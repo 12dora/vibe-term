@@ -357,6 +357,14 @@ function setupClientHandlers(
   // 首次 READY 后补发 connect（避免重连后丢失连接）
   client.onStateChange((state) => {
     if (state !== 'READY') return;
+    lastConnectSentAt.clear();
+    setState((prev) => {
+      const cleared = { ...prev.deviceReconnecting };
+      for (const key of Object.keys(cleared)) {
+        cleared[key] = undefined;
+      }
+      return { deviceReconnecting: cleared };
+    });
     const connectedDevices = getState().connectedDevices;
     for (const deviceId of connectedDevices) {
       if (shouldSkipDuplicateConnect(deviceId)) continue;
