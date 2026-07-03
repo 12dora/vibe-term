@@ -6,7 +6,6 @@ import {
   maxHorizontalStackDepth,
   maxVerticalStackDepth,
   resolveDropPosition,
-  resolveGutterDrag,
 } from './splitLayoutGeometry';
 
 const CELL = { width: 10, height: 20 };
@@ -43,9 +42,6 @@ describe('computeSplitLayoutGeometry', () => {
     expect(gutter).toMatchObject({
       axis: 'x',
       edgeLeafPaneId: '%0',
-      edgeLeafSizeCells: 104,
-      minDeltaCells: -(104 - 2),
-      maxDeltaCells: 103 - 2,
     });
     expect(gutter?.rect).toEqual({
       left: 104 * CELL.width,
@@ -63,34 +59,20 @@ describe('computeSplitLayoutGeometry', () => {
     expect(geo.gutters).toHaveLength(2);
 
     const vertical = geo.gutters.find((g) => g.axis === 'x');
-    // 右侧是 column，其左右边界叶子取第一个 child（都是全宽）
     expect(vertical?.edgeLeafPaneId).toBe('%0');
-    // before(%0) 可缩到 2，after(column) 的最小宽度是 max(2,2)=2
-    expect(vertical?.maxDeltaCells).toBe(103 - 2);
 
     const horizontal = geo.gutters.find((g) => g.axis === 'y');
-    expect(horizontal).toMatchObject({
-      edgeLeafPaneId: '%1',
-      edgeLeafSizeCells: 31,
-      minDeltaCells: -(31 - 2),
-      maxDeltaCells: 30 - 2,
-    });
+    expect(horizontal?.edgeLeafPaneId).toBe('%1');
     expect(horizontal?.rect.top).toBe(31 * CELL.height);
     expect(horizontal?.rect.left).toBe(105 * CELL.width);
   });
 
   test('row inside column: vertical gutter target is rightmost leaf of nested row', () => {
-    // column[ row{a=0, b=1}, c=2 ]，row 内 gutter 的 edge leaf 是 a（row 的第一段的右边界）
     const geo = geometryOf('abcd,100x50,0,0[100x24,0,0{49x24,0,0,0,50x24,50,0,1},100x25,0,25,2]');
     const vertical = geo.gutters.find((g) => g.axis === 'x');
     expect(vertical?.edgeLeafPaneId).toBe('%0');
     const horizontal = geo.gutters.find((g) => g.axis === 'y');
-    // row 的底边叶子取第一个 child
     expect(horizontal?.edgeLeafPaneId).toBe('%0');
-    // before 是 row{a,b}，最小高度 = max(2,2) = 2
-    expect(horizontal?.minDeltaCells).toBe(-(24 - 2));
-    // before 是 row，最小宽度 = 2+2+1 = 5（信息在 vertical gutter 上）
-    expect(vertical?.minDeltaCells).toBe(-(49 - 2));
   });
 });
 
@@ -193,42 +175,5 @@ describe('resolveDropPosition', () => {
   test('clamps out-of-range input', () => {
     expect(resolveDropPosition(-0.5, 0.5)).toBe('left');
     expect(resolveDropPosition(1.5, 0.5)).toBe('right');
-  });
-});
-
-describe('resolveGutterDrag', () => {
-  const gutter = {
-    axis: 'x' as const,
-    rect: { left: 0, top: 0, width: 10, height: 100 },
-    edgeLeafPaneId: '%0',
-    edgeLeafSizeCells: 104,
-    minDeltaCells: -102,
-    maxDeltaCells: 101,
-  };
-
-  test('rounds px to cells and returns absolute target size', () => {
-    expect(resolveGutterDrag(gutter, 47, CELL)).toEqual({ deltaCells: 5, targetSizeCells: 109 });
-    expect(resolveGutterDrag(gutter, -33, CELL)).toEqual({ deltaCells: -3, targetSizeCells: 101 });
-  });
-
-  test('clamps to min/max delta', () => {
-    expect(resolveGutterDrag(gutter, 100000, CELL)).toEqual({
-      deltaCells: 101,
-      targetSizeCells: 205,
-    });
-    expect(resolveGutterDrag(gutter, -100000, CELL)).toEqual({
-      deltaCells: -102,
-      targetSizeCells: 2,
-    });
-  });
-
-  test('sub-cell drag returns null', () => {
-    expect(resolveGutterDrag(gutter, 4, CELL)).toBeNull();
-    expect(resolveGutterDrag(gutter, 0, CELL)).toBeNull();
-  });
-
-  test('y axis uses cell height', () => {
-    const hGutter = { ...gutter, axis: 'y' as const, edgeLeafSizeCells: 31 };
-    expect(resolveGutterDrag(hGutter, 41, CELL)).toEqual({ deltaCells: 2, targetSizeCells: 33 });
   });
 });

@@ -27,54 +27,11 @@ export interface SplitGutter {
   rect: PxRect;
   /** resize-pane 的目标叶子：before 子树中触及本边界的叶子 */
   edgeLeafPaneId: string;
-  /** 该叶子当前轴向尺寸（cells），提交绝对值 = edgeLeafSizeCells + deltaCells */
-  edgeLeafSizeCells: number;
-  /** deltaCells 的允许区间（含），由两侧子树的最小尺寸推出 */
-  minDeltaCells: number;
-  maxDeltaCells: number;
 }
 
 export interface SplitLayoutGeometry {
   panes: SplitPaneRect[];
   gutters: SplitGutter[];
-}
-
-const MIN_PANE_CELLS = 2;
-
-function minWidthCells(node: TmuxLayoutNode): number {
-  if (node.type === 'leaf') {
-    return MIN_PANE_CELLS;
-  }
-  if (node.type === 'row') {
-    let total = node.children.length - 1;
-    for (const child of node.children) {
-      total += minWidthCells(child);
-    }
-    return total;
-  }
-  let max = MIN_PANE_CELLS;
-  for (const child of node.children) {
-    max = Math.max(max, minWidthCells(child));
-  }
-  return max;
-}
-
-function minHeightCells(node: TmuxLayoutNode): number {
-  if (node.type === 'leaf') {
-    return MIN_PANE_CELLS;
-  }
-  if (node.type === 'column') {
-    let total = node.children.length - 1;
-    for (const child of node.children) {
-      total += minHeightCells(child);
-    }
-    return total;
-  }
-  let max = MIN_PANE_CELLS;
-  for (const child of node.children) {
-    max = Math.max(max, minHeightCells(child));
-  }
-  return max;
 }
 
 // before 子树中右边界与子树右边界重合的叶子：
@@ -129,7 +86,6 @@ export function computeSplitLayoutGeometry(
       if (i === node.children.length - 1) {
         continue;
       }
-      const next = node.children[i + 1] as TmuxLayoutNode;
 
       if (node.type === 'row') {
         const edgeLeaf = rightEdgeLeaf(child);
@@ -142,9 +98,6 @@ export function computeSplitLayoutGeometry(
             height: node.height * cell.height,
           },
           edgeLeafPaneId: layoutLeafPaneId(edgeLeaf),
-          edgeLeafSizeCells: edgeLeaf.width,
-          minDeltaCells: -(child.width - minWidthCells(child)),
-          maxDeltaCells: next.width - minWidthCells(next),
         });
       } else {
         const edgeLeaf = bottomEdgeLeaf(child);
@@ -157,9 +110,6 @@ export function computeSplitLayoutGeometry(
             height: cell.height,
           },
           edgeLeafPaneId: layoutLeafPaneId(edgeLeaf),
-          edgeLeafSizeCells: edgeLeaf.height,
-          minDeltaCells: -(child.height - minHeightCells(child)),
-          maxDeltaCells: next.height - minHeightCells(next),
         });
       }
     }
@@ -187,24 +137,6 @@ export function maxVerticalStackDepth(node: TmuxLayoutNode): number {
     max = Math.max(max, maxVerticalStackDepth(child));
   }
   return max;
-}
-
-export function minVerticalStackDepth(node: TmuxLayoutNode): number {
-  if (node.type === 'leaf') {
-    return 1;
-  }
-  if (node.type === 'column') {
-    let total = 0;
-    for (const child of node.children) {
-      total += minVerticalStackDepth(child);
-    }
-    return total;
-  }
-  let min = Infinity;
-  for (const child of node.children) {
-    min = Math.min(min, minVerticalStackDepth(child));
-  }
-  return min;
 }
 
 // 对称地，最大水平并排 pane 数：每个 pane 左右各有视觉留白，
@@ -259,23 +191,5 @@ export function resolveDropPosition(relativeX: number, relativeY: number): DropP
     ['bottom', 1 - y],
   ];
   distances.sort((a, b) => a[1] - b[1]);
-  return (distances[0] as [DropPosition, number])[0];
-}
-
-// 拖拽 px 位移 → clamp 后的 cells 位移；无有效移动返回 null
-export function resolveGutterDrag(
-  gutter: SplitGutter,
-  deltaPx: number,
-  cell: { width: number; height: number }
-): { deltaCells: number; targetSizeCells: number } | null {
-  const axisCell = gutter.axis === 'x' ? cell.width : cell.height;
-  if (axisCell <= 0) {
-    return null;
-  }
-  const raw = Math.round(deltaPx / axisCell);
-  const deltaCells = Math.min(gutter.maxDeltaCells, Math.max(gutter.minDeltaCells, raw));
-  if (deltaCells === 0) {
-    return null;
-  }
-  return { deltaCells, targetSizeCells: gutter.edgeLeafSizeCells + deltaCells };
+    return (distances[0] as [DropPosition, number])[0];
 }
