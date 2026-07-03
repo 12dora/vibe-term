@@ -1808,6 +1808,187 @@ describe('CanvasRenderer', () => {
 
     renderer.dispose();
   });
+
+  // issue45 bug 3 红测：dpr 变化 → resize() canvas.width=width 清空 bitmap（HTML5 标准）
+  // + dirty='clean' 早退 return（canvas-renderer.ts:158-161）→ 终端空白。
+  // 根因见 .sisyphus/evidence/task-1-bug3-trigger-report.md，修复在 Task 8 GREEN。
+
+  test('issue45 bug3 (RED): dpr change + dirty=clean should still redraw all rows', async () => {
+    const previousDpr = (globalThis as any).devicePixelRatio;
+    (globalThis as any).devicePixelRatio = 1;
+    try {
+      dom = installFakeDom();
+      const { CanvasRenderer } = await import(
+        `./canvas-renderer.ts?issue45-red-clean=${Date.now()}`
+      );
+      const screen = dom.document.createElement('div');
+      dom.document.body.appendChild(screen);
+
+      const renderer = new CanvasRenderer({
+        screenElement: screen as unknown as HTMLElement,
+        theme: TEST_THEME,
+        fontFamily: 'monospace',
+        fontSize: 13,
+      });
+
+      const cellStyle = {
+        bold: false,
+        italic: false,
+        faint: false,
+        blink: false,
+        inverse: false,
+        invisible: false,
+        strikethrough: false,
+        overline: false,
+        underline: 0,
+      };
+      const buildRow = (y: number, chars: string, dirty: boolean) => ({
+        y,
+        dirty,
+        wrap: false,
+        wrapContinuation: false,
+        text: chars,
+        cells: chars.split('').map((ch, i) => ({
+          x: i,
+          text: ch,
+          codepoints: [ch.codePointAt(0) ?? 32],
+          widthKind: 'narrow' as const,
+          hasText: true,
+          style: cellStyle,
+          fgColor: null,
+          bgColor: null,
+        })),
+      });
+      const buildFrame = (dirty: 'full' | 'partial' | 'clean') => ({
+        meta: {
+          cols: 2,
+          rows: 2,
+          dirty,
+          colors: {
+            background: { r: 17, g: 17, b: 17 },
+            foreground: { r: 238, g: 238, b: 238 },
+            cursor: null,
+            palette: Array.from({ length: 256 }, () => ({ r: 0, g: 0, b: 0 })),
+          },
+          cursor: {
+            style: 'block' as const,
+            visible: false,
+            blinking: false,
+            passwordInput: false,
+            x: null,
+            y: null,
+            wideTail: false,
+          },
+        },
+        rows: [buildRow(0, 'AB', dirty !== 'clean'), buildRow(1, 'CD', dirty !== 'clean')],
+        cellDimensions: { width: 10, height: 20 },
+      });
+
+      renderer.render(buildFrame('full'));
+      expect(renderer.getDebugState().lastDrawnRows).toEqual([0, 1]);
+
+      // 模拟 dpr 变化：下次 render 时 resize() 会清空 canvas bitmap
+      (globalThis as any).devicePixelRatio = 2;
+
+      // dpr 变化不通知 ghostty 内核 → dirty='clean'；当前实现早退不重画（red）
+      renderer.render(buildFrame('clean'));
+      const drawnAfterWipe = renderer.getDebugState().lastDrawnRows;
+      expect(drawnAfterWipe).toContain(0);
+      expect(drawnAfterWipe).toContain(1);
+
+      renderer.dispose();
+    } finally {
+      (globalThis as any).devicePixelRatio = previousDpr;
+    }
+  });
+
+  test('issue45 bug3 (GUARD): dpr unchanged + dirty=partial should only redraw the dirty row', async () => {
+    // 反向验证：dpr 不变（resize 早退）+ dirty='partial' → 只画脏行。应通过，
+    // 证明 Task 8 GREEN 修复不破坏 partial 重绘优化。
+    const previousDpr = (globalThis as any).devicePixelRatio;
+    (globalThis as any).devicePixelRatio = 1;
+    try {
+      dom = installFakeDom();
+      const { CanvasRenderer } = await import(
+        `./canvas-renderer.ts?issue45-guard-partial=${Date.now()}`
+      );
+      const screen = dom.document.createElement('div');
+      dom.document.body.appendChild(screen);
+
+      const renderer = new CanvasRenderer({
+        screenElement: screen as unknown as HTMLElement,
+        theme: TEST_THEME,
+        fontFamily: 'monospace',
+        fontSize: 13,
+      });
+
+      const cellStyle = {
+        bold: false,
+        italic: false,
+        faint: false,
+        blink: false,
+        inverse: false,
+        invisible: false,
+        strikethrough: false,
+        overline: false,
+        underline: 0,
+      };
+      const buildRow = (y: number, chars: string, dirty: boolean) => ({
+        y,
+        dirty,
+        wrap: false,
+        wrapContinuation: false,
+        text: chars,
+        cells: chars.split('').map((ch, i) => ({
+          x: i,
+          text: ch,
+          codepoints: [ch.codePointAt(0) ?? 32],
+          widthKind: 'narrow' as const,
+          hasText: true,
+          style: cellStyle,
+          fgColor: null,
+          bgColor: null,
+        })),
+      });
+      const baseMeta = {
+        cols: 2,
+        rows: 2,
+        colors: {
+          background: { r: 17, g: 17, b: 17 },
+          foreground: { r: 238, g: 238, b: 238 },
+          cursor: null,
+          palette: Array.from({ length: 256 }, () => ({ r: 0, g: 0, b: 0 })),
+        },
+        cursor: {
+          style: 'block' as const,
+          visible: false,
+          blinking: false,
+          passwordInput: false,
+          x: null,
+          y: null,
+          wideTail: false,
+        },
+      };
+
+      renderer.render({
+        meta: { ...baseMeta, dirty: 'full' as const },
+        rows: [buildRow(0, 'AB', true), buildRow(1, 'CD', true)],
+        cellDimensions: { width: 10, height: 20 },
+      });
+      expect(renderer.getDebugState().lastDrawnRows).toEqual([0, 1]);
+
+      renderer.render({
+        meta: { ...baseMeta, dirty: 'partial' as const },
+        rows: [buildRow(0, 'AB', false), buildRow(1, 'CD', true)],
+        cellDimensions: { width: 10, height: 20 },
+      });
+      expect(renderer.getDebugState().lastDrawnRows).toEqual([1]);
+
+      renderer.dispose();
+    } finally {
+      (globalThis as any).devicePixelRatio = previousDpr;
+    }
+  });
 });
 
 describe('SelectionModel', () => {
