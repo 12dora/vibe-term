@@ -254,6 +254,8 @@ export class GhosttyTerminalController implements CompatibleTerminalLike {
   private copyShortcutSuppressed = false;
   private scrollbarThumb: HTMLDivElement | null = null;
   private scrollbarFadeTimer: ReturnType<typeof setTimeout> | null = null;
+  private scrollbarVisible = false;
+  private focused = true;
   private readonly pressedMouseButtons = new Set<number>();
   private wheelPixelDelta = 0;
   private mouseDragActive = false;
@@ -864,6 +866,7 @@ export class GhosttyTerminalController implements CompatibleTerminalLike {
       if (!(event instanceof MouseEvent)) {
         return;
       }
+      this.showScrollbarTransient();
 
       if (!this.disableStdin) {
         this.focus();
@@ -913,6 +916,7 @@ export class GhosttyTerminalController implements CompatibleTerminalLike {
       if (!(event instanceof MouseEvent) || this.mouseDragActive) {
         return;
       }
+      this.showScrollbarTransient();
       if (this.getInputRoutingState().mouseReporting) {
         this.setLinkCursor(false);
         return;
@@ -930,6 +934,7 @@ export class GhosttyTerminalController implements CompatibleTerminalLike {
     root.addEventListener(
       'wheel',
       (event) => {
+        this.showScrollbarTransient();
         if (
           this.handleViewportGesture({
             source: 'wheel',
@@ -1525,14 +1530,38 @@ export class GhosttyTerminalController implements CompatibleTerminalLike {
 
     thumb.style.height = `${thumbHeight}px`;
     thumb.style.transform = `translateY(${thumbTop}px)`;
-    thumb.style.opacity = '1';
+    thumb.style.opacity = this.scrollbarVisible ? '1' : '0';
+  }
 
+  private showScrollbarTransient(): void {
+    if (!this.focused || !this.scrollbarThumb) {
+      return;
+    }
+    this.scrollbarVisible = true;
+    this.scrollbarThumb.style.opacity = '1';
     if (this.scrollbarFadeTimer) {
       clearTimeout(this.scrollbarFadeTimer);
     }
     this.scrollbarFadeTimer = setTimeout(() => {
-      thumb.style.opacity = '0';
-    }, 800);
+      this.scrollbarVisible = false;
+      if (this.scrollbarThumb) {
+        this.scrollbarThumb.style.opacity = '0';
+      }
+    }, 3000);
+  }
+
+  setFocused(focused: boolean): void {
+    this.focused = focused;
+    if (!focused) {
+      this.scrollbarVisible = false;
+      if (this.scrollbarThumb) {
+        this.scrollbarThumb.style.opacity = '0';
+      }
+      if (this.scrollbarFadeTimer) {
+        clearTimeout(this.scrollbarFadeTimer);
+        this.scrollbarFadeTimer = null;
+      }
+    }
   }
 
   private updateCellDimensions(): void {

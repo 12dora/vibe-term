@@ -574,6 +574,7 @@ export function SplitTerminalArea({
                 isSelectionInvalid={false}
                 sizingMode="follow"
                 autoFocus={isFocused}
+                focused={isFocused}
                 onResize={() => {}}
                 onSync={() => {}}
               />

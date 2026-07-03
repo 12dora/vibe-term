@@ -169,6 +169,7 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(
       isSelectionInvalid,
       sizingMode = 'report',
       autoFocus = true,
+      focused = true,
       onResize,
       onSync,
       children,
@@ -323,6 +324,10 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(
       }
       setE2eTerminalProbe(instance);
     }, [instance, autoFocus]);
+
+    useEffect(() => {
+      instance?.setFocused?.(focused);
+    }, [instance, focused]);
 
     useEffect(() => {
       if (!instance || !('setTheme' in instance)) {
