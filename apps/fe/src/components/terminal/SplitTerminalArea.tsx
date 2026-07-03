@@ -24,7 +24,6 @@ import {
   maxHorizontalStackDepth,
   maxVerticalStackDepth,
   resolveDropPosition,
-  resolveGutterDrag,
 } from './splitLayoutGeometry';
 import type { TerminalRef, TerminalTheme } from './types';
 

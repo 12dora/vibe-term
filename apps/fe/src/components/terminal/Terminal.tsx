@@ -395,7 +395,7 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(
             : normalizeHistoryForTerminal(data);
           keepShortHistoryVisibleRef.current = true;
           instance.write(payload);
-          instance.forceFullRepaint();
+          instance.forceFullRepaint?.();
           skipNextDetachPersistRef.current = false;
           attachedDeviceIdRef.current = currentDeviceIdRef.current;
           attachedPaneIdRef.current = currentPaneIdRef.current;

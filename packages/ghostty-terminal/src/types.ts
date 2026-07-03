@@ -195,6 +195,8 @@ export interface CompatibleTerminalLike {
   getSelection?: () => string;
   hasSelection?: () => boolean;
   clearSelection?: () => void;
+  setFocused?: (focused: boolean) => void;
+  forceFullRepaint?: () => void;
   onSelectionChange?: (callback: (text: string | null) => void) => TerminalDisposable;
   onLinkActivated?: (callback: (url: string) => void) => TerminalDisposable;
   startTouchSelection?: (

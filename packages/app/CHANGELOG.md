@@ -1,3 +1,29 @@
+# 0.16.1
+
+_2026-07-03_
+
+## English
+
+### Fixes
+
+- Split screen pane overflow: deep-column panes no longer exceed their content area. Window row calculation now deducts the deepest vertical stack's title bar overhead.
+- Mobile connect no longer shrinks the PC terminal window. Mobile select never carries size; resize/sync are skipped until snapshot arrives.
+- PC and mobile no longer fight over terminal size. Remote resize snapshots no longer trigger local re-resize — last resizer wins.
+- Split handle drag now uses the actual rendered cell CSS pixel size instead of tmux window cols, so dragging produces correct pane ratios even after the window was resized by another device. Both resize-window and resize-pane fire on pointerup, ensuring the pane resize executes in the correctly-sized window.
+
+---
+
+## 中文
+
+### 修复
+
+- 分屏 pane 溢出：深列 pane 不再超出内容区域。整窗行数计算现在扣除最深垂直堆叠的标题栏占位。
+- 手机连接不再缩小 PC 终端窗口。手机端 select 不携带尺寸；resize/sync 在快照到达前跳过。
+- PC 与手机不再抢终端尺寸。远端 resize 快照不再触发本地重报——后操作者赢。
+- 分隔条拖拽现在使用实际渲染 cell CSS 像素尺寸而非 tmux window cols，即使窗口被其他设备 resize 过，拖拽也能产生正确的 pane 比例。pointerup 时同时发 resize-window 和 resize-pane，确保 pane resize 在正确尺寸的 window 中执行。
+
+---
+
 # 0.16.0
 
 _2026-07-02_
