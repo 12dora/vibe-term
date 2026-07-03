@@ -54,5 +54,4 @@ data/
 
 # 本地代理状态（笔记/计划/临时产物不进 history，但 evidence 是任务交付物，
 # 需随对应 commit 进 git 供后续 Task 引用与审计）
-.sisyphus/*
-!.sisyphus/evidence/
+.sisyphus/
