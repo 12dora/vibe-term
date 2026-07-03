@@ -20,6 +20,7 @@ import {
   type DropPosition,
   type SplitGutter,
   computeSplitLayoutGeometry,
+  computeSplitWindowGridSize,
   maxHorizontalStackDepth,
   maxVerticalStackDepth,
   resolveDropPosition,
@@ -174,14 +175,6 @@ export function SplitTerminalArea({
     }
   }, [deviceId, tmuxWindow.id, knownPaneIdsKey, focusedPaneId, fetchPaneHistory]);
 
-  // 各实例 cols/rows 跟随 layout（tmux 是尺寸权威，不信容器像素测量）
-  useEffect(() => {
-    if (!geometry) return;
-    for (const pane of geometry.panes) {
-      terminalRefs.current.get(pane.paneId)?.resize(pane.cols, pane.rows);
-    }
-  }, [geometry]);
-
   // 焦点变化时聚焦对应实例
   useEffect(() => {
     if (inputMode !== 'direct') return;
@@ -198,6 +191,14 @@ export function SplitTerminalArea({
     return null;
   }, [focusedPaneId]);
 
+  // 各实例 cols/rows 跟随 tmux layout（tmux 是尺寸权威）
+  useEffect(() => {
+    if (!geometry) return;
+    for (const pane of geometry.panes) {
+      terminalRefs.current.get(pane.paneId)?.resize(pane.cols, pane.rows);
+    }
+  }, [geometry]);
+
   // 每个 pane 的标题栏占据实际空间：整窗 rows 按最深的一列扣除标题栏总高，
   // 保证该列的终端区也能放下 layout 分配的行数（其余列底部允许少量留白）
   const titleBarStackDepth = useMemo(
@@ -212,18 +213,19 @@ export function SplitTerminalArea({
   // window 级 resize：容器尺寸 / cell 尺寸 → 整窗 cols/rows（防抖 + cellSize 未就绪重试）
   const reportWindowSize = useCallback(() => {
     const container = containerRef.current;
-    if (!container) return false;
+    if (!container || !layout) return false;
     const rect = container.getBoundingClientRect();
     if (rect.width < 1 || rect.height < 1) return false;
     const cell = getFocusedCellSize();
     if (!cell) return false;
-    const usableHeight = Math.max(0, rect.height - titleBarStackDepth * PANE_V_OVERHEAD_PX);
-    const usableWidth = Math.max(0, rect.width - horizontalStackDepth * PANE_H_OVERHEAD_PX);
-    const cols = Math.max(2, Math.floor(usableWidth / cell.width));
-    const rows = Math.max(2, Math.floor(usableHeight / cell.height));
+    const { cols, rows } = computeSplitWindowGridSize(layout.root, {
+      viewport: { width: rect.width, height: rect.height },
+      cell,
+      paneChrome: { width: PANE_H_OVERHEAD_PX, height: PANE_V_OVERHEAD_PX },
+    });
     onWindowResize(cols, rows);
     return true;
-  }, [getFocusedCellSize, onWindowResize, titleBarStackDepth, horizontalStackDepth]);
+  }, [getFocusedCellSize, layout, onWindowResize]);
 
   const reportWindowSizeRef = useRef(reportWindowSize);
   useEffect(() => {
@@ -299,23 +301,29 @@ export function SplitTerminalArea({
         setDragState(null);
         if (!commit) return;
 
-        const rect = container.getBoundingClientRect();
-        const pxPerCell =
-          gutter.axis === 'x'
-            ? rect.width / Math.max(1, rootCols)
-            : rect.height / Math.max(1, rootRows);
+        const cell = getFocusedCellSize();
+        if (!cell) return;
         const deltaPx = gutter.axis === 'x' ? upEvent.clientX - startX : upEvent.clientY - startY;
-        const resolved = resolveGutterDrag(gutter, deltaPx, {
-          width: gutter.axis === 'x' ? pxPerCell : 1,
-          height: gutter.axis === 'y' ? pxPerCell : 1,
-        });
-        if (!resolved) return;
+        const axisCell = gutter.axis === 'x' ? cell.width : cell.height;
+        if (axisCell <= 0) return;
+        const deltaCells = Math.round(deltaPx / axisCell);
+        if (deltaCells === 0) return;
+
+        const edgePaneEl = container.querySelector<HTMLElement>(
+          `[data-pane-id="${gutter.edgeLeafPaneId}"]`
+        );
+        if (!edgePaneEl) return;
+        const edgePaneRect = edgePaneEl.getBoundingClientRect();
+        const currentSize = gutter.axis === 'x'
+          ? Math.floor(edgePaneRect.width / axisCell)
+          : Math.floor(edgePaneRect.height / axisCell);
+        const targetSize = currentSize + deltaCells;
+        if (targetSize < 2) return;
+        reportWindowSizeRef.current();
         resizePaneInWindow(
           deviceId,
           gutter.edgeLeafPaneId,
-          gutter.axis === 'x'
-            ? { cols: resolved.targetSizeCells }
-            : { rows: resolved.targetSizeCells }
+          gutter.axis === 'x' ? { cols: targetSize } : { rows: targetSize }
         );
       };
 
@@ -326,7 +334,7 @@ export function SplitTerminalArea({
       window.addEventListener('pointerup', onUp);
       window.addEventListener('pointercancel', onCancel);
     },
-    [deviceId, resizePaneInWindow, rootCols, rootRows]
+    [deviceId, getFocusedCellSize, resizePaneInWindow]
   );
 
   // 标题栏拖拽重排：命中测试基于 layout 比例几何（与渲染同源），
@@ -503,7 +511,7 @@ export function SplitTerminalArea({
         return (
           <div
             key={pane.paneId}
-            className={`absolute flex flex-col ${isDragSource ? 'opacity-60' : ''}`}
+            className={`absolute flex flex-col overflow-hidden ${isDragSource ? 'opacity-60' : ''}`}
             data-testid="split-pane"
             data-pane-id={pane.paneId}
             data-focused={isFocused || undefined}
@@ -562,7 +570,10 @@ export function SplitTerminalArea({
                 </button>
               </div>
             </div>
-            <div className="relative min-h-0 flex-1 px-1.5 pb-2">
+            <div
+              className="relative min-h-0 flex-1 overflow-hidden px-1.5 pb-2"
+              data-pane-content-id={pane.paneId}
+            >
               <Terminal
                 key={`${deviceId}:${pane.paneId}`}
                 ref={bindTerminalRef(pane.paneId)}

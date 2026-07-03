@@ -132,6 +132,10 @@ export default function DevicePage() {
   );
 
   const [isMobile, setIsMobile] = useState(false);
+  const isMobileRef = useRef(false);
+  useEffect(() => {
+    isMobileRef.current = isMobile;
+  }, [isMobile]);
   const [editorText, setEditorText] = useState('');
   const isComposingRef = useRef(false);
   // Loading state - false when connected and has pane
@@ -248,6 +252,11 @@ export default function DevicePage() {
     stackedLayoutTargetRef.current = stackedLayoutTarget;
   }, [stackedLayoutTarget]);
 
+  const hasWindowSnapshotRef = useRef(false);
+  useEffect(() => {
+    hasWindowSnapshotRef.current = Boolean(windows) && Boolean(windowId);
+  }, [windows, windowId]);
+
   // Handle resize from terminal - use store directly to avoid unstable callback deps
   const handleResize = useCallback(
     (cols: number, rows: number) => {
@@ -257,6 +266,7 @@ export default function DevicePage() {
         useTmuxStore.getState().applyStackedLayout(deviceId, stackedWindowId, cols, rows);
         return;
       }
+      if (isMobileRef.current && !hasWindowSnapshotRef.current) return;
       useTmuxStore.getState().resizePane(deviceId, resolvedPaneId, cols, rows);
     },
     [deviceId, resolvedPaneId]
@@ -271,6 +281,7 @@ export default function DevicePage() {
         useTmuxStore.getState().applyStackedLayout(deviceId, stackedWindowId, cols, rows);
         return;
       }
+      if (isMobileRef.current && !hasWindowSnapshotRef.current) return;
       useTmuxStore.getState().syncPaneSize(deviceId, resolvedPaneId, cols, rows);
     },
     [deviceId, resolvedPaneId]
@@ -294,14 +305,10 @@ export default function DevicePage() {
         return undefined;
       }
 
-      // 移动端多 pane window：select 不带尺寸（否则整窗被 resize 成单 pane 尺寸），
-      // 尺寸由随后的 sync 经 applyStackedLayout 处理
-      if (targetWindowId && windows) {
-        const targetWindow = windows.find((window) => window.id === targetWindowId);
-        if (isMobile && targetWindow && targetWindow.panes.length > 1) {
-          return undefined;
-        }
-      }
+      // 移动端不携带 select 尺寸：整窗尺寸由 stacked layout（多 pane）或
+      // Terminal ResizeObserver 的 sync 路径（单 pane）异步驱动，
+      // select 只负责切焦点 + 拉 history，不主动 resize
+      if (isMobileRef.current) return undefined;
 
       const terminalSize =
         terminal?.calculateSizeFromContainer() ?? terminal?.getSize() ?? undefined;
@@ -324,7 +331,7 @@ export default function DevicePage() {
         rows: targetPane.height,
       };
     },
-    [isMobile, windows]
+    [windows]
   );
 
   // 分屏：点击非焦点 pane 切焦点（URL 为真相源，select effect 走轻量 FOCUS_PANE）

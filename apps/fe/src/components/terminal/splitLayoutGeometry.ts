@@ -189,6 +189,24 @@ export function maxVerticalStackDepth(node: TmuxLayoutNode): number {
   return max;
 }
 
+export function minVerticalStackDepth(node: TmuxLayoutNode): number {
+  if (node.type === 'leaf') {
+    return 1;
+  }
+  if (node.type === 'column') {
+    let total = 0;
+    for (const child of node.children) {
+      total += minVerticalStackDepth(child);
+    }
+    return total;
+  }
+  let min = Infinity;
+  for (const child of node.children) {
+    min = Math.min(min, minVerticalStackDepth(child));
+  }
+  return min;
+}
+
 // 对称地，最大水平并排 pane 数：每个 pane 左右各有视觉留白，
 // 整窗 cols 换算按最宽的一行扣除留白总宽
 export function maxHorizontalStackDepth(node: TmuxLayoutNode): number {
@@ -207,6 +225,25 @@ export function maxHorizontalStackDepth(node: TmuxLayoutNode): number {
     max = Math.max(max, maxHorizontalStackDepth(child));
   }
   return max;
+}
+
+export interface SplitWindowGridSizeInput {
+  viewport: { width: number; height: number };
+  cell: { width: number; height: number };
+  paneChrome: { width: number; height: number };
+}
+
+export function computeSplitWindowGridSize(
+  root: TmuxLayoutNode,
+  input: SplitWindowGridSizeInput
+): { cols: number; rows: number } {
+  const vStack = maxVerticalStackDepth(root);
+  const hStack = maxHorizontalStackDepth(root);
+  const usableWidth = Math.max(0, input.viewport.width - hStack * input.paneChrome.width);
+  const usableHeight = Math.max(0, input.viewport.height - vStack * input.paneChrome.height);
+  const cols = Math.max(2, Math.floor(usableWidth / input.cell.width));
+  const rows = Math.max(2, Math.floor(usableHeight / input.cell.height));
+  return { cols, rows };
 }
 
 export type DropPosition = 'left' | 'right' | 'top' | 'bottom';

@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import { parseWindowLayout } from '@tmex/shared';
 import {
+  computeSplitWindowGridSize,
   computeSplitLayoutGeometry,
   maxHorizontalStackDepth,
   maxVerticalStackDepth,
@@ -156,6 +157,28 @@ describe('maxHorizontalStackDepth', () => {
         rootOf('abcd,100x50,0,0[100x24,0,0{49x24,0,0,0,50x24,50,0,1},100x25,0,25,2]')
       )
     ).toBe(2);
+  });
+});
+
+describe('computeSplitWindowGridSize', () => {
+  const rootOf = (layout: string) => {
+    const parsed = parseWindowLayout(layout);
+    if (!parsed) throw new Error('bad layout');
+    return parsed.root;
+  };
+
+  test('mixed row/column layout deducts chrome for the deepest vertical stack', () => {
+    const root = rootOf(
+      '5ee7,208x62,0,0{104x62,0,0,0,103x62,105,0[103x31,105,0,1,103x30,105,32,2]}'
+    );
+
+    expect(
+      computeSplitWindowGridSize(root, {
+        viewport: { width: 1200, height: 506 },
+        cell: { width: 10, height: 10 },
+        paneChrome: { width: 12, height: 46 },
+      })
+    ).toEqual({ cols: 117, rows: 41 });
   });
 });
 
