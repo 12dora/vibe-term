@@ -141,6 +141,9 @@ export function SplitTerminalArea({
     return computeSplitLayoutGeometry(layout.root, { width: 1, height: 1 });
   }, [layout]);
 
+  const geometryRef = useRef(geometry);
+  geometryRef.current = geometry;
+
   const rootCols = layout?.root.width ?? 1;
   const rootRows = layout?.root.height ?? 1;
 
@@ -165,8 +168,8 @@ export function SplitTerminalArea({
     }
     for (const paneId of knownPaneIdsKey ? knownPaneIdsKey.split(',') : []) {
       if (fetchStateRef.current.fetched.has(paneId)) continue;
-      fetchStateRef.current.fetched.add(paneId);
       if (paneId === focusedPaneId) continue;
+      fetchStateRef.current.fetched.add(paneId);
       fetchPaneHistory(deviceId, paneId);
     }
   }, [deviceId, tmuxWindow.id, knownPaneIdsKey, focusedPaneId, fetchPaneHistory]);
@@ -291,6 +294,8 @@ export function SplitTerminalArea({
         target.removeEventListener('pointermove', onMove);
         target.removeEventListener('pointerup', onUp);
         target.removeEventListener('pointercancel', onCancel);
+        window.removeEventListener('pointerup', onUp);
+        window.removeEventListener('pointercancel', onCancel);
         setDragState(null);
         if (!commit) return;
 
@@ -318,8 +323,8 @@ export function SplitTerminalArea({
       const onCancel = (cancelEvent: PointerEvent) => finish(cancelEvent, false);
 
       target.addEventListener('pointermove', onMove);
-      target.addEventListener('pointerup', onUp);
-      target.addEventListener('pointercancel', onCancel);
+      window.addEventListener('pointerup', onUp);
+      window.addEventListener('pointercancel', onCancel);
     },
     [deviceId, resizePaneInWindow, rootCols, rootRows]
   );
@@ -416,6 +421,8 @@ export function SplitTerminalArea({
         handle.removeEventListener('pointermove', onMove);
         handle.removeEventListener('pointerup', onUp);
         handle.removeEventListener('pointercancel', onCancel);
+        window.removeEventListener('pointerup', onUp);
+        window.removeEventListener('pointercancel', onCancel);
         setPaneDrag(null);
         if (!commit || !activated) return;
         const target = resolveTarget(upEvent.clientX, upEvent.clientY);
@@ -441,8 +448,8 @@ export function SplitTerminalArea({
       const onCancel = (cancelEvent: PointerEvent) => finish(cancelEvent, false);
 
       handle.addEventListener('pointermove', onMove);
-      handle.addEventListener('pointerup', onUp);
-      handle.addEventListener('pointercancel', onCancel);
+      window.addEventListener('pointerup', onUp);
+      window.addEventListener('pointercancel', onCancel);
     },
     [deviceId, geometry, movePane, breakPane, rootCols, rootRows, tmuxWindow.id]
   );
@@ -451,6 +458,10 @@ export function SplitTerminalArea({
     (paneId: string) => (ref: TerminalRef | null) => {
       if (ref) {
         terminalRefs.current.set(paneId, ref);
+        const pane = geometryRef.current?.panes.find((p) => p.paneId === paneId);
+        if (pane) {
+          ref.resize(pane.cols, pane.rows);
+        }
       } else {
         terminalRefs.current.delete(paneId);
       }

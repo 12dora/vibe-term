@@ -267,7 +267,10 @@ export function useTerminalResize({
         containerSize,
       });
       if (!shouldSync) {
-        term.refresh?.();
+        // canvas 位图可能在容器尺寸变化 / DOM 重插入中被 resize 清空，但 ghostty 内核
+        // 仍报 dirty='clean'。强制 renderer 全画以避免空白（issue #45 bug 3）。
+        // ?.() 容错老版本 terminal 暂未提供 forceFullRepaint 的情形。
+        term.forceFullRepaint?.();
         return;
       }
 

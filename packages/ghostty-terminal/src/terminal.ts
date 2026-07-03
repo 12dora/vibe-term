@@ -227,6 +227,9 @@ export class GhosttyTerminalController implements CompatibleTerminalLike {
   private screenElement: HTMLDivElement | null = null;
   private renderer: CanvasRenderer | null = null;
   private renderRaf: number | null = null;
+  // 外部（如 viewport restore）请求下一帧强制全画——canvas 已被 resize 清空但
+  // ghostty 内核仍报 dirty='clean'，必须绕过早退重画以避免空白（issue #45 bug 3）。
+  private forceFullNext = false;
   // 每帧 render 缓存的光标快照，供 getCursorViewportRect 读取（issue #27 follow 模式）。
   private lastCursor: GhosttyRenderCursor | null = null;
   private disposed = false;
@@ -556,6 +559,23 @@ export class GhosttyTerminalController implements CompatibleTerminalLike {
       return;
     }
 
+    this.render();
+  }
+
+  // 标记 renderer.render 必须全画所有行，并立即同步执行（不等 rAF）。
+  // 用于 history 注入（onApplyHistory）等需要内容立即可见的场景：
+  // DOM 重插入或容器尺寸变化后 canvas 位图可能已被 resize 清空，但 ghostty 内核
+  // 未必同步报 dirty='full'（issue #45 bug 3）。同步 render 消除 rAF 延迟。
+  forceFullRepaint(): void {
+    if (this.disposed) {
+      return;
+    }
+
+    this.forceFullNext = true;
+    if (this.renderRaf !== null) {
+      cancelAnimationFrame(this.renderRaf);
+      this.renderRaf = null;
+    }
     this.render();
   }
 
@@ -1402,19 +1422,14 @@ export class GhosttyTerminalController implements CompatibleTerminalLike {
       return;
     }
 
-    const renderState = createRenderState(this.bindings);
-    let cursorX = 0;
-    let cursorY = 0;
-    try {
-      updateRenderState(renderState, this.terminalHandle);
-      const meta = readRenderSnapshotMeta(renderState);
-      if (meta.cursor.x !== null && meta.cursor.y !== null) {
-        cursorX = meta.cursor.x;
-        cursorY = meta.cursor.y;
-      }
-    } finally {
-      disposeRenderStateResources(renderState);
+    // 改读主 render 缓存的 lastCursor，避免在 IME 组字期间消费 WASM dirty
+    // 导致后续 rAF 渲染看到 dirty='clean' 而漏画（issue #45 bug 4-C）。
+    if (!this.lastCursor) {
+      return;
     }
+
+    const cursorX = this.lastCursor.x ?? 0;
+    const cursorY = this.lastCursor.y ?? 0;
 
     const left = cursorX * width;
     const top = cursorY * height;
@@ -1443,6 +1458,11 @@ export class GhosttyTerminalController implements CompatibleTerminalLike {
     if (this.disposed || !this.screenElement || !this.renderer) {
       return;
     }
+
+    // 一次性消费：本帧若被 forceFullRepaint 标记，传给 renderer 让它绕过 dirty='clean'
+    // 早退（issue #45 bug 3）。读后立即清零避免污染后续帧。
+    const forceFull = this.forceFullNext;
+    this.forceFullNext = false;
 
     const scrollbar = this.bindings.readScrollbar(this.terminalHandle);
     const viewportRows = Math.max(1, scrollbar.len || this.rows);
@@ -1476,6 +1496,7 @@ export class GhosttyTerminalController implements CompatibleTerminalLike {
       cellDimensions: this.cellDimensions(),
       selectionRects,
       selectionColor: this.options.theme.selectionBackground,
+      forceFull,
     });
 
     const visibleLines = normalizeVisibleLines(rows, this.rows);

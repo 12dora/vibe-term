@@ -342,7 +342,11 @@ export class WebSocketServer {
 
       case wsBorsh.KIND_TMUX_CREATE_WINDOW: {
         const decoded = wsBorsh.decodePayload(wsBorsh.schema.TmuxCreateWindowSchema, payload);
-        this.handleCreateWindow(decoded.deviceId, decoded.name ?? undefined, decoded.cwd ?? undefined);
+        this.handleCreateWindow(
+          decoded.deviceId,
+          decoded.name ?? undefined,
+          decoded.cwd ?? undefined
+        );
         return;
       }
 
@@ -407,7 +411,12 @@ export class WebSocketServer {
 
       case wsBorsh.KIND_TMUX_APPLY_STACKED_LAYOUT: {
         const decoded = wsBorsh.decodePayload(wsBorsh.schema.TmuxApplyStackedLayoutSchema, payload);
-        this.handleApplyStackedLayout(decoded.deviceId, decoded.windowId, decoded.cols, decoded.rows);
+        this.handleApplyStackedLayout(
+          decoded.deviceId,
+          decoded.windowId,
+          decoded.cols,
+          decoded.rows
+        );
         return;
       }
 
@@ -436,7 +445,12 @@ export class WebSocketServer {
 
       case wsBorsh.KIND_TMUX_MOVE_PANE: {
         const decoded = wsBorsh.decodePayload(wsBorsh.schema.TmuxMovePaneSchema, payload);
-        this.handleMovePane(decoded.deviceId, decoded.srcPaneId, decoded.dstPaneId, decoded.position);
+        this.handleMovePane(
+          decoded.deviceId,
+          decoded.srcPaneId,
+          decoded.dstPaneId,
+          decoded.position
+        );
         return;
       }
 
@@ -766,7 +780,9 @@ export class WebSocketServer {
       return false;
     }
 
-    const window = entry.lastSnapshot?.session?.windows.find((candidate) => candidate.id === windowId);
+    const window = entry.lastSnapshot?.session?.windows.find(
+      (candidate) => candidate.id === windowId
+    );
     if (!window?.panes.some((pane) => pane.id === paneId)) {
       console.warn(`[ws] rejecting missing tmux pane id on ${deviceId}: ${paneId}`);
       entry.runtime.requestSnapshot();
@@ -785,6 +801,18 @@ export class WebSocketServer {
   private handleTermResize(deviceId: string, paneId: string, cols: number, rows: number): void {
     const entry = this.connections.get(deviceId);
     if (!entry) return;
+
+    const snapshot = entry.lastSnapshot;
+    if (snapshot?.session?.windows) {
+      const window = snapshot.session.windows.find(
+        (w) => w.panes && w.panes.some((p) => p.id === paneId)
+      );
+      if (window && window.panes && window.panes.length > 1) {
+        entry.runtime.resizeWindow(window.id, cols, rows);
+        return;
+      }
+    }
+
     entry.runtime.resizePane(paneId, cols, rows);
   }
 
@@ -998,12 +1026,7 @@ export class WebSocketServer {
     }
   }
 
-  private handleSplitPane(
-    deviceId: string,
-    paneId: string,
-    direction: number,
-    cwd?: string
-  ): void {
+  private handleSplitPane(deviceId: string, paneId: string, direction: number, cwd?: string): void {
     const entry = this.connections.get(deviceId);
     if (!entry || !isTmuxPaneId(paneId)) return;
     const dir = direction === 2 ? 'v' : 'h';
@@ -1302,8 +1325,29 @@ export class WebSocketServer {
     const fetchKey = `${deviceId}:${paneId}`;
 
     for (const client of entry.clients) {
+      // 优先按进行中的 barrier 事务路由 history，而非 selectedPanes。
+      // split 翻转后前端 focusPane 把 selectedPanes 改为新 pane，但旧 pane 的 barrier
+      // 事务仍卡在 ACKED：按事务 context.paneId 路由才能让 barrier history 正确投递。
+      const txPaneId = switchBarrier.getTransactionPaneId(client as any, deviceId);
+      if (txPaneId !== null && txPaneId === paneId) {
+        switchBarrier.sendTermHistory(
+          client as any,
+          deviceId,
+          paneId,
+          historyBytes,
+          alternateScreen
+        );
+        continue;
+      }
+
       if (client.data.borshState.selectedPanes[deviceId] === paneId) {
-        switchBarrier.sendTermHistory(client as any, deviceId, paneId, historyBytes, alternateScreen);
+        switchBarrier.sendTermHistory(
+          client as any,
+          deviceId,
+          paneId,
+          historyBytes,
+          alternateScreen
+        );
         continue;
       }
 

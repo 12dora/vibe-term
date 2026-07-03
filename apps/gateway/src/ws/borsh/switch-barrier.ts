@@ -334,6 +334,22 @@ export class SwitchBarrier {
   }
 
   /**
+   * 获取当前 ACKED 事务的目标 paneId，用于 history 路由。
+   *
+   * 仅在事务处于 ACKED 阶段时返回 context.paneId，其他状态或无事务返回 null。
+   * broadcastTerminalHistory 在 selectedPanes 检查之前调用此方法路由 barrier history：
+   * split 翻转后前端 focusPane 把 selectedPanes 改为新 pane，但旧 pane 的 barrier
+   * 事务仍卡在 ACKED，按事务 context.paneId 路由才能保证 history 投递到 barrier 而不被丢弃。
+   */
+  getTransactionPaneId(ws: ServerWebSocket<unknown>, deviceId: string): string | null {
+    const pending = this.getPending(ws, deviceId);
+    if (!pending) return null;
+    const selectState = sessionStateStore.getOrCreateSelectTransaction(ws, deviceId)?.state;
+    if (selectState !== 'ACKED') return null;
+    return pending.context.paneId;
+  }
+
+  /**
    * 获取当前事务的 token
    */
   getSelectToken(ws: ServerWebSocket<unknown>, deviceId: string): Uint8Array | null {

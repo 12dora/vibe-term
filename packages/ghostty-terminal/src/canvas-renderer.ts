@@ -20,6 +20,10 @@ type CanvasRendererFrame = {
   cellDimensions: GhosttyCellDimensions;
   selectionRects?: GhosttySelectionRect[];
   selectionColor?: string;
+  // canvas 在上次 render 后被 resize 清空了位图（HTML5 canvas.width 赋值副作用），
+  // 或 terminal 显式请求全画（forceFullRepaint）：两种情形都必须忽略 dirty='clean'
+  // 早退、强制按 'full' 重画所有行，否则屏幕空白（issue #45 bug 3）。
+  forceFull?: boolean;
 };
 
 type CanvasRendererDebugState = {
@@ -148,15 +152,22 @@ export class CanvasRenderer {
     this.frameCount += 1;
     this.lastDrawnRows = [];
     this.cellDimensions = frame.cellDimensions;
-    this.resize(frame.meta.cols, frame.meta.rows);
-    this.drawSelection(frame.selectionRects ?? [], frame.selectionColor ?? this.theme.selectionBackground);
+    const wiped = this.resize(frame.meta.cols, frame.meta.rows);
+    this.drawSelection(
+      frame.selectionRects ?? [],
+      frame.selectionColor ?? this.theme.selectionBackground
+    );
 
-    if (frame.meta.dirty === 'clean') {
+    // canvas 位图被 resize 清空 / 外部强制全画 → 必须忽略 dirty='clean' 早退，
+    // 否则屏幕空白（issue #45 bug 3）。
+    const effectiveDirty = wiped || frame.forceFull === true ? 'full' : frame.meta.dirty;
+
+    if (effectiveDirty === 'clean') {
       this.drawCursor(frame.meta);
       return;
     }
 
-    const drawAllRows = frame.meta.dirty === 'full';
+    const drawAllRows = effectiveDirty === 'full';
     const dirtyRows = drawAllRows ? frame.rows : frame.rows.filter((row) => row.dirty);
 
     // 允许字形垂直溢出相邻 cell——兼容带高升部/深降部的「奇怪」Unicode（组合记号、Zalgo、
@@ -229,7 +240,9 @@ export class CanvasRenderer {
     this.cursorCanvas.style.opacity = '1';
   }
 
-  private resize(cols: number, rows: number): void {
+  // 返回 true 表示触发了 canvas.width/height 赋值（HTML5 标准会 wipe 已绘位图），
+  // 调用方需把 dirty 视作 'full' 强制全画以避免空白屏（issue #45 bug 3）。
+  private resize(cols: number, rows: number): boolean {
     const nextCols = Math.max(1, cols);
     const nextRows = Math.max(1, rows);
     const dpr = Math.max(1, globalThis.devicePixelRatio ?? 1);
@@ -243,7 +256,7 @@ export class CanvasRenderer {
       this.deviceCellWidth === deviceCellWidth &&
       this.deviceCellHeight === deviceCellHeight
     ) {
-      return;
+      return false;
     }
 
     this.cols = nextCols;
@@ -284,6 +297,8 @@ export class CanvasRenderer {
       context.textBaseline = 'alphabetic';
       context.imageSmoothingEnabled = false;
     }
+
+    return true;
   }
 
   private drawSelection(rects: GhosttySelectionRect[], color: string): void {
