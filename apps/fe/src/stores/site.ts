@@ -26,6 +26,7 @@ const DEFAULT_SETTINGS: SiteSettings = {
   sshReconnectDelaySeconds: 10,
   language: DEFAULT_LOCALE,
   theme: 'dark' as ThemeMode,
+  disabledNotificationChannels: [],
   updatedAt: new Date(0).toISOString(),
 };
 

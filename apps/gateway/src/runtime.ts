@@ -8,6 +8,7 @@ import { runMigrations } from './db/migrate';
 import { sweepOrphanTransferTemps } from './files/transfer-session';
 import { connectionAlertNotifier } from './push/connection-alerts';
 import { pushSupervisor } from './push/supervisor';
+import { registerSettingsBroadcaster, registerTreeOverlayBridge } from './settings/broadcaster';
 import { telegramService } from './telegram/service';
 import { tmuxRuntimeRegistry } from './tmux-client/registry';
 import { primeLocalShellPath } from './tmux/local-shell-path';
@@ -66,6 +67,17 @@ export async function createGatewayRuntime(
       wsServer.broadcastSiteThemeUpdateS2C(theme);
     }
   );
+  registerSettingsBroadcaster((namespace) => {
+    wsServer.broadcastSettingsUpdate(namespace);
+  });
+  registerTreeOverlayBridge({
+    reorderWindows: (deviceId, windowIds) => wsServer.reorderWindows(deviceId, windowIds),
+    reorderPanes: (deviceId, windowId, paneIds) =>
+      wsServer.reorderPanes(deviceId, windowId, paneIds),
+    renameWindow: (deviceId, windowId, name) => wsServer.renameWindow(deviceId, windowId, name),
+    renamePane: (deviceId, paneId, name) => wsServer.renamePane(deviceId, paneId, name),
+    getCustomNames: (deviceId) => wsServer.getCustomNames(deviceId),
+  });
   await telegramService.refresh();
   await weixinService.refresh();
   await pushSupervisor.start();
@@ -119,6 +131,8 @@ export async function createGatewayRuntime(
     async stop() {
       connectionAlertNotifier.setBroadcaster(null);
       registerThemeBroadcaster(null);
+      registerSettingsBroadcaster(null);
+      registerTreeOverlayBridge(null);
       wsServer.closeAll();
       await watchService.stop();
       await agentSupervisor.stop();

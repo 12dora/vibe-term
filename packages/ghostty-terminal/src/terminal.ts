@@ -1,11 +1,12 @@
 import { CanvasRenderer } from './canvas-renderer';
+import { type FileLinkContext, resolveValidFilePath } from './file-path';
 import { getGhosttyKeyCode, getUnshiftedCodepoint } from './ghostty-keycodes';
 import {
   type GhosttyBindings,
   getGhosttyBindings,
   keyboardEventToGhosttyMods,
 } from './ghostty-wasm';
-import { detectLinksInWrappedLines } from './link-detector';
+import { type WrappedMatch, detectMatchesInWrappedLines } from './link-detector';
 import {
   type GhosttyRenderStateResources,
   createRenderState,
@@ -60,6 +61,9 @@ const DEFAULT_CELL_HEIGHT = 17;
 const LINE_HEIGHT = 1.2;
 const AUTO_SCROLL_INTERVAL_MS = 48;
 const TERMINAL_ENGINE = 'ghostty-official';
+// 链接下划线重算节流：只扫可见区，且相邻两次重算至少间隔此值（trailing 保证终态正确）。
+const LINK_OVERLAY_THROTTLE_MS = 150;
+const LINK_MATCH_CACHE_LIMIT = 300;
 
 const GHOSTTY_MODE_X10_MOUSE = 9;
 const GHOSTTY_MODE_NORMAL_MOUSE = 1000;
@@ -221,6 +225,13 @@ export class GhosttyTerminalController implements CompatibleTerminalLike {
   private readonly dataListeners = new Set<(data: string) => void>();
   private readonly selectionListeners = new Set<(text: string | null) => void>();
   private readonly linkListeners = new Set<(url: string) => void>();
+  private readonly fileLinkListeners = new Set<(path: string) => void>();
+  private fileLinkContext: FileLinkContext | null = null;
+  private linkOverlayTimer: ReturnType<typeof setTimeout> | null = null;
+  private linkOverlayLastComputeAt = 0;
+  private linkOverlayDrawnOffset = -1;
+  // 逻辑行文本 → 检测结果（候选，不含有效性），LRU；正则只对新出现的文本执行。
+  private readonly linkMatchCache = new Map<string, WrappedMatch[]>();
   private linkCursorActive = false;
   private lastNotifiedSelectionText: string | null = null;
   private readonly addons = new Set<{ dispose: () => void }>();
@@ -468,6 +479,28 @@ export class GhosttyTerminalController implements CompatibleTerminalLike {
         this.linkListeners.delete(callback);
       },
     };
+  }
+
+  onFileLinkActivated(callback: (path: string) => void): TerminalDisposable {
+    this.fileLinkListeners.add(callback);
+    return {
+      dispose: () => {
+        this.fileLinkListeners.delete(callback);
+      },
+    };
+  }
+
+  // 宿主注入文件链接上下文（pane cwd + 该设备已启用授权根）。null 关闭文件链接识别。
+  // 候选检测缓存与上下文无关（有效性在使用时过滤），无需失效，仅需重算 overlay。
+  setFileLinkContext(context: FileLinkContext | null): void {
+    if (this.disposed) {
+      return;
+    }
+    this.fileLinkContext =
+      context && context.rootPaths.length > 0
+        ? { cwd: context.cwd ?? null, rootPaths: [...context.rootPaths] }
+        : null;
+    this.scheduleLinkOverlayUpdate();
   }
 
   hasSelection(): boolean {
@@ -815,6 +848,12 @@ export class GhosttyTerminalController implements CompatibleTerminalLike {
       this.scrollbarFadeTimer = null;
     }
 
+    if (this.linkOverlayTimer !== null) {
+      clearTimeout(this.linkOverlayTimer);
+      this.linkOverlayTimer = null;
+    }
+    this.linkMatchCache.clear();
+
     for (const addon of this.addons) {
       addon.dispose();
     }
@@ -898,9 +937,13 @@ export class GhosttyTerminalController implements CompatibleTerminalLike {
       // 带平台主修饰键(Mac Cmd / 其它 Ctrl)点击链接 → 打开，不进入文本选择。
       // 置于 mouseReporting 分支之后，鼠标上报应用(vim/htop)优先，不误触发。
       if (event.button === 0 && hasPlatformModifier(event)) {
-        const url = this.linkAtClient(event.clientX, event.clientY);
-        if (url) {
-          this.emitLinkActivated(url);
+        const hit = this.linkAtClient(event.clientX, event.clientY);
+        if (hit) {
+          if (hit.kind === 'url') {
+            this.emitLinkActivated(hit.url);
+          } else {
+            this.emitFileLinkActivated(hit.path);
+          }
           event.preventDefault();
           return;
         }
@@ -1512,6 +1555,106 @@ export class GhosttyTerminalController implements CompatibleTerminalLike {
     this.buffer.setViewport(scrollbar.offset, baseY, scrollbar.total, visibleLines);
     this.updateSelectionTextProbe(selectionText);
     this.updateScrollbar(scrollbar);
+
+    // 滚动后旧下划线位置立刻失效：先清空避免错位残影，再等节流重算。
+    if (this.linkOverlayDrawnOffset !== -1 && this.linkOverlayDrawnOffset !== scrollbar.offset) {
+      this.linkOverlayDrawnOffset = -1;
+      this.renderer.clearLinkUnderlines();
+    }
+    this.scheduleLinkOverlayUpdate();
+  }
+
+  private scheduleLinkOverlayUpdate(): void {
+    if (this.disposed || this.linkOverlayTimer !== null) {
+      return;
+    }
+    const elapsed = Date.now() - this.linkOverlayLastComputeAt;
+    const delay = Math.max(0, LINK_OVERLAY_THROTTLE_MS - elapsed);
+    this.linkOverlayTimer = setTimeout(() => {
+      this.linkOverlayTimer = null;
+      this.linkOverlayLastComputeAt = Date.now();
+      this.updateLinkOverlay();
+    }, delay);
+  }
+
+  // 只扫可见区：按 wrap 分组成逻辑行（经 lineCache 可延伸出视口边界），检测结果
+  // 按逻辑行文本缓存；文件候选用当前上下文过滤有效性后连同 URL 一起画虚线下划线。
+  private updateLinkOverlay(): void {
+    if (this.disposed || !this.renderer) {
+      return;
+    }
+
+    const offset = this.lastViewportOffset;
+    const end = offset + this.lastViewportRows;
+    const segments: { row: number; startCol: number; endCol: number }[] = [];
+
+    let line = offset;
+    while (line < end) {
+      if (this.getLineModel(line).colChars.length === 0) {
+        line += 1;
+        continue;
+      }
+      let startLine = line;
+      while (this.getLineModel(startLine - 1).wrappedToNext) {
+        startLine -= 1;
+      }
+      let endLine = line;
+      while (this.getLineModel(endLine).wrappedToNext) {
+        endLine += 1;
+      }
+      const models: SelectionLineModel[] = [];
+      for (let l = startLine; l <= endLine; l += 1) {
+        models.push(this.getLineModel(l));
+      }
+
+      for (const match of this.detectMatchesCached(models)) {
+        const matchLine = startLine + match.lineIndex;
+        if (matchLine < offset || matchLine >= end) {
+          continue;
+        }
+        if (match.kind === 'file' && !resolveValidFilePath(match.text, this.fileLinkContext)) {
+          continue;
+        }
+        segments.push({
+          row: matchLine - offset,
+          startCol: match.startCol,
+          endCol: match.endCol,
+        });
+      }
+
+      line = endLine + 1;
+    }
+
+    this.linkOverlayDrawnOffset = offset;
+    this.renderer.drawLinkUnderlines(segments);
+  }
+
+  private detectMatchesCached(models: SelectionLineModel[]): WrappedMatch[] {
+    let key = '';
+    for (const model of models) {
+      for (const ch of model.colChars) {
+        key += ch ?? '\u0000';
+      }
+      key += '\u0001';
+    }
+
+    const cached = this.linkMatchCache.get(key);
+    if (cached) {
+      // LRU：命中后移到末尾
+      this.linkMatchCache.delete(key);
+      this.linkMatchCache.set(key, cached);
+      return cached;
+    }
+
+    const matches = detectMatchesInWrappedLines(models);
+    this.linkMatchCache.set(key, matches);
+    if (this.linkMatchCache.size > LINK_MATCH_CACHE_LIMIT) {
+      const oldest = this.linkMatchCache.keys().next().value;
+      if (oldest !== undefined) {
+        this.linkMatchCache.delete(oldest);
+      }
+    }
+    return matches;
   }
 
   private updateScrollbar(scrollbar: { total: number; offset: number; len: number }): void {
@@ -1754,6 +1897,12 @@ export class GhosttyTerminalController implements CompatibleTerminalLike {
     }
   }
 
+  private emitFileLinkActivated(path: string): void {
+    for (const listener of this.fileLinkListeners) {
+      listener(path);
+    }
+  }
+
   private setLinkCursor(active: boolean): void {
     if (this.linkCursorActive === active) {
       return;
@@ -1764,7 +1913,10 @@ export class GhosttyTerminalController implements CompatibleTerminalLike {
     }
   }
 
-  private linkAtClient(clientX: number, clientY: number): string | null {
+  private linkAtClient(
+    clientX: number,
+    clientY: number
+  ): { kind: 'url'; url: string } | { kind: 'file'; path: string } | null {
     const point = this.hitTest(clientX, clientY);
     if (!point) {
       return null;
@@ -1775,7 +1927,11 @@ export class GhosttyTerminalController implements CompatibleTerminalLike {
   // 命中检测：把目标行所在的软换行逻辑行整体取出做链接识别，
   // 再判断 (line, col) 是否落在某个链接的列区间内。越界行 getLineModel 返回 EMPTY
   // (wrappedToNext=false)，使前后扩展在视口边界自然停止。
-  private linkAtPoint(line: number, col: number): string | null {
+  // 文件候选须经 cwd/授权根解析有效才算命中，返回解析后的绝对路径。
+  private linkAtPoint(
+    line: number,
+    col: number
+  ): { kind: 'url'; url: string } | { kind: 'file'; path: string } | null {
     if (this.getLineModel(line).colChars.length === 0) {
       return null;
     }
@@ -1794,9 +1950,16 @@ export class GhosttyTerminalController implements CompatibleTerminalLike {
     }
 
     const targetIndex = line - startLine;
-    for (const link of detectLinksInWrappedLines(models)) {
-      if (link.lineIndex === targetIndex && col >= link.startCol && col <= link.endCol) {
-        return link.url;
+    for (const match of this.detectMatchesCached(models)) {
+      if (match.lineIndex !== targetIndex || col < match.startCol || col > match.endCol) {
+        continue;
+      }
+      if (match.kind === 'url') {
+        return { kind: 'url', url: match.text };
+      }
+      const resolved = resolveValidFilePath(match.text, this.fileLinkContext);
+      if (resolved) {
+        return { kind: 'file', path: resolved };
       }
     }
     return null;

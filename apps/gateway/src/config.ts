@@ -16,6 +16,7 @@ export const config = {
 
   // 服务配置
   port: Number.parseInt(getEnv('GATEWAY_PORT', '9663'), 10),
+  bindHost: getEnv('TMEX_BIND_HOST', '0.0.0.0'),
   baseUrl: getEnv('TMEX_BASE_URL', 'http://127.0.0.1:8085'),
   siteNameDefault: getEnv('TMEX_SITE_NAME', 'tmex'),
 

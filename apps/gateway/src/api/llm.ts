@@ -1,12 +1,13 @@
 import type {
   AgentLlmSettingsDto,
-  AgentSearchProvider,
   CreateLlmProviderRequest,
   LlmProviderDto,
   LlmProviderProtocol,
+  SearchProviderInfoDto,
   UpdateAgentLlmSettingsRequest,
   UpdateLlmProviderRequest,
 } from '@tmex/shared';
+import { getSearchProvider, getSearchProviders } from '../agent/tools/web';
 import { encrypt } from '../crypto';
 import { getAgentSettings, updateAgentSettings } from '../db/agent';
 import type { AgentSettingsRecord } from '../db/agent';
@@ -21,9 +22,25 @@ import {
 } from '../db/llm';
 import { t } from '../i18n';
 import { fetchProviderModels } from '../llm/provider-registry';
+import { broadcastSettingsUpdate } from '../settings/broadcaster';
 
 const PROTOCOLS: readonly LlmProviderProtocol[] = ['openai-chat', 'openai-responses'];
-const SEARCH_PROVIDERS: readonly AgentSearchProvider[] = ['none', 'tavily', 'brave'];
+
+// 白名单由 registry 驱动：'none'（固定语义）+ 已注册 provider id
+function isValidSearchProvider(value: unknown): value is string {
+  if (typeof value !== 'string') {
+    return false;
+  }
+  return value === 'none' || getSearchProvider(value) !== undefined;
+}
+
+function toSearchProviderInfos(settings: AgentSettingsRecord): SearchProviderInfoDto[] {
+  return getSearchProviders().map((provider) => ({
+    id: provider.id,
+    label: provider.label,
+    isConfigured: provider.isConfigured(settings),
+  }));
+}
 
 export function handleLlmApiRequest(
   req: Request,
@@ -168,6 +185,7 @@ async function handleCreateProvider(req: Request): Promise<Response> {
     enabled: body.enabled ?? true,
   });
 
+  broadcastSettingsUpdate('llm');
   const { provider, modelsError } = await refreshModelsCache(created);
   return json({ provider: toProviderDto(provider), ...(modelsError ? { modelsError } : {}) }, 201);
 }
@@ -245,6 +263,7 @@ async function handleUpdateProvider(req: Request, id: string): Promise<Response>
   if (!provider) {
     return json({ error: t('apiError.llmProviderNotFound') }, 404);
   }
+  broadcastSettingsUpdate('llm');
 
   const credentialsChanged =
     (updates.baseUrl !== undefined && updates.baseUrl !== existing.baseUrl) ||
@@ -267,6 +286,7 @@ async function handleDeleteProvider(id: string): Promise<Response> {
   }
 
   deleteLlmProvider(id);
+  broadcastSettingsUpdate('llm');
   return json({ success: true });
 }
 
@@ -285,7 +305,11 @@ async function handleRefreshProviderModels(id: string): Promise<Response> {
 }
 
 async function handleGetSettings(): Promise<Response> {
-  return json({ settings: toSettingsDto(getAgentSettings()) });
+  const record = getAgentSettings();
+  return json({
+    settings: toSettingsDto(record),
+    searchProviders: toSearchProviderInfos(record),
+  });
 }
 
 async function handleUpdateSettings(req: Request): Promise<Response> {
@@ -297,7 +321,7 @@ async function handleUpdateSettings(req: Request): Promise<Response> {
   const updates: Parameters<typeof updateAgentSettings>[0] = {};
 
   if (body.searchProvider !== undefined) {
-    if (!SEARCH_PROVIDERS.includes(body.searchProvider)) {
+    if (!isValidSearchProvider(body.searchProvider)) {
       return json({ error: t('apiError.llmSearchProviderInvalid') }, 400);
     }
     updates.searchProvider = body.searchProvider;
@@ -338,6 +362,7 @@ async function handleUpdateSettings(req: Request): Promise<Response> {
   }
 
   const settings = updateAgentSettings(updates);
+  broadcastSettingsUpdate('llm');
   return json({ settings: toSettingsDto(settings) });
 }
 

@@ -7,7 +7,10 @@ import { getDb as getOrmDb } from '../../db/client';
 import {
   createFetchUrlTool,
   createWebSearchTool,
+  getSearchProvider,
+  getSearchProviders,
   isPrivateHostname,
+  registerSearchProvider,
   validateFetchUrl,
 } from './web';
 
@@ -121,6 +124,76 @@ describe('isPrivateHostname / validateFetchUrl（SSRF 拒绝表）', () => {
     } finally {
       delete process.env.TMEX_AGENT_ALLOW_PRIVATE_FETCH;
     }
+  });
+});
+
+describe('search provider registry', () => {
+  test('内建 tavily/brave 已按插入序注册', () => {
+    const ids = getSearchProviders().map((provider) => provider.id);
+    expect(ids.indexOf('tavily')).toBe(0);
+    expect(ids.indexOf('brave')).toBe(1);
+    expect(getSearchProvider('tavily')?.label).toBe('Tavily');
+    expect(getSearchProvider('brave')?.label).toBe('Brave');
+    expect(getSearchProvider('missing')).toBeUndefined();
+  });
+
+  test('重复注册同 id 抛错', () => {
+    expect(() =>
+      registerSearchProvider({
+        id: 'tavily',
+        label: 'Dup',
+        isConfigured: () => true,
+        search: async () => [],
+      })
+    ).toThrow('tavily');
+  });
+
+  test('自定义 provider 注册后 createWebSearchTool 生效', async () => {
+    const queries: string[] = [];
+    registerSearchProvider({
+      id: 'custom-echo',
+      label: 'Custom Echo',
+      isConfigured: (settings) => settings.searchProvider === 'custom-echo',
+      search: async (query) => {
+        queries.push(query);
+        return [{ title: 'Echo', url: 'https://echo.example', snippet: `echo: ${query}` }];
+      },
+    });
+
+    const tool = await createWebSearchTool({
+      settings: baseSettings({ searchProvider: 'custom-echo' }),
+    });
+    expect(tool).not.toBeNull();
+
+    const output = (await (tool as unknown as ExecutableTool).execute(
+      { query: 'hello registry' },
+      execOptions
+    )) as string;
+    expect(JSON.parse(output)).toEqual([
+      { title: 'Echo', url: 'https://echo.example', snippet: 'echo: hello registry' },
+    ]);
+    expect(queries).toEqual(['hello registry']);
+  });
+
+  test('自定义 provider isConfigured=false 时不注册工具', async () => {
+    registerSearchProvider({
+      id: 'custom-unconfigured',
+      label: 'Custom Unconfigured',
+      isConfigured: () => false,
+      search: async () => [],
+    });
+
+    const tool = await createWebSearchTool({
+      settings: baseSettings({ searchProvider: 'custom-unconfigured' }),
+    });
+    expect(tool).toBeNull();
+  });
+
+  test('未注册的 provider id 不注册工具', async () => {
+    const tool = await createWebSearchTool({
+      settings: baseSettings({ searchProvider: 'not-registered' }),
+    });
+    expect(tool).toBeNull();
   });
 });
 

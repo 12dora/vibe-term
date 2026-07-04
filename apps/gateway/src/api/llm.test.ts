@@ -6,6 +6,7 @@ import type {
   RefreshLlmProviderModelsResponse,
 } from '@tmex/shared';
 import { migrate } from 'drizzle-orm/bun-sqlite/migrator';
+import { registerSearchProvider } from '../agent/tools/web';
 import { decrypt } from '../crypto';
 import { getAgentSettings } from '../db/agent';
 import { getDb as getOrmDb } from '../db/client';
@@ -357,6 +358,50 @@ describe('llm settings api', () => {
   test('patch settings rejects invalid search provider', async () => {
     const response = await callApi('PATCH', '/api/llm/settings', { searchProvider: 'google' });
     expect(response.status).toBe(400);
+  });
+
+  test('get settings lists registered search providers', async () => {
+    const response = await callApi('GET', '/api/llm/settings');
+    expect(response.status).toBe(200);
+
+    const payload = (await response.json()) as {
+      searchProviders: Array<{ id: string; label: string; isConfigured: boolean }>;
+    };
+    const ids = payload.searchProviders.map((provider) => provider.id);
+    expect(ids).toContain('tavily');
+    expect(ids).toContain('brave');
+    for (const provider of payload.searchProviders) {
+      expect(provider.label).toBeString();
+      expect(provider.isConfigured).toBeBoolean();
+    }
+  });
+
+  test('patch settings accepts a runtime-registered search provider', async () => {
+    registerSearchProvider({
+      id: 'custom-llm-api',
+      label: 'Custom (API test)',
+      isConfigured: () => true,
+      search: async () => [],
+    });
+
+    try {
+      const response = await callApi('PATCH', '/api/llm/settings', {
+        searchProvider: 'custom-llm-api',
+      });
+      expect(response.status).toBe(200);
+      const payload = (await response.json()) as { settings: AgentLlmSettingsDto };
+      expect(payload.settings.searchProvider).toBe('custom-llm-api');
+
+      const listed = await callApi('GET', '/api/llm/settings');
+      const { searchProviders } = (await listed.json()) as {
+        searchProviders: Array<{ id: string; isConfigured: boolean }>;
+      };
+      const custom = searchProviders.find((provider) => provider.id === 'custom-llm-api');
+      expect(custom?.isConfigured).toBe(true);
+    } finally {
+      const reset = await callApi('PATCH', '/api/llm/settings', { searchProvider: 'none' });
+      expect(reset.status).toBe(200);
+    }
   });
 
   test('unmatched llm paths return null from handler', () => {

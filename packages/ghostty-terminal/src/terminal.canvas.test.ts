@@ -1521,7 +1521,7 @@ describe('CanvasRenderer', () => {
     };
 
     renderer.render(frame);
-    expect(findElementsByTag(screen, 'canvas').length).toBe(3);
+    expect(findElementsByTag(screen, 'canvas').length).toBe(4);
     expect(renderer.getDebugState().lastDrawnRows).toEqual([0, 1]);
 
     const mainCanvas = findCanvasByLayer(screen, 'main');

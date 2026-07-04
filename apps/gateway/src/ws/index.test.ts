@@ -725,7 +725,7 @@ describe('WebSocketServer window custom names', () => {
     const ws = createBorshWs();
     setupEntry(server, makeSnapshot(['@1', '@2']), ws);
 
-    server.handleRenameWindow('device-a', '@1', '  My Window  ');
+    server.renameWindow('device-a', '@1', '  My Window  ');
 
     const snapshot = decodeLastSnapshot(ws);
     expect(snapshot.session?.windows[0].customName).toBe('My Window');
@@ -741,8 +741,8 @@ describe('WebSocketServer window custom names', () => {
     const ws = createBorshWs();
     setupEntry(server, makeSnapshot(['@1']), ws);
 
-    server.handleRenameWindow('device-a', '@1', 'Custom');
-    server.handleRenameWindow('device-a', '@1', '   ');
+    server.renameWindow('device-a', '@1', 'Custom');
+    server.renameWindow('device-a', '@1', '   ');
 
     const snapshot = decodeLastSnapshot(ws);
     expect(snapshot.session?.windows[0].customName).toBeUndefined();
@@ -754,7 +754,7 @@ describe('WebSocketServer window custom names', () => {
     const ws = createBorshWs();
     setupEntry(server, makeSnapshot(['@1']), ws);
 
-    server.handleRenameWindow('device-a', '@1', 'x'.repeat(100));
+    server.renameWindow('device-a', '@1', 'x'.repeat(100));
 
     const snapshot = decodeLastSnapshot(ws);
     expect(snapshot.session?.windows[0].customName).toBe('x'.repeat(64));
@@ -765,8 +765,8 @@ describe('WebSocketServer window custom names', () => {
     const ws = createBorshWs();
     setupEntry(server, makeSnapshot(['@1', '@2']), ws);
 
-    server.handleRenameWindow('device-a', '@1', 'Keep');
-    server.handleRenameWindow('device-a', '@2', 'Gone');
+    server.renameWindow('device-a', '@1', 'Keep');
+    server.renameWindow('device-a', '@2', 'Gone');
 
     server.broadcastStateSnapshot('device-a', makeSnapshot(['@1']));
 
@@ -795,7 +795,7 @@ describe('WebSocketServer window custom names', () => {
     sessionStateStore.create(ws);
     setupEntry(server, makeSnapshot(['@1']), ws);
 
-    server.handleRenameWindow('device-a', '@1', 'Persisted');
+    server.renameWindow('device-a', '@1', 'Persisted');
 
     // 模拟所有 client 断开后 entry 销毁、随后重连
     server.connections.delete('device-a');

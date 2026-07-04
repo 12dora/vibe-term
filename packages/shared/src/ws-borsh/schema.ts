@@ -432,3 +432,11 @@ export const SiteThemeUpdateS2CSchema = b.struct({
   theme: b.u8(),
   serverTimestamp: b.u64(),
 });
+
+// S2C：服务端广播设置变更（缓存失效信号）。namespace 标识设置面（如 'site' /
+// 'terminal-shortcuts' / 'theme' / 'llm' / 'file-roots' / 'webhooks' / 'telegram' /
+// 'weixin' / 'devices' / 'tree-order'），客户端按需重拉对应 REST。
+export const SettingsUpdateS2CSchema = b.struct({
+  namespace: b.string(),
+  serverTimestamp: b.u64(),
+});

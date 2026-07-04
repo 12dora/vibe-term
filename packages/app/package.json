@@ -20,6 +20,7 @@
     "clean": "rm -rf dist resources/fe-dist resources/gateway-drizzle",
     "bundle:resources": "bash ./scripts/bundle-resources.sh",
     "build:runtime": "bun scripts/build-runtime.ts",
+    "build:artifacts": "bun scripts/build-artifacts.ts",
     "build:cli": "bun build src/cli-node.ts --outfile ./dist/cli-node.js --target node --format esm",
     "build": "bun run clean && bun run bundle:resources && bun run build:runtime && bun run build:cli",
     "release": "npm publish",
