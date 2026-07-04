@@ -68,6 +68,7 @@ function createHarness(runtime: TerminalRuntimeLike | null, needsApproval = fals
   };
   harness.tools = createTerminalTools({
     paneId: '%1',
+    deviceId: 'dev1',
     getRuntime: () => runtime,
     needsApprovalForWrite: needsApproval,
     onFailure: () => {
