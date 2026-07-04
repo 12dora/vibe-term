@@ -1,25 +1,25 @@
-# 0.16.3
+# 0.16.4
 
-_2026-07-04_
+_2026-07-05_
 
 ## English
 
-### Features
+### Improvements
 
-- **Theme sync across devices**: Dark/light theme is now persisted server-side and broadcast to all connected web clients and devices in real time. Switching theme on one browser instantly updates every other open tab and remote SSH device. TUI coding agents (OpenCode, Codex, Claude Code) detect the correct theme on startup via tmux's native OSC 11 color query response.
+- Terminal apps that follow the system light/dark mode (such as Claude Code and opencode) now switch their colors instantly when you change the tmex theme, no restart needed.
 
-### Bug Fixes
+### Fixes
 
-- **Split-pane selection cleared by opposite pane output**: When one pane continuously outputs text (e.g. a running build), selecting text in another pane no longer gets immediately cleared. The terminal resize logic now skips unnecessary selection resets when pane dimensions haven't changed.
+- Fixed switching to a single-pane window not resizing it to fit your screen: the content stayed at its old size and did not redraw until you resized the browser manually.
 
 ---
 
 ## 中文
 
-### 新功能
+### 改进
 
-- **跨设备主题同步**：dark/light 主题现在持久化在服务端，并实时广播给所有已连接的网页客户端和设备。在一个浏览器上切换主题，其他所有标签页和远程 SSH 设备会立即同步。终端内的 Coding Agent（OpenCode、Codex、Claude Code）启动时能通过 tmux 原生 OSC 11 颜色查询正确探测当前主题。
+- 支持跟随系统亮暗模式的终端应用（如 Claude Code、opencode）现在会在切换 tmex 主题时即时换肤，无需重启。
 
-### Bug 修复
+### 修复
 
-- **分屏对端输出时选中文字被清空**：当一个 pane 持续输出文本（如正在运行的构建），在另一个 pane 中选取文字不再被立即清空。终端 resize 逻辑现在在 pane 尺寸未变时跳过不必要的 selection 重置。
+- 修复切换到单 pane 窗口时不会自动调整为当前屏幕尺寸的问题：此前内容会停留在旧尺寸且不重绘，需手动改变浏览器窗口大小才能恢复。
