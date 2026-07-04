@@ -47,6 +47,7 @@ import { toast } from 'sonner';
 import { useAgentStore } from '../stores/agent';
 import { useSiteStore } from '../stores/site';
 import { useTmuxStore } from '../stores/tmux';
+import { useBellStore } from '../stores/bell';
 import { useUIStore } from '../stores/ui';
 import { shouldApplyRemotePaneSize } from '../utils/resizeSyncGuards';
 import {
@@ -215,20 +216,21 @@ export default function DevicePage() {
   useEffect(() => {
     isSplitViewRef.current = isSplitView;
   }, [isSplitView]);
-
+  const ringingPanes = useBellStore((state) => state.ringingPanes);
   const terminalTopbarLabel = useMemo(() => {
     if (!selectedWindow || !selectedPane) {
       return null;
     }
     const deviceName = currentDevice?.name ?? deviceId;
-    return buildTerminalLabel({
+    const label = buildTerminalLabel({
       paneCustomName: selectedPane.customName,
       paneTitle: selectedPane.title,
       windowName: selectedWindow.name,
       windowCustomName: selectedWindow.customName,
       deviceName,
     });
-  }, [currentDevice?.name, deviceId, selectedPane, selectedWindow]);
+    return ringingPanes[selectedPane.id] ? `🔔 ${label}` : label;
+  }, [currentDevice?.name, deviceId, selectedPane, selectedWindow, ringingPanes]);
 
   const snapshotActiveSelection = useMemo(() => {
     if (!windows || windows.length === 0) {
@@ -1373,7 +1375,15 @@ export function PageTitle() {
     return deviceId ?? '';
   }, [selectedWindow, selectedPane, siteName, deviceId]);
 
-  return <>{title}</>;
+  const isRinging = useBellStore((state) =>
+    resolvedPaneId ? Boolean(state.ringingPanes[resolvedPaneId]) : false
+  );
+  return (
+    <>
+      {isRinging && <span className="bell-blink">🔔 </span>}
+      {title}
+    </>
+  );
 }
 
 // Page actions component - shows input mode toggle, jump to latest and refresh page

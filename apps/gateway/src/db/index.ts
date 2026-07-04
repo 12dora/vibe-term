@@ -90,12 +90,10 @@ function toSiteSettings(row: typeof siteSettings.$inferSelect): SiteSettings {
     siteUrl: row.siteUrl,
     bellThrottleSeconds: row.bellThrottleSeconds,
     notificationThrottleSeconds: row.notificationThrottleSeconds,
-    enableBrowserBellToast: row.enableBrowserBellToast,
     enableBrowserNotificationToast: row.enableBrowserNotificationToast,
-    enableTelegramBellPush: row.enableTelegramBellPush,
-    enableTelegramNotificationPush: row.enableTelegramNotificationPush,
-    enableWeixinBellPush: row.enableWeixinBellPush,
-    enableWeixinNotificationPush: row.enableWeixinNotificationPush,
+    enableNotificationPush: row.enableNotificationPush,
+    enableBellPush: row.enableBellPush,
+    enableBellSound: row.enableBellSound,
     sshReconnectMaxRetries: row.sshReconnectMaxRetries,
     sshReconnectDelaySeconds: row.sshReconnectDelaySeconds,
     language: normalizeLocale(row.language),
@@ -189,12 +187,10 @@ export function ensureSiteSettingsInitialized(): void {
       siteUrl: config.baseUrl,
       bellThrottleSeconds: config.bellThrottleSecondsDefault,
       notificationThrottleSeconds: config.notificationThrottleSecondsDefault,
-      enableBrowserBellToast: true,
       enableBrowserNotificationToast: true,
-      enableTelegramBellPush: true,
-      enableTelegramNotificationPush: true,
-      enableWeixinBellPush: false,
-      enableWeixinNotificationPush: false,
+      enableNotificationPush: true,
+      enableBellPush: true,
+      enableBellSound: true,
       sshReconnectMaxRetries: config.sshReconnectMaxRetriesDefault,
       sshReconnectDelaySeconds: config.sshReconnectDelaySecondsDefault,
       language: normalizeLocale(config.languageDefault),
@@ -433,7 +429,10 @@ export function updateDeviceRuntimeStatus(
     .run();
 }
 
-export function getSiteSettings(): SiteSettings {
+let siteSettingsCache: { value: SiteSettings; expiresAt: number } | null = null;
+const SITE_SETTINGS_TTL_MS = 30_000;
+
+function refreshSiteSettingsCache(): SiteSettings {
   const orm = getOrmDb();
   let row = orm.select().from(siteSettings).where(eq(siteSettings.id, 1)).get();
 
@@ -447,12 +446,20 @@ export function getSiteSettings(): SiteSettings {
   }
 
   const settings = toSiteSettings(row);
+  siteSettingsCache = { value: settings, expiresAt: Date.now() + SITE_SETTINGS_TTL_MS };
 
   if (i18next.language !== settings.language) {
     void i18next.changeLanguage(settings.language);
   }
 
   return settings;
+}
+
+export function getSiteSettings(): SiteSettings {
+  if (siteSettingsCache && Date.now() < siteSettingsCache.expiresAt) {
+    return siteSettingsCache.value;
+  }
+  return refreshSiteSettingsCache();
 }
 
 export function updateSiteSettings(
@@ -465,15 +472,11 @@ export function updateSiteSettings(
     bellThrottleSeconds: updates.bellThrottleSeconds ?? current.bellThrottleSeconds,
     notificationThrottleSeconds:
       updates.notificationThrottleSeconds ?? current.notificationThrottleSeconds,
-    enableBrowserBellToast: updates.enableBrowserBellToast ?? current.enableBrowserBellToast,
     enableBrowserNotificationToast:
       updates.enableBrowserNotificationToast ?? current.enableBrowserNotificationToast,
-    enableTelegramBellPush: updates.enableTelegramBellPush ?? current.enableTelegramBellPush,
-    enableTelegramNotificationPush:
-      updates.enableTelegramNotificationPush ?? current.enableTelegramNotificationPush,
-    enableWeixinBellPush: updates.enableWeixinBellPush ?? current.enableWeixinBellPush,
-    enableWeixinNotificationPush:
-      updates.enableWeixinNotificationPush ?? current.enableWeixinNotificationPush,
+    enableNotificationPush: updates.enableNotificationPush ?? current.enableNotificationPush,
+    enableBellPush: updates.enableBellPush ?? current.enableBellPush,
+    enableBellSound: updates.enableBellSound ?? current.enableBellSound,
     sshReconnectMaxRetries: updates.sshReconnectMaxRetries ?? current.sshReconnectMaxRetries,
     sshReconnectDelaySeconds: updates.sshReconnectDelaySeconds ?? current.sshReconnectDelaySeconds,
     language: updates.language ? normalizeLocale(updates.language) : current.language,
@@ -488,19 +491,15 @@ export function updateSiteSettings(
       siteUrl: next.siteUrl,
       bellThrottleSeconds: next.bellThrottleSeconds,
       notificationThrottleSeconds: next.notificationThrottleSeconds,
-      enableBrowserBellToast: next.enableBrowserBellToast,
       enableBrowserNotificationToast: next.enableBrowserNotificationToast,
-      enableTelegramBellPush: next.enableTelegramBellPush,
-      enableTelegramNotificationPush: next.enableTelegramNotificationPush,
-      enableWeixinBellPush: next.enableWeixinBellPush,
-      enableWeixinNotificationPush: next.enableWeixinNotificationPush,
-      sshReconnectMaxRetries: next.sshReconnectMaxRetries,
-      sshReconnectDelaySeconds: next.sshReconnectDelaySeconds,
-      language: next.language,
-      updatedAt: next.updatedAt,
+      enableNotificationPush: next.enableNotificationPush,
+      enableBellPush: next.enableBellPush,
+      enableBellSound: next.enableBellSound,
     })
     .where(eq(siteSettings.id, 1))
     .run();
+
+  siteSettingsCache = { value: next, expiresAt: Date.now() + SITE_SETTINGS_TTL_MS };
 
   if (i18next.language !== next.language) {
     void i18next.changeLanguage(next.language);

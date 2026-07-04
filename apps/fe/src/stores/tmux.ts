@@ -44,7 +44,9 @@ import { toast } from 'sonner';
 import { create } from 'zustand';
 import i18n from '../i18n';
 import { useSiteStore } from './site';
-import { buildPaneLocationLabel, formatTerminalNotificationToast } from './tmux-notification-format';
+import { useBellStore } from './bell';
+import { playBellSound } from '../utils/bell-sound';
+import { formatTerminalNotificationToast } from './tmux-notification-format';
 import { useUIStore } from './ui';
 
 type SnapshotMap = Record<string, StateSnapshotPayload | undefined>;
@@ -453,26 +455,17 @@ function handleTmuxEvent(
 ): void {
   if (payload.type === 'bell') {
     console.log('[tmex] bell', payload.data);
-    const settings = useSiteStore.getState().settings;
-    if (settings?.enableBrowserBellToast === false) {
-      return;
-    }
-
     const data = (payload.data ?? {}) as Record<string, unknown>;
-    const title = i18n.t('terminal.bellNotification');
-    const description = buildPaneLocationLabel(data);
-    const paneUrl = typeof data.paneUrl === 'string' ? data.paneUrl : undefined;
-    toast(title, {
-      description: description || i18n.t('terminal.bellFallback'),
-      action: paneUrl
-        ? {
-            label: 'Open',
-            onClick: () => {
-              navigateToAppUrl(paneUrl);
-            },
-          }
-        : undefined,
-    });
+    const paneId =
+      (typeof data.paneId === 'string' ? data.paneId : undefined) ??
+      (typeof data.windowId === 'string' ? data.windowId : undefined);
+    if (paneId) {
+      useBellStore.getState().triggerBell(paneId);
+    }
+    const settings = useSiteStore.getState().settings;
+    if (settings?.enableBellSound !== false) {
+      playBellSound();
+    }
   }
 
   if (payload.type === 'notification') {

@@ -114,13 +114,6 @@ function normalizeSiteSettingsInput(
     updates.notificationThrottleSeconds = value;
   }
 
-  if (body.enableBrowserBellToast !== undefined) {
-    if (typeof body.enableBrowserBellToast !== 'boolean') {
-      throw new Error(t('apiError.invalidRequest'));
-    }
-    updates.enableBrowserBellToast = body.enableBrowserBellToast;
-  }
-
   if (body.enableBrowserNotificationToast !== undefined) {
     if (typeof body.enableBrowserNotificationToast !== 'boolean') {
       throw new Error(t('apiError.invalidRequest'));
@@ -128,32 +121,25 @@ function normalizeSiteSettingsInput(
     updates.enableBrowserNotificationToast = body.enableBrowserNotificationToast;
   }
 
-  if (body.enableTelegramBellPush !== undefined) {
-    if (typeof body.enableTelegramBellPush !== 'boolean') {
+  if (body.enableNotificationPush !== undefined) {
+    if (typeof body.enableNotificationPush !== 'boolean') {
       throw new Error(t('apiError.invalidRequest'));
     }
-    updates.enableTelegramBellPush = body.enableTelegramBellPush;
+    updates.enableNotificationPush = body.enableNotificationPush;
   }
 
-  if (body.enableTelegramNotificationPush !== undefined) {
-    if (typeof body.enableTelegramNotificationPush !== 'boolean') {
+  if (body.enableBellPush !== undefined) {
+    if (typeof body.enableBellPush !== 'boolean') {
       throw new Error(t('apiError.invalidRequest'));
     }
-    updates.enableTelegramNotificationPush = body.enableTelegramNotificationPush;
+    updates.enableBellPush = body.enableBellPush;
   }
 
-  if (body.enableWeixinBellPush !== undefined) {
-    if (typeof body.enableWeixinBellPush !== 'boolean') {
+  if (body.enableBellSound !== undefined) {
+    if (typeof body.enableBellSound !== 'boolean') {
       throw new Error(t('apiError.invalidRequest'));
     }
-    updates.enableWeixinBellPush = body.enableWeixinBellPush;
-  }
-
-  if (body.enableWeixinNotificationPush !== undefined) {
-    if (typeof body.enableWeixinNotificationPush !== 'boolean') {
-      throw new Error(t('apiError.invalidRequest'));
-    }
-    updates.enableWeixinNotificationPush = body.enableWeixinNotificationPush;
+    updates.enableBellSound = body.enableBellSound;
   }
 
   if (body.sshReconnectMaxRetries !== undefined) {

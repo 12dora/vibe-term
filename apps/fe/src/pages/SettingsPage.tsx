@@ -85,12 +85,10 @@ export default function SettingsPage() {
   // Notifications state
   const [bellThrottleSeconds, setBellThrottleSeconds] = useState(6);
   const [notificationThrottleSeconds, setNotificationThrottleSeconds] = useState(3);
-  const [enableBrowserBellToast, setEnableBrowserBellToast] = useState(true);
   const [enableBrowserNotificationToast, setEnableBrowserNotificationToast] = useState(true);
-  const [enableTelegramBellPush, setEnableTelegramBellPush] = useState(true);
-  const [enableTelegramNotificationPush, setEnableTelegramNotificationPush] = useState(true);
-  const [enableWeixinBellPush, setEnableWeixinBellPush] = useState(false);
-  const [enableWeixinNotificationPush, setEnableWeixinNotificationPush] = useState(false);
+  const [enableNotificationPush, setEnableNotificationPush] = useState(true);
+  const [enableBellPush, setEnableBellPush] = useState(true);
+  const [enableBellSound, setEnableBellSound] = useState(true);
   const [sshReconnectMaxRetries, setSshReconnectMaxRetries] = useState(2);
   const [sshReconnectDelaySeconds, setSshReconnectDelaySeconds] = useState(10);
   const [showRefreshNotice, setShowRefreshNotice] = useState(false);
@@ -123,14 +121,10 @@ export default function SettingsPage() {
     setLanguage(settings.language ?? 'en_US');
     setBellThrottleSeconds(settings.bellThrottleSeconds);
     setNotificationThrottleSeconds(settings.notificationThrottleSeconds ?? 3);
-    setEnableBrowserBellToast(settings.enableBrowserBellToast ?? true);
     setEnableBrowserNotificationToast(settings.enableBrowserNotificationToast ?? true);
-    setEnableTelegramBellPush(settings.enableTelegramBellPush ?? true);
-    setEnableTelegramNotificationPush(settings.enableTelegramNotificationPush ?? true);
-    setEnableWeixinBellPush(settings.enableWeixinBellPush ?? false);
-    setEnableWeixinNotificationPush(settings.enableWeixinNotificationPush ?? false);
-    setSshReconnectMaxRetries(settings.sshReconnectMaxRetries);
-    setSshReconnectDelaySeconds(settings.sshReconnectDelaySeconds);
+    setEnableNotificationPush(settings.enableNotificationPush ?? true);
+    setEnableBellPush(settings.enableBellPush ?? true);
+    setEnableBellSound(settings.enableBellSound ?? true);
   }, [settingsQuery.data?.settings]);
 
   const saveSiteMutation = useMutation({
@@ -141,12 +135,10 @@ export default function SettingsPage() {
         language,
         bellThrottleSeconds,
         notificationThrottleSeconds,
-        enableBrowserBellToast,
         enableBrowserNotificationToast,
-        enableTelegramBellPush,
-        enableTelegramNotificationPush,
-        enableWeixinBellPush,
-        enableWeixinNotificationPush,
+        enableNotificationPush,
+        enableBellPush,
+        enableBellSound,
         sshReconnectMaxRetries,
         sshReconnectDelaySeconds,
       };
@@ -362,26 +354,35 @@ export default function SettingsPage() {
                 <div className="flex min-h-10 items-center justify-between gap-4 rounded-lg border border-border bg-card px-4 py-2.5">
                   <div className="min-w-0 pr-2">
                     <div className="text-sm font-medium">
-                      {t('settings.enableBrowserBellToast')}
+                      {t('settings.enableNotificationPush')}
                     </div>
                   </div>
                   <Switch
-                    checked={enableBrowserBellToast}
-                    onCheckedChange={(checked) => setEnableBrowserBellToast(Boolean(checked))}
-                    data-testid="settings-enable-browser-bell-toast"
+                    checked={enableNotificationPush}
+                    onCheckedChange={(checked) => setEnableNotificationPush(Boolean(checked))}
+                    data-testid="settings-enable-notification-push"
                   />
                 </div>
 
                 <div className="flex min-h-10 items-center justify-between gap-4 rounded-lg border border-border bg-card px-4 py-2.5">
                   <div className="min-w-0 pr-2">
-                    <div className="text-sm font-medium">
-                      {t('settings.enableTelegramBellPush')}
-                    </div>
+                    <div className="text-sm font-medium">{t('settings.enableBellPush')}</div>
                   </div>
                   <Switch
-                    checked={enableTelegramBellPush}
-                    onCheckedChange={(checked) => setEnableTelegramBellPush(Boolean(checked))}
-                    data-testid="settings-enable-telegram-bell-push"
+                    checked={enableBellPush}
+                    onCheckedChange={(checked) => setEnableBellPush(Boolean(checked))}
+                    data-testid="settings-enable-bell-push"
+                  />
+                </div>
+
+                <div className="flex min-h-10 items-center justify-between gap-4 rounded-lg border border-border bg-card px-4 py-2.5">
+                  <div className="min-w-0 pr-2">
+                    <div className="text-sm font-medium">{t('settings.enableBellSound')}</div>
+                  </div>
+                  <Switch
+                    checked={enableBellSound}
+                    onCheckedChange={(checked) => setEnableBellSound(Boolean(checked))}
+                    data-testid="settings-enable-bell-sound"
                   />
                 </div>
 
@@ -397,45 +398,6 @@ export default function SettingsPage() {
                       setEnableBrowserNotificationToast(Boolean(checked))
                     }
                     data-testid="settings-enable-browser-notification-toast"
-                  />
-                </div>
-
-                <div className="flex min-h-10 items-center justify-between gap-4 rounded-lg border border-border bg-card px-4 py-2.5">
-                  <div className="min-w-0 pr-2">
-                    <div className="text-sm font-medium">
-                      {t('settings.enableTelegramNotificationPush')}
-                    </div>
-                  </div>
-                  <Switch
-                    checked={enableTelegramNotificationPush}
-                    onCheckedChange={(checked) =>
-                      setEnableTelegramNotificationPush(Boolean(checked))
-                    }
-                    data-testid="settings-enable-telegram-notification-push"
-                  />
-                </div>
-
-                <div className="flex min-h-10 items-center justify-between gap-4 rounded-lg border border-border bg-card px-4 py-2.5">
-                  <div className="min-w-0 pr-2">
-                    <div className="text-sm font-medium">{t('settings.enableWeixinBellPush')}</div>
-                  </div>
-                  <Switch
-                    checked={enableWeixinBellPush}
-                    onCheckedChange={(checked) => setEnableWeixinBellPush(Boolean(checked))}
-                    data-testid="settings-enable-weixin-bell-push"
-                  />
-                </div>
-
-                <div className="flex min-h-10 items-center justify-between gap-4 rounded-lg border border-border bg-card px-4 py-2.5">
-                  <div className="min-w-0 pr-2">
-                    <div className="text-sm font-medium">
-                      {t('settings.enableWeixinNotificationPush')}
-                    </div>
-                  </div>
-                  <Switch
-                    checked={enableWeixinNotificationPush}
-                    onCheckedChange={(checked) => setEnableWeixinNotificationPush(Boolean(checked))}
-                    data-testid="settings-enable-weixin-notification-push"
                   />
                 </div>
               </div>

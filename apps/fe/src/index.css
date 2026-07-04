@@ -282,4 +282,14 @@
   will-change: transform;
 }
 
+@keyframes bell-blink {
+  0%, 49% { opacity: 1; }
+  50%, 99% { opacity: 0; }
+  100% { opacity: 1; }
+}
+
+.bell-blink {
+  animation: bell-blink 0.75s ease-in-out 2;
+}
+
 @import "./app.css";

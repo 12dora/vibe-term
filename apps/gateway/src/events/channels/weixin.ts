@@ -24,7 +24,7 @@ const EMOJI_MAP: Record<EventType, string> = {
 
 /**
  * 微信 (iLink) 渠道：纯文本推送（无 HTML）。
- * bell 走 enableWeixinBellPush，其余事件（含 terminal_notification）走 enableWeixinNotificationPush。
+ * bell 走 enableBellPush，其余事件（含 terminal_notification）走 enableNotificationPush。
  * 实际发送语义为"半主动·最佳努力"，由 WeixinService 负责 context_token 缓存与失效标记。
  */
 export class WeixinChannel implements NotificationChannel {
@@ -34,14 +34,14 @@ export class WeixinChannel implements NotificationChannel {
     const settings = getSiteSettings();
 
     if (eventType === 'terminal_bell') {
-      if (!settings.enableWeixinBellPush) {
+      if (!settings.enableBellPush) {
         return;
       }
       await weixinService.sendToAuthorizedUsers({ text: this.formatBellMessage(event) });
       return;
     }
 
-    if (!settings.enableWeixinNotificationPush) {
+    if (!settings.enableNotificationPush) {
       return;
     }
 

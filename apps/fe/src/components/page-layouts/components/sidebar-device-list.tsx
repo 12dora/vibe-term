@@ -95,6 +95,7 @@ import { useTranslation } from 'react-i18next';
 import { matchPath, useLocation, useNavigate } from 'react-router';
 import { useSiteStore } from '../../../stores/site';
 import { useTmuxStore } from '../../../stores/tmux';
+import { useBellStore } from '../../../stores/bell';
 import { decodePaneIdFromUrlParam, encodePaneIdForUrl } from '../../../utils/tmuxUrl';
 
 function StatusDot({ status }: { status: AgentSessionDto['status'] }) {
@@ -112,6 +113,18 @@ function StatusDot({ status }: { status: AgentSessionDto['status'] }) {
       )}
     />
   );
+}
+
+function WindowBellIcon({ paneIds }: { paneIds: string[] }) {
+  const ringing = useBellStore((state) => paneIds.some((id) => state.ringingPanes[id]));
+  if (!ringing) return null;
+  return <span className="bell-blink shrink-0">🔔 </span>;
+}
+
+function PaneBellIcon({ paneId }: { paneId: string }) {
+  const ringing = useBellStore((state) => Boolean(state.ringingPanes[paneId]));
+  if (!ringing) return null;
+  return <span className="bell-blink shrink-0">🔔 </span>;
 }
 
 // device/window/pane 三层共用的拖拽 sensors：
@@ -1055,6 +1068,8 @@ function WindowItem({
                 : 'hover:bg-accent/50 text-foreground'
           )}
         >
+          <WindowBellIcon paneIds={window.panes.map((p) => p.id)} />
+
           {hasMultiplePanes ? (
             // 多 pane 窗口：窗口行只做分组标识，标题/进程细节由各 pane 行完整呈现
             <span className="flex-1 min-w-0 font-mono text-[10.5px] leading-tight text-muted-foreground">
@@ -1334,6 +1349,7 @@ function PaneRow({
                 : 'hover:bg-accent/30 text-muted-foreground'
           )}
         >
+          <PaneBellIcon paneId={pane.id} />
           {/* 多 pane 窗口的窗口行不再展示细节，pane 行呈现完整的标题 + 进程@路径 */}
           <span className="flex-1 min-w-0">
             <span className="font-mono text-[11px] leading-tight font-medium line-clamp-2 [overflow-wrap:break-word]">

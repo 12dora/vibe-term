@@ -20,7 +20,7 @@ export class TelegramChannel implements NotificationChannel {
     const settings = getSiteSettings();
 
     if (eventType === 'terminal_bell') {
-      if (!settings.enableTelegramBellPush) {
+      if (!settings.enableBellPush) {
         return;
       }
       const bellMessage = this.formatTelegramBellMessage(event);
@@ -28,10 +28,11 @@ export class TelegramChannel implements NotificationChannel {
       return;
     }
 
+    if (!settings.enableNotificationPush) {
+      return;
+    }
+
     if (eventType === 'terminal_notification') {
-      if (!settings.enableTelegramNotificationPush) {
-        return;
-      }
       const notificationMessage = this.formatTelegramNotificationMessage(event);
       await telegramService.sendToAuthorizedChats({ text: notificationMessage, parseMode: 'HTML' });
       return;

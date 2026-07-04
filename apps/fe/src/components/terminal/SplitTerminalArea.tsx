@@ -11,6 +11,7 @@
 // - 焦点 pane 由 URL 决定，点击非焦点 pane 触发 onUserSelectPane（轻量 focus 路径）。
 
 import { useTmuxStore } from '@/stores/tmux';
+import { useBellStore } from '@/stores/bell';
 import type { TmuxPane, TmuxWindow } from '@tmex/shared';
 import { parseWindowLayout } from '@tmex/shared';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
@@ -89,6 +90,12 @@ function paneMetaText(pane: TmuxPane | undefined): string | null {
   if (!command) return null;
   const path = pane?.currentPath?.trim();
   return path ? `${command}@${path}` : command;
+}
+
+function PaneBellIcon({ paneId }: { paneId: string }) {
+  const ringing = useBellStore((state) => Boolean(state.ringingPanes[paneId]));
+  if (!ringing) return null;
+  return <span className="bell-blink shrink-0">🔔 </span>;
 }
 
 const DROP_PREVIEW_CLASS: Record<DropPosition, string> = {
@@ -537,6 +544,7 @@ export function SplitTerminalArea({
                 }`}
                 onPointerDown={(event) => handleTitleBarPointerDown(pane.paneId, event)}
               >
+                <PaneBellIcon paneId={pane.paneId} />
                 <span
                   className={`shrink-0 truncate font-mono text-[10.5px] leading-none ${
                     isFocused ? 'text-foreground/90' : 'text-foreground/50'

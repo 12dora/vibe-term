@@ -1,5 +1,5 @@
 import type { EventType, WebhookEndpoint, WebhookEvent } from '@tmex/shared';
-import { getAllWebhookEndpoints } from '../../db';
+import { getAllWebhookEndpoints, getSiteSettings } from '../../db';
 import type { NotificationChannel } from './types';
 
 export class WebhookChannel implements NotificationChannel {
@@ -20,6 +20,12 @@ export class WebhookChannel implements NotificationChannel {
   }
 
   async notify(eventType: EventType, event: WebhookEvent): Promise<void> {
+    const settings = getSiteSettings();
+    if (eventType === 'terminal_bell') {
+      if (!settings.enableBellPush) return;
+    } else if (!settings.enableNotificationPush) {
+      return;
+    }
     this.refreshConfig();
     const targets = this.webhooks.filter((w) => w.eventMask.includes(eventType));
 

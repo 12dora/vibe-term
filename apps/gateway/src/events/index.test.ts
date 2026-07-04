@@ -20,7 +20,7 @@ describe('EventNotifier telegram bell settings & html formatting', () => {
     try {
       updateSiteSettings({
         bellThrottleSeconds: 0,
-        enableTelegramBellPush: false,
+        enableBellPush: false,
       });
 
       await eventNotifier.notify('terminal_bell', {
@@ -45,7 +45,7 @@ describe('EventNotifier telegram bell settings & html formatting', () => {
     } finally {
       telegramService.sendToAuthorizedChats = originalSend;
       updateSiteSettings({
-        enableTelegramBellPush: true,
+        enableBellPush: true,
       });
     }
   });
@@ -60,7 +60,7 @@ describe('EventNotifier telegram bell settings & html formatting', () => {
     try {
       updateSiteSettings({
         bellThrottleSeconds: 0,
-        enableTelegramBellPush: true,
+        enableBellPush: true,
       });
 
       await eventNotifier.notify('terminal_bell', {
@@ -104,7 +104,7 @@ describe('EventNotifier telegram bell settings & html formatting', () => {
     try {
       // 关 bell 开关：非 bell 事件仍应照常发送
       updateSiteSettings({
-        enableTelegramBellPush: false,
+        enableBellPush: false,
       });
 
       await eventNotifier.notify('watch_rule_error', {
@@ -147,7 +147,7 @@ describe('EventNotifier telegram bell settings & html formatting', () => {
     } finally {
       telegramService.sendToAuthorizedChats = originalSend;
       updateSiteSettings({
-        enableTelegramBellPush: true,
+        enableBellPush: true,
       });
     }
   });
@@ -162,7 +162,7 @@ describe('EventNotifier telegram bell settings & html formatting', () => {
     try {
       updateSiteSettings({
         notificationThrottleSeconds: 0,
-        enableTelegramNotificationPush: false,
+        enableNotificationPush: false,
       });
 
       await eventNotifier.notify('terminal_notification', {
@@ -192,7 +192,7 @@ describe('EventNotifier telegram bell settings & html formatting', () => {
     } finally {
       telegramService.sendToAuthorizedChats = originalSend;
       updateSiteSettings({
-        enableTelegramNotificationPush: true,
+        enableNotificationPush: true,
       });
     }
   });
@@ -207,7 +207,7 @@ describe('EventNotifier telegram bell settings & html formatting', () => {
     try {
       updateSiteSettings({
         notificationThrottleSeconds: 3,
-        enableTelegramNotificationPush: true,
+        enableNotificationPush: true,
       });
 
       const payload = {

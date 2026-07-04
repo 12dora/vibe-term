@@ -35,9 +35,9 @@ async function withMockSend(fn: (calls: Array<{ text: string }>) => Promise<void
 }
 
 describe('WeixinChannel gating & formatting', () => {
-  test('skips bell when enableWeixinBellPush is false', async () => {
+  test('skips bell when enableBellPush is false', async () => {
     await withMockSend(async (calls) => {
-      updateSiteSettings({ enableWeixinBellPush: false });
+      updateSiteSettings({ enableBellPush: false });
       await weixinChannel.notify('terminal_bell', makeEvent({ eventType: 'terminal_bell' }));
       expect(calls).toHaveLength(0);
     });
@@ -45,7 +45,7 @@ describe('WeixinChannel gating & formatting', () => {
 
   test('sends plain-text bell when enabled', async () => {
     await withMockSend(async (calls) => {
-      updateSiteSettings({ enableWeixinBellPush: true });
+      updateSiteSettings({ enableBellPush: true });
       await weixinChannel.notify('terminal_bell', makeEvent({ eventType: 'terminal_bell' }));
       expect(calls).toHaveLength(1);
       const text = calls[0]?.text ?? '';
@@ -54,13 +54,13 @@ describe('WeixinChannel gating & formatting', () => {
       // 纯文本：不含 HTML 锚标签
       expect(text).not.toContain('<a href');
       expect(text).toContain('https://tmex.example.com/devices/dev-1/windows/%401/panes/%251');
-      updateSiteSettings({ enableWeixinBellPush: false });
+      updateSiteSettings({ enableBellPush: false });
     });
   });
 
   test('skips notification & generic events when notification push disabled', async () => {
     await withMockSend(async (calls) => {
-      updateSiteSettings({ enableWeixinNotificationPush: false });
+      updateSiteSettings({ enableNotificationPush: false });
       await weixinChannel.notify(
         'terminal_notification',
         makeEvent({
@@ -75,7 +75,7 @@ describe('WeixinChannel gating & formatting', () => {
 
   test('sends notification with title and body when enabled', async () => {
     await withMockSend(async (calls) => {
-      updateSiteSettings({ enableWeixinNotificationPush: true });
+      updateSiteSettings({ enableNotificationPush: true });
       await weixinChannel.notify(
         'terminal_notification',
         makeEvent({
@@ -87,7 +87,7 @@ describe('WeixinChannel gating & formatting', () => {
       const text = calls[0]?.text ?? '';
       expect(text).toContain('Build finished');
       expect(text).toContain('All tests passed');
-      updateSiteSettings({ enableWeixinNotificationPush: false });
+      updateSiteSettings({ enableNotificationPush: false });
     });
   });
 });

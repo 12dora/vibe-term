@@ -315,7 +315,7 @@ export class AgentSupervisor {
   private async pushCredentialWarning(session: AgentSessionRecord, types: string[]): Promise<void> {
     try {
       const settings = getSiteSettings();
-      if (!settings.enableTelegramNotificationPush) {
+      if (!settings.enableNotificationPush) {
         return;
       }
       const text = t('telegram.agentCredentialWarning', {
