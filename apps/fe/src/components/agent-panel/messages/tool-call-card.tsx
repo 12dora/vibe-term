@@ -1,6 +1,7 @@
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { cn } from '@/lib/utils';
 import type { UiToolCall } from '@/stores/agent-thread';
 import {
@@ -15,6 +16,7 @@ import {
   WrenchIcon,
   XIcon,
 } from 'lucide-react';
+import { createContext, useContext, useState } from 'react';
 import type { ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
 
@@ -29,6 +31,17 @@ interface ToolCallCardProps {
   onDecide?: (confirmationId: string, approved: boolean) => void;
   className?: string;
 }
+
+const I18N_TOOL_NAMES = [
+  'send_input',
+  'read_screen',
+  'web_search',
+  'fetch_url',
+  'run_command',
+  'get_pane_info',
+];
+
+const KNOWN_BODY_TOOL_NAMES = ['send_input', 'read_screen', 'web_search', 'fetch_url'];
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -68,9 +81,12 @@ function toolIcon(toolName: string): ReactNode {
   }
 }
 
+const DetailsExpandedContext = createContext(false);
+
 function CollapsedText({ label, text }: { label: string; text: string }) {
+  const defaultOpen = useContext(DetailsExpandedContext);
   return (
-    <Collapsible>
+    <Collapsible defaultOpen={defaultOpen}>
       <CollapsibleTrigger className="text-muted-foreground hover:text-foreground group flex items-center gap-1 text-xs">
         <ChevronRightIcon className="size-3 transition-transform group-data-[panel-open]:rotate-90" />
         <span>{label}</span>
@@ -113,9 +129,14 @@ function SendInputBody({ call }: { call: UiToolCall }) {
   const { t } = useTranslation();
   const input = isRecord(call.input) ? call.input : {};
   const text = typeof input.text === 'string' ? input.text : '';
-  const keys = Array.isArray(input.keys) ? input.keys.filter((k) => typeof k === 'string') : [];
+  const keys = Array.isArray(input.keys)
+    ? input.keys.filter((k): k is string => typeof k === 'string')
+    : [];
+  const combos = Array.isArray(input.combos) ? input.combos.filter(isRecord) : [];
   const output = isRecord(call.output) ? call.output : {};
   const screenTail = typeof output.screenTail === 'string' ? output.screenTail : '';
+
+  const showKeyBadges = keys.length > 0 || combos.length > 0;
 
   return (
     <div className="flex flex-col gap-1.5">
@@ -124,13 +145,28 @@ function SendInputBody({ call }: { call: UiToolCall }) {
           {text}
         </pre>
       )}
-      {keys.length > 0 && (
+      {showKeyBadges && (
         <div className="flex flex-wrap items-center gap-1">
           {keys.map((key, index) => (
-            <Badge key={`${index}-${key}`} variant="outline" className="font-mono">
-              {key as string}
+            <Badge key={`k-${index}-${key}`} variant="outline" className="font-mono">
+              {key}
             </Badge>
           ))}
+          {combos.map((combo, index) => {
+            const mods = Array.isArray(combo.modifiers)
+              ? combo.modifiers.filter((m): m is string => typeof m === 'string')
+              : [];
+            const key = typeof combo.key === 'string' ? combo.key : '';
+            if (!key && mods.length === 0) return null;
+            const label = [...mods.map((m) => `${m.charAt(0).toUpperCase()}${m.slice(1)}`), key]
+              .filter(Boolean)
+              .join('+');
+            return (
+              <Badge key={`c-${index}-${label}`} variant="outline" className="font-mono">
+                {label}
+              </Badge>
+            );
+          })}
         </div>
       )}
       {screenTail && <CollapsedText label={t('agent.tool.result')} text={screenTail} />}
@@ -295,24 +331,63 @@ function GenericBody({ call, hideOutput }: { call: UiToolCall; hideOutput?: bool
   );
 }
 
+function actionBrief(call: UiToolCall): string {
+  const input = isRecord(call.input) ? call.input : {};
+  switch (call.toolName) {
+    case 'send_input': {
+      const parts: string[] = [];
+      const text = typeof input.text === 'string' ? input.text : '';
+      if (text) parts.push(text.slice(0, 40));
+      const combos = Array.isArray(input.combos) ? input.combos : [];
+      const keys = Array.isArray(input.keys) ? input.keys : [];
+      const keyCount = combos.length + keys.length;
+      if (keyCount > 0) parts.push(`+${keyCount} key${keyCount > 1 ? 's' : ''}`);
+      return parts.join(' · ') || '(empty)';
+    }
+    case 'read_screen': {
+      const output = isRecord(call.output) ? call.output : {};
+      const rows = typeof output.rows === 'number' ? output.rows : null;
+      return rows !== null ? `(${rows} rows)` : '(screen)';
+    }
+    case 'run_command': {
+      const cmd = typeof input.command === 'string' ? input.command : '';
+      return cmd.slice(0, 60) || '(command)';
+    }
+    case 'web_search': {
+      const query = typeof input.query === 'string' ? input.query : '';
+      return query.slice(0, 60) || '(query)';
+    }
+    case 'fetch_url': {
+      const url = typeof input.url === 'string' ? input.url : '';
+      return url.slice(0, 60) || '(url)';
+    }
+    case 'get_pane_info':
+      return '(pane info)';
+    default: {
+      const s = asText(call.input);
+      return s.slice(0, 60) || '';
+    }
+  }
+}
+
 export function ToolCallCard({ call, confirmationId, onDecide, className }: ToolCallCardProps) {
   const { t } = useTranslation();
+  const [dialogOpen, setDialogOpen] = useState(false);
   const pendingApproval = Boolean(confirmationId) && !call.resolved;
   const denied = call.resolved && call.denied;
   const errorText = call.resolved && !denied ? callErrorText(call) : null;
   const running = !call.resolved && !pendingApproval;
   const deniedReason = denied && typeof call.output === 'string' ? call.output : '';
 
-  const toolLabelKey = `agent.tool.${call.toolName}`;
-  const toolLabel = ['send_input', 'read_screen', 'web_search', 'fetch_url'].includes(call.toolName)
-    ? t(toolLabelKey)
+  const toolLabel = I18N_TOOL_NAMES.includes(call.toolName)
+    ? t(`agent.tool.${call.toolName}`)
     : call.toolName;
 
   const images = extractToolImages(call);
+  const hasKnownBody = KNOWN_BODY_TOOL_NAMES.includes(call.toolName);
 
   return (
     <div
-      data-testid={`agent-tool-card-${call.toolCallId}`}
       data-tool-name={call.toolName}
       data-tool-denied={denied || undefined}
       className={cn(
@@ -322,31 +397,22 @@ export function ToolCallCard({ call, confirmationId, onDecide, className }: Tool
         className
       )}
     >
-      <div className="flex items-center gap-1.5 text-xs font-medium">
+      <button
+        type="button"
+        onClick={() => setDialogOpen(true)}
+        data-testid={`agent-tool-card-${call.toolCallId}`}
+        className="border-border bg-card/50 hover:bg-accent/50 flex max-w-full min-w-0 items-center gap-1.5 rounded-md border px-1.5 py-1 text-xs transition-colors"
+      >
         {toolIcon(call.toolName)}
-        <span className="min-w-0 truncate">{toolLabel}</span>
-        {running && <Loader2Icon className="text-muted-foreground size-3 animate-spin" />}
+        <span className="min-w-0 shrink-0 font-medium truncate">{toolLabel}</span>
+        <span className="text-muted-foreground min-w-0 flex-1 truncate">{actionBrief(call)}</span>
+        {running && <Loader2Icon className="text-muted-foreground size-3 shrink-0 animate-spin" />}
         {call.resolved && !denied && errorText === null && (
-          <CheckIcon className="size-3 text-emerald-500" />
+          <CheckIcon className="size-3 shrink-0 text-emerald-500" />
         )}
-        {errorText !== null && <CircleAlertIcon className="text-destructive size-3" />}
-        {denied && (
-          <span className="text-destructive flex items-center gap-0.5">
-            <XIcon className="size-3" />
-            {t('agent.tool.denied')}
-          </span>
-        )}
-      </div>
-
-      {call.toolName === 'send_input' && <SendInputBody call={call} />}
-      {call.toolName === 'read_screen' && <ReadScreenBody call={call} />}
-      {call.toolName === 'web_search' && <WebSearchBody call={call} />}
-      {call.toolName === 'fetch_url' && <FetchUrlBody call={call} />}
-      {!['send_input', 'read_screen', 'web_search', 'fetch_url'].includes(call.toolName) && (
-        <GenericBody call={call} hideOutput={images.length > 0} />
-      )}
-
-      <ToolImages images={images} />
+        {errorText !== null && <CircleAlertIcon className="text-destructive size-3 shrink-0" />}
+        {denied && <XIcon className="text-destructive size-3 shrink-0" />}
+      </button>
 
       {errorText !== null && (
         <p className="text-destructive text-xs break-words whitespace-pre-wrap">{errorText}</p>
@@ -386,6 +452,27 @@ export function ToolCallCard({ call, confirmationId, onDecide, className }: Tool
           </Button>
         </div>
       )}
+
+      <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
+        <DialogContent className="flex max-h-[80vh] max-w-2xl flex-col gap-3 overflow-hidden sm:max-w-2xl">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-1.5 text-sm">
+              {toolIcon(call.toolName)}
+              <span>{toolLabel}</span>
+            </DialogTitle>
+          </DialogHeader>
+          <div className="text-muted-foreground flex flex-col gap-3 overflow-auto text-xs">
+            <DetailsExpandedContext.Provider value={true}>
+              {call.toolName === 'send_input' && <SendInputBody call={call} />}
+              {call.toolName === 'read_screen' && <ReadScreenBody call={call} />}
+              {call.toolName === 'web_search' && <WebSearchBody call={call} />}
+              {call.toolName === 'fetch_url' && <FetchUrlBody call={call} />}
+              {!hasKnownBody && <GenericBody call={call} hideOutput={images.length > 0} />}
+              <ToolImages images={images} />
+            </DetailsExpandedContext.Provider>
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
