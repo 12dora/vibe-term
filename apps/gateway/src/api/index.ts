@@ -53,6 +53,7 @@ import {
 } from '../db';
 import { t } from '../i18n';
 import { pushSupervisor } from '../push/supervisor';
+import { broadcastSettingsUpdate } from '../settings/broadcaster';
 import { telegramService } from '../telegram/service';
 import { weixinService } from '../weixin/service';
 import { handleAgentApiRequest } from './agent';
@@ -63,6 +64,7 @@ import { handleSystemApiRequest } from './system';
 import { normalizeTerminalShortcutsInput } from './terminal-shortcuts';
 import { handleDeviceTestConnection } from './test-connection';
 import { handleThemeApiRequest } from './theme';
+import { handleTreeOrderApiRequest } from './tree-order';
 import { handleWatchApiRequest } from './watch';
 
 function shouldReconnectPushSupervisor(existing: Device, updates: Partial<Device>): boolean {
@@ -206,6 +208,12 @@ export function handleApiRequest(
   }
   if (path.match(/^\/api\/devices\/[^/]+\/test-connection$/) && req.method === 'POST') {
     return handleTestConnection(path.split('/')[3]);
+  }
+  if (path.startsWith('/api/devices/')) {
+    const treeOrderResponse = handleTreeOrderApiRequest(req, path);
+    if (treeOrderResponse) {
+      return treeOrderResponse;
+    }
   }
 
   if (path === '/api/settings/site' && req.method === 'GET') {
@@ -438,6 +446,7 @@ async function handleCreateDevice(req: Request): Promise<Response> {
   };
 
   createDevice(device);
+  broadcastSettingsUpdate('devices');
   await pushSupervisor.upsert(device.id);
 
   return json({ device: getDeviceById(device.id) ?? device }, 201);
@@ -468,6 +477,7 @@ async function handleUpdateDevice(req: Request, id: string): Promise<Response> {
   }
 
   updateDevice(id, updates);
+  broadcastSettingsUpdate('devices');
 
   if (shouldReconnectPushSupervisor(existing, updates)) {
     await pushSupervisor.reconnect(id);
@@ -489,6 +499,7 @@ async function handleReorderDevices(req: Request): Promise<Response> {
   }
 
   reorderDevices(body.deviceIds as string[]);
+  broadcastSettingsUpdate('devices');
   return json({ devices: getAllDevices().map(enrichDeviceWithRuntime) });
 }
 
@@ -499,6 +510,7 @@ async function handleDeleteDevice(id: string): Promise<Response> {
   }
 
   deleteDevice(id);
+  broadcastSettingsUpdate('devices');
   pushSupervisor.remove(id);
   return json({ success: true });
 }
@@ -516,6 +528,7 @@ async function handleUpdateSiteSettings(req: Request): Promise<Response> {
     const body = (await req.json()) as UpdateSiteSettingsRequest;
     const updates = normalizeSiteSettingsInput(body);
     const settings = updateSiteSettings(updates);
+    broadcastSettingsUpdate('site');
 
     return json({ settings });
   } catch (err) {
@@ -532,6 +545,7 @@ async function handleUpdateTerminalShortcuts(req: Request): Promise<Response> {
     const body = (await req.json()) as UpdateTerminalShortcutSettingsRequest;
     const updates = normalizeTerminalShortcutsInput(body);
     const settings = updateTerminalShortcutSettings(updates);
+    broadcastSettingsUpdate('terminal-shortcuts');
 
     return json({ settings });
   } catch (err) {
@@ -577,6 +591,7 @@ async function handleCreateTelegramBot(req: Request): Promise<Response> {
     updatedAt: now,
   });
 
+  broadcastSettingsUpdate('telegram');
   await telegramService.refresh();
 
   return json({ success: true }, 201);
@@ -621,6 +636,7 @@ async function handleUpdateTelegramBot(req: Request, botId: string): Promise<Res
   }
 
   updateTelegramBot(botId, updates);
+  broadcastSettingsUpdate('telegram');
   await telegramService.refresh();
 
   return json({ success: true });
@@ -633,6 +649,7 @@ async function handleDeleteTelegramBot(botId: string): Promise<Response> {
   }
 
   deleteTelegramBot(botId);
+  broadcastSettingsUpdate('telegram');
   await telegramService.refresh();
 
   return json({ success: true });
@@ -658,6 +675,7 @@ async function handleApproveTelegramChat(botId: string, chatId: string): Promise
   if (!chat) {
     return json({ error: t('apiError.chatNotFound') }, 404);
   }
+  broadcastSettingsUpdate('telegram');
 
   const settings = getSiteSettings();
   await telegramService.sendTestMessage(
@@ -679,6 +697,7 @@ async function handleDeleteTelegramChat(botId: string, chatId: string): Promise<
   }
 
   deleteTelegramChat(botId, chatId);
+  broadcastSettingsUpdate('telegram');
   return json({ success: true });
 }
 
@@ -730,6 +749,7 @@ async function handleCreateWeixinAccount(req: Request): Promise<Response> {
     updatedAt: now,
   });
 
+  broadcastSettingsUpdate('weixin');
   return json({ success: true, accountId: id }, 201);
 }
 
@@ -757,6 +777,7 @@ async function handleUpdateWeixinAccount(req: Request, accountId: string): Promi
   }
 
   updateWeixinAccount(accountId, updates);
+  broadcastSettingsUpdate('weixin');
   await weixinService.refresh();
 
   return json({ success: true });
@@ -769,6 +790,7 @@ async function handleDeleteWeixinAccount(accountId: string): Promise<Response> {
   }
 
   deleteWeixinAccount(accountId);
+  broadcastSettingsUpdate('weixin');
   await weixinService.refresh();
 
   return json({ success: true });
@@ -815,6 +837,7 @@ async function handleApproveWeixinUser(accountId: string, userId: string): Promi
   if (!user) {
     return json({ error: t('weixin.userNotFound') }, 404);
   }
+  broadcastSettingsUpdate('weixin');
 
   // 最佳努力发一条批准回执（会话可能已过期，失败不影响批准结果）。
   const settings = getSiteSettings();
@@ -886,6 +909,7 @@ async function handleDeleteWeixinUser(accountId: string, userId: string): Promis
     return json({ error: t('weixin.accountNotFound') }, 404);
   }
   deleteWeixinUser(accountId, userId);
+  broadcastSettingsUpdate('weixin');
   return json({ success: true });
 }
 
@@ -913,12 +937,14 @@ async function handleCreateWebhook(req: Request): Promise<Response> {
   };
 
   createWebhookEndpoint(endpoint);
+  broadcastSettingsUpdate('webhooks');
 
   return json({ webhook: endpoint }, 201);
 }
 
 async function handleDeleteWebhook(id: string): Promise<Response> {
   deleteWebhookEndpoint(id);
+  broadcastSettingsUpdate('webhooks');
   return json({ success: true });
 }
 

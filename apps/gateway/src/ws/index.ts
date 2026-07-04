@@ -11,6 +11,7 @@ import {
   updateSiteSettings,
 } from '../db';
 import { t } from '../i18n';
+import type { SettingsNamespace } from '../settings/broadcaster';
 import { getDisplayVersion } from '../system/version';
 import type {
   DeviceSessionRuntime,
@@ -79,6 +80,7 @@ export class WebSocketServer {
   currentTheme: ThemeMode | null = null;
   private themeSignalLast = new Map<string, { theme: 'dark' | 'light'; at: number }>();
   private lastThemeTimestamp = 0n;
+  private lastSettingsTimestamp = 0n;
   // per-device 去重缓存：同主题不重发 OSC stdin 注入（resize 路径触发的主题同步如主题未变则跳过）
   private pendingTmuxTheme: ThemeMode | null = null;
   private themeApplyInFlight = false;
@@ -395,7 +397,7 @@ export class WebSocketServer {
 
       case wsBorsh.KIND_TMUX_RENAME_WINDOW: {
         const decoded = wsBorsh.decodePayload(wsBorsh.schema.TmuxRenameWindowSchema, payload);
-        this.handleRenameWindow(decoded.deviceId, decoded.windowId, decoded.name);
+        this.renameWindow(decoded.deviceId, decoded.windowId, decoded.name);
         return;
       }
 
@@ -407,13 +409,13 @@ export class WebSocketServer {
 
       case wsBorsh.KIND_TMUX_REORDER_WINDOWS: {
         const decoded = wsBorsh.decodePayload(wsBorsh.schema.TmuxReorderWindowsSchema, payload);
-        this.handleReorderWindows(decoded.deviceId, decoded.windowIds);
+        this.reorderWindows(decoded.deviceId, decoded.windowIds);
         return;
       }
 
       case wsBorsh.KIND_TMUX_REORDER_PANES: {
         const decoded = wsBorsh.decodePayload(wsBorsh.schema.TmuxReorderPanesSchema, payload);
-        this.handleReorderPanes(decoded.deviceId, decoded.windowId, decoded.paneIds);
+        this.reorderPanes(decoded.deviceId, decoded.windowId, decoded.paneIds);
         return;
       }
 
@@ -470,7 +472,7 @@ export class WebSocketServer {
 
       case wsBorsh.KIND_TMUX_RENAME_PANE: {
         const decoded = wsBorsh.decodePayload(wsBorsh.schema.TmuxRenamePaneSchema, payload);
-        this.handleRenamePane(decoded.deviceId, decoded.paneId, decoded.name);
+        this.renamePane(decoded.deviceId, decoded.paneId, decoded.name);
         return;
       }
 
@@ -891,8 +893,9 @@ export class WebSocketServer {
     entry.runtime.closePane(paneId);
   }
 
-  // pane 重命名同窗口：写内存 overlay 而非 tmux pane title，避免被应用 OSC 持续覆盖
-  private handleRenamePane(deviceId: string, paneId: string, name: string): void {
+  // pane 重命名同窗口：写内存 overlay 而非 tmux pane title，避免被应用 OSC 持续覆盖。
+  // WS handler 与 REST 桥共用（settings/broadcaster 注册）。
+  renamePane(deviceId: string, paneId: string, name: string): void {
     if (!isTmuxPaneId(paneId)) return;
     const trimmed = name.trim().slice(0, 64);
     const names = this.paneCustomNames.get(deviceId);
@@ -905,6 +908,7 @@ export class WebSocketServer {
       this.paneCustomNames.set(deviceId, new Map([[paneId, trimmed]]));
     }
 
+    this.broadcastSettingsUpdate('tree-order');
     const entry = this.connections.get(deviceId);
     if (!entry?.lastSnapshot) return;
     this.sendSnapshotToClients(entry, entry.lastSnapshot);
@@ -936,8 +940,9 @@ export class WebSocketServer {
     entry.runtime.movePane(srcPaneId, dstPaneId, resolved);
   }
 
-  // 重命名写入内存 overlay 而非 tmux rename-window，避免关闭 automatic-rename 导致标题不再跟随终端
-  private handleRenameWindow(deviceId: string, windowId: string, name: string): void {
+  // 重命名写入内存 overlay 而非 tmux rename-window，避免关闭 automatic-rename 导致标题不再跟随终端。
+  // WS handler 与 REST 桥共用（settings/broadcaster 注册）。
+  renameWindow(deviceId: string, windowId: string, name: string): void {
     const trimmed = name.trim().slice(0, 64);
     const names = this.windowCustomNames.get(deviceId);
 
@@ -949,9 +954,21 @@ export class WebSocketServer {
       this.windowCustomNames.set(deviceId, new Map([[windowId, trimmed]]));
     }
 
+    this.broadcastSettingsUpdate('tree-order');
     const entry = this.connections.get(deviceId);
     if (!entry?.lastSnapshot) return;
     this.sendSnapshotToClients(entry, entry.lastSnapshot);
+  }
+
+  // 供 REST 读自定义名 overlay（快照未必存在，直接读内存 Map）
+  getCustomNames(deviceId: string): {
+    windows: Record<string, string>;
+    panes: Record<string, string>;
+  } {
+    return {
+      windows: Object.fromEntries(this.windowCustomNames.get(deviceId) ?? []),
+      panes: Object.fromEntries(this.paneCustomNames.get(deviceId) ?? []),
+    };
   }
 
   private handleSetWindowStyle(deviceId: string, style: string): void {
@@ -993,6 +1010,7 @@ export class WebSocketServer {
     updateSiteSettings({ theme: themeName });
     this.scheduleTmuxThemeApply(themeName);
     this.broadcastSiteThemeUpdateS2C(themeName);
+    this.broadcastSettingsUpdate('theme');
   }
 
   // tmux 侧主题编排（latest-wins 合并）：先 await 全设备 window-style 落地，再对订阅
@@ -1038,6 +1056,25 @@ export class WebSocketServer {
     });
     for (const client of this.connectedClients) {
       this.sendEnvelope(client, wsBorsh.KIND_SITE_THEME_UPDATE, payloadBytes);
+    }
+  }
+
+  // 向所有 connected clients 广播 KIND_SETTINGS_UPDATE（设置变更缓存失效信号）。
+  // serverTimestamp 与 theme 广播同规则：严格递增（同毫秒并发时 +1）。
+  broadcastSettingsUpdate(namespace: SettingsNamespace): void {
+    const now = BigInt(Date.now());
+    if (now <= this.lastSettingsTimestamp) {
+      this.lastSettingsTimestamp += 1n;
+    } else {
+      this.lastSettingsTimestamp = now;
+    }
+
+    const payloadBytes = wsBorsh.encodePayload(wsBorsh.schema.SettingsUpdateS2CSchema, {
+      namespace,
+      serverTimestamp: this.lastSettingsTimestamp,
+    });
+    for (const client of this.connectedClients) {
+      this.sendEnvelope(client, wsBorsh.KIND_SETTINGS_UPDATE, payloadBytes);
     }
   }
 
@@ -1099,16 +1136,19 @@ export class WebSocketServer {
     }
   }
 
-  // window / pane 重排：纯显示层 overlay，写库后立即用上一份快照重广播（不触碰 tmux、不打 poll）
-  private handleReorderWindows(deviceId: string, windowIds: string[]): void {
+  // window / pane 重排：纯显示层 overlay，写库后立即用上一份快照重广播（不触碰 tmux、不打 poll）。
+  // WS handler 与 REST 桥共用（settings/broadcaster 注册）。
+  reorderWindows(deviceId: string, windowIds: string[]): void {
     setWindowOrder(deviceId, windowIds);
+    this.broadcastSettingsUpdate('tree-order');
     const entry = this.connections.get(deviceId);
     if (!entry?.lastSnapshot) return;
     this.sendSnapshotToClients(entry, entry.lastSnapshot);
   }
 
-  private handleReorderPanes(deviceId: string, windowId: string, paneIds: string[]): void {
+  reorderPanes(deviceId: string, windowId: string, paneIds: string[]): void {
     setPaneOrder(deviceId, windowId, paneIds);
+    this.broadcastSettingsUpdate('tree-order');
     const entry = this.connections.get(deviceId);
     if (!entry?.lastSnapshot) return;
     this.sendSnapshotToClients(entry, entry.lastSnapshot);

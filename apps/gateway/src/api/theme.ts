@@ -1,5 +1,6 @@
 import type { ThemeMode } from '@tmex/shared';
 import { getSiteSettings, updateSiteSettings } from '../db';
+import { broadcastSettingsUpdate } from '../settings/broadcaster';
 import { broadcastSiteThemeUpdateS2C, broadcastThemeChange } from '../tmux/theme-broadcaster';
 
 const VALID_THEMES: readonly ThemeMode[] = ['dark', 'light'];
@@ -44,6 +45,7 @@ async function handleUpdateTheme(req: Request): Promise<Response> {
   updateSiteSettings({ theme: theme as ThemeMode });
   broadcastThemeChange(theme as ThemeMode);
   broadcastSiteThemeUpdateS2C(theme as ThemeMode);
+  broadcastSettingsUpdate('theme');
 
   return json({ theme: theme as ThemeMode, serverTimestamp });
 }

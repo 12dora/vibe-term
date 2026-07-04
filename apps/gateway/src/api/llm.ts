@@ -21,6 +21,7 @@ import {
 } from '../db/llm';
 import { t } from '../i18n';
 import { fetchProviderModels } from '../llm/provider-registry';
+import { broadcastSettingsUpdate } from '../settings/broadcaster';
 
 const PROTOCOLS: readonly LlmProviderProtocol[] = ['openai-chat', 'openai-responses'];
 const SEARCH_PROVIDERS: readonly AgentSearchProvider[] = ['none', 'tavily', 'brave'];
@@ -168,6 +169,7 @@ async function handleCreateProvider(req: Request): Promise<Response> {
     enabled: body.enabled ?? true,
   });
 
+  broadcastSettingsUpdate('llm');
   const { provider, modelsError } = await refreshModelsCache(created);
   return json({ provider: toProviderDto(provider), ...(modelsError ? { modelsError } : {}) }, 201);
 }
@@ -245,6 +247,7 @@ async function handleUpdateProvider(req: Request, id: string): Promise<Response>
   if (!provider) {
     return json({ error: t('apiError.llmProviderNotFound') }, 404);
   }
+  broadcastSettingsUpdate('llm');
 
   const credentialsChanged =
     (updates.baseUrl !== undefined && updates.baseUrl !== existing.baseUrl) ||
@@ -267,6 +270,7 @@ async function handleDeleteProvider(id: string): Promise<Response> {
   }
 
   deleteLlmProvider(id);
+  broadcastSettingsUpdate('llm');
   return json({ success: true });
 }
 
@@ -338,6 +342,7 @@ async function handleUpdateSettings(req: Request): Promise<Response> {
   }
 
   const settings = updateAgentSettings(updates);
+  broadcastSettingsUpdate('llm');
   return json({ settings: toSettingsDto(settings) });
 }
 

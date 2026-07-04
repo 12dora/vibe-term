@@ -33,6 +33,7 @@ import {
   removeUploadSession,
 } from '../files/transfer-session';
 import { t } from '../i18n';
+import { broadcastSettingsUpdate } from '../settings/broadcaster';
 
 // 分块上传的 chunk 大小（前端按此切片，每个 PUT body ≤ 此值，远低于 Bun 默认 128MB body 上限）
 const UPLOAD_CHUNK_SIZE = 8 * 1024 * 1024;
@@ -117,6 +118,7 @@ async function handleCreateRoot(req: Request): Promise<Response> {
   }
 
   const record = createFileRoot({ deviceId, path, enabled: body.enabled ?? true });
+  broadcastSettingsUpdate('file-roots');
   return json({ root: toRootDto(record) }, 201);
 }
 
@@ -154,12 +156,14 @@ async function handleUpdateRoot(req: Request, id: string): Promise<Response> {
 
   const updated = updateFileRoot(id, updates);
   if (!updated) return json({ error: t('apiError.notFound') }, 404);
+  broadcastSettingsUpdate('file-roots');
   return json({ root: toRootDto(updated) });
 }
 
 function handleDeleteRoot(id: string): Response {
   const okDelete = deleteFileRoot(id);
   if (!okDelete) return json({ error: t('apiError.notFound') }, 404);
+  broadcastSettingsUpdate('file-roots');
   return json({ success: true });
 }
 
