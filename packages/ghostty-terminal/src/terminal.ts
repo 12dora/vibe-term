@@ -588,6 +588,9 @@ export class GhosttyTerminalController implements CompatibleTerminalLike {
 
     const nextCols = Math.max(2, Math.floor(cols));
     const nextRows = Math.max(2, Math.floor(rows));
+    if (nextCols === this.cols && nextRows === this.rows) {
+      return;
+    }
     this.cols = nextCols;
     this.rows = nextRows;
     this.clearSelectionState(false);

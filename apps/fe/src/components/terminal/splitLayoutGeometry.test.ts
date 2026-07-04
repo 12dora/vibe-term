@@ -1,10 +1,11 @@
 import { describe, expect, test } from 'bun:test';
 import { parseWindowLayout } from '@tmex/shared';
 import {
-  computeSplitWindowGridSize,
   computeSplitLayoutGeometry,
+  computeSplitWindowGridSize,
   maxHorizontalStackDepth,
   maxVerticalStackDepth,
+  paneSizesKey,
   resolveDropPosition,
 } from './splitLayoutGeometry';
 
@@ -175,5 +176,28 @@ describe('resolveDropPosition', () => {
   test('clamps out-of-range input', () => {
     expect(resolveDropPosition(-0.5, 0.5)).toBe('left');
     expect(resolveDropPosition(1.5, 0.5)).toBe('right');
+  });
+});
+
+// Bug 1: pane 尺寸签名用于 SplitTerminalArea geometry effect 稳定化
+describe('paneSizesKey', () => {
+  test('same pane sizes produce same key even with different geometry references', () => {
+    const layout = '7d1d,208x62,0,0{104x62,0,0,0,103x62,105,0,1}';
+    const geo1 = geometryOf(layout);
+    const geo2 = geometryOf(layout);
+
+    expect(geo1).not.toBe(geo2);
+    expect(paneSizesKey(geo1)).toBe(paneSizesKey(geo2));
+  });
+
+  test('different pane sizes produce different keys', () => {
+    const geo1 = geometryOf('7d1d,208x62,0,0{104x62,0,0,0,103x62,105,0,1}');
+    const geo2 = geometryOf('7d1d,208x62,0,0{105x62,0,0,0,102x62,106,0,1}');
+
+    expect(paneSizesKey(geo1)).not.toBe(paneSizesKey(geo2));
+  });
+
+  test('null geometry produces empty key', () => {
+    expect(paneSizesKey(null)).toBe('');
   });
 });

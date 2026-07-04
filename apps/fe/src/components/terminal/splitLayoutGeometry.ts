@@ -180,6 +180,13 @@ export function computeSplitWindowGridSize(
 
 export type DropPosition = 'left' | 'right' | 'top' | 'bottom';
 
+// pane 尺寸签名：只在 pane 的 paneId/cols/rows 变化时才变化，
+// 用于 SplitTerminalArea geometry effect 依赖，避免 geometry 引用抖动导致无效 resize
+export function paneSizesKey(geometry: SplitLayoutGeometry | null): string {
+  if (!geometry) return '';
+  return geometry.panes.map((p) => `${p.paneId}:${p.cols}x${p.rows}`).join('|');
+}
+
 // 指针在目标 pane 内的相对位置 → 四分区判定（距哪条边最近归哪侧）
 export function resolveDropPosition(relativeX: number, relativeY: number): DropPosition {
   const x = Math.min(1, Math.max(0, relativeX));

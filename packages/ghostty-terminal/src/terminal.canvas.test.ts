@@ -2173,4 +2173,37 @@ describe('GhosttyTerminalController clipboard and selection API', () => {
 
     disposable.dispose();
   });
+
+  // Bug 1: resize cols/rows 未变时不应清 selection（geometry effect 抖动导致无效 resize）
+  test('resize with unchanged cols/rows should preserve selection', async () => {
+    dom = installFakeDom();
+    const bindings = createFakeBindings();
+    const { terminal } = await setupTerminal(bindings);
+
+    expect(terminal.startTouchSelection(4, 4, 'word')).toBeTrue();
+    expect(terminal.hasSelection()).toBeTrue();
+
+    const colsBefore = (terminal as any).cols;
+    const rowsBefore = (terminal as any).rows;
+
+    terminal.resize(colsBefore, rowsBefore);
+
+    expect(terminal.hasSelection()).toBeTrue();
+  });
+
+  test('resize with changed cols/rows should clear selection', async () => {
+    dom = installFakeDom();
+    const bindings = createFakeBindings();
+    const { terminal } = await setupTerminal(bindings);
+
+    expect(terminal.startTouchSelection(4, 4, 'word')).toBeTrue();
+    expect(terminal.hasSelection()).toBeTrue();
+
+    const colsBefore = (terminal as any).cols;
+    const rowsBefore = (terminal as any).rows;
+
+    terminal.resize(colsBefore + 10, rowsBefore + 5);
+
+    expect(terminal.hasSelection()).toBeFalse();
+  });
 });

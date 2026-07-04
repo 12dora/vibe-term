@@ -25,6 +25,7 @@ import {
   computeSplitWindowGridSize,
   maxHorizontalStackDepth,
   maxVerticalStackDepth,
+  paneSizesKey,
   resolveDropPosition,
 } from './splitLayoutGeometry';
 import type { TerminalRef, TerminalTheme } from './types';
@@ -41,6 +42,7 @@ export interface SplitTerminalAreaProps {
   onUserSelectPane: (windowId: string, paneId: string) => void;
   /** window 级尺寸上报（resize-window 语义），复用单 pane 的 KIND_TERM_RESIZE 通道 */
   onWindowResize: (cols: number, rows: number) => void;
+  onWindowResizeSettled?: (cols: number, rows: number) => void;
 }
 
 interface DragState {
@@ -142,6 +144,7 @@ export function SplitTerminalArea({
   focusedTerminalRef,
   onUserSelectPane,
   onWindowResize,
+  onWindowResizeSettled,
 }: SplitTerminalAreaProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const terminalRefs = useRef(new Map<string, TerminalRef | null>());
@@ -225,12 +228,17 @@ export function SplitTerminalArea({
   }, [focusedPaneId]);
 
   // 各实例 cols/rows 跟随 tmux layout（tmux 是尺寸权威）
+  // 依赖 paneSizesKey 而非 geometry 引用：layout 字符串抖动（A pane 输出导致光标移动）
+  // 会使 geometry 引用变化但 pane 尺寸不变，此时不应触发 resize（Bug 1）
+  const paneSizes = paneSizesKey(geometry);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: paneSizes 是触发条件，geometry 通过 ref 访问避免引用抖动
   useEffect(() => {
+    const geometry = geometryRef.current;
     if (!geometry) return;
     for (const pane of geometry.panes) {
       terminalRefs.current.get(pane.paneId)?.resize(pane.cols, pane.rows);
     }
-  }, [geometry]);
+  }, [paneSizes]);
 
   // 每个 pane 的标题栏占据实际空间：整窗 rows 按最深的一列扣除标题栏总高，
   // 保证该列的终端区也能放下 layout 分配的行数（其余列底部允许少量留白）
@@ -257,8 +265,9 @@ export function SplitTerminalArea({
       paneChrome: { width: PANE_H_OVERHEAD_PX, height: PANE_V_OVERHEAD_PX },
     });
     onWindowResize(cols, rows);
+    onWindowResizeSettled?.(cols, rows);
     return true;
-  }, [getFocusedCellSize, layout, onWindowResize]);
+  }, [getFocusedCellSize, layout, onWindowResize, onWindowResizeSettled]);
 
   const reportWindowSizeRef = useRef(reportWindowSize);
   useEffect(() => {
