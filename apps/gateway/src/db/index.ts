@@ -14,6 +14,7 @@ import {
   type TelegramChatType,
   type TerminalShortcutItem,
   type TerminalShortcutSettings,
+  type ThemeMode,
   type WebhookEndpoint,
   type WeixinAccountConfig,
   type WeixinAccountUser,
@@ -97,6 +98,7 @@ function toSiteSettings(row: typeof siteSettings.$inferSelect): SiteSettings {
     sshReconnectMaxRetries: row.sshReconnectMaxRetries,
     sshReconnectDelaySeconds: row.sshReconnectDelaySeconds,
     language: normalizeLocale(row.language),
+    theme: row.theme as ThemeMode,
     updatedAt: row.updatedAt,
   };
 }
@@ -480,6 +482,7 @@ export function updateSiteSettings(
     sshReconnectMaxRetries: updates.sshReconnectMaxRetries ?? current.sshReconnectMaxRetries,
     sshReconnectDelaySeconds: updates.sshReconnectDelaySeconds ?? current.sshReconnectDelaySeconds,
     language: updates.language ? normalizeLocale(updates.language) : current.language,
+    theme: updates.theme ?? current.theme,
     updatedAt: new Date().toISOString(),
   };
 
@@ -495,6 +498,7 @@ export function updateSiteSettings(
       enableNotificationPush: next.enableNotificationPush,
       enableBellPush: next.enableBellPush,
       enableBellSound: next.enableBellSound,
+      theme: next.theme,
     })
     .where(eq(siteSettings.id, 1))
     .run();

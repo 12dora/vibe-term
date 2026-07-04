@@ -1,0 +1,1 @@
+ALTER TABLE `site_settings` ADD `theme` text DEFAULT 'dark' NOT NULL CHECK(`site_settings`.`theme` in ('dark', 'light'));

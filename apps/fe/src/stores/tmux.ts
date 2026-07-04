@@ -27,6 +27,7 @@ import {
   buildTmuxSetWindowStyle,
   buildTmuxSplitPane,
   buildTmuxSubscribePanes,
+  decodeSiteThemeUpdate,
   generateSelectToken,
 } from '@/ws-borsh';
 import { getSelectStateMachine } from '@/ws-borsh';
@@ -43,9 +44,9 @@ import { wsBorsh } from '@tmex/shared';
 import { toast } from 'sonner';
 import { create } from 'zustand';
 import i18n from '../i18n';
-import { useSiteStore } from './site';
-import { useBellStore } from './bell';
 import { playBellSound } from '../utils/bell-sound';
+import { useBellStore } from './bell';
+import { useSiteStore } from './site';
 import { formatTerminalNotificationToast } from './tmux-notification-format';
 import { useUIStore } from './ui';
 
@@ -124,6 +125,7 @@ interface TmuxState {
     size: { cols?: number; rows?: number }
   ) => void;
   applyStackedLayout: (deviceId: string, windowId: string, cols: number, rows: number) => void;
+  syncThemeAfterResize: (deviceId: string) => void;
 }
 
 const CONNECT_DEDUP_WINDOW_MS = 500;
@@ -319,10 +321,7 @@ function setupClientHandlers(
       }
 
       case wsBorsh.KIND_CLIPBOARD_WRITE: {
-        const decoded = wsBorsh.decodePayload(
-          wsBorsh.schema.ClipboardWriteSchema,
-          msg.payload
-        );
+        const decoded = wsBorsh.decodePayload(wsBorsh.schema.ClipboardWriteSchema, msg.payload);
         if (document.visibilityState !== 'visible') {
           return;
         }
@@ -336,13 +335,20 @@ function setupClientHandlers(
           },
           (err) => {
             console.warn('[tmux] clipboard write failed:', err);
-          },
+          }
         );
         return;
       }
 
       case wsBorsh.KIND_ERROR: {
         // 连接级错误不一定需要 toast；保留给上层需要时再做
+        return;
+      }
+
+      case wsBorsh.KIND_SITE_THEME_UPDATE: {
+        const decoded = decodeSiteThemeUpdate(msg.payload);
+        const themeName = decoded.theme === wsBorsh.SITE_THEME_LIGHT ? 'light' : 'dark';
+        useSiteStore.getState().setThemeFromS2C(themeName);
         return;
       }
     }
@@ -791,5 +797,12 @@ export const useTmuxStore = create<TmuxState>((set, get) => ({
     });
     const msg = buildTmuxReorderPanes(deviceId, windowId, paneIds);
     getBorshClient().send(msg.kind, msg.payload);
+  },
+
+  syncThemeAfterResize(deviceId) {
+    if (!deviceId) return;
+    const client = getBorshClient();
+    if (!client.isReady()) return;
+    sendWindowStyleForCurrentTheme(deviceId);
   },
 }));

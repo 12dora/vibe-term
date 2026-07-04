@@ -12,12 +12,15 @@ import {
   KIND_AGENT_SUBSCRIBE,
   KIND_AGENT_UNSUBSCRIBE,
   KIND_CHUNK,
+  KIND_CLIPBOARD_WRITE,
   KIND_PING,
+  KIND_SITE_THEME_UPDATE,
   KIND_TMUX_REORDER_PANES,
   KIND_TMUX_REORDER_WINDOWS,
-  KIND_CLIPBOARD_WRITE,
   KIND_WATCH_EVENT,
   MAGIC,
+  SITE_THEME_DARK,
+  SITE_THEME_LIGHT,
   WATCH_EVENT_TRIGGERED,
   WsBorshError,
   checkMagic,
@@ -40,6 +43,8 @@ import {
   AgentUnsubscribeSchema,
   ClipboardWriteSchema,
   PingPongSchema,
+  SiteThemeUpdateC2SSchema,
+  SiteThemeUpdateS2CSchema,
   TmuxReorderPanesSchema,
   TmuxReorderWindowsSchema,
   WatchEventSchema,
@@ -351,14 +356,20 @@ describe('tmux reorder 协议消息', () => {
 
   it('TmuxReorderWindows payload roundtrip（含字符串数组）', () => {
     const data = { deviceId: 'dev-1', windowIds: ['@2', '@0', '@1'] };
-    const decoded = decodePayload(TmuxReorderWindowsSchema, encodePayload(TmuxReorderWindowsSchema, data));
+    const decoded = decodePayload(
+      TmuxReorderWindowsSchema,
+      encodePayload(TmuxReorderWindowsSchema, data)
+    );
     expect(decoded.deviceId).toBe('dev-1');
     expect(decoded.windowIds).toEqual(['@2', '@0', '@1']);
   });
 
   it('TmuxReorderPanes payload roundtrip', () => {
     const data = { deviceId: 'dev-1', windowId: '@0', paneIds: ['%3', '%1', '%2'] };
-    const decoded = decodePayload(TmuxReorderPanesSchema, encodePayload(TmuxReorderPanesSchema, data));
+    const decoded = decodePayload(
+      TmuxReorderPanesSchema,
+      encodePayload(TmuxReorderPanesSchema, data)
+    );
     expect(decoded.deviceId).toBe('dev-1');
     expect(decoded.windowId).toBe('@0');
     expect(decoded.paneIds).toEqual(['%3', '%1', '%2']);
@@ -452,6 +463,54 @@ describe('agent/watch 协议消息', () => {
     expect(decoded.paneId).toBe('%1');
     expect(decoded.eventType).toBe(WATCH_EVENT_TRIGGERED);
     expect(JSON.parse(new TextDecoder().decode(decoded.payload))).toEqual(jsonPayload);
+  });
+});
+
+describe('site theme update 协议消息', () => {
+  it('SiteThemeUpdateC2S payload roundtrip（dark=0）', () => {
+    const data = { theme: SITE_THEME_DARK };
+    const decoded = decodePayload(
+      SiteThemeUpdateC2SSchema,
+      encodePayload(SiteThemeUpdateC2SSchema, data)
+    );
+    expect(decoded.theme).toBe(SITE_THEME_DARK);
+  });
+
+  it('SiteThemeUpdateC2S payload roundtrip（light=1）', () => {
+    const data = { theme: SITE_THEME_LIGHT };
+    const decoded = decodePayload(
+      SiteThemeUpdateC2SSchema,
+      encodePayload(SiteThemeUpdateC2SSchema, data)
+    );
+    expect(decoded.theme).toBe(SITE_THEME_LIGHT);
+  });
+
+  it('SiteThemeUpdateS2C payload roundtrip（含 serverTimestamp u64）', () => {
+    const data = { theme: SITE_THEME_LIGHT, serverTimestamp: 1719900000000n };
+    const decoded = decodePayload(
+      SiteThemeUpdateS2CSchema,
+      encodePayload(SiteThemeUpdateS2CSchema, data)
+    );
+    expect(decoded.theme).toBe(SITE_THEME_LIGHT);
+    expect(decoded.serverTimestamp).toBe(1719900000000n);
+  });
+
+  it('KIND_SITE_THEME_UPDATE 在 valid kinds 中且 kindToString 可读', () => {
+    expect(isValidKind(KIND_SITE_THEME_UPDATE)).toBe(true);
+    expect(kindToString(KIND_SITE_THEME_UPDATE)).toBe('SITE_THEME_UPDATE');
+  });
+
+  it('envelope roundtrip KIND_SITE_THEME_UPDATE（S2C）', () => {
+    const payload = encodePayload(SiteThemeUpdateS2CSchema, {
+      theme: SITE_THEME_DARK,
+      serverTimestamp: 42n,
+    });
+    const envelope = encodeEnvelope(KIND_SITE_THEME_UPDATE, payload, 7);
+    const decoded = decodeEnvelope(envelope);
+    expect(decoded.kind).toBe(KIND_SITE_THEME_UPDATE);
+    const decodedPayload = decodePayload(SiteThemeUpdateS2CSchema, decoded.payload);
+    expect(decodedPayload.theme).toBe(SITE_THEME_DARK);
+    expect(decodedPayload.serverTimestamp).toBe(42n);
   });
 });
 

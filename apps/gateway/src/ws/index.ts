@@ -1,8 +1,14 @@
 import type { EventDevicePayload, StateSnapshotPayload, TmuxEventType } from '@tmex/shared';
-import { wsBorsh } from '@tmex/shared';
+import { type ThemeMode, getTmuxWindowStyle, wsBorsh } from '@tmex/shared';
 import type { Server, ServerWebSocket } from 'bun';
 import { agentWsHub } from '../agent/ws-hub';
-import { getDeviceTreeOrder, getSiteSettings, setPaneOrder, setWindowOrder } from '../db';
+import {
+  getDeviceTreeOrder,
+  getSiteSettings,
+  setPaneOrder,
+  setWindowOrder,
+  updateSiteSettings,
+} from '../db';
 import { t } from '../i18n';
 import type {
   DeviceSessionRuntime,
@@ -52,10 +58,19 @@ interface WebSocketServerOptions {
 export class WebSocketServer {
   connections = new Map<string, DeviceConnectionEntry>();
   pendingConnectionEntries = new Map<string, Promise<DeviceConnectionEntry | null>>();
+  connectedClients = new Set<ServerWebSocket<ClientState>>();
   // 窗口自定义名 overlay：deviceId -> windowId -> name，仅存于 gateway 内存（进程生命周期内有效）
   windowCustomNames = new Map<string, Map<string, string>>();
   // pane 自定义名 overlay：deviceId -> paneId -> name（不写 tmux pane title，避免被应用 OSC 覆盖）
   paneCustomNames = new Map<string, Map<string, string>>();
+  // 当前站点主题（来自 SiteSettings.theme），用于设置 tmux window-style 让 tmux 原生代答 OSC 11
+  currentTheme: ThemeMode | null = null;
+  private themeSignalLast = new Map<string, { theme: 'dark' | 'light'; at: number }>();
+  private lastThemeTimestamp = 0n;
+  // per-device 去重缓存：同主题不重发 OSC stdin 注入（resize 路径触发的主题同步如主题未变则跳过）
+  private lastBroadcastTheme = new Map<string, 'dark' | 'light'>();
+  // per-device 去重缓存：同 cols/rows 不重复调 resize-window/resize-pane
+  private lastBroadcastSize = new Map<string, { cols: number; rows: number }>();
   private readonly deps: WebSocketServerDeps;
 
   constructor(options: WebSocketServerOptions = {}) {
@@ -89,6 +104,9 @@ export class WebSocketServer {
     this.clearReconnectTimer(entry);
     entry.detachRuntime?.();
     entry.detachRuntime = null;
+    this.themeSignalLast.delete(deviceId);
+    this.lastBroadcastTheme.delete(deviceId);
+    this.lastBroadcastSize.delete(deviceId);
     void this.deps.releaseRuntime(deviceId, entry.runtime);
   }
 
@@ -188,6 +206,7 @@ export class WebSocketServer {
   handleOpen(ws: ServerWebSocket<ClientState>): void {
     console.log('[ws] client connected');
     sessionStateStore.create(ws);
+    this.connectedClients.add(ws);
   }
 
   handleMessage(ws: ServerWebSocket<ClientState>, message: string | Buffer): void {
@@ -248,6 +267,7 @@ export class WebSocketServer {
   handleClose(ws: ServerWebSocket<ClientState>): void {
     console.log('[ws] client disconnected');
 
+    this.connectedClients.delete(ws);
     switchBarrier.cleanupClient(ws);
     sessionStateStore.cleanup(ws);
     agentWsHub.removeClient(ws);
@@ -496,6 +516,12 @@ export class WebSocketServer {
       case wsBorsh.KIND_AGENT_UNSUBSCRIBE: {
         const decoded = wsBorsh.decodePayload(wsBorsh.schema.AgentUnsubscribeSchema, payload);
         agentWsHub.unsubscribe(ws, decoded.sessionId);
+        return;
+      }
+
+      case wsBorsh.KIND_SITE_THEME_UPDATE: {
+        const decoded = wsBorsh.decodePayload(wsBorsh.schema.SiteThemeUpdateC2SSchema, payload);
+        this.handleSiteThemeUpdate(ws, decoded);
         return;
       }
 
@@ -802,6 +828,12 @@ export class WebSocketServer {
     const entry = this.connections.get(deviceId);
     if (!entry) return;
 
+    const last = this.lastBroadcastSize.get(deviceId);
+    if (last && last.cols === cols && last.rows === rows) {
+      return;
+    }
+    this.lastBroadcastSize.set(deviceId, { cols, rows });
+
     const snapshot = entry.lastSnapshot;
     if (snapshot?.session?.windows) {
       const window = snapshot.session.windows.find(
@@ -912,6 +944,117 @@ export class WebSocketServer {
     const entry = this.connections.get(deviceId);
     if (!entry) return;
     entry.runtime.setWindowStyle(style);
+    if (this.currentTheme !== null) {
+      const theme = this.currentTheme;
+      if (this.lastBroadcastTheme.get(deviceId) !== theme) {
+        this.lastBroadcastTheme.set(deviceId, theme);
+        this.broadcastThemeChange(theme);
+      }
+    }
+  }
+
+  private handleSiteThemeUpdate(
+    ws: ServerWebSocket<ClientState>,
+    decoded: wsBorsh.b.infer<typeof wsBorsh.schema.SiteThemeUpdateC2SSchema>
+  ): void {
+    if (decoded.theme !== wsBorsh.SITE_THEME_DARK && decoded.theme !== wsBorsh.SITE_THEME_LIGHT) {
+      this.sendError(
+        ws,
+        null,
+        wsBorsh.ERROR_PAYLOAD_DECODE_FAILED,
+        `invalid theme value: ${decoded.theme}`,
+        false
+      );
+      return;
+    }
+    const themeName: ThemeMode = decoded.theme === wsBorsh.SITE_THEME_LIGHT ? 'light' : 'dark';
+
+    updateSiteSettings({ theme: themeName });
+    this.handleSiteThemeChange(themeName);
+    this.broadcastThemeChange(themeName);
+    this.broadcastSiteThemeUpdateS2C(themeName);
+  }
+
+  // 向所有 connected clients 广播 KIND_SITE_THEME_UPDATE S2C。
+  // serverTimestamp 严格递增（同毫秒并发时 +1），保证前端能按序应用。
+  // WS C2S handleSiteThemeUpdate 与 HTTP POST /api/settings/theme 共用此路径，
+  // 确保两条入口的 S2C 行为一致（T10 已确保前端收到 S2C 不回送 C2S，无循环）。
+  broadcastSiteThemeUpdateS2C(theme: ThemeMode): void {
+    const now = BigInt(Date.now());
+    if (now <= this.lastThemeTimestamp) {
+      this.lastThemeTimestamp += 1n;
+    } else {
+      this.lastThemeTimestamp = now;
+    }
+    const effectiveTimestamp = this.lastThemeTimestamp;
+
+    const themeCode = theme === 'light' ? wsBorsh.SITE_THEME_LIGHT : wsBorsh.SITE_THEME_DARK;
+    const payloadBytes = wsBorsh.encodePayload(wsBorsh.schema.SiteThemeUpdateS2CSchema, {
+      theme: themeCode,
+      serverTimestamp: effectiveTimestamp,
+    });
+    for (const client of this.connectedClients) {
+      this.sendEnvelope(client, wsBorsh.KIND_SITE_THEME_UPDATE, payloadBytes);
+    }
+  }
+
+  // 站点主题变化时对所有已连接设备的所有 window 设置 tmux window-style，
+  // 让 tmux 原生代答 OSC 11 取到与前端主题一致的颜色。
+  // 严格 per-device：每个设备的所有 window 都要设置。
+  handleSiteThemeChange(theme: ThemeMode): void {
+    if (theme !== 'dark' && theme !== 'light') {
+      return;
+    }
+    this.currentTheme = theme;
+    const style = getTmuxWindowStyle(theme);
+    for (const [, entry] of this.connections) {
+      try {
+        entry.runtime.setWindowStyle(style);
+      } catch (err) {
+        console.error('[ws] setWindowStyle on theme change failed:', err);
+      }
+    }
+  }
+
+  // 对单个设备应用当前主题的 window-style（用于新设备连接时）。
+  // currentTheme 为 null 时跳过（尚未从 SiteSettings 初始化）。
+  applyThemeToDevice(deviceId: string): void {
+    if (this.currentTheme === null) {
+      return;
+    }
+    const entry = this.connections.get(deviceId);
+    if (!entry) {
+      return;
+    }
+    const style = getTmuxWindowStyle(this.currentTheme);
+    try {
+      entry.runtime.setWindowStyle(style);
+    } catch (err) {
+      console.error(`[ws] setWindowStyle on device ${deviceId} failed:`, err);
+    }
+  }
+
+  // 主题变化时对所有已连接设备的所有 pane 注入主题通知序列（stdin 路径）。
+  // 节流：同一设备同主题 1s 内去重，避免快速切换时刷屏。
+  broadcastThemeChange(theme: 'dark' | 'light'): void {
+    const now = Date.now();
+    for (const [deviceId, entry] of this.connections) {
+      const last = this.themeSignalLast.get(deviceId);
+      if (last && last.theme === theme && now - last.at < 1000) {
+        continue;
+      }
+      this.themeSignalLast.set(deviceId, { theme, at: now });
+      this.lastBroadcastTheme.set(deviceId, theme);
+
+      const panes = entry.lastSnapshot?.session?.windows?.flatMap((w) => w.panes) ?? [];
+      for (const pane of panes) {
+        try {
+          entry.runtime.signalThemeChange(pane.id, theme);
+        } catch (err) {
+          console.error(`[ws] signalThemeChange failed for ${deviceId}/${pane.id}:`, err);
+        }
+      }
+    }
   }
 
   // window / pane 重排：纯显示层 overlay，写库后立即用上一份快照重广播（不触碰 tmux、不打 poll）
@@ -1116,6 +1259,9 @@ export class WebSocketServer {
       detachRuntime = this.attachRuntime(deviceId, runtime);
 
       await runtime.connect();
+      if (this.currentTheme !== null) {
+        runtime.setWindowStyle(getTmuxWindowStyle(this.currentTheme));
+      }
       return {
         runtime,
         detachRuntime,

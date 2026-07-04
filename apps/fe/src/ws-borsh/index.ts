@@ -59,6 +59,7 @@ export {
   buildTermSyncSize,
   buildAgentSubscribe,
   buildAgentUnsubscribe,
+  buildSiteThemeUpdate,
   decodeDeviceConnected,
   decodeDeviceDisconnected,
   decodeDeviceEvent,
@@ -69,5 +70,6 @@ export {
   decodeSwitchAck,
   decodeLiveResume,
   decodeError,
+  decodeSiteThemeUpdate,
   type TmuxSelectParams,
 } from './message-builder';

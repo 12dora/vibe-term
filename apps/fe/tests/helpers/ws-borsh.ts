@@ -35,6 +35,9 @@ export const KIND = {
   LIVE_RESUME: 0x0402,
 
   CHUNK: 0x0501,
+
+  TMUX_SET_WINDOW_STYLE: 0x020a,
+  SITE_THEME_UPDATE: 0x0801,
 } as const;
 
 function isMagicTX(data: Buffer): boolean {
@@ -237,4 +240,17 @@ export function decodeTermResize(payload: Buffer): TermResizePayload {
   const cols = c.readU16();
   const rows = c.readU16();
   return { deviceId, paneId, cols, rows };
+}
+
+export interface SiteThemeUpdateS2CPayload {
+  theme: number;
+  serverTimestamp: bigint;
+}
+
+export function decodeSiteThemeUpdateS2C(payload: Buffer): SiteThemeUpdateS2CPayload {
+  const c = new BorshCursor(payload);
+  const theme = c.readU8();
+  const low = BigInt(c.readU32());
+  const high = BigInt(c.readU32());
+  return { theme, serverTimestamp: (high << 32n) | low };
 }

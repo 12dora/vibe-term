@@ -31,6 +31,7 @@ function createSettings(): SiteSettings {
     sshReconnectMaxRetries: 2,
     sshReconnectDelaySeconds: 1,
     language: 'zh_CN',
+    theme: 'dark',
     updatedAt: now,
   };
 }

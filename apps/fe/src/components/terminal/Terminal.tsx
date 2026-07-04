@@ -172,6 +172,7 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(
       focused = true,
       onResize,
       onSync,
+      onResizeSettled,
       children,
     },
     ref
@@ -268,6 +269,7 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(
         sizingMode,
         onResize,
         onSync,
+        onResizeSettled,
         getContainerRect: () => {
           const el = containerRef.current;
           if (!el) return null;

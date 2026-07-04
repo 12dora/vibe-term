@@ -23,11 +23,11 @@ export function SidebarTitle() {
 
   // Theme toggle
   const theme = useUIStore((state) => state.theme);
-  const setTheme = useUIStore((state) => state.setTheme);
+  const updateTheme = useSiteStore((state) => state.updateTheme);
   const isDark = theme === 'dark';
   const toggleTheme = () => {
     const nextTheme = isDark ? 'light' : 'dark';
-    setTheme(nextTheme);
+    updateTheme(nextTheme);
     document.documentElement.classList.toggle('dark', nextTheme === 'dark');
   };
 

@@ -350,6 +350,16 @@ export function buildAgentUnsubscribe(sessionId: string): { kind: number; payloa
   return { kind: wsBorsh.KIND_AGENT_UNSUBSCRIBE, payload };
 }
 
+export function buildSiteThemeUpdate(theme: 'dark' | 'light'): {
+  kind: number;
+  payload: Uint8Array;
+} {
+  const payload = wsBorsh.encodePayload(wsBorsh.schema.SiteThemeUpdateC2SSchema, {
+    theme: theme === 'light' ? wsBorsh.SITE_THEME_LIGHT : wsBorsh.SITE_THEME_DARK,
+  });
+  return { kind: wsBorsh.KIND_SITE_THEME_UPDATE, payload };
+}
+
 // ========== S2C 消息解码 ==========
 
 export function decodeDeviceConnected(payload: Uint8Array): { deviceId: string } {
@@ -404,4 +414,10 @@ export function decodeLiveResume(
 
 export function decodeError(payload: Uint8Array): b.infer<typeof wsBorsh.schema.ErrorSchema> {
   return wsBorsh.decodePayload(wsBorsh.schema.ErrorSchema, payload);
+}
+
+export function decodeSiteThemeUpdate(
+  payload: Uint8Array
+): b.infer<typeof wsBorsh.schema.SiteThemeUpdateS2CSchema> {
+  return wsBorsh.decodePayload(wsBorsh.schema.SiteThemeUpdateS2CSchema, payload);
 }

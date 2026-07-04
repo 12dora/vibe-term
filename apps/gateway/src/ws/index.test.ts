@@ -243,7 +243,11 @@ describe('WebSocketServer tmux select guards', () => {
     const recorder = {
       requestSnapshotCalls: 0,
       selectWindowCalls: [] as string[],
-      selectPaneCalls: [] as Array<{ windowId: string; paneId: string; size?: { cols: number; rows: number } }>,
+      selectPaneCalls: [] as Array<{
+        windowId: string;
+        paneId: string;
+        size?: { cols: number; rows: number };
+      }>,
       runtime: {
         requestSnapshot() {
           recorder.requestSnapshotCalls += 1;
@@ -611,9 +615,8 @@ describe('WebSocketServer bell extension', () => {
     server.scheduleSnapshot = () => {};
     updateSiteSettings({ notificationThrottleSeconds: 3 });
     let shouldAllowCalls = 0;
-    const originalShouldAllowNotification = sessionStateStore.shouldAllowNotification.bind(
-      sessionStateStore
-    );
+    const originalShouldAllowNotification =
+      sessionStateStore.shouldAllowNotification.bind(sessionStateStore);
     sessionStateStore.shouldAllowNotification = (() => {
       shouldAllowCalls += 1;
       return shouldAllowCalls === 1;
@@ -724,8 +727,9 @@ describe('WebSocketServer window custom names', () => {
     expect(snapshot.session?.windows[0].customName).toBe('My Window');
     expect(snapshot.session?.windows[1].customName).toBeUndefined();
     // lastSnapshot 保持原始数据，不被 overlay 污染
-    expect(server.connections.get('device-a').lastSnapshot.session.windows[0].customName)
-      .toBeUndefined();
+    expect(
+      server.connections.get('device-a').lastSnapshot.session.windows[0].customName
+    ).toBeUndefined();
   });
 
   test('empty name clears the overlay', () => {
@@ -796,5 +800,515 @@ describe('WebSocketServer window custom names', () => {
 
     const snapshot = decodeLastSnapshot(ws);
     expect(snapshot.session?.windows[0].customName).toBe('Persisted');
+  });
+});
+
+describe('WebSocketServer site theme propagation', () => {
+  function createStyleRecorder() {
+    const recorder = {
+      setWindowStyleCalls: [] as string[],
+      runtime: {
+        setWindowStyle(style: string) {
+          recorder.setWindowStyleCalls.push(style);
+        },
+      },
+    };
+    return recorder;
+  }
+
+  function setupStyleEntry(
+    server: any,
+    deviceId: string,
+    runtime: ReturnType<typeof createStyleRecorder>['runtime']
+  ) {
+    server.connections.set(deviceId, {
+      runtime,
+      detachRuntime: () => {},
+      clients: new Set(),
+      lastSnapshot: null,
+      snapshotTimer: null,
+      snapshotPollTimer: null,
+      reconnectAttempts: 0,
+      reconnectTimer: null,
+    });
+  }
+
+  test('handleSiteThemeChange applies window-style to all connected devices', () => {
+    const server = new WebSocketServer() as any;
+    const recorderA = createStyleRecorder();
+    const recorderB = createStyleRecorder();
+    setupStyleEntry(server, 'device-a', recorderA.runtime);
+    setupStyleEntry(server, 'device-b', recorderB.runtime);
+
+    server.handleSiteThemeChange('light');
+
+    const expectedLight = 'fg=#616161,bg=#e1e1e1';
+    expect(recorderA.setWindowStyleCalls).toEqual([expectedLight]);
+    expect(recorderB.setWindowStyleCalls).toEqual([expectedLight]);
+  });
+
+  test('handleSiteThemeChange skips devices without connection entry', () => {
+    const server = new WebSocketServer() as any;
+    const recorderA = createStyleRecorder();
+    setupStyleEntry(server, 'device-a', recorderA.runtime);
+    // device-b 没有 entry，不应抛错
+
+    server.handleSiteThemeChange('light');
+
+    expect(recorderA.setWindowStyleCalls).toEqual(['fg=#616161,bg=#e1e1e1']);
+  });
+
+  test('handleSiteThemeChange dark uses dark theme colors', () => {
+    const server = new WebSocketServer() as any;
+    const recorder = createStyleRecorder();
+    setupStyleEntry(server, 'device-a', recorder.runtime);
+
+    server.handleSiteThemeChange('dark');
+
+    expect(recorder.setWindowStyleCalls).toEqual(['fg=#d0d0d0,bg=#262626']);
+  });
+
+  test('handleSiteThemeChange ignores invalid theme value', () => {
+    const server = new WebSocketServer() as any;
+    const recorder = createStyleRecorder();
+    setupStyleEntry(server, 'device-a', recorder.runtime);
+
+    server.handleSiteThemeChange('blue' as any);
+
+    expect(recorder.setWindowStyleCalls).toEqual([]);
+  });
+
+  test('handleSiteThemeChange updates currentTheme', () => {
+    const server = new WebSocketServer() as any;
+    expect(server.currentTheme).toBeNull();
+
+    server.handleSiteThemeChange('light');
+    expect(server.currentTheme).toBe('light');
+
+    server.handleSiteThemeChange('dark');
+    expect(server.currentTheme).toBe('dark');
+  });
+
+  test('applyThemeToDevice applies current theme to a single device', () => {
+    const server = new WebSocketServer() as any;
+    server.currentTheme = 'light';
+    const recorder = createStyleRecorder();
+    setupStyleEntry(server, 'device-a', recorder.runtime);
+
+    server.applyThemeToDevice('device-a');
+
+    expect(recorder.setWindowStyleCalls).toEqual(['fg=#616161,bg=#e1e1e1']);
+  });
+
+  test('applyThemeToDevice skips when no connection entry', () => {
+    const server = new WebSocketServer() as any;
+    server.currentTheme = 'dark';
+    // 不应抛错
+    server.applyThemeToDevice('device-missing');
+  });
+
+  test('applyThemeToDevice skips when currentTheme is null', () => {
+    const server = new WebSocketServer() as any;
+    server.currentTheme = null;
+    const recorder = createStyleRecorder();
+    setupStyleEntry(server, 'device-a', recorder.runtime);
+
+    server.applyThemeToDevice('device-a');
+
+    expect(recorder.setWindowStyleCalls).toEqual([]);
+  });
+
+  test('createDeviceConnectionEntry applies current theme after connect', async () => {
+    const server = new WebSocketServer() as any;
+    server.currentTheme = 'light';
+    const recorder = createStyleRecorder();
+    const ws = {
+      data: { borshState: createBorshClientState() },
+      send() {},
+    } as any;
+    sessionStateStore.create(ws);
+
+    server.deps.acquireRuntime = async () =>
+      ({
+        async connect() {},
+        subscribe() {
+          return () => {};
+        },
+        requestSnapshot() {},
+        disconnect() {},
+        setWindowStyle(style: string) {
+          recorder.setWindowStyleCalls.push(style);
+        },
+      }) as any;
+
+    const entry = await server.createDeviceConnectionEntry('device-a', ws);
+    expect(entry).not.toBeNull();
+    expect(recorder.setWindowStyleCalls).toEqual(['fg=#616161,bg=#e1e1e1']);
+  });
+
+  test('broadcastThemeChange signals all panes of connected devices', () => {
+    const signaled: Array<[string, 'dark' | 'light']> = [];
+    const server = new WebSocketServer() as any;
+    const runtime = {
+      signalThemeChange(paneId: string, theme: 'dark' | 'light') {
+        signaled.push([paneId, theme]);
+      },
+    };
+    server.connections.set('device-a', {
+      runtime,
+      detachRuntime: () => {},
+      clients: new Set(),
+      lastSnapshot: {
+        deviceId: 'device-a',
+        session: {
+          id: '$1',
+          name: 'tmex',
+          windows: [
+            {
+              id: '@1',
+              name: 'w1',
+              index: 0,
+              active: true,
+              panes: [
+                {
+                  id: '%0',
+                  windowId: '@1',
+                  index: 0,
+                  title: 't',
+                  active: true,
+                  width: 80,
+                  height: 24,
+                },
+              ],
+            },
+            {
+              id: '@2',
+              name: 'w2',
+              index: 1,
+              active: false,
+              panes: [
+                {
+                  id: '%1',
+                  windowId: '@2',
+                  index: 0,
+                  title: 't',
+                  active: true,
+                  width: 80,
+                  height: 24,
+                },
+              ],
+            },
+          ],
+        },
+      },
+      snapshotTimer: null,
+      snapshotPollTimer: null,
+      reconnectAttempts: 0,
+      reconnectTimer: null,
+    });
+
+    server.broadcastThemeChange('dark');
+
+    expect(signaled).toEqual([
+      ['%0', 'dark'],
+      ['%1', 'dark'],
+    ]);
+  });
+
+  test('broadcastThemeChange deduplicates same theme within 1s', () => {
+    const signaled: Array<[string, 'dark' | 'light']> = [];
+    const server = new WebSocketServer() as any;
+    const runtime = {
+      signalThemeChange(paneId: string, theme: 'dark' | 'light') {
+        signaled.push([paneId, theme]);
+      },
+    };
+    server.connections.set('device-a', {
+      runtime,
+      detachRuntime: () => {},
+      clients: new Set(),
+      lastSnapshot: {
+        deviceId: 'device-a',
+        session: {
+          id: '$1',
+          name: 'tmex',
+          windows: [
+            {
+              id: '@1',
+              name: 'w1',
+              index: 0,
+              active: true,
+              panes: [
+                {
+                  id: '%0',
+                  windowId: '@1',
+                  index: 0,
+                  title: 't',
+                  active: true,
+                  width: 80,
+                  height: 24,
+                },
+              ],
+            },
+          ],
+        },
+      },
+      snapshotTimer: null,
+      snapshotPollTimer: null,
+      reconnectAttempts: 0,
+      reconnectTimer: null,
+    });
+
+    server.broadcastThemeChange('dark');
+    server.broadcastThemeChange('dark');
+
+    expect(signaled).toEqual([['%0', 'dark']]);
+  });
+
+  test('broadcastThemeChange allows different theme immediately', () => {
+    const signaled: Array<[string, 'dark' | 'light']> = [];
+    const server = new WebSocketServer() as any;
+    const runtime = {
+      signalThemeChange(paneId: string, theme: 'dark' | 'light') {
+        signaled.push([paneId, theme]);
+      },
+    };
+    server.connections.set('device-a', {
+      runtime,
+      detachRuntime: () => {},
+      clients: new Set(),
+      lastSnapshot: {
+        deviceId: 'device-a',
+        session: {
+          id: '$1',
+          name: 'tmex',
+          windows: [
+            {
+              id: '@1',
+              name: 'w1',
+              index: 0,
+              active: true,
+              panes: [
+                {
+                  id: '%0',
+                  windowId: '@1',
+                  index: 0,
+                  title: 't',
+                  active: true,
+                  width: 80,
+                  height: 24,
+                },
+              ],
+            },
+          ],
+        },
+      },
+      snapshotTimer: null,
+      snapshotPollTimer: null,
+      reconnectAttempts: 0,
+      reconnectTimer: null,
+    });
+
+    server.broadcastThemeChange('dark');
+    server.broadcastThemeChange('light');
+
+    expect(signaled).toEqual([
+      ['%0', 'dark'],
+      ['%0', 'light'],
+    ]);
+  });
+});
+
+describe('WebSocketServer resize × theme dedup', () => {
+  function createResizeThemeRecorder() {
+    const recorder = {
+      setWindowStyleCalls: [] as string[],
+      signalThemeChangeCalls: [] as Array<[string, 'dark' | 'light']>,
+      resizeWindowCalls: [] as Array<[string, number, number]>,
+      resizePaneCalls: [] as Array<[string, number, number]>,
+      runtime: {
+        setWindowStyle(style: string) {
+          recorder.setWindowStyleCalls.push(style);
+        },
+        signalThemeChange(paneId: string, theme: 'dark' | 'light') {
+          recorder.signalThemeChangeCalls.push([paneId, theme]);
+        },
+        resizeWindow(windowId: string, cols: number, rows: number) {
+          recorder.resizeWindowCalls.push([windowId, cols, rows]);
+        },
+        resizePane(paneId: string, cols: number, rows: number) {
+          recorder.resizePaneCalls.push([paneId, cols, rows]);
+        },
+      },
+    };
+    return recorder;
+  }
+
+  function setupEntryWithSnapshot(
+    server: any,
+    deviceId: string,
+    runtime: ReturnType<typeof createResizeThemeRecorder>['runtime']
+  ) {
+    server.connections.set(deviceId, {
+      runtime,
+      detachRuntime: () => {},
+      clients: new Set(),
+      lastSnapshot: {
+        deviceId,
+        session: {
+          id: '$1',
+          name: 'tmex',
+          windows: [
+            {
+              id: '@1',
+              name: 'w1',
+              index: 0,
+              active: true,
+              panes: [
+                {
+                  id: '%0',
+                  windowId: '@1',
+                  index: 0,
+                  title: 't',
+                  active: true,
+                  width: 80,
+                  height: 24,
+                },
+              ],
+            },
+          ],
+        },
+      },
+      snapshotTimer: null,
+      snapshotPollTimer: null,
+      reconnectAttempts: 0,
+      reconnectTimer: null,
+    });
+  }
+
+  test('handleSetWindowStyle triggers broadcastThemeChange when theme differs from lastBroadcastTheme', () => {
+    const server = new WebSocketServer() as any;
+    server.currentTheme = 'dark';
+    const recorder = createResizeThemeRecorder();
+    setupEntryWithSnapshot(server, 'device-a', recorder.runtime);
+
+    server.handleSetWindowStyle('device-a', 'fg=#d0d0d0,bg=#262626');
+
+    expect(recorder.setWindowStyleCalls).toEqual(['fg=#d0d0d0,bg=#262626']);
+    expect(recorder.signalThemeChangeCalls).toEqual([['%0', 'dark']]);
+  });
+
+  test('handleSetWindowStyle skips broadcastThemeChange when theme unchanged (resize path dedup)', () => {
+    const server = new WebSocketServer() as any;
+    server.currentTheme = 'dark';
+    const recorder = createResizeThemeRecorder();
+    setupEntryWithSnapshot(server, 'device-a', recorder.runtime);
+
+    server.handleSetWindowStyle('device-a', 'fg=#d0d0d0,bg=#262626');
+    expect(recorder.signalThemeChangeCalls).toHaveLength(1);
+
+    server.handleSetWindowStyle('device-a', 'fg=#d0d0d0,bg=#262626');
+    expect(recorder.signalThemeChangeCalls).toHaveLength(1);
+  });
+
+  test('handleSetWindowStyle broadcasts when theme changes between calls', () => {
+    const server = new WebSocketServer() as any;
+    const recorder = createResizeThemeRecorder();
+    setupEntryWithSnapshot(server, 'device-a', recorder.runtime);
+
+    server.currentTheme = 'dark';
+    server.handleSetWindowStyle('device-a', 'fg=#d0d0d0,bg=#262626');
+    server.currentTheme = 'light';
+    server.handleSetWindowStyle('device-a', 'fg=#616161,bg=#e1e1e1');
+
+    expect(recorder.signalThemeChangeCalls).toEqual([
+      ['%0', 'dark'],
+      ['%0', 'light'],
+    ]);
+  });
+
+  test('handleSetWindowStyle skips broadcast when currentTheme is null', () => {
+    const server = new WebSocketServer() as any;
+    server.currentTheme = null;
+    const recorder = createResizeThemeRecorder();
+    setupEntryWithSnapshot(server, 'device-a', recorder.runtime);
+
+    server.handleSetWindowStyle('device-a', 'fg=#d0d0d0,bg=#262626');
+
+    expect(recorder.setWindowStyleCalls).toEqual(['fg=#d0d0d0,bg=#262626']);
+    expect(recorder.signalThemeChangeCalls).toEqual([]);
+  });
+
+  test('handleTermResize deduplicates same cols/rows', () => {
+    const server = new WebSocketServer() as any;
+    const recorder = createResizeThemeRecorder();
+    setupEntryWithSnapshot(server, 'device-a', recorder.runtime);
+
+    server.handleTermResize('device-a', '%0', 80, 24);
+    server.handleTermResize('device-a', '%0', 80, 24);
+
+    expect(recorder.resizePaneCalls).toEqual([['%0', 80, 24]]);
+  });
+
+  test('handleTermResize allows different cols/rows', () => {
+    const server = new WebSocketServer() as any;
+    const recorder = createResizeThemeRecorder();
+    setupEntryWithSnapshot(server, 'device-a', recorder.runtime);
+
+    server.handleTermResize('device-a', '%0', 80, 24);
+    server.handleTermResize('device-a', '%0', 100, 30);
+
+    expect(recorder.resizePaneCalls).toEqual([
+      ['%0', 80, 24],
+      ['%0', 100, 30],
+    ]);
+  });
+
+  test('handleSiteThemeUpdate does not call resize-window or resize-pane', () => {
+    const server = new WebSocketServer() as any;
+    server.currentTheme = 'dark';
+    const recorder = createResizeThemeRecorder();
+    setupEntryWithSnapshot(server, 'device-a', recorder.runtime);
+    const ws = {
+      data: { borshState: createBorshClientState() },
+      send() {},
+    } as any;
+    sessionStateStore.create(ws);
+    server.connectedClients = new Set([ws]);
+
+    server.handleSiteThemeUpdate(ws, { theme: wsBorsh.SITE_THEME_LIGHT });
+
+    expect(recorder.resizeWindowCalls).toEqual([]);
+    expect(recorder.resizePaneCalls).toEqual([]);
+  });
+
+  test('handleSetWindowStyle does not call resize-window or resize-pane', () => {
+    const server = new WebSocketServer() as any;
+    server.currentTheme = 'dark';
+    const recorder = createResizeThemeRecorder();
+    setupEntryWithSnapshot(server, 'device-a', recorder.runtime);
+
+    server.handleSetWindowStyle('device-a', 'fg=#d0d0d0,bg=#262626');
+
+    expect(recorder.resizeWindowCalls).toEqual([]);
+    expect(recorder.resizePaneCalls).toEqual([]);
+  });
+
+  test('releaseConnectionEntry clears per-device dedup caches', () => {
+    const server = new WebSocketServer() as any;
+    server.currentTheme = 'dark';
+    const recorder = createResizeThemeRecorder();
+    setupEntryWithSnapshot(server, 'device-a', recorder.runtime);
+
+    server.handleSetWindowStyle('device-a', 'fg=#d0d0d0,bg=#262626');
+    server.handleTermResize('device-a', '%0', 80, 24);
+    expect(server.lastBroadcastTheme.get('device-a')).toBe('dark');
+    expect(server.lastBroadcastSize.get('device-a')).toEqual({ cols: 80, rows: 24 });
+
+    const entry = server.connections.get('device-a');
+    server.releaseConnectionEntry('device-a', entry);
+    expect(server.lastBroadcastTheme.has('device-a')).toBe(false);
+    expect(server.lastBroadcastSize.has('device-a')).toBe(false);
+    expect(server.themeSignalLast.has('device-a')).toBe(false);
   });
 });

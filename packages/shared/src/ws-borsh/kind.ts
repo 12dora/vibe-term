@@ -63,6 +63,9 @@ export const KIND_AGENT_EVENT = 0x0603;
 // ========== Watch (0x0700-0x07FF) ==========
 export const KIND_WATCH_EVENT = 0x0701;
 
+// ========== 站点设置 (0x0800-0x08FF) ==========
+export const KIND_SITE_THEME_UPDATE = 0x0801;
+
 // ========== Kind 有效性检查 ==========
 const VALID_KINDS = new Set<number>([
   KIND_HELLO_C2S,
@@ -110,6 +113,7 @@ const VALID_KINDS = new Set<number>([
   KIND_AGENT_UNSUBSCRIBE,
   KIND_AGENT_EVENT,
   KIND_WATCH_EVENT,
+  KIND_SITE_THEME_UPDATE,
 ]);
 
 export function isValidKind(kind: number): boolean {
@@ -163,6 +167,7 @@ export function kindToString(kind: number): string {
     [KIND_AGENT_UNSUBSCRIBE]: 'AGENT_UNSUBSCRIBE',
     [KIND_AGENT_EVENT]: 'AGENT_EVENT',
     [KIND_WATCH_EVENT]: 'WATCH_EVENT',
+    [KIND_SITE_THEME_UPDATE]: 'SITE_THEME_UPDATE',
   };
   return kindMap[kind] ?? `UNKNOWN(0x${kind.toString(16).padStart(4, '0')})`;
 }

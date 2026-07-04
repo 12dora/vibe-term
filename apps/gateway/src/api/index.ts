@@ -61,6 +61,7 @@ import { handleLlmApiRequest } from './llm';
 import { handleSystemApiRequest } from './system';
 import { normalizeTerminalShortcutsInput } from './terminal-shortcuts';
 import { handleDeviceTestConnection } from './test-connection';
+import { handleThemeApiRequest } from './theme';
 import { handleWatchApiRequest } from './watch';
 
 function shouldReconnectPushSupervisor(existing: Device, updates: Partial<Device>): boolean {
@@ -210,6 +211,12 @@ export function handleApiRequest(
   }
   if (path === '/api/settings/terminal-shortcuts' && req.method === 'PATCH') {
     return handleUpdateTerminalShortcuts(req);
+  }
+  if (path === '/api/settings/theme' && (req.method === 'GET' || req.method === 'POST')) {
+    const themeResponse = handleThemeApiRequest(req, path);
+    if (themeResponse) {
+      return themeResponse;
+    }
   }
   if (path === '/api/settings/restart' && req.method === 'POST') {
     return handleRestartGateway();

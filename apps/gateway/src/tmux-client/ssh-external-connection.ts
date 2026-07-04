@@ -35,8 +35,8 @@ import {
   parseWindowSnapshotRow,
   splitSnapshotFields,
 } from './snapshot-format';
-import { resolveSshConnectConfig } from './ssh-connect-config';
 import { buildSshBootstrapScript, parseSshBootstrapOutput } from './ssh-bootstrap';
+import { resolveSshConnectConfig } from './ssh-connect-config';
 import { TmuxTargetMissingError, isTargetMissingMessage } from './target-missing';
 import { isControlModeSupported, parseTmuxVersion } from './tmux-version';
 import { resolveTmuxWindowStyle } from './window-style';
@@ -179,6 +179,17 @@ export class SshExternalTmuxConnection {
     }
   }
 
+  // 主题变化通知：曾通过 stdin 注入 ESC[?997;2n + ESC[I 触发 pane 内 TUI 重查 OSC 11，
+  // 但空闲 shell 的 readline 会把 DECRQM 应答回显到 pane 屏幕（显示 "997;2n"），污染
+  // layout。tmux 原生 OSC 11 代答已由 window-style 路径覆盖，stdin 注入属多余且有害的
+  // best-effort，故移除注入逻辑，保留接口为 no-op 以兼容调用方。
+  // 主题同步改由 window-style（T8）+ 新 agent 启动时自然探测承担。
+  signalThemeChange(_paneId: string, _theme: 'dark' | 'light'): void {
+    if (!this.connected) {
+      return;
+    }
+  }
+
   resizePane(paneId: string, cols: number, rows: number): void {
     if (!this.connected) {
       return;
@@ -224,7 +235,13 @@ export class SshExternalTmuxConnection {
       return;
     }
 
-    const argv = ['new-window', '-t', this.sessionName, '-c', cwd ?? this.resolveDefaultWorkingDir()];
+    const argv = [
+      'new-window',
+      '-t',
+      this.sessionName,
+      '-c',
+      cwd ?? this.resolveDefaultWorkingDir(),
+    ];
     if (name) {
       argv.push('-n', name);
     }
@@ -305,7 +322,11 @@ export class SshExternalTmuxConnection {
 
   // 拖拽重排：把 src pane 移到 dst pane 的某一侧。
   // move-pane -h 产生左右排列、-v 上下排列，-b 放在目标之前（左/上）
-  movePane(srcPaneId: string, dstPaneId: string, position: 'left' | 'right' | 'top' | 'bottom'): void {
+  movePane(
+    srcPaneId: string,
+    dstPaneId: string,
+    position: 'left' | 'right' | 'top' | 'bottom'
+  ): void {
     if (!this.connected) {
       return;
     }
@@ -320,7 +341,6 @@ export class SshExternalTmuxConnection {
       this.callbacks.onError(error);
     });
   }
-
 
   breakPane(paneId: string): void {
     if (!this.connected) {
@@ -560,7 +580,14 @@ export class SshExternalTmuxConnection {
       return;
     }
 
-    await this.runTmux(['new-session', '-d', '-c', this.resolveDefaultWorkingDir(), '-s', this.sessionName]);
+    await this.runTmux([
+      'new-session',
+      '-d',
+      '-c',
+      this.resolveDefaultWorkingDir(),
+      '-s',
+      this.sessionName,
+    ]);
   }
 
   private async configureSessionOptions(): Promise<void> {
@@ -572,7 +599,14 @@ export class SshExternalTmuxConnection {
       'allow-passthrough',
       config.tmuxAllowPassthrough ? 'on' : 'off',
     ]);
-    await this.runTmuxAllowFailure(['set-option', '-t', this.sessionName, '-g', 'extended-keys', 'on']);
+    await this.runTmuxAllowFailure([
+      'set-option',
+      '-t',
+      this.sessionName,
+      '-g',
+      'extended-keys',
+      'on',
+    ]);
     await this.runTmuxAllowFailure([
       'set-option',
       '-t',
@@ -583,7 +617,14 @@ export class SshExternalTmuxConnection {
     ]);
     // 同 local 版本：control client 自带 focused 标志，focus-events 必须关闭，
     // 且 control client detach 不能触发 destroy-unattached。
-    await this.runTmuxAllowFailure(['set-option', '-t', this.sessionName, '-g', 'focus-events', 'off']);
+    await this.runTmuxAllowFailure([
+      'set-option',
+      '-t',
+      this.sessionName,
+      '-g',
+      'focus-events',
+      'off',
+    ]);
     await this.runTmuxAllowFailure([
       'set-option',
       '-t',
@@ -641,6 +682,7 @@ export class SshExternalTmuxConnection {
     if (!windowStyle) {
       return;
     }
+    const startedAt = config.isDev ? Date.now() : 0;
     await this.runTmuxAllowFailure([
       'set-hook',
       '-t',
@@ -656,21 +698,35 @@ export class SshExternalTmuxConnection {
       '#{window_id}',
     ]);
     if (windows.exitCode !== 0) {
+      if (config.isDev) {
+        console.debug(
+          `[ssh] configureWindowStyle deviceId=${this.deviceId} elapsed=${Date.now() - startedAt}ms (list-windows failed)`
+        );
+      }
       return;
     }
+    const windowIds: string[] = [];
     for (const line of windows.stdout.split('\n')) {
       const windowId = line.trim();
       if (!windowId) {
         continue;
       }
-      await this.runTmuxAllowFailure([
-        'set-option',
-        '-w',
-        '-t',
-        windowId,
-        'window-style',
-        windowStyle,
-      ]);
+      windowIds.push(windowId);
+    }
+    // 合并所有 window 的 set-option 成一条 shell 命令，减少 SSH round-trip（N 次 → 1 次）。
+    if (windowIds.length > 0) {
+      const setOptions = windowIds
+        .map(
+          (id) =>
+            `${quoteShellArg(this.tmuxBin)} set-option -w -t ${quoteShellArg(id)} window-style ${quoteShellArg(windowStyle)}`
+        )
+        .join(' && ');
+      await this.runShellAllowFailure(setOptions);
+    }
+    if (config.isDev) {
+      console.debug(
+        `[ssh] configureWindowStyle deviceId=${this.deviceId} windows=${windowIds.length} elapsed=${Date.now() - startedAt}ms`
+      );
     }
   }
 
@@ -958,7 +1014,14 @@ export class SshExternalTmuxConnection {
     );
 
     if (count <= 1) {
-      await this.runTmux(['new-window', '-d', '-t', this.sessionName, '-c', this.resolveDefaultWorkingDir()]);
+      await this.runTmux([
+        'new-window',
+        '-d',
+        '-t',
+        this.sessionName,
+        '-c',
+        this.resolveDefaultWorkingDir(),
+      ]);
     }
 
     await this.runAndRefresh(['kill-window', '-t', windowId], true);
@@ -1075,9 +1138,8 @@ export class SshExternalTmuxConnection {
 
   private async capturePaneHistory(paneId: string): Promise<void> {
     const screenInfo = parsePaneScreenInfo(
-      (
-        await this.runTmux(['display-message', '-p', '-t', paneId, PANE_SCREEN_INFO_FORMAT], true)
-      ).stdout
+      (await this.runTmux(['display-message', '-p', '-t', paneId, PANE_SCREEN_INFO_FORMAT], true))
+        .stdout
     );
     const alternateScreen = screenInfo.alternateScreen;
     const normal = (
@@ -1130,18 +1192,25 @@ export class SshExternalTmuxConnection {
         '-F',
         WINDOW_SNAPSHOT_FORMAT,
       ]),
-      this.runTmuxAllowFailure(['list-panes', '-s', '-t', this.sessionName, '-F', PANE_SNAPSHOT_FORMAT]),
+      this.runTmuxAllowFailure([
+        'list-panes',
+        '-s',
+        '-t',
+        this.sessionName,
+        '-F',
+        PANE_SNAPSHOT_FORMAT,
+      ]),
     ]);
 
     if (sessionRes.exitCode !== 0 || windowsRes.exitCode !== 0 || panesRes.exitCode !== 0) {
       const stderrBlob = `${sessionRes.stderr}\n${windowsRes.stderr}\n${panesRes.stderr}`;
-      if (
-        this.connected &&
-        !this.manualDisconnect &&
-        this.isTmuxServerGoneMessage(stderrBlob)
-      ) {
-        const message = stderrBlob.trim().split(/\r?\n/).find((line) => line.trim())?.trim() ??
-          'tmux server gone';
+      if (this.connected && !this.manualDisconnect && this.isTmuxServerGoneMessage(stderrBlob)) {
+        const message =
+          stderrBlob
+            .trim()
+            .split(/\r?\n/)
+            .find((line) => line.trim())
+            ?.trim() ?? 'tmux server gone';
         console.warn(`[ssh] tmux server gone during snapshot on ${this.deviceId}: ${message}`);
         updateDeviceRuntimeStatus(this.deviceId, {
           lastSeenAt: new Date().toISOString(),
@@ -1531,7 +1600,9 @@ export class SshExternalTmuxConnection {
         stream.destroy();
       },
       write: (data: string) => {
-        try { stream.write(data); } catch {}
+        try {
+          stream.write(data);
+        } catch {}
       },
     };
   }

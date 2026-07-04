@@ -51,9 +51,16 @@ export {
   KIND_AGENT_UNSUBSCRIBE,
   KIND_AGENT_EVENT,
   KIND_WATCH_EVENT,
+  KIND_SITE_THEME_UPDATE,
   isValidKind,
   kindToString,
 } from './kind';
+
+// ========== 站点主题枚举值 ==========
+export {
+  SITE_THEME_DARK,
+  SITE_THEME_LIGHT,
+} from './schema';
 
 // ========== Agent/Watch 事件常量与 payload 类型 ==========
 export {

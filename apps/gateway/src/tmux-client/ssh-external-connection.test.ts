@@ -47,7 +47,7 @@ function isConfigureSessionOptionPayload(payload: string, session: string): bool
     payload.includes(`'set-environment' '-t' '${session}' 'COLORTERM' 'truecolor'`) ||
     payload.includes(`'set-option' '-t' '${session}' 'default-path'`) ||
     payload.includes(`'set-hook' '-t' '${session}' 'after-new-window'`) ||
-    payload.includes("'set-option' '-w' '-t' '@1' 'window-style' 'fg=#d0d0d0,bg=#262626'")
+    payload.includes("set-option -w -t '@1' window-style 'fg=#d0d0d0,bg=#262626'")
   );
 }
 
@@ -73,13 +73,21 @@ function respondToPayload(
   ) {
     return { stdout: '@99\n', exitCode: 0 };
   }
-  if (payload.includes(`'new-window' '-t' '${session}' '-c'`) || payload.includes(`'new-window' '-d' '-t' '${session}' '-c'`)) {
+  if (
+    payload.includes(`'new-window' '-t' '${session}' '-c'`) ||
+    payload.includes(`'new-window' '-d' '-t' '${session}' '-c'`)
+  ) {
     return { stdout: '', exitCode: 0 };
   }
-  if (payload.includes(`'last-window' '-t' '${session}'`) || payload.includes("'kill-window' '-t' '@99'")) {
+  if (
+    payload.includes(`'last-window' '-t' '${session}'`) ||
+    payload.includes("'kill-window' '-t' '@99'")
+  ) {
     return { stdout: '', exitCode: 0 };
   }
-  if (payload.includes(`'display-message' '-p' '-t' '${session}' '#{session_id}|#{session_name}'`)) {
+  if (
+    payload.includes(`'display-message' '-p' '-t' '${session}' '#{session_id}|#{session_name}'`)
+  ) {
     return { stdout: `$1|${session}\n`, exitCode: 0 };
   }
   if (payload.includes(`'list-windows' '-t' '${session}' '-F' '#{window_id}'`)) {
@@ -162,7 +170,7 @@ class FakeClient extends EventEmitter {
       channel = new FakeChannel();
       // control channel：收到 attach 命令后回送 greeting 块，解除 attach-ready 等待
       channel.onWrite = (data) => {
-        if (data.includes("-C attach-session")) {
+        if (data.includes('-C attach-session')) {
           queueMicrotask(() => {
             channel.emit('data', Buffer.from('%begin 1 1 0\n%end 1 1 0\n%session-changed $1 s\n'));
           });
@@ -675,9 +683,7 @@ describe('SshExternalTmuxConnection', () => {
     );
 
     // 未连接时 fail-fast
-    await expect(connection.capturePaneText('%1')).rejects.toThrow(
-      /tmux connection not available/
-    );
+    await expect(connection.capturePaneText('%1')).rejects.toThrow(/tmux connection not available/);
 
     await connection.connect();
 
@@ -706,9 +712,7 @@ describe('SshExternalTmuxConnection', () => {
     ).toBe(false);
 
     connection.disconnect();
-    await expect(connection.capturePaneText('%1')).rejects.toThrow(
-      /tmux connection not available/
-    );
+    await expect(connection.capturePaneText('%1')).rejects.toThrow(/tmux connection not available/);
   });
 
   test('connect no longer provisions remote fifo dirs or hooks', async () => {
@@ -788,9 +792,10 @@ describe('SshExternalTmuxConnection', () => {
     await Bun.sleep(100);
 
     expect(
-      writes.some((payload) =>
-        payload.includes(`'new-window' '-t' '${session}' '-c' '/custom/remote/path'`) &&
-        payload.includes("'-n' 'test-win'")
+      writes.some(
+        (payload) =>
+          payload.includes(`'new-window' '-t' '${session}' '-c' '/custom/remote/path'`) &&
+          payload.includes("'-n' 'test-win'")
       )
     ).toBe(true);
 
@@ -956,5 +961,250 @@ describe('SshExternalTmuxConnection', () => {
     ).toBe(true);
 
     connection.disconnect();
+  });
+
+  test('configureWindowStyle batches set-option into a single shell command to minimize SSH round-trips', async () => {
+    const session = 'tmex-ssh-batch-style';
+    const fakeClient = new FakeClient();
+    const writes: string[] = [];
+    setupCommandChannel(fakeClient, session, {
+      record: writes,
+      overrides: (payload) => {
+        if (payload.includes(`'has-session' '-t' '${session}'`)) {
+          return { stdout: "can't find session\n", exitCode: 1 };
+        }
+        if (payload.includes(`'new-session' '-d' '-c' '/home/alice' '-s' '${session}'`)) {
+          return { stdout: '', exitCode: 0 };
+        }
+        if (payload.includes(`'list-windows' '-t' '${session}' '-F' '#{window_id}'`)) {
+          return { stdout: '@1\n@2\n@3\n', exitCode: 0 };
+        }
+        if (payload.includes('set-option -w -t') && payload.includes('window-style')) {
+          return { stdout: '', exitCode: 0 };
+        }
+        return null;
+      },
+    });
+
+    const connection = new SshExternalTmuxConnection(createCallbacks({}), {
+      getDevice: () => createDevice(session),
+      decrypt: async () => 'secret',
+      createClient: () => fakeClient as unknown as Client,
+    });
+
+    await connection.connect();
+
+    const batchedSetOptionWrites = writes.filter(
+      (payload) =>
+        payload.includes('set-option -w -t') &&
+        payload.includes('window-style') &&
+        !payload.includes("'set-option'")
+    );
+    expect(batchedSetOptionWrites.length).toBe(1);
+    const batchedPayload = batchedSetOptionWrites[0];
+    if (!batchedPayload) {
+      throw new Error('batched set-option write missing');
+    }
+    expect(batchedPayload).toContain("'@1'");
+    expect(batchedPayload).toContain("'@2'");
+    expect(batchedPayload).toContain("'@3'");
+    expect(batchedPayload).toContain('&&');
+
+    connection.disconnect();
+  });
+
+  test('signalThemeChange is a no-op (stdin injection removed to avoid shell pollution)', async () => {
+    const session = 'tmex-ssh-theme-signal';
+    const fakeClient = new FakeClient();
+    const writes: string[] = [];
+    setupCommandChannel(fakeClient, session, {
+      record: writes,
+      overrides: (payload) => {
+        if (payload.includes("'send-keys' '-H' '-t' '%1'")) {
+          return { stdout: '', exitCode: 0 };
+        }
+        return null;
+      },
+    });
+
+    const connection = new SshExternalTmuxConnection(createCallbacks({}), {
+      getDevice: () => createDevice(session),
+      decrypt: async () => 'secret',
+      createClient: () => fakeClient as unknown as Client,
+    });
+
+    await connection.connect();
+    writes.length = 0;
+
+    connection.signalThemeChange('%1', 'light');
+    connection.signalThemeChange('%1', 'dark');
+    await Bun.sleep(50);
+
+    // stdin 注入已移除：不应有任何 send-keys -H 调用
+    const sendKeysWrites = writes.filter((w) => w.includes("'send-keys' '-H'"));
+    expect(sendKeysWrites).toHaveLength(0);
+
+    connection.disconnect();
+  });
+
+  test('setWindowStyle triggers configureWindowStyle with custom style value', async () => {
+    const session = 'tmex-ssh-set-style';
+    const fakeClient = new FakeClient();
+    const writes: string[] = [];
+    setupCommandChannel(fakeClient, session, {
+      record: writes,
+      overrides: (payload) => {
+        if (payload.includes('set-option -w -t') && payload.includes('window-style')) {
+          return { stdout: '', exitCode: 0 };
+        }
+        return null;
+      },
+    });
+
+    const connection = new SshExternalTmuxConnection(createCallbacks({}), {
+      getDevice: () => createDevice(session),
+      decrypt: async () => 'secret',
+      createClient: () => fakeClient as unknown as Client,
+    });
+
+    await connection.connect();
+    writes.length = 0;
+
+    connection.setWindowStyle('fg=#616161,bg=#e1e1e1');
+    await waitFor(() =>
+      writes.some((w) => w.includes('window-style') && w.includes('#e1e1e1')) ? true : null
+    );
+
+    const styleWrite = writes.find(
+      (w) => w.includes('set-option -w -t') && w.includes("'fg=#616161,bg=#e1e1e1'")
+    );
+    expect(styleWrite).toBeDefined();
+    if (styleWrite) {
+      expect(styleWrite).toContain("'@1'");
+    }
+
+    connection.disconnect();
+  });
+
+  test('reconnect re-applies configureWindowStyle to restore OSC 11 reply state', async () => {
+    const session = 'tmex-ssh-reconnect-style';
+    const writes: string[] = [];
+    let listWindowsCallCount = 0;
+    let connectCount = 0;
+    const createClient = (): FakeClient => {
+      const fakeClient = new FakeClient();
+      setupCommandChannel(fakeClient, session, {
+        record: writes,
+        overrides: (payload) => {
+          if (payload.includes(`'has-session' '-t' '${session}'`)) {
+            return { stdout: '', exitCode: 0 };
+          }
+          if (payload.includes(`'list-windows' '-t' '${session}' '-F' '#{window_id}'`)) {
+            listWindowsCallCount += 1;
+            return { stdout: '@1\n', exitCode: 0 };
+          }
+          if (payload.includes('set-option -w -t') && payload.includes('window-style')) {
+            return { stdout: '', exitCode: 0 };
+          }
+          return null;
+        },
+      });
+      return fakeClient;
+    };
+
+    const connection = new SshExternalTmuxConnection(createCallbacks({}), {
+      getDevice: () => createDevice(session),
+      decrypt: async () => 'secret',
+      createClient: () => createClient() as unknown as Client,
+    });
+
+    await connection.connect();
+    connectCount += 1;
+    const firstCallCount = listWindowsCallCount;
+    expect(firstCallCount).toBeGreaterThanOrEqual(1);
+
+    const styleWritesAfterConnect = writes.filter(
+      (w) => w.includes('set-option -w -t') && w.includes('window-style')
+    );
+    expect(styleWritesAfterConnect.length).toBeGreaterThanOrEqual(1);
+
+    connection.disconnect();
+    await Bun.sleep(50);
+
+    await connection.connect();
+    connectCount += 1;
+    expect(connectCount).toBe(2);
+    expect(listWindowsCallCount).toBeGreaterThan(firstCallCount);
+
+    const allStyleWrites = writes.filter(
+      (w) => w.includes('set-option -w -t') && w.includes('window-style')
+    );
+    expect(allStyleWrites.length).toBeGreaterThanOrEqual(2);
+
+    connection.disconnect();
+  });
+
+  test('concurrent setWindowStyle calls on same connection are serialized via commandQueue without loss', async () => {
+    const session = 'tmex-ssh-concurrent-style';
+    const fakeClient = new FakeClient();
+    const writes: string[] = [];
+    setupCommandChannel(fakeClient, session, {
+      record: writes,
+      overrides: (payload) => {
+        if (payload.includes('set-option -w -t') && payload.includes('window-style')) {
+          return { stdout: '', exitCode: 0 };
+        }
+        return null;
+      },
+    });
+
+    const connection = new SshExternalTmuxConnection(createCallbacks({}), {
+      getDevice: () => createDevice(session),
+      decrypt: async () => 'secret',
+      createClient: () => fakeClient as unknown as Client,
+    });
+
+    await connection.connect();
+    writes.length = 0;
+
+    const styles = ['fg=#616161,bg=#e1e1e1', 'fg=#d0d0d0,bg=#262626', 'fg=#616161,bg=#e1e1e1'];
+    for (const style of styles) {
+      connection.setWindowStyle(style);
+    }
+
+    await waitFor(() => {
+      const styleWrites = writes.filter(
+        (w) => w.includes('set-option -w -t') && w.includes('window-style')
+      );
+      return styleWrites.length >= 3 ? true : null;
+    });
+
+    const styleWrites = writes.filter(
+      (w) => w.includes('set-option -w -t') && w.includes('window-style')
+    );
+    expect(styleWrites.length).toBe(3);
+    expect(styleWrites[0]).toContain('#e1e1e1');
+    expect(styleWrites[1]).toContain('#262626');
+    expect(styleWrites[2]).toContain('#e1e1e1');
+
+    connection.disconnect();
+  });
+
+  test('signalThemeChange is a no-op when disconnected', async () => {
+    const session = 'tmex-ssh-signal-disconnected';
+    const fakeClient = new FakeClient();
+    const writes: string[] = [];
+    setupCommandChannel(fakeClient, session, { record: writes });
+
+    const connection = new SshExternalTmuxConnection(createCallbacks({}), {
+      getDevice: () => createDevice(session),
+      decrypt: async () => 'secret',
+      createClient: () => fakeClient as unknown as Client,
+    });
+
+    connection.signalThemeChange('%1', 'light');
+    await Bun.sleep(20);
+
+    expect(writes.some((w) => w.includes("'send-keys' '-H'"))).toBe(false);
   });
 });

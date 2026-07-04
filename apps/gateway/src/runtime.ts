@@ -12,6 +12,7 @@ import { telegramService } from './telegram/service';
 import { tmuxRuntimeRegistry } from './tmux-client/registry';
 import { primeLocalShellPath } from './tmux/local-shell-path';
 import { registerSnapshotLookup } from './tmux/snapshot-directory';
+import { registerThemeBroadcaster } from './tmux/theme-broadcaster';
 import { watchService } from './watch/service';
 import { weixinService } from './weixin/service';
 import { WebSocketServer } from './ws';
@@ -52,10 +53,20 @@ export async function createGatewayRuntime(
   sweepOrphanTransferTemps();
 
   const wsServer = new WebSocketServer();
+  wsServer.currentTheme = getSiteSettings().theme;
   connectionAlertNotifier.setBroadcaster((deviceId, payload) => {
     wsServer.broadcastDeviceError(deviceId, payload);
   });
   registerSnapshotLookup((deviceId) => wsServer.getLastSnapshot(deviceId));
+  registerThemeBroadcaster(
+    (theme) => {
+      wsServer.handleSiteThemeChange(theme);
+      wsServer.broadcastThemeChange(theme);
+    },
+    (theme) => {
+      wsServer.broadcastSiteThemeUpdateS2C(theme);
+    }
+  );
   await telegramService.refresh();
   await weixinService.refresh();
   await pushSupervisor.start();
@@ -108,6 +119,7 @@ export async function createGatewayRuntime(
     },
     async stop() {
       connectionAlertNotifier.setBroadcaster(null);
+      registerThemeBroadcaster(null);
       wsServer.closeAll();
       await watchService.stop();
       await agentSupervisor.stop();

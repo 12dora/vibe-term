@@ -119,6 +119,8 @@ export interface DeviceRuntimeStatus {
 
 // ==================== Site Settings ====================
 
+export type ThemeMode = 'dark' | 'light';
+
 export interface SiteSettings {
   siteName: string;
   siteUrl: string;
@@ -131,6 +133,7 @@ export interface SiteSettings {
   sshReconnectMaxRetries: number;
   sshReconnectDelaySeconds: number;
   language: LocaleCode;
+  theme: ThemeMode;
   updatedAt: string;
 }
 
@@ -301,6 +304,16 @@ export interface WsMessage<T = unknown> {
 
 export { b } from './ws-borsh';
 export * as wsBorsh from './ws-borsh';
+
+export {
+  TERMINAL_THEME_DARK,
+  TERMINAL_THEME_LIGHT,
+  type TerminalThemeColors,
+  type TerminalThemeName,
+  getOsc11ResponseColor,
+  getTerminalTheme,
+  getTmuxWindowStyle,
+} from './appearance';
 
 export {
   collectLayoutLeaves,

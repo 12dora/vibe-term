@@ -415,3 +415,20 @@ export const NotificationEventSchema = b.struct({
   paneTitle: OptionStringSchema,
   paneCurrentCommand: OptionStringSchema,
 });
+
+// ========== 站点设置 ==========
+
+// theme 枚举值：0=dark, 1=light。用 u8 而非 b.enum，遵循协议规范「不使用 b.enum 变体序号」。
+export const SITE_THEME_DARK = 0;
+export const SITE_THEME_LIGHT = 1;
+
+// C2S：客户端请求切换主题（不带 clientTimestamp，避免时钟漂移）
+export const SiteThemeUpdateC2SSchema = b.struct({
+  theme: b.u8(),
+});
+
+// S2C：服务端广播主题变更（serverTimestamp 由服务端 Date.now() 分配，严格递增）
+export const SiteThemeUpdateS2CSchema = b.struct({
+  theme: b.u8(),
+  serverTimestamp: b.u64(),
+});

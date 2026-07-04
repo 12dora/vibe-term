@@ -74,7 +74,7 @@ export default function SettingsPage() {
   const [activeTab, setActiveTab] = useState<SettingsTab>('general');
 
   const theme = useUIStore((state) => state.theme);
-  const setTheme = useUIStore((state) => state.setTheme);
+  const updateTheme = useSiteStore((state) => state.updateTheme);
   const isDark = theme === 'dark';
 
   // Site settings state
@@ -95,7 +95,7 @@ export default function SettingsPage() {
 
   const handleThemeChange = (checked: boolean) => {
     const nextTheme = checked ? 'dark' : 'light';
-    setTheme(nextTheme);
+    updateTheme(nextTheme);
     document.documentElement.classList.toggle('dark', nextTheme === 'dark');
   };
 

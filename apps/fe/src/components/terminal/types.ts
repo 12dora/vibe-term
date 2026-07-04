@@ -20,6 +20,7 @@ export interface TerminalProps {
   onData?: (data: string) => void;
   onResize: (cols: number, rows: number) => void;
   onSync: (cols: number, rows: number) => void;
+  onResizeSettled?: (cols: number, rows: number) => void;
   /** 拼接在终端容器最下方的内容（如快捷键栏），会占据终端可视区域下方的空间 */
   children?: ReactNode;
   /** 该 pane 是否为焦点（分屏下控制滚动条可见性） */

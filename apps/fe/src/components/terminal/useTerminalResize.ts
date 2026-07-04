@@ -16,6 +16,13 @@ interface UseTerminalResizeOptions {
   sizingMode?: 'report' | 'follow';
   onResize: (cols: number, rows: number) => void;
   onSync: (cols: number, rows: number) => void;
+  /**
+   * resize/sync 成功上报后附加触发（同 150ms 防抖节奏）。
+   * 用于 resize 路径附加发一次主题同步消息（KIND_TMUX_SET_WINDOW_STYLE），
+   * 让 gateway 重查 OSC 11 代答色，避免 resize 后 TUI 颜色与前端主题脱节。
+   * 仅在 reportSize 实际上报（非 short-circuit）时触发。
+   */
+  onResizeSettled?: (cols: number, rows: number) => void;
   /** 获取容器尺寸的回调函数，用于 fitAddon 失败时的回退计算 */
   getContainerRect?: () => { width: number; height: number } | null;
 }
@@ -28,6 +35,7 @@ export function useTerminalResize({
   sizingMode = 'report',
   onResize,
   onSync,
+  onResizeSettled,
   getContainerRect,
 }: UseTerminalResizeOptions) {
   const resizeRaf = useRef<number | null>(null);
@@ -44,6 +52,7 @@ export function useTerminalResize({
   // Use refs to store callbacks to avoid dependency cycles
   const onResizeRef = useRef(onResize);
   const onSyncRef = useRef(onSync);
+  const onResizeSettledRef = useRef(onResizeSettled);
 
   // Update refs when callbacks change
   useEffect(() => {
@@ -53,6 +62,10 @@ export function useTerminalResize({
   useEffect(() => {
     onSyncRef.current = onSync;
   }, [onSync]);
+
+  useEffect(() => {
+    onResizeSettledRef.current = onResizeSettled;
+  }, [onResizeSettled]);
 
   useEffect(() => {
     getContainerRectRef.current = getContainerRect;
@@ -153,6 +166,7 @@ export function useTerminalResize({
 
       lastReportedSize.current = { cols, rows };
       pendingLocalSize.current = { cols, rows, at: Date.now() };
+      onResizeSettledRef.current?.(cols, rows);
       return true;
     },
     // Only depend on stable values, not the callbacks

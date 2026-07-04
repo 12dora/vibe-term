@@ -289,6 +289,11 @@ export default function DevicePage() {
     [deviceId, resolvedPaneId]
   );
 
+  const handleResizeSettled = useCallback(() => {
+    if (!deviceId) return;
+    useTmuxStore.getState().syncThemeAfterResize(deviceId);
+  }, [deviceId]);
+
   const getSelectSize = useCallback(
     (targetWindowId?: string, targetPaneId?: string) => {
       const terminal = terminalRef.current;
@@ -1113,6 +1118,7 @@ export default function DevicePage() {
                     focusedTerminalRef={bindFocusedTerminalRef}
                     onUserSelectPane={handleUserSelectPane}
                     onWindowResize={handleResize}
+                    onWindowResizeSettled={handleResizeSettled}
                   />
                 </div>
                 {inputMode === 'direct' && (
@@ -1144,6 +1150,7 @@ export default function DevicePage() {
                   isSelectionInvalid={isSelectionInvalid}
                   onResize={handleResize}
                   onSync={handleSync}
+                  onResizeSettled={handleResizeSettled}
                 >
                   {/* direct 模式：快捷键栏拼在终端可视区域下方，与终端共用 seoul256 配色。
                       follow 键盘模式弹起时，外层 .kb-floating-shortcuts 按 --tmex-kb-shortcut-lift

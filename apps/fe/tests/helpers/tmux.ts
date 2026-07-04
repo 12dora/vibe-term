@@ -66,6 +66,28 @@ export function createTwoWindowSession(sessionName: string): {
   };
 }
 
+// 2×2 分屏：先水平 split 成左右两列，再对每列垂直 split，形成四个 pane。
+// pane 顺序：左上、左下、右上、右下（按 list-panes 默认顺序，可能因 tmux layout 重排）。
+export function createFourPaneSession(sessionName: string): {
+  paneIds: string[];
+  windowId: string;
+} {
+  ensureCleanSession(sessionName);
+  tmux(`new-session -d -s ${sessionName} "sh -lc 'echo PANE0_READY; exec sh'"`);
+  tmux(`split-window -h -t ${sessionName} "sh -lc 'echo PANE1_READY; exec sh'"`);
+  tmux(`split-window -v -t ${sessionName}.0 "sh -lc 'echo PANE2_READY; exec sh'"`);
+  tmux(`split-window -v -t ${sessionName}.1 "sh -lc 'echo PANE3_READY; exec sh'"`);
+  tmux(`select-pane -t ${sessionName}.0`);
+
+  const paneIds = tmux(`list-panes -t ${sessionName} -F '#{pane_id}'`)
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean);
+
+  const windowId = tmux(`display-message -p -t ${sessionName}:0 '#{window_id}'`);
+  return { paneIds, windowId };
+}
+
 export function getPaneSize(paneId: string): { cols: number; rows: number } {
   const [colsRaw, rowsRaw] = tmux(`display-message -p -t ${paneId} '#{pane_width}\t#{pane_height}'`)
     .split('\t')

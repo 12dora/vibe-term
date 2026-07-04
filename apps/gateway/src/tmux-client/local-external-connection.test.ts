@@ -76,7 +76,10 @@ function createRunStub(
     if (command === `new-window -t ${session} -n tmex-park -P -F #{window_id} sleep 30`) {
       return ok('@99\n');
     }
-    if (command.startsWith(`new-window -t ${session} -c `) || command.startsWith(`new-window -d -t ${session} -c `)) {
+    if (
+      command.startsWith(`new-window -t ${session} -c `) ||
+      command.startsWith(`new-window -d -t ${session} -c `)
+    ) {
       return ok();
     }
     if (command === `last-window -t ${session}` || command === 'kill-window -t @99') {
@@ -552,8 +555,7 @@ describe('LocalExternalTmuxConnection', () => {
         getDevice: () => createDevice('tmex-input'),
         run: createRunStub('tmex-input', {
           record: commands,
-          overrides: (command) =>
-            command.startsWith('send-keys -H -t %1') ? ok() : null,
+          overrides: (command) => (command.startsWith('send-keys -H -t %1') ? ok() : null),
         }),
       }
     );
@@ -744,8 +746,7 @@ describe('LocalExternalTmuxConnection', () => {
         getDevice: () => createDevice('tmex-resize'),
         run: createRunStub('tmex-resize', {
           record: commands,
-          overrides: (command) =>
-            command === 'resize-window -t @1 -x 137 -y 41' ? ok() : null,
+          overrides: (command) => (command === 'resize-window -t @1 -x 137 -y 41' ? ok() : null),
         }),
       }
     );
@@ -1353,9 +1354,7 @@ describe('LocalExternalTmuxConnection', () => {
 
     fake.pushStdout('%pause %1\n');
 
-    await waitFor(() =>
-      fake.writtenData.some((d) => d.includes('refresh-client')) ? true : null
-    );
+    await waitFor(() => (fake.writtenData.some((d) => d.includes('refresh-client')) ? true : null));
 
     expect(fake.writtenData).toContain('refresh-client -A %1:continue\n');
 
@@ -1435,5 +1434,68 @@ describe('LocalExternalTmuxConnection', () => {
     expect((connection as any).heartbeatTimer).toBeNull();
     expect((connection as any).heartbeatTimeoutTimer).toBeNull();
     expect((connection as any).heartbeatPending).toBe(false);
+  });
+
+  test('signalThemeChange is a no-op (stdin injection removed to avoid shell pollution)', async () => {
+    const commands: string[][] = [];
+    const connection = new LocalExternalTmuxConnection(
+      {
+        deviceId: 'device-local',
+        onEvent: () => {},
+        onTerminalOutput: () => {},
+        onTerminalHistory: () => {},
+        onSnapshot: () => {},
+        onError: (error) => {
+          throw error;
+        },
+        onClose: () => {},
+      },
+      {
+        enableSubscription: false,
+        ensureGhosttyTerminfo: async () => false,
+        getDevice: () => createDevice('tmex-theme'),
+        run: createRunStub('tmex-theme', {
+          record: commands,
+          overrides: (command) => (command.startsWith('send-keys -H -t %') ? ok() : null),
+        }),
+      }
+    );
+
+    await connection.connect();
+
+    connection.signalThemeChange('%1', 'dark');
+    connection.signalThemeChange('%2', 'light');
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    // stdin 注入已移除：不应有任何 send-keys 调用
+    const sendKeysCalls = commands.filter((argv) => argv.includes('send-keys'));
+    expect(sendKeysCalls).toHaveLength(0);
+  });
+
+  test('signalThemeChange is a no-op when disconnected', async () => {
+    const commands: string[][] = [];
+    const connection = new LocalExternalTmuxConnection(
+      {
+        deviceId: 'device-local',
+        onEvent: () => {},
+        onTerminalOutput: () => {},
+        onTerminalHistory: () => {},
+        onSnapshot: () => {},
+        onError: () => {},
+        onClose: () => {},
+      },
+      {
+        enableSubscription: false,
+        ensureGhosttyTerminfo: async () => false,
+        getDevice: () => createDevice('tmex-theme-disc'),
+        run: createRunStub('tmex-theme-disc', { record: commands }),
+      }
+    );
+
+    // 不调 connect，connected=false
+    connection.signalThemeChange('%1', 'dark');
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(commands.some((argv) => argv.includes('send-keys'))).toBe(false);
   });
 });

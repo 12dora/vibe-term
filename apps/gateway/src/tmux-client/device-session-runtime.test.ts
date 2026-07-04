@@ -31,6 +31,7 @@ function createStubConnectionRecorder() {
     setWindowStyleCalls: [] as string[],
     capturePaneTextCalls: [] as Array<[string, number | undefined]>,
     getPaneInfoCalls: [] as string[],
+    signalThemeChangeCalls: [] as Array<[string, 'dark' | 'light']>,
     options: null as TmuxConnectionOptions | null,
   };
 
@@ -122,6 +123,9 @@ function createStubConnectionRecorder() {
         alternateScreen: false,
         currentCommand: `cmd:${paneId}`,
       };
+    },
+    signalThemeChange(paneId, theme) {
+      state.signalThemeChangeCalls.push([paneId, theme]);
     },
   };
 
@@ -313,5 +317,27 @@ describe('DeviceSessionRuntime', () => {
     }
 
     expect(caught?.message ?? '').toContain('Device session runtime already terminated');
+  });
+
+  test('signalThemeChange delegates to the underlying connection', async () => {
+    const recorder = createStubConnectionRecorder();
+    const runtime = createDeviceSessionRuntime({
+      deviceId: 'device-a',
+      createConnection(options) {
+        recorder.state.options = options;
+        return recorder.connection;
+      },
+    });
+
+    recorder.releaseConnect();
+    await runtime.connect();
+
+    runtime.signalThemeChange('%1', 'dark');
+    runtime.signalThemeChange('%2', 'light');
+
+    expect(recorder.state.signalThemeChangeCalls).toEqual([
+      ['%1', 'dark'],
+      ['%2', 'light'],
+    ]);
   });
 });

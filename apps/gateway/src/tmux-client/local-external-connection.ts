@@ -159,7 +159,9 @@ function defaultSpawnControlClient(argv: string[]): ControlClientProcess {
       subprocess.kill();
     },
     write: (data) => {
-      try { stdin?.write(data); } catch {}
+      try {
+        stdin?.write(data);
+      } catch {}
     },
   };
 }
@@ -325,7 +327,13 @@ export class LocalExternalTmuxConnection {
       return;
     }
 
-    const argv = ['new-window', '-t', this.sessionName, '-c', cwd ?? this.resolveDefaultWorkingDir()];
+    const argv = [
+      'new-window',
+      '-t',
+      this.sessionName,
+      '-c',
+      cwd ?? this.resolveDefaultWorkingDir(),
+    ];
     if (name) {
       argv.push('-n', name);
     }
@@ -406,7 +414,11 @@ export class LocalExternalTmuxConnection {
 
   // 拖拽重排：把 src pane 移到 dst pane 的某一侧。
   // move-pane -h 产生左右排列、-v 上下排列，-b 放在目标之前（左/上）
-  movePane(srcPaneId: string, dstPaneId: string, position: 'left' | 'right' | 'top' | 'bottom'): void {
+  movePane(
+    srcPaneId: string,
+    dstPaneId: string,
+    position: 'left' | 'right' | 'top' | 'bottom'
+  ): void {
     if (!this.connected) {
       return;
     }
@@ -421,7 +433,6 @@ export class LocalExternalTmuxConnection {
       this.callbacks.onError(error);
     });
   }
-
 
   breakPane(paneId: string): void {
     if (!this.connected) {
@@ -507,6 +518,17 @@ export class LocalExternalTmuxConnection {
     });
   }
 
+  // 主题变化通知：曾通过 stdin 注入 ESC[?997;2n + ESC[I 触发 pane 内 TUI 重查 OSC 11，
+  // 但空闲 shell 的 readline 会把 DECRQM 应答回显到 pane 屏幕（显示 "997;2n"），污染
+  // layout 并导致 Bug 1 修复失效。tmux 原生 OSC 11 代答已由 window-style 路径覆盖，
+  // stdin 注入属多余且有害的 best-effort，故移除注入逻辑，保留接口为 no-op 以兼容调用方。
+  // 主题同步改由 window-style（T8）+ 新 agent 启动时自然探测承担。
+  signalThemeChange(_paneId: string, _theme: 'dark' | 'light'): void {
+    if (!this.connected) {
+      return;
+    }
+  }
+
   // 按需读取 pane 当前可见屏幕的纯文本（无 ANSI 转义）；historyLines > 0 时
   // 额外包含可见区上方 N 行历史。供 Agent / Watch 等主动采样场景使用。
   // pane 缺失抛 TmuxTargetMissingError（静默形态，不触发连接告警/不污染设备状态）。
@@ -545,7 +567,14 @@ export class LocalExternalTmuxConnection {
       return;
     }
 
-    await this.runTmux(['new-session', '-d', '-c', this.resolveDefaultWorkingDir(), '-s', this.sessionName]);
+    await this.runTmux([
+      'new-session',
+      '-d',
+      '-c',
+      this.resolveDefaultWorkingDir(),
+      '-s',
+      this.sessionName,
+    ]);
   }
 
   private async configureSessionOptions(): Promise<void> {
@@ -557,7 +586,14 @@ export class LocalExternalTmuxConnection {
       'allow-passthrough',
       config.tmuxAllowPassthrough ? 'on' : 'off',
     ]);
-    await this.runTmuxAllowFailure(['set-option', '-t', this.sessionName, '-g', 'extended-keys', 'on']);
+    await this.runTmuxAllowFailure([
+      'set-option',
+      '-t',
+      this.sessionName,
+      '-g',
+      'extended-keys',
+      'on',
+    ]);
     await this.runTmuxAllowFailure([
       'set-option',
       '-t',
@@ -568,7 +604,14 @@ export class LocalExternalTmuxConnection {
     ]);
     // control client 自带 attached+focused 标志，focus-events on 会把 ESC[I 投递给
     // ?1004h 的 pane（如 Claude Code），使其永久判定"用户在场"、通知静默，必须关闭。
-    await this.runTmuxAllowFailure(['set-option', '-t', this.sessionName, '-g', 'focus-events', 'off']);
+    await this.runTmuxAllowFailure([
+      'set-option',
+      '-t',
+      this.sessionName,
+      '-g',
+      'focus-events',
+      'off',
+    ]);
     // control client detach 不能触发 destroy-unattached 销毁会话。
     await this.runTmuxAllowFailure([
       'set-option',
@@ -735,7 +778,9 @@ export class LocalExternalTmuxConnection {
     // connect 阶段（connected 尚为 false）进程瞬退不会走重连，这里显式失败。
     if (this.controlProcess !== proc) {
       const message = this.controlStderrTail.trim() || 'tmux control client exited during attach';
-      console.warn(`[local] tmux control client died during attach on ${this.deviceId}: ${message}`);
+      console.warn(
+        `[local] tmux control client died during attach on ${this.deviceId}: ${message}`
+      );
       throw new Error(message);
     }
 
@@ -823,7 +868,9 @@ export class LocalExternalTmuxConnection {
     }
     subscription.end();
     if (this.controlProcess === proc) {
-      console.warn('[local] control client stdout ended unexpectedly on ' + this.deviceId + ', killing process');
+      console.warn(
+        '[local] control client stdout ended unexpectedly on ' + this.deviceId + ', killing process'
+      );
       proc.kill();
     }
   }
@@ -886,7 +933,9 @@ export class LocalExternalTmuxConnection {
       if (!this.heartbeatPending || !this.connected || this.manualDisconnect) {
         return;
       }
-      console.warn(`[local] tmux control client heartbeat timeout on ${this.deviceId}, killing stalled process`);
+      console.warn(
+        `[local] tmux control client heartbeat timeout on ${this.deviceId}, killing stalled process`
+      );
       this.controlProcess?.kill();
     }, HEARTBEAT_TIMEOUT_MS);
   }
@@ -996,7 +1045,14 @@ export class LocalExternalTmuxConnection {
     );
 
     if (count <= 1) {
-      await this.runTmux(['new-window', '-d', '-t', this.sessionName, '-c', this.resolveDefaultWorkingDir()]);
+      await this.runTmux([
+        'new-window',
+        '-d',
+        '-t',
+        this.sessionName,
+        '-c',
+        this.resolveDefaultWorkingDir(),
+      ]);
     }
 
     await this.runAndRefresh(['kill-window', '-t', windowId], true);
@@ -1113,9 +1169,8 @@ export class LocalExternalTmuxConnection {
 
   private async capturePaneHistory(paneId: string): Promise<void> {
     const screenInfo = parsePaneScreenInfo(
-      (
-        await this.runTmux(['display-message', '-p', '-t', paneId, PANE_SCREEN_INFO_FORMAT], true)
-      ).stdout
+      (await this.runTmux(['display-message', '-p', '-t', paneId, PANE_SCREEN_INFO_FORMAT], true))
+        .stdout
     );
     const alternateScreen = screenInfo.alternateScreen;
     const normal = (
@@ -1166,7 +1221,14 @@ export class LocalExternalTmuxConnection {
         '-F',
         WINDOW_SNAPSHOT_FORMAT,
       ]),
-      this.runTmuxAllowFailure(['list-panes', '-s', '-t', this.sessionName, '-F', PANE_SNAPSHOT_FORMAT]),
+      this.runTmuxAllowFailure([
+        'list-panes',
+        '-s',
+        '-t',
+        this.sessionName,
+        '-F',
+        PANE_SNAPSHOT_FORMAT,
+      ]),
     ]);
 
     const transientResult = [sessionRes, windowsRes, panesRes].find(
@@ -1180,13 +1242,13 @@ export class LocalExternalTmuxConnection {
 
     if (sessionRes.exitCode !== 0 || windowsRes.exitCode !== 0 || panesRes.exitCode !== 0) {
       const stderrBlob = `${sessionRes.stderr}\n${windowsRes.stderr}\n${panesRes.stderr}`;
-      if (
-        this.connected &&
-        !this.manualDisconnect &&
-        this.isTmuxServerGoneMessage(stderrBlob)
-      ) {
-        const message = stderrBlob.trim().split(/\r?\n/).find((line) => line.trim())?.trim() ??
-          'tmux server gone';
+      if (this.connected && !this.manualDisconnect && this.isTmuxServerGoneMessage(stderrBlob)) {
+        const message =
+          stderrBlob
+            .trim()
+            .split(/\r?\n/)
+            .find((line) => line.trim())
+            ?.trim() ?? 'tmux server gone';
         console.warn(`[local] tmux server gone during snapshot on ${this.deviceId}: ${message}`);
         updateDeviceRuntimeStatus(this.deviceId, {
           lastSeenAt: new Date().toISOString(),

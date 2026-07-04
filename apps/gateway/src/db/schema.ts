@@ -38,9 +38,13 @@ export const siteSettings = sqliteTable(
     sshReconnectMaxRetries: integer('ssh_reconnect_max_retries').notNull(),
     sshReconnectDelaySeconds: integer('ssh_reconnect_delay_seconds').notNull(),
     language: text('language').notNull().default('en_US'),
+    theme: text('theme').notNull().default('dark'),
     updatedAt: text('updated_at').notNull(),
   },
-  (table) => [check('site_settings_singleton_check', sql`${table.id} = 1`)]
+  (table) => [
+    check('site_settings_singleton_check', sql`${table.id} = 1`),
+    check('site_settings_theme_check', sql`${table.theme} in ('dark', 'light')`),
+  ]
 );
 
 // 终端快捷键栏配置（服务器单例，多端共享）。items 为有序快捷键列表，

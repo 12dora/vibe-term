@@ -3,9 +3,9 @@ import type { StateSnapshotPayload } from '@tmex/shared';
 import { getDeviceById } from '../db';
 import type { PaneInfo } from './capture-history';
 import type { TmuxConnectionOptions } from './connection-types';
-import type { PromptMarker } from './pane-stream-parser';
 import type { TmuxEvent } from './events';
 import { LocalExternalTmuxConnection } from './local-external-connection';
+import type { PromptMarker } from './pane-stream-parser';
 import { SshExternalTmuxConnection } from './ssh-external-connection';
 
 export interface DeviceSessionRuntimeConnection {
@@ -26,11 +26,16 @@ export interface DeviceSessionRuntimeConnection {
   resizeWindow(windowId: string, cols: number, rows: number): void;
   selectLayout(windowId: string, preset: 'even-horizontal'): void;
   focusPane(windowId: string, paneId: string): void;
-  movePane(srcPaneId: string, dstPaneId: string, position: 'left' | 'right' | 'top' | 'bottom'): void;
+  movePane(
+    srcPaneId: string,
+    dstPaneId: string,
+    position: 'left' | 'right' | 'top' | 'bottom'
+  ): void;
   breakPane(paneId: string): void;
   requestPaneHistory(paneId: string): Promise<void>;
   renameWindow(windowId: string, name: string): void;
   setWindowStyle(style: string): void;
+  signalThemeChange(paneId: string, theme: 'dark' | 'light'): void;
   capturePaneText(paneId: string, opts?: { historyLines?: number }): Promise<string>;
   getPaneInfo(paneId: string): Promise<PaneInfo>;
 }
@@ -236,6 +241,10 @@ export class DeviceSessionRuntime {
 
   setWindowStyle(style: string): void {
     this.connection.setWindowStyle(style);
+  }
+
+  signalThemeChange(paneId: string, theme: 'dark' | 'light'): void {
+    this.connection.signalThemeChange(paneId, theme);
   }
 
   async capturePaneText(paneId: string, opts?: { historyLines?: number }): Promise<string> {
