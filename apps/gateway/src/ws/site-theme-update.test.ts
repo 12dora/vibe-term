@@ -23,10 +23,16 @@ function createBorshWs() {
   return ws;
 }
 
-function decodeSiteThemeUpdateS2C(message: Uint8Array) {
-  const envelope = wsBorsh.decodeEnvelope(message);
-  expect(envelope.kind).toBe(wsBorsh.KIND_SITE_THEME_UPDATE);
-  return wsBorsh.decodePayload(wsBorsh.schema.SiteThemeUpdateS2CSchema, envelope.payload);
+// theme 更新现在还伴随 KIND_SETTINGS_UPDATE 通用事件，取最后一帧 SITE_THEME_UPDATE 解码
+function lastSiteThemeUpdateS2C(sent: Uint8Array[]) {
+  const frames = sent
+    .map((message) => wsBorsh.decodeEnvelope(message))
+    .filter((envelope) => envelope.kind === wsBorsh.KIND_SITE_THEME_UPDATE);
+  expect(frames.length).toBeGreaterThan(0);
+  return wsBorsh.decodePayload(
+    wsBorsh.schema.SiteThemeUpdateS2CSchema,
+    frames[frames.length - 1].payload
+  );
 }
 
 describe('WebSocketServer site theme update', () => {
@@ -42,8 +48,8 @@ describe('WebSocketServer site theme update', () => {
     expect(ws1.sent.length).toBeGreaterThanOrEqual(1);
     expect(ws2.sent.length).toBeGreaterThanOrEqual(1);
 
-    const decoded1 = decodeSiteThemeUpdateS2C(ws1.sent[ws1.sent.length - 1]);
-    const decoded2 = decodeSiteThemeUpdateS2C(ws2.sent[ws2.sent.length - 1]);
+    const decoded1 = lastSiteThemeUpdateS2C(ws1.sent);
+    const decoded2 = lastSiteThemeUpdateS2C(ws2.sent);
     expect(decoded1.theme).toBe(wsBorsh.SITE_THEME_LIGHT);
     expect(decoded2.theme).toBe(wsBorsh.SITE_THEME_LIGHT);
     expect(typeof decoded1.serverTimestamp).toBe('bigint');
@@ -91,10 +97,10 @@ describe('WebSocketServer site theme update', () => {
     updateSiteSettings({ theme: 'dark' });
 
     server.handleSiteThemeUpdate(ws1, { theme: wsBorsh.SITE_THEME_LIGHT });
-    const ts1 = decodeSiteThemeUpdateS2C(ws1.sent[ws1.sent.length - 1]).serverTimestamp;
+    const ts1 = lastSiteThemeUpdateS2C(ws1.sent).serverTimestamp;
 
     server.handleSiteThemeUpdate(ws2, { theme: wsBorsh.SITE_THEME_DARK });
-    const ts2 = decodeSiteThemeUpdateS2C(ws2.sent[ws2.sent.length - 1]).serverTimestamp;
+    const ts2 = lastSiteThemeUpdateS2C(ws2.sent).serverTimestamp;
 
     expect(ts2).toBeGreaterThan(ts1);
     expect(getSiteSettings().theme).toBe('dark');
@@ -106,10 +112,10 @@ describe('WebSocketServer site theme update', () => {
     server.connectedClients = new Set([ws]);
 
     server.handleSiteThemeUpdate(ws, { theme: wsBorsh.SITE_THEME_LIGHT });
-    const ts1 = decodeSiteThemeUpdateS2C(ws.sent[ws.sent.length - 1]).serverTimestamp;
+    const ts1 = lastSiteThemeUpdateS2C(ws.sent).serverTimestamp;
 
     server.handleSiteThemeUpdate(ws, { theme: wsBorsh.SITE_THEME_DARK });
-    const ts2 = decodeSiteThemeUpdateS2C(ws.sent[ws.sent.length - 1]).serverTimestamp;
+    const ts2 = lastSiteThemeUpdateS2C(ws.sent).serverTimestamp;
 
     expect(ts2).toBeGreaterThan(ts1);
   });
