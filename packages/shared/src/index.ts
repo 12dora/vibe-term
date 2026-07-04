@@ -800,6 +800,8 @@ export interface AgentSessionDto {
   useProviderWebSearch: boolean;
   /** 启用的 provider 原生 hosted 工具 key（如 image_generation） */
   providerHostedTools: string[];
+  /** 允许 send_input 写入原始控制字符（需显式开启，默认 false） */
+  allowControlChars: boolean;
   /** 起源元数据：创建时绑定 pane 的终端标题/进程名（旧记录为 null） */
   originPaneTitle: string | null;
   originProcessName: string | null;
@@ -853,6 +855,7 @@ export interface CreateAgentSessionRequest {
   writeMode?: AgentWriteMode;
   useProviderWebSearch?: boolean;
   providerHostedTools?: string[];
+  allowControlChars?: boolean;
   /** 前端可附带 snapshot 的 pane 标题作为起源元数据兜底（进程名由后端采集） */
   originPaneTitle?: string | null;
   maxStepsPerTurn?: number;
@@ -867,6 +870,7 @@ export interface UpdateAgentSessionRequest {
   writeMode?: AgentWriteMode;
   useProviderWebSearch?: boolean;
   providerHostedTools?: string[];
+  allowControlChars?: boolean;
   maxStepsPerTurn?: number;
 }
 

@@ -189,6 +189,8 @@ export const agentSessions = sqliteTable(
       .$type<string[]>()
       .notNull()
       .default([]),
+    // 允许 send_input 写入原始控制字符（rawControlChars）；默认关闭（安全）
+    allowControlChars: integer('allow_control_chars', { mode: 'boolean' }).notNull().default(false),
     // 起源元数据：创建会话时绑定 pane 的终端标题与进程名（旧记录为 null，前端不显示）
     originPaneTitle: text('origin_pane_title'),
     originProcessName: text('origin_process_name'),

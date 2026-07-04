@@ -114,6 +114,7 @@ function toSessionDto(record: AgentSessionRecord): AgentSessionDto {
     writeMode: record.writeMode,
     useProviderWebSearch: record.useProviderWebSearch,
     providerHostedTools: record.providerHostedTools ?? [],
+    allowControlChars: record.allowControlChars,
     originPaneTitle: record.originPaneTitle,
     originProcessName: record.originProcessName,
     status: record.status,
@@ -324,6 +325,10 @@ async function handleCreateSession(req: Request): Promise<Response> {
     return json({ error: hostedTools.error }, 400);
   }
 
+  if (body.allowControlChars !== undefined && typeof body.allowControlChars !== 'boolean') {
+    return json({ error: t('apiError.invalidRequest') }, 400);
+  }
+
   if (
     body.systemPrompt !== undefined &&
     body.systemPrompt !== null &&
@@ -358,6 +363,7 @@ async function handleCreateSession(req: Request): Promise<Response> {
     writeMode: body.writeMode,
     useProviderWebSearch: body.useProviderWebSearch ?? false,
     providerHostedTools: hostedTools.value,
+    allowControlChars: body.allowControlChars ?? false,
     originPaneTitle: origin.title,
     originProcessName: origin.processName,
     maxStepsPerTurn,
@@ -396,6 +402,7 @@ async function handleUpdateSession(req: Request, id: string): Promise<Response> 
       | 'writeMode'
       | 'useProviderWebSearch'
       | 'providerHostedTools'
+      | 'allowControlChars'
       | 'maxStepsPerTurn'
     >
   > = {};
@@ -462,6 +469,13 @@ async function handleUpdateSession(req: Request, id: string): Promise<Response> 
       return json({ error: hostedTools.error }, 400);
     }
     updates.providerHostedTools = hostedTools.value;
+  }
+
+  if (body.allowControlChars !== undefined) {
+    if (typeof body.allowControlChars !== 'boolean') {
+      return json({ error: t('apiError.invalidRequest') }, 400);
+    }
+    updates.allowControlChars = body.allowControlChars;
   }
 
   if (body.maxStepsPerTurn !== undefined) {

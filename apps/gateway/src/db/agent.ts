@@ -100,6 +100,7 @@ export interface CreateAgentSessionInput {
   writeMode?: AgentWriteMode;
   useProviderWebSearch?: boolean;
   providerHostedTools?: string[];
+  allowControlChars?: boolean;
   originPaneTitle?: string | null;
   originProcessName?: string | null;
   maxStepsPerTurn?: number;
@@ -119,6 +120,7 @@ export function createAgentSession(input: CreateAgentSessionInput): AgentSession
     writeMode: input.writeMode ?? 'confirm',
     useProviderWebSearch: input.useProviderWebSearch ?? false,
     providerHostedTools: input.providerHostedTools ?? [],
+    allowControlChars: input.allowControlChars ?? false,
     originPaneTitle: input.originPaneTitle ?? null,
     originProcessName: input.originProcessName ?? null,
     status: 'idle',
@@ -175,6 +177,7 @@ export function updateAgentSession(
     'writeMode',
     'useProviderWebSearch',
     'providerHostedTools',
+    'allowControlChars',
     'status',
     'lastError',
     'maxStepsPerTurn',

@@ -1,0 +1,1 @@
+ALTER TABLE `agent_sessions` ADD `allow_control_chars` integer DEFAULT false NOT NULL;
