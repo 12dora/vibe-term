@@ -1318,9 +1318,11 @@ function PaneRow({
     <div
       ref={setNodeRef}
       style={{ transform: CSS.Translate.toString(transform), transition }}
-      className={cn('group relative', isDragging && 'opacity-60')}
+      className={cn(isDragging && 'opacity-60')}
     >
-      <div className="flex items-center gap-1">
+      {/* 菜单/关闭按钮的 absolute 锚点必须只包住 pane 行本身；
+          若锚在外层（含 PaneSessionBranch），挂了 Agent session 后 top-1/2 会随容器撑高而错位 */}
+      <div className="group/pane relative flex items-center gap-1">
         <button
           type="button"
           ref={setActivatorNodeRef}
@@ -1364,10 +1366,9 @@ function PaneRow({
             )}
           </span>
         </button>
-      </div>
 
-      {/* Pane Actions Menu */}
-      <DropdownMenu>
+        {/* Pane Actions Menu */}
+        <DropdownMenu>
         <DropdownMenuTrigger
           data-testid={`pane-menu-${pane.id}`}
           aria-label={t('watch.openMonitor')}
@@ -1378,7 +1379,7 @@ function PaneRow({
               : 'h-5 w-5 right-7 [@media(any-pointer:coarse)]:h-10 [@media(any-pointer:coarse)]:w-10 [@media(any-pointer:coarse)]:right-10.5 [@media(any-pointer:coarse)]:rounded-lg',
             isActive
               ? 'opacity-100'
-              : 'opacity-0 group-hover:opacity-100 [@media(any-pointer:coarse)]:opacity-100'
+              : 'opacity-0 group-hover/pane:opacity-100 [@media(any-pointer:coarse)]:opacity-100'
           )}
         >
           <EllipsisVertical className={cn(isMobile ? 'h-5 w-5' : 'h-3.5 w-3.5')} />
@@ -1489,12 +1490,13 @@ function PaneRow({
             : 'h-5 w-5 right-1.5 [@media(any-pointer:coarse)]:h-10 [@media(any-pointer:coarse)]:w-10 [@media(any-pointer:coarse)]:right-0.5 [@media(any-pointer:coarse)]:rounded-lg',
           isActive
             ? 'opacity-100'
-            : 'opacity-0 group-hover:opacity-100 [@media(any-pointer:coarse)]:opacity-100'
+            : 'opacity-0 group-hover/pane:opacity-100 [@media(any-pointer:coarse)]:opacity-100'
         )}
-        title={t('window.closePane')}
-      >
-        <span className={cn('leading-none', isMobile ? 'text-base' : 'text-xs')}>×</span>
-      </button>
+          title={t('window.closePane')}
+        >
+          <span className={cn('leading-none', isMobile ? 'text-base' : 'text-xs')}>×</span>
+        </button>
+      </div>
 
       <PaneSessionBranch
         sessions={sessions}
