@@ -167,6 +167,20 @@ function normalizeSiteSettingsInput(
     updates.language = value as LocaleCode;
   }
 
+  // 宽松校验：只要求 string[]（trim 后非空、去重），不绑定「已注册 channel id」集合——
+  // 自定义 channel 在运行时注册，设置写入时可能尚未注册，绑定会造成先后次序耦合。
+  if (body.disabledNotificationChannels !== undefined) {
+    if (
+      !Array.isArray(body.disabledNotificationChannels) ||
+      !body.disabledNotificationChannels.every((item) => typeof item === 'string')
+    ) {
+      throw new Error(t('apiError.invalidRequest'));
+    }
+    updates.disabledNotificationChannels = [
+      ...new Set(body.disabledNotificationChannels.map((item) => item.trim()).filter(Boolean)),
+    ];
+  }
+
   return updates;
 }
 

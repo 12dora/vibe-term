@@ -99,6 +99,9 @@ function toSiteSettings(row: typeof siteSettings.$inferSelect): SiteSettings {
     sshReconnectDelaySeconds: row.sshReconnectDelaySeconds,
     language: normalizeLocale(row.language),
     theme: row.theme as ThemeMode,
+    disabledNotificationChannels: Array.isArray(row.disabledNotificationChannels)
+      ? row.disabledNotificationChannels
+      : [],
     updatedAt: row.updatedAt,
   };
 }
@@ -196,6 +199,7 @@ export function ensureSiteSettingsInitialized(): void {
       sshReconnectMaxRetries: config.sshReconnectMaxRetriesDefault,
       sshReconnectDelaySeconds: config.sshReconnectDelaySecondsDefault,
       language: normalizeLocale(config.languageDefault),
+      disabledNotificationChannels: [],
       updatedAt: now,
     })
     .onConflictDoNothing({ target: siteSettings.id })
@@ -483,6 +487,8 @@ export function updateSiteSettings(
     sshReconnectDelaySeconds: updates.sshReconnectDelaySeconds ?? current.sshReconnectDelaySeconds,
     language: updates.language ? normalizeLocale(updates.language) : current.language,
     theme: updates.theme ?? current.theme,
+    disabledNotificationChannels:
+      updates.disabledNotificationChannels ?? current.disabledNotificationChannels,
     updatedAt: new Date().toISOString(),
   };
 
@@ -499,6 +505,7 @@ export function updateSiteSettings(
       enableBellPush: next.enableBellPush,
       enableBellSound: next.enableBellSound,
       theme: next.theme,
+      disabledNotificationChannels: next.disabledNotificationChannels,
     })
     .where(eq(siteSettings.id, 1))
     .run();

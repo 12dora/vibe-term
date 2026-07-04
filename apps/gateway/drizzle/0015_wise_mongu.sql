@@ -1,0 +1,1 @@
+ALTER TABLE `site_settings` ADD `disabled_notification_channels` text DEFAULT '[]' NOT NULL;

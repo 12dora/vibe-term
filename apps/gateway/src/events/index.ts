@@ -8,11 +8,21 @@ import { weixinChannel } from './channels/weixin';
 export class EventNotifier {
   private bellThrottleMap = new Map<string, number>();
   private notificationThrottleMap = new Map<string, number>();
-  private readonly channels: NotificationChannel[] = [
-    webhookChannel,
-    telegramChannel,
-    weixinChannel,
-  ];
+  private readonly channels = new Map<string, NotificationChannel>();
+
+  constructor() {
+    this.registerChannel(webhookChannel);
+    this.registerChannel(telegramChannel);
+    this.registerChannel(weixinChannel);
+  }
+
+  /** 注册通知渠道；重复 id 视为编程错误，直接抛错 */
+  registerChannel(channel: NotificationChannel): void {
+    if (this.channels.has(channel.id)) {
+      throw new Error(`notification channel already registered: ${channel.id}`);
+    }
+    this.channels.set(channel.id, channel);
+  }
 
   async notify(
     eventType: EventType,
@@ -34,7 +44,9 @@ export class EventNotifier {
       }
     }
 
-    await Promise.all(this.channels.map((channel) => channel.notify(eventType, fullEvent)));
+    const disabled = new Set(getSiteSettings().disabledNotificationChannels);
+    const active = [...this.channels.values()].filter((channel) => !disabled.has(channel.id));
+    await Promise.all(active.map((channel) => channel.notify(eventType, fullEvent)));
   }
 
   private shouldPassBellThrottle(event: WebhookEvent): boolean {

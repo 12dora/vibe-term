@@ -134,6 +134,8 @@ export interface SiteSettings {
   sshReconnectDelaySeconds: number;
   language: LocaleCode;
   theme: ThemeMode;
+  /** 被禁用的通知 channel id 列表（如 'webhook' / 'telegram' / 'weixin' 或运行时注册的自定义 id） */
+  disabledNotificationChannels: string[];
   updatedAt: string;
 }
 
@@ -626,6 +628,7 @@ export interface UpdateSiteSettingsRequest {
   sshReconnectMaxRetries?: number;
   sshReconnectDelaySeconds?: number;
   language?: LocaleCode;
+  disabledNotificationChannels?: string[];
 }
 
 export interface UpdateSiteSettingsResponse {

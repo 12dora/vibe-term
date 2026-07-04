@@ -39,6 +39,10 @@ export const siteSettings = sqliteTable(
     sshReconnectDelaySeconds: integer('ssh_reconnect_delay_seconds').notNull(),
     language: text('language').notNull().default('en_US'),
     theme: text('theme').notNull().default('dark'),
+    disabledNotificationChannels: text('disabled_notification_channels', { mode: 'json' })
+      .$type<string[]>()
+      .notNull()
+      .default([]),
     updatedAt: text('updated_at').notNull(),
   },
   (table) => [
