@@ -560,3 +560,74 @@ describe('pane stream parser - OSC 52 clipboard', () => {
     expect(writes).toEqual(['hello']);
   });
 });
+
+describe('pane stream parser - CSI mode 2031 主题订阅', () => {
+  function collectSubscriptions() {
+    const subs: boolean[] = [];
+    const parser = createPaneStreamParser({
+      onTitle: () => {},
+      onBell: () => {},
+      onNotification: () => {},
+      onThemeSubscription: (subscribed) => subs.push(subscribed),
+    });
+    return { parser, subs };
+  }
+
+  test('?2031h/?2031l 上报订阅状态且字节原样透传', () => {
+    const { parser, subs } = collectSubscriptions();
+    const input = bytes('X', 0x1b, '[?2031h', 'Y', 0x1b, '[?2031l', 'Z');
+    const output = parser.push(input);
+    expect(Array.from(output)).toEqual(Array.from(input));
+    expect(subs).toEqual([true, false]);
+  });
+
+  test('多参数合并声明 ?1004;2031h 也识别', () => {
+    const { parser, subs } = collectSubscriptions();
+    const input = bytes(0x1b, '[?1004;2031h');
+    const output = parser.push(input);
+    expect(Array.from(output)).toEqual(Array.from(input));
+    expect(subs).toEqual([true]);
+  });
+
+  test('无关 CSI 不上报且原样透传（SGR/光标移动/其他 private mode）', () => {
+    const { parser, subs } = collectSubscriptions();
+    const input = bytes(0x1b, '[1;31m', 0x1b, '[2J', 0x1b, '[?1004h', 0x1b, '[?20316h');
+    const output = parser.push(input);
+    expect(Array.from(output)).toEqual(Array.from(input));
+    expect(subs).toEqual([]);
+  });
+
+  test('跨 push 分片的 ?2031h 仍识别', () => {
+    const { parser, subs } = collectSubscriptions();
+    const out1 = parser.push(bytes('A', 0x1b, '[?20'));
+    const out2 = parser.push(bytes('31h', 'B'));
+    expect(Array.from(out1)).toEqual([0x41]);
+    expect(Array.from(out2)).toEqual(Array.from(bytes(0x1b, '[?2031h', 'B')));
+    expect(subs).toEqual([true]);
+  });
+
+  test('tmux passthrough 包裹的 ?2031h 不上报但字节照常透传', () => {
+    const { parser, subs } = collectSubscriptions();
+    // ESC P tmux ; ESC ESC [?2031h ESC \（body 内 ESC 加倍）
+    const input = bytes(0x1b, 'Ptmux;', 0x1b, 0x1b, '[?2031h', 0x1b, 0x5c);
+    const output = parser.push(input);
+    expect(Array.from(output)).toEqual(Array.from(bytes(0x1b, '[?2031h')));
+    expect(subs).toEqual([]);
+  });
+
+  test('超长 CSI 放弃解析并原样回填', () => {
+    const { parser, subs } = collectSubscriptions();
+    const longParams = '9'.repeat(80);
+    const input = bytes(0x1b, '[', longParams, 'm');
+    const output = parser.push(input);
+    expect(Array.from(output)).toEqual(Array.from(input));
+    expect(subs).toEqual([]);
+  });
+
+  test('CSI 内出现 ESC 中止解析并开启新序列', () => {
+    const { parser, subs } = collectSubscriptions();
+    const output = parser.push(bytes(0x1b, '[?20', 0x1b, '[?2031h'));
+    expect(Array.from(output)).toEqual(Array.from(bytes(0x1b, '[?20', 0x1b, '[?2031h')));
+    expect(subs).toEqual([true]);
+  });
+});

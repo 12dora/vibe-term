@@ -3,6 +3,7 @@ const decoder = new TextDecoder();
 type Phase =
   | 'normal'
   | 'esc'
+  | 'csi'
   | 'osc-params'
   | 'osc-body'
   | 'osc-body-ignore'
@@ -37,6 +38,8 @@ export interface PaneStreamParserOptions {
   onNotification: (notification: PaneStreamNotification) => void;
   onPromptMarker?: (marker: PromptMarker) => void;
   onClipboardWrite?: (text: string) => void;
+  // pane 内程序声明/撤销 DEC private mode 2031（主题变化通知订阅，CSI ?2031h / ?2031l）
+  onThemeSubscription?: (subscribed: boolean) => void;
 }
 
 export interface PaneStreamParser {
@@ -47,7 +50,9 @@ const MAX_OSC_KIND_BYTES = 16;
 const MAX_OSC_PAYLOAD_BYTES = 8 * 1024;
 const MAX_DCS_PASSTHROUGH_BYTES = 64 * 1024;
 const MAX_KITTY_PENDING_IDS = 16;
+const MAX_CSI_BYTES = 64;
 const TMUX_PASSTHROUGH_PREFIX = 'tmux;';
+const THEME_UPDATES_MODE = '2031';
 
 export function createPaneStreamParser(options: PaneStreamParserOptions): PaneStreamParser {
   let phase: Phase = 'normal';
@@ -58,6 +63,8 @@ export function createPaneStreamParser(options: PaneStreamParserOptions): PaneSt
   let warnedDcsOverflow = false;
   let dcsPrefix = '';
   let dcsBytes: number[] = [];
+  let csiBytes: number[] = [];
+  let inTmuxPassthrough = false;
   const kittyPending = new Map<string, { title: string; body: string }>();
 
   function resetOscState(): void {
@@ -217,8 +224,21 @@ export function createPaneStreamParser(options: PaneStreamParserOptions): PaneSt
         dcsBytes = [];
         dcsPrefix = '';
         phase = 'normal';
-        for (const byte of content) {
-          processByte(byte);
+        // 解包内容里的 mode 声明是发给外层终端的，不代表对 tmux 的订阅，打标跳过上报
+        inTmuxPassthrough = true;
+        try {
+          for (const byte of content) {
+            processByte(byte);
+          }
+        } finally {
+          inTmuxPassthrough = false;
+        }
+        const phaseAfterFlush: Phase = phase;
+        if (phaseAfterFlush === 'csi') {
+          // 解包内容以不完整 CSI 结尾：回填并复位，避免后续普通流被误并入
+          output.push(0x1b, 0x5b, ...csiBytes);
+          csiBytes = [];
+          phase = 'normal';
         }
       }
 
@@ -266,8 +286,40 @@ export function createPaneStreamParser(options: PaneStreamParserOptions): PaneSt
             phase = 'dcs-detect';
             return;
           }
+          if (byte === 0x5b) {
+            csiBytes = [];
+            phase = 'csi';
+            return;
+          }
           output.push(0x1b, byte);
           phase = 'normal';
+          return;
+        }
+
+        // CSI 旁路观察：与 OSC 的"吞掉"相反，序列无论是否识别都原样回填，
+        // 仅在识别到 DEC private mode 2031 的 h/l 时上报订阅状态。
+        if (phase === 'csi') {
+          if (byte >= 0x40 && byte <= 0x7e) {
+            output.push(0x1b, 0x5b, ...csiBytes, byte);
+            if ((byte === 0x68 || byte === 0x6c) && csiBytes[0] === 0x3f && !inTmuxPassthrough) {
+              const params = decoder.decode(new Uint8Array(csiBytes.slice(1))).split(';');
+              if (params.includes(THEME_UPDATES_MODE)) {
+                options.onThemeSubscription?.(byte === 0x68);
+              }
+            }
+            csiBytes = [];
+            phase = 'normal';
+            return;
+          }
+          if (byte >= 0x20 && byte <= 0x3f && csiBytes.length < MAX_CSI_BYTES) {
+            csiBytes.push(byte);
+            return;
+          }
+          // 超长或非法字节：放弃解析，原样回填后按普通流重新处理该字节
+          output.push(0x1b, 0x5b, ...csiBytes);
+          csiBytes = [];
+          phase = 'normal';
+          processByte(byte);
           return;
         }
 

@@ -60,8 +60,7 @@ export async function createGatewayRuntime(
   registerSnapshotLookup((deviceId) => wsServer.getLastSnapshot(deviceId));
   registerThemeBroadcaster(
     (theme) => {
-      wsServer.handleSiteThemeChange(theme);
-      wsServer.broadcastThemeChange(theme);
+      wsServer.scheduleTmuxThemeApply(theme);
     },
     (theme) => {
       wsServer.broadcastSiteThemeUpdateS2C(theme);

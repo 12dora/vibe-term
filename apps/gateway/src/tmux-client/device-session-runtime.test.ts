@@ -106,7 +106,7 @@ function createStubConnectionRecorder() {
     renameWindow(windowId, name) {
       state.renameWindowCalls.push([windowId, name]);
     },
-    setWindowStyle(style) {
+    async setWindowStyle(style) {
       state.setWindowStyleCalls.push(style);
     },
     async capturePaneText(paneId, opts) {

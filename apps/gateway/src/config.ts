@@ -32,6 +32,8 @@ export const config = {
     10
   ),
   tmuxAllowPassthrough: getBooleanEnv('TMEX_TMUX_ALLOW_PASSTHROUGH', false),
+  // 主题切换时向订阅了 mode 2031 的 pane 注入 CSI ?997;{1|2}n 通知（kill switch）
+  themeNotify2031Enabled: getBooleanEnv('TMEX_THEME_NOTIFY_2031', true),
   tmuxTermProgram: getEnv('TMEX_TMUX_TERM_PROGRAM', 'ghostty'),
   // 受管 session 的 window-style，用于 tmux 代答 pane 内 OSC 10/11 颜色查询；
   // 默认与前端 seoul256 dark 主题一致，设为 off 关闭

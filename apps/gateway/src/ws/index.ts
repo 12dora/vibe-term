@@ -68,6 +68,8 @@ export class WebSocketServer {
   private themeSignalLast = new Map<string, { theme: 'dark' | 'light'; at: number }>();
   private lastThemeTimestamp = 0n;
   // per-device 去重缓存：同主题不重发 OSC stdin 注入（resize 路径触发的主题同步如主题未变则跳过）
+  private pendingTmuxTheme: ThemeMode | null = null;
+  private themeApplyInFlight = false;
   private lastBroadcastTheme = new Map<string, 'dark' | 'light'>();
   // per-device 去重缓存：同 cols/rows 不重复调 resize-window/resize-pane
   private lastBroadcastSize = new Map<string, { cols: number; rows: number }>();
@@ -943,14 +945,21 @@ export class WebSocketServer {
   private handleSetWindowStyle(deviceId: string, style: string): void {
     const entry = this.connections.get(deviceId);
     if (!entry) return;
-    entry.runtime.setWindowStyle(style);
-    if (this.currentTheme !== null) {
-      const theme = this.currentTheme;
-      if (this.lastBroadcastTheme.get(deviceId) !== theme) {
-        this.lastBroadcastTheme.set(deviceId, theme);
-        this.broadcastThemeChange(theme);
+    void (async () => {
+      try {
+        // 先等 window-style 落地再补发 997：TUI 收到通知会重查 OSC 11，顺序反了拿旧色
+        await entry.runtime.setWindowStyle(style);
+      } catch (err) {
+        console.error('[ws] setWindowStyle failed:', err);
       }
-    }
+      if (this.currentTheme !== null) {
+        const theme = this.currentTheme;
+        if (this.lastBroadcastTheme.get(deviceId) !== theme) {
+          this.lastBroadcastTheme.set(deviceId, theme);
+          this.broadcastThemeChange(theme);
+        }
+      }
+    })();
   }
 
   private handleSiteThemeUpdate(
@@ -970,9 +979,31 @@ export class WebSocketServer {
     const themeName: ThemeMode = decoded.theme === wsBorsh.SITE_THEME_LIGHT ? 'light' : 'dark';
 
     updateSiteSettings({ theme: themeName });
-    this.handleSiteThemeChange(themeName);
-    this.broadcastThemeChange(themeName);
+    this.scheduleTmuxThemeApply(themeName);
     this.broadcastSiteThemeUpdateS2C(themeName);
+  }
+
+  // tmux 侧主题编排（latest-wins 合并）：先 await 全设备 window-style 落地，再对订阅
+  // mode 2031 的 pane 注入 997。编排进行中新值到来只记 pending，当前轮结束后再跑，
+  // 快速连切时丢弃中间态只应用末态。
+  scheduleTmuxThemeApply(theme: ThemeMode): void {
+    this.pendingTmuxTheme = theme;
+    if (this.themeApplyInFlight) {
+      return;
+    }
+    this.themeApplyInFlight = true;
+    void (async () => {
+      try {
+        while (this.pendingTmuxTheme !== null) {
+          const next = this.pendingTmuxTheme;
+          this.pendingTmuxTheme = null;
+          await this.handleSiteThemeChange(next);
+          this.broadcastThemeChange(next);
+        }
+      } finally {
+        this.themeApplyInFlight = false;
+      }
+    })();
   }
 
   // 向所有 connected clients 广播 KIND_SITE_THEME_UPDATE S2C。
@@ -1001,17 +1032,18 @@ export class WebSocketServer {
   // 站点主题变化时对所有已连接设备的所有 window 设置 tmux window-style，
   // 让 tmux 原生代答 OSC 11 取到与前端主题一致的颜色。
   // 严格 per-device：每个设备的所有 window 都要设置。
-  handleSiteThemeChange(theme: ThemeMode): void {
+  async handleSiteThemeChange(theme: ThemeMode): Promise<void> {
     if (theme !== 'dark' && theme !== 'light') {
       return;
     }
     this.currentTheme = theme;
     const style = getTmuxWindowStyle(theme);
-    for (const [, entry] of this.connections) {
-      try {
-        entry.runtime.setWindowStyle(style);
-      } catch (err) {
-        console.error('[ws] setWindowStyle on theme change failed:', err);
+    const results = await Promise.allSettled(
+      [...this.connections.values()].map((entry) => entry.runtime.setWindowStyle(style))
+    );
+    for (const result of results) {
+      if (result.status === 'rejected') {
+        console.error('[ws] setWindowStyle on theme change failed:', result.reason);
       }
     }
   }
@@ -1027,11 +1059,9 @@ export class WebSocketServer {
       return;
     }
     const style = getTmuxWindowStyle(this.currentTheme);
-    try {
-      entry.runtime.setWindowStyle(style);
-    } catch (err) {
+    entry.runtime.setWindowStyle(style).catch((err) => {
       console.error(`[ws] setWindowStyle on device ${deviceId} failed:`, err);
-    }
+    });
   }
 
   // 主题变化时对所有已连接设备的所有 pane 注入主题通知序列（stdin 路径）。
@@ -1260,7 +1290,7 @@ export class WebSocketServer {
 
       await runtime.connect();
       if (this.currentTheme !== null) {
-        runtime.setWindowStyle(getTmuxWindowStyle(this.currentTheme));
+        await runtime.setWindowStyle(getTmuxWindowStyle(this.currentTheme));
       }
       return {
         runtime,

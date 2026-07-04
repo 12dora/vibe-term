@@ -22,6 +22,10 @@ function createMockWs() {
   };
 }
 
+function flushAsync(): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, 0));
+}
+
 describe('WebSocketServer connection entry dedup', () => {
   test('deduplicates concurrent creation for same device', async () => {
     const server = new WebSocketServer() as any;
@@ -808,7 +812,7 @@ describe('WebSocketServer site theme propagation', () => {
     const recorder = {
       setWindowStyleCalls: [] as string[],
       runtime: {
-        setWindowStyle(style: string) {
+        async setWindowStyle(style: string) {
           recorder.setWindowStyleCalls.push(style);
         },
       },
@@ -1127,7 +1131,7 @@ describe('WebSocketServer resize × theme dedup', () => {
       resizeWindowCalls: [] as Array<[string, number, number]>,
       resizePaneCalls: [] as Array<[string, number, number]>,
       runtime: {
-        setWindowStyle(style: string) {
+        async setWindowStyle(style: string) {
           recorder.setWindowStyleCalls.push(style);
         },
         signalThemeChange(paneId: string, theme: 'dark' | 'light') {
@@ -1186,40 +1190,45 @@ describe('WebSocketServer resize × theme dedup', () => {
     });
   }
 
-  test('handleSetWindowStyle triggers broadcastThemeChange when theme differs from lastBroadcastTheme', () => {
+  test('handleSetWindowStyle triggers broadcastThemeChange when theme differs from lastBroadcastTheme', async () => {
     const server = new WebSocketServer() as any;
     server.currentTheme = 'dark';
     const recorder = createResizeThemeRecorder();
     setupEntryWithSnapshot(server, 'device-a', recorder.runtime);
 
     server.handleSetWindowStyle('device-a', 'fg=#d0d0d0,bg=#262626');
+    await flushAsync();
 
     expect(recorder.setWindowStyleCalls).toEqual(['fg=#d0d0d0,bg=#262626']);
     expect(recorder.signalThemeChangeCalls).toEqual([['%0', 'dark']]);
   });
 
-  test('handleSetWindowStyle skips broadcastThemeChange when theme unchanged (resize path dedup)', () => {
+  test('handleSetWindowStyle skips broadcastThemeChange when theme unchanged (resize path dedup)', async () => {
     const server = new WebSocketServer() as any;
     server.currentTheme = 'dark';
     const recorder = createResizeThemeRecorder();
     setupEntryWithSnapshot(server, 'device-a', recorder.runtime);
 
     server.handleSetWindowStyle('device-a', 'fg=#d0d0d0,bg=#262626');
+    await flushAsync();
     expect(recorder.signalThemeChangeCalls).toHaveLength(1);
 
     server.handleSetWindowStyle('device-a', 'fg=#d0d0d0,bg=#262626');
+    await flushAsync();
     expect(recorder.signalThemeChangeCalls).toHaveLength(1);
   });
 
-  test('handleSetWindowStyle broadcasts when theme changes between calls', () => {
+  test('handleSetWindowStyle broadcasts when theme changes between calls', async () => {
     const server = new WebSocketServer() as any;
     const recorder = createResizeThemeRecorder();
     setupEntryWithSnapshot(server, 'device-a', recorder.runtime);
 
     server.currentTheme = 'dark';
     server.handleSetWindowStyle('device-a', 'fg=#d0d0d0,bg=#262626');
+    await flushAsync();
     server.currentTheme = 'light';
     server.handleSetWindowStyle('device-a', 'fg=#616161,bg=#e1e1e1');
+    await flushAsync();
 
     expect(recorder.signalThemeChangeCalls).toEqual([
       ['%0', 'dark'],
@@ -1294,13 +1303,14 @@ describe('WebSocketServer resize × theme dedup', () => {
     expect(recorder.resizePaneCalls).toEqual([]);
   });
 
-  test('releaseConnectionEntry clears per-device dedup caches', () => {
+  test('releaseConnectionEntry clears per-device dedup caches', async () => {
     const server = new WebSocketServer() as any;
     server.currentTheme = 'dark';
     const recorder = createResizeThemeRecorder();
     setupEntryWithSnapshot(server, 'device-a', recorder.runtime);
 
     server.handleSetWindowStyle('device-a', 'fg=#d0d0d0,bg=#262626');
+    await flushAsync();
     server.handleTermResize('device-a', '%0', 80, 24);
     expect(server.lastBroadcastTheme.get('device-a')).toBe('dark');
     expect(server.lastBroadcastSize.get('device-a')).toEqual({ cols: 80, rows: 24 });

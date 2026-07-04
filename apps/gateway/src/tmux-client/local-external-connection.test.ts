@@ -262,6 +262,7 @@ describe('LocalExternalTmuxConnection', () => {
       'tmux display-message -p -t tmex-snapshot #{session_id}|#{session_name}',
       'tmux list-windows -t tmex-snapshot -F #{window_id}|#{window_index}|#{window_active}|#{window_layout}|#{window_name}',
       'tmux list-panes -s -t tmex-snapshot -F #{pane_id}|#{window_id}|#{pane_index}|#{pane_active}|#{pane_width}|#{pane_height}|#{pane_left}|#{pane_top}|#{window_active}|#{pane_title}|#{pane_current_command}|#{pane_current_path}',
+      'tmux list-panes -a -F #{pane_id}|#{@tmex_2031}',
     ]);
     expect(snapshots).toEqual([
       {

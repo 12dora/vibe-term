@@ -691,3 +691,110 @@ describe('LocalExternalTmuxConnection integration', () => {
   }, 30_000);
 
 });
+
+describe('LocalExternalTmuxConnection mode 2031 theme notify integration', () => {
+  function createConnection(sessionName: string, sink: {
+    outputs: string[];
+    snapshots: StateSnapshotPayload[];
+  }): LocalExternalTmuxConnection {
+    return new LocalExternalTmuxConnection(
+      {
+        deviceId: 'device-local',
+        onEvent: () => {},
+        onTerminalOutput: (_paneId, data) => {
+          sink.outputs.push(new TextDecoder().decode(data));
+        },
+        onTerminalHistory: () => {},
+        onSnapshot: (payload) => {
+          sink.snapshots.push(payload);
+        },
+        onError: () => {},
+        onClose: () => {},
+      },
+      { getDevice: () => createLocalDevice(sessionName) }
+    );
+  }
+
+  test('订阅 pane 收到 997 注入，未订阅 pane 不受影响，prompt marker 清位', async () => {
+    const sessionName = `tmex-gateway-2031-${Date.now()}`;
+    const recvFile = `/tmp/${sessionName}-recv`;
+    ensureCleanSession(sessionName);
+    tmux(`new-session -d -x 80 -y 24 -s ${sessionName}`);
+    tmux(`split-window -t ${sessionName}`);
+
+    const sink = { outputs: [] as string[], snapshots: [] as StateSnapshotPayload[] };
+    const connection = createConnection(sessionName, sink);
+
+    try {
+      await connection.connect();
+      const snapshot = await waitFor(() => {
+        const session = sink.snapshots.at(-1)?.session;
+        return session && session.windows[0]?.panes.length === 2 ? session : null;
+      });
+      const subPane = snapshot.windows[0]?.panes[0]?.id as string;
+      const idlePane = snapshot.windows[0]?.panes[1]?.id as string;
+      expect(subPane).toBeTruthy();
+      expect(idlePane).toBeTruthy();
+
+      const tracker = (connection as any).themeSubscriptions;
+
+      // pane 内 shell 声明订阅后 exec cat 落盘后续 stdin（isig 保留以便 Ctrl-C 退出）
+      connection.sendInput(
+        subPane,
+        `printf '\\033[?2031h'; stty raw isig -echo; exec cat > ${recvFile}\r`
+      );
+      await waitFor(() => (tracker.has(subPane) ? true : null));
+      // 原样回填验证：订阅序列透传给了前端输出流
+      expect(sink.outputs.join('')).toContain('\x1b[?2031h');
+
+      connection.signalThemeChange(subPane, 'light');
+      connection.signalThemeChange(idlePane, 'light');
+      const received = await waitFor(async () => {
+        try {
+          const text = await Bun.file(recvFile).text();
+          return text.includes('\x1b[?997;2n') ? text : null;
+        } catch {
+          return null;
+        }
+      });
+      expect(received).toContain('\x1b[?997;2n');
+
+      // 未订阅 pane 零注入（tracker 无记录 → signalThemeChange no-op）
+      expect(tracker.has(idlePane)).toBe(false);
+
+      // Ctrl-C 退出 cat 回 shell，打印 prompt marker → 清位
+      connection.sendInput(subPane, '\x03');
+      await Bun.sleep(200);
+      connection.sendInput(subPane, `printf '\\033]133;A\\033\\\\'\r`);
+      await waitFor(() => (tracker.has(subPane) ? null : true));
+
+      // 清位后注入不再发生
+      connection.signalThemeChange(subPane, 'dark');
+      await Bun.sleep(300);
+      const after = await Bun.file(recvFile).text();
+      expect(after).not.toContain('\x1b[?997;1n');
+    } finally {
+      connection.disconnect();
+      ensureCleanSession(sessionName);
+    }
+  }, 30_000);
+
+  test('gateway 重启后经 @tmex_2031 pane 选项恢复订阅', async () => {
+    const sessionName = `tmex-gateway-2031-restore-${Date.now()}`;
+    ensureCleanSession(sessionName);
+    tmux(`new-session -d -x 80 -y 24 -s ${sessionName}`);
+    const paneId = tmux(`display-message -p -t ${sessionName} '#{pane_id}'`);
+    tmux(`set-option -p -t ${paneId} @tmex_2031 on`);
+
+    const sink = { outputs: [] as string[], snapshots: [] as StateSnapshotPayload[] };
+    const connection = createConnection(sessionName, sink);
+    try {
+      await connection.connect();
+      const tracker = (connection as any).themeSubscriptions;
+      await waitFor(() => (tracker.has(paneId) ? true : null));
+    } finally {
+      connection.disconnect();
+      ensureCleanSession(sessionName);
+    }
+  }, 20_000);
+});

@@ -34,6 +34,7 @@ import {
   splitSnapshotFields,
 } from './snapshot-format';
 import { TmuxTargetMissingError, isTargetMissingMessage } from './target-missing';
+import { createThemeSubscriptionTracker } from './theme-subscriptions';
 import { isControlModeSupported, parseTmuxVersion } from './tmux-version';
 import { resolveTmuxWindowStyle } from './window-style';
 
@@ -192,6 +193,8 @@ export class LocalExternalTmuxConnection {
   private heartbeatTimer: ReturnType<typeof setInterval> | null = null;
   private heartbeatPending = false;
   private heartbeatTimeoutTimer: ReturnType<typeof setTimeout> | null = null;
+  private themeSubscriptions = createThemeSubscriptionTracker();
+  private themeSubscriptionsRestored = false;
 
   constructor(
     options: TmuxConnectionOptions,
@@ -505,7 +508,7 @@ export class LocalExternalTmuxConnection {
     }
   }
 
-  setWindowStyle(style: string): void {
+  async setWindowStyle(style: string): Promise<void> {
     if (!this.connected) {
       return;
     }
@@ -513,20 +516,76 @@ export class LocalExternalTmuxConnection {
       return;
     }
 
-    void this.configureWindowStyle(style).catch((error) => {
+    // 错误内部上报后 resolve，不 reject（调用方 await 只关心"已尽力落地"）
+    await this.configureWindowStyle(style).catch((error) => {
       this.callbacks.onError(error);
     });
   }
 
-  // 主题变化通知：曾通过 stdin 注入 ESC[?997;2n + ESC[I 触发 pane 内 TUI 重查 OSC 11，
-  // 但空闲 shell 的 readline 会把 DECRQM 应答回显到 pane 屏幕（显示 "997;2n"），污染
-  // layout 并导致 Bug 1 修复失效。tmux 原生 OSC 11 代答已由 window-style 路径覆盖，
-  // stdin 注入属多余且有害的 best-effort，故移除注入逻辑，保留接口为 no-op 以兼容调用方。
-  // 主题同步改由 window-style（T8）+ 新 agent 启动时自然探测承担。
-  signalThemeChange(_paneId: string, _theme: 'dark' | 'light'): void {
-    if (!this.connected) {
+  // 主题变化通知（mode 2031）：仅对输出流中声明过 CSI ?2031h 的 pane 注入
+  // CSI ?997;{1|2}n（1=dark 2=light）。历史上无守卫广播注入曾污染空闲 shell
+  // （readline 回显 "997;2n"），现靠订阅跟踪守卫；调用方须先更新 window-style
+  // 再调本方法，否则 TUI 收通知后重查 OSC 11 会拿到旧色。
+  signalThemeChange(paneId: string, theme: 'dark' | 'light'): void {
+    if (!this.connected || !config.themeNotify2031Enabled) {
       return;
     }
+    if (!this.themeSubscriptions.has(paneId)) {
+      return;
+    }
+    this.sendInput(paneId, `\x1b[?997;${theme === 'dark' ? '1' : '2'}n`);
+  }
+
+  // 订阅状态除内存外落到 tmux pane 用户选项 @tmex_2031：与 pane 同生共死，
+  // gateway 重启后靠 list-panes 一次性恢复（写失败不阻塞，仅日志）。
+  private noteThemeSubscription(paneId: string, subscribed: boolean): void {
+    this.themeSubscriptions.note(paneId, subscribed);
+    void this.runTmuxAllowFailure([
+      'set-option',
+      '-p',
+      '-t',
+      paneId,
+      '@tmex_2031',
+      subscribed ? 'on' : 'off',
+    ]).catch(() => {});
+  }
+
+  private clearThemeSubscription(paneId: string): void {
+    if (!this.themeSubscriptions.has(paneId)) {
+      return;
+    }
+    this.themeSubscriptions.clear(paneId);
+    void this.runTmuxAllowFailure(['set-option', '-p', '-t', paneId, '@tmex_2031', 'off']).catch(
+      () => {}
+    );
+  }
+
+  private restoreThemeSubscriptionsOnce(): void {
+    if (this.themeSubscriptionsRestored) {
+      return;
+    }
+    this.themeSubscriptionsRestored = true;
+    void this.runTmuxAllowFailure([
+      'list-panes',
+      '-a',
+      '-F',
+      // 用 | 分隔：LANG=C 环境下 tmux 会把 -F 里的 tab 渲染成 "_"
+      '#{pane_id}|#{@tmex_2031}',
+    ])
+      .then((result) => {
+        if (!result || result.exitCode !== 0) {
+          return;
+        }
+        const restored: string[] = [];
+        for (const line of result.stdout.split('\n')) {
+          const [paneId, flag] = line.trim().split('|');
+          if (paneId && flag === 'on') {
+            restored.push(paneId);
+          }
+        }
+        this.themeSubscriptions.restore(restored);
+      })
+      .catch(() => {});
   }
 
   // 按需读取 pane 当前可见屏幕的纯文本（无 ANSI 转义）；historyLines > 0 时
@@ -803,10 +862,17 @@ export class LocalExternalTmuxConnection {
         this.emitNotification(paneId, notification);
       },
       onPromptMarker: (paneId, marker) => {
+        // 提示符出现 = 前台回到 shell，订阅方 TUI 已不在前台（挂起/异常退出兜底清位）
+        if (marker.kind === 'A') {
+          this.clearThemeSubscription(paneId);
+        }
         this.callbacks.onPromptMarker?.(paneId, marker);
       },
       onClipboardWrite: (paneId, text) => {
         this.callbacks.onClipboardWrite?.(paneId, text);
+      },
+      onThemeSubscription: (paneId, subscribed) => {
+        this.noteThemeSubscription(paneId, subscribed);
       },
       onStructureChanged: () => {
         this.requestSnapshot();
@@ -1266,7 +1332,10 @@ export class LocalExternalTmuxConnection {
     this.parseSnapshotWindows(windowsRes.stdout.split(/\r?\n/));
     this.parseSnapshotPanes(panesRes.stdout.split(/\r?\n/));
     this.discardInvalidSnapshot();
-    this.controlSubscription?.prunePanes(new Set(this.getExpectedPaneIds()));
+    const expectedPaneIds = new Set(this.getExpectedPaneIds());
+    this.controlSubscription?.prunePanes(expectedPaneIds);
+    this.themeSubscriptions.prune(expectedPaneIds);
+    this.restoreThemeSubscriptionsOnce();
     this.markSpawnRecovered();
     this.emitSnapshot();
   }
