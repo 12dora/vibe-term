@@ -12,7 +12,7 @@ async function main(): Promise<void> {
   while (true) {
     const gateway = await createGatewayRuntime();
     const server = Bun.serve({
-      hostname: '0.0.0.0',
+      hostname: config.bindHost,
       port: config.port,
       // 默认 10s 空闲超时会中断大文件传输（拖到桌面的单次下载在 rsync 期间无响应数据）。
       // 拉满到 255s；流式上传/下载（commit / prepare）持续有 NDJSON 数据，本就不受影响。
@@ -27,7 +27,7 @@ async function main(): Promise<void> {
       websocket: gateway.websocket,
     });
 
-    console.log(`[gateway] listening on port ${config.port}`);
+    console.log(`[gateway] listening on ${config.bindHost}:${config.port}`);
 
     await new Promise<void>((resolve) => {
       gateway.onRestartRequested(async () => {
