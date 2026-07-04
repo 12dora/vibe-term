@@ -1151,7 +1151,8 @@ describe('WebSocketServer resize × theme dedup', () => {
   function setupEntryWithSnapshot(
     server: any,
     deviceId: string,
-    runtime: ReturnType<typeof createResizeThemeRecorder>['runtime']
+    runtime: ReturnType<typeof createResizeThemeRecorder>['runtime'],
+    windows?: unknown[]
   ) {
     server.connections.set(deviceId, {
       runtime,
@@ -1162,7 +1163,7 @@ describe('WebSocketServer resize × theme dedup', () => {
         session: {
           id: '$1',
           name: 'tmex',
-          windows: [
+          windows: windows ?? [
             {
               id: '@1',
               name: 'w1',
@@ -1248,29 +1249,91 @@ describe('WebSocketServer resize × theme dedup', () => {
     expect(recorder.signalThemeChangeCalls).toEqual([]);
   });
 
-  test('handleTermResize deduplicates same cols/rows', () => {
+  test('handleTermResize skips when single-pane window already at requested size', () => {
     const server = new WebSocketServer() as any;
     const recorder = createResizeThemeRecorder();
     setupEntryWithSnapshot(server, 'device-a', recorder.runtime);
 
     server.handleTermResize('device-a', '%0', 80, 24);
-    server.handleTermResize('device-a', '%0', 80, 24);
 
-    expect(recorder.resizePaneCalls).toEqual([['%0', 80, 24]]);
+    expect(recorder.resizePaneCalls).toEqual([]);
   });
 
-  test('handleTermResize allows different cols/rows', () => {
+  test('handleTermResize resizes when requested size differs from snapshot', () => {
     const server = new WebSocketServer() as any;
     const recorder = createResizeThemeRecorder();
     setupEntryWithSnapshot(server, 'device-a', recorder.runtime);
 
-    server.handleTermResize('device-a', '%0', 80, 24);
     server.handleTermResize('device-a', '%0', 100, 30);
 
-    expect(recorder.resizePaneCalls).toEqual([
-      ['%0', 80, 24],
-      ['%0', 100, 30],
+    expect(recorder.resizePaneCalls).toEqual([['%0', 100, 30]]);
+  });
+
+  // 回归：切换到另一个单 pane window 时，即使本 device 刚 resize 过相同 cols/rows，
+  // 目标 window 尺寸不同就必须下发 resize（旧 per-device 缓存会把它吞掉）
+  test('handleTermResize resizes another window even after same cols/rows on this device', () => {
+    const server = new WebSocketServer() as any;
+    const recorder = createResizeThemeRecorder();
+    setupEntryWithSnapshot(server, 'device-a', recorder.runtime, [
+      {
+        id: '@1',
+        name: 'w1',
+        index: 0,
+        active: true,
+        panes: [
+          { id: '%0', windowId: '@1', index: 0, title: 't', active: true, width: 120, height: 30 },
+        ],
+      },
+      {
+        id: '@2',
+        name: 'w2',
+        index: 1,
+        active: false,
+        panes: [
+          { id: '%1', windowId: '@2', index: 0, title: 't', active: true, width: 80, height: 24 },
+        ],
+      },
     ]);
+
+    server.handleTermResize('device-a', '%0', 120, 30);
+    server.handleTermResize('device-a', '%1', 120, 30);
+
+    expect(recorder.resizePaneCalls).toEqual([['%1', 120, 30]]);
+  });
+
+  test('handleTermResize skips multi-pane window already at layout size', () => {
+    const server = new WebSocketServer() as any;
+    const recorder = createResizeThemeRecorder();
+    setupEntryWithSnapshot(server, 'device-a', recorder.runtime, [
+      {
+        id: '@1',
+        name: 'w1',
+        index: 0,
+        active: true,
+        layout: 'b25d,120x30,0,0{60x30,0,0,0,59x30,61,0,1}',
+        panes: [
+          { id: '%0', windowId: '@1', index: 0, title: 't', active: true, width: 60, height: 30 },
+          { id: '%1', windowId: '@1', index: 1, title: 't', active: false, width: 59, height: 30 },
+        ],
+      },
+    ]);
+
+    server.handleTermResize('device-a', '%0', 120, 30);
+    expect(recorder.resizeWindowCalls).toEqual([]);
+
+    server.handleTermResize('device-a', '%0', 100, 40);
+    expect(recorder.resizeWindowCalls).toEqual([['@1', 100, 40]]);
+    expect(recorder.resizePaneCalls).toEqual([]);
+  });
+
+  test('handleTermResize falls back to resizePane for pane missing from snapshot', () => {
+    const server = new WebSocketServer() as any;
+    const recorder = createResizeThemeRecorder();
+    setupEntryWithSnapshot(server, 'device-a', recorder.runtime);
+
+    server.handleTermResize('device-a', '%9', 80, 24);
+
+    expect(recorder.resizePaneCalls).toEqual([['%9', 80, 24]]);
   });
 
   test('handleSiteThemeUpdate does not call resize-window or resize-pane', () => {
@@ -1311,14 +1374,11 @@ describe('WebSocketServer resize × theme dedup', () => {
 
     server.handleSetWindowStyle('device-a', 'fg=#d0d0d0,bg=#262626');
     await flushAsync();
-    server.handleTermResize('device-a', '%0', 80, 24);
     expect(server.lastBroadcastTheme.get('device-a')).toBe('dark');
-    expect(server.lastBroadcastSize.get('device-a')).toEqual({ cols: 80, rows: 24 });
 
     const entry = server.connections.get('device-a');
     server.releaseConnectionEntry('device-a', entry);
     expect(server.lastBroadcastTheme.has('device-a')).toBe(false);
-    expect(server.lastBroadcastSize.has('device-a')).toBe(false);
     expect(server.themeSignalLast.has('device-a')).toBe(false);
   });
 });

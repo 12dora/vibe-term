@@ -55,6 +55,16 @@ interface WebSocketServerOptions {
   deps?: Partial<WebSocketServerDeps>;
 }
 
+// tmux #{window_layout} 前缀携带整窗尺寸（如 "b25d,120x30,0,0[...]"）
+export function parseWindowLayoutSize(
+  layout: string | undefined
+): { cols: number; rows: number } | null {
+  if (!layout) return null;
+  const match = /^[0-9a-fA-F]{4},(\d+)x(\d+)/.exec(layout);
+  if (!match) return null;
+  return { cols: Number(match[1]), rows: Number(match[2]) };
+}
+
 export class WebSocketServer {
   connections = new Map<string, DeviceConnectionEntry>();
   pendingConnectionEntries = new Map<string, Promise<DeviceConnectionEntry | null>>();
@@ -71,8 +81,6 @@ export class WebSocketServer {
   private pendingTmuxTheme: ThemeMode | null = null;
   private themeApplyInFlight = false;
   private lastBroadcastTheme = new Map<string, 'dark' | 'light'>();
-  // per-device 去重缓存：同 cols/rows 不重复调 resize-window/resize-pane
-  private lastBroadcastSize = new Map<string, { cols: number; rows: number }>();
   private readonly deps: WebSocketServerDeps;
 
   constructor(options: WebSocketServerOptions = {}) {
@@ -108,7 +116,6 @@ export class WebSocketServer {
     entry.detachRuntime = null;
     this.themeSignalLast.delete(deviceId);
     this.lastBroadcastTheme.delete(deviceId);
-    this.lastBroadcastSize.delete(deviceId);
     void this.deps.releaseRuntime(deviceId, entry.runtime);
   }
 
@@ -826,25 +833,28 @@ export class WebSocketServer {
     entry.runtime.sendInput(paneId, data);
   }
 
+  // 去重以快照中目标 window 的实际尺寸为准：tmux 尺寸是 per-window 的，
+  // 独立的 per-device 缓存会吞掉切换 window 后的合法 resize（单 pane 切窗不重绘回归）
   private handleTermResize(deviceId: string, paneId: string, cols: number, rows: number): void {
     const entry = this.connections.get(deviceId);
     if (!entry) return;
 
-    const last = this.lastBroadcastSize.get(deviceId);
-    if (last && last.cols === cols && last.rows === rows) {
-      return;
-    }
-    this.lastBroadcastSize.set(deviceId, { cols, rows });
+    const window = entry.lastSnapshot?.session?.windows?.find((w) =>
+      w.panes?.some((p) => p.id === paneId)
+    );
 
-    const snapshot = entry.lastSnapshot;
-    if (snapshot?.session?.windows) {
-      const window = snapshot.session.windows.find(
-        (w) => w.panes && w.panes.some((p) => p.id === paneId)
-      );
-      if (window && window.panes && window.panes.length > 1) {
-        entry.runtime.resizeWindow(window.id, cols, rows);
+    if (window?.panes && window.panes.length > 1) {
+      const currentSize = parseWindowLayoutSize(window.layout);
+      if (currentSize && currentSize.cols === cols && currentSize.rows === rows) {
         return;
       }
+      entry.runtime.resizeWindow(window.id, cols, rows);
+      return;
+    }
+
+    const pane = window?.panes.find((p) => p.id === paneId);
+    if (pane && pane.width === cols && pane.height === rows) {
+      return;
     }
 
     entry.runtime.resizePane(paneId, cols, rows);
