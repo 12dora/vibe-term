@@ -2,6 +2,7 @@ import type { EventDevicePayload, StateSnapshotPayload, TmuxEventType } from '@t
 import { type ThemeMode, getTmuxWindowStyle, wsBorsh } from '@tmex/shared';
 import type { Server, ServerWebSocket } from 'bun';
 import { agentWsHub } from '../agent/ws-hub';
+import { GATEWAY_CAPABILITIES } from '../capabilities';
 import {
   getDeviceTreeOrder,
   getSiteSettings,
@@ -10,6 +11,7 @@ import {
   updateSiteSettings,
 } from '../db';
 import { t } from '../i18n';
+import { getDisplayVersion } from '../system/version';
 import type {
   DeviceSessionRuntime,
   DeviceSessionRuntimeListener,
@@ -564,11 +566,11 @@ export class WebSocketServer {
 
     const helloS2C: wsBorsh.b.infer<typeof wsBorsh.schema.HelloS2CSchema> = {
       serverImpl: 'tmex-gateway',
-      serverVersion: '0.1.0',
+      serverVersion: getDisplayVersion(),
       selectedVersion: wsBorsh.CURRENT_VERSION,
       maxFrameBytes: serverMaxFrameBytes,
       heartbeatIntervalMs: 15000,
-      capabilities: ['tmex-ws-borsh-v1', 'tmex-agent-v1', 'tmex-split-v1'],
+      capabilities: [...GATEWAY_CAPABILITIES],
     };
 
     const payloadBytes = wsBorsh.encodePayload(wsBorsh.schema.HelloS2CSchema, helloS2C);

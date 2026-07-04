@@ -56,6 +56,7 @@ import { pushSupervisor } from '../push/supervisor';
 import { telegramService } from '../telegram/service';
 import { weixinService } from '../weixin/service';
 import { handleAgentApiRequest } from './agent';
+import { handleCapabilitiesApiRequest } from './capabilities';
 import { handleFilesApiRequest } from './files';
 import { handleLlmApiRequest } from './llm';
 import { handleSystemApiRequest } from './system';
@@ -176,6 +177,13 @@ export function handleApiRequest(
 ): Response | Promise<Response> {
   const url = new URL(req.url);
   const path = url.pathname;
+
+  if (path === '/api/capabilities') {
+    const capabilitiesResponse = handleCapabilitiesApiRequest(req, path);
+    if (capabilitiesResponse) {
+      return capabilitiesResponse;
+    }
+  }
 
   if (path === '/api/devices' && req.method === 'GET') {
     return handleGetDevices();
@@ -450,7 +458,8 @@ async function handleUpdateDevice(req: Request, id: string): Promise<Response> {
   if (body.username !== undefined) updates.username = body.username;
   if (body.sshConfigRef !== undefined) updates.sshConfigRef = body.sshConfigRef;
   if (body.session !== undefined) updates.session = body.session;
-  if (body.defaultWorkingDir !== undefined) updates.defaultWorkingDir = body.defaultWorkingDir.trim() || undefined;
+  if (body.defaultWorkingDir !== undefined)
+    updates.defaultWorkingDir = body.defaultWorkingDir.trim() || undefined;
   if (body.authMode !== undefined) updates.authMode = body.authMode;
   if (body.password !== undefined) updates.passwordEnc = await encrypt(body.password);
   if (body.privateKey !== undefined) updates.privateKeyEnc = await encrypt(body.privateKey);
