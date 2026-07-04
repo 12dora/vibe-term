@@ -753,13 +753,25 @@
       },
       "tool": {
         "input": "入力",
+        "details": "詳細",
+        "close": "閉じる",
         "result": "結果",
         "screen": "画面キャプチャ",
         "send_input": "入力送信",
         "read_screen": "画面読み取り",
         "web_search": "Web 検索",
         "fetch_url": "URL 取得",
+        "get_pane_info": "ペイン情報を取得",
+        "run_command": "コマンドを実行",
         "denied": "拒否されました"
+      },
+      "paneBadge": {
+        "bound": "Agent バインド中",
+        "generating": "Agent 出力中"
+      },
+      "controlChars": {
+        "label": "制御文字",
+        "hint": "send_input で生の制御文字（C0）の送信を許可します。デフォルトはオフ。必要な時のみ有効化してください。"
       },
       "reasoning": {
         "title": "思考プロセス"

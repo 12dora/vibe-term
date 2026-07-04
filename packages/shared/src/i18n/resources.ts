@@ -759,13 +759,25 @@ export const I18N_RESOURCES = {
       },
       "tool": {
         "input": "Input",
+        "details": "Details",
+        "close": "Close",
         "result": "Result",
         "screen": "Screen capture",
         "send_input": "Send input",
         "read_screen": "Read screen",
         "web_search": "Web search",
         "fetch_url": "Fetch URL",
+        "get_pane_info": "Get pane info",
+        "run_command": "Run command",
         "denied": "Denied"
+      },
+      "paneBadge": {
+        "bound": "Agent bound",
+        "generating": "Agent generating"
+      },
+      "controlChars": {
+        "label": "Control chars",
+        "hint": "Allow the agent to send raw control characters (C0) via send_input. Off by default; enable only when necessary."
       },
       "reasoning": {
         "title": "Reasoning"
@@ -1754,13 +1766,25 @@ export const I18N_RESOURCES = {
       },
       "tool": {
         "input": "输入",
+        "details": "详情",
+        "close": "关闭",
         "result": "结果",
         "screen": "屏幕快照",
         "send_input": "发送输入",
         "read_screen": "读取屏幕",
         "web_search": "网络搜索",
         "fetch_url": "抓取网页",
+        "get_pane_info": "获取面板信息",
+        "run_command": "运行命令",
         "denied": "已拒绝"
+      },
+      "paneBadge": {
+        "bound": "Agent 已绑定",
+        "generating": "Agent 输出中"
+      },
+      "controlChars": {
+        "label": "控制字符",
+        "hint": "允许 agent 通过 send_input 发送原始控制字符（C0）。默认关闭；仅在必要时开启。"
       },
       "reasoning": {
         "title": "思考过程"
@@ -2749,13 +2773,25 @@ export const I18N_RESOURCES = {
       },
       "tool": {
         "input": "入力",
+        "details": "詳細",
+        "close": "閉じる",
         "result": "結果",
         "screen": "画面キャプチャ",
         "send_input": "入力送信",
         "read_screen": "画面読み取り",
         "web_search": "Web 検索",
         "fetch_url": "URL 取得",
+        "get_pane_info": "ペイン情報を取得",
+        "run_command": "コマンドを実行",
         "denied": "拒否されました"
+      },
+      "paneBadge": {
+        "bound": "Agent バインド中",
+        "generating": "Agent 出力中"
+      },
+      "controlChars": {
+        "label": "制御文字",
+        "hint": "send_input で生の制御文字（C0）の送信を許可します。デフォルトはオフ。必要な時のみ有効化してください。"
       },
       "reasoning": {
         "title": "思考プロセス"

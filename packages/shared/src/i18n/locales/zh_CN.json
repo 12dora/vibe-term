@@ -753,13 +753,25 @@
       },
       "tool": {
         "input": "输入",
+        "details": "详情",
+        "close": "关闭",
         "result": "结果",
         "screen": "屏幕快照",
         "send_input": "发送输入",
         "read_screen": "读取屏幕",
         "web_search": "网络搜索",
         "fetch_url": "抓取网页",
+        "get_pane_info": "获取面板信息",
+        "run_command": "运行命令",
         "denied": "已拒绝"
+      },
+      "paneBadge": {
+        "bound": "Agent 已绑定",
+        "generating": "Agent 输出中"
+      },
+      "controlChars": {
+        "label": "控制字符",
+        "hint": "允许 agent 通过 send_input 发送原始控制字符（C0）。默认关闭；仅在必要时开启。"
       },
       "reasoning": {
         "title": "思考过程"

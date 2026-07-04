@@ -753,13 +753,25 @@
       },
       "tool": {
         "input": "Input",
+        "details": "Details",
+        "close": "Close",
         "result": "Result",
         "screen": "Screen capture",
         "send_input": "Send input",
         "read_screen": "Read screen",
         "web_search": "Web search",
         "fetch_url": "Fetch URL",
+        "get_pane_info": "Get pane info",
+        "run_command": "Run command",
         "denied": "Denied"
+      },
+      "paneBadge": {
+        "bound": "Agent bound",
+        "generating": "Agent generating"
+      },
+      "controlChars": {
+        "label": "Control chars",
+        "hint": "Allow the agent to send raw control characters (C0) via send_input. Off by default; enable only when necessary."
       },
       "reasoning": {
         "title": "Reasoning"
