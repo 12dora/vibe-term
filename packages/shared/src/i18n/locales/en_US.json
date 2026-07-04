@@ -156,7 +156,8 @@
       "copied": "Copied to clipboard",
       "copyFailed": "Copy failed",
       "pasteFailed": "Could not read clipboard, check browser permissions",
-      "clearSelection": "Dismiss selection"
+      "clearSelection": "Dismiss selection",
+      "fileLinkNotFound": "File does not exist or is not accessible"
     },
     "settings": {
       "title": "System Settings",

@@ -162,7 +162,8 @@ export const I18N_RESOURCES = {
       "copied": "Copied to clipboard",
       "copyFailed": "Copy failed",
       "pasteFailed": "Could not read clipboard, check browser permissions",
-      "clearSelection": "Dismiss selection"
+      "clearSelection": "Dismiss selection",
+      "fileLinkNotFound": "File does not exist or is not accessible"
     },
     "settings": {
       "title": "System Settings",
@@ -1169,7 +1170,8 @@ export const I18N_RESOURCES = {
       "copied": "已复制到剪贴板",
       "copyFailed": "复制失败",
       "pasteFailed": "无法读取剪贴板，请检查浏览器权限",
-      "clearSelection": "取消选择"
+      "clearSelection": "取消选择",
+      "fileLinkNotFound": "文件不存在或无法访问"
     },
     "settings": {
       "title": "系统设置",
@@ -2176,7 +2178,8 @@ export const I18N_RESOURCES = {
       "copied": "クリップボードにコピーしました",
       "copyFailed": "コピーに失敗しました",
       "pasteFailed": "クリップボードを読み取れません。ブラウザの権限を確認してください",
-      "clearSelection": "選択を解除"
+      "clearSelection": "選択を解除",
+      "fileLinkNotFound": "ファイルが存在しないかアクセスできません"
     },
     "settings": {
       "title": "システム設定",

@@ -1,5 +1,9 @@
 import { describe, expect, test } from 'bun:test';
-import { detectLinksInLine, detectLinksInWrappedLines } from './link-detector';
+import {
+  detectLinksInLine,
+  detectLinksInWrappedLines,
+  detectMatchesInWrappedLines,
+} from './link-detector';
 import { type SelectionLineModel, lineModelFromText } from './selection-model';
 
 function model(colChars: (string | null)[], wrappedToNext = false): SelectionLineModel {
@@ -79,5 +83,85 @@ describe('detectLinksInWrappedLines', () => {
     expect(wrapped).toHaveLength(1);
     expect(wrapped[0].lineIndex).toBe(0);
     expect(wrapped[0].url).toBe('https://a.com');
+  });
+});
+
+describe('detectMatchesInWrappedLines - 文件路径候选', () => {
+  const detect = (text: string) => detectMatchesInWrappedLines([lineModelFromText(text)]);
+  const files = (text: string) =>
+    detect(text)
+      .filter((m) => m.kind === 'file')
+      .map((m) => m.text);
+
+  test('绝对路径', () => {
+    expect(files('cat /etc/hosts now')).toEqual(['/etc/hosts']);
+  });
+
+  test('显式相对路径 ./ 与 ../', () => {
+    expect(files('vi ./src/main.ts and ../lib/a.c')).toEqual(['./src/main.ts', '../lib/a.c']);
+  });
+
+  test('含斜杠的相对路径', () => {
+    expect(files('open src/utils/fileUrl.ts')).toEqual(['src/utils/fileUrl.ts']);
+  });
+
+  test('裸文件名需要字母开头的扩展名', () => {
+    expect(files('build main.rs done')).toEqual(['main.rs']);
+    expect(files('pi is 3.14 ok')).toEqual([]);
+  });
+
+  test(':line 与 :line:col 后缀计入区间但不计入路径', () => {
+    const [match] = detect('src/a.ts:12:5 error');
+    expect(match.kind).toBe('file');
+    expect(match.text).toBe('src/a.ts');
+    expect(match.startCol).toBe(0);
+    expect(match.endCol).toBe('src/a.ts:12:5'.length - 1);
+  });
+
+  test('URL 区间被掩掉，不会重复识别为文件路径', () => {
+    const matches = detect('see https://example.com/a/b.ts now');
+    expect(matches).toHaveLength(1);
+    expect(matches[0].kind).toBe('url');
+  });
+
+  test('URL 与文件路径可同行共存', () => {
+    const matches = detect('doc https://a.com and /var/log/app.log');
+    expect(matches.map((m) => m.kind)).toEqual(['url', 'file']);
+    expect(matches[1].text).toBe('/var/log/app.log');
+  });
+
+  test('剥掉紧贴末尾的句读', () => {
+    expect(files('见 src/a.ts.')).toEqual(['src/a.ts']);
+  });
+
+  test('引号/括号是定界符', () => {
+    expect(files('open "/tmp/x.log" (see ./a/b)')).toEqual(['/tmp/x.log', './a/b']);
+  });
+
+  test('不识别 ~ 前缀与纯斜杠', () => {
+    expect(files('cd ~/work now / alone')).toEqual([]);
+  });
+
+  test('宽字符文件名 endCol 覆盖 spacer-tail 列', () => {
+    // '/日志.txt'：'日' 与 '志' 各占两列
+    const colChars: (string | null)[] = ['/', '日', null, '志', null, ...Array.from('.txt')];
+    const [match] = detectMatchesInWrappedLines([
+      { colChars, contentCols: colChars.length, wrappedToNext: false },
+    ]);
+    expect(match.kind).toBe('file');
+    expect(match.text).toBe('/日志.txt');
+    expect(match.startCol).toBe(0);
+    expect(match.endCol).toBe(colChars.length - 1);
+  });
+
+  test('跨软换行的文件路径按物理行切段', () => {
+    const first = model(Array.from('ls /usr/local/sha'), true);
+    const second = model(Array.from('re/doc/readme.md'), false);
+    const matches = detectMatchesInWrappedLines([first, second]);
+    expect(matches).toHaveLength(2);
+    expect(matches[0].text).toBe('/usr/local/share/doc/readme.md');
+    expect(matches[0].lineIndex).toBe(0);
+    expect(matches[1].lineIndex).toBe(1);
+    expect(matches[1].startCol).toBe(0);
   });
 });

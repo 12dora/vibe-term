@@ -199,6 +199,11 @@ export interface CompatibleTerminalLike {
   forceFullRepaint?: () => void;
   onSelectionChange?: (callback: (text: string | null) => void) => TerminalDisposable;
   onLinkActivated?: (callback: (url: string) => void) => TerminalDisposable;
+  /** 回调收到的是经 cwd/授权根解析后的绝对路径 */
+  onFileLinkActivated?: (callback: (path: string) => void) => TerminalDisposable;
+  setFileLinkContext?: (
+    context: { cwd?: string | null; rootPaths: readonly string[] } | null
+  ) => void;
   startTouchSelection?: (
     clientX: number,
     clientY: number,

@@ -1,11 +1,13 @@
 import { loadTerminalFonts, resolveFontStack } from '@/lib/fonts';
 import { useTmuxStore } from '@/stores/tmux';
 import { useUIStore } from '@/stores/ui';
+import { fileRoute } from '@/utils/fileUrl';
 import {
   registerCursorRectGetter,
   unregisterCursorRectGetter,
 } from '@/utils/keyboard-cursor-bridge';
 import { type PaneSink, registerPaneSink } from '@/ws-borsh/pane-sink-registry';
+import { useQuery } from '@tanstack/react-query';
 import {
   type CompatibleTerminalLike,
   FitAddon,
@@ -24,7 +26,9 @@ import {
   useState,
 } from 'react';
 import { useTranslation } from 'react-i18next';
+import { useNavigate } from 'react-router';
 import { toast } from 'sonner';
+import { fetchFileRoots, fetchFileStat } from '../files-panel/api';
 import { SelectionToolbar } from './SelectionToolbar';
 import {
   normalizeHistoryForTerminal,
@@ -184,6 +188,7 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(
     const terminalFontSize = useUIStore((state) => state.terminalFontSize);
     const terminalLineHeight = useUIStore((state) => state.terminalLineHeight);
     const { t } = useTranslation();
+    const navigate = useNavigate();
 
     const terminalTheme = useMemo(() => {
       switch (theme) {
@@ -545,6 +550,54 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(
       });
       return () => disposable.dispose();
     }, [instance]);
+
+    // 文件链接上下文：该设备已启用的授权根 + 当前 pane 的 cwd，注入终端做候选有效性过滤。
+    const { data: fileRootsData } = useQuery({
+      queryKey: ['files', 'roots'],
+      queryFn: fetchFileRoots,
+      staleTime: 30_000,
+    });
+    const fileLinkRoots = useMemo(
+      () =>
+        (fileRootsData?.roots ?? []).filter((root) => root.enabled && root.deviceId === deviceId),
+      [fileRootsData, deviceId]
+    );
+    const paneCurrentPath = useTmuxStore((state) => {
+      const session = state.snapshots[deviceId]?.session;
+      if (!session) return undefined;
+      for (const win of session.windows) {
+        for (const pane of win.panes) {
+          if (pane.id === paneId) return pane.currentPath;
+        }
+      }
+      return undefined;
+    });
+
+    useEffect(() => {
+      instance?.setFileLinkContext?.({
+        cwd: paneCurrentPath ?? null,
+        rootPaths: fileLinkRoots.map((root) => root.path),
+      });
+    }, [instance, paneCurrentPath, fileLinkRoots]);
+
+    // 文件链接点击：最长前缀匹配定位 root，stat 校验存在后跳转文件预览。
+    useEffect(() => {
+      if (!instance?.onFileLinkActivated) return;
+      const disposable = instance.onFileLinkActivated((path) => {
+        const root = fileLinkRoots
+          .filter((r) => path === r.path || path.startsWith(r.path === '/' ? '/' : `${r.path}/`))
+          .sort((a, b) => b.path.length - a.path.length)[0];
+        if (!root) return;
+        void fetchFileStat(root.id, path)
+          .then(() => {
+            navigate(fileRoute(root.id, path));
+          })
+          .catch(() => {
+            toast.error(t('terminal.fileLinkNotFound'));
+          });
+      });
+      return () => disposable.dispose();
+    }, [instance, fileLinkRoots, navigate, t]);
 
     useEffect(() => {
       if (!instance?.onSelectionChange) {

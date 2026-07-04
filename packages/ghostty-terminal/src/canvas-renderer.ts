@@ -32,6 +32,13 @@ type CanvasRendererDebugState = {
   lastDrawnRows: number[];
 };
 
+type LinkUnderlineSegment = {
+  /** 视口内行号（0 起） */
+  row: number;
+  startCol: number;
+  endCol: number;
+};
+
 type CursorCell = {
   x: number;
   y: number;
@@ -79,9 +86,11 @@ export class CanvasRenderer {
   readonly kind = 'canvas';
 
   private readonly mainCanvas: HTMLCanvasElement;
+  private readonly linkCanvas: HTMLCanvasElement;
   private readonly selectionCanvas: HTMLCanvasElement;
   private readonly cursorCanvas: HTMLCanvasElement;
   private readonly mainContext: CanvasRenderingContext2D;
+  private readonly linkContext: CanvasRenderingContext2D;
   private readonly selectionContext: CanvasRenderingContext2D;
   private readonly cursorContext: CanvasRenderingContext2D;
   private theme: GhosttyTheme;
@@ -121,11 +130,13 @@ export class CanvasRenderer {
     options.screenElement.style.overflow = 'hidden';
 
     this.mainCanvas = document.createElement('canvas');
+    this.linkCanvas = document.createElement('canvas');
     this.selectionCanvas = document.createElement('canvas');
     this.cursorCanvas = document.createElement('canvas');
 
     for (const [canvas, layer] of [
       [this.mainCanvas, 'main'],
+      [this.linkCanvas, 'link'],
       [this.selectionCanvas, 'selection'],
       [this.cursorCanvas, 'cursor'],
     ] as const) {
@@ -139,6 +150,7 @@ export class CanvasRenderer {
     }
 
     this.mainContext = ensureContext(this.mainCanvas);
+    this.linkContext = ensureContext(this.linkCanvas);
     this.selectionContext = ensureContext(this.selectionCanvas);
     this.cursorContext = ensureContext(this.cursorCanvas);
   }
@@ -213,6 +225,7 @@ export class CanvasRenderer {
 
   dispose(): void {
     this.mainCanvas.remove();
+    this.linkCanvas.remove();
     this.selectionCanvas.remove();
     this.cursorCanvas.remove();
     this.colorCache.clear();
@@ -284,14 +297,24 @@ export class CanvasRenderer {
     const width = nextCols * deviceCellWidth;
     const height = nextRows * deviceCellHeight;
 
-    for (const canvas of [this.mainCanvas, this.selectionCanvas, this.cursorCanvas]) {
+    for (const canvas of [
+      this.mainCanvas,
+      this.linkCanvas,
+      this.selectionCanvas,
+      this.cursorCanvas,
+    ]) {
       canvas.width = width;
       canvas.height = height;
       canvas.style.width = `${width / dpr}px`;
       canvas.style.height = `${height / dpr}px`;
     }
 
-    for (const context of [this.mainContext, this.selectionContext, this.cursorContext]) {
+    for (const context of [
+      this.mainContext,
+      this.linkContext,
+      this.selectionContext,
+      this.cursorContext,
+    ]) {
       context.setTransform(1, 0, 0, 1, 0, 0);
       // alphabetic：按真实 baseline 定位，配合 textBaselineY 精确居中字形盒。
       context.textBaseline = 'alphabetic';
@@ -299,6 +322,46 @@ export class CanvasRenderer {
     }
 
     return true;
+  }
+
+  // 链接虚线下划线层：独立 canvas，与主画布的按行局部重绘互不干扰。
+  // 每次全量重画（段数少、开销可忽略），由 terminal 侧节流调用。
+  drawLinkUnderlines(segments: LinkUnderlineSegment[]): void {
+    const context = this.linkContext;
+    context.clearRect(0, 0, this.linkCanvas.width, this.linkCanvas.height);
+    if (segments.length === 0) {
+      return;
+    }
+
+    const thickness = Math.max(1, Math.round(this.dpr));
+    const dash = Math.max(2, Math.round(2 * this.dpr));
+    // 奇数线宽时偏移 0.5 物理像素，避免 1px 线被抗锯齿糊成 2px。
+    const crisp = thickness % 2 === 1 ? 0.5 : 0;
+
+    context.strokeStyle = this.theme.foreground;
+    context.globalAlpha = 0.55;
+    context.lineWidth = thickness;
+    context.setLineDash([dash, dash]);
+    context.beginPath();
+    for (const segment of segments) {
+      const cellTop = segment.row * this.deviceCellHeight;
+      const y =
+        Math.min(
+          Math.round(cellTop + this.textTopGap + this.glyphBoxHeight - thickness),
+          cellTop + this.deviceCellHeight - thickness
+        ) + crisp;
+      const x0 = segment.startCol * this.deviceCellWidth;
+      const x1 = (segment.endCol + 1) * this.deviceCellWidth;
+      context.moveTo(x0, y);
+      context.lineTo(x1, y);
+    }
+    context.stroke();
+    context.setLineDash([]);
+    context.globalAlpha = 1;
+  }
+
+  clearLinkUnderlines(): void {
+    this.linkContext.clearRect(0, 0, this.linkCanvas.width, this.linkCanvas.height);
   }
 
   private drawSelection(rects: GhosttySelectionRect[], color: string): void {
@@ -320,7 +383,10 @@ export class CanvasRenderer {
   }
 
   // 背景遍：清本行带、铺默认底色、逐 cell 铺非默认底色。不画任何字形。
-  private drawRowBackground(row: GhosttyRenderRow, colors: GhosttyRenderSnapshotMeta['colors']): void {
+  private drawRowBackground(
+    row: GhosttyRenderRow,
+    colors: GhosttyRenderSnapshotMeta['colors']
+  ): void {
     const y = row.y * this.deviceCellHeight;
     const width = this.cols * this.deviceCellWidth;
     const defaultBackground = this.toCss(colors.background);
@@ -335,8 +401,8 @@ export class CanvasRenderer {
       }
 
       const bg = cell.style.inverse
-        ? cell.fgColor ?? colors.foreground
-        : cell.bgColor ?? colors.background;
+        ? (cell.fgColor ?? colors.foreground)
+        : (cell.bgColor ?? colors.background);
       if (
         bg.r !== colors.background.r ||
         bg.g !== colors.background.g ||
@@ -353,7 +419,10 @@ export class CanvasRenderer {
 
   // 前景遍：逐 cell 画字形/块元素/装饰线。在所有行背景铺完后调用，故字形可越界相邻 cell
   // 而不被邻 cell 的不透明背景擦掉（允许「奇怪」Unicode 的升/降部溢出）。
-  private drawRowForeground(row: GhosttyRenderRow, colors: GhosttyRenderSnapshotMeta['colors']): void {
+  private drawRowForeground(
+    row: GhosttyRenderRow,
+    colors: GhosttyRenderSnapshotMeta['colors']
+  ): void {
     const y = row.y * this.deviceCellHeight;
     const lineThickness = Math.max(1, Math.round(this.dpr));
 
@@ -368,8 +437,8 @@ export class CanvasRenderer {
 
       const x = cell.x * this.deviceCellWidth;
       const fg = cell.style.inverse
-        ? cell.bgColor ?? colors.background
-        : cell.fgColor ?? colors.foreground;
+        ? (cell.bgColor ?? colors.background)
+        : (cell.fgColor ?? colors.foreground);
       const cellWidth = cell.widthKind === 'wide' ? this.deviceCellWidth * 2 : this.deviceCellWidth;
 
       this.mainContext.fillStyle = this.toCss(fg);
@@ -566,4 +635,9 @@ export class CanvasRenderer {
   }
 }
 
-export type { CanvasRendererDebugState, CanvasRendererFrame, CanvasRendererOptions };
+export type {
+  CanvasRendererDebugState,
+  CanvasRendererFrame,
+  CanvasRendererOptions,
+  LinkUnderlineSegment,
+};
