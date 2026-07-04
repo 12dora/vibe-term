@@ -94,6 +94,7 @@ interface AgentState {
   renameSession: (sessionId: string, title: string) => Promise<boolean>;
   deleteSession: (sessionId: string) => Promise<boolean>;
   setWriteMode: (sessionId: string, writeMode: AgentWriteMode) => Promise<void>;
+  setAllowControlChars: (sessionId: string, allow: boolean) => Promise<void>;
   setDefaultWriteMode: (writeMode: AgentWriteMode) => void;
   setSessionModel: (sessionId: string, providerId: string | null, modelId: string) => Promise<void>;
   rebindPane: (sessionId: string, paneId: string) => Promise<void>;
@@ -853,6 +854,23 @@ export const useAgentStore = create<AgentState>()(
           });
           if (!res.ok) {
             throw new Error(await parseApiError(res, 'Failed to update write mode'));
+          }
+          const payload = (await res.json()) as { session: AgentSessionDto };
+          set((prev) => ({ sessions: { ...prev.sessions, [sessionId]: payload.session } }));
+        } catch (error) {
+          toast.error(error instanceof Error ? error.message : String(error));
+        }
+      },
+
+      async setAllowControlChars(sessionId, allow) {
+        try {
+          const res = await fetch(`/api/agent/sessions/${sessionId}`, {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ allowControlChars: allow }),
+          });
+          if (!res.ok) {
+            throw new Error(await parseApiError(res, 'Failed to update control chars setting'));
           }
           const payload = (await res.json()) as { session: AgentSessionDto };
           set((prev) => ({ sessions: { ...prev.sessions, [sessionId]: payload.session } }));

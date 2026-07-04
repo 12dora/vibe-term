@@ -397,6 +397,7 @@ export function AgentTab() {
   const draftEmpty = Boolean(draft && !activeSession);
   // 有活动 session 时反映该 session 的写入模式；否则用浏览器记忆的默认值（新 session 的初值）
   const writeMode = activeSession ? activeSession.writeMode : defaultWriteMode;
+  const allowControlChars = activeSession?.allowControlChars ?? false;
   // 新建按钮仅在「有内容的活动会话」时显示；草稿态/空会话本身即新会话，隐藏之
   const showNewSession = Boolean(activeSession && (messages?.length ?? 0) > 0);
   const inputDisabled =
@@ -582,23 +583,41 @@ export function AgentTab() {
               />
             }
             writeModeControl={
-              <div className="flex shrink-0 items-center gap-1.5">
-                <span className="text-muted-foreground text-xs">
-                  {writeMode === 'auto' ? t('agent.writeMode.auto') : t('agent.writeMode.confirm')}
-                </span>
-                <Switch
-                  data-testid="agent-write-mode-switch"
-                  checked={writeMode === 'auto'}
-                  disabled={Boolean(activeSession) && isOrphan}
-                  onCheckedChange={(checked) => {
-                    const next = checked ? 'auto' : 'confirm';
-                    // 记忆为默认值（影响后续新 session）；有活动 session 时同时改该 session
-                    useAgentStore.getState().setDefaultWriteMode(next);
-                    if (activeSession) {
-                      void useAgentStore.getState().setWriteMode(activeSession.id, next);
-                    }
-                  }}
-                />
+              <div className="flex shrink-0 items-center gap-3">
+                <div className="flex items-center gap-1.5">
+                  <span className="text-muted-foreground text-xs">
+                    {writeMode === 'auto' ? t('agent.writeMode.auto') : t('agent.writeMode.confirm')}
+                  </span>
+                  <Switch
+                    data-testid="agent-write-mode-switch"
+                    checked={writeMode === 'auto'}
+                    disabled={Boolean(activeSession) && isOrphan}
+                    onCheckedChange={(checked) => {
+                      const next = checked ? 'auto' : 'confirm';
+                      // 记忆为默认值（影响后续新 session）；有活动 session 时同时改该 session
+                      useAgentStore.getState().setDefaultWriteMode(next);
+                      if (activeSession) {
+                        void useAgentStore.getState().setWriteMode(activeSession.id, next);
+                      }
+                    }}
+                  />
+                </div>
+                {activeSession && (
+                  <div className="flex items-center gap-1.5">
+                    <span className="text-muted-foreground text-xs" title={t('agent.controlChars.hint')}>
+                      {t('agent.controlChars.label')}
+                    </span>
+                    <Switch
+                      data-testid="agent-control-chars-switch"
+                      checked={allowControlChars}
+                      disabled={isOrphan}
+                      title={t('agent.controlChars.hint')}
+                      onCheckedChange={(checked) => {
+                        void useAgentStore.getState().setAllowControlChars(activeSession.id, checked);
+                      }}
+                    />
+                  </div>
+                )}
               </div>
             }
           />
