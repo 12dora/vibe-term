@@ -1201,9 +1201,6 @@ export class SshExternalTmuxConnection {
   async fetchPaneHistory(
     paneId: string
   ): Promise<{ data: string; alternateScreen: boolean } | null> {
-    if (!this.connected) {
-      return null;
-    }
     const screenInfo = parsePaneScreenInfo(
       (await this.runTmux(['display-message', '-p', '-t', paneId, PANE_SCREEN_INFO_FORMAT], true))
         .stdout
