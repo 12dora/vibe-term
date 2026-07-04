@@ -6,6 +6,7 @@ import type {
   TmuxNotificationEventData,
 } from '@tmex/shared';
 import { getAllDevices, getDeviceById, getSiteSettings } from '../db';
+import { notifyDeviceClose } from '../agent/device-close-bus';
 import { eventNotifier } from '../events';
 import { t } from '../i18n';
 import type { DeviceSessionRuntime } from '../tmux-client/device-session-runtime';
@@ -349,6 +350,8 @@ export class PushSupervisor {
     if (!entry || entry.generation !== generation || entry.runtime !== runtime) {
       return;
     }
+
+    notifyDeviceClose(deviceId);
 
     await connectionAlertNotifier.notify({
       device,

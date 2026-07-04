@@ -14,6 +14,7 @@ import type { LanguageModel } from 'ai';
 import { generateObject } from 'ai';
 import { z } from 'zod';
 import { agentWsHub } from '../agent/ws-hub';
+import { notifyDeviceClose } from '../agent/device-close-bus';
 import { getDeviceById, getSiteSettings } from '../db';
 import {
   type WatchRuleRecord,
@@ -407,6 +408,7 @@ export class WatchService {
     if (device.runtime !== runtime) {
       return;
     }
+    notifyDeviceClose(device.deviceId);
     device.detach?.();
     device.detach = null;
     device.runtime = null;

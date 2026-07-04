@@ -116,7 +116,7 @@ export type AgentRunOutcome = 'idle' | 'waiting_confirmation' | 'stopped' | 'int
 /** runOnce 内部结果：'steer' 表示需 drain 队列后续跑（不逃逸出 execute） */
 type RunOnceResult = AgentRunOutcome | 'steer';
 
-export type AgentStopReason = 'manual' | 'shutdown';
+export type AgentStopReason = 'manual' | 'shutdown' | 'pane_lost';
 
 export interface AgentRunDeps {
   resolveModel: (providerId: string | null, modelId: string | null) => Promise<LanguageModel>;
@@ -268,6 +268,9 @@ export class AgentRun {
 
   // 当前 run 期间该 pane 的 headless 模拟器（流式读屏 + run_command），run 结束释放。
   private emulator: PaneEmulator | null = null;
+  // run 期间绑定的设备/pane（emulator destroy 兜底用；execute 内赋值）
+  private runtimeDeviceId: string | null = null;
+  private runtimePaneId: string | null = null;
 
   private eventSeq = 0;
 
@@ -322,6 +325,8 @@ export class AgentRun {
 
     let runtime: TerminalRuntimeLike | null = null;
     const runtimeDeviceId = session.deviceId;
+    this.runtimeDeviceId = runtimeDeviceId;
+    this.runtimePaneId = session.paneId;
     try {
       if (runtimeDeviceId && session.paneId) {
         try {
@@ -408,6 +413,12 @@ export class AgentRun {
         } catch (error) {
           console.error(`[agent-run] failed to release pane emulator:`, error);
         }
+        // 兜底强制销毁：release 仅减引用计数，run 结束应确保 emulator 真正释放
+        try {
+          await paneEmulatorRegistry.destroy(runtimeDeviceId, session.paneId);
+        } catch (error) {
+          console.error(`[agent-run] failed to destroy pane emulator:`, error);
+        }
       }
       if (runtime && runtimeDeviceId) {
         try {
@@ -416,6 +427,8 @@ export class AgentRun {
           console.error(`[agent-run] failed to release runtime ${runtimeDeviceId}:`, error);
         }
       }
+      this.runtimeDeviceId = null;
+      this.runtimePaneId = null;
     }
   }
 
@@ -495,6 +508,13 @@ export class AgentRun {
           this.deps.hasQueuedMessages(this.sessionId)
         ) {
           this.steerRequested = true;
+          this.abortController.abort();
+        }
+
+        // pane/runtime 失效主动停止：连接已断，标记 fatal 并 abort，避免后续工具反复超时
+        if (runtime && (runtime as { isTerminated?: boolean }).isTerminated) {
+          this.terminalFatal = true;
+          this.terminalFatalMessage = 'terminal connection lost during run';
           this.abortController.abort();
         }
       },
@@ -629,8 +649,12 @@ export class AgentRun {
         tools,
         createTerminalTools({
           paneId: session.paneId,
+          deviceId: session.deviceId ?? '',
           getRuntime: () => runtime,
           getEmulator: () => this.emulator,
+          isRuntimeAlive: () =>
+            runtime != null && !(runtime as { isTerminated?: boolean }).isTerminated,
+          allowControlChars: session.allowControlChars,
           needsApprovalForWrite: session.writeMode === 'confirm',
           onFailure: () => this.recordTerminalFailure(),
           onSuccess: () => {
@@ -671,6 +695,15 @@ export class AgentRun {
     if (this.terminalFailureStreak >= TERMINAL_FAILURE_LIMIT && !this.terminalFatal) {
       this.terminalFatal = true;
       this.terminalFatalMessage = `terminal tool failed ${this.terminalFailureStreak} times in a row, aborting run`;
+      // fatal streak：强制销毁 emulator，防止 finally 的 release 仅减引用计数而残留脏状态
+      if (this.runtimeDeviceId && this.runtimePaneId) {
+        void paneEmulatorRegistry
+          .destroy(this.runtimeDeviceId, this.runtimePaneId)
+          .catch((error) => {
+            console.error(`[agent-run] failed to destroy emulator on fatal:`, error);
+          });
+        this.emulator = null;
+      }
       this.abortController.abort();
     }
   }
@@ -738,6 +771,13 @@ export class AgentRun {
     if (this.stopReason === 'shutdown') {
       // 进程退出：status 保持 'running'，下次启动由 supervisor 自动恢复
       return 'interrupted';
+    }
+
+    if (this.stopReason === 'pane_lost') {
+      return this.finishError(
+        session,
+        this.terminalFatalMessage || 'terminal connection lost: pane/device unavailable'
+      );
     }
 
     this.setStatus('stopped');

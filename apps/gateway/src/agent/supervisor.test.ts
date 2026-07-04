@@ -583,6 +583,98 @@ describe('AgentSupervisor - stop 语义', () => {
     expect(getAgentSessionById(harness.session.id)?.status).toBe('running');
     expect(harness.supervisor.isSessionActive(harness.session.id)).toBe(false);
   });
+
+  test("stopSessionsForDevice('pane_lost')：活动 run 被 abort 且 status=error（不自动恢复）", async () => {
+    const mock = createMockChatServer(() =>
+      slowSseResponse(
+        [
+          chunk({ role: 'assistant', content: 'working ' }),
+          chunk({ content: 'more ' }),
+          chunk({}, 'stop'),
+        ],
+        50
+      )
+    );
+    servers.push(mock.server);
+
+    const harness = createSupervisorHarness({ baseUrl: mock.baseUrl });
+    await harness.supervisor.start();
+    harness.supervisor.submitUserMessage(harness.session.id, 'talk');
+
+    await new Promise((r) => setTimeout(r, 80));
+    harness.supervisor.stopSessionsForDevice(TEST_DEVICE_ID, 'pane_lost');
+
+    await harness.waitForIdle();
+
+    const session = getAgentSessionById(harness.session.id);
+    expect(session?.status).toBe('error');
+    expect(session?.lastError).toMatch(/terminal connection lost|pane\/device unavailable/);
+    expect(harness.supervisor.isSessionActive(harness.session.id)).toBe(false);
+  });
+
+  test("stopSessionsForDevice：无活动 run 时直接落 error 并广播", async () => {
+    const harness = createSupervisorHarness({
+      baseUrl: 'http://unused',
+      sessionStatus: 'running',
+    });
+
+    const beforeCount = harness.broadcasts.length;
+    harness.supervisor.stopSessionsForDevice(TEST_DEVICE_ID, 'pane_lost');
+
+    const session = getAgentSessionById(harness.session.id);
+    expect(session?.status).toBe('error');
+    expect(session?.lastError).toMatch(/terminal connection lost|pane\/device unavailable/);
+
+    const newEvents = harness.broadcasts.slice(beforeCount).filter(
+      (b) =>
+        b.sessionId === harness.session.id &&
+        b.payload !== null &&
+        typeof b.payload === 'object' &&
+        (b.payload as { status?: string }).status === 'error'
+    );
+    expect(newEvents.length).toBeGreaterThan(0);
+  });
+
+  test('stopSessionsForDevice：不影响其他 device 的 session', async () => {
+    const OTHER_DEVICE_ID = 'agent-supervisor-other-device';
+    createDevice({
+      id: OTHER_DEVICE_ID,
+      name: 'other-device',
+      type: 'local',
+      session: 'tmex-test',
+      authMode: 'agent',
+      port: 22,
+      sortOrder: 0,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    });
+
+    const mock = createMockChatServer(() =>
+      sseResponse([chunk({ role: 'assistant', content: 'ok' }), chunk({}, 'stop')])
+    );
+    servers.push(mock.server);
+
+    const harness = createSupervisorHarness({
+      baseUrl: mock.baseUrl,
+      sessionStatus: 'running',
+    });
+
+    const otherSession = createAgentSession({
+      title: 'Other Device',
+      deviceId: OTHER_DEVICE_ID,
+      paneId: '%2',
+      modelId: 'mock-model',
+      writeMode: 'auto',
+    });
+    updateAgentSession(otherSession.id, { status: 'running' });
+
+    harness.supervisor.stopSessionsForDevice(TEST_DEVICE_ID, 'pane_lost');
+
+    const mine = getAgentSessionById(harness.session.id);
+    const others = getAgentSessionById(otherSession.id);
+    expect(mine?.status).toBe('error');
+    expect(others?.status).toBe('running');
+  });
 });
 
 describe('AgentSupervisor - 重启恢复', () => {

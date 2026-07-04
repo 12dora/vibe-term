@@ -29,8 +29,10 @@ import {
 } from '../db/agent';
 import { t } from '../i18n';
 import { telegramService } from '../telegram/service';
+import type { AgentStopReason } from './run';
 import { AgentRun, type AgentRunDeps } from './run';
 import { detectSecrets } from './secret-scan';
+import { registerDeviceCloseListener } from './device-close-bus';
 import { type AgentWsHub, agentWsHub } from './ws-hub';
 
 export class AgentSessionNotFoundError extends Error {
@@ -189,6 +191,9 @@ export class AgentSupervisor {
         updateAgentSession(session.id, { status: 'idle' });
       }
     }
+
+    // 订阅设备关闭事件：设备 runtime 断开时主动停止绑定该设备的 session
+    registerDeviceCloseListener((deviceId) => this.stopSessionsForDevice(deviceId, 'pane_lost'));
   }
 
   async stop(): Promise<void> {
@@ -354,6 +359,33 @@ export class AgentSupervisor {
       { status: 'stopped', lastError: null },
       0
     );
+  }
+
+  /**
+   * 设备连接关闭时主动停止绑定该设备的运行中/等待确认 session：
+   * 有活动 run 则 requestStop('pane_lost')，无活动 run 直接落 error 状态。
+   */
+  stopSessionsForDevice(deviceId: string, reason: AgentStopReason = 'pane_lost'): void {
+    const sessions = [
+      ...getAgentSessionsByStatus('running'),
+      ...getAgentSessionsByStatus('waiting_confirmation'),
+    ].filter((s) => s.deviceId === deviceId);
+
+    for (const session of sessions) {
+      const active = this.activeRuns.get(session.id);
+      if (active) {
+        active.run.requestStop(reason);
+        continue;
+      }
+      const message = 'terminal connection lost: pane/device unavailable';
+      updateAgentSession(session.id, { status: 'error', lastError: message });
+      this.deps.hub.broadcastAgentEvent(
+        session.id,
+        wsBorsh.AGENT_EVENT_STATUS,
+        { status: 'error', lastError: message },
+        0
+      );
+    }
   }
 
   resolveConfirmation(
