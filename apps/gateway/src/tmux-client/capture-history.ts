@@ -40,6 +40,28 @@ export interface PaneInfo {
   cursorY: number | null;
   alternateScreen: boolean;
   currentCommand: string | null;
+  /** pane 标题（tmux #{pane_title}） */
+  title?: string | null;
+  /** pane 当前工作目录（tmux #{pane_current_path}） */
+  currentPath?: string | null;
+  /** tmux session id */
+  sessionId?: string | null;
+  /** tmux session name */
+  sessionName?: string | null;
+  /** tmux window id */
+  windowId?: string | null;
+  /** tmux window name */
+  windowName?: string | null;
+  /** 同 window 内 pane 数量（>1 即分屏） */
+  splitPaneCount?: number | null;
+  /** 入口主机（gateway）侧 TERM，pane 实际值需自探 */
+  term?: string | null;
+  /** 入口主机侧 TERM_PROGRAM */
+  termProgram?: string | null;
+  /** 入口主机侧 locale（LANG ?? LC_ALL） */
+  locale?: string | null;
+  /** 编码（固定 utf-8，gateway 侧） */
+  encoding?: string | null;
 }
 
 export const PANE_META_FORMAT =
