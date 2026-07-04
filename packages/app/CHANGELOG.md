@@ -1,37 +1,25 @@
-# 0.16.2
+# 0.16.3
 
 _2026-07-04_
 
 ## English
 
-### New
+### Features
 
-- Agent panel: new "Allow control characters" toggle to control whether the Agent can send terminal control sequences to a pane.
-- Pane title bar now shows an Agent status emoji when an Agent is running on that pane, so you can spot active Agents at a glance.
-- Tool call cards in the Agent panel are now collapsed to a single line; click a card to open the full details in a dialog.
+- **Theme sync across devices**: Dark/light theme is now persisted server-side and broadcast to all connected web clients and devices in real time. Switching theme on one browser instantly updates every other open tab and remote SSH device. TUI coding agents (OpenCode, Codex, Claude Code) detect the correct theme on startup via tmux's native OSC 11 color query response.
 
-### Improvements
+### Bug Fixes
 
-- Bell notifications redesigned: alert sources are clearer, and delivery across Telegram, webhook, and browser push is more reliable.
-
-### Fixes
-
-- Closing a device now automatically stops any Agent sessions tied to it, so sessions no longer keep running in the background after a device is gone.
+- **Split-pane selection cleared by opposite pane output**: When one pane continuously outputs text (e.g. a running build), selecting text in another pane no longer gets immediately cleared. The terminal resize logic now skips unnecessary selection resets when pane dimensions haven't changed.
 
 ---
 
 ## 中文
 
-### 新增
+### 新功能
 
-- Agent 面板新增「允许控制字符」开关，可控制 Agent 是否向终端窗格发送控制序列。
-- 窗格标题栏在 Agent 运行时会显示状态 emoji，一眼即可看出哪个窗格有 Agent 在工作。
-- Agent 面板的工具调用卡片改为单行摘要，点击后在弹窗中查看完整详情。
+- **跨设备主题同步**：dark/light 主题现在持久化在服务端，并实时广播给所有已连接的网页客户端和设备。在一个浏览器上切换主题，其他所有标签页和远程 SSH 设备会立即同步。终端内的 Coding Agent（OpenCode、Codex、Claude Code）启动时能通过 tmux 原生 OSC 11 颜色查询正确探测当前主题。
 
-### 改进
+### Bug 修复
 
-- 通知系统重新设计：告警来源更清晰，Telegram、webhook、浏览器推送的投递更可靠。
-
-### 修复
-
-- 关闭设备时会自动停止该设备上运行的 Agent 会话，不再在设备离线后遗留孤立会话。
+- **分屏对端输出时选中文字被清空**：当一个 pane 持续输出文本（如正在运行的构建），在另一个 pane 中选取文字不再被立即清空。终端 resize 逻辑现在在 pane 尺寸未变时跳过不必要的 selection 重置。
