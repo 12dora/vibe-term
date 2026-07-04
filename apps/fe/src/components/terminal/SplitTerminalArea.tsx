@@ -12,6 +12,7 @@
 
 import { useTmuxStore } from '@/stores/tmux';
 import { useBellStore } from '@/stores/bell';
+import { usePaneAgentState } from '@/hooks/usePaneAgentState';
 import type { TmuxPane, TmuxWindow } from '@tmex/shared';
 import { parseWindowLayout } from '@tmex/shared';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
@@ -96,6 +97,32 @@ function PaneBellIcon({ paneId }: { paneId: string }) {
   const ringing = useBellStore((state) => Boolean(state.ringingPanes[paneId]));
   if (!ringing) return null;
   return <span className="bell-blink shrink-0">🔔 </span>;
+}
+
+function PaneAgentBadge({ deviceId, paneId }: { deviceId: string; paneId: string }) {
+  const { t } = useTranslation();
+  const state = usePaneAgentState(deviceId, paneId);
+  if (state === 'none') return null;
+  if (state === 'generating') {
+    return (
+      <span
+        className="shrink-0 select-none text-xs"
+        title={t('agent.paneBadge.generating')}
+        aria-label={t('agent.paneBadge.generating')}
+      >
+        🤖<span className="ml-0.5 text-[10px] animate-pulse">✨</span>
+      </span>
+    );
+  }
+  return (
+    <span
+      className="text-muted-foreground/60 shrink-0 select-none text-xs grayscale"
+      title={t('agent.paneBadge.bound')}
+      aria-label={t('agent.paneBadge.bound')}
+    >
+      🤖
+    </span>
+  );
 }
 
 const DROP_PREVIEW_CLASS: Record<DropPosition, string> = {
@@ -545,6 +572,7 @@ export function SplitTerminalArea({
                 onPointerDown={(event) => handleTitleBarPointerDown(pane.paneId, event)}
               >
                 <PaneBellIcon paneId={pane.paneId} />
+                <PaneAgentBadge deviceId={deviceId} paneId={pane.paneId} />
                 <span
                   className={`shrink-0 truncate font-mono text-[10.5px] leading-none ${
                     isFocused ? 'text-foreground/90' : 'text-foreground/50'
