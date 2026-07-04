@@ -13,6 +13,10 @@ const baseEnv: AgentEnvironmentInfo = {
   nowIso: '2026-06-13T08:00:00.000Z',
   gatewayOs: null,
   gatewayShell: null,
+  term: null,
+  termProgram: null,
+  locale: null,
+  encoding: null,
 };
 
 describe('system prompt 组装', () => {
@@ -113,5 +117,58 @@ describe('system prompt 组装', () => {
       environment: baseEnv,
     });
     expect(out).not.toContain('## Additional instructions from the user');
+  });
+
+  test('Pacing 与 StreamingOutput 段存在', () => {
+    const out = buildAgentSystemPrompt({
+      paneId: '%1',
+      writeMode: 'auto',
+      customSystemPrompt: null,
+      environment: baseEnv,
+    });
+    expect(out).toContain('One step at a time');
+    expect(out).toContain('irreversible');
+    expect(out).toContain('tail -f');
+    expect(out).toContain('read_screen to confirm');
+    expect(out).toContain('connection-lost');
+    expect(out).toContain('STOP immediately');
+  });
+
+  test('local 设备渲染 TERM/locale/encoding 入口侧值', () => {
+    const out = buildAgentSystemPrompt({
+      paneId: '%1',
+      writeMode: 'auto',
+      customSystemPrompt: null,
+      environment: {
+        ...baseEnv,
+        deviceType: 'local',
+        host: null,
+        username: null,
+        port: null,
+        gatewayOs: 'darwin 27.0.0 (arm64)',
+        gatewayShell: '/bin/zsh',
+        term: 'xterm-256color',
+        termProgram: 'ghostty',
+        locale: 'en_US.UTF-8',
+        encoding: 'utf-8',
+      },
+    });
+    expect(out).toContain('Entry-host terminal: xterm-256color (ghostty)');
+    expect(out).toContain('Entry-host locale: en_US.UTF-8');
+    expect(out).toContain('Entry-host encoding: utf-8');
+    expect(out).toContain('pane may differ');
+    expect(out).toContain('get_pane_info');
+  });
+
+  test('ssh 设备 TERM/locale 为 null 不渲染入口侧值行', () => {
+    const out = buildAgentSystemPrompt({
+      paneId: '%1',
+      writeMode: 'auto',
+      customSystemPrompt: null,
+      environment: baseEnv,
+    });
+    expect(out).not.toContain('Entry-host terminal:');
+    expect(out).not.toContain('Entry-host locale:');
+    expect(out).not.toContain('Entry-host encoding:');
   });
 });

@@ -17,6 +17,10 @@ export interface AgentEnvironmentInfo {
   /** 仅 local 设备可知：gateway 主机即入口主机 */
   gatewayOs: string | null;
   gatewayShell: string | null;
+  term: string | null;
+  termProgram: string | null;
+  locale: string | null;
+  encoding: string | null;
 }
 
 export function collectAgentEnvironment(device: Device | null): AgentEnvironmentInfo {
@@ -38,5 +42,9 @@ export function collectAgentEnvironment(device: Device | null): AgentEnvironment
     nowIso: new Date().toISOString(),
     gatewayOs: isLocal ? `${os.platform()} ${os.release()} (${os.arch()})` : null,
     gatewayShell: isLocal ? (process.env.SHELL ?? null) : null,
+    term: isLocal ? (process.env.TERM ?? null) : null,
+    termProgram: isLocal ? (process.env.TERM_PROGRAM ?? null) : null,
+    locale: isLocal ? (process.env.LANG ?? process.env.LC_ALL ?? null) : null,
+    encoding: isLocal ? 'utf-8' : null,
   };
 }

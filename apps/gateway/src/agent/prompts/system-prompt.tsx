@@ -47,7 +47,19 @@ const Environment = ({ env }: { env: AgentEnvironmentInfo }) => (
     {env.tmuxSession && <Item>tmux session: {env.tmuxSession}</Item>}
     {env.gatewayOs && <Item>Entry-host OS: {env.gatewayOs}</Item>}
     {env.gatewayShell && <Item>Entry-host shell: {env.gatewayShell}</Item>}
+    {env.term && (
+      <Item>
+        Entry-host terminal: {env.term}
+        {env.termProgram ? ` (${env.termProgram})` : ''}
+      </Item>
+    )}
+    {env.locale && <Item>Entry-host locale: {env.locale}</Item>}
+    {env.encoding && <Item>Entry-host encoding: {env.encoding}</Item>}
     <Item>Timezone: {env.timezone}</Item>
+    <Item>
+      The terminal/locale/encoding above are ENTRY-host values; the pane may differ — use
+      `get_pane_info` or probe (`locale`, `echo $TERM`) to confirm.
+    </Item>
     <Item>Current time: {env.nowIso}</Item>
   </Section>
 );
@@ -112,9 +124,17 @@ const TerminalTools = ({ writeMode }: { writeMode: 'confirm' | 'auto' }) => (
     </Item>
     <Item>
       For interactive programs and TUIs (editors, pagers, top, menuconfig, REPLs) use send_input to
-      send keystrokes (use the keys parameter for enter/ctrl_c/arrows) and read_screen to see the
-      rendered screen. read_screen reflects the true TUI grid; send_input returns the new output
-      (line mode) or the full re-rendered screen (TUI mode).
+      send keystrokes — use the combos parameter for modifier+key combinations (e.g.
+      {'{"modifiers":["ctrl"],"key":"c"}'}, {'{"key":"up"}'}) or the keys parameter for legacy named
+      keys — and read_screen to see the rendered screen. read_screen reflects the true TUI grid;
+      send_input returns the new output (line mode) or the full re-rendered screen (TUI mode) plus
+      cursor position. Control characters (rawControlChars) are only honored when the session has
+      control-chars mode enabled; otherwise use combos. Prefer combos over raw control bytes
+      whenever possible.
+    </Item>
+    <Item>
+      If read_screen, get_pane_info, or send_input returns a connection-lost or pane-missing error,
+      STOP immediately — do not retry the same tool; report the situation to the user.
     </Item>
     {writeMode === 'confirm' ? (
       <Item>
@@ -257,6 +277,39 @@ const Safety = () => (
   </Section>
 );
 
+const Pacing = () => (
+  <Section title="## Pacing and confirmation">
+    <Item>
+      One step at a time: perform one operation and wait for its result before deciding the next
+      step. Do not batch multiple run_command/send_input calls in a single reply.
+    </Item>
+    <Item>
+      The terminal may be doing production-related, irreversible, dangerous work. Before each step,
+      state what you intend and why; after acting, report the result and current state so the user
+      can correct course.
+    </Item>
+    <Item>
+      Consider the user's state of mind: before destructive operations, explain the risk in plain
+      language and wait for explicit confirmation; never let the user bear consequences they did not
+      agree to.
+    </Item>
+  </Section>
+);
+
+const StreamingOutput = () => (
+  <Section title="## Streaming output and completion checks">
+    <Item>
+      When you need to issue multiple run_command calls back-to-back, if the previous command might
+      still be streaming (`tail -f`, build, `watch`), first read_screen to confirm the prompt
+      returned / command completed before sending the next one.
+    </Item>
+    <Item>
+      run_command waits until completion or timeout; if status='timeout' or output still growing,
+      read_screen to re-check before deciding.
+    </Item>
+  </Section>
+);
+
 const General = () => (
   <Section title="## General">
     <Item>If a tool returns an error, report it honestly instead of pretending it succeeded.</Item>
@@ -277,12 +330,14 @@ export const SystemPrompt = (ctx: AgentSystemPromptContext): string => {
       <RealEnvironment />
       <WindowSize />
       <TerminalTools writeMode={ctx.writeMode} />
+      <StreamingOutput />
       <NetworkDevices />
       <CodingAgents />
       <UntrustedContent />
       <Credentials />
       <Intent />
       <Safety />
+      <Pacing />
       <General />
       {custom ? <Custom text={custom} /> : null}
     </Doc>
