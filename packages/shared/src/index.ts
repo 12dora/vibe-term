@@ -699,7 +699,15 @@ export interface RestartGatewayResponse {
 
 export type LlmProviderProtocol = 'openai-chat' | 'openai-responses';
 
-export type AgentSearchProvider = 'none' | 'tavily' | 'brave';
+/** 'none' 为固定语义（不启用搜索）；其余为已注册 search provider 的 id（内建 tavily/brave 或运行时注册的自定义 id） */
+export type AgentSearchProvider = 'none' | 'tavily' | 'brave' | (string & {});
+
+/** 可用搜索 provider 描述（GET /api/llm/settings 返回，供前端数据驱动渲染选项） */
+export interface SearchProviderInfoDto {
+  id: string;
+  label: string;
+  isConfigured: boolean;
+}
 
 export type LlmModelSource = 'fetched' | 'manual';
 
@@ -775,6 +783,7 @@ export interface AgentLlmSettingsDto {
 
 export interface GetAgentLlmSettingsResponse {
   settings: AgentLlmSettingsDto;
+  searchProviders: SearchProviderInfoDto[];
 }
 
 export interface UpdateAgentLlmSettingsRequest {

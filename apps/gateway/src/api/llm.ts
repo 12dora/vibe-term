@@ -1,12 +1,13 @@
 import type {
   AgentLlmSettingsDto,
-  AgentSearchProvider,
   CreateLlmProviderRequest,
   LlmProviderDto,
   LlmProviderProtocol,
+  SearchProviderInfoDto,
   UpdateAgentLlmSettingsRequest,
   UpdateLlmProviderRequest,
 } from '@tmex/shared';
+import { getSearchProvider, getSearchProviders } from '../agent/tools/web';
 import { encrypt } from '../crypto';
 import { getAgentSettings, updateAgentSettings } from '../db/agent';
 import type { AgentSettingsRecord } from '../db/agent';
@@ -23,7 +24,22 @@ import { t } from '../i18n';
 import { fetchProviderModels } from '../llm/provider-registry';
 
 const PROTOCOLS: readonly LlmProviderProtocol[] = ['openai-chat', 'openai-responses'];
-const SEARCH_PROVIDERS: readonly AgentSearchProvider[] = ['none', 'tavily', 'brave'];
+
+// 白名单由 registry 驱动：'none'（固定语义）+ 已注册 provider id
+function isValidSearchProvider(value: unknown): value is string {
+  if (typeof value !== 'string') {
+    return false;
+  }
+  return value === 'none' || getSearchProvider(value) !== undefined;
+}
+
+function toSearchProviderInfos(settings: AgentSettingsRecord): SearchProviderInfoDto[] {
+  return getSearchProviders().map((provider) => ({
+    id: provider.id,
+    label: provider.label,
+    isConfigured: provider.isConfigured(settings),
+  }));
+}
 
 export function handleLlmApiRequest(
   req: Request,
@@ -285,7 +301,11 @@ async function handleRefreshProviderModels(id: string): Promise<Response> {
 }
 
 async function handleGetSettings(): Promise<Response> {
-  return json({ settings: toSettingsDto(getAgentSettings()) });
+  const record = getAgentSettings();
+  return json({
+    settings: toSettingsDto(record),
+    searchProviders: toSearchProviderInfos(record),
+  });
 }
 
 async function handleUpdateSettings(req: Request): Promise<Response> {
@@ -297,7 +317,7 @@ async function handleUpdateSettings(req: Request): Promise<Response> {
   const updates: Parameters<typeof updateAgentSettings>[0] = {};
 
   if (body.searchProvider !== undefined) {
-    if (!SEARCH_PROVIDERS.includes(body.searchProvider)) {
+    if (!isValidSearchProvider(body.searchProvider)) {
       return json({ error: t('apiError.llmSearchProviderInvalid') }, 400);
     }
     updates.searchProvider = body.searchProvider;

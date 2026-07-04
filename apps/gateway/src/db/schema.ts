@@ -169,13 +169,7 @@ export const agentSettings = sqliteTable(
     defaultModelId: text('default_model_id'),
     updatedAt: text('updated_at').notNull(),
   },
-  (table) => [
-    check('agent_settings_singleton_check', sql`${table.id} = 1`),
-    check(
-      'agent_settings_search_provider_check',
-      sql`${table.searchProvider} in ('none', 'tavily', 'brave')`
-    ),
-  ]
+  (table) => [check('agent_settings_singleton_check', sql`${table.id} = 1`)]
 );
 
 export const agentSessions = sqliteTable(

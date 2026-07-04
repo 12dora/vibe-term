@@ -125,100 +125,154 @@ export function validateFetchUrl(rawUrl: string): { url: URL } | { error: string
 
 // ========== web_search ==========
 
-interface WebSearchDeps {
+/** search() 的运行期注入（测试替身 / endpoint 覆盖）；缺省用全局 fetch 与 provider 默认 endpoint */
+export interface SearchProviderDeps {
   fetchImpl?: typeof fetch;
+  endpoint?: string;
+}
+
+/** 搜索 provider 抽象：注册进模块级 registry，按 agentSettings.searchProvider 查找。
+ * provider 拿完整 settings 自行取所需凭证（内建 tavily/brave 读各自的 *ApiKeyEnc 列）。 */
+export interface SearchProvider {
+  readonly id: string;
+  readonly label: string;
+  isConfigured(settings: AgentSettingsRecord): boolean;
+  search(
+    query: string,
+    settings: AgentSettingsRecord,
+    deps?: SearchProviderDeps
+  ): Promise<WebSearchResultItem[]>;
+}
+
+const searchProviderRegistry = new Map<string, SearchProvider>();
+
+/** 注册搜索 provider；重复 id 视为编程错误，直接抛错 */
+export function registerSearchProvider(provider: SearchProvider): void {
+  if (searchProviderRegistry.has(provider.id)) {
+    throw new Error(`search provider already registered: ${provider.id}`);
+  }
+  searchProviderRegistry.set(provider.id, provider);
+}
+
+/** 按注册顺序返回全部 provider */
+export function getSearchProviders(): SearchProvider[] {
+  return [...searchProviderRegistry.values()];
+}
+
+export function getSearchProvider(id: string): SearchProvider | undefined {
+  return searchProviderRegistry.get(id);
+}
+
+const TAVILY_DEFAULT_ENDPOINT = 'https://api.tavily.com/search';
+const BRAVE_DEFAULT_ENDPOINT = 'https://api.search.brave.com/res/v1/web/search';
+
+const tavilyProvider: SearchProvider = {
+  id: 'tavily',
+  label: 'Tavily',
+  isConfigured: (settings) => Boolean(settings.tavilyApiKeyEnc),
+  async search(query, settings, deps) {
+    const apiKey = await decrypt(settings.tavilyApiKeyEnc ?? '');
+    const fetchImpl = deps?.fetchImpl ?? fetch;
+    const endpoint = deps?.endpoint ?? TAVILY_DEFAULT_ENDPOINT;
+    const response = await fetchImpl(endpoint, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        // Tavily 现行 API 使用 Bearer header，旧版接受 body api_key；两者都带以兼容
+        Authorization: `Bearer ${apiKey}`,
+      },
+      body: JSON.stringify({
+        api_key: apiKey,
+        query,
+        max_results: WEB_SEARCH_MAX_RESULTS,
+      }),
+      signal: AbortSignal.timeout(FETCH_URL_TIMEOUT_MS),
+    });
+    if (!response.ok) {
+      throw new Error(`Tavily search failed: HTTP ${response.status}`);
+    }
+    const payload = (await response.json()) as {
+      results?: Array<{ title?: string; url?: string; content?: string }>;
+    };
+    return (payload.results ?? []).map((item) => ({
+      title: item.title ?? '',
+      url: item.url ?? '',
+      snippet: item.content ?? '',
+    }));
+  },
+};
+
+const braveProvider: SearchProvider = {
+  id: 'brave',
+  label: 'Brave',
+  isConfigured: (settings) => Boolean(settings.braveApiKeyEnc),
+  async search(query, settings, deps) {
+    const apiKey = await decrypt(settings.braveApiKeyEnc ?? '');
+    const fetchImpl = deps?.fetchImpl ?? fetch;
+    const url = new URL(deps?.endpoint ?? BRAVE_DEFAULT_ENDPOINT);
+    url.searchParams.set('q', query);
+    url.searchParams.set('count', String(WEB_SEARCH_MAX_RESULTS));
+    const response = await fetchImpl(url.toString(), {
+      headers: {
+        Accept: 'application/json',
+        'X-Subscription-Token': apiKey,
+      },
+      signal: AbortSignal.timeout(FETCH_URL_TIMEOUT_MS),
+    });
+    if (!response.ok) {
+      throw new Error(`Brave search failed: HTTP ${response.status}`);
+    }
+    const payload = (await response.json()) as {
+      web?: { results?: Array<{ title?: string; url?: string; description?: string }> };
+    };
+    return (payload.web?.results ?? []).map((item) => ({
+      title: item.title ?? '',
+      url: item.url ?? '',
+      snippet: item.description ?? '',
+    }));
+  },
+};
+
+registerSearchProvider(tavilyProvider);
+registerSearchProvider(braveProvider);
+
+export interface CreateWebSearchToolOptions {
+  settings?: AgentSettingsRecord;
+  fetchImpl?: typeof fetch;
+  /** 按 provider id 覆盖 endpoint（测试注入） */
+  endpointOverrides?: Record<string, string>;
+  /** 兼容旧签名的内建 endpoint 覆盖 */
   tavilyEndpoint?: string;
   braveEndpoint?: string;
 }
 
-async function searchTavily(
-  apiKey: string,
-  query: string,
-  deps: Required<Pick<WebSearchDeps, 'fetchImpl' | 'tavilyEndpoint'>>
-): Promise<WebSearchResultItem[]> {
-  const response = await deps.fetchImpl(deps.tavilyEndpoint, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      // Tavily 现行 API 使用 Bearer header，旧版接受 body api_key；两者都带以兼容
-      Authorization: `Bearer ${apiKey}`,
-    },
-    body: JSON.stringify({
-      api_key: apiKey,
-      query,
-      max_results: WEB_SEARCH_MAX_RESULTS,
-    }),
-    signal: AbortSignal.timeout(FETCH_URL_TIMEOUT_MS),
-  });
-  if (!response.ok) {
-    throw new Error(`Tavily search failed: HTTP ${response.status}`);
-  }
-  const payload = (await response.json()) as {
-    results?: Array<{ title?: string; url?: string; content?: string }>;
-  };
-  return (payload.results ?? []).map((item) => ({
-    title: item.title ?? '',
-    url: item.url ?? '',
-    snippet: item.content ?? '',
-  }));
-}
-
-async function searchBrave(
-  apiKey: string,
-  query: string,
-  deps: Required<Pick<WebSearchDeps, 'fetchImpl' | 'braveEndpoint'>>
-): Promise<WebSearchResultItem[]> {
-  const url = new URL(deps.braveEndpoint);
-  url.searchParams.set('q', query);
-  url.searchParams.set('count', String(WEB_SEARCH_MAX_RESULTS));
-  const response = await deps.fetchImpl(url.toString(), {
-    headers: {
-      Accept: 'application/json',
-      'X-Subscription-Token': apiKey,
-    },
-    signal: AbortSignal.timeout(FETCH_URL_TIMEOUT_MS),
-  });
-  if (!response.ok) {
-    throw new Error(`Brave search failed: HTTP ${response.status}`);
-  }
-  const payload = (await response.json()) as {
-    web?: { results?: Array<{ title?: string; url?: string; description?: string }> };
-  };
-  return (payload.web?.results ?? []).map((item) => ({
-    title: item.title ?? '',
-    url: item.url ?? '',
-    snippet: item.description ?? '',
-  }));
-}
-
-export interface CreateWebSearchToolOptions extends WebSearchDeps {
-  settings?: AgentSettingsRecord;
-}
-
-/** searchProvider='none' 或未配置对应 key 时返回 null（不注册工具） */
+/** searchProvider='none'、provider 未注册或未配置凭证时返回 null（不注册工具） */
 export async function createWebSearchTool(
   options: CreateWebSearchToolOptions = {}
 ): Promise<Tool | null> {
   const settings = options.settings ?? getAgentSettings();
-  const fetchImpl = options.fetchImpl ?? fetch;
-  const tavilyEndpoint = options.tavilyEndpoint ?? 'https://api.tavily.com/search';
-  const braveEndpoint = options.braveEndpoint ?? 'https://api.search.brave.com/res/v1/web/search';
-
-  let search: ((query: string) => Promise<WebSearchResultItem[]>) | null = null;
-
-  if (settings.searchProvider === 'tavily' && settings.tavilyApiKeyEnc) {
-    const apiKey = await decrypt(settings.tavilyApiKeyEnc);
-    search = (query) => searchTavily(apiKey, query, { fetchImpl, tavilyEndpoint });
-  } else if (settings.searchProvider === 'brave' && settings.braveApiKeyEnc) {
-    const apiKey = await decrypt(settings.braveApiKeyEnc);
-    search = (query) => searchBrave(apiKey, query, { fetchImpl, braveEndpoint });
-  }
-
-  if (!search) {
+  if (settings.searchProvider === 'none') {
     return null;
   }
 
-  const searchFn = search;
+  const provider = searchProviderRegistry.get(settings.searchProvider);
+  if (!provider || !provider.isConfigured(settings)) {
+    return null;
+  }
+
+  const endpoint =
+    options.endpointOverrides?.[provider.id] ??
+    (provider.id === 'tavily'
+      ? options.tavilyEndpoint
+      : provider.id === 'brave'
+        ? options.braveEndpoint
+        : undefined);
+  const deps: SearchProviderDeps = {
+    fetchImpl: options.fetchImpl ?? fetch,
+    endpoint,
+  };
+
+  const searchFn = (query: string) => provider.search(query, settings, deps);
   return tool({
     description: 'Search the web. Returns a JSON array of results with title, url and snippet.',
     inputSchema: z.object({
