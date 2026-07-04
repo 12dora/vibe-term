@@ -375,12 +375,16 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(
       }
 
       return {
-        onReset: () => {
+        onReset: (origin) => {
           persistTerminalModes(instance, attachedDeviceIdRef.current, attachedPaneIdRef.current);
           skipNextDetachPersistRef.current = true;
           instance.reset();
           liveOutputEndedWithCR.current = false;
-          runPostSelectResize();
+          // history-refresh（远端 resize 后的内容重建）不上报本地尺寸，
+          // 避免不同视口的客户端互相抢 window 尺寸
+          if (origin !== 'history-refresh') {
+            runPostSelectResize();
+          }
         },
         onApplyHistory: (data, alternateScreen) => {
           const recoveredModes = reconcileRecoveredModes(

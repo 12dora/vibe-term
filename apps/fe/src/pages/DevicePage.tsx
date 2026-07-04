@@ -108,6 +108,7 @@ export default function DevicePage() {
 
   const selectPane = useTmuxStore((state) => state.selectPane);
   const focusPane = useTmuxStore((state) => state.focusPane);
+  const fetchPaneHistory = useTmuxStore((state) => state.fetchPaneHistory);
 
   const snapshot = useTmuxStore((state) => (deviceId ? state.snapshots[deviceId] : undefined));
   const deviceError = useTmuxStore((state) =>
@@ -841,7 +842,21 @@ export default function DevicePage() {
     }
 
     term.resize(remoteCols, remoteRows);
-  }, [canInteractWithPane, isLoading, isSplitView, selectedPane]);
+    // 远端 resize 后本地 reflow 与 tmux reflow 不保证一致（差一行即让 TUI 的
+    // 相对移动重绘永久错位），重拉 history 以 tmux 权威状态重建本地屏幕；
+    // fetch gate 会缓冲期间的 live 输出保序
+    if (deviceId && resolvedPaneId) {
+      fetchPaneHistory(deviceId, resolvedPaneId);
+    }
+  }, [
+    canInteractWithPane,
+    deviceId,
+    fetchPaneHistory,
+    isLoading,
+    isSplitView,
+    resolvedPaneId,
+    selectedPane,
+  ]);
 
   // Scroll to bottom on input mode change
   useEffect(() => {

@@ -1233,7 +1233,12 @@ export class LocalExternalTmuxConnection {
     await this.requestSnapshotInternal();
   }
 
-  private async capturePaneHistory(paneId: string): Promise<void> {
+  async fetchPaneHistory(
+    paneId: string
+  ): Promise<{ data: string; alternateScreen: boolean } | null> {
+    if (!this.connected) {
+      return null;
+    }
     const screenInfo = parsePaneScreenInfo(
       (await this.runTmux(['display-message', '-p', '-t', paneId, PANE_SCREEN_INFO_FORMAT], true))
         .stdout
@@ -1258,12 +1263,16 @@ export class LocalExternalTmuxConnection {
         : alternate
       : normal || alternate;
 
-    if (history) {
-      this.callbacks.onTerminalHistory(
-        paneId,
-        appendCursorRestore(history, screenInfo),
-        alternateScreen
-      );
+    if (!history) {
+      return null;
+    }
+    return { data: appendCursorRestore(history, screenInfo), alternateScreen };
+  }
+
+  private async capturePaneHistory(paneId: string): Promise<void> {
+    const captured = await this.fetchPaneHistory(paneId);
+    if (captured) {
+      this.callbacks.onTerminalHistory(paneId, captured.data, captured.alternateScreen);
     }
   }
 

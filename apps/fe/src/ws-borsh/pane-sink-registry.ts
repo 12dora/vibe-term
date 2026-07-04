@@ -6,8 +6,13 @@
 // - fetch-history gate：非焦点 pane 主动拉取首屏时，先缓冲 live 输出，
 //   history 应用后再 flush，保证内容顺序（带超时兜底放行）。
 
+// reset 来源：select = 切换/选择流程（随后会有 post-select 尺寸上报）；
+// history-refresh = 远端 resize 等触发的内容重建，不得携带本地尺寸上报，
+// 否则两个不同视口的客户端会互相抢 window 尺寸形成拉锯
+export type PaneResetOrigin = 'select' | 'history-refresh';
+
 export interface PaneSink {
-  onReset(): void;
+  onReset(origin: PaneResetOrigin): void;
   onApplyHistory(data: string, alternateScreen: boolean): void;
   onOutput(data: Uint8Array): void;
 }
@@ -60,7 +65,7 @@ export function registerPaneSink(deviceId: string, paneId: string, sink: PaneSin
   if (state) {
     pending.delete(key);
     if (state.reset) {
-      sink.onReset();
+      sink.onReset('select');
     }
     if (state.history) {
       sink.onApplyHistory(state.history.data, state.history.alternateScreen);
@@ -77,11 +82,15 @@ export function registerPaneSink(deviceId: string, paneId: string, sink: PaneSin
   };
 }
 
-export function dispatchPaneReset(deviceId: string, paneId: string): void {
+export function dispatchPaneReset(
+  deviceId: string,
+  paneId: string,
+  origin: PaneResetOrigin = 'select'
+): void {
   const key = paneKey(deviceId, paneId);
   const sink = sinks.get(key);
   if (sink) {
-    sink.onReset();
+    sink.onReset(origin);
     return;
   }
   const state = getPending(key);
@@ -162,7 +171,7 @@ export function dispatchPaneHistory(
   clearTimeout(gate.timer);
   historyGates.delete(key);
 
-  dispatchPaneReset(deviceId, paneId);
+  dispatchPaneReset(deviceId, paneId, 'history-refresh');
   dispatchPaneApplyHistory(deviceId, paneId, data, alternateScreen);
   for (const buffered of gate.buffer) {
     dispatchPaneOutput(deviceId, paneId, buffered);

@@ -33,6 +33,7 @@ export interface DeviceSessionRuntimeConnection {
   ): void;
   breakPane(paneId: string): void;
   requestPaneHistory(paneId: string): Promise<void>;
+  fetchPaneHistory(paneId: string): Promise<{ data: string; alternateScreen: boolean } | null>;
   renameWindow(windowId: string, name: string): void;
   setWindowStyle(style: string): Promise<void>;
   signalThemeChange(paneId: string, theme: 'dark' | 'light'): void;
@@ -233,6 +234,12 @@ export class DeviceSessionRuntime {
 
   async requestPaneHistory(paneId: string): Promise<void> {
     return this.connection.requestPaneHistory(paneId);
+  }
+
+  async fetchPaneHistory(
+    paneId: string
+  ): Promise<{ data: string; alternateScreen: boolean } | null> {
+    return this.connection.fetchPaneHistory(paneId);
   }
 
   renameWindow(windowId: string, name: string): void {

@@ -288,7 +288,6 @@ export class WebSocketServer {
       entry.clients.delete(ws);
       delete ws.data.borshState.selectedPanes[deviceId];
       delete ws.data.borshState.subscribedPanes[deviceId];
-      this.clearPendingHistoryFetches(ws, deviceId);
 
       if (entry.clients.size === 0) {
         console.log(`[ws] no more clients for device ${deviceId}, disconnecting`);
@@ -707,21 +706,11 @@ export class WebSocketServer {
 
     delete ws.data.borshState.selectedPanes[deviceId];
     delete ws.data.borshState.subscribedPanes[deviceId];
-    this.clearPendingHistoryFetches(ws, deviceId);
 
     const disconnectedPayload = wsBorsh.encodePayload(wsBorsh.schema.DeviceDisconnectedSchema, {
       deviceId,
     });
     this.sendEnvelope(ws, wsBorsh.KIND_DEVICE_DISCONNECTED, disconnectedPayload);
-  }
-
-  private clearPendingHistoryFetches(ws: ServerWebSocket<ClientState>, deviceId: string): void {
-    const prefix = `${deviceId}:`;
-    for (const key of ws.data.borshState.pendingHistoryFetches.keys()) {
-      if (key.startsWith(prefix)) {
-        ws.data.borshState.pendingHistoryFetches.delete(key);
-      }
-    }
   }
 
   private handleTmuxSelect(
@@ -1141,6 +1130,9 @@ export class WebSocketServer {
     this.refreshSnapshotPolling(deviceId);
   }
 
+  // 点对点请求-响应：直接 capture 并只回发起 client（带其 requestToken），
+  // 不经 broadcastTerminalHistory——广播路由按 barrier/selectedPanes 投递，
+  // 无法与进行中的 select 事务区分同一 pane 的两份 history
   private handleFetchPaneHistory(
     ws: ServerWebSocket<ClientState>,
     deviceId: string,
@@ -1150,11 +1142,23 @@ export class WebSocketServer {
     const entry = this.connections.get(deviceId);
     if (!entry || !isTmuxPaneId(paneId)) return;
 
-    ws.data.borshState.pendingHistoryFetches.set(`${deviceId}:${paneId}`, requestToken);
-    void entry.runtime.requestPaneHistory(paneId).catch((error) => {
-      console.warn(`[ws] fetch pane history failed on ${deviceId}/${paneId}:`, error);
-      ws.data.borshState.pendingHistoryFetches.delete(`${deviceId}:${paneId}`);
-    });
+    void entry.runtime
+      .fetchPaneHistory(paneId)
+      .then((captured) => {
+        if (!captured) return;
+        const payloadBytes = wsBorsh.encodePayload(wsBorsh.schema.TermHistorySchema, {
+          deviceId,
+          paneId,
+          selectToken: requestToken,
+          encoding: 1,
+          alternateScreen: captured.alternateScreen,
+          data: new TextEncoder().encode(captured.data),
+        });
+        this.sendChunked(ws, wsBorsh.KIND_TERM_HISTORY, payloadBytes);
+      })
+      .catch((error) => {
+        console.warn(`[ws] fetch pane history failed on ${deviceId}/${paneId}:`, error);
+      });
   }
 
   private handleResizePaneById(
@@ -1508,7 +1512,6 @@ export class WebSocketServer {
     if (!entry) return;
 
     const historyBytes = new TextEncoder().encode(data);
-    const fetchKey = `${deviceId}:${paneId}`;
 
     for (const client of entry.clients) {
       // 优先按进行中的 barrier 事务路由 history，而非 selectedPanes。
@@ -1534,24 +1537,7 @@ export class WebSocketServer {
           historyBytes,
           alternateScreen
         );
-        continue;
       }
-
-      // 非焦点 pane：仅在该 client 主动 fetch 过时用其 requestToken 直发（不经 barrier）
-      const requestToken = client.data.borshState.pendingHistoryFetches.get(fetchKey);
-      if (!requestToken) {
-        continue;
-      }
-      client.data.borshState.pendingHistoryFetches.delete(fetchKey);
-      const payloadBytes = wsBorsh.encodePayload(wsBorsh.schema.TermHistorySchema, {
-        deviceId,
-        paneId,
-        selectToken: requestToken,
-        encoding: 1,
-        alternateScreen,
-        data: historyBytes,
-      });
-      this.sendChunked(client, wsBorsh.KIND_TERM_HISTORY, payloadBytes);
     }
   }
 

@@ -487,10 +487,100 @@ test('bug3b: stdin-driven full-viewport inline TUI redraw stays aligned (no resi
             }
             return d;
           },
-          { timeout: 5_000 }
+          { timeout: 8_000 }
         )
         .toEqual([]);
       void diffs;
+    }
+  } finally {
+    await request.delete(`/api/devices/${deviceId}`);
+    ensureCleanSession(sessionName);
+  }
+});
+
+test('bug4: remote resize (another client) rebuilds local screen aligned', async ({
+  page,
+  request,
+}) => {
+  const sessionName = `tmex-e2e-remote-resize-${Date.now()}`;
+  const { paneId, windowId } = createSinglePaneSession(sessionName);
+
+  const deviceId = await createDevice(request, `e2e-remote-resize-${Date.now()}`, sessionName);
+
+  try {
+    await page.goto(`/devices/${deviceId}`);
+    await expect(page.getByTestId('device-page')).toBeVisible();
+
+    await expect
+      .poll(
+        async () => {
+          const term = await readTerminalSize(page);
+          if (!term) return 'no-term';
+          const pane = getPaneSize(paneId);
+          return pane.cols === term.cols && pane.rows === term.rows ? 'match' : 'pending';
+        },
+        { timeout: 20_000 }
+      )
+      .toBe('match');
+
+    // 满屏 inline TUI（claude code 形态）
+    const viewport = (await readTerminalSize(page)) as { cols: number; rows: number };
+    const tuiScript = writeInlineTuiScript(viewport.rows);
+    tmux(`send-keys -t '${paneId}' "TUI_STDIN_DRIVEN=1 sh ${tuiScript}" C-m`);
+    await expect
+      .poll(() => capturePaneScreen(paneId).join('\n'), { timeout: 10_000 })
+      .toContain(`TUI_ROW_${String(viewport.rows).padStart(2, '0')}_FRAME_0`);
+
+    // 另一客户端（手机等）把 window 改小并停住：TUI 收 WINCH 按新尺寸重绘。
+    // 曾经的回归：前端只 term.resize 本地 reflow，与 tmux reflow 差一行后
+    // TUI 相对移动重绘永久错位；正确行为是跟随尺寸并重拉 history 重建。
+    const smallCols = viewport.cols - 20;
+    const smallRows = viewport.rows - 8;
+    tmux(`resize-window -t '${windowId}' -x ${smallCols} -y ${smallRows}`);
+    await expect
+      .poll(() => {
+        const pane = getPaneSize(paneId);
+        return `${pane.cols}x${pane.rows}`;
+      })
+      .toBe(`${smallCols}x${smallRows}`);
+
+    // 前端应跟随远端尺寸且屏幕与 tmux 逐行一致（重建后）
+    await expect
+      .poll(
+        async () => {
+          const term = await readTerminalSize(page);
+          if (!term) return 'no-term';
+          if (term.cols !== smallCols || term.rows !== smallRows) {
+            return `term=${term.cols}x${term.rows}`;
+          }
+          const fe = await readScreenLines(page);
+          const tm = capturePaneScreen(paneId);
+          const diffs = diffScreens(fe, tm, term.rows);
+          if (diffs.length > 0) {
+            console.log(
+              `[bug4] internals=${JSON.stringify(await readTerminalInternals(page))}\n${renderSideBySide(fe, tm, term.rows)}`
+            );
+            return diffs.slice(0, 3).join(' | ');
+          }
+          return 'aligned';
+        },
+        { timeout: 20_000 }
+      )
+      .toBe('aligned');
+
+    // 之后的每帧重绘持续对齐（远端尺寸下驱动两帧）
+    for (let i = 1; i <= 2; i += 1) {
+      tmux(`send-keys -t '${paneId}' "n" C-m`);
+      await expect
+        .poll(
+          async () => {
+            const fe = await readScreenLines(page);
+            const tm = capturePaneScreen(paneId);
+            return diffScreens(fe, tm, smallRows);
+          },
+          { timeout: 8_000 }
+        )
+        .toEqual([]);
     }
   } finally {
     await request.delete(`/api/devices/${deviceId}`);

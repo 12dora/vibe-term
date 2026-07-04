@@ -100,6 +100,10 @@ function createStubConnectionRecorder() {
     async requestPaneHistory(paneId) {
       state.requestPaneHistoryCalls.push(paneId);
     },
+    async fetchPaneHistory(paneId) {
+      state.requestPaneHistoryCalls.push(paneId);
+      return null;
+    },
     updateDefaultWorkingDir(dir) {
       state.updateDefaultWorkingDirCalls.push(dir);
     },
