@@ -1,12 +1,143 @@
 import { beforeAll, describe, expect, test } from 'bun:test';
-import { ensureSiteSettingsInitialized, updateSiteSettings } from '../db';
+import type { EventType, WebhookEvent } from '@tmex/shared';
+import type { Server } from 'bun';
+import { handleApiRequest } from '../api/index';
+import { ensureSiteSettingsInitialized, getSiteSettings, updateSiteSettings } from '../db';
 import { runMigrations } from '../db/migrate';
 import { telegramService } from '../telegram/service';
-import { eventNotifier } from './index';
+import type { NotificationChannel } from './channels/types';
+import { EventNotifier, eventNotifier } from './index';
 
 beforeAll(() => {
   runMigrations();
   ensureSiteSettingsInitialized();
+});
+
+function recordingChannel(id: string): {
+  channel: NotificationChannel;
+  calls: Array<{ eventType: EventType; event: WebhookEvent }>;
+} {
+  const calls: Array<{ eventType: EventType; event: WebhookEvent }> = [];
+  return {
+    channel: {
+      id,
+      notify: async (eventType, event) => {
+        calls.push({ eventType, event });
+      },
+    },
+    calls,
+  };
+}
+
+const baseEvent = {
+  site: { name: 'tmex', url: 'https://tmex.example.com' },
+  device: { id: 'device-reg', name: 'dev-reg', type: 'local' as const },
+  tmux: { windowId: '@1', paneId: '%1', windowIndex: 1, paneIndex: 1 },
+};
+
+describe('EventNotifier channel registry', () => {
+  test('registered custom channel receives notifications', async () => {
+    const notifier = new EventNotifier();
+    const { channel, calls } = recordingChannel('custom-a');
+    notifier.registerChannel(channel);
+
+    await notifier.notify('watch_rule_error', {
+      ...baseEvent,
+      payload: { message: 'boom' },
+    });
+
+    expect(calls).toHaveLength(1);
+    expect(calls[0]?.eventType).toBe('watch_rule_error');
+    expect(calls[0]?.event.payload?.message).toBe('boom');
+  });
+
+  test('registering duplicate channel id throws', () => {
+    const notifier = new EventNotifier();
+    const { channel } = recordingChannel('custom-dup');
+    notifier.registerChannel(channel);
+    expect(() => notifier.registerChannel(recordingChannel('custom-dup').channel)).toThrow(
+      'custom-dup'
+    );
+    expect(() => notifier.registerChannel(recordingChannel('webhook').channel)).toThrow('webhook');
+  });
+
+  test('channels listed in disabledNotificationChannels are skipped', async () => {
+    const notifier = new EventNotifier();
+    const blocked = recordingChannel('custom-blocked');
+    const allowed = recordingChannel('custom-allowed');
+    notifier.registerChannel(blocked.channel);
+    notifier.registerChannel(allowed.channel);
+
+    try {
+      updateSiteSettings({ disabledNotificationChannels: ['custom-blocked'] });
+
+      await notifier.notify('watch_rule_error', {
+        ...baseEvent,
+        payload: { message: 'filtered' },
+      });
+
+      expect(blocked.calls).toHaveLength(0);
+      expect(allowed.calls).toHaveLength(1);
+    } finally {
+      updateSiteSettings({ disabledNotificationChannels: [] });
+    }
+  });
+
+  test('PATCH /api/settings/site persists disabled channels and takes effect', async () => {
+    const fakeServer = {} as unknown as Server<unknown>;
+    const notifier = new EventNotifier();
+    const restBlocked = recordingChannel('rest-blocked');
+    notifier.registerChannel(restBlocked.channel);
+
+    try {
+      const patchRes = await handleApiRequest(
+        new Request('http://localhost/api/settings/site', {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            disabledNotificationChannels: ['rest-blocked', ' rest-blocked ', ''],
+          }),
+        }),
+        fakeServer
+      );
+      expect(patchRes.status).toBe(200);
+      const patched = (await patchRes.json()) as {
+        settings: { disabledNotificationChannels: string[] };
+      };
+      expect(patched.settings.disabledNotificationChannels).toEqual(['rest-blocked']);
+      expect(getSiteSettings().disabledNotificationChannels).toEqual(['rest-blocked']);
+
+      await notifier.notify('watch_rule_error', {
+        ...baseEvent,
+        payload: { message: 'rest filtered' },
+      });
+      expect(restBlocked.calls).toHaveLength(0);
+
+      const getRes = await handleApiRequest(
+        new Request('http://localhost/api/settings/site', { method: 'GET' }),
+        fakeServer
+      );
+      const fetched = (await getRes.json()) as {
+        settings: { disabledNotificationChannels: string[] };
+      };
+      expect(fetched.settings.disabledNotificationChannels).toEqual(['rest-blocked']);
+    } finally {
+      updateSiteSettings({ disabledNotificationChannels: [] });
+    }
+  });
+
+  test('PATCH /api/settings/site rejects non string array', async () => {
+    const fakeServer = {} as unknown as Server<unknown>;
+    const res = await handleApiRequest(
+      new Request('http://localhost/api/settings/site', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ disabledNotificationChannels: [1, 2] }),
+      }),
+      fakeServer
+    );
+    expect(res.status).toBe(400);
+  });
 });
 
 describe('EventNotifier telegram bell settings & html formatting', () => {

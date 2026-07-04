@@ -1,8 +1,8 @@
 {
   "version": "6",
   "dialect": "sqlite",
-  "id": "8a9d0cbc-37bf-490e-a055-0a7b3aefc9fc",
-  "prevId": "c2570511-6775-48b4-ae9e-9d9143d92e5f",
+  "id": "301b0f91-3f1c-4a5a-9daf-b294d6fdfaca",
+  "prevId": "8a9d0cbc-37bf-490e-a055-0a7b3aefc9fc",
   "tables": {
     "agent_confirmations": {
       "name": "agent_confirmations",
@@ -307,6 +307,14 @@
           "autoincrement": false,
           "default": "'[]'"
         },
+        "allow_control_chars": {
+          "name": "allow_control_chars",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": false
+        },
         "origin_pane_title": {
           "name": "origin_pane_title",
           "type": "text",
@@ -357,14 +365,6 @@
           "primaryKey": false,
           "notNull": true,
           "autoincrement": false
-        },
-        "allow_control_chars": {
-          "name": "allow_control_chars",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false,
-          "default": false
         }
       },
       "indexes": {},
@@ -1020,6 +1020,14 @@
           "autoincrement": false,
           "default": "'dark'"
         },
+        "disabled_notification_channels": {
+          "name": "disabled_notification_channels",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "'[]'"
+        },
         "updated_at": {
           "name": "updated_at",
           "type": "text",
@@ -1232,7 +1240,7 @@
           "primaryKey": false,
           "notNull": true,
           "autoincrement": false,
-          "default": "'[{\"id\":\"paste\",\"type\":\"action\",\"action\":\"paste\",\"label\":\"\"},{\"id\":\"enter\",\"type\":\"send\",\"label\":\"Enter\",\"payload\":\"\\r\"},{\"id\":\"shift-tab\",\"type\":\"send\",\"label\":\"SHIFT-TAB\",\"payload\":\"\\u001b[Z\"},{\"id\":\"esc\",\"type\":\"send\",\"label\":\"ESC\",\"payload\":\"\\u001b\"},{\"id\":\"ctrl-c\",\"type\":\"send\",\"label\":\"CTRL-C\",\"payload\":\"\\u0003\"},{\"id\":\"ctrl-d\",\"type\":\"send\",\"label\":\"CTRL-D\",\"payload\":\"\\u0004\"},{\"id\":\"arrow-up\",\"type\":\"send\",\"label\":\"\u2191\",\"payload\":\"\\u001b[A\"},{\"id\":\"arrow-down\",\"type\":\"send\",\"label\":\"\u2193\",\"payload\":\"\\u001b[B\"},{\"id\":\"arrow-left\",\"type\":\"send\",\"label\":\"\u2190\",\"payload\":\"\\u001b[D\"},{\"id\":\"arrow-right\",\"type\":\"send\",\"label\":\"\u2192\",\"payload\":\"\\u001b[C\"},{\"id\":\"shift-enter\",\"type\":\"send\",\"label\":\"SHIFT-Enter\",\"payload\":\"\\u001b[13;2u\"},{\"id\":\"backspace\",\"type\":\"send\",\"label\":\"Backspace\",\"payload\":\"\\b\"}]'"
+          "default": "'[{\"id\":\"paste\",\"type\":\"action\",\"action\":\"paste\",\"label\":\"\"},{\"id\":\"enter\",\"type\":\"send\",\"label\":\"Enter\",\"payload\":\"\\r\"},{\"id\":\"shift-tab\",\"type\":\"send\",\"label\":\"SHIFT-TAB\",\"payload\":\"\\u001b[Z\"},{\"id\":\"esc\",\"type\":\"send\",\"label\":\"ESC\",\"payload\":\"\\u001b\"},{\"id\":\"ctrl-c\",\"type\":\"send\",\"label\":\"CTRL-C\",\"payload\":\"\\u0003\"},{\"id\":\"ctrl-d\",\"type\":\"send\",\"label\":\"CTRL-D\",\"payload\":\"\\u0004\"},{\"id\":\"arrow-up\",\"type\":\"send\",\"label\":\"↑\",\"payload\":\"\\u001b[A\"},{\"id\":\"arrow-down\",\"type\":\"send\",\"label\":\"↓\",\"payload\":\"\\u001b[B\"},{\"id\":\"arrow-left\",\"type\":\"send\",\"label\":\"←\",\"payload\":\"\\u001b[D\"},{\"id\":\"arrow-right\",\"type\":\"send\",\"label\":\"→\",\"payload\":\"\\u001b[C\"},{\"id\":\"shift-enter\",\"type\":\"send\",\"label\":\"SHIFT-Enter\",\"payload\":\"\\u001b[13;2u\"},{\"id\":\"backspace\",\"type\":\"send\",\"label\":\"Backspace\",\"payload\":\"\\b\"}]'"
         },
         "use_icons": {
           "name": "use_icons",

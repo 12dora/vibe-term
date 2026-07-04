@@ -2,6 +2,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import type {
   AgentLlmSettingsDto,
   AgentSearchProvider,
+  SearchProviderInfoDto,
   UpdateAgentLlmSettingsRequest,
 } from '@tmex/shared';
 import { Loader2, Save, Trash2 } from 'lucide-react';
@@ -30,10 +31,9 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 
-const SEARCH_PROVIDER_OPTIONS: AgentSearchProvider[] = ['none', 'tavily', 'brave'];
-
 interface LlmSettingsResponse {
   settings: AgentLlmSettingsDto;
+  searchProviders?: SearchProviderInfoDto[];
 }
 
 async function parseApiError(res: Response, fallback: string): Promise<string> {
@@ -127,11 +127,20 @@ export function SearchTab() {
     },
   });
 
+  const searchProviders = settingsQuery.data?.searchProviders ?? [];
+  const providerOptions: AgentSearchProvider[] = [
+    'none',
+    ...searchProviders.map((provider) => provider.id),
+  ];
+  if (!providerOptions.includes(searchProvider)) {
+    providerOptions.push(searchProvider);
+  }
+
   const providerLabel = (provider: AgentSearchProvider): string => {
     if (provider === 'none') {
       return t('settings.search.providerNone');
     }
-    return provider === 'tavily' ? 'Tavily' : 'Brave';
+    return searchProviders.find((item) => item.id === provider)?.label ?? provider;
   };
 
   return (
@@ -159,7 +168,7 @@ export function SearchTab() {
               <SelectValue>{providerLabel(searchProvider)}</SelectValue>
             </SelectTrigger>
             <SelectContent>
-              {SEARCH_PROVIDER_OPTIONS.map((provider) => (
+              {providerOptions.map((provider) => (
                 <SelectItem key={provider} value={provider}>
                   {providerLabel(provider)}
                 </SelectItem>
