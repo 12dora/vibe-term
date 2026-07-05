@@ -85,6 +85,10 @@ const GHOSTTY_MOUSE_BUTTON_MIDDLE = 3;
 const GHOSTTY_MOUSE_BUTTON_RIGHT = 2;
 const GHOSTTY_MOUSE_BUTTON_FOUR = 4;
 const GHOSTTY_MOUSE_BUTTON_FIVE = 5;
+const GHOSTTY_MOUSE_BUTTON_SIX = 6;
+const GHOSTTY_MOUSE_BUTTON_SEVEN = 7;
+// 触摸手势消费后的合成鼠标（compat mouse events）抑制窗口
+const SYNTHETIC_MOUSE_SUPPRESS_MS = 500;
 
 type PointerDragState = {
   active: boolean;
@@ -269,6 +273,10 @@ export class GhosttyTerminalController implements CompatibleTerminalLike {
   private focused = true;
   private readonly pressedMouseButtons = new Set<number>();
   private wheelPixelDelta = 0;
+  private wheelPixelDeltaX = 0;
+  private mouseReportBypassed = false;
+  private lastMotionCell: { col: number; row: number } | null = null;
+  private suppressSyntheticMouseUntil = 0;
   private mouseDragActive = false;
 
   private constructor(
@@ -568,6 +576,7 @@ export class GhosttyTerminalController implements CompatibleTerminalLike {
     }
     this.bindings.resetMouseEncoder(this.mouseEncoderHandle);
     this.pressedMouseButtons.clear();
+    this.lastMotionCell = null;
     this.mouseDragActive = false;
   }
 
@@ -704,27 +713,73 @@ export class GhosttyTerminalController implements CompatibleTerminalLike {
       snapshot.altScreen1049
     );
     this.bindings.resetMouseEncoder(this.mouseEncoderHandle);
+    this.lastMotionCell = null;
+  }
+
+  // 触摸路由用的有效上报判定：折叠 disposed/disableStdin，hook 据此决定手势分支
+  isMouseReporting(): boolean {
+    return !this.disposed && !this.disableStdin && this.getInputRoutingState().mouseReporting;
+  }
+
+  // 触摸手势 → 鼠标上报（button 恒为左键，mods=0）。返回 false = 模式已关/编码失败，
+  // 调用方（useMobileTouch 状态机）据此中止手势。触摸按钮状态由调用方独占维护，
+  // 不写 pressedMouseButtons/mouseDragActive（二者被 clearSelectionState 与真实鼠标共享）。
+  sendTouchMouseEvent(event: {
+    action: 'press' | 'motion' | 'release';
+    clientX: number;
+    clientY: number;
+  }): boolean {
+    if (!this.isMouseReporting()) {
+      return false;
+    }
+    if (event.action === 'press') {
+      this.showScrollbarTransient();
+      this.clearSelectionState();
+    }
+    return this.emitMouseInput({
+      action: event.action,
+      button: GHOSTTY_MOUSE_BUTTON_LEFT,
+      clientX: event.clientX,
+      clientY: event.clientY,
+      mods: 0,
+      anyButtonPressed: event.action !== 'release',
+    });
+  }
+
+  // 触摸手势被消费后调用：开启合成鼠标抑制窗（自 touchend 时刻起算）
+  noteTouchHandled(): void {
+    this.suppressSyntheticMouseUntil = Date.now() + SYNTHETIC_MOUSE_SUPPRESS_MS;
   }
 
   handleViewportGesture(gesture: GhosttyViewportGesture): boolean {
-    if (this.disposed || gesture.deltaY === 0) {
-      return false;
-    }
-
-    const lines = this.gestureToLines(gesture);
-    if (lines === 0) {
+    const deltaX = gesture.deltaX ?? 0;
+    if (this.disposed || (gesture.deltaY === 0 && deltaX === 0)) {
       return false;
     }
 
     const routing = this.getInputRoutingState();
     if (routing.mouseReporting) {
-      const button = lines < 0 ? GHOSTTY_MOUSE_BUTTON_FOUR : GHOSTTY_MOUSE_BUTTON_FIVE;
       let consumed = false;
+      const lines = gesture.deltaY === 0 ? 0 : this.gestureToLines(gesture);
+      const verticalButton = lines < 0 ? GHOSTTY_MOUSE_BUTTON_FOUR : GHOSTTY_MOUSE_BUTTON_FIVE;
       for (let index = 0; index < Math.abs(lines); index += 1) {
         consumed =
           this.emitMouseInput({
             action: 'press',
-            button,
+            button: verticalButton,
+            clientX: gesture.clientX,
+            clientY: gesture.clientY,
+            mods: pointerLikeEventToGhosttyMods(gesture),
+            anyButtonPressed: this.pressedMouseButtons.size > 0,
+          }) || consumed;
+      }
+      const columns = this.gestureToColumns(gesture);
+      const horizontalButton = columns < 0 ? GHOSTTY_MOUSE_BUTTON_SIX : GHOSTTY_MOUSE_BUTTON_SEVEN;
+      for (let index = 0; index < Math.abs(columns); index += 1) {
+        consumed =
+          this.emitMouseInput({
+            action: 'press',
+            button: horizontalButton,
             clientX: gesture.clientX,
             clientY: gesture.clientY,
             mods: pointerLikeEventToGhosttyMods(gesture),
@@ -732,6 +787,15 @@ export class GhosttyTerminalController implements CompatibleTerminalLike {
           }) || consumed;
       }
       return consumed;
+    }
+
+    // 本地视口没有横向滚动概念，非上报模式只消费纵向
+    if (gesture.deltaY === 0) {
+      return false;
+    }
+    const lines = this.gestureToLines(gesture);
+    if (lines === 0) {
+      return false;
     }
 
     if (routing.altScroll) {
@@ -908,13 +972,21 @@ export class GhosttyTerminalController implements CompatibleTerminalLike {
       if (!(event instanceof MouseEvent)) {
         return;
       }
+      // 触摸手势刚被 useMobileTouch 消费过：忽略浏览器随后合成的鼠标事件，
+      // 防止 tap 双触发与"合成 mousedown 清掉长按选择"（不查 isTrusted，保证测试可驱动）
+      if (Date.now() < this.suppressSyntheticMouseUntil) {
+        return;
+      }
       this.showScrollbarTransient();
 
       if (!this.disableStdin) {
         this.focus();
       }
 
-      if (this.getInputRoutingState().mouseReporting) {
+      // xterm 约定：Shift+左键绕过鼠标上报、走本地文本选择（上报 TUI 下唯一的复制入口）
+      const reporting = this.getInputRoutingState().mouseReporting;
+      const bypassReporting = reporting && event.shiftKey && event.button === 0;
+      if (reporting && !bypassReporting) {
         const button = this.mouseButtonFromEvent(event);
         if (button === null) {
           return;
@@ -932,6 +1004,9 @@ export class GhosttyTerminalController implements CompatibleTerminalLike {
         });
         event.preventDefault();
         return;
+      }
+      if (bypassReporting) {
+        this.mouseReportBypassed = true;
       }
 
       // 带平台主修饰键(Mac Cmd / 其它 Ctrl)点击链接 → 打开，不进入文本选择。
@@ -965,6 +1040,18 @@ export class GhosttyTerminalController implements CompatibleTerminalLike {
       this.showScrollbarTransient();
       if (this.getInputRoutingState().mouseReporting) {
         this.setLinkCursor(false);
+        // 1003 any-event tracking：裸悬停也上报 motion（无按钮 → SGR code 35），
+        // 事件量由同 cell 去重约束；Shift 按住时与点击/拖拽一致交还本地（xterm 约定）
+        if (this.isModeEnabled(GHOSTTY_MODE_ANY_MOUSE) && !event.shiftKey) {
+          this.emitMouseInput({
+            action: 'motion',
+            button: null,
+            clientX: event.clientX,
+            clientY: event.clientY,
+            mods: pointerLikeEventToGhosttyMods(event),
+            anyButtonPressed: false,
+          });
+        }
         return;
       }
       // 仅在按住修饰键时扫描链接，普通移动只做一次廉价的修饰键判断。
@@ -984,6 +1071,7 @@ export class GhosttyTerminalController implements CompatibleTerminalLike {
         if (
           this.handleViewportGesture({
             source: 'wheel',
+            deltaX: event.deltaX,
             deltaY: event.deltaY,
             deltaMode: event.deltaMode,
             clientX: event.clientX,
@@ -1009,7 +1097,7 @@ export class GhosttyTerminalController implements CompatibleTerminalLike {
         if (!this.mouseDragActive) {
           return;
         }
-        if (this.getInputRoutingState().mouseReporting) {
+        if (this.getInputRoutingState().mouseReporting && !this.mouseReportBypassed) {
           this.emitMouseInput({
             action: 'motion',
             button: this.mouseButtonFromButtons(event.buttons),
@@ -1023,11 +1111,13 @@ export class GhosttyTerminalController implements CompatibleTerminalLike {
         this.updatePointerSelection(event);
       };
       const upListener = (event: MouseEvent) => {
-        if (!this.mouseDragActive) {
+        if (!this.mouseDragActive || Date.now() < this.suppressSyntheticMouseUntil) {
           return;
         }
         this.mouseDragActive = false;
-        if (this.getInputRoutingState().mouseReporting) {
+        const bypassed = this.mouseReportBypassed;
+        this.mouseReportBypassed = false;
+        if (this.getInputRoutingState().mouseReporting && !bypassed) {
           const button = this.mouseButtonFromEvent(event);
           if (button !== null) {
             this.pressedMouseButtons.delete(button);
@@ -1332,6 +1422,40 @@ export class GhosttyTerminalController implements CompatibleTerminalLike {
       : Math.floor(gesture.deltaY / cellHeight);
   }
 
+  private gestureToColumns(gesture: GhosttyViewportGesture): number {
+    const deltaX = gesture.deltaX ?? 0;
+    if (deltaX === 0) {
+      return 0;
+    }
+    const cellWidth = this.cellDimensions().width || DEFAULT_CELL_WIDTH;
+
+    if (gesture.source === 'wheel') {
+      if (gesture.deltaMode === 1) {
+        this.wheelPixelDeltaX = 0;
+        return deltaX > 0 ? Math.ceil(deltaX) : Math.floor(deltaX);
+      }
+
+      if (gesture.deltaMode === 2) {
+        this.wheelPixelDeltaX = 0;
+        const pageColumns = Math.max(1, this.cols);
+        const scaled = deltaX * pageColumns;
+        return scaled > 0 ? Math.ceil(scaled) : Math.floor(scaled);
+      }
+
+      this.wheelPixelDeltaX += deltaX;
+      const columns =
+        this.wheelPixelDeltaX > 0
+          ? Math.floor(this.wheelPixelDeltaX / cellWidth)
+          : Math.ceil(this.wheelPixelDeltaX / cellWidth);
+      if (columns !== 0) {
+        this.wheelPixelDeltaX -= columns * cellWidth;
+      }
+      return columns;
+    }
+
+    return deltaX > 0 ? Math.ceil(deltaX / cellWidth) : Math.floor(deltaX / cellWidth);
+  }
+
   private isModeEnabled(mode: number): boolean {
     return this.bindings.isTerminalModeEnabled(this.terminalHandle, mode);
   }
@@ -1403,6 +1527,20 @@ export class GhosttyTerminalController implements CompatibleTerminalLike {
       return false;
     }
 
+    // 真实终端只在跨 cell 时发 motion：同 cell 去重（press 记锚、release 清锚）。
+    // 1016（SGR-pixels）是像素粒度语义，不去重。
+    const motionCol = Math.floor(position.x / Math.max(1, cell.width || DEFAULT_CELL_WIDTH));
+    const motionRow = Math.floor(position.y / Math.max(1, cell.height || DEFAULT_CELL_HEIGHT));
+    if (
+      options.action === 'motion' &&
+      !this.isModeEnabled(1016) &&
+      this.lastMotionCell &&
+      this.lastMotionCell.col === motionCol &&
+      this.lastMotionCell.row === motionRow
+    ) {
+      return false;
+    }
+
     const payload = this.bindings.encodeMouseEvent(this.mouseEncoderHandle, this.terminalHandle, {
       action: options.action,
       button: options.button,
@@ -1412,11 +1550,19 @@ export class GhosttyTerminalController implements CompatibleTerminalLike {
       anyButtonPressed: options.anyButtonPressed,
       screenWidth: Math.max(1, Math.round(rect.width)),
       screenHeight: Math.max(1, Math.round(rect.height)),
-      cellWidth: Math.max(1, Math.round(cell.width || DEFAULT_CELL_WIDTH)),
-      cellHeight: Math.max(1, Math.round(cell.height || DEFAULT_CELL_HEIGHT)),
+      // cell 尺寸不得取整：cssCell 按物理像素网格对齐可为非整数（如 dpr=2 下 15.5），
+      // 渲染与 hitTest 均基于该精确值，取整会让行列换算随坐标增大漂移出 off-by-one
+      cellWidth: Math.max(1, cell.width || DEFAULT_CELL_WIDTH),
+      cellHeight: Math.max(1, cell.height || DEFAULT_CELL_HEIGHT),
     });
     if (!payload) {
       return false;
+    }
+
+    if (options.action === 'release') {
+      this.lastMotionCell = null;
+    } else {
+      this.lastMotionCell = { col: motionCol, row: motionRow };
     }
 
     this.emitData(payload);

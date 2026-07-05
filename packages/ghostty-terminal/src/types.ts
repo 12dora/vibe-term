@@ -43,6 +43,7 @@ export interface GhosttyCellDimensions {
 
 export interface GhosttyViewportGesture {
   source: 'wheel' | 'touch';
+  deltaX?: number;
   deltaY: number;
   deltaMode?: number;
   clientX: number;
@@ -186,6 +187,13 @@ export interface CompatibleTerminalLike {
   scrollToTop: () => void;
   scrollToBottom: () => void;
   handleViewportGesture?: (gesture: GhosttyViewportGesture) => boolean;
+  isMouseReporting?: () => boolean;
+  sendTouchMouseEvent?: (event: {
+    action: 'press' | 'motion' | 'release';
+    clientX: number;
+    clientY: number;
+  }) => boolean;
+  noteTouchHandled?: () => void;
   exportModeSnapshot?: () => GhosttyTerminalModeSnapshot;
   restoreModeSnapshot?: (snapshot: GhosttyTerminalModeSnapshot) => void;
   clearMouseTrackingModes?: () => void;

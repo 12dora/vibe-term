@@ -17,6 +17,7 @@ type FakeEvent = {
   buttons?: number;
   clientX?: number;
   clientY?: number;
+  deltaX?: number;
   deltaY?: number;
   deltaMode?: number;
   detail?: number;
@@ -206,7 +207,12 @@ class FakeElement {
     };
   }
 
-  setBoundingClientRect(rect: { width: number; height: number; left?: number; top?: number }): void {
+  setBoundingClientRect(rect: {
+    width: number;
+    height: number;
+    left?: number;
+    top?: number;
+  }): void {
     this.rect = {
       width: rect.width,
       height: rect.height,
@@ -237,7 +243,16 @@ class FakeMouseEvent {
     init: Partial<
       Pick<
         FakeEvent,
-        'button' | 'buttons' | 'clientX' | 'clientY' | 'detail' | 'shiftKey' | 'ctrlKey' | 'altKey' | 'metaKey' | 'cancelable'
+        | 'button'
+        | 'buttons'
+        | 'clientX'
+        | 'clientY'
+        | 'detail'
+        | 'shiftKey'
+        | 'ctrlKey'
+        | 'altKey'
+        | 'metaKey'
+        | 'cancelable'
       >
     > = {}
   ) {
@@ -263,14 +278,30 @@ class FakeWheelEvent extends FakeMouseEvent {
   static readonly DOM_DELTA_PIXEL = 0;
   static readonly DOM_DELTA_LINE = 1;
   static readonly DOM_DELTA_PAGE = 2;
+  readonly deltaX: number;
   readonly deltaY: number;
   readonly deltaMode: number;
 
   constructor(
     type: string,
-    init: Partial<Pick<FakeEvent, 'deltaY' | 'deltaMode' | 'clientX' | 'clientY' | 'shiftKey' | 'ctrlKey' | 'altKey' | 'metaKey' | 'cancelable'>> = {}
+    init: Partial<
+      Pick<
+        FakeEvent,
+        | 'deltaX'
+        | 'deltaY'
+        | 'deltaMode'
+        | 'clientX'
+        | 'clientY'
+        | 'shiftKey'
+        | 'ctrlKey'
+        | 'altKey'
+        | 'metaKey'
+        | 'cancelable'
+      >
+    > = {}
   ) {
     super(type, init);
+    this.deltaX = init.deltaX ?? 0;
     this.deltaY = init.deltaY ?? 0;
     this.deltaMode = init.deltaMode ?? 0;
   }
@@ -397,10 +428,10 @@ function findElementsByTag(root: FakeElement | null, tagName: string): FakeEleme
 
 function findCanvasByLayer(root: FakeElement | null, layer: string): FakeCanvasElement | null {
   return (
-    findElementsByTag(root, 'canvas').find(
+    (findElementsByTag(root, 'canvas').find(
       (element) => (element as FakeCanvasElement).dataset.layer === layer
-    ) as FakeCanvasElement | undefined
-  ) ?? null;
+    ) as FakeCanvasElement | undefined) ?? null
+  );
 }
 
 function findElementByClass(root: FakeElement | null, className: string): FakeElement | null {
@@ -590,30 +621,31 @@ async function loadControllerModule(bindings: FakeBindings, version: number) {
       wrap: false,
       wrapContinuation: false,
       text: index === 0 ? 'mock-canvas-line' : '',
-      cells: index === 0
-        ? [
-            {
-              x: 0,
-              text: 'mock-canvas-line',
-              codepoints: Array.from('mock-canvas-line').map((char) => char.codePointAt(0) ?? 32),
-              widthKind: 'narrow',
-              hasText: true,
-              style: {
-                bold: false,
-                italic: false,
-                faint: false,
-                blink: false,
-                inverse: false,
-                invisible: false,
-                strikethrough: false,
-                overline: false,
-                underline: 0,
+      cells:
+        index === 0
+          ? [
+              {
+                x: 0,
+                text: 'mock-canvas-line',
+                codepoints: Array.from('mock-canvas-line').map((char) => char.codePointAt(0) ?? 32),
+                widthKind: 'narrow',
+                hasText: true,
+                style: {
+                  bold: false,
+                  italic: false,
+                  faint: false,
+                  blink: false,
+                  inverse: false,
+                  invisible: false,
+                  strikethrough: false,
+                  overline: false,
+                  underline: 0,
+                },
+                fgColor: null,
+                bgColor: null,
               },
-              fgColor: null,
-              bgColor: null,
-            },
-          ]
-        : [],
+            ]
+          : [],
     }));
 
     return {
@@ -715,7 +747,9 @@ describe('GhosttyTerminalController canvas baseline', () => {
     terminal.write('printf "hello"');
     await dom.flushAnimationFrames();
 
-    expect(findElementsByTag(terminal.element as unknown as FakeElement, 'canvas').length).toBeGreaterThan(0);
+    expect(
+      findElementsByTag(terminal.element as unknown as FakeElement, 'canvas').length
+    ).toBeGreaterThan(0);
     expect(bindings.formatViewportCalls).toBe(0);
   });
 
@@ -742,7 +776,11 @@ describe('GhosttyTerminalController canvas baseline', () => {
     terminal.dispose();
 
     expect(dom.cancelledFrames.length).toBeGreaterThan(0);
-    expect(findElementsByTag(dom.document.body, 'div').some((el) => el.className === 'xterm-helper-textarea')).toBeFalse();
+    expect(
+      findElementsByTag(dom.document.body, 'div').some(
+        (el) => el.className === 'xterm-helper-textarea'
+      )
+    ).toBeFalse();
   });
 
   test('input event should emit committed text when compositionend data is empty', async () => {
@@ -817,7 +855,11 @@ describe('GhosttyTerminalController canvas baseline', () => {
     if (textarea) {
       // 模拟 Android：keydown 报 229（无操作），随后 beforeinput 携带删除意图
       textarea.dispatchEvent({ type: 'keydown', keyCode: 229, key: 'Unidentified', code: '' });
-      textarea.dispatchEvent({ type: 'beforeinput', inputType: 'deleteContentBackward', data: null });
+      textarea.dispatchEvent({
+        type: 'beforeinput',
+        inputType: 'deleteContentBackward',
+        data: null,
+      });
     }
 
     expect(received).toEqual(['key:press:53:0']);
@@ -852,7 +894,11 @@ describe('GhosttyTerminalController canvas baseline', () => {
     );
 
     if (textarea) {
-      textarea.dispatchEvent({ type: 'beforeinput', inputType: 'deleteContentForward', data: null });
+      textarea.dispatchEvent({
+        type: 'beforeinput',
+        inputType: 'deleteContentForward',
+        data: null,
+      });
     }
 
     expect(received).toEqual(['key:press:68:0']);
@@ -1017,7 +1063,10 @@ describe('GhosttyTerminalController canvas baseline', () => {
     terminal.open(container as unknown as HTMLElement);
 
     (terminal.element as unknown as FakeElement).dispatchEvent(
-      new FakeWheelEvent('wheel', { deltaY: 3, deltaMode: FakeWheelEvent.DOM_DELTA_LINE }) as unknown as FakeEvent
+      new FakeWheelEvent('wheel', {
+        deltaY: 3,
+        deltaMode: FakeWheelEvent.DOM_DELTA_LINE,
+      }) as unknown as FakeEvent
     );
 
     expect(bindings.scrollDeltaCalls).toEqual([3]);
@@ -1158,13 +1207,28 @@ describe('GhosttyTerminalController canvas baseline', () => {
     });
 
     screen?.dispatchEvent(
-      new FakeMouseEvent('mousedown', { clientX: 10, clientY: 10, button: 0, buttons: 1 }) as unknown as FakeEvent
+      new FakeMouseEvent('mousedown', {
+        clientX: 10,
+        clientY: 10,
+        button: 0,
+        buttons: 1,
+      }) as unknown as FakeEvent
     );
     ((globalThis as any).window as FakeWindowTarget).dispatchEvent(
-      new FakeMouseEvent('mousemove', { clientX: 80, clientY: 10, button: 0, buttons: 1 }) as unknown as FakeEvent
+      new FakeMouseEvent('mousemove', {
+        clientX: 80,
+        clientY: 10,
+        button: 0,
+        buttons: 1,
+      }) as unknown as FakeEvent
     );
     ((globalThis as any).window as FakeWindowTarget).dispatchEvent(
-      new FakeMouseEvent('mouseup', { clientX: 80, clientY: 10, button: 0, buttons: 0 }) as unknown as FakeEvent
+      new FakeMouseEvent('mouseup', {
+        clientX: 80,
+        clientY: 10,
+        button: 0,
+        buttons: 0,
+      }) as unknown as FakeEvent
     );
 
     expect(received.some((item) => item.startsWith('mouse:'))).toBeTrue();
@@ -1195,10 +1259,20 @@ describe('GhosttyTerminalController canvas baseline', () => {
     screen?.setBoundingClientRect({ width: 960, height: 480, left: 0, top: 0 });
 
     screen?.dispatchEvent(
-      new FakeMouseEvent('mousedown', { clientX: 10, clientY: 10, button: 1, buttons: 4 }) as unknown as FakeEvent
+      new FakeMouseEvent('mousedown', {
+        clientX: 10,
+        clientY: 10,
+        button: 1,
+        buttons: 4,
+      }) as unknown as FakeEvent
     );
     screen?.dispatchEvent(
-      new FakeMouseEvent('mousedown', { clientX: 20, clientY: 20, button: 2, buttons: 2 }) as unknown as FakeEvent
+      new FakeMouseEvent('mousedown', {
+        clientX: 20,
+        clientY: 20,
+        button: 2,
+        buttons: 2,
+      }) as unknown as FakeEvent
     );
 
     expect(bindings.mouseEventCalls?.map((item) => item.button)).toEqual([3, 2]);
@@ -1232,6 +1306,403 @@ describe('GhosttyTerminalController canvas baseline', () => {
     expect(bindings.modeState?.has(1006)).toBeTrue();
     expect(bindings.modeState?.has(1049)).toBeTrue();
   });
+
+  // Retina（dpr=2）下 cssCell 高按物理像素网格对齐可为 .5 步进（13 × 1.2 = 15.6 →
+  // round(31.2)/2 = 15.5）。鼠标上报必须与渲染 / hitTest 用同一未取整 cell 尺寸：
+  // 取整成 16 后 floor(y/16)+1 从视觉第 ~17 行起行号少 1（opencode 下半屏点击/拖拽偏一行）。
+  test('mouse input should pass unrounded cell dimensions to the encoder (dpr=2 half-pixel cell)', async () => {
+    dom = installFakeDom();
+    const previousDpr = (globalThis as any).devicePixelRatio;
+    (globalThis as any).devicePixelRatio = 2;
+
+    try {
+      const bindings = createFakeBindings();
+      bindings.modeState?.add(1002);
+      bindings.modeState?.add(1006);
+      importVersion += 1;
+      const { createTerminalController } = await loadControllerModule(bindings, importVersion);
+      const terminal = await createTerminalController({
+        theme: TEST_THEME,
+        fontFamily: 'monospace',
+        fontSize: 13,
+        scrollback: 1000,
+      });
+      const container = dom.document.createElement('div');
+      container.setBoundingClientRect({ width: 960, height: 640 });
+      dom.document.body.appendChild(container);
+
+      terminal.open(container as unknown as HTMLElement);
+      await dom.flushAnimationFrames();
+
+      const screen = findElementByClass(terminal.element as unknown as FakeElement, 'xterm-screen');
+      expect(screen).toBeTruthy();
+      screen?.setBoundingClientRect({ width: 960, height: 640, left: 0, top: 0 });
+
+      // 视觉第 21 行（0-based 20）中部：y = 20.5 × 15.5 = 317.75
+      screen?.dispatchEvent(
+        new FakeMouseEvent('mousedown', {
+          clientX: 5,
+          clientY: 317,
+          button: 0,
+          buttons: 1,
+        }) as unknown as FakeEvent
+      );
+
+      const call = bindings.mouseEventCalls?.[0] as { y: number; cellHeight: number } | undefined;
+      expect(call).toBeDefined();
+      if (!call) {
+        return;
+      }
+      expect(call.cellHeight).toBe(15.5);
+      // 编码器按 floor(y / cellHeight) + 1 计算 SGR 行号，传入值必须能还原出第 21 行
+      expect(Math.floor(call.y / call.cellHeight) + 1).toBe(21);
+
+      terminal.dispose();
+    } finally {
+      (globalThis as any).devicePixelRatio = previousDpr;
+    }
+  });
+
+  // 共用装配：开启指定模式、打开终端、定位 screen rect，返回操作句柄
+  async function setupMouseTerminal(modes: number[]): Promise<{
+    bindings: FakeBindings;
+    terminal: any;
+    screen: FakeElement | null;
+    windowTarget: FakeWindowTarget;
+  }> {
+    const bindings = createFakeBindings();
+    for (const mode of modes) {
+      bindings.modeState?.add(mode);
+    }
+    importVersion += 1;
+    const { createTerminalController } = await loadControllerModule(bindings, importVersion);
+    const terminal = await createTerminalController({
+      theme: TEST_THEME,
+      fontFamily: 'monospace',
+      fontSize: 13,
+      scrollback: 1000,
+    });
+    const container = dom?.document.createElement('div');
+    if (container && dom) {
+      container.setBoundingClientRect({ width: 960, height: 480 });
+      dom.document.body.appendChild(container);
+      terminal.open(container as unknown as HTMLElement);
+      await dom.flushAnimationFrames();
+    }
+    const screen = findElementByClass(terminal.element as unknown as FakeElement, 'xterm-screen');
+    screen?.setBoundingClientRect({ width: 960, height: 480, left: 0, top: 0 });
+    return {
+      bindings,
+      terminal,
+      screen,
+      windowTarget: (globalThis as any).window as FakeWindowTarget,
+    };
+  }
+
+  // xterm 约定：鼠标上报模式下 Shift+左键拖拽绕过上报、走本地文本选择（唯一的复制入口）
+  test('shift+left drag bypasses mouse reporting into local selection', async () => {
+    dom = installFakeDom();
+    const { bindings, terminal, screen, windowTarget } = await setupMouseTerminal([1000, 1006]);
+
+    screen?.dispatchEvent(
+      new FakeMouseEvent('mousedown', {
+        clientX: 10,
+        clientY: 8,
+        button: 0,
+        buttons: 1,
+        shiftKey: true,
+      }) as unknown as FakeEvent
+    );
+    windowTarget.dispatchEvent(
+      new FakeMouseEvent('mousemove', {
+        clientX: 100,
+        clientY: 8,
+        buttons: 1,
+        shiftKey: true,
+      }) as unknown as FakeEvent
+    );
+    windowTarget.dispatchEvent(
+      new FakeMouseEvent('mouseup', {
+        clientX: 100,
+        clientY: 8,
+        button: 0,
+        buttons: 0,
+        shiftKey: true,
+      }) as unknown as FakeEvent
+    );
+
+    expect(bindings.mouseEventCalls?.length ?? 0).toBe(0);
+    expect(terminal.getSelection?.() ?? '').not.toBe('');
+
+    // 无 Shift 的后续拖拽仍走上报（bypass 状态不得泄漏到下一次会话）
+    screen?.dispatchEvent(
+      new FakeMouseEvent('mousedown', {
+        clientX: 10,
+        clientY: 8,
+        button: 0,
+        buttons: 1,
+      }) as unknown as FakeEvent
+    );
+    windowTarget.dispatchEvent(
+      new FakeMouseEvent('mouseup', {
+        clientX: 10,
+        clientY: 8,
+        button: 0,
+        buttons: 0,
+      }) as unknown as FakeEvent
+    );
+    expect(bindings.mouseEventCalls?.length ?? 0).toBeGreaterThan(0);
+  });
+
+  // 真实终端只在跨 cell 时发 motion：同 cell 的 mousemove 必须去重
+  test('drag motion within one cell is deduplicated until crossing cells', async () => {
+    dom = installFakeDom();
+    const { bindings, screen, windowTarget } = await setupMouseTerminal([1002, 1006]);
+
+    screen?.dispatchEvent(
+      new FakeMouseEvent('mousedown', {
+        clientX: 10,
+        clientY: 8,
+        button: 0,
+        buttons: 1,
+      }) as unknown as FakeEvent
+    );
+    // 同 cell 内抖动（cell 宽 9 / 高 16）：不得产生新事件
+    windowTarget.dispatchEvent(
+      new FakeMouseEvent('mousemove', {
+        clientX: 12,
+        clientY: 9,
+        buttons: 1,
+      }) as unknown as FakeEvent
+    );
+    windowTarget.dispatchEvent(
+      new FakeMouseEvent('mousemove', {
+        clientX: 13,
+        clientY: 10,
+        buttons: 1,
+      }) as unknown as FakeEvent
+    );
+    // 跨列：产生一条 motion
+    windowTarget.dispatchEvent(
+      new FakeMouseEvent('mousemove', {
+        clientX: 100,
+        clientY: 8,
+        buttons: 1,
+      }) as unknown as FakeEvent
+    );
+    // 又回到同 cell：不产生
+    windowTarget.dispatchEvent(
+      new FakeMouseEvent('mousemove', {
+        clientX: 103,
+        clientY: 9,
+        buttons: 1,
+      }) as unknown as FakeEvent
+    );
+    windowTarget.dispatchEvent(
+      new FakeMouseEvent('mouseup', {
+        clientX: 103,
+        clientY: 9,
+        button: 0,
+        buttons: 0,
+      }) as unknown as FakeEvent
+    );
+
+    expect(bindings.mouseEventCalls?.map((call) => call.action)).toEqual([
+      'press',
+      'motion',
+      'release',
+    ]);
+  });
+
+  // 1016（SGR-pixels）语义是像素粒度，同 cell 去重必须停用
+  test('sgr-pixels mode (1016) disables motion dedupe', async () => {
+    dom = installFakeDom();
+    const { bindings, screen, windowTarget } = await setupMouseTerminal([1002, 1006, 1016]);
+
+    screen?.dispatchEvent(
+      new FakeMouseEvent('mousedown', {
+        clientX: 10,
+        clientY: 8,
+        button: 0,
+        buttons: 1,
+      }) as unknown as FakeEvent
+    );
+    windowTarget.dispatchEvent(
+      new FakeMouseEvent('mousemove', {
+        clientX: 12,
+        clientY: 9,
+        buttons: 1,
+      }) as unknown as FakeEvent
+    );
+    windowTarget.dispatchEvent(
+      new FakeMouseEvent('mousemove', {
+        clientX: 13,
+        clientY: 10,
+        buttons: 1,
+      }) as unknown as FakeEvent
+    );
+
+    expect(bindings.mouseEventCalls?.map((call) => call.action)).toEqual([
+      'press',
+      'motion',
+      'motion',
+    ]);
+  });
+
+  // 1003 any-event tracking：裸悬停（无按钮）也要上报 motion，且受同 cell 去重约束
+  test('hover motion is reported under any-event tracking (1003)', async () => {
+    dom = installFakeDom();
+    const { bindings, screen } = await setupMouseTerminal([1003, 1006]);
+
+    screen?.dispatchEvent(
+      new FakeMouseEvent('mousemove', {
+        clientX: 50,
+        clientY: 20,
+        buttons: 0,
+      }) as unknown as FakeEvent
+    );
+    screen?.dispatchEvent(
+      new FakeMouseEvent('mousemove', {
+        clientX: 52,
+        clientY: 21,
+        buttons: 0,
+      }) as unknown as FakeEvent
+    );
+    screen?.dispatchEvent(
+      new FakeMouseEvent('mousemove', {
+        clientX: 150,
+        clientY: 20,
+        buttons: 0,
+      }) as unknown as FakeEvent
+    );
+
+    const calls = bindings.mouseEventCalls ?? [];
+    expect(calls.map((call) => call.action)).toEqual(['motion', 'motion']);
+    expect(calls.every((call) => call.anyButtonPressed === false)).toBeTrue();
+  });
+
+  test('hover motion with shift held is not reported (local override)', async () => {
+    dom = installFakeDom();
+    const { bindings, screen } = await setupMouseTerminal([1003, 1006]);
+
+    screen?.dispatchEvent(
+      new FakeMouseEvent('mousemove', {
+        clientX: 50,
+        clientY: 20,
+        buttons: 0,
+        shiftKey: true,
+      }) as unknown as FakeEvent
+    );
+
+    expect(bindings.mouseEventCalls?.length ?? 0).toBe(0);
+  });
+
+  test('hover motion is not reported under button-event tracking (1002)', async () => {
+    dom = installFakeDom();
+    const { bindings, screen } = await setupMouseTerminal([1002, 1006]);
+
+    screen?.dispatchEvent(
+      new FakeMouseEvent('mousemove', {
+        clientX: 50,
+        clientY: 20,
+        buttons: 0,
+      }) as unknown as FakeEvent
+    );
+
+    expect(bindings.mouseEventCalls?.length ?? 0).toBe(0);
+  });
+
+  // 水平滚轮：SGR 按钮 6/7（66/67），仅上报模式消费 deltaX
+  test('horizontal wheel emits buttons 6/7 when mouse reporting is enabled', async () => {
+    dom = installFakeDom();
+    const { bindings, terminal } = await setupMouseTerminal([1000, 1006]);
+
+    (terminal.element as unknown as FakeElement).dispatchEvent(
+      new FakeWheelEvent('wheel', {
+        deltaX: 27,
+        deltaY: 0,
+        clientX: 40,
+        clientY: 30,
+      }) as unknown as FakeEvent
+    );
+    // 27px / 9px cell = 3 列 → 3 个按钮 7（向右）
+    expect(bindings.mouseEventCalls?.map((call) => call.button)).toEqual([7, 7, 7]);
+
+    (terminal.element as unknown as FakeElement).dispatchEvent(
+      new FakeWheelEvent('wheel', {
+        deltaX: -9,
+        deltaY: 0,
+        clientX: 40,
+        clientY: 30,
+      }) as unknown as FakeEvent
+    );
+    expect(bindings.mouseEventCalls?.map((call) => call.button)).toEqual([7, 7, 7, 6]);
+  });
+
+  test('horizontal wheel is ignored without mouse reporting', async () => {
+    dom = installFakeDom();
+    const { bindings, terminal } = await setupMouseTerminal([]);
+
+    (terminal.element as unknown as FakeElement).dispatchEvent(
+      new FakeWheelEvent('wheel', {
+        deltaX: 48,
+        deltaY: 0,
+        clientX: 40,
+        clientY: 30,
+      }) as unknown as FakeEvent
+    );
+
+    expect(bindings.mouseEventCalls?.length ?? 0).toBe(0);
+    expect(bindings.scrollDeltaCalls).toEqual([]);
+  });
+
+  // 触摸手势 API：press/motion/release 三态上报；返回 false = 上报模式未开启
+  test('sendTouchMouseEvent reports press/motion/release with left button', async () => {
+    dom = installFakeDom();
+    const { bindings, terminal } = await setupMouseTerminal([1002, 1006]);
+
+    expect(terminal.isMouseReporting?.()).toBeTrue();
+    expect(terminal.sendTouchMouseEvent?.({ action: 'press', clientX: 10, clientY: 8 })).toBeTrue();
+    expect(
+      terminal.sendTouchMouseEvent?.({ action: 'motion', clientX: 100, clientY: 8 })
+    ).toBeTrue();
+    expect(
+      terminal.sendTouchMouseEvent?.({ action: 'release', clientX: 100, clientY: 8 })
+    ).toBeTrue();
+
+    const calls = bindings.mouseEventCalls ?? [];
+    expect(calls.map((call) => call.action)).toEqual(['press', 'motion', 'release']);
+    expect(calls.every((call) => call.button === 1)).toBeTrue();
+    expect(calls[2]?.anyButtonPressed).toBeFalse();
+  });
+
+  test('sendTouchMouseEvent returns false when mouse reporting is off', async () => {
+    dom = installFakeDom();
+    const { bindings, terminal } = await setupMouseTerminal([]);
+
+    expect(terminal.isMouseReporting?.()).toBeFalse();
+    expect(
+      terminal.sendTouchMouseEvent?.({ action: 'press', clientX: 10, clientY: 8 })
+    ).toBeFalse();
+    expect(bindings.mouseEventCalls?.length ?? 0).toBe(0);
+  });
+
+  // 触摸手势被消费后，浏览器随后的 compat 鼠标事件必须被忽略（防 tap 双触发/清掉长按选择）
+  test('noteTouchHandled suppresses synthetic mouse events within the window', async () => {
+    dom = installFakeDom();
+    const { bindings, terminal, screen } = await setupMouseTerminal([1000, 1006]);
+
+    terminal.noteTouchHandled?.();
+    screen?.dispatchEvent(
+      new FakeMouseEvent('mousedown', {
+        clientX: 10,
+        clientY: 8,
+        button: 0,
+        buttons: 1,
+      }) as unknown as FakeEvent
+    );
+    expect(bindings.mouseEventCalls?.length ?? 0).toBe(0);
+  });
 });
 
 describe('ghostty render-state bindings', () => {
@@ -1259,10 +1730,7 @@ describe('ghostty render-state bindings', () => {
       try {
         const renderState = createRenderState(bindings);
         try {
-          bindings.writeVt(
-            terminal,
-            'plain line\r\n\x1b[31mred line\x1b[0m\r\ncursor line\r\n'
-          );
+          bindings.writeVt(terminal, 'plain line\r\n\x1b[31mred line\x1b[0m\r\ncursor line\r\n');
 
           updateRenderState(renderState, terminal);
           const meta = readRenderSnapshotMeta(renderState);
@@ -1379,6 +1847,44 @@ describe('ghostty mouse protocol bindings', () => {
         });
 
         expect(encoded).toBe('\u001b[<0;51;41M'.replace('\\u001b', ''));
+      } finally {
+        bindings.freeMouseEncoder(mouseEncoder);
+        bindings.freeTerminal(terminal);
+      }
+    } finally {
+      restoreFetch();
+    }
+  });
+
+  // cell 尺寸是 float（物理像素网格对齐可产生 .5 步进），编码器必须按精确值换算行列
+  test('encodes sgr coordinates from fractional cell dimensions', async () => {
+    const restoreFetch = installLocalFileFetch();
+
+    try {
+      const { getGhosttyBindings } = await import(`./ghostty-wasm.ts?mouse-frac=${Date.now()}`);
+      const bindings = await getGhosttyBindings();
+      const terminal = bindings.createTerminal(80, 40, 1000);
+      const mouseEncoder = bindings.createMouseEncoder();
+
+      try {
+        bindings.exports.ghostty_terminal_mode_set(terminal, 1002, 1);
+        bindings.exports.ghostty_terminal_mode_set(terminal, 1006, 1);
+
+        // 视觉第 21 行（0-based 20）中部：y = 20.5 × 15.5 = 317.75；cell 高取整成 16 会算出第 20 行
+        const encoded = bindings.encodeMouseEvent(mouseEncoder, terminal, {
+          action: 'press',
+          button: 1,
+          mods: 0,
+          x: 5,
+          y: 317.75,
+          anyButtonPressed: true,
+          screenWidth: 960,
+          screenHeight: 640,
+          cellWidth: 7.5,
+          cellHeight: 15.5,
+        });
+
+        expect(encoded).toBe('\x1b[<0;1;21M');
       } finally {
         bindings.freeMouseEncoder(mouseEncoder);
         bindings.freeTerminal(terminal);
@@ -1546,7 +2052,10 @@ describe('CanvasRenderer', () => {
       mainCanvas?.context.operations.some(
         (operation) =>
           operation.type === 'fillText' &&
-          (operation.text === 'A' || operation.text === 'B' || operation.text === 'C' || operation.text === 'D')
+          (operation.text === 'A' ||
+            operation.text === 'B' ||
+            operation.text === 'C' ||
+            operation.text === 'D')
       )
     ).toBeTruthy();
     expect(
@@ -1592,8 +2101,7 @@ describe('CanvasRenderer', () => {
     });
     expect(
       mainCanvas?.context.operations.some(
-        (operation) =>
-          operation.type === 'fillRect' && operation.fillStyle === 'rgb(34 34 34)'
+        (operation) => operation.type === 'fillRect' && operation.fillStyle === 'rgb(34 34 34)'
       )
     ).toBeTruthy();
 
@@ -2027,34 +2535,50 @@ describe('SelectionModel', () => {
         )[line] ?? ''
       );
 
-    let selection = resolvePointerSelection(createEmptySelectionState(), {
-      line: 10,
-      col: 0,
-      mode: 'character',
-    }, lineProvider);
+    let selection = resolvePointerSelection(
+      createEmptySelectionState(),
+      {
+        line: 10,
+        col: 0,
+        mode: 'character',
+      },
+      lineProvider
+    );
     selection = updateSelectionFocus(selection, { line: 10, col: 9 }, lineProvider);
     expect(serializeSelectionText(selection, lineProvider)).toBe('dragtarget');
 
-    const wordSelection = resolvePointerSelection(createEmptySelectionState(), {
-      line: 11,
-      col: 2,
-      mode: 'word',
-    }, lineProvider);
+    const wordSelection = resolvePointerSelection(
+      createEmptySelectionState(),
+      {
+        line: 11,
+        col: 2,
+        mode: 'word',
+      },
+      lineProvider
+    );
     expect(serializeSelectionText(wordSelection, lineProvider)).toBe('dbltoken');
 
-    const lineSelection = resolvePointerSelection(createEmptySelectionState(), {
-      line: 12,
-      col: 3,
-      mode: 'line',
-    }, lineProvider);
+    const lineSelection = resolvePointerSelection(
+      createEmptySelectionState(),
+      {
+        line: 12,
+        col: 3,
+        mode: 'line',
+      },
+      lineProvider
+    );
     expect(serializeSelectionText(lineSelection, lineProvider)).toBe('tripline');
 
     const multiLine = updateSelectionFocus(
-      resolvePointerSelection(createEmptySelectionState(), {
-        line: 10,
-        col: 4,
-        mode: 'character',
-      }, lineProvider),
+      resolvePointerSelection(
+        createEmptySelectionState(),
+        {
+          line: 10,
+          col: 4,
+          mode: 'character',
+        },
+        lineProvider
+      ),
       { line: 12, col: 3 },
       lineProvider
     );
@@ -2108,10 +2632,11 @@ describe('GhosttyTerminalController clipboard and selection API', () => {
     dom = installFakeDom();
     const bindings = createFakeBindings();
     const writes: string[] = [];
-    ((globalThis as any).navigator.clipboard as { writeText: (text: string) => Promise<void> }).writeText =
-      async (text: string) => {
-        writes.push(text);
-      };
+    (
+      (globalThis as any).navigator.clipboard as { writeText: (text: string) => Promise<void> }
+    ).writeText = async (text: string) => {
+      writes.push(text);
+    };
 
     const { terminal, textarea, received } = await setupTerminal(bindings);
 
@@ -2145,7 +2670,12 @@ describe('GhosttyTerminalController clipboard and selection API', () => {
     textarea.dispatchEvent(ctrlV);
     expect(ctrlV.defaultPrevented).toBeFalse();
 
-    const shiftInsert: FakeEvent = { type: 'keydown', key: 'Insert', code: 'Insert', shiftKey: true };
+    const shiftInsert: FakeEvent = {
+      type: 'keydown',
+      key: 'Insert',
+      code: 'Insert',
+      shiftKey: true,
+    };
     textarea.dispatchEvent(shiftInsert);
     expect(shiftInsert.defaultPrevented).toBeFalse();
 
