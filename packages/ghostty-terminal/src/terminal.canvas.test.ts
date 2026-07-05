@@ -1,4 +1,10 @@
-import { afterEach, describe, expect, mock, test } from 'bun:test';
+import { afterAll, afterEach, describe, expect, mock, test } from 'bun:test';
+import * as realGhosttyWasm from './ghostty-wasm';
+import * as realRenderState from './render-state';
+// mock.module 前的导出值快照：namespace import 是 live binding，mock 生效后
+// realGhosttyWasm.* 会跟着变成 fake，还原必须用 mock 前拷出的值。
+const realGhosttyWasmSnapshot = { ...realGhosttyWasm };
+const realRenderStateSnapshot = { ...realRenderState };
 import type { GhosttyTheme } from './types';
 
 type FakeEvent = {
@@ -572,6 +578,7 @@ async function loadControllerModule(bindings: FakeBindings, version: number) {
   mock.restore();
   mock.module('./ghostty-wasm', () => {
     return {
+      ...realGhosttyWasmSnapshot,
       keyboardEventToGhosttyMods: () => 0,
       getGhosttyBindings: async () => bindings,
     };
@@ -671,6 +678,13 @@ const TEST_THEME: GhosttyTheme = {
   brightCyan: '#55ffff',
   brightWhite: '#ffffff',
 };
+
+// bun 的 mock.module 是全局持久的（mock.restore 不还原），文件跑完必须显式还原，
+// 否则污染同一进程中后续测试文件（如 headless.test.ts 拿到 fake bindings）。
+afterAll(() => {
+  mock.module('./ghostty-wasm', () => ({ ...realGhosttyWasmSnapshot }));
+  mock.module('./render-state', () => ({ ...realRenderStateSnapshot }));
+});
 
 describe('GhosttyTerminalController canvas baseline', () => {
   let dom: ReturnType<typeof installFakeDom> | null = null;

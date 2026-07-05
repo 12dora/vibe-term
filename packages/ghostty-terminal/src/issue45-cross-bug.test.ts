@@ -1,4 +1,10 @@
-import { afterEach, describe, expect, mock, test } from 'bun:test';
+import { afterAll, afterEach, describe, expect, mock, test } from 'bun:test';
+import * as realGhosttyWasm from './ghostty-wasm';
+import * as realRenderState from './render-state';
+// mock.module 前的导出值快照：namespace import 是 live binding，mock 生效后
+// realGhosttyWasm.* 会跟着变成 fake，还原必须用 mock 前拷出的值。
+const realGhosttyWasmSnapshot = { ...realGhosttyWasm };
+const realRenderStateSnapshot = { ...realRenderState };
 import type { GhosttyTheme } from './types';
 
 // 跨 bug 干扰测试（issue #45 Task 12 场景 1）：bug 3（forceFullRepaint）× bug 4-C
@@ -411,6 +417,7 @@ async function loadControllerModule(
   mock.restore();
 
   mock.module('./ghostty-wasm', () => ({
+    ...realGhosttyWasmSnapshot,
     keyboardEventToGhosttyMods: () => 0,
     getGhosttyBindings: async () => bindings,
   }));
@@ -531,6 +538,13 @@ function countFillText(canvas: FakeCanvasElement | null): number {
   return canvas.context.operations.filter((op) => op.type === 'fillText').length;
 }
 
+// bun 的 mock.module 是全局持久的（mock.restore 不还原），文件跑完必须显式还原，
+// 否则污染同一进程中后续测试文件（如 headless.test.ts 拿到 fake bindings）。
+afterAll(() => {
+  mock.module('./ghostty-wasm', () => ({ ...realGhosttyWasmSnapshot }));
+  mock.module('./render-state', () => ({ ...realRenderStateSnapshot }));
+});
+
 describe('issue45 cross-bug: bug 3 (forceFullRepaint) x bug 4-C (syncTextarea reads lastCursor)', () => {
   let dom: ReturnType<typeof installFakeDom> | null = null;
   let importVersion = 0;
@@ -584,15 +598,13 @@ describe('issue45 cross-bug: bug 3 (forceFullRepaint) x bug 4-C (syncTextarea re
     state.dirty = 'clean';
     mainCanvas.context.operations = [];
 
+    // forceFullRepaint 同步执行 render（不等 rAF）：dirty='clean' 仍强制全画。
     terminal.forceFullRepaint();
-    expect(dom.pendingAnimationFrames()).toBeGreaterThan(0);
-
-    await dom.flushAnimationFrames();
-
     expect(countFillText(mainCanvas)).toBeGreaterThan(0);
 
-    // forceFullNext 必须一次性消费，下一帧不再强制全画。
+    // forceFullNext 必须一次性消费：后续普通 render 在 dirty='clean' 下不再全画。
     mainCanvas.context.operations = [];
+    terminal.write('B');
     await dom.flushAnimationFrames();
 
     expect(countFillText(mainCanvas)).toBe(0);
@@ -649,31 +661,22 @@ describe('issue45 cross-bug: bug 3 (forceFullRepaint) x bug 4-C (syncTextarea re
 
     const leftAfterInit = textarea.style.left;
 
-    // bug 3 × bug 4 协同时序：forceFullRepaint（排队 rAF）→ IME composition 进入
-    // syncTextareaPositionToCursor（读 lastCursor，不应消费 dirty）→ rAF 触发 forceFull render。
-    terminal.forceFullRepaint();
-    expect(dom.pendingAnimationFrames()).toBeGreaterThan(0);
-
+    // 同步语义：forceFullRepaint 立即执行 render（bug 3：dirty='clean' 仍全画），
+    // 并把 lastCursor 更新到 (5, 2)。
     const baseline = updateCalls.length;
+    mainCanvas.context.operations = [];
+    terminal.forceFullRepaint();
+    expect(countFillText(mainCanvas)).toBeGreaterThan(0);
+    expect(updateCalls.length - baseline).toBe(1);
 
     textarea.dispatchEvent({ type: 'compositionstart', data: '' });
     textarea.dispatchEvent({ type: 'compositionupdate', data: '你' });
 
-    // bug 4-C：composition 期间 syncTextareaPositionToCursor 不调 updateRenderState。
-    const updateCallsDuringIme = updateCalls.length - baseline;
-    expect(updateCallsDuringIme).toBe(0);
+    // bug 4-C：composition 期间 syncTextareaPositionToCursor 不调 updateRenderState
+    //（不消费 dirty），只读 forceFull render 缓存的 lastCursor。
+    expect(updateCalls.length - baseline).toBe(1);
 
-    mainCanvas.context.operations = [];
-    await dom.flushAnimationFrames();
-
-    // bug 3：rAF 触发后 forceFull 生效，dirty='clean' 仍全画。
-    expect(countFillText(mainCanvas)).toBeGreaterThan(0);
-
-    const updateCallsAfterRaf = updateCalls.length - baseline;
-    expect(updateCallsAfterRaf).toBe(1);
-
-    // forceFull render 已更新 lastCursor 到 (5, 2)。再次 composition 应让 textarea
-    // 定位到新位置，证明 IME 用的是最新光标而非过时缓存。
+    // lastCursor 已更新到 (5, 2)：composition 定位用最新光标而非过时缓存。
     textarea.dispatchEvent({ type: 'compositionupdate', data: '你好' });
     expect(textarea.style.left).not.toEqual(leftAfterInit);
 

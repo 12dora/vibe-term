@@ -1,4 +1,10 @@
-import { afterEach, describe, expect, mock, test } from 'bun:test';
+import { afterAll, afterEach, describe, expect, mock, test } from 'bun:test';
+import * as realGhosttyWasm from './ghostty-wasm';
+import * as realRenderState from './render-state';
+// mock.module 前的导出值快照：namespace import 是 live binding，mock 生效后
+// realGhosttyWasm.* 会跟着变成 fake，还原必须用 mock 前拷出的值。
+const realGhosttyWasmSnapshot = { ...realGhosttyWasm };
+const realRenderStateSnapshot = { ...realRenderState };
 import type { GhosttyTheme } from './types';
 
 // issue-45 bug 4-C 红测：syncTextareaPositionToCursor 路径不应消费 dirty。
@@ -380,6 +386,7 @@ async function loadControllerModule(
 ) {
   mock.restore();
   mock.module('./ghostty-wasm', () => ({
+    ...realGhosttyWasmSnapshot,
     keyboardEventToGhosttyMods: () => 0,
     getGhosttyBindings: async () => bindings,
   }));
@@ -463,6 +470,13 @@ function findHelperTextarea(root: FakeElement | null): FakeElement | undefined {
   }
   return undefined;
 }
+
+// bun 的 mock.module 是全局持久的（mock.restore 不还原），文件跑完必须显式还原，
+// 否则污染同一进程中后续测试文件（如 headless.test.ts 拿到 fake bindings）。
+afterAll(() => {
+  mock.module('./ghostty-wasm', () => ({ ...realGhosttyWasmSnapshot }));
+  mock.module('./render-state', () => ({ ...realRenderStateSnapshot }));
+});
 
 describe('issue45 bug 4-C: syncTextareaPositionToCursor should not consume dirty', () => {
   let dom: ReturnType<typeof installFakeDom> | null = null;
