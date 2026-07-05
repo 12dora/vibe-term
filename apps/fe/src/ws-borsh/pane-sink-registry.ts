@@ -13,14 +13,14 @@ export type PaneResetOrigin = 'select' | 'history-refresh';
 
 export interface PaneSink {
   onReset(origin: PaneResetOrigin): void;
-  onApplyHistory(data: string, alternateScreen: boolean): void;
+  onApplyHistory(data: string, alternateScreen: boolean, modes: number): void;
   onOutput(data: Uint8Array): void;
 }
 
 interface PendingPaneState {
   outputs: Uint8Array[];
   reset: boolean;
-  history: { data: string; alternateScreen: boolean } | null;
+  history: { data: string; alternateScreen: boolean; modes: number } | null;
 }
 
 interface HistoryGate {
@@ -68,7 +68,7 @@ export function registerPaneSink(deviceId: string, paneId: string, sink: PaneSin
       sink.onReset('select');
     }
     if (state.history) {
-      sink.onApplyHistory(state.history.data, state.history.alternateScreen);
+      sink.onApplyHistory(state.history.data, state.history.alternateScreen, state.history.modes);
     }
     for (const data of state.outputs) {
       sink.onOutput(data);
@@ -103,15 +103,16 @@ export function dispatchPaneApplyHistory(
   deviceId: string,
   paneId: string,
   data: string,
-  alternateScreen: boolean
+  alternateScreen: boolean,
+  modes: number
 ): void {
   const key = paneKey(deviceId, paneId);
   const sink = sinks.get(key);
   if (sink) {
-    sink.onApplyHistory(data, alternateScreen);
+    sink.onApplyHistory(data, alternateScreen, modes);
     return;
   }
-  getPending(key).history = { data, alternateScreen };
+  getPending(key).history = { data, alternateScreen, modes };
 }
 
 export function dispatchPaneOutput(deviceId: string, paneId: string, data: Uint8Array): void {
@@ -160,7 +161,8 @@ export function dispatchPaneHistory(
   paneId: string,
   token: Uint8Array,
   data: string,
-  alternateScreen: boolean
+  alternateScreen: boolean,
+  modes: number
 ): boolean {
   const key = paneKey(deviceId, paneId);
   const gate = historyGates.get(key);
@@ -172,7 +174,7 @@ export function dispatchPaneHistory(
   historyGates.delete(key);
 
   dispatchPaneReset(deviceId, paneId, 'history-refresh');
-  dispatchPaneApplyHistory(deviceId, paneId, data, alternateScreen);
+  dispatchPaneApplyHistory(deviceId, paneId, data, alternateScreen, modes);
   for (const buffered of gate.buffer) {
     dispatchPaneOutput(deviceId, paneId, buffered);
   }

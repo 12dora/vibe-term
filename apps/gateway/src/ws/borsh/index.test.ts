@@ -251,7 +251,8 @@ describe('switch barrier', () => {
       deviceId,
       '%1',
       new TextEncoder().encode('READY_MARKER\n'),
-      false
+      false,
+      0
     );
     const firstCount = sentFrames.length;
 
@@ -260,7 +261,8 @@ describe('switch barrier', () => {
       deviceId,
       '%1',
       new TextEncoder().encode('READY_MARKER\n'),
-      false
+      false,
+      0
     );
 
     expect(sentFrames.length).toBe(firstCount);

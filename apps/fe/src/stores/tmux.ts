@@ -181,8 +181,8 @@ function setupClientHandlers(
     onResetTerminal: (deviceId, paneId) => {
       dispatchPaneReset(deviceId, paneId);
     },
-    onApplyHistory: (deviceId, paneId, data, alternateScreen) => {
-      dispatchPaneApplyHistory(deviceId, paneId, data, alternateScreen);
+    onApplyHistory: (deviceId, paneId, data, alternateScreen, modes) => {
+      dispatchPaneApplyHistory(deviceId, paneId, data, alternateScreen, modes);
     },
     onFlushBuffer: (deviceId, paneId, buffer) => {
       for (const chunk of buffer) {
@@ -284,7 +284,8 @@ function setupClientHandlers(
             decoded.paneId,
             decoded.selectToken,
             text,
-            decoded.alternateScreen
+            decoded.alternateScreen,
+            decoded.modes
           )
         ) {
           return;
@@ -295,6 +296,7 @@ function setupClientHandlers(
           selectToken: decoded.selectToken,
           data: text,
           alternateScreen: decoded.alternateScreen,
+          modes: decoded.modes,
         });
         return;
       }

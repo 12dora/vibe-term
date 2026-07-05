@@ -211,7 +211,8 @@ export class SwitchBarrier {
     deviceId: string,
     paneId: string,
     historyData: Uint8Array,
-    alternateScreen: boolean
+    alternateScreen: boolean,
+    modes: number
   ): void {
     const pending = this.getPending(ws, deviceId);
     if (!pending) return;
@@ -244,6 +245,7 @@ export class SwitchBarrier {
         selectToken: context.selectToken,
         encoding: 2, // utf8-bytes
         alternateScreen,
+        modes,
         data: historyData,
       },
       borshState.seqGen,

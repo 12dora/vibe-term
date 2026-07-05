@@ -244,6 +244,8 @@ export const TermHistorySchema = b.struct({
   selectToken: b.bytes(16),
   encoding: b.u8(),
   alternateScreen: b.bool(),
+  // pane 终端模式位图（见 pane-modes.ts）：capture 快照不含 DECSET，鼠标模式随 history 下发
+  modes: b.u8(),
   data: b.bytes(),
 });
 

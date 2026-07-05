@@ -236,7 +236,7 @@ describe('DeviceSessionRuntime', () => {
 
     options?.onEvent({ type: 'bell', data: { paneId: '%1' } });
     options?.onTerminalOutput('%1', new Uint8Array([0x41, 0x42]));
-    options?.onTerminalHistory('%1', 'history-data', false);
+    options?.onTerminalHistory('%1', 'history-data', false, 0);
     options?.onSnapshot({
       deviceId: 'device-a',
       session: null,

@@ -129,9 +129,7 @@ describe('issue-45 bug 2: broadcastTerminalHistory routes barrier history by tra
     expect(started).toBe(true);
 
     switchBarrier.sendSwitchAck(ws, 'device-a');
-    expect(
-      sessionStateStore.getOrCreateSelectTransaction(ws, 'device-a')?.state
-    ).toBe('ACKED');
+    expect(sessionStateStore.getOrCreateSelectTransaction(ws, 'device-a')?.state).toBe('ACKED');
 
     // bug 2 触发条件：P1 history 到达前，前端 focusPane(P2) 已把 selectedPanes 翻转为 P2
     ws.data.borshState.selectedPanes['device-a'] = '%2';
@@ -139,14 +137,14 @@ describe('issue-45 bug 2: broadcastTerminalHistory routes barrier history by tra
     const sentBefore = ws.sent.length;
 
     // 模拟 runtime 回调 onTerminalHistory(P1, data) —— P1 的 barrier history
-    server.broadcastTerminalHistory('device-a', '%1', 'P1_HISTORY_DATA', false);
+    server.broadcastTerminalHistory('device-a', '%1', 'P1_HISTORY_DATA', false, 0);
 
     const newSent = ws.sent.slice(sentBefore);
     const kinds = newSent.map(envelopeKind).filter((k) => k !== null) as number[];
     expect(kinds).toContain(wsBorsh.KIND_TERM_HISTORY);
 
-    expect(
-      sessionStateStore.getOrCreateSelectTransaction(ws, 'device-a')?.state
-    ).toBe('HISTORY_APPLIED');
+    expect(sessionStateStore.getOrCreateSelectTransaction(ws, 'device-a')?.state).toBe(
+      'HISTORY_APPLIED'
+    );
   });
 });

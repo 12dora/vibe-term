@@ -13,12 +13,18 @@ import termios
 import tty
 
 LOG_PATH = sys.argv[1] if len(sys.argv) > 1 else '/tmp/issue45-mouse-events.log'
+USE_ALT_SCREEN = '--alt' in sys.argv[2:]
+USE_ANY_MOTION = '--all' in sys.argv[2:]
 DEBUG_OUT = '/tmp/issue45-tui-debug.log'
 
 with open(LOG_PATH, 'w'):
     pass
 
 enable_seq = '\x1b[?1000h\x1b[?1002h\x1b[?1006h'
+if USE_ANY_MOTION:
+    enable_seq += '\x1b[?1003h'
+if USE_ALT_SCREEN:
+    enable_seq = '\x1b[?1049h' + enable_seq
 clear_seq = '\x1b[2J\x1b[H'
 sys.stdout.write(enable_seq)
 sys.stdout.write(clear_seq)
@@ -46,5 +52,10 @@ try:
             f.flush()
 finally:
     termios.tcsetattr(fd, termios.TCSADRAIN, old)
-    sys.stdout.write('\x1b[?1002l\x1b[?1006l\x1b[?1000l')
+    disable_seq = '\x1b[?1002l\x1b[?1006l\x1b[?1000l'
+    if USE_ANY_MOTION:
+        disable_seq = '\x1b[?1003l' + disable_seq
+    if USE_ALT_SCREEN:
+        disable_seq += '\x1b[?1049l'
+    sys.stdout.write(disable_seq)
     sys.stdout.flush()

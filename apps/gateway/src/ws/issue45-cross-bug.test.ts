@@ -156,7 +156,7 @@ describe('issue45 cross-bug: bug 2 (transaction pane routing) x normal pane swit
     ws.data.borshState.selectedPanes['device-a'] = '%3';
 
     const sentBefore = ws.sent.length;
-    server.broadcastTerminalHistory('device-a', '%3', 'OTHER_WIN_HISTORY', false);
+    server.broadcastTerminalHistory('device-a', '%3', 'OTHER_WIN_HISTORY', false, 0);
 
     const newSent = ws.sent.slice(sentBefore);
     const kinds = newSent.map(envelopeKind).filter((k) => k !== null) as number[];
@@ -188,7 +188,7 @@ describe('issue45 cross-bug: bug 2 (transaction pane routing) x normal pane swit
       const sentBeforeB = wsB.sent.length;
 
       // P3 history 到达：只能投递给 A（txPaneId === %3），B 的 txPaneId=%1 不匹配 → continue。
-      server.broadcastTerminalHistory('device-a', '%3', 'P3_HISTORY', false);
+      server.broadcastTerminalHistory('device-a', '%3', 'P3_HISTORY', false, 0);
 
       const newSentA = ws.sent.slice(sentBeforeA);
       const newSentB = wsB.sent.slice(sentBeforeB);
@@ -208,7 +208,7 @@ describe('issue45 cross-bug: bug 2 (transaction pane routing) x normal pane swit
       const sentBeforeA2 = ws.sent.length;
       const sentBeforeB2 = wsB.sent.length;
 
-      server.broadcastTerminalHistory('device-a', '%1', 'P1_HISTORY', false);
+      server.broadcastTerminalHistory('device-a', '%1', 'P1_HISTORY', false, 0);
 
       const newSentA2 = ws.sent.slice(sentBeforeA2);
       const newSentB2 = wsB.sent.slice(sentBeforeB2);
@@ -243,7 +243,7 @@ describe('issue45 cross-bug: bug 2 (transaction pane routing) x normal pane swit
     // 所以 selectedPanes 匹配也不会发送——但关键是 bug 2 fix 的新分支不会误把无事务 client
     // 当成有事务处理（即不会 continue 跳过 selectedPanes 分支后再误判）。
     const sentBefore = ws.sent.length;
-    server.broadcastTerminalHistory('device-a', '%1', 'ORPHAN_HISTORY', false);
+    server.broadcastTerminalHistory('device-a', '%1', 'ORPHAN_HISTORY', false, 0);
     const newSent = ws.sent.slice(sentBefore);
     const kinds = newSent.map(envelopeKind).filter((k) => k !== null) as number[];
 
