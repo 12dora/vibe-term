@@ -210,7 +210,6 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(
     const currentInputModeRef = useRef(inputMode);
     const currentTerminalThemeRef = useRef(terminalTheme);
     const liveOutputEndedWithCR = useRef(false);
-    const keepShortHistoryVisibleRef = useRef(false);
     const lastTerminalInstanceRef = useRef<CompatibleTerminalLike | null>(null);
     const skipNextDetachPersistRef = useRef(false);
 
@@ -230,7 +229,6 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(
     useEffect(() => {
       currentDeviceIdRef.current = deviceId;
       currentPaneIdRef.current = paneId;
-      keepShortHistoryVisibleRef.current = false;
     }, [deviceId, paneId]);
 
     useEffect(() => {
@@ -382,12 +380,16 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(
       }
 
       return {
-        onReset: () => {
+        onReset: (origin) => {
           persistTerminalModes(instance, attachedDeviceIdRef.current, attachedPaneIdRef.current);
           skipNextDetachPersistRef.current = true;
           instance.reset();
           liveOutputEndedWithCR.current = false;
-          runPostSelectResize();
+          // history-refresh（远端 resize 后的内容重建）不上报本地尺寸，
+          // 避免不同视口的客户端互相抢 window 尺寸
+          if (origin !== 'history-refresh') {
+            runPostSelectResize();
+          }
         },
         onApplyHistory: (data, alternateScreen) => {
           const recoveredModes = reconcileRecoveredModes(
@@ -400,7 +402,6 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(
           const payload = alternateScreen
             ? wrapAlternateScreenHistory(data)
             : normalizeHistoryForTerminal(data);
-          keepShortHistoryVisibleRef.current = true;
           instance.write(payload);
           instance.forceFullRepaint?.();
           skipNextDetachPersistRef.current = false;
@@ -412,12 +413,6 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(
           const normalized = normalizeLiveOutputForTerminal(data, liveOutputEndedWithCR.current);
           liveOutputEndedWithCR.current = normalized.endedWithCR;
           instance.write(normalized.normalized);
-          if (keepShortHistoryVisibleRef.current) {
-            if (instance.buffer.active.baseY <= 1) {
-              instance.scrollToTop();
-            }
-            keepShortHistoryVisibleRef.current = false;
-          }
           attachedDeviceIdRef.current = currentDeviceIdRef.current;
           attachedPaneIdRef.current = currentPaneIdRef.current;
           persistTerminalModes(instance, currentDeviceIdRef.current, currentPaneIdRef.current);

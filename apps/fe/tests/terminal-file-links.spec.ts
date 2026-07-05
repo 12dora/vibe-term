@@ -205,6 +205,8 @@ test('terminal: 有效文件路径与 URL 画虚线下划线，修饰键点击�
     await expect.poll(() => page.url(), { timeout: 10_000 }).toContain('/file/');
     await expect(page.getByText('hello from file link')).toBeVisible({ timeout: 15_000 });
   } finally {
+    // file_roots 外键引用 devices：必须先删 root 再删 device，否则 FK 约束失败
+    await request.delete(`/api/files/roots/${rootId}`).catch(() => {});
     await request.delete(`/api/devices/${deviceId}`).catch(() => {});
     ensureCleanSession(sessionName);
     rmSync(sandbox, { recursive: true, force: true });
@@ -222,6 +224,7 @@ test('terminal: 相对路径基于 pane cwd 解析后画下划线', async ({ pag
     data: { deviceId, path: sandbox, enabled: true },
   });
   expect(rootRes.ok()).toBeTruthy();
+  const rootId = (await rootRes.json()).root.id as string;
 
   try {
     await page.goto(`/devices/${deviceId}`);
@@ -236,6 +239,8 @@ test('terminal: 相对路径基于 pane cwd 解析后画下划线', async ({ pag
       .poll(() => countUnderlinePixels(page, relRange), { timeout: 15_000 })
       .toBeGreaterThan(0);
   } finally {
+    // file_roots 外键引用 devices：必须先删 root 再删 device，否则 FK 约束失败
+    await request.delete(`/api/files/roots/${rootId}`).catch(() => {});
     await request.delete(`/api/devices/${deviceId}`).catch(() => {});
     ensureCleanSession(sessionName);
     rmSync(sandbox, { recursive: true, force: true });
