@@ -763,14 +763,19 @@ describe('LocalExternalTmuxConnection', () => {
   });
 
   test('capturePaneHistory falls back to normal capture when alternate capture is visually empty', async () => {
-    const histories: Array<{ paneId: string; data: string; alternateScreen: boolean }> = [];
+    const histories: Array<{
+      paneId: string;
+      data: string;
+      alternateScreen: boolean;
+      modes: number;
+    }> = [];
     const connection = new LocalExternalTmuxConnection(
       {
         deviceId: 'device-local',
         onEvent: () => {},
         onTerminalOutput: () => {},
-        onTerminalHistory: (paneId, data, alternateScreen) => {
-          histories.push({ paneId, data, alternateScreen });
+        onTerminalHistory: (paneId, data, alternateScreen, modes) => {
+          histories.push({ paneId, data, alternateScreen, modes });
         },
         onSnapshot: () => {},
         onError: (error) => {
@@ -786,9 +791,9 @@ describe('LocalExternalTmuxConnection', () => {
           const command = argv.slice(1).join(' ');
           if (
             command ===
-            'display-message -p -t %1 #{alternate_on} #{cursor_x} #{cursor_y} #{pane_height}'
+            'display-message -p -t %1 #{alternate_on} #{cursor_x} #{cursor_y} #{pane_height} #{mouse_standard_flag} #{mouse_button_flag} #{mouse_all_flag} #{mouse_sgr_flag} #{mouse_utf8_flag}'
           ) {
-            return ok('1 8 3 40\n');
+            return ok('1 8 3 40 0 0 0 0 0\n');
           }
           if (command === 'capture-pane -t %1 -S - -E - -e -J -N -p') {
             return ok('VIM SCREEN\n');
@@ -808,19 +813,25 @@ describe('LocalExternalTmuxConnection', () => {
         paneId: '%1',
         data: 'VIM SCREEN\x1b[4;9H',
         alternateScreen: true,
+        modes: 0,
       },
     ]);
   });
 
   test('capturePaneHistory prefers current visible capture when pane is in alternate screen', async () => {
-    const histories: Array<{ paneId: string; data: string; alternateScreen: boolean }> = [];
+    const histories: Array<{
+      paneId: string;
+      data: string;
+      alternateScreen: boolean;
+      modes: number;
+    }> = [];
     const connection = new LocalExternalTmuxConnection(
       {
         deviceId: 'device-local',
         onEvent: () => {},
         onTerminalOutput: () => {},
-        onTerminalHistory: (paneId, data, alternateScreen) => {
-          histories.push({ paneId, data, alternateScreen });
+        onTerminalHistory: (paneId, data, alternateScreen, modes) => {
+          histories.push({ paneId, data, alternateScreen, modes });
         },
         onSnapshot: () => {},
         onError: (error) => {
@@ -836,9 +847,9 @@ describe('LocalExternalTmuxConnection', () => {
           const command = argv.slice(1).join(' ');
           if (
             command ===
-            'display-message -p -t %1 #{alternate_on} #{cursor_x} #{cursor_y} #{pane_height}'
+            'display-message -p -t %1 #{alternate_on} #{cursor_x} #{cursor_y} #{pane_height} #{mouse_standard_flag} #{mouse_button_flag} #{mouse_all_flag} #{mouse_sgr_flag} #{mouse_utf8_flag}'
           ) {
-            return ok('1 2 1 40\n');
+            return ok('1 2 1 40 0 1 0 1 0\n');
           }
           if (command === 'capture-pane -t %1 -S - -E - -e -J -N -p') {
             return ok('VISIBLE TUI\n');
@@ -858,19 +869,25 @@ describe('LocalExternalTmuxConnection', () => {
         paneId: '%1',
         data: 'VISIBLE TUI\x1b[2;3H',
         alternateScreen: true,
+        modes: 10,
       },
     ]);
   });
 
   test('capturePaneHistory appends relative cursor restore for normal screen', async () => {
-    const histories: Array<{ paneId: string; data: string; alternateScreen: boolean }> = [];
+    const histories: Array<{
+      paneId: string;
+      data: string;
+      alternateScreen: boolean;
+      modes: number;
+    }> = [];
     const connection = new LocalExternalTmuxConnection(
       {
         deviceId: 'device-local',
         onEvent: () => {},
         onTerminalOutput: () => {},
-        onTerminalHistory: (paneId, data, alternateScreen) => {
-          histories.push({ paneId, data, alternateScreen });
+        onTerminalHistory: (paneId, data, alternateScreen, modes) => {
+          histories.push({ paneId, data, alternateScreen, modes });
         },
         onSnapshot: () => {},
         onError: (error) => {
@@ -886,10 +903,10 @@ describe('LocalExternalTmuxConnection', () => {
           const command = argv.slice(1).join(' ');
           if (
             command ===
-            'display-message -p -t %1 #{alternate_on} #{cursor_x} #{cursor_y} #{pane_height}'
+            'display-message -p -t %1 #{alternate_on} #{cursor_x} #{cursor_y} #{pane_height} #{mouse_standard_flag} #{mouse_button_flag} #{mouse_all_flag} #{mouse_sgr_flag} #{mouse_utf8_flag}'
           ) {
             // 光标在可见区域倒数第 3 行（如 Claude Code 输入行），列 8
-            return ok('0 8 1 4\n');
+            return ok('0 8 1 4 0 0 0 0 0\n');
           }
           if (command === 'capture-pane -t %1 -S - -E - -e -J -N -p') {
             return ok('sh-3.2$ \n> input   \nstatus bar\n\n');
@@ -909,6 +926,7 @@ describe('LocalExternalTmuxConnection', () => {
         paneId: '%1',
         data: 'sh-3.2$ \n> input   \nstatus bar\n\x1b[2A\x1b[9G',
         alternateScreen: false,
+        modes: 0,
       },
     ]);
   });

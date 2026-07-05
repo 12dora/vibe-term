@@ -4,14 +4,22 @@
 // 普通终端则表现为光标偏移到行尾空白之后。因此 capture 时一并读取光标位置，
 // 把恢复序列拼接到 history 末尾，使回放结束时前端光标与 tmux 一致。
 
+import type { PaneModeFlags } from '@tmex/shared';
+
 export interface PaneScreenInfo {
   alternateScreen: boolean;
   cursorX: number | null;
   cursorY: number | null;
   paneHeight: number | null;
+  // pane 的 DECSET 鼠标模式：capture 快照不含 DECSET 序列，唯一权威来源是 tmux 的
+  // format 变量。注意 1003 对应 mouse_all_flag；mouse_any_flag 是"任意鼠标模式
+  // 开启"的聚合标志，不要混用。
+  modes: PaneModeFlags;
 }
 
-export const PANE_SCREEN_INFO_FORMAT = '#{alternate_on} #{cursor_x} #{cursor_y} #{pane_height}';
+export const PANE_SCREEN_INFO_FORMAT =
+  '#{alternate_on} #{cursor_x} #{cursor_y} #{pane_height}' +
+  ' #{mouse_standard_flag} #{mouse_button_flag} #{mouse_all_flag} #{mouse_sgr_flag} #{mouse_utf8_flag}';
 
 export function parsePaneScreenInfo(stdout: string): PaneScreenInfo {
   const parts = stdout.trim().split(/\s+/);
@@ -28,6 +36,13 @@ export function parsePaneScreenInfo(stdout: string): PaneScreenInfo {
     cursorX: toInt(parts[1]),
     cursorY: toInt(parts[2]),
     paneHeight: toInt(parts[3]),
+    modes: {
+      mouseStandard: parts[4] === '1',
+      mouseButton: parts[5] === '1',
+      mouseAll: parts[6] === '1',
+      mouseSgr: parts[7] === '1',
+      mouseUtf8: parts[8] === '1',
+    },
   };
 }
 

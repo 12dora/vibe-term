@@ -25,6 +25,7 @@ describe('SelectStateMachine', () => {
       selectToken: token,
       data: 'alt-history',
       alternateScreen: true,
+      modes: 0,
     });
 
     const received: Array<{ paneId: string; data: string; alternateScreen: boolean }> = [];

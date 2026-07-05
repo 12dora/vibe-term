@@ -8,6 +8,7 @@ import {
 } from '@/utils/keyboard-cursor-bridge';
 import { type PaneSink, registerPaneSink } from '@/ws-borsh/pane-sink-registry';
 import { useQuery } from '@tanstack/react-query';
+import { decodePaneModes } from '@tmex/shared';
 import {
   type CompatibleTerminalLike,
   FitAddon,
@@ -42,98 +43,28 @@ import { useTerminalResize } from './useTerminalResize';
 
 const TERMINAL_SCROLLBACK = 10000;
 
-const TERMINAL_MODE_CACHE_KEY = 'tmex:terminal-mode-cache';
-
-function readTerminalModeCache(
-  deviceId: string,
-  paneId: string
-): GhosttyTerminalModeSnapshot | null {
-  try {
-    const raw = sessionStorage.getItem(TERMINAL_MODE_CACHE_KEY);
-    if (!raw) return null;
-    const parsed = JSON.parse(raw) as Record<string, GhosttyTerminalModeSnapshot | undefined>;
-    return parsed[`${deviceId}:${paneId}`] ?? null;
-  } catch {
-    return null;
-  }
-}
-
-function writeTerminalModeCache(
-  deviceId: string,
-  paneId: string,
-  snapshot: GhosttyTerminalModeSnapshot | null
-): void {
-  try {
-    const raw = sessionStorage.getItem(TERMINAL_MODE_CACHE_KEY);
-    const parsed = raw
-      ? (JSON.parse(raw) as Record<string, GhosttyTerminalModeSnapshot | undefined>)
-      : {};
-    const key = `${deviceId}:${paneId}`;
-    if (snapshot) {
-      parsed[key] = snapshot;
-    } else {
-      delete parsed[key];
-    }
-    sessionStorage.setItem(TERMINAL_MODE_CACHE_KEY, JSON.stringify(parsed));
-  } catch {
-    // ignore storage failures
-  }
-}
-
-function createAlternateScreenFallbackSnapshot(): GhosttyTerminalModeSnapshot {
-  return {
-    mouseX10: false,
-    mouseNormal: true,
-    mouseButton: false,
-    mouseAny: false,
-    mouseUtf8: false,
-    mouseSgr: true,
-    mouseSgrPixels: false,
-    mouseUrxvt: false,
-    altScroll: true,
-    altScreen1047: false,
-    altScreen1049: false,
-  };
-}
-
-function reconcileRecoveredModes(
-  cached: GhosttyTerminalModeSnapshot | null,
+// history 重建时恢复的终端模式：来自 gateway 随 TermHistory 下发的 tmux 权威位图
+// （capture 快照本身不含 DECSET 序列，tmux 的 mouse_*_flag 是唯一可靠来源）。
+// 1016/1015/9 无 tmux format 变量、pane 内程序也从未在 tmux 下拿到过这些形态，恒
+// false；1007 只影响 alt 屏滚轮行为、同样无 format 变量，alt 屏按惯例开启；alt
+// screen 状态本身由 history 前缀（\x1b[?1049h）恢复，这里不设。
+function terminalModesFromHistory(
+  modes: number,
   alternateScreen: boolean
-): GhosttyTerminalModeSnapshot | null {
-  if (!alternateScreen) {
-    if (!cached) return null;
-    return {
-      ...cached,
-      mouseX10: false,
-      mouseNormal: false,
-      mouseButton: false,
-      mouseAny: false,
-      mouseUtf8: false,
-      mouseSgrPixels: false,
-      mouseUrxvt: false,
-      altScreen1047: false,
-      altScreen1049: false,
-    };
-  }
-
-  const fallback = createAlternateScreenFallbackSnapshot();
-  if (!cached) {
-    return fallback;
-  }
-
-  const hasTrackingMode = cached.mouseNormal || cached.mouseButton || cached.mouseAny;
-
+): GhosttyTerminalModeSnapshot {
+  const flags = decodePaneModes(modes);
   return {
-    ...cached,
     mouseX10: false,
-    mouseUtf8: false,
-    mouseSgr: true,
+    mouseNormal: flags.mouseStandard,
+    mouseButton: flags.mouseButton,
+    mouseAny: flags.mouseAll,
+    mouseUtf8: flags.mouseUtf8,
+    mouseSgr: flags.mouseSgr,
     mouseSgrPixels: false,
     mouseUrxvt: false,
-    altScroll: true,
+    altScroll: alternateScreen,
     altScreen1047: false,
     altScreen1049: false,
-    mouseNormal: hasTrackingMode ? cached.mouseNormal : fallback.mouseNormal,
   };
 }
 
@@ -204,24 +135,11 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(
     const fitAddonRef = useRef<FitAddon | null>(null);
     const currentDeviceIdRef = useRef(deviceId);
     const currentPaneIdRef = useRef(paneId);
-    const attachedDeviceIdRef = useRef(deviceId);
-    const attachedPaneIdRef = useRef(paneId);
     const canWriteRef = useRef(deviceConnected && !isSelectionInvalid);
     const currentInputModeRef = useRef(inputMode);
     const currentTerminalThemeRef = useRef(terminalTheme);
     const liveOutputEndedWithCR = useRef(false);
     const lastTerminalInstanceRef = useRef<CompatibleTerminalLike | null>(null);
-    const skipNextDetachPersistRef = useRef(false);
-
-    const persistTerminalModes = useCallback(
-      (terminal: CompatibleTerminalLike | null, targetDeviceId: string, targetPaneId: string) => {
-        if (!terminal?.exportModeSnapshot || !targetDeviceId || !targetPaneId) {
-          return;
-        }
-        writeTerminalModeCache(targetDeviceId, targetPaneId, terminal.exportModeSnapshot());
-      },
-      []
-    );
 
     const getTerminalForTouch = useCallback(() => instance, [instance]);
     useMobileTouch(containerRef, getTerminalForTouch);
@@ -381,8 +299,6 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(
 
       return {
         onReset: (origin) => {
-          persistTerminalModes(instance, attachedDeviceIdRef.current, attachedPaneIdRef.current);
-          skipNextDetachPersistRef.current = true;
           instance.reset();
           liveOutputEndedWithCR.current = false;
           // history-refresh（远端 resize 后的内容重建）不上报本地尺寸，
@@ -391,59 +307,30 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(
             runPostSelectResize();
           }
         },
-        onApplyHistory: (data, alternateScreen) => {
-          const recoveredModes = reconcileRecoveredModes(
-            readTerminalModeCache(currentDeviceIdRef.current, currentPaneIdRef.current),
-            alternateScreen
-          );
-          if (recoveredModes) {
-            instance.restoreModeSnapshot?.(recoveredModes);
-          }
+        onApplyHistory: (data, alternateScreen, modes) => {
+          instance.restoreModeSnapshot?.(terminalModesFromHistory(modes, alternateScreen));
           const payload = alternateScreen
             ? wrapAlternateScreenHistory(data)
             : normalizeHistoryForTerminal(data);
           instance.write(payload);
           instance.forceFullRepaint?.();
-          skipNextDetachPersistRef.current = false;
-          attachedDeviceIdRef.current = currentDeviceIdRef.current;
-          attachedPaneIdRef.current = currentPaneIdRef.current;
-          persistTerminalModes(instance, currentDeviceIdRef.current, currentPaneIdRef.current);
         },
         onOutput: (data) => {
           const normalized = normalizeLiveOutputForTerminal(data, liveOutputEndedWithCR.current);
           liveOutputEndedWithCR.current = normalized.endedWithCR;
           instance.write(normalized.normalized);
-          attachedDeviceIdRef.current = currentDeviceIdRef.current;
-          attachedPaneIdRef.current = currentPaneIdRef.current;
-          persistTerminalModes(instance, currentDeviceIdRef.current, currentPaneIdRef.current);
         },
       };
-    }, [instance, persistTerminalModes, runPostSelectResize]);
+    }, [instance, runPostSelectResize]);
 
     useEffect(() => {
       if (!instance) {
         lastTerminalInstanceRef.current = null;
       } else if (lastTerminalInstanceRef.current !== instance) {
         liveOutputEndedWithCR.current = false;
-        attachedDeviceIdRef.current = currentDeviceIdRef.current;
-        attachedPaneIdRef.current = currentPaneIdRef.current;
         lastTerminalInstanceRef.current = instance;
       }
     }, [instance]);
-
-    useEffect(() => {
-      if (!instance || !deviceId || !paneId) {
-        return;
-      }
-
-      return () => {
-        if (skipNextDetachPersistRef.current) {
-          skipNextDetachPersistRef.current = false;
-          return;
-        }
-        persistTerminalModes(instance, attachedDeviceIdRef.current, attachedPaneIdRef.current);
-      };
-    }, [deviceId, instance, paneId, persistTerminalModes]);
 
     useEffect(() => {
       if (!paneSink || !deviceId || !paneId) {

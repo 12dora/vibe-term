@@ -33,7 +33,9 @@ export interface DeviceSessionRuntimeConnection {
   ): void;
   breakPane(paneId: string): void;
   requestPaneHistory(paneId: string): Promise<void>;
-  fetchPaneHistory(paneId: string): Promise<{ data: string; alternateScreen: boolean } | null>;
+  fetchPaneHistory(
+    paneId: string
+  ): Promise<{ data: string; alternateScreen: boolean; modes: number } | null>;
   renameWindow(windowId: string, name: string): void;
   setWindowStyle(style: string): Promise<void>;
   signalThemeChange(paneId: string, theme: 'dark' | 'light'): void;
@@ -44,7 +46,12 @@ export interface DeviceSessionRuntimeConnection {
 export interface DeviceSessionRuntimeListener {
   onEvent?: (event: TmuxEvent) => void;
   onTerminalOutput?: (paneId: string, data: Uint8Array) => void;
-  onTerminalHistory?: (paneId: string, data: string, alternateScreen: boolean) => void;
+  onTerminalHistory?: (
+    paneId: string,
+    data: string,
+    alternateScreen: boolean,
+    modes: number
+  ) => void;
   onPromptMarker?: (paneId: string, marker: PromptMarker) => void;
   onClipboardWrite?: (paneId: string, text: string) => void;
   onSnapshot?: (payload: StateSnapshotPayload) => void;
@@ -87,8 +94,10 @@ export class DeviceSessionRuntime {
       onTerminalOutput: (paneId, data) => {
         this.broadcast((listener) => listener.onTerminalOutput?.(paneId, data));
       },
-      onTerminalHistory: (paneId, data, alternateScreen) => {
-        this.broadcast((listener) => listener.onTerminalHistory?.(paneId, data, alternateScreen));
+      onTerminalHistory: (paneId, data, alternateScreen, modes) => {
+        this.broadcast((listener) =>
+          listener.onTerminalHistory?.(paneId, data, alternateScreen, modes)
+        );
       },
       onPromptMarker: (paneId, marker) => {
         this.broadcast((listener) => listener.onPromptMarker?.(paneId, marker));
@@ -238,7 +247,7 @@ export class DeviceSessionRuntime {
 
   async fetchPaneHistory(
     paneId: string
-  ): Promise<{ data: string; alternateScreen: boolean } | null> {
+  ): Promise<{ data: string; alternateScreen: boolean; modes: number } | null> {
     return this.connection.fetchPaneHistory(paneId);
   }
 

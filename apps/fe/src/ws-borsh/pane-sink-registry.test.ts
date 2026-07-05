@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, test } from 'bun:test';
 import {
+  type PaneSink,
   beginPaneHistoryGate,
   cleanupDevicePaneState,
   dispatchPaneHistory,
@@ -8,7 +9,6 @@ import {
   hasPaneSink,
   registerPaneSink,
   resetPaneSinkRegistryForTest,
-  type PaneSink,
 } from './pane-sink-registry';
 
 function createRecordingSink() {
@@ -77,7 +77,7 @@ describe('pane-sink-registry', () => {
     dispatchPaneOutput('dev', '%3', encode('live-2'));
     expect(events).toEqual([]);
 
-    const consumed = dispatchPaneHistory('dev', '%3', token, 'HISTORY', false);
+    const consumed = dispatchPaneHistory('dev', '%3', token, 'HISTORY', false, 0);
     expect(consumed).toBe(true);
     expect(events).toEqual([
       { type: 'reset' },
@@ -92,12 +92,12 @@ describe('pane-sink-registry', () => {
     registerPaneSink('dev', '%3', sink);
     beginPaneHistoryGate('dev', '%3', new Uint8Array(16).fill(1));
 
-    const consumed = dispatchPaneHistory('dev', '%3', new Uint8Array(16).fill(9), 'H', false);
+    const consumed = dispatchPaneHistory('dev', '%3', new Uint8Array(16).fill(9), 'H', false, 0);
     expect(consumed).toBe(false);
   });
 
   test('history without gate is not consumed (select path falls through)', () => {
-    const consumed = dispatchPaneHistory('dev', '%9', new Uint8Array(16), 'H', true);
+    const consumed = dispatchPaneHistory('dev', '%9', new Uint8Array(16), 'H', true, 0);
     expect(consumed).toBe(false);
   });
 
@@ -112,7 +112,14 @@ describe('pane-sink-registry', () => {
     registerPaneSink('dev-a', '%1', a.sink);
     expect(a.events).toEqual([]);
 
-    const gateConsumed = dispatchPaneHistory('dev-a', '%2', new Uint8Array(16).fill(4), 'H', false);
+    const gateConsumed = dispatchPaneHistory(
+      'dev-a',
+      '%2',
+      new Uint8Array(16).fill(4),
+      'H',
+      false,
+      0
+    );
     expect(gateConsumed).toBe(false);
 
     const b = createRecordingSink();

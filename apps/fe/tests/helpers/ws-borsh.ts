@@ -212,6 +212,7 @@ export interface TermHistoryPayload {
   selectToken: Buffer;
   encoding: number;
   alternateScreen: boolean;
+  modes: number;
   data: Buffer;
 }
 
@@ -222,8 +223,9 @@ export function decodeTermHistory(payload: Buffer): TermHistoryPayload {
   const selectToken = c.readFixedBytes(16);
   const encoding = c.readU8();
   const alternateScreen = c.readBool();
+  const modes = c.readU8();
   const data = c.readVecBytes();
-  return { deviceId, paneId, selectToken, encoding, alternateScreen, data };
+  return { deviceId, paneId, selectToken, encoding, alternateScreen, modes, data };
 }
 
 export interface TermResizePayload {

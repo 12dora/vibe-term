@@ -129,6 +129,19 @@ export {
 // ========== Schema ==========
 export * as schema from './schema';
 
+// ========== pane 终端模式位图 ==========
+export {
+  PANE_MODE_MOUSE_STANDARD,
+  PANE_MODE_MOUSE_BUTTON,
+  PANE_MODE_MOUSE_ALL,
+  PANE_MODE_MOUSE_SGR,
+  PANE_MODE_MOUSE_UTF8,
+  EMPTY_PANE_MODE_FLAGS,
+  type PaneModeFlags,
+  encodePaneModes,
+  decodePaneModes,
+} from './pane-modes';
+
 // ========== 编解码器 ==========
 export {
   MAGIC,

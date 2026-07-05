@@ -308,6 +308,13 @@ export { b } from './ws-borsh';
 export * as wsBorsh from './ws-borsh';
 
 export {
+  EMPTY_PANE_MODE_FLAGS,
+  type PaneModeFlags,
+  decodePaneModes,
+  encodePaneModes,
+} from './ws-borsh/pane-modes';
+
+export {
   TERMINAL_THEME_DARK,
   TERMINAL_THEME_LIGHT,
   type TerminalThemeColors,

@@ -131,8 +131,8 @@ export class WebSocketServer {
       onTerminalOutput: (paneId, data) => {
         this.broadcastTerminalOutput(deviceId, paneId, data);
       },
-      onTerminalHistory: (paneId, data, alternateScreen) => {
-        this.broadcastTerminalHistory(deviceId, paneId, data, alternateScreen);
+      onTerminalHistory: (paneId, data, alternateScreen, modes) => {
+        this.broadcastTerminalHistory(deviceId, paneId, data, alternateScreen, modes);
       },
       onClipboardWrite: (paneId, text) => {
         this.broadcastClipboardWrite(deviceId, paneId, text);
@@ -1194,6 +1194,7 @@ export class WebSocketServer {
           selectToken: requestToken,
           encoding: 1,
           alternateScreen: captured.alternateScreen,
+          modes: captured.modes,
           data: new TextEncoder().encode(captured.data),
         });
         this.sendChunked(ws, wsBorsh.KIND_TERM_HISTORY, payloadBytes);
@@ -1548,7 +1549,8 @@ export class WebSocketServer {
     deviceId: string,
     paneId: string,
     data: string,
-    alternateScreen: boolean
+    alternateScreen: boolean,
+    modes: number
   ): void {
     const entry = this.connections.get(deviceId);
     if (!entry) return;
@@ -1566,7 +1568,8 @@ export class WebSocketServer {
           deviceId,
           paneId,
           historyBytes,
-          alternateScreen
+          alternateScreen,
+          modes
         );
         continue;
       }
@@ -1577,7 +1580,8 @@ export class WebSocketServer {
           deviceId,
           paneId,
           historyBytes,
-          alternateScreen
+          alternateScreen,
+          modes
         );
       }
     }

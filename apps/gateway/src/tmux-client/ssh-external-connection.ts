@@ -1,3 +1,4 @@
+import { encodePaneModes } from '@tmex/shared';
 import type { Device, StateSnapshotPayload, TmuxPane, TmuxSession, TmuxWindow } from '@tmex/shared';
 import { Client, type ClientChannel, type ConnectConfig } from 'ssh2';
 
@@ -1200,7 +1201,7 @@ export class SshExternalTmuxConnection {
 
   async fetchPaneHistory(
     paneId: string
-  ): Promise<{ data: string; alternateScreen: boolean } | null> {
+  ): Promise<{ data: string; alternateScreen: boolean; modes: number } | null> {
     const screenInfo = parsePaneScreenInfo(
       (await this.runTmux(['display-message', '-p', '-t', paneId, PANE_SCREEN_INFO_FORMAT], true))
         .stdout
@@ -1230,13 +1231,22 @@ export class SshExternalTmuxConnection {
     if (!history) {
       return null;
     }
-    return { data: appendCursorRestore(history, screenInfo), alternateScreen };
+    return {
+      data: appendCursorRestore(history, screenInfo),
+      alternateScreen,
+      modes: encodePaneModes(screenInfo.modes),
+    };
   }
 
   private async capturePaneHistory(paneId: string): Promise<void> {
     const captured = await this.fetchPaneHistory(paneId);
     if (captured) {
-      this.callbacks.onTerminalHistory(paneId, captured.data, captured.alternateScreen);
+      this.callbacks.onTerminalHistory(
+        paneId,
+        captured.data,
+        captured.alternateScreen,
+        captured.modes
+      );
     }
   }
 

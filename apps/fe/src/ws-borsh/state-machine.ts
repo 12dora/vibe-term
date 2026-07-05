@@ -33,6 +33,7 @@ interface DeferredHistory {
   paneId: string;
   data: string;
   alternateScreen: boolean;
+  modes: number;
 }
 
 // ========== 事件定义 ==========
@@ -58,6 +59,7 @@ export interface HistoryEvent {
   selectToken: Uint8Array;
   data: string;
   alternateScreen: boolean;
+  modes: number;
 }
 
 export interface LiveResumeEvent {
@@ -94,7 +96,8 @@ export interface SelectCallbacks {
     deviceId: string,
     paneId: string,
     data: string,
-    alternateScreen: boolean
+    alternateScreen: boolean,
+    modes: number
   ) => void;
   onFlushBuffer?: (deviceId: string, paneId: string, buffer: Uint8Array[]) => void;
   onOutput?: (deviceId: string, paneId: string, data: Uint8Array) => void;
@@ -270,12 +273,19 @@ export class SelectStateMachine {
     transaction.state = 'HISTORY_APPLIED';
 
     if (this.callbacks.onApplyHistory) {
-      this.callbacks.onApplyHistory(deviceId, transaction.paneId, data, event.alternateScreen);
+      this.callbacks.onApplyHistory(
+        deviceId,
+        transaction.paneId,
+        data,
+        event.alternateScreen,
+        event.modes
+      );
     } else {
       this.deferredHistories.set(deviceId, {
         paneId: transaction.paneId,
         data,
         alternateScreen: event.alternateScreen,
+        modes: event.modes,
       });
     }
 
@@ -453,7 +463,13 @@ export class SelectStateMachine {
 
     const history = this.deferredHistories.get(deviceId);
     if (history !== undefined && this.callbacks.onApplyHistory) {
-      this.callbacks.onApplyHistory(deviceId, history.paneId, history.data, history.alternateScreen);
+      this.callbacks.onApplyHistory(
+        deviceId,
+        history.paneId,
+        history.data,
+        history.alternateScreen,
+        history.modes
+      );
       this.deferredHistories.delete(deviceId);
     }
 
