@@ -1,3 +1,5 @@
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import type { WatchRuleDto } from '@tmex/shared';
 import {
   AlertDialog,
   AlertDialogAction,
@@ -7,19 +9,17 @@ import {
   AlertDialogFooter,
   AlertDialogHeader,
   AlertDialogTitle,
-} from '@/components/ui/alert-dialog';
-import { Badge } from '@/components/ui/badge';
-import { Button } from '@/components/ui/button';
+} from '@tmex/ui/alert-dialog';
+import { Badge } from '@tmex/ui/badge';
+import { Button } from '@tmex/ui/button';
 import {
   Dialog,
   DialogContent,
   DialogDescription,
   DialogHeader,
   DialogTitle,
-} from '@/components/ui/dialog';
-import { Switch } from '@/components/ui/switch';
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import type { WatchRuleDto } from '@tmex/shared';
+} from '@tmex/ui/dialog';
+import { Switch } from '@tmex/ui/switch';
 import { Activity, ArrowLeft, Bell, Loader2, Pencil, Plus, Trash2 } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';

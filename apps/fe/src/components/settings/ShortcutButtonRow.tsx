@@ -1,7 +1,7 @@
-import { Button } from '@/components/ui/button';
-import { cn } from '@/lib/utils';
 import { escapeForDisplay, labelToSymbols } from '@/utils/terminalKeySequence';
 import type { TerminalShortcutAction, TerminalShortcutItem } from '@tmex/shared';
+import { cn } from '@tmex/ui';
+import { Button } from '@tmex/ui/button';
 import { ArrowDownToLine, ClipboardPaste, Keyboard, type LucideIcon, Radar } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 

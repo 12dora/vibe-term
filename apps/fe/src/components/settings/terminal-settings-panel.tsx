@@ -1,15 +1,15 @@
 import { TerminalPreview } from '@/components/terminal/TerminalPreview';
-import { Input } from '@/components/ui/input';
+import { FONT_MANIFEST, getFontEntry } from '@/lib/fonts';
+import { type KeyboardBehaviorMode, useUIStore } from '@/stores/ui';
+import { cn } from '@tmex/ui';
+import { Input } from '@tmex/ui/input';
 import {
   Select,
   SelectContent,
   SelectItem,
   SelectTrigger,
   SelectValue,
-} from '@/components/ui/select';
-import { FONT_MANIFEST, getFontEntry } from '@/lib/fonts';
-import { cn } from '@/lib/utils';
-import { type KeyboardBehaviorMode, useUIStore } from '@/stores/ui';
+} from '@tmex/ui/select';
 import { Check } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';

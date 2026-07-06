@@ -1,7 +1,7 @@
-import { useEffect } from "react";
+import { useSidebar } from "@tmex/ui/sidebar";
 import { Moon, Settings, Sun, X } from "lucide-react";
+import { useEffect } from "react";
 import { useTranslation } from "react-i18next";
-import { useSidebar } from "@/components/ui/sidebar";
 import { useSiteStore } from "../../../stores/site";
 import { useTmuxStore } from "../../../stores/tmux";
 import { useUIStore } from "../../../stores/ui";

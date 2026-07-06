@@ -1,13 +1,13 @@
 // 移动端 pane 切换按钮：当前 window 多 pane 时出现在标题栏 PageActions，
 // 点击弹出 pane 列表（与侧栏 pane 行同款两行排版：标题 + 进程@路径），点击项切换 pane。
 
+import type { TmuxWindow } from '@tmex/shared';
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuTrigger,
-} from '@/components/ui/dropdown-menu';
-import type { TmuxWindow } from '@tmex/shared';
+} from '@tmex/ui/dropdown-menu';
 import { Columns2 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 

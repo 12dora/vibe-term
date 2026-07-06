@@ -6,15 +6,15 @@ import { useMemo } from 'react';
 import { useTranslation } from 'react-i18next';
 import { toast } from 'sonner';
 
-import { Button } from '@/components/ui/button';
+import { useSiteStore } from '@/stores/site';
+import { Button } from '@tmex/ui/button';
 import {
   Dialog,
   DialogContent,
   DialogDescription,
   DialogHeader,
   DialogTitle,
-} from '@/components/ui/dialog';
-import { useSiteStore } from '@/stores/site';
+} from '@tmex/ui/dialog';
 
 interface TelegramChatsResponse {
   chats: TelegramBotChat[];

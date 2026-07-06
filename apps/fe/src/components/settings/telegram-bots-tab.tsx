@@ -4,8 +4,8 @@ import { Plus } from 'lucide-react';
 import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 
-import { Button } from '@/components/ui/button';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Button } from '@tmex/ui/button';
+import { Card, CardContent, CardHeader, CardTitle } from '@tmex/ui/card';
 
 import { TelegramBotFormModal } from './telegram-bot-form-modal';
 import { TelegramBotRow } from './telegram-bot-row';

@@ -1,6 +1,6 @@
-import { Button } from '@/components/ui/button';
-import { Textarea } from '@/components/ui/textarea';
 import type { AgentQueuedMessageDto } from '@tmex/shared';
+import { Button } from '@tmex/ui/button';
+import { Textarea } from '@tmex/ui/textarea';
 import { CheckIcon, PencilIcon, XIcon, ZapIcon } from 'lucide-react';
 import { useState } from 'react';
 import { useTranslation } from 'react-i18next';

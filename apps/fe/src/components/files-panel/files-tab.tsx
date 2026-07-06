@@ -21,19 +21,19 @@ import { useTranslation } from 'react-i18next';
 import { matchPath, useLocation, useNavigate } from 'react-router';
 import { toast } from 'sonner';
 
-import { Button } from '@/components/ui/button';
+import { fileNodeKey, useFileTreeStore } from '@/stores/file-tree';
+import { decodeFileRef, fileDownloadUrl, fileRoute } from '@/utils/fileUrl';
+import { cn } from '@tmex/ui';
+import { Button } from '@tmex/ui/button';
 import {
   ContextMenu,
   ContextMenuContent,
   ContextMenuItem,
   ContextMenuSeparator,
   ContextMenuTrigger,
-} from '@/components/ui/context-menu';
-import { ScrollArea } from '@/components/ui/scroll-area';
-import { SidebarGroup, useSidebar } from '@/components/ui/sidebar';
-import { cn } from '@/lib/utils';
-import { fileNodeKey, useFileTreeStore } from '@/stores/file-tree';
-import { decodeFileRef, fileDownloadUrl, fileRoute } from '@/utils/fileUrl';
+} from '@tmex/ui/context-menu';
+import { ScrollArea } from '@tmex/ui/scroll-area';
+import { SidebarGroup, useSidebar } from '@tmex/ui/sidebar';
 import {
   type FileApiError,
   downloadFileWithProgress,

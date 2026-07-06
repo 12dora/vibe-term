@@ -1,3 +1,6 @@
+import { useQuery } from '@tanstack/react-query';
+import type { GetAgentLlmSettingsResponse, LlmProviderDto } from '@tmex/shared';
+import { cn } from '@tmex/ui';
 import {
   Select,
   SelectContent,
@@ -5,10 +8,7 @@ import {
   SelectItem,
   SelectLabel,
   SelectTrigger,
-} from '@/components/ui/select';
-import { cn } from '@/lib/utils';
-import { useQuery } from '@tanstack/react-query';
-import type { GetAgentLlmSettingsResponse, LlmProviderDto } from '@tmex/shared';
+} from '@tmex/ui/select';
 import { useTranslation } from 'react-i18next';
 
 const SEP = '::';

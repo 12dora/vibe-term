@@ -1,4 +1,4 @@
-import { cn } from '@/lib/utils';
+import { cn } from '@tmex/ui';
 
 export function UserMessage({ text, className }: { text: string; className?: string }) {
   return (

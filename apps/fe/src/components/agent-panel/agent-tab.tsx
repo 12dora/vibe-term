@@ -2,10 +2,6 @@ import { type ReactNode, useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useMatch, useNavigate } from 'react-router';
 
-import { Button } from '@/components/ui/button';
-import { Switch } from '@/components/ui/switch';
-import { Textarea } from '@/components/ui/textarea';
-import { cn } from '@/lib/utils';
 import { useAgentStore } from '@/stores/agent';
 import { type UiThreadBlock, buildThreadBlocks, lastUserMessageText } from '@/stores/agent-thread';
 import { useTmuxStore } from '@/stores/tmux';
@@ -13,6 +9,10 @@ import { useUIStore } from '@/stores/ui';
 import { buildTerminalLabel } from '@/utils/terminalMeta';
 import { useQuery } from '@tanstack/react-query';
 import type { Device, StateSnapshotPayload } from '@tmex/shared';
+import { cn } from '@tmex/ui';
+import { Button } from '@tmex/ui/button';
+import { Switch } from '@tmex/ui/switch';
+import { Textarea } from '@tmex/ui/textarea';
 import {
   CircleAlertIcon,
   ListTreeIcon,

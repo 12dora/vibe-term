@@ -5,8 +5,8 @@ import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { toast } from 'sonner';
 
-import { Button } from '@/components/ui/button';
-import { Switch } from '@/components/ui/switch';
+import { Button } from '@tmex/ui/button';
+import { Switch } from '@tmex/ui/switch';
 
 import { TelegramBotChatsModal } from './telegram-bot-chats-modal';
 

@@ -14,10 +14,10 @@ import {
   AlertDialogFooter,
   AlertDialogHeader,
   AlertDialogTitle,
-} from '@/components/ui/alert-dialog';
-import { Badge } from '@/components/ui/badge';
-import { Button } from '@/components/ui/button';
-import { Switch } from '@/components/ui/switch';
+} from '@tmex/ui/alert-dialog';
+import { Badge } from '@tmex/ui/badge';
+import { Button } from '@tmex/ui/button';
+import { Switch } from '@tmex/ui/switch';
 
 import { LlmProviderModelsModal } from './llm-provider-models-modal';
 import { parseApiError } from './llm-providers-api';

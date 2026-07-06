@@ -9,16 +9,16 @@ import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { toast } from 'sonner';
 
-import { Button } from '@/components/ui/button';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Input } from '@/components/ui/input';
+import { Button } from '@tmex/ui/button';
+import { Card, CardContent, CardHeader, CardTitle } from '@tmex/ui/card';
+import { Input } from '@tmex/ui/input';
 import {
   Select,
   SelectContent,
   SelectItem,
   SelectTrigger,
   SelectValue,
-} from '@/components/ui/select';
+} from '@tmex/ui/select';
 
 import { LlmProviderFormModal } from './llm-provider-form-modal';
 import { LlmProviderRow } from './llm-provider-row';

@@ -16,9 +16,9 @@ import {
   AlertDialogFooter,
   AlertDialogHeader,
   AlertDialogTitle,
-} from '@/components/ui/alert-dialog';
-import { Button } from '@/components/ui/button';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+} from '@tmex/ui/alert-dialog';
+import { Button } from '@tmex/ui/button';
+import { Card, CardContent, CardHeader, CardTitle } from '@tmex/ui/card';
 import { useSiteStore } from '../../stores/site';
 
 async function parseApiError(res: Response, fallback: string): Promise<string> {

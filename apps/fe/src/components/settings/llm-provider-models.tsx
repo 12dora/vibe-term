@@ -3,10 +3,10 @@ import { Plus, X } from 'lucide-react';
 import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 
-import { Badge } from '@/components/ui/badge';
-import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
-import { Switch } from '@/components/ui/switch';
+import { Badge } from '@tmex/ui/badge';
+import { Button } from '@tmex/ui/button';
+import { Input } from '@tmex/ui/input';
+import { Switch } from '@tmex/ui/switch';
 
 export interface ModelDraft {
   id: string;

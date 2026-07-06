@@ -2,9 +2,9 @@ import { Bot, FolderClosed, Monitor, PanelsTopLeft } from 'lucide-react';
 import { type ComponentProps, Suspense, lazy } from 'react';
 import { useTranslation } from 'react-i18next';
 
-import { Sidebar, SidebarContent, SidebarFooter, SidebarHeader } from '@/components/ui/sidebar';
-import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { useUIStore } from '@/stores/ui';
+import { Sidebar, SidebarContent, SidebarFooter, SidebarHeader } from '@tmex/ui/sidebar';
+import { Tabs, TabsList, TabsTrigger } from '@tmex/ui/tabs';
 import { NavMain } from './nav-main';
 import { SideBarDeviceList } from './sidebar-device-list';
 import { SidebarTitle } from './sidebar-title';

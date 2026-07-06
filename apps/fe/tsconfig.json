@@ -19,7 +19,9 @@
     "baseUrl": ".",
     "paths": {
       "@/*": ["src/*"],
-      "@tmex/shared": ["../../packages/shared/src"]
+      "@tmex/shared": ["../../packages/shared/src"],
+      "@tmex/ui": ["../../packages/ui/src"],
+      "@tmex/ui/*": ["../../packages/ui/src/components/*"]
     }
   },
   "include": ["src"],

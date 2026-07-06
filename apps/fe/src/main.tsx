@@ -14,12 +14,12 @@ import { ConnectionIndicator } from '@/components/connection-indicator';
 import { FlowBridges } from '@/components/flow-bridges';
 import { GlobalDeviceProvider } from '@/components/global-device-provider';
 import { AppSidebar } from '@/components/page-layouts/components/app-sidebar';
-import { Separator } from '@/components/ui/separator';
-import { SidebarInset, SidebarProvider, SidebarTrigger, useSidebar } from '@/components/ui/sidebar';
 import { WatchEventsInit } from '@/components/watch/watch-events-init';
 import { useKeyboardAvoidance } from '@/hooks/use-keyboard-avoidance';
 import { useAppMonoFont } from '@/lib/fonts/useAppMonoFont';
 import { useUIStore } from '@/stores/ui';
+import { Separator } from '@tmex/ui/separator';
+import { SidebarInset, SidebarProvider, SidebarTrigger, useSidebar } from '@tmex/ui/sidebar';
 
 function applyInitialTheme(): void {
   try {

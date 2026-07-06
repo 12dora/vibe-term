@@ -1,9 +1,9 @@
-import { Badge } from '@/components/ui/badge';
-import { Button } from '@/components/ui/button';
-import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
-import { cn } from '@/lib/utils';
 import type { UiToolCall } from '@/stores/agent-thread';
+import { cn } from '@tmex/ui';
+import { Badge } from '@tmex/ui/badge';
+import { Button } from '@tmex/ui/button';
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@tmex/ui/collapsible';
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@tmex/ui/dialog';
 import {
   CheckIcon,
   ChevronRightIcon,

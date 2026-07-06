@@ -1,7 +1,7 @@
 // 流式 markdown 渲染：按 fence 感知的双换行分块，块级 memo，
 // 流式追加时只有最后一块重新 parse，避免长文本整体重渲染。
 
-import { cn } from '@/lib/utils';
+import { cn } from '@tmex/ui';
 import { memo, useMemo } from 'react';
 import ReactMarkdown, { type Components } from 'react-markdown';
 import remarkGfm from 'remark-gfm';

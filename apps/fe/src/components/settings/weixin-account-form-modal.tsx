@@ -5,16 +5,16 @@ import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { toast } from 'sonner';
 
-import { Button } from '@/components/ui/button';
+import { Button } from '@tmex/ui/button';
 import {
   Dialog,
   DialogContent,
   DialogFooter,
   DialogHeader,
   DialogTitle,
-} from '@/components/ui/dialog';
-import { Input } from '@/components/ui/input';
-import { Switch } from '@/components/ui/switch';
+} from '@tmex/ui/dialog';
+import { Input } from '@tmex/ui/input';
+import { Switch } from '@tmex/ui/switch';
 
 import { WeixinAccountLoginModal } from './weixin-account-login-modal';
 

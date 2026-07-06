@@ -1,3 +1,7 @@
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import type { Device, TmuxPane, TmuxWindow } from '@tmex/shared';
+import { toBCP47 } from '@tmex/shared';
+import { cn } from '@tmex/ui';
 import {
   AlertDialog,
   AlertDialogAction,
@@ -8,15 +12,11 @@ import {
   AlertDialogHeader,
   AlertDialogMedia,
   AlertDialogTitle,
-} from '@/components/ui/alert-dialog';
-import { Badge } from '@/components/ui/badge';
-import { Button, buttonVariants } from '@/components/ui/button';
-import { ScrollArea } from '@/components/ui/scroll-area';
-import { Separator } from '@/components/ui/separator';
-import { cn } from '@/lib/utils';
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import type { Device, TmuxPane, TmuxWindow } from '@tmex/shared';
-import { toBCP47 } from '@tmex/shared';
+} from '@tmex/ui/alert-dialog';
+import { Badge } from '@tmex/ui/badge';
+import { Button, buttonVariants } from '@tmex/ui/button';
+import { ScrollArea } from '@tmex/ui/scroll-area';
+import { Separator } from '@tmex/ui/separator';
 import {
   ChevronDown,
   ChevronLeft,

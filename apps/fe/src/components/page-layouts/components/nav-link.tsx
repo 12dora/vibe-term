@@ -1,5 +1,5 @@
+import { useSidebar } from "@tmex/ui/sidebar";
 import { Link, type LinkProps } from "react-router";
-import { useSidebar } from "@/components/ui/sidebar";
 
 interface NavLinkProps extends LinkProps {
   children?: React.ReactNode;

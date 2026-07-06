@@ -15,9 +15,9 @@ import {
 import { formatBytes } from '@/components/files-panel/format';
 import { startTransferToast } from '@/components/files-panel/transfer-toast';
 import { MarkdownPreview } from '@/components/markdown/markdown-preview';
-import { Button } from '@/components/ui/button';
 import i18n from '@/i18n';
 import { type FileRef, decodeFileRef, fileRawUrl } from '@/utils/fileUrl';
+import { Button } from '@tmex/ui/button';
 
 function useFileRef(ref?: string): FileRef | null {
   return useMemo(() => (ref ? decodeFileRef(ref) : null), [ref]);

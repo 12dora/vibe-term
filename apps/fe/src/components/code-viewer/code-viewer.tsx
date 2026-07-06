@@ -1,7 +1,7 @@
 // 代码/纯文本查看器：highlight.js 高亮 + 终端 seoul256 配色（hljs-terminal-theme.css）。
 // 左侧行号栏 + 右侧可横向滚动代码区，font-mono 与终端共享字体栈。
 
-import { cn } from '@/lib/utils';
+import { cn } from '@tmex/ui';
 // 只引入常用语言子集（~37 种），避免 full build（~190 种语言，约 1MB）拖大 FilePage chunk。
 // 子集已覆盖 ts/js/py/json/css/xml/bash/yaml/sql/go/rust/java/c/cpp/markdown/makefile 等；
 // 未覆盖的（dockerfile/dart/scala 等）回退到 highlightAuto，不影响可读性。

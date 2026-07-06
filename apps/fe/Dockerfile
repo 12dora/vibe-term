@@ -6,6 +6,8 @@ WORKDIR /app
 # 复制 workspace 配置
 COPY package.json bun.lock* ./
 COPY packages/shared/package.json packages/shared/
+COPY packages/ui/package.json packages/ui/
+COPY packages/ghostty-terminal/package.json packages/ghostty-terminal/
 COPY apps/fe/package.json apps/fe/
 
 # 安装依赖
@@ -13,6 +15,8 @@ RUN bun install
 
 # 复制源代码
 COPY packages/shared/ packages/shared/
+COPY packages/ui/ packages/ui/
+COPY packages/ghostty-terminal/ packages/ghostty-terminal/
 COPY apps/fe/ apps/fe/
 
 # 构建

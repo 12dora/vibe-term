@@ -9,7 +9,11 @@ import { Terminal as TerminalComponent, type TerminalRef } from '@/components/te
 import { PaneSwitcherMenu } from '@/components/terminal/PaneSwitcherMenu';
 import { SplitTerminalArea } from '@/components/terminal/SplitTerminalArea';
 import { XTERM_THEME_DARK, XTERM_THEME_LIGHT } from '@/components/terminal/theme';
-import { useIsMobile } from '@/hooks/use-mobile';
+import { fetchWatchRules, watchRulesQueryKey } from '@/components/watch/api';
+import { WatchDialog } from '@/components/watch/watch-dialog';
+import { useQuery } from '@tanstack/react-query';
+import type { Device, TerminalShortcutItem } from '@tmex/shared';
+import { useIsMobile } from '@tmex/ui';
 import {
   AlertDialog,
   AlertDialogAction,
@@ -19,13 +23,9 @@ import {
   AlertDialogFooter,
   AlertDialogHeader,
   AlertDialogTitle,
-} from '@/components/ui/alert-dialog';
-import { Button } from '@/components/ui/button';
-import { Switch } from '@/components/ui/switch';
-import { fetchWatchRules, watchRulesQueryKey } from '@/components/watch/api';
-import { WatchDialog } from '@/components/watch/watch-dialog';
-import { useQuery } from '@tanstack/react-query';
-import type { Device, TerminalShortcutItem } from '@tmex/shared';
+} from '@tmex/ui/alert-dialog';
+import { Button } from '@tmex/ui/button';
+import { Switch } from '@tmex/ui/switch';
 import {
   ArrowDownToLine,
   Keyboard,
@@ -45,9 +45,9 @@ import { useTranslation } from 'react-i18next';
 import { useNavigate, useParams } from 'react-router';
 import { toast } from 'sonner';
 import { useAgentStore } from '../stores/agent';
+import { useBellStore } from '../stores/bell';
 import { useSiteStore } from '../stores/site';
 import { useTmuxStore } from '../stores/tmux';
-import { useBellStore } from '../stores/bell';
 import { useUIStore } from '../stores/ui';
 import { shouldApplyRemotePaneSize } from '../utils/resizeSyncGuards';
 import {

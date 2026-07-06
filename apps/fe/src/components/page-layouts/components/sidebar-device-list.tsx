@@ -1,42 +1,8 @@
 import { DeviceStatusBadge } from '@/components/device-status-badge';
 import { useGlobalDevice } from '@/components/global-device-provider';
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogMedia,
-  AlertDialogTitle,
-} from '@/components/ui/alert-dialog';
-import { Button } from '@/components/ui/button';
-import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from '@/components/ui/dialog';
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from '@/components/ui/dropdown-menu';
-import { Input } from '@/components/ui/input';
-import { ScrollArea } from '@/components/ui/scroll-area';
-import { SidebarGroup, useSidebar } from '@/components/ui/sidebar';
 import { WatchDialog } from '@/components/watch/watch-dialog';
-import { cn } from '@/lib/utils';
 import { useAgentStore } from '@/stores/agent';
 import { useUIStore } from '@/stores/ui';
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import type { AgentSessionDto, Device, TmuxPane, TmuxWindow } from '@tmex/shared';
-import { toBCP47 } from '@tmex/shared';
 import {
   DndContext,
   type DragEndEvent,
@@ -55,6 +21,40 @@ import {
   verticalListSortingStrategy,
 } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import type { AgentSessionDto, Device, TmuxPane, TmuxWindow } from '@tmex/shared';
+import { toBCP47 } from '@tmex/shared';
+import { cn } from '@tmex/ui';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogMedia,
+  AlertDialogTitle,
+} from '@tmex/ui/alert-dialog';
+import { Button } from '@tmex/ui/button';
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@tmex/ui/collapsible';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@tmex/ui/dialog';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '@tmex/ui/dropdown-menu';
+import { Input } from '@tmex/ui/input';
+import { ScrollArea } from '@tmex/ui/scroll-area';
+import { SidebarGroup, useSidebar } from '@tmex/ui/sidebar';
 import {
   Bot,
   ChevronRight,
@@ -93,9 +93,9 @@ type RenameCandidate =
   | { kind: 'pane'; deviceId: string; paneId: string; hasCustomName: boolean };
 import { useTranslation } from 'react-i18next';
 import { matchPath, useLocation, useNavigate } from 'react-router';
+import { useBellStore } from '../../../stores/bell';
 import { useSiteStore } from '../../../stores/site';
 import { useTmuxStore } from '../../../stores/tmux';
-import { useBellStore } from '../../../stores/bell';
 import { decodePaneIdFromUrlParam, encodePaneIdForUrl } from '../../../utils/tmuxUrl';
 
 function StatusDot({ status }: { status: AgentSessionDto['status'] }) {

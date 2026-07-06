@@ -22,6 +22,7 @@
         "@fontsource-variable/geist": "^5.2.8",
         "@tanstack/react-query": "^5.66.0",
         "@tmex/shared": "workspace:*",
+        "@tmex/ui": "workspace:*",
         "class-variance-authority": "^0.7.1",
         "clsx": "^2.1.1",
         "ghostty-terminal": "workspace:*",
@@ -88,7 +89,7 @@
     },
     "packages/app": {
       "name": "tmex-cli",
-      "version": "0.12.4",
+      "version": "0.17.0",
       "bin": {
         "tmex": "./bin/tmex.js",
         "tmex-cli": "./bin/tmex.js",
@@ -113,6 +114,26 @@
       },
       "devDependencies": {
         "typescript": "^5.7.3",
+      },
+    },
+    "packages/ui": {
+      "name": "@tmex/ui",
+      "version": "0.1.0",
+      "dependencies": {
+        "@base-ui/react": "^1.2.0",
+        "class-variance-authority": "^0.7.1",
+        "clsx": "^2.1.1",
+        "lucide-react": "^0.564.0",
+        "tailwind-merge": "^3.4.0",
+      },
+      "devDependencies": {
+        "@types/react": "^19.0.8",
+        "@types/react-dom": "^19.0.3",
+        "typescript": "^5.7.3",
+      },
+      "peerDependencies": {
+        "react": "^19.0.0",
+        "react-dom": "^19.0.0",
       },
     },
   },
@@ -486,6 +507,8 @@
     "@tmex/gateway": ["@tmex/gateway@workspace:apps/gateway"],
 
     "@tmex/shared": ["@tmex/shared@workspace:packages/shared"],
+
+    "@tmex/ui": ["@tmex/ui@workspace:packages/ui"],
 
     "@ts-morph/common": ["@ts-morph/common@0.27.0", "", { "dependencies": { "fast-glob": "^3.3.3", "minimatch": "^10.0.1", "path-browserify": "^1.0.1" } }, "sha512-Wf29UqxWDpc+i61k3oIOzcUfQt79PIT9y/MWfAGlrkjg6lBC1hwDECLXPVJAhWjiGbfBCxZd65F/LIZF3+jeJQ=="],
 

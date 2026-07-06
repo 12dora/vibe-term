@@ -1,15 +1,3 @@
-import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select';
-import { Switch } from '@/components/ui/switch';
-import { Textarea } from '@/components/ui/textarea';
-import { cn } from '@/lib/utils';
 import { useMutation, useQuery } from '@tanstack/react-query';
 import type {
   AssistRegexResponse,
@@ -21,6 +9,18 @@ import type {
   WatchRuleDto,
   WatchTriggerType,
 } from '@tmex/shared';
+import { cn } from '@tmex/ui';
+import { Button } from '@tmex/ui/button';
+import { Input } from '@tmex/ui/input';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@tmex/ui/select';
+import { Switch } from '@tmex/ui/switch';
+import { Textarea } from '@tmex/ui/textarea';
 import { Loader2, Sparkles } from 'lucide-react';
 import { useId, useState } from 'react';
 import { useTranslation } from 'react-i18next';

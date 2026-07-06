@@ -1,6 +1,6 @@
-import { Button } from '@/components/ui/button';
-import { cn } from '@/lib/utils';
 import type { UiThreadBlock } from '@/stores/agent-thread';
+import { cn } from '@tmex/ui';
+import { Button } from '@tmex/ui/button';
 import { ArrowDownIcon } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';

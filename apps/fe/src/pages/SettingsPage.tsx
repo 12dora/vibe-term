@@ -15,6 +15,7 @@ import { useTranslation } from 'react-i18next';
 import { toast } from 'sonner';
 import i18n from '../i18n';
 
+import { cn } from '@tmex/ui';
 import {
   AlertDialog,
   AlertDialogAction,
@@ -24,20 +25,19 @@ import {
   AlertDialogFooter,
   AlertDialogHeader,
   AlertDialogTitle,
-} from '@/components/ui/alert-dialog';
-import { Button } from '@/components/ui/button';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Input } from '@/components/ui/input';
+} from '@tmex/ui/alert-dialog';
+import { Button } from '@tmex/ui/button';
+import { Card, CardContent, CardHeader, CardTitle } from '@tmex/ui/card';
+import { Input } from '@tmex/ui/input';
 import {
   Select,
   SelectContent,
   SelectItem,
   SelectTrigger,
   SelectValue,
-} from '@/components/ui/select';
-import { Switch } from '@/components/ui/switch';
-import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { cn } from '@/lib/utils';
+} from '@tmex/ui/select';
+import { Switch } from '@tmex/ui/switch';
+import { Tabs, TabsList, TabsTrigger } from '@tmex/ui/tabs';
 import { tabTriggerClassName } from '../components/page-layouts/components/app-sidebar';
 import { DeviceEntryCard } from '../components/settings/device-entry-card';
 import { FilesSettingsTab } from '../components/settings/files-tab';

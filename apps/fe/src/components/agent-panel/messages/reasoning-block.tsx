@@ -1,5 +1,5 @@
-import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
-import { cn } from '@/lib/utils';
+import { cn } from '@tmex/ui';
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@tmex/ui/collapsible';
 import { BrainIcon, ChevronRightIcon, Loader2Icon } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 

@@ -9,14 +9,6 @@ type DeviceListItem = Device & {
   lastError?: string | null;
   lastErrorType?: string | null;
 };
-import { Globe, Monitor, MoreHorizontal, Pencil, Plus, Trash2, Zap } from 'lucide-react';
-import { type FormEvent, useState, useEffect, useMemo } from 'react';
-import { useTranslation } from 'react-i18next';
-import { Link } from 'react-router';
-import { toast } from 'sonner';
-import { Badge } from '@/components/ui/badge';
-import { Button, buttonVariants } from '@/components/ui/button';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import {
   AlertDialog,
   AlertDialogAction,
@@ -27,7 +19,10 @@ import {
   AlertDialogHeader,
   AlertDialogMedia,
   AlertDialogTitle,
-} from '@/components/ui/alert-dialog';
+} from '@tmex/ui/alert-dialog';
+import { Badge } from '@tmex/ui/badge';
+import { Button, buttonVariants } from '@tmex/ui/button';
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@tmex/ui/card';
 import {
   Dialog,
   DialogContent,
@@ -35,24 +30,29 @@ import {
   DialogFooter,
   DialogHeader,
   DialogTitle,
-} from '@/components/ui/dialog';
+} from '@tmex/ui/dialog';
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
-} from '@/components/ui/dropdown-menu';
-import { Input } from '@/components/ui/input';
+} from '@tmex/ui/dropdown-menu';
+import { Input } from '@tmex/ui/input';
 import {
   Select,
   SelectContent,
   SelectItem,
   SelectTrigger,
   SelectValue,
-} from '@/components/ui/select';
-import { Separator } from '@/components/ui/separator';
-import { Textarea } from '@/components/ui/textarea';
+} from '@tmex/ui/select';
+import { Separator } from '@tmex/ui/separator';
+import { Textarea } from '@tmex/ui/textarea';
+import { Globe, Monitor, MoreHorizontal, Pencil, Plus, Trash2, Zap } from 'lucide-react';
+import { type FormEvent, useEffect, useMemo, useState } from 'react';
+import { useTranslation } from 'react-i18next';
+import { Link } from 'react-router';
+import { toast } from 'sonner';
 
 type DeviceFormValues = {
   name: string;

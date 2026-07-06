@@ -4,7 +4,7 @@ import {
   SheetDescription,
   SheetHeader,
   SheetTitle,
-} from '@/components/ui/sheet';
+} from '@tmex/ui/sheet';
 import { useTranslation } from 'react-i18next';
 import { TerminalSettingsPanel } from './terminal-settings-panel';
 

@@ -1,4 +1,4 @@
-import { cn } from '@/lib/utils';
+import { cn } from '../utils';
 
 // 极简进度条：0-100 的 value 控制填充宽度（纯视觉，进度文本由调用方展示）。
 function Progress({ value = 0, className }: { value?: number; className?: string }) {

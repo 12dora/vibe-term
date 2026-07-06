@@ -1,7 +1,7 @@
 import { toast } from 'sonner';
 
-import { Progress } from '@/components/ui/progress';
 import i18n from '@/i18n';
+import { Progress } from '@tmex/ui/progress';
 import type { LegProgress } from './api';
 
 export type TransferDirection = 'upload' | 'download';

@@ -6,11 +6,11 @@ import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { toast } from 'sonner';
 
-import { Button } from '@/components/ui/button';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Input } from '@/components/ui/input';
-import { Switch } from '@/components/ui/switch';
 import { useSiteStore } from '@/stores/site';
+import { Button } from '@tmex/ui/button';
+import { Card, CardContent, CardHeader, CardTitle } from '@tmex/ui/card';
+import { Input } from '@tmex/ui/input';
+import { Switch } from '@tmex/ui/switch';
 
 export const WEBHOOK_EVENT_OPTIONS: EventType[] = [
   'terminal_bell',

@@ -1,6 +1,6 @@
-import { Badge } from '@/components/ui/badge';
-import { cn } from '@/lib/utils';
 import { useTmuxStore } from '@/stores/tmux';
+import { cn } from '@tmex/ui';
+import { Badge } from '@tmex/ui/badge';
 import { AlertCircle, RefreshCcw } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 

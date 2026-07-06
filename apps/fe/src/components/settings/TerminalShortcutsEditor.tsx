@@ -4,10 +4,6 @@ import {
   terminalShortcutsQueryKey,
   updateTerminalShortcuts,
 } from '@/components/settings/terminal-shortcuts-api';
-import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
-import { Switch } from '@/components/ui/switch';
-import { cn } from '@/lib/utils';
 import {
   escapeForDisplay,
   keyEventToTerminalSequence,
@@ -37,6 +33,10 @@ import {
   type TerminalShortcutAction,
   type TerminalShortcutItem,
 } from '@tmex/shared';
+import { cn } from '@tmex/ui';
+import { Button } from '@tmex/ui/button';
+import { Input } from '@tmex/ui/input';
+import { Switch } from '@tmex/ui/switch';
 import {
   ArrowDownToLine,
   ClipboardPaste,
