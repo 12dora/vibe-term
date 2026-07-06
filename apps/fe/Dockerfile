@@ -4,7 +4,7 @@ FROM oven/bun:1 AS builder
 WORKDIR /app
 
 # 复制 workspace 配置
-COPY package.json bun.lock* ./
+COPY package.json bun.lock* tsconfig.json ./
 COPY packages/shared/package.json packages/shared/
 COPY packages/ui/package.json packages/ui/
 COPY packages/ghostty-terminal/package.json packages/ghostty-terminal/
