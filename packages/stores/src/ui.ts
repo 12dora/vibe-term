@@ -1,4 +1,4 @@
-import { DEFAULT_FONT_ID } from '@tmex/theme';
+import { DEFAULT_FONT_ID, type ThemePreset } from '@tmex/theme';
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 import type { RuntimeCore } from './runtime';
@@ -21,6 +21,7 @@ interface UIState {
   inputMode: 'direct' | 'editor';
   editorSendWithEnter: boolean;
   theme: 'light' | 'dark';
+  themePreset: ThemePreset | null;
   keyboardBehaviorMode: KeyboardBehaviorMode;
   editorHistory: string[];
   editorDrafts: Record<string, string>;
@@ -34,6 +35,7 @@ interface UIState {
   setKeyboardBehaviorMode: (mode: KeyboardBehaviorMode) => void;
   setEditorSendWithEnter: (enabled: boolean) => void;
   setTheme: (theme: 'light' | 'dark') => void;
+  setThemePreset: (preset: ThemePreset | null) => void;
   addEditorHistory: (text: string) => void;
   setEditorDraft: (draftKey: string, text: string) => void;
   removeEditorDraft: (draftKey: string) => void;
@@ -51,6 +53,7 @@ export function createUIStore(core: Pick<RuntimeCore, 'storagePrefix'>) {
         inputMode: 'direct',
         editorSendWithEnter: true,
         theme: 'dark',
+        themePreset: null,
         keyboardBehaviorMode: 'follow',
         editorHistory: [],
         editorDrafts: {},
@@ -64,6 +67,7 @@ export function createUIStore(core: Pick<RuntimeCore, 'storagePrefix'>) {
         setKeyboardBehaviorMode: (mode) => set({ keyboardBehaviorMode: mode }),
         setEditorSendWithEnter: (enabled) => set({ editorSendWithEnter: enabled }),
         setTheme: (theme) => set({ theme }),
+        setThemePreset: (preset) => set({ themePreset: preset }),
         setTerminalFontSize: (size) => set({ terminalFontSize: size }),
         setTerminalLineHeight: (height) => set({ terminalLineHeight: height }),
         setTerminalFontId: (fontId) => set({ terminalFontId: fontId }),
@@ -99,6 +103,7 @@ export function createUIStore(core: Pick<RuntimeCore, 'storagePrefix'>) {
           inputMode: state.inputMode,
           editorSendWithEnter: state.editorSendWithEnter,
           theme: state.theme,
+          themePreset: state.themePreset,
           keyboardBehaviorMode: state.keyboardBehaviorMode,
           editorHistory: state.editorHistory,
           editorDrafts: state.editorDrafts,

@@ -7,3 +7,13 @@ export {
   resolveFontStack,
 } from './fonts/index';
 export type { FontManifestEntry } from './fonts/types';
+export {
+  applyThemePreset,
+  isThemePreset,
+  THEME_PRESETS,
+  type ThemePreset,
+} from './presets';
+export {
+  TERMINAL_SHORTCUT_TOKENS,
+  type TerminalShortcutTokens,
+} from './terminal-shortcut-tokens';

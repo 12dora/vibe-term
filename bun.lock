@@ -172,6 +172,9 @@
     "packages/theme": {
       "name": "@tmex/theme",
       "version": "0.1.0",
+      "dependencies": {
+        "@tmex/shared": "workspace:*",
+      },
       "devDependencies": {
         "typescript": "^5.7.3",
       },

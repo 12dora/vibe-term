@@ -6,7 +6,9 @@
 
 @custom-variant dark (&:is(.dark *));
 
-@import "./themes.css";
+@import "../../../packages/theme/src/themes.css";
+@import "../../../packages/theme/src/tokens.css";
+@import "../../../packages/theme/src/tokens.generated.css";
 
 /* 终端内嵌等宽符号字体：Geist Mono Nerd Font Mono 自带 Powerline/制表/Nerd 图标，
    补齐部分系统缺失的字形；CJK 仍交由字体栈后段的 monospace 走系统字体
@@ -37,119 +39,6 @@
   font-style: normal;
   font-display: swap;
 }
-
-:root {
-  --tmex-safe-area-top: env(safe-area-inset-top, 0px);
-  --tmex-safe-area-bottom: env(safe-area-inset-bottom, 0px);
-
-  --base-50: oklch(0.985 0.0013 286.84);
-  --base-100: oklch(0.967 0.0027 286.38);
-  --base-200: oklch(0.92 0.0053 286.32);
-  --base-300: oklch(0.871 0.008 286.29);
-  --base-400: oklch(0.705 0.012 286.07);
-  --base-500: oklch(0.552 0.016 285.94);
-  --base-600: oklch(0.442 0.0147 285.79);
-  --base-700: oklch(0.37 0.012 285.81);
-  --base-800: oklch(0.274 0.008 286.03);
-  --base-900: oklch(0.21 0.0053 285.89);
-  --base-950: oklch(0.141 0.004 285.83);
-  --base-1000: oklch(0.096 0.0027 285.79);
-
-  --background: var(--color-white);
-  --foreground: var(--base-800);
-  --card: var(--color-white);
-  --card-foreground: var(--base-800);
-  --popover: var(--color-white);
-  --popover-foreground: var(--base-800);
-  --primary: var(--base-950);
-  --primary-foreground: var(--color-white);
-  --secondary: var(--base-300);
-  --secondary-foreground: var(--base-800);
-  --muted: var(--color-neutral-100);
-  --muted-foreground: var(--color-neutral-500);
-  --accent: var(--base-200);
-  --accent-foreground: var(--base-800);
-  --destructive: oklch(0.577 0.245 27.325);
-  --border: var(--base-200);
-  --input: var(--base-300);
-  --ring: var(--base-800);
-  --chart-1: var(--base-950);
-  --chart-2: var(--base-600);
-  --chart-3: var(--base-800);
-  --chart-4: var(--base-400);
-  --chart-5: var(--base-300);
-  --radius: 0.5rem;
-  --sidebar: var(--base-100);
-  --sidebar-foreground: var(--base-500);
-  --sidebar-primary: var(--base-950);
-  --sidebar-primary-foreground: var(--color-white);
-  --sidebar-accent: var(--base-200);
-  --sidebar-accent-foreground: var(--base-950);
-  --sidebar-border: var(--base-200);
-  --sidebar-ring: var(--base-800);
-
-  /* Agent 聊天内容区/输入区背景（与语义 token 解耦，明暗各一档） */
-  --chat-surface: #fcfcfc;
-
-  /* 终端快捷按钮配色：取自 seoul256 亮色终端主题，须与 components/terminal/theme.ts 保持一致 */
-  --terminal-shortcut-fg: #616161;
-  --terminal-shortcut-bg: #e1e1e1;
-
-  --display-weight: 700;
-
-  --fc-button-bg-color: var(--primary);
-  --fc-button-hover-bg-color: var(--primary);
-  --fc-button-active-bg-color: var(--primary);
-  --fc-button-hover-border-color: transparent;
-  --fc-button-active-border-color: transparent;
-  --fc-button-border-color: transparent;
-  --fc-event-border-color: transparent;
-  --fc-event-text-color: oklch(1 0 0);
-  --fc-border-color: var(--border);
-  --fc-page-bg-color: var(--muted);
-  --fc-today-bg-color: var(--muted);
-}
-
-.dark {
-  --background: var(--base-950);
-  --foreground: var(--base-200);
-  --card: var(--base-950);
-  --card-foreground: var(--base-200);
-  --popover: var(--base-950);
-  --popover-foreground: var(--base-200);
-  --primary: var(--base-50);
-  --primary-foreground: var(--base-900);
-  --secondary: var(--base-500);
-  --secondary-foreground: var(--base-200);
-  --muted: var(--base-900);
-  --muted-foreground: var(--base-400);
-  --accent: var(--base-900);
-  --accent-foreground: var(--base-200);
-  --destructive: oklch(0.704 0.191 22.216);
-  --border: var(--base-800);
-  --input: var(--base-700);
-  --ring: var(--base-200);
-  --chart-1: var(--base-50);
-  --chart-2: var(--base-400);
-  --chart-3: var(--base-200);
-  --chart-4: var(--base-600);
-  --chart-5: var(--base-700);
-  --sidebar: var(--base-900);
-  --sidebar-foreground: var(--base-200);
-  --sidebar-primary: var(--base-50);
-  --sidebar-primary-foreground: var(--base-900);
-  --sidebar-accent: var(--base-800);
-  --sidebar-accent-foreground: var(--base-200);
-  --sidebar-border: var(--base-800);
-  --sidebar-ring: var(--base-200);
-
-  --chat-surface: #121212;
-
-  /* 终端快捷按钮配色：取自 seoul256 暗色终端主题，须与 components/terminal/theme.ts 保持一致 */
-  --terminal-shortcut-fg: #d0d0d0;
-  --terminal-shortcut-bg: #262626;
-}
-
 @theme inline {
   --animate-scroll: scroll var(--animation-duration, 40s) var(--animation-direction, forwards)
     linear infinite;
@@ -303,3 +192,4 @@
 }
 
 @import "./app.css";
+

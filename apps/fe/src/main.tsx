@@ -19,6 +19,7 @@ import { WatchEventsInit } from '@/components/watch/watch-events-init';
 import { useKeyboardAvoidance } from '@/hooks/use-keyboard-avoidance';
 import { useAppMonoFont } from '@/lib/fonts/useAppMonoFont';
 import { useUIStore } from '@tmex/stores';
+import { applyThemePreset, isThemePreset } from '@tmex/theme';
 import { Separator } from '@tmex/ui/separator';
 import { SidebarInset, SidebarProvider, SidebarTrigger, useSidebar } from '@tmex/ui/sidebar';
 
@@ -40,6 +41,23 @@ function applyInitialTheme(): void {
 }
 
 applyInitialTheme();
+
+// 主题预设（dormant preset 激活机制）：初始从持久化状态应用，变更时跟随。
+function applyInitialThemePreset(): void {
+  try {
+    const raw = localStorage.getItem('tmex-ui');
+    const parsed = raw ? (JSON.parse(raw) as { state?: { themePreset?: unknown } }) : null;
+    const preset = parsed?.state?.themePreset;
+    applyThemePreset(isThemePreset(preset) ? preset : null);
+  } catch {
+    applyThemePreset(null);
+  }
+}
+
+applyInitialThemePreset();
+useUIStore.subscribe((state) => {
+  applyThemePreset(state.themePreset);
+});
 
 const queryClient = new QueryClient({
   defaultOptions: {
