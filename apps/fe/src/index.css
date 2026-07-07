@@ -1,6 +1,7 @@
 @import "tailwindcss";
 
 @source "../../../packages/ui/src";
+@source "../../../packages/panels/src";
 
 @plugin "tailwindcss-animate";
 

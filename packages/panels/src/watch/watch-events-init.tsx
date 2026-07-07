@@ -1,7 +1,7 @@
 // WATCH_EVENT 全局通知接线（模式仿 stores/tmux.ts：模块级 initialized 防重 + client.onMessage 独立 handler）。
 // 挂在 RootLayout，只负责 toast / 浏览器 Notification / react-query 失效，不持有渲染状态。
 
-import i18n from '@/i18n';
+import i18next from 'i18next';
 import type { QueryClient } from '@tanstack/react-query';
 import { useQueryClient } from '@tanstack/react-query';
 import { fetchWatchRule } from '@tmex/api-client';
@@ -13,12 +13,11 @@ import type {
   WatchTriggeredPayload,
 } from '@tmex/shared';
 import { wsBorsh } from '@tmex/shared';
-import { navigateToAppUrl } from '@tmex/stores';
+import { defaultRuntime, navigateToAppUrl } from '@tmex/stores';
 import { useTmuxStore } from '@tmex/stores';
 import { encodePaneIdForUrl } from '@tmex/stores';
 import { getBorshClient } from '@tmex/ws-client';
 import { useEffect } from 'react';
-import { toast } from 'sonner';
 
 let initialized = false;
 
@@ -86,13 +85,13 @@ async function handleTriggered(
   payload: WatchTriggeredPayload
 ): Promise<void> {
   const ruleName = await resolveRuleName(queryClient, ruleId);
-  const { title, description } = formatWatchTriggeredNotification(ruleName, payload, i18n.t);
+  const { title, description } = formatWatchTriggeredNotification(ruleName, payload, i18next.t);
   const url = buildPaneUrl(deviceId, paneId, payload.windowId);
 
-  toast(title, {
+  defaultRuntime.notifications.info(title, {
     description,
     action: {
-      label: i18n.t('watch.toast.openTerminal'),
+      label: i18next.t('watch.toast.openTerminal'),
       onClick: () => {
         navigateToAppUrl(url);
       },
@@ -149,14 +148,14 @@ function setupWatchEventHandlers(queryClient: QueryClient): void {
         return;
       case wsBorsh.WATCH_EVENT_MODEL_UNAVAILABLE: {
         const data = payload as WatchModelUnavailablePayload;
-        toast.warning(i18n.t('watch.toast.modelUnavailableTitle'), {
-          description: `${data.message} ${i18n.t('watch.toast.modelUnavailableHint')}`,
+        defaultRuntime.notifications.warning(i18next.t('watch.toast.modelUnavailableTitle'), {
+          description: `${data.message} ${i18next.t('watch.toast.modelUnavailableHint')}`,
         });
         return;
       }
       case wsBorsh.WATCH_EVENT_RULE_ERROR: {
         const data = payload as WatchRuleErrorPayload;
-        toast.error(i18n.t('watch.toast.ruleErrorTitle'), {
+        defaultRuntime.notifications.error(i18next.t('watch.toast.ruleErrorTitle'), {
           description: data.message,
         });
         return;

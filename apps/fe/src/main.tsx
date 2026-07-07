@@ -11,11 +11,11 @@ import './index.css';
 // 浏览器 console 打印 monorepo 版本（非 production 带 _dev 后缀）
 console.info(`tmex ${formatDisplayVersion(__MONOREPO_VERSION__, __IS_PROD__)}`);
 
-import { ConnectionIndicator } from '@/components/connection-indicator';
+import { ConnectionIndicator } from '@tmex/panels';
 import { FlowBridges } from '@/components/flow-bridges';
 import { GlobalDeviceProvider } from '@/components/global-device-provider';
 import { AppSidebar } from '@/components/page-layouts/components/app-sidebar';
-import { WatchEventsInit } from '@/components/watch/watch-events-init';
+import { WatchEventsInit } from '@tmex/panels/watch';
 import { useAppMonoFont } from '@/lib/fonts/useAppMonoFont';
 import { useUIStore } from '@tmex/stores';
 import { useKeyboardAvoidance } from '@tmex/terminal-ui';

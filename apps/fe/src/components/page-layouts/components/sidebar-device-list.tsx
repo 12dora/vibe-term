@@ -1,6 +1,6 @@
-import { DeviceStatusBadge } from '@/components/device-status-badge';
+import { DeviceStatusBadge } from '@tmex/panels';
 import { useGlobalDevice } from '@/components/global-device-provider';
-import { WatchDialog } from '@/components/watch/watch-dialog';
+import { WatchDialog } from '@tmex/panels/watch';
 import {
   DndContext,
   type DragEndEvent,

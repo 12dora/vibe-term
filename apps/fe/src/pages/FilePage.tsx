@@ -5,9 +5,9 @@ import { type ReactNode, useMemo } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useParams } from 'react-router';
 
-import { CodeViewer } from '@/components/code-viewer/code-viewer';
-import { startTransferToast } from '@/components/files-panel/transfer-toast';
-import { MarkdownPreview } from '@/components/markdown/markdown-preview';
+import { CodeViewer } from '@tmex/panels/code-viewer';
+import { startTransferToast } from '@tmex/panels/files';
+import { MarkdownPreview } from '@tmex/panels/markdown';
 import i18n from '@/i18n';
 import {
   type FileApiError,

@@ -1,4 +1,4 @@
-import { StreamingMarkdown } from '@/components/markdown/streaming-markdown';
+import { StreamingMarkdown } from '../../markdown/streaming-markdown';
 import { cn } from '@tmex/ui';
 
 export function AssistantMessage({

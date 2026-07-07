@@ -12,10 +12,10 @@ import { SidebarTitle } from './sidebar-title';
 // AgentTab / FilesTab 仅在选中对应 tab 时才渲染，改 React.lazy 懒加载，
 // 把 agent / files 两个子系统（含各自 store + 重组件链）移出首屏 entry chunk。
 const AgentTab = lazy(() =>
-  import('@/components/agent-panel/agent-tab').then((m) => ({ default: m.AgentTab }))
+  import('@tmex/panels/agent').then((m) => ({ default: m.AgentTab }))
 );
 const FilesTab = lazy(() =>
-  import('@/components/files-panel/files-tab').then((m) => ({ default: m.FilesTab }))
+  import('@tmex/panels/files').then((m) => ({ default: m.FilesTab }))
 );
 
 // 灰色轨道(bg-muted)上嵌一个更亮的圆角药丸：亮色用 bg-background(白)，暗色用更亮的半透明覆盖，去边框。

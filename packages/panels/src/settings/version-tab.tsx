@@ -6,7 +6,7 @@ import { useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { toast } from 'sonner';
 
-import { MarkdownPreview } from '@/components/markdown/markdown-preview';
+import { MarkdownPreview } from '../markdown/markdown-preview';
 import { useSiteStore } from '@tmex/stores';
 import {
   AlertDialog,

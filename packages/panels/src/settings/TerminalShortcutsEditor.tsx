@@ -1,4 +1,4 @@
-import { ShortcutButtonRow } from '@/components/settings/ShortcutButtonRow';
+import { ShortcutButtonRow } from './ShortcutButtonRow';
 import {
   DndContext,
   type DragEndEvent,

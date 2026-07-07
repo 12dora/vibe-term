@@ -1,4 +1,4 @@
-import i18n from '@/i18n';
+import i18next from 'i18next';
 import { bridgeNavigate, bridgeOpenMobileSidebar } from '@tmex/stores';
 import { useAgentStore } from '@tmex/stores';
 import { useTmuxStore } from '@tmex/stores';
@@ -44,14 +44,14 @@ async function pollUntil<T>(fn: () => T | null, timeoutMs: number): Promise<T | 
 }
 
 export function buildRsyncInstallPrompt(deviceLabel: string, remote: boolean): string {
-  return i18n.t('files.install.prompt', {
+  return i18next.t('files.install.prompt', {
     device: deviceLabel,
-    scope: remote ? i18n.t('files.install.scopeRemote') : i18n.t('files.install.scopeLocal'),
+    scope: remote ? i18next.t('files.install.scopeRemote') : i18next.t('files.install.scopeLocal'),
   });
 }
 
 export function buildSendToAgentPrompt(path: string): string {
-  return i18n.t('files.sendToAgent.prompt', { path });
+  return i18next.t('files.sendToAgent.prompt', { path });
 }
 
 // 通用 agent 编排：确保设备连接 → 建窗 → 等就绪 → 起草（预填 prompt）→ 导航 → 切 agent → 手机强开 sidebar。
@@ -73,7 +73,7 @@ export async function openAgentInNewWindowWithPrompt(
         CONNECT_TIMEOUT_MS
       );
       if (!connected) {
-        toast.error(i18n.t('files.agentLaunch.connectFailed'));
+        toast.error(i18next.t('files.agentLaunch.connectFailed'));
         return;
       }
     }
@@ -83,7 +83,7 @@ export async function openAgentInNewWindowWithPrompt(
     tmux.createWindow(deviceId);
     const win = await pollUntil(() => findNewWindow(deviceId, before), WINDOW_TIMEOUT_MS);
     if (!win) {
-      toast.error(i18n.t('files.agentLaunch.windowFailed'));
+      toast.error(i18next.t('files.agentLaunch.windowFailed'));
       return;
     }
 

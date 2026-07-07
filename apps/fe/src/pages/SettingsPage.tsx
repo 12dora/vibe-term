@@ -35,15 +35,15 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Switch } from '@tmex/ui/switch';
 import { Tabs, TabsList, TabsTrigger } from '@tmex/ui/tabs';
 import { tabTriggerClassName } from '../components/page-layouts/components/app-sidebar';
-import { DeviceEntryCard } from '../components/settings/device-entry-card';
-import { FilesSettingsTab } from '../components/settings/files-tab';
-import { LlmProvidersTab } from '../components/settings/llm-providers-tab';
-import { SearchTab } from '../components/settings/search-tab';
-import { TelegramBotsTab } from '../components/settings/telegram-bots-tab';
-import { TerminalSettingsTab } from '../components/settings/terminal-tab';
-import { VersionTab } from '../components/settings/version-tab';
-import { WebhooksTab } from '../components/settings/webhooks-tab';
-import { WeixinAccountsTab } from '../components/settings/weixin-accounts-tab';
+import { DeviceEntryCard } from '@tmex/panels/settings';
+import { FilesSettingsTab } from '@tmex/panels/settings';
+import { LlmProvidersTab } from '@tmex/panels/settings';
+import { SearchTab } from '@tmex/panels/settings';
+import { TelegramBotsTab } from '@tmex/panels/settings';
+import { TerminalSettingsTab } from '@tmex/panels/settings';
+import { VersionTab } from '@tmex/panels/settings';
+import { WebhooksTab } from '@tmex/panels/settings';
+import { WeixinAccountsTab } from '@tmex/panels/settings';
 
 interface SiteSettingsResponse {
   settings: SiteSettings;

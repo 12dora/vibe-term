@@ -5,7 +5,7 @@ import rehypeKatex from 'rehype-katex';
 import remarkGfm from 'remark-gfm';
 import remarkMath from 'remark-math';
 import 'katex/dist/katex.min.css';
-import '@/components/code-viewer/hljs-terminal-theme.css';
+import '../code-viewer/hljs-terminal-theme.css';
 import { MermaidBlock } from './mermaid-block';
 
 /** 简易 posix 路径规范化，处理 './' '../' 段 */

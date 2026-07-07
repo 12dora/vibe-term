@@ -1,4 +1,4 @@
-import { DeviceStatusBadge } from '@/components/device-status-badge';
+import { DeviceStatusBadge } from '@tmex/panels';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import type { CreateDeviceRequest, Device, UpdateDeviceRequest } from '@tmex/shared';
 import { toBCP47 } from '@tmex/shared';

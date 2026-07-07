@@ -1,7 +1,7 @@
-import { DeviceStatusBadge } from '@/components/device-status-badge';
-import { ShortcutButtonRow } from '@/components/settings/ShortcutButtonRow';
-import { TerminalSettingsSheet } from '@/components/settings/terminal-settings-sheet';
-import { WatchDialog } from '@/components/watch/watch-dialog';
+import { DeviceStatusBadge } from '@tmex/panels';
+import { ShortcutButtonRow } from '@tmex/panels/settings';
+import { TerminalSettingsSheet } from '@tmex/panels/settings';
+import { WatchDialog } from '@tmex/panels/watch';
 import { useQuery } from '@tanstack/react-query';
 import { fetchTerminalShortcuts, terminalShortcutsQueryKey } from '@tmex/api-client';
 import { fetchWatchRules, watchRulesQueryKey } from '@tmex/api-client';

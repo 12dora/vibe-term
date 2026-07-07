@@ -1,6 +1,6 @@
 import { toast } from 'sonner';
 
-import i18n from '@/i18n';
+import i18next from 'i18next';
 import type { LegProgress } from '@tmex/api-client';
 import { Progress } from '@tmex/ui/progress';
 
@@ -15,12 +15,12 @@ interface ToastModel {
 function legLabel(direction: TransferDirection, leg: 1 | 2): string {
   if (direction === 'upload') {
     return leg === 1
-      ? i18n.t('files.transfer.legUserToTmex')
-      : i18n.t('files.transfer.legTmexToServer');
+      ? i18next.t('files.transfer.legUserToTmex')
+      : i18next.t('files.transfer.legTmexToServer');
   }
   return leg === 1
-    ? i18n.t('files.transfer.legServerToTmex')
-    : i18n.t('files.transfer.legTmexToUser');
+    ? i18next.t('files.transfer.legServerToTmex')
+    : i18next.t('files.transfer.legTmexToUser');
 }
 
 function LegRow({ label, leg }: { label: string; leg: LegProgress }) {
@@ -83,7 +83,7 @@ export function startTransferToast(
       closeButton: false,
       // 取消用 sonner 的 action 按钮（位于卡片右侧区域）。注意：sonner 的 cancel 按钮在
       // dismissible:false 时会被禁用（源码 `if (!dismissible) return`），故必须用 action。
-      action: { label: i18n.t('files.transfer.cancel'), onClick: () => onCancel() },
+      action: { label: i18next.t('files.transfer.cancel'), onClick: () => onCancel() },
       // sonner 的 content 默认按内容宽度收缩 → 进度条不满；flex-1 让内容占满可用区域（取消按钮之外）
       classNames: { content: 'flex-1' },
     });
