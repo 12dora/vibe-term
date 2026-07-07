@@ -43,7 +43,7 @@ mock.module('../i18n', () => {
 
 const sendMock = mock(() => true);
 const isReadyMock = mock(() => true);
-mock.module('../ws-borsh', () => {
+mock.module('@tmex/ws-client', () => {
   return {
     getBorshClient: () => ({ send: sendMock, isReady: isReadyMock }),
     buildSiteThemeUpdate: (theme: 'dark' | 'light') => ({

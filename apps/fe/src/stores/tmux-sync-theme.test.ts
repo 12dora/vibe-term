@@ -61,7 +61,7 @@ function makeBuildFn(kind: number) {
   });
 }
 
-mock.module('../ws-borsh', () => {
+mock.module('@tmex/ws-client', () => {
   const stub = {
     send: sendMock,
     isReady: isReadyMock,
@@ -140,7 +140,7 @@ mock.module('../ws-borsh', () => {
   };
 });
 
-mock.module('../ws-borsh/pane-sink-registry', () => ({
+mock.module('@tmex/ws-client/pane-sink-registry', () => ({
   beginPaneHistoryGate: () => {},
   cleanupDevicePaneState: () => {},
   dispatchPaneApplyHistory: () => {},

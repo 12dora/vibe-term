@@ -1,7 +1,7 @@
 import { getTmuxWindowStyle } from '@/components/terminal/theme';
 import { navigateToAppUrl } from '@/lib/app-navigation';
-import type { ConnectionState } from '@/ws-borsh';
-import { getBorshClient } from '@/ws-borsh';
+import type { ConnectionState } from '@tmex/ws-client';
+import { getBorshClient } from '@tmex/ws-client';
 import {
   buildDeviceConnect,
   buildDeviceDisconnect,
@@ -29,8 +29,8 @@ import {
   buildTmuxSubscribePanes,
   decodeSiteThemeUpdate,
   generateSelectToken,
-} from '@/ws-borsh';
-import { getSelectStateMachine } from '@/ws-borsh';
+} from '@tmex/ws-client';
+import { getSelectStateMachine } from '@tmex/ws-client';
 import {
   beginPaneHistoryGate,
   cleanupDevicePaneState,
@@ -38,7 +38,7 @@ import {
   dispatchPaneHistory,
   dispatchPaneOutput,
   dispatchPaneReset,
-} from '@/ws-borsh/pane-sink-registry';
+} from '@tmex/ws-client/pane-sink-registry';
 import type { EventDevicePayload, EventTmuxPayload, StateSnapshotPayload } from '@tmex/shared';
 import { wsBorsh } from '@tmex/shared';
 import { toast } from 'sonner';

@@ -8,6 +8,7 @@ COPY package.json bun.lock* tsconfig.json ./
 COPY packages/shared/package.json packages/shared/
 COPY packages/ui/package.json packages/ui/
 COPY packages/ghostty-terminal/package.json packages/ghostty-terminal/
+COPY packages/ws-client/package.json packages/ws-client/
 COPY apps/fe/package.json apps/fe/
 
 # 安装依赖
@@ -17,6 +18,7 @@ RUN bun install
 COPY packages/shared/ packages/shared/
 COPY packages/ui/ packages/ui/
 COPY packages/ghostty-terminal/ packages/ghostty-terminal/
+COPY packages/ws-client/ packages/ws-client/
 COPY apps/fe/ apps/fe/
 
 # 构建

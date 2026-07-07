@@ -1,6 +1,6 @@
 import { useTmuxStore } from '@/stores/tmux';
-import type { ConnectionState } from '@/ws-borsh';
-import { getBorshClient } from '@/ws-borsh';
+import type { ConnectionState } from '@tmex/ws-client';
+import { getBorshClient } from '@tmex/ws-client';
 import { Loader2, RefreshCcw } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';

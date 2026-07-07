@@ -1,8 +1,8 @@
 // Agent 会话 store：REST 管理 + WS 订阅流式事件
 // 模式仿 tmux.ts：模块级 initialized 防重入、client.onMessage 独立 handler、READY 重连补发订阅。
 
-import { getBorshClient } from '@/ws-borsh';
-import { buildAgentSubscribe, buildAgentUnsubscribe } from '@/ws-borsh';
+import { getBorshClient } from '@tmex/ws-client';
+import { buildAgentSubscribe, buildAgentUnsubscribe } from '@tmex/ws-client';
 import type {
   AgentConfirmationDto,
   AgentMessageDto,

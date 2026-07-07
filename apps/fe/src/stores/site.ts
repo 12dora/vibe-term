@@ -1,7 +1,7 @@
 import { DEFAULT_LOCALE, type SiteSettings, type ThemeMode } from '@tmex/shared';
 import { create } from 'zustand';
 import i18n from '../i18n';
-import { buildSiteThemeUpdate, getBorshClient } from '../ws-borsh';
+import { buildSiteThemeUpdate, getBorshClient } from '@tmex/ws-client';
 import { useUIStore } from './ui';
 
 interface SiteState {
