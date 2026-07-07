@@ -1,7 +1,7 @@
-import { shouldSyncOnViewportRestore } from '@/utils/resizeSyncGuards';
 import type { CompatibleTerminalLike } from 'ghostty-terminal';
 import type { FitAddon } from 'ghostty-terminal';
 import { useCallback, useEffect, useRef } from 'react';
+import { shouldSyncOnViewportRestore } from '../utils/resizeSyncGuards';
 
 interface UseTerminalResizeOptions {
   deviceId: string;

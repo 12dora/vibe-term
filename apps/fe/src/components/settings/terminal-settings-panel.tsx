@@ -1,5 +1,5 @@
-import { TerminalPreview } from '@/components/terminal/TerminalPreview';
 import { type KeyboardBehaviorMode, useUIStore } from '@tmex/stores';
+import { TerminalPreview } from '@tmex/terminal-ui';
 import { FONT_MANIFEST, getFontEntry } from '@tmex/theme';
 import { cn } from '@tmex/ui';
 import { Input } from '@tmex/ui/input';

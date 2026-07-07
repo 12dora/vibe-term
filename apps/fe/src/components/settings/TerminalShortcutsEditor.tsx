@@ -1,10 +1,5 @@
 import { ShortcutButtonRow } from '@/components/settings/ShortcutButtonRow';
 import {
-  escapeForDisplay,
-  keyEventToTerminalSequence,
-  parseEscapeSequence,
-} from '@/utils/terminalKeySequence';
-import {
   DndContext,
   type DragEndEvent,
   KeyboardSensor,
@@ -33,6 +28,11 @@ import {
   type TerminalShortcutAction,
   type TerminalShortcutItem,
 } from '@tmex/shared';
+import {
+  escapeForDisplay,
+  keyEventToTerminalSequence,
+  parseEscapeSequence,
+} from '@tmex/terminal-ui';
 import { cn } from '@tmex/ui';
 import { Button } from '@tmex/ui/button';
 import { Input } from '@tmex/ui/input';

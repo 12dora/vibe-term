@@ -1,10 +1,6 @@
 import { DeviceStatusBadge } from '@/components/device-status-badge';
 import { ShortcutButtonRow } from '@/components/settings/ShortcutButtonRow';
 import { TerminalSettingsSheet } from '@/components/settings/terminal-settings-sheet';
-import { Terminal as TerminalComponent, type TerminalRef } from '@/components/terminal';
-import { PaneSwitcherMenu } from '@/components/terminal/PaneSwitcherMenu';
-import { SplitTerminalArea } from '@/components/terminal/SplitTerminalArea';
-import { XTERM_THEME_DARK, XTERM_THEME_LIGHT } from '@/components/terminal/theme';
 import { WatchDialog } from '@/components/watch/watch-dialog';
 import { useQuery } from '@tanstack/react-query';
 import { fetchTerminalShortcuts, terminalShortcutsQueryKey } from '@tmex/api-client';
@@ -17,6 +13,19 @@ import { useTmuxStore } from '@tmex/stores';
 import { useUIStore } from '@tmex/stores';
 import { buildBrowserTitle, buildTerminalLabel } from '@tmex/stores';
 import { decodePaneIdFromUrlParam, encodePaneIdForUrl } from '@tmex/stores';
+import { Terminal as TerminalComponent, type TerminalRef } from '@tmex/terminal-ui';
+import { PaneSwitcherMenu } from '@tmex/terminal-ui';
+import { SplitTerminalArea } from '@tmex/terminal-ui';
+import { XTERM_THEME_DARK, XTERM_THEME_LIGHT } from '@tmex/terminal-ui';
+import { shouldApplyRemotePaneSize } from '@tmex/terminal-ui';
+import {
+  type TimedPaneSelection,
+  resolvePendingUserSelection,
+  shouldIgnoreActivePaneEvent,
+  shouldSkipSnapshotFollow,
+  shouldTrackPendingRouteSelection,
+} from '@tmex/terminal-ui';
+import { isIOSMobileBrowser } from '@tmex/terminal-ui';
 import { useIsMobile } from '@tmex/ui';
 import {
   AlertDialog,
@@ -48,15 +57,6 @@ import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useNavigate, useParams } from 'react-router';
 import { toast } from 'sonner';
-import { shouldApplyRemotePaneSize } from '../utils/resizeSyncGuards';
-import {
-  type TimedPaneSelection,
-  resolvePendingUserSelection,
-  shouldIgnoreActivePaneEvent,
-  shouldSkipSnapshotFollow,
-  shouldTrackPendingRouteSelection,
-} from '../utils/selectionGuards';
-import { isIOSMobileBrowser } from '../utils/virtualKeyboard';
 
 // 终端快捷键栏：从服务器配置渲染（send 类发送控制序列，action 类触发特殊动作）。
 const ShortcutsBar = memo(function ShortcutsBar({

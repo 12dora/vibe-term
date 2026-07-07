@@ -1,5 +1,5 @@
-import { escapeForDisplay, labelToSymbols } from '@/utils/terminalKeySequence';
 import type { TerminalShortcutAction, TerminalShortcutItem } from '@tmex/shared';
+import { escapeForDisplay, labelToSymbols } from '@tmex/terminal-ui';
 import { cn } from '@tmex/ui';
 import { Button } from '@tmex/ui/button';
 import { ArrowDownToLine, ClipboardPaste, Keyboard, type LucideIcon, Radar } from 'lucide-react';

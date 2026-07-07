@@ -23,6 +23,7 @@
     "@tmex/notifications": "workspace:*",
     "@tmex/shared": "workspace:*",
     "@tmex/stores": "workspace:*",
+    "@tmex/terminal-ui": "workspace:*",
     "@tmex/theme": "workspace:*",
     "@tmex/ui": "workspace:*",
     "@tmex/ws-client": "workspace:*",

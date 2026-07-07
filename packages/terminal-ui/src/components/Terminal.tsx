@@ -1,7 +1,3 @@
-import {
-  registerCursorRectGetter,
-  unregisterCursorRectGetter,
-} from '@/utils/keyboard-cursor-bridge';
 import { useQuery } from '@tanstack/react-query';
 import { fetchFileRoots, fetchFileStat } from '@tmex/api-client';
 import { decodePaneModes } from '@tmex/shared';
@@ -30,6 +26,10 @@ import {
 import { useTranslation } from 'react-i18next';
 import { useNavigate } from 'react-router';
 import { toast } from 'sonner';
+import {
+  registerCursorRectGetter,
+  unregisterCursorRectGetter,
+} from '../utils/keyboard-cursor-bridge';
 import { SelectionToolbar } from './SelectionToolbar';
 import {
   normalizeHistoryForTerminal,
