@@ -79,7 +79,7 @@ export interface CreateSessionOptions {
   writeMode?: AgentWriteMode;
 }
 
-interface AgentState {
+export interface AgentState {
   sessions: Record<string, AgentSessionDto | undefined>;
   sessionOrder: string[];
   sessionsLoaded: boolean;

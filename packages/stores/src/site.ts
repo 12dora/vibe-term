@@ -6,7 +6,7 @@ import { create } from 'zustand';
 import type { RuntimeCore } from './runtime';
 import type { UIStore } from './ui';
 
-interface SiteState {
+export interface SiteState {
   settings: SiteSettings | null;
   loading: boolean;
   fetchSettings: () => Promise<SiteSettings>;

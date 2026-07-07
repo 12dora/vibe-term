@@ -21,6 +21,8 @@ export interface TerminalProps {
   onResize: (cols: number, rows: number) => void;
   onSync: (cols: number, rows: number) => void;
   onResizeSettled?: (cols: number, rows: number) => void;
+  /** 文件链接点击回调（逃生门）；不传则默认走 runtime.host.navigate + fileRoute */
+  onOpenFile?: (rootId: string, path: string) => void;
   /** 拼接在终端容器最下方的内容（如快捷键栏），会占据终端可视区域下方的空间 */
   children?: ReactNode;
   /** 该 pane 是否为焦点（分屏下控制滚动条可见性） */

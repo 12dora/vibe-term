@@ -1,4 +1,4 @@
-import { useUIStore } from '@tmex/stores';
+import { useUIStore } from '@tmex/stores/react';
 import { loadTerminalFonts, resolveFontStack } from '@tmex/theme';
 import { cn } from '@tmex/ui';
 import { FitAddon, createTerminalController } from 'ghostty-terminal';

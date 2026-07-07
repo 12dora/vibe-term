@@ -1,11 +1,10 @@
 import { useQuery } from '@tanstack/react-query';
 import { fetchFileRoots, fetchFileStat } from '@tmex/api-client';
 import { decodePaneModes } from '@tmex/shared';
-import { useTmuxStore } from '@tmex/stores';
-import { useUIStore } from '@tmex/stores';
 import { fileRoute } from '@tmex/stores';
+import { useRuntime, useTmuxStore, useUIStore } from '@tmex/stores/react';
 import { loadTerminalFonts, resolveFontStack } from '@tmex/theme';
-import { type PaneSink, registerPaneSink } from '@tmex/ws-client/pane-sink-registry';
+import type { PaneSink } from '@tmex/ws-client/pane-sink-registry';
 import {
   type CompatibleTerminalLike,
   FitAddon,
@@ -24,8 +23,6 @@ import {
   useState,
 } from 'react';
 import { useTranslation } from 'react-i18next';
-import { useNavigate } from 'react-router';
-import { toast } from 'sonner';
 import {
   registerCursorRectGetter,
   unregisterCursorRectGetter,
@@ -108,6 +105,7 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(
       onResize,
       onSync,
       onResizeSettled,
+      onOpenFile,
       children,
     },
     ref
@@ -119,7 +117,7 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(
     const terminalFontSize = useUIStore((state) => state.terminalFontSize);
     const terminalLineHeight = useUIStore((state) => state.terminalLineHeight);
     const { t } = useTranslation();
-    const navigate = useNavigate();
+    const runtime = useRuntime();
 
     const terminalTheme = useMemo(() => {
       switch (theme) {
@@ -336,8 +334,8 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(
       if (!paneSink || !deviceId || !paneId) {
         return;
       }
-      return registerPaneSink(deviceId, paneId, paneSink);
-    }, [paneSink, deviceId, paneId]);
+      return runtime.paneSinks.registerPaneSink(deviceId, paneId, paneSink);
+    }, [paneSink, deviceId, paneId, runtime]);
 
     useEffect(() => {
       if (!instance) {
@@ -436,7 +434,7 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(
     // 文件链接上下文：该设备已启用的授权根 + 当前 pane 的 cwd，注入终端做候选有效性过滤。
     const { data: fileRootsData } = useQuery({
       queryKey: ['files', 'roots'],
-      queryFn: () => fetchFileRoots(),
+      queryFn: () => fetchFileRoots(runtime.apiClient),
       staleTime: 30_000,
     });
     const fileLinkRoots = useMemo(
@@ -470,16 +468,20 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(
           .filter((r) => path === r.path || path.startsWith(r.path === '/' ? '/' : `${r.path}/`))
           .sort((a, b) => b.path.length - a.path.length)[0];
         if (!root) return;
-        void fetchFileStat(root.id, path)
+        void fetchFileStat(root.id, path, runtime.apiClient)
           .then(() => {
-            navigate(fileRoute(root.id, path));
+            if (onOpenFile) {
+              onOpenFile(root.id, path);
+            } else {
+              runtime.host.navigate(fileRoute(root.id, path));
+            }
           })
           .catch(() => {
-            toast.error(t('terminal.fileLinkNotFound'));
+            runtime.notifications.error(t('terminal.fileLinkNotFound'));
           });
       });
       return () => disposable.dispose();
-    }, [instance, fileLinkRoots, navigate, t]);
+    }, [instance, fileLinkRoots, onOpenFile, runtime, t]);
 
     useEffect(() => {
       if (!instance?.onSelectionChange) {
@@ -504,16 +506,16 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(
 
       void writeTextToClipboard(text)
         .then(() => {
-          toast.success(t('terminal.copied'));
+          runtime.notifications.success(t('terminal.copied'));
         })
         .catch(() => {
-          toast.error(t('terminal.copyFailed'));
+          runtime.notifications.error(t('terminal.copyFailed'));
         })
         .finally(() => {
           instance.clearSelection?.();
           instance.focus();
         });
-    }, [instance, t]);
+    }, [instance, runtime, t]);
 
     const handlePasteClipboard = useCallback(() => {
       if (!instance) return;
@@ -530,9 +532,9 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(
           instance.focus();
         })
         .catch(() => {
-          toast.error(t('terminal.pasteFailed'));
+          runtime.notifications.error(t('terminal.pasteFailed'));
         });
-    }, [instance, t]);
+    }, [instance, runtime, t]);
 
     const handleDismissSelection = useCallback(() => {
       instance?.clearSelection?.();

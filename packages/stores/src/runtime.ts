@@ -18,12 +18,14 @@ import {
   getSelectStateMachine,
 } from '@tmex/ws-client';
 import {
+  type PaneSink,
   beginPaneHistoryGate,
   cleanupDevicePaneState,
   dispatchPaneApplyHistory,
   dispatchPaneHistory,
   dispatchPaneOutput,
   dispatchPaneReset,
+  registerPaneSink,
 } from '@tmex/ws-client/pane-sink-registry';
 import i18next from 'i18next';
 import { bridgeCloseMobileSidebar, bridgeIsMobile, bridgeOpenMobileSidebar } from './flow-bridges';
@@ -38,6 +40,8 @@ export interface HostServices {
 
 /** pane 输出路由面（默认绑模块级注册表，多实例绑各自 PaneSinkRegistry） */
 export interface PaneSinkRouting {
+  /** 终端组件挂载时注册 sink，返回注销函数（消费侧，与 dispatch 生产侧同一注册表） */
+  registerPaneSink(deviceId: string, paneId: string, sink: PaneSink): () => void;
   dispatchPaneReset(deviceId: string, paneId: string, origin?: 'select' | 'history-refresh'): void;
   dispatchPaneApplyHistory(
     deviceId: string,
@@ -116,6 +120,7 @@ export const proxyDefaultNotificationSink: NotificationSink = {
 const defaultBell: BellPlayer = { play: playBellSound };
 
 const defaultPaneSinks: PaneSinkRouting = {
+  registerPaneSink,
   dispatchPaneReset,
   dispatchPaneApplyHistory,
   dispatchPaneOutput,
@@ -139,6 +144,7 @@ export function resolveRuntimeCore(options: AppRuntimeOptions = {}): RuntimeCore
       : (callbacks) => getSelectStateMachine(callbacks),
     paneSinks: conn
       ? {
+          registerPaneSink: (d, p, sink) => conn.paneSinks.registerPaneSink(d, p, sink),
           dispatchPaneReset: (d, p, o) => conn.paneSinks.dispatchPaneReset(d, p, o),
           dispatchPaneApplyHistory: (d, p, data, alt, m) =>
             conn.paneSinks.dispatchPaneApplyHistory(d, p, data, alt, m),

@@ -13,8 +13,7 @@
 import { useBellStore } from '@tmex/notifications';
 import type { TmuxPane, TmuxWindow } from '@tmex/shared';
 import { parseWindowLayout } from '@tmex/shared';
-import { usePaneAgentState } from '@tmex/stores';
-import { useTmuxStore } from '@tmex/stores';
+import { usePaneAgentState, useRuntime, useTmuxStore } from '@tmex/stores/react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Terminal } from './Terminal';
@@ -152,6 +151,7 @@ export function SplitTerminalArea({
   const [paneDrag, setPaneDrag] = useState<PaneDragState | null>(null);
 
   const { t } = useTranslation();
+  const runtime = useRuntime();
   const subscribePanes = useTmuxStore((state) => state.subscribePanes);
   const fetchPaneHistory = useTmuxStore((state) => state.fetchPaneHistory);
   const resizePaneInWindow = useTmuxStore((state) => state.resizePaneInWindow);
@@ -482,7 +482,7 @@ export function SplitTerminalArea({
         }
         if (target.type === 'window') {
           // 移入目标窗口：挂到其 active pane 右侧（tmux move-pane 支持跨窗口目标）
-          const windows = useTmuxStore.getState().snapshots[deviceId]?.session?.windows;
+          const windows = runtime.stores.tmux.getState().snapshots[deviceId]?.session?.windows;
           const dstWindow = windows?.find((w) => w.id === target.windowId);
           const dstPane = dstWindow?.panes.find((p) => p.active) ?? dstWindow?.panes[0];
           if (dstPane) {

@@ -15,7 +15,7 @@ const DEFAULT_TERMINAL_LINE_HEIGHT = 1.2;
 // follow=光标对齐（按光标位置上移，光标始终在键盘上方，终端尺寸不变）。
 export type KeyboardBehaviorMode = 'lift' | 'resize' | 'follow';
 
-interface UIState {
+export interface UIState {
   sidebarCollapsed: boolean;
   sidebarTab: SidebarTab;
   inputMode: 'direct' | 'editor';

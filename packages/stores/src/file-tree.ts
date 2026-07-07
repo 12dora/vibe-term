@@ -8,7 +8,7 @@ export function fileNodeKey(rootId: string, path: string): string {
   return `${rootId}\n${path}`;
 }
 
-interface FileTreeState {
+export interface FileTreeState {
   expanded: Record<string, boolean>;
   toggle: (rootId: string, path: string) => void;
   expand: (rootId: string, path: string) => void;

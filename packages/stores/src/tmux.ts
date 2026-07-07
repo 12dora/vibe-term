@@ -56,7 +56,7 @@ export interface DeviceInitialErrorInput {
   lastErrorType: string | null;
 }
 
-interface TmuxState {
+export interface TmuxState {
   connectionState: ConnectionState;
   hasConnectedOnce: boolean;
   wsLatencyMs: number | null;
