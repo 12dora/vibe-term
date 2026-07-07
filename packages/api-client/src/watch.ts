@@ -70,6 +70,19 @@ export async function deleteWatchRule(
   }
 }
 
+/** 非 2xx 返回 null（调用方按缓存缺失处理）；网络异常仍抛出 */
+export async function fetchWatchRule(
+  ruleId: string,
+  client: ApiClient = defaultApiClient
+): Promise<WatchRuleDto | null> {
+  const res = await client.fetch(`/api/watch/rules/${ruleId}`);
+  if (!res.ok) {
+    return null;
+  }
+  const payload = (await res.json()) as { rule?: WatchRuleDto };
+  return payload.rule ?? null;
+}
+
 export async function fetchWatchRuleState(
   ruleId: string,
   client: ApiClient = defaultApiClient

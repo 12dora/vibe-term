@@ -9,6 +9,7 @@ import { WatchDialog } from '@/components/watch/watch-dialog';
 import { useQuery } from '@tanstack/react-query';
 import { fetchTerminalShortcuts, terminalShortcutsQueryKey } from '@tmex/api-client';
 import { fetchWatchRules, watchRulesQueryKey } from '@tmex/api-client';
+import { useBellStore } from '@tmex/notifications';
 import type { Device, TerminalShortcutItem } from '@tmex/shared';
 import { useIsMobile } from '@tmex/ui';
 import {
@@ -42,7 +43,6 @@ import { useTranslation } from 'react-i18next';
 import { useNavigate, useParams } from 'react-router';
 import { toast } from 'sonner';
 import { useAgentStore } from '../stores/agent';
-import { useBellStore } from '@tmex/notifications';
 import { useSiteStore } from '../stores/site';
 import { useTmuxStore } from '../stores/tmux';
 import { useUIStore } from '../stores/ui';

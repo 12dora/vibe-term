@@ -11,8 +11,8 @@
 // - 焦点 pane 由 URL 决定，点击非焦点 pane 触发 onUserSelectPane（轻量 focus 路径）。
 
 import { usePaneAgentState } from '@/hooks/usePaneAgentState';
-import { useBellStore } from '@tmex/notifications';
 import { useTmuxStore } from '@/stores/tmux';
+import { useBellStore } from '@tmex/notifications';
 import type { TmuxPane, TmuxWindow } from '@tmex/shared';
 import { parseWindowLayout } from '@tmex/shared';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
@@ -356,9 +356,10 @@ export function SplitTerminalArea({
         );
         if (!edgePaneEl) return;
         const edgePaneRect = edgePaneEl.getBoundingClientRect();
-        const currentSize = gutter.axis === 'x'
-          ? Math.floor(edgePaneRect.width / axisCell)
-          : Math.floor(edgePaneRect.height / axisCell);
+        const currentSize =
+          gutter.axis === 'x'
+            ? Math.floor(edgePaneRect.width / axisCell)
+            : Math.floor(edgePaneRect.height / axisCell);
         const targetSize = currentSize + deltaCells;
         if (targetSize < 2) return;
         reportWindowSizeRef.current();
@@ -422,9 +423,7 @@ export function SplitTerminalArea({
 
       // 侧栏落点：窗口行 = 移入该窗口；侧栏其余区域 = 拆为独立窗口
       const hitTestSidebar = (clientX: number, clientY: number): PaneDragTarget | null => {
-        for (const row of Array.from(
-          document.querySelectorAll('[data-testid^="window-item-"]')
-        )) {
+        for (const row of Array.from(document.querySelectorAll('[data-testid^="window-item-"]'))) {
           const r = row.getBoundingClientRect();
           if (r.width < 1 || !within(clientX, clientY, r)) continue;
           const windowId = (row.getAttribute('data-testid') ?? '').replace('window-item-', '');

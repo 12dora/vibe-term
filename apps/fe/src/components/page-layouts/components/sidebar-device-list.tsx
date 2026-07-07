@@ -91,9 +91,9 @@ type CloseCandidate =
 type RenameCandidate =
   | { kind: 'window'; deviceId: string; windowId: string; hasCustomName: boolean }
   | { kind: 'pane'; deviceId: string; paneId: string; hasCustomName: boolean };
+import { useBellStore } from '@tmex/notifications';
 import { useTranslation } from 'react-i18next';
 import { matchPath, useLocation, useNavigate } from 'react-router';
-import { useBellStore } from '@tmex/notifications';
 import { useSiteStore } from '../../../stores/site';
 import { useTmuxStore } from '../../../stores/tmux';
 import { decodePaneIdFromUrlParam, encodePaneIdForUrl } from '../../../utils/tmuxUrl';
@@ -205,7 +205,12 @@ export function SideBarDeviceList() {
   );
 
   const navigateToPane = useCallback(
-    (deviceId: string, windowId: string, paneId: string, options?: { keepSidebarOpen?: boolean }) => {
+    (
+      deviceId: string,
+      windowId: string,
+      paneId: string,
+      options?: { keepSidebarOpen?: boolean }
+    ) => {
       // Clear any pending navigation to prevent interference
       pendingNavigationRef.current = null;
 
@@ -382,7 +387,12 @@ export function SideBarDeviceList() {
     const target = windows?.flatMap((w) => w.panes).find((p) => p.id === paneId);
     if (!target) return;
     setRenameValue(target.customName ?? target.title ?? '');
-    setRenameCandidate({ kind: 'pane', deviceId, paneId, hasCustomName: Boolean(target.customName) });
+    setRenameCandidate({
+      kind: 'pane',
+      deviceId,
+      paneId,
+      hasCustomName: Boolean(target.customName),
+    });
   }, []);
 
   const renamePane = useTmuxStore((state) => state.renamePane);
@@ -551,28 +561,28 @@ export function SideBarDeviceList() {
                 <DeviceSection
                   key={device.id}
                   device={device}
-              windows={snapshots[device.id]?.session?.windows ?? null}
-              isConnected={connectedDevices.has(device.id)}
-              isSelected={device.id === selectedDeviceId}
-              selectedWindowId={selectedWindowId}
-              selectedPaneId={selectedPaneId}
-              onConnectToggle={() =>
-                handleConnectToggle(device.id, connectedDevices.has(device.id))
-              }
-              onCreateWindow={handleCreateWindow}
-              onCloseWindow={requestCloseWindow}
-              onClosePane={requestClosePane}
-              onRenameWindow={requestRenameWindow}
-              onRenamePane={requestRenamePane}
-              onPaneClick={navigateToPane}
-              onWindowClick={navigateToWindow}
-              onWatchPane={requestWatchPane}
-              sessionsByPane={sessionsByPane}
-              activeSessionId={activeSessionId}
-              onSelectSession={handleSelectSession}
-              onCreateSessionForPane={handleCreateSessionForPane}
-              onRenameSession={requestRenameSession}
-              onDeleteSession={requestDeleteSession}
+                  windows={snapshots[device.id]?.session?.windows ?? null}
+                  isConnected={connectedDevices.has(device.id)}
+                  isSelected={device.id === selectedDeviceId}
+                  selectedWindowId={selectedWindowId}
+                  selectedPaneId={selectedPaneId}
+                  onConnectToggle={() =>
+                    handleConnectToggle(device.id, connectedDevices.has(device.id))
+                  }
+                  onCreateWindow={handleCreateWindow}
+                  onCloseWindow={requestCloseWindow}
+                  onClosePane={requestClosePane}
+                  onRenameWindow={requestRenameWindow}
+                  onRenamePane={requestRenamePane}
+                  onPaneClick={navigateToPane}
+                  onWindowClick={navigateToWindow}
+                  onWatchPane={requestWatchPane}
+                  sessionsByPane={sessionsByPane}
+                  activeSessionId={activeSessionId}
+                  onSelectSession={handleSelectSession}
+                  onCreateSessionForPane={handleCreateSessionForPane}
+                  onRenameSession={requestRenameSession}
+                  onDeleteSession={requestDeleteSession}
                 />
               ))}
             </SortableContext>
@@ -856,9 +866,7 @@ function DeviceSection({
             <GripVertical className="h-3.5 w-3.5 [@media(any-pointer:coarse)]:h-5 [@media(any-pointer:coarse)]:w-5" />
           </button>
           <DeviceIcon className="h-4 w-4 text-muted-foreground shrink-0" />
-          <span className="flex-1 truncate text-xs font-medium">
-            {device.name}
-          </span>
+          <span className="flex-1 truncate text-xs font-medium">{device.name}</span>
 
           <DeviceStatusBadge deviceId={device.id} className="shrink-0" />
 
@@ -1049,7 +1057,9 @@ function WindowItem({
           onClick={(e) => e.stopPropagation()}
           className={cn(
             'touch-none cursor-grab shrink-0 flex items-center justify-center text-muted-foreground/50 hover:text-muted-foreground opacity-100',
-            isMobile ? 'h-9 w-4' : 'h-6 w-3.5 [@media(any-pointer:coarse)]:h-9 [@media(any-pointer:coarse)]:w-4'
+            isMobile
+              ? 'h-9 w-4'
+              : 'h-6 w-3.5 [@media(any-pointer:coarse)]:h-9 [@media(any-pointer:coarse)]:w-4'
           )}
         >
           <GripVertical className={cn(isMobile ? 'h-4 w-4' : 'h-3.5 w-3.5')} />
@@ -1093,127 +1103,135 @@ function WindowItem({
 
         {/* Window Actions Menu - positioned absolutely；多 pane 窗口的操作全部下放到各 pane 行 */}
         {!hasMultiplePanes && (
-        <DropdownMenu>
-          <DropdownMenuTrigger
-            data-testid={`window-menu-${window.id}`}
-            aria-label={t('window.menu')}
-            title={t('window.menu')}
-            className={cn(
-              'absolute top-1/2 -translate-y-1/2 flex items-center justify-center rounded text-muted-foreground hover:bg-background hover:text-foreground transition-opacity data-popup-open:opacity-100',
-              isMobile
-                ? 'h-11 w-11 right-0 rounded-lg bg-background/40 opacity-100'
-                : 'h-5 w-5 right-1.5 [@media(any-pointer:coarse)]:h-10 [@media(any-pointer:coarse)]:w-10 [@media(any-pointer:coarse)]:right-0.5 [@media(any-pointer:coarse)]:rounded-lg',
-              isPaneSelected
-                ? 'opacity-100'
-                : 'opacity-0 group-hover:opacity-100 [@media(any-pointer:coarse)]:opacity-100'
-            )}
-          >
-            <EllipsisVertical
+          <DropdownMenu>
+            <DropdownMenuTrigger
+              data-testid={`window-menu-${window.id}`}
+              aria-label={t('window.menu')}
+              title={t('window.menu')}
               className={cn(
+                'absolute top-1/2 -translate-y-1/2 flex items-center justify-center rounded text-muted-foreground hover:bg-background hover:text-foreground transition-opacity data-popup-open:opacity-100',
                 isMobile
-                  ? 'h-5 w-5'
-                  : 'h-3.5 w-3.5 [@media(any-pointer:coarse)]:h-4.5 [@media(any-pointer:coarse)]:w-4.5'
+                  ? 'h-11 w-11 right-0 rounded-lg bg-background/40 opacity-100'
+                  : 'h-5 w-5 right-1.5 [@media(any-pointer:coarse)]:h-10 [@media(any-pointer:coarse)]:w-10 [@media(any-pointer:coarse)]:right-0.5 [@media(any-pointer:coarse)]:rounded-lg',
+                isPaneSelected
+                  ? 'opacity-100'
+                  : 'opacity-0 group-hover:opacity-100 [@media(any-pointer:coarse)]:opacity-100'
               )}
-            />
-          </DropdownMenuTrigger>
-          <DropdownMenuContent
-            align="end"
-            backdrop
-            className="w-auto min-w-36 [@media(any-pointer:coarse)]:min-w-48"
-          >
-            <DropdownMenuItem
-              data-testid={`window-menu-rename-${window.id}`}
-              className={cn(
-                '[@media(any-pointer:coarse)]:py-2.5 [@media(any-pointer:coarse)]:px-2',
-                isMobile && 'py-3 px-2.5 text-base gap-2.5'
-              )}
-              onClick={() => onRenameWindow(deviceId, window.id)}
             >
-              <Pencil className={cn('h-4 w-4', isMobile && 'h-5 w-5')} />
-              {t('window.rename')}
-            </DropdownMenuItem>
-            <DropdownMenuItem
-              data-testid={`window-menu-new-session-${window.id}`}
-              className={cn(
-                '[@media(any-pointer:coarse)]:py-2.5 [@media(any-pointer:coarse)]:px-2',
-                isMobile && 'py-3 px-2.5 text-base gap-2.5'
-              )}
-              onClick={() => onCreateSessionForPane(deviceId, window.id, selectedPaneInWindow || window.panes[0])}
+              <EllipsisVertical
+                className={cn(
+                  isMobile
+                    ? 'h-5 w-5'
+                    : 'h-3.5 w-3.5 [@media(any-pointer:coarse)]:h-4.5 [@media(any-pointer:coarse)]:w-4.5'
+                )}
+              />
+            </DropdownMenuTrigger>
+            <DropdownMenuContent
+              align="end"
+              backdrop
+              className="w-auto min-w-36 [@media(any-pointer:coarse)]:min-w-48"
             >
-              <Plus className={cn('h-4 w-4', isMobile && 'h-5 w-5')} />
-              {t('agent.session.new')}
-            </DropdownMenuItem>
-            {activePaneCwd && (
               <DropdownMenuItem
+                data-testid={`window-menu-rename-${window.id}`}
                 className={cn(
                   '[@media(any-pointer:coarse)]:py-2.5 [@media(any-pointer:coarse)]:px-2',
                   isMobile && 'py-3 px-2.5 text-base gap-2.5'
                 )}
-                onClick={() => useTmuxStore.getState().createWindow(deviceId, undefined, activePaneCwd)}
+                onClick={() => onRenameWindow(deviceId, window.id)}
               >
-                <FolderOpen className={cn('h-4 w-4', isMobile && 'h-5 w-5')} />
-                {t('window.newInCwd')}
+                <Pencil className={cn('h-4 w-4', isMobile && 'h-5 w-5')} />
+                {t('window.rename')}
               </DropdownMenuItem>
-            )}
-            {activePane && (
-              <>
+              <DropdownMenuItem
+                data-testid={`window-menu-new-session-${window.id}`}
+                className={cn(
+                  '[@media(any-pointer:coarse)]:py-2.5 [@media(any-pointer:coarse)]:px-2',
+                  isMobile && 'py-3 px-2.5 text-base gap-2.5'
+                )}
+                onClick={() =>
+                  onCreateSessionForPane(
+                    deviceId,
+                    window.id,
+                    selectedPaneInWindow || window.panes[0]
+                  )
+                }
+              >
+                <Plus className={cn('h-4 w-4', isMobile && 'h-5 w-5')} />
+                {t('agent.session.new')}
+              </DropdownMenuItem>
+              {activePaneCwd && (
                 <DropdownMenuItem
-                  data-testid={`window-menu-split-right-${window.id}`}
                   className={cn(
                     '[@media(any-pointer:coarse)]:py-2.5 [@media(any-pointer:coarse)]:px-2',
                     isMobile && 'py-3 px-2.5 text-base gap-2.5'
                   )}
                   onClick={() =>
-                    useTmuxStore
-                      .getState()
-                      .splitPane(deviceId, activePane.id, 'right', activePane.currentPath)
+                    useTmuxStore.getState().createWindow(deviceId, undefined, activePaneCwd)
                   }
                 >
-                  <SquareSplitHorizontal className={cn('h-4 w-4', isMobile && 'h-5 w-5')} />
-                  {t('window.splitRight')}
+                  <FolderOpen className={cn('h-4 w-4', isMobile && 'h-5 w-5')} />
+                  {t('window.newInCwd')}
                 </DropdownMenuItem>
-                <DropdownMenuItem
-                  data-testid={`window-menu-split-down-${window.id}`}
-                  className={cn(
-                    '[@media(any-pointer:coarse)]:py-2.5 [@media(any-pointer:coarse)]:px-2',
-                    isMobile && 'py-3 px-2.5 text-base gap-2.5'
-                  )}
-                  onClick={() =>
-                    useTmuxStore
-                      .getState()
-                      .splitPane(deviceId, activePane.id, 'down', activePane.currentPath)
-                  }
-                >
-                  <SquareSplitVertical className={cn('h-4 w-4', isMobile && 'h-5 w-5')} />
-                  {t('window.splitDown')}
-                </DropdownMenuItem>
-                <DropdownMenuItem
-                  data-testid={`window-menu-watch-${window.id}`}
-                  className={cn(
-                    '[@media(any-pointer:coarse)]:py-2.5 [@media(any-pointer:coarse)]:px-2',
-                    isMobile && 'py-3 px-2.5 text-base gap-2.5'
-                  )}
-                  onClick={() => onWatchPane(deviceId, activePane.id)}
-                >
-                  <Radar className={cn('h-4 w-4', isMobile && 'h-5 w-5')} />
-                  {t('watch.openMonitor')}
-                </DropdownMenuItem>
-              </>
-            )}
-            <DropdownMenuItem
-              variant="destructive"
-              data-testid={`window-menu-close-${window.id}`}
-              className={cn(
-                '[@media(any-pointer:coarse)]:py-2.5 [@media(any-pointer:coarse)]:px-2',
-                isMobile && 'py-3 px-2.5 text-base gap-2.5'
               )}
-              onClick={() => onCloseWindow(deviceId, window.id)}
-            >
-              <X className={cn('h-4 w-4', isMobile && 'h-5 w-5')} />
-              {t('window.close')}
-            </DropdownMenuItem>
-          </DropdownMenuContent>
-        </DropdownMenu>
+              {activePane && (
+                <>
+                  <DropdownMenuItem
+                    data-testid={`window-menu-split-right-${window.id}`}
+                    className={cn(
+                      '[@media(any-pointer:coarse)]:py-2.5 [@media(any-pointer:coarse)]:px-2',
+                      isMobile && 'py-3 px-2.5 text-base gap-2.5'
+                    )}
+                    onClick={() =>
+                      useTmuxStore
+                        .getState()
+                        .splitPane(deviceId, activePane.id, 'right', activePane.currentPath)
+                    }
+                  >
+                    <SquareSplitHorizontal className={cn('h-4 w-4', isMobile && 'h-5 w-5')} />
+                    {t('window.splitRight')}
+                  </DropdownMenuItem>
+                  <DropdownMenuItem
+                    data-testid={`window-menu-split-down-${window.id}`}
+                    className={cn(
+                      '[@media(any-pointer:coarse)]:py-2.5 [@media(any-pointer:coarse)]:px-2',
+                      isMobile && 'py-3 px-2.5 text-base gap-2.5'
+                    )}
+                    onClick={() =>
+                      useTmuxStore
+                        .getState()
+                        .splitPane(deviceId, activePane.id, 'down', activePane.currentPath)
+                    }
+                  >
+                    <SquareSplitVertical className={cn('h-4 w-4', isMobile && 'h-5 w-5')} />
+                    {t('window.splitDown')}
+                  </DropdownMenuItem>
+                  <DropdownMenuItem
+                    data-testid={`window-menu-watch-${window.id}`}
+                    className={cn(
+                      '[@media(any-pointer:coarse)]:py-2.5 [@media(any-pointer:coarse)]:px-2',
+                      isMobile && 'py-3 px-2.5 text-base gap-2.5'
+                    )}
+                    onClick={() => onWatchPane(deviceId, activePane.id)}
+                  >
+                    <Radar className={cn('h-4 w-4', isMobile && 'h-5 w-5')} />
+                    {t('watch.openMonitor')}
+                  </DropdownMenuItem>
+                </>
+              )}
+              <DropdownMenuItem
+                variant="destructive"
+                data-testid={`window-menu-close-${window.id}`}
+                className={cn(
+                  '[@media(any-pointer:coarse)]:py-2.5 [@media(any-pointer:coarse)]:px-2',
+                  isMobile && 'py-3 px-2.5 text-base gap-2.5'
+                )}
+                onClick={() => onCloseWindow(deviceId, window.id)}
+              >
+                <X className={cn('h-4 w-4', isMobile && 'h-5 w-5')} />
+                {t('window.close')}
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
         )}
       </div>
 
@@ -1332,7 +1350,9 @@ function PaneRow({
           onClick={(e) => e.stopPropagation()}
           className={cn(
             'touch-none cursor-grab shrink-0 flex items-center justify-center text-muted-foreground/50 hover:text-muted-foreground opacity-100',
-            isMobile ? 'h-9 w-4' : 'h-6 w-3 [@media(any-pointer:coarse)]:h-9 [@media(any-pointer:coarse)]:w-4'
+            isMobile
+              ? 'h-9 w-4'
+              : 'h-6 w-3 [@media(any-pointer:coarse)]:h-9 [@media(any-pointer:coarse)]:w-4'
           )}
         >
           <GripVertical className={cn(isMobile ? 'h-4 w-4' : 'h-3 w-3')} />
@@ -1369,129 +1389,131 @@ function PaneRow({
 
         {/* Pane Actions Menu */}
         <DropdownMenu>
-        <DropdownMenuTrigger
-          data-testid={`pane-menu-${pane.id}`}
-          aria-label={t('watch.openMonitor')}
-          className={cn(
-            'absolute top-1/2 -translate-y-1/2 flex items-center justify-center rounded text-muted-foreground hover:bg-background hover:text-foreground transition-opacity data-popup-open:opacity-100',
-            isMobile
-              ? 'h-11 w-11 right-11 rounded-lg bg-background/40 opacity-100'
-              : 'h-5 w-5 right-7 [@media(any-pointer:coarse)]:h-10 [@media(any-pointer:coarse)]:w-10 [@media(any-pointer:coarse)]:right-10.5 [@media(any-pointer:coarse)]:rounded-lg',
-            isActive
-              ? 'opacity-100'
-              : 'opacity-0 group-hover/pane:opacity-100 [@media(any-pointer:coarse)]:opacity-100'
-          )}
-        >
-          <EllipsisVertical className={cn(isMobile ? 'h-5 w-5' : 'h-3.5 w-3.5')} />
-        </DropdownMenuTrigger>
-        <DropdownMenuContent
-          align="end"
-          backdrop
-          className="w-auto min-w-36 [@media(any-pointer:coarse)]:min-w-48"
-        >
-          <DropdownMenuItem
-            data-testid={`pane-menu-rename-${pane.id}`}
+          <DropdownMenuTrigger
+            data-testid={`pane-menu-${pane.id}`}
+            aria-label={t('watch.openMonitor')}
             className={cn(
-              '[@media(any-pointer:coarse)]:py-2.5 [@media(any-pointer:coarse)]:px-2',
-              isMobile && 'py-3 px-2.5 text-base gap-2.5'
+              'absolute top-1/2 -translate-y-1/2 flex items-center justify-center rounded text-muted-foreground hover:bg-background hover:text-foreground transition-opacity data-popup-open:opacity-100',
+              isMobile
+                ? 'h-11 w-11 right-11 rounded-lg bg-background/40 opacity-100'
+                : 'h-5 w-5 right-7 [@media(any-pointer:coarse)]:h-10 [@media(any-pointer:coarse)]:w-10 [@media(any-pointer:coarse)]:right-10.5 [@media(any-pointer:coarse)]:rounded-lg',
+              isActive
+                ? 'opacity-100'
+                : 'opacity-0 group-hover/pane:opacity-100 [@media(any-pointer:coarse)]:opacity-100'
             )}
-            onClick={() => onRenamePane(deviceId, pane.id)}
           >
-            <Pencil className={cn('h-4 w-4', isMobile && 'h-5 w-5')} />
-            {t('window.rename')}
-          </DropdownMenuItem>
-          <DropdownMenuItem
-            data-testid={`pane-menu-new-session-${pane.id}`}
-            className={cn(
-              '[@media(any-pointer:coarse)]:py-2.5 [@media(any-pointer:coarse)]:px-2',
-              isMobile && 'py-3 px-2.5 text-base gap-2.5'
-            )}
-            onClick={() => onCreateSessionForPane(deviceId, windowId, pane)}
+            <EllipsisVertical className={cn(isMobile ? 'h-5 w-5' : 'h-3.5 w-3.5')} />
+          </DropdownMenuTrigger>
+          <DropdownMenuContent
+            align="end"
+            backdrop
+            className="w-auto min-w-36 [@media(any-pointer:coarse)]:min-w-48"
           >
-            <Plus className={cn('h-4 w-4', isMobile && 'h-5 w-5')} />
-            {t('agent.session.new')}
-          </DropdownMenuItem>
-          {pane.currentPath && (
             <DropdownMenuItem
+              data-testid={`pane-menu-rename-${pane.id}`}
               className={cn(
                 '[@media(any-pointer:coarse)]:py-2.5 [@media(any-pointer:coarse)]:px-2',
                 isMobile && 'py-3 px-2.5 text-base gap-2.5'
               )}
-              onClick={() => useTmuxStore.getState().createWindow(deviceId, undefined, pane.currentPath)}
+              onClick={() => onRenamePane(deviceId, pane.id)}
             >
-              <FolderOpen className={cn('h-4 w-4', isMobile && 'h-5 w-5')} />
-              {t('window.newInCwd')}
+              <Pencil className={cn('h-4 w-4', isMobile && 'h-5 w-5')} />
+              {t('window.rename')}
             </DropdownMenuItem>
-          )}
-          <DropdownMenuItem
-            data-testid={`pane-split-right-${pane.id}`}
-            className={cn(
-              '[@media(any-pointer:coarse)]:py-2.5 [@media(any-pointer:coarse)]:px-2',
-              isMobile && 'py-3 px-2.5 text-base gap-2.5'
+            <DropdownMenuItem
+              data-testid={`pane-menu-new-session-${pane.id}`}
+              className={cn(
+                '[@media(any-pointer:coarse)]:py-2.5 [@media(any-pointer:coarse)]:px-2',
+                isMobile && 'py-3 px-2.5 text-base gap-2.5'
+              )}
+              onClick={() => onCreateSessionForPane(deviceId, windowId, pane)}
+            >
+              <Plus className={cn('h-4 w-4', isMobile && 'h-5 w-5')} />
+              {t('agent.session.new')}
+            </DropdownMenuItem>
+            {pane.currentPath && (
+              <DropdownMenuItem
+                className={cn(
+                  '[@media(any-pointer:coarse)]:py-2.5 [@media(any-pointer:coarse)]:px-2',
+                  isMobile && 'py-3 px-2.5 text-base gap-2.5'
+                )}
+                onClick={() =>
+                  useTmuxStore.getState().createWindow(deviceId, undefined, pane.currentPath)
+                }
+              >
+                <FolderOpen className={cn('h-4 w-4', isMobile && 'h-5 w-5')} />
+                {t('window.newInCwd')}
+              </DropdownMenuItem>
             )}
-            onClick={() =>
-              useTmuxStore.getState().splitPane(deviceId, pane.id, 'right', pane.currentPath)
-            }
-          >
-            <SquareSplitHorizontal className={cn('h-4 w-4', isMobile && 'h-5 w-5')} />
-            {t('window.splitRight')}
-          </DropdownMenuItem>
-          <DropdownMenuItem
-            data-testid={`pane-split-down-${pane.id}`}
-            className={cn(
-              '[@media(any-pointer:coarse)]:py-2.5 [@media(any-pointer:coarse)]:px-2',
-              isMobile && 'py-3 px-2.5 text-base gap-2.5'
-            )}
-            onClick={() =>
-              useTmuxStore.getState().splitPane(deviceId, pane.id, 'down', pane.currentPath)
-            }
-          >
-            <SquareSplitVertical className={cn('h-4 w-4', isMobile && 'h-5 w-5')} />
-            {t('window.splitDown')}
-          </DropdownMenuItem>
-          <DropdownMenuItem
-            data-testid={`pane-watch-${pane.id}`}
-            className={cn(
-              '[@media(any-pointer:coarse)]:py-2.5 [@media(any-pointer:coarse)]:px-2',
-              isMobile && 'py-3 px-2.5 text-base gap-2.5'
-            )}
-            onClick={() => onWatchPane(deviceId, pane.id)}
-          >
-            <Radar className={cn('h-4 w-4', isMobile && 'h-5 w-5')} />
-            {t('watch.openMonitor')}
-          </DropdownMenuItem>
-          <DropdownMenuItem
-            variant="destructive"
-            data-testid={`pane-menu-close-${pane.id}`}
-            className={cn(
-              '[@media(any-pointer:coarse)]:py-2.5 [@media(any-pointer:coarse)]:px-2',
-              isMobile && 'py-3 px-2.5 text-base gap-2.5'
-            )}
-            onClick={() => onClosePane(deviceId, windowId, pane.id)}
-          >
-            <X className={cn('h-4 w-4', isMobile && 'h-5 w-5')} />
-            {t('window.closePane')}
-          </DropdownMenuItem>
-        </DropdownMenuContent>
-      </DropdownMenu>
+            <DropdownMenuItem
+              data-testid={`pane-split-right-${pane.id}`}
+              className={cn(
+                '[@media(any-pointer:coarse)]:py-2.5 [@media(any-pointer:coarse)]:px-2',
+                isMobile && 'py-3 px-2.5 text-base gap-2.5'
+              )}
+              onClick={() =>
+                useTmuxStore.getState().splitPane(deviceId, pane.id, 'right', pane.currentPath)
+              }
+            >
+              <SquareSplitHorizontal className={cn('h-4 w-4', isMobile && 'h-5 w-5')} />
+              {t('window.splitRight')}
+            </DropdownMenuItem>
+            <DropdownMenuItem
+              data-testid={`pane-split-down-${pane.id}`}
+              className={cn(
+                '[@media(any-pointer:coarse)]:py-2.5 [@media(any-pointer:coarse)]:px-2',
+                isMobile && 'py-3 px-2.5 text-base gap-2.5'
+              )}
+              onClick={() =>
+                useTmuxStore.getState().splitPane(deviceId, pane.id, 'down', pane.currentPath)
+              }
+            >
+              <SquareSplitVertical className={cn('h-4 w-4', isMobile && 'h-5 w-5')} />
+              {t('window.splitDown')}
+            </DropdownMenuItem>
+            <DropdownMenuItem
+              data-testid={`pane-watch-${pane.id}`}
+              className={cn(
+                '[@media(any-pointer:coarse)]:py-2.5 [@media(any-pointer:coarse)]:px-2',
+                isMobile && 'py-3 px-2.5 text-base gap-2.5'
+              )}
+              onClick={() => onWatchPane(deviceId, pane.id)}
+            >
+              <Radar className={cn('h-4 w-4', isMobile && 'h-5 w-5')} />
+              {t('watch.openMonitor')}
+            </DropdownMenuItem>
+            <DropdownMenuItem
+              variant="destructive"
+              data-testid={`pane-menu-close-${pane.id}`}
+              className={cn(
+                '[@media(any-pointer:coarse)]:py-2.5 [@media(any-pointer:coarse)]:px-2',
+                isMobile && 'py-3 px-2.5 text-base gap-2.5'
+              )}
+              onClick={() => onClosePane(deviceId, windowId, pane.id)}
+            >
+              <X className={cn('h-4 w-4', isMobile && 'h-5 w-5')} />
+              {t('window.closePane')}
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
 
-      {/* Close Pane Button */}
-      <button
-        type="button"
-        onClick={(e) => {
-          e.stopPropagation();
-          onClosePane(deviceId, windowId, pane.id);
-        }}
-        data-testid={`pane-close-${pane.id}`}
-        className={cn(
-          'absolute top-1/2 -translate-y-1/2 flex items-center justify-center rounded text-muted-foreground hover:bg-background hover:text-foreground transition-opacity',
-          isMobile
-            ? 'h-11 w-11 right-0 rounded-lg bg-background/40 opacity-100'
-            : 'h-5 w-5 right-1.5 [@media(any-pointer:coarse)]:h-10 [@media(any-pointer:coarse)]:w-10 [@media(any-pointer:coarse)]:right-0.5 [@media(any-pointer:coarse)]:rounded-lg',
-          isActive
-            ? 'opacity-100'
-            : 'opacity-0 group-hover/pane:opacity-100 [@media(any-pointer:coarse)]:opacity-100'
-        )}
+        {/* Close Pane Button */}
+        <button
+          type="button"
+          onClick={(e) => {
+            e.stopPropagation();
+            onClosePane(deviceId, windowId, pane.id);
+          }}
+          data-testid={`pane-close-${pane.id}`}
+          className={cn(
+            'absolute top-1/2 -translate-y-1/2 flex items-center justify-center rounded text-muted-foreground hover:bg-background hover:text-foreground transition-opacity',
+            isMobile
+              ? 'h-11 w-11 right-0 rounded-lg bg-background/40 opacity-100'
+              : 'h-5 w-5 right-1.5 [@media(any-pointer:coarse)]:h-10 [@media(any-pointer:coarse)]:w-10 [@media(any-pointer:coarse)]:right-0.5 [@media(any-pointer:coarse)]:rounded-lg',
+            isActive
+              ? 'opacity-100'
+              : 'opacity-0 group-hover/pane:opacity-100 [@media(any-pointer:coarse)]:opacity-100'
+          )}
           title={t('window.closePane')}
         >
           <span className={cn('leading-none', isMobile ? 'text-base' : 'text-xs')}>×</span>
@@ -1608,9 +1630,7 @@ function PaneSessionBranch({
               className={cn(
                 'w-full flex items-center gap-1.5 px-2 py-1 pr-7 rounded-md text-left transition-colors [@media(any-pointer:coarse)]:min-h-11 [@media(any-pointer:coarse)]:py-2 [@media(any-pointer:coarse)]:pr-12',
                 isMobile && 'min-h-11 py-2 pr-12',
-                isActive
-                  ? 'bg-primary/10 text-primary'
-                  : 'hover:bg-accent/30 text-muted-foreground'
+                isActive ? 'bg-primary/10 text-primary' : 'hover:bg-accent/30 text-muted-foreground'
               )}
             >
               <Bot className="size-3 shrink-0 opacity-70" />
@@ -1627,7 +1647,7 @@ function PaneSessionBranch({
             </div>
           </div>
         );
-      }      )}
+      })}
     </div>
   );
 }
@@ -1650,7 +1670,11 @@ function OrphanSessions({
   const language = useSiteStore((state) => state.settings?.language ?? 'en_US');
 
   return (
-    <Collapsible open={open} onOpenChange={setOpen} className="rounded-xl border border-border/60 bg-muted/20">
+    <Collapsible
+      open={open}
+      onOpenChange={setOpen}
+      className="rounded-xl border border-border/60 bg-muted/20"
+    >
       <CollapsibleTrigger
         data-testid="agent-orphan-sessions-trigger"
         className="flex w-full items-center gap-2 px-3 py-1.5 text-left"
@@ -1684,9 +1708,7 @@ function OrphanSessions({
                 onClick={() => onSelectSession(session)}
                 className={cn(
                   'w-full flex flex-col gap-0.5 px-2 py-1.5 pr-7 rounded-lg text-left transition-colors',
-                  isActive
-                    ? 'bg-primary/10 text-primary'
-                    : 'hover:bg-accent/30'
+                  isActive ? 'bg-primary/10 text-primary' : 'hover:bg-accent/30'
                 )}
               >
                 <span className="flex items-center gap-1.5">

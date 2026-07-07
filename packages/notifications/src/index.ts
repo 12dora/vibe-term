@@ -7,3 +7,14 @@ export {
 } from './notification-format';
 export { playBellSound } from './bell-sound';
 export { useBellStore } from './bell-store';
+export {
+  noopBellPlayer,
+  noopBrowserNotifier,
+  noopNotificationSink,
+  type BellPlayer,
+  type BrowserNotifier,
+  type NotificationAction,
+  type NotificationOptions,
+  type NotificationSink,
+} from './sinks';
+export { formatWatchTriggeredNotification } from './watch-format';

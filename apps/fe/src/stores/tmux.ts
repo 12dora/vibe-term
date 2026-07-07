@@ -1,5 +1,6 @@
 import { getTmuxWindowStyle } from '@/components/terminal/theme';
 import { navigateToAppUrl } from '@/lib/app-navigation';
+import { formatTerminalNotificationToast, playBellSound, useBellStore } from '@tmex/notifications';
 import type { EventDevicePayload, EventTmuxPayload, StateSnapshotPayload } from '@tmex/shared';
 import { wsBorsh } from '@tmex/shared';
 import type { ConnectionState } from '@tmex/ws-client';
@@ -44,7 +45,6 @@ import {
 import { toast } from 'sonner';
 import { create } from 'zustand';
 import i18n from '../i18n';
-import { formatTerminalNotificationToast, playBellSound, useBellStore } from '@tmex/notifications';
 import { useSiteStore } from './site';
 import { useUIStore } from './ui';
 

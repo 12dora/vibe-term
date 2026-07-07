@@ -4,6 +4,8 @@
 import i18n from '@/i18n';
 import type { QueryClient } from '@tanstack/react-query';
 import { useQueryClient } from '@tanstack/react-query';
+import { fetchWatchRule } from '@tmex/api-client';
+import { formatWatchTriggeredNotification } from '@tmex/notifications';
 import type {
   WatchModelUnavailablePayload,
   WatchRuleDto,
@@ -49,12 +51,8 @@ async function resolveRuleName(queryClient: QueryClient, ruleId: string): Promis
     return cached;
   }
   try {
-    const res = await fetch(`/api/watch/rules/${ruleId}`);
-    if (!res.ok) {
-      return null;
-    }
-    const payload = (await res.json()) as { rule?: WatchRuleDto };
-    return payload.rule?.name ?? null;
+    const rule = await fetchWatchRule(ruleId);
+    return rule?.name ?? null;
   } catch {
     return null;
   }
@@ -88,10 +86,7 @@ async function handleTriggered(
   payload: WatchTriggeredPayload
 ): Promise<void> {
   const ruleName = await resolveRuleName(queryClient, ruleId);
-  const title = ruleName ?? i18n.t('watch.toast.triggeredTitle');
-  const rawDescription = payload.summary || payload.matchedText || '';
-  const description =
-    rawDescription.length > 200 ? `${rawDescription.slice(0, 200)}…` : rawDescription;
+  const { title, description } = formatWatchTriggeredNotification(ruleName, payload, i18n.t);
   const url = buildPaneUrl(deviceId, paneId, payload.windowId);
 
   toast(title, {
