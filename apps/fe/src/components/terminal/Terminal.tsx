@@ -6,9 +6,9 @@ import {
   registerCursorRectGetter,
   unregisterCursorRectGetter,
 } from '@/utils/keyboard-cursor-bridge';
-import { type PaneSink, registerPaneSink } from '@tmex/ws-client/pane-sink-registry';
 import { useQuery } from '@tanstack/react-query';
 import { decodePaneModes } from '@tmex/shared';
+import { type PaneSink, registerPaneSink } from '@tmex/ws-client/pane-sink-registry';
 import {
   type CompatibleTerminalLike,
   FitAddon,

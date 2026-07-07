@@ -7,7 +7,14 @@
   },
   "files": {
     "ignoreUnknown": false,
-    "ignore": ["**/dist/**", "**/node_modules/**"]
+    "ignore": [
+      "**/dist/**",
+      "**/node_modules/**",
+      "**/resources/fe-dist/**",
+      "**/resources/gateway-drizzle/**",
+      "**/test-results/**",
+      "**/playwright-report/**"
+    ]
   },
   "formatter": {
     "enabled": true,

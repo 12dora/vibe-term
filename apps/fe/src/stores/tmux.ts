@@ -1,5 +1,7 @@
 import { getTmuxWindowStyle } from '@/components/terminal/theme';
 import { navigateToAppUrl } from '@/lib/app-navigation';
+import type { EventDevicePayload, EventTmuxPayload, StateSnapshotPayload } from '@tmex/shared';
+import { wsBorsh } from '@tmex/shared';
 import type { ConnectionState } from '@tmex/ws-client';
 import { getBorshClient } from '@tmex/ws-client';
 import {
@@ -39,8 +41,6 @@ import {
   dispatchPaneOutput,
   dispatchPaneReset,
 } from '@tmex/ws-client/pane-sink-registry';
-import type { EventDevicePayload, EventTmuxPayload, StateSnapshotPayload } from '@tmex/shared';
-import { wsBorsh } from '@tmex/shared';
 import { toast } from 'sonner';
 import { create } from 'zustand';
 import i18n from '../i18n';

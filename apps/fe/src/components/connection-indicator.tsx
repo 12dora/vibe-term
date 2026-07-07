@@ -8,7 +8,12 @@ import { useTranslation } from 'react-i18next';
 type Phase = 'hidden' | 'entering' | 'visible' | 'exiting';
 
 function shouldShowIndicator(state: ConnectionState): boolean {
-  return state === 'WS_CONNECTING' || state === 'HELLO_NEGOTIATING' || state === 'RECONNECT_BACKOFF' || state === 'CLOSED';
+  return (
+    state === 'WS_CONNECTING' ||
+    state === 'HELLO_NEGOTIATING' ||
+    state === 'RECONNECT_BACKOFF' ||
+    state === 'CLOSED'
+  );
 }
 
 export function ConnectionIndicator() {
@@ -47,10 +52,16 @@ export function ConnectionIndicator() {
 
   const transitionStyle: React.CSSProperties = {
     bottom: 'calc(1rem + env(safe-area-inset-bottom, 0px))',
-    transition: phase === 'exiting'
-      ? 'transform 300ms ease-in, opacity 300ms ease-in'
-      : 'transform 300ms ease-out, opacity 300ms ease-out',
-    transform: phase === 'visible' ? 'translateY(0)' : phase === 'exiting' ? 'translateY(20px) scale(0.8)' : 'translateY(20px)',
+    transition:
+      phase === 'exiting'
+        ? 'transform 300ms ease-in, opacity 300ms ease-in'
+        : 'transform 300ms ease-out, opacity 300ms ease-out',
+    transform:
+      phase === 'visible'
+        ? 'translateY(0)'
+        : phase === 'exiting'
+          ? 'translateY(20px) scale(0.8)'
+          : 'translateY(20px)',
     opacity: phase === 'visible' ? 1 : 0,
   };
 

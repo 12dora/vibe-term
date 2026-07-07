@@ -1,7 +1,8 @@
-// FE WebSocket Borsh 协议模块
+// WebSocket Borsh 协议客户端模块
 
 export {
   BorshWebSocketClient,
+  defaultWsUrl,
   getBorshClient,
   resetBorshClient,
   type BorshClientOptions,
@@ -11,6 +12,19 @@ export {
   type StateChangeHandler,
   type ErrorHandler,
 } from './client';
+
+export {
+  createGatewayConnection,
+  type GatewayConnection,
+  type GatewayConnectionOptions,
+} from './connection';
+
+export {
+  PaneSinkRegistry,
+  getDefaultPaneSinkRegistry,
+  type PaneSink,
+  type PaneResetOrigin,
+} from './pane-sink-registry';
 
 export {
   SelectStateMachine,

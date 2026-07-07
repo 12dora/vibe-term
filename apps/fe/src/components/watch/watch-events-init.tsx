@@ -2,7 +2,6 @@
 // 挂在 RootLayout，只负责 toast / 浏览器 Notification / react-query 失效，不持有渲染状态。
 
 import i18n from '@/i18n';
-import { getBorshClient } from '@tmex/ws-client';
 import type { QueryClient } from '@tanstack/react-query';
 import { useQueryClient } from '@tanstack/react-query';
 import type {
@@ -12,6 +11,7 @@ import type {
   WatchTriggeredPayload,
 } from '@tmex/shared';
 import { wsBorsh } from '@tmex/shared';
+import { getBorshClient } from '@tmex/ws-client';
 import { useEffect } from 'react';
 import { toast } from 'sonner';
 import { navigateToAppUrl } from '../../lib/app-navigation';

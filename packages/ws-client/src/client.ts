@@ -5,7 +5,10 @@ import { wsBorsh } from '@tmex/shared';
 
 // ========== 配置 ==========
 
-const WS_URL = `${typeof window !== 'undefined' && window.location.protocol === 'https:' ? 'wss:' : 'ws:'}//${typeof window !== 'undefined' ? window.location.host : ''}/ws`;
+// 惰性求值：允许在非浏览器环境 import 本模块，也允许宿主在构造时注入自定义端点
+export function defaultWsUrl(): string {
+  return `${typeof window !== 'undefined' && window.location.protocol === 'https:' ? 'wss:' : 'ws:'}//${typeof window !== 'undefined' ? window.location.host : ''}/ws`;
+}
 
 const DEFAULT_OPTIONS: BorshClientOptions = {
   clientImpl: 'tmex-fe',
@@ -25,6 +28,8 @@ export interface BorshClientOptions {
   reconnectDelayMs: number;
   maxReconnectAttempts: number;
   heartbeatIntervalMs: number;
+  /** WS 端点；缺省时连接当刻按 window.location 推导（defaultWsUrl） */
+  url?: string;
 }
 
 export type ConnectionState =
@@ -150,7 +155,7 @@ export class BorshWebSocketClient {
     this.setState('WS_CONNECTING');
 
     try {
-      this.ws = new WebSocket(WS_URL);
+      this.ws = new WebSocket(this.options.url ?? defaultWsUrl());
       this.ws.binaryType = 'arraybuffer';
 
       this.ws.onopen = () => {
@@ -480,6 +485,17 @@ export class BorshWebSocketClient {
 
     document.addEventListener('visibilitychange', handler);
     this.visibilityHandler = handler;
+  }
+
+  // ========== 端点切换 ==========
+
+  /** 更新 WS 端点；已建立的连接不受影响，下次 connect/reconnect 生效 */
+  updateUrl(url: string): void {
+    this.options.url = url;
+  }
+
+  getUrl(): string {
+    return this.options.url ?? defaultWsUrl();
   }
 
   // ========== 强制重连 ==========

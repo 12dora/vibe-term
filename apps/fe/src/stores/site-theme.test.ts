@@ -22,7 +22,8 @@ class MemStorage {
     return Array.from(this.store.keys())[index] ?? null;
   }
 }
-const memStorage = (globalThis.localStorage as unknown as MemStorage | undefined) ?? new MemStorage();
+const memStorage =
+  (globalThis.localStorage as unknown as MemStorage | undefined) ?? new MemStorage();
 // @ts-ignore
 globalThis.localStorage = memStorage;
 // @ts-ignore zustand persist 默认读 window.localStorage；site.ts 读 window.location.origin
