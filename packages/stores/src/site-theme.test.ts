@@ -44,8 +44,10 @@ mock.module('i18next', () => {
 
 const sendMock = mock(() => true);
 const isReadyMock = mock(() => true);
+const wsActual = await import('@tmex/ws-client');
 mock.module('@tmex/ws-client', () => {
   return {
+    ...wsActual,
     getBorshClient: () => ({ send: sendMock, isReady: isReadyMock }),
     buildSiteThemeUpdate: (theme: 'dark' | 'light') => ({
       kind: 99,
@@ -54,8 +56,7 @@ mock.module('@tmex/ws-client', () => {
   };
 });
 
-const { useSiteStore } = await import('./site');
-const { useUIStore } = await import('./ui');
+const { useSiteStore, useUIStore } = await import('./index');
 
 const TMEX_UI_KEY = 'tmex-ui';
 

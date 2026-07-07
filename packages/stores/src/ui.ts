@@ -1,6 +1,7 @@
 import { DEFAULT_FONT_ID } from '@tmex/theme';
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
+import type { RuntimeCore } from './runtime';
 
 export type SidebarTab = 'panes' | 'agent' | 'files';
 
@@ -41,74 +42,78 @@ interface UIState {
   setTerminalFontId: (fontId: string) => void;
 }
 
-export const useUIStore = create<UIState>()(
-  persist(
-    (set) => ({
-      sidebarCollapsed: false,
-      sidebarTab: 'panes',
-      inputMode: 'direct',
-      editorSendWithEnter: true,
-      theme: 'dark',
-      keyboardBehaviorMode: 'follow',
-      editorHistory: [],
-      editorDrafts: {},
-      terminalFontSize: DEFAULT_TERMINAL_FONT_SIZE,
-      terminalLineHeight: DEFAULT_TERMINAL_LINE_HEIGHT,
-      terminalFontId: DEFAULT_FONT_ID,
+export function createUIStore(core: Pick<RuntimeCore, 'storagePrefix'>) {
+  return create<UIState>()(
+    persist(
+      (set) => ({
+        sidebarCollapsed: false,
+        sidebarTab: 'panes',
+        inputMode: 'direct',
+        editorSendWithEnter: true,
+        theme: 'dark',
+        keyboardBehaviorMode: 'follow',
+        editorHistory: [],
+        editorDrafts: {},
+        terminalFontSize: DEFAULT_TERMINAL_FONT_SIZE,
+        terminalLineHeight: DEFAULT_TERMINAL_LINE_HEIGHT,
+        terminalFontId: DEFAULT_FONT_ID,
 
-      setSidebarCollapsed: (collapsed) => set({ sidebarCollapsed: collapsed }),
-      setSidebarTab: (tab) => set({ sidebarTab: tab }),
-      setInputMode: (mode) => set({ inputMode: mode }),
-      setKeyboardBehaviorMode: (mode) => set({ keyboardBehaviorMode: mode }),
-      setEditorSendWithEnter: (enabled) => set({ editorSendWithEnter: enabled }),
-      setTheme: (theme) => set({ theme }),
-      setTerminalFontSize: (size) => set({ terminalFontSize: size }),
-      setTerminalLineHeight: (height) => set({ terminalLineHeight: height }),
-      setTerminalFontId: (fontId) => set({ terminalFontId: fontId }),
+        setSidebarCollapsed: (collapsed) => set({ sidebarCollapsed: collapsed }),
+        setSidebarTab: (tab) => set({ sidebarTab: tab }),
+        setInputMode: (mode) => set({ inputMode: mode }),
+        setKeyboardBehaviorMode: (mode) => set({ keyboardBehaviorMode: mode }),
+        setEditorSendWithEnter: (enabled) => set({ editorSendWithEnter: enabled }),
+        setTheme: (theme) => set({ theme }),
+        setTerminalFontSize: (size) => set({ terminalFontSize: size }),
+        setTerminalLineHeight: (height) => set({ terminalLineHeight: height }),
+        setTerminalFontId: (fontId) => set({ terminalFontId: fontId }),
 
-      addEditorHistory: (text) =>
-        set((state) => ({
-          editorHistory: [text, ...state.editorHistory.slice(0, 49)],
-        })),
+        addEditorHistory: (text) =>
+          set((state) => ({
+            editorHistory: [text, ...state.editorHistory.slice(0, 49)],
+          })),
 
-      setEditorDraft: (draftKey, text) =>
-        set((state) => ({
-          editorDrafts: {
-            ...state.editorDrafts,
-            [draftKey]: text,
-          },
-        })),
+        setEditorDraft: (draftKey, text) =>
+          set((state) => ({
+            editorDrafts: {
+              ...state.editorDrafts,
+              [draftKey]: text,
+            },
+          })),
 
-      removeEditorDraft: (draftKey) =>
-        set((state) => {
-          if (!(draftKey in state.editorDrafts)) {
-            return state;
-          }
-          const nextDrafts = { ...state.editorDrafts };
-          delete nextDrafts[draftKey];
-          return { editorDrafts: nextDrafts };
-        }),
-    }),
-    {
-      name: 'tmex-ui',
-      // sidebarTab 不持久化：每次加载都回到默认 'panes'。
-      partialize: (state) => ({
-        sidebarCollapsed: state.sidebarCollapsed,
-        inputMode: state.inputMode,
-        editorSendWithEnter: state.editorSendWithEnter,
-        theme: state.theme,
-        keyboardBehaviorMode: state.keyboardBehaviorMode,
-        editorHistory: state.editorHistory,
-        editorDrafts: state.editorDrafts,
-        terminalFontSize: state.terminalFontSize,
-        terminalLineHeight: state.terminalLineHeight,
-        terminalFontId: state.terminalFontId,
+        removeEditorDraft: (draftKey) =>
+          set((state) => {
+            if (!(draftKey in state.editorDrafts)) {
+              return state;
+            }
+            const nextDrafts = { ...state.editorDrafts };
+            delete nextDrafts[draftKey];
+            return { editorDrafts: nextDrafts };
+          }),
       }),
-      // 丢弃旧版本 localStorage 里残留的 sidebarTab，避免被默认 merge 带回。
-      merge: (persisted, current) => {
-        const { sidebarTab: _ignored, ...rest } = (persisted ?? {}) as Partial<UIState>;
-        return { ...current, ...rest };
-      },
-    }
-  )
-);
+      {
+        name: `${core.storagePrefix}tmex-ui`,
+        // sidebarTab 不持久化：每次加载都回到默认 'panes'。
+        partialize: (state) => ({
+          sidebarCollapsed: state.sidebarCollapsed,
+          inputMode: state.inputMode,
+          editorSendWithEnter: state.editorSendWithEnter,
+          theme: state.theme,
+          keyboardBehaviorMode: state.keyboardBehaviorMode,
+          editorHistory: state.editorHistory,
+          editorDrafts: state.editorDrafts,
+          terminalFontSize: state.terminalFontSize,
+          terminalLineHeight: state.terminalLineHeight,
+          terminalFontId: state.terminalFontId,
+        }),
+        // 丢弃旧版本 localStorage 里残留的 sidebarTab，避免被默认 merge 带回。
+        merge: (persisted, current) => {
+          const { sidebarTab: _ignored, ...rest } = (persisted ?? {}) as Partial<UIState>;
+          return { ...current, ...rest };
+        },
+      }
+    )
+  );
+}
+
+export type UIStore = ReturnType<typeof createUIStore>;

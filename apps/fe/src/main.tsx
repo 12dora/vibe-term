@@ -1,3 +1,4 @@
+import './lib/runtime-setup';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { formatDisplayVersion } from '@tmex/shared';
 import { type CSSProperties, StrictMode, useEffect, useState } from 'react';

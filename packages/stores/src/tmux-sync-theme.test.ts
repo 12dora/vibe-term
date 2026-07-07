@@ -63,6 +63,7 @@ function makeBuildFn(kind: number) {
   });
 }
 
+const wsActual = await import('@tmex/ws-client');
 mock.module('@tmex/ws-client', () => {
   const stub = {
     send: sendMock,
@@ -74,6 +75,7 @@ mock.module('@tmex/ws-client', () => {
     connect: () => {},
   };
   return {
+    ...wsActual,
     getBorshClient: () => stub,
     resetBorshClient: () => {},
     getSelectStateMachine: () => ({
@@ -151,8 +153,7 @@ mock.module('@tmex/ws-client/pane-sink-registry', () => ({
   dispatchPaneReset: () => {},
 }));
 
-const { useTmuxStore } = await import('./tmux');
-const { useUIStore } = await import('./ui');
+const { useTmuxStore, useUIStore } = await import('./index');
 
 const KIND_TMUX_SET_WINDOW_STYLE = 0x020a;
 

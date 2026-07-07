@@ -1,5 +1,6 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
+import type { RuntimeCore } from './runtime';
 
 // 文件树展开状态，按 (rootId, path) 复合键记录（不同设备/根下路径可能同名）。
 // 持久化到 localStorage，刷新后恢复展开（req3）；陈旧键（根/设备已不存在）在加载时由 UI 剪枝。
@@ -18,53 +19,57 @@ interface FileTreeState {
   pruneStaleRoots: (validRootIds: string[]) => void;
 }
 
-export const useFileTreeStore = create<FileTreeState>()(
-  persist(
-    (set) => ({
-      expanded: {},
-      toggle: (rootId, path) =>
-        set((s) => {
-          const k = fileNodeKey(rootId, path);
-          const next = { ...s.expanded };
-          if (next[k]) delete next[k];
-          else next[k] = true;
-          return { expanded: next };
-        }),
-      expand: (rootId, path) =>
-        set((s) => {
-          const k = fileNodeKey(rootId, path);
-          return s.expanded[k] ? s : { expanded: { ...s.expanded, [k]: true } };
-        }),
-      collapse: (rootId, path) =>
-        set((s) => {
-          const k = fileNodeKey(rootId, path);
-          if (!s.expanded[k]) return s;
-          const next = { ...s.expanded };
-          delete next[k];
-          return { expanded: next };
-        }),
-      pruneRoot: (rootId) =>
-        set((s) => {
-          const prefix = `${rootId}\n`;
-          const next: Record<string, boolean> = {};
-          for (const k of Object.keys(s.expanded)) {
-            if (!k.startsWith(prefix)) next[k] = s.expanded[k];
-          }
-          return { expanded: next };
-        }),
-      pruneStaleRoots: (validRootIds) =>
-        set((s) => {
-          const valid = new Set(validRootIds);
-          const next: Record<string, boolean> = {};
-          let changed = false;
-          for (const k of Object.keys(s.expanded)) {
-            const rootId = k.slice(0, k.indexOf('\n'));
-            if (valid.has(rootId)) next[k] = s.expanded[k];
-            else changed = true;
-          }
-          return changed ? { expanded: next } : s;
-        }),
-    }),
-    { name: 'tmex-file-tree', partialize: (s) => ({ expanded: s.expanded }) }
-  )
-);
+export function createFileTreeStore(core: Pick<RuntimeCore, 'storagePrefix'>) {
+  return create<FileTreeState>()(
+    persist(
+      (set) => ({
+        expanded: {},
+        toggle: (rootId, path) =>
+          set((s) => {
+            const k = fileNodeKey(rootId, path);
+            const next = { ...s.expanded };
+            if (next[k]) delete next[k];
+            else next[k] = true;
+            return { expanded: next };
+          }),
+        expand: (rootId, path) =>
+          set((s) => {
+            const k = fileNodeKey(rootId, path);
+            return s.expanded[k] ? s : { expanded: { ...s.expanded, [k]: true } };
+          }),
+        collapse: (rootId, path) =>
+          set((s) => {
+            const k = fileNodeKey(rootId, path);
+            if (!s.expanded[k]) return s;
+            const next = { ...s.expanded };
+            delete next[k];
+            return { expanded: next };
+          }),
+        pruneRoot: (rootId) =>
+          set((s) => {
+            const prefix = `${rootId}\n`;
+            const next: Record<string, boolean> = {};
+            for (const k of Object.keys(s.expanded)) {
+              if (!k.startsWith(prefix)) next[k] = s.expanded[k];
+            }
+            return { expanded: next };
+          }),
+        pruneStaleRoots: (validRootIds) =>
+          set((s) => {
+            const valid = new Set(validRootIds);
+            const next: Record<string, boolean> = {};
+            let changed = false;
+            for (const k of Object.keys(s.expanded)) {
+              const rootId = k.slice(0, k.indexOf('\n'));
+              if (valid.has(rootId)) next[k] = s.expanded[k];
+              else changed = true;
+            }
+            return changed ? { expanded: next } : s;
+          }),
+      }),
+      { name: `${core.storagePrefix}tmex-file-tree`, partialize: (s) => ({ expanded: s.expanded }) }
+    )
+  );
+}
+
+export type FileTreeStore = ReturnType<typeof createFileTreeStore>;

@@ -1,4 +1,6 @@
-import { useAgentStore } from './agent';
+import { defaultRuntime } from './default-runtime';
+
+const useAgentStore = defaultRuntime.stores.agent;
 
 export type PaneAgentState = 'none' | 'bound' | 'generating';
 

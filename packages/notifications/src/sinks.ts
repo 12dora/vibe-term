@@ -9,6 +9,8 @@ export interface NotificationAction {
 export interface NotificationOptions {
   description?: string;
   action?: NotificationAction;
+  /** 展示时长（毫秒），实现可忽略 */
+  duration?: number;
 }
 
 export interface NotificationSink {

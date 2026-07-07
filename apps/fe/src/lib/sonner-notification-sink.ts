@@ -7,6 +7,7 @@ function toSonnerOptions(options?: NotificationOptions) {
   if (!options) return undefined;
   return {
     ...(options.description !== undefined ? { description: options.description } : {}),
+    ...(options.duration !== undefined ? { duration: options.duration } : {}),
     ...(options.action
       ? { action: { label: options.action.label, onClick: options.action.onClick } }
       : {}),
