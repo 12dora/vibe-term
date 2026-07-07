@@ -22,6 +22,8 @@
     "@tmex/api-client": "workspace:*",
     "@tmex/notifications": "workspace:*",
     "@tmex/shared": "workspace:*",
+    "@tmex/stores": "workspace:*",
+    "@tmex/theme": "workspace:*",
     "@tmex/ui": "workspace:*",
     "@tmex/ws-client": "workspace:*",
     "class-variance-authority": "^0.7.1",

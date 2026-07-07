@@ -15,6 +15,8 @@ import { useTranslation } from 'react-i18next';
 import { toast } from 'sonner';
 import i18n from '../i18n';
 
+import { useSiteStore } from '@tmex/stores';
+import { useUIStore } from '@tmex/stores';
 import { cn } from '@tmex/ui';
 import {
   AlertDialog,
@@ -29,13 +31,7 @@ import {
 import { Button } from '@tmex/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@tmex/ui/card';
 import { Input } from '@tmex/ui/input';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@tmex/ui/select';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@tmex/ui/select';
 import { Switch } from '@tmex/ui/switch';
 import { Tabs, TabsList, TabsTrigger } from '@tmex/ui/tabs';
 import { tabTriggerClassName } from '../components/page-layouts/components/app-sidebar';
@@ -48,8 +44,6 @@ import { TerminalSettingsTab } from '../components/settings/terminal-tab';
 import { VersionTab } from '../components/settings/version-tab';
 import { WebhooksTab } from '../components/settings/webhooks-tab';
 import { WeixinAccountsTab } from '../components/settings/weixin-accounts-tab';
-import { useSiteStore } from '../stores/site';
-import { useUIStore } from '../stores/ui';
 
 interface SiteSettingsResponse {
   settings: SiteSettings;

@@ -1,4 +1,4 @@
-import { useSiteStore } from '../stores/site';
+import { useSiteStore } from './site';
 
 export function getSiteNameFallback(): string {
   const settings = useSiteStore.getState().settings;

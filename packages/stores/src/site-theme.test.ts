@@ -37,7 +37,7 @@ if (typeof globalThis.window === 'undefined') {
     memStorage as unknown as Storage;
 }
 
-mock.module('../i18n', () => {
+mock.module('i18next', () => {
   const changeLanguage = mock(() => Promise.resolve());
   return { default: { changeLanguage, t: (k: string) => k } };
 });

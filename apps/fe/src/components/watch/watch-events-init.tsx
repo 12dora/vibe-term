@@ -13,12 +13,12 @@ import type {
   WatchTriggeredPayload,
 } from '@tmex/shared';
 import { wsBorsh } from '@tmex/shared';
+import { navigateToAppUrl } from '@tmex/stores';
+import { useTmuxStore } from '@tmex/stores';
+import { encodePaneIdForUrl } from '@tmex/stores';
 import { getBorshClient } from '@tmex/ws-client';
 import { useEffect } from 'react';
 import { toast } from 'sonner';
-import { navigateToAppUrl } from '../../lib/app-navigation';
-import { useTmuxStore } from '../../stores/tmux';
-import { encodePaneIdForUrl } from '../../utils/tmuxUrl';
 
 let initialized = false;
 

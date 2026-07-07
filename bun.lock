@@ -24,6 +24,8 @@
         "@tmex/api-client": "workspace:*",
         "@tmex/notifications": "workspace:*",
         "@tmex/shared": "workspace:*",
+        "@tmex/stores": "workspace:*",
+        "@tmex/theme": "workspace:*",
         "@tmex/ui": "workspace:*",
         "@tmex/ws-client": "workspace:*",
         "class-variance-authority": "^0.7.1",
@@ -136,6 +138,34 @@
       "dependencies": {
         "@zorsh/zorsh": "0.4.0",
       },
+      "devDependencies": {
+        "typescript": "^5.7.3",
+      },
+    },
+    "packages/stores": {
+      "name": "@tmex/stores",
+      "version": "0.1.0",
+      "dependencies": {
+        "@tmex/api-client": "workspace:*",
+        "@tmex/notifications": "workspace:*",
+        "@tmex/shared": "workspace:*",
+        "@tmex/theme": "workspace:*",
+        "@tmex/ws-client": "workspace:*",
+        "sonner": "^2.0.7",
+      },
+      "devDependencies": {
+        "i18next": "^25.6.3",
+        "typescript": "^5.7.3",
+        "zustand": "^5.0.3",
+      },
+      "peerDependencies": {
+        "i18next": "^24.0.0 || ^25.0.0",
+        "zustand": "^5.0.0",
+      },
+    },
+    "packages/theme": {
+      "name": "@tmex/theme",
+      "version": "0.1.0",
       "devDependencies": {
         "typescript": "^5.7.3",
       },
@@ -545,6 +575,10 @@
     "@tmex/notifications": ["@tmex/notifications@workspace:packages/notifications"],
 
     "@tmex/shared": ["@tmex/shared@workspace:packages/shared"],
+
+    "@tmex/stores": ["@tmex/stores@workspace:packages/stores"],
+
+    "@tmex/theme": ["@tmex/theme@workspace:packages/theme"],
 
     "@tmex/ui": ["@tmex/ui@workspace:packages/ui"],
 

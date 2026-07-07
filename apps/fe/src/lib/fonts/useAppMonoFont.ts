@@ -1,6 +1,6 @@
-import { useUIStore } from '@/stores/ui';
+import { useUIStore } from '@tmex/stores';
+import { loadTerminalFonts, resolveFontStack } from '@tmex/theme';
 import { useEffect } from 'react';
-import { loadTerminalFonts, resolveFontStack } from './index';
 
 // 挂在应用根：把选中的等宽字体派生成 --font-mono 写到 :root，全应用所有 font-mono
 // 用户（终端、markdown 代码块、code-viewer、侧边栏等）零改动统一跟随；并触发非默认

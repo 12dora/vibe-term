@@ -18,7 +18,10 @@ describe('normalizeHistoryForTerminal', () => {
 describe('normalizeLiveOutputForTerminal', () => {
   test('preserves CRLF chunk boundaries without inserting duplicate CR', () => {
     const first = normalizeLiveOutputForTerminal(new TextEncoder().encode('a\r'), false);
-    const second = normalizeLiveOutputForTerminal(new TextEncoder().encode('\nb'), first.endedWithCR);
+    const second = normalizeLiveOutputForTerminal(
+      new TextEncoder().encode('\nb'),
+      first.endedWithCR
+    );
 
     expect(decode(first.normalized)).toBe('a\r');
     expect(decode(second.normalized)).toBe('\nb');

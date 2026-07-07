@@ -11,6 +11,12 @@ import { fetchTerminalShortcuts, terminalShortcutsQueryKey } from '@tmex/api-cli
 import { fetchWatchRules, watchRulesQueryKey } from '@tmex/api-client';
 import { useBellStore } from '@tmex/notifications';
 import type { Device, TerminalShortcutItem } from '@tmex/shared';
+import { useAgentStore } from '@tmex/stores';
+import { useSiteStore } from '@tmex/stores';
+import { useTmuxStore } from '@tmex/stores';
+import { useUIStore } from '@tmex/stores';
+import { buildBrowserTitle, buildTerminalLabel } from '@tmex/stores';
+import { decodePaneIdFromUrlParam, encodePaneIdForUrl } from '@tmex/stores';
 import { useIsMobile } from '@tmex/ui';
 import {
   AlertDialog,
@@ -42,10 +48,6 @@ import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useNavigate, useParams } from 'react-router';
 import { toast } from 'sonner';
-import { useAgentStore } from '../stores/agent';
-import { useSiteStore } from '../stores/site';
-import { useTmuxStore } from '../stores/tmux';
-import { useUIStore } from '../stores/ui';
 import { shouldApplyRemotePaneSize } from '../utils/resizeSyncGuards';
 import {
   type TimedPaneSelection,
@@ -54,8 +56,6 @@ import {
   shouldSkipSnapshotFollow,
   shouldTrackPendingRouteSelection,
 } from '../utils/selectionGuards';
-import { buildBrowserTitle, buildTerminalLabel } from '../utils/terminalMeta';
-import { decodePaneIdFromUrlParam, encodePaneIdForUrl } from '../utils/tmuxUrl';
 import { isIOSMobileBrowser } from '../utils/virtualKeyboard';
 
 // 终端快捷键栏：从服务器配置渲染（send 类发送控制序列，action 类触发特殊动作）。

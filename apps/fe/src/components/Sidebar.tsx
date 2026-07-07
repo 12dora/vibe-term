@@ -1,6 +1,10 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import type { Device, TmuxPane, TmuxWindow } from '@tmex/shared';
 import { toBCP47 } from '@tmex/shared';
+import { useSiteStore } from '@tmex/stores';
+import { useTmuxStore } from '@tmex/stores';
+import { useUIStore } from '@tmex/stores';
+import { decodePaneIdFromUrlParam, encodePaneIdForUrl } from '@tmex/stores';
 import { cn } from '@tmex/ui';
 import {
   AlertDialog,
@@ -32,10 +36,6 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Link, matchPath, useLocation, useNavigate } from 'react-router';
 import { toast } from 'sonner';
-import { useSiteStore } from '../stores/site';
-import { useTmuxStore } from '../stores/tmux';
-import { useUIStore } from '../stores/ui';
-import { decodePaneIdFromUrlParam, encodePaneIdForUrl } from '../utils/tmuxUrl';
 
 interface SidebarProps {
   isOpen: boolean;

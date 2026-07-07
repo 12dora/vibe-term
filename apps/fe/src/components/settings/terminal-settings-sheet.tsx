@@ -1,10 +1,4 @@
-import {
-  Sheet,
-  SheetContent,
-  SheetDescription,
-  SheetHeader,
-  SheetTitle,
-} from '@tmex/ui/sheet';
+import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from '@tmex/ui/sheet';
 import { useTranslation } from 'react-i18next';
 import { TerminalSettingsPanel } from './terminal-settings-panel';
 

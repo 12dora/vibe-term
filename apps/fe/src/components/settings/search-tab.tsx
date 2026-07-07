@@ -23,13 +23,7 @@ import {
 import { Button } from '@tmex/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@tmex/ui/card';
 import { Input } from '@tmex/ui/input';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@tmex/ui/select';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@tmex/ui/select';
 
 interface LlmSettingsResponse {
   settings: AgentLlmSettingsDto;

@@ -1,4 +1,4 @@
-import type { UiThreadBlock } from '@/stores/agent-thread';
+import type { UiThreadBlock } from '@tmex/stores';
 import { cn } from '@tmex/ui';
 import { Button } from '@tmex/ui/button';
 import { ArrowDownIcon } from 'lucide-react';

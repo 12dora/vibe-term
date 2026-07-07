@@ -1,10 +1,10 @@
-import type { KeyboardBehaviorMode } from '@/stores/ui';
 import { readActiveCursorRect } from '@/utils/keyboard-cursor-bridge';
 import {
   computeCursorFollowOffset,
   computeVirtualKeyboardOffset,
   needsManualKeyboardAvoidance,
 } from '@/utils/virtualKeyboard';
+import type { KeyboardBehaviorMode } from '@tmex/stores';
 import { useEffect, useState } from 'react';
 
 // 手机虚拟键盘避让结果，由 MainInset 应用到 <main>（issue #27）。

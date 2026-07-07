@@ -6,7 +6,7 @@ import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { toast } from 'sonner';
 
-import { useSiteStore } from '@/stores/site';
+import { useSiteStore } from '@tmex/stores';
 import { Button } from '@tmex/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@tmex/ui/card';
 import { Input } from '@tmex/ui/input';

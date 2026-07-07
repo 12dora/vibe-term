@@ -1,4 +1,4 @@
-import type { UiToolCall } from '@/stores/agent-thread';
+import type { UiToolCall } from '@tmex/stores';
 import { cn } from '@tmex/ui';
 import { Badge } from '@tmex/ui/badge';
 import { Button } from '@tmex/ui/button';

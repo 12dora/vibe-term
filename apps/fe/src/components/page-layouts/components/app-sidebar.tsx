@@ -2,7 +2,7 @@ import { Bot, FolderClosed, Monitor, PanelsTopLeft } from 'lucide-react';
 import { type ComponentProps, Suspense, lazy } from 'react';
 import { useTranslation } from 'react-i18next';
 
-import { useUIStore } from '@/stores/ui';
+import { useUIStore } from '@tmex/stores';
 import { Sidebar, SidebarContent, SidebarFooter, SidebarHeader } from '@tmex/ui/sidebar';
 import { Tabs, TabsList, TabsTrigger } from '@tmex/ui/tabs';
 import { NavMain } from './nav-main';

@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 
-import { decodePaneIdFromUrlParam, encodePaneIdForUrl } from './tmuxUrl';
+import { decodePaneIdFromUrlParam, encodePaneIdForUrl } from './tmux-url';
 
 describe('tmuxUrl', () => {
   test('decodePaneIdFromUrlParam preserves pane ids that legitimately start with %25', () => {

@@ -1,4 +1,4 @@
-import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@tmex/ui/collapsible";
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@tmex/ui/collapsible';
 import {
   SidebarGroup,
   SidebarMenu,
@@ -7,14 +7,14 @@ import {
   SidebarMenuItem,
   SidebarMenuSub,
   SidebarMenuSubButton,
-  SidebarMenuSubItem
-} from "@tmex/ui/sidebar";
-import { ChevronRight, type LucideIcon } from "lucide-react";
-import { useTranslation } from "react-i18next";
-import { NavLink } from "./nav-link";
+  SidebarMenuSubItem,
+} from '@tmex/ui/sidebar';
+import { ChevronRight, type LucideIcon } from 'lucide-react';
+import { useTranslation } from 'react-i18next';
+import { NavLink } from './nav-link';
 
 export function NavMain({
-  items
+  items,
 }: {
   items: {
     title: string;
@@ -41,7 +41,9 @@ export function NavMain({
             </NavLink>
             {item.items?.length ? (
               <>
-                <CollapsibleTrigger render={<SidebarMenuAction className="data-[state=open]:rotate-90" />}>
+                <CollapsibleTrigger
+                  render={<SidebarMenuAction className="data-[state=open]:rotate-90" />}
+                >
                   <ChevronRight />
                   <span className="sr-only">Toggle</span>
                 </CollapsibleTrigger>

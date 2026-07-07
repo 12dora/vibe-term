@@ -198,5 +198,5 @@ export function resolveDropPosition(relativeX: number, relativeY: number): DropP
     ['bottom', 1 - y],
   ];
   distances.sort((a, b) => a[1] - b[1]);
-    return (distances[0] as [DropPosition, number])[0];
+  return (distances[0] as [DropPosition, number])[0];
 }

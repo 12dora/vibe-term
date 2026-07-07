@@ -41,10 +41,10 @@ import type {
 import { wsBorsh } from '@tmex/shared';
 import { getBorshClient } from '@tmex/ws-client';
 import { buildAgentSubscribe, buildAgentUnsubscribe } from '@tmex/ws-client';
+import i18next from 'i18next';
 import { toast } from 'sonner';
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
-import i18n from '../i18n';
 import {
   type SessionInProgress,
   emptyInProgress,
@@ -529,7 +529,7 @@ function setupClientHandlers(setState: SetState, getState: GetState): void {
 
   const handleErrorEvent = (sessionId: string, payload: AgentErrorEventPayload): void => {
     const session = getState().sessions[sessionId];
-    toast.error(i18n.t('agent.toast.errorTitle', { title: session?.title ?? 'Agent' }), {
+    toast.error(i18next.t('agent.toast.errorTitle', { title: session?.title ?? 'Agent' }), {
       description: payload.message,
     });
   };
@@ -538,8 +538,8 @@ function setupClientHandlers(setState: SetState, getState: GetState): void {
     _sessionId: string,
     payload: AgentCredentialWarningPayload
   ): void => {
-    toast.warning(i18n.t('agent.toast.credentialWarningTitle'), {
-      description: i18n.t('agent.toast.credentialWarningDescription', {
+    toast.warning(i18next.t('agent.toast.credentialWarningTitle'), {
+      description: i18next.t('agent.toast.credentialWarningDescription', {
         types: payload.types.join(', '),
       }),
       duration: 10000,

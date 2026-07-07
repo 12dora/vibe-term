@@ -1,4 +1,4 @@
-import { DEFAULT_FONT_ID } from '@/lib/fonts/manifest.generated';
+import { DEFAULT_FONT_ID } from '@tmex/theme';
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 

@@ -34,7 +34,7 @@ const ROOT = path.resolve(__dirname, '../..');
 const CACHE_DIR = path.join(__dirname, '.cache');
 const EXTRACT_DIR = path.join(CACHE_DIR, 'extract');
 const PUBLIC_GENERATED_DIR = path.join(ROOT, 'apps/fe/public/fonts/generated');
-const MANIFEST_OUT = path.join(ROOT, 'apps/fe/src/lib/fonts/manifest.generated.ts');
+const MANIFEST_OUT = path.join(ROOT, 'packages/theme/src/fonts/manifest.generated.ts');
 
 interface ManifestEntry {
   id: string;

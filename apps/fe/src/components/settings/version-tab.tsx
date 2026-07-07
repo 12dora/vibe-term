@@ -7,6 +7,7 @@ import { useTranslation } from 'react-i18next';
 import { toast } from 'sonner';
 
 import { MarkdownPreview } from '@/components/markdown/markdown-preview';
+import { useSiteStore } from '@tmex/stores';
 import {
   AlertDialog,
   AlertDialogAction,
@@ -19,7 +20,6 @@ import {
 } from '@tmex/ui/alert-dialog';
 import { Button } from '@tmex/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@tmex/ui/card';
-import { useSiteStore } from '../../stores/site';
 
 async function parseApiError(res: Response, fallback: string): Promise<string> {
   try {

@@ -1,6 +1,6 @@
+import { useTmuxStore } from '@tmex/stores';
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
 import { useLocation } from 'react-router';
-import { useTmuxStore } from '../stores/tmux';
 
 const STORAGE_KEY = 'tmex:connectedDevices';
 

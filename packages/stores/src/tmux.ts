@@ -1,6 +1,5 @@
-import { getTmuxWindowStyle } from '@/components/terminal/theme';
-import { navigateToAppUrl } from '@/lib/app-navigation';
 import { formatTerminalNotificationToast, playBellSound, useBellStore } from '@tmex/notifications';
+import { getTmuxWindowStyle } from '@tmex/shared';
 import type { EventDevicePayload, EventTmuxPayload, StateSnapshotPayload } from '@tmex/shared';
 import { wsBorsh } from '@tmex/shared';
 import type { ConnectionState } from '@tmex/ws-client';
@@ -42,9 +41,10 @@ import {
   dispatchPaneOutput,
   dispatchPaneReset,
 } from '@tmex/ws-client/pane-sink-registry';
+import i18next from 'i18next';
 import { toast } from 'sonner';
 import { create } from 'zustand';
-import i18n from '../i18n';
+import { navigateToAppUrl } from './app-navigation';
 import { useSiteStore } from './site';
 import { useUIStore } from './ui';
 
@@ -331,7 +331,7 @@ function setupClientHandlers(
         }
         navigator.clipboard.writeText(decoded.text).then(
           () => {
-            toast.success(i18n.t('terminal.copied'));
+            toast.success(i18next.t('terminal.copied'));
           },
           (err) => {
             console.warn('[tmux] clipboard write failed:', err);
@@ -482,7 +482,7 @@ function handleTmuxEvent(
     }
 
     const data = (payload.data ?? {}) as Record<string, unknown>;
-    const { title, description } = formatTerminalNotificationToast(data, i18n.t);
+    const { title, description } = formatTerminalNotificationToast(data, i18next.t);
     const paneUrl = typeof data.paneUrl === 'string' ? data.paneUrl : undefined;
     toast(title, {
       description,

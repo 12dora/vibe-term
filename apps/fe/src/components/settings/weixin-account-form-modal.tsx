@@ -6,13 +6,7 @@ import { useTranslation } from 'react-i18next';
 import { toast } from 'sonner';
 
 import { Button } from '@tmex/ui/button';
-import {
-  Dialog,
-  DialogContent,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from '@tmex/ui/dialog';
+import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@tmex/ui/dialog';
 import { Input } from '@tmex/ui/input';
 import { Switch } from '@tmex/ui/switch';
 

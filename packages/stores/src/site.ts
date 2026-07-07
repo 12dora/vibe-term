@@ -1,8 +1,8 @@
 import { fetchSiteSettings } from '@tmex/api-client';
 import { DEFAULT_LOCALE, type SiteSettings, type ThemeMode } from '@tmex/shared';
 import { buildSiteThemeUpdate, getBorshClient } from '@tmex/ws-client';
+import i18next from 'i18next';
 import { create } from 'zustand';
-import i18n from '../i18n';
 import { useUIStore } from './ui';
 
 interface SiteState {
@@ -65,13 +65,13 @@ export const useSiteStore = create<SiteState>((set, get) => ({
     try {
       const settings = await fetchSiteSettings();
       set({ settings, loading: false });
-      void i18n.changeLanguage(settings.language);
+      void i18next.changeLanguage(settings.language);
       syncThemeToUIStore(settings.theme);
       return settings;
     } catch (err) {
       console.error('[site] failed to fetch settings:', err);
       set({ settings: DEFAULT_SETTINGS, loading: false });
-      void i18n.changeLanguage(DEFAULT_SETTINGS.language);
+      void i18next.changeLanguage(DEFAULT_SETTINGS.language);
       syncThemeToUIStore(DEFAULT_SETTINGS.theme);
       return DEFAULT_SETTINGS;
     }
@@ -82,7 +82,7 @@ export const useSiteStore = create<SiteState>((set, get) => ({
     try {
       const settings = await fetchSiteSettings();
       set({ settings, loading: false });
-      void i18n.changeLanguage(settings.language);
+      void i18next.changeLanguage(settings.language);
       syncThemeToUIStore(settings.theme);
       return settings;
     } catch (err) {

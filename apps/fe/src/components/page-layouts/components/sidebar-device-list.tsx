@@ -1,8 +1,6 @@
 import { DeviceStatusBadge } from '@/components/device-status-badge';
 import { useGlobalDevice } from '@/components/global-device-provider';
 import { WatchDialog } from '@/components/watch/watch-dialog';
-import { useAgentStore } from '@/stores/agent';
-import { useUIStore } from '@/stores/ui';
 import {
   DndContext,
   type DragEndEvent,
@@ -24,6 +22,9 @@ import { CSS } from '@dnd-kit/utilities';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import type { AgentSessionDto, Device, TmuxPane, TmuxWindow } from '@tmex/shared';
 import { toBCP47 } from '@tmex/shared';
+import { useAgentStore } from '@tmex/stores';
+import { useUIStore } from '@tmex/stores';
+import { buildWindowDisplayName, buildWindowTitleParts } from '@tmex/stores';
 import { cn } from '@tmex/ui';
 import {
   AlertDialog,
@@ -77,7 +78,6 @@ import {
 } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { toast } from 'sonner';
-import { buildWindowDisplayName, buildWindowTitleParts } from '../../../utils/terminalMeta';
 
 type DeviceListItem = Device & {
   lastError?: string | null;
@@ -92,11 +92,11 @@ type RenameCandidate =
   | { kind: 'window'; deviceId: string; windowId: string; hasCustomName: boolean }
   | { kind: 'pane'; deviceId: string; paneId: string; hasCustomName: boolean };
 import { useBellStore } from '@tmex/notifications';
+import { useSiteStore } from '@tmex/stores';
+import { useTmuxStore } from '@tmex/stores';
+import { decodePaneIdFromUrlParam, encodePaneIdForUrl } from '@tmex/stores';
 import { useTranslation } from 'react-i18next';
 import { matchPath, useLocation, useNavigate } from 'react-router';
-import { useSiteStore } from '../../../stores/site';
-import { useTmuxStore } from '../../../stores/tmux';
-import { decodePaneIdFromUrlParam, encodePaneIdForUrl } from '../../../utils/tmuxUrl';
 
 function StatusDot({ status }: { status: AgentSessionDto['status'] }) {
   return (

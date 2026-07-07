@@ -11,6 +11,8 @@ COPY packages/ghostty-terminal/package.json packages/ghostty-terminal/
 COPY packages/ws-client/package.json packages/ws-client/
 COPY packages/api-client/package.json packages/api-client/
 COPY packages/notifications/package.json packages/notifications/
+COPY packages/stores/package.json packages/stores/
+COPY packages/theme/package.json packages/theme/
 COPY apps/fe/package.json apps/fe/
 
 # 安装依赖
@@ -23,6 +25,8 @@ COPY packages/ghostty-terminal/ packages/ghostty-terminal/
 COPY packages/ws-client/ packages/ws-client/
 COPY packages/api-client/ packages/api-client/
 COPY packages/notifications/ packages/notifications/
+COPY packages/stores/ packages/stores/
+COPY packages/theme/ packages/theme/
 COPY apps/fe/ apps/fe/
 
 # 构建

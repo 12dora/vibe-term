@@ -121,9 +121,7 @@ describe('maxHorizontalStackDepth', () => {
   });
 
   test('side-by-side row accumulates', () => {
-    expect(maxHorizontalStackDepth(rootOf('7d1d,208x62,0,0{104x62,0,0,0,103x62,105,0,1}'))).toBe(
-      2
-    );
+    expect(maxHorizontalStackDepth(rootOf('7d1d,208x62,0,0{104x62,0,0,0,103x62,105,0,1}'))).toBe(2);
   });
 
   test('row with nested column: column takes max of children', () => {

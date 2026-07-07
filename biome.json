@@ -13,7 +13,10 @@
       "**/resources/fe-dist/**",
       "**/resources/gateway-drizzle/**",
       "**/test-results/**",
-      "**/playwright-report/**"
+      "**/playwright-report/**",
+      "**/manifest.generated.ts",
+      "packages/shared/src/i18n/resources.ts",
+      "packages/shared/src/i18n/types.ts"
     ]
   },
   "formatter": {

@@ -1,4 +1,4 @@
-import { useTmuxStore } from '@/stores/tmux';
+import { useTmuxStore } from '@tmex/stores';
 import type { ConnectionState } from '@tmex/ws-client';
 import { getBorshClient } from '@tmex/ws-client';
 import { Loader2, RefreshCcw } from 'lucide-react';

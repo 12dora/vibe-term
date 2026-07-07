@@ -1,4 +1,4 @@
-import { getSiteNameFallback } from './site';
+import { getSiteNameFallback } from './site-fallback';
 
 interface TerminalLabelInput {
   paneIdx?: number | null;

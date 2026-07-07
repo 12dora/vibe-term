@@ -1,4 +1,4 @@
-import { useAgentStore } from '@/stores/agent';
+import { useAgentStore } from './agent';
 
 export type PaneAgentState = 'none' | 'bound' | 'generating';
 
@@ -17,9 +17,7 @@ export function usePaneAgentState(deviceId: string, paneId: string): PaneAgentSt
         const prog = state.inProgress[session.id];
         if (
           prog &&
-          (prog.texts.length > 0 ||
-            prog.toolCalls.length > 0 ||
-            prog.reasonings.length > 0)
+          (prog.texts.length > 0 || prog.toolCalls.length > 0 || prog.reasonings.length > 0)
         ) {
           return 'generating';
         }

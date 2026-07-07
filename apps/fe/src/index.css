@@ -151,8 +151,8 @@
 }
 
 @theme inline {
-  --animate-scroll: scroll var(--animation-duration, 40s)
-    var(--animation-direction, forwards) linear infinite;
+  --animate-scroll: scroll var(--animation-duration, 40s) var(--animation-direction, forwards)
+    linear infinite;
 
   @keyframes scroll {
     to {
@@ -285,9 +285,17 @@
 }
 
 @keyframes bell-blink {
-  0%, 49% { opacity: 1; }
-  50%, 99% { opacity: 0; }
-  100% { opacity: 1; }
+  0%,
+  49% {
+    opacity: 1;
+  }
+  50%,
+  99% {
+    opacity: 0;
+  }
+  100% {
+    opacity: 1;
+  }
 }
 
 .bell-blink {

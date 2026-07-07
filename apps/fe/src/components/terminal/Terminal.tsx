@@ -1,7 +1,3 @@
-import { loadTerminalFonts, resolveFontStack } from '@/lib/fonts';
-import { useTmuxStore } from '@/stores/tmux';
-import { useUIStore } from '@/stores/ui';
-import { fileRoute } from '@/utils/fileUrl';
 import {
   registerCursorRectGetter,
   unregisterCursorRectGetter,
@@ -9,6 +5,10 @@ import {
 import { useQuery } from '@tanstack/react-query';
 import { fetchFileRoots, fetchFileStat } from '@tmex/api-client';
 import { decodePaneModes } from '@tmex/shared';
+import { useTmuxStore } from '@tmex/stores';
+import { useUIStore } from '@tmex/stores';
+import { fileRoute } from '@tmex/stores';
+import { loadTerminalFonts, resolveFontStack } from '@tmex/theme';
 import { type PaneSink, registerPaneSink } from '@tmex/ws-client/pane-sink-registry';
 import {
   type CompatibleTerminalLike,

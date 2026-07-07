@@ -9,7 +9,6 @@ import { CodeViewer } from '@/components/code-viewer/code-viewer';
 import { startTransferToast } from '@/components/files-panel/transfer-toast';
 import { MarkdownPreview } from '@/components/markdown/markdown-preview';
 import i18n from '@/i18n';
-import { type FileRef, decodeFileRef } from '@/utils/fileUrl';
 import {
   type FileApiError,
   downloadFileWithProgress,
@@ -18,6 +17,7 @@ import {
 } from '@tmex/api-client';
 import { formatBytes } from '@tmex/api-client';
 import { fileRawUrl } from '@tmex/api-client';
+import { type FileRef, decodeFileRef } from '@tmex/stores';
 import { Button } from '@tmex/ui/button';
 
 function useFileRef(ref?: string): FileRef | null {

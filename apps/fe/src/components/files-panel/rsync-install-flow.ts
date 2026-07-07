@@ -1,9 +1,9 @@
 import i18n from '@/i18n';
-import { bridgeNavigate, bridgeOpenMobileSidebar } from '@/lib/flow-bridges';
-import { useAgentStore } from '@/stores/agent';
-import { useTmuxStore } from '@/stores/tmux';
-import { useUIStore } from '@/stores/ui';
-import { encodePaneIdForUrl } from '@/utils/tmuxUrl';
+import { bridgeNavigate, bridgeOpenMobileSidebar } from '@tmex/stores';
+import { useAgentStore } from '@tmex/stores';
+import { useTmuxStore } from '@tmex/stores';
+import { useUIStore } from '@tmex/stores';
+import { encodePaneIdForUrl } from '@tmex/stores';
 import { toast } from 'sonner';
 
 const CONNECT_TIMEOUT_MS = 12_000;

@@ -1,9 +1,9 @@
 import { DeviceStatusBadge } from '@/components/device-status-badge';
-import { useSiteStore } from '@/stores/site';
-import { useTmuxStore } from '@/stores/tmux';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import type { CreateDeviceRequest, Device, UpdateDeviceRequest } from '@tmex/shared';
 import { toBCP47 } from '@tmex/shared';
+import { useSiteStore } from '@tmex/stores';
+import { useTmuxStore } from '@tmex/stores';
 
 type DeviceListItem = Device & {
   lastError?: string | null;
@@ -39,13 +39,7 @@ import {
   DropdownMenuTrigger,
 } from '@tmex/ui/dropdown-menu';
 import { Input } from '@tmex/ui/input';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@tmex/ui/select';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@tmex/ui/select';
 import { Separator } from '@tmex/ui/separator';
 import { Textarea } from '@tmex/ui/textarea';
 import { Globe, Monitor, MoreHorizontal, Pencil, Plus, Trash2, Zap } from 'lucide-react';
@@ -286,14 +280,21 @@ export default function DevicesPage() {
   }, [data?.devices, language]);
 
   return (
-    <div className="mx-auto flex w-full max-w-6xl flex-col gap-3 p-3 pb-[calc(1rem+env(safe-area-inset-bottom))] sm:gap-4 sm:p-5" data-testid="devices-page">
+    <div
+      className="mx-auto flex w-full max-w-6xl flex-col gap-3 p-3 pb-[calc(1rem+env(safe-area-inset-bottom))] sm:gap-4 sm:p-5"
+      data-testid="devices-page"
+    >
       {isLoading ? (
         <Card>
-          <CardContent className="py-16 text-center text-sm text-muted-foreground">{t('common.loading')}</CardContent>
+          <CardContent className="py-16 text-center text-sm text-muted-foreground">
+            {t('common.loading')}
+          </CardContent>
         </Card>
       ) : isError ? (
         <Card>
-          <CardContent className="py-16 text-center text-sm text-destructive">{t('device.loadFailed')}</CardContent>
+          <CardContent className="py-16 text-center text-sm text-destructive">
+            {t('device.loadFailed')}
+          </CardContent>
         </Card>
       ) : devices.length === 0 ? (
         <Card>
@@ -305,7 +306,11 @@ export default function DevicesPage() {
               <h2 className="text-lg font-medium">{t('device.noDevices')}</h2>
               <p className="text-sm text-muted-foreground">{t('device.addDevice')}</p>
             </div>
-            <Button variant="default" data-testid="devices-add-empty" onClick={() => setShowAddModal(true)}>
+            <Button
+              variant="default"
+              data-testid="devices-add-empty"
+              onClick={() => setShowAddModal(true)}
+            >
               <Plus className="h-4 w-4" />
               {t('device.addDevice')}
             </Button>
@@ -329,7 +334,10 @@ export default function DevicesPage() {
         <DeviceDialog mode="edit" device={editingDevice} onClose={() => setEditingDevice(null)} />
       )}
 
-      <AlertDialog open={deleteCandidate !== null} onOpenChange={(open) => !open && setDeleteCandidate(null)}>
+      <AlertDialog
+        open={deleteCandidate !== null}
+        onOpenChange={(open) => !open && setDeleteCandidate(null)}
+      >
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogMedia className="bg-destructive/10">
@@ -405,7 +413,12 @@ function DeviceCard({ device, onEdit, onDelete }: DeviceCardProps) {
   });
 
   return (
-    <Card data-testid="device-card" data-device-id={device.id} data-device-name={device.name} className="overflow-hidden border-border/50">
+    <Card
+      data-testid="device-card"
+      data-device-id={device.id}
+      data-device-name={device.name}
+      className="overflow-hidden border-border/50"
+    >
       <CardHeader className="space-y-2 pb-2">
         <div className="flex items-start justify-between gap-2">
           <div className="flex min-w-0 items-center gap-2.5">
@@ -436,10 +449,7 @@ function DeviceCard({ device, onEdit, onDelete }: DeviceCardProps) {
                 <MoreHorizontal className="h-4 w-4" />
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end">
-                <DropdownMenuItem
-                  data-testid={`device-card-edit-${device.id}`}
-                  onClick={onEdit}
-                >
+                <DropdownMenuItem data-testid={`device-card-edit-${device.id}`} onClick={onEdit}>
                   <Pencil className="h-4 w-4" />
                   {t('common.edit')}
                 </DropdownMenuItem>
@@ -807,9 +817,7 @@ function DeviceDialog({ mode, device, onClose }: DeviceDialogProps) {
                           id={passwordInputId}
                           type="password"
                           value={formData.password}
-                          onChange={(e) =>
-                            setFormData((d) => ({ ...d, password: e.target.value }))
-                          }
+                          onChange={(e) => setFormData((d) => ({ ...d, password: e.target.value }))}
                         />
                       </div>
                     )}
@@ -847,7 +855,11 @@ function DeviceDialog({ mode, device, onClose }: DeviceDialogProps) {
 
                     {formData.authMode === 'configRef' && (
                       <div className="space-y-1.5">
-                        {fieldLabel(`${mode}-device-ssh-config-ref`, t('device.authConfigRef'), true)}
+                        {fieldLabel(
+                          `${mode}-device-ssh-config-ref`,
+                          t('device.authConfigRef'),
+                          true
+                        )}
                         <Input
                           id={`${mode}-device-ssh-config-ref`}
                           data-testid="device-ssh-config-ref-input"
@@ -898,11 +910,11 @@ export function PageTitle() {
 // Page actions component
 export function PageActions() {
   const { t } = useTranslation();
-  
+
   const handleAdd = () => {
     window.dispatchEvent(new CustomEvent('tmex:open-add-device'));
   };
-  
+
   return (
     <Button
       variant="ghost"

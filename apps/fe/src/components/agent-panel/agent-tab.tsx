@@ -2,13 +2,13 @@ import { type ReactNode, useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useMatch, useNavigate } from 'react-router';
 
-import { useAgentStore } from '@/stores/agent';
-import { type UiThreadBlock, buildThreadBlocks, lastUserMessageText } from '@/stores/agent-thread';
-import { useTmuxStore } from '@/stores/tmux';
-import { useUIStore } from '@/stores/ui';
-import { buildTerminalLabel } from '@/utils/terminalMeta';
 import { useQuery } from '@tanstack/react-query';
 import type { Device, StateSnapshotPayload } from '@tmex/shared';
+import { useAgentStore } from '@tmex/stores';
+import { type UiThreadBlock, buildThreadBlocks, lastUserMessageText } from '@tmex/stores';
+import { useTmuxStore } from '@tmex/stores';
+import { useUIStore } from '@tmex/stores';
+import { buildTerminalLabel } from '@tmex/stores';
 import { cn } from '@tmex/ui';
 import { Button } from '@tmex/ui/button';
 import { Switch } from '@tmex/ui/switch';
@@ -586,7 +586,9 @@ export function AgentTab() {
               <div className="flex shrink-0 items-center gap-3">
                 <div className="flex items-center gap-1.5">
                   <span className="text-muted-foreground text-xs">
-                    {writeMode === 'auto' ? t('agent.writeMode.auto') : t('agent.writeMode.confirm')}
+                    {writeMode === 'auto'
+                      ? t('agent.writeMode.auto')
+                      : t('agent.writeMode.confirm')}
                   </span>
                   <Switch
                     data-testid="agent-write-mode-switch"
@@ -604,7 +606,10 @@ export function AgentTab() {
                 </div>
                 {activeSession && (
                   <div className="flex items-center gap-1.5">
-                    <span className="text-muted-foreground text-xs" title={t('agent.controlChars.hint')}>
+                    <span
+                      className="text-muted-foreground text-xs"
+                      title={t('agent.controlChars.hint')}
+                    >
                       {t('agent.controlChars.label')}
                     </span>
                     <Switch
@@ -613,7 +618,9 @@ export function AgentTab() {
                       disabled={isOrphan}
                       title={t('agent.controlChars.hint')}
                       onCheckedChange={(checked) => {
-                        void useAgentStore.getState().setAllowControlChars(activeSession.id, checked);
+                        void useAgentStore
+                          .getState()
+                          .setAllowControlChars(activeSession.id, checked);
                       }}
                     />
                   </div>

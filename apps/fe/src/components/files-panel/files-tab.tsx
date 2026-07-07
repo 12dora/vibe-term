@@ -21,8 +21,6 @@ import { useTranslation } from 'react-i18next';
 import { matchPath, useLocation, useNavigate } from 'react-router';
 import { toast } from 'sonner';
 
-import { fileNodeKey, useFileTreeStore } from '@/stores/file-tree';
-import { decodeFileRef, fileRoute } from '@/utils/fileUrl';
 import { fileDownloadUrl } from '@tmex/api-client';
 import {
   type FileApiError,
@@ -32,6 +30,8 @@ import {
   uploadFileChunked,
 } from '@tmex/api-client';
 import { formatBytes } from '@tmex/api-client';
+import { fileNodeKey, useFileTreeStore } from '@tmex/stores';
+import { decodeFileRef, fileRoute } from '@tmex/stores';
 import { cn } from '@tmex/ui';
 import { Button } from '@tmex/ui/button';
 import {

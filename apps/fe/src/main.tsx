@@ -17,7 +17,7 @@ import { AppSidebar } from '@/components/page-layouts/components/app-sidebar';
 import { WatchEventsInit } from '@/components/watch/watch-events-init';
 import { useKeyboardAvoidance } from '@/hooks/use-keyboard-avoidance';
 import { useAppMonoFont } from '@/lib/fonts/useAppMonoFont';
-import { useUIStore } from '@/stores/ui';
+import { useUIStore } from '@tmex/stores';
 import { Separator } from '@tmex/ui/separator';
 import { SidebarInset, SidebarProvider, SidebarTrigger, useSidebar } from '@tmex/ui/sidebar';
 
@@ -249,14 +249,16 @@ if (!rootElement) {
 
 // 当前语言（及 fallback）按需异步加载，渲染前 await 以避免首屏出现未翻译的 key。
 // 弱网下即便 locale chunk 加载失败也必须渲染（catch 兜底），否则整页空白比未翻译更糟。
-void i18nReady.catch(() => undefined).then(() => {
-  createRoot(rootElement).render(
-    <StrictMode>
-      <QueryClientProvider client={queryClient}>
-        <RouterProvider router={router} />
-        <ConnectionIndicator />
-        <ThemedToaster />
-      </QueryClientProvider>
-    </StrictMode>
-  );
-});
+void i18nReady
+  .catch(() => undefined)
+  .then(() => {
+    createRoot(rootElement).render(
+      <StrictMode>
+        <QueryClientProvider client={queryClient}>
+          <RouterProvider router={router} />
+          <ConnectionIndicator />
+          <ThemedToaster />
+        </QueryClientProvider>
+      </StrictMode>
+    );
+  });
