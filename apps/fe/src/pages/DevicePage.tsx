@@ -42,7 +42,7 @@ import { useTranslation } from 'react-i18next';
 import { useNavigate, useParams } from 'react-router';
 import { toast } from 'sonner';
 import { useAgentStore } from '../stores/agent';
-import { useBellStore } from '../stores/bell';
+import { useBellStore } from '@tmex/notifications';
 import { useSiteStore } from '../stores/site';
 import { useTmuxStore } from '../stores/tmux';
 import { useUIStore } from '../stores/ui';

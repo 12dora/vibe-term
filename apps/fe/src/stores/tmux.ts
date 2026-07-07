@@ -44,10 +44,8 @@ import {
 import { toast } from 'sonner';
 import { create } from 'zustand';
 import i18n from '../i18n';
-import { playBellSound } from '../utils/bell-sound';
-import { useBellStore } from './bell';
+import { formatTerminalNotificationToast, playBellSound, useBellStore } from '@tmex/notifications';
 import { useSiteStore } from './site';
-import { formatTerminalNotificationToast } from './tmux-notification-format';
 import { useUIStore } from './ui';
 
 type SnapshotMap = Record<string, StateSnapshotPayload | undefined>;
@@ -484,7 +482,7 @@ function handleTmuxEvent(
     }
 
     const data = (payload.data ?? {}) as Record<string, unknown>;
-    const { title, description } = formatTerminalNotificationToast(data);
+    const { title, description } = formatTerminalNotificationToast(data, i18n.t);
     const paneUrl = typeof data.paneUrl === 'string' ? data.paneUrl : undefined;
     toast(title, {
       description,

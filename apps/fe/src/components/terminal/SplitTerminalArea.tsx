@@ -11,7 +11,7 @@
 // - 焦点 pane 由 URL 决定，点击非焦点 pane 触发 onUserSelectPane（轻量 focus 路径）。
 
 import { usePaneAgentState } from '@/hooks/usePaneAgentState';
-import { useBellStore } from '@/stores/bell';
+import { useBellStore } from '@tmex/notifications';
 import { useTmuxStore } from '@/stores/tmux';
 import type { TmuxPane, TmuxWindow } from '@tmex/shared';
 import { parseWindowLayout } from '@tmex/shared';

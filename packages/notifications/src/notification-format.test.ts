@@ -1,17 +1,17 @@
-import { describe, expect, mock, test } from 'bun:test';
+import { describe, expect, test } from 'bun:test';
+import {
+  buildPaneLocationLabel as buildLabelRaw,
+  formatTerminalNotificationToast as formatToastRaw,
+} from './notification-format';
 
-mock.module('../i18n', () => {
-  const t = (key: string, params?: Record<string, unknown>) => {
-    if (!params || Object.keys(params).length === 0) return key;
-    const values = Object.values(params).join(', ');
-    return `${key}[${values}]`;
-  };
-  return { default: { t } };
-});
+const t = (key: string, params?: Record<string, unknown>) => {
+  if (!params || Object.keys(params).length === 0) return key;
+  const values = Object.values(params).join(', ');
+  return `${key}[${values}]`;
+};
 
-const { buildPaneLocationLabel, formatTerminalNotificationToast } = await import(
-  './tmux-notification-format'
-);
+const buildPaneLocationLabel = (data: Record<string, unknown>) => buildLabelRaw(data, t);
+const formatTerminalNotificationToast = (data: Record<string, unknown>) => formatToastRaw(data, t);
 
 describe('buildPaneLocationLabel', () => {
   test('uses paneTitle when available', () => {

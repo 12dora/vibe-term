@@ -93,7 +93,7 @@ type RenameCandidate =
   | { kind: 'pane'; deviceId: string; paneId: string; hasCustomName: boolean };
 import { useTranslation } from 'react-i18next';
 import { matchPath, useLocation, useNavigate } from 'react-router';
-import { useBellStore } from '../../../stores/bell';
+import { useBellStore } from '@tmex/notifications';
 import { useSiteStore } from '../../../stores/site';
 import { useTmuxStore } from '../../../stores/tmux';
 import { decodePaneIdFromUrlParam, encodePaneIdForUrl } from '../../../utils/tmuxUrl';

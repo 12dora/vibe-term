@@ -44,7 +44,9 @@ mock.module('sonner', () => ({
   toast: mock(() => {}),
 }));
 
-mock.module('../utils/bell-sound', () => ({
+const notificationsActual = await import('@tmex/notifications');
+mock.module('@tmex/notifications', () => ({
+  ...notificationsActual,
   playBellSound: mock(() => {}),
 }));
 
