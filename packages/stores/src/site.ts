@@ -1,4 +1,4 @@
-import { fetchSiteSettings } from '@tmex/api-client';
+import { FeatureSet, fetchCapabilities, fetchSiteSettings } from '@tmex/api-client';
 import { DEFAULT_LOCALE, type SiteSettings, type ThemeMode } from '@tmex/shared';
 import { buildSiteThemeUpdate } from '@tmex/ws-client';
 import i18next from 'i18next';
@@ -9,8 +9,11 @@ import type { UIStore } from './ui';
 export interface SiteState {
   settings: SiteSettings | null;
   loading: boolean;
+  /** 服务端能力集（GET /api/capabilities）；消费方按 featureset 决定渲染，默认空集 */
+  capabilities: FeatureSet;
   fetchSettings: () => Promise<SiteSettings>;
   refreshSettings: () => Promise<SiteSettings>;
+  loadCapabilities: () => Promise<void>;
   updateTheme: (theme: ThemeMode) => void;
   setThemeFromS2C: (theme: ThemeMode) => void;
 }
@@ -61,6 +64,7 @@ export function createSiteStore(
   return create<SiteState>((set, get) => ({
     settings: null,
     loading: false,
+    capabilities: FeatureSet.empty(),
 
     fetchSettings: async () => {
       const existing = get().settings;
@@ -96,6 +100,15 @@ export function createSiteStore(
         console.error('[site] failed to refresh settings:', err);
         set({ loading: false });
         throw err;
+      }
+    },
+
+    loadCapabilities: async () => {
+      try {
+        const res = await fetchCapabilities(core.apiClient);
+        set({ capabilities: new FeatureSet(res.capabilities) });
+      } catch (err) {
+        console.error('[site] failed to load capabilities:', err);
       }
     },
 

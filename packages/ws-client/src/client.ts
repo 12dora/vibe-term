@@ -86,6 +86,8 @@ export class BorshWebSocketClient {
 
   hasConnectedOnce = false;
   latencyMs: number | null = null;
+  // 服务端 HELLO_S2C 协商的能力集（消费方按 featureset 判定；多实例宿主按连接读取）
+  serverCapabilities: readonly string[] = [];
 
   constructor(options: Partial<BorshClientOptions> = {}) {
     this.options = { ...DEFAULT_OPTIONS, ...options };
@@ -270,7 +272,7 @@ export class BorshWebSocketClient {
   private handleHelloS2C(payload: Uint8Array): void {
     try {
       const hello = wsBorsh.decodePayload(wsBorsh.schema.HelloS2CSchema, payload);
-      console.log('[borsh-client] HELLO_S2C received:', hello);
+      this.serverCapabilities = hello.capabilities ?? [];
 
       this.setState('READY');
       this.hasConnectedOnce = true;

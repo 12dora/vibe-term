@@ -17,7 +17,7 @@ import { GlobalDeviceProvider } from '@/components/global-device-provider';
 import { AppSidebar } from '@/components/page-layouts/components/app-sidebar';
 import { WatchEventsInit } from '@tmex/panels/watch';
 import { useAppMonoFont } from '@/lib/fonts/useAppMonoFont';
-import { useUIStore } from '@tmex/stores';
+import { useSiteStore, useUIStore } from '@tmex/stores';
 import { useKeyboardAvoidance } from '@tmex/terminal-ui';
 import { applyThemePreset, isThemePreset } from '@tmex/theme';
 import { Separator } from '@tmex/ui/separator';
@@ -125,6 +125,11 @@ function ThemedToaster() {
 function RootLayout() {
   // 把选中等宽字体派生到 --font-mono（全应用统一）并按需懒加载 woff2
   useAppMonoFont();
+  // 启动即拉取服务端能力集（/api/capabilities），落 site store 供按 featureset 渲染
+  const loadCapabilities = useSiteStore((state) => state.loadCapabilities);
+  useEffect(() => {
+    void loadCapabilities();
+  }, [loadCapabilities]);
   return (
     <GlobalDeviceProvider>
       <WatchEventsInit />
