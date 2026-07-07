@@ -7,6 +7,7 @@ import {
   unregisterCursorRectGetter,
 } from '@/utils/keyboard-cursor-bridge';
 import { useQuery } from '@tanstack/react-query';
+import { fetchFileRoots, fetchFileStat } from '@tmex/api-client';
 import { decodePaneModes } from '@tmex/shared';
 import { type PaneSink, registerPaneSink } from '@tmex/ws-client/pane-sink-registry';
 import {
@@ -29,7 +30,6 @@ import {
 import { useTranslation } from 'react-i18next';
 import { useNavigate } from 'react-router';
 import { toast } from 'sonner';
-import { fetchFileRoots, fetchFileStat } from '@tmex/api-client';
 import { SelectionToolbar } from './SelectionToolbar';
 import {
   normalizeHistoryForTerminal,
@@ -436,7 +436,7 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(
     // 文件链接上下文：该设备已启用的授权根 + 当前 pane 的 cwd，注入终端做候选有效性过滤。
     const { data: fileRootsData } = useQuery({
       queryKey: ['files', 'roots'],
-      queryFn: fetchFileRoots,
+      queryFn: () => fetchFileRoots(),
       staleTime: 30_000,
     });
     const fileLinkRoots = useMemo(

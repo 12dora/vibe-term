@@ -22,8 +22,16 @@ import { matchPath, useLocation, useNavigate } from 'react-router';
 import { toast } from 'sonner';
 
 import { fileNodeKey, useFileTreeStore } from '@/stores/file-tree';
-import { fileDownloadUrl } from '@tmex/api-client';
 import { decodeFileRef, fileRoute } from '@/utils/fileUrl';
+import { fileDownloadUrl } from '@tmex/api-client';
+import {
+  type FileApiError,
+  downloadFileWithProgress,
+  fetchFileList,
+  fetchFileRoots,
+  uploadFileChunked,
+} from '@tmex/api-client';
+import { formatBytes } from '@tmex/api-client';
 import { cn } from '@tmex/ui';
 import { Button } from '@tmex/ui/button';
 import {
@@ -35,15 +43,7 @@ import {
 } from '@tmex/ui/context-menu';
 import { ScrollArea } from '@tmex/ui/scroll-area';
 import { SidebarGroup, useSidebar } from '@tmex/ui/sidebar';
-import {
-  type FileApiError,
-  downloadFileWithProgress,
-  fetchFileList,
-  fetchFileRoots,
-  uploadFileChunked,
-} from '@tmex/api-client';
 import { fileIconColor, fileIconFor } from './file-icon';
-import { formatBytes } from '@tmex/api-client';
 import {
   buildRsyncInstallPrompt,
   sendPathToAgent,
@@ -175,7 +175,7 @@ export function FilesTab() {
 
   const rootsQuery = useQuery({
     queryKey: ['files', 'roots'],
-    queryFn: fetchFileRoots,
+    queryFn: () => fetchFileRoots(),
     refetchOnWindowFocus: true,
   });
   const devicesQuery = useQuery({

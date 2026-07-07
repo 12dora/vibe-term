@@ -1,10 +1,5 @@
 import { ShortcutButtonRow } from '@/components/settings/ShortcutButtonRow';
 import {
-  fetchTerminalShortcuts,
-  terminalShortcutsQueryKey,
-  updateTerminalShortcuts,
-} from '@tmex/api-client';
-import {
   escapeForDisplay,
   keyEventToTerminalSequence,
   parseEscapeSequence,
@@ -28,6 +23,11 @@ import {
 } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import {
+  fetchTerminalShortcuts,
+  terminalShortcutsQueryKey,
+  updateTerminalShortcuts,
+} from '@tmex/api-client';
 import {
   DEFAULT_TERMINAL_SHORTCUTS,
   type TerminalShortcutAction,
@@ -191,7 +191,7 @@ export function TerminalShortcutsEditor() {
   const queryClient = useQueryClient();
   const { data, isLoading, isError, refetch } = useQuery({
     queryKey: terminalShortcutsQueryKey,
-    queryFn: fetchTerminalShortcuts,
+    queryFn: () => fetchTerminalShortcuts(),
   });
 
   const [items, setItems] = useState<TerminalShortcutItem[]>([]);

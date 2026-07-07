@@ -12,17 +12,11 @@ import { toast } from 'sonner';
 import { Button } from '@tmex/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@tmex/ui/card';
 import { Input } from '@tmex/ui/input';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@tmex/ui/select';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@tmex/ui/select';
 
+import { parseApiError } from '@tmex/api-client';
 import { LlmProviderFormModal } from './llm-provider-form-modal';
 import { LlmProviderRow } from './llm-provider-row';
-import { parseApiError } from '@tmex/api-client';
 
 interface ProvidersResponse {
   providers: LlmProviderDto[];

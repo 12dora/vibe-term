@@ -1,4 +1,3 @@
-import { filesApiUrl } from './file-urls';
 import type {
   CreateFileRootRequest,
   FileContentResponse,
@@ -12,6 +11,8 @@ import type {
   UploadInitRequest,
   UploadInitResponse,
 } from '@tmex/shared';
+import { type ApiClient, defaultApiClient } from './client';
+import { filesApiUrl } from './file-urls';
 import { formatBytes, formatRate } from './format';
 
 export class FileApiError extends Error {
@@ -38,14 +39,19 @@ async function parseError(res: Response): Promise<FileApiError> {
   return new FileApiError(res.status, message, code);
 }
 
-export async function fetchFileRoots(): Promise<ListFileRootsResponse> {
-  const res = await fetch('/api/files/roots');
+export async function fetchFileRoots(
+  client: ApiClient = defaultApiClient
+): Promise<ListFileRootsResponse> {
+  const res = await client.fetch('/api/files/roots');
   if (!res.ok) throw await parseError(res);
   return (await res.json()) as ListFileRootsResponse;
 }
 
-export async function createFileRoot(body: CreateFileRootRequest): Promise<FileRootResponse> {
-  const res = await fetch('/api/files/roots', {
+export async function createFileRoot(
+  body: CreateFileRootRequest,
+  client: ApiClient = defaultApiClient
+): Promise<FileRootResponse> {
+  const res = await client.fetch('/api/files/roots', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
@@ -56,9 +62,10 @@ export async function createFileRoot(body: CreateFileRootRequest): Promise<FileR
 
 export async function updateFileRoot(
   id: string,
-  body: UpdateFileRootRequest
+  body: UpdateFileRootRequest,
+  client: ApiClient = defaultApiClient
 ): Promise<FileRootResponse> {
-  const res = await fetch(`/api/files/roots/${encodeURIComponent(id)}`, {
+  const res = await client.fetch(`/api/files/roots/${encodeURIComponent(id)}`, {
     method: 'PATCH',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
@@ -67,25 +74,42 @@ export async function updateFileRoot(
   return (await res.json()) as FileRootResponse;
 }
 
-export async function deleteFileRoot(id: string): Promise<void> {
-  const res = await fetch(`/api/files/roots/${encodeURIComponent(id)}`, { method: 'DELETE' });
+export async function deleteFileRoot(
+  id: string,
+  client: ApiClient = defaultApiClient
+): Promise<void> {
+  const res = await client.fetch(`/api/files/roots/${encodeURIComponent(id)}`, {
+    method: 'DELETE',
+  });
   if (!res.ok) throw await parseError(res);
 }
 
-export async function fetchFileList(rootId: string, path?: string): Promise<ListFilesResponse> {
-  const res = await fetch(filesApiUrl('list', rootId, path));
+export async function fetchFileList(
+  rootId: string,
+  path?: string,
+  client: ApiClient = defaultApiClient
+): Promise<ListFilesResponse> {
+  const res = await client.fetch(filesApiUrl('list', rootId, path));
   if (!res.ok) throw await parseError(res);
   return (await res.json()) as ListFilesResponse;
 }
 
-export async function fetchFileStat(rootId: string, path: string): Promise<FileStatResponse> {
-  const res = await fetch(filesApiUrl('stat', rootId, path));
+export async function fetchFileStat(
+  rootId: string,
+  path: string,
+  client: ApiClient = defaultApiClient
+): Promise<FileStatResponse> {
+  const res = await client.fetch(filesApiUrl('stat', rootId, path));
   if (!res.ok) throw await parseError(res);
   return (await res.json()) as FileStatResponse;
 }
 
-export async function fetchFileContent(rootId: string, path: string): Promise<FileContentResponse> {
-  const res = await fetch(filesApiUrl('content', rootId, path));
+export async function fetchFileContent(
+  rootId: string,
+  path: string,
+  client: ApiClient = defaultApiClient
+): Promise<FileContentResponse> {
+  const res = await client.fetch(filesApiUrl('content', rootId, path));
   if (!res.ok) throw await parseError(res);
   return (await res.json()) as FileContentResponse;
 }
@@ -126,7 +150,8 @@ export async function uploadFileChunked(
   rootId: string,
   destDir: string,
   file: File,
-  opts: TransferOpts = {}
+  opts: TransferOpts = {},
+  client: ApiClient = defaultApiClient
 ): Promise<void> {
   const { onLeg, signal } = opts;
   const ensureNotAborted = () => {
@@ -135,7 +160,7 @@ export async function uploadFileChunked(
   const total = file.size;
   const bytes = (n: number) => `${formatBytes(n)} / ${formatBytes(total)}`;
   const initBody: UploadInitRequest = { rootId, path: destDir, name: file.name, size: total };
-  const initRes = await fetch('/api/files/upload/init', {
+  const initRes = await client.fetch('/api/files/upload/init', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(initBody),
@@ -153,7 +178,7 @@ export async function uploadFileChunked(
     while (offset < total) {
       ensureNotAborted();
       const end = Math.min(offset + step, total);
-      const res = await fetch(`/api/files/upload/${uploadId}?offset=${offset}`, {
+      const res = await client.fetch(`/api/files/upload/${uploadId}?offset=${offset}`, {
         method: 'PUT',
         body: file.slice(offset, end),
         signal,
@@ -172,7 +197,7 @@ export async function uploadFileChunked(
     // leg2：tmex → 服务器（rsync 推送，commit 流式 NDJSON 回传进度）
     ensureNotAborted();
     onLeg?.(2, { pct: 0, detail: bytes(0) });
-    const commitRes = await fetch(`/api/files/upload/${uploadId}/commit`, {
+    const commitRes = await client.fetch(`/api/files/upload/${uploadId}/commit`, {
       method: 'POST',
       signal,
     });
@@ -204,7 +229,7 @@ export async function uploadFileChunked(
   } catch (e) {
     // 失败/取消：通知后端中止 rsync + 清理临时会话（best-effort）
     try {
-      await fetch(`/api/files/upload/${uploadId}`, { method: 'DELETE' });
+      await client.fetch(`/api/files/upload/${uploadId}`, { method: 'DELETE' });
     } catch {
       // 忽略
     }
@@ -218,13 +243,14 @@ export async function downloadFileWithProgress(
   rootId: string,
   path: string,
   name: string,
-  opts: TransferOpts = {}
+  opts: TransferOpts = {},
+  client: ApiClient = defaultApiClient
 ): Promise<void> {
   const { onLeg, signal } = opts;
 
   // leg1：服务器 → tmex（rsync）
   onLeg?.(1, { pct: 0 });
-  const prep = await fetch('/api/files/download/prepare', {
+  const prep = await client.fetch('/api/files/download/prepare', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ rootId, path }),
@@ -270,7 +296,7 @@ export async function downloadFileWithProgress(
   try {
     const bytes = (n: number) => `${formatBytes(n)} / ${formatBytes(size)}`;
     onLeg?.(2, { pct: 0, detail: bytes(0) });
-    const res = await fetch(`/api/files/download/${downloadId}/content`, { signal });
+    const res = await client.fetch(`/api/files/download/${downloadId}/content`, { signal });
     if (!res.ok || !res.body) throw await parseError(res);
     const total = Number(res.headers.get('Content-Length') ?? String(size));
     const reader = res.body.getReader();
@@ -301,7 +327,7 @@ export async function downloadFileWithProgress(
     onLeg?.(2, { pct: 100, detail: bytes(size) });
   } catch (e) {
     try {
-      await fetch(`/api/files/download/${downloadId}`, { method: 'DELETE' });
+      await client.fetch(`/api/files/download/${downloadId}`, { method: 'DELETE' });
     } catch {
       // 忽略
     }

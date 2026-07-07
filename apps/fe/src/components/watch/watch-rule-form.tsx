@@ -1,4 +1,5 @@
 import { useMutation, useQuery } from '@tanstack/react-query';
+import { assistRegex, createWatchRule, updateWatchRule } from '@tmex/api-client';
 import type {
   AssistRegexResponse,
   CreateWatchRuleRequest,
@@ -12,20 +13,13 @@ import type {
 import { cn } from '@tmex/ui';
 import { Button } from '@tmex/ui/button';
 import { Input } from '@tmex/ui/input';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@tmex/ui/select';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@tmex/ui/select';
 import { Switch } from '@tmex/ui/switch';
 import { Textarea } from '@tmex/ui/textarea';
 import { Loader2, Sparkles } from 'lucide-react';
 import { useId, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { toast } from 'sonner';
-import { assistRegex, createWatchRule, updateWatchRule } from '@tmex/api-client';
 
 const TRIGGER_TYPES: WatchTriggerType[] = ['match', 'unchanged', 'llm'];
 const FOLLOW_DEFAULT_VALUE = '__default__';

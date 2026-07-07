@@ -1,8 +1,3 @@
-export async function parseApiError(res: Response, fallback: string): Promise<string> {
-  try {
-    const payload = (await res.json()) as { error?: string };
-    return payload.error ?? fallback;
-  } catch {
-    return fallback;
-  }
-}
+// LLM providers 设置相关端点的共享错误解析（实现收敛在 client.ts）
+
+export { parseApiError } from './client';

@@ -1,8 +1,22 @@
 // Agent 会话 store：REST 管理 + WS 订阅流式事件
 // 模式仿 tmux.ts：模块级 initialized 防重入、client.onMessage 独立 handler、READY 重连补发订阅。
 
+import {
+  createAgentSession,
+  decideAgentConfirmation,
+  deleteAgentSession,
+  editQueuedAgentMessage,
+  enqueueAgentMessage,
+  fetchAgentConfirmations,
+  fetchAgentMessages,
+  fetchAgentSession,
+  fetchAgentSessions,
+  sendAgentMessage,
+  stopAgentSession,
+  updateAgentSession,
+  withdrawQueuedAgentMessage,
+} from '@tmex/api-client';
 import type {
-  AgentConfirmationDto,
   AgentMessageDto,
   AgentQueuedMessageDto,
   AgentSessionDto,
@@ -120,15 +134,6 @@ interface AgentState {
   updateDraft: (patch: Partial<Pick<DraftSession, 'providerId' | 'modelId'>>) => void;
   clearDraft: () => void;
   materializeDraft: () => Promise<AgentSessionDto | null>;
-}
-
-async function parseApiError(res: Response, fallback: string): Promise<string> {
-  try {
-    const payload = (await res.json()) as { error?: string };
-    return payload.error ?? fallback;
-  } catch {
-    return fallback;
-  }
 }
 
 function sortSessionOrder(sessions: Record<string, AgentSessionDto | undefined>): string[] {
@@ -670,14 +675,10 @@ export const useAgentStore = create<AgentState>()(
 
       async loadSessions() {
         try {
-          const res = await fetch('/api/agent/sessions');
-          if (!res.ok) {
-            throw new Error(await parseApiError(res, 'Failed to load agent sessions'));
-          }
-          const payload = (await res.json()) as { sessions: AgentSessionDto[] };
+          const sessionList = await fetchAgentSessions();
           set(() => {
             const sessions: Record<string, AgentSessionDto> = {};
-            for (const session of payload.sessions) {
+            for (const session of sessionList) {
               sessions[session.id] = session;
             }
             return {
@@ -698,18 +699,14 @@ export const useAgentStore = create<AgentState>()(
 
       async refreshSession(sessionId) {
         try {
-          const res = await fetch(`/api/agent/sessions/${sessionId}`);
-          if (res.status === 404) {
+          const refreshed = await fetchAgentSession(sessionId);
+          if (refreshed === null) {
             // session 已被别端删除，回退全量刷新走统一清理逻辑
             await get().loadSessions();
             return;
           }
-          if (!res.ok) {
-            throw new Error(await parseApiError(res, 'Failed to load agent session'));
-          }
-          const payload = (await res.json()) as { session: AgentSessionDto };
           set((prev) => {
-            const sessions = { ...prev.sessions, [sessionId]: payload.session };
+            const sessions = { ...prev.sessions, [sessionId]: refreshed };
             return { sessions, sessionOrder: sortSessionOrder(sessions) };
           });
         } catch (error) {
@@ -740,30 +737,21 @@ export const useAgentStore = create<AgentState>()(
 
       async createSession(deviceId, paneId, options) {
         try {
-          const res = await fetch('/api/agent/sessions', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              deviceId,
-              paneId,
-              ...(options?.providerId !== undefined ? { providerId: options.providerId } : {}),
-              ...(options?.modelId !== undefined && options.modelId !== null
-                ? { modelId: options.modelId }
-                : {}),
-              ...(options?.providerHostedTools !== undefined
-                ? { providerHostedTools: options.providerHostedTools }
-                : {}),
-              ...(options?.originPaneTitle !== undefined
-                ? { originPaneTitle: options.originPaneTitle }
-                : {}),
-              writeMode: options?.writeMode ?? get().defaultWriteMode,
-            }),
+          const session = await createAgentSession({
+            deviceId,
+            paneId,
+            ...(options?.providerId !== undefined ? { providerId: options.providerId } : {}),
+            ...(options?.modelId !== undefined && options.modelId !== null
+              ? { modelId: options.modelId }
+              : {}),
+            ...(options?.providerHostedTools !== undefined
+              ? { providerHostedTools: options.providerHostedTools }
+              : {}),
+            ...(options?.originPaneTitle !== undefined
+              ? { originPaneTitle: options.originPaneTitle }
+              : {}),
+            writeMode: options?.writeMode ?? get().defaultWriteMode,
           });
-          if (!res.ok) {
-            throw new Error(await parseApiError(res, 'Failed to create agent session'));
-          }
-          const payload = (await res.json()) as { session: AgentSessionDto };
-          const session = payload.session;
           set((prev) => {
             const sessions = { ...prev.sessions, [session.id]: session };
             return {
@@ -783,17 +771,13 @@ export const useAgentStore = create<AgentState>()(
 
       async renameSession(sessionId, title) {
         try {
-          const res = await fetch(`/api/agent/sessions/${sessionId}`, {
-            method: 'PATCH',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ title }),
-          });
-          if (!res.ok) {
-            throw new Error(await parseApiError(res, 'Failed to rename agent session'));
-          }
-          const payload = (await res.json()) as { session: AgentSessionDto };
+          const session = await updateAgentSession(
+            sessionId,
+            { title },
+            'Failed to rename agent session'
+          );
           set((prev) => {
-            const sessions = { ...prev.sessions, [sessionId]: payload.session };
+            const sessions = { ...prev.sessions, [sessionId]: session };
             return { sessions, sessionOrder: sortSessionOrder(sessions) };
           });
           return true;
@@ -805,12 +789,7 @@ export const useAgentStore = create<AgentState>()(
 
       async deleteSession(sessionId) {
         try {
-          const res = await fetch(`/api/agent/sessions/${sessionId}`, {
-            method: 'DELETE',
-          });
-          if (!res.ok) {
-            throw new Error(await parseApiError(res, 'Failed to delete agent session'));
-          }
+          await deleteAgentSession(sessionId);
           if (get().activeSessionId === sessionId) {
             get().setActiveSession(null);
           }
@@ -847,16 +826,12 @@ export const useAgentStore = create<AgentState>()(
 
       async setWriteMode(sessionId, writeMode) {
         try {
-          const res = await fetch(`/api/agent/sessions/${sessionId}`, {
-            method: 'PATCH',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ writeMode }),
-          });
-          if (!res.ok) {
-            throw new Error(await parseApiError(res, 'Failed to update write mode'));
-          }
-          const payload = (await res.json()) as { session: AgentSessionDto };
-          set((prev) => ({ sessions: { ...prev.sessions, [sessionId]: payload.session } }));
+          const session = await updateAgentSession(
+            sessionId,
+            { writeMode },
+            'Failed to update write mode'
+          );
+          set((prev) => ({ sessions: { ...prev.sessions, [sessionId]: session } }));
         } catch (error) {
           toast.error(error instanceof Error ? error.message : String(error));
         }
@@ -864,16 +839,12 @@ export const useAgentStore = create<AgentState>()(
 
       async setAllowControlChars(sessionId, allow) {
         try {
-          const res = await fetch(`/api/agent/sessions/${sessionId}`, {
-            method: 'PATCH',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ allowControlChars: allow }),
-          });
-          if (!res.ok) {
-            throw new Error(await parseApiError(res, 'Failed to update control chars setting'));
-          }
-          const payload = (await res.json()) as { session: AgentSessionDto };
-          set((prev) => ({ sessions: { ...prev.sessions, [sessionId]: payload.session } }));
+          const session = await updateAgentSession(
+            sessionId,
+            { allowControlChars: allow },
+            'Failed to update control chars setting'
+          );
+          set((prev) => ({ sessions: { ...prev.sessions, [sessionId]: session } }));
         } catch (error) {
           toast.error(error instanceof Error ? error.message : String(error));
         }
@@ -885,16 +856,12 @@ export const useAgentStore = create<AgentState>()(
 
       async setSessionModel(sessionId, providerId, modelId) {
         try {
-          const res = await fetch(`/api/agent/sessions/${sessionId}`, {
-            method: 'PATCH',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ providerId, modelId }),
-          });
-          if (!res.ok) {
-            throw new Error(await parseApiError(res, 'Failed to update model'));
-          }
-          const payload = (await res.json()) as { session: AgentSessionDto };
-          set((prev) => ({ sessions: { ...prev.sessions, [sessionId]: payload.session } }));
+          const session = await updateAgentSession(
+            sessionId,
+            { providerId, modelId },
+            'Failed to update model'
+          );
+          set((prev) => ({ sessions: { ...prev.sessions, [sessionId]: session } }));
         } catch (error) {
           toast.error(error instanceof Error ? error.message : String(error));
         }
@@ -902,16 +869,8 @@ export const useAgentStore = create<AgentState>()(
 
       async rebindPane(sessionId, paneId) {
         try {
-          const res = await fetch(`/api/agent/sessions/${sessionId}`, {
-            method: 'PATCH',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ paneId }),
-          });
-          if (!res.ok) {
-            throw new Error(await parseApiError(res, 'Failed to rebind pane'));
-          }
-          const payload = (await res.json()) as { session: AgentSessionDto };
-          set((prev) => ({ sessions: { ...prev.sessions, [sessionId]: payload.session } }));
+          const session = await updateAgentSession(sessionId, { paneId }, 'Failed to rebind pane');
+          set((prev) => ({ sessions: { ...prev.sessions, [sessionId]: session } }));
         } catch (error) {
           toast.error(error instanceof Error ? error.message : String(error));
         }
@@ -929,16 +888,11 @@ export const useAgentStore = create<AgentState>()(
           const afterSeq = state.historyLoaded[sessionId]
             ? maxMessageSeq(state.messages[sessionId])
             : -1;
-          const query = afterSeq >= 0 ? `?afterSeq=${afterSeq}` : '';
-          const res = await fetch(`/api/agent/sessions/${sessionId}/messages${query}`);
-          if (!res.ok) {
-            throw new Error(await parseApiError(res, 'Failed to load agent messages'));
-          }
-          const payload = (await res.json()) as { messages: AgentMessageDto[] };
+          const messageList = await fetchAgentMessages(sessionId, afterSeq);
           set((prev) => {
             const merged = mergeMessages(
               afterSeq >= 0 ? prev.messages[sessionId] : undefined,
-              payload.messages
+              messageList
             );
             const current = prev.inProgress[sessionId];
             // 已落库内容对应的 stale 流式段在此处清除
@@ -971,18 +925,7 @@ export const useAgentStore = create<AgentState>()(
       async sendMessage(sessionId, text) {
         set((prev) => ({ sending: { ...prev.sending, [sessionId]: true } }));
         try {
-          const res = await fetch(`/api/agent/sessions/${sessionId}/messages`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ text }),
-          });
-          if (!res.ok) {
-            throw new Error(await parseApiError(res, 'Failed to send message'));
-          }
-          const payload = (await res.json()) as {
-            message?: AgentMessageDto;
-            queued?: AgentQueuedMessageDto;
-          };
+          const payload = await sendAgentMessage(sessionId, text);
           // 运行中后端会入队（QUEUE_UPDATED 事件负责更新队列态），此处仅处理直接落库的消息
           if (payload.message) {
             const message = payload.message;
@@ -1013,14 +956,7 @@ export const useAgentStore = create<AgentState>()(
 
       async enqueueMessage(sessionId, text, steer = false) {
         try {
-          const res = await fetch(`/api/agent/sessions/${sessionId}/queue`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ text, steer }),
-          });
-          if (!res.ok) {
-            throw new Error(await parseApiError(res, 'Failed to queue message'));
-          }
+          await enqueueAgentMessage(sessionId, text, steer);
           // 队列态由 AGENT_EVENT_QUEUE_UPDATED 驱动；message（已落库）的情况由 WS 增量补史
         } catch (error) {
           toast.error(error instanceof Error ? error.message : String(error));
@@ -1029,14 +965,7 @@ export const useAgentStore = create<AgentState>()(
 
       async editQueuedMessage(_sessionId, itemId, text) {
         try {
-          const res = await fetch(`/api/agent/queue/${itemId}`, {
-            method: 'PATCH',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ text }),
-          });
-          if (!res.ok) {
-            throw new Error(await parseApiError(res, 'Failed to edit queued message'));
-          }
+          await editQueuedAgentMessage(itemId, text);
         } catch (error) {
           toast.error(error instanceof Error ? error.message : String(error));
         }
@@ -1044,10 +973,7 @@ export const useAgentStore = create<AgentState>()(
 
       async withdrawQueuedMessage(_sessionId, itemId) {
         try {
-          const res = await fetch(`/api/agent/queue/${itemId}`, { method: 'DELETE' });
-          if (!res.ok) {
-            throw new Error(await parseApiError(res, 'Failed to withdraw queued message'));
-          }
+          await withdrawQueuedAgentMessage(itemId);
         } catch (error) {
           toast.error(error instanceof Error ? error.message : String(error));
         }
@@ -1095,14 +1021,9 @@ export const useAgentStore = create<AgentState>()(
 
       async stopSession(sessionId) {
         try {
-          const res = await fetch(`/api/agent/sessions/${sessionId}/stop`, { method: 'POST' });
-          if (!res.ok) {
-            throw new Error(await parseApiError(res, 'Failed to stop agent session'));
-          }
-          const payload = (await res.json()) as { session: AgentSessionDto | null };
-          if (payload.session) {
-            const session = payload.session;
-            set((prev) => ({ sessions: { ...prev.sessions, [sessionId]: session } }));
+          const stopped = await stopAgentSession(sessionId);
+          if (stopped) {
+            set((prev) => ({ sessions: { ...prev.sessions, [sessionId]: stopped } }));
           }
         } catch (error) {
           toast.error(error instanceof Error ? error.message : String(error));
@@ -1124,40 +1045,28 @@ export const useAgentStore = create<AgentState>()(
         };
 
         try {
-          const res = await fetch(`/api/agent/confirmations/${confirmationId}/decide`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(reason === undefined ? { approved } : { approved, reason }),
-          });
-          if (res.status === 409) {
+          const decided = await decideAgentConfirmation(confirmationId, approved, reason);
+          if (decided === 'conflict') {
             // 已被别端决定：静默刷新 pending 列表
             removeLocally();
             try {
-              const refresh = await fetch(`/api/agent/sessions/${sessionId}/confirmations`);
-              if (refresh.ok) {
-                const payload = (await refresh.json()) as {
-                  confirmations: AgentConfirmationDto[];
-                };
-                set((prev) => ({
-                  pendingConfirmations: {
-                    ...prev.pendingConfirmations,
-                    [sessionId]: payload.confirmations.map((confirmation) => ({
-                      id: confirmation.id,
-                      toolCallId: confirmation.toolCallId,
-                      toolName: confirmation.toolName,
-                      input: confirmation.input,
-                      createdAt: confirmation.createdAt,
-                    })),
-                  },
-                }));
-              }
+              const confirmations = await fetchAgentConfirmations(sessionId);
+              set((prev) => ({
+                pendingConfirmations: {
+                  ...prev.pendingConfirmations,
+                  [sessionId]: confirmations.map((confirmation) => ({
+                    id: confirmation.id,
+                    toolCallId: confirmation.toolCallId,
+                    toolName: confirmation.toolName,
+                    input: confirmation.input,
+                    createdAt: confirmation.createdAt,
+                  })),
+                },
+              }));
             } catch {
               // 刷新失败不致命，CONFIRMATION_RESOLVED 事件会兜底
             }
             return;
-          }
-          if (!res.ok) {
-            throw new Error(await parseApiError(res, 'Failed to decide confirmation'));
           }
           removeLocally();
         } catch (error) {

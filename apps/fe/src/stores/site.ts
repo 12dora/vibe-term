@@ -1,3 +1,4 @@
+import { fetchSiteSettings } from '@tmex/api-client';
 import { DEFAULT_LOCALE, type SiteSettings, type ThemeMode } from '@tmex/shared';
 import { buildSiteThemeUpdate, getBorshClient } from '@tmex/ws-client';
 import { create } from 'zustand';
@@ -29,15 +30,6 @@ const DEFAULT_SETTINGS: SiteSettings = {
   disabledNotificationChannels: [],
   updatedAt: new Date(0).toISOString(),
 };
-
-async function fetchSiteSettingsFromApi(): Promise<SiteSettings> {
-  const res = await fetch('/api/settings/site');
-  if (!res.ok) {
-    throw new Error('Failed to load site settings');
-  }
-  const payload = (await res.json()) as { settings: SiteSettings };
-  return payload.settings;
-}
 
 function syncThemeToUIStore(theme: ThemeMode): void {
   if (useUIStore.getState().theme !== theme) {
@@ -71,7 +63,7 @@ export const useSiteStore = create<SiteState>((set, get) => ({
 
     set({ loading: true });
     try {
-      const settings = await fetchSiteSettingsFromApi();
+      const settings = await fetchSiteSettings();
       set({ settings, loading: false });
       void i18n.changeLanguage(settings.language);
       syncThemeToUIStore(settings.theme);
@@ -88,7 +80,7 @@ export const useSiteStore = create<SiteState>((set, get) => ({
   refreshSettings: async () => {
     set({ loading: true });
     try {
-      const settings = await fetchSiteSettingsFromApi();
+      const settings = await fetchSiteSettings();
       set({ settings, loading: false });
       void i18n.changeLanguage(settings.language);
       syncThemeToUIStore(settings.theme);

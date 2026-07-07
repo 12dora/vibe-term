@@ -1,4 +1,12 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import {
+  deleteWatchRule,
+  fetchWatchRuleState,
+  fetchWatchRules,
+  updateWatchRule,
+  watchRuleStateQueryKey,
+  watchRulesQueryKey,
+} from '@tmex/api-client';
 import type { WatchRuleDto } from '@tmex/shared';
 import {
   AlertDialog,
@@ -24,14 +32,6 @@ import { Activity, ArrowLeft, Bell, Loader2, Pencil, Plus, Trash2 } from 'lucide
 import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { toast } from 'sonner';
-import {
-  deleteWatchRule,
-  fetchWatchRuleState,
-  fetchWatchRules,
-  updateWatchRule,
-  watchRuleStateQueryKey,
-  watchRulesQueryKey,
-} from '@tmex/api-client';
 import { WatchRuleForm } from './watch-rule-form';
 
 type DialogView =

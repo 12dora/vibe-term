@@ -19,8 +19,8 @@ import {
   DialogTitle,
 } from '@tmex/ui/dialog';
 
-import { LlmProviderModels, type ModelDraft } from './llm-provider-models';
 import { parseApiError } from '@tmex/api-client';
+import { LlmProviderModels, type ModelDraft } from './llm-provider-models';
 
 interface LlmProviderModelsModalProps {
   open: boolean;

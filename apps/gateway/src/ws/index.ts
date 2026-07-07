@@ -2,7 +2,7 @@ import type { EventDevicePayload, StateSnapshotPayload, TmuxEventType } from '@t
 import { type ThemeMode, getTmuxWindowStyle, wsBorsh } from '@tmex/shared';
 import type { Server, ServerWebSocket } from 'bun';
 import { agentWsHub } from '../agent/ws-hub';
-import { GATEWAY_CAPABILITIES } from '../capabilities';
+import { GATEWAY_CAPABILITIES } from '@tmex/shared';
 import {
   getDeviceTreeOrder,
   getSiteSettings,

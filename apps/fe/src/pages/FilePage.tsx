@@ -6,6 +6,10 @@ import { useTranslation } from 'react-i18next';
 import { useParams } from 'react-router';
 
 import { CodeViewer } from '@/components/code-viewer/code-viewer';
+import { startTransferToast } from '@/components/files-panel/transfer-toast';
+import { MarkdownPreview } from '@/components/markdown/markdown-preview';
+import i18n from '@/i18n';
+import { type FileRef, decodeFileRef } from '@/utils/fileUrl';
 import {
   type FileApiError,
   downloadFileWithProgress,
@@ -13,11 +17,7 @@ import {
   fetchFileStat,
 } from '@tmex/api-client';
 import { formatBytes } from '@tmex/api-client';
-import { startTransferToast } from '@/components/files-panel/transfer-toast';
-import { MarkdownPreview } from '@/components/markdown/markdown-preview';
-import i18n from '@/i18n';
 import { fileRawUrl } from '@tmex/api-client';
-import { type FileRef, decodeFileRef } from '@/utils/fileUrl';
 import { Button } from '@tmex/ui/button';
 
 function useFileRef(ref?: string): FileRef | null {

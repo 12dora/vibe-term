@@ -39,13 +39,7 @@ import {
   DialogTitle,
 } from '@tmex/ui/dialog';
 import { Input } from '@tmex/ui/input';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@tmex/ui/select';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@tmex/ui/select';
 import { Switch } from '@tmex/ui/switch';
 
 interface DevicesResponse {
@@ -67,7 +61,7 @@ export function FilesSettingsTab() {
 
   const rootsQuery = useQuery({
     queryKey: ['files', 'roots'],
-    queryFn: fetchFileRoots,
+    queryFn: () => fetchFileRoots(),
   });
 
   const devicesQuery = useQuery({

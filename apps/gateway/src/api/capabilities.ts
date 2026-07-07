@@ -1,5 +1,5 @@
 import { wsBorsh } from '@tmex/shared';
-import { API_VERSION, GATEWAY_CAPABILITIES } from '../capabilities';
+import { API_VERSION, GATEWAY_CAPABILITIES } from '@tmex/shared';
 import { getDisplayVersion } from '../system/version';
 
 export function handleCapabilitiesApiRequest(req: Request, path: string): Response | null {

@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import { wsBorsh } from '@tmex/shared';
-import { API_VERSION, GATEWAY_CAPABILITIES } from '../capabilities';
+import { API_VERSION, GATEWAY_CAPABILITIES } from '@tmex/shared';
 import { getDisplayVersion } from '../system/version';
 import { handleCapabilitiesApiRequest } from './capabilities';
 

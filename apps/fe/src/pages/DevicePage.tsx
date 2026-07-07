@@ -1,17 +1,14 @@
 import { DeviceStatusBadge } from '@/components/device-status-badge';
 import { ShortcutButtonRow } from '@/components/settings/ShortcutButtonRow';
 import { TerminalSettingsSheet } from '@/components/settings/terminal-settings-sheet';
-import {
-  fetchTerminalShortcuts,
-  terminalShortcutsQueryKey,
-} from '@tmex/api-client';
 import { Terminal as TerminalComponent, type TerminalRef } from '@/components/terminal';
 import { PaneSwitcherMenu } from '@/components/terminal/PaneSwitcherMenu';
 import { SplitTerminalArea } from '@/components/terminal/SplitTerminalArea';
 import { XTERM_THEME_DARK, XTERM_THEME_LIGHT } from '@/components/terminal/theme';
-import { fetchWatchRules, watchRulesQueryKey } from '@tmex/api-client';
 import { WatchDialog } from '@/components/watch/watch-dialog';
 import { useQuery } from '@tanstack/react-query';
+import { fetchTerminalShortcuts, terminalShortcutsQueryKey } from '@tmex/api-client';
+import { fetchWatchRules, watchRulesQueryKey } from '@tmex/api-client';
 import type { Device, TerminalShortcutItem } from '@tmex/shared';
 import { useIsMobile } from '@tmex/ui';
 import {
@@ -71,7 +68,7 @@ const ShortcutsBar = memo(function ShortcutsBar({
 }) {
   const { data } = useQuery({
     queryKey: terminalShortcutsQueryKey,
-    queryFn: fetchTerminalShortcuts,
+    queryFn: () => fetchTerminalShortcuts(),
     staleTime: 60_000,
   });
   const items = data?.items ?? [];
@@ -458,9 +455,7 @@ export default function DevicePage() {
     if (!currentPane) {
       // pane 不在本窗口时先查它是否被 move/break 到了其他窗口——是则跟随过去
       // （否则这里抢先导航回本窗口会与 pane-active 事件竞争，把 tmux 焦点拉回来）
-      const relocatedWindow = windows.find((w) =>
-        w.panes.some((p) => p.id === resolvedPaneId)
-      );
+      const relocatedWindow = windows.find((w) => w.panes.some((p) => p.id === resolvedPaneId));
       if (relocatedWindow) {
         navigate(
           `/devices/${deviceId}/windows/${relocatedWindow.id}/panes/${encodePaneIdForUrl(resolvedPaneId)}`,
@@ -1445,7 +1440,9 @@ export function PageActions() {
   const handleSplitPane = useCallback(
     (direction: 'right' | 'down') => {
       if (!deviceId || !resolvedPaneId) return;
-      useTmuxStore.getState().splitPane(deviceId, resolvedPaneId, direction, currentPane?.currentPath);
+      useTmuxStore
+        .getState()
+        .splitPane(deviceId, resolvedPaneId, direction, currentPane?.currentPath);
     },
     [deviceId, resolvedPaneId, currentPane?.currentPath]
   );

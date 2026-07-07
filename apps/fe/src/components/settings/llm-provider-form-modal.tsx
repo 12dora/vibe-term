@@ -22,13 +22,7 @@ import {
   DialogTitle,
 } from '@tmex/ui/dialog';
 import { Input } from '@tmex/ui/input';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@tmex/ui/select';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@tmex/ui/select';
 
 import { parseApiError } from '@tmex/api-client';
 

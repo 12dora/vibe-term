@@ -19,8 +19,8 @@ import { Badge } from '@tmex/ui/badge';
 import { Button } from '@tmex/ui/button';
 import { Switch } from '@tmex/ui/switch';
 
-import { LlmProviderModelsModal } from './llm-provider-models-modal';
 import { parseApiError } from '@tmex/api-client';
+import { LlmProviderModelsModal } from './llm-provider-models-modal';
 
 function maskBaseUrl(baseUrl: string): string {
   try {
