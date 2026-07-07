@@ -4,12 +4,12 @@ import { TerminalSettingsSheet } from '@/components/settings/terminal-settings-s
 import {
   fetchTerminalShortcuts,
   terminalShortcutsQueryKey,
-} from '@/components/settings/terminal-shortcuts-api';
+} from '@tmex/api-client';
 import { Terminal as TerminalComponent, type TerminalRef } from '@/components/terminal';
 import { PaneSwitcherMenu } from '@/components/terminal/PaneSwitcherMenu';
 import { SplitTerminalArea } from '@/components/terminal/SplitTerminalArea';
 import { XTERM_THEME_DARK, XTERM_THEME_LIGHT } from '@/components/terminal/theme';
-import { fetchWatchRules, watchRulesQueryKey } from '@/components/watch/api';
+import { fetchWatchRules, watchRulesQueryKey } from '@tmex/api-client';
 import { WatchDialog } from '@/components/watch/watch-dialog';
 import { useQuery } from '@tanstack/react-query';
 import type { Device, TerminalShortcutItem } from '@tmex/shared';

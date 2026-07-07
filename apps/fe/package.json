@@ -19,6 +19,7 @@
     "@dnd-kit/utilities": "^3.2.2",
     "@fontsource-variable/geist": "^5.2.8",
     "@tanstack/react-query": "^5.66.0",
+    "@tmex/api-client": "workspace:*",
     "@tmex/shared": "workspace:*",
     "@tmex/ui": "workspace:*",
     "@tmex/ws-client": "workspace:*",

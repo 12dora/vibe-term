@@ -16,7 +16,7 @@ import {
   deleteFileRoot,
   fetchFileRoots,
   updateFileRoot,
-} from '@/components/files-panel/api';
+} from '@tmex/api-client';
 import {
   AlertDialog,
   AlertDialogAction,

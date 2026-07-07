@@ -29,7 +29,7 @@ import {
 import { useTranslation } from 'react-i18next';
 import { useNavigate } from 'react-router';
 import { toast } from 'sonner';
-import { fetchFileRoots, fetchFileStat } from '../files-panel/api';
+import { fetchFileRoots, fetchFileStat } from '@tmex/api-client';
 import { SelectionToolbar } from './SelectionToolbar';
 import {
   normalizeHistoryForTerminal,

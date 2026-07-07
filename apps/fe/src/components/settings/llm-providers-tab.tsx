@@ -22,7 +22,7 @@ import {
 
 import { LlmProviderFormModal } from './llm-provider-form-modal';
 import { LlmProviderRow } from './llm-provider-row';
-import { parseApiError } from './llm-providers-api';
+import { parseApiError } from '@tmex/api-client';
 
 interface ProvidersResponse {
   providers: LlmProviderDto[];

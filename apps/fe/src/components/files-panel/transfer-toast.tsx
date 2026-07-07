@@ -2,7 +2,7 @@ import { toast } from 'sonner';
 
 import i18n from '@/i18n';
 import { Progress } from '@tmex/ui/progress';
-import type { LegProgress } from './api';
+import type { LegProgress } from '@tmex/api-client';
 
 export type TransferDirection = 'upload' | 'download';
 

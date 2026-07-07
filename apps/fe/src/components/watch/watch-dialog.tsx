@@ -31,7 +31,7 @@ import {
   updateWatchRule,
   watchRuleStateQueryKey,
   watchRulesQueryKey,
-} from './api';
+} from '@tmex/api-client';
 import { WatchRuleForm } from './watch-rule-form';
 
 type DialogView =

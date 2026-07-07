@@ -3,7 +3,7 @@ import {
   fetchTerminalShortcuts,
   terminalShortcutsQueryKey,
   updateTerminalShortcuts,
-} from '@/components/settings/terminal-shortcuts-api';
+} from '@tmex/api-client';
 import {
   escapeForDisplay,
   keyEventToTerminalSequence,

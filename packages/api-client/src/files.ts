@@ -1,4 +1,4 @@
-import { filesApiUrl } from '@/utils/fileUrl';
+import { filesApiUrl } from './file-urls';
 import type {
   CreateFileRootRequest,
   FileContentResponse,

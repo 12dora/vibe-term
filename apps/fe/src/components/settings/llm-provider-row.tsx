@@ -20,7 +20,7 @@ import { Button } from '@tmex/ui/button';
 import { Switch } from '@tmex/ui/switch';
 
 import { LlmProviderModelsModal } from './llm-provider-models-modal';
-import { parseApiError } from './llm-providers-api';
+import { parseApiError } from '@tmex/api-client';
 
 function maskBaseUrl(baseUrl: string): string {
   try {

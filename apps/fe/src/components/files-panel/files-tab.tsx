@@ -22,7 +22,8 @@ import { matchPath, useLocation, useNavigate } from 'react-router';
 import { toast } from 'sonner';
 
 import { fileNodeKey, useFileTreeStore } from '@/stores/file-tree';
-import { decodeFileRef, fileDownloadUrl, fileRoute } from '@/utils/fileUrl';
+import { fileDownloadUrl } from '@tmex/api-client';
+import { decodeFileRef, fileRoute } from '@/utils/fileUrl';
 import { cn } from '@tmex/ui';
 import { Button } from '@tmex/ui/button';
 import {
@@ -40,9 +41,9 @@ import {
   fetchFileList,
   fetchFileRoots,
   uploadFileChunked,
-} from './api';
+} from '@tmex/api-client';
 import { fileIconColor, fileIconFor } from './file-icon';
-import { formatBytes } from './format';
+import { formatBytes } from '@tmex/api-client';
 import {
   buildRsyncInstallPrompt,
   sendPathToAgent,

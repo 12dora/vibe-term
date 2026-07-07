@@ -30,7 +30,7 @@ import {
   SelectValue,
 } from '@tmex/ui/select';
 
-import { parseApiError } from './llm-providers-api';
+import { parseApiError } from '@tmex/api-client';
 
 const PROTOCOL_OPTIONS: LlmProviderProtocol[] = ['openai-chat', 'openai-responses'];
 

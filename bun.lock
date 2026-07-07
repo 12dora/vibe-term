@@ -21,6 +21,7 @@
         "@dnd-kit/utilities": "^3.2.2",
         "@fontsource-variable/geist": "^5.2.8",
         "@tanstack/react-query": "^5.66.0",
+        "@tmex/api-client": "workspace:*",
         "@tmex/shared": "workspace:*",
         "@tmex/ui": "workspace:*",
         "@tmex/ws-client": "workspace:*",
@@ -85,6 +86,16 @@
         "@types/ssh2": "^1.15.4",
         "@types/uuid": "^10.0.0",
         "drizzle-kit": "^0.31.9",
+        "typescript": "^5.7.3",
+      },
+    },
+    "packages/api-client": {
+      "name": "@tmex/api-client",
+      "version": "0.1.0",
+      "dependencies": {
+        "@tmex/shared": "workspace:*",
+      },
+      "devDependencies": {
         "typescript": "^5.7.3",
       },
     },
@@ -512,6 +523,8 @@
     "@tanstack/query-core": ["@tanstack/query-core@5.90.20", "", {}, "sha512-OMD2HLpNouXEfZJWcKeVKUgQ5n+n3A2JFmBaScpNDUqSrQSjiveC7dKMe53uJUg1nDG16ttFPz2xfilz6i2uVg=="],
 
     "@tanstack/react-query": ["@tanstack/react-query@5.90.20", "", { "dependencies": { "@tanstack/query-core": "5.90.20" }, "peerDependencies": { "react": "^18 || ^19" } }, "sha512-vXBxa+qeyveVO7OA0jX1z+DeyCA4JKnThKv411jd5SORpBKgkcVnYKCiBgECvADvniBX7tobwBmg01qq9JmMJw=="],
+
+    "@tmex/api-client": ["@tmex/api-client@workspace:packages/api-client"],
 
     "@tmex/fe": ["@tmex/fe@workspace:apps/fe"],
 

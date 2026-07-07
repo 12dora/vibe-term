@@ -20,7 +20,7 @@ import {
 } from '@tmex/ui/dialog';
 
 import { LlmProviderModels, type ModelDraft } from './llm-provider-models';
-import { parseApiError } from './llm-providers-api';
+import { parseApiError } from '@tmex/api-client';
 
 interface LlmProviderModelsModalProps {
   open: boolean;
