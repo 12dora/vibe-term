@@ -674,7 +674,7 @@
       "closeWindow": "ウィンドウを閉じる",
       "closePane": "ペインを閉じる",
       "addDevice": "デバイスを追加",
-      "tab": {
+      "section": {
         "panes": "Panes",
         "agent": "Agent",
         "files": "Files"

@@ -149,7 +149,7 @@ export function SideBarDeviceList() {
 
   const agentSessions = useAgentStore((state) => state.sessions);
   const activeSessionId = useAgentStore((state) => state.activeSessionId);
-  const setSidebarTab = useUIStore((state) => state.setSidebarTab);
+  const expandSidebarSection = useUIStore((state) => state.expandSidebarSection);
 
   useEffect(() => {
     const store = useAgentStore.getState();
@@ -230,7 +230,7 @@ export function SideBarDeviceList() {
   const handleSelectSession = useCallback(
     (session: AgentSessionDto) => {
       useAgentStore.getState().setActiveSession(session.id);
-      setSidebarTab('agent');
+      expandSidebarSection('agent');
       if (session.deviceId && session.paneId) {
         const windows = useTmuxStore.getState().snapshots[session.deviceId]?.session?.windows;
         const window = windows?.find((w) => w.panes.some((p) => p.id === session.paneId));
@@ -240,16 +240,16 @@ export function SideBarDeviceList() {
         }
       }
     },
-    [setSidebarTab, navigateToPane]
+    [expandSidebarSection, navigateToPane]
   );
 
   const handleCreateSessionForPane = useCallback(
     (deviceId: string, windowId: string, pane: TmuxPane) => {
       navigateToPane(deviceId, windowId, pane.id, { keepSidebarOpen: true });
       useAgentStore.getState().startDraft(deviceId, pane.id, pane.title ?? null);
-      setSidebarTab('agent');
+      expandSidebarSection('agent');
     },
-    [navigateToPane, setSidebarTab]
+    [navigateToPane, expandSidebarSection]
   );
 
   const selectWindow = useTmuxStore((state) => state.selectWindow);

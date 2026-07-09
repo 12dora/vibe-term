@@ -3,7 +3,7 @@ import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 import type { RuntimeCore } from './runtime';
 
-export type SidebarTab = 'panes' | 'agent' | 'files';
+export type SidebarSection = 'panes' | 'agent' | 'files';
 
 // 终端字体设置默认值（与 ghostty-terminal 内置默认保持一致）。
 const DEFAULT_TERMINAL_FONT_SIZE = 13;
@@ -17,7 +17,7 @@ export type KeyboardBehaviorMode = 'lift' | 'resize' | 'follow';
 
 export interface UIState {
   sidebarCollapsed: boolean;
-  sidebarTab: SidebarTab;
+  sidebarSections: Record<SidebarSection, boolean>;
   inputMode: 'direct' | 'editor';
   editorSendWithEnter: boolean;
   theme: 'light' | 'dark';
@@ -30,7 +30,8 @@ export interface UIState {
   terminalLineHeight: number;
   terminalFontId: string;
   setSidebarCollapsed: (collapsed: boolean) => void;
-  setSidebarTab: (tab: SidebarTab) => void;
+  setSidebarSectionOpen: (section: SidebarSection, open: boolean) => void;
+  expandSidebarSection: (section: SidebarSection) => void;
   setInputMode: (mode: 'direct' | 'editor') => void;
   setKeyboardBehaviorMode: (mode: KeyboardBehaviorMode) => void;
   setEditorSendWithEnter: (enabled: boolean) => void;
@@ -49,7 +50,7 @@ export function createUIStore(core: Pick<RuntimeCore, 'storagePrefix'>) {
     persist(
       (set) => ({
         sidebarCollapsed: false,
-        sidebarTab: 'panes',
+        sidebarSections: { panes: true, agent: true, files: true },
         inputMode: 'direct',
         editorSendWithEnter: true,
         theme: 'dark',
@@ -62,7 +63,14 @@ export function createUIStore(core: Pick<RuntimeCore, 'storagePrefix'>) {
         terminalFontId: DEFAULT_FONT_ID,
 
         setSidebarCollapsed: (collapsed) => set({ sidebarCollapsed: collapsed }),
-        setSidebarTab: (tab) => set({ sidebarTab: tab }),
+        setSidebarSectionOpen: (section, open) =>
+          set((state) => ({ sidebarSections: { ...state.sidebarSections, [section]: open } })),
+        expandSidebarSection: (section) =>
+          set((state) =>
+            state.sidebarSections[section]
+              ? state
+              : { sidebarSections: { ...state.sidebarSections, [section]: true } }
+          ),
         setInputMode: (mode) => set({ inputMode: mode }),
         setKeyboardBehaviorMode: (mode) => set({ keyboardBehaviorMode: mode }),
         setEditorSendWithEnter: (enabled) => set({ editorSendWithEnter: enabled }),
@@ -97,7 +105,7 @@ export function createUIStore(core: Pick<RuntimeCore, 'storagePrefix'>) {
       }),
       {
         name: `${core.storagePrefix}tmex-ui`,
-        // sidebarTab 不持久化：每次加载都回到默认 'panes'。
+        // sidebarSections 不持久化：每次加载三个分区都回到默认全展开。
         partialize: (state) => ({
           sidebarCollapsed: state.sidebarCollapsed,
           inputMode: state.inputMode,
@@ -111,9 +119,13 @@ export function createUIStore(core: Pick<RuntimeCore, 'storagePrefix'>) {
           terminalLineHeight: state.terminalLineHeight,
           terminalFontId: state.terminalFontId,
         }),
-        // 丢弃旧版本 localStorage 里残留的 sidebarTab，避免被默认 merge 带回。
+        // 丢弃旧版本 localStorage 里残留的 sidebarTab/sidebarSections，避免被默认 merge 带回。
         merge: (persisted, current) => {
-          const { sidebarTab: _ignored, ...rest } = (persisted ?? {}) as Partial<UIState>;
+          const {
+            sidebarTab: _legacyTab,
+            sidebarSections: _ignored,
+            ...rest
+          } = (persisted ?? {}) as Partial<UIState> & { sidebarTab?: string };
           return { ...current, ...rest };
         },
       }

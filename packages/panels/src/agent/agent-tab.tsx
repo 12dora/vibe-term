@@ -200,7 +200,7 @@ function resolveBinding(
 export function AgentTab() {
   const { t } = useTranslation();
   const navigate = useNavigate();
-  const setSidebarTab = useUIStore((state) => state.setSidebarTab);
+  const expandSidebarSection = useUIStore((state) => state.expandSidebarSection);
 
   const paneMatch = useMatch('/devices/:deviceId/windows/:windowId/panes/:paneId');
   const routeDeviceId = paneMatch?.params.deviceId ?? null;
@@ -404,7 +404,7 @@ export function AgentTab() {
     isOrphan || !hasContext || activeSession?.status === 'waiting_confirmation' || Boolean(sending);
 
   return (
-    <div data-testid="agent-tab" className="flex h-full min-h-0 flex-col">
+    <div data-testid="agent-tab" className="flex min-h-0 flex-1 flex-col">
       <div className="flex shrink-0 items-center gap-2 px-3 py-2">
         {binding ? (
           <button
@@ -435,7 +435,7 @@ export function AgentTab() {
             data-testid="agent-session-switch"
             size="icon-sm"
             variant="ghost"
-            onClick={() => setSidebarTab('panes')}
+            onClick={() => expandSidebarSection('panes')}
             aria-label={t('agent.session.switch')}
             title={t('agent.session.switch')}
           >

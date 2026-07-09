@@ -674,7 +674,7 @@
       "closeWindow": "Close Window",
       "closePane": "Close Pane",
       "addDevice": "Add Device",
-      "tab": {
+      "section": {
         "panes": "Panes",
         "agent": "Agent",
         "files": "Files"

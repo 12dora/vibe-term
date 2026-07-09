@@ -34,7 +34,6 @@ import { Input } from '@tmex/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@tmex/ui/select';
 import { Switch } from '@tmex/ui/switch';
 import { Tabs, TabsList, TabsTrigger } from '@tmex/ui/tabs';
-import { tabTriggerClassName } from '../components/page-layouts/components/app-sidebar';
 import { DeviceEntryCard } from '@tmex/panels/settings';
 import { FilesSettingsTab } from '@tmex/panels/settings';
 import { LlmProvidersTab } from '@tmex/panels/settings';
@@ -44,6 +43,11 @@ import { TerminalSettingsTab } from '@tmex/panels/settings';
 import { VersionTab } from '@tmex/panels/settings';
 import { WebhooksTab } from '@tmex/panels/settings';
 import { WeixinAccountsTab } from '@tmex/panels/settings';
+
+// 灰色轨道(bg-muted)上嵌一个更亮的圆角药丸：亮色用 bg-background(白)，暗色用更亮的半透明覆盖，去边框。
+// rounded-lg 与外层 rounded-xl 轨道同心收敛。（原侧边栏 Tabs 样式，侧边栏平铺后仅设置页使用）
+const tabTriggerClassName =
+  "rounded-lg data-active:bg-background data-active:text-foreground data-active:border-transparent group-data-[variant=default]/tabs-list:data-active:shadow-none dark:data-active:bg-input/60 dark:data-active:border-transparent text-[13px] transition-colors duration-200 [&_svg:not([class*='size-'])]:size-[15px]";
 
 interface SiteSettingsResponse {
   settings: SiteSettings;

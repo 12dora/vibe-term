@@ -674,7 +674,7 @@
       "closeWindow": "关闭窗口",
       "closePane": "关闭 pane",
       "addDevice": "添加设备",
-      "tab": {
+      "section": {
         "panes": "Panes",
         "agent": "Agent",
         "files": "Files"

@@ -976,7 +976,7 @@ export default function DevicePage() {
         case 'newAgentSession':
           useAgentStore.getState().startDraft(deviceId, resolvedPaneId, null);
           useUIStore.getState().setSidebarCollapsed(false);
-          useUIStore.getState().setSidebarTab('agent');
+          useUIStore.getState().expandSidebarSection('agent');
           break;
         default:
           break;

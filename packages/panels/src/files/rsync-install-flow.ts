@@ -87,13 +87,13 @@ export async function openAgentInNewWindowWithPrompt(
       return;
     }
 
-    // 3. 先起草（含预填 prompt）→ 再导航 → 切 agent → 手机强开 sidebar
+    // 3. 先起草（含预填 prompt）→ 再导航 → 展开 agent 分区 → 手机强开 sidebar
     useAgentStore.getState().startDraft(deviceId, win.paneId, win.paneTitle, promptText);
     bridgeNavigate(
       `/devices/${deviceId}/windows/${win.windowId}/panes/${encodePaneIdForUrl(win.paneId)}`,
       { replace: true }
     );
-    useUIStore.getState().setSidebarTab('agent');
+    useUIStore.getState().expandSidebarSection('agent');
     bridgeOpenMobileSidebar();
   } finally {
     agentOrchestrationInProgress = false;
