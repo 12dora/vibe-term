@@ -404,7 +404,7 @@ export function AgentTab() {
     isOrphan || !hasContext || activeSession?.status === 'waiting_confirmation' || Boolean(sending);
 
   return (
-    <div data-testid="agent-tab" className="flex min-h-0 flex-1 flex-col">
+    <div data-testid="agent-tab" className="flex min-h-[360px] flex-1 flex-col">
       <div className="flex shrink-0 items-center gap-2 px-3 py-2">
         {binding ? (
           <button

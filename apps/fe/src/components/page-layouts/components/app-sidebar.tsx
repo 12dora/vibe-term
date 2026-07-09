@@ -57,7 +57,8 @@ function SidebarSectionBlock({ section, icon: Icon, title, children }: SidebarSe
         <Icon className="h-3.5 w-3.5 shrink-0" />
         <span className="flex-1 truncate">{title}</span>
       </CollapsibleTrigger>
-      <CollapsibleContent className="flex min-h-0 flex-1 flex-col overflow-hidden">
+      {/* 分区分到的高度容不下内容最小高度（如 Agent 的 min-h）时，在分区内滚动 */}
+      <CollapsibleContent className="flex min-h-0 flex-1 flex-col overflow-y-auto">
         {children}
       </CollapsibleContent>
     </Collapsible>

@@ -52,9 +52,10 @@ test.describe
 
       await expect(page.getByTestId('agent-tab')).toBeVisible();
 
-      // 当前 pane 自动起草，输入框在视口内可见可用
+      // 当前 pane 自动起草；小屏下 Agent 分区内容可在分区内滚动，滚到输入框后可见可用
       const textarea = page.getByTestId('agent-chat-input-textarea');
       await expect(textarea).toBeVisible();
+      await textarea.scrollIntoViewIfNeeded();
       await expect(textarea).toBeInViewport();
       await expect(textarea).toBeEnabled();
 
