@@ -10,6 +10,32 @@ export function defaultWsUrl(): string {
   return `${typeof window !== 'undefined' && window.location.protocol === 'https:' ? 'wss:' : 'ws:'}//${typeof window !== 'undefined' ? window.location.host : ''}/ws`;
 }
 
+// WHATWG 规定的 readyState 取值。用本地常量而非全局 WebSocket 的静态属性：
+// 注入的 transport 不必是 WebSocket 的实例，非浏览器环境下全局 WebSocket 也未必存在。
+const WS_CONNECTING = 0;
+const WS_OPEN = 1;
+
+/**
+ * 浏览器 WebSocket 的最小结构子集。宿主可据此把 ws-borsh 帧承载在自定义通道上，
+ * 只要实现遵循 WHATWG 的 readyState 取值约定。
+ */
+export interface WebSocketLike {
+  readonly readyState: number;
+  binaryType: 'blob' | 'arraybuffer';
+  onopen: ((event?: unknown) => void) | null;
+  onmessage: ((event: { data: ArrayBuffer | string }) => void) | null;
+  onclose: ((event?: unknown) => void) | null;
+  onerror: ((event?: unknown) => void) | null;
+  send(data: ArrayBufferLike | ArrayBufferView | string): void;
+  close(code?: number, reason?: string): void;
+}
+
+export type SocketFactory = (url: string) => WebSocketLike;
+
+// DOM 的 onmessage 事件参数是 MessageEvent，在 strictFunctionTypes 下与 WebSocketLike 的
+// 结构化参数互不可赋值（参数逆变）。把这层不兼容收敛在此一处断言，不向接口撒 any。
+const defaultSocketFactory: SocketFactory = (url) => new WebSocket(url) as unknown as WebSocketLike;
+
 const DEFAULT_OPTIONS: BorshClientOptions = {
   clientImpl: 'tmex-fe',
   clientVersion: '0.1.0',
@@ -30,6 +56,8 @@ export interface BorshClientOptions {
   heartbeatIntervalMs: number;
   /** WS 端点；缺省时连接当刻按 window.location 推导（defaultWsUrl） */
   url?: string;
+  /** 自定义 transport 工厂；缺省为 `new WebSocket(url)` */
+  socketFactory?: SocketFactory;
 }
 
 export type ConnectionState =
@@ -53,7 +81,7 @@ export type ErrorHandler = (error: Error) => void;
 // ========== Borsh WebSocket 客户端 ==========
 
 export class BorshWebSocketClient {
-  private ws: WebSocket | null = null;
+  private ws: WebSocketLike | null = null;
   private options: BorshClientOptions;
   private state: ConnectionState = 'IDLE';
 
@@ -150,14 +178,15 @@ export class BorshWebSocketClient {
   connect(): void {
     this.setupVisibilityListener();
 
-    if (this.ws?.readyState === WebSocket.OPEN || this.ws?.readyState === WebSocket.CONNECTING) {
+    if (this.ws?.readyState === WS_OPEN || this.ws?.readyState === WS_CONNECTING) {
       return;
     }
 
     this.setState('WS_CONNECTING');
 
     try {
-      this.ws = new WebSocket(this.options.url ?? defaultWsUrl());
+      const createSocket = this.options.socketFactory ?? defaultSocketFactory;
+      this.ws = createSocket(this.options.url ?? defaultWsUrl());
       this.ws.binaryType = 'arraybuffer';
 
       this.ws.onopen = () => {
@@ -364,7 +393,7 @@ export class BorshWebSocketClient {
   }
 
   private sendRaw(data: Uint8Array): void {
-    if (this.ws?.readyState === WebSocket.OPEN) {
+    if (this.ws?.readyState === WS_OPEN) {
       this.ws.send(data);
     }
   }

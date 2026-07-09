@@ -11,6 +11,8 @@ export {
   type MessageHandler,
   type StateChangeHandler,
   type ErrorHandler,
+  type WebSocketLike,
+  type SocketFactory,
 } from './client';
 
 export {
