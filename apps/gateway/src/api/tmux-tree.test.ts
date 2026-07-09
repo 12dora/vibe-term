@@ -116,10 +116,14 @@ describe('GET /api/tmux/tree', () => {
   test('returns all devices with null session when no snapshot exists', async () => {
     const { status, json } = await call('GET', '/api/tmux/tree');
     expect(status).toBe(200);
+    // 同进程其他测试文件共享 :memory: 库，只断言本文件造的设备，不断言全集
     const devices = json.devices as TreeDeviceJson[];
-    expect(devices.map((d) => d.deviceId)).toEqual([DEVICE_A, DEVICE_B]);
-    expect(devices.map((d) => d.deviceName)).toEqual(['tree-a', 'tree-b']);
-    expect(devices.every((d) => d.session === null)).toBe(true);
+    const deviceA = devices.find((d) => d.deviceId === DEVICE_A);
+    const deviceB = devices.find((d) => d.deviceId === DEVICE_B);
+    expect(deviceA?.deviceName).toBe('tree-a');
+    expect(deviceB?.deviceName).toBe('tree-b');
+    expect(deviceA?.session).toBeNull();
+    expect(deviceB?.session).toBeNull();
   });
 
   test('returns snapshot tree for devices that have one', async () => {
