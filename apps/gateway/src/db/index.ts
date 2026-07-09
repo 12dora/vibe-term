@@ -504,8 +504,12 @@ export function updateSiteSettings(
       enableNotificationPush: next.enableNotificationPush,
       enableBellPush: next.enableBellPush,
       enableBellSound: next.enableBellSound,
+      sshReconnectMaxRetries: next.sshReconnectMaxRetries,
+      sshReconnectDelaySeconds: next.sshReconnectDelaySeconds,
+      language: next.language,
       theme: next.theme,
       disabledNotificationChannels: next.disabledNotificationChannels,
+      updatedAt: next.updatedAt,
     })
     .where(eq(siteSettings.id, 1))
     .run();
