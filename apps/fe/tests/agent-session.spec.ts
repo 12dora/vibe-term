@@ -18,10 +18,9 @@ interface MockLlmServer {
   baseUrl: string;
 }
 
-// 进入 Agent Tab（桌面端 sidebar 默认展开，直接点 Tab 触发器）。
+// Agent 分区在并列侧边栏里默认展开、常驻可见，等待其挂载完成即可。
 // 当前路由有 pane 时 agent-tab 会自动进入草稿态，输入区即可用。
 async function openAgentTab(page: Page): Promise<void> {
-  await page.getByTestId('sidebar-tab-agent').click();
   await expect(page.getByTestId('agent-tab')).toBeVisible();
 }
 
@@ -306,13 +305,12 @@ test.describe
       await expect(page.getByTestId('agent-chat-send')).toBeVisible({ timeout: 15_000 });
       await expect(page.getByTestId('agent-chat-stop')).toHaveCount(0);
 
-      // 标题自动生成：Panes 树里出现对应会话节点（验证 STATUS 事件驱动列表刷新链路）
-      await page.getByTestId('sidebar-tab-panes').click();
+      // 标题自动生成：Panes 分区（常驻可见）里出现对应会话节点（验证 STATUS 事件驱动列表刷新链路）
       await expect(
         page.locator('[data-testid^="agent-session-item-"]', { hasText: MOCK_TITLE })
       ).toBeVisible({ timeout: 15_000 });
 
-      // 刷新后会话与历史恢复（sidebarTab 与 activeSessionId 均持久化）
+      // 刷新后会话与历史恢复（activeSessionId 持久化；分区默认全展开）
       await page.reload();
       await openAgentTab(page);
       await expect(page.getByTestId('agent-chat-thread')).toContainText(REPLY_TEXT, {
@@ -330,7 +328,6 @@ test.describe
       // 串行套件共享 pane，前序用例已留存会话；先记录已有会话 id，
       // 再显式新建并发消息落库，挑出新出现的 id 精准定位（标题统一是 MOCK_TITLE）
       await openAgentTab(page);
-      await page.getByTestId('sidebar-tab-panes').click();
       const existingIds = new Set(
         await page
           .locator('[data-testid^="agent-session-item-"]')
@@ -339,7 +336,7 @@ test.describe
           )
       );
 
-      // 进入 Agent Tab 即自动进入草稿态（干净空会话），无需点新建按钮
+      // Agent 分区有 pane 路由即自动进入草稿态（干净空会话），无需点新建按钮
       // （草稿态下新建按钮被隐藏，因为草稿本身就是「新会话」状态）
       await openAgentTab(page);
       const textarea = page.getByTestId('agent-chat-input-textarea');
@@ -350,8 +347,7 @@ test.describe
         timeout: 20_000,
       });
 
-      // 标题自动生成后切到 Panes 树，挑出新出现的会话节点
-      await page.getByTestId('sidebar-tab-panes').click();
+      // 标题自动生成后在 Panes 分区（常驻可见）挑出新出现的会话节点
       let sessionId = '';
       await expect
         .poll(
@@ -441,9 +437,8 @@ test.describe
       await pageB.goto(paneUrl);
       await expect(pageB.locator('.xterm').first()).toBeVisible({ timeout: 20_000 });
 
-      // B 从 Panes 树显式选中同一 session（setActiveSession→subscribe+loadHistory，
+      // B 从 Panes 分区（常驻可见）显式选中同一 session（setActiveSession→subscribe+loadHistory，
       // 比依赖 rehydration 时序更稳），随后通过 WS 订阅/历史回放同步内容
-      await pageB.getByTestId('sidebar-tab-panes').click();
       const sessionItemB = pageB
         .locator('[data-testid^="agent-session-item-"]')
         .first();

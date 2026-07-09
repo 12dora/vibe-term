@@ -55,8 +55,7 @@ test.describe('sidebar pane row action buttons alignment', () => {
     await page.goto(`/devices/${deviceId}/windows/${windowId}/panes/${encodeURIComponent(paneId)}`);
     await expect(page.locator('.xterm').first()).toBeVisible({ timeout: 20_000 });
 
-    await page.getByTestId('sidebar-tab-panes').click();
-
+    // Panes 分区默认展开、常驻可见，无需切换
     const paneRow = page.getByTestId(`pane-item-${paneId}`);
     await expect(paneRow).toBeVisible({ timeout: 15_000 });
 

@@ -46,11 +46,10 @@ test.describe
       );
       await expect(page.locator('.xterm').first()).toBeVisible({ timeout: 20_000 });
 
-      // 移动端：从顶栏打开 sidebar Sheet，再切到 Agent Tab
+      // 移动端：从顶栏打开 sidebar Sheet，Agent 分区默认展开、常驻可见
       await page.getByTestId('mobile-sidebar-open').click();
       await expect(page.getByTestId('mobile-sidebar-sheet')).toBeVisible();
 
-      await page.getByTestId('sidebar-tab-agent').click();
       await expect(page.getByTestId('agent-tab')).toBeVisible();
 
       // 当前 pane 自动起草，输入框在视口内可见可用
@@ -59,12 +58,12 @@ test.describe
       await expect(textarea).toBeInViewport();
       await expect(textarea).toBeEnabled();
 
-      // 模型选择器可见（Agent Tab 头部）
+      // 模型选择器可见（Agent 分区头部）
       await expect(page.getByTestId('agent-model-picker')).toBeVisible();
 
-      // 切回 Panes Tab：设备会话树可达
-      await page.getByTestId('sidebar-tab-panes').click();
-      await expect(page.getByTestId('agent-tab')).toHaveCount(0);
+      // Panes 分区与 Agent 分区并列常驻：设备会话树同时可达
+      await expect(page.getByTestId('sidebar-section-panes')).toBeVisible();
+      await expect(page.getByTestId('agent-tab')).toBeVisible();
 
       // 关闭 Sheet 回到终端
       await page.getByTestId('mobile-sidebar-close').click();
