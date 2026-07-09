@@ -64,6 +64,7 @@ import { handleSystemApiRequest } from './system';
 import { normalizeTerminalShortcutsInput } from './terminal-shortcuts';
 import { handleDeviceTestConnection } from './test-connection';
 import { handleThemeApiRequest } from './theme';
+import { handleTmuxTreeApiRequest } from './tmux-tree';
 import { handleTreeOrderApiRequest } from './tree-order';
 import { handleWatchApiRequest } from './watch';
 
@@ -227,6 +228,13 @@ export function handleApiRequest(
     const treeOrderResponse = handleTreeOrderApiRequest(req, path);
     if (treeOrderResponse) {
       return treeOrderResponse;
+    }
+  }
+
+  if (path === '/api/tmux/tree') {
+    const tmuxTreeResponse = handleTmuxTreeApiRequest(req, path);
+    if (tmuxTreeResponse) {
+      return tmuxTreeResponse;
     }
   }
 

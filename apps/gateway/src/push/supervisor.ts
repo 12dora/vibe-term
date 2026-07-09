@@ -196,6 +196,10 @@ export class PushSupervisor {
     entry?.runtime?.updateDefaultWorkingDir(dir);
   }
 
+  getLastSnapshot(deviceId: string): StateSnapshotPayload | null {
+    return this.entries.get(deviceId)?.lastSnapshot ?? null;
+  }
+
   remove(deviceId: string): void {
     const entry = this.entries.get(deviceId);
     if (!entry) {
