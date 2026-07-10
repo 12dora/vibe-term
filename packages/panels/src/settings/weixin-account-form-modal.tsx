@@ -1,5 +1,6 @@
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import type { WeixinAccountWithStats } from '@tmex/shared';
+import { useRuntime } from '@tmex/stores/react';
 import { Loader2, Save } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
@@ -42,6 +43,7 @@ export function WeixinAccountFormModal({
 }: WeixinAccountFormModalProps) {
   const { t } = useTranslation();
   const queryClient = useQueryClient();
+  const { apiClient } = useRuntime();
   const isEdit = Boolean(account);
 
   const [name, setName] = useState('');
@@ -59,7 +61,7 @@ export function WeixinAccountFormModal({
 
   const createMutation = useMutation({
     mutationFn: async () => {
-      const res = await fetch('/api/settings/weixin/accounts', {
+      const res = await apiClient.fetch('/api/settings/weixin/accounts', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -89,7 +91,7 @@ export function WeixinAccountFormModal({
       if (!account) {
         throw new Error(t('weixin.updateFailed'));
       }
-      const res = await fetch(`/api/settings/weixin/accounts/${account.id}`, {
+      const res = await apiClient.fetch(`/api/settings/weixin/accounts/${account.id}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({

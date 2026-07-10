@@ -20,6 +20,7 @@ import {
 } from '@tmex/ui/dialog';
 
 import { parseApiError } from '@tmex/api-client';
+import { useRuntime } from '@tmex/stores/react';
 import { LlmProviderModels, type ModelDraft } from './llm-provider-models';
 
 interface LlmProviderModelsModalProps {
@@ -43,6 +44,7 @@ export function LlmProviderModelsModal({
 }: LlmProviderModelsModalProps) {
   const { t } = useTranslation();
   const queryClient = useQueryClient();
+  const { apiClient } = useRuntime();
   const [models, setModels] = useState<ModelDraft[]>([]);
 
   useEffect(() => {
@@ -57,7 +59,7 @@ export function LlmProviderModelsModal({
       const manualModels = models.filter((m) => m.source === 'manual').map((m) => m.id);
       const disabledModels = models.filter((m) => !m.enabled).map((m) => m.id);
       const payload: UpdateLlmProviderRequest = { manualModels, disabledModels };
-      const res = await fetch(`/api/llm/providers/${provider.id}`, {
+      const res = await apiClient.fetch(`/api/llm/providers/${provider.id}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),

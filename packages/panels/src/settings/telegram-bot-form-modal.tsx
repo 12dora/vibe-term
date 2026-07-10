@@ -1,5 +1,6 @@
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import type { TelegramBotWithStats } from '@tmex/shared';
+import { useRuntime } from '@tmex/stores/react';
 import { Loader2, Save } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
@@ -31,6 +32,7 @@ interface TelegramBotFormModalProps {
 export function TelegramBotFormModal({ open, onOpenChange, bot }: TelegramBotFormModalProps) {
   const { t } = useTranslation();
   const queryClient = useQueryClient();
+  const { apiClient } = useRuntime();
   const isEdit = Boolean(bot);
 
   const [name, setName] = useState('');
@@ -48,7 +50,7 @@ export function TelegramBotFormModal({ open, onOpenChange, bot }: TelegramBotFor
 
   const createMutation = useMutation({
     mutationFn: async () => {
-      const res = await fetch('/api/settings/telegram/bots', {
+      const res = await apiClient.fetch('/api/settings/telegram/bots', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -84,7 +86,7 @@ export function TelegramBotFormModal({ open, onOpenChange, bot }: TelegramBotFor
       if (token.trim()) {
         payload.token = token.trim();
       }
-      const res = await fetch(`/api/settings/telegram/bots/${bot.id}`, {
+      const res = await apiClient.fetch(`/api/settings/telegram/bots/${bot.id}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),

@@ -4,11 +4,9 @@ import { useMatch, useNavigate } from 'react-router';
 
 import { useQuery } from '@tanstack/react-query';
 import type { Device, StateSnapshotPayload } from '@tmex/shared';
-import { useAgentStore } from '@tmex/stores';
 import { type UiThreadBlock, buildThreadBlocks, lastUserMessageText } from '@tmex/stores';
-import { useTmuxStore } from '@tmex/stores';
-import { useUIStore } from '@tmex/stores';
 import { buildTerminalLabel } from '@tmex/stores';
+import { useAgentStore, useRuntime, useTmuxStore, useUIStore } from '@tmex/stores/react';
 import { cn } from '@tmex/ui';
 import { Button } from '@tmex/ui/button';
 import { Switch } from '@tmex/ui/switch';
@@ -200,6 +198,8 @@ function resolveBinding(
 export function AgentTab() {
   const { t } = useTranslation();
   const navigate = useNavigate();
+  const runtime = useRuntime();
+  const agentStore = runtime.stores.agent;
   const expandSidebarSection = useUIStore((state) => state.expandSidebarSection);
 
   const paneMatch = useMatch('/devices/:deviceId/windows/:windowId/panes/:paneId');
@@ -231,7 +231,7 @@ export function AgentTab() {
   const { data: devicesData } = useQuery({
     queryKey: ['devices'],
     queryFn: async () => {
-      const res = await fetch('/api/devices');
+      const res = await runtime.apiClient.fetch('/api/devices');
       if (!res.ok) throw new Error('Failed to load devices');
       return res.json() as Promise<{ devices: Device[] }>;
     },
@@ -239,10 +239,10 @@ export function AgentTab() {
   });
 
   useEffect(() => {
-    const store = useAgentStore.getState();
+    const store = agentStore.getState();
     store.ensureInitialized();
     void store.loadSessions();
-  }, []);
+  }, [agentStore]);
 
   const activeSession = activeSessionId ? sessions[activeSessionId] : undefined;
 
@@ -260,9 +260,9 @@ export function AgentTab() {
   // 空态即草稿态：进入 agent tab 且有路由 pane 但无会话/草稿时自动起草
   useEffect(() => {
     if (!activeSession && !draft && routeDeviceId && routePaneId) {
-      useAgentStore.getState().startDraft(routeDeviceId, routePaneId, routePaneTitle);
+      agentStore.getState().startDraft(routeDeviceId, routePaneId, routePaneTitle);
     }
-  }, [activeSession, draft, routeDeviceId, routePaneId, routePaneTitle]);
+  }, [activeSession, draft, routeDeviceId, routePaneId, routePaneTitle, agentStore]);
 
   const confirmationByToolCallId = useMemo(() => {
     const map = new Map<string, string>();
@@ -327,7 +327,7 @@ export function AgentTab() {
 
   const handleDecide = (confirmationId: string, approved: boolean): void => {
     if (!activeSessionId) return;
-    void useAgentStore.getState().decideConfirmation(activeSessionId, confirmationId, approved);
+    void agentStore.getState().decideConfirmation(activeSessionId, confirmationId, approved);
   };
 
   const handleBindingClick = (): void => {
@@ -345,19 +345,19 @@ export function AgentTab() {
 
   const handleNewSession = (): void => {
     if (!routeDeviceId || !routePaneId) return;
-    useAgentStore.getState().startDraft(routeDeviceId, routePaneId, routePaneTitle);
+    agentStore.getState().startDraft(routeDeviceId, routePaneId, routePaneTitle);
   };
 
   const handleModelChange = (providerId: string | null, modelId: string): void => {
     if (activeSession) {
-      void useAgentStore.getState().setSessionModel(activeSession.id, providerId, modelId);
+      void agentStore.getState().setSessionModel(activeSession.id, providerId, modelId);
     } else if (draft) {
-      useAgentStore.getState().updateDraft({ providerId, modelId });
+      agentStore.getState().updateDraft({ providerId, modelId });
     }
   };
 
   const handleSend = (text: string): void => {
-    const store = useAgentStore.getState();
+    const store = agentStore.getState();
     if (activeSession) {
       if (activeSession.status === 'running') {
         void store.enqueueMessage(activeSession.id, text);
@@ -376,14 +376,14 @@ export function AgentTab() {
 
   const handleSteer = (text: string): void => {
     if (!activeSession) return;
-    void useAgentStore.getState().enqueueMessage(activeSession.id, text, true);
+    void agentStore.getState().enqueueMessage(activeSession.id, text, true);
   };
 
   const handleQueueSteer = (): void => {
     if (!activeSession) return;
     const first = queuedItems[0];
     if (!first) return;
-    const store = useAgentStore.getState();
+    const store = agentStore.getState();
     void (async () => {
       await store.withdrawQueuedMessage(activeSession.id, first.id);
       await store.enqueueMessage(activeSession.id, first.text, true);
@@ -496,7 +496,7 @@ export function AgentTab() {
               size="xs"
               variant="outline"
               onClick={() => {
-                void useAgentStore.getState().rebindPane(activeSession.id, routePaneId);
+                void agentStore.getState().rebindPane(activeSession.id, routePaneId);
               }}
             >
               {t('agent.binding.rebind')}
@@ -520,7 +520,7 @@ export function AgentTab() {
               className="shrink-0"
               disabled={Boolean(sending)}
               onClick={() => {
-                void useAgentStore.getState().sendMessage(activeSession.id, retryText);
+                void agentStore.getState().sendMessage(activeSession.id, retryText);
               }}
             >
               {t('agent.panel.retry')}
@@ -545,10 +545,10 @@ export function AgentTab() {
         <QueueChips
           queued={queuedItems}
           onEdit={(itemId, text) =>
-            void useAgentStore.getState().editQueuedMessage(activeSession.id, itemId, text)
+            void agentStore.getState().editQueuedMessage(activeSession.id, itemId, text)
           }
           onWithdraw={(itemId) =>
-            void useAgentStore.getState().withdrawQueuedMessage(activeSession.id, itemId)
+            void agentStore.getState().withdrawQueuedMessage(activeSession.id, itemId)
           }
           onSteer={handleQueueSteer}
         />
@@ -571,7 +571,7 @@ export function AgentTab() {
             onSteer={handleSteer}
             onStop={() => {
               if (activeSession) {
-                void useAgentStore.getState().stopSession(activeSession.id);
+                void agentStore.getState().stopSession(activeSession.id);
               }
             }}
             modelPicker={
@@ -597,9 +597,9 @@ export function AgentTab() {
                     onCheckedChange={(checked) => {
                       const next = checked ? 'auto' : 'confirm';
                       // 记忆为默认值（影响后续新 session）；有活动 session 时同时改该 session
-                      useAgentStore.getState().setDefaultWriteMode(next);
+                      agentStore.getState().setDefaultWriteMode(next);
                       if (activeSession) {
-                        void useAgentStore.getState().setWriteMode(activeSession.id, next);
+                        void agentStore.getState().setWriteMode(activeSession.id, next);
                       }
                     }}
                   />
@@ -618,7 +618,7 @@ export function AgentTab() {
                       disabled={isOrphan}
                       title={t('agent.controlChars.hint')}
                       onCheckedChange={(checked) => {
-                        void useAgentStore
+                        void agentStore
                           .getState()
                           .setAllowControlChars(activeSession.id, checked);
                       }}

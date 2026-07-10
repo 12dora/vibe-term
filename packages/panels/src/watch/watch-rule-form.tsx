@@ -1,5 +1,6 @@
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { assistRegex, createWatchRule, updateWatchRule } from '@tmex/api-client';
+import { useRuntime } from '@tmex/stores/react';
 import type {
   AssistRegexResponse,
   CreateWatchRuleRequest,
@@ -38,6 +39,7 @@ interface WatchRuleFormProps {
 
 export function WatchRuleForm({ deviceId, paneId, rule, onSaved, onCancel }: WatchRuleFormProps) {
   const { t } = useTranslation();
+  const { apiClient } = useRuntime();
   const formId = useId();
 
   const [name, setName] = useState(rule?.name ?? '');
@@ -64,7 +66,7 @@ export function WatchRuleForm({ deviceId, paneId, rule, onSaved, onCancel }: Wat
   const providersQuery = useQuery({
     queryKey: ['llm-providers'],
     queryFn: async () => {
-      const res = await fetch('/api/llm/providers');
+      const res = await apiClient.fetch('/api/llm/providers');
       if (!res.ok) {
         throw new Error('Failed to load providers');
       }
@@ -142,11 +144,11 @@ export function WatchRuleForm({ deviceId, paneId, rule, onSaved, onCancel }: Wat
       };
       if (rule) {
         const body: UpdateWatchRuleRequest = common;
-        await updateWatchRule(rule.id, body);
+        await updateWatchRule(rule.id, body, apiClient);
         return false;
       }
       const body: CreateWatchRuleRequest = { ...common, deviceId, paneId, enabled: true };
-      await createWatchRule(body);
+      await createWatchRule(body, apiClient);
       return true;
     },
     onSuccess: (created) => {
@@ -160,13 +162,16 @@ export function WatchRuleForm({ deviceId, paneId, rule, onSaved, onCancel }: Wat
 
   const assistMutation = useMutation({
     mutationFn: async () =>
-      assistRegex({
-        description: assistDescription.trim(),
-        deviceId,
-        paneId,
-        providerId,
-        modelId: providerId ? modelId.trim() || null : null,
-      }),
+      assistRegex(
+        {
+          description: assistDescription.trim(),
+          deviceId,
+          paneId,
+          providerId,
+          modelId: providerId ? modelId.trim() || null : null,
+        },
+        apiClient
+      ),
     onSuccess: (result) => {
       setPattern(result.pattern);
       setPatternFlags(result.flags);

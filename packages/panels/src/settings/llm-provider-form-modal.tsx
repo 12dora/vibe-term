@@ -25,6 +25,7 @@ import { Input } from '@tmex/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@tmex/ui/select';
 
 import { parseApiError } from '@tmex/api-client';
+import { useRuntime } from '@tmex/stores/react';
 
 const PROTOCOL_OPTIONS: LlmProviderProtocol[] = ['openai-chat', 'openai-responses'];
 
@@ -40,6 +41,7 @@ interface LlmProviderFormModalProps {
 export function LlmProviderFormModal({ open, onOpenChange, provider }: LlmProviderFormModalProps) {
   const { t } = useTranslation();
   const queryClient = useQueryClient();
+  const { apiClient } = useRuntime();
   const isEdit = Boolean(provider);
 
   const [name, setName] = useState('');
@@ -66,7 +68,7 @@ export function LlmProviderFormModal({ open, onOpenChange, provider }: LlmProvid
         apiKey: apiKey.trim(),
         enabled: true,
       };
-      const res = await fetch('/api/llm/providers', {
+      const res = await apiClient.fetch('/api/llm/providers', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
@@ -103,7 +105,7 @@ export function LlmProviderFormModal({ open, onOpenChange, provider }: LlmProvid
       if (apiKey.trim()) {
         payload.apiKey = apiKey.trim();
       }
-      const res = await fetch(`/api/llm/providers/${provider.id}`, {
+      const res = await apiClient.fetch(`/api/llm/providers/${provider.id}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),

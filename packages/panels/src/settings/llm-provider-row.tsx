@@ -20,6 +20,7 @@ import { Button } from '@tmex/ui/button';
 import { Switch } from '@tmex/ui/switch';
 
 import { parseApiError } from '@tmex/api-client';
+import { useRuntime } from '@tmex/stores/react';
 import { LlmProviderModelsModal } from './llm-provider-models-modal';
 
 function maskBaseUrl(baseUrl: string): string {
@@ -39,12 +40,13 @@ interface LlmProviderRowProps {
 export function LlmProviderRow({ provider, onEdit }: LlmProviderRowProps) {
   const { t } = useTranslation();
   const queryClient = useQueryClient();
+  const { apiClient } = useRuntime();
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [showModelsModal, setShowModelsModal] = useState(false);
 
   const toggleEnabledMutation = useMutation({
     mutationFn: async (enabled: boolean) => {
-      const res = await fetch(`/api/llm/providers/${provider.id}`, {
+      const res = await apiClient.fetch(`/api/llm/providers/${provider.id}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ enabled }),
@@ -63,7 +65,7 @@ export function LlmProviderRow({ provider, onEdit }: LlmProviderRowProps) {
 
   const refreshModelsMutation = useMutation({
     mutationFn: async () => {
-      const res = await fetch(`/api/llm/providers/${provider.id}/refresh-models`, {
+      const res = await apiClient.fetch(`/api/llm/providers/${provider.id}/refresh-models`, {
         method: 'POST',
       });
       if (!res.ok) {
@@ -81,7 +83,9 @@ export function LlmProviderRow({ provider, onEdit }: LlmProviderRowProps) {
 
   const deleteProviderMutation = useMutation({
     mutationFn: async () => {
-      const res = await fetch(`/api/llm/providers/${provider.id}`, { method: 'DELETE' });
+      const res = await apiClient.fetch(`/api/llm/providers/${provider.id}`, {
+        method: 'DELETE',
+      });
       if (!res.ok) {
         throw new Error(await parseApiError(res, t('settings.llm.deleteFailed')));
       }

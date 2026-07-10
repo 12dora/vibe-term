@@ -5,6 +5,7 @@ import type {
   SearchProviderInfoDto,
   UpdateAgentLlmSettingsRequest,
 } from '@tmex/shared';
+import { useRuntime } from '@tmex/stores/react';
 import { Loader2, Save, Trash2 } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
@@ -42,6 +43,7 @@ async function parseApiError(res: Response, fallback: string): Promise<string> {
 export function SearchTab() {
   const { t } = useTranslation();
   const queryClient = useQueryClient();
+  const { apiClient } = useRuntime();
 
   const [searchProvider, setSearchProvider] = useState<AgentSearchProvider>('none');
   const [tavilyApiKey, setTavilyApiKey] = useState('');
@@ -53,7 +55,7 @@ export function SearchTab() {
   const settingsQuery = useQuery({
     queryKey: ['llm-settings'],
     queryFn: async () => {
-      const res = await fetch('/api/llm/settings');
+      const res = await apiClient.fetch('/api/llm/settings');
       if (!res.ok) {
         throw new Error(await parseApiError(res, t('settings.search.loadFailed')));
       }
@@ -80,7 +82,7 @@ export function SearchTab() {
       if (braveApiKey.trim()) {
         payload.braveApiKey = braveApiKey.trim();
       }
-      const res = await fetch('/api/llm/settings', {
+      const res = await apiClient.fetch('/api/llm/settings', {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
@@ -103,7 +105,7 @@ export function SearchTab() {
   const clearKeyMutation = useMutation({
     mutationFn: async (key: 'tavilyApiKey' | 'braveApiKey') => {
       const payload: UpdateAgentLlmSettingsRequest = { [key]: '' };
-      const res = await fetch('/api/llm/settings', {
+      const res = await apiClient.fetch('/api/llm/settings', {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),

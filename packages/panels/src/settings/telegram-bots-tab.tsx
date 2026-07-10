@@ -1,5 +1,6 @@
 import { useQuery } from '@tanstack/react-query';
 import type { TelegramBotWithStats } from '@tmex/shared';
+import { useRuntime } from '@tmex/stores/react';
 import { Plus } from 'lucide-react';
 import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
@@ -25,6 +26,7 @@ async function parseApiError(res: Response, fallback: string): Promise<string> {
 
 export function TelegramBotsTab() {
   const { t } = useTranslation();
+  const { apiClient } = useRuntime();
 
   const [modalOpen, setModalOpen] = useState(false);
   const [editingBot, setEditingBot] = useState<TelegramBotWithStats | undefined>(undefined);
@@ -32,7 +34,7 @@ export function TelegramBotsTab() {
   const botsQuery = useQuery({
     queryKey: ['telegram-bots'],
     queryFn: async () => {
-      const res = await fetch('/api/settings/telegram/bots');
+      const res = await apiClient.fetch('/api/settings/telegram/bots');
       if (!res.ok) {
         throw new Error(await parseApiError(res, t('telegram.loadBotsFailed')));
       }

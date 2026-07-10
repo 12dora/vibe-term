@@ -30,8 +30,9 @@ import {
   uploadFileChunked,
 } from '@tmex/api-client';
 import { formatBytes } from '@tmex/api-client';
-import { fileNodeKey, useFileTreeStore } from '@tmex/stores';
+import { fileNodeKey, hostAppPath } from '@tmex/stores';
 import { decodeFileRef, fileRoute } from '@tmex/stores';
+import { useFileTreeStore, useRuntime } from '@tmex/stores/react';
 import { cn } from '@tmex/ui';
 import { Button } from '@tmex/ui/button';
 import {
@@ -102,6 +103,7 @@ function CommonNodeMenuItems({
   rootPath: string;
 }) {
   const { t } = useTranslation();
+  const runtime = useRuntime();
   return (
     <>
       <ContextMenuItem
@@ -118,7 +120,7 @@ function CommonNodeMenuItems({
         <Link />
         {t('files.menu.copyRelative')}
       </ContextMenuItem>
-      <ContextMenuItem onClick={() => void sendPathToAgent(deviceId, absPath)}>
+      <ContextMenuItem onClick={() => void sendPathToAgent(runtime, deviceId, absPath)}>
         <Bot />
         {t('files.menu.sendToAgent')}
       </ContextMenuItem>
@@ -150,11 +152,12 @@ function NodeMenuHeader({
 
 function useSelectedFilePath(): { rootId: string; path: string } | null {
   const location = useLocation();
+  const { host } = useRuntime();
   return useMemo(() => {
-    const match = matchPath('/file/:ref', location.pathname);
+    const match = matchPath(hostAppPath(host, '/file/:ref'), location.pathname);
     if (!match?.params.ref) return null;
     return decodeFileRef(match.params.ref);
-  }, [location.pathname]);
+  }, [location.pathname, host]);
 }
 
 function errorKey(code?: FileErrorCode): string {
@@ -170,18 +173,19 @@ interface TreeContext {
 export function FilesTab() {
   const { t } = useTranslation();
   const queryClient = useQueryClient();
+  const { apiClient } = useRuntime();
   const isFetching = useIsFetching({ queryKey: ['files'] });
   const pruneStaleRoots = useFileTreeStore((s) => s.pruneStaleRoots);
 
   const rootsQuery = useQuery({
     queryKey: ['files', 'roots'],
-    queryFn: () => fetchFileRoots(),
+    queryFn: () => fetchFileRoots(apiClient),
     refetchOnWindowFocus: true,
   });
   const devicesQuery = useQuery({
     queryKey: ['devices'],
     queryFn: async () => {
-      const res = await fetch('/api/devices');
+      const res = await apiClient.fetch('/api/devices');
       if (!res.ok) throw new Error('devices');
       return (await res.json()) as DevicesResponse;
     },
@@ -189,7 +193,7 @@ export function FilesTab() {
   const providersQuery = useQuery({
     queryKey: ['llm-providers'],
     queryFn: async () => {
-      const res = await fetch('/api/llm/providers');
+      const res = await apiClient.fetch('/api/llm/providers');
       if (!res.ok) throw new Error('providers');
       return (await res.json()) as ProvidersResponse;
     },
@@ -198,7 +202,7 @@ export function FilesTab() {
   const systemInfoQuery = useQuery({
     queryKey: ['system', 'info'],
     queryFn: async () => {
-      const res = await fetch('/api/system/info');
+      const res = await apiClient.fetch('/api/system/info');
       if (!res.ok) throw new Error('system');
       return (await res.json()) as SystemInfo;
     },
@@ -303,6 +307,7 @@ function DirNode({
   ctx: TreeContext;
 }) {
   const { t } = useTranslation();
+  const runtime = useRuntime();
   const nodeKey = fileNodeKey(rootId, path);
   const expanded = useFileTreeStore((s) => Boolean(s.expanded[nodeKey]));
   const toggle = useFileTreeStore((s) => s.toggle);
@@ -330,10 +335,16 @@ function DirNode({
       const controller = new AbortController();
       const tt = startTransferToast(file.name, 'upload', () => controller.abort());
       try {
-        await uploadFileChunked(rootId, path, file, {
-          onLeg: tt.leg,
-          signal: controller.signal,
-        });
+        await uploadFileChunked(
+          rootId,
+          path,
+          file,
+          {
+            onLeg: tt.leg,
+            signal: controller.signal,
+          },
+          runtime.apiClient
+        );
         tt.success(t('files.upload.success', { name: file.name }));
       } catch {
         if (controller.signal.aborted) tt.cancel();
@@ -346,7 +357,7 @@ function DirNode({
 
   const query = useQuery({
     queryKey: ['files', 'list', rootId, path],
-    queryFn: () => fetchFileList(rootId, path),
+    queryFn: () => fetchFileList(rootId, path, runtime.apiClient),
     enabled: expanded,
     staleTime: LIST_STALE_MS,
     retry: false,
@@ -387,6 +398,7 @@ function DirNode({
                 // 一次性：立即清除当前 toast，再触发安装编排
                 toast.dismiss(toastId);
                 void triggerRsyncInstall(
+                  runtime,
                   installDeviceId,
                   buildRsyncInstallPrompt(root.deviceName ?? root.deviceId, remote)
                 );
@@ -394,7 +406,7 @@ function DirNode({
             }
           : undefined,
     });
-  }, [errCode, nodeKey, root, ctx.llmConfigured, ctx.localDeviceId, t]);
+  }, [errCode, nodeKey, root, ctx.llmConfigured, ctx.localDeviceId, t, runtime]);
 
   // reconcile：成功刷新后，把「曾展开但已消失」的直接子目录折叠掉（同一 root 下）
   useEffect(() => {
@@ -402,7 +414,7 @@ function DirNode({
     const childDirs = new Set(
       query.data.entries.filter((e) => e.type === 'dir').map((e) => e.path)
     );
-    const store = useFileTreeStore.getState();
+    const store = runtime.stores.fileTree.getState();
     const prefix = `${rootId}\n`;
     for (const key of Object.keys(store.expanded)) {
       if (!key.startsWith(prefix)) continue;
@@ -411,7 +423,7 @@ function DirNode({
       // 导致根 '/' 加载后自己折叠 → 闪一下就收起）。
       if (p !== path && parentOf(p) === path && !childDirs.has(p)) store.collapse(rootId, p);
     }
-  }, [query.data, rootId, path]);
+  }, [query.data, rootId, path, runtime]);
 
   const Icon = fileIconFor({ category: 'directory', name: root.name, type: 'dir' }, { expanded });
   const indent = depth * INDENT_STEP + 4;
@@ -594,6 +606,7 @@ function FileLeaf({
 }: { entry: FileEntryDto; root: FileRootDto; depth: number }) {
   const { t } = useTranslation();
   const navigate = useNavigate();
+  const runtime = useRuntime();
   const { isMobile, setOpenMobile } = useSidebar();
   const selected = useSelectedFilePath();
   const rootId = root.id;
@@ -602,7 +615,7 @@ function FileLeaf({
   const indent = depth * INDENT_STEP + 4 + 18;
 
   const open = () => {
-    navigate(fileRoute(rootId, entry.path));
+    navigate(hostAppPath(runtime.host, fileRoute(rootId, entry.path)));
     if (isMobile) setOpenMobile(false);
   };
 
@@ -611,10 +624,16 @@ function FileLeaf({
     const controller = new AbortController();
     const tt = startTransferToast(entry.name, 'download', () => controller.abort());
     try {
-      await downloadFileWithProgress(rootId, entry.path, entry.name, {
-        onLeg: tt.leg,
-        signal: controller.signal,
-      });
+      await downloadFileWithProgress(
+        rootId,
+        entry.path,
+        entry.name,
+        {
+          onLeg: tt.leg,
+          signal: controller.signal,
+        },
+        runtime.apiClient
+      );
       tt.success(t('files.transfer.downloaded', { name: entry.name }));
     } catch {
       if (controller.signal.aborted) tt.cancel();

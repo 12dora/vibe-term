@@ -15,6 +15,7 @@ import { Input } from '@tmex/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@tmex/ui/select';
 
 import { parseApiError } from '@tmex/api-client';
+import { useRuntime } from '@tmex/stores/react';
 import { LlmProviderFormModal } from './llm-provider-form-modal';
 import { LlmProviderRow } from './llm-provider-row';
 
@@ -28,6 +29,7 @@ interface LlmSettingsResponse {
 
 export function LlmProvidersTab() {
   const { t } = useTranslation();
+  const { apiClient } = useRuntime();
 
   const [modalOpen, setModalOpen] = useState(false);
   const [editingProvider, setEditingProvider] = useState<LlmProviderDto | undefined>(undefined);
@@ -35,7 +37,7 @@ export function LlmProvidersTab() {
   const providersQuery = useQuery({
     queryKey: ['llm-providers'],
     queryFn: async () => {
-      const res = await fetch('/api/llm/providers');
+      const res = await apiClient.fetch('/api/llm/providers');
       if (!res.ok) {
         throw new Error(await parseApiError(res, t('settings.llm.loadFailed')));
       }
@@ -102,6 +104,7 @@ const NONE_PROVIDER_VALUE = '__none__';
 function LlmDefaultsCard({ providers }: LlmDefaultsCardProps) {
   const { t } = useTranslation();
   const queryClient = useQueryClient();
+  const { apiClient } = useRuntime();
 
   const [defaultProviderId, setDefaultProviderId] = useState<string | null>(null);
   const [defaultModelId, setDefaultModelId] = useState('');
@@ -109,7 +112,7 @@ function LlmDefaultsCard({ providers }: LlmDefaultsCardProps) {
   const settingsQuery = useQuery({
     queryKey: ['llm-settings'],
     queryFn: async () => {
-      const res = await fetch('/api/llm/settings');
+      const res = await apiClient.fetch('/api/llm/settings');
       if (!res.ok) {
         throw new Error(await parseApiError(res, t('settings.llm.settingsLoadFailed')));
       }
@@ -135,7 +138,7 @@ function LlmDefaultsCard({ providers }: LlmDefaultsCardProps) {
         defaultProviderId,
         defaultModelId: defaultModelId.trim() || null,
       };
-      const res = await fetch('/api/llm/settings', {
+      const res = await apiClient.fetch('/api/llm/settings', {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),

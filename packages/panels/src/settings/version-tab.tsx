@@ -7,7 +7,7 @@ import { useTranslation } from 'react-i18next';
 import { toast } from 'sonner';
 
 import { MarkdownPreview } from '../markdown/markdown-preview';
-import { useSiteStore } from '@tmex/stores';
+import { useRuntime, useSiteStore } from '@tmex/stores/react';
 import {
   AlertDialog,
   AlertDialogAction,
@@ -42,6 +42,7 @@ function InfoRow({ label, value }: { label: string; value: React.ReactNode }) {
 export function VersionTab() {
   const { t } = useTranslation();
   const queryClient = useQueryClient();
+  const { apiClient } = useRuntime();
   const language = useSiteStore((state) => state.settings?.language ?? 'en_US');
 
   const [showConfirm, setShowConfirm] = useState(false);
@@ -52,7 +53,7 @@ export function VersionTab() {
   const infoQuery = useQuery({
     queryKey: ['system-info'],
     queryFn: async () => {
-      const res = await fetch('/api/system/info');
+      const res = await apiClient.fetch('/api/system/info');
       if (!res.ok) throw new Error(await parseApiError(res, t('settings.loadFailed')));
       return (await res.json()) as SystemInfo;
     },
@@ -64,7 +65,7 @@ export function VersionTab() {
     enabled: false,
     gcTime: 0,
     queryFn: async () => {
-      const res = await fetch('/api/system/update-check');
+      const res = await apiClient.fetch('/api/system/update-check');
       if (!res.ok) throw new Error(await parseApiError(res, t('settings.version.checkFailed')));
       return (await res.json()) as UpdateCheckResult;
     },
@@ -81,7 +82,7 @@ export function VersionTab() {
     },
     retry: true,
     queryFn: async () => {
-      const res = await fetch('/api/system/upgrade');
+      const res = await apiClient.fetch('/api/system/upgrade');
       if (!res.ok) throw new Error('status');
       return (await res.json()) as UpgradeStatus;
     },
@@ -111,7 +112,7 @@ export function VersionTab() {
 
   const startUpgradeMutation = useMutation({
     mutationFn: async (version: string) => {
-      const res = await fetch('/api/system/upgrade', {
+      const res = await apiClient.fetch('/api/system/upgrade', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ version }),

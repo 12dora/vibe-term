@@ -1,4 +1,5 @@
-import { type KeyboardBehaviorMode, useUIStore } from '@tmex/stores';
+import type { KeyboardBehaviorMode } from '@tmex/stores';
+import { useUIStore } from '@tmex/stores/react';
 import { TerminalPreview } from '@tmex/terminal-ui';
 import { FONT_MANIFEST, getFontEntry } from '@tmex/theme';
 import { cn } from '@tmex/ui';

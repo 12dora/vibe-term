@@ -6,7 +6,7 @@ import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { toast } from 'sonner';
 
-import { useSiteStore } from '@tmex/stores';
+import { useRuntime, useSiteStore } from '@tmex/stores/react';
 import { Button } from '@tmex/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@tmex/ui/card';
 import { Input } from '@tmex/ui/input';
@@ -45,6 +45,7 @@ async function parseApiError(res: Response, fallback: string): Promise<string> {
 export function WebhooksTab() {
   const { t } = useTranslation();
   const queryClient = useQueryClient();
+  const { apiClient } = useRuntime();
   const language = useSiteStore((state) => state.settings?.language ?? 'en_US');
 
   const [newWebhookUrl, setNewWebhookUrl] = useState('');
@@ -55,7 +56,7 @@ export function WebhooksTab() {
   const webhooksQuery = useQuery({
     queryKey: ['webhooks'],
     queryFn: async () => {
-      const res = await fetch('/api/webhooks');
+      const res = await apiClient.fetch('/api/webhooks');
       if (!res.ok) {
         throw new Error(await parseApiError(res, t('webhook.loadFailed')));
       }
@@ -65,7 +66,7 @@ export function WebhooksTab() {
 
   const createWebhookMutation = useMutation({
     mutationFn: async () => {
-      const res = await fetch('/api/webhooks', {
+      const res = await apiClient.fetch('/api/webhooks', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -95,7 +96,7 @@ export function WebhooksTab() {
 
   const deleteWebhookMutation = useMutation({
     mutationFn: async (id: string) => {
-      const res = await fetch(`/api/webhooks/${id}`, { method: 'DELETE' });
+      const res = await apiClient.fetch(`/api/webhooks/${id}`, { method: 'DELETE' });
       if (!res.ok) {
         throw new Error(await parseApiError(res, t('webhook.deleteFailed')));
       }

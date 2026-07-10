@@ -1,5 +1,6 @@
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import type { WeixinAccountWithStats } from '@tmex/shared';
+import { useRuntime } from '@tmex/stores/react';
 import { AlertTriangle, Pencil, QrCode, Send, Trash2 } from 'lucide-react';
 import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
@@ -28,13 +29,14 @@ interface WeixinAccountRowProps {
 export function WeixinAccountRow({ account, onEdit }: WeixinAccountRowProps) {
   const { t } = useTranslation();
   const queryClient = useQueryClient();
+  const { apiClient } = useRuntime();
   const [showLogin, setShowLogin] = useState(false);
 
   const bound = account.loggedIn && account.authorizedCount > 0;
 
   const toggleEnabledMutation = useMutation({
     mutationFn: async (enabled: boolean) => {
-      const res = await fetch(`/api/settings/weixin/accounts/${account.id}`, {
+      const res = await apiClient.fetch(`/api/settings/weixin/accounts/${account.id}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ enabled }),
@@ -53,7 +55,7 @@ export function WeixinAccountRow({ account, onEdit }: WeixinAccountRowProps) {
 
   const testMutation = useMutation({
     mutationFn: async () => {
-      const res = await fetch(`/api/settings/weixin/accounts/${account.id}/test`, {
+      const res = await apiClient.fetch(`/api/settings/weixin/accounts/${account.id}/test`, {
         method: 'POST',
       });
       if (!res.ok) {
@@ -70,7 +72,9 @@ export function WeixinAccountRow({ account, onEdit }: WeixinAccountRowProps) {
 
   const deleteAccountMutation = useMutation({
     mutationFn: async () => {
-      const res = await fetch(`/api/settings/weixin/accounts/${account.id}`, { method: 'DELETE' });
+      const res = await apiClient.fetch(`/api/settings/weixin/accounts/${account.id}`, {
+        method: 'DELETE',
+      });
       if (!res.ok) {
         throw new Error(await parseApiError(res, t('weixin.deleteFailed')));
       }

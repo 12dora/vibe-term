@@ -1,5 +1,6 @@
 import { useQuery } from '@tanstack/react-query';
 import type { GetAgentLlmSettingsResponse, LlmProviderDto } from '@tmex/shared';
+import { useRuntime } from '@tmex/stores/react';
 import { cn } from '@tmex/ui';
 import {
   Select,
@@ -39,10 +40,11 @@ export function ModelPicker({
   className?: string;
 }) {
   const { t } = useTranslation();
+  const { apiClient } = useRuntime();
   const { data } = useQuery({
     queryKey: ['llm-providers'],
     queryFn: async () => {
-      const res = await fetch('/api/llm/providers');
+      const res = await apiClient.fetch('/api/llm/providers');
       if (!res.ok) throw new Error('Failed to load providers');
       return (await res.json()) as { providers: LlmProviderDto[] };
     },
@@ -52,7 +54,7 @@ export function ModelPicker({
   const { data: settingsData } = useQuery({
     queryKey: ['llm-settings'],
     queryFn: async () => {
-      const res = await fetch('/api/llm/settings');
+      const res = await apiClient.fetch('/api/llm/settings');
       if (!res.ok) throw new Error('Failed to load settings');
       return (await res.json()) as GetAgentLlmSettingsResponse;
     },

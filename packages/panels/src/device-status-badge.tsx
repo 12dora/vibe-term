@@ -1,4 +1,4 @@
-import { useTmuxStore } from '@tmex/stores';
+import { useTmuxStore } from '@tmex/stores/react';
 import { cn } from '@tmex/ui';
 import { Badge } from '@tmex/ui/badge';
 import { AlertCircle, RefreshCcw } from 'lucide-react';

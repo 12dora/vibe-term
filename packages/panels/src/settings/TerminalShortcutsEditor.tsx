@@ -23,6 +23,7 @@ import {
   terminalShortcutsQueryKey,
   updateTerminalShortcuts,
 } from '@tmex/api-client';
+import { useRuntime } from '@tmex/stores/react';
 import {
   DEFAULT_TERMINAL_SHORTCUTS,
   type TerminalShortcutAction,
@@ -189,9 +190,10 @@ function SortableShortcutRow({
 export function TerminalShortcutsEditor() {
   const { t } = useTranslation();
   const queryClient = useQueryClient();
+  const { apiClient } = useRuntime();
   const { data, isLoading, isError, refetch } = useQuery({
     queryKey: terminalShortcutsQueryKey,
-    queryFn: () => fetchTerminalShortcuts(),
+    queryFn: () => fetchTerminalShortcuts(apiClient),
   });
 
   const [items, setItems] = useState<TerminalShortcutItem[]>([]);
@@ -240,7 +242,7 @@ export function TerminalShortcutsEditor() {
   );
 
   const mutation = useMutation({
-    mutationFn: () => updateTerminalShortcuts({ items, useIcons }),
+    mutationFn: () => updateTerminalShortcuts({ items, useIcons }, apiClient),
     onSuccess: (saved) => {
       queryClient.setQueryData(terminalShortcutsQueryKey, saved);
       setItems(saved.items);

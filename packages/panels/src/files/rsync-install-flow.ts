@@ -1,9 +1,6 @@
 import i18next from 'i18next';
-import { bridgeNavigate, bridgeOpenMobileSidebar } from '@tmex/stores';
-import { useAgentStore } from '@tmex/stores';
-import { useTmuxStore } from '@tmex/stores';
-import { useUIStore } from '@tmex/stores';
-import { encodePaneIdForUrl } from '@tmex/stores';
+import type { AppRuntime } from '@tmex/stores';
+import { encodePaneIdForUrl, hostAppPath } from '@tmex/stores';
 import { toast } from 'sonner';
 
 const CONNECT_TIMEOUT_MS = 12_000;
@@ -14,16 +11,17 @@ const POLL_INTERVAL_MS = 120;
 // rsync 自动安装与「发送到 Agent」共用同一把锁，避免并发建窗/起草互相覆盖。
 let agentOrchestrationInProgress = false;
 
-function windowIdsOf(deviceId: string): Set<string> {
-  const windows = useTmuxStore.getState().snapshots[deviceId]?.session?.windows ?? [];
+function windowIdsOf(runtime: AppRuntime, deviceId: string): Set<string> {
+  const windows = runtime.stores.tmux.getState().snapshots[deviceId]?.session?.windows ?? [];
   return new Set(windows.map((w) => w.id));
 }
 
 function findNewWindow(
+  runtime: AppRuntime,
   deviceId: string,
   before: Set<string>
 ): { windowId: string; paneId: string; paneTitle: string | null } | null {
-  const windows = useTmuxStore.getState().snapshots[deviceId]?.session?.windows ?? [];
+  const windows = runtime.stores.tmux.getState().snapshots[deviceId]?.session?.windows ?? [];
   for (const w of windows) {
     if (!before.has(w.id) && w.panes.length > 0) {
       const pane = w.panes.find((p) => p.active) ?? w.panes[0];
@@ -55,21 +53,22 @@ export function buildSendToAgentPrompt(path: string): string {
 }
 
 // 通用 agent 编排：确保设备连接 → 建窗 → 等就绪 → 起草（预填 prompt）→ 导航 → 切 agent → 手机强开 sidebar。
-// 顺序不可调换：必须先 startDraft 再 bridgeNavigate，否则路由变化触发的自动起草会覆盖预填 prompt。
+// 顺序不可调换：必须先 startDraft 再导航，否则路由变化触发的自动起草会覆盖预填 prompt。
 export async function openAgentInNewWindowWithPrompt(
+  runtime: AppRuntime,
   deviceId: string,
   promptText: string
 ): Promise<void> {
   if (agentOrchestrationInProgress) return; // 不被打断、不重入
   agentOrchestrationInProgress = true;
   try {
-    const tmux = useTmuxStore.getState();
+    const tmux = runtime.stores.tmux.getState();
 
     // 1. 设备可能仅用于 rsync 文件浏览而未连接 tmux，先连接
     if (!tmux.connectedDevices.has(deviceId)) {
       tmux.connectDevice(deviceId);
       const connected = await pollUntil(
-        () => (useTmuxStore.getState().snapshots[deviceId]?.session ? true : null),
+        () => (runtime.stores.tmux.getState().snapshots[deviceId]?.session ? true : null),
         CONNECT_TIMEOUT_MS
       );
       if (!connected) {
@@ -79,33 +78,44 @@ export async function openAgentInNewWindowWithPrompt(
     }
 
     // 2. 记录现有窗口 → 建窗 → 等待「新窗口出现且 pane 就绪」（snapshot diff，自带超时）
-    const before = windowIdsOf(deviceId);
+    const before = windowIdsOf(runtime, deviceId);
     tmux.createWindow(deviceId);
-    const win = await pollUntil(() => findNewWindow(deviceId, before), WINDOW_TIMEOUT_MS);
+    const win = await pollUntil(() => findNewWindow(runtime, deviceId, before), WINDOW_TIMEOUT_MS);
     if (!win) {
       toast.error(i18next.t('files.agentLaunch.windowFailed'));
       return;
     }
 
     // 3. 先起草（含预填 prompt）→ 再导航 → 展开 agent 分区 → 手机强开 sidebar
-    useAgentStore.getState().startDraft(deviceId, win.paneId, win.paneTitle, promptText);
-    bridgeNavigate(
-      `/devices/${deviceId}/windows/${win.windowId}/panes/${encodePaneIdForUrl(win.paneId)}`,
+    runtime.stores.agent.getState().startDraft(deviceId, win.paneId, win.paneTitle, promptText);
+    runtime.host.navigate(
+      hostAppPath(
+        runtime.host,
+        `/devices/${deviceId}/windows/${win.windowId}/panes/${encodePaneIdForUrl(win.paneId)}`
+      ),
       { replace: true }
     );
-    useUIStore.getState().expandSidebarSection('agent');
-    bridgeOpenMobileSidebar();
+    runtime.stores.ui.getState().expandSidebarSection('agent');
+    runtime.host.openMobileSidebar();
   } finally {
     agentOrchestrationInProgress = false;
   }
 }
 
 // rsync 自动安装：在设备上新建窗口并预填安装引导 prompt（薄封装）。
-export function triggerRsyncInstall(deviceId: string, promptText: string): Promise<void> {
-  return openAgentInNewWindowWithPrompt(deviceId, promptText);
+export function triggerRsyncInstall(
+  runtime: AppRuntime,
+  deviceId: string,
+  promptText: string
+): Promise<void> {
+  return openAgentInNewWindowWithPrompt(runtime, deviceId, promptText);
 }
 
 // 发送文件/文件夹路径到 Agent：在所属设备上新建窗口并把该绝对路径预填进 agent 输入框。
-export function sendPathToAgent(deviceId: string, absPath: string): Promise<void> {
-  return openAgentInNewWindowWithPrompt(deviceId, buildSendToAgentPrompt(absPath));
+export function sendPathToAgent(
+  runtime: AppRuntime,
+  deviceId: string,
+  absPath: string
+): Promise<void> {
+  return openAgentInNewWindowWithPrompt(runtime, deviceId, buildSendToAgentPrompt(absPath));
 }

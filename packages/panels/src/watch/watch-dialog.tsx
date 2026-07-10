@@ -8,6 +8,7 @@ import {
   watchRulesQueryKey,
 } from '@tmex/api-client';
 import type { WatchRuleDto } from '@tmex/shared';
+import { useRuntime } from '@tmex/stores/react';
 import {
   AlertDialog,
   AlertDialogAction,
@@ -60,6 +61,7 @@ function formatTime(value: string | null | undefined): string | null {
 export function WatchDialog({ open, onOpenChange, deviceId, paneId }: WatchDialogProps) {
   const { t } = useTranslation();
   const queryClient = useQueryClient();
+  const { apiClient } = useRuntime();
   const [view, setView] = useState<DialogView>({ mode: 'list' });
   const [deleteCandidate, setDeleteCandidate] = useState<WatchRuleDto | null>(null);
   const [showNotifBanner, setShowNotifBanner] = useState(false);
@@ -74,7 +76,7 @@ export function WatchDialog({ open, onOpenChange, deviceId, paneId }: WatchDialo
 
   const rulesQuery = useQuery({
     queryKey: watchRulesQueryKey(deviceId, paneId),
-    queryFn: () => fetchWatchRules(deviceId, paneId),
+    queryFn: () => fetchWatchRules(deviceId, paneId, apiClient),
     enabled: open,
     throwOnError: false,
   });
@@ -85,7 +87,7 @@ export function WatchDialog({ open, onOpenChange, deviceId, paneId }: WatchDialo
 
   const toggleMutation = useMutation({
     mutationFn: async ({ rule, enabled }: { rule: WatchRuleDto; enabled: boolean }) => {
-      await updateWatchRule(rule.id, { enabled });
+      await updateWatchRule(rule.id, { enabled }, apiClient);
     },
     onSuccess: invalidateRules,
     onError: (error) => {
@@ -96,7 +98,7 @@ export function WatchDialog({ open, onOpenChange, deviceId, paneId }: WatchDialo
 
   const deleteMutation = useMutation({
     mutationFn: async (rule: WatchRuleDto) => {
-      await deleteWatchRule(rule.id);
+      await deleteWatchRule(rule.id, apiClient);
     },
     onSuccess: () => {
       toast.success(t('watch.toast.deleted'));
@@ -267,10 +269,11 @@ interface WatchRuleRowProps {
 
 function WatchRuleRow({ rule, onToggle, onEdit, onViewState, onDelete }: WatchRuleRowProps) {
   const { t } = useTranslation();
+  const { apiClient } = useRuntime();
 
   const stateQuery = useQuery({
     queryKey: watchRuleStateQueryKey(rule.id),
-    queryFn: () => fetchWatchRuleState(rule.id),
+    queryFn: () => fetchWatchRuleState(rule.id, apiClient),
     throwOnError: false,
   });
 
@@ -341,10 +344,11 @@ interface WatchRuleStateViewProps {
 
 function WatchRuleStateView({ rule, onBack }: WatchRuleStateViewProps) {
   const { t } = useTranslation();
+  const { apiClient } = useRuntime();
 
   const stateQuery = useQuery({
     queryKey: watchRuleStateQueryKey(rule.id),
-    queryFn: () => fetchWatchRuleState(rule.id),
+    queryFn: () => fetchWatchRuleState(rule.id, apiClient),
     refetchInterval: 5000,
     throwOnError: false,
   });

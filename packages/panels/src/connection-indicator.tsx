@@ -1,6 +1,5 @@
-import { useTmuxStore } from '@tmex/stores';
+import { useRuntime, useTmuxStore } from '@tmex/stores/react';
 import type { ConnectionState } from '@tmex/ws-client';
-import { getBorshClient } from '@tmex/ws-client';
 import { Loader2, RefreshCcw } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
@@ -18,6 +17,7 @@ function shouldShowIndicator(state: ConnectionState): boolean {
 
 export function ConnectionIndicator() {
   const { t } = useTranslation();
+  const runtime = useRuntime();
   const connectionState = useTmuxStore((s) => s.connectionState);
   const hasConnectedOnce = useTmuxStore((s) => s.hasConnectedOnce);
   const [phase, setPhase] = useState<Phase>('hidden');
@@ -71,7 +71,7 @@ export function ConnectionIndicator() {
         className="fixed z-50 right-4 flex items-center rounded-full bg-background border border-border shadow-lg px-3 py-2 gap-2 text-sm text-destructive cursor-pointer"
         style={transitionStyle}
         onTransitionEnd={handleTransitionEnd}
-        onClick={() => getBorshClient().reconnect()}
+        onClick={() => runtime.client.reconnect()}
       >
         <RefreshCcw className="size-4" />
         <span>{t('websocket.reconnect')}</span>

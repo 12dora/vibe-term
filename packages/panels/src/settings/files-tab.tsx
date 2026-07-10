@@ -17,6 +17,7 @@ import {
   fetchFileRoots,
   updateFileRoot,
 } from '@tmex/api-client';
+import { useRuntime } from '@tmex/stores/react';
 import {
   AlertDialog,
   AlertDialogAction,
@@ -55,19 +56,20 @@ function DeviceIcon({ type, className }: { type: 'local' | 'ssh' | null; classNa
 
 export function FilesSettingsTab() {
   const { t } = useTranslation();
+  const { apiClient } = useRuntime();
 
   const [modalOpen, setModalOpen] = useState(false);
   const [editingRoot, setEditingRoot] = useState<FileRootDto | undefined>(undefined);
 
   const rootsQuery = useQuery({
     queryKey: ['files', 'roots'],
-    queryFn: () => fetchFileRoots(),
+    queryFn: () => fetchFileRoots(apiClient),
   });
 
   const devicesQuery = useQuery({
     queryKey: ['devices'],
     queryFn: async () => {
-      const res = await fetch('/api/devices');
+      const res = await apiClient.fetch('/api/devices');
       if (!res.ok) {
         throw new Error(`HTTP ${res.status}`);
       }
@@ -137,11 +139,12 @@ interface FileRootRowProps {
 function FileRootRow({ root, onEdit }: FileRootRowProps) {
   const { t } = useTranslation();
   const queryClient = useQueryClient();
+  const { apiClient } = useRuntime();
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
 
   const toggleMutation = useMutation({
     mutationFn: ({ id, enabled }: { id: string; enabled: boolean }) =>
-      updateFileRoot(id, { enabled } satisfies UpdateFileRootRequest),
+      updateFileRoot(id, { enabled } satisfies UpdateFileRootRequest, apiClient),
     onSuccess: async () => {
       await queryClient.invalidateQueries({ queryKey: ['files'] });
     },
@@ -151,7 +154,7 @@ function FileRootRow({ root, onEdit }: FileRootRowProps) {
   });
 
   const deleteMutation = useMutation({
-    mutationFn: (id: string) => deleteFileRoot(id),
+    mutationFn: (id: string) => deleteFileRoot(id, apiClient),
     onSuccess: async () => {
       await queryClient.invalidateQueries({ queryKey: ['files'] });
       toast.success(t('common.success'));
@@ -254,6 +257,7 @@ interface FileRootFormModalProps {
 function FileRootFormModal({ open, onOpenChange, root, devices }: FileRootFormModalProps) {
   const { t } = useTranslation();
   const queryClient = useQueryClient();
+  const { apiClient } = useRuntime();
   const isEdit = Boolean(root);
 
   const [deviceId, setDeviceId] = useState('');
@@ -272,7 +276,7 @@ function FileRootFormModal({ open, onOpenChange, root, devices }: FileRootFormMo
   const createMutation = useMutation({
     mutationFn: () => {
       const payload: CreateFileRootRequest = { deviceId, path: path.trim(), enabled };
-      return createFileRoot(payload);
+      return createFileRoot(payload, apiClient);
     },
     onSuccess: async () => {
       await queryClient.invalidateQueries({ queryKey: ['files'] });
@@ -291,7 +295,7 @@ function FileRootFormModal({ open, onOpenChange, root, devices }: FileRootFormMo
         throw new Error(t('settings.files.updateFailed'));
       }
       const payload: UpdateFileRootRequest = { path: path.trim(), enabled };
-      return updateFileRoot(root.id, payload);
+      return updateFileRoot(root.id, payload, apiClient);
     },
     onSuccess: async () => {
       await queryClient.invalidateQueries({ queryKey: ['files'] });

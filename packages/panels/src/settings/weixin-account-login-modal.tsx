@@ -4,6 +4,7 @@ import type {
   WeixinAccountUser,
   WeixinLoginStatusResponse,
 } from '@tmex/shared';
+import { useRuntime } from '@tmex/stores/react';
 import { Loader2, QrCode, RefreshCw } from 'lucide-react';
 import { QRCodeSVG } from 'qrcode.react';
 import { useCallback, useEffect, useRef, useState } from 'react';
@@ -52,6 +53,7 @@ export function WeixinAccountLoginModal({
 }: WeixinAccountLoginModalProps) {
   const { t } = useTranslation();
   const queryClient = useQueryClient();
+  const { apiClient } = useRuntime();
 
   const [qrcodeUrl, setQrcodeUrl] = useState<string | null>(null);
   const [phase, setPhase] = useState<Phase>('starting');
@@ -88,7 +90,9 @@ export function WeixinAccountLoginModal({
   const pollBinding = useCallback(
     async (gen: number, signal: AbortSignal, baseline: Map<string, string | null>) => {
       try {
-        const res = await fetch(`/api/settings/weixin/accounts/${accountId}/users`, { signal });
+        const res = await apiClient.fetch(`/api/settings/weixin/accounts/${accountId}/users`, {
+          signal,
+        });
         if (genRef.current !== gen) return;
         if (!res.ok) {
           throw new Error(await parseApiError(res, t('weixin.loginFailed')));
@@ -105,7 +109,7 @@ export function WeixinAccountLoginModal({
           setPhase('binding');
           setStatusMessage(t('weixin.bindingInProgress'));
           if (fresh.status === 'pending') {
-            const approveRes = await fetch(
+            const approveRes = await apiClient.fetch(
               `/api/settings/weixin/accounts/${accountId}/users/${encodeURIComponent(fresh.userId)}/approve`,
               { method: 'POST', signal }
             );
@@ -128,16 +132,17 @@ export function WeixinAccountLoginModal({
         setStatusMessage(err instanceof Error ? err.message : t('weixin.loginFailed'));
       }
     },
-    [accountId, finishBinding, t]
+    [accountId, apiClient, finishBinding, t]
   );
 
   // 第一段轮询：等扫码确认。确认后拍 users baseline 快照，转入第二段。
   const pollLogin = useCallback(
     async (gen: number, signal: AbortSignal) => {
       try {
-        const res = await fetch(`/api/settings/weixin/accounts/${accountId}/login/status`, {
-          signal,
-        });
+        const res = await apiClient.fetch(
+          `/api/settings/weixin/accounts/${accountId}/login/status`,
+          { signal }
+        );
         if (genRef.current !== gen) return;
         if (!res.ok) {
           throw new Error(await parseApiError(res, t('weixin.loginFailed')));
@@ -158,9 +163,10 @@ export function WeixinAccountLoginModal({
 
         if (data.loggedIn || data.status === 'confirmed') {
           // 扫码确认那一刻拍一份 users 快照作为 baseline（服务端 lastInboundAt 比对，免时钟漂移）。
-          const usersRes = await fetch(`/api/settings/weixin/accounts/${accountId}/users`, {
-            signal,
-          });
+          const usersRes = await apiClient.fetch(
+            `/api/settings/weixin/accounts/${accountId}/users`,
+            { signal }
+          );
           if (genRef.current !== gen) return;
           if (!usersRes.ok) {
             throw new Error(await parseApiError(usersRes, t('weixin.loginFailed')));
@@ -189,7 +195,7 @@ export function WeixinAccountLoginModal({
         setStatusMessage(err instanceof Error ? err.message : t('weixin.loginFailed'));
       }
     },
-    [accountId, pollBinding, t]
+    [accountId, apiClient, pollBinding, t]
   );
 
   const start = useCallback(async () => {
@@ -201,7 +207,7 @@ export function WeixinAccountLoginModal({
     setStatusMessage(null);
     setQrcodeUrl(null);
     try {
-      const res = await fetch(`/api/settings/weixin/accounts/${accountId}/login/start`, {
+      const res = await apiClient.fetch(`/api/settings/weixin/accounts/${accountId}/login/start`, {
         method: 'POST',
         signal: controller.signal,
       });
@@ -224,7 +230,7 @@ export function WeixinAccountLoginModal({
       setPhase('error');
       setStatusMessage(err instanceof Error ? err.message : t('weixin.loginFailed'));
     }
-  }, [accountId, cancelActive, pollLogin, t]);
+  }, [accountId, apiClient, cancelActive, pollLogin, t]);
 
   // biome-ignore lint/correctness/useExhaustiveDependencies: 仅在弹窗打开或账号切换时重新发起登录，start/cancelActive 为稳定回调
   useEffect(() => {

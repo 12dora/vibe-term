@@ -1,5 +1,6 @@
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import type { TelegramBotWithStats } from '@tmex/shared';
+import { useRuntime } from '@tmex/stores/react';
 import { Pencil, Trash2, Users } from 'lucide-react';
 import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
@@ -27,11 +28,12 @@ interface TelegramBotRowProps {
 export function TelegramBotRow({ bot, onEdit }: TelegramBotRowProps) {
   const { t } = useTranslation();
   const queryClient = useQueryClient();
+  const { apiClient } = useRuntime();
   const [showChats, setShowChats] = useState(false);
 
   const toggleEnabledMutation = useMutation({
     mutationFn: async (enabled: boolean) => {
-      const res = await fetch(`/api/settings/telegram/bots/${bot.id}`, {
+      const res = await apiClient.fetch(`/api/settings/telegram/bots/${bot.id}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ enabled }),
@@ -50,7 +52,9 @@ export function TelegramBotRow({ bot, onEdit }: TelegramBotRowProps) {
 
   const deleteBotMutation = useMutation({
     mutationFn: async () => {
-      const res = await fetch(`/api/settings/telegram/bots/${bot.id}`, { method: 'DELETE' });
+      const res = await apiClient.fetch(`/api/settings/telegram/bots/${bot.id}`, {
+        method: 'DELETE',
+      });
       if (!res.ok) {
         throw new Error(await parseApiError(res, t('telegram.deleteFailed')));
       }

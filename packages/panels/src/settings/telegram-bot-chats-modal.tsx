@@ -6,7 +6,7 @@ import { useMemo } from 'react';
 import { useTranslation } from 'react-i18next';
 import { toast } from 'sonner';
 
-import { useSiteStore } from '@tmex/stores';
+import { useRuntime, useSiteStore } from '@tmex/stores/react';
 import { Button } from '@tmex/ui/button';
 import {
   Dialog,
@@ -44,12 +44,13 @@ export function TelegramBotChatsModal({
 }: TelegramBotChatsModalProps) {
   const { t } = useTranslation();
   const queryClient = useQueryClient();
+  const { apiClient } = useRuntime();
 
   const chatsQuery = useQuery({
     queryKey: ['telegram-bot-chats', botId],
     enabled: open,
     queryFn: async () => {
-      const res = await fetch(`/api/settings/telegram/bots/${botId}/chats`);
+      const res = await apiClient.fetch(`/api/settings/telegram/bots/${botId}/chats`);
       if (!res.ok) {
         throw new Error(await parseApiError(res, t('telegram.loadChatsFailed')));
       }
@@ -74,7 +75,7 @@ export function TelegramBotChatsModal({
 
   const approveMutation = useMutation({
     mutationFn: async (chatId: string) => {
-      const res = await fetch(
+      const res = await apiClient.fetch(
         `/api/settings/telegram/bots/${botId}/chats/${encodeURIComponent(chatId)}/approve`,
         { method: 'POST' }
       );
@@ -93,7 +94,7 @@ export function TelegramBotChatsModal({
 
   const removeChatMutation = useMutation({
     mutationFn: async (chatId: string) => {
-      const res = await fetch(
+      const res = await apiClient.fetch(
         `/api/settings/telegram/bots/${botId}/chats/${encodeURIComponent(chatId)}`,
         { method: 'DELETE' }
       );
@@ -112,7 +113,7 @@ export function TelegramBotChatsModal({
 
   const testChatMutation = useMutation({
     mutationFn: async (chatId: string) => {
-      const res = await fetch(
+      const res = await apiClient.fetch(
         `/api/settings/telegram/bots/${botId}/chats/${encodeURIComponent(chatId)}/test`,
         { method: 'POST' }
       );
