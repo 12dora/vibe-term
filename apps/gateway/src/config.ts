@@ -33,6 +33,11 @@ export const config = {
     10
   ),
   tmuxAllowPassthrough: getBooleanEnv('TMEX_TMUX_ALLOW_PASSTHROUGH', false),
+  // 逗号分隔的通知渠道禁用清单（如 "webhook,telegram"），命中的内建 channel
+  // 在 EventNotifier 构造时直接跳过注册。getter 保证每次构造读取当前环境值。
+  get disabledNotificationChannelsEnv(): string {
+    return getEnv('TMEX_DISABLED_NOTIFICATION_CHANNELS', '');
+  },
   // 主题切换时向订阅了 mode 2031 的 pane 注入 CSI ?997;{1|2}n 通知（kill switch）
   themeNotify2031Enabled: getBooleanEnv('TMEX_THEME_NOTIFY_2031', true),
   tmuxTermProgram: getEnv('TMEX_TMUX_TERM_PROGRAM', 'ghostty'),

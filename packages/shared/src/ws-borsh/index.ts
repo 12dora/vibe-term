@@ -53,6 +53,7 @@ export {
   KIND_WATCH_EVENT,
   KIND_SITE_THEME_UPDATE,
   KIND_SETTINGS_UPDATE,
+  KIND_NOTIFY_EVENT,
   isValidKind,
   kindToString,
 } from './kind';

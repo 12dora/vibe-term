@@ -13,6 +13,7 @@ import {
   KIND_AGENT_UNSUBSCRIBE,
   KIND_CHUNK,
   KIND_CLIPBOARD_WRITE,
+  KIND_NOTIFY_EVENT,
   KIND_PING,
   KIND_SITE_THEME_UPDATE,
   KIND_TMUX_REORDER_PANES,
@@ -42,6 +43,7 @@ import {
   AgentSubscribeSchema,
   AgentUnsubscribeSchema,
   ClipboardWriteSchema,
+  EventNotifyS2CSchema,
   PingPongSchema,
   SiteThemeUpdateC2SSchema,
   SiteThemeUpdateS2CSchema,
@@ -511,6 +513,32 @@ describe('site theme update 协议消息', () => {
     const decodedPayload = decodePayload(SiteThemeUpdateS2CSchema, decoded.payload);
     expect(decodedPayload.theme).toBe(SITE_THEME_DARK);
     expect(decodedPayload.serverTimestamp).toBe(42n);
+  });
+});
+
+describe('notify event 协议消息', () => {
+  it('KIND_NOTIFY_EVENT = 0x0803，在 valid kinds 中且 kindToString 可读', () => {
+    expect(KIND_NOTIFY_EVENT).toBe(0x0803);
+    expect(isValidKind(KIND_NOTIFY_EVENT)).toBe(true);
+    expect(kindToString(KIND_NOTIFY_EVENT)).toBe('NOTIFY_EVENT');
+  });
+
+  it('EventNotifyS2C envelope + payload roundtrip', () => {
+    const eventJson = JSON.stringify({ eventType: 'terminal_bell', payload: { message: 'ding' } });
+    const payloadBytes = encodePayload(EventNotifyS2CSchema, {
+      eventType: 'terminal_bell',
+      eventJson,
+      timestamp: 1719900000000n,
+    });
+
+    const envelope = encodeEnvelope(KIND_NOTIFY_EVENT, payloadBytes, 11);
+    const decodedEnvelope = decodeEnvelope(envelope);
+    expect(decodedEnvelope.kind).toBe(KIND_NOTIFY_EVENT);
+
+    const decoded = decodePayload(EventNotifyS2CSchema, decodedEnvelope.payload);
+    expect(decoded.eventType).toBe('terminal_bell');
+    expect(decoded.eventJson).toBe(eventJson);
+    expect(decoded.timestamp).toBe(1719900000000n);
   });
 });
 

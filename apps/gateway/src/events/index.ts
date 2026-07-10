@@ -1,9 +1,20 @@
 import type { EventType, WebhookEvent } from '@tmex/shared';
+import { config } from '../config';
 import { getSiteSettings } from '../db';
 import { telegramChannel } from './channels/telegram';
 import type { NotificationChannel } from './channels/types';
 import { webhookChannel } from './channels/webhook';
 import { weixinChannel } from './channels/weixin';
+import { wsBroadcastChannel } from './channels/ws-broadcast';
+
+function parseDisabledChannelIds(csv: string): Set<string> {
+  return new Set(
+    csv
+      .split(',')
+      .map((id) => id.trim())
+      .filter((id) => id.length > 0)
+  );
+}
 
 export class EventNotifier {
   private bellThrottleMap = new Map<string, number>();
@@ -11,9 +22,14 @@ export class EventNotifier {
   private readonly channels = new Map<string, NotificationChannel>();
 
   constructor() {
-    this.registerChannel(webhookChannel);
-    this.registerChannel(telegramChannel);
-    this.registerChannel(weixinChannel);
+    const envDisabled = parseDisabledChannelIds(config.disabledNotificationChannelsEnv);
+    const builtinChannels = [webhookChannel, telegramChannel, weixinChannel, wsBroadcastChannel];
+    for (const channel of builtinChannels) {
+      if (envDisabled.has(channel.id)) {
+        continue;
+      }
+      this.registerChannel(channel);
+    }
   }
 
   /** 注册通知渠道；重复 id 视为编程错误，直接抛错 */
@@ -22,6 +38,10 @@ export class EventNotifier {
       throw new Error(`notification channel already registered: ${channel.id}`);
     }
     this.channels.set(channel.id, channel);
+  }
+
+  hasChannel(id: string): boolean {
+    return this.channels.has(id);
   }
 
   async notify(

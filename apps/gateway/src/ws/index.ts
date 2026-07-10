@@ -1,4 +1,10 @@
-import type { EventDevicePayload, StateSnapshotPayload, TmuxEventType } from '@tmex/shared';
+import type {
+  EventDevicePayload,
+  EventType,
+  StateSnapshotPayload,
+  TmuxEventType,
+  WebhookEvent,
+} from '@tmex/shared';
 import { type ThemeMode, getTmuxWindowStyle, wsBorsh } from '@tmex/shared';
 import type { Server, ServerWebSocket } from 'bun';
 import { agentWsHub } from '../agent/ws-hub';
@@ -1064,6 +1070,20 @@ export class WebSocketServer {
     });
     for (const client of this.connectedClients) {
       this.sendEnvelope(client, wsBorsh.KIND_SETTINGS_UPDATE, payloadBytes);
+    }
+  }
+
+  // 向所有 connected clients 广播 KIND_NOTIFY_EVENT（事件通知，无订阅过滤——
+  // 未知 kind 由客户端静默忽略）。timestamp 取事件时间，解析失败回退 Date.now()。
+  broadcastEventNotify(eventType: EventType, event: WebhookEvent): void {
+    const eventTimeMs = Date.parse(event.timestamp);
+    const payloadBytes = wsBorsh.encodePayload(wsBorsh.schema.EventNotifyS2CSchema, {
+      eventType,
+      eventJson: JSON.stringify(event),
+      timestamp: BigInt(Number.isNaN(eventTimeMs) ? Date.now() : eventTimeMs),
+    });
+    for (const client of this.connectedClients) {
+      this.sendEnvelope(client, wsBorsh.KIND_NOTIFY_EVENT, payloadBytes);
     }
   }
 

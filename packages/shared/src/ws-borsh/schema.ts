@@ -442,3 +442,12 @@ export const SettingsUpdateS2CSchema = b.struct({
   namespace: b.string(),
   serverTimestamp: b.u64(),
 });
+
+// S2C：服务端向全体客户端广播事件通知。eventJson 为完整事件 JSON 字符串
+// （形状同 webhook 推送体），eventType 冗余外提便于客户端快速过滤。
+// 字段顺序即 Borsh 线序，已定稿不可变。
+export const EventNotifyS2CSchema = b.struct({
+  eventType: b.string(),
+  eventJson: b.string(),
+  timestamp: b.u64(),
+});

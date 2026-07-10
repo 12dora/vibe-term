@@ -5,6 +5,7 @@ import { handleApiRequest } from '../api/index';
 import { ensureSiteSettingsInitialized, getSiteSettings, updateSiteSettings } from '../db';
 import { runMigrations } from '../db/migrate';
 import { telegramService } from '../telegram/service';
+import { registerEventNotifyBroadcaster } from './broadcaster';
 import type { NotificationChannel } from './channels/types';
 import { EventNotifier, eventNotifier } from './index';
 
@@ -137,6 +138,178 @@ describe('EventNotifier channel registry', () => {
       fakeServer
     );
     expect(res.status).toBe(400);
+  });
+});
+
+describe('TMEX_DISABLED_NOTIFICATION_CHANNELS env disable', () => {
+  const ENV_KEY = 'TMEX_DISABLED_NOTIFICATION_CHANNELS';
+  const BUILTIN_IDS = ['webhook', 'telegram', 'weixin', 'ws-broadcast'];
+
+  test('未设 env 时注册全部内建 channel', () => {
+    const original = process.env[ENV_KEY];
+    delete process.env[ENV_KEY];
+    try {
+      const notifier = new EventNotifier();
+      for (const id of BUILTIN_IDS) {
+        expect(notifier.hasChannel(id)).toBe(true);
+      }
+    } finally {
+      if (original !== undefined) process.env[ENV_KEY] = original;
+    }
+  });
+
+  test('CSV 点名的内建 channel 跳过注册，未点名的照常', () => {
+    process.env[ENV_KEY] = ' webhook , telegram ,,';
+    try {
+      const notifier = new EventNotifier();
+      expect(notifier.hasChannel('webhook')).toBe(false);
+      expect(notifier.hasChannel('telegram')).toBe(false);
+      expect(notifier.hasChannel('weixin')).toBe(true);
+      expect(notifier.hasChannel('ws-broadcast')).toBe(true);
+    } finally {
+      delete process.env[ENV_KEY];
+    }
+  });
+
+  test('ws-broadcast 可被显式点名禁用', () => {
+    process.env[ENV_KEY] = 'ws-broadcast';
+    try {
+      const notifier = new EventNotifier();
+      expect(notifier.hasChannel('ws-broadcast')).toBe(false);
+      expect(notifier.hasChannel('webhook')).toBe(true);
+      expect(notifier.hasChannel('telegram')).toBe(true);
+      expect(notifier.hasChannel('weixin')).toBe(true);
+    } finally {
+      delete process.env[ENV_KEY];
+    }
+  });
+
+  test('被禁 channel 完全不存在（可重新注册同 id，非运行时过滤）', async () => {
+    process.env[ENV_KEY] = 'webhook,telegram,weixin,ws-broadcast';
+    try {
+      const notifier = new EventNotifier();
+      const replacement = recordingChannel('webhook');
+      expect(() => notifier.registerChannel(replacement.channel)).not.toThrow();
+
+      await notifier.notify('watch_rule_error', {
+        ...baseEvent,
+        payload: { message: 'env disabled' },
+      });
+      expect(replacement.calls).toHaveLength(1);
+    } finally {
+      delete process.env[ENV_KEY];
+    }
+  });
+
+  test('空值与纯空白 CSV 不误伤任何 channel', () => {
+    for (const value of ['', '   ', ' , ,']) {
+      process.env[ENV_KEY] = value;
+      try {
+        const notifier = new EventNotifier();
+        for (const id of BUILTIN_IDS) {
+          expect(notifier.hasChannel(id)).toBe(true);
+        }
+      } finally {
+        delete process.env[ENV_KEY];
+      }
+    }
+  });
+});
+
+describe('ws-broadcast channel 经注册桥转发', () => {
+  test('EventNotifier.notify 经 ws-broadcast channel 调到注册的 broadcaster fn', async () => {
+    const received: Array<{ eventType: EventType; event: WebhookEvent }> = [];
+    registerEventNotifyBroadcaster((eventType, event) => {
+      received.push({ eventType, event });
+    });
+    try {
+      const notifier = new EventNotifier();
+      await notifier.notify('watch_rule_error', {
+        ...baseEvent,
+        payload: { message: 'bridge' },
+      });
+
+      expect(received).toHaveLength(1);
+      expect(received[0]?.eventType).toBe('watch_rule_error');
+      expect(received[0]?.event.eventType).toBe('watch_rule_error');
+      expect(received[0]?.event.payload?.message).toBe('bridge');
+      expect(Number.isNaN(Date.parse(received[0]?.event.timestamp ?? ''))).toBe(false);
+    } finally {
+      registerEventNotifyBroadcaster(null);
+    }
+  });
+
+  test('ws-broadcast 不受 enableBellPush/enableNotificationPush 门控', async () => {
+    const received: EventType[] = [];
+    registerEventNotifyBroadcaster((eventType) => {
+      received.push(eventType);
+    });
+    const original = getSiteSettings();
+    try {
+      updateSiteSettings({
+        bellThrottleSeconds: 0,
+        notificationThrottleSeconds: 0,
+        enableBellPush: false,
+        enableNotificationPush: false,
+      });
+
+      const notifier = new EventNotifier();
+      await notifier.notify('terminal_bell', {
+        ...baseEvent,
+        device: { id: 'device-ws-gate-bell', name: 'dev-g1', type: 'local' },
+      });
+      await notifier.notify('terminal_notification', {
+        ...baseEvent,
+        device: { id: 'device-ws-gate-notification', name: 'dev-g2', type: 'local' },
+        payload: { source: 'osc777', title: 'done', message: 'ok' },
+      });
+
+      expect(received).toEqual(['terminal_bell', 'terminal_notification']);
+    } finally {
+      registerEventNotifyBroadcaster(null);
+      updateSiteSettings({
+        bellThrottleSeconds: original.bellThrottleSeconds,
+        notificationThrottleSeconds: original.notificationThrottleSeconds,
+        enableBellPush: original.enableBellPush,
+        enableNotificationPush: original.enableNotificationPush,
+      });
+    }
+  });
+
+  test('ws-broadcast 受中央 bell 节流约束', async () => {
+    const received: EventType[] = [];
+    registerEventNotifyBroadcaster((eventType) => {
+      received.push(eventType);
+    });
+    const original = getSiteSettings();
+    try {
+      updateSiteSettings({ bellThrottleSeconds: 30, enableBellPush: false });
+
+      const notifier = new EventNotifier();
+      const event = {
+        ...baseEvent,
+        device: { id: 'device-ws-throttle', name: 'dev-th', type: 'local' as const },
+      };
+      await notifier.notify('terminal_bell', event);
+      await notifier.notify('terminal_bell', event);
+
+      expect(received).toEqual(['terminal_bell']);
+    } finally {
+      registerEventNotifyBroadcaster(null);
+      updateSiteSettings({
+        bellThrottleSeconds: original.bellThrottleSeconds,
+        enableBellPush: original.enableBellPush,
+      });
+    }
+  });
+
+  test('桥未注册时 ws-broadcast channel 静默 no-op', async () => {
+    registerEventNotifyBroadcaster(null);
+    const notifier = new EventNotifier();
+    await notifier.notify('watch_rule_error', {
+      ...baseEvent,
+      payload: { message: 'no bridge' },
+    });
   });
 });
 

@@ -66,6 +66,7 @@ export const KIND_WATCH_EVENT = 0x0701;
 // ========== 站点设置 (0x0800-0x08FF) ==========
 export const KIND_SITE_THEME_UPDATE = 0x0801;
 export const KIND_SETTINGS_UPDATE = 0x0802;
+export const KIND_NOTIFY_EVENT = 0x0803;
 
 // ========== Kind 有效性检查 ==========
 const VALID_KINDS = new Set<number>([
@@ -116,6 +117,7 @@ const VALID_KINDS = new Set<number>([
   KIND_WATCH_EVENT,
   KIND_SITE_THEME_UPDATE,
   KIND_SETTINGS_UPDATE,
+  KIND_NOTIFY_EVENT,
 ]);
 
 export function isValidKind(kind: number): boolean {
@@ -171,6 +173,7 @@ export function kindToString(kind: number): string {
     [KIND_WATCH_EVENT]: 'WATCH_EVENT',
     [KIND_SITE_THEME_UPDATE]: 'SITE_THEME_UPDATE',
     [KIND_SETTINGS_UPDATE]: 'SETTINGS_UPDATE',
+    [KIND_NOTIFY_EVENT]: 'NOTIFY_EVENT',
   };
   return kindMap[kind] ?? `UNKNOWN(0x${kind.toString(16).padStart(4, '0')})`;
 }

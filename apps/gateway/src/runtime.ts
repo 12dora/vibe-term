@@ -5,6 +5,7 @@ import { runtimeController } from './control/runtime';
 import { ensureSiteSettingsInitialized, getSiteSettings } from './db';
 import { ensureAgentSettingsInitialized } from './db/agent';
 import { runMigrations } from './db/migrate';
+import { registerEventNotifyBroadcaster } from './events/broadcaster';
 import { sweepOrphanTransferTemps } from './files/transfer-session';
 import { connectionAlertNotifier } from './push/connection-alerts';
 import { pushSupervisor } from './push/supervisor';
@@ -70,6 +71,9 @@ export async function createGatewayRuntime(
   registerSettingsBroadcaster((namespace) => {
     wsServer.broadcastSettingsUpdate(namespace);
   });
+  registerEventNotifyBroadcaster((eventType, event) => {
+    wsServer.broadcastEventNotify(eventType, event);
+  });
   registerTreeOverlayBridge({
     reorderWindows: (deviceId, windowIds) => wsServer.reorderWindows(deviceId, windowIds),
     reorderPanes: (deviceId, windowId, paneIds) =>
@@ -132,6 +136,7 @@ export async function createGatewayRuntime(
       connectionAlertNotifier.setBroadcaster(null);
       registerThemeBroadcaster(null);
       registerSettingsBroadcaster(null);
+      registerEventNotifyBroadcaster(null);
       registerTreeOverlayBridge(null);
       wsServer.closeAll();
       await watchService.stop();
