@@ -126,11 +126,11 @@ export default function DevicePage() {
     [deviceId, resolvedPaneId]
   );
 
-  const [isMobile, setIsMobile] = useState(false);
-  const isMobileRef = useRef(false);
-  useEffect(() => {
-    isMobileRef.current = isMobile;
-  }, [isMobile]);
+  const [isMobile, setIsMobile] = useState(
+    () => typeof window !== 'undefined' && (window.innerWidth < 768 || 'ontouchstart' in window)
+  );
+  const isMobileRef = useRef(isMobile);
+  isMobileRef.current = isMobile;
   const [editorText, setEditorText] = useState('');
   const isComposingRef = useRef(false);
   // Loading state - false when connected and has pane
@@ -244,9 +244,11 @@ export default function DevicePage() {
   const stackedLayoutTarget =
     isMobile && selectedWindow && selectedWindow.panes.length > 1 ? selectedWindow.id : null;
   const stackedLayoutTargetRef = useRef(stackedLayoutTarget);
+  stackedLayoutTargetRef.current = stackedLayoutTarget;
   useEffect(() => {
-    stackedLayoutTargetRef.current = stackedLayoutTarget;
-  }, [stackedLayoutTarget]);
+    if (!deviceConnected || !stackedLayoutTarget) return;
+    terminalRef.current?.runPostSelectResize();
+  }, [deviceConnected, stackedLayoutTarget]);
 
   const hasWindowSnapshotRef = useRef(false);
   useEffect(() => {

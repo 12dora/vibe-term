@@ -1130,6 +1130,8 @@ describe('WebSocketServer resize × theme dedup', () => {
       signalThemeChangeCalls: [] as Array<[string, 'dark' | 'light']>,
       resizeWindowCalls: [] as Array<[string, number, number]>,
       resizePaneCalls: [] as Array<[string, number, number]>,
+      selectLayoutCalls: [] as Array<[string, 'even-horizontal']>,
+      applyStackedLayoutCalls: [] as Array<[string, number, number]>,
       runtime: {
         async setWindowStyle(style: string) {
           recorder.setWindowStyleCalls.push(style);
@@ -1142,6 +1144,12 @@ describe('WebSocketServer resize × theme dedup', () => {
         },
         resizePane(paneId: string, cols: number, rows: number) {
           recorder.resizePaneCalls.push([paneId, cols, rows]);
+        },
+        selectLayout(windowId: string, preset: 'even-horizontal') {
+          recorder.selectLayoutCalls.push([windowId, preset]);
+        },
+        applyStackedLayout(windowId: string, cols: number, rows: number) {
+          recorder.applyStackedLayoutCalls.push([windowId, cols, rows]);
         },
       },
     };
@@ -1334,6 +1342,29 @@ describe('WebSocketServer resize × theme dedup', () => {
     server.handleTermResize('device-a', '%9', 80, 24);
 
     expect(recorder.resizePaneCalls).toEqual([['%9', 80, 24]]);
+  });
+
+  test('handleApplyStackedLayout delegates multi-pane geometry as one runtime operation', () => {
+    const server = new WebSocketServer() as any;
+    const recorder = createResizeThemeRecorder();
+    setupEntryWithSnapshot(server, 'device-a', recorder.runtime, [
+      {
+        id: '@1',
+        name: 'w1',
+        index: 0,
+        active: true,
+        panes: [
+          { id: '%0', windowId: '@1', index: 0, title: 't', active: true, width: 40, height: 24 },
+          { id: '%1', windowId: '@1', index: 1, title: 't', active: false, width: 39, height: 24 },
+        ],
+      },
+    ]);
+
+    server.handleApplyStackedLayout('device-a', '@1', 42, 24);
+
+    expect(recorder.applyStackedLayoutCalls).toEqual([['@1', 85, 24]]);
+    expect(recorder.resizeWindowCalls).toEqual([]);
+    expect(recorder.selectLayoutCalls).toEqual([]);
   });
 
   test('handleSiteThemeUpdate does not call resize-window or resize-pane', () => {

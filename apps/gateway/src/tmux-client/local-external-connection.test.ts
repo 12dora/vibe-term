@@ -762,6 +762,49 @@ describe('LocalExternalTmuxConnection', () => {
     );
   });
 
+  test('applyStackedLayout serializes resize-window before select-layout', async () => {
+    const commands: string[][] = [];
+    const connection = new LocalExternalTmuxConnection(
+      {
+        deviceId: 'device-local',
+        onEvent: () => {},
+        onTerminalOutput: () => {},
+        onTerminalHistory: () => {},
+        onSnapshot: () => {},
+        onError: (error) => {
+          throw error;
+        },
+        onClose: () => {},
+      },
+      {
+        enableSubscription: false,
+        ensureGhosttyTerminfo: async () => false,
+        getDevice: () => createDevice('tmex-stacked-layout'),
+        run: createRunStub('tmex-stacked-layout', {
+          record: commands,
+          overrides: (command) => {
+            if (command === 'resize-window -t @1 -x 85 -y 24') return ok();
+            if (command === 'select-layout -t @1 even-horizontal') return ok();
+            return null;
+          },
+        }),
+      }
+    );
+
+    await connection.connect();
+    (connection as any).applyStackedLayout('@1', 85, 24);
+
+    await waitFor(() => {
+      const names = commands.map((argv) => argv.slice(1).join(' '));
+      return names.includes('select-layout -t @1 even-horizontal') ? names : null;
+    });
+
+    const names = commands.map((argv) => argv.slice(1).join(' '));
+    expect(names.indexOf('resize-window -t @1 -x 85 -y 24')).toBeLessThan(
+      names.indexOf('select-layout -t @1 even-horizontal')
+    );
+  });
+
   test('capturePaneHistory falls back to normal capture when alternate capture is visually empty', async () => {
     const histories: Array<{
       paneId: string;

@@ -25,6 +25,7 @@ export interface DeviceSessionRuntimeConnection {
   resizePaneById(paneId: string, size: { cols?: number; rows?: number }): void;
   resizeWindow(windowId: string, cols: number, rows: number): void;
   selectLayout(windowId: string, preset: 'even-horizontal'): void;
+  applyStackedLayout(windowId: string, cols: number, rows: number): void;
   focusPane(windowId: string, paneId: string): void;
   movePane(
     srcPaneId: string,
@@ -223,6 +224,10 @@ export class DeviceSessionRuntime {
 
   selectLayout(windowId: string, preset: 'even-horizontal'): void {
     this.connection.selectLayout(windowId, preset);
+  }
+
+  applyStackedLayout(windowId: string, cols: number, rows: number): void {
+    this.connection.applyStackedLayout(windowId, cols, rows);
   }
 
   focusPane(windowId: string, paneId: string): void {

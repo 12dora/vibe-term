@@ -2,6 +2,7 @@
 
 @source "../../../packages/ui/src";
 @source "../../../packages/panels/src";
+@source "../../../packages/terminal-ui/src";
 
 @plugin "tailwindcss-animate";
 
@@ -194,4 +195,3 @@
 }
 
 @import "./app.css";
-

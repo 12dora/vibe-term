@@ -717,17 +717,17 @@ export function SplitTerminalArea({
               onPointerDown={(event) => handleGutterPointerDown(index, gutter, event)}
             >
               <div
-                className={`absolute bg-foreground/[0.08] transition-colors hover:bg-primary/50 ${
+                className={`absolute bg-foreground/[0.08] transition-colors ${
                   isVertical
                     ? 'inset-y-0 left-1/2 w-px -translate-x-1/2'
                     : 'inset-x-0 top-1/2 h-px -translate-y-1/2'
-                } ${isDragging ? 'bg-primary' : ''}`}
+                } ${isDragging ? 'bg-primary/60' : 'hover:bg-primary/50'}`}
               />
             </div>
             {/* 拖拽参考线 */}
             {isDragging && dragState && (
               <div
-                className="pointer-events-none absolute bg-primary/70"
+                className="pointer-events-none absolute bg-primary/45"
                 style={
                   isVertical
                     ? {
