@@ -18,10 +18,25 @@ interface MockLlmServer {
   baseUrl: string;
 }
 
-// Agent 分区在并列侧边栏里默认展开、常驻可见，等待其挂载完成即可。
+// Agent 分区默认收起；通过真实 trigger 展开，保持与其他一级分区的互斥规则一致。
 // 当前路由有 pane 时 agent-tab 会自动进入草稿态，输入区即可用。
 async function openAgentTab(page: Page): Promise<void> {
+  const agentToggle = page.getByTestId('sidebar-section-toggle-agent');
+  await expect(agentToggle).toBeVisible();
+  if ((await agentToggle.getAttribute('aria-expanded')) !== 'true') {
+    await agentToggle.click();
+  }
+  await expect(agentToggle).toHaveAttribute('aria-expanded', 'true');
   await expect(page.getByTestId('agent-tab')).toBeVisible();
+}
+
+async function openPanesSection(page: Page): Promise<void> {
+  const panesToggle = page.getByTestId('sidebar-section-toggle-panes');
+  await expect(panesToggle).toBeVisible();
+  if ((await panesToggle.getAttribute('aria-expanded')) !== 'true') {
+    await panesToggle.click();
+  }
+  await expect(panesToggle).toHaveAttribute('aria-expanded', 'true');
 }
 
 function sseChunk(delta: Record<string, unknown>, finishReason: string | null = null): string {
@@ -305,12 +320,13 @@ test.describe
       await expect(page.getByTestId('agent-chat-send')).toBeVisible({ timeout: 15_000 });
       await expect(page.getByTestId('agent-chat-stop')).toHaveCount(0);
 
-      // 标题自动生成：Panes 分区（常驻可见）里出现对应会话节点（验证 STATUS 事件驱动列表刷新链路）
+      // 标题自动生成后，展开 Panes 验证 STATUS 事件驱动的会话树刷新链路。
+      await openPanesSection(page);
       await expect(
         page.locator('[data-testid^="agent-session-item-"]', { hasText: MOCK_TITLE })
       ).toBeVisible({ timeout: 15_000 });
 
-      // 刷新后会话与历史恢复（activeSessionId 持久化；分区默认全展开）
+      // 刷新后会话与历史恢复（activeSessionId 持久化；helper 会按需重新展开 Agent）
       await page.reload();
       await openAgentTab(page);
       await expect(page.getByTestId('agent-chat-thread')).toContainText(REPLY_TEXT, {
@@ -327,7 +343,7 @@ test.describe
 
       // 串行套件共享 pane，前序用例已留存会话；先记录已有会话 id，
       // 再显式新建并发消息落库，挑出新出现的 id 精准定位（标题统一是 MOCK_TITLE）
-      await openAgentTab(page);
+      await openPanesSection(page);
       const existingIds = new Set(
         await page
           .locator('[data-testid^="agent-session-item-"]')
@@ -347,7 +363,8 @@ test.describe
         timeout: 20_000,
       });
 
-      // 标题自动生成后在 Panes 分区（常驻可见）挑出新出现的会话节点
+      // 标题自动生成后在 Panes 分区挑出新出现的会话节点
+      await openPanesSection(page);
       let sessionId = '';
       await expect
         .poll(
@@ -355,9 +372,7 @@ test.describe
             const ids = await page
               .locator('[data-testid^="agent-session-item-"]')
               .evaluateAll((nodes) =>
-                nodes.map((n) =>
-                  n.getAttribute('data-testid')?.replace('agent-session-item-', '')
-                )
+                nodes.map((n) => n.getAttribute('data-testid')?.replace('agent-session-item-', ''))
               );
             const fresh = ids.find((id): id is string => Boolean(id) && !existingIds.has(id));
             if (fresh) sessionId = fresh;
@@ -384,9 +399,9 @@ test.describe
       await page.getByTestId('agent-session-delete').click();
       await page.getByTestId('agent-session-delete-confirm').click();
 
-      await expect(
-        page.locator(`[data-testid="agent-session-item-${sessionId}"]`)
-      ).toHaveCount(0, { timeout: 15_000 });
+      await expect(page.locator(`[data-testid="agent-session-item-${sessionId}"]`)).toHaveCount(0, {
+        timeout: 15_000,
+      });
     });
 
     test('running session enqueues further messages', async ({ page }) => {
@@ -437,11 +452,10 @@ test.describe
       await pageB.goto(paneUrl);
       await expect(pageB.locator('.xterm').first()).toBeVisible({ timeout: 20_000 });
 
-      // B 从 Panes 分区（常驻可见）显式选中同一 session（setActiveSession→subscribe+loadHistory，
+      // B 从 Panes 分区显式选中同一 session（setActiveSession→subscribe+loadHistory，
       // 比依赖 rehydration 时序更稳），随后通过 WS 订阅/历史回放同步内容
-      const sessionItemB = pageB
-        .locator('[data-testid^="agent-session-item-"]')
-        .first();
+      await openPanesSection(pageB);
+      const sessionItemB = pageB.locator('[data-testid^="agent-session-item-"]').first();
       await expect(sessionItemB).toBeVisible({ timeout: 20_000 });
       await sessionItemB.click();
       await expect(pageB.getByTestId('agent-tab')).toBeVisible();

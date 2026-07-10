@@ -1,11 +1,11 @@
-import { DeviceStatusBadge } from '@tmex/panels';
-import { ShortcutButtonRow } from '@tmex/panels/settings';
-import { TerminalSettingsSheet } from '@tmex/panels/settings';
-import { WatchDialog } from '@tmex/panels/watch';
 import { useQuery } from '@tanstack/react-query';
 import { fetchTerminalShortcuts, terminalShortcutsQueryKey } from '@tmex/api-client';
 import { fetchWatchRules, watchRulesQueryKey } from '@tmex/api-client';
 import { useBellStore } from '@tmex/notifications';
+import { DeviceStatusBadge } from '@tmex/panels';
+import { ShortcutButtonRow } from '@tmex/panels/settings';
+import { TerminalSettingsSheet } from '@tmex/panels/settings';
+import { WatchDialog } from '@tmex/panels/watch';
 import type { Device, TerminalShortcutItem } from '@tmex/shared';
 import { useAgentStore } from '@tmex/stores';
 import { useSiteStore } from '@tmex/stores';
@@ -118,10 +118,6 @@ export default function DevicePage() {
     deviceId ? state.deviceReconnecting?.[deviceId] : undefined
   );
   const isReconnecting = Boolean(deviceReconnecting);
-  // 连接意图：connectDevice 入集、disconnectDevice 出集——用于区分「初次连接中」与「已断开」。
-  const hasConnectIntent = useTmuxStore((state) =>
-    deviceId ? state.connectedDevices.has(deviceId) : false
-  );
   const siteName = useSiteStore((state) => state.settings?.siteName ?? 'tmex');
 
   const resolvedPaneId = useMemo(() => decodePaneIdFromUrlParam(paneId), [paneId]);
@@ -1073,15 +1069,13 @@ export default function DevicePage() {
   // 已连接、URL 指定了 pane，但 snapshot 尚未解析出它（且不是 not-found）→ 仍在加载，内容本就空白。
   const isResolvingSnapshot =
     deviceConnected && Boolean(resolvedPaneId) && !isSelectionInvalid && !selectedPane;
-  // 有连接意图但尚未 ack、无错误、非重连 → 初次连接中，显示 loading 而非误导性的「已断开」。
-  const isConnecting = hasConnectIntent && !deviceConnected && !deviceError && !isReconnecting;
 
-  const connectingPlaceholder = (
+  const loadingPlaceholder = (
     <>
       <div className="h-12 w-12 rounded-full bg-muted flex items-center justify-center mx-auto">
         <Loader2 className="h-6 w-6 text-muted-foreground animate-spin" />
       </div>
-      <h3 className="text-lg font-medium">{t('terminal.connecting')}</h3>
+      <h3 className="text-lg font-medium">{t('common.loading')}</h3>
     </>
   );
 
@@ -1182,16 +1176,8 @@ export default function DevicePage() {
           ) : (
             <div className="absolute inset-0 flex flex-col items-center justify-center p-8 text-center">
               <div className="max-w-sm space-y-4">
-                {isConnecting ? (
-                  connectingPlaceholder
-                ) : !deviceConnected && !isReconnecting ? (
-                  <>
-                    <div className="h-12 w-12 rounded-full bg-muted flex items-center justify-center mx-auto">
-                      <span className="text-2xl text-muted-foreground">🔌</span>
-                    </div>
-                    <h3 className="text-lg font-medium">{t('device.disconnected')}</h3>
-                    <p className="text-sm text-muted-foreground">{t('device.connectToStart')}</p>
-                  </>
+                {!deviceConnected || isReconnecting ? (
+                  loadingPlaceholder
                 ) : !windowId ? (
                   <>
                     <div className="h-12 w-12 rounded-full bg-muted flex items-center justify-center mx-auto">
@@ -1203,7 +1189,7 @@ export default function DevicePage() {
                     </p>
                   </>
                 ) : (
-                  connectingPlaceholder
+                  loadingPlaceholder
                 )}
               </div>
             </div>

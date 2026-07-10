@@ -1,5 +1,5 @@
-import { DeviceStatusBadge } from '@tmex/panels';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { DeviceStatusBadge } from '@tmex/panels';
 import type { CreateDeviceRequest, Device, UpdateDeviceRequest } from '@tmex/shared';
 import { toBCP47 } from '@tmex/shared';
 import { useSiteStore } from '@tmex/stores';
@@ -21,7 +21,7 @@ import {
   AlertDialogTitle,
 } from '@tmex/ui/alert-dialog';
 import { Badge } from '@tmex/ui/badge';
-import { Button, buttonVariants } from '@tmex/ui/button';
+import { Button } from '@tmex/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@tmex/ui/card';
 import {
   Dialog,
@@ -40,12 +40,10 @@ import {
 } from '@tmex/ui/dropdown-menu';
 import { Input } from '@tmex/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@tmex/ui/select';
-import { Separator } from '@tmex/ui/separator';
 import { Textarea } from '@tmex/ui/textarea';
 import { Globe, Monitor, MoreHorizontal, Pencil, Plus, Trash2, Zap } from 'lucide-react';
 import { type FormEvent, useEffect, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Link } from 'react-router';
 import { toast } from 'sonner';
 
 type DeviceFormValues = {
@@ -489,19 +487,6 @@ function DeviceCard({ device, onEdit, onDelete }: DeviceCardProps) {
           <DeviceStatusBadge deviceId={device.id} />
         </div>
       </CardHeader>
-
-      <CardContent className="pt-0">
-        <Separator className="mb-2" />
-        <div className="flex items-center justify-end">
-          <Link
-            to={`/devices/${device.id}`}
-            data-testid={`device-card-connect-${device.id}`}
-            className={buttonVariants({ variant: 'outline', size: 'sm' })}
-          >
-            {t('device.connect')}
-          </Link>
-        </div>
-      </CardContent>
     </Card>
   );
 }

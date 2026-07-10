@@ -46,9 +46,11 @@ test.describe
       );
       await expect(page.locator('.xterm').first()).toBeVisible({ timeout: 20_000 });
 
-      // 移动端：从顶栏打开 sidebar Sheet，Agent 分区默认展开、常驻可见
+      // 移动端：从顶栏打开 sidebar Sheet，显式展开 Agent 分区
       await page.getByTestId('mobile-sidebar-open').click();
       await expect(page.getByTestId('mobile-sidebar-sheet')).toBeVisible();
+
+      await page.getByTestId('sidebar-section-toggle-agent').click();
 
       await expect(page.getByTestId('agent-tab')).toBeVisible();
 
@@ -62,9 +64,15 @@ test.describe
       // 模型选择器可见（Agent 分区头部）
       await expect(page.getByTestId('agent-model-picker')).toBeVisible();
 
-      // Panes 分区与 Agent 分区并列常驻：设备会话树同时可达
-      await expect(page.getByTestId('sidebar-section-panes')).toBeVisible();
-      await expect(page.getByTestId('agent-tab')).toBeVisible();
+      // Agent 展开时其他一级分区收起
+      await expect(page.getByTestId('sidebar-section-toggle-panes')).toHaveAttribute(
+        'aria-expanded',
+        'false'
+      );
+      await expect(page.getByTestId('sidebar-section-toggle-files')).toHaveAttribute(
+        'aria-expanded',
+        'false'
+      );
 
       // 关闭 Sheet 回到终端
       await page.getByTestId('mobile-sidebar-close').click();

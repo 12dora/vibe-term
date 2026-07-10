@@ -1,17 +1,22 @@
+import { useQuery } from '@tanstack/react-query';
 import { useTmuxStore } from '@tmex/stores';
-import { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
+import { createContext, useCallback, useContext, useEffect, useMemo } from 'react';
 import { useLocation } from 'react-router';
 
-const STORAGE_KEY = 'tmex:connectedDevices';
-
 interface GlobalDeviceContextValue {
-  persistedDevices: Set<string>;
-  connectDevice: (deviceId: string) => void;
-  disconnectDevice: (deviceId: string) => void;
-  toggleDevice: (deviceId: string, isConnected: boolean) => void;
+  ensureDeviceSubscribed: (deviceId: string) => void;
 }
 
 const GlobalDeviceContext = createContext<GlobalDeviceContextValue | null>(null);
+
+export function shouldEnsureRouteDeviceSubscription(
+  deviceId: string | undefined,
+  devicesData: { devices: Array<{ id: string }> } | undefined
+): deviceId is string {
+  return Boolean(
+    deviceId && (!devicesData || devicesData.devices.some((device) => device.id === deviceId))
+  );
+}
 
 export function useGlobalDevice(): GlobalDeviceContextValue {
   const ctx = useContext(GlobalDeviceContext);
@@ -27,92 +32,47 @@ interface GlobalDeviceProviderProps {
 
 export function GlobalDeviceProvider({ children }: GlobalDeviceProviderProps) {
   const location = useLocation();
-  const [persistedDevices, setPersistedDevices] = useState<Set<string>>(() => {
-    try {
-      const stored = localStorage.getItem(STORAGE_KEY);
-      if (stored) {
-        const parsed = JSON.parse(stored) as string[];
-        return new Set(parsed);
-      }
-    } catch {
-      // 忽略 localStorage 错误
-    }
-    return new Set<string>();
-  });
-
   const connectTmuxDevice = useTmuxStore((state) => state.connectDevice);
   const disconnectTmuxDevice = useTmuxStore((state) => state.disconnectDevice);
   const connectedDevices = useTmuxStore((state) => state.connectedDevices);
 
-  // 持久化到 localStorage
-  useEffect(() => {
-    try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify([...persistedDevices]));
-    } catch {
-      // 忽略 localStorage 错误
-    }
-  }, [persistedDevices]);
+  const { data: devicesData } = useQuery({
+    queryKey: ['devices'],
+    queryFn: async () => {
+      const res = await fetch('/api/devices');
+      if (!res.ok) throw new Error('Failed to fetch devices');
+      return res.json() as Promise<{ devices: Array<{ id: string }> }>;
+    },
+    throwOnError: false,
+  });
 
-  // 监听路由变化，自动连接当前设备
-  useEffect(() => {
-    const match = location.pathname.match(/^\/devices\/([^/]+)/);
-    const currentDeviceId = match?.[1];
-
-    if (currentDeviceId && !connectedDevices.has(currentDeviceId)) {
-      connectTmuxDevice(currentDeviceId);
-    }
-  }, [location.pathname, connectedDevices, connectTmuxDevice]);
-
-  const connectDevice = useCallback(
+  const ensureDeviceSubscribed = useCallback(
     (deviceId: string) => {
-      setPersistedDevices((prev) => {
-        const next = new Set(prev);
-        next.add(deviceId);
-        return next;
-      });
-
-      if (!connectedDevices.has(deviceId)) {
+      if (deviceId && !connectedDevices.has(deviceId)) {
         connectTmuxDevice(deviceId);
       }
     },
     [connectedDevices, connectTmuxDevice]
   );
 
-  const disconnectDevice = useCallback(
-    (deviceId: string) => {
-      setPersistedDevices((prev) => {
-        const next = new Set(prev);
-        next.delete(deviceId);
-        return next;
-      });
+  useEffect(() => {
+    const currentDeviceId = location.pathname.match(/^\/devices\/([^/]+)/)?.[1];
+    if (shouldEnsureRouteDeviceSubscription(currentDeviceId, devicesData)) {
+      ensureDeviceSubscribed(currentDeviceId);
+    }
+  }, [location.pathname, devicesData, ensureDeviceSubscribed]);
 
-      if (connectedDevices.has(deviceId)) {
+  useEffect(() => {
+    if (!devicesData) return;
+    const knownDeviceIds = new Set(devicesData.devices.map((device) => device.id));
+    for (const deviceId of connectedDevices) {
+      if (!knownDeviceIds.has(deviceId)) {
         disconnectTmuxDevice(deviceId);
       }
-    },
-    [connectedDevices, disconnectTmuxDevice]
-  );
+    }
+  }, [devicesData, connectedDevices, disconnectTmuxDevice]);
 
-  const toggleDevice = useCallback(
-    (deviceId: string, isConnected: boolean) => {
-      if (isConnected) {
-        disconnectDevice(deviceId);
-      } else {
-        connectDevice(deviceId);
-      }
-    },
-    [connectDevice, disconnectDevice]
-  );
-
-  const value = useMemo(
-    () => ({
-      persistedDevices,
-      connectDevice,
-      disconnectDevice,
-      toggleDevice,
-    }),
-    [persistedDevices, connectDevice, disconnectDevice, toggleDevice]
-  );
+  const value = useMemo(() => ({ ensureDeviceSubscribed }), [ensureDeviceSubscribed]);
 
   return <GlobalDeviceContext.Provider value={value}>{children}</GlobalDeviceContext.Provider>;
 }

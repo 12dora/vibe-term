@@ -1,6 +1,4 @@
-import { DeviceStatusBadge } from '@tmex/panels';
 import { useGlobalDevice } from '@/components/global-device-provider';
-import { WatchDialog } from '@tmex/panels/watch';
 import {
   DndContext,
   type DragEndEvent,
@@ -20,6 +18,8 @@ import {
 } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { DeviceStatusBadge } from '@tmex/panels';
+import { WatchDialog } from '@tmex/panels/watch';
 import type { AgentSessionDto, Device, TmuxPane, TmuxWindow } from '@tmex/shared';
 import { toBCP47 } from '@tmex/shared';
 import { useAgentStore } from '@tmex/stores';
@@ -68,8 +68,6 @@ import {
   MoreHorizontal,
   Pencil,
   Plus,
-  Power,
-  PowerOff,
   Radar,
   SquareSplitHorizontal,
   SquareSplitVertical,
@@ -145,11 +143,13 @@ export function SideBarDeviceList() {
   const location = useLocation();
   const navigate = useNavigate();
   const { isMobile, setOpenMobile } = useSidebar();
-  const { toggleDevice } = useGlobalDevice();
+  const { ensureDeviceSubscribed } = useGlobalDevice();
 
   const agentSessions = useAgentStore((state) => state.sessions);
   const activeSessionId = useAgentStore((state) => state.activeSessionId);
   const expandSidebarSection = useUIStore((state) => state.expandSidebarSection);
+  const sidebarDeviceExpanded = useUIStore((state) => state.sidebarDeviceExpanded);
+  const setSidebarDeviceExpanded = useUIStore((state) => state.setSidebarDeviceExpanded);
 
   useEffect(() => {
     const store = useAgentStore.getState();
@@ -162,12 +162,19 @@ export function SideBarDeviceList() {
     '/devices/:deviceId/windows/:windowId/panes/:paneId',
     location.pathname
   );
-  const selectedDeviceId = paneMatch?.params.deviceId;
+  const deviceMatch = matchPath({ path: '/devices/:deviceId', end: false }, location.pathname);
+  const selectedDeviceId = paneMatch?.params.deviceId ?? deviceMatch?.params.deviceId;
   const selectedWindowId = paneMatch?.params.windowId;
-  const selectedPaneId = decodePaneIdFromUrlParam(paneMatch?.params.paneId);
+  // matchPath 接收的是 location.pathname，其中 paneId 仍保留 URL 编码；只在这里解码一次，
+  // 再交给 tmux URL 工具保持与 useParams 路径一致。
+  const selectedPaneId = decodePaneIdFromUrlParam(
+    paneMatch?.params.paneId ? decodeURIComponent(paneMatch.params.paneId) : undefined
+  );
 
   const snapshots = useTmuxStore((state) => state.snapshots);
-  const connectedDevices = useTmuxStore((state) => state.connectedDevices);
+  const deviceConnected = useTmuxStore((state) => state.deviceConnected);
+  const deviceErrors = useTmuxStore((state) => state.deviceErrors);
+  const deviceReconnecting = useTmuxStore((state) => state.deviceReconnecting);
   const closeWindow = useTmuxStore((state) => state.closeWindow);
   const closePane = useTmuxStore((state) => state.closePane);
   const renameWindow = useTmuxStore((state) => state.renameWindow);
@@ -303,22 +310,6 @@ export function SideBarDeviceList() {
       }
     },
     [navigateToPane, selectWindow]
-  );
-
-  const handleConnectToggle = useCallback(
-    (deviceId: string, isConnected: boolean) => {
-      if (isConnected) {
-        // If disconnecting the currently selected device, navigate to fallback
-        if (deviceId === selectedDeviceId) {
-          handleNavigate('/devices');
-        }
-      } else {
-        // Connect and navigate to device page
-        handleNavigate(`/devices/${deviceId}`);
-      }
-      toggleDevice(deviceId, isConnected);
-    },
-    [toggleDevice, selectedDeviceId, handleNavigate]
   );
 
   const handleCloseWindow = useCallback(
@@ -500,6 +491,43 @@ export function SideBarDeviceList() {
   });
 
   const devices = devicesData?.devices ?? [];
+  const autoExpandedDeviceIdsRef = useRef(new Set<string>());
+
+  const handleDeviceExpandedChange = useCallback(
+    (deviceId: string, expanded: boolean) => {
+      setSidebarDeviceExpanded(deviceId, expanded);
+      if (expanded) {
+        ensureDeviceSubscribed(deviceId);
+      }
+    },
+    [ensureDeviceSubscribed, setSidebarDeviceExpanded]
+  );
+
+  useEffect(() => {
+    if (!selectedDeviceId || !devices.some((device) => device.id === selectedDeviceId)) return;
+    if (autoExpandedDeviceIdsRef.current.has(selectedDeviceId)) return;
+
+    autoExpandedDeviceIdsRef.current.add(selectedDeviceId);
+    if (!Object.prototype.hasOwnProperty.call(sidebarDeviceExpanded, selectedDeviceId)) {
+      setSidebarDeviceExpanded(selectedDeviceId, true);
+    }
+    ensureDeviceSubscribed(selectedDeviceId);
+  }, [
+    devices,
+    ensureDeviceSubscribed,
+    selectedDeviceId,
+    setSidebarDeviceExpanded,
+    sidebarDeviceExpanded,
+  ]);
+
+  useEffect(() => {
+    for (const device of devices) {
+      if (sidebarDeviceExpanded[device.id] !== false) {
+        ensureDeviceSubscribed(device.id);
+      }
+    }
+  }, [devices, ensureDeviceSubscribed, sidebarDeviceExpanded]);
+
   const sortedDevices = useMemo(
     () =>
       [...devices].sort(
@@ -562,13 +590,16 @@ export function SideBarDeviceList() {
                   key={device.id}
                   device={device}
                   windows={snapshots[device.id]?.session?.windows ?? null}
-                  isConnected={connectedDevices.has(device.id)}
+                  isExpanded={sidebarDeviceExpanded[device.id] !== false}
+                  isOnline={
+                    deviceConnected[device.id] === true &&
+                    !deviceErrors[device.id] &&
+                    !deviceReconnecting[device.id]
+                  }
                   isSelected={device.id === selectedDeviceId}
                   selectedWindowId={selectedWindowId}
                   selectedPaneId={selectedPaneId}
-                  onConnectToggle={() =>
-                    handleConnectToggle(device.id, connectedDevices.has(device.id))
-                  }
+                  onExpandedChange={handleDeviceExpandedChange}
                   onCreateWindow={handleCreateWindow}
                   onCloseWindow={requestCloseWindow}
                   onClosePane={requestClosePane}
@@ -770,11 +801,12 @@ export function SideBarDeviceList() {
 interface DeviceSectionProps {
   device: Device;
   windows: TmuxWindow[] | null;
-  isConnected: boolean;
+  isExpanded: boolean;
+  isOnline: boolean;
   isSelected: boolean;
   selectedWindowId?: string;
   selectedPaneId?: string;
-  onConnectToggle: () => void;
+  onExpandedChange: (deviceId: string, expanded: boolean) => void;
   onCreateWindow: (deviceId: string) => void;
   onCloseWindow: (deviceId: string, windowId: string) => void;
   onClosePane: (deviceId: string, windowId: string, paneId: string) => void;
@@ -794,11 +826,12 @@ interface DeviceSectionProps {
 function DeviceSection({
   device,
   windows,
-  isConnected,
+  isExpanded,
+  isOnline,
   isSelected,
   selectedWindowId,
   selectedPaneId,
-  onConnectToggle,
+  onExpandedChange,
   onCreateWindow,
   onCloseWindow,
   onClosePane,
@@ -843,12 +876,10 @@ function DeviceSection({
       data-testid={`device-item-${device.id}`}
       className={cn(
         'group/device rounded-xl border border-border/60 overflow-hidden',
-        isSelected ? 'bg-chat-surface' : isConnected ? 'bg-muted/40' : 'bg-muted/20',
+        isSelected ? 'bg-chat-surface' : 'bg-muted/20',
         isDragging && 'opacity-60 shadow-lg'
       )}
-      onClick={isConnected ? undefined : onConnectToggle}
     >
-      {/* Device Header - Not selectable, just shows status and controls */}
       <div className="relative px-3 py-1.5">
         {isSelected && (
           <span className="absolute left-0 top-0 bottom-0 w-0.5 bg-muted-foreground/70" />
@@ -869,43 +900,40 @@ function DeviceSection({
           <span className="flex-1 truncate text-xs font-medium">{device.name}</span>
 
           <DeviceStatusBadge deviceId={device.id} className="shrink-0" />
-
-          {/* Connection Status */}
-          <div
+          <span
+            data-testid={`device-online-status-${device.id}`}
+            data-online={isOnline}
+            aria-label={isOnline ? t('device.connected') : t('device.disconnected')}
+            title={isOnline ? t('device.connected') : t('device.disconnected')}
             className={cn(
-              'h-2 w-2 rounded-full shrink-0',
-              isConnected ? 'bg-emerald-500' : 'bg-gray-400'
+              'h-2 w-2 shrink-0 rounded-full',
+              isOnline ? 'bg-emerald-500' : 'bg-gray-400'
             )}
           />
-
-          {/* Connect/Disconnect Button */}
-          <Button
-            variant="ghost"
-            size="icon-xs"
-            onClick={(e) => {
-              e.stopPropagation();
-              onConnectToggle();
-            }}
-            data-testid={
-              isConnected ? `device-disconnect-${device.id}` : `device-connect-${device.id}`
-            }
-            title={isConnected ? t('device.disconnect') : t('device.connect')}
+          <button
+            type="button"
+            data-testid={`device-expand-${device.id}`}
+            aria-expanded={isExpanded}
+            aria-label={isExpanded ? t('common.collapse') : t('common.expand')}
+            title={isExpanded ? t('common.collapse') : t('common.expand')}
+            onClick={() => onExpandedChange(device.id, !isExpanded)}
+            className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground [@media(any-pointer:coarse)]:h-9 [@media(any-pointer:coarse)]:w-9"
           >
-            {isConnected ? (
-              <PowerOff className="h-3.5 w-3.5 text-orange-500" />
-            ) : (
-              <Power className="h-3.5 w-3.5 text-emerald-500" />
-            )}
-          </Button>
+            <ChevronRight
+              className={cn('h-3.5 w-3.5 transition-transform', isExpanded && 'rotate-90')}
+            />
+          </button>
         </div>
       </div>
 
-      {/* Windows List - only show when connected */}
-      {isConnected && (
-        <div className="p-1.5 space-y-1.5 [@media(any-pointer:coarse)]:space-y-2">
+      {isExpanded && (
+        <div
+          data-testid={`device-tree-${device.id}`}
+          className="space-y-1.5 py-1.5 pr-1.5 pl-10 [@media(any-pointer:coarse)]:space-y-2"
+        >
           {!windows && (
             <div className="text-xs text-muted-foreground px-2 py-1.5 text-center">
-              {t('device.connecting')}
+              {t('common.loading')}
             </div>
           )}
 
@@ -930,7 +958,8 @@ function DeviceSection({
                     key={window.id}
                     deviceId={device.id}
                     window={window}
-                    isSelected={window.id === selectedWindowId}
+                    isDeviceSelected={isSelected}
+                    selectedWindowId={selectedWindowId}
                     selectedPaneId={selectedPaneId}
                     onPaneClick={onPaneClick}
                     onWindowClick={onWindowClick}
@@ -972,7 +1001,8 @@ function DeviceSection({
 interface WindowItemProps {
   deviceId: string;
   window: TmuxWindow;
-  isSelected: boolean;
+  isDeviceSelected: boolean;
+  selectedWindowId?: string;
   selectedPaneId?: string;
   onPaneClick: (deviceId: string, windowId: string, paneId: string) => void;
   onWindowClick: (deviceId: string, windowId: string, panes: TmuxPane[]) => void;
@@ -992,7 +1022,8 @@ interface WindowItemProps {
 function WindowItem({
   deviceId,
   window,
-  isSelected,
+  isDeviceSelected,
+  selectedWindowId,
   selectedPaneId,
   onPaneClick,
   onWindowClick,
@@ -1015,9 +1046,9 @@ function WindowItem({
   const activePane = window.panes.find((p) => p.active) ?? window.panes[0];
   const activePaneCwd = activePane?.currentPath;
 
-  // Find which pane is selected in this window
-  const selectedPaneInWindow = window.panes.find((p) => p.id === selectedPaneId);
-  const isPaneSelected = isSelected && Boolean(selectedPaneInWindow);
+  const selectedPaneInWindow = window.panes.find((pane) => pane.id === selectedPaneId);
+  const isPaneSelected =
+    isDeviceSelected && window.id === selectedWindowId && Boolean(selectedPaneInWindow);
 
   const {
     attributes,
@@ -1068,14 +1099,11 @@ function WindowItem({
           type="button"
           onClick={() => onWindowClick(deviceId, window.id, window.panes)}
           data-testid={`window-item-${window.id}`}
+          data-active={isPaneSelected ? 'true' : undefined}
           className={cn(
             'flex-1 min-w-0 flex items-center gap-2 px-2 py-1.5 rounded-lg text-left transition-colors pr-7 [@media(any-pointer:coarse)]:py-2.5 [@media(any-pointer:coarse)]:pr-12',
             isMobile && 'py-2.5 pr-13',
-            isPaneSelected
-              ? 'bg-primary/10 text-primary'
-              : window.active
-                ? 'bg-accent text-accent-foreground'
-                : 'hover:bg-accent/50 text-foreground'
+            isPaneSelected ? 'bg-primary/10 text-primary' : 'hover:bg-accent/50 text-foreground'
           )}
         >
           <WindowBellIcon paneIds={window.panes.map((p) => p.id)} />
@@ -1253,7 +1281,7 @@ function WindowItem({
                   deviceId={deviceId}
                   windowId={window.id}
                   pane={pane}
-                  isActive={pane.id === selectedPaneId}
+                  isActive={isPaneSelected && pane.id === selectedPaneId}
                   isMobile={isMobile}
                   onPaneClick={onPaneClick}
                   onClosePane={onClosePane}
@@ -1361,14 +1389,11 @@ function PaneRow({
           type="button"
           onClick={() => onPaneClick(deviceId, windowId, pane.id)}
           data-testid={`pane-item-${pane.id}`}
+          data-active={isActive ? 'true' : undefined}
           className={cn(
             'flex-1 min-w-0 flex items-center gap-2 px-2 py-1 rounded-lg text-left transition-colors pr-13 [@media(any-pointer:coarse)]:py-2 [@media(any-pointer:coarse)]:pr-21',
             isMobile && 'py-2.5 pr-24',
-            isActive
-              ? 'bg-primary/10 text-primary'
-              : pane.active
-                ? 'bg-accent text-accent-foreground'
-                : 'hover:bg-accent/30 text-muted-foreground'
+            isActive ? 'bg-primary/10 text-primary' : 'hover:bg-accent/30 text-muted-foreground'
           )}
         >
           <PaneBellIcon paneId={pane.id} />
