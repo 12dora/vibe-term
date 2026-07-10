@@ -4,23 +4,41 @@ import type { Device, StateSnapshotPayload } from '@tmex/shared';
 
 import { runMigrations } from '../db/migrate';
 import type { TmuxEvent } from './events';
-import { LocalExternalTmuxConnection } from './local-external-connection';
+import {
+  LocalExternalTmuxConnection,
+  defaultRun,
+  defaultSpawnControlClient,
+} from './local-external-connection';
 
 const now = '2026-04-14T00:00:00.000Z';
 
-function tmux(command: string): string {
-  return execSync(`tmux ${command}`, {
+// 所有用例走独立临时 socket（-L），不触碰默认 socket 上的任何会话。
+// ensureGhosttyTerminfo 经同一 run 执行 ['/bin/sh','-c',…]，只对 tmux argv 插 -L。
+function socketArgs(socketName: string, argv: string[]): string[] {
+  return argv[0] === 'tmux' ? ['tmux', '-L', socketName, ...argv.slice(1)] : argv;
+}
+
+function socketDeps(socketName: string) {
+  return {
+    run: (argv: string[]) => defaultRun(socketArgs(socketName, argv)),
+    spawnControlClient: (argv: string[]) => defaultSpawnControlClient(socketArgs(socketName, argv)),
+  };
+}
+
+function tmuxOn(socketName: string, command: string): string {
+  return execSync(`tmux -L ${socketName} ${command}`, {
     encoding: 'utf8',
     stdio: ['ignore', 'pipe', 'pipe'],
   }).trim();
 }
 
-function ensureCleanSession(sessionName: string): void {
+function cleanupSocket(socketName: string): void {
   try {
-    tmux(`kill-session -t ${sessionName}`);
+    execSync(`tmux -L ${socketName} kill-server`, { stdio: 'ignore' });
   } catch {
-    // ignore
+    // server 已退出则忽略
   }
+  execSync(`rm -f "\${TMUX_TMPDIR:-/tmp}/tmux-$(id -u)/${socketName}"`, { stdio: 'ignore' });
 }
 
 function createLocalDevice(session: string): Device {
@@ -57,9 +75,9 @@ beforeAll(() => {
 
 describe('LocalExternalTmuxConnection integration', () => {
   test('connects to tmux session, captures history, streams live output and bell', async () => {
-    const sessionName = `tmex-gateway-local-${Date.now()}`;
-    ensureCleanSession(sessionName);
-    tmux(`new-session -d -s ${sessionName} "sh -lc 'echo READY_MARKER; exec sh'"`);
+    const socketName = `tmex-test-local-basic-${Date.now()}`;
+    const sessionName = 'tmex-local-basic';
+    tmuxOn(socketName, `new-session -d -s ${sessionName} "sh -lc 'echo READY_MARKER; exec sh'"`);
 
     const snapshots: StateSnapshotPayload[] = [];
     const histories: Array<{ paneId: string; data: string }> = [];
@@ -88,6 +106,7 @@ describe('LocalExternalTmuxConnection integration', () => {
       },
       {
         getDevice: () => createLocalDevice(sessionName),
+        ...socketDeps(socketName),
       }
     );
 
@@ -121,14 +140,14 @@ describe('LocalExternalTmuxConnection integration', () => {
       await waitFor(() => events.find((event) => event.type === 'bell') ?? null);
     } finally {
       connection.disconnect();
-      ensureCleanSession(sessionName);
+      cleanupSocket(socketName);
     }
   }, 20_000);
 
   test('OSC notifications (raw and tmux-passthrough-wrapped) flow through control mode', async () => {
-    const sessionName = `tmex-gateway-local-notify-${Date.now()}`;
-    ensureCleanSession(sessionName);
-    tmux(`new-session -d -s ${sessionName} "sh -lc 'echo READY_MARKER; exec sh'"`);
+    const socketName = `tmex-test-local-notify-${Date.now()}`;
+    const sessionName = 'tmex-local-notify';
+    tmuxOn(socketName, `new-session -d -s ${sessionName} "sh -lc 'echo READY_MARKER; exec sh'"`);
 
     const snapshots: StateSnapshotPayload[] = [];
     const events: TmuxEvent[] = [];
@@ -150,6 +169,7 @@ describe('LocalExternalTmuxConnection integration', () => {
       },
       {
         getDevice: () => createLocalDevice(sessionName),
+        ...socketDeps(socketName),
       }
     );
 
@@ -187,14 +207,14 @@ describe('LocalExternalTmuxConnection integration', () => {
       );
     } finally {
       connection.disconnect();
-      ensureCleanSession(sessionName);
+      cleanupSocket(socketName);
     }
   }, 20_000);
 
   test('two gateway connections subscribe to the same session without preempting each other', async () => {
-    const sessionName = `tmex-gateway-local-dual-${Date.now()}`;
-    ensureCleanSession(sessionName);
-    tmux(`new-session -d -s ${sessionName} "sh -lc 'echo READY_MARKER; exec sh'"`);
+    const socketName = `tmex-test-local-dual-${Date.now()}`;
+    const sessionName = 'tmex-local-dual';
+    tmuxOn(socketName, `new-session -d -s ${sessionName} "sh -lc 'echo READY_MARKER; exec sh'"`);
 
     function createConn(outputs: string[], snapshots: StateSnapshotPayload[]) {
       return new LocalExternalTmuxConnection(
@@ -215,6 +235,7 @@ describe('LocalExternalTmuxConnection integration', () => {
         },
         {
           getDevice: () => createLocalDevice(sessionName),
+          ...socketDeps(socketName),
         }
       );
     }
@@ -254,17 +275,18 @@ describe('LocalExternalTmuxConnection integration', () => {
     } finally {
       connA.disconnect();
       connB.disconnect();
-      ensureCleanSession(sessionName);
+      cleanupSocket(socketName);
     }
   }, 30_000);
 
   test('control client never delivers focus events to ?1004h panes (Claude Code 60s fallback guard)', async () => {
-    const sessionName = `tmex-gateway-local-focus-${Date.now()}`;
-    const focusLog = `/tmp/${sessionName}.focuslog`;
-    ensureCleanSession(sessionName);
+    const socketName = `tmex-test-local-focus-${Date.now()}`;
+    const sessionName = 'tmex-local-focus';
+    const focusLog = `/tmp/${socketName}.focuslog`;
     // pane 进入 raw 模式、开启 focus reporting，并把 stdin 原样落盘；
     // 若 control attach / select-pane 触发焦点事件，日志中会出现 ESC[I / ESC[O。
-    tmux(
+    tmuxOn(
+      socketName,
       `new-session -d -s ${sessionName} "sh -c 'stty raw -echo; printf \\"\\\\033[?1004h\\"; exec cat -u > ${focusLog}'"`
     );
 
@@ -285,6 +307,7 @@ describe('LocalExternalTmuxConnection integration', () => {
       },
       {
         getDevice: () => createLocalDevice(sessionName),
+        ...socketDeps(socketName),
       }
     );
 
@@ -315,15 +338,15 @@ describe('LocalExternalTmuxConnection integration', () => {
       expect(logged).not.toContain('[O');
     } finally {
       connection.disconnect();
-      ensureCleanSession(sessionName);
+      cleanupSocket(socketName);
       execSync(`rm -f ${focusLog}`);
     }
   }, 20_000);
 
   test('re-selecting the same pane concurrently does not reopen fifo twice', async () => {
-    const sessionName = `tmex-gateway-local-reselect-${Date.now()}`;
-    ensureCleanSession(sessionName);
-    tmux(`new-session -d -s ${sessionName} "sh -lc 'echo READY_MARKER; exec sh'"`);
+    const socketName = `tmex-test-local-reselect-${Date.now()}`;
+    const sessionName = 'tmex-local-reselect';
+    tmuxOn(socketName, `new-session -d -s ${sessionName} "sh -lc 'echo READY_MARKER; exec sh'"`);
 
     const snapshots: StateSnapshotPayload[] = [];
     const histories: Array<{ paneId: string; data: string }> = [];
@@ -347,6 +370,7 @@ describe('LocalExternalTmuxConnection integration', () => {
       },
       {
         getDevice: () => createLocalDevice(sessionName),
+        ...socketDeps(socketName),
       }
     );
 
@@ -375,7 +399,7 @@ describe('LocalExternalTmuxConnection integration', () => {
       expect(errors).toHaveLength(0);
     } finally {
       connection.disconnect();
-      ensureCleanSession(sessionName);
+      cleanupSocket(socketName);
     }
   }, 20_000);
 
@@ -535,9 +559,7 @@ describe('LocalExternalTmuxConnection integration', () => {
       expect(typeof info.cursorX).toBe('number');
 
       connection.disconnect();
-      await expect(connection.getPaneInfo(paneId)).rejects.toThrow(
-        /tmux connection not available/
-      );
+      await expect(connection.getPaneInfo(paneId)).rejects.toThrow(/tmux connection not available/);
     } finally {
       connection.disconnect();
       try {
@@ -689,14 +711,17 @@ describe('LocalExternalTmuxConnection integration', () => {
       execSync(`rm -f "\${TMUX_TMPDIR:-/tmp}/tmux-$(id -u)/${socketName}"`, { stdio: 'ignore' });
     }
   }, 30_000);
-
 });
 
 describe('LocalExternalTmuxConnection mode 2031 theme notify integration', () => {
-  function createConnection(sessionName: string, sink: {
-    outputs: string[];
-    snapshots: StateSnapshotPayload[];
-  }): LocalExternalTmuxConnection {
+  function createConnection(
+    socketName: string,
+    sessionName: string,
+    sink: {
+      outputs: string[];
+      snapshots: StateSnapshotPayload[];
+    }
+  ): LocalExternalTmuxConnection {
     return new LocalExternalTmuxConnection(
       {
         deviceId: 'device-local',
@@ -711,19 +736,22 @@ describe('LocalExternalTmuxConnection mode 2031 theme notify integration', () =>
         onError: () => {},
         onClose: () => {},
       },
-      { getDevice: () => createLocalDevice(sessionName) }
+      {
+        getDevice: () => createLocalDevice(sessionName),
+        ...socketDeps(socketName),
+      }
     );
   }
 
   test('订阅 pane 收到 997 注入，未订阅 pane 不受影响，prompt marker 清位', async () => {
-    const sessionName = `tmex-gateway-2031-${Date.now()}`;
-    const recvFile = `/tmp/${sessionName}-recv`;
-    ensureCleanSession(sessionName);
-    tmux(`new-session -d -x 80 -y 24 -s ${sessionName}`);
-    tmux(`split-window -t ${sessionName}`);
+    const socketName = `tmex-test-local-2031-${Date.now()}`;
+    const sessionName = 'tmex-local-2031';
+    const recvFile = `/tmp/${socketName}-recv`;
+    tmuxOn(socketName, `new-session -d -x 80 -y 24 -s ${sessionName}`);
+    tmuxOn(socketName, `split-window -t ${sessionName}`);
 
     const sink = { outputs: [] as string[], snapshots: [] as StateSnapshotPayload[] };
-    const connection = createConnection(sessionName, sink);
+    const connection = createConnection(socketName, sessionName, sink);
 
     try {
       await connection.connect();
@@ -775,26 +803,27 @@ describe('LocalExternalTmuxConnection mode 2031 theme notify integration', () =>
       expect(after).not.toContain('\x1b[?997;1n');
     } finally {
       connection.disconnect();
-      ensureCleanSession(sessionName);
+      cleanupSocket(socketName);
+      execSync(`rm -f ${recvFile}`);
     }
   }, 30_000);
 
   test('gateway 重启后经 @tmex_2031 pane 选项恢复订阅', async () => {
-    const sessionName = `tmex-gateway-2031-restore-${Date.now()}`;
-    ensureCleanSession(sessionName);
-    tmux(`new-session -d -x 80 -y 24 -s ${sessionName}`);
-    const paneId = tmux(`display-message -p -t ${sessionName} '#{pane_id}'`);
-    tmux(`set-option -p -t ${paneId} @tmex_2031 on`);
+    const socketName = `tmex-test-local-2031-restore-${Date.now()}`;
+    const sessionName = 'tmex-local-2031-restore';
+    tmuxOn(socketName, `new-session -d -x 80 -y 24 -s ${sessionName}`);
+    const paneId = tmuxOn(socketName, `display-message -p -t ${sessionName} '#{pane_id}'`);
+    tmuxOn(socketName, `set-option -p -t ${paneId} @tmex_2031 on`);
 
     const sink = { outputs: [] as string[], snapshots: [] as StateSnapshotPayload[] };
-    const connection = createConnection(sessionName, sink);
+    const connection = createConnection(socketName, sessionName, sink);
     try {
       await connection.connect();
       const tracker = (connection as any).themeSubscriptions;
       await waitFor(() => (tracker.has(paneId) ? true : null));
     } finally {
       connection.disconnect();
-      ensureCleanSession(sessionName);
+      cleanupSocket(socketName);
     }
   }, 20_000);
 });

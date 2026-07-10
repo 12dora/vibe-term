@@ -118,7 +118,7 @@ function isTransientSpawnError(error: unknown): boolean {
   );
 }
 
-function defaultRun(argv: string[]): Promise<CommandResult> {
+export function defaultRun(argv: string[]): Promise<CommandResult> {
   return new Promise((resolve, reject) => {
     const subprocess = Bun.spawn(argv, {
       env: buildLocalTmuxEnv(getLocalShellPath()),
@@ -138,7 +138,7 @@ function defaultRun(argv: string[]): Promise<CommandResult> {
   });
 }
 
-function defaultSpawnControlClient(argv: string[]): ControlClientProcess {
+export function defaultSpawnControlClient(argv: string[]): ControlClientProcess {
   const subprocess = Bun.spawn(argv, {
     env: buildLocalTmuxEnv(getLocalShellPath()),
     // stdin 保持打开（tmux -C 在 stdin EOF 时退出）。
