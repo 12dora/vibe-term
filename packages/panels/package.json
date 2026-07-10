@@ -13,7 +13,10 @@
     "./markdown": "./src/markdown/index.ts",
     "./code-viewer": "./src/code-viewer/index.ts",
     "./watch": "./src/watch/index.ts",
-    "./settings": "./src/settings/index.ts"
+    "./settings": "./src/settings/index.ts",
+    "./device-tree": "./src/device-tree/index.ts",
+    "./device-console": "./src/device-console/index.ts",
+    "./device-management": "./src/device-management/index.ts"
   },
   "scripts": {
     "test": "bun test"
