@@ -120,10 +120,12 @@ function CommonNodeMenuItems({
         <Link />
         {t('files.menu.copyRelative')}
       </ContextMenuItem>
-      <ContextMenuItem onClick={() => void sendPathToAgent(runtime, deviceId, absPath)}>
-        <Bot />
-        {t('files.menu.sendToAgent')}
-      </ContextMenuItem>
+      {runtime.features.agentUi && (
+        <ContextMenuItem onClick={() => void sendPathToAgent(runtime, deviceId, absPath)}>
+          <Bot />
+          {t('files.menu.sendToAgent')}
+        </ContextMenuItem>
+      )}
     </>
   );
 }
@@ -391,7 +393,7 @@ function DirNode({
       id: toastId,
       description: root.deviceName ? `${root.deviceName}` : undefined,
       action:
-        ctx.llmConfigured && installDeviceId
+        runtime.features.agentUi && ctx.llmConfigured && installDeviceId
           ? {
               label: t('files.install.button'),
               onClick: () => {
