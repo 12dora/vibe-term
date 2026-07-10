@@ -3,10 +3,12 @@
 export { createAppRuntime, type AppRuntime } from './app-runtime';
 export { defaultRuntime } from './default-runtime';
 export {
+  hostAppPath,
   setDefaultNotificationSink,
   type AppRuntimeOptions,
   type HostServices,
   type RuntimeCore,
+  type RuntimeFeatures,
 } from './runtime';
 
 export { createUIStore, type KeyboardBehaviorMode, type SidebarSection, type UIStore } from './ui';

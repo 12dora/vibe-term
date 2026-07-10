@@ -4,7 +4,8 @@
 // 一律不再用 window.location.href，避免整页刷新 / 被服务端持久化的 siteUrl 污染 origin（issue #32）。
 import { bridgeCloseMobileSidebar, bridgeNavigate } from './flow-bridges';
 
-const PANE_URL_RE = /^\/devices\/([^/]+)\/windows\/([^/]+)\/panes\/([^/]+)$/;
+// 不锚定开头：宿主路由可能带前缀（如多实例宿主的 /instances/{id}/devices/...）。
+const PANE_URL_RE = /\/devices\/([^/]+)\/windows\/([^/]+)\/panes\/([^/]+)$/;
 
 // 服务端构造的 paneUrl 是带 origin 的绝对 URL（${siteUrl}/devices/...，siteUrl 可能是 loopback——正是 issue #32 根因），
 // 客户端 buildPaneUrl 则是相对路径。统一抽取 pathname，既能让选择事件命中正则，又确保导航到当前 origin 的同路径。

@@ -29,10 +29,16 @@ import {
 } from '@tmex/ws-client/pane-sink-registry';
 import i18next from 'i18next';
 import { bridgeCloseMobileSidebar, bridgeIsMobile, bridgeOpenMobileSidebar } from './flow-bridges';
+import type { UIStore } from './ui';
 
 export interface HostServices {
   /** 应用内跳转（toast/通知点击等），语义等同 navigateToAppUrl */
   navigate(to: string, opts?: { replace?: boolean }): void;
+  /**
+   * 把包内构造的应用内路径（如 /devices/…、/file/…）映射为宿主路由形状；缺省恒等。
+   * 必须是纯路径前缀变换（同一实现也会用于 matchPath pattern）。
+   */
+  appPath?(path: string): string;
   isMobile(): boolean;
   openMobileSidebar(): void;
   closeMobileSidebar(): void;
@@ -73,6 +79,15 @@ export interface AppRuntimeOptions {
   host?: HostServices;
   /** localStorage persist key 前缀；缺省空（与既有 key 完全一致） */
   storagePrefix?: string;
+  /** 宿主共享的 UI 偏好 store（多 runtime 并存时传同一实例）；缺省按 storagePrefix 新建 */
+  uiStore?: UIStore;
+  /** UI 能力开关；缺省全开（单实例宿主零变化） */
+  features?: { agentUi?: boolean };
+}
+
+/** 已解析的 UI 能力开关 */
+export interface RuntimeFeatures {
+  agentUi: boolean;
 }
 
 /** store 工厂消费的已解析服务面 */
@@ -86,6 +101,7 @@ export interface RuntimeCore {
   t: TranslateFn;
   host: HostServices;
   storagePrefix: string;
+  features: RuntimeFeatures;
 }
 
 const defaultHost: HostServices = {
@@ -161,5 +177,11 @@ export function resolveRuntimeCore(options: AppRuntimeOptions = {}): RuntimeCore
     t: options.t ?? ((key, params) => String(i18next.t(key, params as never))),
     host: options.host ?? defaultHost,
     storagePrefix: options.storagePrefix ?? '',
+    features: { agentUi: options.features?.agentUi ?? true },
   };
+}
+
+/** 包内 URL 构造统一经此映射到宿主路由形状（缺省恒等） */
+export function hostAppPath(host: HostServices, path: string): string {
+  return host.appPath ? host.appPath(path) : path;
 }

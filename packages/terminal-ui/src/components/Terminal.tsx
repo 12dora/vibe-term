@@ -1,7 +1,7 @@
 import { useQuery } from '@tanstack/react-query';
 import { fetchFileRoots, fetchFileStat } from '@tmex/api-client';
 import { decodePaneModes } from '@tmex/shared';
-import { fileRoute } from '@tmex/stores';
+import { fileRoute, hostAppPath } from '@tmex/stores';
 import { useRuntime, useTmuxStore, useUIStore } from '@tmex/stores/react';
 import { loadTerminalFonts, resolveFontStack } from '@tmex/theme';
 import type { PaneSink } from '@tmex/ws-client/pane-sink-registry';
@@ -473,7 +473,7 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(
             if (onOpenFile) {
               onOpenFile(root.id, path);
             } else {
-              runtime.host.navigate(fileRoute(root.id, path));
+              runtime.host.navigate(hostAppPath(runtime.host, fileRoute(root.id, path)));
             }
           })
           .catch(() => {
