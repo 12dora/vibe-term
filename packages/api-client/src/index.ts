@@ -3,6 +3,7 @@
 export * from './agent';
 export * from './capabilities';
 export * from './client';
+export * from './devices';
 export * from './file-urls';
 export * from './files';
 export * from './format';

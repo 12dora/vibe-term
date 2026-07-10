@@ -1,4 +1,5 @@
 import { useQuery } from '@tanstack/react-query';
+import { fetchDevices } from '@tmex/api-client';
 import { fetchTerminalShortcuts, terminalShortcutsQueryKey } from '@tmex/api-client';
 import { fetchWatchRules, watchRulesQueryKey } from '@tmex/api-client';
 import { useBellStore } from '@tmex/notifications';
@@ -6,7 +7,7 @@ import { DeviceStatusBadge } from '@tmex/panels';
 import { ShortcutButtonRow } from '@tmex/panels/settings';
 import { TerminalSettingsSheet } from '@tmex/panels/settings';
 import { WatchDialog } from '@tmex/panels/watch';
-import type { Device, TerminalShortcutItem } from '@tmex/shared';
+import type { TerminalShortcutItem } from '@tmex/shared';
 import { useAgentStore } from '@tmex/stores';
 import { useSiteStore } from '@tmex/stores';
 import { useTmuxStore } from '@tmex/stores';
@@ -153,13 +154,7 @@ export default function DevicePage() {
 
   const { data: devicesData } = useQuery({
     queryKey: ['devices'],
-    queryFn: async () => {
-      const res = await fetch('/api/devices');
-      if (!res.ok) {
-        throw new Error('Failed to fetch devices');
-      }
-      return res.json() as Promise<{ devices: Device[] }>;
-    },
+    queryFn: () => fetchDevices(),
     throwOnError: false,
   });
 

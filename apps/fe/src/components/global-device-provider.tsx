@@ -1,4 +1,5 @@
 import { useQuery } from '@tanstack/react-query';
+import { fetchDevices } from '@tmex/api-client';
 import { useTmuxStore } from '@tmex/stores';
 import { createContext, useCallback, useContext, useEffect, useMemo } from 'react';
 import { useLocation } from 'react-router';
@@ -38,11 +39,7 @@ export function GlobalDeviceProvider({ children }: GlobalDeviceProviderProps) {
 
   const { data: devicesData } = useQuery({
     queryKey: ['devices'],
-    queryFn: async () => {
-      const res = await fetch('/api/devices');
-      if (!res.ok) throw new Error('Failed to fetch devices');
-      return res.json() as Promise<{ devices: Array<{ id: string }> }>;
-    },
+    queryFn: () => fetchDevices(),
     throwOnError: false,
   });
 

@@ -18,6 +18,7 @@ import {
 } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { fetchDevices, reorderDevices } from '@tmex/api-client';
 import { DeviceStatusBadge } from '@tmex/panels';
 import { WatchDialog } from '@tmex/panels/watch';
 import type { AgentSessionDto, Device, TmuxPane, TmuxWindow } from '@tmex/shared';
@@ -182,11 +183,7 @@ export function SideBarDeviceList() {
 
   const { data: devicesData } = useQuery({
     queryKey: ['devices'],
-    queryFn: async () => {
-      const res = await fetch('/api/devices');
-      if (!res.ok) throw new Error('Failed to fetch devices');
-      return res.json() as Promise<{ devices: DeviceListItem[] }>;
-    },
+    queryFn: () => fetchDevices(),
     throwOnError: false,
   });
 
@@ -456,15 +453,7 @@ export function SideBarDeviceList() {
   const deviceSensors = useDeviceTreeSensors();
 
   const reorderDevicesMutation = useMutation({
-    mutationFn: async (deviceIds: string[]) => {
-      const res = await fetch('/api/devices/order', {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ deviceIds }),
-      });
-      if (!res.ok) throw new Error('Failed to reorder devices');
-      return res.json() as Promise<{ devices: DeviceListItem[] }>;
-    },
+    mutationFn: (deviceIds: string[]) => reorderDevices(deviceIds),
     onMutate: async (deviceIds: string[]) => {
       await queryClient.cancelQueries({ queryKey: ['devices'] });
       const previous = queryClient.getQueryData<{ devices: DeviceListItem[] }>(['devices']);

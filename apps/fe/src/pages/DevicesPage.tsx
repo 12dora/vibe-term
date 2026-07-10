@@ -1,14 +1,16 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import {
+  createDevice as createDeviceApi,
+  deleteDevice as deleteDeviceApi,
+  fetchDevices,
+  testDeviceConnection,
+  updateDevice as updateDeviceApi,
+} from '@tmex/api-client';
 import { DeviceStatusBadge } from '@tmex/panels';
 import type { CreateDeviceRequest, Device, UpdateDeviceRequest } from '@tmex/shared';
 import { toBCP47 } from '@tmex/shared';
 import { useSiteStore } from '@tmex/stores';
 import { useTmuxStore } from '@tmex/stores';
-
-type DeviceListItem = Device & {
-  lastError?: string | null;
-  lastErrorType?: string | null;
-};
 import {
   AlertDialog,
   AlertDialogAction,
@@ -204,15 +206,6 @@ function validateDeviceForm(values: DeviceFormValues): string | null {
   return null;
 }
 
-async function parseApiError(res: Response, fallback: string): Promise<string> {
-  try {
-    const payload = (await res.json()) as { error?: string };
-    return payload.error ?? fallback;
-  } catch {
-    return fallback;
-  }
-}
-
 export default function DevicesPage() {
   const { t } = useTranslation();
   const [showAddModal, setShowAddModal] = useState(false);
@@ -230,11 +223,7 @@ export default function DevicesPage() {
 
   const { data, isLoading, isError } = useQuery({
     queryKey: ['devices'],
-    queryFn: async () => {
-      const res = await fetch('/api/devices');
-      if (!res.ok) throw new Error(t('device.loadFailed'));
-      return res.json() as Promise<{ devices: DeviceListItem[] }>;
-    },
+    queryFn: () => fetchDevices(),
     throwOnError: false,
   });
 
@@ -252,12 +241,7 @@ export default function DevicesPage() {
   }, [data, hydrateDeviceErrors]);
 
   const deleteDevice = useMutation({
-    mutationFn: async (id: string) => {
-      const res = await fetch(`/api/devices/${id}`, {
-        method: 'DELETE',
-      });
-      if (!res.ok) throw new Error(t('device.deleteFailed'));
-    },
+    mutationFn: (id: string) => deleteDeviceApi(id, t('device.deleteFailed')),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['devices'] });
       toast.success(t('common.success'));
@@ -383,25 +367,7 @@ function DeviceCard({ device, onEdit, onDelete }: DeviceCardProps) {
       : `${device.username ?? '-'}@${device.host ?? '-'}:${device.port ?? 22}`;
 
   const testConnection = useMutation({
-    mutationFn: async () => {
-      const res = await fetch(`/api/devices/${device.id}/test-connection`, {
-        method: 'POST',
-      });
-
-      let payload: unknown = null;
-      try {
-        payload = (await res.json()) as unknown;
-      } catch {
-        payload = null;
-      }
-
-      if (!res.ok) {
-        const err = payload as { error?: string } | null;
-        throw new Error(err?.error ?? t('common.error'));
-      }
-
-      return payload as { success?: boolean; tmuxAvailable?: boolean; message?: string };
-    },
+    mutationFn: () => testDeviceConnection(device.id, t('common.error')),
     onSuccess: (payload) => {
       toast.success(payload.message ?? t('common.success'));
     },
@@ -508,19 +474,8 @@ function DeviceDialog({ mode, device, onClose }: DeviceDialogProps) {
   const isSSH = formData.type === 'ssh';
 
   const createDevice = useMutation({
-    mutationFn: async (payload: CreateDeviceRequest) => {
-      const res = await fetch('/api/devices', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload),
-      });
-
-      if (!res.ok) {
-        throw new Error(await parseApiError(res, t('device.createFailed')));
-      }
-
-      return res.json();
-    },
+    mutationFn: (payload: CreateDeviceRequest) =>
+      createDeviceApi(payload, t('device.createFailed')),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['devices'] });
       toast.success(t('common.success'));
@@ -537,17 +492,7 @@ function DeviceDialog({ mode, device, onClose }: DeviceDialogProps) {
         throw new Error(t('apiError.deviceNotFound'));
       }
 
-      const res = await fetch(`/api/devices/${device.id}`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload),
-      });
-
-      if (!res.ok) {
-        throw new Error(await parseApiError(res, t('device.updateFailed')));
-      }
-
-      return res.json();
+      return updateDeviceApi(device.id, payload, t('device.updateFailed'));
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['devices'] });
