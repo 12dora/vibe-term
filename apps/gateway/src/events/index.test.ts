@@ -5,6 +5,7 @@ import { handleApiRequest } from '../api/index';
 import { ensureSiteSettingsInitialized, getSiteSettings, updateSiteSettings } from '../db';
 import { runMigrations } from '../db/migrate';
 import { telegramService } from '../telegram/service';
+import { weixinService } from '../weixin/service';
 import { registerEventNotifyBroadcaster } from './broadcaster';
 import type { NotificationChannel } from './channels/types';
 import { EventNotifier, eventNotifier } from './index';
@@ -310,6 +311,53 @@ describe('ws-broadcast channel 经注册桥转发', () => {
       ...baseEvent,
       payload: { message: 'no bridge' },
     });
+  });
+
+  test('lifecycle 事件全量到达 ws-broadcast，但不进 telegram/weixin 推送', async () => {
+    const received: EventType[] = [];
+    registerEventNotifyBroadcaster((eventType) => {
+      received.push(eventType);
+    });
+    const telegramCalls: string[] = [];
+    const weixinCalls: string[] = [];
+    const originalTelegramSend = telegramService.sendToAuthorizedChats;
+    const originalWeixinSend = weixinService.sendToAuthorizedUsers;
+    telegramService.sendToAuthorizedChats = async ({ text }) => {
+      telegramCalls.push(text);
+    };
+    weixinService.sendToAuthorizedUsers = async ({ text }) => {
+      weixinCalls.push(text);
+    };
+    const original = getSiteSettings();
+    try {
+      updateSiteSettings({ enableNotificationPush: true });
+
+      const notifier = new EventNotifier();
+      const lifecycle: EventType[] = [
+        'device_disconnect',
+        'device_tmux_missing',
+        'session_created',
+        'session_closed',
+        'tmux_window_close',
+        'tmux_pane_close',
+      ];
+      for (const eventType of lifecycle) {
+        await notifier.notify(eventType, {
+          ...baseEvent,
+          device: { id: `device-lc-${eventType}`, name: 'dev-lc', type: 'local' },
+          payload: { message: eventType },
+        });
+      }
+
+      expect(received).toEqual(lifecycle);
+      expect(telegramCalls).toHaveLength(0);
+      expect(weixinCalls).toHaveLength(0);
+    } finally {
+      registerEventNotifyBroadcaster(null);
+      telegramService.sendToAuthorizedChats = originalTelegramSend;
+      weixinService.sendToAuthorizedUsers = originalWeixinSend;
+      updateSiteSettings({ enableNotificationPush: original.enableNotificationPush });
+    }
   });
 });
 

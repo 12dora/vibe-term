@@ -291,4 +291,43 @@ describe('ConnectionAlertNotifier event bridge', () => {
     });
     expect(events.map((e) => e.eventType)).toEqual(['device_tmux_missing']);
   });
+
+  test('settings provider failure does not consume the bridge throttle window', async () => {
+    const { notifier, events } = makeBridgedNotifier();
+    const device = makeDevice('d1');
+    let settingsBroken = true;
+    notifier.setSettingsProvider(() => {
+      if (settingsBroken) {
+        throw new Error('settings unavailable');
+      }
+      return makeSettings();
+    });
+
+    await notifier.notify({ device, error: new Error('ssh_connection_closed'), source: 'close' });
+    expect(events).toHaveLength(0);
+
+    settingsBroken = false;
+    await notifier.notify({ device, error: new Error('ssh_connection_closed'), source: 'close' });
+    expect(events.map((e) => e.eventType)).toEqual(['device_disconnect']);
+  });
+
+  test('successful emit lazily sweeps expired bridge throttle keys for the same device only', async () => {
+    const { notifier, events } = makeBridgedNotifier();
+    const bridgeMap = (notifier as unknown as { bridgeThrottleMap: Map<string, number> })
+      .bridgeThrottleMap;
+    const expired = Date.now() - 5 * 60 * 1000 - 1;
+    bridgeMap.set('d1:device_tmux_missing', expired);
+    bridgeMap.set('d2:device_disconnect', expired);
+
+    await notifier.notify({
+      device: makeDevice('d1'),
+      error: new Error('ssh_connection_closed'),
+      source: 'close',
+    });
+
+    expect(events).toHaveLength(1);
+    expect(bridgeMap.has('d1:device_disconnect')).toBe(true);
+    expect(bridgeMap.has('d1:device_tmux_missing')).toBe(false);
+    expect(bridgeMap.has('d2:device_disconnect')).toBe(true);
+  });
 });

@@ -1,7 +1,7 @@
 import { beforeAll, describe, expect, spyOn, test } from 'bun:test';
 import type { Device, StateSnapshotPayload } from '@tmex/shared';
 
-import { createDevice as createDeviceRow, getDeviceRuntimeStatus } from '../db';
+import { createDevice as createDeviceRow, getDeviceById, getDeviceRuntimeStatus } from '../db';
 import { runMigrations } from '../db/migrate';
 import type { TmuxEvent } from './events';
 import {
@@ -1748,5 +1748,39 @@ describe('LocalExternalTmuxConnection lifecycle events', () => {
     expect(events.map((e) => e.eventType)).toEqual(['session_closed']);
     expect(events[0].event.payload.message).toBe('no server running on /tmp/sock');
     expect(events[0].event.tmux.sessionName).toBe(session);
+  });
+
+  test('runTmux server-gone marks tmux unavailable before emitting session_closed', async () => {
+    let serverGone = false;
+    const session = 'tmex-lc-cmd-gone';
+    const { connection, events } = makeLifecycleConnection({
+      session,
+      overrides: (command) => {
+        if (command.startsWith('send-keys -H -t %1')) {
+          return serverGone
+            ? { exitCode: 1, stdout: '', stderr: 'no server running on /tmp/sock' }
+            : ok();
+        }
+        return null;
+      },
+    });
+
+    // 设备行存在时 notifyRuntimeError 走 runtime 告警通路（不落 tmuxAvailable），
+    // 只有 server-gone 分支负责把 tmuxAvailable 置 false
+    if (!getDeviceById('device-local')) {
+      createDeviceRow(createDevice(session));
+    }
+
+    await connection.connect();
+    expect(events).toHaveLength(0);
+
+    serverGone = true;
+    connection.sendInput('%1', 'x');
+    await waitFor(() => (events.length > 0 ? true : null));
+
+    expect(events.map((e) => e.eventType)).toEqual(['session_closed']);
+    const status = getDeviceRuntimeStatus('device-local');
+    expect(status.tmuxAvailable).toBe(false);
+    expect(status.lastError).toBe('no server running on /tmp/sock');
   });
 });

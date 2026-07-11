@@ -77,4 +77,31 @@ describe('diffSnapshotClosures', () => {
     expect(closedWindows.map((w) => w.id)).toEqual(['@1']);
     expect(closedPanes.map((entry) => entry.pane.id)).toEqual(['%3']);
   });
+
+  test('pane moved to a new window is not reported as closed (move-pane/break-pane)', () => {
+    const prev = toMap([makeWindow('@1', [makePane('%1', '@1'), makePane('%2', '@1', 1)])]);
+    const next = toMap([
+      makeWindow('@1', [makePane('%1', '@1')]),
+      makeWindow('@9', [makePane('%2', '@9')], 1),
+    ]);
+
+    const { closedWindows, closedPanes } = diffSnapshotClosures(prev, next);
+    expect(closedWindows).toHaveLength(0);
+    expect(closedPanes).toHaveLength(0);
+  });
+
+  test('break-pane emptying a window reports window close but not the surviving pane', () => {
+    const prev = toMap([
+      makeWindow('@1', [makePane('%1', '@1')]),
+      makeWindow('@2', [makePane('%2', '@2')], 1),
+    ]);
+    const next = toMap([
+      makeWindow('@2', [makePane('%2', '@2')], 1),
+      makeWindow('@9', [makePane('%1', '@9')], 2),
+    ]);
+
+    const { closedWindows, closedPanes } = diffSnapshotClosures(prev, next);
+    expect(closedWindows.map((w) => w.id)).toEqual(['@1']);
+    expect(closedPanes).toHaveLength(0);
+  });
 });

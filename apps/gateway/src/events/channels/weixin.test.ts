@@ -90,4 +90,27 @@ describe('WeixinChannel gating & formatting', () => {
       updateSiteSettings({ enableNotificationPush: false });
     });
   });
+
+  test('skips lifecycle events even when notification push is enabled', async () => {
+    await withMockSend(async (calls) => {
+      updateSiteSettings({ enableNotificationPush: true });
+      const lifecycle = [
+        'device_disconnect',
+        'device_tmux_missing',
+        'session_created',
+        'session_closed',
+        'tmux_window_close',
+        'tmux_pane_close',
+      ] as const;
+      for (const eventType of lifecycle) {
+        await weixinChannel.notify(eventType, makeEvent({ eventType }));
+      }
+      expect(calls).toHaveLength(0);
+
+      // 非生命周期的 generic 事件不受影响
+      await weixinChannel.notify('watch_triggered', makeEvent({ eventType: 'watch_triggered' }));
+      expect(calls).toHaveLength(1);
+      updateSiteSettings({ enableNotificationPush: false });
+    });
+  });
 });
