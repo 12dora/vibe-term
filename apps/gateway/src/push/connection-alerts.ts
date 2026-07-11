@@ -1,10 +1,34 @@
-import type { Device, EventDevicePayload, SiteSettings } from '@tmex/shared';
-import { getSiteSettings, updateDeviceRuntimeStatus } from '../db';
+import type {
+  Device,
+  EventDevicePayload,
+  EventType,
+  SiteSettings,
+  WebhookEvent,
+} from '@tmex/shared';
+import { getDeviceRuntimeStatus, getSiteSettings, updateDeviceRuntimeStatus } from '../db';
 import { t } from '../i18n';
 import { telegramService } from '../telegram/service';
 import { classifySshError } from '../ws/error-classify';
 
 export type ConnectionAlertSource = 'connect' | 'runtime' | 'close' | 'probe';
+
+export type ConnectionEventEmitter = (
+  eventType: EventType,
+  event: Omit<WebhookEvent, 'eventType' | 'timestamp'>
+) => void;
+
+// 桥接进事件系统的错误分类：连接级断开 → device_disconnect；tmux 不可用 → device_tmux_missing。
+// 认证/agent/配置类错误不属于设备连接生命周期，不桥接。
+const DISCONNECT_ERROR_TYPES = new Set([
+  'connection_closed',
+  'network_unreachable',
+  'connection_refused',
+  'timeout',
+  'host_not_found',
+  'handshake_failed',
+]);
+// runtime 来源是 tmux 命令级失败（高频且 session gone 另有 session_closed 事件），不桥接。
+const BRIDGE_EVENT_SOURCES = new Set<ConnectionAlertSource>(['close', 'connect', 'probe']);
 
 export interface ConnectionAlertInput {
   device: Device;
@@ -43,7 +67,11 @@ function toErrorObject(err: unknown): Error {
 
 export class ConnectionAlertNotifier {
   private readonly throttleMap = new Map<string, number>();
+  private readonly bridgeThrottleMap = new Map<string, number>();
   private broadcaster: ConnectionAlertBroadcaster | null = null;
+  private eventEmitter: ConnectionEventEmitter | null = null;
+  private runtimeStatusProvider: (deviceId: string) => { tmuxAvailable: boolean } = (deviceId) =>
+    getDeviceRuntimeStatus(deviceId);
   private settingsProvider: () => SiteSettings = () => getSiteSettings();
   private persister: (deviceId: string, friendlyMessage: string, errorType: string) => void = (
     deviceId,
@@ -61,6 +89,14 @@ export class ConnectionAlertNotifier {
 
   setBroadcaster(broadcaster: ConnectionAlertBroadcaster | null): void {
     this.broadcaster = broadcaster;
+  }
+
+  setEventEmitter(emitter: ConnectionEventEmitter | null): void {
+    this.eventEmitter = emitter;
+  }
+
+  setRuntimeStatusProvider(provider: (deviceId: string) => { tmuxAvailable: boolean }): void {
+    this.runtimeStatusProvider = provider;
   }
 
   setSettingsProvider(provider: () => SiteSettings): void {
@@ -118,6 +154,8 @@ export class ConnectionAlertNotifier {
       await this.sendTelegram(device, classified.type, friendlyMessage, rawMessage);
     }
 
+    this.maybeEmitEvent(device, source, classified.type, friendlyMessage);
+
     return {
       errorType: classified.type,
       messageKey: classified.messageKey,
@@ -131,6 +169,65 @@ export class ConnectionAlertNotifier {
       if (key.startsWith(`${deviceId}:`)) {
         this.throttleMap.delete(key);
       }
+    }
+    for (const key of this.bridgeThrottleMap.keys()) {
+      if (key.startsWith(`${deviceId}:`)) {
+        this.bridgeThrottleMap.delete(key);
+      }
+    }
+  }
+
+  private maybeEmitEvent(
+    device: Device,
+    source: ConnectionAlertSource,
+    errorType: string,
+    friendlyMessage: string
+  ): void {
+    if (!this.eventEmitter || !BRIDGE_EVENT_SOURCES.has(source)) {
+      return;
+    }
+    let eventType: EventType | null = null;
+    if (errorType === 'tmux_unavailable') {
+      eventType = 'device_tmux_missing';
+    } else if (DISCONNECT_ERROR_TYPES.has(errorType)) {
+      eventType = 'device_disconnect';
+    }
+    if (!eventType) {
+      return;
+    }
+    // session gone 路径在断开前已把 tmuxAvailable 置 false 并另发 session_closed，
+    // 此处跳过 device_disconnect 避免同一物理事件双发。
+    if (eventType === 'device_disconnect') {
+      try {
+        if (this.runtimeStatusProvider(device.id).tmuxAvailable === false) {
+          return;
+        }
+      } catch {
+        return;
+      }
+    }
+    const key = `${device.id}:${eventType}`;
+    const now = Date.now();
+    if (now - (this.bridgeThrottleMap.get(key) ?? 0) < NOTIFY_THROTTLE_MS) {
+      return;
+    }
+    this.bridgeThrottleMap.set(key, now);
+
+    let settings: SiteSettings;
+    try {
+      settings = this.settingsProvider();
+    } catch {
+      return;
+    }
+    try {
+      this.eventEmitter(eventType, {
+        site: { name: settings.siteName, url: settings.siteUrl },
+        device: { id: device.id, name: device.name, type: device.type, host: device.host },
+        tmux: { sessionName: device.session },
+        payload: { message: friendlyMessage },
+      });
+    } catch (emitErr) {
+      console.error('[conn-alert] event emit failed:', emitErr);
     }
   }
 

@@ -2,7 +2,7 @@ import type { StateSnapshotPayload } from '@tmex/shared';
 
 import { getDeviceById } from '../db';
 import type { PaneInfo } from './capture-history';
-import type { TmuxConnectionOptions } from './connection-types';
+import type { LifecycleEventEmitter, TmuxConnectionOptions } from './connection-types';
 import type { TmuxEvent } from './events';
 import { LocalExternalTmuxConnection } from './local-external-connection';
 import type { PromptMarker } from './pane-stream-parser';
@@ -62,6 +62,7 @@ export interface DeviceSessionRuntimeListener {
 
 export interface DeviceSessionRuntimeOptions {
   deviceId: string;
+  notifyEvent?: LifecycleEventEmitter;
   createConnection?: (options: TmuxConnectionOptions) => DeviceSessionRuntimeConnection;
 }
 
@@ -89,6 +90,7 @@ export class DeviceSessionRuntime {
 
     this.connection = createConnection({
       deviceId: this.deviceId,
+      notifyEvent: options.notifyEvent,
       onEvent: (event) => {
         this.broadcast((listener) => listener.onEvent?.(event));
       },

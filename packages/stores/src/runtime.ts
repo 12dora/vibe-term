@@ -82,12 +82,14 @@ export interface AppRuntimeOptions {
   /** 宿主共享的 UI 偏好 store（多 runtime 并存时传同一实例）；缺省按 storagePrefix 新建 */
   uiStore?: UIStore;
   /** UI 能力开关；缺省全开（单实例宿主零变化） */
-  features?: { agentUi?: boolean };
+  features?: { agentUi?: boolean; hostManagedNotifications?: boolean };
 }
 
 /** 已解析的 UI 能力开关 */
 export interface RuntimeFeatures {
   agentUi: boolean;
+  /** 宿主接管通知呈现：终端 notification 不再由包内弹 toast（bell 声与高亮不受影响） */
+  hostManagedNotifications: boolean;
 }
 
 /** store 工厂消费的已解析服务面 */
@@ -177,7 +179,10 @@ export function resolveRuntimeCore(options: AppRuntimeOptions = {}): RuntimeCore
     t: options.t ?? ((key, params) => String(i18next.t(key, params as never))),
     host: options.host ?? defaultHost,
     storagePrefix: options.storagePrefix ?? '',
-    features: { agentUi: options.features?.agentUi ?? true },
+    features: {
+      agentUi: options.features?.agentUi ?? true,
+      hostManagedNotifications: options.features?.hostManagedNotifications ?? false,
+    },
   };
 }
 

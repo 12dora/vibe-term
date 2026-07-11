@@ -493,6 +493,9 @@ export function createTmuxStore(
 
     if (payload.type === 'notification') {
       console.log('[tmex] notification', payload.data);
+      if (core.features.hostManagedNotifications) {
+        return;
+      }
       const settings = deps.getSite().getState().settings;
       if (settings?.enableBrowserNotificationToast === false) {
         return;

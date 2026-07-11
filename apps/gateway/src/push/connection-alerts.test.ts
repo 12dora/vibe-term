@@ -169,3 +169,126 @@ describe('ConnectionAlertNotifier', () => {
     expect(occurrences).toBe(1);
   });
 });
+
+describe('ConnectionAlertNotifier event bridge', () => {
+  function makeBridgedNotifier(tmuxAvailable = true) {
+    const base = makeNotifier();
+    const events: Array<{ eventType: string; event: Record<string, unknown> }> = [];
+    base.notifier.setEventEmitter((eventType, event) => {
+      events.push({ eventType, event: event as unknown as Record<string, unknown> });
+    });
+    base.notifier.setRuntimeStatusProvider(() => ({ tmuxAvailable }));
+    return { ...base, events };
+  }
+
+  test('maps connection-level errors to device_disconnect with full event shape', async () => {
+    const { notifier, events } = makeBridgedNotifier();
+    const device = makeDevice('d1');
+    await notifier.notify({ device, error: new Error('ssh_connection_closed'), source: 'close' });
+
+    expect(events).toHaveLength(1);
+    expect(events[0].eventType).toBe('device_disconnect');
+    const event = events[0].event as {
+      site: { name: string; url: string };
+      device: { id: string; name: string };
+      tmux: { sessionName?: string };
+      payload: { message?: string };
+    };
+    expect(event.site.name).toBe('tmex');
+    expect(event.device.id).toBe('d1');
+    expect(event.tmux.sessionName).toBe('tmex');
+    expect(typeof event.payload.message).toBe('string');
+  });
+
+  test('maps tmux_unavailable to device_tmux_missing', async () => {
+    const { notifier, events } = makeBridgedNotifier();
+    await notifier.notify({
+      device: makeDevice('d1'),
+      error: new Error('remote tmux unavailable: not installed'),
+      source: 'probe',
+    });
+    expect(events.map((e) => e.eventType)).toEqual(['device_tmux_missing']);
+  });
+
+  test.each([
+    ['ENETUNREACH', 'device_disconnect'],
+    ['connection refused', 'device_disconnect'],
+    ['ETIMEDOUT', 'device_disconnect'],
+    ['host not found', 'device_disconnect'],
+    ['handshake failed', 'device_disconnect'],
+  ])('maps %s to %s', async (raw, expected) => {
+    const { notifier, events } = makeBridgedNotifier();
+    await notifier.notify({ device: makeDevice('d1'), error: new Error(raw), source: 'connect' });
+    expect(events.map((e) => e.eventType)).toEqual([expected]);
+  });
+
+  test('auth/config/unknown errors do not bridge', async () => {
+    const { notifier, events } = makeBridgedNotifier();
+    for (const raw of ['permission denied', 'ssh_config_ref_not_supported', 'weird failure']) {
+      await notifier.notify({ device: makeDevice('d1'), error: new Error(raw), source: 'close' });
+    }
+    expect(events).toHaveLength(0);
+  });
+
+  test('runtime source is gated off', async () => {
+    const { notifier, events } = makeBridgedNotifier();
+    await notifier.notify({
+      device: makeDevice('d1'),
+      error: new Error('ssh_connection_closed'),
+      source: 'runtime',
+    });
+    expect(events).toHaveLength(0);
+  });
+
+  test('throttles repeated events per device+type within the window', async () => {
+    const { notifier, events } = makeBridgedNotifier();
+    const device = makeDevice('d1');
+    await notifier.notify({ device, error: new Error('ssh_connection_closed'), source: 'close' });
+    await notifier.notify({ device, error: new Error('connection closed'), source: 'close' });
+    expect(events).toHaveLength(1);
+
+    // 不同事件类型与不同设备不受影响
+    await notifier.notify({
+      device,
+      error: new Error('remote tmux unavailable: x'),
+      source: 'probe',
+    });
+    await notifier.notify({
+      device: makeDevice('d2'),
+      error: new Error('ssh_connection_closed'),
+      source: 'close',
+    });
+    expect(events.map((e) => e.eventType)).toEqual([
+      'device_disconnect',
+      'device_tmux_missing',
+      'device_disconnect',
+    ]);
+  });
+
+  test('clear() resets the bridge throttle for the device', async () => {
+    const { notifier, events } = makeBridgedNotifier();
+    const device = makeDevice('d1');
+    await notifier.notify({ device, error: new Error('ssh_connection_closed'), source: 'close' });
+    notifier.clear(device.id);
+    await notifier.notify({ device, error: new Error('ssh_connection_closed'), source: 'close' });
+    expect(events).toHaveLength(2);
+  });
+
+  test('skips device_disconnect when tmux already marked unavailable (session gone path)', async () => {
+    const { notifier, events } = makeBridgedNotifier(false);
+    await notifier.notify({
+      device: makeDevice('d1'),
+      error: new Error('ssh_connection_closed'),
+      source: 'close',
+    });
+    expect(events).toHaveLength(0);
+
+    // device_tmux_missing 不受该守卫影响
+    await notifier.notify({
+      device: makeDevice('d1'),
+      error: new Error('remote tmux unavailable: x'),
+      source: 'probe',
+    });
+    expect(events.map((e) => e.eventType)).toEqual(['device_tmux_missing']);
+  });
+});

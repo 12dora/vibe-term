@@ -1,10 +1,16 @@
-import type { StateSnapshotPayload } from '@tmex/shared';
+import type { EventType, StateSnapshotPayload, WebhookEvent } from '@tmex/shared';
 
 import type { TmuxEvent } from './events';
 import type { PromptMarker } from './pane-stream-parser';
 
+export type LifecycleEventEmitter = (
+  eventType: EventType,
+  event: Omit<WebhookEvent, 'eventType' | 'timestamp'>
+) => void;
+
 export interface TmuxConnectionOptions {
   deviceId: string;
+  notifyEvent?: LifecycleEventEmitter;
   onEvent: (event: TmuxEvent) => void;
   onTerminalOutput: (paneId: string, data: Uint8Array) => void;
   onTerminalHistory: (

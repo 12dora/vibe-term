@@ -5,6 +5,7 @@ import { runtimeController } from './control/runtime';
 import { ensureSiteSettingsInitialized, getSiteSettings } from './db';
 import { ensureAgentSettingsInitialized } from './db/agent';
 import { runMigrations } from './db/migrate';
+import { eventNotifier } from './events';
 import { registerEventNotifyBroadcaster } from './events/broadcaster';
 import { sweepOrphanTransferTemps } from './files/transfer-session';
 import { connectionAlertNotifier } from './push/connection-alerts';
@@ -58,6 +59,9 @@ export async function createGatewayRuntime(
   wsServer.currentTheme = getSiteSettings().theme;
   connectionAlertNotifier.setBroadcaster((deviceId, payload) => {
     wsServer.broadcastDeviceError(deviceId, payload);
+  });
+  connectionAlertNotifier.setEventEmitter((eventType, event) => {
+    void eventNotifier.notify(eventType, event);
   });
   registerSnapshotLookup((deviceId) => wsServer.getLastSnapshot(deviceId));
   registerThemeBroadcaster(
@@ -134,6 +138,7 @@ export async function createGatewayRuntime(
     },
     async stop() {
       connectionAlertNotifier.setBroadcaster(null);
+      connectionAlertNotifier.setEventEmitter(null);
       registerThemeBroadcaster(null);
       registerSettingsBroadcaster(null);
       registerEventNotifyBroadcaster(null);
