@@ -1,0 +1,25 @@
+// REST 客户端核心：baseUrl 注入 + 统一错误解析。
+// 端点函数一律以 `client: ApiClient = defaultApiClient` 收尾（单实例宿主零改动，多实例宿主按连接注入）。
+
+export class ApiClient {
+  constructor(readonly baseUrl: string = '') {}
+
+  url(path: string): string {
+    return `${this.baseUrl}${path}`;
+  }
+
+  fetch(path: string, init?: RequestInit): Promise<Response> {
+    return fetch(this.url(path), init);
+  }
+}
+
+export const defaultApiClient = new ApiClient();
+
+export async function parseApiError(res: Response, fallback: string): Promise<string> {
+  try {
+    const payload = (await res.json()) as { error?: string };
+    return payload.error ?? fallback;
+  } catch {
+    return fallback;
+  }
+}

@@ -1,3 +1,4 @@
+import './lib/runtime-setup';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { formatDisplayVersion } from '@tmex/shared';
 import { type CSSProperties, StrictMode, useEffect, useState } from 'react';
@@ -10,16 +11,17 @@ import './index.css';
 // 浏览器 console 打印 monorepo 版本（非 production 带 _dev 后缀）
 console.info(`tmex ${formatDisplayVersion(__MONOREPO_VERSION__, __IS_PROD__)}`);
 
-import { ConnectionIndicator } from '@/components/connection-indicator';
+import { ConnectionIndicator } from '@tmex/panels';
 import { FlowBridges } from '@/components/flow-bridges';
 import { GlobalDeviceProvider } from '@/components/global-device-provider';
 import { AppSidebar } from '@/components/page-layouts/components/app-sidebar';
-import { Separator } from '@/components/ui/separator';
-import { SidebarInset, SidebarProvider, SidebarTrigger, useSidebar } from '@/components/ui/sidebar';
-import { WatchEventsInit } from '@/components/watch/watch-events-init';
-import { useKeyboardAvoidance } from '@/hooks/use-keyboard-avoidance';
+import { WatchEventsInit } from '@tmex/panels/watch';
 import { useAppMonoFont } from '@/lib/fonts/useAppMonoFont';
-import { useUIStore } from '@/stores/ui';
+import { useSiteStore, useUIStore } from '@tmex/stores';
+import { useKeyboardAvoidance } from '@tmex/terminal-ui';
+import { applyThemePreset, isThemePreset } from '@tmex/theme';
+import { Separator } from '@tmex/ui/separator';
+import { SidebarInset, SidebarProvider, SidebarTrigger, useSidebar } from '@tmex/ui/sidebar';
 
 function applyInitialTheme(): void {
   try {
@@ -39,6 +41,23 @@ function applyInitialTheme(): void {
 }
 
 applyInitialTheme();
+
+// 主题预设（dormant preset 激活机制）：初始从持久化状态应用，变更时跟随。
+function applyInitialThemePreset(): void {
+  try {
+    const raw = localStorage.getItem('tmex-ui');
+    const parsed = raw ? (JSON.parse(raw) as { state?: { themePreset?: unknown } }) : null;
+    const preset = parsed?.state?.themePreset;
+    applyThemePreset(isThemePreset(preset) ? preset : null);
+  } catch {
+    applyThemePreset(null);
+  }
+}
+
+applyInitialThemePreset();
+useUIStore.subscribe((state) => {
+  applyThemePreset(state.themePreset);
+});
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -106,6 +125,11 @@ function ThemedToaster() {
 function RootLayout() {
   // 把选中等宽字体派生到 --font-mono（全应用统一）并按需懒加载 woff2
   useAppMonoFont();
+  // 启动即拉取服务端能力集（/api/capabilities），落 site store 供按 featureset 渲染
+  const loadCapabilities = useSiteStore((state) => state.loadCapabilities);
+  useEffect(() => {
+    void loadCapabilities();
+  }, [loadCapabilities]);
   return (
     <GlobalDeviceProvider>
       <WatchEventsInit />
@@ -249,14 +273,16 @@ if (!rootElement) {
 
 // 当前语言（及 fallback）按需异步加载，渲染前 await 以避免首屏出现未翻译的 key。
 // 弱网下即便 locale chunk 加载失败也必须渲染（catch 兜底），否则整页空白比未翻译更糟。
-void i18nReady.catch(() => undefined).then(() => {
-  createRoot(rootElement).render(
-    <StrictMode>
-      <QueryClientProvider client={queryClient}>
-        <RouterProvider router={router} />
-        <ConnectionIndicator />
-        <ThemedToaster />
-      </QueryClientProvider>
-    </StrictMode>
-  );
-});
+void i18nReady
+  .catch(() => undefined)
+  .then(() => {
+    createRoot(rootElement).render(
+      <StrictMode>
+        <QueryClientProvider client={queryClient}>
+          <RouterProvider router={router} />
+          <ConnectionIndicator />
+          <ThemedToaster />
+        </QueryClientProvider>
+      </StrictMode>
+    );
+  });

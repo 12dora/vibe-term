@@ -1212,3 +1212,5 @@ export type UploadCommitEvent =
   | { type: 'progress'; transferred: number; pct: number; rate: string }
   | { type: 'done'; uploaded: string }
   | { type: 'error'; code: FileErrorCode; detail?: string };
+
+export { API_VERSION, GATEWAY_CAPABILITIES } from './capabilities';

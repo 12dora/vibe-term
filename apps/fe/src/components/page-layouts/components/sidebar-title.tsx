@@ -1,20 +1,20 @@
-import { useEffect } from "react";
-import { Moon, Settings, Sun, X } from "lucide-react";
-import { useTranslation } from "react-i18next";
-import { useSidebar } from "@/components/ui/sidebar";
-import { useSiteStore } from "../../../stores/site";
-import { useTmuxStore } from "../../../stores/tmux";
-import { useUIStore } from "../../../stores/ui";
-import { NavLink } from "./nav-link";
+import { useSiteStore } from '@tmex/stores';
+import { useTmuxStore } from '@tmex/stores';
+import { useUIStore } from '@tmex/stores';
+import { useSidebar } from '@tmex/ui/sidebar';
+import { Moon, Settings, Sun, X } from 'lucide-react';
+import { useEffect } from 'react';
+import { useTranslation } from 'react-i18next';
+import { NavLink } from './nav-link';
 
 export function SidebarTitle() {
   const { t } = useTranslation();
   const { isMobile, setOpenMobile } = useSidebar();
   const siteName = useSiteStore((state) => state.settings?.siteName);
-  
+
   // Fetch settings on mount if not loaded
   const fetchSettings = useSiteStore((state) => state.fetchSettings);
-  
+
   useEffect(() => {
     fetchSettings();
   }, [fetchSettings]);
@@ -47,15 +47,9 @@ export function SidebarTitle() {
       )}
       <NavLink to="/" className="flex flex-1 items-center gap-3 overflow-hidden">
         <div className="h-8 w-8 shrink-0 overflow-hidden rounded-lg border-2 border-black">
-          <img
-            src="/logo.png"
-            alt={displayName}
-            className="h-full w-full object-cover"
-          />
+          <img src="/logo.png" alt={displayName} className="h-full w-full object-cover" />
         </div>
-        <span className="truncate text-sm font-semibold tracking-tight">
-          {displayName}
-        </span>
+        <span className="truncate text-sm font-semibold tracking-tight">{displayName}</span>
       </NavLink>
       <WsLatency />
       <button

@@ -22,6 +22,7 @@ function createStubConnectionRecorder() {
     resizePaneByIdCalls: [] as Array<[string, number | undefined, number | undefined]>,
     resizeWindowCalls: [] as Array<[string, number, number]>,
     selectLayoutCalls: [] as Array<[string, string]>,
+    applyStackedLayoutCalls: [] as Array<[string, number, number]>,
     focusPaneCalls: [] as Array<[string, string]>,
     movePaneCalls: [] as Array<[string, string, string]>,
     breakPaneCalls: [] as string[],
@@ -87,6 +88,9 @@ function createStubConnectionRecorder() {
     },
     selectLayout(windowId, preset) {
       state.selectLayoutCalls.push([windowId, preset]);
+    },
+    applyStackedLayout(windowId, cols, rows) {
+      state.applyStackedLayoutCalls.push([windowId, cols, rows]);
     },
     focusPane(windowId, paneId) {
       state.focusPaneCalls.push([windowId, paneId]);
@@ -343,5 +347,23 @@ describe('DeviceSessionRuntime', () => {
       ['%1', 'dark'],
       ['%2', 'light'],
     ]);
+  });
+
+  test('applyStackedLayout delegates as one runtime operation', async () => {
+    const recorder = createStubConnectionRecorder();
+    const runtime = createDeviceSessionRuntime({
+      deviceId: 'device-a',
+      createConnection(options) {
+        recorder.state.options = options;
+        return recorder.connection;
+      },
+    });
+
+    recorder.releaseConnect();
+    await runtime.connect();
+
+    (runtime as any).applyStackedLayout('@1', 85, 24);
+
+    expect(recorder.state.applyStackedLayoutCalls).toEqual([['@1', 85, 24]]);
   });
 });

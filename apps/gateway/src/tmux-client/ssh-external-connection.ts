@@ -116,6 +116,7 @@ export class SshExternalTmuxConnection {
   private tmuxBin = 'tmux';
   private remoteHomeDir = '.';
   private commandQueue: Promise<void> = Promise.resolve();
+  private stackedLayoutTransition: Promise<void> = Promise.resolve();
 
   constructor(
     options: TmuxConnectionOptions,
@@ -361,6 +362,29 @@ export class SshExternalTmuxConnection {
     }
 
     void this.runAndRefresh(['select-layout', '-t', windowId, preset], true).catch((error) => {
+      this.callbacks.onError(error);
+    });
+  }
+
+  applyStackedLayout(windowId: string, cols: number, rows: number): void {
+    if (!this.connected) {
+      return;
+    }
+
+    const next = this.stackedLayoutTransition
+      .catch(() => undefined)
+      .then(async () => {
+        if (!this.connected) {
+          return;
+        }
+        await this.resizeWindowInternal(windowId, cols, rows, false);
+        if (!this.connected) {
+          return;
+        }
+        await this.runAndRefresh(['select-layout', '-t', windowId, 'even-horizontal'], true);
+      });
+    this.stackedLayoutTransition = next;
+    void next.catch((error) => {
       this.callbacks.onError(error);
     });
   }
@@ -1103,14 +1127,21 @@ export class SshExternalTmuxConnection {
     await this.resizeWindowInternal(windowId, cols, rows);
   }
 
-  private async resizeWindowInternal(windowId: string, cols: number, rows: number): Promise<void> {
+  private async resizeWindowInternal(
+    windowId: string,
+    cols: number,
+    rows: number,
+    refresh = true
+  ): Promise<void> {
     const safeCols = Math.max(2, Math.floor(cols));
     const safeRows = Math.max(2, Math.floor(rows));
     await this.runTmux(
       ['resize-window', '-t', windowId, '-x', String(safeCols), '-y', String(safeRows)],
       true
     );
-    await this.requestSnapshotInternal();
+    if (refresh) {
+      await this.requestSnapshotInternal();
+    }
   }
 
   private async resizePaneByIdInternal(

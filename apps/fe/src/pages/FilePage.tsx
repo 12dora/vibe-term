@@ -5,19 +5,20 @@ import { type ReactNode, useMemo } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useParams } from 'react-router';
 
-import { CodeViewer } from '@/components/code-viewer/code-viewer';
+import { CodeViewer } from '@tmex/panels/code-viewer';
+import { startTransferToast } from '@tmex/panels/files';
+import { MarkdownPreview } from '@tmex/panels/markdown';
+import i18n from '@/i18n';
 import {
   type FileApiError,
   downloadFileWithProgress,
   fetchFileContent,
   fetchFileStat,
-} from '@/components/files-panel/api';
-import { formatBytes } from '@/components/files-panel/format';
-import { startTransferToast } from '@/components/files-panel/transfer-toast';
-import { MarkdownPreview } from '@/components/markdown/markdown-preview';
-import { Button } from '@/components/ui/button';
-import i18n from '@/i18n';
-import { type FileRef, decodeFileRef, fileRawUrl } from '@/utils/fileUrl';
+} from '@tmex/api-client';
+import { formatBytes } from '@tmex/api-client';
+import { fileRawUrl } from '@tmex/api-client';
+import { type FileRef, decodeFileRef } from '@tmex/stores';
+import { Button } from '@tmex/ui/button';
 
 function useFileRef(ref?: string): FileRef | null {
   return useMemo(() => (ref ? decodeFileRef(ref) : null), [ref]);

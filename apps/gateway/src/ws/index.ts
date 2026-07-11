@@ -8,7 +8,7 @@ import type {
 import { type ThemeMode, getTmuxWindowStyle, wsBorsh } from '@tmex/shared';
 import type { Server, ServerWebSocket } from 'bun';
 import { agentWsHub } from '../agent/ws-hub';
-import { GATEWAY_CAPABILITIES } from '../capabilities';
+import { GATEWAY_CAPABILITIES } from '@tmex/shared';
 import {
   getDeviceTreeOrder,
   getSiteSettings,
@@ -1270,10 +1270,12 @@ export class WebSocketServer {
       );
     }
 
-    entry.runtime.resizeWindow(windowId, clampedCols, rows);
-    if (paneCount > 1) {
-      entry.runtime.selectLayout(windowId, 'even-horizontal');
+    if (paneCount === 1) {
+      entry.runtime.resizeWindow(windowId, clampedCols, rows);
+      return;
     }
+
+    entry.runtime.applyStackedLayout(windowId, clampedCols, rows);
   }
 
   private handleSplitPane(deviceId: string, paneId: string, direction: number, cwd?: string): void {

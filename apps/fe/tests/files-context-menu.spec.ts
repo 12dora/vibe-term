@@ -37,9 +37,8 @@ test('files: 文件/文件夹右键菜单、复制路径、上传', async ({ pag
   expect(rootRes.ok()).toBeTruthy();
   rootId = (await rootRes.json()).root.id as string;
 
-  // 3. 打开 Files Tab，展开根目录
+  // 3. Files 分区默认展开、常驻可见，等待挂载后展开根目录
   await page.goto('/');
-  await page.getByTestId('sidebar-tab-files').click();
   await expect(page.getByTestId('files-tab')).toBeVisible();
 
   const rootNode = page.getByTestId(`file-dir-${rootId}-${rootPath}`);
@@ -126,7 +125,7 @@ test('files: 应用内流式下载（菜单）保存文件', async ({ page, cont
   const rootId2 = (await rootRes.json()).root.id as string;
 
   await page.goto('/');
-  await page.getByTestId('sidebar-tab-files').click();
+  await expect(page.getByTestId('files-tab')).toBeVisible();
   await page.getByTestId(`file-dir-${rootId2}-${dlSandbox}`).click();
   const fileNode = page.getByTestId(`file-item-${rootId2}-${dlSandbox}/doc.txt`);
   await expect(fileNode).toBeVisible();
@@ -171,7 +170,7 @@ test('files: 上传进行中的 toast 不自动消失、不可手动关闭、可
   });
 
   await page.goto('/');
-  await page.getByTestId('sidebar-tab-files').click();
+  await expect(page.getByTestId('files-tab')).toBeVisible();
   const rootNode = page.getByTestId(`file-dir-${rId}-${upSandbox}`);
   await expect(rootNode).toBeVisible();
   await rootNode.click();

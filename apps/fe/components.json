@@ -14,8 +14,8 @@
   "rtl": false,
   "aliases": {
     "components": "@/components",
-    "utils": "@/lib/utils",
-    "ui": "@/components/ui",
+    "utils": "@tmex/ui",
+    "ui": "@tmex/ui",
     "lib": "@/lib",
     "hooks": "@/hooks"
   },

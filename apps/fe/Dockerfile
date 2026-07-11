@@ -4,8 +4,17 @@ FROM oven/bun:1 AS builder
 WORKDIR /app
 
 # 复制 workspace 配置
-COPY package.json bun.lock* ./
+COPY package.json bun.lock* tsconfig.json ./
 COPY packages/shared/package.json packages/shared/
+COPY packages/ui/package.json packages/ui/
+COPY packages/ghostty-terminal/package.json packages/ghostty-terminal/
+COPY packages/ws-client/package.json packages/ws-client/
+COPY packages/api-client/package.json packages/api-client/
+COPY packages/notifications/package.json packages/notifications/
+COPY packages/stores/package.json packages/stores/
+COPY packages/theme/package.json packages/theme/
+COPY packages/terminal-ui/package.json packages/terminal-ui/
+COPY packages/panels/package.json packages/panels/
 COPY apps/fe/package.json apps/fe/
 
 # 安装依赖
@@ -13,6 +22,15 @@ RUN bun install
 
 # 复制源代码
 COPY packages/shared/ packages/shared/
+COPY packages/ui/ packages/ui/
+COPY packages/ghostty-terminal/ packages/ghostty-terminal/
+COPY packages/ws-client/ packages/ws-client/
+COPY packages/api-client/ packages/api-client/
+COPY packages/notifications/ packages/notifications/
+COPY packages/stores/ packages/stores/
+COPY packages/theme/ packages/theme/
+COPY packages/terminal-ui/ packages/terminal-ui/
+COPY packages/panels/ packages/panels/
 COPY apps/fe/ apps/fe/
 
 # 构建

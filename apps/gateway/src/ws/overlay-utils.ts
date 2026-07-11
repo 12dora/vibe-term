@@ -51,3 +51,39 @@ export function applyDeviceTreeOverlay(
     session: { ...payload.session, windows: orderedWindows },
   };
 }
+
+// 自定义 window/pane 名 overlay 的输入：id → 显示名
+export interface CustomNamesInput {
+  windows: Record<string, string>;
+  panes: Record<string, string>;
+}
+
+// 在快照上叠加自定义 window/pane 名（REST 读侧用）。纯函数、无副作用：
+// 不清理 stale 名（那是 wsServer 内存 overlay 的职责），未知 id 直接忽略。
+export function applyCustomNamesOverlay(
+  payload: StateSnapshotPayload,
+  names: CustomNamesInput
+): StateSnapshotPayload {
+  if (!payload.session) return payload;
+
+  const hasWindowNames = Object.keys(names.windows).length > 0;
+  const hasPaneNames = Object.keys(names.panes).length > 0;
+  if (!hasWindowNames && !hasPaneNames) return payload;
+
+  return {
+    ...payload,
+    session: {
+      ...payload.session,
+      windows: payload.session.windows.map((window) => {
+        const customName = names.windows[window.id];
+        const panes = hasPaneNames
+          ? window.panes.map((pane) => {
+              const paneCustomName = names.panes[pane.id];
+              return paneCustomName ? { ...pane, customName: paneCustomName } : pane;
+            })
+          : window.panes;
+        return customName ? { ...window, customName, panes } : { ...window, panes };
+      }),
+    },
+  };
+}

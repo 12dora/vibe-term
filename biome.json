@@ -7,7 +7,17 @@
   },
   "files": {
     "ignoreUnknown": false,
-    "ignore": ["**/dist/**", "**/node_modules/**"]
+    "ignore": [
+      "**/dist/**",
+      "**/node_modules/**",
+      "**/resources/fe-dist/**",
+      "**/resources/gateway-drizzle/**",
+      "**/test-results/**",
+      "**/playwright-report/**",
+      "**/manifest.generated.ts",
+      "packages/shared/src/i18n/resources.ts",
+      "packages/shared/src/i18n/types.ts"
+    ]
   },
   "formatter": {
     "enabled": true,
