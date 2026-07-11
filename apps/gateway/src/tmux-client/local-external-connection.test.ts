@@ -1561,3 +1561,192 @@ describe('LocalExternalTmuxConnection', () => {
     expect(commands.some((argv) => argv.includes('send-keys'))).toBe(false);
   });
 });
+
+describe('LocalExternalTmuxConnection lifecycle events', () => {
+  type EmittedEvent = { eventType: string; event: any };
+
+  function makeLifecycleConnection(options: {
+    session: string;
+    overrides?: (command: string) => CommandResult | null;
+  }) {
+    const events: EmittedEvent[] = [];
+    const connection = new LocalExternalTmuxConnection(
+      {
+        deviceId: 'device-local',
+        notifyEvent: (eventType, event) => {
+          events.push({ eventType, event });
+        },
+        onEvent: () => {},
+        onTerminalOutput: () => {},
+        onTerminalHistory: () => {},
+        onSnapshot: () => {},
+        onError: () => {},
+        onClose: () => {},
+      },
+      {
+        enableSubscription: false,
+        ensureGhosttyTerminfo: async () => false,
+        getDevice: () => createDevice(options.session),
+        run: createRunStub(options.session, { overrides: options.overrides }),
+      }
+    );
+    return { connection, events };
+  }
+
+  test('emits session_created only when the session is actually created', async () => {
+    let created = false;
+    const { connection, events } = makeLifecycleConnection({
+      session: 'tmex-lc-created',
+      overrides: (command) => {
+        if (command === 'has-session -t tmex-lc-created' && !created) {
+          created = true;
+          return { exitCode: 1, stdout: '', stderr: "can't find session" };
+        }
+        if (command.startsWith('new-session -d -c ')) {
+          return ok();
+        }
+        return null;
+      },
+    });
+
+    await connection.connect();
+    expect(events.map((e) => e.eventType)).toEqual(['session_created']);
+    expect(events[0].event.tmux.sessionName).toBe('tmex-lc-created');
+    expect(events[0].event.device.id).toBe('device-local');
+    connection.disconnect();
+  });
+
+  test('does not emit session_created when the session already exists (and first snapshot emits no closures)', async () => {
+    const { connection, events } = makeLifecycleConnection({ session: 'tmex-lc-existing' });
+    await connection.connect();
+    expect(events).toHaveLength(0);
+    connection.disconnect();
+  });
+
+  test('emits tmux_pane_close when a pane disappears from the snapshot', async () => {
+    let panesGone = false;
+    const session = 'tmex-lc-pane';
+    const { connection, events } = makeLifecycleConnection({
+      session,
+      overrides: (command) => {
+        if (command.startsWith(`list-panes -s -t ${session}`) && panesGone) {
+          return ok(`%2|@1|1|1|80|24|0|0|1|bash|node|/home/user\n`);
+        }
+        if (command.startsWith(`list-panes -s -t ${session}`)) {
+          return ok(
+            `%1|@1|0|1|80|24|0|0|1|first pane|vim|/home/user\n%2|@1|1|0|80|24|0|0|1|bash|node|/home/user\n`
+          );
+        }
+        return null;
+      },
+    });
+
+    await connection.connect();
+    expect(events).toHaveLength(0);
+
+    panesGone = true;
+    connection.requestSnapshot();
+    await waitFor(() => (events.length > 0 ? true : null));
+
+    expect(events.map((e) => e.eventType)).toEqual(['tmux_pane_close']);
+    expect(events[0].event.tmux.paneId).toBe('%1');
+    expect(events[0].event.tmux.windowId).toBe('@1');
+    expect(events[0].event.tmux.paneTitle).toBe('first pane');
+    expect(events[0].event.tmux.paneCurrentCommand).toBe('vim');
+    connection.disconnect();
+  });
+
+  test('emits tmux_window_close without per-pane events when a window disappears', async () => {
+    let windowGone = false;
+    const session = 'tmex-lc-window';
+    const { connection, events } = makeLifecycleConnection({
+      session,
+      overrides: (command) => {
+        if (command.startsWith(`list-windows -t ${session} -F #{window_id}|`)) {
+          return windowGone
+            ? ok('@1|0|1|ba9d,80x24,0,0,1|main\n')
+            : ok('@1|0|1|ba9d,80x24,0,0,1|main\n@2|1|0|ba9d,80x24,0,0,2|second\n');
+        }
+        if (command === `list-windows -t ${session} -F #{window_id}`) {
+          return windowGone ? ok('@1\n') : ok('@1\n@2\n');
+        }
+        if (command.startsWith('set-option -w -t @2 window-style')) {
+          return ok();
+        }
+        if (command.startsWith(`list-panes -s -t ${session}`) && !windowGone) {
+          return ok(
+            `%1|@1|0|1|80|24|0|0|1|bash|node|/home/user\n%2|@2|0|1|80|24|0|0|0|bash|node|/home/user\n`
+          );
+        }
+        return null;
+      },
+    });
+
+    await connection.connect();
+    expect(events).toHaveLength(0);
+
+    windowGone = true;
+    connection.requestSnapshot();
+    await waitFor(() => (events.length > 0 ? true : null));
+
+    expect(events.map((e) => e.eventType)).toEqual(['tmux_window_close']);
+    expect(events[0].event.tmux.windowId).toBe('@2');
+    expect(events[0].event.payload.windowName).toBe('second');
+    connection.disconnect();
+  });
+
+  test('does not emit closures when the snapshot turns invalid', async () => {
+    let invalid = false;
+    const session = 'tmex-lc-invalid';
+    const { connection, events } = makeLifecycleConnection({
+      session,
+      overrides: (command) => {
+        if (invalid && command.startsWith(`display-message -p -t ${session}`)) {
+          return ok('not-a-session-id|whatever\n');
+        }
+        return null;
+      },
+    });
+
+    await connection.connect();
+    invalid = true;
+    connection.requestSnapshot();
+    await Bun.sleep(80);
+
+    expect(events).toHaveLength(0);
+    connection.disconnect();
+  });
+
+  test('emits session_closed exactly once when the tmux server goes away during snapshot', async () => {
+    let serverGone = false;
+    const session = 'tmex-lc-gone';
+    const { connection, events } = makeLifecycleConnection({
+      session,
+      overrides: (command) => {
+        if (
+          serverGone &&
+          (command.startsWith(`display-message -p -t ${session}`) ||
+            command.startsWith(`list-windows -t ${session}`) ||
+            command.startsWith(`list-panes -s -t ${session}`))
+        ) {
+          return { exitCode: 1, stdout: '', stderr: 'no server running on /tmp/sock' };
+        }
+        return null;
+      },
+    });
+
+    await connection.connect();
+    expect(events).toHaveLength(0);
+
+    serverGone = true;
+    // 并发触发两次：两个 in-flight 快照都会命中 server-gone 分支，once 守卫必须兜住
+    connection.requestSnapshot();
+    connection.requestSnapshot();
+    await waitFor(() => (events.length > 0 ? true : null));
+    await Bun.sleep(50);
+
+    expect(events.map((e) => e.eventType)).toEqual(['session_closed']);
+    expect(events[0].event.payload.message).toBe('no server running on /tmp/sock');
+    expect(events[0].event.tmux.sessionName).toBe(session);
+  });
+});
