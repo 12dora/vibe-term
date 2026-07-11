@@ -3,7 +3,7 @@ import { getSiteSettings } from '../../db';
 import { t } from '../../i18n';
 import { telegramService } from '../../telegram/service';
 import { buildPaneUrl, normalizeHttpUrl } from './pane-url';
-import type { NotificationChannel } from './types';
+import { type NotificationChannel, PUSH_CHANNEL_SKIPPED_LIFECYCLE_EVENTS } from './types';
 
 function escapeTelegramHtmlText(input: string): string {
   return input.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
@@ -17,6 +17,9 @@ export class TelegramChannel implements NotificationChannel {
   readonly id = 'telegram';
 
   async notify(eventType: EventType, event: WebhookEvent): Promise<void> {
+    if (PUSH_CHANNEL_SKIPPED_LIFECYCLE_EVENTS.has(eventType)) {
+      return;
+    }
     const settings = getSiteSettings();
 
     if (eventType === 'terminal_bell') {

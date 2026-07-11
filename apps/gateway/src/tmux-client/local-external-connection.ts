@@ -1679,6 +1679,11 @@ export class LocalExternalTmuxConnection {
     void this.notifyRuntimeError(message);
     if (this.connected && !this.manualDisconnect && this.isTmuxServerGoneMessage(message)) {
       console.warn(`[local] tmux server gone on ${this.deviceId}: ${message}`);
+      updateDeviceRuntimeStatus(this.deviceId, {
+        lastSeenAt: new Date().toISOString(),
+        tmuxAvailable: false,
+        lastError: message,
+      });
       this.notifySessionClosed(message);
       void this.shutdownInternal(true);
     }

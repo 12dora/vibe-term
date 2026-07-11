@@ -52,6 +52,7 @@ import {
   updateWeixinAccount,
 } from '../db';
 import { t } from '../i18n';
+import { connectionAlertNotifier } from '../push/connection-alerts';
 import { pushSupervisor } from '../push/supervisor';
 import { broadcastSettingsUpdate } from '../settings/broadcaster';
 import { telegramService } from '../telegram/service';
@@ -534,6 +535,7 @@ async function handleDeleteDevice(id: string): Promise<Response> {
   deleteDevice(id);
   broadcastSettingsUpdate('devices');
   pushSupervisor.remove(id);
+  connectionAlertNotifier.clear(id);
   return json({ success: true });
 }
 

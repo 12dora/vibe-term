@@ -3,7 +3,7 @@ import { getSiteSettings } from '../../db';
 import { t } from '../../i18n';
 import { weixinService } from '../../weixin/service';
 import { buildPaneUrl, normalizeHttpUrl } from './pane-url';
-import type { NotificationChannel } from './types';
+import { type NotificationChannel, PUSH_CHANNEL_SKIPPED_LIFECYCLE_EVENTS } from './types';
 
 const EMOJI_MAP: Record<EventType, string> = {
   terminal_bell: '🔔',
@@ -31,6 +31,9 @@ export class WeixinChannel implements NotificationChannel {
   readonly id = 'weixin';
 
   async notify(eventType: EventType, event: WebhookEvent): Promise<void> {
+    if (PUSH_CHANNEL_SKIPPED_LIFECYCLE_EVENTS.has(eventType)) {
+      return;
+    }
     const settings = getSiteSettings();
 
     if (eventType === 'terminal_bell') {

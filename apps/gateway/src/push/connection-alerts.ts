@@ -211,7 +211,6 @@ export class ConnectionAlertNotifier {
     if (now - (this.bridgeThrottleMap.get(key) ?? 0) < NOTIFY_THROTTLE_MS) {
       return;
     }
-    this.bridgeThrottleMap.set(key, now);
 
     let settings: SiteSettings;
     try {
@@ -228,6 +227,18 @@ export class ConnectionAlertNotifier {
       });
     } catch (emitErr) {
       console.error('[conn-alert] event emit failed:', emitErr);
+      return;
+    }
+    // 成功发射才消耗节流窗口（settings 读取或发射失败不白耗 5 分钟）；顺带惰性清理同设备过期键
+    this.bridgeThrottleMap.set(key, now);
+    for (const [otherKey, ts] of this.bridgeThrottleMap) {
+      if (
+        otherKey !== key &&
+        otherKey.startsWith(`${device.id}:`) &&
+        now - ts >= NOTIFY_THROTTLE_MS
+      ) {
+        this.bridgeThrottleMap.delete(otherKey);
+      }
     }
   }
 
