@@ -1783,4 +1783,70 @@ describe('LocalExternalTmuxConnection lifecycle events', () => {
     expect(status.tmuxAvailable).toBe(false);
     expect(status.lastError).toBe('no server running on /tmp/sock');
   });
+
+  // local 快照三命令是无队列并发 spawn：后发先至时，过期响应若写回会把已消失的
+  // pane 复活进 snapshotWindows，下一帧 diff 再次报关闭。纪元守卫必须丢弃过期响应。
+  test('stale out-of-order snapshot response is discarded and does not double-emit closures', async () => {
+    const session = 'tmex-lc-race';
+    const fresh = `%2|@1|1|1|80|24|0|0|1|bash|node|/home/user\n`;
+    const stale = `%1|@1|0|1|80|24|0|0|1|first pane|vim|/home/user\n%2|@1|1|0|80|24|0|0|1|bash|node|/home/user\n`;
+    let paneListCalls = 0;
+    let releaseStale: (() => void) | null = null;
+    const staleGate = new Promise<void>((resolve) => {
+      releaseStale = resolve;
+    });
+    const baseRun = createRunStub(session);
+    const events: EmittedEvent[] = [];
+    const connection = new LocalExternalTmuxConnection(
+      {
+        deviceId: 'device-local',
+        notifyEvent: (eventType, event) => {
+          events.push({ eventType, event });
+        },
+        onEvent: () => {},
+        onTerminalOutput: () => {},
+        onTerminalHistory: () => {},
+        onSnapshot: () => {},
+        onError: () => {},
+        onClose: () => {},
+      },
+      {
+        enableSubscription: false,
+        ensureGhosttyTerminfo: async () => false,
+        getDevice: () => createDevice(session),
+        run: async (argv) => {
+          const command = argv.slice(1).join(' ');
+          if (command.startsWith(`list-panes -s -t ${session}`)) {
+            paneListCalls += 1;
+            if (paneListCalls === 1) {
+              return ok(stale); // connect 首帧：两个 pane
+            }
+            if (paneListCalls === 2) {
+              await staleGate; // 请求 A：挂起直到手动放行，届时返回过期数据（%1 仍在）
+              return ok(stale);
+            }
+            return ok(fresh); // 请求 B 与后续帧：%1 已关闭
+          }
+          return baseRun(argv);
+        },
+      }
+    );
+
+    await connection.connect();
+    expect(events).toHaveLength(0);
+
+    connection.requestSnapshot(); // A（响应被扣住）
+    connection.requestSnapshot(); // B（立即返回新数据）
+    await waitFor(() => (events.length > 0 ? true : null));
+    expect(events.map((e) => e.eventType)).toEqual(['tmux_pane_close']);
+
+    releaseStale?.(); // A 的过期响应此刻才到达——必须被丢弃
+    await Bun.sleep(50);
+
+    // 再刷一帧：若过期数据被写回，这里会第二次报 %1 关闭
+    connection.requestSnapshot();
+    await Bun.sleep(50);
+    expect(events.map((e) => e.eventType)).toEqual(['tmux_pane_close']);
+    connection.disconnect();
+  });
 });

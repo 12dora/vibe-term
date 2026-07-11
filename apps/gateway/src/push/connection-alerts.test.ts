@@ -171,13 +171,12 @@ describe('ConnectionAlertNotifier', () => {
 });
 
 describe('ConnectionAlertNotifier event bridge', () => {
-  function makeBridgedNotifier(tmuxAvailable = true) {
+  function makeBridgedNotifier() {
     const base = makeNotifier();
     const events: Array<{ eventType: string; event: Record<string, unknown> }> = [];
     base.notifier.setEventEmitter((eventType, event) => {
       events.push({ eventType, event: event as unknown as Record<string, unknown> });
     });
-    base.notifier.setRuntimeStatusProvider(() => ({ tmuxAvailable }));
     return { ...base, events };
   }
 
@@ -274,12 +273,13 @@ describe('ConnectionAlertNotifier event bridge', () => {
     expect(events).toHaveLength(2);
   });
 
-  test('skips device_disconnect when tmux already marked unavailable (session gone path)', async () => {
-    const { notifier, events } = makeBridgedNotifier(false);
+  test('skips device_disconnect when the connection already emitted session_closed', async () => {
+    const { notifier, events } = makeBridgedNotifier();
     await notifier.notify({
       device: makeDevice('d1'),
       error: new Error('ssh_connection_closed'),
       source: 'close',
+      sessionClosedEmitted: true,
     });
     expect(events).toHaveLength(0);
 
@@ -288,8 +288,43 @@ describe('ConnectionAlertNotifier event bridge', () => {
       device: makeDevice('d1'),
       error: new Error('remote tmux unavailable: x'),
       source: 'probe',
+      sessionClosedEmitted: true,
     });
     expect(events.map((e) => e.eventType)).toEqual(['device_tmux_missing']);
+  });
+
+  // 抑制信号必须来自连接实例的显式标志：持久化的 tmuxAvailable 状态位被
+  // error handler、连接失败路径、无记录设备缺省值等大量非 session-gone 路径
+  // 写成 false，不可据其抑制（否则错误型断开与新设备连接失败全部漏报）。
+  test('emits device_disconnect on error-style close even after runtime status was marked unavailable', async () => {
+    const { notifier, events } = makeBridgedNotifier();
+    const device = makeDevice('d1');
+    // 模拟 error handler 先持久化 tmuxAvailable=false（runtime source 不桥接，但会写状态）
+    await notifier.notify({
+      device,
+      error: new Error('read ECONNRESET'),
+      source: 'runtime',
+      silentTelegram: true,
+    });
+    expect(events).toHaveLength(0);
+    // 随后连接关闭：session 并未 gone（sessionClosedEmitted=false），必须发出 device_disconnect
+    await notifier.notify({
+      device,
+      error: new Error('ssh_connection_closed'),
+      source: 'close',
+      sessionClosedEmitted: false,
+    });
+    expect(events.map((e) => e.eventType)).toEqual(['device_disconnect']);
+  });
+
+  test('emits device_disconnect for a brand-new device failing to connect (no prior runtime status)', async () => {
+    const { notifier, events } = makeBridgedNotifier();
+    await notifier.notify({
+      device: makeDevice('fresh'),
+      error: new Error('ECONNREFUSED 10.0.0.9:22'),
+      source: 'connect',
+    });
+    expect(events.map((e) => e.eventType)).toEqual(['device_disconnect']);
   });
 
   test('settings provider failure does not consume the bridge throttle window', async () => {

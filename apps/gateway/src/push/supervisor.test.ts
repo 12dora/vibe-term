@@ -274,4 +274,59 @@ describe('PushSupervisor', () => {
 
     await supervisor.stopAll();
   });
+
+  // 断开告警桥的双发抑制信号来自连接实例的显式标志：supervisor 必须把
+  // runtime.sessionClosedEmitted 透传给桥，不依赖任何持久化状态位。
+  test.each([
+    [false, ['device_disconnect']],
+    [true, []],
+  ])(
+    'close with sessionClosedEmitted=%p bridges %p',
+    async (sessionClosedEmitted, expectedEvents) => {
+      const device = createDevice(`close-${String(sessionClosedEmitted)}`);
+      let listener: DeviceSessionRuntimeListener | null = null;
+      const events: string[] = [];
+      const { connectionAlertNotifier } = await import('./connection-alerts');
+      connectionAlertNotifier.setEventEmitter((eventType) => {
+        events.push(eventType);
+      });
+      connectionAlertNotifier.setSettingsProvider(() => createSettings());
+      connectionAlertNotifier.setPersister(() => {});
+      connectionAlertNotifier.setBroadcaster(() => {});
+      connectionAlertNotifier.setTelegramSender(async () => {});
+
+      const supervisor = new PushSupervisor({
+        deps: {
+          listDevices: () => [device],
+          getDevice: () => device,
+          getSettings: () => createSettings(),
+          acquireRuntime: async () =>
+            ({
+              sessionClosedEmitted,
+              subscribe(next: DeviceSessionRuntimeListener) {
+                listener = next;
+                return () => {
+                  listener = null;
+                };
+              },
+              async connect() {},
+              requestSnapshot() {},
+              disconnect() {},
+            }) as any,
+          releaseRuntime: async () => {},
+        },
+      });
+
+      try {
+        await supervisor.start();
+        listener?.onClose?.();
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        expect(events).toEqual(expectedEvents);
+      } finally {
+        await supervisor.stopAll();
+        connectionAlertNotifier.setEventEmitter(null);
+        connectionAlertNotifier.clear(device.id);
+      }
+    }
+  );
 });

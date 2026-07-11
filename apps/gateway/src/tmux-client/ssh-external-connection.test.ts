@@ -185,7 +185,10 @@ class FakeClient extends EventEmitter {
   }
 
   end(): this {
-    this.emit('close');
+    // 真实 ssh2 的 close 事件异步到达；同步 emit 会让 shutdown 与 close 处理相互递归
+    queueMicrotask(() => {
+      this.emit('close');
+    });
     return this;
   }
 }
@@ -1206,5 +1209,128 @@ describe('SshExternalTmuxConnection', () => {
     await Bun.sleep(20);
 
     expect(writes.some((w) => w.includes("'send-keys' '-H'"))).toBe(false);
+  });
+});
+
+describe('SshExternalTmuxConnection lifecycle events', () => {
+  type EmittedEvent = { eventType: string; event: any };
+
+  function makeLifecycleConnection(options: {
+    session: string;
+    overrides?: (
+      payload: string,
+      client: FakeClient
+    ) => { stdout: string; exitCode: number } | null;
+  }) {
+    const fakeClient = new FakeClient();
+    setupCommandChannel(fakeClient, options.session, {
+      overrides: options.overrides ? (payload) => options.overrides?.(payload, fakeClient) : undefined,
+    });
+    const events: EmittedEvent[] = [];
+    const connection = new SshExternalTmuxConnection(
+      {
+        ...createCallbacks({}),
+        onError: () => {},
+        notifyEvent: (eventType, event) => {
+          events.push({ eventType, event });
+        },
+      },
+      {
+        getDevice: () => createDevice(options.session),
+        decrypt: async () => 'secret',
+        createClient: () => fakeClient as unknown as Client,
+      }
+    );
+    return { connection, events };
+  }
+
+  test('emits session_created only when the session is actually created', async () => {
+    const session = 'tmex-ssh-lc-created';
+    let created = false;
+    const { connection, events } = makeLifecycleConnection({
+      session,
+      overrides: (payload) => {
+        if (payload.includes(`'has-session' '-t' '${session}'`) && !created) {
+          created = true;
+          return { stdout: "can't find session", exitCode: 1 };
+        }
+        if (payload.includes(`'new-session' '-d' '-c'`)) {
+          return { stdout: '', exitCode: 0 };
+        }
+        return null;
+      },
+    });
+
+    await connection.connect();
+    expect(events.map((e) => e.eventType)).toEqual(['session_created']);
+    expect(events[0].event.tmux.sessionName).toBe(session);
+    expect(connection.isSessionClosedEmitted()).toBe(false);
+    connection.disconnect();
+  });
+
+  test('snapshot server-gone emits session_closed once and raises the closed flag', async () => {
+    const session = 'tmex-ssh-lc-gone';
+    let gone = false;
+    const { connection, events } = makeLifecycleConnection({
+      session,
+      overrides: (payload, client) => {
+        if (gone && payload.includes(`'list-panes' '-s' '-t' '${session}'`)) {
+          // stderr 流在命令 pending 期间同步送达（gone 判定读 stderr）
+          client.commandChannel.stderr.emit(
+            'data',
+            Buffer.from('no server running on /tmp/tmux-1000/default\n')
+          );
+          return { stdout: '', exitCode: 1 };
+        }
+        return null;
+      },
+    });
+
+    await connection.connect();
+    expect(connection.isSessionClosedEmitted()).toBe(false);
+
+    gone = true;
+    connection.requestSnapshot();
+    await waitFor(() => (events.length > 0 ? true : null));
+
+    expect(events.map((e) => e.eventType)).toEqual(['session_closed']);
+    expect(connection.isSessionClosedEmitted()).toBe(true);
+
+    // 再触发一次 gone 路径：once 守卫不重复发射
+    connection.requestSnapshot();
+    await Bun.sleep(50);
+    expect(events.map((e) => e.eventType)).toEqual(['session_closed']);
+  });
+
+  test('emits tmux_pane_close when a pane disappears from the snapshot', async () => {
+    const session = 'tmex-ssh-lc-pane';
+    let panesGone = false;
+    const { connection, events } = makeLifecycleConnection({
+      session,
+      overrides: (payload) => {
+        if (payload.includes(`'list-panes' '-s' '-t' '${session}'`)) {
+          return panesGone
+            ? { stdout: '%2|@1|1|1|80|24|0|0|1|bash|node|/home/alice\n', exitCode: 0 }
+            : {
+                stdout:
+                  '%1|@1|0|1|80|24|0|0|1|first pane|vim|/home/alice\n%2|@1|1|0|80|24|0|0|1|bash|node|/home/alice\n',
+                exitCode: 0,
+              };
+        }
+        return null;
+      },
+    });
+
+    await connection.connect();
+    expect(events).toHaveLength(0);
+
+    panesGone = true;
+    connection.requestSnapshot();
+    await waitFor(() => (events.length > 0 ? true : null));
+
+    expect(events.map((e) => e.eventType)).toEqual(['tmux_pane_close']);
+    expect(events[0].event.tmux.paneId).toBe('%1');
+    expect(events[0].event.tmux.paneTitle).toBe('first pane');
+    connection.disconnect();
   });
 });
