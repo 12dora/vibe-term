@@ -434,7 +434,8 @@ export function createTmuxStore(
         const previousError = prev.deviceErrors[payload.deviceId];
         const shouldToast = !previousError || previousError.type !== errorType;
 
-        if (shouldToast) {
+        // 宿主接管通知呈现时设备错误 toast 一并让位；deviceErrors 状态照写（错误横幅等 UI 状态不受影响）
+        if (shouldToast && !core.features.hostManagedNotifications) {
           core.notifications.error(summary);
         }
 

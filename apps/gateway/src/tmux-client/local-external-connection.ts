@@ -1,16 +1,8 @@
 import { homedir } from 'node:os';
 import { encodePaneModes } from '@tmex/shared';
-import type {
-  Device,
-  EventType,
-  StateSnapshotPayload,
-  TmuxPane,
-  TmuxSession,
-  TmuxWindow,
-  WebhookEvent,
-} from '@tmex/shared';
+import type { Device, StateSnapshotPayload, TmuxPane, TmuxSession, TmuxWindow } from '@tmex/shared';
 import { config } from '../config';
-import { getDeviceById, getSiteSettings, updateDeviceRuntimeStatus } from '../db';
+import { getDeviceById, updateDeviceRuntimeStatus } from '../db';
 import { connectionAlertNotifier } from '../push/connection-alerts';
 import { buildLocalTmuxEnv, getLocalShellPath } from '../tmux/local-shell-path';
 import {
@@ -28,6 +20,7 @@ import {
 } from './control-mode-subscription';
 import { buildEnsureGhosttyTerminfoScript } from './ghostty-terminfo';
 import { encodeInputToHexChunks } from './input-encoder';
+import { ConnectionLifecycleEmitter } from './lifecycle-emitter';
 import type { PaneStreamNotification } from './pane-stream-parser';
 import {
   PANE_SNAPSHOT_FORMAT,
@@ -42,7 +35,6 @@ import {
   parseWindowSnapshotRow,
   splitSnapshotFields,
 } from './snapshot-format';
-import { diffSnapshotClosures } from './snapshot-diff';
 import { TmuxTargetMissingError, isTargetMissingMessage } from './target-missing';
 import { createThemeSubscriptionTracker } from './theme-subscriptions';
 import { isControlModeSupported, parseTmuxVersion } from './tmux-version';
@@ -194,7 +186,8 @@ export class LocalExternalTmuxConnection {
   private stackedLayoutTransition: Promise<void> = Promise.resolve();
   private bellDedup = new Map<string, number>();
   private closeNotified = false;
-  private sessionClosedNotified = false;
+  private readonly lifecycle: ConnectionLifecycleEmitter;
+  private snapshotEpoch = 0;
   private cleanupPromise: Promise<void> | null = null;
   private controlProcess: ControlClientProcess | null = null;
   private controlSubscription: ControlModeSubscription | null = null;
@@ -226,12 +219,23 @@ export class LocalExternalTmuxConnection {
         }),
       spawnControlClient: inputDeps.spawnControlClient ?? defaultSpawnControlClient,
     };
+    this.lifecycle = new ConnectionLifecycleEmitter({
+      getDevice: () => this.device ?? this.deps.getDevice(this.deviceId),
+      getSessionName: () => this.sessionName,
+      isEmittable: () => this.connected && !this.manualDisconnect,
+      getSnapshotWindows: () => this.snapshotWindows,
+      notifyEvent: options.notifyEvent,
+    });
+  }
+
+  isSessionClosedEmitted(): boolean {
+    return this.lifecycle.sessionClosedEmitted;
   }
 
   async connect(): Promise<void> {
     this.manualDisconnect = false;
     this.closeNotified = false;
-    this.sessionClosedNotified = false;
+    this.lifecycle.reset();
     this.device = this.deps.getDevice(this.deviceId);
     if (!this.device) {
       throw new Error(`Device not found: ${this.deviceId}`);
@@ -258,7 +262,7 @@ export class LocalExternalTmuxConnection {
       lastErrorType: null,
     });
     if (created) {
-      this.emitLifecycleEvent('session_created', { sessionName: this.sessionName });
+      this.lifecycle.notifySessionCreated();
     }
     await this.requestSnapshotInternal();
   }
@@ -1117,7 +1121,7 @@ export class LocalExternalTmuxConnection {
         tmuxAvailable: false,
         lastError: message,
       });
-      this.notifySessionClosed(message);
+      this.lifecycle.notifySessionClosed(message);
       void this.shutdownInternal(true);
       return;
     }
@@ -1335,6 +1339,11 @@ export class LocalExternalTmuxConnection {
       return;
     }
 
+    // 快照三命令是无队列的并发 spawn，两次并发刷新可能乱序完成：旧响应若写回会把
+    // 已消失的 window/pane 复活到 snapshotWindows，下一帧 diff 再次报关闭（双发）。
+    // 以纪元号丢弃过期响应：只有最新一次请求的结果允许写回与 diff。
+    const epoch = ++this.snapshotEpoch;
+
     const [sessionRes, windowsRes, panesRes] = await Promise.all([
       this.runTmuxAllowFailure([
         'display-message',
@@ -1360,6 +1369,10 @@ export class LocalExternalTmuxConnection {
       ]),
     ]);
 
+    if (epoch !== this.snapshotEpoch) {
+      return;
+    }
+
     const transientResult = [sessionRes, windowsRes, panesRes].find(
       (res) => res.exitCode === TMUX_SPAWN_UNAVAILABLE_EXIT
     );
@@ -1384,7 +1397,7 @@ export class LocalExternalTmuxConnection {
           tmuxAvailable: false,
           lastError: message,
         });
-        this.notifySessionClosed(message);
+        this.lifecycle.notifySessionClosed(message);
         void this.shutdownInternal(true);
         return;
       }
@@ -1403,7 +1416,7 @@ export class LocalExternalTmuxConnection {
     this.restoreThemeSubscriptionsOnce();
     this.markSpawnRecovered();
     this.emitSnapshot();
-    this.emitSnapshotClosures(prevWindows);
+    this.lifecycle.emitSnapshotClosures(prevWindows);
   }
 
   private parseSnapshotSession(lines: string[]): void {
@@ -1544,76 +1557,6 @@ export class LocalExternalTmuxConnection {
     return null;
   }
 
-  private emitLifecycleEvent(
-    eventType: EventType,
-    tmux: WebhookEvent['tmux'],
-    payload?: Record<string, unknown>
-  ): void {
-    const notifyEvent = this.callbacks.notifyEvent;
-    if (!notifyEvent) {
-      return;
-    }
-    const device = this.device ?? this.deps.getDevice(this.deviceId);
-    if (!device) {
-      return;
-    }
-    const settings = getSiteSettings();
-    notifyEvent(eventType, {
-      site: { name: settings.siteName, url: settings.siteUrl },
-      device: { id: device.id, name: device.name, type: device.type, host: device.host },
-      tmux,
-      payload,
-    });
-  }
-
-  private notifySessionClosed(message: string): void {
-    if (this.sessionClosedNotified) {
-      return;
-    }
-    this.sessionClosedNotified = true;
-    this.emitLifecycleEvent(
-      'session_closed',
-      { sessionName: this.sessionName },
-      { message: message.split(/\r?\n/)[0]?.trim() }
-    );
-  }
-
-  // 快照 diff 产生 window/pane 关闭事件。首帧（prev 为空）、无效快照（next 为空）与
-  // 断开路径一律跳过，避免误报。
-  private emitSnapshotClosures(prev: Map<string, TmuxWindow>): void {
-    if (
-      prev.size === 0 ||
-      this.snapshotWindows.size === 0 ||
-      !this.connected ||
-      this.manualDisconnect
-    ) {
-      return;
-    }
-    const { closedWindows, closedPanes } = diffSnapshotClosures(prev, this.snapshotWindows);
-    for (const window of closedWindows) {
-      this.emitLifecycleEvent(
-        'tmux_window_close',
-        { sessionName: this.sessionName, windowId: window.id, windowIndex: window.index },
-        { windowName: window.name }
-      );
-    }
-    for (const { pane, window } of closedPanes) {
-      this.emitLifecycleEvent(
-        'tmux_pane_close',
-        {
-          sessionName: this.sessionName,
-          windowId: window.id,
-          windowIndex: window.index,
-          paneId: pane.id,
-          paneIndex: pane.index,
-          paneTitle: pane.title,
-          paneCurrentCommand: pane.currentCommand,
-        },
-        { windowName: window.name }
-      );
-    }
-  }
-
   private recordBell(paneId?: string, windowId?: string): void {
     const key = paneId || windowId || '-';
     const previous = this.bellDedup.get(key) ?? 0;
@@ -1684,7 +1627,7 @@ export class LocalExternalTmuxConnection {
         tmuxAvailable: false,
         lastError: message,
       });
-      this.notifySessionClosed(message);
+      this.lifecycle.notifySessionClosed(message);
       void this.shutdownInternal(true);
     }
     throw new Error(message);

@@ -5,7 +5,7 @@ import type {
   SiteSettings,
   WebhookEvent,
 } from '@tmex/shared';
-import { getDeviceRuntimeStatus, getSiteSettings, updateDeviceRuntimeStatus } from '../db';
+import { getSiteSettings, updateDeviceRuntimeStatus } from '../db';
 import { t } from '../i18n';
 import { telegramService } from '../telegram/service';
 import { classifySshError } from '../ws/error-classify';
@@ -36,6 +36,9 @@ export interface ConnectionAlertInput {
   source: ConnectionAlertSource;
   silentTelegram?: boolean;
   persist?: boolean;
+  // 本次断开前连接已因 session gone 发出 session_closed（同一物理事件不再发 device_disconnect）。
+  // 由持有连接实例的调用方显式传入；持久化的 tmuxAvailable 状态位被大量无关路径写入，不可作此信号。
+  sessionClosedEmitted?: boolean;
 }
 
 export interface ClassifiedConnectionAlert {
@@ -70,8 +73,6 @@ export class ConnectionAlertNotifier {
   private readonly bridgeThrottleMap = new Map<string, number>();
   private broadcaster: ConnectionAlertBroadcaster | null = null;
   private eventEmitter: ConnectionEventEmitter | null = null;
-  private runtimeStatusProvider: (deviceId: string) => { tmuxAvailable: boolean } = (deviceId) =>
-    getDeviceRuntimeStatus(deviceId);
   private settingsProvider: () => SiteSettings = () => getSiteSettings();
   private persister: (deviceId: string, friendlyMessage: string, errorType: string) => void = (
     deviceId,
@@ -95,15 +96,13 @@ export class ConnectionAlertNotifier {
     this.eventEmitter = emitter;
   }
 
-  setRuntimeStatusProvider(provider: (deviceId: string) => { tmuxAvailable: boolean }): void {
-    this.runtimeStatusProvider = provider;
-  }
-
   setSettingsProvider(provider: () => SiteSettings): void {
     this.settingsProvider = provider;
   }
 
-  setPersister(persister: (deviceId: string, friendlyMessage: string, errorType: string) => void): void {
+  setPersister(
+    persister: (deviceId: string, friendlyMessage: string, errorType: string) => void
+  ): void {
     this.persister = persister;
   }
 
@@ -112,7 +111,14 @@ export class ConnectionAlertNotifier {
   }
 
   async notify(alert: ConnectionAlertInput): Promise<ClassifiedConnectionAlert> {
-    const { device, error, source, silentTelegram = false, persist = true } = alert;
+    const {
+      device,
+      error,
+      source,
+      silentTelegram = false,
+      persist = true,
+      sessionClosedEmitted = false,
+    } = alert;
     const errObj = toErrorObject(error);
     const classified = classifySshError(errObj);
     const friendlyMessage = t(classified.messageKey, { ...classified.messageParams });
@@ -154,7 +160,7 @@ export class ConnectionAlertNotifier {
       await this.sendTelegram(device, classified.type, friendlyMessage, rawMessage);
     }
 
-    this.maybeEmitEvent(device, source, classified.type, friendlyMessage);
+    this.maybeEmitEvent(device, source, classified.type, friendlyMessage, sessionClosedEmitted);
 
     return {
       errorType: classified.type,
@@ -181,7 +187,8 @@ export class ConnectionAlertNotifier {
     device: Device,
     source: ConnectionAlertSource,
     errorType: string,
-    friendlyMessage: string
+    friendlyMessage: string,
+    sessionClosedEmitted: boolean
   ): void {
     if (!this.eventEmitter || !BRIDGE_EVENT_SOURCES.has(source)) {
       return;
@@ -195,16 +202,9 @@ export class ConnectionAlertNotifier {
     if (!eventType) {
       return;
     }
-    // session gone 路径在断开前已把 tmuxAvailable 置 false 并另发 session_closed，
-    // 此处跳过 device_disconnect 避免同一物理事件双发。
-    if (eventType === 'device_disconnect') {
-      try {
-        if (this.runtimeStatusProvider(device.id).tmuxAvailable === false) {
-          return;
-        }
-      } catch {
-        return;
-      }
+    // session gone 路径已另发 session_closed，跳过 device_disconnect 避免同一物理事件双发。
+    if (eventType === 'device_disconnect' && sessionClosedEmitted) {
+      return;
     }
     const key = `${device.id}:${eventType}`;
     const now = Date.now();
@@ -222,7 +222,8 @@ export class ConnectionAlertNotifier {
       this.eventEmitter(eventType, {
         site: { name: settings.siteName, url: settings.siteUrl },
         device: { id: device.id, name: device.name, type: device.type, host: device.host },
-        tmux: { sessionName: device.session },
+        // 与连接类的 session 名解析口径一致（未配置时缺省 'tmex'），便于消费端跨事件关联
+        tmux: { sessionName: device.session?.trim() || 'tmex' },
         payload: { message: friendlyMessage },
       });
     } catch (emitErr) {
@@ -251,7 +252,11 @@ export class ConnectionAlertNotifier {
     }
     this.throttleMap.set(key, now);
     for (const [otherKey, ts] of this.throttleMap) {
-      if (otherKey !== key && otherKey.startsWith(`${deviceId}:`) && now - ts >= NOTIFY_THROTTLE_MS) {
+      if (
+        otherKey !== key &&
+        otherKey.startsWith(`${deviceId}:`) &&
+        now - ts >= NOTIFY_THROTTLE_MS
+      ) {
         this.throttleMap.delete(otherKey);
       }
     }

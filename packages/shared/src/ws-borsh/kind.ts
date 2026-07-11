@@ -63,7 +63,7 @@ export const KIND_AGENT_EVENT = 0x0603;
 // ========== Watch (0x0700-0x07FF) ==========
 export const KIND_WATCH_EVENT = 0x0701;
 
-// ========== 站点设置 (0x0800-0x08FF) ==========
+// ========== 站点设置与站点级广播 (0x0800-0x08FF) ==========
 export const KIND_SITE_THEME_UPDATE = 0x0801;
 export const KIND_SETTINGS_UPDATE = 0x0802;
 export const KIND_NOTIFY_EVENT = 0x0803;

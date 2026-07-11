@@ -5,8 +5,8 @@ import type {
   TmuxBellEventData,
   TmuxNotificationEventData,
 } from '@tmex/shared';
-import { getAllDevices, getDeviceById, getSiteSettings } from '../db';
 import { notifyDeviceClose } from '../agent/device-close-bus';
+import { getAllDevices, getDeviceById, getSiteSettings } from '../db';
 import { eventNotifier } from '../events';
 import { t } from '../i18n';
 import type { DeviceSessionRuntime } from '../tmux-client/device-session-runtime';
@@ -297,6 +297,7 @@ export class PushSupervisor {
         device,
         error: err,
         source: 'connect',
+        sessionClosedEmitted: runtime.sessionClosedEmitted,
       });
       detachRuntime();
       entry.detachRuntime = null;
@@ -361,6 +362,7 @@ export class PushSupervisor {
       device,
       error: new Error('ssh_connection_closed'),
       source: 'close',
+      sessionClosedEmitted: runtime.sessionClosedEmitted,
     });
 
     entry.detachRuntime?.();

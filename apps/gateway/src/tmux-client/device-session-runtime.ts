@@ -11,6 +11,7 @@ import { SshExternalTmuxConnection } from './ssh-external-connection';
 export interface DeviceSessionRuntimeConnection {
   connect(): Promise<void>;
   disconnect(): void;
+  isSessionClosedEmitted?(): boolean;
   requestSnapshot(): void;
   sendInput(paneId: string, data: string): void;
   resizePane(paneId: string, cols: number, rows: number): void;
@@ -128,6 +129,11 @@ export class DeviceSessionRuntime {
 
   get isTerminated(): boolean {
     return this.terminated;
+  }
+
+  // 本次连接是否已因 session gone 发出 session_closed（供断开告警抑制双发）。
+  get sessionClosedEmitted(): boolean {
+    return this.connection.isSessionClosedEmitted?.() ?? false;
   }
 
   subscribe(listener: DeviceSessionRuntimeListener): () => void {
