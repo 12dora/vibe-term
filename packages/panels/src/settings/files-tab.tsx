@@ -2,6 +2,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import type {
   CreateFileRootRequest,
   Device,
+  DeviceType,
   FileRootDto,
   UpdateFileRootRequest,
 } from '@tmex/shared';
@@ -11,6 +12,7 @@ import { useTranslation } from 'react-i18next';
 import { toast } from 'sonner';
 
 import {
+  type ApiClient,
   FileApiError,
   createFileRoot,
   deleteFileRoot,
@@ -40,11 +42,49 @@ import {
   DialogTitle,
 } from '@tmex/ui/dialog';
 import { Input } from '@tmex/ui/input';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@tmex/ui/select';
+import {
+  Select,
+  SelectContent,
+  SelectGroup,
+  SelectItem,
+  SelectLabel,
+  SelectTrigger,
+  SelectValue,
+} from '@tmex/ui/select';
 import { Switch } from '@tmex/ui/switch';
 
 interface DevicesResponse {
   devices: Device[];
+}
+
+/** 增改弹窗设备选择器里的一个可选设备。 */
+export interface FileRootDeviceOption {
+  id: string;
+  name: string;
+  type?: DeviceType;
+}
+
+/** 注入的设备分组：组标签 + 组内设备 + 该组 file roots 的落盘 client。 */
+export interface FileRootDeviceGroup {
+  label: string;
+  devices: FileRootDeviceOption[];
+  /** 缺省用当前 runtime 的 apiClient */
+  apiClient?: ApiClient;
+}
+
+export interface FilesSettingsTabProps {
+  /**
+   * 注入设备清单数据源（分组显示）。同时决定 file roots 的读写路径：列表聚合各组
+   * client 的 roots，创建/更新/删除路由到对应组的 client。缺省（不传）取本 gateway
+   * 的 /api/devices 且读写本 gateway。
+   */
+  deviceGroups?: FileRootDeviceGroup[];
+}
+
+/** 聚合列表里的一条 root 及其来源 client（更新/删除沿用来源）。 */
+interface FileRootEntry {
+  root: FileRootDto;
+  client: ApiClient;
 }
 
 function DeviceIcon({ type, className }: { type: 'local' | 'ssh' | null; className?: string }) {
@@ -54,16 +94,32 @@ function DeviceIcon({ type, className }: { type: 'local' | 'ssh' | null; classNa
   return <Monitor className={className} />;
 }
 
-export function FilesSettingsTab() {
+export function FilesSettingsTab({ deviceGroups }: FilesSettingsTabProps = {}) {
   const { t } = useTranslation();
   const { apiClient } = useRuntime();
 
   const [modalOpen, setModalOpen] = useState(false);
-  const [editingRoot, setEditingRoot] = useState<FileRootDto | undefined>(undefined);
+  const [editingEntry, setEditingEntry] = useState<FileRootEntry | undefined>(undefined);
 
   const rootsQuery = useQuery({
     queryKey: ['files', 'roots'],
-    queryFn: () => fetchFileRoots(apiClient),
+    queryFn: async (): Promise<FileRootEntry[]> => {
+      if (!deviceGroups) {
+        const res = await fetchFileRoots(apiClient);
+        return res.roots.map((root) => ({ root, client: apiClient }));
+      }
+      const clients: ApiClient[] = [];
+      for (const group of deviceGroups) {
+        const client = group.apiClient ?? apiClient;
+        if (!clients.includes(client)) {
+          clients.push(client);
+        }
+      }
+      const results = await Promise.all(clients.map((client) => fetchFileRoots(client)));
+      return results.flatMap((res, index) =>
+        res.roots.map((root) => ({ root, client: clients[index] }))
+      );
+    },
   });
 
   const devicesQuery = useQuery({
@@ -76,18 +132,19 @@ export function FilesSettingsTab() {
       return (await res.json()) as DevicesResponse;
     },
     throwOnError: false,
+    enabled: !deviceGroups,
   });
 
-  const roots = rootsQuery.data?.roots ?? [];
+  const entries = rootsQuery.data ?? [];
   const devices = devicesQuery.data?.devices ?? [];
 
   const openAdd = () => {
-    setEditingRoot(undefined);
+    setEditingEntry(undefined);
     setModalOpen(true);
   };
 
-  const openEdit = (root: FileRootDto) => {
-    setEditingRoot(root);
+  const openEdit = (entry: FileRootEntry) => {
+    setEditingEntry(entry);
     setModalOpen(true);
   };
 
@@ -109,14 +166,19 @@ export function FilesSettingsTab() {
             <div className="text-sm text-muted-foreground">{t('common.loading')}</div>
           )}
 
-          {!rootsQuery.isLoading && roots.length === 0 && (
+          {!rootsQuery.isLoading && entries.length === 0 && (
             <div className="text-sm text-muted-foreground" data-testid="settings-files-empty">
               {t('settings.files.empty')}
             </div>
           )}
 
-          {roots.map((root) => (
-            <FileRootRow key={root.id} root={root} onEdit={openEdit} />
+          {entries.map((entry) => (
+            <FileRootRow
+              key={entry.root.id}
+              root={entry.root}
+              client={entry.client}
+              onEdit={() => openEdit(entry)}
+            />
           ))}
         </CardContent>
       </Card>
@@ -124,8 +186,10 @@ export function FilesSettingsTab() {
       <FileRootFormModal
         open={modalOpen}
         onOpenChange={setModalOpen}
-        root={editingRoot}
+        root={editingEntry?.root}
+        editClient={editingEntry?.client}
         devices={devices}
+        deviceGroups={deviceGroups}
       />
     </>
   );
@@ -133,18 +197,19 @@ export function FilesSettingsTab() {
 
 interface FileRootRowProps {
   root: FileRootDto;
-  onEdit: (root: FileRootDto) => void;
+  /** 该 root 的来源 client：更新/删除沿用 */
+  client: ApiClient;
+  onEdit: () => void;
 }
 
-function FileRootRow({ root, onEdit }: FileRootRowProps) {
+function FileRootRow({ root, client, onEdit }: FileRootRowProps) {
   const { t } = useTranslation();
   const queryClient = useQueryClient();
-  const { apiClient } = useRuntime();
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
 
   const toggleMutation = useMutation({
     mutationFn: ({ id, enabled }: { id: string; enabled: boolean }) =>
-      updateFileRoot(id, { enabled } satisfies UpdateFileRootRequest, apiClient),
+      updateFileRoot(id, { enabled } satisfies UpdateFileRootRequest, client),
     onSuccess: async () => {
       await queryClient.invalidateQueries({ queryKey: ['files'] });
     },
@@ -154,7 +219,7 @@ function FileRootRow({ root, onEdit }: FileRootRowProps) {
   });
 
   const deleteMutation = useMutation({
-    mutationFn: (id: string) => deleteFileRoot(id, apiClient),
+    mutationFn: (id: string) => deleteFileRoot(id, client),
     onSuccess: async () => {
       await queryClient.invalidateQueries({ queryKey: ['files'] });
       toast.success(t('common.success'));
@@ -198,7 +263,7 @@ function FileRootRow({ root, onEdit }: FileRootRowProps) {
           size="icon-sm"
           title={t('common.edit')}
           data-testid={`settings-files-root-edit-${root.id}`}
-          onClick={() => onEdit(root)}
+          onClick={onEdit}
         >
           <Pencil className="h-4 w-4" />
         </Button>
@@ -251,14 +316,36 @@ interface FileRootFormModalProps {
   onOpenChange: (open: boolean) => void;
   /** 缺省表示新增模式 */
   root?: FileRootDto;
+  /** 编辑模式下该 root 的来源 client；缺省用 runtime 的 apiClient */
+  editClient?: ApiClient;
   devices: Device[];
+  deviceGroups?: FileRootDeviceGroup[];
 }
 
-function FileRootFormModal({ open, onOpenChange, root, devices }: FileRootFormModalProps) {
+function FileRootFormModal({
+  open,
+  onOpenChange,
+  root,
+  editClient,
+  devices,
+  deviceGroups,
+}: FileRootFormModalProps) {
   const { t } = useTranslation();
   const queryClient = useQueryClient();
   const { apiClient } = useRuntime();
   const isEdit = Boolean(root);
+
+  const allDeviceOptions: FileRootDeviceOption[] = deviceGroups
+    ? deviceGroups.flatMap((group) => group.devices)
+    : devices;
+
+  const resolveCreateClient = (targetDeviceId: string): ApiClient => {
+    if (!deviceGroups) {
+      return apiClient;
+    }
+    const group = deviceGroups.find((g) => g.devices.some((d) => d.id === targetDeviceId));
+    return group?.apiClient ?? apiClient;
+  };
 
   const [deviceId, setDeviceId] = useState('');
   const [path, setPath] = useState('');
@@ -276,7 +363,7 @@ function FileRootFormModal({ open, onOpenChange, root, devices }: FileRootFormMo
   const createMutation = useMutation({
     mutationFn: () => {
       const payload: CreateFileRootRequest = { deviceId, path: path.trim(), enabled };
-      return createFileRoot(payload, apiClient);
+      return createFileRoot(payload, resolveCreateClient(deviceId));
     },
     onSuccess: async () => {
       await queryClient.invalidateQueries({ queryKey: ['files'] });
@@ -295,7 +382,7 @@ function FileRootFormModal({ open, onOpenChange, root, devices }: FileRootFormMo
         throw new Error(t('settings.files.updateFailed'));
       }
       const payload: UpdateFileRootRequest = { path: path.trim(), enabled };
-      return updateFileRoot(root.id, payload, apiClient);
+      return updateFileRoot(root.id, payload, editClient ?? apiClient);
     },
     onSuccess: async () => {
       await queryClient.invalidateQueries({ queryKey: ['files'] });
@@ -324,7 +411,14 @@ function FileRootFormModal({ open, onOpenChange, root, devices }: FileRootFormMo
     }
   };
 
-  const selectedDevice = devices.find((device) => device.id === deviceId);
+  const selectedDevice = allDeviceOptions.find((device) => device.id === deviceId);
+
+  const renderDeviceItem = (device: FileRootDeviceOption) => (
+    <SelectItem key={device.id} value={device.id}>
+      <DeviceIcon type={device.type ?? null} className="h-4 w-4 shrink-0" />
+      {device.name}
+    </SelectItem>
+  );
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -361,12 +455,15 @@ function FileRootFormModal({ open, onOpenChange, root, devices }: FileRootFormMo
                   id="files-form-device"
                   data-testid="settings-files-device-select"
                   className={FIELD_CLASS}
-                  disabled={devices.length === 0}
+                  disabled={allDeviceOptions.length === 0}
                 >
                   <SelectValue>
                     {selectedDevice ? (
                       <span className="flex items-center gap-1.5">
-                        <DeviceIcon type={selectedDevice.type} className="h-4 w-4 shrink-0" />
+                        <DeviceIcon
+                          type={selectedDevice.type ?? null}
+                          className="h-4 w-4 shrink-0"
+                        />
                         {selectedDevice.name}
                       </span>
                     ) : (
@@ -377,16 +474,18 @@ function FileRootFormModal({ open, onOpenChange, root, devices }: FileRootFormMo
                   </SelectValue>
                 </SelectTrigger>
                 <SelectContent>
-                  {devices.map((device) => (
-                    <SelectItem key={device.id} value={device.id}>
-                      <DeviceIcon type={device.type} className="h-4 w-4 shrink-0" />
-                      {device.name}
-                    </SelectItem>
-                  ))}
+                  {deviceGroups
+                    ? deviceGroups.map((group, index) => (
+                        <SelectGroup key={`${group.label}-${index}`}>
+                          {group.label ? <SelectLabel>{group.label}</SelectLabel> : null}
+                          {group.devices.map(renderDeviceItem)}
+                        </SelectGroup>
+                      ))
+                    : devices.map(renderDeviceItem)}
                 </SelectContent>
               </Select>
             )}
-            {!isEdit && devices.length === 0 && (
+            {!isEdit && allDeviceOptions.length === 0 && (
               <p className="text-xs text-destructive">{t('settings.files.noDevices')}</p>
             )}
           </div>

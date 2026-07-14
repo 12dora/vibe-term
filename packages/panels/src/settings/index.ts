@@ -1,7 +1,12 @@
 // 设置面板全量出口：消费方（fe 设置页/设备页）按 featureset 决定渲染哪些 tab。
 
 export { DeviceEntryCard } from './device-entry-card';
-export { FilesSettingsTab } from './files-tab';
+export {
+  FilesSettingsTab,
+  type FileRootDeviceGroup,
+  type FileRootDeviceOption,
+  type FilesSettingsTabProps,
+} from './files-tab';
 export { LlmProvidersTab } from './llm-providers-tab';
 export { SearchTab } from './search-tab';
 export { TelegramBotsTab } from './telegram-bots-tab';
