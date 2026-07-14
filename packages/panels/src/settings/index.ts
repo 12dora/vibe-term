@@ -11,3 +11,7 @@ export { WebhooksTab } from './webhooks-tab';
 export { WeixinAccountsTab } from './weixin-accounts-tab';
 export { ShortcutButtonRow } from './ShortcutButtonRow';
 export { TerminalSettingsSheet } from './terminal-settings-sheet';
+export {
+  TerminalShortcutsEditor,
+  type TerminalShortcutsEditorProps,
+} from './TerminalShortcutsEditor';

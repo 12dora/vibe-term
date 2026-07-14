@@ -28,6 +28,8 @@ import {
   DEFAULT_TERMINAL_SHORTCUTS,
   type TerminalShortcutAction,
   type TerminalShortcutItem,
+  type TerminalShortcutSettings,
+  type UpdateTerminalShortcutSettingsRequest,
 } from '@tmex/shared';
 import {
   escapeForDisplay,
@@ -183,17 +185,37 @@ function SortableShortcutRow({
   );
 }
 
+export interface TerminalShortcutsEditorProps {
+  /** 注入自定义读取；缺省读当前 runtime 指向的 gateway。 */
+  loadShortcuts?: () => Promise<TerminalShortcutSettings>;
+  /**
+   * 注入自定义保存；可返回保存后的权威值（缺省或返回空时以提交的草稿为基线）。
+   * 缺省写当前 runtime 指向的 gateway。
+   */
+  saveShortcuts?: (
+    updates: UpdateTerminalShortcutSettingsRequest
+  ) => Promise<TerminalShortcutSettings | undefined> | Promise<void>;
+  /** 缓存 key；注入自定义存取时建议同时传独立 key，避免与缺省 gateway 缓存互串。 */
+  queryKey?: readonly unknown[];
+}
+
 /**
  * 终端快捷键编辑器：草稿态编辑 + 拖拽排序 + 三入口录入 + 图标开关 + 实时预览，
  * 显式「保存」写入服务器（保存后经 react-query 失效让终端栏即时刷新）。
+ * 存取可经 props 注入（嵌入自带存储的宿主时复用），缺省走本 gateway API。
  */
-export function TerminalShortcutsEditor() {
+export function TerminalShortcutsEditor({
+  loadShortcuts,
+  saveShortcuts,
+  queryKey,
+}: TerminalShortcutsEditorProps = {}) {
   const { t } = useTranslation();
   const queryClient = useQueryClient();
   const { apiClient } = useRuntime();
+  const shortcutsQueryKey = queryKey ?? terminalShortcutsQueryKey;
   const { data, isLoading, isError, refetch } = useQuery({
-    queryKey: terminalShortcutsQueryKey,
-    queryFn: () => fetchTerminalShortcuts(apiClient),
+    queryKey: shortcutsQueryKey,
+    queryFn: () => (loadShortcuts ? loadShortcuts() : fetchTerminalShortcuts(apiClient)),
   });
 
   const [items, setItems] = useState<TerminalShortcutItem[]>([]);
@@ -242,9 +264,16 @@ export function TerminalShortcutsEditor() {
   );
 
   const mutation = useMutation({
-    mutationFn: () => updateTerminalShortcuts({ items, useIcons }, apiClient),
+    mutationFn: async (): Promise<TerminalShortcutSettings> => {
+      const updates: UpdateTerminalShortcutSettingsRequest = { items, useIcons };
+      if (saveShortcuts) {
+        const saved = (await saveShortcuts(updates)) as TerminalShortcutSettings | undefined;
+        return saved ?? { ...updates, updatedAt: new Date().toISOString() };
+      }
+      return updateTerminalShortcuts(updates, apiClient);
+    },
     onSuccess: (saved) => {
-      queryClient.setQueryData(terminalShortcutsQueryKey, saved);
+      queryClient.setQueryData(shortcutsQueryKey, saved);
       setItems(saved.items);
       setUseIcons(saved.useIcons);
       setBaseline({ items: saved.items, useIcons: saved.useIcons });
