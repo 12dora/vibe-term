@@ -172,7 +172,12 @@ interface TreeContext {
   transferMaxBytes: number;
 }
 
-export function FilesTab() {
+export interface FilesTabProps {
+  /** 不渲染头部行（标题 + 刷新按钮）；宿主连续渲染多个实例时避免重复头部。 */
+  hideHeader?: boolean;
+}
+
+export function FilesTab({ hideHeader }: FilesTabProps = {}) {
   const { t } = useTranslation();
   const queryClient = useQueryClient();
   const { apiClient } = useRuntime();
@@ -231,20 +236,22 @@ export function FilesTab() {
 
   return (
     <SidebarGroup className="flex min-h-0 flex-1 flex-col pt-0" data-testid="files-tab">
-      <div className="flex items-center justify-between gap-2 px-2 pb-1.5">
-        <span className="truncate text-xs font-medium text-muted-foreground">
-          {t('files.title')}
-        </span>
-        <Button
-          variant="ghost"
-          size="icon-xs"
-          onClick={refresh}
-          title={t('files.refresh')}
-          data-testid="files-refresh"
-        >
-          <RotateCw className={cn('h-3.5 w-3.5', isFetching > 0 && 'animate-spin')} />
-        </Button>
-      </div>
+      {!hideHeader && (
+        <div className="flex items-center justify-between gap-2 px-2 pb-1.5">
+          <span className="truncate text-xs font-medium text-muted-foreground">
+            {t('files.title')}
+          </span>
+          <Button
+            variant="ghost"
+            size="icon-xs"
+            onClick={refresh}
+            title={t('files.refresh')}
+            data-testid="files-refresh"
+          >
+            <RotateCw className={cn('h-3.5 w-3.5', isFetching > 0 && 'animate-spin')} />
+          </Button>
+        </div>
+      )}
       <ScrollArea className="min-h-0 flex-1">
         <div
           // 兜底：阻止把文件拖到非文件夹区域时浏览器默认打开/导航；真正的上传由 DirNode 的 onDrop 处理
