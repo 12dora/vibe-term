@@ -2,7 +2,11 @@ import { agentSupervisor } from './agent/supervisor';
 import { handleApiRequest } from './api';
 import { config } from './config';
 import { runtimeController } from './control/runtime';
-import { ensureSiteSettingsInitialized, getSiteSettings } from './db';
+import {
+  ensureDefaultLocalDeviceSeeded,
+  ensureSiteSettingsInitialized,
+  getSiteSettings,
+} from './db';
 import { ensureAgentSettingsInitialized } from './db/agent';
 import { runMigrations } from './db/migrate';
 import { eventNotifier } from './events';
@@ -47,6 +51,8 @@ export async function createGatewayRuntime(
   }
 
   if (initializeSiteSettings) {
+    // 必须先于 ensureSiteSettingsInitialized：全新库判定依赖 site_settings 尚无行
+    ensureDefaultLocalDeviceSeeded();
     ensureSiteSettingsInitialized();
     ensureAgentSettingsInitialized();
   }

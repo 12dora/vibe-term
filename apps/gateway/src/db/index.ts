@@ -29,6 +29,7 @@ import {
   deviceRuntimeStatus,
   deviceTreeOrder,
   devices,
+  gatewayKv,
   siteSettings,
   telegramBotChats,
   telegramBots,
@@ -204,6 +205,60 @@ export function ensureSiteSettingsInitialized(): void {
     })
     .onConflictDoNothing({ target: siteSettings.id })
     .run();
+}
+
+export function getGatewayKv(key: string): string | null {
+  const orm = getOrmDb();
+  const row = orm.select().from(gatewayKv).where(eq(gatewayKv.key, key)).get();
+  return row?.value ?? null;
+}
+
+export function setGatewayKv(key: string, value: string): void {
+  const orm = getOrmDb();
+  const now = new Date().toISOString();
+  orm
+    .insert(gatewayKv)
+    .values({ key, value, updatedAt: now })
+    .onConflictDoUpdate({ target: gatewayKv.key, set: { value, updatedAt: now } })
+    .run();
+}
+
+export const DEFAULT_LOCAL_DEVICE_SEED_KEY = 'default_local_device_seeded';
+
+/**
+ * 首次建库时自动创建一台本地设备（name/type 均为 local，其余字段与手动新建 local
+ * 设备一致），并写入一次性标记保证只 seed 一次——用户删光设备后重启不复活。
+ *
+ * 全新库的判定：标记缺失且 site_settings 尚无行且 devices 为空。老库每次启动都会
+ * 写入 site_settings 单例行，因此本函数必须在 ensureSiteSettingsInitialized 之前
+ * 调用，否则新库会被误判为老库；存量老库（有 site_settings 行或已有设备）只补写
+ * 标记、不追加 seed。
+ */
+export function ensureDefaultLocalDeviceSeeded(): void {
+  if (getGatewayKv(DEFAULT_LOCAL_DEVICE_SEED_KEY) !== null) {
+    return;
+  }
+
+  const orm = getOrmDb();
+  const siteSettingsRow = orm.select({ id: siteSettings.id }).from(siteSettings).get();
+  const deviceCountRow = orm.select({ total: count() }).from(devices).get();
+  const isFreshDatabase = !siteSettingsRow && Number(deviceCountRow?.total ?? 0) === 0;
+
+  if (isFreshDatabase) {
+    const now = new Date().toISOString();
+    createDevice({
+      id: crypto.randomUUID(),
+      name: 'local',
+      type: 'local',
+      session: 'tmex',
+      authMode: 'auto',
+      sortOrder: 0,
+      createdAt: now,
+      updatedAt: now,
+    });
+  }
+
+  setGatewayKv(DEFAULT_LOCAL_DEVICE_SEED_KEY, '1');
 }
 
 export function createDevice(device: Device): void {

@@ -51,6 +51,13 @@ export const siteSettings = sqliteTable(
   ]
 );
 
+// gateway 级一次性标记 / 杂项状态（如首次建库 seed 标记），普通 kv 存储。
+export const gatewayKv = sqliteTable('gateway_kv', {
+  key: text('key').primaryKey(),
+  value: text('value').notNull(),
+  updatedAt: text('updated_at').notNull(),
+});
+
 // 终端快捷键栏配置（服务器单例，多端共享）。items 为有序快捷键列表，
 // useIcons 控制是否用苹果风格符号替代 send 类按键的文字。
 export const terminalShortcutSettings = sqliteTable(
