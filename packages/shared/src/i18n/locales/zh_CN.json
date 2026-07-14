@@ -793,6 +793,7 @@
       "closePaneConfirmTitle": "关闭此面板？",
       "closeConfirmDesc": "\"{{name}}\" 中运行的进程将被终止，此操作无法撤销。",
       "menu": "窗口操作",
+      "paneMenu": "面板操作",
       "dragHandle": "拖动以调整窗口顺序",
       "dragHandlePane": "拖动以调整 pane 顺序",
       "rename": "重命名窗口",

@@ -760,6 +760,7 @@ export type TranslationKey =
   | 'window.closePaneConfirmTitle'
   | 'window.closeConfirmDesc'
   | 'window.menu'
+  | 'window.paneMenu'
   | 'window.dragHandle'
   | 'window.dragHandlePane'
   | 'window.rename'

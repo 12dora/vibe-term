@@ -644,7 +644,7 @@ export function SideBarDeviceList({
 
       {agentAdapter && <agentAdapter.Dialogs />}
 
-      {watchTarget && (
+      {runtime.features.watchUi && watchTarget && (
         <WatchDialog
           open
           onOpenChange={(open) => !open && setWatchTarget(null)}
@@ -880,7 +880,7 @@ function WindowItem({
 }: WindowItemProps) {
   const { t } = useTranslation();
   const { isMobile } = useSidebar();
-  const { stores } = useRuntime();
+  const { stores, features } = useRuntime();
   const hasMultiplePanes = window.panes.length > 1;
   const titleParts = buildWindowTitleParts(window);
   const activePane = window.panes.find((p) => p.active) ?? window.panes[0];
@@ -1076,17 +1076,19 @@ function WindowItem({
                     <SquareSplitVertical className={cn('h-4 w-4', isMobile && 'h-5 w-5')} />
                     {t('window.splitDown')}
                   </DropdownMenuItem>
-                  <DropdownMenuItem
-                    data-testid={`window-menu-watch-${window.id}`}
-                    className={cn(
-                      '[@media(any-pointer:coarse)]:py-2.5 [@media(any-pointer:coarse)]:px-2',
-                      isMobile && 'py-3 px-2.5 text-base gap-2.5'
-                    )}
-                    onClick={() => onWatchPane(deviceId, activePane.id)}
-                  >
-                    <Radar className={cn('h-4 w-4', isMobile && 'h-5 w-5')} />
-                    {t('watch.openMonitor')}
-                  </DropdownMenuItem>
+                  {features.watchUi && (
+                    <DropdownMenuItem
+                      data-testid={`window-menu-watch-${window.id}`}
+                      className={cn(
+                        '[@media(any-pointer:coarse)]:py-2.5 [@media(any-pointer:coarse)]:px-2',
+                        isMobile && 'py-3 px-2.5 text-base gap-2.5'
+                      )}
+                      onClick={() => onWatchPane(deviceId, activePane.id)}
+                    >
+                      <Radar className={cn('h-4 w-4', isMobile && 'h-5 w-5')} />
+                      {t('watch.openMonitor')}
+                    </DropdownMenuItem>
+                  )}
                 </>
               )}
               <DropdownMenuItem
@@ -1175,7 +1177,7 @@ function PaneRow({
   nav: DeviceTreeNavigation;
 }) {
   const { t } = useTranslation();
-  const { stores } = useRuntime();
+  const { stores, features } = useRuntime();
   const {
     attributes,
     listeners,
@@ -1242,7 +1244,7 @@ function PaneRow({
         <DropdownMenu>
           <DropdownMenuTrigger
             data-testid={`pane-menu-${pane.id}`}
-            aria-label={t('watch.openMonitor')}
+            aria-label={t('window.paneMenu')}
             className={cn(
               'absolute top-1/2 -translate-y-1/2 flex items-center justify-center rounded text-muted-foreground hover:bg-background hover:text-foreground transition-opacity data-popup-open:opacity-100',
               isMobile
@@ -1324,17 +1326,19 @@ function PaneRow({
               <SquareSplitVertical className={cn('h-4 w-4', isMobile && 'h-5 w-5')} />
               {t('window.splitDown')}
             </DropdownMenuItem>
-            <DropdownMenuItem
-              data-testid={`pane-watch-${pane.id}`}
-              className={cn(
-                '[@media(any-pointer:coarse)]:py-2.5 [@media(any-pointer:coarse)]:px-2',
-                isMobile && 'py-3 px-2.5 text-base gap-2.5'
-              )}
-              onClick={() => onWatchPane(deviceId, pane.id)}
-            >
-              <Radar className={cn('h-4 w-4', isMobile && 'h-5 w-5')} />
-              {t('watch.openMonitor')}
-            </DropdownMenuItem>
+            {features.watchUi && (
+              <DropdownMenuItem
+                data-testid={`pane-watch-${pane.id}`}
+                className={cn(
+                  '[@media(any-pointer:coarse)]:py-2.5 [@media(any-pointer:coarse)]:px-2',
+                  isMobile && 'py-3 px-2.5 text-base gap-2.5'
+                )}
+                onClick={() => onWatchPane(deviceId, pane.id)}
+              >
+                <Radar className={cn('h-4 w-4', isMobile && 'h-5 w-5')} />
+                {t('watch.openMonitor')}
+              </DropdownMenuItem>
+            )}
             <DropdownMenuItem
               variant="destructive"
               data-testid={`pane-menu-close-${pane.id}`}

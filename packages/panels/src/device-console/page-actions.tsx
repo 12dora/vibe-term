@@ -92,11 +92,12 @@ export function DeviceConsoleActions({ deviceId, windowId, paneId }: DeviceConso
   const [showTerminalSettings, setShowTerminalSettings] = useState(false);
 
   const canInteract = Boolean(resolvedPaneId && deviceConnected);
+  const watchUi = runtime.features.watchUi;
 
   const watchRulesQuery = useQuery({
     queryKey: watchRulesQueryKey(deviceId ?? '', resolvedPaneId ?? ''),
     queryFn: () => fetchWatchRules(deviceId ?? '', resolvedPaneId ?? '', runtime.apiClient),
-    enabled: Boolean(deviceId && resolvedPaneId),
+    enabled: Boolean(watchUi && deviceId && resolvedPaneId),
     throwOnError: false,
   });
   const hasEnabledWatchRule = (watchRulesQuery.data ?? []).some((rule) => rule.enabled);
@@ -189,24 +190,26 @@ export function DeviceConsoleActions({ deviceId, windowId, paneId }: DeviceConso
       >
         <ArrowDownToLine className="h-4 w-4" />
       </Button>
-      <Button
-        variant="ghost"
-        size="icon-sm"
-        className="relative"
-        onClick={() => setShowWatchDialog(true)}
-        disabled={!resolvedPaneId}
-        data-testid="watch-open-button"
-        aria-label={t('watch.title')}
-        title={t('watch.title')}
-      >
-        <Radar className="h-4 w-4" />
-        {hasEnabledWatchRule && (
-          <span
-            className="absolute right-1 top-1 h-1.5 w-1.5 rounded-full bg-primary"
-            data-testid="watch-active-indicator"
-          />
-        )}
-      </Button>
+      {watchUi && (
+        <Button
+          variant="ghost"
+          size="icon-sm"
+          className="relative"
+          onClick={() => setShowWatchDialog(true)}
+          disabled={!resolvedPaneId}
+          data-testid="watch-open-button"
+          aria-label={t('watch.title')}
+          title={t('watch.title')}
+        >
+          <Radar className="h-4 w-4" />
+          {hasEnabledWatchRule && (
+            <span
+              className="absolute right-1 top-1 h-1.5 w-1.5 rounded-full bg-primary"
+              data-testid="watch-active-indicator"
+            />
+          )}
+        </Button>
+      )}
       <Button
         variant="ghost"
         size="icon-sm"
@@ -220,7 +223,7 @@ export function DeviceConsoleActions({ deviceId, windowId, paneId }: DeviceConso
 
       <TerminalSettingsSheet open={showTerminalSettings} onOpenChange={setShowTerminalSettings} />
 
-      {deviceId && resolvedPaneId && (
+      {watchUi && deviceId && resolvedPaneId && (
         <WatchDialog
           open={showWatchDialog}
           onOpenChange={setShowWatchDialog}

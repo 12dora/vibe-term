@@ -793,6 +793,7 @@
       "closePaneConfirmTitle": "このペインを閉じますか？",
       "closeConfirmDesc": "\"{{name}}\" で実行中のプロセスは終了されます。この操作は取り消せません。",
       "menu": "ウィンドウ操作",
+      "paneMenu": "ペイン操作",
       "dragHandle": "ドラッグしてウィンドウを並べ替え",
       "dragHandlePane": "ドラッグしてペインを並べ替え",
       "rename": "ウィンドウ名を変更",

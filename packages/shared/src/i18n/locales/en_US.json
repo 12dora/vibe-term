@@ -793,6 +793,7 @@
       "closePaneConfirmTitle": "Close this pane?",
       "closeConfirmDesc": "Processes running in \"{{name}}\" will be terminated. This action cannot be undone.",
       "menu": "Window actions",
+      "paneMenu": "Pane actions",
       "dragHandle": "Drag to reorder window",
       "dragHandlePane": "Drag to reorder pane",
       "rename": "Rename window",
