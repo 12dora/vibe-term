@@ -79,6 +79,11 @@ export interface FilesSettingsTabProps {
    * 的 /api/devices 且读写本 gateway。
    */
   deviceGroups?: FileRootDeviceGroup[];
+  /**
+   * roots 增删改成功后的通知。组件内部只失效自身 QueryClient 的 ['files'] 缓存，
+   * 宿主若在其他缓存域（另一个 QueryClient）也展示 roots，可借此扇出失效。
+   */
+  onRootsMutated?: () => void;
 }
 
 /** 聚合列表里的一条 root 及其来源 client（更新/删除沿用来源）。 */
@@ -94,7 +99,7 @@ function DeviceIcon({ type, className }: { type: 'local' | 'ssh' | null; classNa
   return <Monitor className={className} />;
 }
 
-export function FilesSettingsTab({ deviceGroups }: FilesSettingsTabProps = {}) {
+export function FilesSettingsTab({ deviceGroups, onRootsMutated }: FilesSettingsTabProps = {}) {
   const { t } = useTranslation();
   const { apiClient } = useRuntime();
 
@@ -178,6 +183,7 @@ export function FilesSettingsTab({ deviceGroups }: FilesSettingsTabProps = {}) {
               root={entry.root}
               client={entry.client}
               onEdit={() => openEdit(entry)}
+              onRootsMutated={onRootsMutated}
             />
           ))}
         </CardContent>
@@ -190,6 +196,7 @@ export function FilesSettingsTab({ deviceGroups }: FilesSettingsTabProps = {}) {
         editClient={editingEntry?.client}
         devices={devices}
         deviceGroups={deviceGroups}
+        onRootsMutated={onRootsMutated}
       />
     </>
   );
@@ -200,9 +207,10 @@ interface FileRootRowProps {
   /** 该 root 的来源 client：更新/删除沿用 */
   client: ApiClient;
   onEdit: () => void;
+  onRootsMutated?: () => void;
 }
 
-function FileRootRow({ root, client, onEdit }: FileRootRowProps) {
+function FileRootRow({ root, client, onEdit, onRootsMutated }: FileRootRowProps) {
   const { t } = useTranslation();
   const queryClient = useQueryClient();
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
@@ -212,6 +220,7 @@ function FileRootRow({ root, client, onEdit }: FileRootRowProps) {
       updateFileRoot(id, { enabled } satisfies UpdateFileRootRequest, client),
     onSuccess: async () => {
       await queryClient.invalidateQueries({ queryKey: ['files'] });
+      onRootsMutated?.();
     },
     onError: () => {
       toast.error(t('settings.files.toggleFailed'));
@@ -222,6 +231,7 @@ function FileRootRow({ root, client, onEdit }: FileRootRowProps) {
     mutationFn: (id: string) => deleteFileRoot(id, client),
     onSuccess: async () => {
       await queryClient.invalidateQueries({ queryKey: ['files'] });
+      onRootsMutated?.();
       toast.success(t('common.success'));
     },
     onError: (err) => {
@@ -320,6 +330,7 @@ interface FileRootFormModalProps {
   editClient?: ApiClient;
   devices: Device[];
   deviceGroups?: FileRootDeviceGroup[];
+  onRootsMutated?: () => void;
 }
 
 function FileRootFormModal({
@@ -329,6 +340,7 @@ function FileRootFormModal({
   editClient,
   devices,
   deviceGroups,
+  onRootsMutated,
 }: FileRootFormModalProps) {
   const { t } = useTranslation();
   const queryClient = useQueryClient();
@@ -367,6 +379,7 @@ function FileRootFormModal({
     },
     onSuccess: async () => {
       await queryClient.invalidateQueries({ queryKey: ['files'] });
+      onRootsMutated?.();
       toast.success(t('common.success'));
       onOpenChange(false);
     },
@@ -386,6 +399,7 @@ function FileRootFormModal({
     },
     onSuccess: async () => {
       await queryClient.invalidateQueries({ queryKey: ['files'] });
+      onRootsMutated?.();
       toast.success(t('common.success'));
       onOpenChange(false);
     },
