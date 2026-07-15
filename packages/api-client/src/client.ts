@@ -17,8 +17,15 @@ export const defaultApiClient = new ApiClient();
 
 export async function parseApiError(res: Response, fallback: string): Promise<string> {
   try {
-    const payload = (await res.json()) as { error?: string };
-    return payload.error ?? fallback;
+    const payload = (await res.json()) as { error?: unknown };
+    if (typeof payload.error === 'string') return payload.error;
+    // 兼容 `{error: {message}}` 形态的信封（如反向代理/网关层错误），
+    // 避免把对象拼进 Error message 变成 "[object Object]"。
+    if (payload.error && typeof payload.error === 'object') {
+      const message = (payload.error as { message?: unknown }).message;
+      if (typeof message === 'string') return message;
+    }
+    return fallback;
   } catch {
     return fallback;
   }

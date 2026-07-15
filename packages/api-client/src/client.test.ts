@@ -29,6 +29,19 @@ describe('parseApiError', () => {
     const res = new Response(JSON.stringify({ ok: false }), { status: 500 });
     expect(await parseApiError(res, 'fallback')).toBe('fallback');
   });
+
+  test('error 为对象时取其 message，不产出 [object Object]', async () => {
+    const res = new Response(
+      JSON.stringify({ error: { code: 'instance_offline', message: 'instance offline' } }),
+      { status: 503 }
+    );
+    expect(await parseApiError(res, 'fallback')).toBe('instance offline');
+  });
+
+  test('error 为对象但无 message 字段回退 fallback', async () => {
+    const res = new Response(JSON.stringify({ error: { code: 'x' } }), { status: 500 });
+    expect(await parseApiError(res, 'fallback')).toBe('fallback');
+  });
 });
 
 describe('FeatureSet', () => {
