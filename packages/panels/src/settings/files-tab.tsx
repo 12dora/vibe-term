@@ -99,7 +99,14 @@ function DeviceIcon({ type, className }: { type: 'local' | 'ssh' | null; classNa
   return <Monitor className={className} />;
 }
 
-export function FilesSettingsTab({ deviceGroups, onRootsMutated }: FilesSettingsTabProps = {}) {
+// 外壳门：runtime.features.filesUi 关断时不渲染文件根设置卡，也不发起 files 查询（内层 hooks 不执行）。
+export function FilesSettingsTab(props: FilesSettingsTabProps = {}) {
+  const { features } = useRuntime();
+  if (!features.filesUi) return null;
+  return <FilesSettingsTabInner {...props} />;
+}
+
+function FilesSettingsTabInner({ deviceGroups, onRootsMutated }: FilesSettingsTabProps) {
   const { t } = useTranslation();
   const { apiClient } = useRuntime();
 

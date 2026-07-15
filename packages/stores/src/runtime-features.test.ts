@@ -70,6 +70,7 @@ describe('runtime features resolution', () => {
     expect(core.features).toEqual({
       agentUi: true,
       watchUi: true,
+      filesUi: true,
       hostManagedNotifications: false,
     });
   });
@@ -78,6 +79,7 @@ describe('runtime features resolution', () => {
     const core = resolveRuntimeCore({ features: {} });
     expect(core.features.agentUi).toBe(true);
     expect(core.features.watchUi).toBe(true);
+    expect(core.features.filesUi).toBe(true);
   });
 
   test('watchUi can be switched off independently of agentUi', () => {
@@ -90,6 +92,13 @@ describe('runtime features resolution', () => {
   test('agentUi off does not affect watchUi default', () => {
     const core = resolveRuntimeCore({ features: { agentUi: false } });
     expect(core.features.agentUi).toBe(false);
+    expect(core.features.watchUi).toBe(true);
+  });
+
+  test('filesUi can be switched off independently', () => {
+    const core = resolveRuntimeCore({ features: { filesUi: false } });
+    expect(core.features.filesUi).toBe(false);
+    expect(core.features.agentUi).toBe(true);
     expect(core.features.watchUi).toBe(true);
   });
 });

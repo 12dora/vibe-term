@@ -177,7 +177,14 @@ export interface FilesTabProps {
   hideHeader?: boolean;
 }
 
-export function FilesTab({ hideHeader }: FilesTabProps = {}) {
+// 外壳门：runtime.features.filesUi 关断时不渲染文件树，也不发起 files 查询（内层 hooks 不执行）。
+export function FilesTab(props: FilesTabProps = {}) {
+  const { features } = useRuntime();
+  if (!features.filesUi) return null;
+  return <FilesTabInner {...props} />;
+}
+
+function FilesTabInner({ hideHeader }: FilesTabProps) {
   const { t } = useTranslation();
   const queryClient = useQueryClient();
   const { apiClient } = useRuntime();

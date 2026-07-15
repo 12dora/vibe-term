@@ -82,7 +82,12 @@ export interface AppRuntimeOptions {
   /** 宿主共享的 UI 偏好 store（多 runtime 并存时传同一实例）；缺省按 storagePrefix 新建 */
   uiStore?: UIStore;
   /** UI 能力开关；缺省全开（单实例宿主零变化） */
-  features?: { agentUi?: boolean; watchUi?: boolean; hostManagedNotifications?: boolean };
+  features?: {
+    agentUi?: boolean;
+    watchUi?: boolean;
+    filesUi?: boolean;
+    hostManagedNotifications?: boolean;
+  };
 }
 
 /** 已解析的 UI 能力开关 */
@@ -90,6 +95,8 @@ export interface RuntimeFeatures {
   agentUi: boolean;
   /** 终端监控（watch）UI：关断时不渲染 watch 入口与对话框，也不发起 watch 查询 */
   watchUi: boolean;
+  /** 文件（files）UI：关断时不渲染文件面板与文件设置卡，也不发起 files 查询；markdown 预览不改写本地图片 src */
+  filesUi: boolean;
   /** 宿主接管通知呈现：终端 notification 不再由包内弹 toast（bell 声与高亮不受影响） */
   hostManagedNotifications: boolean;
 }
@@ -184,6 +191,7 @@ export function resolveRuntimeCore(options: AppRuntimeOptions = {}): RuntimeCore
     features: {
       agentUi: options.features?.agentUi ?? true,
       watchUi: options.features?.watchUi ?? true,
+      filesUi: options.features?.filesUi ?? true,
       hostManagedNotifications: options.features?.hostManagedNotifications ?? false,
     },
   };
