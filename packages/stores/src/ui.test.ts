@@ -29,7 +29,8 @@ class MemoryStorage {
   }
 }
 
-const storage = new MemoryStorage();
+const storage =
+  (globalThis.localStorage as unknown as MemoryStorage | undefined) ?? new MemoryStorage();
 // @ts-ignore
 globalThis.localStorage = storage;
 if (typeof globalThis.window === 'undefined') {

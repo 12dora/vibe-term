@@ -315,7 +315,7 @@ describe('useSiteStore capabilities', () => {
         );
       }
       return new Response('{}', { status: 404 });
-    }) as typeof fetch;
+    }) as unknown as typeof fetch;
     try {
       await useSiteStore.getState().loadCapabilities();
       const caps = useSiteStore.getState().capabilities;
@@ -329,7 +329,9 @@ describe('useSiteStore capabilities', () => {
 
   test('loadCapabilities 请求失败时静默保持空集（不抛）', async () => {
     const originalFetch = globalThis.fetch;
-    globalThis.fetch = mock(async () => new Response('nope', { status: 500 })) as typeof fetch;
+    globalThis.fetch = mock(
+      async () => new Response('nope', { status: 500 })
+    ) as unknown as typeof fetch;
     try {
       useSiteStore.setState({ capabilities: FeatureSet.empty() });
       await useSiteStore.getState().loadCapabilities();
