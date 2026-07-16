@@ -5,6 +5,9 @@
   "scripts": {
     "dev": "./scripts/run-with-ssh-agent.sh --watch src/index.ts",
     "build": "bun scripts/build.ts",
+    "build:managed": "bun scripts/build-managed.ts",
+    "scan:managed": "bun scripts/scan-managed-artifact.ts",
+    "smoke:managed": "bun scripts/run-managed-smoke.ts",
     "start": "./scripts/run-with-ssh-agent.sh dist/index.js",
     "test": "bun test",
     "test:ssh-agent-local": "bun test ./src/tmux/ssh-agent-local.integration.ts",

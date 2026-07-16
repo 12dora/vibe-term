@@ -1,12 +1,30 @@
 import type { StartUpgradeRequest } from '@tmex/shared';
 import { t } from '../i18n';
-import { checkForUpdate, getSystemInfo, upgradeController } from '../system';
+import { MANAGED_EXTERNALLY, getSystemInfo, isManagedExternally } from '../system/info-public';
+
+// 构建期 define：managed compile 为 true，使自更新模块落入死分支并被剔除。
+declare const TMEX_MANAGED_BUILD: boolean | undefined;
+
+function isManagedBuild(): boolean {
+  return typeof TMEX_MANAGED_BUILD !== 'undefined' && TMEX_MANAGED_BUILD === true;
+}
 
 function json(data: unknown, status = 200): Response {
   return new Response(JSON.stringify(data), {
     status,
     headers: { 'Content-Type': 'application/json' },
   });
+}
+
+function managedExternallyResponse(status = 403): Response {
+  return json(
+    {
+      error: MANAGED_EXTERNALLY,
+      managed: true,
+      canSelfUpdate: false,
+    },
+    status
+  );
 }
 
 export function handleSystemApiRequest(
@@ -17,30 +35,42 @@ export function handleSystemApiRequest(
     return json(getSystemInfo());
   }
 
+  const managed = isManagedBuild() || isManagedExternally();
+
   if (path === '/api/system/update-check' && req.method === 'GET') {
-    return handleUpdateCheck();
+    if (managed) return managedExternallyResponse();
+    return handleUpdateCheckOpen();
   }
 
   if (path === '/api/system/upgrade' && req.method === 'GET') {
-    return json(upgradeController.status());
+    if (managed) return managedExternallyResponse();
+    return handleUpgradeStatusOpen();
   }
 
   if (path === '/api/system/upgrade' && req.method === 'POST') {
-    return handleStartUpgrade(req);
+    if (managed) return managedExternallyResponse();
+    return handleStartUpgradeOpen(req);
   }
 
   return undefined;
 }
 
-async function handleUpdateCheck(): Promise<Response> {
+async function handleUpdateCheckOpen(): Promise<Response> {
+  // 仅开源路径：动态加载，managed build 的死分支不编入 update-check。
   try {
+    const { checkForUpdate } = await import('../system/update-check');
     return json(await checkForUpdate());
   } catch {
     return json({ error: t('apiError.updateCheckFailed') }, 502);
   }
 }
 
-async function handleStartUpgrade(req: Request): Promise<Response> {
+async function handleUpgradeStatusOpen(): Promise<Response> {
+  const { upgradeController } = await import('../system/upgrade');
+  return json(upgradeController.status());
+}
+
+async function handleStartUpgradeOpen(req: Request): Promise<Response> {
   const info = getSystemInfo();
   if (!info.canSelfUpdate) {
     return json({ error: t('apiError.upgradeNotAllowed') }, 403);
@@ -58,6 +88,7 @@ async function handleStartUpgrade(req: Request): Promise<Response> {
     return json({ error: t('apiError.upgradeVersionRequired') }, 400);
   }
 
+  const { upgradeController } = await import('../system/upgrade');
   const started = upgradeController.start(version);
   if (!started) {
     return json({ ...upgradeController.status(), error: t('apiError.upgradeInProgress') }, 409);

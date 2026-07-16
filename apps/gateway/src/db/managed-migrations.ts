@@ -1,0 +1,70 @@
+import { mkdirSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+
+import journal from '../../drizzle/meta/_journal.json';
+
+const MIGRATIONS = [
+  '0000_busy_starjammers.sql',
+  '0001_lowly_the_twelve.sql',
+  '0002_broad_vengeance.sql',
+  '0003_glamorous_lizard.sql',
+  '0004_smiling_layla_miller.sql',
+  '0005_fancy_boom_boom.sql',
+  '0006_bitter_bushwacker.sql',
+  '0007_fearless_pestilence.sql',
+  '0008_perfect_ozymandias.sql',
+  '0009_lying_lethal_legion.sql',
+  '0010_lucky_kabuki.sql',
+  '0011_stormy_sauron.sql',
+  '0012_naive_lizard.sql',
+  '0013_bored_blindfold.sql',
+  '0014_lucky_killraven.sql',
+  '0015_wise_mongu.sql',
+  '0016_cheerful_scarecrow.sql',
+  '0017_fixed_greymalkin.sql',
+] as const;
+
+export interface MaterializedMigrations {
+  path: string;
+  cleanup: () => void;
+}
+
+function embeddedFile(name: string): Blob {
+  const dot = name.lastIndexOf('.');
+  const stem = name.slice(0, dot);
+  const extension = name.slice(dot);
+  const matches = (Bun.embeddedFiles as ReadonlyArray<Blob & { name: string }>).filter(
+    (file) =>
+      file.name === name || (file.name.startsWith(`${stem}-`) && file.name.endsWith(extension))
+  );
+  if (matches.length !== 1) {
+    const names = (Bun.embeddedFiles as ReadonlyArray<Blob & { name: string }>).map(
+      (file) => file.name
+    );
+    throw new Error(
+      `managed embedded asset ${name}: expected one match, got ${matches.length}; embedded=${names.join(',')}`
+    );
+  }
+  const match = matches[0];
+  if (!match) {
+    throw new Error(`managed embedded asset ${name}: match disappeared`);
+  }
+  return match;
+}
+
+export async function materializeManagedMigrations(): Promise<MaterializedMigrations> {
+  const path = join(
+    process.env.TMPDIR || tmpdir(),
+    `tmex-managed-migrations-${process.pid}-${crypto.randomUUID()}`
+  );
+  mkdirSync(join(path, 'meta'), { recursive: true, mode: 0o700 });
+  await Bun.write(join(path, 'meta', '_journal.json'), `${JSON.stringify(journal)}\n`);
+  for (const name of MIGRATIONS) {
+    await Bun.write(join(path, name), embeddedFile(name));
+  }
+  return {
+    path,
+    cleanup: () => rmSync(path, { recursive: true, force: true }),
+  };
+}

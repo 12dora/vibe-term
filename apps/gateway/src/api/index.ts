@@ -61,7 +61,6 @@ import { handleAgentApiRequest } from './agent';
 import { handleCapabilitiesApiRequest } from './capabilities';
 import { handleFilesApiRequest } from './files';
 import { handleLlmApiRequest } from './llm';
-import { handleSystemApiRequest } from './system';
 import { normalizeTerminalShortcutsInput } from './terminal-shortcuts';
 import { handleDeviceTestConnection } from './test-connection';
 import { handleThemeApiRequest } from './theme';
@@ -189,9 +188,15 @@ function normalizeSiteSettingsInput(
   return updates;
 }
 
+export type SystemApiHandler = (
+  req: Request,
+  path: string
+) => Response | Promise<Response> | undefined;
+
 export function handleApiRequest(
   req: Request,
-  _server: Server<unknown>
+  _server: Server<unknown>,
+  systemApiHandler?: SystemApiHandler
 ): Response | Promise<Response> {
   const url = new URL(req.url);
   const path = url.pathname;
@@ -373,7 +378,7 @@ export function handleApiRequest(
   }
 
   if (path.startsWith('/api/system/')) {
-    const systemResponse = handleSystemApiRequest(req, path);
+    const systemResponse = systemApiHandler?.(req, path);
     if (systemResponse) {
       return systemResponse;
     }

@@ -1,4 +1,5 @@
 import './bootstrap-env';
+import { handleSystemApiRequest } from './api/system';
 import { config } from './config';
 import { createGatewayRuntime } from './runtime';
 import { getDisplayVersion } from './system/version';
@@ -10,7 +11,7 @@ interface RunningRuntime {
 async function main(): Promise<void> {
   console.log(`[gateway] tmex ${getDisplayVersion()}`);
   while (true) {
-    const gateway = await createGatewayRuntime();
+    const gateway = await createGatewayRuntime({ systemApiHandler: handleSystemApiRequest });
     const server = Bun.serve({
       hostname: config.bindHost,
       port: config.port,

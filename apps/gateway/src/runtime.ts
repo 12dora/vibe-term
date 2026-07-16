@@ -1,5 +1,5 @@
 import { agentSupervisor } from './agent/supervisor';
-import { handleApiRequest } from './api';
+import { type SystemApiHandler, handleApiRequest } from './api';
 import { config } from './config';
 import { runtimeController } from './control/runtime';
 import {
@@ -27,11 +27,16 @@ import { WebSocketServer } from './ws';
 interface GatewayRuntimeOptions {
   runMigrationsOnStart?: boolean;
   initializeSiteSettings?: boolean;
+  migrationsFolder?: string;
+  systemApiHandler?: SystemApiHandler;
 }
 
 export interface GatewayRuntime {
   readonly port: number;
-  handleRequest: (req: Request, bunServer: Bun.Server) => Response | Promise<Response> | undefined;
+  handleRequest: (
+    req: Request,
+    bunServer: Bun.Server<unknown>
+  ) => Response | Promise<Response> | undefined;
   websocket: {
     open: (ws: Bun.ServerWebSocket<unknown>) => void;
     message: (ws: Bun.ServerWebSocket<unknown>, message: string | Buffer) => void;
@@ -44,10 +49,15 @@ export interface GatewayRuntime {
 export async function createGatewayRuntime(
   options: GatewayRuntimeOptions = {}
 ): Promise<GatewayRuntime> {
-  const { runMigrationsOnStart = true, initializeSiteSettings = true } = options;
+  const {
+    runMigrationsOnStart = true,
+    initializeSiteSettings = true,
+    migrationsFolder,
+    systemApiHandler,
+  } = options;
 
   if (runMigrationsOnStart) {
-    runMigrations();
+    runMigrations(migrationsFolder);
   }
 
   if (initializeSiteSettings) {
@@ -123,7 +133,7 @@ export async function createGatewayRuntime(
       }
 
       if (url.pathname.startsWith('/api/') || url.pathname === '/healthz') {
-        return handleApiRequest(req, bunServer);
+        return handleApiRequest(req, bunServer, systemApiHandler);
       }
 
       return undefined;

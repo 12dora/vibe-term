@@ -13,13 +13,12 @@ function resolveMigrationsFolder(): string {
   return resolve(import.meta.dir, '../../drizzle');
 }
 
-const migrationsFolder = resolveMigrationsFolder();
-
-export function runMigrations(): void {
+export function runMigrations(migrationsFolder = resolveMigrationsFolder()): void {
   migrate(getDb(), { migrationsFolder });
 }
 
 if (import.meta.main) {
-  runMigrations();
+  const migrationsFolder = resolveMigrationsFolder();
+  runMigrations(migrationsFolder);
   console.log(`[db] migrations applied from ${migrationsFolder}`);
 }

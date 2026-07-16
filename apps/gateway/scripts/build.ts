@@ -29,6 +29,8 @@ const r = spawnSync(
     './dist',
     '--target',
     'bun',
+    '--external',
+    'cpu-features',
     '--define',
     `TMEX_MONOREPO_VERSION="${version}"`,
   ],

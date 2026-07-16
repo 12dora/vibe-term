@@ -52,6 +52,14 @@ export interface SystemInfo {
   serviceName: string | null;
   /** 文件传输（上传/下载）单文件字节上限（前端据此做上传前预校验） */
   transferMaxBytes: number;
+  /**
+   * 管理模式（可选，向后兼容）：
+   * - none：开源默认，允许 CLI 自更新路径
+   * - app / companion-cli：由外部宿主管理版本，禁止自更新
+   */
+  managementMode?: 'none' | 'app' | 'companion-cli';
+  /** 更新权归属（可选）；managed 时为 app|companion */
+  updateOwner?: 'self' | 'app' | 'companion';
 }
 
 /** 检查更新结果 */
