@@ -44,6 +44,26 @@ export interface HostServices {
   closeMobileSidebar(): void;
 }
 
+/** 终端文件链接授权根：识别用绝对路径 + 打开文件时回传的定位 id */
+export interface TerminalFileLinkRoot {
+  id: string;
+  path: string;
+}
+
+/**
+ * 终端文件链接面：路径识别用的授权根、存在性校验与打开动作。
+ * 缺省实现走 gateway 文件 API 与 /file/:ref 路由（Terminal 组件内落地）；
+ * 文件子系统另有实现的宿主可整体替换。
+ */
+export interface TerminalFileLinksProvider {
+  /** 该设备可用的授权根；空数组＝该设备不启用文件链接识别 */
+  listRoots(deviceId: string): Promise<TerminalFileLinkRoot[]>;
+  /** 存在性校验；文件不存在时 reject */
+  stat(rootId: string, path: string): Promise<unknown>;
+  /** 打开文件（宿主自行导航） */
+  openFile(rootId: string, path: string): void;
+}
+
 /** pane 输出路由面（默认绑模块级注册表，多实例绑各自 PaneSinkRegistry） */
 export interface PaneSinkRouting {
   /** 终端组件挂载时注册 sink，返回注销函数（消费侧，与 dispatch 生产侧同一注册表） */
@@ -88,6 +108,8 @@ export interface AppRuntimeOptions {
     filesUi?: boolean;
     hostManagedNotifications?: boolean;
   };
+  /** 终端文件链接面；缺省走 gateway 文件 API 与 /file/:ref 路由 */
+  terminalFileLinks?: TerminalFileLinksProvider;
 }
 
 /** 已解析的 UI 能力开关 */
@@ -113,6 +135,7 @@ export interface RuntimeCore {
   host: HostServices;
   storagePrefix: string;
   features: RuntimeFeatures;
+  terminalFileLinks?: TerminalFileLinksProvider;
 }
 
 const defaultHost: HostServices = {
@@ -194,6 +217,7 @@ export function resolveRuntimeCore(options: AppRuntimeOptions = {}): RuntimeCore
       filesUi: options.features?.filesUi ?? true,
       hostManagedNotifications: options.features?.hostManagedNotifications ?? false,
     },
+    terminalFileLinks: options.terminalFileLinks,
   };
 }
 

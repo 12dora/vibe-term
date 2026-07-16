@@ -8,6 +8,8 @@ export {
   type AppRuntimeOptions,
   type HostServices,
   type RuntimeCore,
+  type TerminalFileLinkRoot,
+  type TerminalFileLinksProvider,
   type RuntimeFeatures,
 } from './runtime';
 

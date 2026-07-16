@@ -1,7 +1,7 @@
 import { useQuery } from '@tanstack/react-query';
 import { fetchFileRoots, fetchFileStat } from '@tmex/api-client';
 import { decodePaneModes } from '@tmex/shared';
-import { fileRoute, hostAppPath } from '@tmex/stores';
+import { type TerminalFileLinksProvider, fileRoute, hostAppPath } from '@tmex/stores';
 import { useRuntime, useTmuxStore, useUIStore } from '@tmex/stores/react';
 import { loadTerminalFonts, resolveFontStack } from '@tmex/theme';
 import type { PaneSink } from '@tmex/ws-client/pane-sink-registry';
@@ -432,16 +432,28 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(
     }, [instance]);
 
     // 文件链接上下文：该设备已启用的授权根 + 当前 pane 的 cwd，注入终端做候选有效性过滤。
+    // 数据与跳转面可经 runtime.terminalFileLinks 整体替换；缺省走 gateway 文件 API 与 /file/:ref 路由。
+    const fileLinks = useMemo<TerminalFileLinksProvider>(
+      () =>
+        runtime.terminalFileLinks ?? {
+          listRoots: async (forDeviceId) => {
+            const res = await fetchFileRoots(runtime.apiClient);
+            return res.roots
+              .filter((root) => root.enabled && root.deviceId === forDeviceId)
+              .map((root) => ({ id: root.id, path: root.path }));
+          },
+          stat: (rootId, path) => fetchFileStat(rootId, path, runtime.apiClient),
+          openFile: (rootId, path) =>
+            runtime.host.navigate(hostAppPath(runtime.host, fileRoute(rootId, path))),
+        },
+      [runtime]
+    );
     const { data: fileRootsData } = useQuery({
-      queryKey: ['files', 'roots'],
-      queryFn: () => fetchFileRoots(runtime.apiClient),
+      queryKey: ['terminal-file-links', 'roots', deviceId],
+      queryFn: () => fileLinks.listRoots(deviceId),
       staleTime: 30_000,
     });
-    const fileLinkRoots = useMemo(
-      () =>
-        (fileRootsData?.roots ?? []).filter((root) => root.enabled && root.deviceId === deviceId),
-      [fileRootsData, deviceId]
-    );
+    const fileLinkRoots = useMemo(() => fileRootsData ?? [], [fileRootsData]);
     const paneCurrentPath = useTmuxStore((state) => {
       const session = state.snapshots[deviceId]?.session;
       if (!session) return undefined;
@@ -468,12 +480,13 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(
           .filter((r) => path === r.path || path.startsWith(r.path === '/' ? '/' : `${r.path}/`))
           .sort((a, b) => b.path.length - a.path.length)[0];
         if (!root) return;
-        void fetchFileStat(root.id, path, runtime.apiClient)
+        void fileLinks
+          .stat(root.id, path)
           .then(() => {
             if (onOpenFile) {
               onOpenFile(root.id, path);
             } else {
-              runtime.host.navigate(hostAppPath(runtime.host, fileRoute(root.id, path)));
+              fileLinks.openFile(root.id, path);
             }
           })
           .catch(() => {
@@ -481,7 +494,7 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(
           });
       });
       return () => disposable.dispose();
-    }, [instance, fileLinkRoots, onOpenFile, runtime, t]);
+    }, [instance, fileLinkRoots, fileLinks, onOpenFile, runtime, t]);
 
     useEffect(() => {
       if (!instance?.onSelectionChange) {
