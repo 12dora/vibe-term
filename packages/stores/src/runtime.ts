@@ -31,6 +31,11 @@ import i18next from 'i18next';
 import { bridgeCloseMobileSidebar, bridgeIsMobile, bridgeOpenMobileSidebar } from './flow-bridges';
 import type { UIStore } from './ui';
 
+export interface SaveFileInput {
+  name: string;
+  blob: Blob;
+}
+
 export interface HostServices {
   /** 应用内跳转（toast/通知点击等），语义等同 navigateToAppUrl */
   navigate(to: string, opts?: { replace?: boolean }): void;
@@ -42,6 +47,16 @@ export interface HostServices {
   isMobile(): boolean;
   openMobileSidebar(): void;
   closeMobileSidebar(): void;
+  /** 写入系统剪贴板；默认 Browser 实现含 Clipboard API + textarea/execCommand fallback */
+  writeClipboardText(text: string): Promise<void>;
+  /** 读取系统剪贴板文本 */
+  readClipboardText(): Promise<string>;
+  /** 打开外部 URL（新标签页/系统浏览器等）；可异步 */
+  openExternal(url: string): void | Promise<void>;
+  /** 整页/宿主刷新 */
+  reload(): void | Promise<void>;
+  /** 将已传输完成的文件交给宿主保存（默认 object URL + a[download]） */
+  saveFile(file: SaveFileInput): void | Promise<void>;
 }
 
 /** 终端文件链接授权根：识别用绝对路径 + 打开文件时回传的定位 id */
@@ -138,6 +153,82 @@ export interface RuntimeCore {
   terminalFileLinks?: TerminalFileLinksProvider;
 }
 
+/** Browser 默认：Clipboard API 失败后 textarea + execCommand('copy') fallback。 */
+async function browserWriteClipboard(text: string): Promise<void> {
+  if (!text) {
+    return;
+  }
+
+  if (typeof navigator !== 'undefined' && navigator.clipboard?.writeText) {
+    try {
+      await navigator.clipboard.writeText(text);
+      return;
+    } catch {
+      // fall through to execCommand fallback
+    }
+  }
+
+  if (typeof document === 'undefined' || typeof document.execCommand !== 'function') {
+    throw new Error('clipboard unavailable');
+  }
+
+  const helper = document.createElement('textarea');
+  helper.value = text;
+  helper.setAttribute('readonly', 'true');
+  helper.style.position = 'fixed';
+  helper.style.left = '-9999px';
+  helper.style.top = '0';
+  document.body.appendChild(helper);
+  try {
+    helper.select();
+    if (!document.execCommand('copy')) {
+      throw new Error('execCommand copy failed');
+    }
+  } finally {
+    helper.remove();
+  }
+}
+
+async function browserReadClipboard(): Promise<string> {
+  if (typeof navigator === 'undefined' || !navigator.clipboard?.readText) {
+    throw new Error('clipboard unavailable');
+  }
+  return navigator.clipboard.readText();
+}
+
+function browserOpenExternal(url: string): void {
+  if (typeof window === 'undefined') {
+    throw new Error('openExternal unavailable');
+  }
+  window.open(url, '_blank', 'noopener,noreferrer');
+}
+
+function browserReload(): void {
+  if (typeof window === 'undefined') {
+    throw new Error('reload unavailable');
+  }
+  window.location.reload();
+}
+
+/** Browser 默认：object URL + a[download]，成功与失败路径均清理 object URL / DOM helper。 */
+async function browserSaveFile(file: SaveFileInput): Promise<void> {
+  if (typeof document === 'undefined' || typeof URL === 'undefined' || !URL.createObjectURL) {
+    throw new Error('saveFile unavailable');
+  }
+  const objectUrl = URL.createObjectURL(file.blob);
+  let anchor: HTMLAnchorElement | null = null;
+  try {
+    anchor = document.createElement('a');
+    anchor.href = objectUrl;
+    anchor.download = file.name;
+    document.body.appendChild(anchor);
+    anchor.click();
+  } finally {
+    anchor?.remove();
+    URL.revokeObjectURL(objectUrl);
+  }
+}
+
 const defaultHost: HostServices = {
   navigate(to, opts) {
     // 延迟 import 防环（app-navigation → flow-bridges 已在包内）
@@ -147,6 +238,11 @@ const defaultHost: HostServices = {
   isMobile: bridgeIsMobile,
   openMobileSidebar: bridgeOpenMobileSidebar,
   closeMobileSidebar: bridgeCloseMobileSidebar,
+  writeClipboardText: browserWriteClipboard,
+  readClipboardText: browserReadClipboard,
+  openExternal: browserOpenExternal,
+  reload: browserReload,
+  saveFile: browserSaveFile,
 };
 
 // navigateToAppUrl 定义在 app-navigation.ts；直接 import 会与 runtime 无环（app-navigation 不依赖 runtime）

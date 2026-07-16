@@ -1032,11 +1032,9 @@ export function DeviceConsole({
       }
       switch (item.action) {
         case 'paste': {
-          // 非安全上下文（HTTP 局域网直连）/ 不支持 Clipboard 时给出明确错误而非静默
-          const read = navigator.clipboard?.readText
-            ? navigator.clipboard.readText()
-            : Promise.reject(new Error('clipboard unavailable'));
-          read
+          // 非安全上下文 / 宿主 clipboard 不可用时给出明确错误而非静默
+          void runtime.host
+            .readClipboardText()
             .then((text) => {
               if (text) {
                 runtime.stores.tmux.getState().paste(deviceId, resolvedPaneId, text);

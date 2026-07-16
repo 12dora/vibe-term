@@ -7,11 +7,12 @@
  *  2. 逐字体从 Nerd Fonts pinned release 下载资产 zip（缓存到 scripts/fonts/.cache）
  *  3. 解压，定位 Mono 的 Regular + Bold 两字重（缺 Bold 即跳过并记录）
  *  4. 用 wawoff2 无损转码成 woff2（不子集、保留全部字形含 Nerd 图标）
- *     → apps/fe/public/fonts/generated/<id>/<id>-{regular,bold}.woff2
- *  5. 扫描成功产物，生成 apps/fe/src/lib/fonts/manifest.generated.ts
+ *     → packages/theme/resources/fonts/generated/<id>/<id>-{regular,bold}.woff2
+ *  5. 扫描成功产物，生成 packages/theme/src/fonts/manifest.generated.ts
  *  6. 打印跳过清单
  *
  * 默认字体 Geist Mono 沿用仓库已有扁平 woff2（已静态 @font-face），不下载、不进 generated。
+ * 开源 FE 经 apps/fe/public/fonts → packages/theme/resources/fonts 相对 symlink 提供 /fonts。
  *
  * 用法：bun run build:fonts
  * woff2 与 manifest 均入库；日常 build 无需重跑，仅在更新字体清单/版本时手动执行。
@@ -33,7 +34,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(__dirname, '../..');
 const CACHE_DIR = path.join(__dirname, '.cache');
 const EXTRACT_DIR = path.join(CACHE_DIR, 'extract');
-const PUBLIC_GENERATED_DIR = path.join(ROOT, 'apps/fe/public/fonts/generated');
+const PUBLIC_GENERATED_DIR = path.join(ROOT, 'packages/theme/resources/fonts/generated');
 const MANIFEST_OUT = path.join(ROOT, 'packages/theme/src/fonts/manifest.generated.ts');
 
 interface ManifestEntry {

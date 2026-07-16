@@ -237,15 +237,22 @@ export async function uploadFileChunked(
   }
 }
 
+/** 下载传输完成结果：内容与文件名；宿主侧 save 与传输分离。 */
+export interface DownloadedFile {
+  name: string;
+  blob: Blob;
+}
+
 // 两步下载：prepare（leg1 服务器→tmex rsync，流式 NDJSON 进度，期间持续有数据避免空闲超时）
-// → content（leg2 tmex→浏览器，读流计速）→ Blob 触发保存。支持 AbortSignal 取消。
+// → content（leg2 tmex→客户端，读流计速）→ 返回 {name, blob}。自身不访问 URL/document/下载锚点。
+// 支持 AbortSignal 取消；失败 best-effort 清理远端临时 download。
 export async function downloadFileWithProgress(
   rootId: string,
   path: string,
   name: string,
   opts: TransferOpts = {},
   client: ApiClient = defaultApiClient
-): Promise<void> {
+): Promise<DownloadedFile> {
   const { onLeg, signal } = opts;
 
   // leg1：服务器 → tmex（rsync）
@@ -292,7 +299,7 @@ export async function downloadFileWithProgress(
   if (!downloadId) throw new FileApiError(500, 'unknown', 'unknown');
   onLeg?.(1, { pct: 100, detail: formatBytes(size) });
 
-  // leg2：tmex → 浏览器（接收并保存）
+  // leg2：tmex → 客户端（接收 blob，不触发宿主保存）
   try {
     const bytes = (n: number) => `${formatBytes(n)} / ${formatBytes(size)}`;
     onLeg?.(2, { pct: 0, detail: bytes(0) });
@@ -316,15 +323,8 @@ export async function downloadFileWithProgress(
       });
     }
     const blob = new Blob(chunks as BlobPart[]);
-    const objectUrl = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = objectUrl;
-    a.download = dlName;
-    document.body.appendChild(a);
-    a.click();
-    a.remove();
-    URL.revokeObjectURL(objectUrl);
     onLeg?.(2, { pct: 100, detail: bytes(size) });
+    return { name: dlName, blob };
   } catch (e) {
     try {
       await client.fetch(`/api/files/download/${downloadId}`, { method: 'DELETE' });

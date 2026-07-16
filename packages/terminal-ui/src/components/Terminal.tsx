@@ -11,7 +11,6 @@ import {
   type GhosttyTerminalModeSnapshot,
   TERMINAL_ENGINE,
   createTerminalController,
-  writeTextToClipboard,
 } from 'ghostty-terminal';
 import {
   forwardRef,
@@ -422,14 +421,14 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(
       paneId,
     ]);
 
-    // 终端内链接（Mac Cmd+Click / 其它 Ctrl+Click）在新标签页打开；与连接状态无关。
+    // 终端内链接（Mac Cmd+Click / 其它 Ctrl+Click）经宿主打开外链；与连接状态无关。
     useEffect(() => {
       if (!instance?.onLinkActivated) return;
       const disposable = instance.onLinkActivated((url) => {
-        window.open(url, '_blank', 'noopener,noreferrer');
+        void (async () => runtime.host.openExternal(url))().catch(() => {});
       });
       return () => disposable.dispose();
-    }, [instance]);
+    }, [instance, runtime]);
 
     // 文件链接上下文：该设备已启用的授权根 + 当前 pane 的 cwd，注入终端做候选有效性过滤。
     // 数据与跳转面可经 runtime.terminalFileLinks 整体替换；缺省走 gateway 文件 API 与 /file/:ref 路由。
@@ -517,7 +516,8 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(
       const text = instance.getSelection?.() ?? '';
       if (!text) return;
 
-      void writeTextToClipboard(text)
+      void runtime.host
+        .writeClipboardText(text)
         .then(() => {
           runtime.notifications.success(t('terminal.copied'));
         })
@@ -533,10 +533,8 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(
     const handlePasteClipboard = useCallback(() => {
       if (!instance) return;
 
-      const read = navigator.clipboard?.readText
-        ? navigator.clipboard.readText()
-        : Promise.reject<string>(new Error('clipboard unavailable'));
-      void read
+      void runtime.host
+        .readClipboardText()
         .then((text) => {
           if (text) {
             instance.paste(text);

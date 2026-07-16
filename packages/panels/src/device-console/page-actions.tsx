@@ -116,7 +116,7 @@ export function DeviceConsoleActions({ deviceId, windowId, paneId }: DeviceConso
   };
 
   const handleConfirmRefresh = () => {
-    window.location.reload();
+    void (async () => runtime.host.reload())().catch(() => {});
   };
 
   return (

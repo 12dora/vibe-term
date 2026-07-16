@@ -8,6 +8,7 @@ export {
   type AppRuntimeOptions,
   type HostServices,
   type RuntimeCore,
+  type SaveFileInput,
   type TerminalFileLinkRoot,
   type TerminalFileLinksProvider,
   type RuntimeFeatures,

@@ -330,6 +330,7 @@ export function createTmuxStore(
 
           case wsBorsh.KIND_CLIPBOARD_WRITE: {
             const decoded = wsBorsh.decodePayload(wsBorsh.schema.ClipboardWriteSchema, msg.payload);
+            // visibility 不抽象：仍直接读 document.visibilityState
             if (document.visibilityState !== 'visible') {
               return;
             }
@@ -337,7 +338,7 @@ export function createTmuxStore(
             if (!current || current.paneId !== decoded.paneId) {
               return;
             }
-            navigator.clipboard.writeText(decoded.text).then(
+            void core.host.writeClipboardText(decoded.text).then(
               () => {
                 core.notifications.success(core.t('terminal.copied'));
               },

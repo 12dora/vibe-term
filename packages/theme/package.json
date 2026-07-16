@@ -3,9 +3,16 @@
   "version": "0.1.0",
   "type": "module",
   "private": true,
-  "files": ["src"],
+  "files": ["src", "resources"],
   "exports": {
     ".": "./src/index.ts",
+    "./fonts": "./src/fonts/index.ts",
+    "./fonts/manifest": "./src/fonts/manifest.generated.ts",
+    "./fonts/types": "./src/fonts/types.ts",
+    "./themes.css": "./src/themes.css",
+    "./tokens.css": "./src/tokens.css",
+    "./tokens.generated.css": "./src/tokens.generated.css",
+    "./resources/fonts/*": "./resources/fonts/*",
     "./*": "./src/*.ts"
   },
   "scripts": {

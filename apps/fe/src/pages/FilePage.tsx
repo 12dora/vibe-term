@@ -5,9 +5,6 @@ import { type ReactNode, useMemo } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useParams } from 'react-router';
 
-import { CodeViewer } from '@tmex/panels/code-viewer';
-import { startTransferToast } from '@tmex/panels/files';
-import { MarkdownPreview } from '@tmex/panels/markdown';
 import i18n from '@/i18n';
 import {
   type FileApiError,
@@ -17,18 +14,22 @@ import {
 } from '@tmex/api-client';
 import { formatBytes } from '@tmex/api-client';
 import { fileRawUrl } from '@tmex/api-client';
-import { type FileRef, decodeFileRef } from '@tmex/stores';
+import { CodeViewer } from '@tmex/panels/code-viewer';
+import { startTransferToast } from '@tmex/panels/files';
+import { MarkdownPreview } from '@tmex/panels/markdown';
+import { type FileRef, decodeFileRef, defaultRuntime } from '@tmex/stores';
 import { Button } from '@tmex/ui/button';
 
 function useFileRef(ref?: string): FileRef | null {
   return useMemo(() => (ref ? decodeFileRef(ref) : null), [ref]);
 }
 
-// 应用内下载（与文件树菜单一致）：两段进度 Toast + 可取消，避免旧 <a download> 直链与大文件超时。
+// 应用内下载（与文件树菜单一致）：两段进度 Toast + 可取消；传输与宿主 save 分离。
 function triggerDownload(rootId: string, path: string, name: string): void {
   const controller = new AbortController();
   const tt = startTransferToast(name, 'download', () => controller.abort());
   void downloadFileWithProgress(rootId, path, name, { onLeg: tt.leg, signal: controller.signal })
+    .then((file) => defaultRuntime.host.saveFile(file))
     .then(() => tt.success(i18n.t('files.transfer.downloaded', { name })))
     .catch(() => {
       if (controller.signal.aborted) tt.cancel();

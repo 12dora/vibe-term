@@ -1,15 +1,26 @@
-// REST 客户端核心：baseUrl 注入 + 统一错误解析。
+// REST 客户端核心：baseUrl 注入 + 可选 fetch-like transport + 统一错误解析。
 // 端点函数一律以 `client: ApiClient = defaultApiClient` 收尾（单实例宿主零改动，多实例宿主按连接注入）。
 
+/** fetch-like：接收已拼好 baseUrl 的绝对/相对 URL 与原始 RequestInit。 */
+export type FetchLike = (input: string, init?: RequestInit) => Promise<Response>;
+
 export class ApiClient {
-  constructor(readonly baseUrl: string = '') {}
+  constructor(
+    readonly baseUrl: string = '',
+    private readonly transport?: FetchLike
+  ) {}
 
   url(path: string): string {
     return `${this.baseUrl}${path}`;
   }
 
   fetch(path: string, init?: RequestInit): Promise<Response> {
-    return fetch(this.url(path), init);
+    const url = this.url(path);
+    if (this.transport) {
+      return this.transport(url, init);
+    }
+    // 每次调用时读取 globalThis.fetch，禁止在模块加载或构造时捕获。
+    return globalThis.fetch(url, init);
   }
 }
 

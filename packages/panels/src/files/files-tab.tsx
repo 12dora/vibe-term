@@ -1,6 +1,5 @@
 import { useIsFetching, useQuery, useQueryClient } from '@tanstack/react-query';
 import type { Device, FileEntryDto, FileErrorCode, FileRootDto, SystemInfo } from '@tmex/shared';
-import { writeTextToClipboard } from 'ghostty-terminal';
 import {
   Bot,
   ChevronRight,
@@ -30,6 +29,7 @@ import {
   uploadFileChunked,
 } from '@tmex/api-client';
 import { formatBytes } from '@tmex/api-client';
+import type { HostServices } from '@tmex/stores';
 import { fileNodeKey, hostAppPath } from '@tmex/stores';
 import { decodeFileRef, fileRoute } from '@tmex/stores';
 import { useFileTreeStore, useRuntime } from '@tmex/stores/react';
@@ -78,9 +78,14 @@ function relativeToRoot(rootPath: string, path: string): string {
   return path.startsWith(prefix) ? path.slice(prefix.length) : path;
 }
 
-async function copyText(text: string, okMsg: string, failMsg: string): Promise<void> {
+async function copyText(
+  host: HostServices,
+  text: string,
+  okMsg: string,
+  failMsg: string
+): Promise<void> {
   try {
-    await writeTextToClipboard(text);
+    await host.writeClipboardText(text);
     toast.success(okMsg);
   } catch {
     toast.error(failMsg);
@@ -107,14 +112,21 @@ function CommonNodeMenuItems({
   return (
     <>
       <ContextMenuItem
-        onClick={() => void copyText(absPath, t('files.copied'), t('files.copyFailed'))}
+        onClick={() =>
+          void copyText(runtime.host, absPath, t('files.copied'), t('files.copyFailed'))
+        }
       >
         <Copy />
         {t('files.menu.copyAbsolute')}
       </ContextMenuItem>
       <ContextMenuItem
         onClick={() =>
-          void copyText(relativeToRoot(rootPath, absPath), t('files.copied'), t('files.copyFailed'))
+          void copyText(
+            runtime.host,
+            relativeToRoot(rootPath, absPath),
+            t('files.copied'),
+            t('files.copyFailed')
+          )
         }
       >
         <Link />
@@ -635,12 +647,12 @@ function FileLeaf({
     if (isMobile) setOpenMobile(false);
   };
 
-  // 应用内下载：流式拉取 + 进度 Toast（可取消）→ Blob 触发保存。
+  // 应用内下载：流式拉取 + 进度 Toast（可取消）→ 宿主 saveFile 保存。
   const doDownload = async () => {
     const controller = new AbortController();
     const tt = startTransferToast(entry.name, 'download', () => controller.abort());
     try {
-      await downloadFileWithProgress(
+      const file = await downloadFileWithProgress(
         rootId,
         entry.path,
         entry.name,
@@ -650,6 +662,7 @@ function FileLeaf({
         },
         runtime.apiClient
       );
+      await runtime.host.saveFile(file);
       tt.success(t('files.transfer.downloaded', { name: entry.name }));
     } catch {
       if (controller.signal.aborted) tt.cancel();
