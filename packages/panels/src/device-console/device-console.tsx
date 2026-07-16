@@ -94,6 +94,10 @@ export interface DeviceConsoleProps {
   paneId?: string;
   /** devices 列表查询 key（与其他消费方共享缓存时保持一致），缺省 ['devices'] */
   devicesQueryKey?: readonly unknown[];
+  /** 自定义浏览器标签页标题：入参为当前终端标签（未选中窗格时为 null），
+   *  返回完整 document.title；卸载时以 formatBrowserTitle(null) 复原。
+   *  缺省沿用 buildBrowserTitle（`[siteName]label`）与 siteName 复原。 */
+  formatBrowserTitle?: (label: string | null) => string;
 }
 
 export function DeviceConsole({
@@ -101,6 +105,7 @@ export function DeviceConsole({
   windowId,
   paneId,
   devicesQueryKey = defaultDevicesQueryKey,
+  formatBrowserTitle,
 }: DeviceConsoleProps) {
   const { t } = useTranslation();
   const runtime = useRuntime();
@@ -945,11 +950,13 @@ export function DeviceConsole({
 
   // Page title
   useEffect(() => {
-    document.title = buildBrowserTitle(terminalTopbarLabel);
+    document.title = formatBrowserTitle
+      ? formatBrowserTitle(terminalTopbarLabel ?? null)
+      : buildBrowserTitle(terminalTopbarLabel);
     return () => {
-      document.title = siteName;
+      document.title = formatBrowserTitle ? formatBrowserTitle(null) : siteName;
     };
-  }, [siteName, terminalTopbarLabel]);
+  }, [siteName, terminalTopbarLabel, formatBrowserTitle]);
 
   // Jump to latest event
   useEffect(() => {
