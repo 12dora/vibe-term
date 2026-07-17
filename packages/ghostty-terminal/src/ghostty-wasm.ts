@@ -4,6 +4,22 @@ import type { GhosttyCellDimensions, GhosttyTheme } from './types';
 // 也支持，避免 `?url` 后缀只有 Vite 能解析、bun build 报无法 resolve 的问题。
 const ghosttyWasmUrl = new URL('./assets/ghostty-vt.wasm', import.meta.url).href;
 
+// `bun build --compile` 产物内，跨包引用的资产可能不进入嵌入表（实测 ENOENT）——
+// 按 plan「无法可靠嵌入时的签名相邻资源」策略回退：`TMEX_GHOSTTY_WASM_PATH` 显式覆盖，
+// 否则取可执行同目录的 `ghostty-vt.wasm`（managed 构建保证其随产物分发）。
+function ghosttyWasmCandidates(): string[] {
+  const candidates = [ghosttyWasmUrl];
+  if (typeof Bun !== 'undefined' && typeof process !== 'undefined' && process.execPath) {
+    const envPath = process.env.TMEX_GHOSTTY_WASM_PATH;
+    if (envPath) {
+      candidates.push(envPath);
+    }
+    const execDir = process.execPath.replace(/[/\\][^/\\]*$/, '');
+    candidates.push(`${execDir}/ghostty-vt.wasm`);
+  }
+  return candidates;
+}
+
 const GHOSTTY_SUCCESS = 0;
 const GHOSTTY_OUT_OF_SPACE = -3;
 
@@ -1401,10 +1417,22 @@ async function loadGhosttyWasmBytes(source: string): Promise<ArrayBuffer> {
   return response.arrayBuffer();
 }
 
+async function loadGhosttyWasmBytesAny(): Promise<ArrayBuffer> {
+  let lastError: unknown;
+  for (const candidate of ghosttyWasmCandidates()) {
+    try {
+      return await loadGhosttyWasmBytes(candidate);
+    } catch (err) {
+      lastError = err;
+    }
+  }
+  throw lastError instanceof Error ? lastError : new Error(String(lastError));
+}
+
 export async function getGhosttyBindings(): Promise<GhosttyBindings> {
   if (!bindingsPromise) {
     bindingsPromise = (async () => {
-      const wasmBytes = await loadGhosttyWasmBytes(ghosttyWasmUrl);
+      const wasmBytes = await loadGhosttyWasmBytesAny();
       const wasmModule = await WebAssembly.instantiate(wasmBytes, {
         env: {
           log() {

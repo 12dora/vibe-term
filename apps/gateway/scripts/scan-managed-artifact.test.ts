@@ -41,4 +41,37 @@ describe('managed artifact fail-closed scanner', () => {
     const artifact = fixture('gateway');
     expect(scanManagedArtifact(artifact).ok).toBe(true);
   });
+
+  test('manifest 目录下缺 ghostty wasm 或 sha 不符均拒绝', () => {
+    const artifact = fixture('tmex-gateway-managed-darwin-arm64');
+    const dir = join(artifact, '..');
+    writeFileSync(
+      join(dir, 'target-matrix.json'),
+      JSON.stringify({
+        schemaVersion: 1,
+        adjacentResources: [{ name: 'ghostty-vt.wasm', sha256: 'abc' }],
+        targets: [],
+      })
+    );
+    const missing = scanManagedArtifact(artifact);
+    expect(missing.ok).toBe(false);
+    expect(missing.findings).toContain('adjacent_resource_missing:ghostty-vt.wasm');
+
+    writeFileSync(join(dir, 'ghostty-vt.wasm'), 'not-the-real-wasm');
+    const mismatch = scanManagedArtifact(artifact);
+    expect(mismatch.ok).toBe(false);
+    expect(mismatch.findings).toContain('adjacent_resource_sha_mismatch:ghostty-vt.wasm');
+
+    const { createHash } = require('node:crypto');
+    const wasmSha = createHash('sha256').update(Buffer.from('not-the-real-wasm')).digest('hex');
+    writeFileSync(
+      join(dir, 'target-matrix.json'),
+      JSON.stringify({
+        schemaVersion: 1,
+        adjacentResources: [{ name: 'ghostty-vt.wasm', sha256: wasmSha }],
+        targets: [],
+      })
+    );
+    expect(scanManagedArtifact(artifact).ok).toBe(true);
+  });
 });

@@ -100,6 +100,38 @@ export function scanManagedArtifact(artifactPath: string): ScanResult {
     findings.push(`bad_artifact_name:${base}`);
   }
 
+  // 构建产物目录（含 target-matrix.json）必须携带签名相邻资源，且 sha 与 manifest 一致：
+  // - ghostty-vt.wasm（headless 终端的确定性定位；编译产物不保证跨包嵌入）
+  // - artifact 自身 sha256 与 manifest target 条目一致（防替换/篡改）
+  const matrixPath = join(dir, 'target-matrix.json');
+  if (existsSync(matrixPath)) {
+    try {
+      const matrix = JSON.parse(readFileSync(matrixPath, 'utf8')) as {
+        adjacentResources?: Array<{ name: string; sha256: string }>;
+        targets?: Array<{ outfile?: string; sha256?: string }>;
+      };
+      for (const res of matrix.adjacentResources ?? []) {
+        const resPath = join(dir, res.name);
+        if (!existsSync(resPath)) {
+          findings.push(`adjacent_resource_missing:${res.name}`);
+          continue;
+        }
+        const resSha = createHash('sha256').update(readFileSync(resPath)).digest('hex');
+        if (resSha !== res.sha256) {
+          findings.push(`adjacent_resource_sha_mismatch:${res.name}`);
+        }
+      }
+      const self = (matrix.targets ?? []).find(
+        (t) => t.outfile && basename(t.outfile) === base
+      );
+      if (self?.sha256 && self.sha256 !== sha256) {
+        findings.push('artifact_sha_mismatch:target-matrix');
+      }
+    } catch {
+      findings.push('target_matrix_unreadable');
+    }
+  }
+
   // 不得是指向 node_modules 的链接
   try {
     const real = realpathSync(abs);

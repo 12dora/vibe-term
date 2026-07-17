@@ -12,7 +12,14 @@
 
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
+import {
+  copyFileSync,
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  readdirSync,
+  writeFileSync,
+} from 'node:fs';
 import { join, resolve } from 'node:path';
 
 export const MANAGED_TARGETS = [
@@ -28,6 +35,10 @@ const gatewayRoot = resolve(import.meta.dir, '..');
 const appPkgPath = resolve(gatewayRoot, '../../packages/app/package.json');
 const entry = resolve(gatewayRoot, 'src/managed-entry.ts');
 const drizzleRoot = resolve(gatewayRoot, 'drizzle');
+const ghosttyWasmPath = resolve(
+  gatewayRoot,
+  '../../packages/ghostty-terminal/src/assets/ghostty-vt.wasm'
+);
 
 function managedAssetEntrypoints(): string[] {
   const migrations = readdirSync(drizzleRoot)
@@ -156,11 +167,28 @@ function compileOne(target: ManagedTarget, outDir: string, version: string): Tar
   };
 }
 
+function sha256File(path: string): string {
+  return createHash('sha256').update(readFileSync(path)).digest('hex');
+}
+
+function gitRevision(): string {
+  const r = spawnSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' });
+  return r.status === 0 ? (r.stdout as string).trim() : 'unknown';
+}
+
 function main(): void {
   const { targets, outDir } = parseArgs(process.argv.slice(2));
   mkdirSync(outDir, { recursive: true });
   const version = readVersion();
   const host = hostTarget();
+
+  // headless Ghostty WASM 作为签名相邻资源随产物分发（编译产物不保证跨包嵌入，
+  // loader 回退链见 packages/ghostty-terminal/src/ghostty-wasm.ts）。
+  if (!existsSync(ghosttyWasmPath)) {
+    throw new Error(`ghostty wasm missing at ${ghosttyWasmPath}`);
+  }
+  copyFileSync(ghosttyWasmPath, join(outDir, 'ghostty-vt.wasm'));
+  const wasmSha256 = sha256File(ghosttyWasmPath);
 
   const results: TargetResult[] = [];
   // 始终写出完整 matrix 定义；仅请求的 target 尝试编译。
@@ -179,6 +207,12 @@ function main(): void {
     host: { platform: process.platform, arch: process.arch, target: host },
     monorepoVersion: version,
     entry: 'src/managed-entry.ts',
+    // SBOM/provenance：发布校验与读回验证共用。
+    provenance: {
+      gitRevision: gitRevision(),
+      builtBy: 'apps/gateway/scripts/build-managed.ts',
+    },
+    adjacentResources: [{ name: 'ghostty-vt.wasm', sha256: wasmSha256 }],
     targets: results,
     generatedAt: new Date().toISOString(),
   };

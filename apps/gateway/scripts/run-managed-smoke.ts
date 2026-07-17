@@ -84,6 +84,15 @@ async function main(): Promise<void> {
   spawnSync('cp', [artifact, runBin], { stdio: 'inherit' });
   chmodSync(runBin, 0o755);
 
+  // 签名相邻资源：ghostty-vt.wasm 与可执行同目录（loader 回退链）。
+  const adjacentWasm = join(resolve(artifact, '..'), 'ghostty-vt.wasm');
+  if (existsSync(adjacentWasm)) {
+    spawnSync('cp', [adjacentWasm, join(work, 'ghostty-vt.wasm')], { stdio: 'inherit' });
+  } else {
+    console.error(JSON.stringify({ ok: false, error: 'ghostty_wasm_missing_adjacent', adjacentWasm }));
+    process.exit(1);
+  }
+
   const child = spawn(runBin, [], {
     cwd: work,
     env,
