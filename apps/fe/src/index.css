@@ -118,10 +118,26 @@
 @layer base {
   * {
     @apply border-border outline-ring/50;
+    -webkit-user-drag: none;
   }
 
   body {
     @apply bg-background text-foreground;
+    -webkit-user-select: none;
+    user-select: none;
+  }
+
+  input,
+  textarea,
+  select,
+  [contenteditable=""],
+  [contenteditable="true"],
+  .xterm,
+  .xterm *,
+  [data-terminal-engine],
+  [data-terminal-engine] * {
+    -webkit-user-select: text;
+    user-select: text;
   }
 
   .font-display {
