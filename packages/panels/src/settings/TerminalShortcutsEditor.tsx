@@ -411,6 +411,8 @@ export function TerminalShortcutsEditor({
         <button
           type="button"
           onKeyDown={onCaptureKeyDown}
+          // Safari/WKWebView 桌面端点击 button 不赋予焦点，捕获态永远进不去——显式聚焦。
+          onClick={(e) => e.currentTarget.focus()}
           onFocus={() => setCapturing(true)}
           onBlur={() => setCapturing(false)}
           className={cn(
