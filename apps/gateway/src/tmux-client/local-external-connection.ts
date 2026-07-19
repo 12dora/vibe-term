@@ -35,6 +35,7 @@ import {
   parseWindowSnapshotRow,
   splitSnapshotFields,
 } from './snapshot-format';
+import { SnapshotRefreshCoordinator } from './snapshot-refresh-coordinator';
 import { TmuxTargetMissingError, isTargetMissingMessage } from './target-missing';
 import { createThemeSubscriptionTracker } from './theme-subscriptions';
 import { isControlModeSupported, parseTmuxVersion, tmuxClientMatchesServer } from './tmux-version';
@@ -187,7 +188,9 @@ export class LocalExternalTmuxConnection {
   private bellDedup = new Map<string, number>();
   private closeNotified = false;
   private readonly lifecycle: ConnectionLifecycleEmitter;
-  private snapshotEpoch = 0;
+  private readonly snapshotRefreshCoordinator = new SnapshotRefreshCoordinator(() =>
+    this.performSnapshot()
+  );
   private cleanupPromise: Promise<void> | null = null;
   private controlProcess: ControlClientProcess | null = null;
   private controlSubscription: ControlModeSubscription | null = null;
@@ -1352,14 +1355,13 @@ export class LocalExternalTmuxConnection {
   }
 
   private async requestSnapshotInternal(): Promise<void> {
+    return this.snapshotRefreshCoordinator.request();
+  }
+
+  private async performSnapshot(): Promise<void> {
     if (!this.connected) {
       return;
     }
-
-    // 快照三命令是无队列的并发 spawn，两次并发刷新可能乱序完成：旧响应若写回会把
-    // 已消失的 window/pane 复活到 snapshotWindows，下一帧 diff 再次报关闭（双发）。
-    // 以纪元号丢弃过期响应：只有最新一次请求的结果允许写回与 diff。
-    const epoch = ++this.snapshotEpoch;
 
     const [sessionRes, windowsRes, panesRes] = await Promise.all([
       this.runTmuxAllowFailure([
@@ -1385,10 +1387,6 @@ export class LocalExternalTmuxConnection {
         PANE_SNAPSHOT_FORMAT,
       ]),
     ]);
-
-    if (epoch !== this.snapshotEpoch) {
-      return;
-    }
 
     const transientResult = [sessionRes, windowsRes, panesRes].find(
       (res) => res.exitCode === TMUX_SPAWN_UNAVAILABLE_EXIT

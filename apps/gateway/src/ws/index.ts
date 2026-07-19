@@ -6,9 +6,9 @@ import type {
   WebhookEvent,
 } from '@tmex/shared';
 import { type ThemeMode, getTmuxWindowStyle, wsBorsh } from '@tmex/shared';
+import { GATEWAY_CAPABILITIES } from '@tmex/shared';
 import type { Server, ServerWebSocket } from 'bun';
 import { agentWsHub } from '../agent/ws-hub';
-import { GATEWAY_CAPABILITIES } from '@tmex/shared';
 import {
   getDeviceTreeOrder,
   getSiteSettings,
@@ -63,6 +63,8 @@ const defaultDeps: WebSocketServerDeps = {
 interface WebSocketServerOptions {
   deps?: Partial<WebSocketServerDeps>;
 }
+
+export const SNAPSHOT_WATCHDOG_INTERVAL_MS = 10_000;
 
 // tmux #{window_layout} 前缀携带整窗尺寸（如 "b25d,120x30,0,0[...]"）
 export function parseWindowLayoutSize(
@@ -186,7 +188,7 @@ export class WebSocketServer {
       } catch (err) {
         console.error('[ws] polling snapshot failed:', err);
       }
-    }, 1000);
+    }, SNAPSHOT_WATCHDOG_INTERVAL_MS);
   }
 
   private scheduleSnapshot(deviceId: string): void {

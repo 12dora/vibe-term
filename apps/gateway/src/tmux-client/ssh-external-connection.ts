@@ -37,6 +37,7 @@ import {
   parseWindowSnapshotRow,
   splitSnapshotFields,
 } from './snapshot-format';
+import { SnapshotRefreshCoordinator } from './snapshot-refresh-coordinator';
 import { buildSshBootstrapScript, parseSshBootstrapOutput } from './ssh-bootstrap';
 import { resolveSshConnectConfig } from './ssh-connect-config';
 import { TmuxTargetMissingError, isTargetMissingMessage } from './target-missing';
@@ -119,6 +120,9 @@ export class SshExternalTmuxConnection {
   private remoteHomeDir = '.';
   private commandQueue: Promise<void> = Promise.resolve();
   private stackedLayoutTransition: Promise<void> = Promise.resolve();
+  private readonly snapshotRefreshCoordinator = new SnapshotRefreshCoordinator(() =>
+    this.performSnapshot()
+  );
 
   constructor(
     options: TmuxConnectionOptions,
@@ -936,7 +940,7 @@ export class SshExternalTmuxConnection {
       onExit: () => {},
       onPause: (paneId) => {
         if (this.controlChannel === handle) {
-          handle.write('refresh-client -A ' + paneId + ':continue' + '\n');
+          handle.write(`refresh-client -A ${paneId}:continue\n`);
         }
       },
       onBlockEnd: (block) => {
@@ -1301,6 +1305,10 @@ export class SshExternalTmuxConnection {
   }
 
   private async requestSnapshotInternal(): Promise<void> {
+    return this.snapshotRefreshCoordinator.request();
+  }
+
+  private async performSnapshot(): Promise<void> {
     if (!this.connected) {
       return;
     }

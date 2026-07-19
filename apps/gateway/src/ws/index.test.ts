@@ -1,11 +1,11 @@
-import { beforeAll, describe, expect, test } from 'bun:test';
+import { beforeAll, describe, expect, spyOn, test } from 'bun:test';
 import type { StateSnapshotPayload } from '@tmex/shared';
 import { wsBorsh } from '@tmex/shared';
 import { ensureSiteSettingsInitialized, getSiteSettings, updateSiteSettings } from '../db';
 import { runMigrations } from '../db/migrate';
 import { createBorshClientState } from './borsh/codec-borsh';
 import { sessionStateStore } from './borsh/session-state';
-import { WebSocketServer } from './index';
+import { SNAPSHOT_WATCHDOG_INTERVAL_MS, WebSocketServer } from './index';
 
 // 快照下发路径会同步读 device_tree_order 表，确保所有用例前已建表
 beforeAll(() => {
@@ -181,6 +181,53 @@ describe('WebSocketServer connection entry dedup', () => {
     expect(acquireCalls).toBe(1);
     expect(connectCalls).toBe(1);
     expect(server.connections.get('device-shared')?.clients.size).toBe(2);
+  });
+});
+
+describe('WebSocketServer snapshot recovery watchdog', () => {
+  test('keeps the default idle refresh budget at no more than six full snapshots per minute', () => {
+    expect(Math.ceil(60_000 / SNAPSHOT_WATCHDOG_INTERVAL_MS)).toBeLessThanOrEqual(6);
+  });
+
+  test('starts the recovery watchdog only while a client has an active pane subscription', () => {
+    const server = new WebSocketServer() as any;
+    const ws = {
+      data: { borshState: createBorshClientState() },
+      send() {},
+    } as any;
+    sessionStateStore.create(ws);
+
+    const entry = {
+      runtime: { requestSnapshot() {} },
+      detachRuntime: () => {},
+      clients: new Set([ws]),
+      lastSnapshot: null,
+      snapshotTimer: null,
+      snapshotPollTimer: null,
+      reconnectAttempts: 0,
+      reconnectTimer: null,
+    };
+    server.connections.set('device-watchdog', entry);
+
+    const setIntervalSpy = spyOn(globalThis, 'setInterval');
+    try {
+      server.refreshSnapshotPolling('device-watchdog');
+      expect(setIntervalSpy).not.toHaveBeenCalled();
+
+      ws.data.borshState.selectedPanes['device-watchdog'] = '%1';
+      server.refreshSnapshotPolling('device-watchdog');
+      expect(setIntervalSpy).toHaveBeenCalledTimes(1);
+      expect(setIntervalSpy.mock.calls[0]?.[1]).toBe(SNAPSHOT_WATCHDOG_INTERVAL_MS);
+
+      ws.data.borshState.selectedPanes['device-watchdog'] = undefined;
+      server.refreshSnapshotPolling('device-watchdog');
+      expect(entry.snapshotPollTimer).toBeNull();
+    } finally {
+      if (entry.snapshotPollTimer) {
+        clearInterval(entry.snapshotPollTimer);
+      }
+      setIntervalSpy.mockRestore();
+    }
   });
 });
 

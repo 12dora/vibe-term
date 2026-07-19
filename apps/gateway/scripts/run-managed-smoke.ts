@@ -15,20 +15,27 @@ function freePort(): number {
   return 30000 + Math.floor(Math.random() * 20000);
 }
 
-async function waitHealth(port: number, timeoutMs: number): Promise<boolean> {
+interface HealthResponse {
+  status?: string;
+  env?: string;
+}
+
+async function waitHealth(port: number, timeoutMs: number): Promise<HealthResponse | null> {
   const start = Date.now();
   while (Date.now() - start < timeoutMs) {
     try {
       const res = await fetch(`http://127.0.0.1:${port}/healthz`, {
         signal: AbortSignal.timeout(1000),
       });
-      if (res.ok) return true;
+      if (res.ok) {
+        return (await res.json()) as HealthResponse;
+      }
     } catch {
       // retry
     }
     await Bun.sleep(200);
   }
-  return false;
+  return null;
 }
 
 async function main(): Promise<void> {
@@ -89,7 +96,9 @@ async function main(): Promise<void> {
   if (existsSync(adjacentWasm)) {
     spawnSync('cp', [adjacentWasm, join(work, 'ghostty-vt.wasm')], { stdio: 'inherit' });
   } else {
-    console.error(JSON.stringify({ ok: false, error: 'ghostty_wasm_missing_adjacent', adjacentWasm }));
+    console.error(
+      JSON.stringify({ ok: false, error: 'ghostty_wasm_missing_adjacent', adjacentWasm })
+    );
     process.exit(1);
   }
 
@@ -118,9 +127,9 @@ async function main(): Promise<void> {
   };
 
   try {
-    const healthy = await waitHealth(port, 30_000);
-    (report.probes as Record<string, unknown>).healthz = healthy;
-    if (!healthy) {
+    const health = await waitHealth(port, 30_000);
+    (report.probes as Record<string, unknown>).healthz = health;
+    if (!health) {
       report.error = 'health_timeout';
       report.stdout = stdout.slice(-4000);
       report.stderr = stderr.slice(-4000);
@@ -188,9 +197,11 @@ async function main(): Promise<void> {
       updateRes.status === 403 &&
       (updateBody as { error?: string }).error === 'managed_externally' &&
       upgradeRes.status === 403;
+    const productionEnvironment = health.env === 'production';
 
-    report.ok = healthy && managedBlocked && infoRes.ok;
+    report.ok = productionEnvironment && managedBlocked && infoRes.ok;
     report.managedBlocked = managedBlocked;
+    report.productionEnvironment = productionEnvironment;
     writeFileSync(join(work, 'smoke-report.json'), JSON.stringify(report, null, 2));
     console.log(JSON.stringify(report, null, 2));
     if (!report.ok) process.exit(1);

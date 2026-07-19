@@ -30,6 +30,16 @@ export const MANAGED_TARGETS = [
 ] as const;
 
 export type ManagedTarget = (typeof MANAGED_TARGETS)[number];
+export const MANAGED_NODE_ENV_DEFINE = 'process.env.NODE_ENV="production"';
+
+export function createManagedCompileEnvironment(
+  env: NodeJS.ProcessEnv = process.env
+): NodeJS.ProcessEnv {
+  return {
+    ...env,
+    NODE_ENV: 'production',
+  };
+}
 
 const gatewayRoot = resolve(import.meta.dir, '..');
 const appPkgPath = resolve(gatewayRoot, '../../packages/app/package.json');
@@ -137,6 +147,8 @@ function compileOne(target: ManagedTarget, outDir: string, version: string): Tar
     `TMEX_MONOREPO_VERSION="${version}"`,
     '--define',
     'TMEX_MANAGED_BUILD=true',
+    '--define',
+    MANAGED_NODE_ENV_DEFINE,
     // ssh2 的 optional native dep cpu-features 在多数宿主未安装源码；
     // ssh2 运行时不强制 require 它，external 让 compile 跳过打包而非报错。
     '--external',
@@ -144,7 +156,11 @@ function compileOne(target: ManagedTarget, outDir: string, version: string): Tar
   ];
 
   console.log(`[build-managed] compiling ${target} → ${outfile}`);
-  const r = spawnSync('bun', args, { cwd: gatewayRoot, stdio: 'inherit', env: process.env });
+  const r = spawnSync('bun', args, {
+    cwd: gatewayRoot,
+    stdio: 'inherit',
+    env: createManagedCompileEnvironment(),
+  });
   if ((r.status ?? 1) !== 0 || !existsSync(outfile)) {
     return {
       target,
