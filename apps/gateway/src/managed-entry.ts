@@ -7,36 +7,44 @@
  * 构建：`bun scripts/build-managed.ts`（`bun build --compile`）。
  */
 
-// 必须在任何业务 import 之前锁定（本文件顶层同步执行）。
-import { lockManagedRuntime } from './system/managed';
+export {};
 
-lockManagedRuntime({
-  managementMode: 'companion-cli',
-  updateOwner: 'companion',
-});
-
-// 清理可能把安装布局/自更新拉进来的路径提示。
-Reflect.deleteProperty(process.env, 'TMEX_FE_DIST_DIR');
-
-const [
-  { handleManagedSystemApiRequest },
-  { config },
-  { materializeManagedMigrations },
-  { createGatewayRuntime },
-  { getDisplayVersion, getManagementMode, getUpdateOwner },
-] = await Promise.all([
-  import('./api/system-managed'),
-  import('./config'),
-  import('./db/managed-migrations'),
-  import('./runtime'),
-  import('./system/info-public'),
-]);
+declare const TMEX_MONOREPO_VERSION: string | undefined;
 
 interface RunningRuntime {
   stop: () => Promise<void>;
 }
 
-async function main(): Promise<void> {
+function embeddedVersion(): string {
+  if (typeof TMEX_MONOREPO_VERSION === 'string' && TMEX_MONOREPO_VERSION) {
+    return TMEX_MONOREPO_VERSION;
+  }
+  return 'unknown';
+}
+
+async function runManagedGateway(): Promise<void> {
+  const { lockManagedRuntime } = await import('./system/managed');
+  lockManagedRuntime({
+    managementMode: 'companion-cli',
+    updateOwner: 'companion',
+  });
+
+  Reflect.deleteProperty(process.env, 'TMEX_FE_DIST_DIR');
+
+  const [
+    { handleManagedSystemApiRequest },
+    { config },
+    { materializeManagedMigrations },
+    { createGatewayRuntime },
+    { getDisplayVersion, getManagementMode, getUpdateOwner },
+  ] = await Promise.all([
+    import('./api/system-managed'),
+    import('./config'),
+    import('./db/managed-migrations'),
+    import('./runtime'),
+    import('./system/info-public'),
+  ]);
+
   console.log(
     `[gateway] tmex ${getDisplayVersion()} managed=${getManagementMode()} owner=${getUpdateOwner()}`
   );
@@ -84,4 +92,8 @@ async function main(): Promise<void> {
   }
 }
 
-await main();
+if (process.argv.slice(1).includes('--version')) {
+  console.log(`tmex-gateway ${embeddedVersion()}`);
+} else {
+  await runManagedGateway();
+}

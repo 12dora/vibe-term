@@ -58,6 +58,9 @@ function createRunStub(
     if (command === '-V') {
       return ok('tmux 3.4\n');
     }
+    if (command === 'display-message -p #{version}') {
+      return ok('3.4\n');
+    }
     if (command === `has-session -t ${session}`) {
       return ok();
     }
@@ -67,7 +70,10 @@ function createRunStub(
     if (command === `last-window -t ${session}` || command === 'kill-window -t @99') {
       return ok();
     }
-    if (command.startsWith(`set-option -t ${session}`) || command.startsWith(`set-environment -t ${session}`)) {
+    if (
+      command.startsWith(`set-option -t ${session}`) ||
+      command.startsWith(`set-environment -t ${session}`)
+    ) {
       return ok();
     }
     if (command.startsWith(`set-hook -t ${session}`)) {
@@ -93,7 +99,9 @@ function createRunStub(
 }
 
 function makeEagainError(): Error & { code: string } {
-  const error = new Error('posix_spawn failed: EAGAIN: resource temporarily unavailable') as Error & {
+  const error = new Error(
+    'posix_spawn failed: EAGAIN: resource temporarily unavailable'
+  ) as Error & {
     code: string;
   };
   error.code = 'EAGAIN';
@@ -110,17 +118,166 @@ function setTmuxSocket(value: string): void {
   (config as { tmuxSocket: string }).tmuxSocket = value;
 }
 
+function setTmuxBin(value: string): void {
+  (config as { tmuxBin: string }).tmuxBin = value;
+}
+
 const originalTmuxSocket = config.tmuxSocket;
+const originalTmuxBin = config.tmuxBin;
 
 beforeAll(() => {
   runMigrations();
 });
 
 afterEach(() => {
-  setTmuxSocket('');
+  setTmuxSocket(originalTmuxSocket);
+  setTmuxBin(originalTmuxBin);
 });
 
 describe('LocalExternalTmuxConnection socket injection', () => {
+  test('fails closed before session mutation when client and existing server versions differ', async () => {
+    setTmuxBin('/opt/vibex/bin/tmux');
+    const calls: string[][] = [];
+    const connection = new LocalExternalTmuxConnection(
+      {
+        deviceId: 'device-local',
+        onEvent: () => {},
+        onTerminalOutput: () => {},
+        onTerminalHistory: () => {},
+        onSnapshot: () => {},
+        onError: () => {},
+        onClose: () => {},
+      },
+      {
+        enableSubscription: true,
+        ensureGhosttyTerminfo: async () => false,
+        getDevice: () => createDevice('tmex-version-conflict'),
+        run: createRunStub('tmex-version-conflict', {
+          record: calls,
+          overrides: (command) => {
+            if (command === '-V') return ok('tmux 3.5a\n');
+            if (command === 'display-message -p #{version}') return ok('3.7b\n');
+            return null;
+          },
+        }),
+        spawnControlClient: () => {
+          throw new Error('must not start control client after version conflict');
+        },
+      }
+    );
+
+    await expect(connection.connect()).rejects.toThrow(/client 3\.5a.*server 3\.7b/);
+    expect(calls.map(subcommandOf)).toEqual(['-V', 'display-message -p #{version}']);
+  });
+
+  test('cannot bypass the existing server version gate by disabling subscriptions', async () => {
+    setTmuxBin('/opt/vibex/bin/tmux');
+    const calls: string[][] = [];
+    const connection = new LocalExternalTmuxConnection(
+      {
+        deviceId: 'device-local',
+        onEvent: () => {},
+        onTerminalOutput: () => {},
+        onTerminalHistory: () => {},
+        onSnapshot: () => {},
+        onError: () => {},
+        onClose: () => {},
+      },
+      {
+        enableSubscription: false,
+        ensureGhosttyTerminfo: async () => false,
+        getDevice: () => createDevice('tmex-version-conflict'),
+        run: createRunStub('tmex-version-conflict', {
+          record: calls,
+          overrides: (command) => {
+            if (command === '-V') return ok('tmux 3.5a\n');
+            if (command === 'display-message -p #{version}') return ok('3.7b\n');
+            return null;
+          },
+        }),
+      }
+    );
+
+    await expect(connection.connect()).rejects.toThrow(/client 3\.5a.*server 3\.7b/);
+    expect(calls.map(subcommandOf)).toEqual(['-V', 'display-message -p #{version}']);
+  });
+
+  test('fails closed when the configured absolute tmux executable becomes unavailable', async () => {
+    setTmuxBin('/opt/vibex/bin/tmux');
+    const calls: string[][] = [];
+    const connection = new LocalExternalTmuxConnection(
+      {
+        deviceId: 'device-local',
+        onEvent: () => {},
+        onTerminalOutput: () => {},
+        onTerminalHistory: () => {},
+        onSnapshot: () => {},
+        onError: () => {},
+        onClose: () => {},
+      },
+      {
+        enableSubscription: false,
+        ensureGhosttyTerminfo: async () => false,
+        getDevice: () => createDevice('tmex-missing-client'),
+        run: async (argv) => {
+          calls.push(argv);
+          return { exitCode: 127, stdout: '', stderr: 'No such file or directory' };
+        },
+      }
+    );
+
+    await expect(connection.connect()).rejects.toThrow(
+      /configured tmux executable is unavailable.*No such file/
+    );
+    expect(calls.map(subcommandOf)).toEqual(['-V']);
+  });
+
+  test('uses configured absolute tmux binary for version probe, commands, and control client', async () => {
+    setTmuxBin('/opt/vibex/bin/tmux');
+    setTmuxSocket('tmex-e2e');
+    const session = 'tmex-absolute-bin';
+    const calls: string[][] = [];
+    let controlArgv: string[] | null = null;
+
+    const connection = new LocalExternalTmuxConnection(
+      {
+        deviceId: 'device-local',
+        onEvent: () => {},
+        onTerminalOutput: () => {},
+        onTerminalHistory: () => {},
+        onSnapshot: () => {},
+        onError: () => {},
+        onClose: () => {},
+      },
+      {
+        enableSubscription: true,
+        ensureGhosttyTerminfo: async () => false,
+        getDevice: () => createDevice(session),
+        run: createRunStub(session, { record: calls }),
+        spawnControlClient: (argv) => {
+          controlArgv = argv;
+          throw new Error('stop after capturing control argv');
+        },
+      }
+    );
+
+    await expect(connection.connect()).rejects.toThrow('stop after capturing control argv');
+    expect(calls.length).toBeGreaterThan(1);
+    expect(calls.some((argv) => argv.slice(3).join(' ') === '-V')).toBe(true);
+    for (const argv of calls) {
+      expect(argv.slice(0, 3)).toEqual(['/opt/vibex/bin/tmux', '-L', 'tmex-e2e']);
+    }
+    expect(controlArgv as string[] | null).toEqual([
+      '/opt/vibex/bin/tmux',
+      '-L',
+      'tmex-e2e',
+      '-C',
+      'attach-session',
+      '-t',
+      session,
+    ]);
+  });
+
   test('injects -L <socket> into run argv and control-client argv when tmuxSocket is set', async () => {
     setTmuxSocket('tmex-e2e');
     const session = 'tmex-socket-on';
@@ -200,15 +357,7 @@ describe('LocalExternalTmuxConnection socket injection', () => {
     );
 
     await expect(connection.connect()).rejects.toThrow();
-    expect(controlArgv).toEqual([
-      'tmux',
-      '-L',
-      'tmex-e2e',
-      '-C',
-      'attach-session',
-      '-t',
-      session,
-    ]);
+    expect(controlArgv).toEqual(['tmux', '-L', 'tmex-e2e', '-C', 'attach-session', '-t', session]);
   });
 
   test('omits -L from run argv when tmuxSocket is empty', async () => {
@@ -335,9 +484,9 @@ describe('LocalExternalTmuxConnection EAGAIN handling', () => {
     expect(escaped).toBe(false);
     expect(closeCalls).toBe(0);
     // EAGAIN 不应作为 onError 上报
-    expect(errors.filter((e) => e instanceof Error && /EAGAIN|posix_spawn/.test(e.message))).toEqual(
-      []
-    );
+    expect(
+      errors.filter((e) => e instanceof Error && /EAGAIN|posix_spawn/.test(e.message))
+    ).toEqual([]);
     expect((connection as unknown as { connected: boolean }).connected).toBe(true);
 
     connection.disconnect();
@@ -398,9 +547,9 @@ describe('LocalExternalTmuxConnection EAGAIN handling', () => {
     await Bun.sleep(30);
     expect(snapshots.length).toBeGreaterThan(baseSnapshots);
 
-    expect(errors.filter((e) => e instanceof Error && /EAGAIN|posix_spawn/.test(e.message))).toEqual(
-      []
-    );
+    expect(
+      errors.filter((e) => e instanceof Error && /EAGAIN|posix_spawn/.test(e.message))
+    ).toEqual([]);
     expect((connection as unknown as { connected: boolean }).connected).toBe(true);
 
     connection.disconnect();

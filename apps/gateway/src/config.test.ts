@@ -6,6 +6,8 @@ let bustCounter = 0;
 
 async function loadConfigWith(env: Record<string, string | undefined>): Promise<{
   bindHost: string;
+  tmuxBin: string;
+  gatewayOwnerToken: string | null;
 }> {
   const saved = new Map<string, string | undefined>();
   for (const [key, value] of Object.entries(env)) {
@@ -19,7 +21,7 @@ async function loadConfigWith(env: Record<string, string | undefined>): Promise<
   try {
     bustCounter += 1;
     const mod = (await import(`./config.ts?bust=${bustCounter}`)) as {
-      config: { bindHost: string };
+      config: { bindHost: string; tmuxBin: string; gatewayOwnerToken: string | null };
     };
     return mod.config;
   } finally {
@@ -47,5 +49,41 @@ describe('config.bindHost', () => {
   test('支持任意主机地址值', async () => {
     const config = await loadConfigWith({ TMEX_BIND_HOST: '::1' });
     expect(config.bindHost).toBe('::1');
+  });
+});
+
+describe('config.tmuxBin', () => {
+  test('未设置时保持开源 Gateway 的 PATH 兼容默认值', async () => {
+    const config = await loadConfigWith({ TMEX_TMUX_BIN: undefined });
+    expect(config.tmuxBin).toBe('tmux');
+  });
+
+  test('接受 TMEX_TMUX_BIN 的绝对路径', async () => {
+    const config = await loadConfigWith({ TMEX_TMUX_BIN: '/opt/vibex/bin/tmux' });
+    expect(config.tmuxBin).toBe('/opt/vibex/bin/tmux');
+  });
+
+  test('拒绝相对 TMEX_TMUX_BIN', async () => {
+    await expect(loadConfigWith({ TMEX_TMUX_BIN: './bundled/tmux' })).rejects.toThrow(
+      'TMEX_TMUX_BIN must be an absolute path'
+    );
+  });
+});
+
+describe('config.gatewayOwnerToken', () => {
+  test('is optional for the open-source standalone Gateway', async () => {
+    const config = await loadConfigWith({ TMEX_GATEWAY_OWNER_TOKEN: undefined });
+    expect(config.gatewayOwnerToken).toBeNull();
+  });
+
+  test('accepts and normalizes a 32-byte managed owner token', async () => {
+    const config = await loadConfigWith({ TMEX_GATEWAY_OWNER_TOKEN: 'AB'.repeat(32) });
+    expect(config.gatewayOwnerToken).toBe('ab'.repeat(32));
+  });
+
+  test('rejects malformed owner tokens', async () => {
+    await expect(loadConfigWith({ TMEX_GATEWAY_OWNER_TOKEN: 'not-a-token' })).rejects.toThrow(
+      'exactly 32 bytes'
+    );
   });
 });

@@ -28,3 +28,17 @@ export function isControlModeSupported(version: TmuxVersion | null): boolean {
   }
   return version.minor >= MIN_CONTROL_MODE_VERSION.minor;
 }
+
+function normalizedTmuxIdentity(output: string): string | null {
+  const normalized = output
+    .trim()
+    .replace(/^tmux\s+/i, '')
+    .trim();
+  return normalized || null;
+}
+
+export function tmuxClientMatchesServer(clientOutput: string, serverOutput: string): boolean {
+  const client = normalizedTmuxIdentity(clientOutput);
+  const server = normalizedTmuxIdentity(serverOutput);
+  return client !== null && server !== null && client === server;
+}

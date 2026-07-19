@@ -37,7 +37,7 @@ import {
 } from './snapshot-format';
 import { TmuxTargetMissingError, isTargetMissingMessage } from './target-missing';
 import { createThemeSubscriptionTracker } from './theme-subscriptions';
-import { isControlModeSupported, parseTmuxVersion } from './tmux-version';
+import { isControlModeSupported, parseTmuxVersion, tmuxClientMatchesServer } from './tmux-version';
 import { resolveTmuxWindowStyle } from './window-style';
 
 interface CommandResult {
@@ -246,9 +246,7 @@ export class LocalExternalTmuxConnection {
 
     this.sessionName = this.device.session?.trim() || 'tmex';
 
-    if (this.deps.enableSubscription) {
-      await this.assertControlModeSupport();
-    }
+    await this.assertTmuxCompatibility();
     const { created } = await this.ensureSession();
     await this.configureSessionOptions();
     if (this.deps.enableSubscription) {
@@ -808,16 +806,35 @@ export class LocalExternalTmuxConnection {
     }
   }
 
-  private async assertControlModeSupport(): Promise<void> {
+  private async assertTmuxCompatibility(): Promise<void> {
     const result = await this.runTmuxAllowFailure(['-V']);
     if (result.exitCode !== 0) {
+      if (config.tmuxBin !== 'tmux') {
+        throw new Error(
+          `configured tmux executable is unavailable: ${result.stderr.trim() || `exit ${result.exitCode}`}`
+        );
+      }
       return;
     }
     const version = parseTmuxVersion(result.stdout.trim());
-    if (!isControlModeSupported(version)) {
+    if (this.deps.enableSubscription && !isControlModeSupported(version)) {
       throw new Error(
         `tmux ${version?.major}.${version?.minor} is too old for tmex (control mode requires tmux >= 3.0)`
       );
+    }
+    if (config.tmuxBin !== 'tmux') {
+      const server = await this.runTmuxAllowFailure(['display-message', '-p', '#{version}']);
+      if (
+        server.exitCode === 0 &&
+        server.stdout.trim() &&
+        !tmuxClientMatchesServer(result.stdout, server.stdout)
+      ) {
+        const clientVersion = result.stdout.trim().replace(/^tmux\s+/i, '');
+        const serverVersion = server.stdout.trim().replace(/^tmux\s+/i, '');
+        throw new Error(
+          `tmux client ${clientVersion} does not match existing server ${serverVersion}; refusing to modify the session`
+        );
+      }
     }
   }
 
@@ -922,7 +939,7 @@ export class LocalExternalTmuxConnection {
         this.requestSnapshot();
       },
       onPause: (paneId) => {
-        this.controlProcess?.write('refresh-client -A ' + paneId + ':continue\n');
+        this.controlProcess?.write(`refresh-client -A ${paneId}:continue\n`);
       },
       onExit: () => {},
       onBlockEnd: (block) => {
@@ -934,7 +951,7 @@ export class LocalExternalTmuxConnection {
     });
 
     const proc = this.deps.spawnControlClient([
-      'tmux',
+      config.tmuxBin,
       ...(config.tmuxSocket ? ['-L', config.tmuxSocket] : []),
       '-C',
       'attach-session',
@@ -979,7 +996,7 @@ export class LocalExternalTmuxConnection {
     subscription.end();
     if (this.controlProcess === proc) {
       console.warn(
-        '[local] control client stdout ended unexpectedly on ' + this.deviceId + ', killing process'
+        `[local] control client stdout ended unexpectedly on ${this.deviceId}, killing process`
       );
       proc.kill();
     }
@@ -1672,7 +1689,7 @@ export class LocalExternalTmuxConnection {
   private async runTmuxAllowFailure(argv: string[]): Promise<CommandResult> {
     const socketArgs = config.tmuxSocket ? ['-L', config.tmuxSocket] : [];
     try {
-      return await this.deps.run(['tmux', ...socketArgs, ...argv]);
+      return await this.deps.run([config.tmuxBin, ...socketArgs, ...argv]);
     } catch (error) {
       // 进程资源暂时耗尽时 Bun.spawn 直接抛错。降级为「命令失败」语义，避免逃逸成
       // unhandledRejection；上层据 TMUX_SPAWN_UNAVAILABLE_EXIT 退避重试而非判定连接失效。

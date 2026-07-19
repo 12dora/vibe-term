@@ -17,6 +17,7 @@ import type {
 import { SUPPORTED_LOCALES, toBCP47 } from '@tmex/shared';
 import type { Server } from 'bun';
 import { v4 as uuidv4 } from 'uuid';
+import { config } from '../config';
 import { runtimeController } from '../control/runtime';
 import { decrypt, encrypt } from '../crypto';
 import {
@@ -60,10 +61,12 @@ import { weixinService } from '../weixin/service';
 import { handleAgentApiRequest } from './agent';
 import { handleCapabilitiesApiRequest } from './capabilities';
 import { handleFilesApiRequest } from './files';
+import { createGatewayOwnerProof } from './gateway-ownership';
 import { handleLlmApiRequest } from './llm';
 import { normalizeTerminalShortcutsInput } from './terminal-shortcuts';
 import { handleDeviceTestConnection } from './test-connection';
 import { handleThemeApiRequest } from './theme';
+import { getTmuxHealth } from './tmux-health';
 import { handleTmuxTreeApiRequest } from './tmux-tree';
 import { handleTreeOrderApiRequest } from './tree-order';
 import { handleWatchApiRequest } from './watch';
@@ -399,11 +402,20 @@ export function handleApiRequest(
   }
 
   if (path === '/healthz' && req.method === 'GET') {
-    return json({
-      status: 'ok',
-      restarting: runtimeController.isRestarting(),
-      // 供 e2e globalSetup 断言「连到的是 test 实例而非生产」，避免误改生产数据。
-      env: process.env.NODE_ENV ?? 'development',
+    return getTmuxHealth().then((tmux) => {
+      return json({
+        status: 'ok',
+        restarting: runtimeController.isRestarting(),
+        // 供 e2e globalSetup 断言「连到的是 test 实例而非生产」，避免误改生产数据。
+        env: process.env.NODE_ENV ?? 'development',
+        tmux,
+        owner: createGatewayOwnerProof(
+          config.gatewayOwnerToken,
+          req.headers.get('x-tmex-gateway-challenge'),
+          process.pid,
+          tmux.healthy
+        ),
+      });
     });
   }
 

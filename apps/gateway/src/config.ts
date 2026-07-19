@@ -1,3 +1,5 @@
+import { isAbsolute } from 'node:path';
+
 function getEnv(key: string, defaultValue: string): string {
   return process.env[key] ?? defaultValue;
 }
@@ -8,6 +10,28 @@ function getBooleanEnv(key: string, defaultValue: boolean): boolean {
     return defaultValue;
   }
   return value === '1' || value.toLowerCase() === 'true' || value.toLowerCase() === 'yes';
+}
+
+function getTmuxBin(): string {
+  const value = process.env.TMEX_TMUX_BIN?.trim();
+  if (!value) {
+    return 'tmux';
+  }
+  if (!isAbsolute(value)) {
+    throw new Error('TMEX_TMUX_BIN must be an absolute path');
+  }
+  return value;
+}
+
+function getGatewayOwnerToken(): string | null {
+  const value = process.env.TMEX_GATEWAY_OWNER_TOKEN?.trim();
+  if (!value) {
+    return null;
+  }
+  if (!/^[0-9a-f]{64}$/i.test(value)) {
+    throw new Error('TMEX_GATEWAY_OWNER_TOKEN must be exactly 32 bytes encoded as hex');
+  }
+  return value.toLowerCase();
 }
 
 export const config = {
@@ -47,6 +71,8 @@ export const config = {
   // local 设备的 tmux socket（tmux -L <name>）。仅 e2e 注入 TMEX_TMUX_SOCKET=tmex-e2e
   // 以与生产默认 socket 隔离；生产/普通运行不设 → 空串 → 不加 -L → 用默认 socket。
   tmuxSocket: getEnv('TMEX_TMUX_SOCKET', ''),
+  tmuxBin: getTmuxBin(),
+  gatewayOwnerToken: getGatewayOwnerToken(),
   sshReconnectMaxRetriesDefault: Number.parseInt(getEnv('TMEX_SSH_RECONNECT_MAX_RETRIES', '2'), 10),
   sshReconnectDelaySecondsDefault: Number.parseInt(
     getEnv('TMEX_SSH_RECONNECT_DELAY_SECONDS', '10'),

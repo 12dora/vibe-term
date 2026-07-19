@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 
-import { isControlModeSupported, parseTmuxVersion } from './tmux-version';
+import { isControlModeSupported, parseTmuxVersion, tmuxClientMatchesServer } from './tmux-version';
 
 describe('parseTmuxVersion', () => {
   test('parses release versions', () => {
@@ -30,5 +30,17 @@ describe('isControlModeSupported', () => {
   test('rejects < 3.0', () => {
     expect(isControlModeSupported({ major: 2, minor: 9 })).toBe(false);
     expect(isControlModeSupported({ major: 1, minor: 8 })).toBe(false);
+  });
+});
+
+describe('tmuxClientMatchesServer', () => {
+  test('accepts the exact client/server release', () => {
+    expect(tmuxClientMatchesServer('tmux 3.7b', '3.7b')).toBe(true);
+    expect(tmuxClientMatchesServer('tmux master', 'master')).toBe(true);
+  });
+
+  test('rejects a bundled client against a different existing server', () => {
+    expect(tmuxClientMatchesServer('tmux 3.5a', '3.7b')).toBe(false);
+    expect(tmuxClientMatchesServer('tmux 3.7b', '3.7a')).toBe(false);
   });
 });
