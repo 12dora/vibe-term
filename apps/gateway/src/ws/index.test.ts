@@ -232,7 +232,36 @@ describe('WebSocketServer snapshot recovery watchdog', () => {
 });
 
 describe('WebSocketServer slow consumer isolation', () => {
-  test('stops encoding live output while blocked and terminates after a skipped frame drains', () => {
+  test('coalesces same-tick pane output before encoding it for clients', async () => {
+    const server = new WebSocketServer() as any;
+    const frames: Uint8Array[] = [];
+    const ws = {
+      data: { borshState: createBorshClientState() },
+      send(frame: Uint8Array) {
+        frames.push(frame);
+        return frame.length;
+      },
+      terminate() {},
+    } as any;
+    ws.data.borshState.selectedPanes['device-batch'] = '%1';
+    server.connections.set('device-batch', {
+      clients: new Set([ws]),
+      lastSnapshot: null,
+    });
+
+    server.broadcastTerminalOutput('device-batch', '%1', new Uint8Array([1, 2]));
+    server.broadcastTerminalOutput('device-batch', '%1', new Uint8Array([3]));
+
+    expect(frames).toHaveLength(0);
+    await Promise.resolve();
+    expect(frames).toHaveLength(1);
+
+    const envelope = wsBorsh.decodeEnvelope(frames[0] as Uint8Array);
+    const payload = wsBorsh.decodePayload(wsBorsh.schema.TermOutputSchema, envelope.payload);
+    expect(Array.from(payload.data)).toEqual([1, 2, 3]);
+  });
+
+  test('stops encoding live output while blocked and terminates after a skipped frame drains', async () => {
     const server = new WebSocketServer() as any;
     let sendCalls = 0;
     let terminateCalls = 0;
@@ -253,7 +282,9 @@ describe('WebSocketServer slow consumer isolation', () => {
     });
 
     server.broadcastTerminalOutput('device-slow', '%1', new Uint8Array([1]));
+    await Promise.resolve();
     server.broadcastTerminalOutput('device-slow', '%1', new Uint8Array([2]));
+    await Promise.resolve();
 
     expect(sendCalls).toBe(1);
     expect(terminateCalls).toBe(0);

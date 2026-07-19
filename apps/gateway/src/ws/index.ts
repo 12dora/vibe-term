@@ -32,6 +32,7 @@ import { sessionStateStore } from './borsh/session-state';
 import { switchBarrier } from './borsh/switch-barrier';
 import { classifySshError } from './error-classify';
 import { applyDeviceTreeOverlay } from './overlay-utils';
+import { TerminalOutputBatcher } from './terminal-output-batcher';
 import { gatewayWebSocketSendGuard } from './websocket-send-guard';
 
 interface ClientState {
@@ -78,6 +79,14 @@ export function parseWindowLayoutSize(
 }
 
 export class WebSocketServer {
+  private readonly terminalOutputBatcher = new TerminalOutputBatcher((deviceId, paneId, data) => {
+    try {
+      this.sendTerminalOutput(deviceId, paneId, data);
+    } catch (error) {
+      console.error('[ws] terminal output batch failed:', error);
+    }
+  });
+
   connections = new Map<string, DeviceConnectionEntry>();
   pendingConnectionEntries = new Map<string, Promise<DeviceConnectionEntry | null>>();
   connectedClients = new Set<ServerWebSocket<ClientState>>();
@@ -122,6 +131,7 @@ export class WebSocketServer {
   }
 
   private releaseConnectionEntry(deviceId: string, entry: DeviceConnectionEntry): void {
+    this.terminalOutputBatcher.discardDevice(deviceId);
     this.clearSnapshotTimer(entry);
     this.clearSnapshotPollTimer(entry);
     this.clearReconnectTimer(entry);
@@ -1537,9 +1547,14 @@ export class WebSocketServer {
   }
 
   private broadcastTerminalOutput(deviceId: string, paneId: string, data: Uint8Array): void {
+    this.terminalOutputBatcher.push(deviceId, paneId, data);
+  }
+
+  private sendTerminalOutput(deviceId: string, paneId: string, data: Uint8Array): void {
     const entry = this.connections.get(deviceId);
     if (!entry) return;
 
+    let payloadBytes: Uint8Array | null = null;
     for (const client of entry.clients) {
       const isFocused = client.data.borshState.selectedPanes[deviceId] === paneId;
       const isSubscribed = client.data.borshState.subscribedPanes[deviceId]?.has(paneId) ?? false;
@@ -1554,7 +1569,7 @@ export class WebSocketServer {
         continue;
       }
 
-      const payloadBytes = wsBorsh.encodePayload(wsBorsh.schema.TermOutputSchema, {
+      payloadBytes ??= wsBorsh.encodePayload(wsBorsh.schema.TermOutputSchema, {
         deviceId,
         paneId,
         encoding: 1,
