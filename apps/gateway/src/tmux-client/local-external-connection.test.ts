@@ -440,6 +440,125 @@ describe('LocalExternalTmuxConnection', () => {
     expect(fake.killed()).toBe(true);
   });
 
+  test('control title updates coalesce in memory without full tmux snapshots', async () => {
+    const fake = createFakeControlProcess();
+    const commands: string[][] = [];
+    const snapshots: StateSnapshotPayload[] = [];
+    const connection = new LocalExternalTmuxConnection(
+      {
+        deviceId: 'device-local',
+        onEvent: () => {},
+        onTerminalOutput: () => {},
+        onTerminalHistory: () => {},
+        onSnapshot: (snapshot) => snapshots.push(snapshot),
+        onError: (error) => {
+          throw error;
+        },
+        onClose: () => {},
+      },
+      {
+        enableSubscription: true,
+        ensureGhosttyTerminfo: async () => false,
+        getDevice: () => createDevice('tmex-title'),
+        run: createRunStub('tmex-title', { record: commands }),
+        spawnControlClient: () => {
+          fake.pushStdout('%begin 1 1 0\n%end 1 1 0\n%session-changed $1 tmex-title\n');
+          return fake.proc;
+        },
+      }
+    );
+
+    await connection.connect();
+    commands.length = 0;
+    snapshots.length = 0;
+
+    for (let index = 0; index < 50; index += 1) {
+      fake.pushStdout(`%output %1 \\033]2;build-${index}\\007\n`);
+    }
+
+    await waitFor(() => (snapshots.length > 0 ? true : null));
+    await Bun.sleep(300);
+
+    expect(
+      commands.filter((argv) => {
+        const command = argv.slice(1).join(' ');
+        return (
+          command.startsWith('display-message -p -t tmex-title') ||
+          command.startsWith('list-windows -t tmex-title') ||
+          command.startsWith('list-panes -s -t tmex-title')
+        );
+      })
+    ).toEqual([]);
+    expect(snapshots).toHaveLength(1);
+    expect(snapshots[0]?.session?.windows[0]?.panes[0]?.title).toBe('build-49');
+
+    fake.pushStdout('%output %1 \\033]2;build-49\\007\n');
+    await Bun.sleep(300);
+    expect(snapshots).toHaveLength(1);
+
+    connection.disconnect();
+  });
+
+  test('an unknown pane title waits for a structural snapshot', async () => {
+    const fake = createFakeControlProcess();
+    const session = 'tmex-pending-title';
+    const commands: string[][] = [];
+    const snapshots: StateSnapshotPayload[] = [];
+    let includeSecondPane = false;
+    const connection = new LocalExternalTmuxConnection(
+      {
+        deviceId: 'device-local',
+        onEvent: () => {},
+        onTerminalOutput: () => {},
+        onTerminalHistory: () => {},
+        onSnapshot: (snapshot) => snapshots.push(snapshot),
+        onError: (error) => {
+          throw error;
+        },
+        onClose: () => {},
+      },
+      {
+        enableSubscription: true,
+        ensureGhosttyTerminfo: async () => false,
+        getDevice: () => createDevice(session),
+        run: createRunStub(session, {
+          record: commands,
+          overrides: (command) => {
+            if (command.startsWith(`list-panes -s -t ${session}`) && includeSecondPane) {
+              return ok(
+                '%1|@1|0|1|80|24|0|0|1|bash|node|/home/user\n%2|@1|1|0|80|24|0|0|1|stale|node|/home/user\n'
+              );
+            }
+            return null;
+          },
+        }),
+        spawnControlClient: () => {
+          fake.pushStdout(`%begin 1 1 0\n%end 1 1 0\n%session-changed $1 ${session}\n`);
+          return fake.proc;
+        },
+      }
+    );
+
+    await connection.connect();
+    commands.length = 0;
+    snapshots.length = 0;
+
+    fake.pushStdout('%output %2 \\033]2;pending-title\\007\n');
+    await Bun.sleep(300);
+    expect(commands).toEqual([]);
+    expect(snapshots).toEqual([]);
+
+    includeSecondPane = true;
+    fake.pushStdout('%window-add @2\n');
+    await waitFor(() => (snapshots.length > 0 ? true : null));
+
+    expect(snapshots[0]?.session?.windows[0]?.panes.find((pane) => pane.id === '%2')?.title).toBe(
+      'pending-title'
+    );
+
+    connection.disconnect();
+  });
+
   test('control client restarts after unexpected exit and resyncs snapshot', async () => {
     const fakes: FakeControlProcess[] = [];
     let snapshotCount = 0;

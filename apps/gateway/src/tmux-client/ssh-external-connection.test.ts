@@ -364,6 +364,54 @@ describe('SshExternalTmuxConnection', () => {
     connection.disconnect();
   });
 
+  test('control title updates coalesce in memory without remote tmux snapshots', async () => {
+    const session = 'tmex-ssh-title';
+    const fakeClient = new FakeClient();
+    const writes: string[] = [];
+    const snapshots: StateSnapshotPayload[] = [];
+    setupCommandChannel(fakeClient, session, { record: writes });
+    const connection = new SshExternalTmuxConnection(
+      createCallbacks({ onSnapshot: (snapshot) => snapshots.push(snapshot) }),
+      {
+        getDevice: () => createDevice(session),
+        decrypt: async () => 'secret',
+        createClient: () => fakeClient as unknown as Client,
+      }
+    );
+
+    await connection.connect();
+    const controlChannel = fakeClient.controlChannels[0];
+    if (!controlChannel) {
+      throw new Error('control channel missing');
+    }
+    writes.length = 0;
+    snapshots.length = 0;
+
+    for (let index = 0; index < 50; index += 1) {
+      controlChannel.emit('data', Buffer.from(`%output %1 \\033]2;build-${index}\\007\n`));
+    }
+
+    await waitFor(() => (snapshots.length > 0 ? true : null));
+    await Bun.sleep(300);
+
+    expect(
+      writes.filter(
+        (payload) =>
+          payload.includes(`'display-message' '-p' '-t' '${session}'`) ||
+          payload.includes(`'list-windows' '-t' '${session}'`) ||
+          payload.includes(`'list-panes' '-s' '-t' '${session}'`)
+      )
+    ).toEqual([]);
+    expect(snapshots).toHaveLength(1);
+    expect(snapshots[0]?.session?.windows[0]?.panes[0]?.title).toBe('build-49');
+
+    controlChannel.emit('data', Buffer.from('%output %1 \\033]2;build-49\\007\n'));
+    await Bun.sleep(300);
+    expect(snapshots).toHaveLength(1);
+
+    connection.disconnect();
+  });
+
   test('connect parses real tmux snapshot output that is pipe-delimited', async () => {
     const snapshots: StateSnapshotPayload[] = [];
     const fakeClient = new FakeClient();

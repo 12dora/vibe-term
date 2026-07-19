@@ -22,6 +22,7 @@ import { buildEnsureGhosttyTerminfoScript } from './ghostty-terminfo';
 import { encodeInputToHexChunks } from './input-encoder';
 import { ConnectionLifecycleEmitter } from './lifecycle-emitter';
 import type { PaneStreamNotification } from './pane-stream-parser';
+import { PaneTitleSnapshotCoordinator } from './pane-title-snapshot-coordinator';
 import {
   PANE_SNAPSHOT_FORMAT,
   SNAPSHOT_FIELD_SEPARATOR,
@@ -180,9 +181,13 @@ export class LocalExternalTmuxConnection {
   private manualDisconnect = false;
   private activeWindowId: string | null = null;
   private activePaneId: string | null = null;
-  private pendingPaneTitles = new Map<string, string>();
   private snapshotSession: Pick<TmuxSession, 'id' | 'name'> | null = null;
   private snapshotWindows = new Map<string, TmuxWindow>();
+  private readonly paneTitleSnapshots = new PaneTitleSnapshotCoordinator({
+    getWindows: () => this.snapshotWindows.values(),
+    emitSnapshot: () => this.emitSnapshot(),
+    canEmit: () => this.connected && !this.manualDisconnect,
+  });
   private inputTransition: Promise<void> = Promise.resolve();
   private stackedLayoutTransition: Promise<void> = Promise.resolve();
   private bellDedup = new Map<string, number>();
@@ -239,6 +244,7 @@ export class LocalExternalTmuxConnection {
     this.manualDisconnect = false;
     this.closeNotified = false;
     this.lifecycle.reset();
+    this.paneTitleSnapshots.reset();
     this.device = this.deps.getDevice(this.deviceId);
     if (!this.device) {
       throw new Error(`Device not found: ${this.deviceId}`);
@@ -916,8 +922,7 @@ export class LocalExternalTmuxConnection {
         this.callbacks.onTerminalOutput(paneId, data);
       },
       onTitle: (paneId, title) => {
-        this.pendingPaneTitles.set(paneId, title);
-        this.requestSnapshot();
+        this.paneTitleSnapshots.noteTitle(paneId, title);
       },
       onBell: (paneId) => {
         this.recordBell(paneId);
@@ -1027,6 +1032,7 @@ export class LocalExternalTmuxConnection {
 
   private stopControlClient(): void {
     this.stopHeartbeat();
+    this.paneTitleSnapshots.reset();
     const proc = this.controlProcess;
     this.controlProcess = null;
     this.controlSubscription?.dispose();
@@ -1430,6 +1436,7 @@ export class LocalExternalTmuxConnection {
     this.themeSubscriptions.prune(expectedPaneIds);
     this.restoreThemeSubscriptionsOnce();
     this.markSpawnRecovered();
+    this.paneTitleSnapshots.noteFullSnapshotEmitted();
     this.emitSnapshot();
     this.lifecycle.emitSnapshotClosures(prevWindows);
   }
@@ -1497,7 +1504,7 @@ export class LocalExternalTmuxConnection {
         id: row.id,
         windowId: row.windowId,
         index: row.index,
-        title: this.pendingPaneTitles.get(row.id) ?? row.title,
+        title: this.paneTitleSnapshots.consumeTitle(row.id, row.title),
         currentCommand: row.currentCommand,
         currentPath: row.currentPath,
         // pane_active 是窗口内 active；list-panes -s 下每个窗口都有一个
@@ -1518,7 +1525,6 @@ export class LocalExternalTmuxConnection {
         continue;
       }
       window.panes.push(pane);
-      this.pendingPaneTitles.delete(row.id);
     }
 
     for (const window of this.snapshotWindows.values()) {
