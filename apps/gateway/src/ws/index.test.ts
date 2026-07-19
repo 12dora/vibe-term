@@ -5,6 +5,7 @@ import { ensureSiteSettingsInitialized, getSiteSettings, updateSiteSettings } fr
 import { runMigrations } from '../db/migrate';
 import { createBorshClientState } from './borsh/codec-borsh';
 import { sessionStateStore } from './borsh/session-state';
+import { switchBarrier } from './borsh/switch-barrier';
 import { SNAPSHOT_WATCHDOG_INTERVAL_MS, WebSocketServer } from './index';
 
 // 快照下发路径会同步读 device_tree_order 表，确保所有用例前已建表
@@ -232,7 +233,7 @@ describe('WebSocketServer snapshot recovery watchdog', () => {
 });
 
 describe('WebSocketServer slow consumer isolation', () => {
-  test('coalesces same-tick pane output before encoding it for clients', async () => {
+  test('coalesces pending pane output before encoding it for clients', () => {
     const server = new WebSocketServer() as any;
     const frames: Uint8Array[] = [];
     const ws = {
@@ -253,7 +254,7 @@ describe('WebSocketServer slow consumer isolation', () => {
     server.broadcastTerminalOutput('device-batch', '%1', new Uint8Array([3]));
 
     expect(frames).toHaveLength(0);
-    await Promise.resolve();
+    server.terminalOutputBatcher.flushDevice('device-batch');
     expect(frames).toHaveLength(1);
 
     const envelope = wsBorsh.decodeEnvelope(frames[0] as Uint8Array);
@@ -261,7 +262,7 @@ describe('WebSocketServer slow consumer isolation', () => {
     expect(Array.from(payload.data)).toEqual([1, 2, 3]);
   });
 
-  test('stops encoding live output while blocked and terminates after a skipped frame drains', async () => {
+  test('stops encoding live output while blocked and terminates after a skipped frame drains', () => {
     const server = new WebSocketServer() as any;
     let sendCalls = 0;
     let terminateCalls = 0;
@@ -282,9 +283,9 @@ describe('WebSocketServer slow consumer isolation', () => {
     });
 
     server.broadcastTerminalOutput('device-slow', '%1', new Uint8Array([1]));
-    await Promise.resolve();
+    server.terminalOutputBatcher.flushDevice('device-slow');
     server.broadcastTerminalOutput('device-slow', '%1', new Uint8Array([2]));
-    await Promise.resolve();
+    server.terminalOutputBatcher.flushDevice('device-slow');
 
     expect(sendCalls).toBe(1);
     expect(terminateCalls).toBe(0);
@@ -514,6 +515,55 @@ describe('WebSocketServer tmux select guards', () => {
     expect(recorder.requestSnapshotCalls).toBe(0);
     expect(ws.data.borshState.selectedPanes['device-a']).toBe('%1');
     expect(ws.sent).toHaveLength(1);
+  });
+
+  test('flushes old pane output before starting a new select transaction', () => {
+    const server = new WebSocketServer() as any;
+    const ws = createBorshWs();
+    ws.data.borshState.selectedPanes['device-a'] = '%1';
+    const recorder = createRuntimeRecorder();
+    const entry = setupEntry(server, ws, recorder.runtime);
+
+    server.broadcastTerminalOutput('device-a', '%1', new Uint8Array([7, 8]));
+    server.handleTmuxSelect(ws, {
+      deviceId: 'device-a',
+      windowId: '@2',
+      paneId: '%2',
+      selectToken: new Uint8Array(16).fill(2),
+      wantHistory: true,
+      cols: null,
+      rows: null,
+    });
+    clearPolling(entry);
+
+    expect(ws.sent.map((frame: Uint8Array) => wsBorsh.decodeEnvelope(frame).kind)).toEqual([
+      wsBorsh.KIND_TERM_OUTPUT,
+      wsBorsh.KIND_SWITCH_ACK,
+    ]);
+    const outputEnvelope = wsBorsh.decodeEnvelope(ws.sent[0]);
+    const output = wsBorsh.decodePayload(wsBorsh.schema.TermOutputSchema, outputEnvelope.payload);
+    expect(output.paneId).toBe('%1');
+    expect(Array.from(output.data)).toEqual([7, 8]);
+    switchBarrier.cleanupClient(ws);
+  });
+
+  test('flushes subscribed pane output before replacing the subscription set', () => {
+    const server = new WebSocketServer() as any;
+    const ws = createBorshWs();
+    ws.data.borshState.subscribedPanes['device-a'] = new Set(['%1']);
+    const recorder = createRuntimeRecorder();
+    const entry = setupEntry(server, ws, recorder.runtime);
+
+    server.broadcastTerminalOutput('device-a', '%1', new Uint8Array([9]));
+    server.handleSubscribePanes(ws, 'device-a', ['%2']);
+    clearPolling(entry);
+
+    expect(ws.sent).toHaveLength(1);
+    const outputEnvelope = wsBorsh.decodeEnvelope(ws.sent[0]);
+    const output = wsBorsh.decodePayload(wsBorsh.schema.TermOutputSchema, outputEnvelope.payload);
+    expect(output.paneId).toBe('%1');
+    expect(Array.from(output.data)).toEqual([9]);
+    expect([...ws.data.borshState.subscribedPanes['device-a']]).toEqual(['%2']);
   });
 });
 

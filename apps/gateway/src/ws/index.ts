@@ -763,6 +763,7 @@ export class WebSocketServer {
     if (!windowId || !paneId) return;
     if (!this.canSelectPane(entry, deviceId, windowId, paneId)) return;
 
+    this.terminalOutputBatcher.flushDevice(deviceId);
     const started = switchBarrier.startTransaction(ws as any, {
       deviceId,
       windowId,
@@ -1211,6 +1212,7 @@ export class WebSocketServer {
       }
     }
 
+    this.terminalOutputBatcher.flushDevice(deviceId);
     if (accepted.size > 0) {
       ws.data.borshState.subscribedPanes[deviceId] = accepted;
     } else {

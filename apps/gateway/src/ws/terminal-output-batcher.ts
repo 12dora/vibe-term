@@ -1,20 +1,47 @@
+export const GATEWAY_TERM_OUTPUT_BATCH_DELAY_MS = 8;
 export const GATEWAY_TERM_OUTPUT_BATCH_MAX_BYTES = 64 * 1024;
 
 interface PendingBatch {
   chunks: Uint8Array[];
   length: number;
+  timer: unknown;
 }
 
 type OutputSink = (deviceId: string, paneId: string, data: Uint8Array) => void;
 
+export interface TerminalOutputBatchScheduler {
+  schedule(callback: () => void, delayMs: number): unknown;
+  cancel(handle: unknown): void;
+}
+
+interface TerminalOutputBatcherOptions {
+  delayMs?: number;
+  maxBytes?: number;
+  scheduler?: TerminalOutputBatchScheduler;
+}
+
+const defaultScheduler: TerminalOutputBatchScheduler = {
+  schedule: (callback, delayMs) => setTimeout(callback, delayMs),
+  cancel: (handle) => clearTimeout(handle as ReturnType<typeof setTimeout>),
+};
+
 export class TerminalOutputBatcher {
   private readonly pending = new Map<string, Map<string, PendingBatch>>();
+  private readonly delayMs: number;
+  private readonly maxBytes: number;
+  private readonly scheduler: TerminalOutputBatchScheduler;
 
   constructor(
     private readonly emit: OutputSink,
-    private readonly maxBytes = GATEWAY_TERM_OUTPUT_BATCH_MAX_BYTES
+    options: TerminalOutputBatcherOptions = {}
   ) {
-    if (!Number.isSafeInteger(maxBytes) || maxBytes <= 0) {
+    this.delayMs = options.delayMs ?? GATEWAY_TERM_OUTPUT_BATCH_DELAY_MS;
+    this.maxBytes = options.maxBytes ?? GATEWAY_TERM_OUTPUT_BATCH_MAX_BYTES;
+    this.scheduler = options.scheduler ?? defaultScheduler;
+    if (!Number.isSafeInteger(this.delayMs) || this.delayMs <= 0) {
+      throw new Error('terminal output batch delay must be a positive safe integer');
+    }
+    if (!Number.isSafeInteger(this.maxBytes) || this.maxBytes <= 0) {
       throw new Error('terminal output batch limit must be a positive safe integer');
     }
   }
@@ -33,7 +60,21 @@ export class TerminalOutputBatcher {
     }
   }
 
+  flushDevice(deviceId: string): void {
+    const panes = this.pending.get(deviceId);
+    if (!panes) return;
+    for (const [paneId, batch] of [...panes]) {
+      this.flush(deviceId, paneId, batch);
+    }
+  }
+
   discardDevice(deviceId: string): void {
+    const panes = this.pending.get(deviceId);
+    if (panes) {
+      for (const batch of panes.values()) {
+        this.scheduler.cancel(batch.timer);
+      }
+    }
     this.pending.delete(deviceId);
   }
 
@@ -48,11 +89,14 @@ export class TerminalOutputBatcher {
       return existing;
     }
 
-    const batch: PendingBatch = { chunks: [], length: 0 };
+    const batch: PendingBatch = {
+      chunks: [],
+      length: 0,
+      timer: this.scheduler.schedule(() => {
+        this.flush(deviceId, paneId, batch);
+      }, this.delayMs),
+    };
     panes.set(paneId, batch);
-    queueMicrotask(() => {
-      this.flush(deviceId, paneId, batch);
-    });
     return batch;
   }
 
@@ -61,6 +105,7 @@ export class TerminalOutputBatcher {
     if (panes?.get(paneId) !== batch) {
       return;
     }
+    this.scheduler.cancel(batch.timer);
     panes.delete(paneId);
     if (panes.size === 0) {
       this.pending.delete(deviceId);
