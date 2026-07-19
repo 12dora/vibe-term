@@ -41,6 +41,7 @@ import { useNavigate } from 'react-router';
 import { toast } from 'sonner';
 import { DeviceStatusBadge } from '../device-status-badge';
 import { ShortcutButtonRow } from '../settings/ShortcutButtonRow';
+import { resolveSettledMissingWindowFallback } from './selection-recovery';
 
 // URL 目标未出现在快照时的失效判定/回落宽限：覆盖 select 状态机 ackTimeoutMs(1500ms) + 快照传播。
 const SELECT_SETTLE_GRACE_MS = 2500;
@@ -465,9 +466,20 @@ export function DeviceConsole({
     // Find the target window
     const targetWindow = windows.find((w) => w.id === windowId);
     if (!targetWindow) {
-      // Window doesn't exist in snapshot yet.
-      // Wait for snapshot to arrive. Don't redirect to another window,
-      // as the user may have explicitly navigated to this specific window.
+      const fallback = resolveSettledMissingWindowFallback({
+        windows,
+        routeWindowId: windowId,
+        settled: isSelectionSettledMissing,
+      });
+      if (fallback) {
+        navigate(
+          hostAppPath(
+            runtime.host,
+            `/devices/${deviceId}/windows/${fallback.windowId}/panes/${encodePaneIdForUrl(fallback.paneId)}`
+          ),
+          { replace: true }
+        );
+      }
       return;
     }
 
