@@ -36,6 +36,11 @@ import { XTERM_THEME_DARK, XTERM_THEME_LIGHT } from './theme';
 import type { TerminalProps, TerminalRef } from './types';
 import { useMobileTouch } from './useMobileTouch';
 import { useTerminalResize } from './useTerminalResize';
+import {
+  reportTerminalDiagnostic,
+  scheduleTerminalDiagnosticSamples,
+  useTerminalDiagnosticsReporter,
+} from './terminal-diagnostics';
 
 const TERMINAL_SCROLLBACK = 10000;
 
@@ -117,6 +122,7 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(
     const terminalLineHeight = useUIStore((state) => state.terminalLineHeight);
     const { t } = useTranslation();
     const runtime = useRuntime();
+    const terminalDiagnosticsReporter = useTerminalDiagnosticsReporter();
 
     const terminalTheme = useMemo(() => {
       switch (theme) {
@@ -199,43 +205,124 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(
     useEffect(() => {
       let cancelled = false;
       let createdTerminal: Awaited<ReturnType<typeof createTerminalController>> | null = null;
+      let stopDiagnosticSamples = () => {};
+      const fontFamily = resolveFontStack(terminalFontId);
+      const diagnosticArgs = (
+        stage:
+          | 'mount'
+          | 'fonts_ready'
+          | 'controller_ready'
+          | 'opened'
+          | 'font_load_failed'
+          | 'controller_failed'
+          | 'open_failed',
+        terminal: CompatibleTerminalLike | null
+      ) => ({
+        surface: 'terminal' as const,
+        stage,
+        terminal,
+        mount: mountRef.current,
+        fontFamily,
+        fontSize: terminalFontSize,
+      });
+
+      reportTerminalDiagnostic(
+        terminalDiagnosticsReporter,
+        diagnosticArgs('mount', null)
+      );
 
       void (async () => {
         // 先等选中字体（主字体 + 符号兜底）加载完，再创建终端：open() 内部按 fontFamily
         // 测量 cell 尺寸，字体未就绪会按 monospace 回退测宽，导致后续字形与网格错位。
-        await loadTerminalFonts(terminalFontId, terminalFontSize);
+        try {
+          await loadTerminalFonts(terminalFontId, terminalFontSize);
+        } catch {
+          reportTerminalDiagnostic(
+            terminalDiagnosticsReporter,
+            diagnosticArgs('font_load_failed', null)
+          );
+          return;
+        }
         if (cancelled) {
           return;
         }
+        reportTerminalDiagnostic(
+          terminalDiagnosticsReporter,
+          diagnosticArgs('fonts_ready', null)
+        );
 
-        const terminal = await createTerminalController({
-          fontFamily: resolveFontStack(terminalFontId),
-          fontSize: terminalFontSize,
-          lineHeight: terminalLineHeight,
-          scrollback: TERMINAL_SCROLLBACK,
-          theme: currentTerminalThemeRef.current,
-          disableStdin: currentInputModeRef.current === 'editor',
-        });
+        let terminal: Awaited<ReturnType<typeof createTerminalController>>;
+        try {
+          terminal = await createTerminalController({
+            fontFamily,
+            fontSize: terminalFontSize,
+            lineHeight: terminalLineHeight,
+            scrollback: TERMINAL_SCROLLBACK,
+            theme: currentTerminalThemeRef.current,
+            disableStdin: currentInputModeRef.current === 'editor',
+          });
+        } catch {
+          reportTerminalDiagnostic(
+            terminalDiagnosticsReporter,
+            diagnosticArgs('controller_failed', null)
+          );
+          return;
+        }
         if (cancelled) {
           terminal.dispose();
           return;
         }
 
         createdTerminal = terminal;
-        if (mountRef.current) {
+        reportTerminalDiagnostic(
+          terminalDiagnosticsReporter,
+          diagnosticArgs('controller_ready', terminal)
+        );
+        try {
+          if (!mountRef.current) {
+            throw new Error('terminal mount unavailable');
+          }
           terminal.open(mountRef.current);
+        } catch {
+          reportTerminalDiagnostic(
+            terminalDiagnosticsReporter,
+            diagnosticArgs('open_failed', terminal)
+          );
+          terminal.dispose();
+          createdTerminal = null;
+          return;
         }
         setInstance(terminal);
+        reportTerminalDiagnostic(
+          terminalDiagnosticsReporter,
+          diagnosticArgs('opened', terminal)
+        );
+        stopDiagnosticSamples = scheduleTerminalDiagnosticSamples(
+          terminalDiagnosticsReporter,
+          {
+            surface: 'terminal',
+            terminal,
+            mount: mountRef.current,
+            fontFamily,
+            fontSize: terminalFontSize,
+          }
+        );
       })();
 
       return () => {
         cancelled = true;
+        stopDiagnosticSamples();
         setInstance(null);
         clearE2eTerminalProbe(createdTerminal);
         createdTerminal?.dispose();
       };
       // 字体设置变更（无 post-init 改字体 API）时重建控制器：重新测度量 + 重排。
-    }, [terminalFontId, terminalFontSize, terminalLineHeight]);
+    }, [
+      terminalDiagnosticsReporter,
+      terminalFontId,
+      terminalFontSize,
+      terminalLineHeight,
+    ]);
 
     // e2e 桥指向焦点实例（分屏多实例下 autoFocus 即焦点性；单 pane 恒 true）
     useEffect(() => {

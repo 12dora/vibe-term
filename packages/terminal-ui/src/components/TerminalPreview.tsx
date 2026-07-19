@@ -4,6 +4,11 @@ import { cn } from '@tmex/ui';
 import { FitAddon, createTerminalController } from 'ghostty-terminal';
 import { useEffect, useRef } from 'react';
 import { XTERM_THEME_DARK, XTERM_THEME_LIGHT } from './theme';
+import {
+  reportTerminalDiagnostic,
+  scheduleTerminalDiagnosticSamples,
+  useTerminalDiagnosticsReporter,
+} from './terminal-diagnostics';
 
 // 写死的预览内容：~10 行带 ANSI 颜色、含中文/符号/Nerd 图标的代码块，
 // 用于整体预览字号、字体、行高效果。\r\n 为终端换行。
@@ -29,6 +34,7 @@ export function TerminalPreview({ className }: { className?: string }) {
   const fontSize = useUIStore((state) => state.terminalFontSize);
   const lineHeight = useUIStore((state) => state.terminalLineHeight);
   const theme = useUIStore((state) => state.theme);
+  const terminalDiagnosticsReporter = useTerminalDiagnosticsReporter();
 
   const mountRef = useRef<HTMLDivElement>(null);
   const fitRef = useRef<FitAddon | null>(null);
@@ -36,39 +42,133 @@ export function TerminalPreview({ className }: { className?: string }) {
   useEffect(() => {
     let cancelled = false;
     let term: Awaited<ReturnType<typeof createTerminalController>> | null = null;
+    let stopDiagnosticSamples = () => {};
+    const fontFamily = resolveFontStack(fontId);
+    const diagnosticArgs = (
+      stage:
+        | 'mount'
+        | 'fonts_ready'
+        | 'controller_ready'
+        | 'opened'
+        | 'content_written'
+        | 'font_load_failed'
+        | 'controller_failed'
+        | 'open_failed'
+        | 'content_write_failed',
+      terminal: Awaited<ReturnType<typeof createTerminalController>> | null
+    ) => ({
+      surface: 'preview' as const,
+      stage,
+      terminal,
+      mount: mountRef.current,
+      fontFamily,
+      fontSize,
+    });
+
+    reportTerminalDiagnostic(
+      terminalDiagnosticsReporter,
+      diagnosticArgs('mount', null)
+    );
 
     void (async () => {
-      await loadTerminalFonts(fontId, fontSize);
+      try {
+        await loadTerminalFonts(fontId, fontSize);
+      } catch {
+        reportTerminalDiagnostic(
+          terminalDiagnosticsReporter,
+          diagnosticArgs('font_load_failed', null)
+        );
+        return;
+      }
       const mount = mountRef.current;
       if (cancelled || !mount) {
         return;
       }
-      term = await createTerminalController({
-        fontFamily: resolveFontStack(fontId),
-        fontSize,
-        lineHeight,
-        scrollback: 100,
-        theme: theme === 'light' ? XTERM_THEME_LIGHT : XTERM_THEME_DARK,
-        disableStdin: true,
-      });
+      reportTerminalDiagnostic(
+        terminalDiagnosticsReporter,
+        diagnosticArgs('fonts_ready', null)
+      );
+      try {
+        term = await createTerminalController({
+          fontFamily,
+          fontSize,
+          lineHeight,
+          scrollback: 100,
+          theme: theme === 'light' ? XTERM_THEME_LIGHT : XTERM_THEME_DARK,
+          disableStdin: true,
+        });
+      } catch {
+        reportTerminalDiagnostic(
+          terminalDiagnosticsReporter,
+          diagnosticArgs('controller_failed', null)
+        );
+        return;
+      }
       if (cancelled) {
         term.dispose();
         return;
       }
-      term.open(mount);
+      reportTerminalDiagnostic(
+        terminalDiagnosticsReporter,
+        diagnosticArgs('controller_ready', term)
+      );
+      try {
+        term.open(mount);
+      } catch {
+        reportTerminalDiagnostic(
+          terminalDiagnosticsReporter,
+          diagnosticArgs('open_failed', term)
+        );
+        term.dispose();
+        term = null;
+        return;
+      }
+      reportTerminalDiagnostic(
+        terminalDiagnosticsReporter,
+        diagnosticArgs('opened', term)
+      );
       const fit = new FitAddon();
       term.loadAddon(fit);
       fitRef.current = fit;
-      fit.fit();
-      term.write(PREVIEW_ANSI);
+      try {
+        fit.fit();
+        term.write(PREVIEW_ANSI);
+      } catch {
+        reportTerminalDiagnostic(
+          terminalDiagnosticsReporter,
+          diagnosticArgs('content_write_failed', term)
+        );
+        return;
+      }
+      reportTerminalDiagnostic(
+        terminalDiagnosticsReporter,
+        diagnosticArgs('content_written', term)
+      );
+      stopDiagnosticSamples = scheduleTerminalDiagnosticSamples(
+        terminalDiagnosticsReporter,
+        {
+          surface: 'preview',
+          terminal: term,
+          mount,
+          fontFamily,
+          fontSize,
+        }
+      );
     })();
 
     return () => {
       cancelled = true;
+      stopDiagnosticSamples();
       fitRef.current = null;
       term?.dispose();
     };
-  }, [fontId, fontSize, lineHeight, theme]);
+  }, [
+    fontId,
+    fontSize,
+    lineHeight,
+    terminalDiagnosticsReporter,
+    theme,
+  ]);
 
   // 容器宽度变化时重新 fit（不重建控制器）
   useEffect(() => {
@@ -87,13 +187,14 @@ export function TerminalPreview({ className }: { className?: string }) {
   return (
     <div
       className={cn('relative w-full overflow-hidden rounded-md border', className)}
+      data-testid="terminal-preview"
       style={{
         height: `${heightPx}px`,
         backgroundColor:
           theme === 'light' ? XTERM_THEME_LIGHT.background : XTERM_THEME_DARK.background,
       }}
     >
-      <div ref={mountRef} className="absolute inset-0" />
+      <div ref={mountRef} className="absolute inset-0" data-testid="terminal-preview-mount" />
     </div>
   );
 }

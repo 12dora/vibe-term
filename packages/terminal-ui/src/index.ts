@@ -4,6 +4,21 @@ export { Terminal } from './components/Terminal';
 export type { TerminalProps, TerminalRef, TerminalTheme } from './components/types';
 export { SplitTerminalArea } from './components/SplitTerminalArea';
 export { TerminalPreview } from './components/TerminalPreview';
+export {
+  TerminalDiagnosticsProvider,
+  collectTerminalRenderDiagnostic,
+  reportTerminalDiagnostic,
+  scheduleTerminalDiagnosticSamples,
+  useTerminalDiagnosticsReporter,
+} from './components/terminal-diagnostics';
+export type {
+  TerminalDiagnosticFontStatus,
+  TerminalDiagnosticRenderer,
+  TerminalDiagnosticReporter,
+  TerminalDiagnosticStage,
+  TerminalDiagnosticSurface,
+  TerminalRenderDiagnostic,
+} from './components/terminal-diagnostics';
 export { PaneSwitcherMenu } from './components/PaneSwitcherMenu';
 export { SelectionToolbar } from './components/SelectionToolbar';
 export {
