@@ -231,6 +231,39 @@ describe('WebSocketServer snapshot recovery watchdog', () => {
   });
 });
 
+describe('WebSocketServer slow consumer isolation', () => {
+  test('stops encoding live output while blocked and terminates after a skipped frame drains', () => {
+    const server = new WebSocketServer() as any;
+    let sendCalls = 0;
+    let terminateCalls = 0;
+    const ws = {
+      data: { borshState: createBorshClientState() },
+      send() {
+        sendCalls += 1;
+        return -1;
+      },
+      terminate() {
+        terminateCalls += 1;
+      },
+    } as any;
+    ws.data.borshState.selectedPanes['device-slow'] = '%1';
+    server.connections.set('device-slow', {
+      clients: new Set([ws]),
+      lastSnapshot: null,
+    });
+
+    server.broadcastTerminalOutput('device-slow', '%1', new Uint8Array([1]));
+    server.broadcastTerminalOutput('device-slow', '%1', new Uint8Array([2]));
+
+    expect(sendCalls).toBe(1);
+    expect(terminateCalls).toBe(0);
+
+    server.handleDrain(ws);
+
+    expect(terminateCalls).toBe(1);
+  });
+});
+
 describe('WebSocketServer tmux select guards', () => {
   function makeSnapshot(): StateSnapshotPayload {
     return {

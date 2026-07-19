@@ -32,6 +32,7 @@ import { sessionStateStore } from './borsh/session-state';
 import { switchBarrier } from './borsh/switch-barrier';
 import { classifySshError } from './error-classify';
 import { applyDeviceTreeOverlay } from './overlay-utils';
+import { gatewayWebSocketSendGuard } from './websocket-send-guard';
 
 interface ClientState {
   borshState: BorshClientState;
@@ -285,9 +286,14 @@ export class WebSocketServer {
     void this.handleBorshMessage(ws, envelope.kind, envelope.seq, envelope.payload);
   }
 
+  handleDrain(ws: ServerWebSocket<ClientState>): void {
+    gatewayWebSocketSendGuard.handleDrain(ws as ServerWebSocket<unknown>);
+  }
+
   handleClose(ws: ServerWebSocket<ClientState>): void {
     console.log('[ws] client disconnected');
 
+    gatewayWebSocketSendGuard.forget(ws as ServerWebSocket<unknown>);
     this.connectedClients.delete(ws);
     switchBarrier.cleanupClient(ws);
     sessionStateStore.cleanup(ws);
@@ -607,12 +613,18 @@ export class WebSocketServer {
   }
 
   private sendEnvelope(ws: ServerWebSocket<ClientState>, kind: number, payload: Uint8Array): void {
+    if (!gatewayWebSocketSendGuard.canSend(ws as ServerWebSocket<unknown>)) {
+      return;
+    }
     const seq = ws.data.borshState.seqGen();
     const data = wsBorsh.encodeEnvelope(kind, payload, seq);
-    ws.send(data);
+    gatewayWebSocketSendGuard.sendFrames(ws as ServerWebSocket<unknown>, [data]);
   }
 
   private sendChunked(ws: ServerWebSocket<ClientState>, kind: number, payload: Uint8Array): void {
+    if (!gatewayWebSocketSendGuard.canSend(ws as ServerWebSocket<unknown>)) {
+      return;
+    }
     const state = ws.data.borshState;
 
     const originalSeq = state.seqGen();
@@ -622,13 +634,16 @@ export class WebSocketServer {
     });
 
     if (chunked.totalChunks === 0) {
-      ws.send(wsBorsh.encodeEnvelope(kind, payload, originalSeq));
+      gatewayWebSocketSendGuard.sendFrames(ws as ServerWebSocket<unknown>, [
+        wsBorsh.encodeEnvelope(kind, payload, originalSeq),
+      ]);
       return;
     }
 
-    for (const chunk of chunked.chunks) {
-      ws.send(wsBorsh.encodeChunk(chunk, state.seqGen()));
-    }
+    gatewayWebSocketSendGuard.sendFrames(
+      ws as ServerWebSocket<unknown>,
+      chunked.chunks.map((chunk) => wsBorsh.encodeChunk(chunk, state.seqGen()))
+    );
   }
 
   private sendError(
@@ -1389,18 +1404,16 @@ export class WebSocketServer {
         void this.deps.releaseRuntime(deviceId, runtime);
       }
       const errorInfo = classifySshError(err instanceof Error ? err : new Error(String(err)));
-      ws.send(
-        wsBorsh.encodeEnvelope(
-          wsBorsh.KIND_DEVICE_EVENT,
-          wsBorsh.encodeDeviceEventPayload({
-            deviceId,
-            type: 'error',
-            errorType: errorInfo.type,
-            message: t(errorInfo.messageKey, { ...errorInfo.messageParams }),
-            rawMessage: err instanceof Error ? err.message : String(err),
-          }),
-          ws.data.borshState.seqGen()
-        )
+      this.sendEnvelope(
+        ws,
+        wsBorsh.KIND_DEVICE_EVENT,
+        wsBorsh.encodeDeviceEventPayload({
+          deviceId,
+          type: 'error',
+          errorType: errorInfo.type,
+          message: t(errorInfo.messageKey, { ...errorInfo.messageParams }),
+          rawMessage: err instanceof Error ? err.message : String(err),
+        })
       );
       return null;
     }

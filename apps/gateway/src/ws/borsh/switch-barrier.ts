@@ -3,6 +3,7 @@
 // 参考: docs/terminal/2026021404-terminal-switch-barrier-design.md
 
 import type { ServerWebSocket } from 'bun';
+import { gatewayWebSocketSendGuard } from '../websocket-send-guard';
 import {
   type BorshClientState,
   encodeLiveResume,
@@ -181,7 +182,11 @@ export class SwitchBarrier {
       seq
     );
 
-    sendToClient(ws, ackData);
+    if (!sendToClient(ws, ackData)) {
+      gatewayWebSocketSendGuard.markStreamGap(ws);
+      this.completeTransaction(ws, deviceId);
+      return;
+    }
 
     // 设置 HISTORY 超时
     if (context.wantHistory) {
@@ -252,7 +257,11 @@ export class SwitchBarrier {
       borshState.maxFrameBytes
     );
 
-    sendToClient(ws, historyMessages);
+    if (!sendToClient(ws, historyMessages)) {
+      gatewayWebSocketSendGuard.markStreamGap(ws);
+      this.completeTransaction(ws, deviceId);
+      return;
+    }
 
     pending.callbacks.onHistorySent?.();
 
@@ -312,7 +321,11 @@ export class SwitchBarrier {
       seq
     );
 
-    sendToClient(ws, liveResumeData);
+    if (!sendToClient(ws, liveResumeData)) {
+      gatewayWebSocketSendGuard.markStreamGap(ws);
+      this.completeTransaction(ws, deviceId);
+      return;
+    }
 
     // flush 缓冲输出（LIVE_RESUME 之后发送，保证顺序）
     for (const data of bufferedOutput) {
@@ -326,7 +339,10 @@ export class SwitchBarrier {
         },
         outputSeq
       );
-      sendToClient(ws, outputData);
+      if (!sendToClient(ws, outputData)) {
+        gatewayWebSocketSendGuard.markStreamGap(ws);
+        break;
+      }
     }
 
     // 完成事务

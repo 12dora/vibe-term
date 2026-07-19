@@ -56,8 +56,11 @@ async function runManagedGateway(): Promise<void> {
         bunServer: Bun.Server<unknown>
       ) => Response | Promise<Response> | undefined;
       websocket: {
+        backpressureLimit: number;
+        closeOnBackpressureLimit: boolean;
         open: (ws: Bun.ServerWebSocket<unknown>) => void;
         message: (ws: Bun.ServerWebSocket<unknown>, message: string | Buffer) => void;
+        drain: (ws: Bun.ServerWebSocket<unknown>) => void;
         close: (ws: Bun.ServerWebSocket<unknown>) => void;
       };
       onRestartRequested: (listener: () => Promise<void> | void) => void;

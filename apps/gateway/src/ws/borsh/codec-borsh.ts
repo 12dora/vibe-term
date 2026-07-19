@@ -3,6 +3,7 @@
 
 import { type b, wsBorsh } from '@tmex/shared';
 import type { ServerWebSocket } from 'bun';
+import { gatewayWebSocketSendGuard } from '../websocket-send-guard';
 
 // ========== 类型定义 ==========
 
@@ -166,14 +167,11 @@ function encodeWithChunking(
 
 // ========== 发送工具 ==========
 
-export function sendToClient(ws: ServerWebSocket<unknown>, data: Uint8Array | Uint8Array[]): void {
-  if (Array.isArray(data)) {
-    for (const chunk of data) {
-      ws.send(chunk);
-    }
-  } else {
-    ws.send(data);
-  }
+export function sendToClient(
+  ws: ServerWebSocket<unknown>,
+  data: Uint8Array | Uint8Array[]
+): boolean {
+  return gatewayWebSocketSendGuard.sendFrames(ws, Array.isArray(data) ? data : [data]);
 }
 
 // ========== 解码辅助函数 ==========

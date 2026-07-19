@@ -23,6 +23,7 @@ import { registerThemeBroadcaster } from './tmux/theme-broadcaster';
 import { watchService } from './watch/service';
 import { weixinService } from './weixin/service';
 import { WebSocketServer } from './ws';
+import { GATEWAY_WS_BACKPRESSURE_LIMIT_BYTES } from './ws/websocket-send-guard';
 
 interface GatewayRuntimeOptions {
   runMigrationsOnStart?: boolean;
@@ -38,8 +39,11 @@ export interface GatewayRuntime {
     bunServer: Bun.Server<unknown>
   ) => Response | Promise<Response> | undefined;
   websocket: {
+    backpressureLimit: number;
+    closeOnBackpressureLimit: boolean;
     open: (ws: Bun.ServerWebSocket<unknown>) => void;
     message: (ws: Bun.ServerWebSocket<unknown>, message: string | Buffer) => void;
+    drain: (ws: Bun.ServerWebSocket<unknown>) => void;
     close: (ws: Bun.ServerWebSocket<unknown>) => void;
   };
   onRestartRequested: (listener: () => Promise<void> | void) => void;
@@ -139,11 +143,16 @@ export async function createGatewayRuntime(
       return undefined;
     },
     websocket: {
+      backpressureLimit: GATEWAY_WS_BACKPRESSURE_LIMIT_BYTES,
+      closeOnBackpressureLimit: true,
       open(ws) {
         wsServer.handleOpen(ws as any);
       },
       message(ws, message) {
         wsServer.handleMessage(ws as any, message);
+      },
+      drain(ws) {
+        wsServer.handleDrain(ws as any);
       },
       close(ws) {
         wsServer.handleClose(ws as any);

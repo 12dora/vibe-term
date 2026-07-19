@@ -14,6 +14,7 @@ import {
   getMaxAgentMessageSeq,
   listPendingAgentConfirmations,
 } from '../db/agent';
+import { gatewayWebSocketSendGuard } from '../ws/websocket-send-guard';
 
 export interface AgentHubClientState {
   borshState: {
@@ -165,6 +166,9 @@ export class AgentWsHub {
   // 与 WebSocketServer.sendEnvelope/sendChunked 保持一致的封包方式
   private sendPayload(ws: AgentHubClient, kind: number, payloadBytes: Uint8Array): void {
     try {
+      if (!gatewayWebSocketSendGuard.canSend(ws as ServerWebSocket<unknown>)) {
+        return;
+      }
       const state = ws.data.borshState;
       const originalSeq = state.seqGen();
       const chunked = wsBorsh.splitPayloadIntoChunks(payloadBytes, kind, originalSeq, {
@@ -173,13 +177,16 @@ export class AgentWsHub {
       });
 
       if (chunked.totalChunks === 0) {
-        ws.send(wsBorsh.encodeEnvelope(kind, payloadBytes, originalSeq));
+        gatewayWebSocketSendGuard.sendFrames(ws as ServerWebSocket<unknown>, [
+          wsBorsh.encodeEnvelope(kind, payloadBytes, originalSeq),
+        ]);
         return;
       }
 
-      for (const chunk of chunked.chunks) {
-        ws.send(wsBorsh.encodeChunk(chunk, state.seqGen()));
-      }
+      gatewayWebSocketSendGuard.sendFrames(
+        ws as ServerWebSocket<unknown>,
+        chunked.chunks.map((chunk) => wsBorsh.encodeChunk(chunk, state.seqGen()))
+      );
     } catch (err) {
       console.error('[agent-ws-hub] failed to send payload:', err);
     }
