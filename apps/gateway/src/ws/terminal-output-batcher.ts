@@ -1,4 +1,4 @@
-export const GATEWAY_TERM_OUTPUT_BATCH_DELAY_MS = 8;
+export const GATEWAY_TERM_OUTPUT_BATCH_DELAY_MS = 16;
 export const GATEWAY_TERM_OUTPUT_BATCH_MAX_BYTES = 64 * 1024;
 
 interface PendingBatch {

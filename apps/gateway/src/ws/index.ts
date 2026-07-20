@@ -67,6 +67,11 @@ interface WebSocketServerOptions {
 }
 
 export const SNAPSHOT_WATCHDOG_INTERVAL_MS = 10_000;
+const ENVELOPE_OVERHEAD_BYTES = 16;
+
+export function payloadNeedsChunking(payloadLength: number, maxFrameBytes: number): boolean {
+  return payloadLength > maxFrameBytes - ENVELOPE_OVERHEAD_BYTES;
+}
 
 // tmux #{window_layout} 前缀携带整窗尺寸（如 "b25d,120x30,0,0[...]"）
 export function parseWindowLayoutSize(
@@ -638,17 +643,16 @@ export class WebSocketServer {
     const state = ws.data.borshState;
 
     const originalSeq = state.seqGen();
-    const chunked = wsBorsh.splitPayloadIntoChunks(payload, kind, originalSeq, {
-      maxFrameBytes: state.maxFrameBytes,
-      chunkStreamId: wsBorsh.generateChunkStreamId(),
-    });
-
-    if (chunked.totalChunks === 0) {
+    if (!payloadNeedsChunking(payload.length, state.maxFrameBytes)) {
       gatewayWebSocketSendGuard.sendFrames(ws as ServerWebSocket<unknown>, [
         wsBorsh.encodeEnvelope(kind, payload, originalSeq),
       ]);
       return;
     }
+    const chunked = wsBorsh.splitPayloadIntoChunks(payload, kind, originalSeq, {
+      maxFrameBytes: state.maxFrameBytes,
+      chunkStreamId: wsBorsh.generateChunkStreamId(),
+    });
 
     gatewayWebSocketSendGuard.sendFrames(
       ws as ServerWebSocket<unknown>,
@@ -1549,7 +1553,27 @@ export class WebSocketServer {
   }
 
   private broadcastTerminalOutput(deviceId: string, paneId: string, data: Uint8Array): void {
+    const entry = this.connections.get(deviceId);
+    if (
+      !entry ||
+      !Array.from(entry.clients).some((client) =>
+        this.clientWantsPaneOutput(client, deviceId, paneId)
+      )
+    ) {
+      return;
+    }
     this.terminalOutputBatcher.push(deviceId, paneId, data);
+  }
+
+  private clientWantsPaneOutput(
+    client: ServerWebSocket<ClientState>,
+    deviceId: string,
+    paneId: string
+  ): boolean {
+    return (
+      client.data.borshState.selectedPanes[deviceId] === paneId ||
+      (client.data.borshState.subscribedPanes[deviceId]?.has(paneId) ?? false)
+    );
   }
 
   private sendTerminalOutput(deviceId: string, paneId: string, data: Uint8Array): void {
@@ -1559,8 +1583,7 @@ export class WebSocketServer {
     let payloadBytes: Uint8Array | null = null;
     for (const client of entry.clients) {
       const isFocused = client.data.borshState.selectedPanes[deviceId] === paneId;
-      const isSubscribed = client.data.borshState.subscribedPanes[deviceId]?.has(paneId) ?? false;
-      if (!isFocused && !isSubscribed) {
+      if (!this.clientWantsPaneOutput(client, deviceId, paneId)) {
         continue;
       }
 

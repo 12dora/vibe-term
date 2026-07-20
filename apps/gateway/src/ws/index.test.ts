@@ -6,7 +6,7 @@ import { runMigrations } from '../db/migrate';
 import { createBorshClientState } from './borsh/codec-borsh';
 import { sessionStateStore } from './borsh/session-state';
 import { switchBarrier } from './borsh/switch-barrier';
-import { SNAPSHOT_WATCHDOG_INTERVAL_MS, WebSocketServer } from './index';
+import { SNAPSHOT_WATCHDOG_INTERVAL_MS, WebSocketServer, payloadNeedsChunking } from './index';
 
 // 快照下发路径会同步读 device_tree_order 表，确保所有用例前已建表
 beforeAll(() => {
@@ -233,6 +233,32 @@ describe('WebSocketServer snapshot recovery watchdog', () => {
 });
 
 describe('WebSocketServer slow consumer isolation', () => {
+  test('drops output for panes with no selected or subscribed client before batching', () => {
+    const server = new WebSocketServer() as any;
+    const ws = {
+      data: { borshState: createBorshClientState() },
+      send() {
+        return 1;
+      },
+      terminate() {},
+    } as any;
+    ws.data.borshState.selectedPanes['device-interest'] = '%2';
+    server.connections.set('device-interest', {
+      clients: new Set([ws]),
+      lastSnapshot: null,
+    });
+    const push = spyOn(server.terminalOutputBatcher, 'push');
+
+    server.broadcastTerminalOutput('device-interest', '%1', new Uint8Array([1]));
+    expect(push).not.toHaveBeenCalled();
+
+    ws.data.borshState.subscribedPanes['device-interest'] = new Set(['%1']);
+    server.broadcastTerminalOutput('device-interest', '%1', new Uint8Array([2]));
+    expect(push).toHaveBeenCalledTimes(1);
+    server.terminalOutputBatcher.discardDevice('device-interest');
+    push.mockRestore();
+  });
+
   test('coalesces pending pane output before encoding it for clients', () => {
     const server = new WebSocketServer() as any;
     const frames: Uint8Array[] = [];
@@ -293,6 +319,14 @@ describe('WebSocketServer slow consumer isolation', () => {
     server.handleDrain(ws);
 
     expect(terminateCalls).toBe(1);
+  });
+});
+
+describe('WebSocketServer frame sizing', () => {
+  test('only enters the chunk path when payload exceeds one negotiated frame', () => {
+    expect(payloadNeedsChunking(1, 17)).toBe(false);
+    expect(payloadNeedsChunking(2, 17)).toBe(true);
+    expect(payloadNeedsChunking(64 * 1024, wsBorsh.DEFAULT_MAX_FRAME_BYTES)).toBe(false);
   });
 });
 

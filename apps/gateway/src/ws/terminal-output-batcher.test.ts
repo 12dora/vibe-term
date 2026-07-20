@@ -36,6 +36,10 @@ class ManualScheduler implements TerminalOutputBatchScheduler {
 }
 
 describe('TerminalOutputBatcher', () => {
+  test('uses one frame as the default bounded deadline', () => {
+    expect(GATEWAY_TERM_OUTPUT_BATCH_DELAY_MS).toBe(16);
+  });
+
   test('coalesces adjacent event-loop turns until the bounded deadline', async () => {
     const emitted: Array<{ deviceId: string; paneId: string; data: Uint8Array }> = [];
     const scheduler = new ManualScheduler();
