@@ -33,6 +33,7 @@ import { switchBarrier } from './borsh/switch-barrier';
 import { classifySshError } from './error-classify';
 import { applyDeviceTreeOverlay } from './overlay-utils';
 import { TerminalOutputBatcher } from './terminal-output-batcher';
+import { TerminalOutputMetrics } from './terminal-output-metrics';
 import { gatewayWebSocketSendGuard } from './websocket-send-guard';
 
 interface ClientState {
@@ -84,9 +85,13 @@ export function parseWindowLayoutSize(
 }
 
 export class WebSocketServer {
+  private readonly terminalOutputMetrics = new TerminalOutputMetrics();
+  private terminalOutputEventsUntilMetricsCheck = 1024;
   private readonly terminalOutputBatcher = new TerminalOutputBatcher((deviceId, paneId, data) => {
     try {
+      this.terminalOutputMetrics.recordBatch(data.length);
       this.sendTerminalOutput(deviceId, paneId, data);
+      this.reportTerminalOutputMetricsIfDue();
     } catch (error) {
       console.error('[ws] terminal output batch failed:', error);
     }
@@ -636,25 +641,28 @@ export class WebSocketServer {
     gatewayWebSocketSendGuard.sendFrames(ws as ServerWebSocket<unknown>, [data]);
   }
 
-  private sendChunked(ws: ServerWebSocket<ClientState>, kind: number, payload: Uint8Array): void {
+  private sendChunked(
+    ws: ServerWebSocket<ClientState>,
+    kind: number,
+    payload: Uint8Array
+  ): boolean {
     if (!gatewayWebSocketSendGuard.canSend(ws as ServerWebSocket<unknown>)) {
-      return;
+      return false;
     }
     const state = ws.data.borshState;
 
     const originalSeq = state.seqGen();
     if (!payloadNeedsChunking(payload.length, state.maxFrameBytes)) {
-      gatewayWebSocketSendGuard.sendFrames(ws as ServerWebSocket<unknown>, [
+      return gatewayWebSocketSendGuard.sendFrames(ws as ServerWebSocket<unknown>, [
         wsBorsh.encodeEnvelope(kind, payload, originalSeq),
       ]);
-      return;
     }
     const chunked = wsBorsh.splitPayloadIntoChunks(payload, kind, originalSeq, {
       maxFrameBytes: state.maxFrameBytes,
       chunkStreamId: wsBorsh.generateChunkStreamId(),
     });
 
-    gatewayWebSocketSendGuard.sendFrames(
+    return gatewayWebSocketSendGuard.sendFrames(
       ws as ServerWebSocket<unknown>,
       chunked.chunks.map((chunk) => wsBorsh.encodeChunk(chunk, state.seqGen()))
     );
@@ -1554,15 +1562,41 @@ export class WebSocketServer {
 
   private broadcastTerminalOutput(deviceId: string, paneId: string, data: Uint8Array): void {
     const entry = this.connections.get(deviceId);
-    if (
-      !entry ||
-      !Array.from(entry.clients).some((client) =>
-        this.clientWantsPaneOutput(client, deviceId, paneId)
-      )
-    ) {
+    let observed = false;
+    if (entry) {
+      for (const client of entry.clients) {
+        if (this.clientWantsPaneOutput(client, deviceId, paneId)) {
+          observed = true;
+          break;
+        }
+      }
+    }
+    this.terminalOutputMetrics.recordSource(data.length, observed);
+    this.terminalOutputEventsUntilMetricsCheck -= 1;
+    if (this.terminalOutputEventsUntilMetricsCheck === 0) {
+      this.terminalOutputEventsUntilMetricsCheck = 1024;
+      this.reportTerminalOutputMetricsIfDue();
+    }
+    if (!observed) {
       return;
     }
     this.terminalOutputBatcher.push(deviceId, paneId, data);
+  }
+
+  private reportTerminalOutputMetricsIfDue(): void {
+    const metrics = this.terminalOutputMetrics.takeIfDue(Date.now());
+    if (!metrics) {
+      return;
+    }
+    console.log(
+      `[ws-metrics] terminal_output interval_ms=${metrics.intervalMs} ` +
+        `source_events=${metrics.sourceEvents} source_bytes=${metrics.sourceBytes} ` +
+        `dropped_events=${metrics.droppedEvents} dropped_bytes=${metrics.droppedBytes} ` +
+        `batches=${metrics.batches} batch_bytes=${metrics.batchBytes} ` +
+        `recipient_deliveries=${metrics.recipientDeliveries} ` +
+        `recipient_bytes=${metrics.recipientBytes} ` +
+        `clients=${this.connectedClients.size} devices=${this.connections.size}`
+    );
   }
 
   private clientWantsPaneOutput(
@@ -1600,7 +1634,9 @@ export class WebSocketServer {
         encoding: 1,
         data,
       });
-      this.sendChunked(client, wsBorsh.KIND_TERM_OUTPUT, payloadBytes);
+      if (this.sendChunked(client, wsBorsh.KIND_TERM_OUTPUT, payloadBytes)) {
+        this.terminalOutputMetrics.recordRecipient(payloadBytes.length);
+      }
     }
   }
 

@@ -259,6 +259,29 @@ describe('WebSocketServer slow consumer isolation', () => {
     push.mockRestore();
   });
 
+  test('checks pane interest without allocating a client array per output event', () => {
+    const server = new WebSocketServer() as any;
+    const ws = {
+      data: { borshState: createBorshClientState() },
+      send() {
+        return 1;
+      },
+      terminate() {},
+    } as any;
+    ws.data.borshState.selectedPanes['device-interest'] = '%1';
+    server.connections.set('device-interest', {
+      clients: new Set([ws]),
+      lastSnapshot: null,
+    });
+    const from = spyOn(Array, 'from');
+
+    server.broadcastTerminalOutput('device-interest', '%1', new Uint8Array([1]));
+
+    expect(from).not.toHaveBeenCalled();
+    from.mockRestore();
+    server.terminalOutputBatcher.discardDevice('device-interest');
+  });
+
   test('coalesces pending pane output before encoding it for clients', () => {
     const server = new WebSocketServer() as any;
     const frames: Uint8Array[] = [];

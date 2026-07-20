@@ -132,4 +132,39 @@ describe('TerminalOutputBatcher', () => {
 
     expect(emitted.map(values)).toEqual([[2]]);
   });
+
+  test('owns queued bytes instead of retaining mutable input fragments', () => {
+    const emitted: Uint8Array[] = [];
+    const scheduler = new ManualScheduler();
+    const batcher = new TerminalOutputBatcher(
+      (_deviceId, _paneId, data) => {
+        emitted.push(data);
+      },
+      { scheduler }
+    );
+    const input = new Uint8Array([1, 2, 3]);
+
+    batcher.push('device-a', '%1', input);
+    input.fill(9);
+    scheduler.runAll();
+
+    expect(emitted.map(values)).toEqual([[1, 2, 3]]);
+  });
+
+  test('keeps many tiny fragments in one bounded backing buffer', () => {
+    const scheduler = new ManualScheduler();
+    const batcher = new TerminalOutputBatcher(() => {}, { scheduler }) as any;
+
+    for (let index = 0; index < 10_000; index += 1) {
+      batcher.push('device-a', '%1', new Uint8Array([index % 256]));
+    }
+
+    const pending = batcher.pending.get('device-a')?.get('%1');
+    expect(pending?.data).toBeInstanceOf(Uint8Array);
+    expect(pending?.data.length).toBeGreaterThanOrEqual(10_000);
+    expect(pending?.data.length).toBeLessThanOrEqual(GATEWAY_TERM_OUTPUT_BATCH_MAX_BYTES);
+    expect(pending?.length).toBe(10_000);
+    expect(pending?.chunks).toBeUndefined();
+    batcher.discardDevice('device-a');
+  });
 });

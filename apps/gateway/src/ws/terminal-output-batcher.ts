@@ -2,7 +2,7 @@ export const GATEWAY_TERM_OUTPUT_BATCH_DELAY_MS = 16;
 export const GATEWAY_TERM_OUTPUT_BATCH_MAX_BYTES = 64 * 1024;
 
 interface PendingBatch {
-  chunks: Uint8Array[];
+  data: Uint8Array;
   length: number;
   timer: unknown;
 }
@@ -24,6 +24,8 @@ const defaultScheduler: TerminalOutputBatchScheduler = {
   schedule: (callback, delayMs) => setTimeout(callback, delayMs),
   cancel: (handle) => clearTimeout(handle as ReturnType<typeof setTimeout>),
 };
+
+const INITIAL_BATCH_CAPACITY_BYTES = 1024;
 
 export class TerminalOutputBatcher {
   private readonly pending = new Map<string, Map<string, PendingBatch>>();
@@ -51,7 +53,12 @@ export class TerminalOutputBatcher {
     while (offset < data.length) {
       const batch = this.getOrCreateBatch(deviceId, paneId);
       const count = Math.min(this.maxBytes - batch.length, data.length - offset);
-      batch.chunks.push(data.subarray(offset, offset + count));
+      this.ensureCapacity(batch, batch.length + count);
+      if (offset === 0 && count === data.length) {
+        batch.data.set(data, batch.length);
+      } else {
+        batch.data.set(data.subarray(offset, offset + count), batch.length);
+      }
       batch.length += count;
       offset += count;
       if (batch.length === this.maxBytes) {
@@ -90,7 +97,7 @@ export class TerminalOutputBatcher {
     }
 
     const batch: PendingBatch = {
-      chunks: [],
+      data: new Uint8Array(Math.min(this.maxBytes, INITIAL_BATCH_CAPACITY_BYTES)),
       length: 0,
       timer: this.scheduler.schedule(() => {
         this.flush(deviceId, paneId, batch);
@@ -98,6 +105,19 @@ export class TerminalOutputBatcher {
     };
     panes.set(paneId, batch);
     return batch;
+  }
+
+  private ensureCapacity(batch: PendingBatch, requiredBytes: number): void {
+    if (requiredBytes <= batch.data.length) {
+      return;
+    }
+    let capacity = batch.data.length;
+    while (capacity < requiredBytes) {
+      capacity = Math.min(this.maxBytes, capacity * 2);
+    }
+    const grown = new Uint8Array(capacity);
+    grown.set(batch.data.subarray(0, batch.length));
+    batch.data = grown;
   }
 
   private flush(deviceId: string, paneId: string, batch: PendingBatch): void {
@@ -114,17 +134,6 @@ export class TerminalOutputBatcher {
     if (batch.length === 0) {
       return;
     }
-    if (batch.chunks.length === 1) {
-      this.emit(deviceId, paneId, batch.chunks[0] as Uint8Array);
-      return;
-    }
-
-    const data = new Uint8Array(batch.length);
-    let offset = 0;
-    for (const chunk of batch.chunks) {
-      data.set(chunk, offset);
-      offset += chunk.length;
-    }
-    this.emit(deviceId, paneId, data);
+    this.emit(deviceId, paneId, batch.data.subarray(0, batch.length));
   }
 }
