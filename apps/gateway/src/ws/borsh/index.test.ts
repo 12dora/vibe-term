@@ -18,6 +18,7 @@ describe('borsh codec', () => {
   it('应该创建 BorshClientState', () => {
     const state = createBorshClientState();
     expect(state.negotiated).toBe(false);
+    expect(state.clientImpl).toBeNull();
     expect(state.maxFrameBytes).toBe(wsBorsh.DEFAULT_MAX_FRAME_BYTES);
     expect(state.seqGen()).toBe(1);
     expect(state.seqGen()).toBe(2);

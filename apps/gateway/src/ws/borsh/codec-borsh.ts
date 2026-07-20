@@ -10,6 +10,7 @@ import { gatewayWebSocketSendGuard } from '../websocket-send-guard';
 export interface BorshClientState {
   seqGen: () => number;
   negotiated: boolean;
+  clientImpl: string | null;
   maxFrameBytes: number;
   chunkReassembler: wsBorsh.ChunkReassembler;
   selectedPanes: Record<string, string | null>;
@@ -21,6 +22,7 @@ export function createBorshClientState(): BorshClientState {
   return {
     seqGen: wsBorsh.createSeqGenerator(),
     negotiated: false,
+    clientImpl: null,
     maxFrameBytes: wsBorsh.DEFAULT_MAX_FRAME_BYTES,
     chunkReassembler: new wsBorsh.ChunkReassembler(),
     selectedPanes: {},

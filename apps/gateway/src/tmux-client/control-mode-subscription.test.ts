@@ -2,6 +2,7 @@ import { describe, expect, test } from 'bun:test';
 import type { PaneStreamNotification } from './pane-stream-parser';
 
 import { createControlModeSubscription } from './control-mode-subscription';
+import type { ControlStreamMetricsSnapshot } from './control-stream-metrics';
 
 const encoder = new TextEncoder();
 
@@ -176,5 +177,44 @@ describe('control mode subscription', () => {
     subscription.dispose();
     await Bun.sleep(250);
     expect(collected.structureChanges).toBe(1);
+  });
+
+  test('reports raw, parsed, and swallowed control traffic in one bounded window', () => {
+    const collected: ControlStreamMetricsSnapshot[] = [];
+    let nowMs = 0;
+    const collector = createCollector();
+    collector.subscription.dispose();
+    const first = lines('%output %1 hello');
+    const second = lines('%output %1 \\033]2;title\\007');
+    const subscription = createControlModeSubscription(
+      {
+        onTerminalOutput: () => {},
+        onTitle: () => {},
+        onBell: () => {},
+        onNotification: () => {},
+        onStructureChanged: () => {},
+        onExit: () => {},
+      },
+      {
+        metricsIntervalMs: 10,
+        nowMs: () => nowMs,
+        onMetrics: (snapshot) => collected.push(snapshot),
+      }
+    );
+
+    subscription.push(first);
+    nowMs = 10;
+    subscription.push(second);
+
+    expect(collected).toHaveLength(1);
+    expect(collected[0]).toMatchObject({
+      rawChunks: 2,
+      rawBytes: first.length + second.length,
+      controlOutputs: 2,
+      terminalOutputs: 1,
+      terminalOutputBytes: 5,
+      titles: 1,
+    });
+    subscription.dispose();
   });
 });

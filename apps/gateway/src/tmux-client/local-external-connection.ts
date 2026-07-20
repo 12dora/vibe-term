@@ -4,6 +4,7 @@ import type { Device, StateSnapshotPayload, TmuxPane, TmuxSession, TmuxWindow } 
 import { config } from '../config';
 import { getDeviceById, updateDeviceRuntimeStatus } from '../db';
 import { connectionAlertNotifier } from '../push/connection-alerts';
+import { isManagedExternally } from '../system/managed';
 import { buildLocalTmuxEnv, getLocalShellPath } from '../tmux/local-shell-path';
 import {
   PANE_META_FORMAT,
@@ -18,6 +19,7 @@ import {
   type ControlModeSubscription,
   createControlModeSubscription,
 } from './control-mode-subscription';
+import type { ControlStreamMetricsSnapshot } from './control-stream-metrics';
 import { buildEnsureGhosttyTerminfoScript } from './ghostty-terminfo';
 import { encodeInputToHexChunks } from './input-encoder';
 import { ConnectionLifecycleEmitter } from './lifecycle-emitter';
@@ -917,46 +919,66 @@ export class LocalExternalTmuxConnection {
   }
 
   private spawnControlClientProcess(onAttachReady: () => void): ControlClientProcess {
-    const subscription = createControlModeSubscription({
-      onTerminalOutput: (paneId, data) => {
-        this.callbacks.onTerminalOutput(paneId, data);
-      },
-      onTitle: (paneId, title) => {
-        this.paneTitleSnapshots.noteTitle(paneId, title);
-      },
-      onBell: (paneId) => {
-        this.recordBell(paneId);
-      },
-      onNotification: (paneId, notification) => {
-        this.emitNotification(paneId, notification);
-      },
-      onPromptMarker: (paneId, marker) => {
-        // 提示符出现 = 前台回到 shell，订阅方 TUI 已不在前台（挂起/异常退出兜底清位）
-        if (marker.kind === 'A') {
-          this.clearThemeSubscription(paneId);
+    const metricsOptions = isManagedExternally()
+      ? {
+          onMetrics: (metrics: ControlStreamMetricsSnapshot) => {
+            console.log(
+              `[tmux-metrics] control_stream interval_ms=${metrics.intervalMs} ` +
+                `raw_chunks=${metrics.rawChunks} raw_bytes=${metrics.rawBytes} ` +
+                `control_outputs=${metrics.controlOutputs} ` +
+                `control_output_bytes=${metrics.controlOutputBytes} ` +
+                `terminal_outputs=${metrics.terminalOutputs} ` +
+                `terminal_output_bytes=${metrics.terminalOutputBytes} ` +
+                `titles=${metrics.titles} bells=${metrics.bells} ` +
+                `notifications=${metrics.notifications} ` +
+                `structure_changes=${metrics.structureChanges} blocks=${metrics.blocks}`
+            );
+          },
         }
-        this.callbacks.onPromptMarker?.(paneId, marker);
+      : undefined;
+    const subscription = createControlModeSubscription(
+      {
+        onTerminalOutput: (paneId, data) => {
+          this.callbacks.onTerminalOutput(paneId, data);
+        },
+        onTitle: (paneId, title) => {
+          this.paneTitleSnapshots.noteTitle(paneId, title);
+        },
+        onBell: (paneId) => {
+          this.recordBell(paneId);
+        },
+        onNotification: (paneId, notification) => {
+          this.emitNotification(paneId, notification);
+        },
+        onPromptMarker: (paneId, marker) => {
+          // 提示符出现 = 前台回到 shell，订阅方 TUI 已不在前台（挂起/异常退出兜底清位）
+          if (marker.kind === 'A') {
+            this.clearThemeSubscription(paneId);
+          }
+          this.callbacks.onPromptMarker?.(paneId, marker);
+        },
+        onClipboardWrite: (paneId, text) => {
+          this.callbacks.onClipboardWrite?.(paneId, text);
+        },
+        onThemeSubscription: (paneId, subscribed) => {
+          this.noteThemeSubscription(paneId, subscribed);
+        },
+        onStructureChanged: () => {
+          this.requestSnapshot();
+        },
+        onPause: (paneId) => {
+          this.controlProcess?.write(`refresh-client -A ${paneId}:continue\n`);
+        },
+        onExit: () => {},
+        onBlockEnd: (block) => {
+          onAttachReady();
+          if (!block.isError && block.lines.length === 1 && block.lines[0] === 'tmex-hb') {
+            this.onHeartbeatResponse();
+          }
+        },
       },
-      onClipboardWrite: (paneId, text) => {
-        this.callbacks.onClipboardWrite?.(paneId, text);
-      },
-      onThemeSubscription: (paneId, subscribed) => {
-        this.noteThemeSubscription(paneId, subscribed);
-      },
-      onStructureChanged: () => {
-        this.requestSnapshot();
-      },
-      onPause: (paneId) => {
-        this.controlProcess?.write(`refresh-client -A ${paneId}:continue\n`);
-      },
-      onExit: () => {},
-      onBlockEnd: (block) => {
-        onAttachReady();
-        if (!block.isError && block.lines.length === 1 && block.lines[0] === 'tmex-hb') {
-          this.onHeartbeatResponse();
-        }
-      },
-    });
+      metricsOptions
+    );
 
     const proc = this.deps.spawnControlClient([
       config.tmuxBin,

@@ -4,6 +4,11 @@ import {
   createControlModeParser,
 } from './control-mode-parser';
 import {
+  CONTROL_STREAM_METRICS_INTERVAL_MS,
+  ControlStreamMetrics,
+  type ControlStreamMetricsSnapshot,
+} from './control-stream-metrics';
+import {
   type PaneStreamNotification,
   type PaneStreamParser,
   type PromptMarker,
@@ -49,10 +54,24 @@ export interface ControlModeSubscription {
   dispose(): void;
 }
 
+export interface ControlModeSubscriptionOptions {
+  metricsIntervalMs?: number;
+  nowMs?: () => number;
+  onMetrics?: (snapshot: ControlStreamMetricsSnapshot) => void;
+}
+
 export function createControlModeSubscription(
-  callbacks: ControlModeSubscriptionCallbacks
+  callbacks: ControlModeSubscriptionCallbacks,
+  options: ControlModeSubscriptionOptions = {}
 ): ControlModeSubscription {
   const paneParsers = new Map<string, PaneStreamParser>();
+  const nowMs = options.nowMs ?? Date.now;
+  const metrics = options.onMetrics
+    ? new ControlStreamMetrics(
+        options.metricsIntervalMs ?? CONTROL_STREAM_METRICS_INTERVAL_MS,
+        nowMs()
+      )
+    : null;
   let structureTimer: ReturnType<typeof setTimeout> | null = null;
   let lastStructureEmitAt = 0;
   let disposed = false;
@@ -63,9 +82,18 @@ export function createControlModeSubscription(
       return existing;
     }
     const parser = createPaneStreamParser({
-      onTitle: (title) => callbacks.onTitle(paneId, title),
-      onBell: () => callbacks.onBell(paneId),
-      onNotification: (notification) => callbacks.onNotification(paneId, notification),
+      onTitle: (title) => {
+        metrics?.recordTitle();
+        callbacks.onTitle(paneId, title);
+      },
+      onBell: () => {
+        metrics?.recordBell();
+        callbacks.onBell(paneId);
+      },
+      onNotification: (notification) => {
+        metrics?.recordNotification();
+        callbacks.onNotification(paneId, notification);
+      },
       onPromptMarker: (marker) => callbacks.onPromptMarker?.(paneId, marker),
       onClipboardWrite: (text) => callbacks.onClipboardWrite?.(paneId, text),
       onThemeSubscription: (subscribed) => callbacks.onThemeSubscription?.(paneId, subscribed),
@@ -79,12 +107,13 @@ export function createControlModeSubscription(
     if (disposed) {
       return;
     }
-    const now = Date.now();
+    const now = nowMs();
     if (structureTimer) {
       return;
     }
     if (now - lastStructureEmitAt >= STRUCTURE_DEBOUNCE_MS) {
       lastStructureEmitAt = now;
+      metrics?.recordStructureChange();
       callbacks.onStructureChanged();
       return;
     }
@@ -94,7 +123,8 @@ export function createControlModeSubscription(
         if (disposed) {
           return;
         }
-        lastStructureEmitAt = Date.now();
+        lastStructureEmitAt = nowMs();
+        metrics?.recordStructureChange();
         callbacks.onStructureChanged();
       },
       STRUCTURE_DEBOUNCE_MS - (now - lastStructureEmitAt)
@@ -114,14 +144,19 @@ export function createControlModeSubscription(
 
   const parser = createControlModeParser({
     onOutput: (paneId, data) => {
+      metrics?.recordControlOutput(data.length);
       const output = getPaneParser(paneId).push(data);
       if (output.length > 0) {
+        metrics?.recordTerminalOutput(output.length);
         callbacks.onTerminalOutput(paneId, output);
       }
     },
     onNotification: handleNotification,
     onExit: (reason) => callbacks.onExit(reason),
-    onBlockEnd: (block) => callbacks.onBlockEnd?.(block),
+    onBlockEnd: (block) => {
+      metrics?.recordBlock();
+      callbacks.onBlockEnd?.(block);
+    },
   });
 
   return {
@@ -129,7 +164,12 @@ export function createControlModeSubscription(
       if (disposed) {
         return;
       }
+      metrics?.recordRawChunk(chunk.length);
       parser.push(chunk);
+      const snapshot = metrics?.takeIfDue(nowMs());
+      if (snapshot) {
+        options.onMetrics?.(snapshot);
+      }
     },
     end() {
       if (disposed) {

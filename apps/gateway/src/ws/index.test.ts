@@ -27,6 +27,32 @@ function flushAsync(): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, 0));
 }
 
+describe('WebSocketServer client diagnostics', () => {
+  test('records a bounded client implementation from the negotiated hello', async () => {
+    const server = new WebSocketServer() as any;
+    const ws = {
+      data: { borshState: createBorshClientState() },
+      send(frame: Uint8Array) {
+        return frame.length;
+      },
+    } as any;
+    const clientImpl = `tmex-fe-${'x'.repeat(100)}`;
+    const payload = wsBorsh.encodePayload(wsBorsh.schema.HelloC2SSchema, {
+      clientImpl,
+      clientVersion: 'test',
+      maxFrameBytes: wsBorsh.DEFAULT_MAX_FRAME_BYTES,
+      supportsCompression: false,
+      supportsDiffSnapshot: false,
+    });
+
+    server.handleOpen(ws);
+    await server.handleBorshMessage(ws, wsBorsh.KIND_HELLO_C2S, 1, payload);
+
+    expect(ws.data.borshState.clientImpl).toBe(clientImpl.slice(0, 64));
+    server.handleClose(ws);
+  });
+});
+
 describe('WebSocketServer connection entry dedup', () => {
   test('deduplicates concurrent creation for same device', async () => {
     const server = new WebSocketServer() as any;
