@@ -10,6 +10,7 @@ import { GATEWAY_CAPABILITIES } from '@tmex/shared';
 import type { Server, ServerWebSocket } from 'bun';
 import { agentWsHub } from '../agent/ws-hub';
 import {
+  type DeviceTreeOrderRecord,
   getDeviceTreeOrder,
   getSiteSettings,
   setPaneOrder,
@@ -55,6 +56,9 @@ interface DeviceConnectionEntry {
 interface WebSocketServerDeps {
   acquireRuntime: (deviceId: string) => Promise<DeviceSessionRuntime>;
   releaseRuntime: (deviceId: string, runtime: DeviceSessionRuntime) => Promise<void> | void;
+  loadDeviceTreeOrder: (deviceId: string) => DeviceTreeOrderRecord;
+  saveWindowOrder: (deviceId: string, windowIds: string[]) => void;
+  savePaneOrder: (deviceId: string, windowId: string, paneIds: string[]) => void;
 }
 
 const defaultDeps: WebSocketServerDeps = {
@@ -62,6 +66,9 @@ const defaultDeps: WebSocketServerDeps = {
   releaseRuntime: async (deviceId, runtime) => {
     await tmuxRuntimeRegistry.release(deviceId, runtime);
   },
+  loadDeviceTreeOrder: getDeviceTreeOrder,
+  saveWindowOrder: setWindowOrder,
+  savePaneOrder: setPaneOrder,
 };
 
 interface WebSocketServerOptions {
@@ -115,6 +122,7 @@ export class WebSocketServer {
   private pendingTmuxTheme: ThemeMode | null = null;
   private themeApplyInFlight = false;
   private lastBroadcastTheme = new Map<string, 'dark' | 'light'>();
+  private readonly deviceTreeOrders = new Map<string, DeviceTreeOrderRecord>();
   private readonly deps: WebSocketServerDeps;
 
   constructor(options: WebSocketServerOptions = {}) {
@@ -151,6 +159,7 @@ export class WebSocketServer {
     entry.detachRuntime = null;
     this.themeSignalLast.delete(deviceId);
     this.lastBroadcastTheme.delete(deviceId);
+    this.deviceTreeOrders.delete(deviceId);
     void this.deps.releaseRuntime(deviceId, entry.runtime);
   }
 
@@ -1192,7 +1201,13 @@ export class WebSocketServer {
   // window / pane 重排：纯显示层 overlay，写库后立即用上一份快照重广播（不触碰 tmux、不打 poll）。
   // WS handler 与 REST 桥共用（settings/broadcaster 注册）。
   reorderWindows(deviceId: string, windowIds: string[]): void {
-    setWindowOrder(deviceId, windowIds);
+    const currentOrder = this.getCachedDeviceTreeOrder(deviceId);
+    this.deps.saveWindowOrder(deviceId, windowIds);
+    this.storeDeviceTreeOrder({
+      deviceId,
+      windows: windowIds,
+      panes: currentOrder.panes,
+    });
     this.broadcastSettingsUpdate('tree-order');
     const entry = this.connections.get(deviceId);
     if (!entry?.lastSnapshot) return;
@@ -1200,7 +1215,16 @@ export class WebSocketServer {
   }
 
   reorderPanes(deviceId: string, windowId: string, paneIds: string[]): void {
-    setPaneOrder(deviceId, windowId, paneIds);
+    const currentOrder = this.getCachedDeviceTreeOrder(deviceId);
+    this.deps.savePaneOrder(deviceId, windowId, paneIds);
+    this.storeDeviceTreeOrder({
+      deviceId,
+      windows: currentOrder.windows,
+      panes: {
+        ...currentOrder.panes,
+        [windowId]: paneIds,
+      },
+    });
     this.broadcastSettingsUpdate('tree-order');
     const entry = this.connections.get(deviceId);
     if (!entry?.lastSnapshot) return;
@@ -1388,9 +1412,32 @@ export class WebSocketServer {
     };
   }
 
-  // 链式 overlay：先按 device_tree_order 重排数组（同步读 DB，单一真源），再叠加自定义窗口名
+  private storeDeviceTreeOrder(order: DeviceTreeOrderRecord): DeviceTreeOrderRecord {
+    const stored = {
+      deviceId: order.deviceId,
+      windows: [...order.windows],
+      panes: Object.fromEntries(
+        Object.entries(order.panes).map(([windowId, paneIds]) => [windowId, [...paneIds]])
+      ),
+    };
+    this.deviceTreeOrders.set(order.deviceId, stored);
+    return stored;
+  }
+
+  private getCachedDeviceTreeOrder(deviceId: string): DeviceTreeOrderRecord {
+    const cached = this.deviceTreeOrders.get(deviceId);
+    if (cached) {
+      return cached;
+    }
+    return this.storeDeviceTreeOrder(this.deps.loadDeviceTreeOrder(deviceId));
+  }
+
+  // 链式 overlay：先按连接生命周期内缓存的 device_tree_order 重排数组，再叠加自定义窗口名
   private encodeSnapshotWithOverlays(payload: StateSnapshotPayload): Uint8Array {
-    const ordered = applyDeviceTreeOverlay(payload, getDeviceTreeOrder(payload.deviceId));
+    const ordered = applyDeviceTreeOverlay(
+      payload,
+      this.getCachedDeviceTreeOrder(payload.deviceId)
+    );
     return wsBorsh.encodeStateSnapshot(this.applyWindowCustomNames(ordered));
   }
 

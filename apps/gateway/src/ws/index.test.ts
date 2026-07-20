@@ -1049,6 +1049,105 @@ describe('WebSocketServer window custom names', () => {
     const snapshot = decodeLastSnapshot(ws);
     expect(snapshot.session?.windows[0].customName).toBe('Persisted');
   });
+
+  test('reuses the loaded tree order across repeated snapshots for one device', () => {
+    let loadCalls = 0;
+    const server = new WebSocketServer({
+      deps: {
+        loadDeviceTreeOrder: (deviceId: string) => {
+          loadCalls += 1;
+          return {
+            deviceId,
+            windows: ['@2', '@1'],
+            panes: {},
+          };
+        },
+      },
+    } as any) as any;
+    const snapshot = makeSnapshot(['@1', '@2']);
+
+    const first = wsBorsh.decodeStateSnapshot(server.encodeSnapshotWithOverlays(snapshot));
+    const second = wsBorsh.decodeStateSnapshot(server.encodeSnapshotWithOverlays(snapshot));
+
+    expect(first.session?.windows.map((window) => window.id)).toEqual(['@2', '@1']);
+    expect(second.session?.windows.map((window) => window.id)).toEqual(['@2', '@1']);
+    expect(loadCalls).toBe(1);
+  });
+
+  test('keeps cached window and pane order coherent after writes', () => {
+    let loadCalls = 0;
+    const savedWindows: string[][] = [];
+    const savedPanes: Array<[string, string[]]> = [];
+    const server = new WebSocketServer({
+      deps: {
+        loadDeviceTreeOrder: (deviceId: string) => {
+          loadCalls += 1;
+          return {
+            deviceId,
+            windows: ['@2', '@1'],
+            panes: { '@1': ['%2', '%0'] },
+          };
+        },
+        saveWindowOrder: (_deviceId: string, windowIds: string[]) => {
+          savedWindows.push([...windowIds]);
+        },
+        savePaneOrder: (_deviceId: string, windowId: string, paneIds: string[]) => {
+          savedPanes.push([windowId, [...paneIds]]);
+        },
+      },
+    } as any) as any;
+    const ws = createBorshWs();
+    const snapshot = makeSnapshot(['@1', '@2']);
+    const session = snapshot.session;
+    if (!session) {
+      throw new Error('expected test snapshot session');
+    }
+    session.windows[0].panes.push({
+      ...session.windows[0].panes[0],
+      id: '%2',
+      index: 1,
+      active: false,
+    });
+    setupEntry(server, snapshot, ws);
+
+    server.encodeSnapshotWithOverlays(snapshot);
+    server.reorderWindows('device-a', ['@1', '@2']);
+
+    const afterWindows = decodeLastSnapshot(ws);
+    expect(afterWindows.session?.windows.map((window) => window.id)).toEqual(['@1', '@2']);
+    expect(afterWindows.session?.windows[0].panes.map((pane) => pane.id)).toEqual(['%2', '%0']);
+
+    server.reorderPanes('device-a', '@1', ['%0', '%2']);
+
+    const afterPanes = decodeLastSnapshot(ws);
+    expect(afterPanes.session?.windows.map((window) => window.id)).toEqual(['@1', '@2']);
+    expect(afterPanes.session?.windows[0].panes.map((pane) => pane.id)).toEqual(['%0', '%2']);
+    expect(loadCalls).toBe(1);
+    expect(savedWindows).toEqual([['@1', '@2']]);
+    expect(savedPanes).toEqual([['@1', ['%0', '%2']]]);
+  });
+
+  test('reloads tree order after the device connection is released', () => {
+    let loadCalls = 0;
+    const server = new WebSocketServer({
+      deps: {
+        loadDeviceTreeOrder: (deviceId: string) => {
+          loadCalls += 1;
+          return { deviceId, windows: [], panes: {} };
+        },
+        releaseRuntime: () => {},
+      },
+    } as any) as any;
+    const ws = createBorshWs();
+    const snapshot = makeSnapshot(['@1']);
+    setupEntry(server, snapshot, ws);
+
+    server.encodeSnapshotWithOverlays(snapshot);
+    server.releaseConnectionEntry('device-a', server.connections.get('device-a'));
+    server.encodeSnapshotWithOverlays(snapshot);
+
+    expect(loadCalls).toBe(2);
+  });
 });
 
 describe('WebSocketServer site theme propagation', () => {
