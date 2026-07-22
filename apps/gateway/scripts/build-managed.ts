@@ -1,7 +1,8 @@
 /**
  * Managed standalone Gateway 编译入口。
  *
- * 固定 target matrix：darwin-arm64 / darwin-x64 / linux-arm64 / linux-x64。
+ * 固定 target matrix：darwin-arm64 / darwin-x64 / linux-arm64 / linux-x64 /
+ * windows-x64-baseline / windows-arm64。
  * 仅当前宿主三元组真实 `bun build --compile`；其余目标只输出定义，不假装 PASS。
  *
  * 用法：
@@ -27,6 +28,8 @@ export const MANAGED_TARGETS = [
   'bun-darwin-x64',
   'bun-linux-arm64',
   'bun-linux-x64',
+  'bun-windows-x64-baseline',
+  'bun-windows-arm64',
 ] as const;
 
 export type ManagedTarget = (typeof MANAGED_TARGETS)[number];
@@ -58,13 +61,16 @@ function managedAssetEntrypoints(): string[] {
   return migrations;
 }
 
-function hostTarget(): ManagedTarget {
-  const platform = process.platform;
-  const arch = process.arch;
+export function hostTarget(
+  platform: NodeJS.Platform = process.platform,
+  arch: NodeJS.Architecture = process.arch
+): ManagedTarget {
   if (platform === 'darwin' && arch === 'arm64') return 'bun-darwin-arm64';
   if (platform === 'darwin' && arch === 'x64') return 'bun-darwin-x64';
   if (platform === 'linux' && arch === 'arm64') return 'bun-linux-arm64';
   if (platform === 'linux' && arch === 'x64') return 'bun-linux-x64';
+  if (platform === 'win32' && arch === 'arm64') return 'bun-windows-arm64';
+  if (platform === 'win32' && arch === 'x64') return 'bun-windows-x64-baseline';
   throw new Error(`unsupported host for managed compile: ${platform}/${arch}`);
 }
 
@@ -105,9 +111,9 @@ function readVersion(): string {
   }
 }
 
-function outfileName(target: ManagedTarget): string {
+export function outfileName(target: ManagedTarget): string {
   const suffix = target.replace(/^bun-/, '');
-  return process.platform === 'win32'
+  return target.startsWith('bun-windows-')
     ? `tmex-gateway-managed-${suffix}.exe`
     : `tmex-gateway-managed-${suffix}`;
 }

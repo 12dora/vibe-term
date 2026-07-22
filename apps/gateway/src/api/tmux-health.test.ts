@@ -41,6 +41,7 @@ describe('probeTmuxHealth', () => {
     expect(result).toEqual({
       healthy: true,
       clientVersion: 'tmux 3.7b',
+      clientProvenance: null,
       serverVersion: '3.7b',
       reason: 'ok',
     });
@@ -65,6 +66,34 @@ describe('probeTmuxHealth', () => {
     expect(result.healthy).toBeTrue();
     expect(result.reason).toBe('no_server');
     expect(calls[1]?.slice(-3)).toEqual(['display-message', '-p', '#{version}']);
+  });
+
+  test('keeps psmux provenance separate and compares only the tmux-compatible first line', async () => {
+    (config as { tmuxBin: string }).tmuxBin = 'C:\\Program Files\\tmex\\psmux.exe';
+    (config as { tmuxSocket: string }).tmuxSocket = 'tmex-stable';
+    const calls: string[][] = [];
+    const result = await probeTmuxHealth(
+      sequence(
+        [
+          {
+            exitCode: 0,
+            stdout: 'tmux 3.3.7\r\npsmux 3.3.7 (05cc5d4 2026-07-20)\r\n',
+            stderr: '',
+          },
+          { exitCode: 0, stdout: '3.3.7\r\n', stderr: '' },
+        ],
+        calls
+      )
+    );
+
+    expect(result).toEqual({
+      healthy: true,
+      clientVersion: 'tmux 3.3.7',
+      clientProvenance: 'psmux 3.3.7 (05cc5d4 2026-07-20)',
+      serverVersion: '3.3.7',
+      reason: 'ok',
+    });
+    expect(calls[0]).toEqual(['C:\\Program Files\\tmex\\psmux.exe', '-L', 'tmex-stable', '-V']);
   });
 
   test('fails closed for a mismatched server, unavailable client, or ambiguous probe error', async () => {

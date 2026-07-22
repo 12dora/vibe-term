@@ -5,7 +5,11 @@ import { config } from '../config';
 import { getDeviceById, updateDeviceRuntimeStatus } from '../db';
 import { connectionAlertNotifier } from '../push/connection-alerts';
 import { isManagedExternally } from '../system/managed';
-import { buildLocalTmuxEnv, getLocalShellPath } from '../tmux/local-shell-path';
+import {
+  buildLocalTmuxEnv,
+  getLocalParkingCommand,
+  getLocalShellPath,
+} from '../tmux/local-shell-path';
 import {
   PANE_META_FORMAT,
   PANE_SCREEN_INFO_FORMAT,
@@ -41,7 +45,12 @@ import {
 import { SnapshotRefreshCoordinator } from './snapshot-refresh-coordinator';
 import { TmuxTargetMissingError, isTargetMissingMessage } from './target-missing';
 import { createThemeSubscriptionTracker } from './theme-subscriptions';
-import { isControlModeSupported, parseTmuxVersion, tmuxClientMatchesServer } from './tmux-version';
+import {
+  isControlModeSupported,
+  parseTmuxVersion,
+  tmuxClientMatchesServer,
+  tmuxVersionIdentity,
+} from './tmux-version';
 import { resolveTmuxWindowStyle } from './window-style';
 
 interface CommandResult {
@@ -60,9 +69,11 @@ export interface ControlClientProcess {
 
 interface LocalExternalTmuxConnectionDeps {
   enableSubscription: boolean;
+  platform: NodeJS.Platform;
   getDevice: (deviceId: string) => Device | null;
   run: (argv: string[]) => Promise<CommandResult>;
   ensureGhosttyTerminfo: () => Promise<boolean>;
+  parkingCommand: () => string;
   spawnControlClient: (argv: string[]) => ControlClientProcess;
 }
 
@@ -173,6 +184,14 @@ export function defaultSpawnControlClient(argv: string[]): ControlClientProcess 
   };
 }
 
+export function buildLocalTmuxArgv(
+  argv: readonly string[],
+  tmuxBin = config.tmuxBin,
+  tmuxSocket = config.tmuxSocket
+): string[] {
+  return [tmuxBin, ...(tmuxSocket ? ['-L', tmuxSocket] : []), ...argv];
+}
+
 export class LocalExternalTmuxConnection {
   private readonly deviceId: string;
   private readonly deps: LocalExternalTmuxConnectionDeps;
@@ -215,18 +234,24 @@ export class LocalExternalTmuxConnection {
     options: TmuxConnectionOptions,
     inputDeps: Partial<LocalExternalTmuxConnectionDeps> = {}
   ) {
+    const platform = inputDeps.platform ?? process.platform;
     this.deviceId = options.deviceId;
     this.callbacks = options;
     this.deps = {
       enableSubscription: inputDeps.enableSubscription ?? true,
+      platform,
       getDevice: inputDeps.getDevice ?? ((deviceId) => getDeviceById(deviceId)),
       run: inputDeps.run ?? defaultRun,
       ensureGhosttyTerminfo:
         inputDeps.ensureGhosttyTerminfo ??
         (async () => {
+          if (platform === 'win32') {
+            return false;
+          }
           const result = await this.deps.run(['/bin/sh', '-c', buildEnsureGhosttyTerminfoScript()]);
           return result.exitCode === 0;
         }),
+      parkingCommand: inputDeps.parkingCommand ?? (() => getLocalParkingCommand(platform)),
       spawnControlClient: inputDeps.spawnControlClient ?? defaultSpawnControlClient,
     };
     this.lifecycle = new ConnectionLifecycleEmitter({
@@ -742,7 +767,11 @@ export class LocalExternalTmuxConnection {
         'TERM_PROGRAM',
         termProgram,
       ]);
-      if (termProgram === 'ghostty' && (await this.deps.ensureGhosttyTerminfo())) {
+      if (
+        termProgram === 'ghostty' &&
+        this.deps.platform !== 'win32' &&
+        (await this.deps.ensureGhosttyTerminfo())
+      ) {
         await this.runTmuxAllowFailure([
           'set-option',
           '-t',
@@ -840,8 +869,8 @@ export class LocalExternalTmuxConnection {
         server.stdout.trim() &&
         !tmuxClientMatchesServer(result.stdout, server.stdout)
       ) {
-        const clientVersion = result.stdout.trim().replace(/^tmux\s+/i, '');
-        const serverVersion = server.stdout.trim().replace(/^tmux\s+/i, '');
+        const clientVersion = tmuxVersionIdentity(result.stdout) ?? 'unknown';
+        const serverVersion = tmuxVersionIdentity(server.stdout) ?? 'unknown';
         throw new Error(
           `tmux client ${clientVersion} does not match existing server ${serverVersion}; refusing to modify the session`
         );
@@ -852,7 +881,7 @@ export class LocalExternalTmuxConnection {
   // tmux 在 client attach 时会无条件向当前窗口的活动 pane 投递焦点事件（不受
   // focus-events 选项约束，实验见 plan-00）。若该 pane 开了 ?1004h（如 Claude Code），
   // ESC[I 会让其永久判定"用户在场"、通知静默。规避：attach 前把会话当前窗口切到
-  // 一次性 parking 窗口（裸 sleep，无 ?1004h），让焦点事件落空，attach 完成后切回并清理。
+  // 一次性 parking 窗口（仅运行等待命令，无 ?1004h），让焦点事件落空，attach 完成后切回并清理。
   private async createParkingWindow(): Promise<string | null> {
     const result = await this.runTmuxAllowFailure([
       'new-window',
@@ -863,7 +892,7 @@ export class LocalExternalTmuxConnection {
       '-P',
       '-F',
       '#{window_id}',
-      'sleep 30',
+      this.deps.parkingCommand(),
     ]);
     if (result.exitCode !== 0) {
       console.warn(
@@ -980,14 +1009,9 @@ export class LocalExternalTmuxConnection {
       metricsOptions
     );
 
-    const proc = this.deps.spawnControlClient([
-      config.tmuxBin,
-      ...(config.tmuxSocket ? ['-L', config.tmuxSocket] : []),
-      '-C',
-      'attach-session',
-      '-t',
-      this.sessionName,
-    ]);
+    const proc = this.deps.spawnControlClient(
+      buildLocalTmuxArgv(['-C', 'attach-session', '-t', this.sessionName])
+    );
     this.controlProcess = proc;
     this.controlSubscription = subscription;
     this.controlStartedAt = Date.now();
@@ -1713,9 +1737,8 @@ export class LocalExternalTmuxConnection {
   }
 
   private async runTmuxAllowFailure(argv: string[]): Promise<CommandResult> {
-    const socketArgs = config.tmuxSocket ? ['-L', config.tmuxSocket] : [];
     try {
-      return await this.deps.run([config.tmuxBin, ...socketArgs, ...argv]);
+      return await this.deps.run(buildLocalTmuxArgv(argv));
     } catch (error) {
       // 进程资源暂时耗尽时 Bun.spawn 直接抛错。降级为「命令失败」语义，避免逃逸成
       // unhandledRejection；上层据 TMUX_SPAWN_UNAVAILABLE_EXIT 退避重试而非判定连接失效。

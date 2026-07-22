@@ -1,4 +1,5 @@
 import { describe, expect, test } from 'bun:test';
+import { resolveTmuxBin } from './config';
 
 // config 是模块级常量（import 时快照 process.env），
 // 用 query-busting 动态 import 在不同 env 下重新求值。
@@ -67,6 +68,25 @@ describe('config.tmuxBin', () => {
     await expect(loadConfigWith({ TMEX_TMUX_BIN: './bundled/tmux' })).rejects.toThrow(
       'TMEX_TMUX_BIN must be an absolute path'
     );
+  });
+
+  test('Windows 使用 Windows 路径语义接受盘符与 UNC 绝对路径', () => {
+    expect(
+      resolveTmuxBin({ TMEX_TMUX_BIN: 'C:\\Program Files\\tmex\\psmux.exe' }, 'win32', true)
+    ).toBe('C:\\Program Files\\tmex\\psmux.exe');
+    expect(resolveTmuxBin({ TMEX_TMUX_BIN: '\\\\server\\share\\psmux.exe' }, 'win32', true)).toBe(
+      '\\\\server\\share\\psmux.exe'
+    );
+  });
+
+  test('managed Windows 必须由调用方提供绝对 multiplexer 路径', () => {
+    expect(() => resolveTmuxBin({}, 'win32', true)).toThrow(
+      'TMEX_TMUX_BIN must be set to an absolute path on managed Windows'
+    );
+    expect(() =>
+      resolveTmuxBin({ TMEX_TMUX_BIN: '.\\resources\\psmux.exe' }, 'win32', true)
+    ).toThrow('TMEX_TMUX_BIN must be an absolute path');
+    expect(resolveTmuxBin({}, 'win32', false)).toBe('tmux');
   });
 });
 

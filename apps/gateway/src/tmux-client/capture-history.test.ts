@@ -64,6 +64,16 @@ describe('parsePaneScreenInfo', () => {
     });
     expect(parsePaneScreenInfo('0 x y z\n').cursorX).toBeNull();
   });
+
+  test('psmux 缺少鼠标 format 时保留核心屏幕字段并关闭未知模式', () => {
+    expect(parsePaneScreenInfo('1 8 3 40     \r\n')).toEqual({
+      alternateScreen: true,
+      cursorX: 8,
+      cursorY: 3,
+      paneHeight: 40,
+      modes: NO_MODES,
+    });
+  });
 });
 
 describe('appendCursorRestore', () => {

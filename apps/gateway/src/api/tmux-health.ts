@@ -1,9 +1,11 @@
 import { config } from '../config';
 import {
   isControlModeSupported,
+  normalizeTmuxVersionOutput,
   parseTmuxVersion,
   tmuxClientMatchesServer,
 } from '../tmux-client/tmux-version';
+import { buildLocalTmuxEnv, getLocalShellPath } from '../tmux/local-shell-path';
 
 export type TmuxHealthReason =
   | 'ok'
@@ -16,6 +18,7 @@ export type TmuxHealthReason =
 export interface TmuxHealth {
   healthy: boolean;
   clientVersion: string | null;
+  clientProvenance: string | null;
   serverVersion: string | null;
   reason: TmuxHealthReason;
 }
@@ -31,7 +34,7 @@ export type TmuxHealthRunner = (argv: string[]) => Promise<CommandResult>;
 const CACHE_MS = 5_000;
 const COMMAND_TIMEOUT_MS = 1_500;
 const NO_SERVER_PATTERN =
-  /no server running|failed to connect to server|error connecting to|no such file or directory/i;
+  /no server running|failed to connect to server|error connecting to|no such file or directory|session .* not found|no sessions/i;
 
 let cached: { expiresAt: number; value: TmuxHealth } | null = null;
 let inFlight: Promise<TmuxHealth> | null = null;
@@ -40,7 +43,7 @@ async function defaultRunner(argv: string[]): Promise<CommandResult> {
   let process: ReturnType<typeof Bun.spawn>;
   try {
     process = Bun.spawn(argv, {
-      env: processEnv(),
+      env: buildLocalTmuxEnv(getLocalShellPath(), processEnv()),
       stdin: 'ignore',
       stdout: 'pipe',
       stderr: 'pipe',
@@ -82,11 +85,14 @@ function processEnv(): Record<string, string | undefined> {
 export async function probeTmuxHealth(run: TmuxHealthRunner): Promise<TmuxHealth> {
   const socketArgs = config.tmuxSocket ? ['-L', config.tmuxSocket] : [];
   const client = await run([config.tmuxBin, ...socketArgs, '-V']);
-  const clientVersion = client.stdout.trim() || null;
+  const normalizedClient = normalizeTmuxVersionOutput(client.stdout);
+  const clientVersion = normalizedClient.versionLine;
+  const clientProvenance = normalizedClient.provenance;
   if (client.exitCode !== 0 || clientVersion === null) {
     return {
       healthy: false,
       clientVersion,
+      clientProvenance,
       serverVersion: null,
       reason: 'client_unavailable',
     };
@@ -95,18 +101,20 @@ export async function probeTmuxHealth(run: TmuxHealthRunner): Promise<TmuxHealth
     return {
       healthy: false,
       clientVersion,
+      clientProvenance,
       serverVersion: null,
       reason: 'unsupported_version',
     };
   }
 
   const server = await run([config.tmuxBin, ...socketArgs, 'display-message', '-p', '#{version}']);
-  const serverVersion = server.stdout.trim() || null;
+  const serverVersion = normalizeTmuxVersionOutput(server.stdout).versionLine;
   if (server.exitCode !== 0) {
     const detail = `${server.stdout}\n${server.stderr}`;
     return {
       healthy: NO_SERVER_PATTERN.test(detail),
       clientVersion,
+      clientProvenance,
       serverVersion: null,
       reason: NO_SERVER_PATTERN.test(detail) ? 'no_server' : 'server_probe_failed',
     };
@@ -115,6 +123,7 @@ export async function probeTmuxHealth(run: TmuxHealthRunner): Promise<TmuxHealth
     return {
       healthy: false,
       clientVersion,
+      clientProvenance,
       serverVersion,
       reason: 'version_mismatch',
     };
@@ -122,6 +131,7 @@ export async function probeTmuxHealth(run: TmuxHealthRunner): Promise<TmuxHealth
   return {
     healthy: true,
     clientVersion,
+    clientProvenance,
     serverVersion,
     reason: 'ok',
   };

@@ -1,5 +1,5 @@
 import { existsSync } from 'node:fs';
-import { delimiter, join } from 'node:path';
+import { delimiter, join, win32 } from 'node:path';
 
 const SHELL_ENV_BEGIN_MARKER = '__TMEX_SHELL_ENV_BEGIN__';
 const SHELL_ENV_END_MARKER = '__TMEX_SHELL_ENV_END__';
@@ -21,6 +21,50 @@ interface LocalShellPathCacheDeps {
 export interface LocalShellPathCache {
   get(): string | null;
   prime(): string | null;
+}
+
+function findEnvEntry(
+  env: NodeJS.ProcessEnv,
+  key: string,
+  caseInsensitive: boolean
+): [string, string | undefined] | null {
+  if (!caseInsensitive) {
+    return Object.hasOwn(env, key) ? [key, env[key]] : null;
+  }
+  const normalized = key.toUpperCase();
+  for (const [candidate, value] of Object.entries(env)) {
+    if (candidate.toUpperCase() === normalized) {
+      return [candidate, value];
+    }
+  }
+  return null;
+}
+
+function getEnvValue(
+  env: NodeJS.ProcessEnv,
+  key: string,
+  caseInsensitive: boolean
+): string | undefined {
+  return findEnvEntry(env, key, caseInsensitive)?.[1];
+}
+
+function setEnvValue(
+  env: NodeJS.ProcessEnv,
+  key: string,
+  value: string,
+  caseInsensitive: boolean
+): void {
+  const existingKey = findEnvEntry(env, key, caseInsensitive)?.[0];
+  env[existingKey ?? key] = value;
+}
+
+export function getLocalParkingCommand(platform: NodeJS.Platform = process.platform): string {
+  if (platform !== 'win32') {
+    return 'sleep 30';
+  }
+  // psmux 的 default-shell 可由用户配置；使用 pwsh、Windows PowerShell、cmd 与
+  // Git Bash 都能直接执行的命令，避免 Gateway 对 shell 做出不同判断。
+  return 'ping.exe -n 31 127.0.0.1';
 }
 
 function defaultRunSync(cmd: string[]): RunSyncResult {
@@ -110,13 +154,15 @@ function canResolveExecutableFromPath(
   executableName: string,
   deps: LocalShellPathCacheDeps
 ): boolean {
-  for (const rawDir of resolvedPath.split(delimiter)) {
+  const pathDelimiter = deps.platform === 'win32' ? win32.delimiter : delimiter;
+  const joinPath = deps.platform === 'win32' ? win32.join : join;
+  for (const rawDir of resolvedPath.split(pathDelimiter)) {
     const dir = rawDir.trim();
     if (!dir) {
       continue;
     }
 
-    if (deps.fileExists(join(dir, executableName))) {
+    if (deps.fileExists(joinPath(dir, executableName))) {
       return true;
     }
   }
@@ -175,6 +221,11 @@ export function createLocalShellPathCache(
       }
 
       initialized = true;
+      if (deps.platform === 'win32') {
+        const inheritedPath = getEnvValue(deps.env, 'PATH', true)?.trim();
+        cachedPath = inheritedPath || null;
+        return cachedPath;
+      }
       const shellPath = resolveDefaultShell(deps);
       if (!shellPath) {
         return null;
@@ -203,8 +254,9 @@ export function getLocalShellPath(): string | null {
 // 绝大多数为 TMEX_ 前缀，少数非前缀键单列。
 const TMEX_INJECTED_ENV_EXACT = new Set(['NODE_ENV', 'DATABASE_URL', 'GATEWAY_PORT', 'FE_PORT']);
 
-function isTmexInjectedEnvKey(key: string): boolean {
-  return key.startsWith('TMEX_') || TMEX_INJECTED_ENV_EXACT.has(key);
+function isTmexInjectedEnvKey(key: string, caseInsensitive: boolean): boolean {
+  const normalized = caseInsensitive ? key.toUpperCase() : key;
+  return normalized.startsWith('TMEX_') || TMEX_INJECTED_ENV_EXACT.has(normalized);
 }
 
 function isUtf8Locale(value: string | undefined): boolean {
@@ -213,25 +265,27 @@ function isUtf8Locale(value: string | undefined): boolean {
 
 export function buildLocalTmuxEnv(
   resolvedPath: string | null,
-  baseEnv: NodeJS.ProcessEnv = process.env
+  baseEnv: NodeJS.ProcessEnv = process.env,
+  platform: NodeJS.Platform = process.platform
 ): NodeJS.ProcessEnv {
+  const caseInsensitive = platform === 'win32';
   const nextEnv: NodeJS.ProcessEnv = {};
   for (const [key, value] of Object.entries(baseEnv)) {
-    if (isTmexInjectedEnvKey(key)) {
+    if (isTmexInjectedEnvKey(key, caseInsensitive)) {
       continue;
     }
     nextEnv[key] = value;
   }
 
   if (resolvedPath) {
-    nextEnv.PATH = resolvedPath;
+    setEnvValue(nextEnv, 'PATH', resolvedPath, caseInsensitive);
   }
 
-  if (
-    !isUtf8Locale(nextEnv.LC_ALL) &&
-    (nextEnv.LC_ALL || (!isUtf8Locale(nextEnv.LC_CTYPE) && !isUtf8Locale(nextEnv.LANG)))
-  ) {
-    nextEnv.LC_ALL = 'C.UTF-8';
+  const lcAll = getEnvValue(nextEnv, 'LC_ALL', caseInsensitive);
+  const lcCtype = getEnvValue(nextEnv, 'LC_CTYPE', caseInsensitive);
+  const lang = getEnvValue(nextEnv, 'LANG', caseInsensitive);
+  if (!isUtf8Locale(lcAll) && (lcAll || (!isUtf8Locale(lcCtype) && !isUtf8Locale(lang)))) {
+    setEnvValue(nextEnv, 'LC_ALL', 'C.UTF-8', caseInsensitive);
   }
 
   return nextEnv;

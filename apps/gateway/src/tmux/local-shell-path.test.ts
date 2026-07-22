@@ -1,6 +1,10 @@
 import { describe, expect, test } from 'bun:test';
 
-import { buildLocalTmuxEnv, createLocalShellPathCache } from './local-shell-path';
+import {
+  buildLocalTmuxEnv,
+  createLocalShellPathCache,
+  getLocalParkingCommand,
+} from './local-shell-path';
 
 describe('local shell PATH cache', () => {
   test('primes PATH from default shell once and caches it', () => {
@@ -130,6 +134,32 @@ describe('local shell PATH cache', () => {
       "printf '__TMEX_SHELL_ENV_BEGIN__\\n'; /usr/bin/env; printf '__TMEX_SHELL_ENV_END__\\n'",
     ]);
   });
+
+  test('Windows preserves the inherited PATH without starting a POSIX shell probe', () => {
+    let runCount = 0;
+    const cache = createLocalShellPathCache({
+      platform: 'win32',
+      env: {
+        Path: 'C:\\Windows\\System32;C:\\Program Files\\PowerShell\\7',
+        ComSpec: 'C:\\Windows\\System32\\cmd.exe',
+      },
+      runSync: () => {
+        runCount += 1;
+        throw new Error('Windows must not probe /bin/sh or a POSIX login shell');
+      },
+    });
+
+    expect(cache.prime()).toBe('C:\\Windows\\System32;C:\\Program Files\\PowerShell\\7');
+    expect(cache.get()).toBe('C:\\Windows\\System32;C:\\Program Files\\PowerShell\\7');
+    expect(runCount).toBe(0);
+  });
+});
+
+describe('Windows parking command', () => {
+  test('uses a command shared by PowerShell, cmd, and Git Bash', () => {
+    expect(getLocalParkingCommand('win32')).toBe('ping.exe -n 31 127.0.0.1');
+    expect(getLocalParkingCommand('darwin')).toBe('sleep 30');
+  });
 });
 
 describe('buildLocalTmuxEnv', () => {
@@ -243,6 +273,47 @@ describe('buildLocalTmuxEnv', () => {
       PATH: '/opt/homebrew/bin:/usr/bin:/bin',
       LANG: 'zh_CN.UTF-8',
       SSH_AUTH_SOCK: '/tmp/agent.sock',
+    });
+  });
+
+  test('Windows environment keys are handled case-insensitively and remain UTF-8', () => {
+    expect(
+      buildLocalTmuxEnv(
+        'C:\\Windows\\System32;C:\\Program Files\\PowerShell\\7',
+        {
+          Path: 'C:\\Windows\\System32',
+          SystemRoot: 'C:\\Windows',
+          ComSpec: 'C:\\Windows\\System32\\cmd.exe',
+          Tmex_Master_Key: 'must-not-leak',
+          node_env: 'production',
+        },
+        'win32'
+      )
+    ).toEqual({
+      Path: 'C:\\Windows\\System32;C:\\Program Files\\PowerShell\\7',
+      SystemRoot: 'C:\\Windows',
+      ComSpec: 'C:\\Windows\\System32\\cmd.exe',
+      LC_ALL: 'C.UTF-8',
+    });
+  });
+
+  test('Unix environment keys remain case-sensitive', () => {
+    expect(
+      buildLocalTmuxEnv(
+        '/usr/bin:/bin',
+        {
+          Path: '/user-owned/path',
+          tmex_user_owned: 'preserved',
+          node_env: 'development',
+        },
+        'linux'
+      )
+    ).toEqual({
+      Path: '/user-owned/path',
+      PATH: '/usr/bin:/bin',
+      tmex_user_owned: 'preserved',
+      node_env: 'development',
+      LC_ALL: 'C.UTF-8',
     });
   });
 });

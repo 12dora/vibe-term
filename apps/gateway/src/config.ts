@@ -1,4 +1,6 @@
-import { isAbsolute } from 'node:path';
+import { posix, win32 } from 'node:path';
+
+declare const TMEX_MANAGED_BUILD: boolean | undefined;
 
 function getEnv(key: string, defaultValue: string): string {
   return process.env[key] ?? defaultValue;
@@ -12,12 +14,24 @@ function getBooleanEnv(key: string, defaultValue: boolean): boolean {
   return value === '1' || value.toLowerCase() === 'true' || value.toLowerCase() === 'yes';
 }
 
-function getTmuxBin(): string {
-  const value = process.env.TMEX_TMUX_BIN?.trim();
+function isManagedBuild(): boolean {
+  return typeof TMEX_MANAGED_BUILD === 'boolean' && TMEX_MANAGED_BUILD;
+}
+
+export function resolveTmuxBin(
+  env: NodeJS.ProcessEnv = process.env,
+  platform: NodeJS.Platform = process.platform,
+  managedBuild = isManagedBuild()
+): string {
+  const value = env.TMEX_TMUX_BIN?.trim();
   if (!value) {
+    if (managedBuild && platform === 'win32') {
+      throw new Error('TMEX_TMUX_BIN must be set to an absolute path on managed Windows');
+    }
     return 'tmux';
   }
-  if (!isAbsolute(value)) {
+  const isAbsolute = platform === 'win32' ? win32.isAbsolute(value) : posix.isAbsolute(value);
+  if (!isAbsolute) {
     throw new Error('TMEX_TMUX_BIN must be an absolute path');
   }
   return value;
@@ -71,7 +85,7 @@ export const config = {
   // local 设备的 tmux socket（tmux -L <name>）。仅 e2e 注入 TMEX_TMUX_SOCKET=tmex-e2e
   // 以与生产默认 socket 隔离；生产/普通运行不设 → 空串 → 不加 -L → 用默认 socket。
   tmuxSocket: getEnv('TMEX_TMUX_SOCKET', ''),
-  tmuxBin: getTmuxBin(),
+  tmuxBin: resolveTmuxBin(),
   gatewayOwnerToken: getGatewayOwnerToken(),
   sshReconnectMaxRetriesDefault: Number.parseInt(getEnv('TMEX_SSH_RECONNECT_MAX_RETRIES', '2'), 10),
   sshReconnectDelaySecondsDefault: Number.parseInt(

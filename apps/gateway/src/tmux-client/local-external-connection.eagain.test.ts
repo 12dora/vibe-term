@@ -278,6 +278,76 @@ describe('LocalExternalTmuxConnection socket injection', () => {
     ]);
   });
 
+  test('uses the Windows psmux contract without POSIX shell, terminfo, or global teardown', async () => {
+    const psmuxBin = 'C:\\Program Files\\tmex\\resources\\psmux.exe';
+    const namespace = 'tmex-stable';
+    const session = 'tmex-windows-contract';
+    setTmuxBin(psmuxBin);
+    setTmuxSocket(namespace);
+    const calls: string[][] = [];
+    let controlArgv: string[] | null = null;
+
+    const connection = new LocalExternalTmuxConnection(
+      {
+        deviceId: 'device-local',
+        onEvent: () => {},
+        onTerminalOutput: () => {},
+        onTerminalHistory: () => {},
+        onSnapshot: () => {},
+        onError: () => {},
+        onClose: () => {},
+      },
+      {
+        platform: 'win32',
+        enableSubscription: true,
+        getDevice: () => createDevice(session),
+        run: createRunStub(session, {
+          record: calls,
+          overrides: (command) => {
+            if (command === '-V') {
+              return ok('tmux 3.3.7\r\npsmux 3.3.7 (05cc5d4 2026-07-20)\r\n');
+            }
+            if (command === 'display-message -p #{version}') return ok('3.3.7\r\n');
+            if (
+              command ===
+              `new-window -t ${session} -n tmex-park -P -F #{window_id} ping.exe -n 31 127.0.0.1`
+            ) {
+              return ok('@99\r\n');
+            }
+            return null;
+          },
+        }),
+        spawnControlClient: (argv) => {
+          controlArgv = argv;
+          throw new Error('stop after capturing Windows control argv');
+        },
+      }
+    );
+
+    await expect(connection.connect()).rejects.toThrow('stop after capturing Windows control argv');
+
+    for (const argv of calls) {
+      expect(argv.slice(0, 3)).toEqual([psmuxBin, '-L', namespace]);
+      expect(argv.join(' ')).not.toContain('kill-server');
+      expect(argv[0]).not.toBe('/bin/sh');
+    }
+    expect(calls.map(subcommandOf)).toContain(
+      `new-window -t ${session} -n tmex-park -P -F #{window_id} ping.exe -n 31 127.0.0.1`
+    );
+    expect(calls.map(subcommandOf).some((command) => command.includes('default-terminal'))).toBe(
+      false
+    );
+    expect(controlArgv as string[] | null).toEqual([
+      psmuxBin,
+      '-L',
+      namespace,
+      '-C',
+      'attach-session',
+      '-t',
+      session,
+    ]);
+  });
+
   test('injects -L <socket> into run argv and control-client argv when tmuxSocket is set', async () => {
     setTmuxSocket('tmex-e2e');
     const session = 'tmex-socket-on';
