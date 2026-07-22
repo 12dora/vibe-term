@@ -4,7 +4,13 @@ import { getDeviceById } from '../db';
 import type { PaneInfo } from './capture-history';
 import type { LifecycleEventEmitter, TmuxConnectionOptions } from './connection-types';
 import type { TmuxEvent } from './events';
+import type { TmuxSourceMetadataEvent } from './events';
 import { LocalExternalTmuxConnection } from './local-external-connection';
+import {
+  MetadataProjection,
+  type MetadataProjectionPatch,
+  type MetadataProjectionSnapshot,
+} from './metadata-projection';
 import type { PromptMarker } from './pane-stream-parser';
 import { SshExternalTmuxConnection } from './ssh-external-connection';
 
@@ -57,6 +63,8 @@ export interface DeviceSessionRuntimeListener {
   onPromptMarker?: (paneId: string, marker: PromptMarker) => void;
   onClipboardWrite?: (paneId: string, text: string) => void;
   onSnapshot?: (payload: StateSnapshotPayload) => void;
+  onMetadataPatch?: (patch: MetadataProjectionPatch) => void;
+  onMetadataRebaseRequired?: (snapshot: MetadataProjectionSnapshot) => void;
   onError?: (error: Error) => void;
   onClose?: () => void;
 }
@@ -79,7 +87,9 @@ export class DeviceSessionRuntime {
   readonly deviceId: string;
 
   private readonly connection: DeviceSessionRuntimeConnection;
+  private readonly metadataProjection: MetadataProjection;
   private readonly listeners = new Set<DeviceSessionRuntimeListener>();
+  private lastSnapshot: StateSnapshotPayload | null = null;
   private connectPromise: Promise<void> | null = null;
   private terminated = false;
   private closeEmitted = false;
@@ -88,6 +98,15 @@ export class DeviceSessionRuntime {
   constructor(options: DeviceSessionRuntimeOptions) {
     this.deviceId = options.deviceId;
     const createConnection = options.createConnection ?? createDefaultConnection;
+
+    this.metadataProjection = new MetadataProjection(this.deviceId, {
+      onPatch: (patch) => {
+        this.broadcast((listener) => listener.onMetadataPatch?.(patch));
+      },
+      onRebaseRequired: (snapshot) => {
+        this.broadcast((listener) => listener.onMetadataRebaseRequired?.(snapshot));
+      },
+    });
 
     this.connection = createConnection({
       deviceId: this.deviceId,
@@ -109,7 +128,16 @@ export class DeviceSessionRuntime {
       onClipboardWrite: (paneId, text) => {
         this.broadcast((listener) => listener.onClipboardWrite?.(paneId, text));
       },
-      onSnapshot: (payload) => {
+      onSourceReady: (serverEpoch) => {
+        this.metadataProjection.setServerEpoch(serverEpoch);
+      },
+      onSourceMetadata: (event: TmuxSourceMetadataEvent) => {
+        this.metadataProjection.applySourceEvent(event);
+      },
+      beginMetadataReconcile: () => this.metadataProjection.revision,
+      onSnapshot: (payload, baseRevision) => {
+        this.lastSnapshot = payload;
+        this.metadataProjection.reconcile(payload, baseRevision);
         this.broadcast((listener) => listener.onSnapshot?.(payload));
       },
       onError: (error) => {
@@ -157,6 +185,7 @@ export class DeviceSessionRuntime {
     this.connectPromise = this.connection.connect().catch((error) => {
       this.terminated = true;
       this.connectPromise = null;
+      this.metadataProjection.dispose();
       throw error;
     });
 
@@ -172,6 +201,7 @@ export class DeviceSessionRuntime {
     this.manualDisconnect = true;
     this.connectPromise = null;
     this.connection.disconnect();
+    this.metadataProjection.dispose();
   }
 
   async shutdown(): Promise<void> {
@@ -180,6 +210,18 @@ export class DeviceSessionRuntime {
 
   requestSnapshot(): void {
     this.connection.requestSnapshot();
+  }
+
+  getCurrentSnapshot(): StateSnapshotPayload | null {
+    return this.lastSnapshot;
+  }
+
+  getMetadataSnapshot(): MetadataProjectionSnapshot {
+    return this.metadataProjection.currentSnapshot();
+  }
+
+  setCustomName(kind: 'window' | 'pane', nativeId: string, name: string | null): void {
+    this.metadataProjection.setCustomName(kind, nativeId, name);
   }
 
   sendInput(paneId: string, data: string): void {

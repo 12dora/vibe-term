@@ -11,6 +11,8 @@ type Phase =
   | 'osc-st-ignore'
   | 'screen-title'
   | 'screen-title-st'
+  | 'screen-title-ignore'
+  | 'screen-title-st-ignore'
   | 'dcs-detect'
   | 'dcs-tmux'
   | 'dcs-tmux-esc'
@@ -34,6 +36,7 @@ export type PromptMarker = {
 
 export interface PaneStreamParserOptions {
   onTitle: (title: string) => void;
+  onCurrentPath?: (currentPath: string) => void;
   onBell: () => void;
   onNotification: (notification: PaneStreamNotification) => void;
   onPromptMarker?: (marker: PromptMarker) => void;
@@ -48,6 +51,7 @@ export interface PaneStreamParser {
 
 const MAX_OSC_KIND_BYTES = 16;
 const MAX_OSC_PAYLOAD_BYTES = 8 * 1024;
+const MAX_TITLE_BYTES = 8 * 1024;
 const MAX_DCS_PASSTHROUGH_BYTES = 64 * 1024;
 const MAX_KITTY_PENDING_IDS = 16;
 const MAX_CSI_BYTES = 64;
@@ -60,6 +64,7 @@ export function createPaneStreamParser(options: PaneStreamParserOptions): PaneSt
   let oscPayloadBytes: number[] = [];
   let titleBytes: number[] = [];
   let warnedOscPayloadOverflow = false;
+  let warnedTitleOverflow = false;
   let warnedDcsOverflow = false;
   let dcsPrefix = '';
   let dcsBytes: number[] = [];
@@ -102,6 +107,15 @@ export function createPaneStreamParser(options: PaneStreamParserOptions): PaneSt
       case '2':
         emitTitle(oscPayloadBytes);
         return;
+      case '7': {
+        try {
+          const value = new URL(payload);
+          if (value.protocol === 'file:' && value.pathname) {
+            options.onCurrentPath?.(decodeURIComponent(value.pathname));
+          }
+        } catch {}
+        return;
+      }
       case '9':
         if (/^4(;|$)/.test(payload)) {
           return;
@@ -233,8 +247,7 @@ export function createPaneStreamParser(options: PaneStreamParserOptions): PaneSt
         } finally {
           inTmuxPassthrough = false;
         }
-        const phaseAfterFlush: Phase = phase;
-        if (phaseAfterFlush === 'csi') {
+        if (String(phase) === 'csi') {
           // 解包内容以不完整 CSI 结尾：回填并复位，避免后续普通流被误并入
           output.push(0x1b, 0x5b, ...csiBytes);
           csiBytes = [];
@@ -395,6 +408,7 @@ export function createPaneStreamParser(options: PaneStreamParserOptions): PaneSt
               oscKind === '0' ||
               oscKind === '1' ||
               oscKind === '2' ||
+              oscKind === '7' ||
               oscKind === '9' ||
               oscKind === '52' ||
               oscKind === '99' ||
@@ -486,7 +500,30 @@ export function createPaneStreamParser(options: PaneStreamParserOptions): PaneSt
             phase = 'screen-title-st';
             return;
           }
+          if (titleBytes.length >= MAX_TITLE_BYTES) {
+            if (!warnedTitleOverflow) {
+              warnedTitleOverflow = true;
+              console.warn('[tmex] pane stream parser dropped oversized title');
+            }
+            titleBytes = [];
+            phase = 'screen-title-ignore';
+            return;
+          }
           titleBytes.push(byte);
+          return;
+        }
+
+        if (phase === 'screen-title-ignore') {
+          if (byte === 0x07) {
+            phase = 'normal';
+          } else if (byte === 0x1b) {
+            phase = 'screen-title-st-ignore';
+          }
+          return;
+        }
+
+        if (phase === 'screen-title-st-ignore') {
+          phase = byte === 0x5c ? 'normal' : 'screen-title-ignore';
           return;
         }
 
@@ -497,6 +534,15 @@ export function createPaneStreamParser(options: PaneStreamParserOptions): PaneSt
           return;
         }
 
+        if (titleBytes.length + 2 > MAX_TITLE_BYTES) {
+          if (!warnedTitleOverflow) {
+            warnedTitleOverflow = true;
+            console.warn('[tmex] pane stream parser dropped oversized title');
+          }
+          titleBytes = [];
+          phase = 'screen-title-ignore';
+          return;
+        }
         titleBytes.push(0x1b, byte);
         phase = 'screen-title';
       }

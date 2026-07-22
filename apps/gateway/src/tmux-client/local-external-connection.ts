@@ -20,6 +20,7 @@ import {
 } from './capture-history';
 import type { TmuxConnectionOptions } from './connection-types';
 import {
+  SOURCE_METADATA_SUBSCRIPTION_COMMANDS,
   type ControlModeSubscription,
   createControlModeSubscription,
 } from './control-mode-subscription';
@@ -43,6 +44,7 @@ import {
   splitSnapshotFields,
 } from './snapshot-format';
 import { SnapshotRefreshCoordinator } from './snapshot-refresh-coordinator';
+import { ensureStableServerEpoch } from './server-epoch';
 import { TmuxTargetMissingError, isTargetMissingMessage } from './target-missing';
 import { createThemeSubscriptionTracker } from './theme-subscriptions';
 import {
@@ -284,6 +286,8 @@ export class LocalExternalTmuxConnection {
 
     await this.assertTmuxCompatibility();
     const { created } = await this.ensureSession();
+    const serverEpoch = await ensureStableServerEpoch((argv) => this.runTmuxAllowFailure(argv));
+    this.callbacks.onSourceReady?.(serverEpoch);
     await this.configureSessionOptions();
     if (this.deps.enableSubscription) {
       await this.startControlClient();
@@ -944,6 +948,8 @@ export class LocalExternalTmuxConnection {
       throw new Error(message);
     }
 
+    for (const command of SOURCE_METADATA_SUBSCRIPTION_COMMANDS) proc.write(command);
+
     this.startHeartbeat();
   }
 
@@ -971,7 +977,11 @@ export class LocalExternalTmuxConnection {
           this.callbacks.onTerminalOutput(paneId, data);
         },
         onTitle: (paneId, title) => {
+          this.callbacks.onSourceMetadata?.({ type: 'pane-title', paneId, title });
           this.paneTitleSnapshots.noteTitle(paneId, title);
+        },
+        onSourceMetadata: (event) => {
+          this.callbacks.onSourceMetadata?.(event);
         },
         onBell: (paneId) => {
           this.recordBell(paneId);
@@ -1415,6 +1425,8 @@ export class LocalExternalTmuxConnection {
       return;
     }
 
+    const baseRevision = this.callbacks.beginMetadataReconcile?.();
+
     const [sessionRes, windowsRes, panesRes] = await Promise.all([
       this.runTmuxAllowFailure([
         'display-message',
@@ -1483,7 +1495,7 @@ export class LocalExternalTmuxConnection {
     this.restoreThemeSubscriptionsOnce();
     this.markSpawnRecovered();
     this.paneTitleSnapshots.noteFullSnapshotEmitted();
-    this.emitSnapshot();
+    this.emitSnapshot(baseRevision);
     this.lifecycle.emitSnapshotClosures(prevWindows);
   }
 
@@ -1550,7 +1562,7 @@ export class LocalExternalTmuxConnection {
         id: row.id,
         windowId: row.windowId,
         index: row.index,
-        title: this.paneTitleSnapshots.consumeTitle(row.id, row.title),
+        title: this.paneTitleSnapshots.consumeTitle(row.id, row.title ?? ''),
         currentCommand: row.currentCommand,
         currentPath: row.currentPath,
         // pane_active 是窗口内 active；list-panes -s 下每个窗口都有一个
@@ -1598,7 +1610,7 @@ export class LocalExternalTmuxConnection {
     }
   }
 
-  private emitSnapshot(): void {
+  private emitSnapshot(baseRevision?: bigint): void {
     const session = this.snapshotSession
       ? {
           id: this.snapshotSession.id,
@@ -1609,10 +1621,13 @@ export class LocalExternalTmuxConnection {
         }
       : null;
 
-    this.callbacks.onSnapshot({
-      deviceId: this.deviceId,
-      session,
-    });
+    this.callbacks.onSnapshot(
+      {
+        deviceId: this.deviceId,
+        session,
+      },
+      baseRevision
+    );
   }
 
   private findPaneWindowId(paneId: string): string | null {

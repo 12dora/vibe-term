@@ -1,4 +1,5 @@
 import { describe, expect, test } from 'bun:test';
+import type { TmuxSourceMetadataEvent } from './events';
 import type { PaneStreamNotification } from './pane-stream-parser';
 
 import { createControlModeSubscription } from './control-mode-subscription';
@@ -17,6 +18,7 @@ interface Collected {
   notifications: Array<{ paneId: string; notification: PaneStreamNotification }>;
   pauses: string[];
   continues: string[];
+  metadata: TmuxSourceMetadataEvent[];
   structureChanges: number;
   exits: Array<string | null>;
 }
@@ -29,6 +31,7 @@ function createCollector() {
     notifications: [],
     pauses: [],
     continues: [],
+    metadata: [],
     structureChanges: 0,
     exits: [],
   };
@@ -50,6 +53,9 @@ function createCollector() {
     },
     onContinue: (paneId) => {
       collected.continues.push(paneId);
+    },
+    onSourceMetadata: (event) => {
+      collected.metadata.push(event);
     },
     onStructureChanged: () => {
       collected.structureChanges += 1;
@@ -123,12 +129,32 @@ describe('control mode subscription', () => {
     subscription.dispose();
   });
 
-  test('debounces bursts of structure notifications (leading + trailing)', async () => {
+  test('maps known structural notifications directly and coalesces only missing-field reconcile', async () => {
     const { subscription, collected } = createCollector();
     subscription.push(lines('%window-add @1', '%layout-change @1 x y !', '%window-renamed @1 zsh'));
+    expect(collected.structureChanges).toBe(0);
+    expect(collected.metadata).toEqual([
+      { type: 'layout-change', windowId: '@1', layout: 'x' },
+      { type: 'window-renamed', windowId: '@1', name: 'zsh' },
+    ]);
+    await Bun.sleep(80);
     expect(collected.structureChanges).toBe(1);
-    await Bun.sleep(250);
-    expect(collected.structureChanges).toBe(2);
+    subscription.dispose();
+  });
+
+  test('parses shared format subscription values without losing spaces', () => {
+    const { subscription, collected } = createCollector();
+    subscription.push(
+      lines(
+        '%subscription-changed tmex-cwd \u00241 @1 0 %7 : /work/tree with spaces',
+        '%subscription-changed tmex-command \u00241 @1 0 %7 : cargo test'
+      )
+    );
+    expect(collected.metadata).toEqual([
+      { type: 'pane-current-path', paneId: '%7', currentPath: '/work/tree with spaces' },
+      { type: 'pane-current-command', paneId: '%7', currentCommand: 'cargo test' },
+    ]);
+    expect(collected.structureChanges).toBe(0);
     subscription.dispose();
   });
 
@@ -173,10 +199,10 @@ describe('control mode subscription', () => {
   test('dispose cancels pending trailing structure callback', async () => {
     const { subscription, collected } = createCollector();
     subscription.push(lines('%window-add @1', '%window-add @2'));
-    expect(collected.structureChanges).toBe(1);
+    expect(collected.structureChanges).toBe(0);
     subscription.dispose();
-    await Bun.sleep(250);
-    expect(collected.structureChanges).toBe(1);
+    await Bun.sleep(80);
+    expect(collected.structureChanges).toBe(0);
   });
 
   test('reports raw, parsed, and swallowed control traffic in one bounded window', () => {

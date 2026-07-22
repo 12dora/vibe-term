@@ -73,6 +73,9 @@ function createRunStub(
     if (command === `has-session -t ${session}`) {
       return ok();
     }
+    if (command === 'show-options -gqv @tmex-server-epoch') {
+      return ok('00112233445566778899aabbccddeeff\n');
+    }
     if (command === `new-window -t ${session} -n tmex-park -P -F #{window_id} sleep 30`) {
       return ok('@99\n');
     }
@@ -249,6 +252,7 @@ describe('LocalExternalTmuxConnection', () => {
       'tmux -V',
       'tmux has-session -t tmex-snapshot',
       `tmux new-session -d -c ${homedir} -s tmex-snapshot`,
+      'tmux show-options -gqv @tmex-server-epoch',
       'tmux set-option -t tmex-snapshot -s allow-passthrough off',
       'tmux set-option -t tmex-snapshot -g extended-keys on',
       'tmux set-option -t tmex-snapshot -s extended-keys-format csi-u',

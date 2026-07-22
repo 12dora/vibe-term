@@ -8,6 +8,7 @@ import {
   ControlStreamMetrics,
   type ControlStreamMetricsSnapshot,
 } from './control-stream-metrics';
+import type { TmuxSourceMetadataEvent } from './events';
 import {
   type PaneStreamNotification,
   type PaneStreamParser,
@@ -15,22 +16,14 @@ import {
   createPaneStreamParser,
 } from './pane-stream-parser';
 
-const STRUCTURE_DEBOUNCE_MS = 150;
+const STRUCTURE_RECONCILE_MS = 50;
 
-// 这些通知意味着会话结构（窗口/布局/活动 pane/名称）可能变化，需要刷新快照。
-const STRUCTURE_NOTIFICATION_TYPES = new Set([
-  'layout-change',
-  'session-renamed',
-  'session-window-changed',
-  'sessions-changed',
-  'unlinked-window-add',
-  'unlinked-window-close',
-  'unlinked-window-renamed',
-  'window-add',
-  'window-close',
-  'window-pane-changed',
-  'window-renamed',
-]);
+const RECONCILE_NOTIFICATION_TYPES = new Set(['sessions-changed', 'window-add']);
+
+export const SOURCE_METADATA_SUBSCRIPTION_COMMANDS = [
+  'refresh-client -B tmex-cwd:%*:#{pane_current_path}\n',
+  'refresh-client -B tmex-command:%*:#{pane_current_command}\n',
+] as const;
 
 export interface ControlModeSubscriptionCallbacks {
   onTerminalOutput: (paneId: string, data: Uint8Array) => void;
@@ -40,6 +33,7 @@ export interface ControlModeSubscriptionCallbacks {
   onPromptMarker?: (paneId: string, marker: PromptMarker) => void;
   onClipboardWrite?: (paneId: string, text: string) => void;
   onThemeSubscription?: (paneId: string, subscribed: boolean) => void;
+  onSourceMetadata?: (event: TmuxSourceMetadataEvent) => void;
   onPause?: (paneId: string) => void;
   onContinue?: (paneId: string) => void;
   onStructureChanged: () => void;
@@ -73,7 +67,6 @@ export function createControlModeSubscription(
       )
     : null;
   let structureTimer: ReturnType<typeof setTimeout> | null = null;
-  let lastStructureEmitAt = 0;
   let disposed = false;
 
   function getPaneParser(paneId: string): PaneStreamParser {
@@ -85,6 +78,9 @@ export function createControlModeSubscription(
       onTitle: (title) => {
         metrics?.recordTitle();
         callbacks.onTitle(paneId, title);
+      },
+      onCurrentPath: (currentPath) => {
+        callbacks.onSourceMetadata?.({ type: 'pane-current-path', paneId, currentPath });
       },
       onBell: () => {
         metrics?.recordBell();
@@ -102,37 +98,70 @@ export function createControlModeSubscription(
     return parser;
   }
 
-  // 首发立即触发，突发期间合并为一次尾随触发，避免 %window-renamed 等高频通知刷快照。
   function scheduleStructureChanged(): void {
-    if (disposed) {
-      return;
-    }
-    const now = nowMs();
-    if (structureTimer) {
-      return;
-    }
-    if (now - lastStructureEmitAt >= STRUCTURE_DEBOUNCE_MS) {
-      lastStructureEmitAt = now;
+    if (disposed || structureTimer) return;
+    structureTimer = setTimeout(() => {
+      structureTimer = null;
+      if (disposed) return;
       metrics?.recordStructureChange();
       callbacks.onStructureChanged();
-      return;
-    }
-    structureTimer = setTimeout(
-      () => {
-        structureTimer = null;
-        if (disposed) {
-          return;
+    }, STRUCTURE_RECONCILE_MS);
+  }
+
+  function splitFirst(value: string): [string, string] {
+    const index = value.indexOf(' ');
+    return index < 0 ? [value, ''] : [value.slice(0, index), value.slice(index + 1)];
+  }
+
+  function emitStructuredMetadata(notification: ControlModeNotification): void {
+    const emit = callbacks.onSourceMetadata;
+    if (!emit) return;
+    const [first, rest] = splitFirst(notification.args.trim());
+    switch (notification.type) {
+      case 'session-renamed':
+        if (first && rest) emit({ type: 'session-renamed', sessionId: first, name: rest });
+        return;
+      case 'session-window-changed': {
+        const [windowId] = splitFirst(rest);
+        if (first && windowId) emit({ type: 'session-window-changed', sessionId: first, windowId });
+        return;
+      }
+      case 'window-renamed':
+        if (first && rest) emit({ type: 'window-renamed', windowId: first, name: rest });
+        return;
+      case 'window-pane-changed': {
+        const [paneId] = splitFirst(rest);
+        if (first && paneId) emit({ type: 'window-pane-changed', windowId: first, paneId });
+        return;
+      }
+      case 'layout-change': {
+        const [layout] = splitFirst(rest);
+        if (first && layout) emit({ type: 'layout-change', windowId: first, layout });
+        return;
+      }
+      case 'window-close':
+        if (first) emit({ type: 'window-close', windowId: first });
+        return;
+      case 'subscription-changed': {
+        const separator = notification.args.indexOf(' : ');
+        if (separator < 0) return;
+        const header = notification.args.slice(0, separator).trim().split(/\s+/);
+        const name = header[0];
+        const paneId = header.find((part) => /^%\d+$/.test(part));
+        const value = notification.args.slice(separator + 3);
+        if (!paneId) return;
+        if (name === 'tmex-cwd') {
+          emit({ type: 'pane-current-path', paneId, currentPath: value });
+        } else if (name === 'tmex-command') {
+          emit({ type: 'pane-current-command', paneId, currentCommand: value });
         }
-        lastStructureEmitAt = nowMs();
-        metrics?.recordStructureChange();
-        callbacks.onStructureChanged();
-      },
-      STRUCTURE_DEBOUNCE_MS - (now - lastStructureEmitAt)
-    );
+      }
+    }
   }
 
   function handleNotification(notification: ControlModeNotification): void {
-    if (STRUCTURE_NOTIFICATION_TYPES.has(notification.type)) {
+    emitStructuredMetadata(notification);
+    if (RECONCILE_NOTIFICATION_TYPES.has(notification.type)) {
       scheduleStructureChanged();
     }
     if (notification.type === 'pause') {

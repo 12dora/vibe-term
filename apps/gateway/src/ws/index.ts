@@ -951,6 +951,8 @@ export class WebSocketServer {
       this.paneCustomNames.set(deviceId, new Map([[paneId, trimmed]]));
     }
 
+    this.connections.get(deviceId)?.runtime.setCustomName('pane', paneId, trimmed || null);
+
     this.broadcastSettingsUpdate('tree-order');
     const entry = this.connections.get(deviceId);
     if (!entry?.lastSnapshot) return;
@@ -996,6 +998,8 @@ export class WebSocketServer {
     } else {
       this.windowCustomNames.set(deviceId, new Map([[windowId, trimmed]]));
     }
+
+    this.connections.get(deviceId)?.runtime.setCustomName('window', windowId, trimmed || null);
 
     this.broadcastSettingsUpdate('tree-order');
     const entry = this.connections.get(deviceId);
@@ -1466,7 +1470,7 @@ export class WebSocketServer {
         runtime,
         detachRuntime,
         clients: new Set(),
-        lastSnapshot: null,
+        lastSnapshot: runtime.getCurrentSnapshot(),
         snapshotTimer: null,
         snapshotPollTimer: null,
         reconnectAttempts: 0,

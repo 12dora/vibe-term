@@ -63,6 +63,9 @@ function respondToPayload(
   if (payload.includes(`'has-session' '-t' '${session}'`)) {
     return { stdout: '', exitCode: 0 };
   }
+  if (payload.includes("'show-options' '-gqv' '@tmex-server-epoch'")) {
+    return { stdout: '00112233445566778899aabbccddeeff\n', exitCode: 0 };
+  }
   if (isConfigureSessionOptionPayload(payload, session)) {
     return { stdout: '', exitCode: 0 };
   }

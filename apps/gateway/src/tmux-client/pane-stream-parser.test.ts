@@ -631,3 +631,30 @@ describe('pane stream parser - CSI mode 2031 主题订阅', () => {
     expect(subs).toEqual([true]);
   });
 });
+
+describe('pane stream parser - bounded realtime metadata', () => {
+  test('extracts OSC 7 current directory without leaking escape bytes', () => {
+    const paths: string[] = [];
+    const parser = createPaneStreamParser({
+      onTitle: () => {},
+      onCurrentPath: (value) => paths.push(value),
+      onBell: () => {},
+      onNotification: () => {},
+    });
+    const output = parser.push(bytes('A', 0x1b, ']7;file://host/work/my%20repo', 0x07, 'B'));
+    expect(new TextDecoder().decode(output)).toBe('AB');
+    expect(paths).toEqual(['/work/my repo']);
+  });
+
+  test('drops an oversized ESC-k title with bounded memory and resumes parsing', () => {
+    const titles: string[] = [];
+    const parser = createPaneStreamParser({
+      onTitle: (value) => titles.push(value),
+      onBell: () => {},
+      onNotification: () => {},
+    });
+    const output = parser.push(bytes(0x1b, 'k', 'x'.repeat(9 * 1024), 0x07, 'ok'));
+    expect(titles).toEqual([]);
+    expect(new TextDecoder().decode(output)).toBe('ok');
+  });
+});
