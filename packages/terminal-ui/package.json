@@ -3,11 +3,10 @@
   "version": "0.1.0",
   "type": "module",
   "private": true,
-  "files": [
-    "src"
-  ],
+  "files": ["src"],
   "exports": {
     ".": "./src/index.ts",
+    "./terminal-diagnostics": "./src/components/terminal-diagnostics.tsx",
     "./*": "./src/*.ts"
   },
   "scripts": {

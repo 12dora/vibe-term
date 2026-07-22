@@ -1,6 +1,11 @@
 // 终端 UI 包：终端组件、分屏、触控/键盘/尺寸逻辑，与终端相关的纯工具
 
 export { Terminal } from './components/Terminal';
+export {
+  TerminalGeneration,
+  type TerminalGenerationOptions,
+  type TerminalGenerationTarget,
+} from './components/TerminalGeneration';
 export type { TerminalProps, TerminalRef, TerminalTheme } from './components/types';
 export { SplitTerminalArea } from './components/SplitTerminalArea';
 export { TerminalPreview } from './components/TerminalPreview';

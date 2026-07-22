@@ -27,6 +27,8 @@ export interface TerminalProps {
   children?: ReactNode;
   /** 该 pane 是否为焦点（分屏下控制滚动条可见性） */
   focused?: boolean;
+  /** 宿主按需准备字体/WASM 等非首屏资源；缺省由 Terminal 自行加载选中字体。 */
+  prepareResources?: () => Promise<void>;
 }
 
 export interface TerminalRef {

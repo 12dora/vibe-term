@@ -152,7 +152,6 @@ export function SplitTerminalArea({
 
   const { t } = useTranslation();
   const runtime = useRuntime();
-  const subscribePanes = useTmuxStore((state) => state.subscribePanes);
   const fetchPaneHistory = useTmuxStore((state) => state.fetchPaneHistory);
   const resizePaneInWindow = useTmuxStore((state) => state.resizePaneInWindow);
   const movePane = useTmuxStore((state) => state.movePane);
@@ -187,18 +186,11 @@ export function SplitTerminalArea({
   // 集合语义用逗号串表达，避免快照每次刷新引用变化导致 effect 空转
   const knownPaneIdsKey = tmuxWindow.panes.map((pane) => pane.id).join(',');
 
-  // 附加订阅集：window 内全部 pane（焦点在 gateway 侧优先走 barrier 路径）
-  useEffect(() => {
-    subscribePanes(deviceId, knownPaneIdsKey ? knownPaneIdsKey.split(',') : []);
-    return () => {
-      subscribePanes(deviceId, []);
-    };
-  }, [deviceId, knownPaneIdsKey, subscribePanes]);
-
   // 非焦点 pane 首屏：fetch history（焦点 pane 的内容来自 select 流程）；
   // 每个 pane 只 fetch 一次，window 切换时重置
   const fetchStateRef = useRef({ key: '', fetched: new Set<string>() });
   useEffect(() => {
+    if (runtime.transport.capabilities.atomicScreen) return;
     const windowKey = `${deviceId}:${tmuxWindow.id}`;
     if (fetchStateRef.current.key !== windowKey) {
       fetchStateRef.current = { key: windowKey, fetched: new Set() };
@@ -209,7 +201,7 @@ export function SplitTerminalArea({
       fetchStateRef.current.fetched.add(paneId);
       fetchPaneHistory(deviceId, paneId);
     }
-  }, [deviceId, tmuxWindow.id, knownPaneIdsKey, focusedPaneId, fetchPaneHistory]);
+  }, [deviceId, tmuxWindow.id, knownPaneIdsKey, focusedPaneId, fetchPaneHistory, runtime]);
 
   // 焦点变化时聚焦对应实例
   useEffect(() => {
@@ -309,6 +301,7 @@ export function SplitTerminalArea({
 
   // 布局结构变化（split/move-pane 使垂直堆叠数变化）时容器尺寸不变、RO 不触发，
   // 但标题栏占用的总高变了，需要重报整窗 rows（如左右拖成上下后可用高度减一条标题栏）
+  // biome-ignore lint/correctness/useExhaustiveDependencies: layout depth values intentionally trigger a ref-backed report
   useEffect(() => {
     const timer = setTimeout(() => {
       reportWindowSizeRef.current();
@@ -500,7 +493,7 @@ export function SplitTerminalArea({
       window.addEventListener('pointerup', onUp);
       window.addEventListener('pointercancel', onCancel);
     },
-    [deviceId, geometry, movePane, breakPane, rootCols, rootRows, tmuxWindow.id]
+    [deviceId, geometry, movePane, breakPane, rootCols, rootRows, runtime, tmuxWindow.id]
   );
 
   const bindTerminalRef = useCallback(
@@ -696,7 +689,6 @@ export function SplitTerminalArea({
         const isDragging = dragState?.gutterIndex === index;
         return (
           <div
-            // biome-ignore lint/suspicious/noArrayIndexKey: gutter 与 layout 树一一对应，无稳定 id
             key={`${tmuxWindow.layout ?? ''}:${index}`}
             className="absolute z-20"
             style={{

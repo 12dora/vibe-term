@@ -4,6 +4,7 @@ import { decodePaneModes } from '@tmex/shared';
 import { type TerminalFileLinksProvider, fileRoute, hostAppPath } from '@tmex/stores';
 import { useRuntime, useTmuxStore, useUIStore } from '@tmex/stores/react';
 import { loadTerminalFonts, resolveFontStack } from '@tmex/theme';
+import type { GatewayPaneHistoryPage, GatewayPaneScreenSnapshot } from '@tmex/ws-client';
 import type { PaneSink } from '@tmex/ws-client/pane-sink-registry';
 import {
   type CompatibleTerminalLike,
@@ -27,22 +28,72 @@ import {
   unregisterCursorRectGetter,
 } from '../utils/keyboard-cursor-bridge';
 import { SelectionToolbar } from './SelectionToolbar';
+import { TerminalGeneration, type TerminalGenerationTarget } from './TerminalGeneration';
 import {
   normalizeHistoryForTerminal,
   normalizeLiveOutputForTerminal,
   wrapAlternateScreenHistory,
 } from './normalization';
-import { XTERM_THEME_DARK, XTERM_THEME_LIGHT } from './theme';
-import type { TerminalProps, TerminalRef } from './types';
-import { useMobileTouch } from './useMobileTouch';
-import { useTerminalResize } from './useTerminalResize';
 import {
   reportTerminalDiagnostic,
   scheduleTerminalDiagnosticSamples,
   useTerminalDiagnosticsReporter,
 } from './terminal-diagnostics';
+import { XTERM_THEME_DARK, XTERM_THEME_LIGHT } from './theme';
+import type { TerminalProps, TerminalRef } from './types';
+import { useMobileTouch } from './useMobileTouch';
+import { useTerminalResize } from './useTerminalResize';
 
 const TERMINAL_SCROLLBACK = 10000;
+const NORMAL_SCREEN_PREFIX = new TextEncoder().encode('\x1b[2J\x1b[H');
+type TerminalController = Awaited<ReturnType<typeof createTerminalController>>;
+
+interface TerminalRenderTarget extends TerminalGenerationTarget {
+  terminal: TerminalController;
+  mount: HTMLDivElement;
+  liveOutputEndedWithCR: boolean;
+}
+
+type TerminalBootState =
+  | { status: 'loading'; message: string }
+  | { status: 'ready' }
+  | { status: 'error'; message: string };
+
+function startsWithBytes(value: Uint8Array, prefix: Uint8Array): boolean {
+  return (
+    value.byteLength >= prefix.byteLength && prefix.every((byte, index) => value[index] === byte)
+  );
+}
+
+function writeCanonicalSnapshot(
+  target: TerminalRenderTarget,
+  snapshot: GatewayPaneScreenSnapshot,
+  historyPages: readonly GatewayPaneHistoryPage[]
+): void {
+  target.terminal.reset();
+  target.liveOutputEndedWithCR = false;
+  target.terminal.resize(snapshot.cols, snapshot.rows);
+  if (historyPages.length === 0) {
+    target.terminal.write(snapshot.data);
+  } else {
+    target.terminal.write(NORMAL_SCREEN_PREFIX);
+    for (const page of historyPages) {
+      target.terminal.write(normalizeHistoryForTerminal(new TextDecoder().decode(page.data)));
+    }
+    target.terminal.write(
+      startsWithBytes(snapshot.data, NORMAL_SCREEN_PREFIX)
+        ? snapshot.data.subarray(NORMAL_SCREEN_PREFIX.byteLength)
+        : snapshot.data
+    );
+  }
+  target.terminal.forceFullRepaint?.();
+}
+
+function afterNextPaint(): Promise<void> {
+  return new Promise((resolve) => {
+    requestAnimationFrame(() => requestAnimationFrame(() => resolve()));
+  });
+}
 
 // history 重建时恢复的终端模式：来自 gateway 随 TermHistory 下发的 tmux 权威位图
 // （capture 快照本身不含 DECSET 序列，tmux 的 mouse_*_flag 是唯一可靠来源）。
@@ -110,13 +161,22 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(
       onSync,
       onResizeSettled,
       onOpenFile,
+      prepareResources,
       children,
     },
     ref
   ) => {
     const [instance, setInstance] = useState<CompatibleTerminalLike | null>(null);
     const [hasSelection, setHasSelection] = useState(false);
+    const [bootState, setBootState] = useState<TerminalBootState>({
+      status: 'loading',
+      message: 'Preparing terminal…',
+    });
+    const [retryNonce, setRetryNonce] = useState(0);
     const sendInput = useTmuxStore((state) => state.sendInput);
+    const mountPane = useTmuxStore((state) => state.mountPane);
+    const requestPaneScreen = useTmuxStore((state) => state.requestPaneScreen);
+    const fetchPaneHistory = useTmuxStore((state) => state.fetchPaneHistory);
     const terminalFontId = useUIStore((state) => state.terminalFontId);
     const terminalFontSize = useUIStore((state) => state.terminalFontSize);
     const terminalLineHeight = useUIStore((state) => state.terminalLineHeight);
@@ -134,15 +194,18 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(
     }, [theme]);
 
     const containerRef = useRef<HTMLDivElement>(null);
-    const mountRef = useRef<HTMLDivElement>(null);
+    const generationHostRef = useRef<HTMLDivElement>(null);
+    const mountRef = useRef<HTMLDivElement | null>(null);
+    const generationRef = useRef<TerminalGeneration<TerminalRenderTarget> | null>(null);
     const fitAddonRef = useRef<FitAddon | null>(null);
     const currentDeviceIdRef = useRef(deviceId);
     const currentPaneIdRef = useRef(paneId);
     const canWriteRef = useRef(deviceConnected && !isSelectionInvalid);
     const currentInputModeRef = useRef(inputMode);
     const currentTerminalThemeRef = useRef(terminalTheme);
-    const liveOutputEndedWithCR = useRef(false);
-    const lastTerminalInstanceRef = useRef<CompatibleTerminalLike | null>(null);
+    const initialScreenRequestedRef = useRef(false);
+    const historyRequestInFlightRef = useRef(false);
+    const historyRequestTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
     const getTerminalForTouch = useCallback(() => instance, [instance]);
     useMobileTouch(containerRef, getTerminalForTouch);
@@ -202,10 +265,11 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(
         },
       });
 
+    // biome-ignore lint/correctness/useExhaustiveDependencies: retryNonce is an explicit failed-resource retry trigger
     useEffect(() => {
       let cancelled = false;
-      let createdTerminal: Awaited<ReturnType<typeof createTerminalController>> | null = null;
       let stopDiagnosticSamples = () => {};
+      let hasCommittedSnapshot = false;
       const fontFamily = resolveFontStack(terminalFontId);
       const diagnosticArgs = (
         stage:
@@ -216,108 +280,202 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(
           | 'font_load_failed'
           | 'controller_failed'
           | 'open_failed',
-        terminal: CompatibleTerminalLike | null
+        terminal: CompatibleTerminalLike | null,
+        mount: HTMLElement | null = mountRef.current
       ) => ({
         surface: 'terminal' as const,
         stage,
         terminal,
-        mount: mountRef.current,
+        mount,
         fontFamily,
         fontSize: terminalFontSize,
       });
 
-      reportTerminalDiagnostic(
-        terminalDiagnosticsReporter,
-        diagnosticArgs('mount', null)
-      );
+      initialScreenRequestedRef.current = false;
+      generationRef.current = null;
+      setInstance(null);
+      setBootState({ status: 'loading', message: 'Preparing terminal…' });
+      reportTerminalDiagnostic(terminalDiagnosticsReporter, diagnosticArgs('mount', null));
 
       void (async () => {
-        // 先等选中字体（主字体 + 符号兜底）加载完，再创建终端：open() 内部按 fontFamily
-        // 测量 cell 尺寸，字体未就绪会按 monospace 回退测宽，导致后续字形与网格错位。
         try {
+          await prepareResources?.();
           await loadTerminalFonts(terminalFontId, terminalFontSize);
-        } catch {
+        } catch (error) {
           reportTerminalDiagnostic(
             terminalDiagnosticsReporter,
             diagnosticArgs('font_load_failed', null)
           );
-          return;
-        }
-        if (cancelled) {
-          return;
-        }
-        reportTerminalDiagnostic(
-          terminalDiagnosticsReporter,
-          diagnosticArgs('fonts_ready', null)
-        );
-
-        let terminal: Awaited<ReturnType<typeof createTerminalController>>;
-        try {
-          terminal = await createTerminalController({
-            fontFamily,
-            fontSize: terminalFontSize,
-            lineHeight: terminalLineHeight,
-            scrollback: TERMINAL_SCROLLBACK,
-            theme: currentTerminalThemeRef.current,
-            disableStdin: currentInputModeRef.current === 'editor',
-          });
-        } catch {
-          reportTerminalDiagnostic(
-            terminalDiagnosticsReporter,
-            diagnosticArgs('controller_failed', null)
-          );
-          return;
-        }
-        if (cancelled) {
-          terminal.dispose();
-          return;
-        }
-
-        createdTerminal = terminal;
-        reportTerminalDiagnostic(
-          terminalDiagnosticsReporter,
-          diagnosticArgs('controller_ready', terminal)
-        );
-        try {
-          if (!mountRef.current) {
-            throw new Error('terminal mount unavailable');
+          if (!cancelled) {
+            setBootState({
+              status: 'error',
+              message:
+                error instanceof Error ? error.message : 'Terminal resources failed to load.',
+            });
           }
-          terminal.open(mountRef.current);
-        } catch {
-          reportTerminalDiagnostic(
-            terminalDiagnosticsReporter,
-            diagnosticArgs('open_failed', terminal)
-          );
-          terminal.dispose();
-          createdTerminal = null;
           return;
         }
-        setInstance(terminal);
-        reportTerminalDiagnostic(
-          terminalDiagnosticsReporter,
-          diagnosticArgs('opened', terminal)
-        );
-        stopDiagnosticSamples = scheduleTerminalDiagnosticSamples(
-          terminalDiagnosticsReporter,
-          {
-            surface: 'terminal',
+        if (cancelled) return;
+        reportTerminalDiagnostic(terminalDiagnosticsReporter, diagnosticArgs('fonts_ready', null));
+
+        const createTarget = async (): Promise<TerminalRenderTarget> => {
+          let terminal: TerminalController;
+          try {
+            terminal = await createTerminalController({
+              fontFamily,
+              fontSize: terminalFontSize,
+              lineHeight: terminalLineHeight,
+              scrollback: TERMINAL_SCROLLBACK,
+              theme: currentTerminalThemeRef.current,
+              disableStdin: currentInputModeRef.current === 'editor',
+            });
+          } catch (error) {
+            reportTerminalDiagnostic(
+              terminalDiagnosticsReporter,
+              diagnosticArgs('controller_failed', null)
+            );
+            throw error;
+          }
+          if (cancelled) {
+            terminal.dispose();
+            throw new Error('terminal initialization cancelled');
+          }
+
+          const host = generationHostRef.current;
+          if (!host) {
+            terminal.dispose();
+            throw new Error('Terminal mount is unavailable.');
+          }
+          const mount = document.createElement('div');
+          mount.className = 'absolute inset-0';
+          mount.style.visibility = 'hidden';
+          mount.style.pointerEvents = 'none';
+          host.appendChild(mount);
+          reportTerminalDiagnostic(
+            terminalDiagnosticsReporter,
+            diagnosticArgs('controller_ready', terminal, mount)
+          );
+          try {
+            terminal.open(mount);
+          } catch (error) {
+            reportTerminalDiagnostic(
+              terminalDiagnosticsReporter,
+              diagnosticArgs('open_failed', terminal, mount)
+            );
+            terminal.dispose();
+            mount.remove();
+            throw error;
+          }
+          reportTerminalDiagnostic(
+            terminalDiagnosticsReporter,
+            diagnosticArgs('opened', terminal, mount)
+          );
+          return {
             terminal,
-            mount: mountRef.current,
-            fontFamily,
-            fontSize: terminalFontSize,
+            mount,
+            liveOutputEndedWithCR: false,
+            dispose() {
+              clearE2eTerminalProbe(terminal);
+              terminal.dispose();
+              mount.remove();
+            },
+          };
+        };
+
+        const manager = new TerminalGeneration<TerminalRenderTarget>({
+          createTarget,
+          writeSnapshot: writeCanonicalSnapshot,
+          writeLive(target, data) {
+            const normalized = normalizeLiveOutputForTerminal(data, target.liveOutputEndedWithCR);
+            target.liveOutputEndedWithCR = normalized.endedWithCR;
+            target.terminal.write(normalized.normalized);
+          },
+          waitForFirstRender(target) {
+            target.terminal.forceFullRepaint?.();
+            return afterNextPaint();
+          },
+          captureScrollDistance(target) {
+            const buffer = target.terminal.buffer.active;
+            return Math.max(0, buffer.baseY - buffer.viewportY);
+          },
+          activate(target, previous, scrollDistanceFromBottom) {
+            if (previous) {
+              previous.mount.style.visibility = 'hidden';
+              previous.mount.style.pointerEvents = 'none';
+            }
+            target.mount.style.visibility = 'visible';
+            target.mount.style.pointerEvents = 'auto';
+            target.terminal.scrollToBottom();
+            if (scrollDistanceFromBottom > 0) {
+              target.terminal.scrollLines(-scrollDistanceFromBottom);
+            }
+            target.terminal.forceFullRepaint?.();
+          },
+          onRecoveryRequired(reason) {
+            if (cancelled) return;
+            if (!hasCommittedSnapshot && runtime.transport.capabilities.atomicScreen) {
+              setBootState(
+                reason === 'resource_exhausted'
+                  ? {
+                      status: 'error',
+                      message: 'Terminal rendering failed before the first screen was ready.',
+                    }
+                  : { status: 'loading', message: 'Recovering terminal state…' }
+              );
+            }
+            const activeDeviceId = currentDeviceIdRef.current;
+            const activePaneId = currentPaneIdRef.current;
+            if (activeDeviceId && activePaneId) {
+              runtime.stores.tmux.getState().requestPaneScreen(activeDeviceId, activePaneId);
+            }
+          },
+          onGenerationActivated(target, snapshot) {
+            if (cancelled) return;
+            mountRef.current = target.mount;
+            setInstance(target.terminal);
+            if (snapshot) hasCommittedSnapshot = true;
+            setBootState(
+              runtime.transport.capabilities.atomicScreen && !snapshot
+                ? { status: 'loading', message: 'Restoring terminal state…' }
+                : { status: 'ready' }
+            );
+            stopDiagnosticSamples();
+            stopDiagnosticSamples = scheduleTerminalDiagnosticSamples(terminalDiagnosticsReporter, {
+              surface: 'terminal',
+              terminal: target.terminal,
+              mount: target.mount,
+              fontFamily,
+              fontSize: terminalFontSize,
+            });
+          },
+        });
+        generationRef.current = manager;
+        try {
+          await manager.initialize();
+        } catch (error) {
+          if (!cancelled) {
+            setBootState({
+              status: 'error',
+              message: error instanceof Error ? error.message : 'Terminal failed to initialize.',
+            });
           }
-        );
+          return;
+        }
       })();
 
       return () => {
         cancelled = true;
         stopDiagnosticSamples();
+        const manager = generationRef.current;
+        if (manager) manager.dispose();
+        if (generationRef.current === manager) generationRef.current = null;
+        mountRef.current = null;
         setInstance(null);
-        clearE2eTerminalProbe(createdTerminal);
-        createdTerminal?.dispose();
       };
-      // 字体设置变更（无 post-init 改字体 API）时重建控制器：重新测度量 + 重排。
     }, [
+      prepareResources,
+      retryNonce,
+      runtime,
       terminalDiagnosticsReporter,
       terminalFontId,
       terminalFontSize,
@@ -383,8 +541,9 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(
 
       return {
         onReset: (origin) => {
-          instance.reset();
-          liveOutputEndedWithCR.current = false;
+          const target = generationRef.current?.getVisibleTarget();
+          target?.terminal.reset();
+          if (target) target.liveOutputEndedWithCR = false;
           // history-refresh（远端 resize 后的内容重建）不上报本地尺寸，
           // 避免不同视口的客户端互相抢 window 尺寸
           if (origin !== 'history-refresh') {
@@ -392,29 +551,28 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(
           }
         },
         onApplyHistory: (data, alternateScreen, modes) => {
-          instance.restoreModeSnapshot?.(terminalModesFromHistory(modes, alternateScreen));
+          const target = generationRef.current?.getVisibleTarget();
+          if (!target) return;
+          target.terminal.restoreModeSnapshot?.(terminalModesFromHistory(modes, alternateScreen));
           const payload = alternateScreen
             ? wrapAlternateScreenHistory(data)
             : normalizeHistoryForTerminal(data);
-          instance.write(payload);
-          instance.forceFullRepaint?.();
+          target.terminal.write(payload);
+          target.terminal.forceFullRepaint?.();
         },
-        onOutput: (data) => {
-          const normalized = normalizeLiveOutputForTerminal(data, liveOutputEndedWithCR.current);
-          liveOutputEndedWithCR.current = normalized.endedWithCR;
-          instance.write(normalized.normalized);
+        onOutput: (data, frame) => {
+          generationRef.current?.write(frame ?? { deviceId, paneId, data });
         },
+        onScreenSnapshot: (snapshot) => generationRef.current?.replace(snapshot),
+        onHistoryPage: (page) => {
+          historyRequestInFlightRef.current = false;
+          if (historyRequestTimerRef.current) clearTimeout(historyRequestTimerRef.current);
+          historyRequestTimerRef.current = null;
+          generationRef.current?.applyHistoryPage(page);
+        },
+        onRebase: (reason) => generationRef.current?.rebase(reason),
       };
-    }, [instance, runPostSelectResize]);
-
-    useEffect(() => {
-      if (!instance) {
-        lastTerminalInstanceRef.current = null;
-      } else if (lastTerminalInstanceRef.current !== instance) {
-        liveOutputEndedWithCR.current = false;
-        lastTerminalInstanceRef.current = instance;
-      }
-    }, [instance]);
+    }, [deviceId, instance, paneId, runPostSelectResize]);
 
     useEffect(() => {
       if (!paneSink || !deviceId || !paneId) {
@@ -422,6 +580,55 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(
       }
       return runtime.paneSinks.registerPaneSink(deviceId, paneId, paneSink);
     }, [paneSink, deviceId, paneId, runtime]);
+
+    useEffect(() => {
+      if (!deviceId || !paneId) return;
+      return mountPane(deviceId, paneId);
+    }, [deviceId, mountPane, paneId]);
+
+    useEffect(() => {
+      if (
+        !instance ||
+        !runtime.transport.capabilities.atomicScreen ||
+        initialScreenRequestedRef.current
+      ) {
+        return;
+      }
+      initialScreenRequestedRef.current = true;
+      requestPaneScreen(deviceId, paneId);
+    }, [deviceId, instance, paneId, requestPaneScreen, runtime]);
+
+    useEffect(() => {
+      if (!instance || !runtime.transport.capabilities.cursorHistory) return;
+      const container = containerRef.current;
+      if (!container) return;
+
+      const requestOlderHistory = (event: WheelEvent): void => {
+        if (event.deltaY >= 0 || historyRequestInFlightRef.current) return;
+        if (instance.buffer.active.viewportY > 3) return;
+        const cursor = generationRef.current?.getNextHistoryCursor();
+        if (!cursor) return;
+
+        historyRequestInFlightRef.current = true;
+        fetchPaneHistory(deviceId, paneId, cursor);
+        const deadlineMs = Math.min(
+          60_000,
+          Math.max(15_000, (runtime.transport.latencyMs ?? 0) * 8)
+        );
+        if (historyRequestTimerRef.current) clearTimeout(historyRequestTimerRef.current);
+        historyRequestTimerRef.current = setTimeout(() => {
+          historyRequestInFlightRef.current = false;
+          historyRequestTimerRef.current = null;
+        }, deadlineMs);
+      };
+      container.addEventListener('wheel', requestOlderHistory, { passive: true });
+      return () => {
+        container.removeEventListener('wheel', requestOlderHistory);
+        historyRequestInFlightRef.current = false;
+        if (historyRequestTimerRef.current) clearTimeout(historyRequestTimerRef.current);
+        historyRequestTimerRef.current = null;
+      };
+    }, [deviceId, fetchPaneHistory, instance, paneId, runtime]);
 
     useEffect(() => {
       if (!instance) {
@@ -645,7 +852,8 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(
         write: (data) => instance?.write(data),
         reset: () => {
           instance?.reset();
-          liveOutputEndedWithCR.current = false;
+          const target = generationRef.current?.getVisibleTarget();
+          if (target) target.liveOutputEndedWithCR = false;
         },
         scrollToBottom: () => instance?.scrollToBottom(),
         resize: (cols, rows) => instance?.resize(cols, rows),
@@ -708,7 +916,25 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(
         data-terminal-engine={TERMINAL_ENGINE}
       >
         <div ref={containerRef} className="relative min-h-0 w-full flex-1">
-          <div ref={mountRef} className="absolute inset-0" />
+          <div ref={generationHostRef} className="absolute inset-0" />
+          {bootState.status !== 'ready' && (
+            <div
+              className="absolute inset-0 z-10 flex items-center justify-center bg-black/70 px-6 text-center text-sm text-white"
+              role={bootState.status === 'error' ? 'alert' : 'status'}
+              aria-live="polite"
+            >
+              <div className="flex max-w-sm flex-col items-center gap-3">
+                <span>{bootState.message}</span>
+                <button
+                  type="button"
+                  className="rounded-md border border-white/40 bg-white/10 px-3 py-1.5 font-medium hover:bg-white/20"
+                  onClick={() => setRetryNonce((value) => value + 1)}
+                >
+                  Retry terminal
+                </button>
+              </div>
+            </div>
+          )}
           <SelectionToolbar
             visible={hasSelection}
             canPaste={inputMode === 'direct' && deviceConnected && !isSelectionInvalid}
