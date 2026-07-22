@@ -68,6 +68,10 @@ export const KIND_SITE_THEME_UPDATE = 0x0801;
 export const KIND_SETTINGS_UPDATE = 0x0802;
 export const KIND_NOTIFY_EVENT = 0x0803;
 
+// ========== Canonical terminal state (0x0900-0x09FF) ==========
+export const KIND_CANONICAL_COMMAND = 0x0901;
+export const KIND_CANONICAL_EVENT = 0x0902;
+
 // ========== Kind 有效性检查 ==========
 const VALID_KINDS = new Set<number>([
   KIND_HELLO_C2S,
@@ -118,6 +122,8 @@ const VALID_KINDS = new Set<number>([
   KIND_SITE_THEME_UPDATE,
   KIND_SETTINGS_UPDATE,
   KIND_NOTIFY_EVENT,
+  KIND_CANONICAL_COMMAND,
+  KIND_CANONICAL_EVENT,
 ]);
 
 export function isValidKind(kind: number): boolean {
@@ -174,6 +180,8 @@ export function kindToString(kind: number): string {
     [KIND_SITE_THEME_UPDATE]: 'SITE_THEME_UPDATE',
     [KIND_SETTINGS_UPDATE]: 'SETTINGS_UPDATE',
     [KIND_NOTIFY_EVENT]: 'NOTIFY_EVENT',
+    [KIND_CANONICAL_COMMAND]: 'CANONICAL_COMMAND',
+    [KIND_CANONICAL_EVENT]: 'CANONICAL_EVENT',
   };
   return kindMap[kind] ?? `UNKNOWN(0x${kind.toString(16).padStart(4, '0')})`;
 }

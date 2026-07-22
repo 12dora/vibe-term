@@ -1221,4 +1221,8 @@ export type UploadCommitEvent =
   | { type: 'done'; uploaded: string }
   | { type: 'error'; code: FileErrorCode; detail?: string };
 
-export { API_VERSION, GATEWAY_CAPABILITIES } from './capabilities';
+export {
+  API_VERSION,
+  GATEWAY_CAPABILITIES,
+  GATEWAY_CAPABILITY_CANONICAL_STATE_V1,
+} from './capabilities';

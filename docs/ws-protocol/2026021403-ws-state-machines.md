@@ -127,11 +127,11 @@
 - `SELECTING/ACKED/HISTORY_APPLIED` 超时 -> `SELECT_FAILED`。
 - `SELECT_FAILED` 可回退到上一个 `STABLE` 的 pane（若存在），或保持空白并提示。
 
-### 超时策略（建议值）
+### 超时策略
 
-- ACK 超时：1.5s。
-- HISTORY 超时：1.5s（到期允许无历史继续）。
-- LIVE_RESUME 超时：2.0s（到期允许继续，但记录错误并触发重新 select）。
+- 选择事务使用“无进展超时”，每收到一个属于当前 token 的有效 ACK、history chunk 或 live bytes 都刷新 deadline。
+- 超时后保留上一份已提交画布并自动重试当前 select；不得先清空终端，也不得提交缺块的 history。
+- 新 token 会立即废弃旧 token 的事务缓冲；旧 token 的后续帧全部丢弃。
 
 ---
 
@@ -223,3 +223,38 @@
 
 这样才能在 output 与 reply 交错时仍保持确定性。
 
+---
+
+## 9) Canonical feed 状态机（每条客户端 WS）
+
+### 状态
+
+- `NEGOTIATING`：等待 HELLO，不能收发 canonical 业务消息。
+- `READY`：已发送一次 `FeedReady` 和完整 metadata snapshot，可接受命令。
+- `RESYNCING`：检测到 metadata revision 或 pane sequence gap，正在发送对应 snapshot。
+- `CLOSED`：释放客户端订阅；不关闭仍被其他消费者使用的 device runtime。
+
+### 不变量
+
+1. 同一个 `deviceId` 的所有 WS 消费者共享一个 `DeviceSessionRuntime` 和一条底层 tmux control/output 连接，不能按浏览器 tab 新建采集流。
+2. feed 建立时先发 `FeedReady`，再发完整 metadata snapshot；snapshot Commit 前客户端不可应用后续 patch。
+3. metadata patch 必须满足 `fromRevision == clientRevision`；不连续时进入 `RESYNCING` 并重发完整 metadata snapshot。
+4. pane output 只下发给该 feed 的 active/hot 并集；未订阅 pane 的元数据仍实时下发，但终端字节不下发。
+5. `SetPaneSubscriptions` 是集合替换，不是增量修改。generation 小于等于已应用 generation 时幂等忽略并回当前 ACK。
+6. canonical event 直接编码为不超过 32KiB 的 Envelope，严禁再经通用 `CHUNK`。
+
+### 连接恢复
+
+- WS 重连后视为新 feed：客户端重新发送期望的 active/hot 集，服务端返回最新 metadata snapshot 和 `SubscriptionApplied`。
+- tmux/SSH 底层短暂重连时，runtime 保留已提交热缓存；server epoch 未变则继续原有 pane sequence，并补发缺口内仍保留的数据。
+- server epoch 或 pane epoch 改变、或者所需数据已被逐出时，发送 `SourceGap`，随后为受影响 pane 推送完整 screen snapshot；客户端无需刷新页面。
+
+---
+
+## 10) Active / Hot / Cold 缓存状态机（Gateway runtime）
+
+- `ACTIVE`：至少一个 feed 把 pane 放入 active 集。实时转发输出，保留 screen emulator 与有界增量环。
+- `HOT`：没有 active 引用但至少一个 hot 引用，或刚从 active 降级且仍在热集 TTL/LRU 内。继续维护有界 screen/增量缓存，但不向未订阅客户端发送字节。
+- `COLD`：无引用且已逐出热集。只维护元数据；再次激活时通过一次 screen snapshot 恢复。
+
+订阅集按所有 feed 求并集并带引用计数。容量超限时优先拒绝或逐出 hot pane，不能影响 active pane；所有环形缓冲、screen 和历史页都有显式 byte 上限，达到阈值必须丢弃旧数据并用 gap/snapshot 恢复，不能形成无界积压。

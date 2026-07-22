@@ -451,3 +451,5 @@ export const EventNotifyS2CSchema = b.struct({
   eventJson: b.string(),
   timestamp: b.u64(),
 });
+
+export * from './canonical-state';

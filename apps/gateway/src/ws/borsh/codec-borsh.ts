@@ -138,6 +138,28 @@ export function encodeLiveResume(
   return wsBorsh.encodeEnvelope(wsBorsh.KIND_LIVE_RESUME, payload, seq);
 }
 
+export function encodeCanonicalEvent(
+  event: wsBorsh.CanonicalEvent,
+  seq: number,
+  negotiatedMaxFrameBytes = wsBorsh.CANONICAL_STATE_MAX_FRAME_BYTES
+): Uint8Array {
+  const payload = wsBorsh.encodeCanonicalEventPayload(event);
+  const frame = wsBorsh.encodeEnvelope(wsBorsh.KIND_CANONICAL_EVENT, payload, seq);
+  const maxFrameBytes = Math.min(wsBorsh.CANONICAL_STATE_MAX_FRAME_BYTES, negotiatedMaxFrameBytes);
+  if (frame.byteLength > maxFrameBytes) {
+    throw new wsBorsh.WsBorshError(
+      wsBorsh.ERROR_FRAME_TOO_LARGE,
+      false,
+      `canonical event frame exceeds ${maxFrameBytes} byte wire limit`
+    );
+  }
+  return frame;
+}
+
+export function decodeCanonicalCommand(data: Uint8Array): wsBorsh.CanonicalCommandEnvelope {
+  return wsBorsh.decodeCanonicalCommandPayload(data);
+}
+
 // ========== 分片编码 ==========
 
 function encodeWithChunking(

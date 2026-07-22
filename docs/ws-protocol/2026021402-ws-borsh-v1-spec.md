@@ -31,7 +31,8 @@
 
 - wire 层禁止直接使用 `hashMap/hashSet`（顺序不确定）。映射/集合统一用 `vec(entry)` 表示。
 - 协议版本使用 `Envelope.version` 显式演进。
-- 消息类型使用显式 `kind(u16)`，不使用 `b.enum(...)` 变体序号（避免对象 key 顺序风险）。
+- 顶层消息类型使用显式 `kind(u16)`，不使用 `b.enum(...)` 变体序号。
+- `CANONICAL_COMMAND` / `CANONICAL_EVENT` 的 payload 是唯一例外：其版本化的嵌套命令/事件使用 `b.enum(...)`。声明顺序就是 `u8` wire discriminator，所有 discriminator 由 golden test 固定；v1 冻结后新增 variant 必须升级 canonical protocol version/capability，不能只在尾部追加并假设旧客户端可解码。
 
 ## 术语
 
@@ -46,7 +47,8 @@
 - 默认最大帧：`MAX_FRAME_BYTES = 1_048_576`（1MiB）。
 - HELLO 协商：实际生效的最大帧大小为：
   - `effectiveMaxFrameBytes = min(client.maxFrameBytes, server.maxFrameBytes)`。
-- 任意消息若编码后超过 `effectiveMaxFrameBytes`，必须使用 `CHUNK` 分片发送。
+- 普通消息若编码后超过 `effectiveMaxFrameBytes`，必须使用 `CHUNK` 分片发送。
+- canonical state 消息不使用通用 `CHUNK`：完整 Envelope 必须不超过 `min(32KiB, effectiveMaxFrameBytes)`，screen、history 和 metadata snapshot 使用各自有事务语义的 Begin/Chunk/Commit 事件分片。
 
 ## Envelope（固定外层）
 
@@ -159,6 +161,15 @@ export const EnvelopeSchema = b.struct({
 | kind | 名称 | 方向 | 说明 |
 |---:|---|---|---|
 | 0x0701 | WATCH_EVENT | S2C | watch 规则事件，广播给所有已协商客户端（payload 为 JSON bytes） |
+
+### Canonical State（0x0900-0x09FF）
+
+| kind | 名称 | 方向 | 说明 |
+|---:|---|---|---|
+| 0x0901 | CANONICAL_COMMAND | C2S | 唯一状态流上的订阅、输入、resize、screen/history 请求 |
+| 0x0902 | CANONICAL_EVENT | S2C | 元数据、pane 增量、订阅 ACK、screen/history 事务与 gap |
+
+协商能力：`canonical-state-v1`。客户端只有在 `HELLO_S2C.capabilities` 包含该值时才能发送 canonical command。
 
 ## payload schemas（完整）
 
@@ -486,6 +497,45 @@ PaneWire：
 - 收到 `CHUNK` 后按 `chunkStreamId` 聚合，收齐 `totalChunks` 后按 `chunkIndex` 拼接 `data`。
 - 拼接得到 `originalPayloadBytes` 后，用 `originalKind` 解码为对应 payload。
 - 超时（默认 5s）或重复/越界 index：丢弃并回 `ERROR(code=1002)`。
+
+### CANONICAL_COMMAND / CANONICAL_EVENT（0x0901/0x0902）
+
+两种 payload 均以 `protocolVersion: u16` 开头，当前为 `1`，随后是声明顺序固定的 `b.enum(...)`。canonical 实现与通用 WS Envelope 版本分别演进。
+
+命令 discriminator（只能尾部追加）：
+
+| discriminator | 命令 |
+|---:|---|
+| 0 | `SetPaneSubscriptions` |
+| 1 | `TerminalInput` |
+| 2 | `ResizePane` |
+| 3 | `RequestScreen` |
+| 4 | `RequestHistory` |
+
+事件 discriminator（只能尾部追加）：
+
+| discriminator | 事件 |
+|---:|---|
+| 0 | `FeedReady` |
+| 1 | `SourceMetadataSnapshot` |
+| 2 | `SourceMetadataPatch` |
+| 3 | `PaneData` |
+| 4 | `SubscriptionApplied` |
+| 5–7 | `ScreenBegin` / `ScreenChunk` / `ScreenCommit` |
+| 8–10 | `HistoryBegin` / `HistoryChunk` / `HistoryCommit` |
+| 11 | `SourceGap` |
+| 12 | `Error` |
+
+核心标识和顺序约束：
+
+- source key 为 `(deviceId, serverEpoch, entityKind, nativeId)`；`serverEpoch` 是 tmux server 生命周期内稳定的 16 bytes 标识。
+- pane 数据为 `(pane target, paneEpoch, seqStart, seqEnd, data)`，且 `seqEnd - seqStart == data.length`。
+- pane subscription 携带 pane target 和可选 history cursor；cursor 为 `paneEpoch + terminalSeq`，只允许用于同一 subscription/request 的 pane target，跨 pane/server epoch 的 cursor 无效。
+- metadata 使用独立 `metadataEpoch + revision`；snapshot 是冷启动/恢复屏障，patch 必须连续应用。
+- `SetPaneSubscriptions.generation` 单调递增；服务端只保留最新 generation，并以 `SubscriptionApplied` 返回实际 active/hot 集与拒绝项。
+- screen、history 事务按 `requestId` 以 Begin/Chunk/Commit 原子提交。中途断开或缺块时客户端保留旧画布，不应用半成品。
+- `SourceGap` 明确区分 metadata gap 与 pane sequence gap；客户端请求对应 snapshot 恢复，不要求整页刷新。
+- 每个完整 canonical Envelope 最大 32KiB；semantic chunk 的数据长度必须为 Envelope 和字段开销预留空间。
 
 ### AGENT_SUBSCRIBE（0x0601）/ AGENT_UNSUBSCRIBE（0x0602）
 
