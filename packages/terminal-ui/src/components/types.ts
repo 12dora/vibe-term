@@ -49,6 +49,7 @@ export interface TerminalRef {
    */
   calculateSizeFromContainer: () => { cols: number; rows: number } | null;
   getPendingLocalSize: () => { cols: number; rows: number; at: number } | null;
+  clearPendingLocalSize: () => void;
   /** 当前渲染 cell 的 CSS 像素尺寸（分屏几何换算用），渲染服务未就绪时返回 null */
   getCellSize: () => { width: number; height: number } | null;
 }

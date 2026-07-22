@@ -1,4 +1,4 @@
-import type { StateSnapshotPayload } from '@tmex/shared';
+import { type StateSnapshotPayload, wsBorsh } from '@tmex/shared';
 
 import { getDeviceById } from '../db';
 import type { PaneInfo } from './capture-history';
@@ -135,6 +135,10 @@ export class DeviceSessionRuntime {
 
     this.metadataProjection = new MetadataProjection(this.deviceId, {
       onPatch: (patch) => {
+        if (this.lastSnapshot) {
+          const diff = wsBorsh.sourceMetadataPatchToLegacyDiff(patch);
+          this.lastSnapshot = wsBorsh.applyLegacyStateSnapshotDiff(this.lastSnapshot, diff);
+        }
         this.broadcast((listener) => listener.onMetadataPatch?.(patch));
       },
       onRebaseRequired: (snapshot) => {

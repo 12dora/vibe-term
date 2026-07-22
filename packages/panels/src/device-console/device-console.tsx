@@ -45,6 +45,7 @@ import { resolveSettledMissingWindowFallback } from './selection-recovery';
 
 // URL 目标未出现在快照时的失效判定/回落宽限：覆盖 select 状态机 ackTimeoutMs(1500ms) + 快照传播。
 const SELECT_SETTLE_GRACE_MS = 2500;
+const REMOTE_PANE_SIZE_GUARD_TTL_MS = 2000;
 
 // 终端快捷键栏：从服务器配置渲染（send 类发送控制序列，action 类触发特殊动作）。
 const ShortcutsBar = memo(function ShortcutsBar({
@@ -151,6 +152,7 @@ export function DeviceConsole({
   const isMobileRef = useRef(isMobile);
   isMobileRef.current = isMobile;
   const [editorText, setEditorText] = useState('');
+  const [remoteSizeRetryRevision, setRemoteSizeRetryRevision] = useState(0);
   const isComposingRef = useRef(false);
   // Loading state - false when connected and has pane
   const isLoading = !deviceConnected || !resolvedPaneId;
@@ -590,6 +592,7 @@ export function DeviceConsole({
   // 跟踪当前 Terminal 实例已下发过的 SELECT_START：device/pane 变化时 Terminal 重挂载，
   // 需要让下面的 select 效果重新派发（否则切到其他 device 再切回会命中短路、终端空白）
   const lastDispatchedSelectRef = useRef<string | null>(null);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: 路由身份变化必须重置仅由 ref 持有的派发守卫
   useEffect(() => {
     lastDispatchedSelectRef.current = null;
   }, [deviceId, resolvedPaneId]);
@@ -897,6 +900,7 @@ export function DeviceConsole({
 
   // Sync pane size from remote
   useEffect(() => {
+    void remoteSizeRetryRevision;
     // 分屏模式：pane 尺寸完全由 layout 驱动（SplitTerminalArea 内部 resize），不走回灌
     if (isSplitView) return;
     if (!canInteractWithPane || !selectedPane || isLoading) return;
@@ -917,10 +921,18 @@ export function DeviceConsole({
         now,
         remoteSize,
         pendingLocalSize,
+        ttlMs: REMOTE_PANE_SIZE_GUARD_TTL_MS,
       })
     ) {
-      return;
+      const elapsed = Math.max(0, now - (pendingLocalSize?.at ?? now));
+      const retryAfterMs = Math.max(1, REMOTE_PANE_SIZE_GUARD_TTL_MS - elapsed + 1);
+      const timer = window.setTimeout(() => {
+        setRemoteSizeRetryRevision((revision) => revision + 1);
+      }, retryAfterMs);
+      return () => window.clearTimeout(timer);
     }
+
+    if (pendingLocalSize) terminal?.clearPendingLocalSize();
 
     if (term.cols === remoteCols && term.rows === remoteRows) {
       return;
@@ -940,6 +952,7 @@ export function DeviceConsole({
     isLoading,
     isSplitView,
     resolvedPaneId,
+    remoteSizeRetryRevision,
     selectedPane,
   ]);
 

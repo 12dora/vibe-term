@@ -248,23 +248,29 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(
       [inputMode, sendInput]
     );
 
-    const { pendingLocalSize, scheduleResize, runPostSelectResize, setFitAddon, setTerminal } =
-      useTerminalResize({
-        deviceId,
-        paneId,
-        deviceConnected,
-        isSelectionInvalid,
-        sizingMode,
-        onResize,
-        onSync,
-        onResizeSettled,
-        getContainerRect: () => {
-          const el = containerRef.current;
-          if (!el) return null;
-          const rect = el.getBoundingClientRect();
-          return { width: rect.width, height: rect.height };
-        },
-      });
+    const {
+      pendingLocalSize,
+      scheduleResize,
+      runPostSelectResize,
+      setFitAddon,
+      setTerminal,
+      clearPendingLocalSize,
+    } = useTerminalResize({
+      deviceId,
+      paneId,
+      deviceConnected,
+      isSelectionInvalid,
+      sizingMode,
+      onResize,
+      onSync,
+      onResizeSettled,
+      getContainerRect: () => {
+        const el = containerRef.current;
+        if (!el) return null;
+        const rect = el.getBoundingClientRect();
+        return { width: rect.width, height: rect.height };
+      },
+    });
 
     // biome-ignore lint/correctness/useExhaustiveDependencies: retryNonce is an explicit failed-resource retry trigger
     useEffect(() => {
@@ -924,6 +930,7 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(
           return { cols, rows };
         },
         getPendingLocalSize: () => pendingLocalSize.current,
+        clearPendingLocalSize,
         getCellSize: () => {
           const core = instance?._core;
           const cell = core?._renderService?.dimensions?.css?.cell;
@@ -931,7 +938,7 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(
           return { width: cell.width, height: cell.height };
         },
       }),
-      [instance, pendingLocalSize, runPostSelectResize, scheduleResize]
+      [clearPendingLocalSize, instance, pendingLocalSize, runPostSelectResize, scheduleResize]
     );
 
     return (

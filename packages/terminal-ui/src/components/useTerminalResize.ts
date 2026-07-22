@@ -347,6 +347,10 @@ export function useTerminalResize({
     terminalRef.current = terminal;
   }, []);
 
+  const clearPendingLocalSize = useCallback(() => {
+    pendingLocalSize.current = null;
+  }, []);
+
   return {
     scheduleResize,
     runPostSelectResize,
@@ -355,6 +359,7 @@ export function useTerminalResize({
     setTerminal,
     lastReportedSize,
     pendingLocalSize,
+    clearPendingLocalSize,
     suppressLocalResizeUntil,
   };
 }

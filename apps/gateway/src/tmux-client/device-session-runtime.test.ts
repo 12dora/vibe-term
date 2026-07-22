@@ -286,6 +286,67 @@ describe('DeviceSessionRuntime', () => {
     runtime.disconnect();
   });
 
+  test('keeps the compatibility snapshot on the canonical metadata revision', async () => {
+    const recorder = createStubConnectionRecorder();
+    const runtime = createDeviceSessionRuntime({
+      deviceId: 'device-a',
+      createConnection(options) {
+        recorder.state.options = options;
+        return recorder.connection;
+      },
+    });
+    let snapshots = 0;
+    let patches = 0;
+    runtime.subscribe({
+      onSnapshot: () => snapshots++,
+      onMetadataPatch: () => patches++,
+    });
+
+    recorder.state.options?.onSourceReady?.(new Uint8Array(16).fill(1));
+    recorder.state.options?.onSnapshot({
+      deviceId: 'device-a',
+      session: {
+        id: '$1',
+        name: 'main',
+        windows: [
+          {
+            id: '@1',
+            name: 'shell',
+            index: 0,
+            active: true,
+            layout: 'bdbf,112x35,0,0,2',
+            panes: [
+              {
+                id: '%2',
+                windowId: '@1',
+                index: 0,
+                active: true,
+                width: 112,
+                height: 35,
+                left: 0,
+                top: 0,
+              },
+            ],
+          },
+        ],
+      },
+    });
+
+    recorder.state.options?.onSourceMetadata?.({
+      type: 'layout-change',
+      windowId: '@1',
+      layout: 'bf9f,92x27,0,0,2',
+    });
+    await Bun.sleep(30);
+
+    const current = runtime.getCurrentSnapshot();
+    expect(current?.session?.windows[0]?.layout).toBe('bf9f,92x27,0,0,2');
+    expect(current?.session?.windows[0]?.panes[0]).toMatchObject({ width: 92, height: 27 });
+    expect(snapshots).toBe(1);
+    expect(patches).toBe(1);
+    runtime.disconnect();
+  });
+
   test('disconnects the underlying connection only once', async () => {
     const recorder = createStubConnectionRecorder();
     const runtime = createDeviceSessionRuntime({

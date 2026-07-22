@@ -218,7 +218,7 @@ export class WebSocketServer {
         this.broadcastStateSnapshot(deviceId, payload);
       },
       onMetadataPatch: (patch) => {
-        this.broadcastLegacyMetadataPatch(deviceId, patch);
+        this.broadcastLegacyMetadataPatch(deviceId, patch, runtime.getCurrentSnapshot());
       },
       onMetadataRebaseRequired: () => {
         const snapshot = runtime.getCurrentSnapshot();
@@ -1702,15 +1702,14 @@ export class WebSocketServer {
 
   private broadcastLegacyMetadataPatch(
     deviceId: string,
-    patch: Parameters<typeof wsBorsh.sourceMetadataPatchToLegacyDiff>[0]
+    patch: Parameters<typeof wsBorsh.sourceMetadataPatchToLegacyDiff>[0],
+    currentSnapshot: StateSnapshotPayload | null
   ): void {
     const entry = this.connections.get(deviceId);
     if (!entry) return;
     const diff = wsBorsh.sourceMetadataPatchToLegacyDiff(patch);
     if (diff.upserts.length === 0 && diff.removals.length === 0) return;
-    if (entry.lastSnapshot) {
-      entry.lastSnapshot = wsBorsh.applyLegacyStateSnapshotDiff(entry.lastSnapshot, diff);
-    }
+    entry.lastSnapshot = currentSnapshot;
     const payload = wsBorsh.encodePayload(wsBorsh.schema.StateSnapshotDiffSchema, {
       deviceId,
       baseRevision: Number(patch.fromRevision & 0xffff_ffffn),
