@@ -42,6 +42,7 @@ export interface SplitTerminalAreaProps {
   /** window 级尺寸上报（resize-window 语义），复用单 pane 的 KIND_TERM_RESIZE 通道 */
   onWindowResize: (cols: number, rows: number) => void;
   onWindowResizeSettled?: (cols: number, rows: number) => void;
+  prepareResources?: () => Promise<void>;
 }
 
 interface DragState {
@@ -144,6 +145,7 @@ export function SplitTerminalArea({
   onUserSelectPane,
   onWindowResize,
   onWindowResizeSettled,
+  prepareResources,
 }: SplitTerminalAreaProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const terminalRefs = useRef(new Map<string, TerminalRef | null>());
@@ -622,6 +624,7 @@ export function SplitTerminalArea({
                 sizingMode="follow"
                 autoFocus={isFocused}
                 focused={isFocused}
+                prepareResources={prepareResources}
                 onResize={() => {}}
                 onSync={() => {}}
               />

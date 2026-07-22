@@ -99,6 +99,7 @@ export interface DeviceConsoleProps {
    *  返回完整 document.title；卸载时以 formatBrowserTitle(null) 复原。
    *  缺省沿用 buildBrowserTitle（`[siteName]label`）与 siteName 复原。 */
   formatBrowserTitle?: (label: string | null) => string;
+  prepareTerminalResources?: (fontId: string, fontSize: number) => Promise<void>;
 }
 
 export function DeviceConsole({
@@ -107,6 +108,7 @@ export function DeviceConsole({
   paneId,
   devicesQueryKey = defaultDevicesQueryKey,
   formatBrowserTitle,
+  prepareTerminalResources,
 }: DeviceConsoleProps) {
   const { t } = useTranslation();
   const runtime = useRuntime();
@@ -155,6 +157,8 @@ export function DeviceConsole({
   const [isSending, setIsSending] = useState(false);
   const inputMode = useUIStore((state) => state.inputMode);
   const uiTheme = useUIStore((state) => state.theme);
+  const terminalFontId = useUIStore((state) => state.terminalFontId);
+  const terminalFontSize = useUIStore((state) => state.terminalFontSize);
   const editorSendWithEnter = useUIStore((state) => state.editorSendWithEnter);
   const setEditorSendWithEnter = useUIStore((state) => state.setEditorSendWithEnter);
   const addEditorHistory = useUIStore((state) => state.addEditorHistory);
@@ -167,6 +171,10 @@ export function DeviceConsole({
 
   const windows = snapshot?.session?.windows;
   const terminalTheme = uiTheme === 'light' ? XTERM_THEME_LIGHT : XTERM_THEME_DARK;
+  const prepareResources = useCallback(
+    () => prepareTerminalResources?.(terminalFontId, terminalFontSize) ?? Promise.resolve(),
+    [prepareTerminalResources, terminalFontId, terminalFontSize]
+  );
 
   const { data: devicesData } = useQuery({
     queryKey: devicesQueryKey,
@@ -1215,6 +1223,7 @@ export function DeviceConsole({
                     onUserSelectPane={handleUserSelectPane}
                     onWindowResize={handleResize}
                     onWindowResizeSettled={handleResizeSettled}
+                    prepareResources={prepareResources}
                   />
                 </div>
                 {inputMode === 'direct' && (
@@ -1244,6 +1253,7 @@ export function DeviceConsole({
                   inputMode={inputMode}
                   deviceConnected={deviceConnected}
                   isSelectionInvalid={isSelectionInvalid}
+                  prepareResources={prepareResources}
                   onResize={handleResize}
                   onSync={handleSync}
                   onResizeSettled={handleResizeSettled}
