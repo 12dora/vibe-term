@@ -176,6 +176,7 @@ export {
   MAX_CHUNKS_PER_MESSAGE,
   type Chunk,
   type ReassembledMessage,
+  type ChunkReassemblerOptions,
   ChunkReassembler,
   type ChunkOptions,
   type ChunkedResult,

@@ -2,11 +2,12 @@ import { describe, expect, test } from 'bun:test';
 
 import { WebSocketSendGuard } from './websocket-send-guard';
 
-function createSocket(statuses: number[]) {
+function createSocket(statuses: number[], maxFrameBytes?: number) {
   let sendCalls = 0;
   let terminateCalls = 0;
   return {
     socket: {
+      data: maxFrameBytes === undefined ? undefined : { borshState: { maxFrameBytes } },
       send() {
         const status = statuses[Math.min(sendCalls, statuses.length - 1)] ?? 1;
         sendCalls += 1;
@@ -96,6 +97,20 @@ describe('WebSocketSendGuard', () => {
 
     expect(guard.sendFrames(target.socket as never, [new Uint8Array([1])])).toBe(false);
     expect(target.terminateCalls()).toBe(1);
+  });
+
+  test('rejects every frame that exceeds the negotiated maximum before calling Bun', () => {
+    const reasons: string[] = [];
+    const guard = new WebSocketSendGuard({
+      timeoutMs: 1000,
+      onTerminate: (reason) => reasons.push(reason),
+    });
+    const target = createSocket([1], 4);
+
+    expect(guard.sendFrames(target.socket as never, [new Uint8Array(5)])).toBe(false);
+    expect(target.sendCalls()).toBe(0);
+    expect(target.terminateCalls()).toBe(1);
+    expect(reasons).toEqual(['oversized_frame']);
   });
 
   test('forget cancels the backpressure deadline for a closed socket', async () => {

@@ -10,7 +10,28 @@ interface BackpressureState {
 
 interface WebSocketSendGuardOptions {
   timeoutMs?: number;
-  onTerminate?: (reason: 'backpressure_gap' | 'backpressure_timeout' | 'dropped_frame') => void;
+  onTerminate?: (
+    reason: 'backpressure_gap' | 'backpressure_timeout' | 'dropped_frame' | 'oversized_frame'
+  ) => void;
+}
+
+type TerminationReason = Parameters<NonNullable<WebSocketSendGuardOptions['onTerminate']>>[0];
+
+function frameByteLength(frame: string | BufferSource): number {
+  if (typeof frame === 'string') {
+    return new TextEncoder().encode(frame).byteLength;
+  }
+  return frame.byteLength;
+}
+
+function negotiatedFrameLimit(ws: ServerWebSocket<unknown>): number | null {
+  const state = (
+    ws as unknown as {
+      data?: { borshState?: { maxFrameBytes?: unknown } };
+    }
+  ).data?.borshState;
+  const value = state?.maxFrameBytes;
+  return typeof value === 'number' && Number.isSafeInteger(value) && value > 0 ? value : null;
 }
 
 export class WebSocketSendGuard {
@@ -42,6 +63,15 @@ export class WebSocketSendGuard {
 
   sendFrames(ws: ServerWebSocket<unknown>, frames: readonly (string | BufferSource)[]): boolean {
     if (!this.canSend(ws)) {
+      return false;
+    }
+
+    const maxFrameBytes = negotiatedFrameLimit(ws);
+    if (
+      maxFrameBytes !== null &&
+      frames.some((frame) => frame !== undefined && frameByteLength(frame) > maxFrameBytes)
+    ) {
+      this.terminate(ws, 'oversized_frame');
       return false;
     }
 
@@ -111,10 +141,7 @@ export class WebSocketSendGuard {
     this.unavailable.delete(ws);
   }
 
-  private terminate(
-    ws: ServerWebSocket<unknown>,
-    reason: 'backpressure_gap' | 'backpressure_timeout' | 'dropped_frame'
-  ): void {
+  private terminate(ws: ServerWebSocket<unknown>, reason: TerminationReason): void {
     if (this.unavailable.has(ws)) {
       return;
     }

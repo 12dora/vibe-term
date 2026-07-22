@@ -1,6 +1,37 @@
 import { describe, expect, test } from 'bun:test';
 import { SelectStateMachine } from './state-machine';
 
+class ManualScheduler {
+  private now = 0;
+  private nextId = 1;
+  private readonly tasks = new Map<number, { at: number; callback: () => void }>();
+
+  schedule(callback: () => void, delayMs: number): number {
+    const id = this.nextId++;
+    this.tasks.set(id, { at: this.now + delayMs, callback });
+    return id;
+  }
+
+  cancel(handle: unknown): void {
+    this.tasks.delete(handle as number);
+  }
+
+  advance(delayMs: number): void {
+    const target = this.now + delayMs;
+    while (true) {
+      const next = [...this.tasks.entries()]
+        .filter(([, task]) => task.at <= target)
+        .sort((left, right) => left[1].at - right[1].at)[0];
+      if (!next) break;
+      const [id, task] = next;
+      this.tasks.delete(id);
+      this.now = task.at;
+      task.callback();
+    }
+    this.now = target;
+  }
+}
+
 describe('SelectStateMachine', () => {
   test('replays deferred history with alternateScreen preserved', () => {
     const sm = new SelectStateMachine();
@@ -29,13 +60,17 @@ describe('SelectStateMachine', () => {
     });
 
     const received: Array<{ paneId: string; data: string; alternateScreen: boolean }> = [];
+    const events: string[] = [];
     sm.setCallbacks({
+      onResetTerminal: () => events.push('reset'),
       onApplyHistory: (_deviceId, paneId, data, alternateScreen) => {
+        events.push('history');
         received.push({ paneId, data, alternateScreen });
       },
     });
 
     expect(received).toEqual([{ paneId: '%1', data: 'alt-history', alternateScreen: true }]);
+    expect(events).toEqual(['reset', 'history']);
   });
 
   test('routes non-transaction pane output instead of dropping it (split view siblings)', () => {
@@ -87,6 +122,7 @@ describe('SelectStateMachine', () => {
     const flushes: Array<{ paneId: string; chunks: number }> = [];
 
     sm.setCallbacks({
+      onResetTerminal: () => {},
       onFlushBuffer: (_deviceId, paneId, buffer) => {
         flushes.push({ paneId, chunks: buffer.length });
       },
@@ -110,5 +146,77 @@ describe('SelectStateMachine', () => {
     sm.dispatch({ type: 'LIVE_RESUME', deviceId: 'device-1', selectToken: token });
 
     expect(flushes).toEqual([{ paneId: '%7', chunks: 1 }]);
+  });
+
+  test('ACK 和低速分片进展不会清空旧画面；停止进展后可重入新事务', () => {
+    const scheduler = new ManualScheduler();
+    const firstToken = new Uint8Array(16).fill(4);
+    const retryToken = new Uint8Array(16).fill(5);
+    const events: string[] = [];
+    const sm: SelectStateMachine = new SelectStateMachine(
+      {
+        onResetTerminal: () => events.push('reset'),
+        onApplyHistory: () => events.push('history'),
+        onSelectFailed: (_deviceId, reason) => {
+          events.push(reason);
+          sm.dispatch({
+            type: 'SELECT_START',
+            deviceId: 'device-slow',
+            windowId: '@1',
+            paneId: '%1',
+            selectToken: retryToken,
+            wantHistory: true,
+          });
+        },
+      },
+      { ackTimeoutMs: 100, progressTimeoutMs: 100, scheduler }
+    );
+
+    sm.dispatch({
+      type: 'SELECT_START',
+      deviceId: 'device-slow',
+      windowId: '@1',
+      paneId: '%1',
+      selectToken: firstToken,
+      wantHistory: true,
+    });
+    sm.dispatch({ type: 'SWITCH_ACK', deviceId: 'device-slow', selectToken: firstToken });
+    expect(events).toEqual([]);
+
+    scheduler.advance(90);
+    sm.reportTerminalProgress('device-slow');
+    scheduler.advance(90);
+    sm.reportTerminalProgress('device-slow');
+    scheduler.advance(99);
+    expect(sm.getState('device-slow')).toBe('ACKED');
+    expect(events).toEqual([]);
+
+    scheduler.advance(2);
+    expect(events).toEqual(['progress_timeout']);
+    expect(sm.getState('device-slow')).toBe('SELECTING');
+    expect(sm.getTransaction('device-slow')?.selectToken).toEqual(retryToken);
+  });
+
+  test('请求 history 却只收到 LIVE_RESUME 时保留旧画面并进入可恢复失败', () => {
+    const token = new Uint8Array(16).fill(6);
+    const events: string[] = [];
+    const sm = new SelectStateMachine({
+      onResetTerminal: () => events.push('reset'),
+      onSelectFailed: (_deviceId, reason) => events.push(reason),
+    });
+
+    sm.dispatch({
+      type: 'SELECT_START',
+      deviceId: 'device-1',
+      windowId: '@1',
+      paneId: '%1',
+      selectToken: token,
+      wantHistory: true,
+    });
+    sm.dispatch({ type: 'SWITCH_ACK', deviceId: 'device-1', selectToken: token });
+    sm.dispatch({ type: 'LIVE_RESUME', deviceId: 'device-1', selectToken: token });
+
+    expect(events).toEqual(['history_missing']);
+    expect(sm.getState('device-1')).toBe('STABLE');
   });
 });

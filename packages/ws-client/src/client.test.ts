@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'bun:test';
-import { BorshWebSocketClient, defaultWsUrl, type WebSocketLike } from './client';
+import { wsBorsh } from '@tmex/shared';
+import { BorshWebSocketClient, type WebSocketLike, defaultWsUrl } from './client';
 import { createGatewayConnection } from './connection';
 
 /** 可手工驱动的假 transport，遵循 WHATWG 的 readyState 取值。 */
@@ -185,5 +186,61 @@ describe('socketFactory', () => {
     expect(urls).toEqual(['ws://tunnel.test/ws']);
     conn.dispose();
     expect(socket.closeCount).toBe(1);
+  });
+
+  test('createGatewayConnection 顶层 maxFrameBytes 进入 HELLO 协商', () => {
+    const socket = new FakeSocket();
+    const conn = createGatewayConnection({
+      wsUrl: 'ws://tunnel.test/ws',
+      socketFactory: () => socket,
+      maxFrameBytes: 192 * 1024,
+    });
+
+    conn.client.connect();
+    socket.open();
+    const sent = socket.sent[0];
+    if (typeof sent === 'string' || sent === undefined) {
+      throw new Error('expected binary hello');
+    }
+    const bytes = ArrayBuffer.isView(sent)
+      ? new Uint8Array(sent.buffer, sent.byteOffset, sent.byteLength)
+      : new Uint8Array(sent);
+    const envelope = wsBorsh.decodeEnvelope(bytes);
+    const hello = wsBorsh.decodePayload(wsBorsh.schema.HelloC2SSchema, envelope.payload);
+    expect(hello.maxFrameBytes).toBe(192 * 1024);
+    conn.dispose();
+  });
+
+  test('每个合法 chunk 都报告进展，供上层刷新无进展 deadline', () => {
+    const socket = new FakeSocket();
+    const client = new BorshWebSocketClient({
+      url: 'ws://example.test/ws',
+      socketFactory: () => socket,
+    });
+    const progress: number[] = [];
+    const messages: Uint8Array[] = [];
+    client.onChunkProgress((event) => progress.push(event.chunkIndex));
+    client.onMessage((message) => messages.push(message.payload));
+    client.connect();
+    socket.open();
+
+    const payload = new Uint8Array(256).fill(7);
+    const split = wsBorsh.splitPayloadIntoChunks(payload, wsBorsh.KIND_TERM_HISTORY, 9, {
+      maxFrameBytes: 96,
+      chunkStreamId: 3,
+    });
+    for (const chunk of split.chunks) {
+      const encoded = wsBorsh.encodeChunk(chunk, chunk.chunkIndex + 1);
+      socket.onmessage?.({
+        data: encoded.buffer.slice(
+          encoded.byteOffset,
+          encoded.byteOffset + encoded.byteLength
+        ) as ArrayBuffer,
+      });
+    }
+
+    expect(progress).toEqual(split.chunks.map((chunk) => chunk.chunkIndex));
+    expect(messages).toEqual([payload]);
+    client.disconnect();
   });
 });

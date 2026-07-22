@@ -129,6 +129,7 @@ export function createTmuxStore(
   const lastConnectSentAt = new Map<string, number>();
 
   const lastReportedTerminalSizes = new Map<string, { cols: number; rows: number; at: number }>();
+  const selectRetryTimers = new Map<string, ReturnType<typeof setTimeout>>();
 
   function shouldSkipDuplicateConnect(deviceId: string): boolean {
     const now = Date.now();
@@ -189,6 +190,19 @@ export function createTmuxStore(
       onOutput: (deviceId, paneId, data) => {
         core.paneSinks.dispatchPaneOutput(deviceId, paneId, data);
       },
+      onSelectFailed: (deviceId, reason) => {
+        if (reason === 'rejected' || selectRetryTimers.has(deviceId)) {
+          return;
+        }
+        const timer = setTimeout(() => {
+          selectRetryTimers.delete(deviceId);
+          if (getState().deviceConnected[deviceId] === false) {
+            return;
+          }
+          maybeReselectCurrentPane(deviceId);
+        }, 250);
+        selectRetryTimers.set(deviceId, timer);
+      },
     });
 
     const maybeReselectCurrentPane = (deviceId: string): void => {
@@ -212,6 +226,24 @@ export function createTmuxStore(
         }));
       })
     );
+
+    disposers.push(
+      client.onChunkProgress(({ originalKind }) => {
+        if (
+          originalKind === wsBorsh.KIND_TERM_HISTORY ||
+          originalKind === wsBorsh.KIND_TERM_OUTPUT
+        ) {
+          core.selectMachine().reportTerminalProgress();
+        }
+      })
+    );
+
+    disposers.push(() => {
+      for (const timer of selectRetryTimers.values()) {
+        clearTimeout(timer);
+      }
+      selectRetryTimers.clear();
+    });
 
     disposers.push(
       client.onMessage((msg) => {

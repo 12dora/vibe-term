@@ -72,6 +72,7 @@ mock.module('@tmex/ws-client', () => {
     onMessage: () => () => {},
     onError: () => () => {},
     onLatency: () => () => {},
+    onChunkProgress: () => () => {},
     connect: () => {},
   };
   return {

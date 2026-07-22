@@ -101,8 +101,30 @@ export interface SelectCallbacks {
   ) => void;
   onFlushBuffer?: (deviceId: string, paneId: string, buffer: Uint8Array[]) => void;
   onOutput?: (deviceId: string, paneId: string, data: Uint8Array) => void;
-  onSelectFailed?: (deviceId: string) => void;
+  onSelectFailed?: (deviceId: string, reason: SelectFailureReason) => void;
 }
+
+export type SelectFailureReason =
+  | 'rejected'
+  | 'ack_timeout'
+  | 'progress_timeout'
+  | 'history_missing';
+
+export interface SelectTimerScheduler {
+  schedule(callback: () => void, delayMs: number): unknown;
+  cancel(handle: unknown): void;
+}
+
+export interface SelectStateMachineOptions {
+  ackTimeoutMs?: number;
+  progressTimeoutMs?: number;
+  scheduler?: SelectTimerScheduler;
+}
+
+const defaultScheduler: SelectTimerScheduler = {
+  schedule: (callback, delayMs) => setTimeout(callback, delayMs),
+  cancel: (handle) => clearTimeout(handle as ReturnType<typeof setTimeout>),
+};
 
 // ========== 状态机 ==========
 
@@ -114,16 +136,16 @@ export class SelectStateMachine {
   private deferredFlushes = new Map<string, { paneId: string; buffer: Uint8Array[] }>();
   private deferredOutputs = new Map<string, Array<{ paneId: string; data: Uint8Array }>>();
   private callbacks: SelectCallbacks;
+  private readonly ackTimeoutMs: number;
+  private readonly progressTimeoutMs: number;
+  private readonly scheduler: SelectTimerScheduler;
+  private timers = new Map<string, unknown>();
 
-  // 超时配置
-  private ackTimeoutMs = 1500;
-  private liveResumeTimeoutMs = 2000;
-
-  // 超时定时器
-  private timers = new Map<string, ReturnType<typeof setTimeout>>();
-
-  constructor(callbacks: SelectCallbacks = {}) {
+  constructor(callbacks: SelectCallbacks = {}, options: SelectStateMachineOptions = {}) {
     this.callbacks = callbacks;
+    this.ackTimeoutMs = options.ackTimeoutMs ?? 1500;
+    this.progressTimeoutMs = options.progressTimeoutMs ?? 5000;
+    this.scheduler = options.scheduler ?? defaultScheduler;
   }
 
   setCallbacks(callbacks: SelectCallbacks): void {
@@ -161,6 +183,21 @@ export class SelectStateMachine {
 
   isBuffering(deviceId: string): boolean {
     return this.outputGates.get(deviceId)?.state === 'BUFFERING';
+  }
+
+  reportTerminalProgress(deviceId?: string): void {
+    if (deviceId) {
+      const transaction = this.transactions.get(deviceId);
+      if (transaction?.state === 'ACKED' || transaction?.state === 'HISTORY_APPLIED') {
+        this.armProgressDeadline(deviceId);
+      }
+      return;
+    }
+    for (const [currentDeviceId, transaction] of this.transactions) {
+      if (transaction.state === 'ACKED' || transaction.state === 'HISTORY_APPLIED') {
+        this.armProgressDeadline(currentDeviceId);
+      }
+    }
   }
 
   // ========== 事件处理 ==========
@@ -241,20 +278,8 @@ export class SelectStateMachine {
     // 更新状态
     transaction.state = 'ACKED';
 
-    if (this.callbacks.onResetTerminal) {
-      this.callbacks.onResetTerminal(deviceId, transaction.paneId);
-    } else {
-      this.deferredResets.set(deviceId, transaction.paneId);
-    }
-
-    // ACK 后进入等待 LIVE_RESUME。history 可选且不会阻塞 live。
-    this.setTimer(
-      deviceId,
-      () => {
-        this.handleTimeout(deviceId, 'live');
-      },
-      this.liveResumeTimeoutMs
-    );
+    // ACK 只证明服务端接受了切换；旧画面要保留到完整 history 或无 history 的 live commit。
+    this.armProgressDeadline(deviceId);
   }
 
   private handleHistory(event: HistoryEvent): void {
@@ -272,7 +297,8 @@ export class SelectStateMachine {
     // 更新状态
     transaction.state = 'HISTORY_APPLIED';
 
-    if (this.callbacks.onApplyHistory) {
+    if (this.callbacks.onResetTerminal && this.callbacks.onApplyHistory) {
+      this.callbacks.onResetTerminal(deviceId, transaction.paneId);
       this.callbacks.onApplyHistory(
         deviceId,
         transaction.paneId,
@@ -289,14 +315,7 @@ export class SelectStateMachine {
       });
     }
 
-    // 继续等待 LIVE_RESUME（重置超时窗口，避免长 history 导致误判）
-    this.setTimer(
-      deviceId,
-      () => {
-        this.handleTimeout(deviceId, 'live');
-      },
-      this.liveResumeTimeoutMs
-    );
+    this.armProgressDeadline(deviceId);
   }
 
   private handleLiveResume(event: LiveResumeEvent): void {
@@ -311,6 +330,13 @@ export class SelectStateMachine {
       return;
     }
 
+    if (transaction.state === 'ACKED' && transaction.wantHistory) {
+      this.failTransaction(deviceId, 'history_missing');
+      return;
+    }
+
+    const commitWithoutHistory = transaction.state === 'ACKED';
+
     // 清除超时
     this.clearTimer(deviceId);
 
@@ -321,10 +347,20 @@ export class SelectStateMachine {
     const buffered = this.stopOutputBuffering(deviceId);
     const transactionPaneId = transaction.paneId;
 
+    if (commitWithoutHistory) {
+      if (this.callbacks.onResetTerminal) {
+        this.callbacks.onResetTerminal(deviceId, transactionPaneId);
+      } else {
+        this.deferredResets.set(deviceId, transactionPaneId);
+      }
+    }
+
     // 完成事务
     this.completeTransaction(deviceId);
 
-    if (this.callbacks.onFlushBuffer) {
+    const replacementDeferred =
+      this.deferredResets.has(deviceId) || this.deferredHistories.has(deviceId);
+    if (this.callbacks.onFlushBuffer && !replacementDeferred) {
       this.callbacks.onFlushBuffer(deviceId, transactionPaneId, buffered);
     } else if (buffered.length > 0) {
       this.deferredFlushes.set(deviceId, { paneId: transactionPaneId, buffer: buffered });
@@ -345,6 +381,9 @@ export class SelectStateMachine {
 
     // 如果在缓冲状态，缓冲输出
     if (this.isBuffering(deviceId)) {
+      if (transaction?.state === 'ACKED' || transaction?.state === 'HISTORY_APPLIED') {
+        this.armProgressDeadline(deviceId);
+      }
       this.bufferOutput(deviceId, data);
       return;
     }
@@ -365,12 +404,12 @@ export class SelectStateMachine {
 
   private handleSelectFailed(event: SelectFailedEvent): void {
     const { deviceId } = event;
-    this.failTransaction(deviceId);
+    this.failTransaction(deviceId, 'rejected');
   }
 
   private handleTimeout(deviceId: string, stage: 'ack' | 'history' | 'live'): void {
     console.warn(`[select-sm] Timeout at ${stage} for ${deviceId}`);
-    this.failTransaction(deviceId);
+    this.failTransaction(deviceId, stage === 'ack' ? 'ack_timeout' : 'progress_timeout');
   }
 
   // ========== 事务管理 ==========
@@ -383,7 +422,7 @@ export class SelectStateMachine {
     this.transactions.delete(deviceId);
   }
 
-  private failTransaction(deviceId: string): void {
+  private failTransaction(deviceId: string, reason: SelectFailureReason): void {
     const transaction = this.transactions.get(deviceId);
     if (!transaction) return;
 
@@ -392,13 +431,12 @@ export class SelectStateMachine {
     // 停止输出门控
     this.stopOutputBuffering(deviceId);
 
-    // 回调
-    this.callbacks.onSelectFailed?.(deviceId);
-
     // 清理
     this.transactions.delete(deviceId);
     this.clearTimer(deviceId);
     this.clearDeferred(deviceId);
+
+    this.callbacks.onSelectFailed?.(deviceId, reason);
   }
 
   private cancelTransaction(deviceId: string): void {
@@ -462,7 +500,8 @@ export class SelectStateMachine {
     }
 
     const history = this.deferredHistories.get(deviceId);
-    if (history !== undefined && this.callbacks.onApplyHistory) {
+    if (history !== undefined && this.callbacks.onResetTerminal && this.callbacks.onApplyHistory) {
+      this.callbacks.onResetTerminal(deviceId, history.paneId);
       this.callbacks.onApplyHistory(
         deviceId,
         history.paneId,
@@ -471,6 +510,10 @@ export class SelectStateMachine {
         history.modes
       );
       this.deferredHistories.delete(deviceId);
+    }
+
+    if (this.deferredResets.has(deviceId) || this.deferredHistories.has(deviceId)) {
+      return;
     }
 
     const flush = this.deferredFlushes.get(deviceId);
@@ -497,14 +540,24 @@ export class SelectStateMachine {
 
   private setTimer(deviceId: string, callback: () => void, delay: number): void {
     this.clearTimer(deviceId);
-    const timer = setTimeout(callback, delay);
+    const timer = this.scheduler.schedule(callback, delay);
     this.timers.set(deviceId, timer);
+  }
+
+  private armProgressDeadline(deviceId: string): void {
+    this.setTimer(
+      deviceId,
+      () => {
+        this.handleTimeout(deviceId, 'live');
+      },
+      this.progressTimeoutMs
+    );
   }
 
   private clearTimer(deviceId: string): void {
     const timer = this.timers.get(deviceId);
-    if (timer) {
-      clearTimeout(timer);
+    if (timer !== undefined) {
+      this.scheduler.cancel(timer);
       this.timers.delete(deviceId);
     }
   }
@@ -528,7 +581,7 @@ export class SelectStateMachine {
     this.deferredFlushes.clear();
     this.deferredOutputs.clear();
     for (const timer of this.timers.values()) {
-      clearTimeout(timer);
+      this.scheduler.cancel(timer);
     }
     this.timers.clear();
   }

@@ -11,6 +11,8 @@ export {
   type MessageHandler,
   type StateChangeHandler,
   type ErrorHandler,
+  type ChunkProgress,
+  type ChunkProgressHandler,
   type WebSocketLike,
   type SocketFactory,
 } from './client';
@@ -44,6 +46,9 @@ export {
   type SelectFailedEvent,
   type SelectEvent,
   type SelectCallbacks,
+  type SelectFailureReason,
+  type SelectTimerScheduler,
+  type SelectStateMachineOptions,
 } from './state-machine';
 
 export {

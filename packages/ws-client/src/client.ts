@@ -77,6 +77,13 @@ export interface BorshMessage {
 export type MessageHandler = (message: BorshMessage) => void;
 export type StateChangeHandler = (state: ConnectionState) => void;
 export type ErrorHandler = (error: Error) => void;
+export interface ChunkProgress {
+  streamId: number;
+  originalKind: number;
+  chunkIndex: number;
+  totalChunks: number;
+}
+export type ChunkProgressHandler = (progress: ChunkProgress) => void;
 
 // ========== Borsh WebSocket 客户端 ==========
 
@@ -103,6 +110,7 @@ export class BorshWebSocketClient {
   private stateChangeHandlers: Set<StateChangeHandler> = new Set();
   private errorHandlers: Set<ErrorHandler> = new Set();
   private latencyHandlers: Set<(ms: number) => void> = new Set();
+  private chunkProgressHandlers: Set<ChunkProgressHandler> = new Set();
 
   // visibilitychange
   private visibilityHandler: (() => void) | null = null;
@@ -173,6 +181,11 @@ export class BorshWebSocketClient {
     return () => this.latencyHandlers.delete(handler);
   }
 
+  onChunkProgress(handler: ChunkProgressHandler): () => void {
+    this.chunkProgressHandlers.add(handler);
+    return () => this.chunkProgressHandlers.delete(handler);
+  }
+
   // ========== 连接管理 ==========
 
   connect(): void {
@@ -212,6 +225,7 @@ export class BorshWebSocketClient {
   disconnect(): void {
     this.setState('CLOSED');
     this.clearTimers();
+    this.chunkReassembler.clear();
     this.latencyMs = null;
 
     if (this.ws) {
@@ -248,6 +262,18 @@ export class BorshWebSocketClient {
       if (envelope.kind === wsBorsh.KIND_CHUNK) {
         const chunk = wsBorsh.decodeChunk(envelope.payload);
         const reassembled = this.chunkReassembler.addChunk(chunk);
+        for (const handler of this.chunkProgressHandlers) {
+          try {
+            handler({
+              streamId: chunk.chunkStreamId,
+              originalKind: chunk.originalKind,
+              chunkIndex: chunk.chunkIndex,
+              totalChunks: chunk.totalChunks,
+            });
+          } catch (err) {
+            console.error('[borsh-client] Chunk progress handler error:', err);
+          }
+        }
         if (reassembled) {
           this.dispatchMessage({
             kind: reassembled.kind,
@@ -271,7 +297,9 @@ export class BorshWebSocketClient {
           const rtt = Date.now() - this.lastPingSentAt;
           this.latencyMs = rtt;
           for (const handler of this.latencyHandlers) {
-            try { handler(rtt); } catch {}
+            try {
+              handler(rtt);
+            } catch {}
           }
         }
         return;
@@ -316,6 +344,7 @@ export class BorshWebSocketClient {
 
   private handleClose(): void {
     this.stopHeartbeat();
+    this.chunkReassembler.clear();
 
     if (this.state === 'CLOSED') {
       return;

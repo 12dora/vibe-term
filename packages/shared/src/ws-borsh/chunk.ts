@@ -29,16 +29,27 @@ export interface ReassembledMessage {
 interface ChunkStream {
   chunks: Map<number, Chunk>;
   totalChunks: number;
-  createdAt: number;
+  lastProgressAt: number;
   originalKind: number;
   originalSeq: number;
+}
+
+export interface ChunkReassemblerOptions {
+  timeoutMs?: number;
+  now?: () => number;
 }
 
 // ========== Chunk 重组器 ==========
 
 export class ChunkReassembler {
   private streams = new Map<number, ChunkStream>();
-  private lastCleanup = Date.now();
+  private readonly timeoutMs: number;
+  private readonly now: () => number;
+
+  constructor(options: ChunkReassemblerOptions = {}) {
+    this.timeoutMs = options.timeoutMs ?? CHUNK_TIMEOUT_MS;
+    this.now = options.now ?? Date.now;
+  }
 
   /**
    * 添加一个 chunk，如果重组完成则返回消息
@@ -76,7 +87,7 @@ export class ChunkReassembler {
       stream = {
         chunks: new Map(),
         totalChunks: chunk.totalChunks,
-        createdAt: Date.now(),
+        lastProgressAt: this.now(),
         originalKind: chunk.originalKind,
         originalSeq: chunk.originalSeq,
       };
@@ -99,6 +110,7 @@ export class ChunkReassembler {
     }
 
     stream.chunks.set(chunk.chunkIndex, chunk);
+    stream.lastProgressAt = this.now();
 
     // 检查是否完成
     if (stream.chunks.size === stream.totalChunks) {
@@ -146,19 +158,11 @@ export class ChunkReassembler {
   /**
    * 清理过期的流
    */
-  cleanup(force = false): void {
-    const now = Date.now();
-
-    // 非强制清理每 5 秒执行一次
-    if (!force && now - this.lastCleanup < 5000) {
-      return;
-    }
-
-    this.lastCleanup = now;
-    const cutoff = now - CHUNK_TIMEOUT_MS;
+  cleanup(_force = false): void {
+    const cutoff = this.now() - this.timeoutMs;
 
     for (const [streamId, stream] of this.streams) {
-      if (stream.createdAt < cutoff) {
+      if (stream.lastProgressAt <= cutoff) {
         this.streams.delete(streamId);
       }
     }

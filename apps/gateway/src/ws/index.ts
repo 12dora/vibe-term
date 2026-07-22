@@ -646,12 +646,7 @@ export class WebSocketServer {
   }
 
   private sendEnvelope(ws: ServerWebSocket<ClientState>, kind: number, payload: Uint8Array): void {
-    if (!gatewayWebSocketSendGuard.canSend(ws as ServerWebSocket<unknown>)) {
-      return;
-    }
-    const seq = ws.data.borshState.seqGen();
-    const data = wsBorsh.encodeEnvelope(kind, payload, seq);
-    gatewayWebSocketSendGuard.sendFrames(ws as ServerWebSocket<unknown>, [data]);
+    this.sendChunked(ws, kind, payload);
   }
 
   private sendChunked(

@@ -57,6 +57,7 @@ mock.module('@tmex/ws-client', () => ({
     },
     onError: () => () => {},
     onLatency: () => () => {},
+    onChunkProgress: () => () => {},
     connect: () => {},
   }),
   getSelectStateMachine: () => ({

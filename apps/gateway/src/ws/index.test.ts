@@ -377,6 +377,28 @@ describe('WebSocketServer frame sizing', () => {
     expect(payloadNeedsChunking(2, 17)).toBe(true);
     expect(payloadNeedsChunking(64 * 1024, wsBorsh.DEFAULT_MAX_FRAME_BYTES)).toBe(false);
   });
+
+  test('generic response path chunks every kind below the negotiated frame limit', () => {
+    const server = new WebSocketServer() as any;
+    const sent: Uint8Array[] = [];
+    const ws = {
+      data: { borshState: createBorshClientState() },
+      send(frame: Uint8Array) {
+        sent.push(new Uint8Array(frame));
+        return frame.byteLength;
+      },
+      terminate() {},
+    } as any;
+    ws.data.borshState.maxFrameBytes = 128;
+
+    server.sendEnvelope(ws, wsBorsh.KIND_NOTIFY_EVENT, new Uint8Array(512));
+
+    expect(sent.length).toBeGreaterThan(1);
+    for (const frame of sent) {
+      expect(frame.byteLength).toBeLessThanOrEqual(128);
+      expect(wsBorsh.decodeEnvelope(frame).kind).toBe(wsBorsh.KIND_CHUNK);
+    }
+  });
 });
 
 describe('WebSocketServer tmux select guards', () => {

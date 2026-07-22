@@ -215,7 +215,8 @@ describe('chunk', () => {
     });
 
     it('应该清理过期流', () => {
-      const reassembler = new ChunkReassembler();
+      let now = 0;
+      const reassembler = new ChunkReassembler({ timeoutMs: 100, now: () => now });
 
       // 添加一个正常 chunk，但模拟其已过期
       const chunk = {
@@ -227,18 +228,28 @@ describe('chunk', () => {
         data: new Uint8Array([1, 2, 3]),
       };
       reassembler.addChunk(chunk);
-
-      // 手动将流的创建时间设为过期
-      const streams = (reassembler as unknown as { streams: Map<number, { createdAt: number }> })
-        .streams;
-      const stream = streams.get(1);
-      if (stream) {
-        stream.createdAt = Date.now() - 10000;
-      }
-
-      // 强制清理（跳过冷却时间）
+      now = 101;
       reassembler.cleanup(true);
       expect(reassembler.getActiveStreamCount()).toBe(0);
+    });
+
+    it('持续到达的低速分片按无进展窗口保活，而不是按首块总时长过期', () => {
+      let now = 0;
+      const reassembler = new ChunkReassembler({ timeoutMs: 100, now: () => now });
+      const chunk = (chunkIndex: number) => ({
+        chunkStreamId: 7,
+        originalKind: KIND_PING,
+        originalSeq: 9,
+        totalChunks: 3,
+        chunkIndex,
+        data: new Uint8Array([chunkIndex]),
+      });
+
+      expect(reassembler.addChunk(chunk(0))).toBeNull();
+      now = 90;
+      expect(reassembler.addChunk(chunk(1))).toBeNull();
+      now = 180;
+      expect(reassembler.addChunk(chunk(2))?.payload).toEqual(new Uint8Array([0, 1, 2]));
     });
   });
 
