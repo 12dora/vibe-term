@@ -27,6 +27,7 @@ export {
   WebSocketGatewayTransport,
   LazyWebSocketGatewayTransport,
   createSharedGatewayTransport,
+  encodeGatewayTransportCommand,
   type GatewayHistoryCursor,
   type GatewayPaneHistoryPage,
   type GatewayPaneScreenSnapshot,
@@ -37,6 +38,7 @@ export {
   type GatewayTransportCapabilities,
   type GatewayTransportCommand,
   type GatewayTransportEvent,
+  type GatewayTransportSourceRoute,
   type SharedGatewayTransport,
   type SharedGatewayTransportOptions,
 } from './transport';

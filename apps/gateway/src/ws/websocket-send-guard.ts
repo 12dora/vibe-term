@@ -17,6 +17,17 @@ interface WebSocketSendGuardOptions {
 
 type TerminationReason = Parameters<NonNullable<WebSocketSendGuardOptions['onTerminate']>>[0];
 
+export interface WebSocketSendGuardStats {
+  sessions: number;
+  backpressuredSessions: number;
+  unavailableSessions: number;
+  queuedBytes: number;
+  queuedBytesLimit: number;
+  perSessionBytesLimit: number;
+  backpressureTimeoutMs: number;
+  terminationsByReason: Record<TerminationReason, number>;
+}
+
 function frameByteLength(frame: string | BufferSource): number {
   if (typeof frame === 'string') {
     return new TextEncoder().encode(frame).byteLength;
@@ -39,6 +50,12 @@ export class WebSocketSendGuard {
   private readonly unavailable = new WeakSet<ServerWebSocket<unknown>>();
   private readonly timeoutMs: number;
   private readonly onTerminate: NonNullable<WebSocketSendGuardOptions['onTerminate']>;
+  private readonly terminationsByReason: Record<TerminationReason, number> = {
+    backpressure_gap: 0,
+    backpressure_timeout: 0,
+    dropped_frame: 0,
+    oversized_frame: 0,
+  };
 
   constructor(options: WebSocketSendGuardOptions = {}) {
     this.timeoutMs = options.timeoutMs ?? GATEWAY_WS_BACKPRESSURE_TIMEOUT_MS;
@@ -83,7 +100,7 @@ export class WebSocketSendGuard {
 
       let status: number | undefined;
       try {
-        status = ws.send(frame);
+        status = ws.send(frame as Parameters<ServerWebSocket<unknown>['send']>[0]);
       } catch {
         this.terminate(ws, 'dropped_frame');
         return false;
@@ -141,11 +158,39 @@ export class WebSocketSendGuard {
     this.unavailable.delete(ws);
   }
 
+  snapshotStats(sockets: Iterable<ServerWebSocket<unknown>>): WebSocketSendGuardStats {
+    let sessions = 0;
+    let backpressuredSessions = 0;
+    let unavailableSessions = 0;
+    let queuedBytes = 0;
+    for (const socket of sockets) {
+      sessions += 1;
+      if (this.states.has(socket)) backpressuredSessions += 1;
+      if (this.unavailable.has(socket)) unavailableSessions += 1;
+      try {
+        queuedBytes += Math.max(0, socket.getBufferedAmount());
+      } catch {
+        // A concurrently closing socket contributes zero queued bytes.
+      }
+    }
+    return {
+      sessions,
+      backpressuredSessions,
+      unavailableSessions,
+      queuedBytes,
+      queuedBytesLimit: sessions * GATEWAY_WS_BACKPRESSURE_LIMIT_BYTES,
+      perSessionBytesLimit: GATEWAY_WS_BACKPRESSURE_LIMIT_BYTES,
+      backpressureTimeoutMs: this.timeoutMs,
+      terminationsByReason: { ...this.terminationsByReason },
+    };
+  }
+
   private terminate(ws: ServerWebSocket<unknown>, reason: TerminationReason): void {
     if (this.unavailable.has(ws)) {
       return;
     }
     this.unavailable.add(ws);
+    this.terminationsByReason[reason] += 1;
     this.onTerminate(reason);
     try {
       ws.terminate();

@@ -1,15 +1,17 @@
 import { describe, expect, test } from 'bun:test';
 
-import { TerminalOutputMetrics } from './terminal-output-metrics';
+import { TerminalOutputMetrics, emptyTerminalOutputQueueStats } from './terminal-output-metrics';
 
 describe('TerminalOutputMetrics', () => {
   test('reports source, drop, batch, and recipient layers without identifiers', () => {
     const metrics = new TerminalOutputMetrics(1_000, 10_000);
-    metrics.recordSource(3, false);
-    metrics.recordSource(5, true);
+    metrics.recordSource(3, { legacy: false, canonical: false });
+    metrics.recordSource(5, { legacy: true, canonical: true });
     metrics.recordBatch(5);
     metrics.recordRecipient(5);
     metrics.recordRecipient(5);
+    metrics.recordCanonicalRecipient(5, true);
+    metrics.recordCanonicalRecipient(2, false);
 
     expect(metrics.takeIfDue(10_999)).toBeNull();
     expect(metrics.takeIfDue(11_000)).toEqual({
@@ -18,16 +20,25 @@ describe('TerminalOutputMetrics', () => {
       sourceBytes: 8,
       droppedEvents: 1,
       droppedBytes: 3,
+      legacyObservedEvents: 1,
+      legacyObservedBytes: 5,
+      canonicalObservedEvents: 1,
+      canonicalObservedBytes: 5,
       batches: 1,
       batchBytes: 5,
       recipientDeliveries: 2,
       recipientBytes: 10,
+      canonicalRecipientDeliveries: 1,
+      canonicalRecipientBytes: 5,
+      canonicalDeliveryDrops: 1,
+      canonicalDeliveryDropBytes: 2,
+      queues: emptyTerminalOutputQueueStats(),
     });
   });
 
   test('resets counters after a report window', () => {
     const metrics = new TerminalOutputMetrics(1_000, 5_000);
-    metrics.recordSource(7, true);
+    metrics.recordSource(7, { legacy: true, canonical: false });
     expect(metrics.takeIfDue(6_000)?.sourceBytes).toBe(7);
 
     metrics.recordBatch(4);
@@ -37,10 +48,19 @@ describe('TerminalOutputMetrics', () => {
       sourceBytes: 0,
       droppedEvents: 0,
       droppedBytes: 0,
+      legacyObservedEvents: 0,
+      legacyObservedBytes: 0,
+      canonicalObservedEvents: 0,
+      canonicalObservedBytes: 0,
       batches: 1,
       batchBytes: 4,
       recipientDeliveries: 0,
       recipientBytes: 0,
+      canonicalRecipientDeliveries: 0,
+      canonicalRecipientBytes: 0,
+      canonicalDeliveryDrops: 0,
+      canonicalDeliveryDropBytes: 0,
+      queues: emptyTerminalOutputQueueStats(),
     });
   });
 });

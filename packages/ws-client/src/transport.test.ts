@@ -1,6 +1,7 @@
 import { describe, expect, mock, test } from 'bun:test';
+import { wsBorsh } from '@tmex/shared';
 import type { GatewayTransportCommand, GatewayTransportEvent } from './transport';
-import { createSharedGatewayTransport } from './transport';
+import { createSharedGatewayTransport, encodeGatewayTransportCommand } from './transport';
 
 describe('shared gateway transport', () => {
   test('forwards typed commands and externally published events without opening a socket', () => {
@@ -9,12 +10,14 @@ describe('shared gateway transport', () => {
     const onConnect = mock(() => {});
     const onDisconnect = mock(() => {});
     const transport = createSharedGatewayTransport({
+      sourceRoute: 'relay',
       onConnect,
       onDisconnect,
       onCommand: (command) => {
         commands.push(command);
       },
     });
+    expect(transport.sourceRoute).toBe('relay');
     const unsubscribe = transport.onEvent((event) => events.push(event));
 
     transport.connect();
@@ -58,5 +61,21 @@ describe('shared gateway transport', () => {
   test('allows the shared owner to reject a command', () => {
     const transport = createSharedGatewayTransport({ onCommand: () => false });
     expect(transport.send({ type: 'connect-device', deviceId: 'not-authorized' })).toBe(false);
+  });
+
+  test('exports the stable low-frequency control-lane wire encoder', () => {
+    const message = encodeGatewayTransportCommand({
+      type: 'rename-window',
+      deviceId: 'device-a',
+      windowId: '@4',
+      name: 'editor',
+    });
+
+    expect(message.kind).toBe(wsBorsh.KIND_TMUX_RENAME_WINDOW);
+    expect(wsBorsh.decodePayload(wsBorsh.schema.TmuxRenameWindowSchema, message.payload)).toEqual({
+      deviceId: 'device-a',
+      windowId: '@4',
+      name: 'editor',
+    });
   });
 });

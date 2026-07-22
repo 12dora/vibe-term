@@ -158,6 +158,11 @@ describe('pane retention', () => {
     expect(stats.coldPanes).toBe(1);
     expect(stats.retainedBytes).toBe(6);
     expect(stats.evictions).toBe(1);
+    expect(stats.evictionsByReason.hot_limit).toBe(1);
+    expect(retention.snapshotLimits()).toMatchObject({
+      maxHotPanes: 1,
+      replayTtlMs: 120_000,
+    });
   });
 
   test('keeps generation replay idempotent and rejects conflicting reuse', () => {

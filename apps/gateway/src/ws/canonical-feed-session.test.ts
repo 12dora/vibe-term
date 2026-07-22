@@ -117,8 +117,8 @@ class FakeRuntime implements CanonicalFeedRuntime {
   }
 }
 
-function target() {
-  return { deviceId: 'device-a', serverEpoch: SERVER_EPOCH, paneId: '%1' };
+function target(deviceId = 'device-a') {
+  return { deviceId, serverEpoch: SERVER_EPOCH, paneId: '%1' };
 }
 
 describe('canonical feed session', () => {
@@ -157,6 +157,15 @@ describe('canonical feed session', () => {
     const paneData = events.find((event) => 'PaneData' in event);
     expect(paneData && 'PaneData' in paneData ? paneData.PaneData.seqStart : null).toBe(0n);
     expect(paneData && 'PaneData' in paneData ? paneData.PaneData.seqEnd : null).toBe(4n);
+    expect(session.snapshotStats()).toMatchObject({
+      attachedRuntimes: 1,
+      pendingPaneGaps: 0,
+      paneDataDeliveries: 1,
+      paneDataBytes: 4,
+      paneDataDrops: 0,
+      screenTransactionsStarted: 1,
+      screenTransactionsCompleted: 1,
+    });
     session.close();
   });
 
@@ -229,6 +238,57 @@ describe('canonical feed session', () => {
     expect(
       last && 'SubscriptionApplied' in last ? last.SubscriptionApplied.activePanes : []
     ).toHaveLength(1);
+    session.close();
+  });
+
+  test('bounds pending pane gaps and escalates overflow to one stream rebase', async () => {
+    const runtimes = new Map([
+      ['device-a', new FakeRuntime('device-a')],
+      ['device-b', new FakeRuntime('device-b')],
+    ]);
+    const events: wsBorsh.CanonicalEvent[] = [];
+    const session = new CanonicalFeedSession({
+      maxFrameBytes: 32 * 1024,
+      maxPendingPaneGaps: 1,
+      sendEvent: (event) => {
+        if ('PaneData' in event) return false;
+        events.push(event);
+        return true;
+      },
+      resolveRuntime: async (deviceId) => runtimes.get(deviceId) ?? null,
+    });
+
+    await session.handleCommand({
+      SetPaneSubscriptions: {
+        generation: 1n,
+        activePanes: [
+          { pane: target('device-a'), cursor: null },
+          { pane: target('device-b'), cursor: null },
+        ],
+        hotPanes: [],
+      },
+    });
+    await Bun.sleep(0);
+    runtimes.get('device-a')?.output('a');
+    runtimes.get('device-b')?.output('b');
+
+    expect(session.snapshotStats()).toMatchObject({
+      pendingPaneGaps: 0,
+      pendingPaneGapLimit: 1,
+      streamGapPending: true,
+      paneDataDrops: 2,
+      paneDataDropBytes: 2,
+      pendingPaneGapOverflows: 1,
+    });
+
+    session.onDrain();
+    expect(session.snapshotStats()).toMatchObject({
+      streamGapPending: false,
+      streamGapsSent: 1,
+    });
+    expect(events.some((event) => 'SourceGap' in event && 'Stream' in event.SourceGap.scope)).toBe(
+      true
+    );
     session.close();
   });
 });

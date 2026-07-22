@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 
-import { WebSocketSendGuard } from './websocket-send-guard';
+import { GATEWAY_WS_BACKPRESSURE_LIMIT_BYTES, WebSocketSendGuard } from './websocket-send-guard';
 
 function createSocket(statuses: number[], maxFrameBytes?: number) {
   let sendCalls = 0;
@@ -15,6 +15,9 @@ function createSocket(statuses: number[], maxFrameBytes?: number) {
       },
       terminate() {
         terminateCalls += 1;
+      },
+      getBufferedAmount() {
+        return 37;
       },
     },
     sendCalls: () => sendCalls,
@@ -122,5 +125,29 @@ describe('WebSocketSendGuard', () => {
     await Bun.sleep(30);
 
     expect(target.terminateCalls()).toBe(0);
+  });
+
+  test('reports bounded queue gauges and content-free termination reasons', () => {
+    const guard = new WebSocketSendGuard({ timeoutMs: 1000, onTerminate: () => {} });
+    const target = createSocket([-1]);
+
+    expect(guard.sendFrames(target.socket as never, [new Uint8Array([1])])).toBe(false);
+
+    expect(guard.snapshotStats([target.socket as never])).toMatchObject({
+      sessions: 1,
+      backpressuredSessions: 1,
+      unavailableSessions: 0,
+      queuedBytes: 37,
+      queuedBytesLimit: GATEWAY_WS_BACKPRESSURE_LIMIT_BYTES,
+      perSessionBytesLimit: GATEWAY_WS_BACKPRESSURE_LIMIT_BYTES,
+      backpressureTimeoutMs: 1000,
+      terminationsByReason: {
+        backpressure_gap: 0,
+        backpressure_timeout: 0,
+        dropped_frame: 0,
+        oversized_frame: 0,
+      },
+    });
+    guard.forget(target.socket as never);
   });
 });

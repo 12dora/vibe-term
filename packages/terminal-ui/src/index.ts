@@ -4,6 +4,8 @@ export { Terminal } from './components/Terminal';
 export {
   TerminalGeneration,
   type TerminalGenerationOptions,
+  type TerminalGenerationDiagnosticState,
+  type TerminalGenerationRecoveryState,
   type TerminalGenerationTarget,
 } from './components/TerminalGeneration';
 export type { TerminalProps, TerminalRef, TerminalTheme } from './components/types';
@@ -13,6 +15,7 @@ export {
   TerminalDiagnosticsProvider,
   collectTerminalRenderDiagnostic,
   reportTerminalDiagnostic,
+  sanitizeTerminalStreamDiagnostic,
   scheduleTerminalDiagnosticSamples,
   useTerminalDiagnosticsReporter,
 } from './components/terminal-diagnostics';
@@ -23,6 +26,8 @@ export type {
   TerminalDiagnosticStage,
   TerminalDiagnosticSurface,
   TerminalRenderDiagnostic,
+  TerminalStreamDiagnostic,
+  TerminalStreamDiagnosticInput,
 } from './components/terminal-diagnostics';
 export { PaneSwitcherMenu } from './components/PaneSwitcherMenu';
 export { SelectionToolbar } from './components/SelectionToolbar';

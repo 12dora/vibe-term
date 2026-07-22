@@ -9,21 +9,24 @@ import {
   PaneHistoryCursorError,
   type PaneHistoryPage,
 } from '../tmux-client/pane-history-reader';
-import type {
-  PaneDataSegment,
-  PaneIdentity,
-  PaneReplayGap,
-  PaneReplayPlan,
-  PaneRetentionConsumerLease,
-  PaneScreenCheckpoint,
-  PaneSubscriptionApplyResult,
-  PaneSubscriptionRequest,
-  PaneTerminalCursor,
+import {
+  DEFAULT_MAX_ACTIVE_PANES,
+  DEFAULT_MAX_HOT_PANES,
+  type PaneDataSegment,
+  type PaneIdentity,
+  type PaneReplayGap,
+  type PaneReplayPlan,
+  type PaneRetentionConsumerLease,
+  type PaneScreenCheckpoint,
+  type PaneSubscriptionApplyResult,
+  type PaneSubscriptionRequest,
+  type PaneTerminalCursor,
 } from '../tmux-client/pane-retention';
 
 export const CANONICAL_MAX_SCREEN_BYTES = 512 * 1024;
 export const CANONICAL_MAX_HISTORY_PAGE_BYTES = 256 * 1024;
-const MAX_INPUT_DEDUP_IDS = 1_024;
+export const CANONICAL_MAX_PENDING_PANE_GAPS = 256;
+export const CANONICAL_MAX_INPUT_DEDUP_IDS = 1_024;
 const ENVELOPE_BYTES = 16;
 
 type CanonicalEvent = wsBorsh.CanonicalEvent;
@@ -55,6 +58,30 @@ export interface CanonicalFeedSessionOptions {
   onDeviceAttached?: (deviceId: string, runtime: CanonicalFeedRuntime) => void;
   onDeviceDetached?: (deviceId: string, runtime: CanonicalFeedRuntime) => void;
   createEpoch?: () => Uint8Array;
+  maxPendingPaneGaps?: number;
+}
+
+export interface CanonicalFeedSessionStats {
+  attachedRuntimes: number;
+  screenJobs: number;
+  gatedPanes: number;
+  pendingPaneGaps: number;
+  pendingPaneGapLimit: number;
+  streamGapPending: boolean;
+  inputDedupIds: number;
+  inputDedupLimit: number;
+  paneDataDeliveries: number;
+  paneDataBytes: number;
+  paneDataDrops: number;
+  paneDataDropBytes: number;
+  pendingPaneGapOverflows: number;
+  paneGapsSent: number;
+  paneGapsByReason: Record<PaneReplayGap['reason'], number>;
+  streamGapsSent: number;
+  screenTransactionsStarted: number;
+  screenTransactionsCompleted: number;
+  screenTransactionsFailed: number;
+  screenTransactionsCancelled: number;
 }
 
 interface AttachedDevice {
@@ -119,18 +146,65 @@ export class CanonicalFeedSession {
   private readonly inputIdOrder: string[] = [];
   private readonly gatewayEpoch: Uint8Array;
   private readonly maxFrameBytes: number;
+  private readonly maxPendingPaneGaps: number;
   private readySent = false;
   private bootstrapped = false;
   private closed = false;
   private latestSubscriptionGeneration: bigint | null = null;
+  private streamGapPendingReason: number | null = null;
+  private paneDataDeliveries = 0;
+  private paneDataBytes = 0;
+  private paneDataDrops = 0;
+  private paneDataDropBytes = 0;
+  private pendingPaneGapOverflows = 0;
+  private paneGapsSent = 0;
+  private readonly paneGapsByReason: Record<PaneReplayGap['reason'], number> = {
+    pane_gap: 0,
+    epoch_changed: 0,
+    cache_evicted: 0,
+  };
+  private streamGapsSent = 0;
+  private screenTransactionsStarted = 0;
+  private screenTransactionsCompleted = 0;
+  private screenTransactionsFailed = 0;
+  private screenTransactionsCancelled = 0;
 
   constructor(private readonly options: CanonicalFeedSessionOptions) {
     this.maxFrameBytes = Math.min(
       Math.max(ENVELOPE_BYTES + 64, options.maxFrameBytes),
       wsBorsh.CANONICAL_STATE_MAX_FRAME_BYTES
     );
+    this.maxPendingPaneGaps = options.maxPendingPaneGaps ?? CANONICAL_MAX_PENDING_PANE_GAPS;
+    if (!Number.isSafeInteger(this.maxPendingPaneGaps) || this.maxPendingPaneGaps <= 0) {
+      throw new Error('pending pane gap limit must be a positive safe integer');
+    }
     this.gatewayEpoch = copyBytes((options.createEpoch ?? defaultCreateEpoch)());
     if (this.gatewayEpoch.byteLength !== 16) throw new Error('gateway epoch must be 16 bytes');
+  }
+
+  snapshotStats(): CanonicalFeedSessionStats {
+    return {
+      attachedRuntimes: this.devices.size,
+      screenJobs: this.screenJobs.size,
+      gatedPanes: this.paneSendGates.size,
+      pendingPaneGaps: this.paneSendGaps.size,
+      pendingPaneGapLimit: this.maxPendingPaneGaps,
+      streamGapPending: this.streamGapPendingReason !== null,
+      inputDedupIds: this.inputIds.size,
+      inputDedupLimit: CANONICAL_MAX_INPUT_DEDUP_IDS,
+      paneDataDeliveries: this.paneDataDeliveries,
+      paneDataBytes: this.paneDataBytes,
+      paneDataDrops: this.paneDataDrops,
+      paneDataDropBytes: this.paneDataDropBytes,
+      pendingPaneGapOverflows: this.pendingPaneGapOverflows,
+      paneGapsSent: this.paneGapsSent,
+      paneGapsByReason: { ...this.paneGapsByReason },
+      streamGapsSent: this.streamGapsSent,
+      screenTransactionsStarted: this.screenTransactionsStarted,
+      screenTransactionsCompleted: this.screenTransactionsCompleted,
+      screenTransactionsFailed: this.screenTransactionsFailed,
+      screenTransactionsCancelled: this.screenTransactionsCancelled,
+    };
   }
 
   async handleCommand(command: CanonicalCommand): Promise<void> {
@@ -191,12 +265,7 @@ export class CanonicalFeedSession {
       onClose: () => {
         if (!attached) return;
         attached.metadataNeedsRebase = true;
-        this.send({
-          SourceGap: {
-            reason: wsBorsh.SOURCE_GAP_REASON_EPOCH_CHANGED,
-            scope: { Stream: {} },
-          },
-        });
+        this.sendOrQueueStreamGap(wsBorsh.SOURCE_GAP_REASON_EPOCH_CHANGED);
       },
     };
     attached = {
@@ -220,7 +289,7 @@ export class CanonicalFeedSession {
     attached.detachListener();
     for (const [key, job] of this.screenJobs) {
       if (key.startsWith(`${deviceId}\0`)) {
-        job.cancelled = true;
+        this.cancelScreenJob(job);
         this.screenJobs.delete(key);
         this.paneSendGates.delete(key);
       }
@@ -230,6 +299,11 @@ export class CanonicalFeedSession {
 
   onDrain(): void {
     if (this.closed) return;
+    if (this.streamGapPendingReason !== null) {
+      if (!this.sendStreamGap(this.streamGapPendingReason)) return;
+      this.streamGapPendingReason = null;
+      this.paneSendGaps.clear();
+    }
     for (const device of this.devices.values()) {
       if (device.metadataNeedsRebase) this.sendMetadataSnapshot(device);
     }
@@ -255,10 +329,11 @@ export class CanonicalFeedSession {
   close(): void {
     if (this.closed) return;
     this.closed = true;
-    for (const job of this.screenJobs.values()) job.cancelled = true;
+    for (const job of this.screenJobs.values()) this.cancelScreenJob(job);
     this.screenJobs.clear();
     this.paneSendGates.clear();
     this.paneSendGaps.clear();
+    this.streamGapPendingReason = null;
     for (const deviceId of Array.from(this.devices.keys())) this.detachDevice(deviceId);
   }
 
@@ -269,8 +344,8 @@ export class CanonicalFeedSession {
       FeedReady: {
         gatewayEpoch: copyBytes(this.gatewayEpoch),
         maxFrameBytes: this.maxFrameBytes,
-        maxActivePanes: 32,
-        maxHotPanes: 8,
+        maxActivePanes: DEFAULT_MAX_ACTIVE_PANES,
+        maxHotPanes: DEFAULT_MAX_HOT_PANES,
         maxScreenBytes: CANONICAL_MAX_SCREEN_BYTES,
         maxHistoryPageBytes: CANONICAL_MAX_HISTORY_PAGE_BYTES,
       },
@@ -380,7 +455,7 @@ export class CanonicalFeedSession {
         job.subscriptionGeneration !== null &&
         job.subscriptionGeneration !== command.generation
       ) {
-        job.cancelled = true;
+        this.cancelScreenJob(job);
       }
     }
 
@@ -449,7 +524,7 @@ export class CanonicalFeedSession {
     if (this.inputIds.has(inputId)) return;
     this.inputIds.add(inputId);
     this.inputIdOrder.push(inputId);
-    while (this.inputIdOrder.length > MAX_INPUT_DEDUP_IDS) {
+    while (this.inputIdOrder.length > CANONICAL_MAX_INPUT_DEDUP_IDS) {
       const removed = this.inputIdOrder.shift();
       if (removed) this.inputIds.delete(removed);
     }
@@ -553,12 +628,7 @@ export class CanonicalFeedSession {
       return null;
     }
     if (!bytesEqual(target.serverEpoch, serverEpoch)) {
-      this.send({
-        SourceGap: {
-          reason: wsBorsh.SOURCE_GAP_REASON_EPOCH_CHANGED,
-          scope: { Stream: {} },
-        },
-      });
+      this.sendOrQueueStreamGap(wsBorsh.SOURCE_GAP_REASON_EPOCH_CHANGED);
       return null;
     }
     return {
@@ -578,7 +648,7 @@ export class CanonicalFeedSession {
   ): void {
     const key = paneKey(device.deviceId, pane.paneId);
     const existing = this.screenJobs.get(key);
-    if (existing) existing.cancelled = true;
+    if (existing) this.cancelScreenJob(existing);
     const job: ScreenJob = {
       key,
       requestId: copyBytes(requestId),
@@ -587,6 +657,7 @@ export class CanonicalFeedSession {
     };
     this.screenJobs.set(key, job);
     this.paneSendGates.add(key);
+    this.screenTransactionsStarted += 1;
     void this.runScreenJob(job, device, pane, byteLimit, forceFresh);
   }
 
@@ -597,6 +668,7 @@ export class CanonicalFeedSession {
     byteLimit: number,
     forceFresh: boolean
   ): Promise<void> {
+    let completed = false;
     try {
       let checkpoint = forceFresh ? null : device.runtime.getPaneScreenCheckpoint(pane.paneId);
       if (checkpoint) {
@@ -624,8 +696,9 @@ export class CanonicalFeedSession {
       }
       for (const segment of replay.segments) {
         if (!this.isCurrentScreenJob(job)) return;
-        this.sendPaneData(device.deviceId, segment, true);
+        if (!this.sendPaneData(device.deviceId, segment, true)) return;
       }
+      completed = true;
     } catch (error) {
       if (this.isCurrentScreenJob(job)) {
         this.sendError(
@@ -640,6 +713,8 @@ export class CanonicalFeedSession {
         this.screenJobs.delete(job.key);
         this.paneSendGates.delete(job.key);
       }
+      if (completed) this.screenTransactionsCompleted += 1;
+      else if (!job.cancelled) this.screenTransactionsFailed += 1;
     }
   }
 
@@ -666,12 +741,18 @@ export class CanonicalFeedSession {
   private sendPaneData(deviceId: string, segment: PaneDataSegment, bypassGate = false): boolean {
     const device = this.devices.get(deviceId);
     const serverEpoch = device?.runtime.getServerEpoch();
-    if (!device || !serverEpoch) return false;
+    if (!device || !serverEpoch) {
+      this.recordPaneDataDrop(segment.data.byteLength);
+      return false;
+    }
     const key = paneKey(deviceId, segment.paneId);
     if (!bypassGate && this.paneSendGates.has(key)) return true;
     const target = { deviceId, serverEpoch, paneId: segment.paneId };
     const maxDataBytes = this.maxPaneDataBytes(target, segment.paneEpoch);
-    if (maxDataBytes <= 0) return false;
+    if (maxDataBytes <= 0) {
+      this.recordPaneDataDrop(segment.data.byteLength);
+      return false;
+    }
     let offset = 0;
     while (offset < segment.data.byteLength) {
       const data = segment.data.slice(offset, offset + maxDataBytes);
@@ -694,9 +775,12 @@ export class CanonicalFeedSession {
           expectedSeq: seqStart,
           availableSeq: segment.seqEnd,
         };
-        this.paneSendGaps.set(key, gap);
+        this.recordPaneDataDrop(segment.data.byteLength - offset);
+        this.queuePaneGap(key, gap);
         return false;
       }
+      this.paneDataDeliveries += 1;
+      this.paneDataBytes += data.byteLength;
       offset += data.byteLength;
     }
     return true;
@@ -706,7 +790,7 @@ export class CanonicalFeedSession {
     const device = this.devices.get(deviceId);
     const serverEpoch = device?.runtime.getServerEpoch();
     if (!serverEpoch) return false;
-    return this.send({
+    const sent = this.send({
       SourceGap: {
         reason: sourceGapReason(gap.reason),
         scope: {
@@ -720,6 +804,11 @@ export class CanonicalFeedSession {
         },
       },
     });
+    if (sent) {
+      this.paneGapsSent += 1;
+      this.paneGapsByReason[gap.reason] += 1;
+    }
+    return sent;
   }
 
   private sendTargetGap(
@@ -729,7 +818,7 @@ export class CanonicalFeedSession {
     availablePaneEpoch: Uint8Array,
     availableSeq: bigint
   ): void {
-    this.send({
+    const sent = this.send({
       SourceGap: {
         reason: wsBorsh.SOURCE_GAP_REASON_EPOCH_CHANGED,
         scope: {
@@ -743,6 +832,50 @@ export class CanonicalFeedSession {
         },
       },
     });
+    if (sent) {
+      this.paneGapsSent += 1;
+      this.paneGapsByReason.epoch_changed += 1;
+    }
+  }
+
+  private sendStreamGap(reason: number): boolean {
+    const sent = this.send({
+      SourceGap: {
+        reason,
+        scope: { Stream: {} },
+      },
+    });
+    if (sent) this.streamGapsSent += 1;
+    return sent;
+  }
+
+  private sendOrQueueStreamGap(reason: number): void {
+    if (!this.sendStreamGap(reason)) this.streamGapPendingReason = reason;
+  }
+
+  private queuePaneGap(key: string, gap: PaneReplayGap): void {
+    if (this.streamGapPendingReason !== null || this.paneSendGaps.has(key)) {
+      if (this.streamGapPendingReason === null) this.paneSendGaps.set(key, gap);
+      return;
+    }
+    if (this.paneSendGaps.size < this.maxPendingPaneGaps) {
+      this.paneSendGaps.set(key, gap);
+      return;
+    }
+    this.pendingPaneGapOverflows += 1;
+    this.paneSendGaps.clear();
+    this.streamGapPendingReason = wsBorsh.SOURCE_GAP_REASON_PANE_GAP;
+  }
+
+  private recordPaneDataDrop(bytes: number): void {
+    this.paneDataDrops += 1;
+    this.paneDataDropBytes += Math.max(0, bytes);
+  }
+
+  private cancelScreenJob(job: ScreenJob): void {
+    if (job.cancelled) return;
+    job.cancelled = true;
+    this.screenTransactionsCancelled += 1;
   }
 
   private sendScreenTransaction(

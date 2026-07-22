@@ -38,7 +38,7 @@ import { sessionStateStore } from './borsh/session-state';
 import { switchBarrier } from './borsh/switch-barrier';
 import { CanonicalFeedSession } from './canonical-feed-session';
 import { classifySshError } from './error-classify';
-import { GatewayActivityMetrics } from './gateway-activity-metrics';
+import { GatewayActivityMetrics, collectCanonicalStateMetrics } from './gateway-activity-metrics';
 import { applyDeviceTreeOverlay } from './overlay-utils';
 import { TerminalOutputBatcher } from './terminal-output-batcher';
 import { TerminalOutputMetrics } from './terminal-output-metrics';
@@ -362,16 +362,24 @@ export class WebSocketServer {
     ws: ServerWebSocket<ClientState>,
     event: wsBorsh.CanonicalEvent
   ): boolean {
+    const terminalBytes = 'PaneData' in event ? event.PaneData.data.byteLength : null;
     try {
       const frame = encodeCanonicalEvent(
         event,
         ws.data.borshState.seqGen(),
         ws.data.borshState.maxFrameBytes
       );
-      return gatewayWebSocketSendGuard.sendFrames(ws as ServerWebSocket<unknown>, [
+      const delivered = gatewayWebSocketSendGuard.sendFrames(ws as ServerWebSocket<unknown>, [
         frame as unknown as BufferSource,
       ]);
+      if (terminalBytes !== null) {
+        this.terminalOutputMetrics.recordCanonicalRecipient(terminalBytes, delivered);
+      }
+      return delivered;
     } catch (error) {
+      if (terminalBytes !== null) {
+        this.terminalOutputMetrics.recordCanonicalRecipient(terminalBytes, false);
+      }
       console.error('[ws] failed to encode canonical event:', error);
       return false;
     }
@@ -1718,47 +1726,106 @@ export class WebSocketServer {
 
   private broadcastTerminalOutput(deviceId: string, paneId: string, data: Uint8Array): void {
     const entry = this.connections.get(deviceId);
-    let observed = false;
+    let legacyObserved = false;
     if (entry) {
       for (const client of entry.clients) {
         if (entry.canonicalClients?.has(client)) continue;
         if (this.clientWantsPaneOutput(client, deviceId, paneId)) {
-          observed = true;
+          legacyObserved = true;
           break;
         }
       }
     }
-    this.terminalOutputMetrics.recordSource(data.length, observed);
+    const canonicalObserved = entry?.runtime?.isPaneTerminalRetained?.(paneId) ?? false;
+    this.terminalOutputMetrics.recordSource(data.length, {
+      legacy: legacyObserved,
+      canonical: canonicalObserved,
+    });
     this.terminalOutputEventsUntilMetricsCheck -= 1;
     if (this.terminalOutputEventsUntilMetricsCheck === 0) {
       this.terminalOutputEventsUntilMetricsCheck = 1024;
       this.reportTerminalOutputMetricsIfDue();
     }
-    if (!observed) {
+    if (!legacyObserved) {
       return;
     }
     this.terminalOutputBatcher.push(deviceId, paneId, data);
   }
 
   private reportTerminalOutputMetricsIfDue(): void {
-    const metrics = this.terminalOutputMetrics.takeIfDue(Date.now());
+    const canonicalSessionStats = Array.from(this.canonicalSessions.values(), (session) =>
+      session.snapshotStats()
+    );
+    const metrics = this.terminalOutputMetrics.takeIfDue(Date.now(), {
+      batch: this.terminalOutputBatcher.snapshotStats(),
+      websocket: gatewayWebSocketSendGuard.snapshotStats(
+        this.connectedClients as Set<ServerWebSocket<unknown>>
+      ),
+      canonical: {
+        pendingPaneGaps: canonicalSessionStats.reduce(
+          (total, stats) => total + stats.pendingPaneGaps,
+          0
+        ),
+        pendingPaneGapLimit: canonicalSessionStats.reduce(
+          (total, stats) => total + stats.pendingPaneGapLimit,
+          0
+        ),
+        streamGapsPending: canonicalSessionStats.reduce(
+          (total, stats) => total + Number(stats.streamGapPending),
+          0
+        ),
+      },
+    });
     if (!metrics) {
       return;
     }
+    const wsTerminationReasons = Object.entries(metrics.queues.websocket.terminationsByReason)
+      .map(([reason, count]) => `${reason}:${count}`)
+      .join(',');
     console.log(
       `[ws-metrics] terminal_output interval_ms=${metrics.intervalMs} ` +
         `source_events=${metrics.sourceEvents} source_bytes=${metrics.sourceBytes} ` +
         `dropped_events=${metrics.droppedEvents} dropped_bytes=${metrics.droppedBytes} ` +
+        `legacy_observed_events=${metrics.legacyObservedEvents} ` +
+        `legacy_observed_bytes=${metrics.legacyObservedBytes} ` +
+        `canonical_observed_events=${metrics.canonicalObservedEvents} ` +
+        `canonical_observed_bytes=${metrics.canonicalObservedBytes} ` +
         `batches=${metrics.batches} batch_bytes=${metrics.batchBytes} ` +
         `recipient_deliveries=${metrics.recipientDeliveries} ` +
         `recipient_bytes=${metrics.recipientBytes} ` +
+        `canonical_recipient_deliveries=${metrics.canonicalRecipientDeliveries} ` +
+        `canonical_recipient_bytes=${metrics.canonicalRecipientBytes} ` +
+        `canonical_delivery_drops=${metrics.canonicalDeliveryDrops} ` +
+        `canonical_delivery_drop_bytes=${metrics.canonicalDeliveryDropBytes} ` +
+        `batch_queue_bytes=${metrics.queues.batch.pendingBytes} ` +
+        `batch_queue_limit_bytes=${metrics.queues.batch.pendingBytesLimit} ` +
+        `batch_queue_panes=${metrics.queues.batch.pendingPanes} ` +
+        `batch_queue_pane_limit_bytes=${metrics.queues.batch.perPaneBytesLimit} ` +
+        `ws_queue_bytes=${metrics.queues.websocket.queuedBytes} ` +
+        `ws_queue_limit_bytes=${metrics.queues.websocket.queuedBytesLimit} ` +
+        `ws_backpressured_sessions=${metrics.queues.websocket.backpressuredSessions} ` +
+        `ws_unavailable_sessions=${metrics.queues.websocket.unavailableSessions} ` +
+        `ws_terminations_by_reason=${wsTerminationReasons || 'none'} ` +
+        `canonical_pending_gaps=${metrics.queues.canonical.pendingPaneGaps} ` +
+        `canonical_pending_gap_limit=${metrics.queues.canonical.pendingPaneGapLimit} ` +
+        `canonical_stream_gaps_pending=${metrics.queues.canonical.streamGapsPending} ` +
         `clients=${this.connectedClients.size} devices=${this.connections.size}`
     );
     this.reportGatewayActivityMetricsIfDue();
   }
 
   private reportGatewayActivityMetricsIfDue(): void {
-    const metrics = this.gatewayActivityMetrics.takeIfDue(Date.now());
+    const canonicalRuntimes = Array.from(this.connections.values())
+      .filter((entry) => (entry.canonicalClients?.size ?? 0) > 0)
+      .map((entry) => ({
+        stats: entry.runtime.getPaneRetentionStats(),
+        limits: entry.runtime.getPaneRetentionLimits(),
+      }));
+    const canonicalSessions = Array.from(this.canonicalSessions.values(), (session) =>
+      session.snapshotStats()
+    );
+    const canonical = collectCanonicalStateMetrics(canonicalRuntimes, canonicalSessions);
+    const metrics = this.gatewayActivityMetrics.takeIfDue(Date.now(), canonical);
     if (!metrics) {
       return;
     }
@@ -1768,6 +1835,10 @@ export class WebSocketServer {
         .join(',') || 'none';
     const tmuxEventTypes =
       metrics.tmuxEventTypes.map(([type, count]) => `${type}:${count}`).join(',') || 'none';
+    const cacheEvictionReasons =
+      Object.entries(metrics.canonical.evictionsByReason)
+        .map(([reason, count]) => `${reason}:${count}`)
+        .join(',') || 'none';
     let tmexFeClients = 0;
     let companionClients = 0;
     let otherClients = 0;
@@ -1796,6 +1867,40 @@ export class WebSocketServer {
         `tmux_events=${metrics.tmuxEvents} ` +
         `tmux_event_delivery_attempts=${metrics.tmuxEventDeliveryAttempts} ` +
         `tmux_event_types=${tmuxEventTypes} ` +
+        `canonical_runtimes=${metrics.canonical.runtimes} ` +
+        `canonical_sessions=${metrics.canonical.sessions} ` +
+        `canonical_runtime_attachments=${metrics.canonical.runtimeAttachments} ` +
+        `canonical_active_panes=${metrics.canonical.activePanes} ` +
+        `canonical_active_panes_limit=${metrics.canonical.activePanesLimit} ` +
+        `canonical_grace_panes=${metrics.canonical.gracePanes} ` +
+        `canonical_hot_panes=${metrics.canonical.hotPanes} ` +
+        `canonical_hot_panes_limit=${metrics.canonical.hotPanesLimit} ` +
+        `canonical_cold_panes=${metrics.canonical.coldPanes} ` +
+        `canonical_replay_bytes=${metrics.canonical.replayBytes} ` +
+        `canonical_replay_bytes_limit=${metrics.canonical.replayBytesLimit} ` +
+        `canonical_checkpoint_bytes=${metrics.canonical.checkpointBytes} ` +
+        `canonical_checkpoint_bytes_limit=${metrics.canonical.checkpointBytesLimit} ` +
+        `canonical_retained_bytes=${metrics.canonical.retainedBytes} ` +
+        `canonical_retained_bytes_limit=${metrics.canonical.retainedBytesLimit} ` +
+        `canonical_replay_hits_total=${metrics.canonical.replayHitsTotal} ` +
+        `canonical_replay_misses_total=${metrics.canonical.replayMissesTotal} ` +
+        `canonical_rebases_total=${metrics.canonical.rebasesTotal} ` +
+        `canonical_evictions_total=${metrics.canonical.evictionsTotal} ` +
+        `canonical_evictions_by_reason=${cacheEvictionReasons} ` +
+        `canonical_screen_jobs=${metrics.canonical.screenJobs} ` +
+        `canonical_gated_panes=${metrics.canonical.gatedPanes} ` +
+        `canonical_pending_gaps=${metrics.canonical.pendingPaneGaps} ` +
+        `canonical_pending_gap_limit=${metrics.canonical.pendingPaneGapsLimit} ` +
+        `canonical_stream_gaps_pending=${metrics.canonical.streamGapsPending} ` +
+        `canonical_pending_gap_overflows_total=${metrics.canonical.pendingPaneGapOverflowsTotal} ` +
+        `canonical_pane_gaps_sent_total=${metrics.canonical.paneGapsSentTotal} ` +
+        `canonical_stream_gaps_sent_total=${metrics.canonical.streamGapsSentTotal} ` +
+        `canonical_pane_data_drops_total=${metrics.canonical.paneDataDropsTotal} ` +
+        `canonical_pane_data_drop_bytes_total=${metrics.canonical.paneDataDropBytesTotal} ` +
+        `canonical_screen_transactions_started_total=${metrics.canonical.screenTransactionsStartedTotal} ` +
+        `canonical_screen_transactions_completed_total=${metrics.canonical.screenTransactionsCompletedTotal} ` +
+        `canonical_screen_transactions_failed_total=${metrics.canonical.screenTransactionsFailedTotal} ` +
+        `canonical_screen_transactions_cancelled_total=${metrics.canonical.screenTransactionsCancelledTotal} ` +
         `client_impls=tmex-fe:${tmexFeClients},vibex-companion:${companionClients},` +
         `other:${otherClients},unnegotiated:${unnegotiatedClients}`
     );

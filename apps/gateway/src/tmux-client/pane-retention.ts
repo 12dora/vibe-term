@@ -12,6 +12,25 @@ export const DEFAULT_MAX_RETENTION_BYTES = 64 * 1024 * 1024;
 export type PaneRetentionMode = 'active' | 'grace' | 'hot' | 'cold';
 export type PaneSubscriptionRejectionReason = 'not_found' | 'resource_exhausted' | 'epoch_changed';
 export type PaneReplayGapReason = 'pane_gap' | 'epoch_changed' | 'cache_evicted';
+export type PaneRetentionEvictionReason =
+  | 'replay_byte_limit'
+  | 'replay_ttl'
+  | 'hot_limit'
+  | 'hot_ttl'
+  | 'retention_limit_checkpoint'
+  | 'retention_limit_replay'
+  | 'epoch_changed';
+
+export interface PaneRetentionLimits {
+  maxActivePanes: number;
+  maxHotPanes: number;
+  routeGraceMs: number;
+  hotTtlMs: number;
+  replayTtlMs: number;
+  maxReplayBytesPerPane: number;
+  maxCheckpointBytesPerPane: number;
+  maxRetentionBytes: number;
+}
 
 export interface PaneTerminalCursor {
   paneEpoch: Uint8Array;
@@ -90,6 +109,7 @@ export interface PaneRetentionStats {
   checkpointBytes: number;
   retainedBytes: number;
   evictions: number;
+  evictionsByReason: Record<PaneRetentionEvictionReason, number>;
   replayHits: number;
   replayMisses: number;
   rebases: number;
@@ -243,6 +263,15 @@ export class PaneRetention {
   private timer: ReturnType<typeof setTimeout> | null = null;
   private disposed = false;
   private evictions = 0;
+  private readonly evictionsByReason: Record<PaneRetentionEvictionReason, number> = {
+    replay_byte_limit: 0,
+    replay_ttl: 0,
+    hot_limit: 0,
+    hot_ttl: 0,
+    retention_limit_checkpoint: 0,
+    retention_limit_replay: 0,
+    epoch_changed: 0,
+  };
   private replayHits = 0;
   private replayMisses = 0;
   private rebases = 0;
@@ -361,6 +390,24 @@ export class PaneRetention {
     const state = this.panes.get(paneId);
     if (!state?.known) return null;
     return { paneEpoch: copyBytes(state.paneEpoch), terminalSeq: state.latestSeq };
+  }
+
+  isPaneRetained(paneId: string): boolean {
+    const state = this.panes.get(paneId);
+    return Boolean(state?.known && state.mode !== 'cold');
+  }
+
+  snapshotLimits(): PaneRetentionLimits {
+    return {
+      maxActivePanes: this.maxActivePanes,
+      maxHotPanes: this.maxHotPanes,
+      routeGraceMs: this.routeGraceMs,
+      hotTtlMs: this.hotTtlMs,
+      replayTtlMs: this.replayTtlMs,
+      maxReplayBytesPerPane: this.maxReplayBytesPerPane,
+      maxCheckpointBytesPerPane: this.maxCheckpointBytesPerPane,
+      maxRetentionBytes: this.maxRetentionBytes,
+    };
   }
 
   readReplay(paneId: string, cursor: PaneTerminalCursor): PaneReplayPlan | null {
@@ -523,6 +570,7 @@ export class PaneRetention {
       checkpointBytes,
       retainedBytes: replayBytes + checkpointBytes,
       evictions: this.evictions,
+      evictionsByReason: { ...this.evictionsByReason },
       replayHits: this.replayHits,
       replayMisses: this.replayMisses,
       rebases: this.rebases,
@@ -545,7 +593,7 @@ export class PaneRetention {
         state.hotUntil !== null &&
         now >= state.hotUntil
       ) {
-        this.makeCold(state, true);
+        this.makeCold(state, 'hot_ttl');
       }
     }
     this.enforceBounds(now);
@@ -701,6 +749,9 @@ export class PaneRetention {
   private rotatePaneEpoch(state: PaneState, paneEpoch: Uint8Array): void {
     const previousEpoch = state.paneEpoch;
     const previousSeq = state.latestSeq;
+    if (state.replayBytes > 0 || state.checkpoint !== null) {
+      this.recordEviction('epoch_changed');
+    }
     state.paneEpoch = copyBytes(paneEpoch);
     state.latestSeq = 0n;
     state.dirtyWhileCold = false;
@@ -868,8 +919,13 @@ export class PaneRetention {
       (state.replayBytes > this.maxReplayBytesPerPane ||
         now - (state.replay[0]?.receivedAt ?? now) > this.replayTtlMs)
     ) {
+      const reason: PaneRetentionEvictionReason =
+        state.replayBytes > this.maxReplayBytesPerPane ? 'replay_byte_limit' : 'replay_ttl';
       const removed = state.replay.shift();
-      if (removed) state.replayBytes -= removed.data.byteLength;
+      if (removed) {
+        state.replayBytes -= removed.data.byteLength;
+        this.recordEviction(reason);
+      }
     }
   }
 
@@ -885,7 +941,7 @@ export class PaneRetention {
       if (availableImplicitHot > 0) {
         availableImplicitHot -= 1;
       } else {
-        this.makeCold(state, true);
+        this.makeCold(state, 'hot_limit');
       }
     }
 
@@ -901,7 +957,7 @@ export class PaneRetention {
       if (retainedBytes <= this.maxRetentionBytes) break;
       if (state.mode === 'hot' && !state.explicitHot) {
         retainedBytes -= state.replayBytes + (state.checkpoint?.data.byteLength ?? 0);
-        this.makeCold(state, true);
+        this.makeCold(state, 'retention_limit_replay');
       }
     }
     for (const state of candidates) {
@@ -909,7 +965,7 @@ export class PaneRetention {
       if (state.checkpoint) {
         retainedBytes -= state.checkpoint.data.byteLength;
         state.checkpoint = null;
-        this.evictions += 1;
+        this.recordEviction('retention_limit_checkpoint');
       }
     }
     while (retainedBytes > this.maxRetentionBytes) {
@@ -924,7 +980,7 @@ export class PaneRetention {
       if (!state || !chunk) break;
       state.replayBytes -= chunk.data.byteLength;
       retainedBytes -= chunk.data.byteLength;
-      this.evictions += 1;
+      this.recordEviction('retention_limit_replay');
     }
   }
 
@@ -936,7 +992,7 @@ export class PaneRetention {
     return bytes;
   }
 
-  private makeCold(state: PaneState, eviction: boolean): void {
+  private makeCold(state: PaneState, evictionReason: PaneRetentionEvictionReason | null): void {
     const hadRetention = state.replayBytes > 0 || state.checkpoint !== null;
     state.mode = 'cold';
     state.explicitHot = false;
@@ -945,7 +1001,12 @@ export class PaneRetention {
     state.replay = [];
     state.replayBytes = 0;
     state.checkpoint = null;
-    if (eviction && hadRetention) this.evictions += 1;
+    if (evictionReason && hadRetention) this.recordEviction(evictionReason);
+  }
+
+  private recordEviction(reason: PaneRetentionEvictionReason): void {
+    this.evictions += 1;
+    this.evictionsByReason[reason] += 1;
   }
 
   private scheduleNextDeadline(now: number): void {

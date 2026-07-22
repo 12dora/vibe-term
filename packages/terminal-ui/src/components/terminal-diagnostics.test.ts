@@ -1,8 +1,8 @@
 import { describe, expect, test } from 'bun:test';
 import type { CompatibleTerminalLike } from 'ghostty-terminal';
 import {
-  collectTerminalRenderDiagnostic,
   type TerminalDiagnosticStage,
+  collectTerminalRenderDiagnostic,
 } from './terminal-diagnostics';
 
 function rect(width: number, height: number): DOMRect {
@@ -108,6 +108,21 @@ describe('terminal render diagnostics', () => {
       fontFamily: 'SecretFont, monospace',
       fontSize: 13,
       document: documentLike as unknown as Document,
+      stream: {
+        sourceRoute: 'relay',
+        paneEpoch: new TextEncoder().encode('secret-pane-epoch'),
+        terminalSeq: 1234n,
+        historyEpoch: new TextEncoder().encode('secret-history'),
+        historyBeforeLine: 81,
+        recoveryState: 'recovering',
+        recoveryReason: 'cache_evicted',
+        replayBytes: 512,
+        replayBytesLimit: 2048,
+        historyBytes: 256,
+        historyBytesLimit: 4096,
+        historyPages: 2,
+        historyPagesLimit: 16,
+      },
     });
 
     expect(diagnostic).toMatchObject({
@@ -131,7 +146,18 @@ describe('terminal render diagnostics', () => {
       nonTransparentPixels: 512,
       distinctColorCount: 2,
       overlayPresent: false,
+      stream: {
+        sourceRoute: 'relay',
+        terminalCursor: '1234',
+        historyBeforeLine: 81,
+        recoveryState: 'recovering',
+        recoveryReason: 'cache_evicted',
+        replayBytes: 512,
+        replayBytesLimit: 2048,
+      },
     });
+    expect(diagnostic.stream?.paneEpochTag).toMatch(/^[0-9a-f]{8}$/);
+    expect(diagnostic.stream?.historyEpochTag).toMatch(/^[0-9a-f]{8}$/);
     expect(JSON.stringify(diagnostic)).not.toContain('secret');
     expect(JSON.stringify(diagnostic)).not.toContain('SecretFont');
   });

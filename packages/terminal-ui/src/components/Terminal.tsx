@@ -35,6 +35,7 @@ import {
   wrapAlternateScreenHistory,
 } from './normalization';
 import {
+  type TerminalDiagnosticStage,
   reportTerminalDiagnostic,
   scheduleTerminalDiagnosticSamples,
   useTerminalDiagnosticsReporter,
@@ -271,15 +272,26 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(
       let stopDiagnosticSamples = () => {};
       let hasCommittedSnapshot = false;
       const fontFamily = resolveFontStack(terminalFontId);
+      const streamDiagnostic = () => {
+        const state = generationRef.current?.getDiagnosticState();
+        return {
+          sourceRoute: runtime.transport.sourceRoute,
+          paneEpoch: state?.paneEpoch ?? null,
+          terminalSeq: state?.terminalSeq ?? null,
+          historyEpoch: state?.historyEpoch ?? null,
+          historyBeforeLine: state?.historyBeforeLine ?? null,
+          recoveryState: state?.recoveryState ?? ('initializing' as const),
+          recoveryReason: state?.recoveryReason ?? null,
+          replayBytes: state?.replayBytes ?? 0,
+          replayBytesLimit: state?.replayBytesLimit ?? 0,
+          historyBytes: state?.historyBytes ?? 0,
+          historyBytesLimit: state?.historyBytesLimit ?? 0,
+          historyPages: state?.historyPages ?? 0,
+          historyPagesLimit: state?.historyPagesLimit ?? 0,
+        };
+      };
       const diagnosticArgs = (
-        stage:
-          | 'mount'
-          | 'fonts_ready'
-          | 'controller_ready'
-          | 'opened'
-          | 'font_load_failed'
-          | 'controller_failed'
-          | 'open_failed',
+        stage: TerminalDiagnosticStage,
         terminal: CompatibleTerminalLike | null,
         mount: HTMLElement | null = mountRef.current
       ) => ({
@@ -289,6 +301,7 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(
         mount,
         fontFamily,
         fontSize: terminalFontSize,
+        stream: streamDiagnostic,
       });
 
       initialScreenRequestedRef.current = false;
@@ -413,6 +426,11 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(
           },
           onRecoveryRequired(reason) {
             if (cancelled) return;
+            const visible = generationRef.current?.getVisibleTarget();
+            reportTerminalDiagnostic(
+              terminalDiagnosticsReporter,
+              diagnosticArgs('recovery_started', visible?.terminal ?? null, visible?.mount ?? null)
+            );
             if (!hasCommittedSnapshot && runtime.transport.capabilities.atomicScreen) {
               setBootState(
                 reason === 'resource_exhausted'
@@ -434,6 +452,12 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(
             mountRef.current = target.mount;
             setInstance(target.terminal);
             if (snapshot) hasCommittedSnapshot = true;
+            if (snapshot) {
+              reportTerminalDiagnostic(
+                terminalDiagnosticsReporter,
+                diagnosticArgs('generation_activated', target.terminal, target.mount)
+              );
+            }
             setBootState(
               runtime.transport.capabilities.atomicScreen && !snapshot
                 ? { status: 'loading', message: 'Restoring terminal state…' }
@@ -446,6 +470,7 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(
               mount: target.mount,
               fontFamily,
               fontSize: terminalFontSize,
+              stream: streamDiagnostic,
             });
           },
         });

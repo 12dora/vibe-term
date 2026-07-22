@@ -3,6 +3,7 @@ import { describe, expect, test } from 'bun:test';
 import {
   GATEWAY_TERM_OUTPUT_BATCH_DELAY_MS,
   GATEWAY_TERM_OUTPUT_BATCH_MAX_BYTES,
+  GATEWAY_TERM_OUTPUT_BATCH_TOTAL_MAX_BYTES,
   type TerminalOutputBatchScheduler,
   TerminalOutputBatcher,
 } from './terminal-output-batcher';
@@ -166,5 +167,29 @@ describe('TerminalOutputBatcher', () => {
     expect(pending?.length).toBe(10_000);
     expect(pending?.chunks).toBeUndefined();
     batcher.discardDevice('device-a');
+  });
+
+  test('bounds aggregate queued payload and reports execution-path limits', () => {
+    const scheduler = new ManualScheduler();
+    const emitted: number[] = [];
+    const batcher = new TerminalOutputBatcher(
+      (_deviceId, _paneId, data) => emitted.push(data.byteLength),
+      { scheduler, maxBytes: 5, totalMaxBytes: 6 }
+    );
+
+    batcher.push('device-a', '%1', new Uint8Array([1, 2, 3, 4]));
+    batcher.push('device-a', '%2', new Uint8Array([5, 6, 7, 8]));
+
+    expect(emitted).toEqual([4]);
+    expect(batcher.snapshotStats()).toEqual({
+      pendingPanes: 1,
+      pendingBytes: 4,
+      pendingBytesLimit: 6,
+      perPaneBytesLimit: 5,
+      deadlineMs: GATEWAY_TERM_OUTPUT_BATCH_DELAY_MS,
+    });
+    expect(GATEWAY_TERM_OUTPUT_BATCH_TOTAL_MAX_BYTES).toBeGreaterThanOrEqual(
+      GATEWAY_TERM_OUTPUT_BATCH_MAX_BYTES
+    );
   });
 });

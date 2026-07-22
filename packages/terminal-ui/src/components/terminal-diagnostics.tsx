@@ -1,9 +1,6 @@
+import type { GatewayRebaseReason, GatewayTransportSourceRoute } from '@tmex/ws-client';
 import type { CompatibleTerminalLike } from 'ghostty-terminal';
-import {
-  createContext,
-  useContext,
-  type ReactNode,
-} from 'react';
+import { type ReactNode, createContext, useContext } from 'react';
 
 export type TerminalDiagnosticSurface = 'terminal' | 'preview';
 
@@ -19,10 +16,44 @@ export type TerminalDiagnosticStage =
   | 'font_load_failed'
   | 'controller_failed'
   | 'open_failed'
-  | 'content_write_failed';
+  | 'content_write_failed'
+  | 'recovery_started'
+  | 'generation_activated';
 
 export type TerminalDiagnosticRenderer = 'none' | 'canvas' | 'unknown';
 export type TerminalDiagnosticFontStatus = 'unsupported' | 'loading' | 'loaded';
+
+export interface TerminalStreamDiagnosticInput {
+  sourceRoute: GatewayTransportSourceRoute;
+  paneEpoch: Uint8Array | null;
+  terminalSeq: bigint | null;
+  historyEpoch: Uint8Array | null;
+  historyBeforeLine: number | null;
+  recoveryState: 'initializing' | 'live' | 'recovering' | 'disposed';
+  recoveryReason: GatewayRebaseReason | null;
+  replayBytes: number;
+  replayBytesLimit: number;
+  historyBytes: number;
+  historyBytesLimit: number;
+  historyPages: number;
+  historyPagesLimit: number;
+}
+
+export interface TerminalStreamDiagnostic {
+  sourceRoute: GatewayTransportSourceRoute;
+  paneEpochTag: string | null;
+  terminalCursor: string | null;
+  historyEpochTag: string | null;
+  historyBeforeLine: number | null;
+  recoveryState: TerminalStreamDiagnosticInput['recoveryState'];
+  recoveryReason: GatewayRebaseReason | null;
+  replayBytes: number;
+  replayBytesLimit: number;
+  historyBytes: number;
+  historyBytesLimit: number;
+  historyPages: number;
+  historyPagesLimit: number;
+}
 
 export interface TerminalRenderDiagnostic {
   surface: TerminalDiagnosticSurface;
@@ -47,6 +78,7 @@ export interface TerminalRenderDiagnostic {
   nonTransparentPixels: number;
   distinctColorCount: number;
   overlayPresent: boolean;
+  stream: TerminalStreamDiagnostic | null;
 }
 
 export type TerminalDiagnosticReporter = (
@@ -61,6 +93,7 @@ type CollectTerminalDiagnosticArgs = {
   fontFamily: string;
   fontSize: number;
   document?: Document;
+  stream?: TerminalStreamDiagnosticInput | (() => TerminalStreamDiagnosticInput | null) | null;
 };
 
 const BUFFER_SAMPLE_LIMIT = 512;
@@ -71,6 +104,39 @@ const TerminalDiagnosticsContext = createContext<TerminalDiagnosticReporter | nu
 function boundedMetric(value: number, max = 1_000_000): number {
   if (!Number.isFinite(value) || value <= 0) return 0;
   return Math.min(Math.round(value), max);
+}
+
+function shortBytesHash(value: Uint8Array | null): string | null {
+  if (!value) return null;
+  let hash = 0x811c9dc5;
+  for (const byte of value) {
+    hash ^= byte;
+    hash = Math.imul(hash, 0x01000193);
+  }
+  return (hash >>> 0).toString(16).padStart(8, '0');
+}
+
+export function sanitizeTerminalStreamDiagnostic(
+  input: TerminalStreamDiagnosticInput | null
+): TerminalStreamDiagnostic | null {
+  if (!input) return null;
+  return {
+    sourceRoute: input.sourceRoute,
+    paneEpochTag: shortBytesHash(input.paneEpoch),
+    terminalCursor:
+      input.terminalSeq !== null && input.terminalSeq >= 0n ? input.terminalSeq.toString() : null,
+    historyEpochTag: shortBytesHash(input.historyEpoch),
+    historyBeforeLine:
+      input.historyBeforeLine === null ? null : boundedMetric(input.historyBeforeLine),
+    recoveryState: input.recoveryState,
+    recoveryReason: input.recoveryReason,
+    replayBytes: boundedMetric(input.replayBytes, Number.MAX_SAFE_INTEGER),
+    replayBytesLimit: boundedMetric(input.replayBytesLimit, Number.MAX_SAFE_INTEGER),
+    historyBytes: boundedMetric(input.historyBytes, Number.MAX_SAFE_INTEGER),
+    historyBytesLimit: boundedMetric(input.historyBytesLimit, Number.MAX_SAFE_INTEGER),
+    historyPages: boundedMetric(input.historyPages),
+    historyPagesLimit: boundedMetric(input.historyPagesLimit),
+  };
 }
 
 function rendererOf(terminal: CompatibleTerminalLike | null): TerminalDiagnosticRenderer {
@@ -151,12 +217,7 @@ function pixelSummary(
       return { pixelsReadable: false, nonTransparentPixels: 0, distinctColorCount: 0 };
     }
     context.drawImage(canvas, 0, 0, PIXEL_SAMPLE_WIDTH, PIXEL_SAMPLE_HEIGHT);
-    const pixels = context.getImageData(
-      0,
-      0,
-      PIXEL_SAMPLE_WIDTH,
-      PIXEL_SAMPLE_HEIGHT
-    ).data;
+    const pixels = context.getImageData(0, 0, PIXEL_SAMPLE_WIDTH, PIXEL_SAMPLE_HEIGHT).data;
     let nonTransparentPixels = 0;
     const colors = new Set<number>();
     for (let offset = 0; offset < pixels.length; offset += 4) {
@@ -191,6 +252,7 @@ export function collectTerminalRenderDiagnostic(
     : [];
   const mainCanvas = canvases.find((canvas) => canvas.dataset.layer === 'main') ?? canvases[0];
   const canvasRect = mainCanvas?.getBoundingClientRect();
+  const streamInput = typeof args.stream === 'function' ? args.stream() : (args.stream ?? null);
   return {
     surface: args.surface,
     stage: args.stage,
@@ -208,9 +270,8 @@ export function collectTerminalRenderDiagnostic(
     canvasBitmapWidth: boundedMetric(mainCanvas?.width ?? 0, 65_536),
     canvasBitmapHeight: boundedMetric(mainCanvas?.height ?? 0, 65_536),
     ...pixelSummary(doc, mainCanvas),
-    overlayPresent: Boolean(
-      doc?.querySelector('[data-testid="terminal-status-overlay"]')
-    ),
+    overlayPresent: Boolean(doc?.querySelector('[data-testid="terminal-status-overlay"]')),
+    stream: sanitizeTerminalStreamDiagnostic(streamInput),
   };
 }
 

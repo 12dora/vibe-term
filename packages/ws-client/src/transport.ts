@@ -215,8 +215,11 @@ export interface GatewayTransportCapabilities {
   cursorHistory: boolean;
 }
 
+export type GatewayTransportSourceRoute = 'gateway' | 'local' | 'relay' | 'unknown';
+
 export interface GatewayTransport {
   readonly kind: 'websocket' | 'shared';
+  readonly sourceRoute: GatewayTransportSourceRoute;
   readonly capabilities: GatewayTransportCapabilities;
   readonly hasConnectedOnce: boolean;
   readonly latencyMs: number | null;
@@ -230,7 +233,7 @@ export interface GatewayTransport {
   onEvent(handler: (event: GatewayTransportEvent) => void): () => void;
 }
 
-function toWireMessage(command: GatewayTransportCommand): {
+export function encodeGatewayTransportCommand(command: GatewayTransportCommand): {
   kind: number;
   payload: Uint8Array;
 } {
@@ -303,6 +306,7 @@ function toWireMessage(command: GatewayTransportCommand): {
 
 export class WebSocketGatewayTransport implements GatewayTransport {
   readonly kind = 'websocket' as const;
+  readonly sourceRoute = 'gateway' as const;
   readonly capabilities: GatewayTransportCapabilities = {
     sequencedTerminal: false,
     atomicScreen: false,
@@ -363,7 +367,7 @@ export class WebSocketGatewayTransport implements GatewayTransport {
   }
 
   send(command: GatewayTransportCommand): boolean {
-    const message = toWireMessage(command);
+    const message = encodeGatewayTransportCommand(command);
     return this.client.send(message.kind, message.payload);
   }
 
@@ -480,6 +484,7 @@ export class WebSocketGatewayTransport implements GatewayTransport {
 
 export class LazyWebSocketGatewayTransport implements GatewayTransport {
   readonly kind = 'websocket' as const;
+  readonly sourceRoute = 'gateway' as const;
   readonly capabilities: GatewayTransportCapabilities = {
     sequencedTerminal: false,
     atomicScreen: false,
@@ -539,6 +544,7 @@ export class LazyWebSocketGatewayTransport implements GatewayTransport {
 
 export interface SharedGatewayTransportOptions {
   initialState?: ConnectionState;
+  sourceRoute?: GatewayTransportSourceRoute;
   serverCapabilities?: readonly string[];
   onConnect?: () => void;
   onDisconnect?: () => void;
@@ -581,6 +587,7 @@ export function createSharedGatewayTransport(
 
   return {
     kind: 'shared',
+    sourceRoute: options.sourceRoute ?? 'unknown',
     capabilities: {
       sequencedTerminal: true,
       atomicScreen: true,

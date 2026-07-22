@@ -117,6 +117,13 @@ describe('TerminalGeneration', () => {
     expect(activated).toEqual([1, 2]);
     expect(targets[0]?.disposed).toBe(true);
     expect(manager.getVisibleTarget()?.id).toBe(2);
+    expect(manager.getDiagnosticState()).toMatchObject({
+      terminalSeq: 4n,
+      recoveryState: 'live',
+      recoveryReason: null,
+      replayBytes: 4,
+      replayBytesLimit: 2 * 1024 * 1024,
+    });
   });
 
   test('rebase keeps the last rendered generation visible', async () => {
@@ -132,6 +139,10 @@ describe('TerminalGeneration', () => {
     expect(visible?.disposed).toBe(false);
     expect(targets[0]?.disposed).toBe(true);
     expect(recoveries).toEqual(['pane_gap']);
+    expect(manager.getDiagnosticState()).toMatchObject({
+      recoveryState: 'recovering',
+      recoveryReason: 'pane_gap',
+    });
   });
 
   test('replay overflow rejects the replacement and preserves the visible target', async () => {

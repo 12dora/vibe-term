@@ -24,6 +24,7 @@ import {
   PaneRetention,
   type PaneRetentionConsumerCallbacks,
   type PaneRetentionConsumerLease,
+  type PaneRetentionLimits,
   type PaneRetentionStats,
   type PaneScreenCheckpoint,
   type PaneTerminalCursor,
@@ -294,6 +295,14 @@ export class DeviceSessionRuntime {
 
   getPaneRetentionStats(): PaneRetentionStats {
     return this.paneRetention.snapshotStats();
+  }
+
+  getPaneRetentionLimits(): PaneRetentionLimits {
+    return this.paneRetention.snapshotLimits();
+  }
+
+  isPaneTerminalRetained(paneId: string): boolean {
+    return this.paneRetention.isPaneRetained(paneId);
   }
 
   getPaneScreenCheckpoint(paneId: string): PaneScreenCheckpoint | null {

@@ -14,6 +14,23 @@ export interface TerminalGenerationTarget {
   dispose(): void;
 }
 
+export type TerminalGenerationRecoveryState = 'initializing' | 'live' | 'recovering' | 'disposed';
+
+export interface TerminalGenerationDiagnosticState {
+  paneEpoch: Uint8Array | null;
+  terminalSeq: bigint | null;
+  historyEpoch: Uint8Array | null;
+  historyBeforeLine: number | null;
+  recoveryState: TerminalGenerationRecoveryState;
+  recoveryReason: GatewayRebaseReason | null;
+  replayBytes: number;
+  replayBytesLimit: number;
+  historyBytes: number;
+  historyBytesLimit: number;
+  historyPages: number;
+  historyPagesLimit: number;
+}
+
 export interface TerminalGenerationOptions<Target extends TerminalGenerationTarget> {
   createTarget(): Promise<Target>;
   writeSnapshot(
@@ -115,6 +132,7 @@ export class TerminalGeneration<Target extends TerminalGenerationTarget> {
   private buildId = 0;
   private recoveryRequested = false;
   private recovering = false;
+  private recoveryReason: GatewayRebaseReason | null = null;
   private disposed = false;
 
   constructor(private readonly options: TerminalGenerationOptions<Target>) {
@@ -143,6 +161,38 @@ export class TerminalGeneration<Target extends TerminalGenerationTarget> {
 
   getNextHistoryCursor(): GatewayHistoryCursor | null {
     return copyHistoryCursor(this.nextHistoryCursor);
+  }
+
+  getDiagnosticState(): TerminalGenerationDiagnosticState {
+    const cursor =
+      this.visibleCursor ??
+      (this.pending
+        ? { paneEpoch: this.pending.paneEpoch, terminalSeq: this.pending.nextSeq }
+        : this.observedPaneEpoch
+          ? { paneEpoch: this.observedPaneEpoch, terminalSeq: this.observedEnd }
+          : null);
+    return {
+      paneEpoch: cursor ? Uint8Array.from(cursor.paneEpoch) : null,
+      terminalSeq: cursor?.terminalSeq ?? null,
+      historyEpoch: this.nextHistoryCursor
+        ? Uint8Array.from(this.nextHistoryCursor.historyEpoch)
+        : null,
+      historyBeforeLine: this.nextHistoryCursor?.beforeLine ?? null,
+      recoveryState: this.disposed
+        ? 'disposed'
+        : this.recovering || this.recoveryRequested || this.pending
+          ? 'recovering'
+          : this.visible
+            ? 'live'
+            : 'initializing',
+      recoveryReason: this.recoveryReason,
+      replayBytes: this.replayBytes,
+      replayBytesLimit: this.maxReplayBytes,
+      historyBytes: this.historyBytes,
+      historyBytesLimit: this.maxHistoryBytes,
+      historyPages: this.historyPages.length,
+      historyPagesLimit: this.maxHistoryPages,
+    };
   }
 
   write(frame: GatewayTerminalData): void {
@@ -426,6 +476,7 @@ export class TerminalGeneration<Target extends TerminalGenerationTarget> {
     this.pending = null;
     this.recovering = false;
     this.recoveryRequested = false;
+    this.recoveryReason = null;
     this.options.onGenerationActivated?.(target, snapshot);
     if (previous && previous !== target) previous.dispose();
   }
@@ -439,6 +490,7 @@ export class TerminalGeneration<Target extends TerminalGenerationTarget> {
 
   private enterRecovery(reason: GatewayRebaseReason): void {
     this.recovering = true;
+    this.recoveryReason = reason;
     if (this.recoveryRequested) return;
     this.recoveryRequested = true;
     this.options.onRecoveryRequired(reason);
