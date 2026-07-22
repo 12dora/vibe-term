@@ -1,7 +1,7 @@
 const decoder = new TextDecoder();
 
 const MAX_LINE_BYTES = 4 * 1024 * 1024;
-const MAX_BLOCK_BODY_LINES = 1000;
+const MAX_BLOCK_BODY_LINES = 4096;
 
 const BYTE_LF = 0x0a;
 const BYTE_SPACE = 0x20;
@@ -24,6 +24,7 @@ export interface ControlModeParserCallbacks {
   onOutput: (paneId: string, data: Uint8Array) => void;
   onNotification: (notification: ControlModeNotification) => void;
   onExit: (reason: string | null) => void;
+  onBlockBegin?: (args: string) => boolean;
   onBlockEnd?: (block: ControlModeBlock) => void;
 }
 
@@ -125,6 +126,7 @@ export function createControlModeParser(callbacks: ControlModeParserCallbacks): 
   let warnedInvalidEscape = false;
   let warnedUnexpectedLine = false;
   let currentBlock: ControlModeBlock | null = null;
+  let literalBlock = false;
 
   function warnInvalidEscape(): void {
     if (!warnedInvalidEscape) {
@@ -181,8 +183,9 @@ export function createControlModeParser(callbacks: ControlModeParserCallbacks): 
 
     if (line[0] !== BYTE_PERCENT) {
       if (currentBlock) {
+        const decoded = decoder.decode(line);
         if (currentBlock.lines.length < MAX_BLOCK_BODY_LINES) {
-          currentBlock.lines.push(decoder.decode(line));
+          currentBlock.lines.push(decoded);
         }
         return;
       }
@@ -198,6 +201,13 @@ export function createControlModeParser(callbacks: ControlModeParserCallbacks): 
     const typeEnd = findByte(line, BYTE_SPACE, 0);
     const type = typeEnd < 0 ? decodeRange(line, 1, line.length) : decodeRange(line, 1, typeEnd);
     const argsStart = typeEnd < 0 ? line.length : typeEnd + 1;
+
+    if (currentBlock && literalBlock && type !== 'end' && type !== 'error') {
+      if (currentBlock.lines.length < MAX_BLOCK_BODY_LINES) {
+        currentBlock.lines.push(decoder.decode(line));
+      }
+      return;
+    }
 
     switch (type) {
       case 'output':
@@ -215,6 +225,7 @@ export function createControlModeParser(callbacks: ControlModeParserCallbacks): 
           isError: false,
           lines: [],
         };
+        literalBlock = callbacks.onBlockBegin?.(currentBlock.args) ?? false;
         return;
       }
       case 'end':
@@ -231,6 +242,7 @@ export function createControlModeParser(callbacks: ControlModeParserCallbacks): 
         currentBlock.isError = type === 'error';
         callbacks.onBlockEnd?.(currentBlock);
         currentBlock = null;
+        literalBlock = false;
         return;
       }
       case 'exit': {

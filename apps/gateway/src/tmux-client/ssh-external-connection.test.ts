@@ -146,6 +146,8 @@ class FakeClient extends EventEmitter {
   execCalls: Array<{ command: string; options: unknown }> = [];
   readonly commandChannel = new FakeChannel();
   readonly controlChannels: FakeChannel[] = [];
+  readonly isolatedChannels: FakeChannel[] = [];
+  onIsolatedExec?: (command: string, channel: FakeChannel) => void;
   private execIndex = 0;
 
   connect(config: ConnectConfig): this {
@@ -166,16 +168,30 @@ class FakeClient extends EventEmitter {
         ? (options as (error: Error | undefined, channel: ClientChannel) => void)
         : callback;
     const actualOptions = typeof options === 'function' ? undefined : options;
+    if (command !== '/bin/sh -s') {
+      const channel = new FakeChannel();
+      this.isolatedChannels.push(channel);
+      this.execCalls.push({ command, options: actualOptions });
+      cb?.(undefined, channel as unknown as ClientChannel);
+      queueMicrotask(() => this.onIsolatedExec?.(command, channel));
+      return this;
+    }
     let channel: FakeChannel;
     if (this.execIndex === 0) {
       channel = this.commandChannel;
     } else {
       channel = new FakeChannel();
+      let blockId = 10;
       // control channel：收到 attach 命令后回送 greeting 块，解除 attach-ready 等待
       channel.onWrite = (data) => {
         if (data.includes('-C attach-session')) {
           queueMicrotask(() => {
             channel.emit('data', Buffer.from('%begin 1 1 0\n%end 1 1 0\n%session-changed $1 s\n'));
+          });
+        } else if (data.startsWith('refresh-client -B ') || data.startsWith('refresh-client -A ')) {
+          const id = blockId++;
+          queueMicrotask(() => {
+            channel.emit('data', Buffer.from(`%begin 1 ${id} 0\n%end 1 ${id} 0\n`));
           });
         }
       };
@@ -776,6 +792,47 @@ describe('SshExternalTmuxConnection', () => {
     await expect(connection.capturePaneText('%1')).rejects.toThrow(/tmux connection not available/);
   });
 
+  test('history pages use an isolated bounded SSH channel instead of the input queue', async () => {
+    const fakeClient = new FakeClient();
+    setupCommandChannel(fakeClient, 'tmex-ssh-history-page');
+    fakeClient.onIsolatedExec = (command, channel) => {
+      if (
+        command.includes("'display-message'") &&
+        command.includes("'#{history_size}|#{pane_width}'")
+      ) {
+        channel.emit('data', Buffer.from('200|80\n'));
+      } else if (command.includes("'capture-pane'")) {
+        channel.emit('data', Buffer.from('row-a\nrow-b\n'));
+      } else {
+        throw new Error(`unexpected isolated command: ${command}`);
+      }
+      channel.emit('exit', 0);
+      channel.close();
+    };
+    const connection = new SshExternalTmuxConnection(createCallbacks(), {
+      getDevice: () => createDevice('tmex-ssh-history-page'),
+      decrypt: async () => 'secret',
+      createClient: () => fakeClient as unknown as Client,
+    });
+    await connection.connect();
+    const queuedBefore = fakeClient.commandChannel.writes.length;
+
+    await expect(connection.getPaneHistoryCaptureInfo('%1')).resolves.toEqual({
+      historySize: 200,
+      cols: 80,
+    });
+    await expect(connection.capturePaneHistoryRange('%1', -20, -1, 64)).resolves.toBe(
+      'row-a\nrow-b\n'
+    );
+    expect(fakeClient.commandChannel.writes).toHaveLength(queuedBefore);
+    expect(fakeClient.isolatedChannels).toHaveLength(2);
+
+    await expect(connection.capturePaneHistoryRange('%1', -20, -1, 4)).rejects.toThrow(
+      /bounded output/
+    );
+    connection.disconnect();
+  });
+
   test('connect no longer provisions remote fifo dirs or hooks', async () => {
     const fakeClient = new FakeClient();
     const writes: string[] = [];
@@ -876,7 +933,8 @@ describe('SshExternalTmuxConnection', () => {
     await connection.connect();
     const controlChannel = fakeClient.controlChannels[0];
     expect(controlChannel).toBeDefined();
-    expect(controlChannel!.writes.some((w) => w.includes('-C attach-session'))).toBe(true);
+    if (!controlChannel) throw new Error('control channel was not created');
+    expect(controlChannel.writes.some((w) => w.includes('-C attach-session'))).toBe(true);
 
     connection.disconnect();
   });
@@ -892,7 +950,8 @@ describe('SshExternalTmuxConnection', () => {
     });
 
     await connection.connect();
-    const controlChannel = fakeClient.controlChannels[0]!;
+    const controlChannel = fakeClient.controlChannels[0];
+    if (!controlChannel) throw new Error('control channel was not created');
 
     (connection as any).sendHeartbeat();
     await Bun.sleep(20);
@@ -919,7 +978,8 @@ describe('SshExternalTmuxConnection', () => {
 
     try {
       await connection.connect();
-      const controlChannel = fakeClient.controlChannels[0]!;
+      const controlChannel = fakeClient.controlChannels[0];
+      if (!controlChannel) throw new Error('control channel was not created');
 
       (connection as any).sendHeartbeat();
 
@@ -951,7 +1011,8 @@ describe('SshExternalTmuxConnection', () => {
     });
 
     await connection.connect();
-    const controlChannel = fakeClient.controlChannels[0]!;
+    const controlChannel = fakeClient.controlChannels[0];
+    if (!controlChannel) throw new Error('control channel was not created');
 
     controlChannel.emit('data', Buffer.from('%pause %1\n'));
     await Bun.sleep(20);

@@ -4,6 +4,11 @@ import type {
   DeviceSessionRuntime,
   DeviceSessionRuntimeListener,
 } from '../tmux-client/device-session-runtime';
+import {
+  type PaneHistoryCursor,
+  PaneHistoryCursorError,
+  type PaneHistoryPage,
+} from '../tmux-client/pane-history-reader';
 import type {
   PaneDataSegment,
   PaneIdentity,
@@ -495,7 +500,7 @@ export class CanonicalFeedSession {
   private async handleRequestHistory(command: {
     requestId: Uint8Array;
     pane: CanonicalPaneTarget;
-    beforeCursor: PaneTerminalCursor | null;
+    beforeCursor: PaneHistoryCursor | null;
     byteLimit: number;
   }): Promise<void> {
     const target = await this.resolveTarget(command.pane, command.requestId);
@@ -510,11 +515,20 @@ export class CanonicalFeedSession {
       );
       return;
     }
-    const page = target.device.runtime.readPaneHistory(
-      target.pane.paneId,
-      command.beforeCursor,
-      byteLimit
-    );
+    let page: PaneHistoryPage | null;
+    try {
+      page = await target.device.runtime.readPaneHistory(
+        target.pane.paneId,
+        command.beforeCursor,
+        byteLimit
+      );
+    } catch (error) {
+      if (error instanceof PaneHistoryCursorError) {
+        this.sendError(command.requestId, wsBorsh.ERROR_TMUX_NOT_READY, error.message, true);
+        return;
+      }
+      throw error;
+    }
     if (!page) {
       this.sendError(
         command.requestId,
@@ -522,10 +536,6 @@ export class CanonicalFeedSession {
         'pane not found',
         false
       );
-      return;
-    }
-    if (page.gap) {
-      this.sendPaneGap(target.device.deviceId, page.gap);
       return;
     }
     this.sendHistoryTransaction(target.target, command.requestId, page);
@@ -543,7 +553,12 @@ export class CanonicalFeedSession {
       return null;
     }
     if (!bytesEqual(target.serverEpoch, serverEpoch)) {
-      this.sendTargetGap(target, new Uint8Array(16), 0n, pane.paneEpoch, 0n);
+      this.send({
+        SourceGap: {
+          reason: wsBorsh.SOURCE_GAP_REASON_EPOCH_CHANGED,
+          scope: { Stream: {} },
+        },
+      });
       return null;
     }
     return {
@@ -752,20 +767,18 @@ export class CanonicalFeedSession {
     if (!this.send(begin)) return false;
     if (!this.sendContentChunks('screen', requestId, checkpoint.data)) return false;
     return this.send({
-      ScreenCommit: { requestId, totalBytes: checkpoint.data.byteLength },
+      ScreenCommit: {
+        requestId,
+        totalBytes: checkpoint.data.byteLength,
+        historyCursor: checkpoint.historyCursor,
+      },
     });
   }
 
   private sendHistoryTransaction(
     target: CanonicalPaneTarget,
     requestId: Uint8Array,
-    page: {
-      paneEpoch: Uint8Array;
-      seqStart: bigint;
-      seqEnd: bigint;
-      data: Uint8Array;
-      nextCursor: PaneTerminalCursor | null;
-    }
+    page: PaneHistoryPage
   ): boolean {
     if (
       !this.send({
@@ -773,8 +786,10 @@ export class CanonicalFeedSession {
           requestId,
           pane: target,
           paneEpoch: page.paneEpoch,
-          seqStart: page.seqStart,
-          seqEnd: page.seqEnd,
+          historyEpoch: page.historyEpoch,
+          lineStart: page.lineStart,
+          lineEnd: page.lineEnd,
+          truncated: page.truncated,
           totalBytes: page.data.byteLength,
         },
       })

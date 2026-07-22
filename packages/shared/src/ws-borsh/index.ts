@@ -101,6 +101,7 @@ export {
   type SourceMetadataRecord,
   type CanonicalPaneTarget,
   type CanonicalTerminalCursor,
+  type CanonicalHistoryCursor,
   type CanonicalPaneSubscription,
   type CanonicalCommand,
   type CanonicalCommandEnvelope,

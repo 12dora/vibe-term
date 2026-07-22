@@ -21,8 +21,8 @@ const STRUCTURE_RECONCILE_MS = 50;
 const RECONCILE_NOTIFICATION_TYPES = new Set(['sessions-changed', 'window-add']);
 
 export const SOURCE_METADATA_SUBSCRIPTION_COMMANDS = [
-  'refresh-client -B tmex-cwd:%*:#{pane_current_path}\n',
-  'refresh-client -B tmex-command:%*:#{pane_current_command}\n',
+  'refresh-client -B "tmex-cwd:%*:#{pane_current_path}"\n',
+  'refresh-client -B "tmex-command:%*:#{pane_current_command}"\n',
 ] as const;
 
 export interface ControlModeSubscriptionCallbacks {
@@ -38,6 +38,7 @@ export interface ControlModeSubscriptionCallbacks {
   onContinue?: (paneId: string) => void;
   onStructureChanged: () => void;
   onExit: (reason: string | null) => void;
+  onBlockBegin?: (args: string) => boolean;
   onBlockEnd?: (block: ControlModeBlock) => void;
 }
 
@@ -182,6 +183,7 @@ export function createControlModeSubscription(
     },
     onNotification: handleNotification,
     onExit: (reason) => callbacks.onExit(reason),
+    onBlockBegin: (args) => callbacks.onBlockBegin?.(args) ?? false,
     onBlockEnd: (block) => {
       metrics?.recordBlock();
       callbacks.onBlockEnd?.(block);

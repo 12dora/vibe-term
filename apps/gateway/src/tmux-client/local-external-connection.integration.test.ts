@@ -766,10 +766,10 @@ describe('LocalExternalTmuxConnection mode 2031 theme notify integration', () =>
 
       const tracker = (connection as any).themeSubscriptions;
 
-      // pane 内 shell 声明订阅后 exec cat 落盘后续 stdin（isig 保留以便 Ctrl-C 退出）
+      // pane 内 shell 声明订阅后用 cat 落盘后续 stdin（isig 保留以便 Ctrl-C 回到 shell）
       connection.sendInput(
         subPane,
-        `printf '\\033[?2031h'; stty raw isig -echo; exec cat > ${recvFile}\r`
+        `printf '\\033[?2031h'; stty raw isig -echo; cat > ${recvFile}\r`
       );
       await waitFor(() => (tracker.has(subPane) ? true : null));
       // 原样回填验证：订阅序列透传给了前端输出流

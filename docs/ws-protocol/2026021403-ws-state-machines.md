@@ -242,6 +242,8 @@
 4. pane output 只下发给该 feed 的 active/hot 并集；未订阅 pane 的元数据仍实时下发，但终端字节不下发。
 5. `SetPaneSubscriptions` 是集合替换，不是增量修改。generation 小于等于已应用 generation 时幂等忽略并回当前 ACK。
 6. canonical event 直接编码为不超过 32KiB 的 Envelope，严禁再经通用 `CHUNK`。
+7. 首屏 capture 与 terminal `baseSeq` 在同一 control-mode command block 边界提交；该 block 结束后到达的 pane output 只能作为 replay/live 应用。
+8. history 使用独立、可过期的行游标分页；大页不得经过 terminal control stream，SSH 读取使用独立 bounded channel，不能排在 input 前面。
 
 ### 连接恢复
 

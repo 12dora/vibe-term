@@ -1,3 +1,5 @@
+import type { PaneHistoryCursor } from './pane-history-reader';
+
 export const DEFAULT_MAX_ACTIVE_PANES = 32;
 export const DEFAULT_MAX_HOT_PANES = 8;
 export const DEFAULT_ROUTE_GRACE_MS = 2_000;
@@ -66,6 +68,7 @@ export interface PaneScreenCheckpoint extends PaneIdentity {
   cols: number;
   modes: number;
   data: Uint8Array;
+  historyCursor: PaneHistoryCursor | null;
   capturedAt: number;
 }
 
@@ -377,6 +380,13 @@ export class PaneRetention {
       ...checkpoint,
       paneEpoch: copyBytes(checkpoint.paneEpoch),
       data: copyBytes(checkpoint.data),
+      historyCursor: checkpoint.historyCursor
+        ? {
+            paneEpoch: copyBytes(checkpoint.historyCursor.paneEpoch),
+            historyEpoch: copyBytes(checkpoint.historyCursor.historyEpoch),
+            beforeLine: checkpoint.historyCursor.beforeLine,
+          }
+        : null,
     };
   }
 
@@ -395,6 +405,13 @@ export class PaneRetention {
       ...checkpoint,
       paneEpoch: copyBytes(checkpoint.paneEpoch),
       data: copyBytes(checkpoint.data),
+      historyCursor: checkpoint.historyCursor
+        ? {
+            paneEpoch: copyBytes(checkpoint.historyCursor.paneEpoch),
+            historyEpoch: copyBytes(checkpoint.historyCursor.historyEpoch),
+            beforeLine: checkpoint.historyCursor.beforeLine,
+          }
+        : null,
       capturedAt: checkpoint.capturedAt,
     };
     state.lastTouchedAt = now;
@@ -589,10 +606,7 @@ export class PaneRetention {
         });
         continue;
       }
-      if (
-        !prospectiveActive.has(request.paneId) &&
-        prospectiveActive.size >= this.maxActivePanes
-      ) {
+      if (!prospectiveActive.has(request.paneId) && prospectiveActive.size >= this.maxActivePanes) {
         rejected.push({
           paneId: request.paneId,
           paneEpoch: copyBytes(request.paneEpoch),

@@ -5,6 +5,7 @@ import {
   type EmulatorStreamSource,
   PaneEmulatorRegistry,
 } from './pane-emulator';
+import { PaneRetention } from './pane-retention';
 import type { PromptMarker } from './pane-stream-parser';
 
 const enc = new TextEncoder();
@@ -26,7 +27,14 @@ function createFakeSource(seed = '') {
       return seed;
     },
     async getPaneInfo(): Promise<PaneInfo> {
-      return { cols: 80, rows: 24, cursorX: 0, cursorY: 0, alternateScreen: false, currentCommand: 'bash' };
+      return {
+        cols: 80,
+        rows: 24,
+        cursorX: 0,
+        cursorY: 0,
+        alternateScreen: false,
+        currentCommand: 'bash',
+      };
     },
   };
   return {
@@ -55,6 +63,69 @@ describe('PaneEmulator + registry', () => {
     expect(emu.render()).toContain('hello');
     expect(emu.render()).toContain('world');
     await reg.shutdownAll();
+  });
+
+  test('runtime source seeds through retention checkpoint and replay without a second stream', async () => {
+    const listeners = new Set<EmulatorStreamListener>();
+    const retention = new PaneRetention({ scheduleTimers: false });
+    const paneEpoch = new Uint8Array(16).fill(7);
+    retention.reconcilePanes([{ paneId: '%1', paneEpoch }]);
+    const source: EmulatorStreamSource = {
+      subscribe(listener) {
+        listeners.add(listener);
+        return () => listeners.delete(listener);
+      },
+      async capturePaneText() {
+        throw new Error('legacy capture should not be used');
+      },
+      async getPaneInfo() {
+        return {
+          cols: 80,
+          rows: 24,
+          cursorX: 0,
+          cursorY: 0,
+          alternateScreen: false,
+          currentCommand: 'bash',
+        };
+      },
+      getPaneIdentity() {
+        return { paneId: '%1', paneEpoch };
+      },
+      attachPaneConsumer(callbacks) {
+        return retention.attachConsumer(callbacks);
+      },
+      async captureCanonicalScreen() {
+        retention.ingest('%1', paneEpoch, enc.encode('before-checkpoint\r\n'));
+        const cursor = retention.getLatestCursor('%1');
+        if (!cursor) return null;
+        const checkpoint = {
+          paneId: '%1',
+          paneEpoch,
+          baseSeq: cursor.terminalSeq,
+          rows: 24,
+          cols: 80,
+          modes: 0,
+          data: enc.encode('\x1b[2J\x1b[Hseed\r\n'),
+          historyCursor: null,
+          capturedAt: Date.now(),
+        };
+        retention.storeScreenCheckpoint(checkpoint);
+        retention.ingest('%1', paneEpoch, enc.encode('after-checkpoint\r\n'));
+        return checkpoint;
+      },
+      readPaneReplay(paneId, cursor) {
+        return retention.readReplay(paneId, cursor);
+      },
+    };
+    const reg = new PaneEmulatorRegistry();
+    const emulator = await reg.acquire('d1', '%1', source);
+    expect(emulator.render()).toContain('seed');
+    expect(emulator.render()).toContain('after-checkpoint');
+    expect(retention.snapshotStats().activePanes).toBe(1);
+    await reg.release('d1', '%1');
+    expect(retention.snapshotStats().activePanes).toBe(0);
+    expect(retention.snapshotStats().gracePanes).toBe(1);
+    retention.dispose();
   });
 
   test('只接收本 pane 的字节', async () => {

@@ -3,6 +3,7 @@ import type { StateSnapshotPayload } from '@tmex/shared';
 import { getDeviceById } from '../db';
 import type { PaneInfo } from './capture-history';
 import type { LifecycleEventEmitter, TmuxConnectionOptions } from './connection-types';
+import type { AtomicPaneCapture } from './control-mode-capture';
 import type { TmuxEvent } from './events';
 import type { TmuxSourceMetadataEvent } from './events';
 import { LocalExternalTmuxConnection } from './local-external-connection';
@@ -12,7 +13,12 @@ import {
   type MetadataProjectionSnapshot,
 } from './metadata-projection';
 import {
+  type PaneHistoryCaptureInfo,
+  type PaneHistoryCursor,
   type PaneHistoryPage,
+  PaneHistoryReader,
+} from './pane-history-reader';
+import {
   type PaneIdentity,
   type PaneReplayPlan,
   PaneRetention,
@@ -61,6 +67,18 @@ export interface DeviceSessionRuntimeConnection {
   signalThemeChange(paneId: string, theme: 'dark' | 'light'): void;
   capturePaneText(paneId: string, opts?: { historyLines?: number }): Promise<string>;
   getPaneInfo(paneId: string): Promise<PaneInfo>;
+  capturePaneFrameAtBarrier?(
+    paneId: string,
+    historyLines: number,
+    onBarrier: () => void
+  ): Promise<AtomicPaneCapture>;
+  getPaneHistoryCaptureInfo(paneId: string): Promise<PaneHistoryCaptureInfo>;
+  capturePaneHistoryRange(
+    paneId: string,
+    startLine: number,
+    endLine: number,
+    maxOutputBytes: number
+  ): Promise<string>;
 }
 
 export interface DeviceSessionRuntimeListener {
@@ -101,6 +119,7 @@ export class DeviceSessionRuntime {
   private readonly connection: DeviceSessionRuntimeConnection;
   private readonly metadataProjection: MetadataProjection;
   private readonly paneRetention = new PaneRetention();
+  private readonly paneHistoryReader: PaneHistoryReader;
   private readonly listeners = new Set<DeviceSessionRuntimeListener>();
   private readonly screenCaptures = new Map<string, Promise<PaneScreenCheckpoint | null>>();
   private lastSnapshot: StateSnapshotPayload | null = null;
@@ -152,7 +171,8 @@ export class DeviceSessionRuntime {
       },
       beginMetadataReconcile: () => this.metadataProjection.revision,
       onSnapshot: (payload, baseRevision) => {
-        const changed = !stateSnapshotsEqual(this.lastSnapshot, payload);
+        const previousSnapshot = this.lastSnapshot;
+        const changed = !stateSnapshotsEqual(previousSnapshot, payload);
         this.lastSnapshot = payload;
         this.metadataProjection.reconcile(payload, baseRevision);
         const panes: PaneIdentity[] = [];
@@ -163,6 +183,14 @@ export class DeviceSessionRuntime {
           }
         }
         this.paneRetention.reconcilePanes(panes);
+        const currentPaneIds = new Set(panes.map((pane) => pane.paneId));
+        for (const pane of panes)
+          this.paneHistoryReader.invalidatePane(pane.paneId, pane.paneEpoch);
+        for (const window of previousSnapshot?.session?.windows ?? []) {
+          for (const pane of window.panes) {
+            if (!currentPaneIds.has(pane.id)) this.paneHistoryReader.invalidatePane(pane.id);
+          }
+        }
         if (changed) this.broadcast((listener) => listener.onSnapshot?.(payload));
       },
       onError: (error) => {
@@ -178,6 +206,7 @@ export class DeviceSessionRuntime {
         this.broadcast((listener) => listener.onClose?.());
       },
     });
+    this.paneHistoryReader = new PaneHistoryReader(this.connection);
   }
 
   get isTerminated(): boolean {
@@ -212,6 +241,7 @@ export class DeviceSessionRuntime {
       this.connectPromise = null;
       this.metadataProjection.dispose();
       this.paneRetention.dispose();
+      this.paneHistoryReader.dispose();
       throw error;
     });
 
@@ -229,6 +259,7 @@ export class DeviceSessionRuntime {
     this.connection.disconnect();
     this.metadataProjection.dispose();
     this.paneRetention.dispose();
+    this.paneHistoryReader.dispose();
   }
 
   async shutdown(): Promise<void> {
@@ -275,10 +306,12 @@ export class DeviceSessionRuntime {
 
   readPaneHistory(
     paneId: string,
-    beforeCursor: PaneTerminalCursor | null,
+    beforeCursor: PaneHistoryCursor | null,
     byteLimit: number
-  ): PaneHistoryPage | null {
-    return this.paneRetention.readHistory(paneId, beforeCursor, byteLimit);
+  ): Promise<PaneHistoryPage | null> {
+    const identity = this.getPaneIdentity(paneId);
+    if (!identity) return Promise.resolve(null);
+    return this.paneHistoryReader.readPage(paneId, identity.paneEpoch, beforeCursor, byteLimit);
   }
 
   async captureCanonicalScreen(
@@ -416,38 +449,74 @@ export class DeviceSessionRuntime {
     if (!identity) return null;
     const maxBytes = Math.min(byteLimit, this.paneRetention.maxCheckpointBytesPerPane);
     if (maxBytes < 64) return null;
-    const info = await this.connection.getPaneInfo(paneId);
-    const estimatedBytesPerLine = Math.max(16, info.cols * 4);
+    const projectedPane = this.lastSnapshot?.session?.windows
+      .flatMap((window) => window.panes)
+      .find((pane) => pane.id === paneId);
+    const estimatedCols = Math.max(1, projectedPane?.width ?? 80);
+    const estimatedRows = Math.max(1, projectedPane?.height ?? 24);
+    const estimatedBytesPerLine = Math.max(16, estimatedCols * 4);
     const boundedTotalLines = Math.max(
-      info.rows,
-      Math.min(info.rows + 256, Math.floor(maxBytes / estimatedBytesPerLine))
+      estimatedRows,
+      Math.min(estimatedRows + 256, Math.floor(maxBytes / estimatedBytesPerLine))
     );
-    const historyLines = Math.max(0, boundedTotalLines - info.rows);
-    const text = await this.connection.capturePaneText(paneId, { historyLines });
-    const prefix = info.alternateScreen ? '\x1b[?1049h\x1b[2J\x1b[H' : '\x1b[2J\x1b[H';
+    const historyLines = Math.max(0, boundedTotalLines - estimatedRows);
+    let baseCursor: PaneTerminalCursor | null = null;
+    let frame: AtomicPaneCapture;
+    if (this.connection.capturePaneFrameAtBarrier) {
+      frame = await this.connection.capturePaneFrameAtBarrier(paneId, historyLines, () => {
+        baseCursor = this.paneRetention.getLatestCursor(paneId);
+      });
+    } else {
+      const info = await this.connection.getPaneInfo(paneId);
+      const text = await this.connection.capturePaneText(paneId, { historyLines });
+      baseCursor = this.paneRetention.getLatestCursor(paneId);
+      frame = {
+        text,
+        cols: info.cols,
+        rows: info.rows,
+        cursorX: info.cursorX,
+        cursorY: info.cursorY,
+        alternateScreen: info.alternateScreen,
+        historySize: (await this.connection.getPaneHistoryCaptureInfo(paneId)).historySize,
+      };
+    }
+    const prefix = frame.alternateScreen ? '\x1b[?1049h\x1b[2J\x1b[H' : '\x1b[2J\x1b[H';
     const cursor =
-      info.cursorX === null || info.cursorY === null
+      frame.cursorX === null || frame.cursorY === null
         ? ''
-        : `\x1b[${info.cursorY + 1};${info.cursorX + 1}H`;
+        : `\x1b[${frame.cursorY + 1};${frame.cursorX + 1}H`;
     const encoder = new TextEncoder();
     const prefixBytes = encoder.encode(prefix);
     const cursorBytes = encoder.encode(cursor);
     const textBudget = Math.max(0, maxBytes - prefixBytes.byteLength - cursorBytes.byteLength);
-    const textBytes = truncateUtf8Tail(encoder.encode(text), textBudget);
+    const rawTextBytes = encoder.encode(frame.text);
+    const textWasTruncated = rawTextBytes.byteLength > textBudget;
+    const textBytes = truncateUtf8Tail(rawTextBytes, textBudget);
     const data = concatBytes(prefixBytes, textBytes, cursorBytes);
-    const latest = this.paneRetention.getLatestCursor(paneId);
     const currentIdentity = this.getPaneIdentity(paneId);
-    if (!latest || !currentIdentity || !bytesEqual(identity.paneEpoch, currentIdentity.paneEpoch)) {
+    if (
+      !baseCursor ||
+      !currentIdentity ||
+      !bytesEqual(identity.paneEpoch, currentIdentity.paneEpoch) ||
+      !bytesEqual(baseCursor.paneEpoch, currentIdentity.paneEpoch)
+    ) {
       return null;
     }
     const checkpoint: PaneScreenCheckpoint = {
       paneId,
       paneEpoch: currentIdentity.paneEpoch,
-      baseSeq: latest.terminalSeq,
-      rows: Math.max(1, Math.min(info.rows, 0xffff)),
-      cols: Math.max(1, Math.min(info.cols, 0xffff)),
-      modes: info.alternateScreen ? 1 : 0,
+      baseSeq: baseCursor.terminalSeq,
+      rows: Math.max(1, Math.min(frame.rows, 0xffff)),
+      cols: Math.max(1, Math.min(frame.cols, 0xffff)),
+      modes: frame.alternateScreen ? 1 : 0,
       data,
+      historyCursor: frame.alternateScreen
+        ? null
+        : this.paneHistoryReader.createCursor(
+            paneId,
+            currentIdentity.paneEpoch,
+            textWasTruncated ? frame.historySize : Math.max(0, frame.historySize - historyLines)
+          ),
       capturedAt: Date.now(),
     };
     this.paneRetention.storeScreenCheckpoint(checkpoint);

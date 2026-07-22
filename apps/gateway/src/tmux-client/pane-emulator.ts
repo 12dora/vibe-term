@@ -9,6 +9,14 @@
 
 import { HeadlessTerminal } from 'ghostty-terminal/headless';
 import type { PaneInfo } from './capture-history';
+import type {
+  PaneIdentity,
+  PaneReplayPlan,
+  PaneRetentionConsumerCallbacks,
+  PaneRetentionConsumerLease,
+  PaneScreenCheckpoint,
+  PaneTerminalCursor,
+} from './pane-retention';
 import type { PromptMarker } from './pane-stream-parser';
 
 export interface EmulatorStreamListener {
@@ -22,6 +30,10 @@ export interface EmulatorStreamSource {
   subscribe(listener: EmulatorStreamListener): () => void;
   capturePaneText(paneId: string, opts?: { historyLines?: number }): Promise<string>;
   getPaneInfo(paneId: string): Promise<PaneInfo>;
+  getPaneIdentity?(paneId: string): PaneIdentity | null;
+  attachPaneConsumer?(callbacks: PaneRetentionConsumerCallbacks): PaneRetentionConsumerLease;
+  captureCanonicalScreen?(paneId: string, byteLimit: number): Promise<PaneScreenCheckpoint | null>;
+  readPaneReplay?(paneId: string, cursor: PaneTerminalCursor): PaneReplayPlan | null;
 }
 
 export interface PaneEmulatorTap {
@@ -35,6 +47,7 @@ export class PaneEmulator {
   private readonly byteSubs = new Set<(data: Uint8Array) => void>();
   private readonly markerSubs = new Set<(marker: PromptMarker) => void>();
   private unsubscribe: (() => void) | null = null;
+  private paneLease: PaneRetentionConsumerLease | null = null;
   private disposed = false;
   /** 最近一次工具使用时间，供 idle 驱逐参考（毫秒，注入避免直接用 Date.now） */
   lastUsedAt = 0;
@@ -59,16 +72,61 @@ export class PaneEmulator {
     });
     const emulator = new PaneEmulator(paneId, terminal);
 
-    // 先 seed 当前可见屏（纯文本），再订阅实时增量，避免漏接/重复。
-    const seed = await source.capturePaneText(paneId, { historyLines: 0 }).catch(() => '');
-    if (seed) {
-      terminal.write(`${seed.replace(/\r?\n/g, '\r\n')}\r\n`);
+    const getPaneIdentity = source.getPaneIdentity;
+    const attachPaneConsumer = source.attachPaneConsumer;
+    const captureCanonicalScreen = source.captureCanonicalScreen;
+    const readPaneReplay = source.readPaneReplay;
+    if (getPaneIdentity && attachPaneConsumer && captureCanonicalScreen && readPaneReplay) {
+      const identity = getPaneIdentity.call(source, paneId);
+      if (!identity) {
+        terminal.free();
+        throw new Error(`pane not found: ${paneId}`);
+      }
+      const lease = attachPaneConsumer.call(source, {
+        onData: (segment) => emulator.feed(segment.data),
+      });
+      emulator.paneLease = lease;
+      let checkpoint: PaneScreenCheckpoint | null;
+      try {
+        lease.applySubscriptions(1n, [{ paneId, paneEpoch: identity.paneEpoch, cursor: null }], []);
+        checkpoint = await captureCanonicalScreen.call(source, paneId, 512 * 1024);
+      } catch (error) {
+        lease.close();
+        emulator.paneLease = null;
+        terminal.free();
+        throw error;
+      }
+      if (!checkpoint) {
+        lease.close();
+        emulator.paneLease = null;
+        terminal.free();
+        throw new Error(`pane screen unavailable: ${paneId}`);
+      }
+      terminal.write(checkpoint.data);
+      const replay = readPaneReplay.call(source, paneId, {
+        paneEpoch: checkpoint.paneEpoch,
+        terminalSeq: checkpoint.baseSeq,
+      });
+      if (!replay || replay.gap) {
+        lease.close();
+        emulator.paneLease = null;
+        terminal.free();
+        throw new Error(`pane replay unavailable after screen capture: ${paneId}`);
+      }
+      for (const segment of replay.segments) terminal.write(segment.data);
+      emulator.unsubscribe = source.subscribe({
+        onPromptMarker: (pid, marker) => {
+          if (pid === paneId) emulator.emitMarker(marker);
+        },
+      });
+      return emulator;
     }
+
+    const seed = await source.capturePaneText(paneId, { historyLines: 0 }).catch(() => '');
+    if (seed) terminal.write(`${seed.replace(/\r?\n/g, '\r\n')}\r\n`);
     emulator.unsubscribe = source.subscribe({
       onTerminalOutput: (pid, data) => {
-        if (pid === paneId) {
-          emulator.feed(data);
-        }
+        if (pid === paneId) emulator.feed(data);
       },
       onPromptMarker: (pid, marker) => {
         if (pid === paneId) {
@@ -140,6 +198,8 @@ export class PaneEmulator {
     this.disposed = true;
     this.unsubscribe?.();
     this.unsubscribe = null;
+    this.paneLease?.close();
+    this.paneLease = null;
     this.byteSubs.clear();
     this.markerSubs.clear();
     this.terminal.free();

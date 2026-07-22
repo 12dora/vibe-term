@@ -7,15 +7,22 @@ import { decryptWithContext } from '../crypto';
 import { getDeviceById, updateDeviceRuntimeStatus } from '../db';
 import { resolveSshAgentSocket, resolveSshUsername } from '../tmux/ssh-auth';
 import {
+  PANE_HISTORY_CAPTURE_INFO_FORMAT,
   PANE_META_FORMAT,
   PANE_SCREEN_INFO_FORMAT,
   type PaneInfo,
   appendCursorRestore,
+  parsePaneHistoryCaptureInfo,
   parsePaneMeta,
   parsePaneScreenInfo,
 } from './capture-history';
 import { joinShellArgs, quoteShellArg } from './command-builder';
 import type { TmuxConnectionOptions } from './connection-types';
+import {
+  type AtomicPaneCapture,
+  ControlModeCommandQueue,
+  capturePaneFrameAtControlBarrier,
+} from './control-mode-capture';
 import {
   type ControlModeSubscription,
   SOURCE_METADATA_SUBSCRIPTION_COMMANDS,
@@ -105,6 +112,7 @@ export class SshExternalTmuxConnection {
   private bellDedup = new Map<string, number>();
   private controlChannel: ControlChannelHandle | null = null;
   private controlSubscription: ControlModeSubscription | null = null;
+  private controlCommands = new ControlModeCommandQueue();
   private controlStartedAt = 0;
   private controlRestartCount = 0;
   private controlStderrTail = '';
@@ -562,6 +570,64 @@ export class SshExternalTmuxConnection {
     return parsePaneMeta(stdout);
   }
 
+  async getPaneHistoryCaptureInfo(paneId: string) {
+    if (!this.connected) throw new Error(`tmux connection not available: ${this.deviceId}`);
+    const { stdout } = await this.runTmuxIsolated(
+      ['display-message', '-p', '-t', paneId, PANE_HISTORY_CAPTURE_INFO_FORMAT],
+      4096,
+      30_000
+    );
+    return parsePaneHistoryCaptureInfo(stdout);
+  }
+
+  async capturePaneHistoryRange(
+    paneId: string,
+    startLine: number,
+    endLine: number,
+    maxOutputBytes: number
+  ): Promise<string> {
+    if (!this.connected) throw new Error(`tmux connection not available: ${this.deviceId}`);
+    if (!isTmuxPaneId(paneId) || !Number.isInteger(startLine) || !Number.isInteger(endLine)) {
+      throw new Error('invalid tmux history range');
+    }
+    const { stdout } = await this.runTmuxIsolated(
+      [
+        'capture-pane',
+        '-t',
+        paneId,
+        '-p',
+        '-e',
+        '-N',
+        '-S',
+        String(startLine),
+        '-E',
+        String(endLine),
+      ],
+      maxOutputBytes,
+      30_000
+    );
+    return stdout;
+  }
+
+  capturePaneFrameAtBarrier(
+    paneId: string,
+    historyLines: number,
+    onBarrier: () => void
+  ): Promise<AtomicPaneCapture> {
+    const control = this.controlChannel;
+    if (!this.connected || !control) {
+      return Promise.reject(new Error(`tmux control connection not available: ${this.deviceId}`));
+    }
+    return capturePaneFrameAtControlBarrier(
+      this.controlCommands,
+      (command) => control.write(command),
+      paneId,
+      historyLines,
+      onBarrier,
+      30_000
+    );
+  }
+
   private async connectSshClient(): Promise<void> {
     if (!this.device) {
       throw new Error('SSH device not loaded');
@@ -910,12 +976,20 @@ export class SshExternalTmuxConnection {
       );
     }
 
-    for (const command of SOURCE_METADATA_SUBSCRIPTION_COMMANDS) handle.write(command);
+    for (const command of SOURCE_METADATA_SUBSCRIPTION_COMMANDS) {
+      void this.controlCommands
+        .execute((value) => handle.write(value), command, { transform: () => undefined })
+        .catch((error) => this.callbacks.onError(error));
+    }
 
     this.startHeartbeat();
   }
 
   private async openControlChannel(onAttachReady: () => void): Promise<ControlChannelHandle> {
+    this.controlCommands.dispose('tmux control connection replaced');
+    const handle: ControlChannelHandle = { stop: () => {}, write: () => {} };
+    const controlCommands = new ControlModeCommandQueue(() => handle.stop());
+    this.controlCommands = controlCommands;
     const subscription = createControlModeSubscription({
       onTerminalOutput: (paneId, data) => {
         this.callbacks.onTerminalOutput(paneId, data);
@@ -951,18 +1025,20 @@ export class SshExternalTmuxConnection {
       onExit: () => {},
       onPause: (paneId) => {
         if (this.controlChannel === handle) {
-          handle.write(`refresh-client -A ${paneId}:continue\n`);
+          void controlCommands
+            .execute((value) => handle.write(value), `refresh-client -A ${paneId}:continue`, {
+              transform: () => undefined,
+            })
+            .catch((error) => this.callbacks.onError(error));
         }
       },
+      onBlockBegin: () => controlCommands.nextBlockIsLiteral(),
       onBlockEnd: (block) => {
+        if (controlCommands.handleBlock(block)) return;
         onAttachReady();
-        if (!block.isError && block.lines.length === 1 && block.lines[0] === 'tmex-hb') {
-          this.onHeartbeatResponse();
-        }
       },
     });
 
-    const handle: ControlChannelHandle = { stop: () => {}, write: () => {} };
     this.controlChannel = handle;
     this.controlSubscription = subscription;
     this.controlStartedAt = Date.now();
@@ -999,6 +1075,7 @@ export class SshExternalTmuxConnection {
     this.controlChannel = null;
     this.controlSubscription?.dispose();
     this.controlSubscription = null;
+    this.controlCommands.dispose();
     handle?.stop();
   }
 
@@ -1030,7 +1107,18 @@ export class SshExternalTmuxConnection {
       return;
     }
     this.heartbeatPending = true;
-    this.controlChannel.write('display-message -p "tmex-hb"' + '\n');
+    const control = this.controlChannel;
+    void this.controlCommands
+      .execute((value) => control.write(value), 'display-message -p "tmex-hb"', {
+        timeoutMs: HEARTBEAT_TIMEOUT_MS,
+        transform: (block) => {
+          if (block.lines.length !== 1 || block.lines[0] !== 'tmex-hb') {
+            throw new Error('invalid tmux heartbeat response');
+          }
+        },
+      })
+      .then(() => this.onHeartbeatResponse())
+      .catch(() => {});
     this.heartbeatTimeoutTimer = setTimeout(() => {
       if (this.heartbeatPending && this.connected && !this.manualDisconnect) {
         console.warn(
@@ -1601,6 +1689,95 @@ export class SshExternalTmuxConnection {
       void this.shutdownInternal(true);
     }
     throw new Error(message);
+  }
+
+  private async runTmuxIsolated(
+    argv: string[],
+    maxOutputBytes: number,
+    timeoutMs: number
+  ): Promise<CommandResult> {
+    const command = `${quoteShellArg(this.tmuxBin)} ${joinShellArgs(argv)}`;
+    const result = await this.executeIsolatedShellCommand(command, maxOutputBytes, timeoutMs);
+    if (result.exitCode === 0) return result;
+    const message = (
+      result.stderr.trim() ||
+      result.stdout.trim() ||
+      `tmux command failed: ${argv.join(' ')}`
+    ).trim();
+    if (isTargetMissingMessage(message)) throw new TmuxTargetMissingError(message);
+    throw new Error(message);
+  }
+
+  private executeIsolatedShellCommand(
+    command: string,
+    maxOutputBytes: number,
+    timeoutMs: number
+  ): Promise<CommandResult> {
+    const sshClient = this.requireSshClient();
+    const outputLimit = Math.max(1, Math.floor(maxOutputBytes));
+    return new Promise<CommandResult>((resolve, reject) => {
+      let settled = false;
+      let exitCode = 0;
+      let stdoutBytes = 0;
+      let stderrBytes = 0;
+      const stdout: Buffer[] = [];
+      const stderr: Buffer[] = [];
+      let stream: ClientChannel | null = null;
+
+      const finishReject = (error: Error) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        try {
+          stream?.close();
+          stream?.destroy();
+        } catch {}
+        reject(error);
+      };
+      const timer = setTimeout(
+        () => finishReject(new Error(`isolated SSH command timed out: ${command.slice(0, 80)}`)),
+        timeoutMs
+      );
+
+      sshClient.exec(command, { pty: false }, (error, channel) => {
+        if (error) {
+          finishReject(error);
+          return;
+        }
+        stream = channel;
+        channel.on('data', (chunk: Buffer) => {
+          if (settled) return;
+          stdoutBytes += chunk.byteLength;
+          if (stdoutBytes > outputLimit) {
+            finishReject(new Error('tmux history capture exceeded bounded output'));
+            return;
+          }
+          stdout.push(Buffer.from(chunk));
+        });
+        channel.stderr.on('data', (chunk: Buffer) => {
+          if (settled) return;
+          stderrBytes += chunk.byteLength;
+          if (stderrBytes > 8192) {
+            finishReject(new Error('isolated SSH command stderr exceeded bounded output'));
+            return;
+          }
+          stderr.push(Buffer.from(chunk));
+        });
+        channel.on('exit', (code: number | undefined) => {
+          exitCode = code ?? 1;
+        });
+        channel.on('close', () => {
+          if (settled) return;
+          settled = true;
+          clearTimeout(timer);
+          resolve({
+            exitCode,
+            stdout: Buffer.concat(stdout, stdoutBytes).toString(),
+            stderr: Buffer.concat(stderr, stderrBytes).toString(),
+          });
+        });
+      });
+    });
   }
 
   private async runTmuxAllowFailure(argv: string[], timeoutMs = 10000): Promise<CommandResult> {

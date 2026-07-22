@@ -11,14 +11,21 @@ import {
   getLocalShellPath,
 } from '../tmux/local-shell-path';
 import {
+  PANE_HISTORY_CAPTURE_INFO_FORMAT,
   PANE_META_FORMAT,
   PANE_SCREEN_INFO_FORMAT,
   type PaneInfo,
   appendCursorRestore,
+  parsePaneHistoryCaptureInfo,
   parsePaneMeta,
   parsePaneScreenInfo,
 } from './capture-history';
 import type { TmuxConnectionOptions } from './connection-types';
+import {
+  type AtomicPaneCapture,
+  ControlModeCommandQueue,
+  capturePaneFrameAtControlBarrier,
+} from './control-mode-capture';
 import {
   type ControlModeSubscription,
   SOURCE_METADATA_SUBSCRIPTION_COMMANDS,
@@ -216,6 +223,7 @@ export class LocalExternalTmuxConnection {
   private cleanupPromise: Promise<void> | null = null;
   private controlProcess: ControlClientProcess | null = null;
   private controlSubscription: ControlModeSubscription | null = null;
+  private controlCommands = new ControlModeCommandQueue();
   private controlStartedAt = 0;
   private controlRestartCount = 0;
   private controlStderrTail = '';
@@ -698,6 +706,64 @@ export class LocalExternalTmuxConnection {
     return parsePaneMeta(stdout);
   }
 
+  async getPaneHistoryCaptureInfo(paneId: string) {
+    if (!this.connected) throw new Error(`tmux connection not available: ${this.deviceId}`);
+    const { stdout } = await this.runTmux(
+      ['display-message', '-p', '-t', paneId, PANE_HISTORY_CAPTURE_INFO_FORMAT],
+      'silent'
+    );
+    return parsePaneHistoryCaptureInfo(stdout);
+  }
+
+  async capturePaneHistoryRange(
+    paneId: string,
+    startLine: number,
+    endLine: number,
+    maxOutputBytes: number
+  ): Promise<string> {
+    if (!this.connected) throw new Error(`tmux connection not available: ${this.deviceId}`);
+    if (!isTmuxPaneId(paneId) || !Number.isInteger(startLine) || !Number.isInteger(endLine)) {
+      throw new Error('invalid tmux history range');
+    }
+    const { stdout } = await this.runTmux(
+      [
+        'capture-pane',
+        '-t',
+        paneId,
+        '-p',
+        '-e',
+        '-N',
+        '-S',
+        String(startLine),
+        '-E',
+        String(endLine),
+      ],
+      'silent'
+    );
+    if (new TextEncoder().encode(stdout).byteLength > maxOutputBytes) {
+      throw new Error('tmux history capture exceeded bounded output');
+    }
+    return stdout;
+  }
+
+  capturePaneFrameAtBarrier(
+    paneId: string,
+    historyLines: number,
+    onBarrier: () => void
+  ): Promise<AtomicPaneCapture> {
+    const control = this.controlProcess;
+    if (!this.connected || !control) {
+      return Promise.reject(new Error(`tmux control connection not available: ${this.deviceId}`));
+    }
+    return capturePaneFrameAtControlBarrier(
+      this.controlCommands,
+      (command) => control.write(command),
+      paneId,
+      historyLines,
+      onBarrier
+    );
+  }
+
   private resolveDefaultWorkingDir(): string {
     return this.device?.defaultWorkingDir?.trim() || homedir();
   }
@@ -949,12 +1015,20 @@ export class LocalExternalTmuxConnection {
       throw new Error(message);
     }
 
-    for (const command of SOURCE_METADATA_SUBSCRIPTION_COMMANDS) proc.write(command);
+    for (const command of SOURCE_METADATA_SUBSCRIPTION_COMMANDS) {
+      void this.controlCommands
+        .execute((value) => proc.write(value), command, { transform: () => undefined })
+        .catch((error) => this.callbacks.onError(error));
+    }
 
     this.startHeartbeat();
   }
 
   private spawnControlClientProcess(onAttachReady: () => void): ControlClientProcess {
+    this.controlCommands.dispose('tmux control connection replaced');
+    let proc: ControlClientProcess | null = null;
+    const controlCommands = new ControlModeCommandQueue(() => proc?.kill());
+    this.controlCommands = controlCommands;
     const metricsOptions = isManagedExternally()
       ? {
           onMetrics: (metrics: ControlStreamMetricsSnapshot) => {
@@ -1006,20 +1080,25 @@ export class LocalExternalTmuxConnection {
           this.requestSnapshot();
         },
         onPause: (paneId) => {
-          this.controlProcess?.write(`refresh-client -A ${paneId}:continue\n`);
+          const active = this.controlProcess;
+          if (!active) return;
+          void controlCommands
+            .execute((value) => active.write(value), `refresh-client -A ${paneId}:continue`, {
+              transform: () => undefined,
+            })
+            .catch((error) => this.callbacks.onError(error));
         },
         onExit: () => {},
+        onBlockBegin: () => controlCommands.nextBlockIsLiteral(),
         onBlockEnd: (block) => {
+          if (controlCommands.handleBlock(block)) return;
           onAttachReady();
-          if (!block.isError && block.lines.length === 1 && block.lines[0] === 'tmex-hb') {
-            this.onHeartbeatResponse();
-          }
         },
       },
       metricsOptions
     );
 
-    const proc = this.deps.spawnControlClient(
+    proc = this.deps.spawnControlClient(
       buildLocalTmuxArgv(['-C', 'attach-session', '-t', this.sessionName])
     );
     this.controlProcess = proc;
@@ -1092,6 +1171,7 @@ export class LocalExternalTmuxConnection {
     this.controlProcess = null;
     this.controlSubscription?.dispose();
     this.controlSubscription = null;
+    this.controlCommands.dispose();
     proc?.kill();
   }
 
@@ -1119,7 +1199,18 @@ export class LocalExternalTmuxConnection {
       return;
     }
     this.heartbeatPending = true;
-    this.controlProcess.write('display-message -p "tmex-hb"\n');
+    const control = this.controlProcess;
+    void this.controlCommands
+      .execute((value) => control.write(value), 'display-message -p "tmex-hb"', {
+        timeoutMs: HEARTBEAT_TIMEOUT_MS,
+        transform: (block) => {
+          if (block.lines.length !== 1 || block.lines[0] !== 'tmex-hb') {
+            throw new Error('invalid tmux heartbeat response');
+          }
+        },
+      })
+      .then(() => this.onHeartbeatResponse())
+      .catch(() => {});
     this.heartbeatTimeoutTimer = setTimeout(() => {
       if (!this.heartbeatPending || !this.connected || this.manualDisconnect) {
         return;

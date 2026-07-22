@@ -530,10 +530,11 @@ PaneWire：
 
 - source key 为 `(deviceId, serverEpoch, entityKind, nativeId)`；`serverEpoch` 是 tmux server 生命周期内稳定的 16 bytes 标识。
 - pane 数据为 `(pane target, paneEpoch, seqStart, seqEnd, data)`，且 `seqEnd - seqStart == data.length`。
-- pane subscription 携带 pane target 和可选 history cursor；cursor 为 `paneEpoch + terminalSeq`，只允许用于同一 subscription/request 的 pane target，跨 pane/server epoch 的 cursor 无效。
+- pane subscription 携带 pane target 和可选 terminal cursor；terminal cursor 为 `paneEpoch + terminalSeq`，只允许用于同一 pane target 的精确 replay，跨 pane/server epoch 的 cursor 无效。
+- history 使用独立的 `paneEpoch + historyEpoch + beforeLine` cursor。`historyEpoch` 只引用 Gateway 内存中的短期分页会话，不写数据库；过期、边界锚点变化或 tmux history 淘汰时显式返回可重试错误，客户端从新 cursor 重新取页。
 - metadata 使用独立 `metadataEpoch + revision`；snapshot 是冷启动/恢复屏障，patch 必须连续应用。
 - `SetPaneSubscriptions.generation` 单调递增；服务端只保留最新 generation，并以 `SubscriptionApplied` 返回实际 active/hot 集与拒绝项。
-- screen、history 事务按 `requestId` 以 Begin/Chunk/Commit 原子提交。中途断开或缺块时客户端保留旧画布，不应用半成品。
+- screen、history 事务按 `requestId` 以 Begin/Chunk/Commit 原子提交。`ScreenCommit` 可携带第一条更老 history cursor；`HistoryBegin` 携带 `[lineStart,lineEnd)` 和显式 `truncated`。中途断开或缺块时客户端保留旧画布，不应用半成品。
 - `SourceGap` 明确区分 metadata gap 与 pane sequence gap；客户端请求对应 snapshot 恢复，不要求整页刷新。
 - 每个完整 canonical Envelope 最大 32KiB；semantic chunk 的数据长度必须为 Envelope 和字段开销预留空间。
 

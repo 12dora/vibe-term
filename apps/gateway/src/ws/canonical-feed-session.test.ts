@@ -2,6 +2,7 @@ import { describe, expect, test } from 'bun:test';
 import { wsBorsh } from '@tmex/shared';
 
 import type { DeviceSessionRuntimeListener } from '../tmux-client/device-session-runtime';
+import type { PaneHistoryCursor } from '../tmux-client/pane-history-reader';
 import {
   PaneRetention,
   type PaneRetentionConsumerCallbacks,
@@ -78,8 +79,8 @@ class FakeRuntime implements CanonicalFeedRuntime {
     return this.retention.readReplay(paneId, cursor);
   }
 
-  readPaneHistory(paneId: string, cursor: PaneTerminalCursor | null, byteLimit: number) {
-    return this.retention.readHistory(paneId, cursor, byteLimit);
+  async readPaneHistory(_paneId: string, _cursor: PaneHistoryCursor | null, _byteLimit: number) {
+    return null;
   }
 
   async captureCanonicalScreen(
@@ -96,6 +97,7 @@ class FakeRuntime implements CanonicalFeedRuntime {
       cols: 80,
       modes: 0,
       data: this.screenData.slice(0, byteLimit),
+      historyCursor: null,
       capturedAt: Date.now(),
     };
     this.retention.storeScreenCheckpoint(this.checkpoint);

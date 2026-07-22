@@ -132,6 +132,12 @@ function createStubConnectionRecorder() {
         currentCommand: `cmd:${paneId}`,
       };
     },
+    async getPaneHistoryCaptureInfo() {
+      return { historySize: 0, cols: 120 };
+    },
+    async capturePaneHistoryRange() {
+      return '';
+    },
     signalThemeChange(paneId, theme) {
       state.signalThemeChangeCalls.push([paneId, theme]);
     },
@@ -258,6 +264,26 @@ describe('DeviceSessionRuntime', () => {
     expect(secondErrors).toEqual(['boom']);
     expect(firstClosed).toBe(1);
     expect(secondClosed).toBe(1);
+  });
+
+  test('does not rebroadcast structurally identical snapshots', () => {
+    const recorder = createStubConnectionRecorder();
+    const runtime = createDeviceSessionRuntime({
+      deviceId: 'device-a',
+      createConnection(options) {
+        recorder.state.options = options;
+        return recorder.connection;
+      },
+    });
+    let snapshots = 0;
+    runtime.subscribe({ onSnapshot: () => snapshots++ });
+    const payload = { deviceId: 'device-a', session: null } as const;
+
+    recorder.state.options?.onSnapshot(payload);
+    recorder.state.options?.onSnapshot({ ...payload });
+
+    expect(snapshots).toBe(1);
+    runtime.disconnect();
   });
 
   test('disconnects the underlying connection only once', async () => {

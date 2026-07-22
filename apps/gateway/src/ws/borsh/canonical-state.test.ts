@@ -44,7 +44,7 @@ describe('canonical state wire', () => {
         RequestHistory: {
           requestId: ZERO_16,
           pane: PANE,
-          beforeCursor: { paneEpoch: ZERO_16, terminalSeq: 99n },
+          beforeCursor: { paneEpoch: ZERO_16, historyEpoch: EPOCH_16, beforeLine: 99 },
           byteLimit: 4096,
         },
       },
@@ -131,14 +131,16 @@ describe('canonical state wire', () => {
         },
       },
       { ScreenChunk: { requestId, offset: 0, data: new Uint8Array([1]) } },
-      { ScreenCommit: { requestId, totalBytes: 1 } },
+      { ScreenCommit: { requestId, totalBytes: 1, historyCursor: null } },
       {
         HistoryBegin: {
           requestId,
           pane: PANE,
           paneEpoch: ZERO_16,
-          seqStart: 0n,
-          seqEnd: 1n,
+          historyEpoch: EPOCH_16,
+          lineStart: 0,
+          lineEnd: 1,
+          truncated: false,
           totalBytes: 1,
         },
       },
@@ -236,9 +238,9 @@ describe('canonical state wire', () => {
     const error = wsBorsh.encodeCanonicalEventPayload({
       Error: { requestId: null, code: 1, message: '', retryable: false },
     });
-    expect(() =>
-      wsBorsh.decodeCanonicalEventPayload(Uint8Array.from([...error, 0]))
-    ).toThrow(wsBorsh.WsBorshError);
+    expect(() => wsBorsh.decodeCanonicalEventPayload(Uint8Array.from([...error, 0]))).toThrow(
+      wsBorsh.WsBorshError
+    );
     error[error.byteLength - 1] = 2;
     expect(() => wsBorsh.decodeCanonicalEventPayload(error)).toThrow(wsBorsh.WsBorshError);
   });
@@ -263,12 +265,38 @@ describe('canonical state wire', () => {
       },
       9
     );
+    const historyCommand = wsBorsh.encodeCanonicalCommandPayload({
+      RequestHistory: {
+        requestId: ZERO_16,
+        pane: PANE,
+        beforeCursor: { paneEpoch: ZERO_16, historyEpoch: EPOCH_16, beforeLine: 99 },
+        byteLimit: 4096,
+      },
+    });
+    const historyEvent = wsBorsh.encodeCanonicalEventPayload({
+      HistoryBegin: {
+        requestId: ZERO_16,
+        pane: PANE,
+        paneEpoch: ZERO_16,
+        historyEpoch: EPOCH_16,
+        lineStart: 10,
+        lineEnd: 20,
+        truncated: false,
+        totalBytes: 5,
+      },
+    });
 
     expect(hex(command)).toBe(
       '010000070000000000000001000000050000006465762d31000102030405060708090a0b0c0d0e0f0200000025370000000000'
     );
     expect(hex(event)).toBe(
       '54580100020900000900000049000000010003050000006465762d31000102030405060708090a0b0c0d0e0f020000002537aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa0a000000000000000d0000000000000003000000414243'
+    );
+    expect(hex(historyCommand)).toBe(
+      '01000400000000000000000000000000000000050000006465762d31000102030405060708090a0b0c0d0e0f0200000025370100000000000000000000000000000000000102030405060708090a0b0c0d0e0f6300000000100000'
+    );
+    expect(hex(historyEvent)).toBe(
+      '01000800000000000000000000000000000000050000006465762d31000102030405060708090a0b0c0d0e0f02000000253700000000000000000000000000000000000102030405060708090a0b0c0d0e0f0a000000140000000005000000'
     );
   });
 });

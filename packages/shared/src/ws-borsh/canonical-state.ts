@@ -86,6 +86,12 @@ export const CanonicalTerminalCursorSchema = b.struct({
   terminalSeq: b.u64(),
 });
 
+export const CanonicalHistoryCursorSchema = b.struct({
+  paneEpoch: b.bytes(16),
+  historyEpoch: b.bytes(16),
+  beforeLine: b.u32(),
+});
+
 export const CanonicalPaneSubscriptionSchema = b.struct({
   pane: CanonicalPaneTargetSchema,
   cursor: b.option(CanonicalTerminalCursorSchema),
@@ -121,7 +127,7 @@ export const CanonicalRequestScreenSchema = b.struct({
 export const CanonicalRequestHistorySchema = b.struct({
   requestId: b.bytes(16),
   pane: CanonicalPaneTargetSchema,
-  beforeCursor: b.option(CanonicalTerminalCursorSchema),
+  beforeCursor: b.option(CanonicalHistoryCursorSchema),
   byteLimit: b.u32(),
 });
 
@@ -204,21 +210,24 @@ export const CanonicalContentChunkSchema = b.struct({
 export const CanonicalScreenCommitSchema = b.struct({
   requestId: b.bytes(16),
   totalBytes: b.u32(),
+  historyCursor: b.option(CanonicalHistoryCursorSchema),
 });
 
 export const CanonicalHistoryBeginSchema = b.struct({
   requestId: b.bytes(16),
   pane: CanonicalPaneTargetSchema,
   paneEpoch: b.bytes(16),
-  seqStart: b.u64(),
-  seqEnd: b.u64(),
+  historyEpoch: b.bytes(16),
+  lineStart: b.u32(),
+  lineEnd: b.u32(),
+  truncated: b.bool(),
   totalBytes: b.u32(),
 });
 
 export const CanonicalHistoryCommitSchema = b.struct({
   requestId: b.bytes(16),
   totalBytes: b.u32(),
-  nextCursor: b.option(CanonicalTerminalCursorSchema),
+  nextCursor: b.option(CanonicalHistoryCursorSchema),
 });
 
 export const CanonicalGapScopeSchema = b.enum({
@@ -277,6 +286,7 @@ export type SourceMetadataField = b.infer<typeof SourceMetadataFieldSchema>;
 export type SourceMetadataRecord = b.infer<typeof SourceMetadataRecordSchema>;
 export type CanonicalPaneTarget = b.infer<typeof CanonicalPaneTargetSchema>;
 export type CanonicalTerminalCursor = b.infer<typeof CanonicalTerminalCursorSchema>;
+export type CanonicalHistoryCursor = b.infer<typeof CanonicalHistoryCursorSchema>;
 export type CanonicalPaneSubscription = b.infer<typeof CanonicalPaneSubscriptionSchema>;
 export type CanonicalCommand = b.infer<typeof CanonicalCommandSchema>;
 export type CanonicalCommandEnvelope = b.infer<typeof CanonicalCommandEnvelopeSchema>;

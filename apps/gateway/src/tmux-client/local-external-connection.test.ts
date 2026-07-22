@@ -125,6 +125,7 @@ function createFakeControlProcess(): FakeControlProcess {
   let exitResolve!: (code: number) => void;
   let killed = false;
   let closed = false;
+  let commandId = 10;
   const writtenData: string[] = [];
 
   const close = (code: number) => {
@@ -166,6 +167,14 @@ function createFakeControlProcess(): FakeControlProcess {
       },
       write: (data: string) => {
         writtenData.push(data);
+        if (data.startsWith('refresh-client -B ') || data.startsWith('refresh-client -A ')) {
+          const id = commandId++;
+          queueMicrotask(() => {
+            try {
+              stdoutController.enqueue(encoder.encode(`%begin 1 ${id} 0\n%end 1 ${id} 0\n`));
+            } catch {}
+          });
+        }
       },
     },
     pushStdout: (text) => stdoutController.enqueue(encoder.encode(text)),
@@ -503,6 +512,57 @@ describe('LocalExternalTmuxConnection', () => {
     await waitFor(() => (titles.length === 51 ? true : null));
     expect(snapshots).toEqual([]);
 
+    connection.disconnect();
+  });
+
+  test('canonical screen capture takes its sequence barrier before following live output', async () => {
+    const fake = createFakeControlProcess();
+    const outputs: string[] = [];
+    const barrierOutputCounts: number[] = [];
+    const connection = new LocalExternalTmuxConnection(
+      {
+        deviceId: 'device-local',
+        onEvent: () => {},
+        onTerminalOutput: (_paneId, data) => outputs.push(new TextDecoder().decode(data)),
+        onTerminalHistory: () => {},
+        onSnapshot: () => {},
+        onError: (error) => {
+          throw error;
+        },
+        onClose: () => {},
+      },
+      {
+        enableSubscription: true,
+        ensureGhosttyTerminfo: async () => false,
+        getDevice: () => createDevice('tmex-canonical-capture'),
+        run: createRunStub('tmex-canonical-capture'),
+        spawnControlClient: () => {
+          fake.pushStdout('%begin 1 1 0\n%end 1 1 0\n%session-changed $1 tmex-canonical-capture\n');
+          return fake.proc;
+        },
+      }
+    );
+    await connection.connect();
+    await Bun.sleep(0);
+
+    const capturePromise = connection.capturePaneFrameAtBarrier('%1', 10, () => {
+      barrierOutputCounts.push(outputs.length);
+    });
+    fake.pushStdout(
+      '%begin 2 20 0\n80|24|0|3|4|100\n%end 2 20 0\n' +
+        '%begin 2 21 0\n%output literal screen row\n%end 2 21 0\n' +
+        '%output %1 live-after-capture\n'
+    );
+
+    await expect(capturePromise).resolves.toMatchObject({
+      text: '%output literal screen row\n',
+      cols: 80,
+      rows: 24,
+      historySize: 100,
+    });
+    await waitFor(() => (outputs.length === 1 ? true : null));
+    expect(barrierOutputCounts).toEqual([0]);
+    expect(outputs).toEqual(['live-after-capture']);
     connection.disconnect();
   });
 
@@ -1499,7 +1559,8 @@ describe('LocalExternalTmuxConnection', () => {
     );
 
     await connection.connect();
-    const target = fakes[0]!;
+    const target = fakes[0];
+    if (!target) throw new Error('control process was not created');
 
     (connection as any).sendHeartbeat();
     expect(target.writtenData).toContain('display-message -p "tmex-hb"\n');
@@ -1583,7 +1644,8 @@ describe('LocalExternalTmuxConnection', () => {
     );
 
     await connection.connect();
-    const target = fakes[0]!;
+    const target = fakes[0];
+    if (!target) throw new Error('control process was not created');
 
     target.closeStdout();
 
@@ -1763,11 +1825,11 @@ describe('LocalExternalTmuxConnection lifecycle events', () => {
       session,
       overrides: (command) => {
         if (command.startsWith(`list-panes -s -t ${session}`) && panesGone) {
-          return ok(`%2|@1|1|1|80|24|0|0|1|bash|node|/home/user\n`);
+          return ok('%2|@1|1|1|80|24|0|0|1|bash|node|/home/user\n');
         }
         if (command.startsWith(`list-panes -s -t ${session}`)) {
           return ok(
-            `%1|@1|0|1|80|24|0|0|1|first pane|vim|/home/user\n%2|@1|1|0|80|24|0|0|1|bash|node|/home/user\n`
+            '%1|@1|0|1|80|24|0|0|1|first pane|vim|/home/user\n%2|@1|1|0|80|24|0|0|1|bash|node|/home/user\n'
           );
         }
         return null;
@@ -1808,7 +1870,7 @@ describe('LocalExternalTmuxConnection lifecycle events', () => {
         }
         if (command.startsWith(`list-panes -s -t ${session}`) && !windowGone) {
           return ok(
-            `%1|@1|0|1|80|24|0|0|1|bash|node|/home/user\n%2|@2|0|1|80|24|0|0|0|bash|node|/home/user\n`
+            '%1|@1|0|1|80|24|0|0|1|bash|node|/home/user\n%2|@2|0|1|80|24|0|0|0|bash|node|/home/user\n'
           );
         }
         return null;

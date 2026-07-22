@@ -5,6 +5,7 @@
 // 把恢复序列拼接到 history 末尾，使回放结束时前端光标与 tmux 一致。
 
 import type { PaneModeFlags } from '@tmex/shared';
+import type { PaneHistoryCaptureInfo } from './pane-history-reader';
 
 export interface PaneScreenInfo {
   alternateScreen: boolean;
@@ -81,6 +82,23 @@ export interface PaneInfo {
 
 export const PANE_META_FORMAT =
   '#{pane_width} #{pane_height} #{alternate_on} #{cursor_x} #{cursor_y} #{pane_current_command}';
+
+export const PANE_HISTORY_CAPTURE_INFO_FORMAT = '#{history_size}|#{pane_width}';
+
+export function parsePaneHistoryCaptureInfo(stdout: string): PaneHistoryCaptureInfo {
+  const [historySizeRaw, colsRaw] = stdout.trim().split('|');
+  const historySize = Number.parseInt(historySizeRaw ?? '', 10);
+  const cols = Number.parseInt(colsRaw ?? '', 10);
+  if (
+    !Number.isSafeInteger(historySize) ||
+    historySize < 0 ||
+    !Number.isSafeInteger(cols) ||
+    cols < 1
+  ) {
+    throw new Error('invalid tmux pane history info');
+  }
+  return { historySize, cols };
+}
 
 export function parsePaneMeta(stdout: string): PaneInfo {
   const parts = stdout.trim().split(/\s+/);
