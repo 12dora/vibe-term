@@ -24,6 +24,24 @@ export {
 } from './connection';
 
 export {
+  WebSocketGatewayTransport,
+  LazyWebSocketGatewayTransport,
+  createSharedGatewayTransport,
+  type GatewayHistoryCursor,
+  type GatewayPaneHistoryPage,
+  type GatewayPaneScreenSnapshot,
+  type GatewayRebaseReason,
+  type GatewayTerminalCursor,
+  type GatewayTerminalData,
+  type GatewayTransport,
+  type GatewayTransportCapabilities,
+  type GatewayTransportCommand,
+  type GatewayTransportEvent,
+  type SharedGatewayTransport,
+  type SharedGatewayTransportOptions,
+} from './transport';
+
+export {
   PaneSinkRegistry,
   getDefaultPaneSinkRegistry,
   type PaneSink,

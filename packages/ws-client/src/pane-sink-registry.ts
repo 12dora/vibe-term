@@ -9,27 +9,43 @@
 // reset 来源：select = 切换/选择流程（随后会有 post-select 尺寸上报）；
 // history-refresh = 远端 resize 等触发的内容重建，不得携带本地尺寸上报，
 // 否则两个不同视口的客户端会互相抢 window 尺寸形成拉锯
+import type {
+  GatewayPaneHistoryPage,
+  GatewayPaneScreenSnapshot,
+  GatewayRebaseReason,
+  GatewayTerminalData,
+} from './transport';
+
 export type PaneResetOrigin = 'select' | 'history-refresh';
 
 export interface PaneSink {
   onReset(origin: PaneResetOrigin): void;
   onApplyHistory(data: string, alternateScreen: boolean, modes: number): void;
-  onOutput(data: Uint8Array): void;
+  onOutput(data: Uint8Array, frame?: GatewayTerminalData): void;
+  onScreenSnapshot?(snapshot: GatewayPaneScreenSnapshot): void;
+  onHistoryPage?(page: GatewayPaneHistoryPage): void;
+  onRebase?(reason: GatewayRebaseReason): void;
 }
 
 interface PendingPaneState {
-  outputs: Uint8Array[];
+  outputs: GatewayTerminalData[];
+  outputBytes: number;
   reset: boolean;
   history: { data: string; alternateScreen: boolean; modes: number } | null;
+  screen: GatewayPaneScreenSnapshot | null;
+  historyPages: GatewayPaneHistoryPage[];
+  rebase: GatewayRebaseReason | null;
 }
 
 interface HistoryGate {
   token: Uint8Array;
   buffer: Uint8Array[];
+  bufferBytes: number;
   timer: ReturnType<typeof setTimeout>;
 }
 
-const MAX_PENDING_OUTPUTS = 1000;
+const MAX_PENDING_OUTPUT_BYTES = 2 * 1024 * 1024;
+const MAX_PENDING_HISTORY_PAGES = 16;
 const HISTORY_GATE_TIMEOUT_MS = 3000;
 
 function paneKey(deviceId: string, paneId: string): string {
@@ -58,7 +74,15 @@ export class PaneSinkRegistry {
   private getPending(key: string): PendingPaneState {
     let state = this.pending.get(key);
     if (!state) {
-      state = { outputs: [], reset: false, history: null };
+      state = {
+        outputs: [],
+        outputBytes: 0,
+        reset: false,
+        history: null,
+        screen: null,
+        historyPages: [],
+        rebase: null,
+      };
       this.pending.set(key, state);
     }
     return state;
@@ -77,8 +101,11 @@ export class PaneSinkRegistry {
       if (state.history) {
         sink.onApplyHistory(state.history.data, state.history.alternateScreen, state.history.modes);
       }
-      for (const data of state.outputs) {
-        sink.onOutput(data);
+      if (state.rebase) sink.onRebase?.(state.rebase);
+      if (state.screen) sink.onScreenSnapshot?.(state.screen);
+      for (const page of state.historyPages) sink.onHistoryPage?.(page);
+      for (const frame of state.outputs) {
+        sink.onOutput(frame.data, frame);
       }
     }
 
@@ -99,7 +126,11 @@ export class PaneSinkRegistry {
     const state = this.getPending(key);
     state.reset = true;
     state.outputs = [];
+    state.outputBytes = 0;
     state.history = null;
+    state.screen = null;
+    state.historyPages = [];
+    state.rebase = null;
   }
 
   dispatchPaneApplyHistory(
@@ -119,28 +150,89 @@ export class PaneSinkRegistry {
   }
 
   dispatchPaneOutput(deviceId: string, paneId: string, data: Uint8Array): void {
+    this.dispatchPaneTerminalData({ deviceId, paneId, data });
+  }
+
+  dispatchPaneTerminalData(frame: GatewayTerminalData): void {
+    const { deviceId, paneId } = frame;
     const key = paneKey(deviceId, paneId);
 
     const gate = this.historyGates.get(key);
     if (gate) {
-      if (gate.buffer.length >= MAX_PENDING_OUTPUTS) {
-        gate.buffer.shift();
+      if (gate.bufferBytes + frame.data.byteLength > MAX_PENDING_OUTPUT_BYTES) {
+        this.closePaneHistoryGate(key, { flush: false });
+        this.dispatchPaneRebase(deviceId, paneId, 'resource_exhausted');
+        return;
       }
-      gate.buffer.push(new Uint8Array(data));
+      const data = new Uint8Array(frame.data);
+      gate.buffer.push(data);
+      gate.bufferBytes += data.byteLength;
       return;
     }
 
     const sink = this.sinks.get(key);
     if (sink) {
-      sink.onOutput(data);
+      sink.onOutput(frame.data, frame);
       return;
     }
 
     const state = this.getPending(key);
-    if (state.outputs.length >= MAX_PENDING_OUTPUTS) {
-      state.outputs.shift();
+    if (state.outputBytes + frame.data.byteLength > MAX_PENDING_OUTPUT_BYTES) {
+      state.outputs = [];
+      state.outputBytes = 0;
+      state.screen = null;
+      state.historyPages = [];
+      state.rebase = 'resource_exhausted';
+      return;
     }
-    state.outputs.push(new Uint8Array(data));
+    const pendingFrame = { ...frame, data: new Uint8Array(frame.data) };
+    state.outputs.push(pendingFrame);
+    state.outputBytes += pendingFrame.data.byteLength;
+  }
+
+  dispatchPaneScreenSnapshot(snapshot: GatewayPaneScreenSnapshot): void {
+    const key = paneKey(snapshot.deviceId, snapshot.paneId);
+    const sink = this.sinks.get(key);
+    if (sink?.onScreenSnapshot) {
+      sink.onScreenSnapshot(snapshot);
+      return;
+    }
+    const state = this.getPending(key);
+    state.screen = snapshot;
+    state.historyPages = [];
+    state.rebase = null;
+  }
+
+  dispatchPaneHistoryPage(page: GatewayPaneHistoryPage): void {
+    const key = paneKey(page.deviceId, page.paneId);
+    const sink = this.sinks.get(key);
+    if (sink?.onHistoryPage) {
+      sink.onHistoryPage(page);
+      return;
+    }
+    const state = this.getPending(key);
+    if (state.historyPages.length >= MAX_PENDING_HISTORY_PAGES) {
+      state.historyPages = [];
+      state.screen = null;
+      state.rebase = 'resource_exhausted';
+      return;
+    }
+    state.historyPages.push(page);
+  }
+
+  dispatchPaneRebase(deviceId: string, paneId: string, reason: GatewayRebaseReason): void {
+    const key = paneKey(deviceId, paneId);
+    const sink = this.sinks.get(key);
+    if (sink?.onRebase) {
+      sink.onRebase(reason);
+      return;
+    }
+    const state = this.getPending(key);
+    state.screen = null;
+    state.historyPages = [];
+    state.outputs = [];
+    state.outputBytes = 0;
+    state.rebase = reason;
   }
 
   // 开始 fetch-history 门控：此后该 pane 的 live 输出被缓冲，直到
@@ -154,7 +246,12 @@ export class PaneSinkRegistry {
       this.closePaneHistoryGate(key, { flush: true });
     }, HISTORY_GATE_TIMEOUT_MS);
 
-    this.historyGates.set(key, { token: new Uint8Array(token), buffer: [], timer });
+    this.historyGates.set(key, {
+      token: new Uint8Array(token),
+      buffer: [],
+      bufferBytes: 0,
+      timer,
+    });
   }
 
   // KIND_TERM_HISTORY 到达时先尝试本函数；token 命中 gate 才消费（返回 true），
@@ -256,6 +353,26 @@ export function dispatchPaneApplyHistory(
 
 export function dispatchPaneOutput(deviceId: string, paneId: string, data: Uint8Array): void {
   defaultRegistry.dispatchPaneOutput(deviceId, paneId, data);
+}
+
+export function dispatchPaneTerminalData(frame: GatewayTerminalData): void {
+  defaultRegistry.dispatchPaneTerminalData(frame);
+}
+
+export function dispatchPaneScreenSnapshot(snapshot: GatewayPaneScreenSnapshot): void {
+  defaultRegistry.dispatchPaneScreenSnapshot(snapshot);
+}
+
+export function dispatchPaneHistoryPage(page: GatewayPaneHistoryPage): void {
+  defaultRegistry.dispatchPaneHistoryPage(page);
+}
+
+export function dispatchPaneRebase(
+  deviceId: string,
+  paneId: string,
+  reason: GatewayRebaseReason
+): void {
+  defaultRegistry.dispatchPaneRebase(deviceId, paneId, reason);
 }
 
 export function beginPaneHistoryGate(deviceId: string, paneId: string, token: Uint8Array): void {

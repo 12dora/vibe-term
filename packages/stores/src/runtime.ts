@@ -12,6 +12,12 @@ import type { TranslateFn } from '@tmex/notifications';
 import {
   type BorshWebSocketClient,
   type GatewayConnection,
+  type GatewayPaneHistoryPage,
+  type GatewayPaneScreenSnapshot,
+  type GatewayRebaseReason,
+  type GatewayTerminalData,
+  type GatewayTransport,
+  LazyWebSocketGatewayTransport,
   type SelectCallbacks,
   type SelectStateMachine,
   getBorshClient,
@@ -23,8 +29,12 @@ import {
   cleanupDevicePaneState,
   dispatchPaneApplyHistory,
   dispatchPaneHistory,
+  dispatchPaneHistoryPage,
   dispatchPaneOutput,
+  dispatchPaneRebase,
   dispatchPaneReset,
+  dispatchPaneScreenSnapshot,
+  dispatchPaneTerminalData,
   registerPaneSink,
 } from '@tmex/ws-client/pane-sink-registry';
 import i18next from 'i18next';
@@ -92,6 +102,10 @@ export interface PaneSinkRouting {
     modes: number
   ): void;
   dispatchPaneOutput(deviceId: string, paneId: string, data: Uint8Array): void;
+  dispatchPaneTerminalData(frame: GatewayTerminalData): void;
+  dispatchPaneScreenSnapshot(snapshot: GatewayPaneScreenSnapshot): void;
+  dispatchPaneHistoryPage(page: GatewayPaneHistoryPage): void;
+  dispatchPaneRebase(deviceId: string, paneId: string, reason: GatewayRebaseReason): void;
   dispatchPaneHistory(
     deviceId: string,
     paneId: string,
@@ -107,6 +121,8 @@ export interface PaneSinkRouting {
 export interface AppRuntimeOptions {
   /** 按连接组装的 WS 面；缺省绑各模块默认单例 */
   connection?: GatewayConnection;
+  /** 外部进程/页面持有的共享 state transport；不会创建 physical WebSocket。 */
+  transport?: GatewayTransport;
   apiClient?: ApiClient;
   notifications?: NotificationSink;
   bell?: BellPlayer;
@@ -141,6 +157,7 @@ export interface RuntimeFeatures {
 /** store 工厂消费的已解析服务面 */
 export interface RuntimeCore {
   client: BorshWebSocketClient;
+  transport: GatewayTransport;
   selectMachine(callbacks?: SelectCallbacks): SelectStateMachine;
   paneSinks: PaneSinkRouting;
   apiClient: ApiClient;
@@ -270,6 +287,10 @@ const defaultPaneSinks: PaneSinkRouting = {
   dispatchPaneReset,
   dispatchPaneApplyHistory,
   dispatchPaneOutput,
+  dispatchPaneTerminalData,
+  dispatchPaneScreenSnapshot,
+  dispatchPaneHistoryPage,
+  dispatchPaneRebase,
   dispatchPaneHistory,
   beginPaneHistoryGate,
   cleanupDevicePaneState,
@@ -277,11 +298,16 @@ const defaultPaneSinks: PaneSinkRouting = {
 
 export function resolveRuntimeCore(options: AppRuntimeOptions = {}): RuntimeCore {
   const conn = options.connection;
+  const transport =
+    options.transport ??
+    conn?.transport ??
+    new LazyWebSocketGatewayTransport(() => conn?.client ?? getBorshClient());
   return {
     // 默认路径惰性求值：与拆包前「逐调用点 getBorshClient()」语义一致（含测试 mock 的 live binding）
     get client() {
       return conn?.client ?? getBorshClient();
     },
+    transport,
     selectMachine: conn
       ? (callbacks) => {
           if (callbacks) conn.selectMachine.setCallbacks(callbacks);
@@ -295,6 +321,11 @@ export function resolveRuntimeCore(options: AppRuntimeOptions = {}): RuntimeCore
           dispatchPaneApplyHistory: (d, p, data, alt, m) =>
             conn.paneSinks.dispatchPaneApplyHistory(d, p, data, alt, m),
           dispatchPaneOutput: (d, p, data) => conn.paneSinks.dispatchPaneOutput(d, p, data),
+          dispatchPaneTerminalData: (frame) => conn.paneSinks.dispatchPaneTerminalData(frame),
+          dispatchPaneScreenSnapshot: (snapshot) =>
+            conn.paneSinks.dispatchPaneScreenSnapshot(snapshot),
+          dispatchPaneHistoryPage: (page) => conn.paneSinks.dispatchPaneHistoryPage(page),
+          dispatchPaneRebase: (d, p, reason) => conn.paneSinks.dispatchPaneRebase(d, p, reason),
           dispatchPaneHistory: (d, p, tok, data, alt, m) =>
             conn.paneSinks.dispatchPaneHistory(d, p, tok, data, alt, m),
           beginPaneHistoryGate: (d, p, tok) => conn.paneSinks.beginPaneHistoryGate(d, p, tok),

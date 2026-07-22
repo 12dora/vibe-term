@@ -2,6 +2,7 @@ import { describe, expect, test } from 'bun:test';
 import { BorshWebSocketClient, defaultWsUrl } from './client';
 import { createGatewayConnection } from './connection';
 import type { PaneSink } from './pane-sink-registry';
+import { createSharedGatewayTransport } from './transport';
 
 function collectingSink(outputs: Uint8Array[]): PaneSink {
   return {
@@ -44,6 +45,25 @@ describe('createGatewayConnection', () => {
     expect(a.selectMachine).not.toBe(b.selectMachine);
     a.dispose();
     b.dispose();
+  });
+
+  test('dispose does not close a host-owned shared transport', () => {
+    let disconnects = 0;
+    const transport = createSharedGatewayTransport({
+      initialState: 'READY',
+      onDisconnect: () => {
+        disconnects += 1;
+      },
+      onCommand: () => {},
+    });
+    const connection = createGatewayConnection({ transport });
+
+    connection.dispose();
+
+    expect(disconnects).toBe(0);
+    expect(transport.isReady()).toBe(true);
+    expect(transport.send({ type: 'connect-device', deviceId: 'device-a' })).toBe(true);
+    transport.dispose();
   });
 });
 

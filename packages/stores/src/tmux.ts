@@ -1,34 +1,10 @@
 import { formatTerminalNotificationToast, useBellStore } from '@tmex/notifications';
-import { getTmuxWindowStyle } from '@tmex/shared';
+import { getTmuxWindowStyle, wsBorsh } from '@tmex/shared';
 import type { EventDevicePayload, EventTmuxPayload, StateSnapshotPayload } from '@tmex/shared';
-import { wsBorsh } from '@tmex/shared';
-import type { ConnectionState } from '@tmex/ws-client';
 import {
-  buildDeviceConnect,
-  buildDeviceDisconnect,
-  buildTermInput,
-  buildTermPaste,
-  buildTermResize,
-  buildTermSyncSize,
-  buildTmuxApplyStackedLayout,
-  buildTmuxBreakPane,
-  buildTmuxClosePane,
-  buildTmuxCloseWindow,
-  buildTmuxCreateWindow,
-  buildTmuxFetchPaneHistory,
-  buildTmuxFocusPane,
-  buildTmuxMovePane,
-  buildTmuxRenamePane,
-  buildTmuxRenameWindow,
-  buildTmuxReorderPanes,
-  buildTmuxReorderWindows,
-  buildTmuxResizePane,
-  buildTmuxSelect,
-  buildTmuxSelectWindow,
-  buildTmuxSetWindowStyle,
-  buildTmuxSplitPane,
-  buildTmuxSubscribePanes,
-  decodeSiteThemeUpdate,
+  type ConnectionState,
+  type GatewayHistoryCursor,
+  type GatewayTransportEvent,
   generateSelectToken,
 } from '@tmex/ws-client';
 import { create } from 'zustand';
@@ -94,7 +70,13 @@ export interface TmuxState {
   reorderPanes: (deviceId: string, windowId: string, paneIds: string[]) => void;
   // ---------- 分屏 ----------
   subscribePanes: (deviceId: string, paneIds: string[]) => void;
-  fetchPaneHistory: (deviceId: string, paneId: string) => void;
+  mountPane: (deviceId: string, paneId: string) => () => void;
+  requestPaneScreen: (deviceId: string, paneId: string) => void;
+  fetchPaneHistory: (
+    deviceId: string,
+    paneId: string,
+    cursor?: GatewayHistoryCursor | null
+  ) => void;
   focusPane: (deviceId: string, windowId: string, paneId: string) => void;
   splitPane: (deviceId: string, paneId: string, direction: 'right' | 'down', cwd?: string) => void;
   renamePane: (deviceId: string, paneId: string, name: string) => void;
@@ -115,6 +97,8 @@ export interface TmuxState {
 }
 
 const CONNECT_DEDUP_WINDOW_MS = 500;
+const SCREEN_BYTE_LIMIT = 512 * 1024;
+const HISTORY_PAGE_BYTE_LIMIT = 256 * 1024;
 
 export interface TmuxStoreDeps {
   getUI: () => UIStore;
@@ -130,6 +114,9 @@ export function createTmuxStore(
 
   const lastReportedTerminalSizes = new Map<string, { cols: number; rows: number; at: number }>();
   const selectRetryTimers = new Map<string, ReturnType<typeof setTimeout>>();
+  const mountedPaneCounts = new Map<string, Map<string, number>>();
+  const manualPaneSubscriptions = new Map<string, Set<string>>();
+  const subscriptionGenerations = new Map<string, bigint>();
 
   function shouldSkipDuplicateConnect(deviceId: string): boolean {
     const now = Date.now();
@@ -147,8 +134,26 @@ export function createTmuxStore(
   // 这里在设备连上/重连/主题切换时按前端当前主题覆盖，保持 tmux 代答的 OSC 10/11 颜色一致。
   function sendWindowStyleForCurrentTheme(deviceId: string): void {
     const style = getTmuxWindowStyle(deps.getUI().getState().theme);
-    const msg = buildTmuxSetWindowStyle(deviceId, style);
-    core.client.send(msg.kind, msg.payload);
+    core.transport.send({ type: 'set-window-style', deviceId, style });
+  }
+
+  function currentPaneSubscriptions(deviceId: string): string[] {
+    const panes = new Set(manualPaneSubscriptions.get(deviceId) ?? []);
+    for (const [paneId, count] of mountedPaneCounts.get(deviceId) ?? []) {
+      if (count > 0) panes.add(paneId);
+    }
+    return [...panes].sort();
+  }
+
+  function sendPaneSubscriptions(deviceId: string): void {
+    const generation = (subscriptionGenerations.get(deviceId) ?? 0n) + 1n;
+    subscriptionGenerations.set(deviceId, generation);
+    core.transport.send({
+      type: 'set-pane-subscriptions',
+      deviceId,
+      generation,
+      paneIds: currentPaneSubscriptions(deviceId),
+    });
   }
 
   function normalizeTerminalSize(
@@ -164,14 +169,14 @@ export function createTmuxStore(
     return { cols: safeCols, rows: safeRows };
   }
 
-  function setupClientHandlers(
+  function setupTransportHandlers(
     setState: (partial: Partial<TmuxState> | ((prev: TmuxState) => Partial<TmuxState>)) => void,
     getState: () => TmuxState
   ): void {
     if (initialized) return;
     initialized = true;
 
-    const client = core.client;
+    const transport = core.transport;
 
     // 选择状态机的输出/历史统一经 pane-sink-registry 按 (deviceId, paneId) 路由到
     // 各 Terminal 实例（分屏多实例）；回调一次性设置，Terminal 只注册/注销 sink
@@ -217,27 +222,6 @@ export function createTmuxStore(
       getState().selectPane(deviceId, current.windowId, current.paneId);
     };
 
-    disposers.push(
-      client.onStateChange((state) => {
-        setState((prev) => ({
-          connectionState: state,
-          hasConnectedOnce: state === 'READY' ? true : prev.hasConnectedOnce,
-          wsLatencyMs: state === 'READY' ? prev.wsLatencyMs : null,
-        }));
-      })
-    );
-
-    disposers.push(
-      client.onChunkProgress(({ originalKind }) => {
-        if (
-          originalKind === wsBorsh.KIND_TERM_HISTORY ||
-          originalKind === wsBorsh.KIND_TERM_OUTPUT
-        ) {
-          core.selectMachine().reportTerminalProgress();
-        }
-      })
-    );
-
     disposers.push(() => {
       for (const timer of selectRetryTimers.values()) {
         clearTimeout(timer);
@@ -245,209 +229,193 @@ export function createTmuxStore(
       selectRetryTimers.clear();
     });
 
-    disposers.push(
-      client.onMessage((msg) => {
-        const sm = core.selectMachine();
+    const handleReady = (): void => {
+      lastConnectSentAt.clear();
+      setState((prev) => {
+        const cleared = { ...prev.deviceReconnecting };
+        for (const key of Object.keys(cleared)) cleared[key] = undefined;
+        return { deviceReconnecting: cleared };
+      });
+      for (const deviceId of getState().connectedDevices) {
+        if (!shouldSkipDuplicateConnect(deviceId)) {
+          transport.send({ type: 'connect-device', deviceId });
+        }
+        if (currentPaneSubscriptions(deviceId).length > 0) sendPaneSubscriptions(deviceId);
+      }
+    };
 
-        switch (msg.kind) {
-          case wsBorsh.KIND_DEVICE_CONNECTED: {
-            const decoded = wsBorsh.decodePayload(
-              wsBorsh.schema.DeviceConnectedSchema,
-              msg.payload
-            );
-            setState((prev) => ({
-              deviceConnected: { ...prev.deviceConnected, [decoded.deviceId]: true },
-              deviceErrors: { ...prev.deviceErrors, [decoded.deviceId]: undefined },
-              deviceReconnecting: { ...prev.deviceReconnecting, [decoded.deviceId]: undefined },
-            }));
-            sendWindowStyleForCurrentTheme(decoded.deviceId);
-            maybeReselectCurrentPane(decoded.deviceId);
-            return;
-          }
-
-          case wsBorsh.KIND_DEVICE_DISCONNECTED: {
-            const decoded = wsBorsh.decodePayload(
-              wsBorsh.schema.DeviceDisconnectedSchema,
-              msg.payload
-            );
-            sm.cleanup(decoded.deviceId);
-            core.paneSinks.cleanupDevicePaneState(decoded.deviceId);
-            setState((prev) => ({
-              deviceConnected: { ...prev.deviceConnected, [decoded.deviceId]: false },
-            }));
-            return;
-          }
-
-          case wsBorsh.KIND_DEVICE_EVENT: {
-            const payload = wsBorsh.decodeDeviceEventPayload(msg.payload);
-            handleDeviceEvent(setState, payload);
-            if (payload.type === 'reconnected') {
-              sendWindowStyleForCurrentTheme(payload.deviceId);
-              maybeReselectCurrentPane(payload.deviceId);
+    const handleTransportEvent = (event: GatewayTransportEvent): void => {
+      const sm = core.selectMachine();
+      switch (event.type) {
+        case 'connection-state':
+          setState((prev) => ({
+            connectionState: event.state,
+            hasConnectedOnce: event.state === 'READY' ? true : prev.hasConnectedOnce,
+            wsLatencyMs: event.state === 'READY' ? prev.wsLatencyMs : null,
+          }));
+          if (event.state === 'READY') handleReady();
+          return;
+        case 'latency':
+          setState({ wsLatencyMs: event.latencyMs });
+          return;
+        case 'terminal-progress':
+          core.selectMachine().reportTerminalProgress(event.deviceId);
+          return;
+        case 'device-connected':
+          setState((prev) => ({
+            deviceConnected: { ...prev.deviceConnected, [event.deviceId]: true },
+            deviceErrors: { ...prev.deviceErrors, [event.deviceId]: undefined },
+            deviceReconnecting: { ...prev.deviceReconnecting, [event.deviceId]: undefined },
+          }));
+          sendWindowStyleForCurrentTheme(event.deviceId);
+          if (!transport.capabilities.atomicScreen) maybeReselectCurrentPane(event.deviceId);
+          return;
+        case 'device-disconnected':
+          sm.cleanup(event.deviceId);
+          core.paneSinks.cleanupDevicePaneState(event.deviceId);
+          setState((prev) => ({
+            deviceConnected: { ...prev.deviceConnected, [event.deviceId]: false },
+          }));
+          return;
+        case 'device-event':
+          handleDeviceEvent(setState, event.event);
+          if (event.event.type === 'reconnected') {
+            sendWindowStyleForCurrentTheme(event.event.deviceId);
+            if (!transport.capabilities.atomicScreen) {
+              maybeReselectCurrentPane(event.event.deviceId);
             }
+          }
+          return;
+        case 'metadata-snapshot':
+          setState((prev) => ({
+            snapshots: {
+              ...prev.snapshots,
+              [event.snapshot.deviceId]: event.snapshot,
+            },
+          }));
+          return;
+        case 'metadata-patch':
+          setState((prev) => {
+            const current = prev.snapshots[event.deviceId];
+            if (!current) return {};
+            return {
+              snapshots: {
+                ...prev.snapshots,
+                [event.deviceId]: wsBorsh.applyLegacyStateSnapshotDiff(current, event.patch),
+              },
+            };
+          });
+          return;
+        case 'tmux-event':
+          handleTmuxEvent(setState, event.event);
+          return;
+        case 'selection-ack':
+          sm.dispatch({
+            type: 'SWITCH_ACK',
+            deviceId: event.deviceId,
+            selectToken: event.selectToken,
+          });
+          return;
+        case 'legacy-history':
+          if (
+            core.paneSinks.dispatchPaneHistory(
+              event.deviceId,
+              event.paneId,
+              event.selectToken,
+              event.data,
+              event.alternateScreen,
+              event.modes
+            )
+          ) {
             return;
           }
-
-          case wsBorsh.KIND_STATE_SNAPSHOT: {
-            const payload = wsBorsh.decodeStateSnapshot(msg.payload);
-            setState((prev) => ({
-              snapshots: { ...prev.snapshots, [payload.deviceId]: payload },
-            }));
-            return;
-          }
-
-          case wsBorsh.KIND_STATE_SNAPSHOT_DIFF: {
-            const payload = wsBorsh.decodePayload(
-              wsBorsh.schema.StateSnapshotDiffSchema,
-              msg.payload
-            );
-            if (payload.diffFormat !== wsBorsh.STATE_SNAPSHOT_DIFF_FORMAT_ABSOLUTE_JSON) return;
-            const diff = wsBorsh.decodeLegacyStateSnapshotDiff(payload.diffBytes);
-            setState((prev) => {
-              const current = prev.snapshots[payload.deviceId];
-              if (!current) return {};
-              return {
-                snapshots: {
-                  ...prev.snapshots,
-                  [payload.deviceId]: wsBorsh.applyLegacyStateSnapshotDiff(current, diff),
-                },
-              };
-            });
-            return;
-          }
-
-          case wsBorsh.KIND_TMUX_EVENT: {
-            const payload = wsBorsh.decodeTmuxEventPayload(msg.payload);
-            handleTmuxEvent(setState, payload);
-            return;
-          }
-
-          case wsBorsh.KIND_SWITCH_ACK: {
-            const decoded = wsBorsh.decodePayload(wsBorsh.schema.SwitchAckSchema, msg.payload);
-            sm.dispatch({
-              type: 'SWITCH_ACK',
-              deviceId: decoded.deviceId,
-              selectToken: decoded.selectToken,
-            });
-            return;
-          }
-
-          case wsBorsh.KIND_TERM_HISTORY: {
-            const decoded = wsBorsh.decodePayload(wsBorsh.schema.TermHistorySchema, msg.payload);
-            const text = new TextDecoder().decode(decoded.data);
-            // 先试非焦点 pane 的 fetch-history 路径（token 命中 gate 才消费）
-            if (
-              core.paneSinks.dispatchPaneHistory(
-                decoded.deviceId,
-                decoded.paneId,
-                decoded.selectToken,
-                text,
-                decoded.alternateScreen,
-                decoded.modes
-              )
-            ) {
-              return;
-            }
-            sm.dispatch({
-              type: 'HISTORY',
-              deviceId: decoded.deviceId,
-              selectToken: decoded.selectToken,
-              data: text,
-              alternateScreen: decoded.alternateScreen,
-              modes: decoded.modes,
-            });
-            return;
-          }
-
-          case wsBorsh.KIND_LIVE_RESUME: {
-            const decoded = wsBorsh.decodePayload(wsBorsh.schema.LiveResumeSchema, msg.payload);
-            sm.dispatch({
-              type: 'LIVE_RESUME',
-              deviceId: decoded.deviceId,
-              selectToken: decoded.selectToken,
-            });
-            return;
-          }
-
-          case wsBorsh.KIND_TERM_OUTPUT: {
-            const decoded = wsBorsh.decodePayload(wsBorsh.schema.TermOutputSchema, msg.payload);
+          sm.dispatch({
+            type: 'HISTORY',
+            deviceId: event.deviceId,
+            selectToken: event.selectToken,
+            data: event.data,
+            alternateScreen: event.alternateScreen,
+            modes: event.modes,
+          });
+          return;
+        case 'live-resume':
+          sm.dispatch({
+            type: 'LIVE_RESUME',
+            deviceId: event.deviceId,
+            selectToken: event.selectToken,
+          });
+          return;
+        case 'terminal-data':
+          if (event.frame.seqStart === undefined) {
             sm.dispatch({
               type: 'OUTPUT',
-              deviceId: decoded.deviceId,
-              paneId: decoded.paneId,
-              data: decoded.data,
+              deviceId: event.frame.deviceId,
+              paneId: event.frame.paneId,
+              data: event.frame.data,
             });
-            return;
+          } else {
+            core.paneSinks.dispatchPaneTerminalData(event.frame);
           }
-
-          case wsBorsh.KIND_CLIPBOARD_WRITE: {
-            const decoded = wsBorsh.decodePayload(wsBorsh.schema.ClipboardWriteSchema, msg.payload);
-            // visibility 不抽象：仍直接读 document.visibilityState
-            if (document.visibilityState !== 'visible') {
-              return;
-            }
-            const current = getState().selectedPanes[decoded.deviceId];
-            if (!current || current.paneId !== decoded.paneId) {
-              return;
-            }
-            void core.host.writeClipboardText(decoded.text).then(
-              () => {
-                core.notifications.success(core.t('terminal.copied'));
-              },
-              (err) => {
-                console.warn('[tmux] clipboard write failed:', err);
+          return;
+        case 'screen-snapshot':
+          core.paneSinks.dispatchPaneScreenSnapshot(event.snapshot);
+          return;
+        case 'history-page':
+          core.paneSinks.dispatchPaneHistoryPage(event.page);
+          return;
+        case 'subscription-applied':
+          for (const paneId of event.rejectedPaneIds) {
+            core.paneSinks.dispatchPaneRebase(event.deviceId, paneId, 'resource_exhausted');
+          }
+          return;
+        case 'rebase-required':
+          if (event.reason === 'metadata_gap') return;
+          if (event.deviceId && event.paneId) {
+            core.paneSinks.dispatchPaneRebase(event.deviceId, event.paneId, event.reason);
+          } else {
+            for (const [deviceId, panes] of mountedPaneCounts) {
+              if (event.deviceId && event.deviceId !== deviceId) continue;
+              for (const paneId of panes.keys()) {
+                core.paneSinks.dispatchPaneRebase(deviceId, paneId, event.reason);
               }
-            );
+            }
+          }
+          return;
+        case 'clipboard-write': {
+          if (typeof document === 'undefined' || document.visibilityState !== 'visible') {
             return;
           }
-
-          case wsBorsh.KIND_ERROR: {
-            // 连接级错误不一定需要 toast；保留给上层需要时再做
+          const current = getState().selectedPanes[event.deviceId];
+          if (!current || current.paneId !== event.paneId) {
             return;
           }
-
-          case wsBorsh.KIND_SITE_THEME_UPDATE: {
-            const decoded = decodeSiteThemeUpdate(msg.payload);
-            const themeName = decoded.theme === wsBorsh.SITE_THEME_LIGHT ? 'light' : 'dark';
-            deps.getSite().getState().setThemeFromS2C(themeName);
-            return;
-          }
+          void core.host.writeClipboardText(event.text).then(
+            () => {
+              core.notifications.success(core.t('terminal.copied'));
+            },
+            (err) => {
+              console.warn('[tmux] clipboard write failed:', err);
+            }
+          );
+          return;
         }
-      })
-    );
+        case 'site-theme-update':
+          deps.getSite().getState().setThemeFromS2C(event.theme);
+          return;
+        case 'transport-error':
+          console.error('[tmux] gateway transport error:', event.error);
+          return;
+      }
+    };
 
-    disposers.push(
-      client.onError((error) => {
-        console.error('[tmux] borsh ws error:', error);
-      })
-    );
-
-    disposers.push(
-      client.onLatency((ms) => {
-        setState({ wsLatencyMs: ms });
-      })
-    );
-
-    // 首次 READY 后补发 connect（避免重连后丢失连接）
-    disposers.push(
-      client.onStateChange((state) => {
-        if (state !== 'READY') return;
-        lastConnectSentAt.clear();
-        setState((prev) => {
-          const cleared = { ...prev.deviceReconnecting };
-          for (const key of Object.keys(cleared)) {
-            cleared[key] = undefined;
-          }
-          return { deviceReconnecting: cleared };
-        });
-        const connectedDevices = getState().connectedDevices;
-        for (const deviceId of connectedDevices) {
-          if (shouldSkipDuplicateConnect(deviceId)) continue;
-          const msg = buildDeviceConnect(deviceId);
-          client.send(msg.kind, msg.payload);
-        }
-      })
-    );
+    disposers.push(transport.onEvent(handleTransportEvent));
+    const initialState = transport.getState();
+    setState({
+      connectionState: initialState,
+      hasConnectedOnce: transport.hasConnectedOnce,
+      wsLatencyMs: transport.latencyMs,
+    });
+    if (initialState === 'READY') handleReady();
 
     // 主题切换时同步所有已连接设备的 tmux window-style
     let lastTheme = deps.getUI().getState().theme;
@@ -598,8 +566,8 @@ export function createTmuxStore(
     pendingCreateWindowAt: {},
 
     ensureSocketConnected() {
-      setupClientHandlers(set, get);
-      core.client.connect();
+      setupTransportHandlers(set, get);
+      core.transport.connect();
     },
 
     connectDevice(deviceId) {
@@ -614,8 +582,7 @@ export function createTmuxStore(
       get().ensureSocketConnected();
 
       if (shouldSkipDuplicateConnect(deviceId)) return;
-      const msg = buildDeviceConnect(deviceId);
-      core.client.send(msg.kind, msg.payload);
+      core.transport.send({ type: 'connect-device', deviceId });
     },
 
     disconnectDevice(deviceId) {
@@ -628,8 +595,10 @@ export function createTmuxStore(
       });
 
       core.selectMachine().cleanup(deviceId);
-      const msg = buildDeviceDisconnect(deviceId);
-      core.client.send(msg.kind, msg.payload);
+      manualPaneSubscriptions.delete(deviceId);
+      mountedPaneCounts.delete(deviceId);
+      subscriptionGenerations.delete(deviceId);
+      core.transport.send({ type: 'disconnect-device', deviceId });
     },
 
     clearDeviceError(deviceId) {
@@ -665,21 +634,24 @@ export function createTmuxStore(
       const selectToken = generateSelectToken();
       const wantHistory = true;
 
-      core.selectMachine().dispatch({
-        type: 'SELECT_START',
-        deviceId,
-        windowId,
-        paneId,
-        selectToken,
-        wantHistory,
-      });
+      if (!core.transport.capabilities.atomicScreen) {
+        core.selectMachine().dispatch({
+          type: 'SELECT_START',
+          deviceId,
+          windowId,
+          paneId,
+          selectToken,
+          wantHistory,
+        });
+      }
 
       const normalizedSize =
         normalizeTerminalSize(size?.cols, size?.rows) ??
         lastReportedTerminalSizes.get(deviceId) ??
         null;
 
-      const msg = buildTmuxSelect({
+      core.transport.send({
+        type: 'select-pane',
         deviceId,
         windowId,
         paneId,
@@ -688,19 +660,16 @@ export function createTmuxStore(
         cols: normalizedSize?.cols,
         rows: normalizedSize?.rows,
       });
-      core.client.send(msg.kind, msg.payload);
     },
 
     selectWindow(deviceId, windowId) {
       if (!deviceId || !windowId) return;
-      const msg = buildTmuxSelectWindow(deviceId, windowId);
-      core.client.send(msg.kind, msg.payload);
+      core.transport.send({ type: 'select-window', deviceId, windowId });
     },
 
     sendInput(deviceId, paneId, data, isComposing = false) {
       if (!deviceId || !paneId) return;
-      const msg = buildTermInput(deviceId, paneId, data, isComposing);
-      core.client.send(msg.kind, msg.payload);
+      core.transport.send({ type: 'terminal-input', deviceId, paneId, data, isComposing });
     },
 
     resizePane(deviceId, paneId, cols, rows) {
@@ -709,8 +678,7 @@ export function createTmuxStore(
       if (normalizedSize) {
         lastReportedTerminalSizes.set(deviceId, { ...normalizedSize, at: Date.now() });
       }
-      const msg = buildTermResize(deviceId, paneId, cols, rows);
-      core.client.send(msg.kind, msg.payload);
+      core.transport.send({ type: 'terminal-resize', deviceId, paneId, cols, rows });
     },
 
     syncPaneSize(deviceId, paneId, cols, rows) {
@@ -719,20 +687,17 @@ export function createTmuxStore(
       if (normalizedSize) {
         lastReportedTerminalSizes.set(deviceId, { ...normalizedSize, at: Date.now() });
       }
-      const msg = buildTermSyncSize(deviceId, paneId, cols, rows);
-      core.client.send(msg.kind, msg.payload);
+      core.transport.send({ type: 'terminal-sync-size', deviceId, paneId, cols, rows });
     },
 
     paste(deviceId, paneId, data) {
       if (!deviceId || !paneId) return;
-      const msg = buildTermPaste(deviceId, paneId, data);
-      core.client.send(msg.kind, msg.payload);
+      core.transport.send({ type: 'terminal-paste', deviceId, paneId, data });
     },
 
     createWindow(deviceId, name, cwd) {
       if (!deviceId) return;
-      const msg = buildTmuxCreateWindow(deviceId, name, cwd);
-      core.client.send(msg.kind, msg.payload);
+      core.transport.send({ type: 'create-window', deviceId, name, cwd });
       set((prev) => ({
         pendingCreateWindowAt: { ...prev.pendingCreateWindowAt, [deviceId]: Date.now() },
       }));
@@ -750,20 +715,17 @@ export function createTmuxStore(
 
     closeWindow(deviceId, windowId) {
       if (!deviceId || !windowId) return;
-      const msg = buildTmuxCloseWindow(deviceId, windowId);
-      core.client.send(msg.kind, msg.payload);
+      core.transport.send({ type: 'close-window', deviceId, windowId });
     },
 
     closePane(deviceId, paneId) {
       if (!deviceId || !paneId) return;
-      const msg = buildTmuxClosePane(deviceId, paneId);
-      core.client.send(msg.kind, msg.payload);
+      core.transport.send({ type: 'close-pane', deviceId, paneId });
     },
 
     renameWindow(deviceId, windowId, name) {
       if (!deviceId || !windowId) return;
-      const msg = buildTmuxRenameWindow(deviceId, windowId, name);
-      core.client.send(msg.kind, msg.payload);
+      core.transport.send({ type: 'rename-window', deviceId, windowId, name });
     },
 
     reorderWindows(deviceId, windowIds) {
@@ -783,22 +745,65 @@ export function createTmuxStore(
           },
         };
       });
-      const msg = buildTmuxReorderWindows(deviceId, windowIds);
-      core.client.send(msg.kind, msg.payload);
+      core.transport.send({ type: 'reorder-windows', deviceId, windowIds });
     },
 
     subscribePanes(deviceId, paneIds) {
       if (!deviceId) return;
-      const msg = buildTmuxSubscribePanes(deviceId, paneIds);
-      core.client.send(msg.kind, msg.payload);
+      manualPaneSubscriptions.set(deviceId, new Set(paneIds));
+      sendPaneSubscriptions(deviceId);
     },
 
-    fetchPaneHistory(deviceId, paneId) {
+    mountPane(deviceId, paneId) {
+      if (!deviceId || !paneId) return () => {};
+      const counts = mountedPaneCounts.get(deviceId) ?? new Map<string, number>();
+      mountedPaneCounts.set(deviceId, counts);
+      counts.set(paneId, (counts.get(paneId) ?? 0) + 1);
+      sendPaneSubscriptions(deviceId);
+
+      let released = false;
+      return () => {
+        if (released) return;
+        released = true;
+        const current = mountedPaneCounts.get(deviceId);
+        if (!current) return;
+        const nextCount = (current.get(paneId) ?? 1) - 1;
+        if (nextCount > 0) current.set(paneId, nextCount);
+        else current.delete(paneId);
+        if (current.size === 0) mountedPaneCounts.delete(deviceId);
+        sendPaneSubscriptions(deviceId);
+      };
+    },
+
+    requestPaneScreen(deviceId, paneId) {
       if (!deviceId || !paneId) return;
       const requestToken = generateSelectToken();
-      core.paneSinks.beginPaneHistoryGate(deviceId, paneId, requestToken);
-      const msg = buildTmuxFetchPaneHistory(deviceId, paneId, requestToken);
-      core.client.send(msg.kind, msg.payload);
+      if (!core.transport.capabilities.atomicScreen) {
+        core.paneSinks.beginPaneHistoryGate(deviceId, paneId, requestToken);
+      }
+      core.transport.send({
+        type: 'request-pane-screen',
+        requestId: requestToken,
+        deviceId,
+        paneId,
+        byteLimit: SCREEN_BYTE_LIMIT,
+      });
+    },
+
+    fetchPaneHistory(deviceId, paneId, cursor = null) {
+      if (!deviceId || !paneId) return;
+      const requestToken = generateSelectToken();
+      if (!core.transport.capabilities.cursorHistory) {
+        core.paneSinks.beginPaneHistoryGate(deviceId, paneId, requestToken);
+      }
+      core.transport.send({
+        type: 'request-pane-history',
+        requestId: requestToken,
+        deviceId,
+        paneId,
+        cursor,
+        byteLimit: HISTORY_PAGE_BYTE_LIMIT,
+      });
     },
 
     focusPane(deviceId, windowId, paneId) {
@@ -806,47 +811,46 @@ export function createTmuxStore(
       set((prev) => ({
         selectedPanes: { ...prev.selectedPanes, [deviceId]: { windowId, paneId } },
       }));
-      const msg = buildTmuxFocusPane(deviceId, windowId, paneId);
-      core.client.send(msg.kind, msg.payload);
+      core.transport.send({ type: 'focus-pane', deviceId, windowId, paneId });
     },
 
     splitPane(deviceId, paneId, direction, cwd) {
       if (!deviceId || !paneId) return;
-      const msg = buildTmuxSplitPane(deviceId, paneId, direction, cwd);
-      core.client.send(msg.kind, msg.payload);
+      core.transport.send({ type: 'split-pane', deviceId, paneId, direction, cwd });
     },
 
     renamePane(deviceId, paneId, name) {
       if (!deviceId || !paneId) return;
-      const msg = buildTmuxRenamePane(deviceId, paneId, name);
-      core.client.send(msg.kind, msg.payload);
+      core.transport.send({ type: 'rename-pane', deviceId, paneId, name });
     },
 
     movePane(deviceId, srcPaneId, dstPaneId, position) {
       if (!deviceId || !srcPaneId || !dstPaneId || srcPaneId === dstPaneId) return;
-      const msg = buildTmuxMovePane(deviceId, srcPaneId, dstPaneId, position);
-      core.client.send(msg.kind, msg.payload);
+      core.transport.send({ type: 'move-pane', deviceId, srcPaneId, dstPaneId, position });
     },
 
     breakPane(deviceId, paneId) {
       if (!deviceId || !paneId) return;
-      const msg = buildTmuxBreakPane(deviceId, paneId);
-      core.client.send(msg.kind, msg.payload);
+      core.transport.send({ type: 'break-pane', deviceId, paneId });
     },
 
     resizePaneInWindow(deviceId, paneId, size) {
       if (!deviceId || !paneId) return;
       if (size.cols === undefined && size.rows === undefined) return;
-      const msg = buildTmuxResizePane(deviceId, paneId, size);
-      core.client.send(msg.kind, msg.payload);
+      core.transport.send({ type: 'resize-pane-in-window', deviceId, paneId, ...size });
     },
 
     applyStackedLayout(deviceId, windowId, cols, rows) {
       if (!deviceId || !windowId) return;
       const normalized = normalizeTerminalSize(cols, rows);
       if (!normalized) return;
-      const msg = buildTmuxApplyStackedLayout(deviceId, windowId, normalized.cols, normalized.rows);
-      core.client.send(msg.kind, msg.payload);
+      core.transport.send({
+        type: 'apply-stacked-layout',
+        deviceId,
+        windowId,
+        cols: normalized.cols,
+        rows: normalized.rows,
+      });
     },
 
     reorderPanes(deviceId, windowId, paneIds) {
@@ -869,14 +873,12 @@ export function createTmuxStore(
           },
         };
       });
-      const msg = buildTmuxReorderPanes(deviceId, windowId, paneIds);
-      core.client.send(msg.kind, msg.payload);
+      core.transport.send({ type: 'reorder-panes', deviceId, windowId, paneIds });
     },
 
     syncThemeAfterResize(deviceId) {
       if (!deviceId) return;
-      const client = core.client;
-      if (!client.isReady()) return;
+      if (!core.transport.isReady()) return;
       sendWindowStyleForCurrentTheme(deviceId);
     },
   }));

@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, test } from 'bun:test';
 import {
   type PaneSink,
+  PaneSinkRegistry,
   beginPaneHistoryGate,
   cleanupDevicePaneState,
   dispatchPaneHistory,
@@ -29,6 +30,55 @@ afterEach(() => {
 });
 
 describe('pane-sink-registry', () => {
+  test('replays an atomic screen before sequenced output registered during mount', () => {
+    const registry = new PaneSinkRegistry();
+    const events: string[] = [];
+    const paneEpoch = new Uint8Array(16).fill(3);
+    registry.dispatchPaneScreenSnapshot({
+      deviceId: 'dev',
+      paneId: '%1',
+      paneEpoch,
+      baseSeq: 0n,
+      rows: 24,
+      cols: 80,
+      modes: 0,
+      data: encode('screen'),
+      historyCursor: null,
+    });
+    registry.dispatchPaneTerminalData({
+      deviceId: 'dev',
+      paneId: '%1',
+      paneEpoch,
+      seqStart: 0n,
+      seqEnd: 4n,
+      data: encode('live'),
+    });
+
+    registry.registerPaneSink('dev', '%1', {
+      onReset() {},
+      onApplyHistory() {},
+      onScreenSnapshot: () => events.push('screen'),
+      onOutput: () => events.push('output'),
+    });
+
+    expect(events).toEqual(['screen', 'output']);
+  });
+
+  test('turns an unmounted-pane buffer overflow into scoped recovery', () => {
+    const registry = new PaneSinkRegistry();
+    registry.dispatchPaneOutput('dev', '%1', new Uint8Array(2 * 1024 * 1024 + 1));
+    const reasons: string[] = [];
+
+    registry.registerPaneSink('dev', '%1', {
+      onReset() {},
+      onApplyHistory() {},
+      onOutput() {},
+      onRebase: (reason) => reasons.push(reason),
+    });
+
+    expect(reasons).toEqual(['resource_exhausted']);
+  });
+
   test('routes output to the matching pane sink only', () => {
     const a = createRecordingSink();
     const b = createRecordingSink();
