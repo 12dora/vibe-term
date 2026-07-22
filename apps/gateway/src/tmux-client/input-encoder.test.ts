@@ -1,6 +1,10 @@
 import { describe, expect, test } from 'bun:test';
 
-import { SEND_KEYS_HEX_CHUNK_BYTES, encodeInputToHexChunks } from './input-encoder';
+import {
+  SEND_KEYS_HEX_CHUNK_BYTES,
+  encodeBytesToHexChunks,
+  encodeInputToHexChunks,
+} from './input-encoder';
 
 describe('input encoder', () => {
   test('encodes utf-8 input into tmux send-keys hex chunks', () => {
@@ -13,5 +17,11 @@ describe('input encoder', () => {
     expect(chunks).toHaveLength(2);
     expect(chunks[0]).toHaveLength(SEND_KEYS_HEX_CHUNK_BYTES);
     expect(chunks[1]).toEqual(['61']);
+  });
+
+  test('preserves arbitrary canonical input bytes without a text round trip', () => {
+    expect(encodeBytesToHexChunks(new Uint8Array([0x00, 0x80, 0xff]))).toEqual([
+      ['00', '80', 'ff'],
+    ]);
   });
 });

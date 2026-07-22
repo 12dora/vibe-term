@@ -6,7 +6,7 @@ import { runMigrations } from '../db/migrate';
 import { createBorshClientState } from './borsh/codec-borsh';
 import { sessionStateStore } from './borsh/session-state';
 import { switchBarrier } from './borsh/switch-barrier';
-import { SNAPSHOT_WATCHDOG_INTERVAL_MS, WebSocketServer, payloadNeedsChunking } from './index';
+import { WebSocketServer, payloadNeedsChunking } from './index';
 
 // 快照下发路径会同步读 device_tree_order 表，确保所有用例前已建表
 beforeAll(() => {
@@ -128,7 +128,7 @@ describe('WebSocketServer connection entry dedup', () => {
     expect(server.connections.get('device-b')).toBe(fakeEntry);
   });
 
-  test('releases runtime when last websocket client disconnects from device', async () => {
+  test('keeps the runtime during reconnect grace and releases it on server shutdown', async () => {
     const released: string[] = [];
     const server = new WebSocketServer({
       deps: {
@@ -160,6 +160,9 @@ describe('WebSocketServer connection entry dedup', () => {
 
     server.handleDeviceDisconnect(ws, 'device-c');
 
+    expect(released).toEqual([]);
+    server.closeAll();
+    await Bun.sleep(0);
     expect(released).toEqual(['device-c']);
   });
 
@@ -211,12 +214,8 @@ describe('WebSocketServer connection entry dedup', () => {
   });
 });
 
-describe('WebSocketServer snapshot recovery watchdog', () => {
-  test('keeps the default idle refresh budget at no more than six full snapshots per minute', () => {
-    expect(Math.ceil(60_000 / SNAPSHOT_WATCHDOG_INTERVAL_MS)).toBeLessThanOrEqual(6);
-  });
-
-  test('starts the recovery watchdog only while a client has an active pane subscription', () => {
+describe('WebSocketServer snapshot recovery', () => {
+  test('does not install per-client snapshot polling for active panes', () => {
     const server = new WebSocketServer() as any;
     const ws = {
       data: { borshState: createBorshClientState() },
@@ -243,8 +242,7 @@ describe('WebSocketServer snapshot recovery watchdog', () => {
 
       ws.data.borshState.selectedPanes['device-watchdog'] = '%1';
       server.refreshSnapshotPolling('device-watchdog');
-      expect(setIntervalSpy).toHaveBeenCalledTimes(1);
-      expect(setIntervalSpy.mock.calls[0]?.[1]).toBe(SNAPSHOT_WATCHDOG_INTERVAL_MS);
+      expect(setIntervalSpy).not.toHaveBeenCalled();
 
       ws.data.borshState.selectedPanes['device-watchdog'] = undefined;
       server.refreshSnapshotPolling('device-watchdog');

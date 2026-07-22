@@ -11,6 +11,17 @@ import {
   type MetadataProjectionPatch,
   type MetadataProjectionSnapshot,
 } from './metadata-projection';
+import {
+  type PaneHistoryPage,
+  type PaneIdentity,
+  type PaneReplayPlan,
+  PaneRetention,
+  type PaneRetentionConsumerCallbacks,
+  type PaneRetentionConsumerLease,
+  type PaneRetentionStats,
+  type PaneScreenCheckpoint,
+  type PaneTerminalCursor,
+} from './pane-retention';
 import type { PromptMarker } from './pane-stream-parser';
 import { SshExternalTmuxConnection } from './ssh-external-connection';
 
@@ -20,6 +31,7 @@ export interface DeviceSessionRuntimeConnection {
   isSessionClosedEmitted?(): boolean;
   requestSnapshot(): void;
   sendInput(paneId: string, data: string): void;
+  sendInputBytes?(paneId: string, data: Uint8Array): void;
   resizePane(paneId: string, cols: number, rows: number): void;
   selectPane(windowId: string, paneId: string): void;
   selectPaneWithSize(windowId: string, paneId: string, cols: number, rows: number): void;
@@ -88,7 +100,9 @@ export class DeviceSessionRuntime {
 
   private readonly connection: DeviceSessionRuntimeConnection;
   private readonly metadataProjection: MetadataProjection;
+  private readonly paneRetention = new PaneRetention();
   private readonly listeners = new Set<DeviceSessionRuntimeListener>();
+  private readonly screenCaptures = new Map<string, Promise<PaneScreenCheckpoint | null>>();
   private lastSnapshot: StateSnapshotPayload | null = null;
   private connectPromise: Promise<void> | null = null;
   private terminated = false;
@@ -115,6 +129,8 @@ export class DeviceSessionRuntime {
         this.broadcast((listener) => listener.onEvent?.(event));
       },
       onTerminalOutput: (paneId, data) => {
+        const paneEpoch = this.metadataProjection.ensurePaneEpoch(paneId);
+        if (paneEpoch) this.paneRetention.ingest(paneId, paneEpoch, data);
         this.broadcast((listener) => listener.onTerminalOutput?.(paneId, data));
       },
       onTerminalHistory: (paneId, data, alternateScreen, modes) => {
@@ -136,9 +152,18 @@ export class DeviceSessionRuntime {
       },
       beginMetadataReconcile: () => this.metadataProjection.revision,
       onSnapshot: (payload, baseRevision) => {
+        const changed = !stateSnapshotsEqual(this.lastSnapshot, payload);
         this.lastSnapshot = payload;
         this.metadataProjection.reconcile(payload, baseRevision);
-        this.broadcast((listener) => listener.onSnapshot?.(payload));
+        const panes: PaneIdentity[] = [];
+        for (const window of payload.session?.windows ?? []) {
+          for (const pane of window.panes) {
+            const paneEpoch = this.metadataProjection.getPaneEpoch(pane.id);
+            if (paneEpoch) panes.push({ paneId: pane.id, paneEpoch });
+          }
+        }
+        this.paneRetention.reconcilePanes(panes);
+        if (changed) this.broadcast((listener) => listener.onSnapshot?.(payload));
       },
       onError: (error) => {
         this.broadcast((listener) => listener.onError?.(error));
@@ -186,6 +211,7 @@ export class DeviceSessionRuntime {
       this.terminated = true;
       this.connectPromise = null;
       this.metadataProjection.dispose();
+      this.paneRetention.dispose();
       throw error;
     });
 
@@ -202,6 +228,7 @@ export class DeviceSessionRuntime {
     this.connectPromise = null;
     this.connection.disconnect();
     this.metadataProjection.dispose();
+    this.paneRetention.dispose();
   }
 
   async shutdown(): Promise<void> {
@@ -220,12 +247,67 @@ export class DeviceSessionRuntime {
     return this.metadataProjection.currentSnapshot();
   }
 
+  getServerEpoch(): Uint8Array | null {
+    return this.metadataProjection.serverEpoch;
+  }
+
+  getPaneIdentity(paneId: string): PaneIdentity | null {
+    if (!this.metadataProjection.hasPane(paneId)) return null;
+    const paneEpoch = this.metadataProjection.getPaneEpoch(paneId);
+    return paneEpoch ? { paneId, paneEpoch } : null;
+  }
+
+  attachPaneConsumer(callbacks: PaneRetentionConsumerCallbacks): PaneRetentionConsumerLease {
+    return this.paneRetention.attachConsumer(callbacks);
+  }
+
+  getPaneRetentionStats(): PaneRetentionStats {
+    return this.paneRetention.snapshotStats();
+  }
+
+  getPaneScreenCheckpoint(paneId: string): PaneScreenCheckpoint | null {
+    return this.paneRetention.getScreenCheckpoint(paneId);
+  }
+
+  readPaneReplay(paneId: string, cursor: PaneTerminalCursor): PaneReplayPlan | null {
+    return this.paneRetention.readReplay(paneId, cursor);
+  }
+
+  readPaneHistory(
+    paneId: string,
+    beforeCursor: PaneTerminalCursor | null,
+    byteLimit: number
+  ): PaneHistoryPage | null {
+    return this.paneRetention.readHistory(paneId, beforeCursor, byteLimit);
+  }
+
+  async captureCanonicalScreen(
+    paneId: string,
+    byteLimit: number
+  ): Promise<PaneScreenCheckpoint | null> {
+    const existing = this.screenCaptures.get(paneId);
+    if (existing) return existing;
+    const capture = this.captureCanonicalScreenInternal(paneId, byteLimit).finally(() => {
+      if (this.screenCaptures.get(paneId) === capture) this.screenCaptures.delete(paneId);
+    });
+    this.screenCaptures.set(paneId, capture);
+    return capture;
+  }
+
   setCustomName(kind: 'window' | 'pane', nativeId: string, name: string | null): void {
     this.metadataProjection.setCustomName(kind, nativeId, name);
   }
 
   sendInput(paneId: string, data: string): void {
     this.connection.sendInput(paneId, data);
+  }
+
+  sendInputBytes(paneId: string, data: Uint8Array): void {
+    if (this.connection.sendInputBytes) {
+      this.connection.sendInputBytes(paneId, data);
+      return;
+    }
+    this.connection.sendInput(paneId, new TextDecoder().decode(data));
   }
 
   resizePane(paneId: string, cols: number, rows: number): void {
@@ -326,6 +408,52 @@ export class DeviceSessionRuntime {
     return this.connection.getPaneInfo(paneId);
   }
 
+  private async captureCanonicalScreenInternal(
+    paneId: string,
+    byteLimit: number
+  ): Promise<PaneScreenCheckpoint | null> {
+    const identity = this.getPaneIdentity(paneId);
+    if (!identity) return null;
+    const maxBytes = Math.min(byteLimit, this.paneRetention.maxCheckpointBytesPerPane);
+    if (maxBytes < 64) return null;
+    const info = await this.connection.getPaneInfo(paneId);
+    const estimatedBytesPerLine = Math.max(16, info.cols * 4);
+    const boundedTotalLines = Math.max(
+      info.rows,
+      Math.min(info.rows + 256, Math.floor(maxBytes / estimatedBytesPerLine))
+    );
+    const historyLines = Math.max(0, boundedTotalLines - info.rows);
+    const text = await this.connection.capturePaneText(paneId, { historyLines });
+    const prefix = info.alternateScreen ? '\x1b[?1049h\x1b[2J\x1b[H' : '\x1b[2J\x1b[H';
+    const cursor =
+      info.cursorX === null || info.cursorY === null
+        ? ''
+        : `\x1b[${info.cursorY + 1};${info.cursorX + 1}H`;
+    const encoder = new TextEncoder();
+    const prefixBytes = encoder.encode(prefix);
+    const cursorBytes = encoder.encode(cursor);
+    const textBudget = Math.max(0, maxBytes - prefixBytes.byteLength - cursorBytes.byteLength);
+    const textBytes = truncateUtf8Tail(encoder.encode(text), textBudget);
+    const data = concatBytes(prefixBytes, textBytes, cursorBytes);
+    const latest = this.paneRetention.getLatestCursor(paneId);
+    const currentIdentity = this.getPaneIdentity(paneId);
+    if (!latest || !currentIdentity || !bytesEqual(identity.paneEpoch, currentIdentity.paneEpoch)) {
+      return null;
+    }
+    const checkpoint: PaneScreenCheckpoint = {
+      paneId,
+      paneEpoch: currentIdentity.paneEpoch,
+      baseSeq: latest.terminalSeq,
+      rows: Math.max(1, Math.min(info.rows, 0xffff)),
+      cols: Math.max(1, Math.min(info.cols, 0xffff)),
+      modes: info.alternateScreen ? 1 : 0,
+      data,
+      capturedAt: Date.now(),
+    };
+    this.paneRetention.storeScreenCheckpoint(checkpoint);
+    return checkpoint;
+  }
+
   private broadcast(action: (listener: DeviceSessionRuntimeListener) => void): void {
     for (const listener of this.listeners) {
       try {
@@ -335,6 +463,84 @@ export class DeviceSessionRuntime {
       }
     }
   }
+}
+
+function bytesEqual(left: Uint8Array, right: Uint8Array): boolean {
+  return left.byteLength === right.byteLength && left.every((byte, index) => byte === right[index]);
+}
+
+function stateSnapshotsEqual(
+  left: StateSnapshotPayload | null,
+  right: StateSnapshotPayload
+): boolean {
+  if (!left || left.deviceId !== right.deviceId) return false;
+  if (!left.session || !right.session) return left.session === right.session;
+  if (
+    left.session.id !== right.session.id ||
+    left.session.name !== right.session.name ||
+    left.session.windows.length !== right.session.windows.length
+  ) {
+    return false;
+  }
+  for (let windowIndex = 0; windowIndex < left.session.windows.length; windowIndex += 1) {
+    const previousWindow = left.session.windows[windowIndex];
+    const nextWindow = right.session.windows[windowIndex];
+    if (
+      !previousWindow ||
+      !nextWindow ||
+      previousWindow.id !== nextWindow.id ||
+      previousWindow.name !== nextWindow.name ||
+      previousWindow.customName !== nextWindow.customName ||
+      previousWindow.index !== nextWindow.index ||
+      previousWindow.active !== nextWindow.active ||
+      previousWindow.layout !== nextWindow.layout ||
+      previousWindow.panes.length !== nextWindow.panes.length
+    ) {
+      return false;
+    }
+    for (let paneIndex = 0; paneIndex < previousWindow.panes.length; paneIndex += 1) {
+      const previousPane = previousWindow.panes[paneIndex];
+      const nextPane = nextWindow.panes[paneIndex];
+      if (
+        !previousPane ||
+        !nextPane ||
+        previousPane.id !== nextPane.id ||
+        previousPane.windowId !== nextPane.windowId ||
+        previousPane.index !== nextPane.index ||
+        previousPane.title !== nextPane.title ||
+        previousPane.customName !== nextPane.customName ||
+        previousPane.currentCommand !== nextPane.currentCommand ||
+        previousPane.currentPath !== nextPane.currentPath ||
+        previousPane.active !== nextPane.active ||
+        previousPane.width !== nextPane.width ||
+        previousPane.height !== nextPane.height ||
+        previousPane.left !== nextPane.left ||
+        previousPane.top !== nextPane.top
+      ) {
+        return false;
+      }
+    }
+  }
+  return true;
+}
+
+function truncateUtf8Tail(value: Uint8Array, byteLimit: number): Uint8Array {
+  let start = Math.max(0, value.byteLength - byteLimit);
+  while (start < value.byteLength && (value[start] ?? 0) >= 0x80 && (value[start] ?? 0) < 0xc0) {
+    start += 1;
+  }
+  return value.slice(start);
+}
+
+function concatBytes(...values: Uint8Array[]): Uint8Array {
+  const total = values.reduce((sum, value) => sum + value.byteLength, 0);
+  const result = new Uint8Array(total);
+  let offset = 0;
+  for (const value of values) {
+    result.set(value, offset);
+    offset += value.byteLength;
+  }
+  return result;
 }
 
 export function createDeviceSessionRuntime(

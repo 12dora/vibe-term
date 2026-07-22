@@ -20,16 +20,16 @@ import {
 } from './capture-history';
 import type { TmuxConnectionOptions } from './connection-types';
 import {
-  SOURCE_METADATA_SUBSCRIPTION_COMMANDS,
   type ControlModeSubscription,
+  SOURCE_METADATA_SUBSCRIPTION_COMMANDS,
   createControlModeSubscription,
 } from './control-mode-subscription';
 import type { ControlStreamMetricsSnapshot } from './control-stream-metrics';
 import { buildEnsureGhosttyTerminfoScript } from './ghostty-terminfo';
-import { encodeInputToHexChunks } from './input-encoder';
+import { encodeBytesToHexChunks, encodeInputToHexChunks } from './input-encoder';
 import { ConnectionLifecycleEmitter } from './lifecycle-emitter';
 import type { PaneStreamNotification } from './pane-stream-parser';
-import { PaneTitleSnapshotCoordinator } from './pane-title-snapshot-coordinator';
+import { ensureStableServerEpoch } from './server-epoch';
 import {
   PANE_SNAPSHOT_FORMAT,
   SNAPSHOT_FIELD_SEPARATOR,
@@ -44,7 +44,6 @@ import {
   splitSnapshotFields,
 } from './snapshot-format';
 import { SnapshotRefreshCoordinator } from './snapshot-refresh-coordinator';
-import { ensureStableServerEpoch } from './server-epoch';
 import { TmuxTargetMissingError, isTargetMissingMessage } from './target-missing';
 import { createThemeSubscriptionTracker } from './theme-subscriptions';
 import {
@@ -206,11 +205,6 @@ export class LocalExternalTmuxConnection {
   private activePaneId: string | null = null;
   private snapshotSession: Pick<TmuxSession, 'id' | 'name'> | null = null;
   private snapshotWindows = new Map<string, TmuxWindow>();
-  private readonly paneTitleSnapshots = new PaneTitleSnapshotCoordinator({
-    getWindows: () => this.snapshotWindows.values(),
-    emitSnapshot: () => this.emitSnapshot(),
-    canEmit: () => this.connected && !this.manualDisconnect,
-  });
   private inputTransition: Promise<void> = Promise.resolve();
   private stackedLayoutTransition: Promise<void> = Promise.resolve();
   private bellDedup = new Map<string, number>();
@@ -273,7 +267,6 @@ export class LocalExternalTmuxConnection {
     this.manualDisconnect = false;
     this.closeNotified = false;
     this.lifecycle.reset();
-    this.paneTitleSnapshots.reset();
     this.device = this.deps.getDevice(this.deviceId);
     if (!this.device) {
       throw new Error(`Device not found: ${this.deviceId}`);
@@ -326,12 +319,20 @@ export class LocalExternalTmuxConnection {
   }
 
   sendInput(paneId: string, data: string): void {
+    this.enqueueInputBytes(paneId, new TextEncoder().encode(data));
+  }
+
+  sendInputBytes(paneId: string, data: Uint8Array): void {
+    this.enqueueInputBytes(paneId, Uint8Array.from(data));
+  }
+
+  private enqueueInputBytes(paneId: string, data: Uint8Array): void {
     if (!this.connected) {
       return;
     }
 
     const task = async () => {
-      for (const chunk of encodeInputToHexChunks(data)) {
+      for (const chunk of encodeBytesToHexChunks(data)) {
         await this.runTmux(['send-keys', '-H', '-t', paneId, ...chunk]);
       }
     };
@@ -978,7 +979,6 @@ export class LocalExternalTmuxConnection {
         },
         onTitle: (paneId, title) => {
           this.callbacks.onSourceMetadata?.({ type: 'pane-title', paneId, title });
-          this.paneTitleSnapshots.noteTitle(paneId, title);
         },
         onSourceMetadata: (event) => {
           this.callbacks.onSourceMetadata?.(event);
@@ -1088,7 +1088,6 @@ export class LocalExternalTmuxConnection {
 
   private stopControlClient(): void {
     this.stopHeartbeat();
-    this.paneTitleSnapshots.reset();
     const proc = this.controlProcess;
     this.controlProcess = null;
     this.controlSubscription?.dispose();
@@ -1494,7 +1493,6 @@ export class LocalExternalTmuxConnection {
     this.themeSubscriptions.prune(expectedPaneIds);
     this.restoreThemeSubscriptionsOnce();
     this.markSpawnRecovered();
-    this.paneTitleSnapshots.noteFullSnapshotEmitted();
     this.emitSnapshot(baseRevision);
     this.lifecycle.emitSnapshotClosures(prevWindows);
   }
@@ -1562,7 +1560,7 @@ export class LocalExternalTmuxConnection {
         id: row.id,
         windowId: row.windowId,
         index: row.index,
-        title: this.paneTitleSnapshots.consumeTitle(row.id, row.title ?? ''),
+        title: row.title ?? '',
         currentCommand: row.currentCommand,
         currentPath: row.currentPath,
         // pane_active 是窗口内 active；list-panes -s 下每个窗口都有一个

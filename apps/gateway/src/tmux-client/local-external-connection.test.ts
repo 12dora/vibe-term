@@ -444,16 +444,20 @@ describe('LocalExternalTmuxConnection', () => {
     expect(fake.killed()).toBe(true);
   });
 
-  test('control title updates coalesce in memory without full tmux snapshots', async () => {
+  test('control title updates stay on the realtime metadata path without tmux snapshots', async () => {
     const fake = createFakeControlProcess();
     const commands: string[][] = [];
     const snapshots: StateSnapshotPayload[] = [];
+    const titles: string[] = [];
     const connection = new LocalExternalTmuxConnection(
       {
         deviceId: 'device-local',
         onEvent: () => {},
         onTerminalOutput: () => {},
         onTerminalHistory: () => {},
+        onSourceMetadata: (event) => {
+          if (event.type === 'pane-title') titles.push(event.title);
+        },
         onSnapshot: (snapshot) => snapshots.push(snapshot),
         onError: (error) => {
           throw error;
@@ -480,8 +484,7 @@ describe('LocalExternalTmuxConnection', () => {
       fake.pushStdout(`%output %1 \\033]2;build-${index}\\007\n`);
     }
 
-    await waitFor(() => (snapshots.length > 0 ? true : null));
-    await Bun.sleep(300);
+    await waitFor(() => (titles.length === 50 ? true : null));
 
     expect(
       commands.filter((argv) => {
@@ -493,21 +496,22 @@ describe('LocalExternalTmuxConnection', () => {
         );
       })
     ).toEqual([]);
-    expect(snapshots).toHaveLength(1);
-    expect(snapshots[0]?.session?.windows[0]?.panes[0]?.title).toBe('build-49');
+    expect(snapshots).toEqual([]);
+    expect(titles.at(-1)).toBe('build-49');
 
     fake.pushStdout('%output %1 \\033]2;build-49\\007\n');
-    await Bun.sleep(300);
-    expect(snapshots).toHaveLength(1);
+    await waitFor(() => (titles.length === 51 ? true : null));
+    expect(snapshots).toEqual([]);
 
     connection.disconnect();
   });
 
-  test('an unknown pane title waits for a structural snapshot', async () => {
+  test('an unknown pane title is forwarded for projection-owned reconciliation', async () => {
     const fake = createFakeControlProcess();
     const session = 'tmex-pending-title';
     const commands: string[][] = [];
     const snapshots: StateSnapshotPayload[] = [];
+    const titles: Array<{ paneId: string; title: string }> = [];
     let includeSecondPane = false;
     const connection = new LocalExternalTmuxConnection(
       {
@@ -515,6 +519,10 @@ describe('LocalExternalTmuxConnection', () => {
         onEvent: () => {},
         onTerminalOutput: () => {},
         onTerminalHistory: () => {},
+        onSourceMetadata: (event) => {
+          if (event.type === 'pane-title')
+            titles.push({ paneId: event.paneId, title: event.title });
+        },
         onSnapshot: (snapshot) => snapshots.push(snapshot),
         onError: (error) => {
           throw error;
@@ -548,16 +556,17 @@ describe('LocalExternalTmuxConnection', () => {
     snapshots.length = 0;
 
     fake.pushStdout('%output %2 \\033]2;pending-title\\007\n');
-    await Bun.sleep(300);
+    await waitFor(() => (titles.length === 1 ? true : null));
     expect(commands).toEqual([]);
     expect(snapshots).toEqual([]);
+    expect(titles).toEqual([{ paneId: '%2', title: 'pending-title' }]);
 
     includeSecondPane = true;
     fake.pushStdout('%window-add @2\n');
     await waitFor(() => (snapshots.length > 0 ? true : null));
 
     expect(snapshots[0]?.session?.windows[0]?.panes.find((pane) => pane.id === '%2')?.title).toBe(
-      'pending-title'
+      'stale'
     );
 
     connection.disconnect();

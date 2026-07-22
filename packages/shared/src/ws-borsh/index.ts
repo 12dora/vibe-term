@@ -112,6 +112,16 @@ export {
   encodeCanonicalEventPayload,
   decodeCanonicalEventPayload,
 } from './canonical-state';
+export {
+  STATE_SNAPSHOT_DIFF_FORMAT_ABSOLUTE_JSON,
+  applyLegacyStateSnapshotDiff,
+  decodeLegacyStateSnapshotDiff,
+  encodeLegacyStateSnapshotDiff,
+  sourceMetadataPatchToLegacyDiff,
+  type LegacyMetadataEntityDiff,
+  type LegacyMetadataFieldValue,
+  type LegacyStateSnapshotDiff,
+} from './state-snapshot-diff';
 
 // ========== 站点主题枚举值 ==========
 export {

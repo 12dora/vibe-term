@@ -5,7 +5,7 @@ import type { Client, ClientChannel, ConnectConfig } from 'ssh2';
 
 import { createDevice as createDeviceRow, getDeviceRuntimeStatus } from '../db';
 import { runMigrations } from '../db/migrate';
-import type { TmuxEvent } from './events';
+import type { TmuxEvent, TmuxSourceMetadataEvent } from './events';
 import { SshExternalTmuxConnection } from './ssh-external-connection';
 import { TmuxTargetMissingError } from './target-missing';
 
@@ -240,6 +240,7 @@ function collectCallbacks(overrides: {
   onEvent?: (event: TmuxEvent) => void;
   onTerminalOutput?: (paneId: string, data: Uint8Array) => void;
   onSnapshot?: (payload: StateSnapshotPayload) => void;
+  onSourceMetadata?: (event: TmuxSourceMetadataEvent) => void;
   onClose?: () => void;
 }) {
   return {
@@ -248,6 +249,7 @@ function collectCallbacks(overrides: {
     onTerminalOutput: overrides.onTerminalOutput ?? (() => {}),
     onTerminalHistory: () => {},
     onSnapshot: overrides.onSnapshot ?? (() => {}),
+    onSourceMetadata: overrides.onSourceMetadata ?? (() => {}),
     onError: (error: Error) => {
       throw error;
     },
@@ -367,14 +369,20 @@ describe('SshExternalTmuxConnection', () => {
     connection.disconnect();
   });
 
-  test('control title updates coalesce in memory without remote tmux snapshots', async () => {
+  test('control title updates stay on realtime metadata without remote tmux snapshots', async () => {
     const session = 'tmex-ssh-title';
     const fakeClient = new FakeClient();
     const writes: string[] = [];
     const snapshots: StateSnapshotPayload[] = [];
+    const titles: string[] = [];
     setupCommandChannel(fakeClient, session, { record: writes });
     const connection = new SshExternalTmuxConnection(
-      createCallbacks({ onSnapshot: (snapshot) => snapshots.push(snapshot) }),
+      createCallbacks({
+        onSnapshot: (snapshot) => snapshots.push(snapshot),
+        onSourceMetadata: (event) => {
+          if (event.type === 'pane-title') titles.push(event.title);
+        },
+      }),
       {
         getDevice: () => createDevice(session),
         decrypt: async () => 'secret',
@@ -394,8 +402,7 @@ describe('SshExternalTmuxConnection', () => {
       controlChannel.emit('data', Buffer.from(`%output %1 \\033]2;build-${index}\\007\n`));
     }
 
-    await waitFor(() => (snapshots.length > 0 ? true : null));
-    await Bun.sleep(300);
+    await waitFor(() => (titles.length === 50 ? true : null));
 
     expect(
       writes.filter(
@@ -405,12 +412,12 @@ describe('SshExternalTmuxConnection', () => {
           payload.includes(`'list-panes' '-s' '-t' '${session}'`)
       )
     ).toEqual([]);
-    expect(snapshots).toHaveLength(1);
-    expect(snapshots[0]?.session?.windows[0]?.panes[0]?.title).toBe('build-49');
+    expect(snapshots).toEqual([]);
+    expect(titles.at(-1)).toBe('build-49');
 
     controlChannel.emit('data', Buffer.from('%output %1 \\033]2;build-49\\007\n'));
-    await Bun.sleep(300);
-    expect(snapshots).toHaveLength(1);
+    await waitFor(() => (titles.length === 51 ? true : null));
+    expect(snapshots).toEqual([]);
 
     connection.disconnect();
   });
@@ -1275,7 +1282,9 @@ describe('SshExternalTmuxConnection lifecycle events', () => {
   }) {
     const fakeClient = new FakeClient();
     setupCommandChannel(fakeClient, options.session, {
-      overrides: options.overrides ? (payload) => options.overrides?.(payload, fakeClient) : undefined,
+      overrides: options.overrides
+        ? (payload) => options.overrides?.(payload, fakeClient)
+        : undefined,
     });
     const events: EmittedEvent[] = [];
     const connection = new SshExternalTmuxConnection(

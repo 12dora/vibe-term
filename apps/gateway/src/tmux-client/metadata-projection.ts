@@ -190,6 +190,24 @@ export class MetadataProjection {
     return this.serverEpochValue ? copyBytes(this.serverEpochValue) : null;
   }
 
+  getPaneEpoch(paneId: string): Uint8Array | null {
+    const paneEpoch = this.paneEpochs.get(paneId);
+    return paneEpoch ? copyBytes(paneEpoch) : null;
+  }
+
+  ensurePaneEpoch(paneId: string): Uint8Array | null {
+    if (!this.serverEpochValue) return null;
+    const existing = this.paneEpochs.get(paneId);
+    if (existing) return copyBytes(existing);
+    const paneEpoch = copyBytes(this.createEpoch());
+    this.paneEpochs.set(paneId, paneEpoch);
+    return copyBytes(paneEpoch);
+  }
+
+  hasPane(paneId: string): boolean {
+    return this.records.has(keyId({ entityKind: wsBorsh.SOURCE_ENTITY_PANE, nativeId: paneId }));
+  }
+
   setServerEpoch(serverEpoch: Uint8Array): void {
     if (serverEpoch.byteLength !== 16) throw new Error('server epoch must be 16 bytes');
     if (this.serverEpochValue && bytesEqual(this.serverEpochValue, serverEpoch)) return;
@@ -552,8 +570,8 @@ export class MetadataProjection {
             stringValue(pane.currentCommand)
           );
         }
-        const paneEpoch = this.paneEpochs.get(pane.id) ?? copyBytes(this.createEpoch());
-        this.paneEpochs.set(pane.id, paneEpoch);
+        const paneEpoch = this.ensurePaneEpoch(pane.id);
+        if (!paneEpoch) throw new Error('server epoch must be established before pane projection');
         paneRecord.fields.set(wsBorsh.SOURCE_FIELD_PANE_EPOCH, { Bytes16: copyBytes(paneEpoch) });
         const paneCustomName = this.paneCustomNames.get(pane.id) ?? pane.customName;
         if (paneCustomName) {

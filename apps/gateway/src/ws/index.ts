@@ -28,9 +28,15 @@ import type { TmuxEvent } from '../tmux-client/events';
 import { tmuxRuntimeRegistry } from '../tmux-client/registry';
 import { isTmuxPaneId, isTmuxWindowId } from '../tmux-client/snapshot-format';
 import { resolvePaneContext } from '../tmux/bell-context';
-import { type BorshClientState, createBorshClientState } from './borsh/codec-borsh';
+import {
+  type BorshClientState,
+  createBorshClientState,
+  decodeCanonicalCommand,
+  encodeCanonicalEvent,
+} from './borsh/codec-borsh';
 import { sessionStateStore } from './borsh/session-state';
 import { switchBarrier } from './borsh/switch-barrier';
+import { CanonicalFeedSession } from './canonical-feed-session';
 import { classifySshError } from './error-classify';
 import { GatewayActivityMetrics } from './gateway-activity-metrics';
 import { applyDeviceTreeOverlay } from './overlay-utils';
@@ -51,6 +57,8 @@ interface DeviceConnectionEntry {
   snapshotPollTimer: ReturnType<typeof setInterval> | null;
   reconnectAttempts: number;
   reconnectTimer: ReturnType<typeof setTimeout> | null;
+  canonicalClients?: Set<ServerWebSocket<ClientState>>;
+  idleReleaseTimer?: ReturnType<typeof setTimeout> | null;
 }
 
 interface WebSocketServerDeps {
@@ -75,7 +83,7 @@ interface WebSocketServerOptions {
   deps?: Partial<WebSocketServerDeps>;
 }
 
-export const SNAPSHOT_WATCHDOG_INTERVAL_MS = 10_000;
+export const RUNTIME_IDLE_GRACE_MS = 5_000;
 const ENVELOPE_OVERHEAD_BYTES = 16;
 
 export function payloadNeedsChunking(payloadLength: number, maxFrameBytes: number): boolean {
@@ -124,6 +132,10 @@ export class WebSocketServer {
   private lastBroadcastTheme = new Map<string, 'dark' | 'light'>();
   private readonly deviceTreeOrders = new Map<string, DeviceTreeOrderRecord>();
   private readonly deps: WebSocketServerDeps;
+  private readonly canonicalSessions = new Map<
+    ServerWebSocket<ClientState>,
+    CanonicalFeedSession
+  >();
 
   constructor(options: WebSocketServerOptions = {}) {
     this.deps = {
@@ -150,11 +162,36 @@ export class WebSocketServer {
     entry.reconnectTimer = null;
   }
 
+  private clearIdleReleaseTimer(entry: DeviceConnectionEntry): void {
+    if (!entry.idleReleaseTimer) return;
+    clearTimeout(entry.idleReleaseTimer);
+    entry.idleReleaseTimer = null;
+  }
+
+  private entryHasClients(entry: DeviceConnectionEntry): boolean {
+    return entry.clients.size > 0 || Boolean(entry.canonicalClients?.size);
+  }
+
+  private scheduleConnectionEntryRelease(deviceId: string, entry: DeviceConnectionEntry): void {
+    if (this.entryHasClients(entry)) {
+      this.clearIdleReleaseTimer(entry);
+      return;
+    }
+    if (entry.idleReleaseTimer) return;
+    entry.idleReleaseTimer = setTimeout(() => {
+      entry.idleReleaseTimer = null;
+      if (this.connections.get(deviceId) !== entry || this.entryHasClients(entry)) return;
+      this.connections.delete(deviceId);
+      this.releaseConnectionEntry(deviceId, entry);
+    }, RUNTIME_IDLE_GRACE_MS);
+  }
+
   private releaseConnectionEntry(deviceId: string, entry: DeviceConnectionEntry): void {
     this.terminalOutputBatcher.discardDevice(deviceId);
     this.clearSnapshotTimer(entry);
     this.clearSnapshotPollTimer(entry);
     this.clearReconnectTimer(entry);
+    this.clearIdleReleaseTimer(entry);
     entry.detachRuntime?.();
     entry.detachRuntime = null;
     this.themeSignalLast.delete(deviceId);
@@ -180,6 +217,13 @@ export class WebSocketServer {
       onSnapshot: (payload) => {
         this.broadcastStateSnapshot(deviceId, payload);
       },
+      onMetadataPatch: (patch) => {
+        this.broadcastLegacyMetadataPatch(deviceId, patch);
+      },
+      onMetadataRebaseRequired: () => {
+        const snapshot = runtime.getCurrentSnapshot();
+        if (snapshot) this.broadcastStateSnapshot(deviceId, snapshot);
+      },
       onError: (error) => {
         this.broadcastError(deviceId, error);
       },
@@ -194,51 +238,7 @@ export class WebSocketServer {
   private refreshSnapshotPolling(deviceId: string): void {
     const entry = this.connections.get(deviceId);
     if (!entry) return;
-
-    const hasSelectedPaneClient = Array.from(entry.clients).some(
-      (client) =>
-        Boolean(client.data.borshState.selectedPanes[deviceId]) ||
-        Boolean(client.data.borshState.subscribedPanes[deviceId]?.size)
-    );
-
-    if (!hasSelectedPaneClient) {
-      this.clearSnapshotPollTimer(entry);
-      return;
-    }
-
-    if (entry.snapshotPollTimer) {
-      return;
-    }
-
-    entry.snapshotPollTimer = setInterval(() => {
-      if (this.connections.get(deviceId) !== entry) {
-        return;
-      }
-
-      try {
-        entry.runtime.requestSnapshot();
-      } catch (err) {
-        console.error('[ws] polling snapshot failed:', err);
-      }
-    }, SNAPSHOT_WATCHDOG_INTERVAL_MS);
-  }
-
-  private scheduleSnapshot(deviceId: string): void {
-    const entry = this.connections.get(deviceId);
-    if (!entry) return;
-    if (entry.snapshotTimer) return;
-
-    entry.snapshotTimer = setTimeout(() => {
-      if (this.connections.get(deviceId) !== entry) {
-        return;
-      }
-      entry.snapshotTimer = null;
-      try {
-        entry.runtime.requestSnapshot();
-      } catch (err) {
-        console.error('[ws] failed to request snapshot:', err);
-      }
-    }, 100);
+    this.clearSnapshotPollTimer(entry);
   }
 
   handleUpgrade(req: Request, server: Server<any>): Response | false | undefined {
@@ -319,36 +319,83 @@ export class WebSocketServer {
 
   handleDrain(ws: ServerWebSocket<ClientState>): void {
     gatewayWebSocketSendGuard.handleDrain(ws as ServerWebSocket<unknown>);
+    this.canonicalSessions.get(ws)?.onDrain();
+  }
+
+  private getOrCreateCanonicalSession(ws: ServerWebSocket<ClientState>): CanonicalFeedSession {
+    const existing = this.canonicalSessions.get(ws);
+    if (existing) return existing;
+    const session = new CanonicalFeedSession({
+      maxFrameBytes: ws.data.borshState.maxFrameBytes,
+      sendEvent: (event) => this.sendCanonicalEvent(ws, event),
+      resolveRuntime: async (deviceId) => {
+        const entry = await this.getOrCreateConnectionEntry(deviceId, ws);
+        if (!entry) return null;
+        entry.canonicalClients ??= new Set();
+        entry.canonicalClients.add(ws);
+        this.clearIdleReleaseTimer(entry);
+        return entry.runtime;
+      },
+      initialDeviceIds: () =>
+        Array.from(this.connections, ([deviceId, entry]) =>
+          entry.clients.has(ws) ? deviceId : null
+        ).filter((deviceId): deviceId is string => deviceId !== null),
+      onDeviceAttached: (deviceId, runtime) => {
+        const entry = this.connections.get(deviceId);
+        if (!entry || entry.runtime !== runtime) return;
+        entry.canonicalClients ??= new Set();
+        entry.canonicalClients.add(ws);
+        this.clearIdleReleaseTimer(entry);
+      },
+      onDeviceDetached: (deviceId, runtime) => {
+        const entry = this.connections.get(deviceId);
+        if (!entry || entry.runtime !== runtime) return;
+        entry.canonicalClients?.delete(ws);
+        this.scheduleConnectionEntryRelease(deviceId, entry);
+      },
+    });
+    this.canonicalSessions.set(ws, session);
+    return session;
+  }
+
+  private sendCanonicalEvent(
+    ws: ServerWebSocket<ClientState>,
+    event: wsBorsh.CanonicalEvent
+  ): boolean {
+    try {
+      const frame = encodeCanonicalEvent(
+        event,
+        ws.data.borshState.seqGen(),
+        ws.data.borshState.maxFrameBytes
+      );
+      return gatewayWebSocketSendGuard.sendFrames(ws as ServerWebSocket<unknown>, [
+        frame as unknown as BufferSource,
+      ]);
+    } catch (error) {
+      console.error('[ws] failed to encode canonical event:', error);
+      return false;
+    }
   }
 
   handleClose(ws: ServerWebSocket<ClientState>): void {
     console.log('[ws] client disconnected');
 
+    this.canonicalSessions.get(ws)?.close();
+    this.canonicalSessions.delete(ws);
     gatewayWebSocketSendGuard.forget(ws as ServerWebSocket<unknown>);
     this.connectedClients.delete(ws);
     switchBarrier.cleanupClient(ws);
     sessionStateStore.cleanup(ws);
     agentWsHub.removeClient(ws);
 
-    const toDelete: string[] = [];
-
     for (const [deviceId, entry] of this.connections) {
-      if (!entry.clients.has(ws)) continue;
-      entry.clients.delete(ws);
-      delete ws.data.borshState.selectedPanes[deviceId];
-      delete ws.data.borshState.subscribedPanes[deviceId];
-
-      if (entry.clients.size === 0) {
-        console.log(`[ws] no more clients for device ${deviceId}, disconnecting`);
-        this.releaseConnectionEntry(deviceId, entry);
-        toDelete.push(deviceId);
-      } else {
-        this.refreshSnapshotPolling(deviceId);
+      entry.canonicalClients?.delete(ws);
+      if (entry.clients.delete(ws)) {
+        delete ws.data.borshState.selectedPanes[deviceId];
+        delete ws.data.borshState.subscribedPanes[deviceId];
       }
-    }
-
-    for (const deviceId of toDelete) {
-      this.connections.delete(deviceId);
+      this.refreshSnapshotPolling(deviceId);
+      this.scheduleConnectionEntryRelease(deviceId, entry);
     }
   }
 
@@ -362,6 +409,8 @@ export class WebSocketServer {
   }
 
   closeAll(): void {
+    for (const session of this.canonicalSessions.values()) session.close();
+    this.canonicalSessions.clear();
     for (const [deviceId, entry] of this.connections) {
       this.releaseConnectionEntry(deviceId, entry);
       this.connections.delete(deviceId);
@@ -583,6 +632,23 @@ export class WebSocketServer {
         return;
       }
 
+      case wsBorsh.KIND_CANONICAL_COMMAND: {
+        try {
+          const decoded = decodeCanonicalCommand(payload);
+          await this.getOrCreateCanonicalSession(ws).handleCommand(decoded.command);
+        } catch (error) {
+          const protocolError = error instanceof wsBorsh.WsBorshError ? error : null;
+          this.sendError(
+            ws,
+            refSeq,
+            protocolError?.code ?? wsBorsh.ERROR_PAYLOAD_DECODE_FAILED,
+            protocolError?.message ?? 'Invalid canonical command',
+            protocolError?.retryable ?? false
+          );
+        }
+        return;
+      }
+
       default:
         this.sendError(ws, refSeq, wsBorsh.ERROR_UNKNOWN_KIND, `Unknown kind: ${kind}`, false);
     }
@@ -698,6 +764,7 @@ export class WebSocketServer {
   ): Promise<DeviceConnectionEntry | null> {
     const existing = this.connections.get(deviceId);
     if (existing) {
+      this.clearIdleReleaseTimer(existing);
       return existing;
     }
 
@@ -734,7 +801,11 @@ export class WebSocketServer {
     if (!entry) return;
 
     entry.clients.add(ws);
+    this.clearIdleReleaseTimer(entry);
     ws.data.borshState.selectedPanes[deviceId] ??= null;
+
+    const canonicalSession = this.canonicalSessions.get(ws);
+    if (canonicalSession) await canonicalSession.attachDevice(deviceId, entry.runtime);
 
     const connectedPayload = wsBorsh.encodePayload(wsBorsh.schema.DeviceConnectedSchema, {
       deviceId,
@@ -742,23 +813,22 @@ export class WebSocketServer {
     this.sendEnvelope(ws, wsBorsh.KIND_DEVICE_CONNECTED, connectedPayload);
 
     if (entry.lastSnapshot) {
-      const snapshotBytes = this.encodeSnapshotWithOverlays(entry.lastSnapshot);
-      this.sendChunked(ws, wsBorsh.KIND_STATE_SNAPSHOT, snapshotBytes);
+      if (!entry.canonicalClients?.has(ws)) {
+        const snapshotBytes = this.encodeSnapshotWithOverlays(entry.lastSnapshot);
+        this.sendChunked(ws, wsBorsh.KIND_STATE_SNAPSHOT, snapshotBytes);
+      }
     } else {
       entry.runtime.requestSnapshot();
     }
   }
 
   private handleDeviceDisconnect(ws: ServerWebSocket<ClientState>, deviceId: string): void {
+    this.canonicalSessions.get(ws)?.detachDevice(deviceId);
     const entry = this.connections.get(deviceId);
     if (entry) {
       entry.clients.delete(ws);
       this.refreshSnapshotPolling(deviceId);
-
-      if (entry.clients.size === 0) {
-        this.releaseConnectionEntry(deviceId, entry);
-        this.connections.delete(deviceId);
-      }
+      this.scheduleConnectionEntryRelease(deviceId, entry);
     }
 
     delete ws.data.borshState.selectedPanes[deviceId];
@@ -951,7 +1021,7 @@ export class WebSocketServer {
       this.paneCustomNames.set(deviceId, new Map([[paneId, trimmed]]));
     }
 
-    this.connections.get(deviceId)?.runtime.setCustomName('pane', paneId, trimmed || null);
+    this.connections.get(deviceId)?.runtime.setCustomName?.('pane', paneId, trimmed || null);
 
     this.broadcastSettingsUpdate('tree-order');
     const entry = this.connections.get(deviceId);
@@ -999,7 +1069,7 @@ export class WebSocketServer {
       this.windowCustomNames.set(deviceId, new Map([[windowId, trimmed]]));
     }
 
-    this.connections.get(deviceId)?.runtime.setCustomName('window', windowId, trimmed || null);
+    this.connections.get(deviceId)?.runtime.setCustomName?.('window', windowId, trimmed || null);
 
     this.broadcastSettingsUpdate('tree-order');
     const entry = this.connections.get(deviceId);
@@ -1444,6 +1514,7 @@ export class WebSocketServer {
     const payloadBytes = this.encodeSnapshotWithOverlays(payload);
     let deliveries = 0;
     for (const client of entry.clients) {
+      if (entry.canonicalClients?.has(client)) continue;
       if (this.sendChunked(client, wsBorsh.KIND_STATE_SNAPSHOT, payloadBytes)) {
         deliveries += 1;
       }
@@ -1470,11 +1541,13 @@ export class WebSocketServer {
         runtime,
         detachRuntime,
         clients: new Set(),
-        lastSnapshot: runtime.getCurrentSnapshot(),
+        lastSnapshot: runtime.getCurrentSnapshot?.() ?? null,
         snapshotTimer: null,
         snapshotPollTimer: null,
         reconnectAttempts: 0,
         reconnectTimer: null,
+        canonicalClients: new Set(),
+        idleReleaseTimer: null,
       };
     } catch (err) {
       detachRuntime?.();
@@ -1500,8 +1573,6 @@ export class WebSocketServer {
   private async broadcastTmuxEvent(deviceId: string, event: TmuxEvent): Promise<void> {
     const entry = this.connections.get(deviceId);
     if (!entry) return;
-
-    this.scheduleSnapshot(deviceId);
 
     const extendedEvent = await this.extendTmuxEvent(deviceId, event);
     const settings = getSiteSettings();
@@ -1621,11 +1692,36 @@ export class WebSocketServer {
     this.sendSnapshotToClients(entry, payload);
   }
 
+  private broadcastLegacyMetadataPatch(
+    deviceId: string,
+    patch: Parameters<typeof wsBorsh.sourceMetadataPatchToLegacyDiff>[0]
+  ): void {
+    const entry = this.connections.get(deviceId);
+    if (!entry) return;
+    const diff = wsBorsh.sourceMetadataPatchToLegacyDiff(patch);
+    if (diff.upserts.length === 0 && diff.removals.length === 0) return;
+    if (entry.lastSnapshot) {
+      entry.lastSnapshot = wsBorsh.applyLegacyStateSnapshotDiff(entry.lastSnapshot, diff);
+    }
+    const payload = wsBorsh.encodePayload(wsBorsh.schema.StateSnapshotDiffSchema, {
+      deviceId,
+      baseRevision: Number(patch.fromRevision & 0xffff_ffffn),
+      revision: Number(patch.throughRevision & 0xffff_ffffn),
+      diffFormat: wsBorsh.STATE_SNAPSHOT_DIFF_FORMAT_ABSOLUTE_JSON,
+      diffBytes: wsBorsh.encodeLegacyStateSnapshotDiff(diff),
+    });
+    for (const client of entry.clients) {
+      if (entry.canonicalClients?.has(client)) continue;
+      this.sendChunked(client, wsBorsh.KIND_STATE_SNAPSHOT_DIFF, payload);
+    }
+  }
+
   private broadcastTerminalOutput(deviceId: string, paneId: string, data: Uint8Array): void {
     const entry = this.connections.get(deviceId);
     let observed = false;
     if (entry) {
       for (const client of entry.clients) {
+        if (entry.canonicalClients?.has(client)) continue;
         if (this.clientWantsPaneOutput(client, deviceId, paneId)) {
           observed = true;
           break;
@@ -1722,6 +1818,7 @@ export class WebSocketServer {
 
     let payloadBytes: Uint8Array | null = null;
     for (const client of entry.clients) {
+      if (entry.canonicalClients?.has(client)) continue;
       const isFocused = client.data.borshState.selectedPanes[deviceId] === paneId;
       if (!this.clientWantsPaneOutput(client, deviceId, paneId)) {
         continue;
@@ -1757,6 +1854,7 @@ export class WebSocketServer {
     });
 
     for (const client of entry.clients) {
+      if (entry.canonicalClients?.has(client)) continue;
       if (client.data.borshState.selectedPanes[deviceId] !== paneId) {
         continue;
       }
@@ -1778,6 +1876,7 @@ export class WebSocketServer {
     let deliveryAttempts = 0;
 
     for (const client of entry.clients) {
+      if (entry.canonicalClients?.has(client)) continue;
       // 优先按进行中的 barrier 事务路由 history，而非 selectedPanes。
       // split 翻转后前端 focusPane 把 selectedPanes 改为新 pane，但旧 pane 的 barrier
       // 事务仍卡在 ACKED：按事务 context.paneId 路由才能让 barrier history 正确投递。
@@ -1862,7 +1961,7 @@ export class WebSocketServer {
 
     const { sshReconnectMaxRetries, sshReconnectDelaySeconds } = getSiteSettings();
 
-    if (entry.clients.size > 0 && entry.reconnectAttempts < sshReconnectMaxRetries) {
+    if (this.entryHasClients(entry) && entry.reconnectAttempts < sshReconnectMaxRetries) {
       entry.reconnectAttempts += 1;
       const delay = Math.max(1, sshReconnectDelaySeconds) * 1000;
 
@@ -1883,14 +1982,14 @@ export class WebSocketServer {
         entry.reconnectTimer = null;
 
         const current = this.connections.get(deviceId);
-        if (!current || current !== entry || entry.clients.size === 0) {
+        if (!current || current !== entry || !this.entryHasClients(entry)) {
           return;
         }
 
-        const retryConnection = await this.createDeviceConnectionEntry(
-          deviceId,
-          Array.from(entry.clients)[0]
-        );
+        const retryClient =
+          Array.from(entry.clients)[0] ?? Array.from(entry.canonicalClients ?? [])[0];
+        if (!retryClient) return;
+        const retryConnection = await this.createDeviceConnectionEntry(deviceId, retryClient);
         if (!retryConnection) {
           if (entry.reconnectAttempts < sshReconnectMaxRetries) {
             await this.handleConnectionClose(deviceId);
@@ -1908,8 +2007,13 @@ export class WebSocketServer {
         }
 
         retryConnection.clients = entry.clients;
+        retryConnection.canonicalClients = entry.canonicalClients ?? new Set();
         retryConnection.reconnectAttempts = entry.reconnectAttempts;
         this.connections.set(deviceId, retryConnection);
+
+        for (const client of retryConnection.canonicalClients) {
+          await this.canonicalSessions.get(client)?.attachDevice(deviceId, retryConnection.runtime);
+        }
 
         const reconnected: EventDevicePayload = {
           deviceId,
@@ -1932,6 +2036,9 @@ export class WebSocketServer {
 
     for (const client of entry.clients) {
       delete client.data.borshState.selectedPanes[deviceId];
+    }
+    for (const client of entry.canonicalClients ?? []) {
+      this.canonicalSessions.get(client)?.detachDevice(deviceId);
     }
 
     this.clearReconnectTimer(entry);

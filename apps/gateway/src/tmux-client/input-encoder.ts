@@ -6,7 +6,13 @@ export function encodeInputToHexChunks(
   input: string,
   chunkBytes = SEND_KEYS_HEX_CHUNK_BYTES
 ): string[][] {
-  const bytes = encoder.encode(input);
+  return encodeBytesToHexChunks(encoder.encode(input), chunkBytes);
+}
+
+export function encodeBytesToHexChunks(
+  bytes: Uint8Array,
+  chunkBytes = SEND_KEYS_HEX_CHUNK_BYTES
+): string[][] {
   const chunks: string[][] = [];
 
   for (let offset = 0; offset < bytes.length; offset += chunkBytes) {

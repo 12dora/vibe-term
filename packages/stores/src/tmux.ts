@@ -296,6 +296,26 @@ export function createTmuxStore(
             return;
           }
 
+          case wsBorsh.KIND_STATE_SNAPSHOT_DIFF: {
+            const payload = wsBorsh.decodePayload(
+              wsBorsh.schema.StateSnapshotDiffSchema,
+              msg.payload
+            );
+            if (payload.diffFormat !== wsBorsh.STATE_SNAPSHOT_DIFF_FORMAT_ABSOLUTE_JSON) return;
+            const diff = wsBorsh.decodeLegacyStateSnapshotDiff(payload.diffBytes);
+            setState((prev) => {
+              const current = prev.snapshots[payload.deviceId];
+              if (!current) return {};
+              return {
+                snapshots: {
+                  ...prev.snapshots,
+                  [payload.deviceId]: wsBorsh.applyLegacyStateSnapshotDiff(current, diff),
+                },
+              };
+            });
+            return;
+          }
+
           case wsBorsh.KIND_TMUX_EVENT: {
             const payload = wsBorsh.decodeTmuxEventPayload(msg.payload);
             handleTmuxEvent(setState, payload);
