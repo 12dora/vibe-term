@@ -9,6 +9,18 @@ import type {
 export const MAX_GENERATION_REPLAY_BYTES = 2 * 1024 * 1024;
 export const MAX_GENERATION_HISTORY_BYTES = 4 * 1024 * 1024;
 export const MAX_GENERATION_HISTORY_PAGES = 16;
+// snapshot 的 replay 因持续 live 反复被淘汰而无法连续拼接时，重取上限。
+// 超过后接受该全屏 snapshot 直接作为新 base（丢弃无法回放的旧 live），
+// 由服务端 base_seq 之后的连续 replay 补齐，避免无限 cache_evicted 重取。
+export const MAX_GENERATION_REBASE_ATTEMPTS = 3;
+// 离屏 generation 重建时，回放的 replay 每累计这么多字节就让渡一次主线程（宏任务），
+// 让 metadata 的 React 更新、rAF 绘制和其它传输消息在大回放期间仍能穿插运行，
+// 避免一次性 2MiB writeVt 突发霸占主线程冻住 metadata。小于该阈值的回放（常态）不让渡。
+export const MAX_GENERATION_REPLAY_YIELD_BYTES = 256 * 1024;
+
+function macrotaskYield(): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, 0));
+}
 
 export interface TerminalGenerationTarget {
   dispose(): void;
@@ -47,6 +59,9 @@ export interface TerminalGenerationOptions<Target extends TerminalGenerationTarg
   maxReplayBytes?: number;
   maxHistoryBytes?: number;
   maxHistoryPages?: number;
+  maxRebaseAttempts?: number;
+  replayYieldBytes?: number;
+  scheduleYield?: () => Promise<void>;
 }
 
 interface Cursor {
@@ -118,6 +133,10 @@ export class TerminalGeneration<Target extends TerminalGenerationTarget> {
   private readonly maxReplayBytes: number;
   private readonly maxHistoryBytes: number;
   private readonly maxHistoryPages: number;
+  private readonly maxRebaseAttempts: number;
+  private readonly replayYieldBytes: number;
+  private readonly scheduleYield: () => Promise<void>;
+  private rebaseAttempts = 0;
   private visible: Target | null = null;
   private visibleCursor: Cursor | null = null;
   private pending: PendingGeneration<Target> | null = null;
@@ -139,6 +158,9 @@ export class TerminalGeneration<Target extends TerminalGenerationTarget> {
     this.maxReplayBytes = options.maxReplayBytes ?? MAX_GENERATION_REPLAY_BYTES;
     this.maxHistoryBytes = options.maxHistoryBytes ?? MAX_GENERATION_HISTORY_BYTES;
     this.maxHistoryPages = options.maxHistoryPages ?? MAX_GENERATION_HISTORY_PAGES;
+    this.maxRebaseAttempts = options.maxRebaseAttempts ?? MAX_GENERATION_REBASE_ATTEMPTS;
+    this.replayYieldBytes = options.replayYieldBytes ?? MAX_GENERATION_REPLAY_YIELD_BYTES;
+    this.scheduleYield = options.scheduleYield ?? macrotaskYield;
   }
 
   async initialize(): Promise<Target> {
@@ -429,16 +451,50 @@ export class TerminalGeneration<Target extends TerminalGenerationTarget> {
       return;
     }
 
-    const replay = this.collectReplay(snapshot.paneEpoch, snapshot.baseSeq);
+    let replay = this.collectReplay(snapshot.paneEpoch, snapshot.baseSeq);
     if (!replay) {
-      target.dispose();
-      this.enterRecovery('cache_evicted');
-      return;
+      this.rebaseAttempts += 1;
+      if (this.rebaseAttempts <= this.maxRebaseAttempts) {
+        target.dispose();
+        this.enterRecovery('cache_evicted');
+        return;
+      }
+      // 反复无法从 baseSeq 连续拼接：接受该全屏 snapshot 直接作为新 base，
+      // 丢弃无法回放的旧 live，由服务端 base_seq 之后的连续 replay 补齐。
+      replay = { frames: [], nextSeq: snapshot.baseSeq };
     }
 
+    let replayNextSeq = replay.nextSeq;
     try {
       this.options.writeSnapshot(target, snapshot, historyPages);
-      for (const frame of replay.frames) this.options.writeLive(target, frame.data);
+      // 大回放按字节预算分片，回放到离屏 target 的同时让渡主线程，让 metadata/绘制穿插。
+      let sinceYield = 0;
+      let yielded = false;
+      for (const frame of replay.frames) {
+        this.options.writeLive(target, frame.data);
+        sinceYield += frame.data.length;
+        if (sinceYield >= this.replayYieldBytes) {
+          sinceYield = 0;
+          yielded = true;
+          await this.scheduleYield();
+          if (this.disposed || id !== this.buildId) {
+            target.dispose();
+            return;
+          }
+        }
+      }
+      // 让渡期间新到的 live 已进 replay ring；在离屏 target 上同步补齐到当前 observedEnd，
+      // 使 pending.nextSeq 无缺口，激活后不会与后续 live 之间产生 seq gap 而误触 recovery。
+      if (yielded) {
+        const catchup = this.collectReplay(snapshot.paneEpoch, replayNextSeq);
+        if (catchup === null) {
+          target.dispose();
+          this.enterRecovery('cache_evicted');
+          return;
+        }
+        for (const frame of catchup.frames) this.options.writeLive(target, frame.data);
+        replayNextSeq = catchup.nextSeq;
+      }
     } catch {
       target.dispose();
       this.enterRecovery('resource_exhausted');
@@ -448,7 +504,7 @@ export class TerminalGeneration<Target extends TerminalGenerationTarget> {
       id,
       target,
       paneEpoch: Uint8Array.from(snapshot.paneEpoch),
-      nextSeq: replay.nextSeq,
+      nextSeq: replayNextSeq,
     };
     this.pending = pending;
 
@@ -477,6 +533,7 @@ export class TerminalGeneration<Target extends TerminalGenerationTarget> {
     this.recovering = false;
     this.recoveryRequested = false;
     this.recoveryReason = null;
+    this.rebaseAttempts = 0;
     this.options.onGenerationActivated?.(target, snapshot);
     if (previous && previous !== target) previous.dispose();
   }
