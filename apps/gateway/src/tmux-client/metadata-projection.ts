@@ -8,7 +8,7 @@ import {
 
 import type { TmuxSourceMetadataEvent } from './events';
 
-const DEFAULT_FLUSH_INTERVAL_MS = 16;
+const DEFAULT_FLUSH_INTERVAL_MS = 8;
 const MAX_PENDING_BYTES = 4 * 1024 * 1024;
 const MAX_UNKNOWN_PANES = 256;
 const MAX_UNKNOWN_PANE_BYTES = 256 * 1024;

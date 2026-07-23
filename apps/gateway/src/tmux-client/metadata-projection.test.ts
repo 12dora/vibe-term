@@ -91,7 +91,7 @@ describe('runtime metadata projection', () => {
     expect(patches).toEqual([]);
   });
 
-  test('coalesces rapid titles into one 16 ms latest-wins absolute patch', () => {
+  test('coalesces rapid titles into one latest-wins absolute patch', () => {
     const { projection, patches } = createProjection();
     projection.reconcile(snapshot());
     for (let index = 0; index < 100; index += 1) {
