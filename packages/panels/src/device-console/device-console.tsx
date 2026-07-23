@@ -41,7 +41,10 @@ import { useNavigate } from 'react-router';
 import { toast } from 'sonner';
 import { DeviceStatusBadge } from '../device-status-badge';
 import { ShortcutButtonRow } from '../settings/ShortcutButtonRow';
-import { resolveSettledMissingWindowFallback } from './selection-recovery';
+import {
+  resolveDeviceDefaultSelection,
+  resolveSettledMissingWindowFallback,
+} from './selection-recovery';
 
 // URL 目标未出现在快照时的失效判定/回落宽限：覆盖 select 状态机 ackTimeoutMs(1500ms) + 快照传播。
 const SELECT_SETTLE_GRACE_MS = 2500;
@@ -557,21 +560,19 @@ export function DeviceConsole({
     if (!deviceId) return;
     if (!deviceConnected) return;
     if (!windows || windows.length === 0) return;
-    // If we already have window and pane selected, skip
-    if (windowId && resolvedPaneId) return;
+    // window-only routes are resolved by the target-window effect above.
+    if (windowId) return;
     // If autoSelect already done, skip
     if (autoSelected.current) return;
 
-    // Select the active window's active pane (initial load)
-    const activeWindow = windows.find((win) => win.active) ?? windows[0];
-    const activePane = activeWindow.panes.find((pane) => pane.active) ?? activeWindow.panes[0];
-    if (!activePane) return;
+    const target = resolveDeviceDefaultSelection({ windows });
+    if (!target) return;
 
     autoSelected.current = true;
     navigate(
       hostAppPath(
         runtime.host,
-        `/devices/${deviceId}/windows/${activeWindow.id}/panes/${encodePaneIdForUrl(activePane.id)}`
+        `/devices/${deviceId}/windows/${target.windowId}/panes/${encodePaneIdForUrl(target.paneId)}`
       ),
       { replace: true }
     );

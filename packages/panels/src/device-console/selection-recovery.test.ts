@@ -1,5 +1,8 @@
 import { describe, expect, test } from 'bun:test';
-import { resolveSettledMissingWindowFallback } from './selection-recovery';
+import {
+  resolveDeviceDefaultSelection,
+  resolveSettledMissingWindowFallback,
+} from './selection-recovery';
 
 const windows = [
   {
@@ -69,5 +72,29 @@ describe('resolveSettledMissingWindowFallback', () => {
         settled: true,
       })
     ).toBeNull();
+  });
+});
+
+describe('resolveDeviceDefaultSelection', () => {
+  test('selects the active pane only for a device-only route', () => {
+    expect(resolveDeviceDefaultSelection({ windows })).toEqual({
+      windowId: '@2',
+      paneId: '%3',
+    });
+  });
+
+  test('leaves a window-only route to that window resolver', () => {
+    expect(resolveDeviceDefaultSelection({ windows, routeWindowId: '@1' })).toBeNull();
+  });
+
+  test('falls back to the first usable device window', () => {
+    expect(
+      resolveDeviceDefaultSelection({
+        windows: [
+          { id: '@empty', panes: [] },
+          { id: '@first', panes: [{ id: '%first' }] },
+        ],
+      })
+    ).toEqual({ windowId: '@first', paneId: '%first' });
   });
 });

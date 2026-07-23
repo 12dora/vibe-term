@@ -65,6 +65,7 @@ function createProjection() {
   const rebases: MetadataProjectionSnapshot[] = [];
   let epoch = 10;
   const projection = new MetadataProjection('device-a', {
+    deviceName: 'Developer Mac',
     createEpoch: () => new Uint8Array(16).fill(epoch++),
     onPatch: (patch) => patches.push(patch),
     onRebaseRequired: (value) => rebases.push(value),
@@ -81,6 +82,12 @@ describe('runtime metadata projection', () => {
     const current = projection.currentSnapshot();
     expect(current.revision).toBe(1n);
     expect(current.records.map((record) => record.key.entityKind)).toEqual([0, 1, 2, 3, 4]);
+    expect(
+      stringField(
+        findRecord(current, wsBorsh.SOURCE_ENTITY_DEVICE, 'device-a'),
+        wsBorsh.SOURCE_FIELD_NAME
+      )
+    ).toBe('Developer Mac');
     expect(
       stringField(findRecord(current, wsBorsh.SOURCE_ENTITY_PANE, '%1'), wsBorsh.SOURCE_FIELD_TITLE)
     ).toBe('shell');

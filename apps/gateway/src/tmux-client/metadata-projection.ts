@@ -56,6 +56,7 @@ export interface MetadataProjectionPatch {
 }
 
 export interface MetadataProjectionOptions {
+  deviceName?: string;
   flushIntervalMs?: number;
   createEpoch?: () => Uint8Array;
   onPatch?: (patch: MetadataProjectionPatch) => void;
@@ -163,6 +164,7 @@ export class MetadataProjection {
   private established = false;
   private disposed = false;
   private readonly flushIntervalMs: number;
+  private readonly deviceName: string;
   private readonly createEpoch: () => Uint8Array;
   private readonly onPatch?: (patch: MetadataProjectionPatch) => void;
   private readonly onRebaseRequired?: (snapshot: MetadataProjectionSnapshot) => void;
@@ -171,6 +173,7 @@ export class MetadataProjection {
     readonly deviceId: string,
     options: MetadataProjectionOptions = {}
   ) {
+    this.deviceName = options.deviceName?.trim() || deviceId;
     this.flushIntervalMs = options.flushIntervalMs ?? DEFAULT_FLUSH_INTERVAL_MS;
     this.createEpoch = options.createEpoch ?? defaultCreateEpoch;
     this.metadataEpochValue = copyBytes(this.createEpoch());
@@ -523,6 +526,7 @@ export class MetadataProjection {
   private buildDesired(snapshot: StateSnapshotPayload): Map<string, PendingUpsert> {
     const desired = new Map<string, PendingUpsert>();
     const device = this.newRecord(wsBorsh.SOURCE_ENTITY_DEVICE, this.deviceId, null);
+    device.fields.set(wsBorsh.SOURCE_FIELD_NAME, stringValue(this.deviceName));
     device.fields.set(wsBorsh.SOURCE_FIELD_CONNECTED, boolValue(true));
     desired.set(keyId(device.key), device);
 

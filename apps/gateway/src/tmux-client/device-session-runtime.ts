@@ -102,6 +102,7 @@ export interface DeviceSessionRuntimeListener {
 
 export interface DeviceSessionRuntimeOptions {
   deviceId: string;
+  deviceName?: string;
   notifyEvent?: LifecycleEventEmitter;
   createConnection?: (options: TmuxConnectionOptions) => DeviceSessionRuntimeConnection;
 }
@@ -134,6 +135,7 @@ export class DeviceSessionRuntime {
     const createConnection = options.createConnection ?? createDefaultConnection;
 
     this.metadataProjection = new MetadataProjection(this.deviceId, {
+      deviceName: options.deviceName,
       onPatch: (patch) => {
         if (this.lastSnapshot) {
           const diff = wsBorsh.sourceMetadataPatchToLegacyDiff(patch);

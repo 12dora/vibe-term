@@ -9,6 +9,21 @@ export interface SelectionWindowLike {
   panes: readonly SelectionPaneLike[];
 }
 
+export function resolveDeviceDefaultSelection({
+  windows,
+  routeWindowId,
+}: {
+  windows: readonly SelectionWindowLike[];
+  routeWindowId?: string;
+}): { windowId: string; paneId: string } | null {
+  if (routeWindowId) return null;
+  const activeWindow = windows.find((window) => window.active && window.panes.length > 0);
+  const targetWindow = activeWindow ?? windows.find((window) => window.panes.length > 0);
+  if (!targetWindow) return null;
+  const targetPane = targetWindow.panes.find((pane) => pane.active) ?? targetWindow.panes[0];
+  return targetPane ? { windowId: targetWindow.id, paneId: targetPane.id } : null;
+}
+
 export function resolveSettledMissingWindowFallback({
   windows,
   routeWindowId,
@@ -21,12 +36,5 @@ export function resolveSettledMissingWindowFallback({
   if (!settled || windows.some((window) => window.id === routeWindowId)) {
     return null;
   }
-  const activeWindow = windows.find((window) => window.active && window.panes.length > 0);
-  const fallbackWindow = activeWindow ?? windows.find((window) => window.panes.length > 0);
-  if (!fallbackWindow) {
-    return null;
-  }
-  const fallbackPane =
-    fallbackWindow.panes.find((pane) => pane.active) ?? fallbackWindow.panes[0];
-  return fallbackPane ? { windowId: fallbackWindow.id, paneId: fallbackPane.id } : null;
+  return resolveDeviceDefaultSelection({ windows });
 }
