@@ -13,6 +13,7 @@ import {
   TERMINAL_ENGINE,
   createTerminalController,
 } from 'ghostty-terminal';
+import { Loader2 } from 'lucide-react';
 import {
   forwardRef,
   useCallback,
@@ -56,7 +57,7 @@ interface TerminalRenderTarget extends TerminalGenerationTarget {
 }
 
 type TerminalBootState =
-  | { status: 'loading'; message: string }
+  | { status: 'loading' }
   | { status: 'ready' }
   | { status: 'error'; message: string };
 
@@ -169,10 +170,7 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(
   ) => {
     const [instance, setInstance] = useState<CompatibleTerminalLike | null>(null);
     const [hasSelection, setHasSelection] = useState(false);
-    const [bootState, setBootState] = useState<TerminalBootState>({
-      status: 'loading',
-      message: 'Preparing terminal…',
-    });
+    const [bootState, setBootState] = useState<TerminalBootState>({ status: 'loading' });
     const [retryNonce, setRetryNonce] = useState(0);
     const sendInput = useTmuxStore((state) => state.sendInput);
     const mountPane = useTmuxStore((state) => state.mountPane);
@@ -313,7 +311,7 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(
       initialScreenRequestedRef.current = false;
       generationRef.current = null;
       setInstance(null);
-      setBootState({ status: 'loading', message: 'Preparing terminal…' });
+      setBootState({ status: 'loading' });
       reportTerminalDiagnostic(terminalDiagnosticsReporter, diagnosticArgs('mount', null));
 
       void (async () => {
@@ -444,7 +442,7 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(
                       status: 'error',
                       message: 'Terminal rendering failed before the first screen was ready.',
                     }
-                  : { status: 'loading', message: 'Recovering terminal state…' }
+                  : { status: 'loading' }
               );
             }
             const activeDeviceId = currentDeviceIdRef.current;
@@ -466,7 +464,7 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(
             }
             setBootState(
               runtime.transport.capabilities.atomicScreen && !snapshot
-                ? { status: 'loading', message: 'Restoring terminal state…' }
+                ? { status: 'loading' }
                 : { status: 'ready' }
             );
             stopDiagnosticSamples();
@@ -948,22 +946,35 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(
         data-terminal-engine={TERMINAL_ENGINE}
       >
         <div ref={containerRef} className="relative min-h-0 w-full flex-1">
-          <div ref={generationHostRef} className="absolute inset-0" />
+          <div
+            ref={generationHostRef}
+            className={`absolute inset-0 ${bootState.status === 'ready' ? '' : 'invisible'}`}
+          />
           {bootState.status !== 'ready' && (
             <div
-              className="absolute inset-0 z-10 flex items-center justify-center bg-black/70 px-6 text-center text-sm text-white"
+              className="absolute inset-0 flex flex-col items-center justify-center p-8 text-center"
               role={bootState.status === 'error' ? 'alert' : 'status'}
               aria-live="polite"
+              data-testid="terminal-boot-placeholder"
             >
-              <div className="flex max-w-sm flex-col items-center gap-3">
-                <span>{bootState.message}</span>
-                <button
-                  type="button"
-                  className="rounded-md border border-white/40 bg-white/10 px-3 py-1.5 font-medium hover:bg-white/20"
-                  onClick={() => setRetryNonce((value) => value + 1)}
-                >
-                  Retry terminal
-                </button>
+              <div className="max-w-sm space-y-4">
+                {bootState.status === 'loading' && (
+                  <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-muted">
+                    <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+                  </div>
+                )}
+                <h3 className="text-lg font-medium">
+                  {bootState.status === 'loading' ? t('common.loading') : bootState.message}
+                </h3>
+                {bootState.status === 'error' && (
+                  <button
+                    type="button"
+                    className="rounded-md border border-border bg-background px-3 py-1.5 text-sm font-medium hover:bg-muted"
+                    onClick={() => setRetryNonce((value) => value + 1)}
+                  >
+                    Retry terminal
+                  </button>
+                )}
               </div>
             </div>
           )}
