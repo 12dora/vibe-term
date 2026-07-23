@@ -101,6 +101,7 @@ async function main(): Promise<void> {
   const endpointPath = join(work, 'gateway-ready.json');
   const endpointNonce = randomUUID();
   const masterKey = '0'.repeat(64);
+  const tmuxNamespace = `tmex-managed-smoke-${process.pid}-${randomUUID()}`;
 
   // 构造无 bun/node 的 PATH
   const barePath = [join(work, 'bin'), '/usr/bin', '/bin'].join(':');
@@ -115,7 +116,7 @@ async function main(): Promise<void> {
     TMEX_BIND_HOST: '127.0.0.1',
     TMEX_MANAGED_ENDPOINT_PATH: endpointPath,
     TMEX_MANAGED_ENDPOINT_NONCE: endpointNonce,
-    TMEX_TMUX_SOCKET: `tmex-managed-smoke-${process.pid}-${randomUUID()}`,
+    TMEX_TMUX_SOCKET: `tmex-managed-inherited-${process.pid}`,
     DATABASE_URL: dbPath,
     TMEX_MASTER_KEY: masterKey,
     // 故意注入自管理值，证明 managed entry 在业务模块加载前将其覆盖。
@@ -141,7 +142,7 @@ async function main(): Promise<void> {
     process.exit(1);
   }
 
-  const child = spawn(runBin, [], {
+  const child = spawn(runBin, ['--tmux-namespace', tmuxNamespace], {
     cwd: work,
     env,
     stdio: ['ignore', 'pipe', 'pipe'],
@@ -161,6 +162,7 @@ async function main(): Promise<void> {
     artifact,
     scan,
     work,
+    tmuxNamespace,
     probes: {} as Record<string, unknown>,
   };
 

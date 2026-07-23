@@ -7,7 +7,7 @@
  * 构建：`bun scripts/build-managed.ts`（`bun build --compile`）。
  */
 
-export {};
+import { applyManagedTmuxNamespace, parseManagedGatewayArgs } from './managed-args';
 
 declare const TMEX_MONOREPO_VERSION: string | undefined;
 
@@ -242,8 +242,11 @@ async function runManagedGateway(): Promise<void> {
   }
 }
 
-if (process.argv.slice(1).includes('--version')) {
+const managedArgs = parseManagedGatewayArgs(process.argv.slice(2));
+
+if (managedArgs.version) {
   console.log(`tmex-gateway ${embeddedVersion()}`);
 } else {
+  applyManagedTmuxNamespace(process.env, managedArgs.tmuxNamespace);
   await runManagedGateway();
 }
