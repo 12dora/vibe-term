@@ -1,4 +1,5 @@
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
+import { hostname } from 'node:os';
 import { resolve } from 'node:path';
 import type { Device } from '@tmex/shared';
 import { eq } from 'drizzle-orm';
@@ -46,7 +47,7 @@ function makeManualDevice(id: string): Device {
 }
 
 describe('ensureDefaultLocalDeviceSeeded', () => {
-  test('全新库：seed 一台 local 设备（字段与手动新建一致）并写入标记', () => {
+  test('全新库：seed 一台以 hostname 命名的 local 设备并写入标记', () => {
     resetToFreshDatabase();
 
     ensureDefaultLocalDeviceSeeded();
@@ -54,7 +55,7 @@ describe('ensureDefaultLocalDeviceSeeded', () => {
     const all = getAllDevices();
     expect(all.length).toBe(1);
     const device = all[0];
-    expect(device.name).toBe('local');
+    expect(device.name).toBe(hostname().trim() || 'local');
     expect(device.type).toBe('local');
     expect(device.session).toBe('tmex');
     expect(device.authMode).toBe('auto');
@@ -117,7 +118,7 @@ describe('ensureDefaultLocalDeviceSeeded', () => {
     expect(getGatewayKv(DEFAULT_LOCAL_DEVICE_SEED_KEY)).toBe('1');
   });
 
-  test('启动顺序（seed 先于 site_settings 初始化）：全新库两者协作后仍只有一台 local', () => {
+  test('启动顺序（seed 先于 site_settings 初始化）：全新库协作后仍只有一台 hostname 设备', () => {
     resetToFreshDatabase();
 
     // 对齐 createGatewayRuntime 的调用顺序
@@ -126,7 +127,7 @@ describe('ensureDefaultLocalDeviceSeeded', () => {
 
     const all = getAllDevices();
     expect(all.length).toBe(1);
-    expect(all[0].name).toBe('local');
+    expect(all[0].name).toBe(hostname().trim() || 'local');
 
     // 二次启动：不再追加
     ensureDefaultLocalDeviceSeeded();

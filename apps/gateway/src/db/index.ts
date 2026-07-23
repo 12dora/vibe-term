@@ -1,4 +1,5 @@
 import type { Database } from 'bun:sqlite';
+import { hostname } from 'node:os';
 import {
   DEFAULT_LOCALE,
   DEFAULT_TERMINAL_SHORTCUTS,
@@ -226,8 +227,8 @@ export function setGatewayKv(key: string, value: string): void {
 export const DEFAULT_LOCAL_DEVICE_SEED_KEY = 'default_local_device_seeded';
 
 /**
- * 首次建库时自动创建一台本地设备（name/type 均为 local，其余字段与手动新建 local
- * 设备一致），并写入一次性标记保证只 seed 一次——用户删光设备后重启不复活。
+ * 首次建库时自动创建一台本地设备（name 为当前 hostname、type 为 local，其余字段与
+ * 手动新建 local 设备一致），并写入一次性标记保证只 seed 一次——用户删光设备后重启不复活。
  *
  * 全新库的判定：标记缺失且 site_settings 尚无行且 devices 为空。老库每次启动都会
  * 写入 site_settings 单例行，因此本函数必须在 ensureSiteSettingsInitialized 之前
@@ -248,7 +249,7 @@ export function ensureDefaultLocalDeviceSeeded(): void {
     const now = new Date().toISOString();
     createDevice({
       id: crypto.randomUUID(),
-      name: 'local',
+      name: hostname().trim() || 'local',
       type: 'local',
       session: 'tmex',
       authMode: 'auto',
