@@ -141,6 +141,7 @@ export function createControlModeSubscription(
         return;
       }
       case 'window-close':
+      case 'unlinked-window-close':
         if (first) emit({ type: 'window-close', windowId: first });
         return;
       case 'subscription-changed': {

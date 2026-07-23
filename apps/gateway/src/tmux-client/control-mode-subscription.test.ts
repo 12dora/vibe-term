@@ -142,6 +142,16 @@ describe('control mode subscription', () => {
     subscription.dispose();
   });
 
+  test('normalizes linked and unlinked window close notifications', () => {
+    const { subscription, collected } = createCollector();
+    subscription.push(lines('%window-close @1', '%unlinked-window-close @2'));
+    expect(collected.metadata).toEqual([
+      { type: 'window-close', windowId: '@1' },
+      { type: 'window-close', windowId: '@2' },
+    ]);
+    subscription.dispose();
+  });
+
   test('parses shared format subscription values without losing spaces', () => {
     const { subscription, collected } = createCollector();
     subscription.push(
