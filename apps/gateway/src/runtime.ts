@@ -44,7 +44,7 @@ export interface GatewayRuntime {
     open: (ws: Bun.ServerWebSocket<unknown>) => void;
     message: (ws: Bun.ServerWebSocket<unknown>, message: string | Buffer) => void;
     drain: (ws: Bun.ServerWebSocket<unknown>) => void;
-    close: (ws: Bun.ServerWebSocket<unknown>) => void;
+    close: (ws: Bun.ServerWebSocket<unknown>, code: number, reason: string) => void;
   };
   onRestartRequested: (listener: () => Promise<void> | void) => void;
   stop: () => Promise<void>;
@@ -154,7 +154,7 @@ export async function createGatewayRuntime(
       drain(ws) {
         wsServer.handleDrain(ws as any);
       },
-      close(ws) {
+      close(ws, _code, _reason) {
         wsServer.handleClose(ws as any);
       },
     },

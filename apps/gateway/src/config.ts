@@ -18,6 +18,29 @@ function isManagedBuild(): boolean {
   return typeof TMEX_MANAGED_BUILD === 'boolean' && TMEX_MANAGED_BUILD;
 }
 
+function isCompanionManagedRuntime(env: NodeJS.ProcessEnv): boolean {
+  return (
+    isManagedBuild() ||
+    (env.TMEX_MANAGEMENT_MODE === 'companion-cli' && env.TMEX_UPDATE_OWNER === 'companion')
+  );
+}
+
+export function resolveGatewayPort(
+  env: NodeJS.ProcessEnv = process.env,
+  allowDynamicPort = isCompanionManagedRuntime(env)
+): number {
+  const raw = (env.GATEWAY_PORT ?? '9663').trim();
+  if (!/^\d+$/.test(raw)) {
+    throw new Error('GATEWAY_PORT must be a decimal integer');
+  }
+  const port = Number(raw);
+  const minimum = allowDynamicPort ? 0 : 1;
+  if (!Number.isInteger(port) || port < minimum || port > 65535) {
+    throw new Error(`GATEWAY_PORT must be an integer in ${minimum}..65535`);
+  }
+  return port;
+}
+
 export function resolveTmuxBin(
   env: NodeJS.ProcessEnv = process.env,
   platform: NodeJS.Platform = process.platform,
@@ -53,7 +76,7 @@ export const config = {
   masterKey: process.env.TMEX_MASTER_KEY,
 
   // 服务配置
-  port: Number.parseInt(getEnv('GATEWAY_PORT', '9663'), 10),
+  port: resolveGatewayPort(),
   bindHost: getEnv('TMEX_BIND_HOST', '0.0.0.0'),
   baseUrl: getEnv('TMEX_BASE_URL', 'http://127.0.0.1:8085'),
   siteNameDefault: getEnv('TMEX_SITE_NAME', 'tmex'),

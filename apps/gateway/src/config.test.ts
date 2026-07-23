@@ -6,6 +6,7 @@ import { resolveTmuxBin } from './config';
 let bustCounter = 0;
 
 async function loadConfigWith(env: Record<string, string | undefined>): Promise<{
+  port: number;
   bindHost: string;
   tmuxBin: string;
   gatewayOwnerToken: string | null;
@@ -22,7 +23,12 @@ async function loadConfigWith(env: Record<string, string | undefined>): Promise<
   try {
     bustCounter += 1;
     const mod = (await import(`./config.ts?bust=${bustCounter}`)) as {
-      config: { bindHost: string; tmuxBin: string; gatewayOwnerToken: string | null };
+      config: {
+        port: number;
+        bindHost: string;
+        tmuxBin: string;
+        gatewayOwnerToken: string | null;
+      };
     };
     return mod.config;
   } finally {
@@ -35,6 +41,48 @@ async function loadConfigWith(env: Record<string, string | undefined>): Promise<
     }
   }
 }
+
+describe('config.port', () => {
+  test('standalone Gateway keeps port 9663 as its default', async () => {
+    const config = await loadConfigWith({
+      GATEWAY_PORT: undefined,
+      TMEX_MANAGEMENT_MODE: undefined,
+      TMEX_UPDATE_OWNER: undefined,
+    });
+    expect(config.port).toBe(9663);
+  });
+
+  test('managed Gateway accepts an OS-assigned dynamic port', async () => {
+    const config = await loadConfigWith({
+      GATEWAY_PORT: '0',
+      TMEX_MANAGEMENT_MODE: 'companion-cli',
+      TMEX_UPDATE_OWNER: 'companion',
+    });
+    expect(config.port).toBe(0);
+  });
+
+  test('standalone Gateway rejects port zero', async () => {
+    await expect(
+      loadConfigWith({
+        GATEWAY_PORT: '0',
+        TMEX_MANAGEMENT_MODE: undefined,
+        TMEX_UPDATE_OWNER: undefined,
+      })
+    ).rejects.toThrow('GATEWAY_PORT');
+  });
+
+  test('rejects malformed and out-of-range ports', async () => {
+    for (const port of ['not-a-port', '9663suffix', '-1', '65536']) {
+      await expect(
+        loadConfigWith({
+          GATEWAY_PORT: port,
+          TMEX_MANAGEMENT_MODE: 'companion-cli',
+          TMEX_UPDATE_OWNER: 'companion',
+        })
+      ).rejects.toThrow('GATEWAY_PORT');
+    }
+  });
+});
 
 describe('config.bindHost', () => {
   test('未设 TMEX_BIND_HOST 时默认 0.0.0.0', async () => {

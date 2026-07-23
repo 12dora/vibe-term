@@ -5,19 +5,54 @@
  */
 
 import { spawn, spawnSync } from 'node:child_process';
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { randomUUID } from 'node:crypto';
+import {
+  chmodSync,
+  existsSync,
+  lstatSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
+import {
+  MANAGED_ENDPOINT_MAX_BYTES,
+  type ManagedEndpointReady,
+  parseManagedEndpointPayload,
+} from '../src/system/managed-endpoint';
 import { scanManagedArtifact } from './scan-managed-artifact';
-
-function freePort(): number {
-  // 任务临时端口：高位随机，避免 9883/生产。
-  return 30000 + Math.floor(Math.random() * 20000);
-}
 
 interface HealthResponse {
   status?: string;
   env?: string;
+}
+
+async function waitManagedEndpoint(
+  path: string,
+  expectedNonce: string,
+  expectedPid: number,
+  timeoutMs: number
+): Promise<ManagedEndpointReady | null> {
+  const start = Date.now();
+  while (Date.now() - start < timeoutMs) {
+    try {
+      const stat = lstatSync(path);
+      if (stat.isSymbolicLink() || !stat.isFile() || stat.size > MANAGED_ENDPOINT_MAX_BYTES) {
+        throw new Error('invalid managed endpoint file');
+      }
+      const endpoint = parseManagedEndpointPayload(readFileSync(path, 'utf8'));
+      if (endpoint.nonce !== expectedNonce || endpoint.pid !== expectedPid) {
+        throw new Error('managed endpoint ownership mismatch');
+      }
+      return endpoint;
+    } catch {
+      await Bun.sleep(50);
+    }
+  }
+  return null;
 }
 
 async function waitHealth(port: number, timeoutMs: number): Promise<HealthResponse | null> {
@@ -63,7 +98,8 @@ async function main(): Promise<void> {
 
   const work = mkdtempSync(join(tmpdir(), 'tmex-managed-smoke-'));
   const dbPath = join(work, 'tmex-managed.db');
-  const port = freePort();
+  const endpointPath = join(work, 'gateway-ready.json');
+  const endpointNonce = randomUUID();
   const masterKey = '0'.repeat(64);
 
   // 构造无 bun/node 的 PATH
@@ -75,8 +111,11 @@ async function main(): Promise<void> {
     HOME: work,
     TMPDIR: join(work, 'tmp'),
     NODE_ENV: 'production',
-    GATEWAY_PORT: String(port),
+    GATEWAY_PORT: '0',
     TMEX_BIND_HOST: '127.0.0.1',
+    TMEX_MANAGED_ENDPOINT_PATH: endpointPath,
+    TMEX_MANAGED_ENDPOINT_NONCE: endpointNonce,
+    TMEX_TMUX_SOCKET: `tmex-managed-smoke-${process.pid}-${randomUUID()}`,
     DATABASE_URL: dbPath,
     TMEX_MASTER_KEY: masterKey,
     // 故意注入自管理值，证明 managed entry 在业务模块加载前将其覆盖。
@@ -122,12 +161,35 @@ async function main(): Promise<void> {
     artifact,
     scan,
     work,
-    port,
     probes: {} as Record<string, unknown>,
   };
 
   try {
-    const health = await waitHealth(port, 30_000);
+    if (child.pid === undefined) {
+      throw new Error('managed Gateway child has no PID');
+    }
+    const endpoint = await waitManagedEndpoint(endpointPath, endpointNonce, child.pid, 30_000);
+    (report.probes as Record<string, unknown>).readiness = endpoint
+      ? {
+          schemaVersion: endpoint.schemaVersion,
+          pid: endpoint.pid,
+          transport: endpoint.transport,
+          host: endpoint.host,
+          port: endpoint.port,
+        }
+      : null;
+    if (!endpoint) {
+      report.error = 'readiness_timeout';
+      report.stdout = stdout.slice(-4000);
+      report.stderr = stderr.slice(-4000);
+      writeFileSync(join(work, 'smoke-report.json'), JSON.stringify(report, null, 2));
+      console.error(JSON.stringify(report, null, 2));
+      process.exit(1);
+    }
+
+    report.port = endpoint.port;
+    const baseUrl = `http://${endpoint.host}:${endpoint.port}`;
+    const health = await waitHealth(endpoint.port, 30_000);
     (report.probes as Record<string, unknown>).healthz = health;
     if (!health) {
       report.error = 'health_timeout';
@@ -138,7 +200,7 @@ async function main(): Promise<void> {
       process.exit(1);
     }
 
-    const infoRes = await fetch(`http://127.0.0.1:${port}/api/system/info`);
+    const infoRes = await fetch(`${baseUrl}/api/system/info`);
     const info = (await infoRes.json()) as {
       canSelfUpdate?: boolean;
       managementMode?: string;
@@ -146,14 +208,14 @@ async function main(): Promise<void> {
     };
     (report.probes as Record<string, unknown>).systemInfo = info;
 
-    const updateRes = await fetch(`http://127.0.0.1:${port}/api/system/update-check`);
+    const updateRes = await fetch(`${baseUrl}/api/system/update-check`);
     const updateBody = await updateRes.json();
     (report.probes as Record<string, unknown>).updateCheck = {
       status: updateRes.status,
       body: updateBody,
     };
 
-    const upgradeRes = await fetch(`http://127.0.0.1:${port}/api/system/upgrade`, {
+    const upgradeRes = await fetch(`${baseUrl}/api/system/upgrade`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ version: '9.9.9' }),
@@ -167,7 +229,7 @@ async function main(): Promise<void> {
     // 基础 WebSocket 升级探测
     let wsOk = false;
     try {
-      const ws = new WebSocket(`ws://127.0.0.1:${port}/ws`);
+      const ws = new WebSocket(`ws://${endpoint.host}:${endpoint.port}/ws`);
       wsOk = await new Promise<boolean>((resolveWs) => {
         const t = setTimeout(() => {
           try {
