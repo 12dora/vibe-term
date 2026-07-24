@@ -122,7 +122,7 @@ function target(deviceId = 'device-a') {
 }
 
 describe('canonical feed session', () => {
-  test('sends ready, metadata, subscription ack, screen, then one sequenced live stream', async () => {
+  test('subscription only acks and passes live through; first screen is client-driven', async () => {
     const runtime = new FakeRuntime();
     const events: wsBorsh.CanonicalEvent[] = [];
     const session = new CanonicalFeedSession({
@@ -149,9 +149,6 @@ describe('canonical feed session', () => {
       'FeedReady',
       'SourceMetadataSnapshot',
       'SubscriptionApplied',
-      'ScreenBegin',
-      'ScreenChunk',
-      'ScreenCommit',
       'PaneData',
     ]);
     const paneData = events.find((event) => 'PaneData' in event);
@@ -163,6 +160,25 @@ describe('canonical feed session', () => {
       paneDataDeliveries: 1,
       paneDataBytes: 4,
       paneDataDrops: 0,
+      screenTransactionsStarted: 0,
+      screenTransactionsCompleted: 0,
+    });
+
+    await session.handleCommand({
+      RequestScreen: {
+        requestId: REQUEST_ID,
+        pane: target(),
+        byteLimit: CANONICAL_MAX_SCREEN_BYTES,
+      },
+    });
+    await Bun.sleep(0);
+
+    expect(events.slice(4).map((event) => Object.keys(event)[0])).toEqual([
+      'ScreenBegin',
+      'ScreenChunk',
+      'ScreenCommit',
+    ]);
+    expect(session.snapshotStats()).toMatchObject({
       screenTransactionsStarted: 1,
       screenTransactionsCompleted: 1,
     });
