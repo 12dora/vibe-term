@@ -450,18 +450,16 @@ export class CanonicalFeedSession {
     ) {
       this.latestSubscriptionGeneration = appliedGeneration;
     }
-    for (const job of this.screenJobs.values()) {
-      if (
-        job.subscriptionGeneration !== null &&
-        job.subscriptionGeneration !== command.generation
-      ) {
-        this.cancelScreenJob(job);
-      }
-    }
-
     const activePanes: CanonicalPaneTarget[] = [];
     const hotPanes: CanonicalPaneTarget[] = [];
+    const retainedKeys = new Set<string>();
     for (const { device, result } of applyResults) {
+      for (const pane of result.activePanes) {
+        retainedKeys.add(paneKey(device.deviceId, pane.paneId));
+      }
+      for (const pane of result.hotPanes) {
+        retainedKeys.add(paneKey(device.deviceId, pane.paneId));
+      }
       const serverEpoch = device.runtime.getServerEpoch();
       if (!serverEpoch) continue;
       activePanes.push(
@@ -478,6 +476,20 @@ export class CanonicalFeedSession {
           paneId: pane.paneId,
         }))
       );
+    }
+
+    // 订阅集合变化只应作废「不再被订阅」的 pane：逐个挂载 pane 会连续抬高 generation，
+    // 若按 generation 一律取消，先挂载 pane 的首屏事务会被后挂载的 pane 打断，
+    // 多 pane 窗口因此永远拿不到首屏。仍在订阅集合内的 job 改为跟进到新 generation。
+    for (const job of this.screenJobs.values()) {
+      if (job.subscriptionGeneration === null) continue;
+      if (retainedKeys.has(job.key)) {
+        job.subscriptionGeneration = appliedGeneration;
+        continue;
+      }
+      if (job.subscriptionGeneration !== command.generation) {
+        this.cancelScreenJob(job);
+      }
     }
     this.send({
       SubscriptionApplied: {
