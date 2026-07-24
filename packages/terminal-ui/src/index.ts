@@ -2,12 +2,12 @@
 
 export { Terminal } from './components/Terminal';
 export {
-  TerminalGeneration,
-  type TerminalGenerationOptions,
-  type TerminalGenerationDiagnosticState,
-  type TerminalGenerationRecoveryState,
-  type TerminalGenerationTarget,
-} from './components/TerminalGeneration';
+  TerminalSurface,
+  type TerminalSurfaceOptions,
+  type TerminalSurfaceDiagnosticState,
+  type TerminalSurfaceRecoveryState,
+  type TerminalSurfaceTarget,
+} from './components/TerminalSurface';
 export type { TerminalProps, TerminalRef, TerminalTheme } from './components/types';
 export { SplitTerminalArea } from './components/SplitTerminalArea';
 export { TerminalPreview } from './components/TerminalPreview';

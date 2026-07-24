@@ -1,9 +1,9 @@
 export { Terminal } from './Terminal';
 export {
-  TerminalGeneration,
-  type TerminalGenerationOptions,
-  type TerminalGenerationDiagnosticState,
-  type TerminalGenerationRecoveryState,
-  type TerminalGenerationTarget,
-} from './TerminalGeneration';
+  TerminalSurface,
+  type TerminalSurfaceOptions,
+  type TerminalSurfaceDiagnosticState,
+  type TerminalSurfaceRecoveryState,
+  type TerminalSurfaceTarget,
+} from './TerminalSurface';
 export type { TerminalProps, TerminalRef } from './types';

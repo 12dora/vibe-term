@@ -29,7 +29,7 @@ import {
   unregisterCursorRectGetter,
 } from '../utils/keyboard-cursor-bridge';
 import { SelectionToolbar } from './SelectionToolbar';
-import { TerminalGeneration, type TerminalGenerationTarget } from './TerminalGeneration';
+import { TerminalSurface, type TerminalSurfaceTarget } from './TerminalSurface';
 import {
   normalizeHistoryForTerminal,
   normalizeLiveOutputForTerminal,
@@ -50,7 +50,7 @@ const TERMINAL_SCROLLBACK = 10000;
 const NORMAL_SCREEN_PREFIX = new TextEncoder().encode('\x1b[2J\x1b[H');
 type TerminalController = Awaited<ReturnType<typeof createTerminalController>>;
 
-interface TerminalRenderTarget extends TerminalGenerationTarget {
+interface TerminalRenderTarget extends TerminalSurfaceTarget {
   terminal: TerminalController;
   mount: HTMLDivElement;
   liveOutputEndedWithCR: boolean;
@@ -89,12 +89,6 @@ function writeCanonicalSnapshot(
     );
   }
   target.terminal.forceFullRepaint?.();
-}
-
-function afterNextPaint(): Promise<void> {
-  return new Promise((resolve) => {
-    requestAnimationFrame(() => requestAnimationFrame(() => resolve()));
-  });
 }
 
 // history 重建时恢复的终端模式：来自 gateway 随 TermHistory 下发的 tmux 权威位图
@@ -195,7 +189,7 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(
     const containerRef = useRef<HTMLDivElement>(null);
     const generationHostRef = useRef<HTMLDivElement>(null);
     const mountRef = useRef<HTMLDivElement | null>(null);
-    const generationRef = useRef<TerminalGeneration<TerminalRenderTarget> | null>(null);
+    const generationRef = useRef<TerminalSurface<TerminalRenderTarget> | null>(null);
     const fitAddonRef = useRef<FitAddon | null>(null);
     // 最后一次由外部（分屏按 tmux layout）显式下发的权威尺寸。快照必须按其自带的
     // rows/cols 解析才不会错行，但写完后终端就停在 capture 时的尺寸上；follow 模式下
@@ -291,13 +285,14 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(
         return {
           sourceRoute: runtime.transport.sourceRoute,
           paneEpoch: state?.paneEpoch ?? null,
-          terminalSeq: state?.terminalSeq ?? null,
+          // 字节直通后渲染层不再持有终端游标与客户端 replay ring
+          terminalSeq: null,
           historyEpoch: state?.historyEpoch ?? null,
           historyBeforeLine: state?.historyBeforeLine ?? null,
           recoveryState: state?.recoveryState ?? ('initializing' as const),
           recoveryReason: state?.recoveryReason ?? null,
-          replayBytes: state?.replayBytes ?? 0,
-          replayBytesLimit: state?.replayBytesLimit ?? 0,
+          replayBytes: 0,
+          replayBytesLimit: 0,
           historyBytes: state?.historyBytes ?? 0,
           historyBytesLimit: state?.historyBytesLimit ?? 0,
           historyPages: state?.historyPages ?? 0,
@@ -409,7 +404,7 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(
           };
         };
 
-        const manager = new TerminalGeneration<TerminalRenderTarget>({
+        const manager = new TerminalSurface<TerminalRenderTarget>({
           createTarget,
           writeSnapshot: writeCanonicalSnapshot,
           writeLive(target, data) {
@@ -417,25 +412,10 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(
             target.liveOutputEndedWithCR = normalized.endedWithCR;
             target.terminal.write(normalized.normalized);
           },
-          waitForFirstRender(target) {
-            target.terminal.forceFullRepaint?.();
-            return afterNextPaint();
-          },
-          captureScrollDistance(target) {
-            const buffer = target.terminal.buffer.active;
-            return Math.max(0, buffer.baseY - buffer.viewportY);
-          },
-          activate(target, previous, scrollDistanceFromBottom) {
-            if (previous) {
-              previous.mount.style.visibility = 'hidden';
-              previous.mount.style.pointerEvents = 'none';
-            }
+          activate(target) {
             target.mount.style.visibility = 'visible';
             target.mount.style.pointerEvents = 'auto';
             target.terminal.scrollToBottom();
-            if (scrollDistanceFromBottom > 0) {
-              target.terminal.scrollLines(-scrollDistanceFromBottom);
-            }
             target.terminal.forceFullRepaint?.();
           },
           onRecoveryRequired(reason) {
@@ -461,7 +441,7 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(
               runtime.stores.tmux.getState().requestPaneScreen(activeDeviceId, activePaneId);
             }
           },
-          onGenerationActivated(target, snapshot) {
+          onSnapshotApplied(target, snapshot) {
             if (cancelled) return;
             mountRef.current = target.mount;
             setInstance(target.terminal);
