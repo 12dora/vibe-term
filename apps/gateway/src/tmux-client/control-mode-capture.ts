@@ -147,7 +147,9 @@ export async function capturePaneFrameAtControlBarrier(
     timeoutMs,
     transform: (block) => {
       onBarrier();
-      return block.lines.length > 0 ? `${block.lines.join('\n')}\n` : '';
+      // 不补行尾换行：整屏快照写进终端时，末行多一个换行会把首行顶出屏幕，
+      // 随后按绝对坐标恢复的光标就会落在错位一行的内容上。
+      return block.lines.join('\n');
     },
   });
   const [info, text] = await Promise.all([infoPromise, textPromise]);

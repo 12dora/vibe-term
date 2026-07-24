@@ -41,7 +41,7 @@ describe('control-mode atomic capture', () => {
 
     const capture = await capturePromise;
     expect(capture).toEqual({
-      text: '%output this is terminal text\n%window-add also terminal text\n',
+      text: '%output this is terminal text\n%window-add also terminal text',
       cols: 80,
       rows: 24,
       cursorX: 3,

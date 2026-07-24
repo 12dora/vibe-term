@@ -75,18 +75,22 @@ function writeCanonicalSnapshot(
   target.terminal.reset();
   target.liveOutputEndedWithCR = false;
   target.terminal.resize(snapshot.cols, snapshot.rows);
+  // 快照正文是 gateway 用 '\n' 拼接的 capture-pane 行，和 history 一样是裸 LF；直接写进
+  // xterm 会阶梯式换行，必须与 history/live 两条路径一样补齐 CR。
+  const body = normalizeLiveOutputForTerminal(
+    startsWithBytes(snapshot.data, NORMAL_SCREEN_PREFIX) && historyPages.length > 0
+      ? snapshot.data.subarray(NORMAL_SCREEN_PREFIX.byteLength)
+      : snapshot.data,
+    false
+  ).normalized;
   if (historyPages.length === 0) {
-    target.terminal.write(snapshot.data);
+    target.terminal.write(body);
   } else {
     target.terminal.write(NORMAL_SCREEN_PREFIX);
     for (const page of historyPages) {
       target.terminal.write(normalizeHistoryForTerminal(new TextDecoder().decode(page.data)));
     }
-    target.terminal.write(
-      startsWithBytes(snapshot.data, NORMAL_SCREEN_PREFIX)
-        ? snapshot.data.subarray(NORMAL_SCREEN_PREFIX.byteLength)
-        : snapshot.data
-    );
+    target.terminal.write(body);
   }
   target.terminal.forceFullRepaint?.();
 }

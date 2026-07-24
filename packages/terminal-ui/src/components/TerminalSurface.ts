@@ -226,8 +226,12 @@ export class TerminalSurface<Target extends TerminalSurfaceTarget> {
   }
 
   private requestRecovery(reason: GatewayRebaseReason): void {
+    const changed = this.recoveryReason !== reason;
     this.recoveryReason = reason;
-    if (this.recoveryRequested) return;
+    // 同一 reason 的恢复请求在途时抑制重复请求，避免请求风暴；但 reason 变化必须继续上报：
+    // 首屏一直取不回来时，重试耗尽后的 resource_exhausted 正是靠这条路径把失败态交给渲染层，
+    // 被吞掉就只能永远停在 Loading。
+    if (this.recoveryRequested && !changed) return;
     this.recoveryRequested = true;
     this.options.onRecoveryRequired(reason);
   }

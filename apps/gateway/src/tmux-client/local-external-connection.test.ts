@@ -555,7 +555,7 @@ describe('LocalExternalTmuxConnection', () => {
     );
 
     await expect(capturePromise).resolves.toMatchObject({
-      text: '%output literal screen row\n',
+      text: '%output literal screen row',
       cols: 80,
       rows: 24,
       historySize: 100,
