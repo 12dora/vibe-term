@@ -197,6 +197,12 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(
     const mountRef = useRef<HTMLDivElement | null>(null);
     const generationRef = useRef<TerminalGeneration<TerminalRenderTarget> | null>(null);
     const fitAddonRef = useRef<FitAddon | null>(null);
+    // 最后一次由外部（分屏按 tmux layout）显式下发的权威尺寸。快照必须按其自带的
+    // rows/cols 解析才不会错行，但写完后终端就停在 capture 时的尺寸上；follow 模式下
+    // reportSize 直接 return，没有任何东西会把它改回来，于是排版一直乱到用户手动 resize。
+    const authoritativeSizeRef = useRef<{ cols: number; rows: number } | null>(null);
+    const sizingModeRef = useRef(sizingMode);
+    const runPostSelectResizeRef = useRef<() => void>(() => {});
     const currentDeviceIdRef = useRef(deviceId);
     const currentPaneIdRef = useRef(paneId);
     const canWriteRef = useRef(deviceConnected && !isSelectionInvalid);
@@ -225,6 +231,10 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(
     useEffect(() => {
       currentTerminalThemeRef.current = terminalTheme;
     }, [terminalTheme]);
+
+    useEffect(() => {
+      sizingModeRef.current = sizingMode;
+    }, [sizingMode]);
 
     const sendTerminalInput = useCallback(
       (data: string) => {
@@ -456,6 +466,22 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(
             mountRef.current = target.mount;
             setInstance(target.terminal);
             if (snapshot) hasCommittedSnapshot = true;
+            // 快照按自带尺寸解析完毕，收敛回 tmux 权威尺寸；此后由 live 流继续。
+            if (snapshot) {
+              const authoritative = authoritativeSizeRef.current;
+              if (sizingModeRef.current === 'follow') {
+                if (
+                  authoritative &&
+                  (target.terminal.cols !== authoritative.cols ||
+                    target.terminal.rows !== authoritative.rows)
+                ) {
+                  target.terminal.resize(authoritative.cols, authoritative.rows);
+                  target.terminal.forceFullRepaint?.();
+                }
+              } else {
+                runPostSelectResizeRef.current();
+              }
+            }
             if (snapshot) {
               reportTerminalDiagnostic(
                 terminalDiagnosticsReporter,
@@ -562,6 +588,10 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(
       }
       instance.focus();
     }, [instance, inputMode, autoFocus]);
+
+    useEffect(() => {
+      runPostSelectResizeRef.current = runPostSelectResize;
+    }, [runPostSelectResize]);
 
     const paneSink: PaneSink | null = useMemo(() => {
       if (!instance) {
@@ -885,7 +915,10 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(
           if (target) target.liveOutputEndedWithCR = false;
         },
         scrollToBottom: () => instance?.scrollToBottom(),
-        resize: (cols, rows) => instance?.resize(cols, rows),
+        resize: (cols, rows) => {
+          authoritativeSizeRef.current = { cols, rows };
+          instance?.resize(cols, rows);
+        },
         getTerminal: () => instance ?? null,
         getSize: () => {
           if (!instance) return null;
