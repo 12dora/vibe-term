@@ -213,6 +213,10 @@ export interface GatewayTransportCapabilities {
   sequencedTerminal: boolean;
   atomicScreen: boolean;
   cursorHistory: boolean;
+  // select-pane / select-window / focus-pane 是否真正驱动服务端（tmux）的 active 状态。
+  // 为 false 时 selection 是纯本地语义，消费方不得再拿快照里的 tmux active 反向改写
+  // 本地路由，否则本地选择会被服务端 active 弹回。
+  serverSelection: boolean;
 }
 
 export type GatewayTransportSourceRoute = 'gateway' | 'local' | 'relay' | 'unknown';
@@ -311,6 +315,7 @@ export class WebSocketGatewayTransport implements GatewayTransport {
     sequencedTerminal: false,
     atomicScreen: false,
     cursorHistory: false,
+    serverSelection: true,
   };
 
   private readonly handlers = new Set<(event: GatewayTransportEvent) => void>();
@@ -489,6 +494,7 @@ export class LazyWebSocketGatewayTransport implements GatewayTransport {
     sequencedTerminal: false,
     atomicScreen: false,
     cursorHistory: false,
+    serverSelection: true,
   };
 
   private delegateTransport: WebSocketGatewayTransport | null = null;
@@ -546,6 +552,7 @@ export interface SharedGatewayTransportOptions {
   initialState?: ConnectionState;
   sourceRoute?: GatewayTransportSourceRoute;
   serverCapabilities?: readonly string[];
+  serverSelection?: boolean;
   onConnect?: () => void;
   onDisconnect?: () => void;
   // biome-ignore lint/suspicious/noConfusingVoidType: void accepts fire-and-forget owners; false is the explicit rejection signal
@@ -592,6 +599,7 @@ export function createSharedGatewayTransport(
       sequencedTerminal: true,
       atomicScreen: true,
       cursorHistory: true,
+      serverSelection: options.serverSelection ?? true,
     },
     get hasConnectedOnce() {
       return connectedOnce;

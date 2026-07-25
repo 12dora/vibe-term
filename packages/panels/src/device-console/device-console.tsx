@@ -684,8 +684,12 @@ export function DeviceConsole({
   );
 
   // Follow active pane from event/tmux pane-active
+  // selection 为纯本地语义的 transport（serverSelection=false）下，select 命令不会真正
+  // 驱动 tmux active，跟随 tmux active 改写路由只会把用户刚选中的终端弹回去，必须禁用。
+  const serverSelection = runtime.transport.capabilities.serverSelection;
   const lastHandledActiveRef = useRef<{ windowId: string; paneId: string } | null>(null);
   useEffect(() => {
+    if (!serverSelection) return;
     if (!deviceId) return;
     if (!deviceConnected) return;
     if (!windowId || !resolvedPaneId) return;
@@ -748,11 +752,13 @@ export function DeviceConsole({
     selectPane,
     navigate,
     runtime.host,
+    serverSelection,
   ]);
 
   // Fallback: follow active from snapshot (for environments without pane-active event)
   const lastSnapshotActiveRef = useRef<{ windowId: string; paneId: string } | null>(null);
   useEffect(() => {
+    if (!serverSelection) return;
     if (!deviceId) return;
     if (!deviceConnected) return;
     if (!windows || windows.length === 0) return;
@@ -834,6 +840,7 @@ export function DeviceConsole({
     selectPane,
     navigate,
     runtime.host,
+    serverSelection,
   ]);
 
   // Force-follow snapshot active after a user-initiated createWindow.
