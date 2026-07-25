@@ -1,4 +1,10 @@
-import { type StateSnapshotPayload, wsBorsh } from '@tmex/shared';
+import {
+  PANE_MODE_ALT_SCREEN,
+  PANE_MODE_FLAGS_PRESENT,
+  type StateSnapshotPayload,
+  encodePaneModes,
+  wsBorsh,
+} from '@tmex/shared';
 
 import { getDeviceById } from '../db';
 import type { PaneInfo } from './capture-history';
@@ -493,6 +499,7 @@ export class DeviceSessionRuntime {
         cursorY: info.cursorY,
         alternateScreen: info.alternateScreen,
         historySize: (await this.connection.getPaneHistoryCaptureInfo(paneId)).historySize,
+        modes: null,
       };
     }
     const prefix = frame.alternateScreen ? '\x1b[?1049h\x1b[2J\x1b[H' : '\x1b[2J\x1b[H';
@@ -523,7 +530,9 @@ export class DeviceSessionRuntime {
       baseSeq: baseCursor.terminalSeq,
       rows: Math.max(1, Math.min(frame.rows, 0xffff)),
       cols: Math.max(1, Math.min(frame.cols, 0xffff)),
-      modes: frame.alternateScreen ? 1 : 0,
+      modes:
+        (frame.alternateScreen ? PANE_MODE_ALT_SCREEN : 0) |
+        (frame.modes ? encodePaneModes(frame.modes) | PANE_MODE_FLAGS_PRESENT : 0),
       data,
       historyCursor: frame.alternateScreen
         ? null

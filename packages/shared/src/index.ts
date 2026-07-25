@@ -317,6 +317,8 @@ export * as wsBorsh from './ws-borsh';
 
 export {
   EMPTY_PANE_MODE_FLAGS,
+  PANE_MODE_ALT_SCREEN,
+  PANE_MODE_FLAGS_PRESENT,
   type PaneModeFlags,
   decodePaneModes,
   encodePaneModes,

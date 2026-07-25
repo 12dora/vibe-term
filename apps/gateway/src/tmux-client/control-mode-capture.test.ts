@@ -33,7 +33,7 @@ describe('control-mode atomic capture', () => {
     expect(writes).toHaveLength(2);
     parser.push(
       encoder.encode(
-        '%begin 1 2 0\n80|24|0|3|4|200\n%end 1 2 0\n' +
+        '%begin 1 2 0\n80|24|0|3|4|200|1|0|0|1|0\n%end 1 2 0\n' +
           '%begin 1 3 0\n%output this is terminal text\n%window-add also terminal text\n' +
           '%end 1 3 0\n%output %1 live\n'
       )
@@ -48,6 +48,13 @@ describe('control-mode atomic capture', () => {
       cursorY: 4,
       alternateScreen: false,
       historySize: 200,
+      modes: {
+        mouseStandard: true,
+        mouseButton: false,
+        mouseAll: false,
+        mouseSgr: true,
+        mouseUtf8: false,
+      },
     });
     expect(events).toEqual(['block-end', 'barrier', 'block-end', 'output']);
     expect(writes[1]).toBe('capture-pane -p -e -J -N -t %1 -S -50\n');

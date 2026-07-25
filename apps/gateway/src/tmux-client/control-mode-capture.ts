@@ -1,3 +1,4 @@
+import type { PaneModeFlags } from '@tmex/shared';
 import type { ControlModeBlock } from './control-mode-parser';
 import { isTmuxPaneId } from './snapshot-format';
 
@@ -9,6 +10,9 @@ export interface AtomicPaneCapture {
   cursorY: number | null;
   alternateScreen: boolean;
   historySize: number;
+  // capture-pane 文本不含 DECSET 序列，鼠标模式唯一权威来源是 tmux 的 format 变量，
+  // 必须与截屏在同一 control 屏障内读取；null 表示该连接采不到（快照将不声明模式位图）。
+  modes: PaneModeFlags | null;
 }
 
 interface PendingControlCommand<T = unknown> {
@@ -115,6 +119,13 @@ function parsePaneFrameInfo(block: ControlModeBlock): Omit<AtomicPaneCapture, 't
     cursorX: parseNonNegativeInteger(info?.[3]),
     cursorY: parseNonNegativeInteger(info?.[4]),
     historySize: parseNonNegativeInteger(info?.[5]) ?? 0,
+    modes: {
+      mouseStandard: info?.[6] === '1',
+      mouseButton: info?.[7] === '1',
+      mouseAll: info?.[8] === '1',
+      mouseSgr: info?.[9] === '1',
+      mouseUtf8: info?.[10] === '1',
+    },
   };
 }
 
@@ -128,7 +139,7 @@ export async function capturePaneFrameAtControlBarrier(
 ): Promise<AtomicPaneCapture> {
   if (!isTmuxPaneId(paneId)) throw new Error(`invalid tmux pane id: ${paneId}`);
   const boundedHistoryLines = Math.max(0, Math.min(4096, Math.floor(historyLines)));
-  const infoPromise = queue.execute(write, `display-message -p -t ${paneId} "#{pane_width}|#{pane_height}|#{alternate_on}|#{cursor_x}|#{cursor_y}|#{history_size}"`, {
+  const infoPromise = queue.execute(write, `display-message -p -t ${paneId} "#{pane_width}|#{pane_height}|#{alternate_on}|#{cursor_x}|#{cursor_y}|#{history_size}|#{mouse_standard_flag}|#{mouse_button_flag}|#{mouse_all_flag}|#{mouse_sgr_flag}|#{mouse_utf8_flag}"`, {
     timeoutMs,
     transform: parsePaneFrameInfo,
   });

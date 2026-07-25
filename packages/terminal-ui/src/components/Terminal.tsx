@@ -1,6 +1,6 @@
 import { useQuery } from '@tanstack/react-query';
 import { fetchFileRoots, fetchFileStat } from '@tmex/api-client';
-import { decodePaneModes } from '@tmex/shared';
+import { PANE_MODE_ALT_SCREEN, PANE_MODE_FLAGS_PRESENT, decodePaneModes } from '@tmex/shared';
 import { type TerminalFileLinksProvider, fileRoute, hostAppPath } from '@tmex/stores';
 import { useRuntime, useTmuxStore, useUIStore } from '@tmex/stores/react';
 import { loadTerminalFonts, resolveFontStack } from '@tmex/theme';
@@ -75,6 +75,15 @@ function writeCanonicalSnapshot(
   target.terminal.reset();
   target.liveOutputEndedWithCR = false;
   target.terminal.resize(snapshot.cols, snapshot.rows);
+  // reset() 会清掉全部 DECSET 私有模式，而快照正文（capture-pane 文本）不含这些序列；
+  // 必须在 reset 之后用 gateway 随快照下发的 tmux 权威位图恢复鼠标模式，否则切窗/
+  // 冷启动后 TUI 的鼠标 hover/滚轮全部失灵。bit7 未置位说明位图来自旧版 gateway
+  // （彼时 bit0 是 alternate screen），不能当鼠标位解码。
+  if ((snapshot.modes & PANE_MODE_FLAGS_PRESENT) !== 0) {
+    target.terminal.restoreModeSnapshot?.(
+      terminalModesFromHistory(snapshot.modes, (snapshot.modes & PANE_MODE_ALT_SCREEN) !== 0)
+    );
+  }
   // 快照正文是 gateway 用 '\n' 拼接的 capture-pane 行，和 history 一样是裸 LF；直接写进
   // xterm 会阶梯式换行，必须与 history/live 两条路径一样补齐 CR。
   const body = normalizeLiveOutputForTerminal(
