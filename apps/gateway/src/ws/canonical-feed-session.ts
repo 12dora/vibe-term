@@ -20,6 +20,10 @@ import {
   type PaneSubscriptionApplyResult,
   type PaneSubscriptionRequest,
 } from '../tmux-client/pane-retention';
+import {
+  GATEWAY_TERM_OUTPUT_BATCH_DELAY_MS,
+  GATEWAY_TERM_OUTPUT_BATCH_MAX_BYTES,
+} from './terminal-output-batcher';
 
 export const CANONICAL_MAX_SCREEN_BYTES = 512 * 1024;
 export const CANONICAL_MAX_HISTORY_PAGE_BYTES = 256 * 1024;
@@ -118,6 +122,17 @@ function bytesHex(value: Uint8Array): string {
 
 const CANONICAL_PENDING_SWEEP_MS = 250;
 
+interface PendingPaneDataBatch {
+  deviceId: string;
+  paneId: string;
+  paneEpoch: Uint8Array;
+  seqStart: bigint;
+  seqEnd: bigint;
+  chunks: Uint8Array[];
+  length: number;
+  timer: ReturnType<typeof setTimeout>;
+}
+
 function paneKey(deviceId: string, paneId: string): string {
   return `${deviceId}\0${paneId}`;
 }
@@ -138,6 +153,7 @@ export class CanonicalFeedSession {
   private readonly devices = new Map<string, AttachedDevice>();
   private readonly screenJobs = new Map<string, ScreenJob>();
   private readonly paneSendGaps = new Map<string, PaneReplayGap>();
+  private readonly paneDataBatches = new Map<string, PendingPaneDataBatch>();
   private readonly inputIds = new Set<string>();
   private readonly inputIdOrder: string[] = [];
   private readonly gatewayEpoch: Uint8Array;
@@ -280,6 +296,7 @@ export class CanonicalFeedSession {
   detachDevice(deviceId: string): void {
     const attached = this.devices.get(deviceId);
     if (!attached) return;
+    this.flushPaneDataBatchesForDevice(deviceId);
     this.devices.delete(deviceId);
     attached.lease.close();
     attached.detachListener();
@@ -335,6 +352,7 @@ export class CanonicalFeedSession {
   close(): void {
     if (this.closed) return;
     this.closed = true;
+    this.discardPaneDataBatches();
     for (const job of this.screenJobs.values()) this.cancelScreenJob(job);
     this.screenJobs.clear();
     this.paneSendGaps.clear();
@@ -685,11 +703,82 @@ export class CanonicalFeedSession {
     return !this.closed && !job.cancelled && this.screenJobs.get(job.key) === job;
   }
 
+  // tmux 一次整屏重绘会以几十个独立 %output 到达；legacy 广播路径经 TerminalOutputBatcher
+  // 合帧，canonical 路径若逐段直发，同样的重绘就变成几十个独立帧一路放大到客户端
+  // （每帧独立编码/加密/系统调用，公网上被 RTT 摊开跨渲染帧到达，表现为逐行扫描式重绘，
+  // 客户端主线程也被 message 洪水填满拖慢输入）。此处按 legacy 相同参数（16ms/64KiB）
+  // 对 seq 连续的同 pane 段合帧；发出任何同 pane 的 gap/快照/目标 gap 前必须先 flush，
+  // 保持 pane 内事件全序。
   private handlePaneData(deviceId: string, segment: PaneDataSegment): void {
-    this.sendPaneData(deviceId, segment);
+    const key = paneKey(deviceId, segment.paneId);
+    const pending = this.paneDataBatches.get(key);
+    if (pending) {
+      if (
+        bytesEqual(pending.paneEpoch, segment.paneEpoch) &&
+        pending.seqEnd === segment.seqStart
+      ) {
+        pending.chunks.push(segment.data);
+        pending.length += segment.data.byteLength;
+        pending.seqEnd = segment.seqEnd;
+        if (pending.length >= GATEWAY_TERM_OUTPUT_BATCH_MAX_BYTES) this.flushPaneDataBatch(key);
+        return;
+      }
+      this.flushPaneDataBatch(key);
+    }
+    if (segment.data.byteLength >= GATEWAY_TERM_OUTPUT_BATCH_MAX_BYTES) {
+      this.sendPaneData(deviceId, segment);
+      return;
+    }
+    this.paneDataBatches.set(key, {
+      deviceId,
+      paneId: segment.paneId,
+      paneEpoch: segment.paneEpoch,
+      seqStart: segment.seqStart,
+      seqEnd: segment.seqEnd,
+      chunks: [segment.data],
+      length: segment.data.byteLength,
+      timer: setTimeout(() => this.flushPaneDataBatch(key), GATEWAY_TERM_OUTPUT_BATCH_DELAY_MS),
+    });
+  }
+
+  private flushPaneDataBatch(key: string): void {
+    const pending = this.paneDataBatches.get(key);
+    if (!pending) return;
+    clearTimeout(pending.timer);
+    this.paneDataBatches.delete(key);
+    let data: Uint8Array;
+    if (pending.chunks.length === 1) {
+      data = pending.chunks[0]!;
+    } else {
+      data = new Uint8Array(pending.length);
+      let offset = 0;
+      for (const chunk of pending.chunks) {
+        data.set(chunk, offset);
+        offset += chunk.byteLength;
+      }
+    }
+    this.sendPaneData(pending.deviceId, {
+      paneId: pending.paneId,
+      paneEpoch: pending.paneEpoch,
+      seqStart: pending.seqStart,
+      seqEnd: pending.seqEnd,
+      data,
+    });
+  }
+
+  private flushPaneDataBatchesForDevice(deviceId: string): void {
+    for (const key of Array.from(this.paneDataBatches.keys())) {
+      if (key.startsWith(`${deviceId}\0`)) this.flushPaneDataBatch(key);
+    }
+  }
+
+  private discardPaneDataBatches(): void {
+    for (const pending of this.paneDataBatches.values()) clearTimeout(pending.timer);
+    this.paneDataBatches.clear();
   }
 
   private handlePaneGap(deviceId: string, gap: PaneReplayGap): void {
+    this.flushPaneDataBatch(paneKey(deviceId, gap.paneId));
     this.sendPaneGap(deviceId, gap);
   }
 
@@ -772,6 +861,7 @@ export class CanonicalFeedSession {
     availablePaneEpoch: Uint8Array,
     availableSeq: bigint
   ): void {
+    this.flushPaneDataBatch(paneKey(target.deviceId, target.paneId));
     const sent = this.send({
       SourceGap: {
         reason: wsBorsh.SOURCE_GAP_REASON_EPOCH_CHANGED,
@@ -839,6 +929,7 @@ export class CanonicalFeedSession {
   ): boolean {
     const serverEpoch = this.devices.get(deviceId)?.runtime.getServerEpoch();
     if (!serverEpoch) return false;
+    this.flushPaneDataBatch(paneKey(deviceId, checkpoint.paneId));
     const begin: CanonicalEvent = {
       ScreenBegin: {
         requestId,

@@ -14,6 +14,9 @@ import {
   type CanonicalFeedRuntime,
   CanonicalFeedSession,
 } from './canonical-feed-session';
+import { GATEWAY_TERM_OUTPUT_BATCH_DELAY_MS } from './terminal-output-batcher';
+
+const awaitPaneDataFlush = () => Bun.sleep(GATEWAY_TERM_OUTPUT_BATCH_DELAY_MS + 4);
 
 const SERVER_EPOCH = new Uint8Array(16).fill(0x11);
 const PANE_EPOCH = new Uint8Array(16).fill(0x22);
@@ -144,6 +147,7 @@ describe('canonical feed session', () => {
     });
     await Bun.sleep(0);
     runtime.output('live');
+    await awaitPaneDataFlush();
 
     expect(events.map((event) => Object.keys(event)[0])).toEqual([
       'FeedReady',
@@ -287,6 +291,7 @@ describe('canonical feed session', () => {
     await Bun.sleep(0);
     runtimes.get('device-a')?.output('a');
     runtimes.get('device-b')?.output('b');
+    await awaitPaneDataFlush();
 
     expect(session.snapshotStats()).toMatchObject({
       pendingPaneGaps: 0,
