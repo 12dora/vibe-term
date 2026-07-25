@@ -104,8 +104,13 @@ export class PaneSinkRegistry {
       if (state.rebase) sink.onRebase?.(state.rebase);
       if (state.screen) sink.onScreenSnapshot?.(state.screen);
       for (const page of state.historyPages) sink.onHistoryPage?.(page);
-      for (const frame of state.outputs) {
-        sink.onOutput(frame.data, frame);
+      // 缓冲的 live 字节只有跟在画面基线（reset/history/screen）之后回放才有意义；
+      // 没有基线时它们是任意时刻的流中片段，写进全新空终端只会闪现陈旧乱码
+      //（canonical 路径挂载后总会重新拉快照，丢弃无损）。
+      if (state.reset || state.history || state.screen) {
+        for (const frame of state.outputs) {
+          sink.onOutput(frame.data, frame);
+        }
       }
     }
 

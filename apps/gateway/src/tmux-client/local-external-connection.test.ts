@@ -551,11 +551,13 @@ describe('LocalExternalTmuxConnection', () => {
     fake.pushStdout(
       '%begin 2 20 0\n80|24|0|3|4|100\n%end 2 20 0\n' +
         '%begin 2 21 0\n%output literal screen row\n%end 2 21 0\n' +
+        '%begin 2 22 0\nhistory row\n%end 2 22 0\n' +
         '%output %1 live-after-capture\n'
     );
 
     await expect(capturePromise).resolves.toMatchObject({
       text: '%output literal screen row',
+      historyText: 'history row',
       cols: 80,
       rows: 24,
       historySize: 100,

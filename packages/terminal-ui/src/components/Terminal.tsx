@@ -98,6 +98,9 @@ function writeCanonicalSnapshot(
     target.terminal.write(NORMAL_SCREEN_PREFIX);
     for (const page of historyPages) {
       target.terminal.write(normalizeHistoryForTerminal(new TextDecoder().decode(page.data)));
+      // normalizeHistoryForTerminal 会吃掉页尾换行；不补回的话页与页、
+      // 最后一页与快照正文会粘在同一行，整屏随之错一行。
+      target.terminal.write('\r\n');
     }
     target.terminal.write(body);
   }

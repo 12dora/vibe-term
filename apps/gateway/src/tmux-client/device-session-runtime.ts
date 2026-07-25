@@ -489,10 +489,13 @@ export class DeviceSessionRuntime {
       });
     } else {
       const info = await this.connection.getPaneInfo(paneId);
-      const text = await this.connection.capturePaneText(paneId, { historyLines });
+      const text = await this.connection.capturePaneText(paneId, {
+        historyLines: info.alternateScreen ? 0 : historyLines,
+      });
       baseCursor = this.paneRetention.getLatestCursor(paneId);
       frame = {
         text,
+        historyText: null,
         cols: info.cols,
         rows: info.rows,
         cursorX: info.cursorX,
@@ -511,7 +514,20 @@ export class DeviceSessionRuntime {
     const prefixBytes = encoder.encode(prefix);
     const cursorBytes = encoder.encode(cursor);
     const textBudget = Math.max(0, maxBytes - prefixBytes.byteLength - cursorBytes.byteLength);
-    const rawTextBytes = encoder.encode(frame.text);
+    const visibleBytes = encoder.encode(frame.text);
+    // alt 屏的 scrollback 属于 primary grid（TUI 启动前的旧 shell 输出），绝不拼进快照；
+    // 预算不足时整段丢弃历史而不是从头部截断——截断会切断 SGR 序列且让行数失配。
+    const includeHistory =
+      !frame.alternateScreen && frame.historySize > 0 && frame.historyText !== null;
+    const historyBytes = includeHistory
+      ? encoder.encode(`${frame.historyText}\n`)
+      : new Uint8Array(0);
+    const historyIncluded =
+      includeHistory && historyBytes.byteLength + visibleBytes.byteLength <= textBudget;
+    const rawTextBytes = historyIncluded ? concatBytes(historyBytes, visibleBytes) : visibleBytes;
+    // 降级路径（无 control 通道）的 text 本身就是 -S 合并采集，历史行内嵌其中
+    const fallbackEmbeddedHistory = frame.historyText === null && !frame.alternateScreen;
+    const embeddedHistoryLines = historyIncluded || fallbackEmbeddedHistory ? historyLines : 0;
     const textWasTruncated = rawTextBytes.byteLength > textBudget;
     const textBytes = truncateUtf8Tail(rawTextBytes, textBudget);
     const data = concatBytes(prefixBytes, textBytes, cursorBytes);
@@ -539,7 +555,9 @@ export class DeviceSessionRuntime {
         : this.paneHistoryReader.createCursor(
             paneId,
             currentIdentity.paneEpoch,
-            textWasTruncated ? frame.historySize : Math.max(0, frame.historySize - historyLines)
+            textWasTruncated
+              ? frame.historySize
+              : Math.max(0, frame.historySize - embeddedHistoryLines)
           ),
       capturedAt: Date.now(),
     };

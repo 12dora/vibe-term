@@ -922,6 +922,49 @@ export class CanonicalFeedSession {
     this.screenTransactionsCancelled += 1;
   }
 
+  // 快照屏障（baseSeq）前的待发数据已包含在快照正文里，直接发出会紧贴在 ScreenBegin
+  // 之前到达、被客户端 reset 抹掉的是屏障之后的部分——因此按 baseSeq 切分：
+  // ≤baseSeq 丢弃（快照取代之），>baseSeq 扣到 ScreenCommit 之后补发。
+  private splitPaneDataBatchAtBase(
+    key: string,
+    paneEpoch: Uint8Array,
+    baseSeq: bigint
+  ): PaneDataSegment | null {
+    const pending = this.paneDataBatches.get(key);
+    if (!pending) return null;
+    if (!bytesEqual(pending.paneEpoch, paneEpoch)) {
+      this.flushPaneDataBatch(key);
+      return null;
+    }
+    clearTimeout(pending.timer);
+    this.paneDataBatches.delete(key);
+    if (pending.seqEnd <= baseSeq) return null;
+    let data: Uint8Array;
+    if (pending.chunks.length === 1) {
+      data = pending.chunks[0]!;
+    } else {
+      data = new Uint8Array(pending.length);
+      let offset = 0;
+      for (const chunk of pending.chunks) {
+        data.set(chunk, offset);
+        offset += chunk.byteLength;
+      }
+    }
+    let seqStart = pending.seqStart;
+    if (seqStart < baseSeq) {
+      data = data.subarray(Number(baseSeq - seqStart));
+      seqStart = baseSeq;
+    }
+    if (data.byteLength === 0) return null;
+    return {
+      paneId: pending.paneId,
+      paneEpoch: pending.paneEpoch,
+      seqStart,
+      seqEnd: pending.seqEnd,
+      data,
+    };
+  }
+
   private sendScreenTransaction(
     deviceId: string,
     requestId: Uint8Array,
@@ -929,7 +972,11 @@ export class CanonicalFeedSession {
   ): boolean {
     const serverEpoch = this.devices.get(deviceId)?.runtime.getServerEpoch();
     if (!serverEpoch) return false;
-    this.flushPaneDataBatch(paneKey(deviceId, checkpoint.paneId));
+    const heldLive = this.splitPaneDataBatchAtBase(
+      paneKey(deviceId, checkpoint.paneId),
+      checkpoint.paneEpoch,
+      checkpoint.baseSeq
+    );
     const begin: CanonicalEvent = {
       ScreenBegin: {
         requestId,
@@ -944,13 +991,15 @@ export class CanonicalFeedSession {
     };
     if (!this.send(begin)) return false;
     if (!this.sendContentChunks('screen', requestId, checkpoint.data)) return false;
-    return this.send({
+    const committed = this.send({
       ScreenCommit: {
         requestId,
         totalBytes: checkpoint.data.byteLength,
         historyCursor: checkpoint.historyCursor,
       },
     });
+    if (committed && heldLive) this.sendPaneData(deviceId, heldLive);
+    return committed;
   }
 
   private sendHistoryTransaction(
@@ -958,6 +1007,7 @@ export class CanonicalFeedSession {
     requestId: Uint8Array,
     page: PaneHistoryPage
   ): boolean {
+    this.flushPaneDataBatch(paneKey(target.deviceId, target.paneId));
     if (
       !this.send({
         HistoryBegin: {

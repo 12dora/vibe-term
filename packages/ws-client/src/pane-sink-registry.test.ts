@@ -174,6 +174,7 @@ describe('pane-sink-registry', () => {
 
     const b = createRecordingSink();
     registerPaneSink('dev-b', '%1', b.sink);
-    expect(b.events).toEqual([{ type: 'output', data: 'other-device' }]);
+    // 无画面基线（reset/history/screen）的流中片段不回放：写进全新空终端只会闪现乱码
+    expect(b.events).toEqual([]);
   });
 });

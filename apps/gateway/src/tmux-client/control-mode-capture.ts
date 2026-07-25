@@ -3,7 +3,12 @@ import type { ControlModeBlock } from './control-mode-parser';
 import { isTmuxPaneId } from './snapshot-format';
 
 export interface AtomicPaneCapture {
+  // 可见区（-S 0 起）；历史段单独采集，避免 -J 把跨越 history/可见区边界的
+  // 折行合并成一行导致可见区行数漂移、绝对光标恢复错位。
   text: string;
+  // 纯历史段（-S -N -E -1）；未请求历史时为 null。alt 屏或 history_size=0 时
+  // tmux 会退化返回可见区首行，消费方必须结合同屏障的 alternate_on/history_size 门控。
+  historyText: string | null;
   cols: number;
   rows: number;
   cursorX: number | null;
@@ -143,17 +148,8 @@ export async function capturePaneFrameAtControlBarrier(
     timeoutMs,
     transform: parsePaneFrameInfo,
   });
-  const captureArgs = [
-    'capture-pane',
-    '-p',
-    '-e',
-    '-J',
-    '-N',
-    '-t',
-    paneId,
-    ...(boundedHistoryLines > 0 ? ['-S', `-${boundedHistoryLines}`] : []),
-  ];
-  const textPromise = queue.execute(write, captureArgs.join(' '), {
+  const visibleArgs = ['capture-pane', '-p', '-e', '-J', '-N', '-t', paneId];
+  const textPromise = queue.execute(write, visibleArgs.join(' '), {
     literal: true,
     timeoutMs,
     transform: (block) => {
@@ -163,6 +159,18 @@ export async function capturePaneFrameAtControlBarrier(
       return block.lines.join('\n');
     },
   });
-  const [info, text] = await Promise.all([infoPromise, textPromise]);
-  return { ...info, text };
+  const historyPromise =
+    boundedHistoryLines > 0
+      ? queue.execute(
+          write,
+          [...visibleArgs, '-S', `-${boundedHistoryLines}`, '-E', '-1'].join(' '),
+          {
+            literal: true,
+            timeoutMs,
+            transform: (block) => block.lines.join('\n'),
+          }
+        )
+      : Promise.resolve(null);
+  const [info, text, historyText] = await Promise.all([infoPromise, textPromise, historyPromise]);
+  return { ...info, text, historyText };
 }

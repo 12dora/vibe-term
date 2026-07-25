@@ -30,6 +30,7 @@ class FakeRuntime implements CanonicalFeedRuntime {
   readonly resizes: Array<[string, number, number]> = [];
   screenData = encoder.encode('screen');
   checkpoint: PaneScreenCheckpoint | null = null;
+  baseSeqOverride: bigint | null = null;
 
   constructor(readonly deviceId = 'device-a') {
     this.retention.reconcilePanes([{ paneId: '%1', paneEpoch: PANE_EPOCH }]);
@@ -95,7 +96,7 @@ class FakeRuntime implements CanonicalFeedRuntime {
     this.checkpoint = {
       paneId,
       paneEpoch: PANE_EPOCH,
-      baseSeq: cursor.terminalSeq,
+      baseSeq: this.baseSeqOverride ?? cursor.terminalSeq,
       rows: 24,
       cols: 80,
       modes: 0,
@@ -258,6 +259,56 @@ describe('canonical feed session', () => {
     expect(
       last && 'SubscriptionApplied' in last ? last.SubscriptionApplied.activePanes : []
     ).toHaveLength(1);
+    session.close();
+  });
+
+  test('splits pending pane batch at snapshot baseSeq: stale part dropped, rest after commit', async () => {
+    const runtime = new FakeRuntime();
+    const events: wsBorsh.CanonicalEvent[] = [];
+    const session = new CanonicalFeedSession({
+      maxFrameBytes: wsBorsh.CANONICAL_STATE_MAX_FRAME_BYTES,
+      sendEvent: (event) => {
+        events.push(event);
+        return true;
+      },
+      resolveRuntime: async () => runtime,
+      initialDeviceIds: () => ['device-a'],
+    });
+    await session.handleCommand({
+      SetPaneSubscriptions: {
+        generation: 1n,
+        activePanes: [{ pane: target(), cursor: null }],
+        hotPanes: [],
+      },
+    });
+    await Bun.sleep(0);
+    // 'live'（seq 0..4）在合帧窗口内滞留；快照屏障落在 seq 3（'liv' 已含进快照，'e' 未含）
+    runtime.output('live');
+    runtime.baseSeqOverride = 3n;
+    await session.handleCommand({
+      RequestScreen: {
+        requestId: REQUEST_ID,
+        pane: target(),
+        byteLimit: CANONICAL_MAX_SCREEN_BYTES,
+      },
+    });
+    await Bun.sleep(0);
+
+    const kinds = events.map((event) => Object.keys(event)[0]);
+    expect(kinds).toEqual([
+      'FeedReady',
+      'SourceMetadataSnapshot',
+      'SubscriptionApplied',
+      'ScreenBegin',
+      'ScreenChunk',
+      'ScreenCommit',
+      'PaneData',
+    ]);
+    const paneData = events.find((event) => 'PaneData' in event);
+    if (!paneData || !('PaneData' in paneData)) throw new Error('missing PaneData');
+    expect(paneData.PaneData.seqStart).toBe(3n);
+    expect(paneData.PaneData.seqEnd).toBe(4n);
+    expect(new TextDecoder().decode(paneData.PaneData.data)).toBe('e');
     session.close();
   });
 

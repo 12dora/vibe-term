@@ -178,6 +178,11 @@ export function createControlModeParser(callbacks: ControlModeParserCallbacks): 
 
   function handleLine(line: Uint8Array): void {
     if (line.length === 0) {
+      // literal 块正文里的空行是屏幕内容的一部分（capture-pane 的空白行），
+      // 丢弃会导致整屏快照行号整体上移、绝对光标恢复错位。
+      if (currentBlock && literalBlock && currentBlock.lines.length < MAX_BLOCK_BODY_LINES) {
+        currentBlock.lines.push('');
+      }
       return;
     }
 
