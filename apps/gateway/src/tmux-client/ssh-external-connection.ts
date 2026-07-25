@@ -213,10 +213,25 @@ export class SshExternalTmuxConnection {
       return;
     }
 
+    // 输入优先走 tmux 控制通道 stdin：每次按键起一个 SSH exec 往返开销大，且并发
+    // exec 之间没有顺序保证；控制通道队列天然按 stdin 写入顺序执行。不可用时退回。
     for (const chunk of encodeBytesToHexChunks(data)) {
-      void this.runTmux(['send-keys', '-H', '-t', paneId, ...chunk]).catch((error) => {
-        this.callbacks.onError(error);
-      });
+      const control = this.controlChannel;
+      if (control) {
+        void this.controlCommands
+          .execute(
+            (command) => control.write(command),
+            ['send-keys', '-H', '-t', paneId, ...chunk].join(' '),
+            { transform: () => undefined, timeoutMs: 30_000 }
+          )
+          .catch((error) => {
+            this.callbacks.onError(error instanceof Error ? error : new Error(String(error)));
+          });
+      } else {
+        void this.runTmux(['send-keys', '-H', '-t', paneId, ...chunk]).catch((error) => {
+          this.callbacks.onError(error);
+        });
+      }
     }
   }
 

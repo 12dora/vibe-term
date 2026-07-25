@@ -339,9 +339,21 @@ export class LocalExternalTmuxConnection {
       return;
     }
 
+    // 输入优先走 tmux 控制通道 stdin：每次按键 spawn 一个 tmux 子进程本身有毫秒级
+    // 开销，且 exited 回调排在被输出扇出占满的事件循环尾部，连续输入时延迟线性累加。
+    // 控制通道不可用时退回子进程路径。
     const task = async () => {
       for (const chunk of encodeBytesToHexChunks(data)) {
-        await this.runTmux(['send-keys', '-H', '-t', paneId, ...chunk]);
+        const control = this.controlProcess;
+        if (control) {
+          await this.controlCommands.execute(
+            (command) => control.write(command),
+            ['send-keys', '-H', '-t', paneId, ...chunk].join(' '),
+            { transform: () => undefined }
+          );
+        } else {
+          await this.runTmux(['send-keys', '-H', '-t', paneId, ...chunk]);
+        }
       }
     };
 
