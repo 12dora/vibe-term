@@ -157,7 +157,8 @@
       "copyFailed": "コピーに失敗しました",
       "pasteFailed": "クリップボードを読み取れません。ブラウザの権限を確認してください",
       "clearSelection": "選択を解除",
-      "fileLinkNotFound": "ファイルが存在しないかアクセスできません"
+      "fileLinkNotFound": "ファイルが存在しないかアクセスできません",
+      "linkOpenFailed": "リンクを開けませんでした"
     },
     "settings": {
       "title": "システム設定",

@@ -1958,8 +1958,12 @@ export class WebSocketServer {
     });
 
     for (const client of entry.clients) {
-      if (entry.canonicalClients?.has(client)) continue;
-      if (client.data.borshState.selectedPanes[deviceId] !== paneId) {
+      // canonical 客户端（fe 或下游桥接方）没有 legacy 选中态：原样下发，
+      // 由消费端按当前选中 pane 与可见性裁决（payload 自带 pane 标识）。
+      if (
+        !entry.canonicalClients?.has(client) &&
+        client.data.borshState.selectedPanes[deviceId] !== paneId
+      ) {
         continue;
       }
       this.sendEnvelope(client, wsBorsh.KIND_CLIPBOARD_WRITE, payloadBytes);

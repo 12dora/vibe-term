@@ -774,10 +774,12 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(
     useEffect(() => {
       if (!instance?.onLinkActivated) return;
       const disposable = instance.onLinkActivated((url) => {
-        void (async () => runtime.host.openExternal(url))().catch(() => {});
+        void (async () => runtime.host.openExternal(url))().catch(() => {
+          runtime.notifications.error(t('terminal.linkOpenFailed'));
+        });
       });
       return () => disposable.dispose();
-    }, [instance, runtime]);
+    }, [instance, runtime, t]);
 
     // 文件链接上下文：该设备已启用的授权根 + 当前 pane 的 cwd，注入终端做候选有效性过滤。
     // 数据与跳转面可经 runtime.terminalFileLinks 整体替换；缺省走 gateway 文件 API 与 /file/:ref 路由。

@@ -169,6 +169,7 @@ export type TranslationKey =
   | 'terminal.pasteFailed'
   | 'terminal.clearSelection'
   | 'terminal.fileLinkNotFound'
+  | 'terminal.linkOpenFailed'
   | 'settings'
   | 'settings.title'
   | 'settings.siteSettings'

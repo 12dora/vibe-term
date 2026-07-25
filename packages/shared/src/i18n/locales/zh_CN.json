@@ -157,7 +157,8 @@
       "copyFailed": "复制失败",
       "pasteFailed": "无法读取剪贴板，请检查浏览器权限",
       "clearSelection": "取消选择",
-      "fileLinkNotFound": "文件不存在或无法访问"
+      "fileLinkNotFound": "文件不存在或无法访问",
+      "linkOpenFailed": "无法打开链接"
     },
     "settings": {
       "title": "系统设置",

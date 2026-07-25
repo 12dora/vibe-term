@@ -395,6 +395,7 @@ export function createTmuxStore(
             },
             (err) => {
               console.warn('[tmux] clipboard write failed:', err);
+              core.notifications.error(core.t('terminal.copyFailed'));
             }
           );
           return;
