@@ -32,6 +32,20 @@ describe('HeadlessTerminal', () => {
     term.free();
   });
 
+  // 渲染层依赖 wasm 对 DECSET 2026 的状态跟踪来挂起同步输出期间的渲染；
+  // 该模式一旦在 ghostty 升级中丢失，门控会静默失效，钉住此协议前提。
+  test('synchronized output (DECSET 2026) 状态被跟踪', async () => {
+    const term = await HeadlessTerminal.create({ cols: 40, rows: 10 });
+    const bindings = (term as any).bindings;
+    const handle = (term as any).terminal;
+    expect(bindings.isTerminalModeEnabled(handle, 2026)).toBe(false);
+    term.write('\x1b[?2026h');
+    expect(bindings.isTerminalModeEnabled(handle, 2026)).toBe(true);
+    term.write('\x1b[?2026l');
+    expect(bindings.isTerminalModeEnabled(handle, 2026)).toBe(false);
+    term.free();
+  });
+
   test('size / resize', async () => {
     const term = await HeadlessTerminal.create({ cols: 80, rows: 24 });
     expect(term.size()).toEqual({ cols: 80, rows: 24 });

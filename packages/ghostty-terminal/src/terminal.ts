@@ -72,6 +72,10 @@ const GHOSTTY_MODE_ANY_MOUSE = 1003;
 const GHOSTTY_MODE_ALT_SCROLL = 1007;
 const GHOSTTY_MODE_ALT_SCREEN = 1047;
 const GHOSTTY_MODE_ALT_SCREEN_SAVE = 1049;
+const GHOSTTY_MODE_SYNCHRONIZED_OUTPUT = 2026;
+// 同步输出（DECSET 2026）激活期间挂起渲染的兜底时限：应用悬挂或关闭帧迟迟不到时，
+// 最迟此间隔后仍强制渲染一次，与主流终端对 2026 的安全阀行为一致。
+const SYNCHRONIZED_OUTPUT_FALLBACK_MS = 150;
 
 const MOUSE_TRACKING_MODES: readonly number[] = [
   GHOSTTY_MODE_X10_MOUSE,
@@ -242,6 +246,8 @@ export class GhosttyTerminalController implements CompatibleTerminalLike {
   private screenElement: HTMLDivElement | null = null;
   private renderer: CanvasRenderer | null = null;
   private renderRaf: number | null = null;
+  private syncOutputFallbackTimer: ReturnType<typeof setTimeout> | null = null;
+  private syncOutputModeSupported: boolean | null = null;
   // 外部（如 viewport restore）请求下一帧强制全画——canvas 已被 resize 清空但
   // ghostty 内核仍报 dirty='clean'，必须绕过早退重画以避免空白（issue #45 bug 3）。
   private forceFullNext = false;
@@ -564,7 +570,37 @@ export class GhosttyTerminalController implements CompatibleTerminalLike {
     if (prevAltScreen && !nextAltScreen) {
       this.clearMouseTrackingModes();
     }
+    // BSU（DECSET 2026）激活期间挂起写触发的渲染：一次原子重绘的字节可能分多个
+    // write 到达，rAF 到点就画会把中间态刷上屏（no-flicker TUI 表现为逐行扫描）。
+    // ESU 到达的那次 write 会走正常 scheduleRender；只留低频兜底防应用悬挂。
+    if (this.isSynchronizedOutputActive()) {
+      if (this.syncOutputFallbackTimer === null) {
+        this.syncOutputFallbackTimer = setTimeout(() => {
+          this.syncOutputFallbackTimer = null;
+          this.scheduleRender();
+        }, SYNCHRONIZED_OUTPUT_FALLBACK_MS);
+      }
+      return;
+    }
+    if (this.syncOutputFallbackTimer !== null) {
+      clearTimeout(this.syncOutputFallbackTimer);
+      this.syncOutputFallbackTimer = null;
+    }
     this.scheduleRender();
+  }
+
+  private isSynchronizedOutputActive(): boolean {
+    if (this.syncOutputModeSupported === false) {
+      return false;
+    }
+    try {
+      const enabled = this.isModeEnabled(GHOSTTY_MODE_SYNCHRONIZED_OUTPUT);
+      this.syncOutputModeSupported = true;
+      return enabled;
+    } catch {
+      this.syncOutputModeSupported = false;
+      return false;
+    }
   }
 
   clearMouseTrackingModes(): void {
@@ -915,6 +951,10 @@ export class GhosttyTerminalController implements CompatibleTerminalLike {
     if (this.linkOverlayTimer !== null) {
       clearTimeout(this.linkOverlayTimer);
       this.linkOverlayTimer = null;
+    }
+    if (this.syncOutputFallbackTimer !== null) {
+      clearTimeout(this.syncOutputFallbackTimer);
+      this.syncOutputFallbackTimer = null;
     }
     this.linkMatchCache.clear();
 
