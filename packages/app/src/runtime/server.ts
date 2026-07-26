@@ -2,9 +2,9 @@ import './bootstrap-env';
 import { existsSync } from 'node:fs';
 import { extname, join, normalize, resolve, sep } from 'node:path';
 import { CryptoDecryptError } from '../../../../apps/gateway/src/crypto/errors';
-import { createGatewayRuntime } from '../../../../apps/gateway/src/runtime';
 import { getDisplayVersion } from '../../../../apps/gateway/src/system/version';
 import { t } from '../i18n';
+import { createTmexGatewayRuntime } from './gateway';
 
 const MIME_MAP: Record<string, string> = {
   '.html': 'text/html; charset=utf-8',
@@ -89,7 +89,7 @@ async function main(): Promise<void> {
   const port = Number(process.env.GATEWAY_PORT || '9883');
   const staticRoot = resolveStaticRoot();
 
-  const gateway = await createGatewayRuntime();
+  const gateway = await createTmexGatewayRuntime();
 
   const server = Bun.serve({
     hostname: host,
