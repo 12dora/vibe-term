@@ -1,53 +1,65 @@
-# 0.17.0
+# 1.0.0
 
-_2026-07-05_
+_2026-07-27_
 
 ## English
 
-### New
+### Highlights
 
-- Full mouse support in terminal apps (vim, opencode, htop…):
-  - Hold **Shift and drag** to select and copy text even while the app is capturing the mouse.
-  - **Touch gestures on mobile**: tap to click, drag with one finger, scroll with two fingers.
-  - Hover tracking and horizontal (trackpad) scrolling now reach apps that support them.
-- File paths printed in the terminal are clickable and open directly in the file preview.
-- The AI agent's web search now supports multiple search providers.
-- Notification channels can be enabled or disabled individually.
-- The listen address of the service (bind host) is now configurable.
+- tmex is now ready for its first stable 1.0 release, with a more reliable terminal experience across desktop and mobile.
+- Terminal output, screen recovery, resizing, mouse reporting, split panes, and input handling now remain consistent during reconnects and heavy activity.
+- The managed gateway is ready for standalone use, with improved health monitoring, bounded recovery work, dynamic endpoints, and support for Windows psmux runtimes.
 
-### Fixes
+### Features
 
-- Mouse clicks and drags inside terminal apps landed one row off on Retina/HiDPI displays.
-- After refreshing the page or switching windows, terminal apps stopped responding to mouse drags; mouse modes are now restored accurately.
-- Terminal contents could go blank or shift by one line after switching windows, or misalign when another device resized the session.
+- Added real-time updates for devices, sessions, windows, and panes.
+- Added a default local device on fresh installations and clearer device naming based on the host name.
+- Added configurable terminal file links, host-controlled page titles, injectable host services, and reusable device, console, and management panels.
+- Added capability negotiation and pluggable WebSocket transports for embedded hosts.
+- Improved the Files and Settings experience with grouped device sources, file-root update notifications, optional headers, and runtime feature flags for Files and Watch.
+- Added mobile-friendly navigation and interactions for terminal, settings, device, agent, file, and watch panels.
+- Added support for disabling selected notification channels and for host-managed notifications.
 
-### Improvements
+### Reliability and fixes
 
-- Smoother and lighter mouse dragging in terminal apps (redundant events are no longer sent).
-- UI polish and internal improvements.
+- Fixed the Settings file-roots page crash caused by sharing incompatible cached data with the sidebar.
+- Improved terminal recovery across alternate screens, blank lines, reconnects, chunked history, remote resizing, pane moves, and stale selections.
+- Improved mouse and touch behavior, including modifier-key handling, coordinate mapping, dragging, wheel input, and mobile gestures.
+- Improved theme behavior, including CJK font fallbacks and preset overrides.
+- Improved connection lifecycle handling, session health, device ordering, and clean shutdown behavior.
 
----
+### Performance
+
+- Reduced terminal latency by prioritizing the tmux control channel for input.
+- Reduced rendering and network overhead with bounded history recovery, output batching, metadata coalescing, and protection for slow clients.
 
 ## 中文
 
-### 新增
+### 版本亮点
 
-- 终端应用（vim、opencode、htop 等）的完整鼠标支持：
-  - 按住 **Shift 拖拽**即可在鼠标被应用接管时选择并复制文本。
-  - **移动端触摸手势**：单击点按、单指拖拽、双指滚动。
-  - 支持悬停跟踪与触控板横向滚动的应用现在能收到对应事件。
-- 终端里输出的文件路径可以直接点击，跳转到文件预览。
-- AI Agent 的联网搜索支持多个搜索服务商。
-- 通知渠道可以逐个开启或关闭。
-- 服务监听地址（bind host）可配置。
+- tmex 首次进入稳定版 1.0，桌面端和移动端的终端使用体验更加可靠。
+- 终端输出、屏幕恢复、尺寸同步、鼠标操作、分屏和输入处理在重连及高负载场景下更加稳定。
+- 托管网关已经支持独立运行，并增强了健康检查、故障恢复、动态端点和 Windows psmux 运行时支持。
 
-### 修复
+### 新功能
 
-- Retina/高分屏下终端应用内的鼠标点击与拖拽位置偏移一行。
-- 刷新页面或切换窗口后，终端应用不再响应鼠标拖拽；现在会准确恢复鼠标模式。
-- 切换窗口后终端内容可能空白或错位一行，以及另一台设备调整会话尺寸后画面错位的问题。
+- 新增设备、会话、窗口和面板的实时状态更新。
+- 全新安装时自动创建本地设备，并根据主机名提供更清晰的默认设备名称。
+- 支持配置终端文件链接、由宿主控制页面标题、注入宿主服务，以及复用设备、控制台和设备管理面板。
+- 支持能力协商和可插拔 WebSocket 传输，便于集成到宿主应用。
+- 文件和设置页面支持按设备分组、文件根目录变更通知、可选页面头部，以及 Files 和 Watch 功能开关。
+- 优化移动端导航，并完善终端、设置、设备、Agent、文件和 Watch 面板的触控操作。
+- 支持关闭指定通知渠道，并支持由宿主应用统一管理通知。
 
-### 改进
+### 稳定性与修复
 
-- 终端应用内的鼠标拖拽更流畅、更省资源（不再发送冗余事件）。
-- 界面细节优化与内部改进。
+- 修复设置页文件根目录与侧边栏复用不同缓存数据导致的页面崩溃。
+- 改善备用屏幕、空行、重连、分段历史、远程调整尺寸、面板移动和过期选择状态下的终端恢复。
+- 改善鼠标和触控操作，包括修饰键、坐标映射、拖拽、滚轮和移动端手势。
+- 修复主题相关问题，补充中文字体回退并确保预设样式正确生效。
+- 改善连接生命周期、会话健康状态、设备顺序和退出清理。
+
+### 性能
+
+- 输入优先通过 tmux 控制通道发送，降低终端输入延迟。
+- 通过限制历史恢复规模、合并输出、合并状态更新和隔离慢客户端，降低渲染与网络开销。
