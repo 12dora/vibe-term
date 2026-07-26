@@ -57,6 +57,8 @@ interface DevicesResponse {
   devices: Device[];
 }
 
+const SETTINGS_FILE_ROOTS_QUERY_KEY = ['files', 'settings', 'roots'] as const;
+
 /** 增改弹窗设备选择器里的一个可选设备。 */
 export interface FileRootDeviceOption {
   id: string;
@@ -114,7 +116,7 @@ function FilesSettingsTabInner({ deviceGroups, onRootsMutated }: FilesSettingsTa
   const [editingEntry, setEditingEntry] = useState<FileRootEntry | undefined>(undefined);
 
   const rootsQuery = useQuery({
-    queryKey: ['files', 'roots'],
+    queryKey: SETTINGS_FILE_ROOTS_QUERY_KEY,
     queryFn: async (): Promise<FileRootEntry[]> => {
       if (!deviceGroups) {
         const res = await fetchFileRoots(apiClient);
