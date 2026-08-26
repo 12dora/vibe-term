@@ -23,3 +23,25 @@ export function dispatchStreamPart(part: AgentStreamPart, handlers: StreamPartHa
     | undefined;
   handler?.(part);
 }
+
+export interface StreamLoopWatchdog {
+  start(): void;
+  reset(): void;
+  clear(): void;
+}
+
+export async function consumeAgentStream(
+  stream: AsyncIterable<AgentStreamPart>,
+  handlers: StreamPartHandlers,
+  watchdog: StreamLoopWatchdog
+): Promise<void> {
+  try {
+    watchdog.start();
+    for await (const part of stream) {
+      watchdog.reset();
+      dispatchStreamPart(part, handlers);
+    }
+  } finally {
+    watchdog.clear();
+  }
+}

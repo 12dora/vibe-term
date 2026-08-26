@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import type { AgentStreamPart, StreamPartHandlers } from './stream-part-router';
-import { dispatchStreamPart } from './stream-part-router';
+import { consumeAgentStream, dispatchStreamPart } from './stream-part-router';
 
 function recordHandlers() {
   const hits: string[] = [];
@@ -101,5 +101,42 @@ describe('dispatchStreamPart', () => {
     dispatchStreamPart({ type: 'start' }, handlers);
     dispatchStreamPart({ type: 'text-start', id: 't0' }, handlers);
     expect(hits).toEqual([]);
+  });
+});
+
+describe('consumeAgentStream', () => {
+  test('start → 每个 part reset → finally clear；未知 type 忽略', async () => {
+    const { hits, handlers } = recordHandlers();
+    const events: string[] = [];
+    const stream = (async function* () {
+      yield { type: 'text-delta', id: 't1', text: 'hi' } satisfies AgentStreamPart;
+      yield { type: 'start' } satisfies AgentStreamPart;
+      yield { type: 'abort' } satisfies AgentStreamPart;
+    })();
+
+    await consumeAgentStream(stream, handlers, {
+      start: () => events.push('start'),
+      reset: () => events.push('reset'),
+      clear: () => events.push('clear'),
+    });
+    expect(events).toEqual(['start', 'reset', 'reset', 'reset', 'clear']);
+    expect(hits).toEqual(['text-delta:t1:hi', 'abort']);
+  });
+
+  test('stream 抛错仍 clear watchdog', async () => {
+    const { handlers } = recordHandlers();
+    const events: string[] = [];
+    const stream = (async function* () {
+      yield { type: 'text-delta', id: 't1', text: 'x' } satisfies AgentStreamPart;
+      throw new Error('broken');
+    })();
+    await expect(
+      consumeAgentStream(stream, handlers, {
+        start: () => events.push('start'),
+        reset: () => events.push('reset'),
+        clear: () => events.push('clear'),
+      })
+    ).rejects.toThrow('broken');
+    expect(events).toEqual(['start', 'reset', 'clear']);
   });
 });
