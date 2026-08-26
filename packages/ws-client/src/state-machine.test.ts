@@ -32,6 +32,43 @@ class ManualScheduler {
   }
 }
 
+class LeakyScheduler {
+  private nextId = 1;
+  private readonly pending = new Map<number, () => void>();
+  private readonly cancelled = new Map<number, () => void>();
+
+  schedule(callback: () => void, _delayMs: number): number {
+    const id = this.nextId++;
+    this.pending.set(id, callback);
+    return id;
+  }
+
+  // 模拟"已取消但回调早已排队"的定时器：cancel 不会阻止回调执行
+  cancel(handle: unknown): void {
+    const id = handle as number;
+    const callback = this.pending.get(id);
+    if (!callback) return;
+    this.pending.delete(id);
+    this.cancelled.set(id, callback);
+  }
+
+  fireCancelled(): void {
+    const queued = [...this.cancelled.values()];
+    this.cancelled.clear();
+    for (const callback of queued) {
+      callback();
+    }
+  }
+
+  firePending(): void {
+    const queued = [...this.pending.values()];
+    this.pending.clear();
+    for (const callback of queued) {
+      callback();
+    }
+  }
+}
+
 describe('SelectStateMachine', () => {
   test('replays deferred history with alternateScreen preserved', () => {
     const sm = new SelectStateMachine();
@@ -218,5 +255,73 @@ describe('SelectStateMachine', () => {
 
     expect(events).toEqual(['history_missing']);
     expect(sm.getState('device-1')).toBe('STABLE');
+  });
+  test('已排队的过期 ACK 超时回调不会击杀同设备的新事务', () => {
+    const scheduler = new LeakyScheduler();
+    const firstToken = new Uint8Array(16).fill(7);
+    const secondToken = new Uint8Array(16).fill(8);
+    const failures: string[] = [];
+    const sm = new SelectStateMachine(
+      { onSelectFailed: (_deviceId, reason) => failures.push(reason) },
+      { ackTimeoutMs: 100, progressTimeoutMs: 100, scheduler }
+    );
+
+    sm.dispatch({
+      type: 'SELECT_START',
+      deviceId: 'device-race',
+      windowId: '@1',
+      paneId: '%1',
+      selectToken: firstToken,
+      wantHistory: true,
+    });
+    sm.dispatch({
+      type: 'SELECT_START',
+      deviceId: 'device-race',
+      windowId: '@1',
+      paneId: '%2',
+      selectToken: secondToken,
+      wantHistory: true,
+    });
+    sm.dispatch({ type: 'SWITCH_ACK', deviceId: 'device-race', selectToken: secondToken });
+
+    scheduler.fireCancelled();
+
+    expect(failures).toEqual([]);
+    expect(sm.getState('device-race')).toBe('ACKED');
+    expect(sm.getTransaction('device-race')?.selectToken).toEqual(secondToken);
+
+    scheduler.firePending();
+    expect(failures).toEqual(['progress_timeout']);
+  });
+
+  test('已排队的过期进展超时回调不会击杀重新续期的同一事务', () => {
+    const scheduler = new LeakyScheduler();
+    const token = new Uint8Array(16).fill(9);
+    const failures: string[] = [];
+    const sm = new SelectStateMachine(
+      { onSelectFailed: (_deviceId, reason) => failures.push(reason) },
+      { ackTimeoutMs: 100, progressTimeoutMs: 100, scheduler }
+    );
+
+    sm.dispatch({
+      type: 'SELECT_START',
+      deviceId: 'device-renew',
+      windowId: '@1',
+      paneId: '%1',
+      selectToken: token,
+      wantHistory: true,
+    });
+    sm.dispatch({ type: 'SWITCH_ACK', deviceId: 'device-renew', selectToken: token });
+    sm.reportTerminalProgress('device-renew');
+    sm.reportTerminalProgress('device-renew');
+
+    scheduler.fireCancelled();
+
+    expect(failures).toEqual([]);
+    expect(sm.getState('device-renew')).toBe('ACKED');
+
+    scheduler.firePending();
+    expect(failures).toEqual(['progress_timeout']);
+    expect(sm.getState('device-renew')).toBe('STABLE');
   });
 });

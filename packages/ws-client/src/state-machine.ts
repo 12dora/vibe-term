@@ -126,6 +126,14 @@ const defaultScheduler: SelectTimerScheduler = {
   cancel: (handle) => clearTimeout(handle as ReturnType<typeof setTimeout>),
 };
 
+type SelectTimerPhase = 'ack' | 'progress';
+
+interface ActiveTimer {
+  token: number;
+  generation: number;
+  phase: SelectTimerPhase;
+}
+
 // ========== 状态机 ==========
 
 export class SelectStateMachine {
@@ -140,6 +148,9 @@ export class SelectStateMachine {
   private readonly progressTimeoutMs: number;
   private readonly scheduler: SelectTimerScheduler;
   private timers = new Map<string, unknown>();
+  private activeTimers = new Map<string, ActiveTimer>();
+  private generations = new Map<string, number>();
+  private nextTimerToken = 1;
 
   constructor(callbacks: SelectCallbacks = {}, options: SelectStateMachineOptions = {}) {
     this.callbacks = callbacks;
@@ -246,6 +257,7 @@ export class SelectStateMachine {
     };
 
     this.transactions.set(deviceId, transaction);
+    const generation = this.nextGeneration(deviceId);
 
     // 启动输出门控
     this.startOutputBuffering(deviceId);
@@ -253,6 +265,8 @@ export class SelectStateMachine {
     // 设置 ACK 超时
     this.setTimer(
       deviceId,
+      generation,
+      'ack',
       () => {
         this.handleTimeout(deviceId, 'ack');
       },
@@ -420,6 +434,7 @@ export class SelectStateMachine {
 
     transaction.state = 'STABLE';
     this.transactions.delete(deviceId);
+    this.clearTimer(deviceId);
   }
 
   private failTransaction(deviceId: string, reason: SelectFailureReason): void {
@@ -538,15 +553,55 @@ export class SelectStateMachine {
     this.deferredOutputs.delete(deviceId);
   }
 
-  private setTimer(deviceId: string, callback: () => void, delay: number): void {
+  private nextGeneration(deviceId: string): number {
+    const generation = (this.generations.get(deviceId) ?? 0) + 1;
+    this.generations.set(deviceId, generation);
+    return generation;
+  }
+
+  private setTimer(
+    deviceId: string,
+    generation: number,
+    phase: SelectTimerPhase,
+    callback: () => void,
+    delay: number
+  ): void {
     this.clearTimer(deviceId);
-    const timer = this.scheduler.schedule(callback, delay);
-    this.timers.set(deviceId, timer);
+    const token = this.nextTimerToken++;
+    const handle = this.scheduler.schedule(() => {
+      if (!this.isTimerCurrent(deviceId, token, generation, phase)) return;
+      this.timers.delete(deviceId);
+      this.activeTimers.delete(deviceId);
+      callback();
+    }, delay);
+    this.timers.set(deviceId, handle);
+    this.activeTimers.set(deviceId, { token, generation, phase });
+  }
+
+  private isTimerCurrent(
+    deviceId: string,
+    token: number,
+    generation: number,
+    phase: SelectTimerPhase
+  ): boolean {
+    if (this.generations.get(deviceId) !== generation) return false;
+    if (!this.transactions.has(deviceId)) return false;
+    const active = this.activeTimers.get(deviceId);
+    return (
+      active !== undefined &&
+      active.token === token &&
+      active.generation === generation &&
+      active.phase === phase
+    );
   }
 
   private armProgressDeadline(deviceId: string): void {
+    const generation = this.generations.get(deviceId);
+    if (generation === undefined) return;
     this.setTimer(
       deviceId,
+      generation,
+      'progress',
       () => {
         this.handleTimeout(deviceId, 'live');
       },
@@ -560,6 +615,7 @@ export class SelectStateMachine {
       this.scheduler.cancel(timer);
       this.timers.delete(deviceId);
     }
+    this.activeTimers.delete(deviceId);
   }
 
   // ========== 清理 ==========
@@ -568,6 +624,7 @@ export class SelectStateMachine {
     this.cancelTransaction(deviceId);
     this.outputGates.delete(deviceId);
     this.clearDeferred(deviceId);
+    this.generations.delete(deviceId);
   }
 
   cleanupAll(): void {
@@ -584,6 +641,8 @@ export class SelectStateMachine {
       this.scheduler.cancel(timer);
     }
     this.timers.clear();
+    this.activeTimers.clear();
+    this.generations.clear();
   }
 }
 

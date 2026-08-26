@@ -58,6 +58,7 @@ export class ChunkReassembler {
     this.cleanup();
 
     if (chunk.totalChunks > MAX_CHUNKS_PER_MESSAGE) {
+      this.abortStream(chunk.chunkStreamId);
       throw new WsBorshError(
         ERROR_INVALID_FRAME,
         false,
@@ -66,6 +67,7 @@ export class ChunkReassembler {
     }
 
     if (chunk.chunkIndex >= chunk.totalChunks) {
+      this.abortStream(chunk.chunkStreamId);
       throw new WsBorshError(
         ERROR_INVALID_FRAME,
         false,
@@ -94,14 +96,25 @@ export class ChunkReassembler {
       this.streams.set(chunk.chunkStreamId, stream);
     }
 
-    // 验证一致性
+    // 验证一致性：任一元数据不匹配都说明流被混入了其它消息的分片，整条流作废
     if (stream.totalChunks !== chunk.totalChunks) {
-      this.streams.delete(chunk.chunkStreamId);
+      this.abortStream(chunk.chunkStreamId);
       throw new WsBorshError(ERROR_INVALID_FRAME, false, 'Chunk total count mismatch');
+    }
+
+    if (stream.originalKind !== chunk.originalKind) {
+      this.abortStream(chunk.chunkStreamId);
+      throw new WsBorshError(ERROR_INVALID_FRAME, false, 'Chunk original kind mismatch');
+    }
+
+    if (stream.originalSeq !== chunk.originalSeq) {
+      this.abortStream(chunk.chunkStreamId);
+      throw new WsBorshError(ERROR_INVALID_FRAME, false, 'Chunk original seq mismatch');
     }
 
     // 存储 chunk
     if (stream.chunks.has(chunk.chunkIndex)) {
+      this.abortStream(chunk.chunkStreamId);
       throw new WsBorshError(
         ERROR_INVALID_FRAME,
         false,
@@ -121,6 +134,13 @@ export class ChunkReassembler {
   }
 
   /**
+   * 丢弃整条流：协议要求重复/越界 index 或元数据不一致时作废该 chunkStreamId
+   */
+  private abortStream(streamId: number): void {
+    this.streams.delete(streamId);
+  }
+
+  /**
    * 重组完成的消息
    */
   private reassemble(streamId: number, stream: ChunkStream): ReassembledMessage {
@@ -131,7 +151,7 @@ export class ChunkReassembler {
     for (let i = 0; i < stream.totalChunks; i++) {
       const chunk = stream.chunks.get(i);
       if (!chunk) {
-        this.streams.delete(streamId);
+        this.abortStream(streamId);
         throw new WsBorshError(ERROR_INVALID_FRAME, false, `Missing chunk index: ${i}`);
       }
       chunks.push(chunk.data);

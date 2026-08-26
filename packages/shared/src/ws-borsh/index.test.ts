@@ -15,6 +15,7 @@ import {
   KIND_CLIPBOARD_WRITE,
   KIND_NOTIFY_EVENT,
   KIND_PING,
+  KIND_PONG,
   KIND_SITE_THEME_UPDATE,
   KIND_TMUX_REORDER_PANES,
   KIND_TMUX_REORDER_WINDOWS,
@@ -250,6 +251,63 @@ describe('chunk', () => {
       expect(reassembler.addChunk(chunk(1))).toBeNull();
       now = 180;
       expect(reassembler.addChunk(chunk(2))?.payload).toEqual(new Uint8Array([0, 1, 2]));
+    });
+
+    it('混入其它消息元数据的分片被拒绝并作废整条流', () => {
+      const reassembler = new ChunkReassembler();
+      const base = {
+        chunkStreamId: 11,
+        originalKind: KIND_PING,
+        originalSeq: 100,
+        totalChunks: 2,
+        data: new Uint8Array([1]),
+      };
+
+      expect(reassembler.addChunk({ ...base, chunkIndex: 0 })).toBeNull();
+      expect(() =>
+        reassembler.addChunk({ ...base, chunkIndex: 1, originalKind: KIND_PONG })
+      ).toThrow(WsBorshError);
+      expect(reassembler.getActiveStreamCount()).toBe(0);
+
+      expect(reassembler.addChunk({ ...base, chunkIndex: 0 })).toBeNull();
+      expect(() => reassembler.addChunk({ ...base, chunkIndex: 1, originalSeq: 101 })).toThrow(
+        WsBorshError
+      );
+      expect(reassembler.getActiveStreamCount()).toBe(0);
+    });
+
+    it('重复 index 作废整条流，后续补齐的分片不会重组出消息', () => {
+      const reassembler = new ChunkReassembler();
+      const chunk = (chunkIndex: number) => ({
+        chunkStreamId: 12,
+        originalKind: KIND_PING,
+        originalSeq: 100,
+        totalChunks: 2,
+        chunkIndex,
+        data: new Uint8Array([chunkIndex]),
+      });
+
+      expect(reassembler.addChunk(chunk(0))).toBeNull();
+      expect(() => reassembler.addChunk(chunk(0))).toThrow(WsBorshError);
+      expect(reassembler.getActiveStreamCount()).toBe(0);
+
+      expect(reassembler.addChunk(chunk(1))).toBeNull();
+      expect(reassembler.getActiveStreamCount()).toBe(1);
+    });
+
+    it('越界 index 作废整条流', () => {
+      const reassembler = new ChunkReassembler();
+      const base = {
+        chunkStreamId: 13,
+        originalKind: KIND_PING,
+        originalSeq: 100,
+        totalChunks: 2,
+        data: new Uint8Array([1]),
+      };
+
+      expect(reassembler.addChunk({ ...base, chunkIndex: 0 })).toBeNull();
+      expect(() => reassembler.addChunk({ ...base, chunkIndex: 2 })).toThrow(WsBorshError);
+      expect(reassembler.getActiveStreamCount()).toBe(0);
     });
   });
 
