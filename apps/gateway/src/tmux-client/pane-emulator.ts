@@ -273,19 +273,20 @@ export class PaneEmulatorRegistry {
     return entry.promise;
   }
 
-  async release(deviceId: string, paneId: string): Promise<void> {
+  async release(deviceId: string, paneId: string): Promise<number> {
     const key = this.key(deviceId, paneId);
     const entry = this.entries.get(key);
     if (!entry) {
-      return;
+      return 0;
     }
     entry.refCount -= 1;
     if (entry.refCount > 0) {
-      return;
+      return entry.refCount;
     }
     this.entries.delete(key);
     const emulator = entry.emulator ?? (await entry.promise.catch(() => null));
     emulator?.dispose();
+    return 0;
   }
 
   /** pane 关闭/runtime 断开时强制销毁（忽略 refCount）。 */

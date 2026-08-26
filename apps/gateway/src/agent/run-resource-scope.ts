@@ -81,12 +81,12 @@ export interface ReleaseRunResourcesParams {
   deviceId: string | null;
   paneId: string | null;
   releaseRuntime: (deviceId: string, runtime?: TerminalRuntimeLike) => Promise<void>;
-  releaseEmulator?: (deviceId: string, paneId: string) => Promise<void>;
+  releaseEmulator?: (deviceId: string, paneId: string) => Promise<number>;
   destroyEmulator?: (deviceId: string, paneId: string) => Promise<void>;
 }
 
 /**
- * 释放顺序必须保持：emulator release → emulator destroy → runtime release。
+ * 释放顺序必须保持：emulator release →（末次引用才）emulator destroy → runtime release。
  * 调用方应在传入前把 live emulator 引用置空，避免并发 fatal destroy 双重释放。
  */
 export async function releaseRunResources(params: ReleaseRunResourcesParams): Promise<void> {
@@ -98,15 +98,18 @@ export async function releaseRunResources(params: ReleaseRunResourcesParams): Pr
     ((deviceId, paneId) => paneEmulatorRegistry.destroy(deviceId, paneId));
 
   if (params.emulator && params.deviceId && params.paneId) {
+    let remaining = 0;
     try {
-      await releaseEmulator(params.deviceId, params.paneId);
+      remaining = await releaseEmulator(params.deviceId, params.paneId);
     } catch (error) {
       console.error('[agent-run] failed to release pane emulator:', error);
     }
-    try {
-      await destroyEmulator(params.deviceId, params.paneId);
-    } catch (error) {
-      console.error('[agent-run] failed to destroy pane emulator:', error);
+    if (remaining <= 0) {
+      try {
+        await destroyEmulator(params.deviceId, params.paneId);
+      } catch (error) {
+        console.error('[agent-run] failed to destroy pane emulator:', error);
+      }
     }
   }
 

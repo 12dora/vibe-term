@@ -214,11 +214,22 @@ export class DeviceSessionRuntime {
     }
 
     this.connectPromise = this.connection.connect().catch((error) => {
-      this.terminated = true;
+      if (!this.terminated) {
+        this.manualDisconnect = true;
+        try {
+          this.connection.disconnect();
+        } catch (disconnectError) {
+          console.error(
+            `[tmux-client] failed to disconnect after connect error: ${this.deviceId}`,
+            disconnectError
+          );
+        }
+        this.terminated = true;
+        this.metadataProjection.dispose();
+        this.paneRetention.dispose();
+        this.paneHistoryReader.dispose();
+      }
       this.connectPromise = null;
-      this.metadataProjection.dispose();
-      this.paneRetention.dispose();
-      this.paneHistoryReader.dispose();
       throw error;
     });
 

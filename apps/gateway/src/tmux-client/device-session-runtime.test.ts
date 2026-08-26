@@ -366,6 +366,82 @@ describe('DeviceSessionRuntime', () => {
     expect(recorder.state.disconnectCalls).toBe(1);
   });
 
+  test('connect failure disconnects the underlying connection exactly once', async () => {
+    const recorder = createStubConnectionRecorder();
+    recorder.connection.connect = async () => {
+      recorder.state.connectCalls += 1;
+      throw new Error('ssh handshake failed');
+    };
+    const runtime = createDeviceSessionRuntime({
+      deviceId: 'device-a',
+      createConnection(options) {
+        recorder.state.options = options;
+        return recorder.connection;
+      },
+    });
+
+    await expect(runtime.connect()).rejects.toThrow('ssh handshake failed');
+    expect(recorder.state.disconnectCalls).toBe(1);
+    expect(runtime.isTerminated).toBe(true);
+
+    runtime.disconnect();
+    expect(recorder.state.disconnectCalls).toBe(1);
+  });
+
+  test('connect failure does not broadcast onClose when disconnect emits close', async () => {
+    const recorder = createStubConnectionRecorder();
+    recorder.connection.connect = async () => {
+      recorder.state.connectCalls += 1;
+      throw new Error('ssh handshake failed');
+    };
+    const originalDisconnect = recorder.connection.disconnect;
+    recorder.connection.disconnect = () => {
+      originalDisconnect();
+      recorder.state.options?.onClose?.();
+    };
+    const runtime = createDeviceSessionRuntime({
+      deviceId: 'device-a',
+      createConnection(options) {
+        recorder.state.options = options;
+        return recorder.connection;
+      },
+    });
+    let closed = 0;
+    runtime.subscribe({
+      onClose() {
+        closed += 1;
+      },
+    });
+
+    await expect(runtime.connect()).rejects.toThrow('ssh handshake failed');
+    expect(recorder.state.disconnectCalls).toBe(1);
+    expect(closed).toBe(0);
+    expect(runtime.isTerminated).toBe(true);
+  });
+
+  test('connect failure still rejects the original error if disconnect throws', async () => {
+    const recorder = createStubConnectionRecorder();
+    recorder.connection.connect = async () => {
+      recorder.state.connectCalls += 1;
+      throw new Error('control channel failed');
+    };
+    recorder.connection.disconnect = () => {
+      recorder.state.disconnectCalls += 1;
+      throw new Error('disconnect boom');
+    };
+    const runtime = createDeviceSessionRuntime({
+      deviceId: 'device-a',
+      createConnection(options) {
+        recorder.state.options = options;
+        return recorder.connection;
+      },
+    });
+
+    await expect(runtime.connect()).rejects.toThrow('control channel failed');
+    expect(recorder.state.disconnectCalls).toBe(1);
+    expect(runtime.isTerminated).toBe(true);
+  });
+
   test('capturePaneText delegates to the underlying connection', async () => {
     const recorder = createStubConnectionRecorder();
     const runtime = createDeviceSessionRuntime({

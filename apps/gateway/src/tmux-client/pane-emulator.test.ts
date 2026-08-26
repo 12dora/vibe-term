@@ -165,9 +165,9 @@ describe('PaneEmulator + registry', () => {
     const b = await reg.acquire('d1', '%1', fake.source);
     expect(a).toBe(b); // 复用
     expect(fake.stats().subscribeCount).toBe(1); // 只订阅一次
-    await reg.release('d1', '%1');
+    expect(await reg.release('d1', '%1')).toBe(1);
     expect(a.isDisposed).toBe(false); // 还有一个持有者
-    await reg.release('d1', '%1');
+    expect(await reg.release('d1', '%1')).toBe(0);
     expect(a.isDisposed).toBe(true); // 归零销毁
     expect(fake.stats().unsubscribeCount).toBe(1);
     expect(fake.stats().activeListeners).toBe(0); // 无悬挂监听器
