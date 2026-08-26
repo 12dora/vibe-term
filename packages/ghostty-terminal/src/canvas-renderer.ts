@@ -43,6 +43,7 @@ type CursorCell = {
   x: number;
   y: number;
   style: GhosttyRenderSnapshotMeta['cursor']['style'];
+  blinking: boolean;
 };
 
 function colorToCss(color: GhosttyColorRgb): string {
@@ -570,34 +571,59 @@ export class CanvasRenderer {
     const x = cursor.x * this.deviceCellWidth;
     const y = cursor.y * this.deviceCellHeight;
     const width = cursor.wideTail ? this.deviceCellWidth * 2 : this.deviceCellWidth;
+    const height = this.deviceCellHeight;
     const thickness = Math.max(1, Math.round(this.dpr));
+    const lineThickness = 2 * thickness;
+    // 光标色仍取自 ghostty render state（colors.cursor 缺省时回落到 colors.foreground），
+    // 不读 this.theme——主题切换由 WASM 侧 setTerminalTheme 反映到 render state。
     const cursorColor = colors.cursor ?? colors.foreground;
     const cssColor = this.toCss(cursorColor);
 
     this.cursorContext.fillStyle = cssColor;
     this.cursorContext.strokeStyle = cssColor;
     this.cursorContext.globalAlpha = 0.7;
-    this.cursorContext.fillRect(
-      x,
-      y + this.deviceCellHeight - 2 * thickness,
-      Math.max(width - thickness, thickness),
-      2 * thickness
-    );
+    if (cursor.style === 'bar') {
+      this.cursorContext.fillRect(x, y, lineThickness, height);
+    } else if (cursor.style === 'underline') {
+      this.cursorContext.fillRect(
+        x,
+        y + height - lineThickness,
+        Math.max(width - thickness, thickness),
+        lineThickness
+      );
+    } else if (cursor.style === 'block-hollow') {
+      // 描边沿 cell 内缘走：奇数线宽偏移半物理像素，避免 1px 边框被抗锯齿糊成 2px。
+      this.cursorContext.lineWidth = thickness;
+      this.cursorContext.strokeRect(
+        x + thickness / 2,
+        y + thickness / 2,
+        Math.max(width - thickness, thickness),
+        Math.max(height - thickness, thickness)
+      );
+    } else {
+      this.cursorContext.fillRect(x, y, width, height);
+    }
     this.cursorContext.globalAlpha = 1;
 
-    this.startCursorBlink();
+    if (cursor.blinking) {
+      this.startCursorBlink();
+    } else {
+      this.stopCursorBlink();
+    }
 
     this.lastCursor = {
       x: cursor.x,
       y: cursor.y,
       style: cursor.style,
+      blinking: cursor.blinking,
     };
 
     if (
       previous &&
       (previous.x !== this.lastCursor.x ||
         previous.y !== this.lastCursor.y ||
-        previous.style !== this.lastCursor.style)
+        previous.style !== this.lastCursor.style ||
+        previous.blinking !== this.lastCursor.blinking)
     ) {
       this.lastDrawnRows.push(previous.y);
     }

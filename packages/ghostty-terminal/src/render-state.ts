@@ -5,6 +5,8 @@ import type {
   GhosttyCursorVisualStyle,
   GhosttyRenderCell,
   GhosttyRenderCellStyle,
+  GhosttyRenderColors,
+  GhosttyRenderCursor,
   GhosttyRenderDirtyState,
   GhosttyRenderRow,
   GhosttyRenderSnapshotMeta,
@@ -313,7 +315,37 @@ function buildRowText(cells: GhosttyRenderCell[]): string {
   return text;
 }
 
-function readMeta(resources: GhosttyRenderStateResources): GhosttyRenderSnapshotMeta {
+type RenderStatePointerRead = (ptr: number) => number;
+
+function stateValueReader(
+  resources: GhosttyRenderStateResources,
+  data: number
+): RenderStatePointerRead {
+  return (ptr: number) =>
+    resources.bindings.getRenderStateValueResult(resources.renderStateHandle, data, ptr);
+}
+
+function readStateBool(resources: GhosttyRenderStateResources, data: number): boolean {
+  return readBool(resources, stateValueReader(resources, data));
+}
+
+function readStateU16(resources: GhosttyRenderStateResources, data: number): number {
+  return readU16(resources, stateValueReader(resources, data));
+}
+
+function readStateEnum(resources: GhosttyRenderStateResources, data: number): number {
+  return readEnumI32(resources, stateValueReader(resources, data));
+}
+
+function readOptionalStateU16(
+  resources: GhosttyRenderStateResources,
+  data: number,
+  present: boolean
+): number | null {
+  return present ? readStateU16(resources, data) : null;
+}
+
+function readColors(resources: GhosttyRenderStateResources): GhosttyRenderColors {
   const colors = resources.bindings.allocStruct('GhosttyRenderStateColors');
 
   try {
@@ -325,130 +357,82 @@ function readMeta(resources: GhosttyRenderStateResources): GhosttyRenderSnapshot
     );
     resources.bindings.getRenderStateColors(resources.renderStateHandle, colors.ptr);
 
-    const paletteOffset = resources.bindings.field('GhosttyRenderStateColors', 'palette').offset;
+    const fieldOffset = (name: string) =>
+      resources.bindings.field('GhosttyRenderStateColors', name).offset;
+
+    const paletteOffset = fieldOffset('palette');
     const palette: GhosttyColorRgb[] = [];
     for (let index = 0; index < 256; index += 1) {
-      const colorOffset = colors.ptr + paletteOffset + index * 3;
-      palette.push(readColorAt(resources.bindings, colorOffset));
+      palette.push(readColorAt(resources.bindings, colors.ptr + paletteOffset + index * 3));
     }
 
-    const cursorHasValue =
-      colors.view.getUint8(
-        resources.bindings.field('GhosttyRenderStateColors', 'cursor_has_value').offset
-      ) !== 0;
-
-    const cursorViewportHasValue = readBool(resources, (ptr) =>
-      resources.bindings.getRenderStateValueResult(
-        resources.renderStateHandle,
-        GHOSTTY_RENDER_STATE_DATA_CURSOR_VIEWPORT_HAS_VALUE,
-        ptr
-      )
-    );
+    const cursorHasValue = colors.view.getUint8(fieldOffset('cursor_has_value')) !== 0;
 
     return {
-      cols: readU16(resources, (ptr) =>
-        resources.bindings.getRenderStateValueResult(
-          resources.renderStateHandle,
-          GHOSTTY_RENDER_STATE_DATA_COLS,
-          ptr
-        )
-      ),
-      rows: readU16(resources, (ptr) =>
-        resources.bindings.getRenderStateValueResult(
-          resources.renderStateHandle,
-          GHOSTTY_RENDER_STATE_DATA_ROWS,
-          ptr
-        )
-      ),
-      dirty: resultToDirtyState(
-        readEnumI32(resources, (ptr) =>
-          resources.bindings.getRenderStateValueResult(
-            resources.renderStateHandle,
-            GHOSTTY_RENDER_STATE_DATA_DIRTY,
-            ptr
-          )
-        )
-      ),
-      colors: {
-        background: readColorAt(
-          resources.bindings,
-          colors.ptr + resources.bindings.field('GhosttyRenderStateColors', 'background').offset
-        ),
-        foreground: readColorAt(
-          resources.bindings,
-          colors.ptr + resources.bindings.field('GhosttyRenderStateColors', 'foreground').offset
-        ),
-        cursor: cursorHasValue
-          ? readColorAt(
-              resources.bindings,
-              colors.ptr + resources.bindings.field('GhosttyRenderStateColors', 'cursor').offset
-            )
-          : null,
-        palette,
-      },
-      cursor: {
-        style: resultToCursorStyle(
-          readEnumI32(resources, (ptr) =>
-            resources.bindings.getRenderStateValueResult(
-              resources.renderStateHandle,
-              GHOSTTY_RENDER_STATE_DATA_CURSOR_VISUAL_STYLE,
-              ptr
-            )
-          )
-        ),
-        visible: readBool(resources, (ptr) =>
-          resources.bindings.getRenderStateValueResult(
-            resources.renderStateHandle,
-            GHOSTTY_RENDER_STATE_DATA_CURSOR_VISIBLE,
-            ptr
-          )
-        ),
-        blinking: readBool(resources, (ptr) =>
-          resources.bindings.getRenderStateValueResult(
-            resources.renderStateHandle,
-            GHOSTTY_RENDER_STATE_DATA_CURSOR_BLINKING,
-            ptr
-          )
-        ),
-        passwordInput: readBool(resources, (ptr) =>
-          resources.bindings.getRenderStateValueResult(
-            resources.renderStateHandle,
-            GHOSTTY_RENDER_STATE_DATA_CURSOR_PASSWORD_INPUT,
-            ptr
-          )
-        ),
-        x: cursorViewportHasValue
-          ? readU16(resources, (ptr) =>
-              resources.bindings.getRenderStateValueResult(
-                resources.renderStateHandle,
-                GHOSTTY_RENDER_STATE_DATA_CURSOR_VIEWPORT_X,
-                ptr
-              )
-            )
-          : null,
-        y: cursorViewportHasValue
-          ? readU16(resources, (ptr) =>
-              resources.bindings.getRenderStateValueResult(
-                resources.renderStateHandle,
-                GHOSTTY_RENDER_STATE_DATA_CURSOR_VIEWPORT_Y,
-                ptr
-              )
-            )
-          : null,
-        wideTail: cursorViewportHasValue
-          ? readBool(resources, (ptr) =>
-              resources.bindings.getRenderStateValueResult(
-                resources.renderStateHandle,
-                GHOSTTY_RENDER_STATE_DATA_CURSOR_VIEWPORT_WIDE_TAIL,
-                ptr
-              )
-            )
-          : false,
-      },
+      background: readColorAt(resources.bindings, colors.ptr + fieldOffset('background')),
+      foreground: readColorAt(resources.bindings, colors.ptr + fieldOffset('foreground')),
+      cursor: cursorHasValue
+        ? readColorAt(resources.bindings, colors.ptr + fieldOffset('cursor'))
+        : null,
+      palette,
     };
   } finally {
     colors.free();
   }
+}
+
+function readViewportMeta(
+  resources: GhosttyRenderStateResources
+): Pick<GhosttyRenderSnapshotMeta, 'cols' | 'rows' | 'dirty'> {
+  return {
+    cols: readStateU16(resources, GHOSTTY_RENDER_STATE_DATA_COLS),
+    rows: readStateU16(resources, GHOSTTY_RENDER_STATE_DATA_ROWS),
+    dirty: resultToDirtyState(readStateEnum(resources, GHOSTTY_RENDER_STATE_DATA_DIRTY)),
+  };
+}
+
+function readCursorMeta(
+  resources: GhosttyRenderStateResources,
+  viewportHasValue: boolean
+): GhosttyRenderCursor {
+  return {
+    style: resultToCursorStyle(
+      readStateEnum(resources, GHOSTTY_RENDER_STATE_DATA_CURSOR_VISUAL_STYLE)
+    ),
+    visible: readStateBool(resources, GHOSTTY_RENDER_STATE_DATA_CURSOR_VISIBLE),
+    blinking: readStateBool(resources, GHOSTTY_RENDER_STATE_DATA_CURSOR_BLINKING),
+    passwordInput: readStateBool(resources, GHOSTTY_RENDER_STATE_DATA_CURSOR_PASSWORD_INPUT),
+    x: readOptionalStateU16(
+      resources,
+      GHOSTTY_RENDER_STATE_DATA_CURSOR_VIEWPORT_X,
+      viewportHasValue
+    ),
+    y: readOptionalStateU16(
+      resources,
+      GHOSTTY_RENDER_STATE_DATA_CURSOR_VIEWPORT_Y,
+      viewportHasValue
+    ),
+    wideTail: viewportHasValue
+      ? readStateBool(resources, GHOSTTY_RENDER_STATE_DATA_CURSOR_VIEWPORT_WIDE_TAIL)
+      : false,
+  };
+}
+
+function readMeta(resources: GhosttyRenderStateResources): GhosttyRenderSnapshotMeta {
+  const colors = readColors(resources);
+  const cursorViewportHasValue = readStateBool(
+    resources,
+    GHOSTTY_RENDER_STATE_DATA_CURSOR_VIEWPORT_HAS_VALUE
+  );
+  const viewport = readViewportMeta(resources);
+
+  return {
+    cols: viewport.cols,
+    rows: viewport.rows,
+    dirty: viewport.dirty,
+    colors,
+    cursor: readCursorMeta(resources, cursorViewportHasValue),
+  };
 }
 
 function readRow(resources: GhosttyRenderStateResources, rowIndex: number): GhosttyRenderRow {
@@ -526,11 +510,32 @@ function readRow(resources: GhosttyRenderStateResources, rowIndex: number): Ghos
 }
 
 export function createRenderState(bindings: GhosttyBindings): GhosttyRenderStateResources {
+  let renderStateHandle = 0;
+  let rowIteratorHandle = 0;
+  let rowCellsHandle = 0;
+
+  try {
+    renderStateHandle = bindings.createRenderState();
+    rowIteratorHandle = bindings.createRenderStateRowIterator();
+    rowCellsHandle = bindings.createRenderStateRowCells();
+  } catch (error) {
+    if (rowCellsHandle !== 0) {
+      bindings.freeRenderStateRowCells(rowCellsHandle);
+    }
+    if (rowIteratorHandle !== 0) {
+      bindings.freeRenderStateRowIterator(rowIteratorHandle);
+    }
+    if (renderStateHandle !== 0) {
+      bindings.freeRenderState(renderStateHandle);
+    }
+    throw error;
+  }
+
   return {
     bindings,
-    renderStateHandle: bindings.createRenderState(),
-    rowIteratorHandle: bindings.createRenderStateRowIterator(),
-    rowCellsHandle: bindings.createRenderStateRowCells(),
+    renderStateHandle,
+    rowIteratorHandle,
+    rowCellsHandle,
     snapshotVersion: 0,
     disposed: false,
     cachedMeta: null,

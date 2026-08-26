@@ -602,32 +602,41 @@ export class GhosttyBindings {
   }
 
   setTerminalTheme(terminal: number, theme: GhosttyTheme): void {
-    const foreground = this.allocStruct('GhosttyColorRgb');
-    const background = this.allocStruct('GhosttyColorRgb');
-    const cursor = this.allocStruct('GhosttyColorRgb');
-    const paletteColors = createAnsi256Palette(theme);
-    const palettePtr = this.allocBytes(paletteColors.length * 3);
-
-    const assignRgb = (target: StructAllocation, value: string) => {
-      const [red, green, blue] = parseHexRgb(value);
-      this.setField(target.view, 'GhosttyColorRgb', 'r', red);
-      this.setField(target.view, 'GhosttyColorRgb', 'g', green);
-      this.setField(target.view, 'GhosttyColorRgb', 'b', blue);
-    };
-
-    assignRgb(foreground, theme.foreground);
-    assignRgb(background, theme.background);
-    assignRgb(cursor, theme.cursor);
-
-    const paletteBytes = this.bytes(palettePtr, paletteColors.length * 3);
-    paletteColors.forEach(([red, green, blue], index) => {
-      const offset = index * 3;
-      paletteBytes[offset] = red;
-      paletteBytes[offset + 1] = green;
-      paletteBytes[offset + 2] = blue;
-    });
+    let foreground: StructAllocation | null = null;
+    let background: StructAllocation | null = null;
+    let cursor: StructAllocation | null = null;
+    let palettePtr: number | null = null;
+    let paletteLen = 0;
 
     try {
+      foreground = this.allocStruct('GhosttyColorRgb');
+      background = this.allocStruct('GhosttyColorRgb');
+      cursor = this.allocStruct('GhosttyColorRgb');
+
+      // parseHexRgb 会对非法颜色串抛错，故解析与写入必须与释放同处一个 try/finally。
+      const paletteColors = createAnsi256Palette(theme);
+      paletteLen = paletteColors.length * 3;
+      palettePtr = this.allocBytes(paletteLen);
+
+      const assignRgb = (target: StructAllocation, value: string) => {
+        const [red, green, blue] = parseHexRgb(value);
+        this.setField(target.view, 'GhosttyColorRgb', 'r', red);
+        this.setField(target.view, 'GhosttyColorRgb', 'g', green);
+        this.setField(target.view, 'GhosttyColorRgb', 'b', blue);
+      };
+
+      assignRgb(foreground, theme.foreground);
+      assignRgb(background, theme.background);
+      assignRgb(cursor, theme.cursor);
+
+      const paletteBytes = this.bytes(palettePtr, paletteLen);
+      paletteColors.forEach(([red, green, blue], index) => {
+        const offset = index * 3;
+        paletteBytes[offset] = red;
+        paletteBytes[offset + 1] = green;
+        paletteBytes[offset + 2] = blue;
+      });
+
       assertResult(
         this.exports.ghostty_terminal_set(
           terminal,
@@ -657,10 +666,12 @@ export class GhosttyBindings {
         'ghostty_terminal_set(palette)'
       );
     } finally {
-      foreground.free();
-      background.free();
-      cursor.free();
-      this.freeBytes(palettePtr, paletteColors.length * 3);
+      foreground?.free();
+      background?.free();
+      cursor?.free();
+      if (palettePtr !== null) {
+        this.freeBytes(palettePtr, paletteLen);
+      }
     }
   }
 
@@ -907,15 +918,19 @@ export class GhosttyBindings {
       Math.max(1, Math.min(terminalSize.cols, viewport.cols)),
       Math.max(1, Math.min(terminalSize.rows, viewport.rows))
     );
-    const formatter = this.createFormatter(terminal, emit, {
-      ...options,
-      selectionPtr: selection?.ptr ?? null,
-    });
 
     try {
-      return this.formatFormatter(formatter);
+      const formatter = this.createFormatter(terminal, emit, {
+        ...options,
+        selectionPtr: selection?.ptr ?? null,
+      });
+
+      try {
+        return this.formatFormatter(formatter);
+      } finally {
+        this.freeFormatter(formatter);
+      }
     } finally {
-      this.freeFormatter(formatter);
       selection?.free();
     }
   }
