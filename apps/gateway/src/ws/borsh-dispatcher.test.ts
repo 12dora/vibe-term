@@ -72,9 +72,32 @@ describe('borsh dispatcher', () => {
     const handler = handlers.get(wsBorsh.KIND_DEVICE_CONNECT);
     if (!handler) throw new Error('missing device connect handler');
 
-    expect(() => decodeBorshKindPayload(handler, new Uint8Array([0xff]))).toThrow(
-      wsBorsh.WsBorshError
-    );
+    let decodeError: unknown;
+    try {
+      decodeBorshKindPayload(handler, new Uint8Array([0xff]));
+    } catch (err) {
+      decodeError = err;
+    }
+    expect(decodeError).toBeInstanceOf(wsBorsh.WsBorshError);
+    expect((decodeError as wsBorsh.WsBorshError).code).toBe(wsBorsh.ERROR_PAYLOAD_DECODE_FAILED);
+    expect((decodeError as wsBorsh.WsBorshError).retryable).toBe(false);
+
+    const sentinelSchema = {
+      deserialize() {
+        throw new wsBorsh.WsBorshError(4242, true, 'sentinel');
+      },
+    } as unknown as NonNullable<typeof handler.schema>;
+    let sentinelError: unknown;
+    try {
+      decodeBorshKindPayload(
+        { ...handler, decode: undefined, schema: sentinelSchema },
+        new Uint8Array([1])
+      );
+    } catch (err) {
+      sentinelError = err;
+    }
+    expect((sentinelError as wsBorsh.WsBorshError).code).toBe(wsBorsh.ERROR_PAYLOAD_DECODE_FAILED);
+    expect((sentinelError as wsBorsh.WsBorshError).retryable).toBe(false);
     await expect(
       dispatchBorshKind(
         handlers,
