@@ -200,6 +200,8 @@ export interface CompatibleTerminalLike {
   paste: (data: string) => void;
   focus: () => void;
   getCursorViewportRect?: () => GhosttyCursorViewportRect | null;
+  /** 实时 cell 尺寸（与 _core._renderService.dimensions.css.cell 同一对象） */
+  cellDimensions?: () => GhosttyCellDimensions;
   getSelection?: () => string;
   hasSelection?: () => boolean;
   clearSelection?: () => void;

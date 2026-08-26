@@ -2735,6 +2735,87 @@ describe('GhosttyTerminalController clipboard and selection API', () => {
     expect(terminal.hasSelection()).toBeTrue();
   });
 
+  // e2e（apps/fe/tests）把 controller 当作 window.__tmexE2eXterm 直接读这些入口做
+  // 光标/行列对齐校验。它们必须是公开只读接口，不能退化成内部字段。
+  test('cellDimensions should expose the live cell object shared with _core', async () => {
+    dom = installFakeDom();
+    const bindings = createFakeBindings();
+    const { terminal } = await setupTerminal(bindings);
+
+    const cell = terminal.cellDimensions();
+
+    expect(cell).toBeTruthy();
+    expect(cell.width).toBeGreaterThan(0);
+    expect(cell.height).toBeGreaterThan(0);
+    // 与 xterm 兼容字段同一引用：测量结果就地写入，两侧永远一致
+    expect(cell).toBe(terminal._core._renderService.dimensions.css.cell);
+    expect(terminal.cellDimensions()).toBe(cell);
+  });
+
+  test('lastCursor should expose the cursor of the latest render snapshot', async () => {
+    dom = installFakeDom();
+    const bindings = createFakeBindings();
+    const { terminal } = await setupTerminal(bindings);
+
+    // 每帧重新取快照：刷新后必须是新的光标对象，而不是某个常量
+    const before = terminal.lastCursor;
+    terminal.refresh();
+    expect(terminal.lastCursor).not.toBe(before);
+
+    expect(terminal.lastCursor).toEqual({
+      style: 'block',
+      visible: false,
+      blinking: false,
+      passwordInput: false,
+      x: null,
+      y: null,
+      wideTail: false,
+    });
+    // 同一帧的视口几何（e2e 诊断读它定位渲染错位）
+    expect(terminal.lastViewportRows).toBe(24);
+    expect(terminal.lastRenderedRows).toHaveLength(24);
+    expect(terminal.terminalHandle).toBe(1);
+  });
+
+  // 守卫：apps/fe/tests 通过 window.__tmexE2eXterm 直接读下列成员做对齐校验与失败诊断。
+  // 它们不在 CompatibleTerminalLike 的必选部分，重构时最容易被无声删掉（曾因此挂掉
+  // terminal-render-regressions / terminal-mouse-row-alignment 两个 e2e）。
+  test('controller should keep every member the e2e probes read', async () => {
+    dom = installFakeDom();
+    const bindings = createFakeBindings();
+    const { terminal } = await setupTerminal(bindings);
+    terminal.refresh();
+
+    const probe = terminal as unknown as Record<string, unknown>;
+    for (const method of [
+      'write',
+      'resize',
+      'scrollToTop',
+      'scrollToBottom',
+      'getSelection',
+      'exportModeSnapshot',
+      'cellDimensions',
+    ]) {
+      expect(typeof probe[method]).toBe('function');
+    }
+
+    expect(typeof terminal.cols).toBe('number');
+    expect(typeof terminal.rows).toBe('number');
+    expect(typeof terminal.lastViewportRows).toBe('number');
+    expect(typeof terminal.terminalHandle).toBe('number');
+    expect(Array.isArray(terminal.lastRenderedRows)).toBeTrue();
+    expect(terminal.lastCursor).not.toBeUndefined();
+    expect(terminal.textarea).toBeTruthy();
+    expect(probe.bindings).toBeTruthy();
+
+    const active = terminal.buffer.active;
+    expect(typeof active.baseY).toBe('number');
+    expect(typeof active.viewportY).toBe('number');
+    expect(typeof active.length).toBe('number');
+    expect(typeof active.getLine).toBe('function');
+    expect(terminal._core._renderService.dimensions.css.cell).toBeTruthy();
+  });
+
   // resize 先写 cols/rows 再调 WASM：WASM 抛错后控制器尺寸与内核尺寸永久错位，
   // 且同尺寸重试会被开头的相等判断早退掉，永远修不回来。
   test('failed WASM resize should keep cols/rows so the same size can be retried', async () => {

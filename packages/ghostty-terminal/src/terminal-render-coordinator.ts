@@ -90,6 +90,15 @@ export class TerminalRenderCoordinator {
     return this.renderer?.kind ?? 'unknown';
   }
 
+  // 最近一帧的视口几何：命中测试与 e2e 诊断（apps/fe/tests 的 readTerminalInternals）读它。
+  get lastViewportRows(): number {
+    return this.viewportRows;
+  }
+
+  get lastRenderedRows(): GhosttyRenderRow[] {
+    return this.renderedRows;
+  }
+
   schedule(): void {
     this.loop.schedule();
   }

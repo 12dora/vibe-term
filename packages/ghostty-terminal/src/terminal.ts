@@ -36,6 +36,8 @@ import type {
   CompatibleTerminalLike,
   GhosttyCellDimensions,
   GhosttyCursorViewportRect,
+  GhosttyRenderCursor,
+  GhosttyRenderRow,
   GhosttyTerminalInitOptions,
   GhosttyTerminalModeSnapshot,
   GhosttyTerminalSize,
@@ -512,6 +514,32 @@ export class GhosttyTerminalController implements CompatibleTerminalLike {
 
   getRendererKind(): string {
     return this.renderCoordinator.rendererKind;
+  }
+
+  // 实时 cell 尺寸对象（与 _core._renderService.dimensions.css.cell 同一引用）。
+  // 鼠标坐标换算与 hit-test 同源，e2e（apps/fe/tests 的 readCellDimensions）据此
+  // 把 client 坐标折算成行列，必须是公开只读入口而非内部字段。
+  cellDimensions(): GhosttyCellDimensions {
+    return this.dom.cell;
+  }
+
+  // 最近一帧渲染快照的光标（视口相对坐标：y 是视口内行号，不是绝对行号）。
+  // 供 e2e 对齐校验与诊断读取，语义与 render 时缓存的 meta.cursor 完全一致。
+  get lastCursor(): GhosttyRenderCursor | null {
+    return this.renderCoordinator.cursor;
+  }
+
+  // 以下三个只读入口仅供 e2e 诊断（readTerminalInternals）定位渲染错位问题。
+  get lastViewportRows(): number {
+    return this.renderCoordinator.lastViewportRows;
+  }
+
+  get lastRenderedRows(): GhosttyRenderRow[] {
+    return this.renderCoordinator.lastRenderedRows;
+  }
+
+  get terminalHandle(): number {
+    return this.handles.terminal;
   }
 
   setTheme(theme: GhosttyTerminalInitOptions['theme']): void {
