@@ -35,7 +35,7 @@ import {
 import { notifyAgentEvent } from './run-notify';
 import {
   acquireRunResources,
-  destroyPaneEmulator,
+  releaseHeldPaneEmulator,
   releaseRunResources,
 } from './run-resource-scope';
 import { type PendingApproval, createRunStreamHandlers } from './run-stream-handlers';
@@ -98,7 +98,7 @@ export class AgentRun {
     return this.deltas.inProgressReasoning;
   }
   requestStop(reason: AgentStopReason): void {
-    if (this.stopReason) {
+    if (this.stopReason && this.stopReason !== 'shutdown') {
       return;
     }
     this.stopReason = reason;
@@ -387,11 +387,13 @@ export class AgentRun {
     if (this.terminalFailureStreak >= TERMINAL_FAILURE_LIMIT && !this.terminalFatal) {
       this.terminalFatal = true;
       this.terminalFatalMessage = `terminal tool failed ${this.terminalFailureStreak} times in a row, aborting run`;
-      if (this.runtimeDeviceId && this.runtimePaneId) {
-        void destroyPaneEmulator(this.runtimeDeviceId, this.runtimePaneId).catch((error) => {
-          console.error('[agent-run] failed to destroy emulator on fatal:', error);
-        });
+      if (this.emulator && this.runtimeDeviceId && this.runtimePaneId) {
+        const deviceId = this.runtimeDeviceId;
+        const paneId = this.runtimePaneId;
         this.emulator = null;
+        void releaseHeldPaneEmulator({ deviceId, paneId }).catch((error) => {
+          console.error('[agent-run] failed to release emulator on fatal:', error);
+        });
       }
       this.abortController.abort();
     }

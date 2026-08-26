@@ -107,6 +107,7 @@ interface ActiveRun {
   run: AgentRun;
   promise: Promise<unknown>;
   stale: boolean;
+  resumeSuppressed: boolean;
 }
 
 interface AgentSupervisorDeps {
@@ -124,6 +125,7 @@ export class AgentSupervisor {
   private readonly deps: AgentSupervisorDeps;
   private readonly activeRuns = new Map<string, ActiveRun>();
   private readonly staleSessionIds = new Set<string>();
+  private readonly resumeSuppressedSessionIds = new Set<string>();
   private started = false;
   private stopping = false;
 
@@ -357,6 +359,7 @@ export class AgentSupervisor {
       throw new AgentSessionNotFoundError();
     }
 
+    this.suppressResume(sessionId);
     const active = this.activeRuns.get(sessionId);
     if (active) {
       active.run.requestStop('manual');
@@ -389,6 +392,7 @@ export class AgentSupervisor {
     ].filter((s) => s.deviceId === deviceId);
 
     for (const session of sessions) {
+      this.suppressResume(session.id);
       const active = this.activeRuns.get(session.id);
       if (active) {
         active.run.requestStop(reason);
@@ -471,16 +475,26 @@ export class AgentSupervisor {
     return pending.length;
   }
 
+  private suppressResume(sessionId: string): void {
+    this.resumeSuppressedSessionIds.add(sessionId);
+    const active = this.activeRuns.get(sessionId);
+    if (active) {
+      active.resumeSuppressed = true;
+    }
+  }
+
   private startRun(sessionId: string): void {
     if (this.stopping || this.activeRuns.has(sessionId)) {
       return;
     }
 
+    this.resumeSuppressedSessionIds.delete(sessionId);
     const run = this.deps.createRun(sessionId);
     const entry: ActiveRun = {
       run,
       promise: Promise.resolve(),
       stale: false,
+      resumeSuppressed: false,
     };
     entry.promise = run
       .execute()
@@ -491,8 +505,11 @@ export class AgentSupervisor {
         if (this.activeRuns.get(sessionId) === entry) {
           this.activeRuns.delete(sessionId);
         }
-        if (entry.stale) {
+        if (entry.stale && !entry.resumeSuppressed) {
           this.resumeSessionIfNeeded(sessionId);
+        } else if (entry.resumeSuppressed) {
+          this.staleSessionIds.delete(sessionId);
+          this.resumeSuppressedSessionIds.delete(sessionId);
         }
       });
     this.activeRuns.set(sessionId, entry);
@@ -503,11 +520,19 @@ export class AgentSupervisor {
       return;
     }
     this.staleSessionIds.delete(sessionId);
+    const active = this.activeRuns.get(sessionId);
+    if (active?.resumeSuppressed || this.resumeSuppressedSessionIds.has(sessionId)) {
+      this.resumeSuppressedSessionIds.delete(sessionId);
+      return;
+    }
     if (this.activeRuns.has(sessionId)) {
       return;
     }
     const session = getAgentSessionById(sessionId);
     if (!session || isSessionOrphan(session)) {
+      return;
+    }
+    if (session.status === 'stopped') {
       return;
     }
     if (session.status !== 'running' && listQueuedAgentMessages(sessionId).length === 0) {

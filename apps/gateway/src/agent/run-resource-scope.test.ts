@@ -4,8 +4,17 @@ import {
   type PaneEmulator,
   PaneEmulatorRegistry,
 } from '../tmux-client/pane-emulator';
-import { acquireRunResources, asEmulatorSource, releaseRunResources } from './run-resource-scope';
-import type { TerminalRuntimeLike } from './tools/terminal-context';
+import {
+  acquireRunResources,
+  asEmulatorSource,
+  releaseHeldPaneEmulator,
+  releaseRunResources,
+} from './run-resource-scope';
+import {
+  type TerminalRuntimeLike,
+  createTerminalToolContext,
+  liveEmulator,
+} from './tools/terminal-context';
 
 function stubRuntime(): TerminalRuntimeLike {
   return {
@@ -276,6 +285,75 @@ describe('releaseRunResources', () => {
       releaseRuntime: async () => {},
     });
     expect(first.emulator?.isDisposed).toBe(true);
+    expect(registry.size).toBe(0);
+  });
+
+  test('fatal streak 只释放本 run 引用：共享 emulator 时另一 run 的 liveEmulator 仍可用', async () => {
+    const registry = new PaneEmulatorRegistry();
+    const source: EmulatorStreamSource = {
+      subscribe() {
+        return () => {};
+      },
+      async capturePaneText() {
+        return '';
+      },
+      async getPaneInfo() {
+        return {
+          cols: 80,
+          rows: 24,
+          cursorX: 0,
+          cursorY: 0,
+          alternateScreen: false,
+          currentCommand: 'bash',
+        };
+      },
+    };
+    const runtime = streamingRuntime();
+    const first = await acquireRunResources({
+      deviceId: 'dev1',
+      paneId: '%1',
+      acquireRuntime: async () => runtime,
+      acquireEmulator: (deviceId, paneId) => registry.acquire(deviceId, paneId, source),
+    });
+    const second = await acquireRunResources({
+      deviceId: 'dev1',
+      paneId: '%1',
+      acquireRuntime: async () => runtime,
+      acquireEmulator: (deviceId, paneId) => registry.acquire(deviceId, paneId, source),
+    });
+    expect(first.emulator).toBe(second.emulator);
+    expect(first.emulator).not.toBeNull();
+
+    await releaseHeldPaneEmulator({
+      deviceId: 'dev1',
+      paneId: '%1',
+      releaseEmulator: (deviceId, paneId) => registry.release(deviceId, paneId),
+      destroyEmulator: (deviceId, paneId) => registry.destroy(deviceId, paneId),
+    });
+
+    expect(second.emulator?.isDisposed).toBe(false);
+    expect(registry.size).toBe(1);
+    const otherCtx = createTerminalToolContext({
+      paneId: '%1',
+      deviceId: 'dev1',
+      getRuntime: () => runtime,
+      getEmulator: () => second.emulator,
+      needsApprovalForWrite: false,
+      onFailure: () => {},
+      onSuccess: () => {},
+    });
+    expect(liveEmulator(otherCtx)).toBe(second.emulator);
+
+    await releaseRunResources({
+      emulator: second.emulator,
+      runtime,
+      deviceId: 'dev1',
+      paneId: '%1',
+      releaseEmulator: (deviceId, paneId) => registry.release(deviceId, paneId),
+      destroyEmulator: (deviceId, paneId) => registry.destroy(deviceId, paneId),
+      releaseRuntime: async () => {},
+    });
+    expect(second.emulator?.isDisposed).toBe(true);
     expect(registry.size).toBe(0);
   });
 });

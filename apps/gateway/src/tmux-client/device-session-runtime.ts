@@ -131,6 +131,8 @@ export class DeviceSessionRuntime {
   private terminated = false;
   private closeEmitted = false;
   private manualDisconnect = false;
+  private connectionDisconnected = false;
+  private resourcesDisposed = false;
 
   constructor(options: DeviceSessionRuntimeOptions) {
     this.deviceId = options.deviceId;
@@ -214,21 +216,19 @@ export class DeviceSessionRuntime {
     }
 
     this.connectPromise = this.connection.connect().catch((error) => {
-      if (!this.terminated) {
+      if (!this.connectionDisconnected) {
         this.manualDisconnect = true;
         try {
-          this.connection.disconnect();
+          this.disconnectConnection();
         } catch (disconnectError) {
           console.error(
             `[tmux-client] failed to disconnect after connect error: ${this.deviceId}`,
             disconnectError
           );
         }
-        this.terminated = true;
-        this.metadataProjection.dispose();
-        this.paneRetention.dispose();
-        this.paneHistoryReader.dispose();
       }
+      this.terminated = true;
+      this.disposeRuntimeResources();
       this.connectPromise = null;
       throw error;
     });
@@ -244,10 +244,8 @@ export class DeviceSessionRuntime {
     this.terminated = true;
     this.manualDisconnect = true;
     this.connectPromise = null;
-    this.connection.disconnect();
-    this.metadataProjection.dispose();
-    this.paneRetention.dispose();
-    this.paneHistoryReader.dispose();
+    this.disconnectConnection();
+    this.disposeRuntimeResources();
   }
 
   async shutdown(): Promise<void> {
@@ -429,6 +427,24 @@ export class DeviceSessionRuntime {
 
   async getPaneInfo(paneId: string): Promise<PaneInfo> {
     return this.connection.getPaneInfo(paneId);
+  }
+
+  private disconnectConnection(): void {
+    if (this.connectionDisconnected) {
+      return;
+    }
+    this.connectionDisconnected = true;
+    this.connection.disconnect();
+  }
+
+  private disposeRuntimeResources(): void {
+    if (this.resourcesDisposed) {
+      return;
+    }
+    this.resourcesDisposed = true;
+    this.metadataProjection.dispose();
+    this.paneRetention.dispose();
+    this.paneHistoryReader.dispose();
   }
 
   private handleUnexpectedClose(): void {

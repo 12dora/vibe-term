@@ -5,6 +5,9 @@ import {
   type DeviceSessionRuntimeConnection,
   createDeviceSessionRuntime,
 } from './device-session-runtime';
+import { MetadataProjection } from './metadata-projection';
+import { PaneHistoryReader } from './pane-history-reader';
+import { PaneRetention } from './pane-retention';
 
 function createStubConnectionRecorder() {
   const state = {
@@ -440,6 +443,55 @@ describe('DeviceSessionRuntime', () => {
     await expect(runtime.connect()).rejects.toThrow('control channel failed');
     expect(recorder.state.disconnectCalls).toBe(1);
     expect(runtime.isTerminated).toBe(true);
+  });
+
+  test('onClose during connect still disposes runtime resources exactly once', async () => {
+    const recorder = createStubConnectionRecorder();
+    recorder.connection.connect = async () => {
+      recorder.state.connectCalls += 1;
+      recorder.state.options?.onClose?.();
+      throw new Error('connect reset by peer');
+    };
+
+    const counts = { metadata: 0, retention: 0, history: 0 };
+    const origMeta = MetadataProjection.prototype.dispose;
+    const origRetention = PaneRetention.prototype.dispose;
+    const origHistory = PaneHistoryReader.prototype.dispose;
+    MetadataProjection.prototype.dispose = function (this: MetadataProjection) {
+      counts.metadata += 1;
+      return origMeta.call(this);
+    };
+    PaneRetention.prototype.dispose = function (this: PaneRetention) {
+      counts.retention += 1;
+      return origRetention.call(this);
+    };
+    PaneHistoryReader.prototype.dispose = function (this: PaneHistoryReader) {
+      counts.history += 1;
+      return origHistory.call(this);
+    };
+
+    try {
+      const runtime = createDeviceSessionRuntime({
+        deviceId: 'device-a',
+        createConnection(options) {
+          recorder.state.options = options;
+          return recorder.connection;
+        },
+      });
+
+      await expect(runtime.connect()).rejects.toThrow('connect reset by peer');
+      expect(counts).toEqual({ metadata: 1, retention: 1, history: 1 });
+      expect(recorder.state.disconnectCalls).toBe(1);
+      expect(runtime.isTerminated).toBe(true);
+
+      runtime.disconnect();
+      expect(counts).toEqual({ metadata: 1, retention: 1, history: 1 });
+      expect(recorder.state.disconnectCalls).toBe(1);
+    } finally {
+      MetadataProjection.prototype.dispose = origMeta;
+      PaneRetention.prototype.dispose = origRetention;
+      PaneHistoryReader.prototype.dispose = origHistory;
+    }
   });
 
   test('capturePaneText delegates to the underlying connection', async () => {

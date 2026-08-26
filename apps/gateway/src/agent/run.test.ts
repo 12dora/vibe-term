@@ -538,6 +538,33 @@ describe('AgentRun 核心循环', () => {
     expect(getAgentSessionById(harness.session.id)?.status).toBe('running');
   });
 
+  test('requestStop：shutdown 可被后续 manual 覆盖并落 stopped', async () => {
+    const mock = createMockChatServer(() =>
+      slowSseResponse(
+        [
+          chunk({ role: 'assistant', content: 'aaa' }),
+          chunk({ content: 'bbb' }),
+          chunk({}, 'stop'),
+        ],
+        50
+      )
+    );
+    servers.push(mock.server);
+
+    const harness = createHarness({ baseUrl: mock.baseUrl });
+    appendAgentMessage(harness.session.id, 'user', { role: 'user', content: 'talk' });
+
+    const run = new AgentRun(harness.session.id, harness.deps);
+    const promise = run.execute();
+    await new Promise((r) => setTimeout(r, 70));
+    run.requestStop('shutdown');
+    run.requestStop('manual');
+    const outcome = await promise;
+
+    expect(outcome).toBe('stopped');
+    expect(getAgentSessionById(harness.session.id)?.status).toBe('stopped');
+  });
+
   test('终端工具连续 2 次失败 fail-fast：run 终止、status=error、notify agent_error', async () => {
     const mock = createMockChatServer((callIndex) => {
       // 模型不断要求读屏

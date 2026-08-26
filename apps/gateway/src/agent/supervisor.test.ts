@@ -18,7 +18,7 @@ import {
   updateAgentSession,
 } from '../db/agent';
 import { getDb as getOrmDb } from '../db/client';
-import { AgentRun, type AgentRunDeps } from './run';
+import { AgentRun, type AgentRunDeps, type AgentStopReason } from './run';
 import {
   AgentAwaitingConfirmationError,
   AgentConfirmationAlreadyDecidedError,
@@ -223,12 +223,28 @@ function createTimedOutHangHarness(baseUrl: string) {
   let createRunCount = 0;
   let sessionId = '';
   let runDeps: Partial<AgentRunDeps> = {};
+  let stopReason: AgentStopReason | null = null;
   const hangingRun = {
     inProgressText: '',
     inProgressReasoning: '',
-    requestStop() {},
+    requestStop(reason: AgentStopReason) {
+      if (stopReason && stopReason !== 'shutdown') {
+        return;
+      }
+      stopReason = reason;
+    },
     requestSteer() {},
-    execute: () => firstHang,
+    execute: async () => {
+      await firstHang;
+      if (stopReason === 'manual') {
+        updateAgentSession(sessionId, { status: 'stopped', lastError: null });
+      } else if (stopReason === 'pane_lost') {
+        updateAgentSession(sessionId, {
+          status: 'error',
+          lastError: 'terminal connection lost: pane/device unavailable',
+        });
+      }
+    },
   } as unknown as AgentRun;
 
   const harness = createSupervisorHarness({
@@ -753,6 +769,64 @@ describe('AgentSupervisor - stop 语义', () => {
 
     expect(getCreateRunCount()).toBe(2);
     expect(getAgentSessionById(harness.session.id)?.status).toBe('idle');
+  });
+
+  test('stop() 超时后 start()：resume 窗口内 stopSession 不得再拉起 run', async () => {
+    const mock = createMockChatServer(() =>
+      sseResponse([chunk({ role: 'assistant', content: 'ok' }), chunk({}, 'stop')])
+    );
+    servers.push(mock.server);
+    const { harness, settleFirst, getCreateRunCount } = createTimedOutHangHarness(mock.baseUrl);
+
+    await harness.supervisor.start();
+    harness.supervisor.submitUserMessage(harness.session.id, 'first');
+    const queued = harness.supervisor.submitUserMessage(harness.session.id, 'second');
+    expect(queued.kind).toBe('queued');
+    updateAgentSession(harness.session.id, { status: 'running' });
+
+    await harness.supervisor.stop();
+    await harness.supervisor.start();
+    expect(getCreateRunCount()).toBe(1);
+    expect(harness.supervisor.isSessionActive(harness.session.id)).toBe(true);
+
+    const stopping = harness.supervisor.stopSession(harness.session.id);
+    settleFirst();
+    await stopping;
+    await harness.waitForIdle();
+
+    expect(getCreateRunCount()).toBe(1);
+    expect(harness.supervisor.isSessionActive(harness.session.id)).toBe(false);
+    expect(getAgentSessionById(harness.session.id)?.status).toBe('stopped');
+    expect(listQueuedAgentMessages(harness.session.id).map((q) => q.text)).toEqual(['second']);
+  });
+
+  test('stop() 超时后 start()：resume 窗口内 pane_lost 不得再拉起 run', async () => {
+    const mock = createMockChatServer(() =>
+      sseResponse([chunk({ role: 'assistant', content: 'ok' }), chunk({}, 'stop')])
+    );
+    servers.push(mock.server);
+    const { harness, settleFirst, getCreateRunCount } = createTimedOutHangHarness(mock.baseUrl);
+
+    await harness.supervisor.start();
+    harness.supervisor.submitUserMessage(harness.session.id, 'first');
+    const queued = harness.supervisor.submitUserMessage(harness.session.id, 'second');
+    expect(queued.kind).toBe('queued');
+    updateAgentSession(harness.session.id, { status: 'running' });
+
+    await harness.supervisor.stop();
+    await harness.supervisor.start();
+    expect(getCreateRunCount()).toBe(1);
+
+    harness.supervisor.stopSessionsForDevice(TEST_DEVICE_ID, 'pane_lost');
+    settleFirst();
+    await harness.waitForIdle();
+
+    expect(getCreateRunCount()).toBe(1);
+    expect(harness.supervisor.isSessionActive(harness.session.id)).toBe(false);
+    const session = getAgentSessionById(harness.session.id);
+    expect(session?.status).toBe('error');
+    expect(session?.lastError).toMatch(/terminal connection lost|pane\/device unavailable/);
+    expect(listQueuedAgentMessages(harness.session.id).map((q) => q.text)).toEqual(['second']);
   });
 
   test("stopSessionsForDevice('pane_lost')：活动 run 被 abort 且 status=error（不自动恢复）", async () => {
