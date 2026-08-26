@@ -223,6 +223,8 @@ describe('LocalExternalTmuxConnection', () => {
   test('connect runs exact command sequence with control-mode session options', async () => {
     const calls: string[][] = [];
     const snapshots: StateSnapshotPayload[] = [];
+    const device = createDevice('tmex-snapshot');
+    device.defaultWorkingDir = '/tmp/tmex-test-cwd';
     const connection = new LocalExternalTmuxConnection(
       {
         deviceId: 'device-local',
@@ -238,14 +240,14 @@ describe('LocalExternalTmuxConnection', () => {
       {
         enableSubscription: false,
         ensureGhosttyTerminfo: async () => false,
-        getDevice: () => createDevice('tmex-snapshot'),
+        getDevice: () => device,
         run: createRunStub('tmex-snapshot', {
           record: calls,
           overrides: (command) => {
             if (command === 'has-session -t tmex-snapshot') {
               return { exitCode: 1, stdout: '', stderr: "can't find session: tmex-snapshot" };
             }
-            if (command === 'new-session -d -c /Users/krhougs -s tmex-snapshot') {
+            if (command === 'new-session -d -c /tmp/tmex-test-cwd -s tmex-snapshot') {
               return ok();
             }
             return null;
@@ -256,11 +258,10 @@ describe('LocalExternalTmuxConnection', () => {
 
     await connection.connect();
 
-    const homedir = require('node:os').homedir();
     expect(calls.map((argv) => argv.join(' '))).toEqual([
       'tmux -V',
       'tmux has-session -t tmex-snapshot',
-      `tmux new-session -d -c ${homedir} -s tmex-snapshot`,
+      'tmux new-session -d -c /tmp/tmex-test-cwd -s tmex-snapshot',
       'tmux show-options -gqv @tmex-server-epoch',
       'tmux set-option -t tmex-snapshot -s allow-passthrough off',
       'tmux set-option -t tmex-snapshot -g extended-keys on',
@@ -269,7 +270,7 @@ describe('LocalExternalTmuxConnection', () => {
       'tmux set-option -t tmex-snapshot destroy-unattached off',
       'tmux set-environment -t tmex-snapshot TERM_PROGRAM ghostty',
       'tmux set-environment -t tmex-snapshot COLORTERM truecolor',
-      `tmux set-option -t tmex-snapshot default-path ${homedir}`,
+      'tmux set-option -t tmex-snapshot default-path /tmp/tmex-test-cwd',
       "tmux set-hook -t tmex-snapshot after-new-window set-option -w window-style 'fg=#d0d0d0,bg=#262626'",
       'tmux list-windows -t tmex-snapshot -F #{window_id}',
       'tmux set-option -w -t @1 window-style fg=#d0d0d0,bg=#262626',
