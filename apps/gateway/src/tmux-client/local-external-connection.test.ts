@@ -1758,6 +1758,61 @@ describe('LocalExternalTmuxConnection', () => {
 
     expect(commands.some((argv) => argv.includes('send-keys'))).toBe(false);
   });
+
+  test('requestSnapshot reports a non-transient list-windows error via onError without unhandled rejection', async () => {
+    const session = 'tmex-snapshot-throw';
+    let failListWindows = false;
+    const errors: Error[] = [];
+    const unhandled: unknown[] = [];
+
+    const connection = new LocalExternalTmuxConnection(
+      {
+        deviceId: 'device-local',
+        onEvent: () => {},
+        onTerminalOutput: () => {},
+        onTerminalHistory: () => {},
+        onSnapshot: () => {},
+        onError: (error) => {
+          errors.push(error);
+        },
+        onClose: () => {},
+      },
+      {
+        enableSubscription: false,
+        ensureGhosttyTerminfo: async () => false,
+        getDevice: () => createDevice(session),
+        run: createRunStub(session, {
+          overrides: (command) => {
+            if (failListWindows && command.startsWith(`list-windows -t ${session}`)) {
+              throw new Error('plain snapshot failure');
+            }
+            return null;
+          },
+        }),
+      }
+    );
+
+    await connection.connect();
+    failListWindows = true;
+
+    const onUnhandled = (reason: unknown) => {
+      unhandled.push(reason);
+    };
+    process.on('unhandledRejection', onUnhandled);
+    try {
+      connection.requestSnapshot();
+      await waitFor(() => (errors.length > 0 ? true : null));
+      await Bun.sleep(20);
+    } finally {
+      process.off('unhandledRejection', onUnhandled);
+    }
+
+    expect(unhandled).toEqual([]);
+    expect(errors).toHaveLength(1);
+    expect(errors[0]).toBeInstanceOf(Error);
+    expect(errors[0].message).toBe('plain snapshot failure');
+    connection.disconnect();
+  });
 });
 
 describe('LocalExternalTmuxConnection lifecycle events', () => {

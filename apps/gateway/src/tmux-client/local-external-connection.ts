@@ -229,16 +229,6 @@ export class LocalExternalTmuxConnection extends ExternalTmuxConnectionCore {
     this.stopControlClient();
   }
 
-  override requestSnapshot(): void {
-    void this.requestSnapshotInternal().catch((error) => {
-      if (isTransientSpawnError(error)) {
-        this.handleSpawnUnavailable(error instanceof Error ? error.message : String(error));
-        return;
-      }
-      this.callbacks.onError(error instanceof Error ? error : new Error(String(error)));
-    });
-  }
-
   sendInput(paneId: string, data: string): void {
     this.enqueueInputBytes(paneId, new TextEncoder().encode(data));
   }
@@ -339,6 +329,14 @@ export class LocalExternalTmuxConnection extends ExternalTmuxConnectionCore {
 
   protected onSnapshotSuccess(): void {
     this.markSpawnRecovered();
+  }
+
+  protected override handleSnapshotFailure(error: unknown): void {
+    if (isTransientSpawnError(error)) {
+      this.handleSpawnUnavailable(error instanceof Error ? error.message : String(error));
+      return;
+    }
+    this.callbacks.onError(error instanceof Error ? error : new Error(String(error)));
   }
 
   private enqueueInputBytes(paneId: string, data: Uint8Array): void {

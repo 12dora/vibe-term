@@ -135,7 +135,9 @@ export abstract class ExternalTmuxConnectionCore {
   }
 
   requestSnapshot(): void {
-    void this.requestSnapshotInternal();
+    void this.requestSnapshotInternal().catch((error) => {
+      this.handleSnapshotFailure(error);
+    });
   }
 
   signalThemeChange(paneId: string, theme: 'dark' | 'light'): void {
@@ -532,6 +534,8 @@ export abstract class ExternalTmuxConnectionCore {
   }
 
   protected onSnapshotSuccess(): void {}
+
+  protected handleSnapshotFailure(_error: unknown): void {}
 
   protected async disposeTransport(): Promise<void> {}
 
