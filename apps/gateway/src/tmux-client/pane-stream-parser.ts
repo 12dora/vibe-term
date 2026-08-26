@@ -1,23 +1,9 @@
-const decoder = new TextDecoder();
-
-type Phase =
-  | 'normal'
-  | 'esc'
-  | 'csi'
-  | 'osc-params'
-  | 'osc-body'
-  | 'osc-body-ignore'
-  | 'osc-st'
-  | 'osc-st-ignore'
-  | 'screen-title'
-  | 'screen-title-st'
-  | 'screen-title-ignore'
-  | 'screen-title-st-ignore'
-  | 'dcs-detect'
-  | 'dcs-tmux'
-  | 'dcs-tmux-esc'
-  | 'dcs-tmux-ignore'
-  | 'dcs-tmux-ignore-esc';
+import { handleCsi } from './pane-stream/csi-handler';
+import { handleEsc } from './pane-stream/esc-handler';
+import { handleNormal } from './pane-stream/normal-handler';
+import { handleOsc, handleScreenTitle } from './pane-stream/osc-handlers';
+import { type ParserContext, createParserState } from './pane-stream/parser-state';
+import { handleDcsDetect, handleTmuxPassthrough } from './pane-stream/tmux-passthrough-handler';
 
 export type PaneStreamNotification = {
   source: 'osc9' | 'osc99' | 'osc777' | 'osc1337';
@@ -49,509 +35,58 @@ export interface PaneStreamParser {
   push(data: Uint8Array): Uint8Array;
 }
 
-const MAX_OSC_KIND_BYTES = 16;
-const MAX_OSC_PAYLOAD_BYTES = 8 * 1024;
-const MAX_TITLE_BYTES = 8 * 1024;
-const MAX_DCS_PASSTHROUGH_BYTES = 64 * 1024;
-const MAX_KITTY_PENDING_IDS = 16;
-const MAX_CSI_BYTES = 64;
-const TMUX_PASSTHROUGH_PREFIX = 'tmux;';
-const THEME_UPDATES_MODE = '2031';
+function dispatchPaneStreamByte(ctx: ParserContext, byte: number): void {
+  switch (ctx.state.phase) {
+    case 'normal':
+      handleNormal(ctx, byte);
+      return;
+    case 'esc':
+      handleEsc(ctx, byte);
+      return;
+    case 'csi':
+      handleCsi(ctx, byte);
+      return;
+    case 'osc-params':
+    case 'osc-body':
+    case 'osc-body-ignore':
+    case 'osc-st':
+    case 'osc-st-ignore':
+      handleOsc(ctx, byte);
+      return;
+    case 'screen-title':
+    case 'screen-title-st':
+    case 'screen-title-ignore':
+    case 'screen-title-st-ignore':
+      handleScreenTitle(ctx, byte);
+      return;
+    case 'dcs-detect':
+      handleDcsDetect(ctx, byte);
+      return;
+    case 'dcs-tmux':
+    case 'dcs-tmux-esc':
+    case 'dcs-tmux-ignore':
+    case 'dcs-tmux-ignore-esc':
+      handleTmuxPassthrough(ctx, byte);
+      return;
+  }
+}
 
 export function createPaneStreamParser(options: PaneStreamParserOptions): PaneStreamParser {
-  let phase: Phase = 'normal';
-  let oscKind = '';
-  let oscPayloadBytes: number[] = [];
-  let titleBytes: number[] = [];
-  let warnedOscPayloadOverflow = false;
-  let warnedTitleOverflow = false;
-  let warnedDcsOverflow = false;
-  let dcsPrefix = '';
-  let dcsBytes: number[] = [];
-  let csiBytes: number[] = [];
-  let inTmuxPassthrough = false;
-  const kittyPending = new Map<string, { title: string; body: string }>();
-
-  function resetOscState(): void {
-    oscKind = '';
-    oscPayloadBytes = [];
-  }
-
-  function appendOscPayloadByte(byte: number): boolean {
-    if (oscPayloadBytes.length >= MAX_OSC_PAYLOAD_BYTES) {
-      if (!warnedOscPayloadOverflow) {
-        warnedOscPayloadOverflow = true;
-        console.warn('[tmex] pane stream parser dropped oversized OSC payload');
-      }
-      oscPayloadBytes = [];
-      phase = 'osc-body-ignore';
-      return false;
-    }
-    oscPayloadBytes.push(byte);
-    return true;
-  }
-
-  function emitTitle(bytes: number[]): void {
-    const title = decoder.decode(new Uint8Array(bytes)).trim();
-    if (!title) {
-      return;
-    }
-    options.onTitle(title);
-  }
-
-  function emitOsc(): void {
-    const payload = decoder.decode(new Uint8Array(oscPayloadBytes));
-    switch (oscKind) {
-      case '0':
-      case '1':
-      case '2':
-        emitTitle(oscPayloadBytes);
-        return;
-      case '7': {
-        try {
-          const value = new URL(payload);
-          if (value.protocol === 'file:' && value.pathname) {
-            options.onCurrentPath?.(decodeURIComponent(value.pathname));
-          }
-        } catch {}
-        return;
-      }
-      case '9':
-        if (/^4(;|$)/.test(payload)) {
-          return;
-        }
-        options.onNotification({ source: 'osc9', body: payload });
-        return;
-      case '99': {
-        const metadataSeparatorIndex = payload.indexOf(';');
-        const metadata =
-          metadataSeparatorIndex >= 0 ? payload.slice(0, metadataSeparatorIndex) : payload;
-        const content =
-          metadataSeparatorIndex >= 0 ? payload.slice(metadataSeparatorIndex + 1) : '';
-        const fields = new Map<string, string>();
-        for (const part of metadata.split(':')) {
-          const equalsIndex = part.indexOf('=');
-          if (equalsIndex > 0) {
-            fields.set(part.slice(0, equalsIndex), part.slice(equalsIndex + 1));
-          }
-        }
-        const id = fields.get('i') ?? '0';
-        const done = fields.get('d') !== '0';
-        const part = fields.get('p') ?? 'body';
-        const pending = kittyPending.get(id) ?? { title: '', body: '' };
-        if (part === 'title') {
-          pending.title += content;
-        } else if (part === 'body') {
-          pending.body += content;
-        }
-        if (!done) {
-          if (!kittyPending.has(id) && kittyPending.size >= MAX_KITTY_PENDING_IDS) {
-            const oldestId = kittyPending.keys().next().value;
-            if (oldestId !== undefined) {
-              kittyPending.delete(oldestId);
-            }
-          }
-          kittyPending.set(id, pending);
-          return;
-        }
-        kittyPending.delete(id);
-        if (pending.title || pending.body) {
-          options.onNotification({
-            source: 'osc99',
-            title: pending.title || undefined,
-            body: pending.body,
-          });
-        }
-        return;
-      }
-      case '777': {
-        const verbSeparatorIndex = payload.indexOf(';');
-        const verb = verbSeparatorIndex >= 0 ? payload.slice(0, verbSeparatorIndex) : payload;
-        if (verb !== 'notify') {
-          return;
-        }
-        const rest = verbSeparatorIndex >= 0 ? payload.slice(verbSeparatorIndex + 1) : '';
-        const titleSeparatorIndex = rest.indexOf(';');
-        const title = titleSeparatorIndex >= 0 ? rest.slice(0, titleSeparatorIndex) : rest;
-        const body = titleSeparatorIndex >= 0 ? rest.slice(titleSeparatorIndex + 1) : '';
-        options.onNotification({
-          source: 'osc777',
-          title: title || undefined,
-          body,
-        });
-        return;
-      }
-      case '1337':
-        if (/^RequestAttention=(yes|once|fireworks|true)$/i.test(payload)) {
-          options.onNotification({ source: 'osc1337', body: 'RequestAttention' });
-        }
-        return;
-      case '52': {
-        const separatorIndex = payload.indexOf(';');
-        if (separatorIndex < 0) {
-          return;
-        }
-        const base64Data = payload.slice(separatorIndex + 1);
-        if (!base64Data || base64Data === '?') {
-          return;
-        }
-        try {
-          const binaryString = atob(base64Data);
-          const bytes = new Uint8Array(binaryString.length);
-          for (let i = 0; i < binaryString.length; i++) {
-            bytes[i] = binaryString.charCodeAt(i);
-          }
-          const text = new TextDecoder('utf-8', { fatal: false }).decode(bytes);
-          if (text) {
-            options.onClipboardWrite?.(text);
-          }
-        } catch {
-          // invalid base64 — silently discard
-        }
-        return;
-      }
-      case '133': {
-        const parts = payload.split(';');
-        const kind = parts[0];
-        if (kind !== 'A' && kind !== 'B' && kind !== 'C' && kind !== 'D') {
-          return;
-        }
-        let exitCode: number | null = null;
-        if (kind === 'D' && parts[1] !== undefined && parts[1] !== '') {
-          const parsed = Number.parseInt(parts[1], 10);
-          exitCode = Number.isNaN(parsed) ? null : parsed;
-        }
-        options.onPromptMarker?.({ kind, exitCode, params: parts.slice(1) });
-        return;
-      }
-      default:
-        return;
-    }
-  }
-
+  const state = createParserState();
   return {
     push(data) {
-      const output: number[] = [];
-
-      function flushTmuxPassthrough(): void {
-        const content = dcsBytes;
-        dcsBytes = [];
-        dcsPrefix = '';
-        phase = 'normal';
-        // 解包内容里的 mode 声明是发给外层终端的，不代表对 tmux 的订阅，打标跳过上报
-        inTmuxPassthrough = true;
-        try {
-          for (const byte of content) {
-            processByte(byte);
-          }
-        } finally {
-          inTmuxPassthrough = false;
-        }
-        if (String(phase) === 'csi') {
-          // 解包内容以不完整 CSI 结尾：回填并复位，避免后续普通流被误并入
-          output.push(0x1b, 0x5b, ...csiBytes);
-          csiBytes = [];
-          phase = 'normal';
-        }
-      }
-
-      function appendDcsByte(byte: number): boolean {
-        if (dcsBytes.length >= MAX_DCS_PASSTHROUGH_BYTES) {
-          if (!warnedDcsOverflow) {
-            warnedDcsOverflow = true;
-            console.warn('[tmex] pane stream parser dropped oversized tmux passthrough payload');
-          }
-          dcsBytes = [];
-          phase = 'dcs-tmux-ignore';
-          return false;
-        }
-        dcsBytes.push(byte);
-        return true;
-      }
-
-      function processByte(byte: number): void {
-        if (phase === 'normal') {
-          if (byte === 0x1b) {
-            phase = 'esc';
-            return;
-          }
-          if (byte === 0x07) {
-            options.onBell();
-            return;
-          }
-          output.push(byte);
-          return;
-        }
-
-        if (phase === 'esc') {
-          if (byte === 0x5d) {
-            resetOscState();
-            phase = 'osc-params';
-            return;
-          }
-          if (byte === 0x6b) {
-            titleBytes = [];
-            phase = 'screen-title';
-            return;
-          }
-          if (byte === 0x50) {
-            dcsPrefix = '';
-            phase = 'dcs-detect';
-            return;
-          }
-          if (byte === 0x5b) {
-            csiBytes = [];
-            phase = 'csi';
-            return;
-          }
-          output.push(0x1b, byte);
-          phase = 'normal';
-          return;
-        }
-
-        // CSI 旁路观察：与 OSC 的"吞掉"相反，序列无论是否识别都原样回填，
-        // 仅在识别到 DEC private mode 2031 的 h/l 时上报订阅状态。
-        if (phase === 'csi') {
-          if (byte >= 0x40 && byte <= 0x7e) {
-            output.push(0x1b, 0x5b, ...csiBytes, byte);
-            if ((byte === 0x68 || byte === 0x6c) && csiBytes[0] === 0x3f && !inTmuxPassthrough) {
-              const params = decoder.decode(new Uint8Array(csiBytes.slice(1))).split(';');
-              if (params.includes(THEME_UPDATES_MODE)) {
-                options.onThemeSubscription?.(byte === 0x68);
-              }
-            }
-            csiBytes = [];
-            phase = 'normal';
-            return;
-          }
-          if (byte >= 0x20 && byte <= 0x3f && csiBytes.length < MAX_CSI_BYTES) {
-            csiBytes.push(byte);
-            return;
-          }
-          // 超长或非法字节：放弃解析，原样回填后按普通流重新处理该字节
-          output.push(0x1b, 0x5b, ...csiBytes);
-          csiBytes = [];
-          phase = 'normal';
-          processByte(byte);
-          return;
-        }
-
-        if (phase === 'dcs-detect') {
-          const expected = TMUX_PASSTHROUGH_PREFIX.charCodeAt(dcsPrefix.length);
-          if (byte === expected) {
-            dcsPrefix += String.fromCharCode(byte);
-            if (dcsPrefix.length === TMUX_PASSTHROUGH_PREFIX.length) {
-              dcsBytes = [];
-              phase = 'dcs-tmux';
-            }
-            return;
-          }
-          output.push(0x1b, 0x50);
-          for (const prefixChar of dcsPrefix) {
-            output.push(prefixChar.charCodeAt(0));
-          }
-          dcsPrefix = '';
-          phase = 'normal';
-          processByte(byte);
-          return;
-        }
-
-        if (phase === 'dcs-tmux') {
-          if (byte === 0x1b) {
-            phase = 'dcs-tmux-esc';
-            return;
-          }
-          appendDcsByte(byte);
-          return;
-        }
-
-        if (phase === 'dcs-tmux-esc') {
-          if (byte === 0x5c) {
-            flushTmuxPassthrough();
-            return;
-          }
-          if (byte === 0x1b) {
-            phase = 'dcs-tmux';
-            appendDcsByte(0x1b);
-            return;
-          }
-          phase = 'dcs-tmux';
-          if (appendDcsByte(0x1b)) {
-            appendDcsByte(byte);
-          }
-          return;
-        }
-
-        if (phase === 'dcs-tmux-ignore') {
-          if (byte === 0x1b) {
-            phase = 'dcs-tmux-ignore-esc';
-          }
-          return;
-        }
-
-        if (phase === 'dcs-tmux-ignore-esc') {
-          if (byte === 0x5c) {
-            dcsBytes = [];
-            dcsPrefix = '';
-            phase = 'normal';
-            return;
-          }
-          if (byte !== 0x1b) {
-            phase = 'dcs-tmux-ignore';
-          }
-          return;
-        }
-
-        if (phase === 'osc-params') {
-          if (byte === 0x3b) {
-            phase =
-              oscKind === '0' ||
-              oscKind === '1' ||
-              oscKind === '2' ||
-              oscKind === '7' ||
-              oscKind === '9' ||
-              oscKind === '52' ||
-              oscKind === '99' ||
-              oscKind === '133' ||
-              oscKind === '777' ||
-              oscKind === '1337'
-                ? 'osc-body'
-                : 'osc-body-ignore';
-            return;
-          }
-          if (byte === 0x07) {
-            emitOsc();
-            resetOscState();
-            phase = 'normal';
-            return;
-          }
-          if (byte === 0x1b) {
-            phase = 'osc-st';
-            return;
-          }
-          if (oscKind.length >= MAX_OSC_KIND_BYTES) {
-            resetOscState();
-            phase = 'osc-body-ignore';
-            return;
-          }
-          oscKind += String.fromCharCode(byte);
-          return;
-        }
-
-        if (phase === 'osc-body') {
-          if (byte === 0x07) {
-            emitOsc();
-            resetOscState();
-            phase = 'normal';
-            return;
-          }
-          if (byte === 0x1b) {
-            phase = 'osc-st';
-            return;
-          }
-          appendOscPayloadByte(byte);
-          return;
-        }
-
-        if (phase === 'osc-body-ignore') {
-          if (byte === 0x07) {
-            resetOscState();
-            phase = 'normal';
-            return;
-          }
-          if (byte === 0x1b) {
-            phase = 'osc-st-ignore';
-          }
-          return;
-        }
-
-        if (phase === 'osc-st') {
-          if (byte === 0x5c) {
-            emitOsc();
-            resetOscState();
-            phase = 'normal';
-            return;
-          }
-          phase = 'osc-body';
-          if (appendOscPayloadByte(0x1b)) {
-            appendOscPayloadByte(byte);
-          }
-          return;
-        }
-
-        if (phase === 'osc-st-ignore') {
-          if (byte === 0x5c) {
-            resetOscState();
-            phase = 'normal';
-            return;
-          }
-          phase = 'osc-body-ignore';
-          return;
-        }
-
-        if (phase === 'screen-title') {
-          if (byte === 0x07) {
-            emitTitle(titleBytes);
-            titleBytes = [];
-            phase = 'normal';
-            return;
-          }
-          if (byte === 0x1b) {
-            phase = 'screen-title-st';
-            return;
-          }
-          if (titleBytes.length >= MAX_TITLE_BYTES) {
-            if (!warnedTitleOverflow) {
-              warnedTitleOverflow = true;
-              console.warn('[tmex] pane stream parser dropped oversized title');
-            }
-            titleBytes = [];
-            phase = 'screen-title-ignore';
-            return;
-          }
-          titleBytes.push(byte);
-          return;
-        }
-
-        if (phase === 'screen-title-ignore') {
-          if (byte === 0x07) {
-            phase = 'normal';
-          } else if (byte === 0x1b) {
-            phase = 'screen-title-st-ignore';
-          }
-          return;
-        }
-
-        if (phase === 'screen-title-st-ignore') {
-          phase = byte === 0x5c ? 'normal' : 'screen-title-ignore';
-          return;
-        }
-
-        if (byte === 0x5c) {
-          emitTitle(titleBytes);
-          titleBytes = [];
-          phase = 'normal';
-          return;
-        }
-
-        if (titleBytes.length + 2 > MAX_TITLE_BYTES) {
-          if (!warnedTitleOverflow) {
-            warnedTitleOverflow = true;
-            console.warn('[tmex] pane stream parser dropped oversized title');
-          }
-          titleBytes = [];
-          phase = 'screen-title-ignore';
-          return;
-        }
-        titleBytes.push(0x1b, byte);
-        phase = 'screen-title';
-      }
-
+      const ctx: ParserContext = {
+        state,
+        options,
+        output: [],
+        processByte(byte) {
+          dispatchPaneStreamByte(this, byte);
+        },
+      };
       for (const byte of data) {
-        processByte(byte);
+        ctx.processByte(byte);
       }
-
-      return new Uint8Array(output);
+      return new Uint8Array(ctx.output);
     },
   };
 }
