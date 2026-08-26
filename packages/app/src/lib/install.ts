@@ -2,7 +2,6 @@ import { randomBytes } from 'node:crypto';
 import { chmod, copyFile, rm } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { dirname, isAbsolute, join, resolve } from 'node:path';
-import { t } from '../i18n';
 import type { InstallMeta } from '../types';
 import { copyDirectory, ensureDir, pathExists, writeText } from './fs-utils';
 import type { InstallLayout, PackageLayout } from './install-layout';
@@ -61,14 +60,12 @@ export async function deployRuntimeFiles(
   await copyDirectory(packageLayout.resourceDrizzlePath, installLayout.drizzleDir);
 }
 
+/** POSIX 单引号：`'` → `'\''`，使任意路径可安全插入 shell 脚本。 */
+export function quotePosixShellArg(value: string): string {
+  return `'${value.replaceAll("'", "'\\''")}'`;
+}
+
 export async function writeRunScript(installLayout: InstallLayout, bunPath: string): Promise<void> {
-  for (let i = 0; i < bunPath.length; i += 1) {
-    const code = bunPath.charCodeAt(i);
-    // 拒绝会破坏生成 run.sh 的 shell 元字符：" ` $ \ 及换行回车（防注入 / DoS）。
-    if (code === 34 || code === 96 || code === 36 || code === 92 || code === 10 || code === 13) {
-      throw new Error(t('bun.unsafePath', { path: bunPath }));
-    }
-  }
   // 服务由 launchd/systemd 拉起时 PATH 极简，run.sh 显式补全。${HOME}/.bun/bin 由下方条件块
   // 动态补（故 extraPathDirs 排除它以免重复）；其余补 bun 实际目录 + homebrew/linuxbrew 兜底。
   const homeBunBin = join(homedir(), '.bun', 'bin');
@@ -79,27 +76,31 @@ export async function writeRunScript(installLayout: InstallLayout, bunPath: stri
     '/usr/local/bin',
     '/home/linuxbrew/.linuxbrew/bin',
   ].filter((dir, index, arr) => dir.length > 0 && dir !== homeBunBin && arr.indexOf(dir) === index);
+  const pathExport =
+    extraPathDirs.length > 0
+      ? `export PATH=${extraPathDirs.map(quotePosixShellArg).join(':')}:"\${PATH:-}"`
+      : 'export PATH="${PATH:-}"';
   const lines = [
     '#!/usr/bin/env bash',
     'set -euo pipefail',
     '',
     'SCRIPT_DIR="$(cd -- "$(dirname -- "$0")" && pwd)"',
     'while IFS= read -r line || [[ -n "$line" ]]; do',
-    "  line=\"${line%$'\\r'}\"",
-    "  [[ \"$line\" =~ ^[[:space:]]*$ ]] && continue",
-    "  [[ \"$line\" =~ ^[[:space:]]*# ]] && continue",
+    '  line="${line%$\'\\r\'}"',
+    '  [[ "$line" =~ ^[[:space:]]*$ ]] && continue',
+    '  [[ "$line" =~ ^[[:space:]]*# ]] && continue',
     '  export "$line"',
-    `done < "${installLayout.envPath}"`,
+    `done < ${quotePosixShellArg(installLayout.envPath)}`,
     '',
     'if [[ -n "${HOME:-}" ]] && [[ -d "${HOME}/.bun/bin" ]]; then',
     '  export PATH="${HOME}/.bun/bin:${PATH:-}"',
     'fi',
-    `export PATH="${[...extraPathDirs, '${PATH:-}'].join(':')}"`,
+    pathExport,
     '',
-    `export TMEX_FE_DIST_DIR="${installLayout.feDir}"`,
-    `export TMEX_MIGRATIONS_DIR="${installLayout.drizzleDir}"`,
+    `export TMEX_FE_DIST_DIR=${quotePosixShellArg(installLayout.feDir)}`,
+    `export TMEX_MIGRATIONS_DIR=${quotePosixShellArg(installLayout.drizzleDir)}`,
     '',
-    `exec "${bunPath}" "${installLayout.runtimeServerPath}"`,
+    `exec ${quotePosixShellArg(bunPath)} ${quotePosixShellArg(installLayout.runtimeServerPath)}`,
     '',
   ];
   const script = lines.join('\n');

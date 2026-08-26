@@ -211,6 +211,11 @@ start_managed_ssh_agent_fresh() {
 }
 
 is_managed_ssh_agent_alive() {
+  # 未配置/未拉起 agent 时无需探活：start_gateway_with_fresh_agent 允许无 agent 运行。
+  if [[ -z "${MANAGED_SSH_AGENT_PID:-}" && -z "${MANAGED_SSH_AUTH_SOCK:-}" ]]; then
+    return 0
+  fi
+
   if [[ -n "${MANAGED_SSH_AGENT_PID:-}" ]] && ! kill -0 "${MANAGED_SSH_AGENT_PID}" >/dev/null 2>&1; then
     return 1
   fi
@@ -355,7 +360,7 @@ while true; do
     sleep "${RESTART_DELAY_SECONDS}"
     start_gateway_with_fresh_agent
   elif kill -0 "${gateway_pid}" >/dev/null 2>&1; then
-    if ! is_managed_ssh_agent_alive; then
+    if [[ -n "${MANAGED_SSH_AGENT_PID:-}" || -n "${MANAGED_SSH_AUTH_SOCK:-}" ]] && ! is_managed_ssh_agent_alive; then
       log "ssh-agent died, restarting gateway with fresh ssh-agent"
       sleep "${RESTART_DELAY_SECONDS}"
       start_gateway_with_fresh_agent
