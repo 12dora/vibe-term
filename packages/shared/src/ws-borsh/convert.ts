@@ -4,44 +4,207 @@
 import type { b } from '@zorsh/zorsh';
 import type {
   DeviceEventType,
-  EventDevicePayload,
-  EventTmuxPayload,
   NotificationSource,
-  StateSnapshotPayload,
+  TmuxBellEventData,
   TmuxEventType,
+  TmuxNotificationEventData,
   TmuxPane,
   TmuxSession,
   TmuxWindow,
-} from '../index';
+} from '../contracts/tmux';
+import type {
+  EventDevicePayload,
+  EventTmuxPayload,
+  StateSnapshotPayload,
+} from '../contracts/websocket';
 import * as schema from './schema';
 
-const notificationSourceToU8: Record<NotificationSource, number> = {
+function invertTagMap<T extends string>(tags: Record<T, number>): Record<number, T> {
+  const inverted: Record<number, T> = {};
+  for (const key of Object.keys(tags) as T[]) {
+    inverted[tags[key]] = key;
+  }
+  return inverted;
+}
+
+const NOTIFICATION_SOURCE_TAGS: Record<NotificationSource, number> = {
   osc9: 1,
   osc777: 2,
   osc1337: 3,
   osc99: 4,
 };
 
-const notificationSourceFromU8: Record<number, NotificationSource> = {
-  1: 'osc9',
-  2: 'osc777',
-  3: 'osc1337',
-  4: 'osc99',
+const NOTIFICATION_SOURCE_BY_TAG = invertTagMap(NOTIFICATION_SOURCE_TAGS);
+
+const DEVICE_EVENT_TAGS: Record<DeviceEventType, number> = {
+  'tmux-missing': 1,
+  disconnected: 2,
+  error: 3,
+  reconnected: 4,
 };
+
+const DEVICE_EVENT_TYPE_BY_TAG = invertTagMap(DEVICE_EVENT_TAGS);
+
+// ========== tmux 事件 codec 表 ==========
+//
+// 新增一种 tmux 事件时只改这张表：tag 是 wire 上的 u8 判别值，
+// encode/decode 负责 domain <-> wire 的字段映射（null <-> undefined）。
+
+interface TmuxEventCodec {
+  tag: number;
+  encode: (data: unknown) => Uint8Array;
+  decode: (bytes: Uint8Array) => unknown;
+}
+
+function defineTmuxEventCodec<TData>(spec: {
+  tag: number;
+  encode: (data: TData) => Uint8Array;
+  decode: (bytes: Uint8Array) => unknown;
+}): TmuxEventCodec {
+  return {
+    tag: spec.tag,
+    encode: (data) => spec.encode(data as TData),
+    decode: spec.decode,
+  };
+}
+
+const TMUX_EVENT_CODECS: Record<TmuxEventType, TmuxEventCodec> = {
+  'window-add': defineTmuxEventCodec({
+    tag: 1,
+    encode: (data: { windowId: string }) =>
+      schema.WindowAddEventSchema.serialize({ windowId: data.windowId }),
+    decode: (bytes) => schema.WindowAddEventSchema.deserialize(bytes),
+  }),
+  'window-close': defineTmuxEventCodec({
+    tag: 2,
+    encode: (data: { windowId: string }) =>
+      schema.WindowCloseEventSchema.serialize({ windowId: data.windowId }),
+    decode: (bytes) => schema.WindowCloseEventSchema.deserialize(bytes),
+  }),
+  'window-renamed': defineTmuxEventCodec({
+    tag: 3,
+    encode: (data: { windowId: string; name: string }) =>
+      schema.WindowRenamedEventSchema.serialize({
+        windowId: data.windowId,
+        name: data.name,
+      }),
+    decode: (bytes) => schema.WindowRenamedEventSchema.deserialize(bytes),
+  }),
+  'window-active': defineTmuxEventCodec({
+    tag: 4,
+    encode: (data: { windowId: string }) =>
+      schema.WindowActiveEventSchema.serialize({ windowId: data.windowId }),
+    decode: (bytes) => schema.WindowActiveEventSchema.deserialize(bytes),
+  }),
+  'pane-add': defineTmuxEventCodec({
+    tag: 5,
+    encode: (data: { paneId: string; windowId: string }) =>
+      schema.PaneAddEventSchema.serialize({
+        paneId: data.paneId,
+        windowId: data.windowId,
+      }),
+    decode: (bytes) => schema.PaneAddEventSchema.deserialize(bytes),
+  }),
+  'pane-close': defineTmuxEventCodec({
+    tag: 6,
+    encode: (data: { paneId: string }) =>
+      schema.PaneCloseEventSchema.serialize({ paneId: data.paneId }),
+    decode: (bytes) => schema.PaneCloseEventSchema.deserialize(bytes),
+  }),
+  'pane-active': defineTmuxEventCodec({
+    tag: 7,
+    encode: (data: { windowId: string; paneId: string }) =>
+      schema.PaneActiveEventSchema.serialize({
+        windowId: data.windowId,
+        paneId: data.paneId,
+      }),
+    decode: (bytes) => schema.PaneActiveEventSchema.deserialize(bytes),
+  }),
+  'layout-change': defineTmuxEventCodec({
+    tag: 8,
+    encode: (data: { windowId: string; layout: string }) =>
+      schema.LayoutChangeEventSchema.serialize({
+        windowId: data.windowId,
+        layout: data.layout,
+      }),
+    decode: (bytes) => schema.LayoutChangeEventSchema.deserialize(bytes),
+  }),
+  bell: defineTmuxEventCodec({
+    tag: 9,
+    encode: (data: TmuxBellEventData) =>
+      schema.BellEventSchema.serialize({
+        windowId: data.windowId ?? null,
+        paneId: data.paneId ?? null,
+        windowIndex: data.windowIndex ?? null,
+        paneIndex: data.paneIndex ?? null,
+        paneUrl: data.paneUrl ?? null,
+        paneTitle: data.paneTitle ?? null,
+        paneCurrentCommand: data.paneCurrentCommand ?? null,
+      }),
+    decode: (bytes) => {
+      const bell = schema.BellEventSchema.deserialize(bytes);
+      return {
+        windowId: bell.windowId ?? undefined,
+        paneId: bell.paneId ?? undefined,
+        windowIndex: bell.windowIndex ?? undefined,
+        paneIndex: bell.paneIndex ?? undefined,
+        paneUrl: bell.paneUrl ?? undefined,
+        paneTitle: bell.paneTitle ?? undefined,
+        paneCurrentCommand: bell.paneCurrentCommand ?? undefined,
+      } satisfies TmuxBellEventData;
+    },
+  }),
+  output: defineTmuxEventCodec({
+    tag: 10,
+    encode: () => new Uint8Array(),
+    decode: () => ({}),
+  }),
+  notification: defineTmuxEventCodec({
+    tag: 11,
+    encode: (data: TmuxNotificationEventData) =>
+      schema.NotificationEventSchema.serialize({
+        source: NOTIFICATION_SOURCE_TAGS[data.source],
+        title: data.title ?? null,
+        body: data.body,
+        windowId: data.windowId ?? null,
+        paneId: data.paneId ?? null,
+        windowIndex: data.windowIndex ?? null,
+        paneIndex: data.paneIndex ?? null,
+        paneUrl: data.paneUrl ?? null,
+        paneTitle: data.paneTitle ?? null,
+        paneCurrentCommand: data.paneCurrentCommand ?? null,
+      }),
+    decode: (bytes) => {
+      const notification = schema.NotificationEventSchema.deserialize(bytes);
+      return {
+        source: NOTIFICATION_SOURCE_BY_TAG[notification.source] ?? 'osc9',
+        title: notification.title ?? undefined,
+        body: notification.body,
+        windowId: notification.windowId ?? undefined,
+        paneId: notification.paneId ?? undefined,
+        windowIndex: notification.windowIndex ?? undefined,
+        paneIndex: notification.paneIndex ?? undefined,
+        paneUrl: notification.paneUrl ?? undefined,
+        paneTitle: notification.paneTitle ?? undefined,
+        paneCurrentCommand: notification.paneCurrentCommand ?? undefined,
+      } satisfies TmuxNotificationEventData;
+    },
+  }),
+};
+
+const TMUX_EVENT_TYPE_BY_TAG: Record<number, TmuxEventType> = Object.fromEntries(
+  (Object.keys(TMUX_EVENT_CODECS) as TmuxEventType[]).map((type) => [
+    TMUX_EVENT_CODECS[type].tag,
+    type,
+  ])
+);
 
 // ========== Domain -> Wire 编码 ==========
 
 export function encodeDeviceEventPayload(payload: EventDevicePayload): Uint8Array {
-  const eventTypeMap: Record<DeviceEventType, number> = {
-    'tmux-missing': 1,
-    disconnected: 2,
-    error: 3,
-    reconnected: 4,
-  };
-
   const wireData: b.infer<typeof schema.DeviceEventSchema> = {
     deviceId: payload.deviceId,
-    eventType: eventTypeMap[payload.type],
+    eventType: DEVICE_EVENT_TAGS[payload.type],
     errorType: payload.errorType ?? null,
     message: payload.message ?? null,
     rawMessage: payload.rawMessage ?? null,
@@ -51,25 +214,11 @@ export function encodeDeviceEventPayload(payload: EventDevicePayload): Uint8Arra
 }
 
 export function encodeTmuxEventPayload(payload: EventTmuxPayload): Uint8Array {
-  const eventTypeMap: Record<TmuxEventType, number> = {
-    'window-add': 1,
-    'window-close': 2,
-    'window-renamed': 3,
-    'window-active': 4,
-    'pane-add': 5,
-    'pane-close': 6,
-    'pane-active': 7,
-    'layout-change': 8,
-    bell: 9,
-    output: 10,
-    notification: 11,
-  };
-
   const eventData = encodeEventData(payload.type, payload.data);
 
   const wireData: b.infer<typeof schema.TmuxEventSchema> = {
     deviceId: payload.deviceId,
-    eventType: eventTypeMap[payload.type],
+    eventType: TMUX_EVENT_CODECS[payload.type].tag,
     eventData,
   };
 
@@ -77,102 +226,9 @@ export function encodeTmuxEventPayload(payload: EventTmuxPayload): Uint8Array {
 }
 
 function encodeEventData(type: TmuxEventType, data: unknown): Uint8Array {
-  switch (type) {
-    case 'window-add': {
-      const d = data as { windowId: string };
-      return schema.WindowAddEventSchema.serialize({ windowId: d.windowId });
-    }
-    case 'window-close': {
-      const d = data as { windowId: string };
-      return schema.WindowCloseEventSchema.serialize({ windowId: d.windowId });
-    }
-    case 'window-renamed': {
-      const d = data as { windowId: string; name: string };
-      return schema.WindowRenamedEventSchema.serialize({
-        windowId: d.windowId,
-        name: d.name,
-      });
-    }
-    case 'window-active': {
-      const d = data as { windowId: string };
-      return schema.WindowActiveEventSchema.serialize({ windowId: d.windowId });
-    }
-    case 'pane-add': {
-      const d = data as { paneId: string; windowId: string };
-      return schema.PaneAddEventSchema.serialize({
-        paneId: d.paneId,
-        windowId: d.windowId,
-      });
-    }
-    case 'pane-close': {
-      const d = data as { paneId: string };
-      return schema.PaneCloseEventSchema.serialize({ paneId: d.paneId });
-    }
-    case 'pane-active': {
-      const d = data as { windowId: string; paneId: string };
-      return schema.PaneActiveEventSchema.serialize({
-        windowId: d.windowId,
-        paneId: d.paneId,
-      });
-    }
-    case 'layout-change': {
-      const d = data as { windowId: string; layout: string };
-      return schema.LayoutChangeEventSchema.serialize({
-        windowId: d.windowId,
-        layout: d.layout,
-      });
-    }
-    case 'bell': {
-      const d = data as {
-        windowId?: string;
-        paneId?: string;
-        windowIndex?: number;
-        paneIndex?: number;
-        paneUrl?: string;
-        paneTitle?: string;
-        paneCurrentCommand?: string;
-      };
-      return schema.BellEventSchema.serialize({
-        windowId: d.windowId ?? null,
-        paneId: d.paneId ?? null,
-        windowIndex: d.windowIndex ?? null,
-        paneIndex: d.paneIndex ?? null,
-        paneUrl: d.paneUrl ?? null,
-        paneTitle: d.paneTitle ?? null,
-        paneCurrentCommand: d.paneCurrentCommand ?? null,
-      });
-    }
-    case 'output':
-      return new Uint8Array();
-    case 'notification': {
-      const d = data as {
-        source: NotificationSource;
-        title?: string;
-        body: string;
-        windowId?: string;
-        paneId?: string;
-        windowIndex?: number;
-        paneIndex?: number;
-        paneUrl?: string;
-        paneTitle?: string;
-        paneCurrentCommand?: string;
-      };
-      return schema.NotificationEventSchema.serialize({
-        source: notificationSourceToU8[d.source],
-        title: d.title ?? null,
-        body: d.body,
-        windowId: d.windowId ?? null,
-        paneId: d.paneId ?? null,
-        windowIndex: d.windowIndex ?? null,
-        paneIndex: d.paneIndex ?? null,
-        paneUrl: d.paneUrl ?? null,
-        paneTitle: d.paneTitle ?? null,
-        paneCurrentCommand: d.paneCurrentCommand ?? null,
-      });
-    }
-    default:
-      return new Uint8Array();
-  }
+  const codec = TMUX_EVENT_CODECS[type];
+  if (!codec) return new Uint8Array();
+  return codec.encode(data);
 }
 
 export function encodeStateSnapshot(payload: StateSnapshotPayload): Uint8Array {
@@ -225,16 +281,10 @@ function encodePaneWire(pane: TmuxPane): b.infer<typeof schema.PaneWireSchema> {
 
 export function decodeDeviceEventPayload(data: Uint8Array): EventDevicePayload {
   const wire = schema.DeviceEventSchema.deserialize(data);
-  const eventTypeMap: Record<number, DeviceEventType> = {
-    1: 'tmux-missing',
-    2: 'disconnected',
-    3: 'error',
-    4: 'reconnected',
-  };
 
   return {
     deviceId: wire.deviceId,
-    type: eventTypeMap[wire.eventType] ?? 'error',
+    type: DEVICE_EVENT_TYPE_BY_TAG[wire.eventType] ?? 'error',
     errorType: wire.errorType ?? undefined,
     message: wire.message ?? undefined,
     rawMessage: wire.rawMessage ?? undefined,
@@ -243,21 +293,8 @@ export function decodeDeviceEventPayload(data: Uint8Array): EventDevicePayload {
 
 export function decodeTmuxEventPayload(data: Uint8Array): EventTmuxPayload {
   const wire = schema.TmuxEventSchema.deserialize(data);
-  const eventTypeMap: Record<number, TmuxEventType> = {
-    1: 'window-add',
-    2: 'window-close',
-    3: 'window-renamed',
-    4: 'window-active',
-    5: 'pane-add',
-    6: 'pane-close',
-    7: 'pane-active',
-    8: 'layout-change',
-    9: 'bell',
-    10: 'output',
-    11: 'notification',
-  };
 
-  const type = eventTypeMap[wire.eventType];
+  const type = TMUX_EVENT_TYPE_BY_TAG[wire.eventType];
   if (!type) {
     throw new Error(`Unknown tmux event type: ${wire.eventType}`);
   }
@@ -272,54 +309,11 @@ export function decodeTmuxEventPayload(data: Uint8Array): EventTmuxPayload {
 function decodeEventData(type: TmuxEventType, data: Uint8Array): unknown {
   if (data.length === 0) return {};
 
+  const codec = TMUX_EVENT_CODECS[type];
+  if (!codec) return {};
+
   try {
-    switch (type) {
-      case 'window-add':
-        return schema.WindowAddEventSchema.deserialize(data);
-      case 'window-close':
-        return schema.WindowCloseEventSchema.deserialize(data);
-      case 'window-renamed':
-        return schema.WindowRenamedEventSchema.deserialize(data);
-      case 'window-active':
-        return schema.WindowActiveEventSchema.deserialize(data);
-      case 'pane-add':
-        return schema.PaneAddEventSchema.deserialize(data);
-      case 'pane-close':
-        return schema.PaneCloseEventSchema.deserialize(data);
-      case 'pane-active':
-        return schema.PaneActiveEventSchema.deserialize(data);
-      case 'layout-change':
-        return schema.LayoutChangeEventSchema.deserialize(data);
-      case 'bell': {
-        const bell = schema.BellEventSchema.deserialize(data);
-        return {
-          windowId: bell.windowId ?? undefined,
-          paneId: bell.paneId ?? undefined,
-          windowIndex: bell.windowIndex ?? undefined,
-          paneIndex: bell.paneIndex ?? undefined,
-          paneUrl: bell.paneUrl ?? undefined,
-          paneTitle: bell.paneTitle ?? undefined,
-          paneCurrentCommand: bell.paneCurrentCommand ?? undefined,
-        };
-      }
-      case 'notification': {
-        const notification = schema.NotificationEventSchema.deserialize(data);
-        return {
-          source: notificationSourceFromU8[notification.source] ?? 'osc9',
-          title: notification.title ?? undefined,
-          body: notification.body,
-          windowId: notification.windowId ?? undefined,
-          paneId: notification.paneId ?? undefined,
-          windowIndex: notification.windowIndex ?? undefined,
-          paneIndex: notification.paneIndex ?? undefined,
-          paneUrl: notification.paneUrl ?? undefined,
-          paneTitle: notification.paneTitle ?? undefined,
-          paneCurrentCommand: notification.paneCurrentCommand ?? undefined,
-        };
-      }
-      default:
-        return {};
-    }
+    return codec.decode(data);
   } catch {
     return {};
   }
