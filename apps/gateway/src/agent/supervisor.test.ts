@@ -118,6 +118,7 @@ interface SupervisorHarness {
     syncProvider: ((sessionId: string) => Promise<unknown>) | null;
   };
   waitForIdle: () => Promise<void>;
+  runDeps: Partial<AgentRunDeps>;
 }
 
 function createSupervisorHarness(options: {
@@ -211,7 +212,46 @@ function createSupervisorHarness(options: {
     throw new Error('supervisor run did not finish in time');
   };
 
-  return { supervisor, session, broadcasts, runtimeCalls, hub, waitForIdle };
+  return { supervisor, session, broadcasts, runtimeCalls, hub, waitForIdle, runDeps };
+}
+
+function createTimedOutHangHarness(baseUrl: string) {
+  let settleFirst: () => void = () => {};
+  const firstHang = new Promise<void>((resolve) => {
+    settleFirst = resolve;
+  });
+  let createRunCount = 0;
+  let sessionId = '';
+  let runDeps: Partial<AgentRunDeps> = {};
+  const hangingRun = {
+    inProgressText: '',
+    inProgressReasoning: '',
+    requestStop() {},
+    requestSteer() {},
+    execute: () => firstHang,
+  } as unknown as AgentRun;
+
+  const harness = createSupervisorHarness({
+    baseUrl,
+    stopTimeoutMs: 20,
+    createRun: (id) => {
+      if (id !== sessionId) {
+        return new AgentRun(id, runDeps);
+      }
+      createRunCount += 1;
+      if (createRunCount === 1) {
+        return hangingRun;
+      }
+      return new AgentRun(id, runDeps);
+    },
+  });
+  sessionId = harness.session.id;
+  runDeps = harness.runDeps;
+  return {
+    harness,
+    settleFirst: () => settleFirst(),
+    getCreateRunCount: () => createRunCount,
+  };
 }
 
 beforeAll(() => {
@@ -624,6 +664,95 @@ describe('AgentSupervisor - stop 语义', () => {
     await harness.waitForIdle();
     expect(harness.supervisor.isSessionActive(harness.session.id)).toBe(false);
     expect(createRunCount).toBe(1);
+  });
+
+  test('stop() 超时后 start() 再提交：旧 run settle 后消费排队消息，不会永远无消费者', async () => {
+    const mock = createMockChatServer(() =>
+      sseResponse([chunk({ role: 'assistant', content: 'ok' }), chunk({}, 'stop')])
+    );
+    servers.push(mock.server);
+    const { harness, settleFirst, getCreateRunCount } = createTimedOutHangHarness(mock.baseUrl);
+
+    await harness.supervisor.start();
+    const first = harness.supervisor.submitUserMessage(harness.session.id, 'first');
+    expect(first.kind).toBe('message');
+    expect(getCreateRunCount()).toBe(1);
+
+    await harness.supervisor.stop();
+    expect(harness.supervisor.isSessionActive(harness.session.id)).toBe(true);
+
+    await harness.supervisor.start();
+
+    const second = harness.supervisor.submitUserMessage(harness.session.id, 'second');
+    expect(second.kind).toBe('queued');
+    expect(listQueuedAgentMessages(harness.session.id).map((q) => q.text)).toEqual(['second']);
+    expect(getCreateRunCount()).toBe(1);
+
+    settleFirst();
+    await harness.waitForIdle();
+
+    expect(getCreateRunCount()).toBe(2);
+    expect(listQueuedAgentMessages(harness.session.id)).toHaveLength(0);
+    const userTexts = listAgentMessages(harness.session.id)
+      .filter((m) => m.role === 'user')
+      .map((m) => (m.content as { content?: unknown }).content);
+    expect(userTexts).toEqual(['first', 'second']);
+  });
+
+  test('stop() 超时后旧 run 先 settle，start() 仍会消费已排队消息', async () => {
+    const mock = createMockChatServer(() =>
+      sseResponse([chunk({ role: 'assistant', content: 'ok' }), chunk({}, 'stop')])
+    );
+    servers.push(mock.server);
+    const { harness, settleFirst, getCreateRunCount } = createTimedOutHangHarness(mock.baseUrl);
+
+    await harness.supervisor.start();
+    harness.supervisor.submitUserMessage(harness.session.id, 'first');
+    const queued = harness.supervisor.submitUserMessage(harness.session.id, 'second');
+    expect(queued.kind).toBe('queued');
+    expect(getCreateRunCount()).toBe(1);
+
+    await harness.supervisor.stop();
+    expect(harness.supervisor.isSessionActive(harness.session.id)).toBe(true);
+
+    settleFirst();
+    await harness.waitForIdle();
+    expect(getCreateRunCount()).toBe(1);
+    expect(listQueuedAgentMessages(harness.session.id).map((q) => q.text)).toEqual(['second']);
+
+    await harness.supervisor.start();
+    await harness.waitForIdle();
+
+    expect(getCreateRunCount()).toBe(2);
+    expect(listQueuedAgentMessages(harness.session.id)).toHaveLength(0);
+    const userTexts = listAgentMessages(harness.session.id)
+      .filter((m) => m.role === 'user')
+      .map((m) => (m.content as { content?: unknown }).content);
+    expect(userTexts).toEqual(['first', 'second']);
+  });
+
+  test('stop() 超时后 start()：stale run settle 后恢复 status=running 的 session', async () => {
+    const mock = createMockChatServer(() =>
+      sseResponse([chunk({ role: 'assistant', content: 'ok' }), chunk({}, 'stop')])
+    );
+    servers.push(mock.server);
+    const { harness, settleFirst, getCreateRunCount } = createTimedOutHangHarness(mock.baseUrl);
+
+    await harness.supervisor.start();
+    harness.supervisor.submitUserMessage(harness.session.id, 'first');
+    updateAgentSession(harness.session.id, { status: 'running' });
+    expect(getCreateRunCount()).toBe(1);
+
+    await harness.supervisor.stop();
+    await harness.supervisor.start();
+    expect(getCreateRunCount()).toBe(1);
+    expect(harness.supervisor.isSessionActive(harness.session.id)).toBe(true);
+
+    settleFirst();
+    await harness.waitForIdle();
+
+    expect(getCreateRunCount()).toBe(2);
+    expect(getAgentSessionById(harness.session.id)?.status).toBe('idle');
   });
 
   test("stopSessionsForDevice('pane_lost')：活动 run 被 abort 且 status=error（不自动恢复）", async () => {

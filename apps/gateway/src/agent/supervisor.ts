@@ -106,6 +106,7 @@ function toQueuedWire(record: AgentQueuedMessageRecord): {
 interface ActiveRun {
   run: AgentRun;
   promise: Promise<unknown>;
+  stale: boolean;
 }
 
 interface AgentSupervisorDeps {
@@ -122,6 +123,7 @@ export interface AgentSupervisorOptions {
 export class AgentSupervisor {
   private readonly deps: AgentSupervisorDeps;
   private readonly activeRuns = new Map<string, ActiveRun>();
+  private readonly staleSessionIds = new Set<string>();
   private started = false;
   private stopping = false;
 
@@ -194,6 +196,11 @@ export class AgentSupervisor {
       }
     }
 
+    // stop() 超时留下的 stale session：仍在跑的等它 settle 再续；已 settle 的立即恢复
+    for (const sessionId of [...this.staleSessionIds]) {
+      this.resumeSessionIfNeeded(sessionId);
+    }
+
     // 订阅设备关闭事件：设备 runtime 断开时主动停止绑定该设备的 session
     registerDeviceCloseListener((deviceId) => this.stopSessionsForDevice(deviceId, 'pane_lost'));
   }
@@ -213,6 +220,11 @@ export class AgentSupervisor {
         Promise.allSettled(promises),
         new Promise((resolve) => setTimeout(resolve, this.deps.stopTimeoutMs)),
       ]);
+    }
+
+    for (const [sessionId, entry] of this.activeRuns) {
+      entry.stale = true;
+      this.staleSessionIds.add(sessionId);
     }
   }
 
@@ -468,6 +480,7 @@ export class AgentSupervisor {
     const entry: ActiveRun = {
       run,
       promise: Promise.resolve(),
+      stale: false,
     };
     entry.promise = run
       .execute()
@@ -478,8 +491,29 @@ export class AgentSupervisor {
         if (this.activeRuns.get(sessionId) === entry) {
           this.activeRuns.delete(sessionId);
         }
+        if (entry.stale) {
+          this.resumeSessionIfNeeded(sessionId);
+        }
       });
     this.activeRuns.set(sessionId, entry);
+  }
+
+  private resumeSessionIfNeeded(sessionId: string): void {
+    if (this.stopping || !this.started) {
+      return;
+    }
+    this.staleSessionIds.delete(sessionId);
+    if (this.activeRuns.has(sessionId)) {
+      return;
+    }
+    const session = getAgentSessionById(sessionId);
+    if (!session || isSessionOrphan(session)) {
+      return;
+    }
+    if (session.status !== 'running' && listQueuedAgentMessages(sessionId).length === 0) {
+      return;
+    }
+    this.startRun(sessionId);
   }
 
   /**
