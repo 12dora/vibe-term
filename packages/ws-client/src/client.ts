@@ -1,7 +1,10 @@
 // FE Borsh WebSocket 客户端
-// 管理连接、消息编解码、分片重组
+// 门面：组合心跳、重连退避与协议分发，对外维持连接状态与订阅接口
 
 import { wsBorsh } from '@tmex/shared';
+import { HeartbeatController } from './heartbeat-controller';
+import { type BorshMessage, type ChunkProgress, ProtocolDispatcher } from './protocol-dispatcher';
+import { ReconnectController } from './reconnect-controller';
 
 // ========== 配置 ==========
 
@@ -43,7 +46,10 @@ const DEFAULT_OPTIONS: BorshClientOptions = {
   reconnectDelayMs: 1000,
   maxReconnectAttempts: 5,
   heartbeatIntervalMs: 5000,
+  pongTimeoutMs: 10000,
 };
+
+const VISIBILITY_RECONNECT_THROTTLE_MS = 5000;
 
 // ========== 类型定义 ==========
 
@@ -54,6 +60,8 @@ export interface BorshClientOptions {
   reconnectDelayMs: number;
   maxReconnectAttempts: number;
   heartbeatIntervalMs: number;
+  /** PING 之后等待 PONG 的上限，超时则关闭连接触发重连 */
+  pongTimeoutMs: number;
   /** WS 端点；缺省时连接当刻按 window.location 推导（defaultWsUrl） */
   url?: string;
   /** 自定义 transport 工厂；缺省为 `new WebSocket(url)` */
@@ -68,21 +76,11 @@ export type ConnectionState =
   | 'RECONNECT_BACKOFF'
   | 'CLOSED';
 
-export interface BorshMessage {
-  kind: number;
-  seq: number;
-  payload: Uint8Array;
-}
+export type { BorshMessage, ChunkProgress } from './protocol-dispatcher';
 
 export type MessageHandler = (message: BorshMessage) => void;
 export type StateChangeHandler = (state: ConnectionState) => void;
 export type ErrorHandler = (error: Error) => void;
-export interface ChunkProgress {
-  streamId: number;
-  originalKind: number;
-  chunkIndex: number;
-  totalChunks: number;
-}
 export type ChunkProgressHandler = (progress: ChunkProgress) => void;
 
 // ========== Borsh WebSocket 客户端 ==========
@@ -94,16 +92,11 @@ export class BorshWebSocketClient {
 
   // 消息处理
   private seq = 0;
-  private chunkReassembler = new wsBorsh.ChunkReassembler();
+  private readonly dispatcher: ProtocolDispatcher;
 
-  // 重连
-  private reconnectAttempts = 0;
-  private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
-
-  // 心跳
-  private heartbeatTimer: ReturnType<typeof setInterval> | null = null;
-  private pongTimeoutTimer: ReturnType<typeof setTimeout> | null = null;
-  private lastPingSentAt = 0;
+  // 重连 / 心跳
+  private readonly reconnector: ReconnectController;
+  private readonly heartbeat: HeartbeatController;
 
   // 回调
   private messageHandlers: Set<MessageHandler> = new Set();
@@ -127,6 +120,30 @@ export class BorshWebSocketClient {
 
   constructor(options: Partial<BorshClientOptions> = {}) {
     this.options = { ...DEFAULT_OPTIONS, ...options };
+
+    this.dispatcher = new ProtocolDispatcher({
+      onMessage: (message) => this.dispatchMessage(message),
+      onChunkProgress: (progress) => this.dispatchChunkProgress(progress),
+      onHello: (capabilities) => this.handleHelloNegotiated(capabilities),
+      onHelloFailure: (error) => this.handleError(error),
+      onPong: () => this.handlePong(),
+    });
+
+    this.reconnector = new ReconnectController({
+      delayMs: this.options.reconnectDelayMs,
+      maxAttempts: this.options.maxReconnectAttempts,
+      onReconnect: () => this.connect(),
+      onSchedule: ({ attempt, delayMs }) => {
+        console.log(`[borsh-client] Reconnecting in ${delayMs}ms (attempt ${attempt})`);
+      },
+    });
+
+    this.heartbeat = new HeartbeatController({
+      intervalMs: this.options.heartbeatIntervalMs,
+      pongTimeoutMs: this.options.pongTimeoutMs,
+      sendPing: () => this.sendPingFrame(),
+      onPongTimeout: () => this.ws?.close(),
+    });
   }
 
   // ========== 状态管理 ==========
@@ -199,22 +216,29 @@ export class BorshWebSocketClient {
 
     try {
       const createSocket = this.options.socketFactory ?? defaultSocketFactory;
-      this.ws = createSocket(this.options.url ?? defaultWsUrl());
-      this.ws.binaryType = 'arraybuffer';
+      const socket = createSocket(this.options.url ?? defaultWsUrl());
+      this.ws = socket;
+      socket.binaryType = 'arraybuffer';
 
-      this.ws.onopen = () => {
+      // 事件回调一律绑定创建时捕获的 socket：旧 socket 的 onclose 可能在新连接建立之后
+      // 才派发，若不比对来源就会把新连接的心跳/分片状态一并清掉并再排一次重连。
+      socket.onopen = () => {
+        if (this.ws !== socket) return;
         this.sendHello();
       };
 
-      this.ws.onmessage = (event) => {
-        this.handleMessage(event.data);
+      socket.onmessage = (event) => {
+        if (this.ws !== socket) return;
+        this.dispatcher.handleFrame(event.data);
       };
 
-      this.ws.onclose = () => {
+      socket.onclose = () => {
+        if (this.ws !== socket) return;
         this.handleClose();
       };
 
-      this.ws.onerror = () => {
+      socket.onerror = () => {
+        if (this.ws !== socket) return;
         this.handleError(new Error('WebSocket error'));
       };
     } catch (err) {
@@ -225,7 +249,7 @@ export class BorshWebSocketClient {
   disconnect(): void {
     this.setState('CLOSED');
     this.clearTimers();
-    this.chunkReassembler.clear();
+    this.dispatcher.reset();
     this.latencyMs = null;
 
     if (this.ws) {
@@ -241,81 +265,6 @@ export class BorshWebSocketClient {
 
   // ========== 消息处理 ==========
 
-  private handleMessage(data: ArrayBuffer | string): void {
-    if (typeof data === 'string') {
-      // 忽略旧协议的文本消息
-      return;
-    }
-
-    const buffer = new Uint8Array(data);
-
-    // 检查 magic
-    if (!wsBorsh.checkMagic(buffer)) {
-      console.warn('[borsh-client] Received message without magic, ignoring');
-      return;
-    }
-
-    try {
-      const envelope = wsBorsh.decodeEnvelope(buffer);
-
-      // 处理 CHUNK
-      if (envelope.kind === wsBorsh.KIND_CHUNK) {
-        const chunk = wsBorsh.decodeChunk(envelope.payload);
-        const reassembled = this.chunkReassembler.addChunk(chunk);
-        for (const handler of this.chunkProgressHandlers) {
-          try {
-            handler({
-              streamId: chunk.chunkStreamId,
-              originalKind: chunk.originalKind,
-              chunkIndex: chunk.chunkIndex,
-              totalChunks: chunk.totalChunks,
-            });
-          } catch (err) {
-            console.error('[borsh-client] Chunk progress handler error:', err);
-          }
-        }
-        if (reassembled) {
-          this.dispatchMessage({
-            kind: reassembled.kind,
-            seq: reassembled.seq,
-            payload: reassembled.payload,
-          });
-        }
-        return;
-      }
-
-      // 处理 HELLO_S2C
-      if (envelope.kind === wsBorsh.KIND_HELLO_S2C) {
-        this.handleHelloS2C(envelope.payload);
-        return;
-      }
-
-      // 处理 PONG
-      if (envelope.kind === wsBorsh.KIND_PONG) {
-        this.clearPongTimeout();
-        if (this.lastPingSentAt > 0) {
-          const rtt = Date.now() - this.lastPingSentAt;
-          this.latencyMs = rtt;
-          for (const handler of this.latencyHandlers) {
-            try {
-              handler(rtt);
-            } catch {}
-          }
-        }
-        return;
-      }
-
-      // 分发业务消息
-      this.dispatchMessage({
-        kind: envelope.kind,
-        seq: envelope.seq,
-        payload: envelope.payload,
-      });
-    } catch (err) {
-      console.error('[borsh-client] Failed to decode message:', err);
-    }
-  }
-
   private dispatchMessage(message: BorshMessage): void {
     for (const handler of this.messageHandlers) {
       try {
@@ -326,31 +275,47 @@ export class BorshWebSocketClient {
     }
   }
 
-  private handleHelloS2C(payload: Uint8Array): void {
-    try {
-      const hello = wsBorsh.decodePayload(wsBorsh.schema.HelloS2CSchema, payload);
-      this.serverCapabilities = hello.capabilities ?? [];
+  private dispatchChunkProgress(progress: ChunkProgress): void {
+    for (const handler of this.chunkProgressHandlers) {
+      try {
+        handler(progress);
+      } catch (err) {
+        console.error('[borsh-client] Chunk progress handler error:', err);
+      }
+    }
+  }
 
-      this.setState('READY');
-      this.hasConnectedOnce = true;
-      this.startHeartbeat();
-      this.sendPing();
-      this.reconnectAttempts = 0;
-    } catch (err) {
-      console.error('[borsh-client] Failed to decode HELLO_S2C:', err);
-      this.handleError(new Error('HELLO negotiation failed'));
+  private handleHelloNegotiated(capabilities: readonly string[]): void {
+    this.serverCapabilities = capabilities;
+
+    this.setState('READY');
+    this.hasConnectedOnce = true;
+    this.heartbeat.start();
+    this.heartbeat.ping();
+    this.reconnector.reset();
+  }
+
+  private handlePong(): void {
+    const rtt = this.heartbeat.notePong();
+    if (rtt === null) return;
+
+    this.latencyMs = rtt;
+    for (const handler of this.latencyHandlers) {
+      try {
+        handler(rtt);
+      } catch {}
     }
   }
 
   private handleClose(): void {
-    this.stopHeartbeat();
-    this.chunkReassembler.clear();
+    this.heartbeat.stop();
+    this.dispatcher.reset();
 
     if (this.state === 'CLOSED') {
       return;
     }
 
-    if (this.reconnectAttempts < this.options.maxReconnectAttempts) {
+    if (this.reconnector.canRetry()) {
       this.scheduleReconnect();
     } else {
       this.setState('CLOSED');
@@ -438,23 +403,8 @@ export class BorshWebSocketClient {
 
   // ========== 心跳 ==========
 
-  private startHeartbeat(): void {
-    this.stopHeartbeat();
-
-    this.heartbeatTimer = setInterval(() => {
-      this.sendPing();
-    }, this.options.heartbeatIntervalMs);
-  }
-
-  private stopHeartbeat(): void {
-    if (this.heartbeatTimer) {
-      clearInterval(this.heartbeatTimer);
-      this.heartbeatTimer = null;
-    }
-  }
-
-  private sendPing(): void {
-    if (!this.isReady()) return;
+  private sendPingFrame(): boolean {
+    if (!this.isReady()) return false;
 
     const ping = {
       nonce: Math.floor(Math.random() * 0xffffffff),
@@ -466,52 +416,21 @@ export class BorshWebSocketClient {
     const envelope = wsBorsh.encodeEnvelope(wsBorsh.KIND_PING, payload, seq);
 
     this.sendRaw(envelope);
-    this.lastPingSentAt = Date.now();
-
-    this.clearPongTimeout();
-    this.pongTimeoutTimer = setTimeout(() => {
-      this.pongTimeoutTimer = null;
-      this.ws?.close();
-    }, 10_000);
+    return true;
   }
 
   // ========== 重连 ==========
 
   private scheduleReconnect(): void {
-    if (this.reconnectTimer) return;
+    if (this.reconnector.isPending()) return;
 
-    this.reconnectAttempts++;
     this.setState('RECONNECT_BACKOFF');
-
-    const delay = Math.min(
-      this.options.reconnectDelayMs * 2 ** (this.reconnectAttempts - 1),
-      30000 // 最大 30 秒
-    );
-
-    console.log(`[borsh-client] Reconnecting in ${delay}ms (attempt ${this.reconnectAttempts})`);
-
-    this.reconnectTimer = setTimeout(() => {
-      this.reconnectTimer = null;
-      this.connect();
-    }, delay);
+    this.reconnector.schedule();
   }
 
   private clearTimers(): void {
-    if (this.reconnectTimer) {
-      clearTimeout(this.reconnectTimer);
-      this.reconnectTimer = null;
-    }
-    this.stopHeartbeat();
-    this.clearPongTimeout();
-  }
-
-  // ========== Pong 超时 ==========
-
-  private clearPongTimeout(): void {
-    if (this.pongTimeoutTimer) {
-      clearTimeout(this.pongTimeoutTimer);
-      this.pongTimeoutTimer = null;
-    }
+    this.reconnector.cancel();
+    this.heartbeat.stop();
   }
 
   // ========== visibilitychange ==========
@@ -523,23 +442,19 @@ export class BorshWebSocketClient {
     const handler = () => {
       if (document.visibilityState !== 'visible') return;
 
-      this.clearPongTimeout();
+      this.heartbeat.clearPongTimeout();
 
       if (this.state === 'CLOSED') {
         const now = Date.now();
-        if (now - this.lastVisibilityReconnectAt < 5000) return;
+        if (now - this.lastVisibilityReconnectAt < VISIBILITY_RECONNECT_THROTTLE_MS) return;
         this.lastVisibilityReconnectAt = now;
-        this.reconnectAttempts = 0;
+        this.reconnector.reset();
         this.connect();
       } else if (this.state === 'RECONNECT_BACKOFF') {
-        if (this.reconnectTimer) {
-          clearTimeout(this.reconnectTimer);
-          this.reconnectTimer = null;
-        }
-        this.reconnectAttempts = 0;
+        this.reconnector.reset();
         this.connect();
       } else if (this.state === 'READY') {
-        this.sendPing();
+        this.heartbeat.ping();
       }
     };
 
@@ -569,7 +484,7 @@ export class BorshWebSocketClient {
       this.ws.close();
       this.ws = null;
     }
-    this.reconnectAttempts = 0;
+    this.reconnector.reset();
     this.setState('IDLE');
     this.connect();
   }
