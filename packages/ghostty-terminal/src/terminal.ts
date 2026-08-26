@@ -1,12 +1,11 @@
 import { CanvasRenderer } from './canvas-renderer';
-import { type FileLinkContext, resolveValidFilePath } from './file-path';
+import type { FileLinkContext } from './file-path';
 import { getGhosttyKeyCode, getUnshiftedCodepoint } from './ghostty-keycodes';
 import {
   type GhosttyBindings,
   getGhosttyBindings,
   keyboardEventToGhosttyMods,
 } from './ghostty-wasm';
-import { type WrappedMatch, detectMatchesInWrappedLines } from './link-detector';
 import {
   type GhosttyRenderStateResources,
   createRenderState,
@@ -16,27 +15,37 @@ import {
   updateRenderState,
 } from './render-state';
 import {
-  hasPlatformModifier,
-  isCopyShortcut,
-  isPasteShortcut,
-  writeSelectionToClipboard,
-  writeSelectionToCopyEvent,
-} from './selection-clipboard';
-import {
   EMPTY_SELECTION_LINE_MODEL,
   type SelectionLineModel,
   type SelectionMode,
   type SelectionPoint,
-  type SelectionState,
   buildLineModel,
-  createEmptySelectionState,
-  hasSelection,
-  projectSelectionRects,
-  clearSelection as resetSelectionData,
-  resolvePointerSelection,
-  serializeSelectionText,
-  updateSelectionFocus,
 } from './selection-model';
+import {
+  type TerminalInputContext,
+  bindClipboardEvents,
+  bindCompositionEvents,
+  bindInputEvents,
+  bindKeyboardEvents,
+  createTerminalInputState,
+} from './terminal-input';
+import { LinkMatchCache, collectLinkUnderlineSegments, findLinkAtPoint } from './terminal-links';
+import {
+  GHOSTTY_MOUSE_BUTTON_FIVE,
+  GHOSTTY_MOUSE_BUTTON_FOUR,
+  GHOSTTY_MOUSE_BUTTON_LEFT,
+  GHOSTTY_MOUSE_BUTTON_SEVEN,
+  GHOSTTY_MOUSE_BUTTON_SIX,
+  type InputRoutingState,
+  type MouseInputRequest,
+  type PointerEventContext,
+  SYNTHETIC_MOUSE_SUPPRESS_MS,
+  type TerminalLinkHit,
+  bindMouseEvents,
+  createMouseInputState,
+} from './terminal-pointer';
+import { TerminalRenderLoop, ThrottledTask } from './terminal-render-loop';
+import { TerminalSelection, selectionModeFromClickDetail } from './terminal-selection';
 import type {
   CompatibleBufferLine,
   CompatibleTerminalBuffer,
@@ -59,7 +68,6 @@ const DEFAULT_CELL_HEIGHT = 17;
 // 行高倍率默认值（cell 高 = fontSize × lineHeight）。CSS/probe/textarea/cell 计算共用同一来源，
 // 避免散落的 '1.2' 漂移。可由 init options.lineHeight 覆盖；cell 高由此唯一确定，不依赖 DOM 测量。
 const LINE_HEIGHT = 1.2;
-const AUTO_SCROLL_INTERVAL_MS = 48;
 const TERMINAL_ENGINE = 'ghostty-official';
 // 链接下划线重算节流：只扫可见区，且相邻两次重算至少间隔此值（trailing 保证终态正确）。
 const LINK_OVERLAY_THROTTLE_MS = 150;
@@ -83,29 +91,6 @@ const MOUSE_TRACKING_MODES: readonly number[] = [
   GHOSTTY_MODE_BUTTON_MOUSE,
   GHOSTTY_MODE_ANY_MOUSE,
 ];
-
-const GHOSTTY_MOUSE_BUTTON_LEFT = 1;
-const GHOSTTY_MOUSE_BUTTON_MIDDLE = 3;
-const GHOSTTY_MOUSE_BUTTON_RIGHT = 2;
-const GHOSTTY_MOUSE_BUTTON_FOUR = 4;
-const GHOSTTY_MOUSE_BUTTON_FIVE = 5;
-const GHOSTTY_MOUSE_BUTTON_SIX = 6;
-const GHOSTTY_MOUSE_BUTTON_SEVEN = 7;
-// 触摸手势消费后的合成鼠标（compat mouse events）抑制窗口
-const SYNTHETIC_MOUSE_SUPPRESS_MS = 500;
-
-type PointerDragState = {
-  active: boolean;
-  moved: boolean;
-  mode: SelectionMode;
-  lastClientX: number | null;
-  lastClientY: number | null;
-};
-
-type InputRoutingState = {
-  mouseReporting: boolean;
-  altScroll: boolean;
-};
 
 class BufferLine implements CompatibleBufferLine {
   constructor(private readonly content: string) {}
@@ -135,24 +120,6 @@ class TerminalBuffer implements CompatibleTerminalBuffer {
     this.active.length = length;
     this.visibleLines = lines;
   }
-}
-
-// Android Gboard 在 contenteditable 上对这些按键不发 keydown（报 keyCode 229），
-// 只通过 beforeinput 的 inputType 体现且 data 多为空。按等价按键编码补发。
-const SYNTHETIC_KEY_BY_INPUT_TYPE: Record<string, string> = {
-  deleteContentBackward: 'Backspace',
-  deleteContentForward: 'Delete',
-  insertLineBreak: 'Enter',
-  insertParagraph: 'Enter',
-};
-
-function shouldEncodeOnKeyDown(event: KeyboardEvent): boolean {
-  const isPlainText = event.key.length === 1 && !event.ctrlKey && !event.altKey && !event.metaKey;
-  if (isPlainText) {
-    return false;
-  }
-
-  return true;
 }
 
 function normalizeVisibleLines(rows: GhosttyRenderRow[], expectedRows: number): string[] {
@@ -235,55 +202,50 @@ export class GhosttyTerminalController implements CompatibleTerminalLike {
   private readonly linkListeners = new Set<(url: string) => void>();
   private readonly fileLinkListeners = new Set<(path: string) => void>();
   private fileLinkContext: FileLinkContext | null = null;
-  private linkOverlayTimer: ReturnType<typeof setTimeout> | null = null;
-  private linkOverlayLastComputeAt = 0;
+  private readonly linkOverlayTask = new ThrottledTask(LINK_OVERLAY_THROTTLE_MS, () => {
+    this.updateLinkOverlay();
+  });
   private linkOverlayDrawnOffset = -1;
-  // 逻辑行文本 → 检测结果（候选，不含有效性），LRU；正则只对新出现的文本执行。
-  private readonly linkMatchCache = new Map<string, WrappedMatch[]>();
+  private readonly linkMatchCache = new LinkMatchCache(LINK_MATCH_CACHE_LIMIT);
   private linkCursorActive = false;
   private lastNotifiedSelectionText: string | null = null;
   private readonly addons = new Set<{ dispose: () => void }>();
   private screenElement: HTMLDivElement | null = null;
   private renderer: CanvasRenderer | null = null;
-  private renderRaf: number | null = null;
+  private readonly renderLoop = new TerminalRenderLoop(() => {
+    this.render();
+  });
   private syncOutputFallbackTimer: ReturnType<typeof setTimeout> | null = null;
   private syncOutputModeSupported: boolean | null = null;
-  // 外部（如 viewport restore）请求下一帧强制全画——canvas 已被 resize 清空但
-  // ghostty 内核仍报 dirty='clean'，必须绕过早退重画以避免空白（issue #45 bug 3）。
-  private forceFullNext = false;
   // 每帧 render 缓存的光标快照，供 getCursorViewportRect 读取（issue #27 follow 模式）。
   private lastCursor: GhosttyRenderCursor | null = null;
   private disposed = false;
   private disableStdin: boolean;
   private customKeyEventHandler: (event: KeyboardEvent) => boolean = () => true;
-  private imeIsComposing = false;
-  private lastCompositionCommit: { data: string; at: number } | null = null;
-  private selectionState: SelectionState = createEmptySelectionState();
+  private readonly inputState = createTerminalInputState();
+  private readonly selection = new TerminalSelection({
+    getLineModel: (line) => this.getLineModel(line),
+    hitTest: (clientX, clientY) => this.hitTest(clientX, clientY),
+    getScreenBounds: () => this.screenElement?.getBoundingClientRect() ?? null,
+    scrollViewportBy: (delta) => {
+      this.bindings.scrollViewportDelta(this.terminalHandle, delta);
+    },
+    render: () => {
+      this.render();
+    },
+  });
   private readonly lineCache = new Map<number, SelectionLineModel>();
   private lastViewportOffset = 0;
   private lastViewportRows = DEFAULT_ROWS;
   private lastRenderedRows: GhosttyRenderRow[] = [];
-  private pointerDrag: PointerDragState = {
-    active: false,
-    moved: false,
-    mode: 'character',
-    lastClientX: null,
-    lastClientY: null,
-  };
-  private autoScrollTimer: ReturnType<typeof setInterval> | null = null;
   private readonly domEventDisposers: Array<() => void> = [];
-  private copyShortcutSuppressed = false;
   private scrollbarThumb: HTMLDivElement | null = null;
   private scrollbarFadeTimer: ReturnType<typeof setTimeout> | null = null;
   private scrollbarVisible = false;
   private focused = true;
-  private readonly pressedMouseButtons = new Set<number>();
+  private readonly mouseState = createMouseInputState();
   private wheelPixelDelta = 0;
   private wheelPixelDeltaX = 0;
-  private mouseReportBypassed = false;
-  private lastMotionCell: { col: number; row: number } | null = null;
-  private suppressSyntheticMouseUntil = 0;
-  private mouseDragActive = false;
 
   private constructor(
     bindings: GhosttyBindings,
@@ -518,7 +480,7 @@ export class GhosttyTerminalController implements CompatibleTerminalLike {
   }
 
   hasSelection(): boolean {
-    return hasSelection(this.selectionState);
+    return this.selection.hasSelection();
   }
 
   getSelection(): string {
@@ -538,7 +500,7 @@ export class GhosttyTerminalController implements CompatibleTerminalLike {
       return false;
     }
 
-    return this.beginSelectionAt(clientX, clientY, mode);
+    return this.selection.begin(clientX, clientY, mode);
   }
 
   updateTouchSelection(clientX: number, clientY: number): void {
@@ -546,16 +508,15 @@ export class GhosttyTerminalController implements CompatibleTerminalLike {
       return;
     }
 
-    this.updateSelectionDrag(clientX, clientY);
+    this.selection.update(clientX, clientY);
   }
 
   endTouchSelection(): void {
-    if (this.disposed || !this.pointerDrag.active) {
+    if (this.disposed || !this.selection.dragging) {
       return;
     }
 
-    this.stopAutoScroll();
-    this.pointerDrag.active = false;
+    this.selection.endDrag();
     this.render();
   }
 
@@ -572,12 +533,12 @@ export class GhosttyTerminalController implements CompatibleTerminalLike {
     }
     // BSU（DECSET 2026）激活期间挂起写触发的渲染：一次原子重绘的字节可能分多个
     // write 到达，rAF 到点就画会把中间态刷上屏（no-flicker TUI 表现为逐行扫描）。
-    // ESU 到达的那次 write 会走正常 scheduleRender；只留低频兜底防应用悬挂。
+    // ESU 到达的那次 write 会走正常渲染调度；只留低频兜底防应用悬挂。
     if (this.isSynchronizedOutputActive()) {
       if (this.syncOutputFallbackTimer === null) {
         this.syncOutputFallbackTimer = setTimeout(() => {
           this.syncOutputFallbackTimer = null;
-          this.scheduleRender();
+          this.renderLoop.schedule();
         }, SYNCHRONIZED_OUTPUT_FALLBACK_MS);
       }
       return;
@@ -586,7 +547,7 @@ export class GhosttyTerminalController implements CompatibleTerminalLike {
       clearTimeout(this.syncOutputFallbackTimer);
       this.syncOutputFallbackTimer = null;
     }
-    this.scheduleRender();
+    this.renderLoop.schedule();
   }
 
   private isSynchronizedOutputActive(): boolean {
@@ -611,9 +572,9 @@ export class GhosttyTerminalController implements CompatibleTerminalLike {
       this.bindings.setTerminalMode(this.terminalHandle, mode, false);
     }
     this.bindings.resetMouseEncoder(this.mouseEncoderHandle);
-    this.pressedMouseButtons.clear();
-    this.lastMotionCell = null;
-    this.mouseDragActive = false;
+    this.mouseState.pressedButtons.clear();
+    this.mouseState.lastMotionCell = null;
+    this.mouseState.dragActive = false;
   }
 
   private isAltScreenActive(): boolean {
@@ -631,7 +592,7 @@ export class GhosttyTerminalController implements CompatibleTerminalLike {
     this.lineCache.clear();
     this.clearSelectionState(false);
     this.bindings.resetTerminal(this.terminalHandle);
-    this.scheduleRender();
+    this.renderLoop.schedule();
   }
 
   refresh(): void {
@@ -651,11 +612,7 @@ export class GhosttyTerminalController implements CompatibleTerminalLike {
       return;
     }
 
-    this.forceFullNext = true;
-    if (this.renderRaf !== null) {
-      cancelAnimationFrame(this.renderRaf);
-      this.renderRaf = null;
-    }
+    this.renderLoop.requestFullRepaint();
     this.render();
   }
 
@@ -674,7 +631,7 @@ export class GhosttyTerminalController implements CompatibleTerminalLike {
     this.clearSelectionState(false);
     this.bindings.resizeTerminal(this.terminalHandle, nextCols, nextRows, this.cellDimensions());
     this.bindings.resetMouseEncoder(this.mouseEncoderHandle);
-    this.scheduleRender();
+    this.renderLoop.schedule();
   }
 
   scrollLines(amount: number): void {
@@ -749,7 +706,7 @@ export class GhosttyTerminalController implements CompatibleTerminalLike {
       snapshot.altScreen1049
     );
     this.bindings.resetMouseEncoder(this.mouseEncoderHandle);
-    this.lastMotionCell = null;
+    this.mouseState.lastMotionCell = null;
   }
 
   // 触摸路由用的有效上报判定：折叠 disposed/disableStdin，hook 据此决定手势分支
@@ -784,7 +741,7 @@ export class GhosttyTerminalController implements CompatibleTerminalLike {
 
   // 触摸手势被消费后调用：开启合成鼠标抑制窗（自 touchend 时刻起算）
   noteTouchHandled(): void {
-    this.suppressSyntheticMouseUntil = Date.now() + SYNTHETIC_MOUSE_SUPPRESS_MS;
+    this.mouseState.suppressSyntheticUntil = Date.now() + SYNTHETIC_MOUSE_SUPPRESS_MS;
   }
 
   handleViewportGesture(gesture: GhosttyViewportGesture): boolean {
@@ -806,7 +763,7 @@ export class GhosttyTerminalController implements CompatibleTerminalLike {
             clientX: gesture.clientX,
             clientY: gesture.clientY,
             mods: pointerLikeEventToGhosttyMods(gesture),
-            anyButtonPressed: this.pressedMouseButtons.size > 0,
+            anyButtonPressed: this.mouseState.pressedButtons.size > 0,
           }) || consumed;
       }
       const columns = this.gestureToColumns(gesture);
@@ -819,7 +776,7 @@ export class GhosttyTerminalController implements CompatibleTerminalLike {
             clientX: gesture.clientX,
             clientY: gesture.clientY,
             mods: pointerLikeEventToGhosttyMods(gesture),
-            anyButtonPressed: this.pressedMouseButtons.size > 0,
+            anyButtonPressed: this.mouseState.pressedButtons.size > 0,
           }) || consumed;
       }
       return consumed;
@@ -901,7 +858,7 @@ export class GhosttyTerminalController implements CompatibleTerminalLike {
     }
 
     this.renderer?.setTheme(theme);
-    this.scheduleRender();
+    this.renderLoop.schedule();
   }
 
   setDisableStdin(disabled: boolean): void {
@@ -934,12 +891,8 @@ export class GhosttyTerminalController implements CompatibleTerminalLike {
 
     this.disposed = true;
 
-    if (this.renderRaf !== null) {
-      cancelAnimationFrame(this.renderRaf);
-      this.renderRaf = null;
-    }
-
-    this.stopAutoScroll();
+    this.renderLoop.cancelPending();
+    this.selection.stopAutoScroll();
     this.updateSelectionTextProbe(null);
     this.clearDomEventListeners();
 
@@ -948,10 +901,7 @@ export class GhosttyTerminalController implements CompatibleTerminalLike {
       this.scrollbarFadeTimer = null;
     }
 
-    if (this.linkOverlayTimer !== null) {
-      clearTimeout(this.linkOverlayTimer);
-      this.linkOverlayTimer = null;
-    }
+    this.linkOverlayTask.cancel();
     if (this.syncOutputFallbackTimer !== null) {
       clearTimeout(this.syncOutputFallbackTimer);
       this.syncOutputFallbackTimer = null;
@@ -1001,379 +951,51 @@ export class GhosttyTerminalController implements CompatibleTerminalLike {
       return;
     }
 
-    root.addEventListener('click', () => {
-      if (!this.disableStdin) {
-        this.focus();
-      }
-    });
-
-    const selectSurface = this.screenElement ?? root;
-    selectSurface.addEventListener('mousedown', (event) => {
-      if (!(event instanceof MouseEvent)) {
-        return;
-      }
-      // 触摸手势刚被 useMobileTouch 消费过：忽略浏览器随后合成的鼠标事件，
-      // 防止 tap 双触发与"合成 mousedown 清掉长按选择"（不查 isTrusted，保证测试可驱动）
-      if (Date.now() < this.suppressSyntheticMouseUntil) {
-        return;
-      }
-      this.showScrollbarTransient();
-
-      if (!this.disableStdin) {
-        this.focus();
-      }
-
-      // xterm 约定：Shift+左键绕过鼠标上报、走本地文本选择（上报 TUI 下唯一的复制入口）
-      const reporting = this.getInputRoutingState().mouseReporting;
-      const bypassReporting = reporting && event.shiftKey && event.button === 0;
-      if (reporting && !bypassReporting) {
-        const button = this.mouseButtonFromEvent(event);
-        if (button === null) {
-          return;
-        }
-        this.clearSelectionState();
-        this.pressedMouseButtons.add(button);
-        this.mouseDragActive = true;
-        this.emitMouseInput({
-          action: 'press',
-          button,
-          clientX: event.clientX,
-          clientY: event.clientY,
-          mods: pointerLikeEventToGhosttyMods(event),
-          anyButtonPressed: true,
-        });
-        event.preventDefault();
-        return;
-      }
-      if (bypassReporting) {
-        this.mouseReportBypassed = true;
-      }
-
-      // 带平台主修饰键(Mac Cmd / 其它 Ctrl)点击链接 → 打开，不进入文本选择。
-      // 置于 mouseReporting 分支之后，鼠标上报应用(vim/htop)优先，不误触发。
-      if (event.button === 0 && hasPlatformModifier(event)) {
-        const hit = this.linkAtClient(event.clientX, event.clientY);
-        if (hit) {
-          if (hit.kind === 'url') {
-            this.emitLinkActivated(hit.url);
-          } else {
-            this.emitFileLinkActivated(hit.path);
-          }
-          event.preventDefault();
-          return;
-        }
-      }
-
-      if (event.button !== 0) {
-        return;
-      }
-
-      this.mouseDragActive = true;
-      this.beginPointerSelection(event);
-      event.preventDefault();
-    });
-
-    selectSurface.addEventListener('mousemove', (event) => {
-      if (!(event instanceof MouseEvent) || this.mouseDragActive) {
-        return;
-      }
-      this.showScrollbarTransient();
-      if (this.getInputRoutingState().mouseReporting) {
-        this.setLinkCursor(false);
-        // 1003 any-event tracking：裸悬停也上报 motion（无按钮 → SGR code 35），
-        // 事件量由同 cell 去重约束；Shift 按住时与点击/拖拽一致交还本地（xterm 约定）
-        if (this.isModeEnabled(GHOSTTY_MODE_ANY_MOUSE) && !event.shiftKey) {
-          this.emitMouseInput({
-            action: 'motion',
-            button: null,
-            clientX: event.clientX,
-            clientY: event.clientY,
-            mods: pointerLikeEventToGhosttyMods(event),
-            anyButtonPressed: false,
-          });
-        }
-        return;
-      }
-      // 仅在按住修饰键时扫描链接，普通移动只做一次廉价的修饰键判断。
-      this.setLinkCursor(
-        hasPlatformModifier(event) && this.linkAtClient(event.clientX, event.clientY) !== null
-      );
-    });
-
-    selectSurface.addEventListener('mouseleave', () => {
-      this.setLinkCursor(false);
-    });
-
-    root.addEventListener(
-      'wheel',
-      (event) => {
-        this.showScrollbarTransient();
-        if (
-          this.handleViewportGesture({
-            source: 'wheel',
-            deltaX: event.deltaX,
-            deltaY: event.deltaY,
-            deltaMode: event.deltaMode,
-            clientX: event.clientX,
-            clientY: event.clientY,
-            shiftKey: event.shiftKey,
-            ctrlKey: event.ctrlKey,
-            altKey: event.altKey,
-            metaKey: event.metaKey,
-          })
-        ) {
-          event.preventDefault();
-        }
-      },
-      { passive: false }
+    const inputContext = this.inputContext();
+    this.domEventDisposers.push(
+      bindMouseEvents(root, this.screenElement ?? root, this.pointerContext()),
+      bindKeyboardEvents(textarea, inputContext),
+      bindCompositionEvents(textarea, inputContext),
+      bindClipboardEvents(textarea, inputContext),
+      bindInputEvents(textarea, inputContext)
     );
+  }
 
-    const dragEventTarget =
-      typeof window !== 'undefined' && typeof window.addEventListener === 'function'
-        ? window
-        : null;
-    if (dragEventTarget) {
-      const moveListener = (event: MouseEvent) => {
-        if (!this.mouseDragActive) {
-          return;
-        }
-        if (this.getInputRoutingState().mouseReporting && !this.mouseReportBypassed) {
-          this.emitMouseInput({
-            action: 'motion',
-            button: this.mouseButtonFromButtons(event.buttons),
-            clientX: event.clientX,
-            clientY: event.clientY,
-            mods: pointerLikeEventToGhosttyMods(event),
-            anyButtonPressed: this.pressedMouseButtons.size > 0 || event.buttons > 0,
-          });
-          return;
-        }
-        this.updatePointerSelection(event);
-      };
-      const upListener = (event: MouseEvent) => {
-        if (!this.mouseDragActive || Date.now() < this.suppressSyntheticMouseUntil) {
-          return;
-        }
-        this.mouseDragActive = false;
-        const bypassed = this.mouseReportBypassed;
-        this.mouseReportBypassed = false;
-        if (this.getInputRoutingState().mouseReporting && !bypassed) {
-          const button = this.mouseButtonFromEvent(event);
-          if (button !== null) {
-            this.pressedMouseButtons.delete(button);
-          }
-          this.emitMouseInput({
-            action: 'release',
-            button,
-            clientX: event.clientX,
-            clientY: event.clientY,
-            mods: pointerLikeEventToGhosttyMods(event),
-            anyButtonPressed: this.pressedMouseButtons.size > 0,
-          });
-          return;
-        }
-        this.finishPointerSelection(event);
-      };
-      dragEventTarget.addEventListener('mousemove', moveListener);
-      dragEventTarget.addEventListener('mouseup', upListener);
-      this.domEventDisposers.push(() => {
-        dragEventTarget.removeEventListener('mousemove', moveListener);
-        dragEventTarget.removeEventListener('mouseup', upListener);
-      });
-    }
+  private pointerContext(): PointerEventContext {
+    return {
+      mouse: this.mouseState,
+      isInputDisabled: () => this.disableStdin,
+      focusTerminal: () => this.focus(),
+      showScrollbarTransient: () => this.showScrollbarTransient(),
+      getInputRoutingState: () => this.getInputRoutingState(),
+      isAnyEventTrackingEnabled: () => this.isModeEnabled(GHOSTTY_MODE_ANY_MOUSE),
+      pointerMods: (event) => pointerLikeEventToGhosttyMods(event),
+      emitMouseInput: (request) => this.emitMouseInput(request),
+      clearSelection: () => this.clearSelectionState(),
+      linkAtClient: (clientX, clientY) => this.linkAtClient(clientX, clientY),
+      activateLink: (hit) => this.activateLink(hit),
+      setLinkCursor: (active) => this.setLinkCursor(active),
+      beginPointerSelection: (event) => this.beginPointerSelection(event),
+      updatePointerSelection: (event) => this.updatePointerSelection(event),
+      finishPointerSelection: (event) => this.finishPointerSelection(event),
+      handleViewportGesture: (gesture) => this.handleViewportGesture(gesture),
+    };
+  }
 
-    textarea.addEventListener('keydown', (event) => {
-      const selectionText = this.getSelectionText();
-      if (selectionText && isCopyShortcut(event)) {
-        event.preventDefault();
-        void writeSelectionToClipboard(selectionText).catch(() => {});
-        this.clearSelectionState();
-        this.copyShortcutSuppressed = true;
-        this.clearTextarea();
-        return;
-      }
-
-      if (!this.customKeyEventHandler(event)) {
-        return;
-      }
-
-      if (this.disableStdin || this.imeIsComposing) {
-        return;
-      }
-
-      if (event.keyCode === 229) {
-        return;
-      }
-
-      if (isPasteShortcut(event)) {
-        return;
-      }
-
-      if (!shouldEncodeOnKeyDown(event)) {
-        return;
-      }
-
-      const payload = this.encodeKeyboardEvent(event, event.repeat ? 'repeat' : 'press');
-      if (!payload) {
-        return;
-      }
-
-      event.preventDefault();
-      this.emitData(payload);
-      this.clearTextarea();
-    });
-
-    textarea.addEventListener('keyup', (event) => {
-      if (this.copyShortcutSuppressed) {
-        const key = event.key.toLowerCase();
-        if (key === 'c') {
-          event.preventDefault();
-          return;
-        }
-
-        if (key === 'control' || key === 'meta' || key === 'os') {
-          this.copyShortcutSuppressed = false;
-          event.preventDefault();
-          return;
-        }
-      }
-
-      if (this.disableStdin || this.imeIsComposing) {
-        return;
-      }
-
-      const payload = this.encodeKeyboardEvent(event, 'release');
-      if (!payload) {
-        return;
-      }
-
-      event.preventDefault();
-      this.emitData(payload);
-      this.clearTextarea();
-    });
-
-    textarea.addEventListener('compositionstart', () => {
-      this.imeIsComposing = true;
-      this.lastCompositionCommit = null;
-      this.syncTextareaPositionToCursor();
-    });
-
-    textarea.addEventListener('compositionupdate', () => {
-      this.syncTextareaPositionToCursor();
-    });
-
-    textarea.addEventListener('compositionend', (event) => {
-      this.imeIsComposing = false;
-      const finalData = event.data ?? '';
-      if (finalData) {
-        this.lastCompositionCommit = { data: finalData, at: Date.now() };
-        this.emitData(finalData);
-        this.clearTextarea();
-      }
-    });
-
-    textarea.addEventListener('beforeinput', (event) => {
-      if (this.disableStdin) {
-        return;
-      }
-
-      if (event.inputType === 'insertFromPaste') {
-        return;
-      }
-
-      // 组字过程中的输入/删除交给 compositionend 统一提交，这里忽略
-      if (event.isComposing || this.imeIsComposing) {
-        return;
-      }
-
-      // Android 把退格/删除/换行等只通过 beforeinput 的 inputType 体现（无 keydown，
-      // 报 keyCode 229），data 多为空。按等价按键编码补发；iOS/桌面这些键走 keydown
-      // 且已 preventDefault、会抑制后续 beforeinput，两路径互斥不会重复触发。
-      const syntheticKey = SYNTHETIC_KEY_BY_INPUT_TYPE[event.inputType ?? ''];
-      if (syntheticKey) {
-        event.preventDefault();
-        const payload = this.encodeSyntheticKey(syntheticKey);
-        if (payload) {
-          this.emitData(payload);
-        }
-        this.clearTextarea();
-        return;
-      }
-
-      const data = event.data ?? '';
-      if (!data) {
-        return;
-      }
-
-      const recentCompositionCommit = this.lastCompositionCommit;
-      if (
-        recentCompositionCommit &&
-        recentCompositionCommit.data === data &&
-        Date.now() - recentCompositionCommit.at < 40
-      ) {
-        this.lastCompositionCommit = null;
-        event.preventDefault();
-        this.clearTextarea();
-        return;
-      }
-
-      this.lastCompositionCommit = null;
-
-      event.preventDefault();
-      this.emitData(data);
-      this.clearTextarea();
-    });
-
-    textarea.addEventListener('paste', (event) => {
-      if (this.disableStdin) {
-        return;
-      }
-
-      const text = event.clipboardData?.getData('text/plain') ?? '';
-      if (!text) {
-        return;
-      }
-
-      event.preventDefault();
-      this.paste(text);
-      this.clearTextarea();
-    });
-
-    textarea.addEventListener('copy', (event) => {
-      const selectionText = this.getSelectionText();
-      if (!selectionText) {
-        return;
-      }
-
-      writeSelectionToCopyEvent(event, selectionText);
-    });
-
-    textarea.addEventListener('input', () => {
-      if (this.disableStdin || this.imeIsComposing) {
-        return;
-      }
-
-      const data = textarea.textContent ?? '';
-      if (!data) {
-        this.clearTextarea();
-        return;
-      }
-
-      const recentCompositionCommit = this.lastCompositionCommit;
-      if (
-        recentCompositionCommit &&
-        recentCompositionCommit.data === data &&
-        Date.now() - recentCompositionCommit.at < 40
-      ) {
-        this.lastCompositionCommit = null;
-        this.clearTextarea();
-        return;
-      }
-
-      this.lastCompositionCommit = null;
-      this.emitData(data);
-      this.clearTextarea();
-    });
+  private inputContext(): TerminalInputContext {
+    return {
+      state: this.inputState,
+      isInputDisabled: () => this.disableStdin,
+      getSelectionText: () => this.getSelectionText(),
+      clearSelection: () => this.clearSelectionState(),
+      clearTextarea: () => this.clearTextarea(),
+      emitData: (data) => this.emitData(data),
+      encodeKeyboardEvent: (event, action) => this.encodeKeyboardEvent(event, action),
+      encodeSyntheticKey: (code) => this.encodeSyntheticKey(code),
+      runCustomKeyEventHandler: (event) => this.customKeyEventHandler(event),
+      syncTextareaPositionToCursor: () => this.syncTextareaPositionToCursor(),
+      paste: (text) => this.paste(text),
+    };
   }
 
   private encodeKeyboardEvent(
@@ -1500,33 +1122,6 @@ export class GhosttyTerminalController implements CompatibleTerminalLike {
     return this.bindings.isTerminalModeEnabled(this.terminalHandle, mode);
   }
 
-  private mouseButtonFromEvent(event: MouseEvent): number | null {
-    switch (event.button) {
-      case 0:
-        return GHOSTTY_MOUSE_BUTTON_LEFT;
-      case 1:
-        return GHOSTTY_MOUSE_BUTTON_MIDDLE;
-      case 2:
-        return GHOSTTY_MOUSE_BUTTON_RIGHT;
-      default:
-        return null;
-    }
-  }
-
-  private mouseButtonFromButtons(buttons: number): number | null {
-    if (buttons & 1) {
-      return GHOSTTY_MOUSE_BUTTON_LEFT;
-    }
-    if (buttons & 4) {
-      return GHOSTTY_MOUSE_BUTTON_MIDDLE;
-    }
-    if (buttons & 2) {
-      return GHOSTTY_MOUSE_BUTTON_RIGHT;
-    }
-
-    return null;
-  }
-
   private pointerPositionFromClient(
     clientX: number,
     clientY: number
@@ -1544,14 +1139,7 @@ export class GhosttyTerminalController implements CompatibleTerminalLike {
     };
   }
 
-  private emitMouseInput(options: {
-    action: 'press' | 'release' | 'motion';
-    button?: number | null;
-    clientX: number;
-    clientY: number;
-    mods: number;
-    anyButtonPressed: boolean;
-  }): boolean {
+  private emitMouseInput(options: MouseInputRequest): boolean {
     if (this.disableStdin) {
       return false;
     }
@@ -1574,9 +1162,9 @@ export class GhosttyTerminalController implements CompatibleTerminalLike {
     if (
       options.action === 'motion' &&
       !this.isModeEnabled(1016) &&
-      this.lastMotionCell &&
-      this.lastMotionCell.col === motionCol &&
-      this.lastMotionCell.row === motionRow
+      this.mouseState.lastMotionCell &&
+      this.mouseState.lastMotionCell.col === motionCol &&
+      this.mouseState.lastMotionCell.row === motionRow
     ) {
       return false;
     }
@@ -1600,9 +1188,9 @@ export class GhosttyTerminalController implements CompatibleTerminalLike {
     }
 
     if (options.action === 'release') {
-      this.lastMotionCell = null;
+      this.mouseState.lastMotionCell = null;
     } else {
-      this.lastMotionCell = { col: motionCol, row: motionRow };
+      this.mouseState.lastMotionCell = { col: motionCol, row: motionRow };
     }
 
     this.emitData(payload);
@@ -1680,26 +1268,14 @@ export class GhosttyTerminalController implements CompatibleTerminalLike {
     textarea.style.fontSize = `${this.options.fontSize}px`;
   }
 
-  private scheduleRender(): void {
-    if (this.renderRaf !== null) {
-      return;
-    }
-
-    this.renderRaf = requestAnimationFrame(() => {
-      this.renderRaf = null;
-      this.render();
-    });
-  }
-
   private render(): void {
     if (this.disposed || !this.screenElement || !this.renderer) {
       return;
     }
 
-    // 一次性消费：本帧若被 forceFullRepaint 标记，传给 renderer 让它绕过 dirty='clean'
-    // 早退（issue #45 bug 3）。读后立即清零避免污染后续帧。
-    const forceFull = this.forceFullNext;
-    this.forceFullNext = false;
+    // 本帧若被 forceFullRepaint 标记，传给 renderer 让它绕过 dirty='clean' 早退
+    //（issue #45 bug 3）。
+    const forceFull = this.renderLoop.consumeForceFull();
 
     const scrollbar = this.bindings.readScrollbar(this.terminalHandle);
     const viewportRows = Math.max(1, scrollbar.len || this.rows);
@@ -1719,11 +1295,9 @@ export class GhosttyTerminalController implements CompatibleTerminalLike {
       this.lineCache.set(scrollbar.offset + row.y, buildLineModel(row.cells, row.wrap));
     }
 
-    const selectionRects = projectSelectionRects(
-      this.selectionState,
+    const selectionRects = this.selection.projectRects(
       this.lastViewportOffset,
-      this.lastViewportRows,
-      (line) => this.getLineModel(line)
+      this.lastViewportRows
     );
     const selectionText = this.getSelectionText();
 
@@ -1751,96 +1325,29 @@ export class GhosttyTerminalController implements CompatibleTerminalLike {
   }
 
   private scheduleLinkOverlayUpdate(): void {
-    if (this.disposed || this.linkOverlayTimer !== null) {
+    if (this.disposed) {
       return;
     }
-    const elapsed = Date.now() - this.linkOverlayLastComputeAt;
-    const delay = Math.max(0, LINK_OVERLAY_THROTTLE_MS - elapsed);
-    this.linkOverlayTimer = setTimeout(() => {
-      this.linkOverlayTimer = null;
-      this.linkOverlayLastComputeAt = Date.now();
-      this.updateLinkOverlay();
-    }, delay);
+
+    this.linkOverlayTask.schedule();
   }
 
-  // 只扫可见区：按 wrap 分组成逻辑行（经 lineCache 可延伸出视口边界），检测结果
-  // 按逻辑行文本缓存；文件候选用当前上下文过滤有效性后连同 URL 一起画虚线下划线。
   private updateLinkOverlay(): void {
     if (this.disposed || !this.renderer) {
       return;
     }
 
     const offset = this.lastViewportOffset;
-    const end = offset + this.lastViewportRows;
-    const segments: { row: number; startCol: number; endCol: number }[] = [];
-
-    let line = offset;
-    while (line < end) {
-      if (this.getLineModel(line).colChars.length === 0) {
-        line += 1;
-        continue;
-      }
-      let startLine = line;
-      while (this.getLineModel(startLine - 1).wrappedToNext) {
-        startLine -= 1;
-      }
-      let endLine = line;
-      while (this.getLineModel(endLine).wrappedToNext) {
-        endLine += 1;
-      }
-      const models: SelectionLineModel[] = [];
-      for (let l = startLine; l <= endLine; l += 1) {
-        models.push(this.getLineModel(l));
-      }
-
-      for (const match of this.detectMatchesCached(models)) {
-        const matchLine = startLine + match.lineIndex;
-        if (matchLine < offset || matchLine >= end) {
-          continue;
-        }
-        if (match.kind === 'file' && !resolveValidFilePath(match.text, this.fileLinkContext)) {
-          continue;
-        }
-        segments.push({
-          row: matchLine - offset,
-          startCol: match.startCol,
-          endCol: match.endCol,
-        });
-      }
-
-      line = endLine + 1;
-    }
+    const segments = collectLinkUnderlineSegments({
+      offset,
+      rows: this.lastViewportRows,
+      getLineModel: (line) => this.getLineModel(line),
+      cache: this.linkMatchCache,
+      fileLinkContext: this.fileLinkContext,
+    });
 
     this.linkOverlayDrawnOffset = offset;
     this.renderer.drawLinkUnderlines(segments);
-  }
-
-  private detectMatchesCached(models: SelectionLineModel[]): WrappedMatch[] {
-    let key = '';
-    for (const model of models) {
-      for (const ch of model.colChars) {
-        key += ch ?? '\u0000';
-      }
-      key += '\u0001';
-    }
-
-    const cached = this.linkMatchCache.get(key);
-    if (cached) {
-      // LRU：命中后移到末尾
-      this.linkMatchCache.delete(key);
-      this.linkMatchCache.set(key, cached);
-      return cached;
-    }
-
-    const matches = detectMatchesInWrappedLines(models);
-    this.linkMatchCache.set(key, matches);
-    if (this.linkMatchCache.size > LINK_MATCH_CACHE_LIMIT) {
-      const oldest = this.linkMatchCache.keys().next().value;
-      if (oldest !== undefined) {
-        this.linkMatchCache.delete(oldest);
-      }
-    }
-    return matches;
   }
 
   private updateScrollbar(scrollbar: { total: number; offset: number; len: number }): void {
@@ -1929,18 +1436,10 @@ export class GhosttyTerminalController implements CompatibleTerminalLike {
   }
 
   private clearSelectionState(repaint = true): void {
-    this.selectionState = resetSelectionData();
-    this.pressedMouseButtons.clear();
+    this.selection.reset();
+    this.mouseState.pressedButtons.clear();
     this.wheelPixelDelta = 0;
-    this.pointerDrag = {
-      active: false,
-      moved: false,
-      mode: 'character',
-      lastClientX: null,
-      lastClientY: null,
-    };
-    this.copyShortcutSuppressed = false;
-    this.stopAutoScroll();
+    this.inputState.copyShortcutSuppressed = false;
     this.updateSelectionTextProbe(null);
 
     if (repaint && this.screenElement && this.renderer) {
@@ -1948,96 +1447,24 @@ export class GhosttyTerminalController implements CompatibleTerminalLike {
     }
   }
 
-  private beginSelectionAt(clientX: number, clientY: number, mode: SelectionMode): boolean {
-    const point = this.hitTest(clientX, clientY);
-    if (!point) {
-      return false;
-    }
-
-    this.pointerDrag = {
-      active: true,
-      moved: false,
-      mode,
-      lastClientX: clientX,
-      lastClientY: clientY,
-    };
-    this.selectionState = resolvePointerSelection(
-      this.selectionState,
-      {
-        ...point,
-        mode,
-      },
-      (line) => this.getLineModel(line)
-    );
-    this.updateAutoScroll();
-    this.render();
-    return true;
-  }
-
-  private updateSelectionDrag(clientX: number, clientY: number): void {
-    if (!this.pointerDrag.active) {
-      return;
-    }
-
-    const point = this.hitTest(clientX, clientY);
-    this.pointerDrag.lastClientX = clientX;
-    this.pointerDrag.lastClientY = clientY;
-
-    if (point) {
-      this.pointerDrag.moved = true;
-      this.selectionState = updateSelectionFocus(this.selectionState, point, (line) =>
-        this.getLineModel(line)
-      );
-      this.render();
-    }
-
-    this.updateAutoScroll();
-  }
-
   private beginPointerSelection(event: MouseEvent): void {
-    this.beginSelectionAt(
-      event.clientX,
-      event.clientY,
-      this.selectionModeFromClickDetail(event.detail)
-    );
+    this.selection.begin(event.clientX, event.clientY, selectionModeFromClickDetail(event.detail));
   }
 
   private updatePointerSelection(event: MouseEvent): void {
-    this.updateSelectionDrag(event.clientX, event.clientY);
+    this.selection.update(event.clientX, event.clientY);
   }
 
   private finishPointerSelection(event: MouseEvent): void {
-    if (!this.pointerDrag.active || event.button !== 0) {
-      return;
-    }
-
-    this.pointerDrag.lastClientX = event.clientX;
-    this.pointerDrag.lastClientY = event.clientY;
-    this.stopAutoScroll();
-
-    const shouldClear =
-      this.pointerDrag.mode === 'character' &&
-      !this.pointerDrag.moved &&
-      this.selectionState.anchor?.line === this.selectionState.focus?.line &&
-      this.selectionState.anchor?.col === this.selectionState.focus?.col;
-    this.pointerDrag.active = false;
-
-    if (shouldClear) {
+    const outcome = this.selection.finishPointerDrag(event);
+    if (outcome === 'clear') {
       this.clearSelectionState();
       return;
     }
 
-    this.render();
-  }
-
-  private selectionModeFromClickDetail(detail: number): SelectionMode {
-    if (detail >= 3) {
-      return 'line';
+    if (outcome === 'keep') {
+      this.render();
     }
-    if (detail === 2) {
-      return 'word';
-    }
-    return 'character';
   }
 
   private hitTest(clientX: number, clientY: number): SelectionPoint | null {
@@ -2099,64 +1526,32 @@ export class GhosttyTerminalController implements CompatibleTerminalLike {
     }
   }
 
-  private linkAtClient(
-    clientX: number,
-    clientY: number
-  ): { kind: 'url'; url: string } | { kind: 'file'; path: string } | null {
+  private linkAtClient(clientX: number, clientY: number): TerminalLinkHit | null {
     const point = this.hitTest(clientX, clientY);
     if (!point) {
       return null;
     }
-    return this.linkAtPoint(point.line, point.col);
+
+    return findLinkAtPoint({
+      line: point.line,
+      col: point.col,
+      getLineModel: (line) => this.getLineModel(line),
+      cache: this.linkMatchCache,
+      fileLinkContext: this.fileLinkContext,
+    });
   }
 
-  // 命中检测：把目标行所在的软换行逻辑行整体取出做链接识别，
-  // 再判断 (line, col) 是否落在某个链接的列区间内。越界行 getLineModel 返回 EMPTY
-  // (wrappedToNext=false)，使前后扩展在视口边界自然停止。
-  // 文件候选须经 cwd/授权根解析有效才算命中，返回解析后的绝对路径。
-  private linkAtPoint(
-    line: number,
-    col: number
-  ): { kind: 'url'; url: string } | { kind: 'file'; path: string } | null {
-    if (this.getLineModel(line).colChars.length === 0) {
-      return null;
-    }
-    let startLine = line;
-    while (this.getLineModel(startLine - 1).wrappedToNext) {
-      startLine -= 1;
-    }
-    let endLine = line;
-    while (this.getLineModel(endLine).wrappedToNext) {
-      endLine += 1;
+  private activateLink(hit: TerminalLinkHit): void {
+    if (hit.kind === 'url') {
+      this.emitLinkActivated(hit.url);
+      return;
     }
 
-    const models: SelectionLineModel[] = [];
-    for (let l = startLine; l <= endLine; l += 1) {
-      models.push(this.getLineModel(l));
-    }
-
-    const targetIndex = line - startLine;
-    for (const match of this.detectMatchesCached(models)) {
-      if (match.lineIndex !== targetIndex || col < match.startCol || col > match.endCol) {
-        continue;
-      }
-      if (match.kind === 'url') {
-        return { kind: 'url', url: match.text };
-      }
-      const resolved = resolveValidFilePath(match.text, this.fileLinkContext);
-      if (resolved) {
-        return { kind: 'file', path: resolved };
-      }
-    }
-    return null;
+    this.emitFileLinkActivated(hit.path);
   }
 
   private getSelectionText(): string | null {
-    if (!hasSelection(this.selectionState)) {
-      return null;
-    }
-
-    return serializeSelectionText(this.selectionState, (line) => this.getLineModel(line));
+    return this.selection.getText();
   }
 
   private updateSelectionTextProbe(value: string | null): void {
@@ -2170,86 +1565,6 @@ export class GhosttyTerminalController implements CompatibleTerminalLike {
         listener(value);
       }
     }
-  }
-
-  private updateAutoScroll(): void {
-    if (!this.pointerDrag.active || this.pointerDrag.lastClientY === null) {
-      this.stopAutoScroll();
-      return;
-    }
-
-    const rect = this.screenElement?.getBoundingClientRect();
-    if (!rect) {
-      this.stopAutoScroll();
-      return;
-    }
-
-    const outsideViewport =
-      this.pointerDrag.lastClientY < rect.top || this.pointerDrag.lastClientY > rect.bottom;
-    if (!outsideViewport) {
-      this.stopAutoScroll();
-      return;
-    }
-
-    if (this.autoScrollTimer !== null) {
-      return;
-    }
-
-    this.autoScrollTimer = setInterval(() => {
-      this.stepAutoScroll();
-    }, AUTO_SCROLL_INTERVAL_MS);
-  }
-
-  private stepAutoScroll(): void {
-    if (
-      !this.pointerDrag.active ||
-      this.pointerDrag.lastClientX === null ||
-      this.pointerDrag.lastClientY === null
-    ) {
-      this.stopAutoScroll();
-      return;
-    }
-
-    const rect = this.screenElement?.getBoundingClientRect();
-    if (!rect) {
-      this.stopAutoScroll();
-      return;
-    }
-
-    let delta = 0;
-    if (this.pointerDrag.lastClientY < rect.top) {
-      delta = -1;
-    } else if (this.pointerDrag.lastClientY > rect.bottom) {
-      delta = 1;
-    }
-
-    if (delta === 0) {
-      this.stopAutoScroll();
-      return;
-    }
-
-    this.bindings.scrollViewportDelta(this.terminalHandle, delta);
-    this.render();
-
-    const point = this.hitTest(this.pointerDrag.lastClientX, this.pointerDrag.lastClientY);
-    if (!point) {
-      return;
-    }
-
-    this.selectionState = updateSelectionFocus(this.selectionState, point, (line) =>
-      this.getLineModel(line)
-    );
-    this.pointerDrag.moved = true;
-    this.render();
-  }
-
-  private stopAutoScroll(): void {
-    if (this.autoScrollTimer === null) {
-      return;
-    }
-
-    clearInterval(this.autoScrollTimer);
-    this.autoScrollTimer = null;
   }
 
   private clearDomEventListeners(): void {
