@@ -1,24 +1,16 @@
-import {
-  type ControlModeBlock,
-  type ControlModeNotification,
-  createControlModeParser,
-} from './control-mode-parser';
+import { createControlModeParser } from './control-mode-parser';
+import { ControlModeMetadataBridge, RECONCILE_NOTIFICATION_TYPES } from './control-mode/metadata';
+import { PaneParserRegistry } from './control-mode/pane-registry';
+import type { ControlModeBlock, ControlModeNotification } from './control-mode/types';
 import {
   CONTROL_STREAM_METRICS_INTERVAL_MS,
   ControlStreamMetrics,
   type ControlStreamMetricsSnapshot,
 } from './control-stream-metrics';
 import type { TmuxSourceMetadataEvent } from './events';
-import {
-  type PaneStreamNotification,
-  type PaneStreamParser,
-  type PromptMarker,
-  createPaneStreamParser,
-} from './pane-stream-parser';
+import type { PaneStreamNotification, PromptMarker } from './pane-stream-parser';
 
 const STRUCTURE_RECONCILE_MS = 50;
-
-const RECONCILE_NOTIFICATION_TYPES = new Set(['sessions-changed', 'window-add']);
 
 export const SOURCE_METADATA_SUBSCRIPTION_COMMANDS = [
   'refresh-client -B "tmex-cwd:%*:#{pane_current_path}"\n',
@@ -59,7 +51,6 @@ export function createControlModeSubscription(
   callbacks: ControlModeSubscriptionCallbacks,
   options: ControlModeSubscriptionOptions = {}
 ): ControlModeSubscription {
-  const paneParsers = new Map<string, PaneStreamParser>();
   const nowMs = options.nowMs ?? Date.now;
   const metrics = options.onMetrics
     ? new ControlStreamMetrics(
@@ -69,35 +60,19 @@ export function createControlModeSubscription(
     : null;
   let structureTimer: ReturnType<typeof setTimeout> | null = null;
   let disposed = false;
-
-  function getPaneParser(paneId: string): PaneStreamParser {
-    const existing = paneParsers.get(paneId);
-    if (existing) {
-      return existing;
-    }
-    const parser = createPaneStreamParser({
-      onTitle: (title) => {
-        metrics?.recordTitle();
-        callbacks.onTitle(paneId, title);
-      },
-      onCurrentPath: (currentPath) => {
-        callbacks.onSourceMetadata?.({ type: 'pane-current-path', paneId, currentPath });
-      },
-      onBell: () => {
-        metrics?.recordBell();
-        callbacks.onBell(paneId);
-      },
-      onNotification: (notification) => {
-        metrics?.recordNotification();
-        callbacks.onNotification(paneId, notification);
-      },
-      onPromptMarker: (marker) => callbacks.onPromptMarker?.(paneId, marker),
-      onClipboardWrite: (text) => callbacks.onClipboardWrite?.(paneId, text),
-      onThemeSubscription: (subscribed) => callbacks.onThemeSubscription?.(paneId, subscribed),
-    });
-    paneParsers.set(paneId, parser);
-    return parser;
-  }
+  const metadata = new ControlModeMetadataBridge();
+  const paneParsers = new PaneParserRegistry({
+    onTitle: callbacks.onTitle,
+    onBell: callbacks.onBell,
+    onNotification: callbacks.onNotification,
+    onPromptMarker: callbacks.onPromptMarker,
+    onClipboardWrite: callbacks.onClipboardWrite,
+    onThemeSubscription: callbacks.onThemeSubscription,
+    onSourceMetadata: callbacks.onSourceMetadata,
+    recordTitle: () => metrics?.recordTitle(),
+    recordBell: () => metrics?.recordBell(),
+    recordNotification: () => metrics?.recordNotification(),
+  });
 
   function scheduleStructureChanged(): void {
     if (disposed || structureTimer) return;
@@ -109,60 +84,11 @@ export function createControlModeSubscription(
     }, STRUCTURE_RECONCILE_MS);
   }
 
-  function splitFirst(value: string): [string, string] {
-    const index = value.indexOf(' ');
-    return index < 0 ? [value, ''] : [value.slice(0, index), value.slice(index + 1)];
-  }
-
-  function emitStructuredMetadata(notification: ControlModeNotification): void {
-    const emit = callbacks.onSourceMetadata;
-    if (!emit) return;
-    const [first, rest] = splitFirst(notification.args.trim());
-    switch (notification.type) {
-      case 'session-renamed':
-        if (first && rest) emit({ type: 'session-renamed', sessionId: first, name: rest });
-        return;
-      case 'session-window-changed': {
-        const [windowId] = splitFirst(rest);
-        if (first && windowId) emit({ type: 'session-window-changed', sessionId: first, windowId });
-        return;
-      }
-      case 'window-renamed':
-        if (first && rest) emit({ type: 'window-renamed', windowId: first, name: rest });
-        return;
-      case 'window-pane-changed': {
-        const [paneId] = splitFirst(rest);
-        if (first && paneId) emit({ type: 'window-pane-changed', windowId: first, paneId });
-        return;
-      }
-      case 'layout-change': {
-        const [layout] = splitFirst(rest);
-        if (first && layout) emit({ type: 'layout-change', windowId: first, layout });
-        return;
-      }
-      case 'window-close':
-      case 'unlinked-window-close':
-        if (first) emit({ type: 'window-close', windowId: first });
-        return;
-      case 'subscription-changed': {
-        const separator = notification.args.indexOf(' : ');
-        if (separator < 0) return;
-        const header = notification.args.slice(0, separator).trim().split(/\s+/);
-        const name = header[0];
-        const paneId = header.find((part) => /^%\d+$/.test(part));
-        const value = notification.args.slice(separator + 3);
-        if (!paneId) return;
-        if (name === 'tmex-cwd') {
-          emit({ type: 'pane-current-path', paneId, currentPath: value });
-        } else if (name === 'tmex-command') {
-          emit({ type: 'pane-current-command', paneId, currentCommand: value });
-        }
-      }
-    }
-  }
-
   function handleNotification(notification: ControlModeNotification): void {
-    emitStructuredMetadata(notification);
+    const event = metadata.parse(notification);
+    if (event) {
+      callbacks.onSourceMetadata?.(event);
+    }
     if (RECONCILE_NOTIFICATION_TYPES.has(notification.type)) {
       scheduleStructureChanged();
     }
@@ -176,7 +102,7 @@ export function createControlModeSubscription(
   const parser = createControlModeParser({
     onOutput: (paneId, data) => {
       metrics?.recordControlOutput(data.length);
-      const output = getPaneParser(paneId).push(data);
+      const output = paneParsers.get(paneId).push(data);
       if (output.length > 0) {
         metrics?.recordTerminalOutput(output.length);
         callbacks.onTerminalOutput(paneId, output);
@@ -210,11 +136,7 @@ export function createControlModeSubscription(
       parser.end();
     },
     prunePanes(validPaneIds) {
-      for (const paneId of Array.from(paneParsers.keys())) {
-        if (!validPaneIds.has(paneId)) {
-          paneParsers.delete(paneId);
-        }
-      }
+      paneParsers.prune(validPaneIds);
     },
     dispose() {
       disposed = true;

@@ -142,6 +142,15 @@ describe('control mode subscription', () => {
     subscription.dispose();
   });
 
+  test('session-renamed after session-changed emits metadata with the current session id', () => {
+    const { subscription, collected } = createCollector();
+    subscription.push(lines('%session-changed $0 t1', '%session-renamed work tree'));
+    expect(collected.metadata).toEqual([
+      { type: 'session-renamed', sessionId: '$0', name: 'work tree' },
+    ]);
+    subscription.dispose();
+  });
+
   test('normalizes linked and unlinked window close notifications', () => {
     const { subscription, collected } = createCollector();
     subscription.push(lines('%window-close @1', '%unlinked-window-close @2'));
