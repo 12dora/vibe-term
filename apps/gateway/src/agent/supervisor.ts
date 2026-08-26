@@ -29,10 +29,10 @@ import {
 } from '../db/agent';
 import { t } from '../i18n';
 import { telegramService } from '../telegram/service';
+import { registerDeviceCloseListener } from './device-close-bus';
 import type { AgentStopReason } from './run';
 import { AgentRun, type AgentRunDeps } from './run';
 import { detectSecrets } from './secret-scan';
-import { registerDeviceCloseListener } from './device-close-bus';
 import { type AgentWsHub, agentWsHub } from './ws-hub';
 
 export class AgentSessionNotFoundError extends Error {
@@ -123,6 +123,7 @@ export class AgentSupervisor {
   private readonly deps: AgentSupervisorDeps;
   private readonly activeRuns = new Map<string, ActiveRun>();
   private started = false;
+  private stopping = false;
 
   constructor(options: AgentSupervisorOptions = {}) {
     const runDeps = options.runDeps ?? {};
@@ -143,6 +144,7 @@ export class AgentSupervisor {
       return;
     }
     this.started = true;
+    this.stopping = false;
 
     this.deps.hub.setSyncProvider(async (sessionId) => {
       const session = getAgentSessionById(sessionId);
@@ -197,6 +199,7 @@ export class AgentSupervisor {
   }
 
   async stop(): Promise<void> {
+    this.stopping = true;
     this.started = false;
 
     const promises: Promise<unknown>[] = [];
@@ -211,7 +214,6 @@ export class AgentSupervisor {
         new Promise((resolve) => setTimeout(resolve, this.deps.stopTimeoutMs)),
       ]);
     }
-    this.activeRuns.clear();
   }
 
   /**
@@ -227,6 +229,9 @@ export class AgentSupervisor {
     }
     if (isSessionOrphan(session)) {
       throw new AgentSessionOrphanedError();
+    }
+    if (this.stopping) {
+      throw new AgentSessionBusyError();
     }
 
     // 运行中：入队，不打断（steer=true 时请求立即注入）
@@ -455,7 +460,7 @@ export class AgentSupervisor {
   }
 
   private startRun(sessionId: string): void {
-    if (this.activeRuns.has(sessionId)) {
+    if (this.stopping || this.activeRuns.has(sessionId)) {
       return;
     }
 

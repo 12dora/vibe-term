@@ -124,6 +124,8 @@ function createSupervisorHarness(options: {
   baseUrl: string;
   writeMode?: 'confirm' | 'auto';
   sessionStatus?: AgentSessionRecord['status'];
+  createRun?: (sessionId: string) => AgentRun;
+  stopTimeoutMs?: number;
 }): SupervisorHarness {
   const session = createAgentSession({
     title: 'Supervisor Test',
@@ -194,8 +196,8 @@ function createSupervisorHarness(options: {
   const supervisor = new AgentSupervisor({
     deps: {
       hub,
-      createRun: (sessionId) => new AgentRun(sessionId, runDeps),
-      stopTimeoutMs: 3_000,
+      createRun: options.createRun ?? ((sessionId) => new AgentRun(sessionId, runDeps)),
+      stopTimeoutMs: options.stopTimeoutMs ?? 3_000,
     },
   });
 
@@ -582,6 +584,46 @@ describe('AgentSupervisor - stop 语义', () => {
 
     expect(getAgentSessionById(harness.session.id)?.status).toBe('running');
     expect(harness.supervisor.isSessionActive(harness.session.id)).toBe(false);
+  });
+
+  test('stop() 超时后拒绝新提交，旧 entry 仅在 run settle 后按身份删除', async () => {
+    let settleRun: () => void = () => {};
+    const hanging = new Promise<void>((resolve) => {
+      settleRun = resolve;
+    });
+    let createRunCount = 0;
+    const hangingRun = {
+      inProgressText: '',
+      inProgressReasoning: '',
+      requestStop() {},
+      requestSteer() {},
+      execute: () => hanging,
+    } as unknown as AgentRun;
+
+    const harness = createSupervisorHarness({
+      baseUrl: 'http://unused',
+      stopTimeoutMs: 20,
+      createRun: () => {
+        createRunCount += 1;
+        return hangingRun;
+      },
+    });
+    harness.supervisor.submitUserMessage(harness.session.id, 'hang');
+    expect(createRunCount).toBe(1);
+    expect(harness.supervisor.isSessionActive(harness.session.id)).toBe(true);
+
+    await harness.supervisor.stop();
+
+    expect(harness.supervisor.isSessionActive(harness.session.id)).toBe(true);
+    expect(() => harness.supervisor.submitUserMessage(harness.session.id, 'again')).toThrow(
+      AgentSessionBusyError
+    );
+    expect(createRunCount).toBe(1);
+
+    settleRun();
+    await harness.waitForIdle();
+    expect(harness.supervisor.isSessionActive(harness.session.id)).toBe(false);
+    expect(createRunCount).toBe(1);
   });
 
   test("stopSessionsForDevice('pane_lost')：活动 run 被 abort 且 status=error（不自动恢复）", async () => {
