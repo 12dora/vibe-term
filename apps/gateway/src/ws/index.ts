@@ -325,13 +325,17 @@ export class WebSocketServer {
 
       await dispatchBorshKind(this.borshHandlers, this as never, ws, kind, refSeq, payload);
     } catch (err) {
-      const e = err instanceof wsBorsh.WsBorshError ? err : null;
+      if (err instanceof wsBorsh.WsBorshError) {
+        this.sendError(ws, refSeq, err.code, err.message, err.retryable);
+        return;
+      }
+      console.error('[ws] borsh handler failed:', err);
       this.sendError(
         ws,
         refSeq,
-        e?.code ?? wsBorsh.ERROR_PAYLOAD_DECODE_FAILED,
-        e?.message ?? 'Payload decode failed',
-        e?.retryable ?? false
+        wsBorsh.ERROR_INTERNAL_ERROR,
+        wsBorsh.getErrorMessage(wsBorsh.ERROR_INTERNAL_ERROR),
+        false
       );
     }
   }

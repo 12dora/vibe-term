@@ -17,11 +17,39 @@ function asBody(value: unknown): UpdateSiteSettingsRequest {
 
 describe('normalizeSiteSettingsInput', () => {
   test('composes per-section normalizers and ignores omitted fields', () => {
-    const result = normalizeSiteSettingsInput({
-      siteName: '  tmex  ',
+    expect(normalizeSiteSettingsInput({ siteName: '  tmex  ', language: 'zh_CN' })).toEqual({
+      siteName: 'tmex',
       language: 'zh_CN',
     });
-    expect(result).toEqual({ siteName: 'tmex', language: 'zh_CN' });
+
+    const result = normalizeSiteSettingsInput({
+      siteName: '  tmex  ',
+      siteUrl: 'https://example.test',
+      language: 'zh_CN',
+      bellThrottleSeconds: 1.9,
+      notificationThrottleSeconds: 0,
+      enableBrowserNotificationToast: true,
+      enableNotificationPush: false,
+      enableBellPush: false,
+      enableBellSound: true,
+      sshReconnectMaxRetries: 2.8,
+      sshReconnectDelaySeconds: 3,
+      disabledNotificationChannels: [' a ', '', 'a', 'b'],
+    });
+    expect(result).toEqual({
+      siteName: 'tmex',
+      siteUrl: 'https://example.test',
+      language: 'zh_CN',
+      bellThrottleSeconds: 1,
+      notificationThrottleSeconds: 0,
+      enableBrowserNotificationToast: true,
+      enableNotificationPush: false,
+      enableBellPush: false,
+      enableBellSound: true,
+      sshReconnectMaxRetries: 2,
+      sshReconnectDelaySeconds: 3,
+      disabledNotificationChannels: ['a', 'b'],
+    });
   });
 
   test('identity rejects empty siteName and non-http siteUrl', () => {

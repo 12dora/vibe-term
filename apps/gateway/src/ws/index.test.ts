@@ -321,6 +321,43 @@ describe('WebSocketServer malformed Borsh payload', () => {
     expect(error.refSeq).toBe(11);
     expect(error.retryable).toBe(false);
   });
+
+  test('handler runtime error is not reported as payload decode failure', async () => {
+    const server = new WebSocketServer() as any;
+    const ws = createBorshClient();
+    ws.data.borshState.negotiated = true;
+    server.handleDeviceDisconnect = () => {
+      throw new Error('boom');
+    };
+
+    const logged: unknown[] = [];
+    const errorSpy = spyOn(console, 'error').mockImplementation((...args: unknown[]) => {
+      logged.push(args);
+    });
+    try {
+      const payload = wsBorsh.encodePayload(wsBorsh.schema.DeviceDisconnectSchema, {
+        deviceId: 'dev-1',
+      });
+      await server.handleBorshMessage(ws, wsBorsh.KIND_DEVICE_DISCONNECT, 5, payload);
+
+      expect(ws.sent.length).toBe(1);
+      const error = decodeError(ws.sent[0]);
+      expect(error.code).not.toBe(wsBorsh.ERROR_PAYLOAD_DECODE_FAILED);
+      expect(error.message).not.toBe('Payload decode failed');
+      expect(error.code).toBe(wsBorsh.ERROR_INTERNAL_ERROR);
+      expect(error.refSeq).toBe(5);
+      expect(error.retryable).toBe(false);
+      expect(
+        logged.some(
+          (args) =>
+            Array.isArray(args) &&
+            args.some((arg) => arg instanceof Error && arg.message === 'boom')
+        )
+      ).toBe(true);
+    } finally {
+      errorSpy.mockRestore();
+    }
+  });
 });
 
 describe('WebSocketServer snapshot recovery', () => {

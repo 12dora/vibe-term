@@ -87,4 +87,23 @@ describe('borsh dispatcher', () => {
     ).rejects.toBeInstanceOf(wsBorsh.WsBorshError);
     expect(handled).toBe(false);
   });
+
+  test('handler runtime errors propagate instead of being converted to decode errors', async () => {
+    const host = {
+      handleDeviceDisconnect() {
+        throw new Error('boom');
+      },
+      sendError() {
+        throw new Error('sendError should not be called');
+      },
+    } as unknown as BorshDispatchHost;
+    const handlers = createBorshKindHandlers(host);
+    const payload = wsBorsh.encodePayload(wsBorsh.schema.DeviceDisconnectSchema, {
+      deviceId: 'dev-1',
+    });
+
+    await expect(
+      dispatchBorshKind(handlers, host, createWs(), wsBorsh.KIND_DEVICE_DISCONNECT, 4, payload)
+    ).rejects.toThrow('boom');
+  });
 });
