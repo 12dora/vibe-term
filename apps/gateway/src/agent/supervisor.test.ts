@@ -215,7 +215,7 @@ function createSupervisorHarness(options: {
   return { supervisor, session, broadcasts, runtimeCalls, hub, waitForIdle, runDeps };
 }
 
-function createTimedOutHangHarness(baseUrl: string) {
+function createTimedOutHangHarness(baseUrl: string, options?: { idleBeforeHang?: boolean }) {
   let settleFirst: () => void = () => {};
   const firstHang = new Promise<void>((resolve) => {
     settleFirst = resolve;
@@ -235,10 +235,13 @@ function createTimedOutHangHarness(baseUrl: string) {
     },
     requestSteer() {},
     execute: async () => {
+      if (options?.idleBeforeHang) {
+        updateAgentSession(sessionId, { status: 'idle', lastError: null });
+      }
       await firstHang;
       if (stopReason === 'manual') {
         updateAgentSession(sessionId, { status: 'stopped', lastError: null });
-      } else if (stopReason === 'pane_lost') {
+      } else if (stopReason === 'pane_lost' && !options?.idleBeforeHang) {
         updateAgentSession(sessionId, {
           status: 'error',
           lastError: 'terminal connection lost: pane/device unavailable',
@@ -826,6 +829,37 @@ describe('AgentSupervisor - stop 语义', () => {
     const session = getAgentSessionById(harness.session.id);
     expect(session?.status).toBe('error');
     expect(session?.lastError).toMatch(/terminal connection lost|pane\/device unavailable/);
+    expect(listQueuedAgentMessages(harness.session.id).map((q) => q.text)).toEqual(['second']);
+  });
+
+  test('stop() 超时后 start()：run 已 idle 但仍在 activeRuns 时 pane_lost 不得从队列再拉起', async () => {
+    const mock = createMockChatServer(() =>
+      sseResponse([chunk({ role: 'assistant', content: 'ok' }), chunk({}, 'stop')])
+    );
+    servers.push(mock.server);
+    const { harness, settleFirst, getCreateRunCount } = createTimedOutHangHarness(mock.baseUrl, {
+      idleBeforeHang: true,
+    });
+
+    await harness.supervisor.start();
+    harness.supervisor.submitUserMessage(harness.session.id, 'first');
+    expect(getAgentSessionById(harness.session.id)?.status).toBe('idle');
+    expect(harness.supervisor.isSessionActive(harness.session.id)).toBe(true);
+
+    const queued = harness.supervisor.submitUserMessage(harness.session.id, 'second');
+    expect(queued.kind).toBe('queued');
+
+    await harness.supervisor.stop();
+    await harness.supervisor.start();
+    expect(getCreateRunCount()).toBe(1);
+    expect(harness.supervisor.isSessionActive(harness.session.id)).toBe(true);
+
+    harness.supervisor.stopSessionsForDevice(TEST_DEVICE_ID, 'pane_lost');
+    settleFirst();
+    await harness.waitForIdle();
+
+    expect(getCreateRunCount()).toBe(1);
+    expect(harness.supervisor.isSessionActive(harness.session.id)).toBe(false);
     expect(listQueuedAgentMessages(harness.session.id).map((q) => q.text)).toEqual(['second']);
   });
 

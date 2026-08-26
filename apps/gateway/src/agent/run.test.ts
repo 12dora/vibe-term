@@ -17,7 +17,12 @@ import {
 } from '../db/agent';
 import { getDb as getOrmDb } from '../db/client';
 import { AgentRun, type AgentRunDeps, applyMessageWindow, isRetryableLlmError } from './run';
-import type { TerminalRuntimeLike } from './tools/terminal';
+import { asEmulatorSource, paneEmulatorRegistry } from './run-resource-scope';
+import {
+  type TerminalRuntimeLike,
+  createTerminalToolContext,
+  liveEmulator,
+} from './tools/terminal';
 
 // ========== mock LLM server（spike 模式） ==========
 
@@ -136,6 +141,7 @@ interface HarnessOptions {
   baseUrl: string;
   writeMode?: 'confirm' | 'auto';
   title?: string;
+  paneId?: string;
   captureError?: () => Error | null;
   screen?: string;
   deltaFlushIntervalMs?: number;
@@ -147,7 +153,7 @@ function createHarness(options: HarnessOptions): TestHarness {
   const session = createAgentSession({
     title: options.title ?? 'Test Session',
     deviceId: TEST_DEVICE_ID,
-    paneId: '%5',
+    paneId: options.paneId ?? '%5',
     modelId: 'mock-model',
     writeMode: options.writeMode ?? 'auto',
   });
@@ -608,6 +614,95 @@ describe('AgentRun 核心循环', () => {
 
     // 不应该跑满 5 个 step（fail-fast 在第 2 次失败时 abort）
     expect(mock.requests.length).toBeLessThanOrEqual(3);
+  });
+
+  test('fatal streak 只释放本 run 引用：共享 emulator 仍 live，finally 不二次 release', async () => {
+    const mock = createMockChatServer((callIndex) => {
+      if (callIndex < 5) {
+        return sseResponse([
+          chunk({
+            role: 'assistant',
+            tool_calls: [
+              {
+                index: 0,
+                id: `call_read_${callIndex}`,
+                type: 'function',
+                function: { name: 'read_screen', arguments: '{"historyLines":1}' },
+              },
+            ],
+          }),
+          chunk({}, 'tool_calls'),
+        ]);
+      }
+      return sseResponse([chunk({ role: 'assistant', content: 'done' }), chunk({}, 'stop')]);
+    });
+    servers.push(mock.server);
+
+    const paneId = '%fatal-streak';
+    const harness = createHarness({ baseUrl: mock.baseUrl, paneId });
+    const runtime = {
+      subscribe() {
+        return () => {};
+      },
+      sendInput() {},
+      async capturePaneText() {
+        throw new Error('ssh connection lost');
+      },
+      async getPaneInfo() {
+        return {
+          cols: 80,
+          rows: 24,
+          cursorX: 0,
+          cursorY: 0,
+          alternateScreen: false,
+          currentCommand: 'bash',
+        };
+      },
+    };
+    harness.deps.acquireRuntime = async () => runtime;
+
+    const source = asEmulatorSource(runtime);
+    expect(source).not.toBeNull();
+    if (!source) {
+      throw new Error('expected emulator stream source');
+    }
+    const otherEmulator = await paneEmulatorRegistry.acquire(TEST_DEVICE_ID, paneId, source);
+
+    const originalRelease = paneEmulatorRegistry.release.bind(paneEmulatorRegistry);
+    let releaseCount = 0;
+    paneEmulatorRegistry.release = async (deviceId, id) => {
+      const remaining = await originalRelease(deviceId, id);
+      if (deviceId === TEST_DEVICE_ID && id === paneId) {
+        releaseCount += 1;
+      }
+      return remaining;
+    };
+
+    try {
+      appendAgentMessage(harness.session.id, 'user', { role: 'user', content: 'check screen' });
+      const run = new AgentRun(harness.session.id, harness.deps);
+      const outcome = await run.execute();
+
+      expect(outcome).toBe('error');
+      expect(getAgentSessionById(harness.session.id)?.status).toBe('error');
+      await new Promise((r) => setTimeout(r, 20));
+      expect(otherEmulator.isDisposed).toBe(false);
+      expect(releaseCount).toBe(1);
+
+      const otherCtx = createTerminalToolContext({
+        paneId,
+        deviceId: TEST_DEVICE_ID,
+        getRuntime: () => runtime,
+        getEmulator: () => otherEmulator,
+        needsApprovalForWrite: false,
+        onFailure: () => {},
+        onSuccess: () => {},
+      });
+      expect(liveEmulator(otherCtx)).toBe(otherEmulator);
+    } finally {
+      paneEmulatorRegistry.release = originalRelease;
+      await paneEmulatorRegistry.destroy(TEST_DEVICE_ID, paneId);
+    }
   });
 
   test('流空闲看门狗：上游 SSE stall 时 abort 并落 error', async () => {

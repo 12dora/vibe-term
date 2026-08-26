@@ -108,6 +108,7 @@ interface ActiveRun {
   promise: Promise<unknown>;
   stale: boolean;
   resumeSuppressed: boolean;
+  deviceId: string | null;
 }
 
 interface AgentSupervisorDeps {
@@ -382,10 +383,20 @@ export class AgentSupervisor {
   }
 
   /**
-   * 设备连接关闭时主动停止绑定该设备的运行中/等待确认 session：
-   * 有活动 run 则 requestStop('pane_lost')，无活动 run 直接落 error 状态。
+   * 设备连接关闭时主动停止绑定该设备的 session：
+   * - 所有仍在 activeRuns 且绑定该设备的 entry（不看 DB status）一律 suppressResume + requestStop
+   *   （run 可能已落 idle/error 但仍卡在 finally/release）；
+   * - DB 为 running/waiting_confirmation 且无活动 run 的直接落 error。
    */
   stopSessionsForDevice(deviceId: string, reason: AgentStopReason = 'pane_lost'): void {
+    for (const [sessionId, entry] of this.activeRuns) {
+      if (entry.deviceId !== deviceId) {
+        continue;
+      }
+      this.suppressResume(sessionId);
+      entry.run.requestStop(reason);
+    }
+
     const sessions = [
       ...getAgentSessionsByStatus('running'),
       ...getAgentSessionsByStatus('waiting_confirmation'),
@@ -393,9 +404,7 @@ export class AgentSupervisor {
 
     for (const session of sessions) {
       this.suppressResume(session.id);
-      const active = this.activeRuns.get(session.id);
-      if (active) {
-        active.run.requestStop(reason);
+      if (this.activeRuns.has(session.id)) {
         continue;
       }
       const message = 'terminal connection lost: pane/device unavailable';
@@ -495,6 +504,7 @@ export class AgentSupervisor {
       promise: Promise.resolve(),
       stale: false,
       resumeSuppressed: false,
+      deviceId: getAgentSessionById(sessionId)?.deviceId ?? null,
     };
     entry.promise = run
       .execute()
