@@ -19,7 +19,13 @@ import type { NotificationSink } from '@tmex/notifications';
 import type { AgentSessionDto } from '@tmex/shared';
 import type { AgentHistorySync } from './agent-history-sync';
 import { mergeMessages } from './agent-history-sync';
-import type { AgentActions, AgentGetState, AgentSetState } from './agent-state';
+import type {
+  AgentActions,
+  AgentGetState,
+  AgentSetState,
+  CreateSessionOptions,
+  DraftSession,
+} from './agent-state';
 
 /** 按 updatedAt 倒序；同一时间戳用 id 升序兜底，保证比较函数反对称与排序稳定 */
 export function sortSessionOrder(sessions: Record<string, AgentSessionDto | undefined>): string[] {
@@ -63,8 +69,75 @@ export function createAgentSessionActions(deps: AgentSessionActionsDeps): AgentS
     clearSessionRuntime,
   } = deps;
 
+  let draftSequence = 0;
+  // 草稿物化的 in-flight 去重：同一草稿的并发调用共享同一个请求，避免重复建会话
+  const materializing = new Map<string, Promise<AgentSessionDto | null>>();
+
   function reportError(error: unknown): void {
     notifications.error(error instanceof Error ? error.message : String(error));
+  }
+
+  /** 建会话并写入 store，但不改变当前激活会话（激活由调用方按新鲜度决定） */
+  async function createSessionRequest(
+    deviceId: string,
+    paneId: string,
+    options?: CreateSessionOptions
+  ): Promise<AgentSessionDto | null> {
+    try {
+      const session = await createAgentSession(
+        {
+          deviceId,
+          paneId,
+          ...(options?.providerId !== undefined ? { providerId: options.providerId } : {}),
+          ...(options?.modelId !== undefined && options.modelId !== null
+            ? { modelId: options.modelId }
+            : {}),
+          ...(options?.providerHostedTools !== undefined
+            ? { providerHostedTools: options.providerHostedTools }
+            : {}),
+          ...(options?.originPaneTitle !== undefined
+            ? { originPaneTitle: options.originPaneTitle }
+            : {}),
+          writeMode: options?.writeMode ?? get().defaultWriteMode,
+        },
+        apiClient
+      );
+      set((prev) => {
+        const sessions = { ...prev.sessions, [session.id]: session };
+        return {
+          sessions,
+          sessionOrder: sortSessionOrder(sessions),
+          messages: { ...prev.messages, [session.id]: [] },
+          historyLoaded: { ...prev.historyLoaded, [session.id]: true },
+        };
+      });
+      return session;
+    } catch (error) {
+      reportError(error);
+      return null;
+    }
+  }
+
+  function syncMaterializingFlag(): void {
+    const draftKey = get().draft?.key ?? null;
+    const pending = draftKey !== null && materializing.has(draftKey);
+    if (get().materializingDraft !== pending) {
+      set({ materializingDraft: pending });
+    }
+  }
+
+  async function materializeDraftRequest(draft: DraftSession): Promise<AgentSessionDto | null> {
+    const session = await createSessionRequest(draft.deviceId, draft.paneId, {
+      providerId: draft.providerId,
+      modelId: draft.modelId,
+      originPaneTitle: draft.paneTitle,
+    });
+    // 请求期间用户可能已切到新草稿或别的会话：过期结果只入库，不抢占当前选择
+    if (session && get().draft?.key === draft.key) {
+      // setActiveSession 内部清空草稿
+      get().setActiveSession(session.id);
+    }
+    return session;
   }
 
   return {
@@ -118,7 +191,7 @@ export function createAgentSessionActions(deps: AgentSessionActionsDeps): AgentS
       }
 
       // 选中真实会话即退出草稿态
-      set({ activeSessionId: sessionId, draft: null });
+      set({ activeSessionId: sessionId, draft: null, materializingDraft: false });
 
       if (sessionId) {
         subscribe(sessionId);
@@ -129,40 +202,11 @@ export function createAgentSessionActions(deps: AgentSessionActionsDeps): AgentS
     },
 
     async createSession(deviceId, paneId, options) {
-      try {
-        const session = await createAgentSession(
-          {
-            deviceId,
-            paneId,
-            ...(options?.providerId !== undefined ? { providerId: options.providerId } : {}),
-            ...(options?.modelId !== undefined && options.modelId !== null
-              ? { modelId: options.modelId }
-              : {}),
-            ...(options?.providerHostedTools !== undefined
-              ? { providerHostedTools: options.providerHostedTools }
-              : {}),
-            ...(options?.originPaneTitle !== undefined
-              ? { originPaneTitle: options.originPaneTitle }
-              : {}),
-            writeMode: options?.writeMode ?? get().defaultWriteMode,
-          },
-          apiClient
-        );
-        set((prev) => {
-          const sessions = { ...prev.sessions, [session.id]: session };
-          return {
-            sessions,
-            sessionOrder: sortSessionOrder(sessions),
-            messages: { ...prev.messages, [session.id]: [] },
-            historyLoaded: { ...prev.historyLoaded, [session.id]: true },
-          };
-        });
+      const session = await createSessionRequest(deviceId, paneId, options);
+      if (session) {
         get().setActiveSession(session.id);
-        return session;
-      } catch (error) {
-        reportError(error);
-        return null;
       }
+      return session;
     },
 
     async renameSession(sessionId, title) {
@@ -348,9 +392,12 @@ export function createAgentSessionActions(deps: AgentSessionActionsDeps): AgentS
         unsubscribe(previous);
       }
       // 默认模型继承全局默认（modelId=null → 后端回退默认）；provider 同理
+      draftSequence += 1;
       set({
         activeSessionId: null,
+        materializingDraft: false,
         draft: {
+          key: `draft-${draftSequence}`,
           deviceId,
           paneId,
           providerId: null,
@@ -366,19 +413,21 @@ export function createAgentSessionActions(deps: AgentSessionActionsDeps): AgentS
     },
 
     clearDraft() {
-      set({ draft: null });
+      set({ draft: null, materializingDraft: false });
     },
 
-    async materializeDraft() {
+    materializeDraft() {
       const draft = get().draft;
-      if (!draft) return null;
-      const session = await get().createSession(draft.deviceId, draft.paneId, {
-        providerId: draft.providerId,
-        modelId: draft.modelId,
-        originPaneTitle: draft.paneTitle,
+      if (!draft) return Promise.resolve(null);
+      const inFlight = materializing.get(draft.key);
+      if (inFlight) return inFlight;
+      const pending = materializeDraftRequest(draft).finally(() => {
+        materializing.delete(draft.key);
+        syncMaterializingFlag();
       });
-      // createSession 成功会 setActiveSession（其内部清 draft）
-      return session;
+      materializing.set(draft.key, pending);
+      syncMaterializingFlag();
+      return pending;
     },
 
     async stopSession(sessionId) {

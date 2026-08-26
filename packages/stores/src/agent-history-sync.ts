@@ -62,10 +62,8 @@ export function createAgentHistorySync(deps: AgentHistorySyncDeps): AgentHistory
         : -1;
       const messageList = await fetchAgentMessages(sessionId, afterSeq, apiClient);
       set((prev) => {
-        const merged = mergeMessages(
-          afterSeq >= 0 ? prev.messages[sessionId] : undefined,
-          messageList
-        );
+        // 全量拉取也必须以 store 现有消息为基线：请求在途期间发出的消息不在快照里，直接替换会丢
+        const merged = mergeMessages(prev.messages[sessionId], messageList);
         const current = prev.inProgress[sessionId];
         // 已落库内容对应的 stale 流式段在此处清除
         const inProgress = current

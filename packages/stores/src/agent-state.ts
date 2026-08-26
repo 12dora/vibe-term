@@ -18,6 +18,8 @@ export interface PendingConfirmationUi {
 
 /** 未持久化的草稿会话：首条消息发送时才落库（空草稿不进 DB） */
 export interface DraftSession {
+  /** 草稿代际标识：物化结果回填前用它判定草稿是否已被新的草稿取代 */
+  key: string;
   deviceId: string;
   paneId: string;
   providerId: string | null;
@@ -50,6 +52,8 @@ export interface AgentStateData {
   queued: Record<string, AgentQueuedMessageDto[] | undefined>;
   sending: Record<string, boolean | undefined>;
   draft: DraftSession | null;
+  /** 当前草稿是否正在物化（创建 session 请求 in-flight），输入区据此禁用 */
+  materializingDraft: boolean;
   // 新建 session 的默认写入模式（浏览器记忆，session 创建前也由开关控制）
   defaultWriteMode: AgentWriteMode;
 }
@@ -121,6 +125,7 @@ export function createInitialAgentStateData(): AgentStateData {
     queued: {},
     sending: {},
     draft: null,
+    materializingDraft: false,
     defaultWriteMode: 'confirm',
   };
 }
