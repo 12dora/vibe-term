@@ -2735,6 +2735,77 @@ describe('GhosttyTerminalController clipboard and selection API', () => {
     expect(terminal.hasSelection()).toBeTrue();
   });
 
+  // resize 先写 cols/rows 再调 WASM：WASM 抛错后控制器尺寸与内核尺寸永久错位，
+  // 且同尺寸重试会被开头的相等判断早退掉，永远修不回来。
+  test('failed WASM resize should keep cols/rows so the same size can be retried', async () => {
+    dom = installFakeDom();
+    const bindings = createFakeBindings();
+    const attempts: Array<{ cols: number; rows: number }> = [];
+    let failResize = false;
+    bindings.resizeTerminal = (_terminal: number, cols: number, rows: number) => {
+      attempts.push({ cols, rows });
+      if (failResize) {
+        throw new Error('wasm resize failed');
+      }
+    };
+
+    const { terminal } = await setupTerminal(bindings);
+    attempts.length = 0;
+
+    const colsBefore = terminal.cols;
+    const rowsBefore = terminal.rows;
+    failResize = true;
+
+    expect(() => {
+      terminal.resize(colsBefore + 10, rowsBefore + 5);
+    }).toThrow('wasm resize failed');
+    expect(terminal.cols).toBe(colsBefore);
+    expect(terminal.rows).toBe(rowsBefore);
+
+    failResize = false;
+    terminal.resize(colsBefore + 10, rowsBefore + 5);
+
+    expect(attempts).toEqual([
+      { cols: colsBefore + 10, rows: rowsBefore + 5 },
+      { cols: colsBefore + 10, rows: rowsBefore + 5 },
+    ]);
+    expect(terminal.cols).toBe(colsBefore + 10);
+    expect(terminal.rows).toBe(rowsBefore + 5);
+  });
+
+  // resize 会重排软换行与 scrollback 行号，按绝对行号缓存的行模型全部作废；
+  // 不清缓存则选择文本 / 高亮 / 链接检测会读到 resize 前的模型。
+  test('successful resize should invalidate the absolute-row line cache', async () => {
+    dom = installFakeDom();
+    const bindings = createFakeBindings();
+    let viewportOffset = 0;
+    bindings.readScrollbar = () => ({
+      total: 24 + viewportOffset,
+      offset: viewportOffset,
+      len: 24,
+    });
+
+    const { terminal } = await setupTerminal(bindings);
+    // 白盒探针：行模型缓存归 TerminalRenderCoordinator 所有，直接问它取该绝对行的模型
+    const firstCellOf = (line: number): string | null =>
+      (
+        terminal as unknown as {
+          renderCoordinator: { getLineModel: (line: number) => { colChars: (string | null)[] } };
+        }
+      ).renderCoordinator.getLineModel(line).colChars[0] ?? null;
+
+    expect(firstCellOf(0)).toBe('mock-canvas-line');
+
+    viewportOffset = 10;
+    terminal.refresh();
+    // 行 0 已滚出视口，此时只可能来自绝对行缓存
+    expect(firstCellOf(0)).toBe('mock-canvas-line');
+
+    terminal.resize(terminal.cols + 4, terminal.rows);
+
+    expect(firstCellOf(0)).toBeNull();
+  });
+
   test('resize with changed cols/rows should clear selection', async () => {
     dom = installFakeDom();
     const bindings = createFakeBindings();

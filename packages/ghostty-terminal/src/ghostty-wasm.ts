@@ -1444,33 +1444,43 @@ async function loadGhosttyWasmBytesAny(): Promise<ArrayBuffer> {
   throw lastError instanceof Error ? lastError : new Error(String(lastError));
 }
 
+async function instantiateGhosttyBindings(): Promise<GhosttyBindings> {
+  const wasmBytes = await loadGhosttyWasmBytesAny();
+  const wasmModule = await WebAssembly.instantiate(wasmBytes, {
+    env: {
+      log() {
+        // ignore wasm logs in production usage
+      },
+    },
+  });
+
+  const exports = wasmModule.instance.exports as GhosttyExports;
+  const bytes = new Uint8Array(exports.memory.buffer);
+  const typeJsonPtr = exports.ghostty_type_json();
+  let end = typeJsonPtr;
+
+  while (bytes[end] !== 0) {
+    end += 1;
+  }
+
+  const layout = JSON.parse(
+    new TextDecoder().decode(bytes.subarray(typeJsonPtr, end))
+  ) as LayoutMap;
+
+  return new GhosttyBindings(exports, layout);
+}
+
 export async function getGhosttyBindings(): Promise<GhosttyBindings> {
   if (!bindingsPromise) {
-    bindingsPromise = (async () => {
-      const wasmBytes = await loadGhosttyWasmBytesAny();
-      const wasmModule = await WebAssembly.instantiate(wasmBytes, {
-        env: {
-          log() {
-            // ignore wasm logs in production usage
-          },
-        },
-      });
-
-      const exports = wasmModule.instance.exports as GhosttyExports;
-      const bytes = new Uint8Array(exports.memory.buffer);
-      const typeJsonPtr = exports.ghostty_type_json();
-      let end = typeJsonPtr;
-
-      while (bytes[end] !== 0) {
-        end += 1;
+    // 只缓存成功：失败的 promise 留在缓存里会把一次性的加载错误（网络、资源缺失）
+    // 变成进程级永久失效，之后任何调用都拿不到 bindings 也无从重试。
+    const pending = instantiateGhosttyBindings().catch((error: unknown) => {
+      if (bindingsPromise === pending) {
+        bindingsPromise = null;
       }
-
-      const layout = JSON.parse(
-        new TextDecoder().decode(bytes.subarray(typeJsonPtr, end))
-      ) as LayoutMap;
-
-      return new GhosttyBindings(exports, layout);
-    })();
+      throw error;
+    });
+    bindingsPromise = pending;
   }
 
   return bindingsPromise;
