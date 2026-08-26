@@ -242,8 +242,16 @@ export class BorshWebSocketClient {
         this.handleError(new Error('WebSocket error'));
       };
     } catch (err) {
-      this.handleError(err instanceof Error ? err : new Error(String(err)));
+      this.handleConnectFailure(err instanceof Error ? err : new Error(String(err)));
     }
+  }
+
+  // socketFactory 同步抛出时没有 socket，也就永远等不到 onclose 兜底：
+  // 必须自行清掉 ws 引用并走与 onclose 相同的收敛路径，否则状态卡死在 WS_CONNECTING
+  private handleConnectFailure(error: Error): void {
+    this.ws = null;
+    this.handleError(error);
+    this.handleClose();
   }
 
   disconnect(): void {

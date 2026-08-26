@@ -648,3 +648,79 @@ describe('visibilitychange', () => {
     }
   });
 });
+
+describe('建连同步失败', () => {
+  test('socketFactory 同步抛出时不卡在 WS_CONNECTING，并安排重连', async () => {
+    let calls = 0;
+    const errors: string[] = [];
+    const client = new BorshWebSocketClient({
+      url: 'ws://example.test/ws',
+      socketFactory: () => {
+        calls += 1;
+        throw new Error('factory boom');
+      },
+      reconnectDelayMs: 1,
+      maxReconnectAttempts: 1,
+    });
+    client.onError((error) => errors.push(error.message));
+
+    client.connect();
+
+    expect(calls).toBe(1);
+    expect(client.getState()).toBe('RECONNECT_BACKOFF');
+    expect(errors).toContain('factory boom');
+
+    await until(() => calls === 2);
+    expect(client.getState()).toBe('CLOSED');
+    expect(errors).toContain('Max reconnection attempts reached');
+
+    client.disconnect();
+  });
+
+  test('重连预算为 0 时同步失败直接落 CLOSED', () => {
+    const errors: string[] = [];
+    const client = new BorshWebSocketClient({
+      url: 'ws://example.test/ws',
+      socketFactory: () => {
+        throw new Error('factory boom');
+      },
+      reconnectDelayMs: 1,
+      maxReconnectAttempts: 0,
+    });
+    client.onError((error) => errors.push(error.message));
+
+    client.connect();
+
+    expect(client.getState()).toBe('CLOSED');
+    expect(errors).toEqual(['factory boom', 'Max reconnection attempts reached']);
+
+    client.disconnect();
+  });
+
+  test('同步失败后 connect() 可再次建连，不被残留 ws 挡住', () => {
+    let fail = true;
+    const sockets: FakeSocket[] = [];
+    const client = new BorshWebSocketClient({
+      url: 'ws://example.test/ws',
+      socketFactory: () => {
+        if (fail) throw new Error('factory boom');
+        const socket = new FakeSocket();
+        sockets.push(socket);
+        return socket;
+      },
+      reconnectDelayMs: 60_000,
+      maxReconnectAttempts: 5,
+    });
+
+    client.connect();
+    expect(client.getState()).toBe('RECONNECT_BACKOFF');
+
+    fail = false;
+    client.connect();
+    expect(sockets.length).toBe(1);
+    (sockets[0] as FakeSocket).open();
+    expect(client.getState()).toBe('HELLO_NEGOTIATING');
+
+    client.disconnect();
+  });
+});

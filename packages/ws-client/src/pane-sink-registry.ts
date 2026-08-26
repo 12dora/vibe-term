@@ -30,7 +30,9 @@ export interface PaneSink {
 interface PendingPaneState {
   outputs: GatewayTerminalData[];
   outputBytes: number;
-  reset: boolean;
+  // 缓存的 reset 连同来源一起保留：sink 未挂载时替换为最后一次 reset 的 origin（last-wins），
+  // 注册时按原样重放；丢掉 origin 会把 history-refresh 误当作 select 重放并触发本地尺寸上报
+  reset: PaneResetOrigin | null;
   history: { data: string; alternateScreen: boolean; modes: number } | null;
   screen: GatewayPaneScreenSnapshot | null;
   historyPages: GatewayPaneHistoryPage[];
@@ -77,7 +79,7 @@ export class PaneSinkRegistry {
       state = {
         outputs: [],
         outputBytes: 0,
-        reset: false,
+        reset: null,
         history: null,
         screen: null,
         historyPages: [],
@@ -96,7 +98,7 @@ export class PaneSinkRegistry {
     if (state) {
       this.pending.delete(key);
       if (state.reset) {
-        sink.onReset('select');
+        sink.onReset(state.reset);
       }
       if (state.history) {
         sink.onApplyHistory(state.history.data, state.history.alternateScreen, state.history.modes);
@@ -129,7 +131,7 @@ export class PaneSinkRegistry {
       return;
     }
     const state = this.getPending(key);
-    state.reset = true;
+    state.reset = origin;
     state.outputs = [];
     state.outputBytes = 0;
     state.history = null;

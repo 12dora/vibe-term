@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, test } from 'bun:test';
 import {
+  type PaneResetOrigin,
   type PaneSink,
   PaneSinkRegistry,
   beginPaneHistoryGate,
@@ -21,6 +22,16 @@ function createRecordingSink() {
     onOutput: (data) => events.push({ type: 'output', data: new TextDecoder().decode(data) }),
   };
   return { sink, events };
+}
+
+function createOriginRecordingSink() {
+  const origins: PaneResetOrigin[] = [];
+  const sink: PaneSink = {
+    onReset: (origin) => origins.push(origin),
+    onApplyHistory: () => {},
+    onOutput: () => {},
+  };
+  return { sink, origins };
 }
 
 const encode = (text: string) => new TextEncoder().encode(text);
@@ -176,5 +187,53 @@ describe('pane-sink-registry', () => {
     registerPaneSink('dev-b', '%1', b.sink);
     // 无画面基线（reset/history/screen）的流中片段不回放：写进全新空终端只会闪现乱码
     expect(b.events).toEqual([]);
+  });
+
+  test('挂载前缓存的 history-refresh reset 按原 origin 重放', () => {
+    dispatchPaneReset('dev', '%1', 'history-refresh');
+
+    const { sink, origins } = createOriginRecordingSink();
+    registerPaneSink('dev', '%1', sink);
+
+    expect(origins).toEqual(['history-refresh']);
+  });
+
+  test('挂载前缓存的 select reset 按原 origin 重放', () => {
+    dispatchPaneReset('dev', '%1', 'select');
+
+    const { sink, origins } = createOriginRecordingSink();
+    registerPaneSink('dev', '%1', sink);
+
+    expect(origins).toEqual(['select']);
+  });
+
+  test('挂载前多次 reset 取最后一次的 origin（last-wins），且只重放一次', () => {
+    dispatchPaneReset('dev', '%1', 'select');
+    dispatchPaneReset('dev', '%1', 'history-refresh');
+
+    const { sink, origins } = createOriginRecordingSink();
+    registerPaneSink('dev', '%1', sink);
+
+    expect(origins).toEqual(['history-refresh']);
+
+    dispatchPaneReset('dev', '%2', 'history-refresh');
+    dispatchPaneReset('dev', '%2', 'select');
+
+    const later = createOriginRecordingSink();
+    registerPaneSink('dev', '%2', later.sink);
+
+    expect(later.origins).toEqual(['select']);
+  });
+
+  test('gate 命中的 history 在 sink 挂载前到达时，重放为 history-refresh', () => {
+    const token = new Uint8Array(16).fill(9);
+    beginPaneHistoryGate('dev', '%5', token);
+    dispatchPaneOutput('dev', '%5', encode('live'));
+    expect(dispatchPaneHistory('dev', '%5', token, 'H', false, 0)).toBe(true);
+
+    const { sink, origins } = createOriginRecordingSink();
+    registerPaneSink('dev', '%5', sink);
+
+    expect(origins).toEqual(['history-refresh']);
   });
 });
