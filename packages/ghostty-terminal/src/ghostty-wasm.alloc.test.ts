@@ -110,11 +110,12 @@ function createTrackedBindings(options: FakeOptions = {}) {
     ghostty_formatter_terminal_new: (_allocatorPtr: number, outFormatterPtr: number) => {
       const result = options.formatterNewResult ?? 0;
       if (result === 0) {
-        new DataView(memory.buffer).setUint32(outFormatterPtr, 4096, true);
+        // formatter 句柄同样走记账：否则漏调 freeFormatter 也不会被记账断言发现。
+        new DataView(memory.buffer).setUint32(outFormatterPtr, alloc('formatter', 8), true);
       }
       return result;
     },
-    ghostty_formatter_free: () => {},
+    ghostty_formatter_free: (formatter: number) => free('formatter', formatter),
     ghostty_formatter_format_alloc: (
       _formatter: number,
       _allocatorPtr: number,
