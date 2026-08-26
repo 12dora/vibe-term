@@ -10,14 +10,16 @@ async function loadFreshModule(tag: string): Promise<GhosttyWasmModule> {
   return import(`./ghostty-wasm.ts?retry=${tag}-${Date.now()}`) as Promise<GhosttyWasmModule>;
 }
 
-async function withFailingInstantiate<T>(run: () => Promise<T>): Promise<T> {
+async function withFailingInstantiate<T>(run: (calls: { count: number }) => Promise<T>): Promise<T> {
   const realInstantiate = WebAssembly.instantiate;
+  const calls = { count: 0 };
   (WebAssembly as { instantiate: unknown }).instantiate = async () => {
+    calls.count += 1;
     throw new Error('injected instantiate failure');
   };
 
   try {
-    return await run();
+    return await run(calls);
   } finally {
     (WebAssembly as { instantiate: unknown }).instantiate = realInstantiate;
   }
@@ -47,9 +49,10 @@ describe('getGhosttyBindings failure caching', () => {
   test('should surface every failure while the loader keeps failing', async () => {
     const module = await loadFreshModule('repeat');
 
-    await withFailingInstantiate(async () => {
+    await withFailingInstantiate(async (calls) => {
       await expect(module.getGhosttyBindings()).rejects.toThrow('injected instantiate failure');
       await expect(module.getGhosttyBindings()).rejects.toThrow('injected instantiate failure');
+      expect(calls.count).toBe(2);
     });
   });
 });
