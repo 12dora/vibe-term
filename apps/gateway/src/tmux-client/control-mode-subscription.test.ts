@@ -151,6 +151,15 @@ describe('control mode subscription', () => {
     subscription.dispose();
   });
 
+  test('session-renamed keeps the cached id when the new name looks like $N', () => {
+    const { subscription, collected } = createCollector();
+    subscription.push(lines('%session-changed $0 old', '%session-renamed $3 renamed'));
+    expect(collected.metadata).toEqual([
+      { type: 'session-renamed', sessionId: '$0', name: '$3 renamed' },
+    ]);
+    subscription.dispose();
+  });
+
   test('normalizes linked and unlinked window close notifications', () => {
     const { subscription, collected } = createCollector();
     subscription.push(lines('%window-close @1', '%unlinked-window-close @2'));

@@ -43,12 +43,14 @@ describe('ControlModeMetadataBridge', () => {
     });
   });
 
-  test('session-renamed still accepts $id name if a producer includes the id', () => {
+  test('session-renamed treats a leading $N token as the name, not a session id', () => {
     const bridge = new ControlModeMetadataBridge();
+    expect(bridge.parse({ type: 'session-renamed', args: '$3 renamed', raw: '' })).toBeNull();
+    expect(bridge.parse({ type: 'session-changed', args: '$0 old', raw: '' })).toBeNull();
     expect(bridge.parse({ type: 'session-renamed', args: '$3 renamed', raw: '' })).toEqual({
       type: 'session-renamed',
-      sessionId: '$3',
-      name: 'renamed',
+      sessionId: '$0',
+      name: '$3 renamed',
     });
   });
 });

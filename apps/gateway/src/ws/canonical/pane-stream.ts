@@ -7,7 +7,12 @@ import {
 } from '../terminal-output-batcher';
 import { bytesEqual, copyBytes, paneKey } from './bytes';
 import type { CanonicalTransactionSender } from './transaction-sender';
-import type { CanonicalEvent, CanonicalPaneTarget } from './types';
+import {
+  type CanonicalEvent,
+  type CanonicalPaneTarget,
+  type CanonicalSendResult,
+  canonicalSendAccepted,
+} from './types';
 
 interface PendingPaneDataBatch {
   deviceId: string;
@@ -149,7 +154,7 @@ export class CanonicalPaneStream {
 
   handlePaneGap(deviceId: string, gap: PaneReplayGap): void {
     this.flushPaneDataBatch(paneKey(deviceId, gap.paneId));
-    if (!this.sendPaneGap(deviceId, gap)) {
+    if (!canonicalSendAccepted(this.sendPaneGap(deviceId, gap))) {
       this.queuePaneGap(paneKey(deviceId, gap.paneId), gap);
     }
   }
@@ -180,7 +185,26 @@ export class CanonicalPaneStream {
           data,
         },
       };
-      if (!this.options.sender.send(event)) {
+      const result = this.options.sender.send(event);
+      if (result === 'backpressured') {
+        this.paneDataDeliveries += 1;
+        this.paneDataBytes += data.byteLength;
+        offset += data.byteLength;
+        if (offset < segment.data.byteLength) {
+          this.recordPaneDataDrop(segment.data.byteLength - offset);
+          this.queuePaneGap(key, {
+            paneId: segment.paneId,
+            paneEpoch: copyBytes(segment.paneEpoch),
+            reason: 'pane_gap',
+            expectedPaneEpoch: copyBytes(segment.paneEpoch),
+            expectedSeq: segment.seqStart + BigInt(offset),
+            availableSeq: segment.seqEnd,
+          });
+          return false;
+        }
+        return true;
+      }
+      if (!canonicalSendAccepted(result)) {
         const gap: PaneReplayGap = {
           paneId: segment.paneId,
           paneEpoch: copyBytes(segment.paneEpoch),
@@ -200,7 +224,7 @@ export class CanonicalPaneStream {
     return true;
   }
 
-  sendPaneGap(deviceId: string, gap: PaneReplayGap): boolean {
+  sendPaneGap(deviceId: string, gap: PaneReplayGap): CanonicalSendResult {
     const serverEpoch = this.options.getServerEpoch(deviceId);
     if (!serverEpoch) return false;
     const sent = this.options.sender.send({
@@ -217,7 +241,7 @@ export class CanonicalPaneStream {
         },
       },
     });
-    if (sent) {
+    if (canonicalSendAccepted(sent)) {
       this.paneGapsSent += 1;
       this.paneGapsByReason[gap.reason] += 1;
     }
@@ -246,25 +270,25 @@ export class CanonicalPaneStream {
         },
       },
     });
-    if (sent) {
+    if (canonicalSendAccepted(sent)) {
       this.paneGapsSent += 1;
       this.paneGapsByReason.epoch_changed += 1;
     }
   }
 
-  sendStreamGap(reason: number): boolean {
+  sendStreamGap(reason: number): CanonicalSendResult {
     const sent = this.options.sender.send({
       SourceGap: {
         reason,
         scope: { Stream: {} },
       },
     });
-    if (sent) this.streamGapsSent += 1;
+    if (canonicalSendAccepted(sent)) this.streamGapsSent += 1;
     return sent;
   }
 
   sendOrQueueStreamGap(reason: number): void {
-    if (!this.sendStreamGap(reason)) {
+    if (!canonicalSendAccepted(this.sendStreamGap(reason))) {
       this.streamGapPendingReason = reason;
       this.options.onPendingWork();
     }
@@ -322,7 +346,7 @@ export class CanonicalPaneStream {
 
   flushStreamGapOnDrain(): boolean {
     if (this.streamGapPendingReason === null) return true;
-    if (!this.sendStreamGap(this.streamGapPendingReason)) return false;
+    if (!canonicalSendAccepted(this.sendStreamGap(this.streamGapPendingReason))) return false;
     this.streamGapPendingReason = null;
     this.paneSendGaps.clear();
     return true;
@@ -330,7 +354,7 @@ export class CanonicalPaneStream {
 
   flushPaneGapsOnDrain(): void {
     for (const [key, gap] of Array.from(this.paneSendGaps)) {
-      if (!this.sendPaneGap(key.split('\0')[0] ?? '', gap)) continue;
+      if (!canonicalSendAccepted(this.sendPaneGap(key.split('\0')[0] ?? '', gap))) continue;
       this.paneSendGaps.delete(key);
     }
   }

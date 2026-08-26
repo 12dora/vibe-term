@@ -4,16 +4,19 @@ import type { PaneHistoryPage } from '../../tmux-client/pane-history-reader';
 import type { PaneDataSegment, PaneScreenCheckpoint } from '../../tmux-client/pane-retention';
 import { copyBytes, defaultCreateEpoch, paneKey } from './bytes';
 import type { CanonicalFrameSizer } from './frame-sizer';
-import type {
-  AttachedDevice,
-  CanonicalEvent,
-  CanonicalFeedRuntime,
-  CanonicalPaneTarget,
+import {
+  type AttachedDevice,
+  type CanonicalEvent,
+  type CanonicalFeedRuntime,
+  type CanonicalPaneTarget,
+  type CanonicalSendResult,
+  canonicalSendAccepted,
+  canonicalSendContinue,
 } from './types';
 
 export interface CanonicalTransactionSenderOptions {
   sizer: CanonicalFrameSizer;
-  sendEvent: (event: CanonicalEvent) => boolean;
+  sendEvent: (event: CanonicalEvent) => CanonicalSendResult;
   isClosed: () => boolean;
   getServerEpoch: (deviceId: string) => Uint8Array | null | undefined;
 }
@@ -25,7 +28,7 @@ export class CanonicalTransactionSender {
     return this.options.sizer;
   }
 
-  send(event: CanonicalEvent): boolean {
+  send(event: CanonicalEvent): CanonicalSendResult {
     if (this.options.isClosed() || !this.options.sizer.eventFits(event)) return false;
     return this.options.sendEvent(event);
   }
@@ -53,7 +56,7 @@ export class CanonicalTransactionSender {
           : ({
               HistoryChunk: { requestId, offset, data: data.slice(offset, offset + maxDataBytes) },
             } satisfies CanonicalEvent);
-      if (!this.send(event)) return false;
+      if (!canonicalSendContinue(this.send(event))) return false;
     }
     return true;
   }
@@ -86,7 +89,7 @@ export class CanonicalTransactionSender {
         totalBytes: checkpoint.data.byteLength,
       },
     };
-    if (!this.send(begin)) return false;
+    if (!canonicalSendContinue(this.send(begin))) return false;
     if (!this.sendContentChunks('screen', requestId, checkpoint.data)) return false;
     const committed = this.send({
       ScreenCommit: {
@@ -95,8 +98,8 @@ export class CanonicalTransactionSender {
         historyCursor: checkpoint.historyCursor,
       },
     });
-    if (committed && heldLive) holdLive.sendLive(deviceId, heldLive);
-    return committed;
+    if (committed === true && heldLive) holdLive.sendLive(deviceId, heldLive);
+    return canonicalSendAccepted(committed);
   }
 
   sendHistoryTransaction(
@@ -107,29 +110,33 @@ export class CanonicalTransactionSender {
   ): boolean {
     flushPane(paneKey(target.deviceId, target.paneId));
     if (
-      !this.send({
-        HistoryBegin: {
-          requestId,
-          pane: target,
-          paneEpoch: page.paneEpoch,
-          historyEpoch: page.historyEpoch,
-          lineStart: page.lineStart,
-          lineEnd: page.lineEnd,
-          truncated: page.truncated,
-          totalBytes: page.data.byteLength,
-        },
-      })
+      !canonicalSendContinue(
+        this.send({
+          HistoryBegin: {
+            requestId,
+            pane: target,
+            paneEpoch: page.paneEpoch,
+            historyEpoch: page.historyEpoch,
+            lineStart: page.lineStart,
+            lineEnd: page.lineEnd,
+            truncated: page.truncated,
+            totalBytes: page.data.byteLength,
+          },
+        })
+      )
     ) {
       return false;
     }
     if (!this.sendContentChunks('history', requestId, page.data)) return false;
-    return this.send({
-      HistoryCommit: {
-        requestId,
-        totalBytes: page.data.byteLength,
-        nextCursor: page.nextCursor,
-      },
-    });
+    return canonicalSendAccepted(
+      this.send({
+        HistoryCommit: {
+          requestId,
+          totalBytes: page.data.byteLength,
+          nextCursor: page.nextCursor,
+        },
+      })
+    );
   }
 
   sendMetadataSnapshot(device: AttachedDevice): boolean {
@@ -139,18 +146,24 @@ export class CanonicalTransactionSender {
     if (!chunks) return false;
     let sent = true;
     for (let index = 0; index < chunks.length; index += 1) {
-      sent =
-        this.send({
-          SourceMetadataSnapshot: {
-            metadataEpoch: snapshot.metadataEpoch,
-            revision: snapshot.revision,
-            snapshotId,
-            chunkIndex: index,
-            totalChunks: chunks.length,
-            records: chunks[index] ?? [],
-          },
-        }) && sent;
-      if (!sent) break;
+      const result = this.send({
+        SourceMetadataSnapshot: {
+          metadataEpoch: snapshot.metadataEpoch,
+          revision: snapshot.revision,
+          snapshotId,
+          chunkIndex: index,
+          totalChunks: chunks.length,
+          records: chunks[index] ?? [],
+        },
+      });
+      if (result === 'backpressured') {
+        sent = index === chunks.length - 1;
+        break;
+      }
+      if (!canonicalSendAccepted(result)) {
+        sent = false;
+        break;
+      }
     }
     device.metadataNeedsRebase = !sent;
     return sent;

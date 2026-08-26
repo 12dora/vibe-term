@@ -5,12 +5,13 @@ import { GATEWAY_TERM_OUTPUT_BATCH_DELAY_MS } from '../terminal-output-batcher';
 import { CanonicalFrameSizer } from './frame-sizer';
 import { CanonicalPaneStream } from './pane-stream';
 import { CanonicalTransactionSender } from './transaction-sender';
+import type { CanonicalSendResult } from './types';
 
 const SERVER_EPOCH = new Uint8Array(16).fill(0x11);
 const PANE_EPOCH = new Uint8Array(16).fill(0x22);
 const encoder = new TextEncoder();
 
-function createStream(sendEvent: (event: wsBorsh.CanonicalEvent) => boolean) {
+function createStream(sendEvent: (event: wsBorsh.CanonicalEvent) => CanonicalSendResult) {
   const sizer = new CanonicalFrameSizer(wsBorsh.CANONICAL_STATE_MAX_FRAME_BYTES);
   const sender = new CanonicalTransactionSender({
     sizer,
@@ -92,5 +93,22 @@ describe('canonical pane stream', () => {
     });
     expect(stream.snapshotStats().pendingPaneGaps).toBe(1);
     expect(pending.length).toBeGreaterThan(0);
+  });
+
+  test('does not queue a pane gap when SourceGap was accepted under backpressure', () => {
+    const { stream, pending } = createStream((event) =>
+      'SourceGap' in event ? 'backpressured' : true
+    );
+    stream.handlePaneGap('device-a', {
+      paneId: '%1',
+      paneEpoch: PANE_EPOCH,
+      reason: 'pane_gap',
+      expectedPaneEpoch: PANE_EPOCH,
+      expectedSeq: 4n,
+      availableSeq: 8n,
+    });
+    expect(stream.snapshotStats().pendingPaneGaps).toBe(0);
+    expect(stream.snapshotStats().paneGapsSent).toBe(1);
+    expect(pending.length).toBe(0);
   });
 });

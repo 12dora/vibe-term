@@ -34,9 +34,19 @@ export interface CanonicalFeedRuntime
     | 'resizePane'
   > {}
 
+export type CanonicalSendResult = boolean | 'backpressured';
+
+export function canonicalSendAccepted(result: CanonicalSendResult): boolean {
+  return result === true || result === 'backpressured';
+}
+
+export function canonicalSendContinue(result: CanonicalSendResult): boolean {
+  return result === true;
+}
+
 export interface CanonicalFeedSessionOptions {
   maxFrameBytes: number;
-  sendEvent: (event: CanonicalEvent) => boolean;
+  sendEvent: (event: CanonicalEvent) => CanonicalSendResult;
   resolveRuntime: (deviceId: string) => Promise<CanonicalFeedRuntime | null>;
   initialDeviceIds?: () => Iterable<string>;
   onDeviceAttached?: (deviceId: string, runtime: CanonicalFeedRuntime) => void;

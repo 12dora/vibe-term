@@ -37,6 +37,7 @@ import {
   type CanonicalPaneTarget,
   type ResolvedTarget,
   type ScreenJob,
+  canonicalSendAccepted,
 } from './canonical/types';
 
 export {
@@ -47,6 +48,7 @@ export {
   type CanonicalFeedRuntime,
   type CanonicalFeedSessionOptions,
   type CanonicalFeedSessionStats,
+  type CanonicalSendResult,
 } from './canonical/types';
 export { CANONICAL_PENDING_SWEEP_MS } from './canonical/bytes';
 
@@ -69,6 +71,7 @@ export class CanonicalFeedSession {
   private screenTransactionsFailed = 0;
   private screenTransactionsCancelled = 0;
   private pendingSweepTimer: ReturnType<typeof setTimeout> | null = null;
+  private awaitingSocketDrain = false;
 
   constructor(private readonly options: CanonicalFeedSessionOptions) {
     this.maxFrameBytes = Math.min(
@@ -84,7 +87,11 @@ export class CanonicalFeedSession {
     this.sizer = new CanonicalFrameSizer(this.maxFrameBytes);
     this.sender = new CanonicalTransactionSender({
       sizer: this.sizer,
-      sendEvent: (event) => this.options.sendEvent(event),
+      sendEvent: (event) => {
+        const result = this.options.sendEvent(event);
+        if (result === 'backpressured') this.awaitingSocketDrain = true;
+        return result;
+      },
       isClosed: () => this.closed,
       getServerEpoch: (deviceId) => this.devices.get(deviceId)?.runtime.getServerEpoch(),
     });
@@ -171,7 +178,7 @@ export class CanonicalFeedSession {
           this.schedulePendingSweep();
           return;
         }
-        if (!this.sender.send({ SourceMetadataPatch: patch })) {
+        if (!canonicalSendAccepted(this.sender.send({ SourceMetadataPatch: patch }))) {
           attached.metadataNeedsRebase = true;
           this.schedulePendingSweep();
         }
@@ -234,6 +241,7 @@ export class CanonicalFeedSession {
     this.pendingSweepTimer = setTimeout(() => {
       this.pendingSweepTimer = null;
       if (this.closed) return;
+      if (this.awaitingSocketDrain) return;
       this.onDrain();
     }, CANONICAL_PENDING_SWEEP_MS);
     this.pendingSweepTimer.unref?.();
@@ -241,6 +249,7 @@ export class CanonicalFeedSession {
 
   onDrain(): void {
     if (this.closed) return;
+    this.awaitingSocketDrain = false;
     if (!this.stream.flushStreamGapOnDrain()) {
       this.schedulePendingSweep();
       return;
@@ -261,6 +270,7 @@ export class CanonicalFeedSession {
     for (const job of this.screenJobs.values()) this.cancelScreenJob(job);
     this.screenJobs.clear();
     this.stream.clearPending();
+    this.awaitingSocketDrain = false;
     if (this.pendingSweepTimer !== null) {
       clearTimeout(this.pendingSweepTimer);
       this.pendingSweepTimer = null;

@@ -41,6 +41,20 @@ describe('WebSocketSendGuard', () => {
     expect(target.sendCalls()).toBe(2);
   });
 
+  test('reports backpressured when Bun accepts a frame with status -1', () => {
+    const guard = new WebSocketSendGuard({ timeoutMs: 1000, onTerminate: () => {} });
+    const target = createSocket([-1, 4]);
+
+    expect(guard.sendFramesStatus(target.socket as never, [new Uint8Array([1])])).toBe(
+      'backpressured'
+    );
+    expect(guard.isBackpressured(target.socket as never)).toBe(true);
+    expect(guard.sendFrames(target.socket as never, [new Uint8Array([2])])).toBe(false);
+
+    guard.handleDrain(target.socket as never);
+    expect(target.terminateCalls()).toBe(1);
+  });
+
   test('terminates on drain when live frames were skipped during backpressure', () => {
     const guard = new WebSocketSendGuard({ timeoutMs: 1000, onTerminate: () => {} });
     const target = createSocket([-1]);

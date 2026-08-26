@@ -237,7 +237,7 @@ export class WebSocketServer {
   private sendCanonicalEvent(
     ws: ServerWebSocket<ClientState>,
     event: wsBorsh.CanonicalEvent
-  ): boolean {
+  ): boolean | 'backpressured' {
     const terminalBytes = 'PaneData' in event ? event.PaneData.data.byteLength : null;
     try {
       const frame = encodeCanonicalEvent(
@@ -245,13 +245,14 @@ export class WebSocketServer {
         ws.data.borshState.seqGen(),
         ws.data.borshState.maxFrameBytes
       );
-      const delivered = gatewayWebSocketSendGuard.sendFrames(ws as ServerWebSocket<unknown>, [
+      const status = gatewayWebSocketSendGuard.sendFramesStatus(ws as ServerWebSocket<unknown>, [
         frame as unknown as BufferSource,
       ]);
       if (terminalBytes !== null) {
-        this.terminalOutputMetrics.recordCanonicalRecipient(terminalBytes, delivered);
+        this.terminalOutputMetrics.recordCanonicalRecipient(terminalBytes, status === 'sent');
       }
-      return delivered;
+      if (status === 'backpressured') return 'backpressured';
+      return status === 'sent';
     } catch (error) {
       if (terminalBytes !== null) {
         this.terminalOutputMetrics.recordCanonicalRecipient(terminalBytes, false);

@@ -8,8 +8,6 @@ export function splitFirst(value: string): [string, string] {
   return index < 0 ? [value, ''] : [value.slice(0, index), value.slice(index + 1)];
 }
 
-const SESSION_ID_RE = /^\$\d+$/;
-
 export class ControlModeMetadataBridge {
   private lastSessionId: string | null = null;
 
@@ -23,10 +21,6 @@ export class ControlModeMetadataBridge {
         return null;
       }
       case 'session-renamed': {
-        if (first && rest && SESSION_ID_RE.test(first)) {
-          this.lastSessionId = first;
-          return { type: 'session-renamed', sessionId: first, name: rest };
-        }
         const name = notification.args.trim();
         if (this.lastSessionId && name) {
           return { type: 'session-renamed', sessionId: this.lastSessionId, name };

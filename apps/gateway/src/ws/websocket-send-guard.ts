@@ -17,6 +17,8 @@ interface WebSocketSendGuardOptions {
 
 type TerminationReason = Parameters<NonNullable<WebSocketSendGuardOptions['onTerminate']>>[0];
 
+export type WebSocketSendStatus = 'sent' | 'backpressured' | 'dropped';
+
 export interface WebSocketSendGuardStats {
   sessions: number;
   backpressuredSessions: number;
@@ -78,9 +80,20 @@ export class WebSocketSendGuard {
     return false;
   }
 
+  isBackpressured(ws: ServerWebSocket<unknown>): boolean {
+    return this.states.has(ws);
+  }
+
   sendFrames(ws: ServerWebSocket<unknown>, frames: readonly (string | BufferSource)[]): boolean {
+    return this.sendFramesStatus(ws, frames) === 'sent';
+  }
+
+  sendFramesStatus(
+    ws: ServerWebSocket<unknown>,
+    frames: readonly (string | BufferSource)[]
+  ): WebSocketSendStatus {
     if (!this.canSend(ws)) {
-      return false;
+      return 'dropped';
     }
 
     const maxFrameBytes = negotiatedFrameLimit(ws);
@@ -89,7 +102,7 @@ export class WebSocketSendGuard {
       frames.some((frame) => frame !== undefined && frameByteLength(frame) > maxFrameBytes)
     ) {
       this.terminate(ws, 'oversized_frame');
-      return false;
+      return 'dropped';
     }
 
     for (let index = 0; index < frames.length; index += 1) {
@@ -103,7 +116,7 @@ export class WebSocketSendGuard {
         status = ws.send(frame as Parameters<ServerWebSocket<unknown>['send']>[0]);
       } catch {
         this.terminate(ws, 'dropped_frame');
-        return false;
+        return 'dropped';
       }
 
       if (status === -1) {
@@ -118,16 +131,16 @@ export class WebSocketSendGuard {
           }, this.timeoutMs),
         };
         this.states.set(ws, state);
-        return false;
+        return 'backpressured';
       }
 
       if (status === 0) {
         this.terminate(ws, 'dropped_frame');
-        return false;
+        return 'dropped';
       }
     }
 
-    return true;
+    return 'sent';
   }
 
   handleDrain(ws: ServerWebSocket<unknown>): void {

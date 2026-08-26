@@ -106,6 +106,19 @@ describe('control mode subscription golden traces', () => {
     );
   });
 
+  test('session-changed then session-renamed whose name looks like $N keeps the cached id', () => {
+    expectGolden(lines('%session-changed $0 old', '%session-renamed $3 renamed'), {
+      outputs: [],
+      titles: [],
+      bells: [],
+      notifications: [],
+      pauses: [],
+      continues: [],
+      metadata: [{ type: 'session-renamed', sessionId: '$0', name: '$3 renamed' }],
+      exits: [],
+    });
+  });
+
   test('session-changed then session-renamed (name-only) plus structural metadata', () => {
     expectGolden(
       lines(

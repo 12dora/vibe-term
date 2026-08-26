@@ -15,7 +15,9 @@ import {
   type CanonicalFeedRuntime,
   CanonicalFeedSession,
 } from './canonical-feed-session';
+import type { CanonicalSendResult } from './canonical/types';
 import { GATEWAY_TERM_OUTPUT_BATCH_DELAY_MS } from './terminal-output-batcher';
+import { WebSocketSendGuard } from './websocket-send-guard';
 
 const awaitPaneDataFlush = () => Bun.sleep(GATEWAY_TERM_OUTPUT_BATCH_DELAY_MS + 4);
 
@@ -124,6 +126,48 @@ class FakeRuntime implements CanonicalFeedRuntime {
 
 function target(deviceId = 'device-a') {
   return { deviceId, serverEpoch: SERVER_EPOCH, paneId: '%1' };
+}
+
+function createGuardedSender() {
+  const events: wsBorsh.CanonicalEvent[] = [];
+  const terminateReasons: string[] = [];
+  let nextStatus = 1;
+  let sendCalls = 0;
+  let terminateCalls = 0;
+  const socket = {
+    send() {
+      sendCalls += 1;
+      return nextStatus;
+    },
+    terminate() {
+      terminateCalls += 1;
+    },
+    getBufferedAmount() {
+      return 0;
+    },
+  };
+  const guard = new WebSocketSendGuard({
+    timeoutMs: 5_000,
+    onTerminate: (reason) => terminateReasons.push(reason),
+  });
+  const sendEvent = (event: wsBorsh.CanonicalEvent): CanonicalSendResult => {
+    nextStatus = 'SourceGap' in event && !events.some((item) => 'SourceGap' in item) ? -1 : 1;
+    const status = guard.sendFramesStatus(socket as never, [new Uint8Array([1])]);
+    if (status !== 'dropped') events.push(event);
+    if (status === 'backpressured') return 'backpressured';
+    return status === 'sent';
+  };
+  return {
+    events,
+    terminateReasons,
+    sendEvent,
+    sendCalls: () => sendCalls,
+    terminateCalls: () => terminateCalls,
+    sourceGapCount: () => events.filter((event) => 'SourceGap' in event).length,
+    drainGuard() {
+      guard.handleDrain(socket as never);
+    },
+  };
 }
 
 describe('canonical feed session', () => {
@@ -446,7 +490,7 @@ describe('canonical feed session', () => {
     session.close();
   });
 
-  test('queues a pane gap when SourceGap send backpressures and retries on the pending sweep', async () => {
+  test('queues a pane gap when SourceGap is not sent and retries on the pending sweep', async () => {
     const runtime = new FakeRuntime();
     const events: wsBorsh.CanonicalEvent[] = [];
     let blockGaps = true;
@@ -476,6 +520,82 @@ describe('canonical feed session', () => {
     expect(session.snapshotStats().pendingPaneGaps).toBe(0);
     expect(session.snapshotStats().paneGapsSent).toBe(1);
     expect(events.some((event) => 'SourceGap' in event)).toBe(true);
+    session.close();
+  });
+
+  test('SourceGap accepted under backpressure is not retried when sweep runs before drain', async () => {
+    const runtime = new FakeRuntime();
+    const guarded = createGuardedSender();
+    const session = new CanonicalFeedSession({
+      maxFrameBytes: 32 * 1024,
+      sendEvent: guarded.sendEvent,
+      resolveRuntime: async () => runtime,
+      initialDeviceIds: () => ['device-a'],
+    });
+    await session.handleCommand({
+      SetPaneSubscriptions: {
+        generation: 1n,
+        activePanes: [{ pane: target(), cursor: null }],
+        hotPanes: [],
+      },
+    });
+    const nextEpoch = new Uint8Array(16).fill(0x99);
+    runtime.retention.reconcilePanes([{ paneId: '%1', paneEpoch: nextEpoch }]);
+
+    expect(guarded.sourceGapCount()).toBe(1);
+    expect(session.snapshotStats().pendingPaneGaps).toBe(0);
+    expect(session.snapshotStats().paneGapsSent).toBe(1);
+
+    session.onDrain();
+    expect(guarded.sourceGapCount()).toBe(1);
+    expect(guarded.terminateReasons).toEqual([]);
+
+    guarded.drainGuard();
+    session.onDrain();
+    expect(guarded.sourceGapCount()).toBe(1);
+    expect(guarded.terminateReasons).toEqual([]);
+    expect(guarded.terminateCalls()).toBe(0);
+
+    await Bun.sleep(CANONICAL_PENDING_SWEEP_MS + 20);
+    expect(guarded.sourceGapCount()).toBe(1);
+    expect(guarded.terminateCalls()).toBe(0);
+    session.close();
+  });
+
+  test('SourceGap accepted under backpressure is not duplicated when drain runs before sweep', async () => {
+    const runtime = new FakeRuntime();
+    const guarded = createGuardedSender();
+    const session = new CanonicalFeedSession({
+      maxFrameBytes: 32 * 1024,
+      sendEvent: guarded.sendEvent,
+      resolveRuntime: async () => runtime,
+      initialDeviceIds: () => ['device-a'],
+    });
+    await session.handleCommand({
+      SetPaneSubscriptions: {
+        generation: 1n,
+        activePanes: [{ pane: target(), cursor: null }],
+        hotPanes: [],
+      },
+    });
+    const nextEpoch = new Uint8Array(16).fill(0x99);
+    runtime.retention.reconcilePanes([{ paneId: '%1', paneEpoch: nextEpoch }]);
+
+    expect(guarded.sourceGapCount()).toBe(1);
+    expect(session.snapshotStats().pendingPaneGaps).toBe(0);
+    expect(session.snapshotStats().paneGapsSent).toBe(1);
+
+    guarded.drainGuard();
+    session.onDrain();
+    expect(guarded.sourceGapCount()).toBe(1);
+    expect(guarded.terminateReasons).toEqual([]);
+    expect(guarded.terminateCalls()).toBe(0);
+
+    session.onDrain();
+    await Bun.sleep(CANONICAL_PENDING_SWEEP_MS + 20);
+    expect(guarded.sourceGapCount()).toBe(1);
+    expect(guarded.terminateReasons).toEqual([]);
+    expect(guarded.terminateCalls()).toBe(0);
     session.close();
   });
 });
