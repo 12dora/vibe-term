@@ -53,8 +53,20 @@ export interface TerminalBootSurface {
   authoritativeSizeRef: RefObject<{ cols: number; rows: number } | null>;
 }
 
+interface TerminalE2eGlobals {
+  __tmexE2eXterm: CompatibleTerminalLike | null;
+  __tmexE2eTerminal: CompatibleTerminalLike | null;
+  __tmexE2eTerminalEngine: typeof TERMINAL_ENGINE | null;
+  __tmexE2eTerminalRenderer: string | null;
+  __tmexE2eTerminalSelectionText: string | null;
+}
+
+function terminalE2eGlobals(): TerminalE2eGlobals {
+  return globalThis as unknown as TerminalE2eGlobals;
+}
+
 function setE2eTerminalProbe(terminal: CompatibleTerminalLike): void {
-  const g = globalThis as any;
+  const g = terminalE2eGlobals();
   g.__tmexE2eXterm = terminal;
   g.__tmexE2eTerminal = terminal;
   g.__tmexE2eTerminalEngine = TERMINAL_ENGINE;
@@ -66,7 +78,7 @@ function clearE2eTerminalProbe(terminal: CompatibleTerminalLike | null): void {
     return;
   }
 
-  const g = globalThis as any;
+  const g = terminalE2eGlobals();
   if (g.__tmexE2eTerminal !== terminal && g.__tmexE2eXterm !== terminal) {
     return;
   }
@@ -352,11 +364,7 @@ export function useTerminalBootSurface({
   }, [instance, autoFocus]);
 
   useEffect(() => {
-    if (!instance || !('setTheme' in instance)) {
-      return;
-    }
-
-    (instance as any).setTheme(terminalTheme);
+    instance?.setTheme?.(terminalTheme);
   }, [instance, terminalTheme]);
 
   return {

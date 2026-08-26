@@ -105,7 +105,7 @@ function createHarness(options: { reporting: boolean; pressSucceeds?: boolean })
     noteTouchHandled: () => calls.push('noteTouchHandled'),
     focus: () => calls.push('focus'),
   };
-  (terminal as any)._core = {
+  terminal._core = {
     _renderService: { dimensions: { css: { cell: { height: CELL_HEIGHT } } } },
   };
 

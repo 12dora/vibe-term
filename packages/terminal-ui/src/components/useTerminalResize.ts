@@ -87,7 +87,7 @@ export function useTerminalResize({
       }
       cols = Math.max(2, proposed.cols);
     } catch {
-      const core = (term as any)._core;
+      const core = term._core;
       const cellWidth = core?._renderService?.dimensions?.css?.cell?.width ?? 9;
       const rect = getContainerRectRef.current?.();
       if (!rect || rect.width === 0) {
@@ -100,7 +100,7 @@ export function useTerminalResize({
     if (!containerRect || containerRect.height === 0) {
       return null;
     }
-    const core = (term as any)._core;
+    const core = term._core;
     const cellHeight = core?._renderService?.dimensions?.css?.cell?.height ?? 17;
     const rows = Math.max(2, Math.floor(containerRect.height / cellHeight));
 

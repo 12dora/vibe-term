@@ -26,6 +26,17 @@ export interface TerminalScroller {
       viewportY?: number;
     };
   };
+  _core?: {
+    _renderService?: {
+      dimensions?: {
+        css?: {
+          cell?: {
+            height?: number;
+          };
+        };
+      };
+    };
+  };
 }
 
 export type ResolveTerminal = () => TerminalScroller | null;

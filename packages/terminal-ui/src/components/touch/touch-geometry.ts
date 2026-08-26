@@ -1,3 +1,5 @@
+import type { TerminalScroller } from './types';
+
 export const TOUCH_SCROLL_GAIN = 1.3;
 export const SCROLLBAR_TOUCH_HOTZONE_PX = 36;
 export const LONG_PRESS_SELECT_MS = 500;
@@ -80,7 +82,7 @@ export function exceedsMoveTolerance(
 }
 
 export function terminalLineHeight(terminal: unknown): number {
-  const core = (terminal as any)?._core;
+  const core = (terminal as TerminalScroller | null | undefined)?._core;
   return core?._renderService?.dimensions?.css?.cell?.height ?? FALLBACK_CELL_HEIGHT_PX;
 }
 

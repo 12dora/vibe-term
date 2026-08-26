@@ -65,11 +65,7 @@ export function useTerminalInput({
   }, [instance, focused]);
 
   useEffect(() => {
-    if (!instance || !('setDisableStdin' in instance)) {
-      return;
-    }
-
-    (instance as any).setDisableStdin(inputMode === 'editor');
+    instance?.setDisableStdin?.(inputMode === 'editor');
   }, [instance, inputMode]);
 
   // 注册当前终端的光标矩形 getter，供 main.tsx 键盘避让（光标对齐模式）按需读取。

@@ -204,6 +204,8 @@ export interface CompatibleTerminalLike {
   hasSelection?: () => boolean;
   clearSelection?: () => void;
   setFocused?: (focused: boolean) => void;
+  setTheme?: (theme: GhosttyTheme) => void;
+  setDisableStdin?: (disabled: boolean) => void;
   forceFullRepaint?: () => void;
   onSelectionChange?: (callback: (text: string | null) => void) => TerminalDisposable;
   onLinkActivated?: (callback: (url: string) => void) => TerminalDisposable;
