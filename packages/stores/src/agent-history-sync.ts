@@ -36,6 +36,7 @@ export interface AgentHistorySync {
   loadHistory(sessionId: string): Promise<void>;
   /** 去抖调度一次增量拉取；同一 session 的待触发定时器只保留一个 */
   scheduleFetch(sessionId: string): void;
+  /** 清理该 session 的定时器与补跑标记，并作废在途请求：其响应不再写回 store */
   clearSession(sessionId: string): void;
 }
 
@@ -47,6 +48,8 @@ export function createAgentHistorySync(deps: AgentHistorySyncDeps): AgentHistory
   const loadingSessions = new Set<string>();
   // in-flight 期间又有新的 loadHistory 请求：标记完成后重跑，避免丢增量
   const reloadPending = new Set<string>();
+  // 在途请求的有效性令牌：会话被删除/清理后令牌失效，过期响应必须丢弃而不是写回 store
+  const requestTokens = new Map<string, symbol>();
 
   async function loadHistory(sessionId: string): Promise<void> {
     if (loadingSessions.has(sessionId)) {
@@ -55,12 +58,16 @@ export function createAgentHistorySync(deps: AgentHistorySyncDeps): AgentHistory
       return;
     }
     loadingSessions.add(sessionId);
+    const token = Symbol(sessionId);
+    requestTokens.set(sessionId, token);
     try {
       const state = get();
       const afterSeq = state.historyLoaded[sessionId]
         ? maxMessageSeq(state.messages[sessionId])
         : -1;
       const messageList = await fetchAgentMessages(sessionId, afterSeq, apiClient);
+      // 请求在途期间会话可能已被删除：写回会连带复活 messages/historyLoaded/inProgress
+      if (requestTokens.get(sessionId) !== token) return;
       set((prev) => {
         // 全量拉取也必须以 store 现有消息为基线：请求在途期间发出的消息不在快照里，直接替换会丢
         const merged = mergeMessages(prev.messages[sessionId], messageList);
@@ -86,6 +93,9 @@ export function createAgentHistorySync(deps: AgentHistorySyncDeps): AgentHistory
       console.error('[agent] loadHistory failed:', error);
     } finally {
       loadingSessions.delete(sessionId);
+      if (requestTokens.get(sessionId) === token) {
+        requestTokens.delete(sessionId);
+      }
       if (reloadPending.delete(sessionId)) {
         void loadHistory(sessionId);
       }
@@ -112,6 +122,7 @@ export function createAgentHistorySync(deps: AgentHistorySyncDeps): AgentHistory
         fetchTimers.delete(sessionId);
       }
       reloadPending.delete(sessionId);
+      requestTokens.delete(sessionId);
     },
   };
 }

@@ -23,6 +23,10 @@ function jsonResponse(body: unknown): Response {
   });
 }
 
+function flushMicrotasks(): Promise<void> {
+  return new Promise<void>((resolve) => setTimeout(resolve, 0));
+}
+
 interface Harness {
   state: () => AgentStateData;
   patch: (partial: Partial<AgentStateData>) => void;
@@ -85,6 +89,61 @@ describe('loadHistory', () => {
       'sent while loading',
     ]);
     expect(harness.state().historyLoaded.s1).toBe(true);
+  });
+
+  test('drops a response whose session was cleared while the request was in flight', async () => {
+    const harness = createHarness();
+
+    const pending = harness.sync.loadHistory('s1');
+    // 会话被删除：deleteSession → clearSessionRuntime → history.clearSession
+    harness.sync.clearSession('s1');
+    harness.respond([makeMessage(0, 'from deleted session')]);
+    await pending;
+
+    expect(harness.state().messages.s1).toBeUndefined();
+    expect(harness.state().historyLoaded.s1).toBeUndefined();
+    expect(harness.state().inProgress.s1).toBeUndefined();
+  });
+
+  test('a request started after clearSession still writes to the store', async () => {
+    const harness = createHarness();
+
+    const dropped = harness.sync.loadHistory('s1');
+    harness.sync.clearSession('s1');
+    harness.respond([makeMessage(0, 'dropped')]);
+    await dropped;
+
+    const pending = harness.sync.loadHistory('s1');
+    harness.respond([makeMessage(0, 'fresh')]);
+    await pending;
+
+    expect(harness.state().messages.s1?.map((message) => message.content)).toEqual(['fresh']);
+    expect(harness.state().historyLoaded.s1).toBe(true);
+  });
+
+  test('re-runs a reload requested while the first request was in flight', async () => {
+    const harness = createHarness();
+
+    const first = harness.sync.loadHistory('s1');
+    // in-flight 期间的第二次请求只登记补跑
+    const deduped = harness.sync.loadHistory('s1');
+    expect(harness.requestedUrls).toEqual(['/api/agent/sessions/s1/messages']);
+
+    harness.respond([makeMessage(0, 'older')]);
+    await Promise.all([first, deduped]);
+
+    // 补跑在第一次响应的 finally 中发起，且按已写入的 seq 增量拉取
+    expect(harness.requestedUrls).toEqual([
+      '/api/agent/sessions/s1/messages',
+      '/api/agent/sessions/s1/messages?afterSeq=0',
+    ]);
+    harness.respond([makeMessage(1, 'newer')]);
+    await flushMicrotasks();
+
+    expect(harness.state().messages.s1?.map((message) => message.content)).toEqual([
+      'older',
+      'newer',
+    ]);
   });
 
   test('incremental reload asks for afterSeq and merges onto existing messages', async () => {
