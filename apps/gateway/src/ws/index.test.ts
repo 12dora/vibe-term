@@ -212,6 +212,115 @@ describe('WebSocketServer connection entry dedup', () => {
     expect(connectCalls).toBe(1);
     expect(server.connections.get('device-shared')?.clients.size).toBe(2);
   });
+
+  test('discards in-flight connection creation after closeAll and releases the runtime', async () => {
+    const released: string[] = [];
+    const releaseRef: { current: (() => void) | null } = { current: null };
+    const gate = new Promise<void>((resolve) => {
+      releaseRef.current = resolve;
+    });
+
+    const server = new WebSocketServer({
+      deps: {
+        acquireRuntime: async () => {
+          await gate;
+          return {
+            async connect() {},
+            subscribe() {
+              return () => {};
+            },
+            requestSnapshot() {},
+            disconnect() {},
+          } as any;
+        },
+        releaseRuntime: async (deviceId) => {
+          released.push(deviceId);
+        },
+      },
+    }) as any;
+
+    const ws = {
+      data: { borshState: createBorshClientState() },
+      send() {},
+    } as any;
+    sessionStateStore.create(ws);
+
+    const pending = server.getOrCreateConnectionEntry('device-race', ws);
+    server.closeAll();
+    if (releaseRef.current) {
+      releaseRef.current();
+    }
+    const entry = await pending;
+
+    expect(entry).toBeNull();
+    expect(server.connections.has('device-race')).toBe(false);
+    expect(server.pendingConnectionEntries.size).toBe(0);
+    await Bun.sleep(0);
+    expect(released).toEqual(['device-race']);
+  });
+});
+
+describe('WebSocketServer malformed Borsh payload', () => {
+  function createBorshClient() {
+    const ws = {
+      data: { borshState: createBorshClientState() },
+      sent: [] as Uint8Array[],
+      send(message: Uint8Array) {
+        this.sent.push(message);
+        return message.byteLength;
+      },
+    } as any;
+    sessionStateStore.create(ws);
+    return ws;
+  }
+
+  function decodeError(frame: Uint8Array) {
+    const envelope = wsBorsh.decodeEnvelope(frame);
+    expect(envelope.kind).toBe(wsBorsh.KIND_ERROR);
+    return wsBorsh.decodePayload(wsBorsh.schema.ErrorSchema, envelope.payload);
+  }
+
+  test('handleMessage converts invalid payload to protocol error without unhandled rejection', async () => {
+    const server = new WebSocketServer() as any;
+    const ws = createBorshClient();
+    ws.data.borshState.negotiated = true;
+
+    const unhandled: unknown[] = [];
+    const onUnhandled = (reason: unknown) => {
+      unhandled.push(reason);
+    };
+    process.on('unhandledRejection', onUnhandled);
+
+    const frame = wsBorsh.encodeEnvelope(
+      wsBorsh.KIND_DEVICE_CONNECT,
+      new Uint8Array([0xff, 0xff]),
+      7
+    );
+    server.handleMessage(ws, Buffer.from(frame));
+    await flushAsync();
+    process.off('unhandledRejection', onUnhandled);
+
+    expect(unhandled).toEqual([]);
+    expect(ws.sent.length).toBe(1);
+    const error = decodeError(ws.sent[0]);
+    expect(error.code).toBe(wsBorsh.ERROR_PAYLOAD_DECODE_FAILED);
+    expect(error.refSeq).toBe(7);
+    expect(error.retryable).toBe(false);
+  });
+
+  test('canonical command decode errors still send a single protocol error', async () => {
+    const server = new WebSocketServer() as any;
+    const ws = createBorshClient();
+    ws.data.borshState.negotiated = true;
+
+    await server.handleBorshMessage(ws, wsBorsh.KIND_CANONICAL_COMMAND, 11, new Uint8Array([0x01]));
+
+    expect(ws.sent.length).toBe(1);
+    const error = decodeError(ws.sent[0]);
+    expect(error.code).toBe(wsBorsh.ERROR_PAYLOAD_DECODE_FAILED);
+    expect(error.refSeq).toBe(11);
+    expect(error.retryable).toBe(false);
+  });
 });
 
 describe('WebSocketServer snapshot recovery', () => {

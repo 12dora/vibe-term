@@ -1,0 +1,342 @@
+import type { EventDevicePayload, ThemeMode } from '@tmex/shared';
+import { getTmuxWindowStyle, wsBorsh } from '@tmex/shared';
+import type { ServerWebSocket } from 'bun';
+import { getSiteSettings } from '../db';
+import { t } from '../i18n';
+import type { DeviceSessionRuntime } from '../tmux-client/device-session-runtime';
+import type { CanonicalFeedSession } from './canonical-feed-session';
+import { classifySshError } from './error-classify';
+import {
+  type ClientState,
+  type DeviceConnectionEntry,
+  RUNTIME_IDLE_GRACE_MS,
+  type WebSocketServerDeps,
+} from './types';
+
+export interface DeviceConnectionRegistryHost {
+  readonly deps: WebSocketServerDeps;
+  readonly currentTheme: ThemeMode | null;
+  readonly canonicalSessions: Map<ServerWebSocket<ClientState>, CanonicalFeedSession>;
+  createDeviceConnectionEntry(
+    deviceId: string,
+    ws: ServerWebSocket<ClientState>
+  ): Promise<DeviceConnectionEntry | null>;
+  attachRuntime(deviceId: string, runtime: DeviceSessionRuntime): () => void;
+  releaseConnectionEntry(deviceId: string, entry: DeviceConnectionEntry): void;
+  sendEnvelope(ws: ServerWebSocket<ClientState>, kind: number, payload: Uint8Array): void;
+  sendChunked(ws: ServerWebSocket<ClientState>, kind: number, payload: Uint8Array): boolean;
+  encodeSnapshotWithOverlays(
+    payload: NonNullable<DeviceConnectionEntry['lastSnapshot']>
+  ): Uint8Array;
+  broadcastDeviceEvent(entry: DeviceConnectionEntry, payload: EventDevicePayload): void;
+}
+
+export class DeviceConnectionRegistry {
+  connections = new Map<string, DeviceConnectionEntry>();
+  pendingConnectionEntries = new Map<string, Promise<DeviceConnectionEntry | null>>();
+  private closed = false;
+  private generation = 0;
+
+  constructor(private readonly host: DeviceConnectionRegistryHost) {}
+
+  get isClosed(): boolean {
+    return this.closed;
+  }
+
+  get closeGeneration(): number {
+    return this.generation;
+  }
+
+  clearSnapshotTimer(entry: DeviceConnectionEntry): void {
+    if (!entry.snapshotTimer) return;
+    clearTimeout(entry.snapshotTimer);
+    entry.snapshotTimer = null;
+  }
+
+  clearSnapshotPollTimer(entry: DeviceConnectionEntry): void {
+    if (!entry.snapshotPollTimer) return;
+    clearInterval(entry.snapshotPollTimer);
+    entry.snapshotPollTimer = null;
+  }
+
+  clearReconnectTimer(entry: DeviceConnectionEntry): void {
+    if (!entry.reconnectTimer) return;
+    clearTimeout(entry.reconnectTimer);
+    entry.reconnectTimer = null;
+  }
+
+  clearIdleReleaseTimer(entry: DeviceConnectionEntry): void {
+    if (!entry.idleReleaseTimer) return;
+    clearTimeout(entry.idleReleaseTimer);
+    entry.idleReleaseTimer = null;
+  }
+
+  entryHasClients(entry: DeviceConnectionEntry): boolean {
+    return entry.clients.size > 0 || Boolean(entry.canonicalClients?.size);
+  }
+
+  scheduleConnectionEntryRelease(deviceId: string, entry: DeviceConnectionEntry): void {
+    if (this.entryHasClients(entry)) {
+      this.clearIdleReleaseTimer(entry);
+      return;
+    }
+    if (entry.idleReleaseTimer) return;
+    entry.idleReleaseTimer = setTimeout(() => {
+      entry.idleReleaseTimer = null;
+      if (this.connections.get(deviceId) !== entry || this.entryHasClients(entry)) return;
+      this.connections.delete(deviceId);
+      this.host.releaseConnectionEntry(deviceId, entry);
+    }, RUNTIME_IDLE_GRACE_MS);
+  }
+
+  async getOrCreate(
+    deviceId: string,
+    ws: ServerWebSocket<ClientState>
+  ): Promise<DeviceConnectionEntry | null> {
+    if (this.closed) return null;
+
+    const existing = this.connections.get(deviceId);
+    if (existing) {
+      this.clearIdleReleaseTimer(existing);
+      return existing;
+    }
+
+    const pending = this.pendingConnectionEntries.get(deviceId);
+    if (pending) {
+      return pending;
+    }
+
+    const generation = this.generation;
+    const creationPromise: Promise<DeviceConnectionEntry | null> = this.host
+      .createDeviceConnectionEntry(deviceId, ws)
+      .then((createdEntry) => {
+        if (this.closed || this.generation !== generation) {
+          if (createdEntry) {
+            this.host.releaseConnectionEntry(deviceId, createdEntry);
+          }
+          return null;
+        }
+        if (createdEntry) {
+          this.connections.set(deviceId, createdEntry);
+        }
+        return createdEntry;
+      })
+      .finally(() => {
+        if (this.pendingConnectionEntries.get(deviceId) === creationPromise) {
+          this.pendingConnectionEntries.delete(deviceId);
+        }
+      });
+
+    this.pendingConnectionEntries.set(deviceId, creationPromise);
+    return creationPromise;
+  }
+
+  closeAll(): void {
+    this.closed = true;
+    this.generation += 1;
+    for (const [deviceId, entry] of this.connections) {
+      this.host.releaseConnectionEntry(deviceId, entry);
+      this.connections.delete(deviceId);
+    }
+    this.pendingConnectionEntries.clear();
+  }
+
+  async createEntry(
+    deviceId: string,
+    ws: ServerWebSocket<ClientState>
+  ): Promise<DeviceConnectionEntry | null> {
+    let runtime: DeviceSessionRuntime | null = null;
+    let detachRuntime: (() => void) | null = null;
+
+    try {
+      runtime = await this.host.deps.acquireRuntime(deviceId);
+      detachRuntime = this.host.attachRuntime(deviceId, runtime);
+
+      await runtime.connect();
+      if (this.host.currentTheme !== null) {
+        await runtime.setWindowStyle(getTmuxWindowStyle(this.host.currentTheme));
+      }
+      return {
+        runtime,
+        detachRuntime,
+        clients: new Set(),
+        lastSnapshot: runtime.getCurrentSnapshot?.() ?? null,
+        snapshotTimer: null,
+        snapshotPollTimer: null,
+        reconnectAttempts: 0,
+        reconnectTimer: null,
+        canonicalClients: new Set(),
+        idleReleaseTimer: null,
+      };
+    } catch (err) {
+      detachRuntime?.();
+      if (runtime) {
+        void this.host.deps.releaseRuntime(deviceId, runtime);
+      }
+      const errorInfo = classifySshError(err instanceof Error ? err : new Error(String(err)));
+      this.host.sendEnvelope(
+        ws,
+        wsBorsh.KIND_DEVICE_EVENT,
+        wsBorsh.encodeDeviceEventPayload({
+          deviceId,
+          type: 'error',
+          errorType: errorInfo.type,
+          message: t(errorInfo.messageKey, { ...errorInfo.messageParams }),
+          rawMessage: err instanceof Error ? err.message : String(err),
+        })
+      );
+      return null;
+    }
+  }
+
+  async handleDeviceConnect(ws: ServerWebSocket<ClientState>, deviceId: string): Promise<void> {
+    const entry = await this.getOrCreate(deviceId, ws);
+    if (!entry) return;
+
+    entry.clients.add(ws);
+    this.clearIdleReleaseTimer(entry);
+    ws.data.borshState.selectedPanes[deviceId] ??= null;
+
+    const canonicalSession = this.host.canonicalSessions.get(ws);
+    if (canonicalSession) await canonicalSession.attachDevice(deviceId, entry.runtime);
+
+    const connectedPayload = wsBorsh.encodePayload(wsBorsh.schema.DeviceConnectedSchema, {
+      deviceId,
+    });
+    this.host.sendEnvelope(ws, wsBorsh.KIND_DEVICE_CONNECTED, connectedPayload);
+
+    if (entry.lastSnapshot) {
+      if (!entry.canonicalClients?.has(ws)) {
+        const snapshotBytes = this.host.encodeSnapshotWithOverlays(entry.lastSnapshot);
+        this.host.sendChunked(ws, wsBorsh.KIND_STATE_SNAPSHOT, snapshotBytes);
+      }
+    } else {
+      entry.runtime.requestSnapshot();
+    }
+  }
+
+  handleDeviceDisconnect(ws: ServerWebSocket<ClientState>, deviceId: string): void {
+    this.host.canonicalSessions.get(ws)?.detachDevice(deviceId);
+    const entry = this.connections.get(deviceId);
+    if (entry) {
+      entry.clients.delete(ws);
+      this.clearSnapshotPollTimer(entry);
+      this.scheduleConnectionEntryRelease(deviceId, entry);
+    }
+
+    delete ws.data.borshState.selectedPanes[deviceId];
+    delete ws.data.borshState.subscribedPanes[deviceId];
+
+    const disconnectedPayload = wsBorsh.encodePayload(wsBorsh.schema.DeviceDisconnectedSchema, {
+      deviceId,
+    });
+    this.host.sendEnvelope(ws, wsBorsh.KIND_DEVICE_DISCONNECTED, disconnectedPayload);
+  }
+
+  async handleConnectionClose(deviceId: string): Promise<void> {
+    const entry = this.connections.get(deviceId);
+    if (!entry) {
+      return;
+    }
+
+    this.clearSnapshotTimer(entry);
+    this.clearSnapshotPollTimer(entry);
+    entry.detachRuntime?.();
+    entry.detachRuntime = null;
+    const closedRuntime = entry.runtime;
+    void this.host.deps.releaseRuntime(deviceId, closedRuntime);
+
+    const { sshReconnectMaxRetries, sshReconnectDelaySeconds } = getSiteSettings();
+
+    if (this.entryHasClients(entry) && entry.reconnectAttempts < sshReconnectMaxRetries) {
+      entry.reconnectAttempts += 1;
+      const delay = Math.max(1, sshReconnectDelaySeconds) * 1000;
+
+      const notifying: EventDevicePayload = {
+        deviceId,
+        type: 'error',
+        errorType: 'reconnecting',
+        message: t('sshError.reconnecting', {
+          delay: delay / 1000,
+          attempt: entry.reconnectAttempts,
+          maxRetries: sshReconnectMaxRetries,
+        }),
+      };
+      this.host.broadcastDeviceEvent(entry, notifying);
+
+      this.clearReconnectTimer(entry);
+      entry.reconnectTimer = setTimeout(async () => {
+        entry.reconnectTimer = null;
+
+        const current = this.connections.get(deviceId);
+        if (this.closed || !current || current !== entry || !this.entryHasClients(entry)) {
+          return;
+        }
+
+        const retryClient =
+          Array.from(entry.clients)[0] ?? Array.from(entry.canonicalClients ?? [])[0];
+        if (!retryClient) return;
+        const retryConnection = await this.host.createDeviceConnectionEntry(deviceId, retryClient);
+        if (this.closed) {
+          if (retryConnection) {
+            this.host.releaseConnectionEntry(deviceId, retryConnection);
+          }
+          return;
+        }
+        if (!retryConnection) {
+          if (entry.reconnectAttempts < sshReconnectMaxRetries) {
+            await this.handleConnectionClose(deviceId);
+            return;
+          }
+
+          const finalEvent: EventDevicePayload = {
+            deviceId,
+            type: 'error',
+            errorType: 'reconnect_failed',
+            message: t('sshError.reconnectFailed'),
+          };
+          this.host.broadcastDeviceEvent(entry, finalEvent);
+          return;
+        }
+
+        retryConnection.clients = entry.clients;
+        retryConnection.canonicalClients = entry.canonicalClients ?? new Set();
+        retryConnection.reconnectAttempts = entry.reconnectAttempts;
+        this.connections.set(deviceId, retryConnection);
+
+        for (const client of retryConnection.canonicalClients) {
+          await this.host.canonicalSessions
+            .get(client)
+            ?.attachDevice(deviceId, retryConnection.runtime);
+        }
+
+        const reconnected: EventDevicePayload = {
+          deviceId,
+          type: 'reconnected',
+          message: t('sshError.reconnected'),
+        };
+        this.host.broadcastDeviceEvent(retryConnection, reconnected);
+
+        retryConnection.runtime.requestSnapshot();
+      }, delay);
+
+      return;
+    }
+
+    const disconnected: EventDevicePayload = {
+      deviceId,
+      type: 'disconnected',
+    };
+    this.host.broadcastDeviceEvent(entry, disconnected);
+
+    for (const client of entry.clients) {
+      delete client.data.borshState.selectedPanes[deviceId];
+    }
+    for (const client of entry.canonicalClients ?? []) {
+      this.host.canonicalSessions.get(client)?.detachDevice(deviceId);
+    }
+
+    this.clearReconnectTimer(entry);
+    this.connections.delete(deviceId);
+  }
+}
