@@ -263,6 +263,20 @@ describe('SnapshotProjector.performSnapshot', () => {
     return { exitCode: 1, stdout: '', stderr };
   }
 
+  function deferred<T>(): {
+    promise: Promise<T>;
+    resolve: (value: T) => void;
+  } {
+    let resolve: ((value: T) => void) | null = null;
+    const promise = new Promise<T>((done) => {
+      resolve = done;
+    });
+    return {
+      promise,
+      resolve: (value) => resolve?.(value),
+    };
+  }
+
   type FakeHost = SnapshotProjectorHost & {
     calls: string[][];
     snapshots: unknown[];
@@ -354,20 +368,45 @@ describe('SnapshotProjector.performSnapshot', () => {
 
   test('fetches session/windows/panes in parallel, projects, then restores theme', async () => {
     const host = createHost();
-    host.setResponse(
-      `display-message -p -t tmex #{session_id}${SNAPSHOT_FIELD_SEPARATOR}#{session_name}`,
-      ok('$1|tmex\n')
-    );
-    host.setResponse(
-      `list-windows -t tmex -F ${WINDOW_SNAPSHOT_FORMAT}`,
-      ok('@1|0|1|ba9d,80x24,0,0,1|main\n')
-    );
-    host.setResponse(
-      `list-panes -s -t tmex -F ${PANE_SNAPSHOT_FORMAT}`,
-      ok('%1|@1|0|1|80|24|0|0|1|bash|node|/home/user\n')
-    );
+    const timeline: string[] = [];
+    const sessionGate = deferred<CommandResult>();
+    const windowsGate = deferred<CommandResult>();
+    const panesGate = deferred<CommandResult>();
+    const gates: Record<string, ReturnType<typeof deferred<CommandResult>>> = {
+      'display-message': sessionGate,
+      'list-windows': windowsGate,
+      'list-panes': panesGate,
+    };
 
-    await new SnapshotProjector(host).performSnapshot();
+    host.runTmuxAllowFailure = async (argv) => {
+      const command = argv[0] ?? '';
+      const gate = gates[command];
+      if (!gate) {
+        throw new Error(`unexpected snapshot query: ${command}`);
+      }
+      host.calls.push(argv);
+      timeline.push(`query:start:${command}`);
+      const result = await gate.promise;
+      timeline.push(`query:resolve:${command}`);
+      return result;
+    };
+    const restoreTheme = host.restoreThemeSubscriptionsOnce;
+    host.restoreThemeSubscriptionsOnce = () => {
+      restoreTheme();
+      timeline.push('theme-restore');
+    };
+    const onSnapshot = host.callbacks.onSnapshot;
+    host.callbacks.onSnapshot = (payload, baseRevision) => {
+      onSnapshot?.(payload, baseRevision);
+      timeline.push('snapshot-emit');
+    };
+    const emitClosures = host.lifecycle.emitSnapshotClosures;
+    host.lifecycle.emitSnapshotClosures = (prevWindows) => {
+      emitClosures(prevWindows);
+      timeline.push('closure');
+    };
+
+    const done = new SnapshotProjector(host).performSnapshot();
 
     expect(host.calls).toEqual([
       [
@@ -379,6 +418,31 @@ describe('SnapshotProjector.performSnapshot', () => {
       ],
       ['list-windows', '-t', 'tmex', '-F', WINDOW_SNAPSHOT_FORMAT],
       ['list-panes', '-s', '-t', 'tmex', '-F', PANE_SNAPSHOT_FORMAT],
+    ]);
+    expect(timeline).toEqual([
+      'query:start:display-message',
+      'query:start:list-windows',
+      'query:start:list-panes',
+    ]);
+    expect(host.restored).toBe(0);
+    expect(host.snapshots).toEqual([]);
+    expect(host.closures).toBe(0);
+
+    sessionGate.resolve(ok('$1|tmex\n'));
+    windowsGate.resolve(ok('@1|0|1|ba9d,80x24,0,0,1|main\n'));
+    panesGate.resolve(ok('%1|@1|0|1|80|24|0|0|1|bash|node|/home/user\n'));
+    await done;
+
+    expect(timeline).toEqual([
+      'query:start:display-message',
+      'query:start:list-windows',
+      'query:start:list-panes',
+      'query:resolve:display-message',
+      'query:resolve:list-windows',
+      'query:resolve:list-panes',
+      'theme-restore',
+      'snapshot-emit',
+      'closure',
     ]);
     expect(host.snapshotSession).toEqual({ id: '$1', name: 'tmex' });
     expect(host.activePaneId).toBe('%1');
