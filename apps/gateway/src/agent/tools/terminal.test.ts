@@ -264,6 +264,98 @@ describe('terminal tools - read_screen', () => {
   });
 });
 
+describe('terminal tools - emulator 数据源', () => {
+  test('send_input 行模式通过 tap.onBytes 捕获增量（不是 onByte）', async () => {
+    let onBytes: ((data: Uint8Array) => void) | undefined;
+    const emulator = {
+      isDisposed: false,
+      isAlternateScreen: () => false,
+      render: () => 'should-not-use-render',
+      size: () => ({ cols: 100, rows: 30 }),
+      tap(tap: { onBytes?: (data: Uint8Array) => void }) {
+        onBytes = tap.onBytes;
+        return () => {
+          onBytes = undefined;
+        };
+      },
+    };
+    const { runtime, calls } = createStubRuntime();
+    const harness: ToolHarness = {
+      failures: 0,
+      successes: 0,
+      tools: createTerminalTools({
+        paneId: '%1',
+        deviceId: 'dev1',
+        getRuntime: () => runtime,
+        getEmulator: () => emulator as never,
+        needsApprovalForWrite: false,
+        onFailure: () => {
+          harness.failures += 1;
+        },
+        onSuccess: () => {
+          harness.successes += 1;
+        },
+        sleepMs: async () => {
+          onBytes?.(new TextEncoder().encode('hello from pane\n'));
+        },
+      }),
+    };
+
+    const result = (await getTool(harness, 'send_input').execute(
+      { text: 'ls', keys: ['enter'] },
+      execOptions
+    )) as { delta: string; mode: string; cols: number; rows: number };
+
+    expect(calls.sendInput).toEqual([{ paneId: '%1', data: 'ls\r' }]);
+    expect(calls.capture).toEqual([]);
+    expect(result.mode).toBe('delta');
+    expect(result.delta).toContain('hello from pane');
+    expect(result.cols).toBe(80);
+    expect(result.rows).toBe(24);
+    expect(harness.successes).toBe(1);
+    expect(harness.failures).toBe(0);
+  });
+
+  test('read_screen 在 emulator 可用且 historyLines=0 时走渲染态', async () => {
+    const emulator = {
+      isDisposed: false,
+      isAlternateScreen: () => true,
+      render: () => 'vim screen',
+      size: () => ({ cols: 120, rows: 40 }),
+    };
+    const { runtime, calls } = createStubRuntime({ screen: 'capture-should-not-run' });
+    const harness: ToolHarness = {
+      failures: 0,
+      successes: 0,
+      tools: createTerminalTools({
+        paneId: '%1',
+        deviceId: 'dev1',
+        getRuntime: () => runtime,
+        getEmulator: () => emulator as never,
+        needsApprovalForWrite: false,
+        onFailure: () => {
+          harness.failures += 1;
+        },
+        onSuccess: () => {
+          harness.successes += 1;
+        },
+        sleepMs: async () => {},
+      }),
+    };
+
+    const result = (await getTool(harness, 'read_screen').execute({}, execOptions)) as {
+      screen: string;
+      alternateScreen: boolean;
+      cols: number;
+    };
+    expect(result.screen).toContain('vim screen');
+    expect(result.alternateScreen).toBe(true);
+    expect(result.cols).toBe(80);
+    expect(calls.capture).toEqual([]);
+    expect(harness.successes).toBe(1);
+  });
+});
+
 describe('terminal tools - get_pane_info', () => {
   test('返回尺寸/光标/alternate/当前命令与时间戳', async () => {
     const { runtime, calls } = createStubRuntime({ cols: 120, rows: 40 });

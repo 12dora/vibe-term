@@ -32,36 +32,33 @@ import {
   resolveProviderHostedTools,
   resolveProviderWebSearchTool,
 } from '../llm/provider-registry';
-import {
-  type EmulatorStreamSource,
-  type PaneEmulator,
-  PaneEmulatorRegistry,
-} from '../tmux-client/pane-emulator';
+import type { PaneEmulator } from '../tmux-client/pane-emulator';
 import { tmuxRuntimeRegistry } from '../tmux-client/registry';
 import { resolvePaneContext } from '../tmux/bell-context';
 import { getDeviceSnapshot } from '../tmux/snapshot-directory';
-import { createRedactionMiddleware } from './redaction-middleware';
-
-/** 全局 per-pane 模拟器池（引用计数复用 + 显式 free，见 pane-emulator.ts）。 */
-const paneEmulatorRegistry = new PaneEmulatorRegistry();
-
-/** runtime 是否具备模拟器所需的流订阅能力（stub runtime 没有则退回 capture）。 */
-function asEmulatorSource(runtime: unknown): EmulatorStreamSource | null {
-  const candidate = runtime as Partial<EmulatorStreamSource>;
-  return typeof candidate?.subscribe === 'function' &&
-    typeof candidate?.capturePaneText === 'function' &&
-    typeof candidate?.getPaneInfo === 'function'
-    ? (candidate as EmulatorStreamSource)
-    : null;
-}
+import {
+  type AgentStopReason,
+  type RunOnceDecision,
+  resolveRunOnceOutcome,
+} from './outcome-resolver';
 import {
   buildAgentSystemPrompt,
   buildTitleGenerationPrompt,
   collectAgentEnvironment,
 } from './prompts';
+import { createRedactionMiddleware } from './redaction-middleware';
+import {
+  acquireRunResources,
+  destroyPaneEmulator,
+  releaseRunResources,
+} from './run-resource-scope';
+import { StreamAccumulator } from './stream-accumulator';
+import { type StreamPartHandlers, dispatchStreamPart } from './stream-part-router';
 import { type TerminalRuntimeLike, createTerminalTools } from './tools/terminal';
 import { createFetchUrlTool, createWebSearchTool } from './tools/web';
 import { agentWsHub } from './ws-hub';
+
+export type { AgentStopReason } from './outcome-resolver';
 
 const TERMINAL_FAILURE_LIMIT = 2;
 
@@ -115,8 +112,6 @@ export type AgentRunOutcome = 'idle' | 'waiting_confirmation' | 'stopped' | 'int
 
 /** runOnce 内部结果：'steer' 表示需 drain 队列后续跑（不逃逸出 execute） */
 type RunOnceResult = AgentRunOutcome | 'steer';
-
-export type AgentStopReason = 'manual' | 'shutdown' | 'pane_lost';
 
 export interface AgentRunDeps {
   resolveModel: (providerId: string | null, modelId: string | null) => Promise<LanguageModel>;
@@ -255,6 +250,7 @@ export class AgentRun {
   readonly sessionId: string;
 
   private readonly deps: AgentRunDeps;
+  private readonly deltas: StreamAccumulator;
   // 每个 runOnce 迭代重建（steer 续跑需要新的可用 signal）；requestStop/steer 作用于当前迭代。
   private abortController = new AbortController();
   private stopReason: AgentStopReason | null = null;
@@ -274,28 +270,31 @@ export class AgentRun {
 
   private eventSeq = 0;
 
-  // 进行中回合的累积文本（供 sync 回放），step 落库后清空
-  private textBuffer = '';
-  private reasoningBuffer = '';
-
-  // 节流广播 buffer
-  private pendingTextDelta = '';
-  private pendingTextMessageId = '';
-  private pendingReasoningDelta = '';
-  private pendingReasoningMessageId = '';
-  private flushTimer: ReturnType<typeof setTimeout> | null = null;
-
   constructor(sessionId: string, deps: Partial<AgentRunDeps> = {}) {
     this.sessionId = sessionId;
     this.deps = { ...defaultDeps, ...deps };
+    this.deltas = new StreamAccumulator(
+      {
+        emitText: (messageId, delta) => {
+          this.broadcast(wsBorsh.AGENT_EVENT_TEXT_DELTA, { messageId, delta });
+        },
+        emitReasoning: (messageId, delta) => {
+          this.broadcast(wsBorsh.AGENT_EVENT_REASONING_DELTA, { messageId, delta });
+        },
+      },
+      {
+        flushIntervalMs: this.deps.deltaFlushIntervalMs,
+        flushMaxBytes: this.deps.deltaFlushMaxBytes,
+      }
+    );
   }
 
   get inProgressText(): string {
-    return this.textBuffer;
+    return this.deltas.inProgressText;
   }
 
   get inProgressReasoning(): string {
-    return this.reasoningBuffer;
+    return this.deltas.inProgressReasoning;
   }
 
   requestStop(reason: AgentStopReason): void {
@@ -328,30 +327,16 @@ export class AgentRun {
     this.runtimeDeviceId = runtimeDeviceId;
     this.runtimePaneId = session.paneId;
     try {
-      if (runtimeDeviceId && session.paneId) {
-        try {
-          runtime = await this.deps.acquireRuntime(runtimeDeviceId);
-        } catch (error) {
-          return this.finishError(
-            session,
-            `failed to acquire terminal runtime: ${toErrorMessage(error)}`
-          );
-        }
-        // 尽力获取 headless 模拟器（流式读屏 + run_command）；失败则退回 capture-pane。
-        const source = asEmulatorSource(runtime);
-        if (source) {
-          try {
-            this.emulator = await paneEmulatorRegistry.acquire(
-              runtimeDeviceId,
-              session.paneId,
-              source
-            );
-          } catch (error) {
-            console.error(`[agent-run] failed to acquire pane emulator: ${toErrorMessage(error)}`);
-            this.emulator = null;
-          }
-        }
+      const acquired = await acquireRunResources({
+        deviceId: runtimeDeviceId,
+        paneId: session.paneId,
+        acquireRuntime: this.deps.acquireRuntime,
+      });
+      if (acquired.runtimeError) {
+        return this.finishError(session, acquired.runtimeError);
       }
+      runtime = acquired.runtime;
+      this.emulator = acquired.emulator;
 
       let attempt = 0;
       while (true) {
@@ -367,7 +352,7 @@ export class AgentRun {
         try {
           result = await this.runOnce(session, runtime);
         } catch (error) {
-          this.clearFlushTimer();
+          this.deltas.clearTimer();
           if (this.stopReason || this.abortController.signal.aborted) {
             return this.finishAborted(session);
           }
@@ -405,28 +390,16 @@ export class AgentRun {
         return result;
       }
     } finally {
-      this.clearFlushTimer();
-      if (this.emulator && runtimeDeviceId && session.paneId) {
-        this.emulator = null;
-        try {
-          await paneEmulatorRegistry.release(runtimeDeviceId, session.paneId);
-        } catch (error) {
-          console.error(`[agent-run] failed to release pane emulator:`, error);
-        }
-        // 兜底强制销毁：release 仅减引用计数，run 结束应确保 emulator 真正释放
-        try {
-          await paneEmulatorRegistry.destroy(runtimeDeviceId, session.paneId);
-        } catch (error) {
-          console.error(`[agent-run] failed to destroy pane emulator:`, error);
-        }
-      }
-      if (runtime && runtimeDeviceId) {
-        try {
-          await this.deps.releaseRuntime(runtimeDeviceId, runtime);
-        } catch (error) {
-          console.error(`[agent-run] failed to release runtime ${runtimeDeviceId}:`, error);
-        }
-      }
+      this.deltas.clearTimer();
+      const emulator = this.emulator;
+      this.emulator = null;
+      await releaseRunResources({
+        emulator,
+        runtime,
+        deviceId: runtimeDeviceId,
+        paneId: session.paneId,
+        releaseRuntime: this.deps.releaseRuntime,
+      });
       this.runtimeDeviceId = null;
       this.runtimePaneId = null;
     }
@@ -456,8 +429,7 @@ export class AgentRun {
       environment: collectAgentEnvironment(device),
     });
 
-    this.textBuffer = '';
-    this.reasoningBuffer = '';
+    this.deltas.reset();
     let persistedResponseCount = 0;
     const approvals: PendingApproval[] = [];
     let streamError: unknown = null;
@@ -496,10 +468,8 @@ export class AgentRun {
           });
         }
         persistedResponseCount = responseMessages.length;
-        // 已落库内容不再属于"进行中"
-        this.flushDeltas();
-        this.textBuffer = '';
-        this.reasoningBuffer = '';
+        this.deltas.flush();
+        this.deltas.clearInProgress();
 
         // 默认 step 边界注入：本 step 落库后若有排队消息，优雅中断当前流，drain 后续跑。
         if (
@@ -532,68 +502,68 @@ export class AgentRun {
       }, this.deps.streamIdleTimeoutMs);
     };
 
+    const handlers: StreamPartHandlers = {
+      'text-delta': (part) => {
+        this.deltas.queueTextDelta(part.id, part.text);
+      },
+      'reasoning-delta': (part) => {
+        this.deltas.queueReasoningDelta(part.id, part.text);
+      },
+      'tool-call': (part) => {
+        this.deltas.flush();
+        this.broadcast(wsBorsh.AGENT_EVENT_TOOL_CALL, {
+          toolCallId: part.toolCallId,
+          toolName: part.toolName,
+          input: part.input,
+        });
+      },
+      'tool-result': (part) => {
+        this.deltas.flush();
+        this.broadcast(wsBorsh.AGENT_EVENT_TOOL_RESULT, {
+          toolCallId: part.toolCallId,
+          toolName: part.toolName,
+          output: part.output,
+        });
+      },
+      'tool-error': (part) => {
+        this.deltas.flush();
+        this.broadcast(wsBorsh.AGENT_EVENT_TOOL_RESULT, {
+          toolCallId: part.toolCallId,
+          toolName: part.toolName,
+          output: toErrorMessage(part.error),
+          isError: true,
+        });
+      },
+      'tool-output-denied': (part) => {
+        this.deltas.flush();
+        this.broadcast(wsBorsh.AGENT_EVENT_TOOL_RESULT, {
+          toolCallId: part.toolCallId,
+          toolName: part.toolName,
+          output: 'execution denied by user',
+          isError: true,
+        });
+      },
+      'tool-approval-request': (part) => {
+        approvals.push({
+          approvalId: part.approvalId,
+          toolCallId: part.toolCall.toolCallId,
+          toolName: part.toolCall.toolName,
+          input: part.toolCall.input,
+        });
+      },
+      error: (part) => {
+        streamError = part.error;
+      },
+      abort: () => {
+        aborted = true;
+      },
+    };
+
     try {
       resetIdleTimer();
       for await (const part of result.fullStream) {
         resetIdleTimer();
-        switch (part.type) {
-          case 'text-delta':
-            this.queueTextDelta(part.id, part.text);
-            break;
-          case 'reasoning-delta':
-            this.queueReasoningDelta(part.id, part.text);
-            break;
-          case 'tool-call':
-            this.flushDeltas();
-            this.broadcast(wsBorsh.AGENT_EVENT_TOOL_CALL, {
-              toolCallId: part.toolCallId,
-              toolName: part.toolName,
-              input: part.input,
-            });
-            break;
-          case 'tool-result':
-            this.flushDeltas();
-            this.broadcast(wsBorsh.AGENT_EVENT_TOOL_RESULT, {
-              toolCallId: part.toolCallId,
-              toolName: part.toolName,
-              output: part.output,
-            });
-            break;
-          case 'tool-error':
-            this.flushDeltas();
-            this.broadcast(wsBorsh.AGENT_EVENT_TOOL_RESULT, {
-              toolCallId: part.toolCallId,
-              toolName: part.toolName,
-              output: toErrorMessage(part.error),
-              isError: true,
-            });
-            break;
-          case 'tool-output-denied':
-            this.flushDeltas();
-            this.broadcast(wsBorsh.AGENT_EVENT_TOOL_RESULT, {
-              toolCallId: part.toolCallId,
-              toolName: part.toolName,
-              output: 'execution denied by user',
-              isError: true,
-            });
-            break;
-          case 'tool-approval-request':
-            approvals.push({
-              approvalId: part.approvalId,
-              toolCallId: part.toolCall.toolCallId,
-              toolName: part.toolCall.toolName,
-              input: part.toolCall.input,
-            });
-            break;
-          case 'error':
-            streamError = part.error;
-            break;
-          case 'abort':
-            aborted = true;
-            break;
-          default:
-            break;
-        }
+        dispatchStreamPart(part, handlers);
       }
     } finally {
       if (idleTimer) {
@@ -601,41 +571,48 @@ export class AgentRun {
       }
     }
 
-    this.flushDeltas();
+    this.deltas.flush();
 
-    if (this.stalled) {
-      return this.finishError(session, t('agent.error.streamStalled'));
+    const decision = resolveRunOnceOutcome({
+      stalled: this.stalled,
+      stopReason: this.stopReason,
+      steerRequested: this.steerRequested,
+      aborted: aborted || this.abortController.signal.aborted,
+      streamError,
+      hasApprovals: approvals.length > 0,
+      hasQueuedMessages: this.deps.hasQueuedMessages(this.sessionId),
+      terminalFatal: this.terminalFatal,
+      terminalFatalMessage: this.terminalFatalMessage,
+    });
+    return this.fulfillRunOnceDecision(session, decision, approvals, model);
+  }
+
+  private async fulfillRunOnceDecision(
+    session: AgentSessionRecord,
+    decision: RunOnceDecision,
+    approvals: PendingApproval[],
+    model: LanguageModel
+  ): Promise<RunOnceResult> {
+    switch (decision.kind) {
+      case 'stalled-error':
+        return this.finishError(session, t('agent.error.streamStalled'));
+      case 'fatal-error':
+      case 'pane-lost-error':
+      case 'interrupted':
+      case 'stopped':
+        return this.finishAborted(session);
+      case 'steer':
+        return 'steer';
+      case 'throw': {
+        const error = decision.error;
+        throw error instanceof Error ? error : new Error(String(error));
+      }
+      case 'waiting-confirmation':
+        return this.finishWaitingConfirmation(session, approvals);
+      case 'idle':
+        await this.maybeGenerateTitle(session, model);
+        return this.finishIdle(session);
     }
-
-    // stop（手动/shutdown）优先于 steer 收尾
-    if (this.stopReason) {
-      return this.finishAborted(session);
-    }
-
-    // steer / step 边界注入：abort 当前流后交由 execute drain 队列续跑（status 保持 running）
-    if (this.steerRequested) {
-      return 'steer';
-    }
-
-    if (aborted || this.abortController.signal.aborted) {
-      return this.finishAborted(session);
-    }
-
-    if (streamError) {
-      throw streamError instanceof Error ? streamError : new Error(String(streamError));
-    }
-
-    if (approvals.length > 0) {
-      return this.finishWaitingConfirmation(session, approvals);
-    }
-
-    // 自然完成：若在收尾窗口又有排队消息，转 steer 续跑而非落 idle
-    if (this.deps.hasQueuedMessages(this.sessionId)) {
-      return 'steer';
-    }
-
-    await this.maybeGenerateTitle(session, model);
-    return this.finishIdle(session);
   }
 
   private async buildTools(
@@ -697,11 +674,9 @@ export class AgentRun {
       this.terminalFatalMessage = `terminal tool failed ${this.terminalFailureStreak} times in a row, aborting run`;
       // fatal streak：强制销毁 emulator，防止 finally 的 release 仅减引用计数而残留脏状态
       if (this.runtimeDeviceId && this.runtimePaneId) {
-        void paneEmulatorRegistry
-          .destroy(this.runtimeDeviceId, this.runtimePaneId)
-          .catch((error) => {
-            console.error(`[agent-run] failed to destroy emulator on fatal:`, error);
-          });
+        void destroyPaneEmulator(this.runtimeDeviceId, this.runtimePaneId).catch((error) => {
+          console.error('[agent-run] failed to destroy emulator on fatal:', error);
+        });
         this.emulator = null;
       }
       this.abortController.abort();
@@ -761,7 +736,7 @@ export class AgentRun {
   }
 
   private finishAborted(session: AgentSessionRecord): AgentRunOutcome {
-    this.clearFlushTimer();
+    this.deltas.clearTimer();
     this.persistTruncatedText();
 
     if (this.terminalFatal) {
@@ -789,7 +764,7 @@ export class AgentRun {
   }
 
   private finishError(session: AgentSessionRecord, message: string): AgentRunOutcome {
-    this.clearFlushTimer();
+    this.deltas.clearTimer();
     this.persistTruncatedText();
 
     this.setStatus('error', message);
@@ -802,9 +777,8 @@ export class AgentRun {
 
   /** abort/error 时把进行中累积文本作为 truncated assistant 消息落库 */
   private persistTruncatedText(): void {
-    const text = this.textBuffer;
+    const text = this.deltas.consumeInProgressText();
     if (!text) {
-      this.reasoningBuffer = '';
       return;
     }
     try {
@@ -821,8 +795,6 @@ export class AgentRun {
     } catch (error) {
       console.error(`[agent-run] failed to persist truncated text for ${this.sessionId}:`, error);
     }
-    this.textBuffer = '';
-    this.reasoningBuffer = '';
   }
 
   private async maybeGenerateTitle(
@@ -866,7 +838,6 @@ export class AgentRun {
       }
       updateAgentSession(this.sessionId, { title });
       session.title = title;
-      // 客户端收到 status 事件后重新拉取 session 列表即可看到新标题
       const latest = getAgentSessionById(this.sessionId);
       if (latest) {
         this.broadcast(wsBorsh.AGENT_EVENT_STATUS, {
@@ -902,68 +873,6 @@ export class AgentRun {
     this.broadcast(wsBorsh.AGENT_EVENT_STATUS, { status, lastError });
   }
 
-  private queueTextDelta(messageId: string, delta: string): void {
-    this.textBuffer += delta;
-    if (this.pendingTextDelta && this.pendingTextMessageId !== messageId) {
-      this.flushDeltas();
-    }
-    this.pendingTextMessageId = messageId;
-    this.pendingTextDelta += delta;
-    this.scheduleFlush();
-  }
-
-  private queueReasoningDelta(messageId: string, delta: string): void {
-    this.reasoningBuffer += delta;
-    if (this.pendingReasoningDelta && this.pendingReasoningMessageId !== messageId) {
-      this.flushDeltas();
-    }
-    this.pendingReasoningMessageId = messageId;
-    this.pendingReasoningDelta += delta;
-    this.scheduleFlush();
-  }
-
-  private scheduleFlush(): void {
-    if (
-      this.pendingTextDelta.length + this.pendingReasoningDelta.length >=
-      this.deps.deltaFlushMaxBytes
-    ) {
-      this.flushDeltas();
-      return;
-    }
-    if (this.flushTimer) {
-      return;
-    }
-    this.flushTimer = setTimeout(() => {
-      this.flushTimer = null;
-      this.flushDeltas();
-    }, this.deps.deltaFlushIntervalMs);
-  }
-
-  private flushDeltas(): void {
-    this.clearFlushTimer();
-    if (this.pendingTextDelta) {
-      this.broadcast(wsBorsh.AGENT_EVENT_TEXT_DELTA, {
-        messageId: this.pendingTextMessageId,
-        delta: this.pendingTextDelta,
-      });
-      this.pendingTextDelta = '';
-    }
-    if (this.pendingReasoningDelta) {
-      this.broadcast(wsBorsh.AGENT_EVENT_REASONING_DELTA, {
-        messageId: this.pendingReasoningMessageId,
-        delta: this.pendingReasoningDelta,
-      });
-      this.pendingReasoningDelta = '';
-    }
-  }
-
-  private clearFlushTimer(): void {
-    if (this.flushTimer) {
-      clearTimeout(this.flushTimer);
-      this.flushTimer = null;
-    }
-  }
-
   // ========== 通知 ==========
 
   private async safeNotify(
@@ -974,7 +883,6 @@ export class AgentRun {
     try {
       const settings = getSiteSettings();
       const device = session.deviceId ? getDeviceById(session.deviceId) : null;
-      // 由 paneId 从快照反查 windowId 等上下文，使 buildPaneUrl 能生成 pane 深链
       const paneContext =
         session.deviceId && session.paneId
           ? resolvePaneContext({
