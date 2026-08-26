@@ -1,0 +1,9 @@
+export const BELL_DEDUP_WINDOW_MS = 200;
+export const CONTROL_MAX_RESTARTS = 3;
+export const CONTROL_RESTART_DELAY_MS = 500;
+export const CONTROL_STABLE_RESET_MS = 10_000;
+export const CONTROL_STDERR_TAIL_LIMIT = 2048;
+export const CONTROL_ATTACH_READY_TIMEOUT_MS = 3000;
+export const HEARTBEAT_INTERVAL_MS = 30_000;
+export const HEARTBEAT_TIMEOUT_MS = 10_000;
+export const PARKING_WINDOW_NAME = 'tmex-park';
