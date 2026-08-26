@@ -192,4 +192,164 @@ describe('pane retention', () => {
     expect(retention.getLatestCursor('%1')?.terminalSeq).toBe(0n);
     expect(retention.snapshotStats().coldPanes).toBe(1);
   });
+
+  test('replays accepted panes in active-then-hot insertion order with seq-ordered segments', () => {
+    const retention = new PaneRetention({ scheduleTimers: false });
+    retention.reconcilePanes([
+      { paneId: '%1', paneEpoch: EPOCH_A },
+      { paneId: '%2', paneEpoch: EPOCH_B },
+      { paneId: '%3', paneEpoch: EPOCH_A },
+    ]);
+    const lease = retention.attachConsumer({ onData: () => {} });
+    lease.applySubscriptions(
+      1n,
+      [request('%1', EPOCH_A), request('%3', EPOCH_A)],
+      [request('%2', EPOCH_B), request('%1', EPOCH_A)]
+    );
+    retention.ingest('%1', EPOCH_A, encoder.encode('ab'));
+    retention.ingest('%1', EPOCH_A, encoder.encode('cd'));
+    retention.ingest('%2', EPOCH_B, encoder.encode('two'));
+    retention.ingest('%3', EPOCH_A, encoder.encode('three'));
+
+    const result = lease.applySubscriptions(
+      2n,
+      [request('%1', EPOCH_A, 0n), request('%3', EPOCH_A, 0n)],
+      [request('%2', EPOCH_B, 0n)]
+    );
+    expect(result.hotPanes.map((pane) => pane.paneId)).toEqual(['%2']);
+    expect(result.replay.map((plan) => plan.paneId)).toEqual(['%1', '%3', '%2']);
+    expect(result.replay[0]?.segments.map((segment) => decoder.decode(segment.data))).toEqual([
+      'ab',
+      'cd',
+    ]);
+    expect(result.replay[0]?.segments.map((segment) => [segment.seqStart, segment.seqEnd])).toEqual(
+      [
+        [0n, 2n],
+        [2n, 4n],
+      ]
+    );
+    expect(decoder.decode(result.replay[1]?.segments[0]?.data ?? new Uint8Array())).toBe('three');
+    expect(decoder.decode(result.replay[2]?.segments[0]?.data ?? new Uint8Array())).toBe('two');
+  });
+
+  test('evicts the least-recently-touched implicit hot pane when over maxHotPanes', () => {
+    let now = 0;
+    const retention = new PaneRetention({
+      maxHotPanes: 2,
+      now: () => now,
+      scheduleTimers: false,
+      routeGraceMs: 1,
+      replayTtlMs: 120_000,
+    });
+    retention.reconcilePanes([
+      { paneId: '%1', paneEpoch: EPOCH_A },
+      { paneId: '%2', paneEpoch: EPOCH_B },
+      { paneId: '%3', paneEpoch: EPOCH_A },
+    ]);
+
+    const first = retention.attachConsumer({ onData: () => {} });
+    first.applySubscriptions(1n, [request('%1', EPOCH_A)], []);
+    retention.ingest('%1', EPOCH_A, encoder.encode('one'));
+    first.close();
+    now = 1;
+    retention.sweep();
+
+    now = 2;
+    const second = retention.attachConsumer({ onData: () => {} });
+    second.applySubscriptions(1n, [request('%2', EPOCH_B)], []);
+    retention.ingest('%2', EPOCH_B, encoder.encode('two'));
+    second.close();
+    now = 3;
+    retention.sweep();
+
+    now = 4;
+    const third = retention.attachConsumer({ onData: () => {} });
+    third.applySubscriptions(1n, [request('%3', EPOCH_A)], []);
+    retention.ingest('%3', EPOCH_A, encoder.encode('three'));
+    third.close();
+    now = 5;
+    retention.sweep();
+
+    const stats = retention.snapshotStats();
+    expect(stats.hotPanes).toBe(2);
+    expect(stats.coldPanes).toBe(1);
+    expect(stats.evictionsByReason.hot_limit).toBe(1);
+    expect(retention.readReplay('%1', { paneEpoch: EPOCH_A, terminalSeq: 0n })?.gap?.reason).toBe(
+      'cache_evicted'
+    );
+    expect(retention.readReplay('%2', { paneEpoch: EPOCH_B, terminalSeq: 0n })?.needsScreen).toBe(
+      false
+    );
+    expect(retention.readReplay('%3', { paneEpoch: EPOCH_A, terminalSeq: 0n })?.needsScreen).toBe(
+      false
+    );
+  });
+
+  test('drops checkpoints before trimming live replay when over the retention byte limit', () => {
+    const retention = new PaneRetention({
+      scheduleTimers: false,
+      maxRetentionBytes: 8,
+      maxCheckpointBytesPerPane: 16,
+      maxReplayBytesPerPane: 16,
+    });
+    retention.reconcilePanes([{ paneId: '%1', paneEpoch: EPOCH_A }]);
+    const lease = retention.attachConsumer({ onData: () => {} });
+    lease.applySubscriptions(1n, [request('%1', EPOCH_A)], []);
+    retention.ingest('%1', EPOCH_A, encoder.encode('1234'));
+    expect(
+      retention.storeScreenCheckpoint({
+        paneId: '%1',
+        paneEpoch: EPOCH_A,
+        baseSeq: 4n,
+        rows: 1,
+        cols: 4,
+        modes: 0,
+        data: encoder.encode('12345678'),
+        historyCursor: null,
+        capturedAt: 0,
+      })
+    ).toBe(false);
+    expect(retention.getScreenCheckpoint('%1')).toBeNull();
+    expect(retention.snapshotStats()).toMatchObject({
+      replayBytes: 4,
+      checkpointBytes: 0,
+      evictionsByReason: expect.objectContaining({ retention_limit_checkpoint: 1 }),
+    });
+    expect(retention.readReplay('%1', { paneEpoch: EPOCH_A, terminalSeq: 0n })?.needsScreen).toBe(
+      false
+    );
+  });
+
+  test('scheduled grace timer promotes to hot and dispose cancels it', async () => {
+    let now = 0;
+    const retention = new PaneRetention({
+      now: () => now,
+      scheduleTimers: true,
+      routeGraceMs: 20,
+      hotTtlMs: 60_000,
+      replayTtlMs: 120_000,
+    });
+    retention.reconcilePanes([{ paneId: '%1', paneEpoch: EPOCH_A }]);
+    const lease = retention.attachConsumer({ onData: () => {} });
+    lease.applySubscriptions(1n, [request('%1', EPOCH_A)], []);
+    retention.ingest('%1', EPOCH_A, encoder.encode('hello'));
+    lease.close();
+    expect(retention.snapshotStats().gracePanes).toBe(1);
+
+    now = 20;
+    await Bun.sleep(40);
+    expect(retention.snapshotStats().hotPanes).toBe(1);
+    expect(retention.readReplay('%1', { paneEpoch: EPOCH_A, terminalSeq: 0n })?.needsScreen).toBe(
+      false
+    );
+
+    retention.dispose();
+    now = 80_000;
+    await Bun.sleep(40);
+    expect(retention.snapshotStats()).toMatchObject({
+      knownPanes: 0,
+      hotPanes: 0,
+      retainedBytes: 0,
+    });
+  });
 });

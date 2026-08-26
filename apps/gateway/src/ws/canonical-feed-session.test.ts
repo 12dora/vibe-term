@@ -11,6 +11,7 @@ import {
 } from '../tmux-client/pane-retention';
 import {
   CANONICAL_MAX_SCREEN_BYTES,
+  CANONICAL_PENDING_SWEEP_MS,
   type CanonicalFeedRuntime,
   CanonicalFeedSession,
 } from './canonical-feed-session';
@@ -361,6 +362,120 @@ describe('canonical feed session', () => {
     expect(events.some((event) => 'SourceGap' in event && 'Stream' in event.SourceGap.scope)).toBe(
       true
     );
+    session.close();
+  });
+
+  test('batches contiguous pane seq into one frame and flushes before a pane gap', async () => {
+    const runtime = new FakeRuntime();
+    const events: wsBorsh.CanonicalEvent[] = [];
+    const session = new CanonicalFeedSession({
+      maxFrameBytes: wsBorsh.CANONICAL_STATE_MAX_FRAME_BYTES,
+      sendEvent: (event) => {
+        events.push(event);
+        return true;
+      },
+      resolveRuntime: async () => runtime,
+      initialDeviceIds: () => ['device-a'],
+    });
+    await session.handleCommand({
+      SetPaneSubscriptions: {
+        generation: 1n,
+        activePanes: [{ pane: target(), cursor: null }],
+        hotPanes: [],
+      },
+    });
+    await Bun.sleep(0);
+    runtime.output('ab');
+    runtime.output('cd');
+    await awaitPaneDataFlush();
+
+    const paneData = events.filter((event) => 'PaneData' in event);
+    expect(paneData).toHaveLength(1);
+    if (!paneData[0] || !('PaneData' in paneData[0])) throw new Error('missing PaneData');
+    expect(new TextDecoder().decode(paneData[0].PaneData.data)).toBe('abcd');
+    expect(paneData[0].PaneData.seqStart).toBe(0n);
+    expect(paneData[0].PaneData.seqEnd).toBe(4n);
+
+    const nextEpoch = new Uint8Array(16).fill(0x99);
+    runtime.output('xy');
+    runtime.retention.reconcilePanes([{ paneId: '%1', paneEpoch: nextEpoch }]);
+    await Bun.sleep(0);
+
+    const kinds = events.map((event) => Object.keys(event)[0]);
+    const paneDataIndex = kinds.lastIndexOf('PaneData');
+    const gapIndex = kinds.lastIndexOf('SourceGap');
+    expect(paneDataIndex).toBeGreaterThan(-1);
+    expect(gapIndex).toBeGreaterThan(paneDataIndex);
+    const flushed = events[paneDataIndex];
+    if (!flushed || !('PaneData' in flushed)) throw new Error('missing flushed PaneData');
+    expect(new TextDecoder().decode(flushed.PaneData.data)).toBe('xy');
+    session.close();
+  });
+
+  test('rejects unknown panes and keeps generation when the set is empty on another device', async () => {
+    const runtime = new FakeRuntime();
+    const events: wsBorsh.CanonicalEvent[] = [];
+    const session = new CanonicalFeedSession({
+      maxFrameBytes: 32 * 1024,
+      sendEvent: (event) => {
+        events.push(event);
+        return true;
+      },
+      resolveRuntime: async () => runtime,
+    });
+    await session.handleCommand({
+      SetPaneSubscriptions: {
+        generation: 1n,
+        activePanes: [
+          { pane: { ...target(), paneId: '%missing' }, cursor: null },
+          { pane: target(), cursor: null },
+        ],
+        hotPanes: [],
+      },
+    });
+    const applied = events.find((event) => 'SubscriptionApplied' in event);
+    if (!applied || !('SubscriptionApplied' in applied)) throw new Error('missing ack');
+    expect(applied.SubscriptionApplied.generation).toBe(1n);
+    expect(applied.SubscriptionApplied.activePanes).toEqual([target()]);
+    expect(applied.SubscriptionApplied.rejected).toEqual([
+      {
+        pane: { ...target(), paneId: '%missing' },
+        reason: wsBorsh.SUBSCRIPTION_REJECTED_NOT_FOUND,
+      },
+    ]);
+    session.close();
+  });
+
+  test('queues a pane gap when SourceGap send backpressures and retries on the pending sweep', async () => {
+    const runtime = new FakeRuntime();
+    const events: wsBorsh.CanonicalEvent[] = [];
+    let blockGaps = true;
+    const session = new CanonicalFeedSession({
+      maxFrameBytes: 32 * 1024,
+      sendEvent: (event) => {
+        if (blockGaps && 'SourceGap' in event) return false;
+        events.push(event);
+        return true;
+      },
+      resolveRuntime: async () => runtime,
+      initialDeviceIds: () => ['device-a'],
+    });
+    await session.handleCommand({
+      SetPaneSubscriptions: {
+        generation: 1n,
+        activePanes: [{ pane: target(), cursor: null }],
+        hotPanes: [],
+      },
+    });
+    const nextEpoch = new Uint8Array(16).fill(0x99);
+    runtime.retention.reconcilePanes([{ paneId: '%1', paneEpoch: nextEpoch }]);
+    expect(session.snapshotStats().pendingPaneGaps).toBe(1);
+
+    blockGaps = false;
+    await Bun.sleep(CANONICAL_PENDING_SWEEP_MS + 20);
+    expect(session.snapshotStats().pendingPaneGaps).toBe(0);
+    expect(session.snapshotStats().paneGapsSent).toBe(1);
+    expect(events.some((event) => 'SourceGap' in event)).toBe(true);
     session.close();
   });
 });
