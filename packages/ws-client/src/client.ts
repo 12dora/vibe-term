@@ -61,7 +61,7 @@ export interface BorshClientOptions {
   maxReconnectAttempts: number;
   heartbeatIntervalMs: number;
   /** PING 之后等待 PONG 的上限，超时则关闭连接触发重连 */
-  pongTimeoutMs: number;
+  pongTimeoutMs?: number;
   /** WS 端点；缺省时连接当刻按 window.location 推导（defaultWsUrl） */
   url?: string;
   /** 自定义 transport 工厂；缺省为 `new WebSocket(url)` */
@@ -140,7 +140,7 @@ export class BorshWebSocketClient {
 
     this.heartbeat = new HeartbeatController({
       intervalMs: this.options.heartbeatIntervalMs,
-      pongTimeoutMs: this.options.pongTimeoutMs,
+      pongTimeoutMs: this.options.pongTimeoutMs ?? DEFAULT_OPTIONS.pongTimeoutMs ?? 10000,
       sendPing: () => this.sendPingFrame(),
       onPongTimeout: () => this.ws?.close(),
     });
