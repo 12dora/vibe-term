@@ -17,6 +17,7 @@ import type {
 } from '../tmux-client/device-session-runtime';
 import type { TmuxEvent } from '../tmux-client/events';
 import {
+  type BorshDispatchHost,
   type BorshKindHandlerMap,
   createBorshKindHandlers,
   dispatchBorshKind,
@@ -25,15 +26,19 @@ import { createBorshClientState, encodeCanonicalEvent } from './borsh/codec-bors
 import { sessionStateStore } from './borsh/session-state';
 import { switchBarrier } from './borsh/switch-barrier';
 import { CanonicalFeedSession } from './canonical-feed-session';
-import { DeviceConnectionRegistry } from './device-connection-registry';
+import {
+  DeviceConnectionRegistry,
+  type DeviceConnectionRegistryHost,
+} from './device-connection-registry';
 import { payloadNeedsChunking } from './frame-utils';
 import { GatewayActivityMetrics } from './gateway-activity-metrics';
-import { logTerminalOutputMetricsIfDue } from './gateway-metrics-log';
-import { LegacyFeedBroadcaster } from './legacy-feed-broadcaster';
-import { SnapshotOverlayStore } from './snapshot-overlays';
+import { type GatewayMetricsHost, logTerminalOutputMetricsIfDue } from './gateway-metrics-log';
+import { LegacyFeedBroadcaster, type LegacyFeedHost } from './legacy-feed-broadcaster';
+import { type SnapshotOverlayHost, SnapshotOverlayStore } from './snapshot-overlays';
 import { TerminalOutputBatcher } from './terminal-output-batcher';
 import { TerminalOutputMetrics } from './terminal-output-metrics';
-import { ThemeSettingsBroadcaster } from './theme-settings-broadcaster';
+import { ThemeSettingsBroadcaster, type ThemeSettingsHost } from './theme-settings-broadcaster';
+import type { TmuxCommandHost } from './tmux-command-handlers';
 import * as tmuxCommands from './tmux-command-handlers';
 import {
   type ClientState,
@@ -47,11 +52,20 @@ import { gatewayWebSocketSendGuard } from './websocket-send-guard';
 export { RUNTIME_IDLE_GRACE_MS } from './types';
 export { parseWindowLayoutSize, payloadNeedsChunking } from './frame-utils';
 
-export class WebSocketServer {
-  private readonly gatewayActivityMetrics = new GatewayActivityMetrics();
-  private readonly terminalOutputMetrics = new TerminalOutputMetrics();
-  private terminalOutputEventsUntilMetricsCheck = 1024;
-  private readonly terminalOutputBatcher = new TerminalOutputBatcher((deviceId, paneId, data) => {
+export class WebSocketServer
+  implements
+    BorshDispatchHost,
+    DeviceConnectionRegistryHost,
+    ThemeSettingsHost,
+    SnapshotOverlayHost,
+    LegacyFeedHost,
+    TmuxCommandHost,
+    GatewayMetricsHost
+{
+  readonly gatewayActivityMetrics = new GatewayActivityMetrics();
+  readonly terminalOutputMetrics = new TerminalOutputMetrics();
+  terminalOutputEventsUntilMetricsCheck = 1024;
+  readonly terminalOutputBatcher = new TerminalOutputBatcher((deviceId, paneId, data) => {
     try {
       this.terminalOutputMetrics.recordBatch(data.length);
       this.feed.sendTerminalOutput(deviceId, paneId, data);
@@ -62,11 +76,8 @@ export class WebSocketServer {
   });
 
   connectedClients = new Set<ServerWebSocket<ClientState>>();
-  private readonly canonicalSessions = new Map<
-    ServerWebSocket<ClientState>,
-    CanonicalFeedSession
-  >();
-  private readonly deps: WebSocketServerDeps;
+  readonly canonicalSessions = new Map<ServerWebSocket<ClientState>, CanonicalFeedSession>();
+  readonly deps: WebSocketServerDeps;
   private readonly registry: DeviceConnectionRegistry;
   private readonly theme: ThemeSettingsBroadcaster;
   private readonly overlays: SnapshotOverlayStore;
@@ -110,21 +121,20 @@ export class WebSocketServer {
       ...defaultDeps,
       ...(options.deps ?? {}),
     };
-    const host = this as never;
-    this.registry = new DeviceConnectionRegistry(host);
-    this.theme = new ThemeSettingsBroadcaster(host);
-    this.overlays = new SnapshotOverlayStore(host);
-    this.feed = new LegacyFeedBroadcaster(host);
-    this.borshHandlers = createBorshKindHandlers(host);
+    this.registry = new DeviceConnectionRegistry(this);
+    this.theme = new ThemeSettingsBroadcaster(this);
+    this.overlays = new SnapshotOverlayStore(this);
+    this.feed = new LegacyFeedBroadcaster(this);
+    this.borshHandlers = createBorshKindHandlers(this);
   }
 
-  handleUpgrade(req: Request, server: Server<any>): Response | false | undefined {
+  handleUpgrade(req: Request, server: Server<unknown>): Response | false | undefined {
     const url = new URL(req.url);
     if (url.pathname !== '/ws') {
       return false;
     }
 
-    const success = (server as any).upgrade(req, {
+    const success = server.upgrade(req, {
       data: {
         borshState: createBorshClientState(),
       } satisfies ClientState,
@@ -198,7 +208,7 @@ export class WebSocketServer {
     this.canonicalSessions.get(ws)?.onDrain();
   }
 
-  private getOrCreateCanonicalSession(ws: ServerWebSocket<ClientState>): CanonicalFeedSession {
+  getOrCreateCanonicalSession(ws: ServerWebSocket<ClientState>): CanonicalFeedSession {
     const existing = this.canonicalSessions.get(ws);
     if (existing) return existing;
     const session = new CanonicalFeedSession({
@@ -299,7 +309,7 @@ export class WebSocketServer {
     this.registry.closeAll();
   }
 
-  private async handleBorshMessage(
+  async handleBorshMessage(
     ws: ServerWebSocket<ClientState>,
     kind: number,
     refSeq: number,
@@ -324,7 +334,7 @@ export class WebSocketServer {
         return;
       }
 
-      await dispatchBorshKind(this.borshHandlers, this as never, ws, kind, refSeq, payload);
+      await dispatchBorshKind(this.borshHandlers, this, ws, kind, refSeq, payload);
     } catch (err) {
       if (err instanceof wsBorsh.WsBorshError) {
         this.sendError(ws, refSeq, err.code, err.message, err.retryable);
@@ -398,15 +408,11 @@ export class WebSocketServer {
     }
   }
 
-  private sendEnvelope(ws: ServerWebSocket<ClientState>, kind: number, payload: Uint8Array): void {
+  sendEnvelope(ws: ServerWebSocket<ClientState>, kind: number, payload: Uint8Array): void {
     this.sendChunked(ws, kind, payload);
   }
 
-  private sendChunked(
-    ws: ServerWebSocket<ClientState>,
-    kind: number,
-    payload: Uint8Array
-  ): boolean {
+  sendChunked(ws: ServerWebSocket<ClientState>, kind: number, payload: Uint8Array): boolean {
     if (!gatewayWebSocketSendGuard.canSend(ws as ServerWebSocket<unknown>)) {
       return false;
     }
@@ -429,7 +435,7 @@ export class WebSocketServer {
     );
   }
 
-  private sendError(
+  sendError(
     ws: ServerWebSocket<ClientState>,
     refSeq: number | null,
     code: number,
@@ -445,21 +451,21 @@ export class WebSocketServer {
     this.sendEnvelope(ws, wsBorsh.KIND_ERROR, payload);
   }
 
-  private async getOrCreateConnectionEntry(
+  async getOrCreateConnectionEntry(
     deviceId: string,
     ws: ServerWebSocket<ClientState>
   ): Promise<DeviceConnectionEntry | null> {
     return this.registry.getOrCreate(deviceId, ws);
   }
 
-  private async createDeviceConnectionEntry(
+  async createDeviceConnectionEntry(
     deviceId: string,
     ws: ServerWebSocket<ClientState>
   ): Promise<DeviceConnectionEntry | null> {
     return this.registry.createEntry(deviceId, ws);
   }
 
-  private releaseConnectionEntry(deviceId: string, entry: DeviceConnectionEntry): void {
+  releaseConnectionEntry(deviceId: string, entry: DeviceConnectionEntry): void {
     this.terminalOutputBatcher.discardDevice(deviceId);
     this.registry.clearSnapshotTimer(entry);
     this.registry.clearSnapshotPollTimer(entry);
@@ -472,7 +478,7 @@ export class WebSocketServer {
     void this.deps.releaseRuntime(deviceId, entry.runtime);
   }
 
-  private attachRuntime(deviceId: string, runtime: DeviceSessionRuntime): () => void {
+  attachRuntime(deviceId: string, runtime: DeviceSessionRuntime): () => void {
     const listener: DeviceSessionRuntimeListener = {
       onEvent: (event) => {
         void this.feed.broadcastTmuxEvent(deviceId, event);
@@ -507,91 +513,83 @@ export class WebSocketServer {
     return runtime.subscribe(listener);
   }
 
-  private refreshSnapshotPolling(deviceId: string): void {
+  refreshSnapshotPolling(deviceId: string): void {
     const entry = this.connections.get(deviceId);
     if (!entry) return;
     this.registry.clearSnapshotPollTimer(entry);
   }
 
-  private async handleDeviceConnect(
-    ws: ServerWebSocket<ClientState>,
-    deviceId: string
-  ): Promise<void> {
+  async handleDeviceConnect(ws: ServerWebSocket<ClientState>, deviceId: string): Promise<void> {
     await this.registry.handleDeviceConnect(ws, deviceId);
   }
 
-  private handleDeviceDisconnect(ws: ServerWebSocket<ClientState>, deviceId: string): void {
+  handleDeviceDisconnect(ws: ServerWebSocket<ClientState>, deviceId: string): void {
     this.registry.handleDeviceDisconnect(ws, deviceId);
   }
 
-  private handleTmuxSelect(
+  handleTmuxSelect(
     ws: ServerWebSocket<ClientState>,
     data: wsBorsh.b.infer<typeof wsBorsh.schema.TmuxSelectSchema>
   ): void {
-    tmuxCommands.handleTmuxSelect(this as never, ws, data);
+    tmuxCommands.handleTmuxSelect(this, ws, data);
   }
 
-  private handleTmuxSelectWindow(deviceId: string, windowId: string): void {
-    tmuxCommands.handleTmuxSelectWindow(this as never, deviceId, windowId);
+  handleTmuxSelectWindow(deviceId: string, windowId: string): void {
+    tmuxCommands.handleTmuxSelectWindow(this, deviceId, windowId);
   }
 
-  private handleTermInput(deviceId: string, paneId: string, data: string): void {
-    tmuxCommands.handleTermInput(this as never, deviceId, paneId, data);
+  handleTermInput(deviceId: string, paneId: string, data: string): void {
+    tmuxCommands.handleTermInput(this, deviceId, paneId, data);
   }
 
-  private handleTermResize(deviceId: string, paneId: string, cols: number, rows: number): void {
-    tmuxCommands.handleTermResize(this as never, deviceId, paneId, cols, rows);
+  handleTermResize(deviceId: string, paneId: string, cols: number, rows: number): void {
+    tmuxCommands.handleTermResize(this, deviceId, paneId, cols, rows);
   }
 
-  private handleTermPaste(deviceId: string, paneId: string, data: string): void {
-    tmuxCommands.handleTermPaste(this as never, deviceId, paneId, data);
+  handleTermPaste(deviceId: string, paneId: string, data: string): void {
+    tmuxCommands.handleTermPaste(this, deviceId, paneId, data);
   }
 
-  private handleCreateWindow(deviceId: string, name?: string, cwd?: string): void {
-    tmuxCommands.handleCreateWindow(this as never, deviceId, name, cwd);
+  handleCreateWindow(deviceId: string, name?: string, cwd?: string): void {
+    tmuxCommands.handleCreateWindow(this, deviceId, name, cwd);
   }
 
-  private handleCloseWindow(deviceId: string, windowId: string): void {
-    tmuxCommands.handleCloseWindow(this as never, deviceId, windowId);
+  handleCloseWindow(deviceId: string, windowId: string): void {
+    tmuxCommands.handleCloseWindow(this, deviceId, windowId);
   }
 
-  private handleClosePane(deviceId: string, paneId: string): void {
-    tmuxCommands.handleClosePane(this as never, deviceId, paneId);
+  handleClosePane(deviceId: string, paneId: string): void {
+    tmuxCommands.handleClosePane(this, deviceId, paneId);
   }
 
   renamePane(deviceId: string, paneId: string, name: string): void {
-    tmuxCommands.renamePane(this as never, deviceId, paneId, name);
+    tmuxCommands.renamePane(this, deviceId, paneId, name);
   }
 
-  private handleBreakPane(deviceId: string, paneId: string): void {
-    tmuxCommands.handleBreakPane(this as never, deviceId, paneId);
+  handleBreakPane(deviceId: string, paneId: string): void {
+    tmuxCommands.handleBreakPane(this, deviceId, paneId);
   }
 
-  private handleMovePane(
-    deviceId: string,
-    srcPaneId: string,
-    dstPaneId: string,
-    position: number
-  ): void {
-    tmuxCommands.handleMovePane(this as never, deviceId, srcPaneId, dstPaneId, position);
+  handleMovePane(deviceId: string, srcPaneId: string, dstPaneId: string, position: number): void {
+    tmuxCommands.handleMovePane(this, deviceId, srcPaneId, dstPaneId, position);
   }
 
   renameWindow(deviceId: string, windowId: string, name: string): void {
-    tmuxCommands.renameWindow(this as never, deviceId, windowId, name);
+    tmuxCommands.renameWindow(this, deviceId, windowId, name);
   }
 
   getCustomNames(deviceId: string): {
     windows: Record<string, string>;
     panes: Record<string, string>;
   } {
-    return tmuxCommands.getCustomNames(this as never, deviceId);
+    return tmuxCommands.getCustomNames(this, deviceId);
   }
 
-  private handleSetWindowStyle(deviceId: string, style: string): void {
-    tmuxCommands.handleSetWindowStyle(this as never, deviceId, style);
+  handleSetWindowStyle(deviceId: string, style: string): void {
+    tmuxCommands.handleSetWindowStyle(this, deviceId, style);
   }
 
-  private handleSiteThemeUpdate(
+  handleSiteThemeUpdate(
     ws: ServerWebSocket<ClientState>,
     decoded: wsBorsh.b.infer<typeof wsBorsh.schema.SiteThemeUpdateC2SSchema>
   ): void {
@@ -627,94 +625,84 @@ export class WebSocketServer {
   }
 
   reorderWindows(deviceId: string, windowIds: string[]): void {
-    tmuxCommands.reorderWindows(this as never, deviceId, windowIds);
+    tmuxCommands.reorderWindows(this, deviceId, windowIds);
   }
 
   reorderPanes(deviceId: string, windowId: string, paneIds: string[]): void {
-    tmuxCommands.reorderPanes(this as never, deviceId, windowId, paneIds);
+    tmuxCommands.reorderPanes(this, deviceId, windowId, paneIds);
   }
 
-  private handleSubscribePanes(
+  handleSubscribePanes(
     ws: ServerWebSocket<ClientState>,
     deviceId: string,
     paneIds: string[]
   ): void {
-    tmuxCommands.handleSubscribePanes(this as never, ws, deviceId, paneIds);
+    tmuxCommands.handleSubscribePanes(this, ws, deviceId, paneIds);
   }
 
-  private handleFetchPaneHistory(
+  handleFetchPaneHistory(
     ws: ServerWebSocket<ClientState>,
     deviceId: string,
     paneId: string,
     requestToken: Uint8Array
   ): void {
-    tmuxCommands.handleFetchPaneHistory(this as never, ws, deviceId, paneId, requestToken);
+    tmuxCommands.handleFetchPaneHistory(this, ws, deviceId, paneId, requestToken);
   }
 
-  private handleResizePaneById(
-    deviceId: string,
-    paneId: string,
-    cols?: number,
-    rows?: number
-  ): void {
-    tmuxCommands.handleResizePaneById(this as never, deviceId, paneId, cols, rows);
+  handleResizePaneById(deviceId: string, paneId: string, cols?: number, rows?: number): void {
+    tmuxCommands.handleResizePaneById(this, deviceId, paneId, cols, rows);
   }
 
-  private handleApplyStackedLayout(
-    deviceId: string,
-    windowId: string,
-    cols: number,
-    rows: number
-  ): void {
-    tmuxCommands.handleApplyStackedLayout(this as never, deviceId, windowId, cols, rows);
+  handleApplyStackedLayout(deviceId: string, windowId: string, cols: number, rows: number): void {
+    tmuxCommands.handleApplyStackedLayout(this, deviceId, windowId, cols, rows);
   }
 
-  private handleSplitPane(deviceId: string, paneId: string, direction: number, cwd?: string): void {
-    tmuxCommands.handleSplitPane(this as never, deviceId, paneId, direction, cwd);
+  handleSplitPane(deviceId: string, paneId: string, direction: number, cwd?: string): void {
+    tmuxCommands.handleSplitPane(this, deviceId, paneId, direction, cwd);
   }
 
-  private handleFocusPane(
+  handleFocusPane(
     ws: ServerWebSocket<ClientState>,
     deviceId: string,
     windowId: string,
     paneId: string
   ): void {
-    tmuxCommands.handleFocusPane(this as never, ws, deviceId, windowId, paneId);
+    tmuxCommands.handleFocusPane(this, ws, deviceId, windowId, paneId);
   }
 
-  private encodeSnapshotWithOverlays(payload: StateSnapshotPayload): Uint8Array {
+  encodeSnapshotWithOverlays(payload: StateSnapshotPayload): Uint8Array {
     return this.overlays.encodeSnapshotWithOverlays(payload);
   }
 
-  private getCachedDeviceTreeOrder(deviceId: string): DeviceTreeOrderRecord {
+  getCachedDeviceTreeOrder(deviceId: string): DeviceTreeOrderRecord {
     return this.overlays.getCachedDeviceTreeOrder(deviceId);
   }
 
-  private storeDeviceTreeOrder(order: DeviceTreeOrderRecord): DeviceTreeOrderRecord {
+  storeDeviceTreeOrder(order: DeviceTreeOrderRecord): DeviceTreeOrderRecord {
     return this.overlays.storeDeviceTreeOrder(order);
   }
 
-  private sendSnapshotToClients(entry: DeviceConnectionEntry, payload: StateSnapshotPayload): void {
+  sendSnapshotToClients(entry: DeviceConnectionEntry, payload: StateSnapshotPayload): void {
     this.feed.sendSnapshotToClients(entry, payload);
   }
 
-  private broadcastTerminalOutput(deviceId: string, paneId: string, data: Uint8Array): void {
+  broadcastTerminalOutput(deviceId: string, paneId: string, data: Uint8Array): void {
     this.feed.broadcastTerminalOutput(deviceId, paneId, data);
   }
 
-  private async broadcastTmuxEvent(deviceId: string, event: TmuxEvent): Promise<void> {
+  async broadcastTmuxEvent(deviceId: string, event: TmuxEvent): Promise<void> {
     await this.feed.broadcastTmuxEvent(deviceId, event);
   }
 
-  private async extendTmuxEvent(deviceId: string, event: TmuxEvent): Promise<TmuxEvent> {
+  async extendTmuxEvent(deviceId: string, event: TmuxEvent): Promise<TmuxEvent> {
     return this.feed.extendTmuxEvent(deviceId, event);
   }
 
-  private broadcastStateSnapshot(deviceId: string, payload: StateSnapshotPayload): void {
+  broadcastStateSnapshot(deviceId: string, payload: StateSnapshotPayload): void {
     this.feed.broadcastStateSnapshot(deviceId, payload);
   }
 
-  private broadcastTerminalHistory(
+  broadcastTerminalHistory(
     deviceId: string,
     paneId: string,
     data: string,
@@ -728,11 +716,11 @@ export class WebSocketServer {
     this.feed.broadcastDeviceError(deviceId, payload);
   }
 
-  private broadcastDeviceEvent(entry: DeviceConnectionEntry, payload: EventDevicePayload): void {
+  broadcastDeviceEvent(entry: DeviceConnectionEntry, payload: EventDevicePayload): void {
     this.feed.broadcastDeviceEvent(entry, payload);
   }
 
-  private reportTerminalOutputMetricsIfDue(): void {
-    logTerminalOutputMetricsIfDue(this as never);
+  reportTerminalOutputMetricsIfDue(): void {
+    logTerminalOutputMetricsIfDue(this);
   }
 }

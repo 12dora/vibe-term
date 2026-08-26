@@ -8,7 +8,7 @@ import type { CommandResult } from './types';
 export interface ThemeSubscriptionHost {
   connected: boolean;
   sendInput(paneId: string, data: string): void;
-  runTmuxAllowFailure(argv: string[]): Promise<CommandResult>;
+  runTmuxAllowFailure(argv: string[], timeoutMs?: number): Promise<CommandResult>;
 }
 
 export class ThemeSubscriptionController {

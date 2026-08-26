@@ -7,7 +7,12 @@ import { isTmuxPaneId, isTmuxWindowId } from '../tmux-client/snapshot-format';
 import { switchBarrier } from './borsh/switch-barrier';
 import { parseWindowLayoutSize } from './frame-utils';
 import type { TerminalOutputBatcher } from './terminal-output-batcher';
-import type { ClientState, DeviceConnectionEntry, WebSocketServerDeps } from './types';
+import {
+  type ClientState,
+  type DeviceConnectionEntry,
+  type WebSocketServerDeps,
+  asSwitchBarrierSocket,
+} from './types';
 
 export interface TmuxCommandHost {
   readonly connections: Map<string, DeviceConnectionEntry>;
@@ -100,7 +105,7 @@ export function handleTmuxSelect(
   if (!canSelectPane(entry, deviceId, windowId, paneId)) return;
 
   host.terminalOutputBatcher.flushDevice(deviceId);
-  const started = switchBarrier.startTransaction(ws as never, {
+  const started = switchBarrier.startTransaction(asSwitchBarrierSocket(ws), {
     deviceId,
     windowId,
     paneId,
@@ -123,7 +128,7 @@ export function handleTmuxSelect(
 
   ws.data.borshState.selectedPanes[deviceId] = paneId;
   host.refreshSnapshotPolling(deviceId);
-  switchBarrier.sendSwitchAck(ws as never, deviceId);
+  switchBarrier.sendSwitchAck(asSwitchBarrierSocket(ws), deviceId);
 
   const cols = data.cols ?? null;
   const rows = data.rows ?? null;

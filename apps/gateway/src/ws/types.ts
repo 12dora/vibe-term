@@ -10,6 +10,12 @@ export interface ClientState {
   borshState: BorshClientState;
 }
 
+export type SwitchBarrierSocket = ServerWebSocket<unknown & { borshState?: BorshClientState }>;
+
+export function asSwitchBarrierSocket(ws: ServerWebSocket<ClientState>): SwitchBarrierSocket {
+  return ws as SwitchBarrierSocket;
+}
+
 export interface DeviceConnectionEntry {
   runtime: DeviceSessionRuntime;
   detachRuntime: (() => void) | null;

@@ -11,7 +11,7 @@ import { classifySshError } from './error-classify';
 import type { GatewayActivityMetrics } from './gateway-activity-metrics';
 import type { TerminalOutputBatcher } from './terminal-output-batcher';
 import type { TerminalOutputMetrics } from './terminal-output-metrics';
-import type { ClientState, DeviceConnectionEntry } from './types';
+import { type ClientState, type DeviceConnectionEntry, asSwitchBarrierSocket } from './types';
 
 export interface LegacyFeedHost {
   readonly connections: Map<string, DeviceConnectionEntry>;
@@ -289,10 +289,10 @@ export class LegacyFeedBroadcaster {
 
     for (const client of entry.clients) {
       if (entry.canonicalClients?.has(client)) continue;
-      const txPaneId = switchBarrier.getTransactionPaneId(client as never, deviceId);
+      const txPaneId = switchBarrier.getTransactionPaneId(asSwitchBarrierSocket(client), deviceId);
       if (txPaneId !== null && txPaneId === paneId) {
         switchBarrier.sendTermHistory(
-          client as never,
+          asSwitchBarrierSocket(client),
           deviceId,
           paneId,
           historyBytes,
@@ -305,7 +305,7 @@ export class LegacyFeedBroadcaster {
 
       if (client.data.borshState.selectedPanes[deviceId] === paneId) {
         switchBarrier.sendTermHistory(
-          client as never,
+          asSwitchBarrierSocket(client),
           deviceId,
           paneId,
           historyBytes,

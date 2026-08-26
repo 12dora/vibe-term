@@ -6,7 +6,6 @@ import type { CanonicalFeedSession } from './canonical-feed-session';
 import type { ClientState } from './types';
 
 type SchemaLike<T> = {
-  serialize: (value: T) => Uint8Array;
   deserialize: (data: Uint8Array) => T;
 };
 
@@ -67,24 +66,30 @@ export type BorshKindHandler<T = unknown> = {
   handle: (ws: ServerWebSocket<ClientState>, decoded: T, refSeq: number) => void | Promise<void>;
 };
 
-export type BorshKindHandlerMap = ReadonlyMap<number, BorshKindHandler<any>>;
+export type BorshKindHandlerMap = ReadonlyMap<number, BorshKindHandler<unknown>>;
 
 function schemaHandler<T>(
   schema: SchemaLike<T>,
   handle: BorshKindHandler<T>['handle']
-): BorshKindHandler<T> {
-  return { schema, handle };
+): BorshKindHandler<unknown> {
+  return {
+    schema,
+    handle: (ws, decoded, refSeq) => handle(ws, decoded as T, refSeq),
+  };
 }
 
 function decoderHandler<T>(
   decode: (payload: Uint8Array) => T,
   handle: BorshKindHandler<T>['handle']
-): BorshKindHandler<T> {
-  return { decode, handle };
+): BorshKindHandler<unknown> {
+  return {
+    decode,
+    handle: (ws, decoded, refSeq) => handle(ws, decoded as T, refSeq),
+  };
 }
 
 export function createBorshKindHandlers(host: BorshDispatchHost): BorshKindHandlerMap {
-  const handlers = new Map<number, BorshKindHandler<any>>([
+  const handlers = new Map<number, BorshKindHandler<unknown>>([
     [
       wsBorsh.KIND_DEVICE_CONNECT,
       schemaHandler(wsBorsh.schema.DeviceConnectSchema, async (ws, decoded) => {
@@ -308,7 +313,18 @@ export function decodeBorshKindPayload<T>(handler: BorshKindHandler<T>, payload:
   if (!handler.schema) {
     throw new Error('Borsh kind handler is missing schema and decode');
   }
-  return wsBorsh.decodePayload(handler.schema as never, payload);
+  try {
+    return handler.schema.deserialize(payload);
+  } catch (err) {
+    if (err instanceof wsBorsh.WsBorshError) {
+      throw err;
+    }
+    throw new wsBorsh.WsBorshError(
+      wsBorsh.ERROR_PAYLOAD_DECODE_FAILED,
+      false,
+      err instanceof Error ? err.message : 'Failed to decode payload'
+    );
+  }
 }
 
 export async function dispatchBorshKind(

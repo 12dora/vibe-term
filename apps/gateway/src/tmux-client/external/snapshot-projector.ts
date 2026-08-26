@@ -42,7 +42,7 @@ export interface SnapshotProjectorHost {
   controlSubscription: Pick<ControlModeSubscription, 'prunePanes'> | null;
   callbacks: TmuxConnectionOptions;
   lifecycle: Pick<ConnectionLifecycleEmitter, 'emitSnapshotClosures' | 'notifySessionClosed'>;
-  runTmuxAllowFailure(argv: string[]): Promise<CommandResult>;
+  runTmuxAllowFailure(argv: string[], timeoutMs?: number): Promise<CommandResult>;
   shouldAbortSnapshot(results: CommandResult[]): boolean;
   onSnapshotSuccess(): void;
   pruneThemeSubscriptions(paneIds: ReadonlySet<string>): void;

@@ -9,12 +9,15 @@ import type {
   ControlModeSubscription,
   ControlModeSubscriptionCallbacks,
 } from './control-mode-subscription';
-import { ConnectionCleanup } from './external/connection-cleanup';
+import { ConnectionCleanup, type ConnectionCleanupHost } from './external/connection-cleanup';
 import { BELL_DEDUP_WINDOW_MS } from './external/constants';
-import { ControlModeLifecycle } from './external/control-mode-lifecycle';
-import { SessionCommands } from './external/session-commands';
-import { SnapshotProjector } from './external/snapshot-projector';
-import { ThemeSubscriptionController } from './external/theme-subscription';
+import { type ControlModeHost, ControlModeLifecycle } from './external/control-mode-lifecycle';
+import { type SessionCommandHost, SessionCommands } from './external/session-commands';
+import { SnapshotProjector, type SnapshotProjectorHost } from './external/snapshot-projector';
+import {
+  ThemeSubscriptionController,
+  type ThemeSubscriptionHost,
+} from './external/theme-subscription';
 import type { CommandResult, ExternalControlHandle } from './external/types';
 import { ConnectionLifecycleEmitter } from './lifecycle-emitter';
 import type { PaneStreamNotification } from './pane-stream-parser';
@@ -33,6 +36,12 @@ export {
   PARKING_WINDOW_NAME,
 } from './external/constants';
 export { hasRenderableTerminalContent, isTmuxServerGoneMessage } from './external/helpers';
+
+type ExternalTmuxCollaboratorHost = SessionCommandHost &
+  ControlModeHost &
+  ThemeSubscriptionHost &
+  SnapshotProjectorHost &
+  ConnectionCleanupHost;
 
 export abstract class ExternalTmuxConnectionCore {
   protected readonly deviceId: string;
@@ -86,11 +95,144 @@ export abstract class ExternalTmuxConnectionCore {
       getSnapshotWindows: () => this.snapshotWindows,
       notifyEvent: options.notifyEvent,
     });
-    this.sessionCommands = new SessionCommands(this as never);
-    this.controlLifecycle = new ControlModeLifecycle(this as never);
-    this.themeController = new ThemeSubscriptionController(this as never);
-    this.snapshotProjector = new SnapshotProjector(this as never);
-    this.connectionCleanup = new ConnectionCleanup(this as never);
+    const host = this.bindCollaboratorHost();
+    this.sessionCommands = new SessionCommands(host);
+    this.controlLifecycle = new ControlModeLifecycle(host);
+    this.themeController = new ThemeSubscriptionController(host);
+    this.snapshotProjector = new SnapshotProjector(host);
+    this.connectionCleanup = new ConnectionCleanup(host);
+  }
+
+  private bindCollaboratorHost(): ExternalTmuxCollaboratorHost {
+    const core = this;
+    return {
+      get deviceId() {
+        return core.deviceId;
+      },
+      get sessionName() {
+        return core.sessionName;
+      },
+      get connected() {
+        return core.connected;
+      },
+      set connected(value) {
+        core.connected = value;
+      },
+      get manualDisconnect() {
+        return core.manualDisconnect;
+      },
+      get logPrefix() {
+        return core.logPrefix;
+      },
+      get stalledControlLabel() {
+        return core.stalledControlLabel;
+      },
+      get activeWindowId() {
+        return core.activeWindowId;
+      },
+      set activeWindowId(value) {
+        core.activeWindowId = value;
+      },
+      get activePaneId() {
+        return core.activePaneId;
+      },
+      set activePaneId(value) {
+        core.activePaneId = value;
+      },
+      get snapshotWindows() {
+        return core.snapshotWindows;
+      },
+      get snapshotSession() {
+        return core.snapshotSession;
+      },
+      set snapshotSession(value) {
+        core.snapshotSession = value;
+      },
+      get callbacks() {
+        return core.callbacks;
+      },
+      get controlCommands() {
+        return core.controlCommands;
+      },
+      get controlStderrTail() {
+        return core.controlStderrTail;
+      },
+      get controlSubscription() {
+        return core.controlSubscription;
+      },
+      set controlSubscription(value) {
+        core.controlSubscription = value;
+      },
+      get heartbeatTimer() {
+        return core.heartbeatTimer;
+      },
+      set heartbeatTimer(value) {
+        core.heartbeatTimer = value;
+      },
+      get heartbeatPending() {
+        return core.heartbeatPending;
+      },
+      set heartbeatPending(value) {
+        core.heartbeatPending = value;
+      },
+      get heartbeatTimeoutTimer() {
+        return core.heartbeatTimeoutTimer;
+      },
+      set heartbeatTimeoutTimer(value) {
+        core.heartbeatTimeoutTimer = value;
+      },
+      get lifecycle() {
+        return core.lifecycle;
+      },
+      get cleanupPromise() {
+        return core.cleanupPromise;
+      },
+      set cleanupPromise(value) {
+        core.cleanupPromise = value;
+      },
+      get closeNotified() {
+        return core.closeNotified;
+      },
+      set closeNotified(value) {
+        core.closeNotified = value;
+      },
+      resolveDefaultWorkingDir: () => core.resolveDefaultWorkingDir(),
+      shouldInstallGhosttyTerminfo: () => core.shouldInstallGhosttyTerminfo(),
+      configureWindowStyle: (styleValue) => core.configureWindowStyle(styleValue),
+      getParkingCommand: () => core.getParkingCommand(),
+      runTmuxAllowFailure: (argv: string[], timeoutMs?: number) =>
+        core.runTmuxAllowFailure(argv, timeoutMs),
+      requestSnapshotInternal: () => core.requestSnapshotInternal(),
+      requestSnapshot: () => core.requestSnapshot(),
+      reportTmuxCommandFailure: (message) => core.reportTmuxCommandFailure(message),
+      onTmuxServerGone: (message) => core.onTmuxServerGone(message),
+      notifySessionClosed: (message) => core.notifySessionClosed(message),
+      shutdownInternal: (notifyClose) => core.shutdownInternal(notifyClose),
+      getControlWriter: () => core.getControlWriter(),
+      getControlCommandTimeoutMs: () => core.getControlCommandTimeoutMs(),
+      runHistoryQuery: (argv) => core.runHistoryQuery(argv),
+      runHistoryCapture: (argv, maxOutputBytes) => core.runHistoryCapture(argv, maxOutputBytes),
+      createParkingWindow: () => core.createParkingWindow(),
+      removeParkingWindow: (windowId) => core.removeParkingWindow(windowId),
+      attachControlTransport: (onAttachReady) => core.attachControlTransport(onAttachReady),
+      isAttachedControlTransport: (transport) => core.isAttachedControlTransport(transport),
+      controlAttachFailureMessage: () => core.controlAttachFailureMessage(),
+      onControlAttachPrematureClose: (message) => core.onControlAttachPrematureClose(message),
+      killControlTransport: () => core.killControlTransport(),
+      detachControlTransport: () => core.detachControlTransport(),
+      recordBell: (paneId, windowId) => core.recordBell(paneId, windowId),
+      emitNotification: (paneId, notification) => core.emitNotification(paneId, notification),
+      noteThemeSubscription: (paneId, subscribed) => core.noteThemeSubscription(paneId, subscribed),
+      clearThemeSubscription: (paneId) => core.clearThemeSubscription(paneId),
+      sendInput: (paneId, data) => core.sendInput(paneId, data),
+      shouldAbortSnapshot: (results) => core.shouldAbortSnapshot(results),
+      onSnapshotSuccess: () => core.onSnapshotSuccess(),
+      pruneThemeSubscriptions: (paneIds) => core.pruneThemeSubscriptions(paneIds),
+      restoreThemeSubscriptionsOnce: () => core.restoreThemeSubscriptionsOnce(),
+      markDeviceTmuxUnavailable: (message) => core.markDeviceTmuxUnavailable(message),
+      stopControlClient: () => core.stopControlClient(),
+      disposeTransport: () => core.disposeTransport(),
+    };
   }
 
   isSessionClosedEmitted(): boolean {
