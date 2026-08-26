@@ -313,7 +313,15 @@ export function decodeBorshKindPayload<T>(handler: BorshKindHandler<T>, payload:
   if (!handler.schema) {
     throw new Error('Borsh kind handler is missing schema and decode');
   }
-  return wsBorsh.decodePayload(handler.schema, payload);
+  try {
+    return handler.schema.deserialize(payload);
+  } catch (err) {
+    throw new wsBorsh.WsBorshError(
+      wsBorsh.ERROR_PAYLOAD_DECODE_FAILED,
+      false,
+      err instanceof Error ? err.message : 'Failed to decode payload'
+    );
+  }
 }
 
 export async function dispatchBorshKind(
