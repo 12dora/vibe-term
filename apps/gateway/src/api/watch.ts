@@ -6,11 +6,8 @@ import type {
   AssistRegexRequest,
   CreateWatchRuleRequest,
   UpdateWatchRuleRequest,
-  WatchFireMode,
-  WatchNoMatchBehavior,
   WatchRuleDto,
   WatchRuleStateDto,
-  WatchTriggerType,
 } from '@tmex/shared';
 import type { LanguageModel } from 'ai';
 import { generateObject } from 'ai';
@@ -32,10 +29,8 @@ import { resolveLanguageModel } from '../llm/provider-registry';
 import { tmuxRuntimeRegistry } from '../tmux-client/registry';
 import { compileWatchPattern } from '../watch/evaluator';
 import { type WatchService, watchService } from '../watch/service';
+import { buildEffectiveWatchRule } from './watch-rule-config';
 
-const TRIGGER_TYPES: readonly WatchTriggerType[] = ['match', 'unchanged', 'llm'];
-const NO_MATCH_BEHAVIORS: readonly WatchNoMatchBehavior[] = ['reset', 'ignore'];
-const FIRE_MODES: readonly WatchFireMode[] = ['once', 'repeat'];
 const ASSIST_PREVIEW_LIMIT = 20;
 
 const assistSchema = z.object({
@@ -154,188 +149,6 @@ async function readJsonObjectBody(req: Request): Promise<Record<string, unknown>
   return parsed as Record<string, unknown>;
 }
 
-interface ParsedRuleFields {
-  enabled?: boolean;
-  pattern?: string | null;
-  patternFlags?: string;
-  extractGroup?: number;
-  conditionPrompt?: string | null;
-  providerId?: string | null;
-  modelId?: string | null;
-  confirmWithLlm?: boolean;
-  summarizeWithLlm?: boolean;
-  intervalSeconds?: number;
-  unchangedMinutes?: number | null;
-  noMatchBehavior?: WatchNoMatchBehavior;
-  fireMode?: WatchFireMode;
-  cooldownSeconds?: number;
-}
-
-/** 字段级类型/枚举/范围校验（出现才校验）；跨字段语义校验见 validateRuleSemantics */
-function parseRuleFields(
-  body: Record<string, unknown>
-): { ok: true; fields: ParsedRuleFields } | { ok: false; error: string } {
-  const fields: ParsedRuleFields = {};
-
-  if (body.enabled !== undefined) {
-    if (typeof body.enabled !== 'boolean') {
-      return { ok: false, error: t('apiError.invalidRequest') };
-    }
-    fields.enabled = body.enabled;
-  }
-
-  if (body.pattern !== undefined) {
-    if (body.pattern !== null && typeof body.pattern !== 'string') {
-      return { ok: false, error: t('apiError.invalidRequest') };
-    }
-    fields.pattern = typeof body.pattern === 'string' && body.pattern ? body.pattern : null;
-  }
-
-  if (body.patternFlags !== undefined) {
-    if (typeof body.patternFlags !== 'string') {
-      return { ok: false, error: t('apiError.invalidRequest') };
-    }
-    fields.patternFlags = body.patternFlags;
-  }
-
-  if (body.extractGroup !== undefined) {
-    if (
-      typeof body.extractGroup !== 'number' ||
-      !Number.isInteger(body.extractGroup) ||
-      body.extractGroup < 0
-    ) {
-      return { ok: false, error: t('apiError.watchExtractGroupInvalid') };
-    }
-    fields.extractGroup = body.extractGroup;
-  }
-
-  if (body.conditionPrompt !== undefined) {
-    if (body.conditionPrompt !== null && typeof body.conditionPrompt !== 'string') {
-      return { ok: false, error: t('apiError.invalidRequest') };
-    }
-    fields.conditionPrompt =
-      typeof body.conditionPrompt === 'string' && body.conditionPrompt.trim()
-        ? body.conditionPrompt
-        : null;
-  }
-
-  if (body.providerId !== undefined) {
-    if (body.providerId === null) {
-      fields.providerId = null;
-    } else if (typeof body.providerId !== 'string' || !getLlmProviderById(body.providerId)) {
-      return { ok: false, error: t('apiError.llmProviderNotFound') };
-    } else {
-      fields.providerId = body.providerId;
-    }
-  }
-
-  if (body.modelId !== undefined) {
-    if (body.modelId === null) {
-      fields.modelId = null;
-    } else if (typeof body.modelId !== 'string') {
-      return { ok: false, error: t('apiError.invalidRequest') };
-    } else {
-      fields.modelId = body.modelId.trim() || null;
-    }
-  }
-
-  for (const key of ['confirmWithLlm', 'summarizeWithLlm'] as const) {
-    if (body[key] !== undefined) {
-      if (typeof body[key] !== 'boolean') {
-        return { ok: false, error: t('apiError.invalidRequest') };
-      }
-      fields[key] = body[key];
-    }
-  }
-
-  if (body.intervalSeconds !== undefined) {
-    if (typeof body.intervalSeconds !== 'number' || !Number.isInteger(body.intervalSeconds)) {
-      return { ok: false, error: t('apiError.invalidRequest') };
-    }
-    fields.intervalSeconds = body.intervalSeconds;
-  }
-
-  if (body.unchangedMinutes !== undefined) {
-    if (body.unchangedMinutes === null) {
-      fields.unchangedMinutes = null;
-    } else if (
-      typeof body.unchangedMinutes !== 'number' ||
-      !Number.isInteger(body.unchangedMinutes) ||
-      body.unchangedMinutes <= 0
-    ) {
-      return { ok: false, error: t('apiError.watchUnchangedMinutesInvalid') };
-    } else {
-      fields.unchangedMinutes = body.unchangedMinutes;
-    }
-  }
-
-  if (body.noMatchBehavior !== undefined) {
-    if (!NO_MATCH_BEHAVIORS.includes(body.noMatchBehavior as WatchNoMatchBehavior)) {
-      return { ok: false, error: t('apiError.watchNoMatchBehaviorInvalid') };
-    }
-    fields.noMatchBehavior = body.noMatchBehavior as WatchNoMatchBehavior;
-  }
-
-  if (body.fireMode !== undefined) {
-    if (!FIRE_MODES.includes(body.fireMode as WatchFireMode)) {
-      return { ok: false, error: t('apiError.watchFireModeInvalid') };
-    }
-    fields.fireMode = body.fireMode as WatchFireMode;
-  }
-
-  if (body.cooldownSeconds !== undefined) {
-    if (
-      typeof body.cooldownSeconds !== 'number' ||
-      !Number.isInteger(body.cooldownSeconds) ||
-      body.cooldownSeconds < 0
-    ) {
-      return { ok: false, error: t('apiError.watchCooldownInvalid') };
-    }
-    fields.cooldownSeconds = body.cooldownSeconds;
-  }
-
-  return { ok: true, fields };
-}
-
-interface RuleSemanticInput {
-  triggerType: WatchTriggerType;
-  pattern: string | null;
-  patternFlags: string;
-  unchangedMinutes: number | null;
-  conditionPrompt: string | null;
-  intervalSeconds: number;
-}
-
-/** 跨字段语义校验（基于合成后的完整有效值） */
-function validateRuleSemantics(input: RuleSemanticInput): string | null {
-  if (input.triggerType === 'match' || input.triggerType === 'unchanged') {
-    if (!input.pattern) {
-      return t('apiError.watchPatternRequired');
-    }
-    try {
-      compileWatchPattern(input.pattern, input.patternFlags);
-    } catch (error) {
-      return t('apiError.watchPatternInvalid', {
-        detail: error instanceof Error ? error.message : String(error),
-      });
-    }
-    if (input.triggerType === 'unchanged') {
-      if (!input.unchangedMinutes || input.unchangedMinutes <= 0) {
-        return t('apiError.watchUnchangedMinutesInvalid');
-      }
-    }
-  } else if (!input.conditionPrompt?.trim()) {
-    return t('apiError.watchConditionPromptRequired');
-  }
-
-  const minInterval = input.triggerType === 'llm' ? 30 : 5;
-  if (input.intervalSeconds < minInterval) {
-    return t('apiError.watchIntervalInvalid', { min: minInterval });
-  }
-
-  return null;
-}
-
 async function handleListRules(req: Request): Promise<Response> {
   const url = new URL(req.url);
   const deviceId = url.searchParams.get('deviceId');
@@ -377,48 +190,31 @@ async function handleCreateRule(req: Request, deps: WatchApiDeps): Promise<Respo
     return json({ error: t('apiError.agentPaneRequired') }, 400);
   }
 
-  if (!TRIGGER_TYPES.includes(body.triggerType)) {
-    return json({ error: t('apiError.watchTriggerTypeInvalid') }, 400);
-  }
-
-  const parsed = parseRuleFields(raw);
+  const parsed = buildEffectiveWatchRule(null, raw);
   if (!parsed.ok) {
     return json({ error: parsed.error }, 400);
   }
-  const fields = parsed.fields;
-
-  const effective: RuleSemanticInput = {
-    triggerType: body.triggerType,
-    pattern: fields.pattern ?? null,
-    patternFlags: fields.patternFlags ?? '',
-    unchangedMinutes: fields.unchangedMinutes ?? null,
-    conditionPrompt: fields.conditionPrompt ?? null,
-    intervalSeconds: fields.intervalSeconds ?? (body.triggerType === 'llm' ? 60 : 30),
-  };
-  const semanticError = validateRuleSemantics(effective);
-  if (semanticError) {
-    return json({ error: semanticError }, 400);
-  }
+  const { updates, effective } = parsed;
 
   const rule = createWatchRule({
     name,
     deviceId,
     paneId,
-    enabled: fields.enabled,
-    triggerType: body.triggerType,
+    enabled: updates.enabled,
+    triggerType: effective.triggerType,
     pattern: effective.pattern,
     patternFlags: effective.patternFlags,
-    extractGroup: fields.extractGroup,
+    extractGroup: updates.extractGroup,
     conditionPrompt: effective.conditionPrompt,
-    providerId: fields.providerId,
-    modelId: fields.modelId,
-    confirmWithLlm: fields.confirmWithLlm,
-    summarizeWithLlm: fields.summarizeWithLlm,
+    providerId: updates.providerId,
+    modelId: updates.modelId,
+    confirmWithLlm: updates.confirmWithLlm,
+    summarizeWithLlm: updates.summarizeWithLlm,
     intervalSeconds: effective.intervalSeconds,
     unchangedMinutes: effective.unchangedMinutes,
-    noMatchBehavior: fields.noMatchBehavior,
-    fireMode: fields.fireMode,
-    cooldownSeconds: fields.cooldownSeconds,
+    noMatchBehavior: updates.noMatchBehavior,
+    fireMode: updates.fireMode,
+    cooldownSeconds: updates.cooldownSeconds,
   });
 
   await deps.service.refreshRule(rule.id);
@@ -464,35 +260,11 @@ async function handleUpdateRule(req: Request, id: string, deps: WatchApiDeps): P
     updates.paneId = paneId;
   }
 
-  if (body.triggerType !== undefined) {
-    if (!TRIGGER_TYPES.includes(body.triggerType)) {
-      return json({ error: t('apiError.watchTriggerTypeInvalid') }, 400);
-    }
-    updates.triggerType = body.triggerType;
-  }
-
-  const parsed = parseRuleFields(raw);
+  const parsed = buildEffectiveWatchRule(existing, raw);
   if (!parsed.ok) {
     return json({ error: parsed.error }, 400);
   }
-  const fields = parsed.fields;
-  Object.assign(updates, fields);
-
-  const effective: RuleSemanticInput = {
-    triggerType: updates.triggerType ?? existing.triggerType,
-    pattern: fields.pattern !== undefined ? fields.pattern : existing.pattern,
-    patternFlags: fields.patternFlags !== undefined ? fields.patternFlags : existing.patternFlags,
-    unchangedMinutes:
-      fields.unchangedMinutes !== undefined ? fields.unchangedMinutes : existing.unchangedMinutes,
-    conditionPrompt:
-      fields.conditionPrompt !== undefined ? fields.conditionPrompt : existing.conditionPrompt,
-    intervalSeconds:
-      fields.intervalSeconds !== undefined ? fields.intervalSeconds : existing.intervalSeconds,
-  };
-  const semanticError = validateRuleSemantics(effective);
-  if (semanticError) {
-    return json({ error: semanticError }, 400);
-  }
+  Object.assign(updates, parsed.updates);
 
   const rule = updateWatchRule(id, updates);
   if (!rule) {
