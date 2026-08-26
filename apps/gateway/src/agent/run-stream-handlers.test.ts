@@ -3,9 +3,15 @@ import { wsBorsh } from '@tmex/shared';
 import { createRunStreamHandlers } from './run-stream-handlers';
 import type { AgentStreamPart } from './stream-part-router';
 
+function broadcastLabel(eventType: number): string {
+  if (eventType === wsBorsh.AGENT_EVENT_TOOL_CALL) return 'broadcast:tool-call';
+  if (eventType === wsBorsh.AGENT_EVENT_TOOL_RESULT) return 'broadcast:tool-result';
+  return `broadcast:${eventType}`;
+}
+
 describe('createRunStreamHandlers', () => {
   test('按 part 类型 flush/queue/broadcast/approval/error/abort', () => {
-    const queued: string[] = [];
+    const timeline: string[] = [];
     const broadcasts: Array<{ eventType: number; payload: unknown }> = [];
     const approvals: Array<{
       approvalId: string;
@@ -13,29 +19,36 @@ describe('createRunStreamHandlers', () => {
       toolName: string;
       input: unknown;
     }> = [];
+    approvals.push = ((item: (typeof approvals)[number]) => {
+      timeline.push('approval');
+      return Array.prototype.push.call(approvals, item);
+    }) as typeof approvals.push;
     const errors: unknown[] = [];
     let aborted = 0;
 
     const handlers = createRunStreamHandlers({
       deltas: {
         queueTextDelta: (id, text) => {
-          queued.push(`text:${id}:${text}`);
+          timeline.push(`text:${id}:${text}`);
         },
         queueReasoningDelta: (id, text) => {
-          queued.push(`reason:${id}:${text}`);
+          timeline.push(`reason:${id}:${text}`);
         },
         flush: () => {
-          queued.push('flush');
+          timeline.push('flush');
         },
       },
       broadcast: (eventType, payload) => {
+        timeline.push(broadcastLabel(eventType));
         broadcasts.push({ eventType, payload });
       },
       approvals,
       onError: (error) => {
+        timeline.push('error');
         errors.push(error);
       },
       onAbort: () => {
+        timeline.push('abort');
         aborted += 1;
       },
     });
@@ -89,7 +102,21 @@ describe('createRunStreamHandlers', () => {
       handler?.(part);
     }
 
-    expect(queued).toEqual(['text:t1:hi', 'reason:r1:think', 'flush', 'flush', 'flush', 'flush']);
+    expect(timeline).toEqual([
+      'text:t1:hi',
+      'reason:r1:think',
+      'flush',
+      'broadcast:tool-call',
+      'flush',
+      'broadcast:tool-result',
+      'flush',
+      'broadcast:tool-result',
+      'flush',
+      'broadcast:tool-result',
+      'approval',
+      'error',
+      'abort',
+    ]);
     expect(broadcasts).toEqual([
       {
         eventType: wsBorsh.AGENT_EVENT_TOOL_CALL,

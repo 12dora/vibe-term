@@ -2,35 +2,44 @@ import { describe, expect, test } from 'bun:test';
 import type { AgentStreamPart, StreamPartHandlers } from './stream-part-router';
 import { consumeAgentStream, dispatchStreamPart } from './stream-part-router';
 
-function recordHandlers() {
+function recordHandlers(timeline?: string[]) {
   const hits: string[] = [];
   const handlers: StreamPartHandlers = {
     'text-delta': (part) => {
       hits.push(`text-delta:${part.id}:${part.text}`);
+      timeline?.push('handler:text-delta');
     },
     'reasoning-delta': (part) => {
       hits.push(`reasoning-delta:${part.id}:${part.text}`);
+      timeline?.push('handler:reasoning-delta');
     },
     'tool-call': (part) => {
       hits.push(`tool-call:${part.toolCallId}:${part.toolName}`);
+      timeline?.push('handler:tool-call');
     },
     'tool-result': (part) => {
       hits.push(`tool-result:${part.toolCallId}:${part.toolName}`);
+      timeline?.push('handler:tool-result');
     },
     'tool-error': (part) => {
       hits.push(`tool-error:${part.toolCallId}:${String(part.error)}`);
+      timeline?.push('handler:tool-error');
     },
     'tool-output-denied': (part) => {
       hits.push(`tool-output-denied:${part.toolCallId}:${part.toolName}`);
+      timeline?.push('handler:tool-output-denied');
     },
     'tool-approval-request': (part) => {
       hits.push(`tool-approval-request:${part.approvalId}:${part.toolCall.toolCallId}`);
+      timeline?.push('handler:tool-approval-request');
     },
     error: (part) => {
       hits.push(`error:${String(part.error)}`);
+      timeline?.push('handler:error');
     },
     abort: () => {
       hits.push('abort');
+      timeline?.push('handler:abort');
     },
   };
   return { hits, handlers };
@@ -106,8 +115,8 @@ describe('dispatchStreamPart', () => {
 
 describe('consumeAgentStream', () => {
   test('start → 每个 part reset → finally clear；未知 type 忽略', async () => {
-    const { hits, handlers } = recordHandlers();
-    const events: string[] = [];
+    const timeline: string[] = [];
+    const { hits, handlers } = recordHandlers(timeline);
     const stream = (async function* () {
       yield { type: 'text-delta', id: 't1', text: 'hi' } satisfies AgentStreamPart;
       yield { type: 'start' } satisfies AgentStreamPart;
@@ -115,28 +124,36 @@ describe('consumeAgentStream', () => {
     })();
 
     await consumeAgentStream(stream, handlers, {
-      start: () => events.push('start'),
-      reset: () => events.push('reset'),
-      clear: () => events.push('clear'),
+      start: () => timeline.push('start'),
+      reset: () => timeline.push('reset'),
+      clear: () => timeline.push('clear'),
     });
-    expect(events).toEqual(['start', 'reset', 'reset', 'reset', 'clear']);
+    expect(timeline).toEqual([
+      'start',
+      'reset',
+      'handler:text-delta',
+      'reset',
+      'reset',
+      'handler:abort',
+      'clear',
+    ]);
     expect(hits).toEqual(['text-delta:t1:hi', 'abort']);
   });
 
   test('stream 抛错仍 clear watchdog', async () => {
-    const { handlers } = recordHandlers();
-    const events: string[] = [];
+    const timeline: string[] = [];
+    const { handlers } = recordHandlers(timeline);
     const stream = (async function* () {
       yield { type: 'text-delta', id: 't1', text: 'x' } satisfies AgentStreamPart;
       throw new Error('broken');
     })();
     await expect(
       consumeAgentStream(stream, handlers, {
-        start: () => events.push('start'),
-        reset: () => events.push('reset'),
-        clear: () => events.push('clear'),
+        start: () => timeline.push('start'),
+        reset: () => timeline.push('reset'),
+        clear: () => timeline.push('clear'),
       })
     ).rejects.toThrow('broken');
-    expect(events).toEqual(['start', 'reset', 'clear']);
+    expect(timeline).toEqual(['start', 'reset', 'handler:text-delta', 'clear']);
   });
 });
