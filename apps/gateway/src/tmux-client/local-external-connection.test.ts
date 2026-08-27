@@ -1831,4 +1831,122 @@ describe('LocalExternalTmuxConnection lifecycle events', () => {
     expect(events.map((e) => e.eventType)).toEqual(['tmux_pane_close']);
     connection.disconnect();
   });
+
+  test('disconnect during blocked connect does not resurrect after the block resolves', async () => {
+    const session = 'tmex-cancel-connect';
+    const snapshots: StateSnapshotPayload[] = [];
+    const sourceReady: Uint8Array[] = [];
+    let spawnCount = 0;
+    let epochStarted = false;
+    let releaseEpoch: (() => void) | undefined;
+    const epochGate = new Promise<void>((resolve) => {
+      releaseEpoch = resolve;
+    });
+    const stubRun = createRunStub(session);
+    const fake = createFakeControlProcess();
+
+    const connection = new LocalExternalTmuxConnection(
+      {
+        deviceId: 'device-local',
+        onEvent: () => {},
+        onTerminalOutput: () => {},
+        onTerminalHistory: () => {},
+        onSourceReady: (epoch) => {
+          sourceReady.push(epoch);
+        },
+        onSnapshot: (payload) => snapshots.push(payload),
+        onError: () => {},
+        onClose: () => {},
+      },
+      {
+        enableSubscription: true,
+        ensureGhosttyTerminfo: async () => false,
+        getDevice: () => createDevice(session),
+        run: async (argv) => {
+          const command = argv.slice(1).join(' ');
+          if (command === 'show-options -gqv @tmex-server-epoch') {
+            epochStarted = true;
+            await epochGate;
+          }
+          return stubRun(argv);
+        },
+        spawnControlClient: () => {
+          spawnCount += 1;
+          fake.pushStdout(`%begin 1 1 0\n%end 1 1 0\n%session-changed $1 ${session}\n`);
+          return fake.proc;
+        },
+      }
+    );
+
+    const connectPromise = connection.connect();
+    await waitFor(() => (epochStarted ? true : null));
+    connection.disconnect();
+    releaseEpoch?.();
+    await connectPromise;
+
+    expect((connection as any).connected).toBe(false);
+    expect(sourceReady).toEqual([]);
+    expect(snapshots).toEqual([]);
+    expect(spawnCount).toBe(0);
+    expect(fake.killed()).toBe(false);
+  });
+
+  test('disconnect during control attach does not publish connected state or snapshot', async () => {
+    const session = 'tmex-cancel-attach';
+    const snapshots: StateSnapshotPayload[] = [];
+    const sourceReady: Uint8Array[] = [];
+    let parkStarted = false;
+    let spawnCount = 0;
+    let releasePark: (() => void) | undefined;
+    const parkGate = new Promise<void>((resolve) => {
+      releasePark = resolve;
+    });
+    const stubRun = createRunStub(session);
+    const fake = createFakeControlProcess();
+
+    const connection = new LocalExternalTmuxConnection(
+      {
+        deviceId: 'device-local',
+        onEvent: () => {},
+        onTerminalOutput: () => {},
+        onTerminalHistory: () => {},
+        onSourceReady: (epoch) => {
+          sourceReady.push(epoch);
+        },
+        onSnapshot: (payload) => snapshots.push(payload),
+        onError: () => {},
+        onClose: () => {},
+      },
+      {
+        enableSubscription: true,
+        ensureGhosttyTerminfo: async () => false,
+        getDevice: () => createDevice(session),
+        run: async (argv) => {
+          const command = argv.slice(1).join(' ');
+          if (command === `new-window -t ${session} -n tmex-park -P -F #{window_id} sleep 30`) {
+            parkStarted = true;
+            await parkGate;
+          }
+          return stubRun(argv);
+        },
+        spawnControlClient: () => {
+          spawnCount += 1;
+          fake.pushStdout(`%begin 1 1 0\n%end 1 1 0\n%session-changed $1 ${session}\n`);
+          return fake.proc;
+        },
+      }
+    );
+
+    const connectPromise = connection.connect();
+    await waitFor(() => (parkStarted ? true : null));
+    expect(sourceReady).toHaveLength(1);
+    connection.disconnect();
+    releasePark?.();
+    await connectPromise;
+
+    expect((connection as any).connected).toBe(false);
+    expect(snapshots).toEqual([]);
+    expect(spawnCount).toBe(0);
+    expect(fake.killed()).toBe(false);
+  });
 });

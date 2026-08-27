@@ -21,6 +21,7 @@ import {
 import type { CommandResult, ExternalControlHandle } from './external/types';
 import { ConnectionLifecycleEmitter } from './lifecycle-emitter';
 import type { PaneStreamNotification } from './pane-stream-parser';
+import { ensureStableServerEpoch } from './server-epoch';
 import { SnapshotRefreshCoordinator } from './snapshot-refresh-coordinator';
 
 export type { CommandResult, ExternalControlHandle } from './external/types';
@@ -36,6 +37,14 @@ export {
   PARKING_WINDOW_NAME,
 } from './external/constants';
 export { hasRenderableTerminalContent, isTmuxServerGoneMessage } from './external/helpers';
+
+class ConnectAbandonedError extends Error {
+  readonly name = 'ConnectAbandonedError';
+
+  constructor() {
+    super('tmux connect abandoned');
+  }
+}
 
 type ExternalTmuxCollaboratorHost = SessionCommandHost &
   ControlModeHost &
@@ -71,6 +80,7 @@ export abstract class ExternalTmuxConnectionCore {
   protected heartbeatTimer: ReturnType<typeof setInterval> | null = null;
   protected heartbeatPending = false;
   protected heartbeatTimeoutTimer: ReturnType<typeof setTimeout> | null = null;
+  protected connectGeneration = 0;
 
   private readonly sessionCommands: SessionCommands;
   private readonly controlLifecycle: ControlModeLifecycle;
@@ -237,6 +247,97 @@ export abstract class ExternalTmuxConnectionCore {
 
   isSessionClosedEmitted(): boolean {
     return this.lifecycle.sessionClosedEmitted;
+  }
+
+  protected beginConnectGeneration(): number {
+    this.manualDisconnect = false;
+    this.closeNotified = false;
+    this.lifecycle.reset();
+    this.connectGeneration += 1;
+    return this.connectGeneration;
+  }
+
+  protected invalidateConnectGeneration(): void {
+    this.connectGeneration += 1;
+  }
+
+  protected isConnectGenerationCurrent(generation: number): boolean {
+    return generation === this.connectGeneration && !this.manualDisconnect;
+  }
+
+  protected releaseAbortedConnectResources(): void {
+    this.connected = false;
+    this.stopControlClient();
+    void this.disposeTransport();
+  }
+
+  protected abandonStaleConnect(generation: number): boolean {
+    if (this.isConnectGenerationCurrent(generation)) {
+      return false;
+    }
+    if (this.manualDisconnect) {
+      this.releaseAbortedConnectResources();
+    }
+    return true;
+  }
+
+  protected async awaitConnectStep<T>(generation: number, step: () => Promise<T>): Promise<T> {
+    try {
+      const value = await step();
+      if (this.abandonStaleConnect(generation)) {
+        throw new ConnectAbandonedError();
+      }
+      return value;
+    } catch (error) {
+      if (error instanceof ConnectAbandonedError) {
+        throw error;
+      }
+      if (this.abandonStaleConnect(generation)) {
+        throw new ConnectAbandonedError();
+      }
+      throw error;
+    }
+  }
+
+  protected async runConnectAttempt(run: (generation: number) => Promise<void>): Promise<void> {
+    const generation = this.beginConnectGeneration();
+    try {
+      await run(generation);
+    } catch (error) {
+      if (error instanceof ConnectAbandonedError) {
+        return;
+      }
+      throw error;
+    }
+  }
+
+  protected async finalizeConnect(
+    generation: number,
+    created: boolean,
+    startControl: boolean
+  ): Promise<void> {
+    const serverEpoch = await this.awaitConnectStep(generation, () =>
+      ensureStableServerEpoch((argv) => this.runTmuxAllowFailure(argv))
+    );
+    this.callbacks.onSourceReady?.(serverEpoch);
+    await this.awaitConnectStep(generation, () => this.configureSessionOptions());
+    if (startControl) {
+      await this.awaitConnectStep(generation, () => this.startControlClient());
+    }
+    if (this.abandonStaleConnect(generation)) {
+      throw new ConnectAbandonedError();
+    }
+    this.connected = true;
+    updateDeviceRuntimeStatus(this.deviceId, {
+      lastSeenAt: new Date().toISOString(),
+      tmuxAvailable: true,
+      lastError: null,
+      lastErrorType: null,
+    });
+    if (created) {
+      this.lifecycle.notifySessionCreated();
+    }
+    await this.requestSnapshotInternal();
   }
 
   requestSnapshot(): void {

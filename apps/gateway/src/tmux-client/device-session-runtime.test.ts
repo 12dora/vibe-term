@@ -178,6 +178,39 @@ describe('DeviceSessionRuntime', () => {
     expect(recorder.state.connectCalls).toBe(1);
   });
 
+  test('disconnect during in-flight connect stays terminated after connect resolves', async () => {
+    const recorder = createStubConnectionRecorder();
+    const runtime = createDeviceSessionRuntime({
+      deviceId: 'device-a',
+      createConnection(options) {
+        recorder.state.options = options;
+        return recorder.connection;
+      },
+    });
+    const snapshots: string[] = [];
+    runtime.subscribe({
+      onSnapshot(payload) {
+        snapshots.push(payload.deviceId);
+      },
+    });
+
+    const pending = runtime.connect();
+    expect(recorder.state.connectCalls).toBe(1);
+
+    runtime.disconnect();
+    expect(recorder.state.disconnectCalls).toBe(1);
+    expect(runtime.isTerminated).toBe(true);
+
+    recorder.releaseConnect();
+    await pending;
+
+    expect(runtime.isTerminated).toBe(true);
+    expect(runtime.getCurrentSnapshot()).toBeNull();
+    expect(snapshots).toEqual([]);
+    expect(recorder.state.requestSnapshotCalls).toBe(0);
+    await expect(runtime.connect()).rejects.toThrow(/already terminated/);
+  });
+
   test('broadcasts tmux events and payloads to every subscriber', async () => {
     const recorder = createStubConnectionRecorder();
     const runtime = createDeviceSessionRuntime({

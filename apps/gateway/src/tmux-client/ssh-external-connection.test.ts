@@ -203,7 +203,10 @@ class FakeClient extends EventEmitter {
     return this;
   }
 
+  ended = false;
+
   end(): this {
+    this.ended = true;
     // 真实 ssh2 的 close 事件异步到达；同步 emit 会让 shutdown 与 close 处理相互递归
     queueMicrotask(() => {
       this.emit('close');
@@ -1198,5 +1201,68 @@ describe('SshExternalTmuxConnection lifecycle events', () => {
     expect(events[0].event.tmux.paneId).toBe('%1');
     expect(events[0].event.tmux.paneTitle).toBe('first pane');
     connection.disconnect();
+  });
+
+  test('disconnect during blocked connect does not resurrect after the block resolves', async () => {
+    const session = 'tmex-ssh-cancel-connect';
+    const snapshots: StateSnapshotPayload[] = [];
+    const sourceReady: Uint8Array[] = [];
+    let epochStarted = false;
+    let releaseEpoch: (() => void) | undefined;
+    const epochGate = new Promise<void>((resolve) => {
+      releaseEpoch = resolve;
+    });
+    const fakeClient = new FakeClient();
+    const writes: string[] = [];
+    fakeClient.commandChannel.onWrite = (payload) => {
+      writes.push(payload);
+      const commandId = extractCommandId(payload);
+      const respond = () => {
+        const response = respondToPayload(session, payload);
+        if (!response) {
+          throw new Error(`unexpected command payload: ${payload}`);
+        }
+        fakeClient.commandChannel.emit(
+          'data',
+          Buffer.from(`${response.stdout}\x1eTMEX_END ${commandId} ${response.exitCode}\x1e\n`)
+        );
+      };
+      if (payload.includes("'show-options' '-gqv' '@tmex-server-epoch'")) {
+        epochStarted = true;
+        void epochGate.then(respond);
+        return;
+      }
+      respond();
+    };
+
+    const connection = new SshExternalTmuxConnection(
+      {
+        ...createCallbacks({
+          onSnapshot: (payload) => snapshots.push(payload),
+        }),
+        onSourceReady: (epoch) => {
+          sourceReady.push(epoch);
+        },
+        onError: () => {},
+      },
+      {
+        getDevice: () => createDevice(session),
+        decrypt: async () => 'secret',
+        createClient: () => fakeClient as unknown as Client,
+      }
+    );
+
+    const connectPromise = connection.connect();
+    await waitFor(() => (epochStarted ? true : null));
+    connection.disconnect();
+    releaseEpoch?.();
+    await connectPromise;
+
+    expect((connection as any).connected).toBe(false);
+    expect(sourceReady).toEqual([]);
+    expect(snapshots).toEqual([]);
+    expect(fakeClient.ended).toBe(true);
+    expect(fakeClient.commandChannel.ended).toBe(true);
+    expect(fakeClient.controlChannels).toHaveLength(0);
   });
 });

@@ -46,6 +46,19 @@ class StubExternalCore extends ExternalTmuxConnectionCore {
     await this.shutdownInternal(notifyClose);
   }
 
+  beginAttempt(): number {
+    return this.beginConnectGeneration();
+  }
+
+  invalidateAttempt(): void {
+    this.invalidateConnectGeneration();
+    this.manualDisconnect = true;
+  }
+
+  abandon(generation: number): boolean {
+    return this.abandonStaleConnect(generation);
+  }
+
   protected resolveDefaultWorkingDir(): string {
     return '/tmp';
   }
@@ -121,6 +134,28 @@ describe('ExternalTmuxConnectionCore collaborator host', () => {
     expect(core.isCloseNotified()).toBe(true);
     expect(closed).toEqual([1]);
     expect(core.disposed).toContain('dispose');
+  });
+
+  test('stale connect generation releases resources and does not stay connected', () => {
+    const core = new StubExternalCore();
+    const generation = core.beginAttempt();
+    core.markConnected();
+    core.invalidateAttempt();
+
+    expect(core.abandon(generation)).toBe(true);
+    expect(core.isConnected()).toBe(false);
+    expect(core.disposed).toContain('detach');
+    expect(core.disposed).toContain('dispose');
+  });
+
+  test('current connect generation is not abandoned', () => {
+    const core = new StubExternalCore();
+    const generation = core.beginAttempt();
+    core.markConnected();
+
+    expect(core.abandon(generation)).toBe(false);
+    expect(core.isConnected()).toBe(true);
+    expect(core.disposed).toEqual([]);
   });
 
   test('session commands reach runTmuxAllowFailure through the bound host', async () => {
