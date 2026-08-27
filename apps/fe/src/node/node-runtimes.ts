@@ -6,14 +6,20 @@
 //   而是每个 node 一个 QueryClient——隔离更彻底，且 key 语义完全不变。
 // - 非 self 的 node 在建连时同时起一个 `DirectCarrierController`（F3-1）：信令走
 //   `/mesh/ws` 的 `RTC_SIGNAL`，诊断挂到 `connection.directDiagnostics` 供设备页徽标读取，
-//   并把 `BulkClient`（F3-2 的文件直传）按 nodeId 登记给文件面板。
+//   并把 `BulkClient`（F3-2 的文件直传）按 nodeId 登记给文件面板。控制器拿本连接当前 socket
+//   的 client nonce（WS URL 上的 `?cid=`）去换服务端 `connectionId`（F3-5）。
 //   `self` 是浏览器直接连的 entry，没有第二跳，永远不建直连。
 // - 直连断开回落 primary 时，`setResumeSubscribedPanes` 钩子在这里接上该 node 的 pane
 //   订阅面：重发订阅 + 对挂载中的 pane 重新拉一次画面，并提示用户最近输入可能未送达。
 
 import { sonnerNotificationSink } from '@/lib/sonner-notification-sink';
 import { QueryClient } from '@tanstack/react-query';
-import { createNodeApiClient, isSelfNode, nodeWsUrl } from '@tmex/api-client';
+import {
+  createNodeApiClient,
+  createNodeWsUrlSource,
+  isSelfNode,
+  nodeWsUrl,
+} from '@tmex/api-client';
 import type { NotificationSink } from '@tmex/notifications';
 import {
   type AppRuntime,
@@ -89,7 +95,9 @@ export interface NodeDirectWiring {
   createConnection?: (nodeId: string, onClose: (code: number) => void) => GatewayConnection;
   createController?: (
     nodeId: string,
-    connection: GatewayConnection
+    connection: GatewayConnection,
+    /** 本连接当前 socket 的 client nonce（`?cid=`）；还没建过 socket 时为 null。 */
+    cid: () => string | null
   ) => DirectCarrierController | null;
   /** WS 关闭码回调（宿主用它识别 4401）。 */
   onClose?: (code: number) => void;
@@ -101,12 +109,17 @@ export interface NodeDirectWiring {
   notifications?: NotificationSink;
 }
 
-function defaultController(nodeId: string, connection: GatewayConnection): DirectCarrierController {
+function defaultController(
+  nodeId: string,
+  connection: GatewayConnection,
+  cid: () => string | null
+): DirectCarrierController {
   return new DirectCarrierController({
     nodeId,
     apiClient: createNodeApiClient(nodeId),
     signaling: meshRtcSignals.transport(),
     connection,
+    cid,
   });
 }
 
@@ -186,18 +199,24 @@ export function createNodeConnection(
   // 关闭码回调对两条工厂路径都是**必给**的：自建工厂不接它，4401 就没人处理，
   // ws-client 会一路重连到被反复关掉（见 F4-fix 评审 Major）。
   const onClose = wiring.onClose ?? (() => undefined);
+  // 每建一条 socket（含重连）换一个 client nonce：node 只能靠握手 URL 上的 `?cid=` 把这条
+  // Gateway WS 认出来，直连控制器随后用它换回服务端生成的 `connectionId`。
+  const wsUrls = createNodeWsUrlSource(nodeId);
   const connection = (
     wiring.createConnection ??
     ((id, close) =>
       createGatewayConnection({
         wsUrl: nodeWsUrl(id),
+        wsUrlFactory: () => wsUrls.nextUrl(),
         onClose: close,
         ...(wiring.socketFactory ? { socketFactory: wiring.socketFactory } : {}),
       }))
   )(nodeId, onClose);
   if (isSelfNode(nodeId)) return connection;
 
-  const controller = (wiring.createController ?? defaultController)(nodeId, connection);
+  const controller = (wiring.createController ?? defaultController)(nodeId, connection, () =>
+    wsUrls.cid()
+  );
   if (!controller) return connection;
 
   connection.directDiagnostics = controller.diagnosticsSource;

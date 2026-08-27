@@ -6,6 +6,7 @@ export {
   DEFAULT_RELEASE_GRACE_MS,
   NodeConnectionManager,
   SELF_NODE_ID,
+  createDefaultNodeConnection,
   nodeRuntimes,
   nodeStoragePrefix,
   normalizeNodeId,

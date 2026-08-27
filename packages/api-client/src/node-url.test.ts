@@ -1,10 +1,13 @@
 import { describe, expect, test } from 'bun:test';
 import { fileDownloadUrl, fileRawUrl, filesApiUrl } from './file-urls';
 import {
+  CLIENT_NONCE_BYTES,
   InvalidNodeIdError,
   SELF_NODE_ID,
   assertNodeId,
   createNodeApiClient,
+  createNodeWsUrlSource,
+  generateClientNonce,
   isSelfNode,
   isValidNodeId,
   nodeAppPath,
@@ -103,6 +106,58 @@ describe('nodeWsUrl', () => {
     expect(() => nodeWsUrl('..', { protocol: 'https:', host: 'example.com' })).toThrow(
       InvalidNodeIdError
     );
+  });
+
+  test('带 cid 时拼 `?cid=`，并做 URL 编码', () => {
+    expect(nodeWsUrl('self', { protocol: 'https:', host: 'h', cid: 'abc' })).toBe(
+      'wss://h/ws?cid=abc'
+    );
+    expect(nodeWsUrl(NODE_B, { protocol: 'https:', host: 'h', cid: 'a/b+c=' })).toBe(
+      `wss://h/n/${NODE_B}/ws?cid=a%2Fb%2Bc%3D`
+    );
+    // 空 cid 不拼空 query
+    expect(nodeWsUrl('self', { protocol: 'https:', host: 'h', cid: '' })).toBe('wss://h/ws');
+    expect(nodeWsUrl('self', { protocol: 'https:', host: 'h', cid: null })).toBe('wss://h/ws');
+  });
+});
+
+describe('generateClientNonce', () => {
+  test('b64url 字符集、长度覆盖 16 字节，且每次都不同', () => {
+    const seen = new Set<string>();
+    for (let i = 0; i < 64; i++) {
+      const nonce = generateClientNonce();
+      expect(nonce).toMatch(/^[A-Za-z0-9_-]+$/);
+      // 16 字节 → 22 个 b64url 字符（无 padding）
+      expect(nonce.length).toBe(Math.ceil((CLIENT_NONCE_BYTES * 8) / 6));
+      seen.add(nonce);
+    }
+    expect(seen.size).toBe(64);
+  });
+});
+
+describe('createNodeWsUrlSource', () => {
+  test('每建一条 socket 换一个 nonce，cid() 跟着当前 socket 走', () => {
+    const source = createNodeWsUrlSource(NODE_A, { protocol: 'https:', host: 'h' });
+    // 还没建过 socket：没有 nonce 可用，调用方退化成不带 cid 的查询
+    expect(source.cid()).toBeNull();
+
+    const first = source.nextUrl();
+    const firstCid = source.cid();
+    expect(firstCid).not.toBeNull();
+    expect(first).toBe(`wss://h/n/${NODE_A}/ws?cid=${firstCid}`);
+
+    // 重连：新 socket = 新 nonce = 新的服务端 connectionId
+    const second = source.nextUrl();
+    expect(source.cid()).not.toBe(firstCid);
+    expect(second).not.toBe(first);
+  });
+
+  test('不同连接之间 nonce 互不相同', () => {
+    const a = createNodeWsUrlSource(NODE_A, { protocol: 'https:', host: 'h' });
+    const b = createNodeWsUrlSource(NODE_A, { protocol: 'https:', host: 'h' });
+    a.nextUrl();
+    b.nextUrl();
+    expect(a.cid()).not.toBe(b.cid());
   });
 });
 

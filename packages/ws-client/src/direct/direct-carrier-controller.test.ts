@@ -7,6 +7,7 @@ import {
   RTC_CONFIG_PATH,
   X_TMEX_CONNECTION_HEADER,
   buildIceServers,
+  meshConnectionPath,
 } from './direct-carrier-controller';
 import {
   FP_BROWSER_VALUE,
@@ -267,6 +268,44 @@ describe('DirectCarrierController connectionId 绑定（F3-4）', () => {
       .filter((c) => c.path === RTC_AUTHORIZE_PATH)
       .map((c) => (c.body as { connectionId?: string }).connectionId);
     expect(ids).toEqual([CONNECTION_ID, 'conn-tab-2']);
+  });
+
+  test('带 cid 查 connectionId：query 上是 nonce，authorize 用的是服务端 id（F3-5）', async () => {
+    const s = setup({ cid: () => 'cid-tab-1' });
+    s.controller.start();
+    await flush();
+
+    const lookup = s.api.calls.find((c) => c.path.startsWith(MESH_CONNECTION_PATH));
+    expect(lookup?.path).toBe(`${MESH_CONNECTION_PATH}?cid=cid-tab-1`);
+
+    const authorize = s.api.calls.find((c) => c.path === RTC_AUTHORIZE_PATH);
+    // nonce 只是找回身份的索引，绝不能当成 connectionId 用
+    expect((authorize?.body as { connectionId?: string }).connectionId).toBe(CONNECTION_ID);
+    expect(authorize?.headers[X_TMEX_CONNECTION_HEADER]).toBe(CONNECTION_ID);
+    expect(JSON.stringify(authorize?.body)).not.toContain('cid-tab-1');
+  });
+
+  test('nonce 每次尝试都现取：primary 重连换了 socket 就跟着换', async () => {
+    let nonce = 'cid-1';
+    const s = setup({ cid: () => nonce });
+    s.controller.start();
+    await flush();
+
+    nonce = 'cid-2';
+    s.controller.retry();
+    await flush();
+
+    expect(
+      s.api.calls.filter((c) => c.path.startsWith(MESH_CONNECTION_PATH)).map((c) => c.path)
+    ).toEqual([`${MESH_CONNECTION_PATH}?cid=cid-1`, `${MESH_CONNECTION_PATH}?cid=cid-2`]);
+  });
+
+  test('nonce 里的特殊字符被 URL 编码', () => {
+    expect(meshConnectionPath('a/b+c=')).toBe(`${MESH_CONNECTION_PATH}?cid=a%2Fb%2Bc%3D`);
+    // 宿主没接线 / 还没建过 socket：退化成不带 cid 的旧查询
+    expect(meshConnectionPath(null)).toBe(MESH_CONNECTION_PATH);
+    expect(meshConnectionPath(undefined)).toBe(MESH_CONNECTION_PATH);
+    expect(meshConnectionPath('')).toBe(MESH_CONNECTION_PATH);
   });
 
   test('409 MULTIPLE_CONNECTIONS：不建 PC、不消耗退避，等 primary 重连过再来', async () => {

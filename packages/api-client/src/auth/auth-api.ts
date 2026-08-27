@@ -92,11 +92,19 @@ export class AuthApi {
    * 上的 `connectionId`。直连授权（`POST /api/rtc/authorize`）必须带它，否则同 sid 多标签
    * 时 node 不知道把直连挂到哪条会话上。
    *
-   * 失败不抛异常：`404 NO_CONNECTION`（primary 还没连上）与 `409 MULTIPLE_CONNECTIONS`
-   * （多标签且没带 `x-tmex-connection`）都是调用方要分别处理的正常状态。
+   * 定位方式二选一：`cid`（本条 WS 握手时带的 client nonce，多标签唯一可靠的一种）或
+   * `connectionId`（已知服务端 id 时的复核）。两个都不给且该 sid 有多条 live WS → 409。
+   *
+   * 失败不抛异常：`404 NO_CONNECTION`（primary 还没连上 / nonce 未登记）与
+   * `409 MULTIPLE_CONNECTIONS` 都是调用方要分别处理的正常状态。
    */
-  async getConnection(nodeId: string, connectionId?: string): Promise<MeshConnectionResult> {
-    const res = await this.client.fetch(nodeAuthPath(nodeId, '/api/mesh/connection'), {
+  async getConnection(
+    nodeId: string,
+    options: { connectionId?: string; cid?: string } = {}
+  ): Promise<MeshConnectionResult> {
+    const { connectionId, cid } = options;
+    const query = cid ? `?cid=${encodeURIComponent(cid)}` : '';
+    const res = await this.client.fetch(nodeAuthPath(nodeId, `/api/mesh/connection${query}`), {
       ...(connectionId ? { headers: { [X_TMEX_CONNECTION_HEADER]: connectionId } } : {}),
     });
     if (!res.ok) {

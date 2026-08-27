@@ -1,7 +1,8 @@
 // 每 node 一套运行时：`get(nodeId)` 懒建 { connection, apiClient, appRuntime }，
 // 引用计数归零后宽限 30 s 再释放（路由来回切换不重建连接）。standalone 下只有 `self`。
 //
-// - WS：`createGatewayConnection({ wsUrl: nodeWsUrl(id) })`，self → `/ws`，其余 → `/n/<id>/ws`。
+// - WS：`createGatewayConnection({ wsUrl: nodeWsUrl(id) })`，self → `/ws`，其余 → `/n/<id>/ws`；
+//   每条 socket 另带一个 client nonce `?cid=`（见 `createDefaultNodeConnection`）。
 // - REST：`new ApiClient(nodePathPrefix(id))`，端点函数照旧传 `/api/...`。
 // - storage：agent / file-tree 等 key 带 node 前缀；UI 偏好（主题、侧栏、终端字号）是
 //   宿主级偏好，所有 node 共用同一个 UIStore（key 仍为 `tmex-ui`）。
@@ -11,6 +12,7 @@ import {
   type ApiClient,
   SELF_NODE_ID,
   createNodeApiClient,
+  createNodeWsUrlSource,
   nodeAppPath,
   nodeWsUrl,
   normalizeNodeId,
@@ -20,7 +22,11 @@ import {
   handleNodeLoginRequired,
 } from '@tmex/api-client/auth/session-interceptor';
 import type { NotificationSink } from '@tmex/notifications';
-import { type GatewayConnection, createGatewayConnection } from '@tmex/ws-client';
+import {
+  type GatewayConnection,
+  type SocketFactory,
+  createGatewayConnection,
+} from '@tmex/ws-client';
 import { useEffect } from 'react';
 import { type AppRuntime, createAppRuntime } from './app-runtime';
 import { type AppRuntimeOptions, createBrowserHostServices } from './runtime';
@@ -38,6 +44,27 @@ export const WS_UNAUTHORIZED_CLOSE_CODE = 4401;
 export function nodeStoragePrefix(nodeId: string): string {
   const id = normalizeNodeId(nodeId);
   return id === SELF_NODE_ID ? '' : `n:${id}:`;
+}
+
+/**
+ * manager 的缺省连接工厂（宿主没覆盖 `createConnection` 时走这条）。
+ *
+ * 每条底层 socket（含**重连**新建的那条）都带一个新的 client nonce `?cid=`：浏览器不能给
+ * WS 设请求头，node 只能靠握手 URL 上的 nonce 把这条 WS 认出来，随后
+ * `GET /api/mesh/connection?cid=` 才换得到服务端 `connectionId`。
+ */
+export function createDefaultNodeConnection(
+  nodeId: string,
+  onClose: (code: number) => void,
+  socketFactory?: SocketFactory
+): GatewayConnection {
+  const wsUrls = createNodeWsUrlSource(nodeId);
+  return createGatewayConnection({
+    wsUrl: nodeWsUrl(nodeId),
+    wsUrlFactory: () => wsUrls.nextUrl(),
+    onClose,
+    ...(socketFactory ? { socketFactory } : {}),
+  });
 }
 
 export interface NodeRuntimeEntry {
@@ -128,7 +155,7 @@ export class NodeConnectionManager {
     const onClose = (code: number) => this.notifyClose(nodeId, code);
     const connection =
       this.options.createConnection?.(nodeId, onClose) ??
-      createGatewayConnection({ wsUrl: nodeWsUrl(nodeId), onClose });
+      createDefaultNodeConnection(nodeId, onClose);
     const apiClient = this.options.createApiClient?.(nodeId) ?? createNodeApiClient(nodeId);
 
     const runtimeOptions: AppRuntimeOptions = {

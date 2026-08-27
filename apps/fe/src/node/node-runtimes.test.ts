@@ -378,6 +378,62 @@ describe('4401 通过真实宿主接线传到 manager', () => {
   });
 });
 
+describe('Gateway WS 的 client nonce（F3-5）', () => {
+  /** URL 上的 `?cid=`；没有就是 null（node 在多标签下就答不出 connectionId）。 */
+  function cidOf(url: string): string | null {
+    return /[?&]cid=([^&]+)/.exec(url)?.[1] ?? null;
+  }
+
+  test('生产接线建出的 socket URL 带 `?cid=`，重连换新 nonce，跨 node 不重复', () => {
+    const sockets: FakeSocket[] = [];
+    const manager = hostManager({ sockets });
+
+    manager.get(NODE_HEX_A).connection.client.connect();
+    manager.get(NODE_HEX_A).connection.client.reconnect();
+    manager.get(NODE_HEX_B).connection.client.connect();
+
+    expect(sockets.length).toBe(3);
+    expect(sockets[0].url).toContain(`/n/${NODE_HEX_A}/ws?cid=`);
+    expect(sockets[2].url).toContain(`/n/${NODE_HEX_B}/ws?cid=`);
+    const cids = sockets.map((socket) => cidOf(socket.url));
+    for (const cid of cids) expect(cid).toMatch(/^[A-Za-z0-9_-]{22}$/);
+    expect(new Set(cids).size).toBe(3);
+
+    manager.disposeAll();
+  });
+
+  test('控制器拿到的 cid 就是当前 socket 那一个，随重连一起换', () => {
+    const sockets: FakeSocket[] = [];
+    const captured: Array<() => string | null> = [];
+    const connection = createNodeConnection(NODE_HEX_C, {
+      socketFactory: (url: string) => {
+        const socket = new FakeSocket(url);
+        sockets.push(socket);
+        return socket;
+      },
+      createController: (_nodeId, _connection, getCid) => {
+        captured.push(getCid);
+        return fakeController();
+      },
+    });
+    const cid = captured[0];
+    expect(cid).toBeDefined();
+
+    // 还没建 socket：没有 nonce，控制器只能退化成不带 cid 的查询
+    expect(cid?.()).toBeNull();
+
+    connection.client.connect();
+    const first = cid?.();
+    expect(first).toBe(cidOf(sockets[0].url));
+
+    connection.client.reconnect();
+    expect(cid?.()).toBe(cidOf(sockets[1].url));
+    expect(cid?.()).not.toBe(first);
+
+    connection.dispose();
+  });
+});
+
 describe('QueryClient 随 runtime 一起回收', () => {
   test('生产接线里 dispose 会释放该 node 的 QueryClient', () => {
     const sockets: FakeSocket[] = [];

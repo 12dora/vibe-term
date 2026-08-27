@@ -16,6 +16,14 @@ import { type GatewayTransport, WebSocketGatewayTransport } from './transport';
 export interface GatewayConnectionOptions {
   /** WS 端点；缺省按 window.location 推导 */
   wsUrl?: string;
+  /**
+   * 每次建 socket（**含重连**）时求值，返回该次 socket 的完整 URL。
+   *
+   * 直连合约要求每条 Gateway WS 带一个新的 client nonce（`?cid=`），而
+   * `BorshWebSocketClient` 重连时复用 `options.url` 字符串，所以 nonce 只能在这一层轮换。
+   * 传了它，`wsUrl` 只再用于 `client.getUrl()`（诊断 / `updateUrl` 语义不变）。
+   */
+  wsUrlFactory?: () => string;
   /** 自定义 transport 工厂；缺省为 `new WebSocket(wsUrl)` */
   socketFactory?: SocketFactory;
   /** 本连接可接收的单个 WS frame 上限；顶层值优先于 clientOptions。 */
@@ -98,6 +106,11 @@ function withCloseCode(factory: SocketFactory, onClose: (code: number) => void):
   };
 }
 
+/** 建 socket 的那一刻现算 URL：客户端传下来的静态 url 一律丢弃（重连也走这条路）。 */
+function withUrlFactory(factory: SocketFactory, wsUrlFactory: () => string): SocketFactory {
+  return () => factory(wsUrlFactory());
+}
+
 const browserSocketFactory: SocketFactory = (url) => new WebSocket(url) as unknown as WebSocketLike;
 
 export interface GatewayConnection {
@@ -126,9 +139,12 @@ export interface GatewayConnection {
 }
 
 export function createGatewayConnection(options: GatewayConnectionOptions = {}): GatewayConnection {
-  const socketFactory = options.onClose
-    ? withCloseCode(options.socketFactory ?? browserSocketFactory, options.onClose)
+  const withUrl = options.wsUrlFactory
+    ? withUrlFactory(options.socketFactory ?? browserSocketFactory, options.wsUrlFactory)
     : options.socketFactory;
+  const socketFactory = options.onClose
+    ? withCloseCode(withUrl ?? browserSocketFactory, options.onClose)
+    : withUrl;
   const client = new BorshWebSocketClient({
     ...options.clientOptions,
     ...(options.maxFrameBytes === undefined ? {} : { maxFrameBytes: options.maxFrameBytes }),

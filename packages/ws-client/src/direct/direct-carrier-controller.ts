@@ -2,7 +2,8 @@
 //
 // 生命周期（浏览器恒为 offerer）；**每次尝试都是一代全新的 attempt**：新的 generation、
 // 新的 `rtcSession`、新的 `AbortController`、新的 `RTCPeerConnection`：
-//   0. `GET /api/mesh/connection` 取本标签页 Gateway WS 的 `connectionId`（每次尝试都重取）
+//   0. `GET /api/mesh/connection?cid=<nonce>` 用本条 Gateway WS 握手时带的 client nonce
+//      换回**服务端生成**的 `connectionId`（每次尝试都重取）
 //   1. `GET /api/mesh/rtc-config` 取 ICE 配置
 //   2. 建 `RTCPeerConnection`，开 `sess` 通道（ordered + reliable）
 //   3. `createOffer()` + `setLocalDescription()`，从 `localDescription.sdp` 解出 `fp_browser`
@@ -67,6 +68,11 @@ export const RTC_AUTHORIZE_PATH = '/api/rtc/authorize';
 export const MESH_CONNECTION_PATH = '/api/mesh/connection';
 export const X_TMEX_CONNECTION_HEADER = 'x-tmex-connection';
 
+/** `GET /api/mesh/connection`：带上本条 WS 的 client nonce，node 据此答出**服务端** id。 */
+export function meshConnectionPath(cid?: string | null): string {
+  return cid ? `${MESH_CONNECTION_PATH}?cid=${encodeURIComponent(cid)}` : MESH_CONNECTION_PATH;
+}
+
 export const DEFAULT_RETRY_BASE_MS = 1000;
 export const DEFAULT_RETRY_MAX_MS = 30_000;
 export const DEFAULT_MAX_ATTEMPTS = 5;
@@ -112,6 +118,14 @@ export interface DirectCarrierControllerOptions {
   apiClient: DirectApiClientLike;
   signaling: DirectSignalingTransport;
   connection: GatewayConnectionLike;
+  /**
+   * 本标签页那条 Gateway WS 握手时带的 client nonce（`?cid=`）。**每次尝试都现取**：
+   * primary 重连会换一条 socket，也就会换一个 nonce。
+   *
+   * 返回空值（宿主没接线 / 还没建过 socket）时退化成不带 `cid` 的查询——node 侧只有
+   * 恰好一条 live WS 时才答得上来，多标签会拿到 409。
+   */
+  cid?: () => string | null | undefined;
   /** 缺省 `new RTCPeerConnection(config)`。 */
   rtcFactory?: RtcPeerConnectionFactory;
   /**
@@ -505,11 +519,13 @@ export class DirectCarrierController {
   }
 
   /**
-   * `GET /api/mesh/connection`：取本标签页那条 Gateway WS 在目标 node 上的 `connectionId`。
-   * **每次尝试都要重取**——primary 重连会换一条 WS，缓存下来的旧值会把直连挂到已死的会话上。
+   * `GET /api/mesh/connection?cid=<nonce>`：取本标签页那条 Gateway WS 在目标 node 上的
+   * `connectionId`。**每次尝试都要重取**——primary 重连会换一条 WS（连带换 nonce），
+   * 缓存下来的旧值会把直连挂到已死的会话上。
    *
    * 浏览器的 `WebSocket` 构造函数不能带自定义请求头，也读不到 upgrade 响应头，
-   * HELLO 帧（Borsh）在 B2-10 里也明确不改，所以拿 `connectionId` 只有这一条 REST 路径。
+   * HELLO 帧（Borsh）在 B2-10 里也明确不改，所以身份只能靠握手 URL 上的 `?cid=` nonce
+   * 加这一条 REST 换取。返回的是 node **自己生成**的 id，nonce 绝不能拿去 authorize。
    *
    * - `404 NO_CONNECTION`：primary 还没在 node 上登记（刚开页面 / 刚断线）→ 等 primary 连上再来。
    * - `409 MULTIPLE_CONNECTIONS`：同 sid 多条 live WS，node 无法定位到本标签页 → 这段时间
@@ -520,7 +536,7 @@ export class DirectCarrierController {
   private async fetchConnectionId(attempt: Attempt): Promise<string | null> {
     let res: Response;
     try {
-      res = await this.options.apiClient.fetch(MESH_CONNECTION_PATH, {
+      res = await this.options.apiClient.fetch(meshConnectionPath(this.options.cid?.()), {
         signal: attempt.abort.signal,
       });
     } catch (err) {

@@ -170,9 +170,25 @@ describe('AuthApi.getConnection（F3-4）', () => {
     const { api, calls } = recorder([
       new Response(JSON.stringify({ connectionId: 'conn-2' }), { status: 200 }),
     ]);
-    expect(await api.getConnection('self', 'conn-2')).toEqual({ ok: true, connectionId: 'conn-2' });
+    expect(await api.getConnection('self', { connectionId: 'conn-2' })).toEqual({
+      ok: true,
+      connectionId: 'conn-2',
+    });
     expect(calls[0].url).toBe('/api/mesh/connection');
     expect(calls[0].init?.headers).toEqual({ 'x-tmex-connection': 'conn-2' });
+  });
+
+  test('传 cid 时拼进 query（浏览器唯一能带上握手的定位信息）', async () => {
+    const { api, calls } = recorder([
+      new Response(JSON.stringify({ connectionId: 'srv-1' }), { status: 200 }),
+    ]);
+    expect(await api.getConnection(NODE_A, { cid: 'nonce/+a=' })).toEqual({
+      ok: true,
+      connectionId: 'srv-1',
+    });
+    expect(calls[0].url).toBe(`/n/${NODE_A}/api/mesh/connection?cid=nonce%2F%2Ba%3D`);
+    // 返回的是**服务端** id，nonce 不能拿去 authorize
+    expect(calls[0].init?.headers).toBeUndefined();
   });
 
   test('404 NO_CONNECTION 不抛异常，透出 status + code', async () => {

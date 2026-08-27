@@ -271,7 +271,12 @@ export class FakeApiClient implements DirectApiClientLike {
       headers[key.toLowerCase()] = value;
     }
     this.calls.push({ path, body, headers });
-    const route = this.routes.get(path) ?? { status: 404, body: { error: 'not_found' } };
+    // 路由按**不含 query** 的路径登记；`calls` 里仍是原始路径，用例可以断言 `?cid=`。
+    const route = this.routes.get(path) ??
+      this.routes.get(path.split('?')[0] as string) ?? {
+        status: 404,
+        body: { error: 'not_found' },
+      };
     const status = route.status ?? 200;
     return Promise.resolve(
       new Response(JSON.stringify(route.body ?? {}), {

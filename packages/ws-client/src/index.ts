@@ -34,6 +34,8 @@ export {
 export {
   DirectCarrierController,
   buildIceServers,
+  meshConnectionPath,
+  MESH_CONNECTION_PATH,
   SESS_CHANNEL_LABEL,
   type DirectCarrierControllerOptions,
   type DirectCarrierState,

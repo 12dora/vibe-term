@@ -1,9 +1,14 @@
-import { beforeEach, describe, expect, mock, test } from 'bun:test';
+import { afterAll, beforeAll, beforeEach, describe, expect, mock, test } from 'bun:test';
 import { nodeWsUrl } from '@tmex/api-client';
-import { type GatewayConnection, createGatewayConnection } from '@tmex/ws-client';
+import {
+  type GatewayConnection,
+  type WebSocketLike,
+  createGatewayConnection,
+} from '@tmex/ws-client';
 import {
   NodeConnectionManager,
   WS_UNAUTHORIZED_CLOSE_CODE,
+  createDefaultNodeConnection,
   nodeStoragePrefix,
 } from './node-connection-manager';
 import { installWindowStorage } from './test-utils';
@@ -136,6 +141,86 @@ describe('NodeConnectionManager.get', () => {
   test('默认 WS 地址按 node 解析', () => {
     expect(nodeWsUrl('self', { protocol: 'https:', host: 'h' })).toBe('wss://h/ws');
     expect(nodeWsUrl(NODE_A, { protocol: 'https:', host: 'h' })).toBe(`wss://h/n/${NODE_A}/ws`);
+  });
+});
+
+describe('createDefaultNodeConnection 的 client nonce（F3-5）', () => {
+  // 这里要真的 connect() 才看得到 socket URL，而 client.connect() 会挂 visibilitychange；
+  // 别的测试文件留下的 document 桩没有 addEventListener，本 describe 期间自备一份完整的。
+  const originalDocument = Object.getOwnPropertyDescriptor(globalThis, 'document');
+
+  beforeAll(() => {
+    Object.defineProperty(globalThis, 'document', {
+      value: {
+        visibilityState: 'visible',
+        addEventListener: () => {},
+        removeEventListener: () => {},
+      },
+      configurable: true,
+      writable: true,
+    });
+  });
+
+  afterAll(() => {
+    if (originalDocument) Object.defineProperty(globalThis, 'document', originalDocument);
+    else Reflect.deleteProperty(globalThis, 'document');
+  });
+
+  function fakeSocket(): WebSocketLike {
+    return {
+      readyState: 0,
+      binaryType: 'arraybuffer',
+      onopen: null,
+      onmessage: null,
+      onclose: null,
+      onerror: null,
+      send() {},
+      close() {},
+    };
+  }
+
+  /** URL 上的 `?cid=`；没有就是 null（那样 node 在多标签下答不出 connectionId）。 */
+  function cidOf(url: string): string | null {
+    return /[?&]cid=([^&]+)/.exec(url)?.[1] ?? null;
+  }
+
+  function connectCapturing(nodeId: string): { urls: string[]; connection: GatewayConnection } {
+    const urls: string[] = [];
+    const connection = createDefaultNodeConnection(
+      nodeId,
+      () => {},
+      (url) => {
+        urls.push(url);
+        return fakeSocket();
+      }
+    );
+    return { urls, connection };
+  }
+
+  test('WS URL 带 `?cid=`，重连换新 nonce', () => {
+    const { urls, connection } = connectCapturing(NODE_A);
+    connection.client.connect();
+    connection.client.reconnect();
+
+    expect(urls.length).toBe(2);
+    for (const url of urls) {
+      expect(url).toContain(`/n/${NODE_A}/ws?cid=`);
+      expect(cidOf(url)).toMatch(/^[A-Za-z0-9_-]{22}$/);
+    }
+    // 一条 WS 一个 nonce：重连是另一条 WS，服务端会另发一个 connectionId
+    expect(cidOf(urls[0] as string)).not.toBe(cidOf(urls[1] as string));
+    connection.dispose();
+  });
+
+  test('不同 node 的连接 nonce 互不相同', () => {
+    const a = connectCapturing(NODE_A);
+    const b = connectCapturing(NODE_B);
+    a.connection.client.connect();
+    b.connection.client.connect();
+
+    expect(cidOf(a.urls[0] as string)).not.toBe(cidOf(b.urls[0] as string));
+    a.connection.dispose();
+    b.connection.dispose();
   });
 });
 

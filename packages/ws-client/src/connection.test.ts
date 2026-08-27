@@ -146,4 +146,48 @@ describe('onClose 关闭码回调', () => {
     expect(created).toBe(1);
     conn.dispose();
   });
+
+  describe('wsUrlFactory（每条 socket 一个新 URL）', () => {
+    test('建 socket 时现算 URL，重连再算一次；getUrl 仍是静态 wsUrl', () => {
+      const urls: string[] = [];
+      let n = 0;
+      const conn = createGatewayConnection({
+        wsUrl: 'ws://x/ws',
+        wsUrlFactory: () => `ws://x/ws?cid=n${++n}`,
+        socketFactory: (url) => {
+          urls.push(url);
+          return fakeSocket();
+        },
+      });
+
+      conn.client.connect();
+      // 断线后重连：客户端复用 options.url，nonce 只能靠这一层轮换
+      conn.client.reconnect();
+      expect(urls).toEqual(['ws://x/ws?cid=n1', 'ws://x/ws?cid=n2']);
+      expect(conn.client.getUrl()).toBe('ws://x/ws');
+      conn.dispose();
+    });
+
+    test('与 onClose 并用时两层包装都生效', () => {
+      const urls: string[] = [];
+      const codes: number[] = [];
+      let socket: ReturnType<typeof fakeSocket> | null = null;
+      const conn = createGatewayConnection({
+        wsUrl: 'ws://x/ws',
+        wsUrlFactory: () => 'ws://x/ws?cid=abc',
+        socketFactory: (url) => {
+          urls.push(url);
+          socket = fakeSocket();
+          return socket;
+        },
+        onClose: (code) => codes.push(code),
+      });
+
+      conn.client.connect();
+      expect(urls).toEqual(['ws://x/ws?cid=abc']);
+      (socket as unknown as { onclose: (event: unknown) => void }).onclose({ code: 4401 });
+      expect(codes).toEqual([4401]);
+      conn.dispose();
+    });
+  });
 });

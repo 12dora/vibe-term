@@ -65,16 +65,96 @@ export interface WsUrlLocation {
   host: string;
 }
 
+/** client nonce 的字节数：合约要求 ≥ 16 字节的 b64url。 */
+export const CLIENT_NONCE_BYTES = 16;
+
+const B64URL_ALPHABET = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_';
+
+function base64Url(bytes: Uint8Array): string {
+  let out = '';
+  for (let i = 0; i < bytes.length; i += 3) {
+    const b0 = bytes[i] as number;
+    const b1 = bytes[i + 1];
+    const b2 = bytes[i + 2];
+    out += B64URL_ALPHABET[b0 >> 2];
+    out += B64URL_ALPHABET[((b0 & 0b11) << 4) | ((b1 ?? 0) >> 4)];
+    if (b1 === undefined) break;
+    out += B64URL_ALPHABET[((b1 & 0b1111) << 2) | ((b2 ?? 0) >> 6)];
+    if (b2 === undefined) break;
+    out += B64URL_ALPHABET[b2 & 0b111111];
+  }
+  return out;
+}
+
+/**
+ * 浏览器为**每条 Gateway WS** 生成的 client nonce（合约里的 `cid`）。
+ *
+ * 浏览器既不能给 `new WebSocket(url)` 设请求头，也读不到 upgrade 响应头，所以握手上唯一能
+ * 携带的自定义信息就是 query。node 拿它当索引**自己生成** `connectionId`，浏览器随后用
+ * `GET /api/mesh/connection?cid=` 换回那个服务端 id。**nonce 不是 connectionId**，
+ * 绝不能直接拿去 `POST /api/rtc/authorize`。
+ */
+export function generateClientNonce(): string {
+  const bytes = new Uint8Array(CLIENT_NONCE_BYTES);
+  const cryptoObj = (globalThis as { crypto?: Crypto }).crypto;
+  if (cryptoObj?.getRandomValues) {
+    cryptoObj.getRandomValues(bytes);
+  } else {
+    for (let i = 0; i < bytes.length; i++) bytes[i] = Math.floor(Math.random() * 256);
+  }
+  return base64Url(bytes);
+}
+
+export interface NodeWsUrlOptions extends Partial<WsUrlLocation> {
+  /** 本条 WS 的 client nonce，拼成 `?cid=`；空值不拼。 */
+  cid?: string | null;
+}
+
 /**
  * 目标 node 的绝对 ws(s) URL；缺省按当前页面推导（与 ws-client 的 defaultWsUrl 同规则），
- * self → `/ws`，其余 → `/n/<id>/ws`。
+ * self → `/ws`，其余 → `/n/<id>/ws`。带 `cid` 时追加 `?cid=<nonce>`。
  */
-export function nodeWsUrl(nodeId: string | null | undefined, location?: WsUrlLocation): string {
+export function nodeWsUrl(nodeId: string | null | undefined, options?: NodeWsUrlOptions): string {
   const path = resolveNodeUrl(nodeId, '/ws');
-  const loc =
-    location ?? (typeof window !== 'undefined' ? window.location : { protocol: '', host: '' });
+  const explicit = options?.protocol !== undefined || options?.host !== undefined;
+  const loc = explicit
+    ? { protocol: options?.protocol ?? '', host: options?.host ?? '' }
+    : typeof window !== 'undefined'
+      ? window.location
+      : { protocol: '', host: '' };
   const scheme = loc.protocol === 'https:' ? 'wss:' : 'ws:';
-  return `${scheme}//${loc.host}${path}`;
+  const query = options?.cid ? `?cid=${encodeURIComponent(options.cid)}` : '';
+  return `${scheme}//${loc.host}${path}${query}`;
+}
+
+/**
+ * 一个 `GatewayConnection` 的 ws URL 来源：**每建一条 socket 换一个 nonce**。
+ *
+ * `BorshWebSocketClient` 重连时复用 `options.url` 字符串，所以 nonce 的轮换只能挂在建 socket
+ * 这一步（`GatewayConnectionOptions.wsUrlFactory`）。合约要求每条 WS 一个新 nonce：node 侧
+ * `{sid, via}` 作用域内 nonce 冲突会把新 WS 直接 RST，而旧连接的关闭在经 hub 转发时未必先到。
+ */
+export interface NodeWsUrlSource {
+  /** 建新 socket（含重连）时调用：换一个 nonce，返回带 `?cid=` 的 URL。 */
+  nextUrl(): string;
+  /** 当前 socket 携带的 nonce；还没建过 socket 时为 `null`。 */
+  cid(): string | null;
+}
+
+export function createNodeWsUrlSource(
+  nodeId: string | null | undefined,
+  location?: WsUrlLocation
+): NodeWsUrlSource {
+  let current: string | null = null;
+  return {
+    nextUrl() {
+      current = generateClientNonce();
+      return nodeWsUrl(nodeId, { ...location, cid: current });
+    },
+    cid() {
+      return current;
+    },
+  };
 }
 
 /** 目标 node 的 REST 客户端：baseUrl 即 node 前缀，端点函数照旧传相对 `/api/...`。 */
