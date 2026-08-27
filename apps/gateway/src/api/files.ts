@@ -33,12 +33,109 @@ import {
   removeUploadSession,
 } from '../files/transfer-session';
 import { t } from '../i18n';
+import { requestDispatchContext } from '../mesh/types';
 import { broadcastSettingsUpdate } from '../settings/broadcaster';
 import { json } from './http';
 import { type ApiRoute, route } from './route';
 
 // 分块上传的 chunk 大小（前端按此切片，每个 PUT body ≤ 此值，远低于 Bun 默认 128MB body 上限）
 const UPLOAD_CHUNK_SIZE = 8 * 1024 * 1024;
+
+const transferUids = new Map<string, string>();
+
+export type BulkTransferOwner = {
+  uid: string;
+  tempPath: string;
+  expectedSize: number;
+  kind: 'upload' | 'download';
+};
+
+export type FilesBulkHooks = {
+  getTransferOwner(transferId: string): BulkTransferOwner | null;
+  openDownload(transferId: string): ReadableStream<Uint8Array> | null;
+  appendUpload(
+    transferId: string,
+    bytes: Uint8Array
+  ): { ok: true; received: number } | { ok: false; code: string };
+  abortTransfer(transferId: string): void;
+};
+
+function uidFromRequest(req: Request): string {
+  return requestDispatchContext.get(req)?.uid ?? '';
+}
+
+function rememberTransferUid(transferId: string, uid: string): void {
+  transferUids.set(transferId, uid);
+}
+
+function forgetTransferUid(transferId: string): void {
+  transferUids.delete(transferId);
+}
+
+function cleanupUpload(id: string): void {
+  removeUploadSession(id);
+  forgetTransferUid(id);
+}
+
+function cleanupDownload(id: string): void {
+  removeDownloadSession(id);
+  forgetTransferUid(id);
+}
+
+export function getTransferOwner(transferId: string): BulkTransferOwner | null {
+  const upload = getUploadSession(transferId);
+  if (upload) {
+    return {
+      uid: transferUids.get(transferId) ?? '',
+      tempPath: upload.tmpPath,
+      expectedSize: upload.size,
+      kind: 'upload',
+    };
+  }
+  const download = getDownloadSession(transferId);
+  if (download) {
+    return {
+      uid: transferUids.get(transferId) ?? '',
+      tempPath: download.tmpPath,
+      expectedSize: download.size,
+      kind: 'download',
+    };
+  }
+  return null;
+}
+
+export function openDownload(transferId: string): ReadableStream<Uint8Array> | null {
+  const session = getDownloadSession(transferId);
+  if (!session) return null;
+  return streamTempFile(session.tmpPath, () => cleanupDownload(transferId));
+}
+
+export function appendUpload(
+  transferId: string,
+  bytes: Uint8Array
+): { ok: true; received: number } | { ok: false; code: string } {
+  const session = getUploadSession(transferId);
+  if (!session) return { ok: false, code: 'not_found' };
+  const res = appendUploadChunk(transferId, session.received, bytes);
+  if (!res.ok) {
+    if (res.reason === 'too_large') return { ok: false, code: 'too_large' };
+    if (res.reason === 'not_found') return { ok: false, code: 'not_found' };
+    return { ok: false, code: 'invalid' };
+  }
+  return { ok: true, received: res.received };
+}
+
+export function abortTransfer(transferId: string): void {
+  if (getUploadSession(transferId)) cleanupUpload(transferId);
+  if (getDownloadSession(transferId)) cleanupDownload(transferId);
+}
+
+export const filesBulkHooks: FilesBulkHooks = {
+  getTransferOwner,
+  openDownload,
+  appendUpload,
+  abortTransfer,
+};
 
 const CODE_STATUS: Record<FileErrorCode, number> = {
   invalid: 400,
@@ -233,6 +330,7 @@ async function handleUploadInit(req: Request): Promise<Response> {
   if (stat.data.type !== 'dir') return codeError('not_a_directory');
 
   const session = createUploadSession({ rootId, destDir, name, size });
+  rememberTransferUid(session.id, uidFromRequest(req));
   return json({ uploadId: session.id, chunkSize: UPLOAD_CHUNK_SIZE });
 }
 
@@ -282,12 +380,12 @@ function handleUploadCommit(id: string): Response {
           } catch {
             // 已关闭
           }
-          removeUploadSession(id);
+          cleanupUpload(id);
         });
     },
     cancel() {
       // 客户端中断 commit 流 → 中止 rsync + 清理
-      removeUploadSession(id);
+      cleanupUpload(id);
     },
   });
   return new Response(stream, {
@@ -297,7 +395,7 @@ function handleUploadCommit(id: string): Response {
 }
 
 function handleUploadCancel(id: string): Response {
-  removeUploadSession(id);
+  cleanupUpload(id);
   return json({ success: true });
 }
 
@@ -399,6 +497,7 @@ function handleDownloadPrepare(req: Request): Response {
           mime: result.data.mime,
           cleanup: result.data.cleanup,
         });
+        rememberTransferUid(s.id, uidFromRequest(req));
         emit({ type: 'done', downloadId: s.id, size: s.size, name: s.name });
       } else {
         emit({ type: 'error', code: result.code, detail: result.detail });
@@ -420,7 +519,7 @@ function handleDownloadPrepare(req: Request): Response {
 function handleDownloadContent(id: string): Response {
   const session = getDownloadSession(id);
   if (!session) return codeError('not_found');
-  const body = streamTempFile(session.tmpPath, () => removeDownloadSession(id));
+  const body = streamTempFile(session.tmpPath, () => cleanupDownload(id));
   if (!body) return codeError('unknown');
   return new Response(body, {
     status: 200,
@@ -429,7 +528,7 @@ function handleDownloadContent(id: string): Response {
 }
 
 function handleDownloadCancel(id: string): Response {
-  removeDownloadSession(id);
+  cleanupDownload(id);
   return json({ success: true });
 }
 
