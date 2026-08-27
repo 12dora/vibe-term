@@ -7,6 +7,7 @@ import {
   MAX_OSC_PAYLOAD_BYTES,
   appendDcsByte,
   appendOscPayloadByte,
+  createParserOutput,
   createParserState,
 } from './parser-state';
 
@@ -20,8 +21,9 @@ function makeCtx(): ParserContext {
   return {
     state: createParserState(),
     options,
-    output: [],
+    output: createParserOutput(0),
     processByte: () => {},
+    pendingPassthrough: [],
   };
 }
 

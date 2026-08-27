@@ -1,5 +1,11 @@
 import type { ParserContext } from './parser-state';
-import { MAX_CSI_BYTES, THEME_UPDATES_MODE, utf8Decoder } from './parser-state';
+import {
+  MAX_CSI_BYTES,
+  THEME_UPDATES_MODE,
+  utf8Decoder,
+  writeByte,
+  writeBytes,
+} from './parser-state';
 
 export function maybeEmitThemeSubscription(
   csiBytes: number[],
@@ -15,10 +21,17 @@ export function maybeEmitThemeSubscription(
   }
 }
 
+function writeCsiPrefix(ctx: ParserContext): void {
+  writeByte(ctx.output, 0x1b);
+  writeByte(ctx.output, 0x5b);
+  writeBytes(ctx.output, ctx.state.csiBytes);
+}
+
 export function handleCsi(ctx: ParserContext, byte: number): void {
-  const { state, output } = ctx;
+  const { state } = ctx;
   if (byte >= 0x40 && byte <= 0x7e) {
-    output.push(0x1b, 0x5b, ...state.csiBytes, byte);
+    writeCsiPrefix(ctx);
+    writeByte(ctx.output, byte);
     maybeEmitThemeSubscription(
       state.csiBytes,
       byte,
@@ -33,7 +46,7 @@ export function handleCsi(ctx: ParserContext, byte: number): void {
     state.csiBytes.push(byte);
     return;
   }
-  output.push(0x1b, 0x5b, ...state.csiBytes);
+  writeCsiPrefix(ctx);
   state.csiBytes = [];
   state.phase = 'normal';
   ctx.processByte(byte);

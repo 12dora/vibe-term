@@ -1,8 +1,8 @@
 import type { ParserContext } from './parser-state';
-import { resetOscState } from './parser-state';
+import { resetOscState, writeByte } from './parser-state';
 
 export function handleEsc(ctx: ParserContext, byte: number): void {
-  const { state, output } = ctx;
+  const { state } = ctx;
   if (byte === 0x5d) {
     resetOscState(state);
     state.phase = 'osc-params';
@@ -14,7 +14,7 @@ export function handleEsc(ctx: ParserContext, byte: number): void {
     return;
   }
   if (byte === 0x50) {
-    state.dcsPrefix = '';
+    state.dcsPrefixLength = 0;
     state.phase = 'dcs-detect';
     return;
   }
@@ -23,6 +23,7 @@ export function handleEsc(ctx: ParserContext, byte: number): void {
     state.phase = 'csi';
     return;
   }
-  output.push(0x1b, byte);
+  writeByte(ctx.output, 0x1b);
+  writeByte(ctx.output, byte);
   state.phase = 'normal';
 }
