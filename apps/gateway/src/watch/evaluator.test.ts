@@ -279,3 +279,118 @@ describe('unchanged 型', () => {
     expect(output.stateUpdates.lastValueChangedAt).toBe(NOW.toISOString());
   });
 });
+
+describe('evaluateWatchRule 边缘', () => {
+  test('repeat 模式 cooldown 刚好到期（elapsed === cooldown）时 hit', () => {
+    const rule = makeWatchRule({
+      triggerType: 'match',
+      pattern: 'ERROR',
+      fireMode: 'repeat',
+      cooldownSeconds: 600,
+    });
+    const output = evaluateWatchRule({
+      screen: 'ERROR\n',
+      rule,
+      state: makeWatchRuleState({ lastTriggeredAt: minutesBefore(10) }),
+      now: NOW,
+    });
+    expect(output.hit).toBe(true);
+  });
+
+  test('repeat 模式 lastTriggeredAt 等于 now 时不 hit', () => {
+    const rule = makeWatchRule({
+      triggerType: 'match',
+      pattern: 'ERROR',
+      fireMode: 'repeat',
+      cooldownSeconds: 600,
+    });
+    const output = evaluateWatchRule({
+      screen: 'ERROR\n',
+      rule,
+      state: makeWatchRuleState({ lastTriggeredAt: NOW.toISOString() }),
+      now: NOW,
+    });
+    expect(output.hit).toBe(false);
+  });
+
+  test('unchanged + repeat：cooldown 刚好到期时 hit', () => {
+    const rule = makeWatchRule({
+      triggerType: 'unchanged',
+      pattern: '(\\d+)%',
+      extractGroup: 1,
+      unchangedMinutes: 10,
+      fireMode: 'repeat',
+      cooldownSeconds: 600,
+    });
+    const output = evaluateWatchRule({
+      screen: 'progress 42%\n',
+      rule,
+      state: makeWatchRuleState({
+        lastValue: '42',
+        lastValueChangedAt: minutesBefore(40),
+        lastTriggeredAt: minutesBefore(10),
+      }),
+      now: NOW,
+    });
+    expect(output.hit).toBe(true);
+    expect(output.value).toBe('42');
+  });
+
+  test('无效 flags 返回规则错误而非 hit', () => {
+    const rule = makeWatchRule({ triggerType: 'match', pattern: 'ERROR', patternFlags: 'q' });
+    const output = evaluateWatchRule({ screen: 'ERROR', rule, state: null, now: NOW });
+    expect(output.hit).toBe(false);
+    expect(output.error).toMatch(/invalid pattern/);
+    expect(output.stateUpdates).toEqual({});
+  });
+
+  test('unchanged 首次观测：已有空 state 记录时只记值不 hit', () => {
+    const rule = makeWatchRule({
+      triggerType: 'unchanged',
+      pattern: '(\\d+)%',
+      extractGroup: 1,
+      unchangedMinutes: 10,
+    });
+    const output = evaluateWatchRule({
+      screen: 'progress 7%\n',
+      rule,
+      state: makeWatchRuleState({ lastValue: null, lastValueChangedAt: null }),
+      now: NOW,
+    });
+    expect(output.hit).toBe(false);
+    expect(output.value).toBe('7');
+    expect(output.stateUpdates).toEqual({
+      lastValue: '7',
+      lastValueChangedAt: NOW.toISOString(),
+      triggeredSinceChange: false,
+    });
+  });
+
+  test('同一 rule id 更换 pattern 后不复用旧正则', () => {
+    const original = makeWatchRule({ id: 'cache-rule', triggerType: 'match', pattern: 'ERROR' });
+    const first = evaluateWatchRule({ screen: 'ERROR\n', rule: original, state: null, now: NOW });
+    expect(first.hit).toBe(true);
+
+    const updated = { ...original, pattern: 'WARN' };
+    const staleScreen = evaluateWatchRule({
+      screen: 'ERROR\n',
+      rule: updated,
+      state: null,
+      now: NOW,
+    });
+    expect(staleScreen.hit).toBe(false);
+
+    const newScreen = evaluateWatchRule({ screen: 'WARN\n', rule: updated, state: null, now: NOW });
+    expect(newScreen.hit).toBe(true);
+    expect(newScreen.matchedText).toBe('WARN');
+  });
+
+  test('缓存的全局正则连续求值不会因为 lastIndex 漏命中', () => {
+    const rule = makeWatchRule({ triggerType: 'match', pattern: 'ERROR' });
+    const first = evaluateWatchRule({ screen: 'ERROR\n', rule, state: null, now: NOW });
+    const second = evaluateWatchRule({ screen: 'ERROR\n', rule, state: null, now: NOW });
+    expect(first.hit).toBe(true);
+    expect(second.hit).toBe(true);
+    expect(second.matchedText).toBe('ERROR');
+  });
+});
