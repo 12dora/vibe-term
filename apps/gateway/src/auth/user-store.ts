@@ -267,8 +267,29 @@ export class UserStore {
     this.db.delete(userKeys).where(eq(userKeys.id, id)).run();
   }
 
+  deleteKeysByUser(userId: string): void {
+    this.db.delete(userKeys).where(eq(userKeys.userId, userId)).run();
+  }
+
   listCerts(): NodeCertRecord[] {
     return this.db.select().from(nodeCerts).all().map(toNodeCert);
+  }
+
+  listCertsByUser(userId: string): NodeCertRecord[] {
+    return this.db
+      .select()
+      .from(nodeCerts)
+      .where(eq(nodeCerts.userId, userId))
+      .all()
+      .map(toNodeCert);
+  }
+
+  deleteCertsByUser(userId: string): void {
+    this.db.delete(nodeCerts).where(eq(nodeCerts.userId, userId)).run();
+  }
+
+  deleteAllPeers(): void {
+    this.db.delete(peerCache).run();
   }
 
   getCert(nodeId: string): NodeCertRecord | null {

@@ -7,6 +7,17 @@ export {
 } from './challenge-store';
 export { buildClearCookie, buildSetCookie, nodeSessionCookieName, parseCookies } from './cookies';
 export {
+  KeyLogStore,
+  projectPayloadJson,
+  type AppendKeyLogInput,
+  type KeyLogEntry,
+} from './key-log-store';
+export {
+  ensureNodeIdentity,
+  selfSignedNodeCertificate,
+  type NodeIdentityKeys,
+} from './node-identity-service';
+export {
   NodeIdentityStore,
   type NodeIdentityRecord,
   type SaveNodeIdentityInput,
@@ -21,7 +32,37 @@ export {
   type NodeSessionVerifyReason,
   type NodeSessionVerifyResult,
 } from './node-session-store';
+export {
+  createAuthenticationOptions,
+  createRegistrationOptions,
+  decodePasskeyAssertionSig,
+  encodePasskeyAssertionSig,
+  makeVerifyDelegationPasskey,
+  makeVerifyPasskeyAssertion,
+  verifyAssertion,
+  verifyRegistration,
+  type CreateAuthenticationOptionsInput,
+  type CreateRegistrationOptionsInput,
+  type VerifyAssertionCredential,
+  type VerifyAssertionInput,
+  type VerifyAssertionResult,
+  type VerifyRegistrationInput,
+} from './passkey';
 export type { AuthDb, DelegationMethod, NodeStatus } from './types';
+export {
+  UserKeyService,
+  kdfParamsFromJson,
+  kdfParamsToJson,
+  type ApplyKeyLogFailure,
+  type ApplyKeyLogInput,
+  type ApplyKeyLogServiceResult,
+  type ApplyKeyLogSuccess,
+  type ApplyManyResult,
+  type BootstrapUserResult,
+  type SignAndApplyFields,
+  type UserKeyServiceDeps,
+  type VerifyChainForJoinResult,
+} from './user-key-service';
 export {
   UserStore,
   type CreateEnrollmentTokenInput,

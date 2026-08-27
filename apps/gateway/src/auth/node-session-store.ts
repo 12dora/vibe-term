@@ -128,6 +128,10 @@ export class NodeSessionStore {
       .run();
   }
 
+  deleteAllForUser(userId: string): void {
+    this.db.delete(nodeSessions).where(eq(nodeSessions.userId, userId)).run();
+  }
+
   revokeByCredential(credentialId: Uint8Array, now = Date.now()): void {
     this.db
       .update(nodeSessions)
