@@ -342,6 +342,7 @@ describe('SnapshotProjector.performSnapshot', () => {
     shutdowns: boolean[];
     unavailable: string[];
     closures: number;
+    connectGeneration: number;
     setResponse: (argv: string, result: CommandResult) => void;
   };
 
@@ -361,6 +362,7 @@ describe('SnapshotProjector.performSnapshot', () => {
         responses.set(argv, result);
       },
       connected: true,
+      connectGeneration: 0,
       manualDisconnect: false,
       deviceId: 'dev-1',
       sessionName: 'tmex',
@@ -419,6 +421,67 @@ describe('SnapshotProjector.performSnapshot', () => {
     const host = createHost({ connected: false });
     await new SnapshotProjector(host).performSnapshot();
     expect(host.calls).toEqual([]);
+  });
+
+  function installSnapshotGates(host: FakeHost) {
+    const sessionGate = deferred<CommandResult>();
+    const windowsGate = deferred<CommandResult>();
+    const panesGate = deferred<CommandResult>();
+    const gates: Record<string, ReturnType<typeof deferred<CommandResult>>> = {
+      'display-message': sessionGate,
+      'list-windows': windowsGate,
+      'list-panes': panesGate,
+    };
+    host.runTmuxAllowFailure = async (argv) => {
+      const command = argv[0] ?? '';
+      const gate = gates[command];
+      if (!gate) {
+        throw new Error(`unexpected snapshot query: ${command}`);
+      }
+      host.calls.push(argv);
+      return gate.promise;
+    };
+    return {
+      resolveAll() {
+        sessionGate.resolve(ok('$1|tmex\n'));
+        windowsGate.resolve(ok('@1|0|1|ba9d,80x24,0,0,1|main\n'));
+        panesGate.resolve(ok('%1|@1|0|1|80|24|0|0|1|bash|node|/home/user\n'));
+      },
+    };
+  }
+
+  test('does not emit or mutate snapshot state when disconnected while commands are in flight', async () => {
+    const host = createHost();
+    const gates = installSnapshotGates(host);
+    const done = new SnapshotProjector(host).performSnapshot();
+    expect(host.calls).toHaveLength(3);
+
+    host.connected = false;
+    host.connectGeneration += 1;
+    gates.resolveAll();
+    await done;
+
+    expect(host.snapshots).toEqual([]);
+    expect(host.snapshotSession).toBeNull();
+    expect(host.snapshotWindows.size).toBe(0);
+    expect(host.success).toBe(0);
+    expect(host.closures).toBe(0);
+  });
+
+  test('does not emit when connect generation changes while snapshot commands are in flight', async () => {
+    const host = createHost();
+    const gates = installSnapshotGates(host);
+    const done = new SnapshotProjector(host).performSnapshot();
+    expect(host.calls).toHaveLength(3);
+
+    host.connectGeneration += 1;
+    gates.resolveAll();
+    await done;
+
+    expect(host.snapshots).toEqual([]);
+    expect(host.snapshotSession).toBeNull();
+    expect(host.snapshotWindows.size).toBe(0);
+    expect(host.success).toBe(0);
   });
 
   test('fetches session/windows/panes in parallel, projects, then restores theme', async () => {

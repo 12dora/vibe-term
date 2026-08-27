@@ -177,6 +177,9 @@ export abstract class ExternalTmuxConnectionCore {
       set connected(value) {
         core.connected = value;
       },
+      get connectGeneration() {
+        return core.connectGeneration;
+      },
       get manualDisconnect() {
         return core.manualDisconnect;
       },
@@ -386,7 +389,7 @@ export abstract class ExternalTmuxConnectionCore {
     if (created) {
       this.lifecycle.notifySessionCreated();
     }
-    await this.requestSnapshotInternal();
+    await this.awaitConnectStep(generation, () => this.requestSnapshotInternal());
   }
 
   requestSnapshot(): void {

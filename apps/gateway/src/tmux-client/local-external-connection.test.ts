@@ -1949,4 +1949,57 @@ describe('LocalExternalTmuxConnection lifecycle events', () => {
     expect(spawnCount).toBe(0);
     expect(fake.killed()).toBe(false);
   });
+
+  test('disconnect during blocked snapshot commands does not publish snapshot', async () => {
+    const session = 'tmex-cancel-snapshot';
+    const snapshots: StateSnapshotPayload[] = [];
+    let snapshotStarted = false;
+    let releaseSnapshot: (() => void) | undefined;
+    const snapshotGate = new Promise<void>((resolve) => {
+      releaseSnapshot = resolve;
+    });
+    const stubRun = createRunStub(session);
+    const fake = createFakeControlProcess();
+
+    const connection = new LocalExternalTmuxConnection(
+      {
+        deviceId: 'device-local',
+        onEvent: () => {},
+        onTerminalOutput: () => {},
+        onTerminalHistory: () => {},
+        onSnapshot: (payload) => snapshots.push(payload),
+        onError: () => {},
+        onClose: () => {},
+      },
+      {
+        enableSubscription: true,
+        ensureGhosttyTerminfo: async () => false,
+        getDevice: () => createDevice(session),
+        run: async (argv) => {
+          const command = argv.slice(1).join(' ');
+          if (command.startsWith(`list-panes -s -t ${session}`)) {
+            snapshotStarted = true;
+            await snapshotGate;
+          }
+          return stubRun(argv);
+        },
+        spawnControlClient: () => {
+          fake.pushStdout(`%begin 1 1 0\n%end 1 1 0\n%session-changed $1 ${session}\n`);
+          return fake.proc;
+        },
+      }
+    );
+
+    const connectPromise = connection.connect();
+    await waitFor(() => (snapshotStarted ? true : null));
+    expect((connection as any).connected).toBe(true);
+    connection.disconnect();
+    releaseSnapshot?.();
+    await connectPromise;
+
+    expect((connection as any).connected).toBe(false);
+    expect(snapshots).toEqual([]);
+    expect((connection as any).snapshotSession).toBeNull();
+    expect((connection as any).snapshotWindows.size).toBe(0);
+  });
 });

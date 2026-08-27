@@ -31,6 +31,7 @@ export interface SnapshotEmitHost {
 
 export interface SnapshotProjectorHost {
   connected: boolean;
+  connectGeneration: number;
   manualDisconnect: boolean;
   deviceId: string;
   sessionName: string;
@@ -233,14 +234,14 @@ export function emitSnapshot(
 export class SnapshotProjector {
   constructor(private readonly host: SnapshotProjectorHost) {}
 
-  async performSnapshot(): Promise<void> {
+  private hostStillAcceptsSnapshot(generation: number): boolean {
     const host = this.host;
-    if (!host.connected) {
-      return;
-    }
+    return host.connected && host.connectGeneration === generation;
+  }
 
-    const baseRevision = host.callbacks.beginMetadataReconcile?.();
-    const [sessionRes, windowsRes, panesRes] = await Promise.all([
+  private fetchSnapshotResults(): Promise<[CommandResult, CommandResult, CommandResult]> {
+    const host = this.host;
+    return Promise.all([
       host.runTmuxAllowFailure([
         'display-message',
         '-p',
@@ -264,6 +265,21 @@ export class SnapshotProjector {
         PANE_SNAPSHOT_FORMAT,
       ]),
     ]);
+  }
+
+  async performSnapshot(): Promise<void> {
+    const host = this.host;
+    if (!host.connected) {
+      return;
+    }
+    const generation = host.connectGeneration;
+
+    const baseRevision = host.callbacks.beginMetadataReconcile?.();
+    const [sessionRes, windowsRes, panesRes] = await this.fetchSnapshotResults();
+
+    if (!this.hostStillAcceptsSnapshot(generation)) {
+      return;
+    }
 
     if (host.shouldAbortSnapshot([sessionRes, windowsRes, panesRes])) {
       return;

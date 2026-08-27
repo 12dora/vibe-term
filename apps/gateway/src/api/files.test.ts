@@ -69,6 +69,30 @@ describe('PUT /api/files/upload/:id offset validation', () => {
     expect(res.status).toBe(404);
     expect(await res.json()).toEqual({ error: 'not_found', code: 'not_found' });
   });
+
+  test('accepts decimal offset 12 and then reports missing session', async () => {
+    const response = await dispatchRaw(
+      'PUT',
+      '/api/files/upload/missing?offset=12',
+      new Uint8Array([1])
+    );
+    expect(response).toBeInstanceOf(Response);
+    const res = response as Response;
+    expect(res.status).toBe(404);
+    expect(await res.json()).toEqual({ error: 'not_found', code: 'not_found' });
+  });
+
+  for (const offset of [' ', '0x10', '1e2']) {
+    test(`rejects offset ${JSON.stringify(offset)} that Number() would coerce`, async () => {
+      await expectInvalidRequest(
+        await dispatchRaw(
+          'PUT',
+          `/api/files/upload/any-id?offset=${encodeURIComponent(offset)}`,
+          new Uint8Array([1])
+        )
+      );
+    });
+  }
 });
 
 describe('JSON object body validation', () => {

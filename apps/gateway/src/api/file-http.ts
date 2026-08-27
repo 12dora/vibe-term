@@ -31,7 +31,7 @@ export function codeError(code: FileErrorCode, detail?: string): Response {
 }
 
 export function parseNonNegativeSafeInt(raw: string | null): number | null {
-  if (raw === null || raw === '') return null;
+  if (raw === null || raw === '' || !/^\d+$/.test(raw)) return null;
   const n = Number(raw);
   if (!Number.isSafeInteger(n) || n < 0) return null;
   return n;
