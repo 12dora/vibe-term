@@ -18,6 +18,7 @@ import { AppSidebar } from '@/components/page-layouts/components/app-sidebar';
 import { useAppMonoFont } from '@/lib/fonts/useAppMonoFont';
 import { type PageModuleLoader, usePageModule } from '@/use-page-module';
 import { ConnectionIndicator } from '@tmex/panels';
+import { SettingsEventsInit } from '@tmex/panels/settings';
 import { WatchEventsInit } from '@tmex/panels/watch';
 import { useSiteStore, useUIStore } from '@tmex/stores';
 import { useKeyboardAvoidance } from '@tmex/terminal-ui';
@@ -135,6 +136,7 @@ function RootLayout() {
   return (
     <GlobalDeviceProvider>
       <WatchEventsInit />
+      <SettingsEventsInit />
       <SidebarProvider open={!sidebarCollapsed} onOpenChange={(open) => setSidebarCollapsed(!open)}>
         <StatusBarSync />
         <FlowBridges />
