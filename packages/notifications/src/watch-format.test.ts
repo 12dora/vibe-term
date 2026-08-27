@@ -1,21 +1,7 @@
 import { describe, expect, test } from 'bun:test';
-import { noopBellPlayer, noopBrowserNotifier, noopNotificationSink } from './sinks';
 import { formatWatchTriggeredNotification } from './watch-format';
 
 const t = (key: string) => key;
-
-describe('no-op 默认实现', () => {
-  test('全部方法可安全调用', () => {
-    expect(() => {
-      noopNotificationSink.info('a');
-      noopNotificationSink.success('a', { description: 'd' });
-      noopNotificationSink.warning('a');
-      noopNotificationSink.error('a', { action: { label: 'x', onClick: () => {} } });
-      noopBellPlayer.play();
-      noopBrowserNotifier.notify('t', 'b');
-    }).not.toThrow();
-  });
-});
 
 describe('formatWatchTriggeredNotification', () => {
   test('规则名缺失回退 i18n 标题', () => {

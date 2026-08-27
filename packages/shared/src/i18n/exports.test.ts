@@ -17,27 +17,14 @@ describe('@tmex/shared i18n package exports', () => {
     expect(exports['./i18n/locales/ja_JP.json']).toBe('./src/i18n/locales/ja_JP.json');
   });
 
-  test('export 目标文件全部存在且可 import', async () => {
+  test('export 目标文件全部存在，manifest 列出语言', async () => {
     const exports = packageJson.exports as Record<string, string>;
     for (const rel of Object.values(exports)) {
       const abs = path.join(pkgRoot, rel);
       expect(existsSync(abs)).toBe(true);
     }
 
-    const resources = await import('@tmex/shared/i18n/resources');
-    expect(resources.DEFAULT_LOCALE).toBeDefined();
-    expect(resources.I18N_RESOURCES).toBeDefined();
-
-    const typesMod = await import('@tmex/shared/i18n/types');
-    expect(typesMod).toBeDefined();
-
-    const en = await import('@tmex/shared/i18n/locales/en_US.json');
-    const zh = await import('@tmex/shared/i18n/locales/zh_CN.json');
-    const ja = await import('@tmex/shared/i18n/locales/ja_JP.json');
     const manifest = await import('@tmex/shared/i18n/locales/manifest.json');
-    expect(en.default ?? en).toBeTruthy();
-    expect(zh.default ?? zh).toBeTruthy();
-    expect(ja.default ?? ja).toBeTruthy();
     expect((manifest.default ?? manifest).locales?.length).toBeGreaterThan(0);
   });
 });

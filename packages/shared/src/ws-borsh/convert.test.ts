@@ -60,83 +60,8 @@ describe('convert', () => {
     });
   });
 
+  // 各事件类型的 round-trip 与 wire tag 覆盖见下方「tmux event codec 表」
   describe('TmuxEvent', () => {
-    it('应该正确编解码 window-add 事件', () => {
-      const payload: EventTmuxPayload = {
-        deviceId: 'device-1',
-        type: 'window-add',
-        data: { windowId: '@1' },
-      };
-
-      const encoded = encodeTmuxEventPayload(payload);
-      const decoded = decodeTmuxEventPayload(encoded);
-
-      expect(decoded.deviceId).toBe(payload.deviceId);
-      expect(decoded.type).toBe('window-add');
-      expect(decoded.data).toEqual({ windowId: '@1' });
-    });
-
-    it('应该正确编解码 window-renamed 事件', () => {
-      const payload: EventTmuxPayload = {
-        deviceId: 'device-1',
-        type: 'window-renamed',
-        data: { windowId: '@1', name: 'new-name' },
-      };
-
-      const encoded = encodeTmuxEventPayload(payload);
-      const decoded = decodeTmuxEventPayload(encoded);
-
-      expect(decoded.deviceId).toBe(payload.deviceId);
-      expect(decoded.type).toBe('window-renamed');
-      expect(decoded.data).toEqual({ windowId: '@1', name: 'new-name' });
-    });
-
-    it('应该正确编解码 pane-active 事件', () => {
-      const payload: EventTmuxPayload = {
-        deviceId: 'device-1',
-        type: 'pane-active',
-        data: { windowId: '@1', paneId: '%2' },
-      };
-
-      const encoded = encodeTmuxEventPayload(payload);
-      const decoded = decodeTmuxEventPayload(encoded);
-
-      expect(decoded.deviceId).toBe(payload.deviceId);
-      expect(decoded.type).toBe('pane-active');
-      expect(decoded.data).toEqual({ windowId: '@1', paneId: '%2' });
-    });
-
-    it('应该正确编解码 bell 事件', () => {
-      const payload: EventTmuxPayload = {
-        deviceId: 'device-1',
-        type: 'bell',
-        data: {
-          windowId: '@1',
-          paneId: '%2',
-          windowIndex: 1,
-          paneIndex: 2,
-          paneUrl: 'https://example.com',
-          paneTitle: 'vim session',
-          paneCurrentCommand: 'vim',
-        },
-      };
-
-      const encoded = encodeTmuxEventPayload(payload);
-      const decoded = decodeTmuxEventPayload(encoded);
-
-      expect(decoded.deviceId).toBe(payload.deviceId);
-      expect(decoded.type).toBe('bell');
-      expect(decoded.data).toEqual({
-        windowId: '@1',
-        paneId: '%2',
-        windowIndex: 1,
-        paneIndex: 2,
-        paneUrl: 'https://example.com',
-        paneTitle: 'vim session',
-        paneCurrentCommand: 'vim',
-      });
-    });
-
     it('bell 事件无 paneTitle/paneCurrentCommand 时解码为 undefined', () => {
       const payload: EventTmuxPayload = {
         deviceId: 'device-1',
@@ -157,32 +82,6 @@ describe('convert', () => {
       expect(data.paneCurrentCommand).toBeUndefined();
       expect(data.windowId).toBe('@1');
       expect(data.paneId).toBe('%2');
-    });
-
-    it('应该正确编解码 notification 事件', () => {
-      const payload: EventTmuxPayload = {
-        deviceId: 'device-1',
-        type: 'notification',
-        data: {
-          source: 'osc777',
-          title: 'Build finished',
-          body: 'All 42 tests passed',
-          windowId: '@1',
-          paneId: '%2',
-          windowIndex: 1,
-          paneIndex: 2,
-          paneUrl: 'https://example.com/build',
-          paneTitle: 'build monitor',
-          paneCurrentCommand: 'make',
-        },
-      };
-
-      const encoded = encodeTmuxEventPayload(payload);
-      const decoded = decodeTmuxEventPayload(encoded);
-
-      expect(decoded.deviceId).toBe(payload.deviceId);
-      expect(decoded.type).toBe('notification');
-      expect(decoded.data).toEqual(payload.data);
     });
 
     it('notification 事件无 paneTitle/paneCurrentCommand 时解码为 undefined', () => {
@@ -208,35 +107,6 @@ describe('convert', () => {
       expect(data.paneCurrentCommand).toBeUndefined();
       expect(data.source).toBe('osc9');
       expect(data.body).toBe('Something happened');
-    });
-
-    it('应该正确编解码 layout-change 事件', () => {
-      const payload: EventTmuxPayload = {
-        deviceId: 'device-1',
-        type: 'layout-change',
-        data: { windowId: '@1', layout: 'c3d5,210x56,0,0,5' },
-      };
-
-      const encoded = encodeTmuxEventPayload(payload);
-      const decoded = decodeTmuxEventPayload(encoded);
-
-      expect(decoded.deviceId).toBe(payload.deviceId);
-      expect(decoded.type).toBe('layout-change');
-      expect(decoded.data).toEqual({ windowId: '@1', layout: 'c3d5,210x56,0,0,5' });
-    });
-
-    it('应该处理 output 事件', () => {
-      const payload: EventTmuxPayload = {
-        deviceId: 'device-1',
-        type: 'output',
-        data: {},
-      };
-
-      const encoded = encodeTmuxEventPayload(payload);
-      const decoded = decodeTmuxEventPayload(encoded);
-
-      expect(decoded.deviceId).toBe(payload.deviceId);
-      expect(decoded.type).toBe('output');
     });
 
     it('遇到未知 tmux event tag 时应该抛错而不是回退为 output', () => {

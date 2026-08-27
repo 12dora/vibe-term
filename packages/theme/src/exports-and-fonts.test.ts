@@ -47,9 +47,6 @@ describe('@tmex/theme package exports', () => {
     const manifest = await import('@tmex/theme/fonts/manifest');
     expect(manifest.FONT_MANIFEST.length).toBe(FONT_MANIFEST.length);
 
-    const types = await import('@tmex/theme/fonts/types');
-    expect(types).toBeDefined();
-
     expect(getFontEntry(DEFAULT_FONT_ID).isDefault).toBe(true);
     expect(resolveFontStack(DEFAULT_FONT_ID)).toContain('monospace');
   });

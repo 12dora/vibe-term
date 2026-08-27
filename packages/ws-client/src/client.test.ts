@@ -420,10 +420,10 @@ describe('陈旧 socket 的事件隔离', () => {
   });
 });
 
-describe('重连退避', () => {
-  test('断开后按退避重连，超出上限进入 CLOSED 并报错', async () => {
+// 退避/上限/重置的细节在 reconnect-controller.test.ts，这里只验证 client 确实接上了控制器
+describe('重连接线', () => {
+  test('断开后进入退避并重新建连', async () => {
     const sockets: FakeSocket[] = [];
-    const errors: string[] = [];
     const client = new BorshWebSocketClient({
       url: 'ws://example.test/ws',
       socketFactory: () => {
@@ -434,101 +434,41 @@ describe('重连退避', () => {
       reconnectDelayMs: 1,
       maxReconnectAttempts: 2,
     });
-    client.onError((error) => errors.push(error.message));
 
     client.connect();
     (sockets[0] as FakeSocket).simulateClose();
     expect(client.getState()).toBe('RECONNECT_BACKOFF');
 
     await until(() => sockets.length === 2);
-    (sockets[1] as FakeSocket).simulateClose();
-    expect(client.getState()).toBe('RECONNECT_BACKOFF');
-
-    await until(() => sockets.length === 3);
-    (sockets[2] as FakeSocket).simulateClose();
-
-    expect(client.getState()).toBe('CLOSED');
-    expect(errors).toContain('Max reconnection attempts reached');
-    expect(sockets.length).toBe(3);
-    client.disconnect();
-  });
-
-  test('HELLO 成功后重置尝试次数，下一次断开重新获得完整预算', async () => {
-    const sockets: FakeSocket[] = [];
-    const client = new BorshWebSocketClient({
-      url: 'ws://example.test/ws',
-      socketFactory: () => {
-        const socket = new FakeSocket();
-        sockets.push(socket);
-        return socket;
-      },
-      reconnectDelayMs: 1,
-      maxReconnectAttempts: 1,
-      heartbeatIntervalMs: 10_000,
-      pongTimeoutMs: 10_000,
-    });
-
-    client.connect();
-    (sockets[0] as FakeSocket).simulateClose();
-    await until(() => sockets.length === 2);
-
-    const second = sockets[1] as FakeSocket;
-    second.open();
-    second.deliver(helloS2CFrame());
-    expect(client.getState()).toBe('READY');
-
-    second.simulateClose();
-    expect(client.getState()).toBe('RECONNECT_BACKOFF');
-    await until(() => sockets.length === 3);
     client.disconnect();
   });
 });
 
-describe('心跳', () => {
-  test('READY 后立即发 PING；PONG 超时关闭 socket', async () => {
-    const socket = new FakeSocket();
-    const client = new BorshWebSocketClient({
-      url: 'ws://example.test/ws',
-      socketFactory: () => socket,
-      heartbeatIntervalMs: 10_000,
-      pongTimeoutMs: 10,
-      maxReconnectAttempts: 0,
-    });
-
-    client.connect();
-    socket.open();
-    expect(socket.sent.length).toBe(1);
-
-    socket.deliver(helloS2CFrame(['pane-stream']));
-    expect(client.getState()).toBe('READY');
-    expect(client.serverCapabilities).toEqual(['pane-stream']);
-    expect(socket.sent.length).toBe(2);
-
-    await until(() => socket.closeCount === 1);
-    client.disconnect();
-  });
-
-  test('收到 PONG 后解除超时并上报 latency', async () => {
+// PING 节奏、PONG 超时与 RTT 计算的细节在 heartbeat-controller.test.ts
+describe('心跳接线', () => {
+  test('READY 后发出 PING，收到 PONG 上报 latency', () => {
     const socket = new FakeSocket();
     const latencies: number[] = [];
     const client = new BorshWebSocketClient({
       url: 'ws://example.test/ws',
       socketFactory: () => socket,
       heartbeatIntervalMs: 10_000,
-      pongTimeoutMs: 15,
+      pongTimeoutMs: 10_000,
     });
     client.onLatency((ms) => latencies.push(ms));
 
     client.connect();
     socket.open();
-    socket.deliver(helloS2CFrame());
-    socket.deliver(pongFrame());
+    expect(socket.sent.length).toBe(1);
 
+    socket.deliver(helloS2CFrame());
+    expect(client.getState()).toBe('READY');
+    expect(socket.sent.length).toBe(2);
+
+    socket.deliver(pongFrame());
     expect(latencies.length).toBe(1);
     expect(client.latencyMs).toBeGreaterThanOrEqual(0);
 
-    await new Promise((resolve) => setTimeout(resolve, 40));
-    expect(socket.closeCount).toBe(0);
     client.disconnect();
   });
 });

@@ -50,8 +50,9 @@ describe('buildPaneLocationLabel', () => {
   });
 });
 
+// 位置标签的分支矩阵已由 buildPaneLocationLabel 覆盖，这里只验证 wrapper 的组合与回退
 describe('formatTerminalNotificationToast', () => {
-  test('includes window and pane info in notification description', () => {
+  test('composes title, pane location and body', () => {
     const result = formatTerminalNotificationToast({
       title: 'Build finished',
       body: 'All tests passed',
@@ -64,40 +65,6 @@ describe('formatTerminalNotificationToast', () => {
     expect(result.description).toContain('7');
     expect(result.description).toContain('3');
     expect(result.description).toContain('All tests passed');
-  });
-
-  test('uses paneTitle when available in notification', () => {
-    const result = formatTerminalNotificationToast({
-      title: 'Build finished',
-      body: 'OK',
-      windowIndex: 0,
-      paneTitle: 'build monitor',
-    });
-
-    expect(result.title).toBe('Build finished');
-    expect(result.description).toContain('build monitor');
-  });
-
-  test('uses paneCurrentCommand as fallback in notification', () => {
-    const result = formatTerminalNotificationToast({
-      body: 'Done',
-      windowIndex: 1,
-      paneCurrentCommand: 'make',
-    });
-
-    expect(result.description).toContain('make');
-    expect(result.description).toContain('Done');
-  });
-
-  test('falls back to pane index when no title or command', () => {
-    const result = formatTerminalNotificationToast({
-      body: 'Something happened',
-      windowIndex: 0,
-      paneIndex: 2,
-    });
-
-    expect(result.description).toContain('2');
-    expect(result.description).toContain('Something happened');
   });
 
   test('uses fallback title when title is missing', () => {
