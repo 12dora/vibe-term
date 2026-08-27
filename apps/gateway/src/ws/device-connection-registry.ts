@@ -30,6 +30,7 @@ export interface DeviceConnectionRegistryHost {
   ): Uint8Array;
   broadcastDeviceEvent(entry: DeviceConnectionEntry, payload: EventDevicePayload): void;
   releaseLegacyPaneObservers(ws: ServerWebSocket<ClientState>, deviceId?: string): void;
+  syncLegacyPaneObservers(ws: ServerWebSocket<ClientState>, deviceId: string): void;
 }
 
 export class DeviceConnectionRegistry {
@@ -225,6 +226,7 @@ export class DeviceConnectionRegistry {
     entry.clients.add(ws);
     this.clearIdleReleaseTimer(entry);
     ws.data.borshState.selectedPanes[deviceId] ??= null;
+    this.host.syncLegacyPaneObservers(ws, deviceId);
 
     const canonicalSession = this.host.canonicalSessions.get(ws);
     if (canonicalSession) await canonicalSession.attachDevice(deviceId, entry.runtime);

@@ -146,8 +146,8 @@ async function handleCreateProvider(req: Request): Promise<Response> {
     enabled: body.enabled ?? true,
   });
 
-  broadcastSettingsUpdate('llm');
   const { provider, modelsError } = await refreshModelsCache(created);
+  broadcastSettingsUpdate('llm');
   return json({ provider: toProviderDto(provider), ...(modelsError ? { modelsError } : {}) }, 201);
 }
 
@@ -221,7 +221,6 @@ async function handleUpdateProvider(req: Request, id: string): Promise<Response>
 
   let provider = updateLlmProvider(id, updates);
   if (!provider) return json({ error: t('apiError.llmProviderNotFound') }, 404);
-  broadcastSettingsUpdate('llm');
 
   const credentialsChanged =
     (updates.baseUrl !== undefined && updates.baseUrl !== existing.baseUrl) ||
@@ -234,6 +233,7 @@ async function handleUpdateProvider(req: Request, id: string): Promise<Response>
     modelsError = refreshed.modelsError;
   }
 
+  broadcastSettingsUpdate('llm');
   return json({ provider: toProviderDto(provider), ...(modelsError ? { modelsError } : {}) });
 }
 

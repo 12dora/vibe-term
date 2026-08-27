@@ -268,4 +268,47 @@ describe('legacy observer wiring', () => {
     server.broadcastTerminalOutput(DEVICE_ID, '%1', new Uint8Array([10]));
     expect(push).not.toHaveBeenCalled();
   });
+
+  test('manual reconnect after finalizeReconnectFailure re-syncs observers and delivers output', async () => {
+    const server = new WebSocketServer({
+      deps: {
+        acquireRuntime: async () =>
+          ({
+            async connect() {},
+            subscribe() {
+              return () => {};
+            },
+            requestSnapshot() {},
+            disconnect() {},
+            getCurrentSnapshot() {
+              return makeSnapshot();
+            },
+          }) as never,
+      },
+    });
+    servers.push(server);
+    const ws = createWs();
+    const entry = setupClients(server, [ws]);
+    const push = spyPush(server);
+
+    server.handleSubscribePanes(ws, DEVICE_ID, ['%1']);
+    expect(observerCount(server, '%1')).toBe(1);
+    expect(ws.data.borshState.subscribedPanes[DEVICE_ID]?.has('%1')).toBe(true);
+
+    server.broadcastTerminalOutput(DEVICE_ID, '%1', new Uint8Array([11]));
+    expect(push).toHaveBeenCalledTimes(1);
+
+    finalizeReconnect(server, entry);
+    expect(observerCount(server, '%1')).toBe(0);
+    expect(ws.data.borshState.subscribedPanes[DEVICE_ID]?.has('%1')).toBe(true);
+    server.broadcastTerminalOutput(DEVICE_ID, '%1', new Uint8Array([12]));
+    expect(push).toHaveBeenCalledTimes(1);
+
+    await server.handleDeviceConnect(ws, DEVICE_ID);
+    expect(observerCount(server, '%1')).toBe(1);
+    server.broadcastTerminalOutput(DEVICE_ID, '%1', new Uint8Array([13]));
+    expect(push).toHaveBeenCalledTimes(2);
+
+    server.handleDeviceDisconnect(ws, DEVICE_ID);
+  });
 });

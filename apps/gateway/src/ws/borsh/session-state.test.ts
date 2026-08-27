@@ -1,6 +1,8 @@
 import { describe, expect, test } from 'bun:test';
 import { wsBorsh } from '@tmex/shared';
 import type { ServerWebSocket } from 'bun';
+import { decodeGatewayTransportMessage } from '../../../../../packages/ws-client/src/transport-message-decoder';
+import type { GatewayTransportEvent } from '../../../../../packages/ws-client/src/transport-types';
 import { createBorshTestWs } from '../test-helpers';
 import { SessionStateStore } from './session-state';
 
@@ -11,6 +13,12 @@ function decodeSentSourceGap(frame: Uint8Array | undefined) {
   }
   const envelope = wsBorsh.decodeEnvelope(frame);
   expect(envelope.kind).toBe(wsBorsh.KIND_CANONICAL_EVENT);
+  const events: GatewayTransportEvent[] = [];
+  const handled = decodeGatewayTransportMessage(envelope.kind, envelope.payload, (event) => {
+    events.push(event);
+  });
+  expect(handled).toBe(true);
+  expect(events).toEqual([{ type: 'rebase-required', reason: 'resource_exhausted' }]);
   return wsBorsh.decodeCanonicalEventPayload(envelope.payload).event;
 }
 
@@ -124,5 +132,20 @@ describe('SessionStateStore notification throttle TTL prune', () => {
     expect(state?.notificationThrottles.has('dev:%1:stale')).toBe(false);
     expect(state?.notificationThrottles.has('dev:%1:fresh')).toBe(true);
     expect(state?.notificationThrottles.has('dev:%1:next')).toBe(true);
+  });
+
+  test('raising throttle from 10s to 60s still rejects at 31s', () => {
+    let now = 1_000_000;
+    const store = new SessionStateStore({
+      now: () => now,
+      throttlePruneIntervalMs: 1_000,
+    });
+    const ws = createBorshTestWs();
+    store.create(ws);
+
+    expect(store.shouldAllowNotification(ws, 'dev', '%1', 'src', 10)).toBe(true);
+
+    now = 1_000_000 + 31_000;
+    expect(store.shouldAllowNotification(ws, 'dev', '%1', 'src', 60)).toBe(false);
   });
 });

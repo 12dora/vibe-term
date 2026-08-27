@@ -517,7 +517,7 @@ export class SessionStateStore {
 
     const key = `${deviceId}:${paneId}:${source}`;
     const now = this.now();
-    this.pruneNotificationThrottles(state, now);
+    this.pruneNotificationThrottles(state, now, key);
 
     let ctx = state.notificationThrottles.get(key);
     if (!ctx) {
@@ -530,6 +530,7 @@ export class SessionStateStore {
 
     const throttleMs = throttleSeconds * 1000;
     if (now - ctx.lastBellAt < throttleMs) {
+      ctx.throttleSeconds = throttleSeconds;
       return false;
     }
 
@@ -538,10 +539,11 @@ export class SessionStateStore {
     return true;
   }
 
-  private pruneNotificationThrottles(state: SessionState, now: number): void {
+  private pruneNotificationThrottles(state: SessionState, now: number, keepKey?: string): void {
     if (now - state.lastNotificationPruneAt < this.throttlePruneIntervalMs) return;
     state.lastNotificationPruneAt = now;
     for (const [key, ctx] of state.notificationThrottles) {
+      if (key === keepKey) continue;
       if (now - ctx.lastBellAt >= ctx.throttleSeconds * 1000) {
         state.notificationThrottles.delete(key);
       }

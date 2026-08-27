@@ -206,4 +206,16 @@ describe('decodeGatewayTransportMessage', () => {
       decodeGatewayTransportMessage(wsBorsh.KIND_DEVICE_CONNECTED, new Uint8Array([0xff]), () => {})
     ).toThrow();
   });
+
+  test('KIND_CANONICAL_EVENT SourceGap resource_exhausted yields rebase-required', () => {
+    const payload = wsBorsh.encodeCanonicalEventPayload({
+      SourceGap: {
+        reason: wsBorsh.SOURCE_GAP_REASON_RESOURCE_EXHAUSTED,
+        scope: { Stream: {} },
+      },
+    });
+    const { handled, events } = collect(wsBorsh.KIND_CANONICAL_EVENT, payload);
+    expect(handled).toBe(true);
+    expect(events).toEqual([{ type: 'rebase-required', reason: 'resource_exhausted' }]);
+  });
 });

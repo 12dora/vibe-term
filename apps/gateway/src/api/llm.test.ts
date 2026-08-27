@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
+import { afterAll, afterEach, beforeAll, describe, expect, test } from 'bun:test';
 import { resolve } from 'node:path';
 import type {
   AgentLlmSettingsDto,
@@ -10,7 +10,8 @@ import { registerSearchProvider } from '../agent/tools/web';
 import { decrypt } from '../crypto';
 import { getAgentSettings } from '../db/agent';
 import { getDb as getOrmDb } from '../db/client';
-import { getLlmProviderById } from '../db/llm';
+import { computeProviderModels, getAllLlmProviders, getLlmProviderById } from '../db/llm';
+import { registerSettingsBroadcaster } from '../settings/broadcaster';
 import { llmRoutes } from './llm';
 import { dispatchRoutes } from './route';
 
@@ -20,6 +21,10 @@ afterAll(() => {
   for (const server of servers) {
     server.stop(true);
   }
+});
+
+afterEach(() => {
+  registerSettingsBroadcaster(null);
 });
 
 function createMockModelsServer(options: { status?: number; models?: string[] } = {}) {
@@ -41,6 +46,50 @@ function createMockModelsServer(options: { status?: number; models?: string[] } 
   });
   servers.push(server);
   return { baseUrl: `http://127.0.0.1:${server.port}/v1` };
+}
+
+function createDelayedModelsServer(models: string[]) {
+  let releaseFetch!: () => void;
+  const gate = new Promise<void>((resolve) => {
+    releaseFetch = resolve;
+  });
+  let markStarted!: () => void;
+  const started = new Promise<void>((resolve) => {
+    markStarted = resolve;
+  });
+  const server = Bun.serve({
+    port: 0,
+    fetch: async (req) => {
+      const url = new URL(req.url);
+      if (url.pathname === '/v1/models') {
+        markStarted();
+        await gate;
+        return Response.json({
+          object: 'list',
+          data: models.map((id) => ({ id })),
+        });
+      }
+      return new Response('not found', { status: 404 });
+    },
+  });
+  servers.push(server);
+  return {
+    baseUrl: `http://127.0.0.1:${server.port}/v1`,
+    started,
+    release: () => releaseFetch(),
+  };
+}
+
+function captureLlmBroadcasts(providerName: string) {
+  const broadcasts: Array<{ namespace: string; models: string[] }> = [];
+  registerSettingsBroadcaster((namespace) => {
+    const record = getAllLlmProviders().find((provider) => provider.name === providerName);
+    broadcasts.push({
+      namespace,
+      models: record ? computeProviderModels(record).effective : [],
+    });
+  });
+  return broadcasts;
 }
 
 function dispatchLlm(req: Request) {
@@ -287,6 +336,68 @@ describe('llm provider api', () => {
 
     const missing = await callApi('DELETE', `/api/llm/providers/${created.id}`);
     expect(missing.status).toBe(404);
+  });
+
+  test('create broadcasts llm settings only after models cache is populated', async () => {
+    const name = `delayed-create-${crypto.randomUUID()}`;
+    const upstream = createDelayedModelsServer(['final-b', 'final-a']);
+    const broadcasts = captureLlmBroadcasts(name);
+
+    const pending = callApi('POST', '/api/llm/providers', {
+      name,
+      protocol: 'openai-chat',
+      baseUrl: upstream.baseUrl,
+      apiKey: 'sk-delayed',
+    });
+    await upstream.started;
+    expect(broadcasts).toEqual([]);
+
+    const listedDuring = (await (await callApi('GET', '/api/llm/providers')).json()) as {
+      providers: LlmProviderDto[];
+    };
+    expect(listedDuring.providers.find((provider) => provider.name === name)?.models).toEqual([]);
+
+    upstream.release();
+    const response = await pending;
+    expect(response.status).toBe(201);
+    const payload = (await response.json()) as { provider: LlmProviderDto };
+    expect(payload.provider.models).toEqual(['final-a', 'final-b']);
+    expect(broadcasts).toEqual([{ namespace: 'llm', models: ['final-a', 'final-b'] }]);
+  });
+
+  test('update broadcasts llm settings once after optional models refresh', async () => {
+    const name = `delayed-update-${crypto.randomUUID()}`;
+    const initial = createMockModelsServer({ models: ['old-b', 'old-a'] });
+    const createdResponse = await callApi('POST', '/api/llm/providers', {
+      name,
+      protocol: 'openai-chat',
+      baseUrl: initial.baseUrl,
+      apiKey: 'sk-update',
+    });
+    const created = ((await createdResponse.json()) as { provider: LlmProviderDto }).provider;
+
+    const upstream = createDelayedModelsServer(['new-b', 'new-a']);
+    const broadcasts = captureLlmBroadcasts(name);
+    const pending = callApi('PATCH', `/api/llm/providers/${created.id}`, {
+      baseUrl: upstream.baseUrl,
+    });
+    await upstream.started;
+    expect(broadcasts).toEqual([]);
+
+    const listedDuring = (await (await callApi('GET', '/api/llm/providers')).json()) as {
+      providers: LlmProviderDto[];
+    };
+    expect(listedDuring.providers.find((provider) => provider.id === created.id)?.models).toEqual([
+      'old-a',
+      'old-b',
+    ]);
+
+    upstream.release();
+    const response = await pending;
+    expect(response.status).toBe(200);
+    const payload = (await response.json()) as { provider: LlmProviderDto };
+    expect(payload.provider.models).toEqual(['new-a', 'new-b']);
+    expect(broadcasts).toEqual([{ namespace: 'llm', models: ['new-a', 'new-b'] }]);
   });
 });
 
