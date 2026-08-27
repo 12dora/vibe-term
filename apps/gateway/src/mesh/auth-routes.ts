@@ -1,8 +1,10 @@
 import {
   type Delegation,
   bytesEqual,
+  computeRecordHash,
   decodeBase64url,
   decodeDelegation,
+  decodeKeyLogRecord,
   decodeLogin,
   decryptTotpSecret,
   delegationChallenge,
@@ -27,7 +29,6 @@ import type { UserKeyService } from '../auth/user-key-service';
 import { kdfParamsFromJson } from '../auth/user-key-service';
 import type { UserKeyRecord, UserRecord, UserStore } from '../auth/user-store';
 import {
-  type KeyLogPublisher,
   LOGIN_CHALLENGE_TTL_MS,
   LOGIN_RATE_LIMIT,
   LOGIN_RATE_WINDOW_MS,
@@ -46,6 +47,13 @@ import {
   requireSession,
 } from './session-middleware';
 
+export type KeyLogHubAck = { ok: true; seq: bigint | number } | { ok: false; error: string };
+
+export type AuthKeyLogPublisher = {
+  publish(record: { bytes: Uint8Array; sig: Uint8Array }): Promise<void> | void;
+  publishAndAck?(record: { bytes: Uint8Array; sig: Uint8Array }): Promise<KeyLogHubAck>;
+};
+
 export type PublicAuthNode = {
   id: string;
   name: string;
@@ -60,10 +68,11 @@ export type AuthRoutesDeps = {
   keyLogService: UserKeyService;
   challengeStore: ChallengeStore;
   nodeSessionStore: NodeSessionStore;
-  publisher: KeyLogPublisher;
+  publisher: AuthKeyLogPublisher;
   now?: () => number;
   verifyDelegationPasskey?: VerifyDelegationPasskey;
   primaryUserId?: string;
+  hubPublicUrl?: string | null;
   listPublicNodes?: () => PublicAuthNode[];
   onLogout?: (userId: string) => void;
   onKeyLogEffects?: (userId: string, effects: KeyLogEffect[]) => void;
@@ -114,6 +123,14 @@ export class AuthRoutes {
     if (path === '/api/auth/passkey/login/options' && req.method === 'POST') {
       return this.handlePasskeyLoginOptions(req);
     }
+    if (path === '/api/auth/keylog/head' && req.method === 'GET') {
+      return requireSession(this.sessionDeps, (_r, auth) => this.handleKeyLogHead(auth.userId))(
+        req
+      );
+    }
+    if (path === '/api/auth/passkeys' && req.method === 'GET') {
+      return requireSession(this.sessionDeps, (_r, auth) => this.handlePasskeys(auth.userId))(req);
+    }
     if (path === '/api/auth/keylog' && req.method === 'POST') {
       return requireSession(this.sessionDeps, (r, auth) => this.handleKeyLog(r, auth.userId))(req);
     }
@@ -135,12 +152,17 @@ export class AuthRoutes {
         passkeysForThisOrigin: false,
         passkeyAvailable: isPasskeyAvailable(origin),
         totpEnabled: false,
+        rootEpoch: null,
+        rootPublicKey: null,
+        hubNodeId: null,
+        hubPublicUrl: null,
       });
     }
     const user = findPrimaryUser(this.deps.userStore, this.deps.primaryUserId);
     const keys = user ? this.deps.userStore.listKeysByUser(user.id) : [];
     const passkeysForThisOrigin = keys.some((k) => k.origin === origin);
     const kdfParams = user ? publicKdfParams(user.kdfParamsJson) : null;
+    const hub = this.resolveHub();
     return jsonBody({
       mode: 'mesh',
       nodeId: this.deps.nodeId,
@@ -150,6 +172,10 @@ export class AuthRoutes {
       passkeysForThisOrigin,
       passkeyAvailable: isPasskeyAvailable(origin),
       totpEnabled: user?.totpRecordSeq != null,
+      rootEpoch: user?.rootEpoch ?? null,
+      rootPublicKey: user ? encodeBase64url(user.rootPublicKey) : null,
+      hubNodeId: hub.nodeId,
+      hubPublicUrl: hub.publicUrl,
     });
   }
 
@@ -421,6 +447,38 @@ export class AuthRoutes {
     return jsonBody(options);
   }
 
+  private handleKeyLogHead(userId: string | null): Response {
+    if (!userId) {
+      return jsonError('UNAUTHORIZED', 401);
+    }
+    try {
+      const state = this.deps.keyLogService.currentState(userId);
+      return jsonBody({
+        seq: seqToJson(state.head.seq),
+        hash: encodeBase64url(state.head.hash),
+        rootEpoch: state.rootEpoch,
+        uid: userId,
+      });
+    } catch {
+      return jsonError('UNKNOWN_USER', 404);
+    }
+  }
+
+  private handlePasskeys(userId: string | null): Response {
+    if (!userId) {
+      return jsonError('UNAUTHORIZED', 401);
+    }
+    const passkeys = this.deps.userStore.listKeysByUser(userId).map((k) => ({
+      credential_id: encodeBase64url(k.credentialId),
+      name: k.name,
+      rp_id: k.rpId,
+      origin: k.origin,
+      created_at: k.createdAt,
+      log_seq: k.logSeq,
+    }));
+    return jsonBody({ passkeys });
+  }
+
   private async handleKeyLog(req: Request, userId: string | null): Promise<Response> {
     if (!userId) {
       return jsonError('UNAUTHORIZED', 401);
@@ -437,24 +495,106 @@ export class AuthRoutes {
     } catch {
       return jsonError('MALFORMED', 400);
     }
+    const hubSync = new URL(req.url).searchParams.get('hub') === 'sync';
+    let hubAck: boolean | undefined;
+    let hubError: string | undefined;
+    if (hubSync) {
+      const ack = await this.syncToHub({ bytes, sig });
+      hubAck = ack.ok;
+      if (!ack.ok) {
+        hubError = ack.error;
+      }
+    }
     const applied = await this.deps.keyLogService.apply(userId, { bytes, sig });
     if (!applied.ok) {
+      const replayed = this.identicalAppliedRecord(userId, bytes, sig);
+      if (replayed) {
+        this.deps.onKeyLogEffects?.(userId, []);
+        return this.keyLogSuccess(replayed.seq, replayed.hash, hubSync, hubAck, hubError);
+      }
       if (applied.error === 'fork') {
         return jsonError('KEY_LOG_FORK', 409);
       }
       return jsonError(applied.error, 400);
     }
     this.deps.onKeyLogEffects?.(userId, applied.effects);
+    if (!hubSync) {
+      try {
+        await this.deps.publisher.publish({ bytes, sig });
+      } catch {
+        // local apply is authoritative; hub fan-out is best-effort
+      }
+    }
+    return this.keyLogSuccess(applied.seq, applied.hash, hubSync, hubAck, hubError);
+  }
+
+  private async syncToHub(record: {
+    bytes: Uint8Array;
+    sig: Uint8Array;
+  }): Promise<KeyLogHubAck> {
+    if (!this.deps.publisher.publishAndAck) {
+      return { ok: false, error: 'unavailable' };
+    }
     try {
-      await this.deps.publisher.publish({ bytes, sig });
+      return await this.deps.publisher.publishAndAck(record);
+    } catch (err) {
+      return { ok: false, error: err instanceof Error ? err.message : 'hub_error' };
+    }
+  }
+
+  private identicalAppliedRecord(
+    userId: string,
+    bytes: Uint8Array,
+    sig: Uint8Array
+  ): { seq: number; hash: Uint8Array } | null {
+    try {
+      const record = decodeKeyLogRecord(bytes);
+      const state = this.deps.keyLogService.currentState(userId);
+      const hash = computeRecordHash(bytes, sig);
+      if (state.head.seq === record.seq && bytesEqual(state.head.hash, hash)) {
+        return { seq: Number(record.seq), hash };
+      }
     } catch {
-      // local apply is authoritative; hub fan-out is best-effort
+      return null;
+    }
+    return null;
+  }
+
+  private keyLogSuccess(
+    seq: number | bigint,
+    hash: Uint8Array,
+    hubSync: boolean,
+    hubAck?: boolean,
+    hubError?: string
+  ): Response {
+    if (!hubSync) {
+      return jsonBody({
+        ok: true,
+        seq,
+        hash: encodeBase64url(hash),
+      });
     }
     return jsonBody({
       ok: true,
-      seq: applied.seq,
-      hash: encodeBase64url(applied.hash),
+      seq,
+      hash: encodeBase64url(hash),
+      hubAck: hubAck === true,
+      ...(hubError ? { hubError } : {}),
     });
+  }
+
+  private resolveHub(): { nodeId: string | null; publicUrl: string | null } {
+    const meta = this.deps.userStore.getHubMeta();
+    if (this.deps.roles.hub) {
+      return {
+        nodeId: this.deps.nodeId,
+        publicUrl: this.deps.hubPublicUrl ?? meta?.publicUrl ?? null,
+      };
+    }
+    return {
+      nodeId: meta?.nodeId ?? null,
+      publicUrl: meta?.publicUrl ?? this.deps.hubPublicUrl ?? null,
+    };
   }
 
   private async verifyDelegationForLogin(
@@ -634,6 +774,11 @@ export function isPasskeyAvailable(origin: string): boolean {
   } catch {
     return false;
   }
+}
+
+function seqToJson(seq: bigint | number): number | string {
+  const value = typeof seq === 'bigint' ? seq : BigInt(seq);
+  return value <= BigInt(Number.MAX_SAFE_INTEGER) ? Number(value) : value.toString();
 }
 
 function publicKdfParams(jsonStr: string): {

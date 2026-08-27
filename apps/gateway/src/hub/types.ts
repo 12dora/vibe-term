@@ -37,6 +37,7 @@ export type HubRuntimeConfig = {
   publicUrl: string;
   stun: string[];
   turn?: HubTurnConfig;
+  nodeId?: string;
 };
 
 export type HubAuthResult = {

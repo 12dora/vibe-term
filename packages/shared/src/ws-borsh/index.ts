@@ -60,6 +60,7 @@ export {
   KIND_RTC_SIGNAL,
   KIND_CARRIER_SWITCH,
   KIND_CARRIER_SWITCH_ACK,
+  KIND_ENROLL_REDEEMED,
   isValidKind,
   kindToString,
 } from './kind';

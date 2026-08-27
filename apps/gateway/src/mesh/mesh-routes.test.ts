@@ -107,6 +107,58 @@ describe('mesh-routes', () => {
       expect(peer?.loggedIn).toBe(true);
       expect(peer?.direct_capable).toBe(true);
       expect(peer?.version).toBe('1.2.3');
+      expect((self as { isHub?: boolean })?.isHub).toBe(false);
+      expect((peer as { isHub?: boolean })?.isHub).toBe(false);
+    } finally {
+      mesh.close();
+    }
+  });
+
+  test('GET /api/mesh/nodes marks the persisted hub and broadcasts ENROLL_REDEEMED', async () => {
+    const peers = new FakePeers();
+    const mesh = await bootMesh({ peers });
+    try {
+      mesh.userStore.upsertHubMeta({
+        nodeId: NODE_ID,
+        publicUrl: 'https://hub.example',
+        now: 1,
+      });
+      const { sid } = await challengeAndLogin(mesh.runtime, mesh.boot);
+      const list = await call(mesh.runtime, 'http://localhost/api/mesh/nodes', {
+        headers: { cookie: `tmex_s_self=${sid}` },
+      });
+      const body = (await list.json()) as { nodes: Array<{ id: string; isHub: boolean }> };
+      expect(body.nodes.find((n) => n.id === NODE_ID)?.isHub).toBe(true);
+
+      const frames: Uint8Array[] = [];
+      const ws = {
+        data: { kind: MESH_WS_KIND, sid, uid: mesh.boot.userId },
+        send(d: Uint8Array) {
+          frames.push(d);
+          return d.byteLength;
+        },
+        close() {},
+      } as MeshServerWebSocket;
+      mesh.runtime.handleWebSocket.open(ws);
+      const enrollPk = new Uint8Array(32).fill(1);
+      const certificate = new Uint8Array([9, 8, 7]);
+      const certSig = new Uint8Array(64).fill(2);
+      mesh.runtime.mesh.forwardEnrollRedeemed({
+        enrollPk,
+        certificate,
+        certSig,
+        nodeId: PEER_ID,
+      });
+      expect(frames).toHaveLength(1);
+      const frame = frames[0];
+      if (!frame) throw new Error('missing ENROLL_REDEEMED frame');
+      const env = wsBorsh.decodeEnvelope(frame);
+      expect(env.kind).toBe(wsBorsh.KIND_ENROLL_REDEEMED);
+      const payload = wsBorsh.decodePayload(wsBorsh.schema.EnrollRedeemedSchema, env.payload);
+      expect(payload.nodeId).toBe(PEER_ID);
+      expect(payload.enrollPk).toEqual(enrollPk);
+      expect(payload.certificate).toEqual(certificate);
+      expect(payload.certSig).toEqual(certSig);
     } finally {
       mesh.close();
     }

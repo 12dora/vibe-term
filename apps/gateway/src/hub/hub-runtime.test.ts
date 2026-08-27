@@ -150,6 +150,22 @@ describe('HubRuntime HTTP', () => {
         dummyServer
       );
       expect(created?.status).toBe(201);
+      const createdBody = (await created?.json()) as {
+        id: string;
+        public_url: string;
+        expires_at: number;
+      };
+      expect(createdBody.public_url).toBe('https://hub.example');
+      expect(createdBody.id.length).toBeGreaterThan(4);
+      const pending = await hub.handleRequest(
+        new Request(`http://hub/api/hub/enrollments/${createdBody.id}`),
+        dummyServer
+      );
+      expect(pending?.status).toBe(200);
+      expect(await pending?.json()).toEqual({
+        status: 'pending',
+        enroll_pk: encodeBase64url(enrollment.enrollPk),
+      });
 
       const ed = generateEd25519KeyPair();
       const x = generateX25519KeyPair();
@@ -194,7 +210,33 @@ describe('HubRuntime HTTP', () => {
       expect(pushed.t).toBe('enroll.redeemed');
       if (pushed.t === 'enroll.redeemed') {
         expect(pushed.enroll_pk).toBe(encodeBase64url(enrollment.enrollPk));
+        expect(pushed.node_id).toBe(nodeIdToHex(cert.nodeId));
+        expect(pushed.certificate).toBe(encodeBase64url(cert.certificateBytes));
       }
+
+      const redeemedGet = await hub.handleRequest(
+        new Request(`http://hub/api/hub/enrollments/${createdBody.id}`),
+        dummyServer
+      );
+      expect(redeemedGet?.status).toBe(200);
+      const enrollBody = (await redeemedGet?.json()) as {
+        status: string;
+        certificate?: string;
+        cert_sig?: string;
+        node_id?: string;
+      };
+      expect(enrollBody.status).toBe('redeemed');
+      expect(enrollBody.certificate).toBe(encodeBase64url(cert.certificateBytes));
+      expect(enrollBody.cert_sig).toBe(encodeBase64url(cert.certSig));
+      expect(enrollBody.node_id).toBe(nodeIdToHex(cert.nodeId));
+
+      const listed = await hub.handleRequest(new Request('http://hub/api/hub/nodes'), dummyServer);
+      const listedBody = (await listed?.json()) as {
+        nodes: Array<{ id: string; certificate?: string; cert_sig?: string }>;
+      };
+      const laptop = listedBody.nodes.find((n) => n.id === nodeIdToHex(cert.nodeId));
+      expect(laptop?.certificate).toBe(encodeBase64url(cert.certificateBytes));
+      expect(laptop?.cert_sig).toBe(encodeBase64url(cert.certSig));
 
       const reused = await redeemReq();
       expect(reused).not.toBeUndefined();

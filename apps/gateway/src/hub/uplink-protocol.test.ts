@@ -58,12 +58,14 @@ describe('uplink-protocol', () => {
           version: '1',
         },
       ],
+      hub: { nodeId: 'n1', publicUrl: 'https://hub.example' },
     });
     expect(list.t).toBe('node.list');
     if (list.t === 'node.list') {
       expect(list.version).toBe(3);
       expect(list.nodes).toHaveLength(1);
       expect(list.rtc.stun).toEqual(['stun:example']);
+      expect(list.hub).toEqual({ nodeId: 'n1', publicUrl: 'https://hub.example' });
     }
 
     expect(roundtrip({ t: 'key.log.req', from_seq: 1 })).toEqual({ t: 'key.log.req', from_seq: 1 });
@@ -78,6 +80,30 @@ describe('uplink-protocol', () => {
     expect(roundtrip({ t: 'key.log.append', bytes: recBytes, sig: recSig }).t).toBe(
       'key.log.append'
     );
+    const appendWithId = roundtrip({
+      t: 'key.log.append',
+      bytes: recBytes,
+      sig: recSig,
+      id: 'req-1',
+    });
+    expect(appendWithId).toEqual({
+      t: 'key.log.append',
+      bytes: recBytes,
+      sig: recSig,
+      id: 'req-1',
+    });
+    expect(roundtrip({ t: 'key.log.ack', id: 'req-1', ok: true, seq: 4 })).toEqual({
+      t: 'key.log.ack',
+      id: 'req-1',
+      ok: true,
+      seq: 4,
+    });
+    expect(roundtrip({ t: 'key.log.ack', id: 'req-2', ok: false, error: 'seq_gap' })).toEqual({
+      t: 'key.log.ack',
+      id: 'req-2',
+      ok: false,
+      error: 'seq_gap',
+    });
 
     const rtc = roundtrip({
       t: 'rtc.signal',
@@ -98,8 +124,13 @@ describe('uplink-protocol', () => {
     const cert = encodeBase64url(new Uint8Array([9, 9]));
     const certSig = encodeBase64url(randomBytes(64));
     expect(
-      roundtrip({ t: 'enroll.redeemed', certificate: cert, cert_sig: certSig, enroll_pk: enrollPk })
-        .t
+      roundtrip({
+        t: 'enroll.redeemed',
+        certificate: cert,
+        cert_sig: certSig,
+        enroll_pk: enrollPk,
+        node_id: 'ab'.repeat(16),
+      }).t
     ).toBe('enroll.redeemed');
   });
 

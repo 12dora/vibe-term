@@ -1,5 +1,7 @@
 import {
+  bytesEqual,
   decodeCertificate,
+  decodeKeyLogRecord,
   encodeBase64url,
   hubHostFromUrl,
   nodeIdToHex,
@@ -111,6 +113,13 @@ export class UplinkServer {
     this.heartbeatMissLimit = opts.heartbeatMissLimit ?? HUB_HEARTBEAT_MISS_LIMIT;
     this.authTimeoutMs = opts.authTimeoutMs ?? HUB_AUTH_TIMEOUT_MS;
     this.rtcMaxSessions = opts.rtcMaxSessions ?? HUB_RTC_MAX_SESSIONS;
+    if (opts.config.nodeId) {
+      this.userStore.upsertHubMeta({
+        nodeId: opts.config.nodeId,
+        publicUrl: opts.config.publicUrl,
+        now: this.now(),
+      });
+    }
   }
 
   accept(link: LinkSession): void {
@@ -268,7 +277,7 @@ export class UplinkServer {
         await this.handleKeyLogReq(live, msg.from_seq);
         return;
       case 'key.log.append':
-        await this.handleKeyLogAppend(live, msg.bytes, msg.sig);
+        await this.handleKeyLogAppend(live, msg.bytes, msg.sig, msg.id);
         return;
       case 'rtc.signal':
         this.handleRtcSignal(live, msg);
@@ -318,7 +327,13 @@ export class UplinkServer {
       link.close('bad-sig');
       return;
     }
-    if (!verifyEd25519(sig, uplinkAuthMessage(pending.nonce, hubHostFromUrl(this.config.publicUrl)), edPk)) {
+    if (
+      !verifyEd25519(
+        sig,
+        uplinkAuthMessage(pending.nonce, hubHostFromUrl(this.config.publicUrl)),
+        edPk
+      )
+    ) {
       link.close('unauthorized');
       return;
     }
@@ -414,7 +429,8 @@ export class UplinkServer {
   private async handleKeyLogAppend(
     live: LiveConnection,
     bytesB64: string,
-    sigB64: string
+    sigB64: string,
+    id?: string
   ): Promise<void> {
     let bytes: Uint8Array;
     let sig: Uint8Array;
@@ -426,8 +442,39 @@ export class UplinkServer {
       return;
     }
     const result = await this.keyLogSource.append(live.userId, { bytes, sig });
-    if (!result.ok) return;
-    await this.applyAppendEffects(live.userId, result);
+    if (result.ok) {
+      await this.applyAppendEffects(live.userId, result);
+      if (id) {
+        this.send(live.link, { t: 'key.log.ack', id, ok: true, seq: seqToWire(result.seq) });
+      }
+      return;
+    }
+    if (id) {
+      const replayed = await this.identicalHeadRecord(live.userId, bytes, sig);
+      if (replayed) {
+        this.send(live.link, { t: 'key.log.ack', id, ok: true, seq: seqToWire(replayed.seq) });
+        return;
+      }
+      this.send(live.link, { t: 'key.log.ack', id, ok: false, error: result.error });
+    }
+  }
+
+  private async identicalHeadRecord(
+    userId: string,
+    bytes: Uint8Array,
+    sig: Uint8Array
+  ): Promise<{ seq: bigint } | null> {
+    let seq: bigint;
+    try {
+      seq = decodeKeyLogRecord(bytes).seq;
+    } catch {
+      return null;
+    }
+    const listed = await this.keyLogSource.list(userId, seq);
+    const existing = listed.find((row) => row.seq === seq);
+    if (!existing) return null;
+    if (!bytesEqual(existing.bytes, bytes) || !bytesEqual(existing.sig, sig)) return null;
+    return { seq };
   }
 
   private handleRtcSignal(live: LiveConnection, msg: RtcSignalMessage): void {
@@ -629,7 +676,16 @@ export class UplinkServer {
           version: live?.meta.version ?? n.version,
         };
       });
-    return {
+    const hubNodeId = this.config.nodeId ?? this.userStore.getHubMeta()?.nodeId;
+    if (hubNodeId) {
+      this.userStore.upsertHubMeta({
+        nodeId: hubNodeId,
+        publicUrl: this.config.publicUrl,
+        now: this.now(),
+        listVersion: this.listVersion,
+      });
+    }
+    const msg: NodeListMessage = {
       t: 'node.list',
       version: this.listVersion,
       key_log_head: { seq: seqToWire(head.seq), hash: bytesToB64url(head.hash) },
@@ -639,6 +695,10 @@ export class UplinkServer {
       },
       nodes,
     };
+    if (hubNodeId) {
+      msg.hub = { nodeId: hubNodeId, publicUrl: this.config.publicUrl };
+    }
+    return msg;
   }
 }
 

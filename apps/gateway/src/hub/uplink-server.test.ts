@@ -119,6 +119,44 @@ async function takeUntil(
 }
 
 describe('UplinkServer', () => {
+  test('node.list 带 hub {nodeId, publicUrl}', async () => {
+    const { db, close } = createMigratedAuthDb();
+    try {
+      const { userStore, keyLogSource } = createHubTestStack(db);
+      const user = seedUser(userStore);
+      const hubNodeId = 'aa'.repeat(16);
+      const registry = new NodeRegistry();
+      const server = new UplinkServer({
+        db,
+        userStore,
+        keyLogSource,
+        registry,
+        config: {
+          publicUrl: 'https://hub.example',
+          stun: ['stun:example:3478'],
+          turn: null,
+          nodeId: hubNodeId,
+        },
+        heartbeatIntervalMs: 60_000,
+        authTimeoutMs: 60_000,
+      });
+      const node = await authNode(server, userStore, user.id);
+      await server.broadcastNodeList(user.id);
+      const listed = await takeUntil(node.inbox, 'node.list');
+      expect(listed.t).toBe('node.list');
+      if (listed.t === 'node.list') {
+        expect(listed.hub).toEqual({ nodeId: hubNodeId, publicUrl: 'https://hub.example' });
+      }
+      expect(userStore.getHubMeta()).toEqual({
+        nodeId: hubNodeId,
+        publicUrl: 'https://hub.example',
+      });
+      server.stop();
+    } finally {
+      close();
+    }
+  });
+
   test('auth challenge/response 成功', async () => {
     const { db, close } = createMigratedAuthDb();
     try {
@@ -336,7 +374,14 @@ describe('UplinkServer', () => {
         t: 'key.log.append',
         bytes: encodeBase64url(next.bytes),
         sig: encodeBase64url(next.sig),
+        id: 'append-1',
       });
+      const ack = await takeUntil(a.inbox, 'key.log.ack');
+      expect(ack.t).toBe('key.log.ack');
+      if (ack.t === 'key.log.ack') {
+        expect(ack.ok).toBe(true);
+        expect(ack.id).toBe('append-1');
+      }
       const update = await takeUntil(b.inbox, 'node.list');
       if (update.t !== 'node.list') throw new Error('expected list');
       const after = await keyLogSource.head(user.id);

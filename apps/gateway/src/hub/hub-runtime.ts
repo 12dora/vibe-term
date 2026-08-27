@@ -58,6 +58,9 @@ export type HubRuntimeOptions = {
 type StoredEnrollmentPayload = {
   authorization_b64: string;
   entry_node_id: string | null;
+  certificate_b64?: string;
+  cert_sig_b64?: string;
+  node_id?: string;
 };
 
 export class BunServerWsAdapter implements ServerSocketAdapter {
@@ -112,6 +115,7 @@ export class HubRuntime {
   private readonly keyLogSource: HubKeyLogSource;
   private readonly authenticate: HubAuthenticate;
   private readonly now: () => number;
+  private readonly config: HubRuntimeConfig;
   readonly registry: NodeRegistry;
   readonly uplink: UplinkServer;
 
@@ -121,6 +125,7 @@ export class HubRuntime {
     this.keyLogSource = opts.keyLogSource;
     this.authenticate = opts.authenticate;
     this.now = opts.now ?? Date.now;
+    this.config = opts.config;
     this.registry = new NodeRegistry();
     this.uplink = new UplinkServer({
       db: opts.db,
@@ -166,6 +171,17 @@ export class HubRuntime {
     if (path === '/api/hub/enrollments') {
       if (req.method !== 'POST') return json({ error: 'method_not_allowed' }, 405);
       return this.withAuth(req, (auth) => this.handleCreateEnrollment(req, auth));
+    }
+    const enrollmentGet = path.match(/^\/api\/hub\/enrollments\/([^/]+)$/);
+    if (enrollmentGet) {
+      const enrollmentId = enrollmentGet[1];
+      if (!enrollmentId || enrollmentId === 'redeem') {
+        return json({ error: 'not_found' }, 404);
+      }
+      if (req.method !== 'GET') return json({ error: 'method_not_allowed' }, 405);
+      return this.withAuth(req, (auth) =>
+        this.handleGetEnrollment(decodeURIComponent(enrollmentId), auth)
+      );
     }
     if (path === '/api/hub/nodes') {
       if (req.method !== 'GET') return json({ error: 'method_not_allowed' }, 405);
@@ -224,16 +240,56 @@ export class HubRuntime {
     const nodes = this.userStore
       .listNodes()
       .filter((n) => n.userId === auth.userId)
-      .map((n) => ({
-        id: n.id,
-        name: n.name,
-        status: n.status,
-        online: Boolean(this.registry.get(n.id)?.authenticated),
-        version: n.version,
-        last_seen_at: n.lastSeenAt,
-        direct_capable: n.directCapable,
-      }));
+      .map((n) => {
+        const cert = this.userStore.getCert(n.id);
+        const redeemed = cert
+          ? null
+          : parseStoredEnrollment(
+              this.userStore.getEnrollmentTokenByNodeId(n.id)?.authorizationJson ?? ''
+            );
+        const certificate = cert
+          ? encodeBase64url(cert.certificateBytes)
+          : redeemed?.certificate_b64;
+        const certSig = cert ? encodeBase64url(cert.certSig) : redeemed?.cert_sig_b64;
+        return {
+          id: n.id,
+          name: n.name,
+          status: n.status,
+          online: Boolean(this.registry.get(n.id)?.authenticated),
+          version: n.version,
+          last_seen_at: n.lastSeenAt,
+          direct_capable: n.directCapable,
+          ...(certificate ? { certificate } : {}),
+          ...(certSig ? { cert_sig: certSig } : {}),
+        };
+      });
     return json({ nodes });
+  }
+
+  private handleGetEnrollment(id: string, auth: HubAuthResult): Response {
+    const token = this.userStore.getEnrollmentTokenById(id);
+    if (!token || token.userId !== auth.userId) {
+      return json({ error: 'not_found' }, 404);
+    }
+    const stored = parseStoredEnrollment(token.authorizationJson);
+    const redeemed = token.usedAt !== null;
+    const body: {
+      status: 'pending' | 'redeemed';
+      enroll_pk: string;
+      certificate?: string;
+      cert_sig?: string;
+      node_id?: string;
+    } = {
+      status: redeemed ? 'redeemed' : 'pending',
+      enroll_pk: encodeBase64url(token.enrollPublicKey),
+    };
+    if (redeemed) {
+      if (stored?.certificate_b64) body.certificate = stored.certificate_b64;
+      if (stored?.cert_sig_b64) body.cert_sig = stored.cert_sig_b64;
+      const nodeId = stored?.node_id ?? token.nodeId;
+      if (nodeId) body.node_id = nodeId;
+    }
+    return json(body);
   }
 
   private async handleRename(req: Request, nodeId: string, auth: HubAuthResult): Promise<Response> {
@@ -381,7 +437,15 @@ export class HubRuntime {
       authorizationSig,
       expiresAt,
     });
-    return json({ ok: true, id: token.id, expires_at: expiresAt }, 201);
+    return json(
+      {
+        ok: true,
+        id: token.id,
+        expires_at: expiresAt,
+        public_url: this.config.publicUrl,
+      },
+      201
+    );
   }
 
   private async handleRedeem(req: Request): Promise<Response> {
@@ -454,6 +518,12 @@ export class HubRuntime {
         const consumed = store.consumeEnrollmentToken(certificate.enroll_pk, {
           nodeId: hexId,
           now,
+          authorizationJson: JSON.stringify({
+            ...stored,
+            certificate_b64: encodeBase64url(certBytes),
+            cert_sig_b64: encodeBase64url(certSig),
+            node_id: hexId,
+          } satisfies StoredEnrollmentPayload),
         });
         if (!consumed) {
           throw new RedeemAbort('reused', 400);
@@ -485,6 +555,7 @@ export class HubRuntime {
         certificate: encodeBase64url(certBytes),
         cert_sig: encodeBase64url(certSig),
         enroll_pk: encodeBase64url(certificate.enroll_pk),
+        node_id: hexId,
       });
     }
     return json({
@@ -541,6 +612,9 @@ function parseStoredEnrollment(raw: string): StoredEnrollmentPayload | null {
     return {
       authorization_b64: obj.authorization_b64,
       entry_node_id: typeof obj.entry_node_id === 'string' ? obj.entry_node_id : null,
+      certificate_b64: typeof obj.certificate_b64 === 'string' ? obj.certificate_b64 : undefined,
+      cert_sig_b64: typeof obj.cert_sig_b64 === 'string' ? obj.cert_sig_b64 : undefined,
+      node_id: typeof obj.node_id === 'string' ? obj.node_id : undefined,
     };
   } catch {
     return null;

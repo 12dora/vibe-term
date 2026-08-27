@@ -42,6 +42,7 @@ import {
 import {
   KIND_CARRIER_SWITCH,
   KIND_CARRIER_SWITCH_ACK,
+  KIND_ENROLL_REDEEMED,
   KIND_NODE_EVENT,
   KIND_RTC_SIGNAL,
 } from './kind';
@@ -54,6 +55,7 @@ import {
   CarrierSwitchAckSchema,
   CarrierSwitchSchema,
   ClipboardWriteSchema,
+  EnrollRedeemedSchema,
   EventNotifyS2CSchema,
   NODE_EVENT_STATUS_OFFLINE,
   NODE_EVENT_STATUS_ONLINE,
@@ -643,19 +645,22 @@ describe('errors', () => {
 });
 
 describe('mesh / hub 协议消息', () => {
-  it('KIND_NODE_EVENT / RTC_SIGNAL / CARRIER_SWITCH / ACK 有效且可读名', () => {
+  it('KIND_NODE_EVENT / RTC_SIGNAL / CARRIER_SWITCH / ACK / ENROLL_REDEEMED 有效且可读名', () => {
     expect(KIND_NODE_EVENT).toBe(0x0a01);
     expect(KIND_RTC_SIGNAL).toBe(0x0a02);
     expect(KIND_CARRIER_SWITCH).toBe(0x0a03);
     expect(KIND_CARRIER_SWITCH_ACK).toBe(0x0a04);
+    expect(KIND_ENROLL_REDEEMED).toBe(0x0a05);
     expect(isValidKind(KIND_NODE_EVENT)).toBe(true);
     expect(isValidKind(KIND_RTC_SIGNAL)).toBe(true);
     expect(isValidKind(KIND_CARRIER_SWITCH)).toBe(true);
     expect(isValidKind(KIND_CARRIER_SWITCH_ACK)).toBe(true);
+    expect(isValidKind(KIND_ENROLL_REDEEMED)).toBe(true);
     expect(kindToString(KIND_NODE_EVENT)).toBe('NODE_EVENT');
     expect(kindToString(KIND_RTC_SIGNAL)).toBe('RTC_SIGNAL');
     expect(kindToString(KIND_CARRIER_SWITCH)).toBe('CARRIER_SWITCH');
     expect(kindToString(KIND_CARRIER_SWITCH_ACK)).toBe('CARRIER_SWITCH_ACK');
+    expect(kindToString(KIND_ENROLL_REDEEMED)).toBe('ENROLL_REDEEMED');
   });
 
   it('NODE_EVENT payload roundtrip（含 option 字段）', () => {
@@ -726,5 +731,26 @@ describe('mesh / hub 协议消息', () => {
     expect(decodedEnv.kind).toBe(KIND_CARRIER_SWITCH_ACK);
     expect(decodePayload(CarrierSwitchAckSchema, decodedEnv.payload).epoch).toBe(3);
     expect(CARRIER_SWITCH_TO_PRIMARY).toBe(1);
+  });
+
+  it('ENROLL_REDEEMED payload roundtrip + envelope', () => {
+    const data = {
+      enrollPk: new Uint8Array(32).fill(1),
+      certificate: new Uint8Array([9, 8, 7]),
+      certSig: new Uint8Array(64).fill(2),
+      nodeId: 'aa'.repeat(16),
+    };
+    const decoded = decodePayload(EnrollRedeemedSchema, encodePayload(EnrollRedeemedSchema, data));
+    expect(decoded.enrollPk).toEqual(data.enrollPk);
+    expect(decoded.certificate).toEqual(data.certificate);
+    expect(decoded.certSig).toEqual(data.certSig);
+    expect(decoded.nodeId).toBe(data.nodeId);
+
+    const frame = encodeEnvelope(
+      KIND_ENROLL_REDEEMED,
+      encodePayload(EnrollRedeemedSchema, data),
+      4
+    );
+    expect(decodeEnvelope(frame).kind).toBe(KIND_ENROLL_REDEEMED);
   });
 });

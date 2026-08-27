@@ -323,6 +323,10 @@ describe('auth-routes', () => {
         passkeysForThisOrigin: boolean;
         passkeyAvailable: boolean;
         totpEnabled: boolean;
+        rootEpoch: number | null;
+        rootPublicKey: string | null;
+        hubNodeId: string | null;
+        hubPublicUrl: string | null;
       };
       expect(body.mode).toBe('mesh');
       expect(body.nodeId).toBe(NODE_ID);
@@ -332,6 +336,10 @@ describe('auth-routes', () => {
       expect(body.passkeysForThisOrigin).toBe(false);
       expect(body.passkeyAvailable).toBe(true);
       expect(body.totpEnabled).toBe(false);
+      expect(body.rootEpoch).toBe(mesh.boot.rootEpoch);
+      expect(body.rootPublicKey).toBe(encodeBase64url(mesh.boot.rootPublicKey));
+      expect(body.hubNodeId).toBeNull();
+      expect(body.hubPublicUrl).toBeNull();
     } finally {
       mesh.close();
     }
@@ -343,6 +351,165 @@ describe('auth-routes', () => {
       expect(body.mode).toBe('none');
     } finally {
       standalone.close();
+    }
+  });
+
+  test('GET /api/auth/mode reports persisted hub meta and roles.hub', async () => {
+    const mesh = await bootMesh();
+    try {
+      mesh.userStore.upsertHubMeta({
+        nodeId: 'bb'.repeat(16),
+        publicUrl: 'https://hub.example',
+        now: Date.now(),
+      });
+      const res = await call(mesh.runtime, 'http://localhost/api/auth/mode');
+      const body = (await res.json()) as { hubNodeId: string; hubPublicUrl: string };
+      expect(body.hubNodeId).toBe('bb'.repeat(16));
+      expect(body.hubPublicUrl).toBe('https://hub.example');
+    } finally {
+      mesh.close();
+    }
+
+    const hub = await bootMesh({ roles: { hub: true, node: true } });
+    try {
+      const runtime = new MeshHttpRuntime({
+        roles: { hub: true, node: true },
+        nodeId: NODE_ID,
+        nodePk: NODE_PK,
+        userStore: hub.userStore,
+        keyLogService: hub.keyLogService,
+        challengeStore: hub.challengeStore,
+        nodeSessionStore: hub.nodeSessionStore,
+        peers: hub.peers,
+        streams: hub.streams,
+        publisher: { publish() {} },
+        primaryUserId: hub.boot.userId,
+        hubPublicUrl: 'https://hub.local',
+      });
+      const res = await call(runtime, 'http://localhost/api/auth/mode');
+      const body = (await res.json()) as { hubNodeId: string; hubPublicUrl: string };
+      expect(body.hubNodeId).toBe(NODE_ID);
+      expect(body.hubPublicUrl).toBe('https://hub.local');
+      runtime.stop();
+    } finally {
+      hub.close();
+    }
+  });
+
+  test('GET /api/auth/keylog/head and /api/auth/passkeys require session', async () => {
+    const mesh = await bootMesh();
+    try {
+      const deniedHead = await call(mesh.runtime, 'http://localhost/api/auth/keylog/head');
+      expect(deniedHead.status).toBe(401);
+      const deniedKeys = await call(mesh.runtime, 'http://localhost/api/auth/passkeys');
+      expect(deniedKeys.status).toBe(401);
+
+      const { sid } = await challengeAndLogin(mesh.runtime, mesh.boot);
+      const cookie = { headers: { cookie: `tmex_s_self=${sid}` } };
+      const head = await call(mesh.runtime, 'http://localhost/api/auth/keylog/head', cookie);
+      expect(head.status).toBe(200);
+      const headBody = (await head.json()) as {
+        seq: number;
+        hash: string;
+        rootEpoch: number;
+        uid: string;
+      };
+      const state = mesh.keyLogService.currentState(mesh.boot.userId);
+      expect(headBody.seq).toBe(Number(state.head.seq));
+      expect(headBody.hash).toBe(encodeBase64url(state.head.hash));
+      expect(headBody.rootEpoch).toBe(mesh.boot.rootEpoch);
+      expect(headBody.uid).toBe(mesh.boot.userId);
+
+      mesh.userStore.insertKey({
+        id: crypto.randomUUID(),
+        userId: mesh.boot.userId,
+        credentialId: new Uint8Array(16).fill(3),
+        publicKey: new Uint8Array(32).fill(4),
+        rpId: 'localhost',
+        origin: 'http://localhost:19663',
+        counter: 0,
+        name: 'laptop',
+        logSeq: 2,
+        now: 1_700,
+      });
+      const keys = await call(mesh.runtime, 'http://localhost/api/auth/passkeys', cookie);
+      const keysBody = (await keys.json()) as {
+        passkeys: Array<{
+          credential_id: string;
+          name: string | null;
+          rp_id: string;
+          origin: string;
+          created_at: number;
+          log_seq: number;
+        }>;
+      };
+      expect(keysBody.passkeys).toHaveLength(1);
+      expect(keysBody.passkeys[0]?.name).toBe('laptop');
+      expect(keysBody.passkeys[0]?.rp_id).toBe('localhost');
+      expect(keysBody.passkeys[0]?.log_seq).toBe(2);
+      expect(keysBody.passkeys[0]?.created_at).toBe(1_700);
+    } finally {
+      mesh.close();
+    }
+  });
+
+  test('POST /api/auth/keylog?hub=sync acks hub first then applies locally', async () => {
+    const mesh = await bootMesh();
+    try {
+      const acked: Array<{ bytes: Uint8Array; sig: Uint8Array }> = [];
+      const runtime = new MeshHttpRuntime({
+        roles: { hub: false, node: true },
+        nodeId: NODE_ID,
+        nodePk: NODE_PK,
+        userStore: mesh.userStore,
+        keyLogService: mesh.keyLogService,
+        challengeStore: mesh.challengeStore,
+        nodeSessionStore: mesh.nodeSessionStore,
+        peers: mesh.peers,
+        streams: mesh.streams,
+        publisher: {
+          publish() {},
+          async publishAndAck(record) {
+            acked.push(record);
+            return { ok: true, seq: 2n };
+          },
+        },
+        primaryUserId: mesh.boot.userId,
+      });
+      const { sid } = await challengeAndLogin(runtime, mesh.boot);
+      const { buildKeyLogRecord, encodeKeyLogRecord, signKeyLogRecordWithRoot } = await import(
+        '@tmex/shared/auth'
+      );
+      const state = mesh.keyLogService.currentState(mesh.boot.userId);
+      const rec = buildKeyLogRecord(state.head, state.rootEpoch, {
+        uid: mesh.boot.userId,
+        type: 'clear-totp',
+        payload: encodeClearTotpPayload(),
+        signer: 'root',
+        credential_id: null,
+      });
+      const bytes = encodeKeyLogRecord(rec);
+      const sig = signKeyLogRecordWithRoot(mesh.boot.rootKey, bytes);
+      const ok = await call(runtime, 'http://localhost/api/auth/keylog?hub=sync', {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          cookie: `tmex_s_self=${sid}`,
+        },
+        body: JSON.stringify({
+          bytes: encodeBase64url(bytes),
+          sig: encodeBase64url(sig),
+        }),
+      });
+      expect(ok.status).toBe(200);
+      const body = (await ok.json()) as { ok: boolean; hubAck: boolean; seq: number };
+      expect(body.ok).toBe(true);
+      expect(body.hubAck).toBe(true);
+      expect(acked).toHaveLength(1);
+      expect(mesh.keyLogService.currentState(mesh.boot.userId).head.seq).toBe(state.head.seq + 1n);
+      runtime.stop();
+    } finally {
+      mesh.close();
     }
   });
 

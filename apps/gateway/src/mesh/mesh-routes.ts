@@ -39,6 +39,7 @@ export type MeshNodeDto = {
   direct_capable: boolean;
   inventory: unknown;
   loggedIn: boolean;
+  isHub: boolean;
 };
 
 export type MeshRoutesDeps = {
@@ -161,6 +162,22 @@ export class MeshRoutes {
     return jsonBody({ nodes: this.collectNodes(req) });
   }
 
+  forwardEnrollRedeemed(msg: {
+    enrollPk: Uint8Array;
+    certificate: Uint8Array;
+    certSig: Uint8Array;
+    nodeId: string;
+  }): void {
+    const payload = wsBorsh.encodePayload(wsBorsh.schema.EnrollRedeemedSchema, {
+      enrollPk: msg.enrollPk,
+      certificate: msg.certificate,
+      certSig: msg.certSig,
+      nodeId: msg.nodeId,
+    });
+    const frame = wsBorsh.encodeEnvelope(wsBorsh.KIND_ENROLL_REDEEMED, payload, ++this.seq);
+    this.broadcast(frame);
+  }
+
   private collectNodes(req: Request | null): MeshNodeDto[] {
     const cookies = req ? parseCookies(req.headers.get('cookie')) : new Map<string, string>();
     const reach = this.deps.peers.listReach();
@@ -169,6 +186,9 @@ export class MeshRoutes {
     const peerById = new Map(peers.map((p) => [p.nodeId, p]));
     const ids = new Set<string>([this.deps.nodeId]);
     for (const cert of certs) ids.add(cert.nodeId);
+    const hubNodeId = this.deps.roles.hub
+      ? this.deps.nodeId
+      : (this.deps.userStore.getHubMeta()?.nodeId ?? null);
 
     const nodes: MeshNodeDto[] = [];
     for (const id of ids) {
@@ -210,6 +230,7 @@ export class MeshRoutes {
         direct_capable: peer?.directCapable ?? false,
         inventory,
         loggedIn,
+        isHub: hubNodeId != null && id === hubNodeId,
       });
     }
     return nodes;

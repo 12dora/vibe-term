@@ -1025,7 +1025,8 @@
         "registerPasskeyHere": "为本入口注册 passkey",
         "credentialsRequired": "请填写用户名与密码",
         "totpRequired": "请输入动态验证码",
-        "allNodesFailed": "所有节点均登录失败"
+        "allNodesFailed": "所有节点均登录失败",
+        "nodeListFailed": "节点列表加载失败，请重试"
       },
       "node": {
         "loginToThisNode": "登录此节点",
@@ -1060,7 +1061,10 @@
         "DELEGATION_BAD_SIGNATURE": "授权签名无效",
         "DELEGATION_METHOD_MISMATCH": "授权方式不匹配",
         "DELEGATION_INVALID_TTL": "授权有效期不合法",
-        "DELEGATION_ISSUED_IN_FUTURE": "授权签发时间在未来，请检查系统时钟"
+        "DELEGATION_ISSUED_IN_FUTURE": "授权签发时间在未来，请检查系统时钟",
+        "PROTOCOL_MISMATCH": "服务端未下发必需的协议字段，已中止操作（请升级各节点）",
+        "INVALID_NODE_ID": "节点标识不合法",
+        "TOTP_CODE_REQUIRED": "请输入 6 位动态验证码"
       },
       "security": {
         "title": "账号安全",
@@ -1085,7 +1089,12 @@
         "passkeyName": "passkey 名称",
         "registerPasskey": "注册 passkey",
         "signWithExistingPasskey": "改用已有 passkey 授权（不必输入密码）",
-        "sessionKeyNote": "浏览器临时密钥只能用于登录；以上每个操作都会重新要求密码或 passkey。"
+        "sessionKeyNote": "浏览器临时密钥只能用于登录；以上每个操作都会重新要求密码或 passkey。",
+        "totpConfirm": "确认并启用",
+        "totpConfirmHint": "请输入认证器当前显示的 6 位验证码；验证通过后才会写入密钥日志。",
+        "totpCodeRequired": "请输入 6 位动态验证码",
+        "totpDone": "TOTP 已启用",
+        "passkeyListFailed": "passkey 列表加载失败：{{error}}"
       }
     },
     "nodes": {
@@ -1141,7 +1150,10 @@
         "unknownCertificate": "收到未知节点证书，已忽略",
         "badCertSig": "节点证书签名校验失败，已忽略",
         "expired": "注册授权已过期，请重新生成",
-        "noCertificateYet": "尚未收到该节点的证书，请稍后再试"
+        "noCertificateYet": "尚未收到该节点的证书，请稍后再试",
+        "hubNotConfirmed": "hub 未确认，稍后重试",
+        "retryHub": "重试",
+        "missingHubUrl": "hub 未提供对外地址，无法生成 join 命令"
       },
       "rename": {
         "save": "保存",

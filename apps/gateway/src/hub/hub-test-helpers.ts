@@ -11,8 +11,8 @@ import {
   randomBytes,
   rootKeyFromSeed,
   signEd25519,
-  uplinkAuthMessage,
   signKeyLogRecordWithRoot,
+  uplinkAuthMessage,
 } from '@tmex/shared/auth';
 import type { LinkSession } from '@tmex/shared/link';
 import { KeyLogStore } from '../auth/key-log-store';
@@ -144,7 +144,11 @@ export function signUserRecord(
 
 export const TEST_HUB_HOST = 'hub.example';
 
-export function signAuth(secretKey: Uint8Array, nonce: Uint8Array, hubHost = TEST_HUB_HOST): string {
+export function signAuth(
+  secretKey: Uint8Array,
+  nonce: Uint8Array,
+  hubHost = TEST_HUB_HOST
+): string {
   return encodeBase64url(signEd25519(secretKey, uplinkAuthMessage(nonce, hubHost)));
 }
 

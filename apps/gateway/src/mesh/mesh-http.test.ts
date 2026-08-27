@@ -3,6 +3,7 @@ import { asResponse, bootMesh, challengeAndLogin, dummyServer } from './auth-rou
 import {
   MESH_GATEWAY_WS_KIND,
   MESH_REJECT_4401_KIND,
+  MESH_WS_KIND,
   type MeshServerWebSocket,
   WS_CLOSE_LOGIN_REQUIRED,
   WS_SESSION_VERIFY_MS,
@@ -109,6 +110,36 @@ describe('mesh-http', () => {
       } as MeshServerWebSocket;
       mesh.runtime.handleWebSocket.open(ws);
       mesh.runtime.closeSocketsForSid(sid);
+      expect(closed).toBe(WS_CLOSE_LOGIN_REQUIRED);
+    } finally {
+      mesh.close();
+    }
+  });
+
+  test('/mesh/ws re-verifies the sid every 5 minutes and closes 4401 on expiry', async () => {
+    let now = Date.now();
+    const mesh = await bootMesh({ now: () => now });
+    try {
+      const { sid } = await challengeAndLogin(mesh.runtime, mesh.boot);
+      let closed: number | undefined;
+      const ws = {
+        data: {
+          kind: MESH_WS_KIND,
+          sid,
+          uid: mesh.boot.userId,
+          via: 'self',
+        },
+        send() {},
+        close(code?: number) {
+          closed = code;
+        },
+      } as MeshServerWebSocket;
+      mesh.runtime.handleWebSocket.open(ws);
+      expect(mesh.runtime.touchSocket(ws)).toBe(true);
+      mesh.nodeSessionStore.revoke(sid, now);
+      expect(mesh.runtime.touchSocket(ws)).toBe(true);
+      now += WS_SESSION_VERIFY_MS + 1;
+      expect(mesh.runtime.touchSocket(ws)).toBe(false);
       expect(closed).toBe(WS_CLOSE_LOGIN_REQUIRED);
     } finally {
       mesh.close();

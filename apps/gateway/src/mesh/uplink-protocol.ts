@@ -21,6 +21,7 @@ export const UPLINK_CTL_TYPES = [
   'key.log.req',
   'key.log.res',
   'key.log.append',
+  'key.log.ack',
   'rtc.signal',
   'enroll.redeemed',
 ] as const;
@@ -57,18 +58,33 @@ export type UplinkKeyLogHead = {
   hash: Uint8Array;
 };
 
+export type UplinkHubInfo = { nodeId: string; publicUrl: string };
+
 export type UplinkNodeList = {
   t: 'node.list';
   version: number;
   key_log_head: UplinkKeyLogHead;
   rtc: { stun: string[]; turn: unknown };
   nodes: UplinkNodeInfo[];
+  hub?: UplinkHubInfo;
 };
 
 export type UplinkKeyLogReq = { t: 'key.log.req'; from_seq: bigint };
 export type UplinkKeyLogRecord = { seq: bigint; bytes: Uint8Array; sig: Uint8Array };
 export type UplinkKeyLogRes = { t: 'key.log.res'; records: UplinkKeyLogRecord[] };
-export type UplinkKeyLogAppend = { t: 'key.log.append'; bytes: Uint8Array; sig: Uint8Array };
+export type UplinkKeyLogAppend = {
+  t: 'key.log.append';
+  bytes: Uint8Array;
+  sig: Uint8Array;
+  id?: string;
+};
+export type UplinkKeyLogAck = {
+  t: 'key.log.ack';
+  id: string;
+  ok: boolean;
+  seq?: bigint;
+  error?: string;
+};
 
 export type UplinkRtcSignal = {
   t: 'rtc.signal';
@@ -84,6 +100,7 @@ export type UplinkEnrollRedeemed = {
   certificate: Uint8Array;
   cert_sig: Uint8Array;
   enroll_pk: Uint8Array;
+  nodeId: string;
 };
 
 export type UplinkCtlMessage =
@@ -97,6 +114,7 @@ export type UplinkCtlMessage =
   | UplinkKeyLogReq
   | UplinkKeyLogRes
   | UplinkKeyLogAppend
+  | UplinkKeyLogAck
   | UplinkRtcSignal
   | UplinkEnrollRedeemed;
 
@@ -171,7 +189,7 @@ export function decodeUplinkCtl(bytes: Uint8Array): UplinkCtlMessage {
         throw new Error('node.list nodes must be an array');
       }
       const stun = parsed.rtc.stun;
-      return {
+      const list: UplinkNodeList = {
         t: 'node.list',
         version: requireNumber(parsed.version, 'version'),
         key_log_head: {
@@ -186,6 +204,10 @@ export function decodeUplinkCtl(bytes: Uint8Array): UplinkCtlMessage {
         },
         nodes: parsed.nodes.map(parseNodeInfo),
       };
+      if (parsed.hub !== undefined && parsed.hub !== null) {
+        list.hub = parseHubInfo(parsed.hub);
+      }
+      return list;
     }
     case 'key.log.req':
       return { t: 'key.log.req', from_seq: parseSeq(parsed.from_seq, 'from_seq') };
@@ -205,12 +227,30 @@ export function decodeUplinkCtl(bytes: Uint8Array): UplinkCtlMessage {
         }),
       };
     }
-    case 'key.log.append':
-      return {
+    case 'key.log.append': {
+      const append: UplinkKeyLogAppend = {
         t: 'key.log.append',
         bytes: requireB64(parsed.bytes, 'bytes'),
         sig: requireB64(parsed.sig, 'sig'),
       };
+      const id = optionalString(parsed.id, 'id');
+      if (id) append.id = id;
+      return append;
+    }
+    case 'key.log.ack': {
+      const ok = requireBoolean(parsed.ok, 'ok');
+      const ack: UplinkKeyLogAck = {
+        t: 'key.log.ack',
+        id: requireString(parsed.id, 'id'),
+        ok,
+      };
+      if (ok) {
+        ack.seq = parseSeq(parsed.seq, 'seq');
+      } else {
+        ack.error = requireString(parsed.error, 'error');
+      }
+      return ack;
+    }
     case 'rtc.signal': {
       const from = requireString(parsed.from, 'from');
       if (from !== 'browser' && from !== 'node') {
@@ -231,8 +271,19 @@ export function decodeUplinkCtl(bytes: Uint8Array): UplinkCtlMessage {
         certificate: requireB64(parsed.certificate, 'certificate'),
         cert_sig: requireB64(parsed.cert_sig, 'cert_sig'),
         enroll_pk: requireB64(parsed.enroll_pk, 'enroll_pk'),
+        nodeId: requireString(parsed.node_id, 'node_id'),
       };
   }
+}
+
+function parseHubInfo(value: unknown): UplinkHubInfo {
+  if (!isRecord(value)) {
+    throw new Error('node.list hub must be an object');
+  }
+  return {
+    nodeId: requireString(value.nodeId, 'hub.nodeId'),
+    publicUrl: requireString(value.publicUrl, 'hub.publicUrl'),
+  };
 }
 
 export function encodeUplinkCtl(msg: UplinkCtlMessage): Uint8Array {
@@ -254,6 +305,7 @@ export function encodeUplinkCtl(msg: UplinkCtlMessage): Uint8Array {
         },
         rtc: msg.rtc,
         nodes: msg.nodes,
+        ...(msg.hub ? { hub: msg.hub } : {}),
       });
     case 'key.log.req':
       return encodeCtlMessage({ t: 'key.log.req', from_seq: seqToJson(msg.from_seq) });
@@ -271,6 +323,14 @@ export function encodeUplinkCtl(msg: UplinkCtlMessage): Uint8Array {
         t: 'key.log.append',
         bytes: encodeBase64url(msg.bytes),
         sig: encodeBase64url(msg.sig),
+        ...(msg.id ? { id: msg.id } : {}),
+      });
+    case 'key.log.ack':
+      return encodeCtlMessage({
+        t: 'key.log.ack',
+        id: msg.id,
+        ok: msg.ok,
+        ...(msg.ok ? { seq: seqToJson(msg.seq ?? 0n) } : { error: msg.error ?? 'error' }),
       });
     case 'rtc.signal':
       return encodeCtlMessage({
@@ -287,6 +347,7 @@ export function encodeUplinkCtl(msg: UplinkCtlMessage): Uint8Array {
         certificate: encodeBase64url(msg.certificate),
         cert_sig: encodeBase64url(msg.cert_sig),
         enroll_pk: encodeBase64url(msg.enroll_pk),
+        node_id: msg.nodeId,
       });
   }
 }

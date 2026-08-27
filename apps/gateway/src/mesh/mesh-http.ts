@@ -3,7 +3,7 @@ import type { ChallengeStore } from '../auth/challenge-store';
 import type { NodeSessionStore } from '../auth/node-session-store';
 import type { UserKeyService } from '../auth/user-key-service';
 import type { UserStore } from '../auth/user-store';
-import { AuthRoutes } from './auth-routes';
+import { type AuthKeyLogPublisher, AuthRoutes } from './auth-routes';
 import { Forwarder, rewriteSelf, takePendingForwardStream } from './forwarder';
 import {
   MESH_FORWARD_WS_KIND,
@@ -41,15 +41,12 @@ export type MeshHttpRuntimeOptions = {
   nodeSessionStore: NodeSessionStore;
   peers: PeerLinkProvider;
   streams: StreamOpener;
-  publisher: KeyLogPublisherLike;
+  publisher: AuthKeyLogPublisher;
   rtc?: MeshRtcDeps;
   now?: () => number;
   primaryUserId?: string;
+  hubPublicUrl?: string | null;
   trustProxy?: boolean;
-};
-
-type KeyLogPublisherLike = {
-  publish(record: { bytes: Uint8Array; sig: Uint8Array }): Promise<void> | void;
 };
 
 const STATIC_PREFIXES = ['/assets/', '/static/', '/favicon', '/manifest'];
@@ -117,6 +114,7 @@ export class MeshHttpRuntime {
       publisher: opts.publisher,
       now: this.now,
       primaryUserId: opts.primaryUserId,
+      hubPublicUrl: opts.hubPublicUrl,
       listPublicNodes: () => this.mesh.publicNodes(),
       onLogout: (userId) => this.closeSocketsForUser(userId),
       onKeyLogEffects: (userId, effects) => this.applyKeyLogEffects(userId, effects),

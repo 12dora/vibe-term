@@ -1031,7 +1031,8 @@ export const I18N_RESOURCES = {
         "registerPasskeyHere": "Register a passkey for this entry",
         "credentialsRequired": "Enter a username and password",
         "totpRequired": "Enter the authenticator code",
-        "allNodesFailed": "Sign-in failed on every node"
+        "allNodesFailed": "Sign-in failed on every node",
+        "nodeListFailed": "Failed to load the node list, please retry"
       },
       "node": {
         "loginToThisNode": "Log in to this node",
@@ -1066,7 +1067,10 @@ export const I18N_RESOURCES = {
         "DELEGATION_BAD_SIGNATURE": "Delegation signature is invalid",
         "DELEGATION_METHOD_MISMATCH": "Delegation method mismatch",
         "DELEGATION_INVALID_TTL": "Delegation lifetime is invalid",
-        "DELEGATION_ISSUED_IN_FUTURE": "Delegation issued in the future, check the system clock"
+        "DELEGATION_ISSUED_IN_FUTURE": "Delegation issued in the future, check the system clock",
+        "PROTOCOL_MISMATCH": "The server did not return a required protocol field; aborted",
+        "INVALID_NODE_ID": "Invalid node id",
+        "TOTP_CODE_REQUIRED": "Enter the 6-digit code"
       },
       "security": {
         "title": "Account security",
@@ -1091,7 +1095,12 @@ export const I18N_RESOURCES = {
         "passkeyName": "Passkey name",
         "registerPasskey": "Register passkey",
         "signWithExistingPasskey": "Authorize with an existing passkey instead of a password",
-        "sessionKeyNote": "The browser session key can only sign logins; every action above asks for your password or a passkey again."
+        "sessionKeyNote": "The browser session key can only sign logins; every action above asks for your password or a passkey again.",
+        "totpConfirm": "Confirm and enable",
+        "totpConfirmHint": "Enter the 6-digit code shown by your authenticator; nothing is written to the key log until it verifies.",
+        "totpCodeRequired": "Enter the 6-digit code",
+        "totpDone": "TOTP enabled",
+        "passkeyListFailed": "Failed to load passkeys: {{error}}"
       }
     },
     "nodes": {
@@ -1147,7 +1156,10 @@ export const I18N_RESOURCES = {
         "unknownCertificate": "Received an unknown node certificate — ignored",
         "badCertSig": "Node certificate signature check failed — ignored",
         "expired": "Enrollment authorization expired, please create a new one",
-        "noCertificateYet": "No certificate for this enrollment yet, try again later"
+        "noCertificateYet": "No certificate for this enrollment yet, try again later",
+        "hubNotConfirmed": "Hub has not confirmed yet, retry later",
+        "retryHub": "Retry",
+        "missingHubUrl": "The hub did not provide a public URL; cannot build the join command"
       },
       "rename": {
         "save": "Save",
@@ -2203,7 +2215,8 @@ export const I18N_RESOURCES = {
         "registerPasskeyHere": "为本入口注册 passkey",
         "credentialsRequired": "请填写用户名与密码",
         "totpRequired": "请输入动态验证码",
-        "allNodesFailed": "所有节点均登录失败"
+        "allNodesFailed": "所有节点均登录失败",
+        "nodeListFailed": "节点列表加载失败，请重试"
       },
       "node": {
         "loginToThisNode": "登录此节点",
@@ -2238,7 +2251,10 @@ export const I18N_RESOURCES = {
         "DELEGATION_BAD_SIGNATURE": "授权签名无效",
         "DELEGATION_METHOD_MISMATCH": "授权方式不匹配",
         "DELEGATION_INVALID_TTL": "授权有效期不合法",
-        "DELEGATION_ISSUED_IN_FUTURE": "授权签发时间在未来，请检查系统时钟"
+        "DELEGATION_ISSUED_IN_FUTURE": "授权签发时间在未来，请检查系统时钟",
+        "PROTOCOL_MISMATCH": "服务端未下发必需的协议字段，已中止操作（请升级各节点）",
+        "INVALID_NODE_ID": "节点标识不合法",
+        "TOTP_CODE_REQUIRED": "请输入 6 位动态验证码"
       },
       "security": {
         "title": "账号安全",
@@ -2263,7 +2279,12 @@ export const I18N_RESOURCES = {
         "passkeyName": "passkey 名称",
         "registerPasskey": "注册 passkey",
         "signWithExistingPasskey": "改用已有 passkey 授权（不必输入密码）",
-        "sessionKeyNote": "浏览器临时密钥只能用于登录；以上每个操作都会重新要求密码或 passkey。"
+        "sessionKeyNote": "浏览器临时密钥只能用于登录；以上每个操作都会重新要求密码或 passkey。",
+        "totpConfirm": "确认并启用",
+        "totpConfirmHint": "请输入认证器当前显示的 6 位验证码；验证通过后才会写入密钥日志。",
+        "totpCodeRequired": "请输入 6 位动态验证码",
+        "totpDone": "TOTP 已启用",
+        "passkeyListFailed": "passkey 列表加载失败：{{error}}"
       }
     },
     "nodes": {
@@ -2319,7 +2340,10 @@ export const I18N_RESOURCES = {
         "unknownCertificate": "收到未知节点证书，已忽略",
         "badCertSig": "节点证书签名校验失败，已忽略",
         "expired": "注册授权已过期，请重新生成",
-        "noCertificateYet": "尚未收到该节点的证书，请稍后再试"
+        "noCertificateYet": "尚未收到该节点的证书，请稍后再试",
+        "hubNotConfirmed": "hub 未确认，稍后重试",
+        "retryHub": "重试",
+        "missingHubUrl": "hub 未提供对外地址，无法生成 join 命令"
       },
       "rename": {
         "save": "保存",
@@ -3375,7 +3399,8 @@ export const I18N_RESOURCES = {
         "registerPasskeyHere": "このエントリに passkey を登録",
         "credentialsRequired": "ユーザー名とパスワードを入力してください",
         "totpRequired": "認証コードを入力してください",
-        "allNodesFailed": "すべてのノードでログインに失敗しました"
+        "allNodesFailed": "すべてのノードでログインに失敗しました",
+        "nodeListFailed": "ノード一覧の読み込みに失敗しました。再試行してください"
       },
       "node": {
         "loginToThisNode": "このノードにログイン",
@@ -3410,7 +3435,10 @@ export const I18N_RESOURCES = {
         "DELEGATION_BAD_SIGNATURE": "委任の署名が無効です",
         "DELEGATION_METHOD_MISMATCH": "委任の方式が一致しません",
         "DELEGATION_INVALID_TTL": "委任の有効期間が不正です",
-        "DELEGATION_ISSUED_IN_FUTURE": "委任の発行時刻が未来です。システム時計を確認してください"
+        "DELEGATION_ISSUED_IN_FUTURE": "委任の発行時刻が未来です。システム時計を確認してください",
+        "PROTOCOL_MISMATCH": "サーバーが必要なプロトコルフィールドを返さなかったため中止しました",
+        "INVALID_NODE_ID": "ノード ID が不正です",
+        "TOTP_CODE_REQUIRED": "6 桁のコードを入力してください"
       },
       "security": {
         "title": "アカウントセキュリティ",
@@ -3435,7 +3463,12 @@ export const I18N_RESOURCES = {
         "passkeyName": "passkey の名前",
         "registerPasskey": "passkey を登録",
         "signWithExistingPasskey": "パスワードの代わりに既存の passkey で承認する",
-        "sessionKeyNote": "ブラウザのセッション鍵はログインにしか使えません。上記の操作ごとにパスワードまたは passkey を再度求めます。"
+        "sessionKeyNote": "ブラウザのセッション鍵はログインにしか使えません。上記の操作ごとにパスワードまたは passkey を再度求めます。",
+        "totpConfirm": "確認して有効化",
+        "totpConfirmHint": "認証アプリに表示されている 6 桁のコードを入力してください。検証に成功するまでキーログには書き込みません。",
+        "totpCodeRequired": "6 桁のコードを入力してください",
+        "totpDone": "TOTP を有効にしました",
+        "passkeyListFailed": "passkey 一覧の読み込みに失敗しました: {{error}}"
       }
     },
     "nodes": {
@@ -3491,7 +3524,10 @@ export const I18N_RESOURCES = {
         "unknownCertificate": "未知のノード証明書を受信したため無視しました",
         "badCertSig": "ノード証明書の署名検証に失敗したため無視しました",
         "expired": "登録認可の有効期限が切れています。作り直してください",
-        "noCertificateYet": "まだ証明書を受信していません。後でもう一度お試しください"
+        "noCertificateYet": "まだ証明書を受信していません。後でもう一度お試しください",
+        "hubNotConfirmed": "hub が未確認です。後で再試行してください",
+        "retryHub": "再試行",
+        "missingHubUrl": "hub の公開 URL が無いため join コマンドを生成できません"
       },
       "rename": {
         "save": "保存",

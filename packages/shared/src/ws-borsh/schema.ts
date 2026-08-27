@@ -489,4 +489,11 @@ export const CarrierSwitchAckSchema = b.struct({
   epoch: b.u32(),
 });
 
+export const EnrollRedeemedSchema = b.struct({
+  enrollPk: b.bytes(),
+  certificate: b.bytes(),
+  certSig: b.bytes(),
+  nodeId: b.string(),
+});
+
 export * from './canonical-state';

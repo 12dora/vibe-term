@@ -1025,7 +1025,8 @@
         "registerPasskeyHere": "このエントリに passkey を登録",
         "credentialsRequired": "ユーザー名とパスワードを入力してください",
         "totpRequired": "認証コードを入力してください",
-        "allNodesFailed": "すべてのノードでログインに失敗しました"
+        "allNodesFailed": "すべてのノードでログインに失敗しました",
+        "nodeListFailed": "ノード一覧の読み込みに失敗しました。再試行してください"
       },
       "node": {
         "loginToThisNode": "このノードにログイン",
@@ -1060,7 +1061,10 @@
         "DELEGATION_BAD_SIGNATURE": "委任の署名が無効です",
         "DELEGATION_METHOD_MISMATCH": "委任の方式が一致しません",
         "DELEGATION_INVALID_TTL": "委任の有効期間が不正です",
-        "DELEGATION_ISSUED_IN_FUTURE": "委任の発行時刻が未来です。システム時計を確認してください"
+        "DELEGATION_ISSUED_IN_FUTURE": "委任の発行時刻が未来です。システム時計を確認してください",
+        "PROTOCOL_MISMATCH": "サーバーが必要なプロトコルフィールドを返さなかったため中止しました",
+        "INVALID_NODE_ID": "ノード ID が不正です",
+        "TOTP_CODE_REQUIRED": "6 桁のコードを入力してください"
       },
       "security": {
         "title": "アカウントセキュリティ",
@@ -1085,7 +1089,12 @@
         "passkeyName": "passkey の名前",
         "registerPasskey": "passkey を登録",
         "signWithExistingPasskey": "パスワードの代わりに既存の passkey で承認する",
-        "sessionKeyNote": "ブラウザのセッション鍵はログインにしか使えません。上記の操作ごとにパスワードまたは passkey を再度求めます。"
+        "sessionKeyNote": "ブラウザのセッション鍵はログインにしか使えません。上記の操作ごとにパスワードまたは passkey を再度求めます。",
+        "totpConfirm": "確認して有効化",
+        "totpConfirmHint": "認証アプリに表示されている 6 桁のコードを入力してください。検証に成功するまでキーログには書き込みません。",
+        "totpCodeRequired": "6 桁のコードを入力してください",
+        "totpDone": "TOTP を有効にしました",
+        "passkeyListFailed": "passkey 一覧の読み込みに失敗しました: {{error}}"
       }
     },
     "nodes": {
@@ -1141,7 +1150,10 @@
         "unknownCertificate": "未知のノード証明書を受信したため無視しました",
         "badCertSig": "ノード証明書の署名検証に失敗したため無視しました",
         "expired": "登録認可の有効期限が切れています。作り直してください",
-        "noCertificateYet": "まだ証明書を受信していません。後でもう一度お試しください"
+        "noCertificateYet": "まだ証明書を受信していません。後でもう一度お試しください",
+        "hubNotConfirmed": "hub が未確認です。後で再試行してください",
+        "retryHub": "再試行",
+        "missingHubUrl": "hub の公開 URL が無いため join コマンドを生成できません"
       },
       "rename": {
         "save": "保存",

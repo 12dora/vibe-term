@@ -19,6 +19,7 @@ export const UPLINK_CTL_TYPES = [
   'key.log.req',
   'key.log.res',
   'key.log.append',
+  'key.log.ack',
   'rtc.signal',
   'enroll.redeemed',
 ] as const;
@@ -50,18 +51,28 @@ export type NodeListEntry = {
   version: string | null;
 };
 
+export type NodeListHubInfo = { nodeId: string; publicUrl: string };
+
 export type NodeListMessage = {
   t: 'node.list';
   version: number;
   key_log_head: { seq: number | string; hash: string };
   rtc: { stun: string[]; turn: HubTurnConfig };
   nodes: NodeListEntry[];
+  hub?: NodeListHubInfo;
 };
 
 export type KeyLogReqMessage = { t: 'key.log.req'; from_seq: number | string };
 export type KeyLogRecordWire = { seq: number | string; bytes: string; sig: string };
 export type KeyLogResMessage = { t: 'key.log.res'; records: KeyLogRecordWire[] };
-export type KeyLogAppendMessage = { t: 'key.log.append'; bytes: string; sig: string };
+export type KeyLogAppendMessage = { t: 'key.log.append'; bytes: string; sig: string; id?: string };
+export type KeyLogAckMessage = {
+  t: 'key.log.ack';
+  id: string;
+  ok: boolean;
+  seq?: number | string;
+  error?: string;
+};
 
 export type RtcSignalFrom = 'browser' | 'node';
 export type RtcSignalMessage = {
@@ -78,6 +89,7 @@ export type EnrollRedeemedMessage = {
   certificate: string;
   cert_sig: string;
   enroll_pk: string;
+  node_id: string;
 };
 
 export type UplinkCtlMessage =
@@ -91,6 +103,7 @@ export type UplinkCtlMessage =
   | KeyLogReqMessage
   | KeyLogResMessage
   | KeyLogAppendMessage
+  | KeyLogAckMessage
   | RtcSignalMessage
   | EnrollRedeemedMessage;
 
@@ -207,11 +220,9 @@ export function decodeUplinkCtl(input: Uint8Array | string): UplinkCtlMessage {
     case 'key.log.res':
       return { t: 'key.log.res', records: requireKeyLogRecords(obj.records) };
     case 'key.log.append':
-      return {
-        t: 'key.log.append',
-        bytes: bytesToB64url(b64urlToBytes(requireString(obj, 'bytes'))),
-        sig: bytesToB64url(b64urlToBytes(requireString(obj, 'sig'), 64)),
-      };
+      return decodeKeyLogAppend(obj);
+    case 'key.log.ack':
+      return decodeKeyLogAck(obj);
     case 'rtc.signal':
       return decodeRtcSignal(obj);
     case 'enroll.redeemed':
@@ -220,6 +231,7 @@ export function decodeUplinkCtl(input: Uint8Array | string): UplinkCtlMessage {
         certificate: bytesToB64url(b64urlToBytes(requireString(obj, 'certificate'))),
         cert_sig: bytesToB64url(b64urlToBytes(requireString(obj, 'cert_sig'), 64)),
         enroll_pk: bytesToB64url(b64urlToBytes(requireString(obj, 'enroll_pk'), 32)),
+        node_id: requireNonEmptyString(obj, 'node_id'),
       };
   }
   throw new UplinkCtlError(`unknown t: ${t}`);
@@ -244,7 +256,7 @@ function decodeNodeList(obj: Record<string, unknown>): NodeListMessage {
   if (!Array.isArray(nodes)) {
     throw new UplinkCtlError('invalid nodes');
   }
-  return {
+  const msg: NodeListMessage = {
     t: 'node.list',
     version: requireInt(obj, 'version'),
     key_log_head: { seq: requireSeq(headObj, 'seq'), hash: bytesToB64url(hashBytes) },
@@ -254,6 +266,48 @@ function decodeNodeList(obj: Record<string, unknown>): NodeListMessage {
     },
     nodes: nodes.map(decodeNodeListEntry),
   };
+  if (obj.hub !== undefined && obj.hub !== null) {
+    msg.hub = decodeHubInfo(obj.hub);
+  }
+  return msg;
+}
+
+function decodeHubInfo(value: unknown): NodeListHubInfo {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    throw new UplinkCtlError('invalid hub');
+  }
+  const obj = value as Record<string, unknown>;
+  return {
+    nodeId: requireNonEmptyString(obj, 'nodeId'),
+    publicUrl: requireNonEmptyString(obj, 'publicUrl'),
+  };
+}
+
+function decodeKeyLogAppend(obj: Record<string, unknown>): KeyLogAppendMessage {
+  const msg: KeyLogAppendMessage = {
+    t: 'key.log.append',
+    bytes: bytesToB64url(b64urlToBytes(requireString(obj, 'bytes'))),
+    sig: bytesToB64url(b64urlToBytes(requireString(obj, 'sig'), 64)),
+  };
+  if (obj.id !== undefined && obj.id !== null) {
+    msg.id = requireNonEmptyString(obj, 'id');
+  }
+  return msg;
+}
+
+function decodeKeyLogAck(obj: Record<string, unknown>): KeyLogAckMessage {
+  const ok = requireBoolean(obj, 'ok');
+  const msg: KeyLogAckMessage = {
+    t: 'key.log.ack',
+    id: requireNonEmptyString(obj, 'id'),
+    ok,
+  };
+  if (ok) {
+    msg.seq = requireSeq(obj, 'seq');
+  } else {
+    msg.error = requireNonEmptyString(obj, 'error');
+  }
+  return msg;
 }
 
 function decodeTurn(value: unknown): HubTurnConfig {
