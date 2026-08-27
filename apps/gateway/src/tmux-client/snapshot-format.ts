@@ -1,3 +1,11 @@
+import {
+  FLEXIBLE_FIELD_LAYOUTS,
+  type SnapshotColumn,
+  foldFlexibleFields,
+  parseSnapshotColumns,
+  tokenizeSnapshotFields,
+} from './snapshot-format-tokenize';
+
 export const SNAPSHOT_FIELD_SEPARATOR = '|';
 
 export const TMUX_SESSION_ID_PATTERN = /^\$\d+$/;
@@ -84,6 +92,51 @@ function isSnapshotFlag(value: string | undefined): value is '0' | '1' {
   return value === '0' || value === '1';
 }
 
+function parseRequiredPaneId(raw: string): string | null {
+  return isTmuxPaneId(raw) ? raw : null;
+}
+
+function parseRequiredWindowId(raw: string): string | null {
+  return isTmuxWindowId(raw) ? raw : null;
+}
+
+function parseSnapshotFlag(raw: string): boolean | null {
+  if (!isSnapshotFlag(raw)) {
+    return null;
+  }
+  return raw === '1';
+}
+
+function parseOptionalInteger(raw: string): number | undefined {
+  return parseSnapshotInteger(raw) ?? undefined;
+}
+
+function parseOptionalTitle(raw: string): string | undefined {
+  return raw.trim() ? raw : undefined;
+}
+
+function parseOptionalTrimmed(raw: string): string | undefined {
+  const trimmed = raw.trim();
+  return trimmed ? trimmed : undefined;
+}
+
+const PANE_FLEXIBLE_LAYOUT = { prefix: 9, suffix: 2 };
+
+const PANE_COLUMNS: readonly SnapshotColumn<PaneSnapshotRow>[] = [
+  { name: 'id', required: true, parse: parseRequiredPaneId },
+  { name: 'windowId', required: true, parse: parseRequiredWindowId },
+  { name: 'index', required: true, parse: parseSnapshotInteger },
+  { name: 'active', required: true, parse: parseSnapshotFlag },
+  { name: 'width', required: true, parse: parseSnapshotInteger },
+  { name: 'height', required: true, parse: parseSnapshotInteger },
+  { name: 'left', required: false, parse: parseOptionalInteger },
+  { name: 'top', required: false, parse: parseOptionalInteger },
+  { name: 'windowActive', required: true, parse: parseSnapshotFlag },
+  { name: 'title', required: false, parse: parseOptionalTitle },
+  { name: 'currentCommand', required: false, parse: parseOptionalTrimmed },
+  { name: 'currentPath', required: false, parse: parseOptionalTrimmed },
+];
+
 const WINDOW_LAYOUT_PATTERN = /^[0-9a-fA-F]{4},[0-9x,{}[\]]+$/;
 
 export function parseWindowSnapshotRow(line: string): WindowSnapshotRow | null {
@@ -103,95 +156,16 @@ export function parseWindowSnapshotRow(line: string): WindowSnapshotRow | null {
 }
 
 export function parsePaneSnapshotRow(line: string): PaneSnapshotRow | null {
-  const parts = line.split(SNAPSHOT_FIELD_SEPARATOR);
-  if (parts.length < 12) {
-    return null;
-  }
-  const [id, windowId, indexRaw, activeRaw, widthRaw, heightRaw, leftRaw, topRaw, windowActiveRaw] =
-    parts;
-  // 后 3 个是自由文本：title 最可能含分隔符，吃掉中间的多余分段；command/path 右锚定
-  const rest = parts.slice(9);
-  const title = rest.slice(0, rest.length - 2).join(SNAPSHOT_FIELD_SEPARATOR);
-  const currentCommand = rest.at(-2) ?? '';
-  const currentPath = rest.at(-1) ?? '';
-
-  const index = parseSnapshotInteger(indexRaw);
-  const width = parseSnapshotInteger(widthRaw);
-  const height = parseSnapshotInteger(heightRaw);
-  const left = parseSnapshotInteger(leftRaw);
-  const top = parseSnapshotInteger(topRaw);
-  if (
-    !isTmuxPaneId(id) ||
-    !isTmuxWindowId(windowId) ||
-    index === null ||
-    width === null ||
-    height === null ||
-    !isSnapshotFlag(activeRaw) ||
-    !isSnapshotFlag(windowActiveRaw)
-  ) {
-    return null;
-  }
-  return {
-    id,
-    windowId,
-    index,
-    active: activeRaw === '1',
-    width,
-    height,
-    left: left ?? undefined,
-    top: top ?? undefined,
-    windowActive: windowActiveRaw === '1',
-    title: title.trim() ? title : undefined,
-    currentCommand: currentCommand.trim() ? currentCommand.trim() : undefined,
-    currentPath: currentPath.trim() ? currentPath.trim() : undefined,
-  };
+  const tokens = tokenizeSnapshotFields(line, SNAPSHOT_FIELD_SEPARATOR);
+  const fields = foldFlexibleFields(tokens, PANE_FLEXIBLE_LAYOUT, SNAPSHOT_FIELD_SEPARATOR);
+  return parseSnapshotColumns(fields, PANE_COLUMNS);
 }
 
 export function splitSnapshotFields(line: string, fieldCount: number): string[] {
-  const parts = line.split(SNAPSHOT_FIELD_SEPARATOR);
-  if (parts.length <= fieldCount) {
-    return parts;
+  const tokens = tokenizeSnapshotFields(line, SNAPSHOT_FIELD_SEPARATOR);
+  const layout = FLEXIBLE_FIELD_LAYOUTS[fieldCount];
+  if (!layout) {
+    return tokens;
   }
-
-  if (fieldCount === 2) {
-    return [parts[0] ?? '', parts.slice(1).join(SNAPSHOT_FIELD_SEPARATOR)];
-  }
-
-  if (fieldCount === 4) {
-    return [
-      parts[0] ?? '',
-      parts[1] ?? '',
-      parts.slice(2, -1).join(SNAPSHOT_FIELD_SEPARATOR),
-      parts.at(-1) ?? '',
-    ];
-  }
-
-  if (fieldCount === 8) {
-    return [
-      parts[0] ?? '',
-      parts[1] ?? '',
-      parts[2] ?? '',
-      parts.slice(3, -4).join(SNAPSHOT_FIELD_SEPARATOR),
-      parts.at(-4) ?? '',
-      parts.at(-3) ?? '',
-      parts.at(-2) ?? '',
-      parts.at(-1) ?? '',
-    ];
-  }
-
-  if (fieldCount === 9) {
-    return [
-      parts[0] ?? '',
-      parts[1] ?? '',
-      parts[2] ?? '',
-      parts.slice(3, -5).join(SNAPSHOT_FIELD_SEPARATOR),
-      parts.at(-5) ?? '',
-      parts.at(-4) ?? '',
-      parts.at(-3) ?? '',
-      parts.at(-2) ?? '',
-      parts.at(-1) ?? '',
-    ];
-  }
-
-  return parts;
+  return foldFlexibleFields(tokens, layout, SNAPSHOT_FIELD_SEPARATOR);
 }
