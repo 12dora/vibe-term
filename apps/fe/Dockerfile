@@ -3,24 +3,26 @@ FROM oven/bun:1 AS builder
 
 WORKDIR /app
 
-# 复制 workspace 配置
-COPY package.json bun.lock* tsconfig.json ./
-COPY packages/shared/package.json packages/shared/
-COPY packages/ui/package.json packages/ui/
-COPY packages/ghostty-terminal/package.json packages/ghostty-terminal/
-COPY packages/ws-client/package.json packages/ws-client/
-COPY packages/api-client/package.json packages/api-client/
-COPY packages/notifications/package.json packages/notifications/
-COPY packages/stores/package.json packages/stores/
-COPY packages/theme/package.json packages/theme/
-COPY packages/terminal-ui/package.json packages/terminal-ui/
-COPY packages/panels/package.json packages/panels/
+# bun.lock workspaces 覆盖 apps/* 与 packages/*，缺任一 package.json 会导致
+# `bun install --frozen-lockfile` 失败。packages/app/package.json 还被 vite
+# 在构建期读取以注入 monorepo 版本号。
+COPY package.json bun.lock bunfig.toml tsconfig.json ./
 COPY apps/fe/package.json apps/fe/
+COPY apps/gateway/package.json apps/gateway/
+COPY packages/api-client/package.json packages/api-client/
+COPY packages/app/package.json packages/app/
+COPY packages/ghostty-terminal/package.json packages/ghostty-terminal/
+COPY packages/notifications/package.json packages/notifications/
+COPY packages/panels/package.json packages/panels/
+COPY packages/shared/package.json packages/shared/
+COPY packages/stores/package.json packages/stores/
+COPY packages/terminal-ui/package.json packages/terminal-ui/
+COPY packages/theme/package.json packages/theme/
+COPY packages/ui/package.json packages/ui/
+COPY packages/ws-client/package.json packages/ws-client/
 
-# 安装依赖
-RUN bun install
+RUN bun install --frozen-lockfile
 
-# 复制源代码
 COPY packages/shared/ packages/shared/
 COPY packages/ui/ packages/ui/
 COPY packages/ghostty-terminal/ packages/ghostty-terminal/
@@ -31,19 +33,15 @@ COPY packages/stores/ packages/stores/
 COPY packages/theme/ packages/theme/
 COPY packages/terminal-ui/ packages/terminal-ui/
 COPY packages/panels/ packages/panels/
+COPY packages/app/package.json packages/app/
 COPY apps/fe/ apps/fe/
 
-# 构建
 WORKDIR /app/apps/fe
 RUN bun run build
 
-# 生产镜像 - nginx
 FROM nginx:alpine
 
-# 复制构建产物
 COPY --from=builder /app/apps/fe/dist /usr/share/nginx/html
-
-# 复制 nginx 配置
 COPY apps/fe/nginx.conf /etc/nginx/conf.d/default.conf
 
 EXPOSE 80

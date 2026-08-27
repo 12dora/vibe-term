@@ -26,24 +26,26 @@ cp .env.example .env
 vim .env
 ```
 
-必需配置项：
+`NODE_ENV=production` 时 gateway **不读取仓库 env 文件**，必需变量必须由 compose / 进程环境注入。`loadEnv()` 会校验：
 
 ```bash
-# 主密钥（用于加密敏感数据，生产环境必须设置）
+# 主密钥（32 bytes base64，用于加密敏感数据）
 # 生成方式：head -c 32 /dev/urandom | base64
 TMEX_MASTER_KEY=YOUR_BASE64_ENCODED_32BYTE_KEY
-
-# 管理员密码
-TMEX_ADMIN_PASSWORD=your-secure-password
-
-# JWT 密钥
-JWT_SECRET=your-jwt-secret-min-32-characters-long
 ```
+
+compose 还会注入（镜像内已有默认值，一般不必手写）：
+
+- `GATEWAY_PORT=8080`
+- `TMEX_BIND_HOST=0.0.0.0`
+- `DATABASE_URL=/data/tmex.db`
+- `TMEX_MIGRATIONS_DIR=/app/drizzle`（drizzle SQL，必须是真实目录）
+- `TMEX_FE_DIST_DIR=/app/fe-dist`（生产契约要求目录存在；静态资源由 fe 容器的 nginx 提供）
 
 可选配置项：
 
 ```bash
-# 服务端口（默认 3000）
+# 对外端口（fe nginx，默认 3000）
 TMEX_PORT=3000
 
 # Telegram Bot Token（可选，用于推送通知）
@@ -53,14 +55,16 @@ TELEGRAM_BOT_TOKEN=your-bot-token
 TMEX_BASE_URL=https://tmex.your-domain.com
 ```
 
+拓扑：gateway 容器只提供 `/api`、`/ws`、`/healthz`；fe 容器 nginx 托管 vite dist，并把上述路径反代到 `gateway:8080`。生产 npm 安装版由 `packages/app` runtime 直接托管 fe-dist，Docker 路径不走那套。
+
 ### 3. 启动服务
 
 ```bash
 # 构建并启动
-docker-compose up --build -d
+docker compose up --build -d
 
 # 查看日志
-docker-compose logs -f
+docker compose logs -f
 
 # 等待服务就绪（约 10 秒）
 sleep 10
@@ -97,8 +101,6 @@ bun install
 
 ```bash
 export TMEX_MASTER_KEY=$(head -c 32 /dev/urandom | base64)
-export TMEX_ADMIN_PASSWORD=dev-password
-export JWT_SECRET=dev-jwt-secret
 export NODE_ENV=development
 export GATEWAY_PORT=8080
 export DATABASE_URL=/tmp/tmex.db
@@ -153,18 +155,12 @@ bun dev --host
 #### 2. 配置生产环境变量
 
 ```bash
-# 生成强密钥
+# 生成强密钥（compose 变量插值读仓库旁的 .env，不会被 Bun 当生产配置加载）
 export TMEX_MASTER_KEY=$(openssl rand -base64 32)
-export JWT_SECRET=$(openssl rand -base64 32)
 
-# 创建 .env 文件
 cat > .env << EOF
-NODE_ENV=production
 TMEX_MASTER_KEY=$TMEX_MASTER_KEY
-TMEX_ADMIN_PASSWORD=your-strong-admin-password
 TMEX_BASE_URL=https://tmex.your-domain.com
-JWT_SECRET=$JWT_SECRET
-JWT_EXPIRES_IN=24h
 TMEX_PORT=3000
 EOF
 ```
@@ -175,7 +171,6 @@ EOF
 
 ```yaml
 # docker-compose.override.yml
-version: '3.8'
 services:
   fe:
     expose:
@@ -214,7 +209,7 @@ docker run -d --name cloudflared \
 #### 4. 启动服务
 
 ```bash
-docker-compose -f docker-compose.yml -f docker-compose.override.yml up -d
+docker compose -f docker-compose.yml -f docker-compose.override.yml up -d
 ```
 
 ### 手动部署（无 Docker）
@@ -262,10 +257,11 @@ User=tmex
 WorkingDirectory=/opt/tmex/apps/gateway
 Environment=NODE_ENV=production
 Environment=TMEX_MASTER_KEY=your-master-key
-Environment=TMEX_ADMIN_PASSWORD=your-password
-Environment=JWT_SECRET=your-jwt-secret
+Environment=TMEX_BIND_HOST=0.0.0.0
 Environment=GATEWAY_PORT=8080
 Environment=DATABASE_URL=/var/lib/tmex/tmex.db
+Environment=TMEX_FE_DIST_DIR=/opt/tmex/apps/fe/dist
+Environment=TMEX_MIGRATIONS_DIR=/opt/tmex/apps/gateway/drizzle
 ExecStart=/root/.bun/bin/bun dist/index.js
 Restart=always
 RestartSec=5
@@ -383,7 +379,7 @@ bun dev
 2. Docker 方式需要挂载 SSH 目录：
    ```yaml
    volumes:
-     - ~/.ssh:/home/bunuser/.ssh:ro
+     - ~/.ssh:/home/bun/.ssh:ro
    ```
 
 3. 在 tmex 中添加设备：
@@ -407,13 +403,13 @@ sqlite3 /var/lib/tmex/tmex.db ".backup tmex-backup.db"
 
 ```bash
 # 停止服务
-docker-compose stop
+docker compose stop
 
 # 恢复数据
 docker cp ./tmex-backup.db tmex-gateway:/data/tmex.db
 
 # 重启服务
-docker-compose start
+docker compose start
 ```
 
 ## 监控与日志
@@ -422,8 +418,8 @@ docker-compose start
 
 ```bash
 # Docker Compose
-docker-compose logs -f gateway
-docker-compose logs -f fe
+docker compose logs -f gateway
+docker compose logs -f fe
 
 # 本地运行
 journalctl -u tmex-gateway -f
@@ -448,8 +444,8 @@ curl http://localhost:8080/healthz
 git pull origin main
 
 # 重新构建并启动
-docker-compose down
-docker-compose up --build -d
+docker compose down
+docker compose up --build -d
 
 # 验证
 sleep 5
@@ -480,13 +476,13 @@ sudo systemctl restart nginx
 
 ```bash
 # 检查日志
-docker-compose logs gateway
+docker compose logs gateway
 
 # 检查环境变量
-docker-compose exec gateway env | grep TMEX
+docker compose exec gateway env | grep TMEX
 
 # 检查数据库权限
-docker-compose exec gateway ls -la /data/
+docker compose exec gateway ls -la /data/
 ```
 
 ### WebSocket 连接失败
@@ -499,18 +495,18 @@ docker-compose exec gateway ls -la /data/
 
 ```bash
 # 测试 SSH 连通性
-docker-compose exec gateway ssh -v user@host
+docker compose exec gateway ssh -v user@host
 
 # 检查密钥权限
-docker-compose exec gateway ls -la ~/.ssh/
+docker compose exec gateway ls -la ~/.ssh/
 ```
 
 ### tmux 不可用
 
 ```bash
 # 进入容器检查
-docker-compose exec gateway which tmux
-docker-compose exec gateway tmux -V
+docker compose exec gateway which tmux
+docker compose exec gateway tmux -V
 ```
 
 ## 安全建议
