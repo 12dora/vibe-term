@@ -669,13 +669,21 @@ describe('AgentRun 核心循环', () => {
     const otherEmulator = await paneEmulatorRegistry.acquire(TEST_DEVICE_ID, paneId, source);
 
     const originalRelease = paneEmulatorRegistry.release.bind(paneEmulatorRegistry);
+    const originalDestroy = paneEmulatorRegistry.destroy.bind(paneEmulatorRegistry);
     let releaseCount = 0;
+    let destroyCount = 0;
     paneEmulatorRegistry.release = async (deviceId, id) => {
       const remaining = await originalRelease(deviceId, id);
       if (deviceId === TEST_DEVICE_ID && id === paneId) {
         releaseCount += 1;
       }
       return remaining;
+    };
+    paneEmulatorRegistry.destroy = async (deviceId, id) => {
+      if (deviceId === TEST_DEVICE_ID && id === paneId) {
+        destroyCount += 1;
+      }
+      return originalDestroy(deviceId, id);
     };
 
     try {
@@ -688,6 +696,7 @@ describe('AgentRun 核心循环', () => {
       await new Promise((r) => setTimeout(r, 20));
       expect(otherEmulator.isDisposed).toBe(false);
       expect(releaseCount).toBe(1);
+      expect(destroyCount).toBe(0);
 
       const otherCtx = createTerminalToolContext({
         paneId,
@@ -701,6 +710,7 @@ describe('AgentRun 核心循环', () => {
       expect(liveEmulator(otherCtx)).toBe(otherEmulator);
     } finally {
       paneEmulatorRegistry.release = originalRelease;
+      paneEmulatorRegistry.destroy = originalDestroy;
       await paneEmulatorRegistry.destroy(TEST_DEVICE_ID, paneId);
     }
   });

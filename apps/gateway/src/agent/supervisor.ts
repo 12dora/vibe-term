@@ -127,6 +127,7 @@ export class AgentSupervisor {
   private readonly activeRuns = new Map<string, ActiveRun>();
   private readonly staleSessionIds = new Set<string>();
   private readonly resumeSuppressedSessionIds = new Set<string>();
+  private readonly lostDeviceIds = new Set<string>();
   private started = false;
   private stopping = false;
 
@@ -389,8 +390,10 @@ export class AgentSupervisor {
    * - DB 为 running/waiting_confirmation 且无活动 run 的直接落 error。
    */
   stopSessionsForDevice(deviceId: string, reason: AgentStopReason = 'pane_lost'): void {
+    this.lostDeviceIds.add(deviceId);
     for (const [sessionId, entry] of this.activeRuns) {
-      if (entry.deviceId !== deviceId) {
+      const boundDeviceId = entry.deviceId ?? getAgentSessionById(sessionId)?.deviceId ?? null;
+      if (boundDeviceId !== deviceId) {
         continue;
       }
       this.suppressResume(sessionId);
@@ -498,13 +501,17 @@ export class AgentSupervisor {
     }
 
     this.resumeSuppressedSessionIds.delete(sessionId);
+    const deviceId = getAgentSessionById(sessionId)?.deviceId ?? null;
+    if (deviceId) {
+      this.lostDeviceIds.delete(deviceId);
+    }
     const run = this.deps.createRun(sessionId);
     const entry: ActiveRun = {
       run,
       promise: Promise.resolve(),
       stale: false,
       resumeSuppressed: false,
-      deviceId: getAgentSessionById(sessionId)?.deviceId ?? null,
+      deviceId,
     };
     entry.promise = run
       .execute()
@@ -515,10 +522,9 @@ export class AgentSupervisor {
         if (this.activeRuns.get(sessionId) === entry) {
           this.activeRuns.delete(sessionId);
         }
-        if (entry.stale && !entry.resumeSuppressed) {
+        if (entry.stale) {
           this.resumeSessionIfNeeded(sessionId);
         } else if (entry.resumeSuppressed) {
-          this.staleSessionIds.delete(sessionId);
           this.resumeSuppressedSessionIds.delete(sessionId);
         }
       });
@@ -540,6 +546,9 @@ export class AgentSupervisor {
     }
     const session = getAgentSessionById(sessionId);
     if (!session || isSessionOrphan(session)) {
+      return;
+    }
+    if (session.deviceId && this.lostDeviceIds.has(session.deviceId)) {
       return;
     }
     if (session.status === 'stopped') {
