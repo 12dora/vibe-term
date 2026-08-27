@@ -3,8 +3,7 @@ import { resolve } from 'node:path';
 import { CryptoDecryptError } from '../../../../apps/gateway/src/crypto/errors';
 import { getDisplayVersion } from '../../../../apps/gateway/src/system/version';
 import { t } from '../i18n';
-import { createTmexGatewayRuntime } from './gateway';
-import { serveFrontend } from './serve-frontend';
+import { assembleTmex, installShutdownHandlers } from './assemble';
 
 function resolveStaticRoot(): string {
   if (process.env.TMEX_FE_DIST_DIR) {
@@ -20,27 +19,27 @@ async function main(): Promise<void> {
   const port = Number(process.env.GATEWAY_PORT || '9883');
   const staticRoot = resolveStaticRoot();
 
-  const gateway = await createTmexGatewayRuntime();
+  const assembled = await assembleTmex({ staticRoot });
 
   const server = Bun.serve({
     hostname: host,
     port,
-    async fetch(req, bunServer) {
-      const gatewayResponse = await gateway.handleRequest(req, bunServer);
-      if (gatewayResponse !== undefined) {
-        return gatewayResponse;
-      }
-
-      return await serveFrontend(req, staticRoot);
-    },
-    websocket: gateway.websocket,
+    fetch: assembled.fetch,
+    websocket: assembled.websocket,
   });
 
-  gateway.onRestartRequested(async () => {
+  await assembled.start();
+
+  assembled.gateway.onRestartRequested(async () => {
     console.log(`[tmex] ${t('runtime.restartRequested')}`);
-    await gateway.stop();
+    await assembled.stop();
     server.stop(true);
     process.exit(0);
+  });
+
+  installShutdownHandlers(async () => {
+    await assembled.stop();
+    server.stop(true);
   });
 
   console.log(`[tmex] ${t('runtime.started', { url: `http://${host}:${port}` })}`);
