@@ -18,7 +18,3 @@ export function isTargetMissingMessage(message: string): boolean {
     normalized.includes('no such pane')
   );
 }
-
-export function isTmuxTargetMissingError(error: unknown): error is TmuxTargetMissingError {
-  return error instanceof TmuxTargetMissingError;
-}

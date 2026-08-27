@@ -144,7 +144,3 @@ export async function releaseRunResources(params: ReleaseRunResourcesParams): Pr
     }
   }
 }
-
-export function destroyPaneEmulator(deviceId: string, paneId: string): Promise<void> {
-  return paneEmulatorRegistry.destroy(deviceId, paneId);
-}

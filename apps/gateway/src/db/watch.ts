@@ -89,16 +89,6 @@ export function getEnabledWatchRules(): WatchRuleRecord[] {
     .all();
 }
 
-export function listWatchRulesByDevice(deviceId: string): WatchRuleRecord[] {
-  const orm = getOrmDb();
-  return orm
-    .select()
-    .from(watchRules)
-    .where(eq(watchRules.deviceId, deviceId))
-    .orderBy(desc(watchRules.createdAt))
-    .all();
-}
-
 export function updateWatchRule(
   id: string,
   updates: Partial<Omit<WatchRuleRecord, 'id' | 'createdAt' | 'updatedAt'>>

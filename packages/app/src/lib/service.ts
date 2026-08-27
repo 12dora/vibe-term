@@ -226,54 +226,6 @@ export async function stopService(serviceName: string, installDir?: string): Pro
   }
 }
 
-async function startSystemd(serviceName: string, autostart: boolean): Promise<void> {
-  const args = autostart
-    ? ['--user', 'enable', '--now', serviceName]
-    : ['--user', 'start', serviceName];
-  const result = await runCommand('systemctl', args);
-  if (result.code !== 0) {
-    throw new Error(
-      t('service.systemd.startRuntimeFailed', {
-        detail: result.stderr || result.stdout,
-      })
-    );
-  }
-}
-
-export async function startService(
-  serviceName: string,
-  autostart: boolean,
-  installDir?: string
-): Promise<void> {
-  const manager = await detectServiceManager();
-  if (manager === 'systemd-user') {
-    await startSystemd(serviceName, autostart);
-    return;
-  }
-
-  if (manager === 'launchd') {
-    const uid = String(process.getuid?.() ?? 0);
-    const launchAgentsPath = launchdLaunchAgentsPlistPath(serviceName);
-    const hasLaunchAgents = await pathExists(launchAgentsPath);
-
-    const chosenPath = hasLaunchAgents
-      ? launchAgentsPath
-      : installDir
-        ? launchdLocalPlistPath(serviceName, installDir)
-        : launchAgentsPath;
-
-    const bootstrap = await runCommand('launchctl', ['bootstrap', `gui/${uid}`, chosenPath]);
-    if (bootstrap.code !== 0) {
-      throw new Error(
-        t('service.launchd.bootstrapFailed', {
-          detail: bootstrap.stderr || bootstrap.stdout,
-        })
-      );
-    }
-    return;
-  }
-}
-
 async function uninstallSystemdService(serviceName: string): Promise<void> {
   await runCommand('systemctl', ['--user', 'disable', '--now', serviceName]).catch(() => null);
   const unitPath = systemdUnitPath(serviceName);

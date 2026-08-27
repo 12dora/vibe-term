@@ -7,17 +7,14 @@ export const CHANNEL_VERSION = '1.0.3';
 export const CLIENT_ID_PREFIX = 'openclaw-weixin-';
 
 // message_type
-export const MESSAGE_TYPE_USER = 1;
 export const MESSAGE_TYPE_BOT = 2;
 
 // message_state
-export const MESSAGE_STATE_NEW = 0;
 export const MESSAGE_STATE_GENERATING = 1;
 export const MESSAGE_STATE_FINISH = 2;
 
 // item_list[].type
 export const ITEM_TYPE_TEXT = 1;
-export const ITEM_TYPE_IMAGE = 2;
 export const ITEM_TYPE_VOICE = 3;
 export const ITEM_TYPE_FILE = 4;
 export const ITEM_TYPE_VIDEO = 5;
@@ -84,11 +81,6 @@ export interface GetQrcodeStatusResp {
 }
 
 // ---- 端点：getupdates ----
-export interface GetUpdatesReq {
-  get_updates_buf?: string;
-  base_info?: BaseInfo;
-}
-
 export interface GetUpdatesResp {
   ret?: number;
   errcode?: number;

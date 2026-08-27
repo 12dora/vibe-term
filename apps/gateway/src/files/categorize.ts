@@ -182,7 +182,3 @@ export function categorize(name: string): FileCategory {
 export function mimeOf(name: string): string | null {
   return MIME_MAP[extOf(name)] ?? null;
 }
-
-export function isTextCategory(category: FileCategory): boolean {
-  return category === 'code' || category === 'markdown' || category === 'text';
-}

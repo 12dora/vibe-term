@@ -17,7 +17,3 @@ export const HOSTED_TOOL_FACTORIES: Record<string, (client: OpenAIClient) => Too
 };
 
 export const HOSTED_TOOL_KEYS = Object.keys(HOSTED_TOOL_FACTORIES);
-
-export function isHostedToolKey(key: string): boolean {
-  return Object.prototype.hasOwnProperty.call(HOSTED_TOOL_FACTORIES, key);
-}

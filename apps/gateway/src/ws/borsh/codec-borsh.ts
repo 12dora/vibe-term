@@ -5,8 +5,6 @@ import { type b, wsBorsh } from '@tmex/shared';
 import type { ServerWebSocket } from 'bun';
 import { gatewayWebSocketSendGuard } from '../websocket-send-guard';
 
-// ========== 类型定义 ==========
-
 export interface BorshClientState {
   seqGen: () => number;
   negotiated: boolean;
@@ -28,73 +26,6 @@ export function createBorshClientState(): BorshClientState {
     selectedPanes: {},
     subscribedPanes: {},
   };
-}
-
-// ========== 编码辅助函数 ==========
-
-export function encodeHelloS2C(
-  params: b.infer<typeof wsBorsh.schema.HelloS2CSchema>,
-  seq: number
-): Uint8Array {
-  const payload = wsBorsh.encodePayload(wsBorsh.schema.HelloS2CSchema, params);
-  return wsBorsh.encodeEnvelope(wsBorsh.KIND_HELLO_S2C, payload, seq);
-}
-
-export function encodeError(
-  params: b.infer<typeof wsBorsh.schema.ErrorSchema>,
-  seq: number
-): Uint8Array {
-  const payload = wsBorsh.encodePayload(wsBorsh.schema.ErrorSchema, params);
-  return wsBorsh.encodeEnvelope(wsBorsh.KIND_ERROR, payload, seq);
-}
-
-export function encodePong(
-  params: b.infer<typeof wsBorsh.schema.PingPongSchema>,
-  seq: number
-): Uint8Array {
-  const payload = wsBorsh.encodePayload(wsBorsh.schema.PingPongSchema, params);
-  return wsBorsh.encodeEnvelope(wsBorsh.KIND_PONG, payload, seq);
-}
-
-export function encodeDeviceConnected(
-  params: b.infer<typeof wsBorsh.schema.DeviceConnectedSchema>,
-  seq: number
-): Uint8Array {
-  const payload = wsBorsh.encodePayload(wsBorsh.schema.DeviceConnectedSchema, params);
-  return wsBorsh.encodeEnvelope(wsBorsh.KIND_DEVICE_CONNECTED, payload, seq);
-}
-
-export function encodeDeviceDisconnected(
-  params: b.infer<typeof wsBorsh.schema.DeviceDisconnectedSchema>,
-  seq: number
-): Uint8Array {
-  const payload = wsBorsh.encodePayload(wsBorsh.schema.DeviceDisconnectedSchema, params);
-  return wsBorsh.encodeEnvelope(wsBorsh.KIND_DEVICE_DISCONNECTED, payload, seq);
-}
-
-export function encodeDeviceEvent(
-  params: b.infer<typeof wsBorsh.schema.DeviceEventSchema>,
-  seq: number
-): Uint8Array {
-  const payload = wsBorsh.encodePayload(wsBorsh.schema.DeviceEventSchema, params);
-  return wsBorsh.encodeEnvelope(wsBorsh.KIND_DEVICE_EVENT, payload, seq);
-}
-
-export function encodeStateSnapshot(
-  params: b.infer<typeof wsBorsh.schema.StateSnapshotSchema>,
-  seqGen: () => number,
-  maxFrameBytes: number
-): Uint8Array[] {
-  const payload = wsBorsh.encodePayload(wsBorsh.schema.StateSnapshotSchema, params);
-  return encodePayloadFrames(wsBorsh.KIND_STATE_SNAPSHOT, payload, seqGen, maxFrameBytes);
-}
-
-export function encodeTmuxEvent(
-  params: b.infer<typeof wsBorsh.schema.TmuxEventSchema>,
-  seq: number
-): Uint8Array {
-  const payload = wsBorsh.encodePayload(wsBorsh.schema.TmuxEventSchema, params);
-  return wsBorsh.encodeEnvelope(wsBorsh.KIND_TMUX_EVENT, payload, seq);
 }
 
 export function encodeTermOutput(
@@ -120,14 +51,6 @@ export function encodeSwitchAck(
 ): Uint8Array {
   const payload = wsBorsh.encodePayload(wsBorsh.schema.SwitchAckSchema, params);
   return wsBorsh.encodeEnvelope(wsBorsh.KIND_SWITCH_ACK, payload, seq);
-}
-
-export function encodeClipboardWrite(
-  params: b.infer<typeof wsBorsh.schema.ClipboardWriteSchema>,
-  seq: number
-): Uint8Array {
-  const payload = wsBorsh.encodePayload(wsBorsh.schema.ClipboardWriteSchema, params);
-  return wsBorsh.encodeEnvelope(wsBorsh.KIND_CLIPBOARD_WRITE, payload, seq);
 }
 
 export function encodeLiveResume(
@@ -160,8 +83,6 @@ export function decodeCanonicalCommand(data: Uint8Array): wsBorsh.CanonicalComma
   return wsBorsh.decodeCanonicalCommandPayload(data);
 }
 
-// ========== 分片编码 ==========
-
 export function encodePayloadFrames(
   kind: number,
   payload: Uint8Array,
@@ -181,94 +102,10 @@ export function encodePayloadFrames(
   return chunkResult.chunks.map((chunk) => wsBorsh.encodeChunk(chunk, seqGen()));
 }
 
-// ========== 发送工具 ==========
-
 export function sendToClient(
   ws: ServerWebSocket<unknown>,
   data: Uint8Array | Uint8Array[]
 ): boolean {
   const frames = Array.isArray(data) ? data : [data];
   return gatewayWebSocketSendGuard.sendFrames(ws, frames as readonly BufferSource[]);
-}
-
-// ========== 解码辅助函数 ==========
-
-export function decodeHelloC2S(data: Uint8Array): b.infer<typeof wsBorsh.schema.HelloC2SSchema> {
-  return wsBorsh.decodePayload(wsBorsh.schema.HelloC2SSchema, data);
-}
-
-export function decodePing(data: Uint8Array): b.infer<typeof wsBorsh.schema.PingPongSchema> {
-  return wsBorsh.decodePayload(wsBorsh.schema.PingPongSchema, data);
-}
-
-export function decodeDeviceConnect(
-  data: Uint8Array
-): b.infer<typeof wsBorsh.schema.DeviceConnectSchema> {
-  return wsBorsh.decodePayload(wsBorsh.schema.DeviceConnectSchema, data);
-}
-
-export function decodeDeviceDisconnect(
-  data: Uint8Array
-): b.infer<typeof wsBorsh.schema.DeviceDisconnectSchema> {
-  return wsBorsh.decodePayload(wsBorsh.schema.DeviceDisconnectSchema, data);
-}
-
-export function decodeTmuxSelect(
-  data: Uint8Array
-): b.infer<typeof wsBorsh.schema.TmuxSelectSchema> {
-  return wsBorsh.decodePayload(wsBorsh.schema.TmuxSelectSchema, data);
-}
-
-export function decodeTmuxSelectWindow(
-  data: Uint8Array
-): b.infer<typeof wsBorsh.schema.TmuxSelectWindowSchema> {
-  return wsBorsh.decodePayload(wsBorsh.schema.TmuxSelectWindowSchema, data);
-}
-
-export function decodeTmuxCreateWindow(
-  data: Uint8Array
-): b.infer<typeof wsBorsh.schema.TmuxCreateWindowSchema> {
-  return wsBorsh.decodePayload(wsBorsh.schema.TmuxCreateWindowSchema, data);
-}
-
-export function decodeTmuxCloseWindow(
-  data: Uint8Array
-): b.infer<typeof wsBorsh.schema.TmuxCloseWindowSchema> {
-  return wsBorsh.decodePayload(wsBorsh.schema.TmuxCloseWindowSchema, data);
-}
-
-export function decodeTmuxClosePane(
-  data: Uint8Array
-): b.infer<typeof wsBorsh.schema.TmuxClosePaneSchema> {
-  return wsBorsh.decodePayload(wsBorsh.schema.TmuxClosePaneSchema, data);
-}
-
-export function decodeTmuxRenameWindow(
-  data: Uint8Array
-): b.infer<typeof wsBorsh.schema.TmuxRenameWindowSchema> {
-  return wsBorsh.decodePayload(wsBorsh.schema.TmuxRenameWindowSchema, data);
-}
-
-export function decodeTermInput(data: Uint8Array): b.infer<typeof wsBorsh.schema.TermInputSchema> {
-  return wsBorsh.decodePayload(wsBorsh.schema.TermInputSchema, data);
-}
-
-export function decodeTermPaste(data: Uint8Array): b.infer<typeof wsBorsh.schema.TermPasteSchema> {
-  return wsBorsh.decodePayload(wsBorsh.schema.TermPasteSchema, data);
-}
-
-export function decodeTermResize(
-  data: Uint8Array
-): b.infer<typeof wsBorsh.schema.TermResizeSchema> {
-  return wsBorsh.decodePayload(wsBorsh.schema.TermResizeSchema, data);
-}
-
-export function decodeTermSyncSize(
-  data: Uint8Array
-): b.infer<typeof wsBorsh.schema.TermSyncSizeSchema> {
-  return wsBorsh.decodePayload(wsBorsh.schema.TermSyncSizeSchema, data);
-}
-
-export function decodeChunkPayload(data: Uint8Array): wsBorsh.ChunkData {
-  return wsBorsh.decodeChunk(data);
 }

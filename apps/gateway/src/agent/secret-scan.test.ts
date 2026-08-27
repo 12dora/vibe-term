@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { detectSecrets, hasSecret, redactSecrets } from './secret-scan';
+import { detectSecrets, redactSecrets } from './secret-scan';
 
 describe('secret-scan 正样本', () => {
   test('私钥块整体消毒', () => {
@@ -54,8 +54,8 @@ describe('secret-scan 正样本', () => {
     );
   });
 
-  test('detectSecrets / hasSecret', () => {
-    expect(hasSecret('Authorization: Bearer abcdef12345')).toBe(true);
+  test('detectSecrets', () => {
+    expect(detectSecrets('Authorization: Bearer abcdef12345').length).toBeGreaterThan(0);
     expect(detectSecrets('nothing secret here').length).toBe(0);
   });
 });

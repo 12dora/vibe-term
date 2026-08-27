@@ -1,9 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { type ApiRoute, dispatchRoutes, matchPath, matchRoute, methodMatches } from './route';
-
-function handler(): Response {
-  return new Response(null, { status: 204 });
-}
+import { type ApiRoute, dispatchRoutes, matchPath, methodMatches } from './route';
 
 describe('matchPath', () => {
   test('matches a static path and returns empty params', () => {
@@ -67,52 +63,82 @@ describe('methodMatches', () => {
   });
 });
 
-describe('matchRoute priority', () => {
+describe('dispatchRoutes priority', () => {
+  function tagged(path: string): ApiRoute['handler'] {
+    return (_req, params) =>
+      new Response(JSON.stringify({ path, params }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      });
+  }
+
   const routes: ApiRoute[] = [
-    { method: 'GET', path: '/api/devices', handler },
-    { method: 'PUT', path: '/api/devices/order', handler },
-    { method: 'GET', path: '/api/devices/:id', handler },
-    { method: 'POST', path: '/api/devices/:id/test-connection', handler },
-    { method: '*', path: '/api/devices/*', handler },
-    { method: ['GET', 'HEAD'], path: '/api/manifest.webmanifest', handler },
+    { method: 'GET', path: '/api/devices', handler: tagged('/api/devices') },
+    { method: 'PUT', path: '/api/devices/order', handler: tagged('/api/devices/order') },
+    { method: 'GET', path: '/api/devices/:id', handler: tagged('/api/devices/:id') },
+    {
+      method: 'POST',
+      path: '/api/devices/:id/test-connection',
+      handler: tagged('/api/devices/:id/test-connection'),
+    },
+    { method: '*', path: '/api/devices/*', handler: tagged('/api/devices/*') },
+    {
+      method: ['GET', 'HEAD'],
+      path: '/api/manifest.webmanifest',
+      handler: tagged('/api/manifest.webmanifest'),
+    },
   ];
 
-  test('fixed /api/devices/order wins over /api/devices/:id', () => {
-    const matched = matchRoute('PUT', '/api/devices/order', routes);
-    expect(matched?.route.path).toBe('/api/devices/order');
+  async function dispatch(
+    method: string,
+    pathname: string
+  ): Promise<{ path: string; params: Record<string, string> } | null> {
+    const req = new Request(`http://localhost${pathname}`, { method });
+    const result = dispatchRoutes(req, pathname, routes, {
+      server: {} as never,
+      path: pathname,
+    });
+    if (!result) return null;
+    const res = await result;
+    return (await res.json()) as { path: string; params: Record<string, string> };
+  }
+
+  test('fixed /api/devices/order wins over /api/devices/:id', async () => {
+    const matched = await dispatch('PUT', '/api/devices/order');
+    expect(matched?.path).toBe('/api/devices/order');
     expect(matched?.params).toEqual({});
   });
 
-  test('GET /api/devices/order does not take the PUT order route and matches :id', () => {
-    const matched = matchRoute('GET', '/api/devices/order', routes);
-    expect(matched?.route.path).toBe('/api/devices/:id');
+  test('GET /api/devices/order does not take the PUT order route and matches :id', async () => {
+    const matched = await dispatch('GET', '/api/devices/order');
+    expect(matched?.path).toBe('/api/devices/:id');
     expect(matched?.params).toEqual({ id: 'order' });
   });
 
-  test('GET /api/devices/:id extracts the id', () => {
-    const matched = matchRoute('GET', '/api/devices/dev-1', routes);
-    expect(matched?.route.path).toBe('/api/devices/:id');
+  test('GET /api/devices/:id extracts the id', async () => {
+    const matched = await dispatch('GET', '/api/devices/dev-1');
+    expect(matched?.path).toBe('/api/devices/:id');
     expect(matched?.params).toEqual({ id: 'dev-1' });
   });
 
-  test('list route is preferred over :id for the collection path', () => {
-    const matched = matchRoute('GET', '/api/devices', routes);
-    expect(matched?.route.path).toBe('/api/devices');
+  test('list route is preferred over :id for the collection path', async () => {
+    const matched = await dispatch('GET', '/api/devices');
+    expect(matched?.path).toBe('/api/devices');
   });
 
-  test('later prefix route only matches leftover device paths', () => {
-    const matched = matchRoute('GET', '/api/devices/dev-1/tree-order', routes);
-    expect(matched?.route.path).toBe('/api/devices/*');
+  test('later prefix route only matches leftover device paths', async () => {
+    const matched = await dispatch('GET', '/api/devices/dev-1/tree-order');
+    expect(matched?.path).toBe('/api/devices/*');
     expect(matched?.params).toEqual({ '*': 'dev-1/tree-order' });
   });
 
-  test('returns null when no method+path pair matches', () => {
-    expect(matchRoute('DELETE', '/api/nope', routes)).toBeNull();
+  test('returns undefined when no method+path pair matches', async () => {
+    expect(await dispatch('DELETE', '/api/nope')).toBeNull();
   });
 
-  test('array methods match HEAD on the manifest path', () => {
-    const matched = matchRoute('HEAD', '/api/manifest.webmanifest', routes);
-    expect(matched?.route.path).toBe('/api/manifest.webmanifest');
+  test('array methods match HEAD on the manifest path', async () => {
+    const matched = await dispatch('HEAD', '/api/manifest.webmanifest');
+    expect(matched?.path).toBe('/api/manifest.webmanifest');
   });
 });
 

@@ -83,7 +83,3 @@ export function redactSecrets(input: string): { text: string; matches: SecretMat
 export function detectSecrets(input: string): SecretMatch[] {
   return redactSecrets(input).matches;
 }
-
-export function hasSecret(input: string): boolean {
-  return detectSecrets(input).length > 0;
-}

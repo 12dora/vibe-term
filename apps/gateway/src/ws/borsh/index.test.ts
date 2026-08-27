@@ -1,17 +1,8 @@
 // Gateway Borsh 集成测试
 
-import { beforeEach, describe, expect, it } from 'bun:test';
+import { describe, expect, it } from 'bun:test';
 import { wsBorsh } from '@tmex/shared';
-import {
-  createBorshClientState,
-  decodeDeviceConnect,
-  decodeHelloC2S,
-  decodePing,
-  encodeDeviceConnected,
-  encodeHelloS2C,
-  encodePayloadFrames,
-  encodePong,
-} from './codec-borsh';
+import { createBorshClientState, encodePayloadFrames } from './codec-borsh';
 import { sessionStateStore } from './session-state';
 import { switchBarrier } from './switch-barrier';
 
@@ -38,13 +29,17 @@ describe('borsh codec', () => {
       capabilities: ['borsh-v1'],
     };
 
-    const encoded = encodeHelloS2C(helloS2C, seq);
+    const payload = wsBorsh.encodePayload(wsBorsh.schema.HelloS2CSchema, helloS2C);
+    const encoded = wsBorsh.encodeEnvelope(wsBorsh.KIND_HELLO_S2C, payload, seq);
     expect(encoded).toBeInstanceOf(Uint8Array);
     expect(encoded.length).toBeGreaterThan(0);
 
     const envelope = wsBorsh.decodeEnvelope(encoded);
     expect(envelope.kind).toBe(wsBorsh.KIND_HELLO_S2C);
     expect(envelope.seq).toBe(seq);
+    expect(wsBorsh.decodePayload(wsBorsh.schema.HelloS2CSchema, envelope.payload)).toEqual(
+      helloS2C
+    );
   });
 
   it('应该编码和解码 PING/PONG', () => {
@@ -60,18 +55,17 @@ describe('borsh codec', () => {
     const pingPayload = wsBorsh.encodePayload(wsBorsh.schema.PingPongSchema, ping);
     const pingEnvelope = wsBorsh.encodeEnvelope(wsBorsh.KIND_PING, pingPayload, 1);
 
-    // 服务器解码
-    const decodedPing = decodePing(wsBorsh.decodeEnvelope(pingEnvelope).payload);
+    const decodedPing = wsBorsh.decodePayload(
+      wsBorsh.schema.PingPongSchema,
+      wsBorsh.decodeEnvelope(pingEnvelope).payload
+    );
     expect(decodedPing.nonce).toBe(ping.nonce);
 
-    // 服务器发送 PONG
-    const pong = encodePong(
-      {
-        nonce: decodedPing.nonce,
-        timeMs: BigInt(Date.now()),
-      },
-      seq
-    );
+    const pongPayload = wsBorsh.encodePayload(wsBorsh.schema.PingPongSchema, {
+      nonce: decodedPing.nonce,
+      timeMs: BigInt(Date.now()),
+    });
+    const pong = wsBorsh.encodeEnvelope(wsBorsh.KIND_PONG, pongPayload, seq);
 
     const pongEnvelope = wsBorsh.decodeEnvelope(pong);
     expect(pongEnvelope.kind).toBe(wsBorsh.KIND_PONG);
@@ -81,10 +75,16 @@ describe('borsh codec', () => {
     const state = createBorshClientState();
     const seq = state.seqGen();
 
-    const connected = encodeDeviceConnected({ deviceId: 'device-1' }, seq);
+    const payload = wsBorsh.encodePayload(wsBorsh.schema.DeviceConnectedSchema, {
+      deviceId: 'device-1',
+    });
+    const connected = wsBorsh.encodeEnvelope(wsBorsh.KIND_DEVICE_CONNECTED, payload, seq);
     const envelope = wsBorsh.decodeEnvelope(connected);
 
     expect(envelope.kind).toBe(wsBorsh.KIND_DEVICE_CONNECTED);
+    expect(wsBorsh.decodePayload(wsBorsh.schema.DeviceConnectedSchema, envelope.payload)).toEqual({
+      deviceId: 'device-1',
+    });
   });
 
   it('unchunked encodePayloadFrames 使用原始 seq 且只消耗一次', () => {

@@ -1,13 +1,4 @@
-const encoder = new TextEncoder();
-
 export const SEND_KEYS_HEX_CHUNK_BYTES = 256;
-
-export function encodeInputToHexChunks(
-  input: string,
-  chunkBytes = SEND_KEYS_HEX_CHUNK_BYTES
-): string[][] {
-  return encodeBytesToHexChunks(encoder.encode(input), chunkBytes);
-}
 
 export function encodeBytesToHexChunks(
   bytes: Uint8Array,

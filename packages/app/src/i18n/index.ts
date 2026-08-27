@@ -46,8 +46,6 @@ Global flags:
     'service.systemd.daemonReloadFailed': 'systemctl daemon-reload failed: {{detail}}',
     'service.systemd.enableFailed': 'systemctl enable failed: {{detail}}',
     'service.systemd.restartFailed': 'systemctl restart failed: {{detail}}',
-    'service.systemd.startFailed': 'systemctl start failed: {{detail}}',
-    'service.systemd.startRuntimeFailed': 'systemctl start failed: {{detail}}',
     'service.launchd.bootstrapFailed': 'launchctl bootstrap failed: {{detail}}',
     'service.status.none': 'Service manager is not integrated for platform: {{platform}}',
     'service.status.plistMissing': 'launchd plist not found',
@@ -177,8 +175,6 @@ Global flags:
     'service.systemd.daemonReloadFailed': 'systemctl daemon-reload 失败：{{detail}}',
     'service.systemd.enableFailed': 'systemctl enable 失败：{{detail}}',
     'service.systemd.restartFailed': 'systemctl restart 失败：{{detail}}',
-    'service.systemd.startFailed': 'systemctl start 失败：{{detail}}',
-    'service.systemd.startRuntimeFailed': 'systemctl 启动失败：{{detail}}',
     'service.launchd.bootstrapFailed': 'launchctl bootstrap 失败：{{detail}}',
     'service.status.none': '当前平台未集成服务管理：{{platform}}',
     'service.status.plistMissing': 'plist 不存在',
@@ -292,10 +288,6 @@ export function normalizeLang(input: string | undefined): CliLang {
 
 export function setLang(lang: CliLang): void {
   currentLang = lang;
-}
-
-export function getLang(): CliLang {
-  return currentLang;
 }
 
 function interpolate(template: string, vars: Vars | undefined): string {

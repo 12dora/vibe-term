@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from 'bun:test';
-import { getLang, normalizeLang, setLang, t } from './index';
+import { normalizeLang, setLang, t } from './index';
 
 describe('i18n', () => {
   afterEach(() => {
@@ -16,7 +16,6 @@ describe('i18n', () => {
   });
 
   test('renders english by default', () => {
-    expect(getLang()).toBe('en');
     expect(t('cli.error.unknownCommand', { command: 'foo' })).toContain('Unknown command');
   });
 

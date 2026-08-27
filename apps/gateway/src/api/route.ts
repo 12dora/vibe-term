@@ -38,11 +38,6 @@ export interface ApiRoute<P extends string = string> {
   handler: ApiRouteHandler<P>;
 }
 
-export interface MatchedRoute<P extends string = string> {
-  route: ApiRoute<P>;
-  params: PathParams<P>;
-}
-
 export function route<P extends string>(def: ApiRoute<P>): ApiRoute<P> {
   return def;
 }
@@ -76,21 +71,6 @@ export function matchPath(pathname: string, pattern: string): Record<string, str
     }
   }
   return params;
-}
-
-export function matchRoute(
-  method: string,
-  pathname: string,
-  routes: readonly ApiRoute[]
-): MatchedRoute | null {
-  for (const candidate of routes) {
-    if (!methodMatches(method, candidate.method)) continue;
-    const params = matchPath(pathname, candidate.path);
-    if (params) {
-      return { route: candidate, params };
-    }
-  }
-  return null;
 }
 
 export function dispatchRoutes(
