@@ -19,6 +19,7 @@ export {
   KdfParamsSchema,
   KeyLogRecordSchema,
   LoginSchema,
+  PasskeyAssertionSchema,
   PeerHelloSchema,
   PeerTranscriptSchema,
   RemovePasskeyPayloadSchema,
@@ -41,6 +42,7 @@ export {
   decodeKdfParams,
   decodeKeyLogRecord,
   decodeLogin,
+  decodePasskeyAssertion,
   decodePeerTranscript,
   decodeRemovePasskeyPayload,
   decodeResetRootPayload,
@@ -58,6 +60,7 @@ export {
   encodeKdfParams,
   encodeKeyLogRecord,
   encodeLogin,
+  encodePasskeyAssertion,
   encodePeerTranscript,
   encodeRemovePasskeyPayload,
   encodeResetRootPayload,
@@ -85,6 +88,7 @@ export type {
   KeyLogSigner as KeyLogSignerName,
   KeyLogType as KeyLogTypeName,
   Login,
+  PasskeyAssertion,
   PeerHello,
   PeerPath as PeerPathName,
   PeerTranscript,
@@ -113,22 +117,26 @@ export {
 export type { Ed25519KeyPair, RootKey, X25519KeyPair } from './root-key';
 
 export {
+  DELEGATION_CLOCK_SKEW_MS,
   DELEGATION_TTL_MS,
   buildPasskeyDelegation,
   createDelegation,
   delegationChallenge,
   verifyDelegation,
+  verifyDelegationTimes,
 } from './delegation';
 export type {
   SignedDelegation,
   VerifyDelegationPasskey,
   VerifyDelegationResult,
+  VerifyDelegationTimesError,
 } from './delegation';
 
 export { buildLogin, signLogin, verifyLogin } from './login';
 export type { LoginErrorCode, VerifyLoginExpected, VerifyLoginResult } from './login';
 
 export {
+  KEY_LOG_SIGNER_MATRIX,
   applyKeyLogRecord,
   buildKeyLogRecord,
   computeRecordHash,
@@ -140,10 +148,12 @@ export {
   verifyKeyLogRecord,
 } from './key-log';
 export type {
+  ApplyKeyLogCtx,
   ApplyKeyLogError,
   ApplyKeyLogResult,
   KeyLogEffect,
   KeyLogHead,
+  KeyLogSignedRecord,
   PasskeyRecord,
   StoredNodeCert,
   UserKeyState,

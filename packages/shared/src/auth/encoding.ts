@@ -99,8 +99,18 @@ export const AuthorizationSchema = b.struct({
   enroll_pk: b.bytes(32),
   exp: b.u64(),
   root_epoch: b.u32(),
+  signer: KeyLogSignerSchema,
+  credential_id: b.option(b.string()),
 });
 export type Authorization = b.infer<typeof AuthorizationSchema>;
+
+export const PasskeyAssertionSchema = b.struct({
+  credential_id: b.string(),
+  client_data_json: b.bytes(),
+  authenticator_data: b.bytes(),
+  signature: b.bytes(),
+});
+export type PasskeyAssertion = b.infer<typeof PasskeyAssertionSchema>;
 
 export const CertificateSchema = b.struct({
   domain: b.string(),
@@ -181,7 +191,7 @@ export type ClearTotpPayload = b.infer<typeof ClearTotpPayloadSchema>;
 
 export const AdmitNodePayloadSchema = b.struct({
   authorization_bytes: b.bytes(),
-  authorization_sig: b.bytes(64),
+  authorization_sig: b.bytes(),
   certificate_bytes: b.bytes(),
   cert_sig: b.bytes(64),
 });
@@ -217,6 +227,14 @@ export function decodeLogin(bytes: Uint8Array): Login {
   const value = LoginSchema.deserialize(bytes);
   assertDomain(value.domain, DOMAIN_LOGIN);
   return value;
+}
+
+export function encodePasskeyAssertion(value: PasskeyAssertion): Uint8Array {
+  return PasskeyAssertionSchema.serialize(value);
+}
+
+export function decodePasskeyAssertion(bytes: Uint8Array): PasskeyAssertion {
+  return PasskeyAssertionSchema.deserialize(bytes);
 }
 
 export function encodeAuthorization(value: Authorization): Uint8Array {

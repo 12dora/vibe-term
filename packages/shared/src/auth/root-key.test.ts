@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'bun:test';
-import { x25519 } from '@noble/curves/ed25519.js';
+import { ed25519, x25519 } from '@noble/curves/ed25519.js';
 import {
   DOMAIN_DELEGATION,
   bytesEqual,
@@ -107,6 +107,15 @@ describe('Ed25519 / X25519 wrappers', () => {
     expect(verifyEd25519(sig, msg, kp.publicKey)).toBe(true);
     expect(verifyEd25519(sig, new TextEncoder().encode('other'), kp.publicKey)).toBe(false);
     expect(verifyEd25519(sig, msg, hexToBytes(CANONICAL_ROOT_PK))).toBe(false);
+  });
+
+  it('rejects a ZIP-215-valid small-order public key that RFC 8032 strict must refuse', () => {
+    const identity = hexToBytes(`01${'00'.repeat(31)}`);
+    const zip215Sig = hexToBytes(`01${'00'.repeat(63)}`);
+    const msg = new TextEncoder().encode('tmex');
+    expect(ed25519.verify(zip215Sig, msg, identity, { zip215: true })).toBe(true);
+    expect(ed25519.verify(zip215Sig, msg, identity, { zip215: false })).toBe(false);
+    expect(verifyEd25519(zip215Sig, msg, identity)).toBe(false);
   });
 
   it('X25519 keygen agrees on a shared secret', () => {

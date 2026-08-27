@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'bun:test';
-import { bytesEqual, decodeAuthorization, decodeCertificate } from './encoding';
+import {
+  bytesEqual,
+  decodeAuthorization,
+  decodeCertificate,
+  encodePasskeyAssertion,
+} from './encoding';
 import {
   JOIN_TOKEN_CHARS,
   createEnrollment,
@@ -23,14 +28,37 @@ describe('enrollment', () => {
     expect(auth.uid).toBe('user-1');
     expect(auth.exp).toBe(BigInt(now + 10 * 60 * 1000));
     expect(bytesEqual(auth.enroll_pk, enroll.enrollPk)).toBe(true);
+    expect(auth.signer).toBe('root');
+    expect(auth.credential_id).toBeNull();
   });
 
-  it('join token round-trips at 128 chars / 96 bytes', () => {
+  it('createEnrollment with PasskeySigner stores assertion bytes and passkey fields', async () => {
+    const assertion = encodePasskeyAssertion({
+      credential_id: 'cred-1',
+      client_data_json: new Uint8Array([1, 2, 3]),
+      authenticator_data: new Uint8Array([4, 5, 6]),
+      signature: new Uint8Array([7, 8, 9]),
+    });
+    const enroll = await createEnrollment(
+      { credentialId: 'cred-1', sign: () => assertion },
+      { uid: 'user-1', rootEpoch: 0, now }
+    );
+    expect(bytesEqual(enroll.authorizationSig, assertion)).toBe(true);
+    expect(enroll.authorizationSig.length).not.toBe(64);
+    const auth = decodeAuthorization(enroll.authorizationBytes);
+    expect(auth.signer).toBe('passkey');
+    expect(auth.credential_id).toBe('cred-1');
+  });
+
+  it('join token round-trips at 128 chars / 96 bytes and locks layout', () => {
     const enrollSk = new Uint8Array(32).fill(1);
     const rootPk = new Uint8Array(32).fill(2);
     const head = new Uint8Array(32).fill(3);
     const token = encodeJoinToken(enrollSk, rootPk, head);
     expect(token.length).toBe(JOIN_TOKEN_CHARS);
+    expect(token).toBe(
+      'AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQECAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMD'
+    );
     const decoded = decodeJoinToken(token);
     expect(bytesEqual(decoded.enrollSk, enrollSk)).toBe(true);
     expect(bytesEqual(decoded.rootPublicKey, rootPk)).toBe(true);

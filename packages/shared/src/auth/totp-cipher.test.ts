@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'bun:test';
-import { bytesEqual } from './encoding';
+import { bytesEqual, bytesToHex } from './encoding';
 import { decryptTotpSecret, encryptTotpSecret } from './totp-cipher';
 
 const kTotp = new Uint8Array(32).fill(0x44);
@@ -29,5 +29,14 @@ describe('totp-cipher AES-256-GCM', () => {
     await expect(
       decryptTotpSecret(kTotp, record, { uid: 'user-1', root_epoch: 1, seq: 1n })
     ).rejects.toBeDefined();
+  });
+
+  it('locks AES-256-GCM ciphertext/tag for a fixed nonce', async () => {
+    const nonce = new Uint8Array(12).fill(0x07);
+    const record = await encryptTotpSecret(kTotp, secret, aad, nonce);
+    expect(bytesToHex(record.nonce)).toBe('070707070707070707070707');
+    expect(bytesToHex(record.ciphertext)).toBe('7e89247d9ebf4abe7fdd0c54a0e2b3b7');
+    expect(bytesToHex(record.tag)).toBe('8e0b6151d060e1b56bf7c0e3e614f241');
+    expect(bytesEqual(await decryptTotpSecret(kTotp, record, aad), secret)).toBe(true);
   });
 });

@@ -19,7 +19,6 @@ import {
   decodeRevokeNodePayload,
   decodeRotateRootPayload,
   decodeSetTotpPayload,
-  encodeKeyLogRecord,
   nodeIdToHex,
   sha256,
 } from './encoding';
@@ -55,7 +54,24 @@ export type UserKeyState = {
 export type KeyLogEffect =
   | { type: 'revokeAllSessions' }
   | { type: 'revokeSessionsByCredential'; credentialId: string }
-  | { type: 'revokeSessionsVia'; nodeId: Uint8Array };
+  | { type: 'revokeSessionsVia'; nodeId: Uint8Array }
+  | { type: 'clearPeerCache' };
+
+export const KEY_LOG_SIGNER_MATRIX: Record<KeyLogType, readonly KeyLogSigner[]> = {
+  'add-passkey': ['root', 'passkey'],
+  'remove-passkey': ['root', 'passkey'],
+  'rotate-root': ['root'],
+  'set-totp': ['root', 'passkey'],
+  'clear-totp': ['root', 'passkey'],
+  'admit-node': ['root', 'passkey'],
+  'revoke-node': ['root', 'passkey'],
+  'reset-root': ['root'],
+};
+
+export type KeyLogSignedRecord = {
+  bytes: Uint8Array;
+  sig: Uint8Array;
+};
 
 export type VerifyPasskeyAssertion = (args: {
   recordBytes: Uint8Array;
@@ -71,7 +87,8 @@ export type VerifyKeyLogCtx = {
   rootPublicKey: Uint8Array;
   resolvePasskey: (credentialId: string) => Uint8Array | null;
   verifyPasskeyAssertion?: VerifyPasskeyAssertion;
-  existingAtSeq?: Uint8Array;
+  existingAtSeq?: KeyLogSignedRecord | Uint8Array;
+  allowGenesis?: boolean;
 };
 
 export type VerifyKeyLogError =
@@ -80,7 +97,9 @@ export type VerifyKeyLogError =
   | 'epoch_mismatch'
   | 'bad_signature'
   | 'unknown_signer'
-  | 'fork';
+  | 'fork'
+  | 'signer_not_allowed'
+  | 'reset_not_genesis';
 
 export type VerifyKeyLogResult =
   | { ok: true; record: KeyLogRecord; hash: Uint8Array }
@@ -92,7 +111,12 @@ export type ApplyKeyLogError =
   | 'enroll_pk_mismatch'
   | 'uid_mismatch'
   | 'unknown_node'
-  | 'malformed_payload';
+  | 'malformed_payload'
+  | 'node_id_reused';
+
+export type ApplyKeyLogCtx = {
+  verifyPasskeyAssertion?: VerifyPasskeyAssertion;
+};
 
 export type ApplyKeyLogResult =
   | { ok: true; state: UserKeyState; effects: KeyLogEffect[] }
@@ -162,17 +186,33 @@ export function signKeyLogRecordWithRoot(rootKey: RootKey, recordBytes: Uint8Arr
   return rootKey.sign(recordBytes);
 }
 
-export function detectFork(
-  existingRecordAtSeq: KeyLogRecord | Uint8Array,
-  incomingRecord: KeyLogRecord | Uint8Array
-): boolean {
-  const existing =
-    existingRecordAtSeq instanceof Uint8Array
-      ? existingRecordAtSeq
-      : encodeKeyLogRecord(existingRecordAtSeq);
-  const incoming =
-    incomingRecord instanceof Uint8Array ? incomingRecord : encodeKeyLogRecord(incomingRecord);
-  return !bytesEqual(existing, incoming);
+const ZERO_HASH = new Uint8Array(32);
+
+function isZeroHash(bytes: Uint8Array): boolean {
+  return bytesEqual(bytes, ZERO_HASH);
+}
+
+function incomingHash(incoming: KeyLogSignedRecord): Uint8Array {
+  return computeRecordHash(incoming.bytes, incoming.sig);
+}
+
+function existingHash(existing: KeyLogSignedRecord | Uint8Array): Uint8Array {
+  return existing instanceof Uint8Array
+    ? existing
+    : computeRecordHash(existing.bytes, existing.sig);
+}
+
+export function detectFork(existing: KeyLogSignedRecord, incoming: KeyLogSignedRecord): boolean {
+  return !bytesEqual(incomingHash(existing), incomingHash(incoming));
+}
+
+function isGenesisReset(record: KeyLogRecord, ctx: VerifyKeyLogCtx): boolean {
+  return (
+    ctx.allowGenesis === true &&
+    ctx.head.seq === 0n &&
+    record.seq === 1n &&
+    isZeroHash(record.prev_hash)
+  );
 }
 
 export async function verifyKeyLogRecord(
@@ -181,8 +221,18 @@ export async function verifyKeyLogRecord(
   ctx: VerifyKeyLogCtx
 ): Promise<VerifyKeyLogResult> {
   const record = decodeKeyLogRecord(recordBytes);
-  if (ctx.existingAtSeq && detectFork(ctx.existingAtSeq, recordBytes)) {
-    return { ok: false, error: 'fork' };
+  if (ctx.existingAtSeq) {
+    const incoming = { bytes: recordBytes, sig };
+    if (!bytesEqual(existingHash(ctx.existingAtSeq), incomingHash(incoming))) {
+      return { ok: false, error: 'fork' };
+    }
+  }
+  if (record.type === 'reset-root' && !isGenesisReset(record, ctx)) {
+    return { ok: false, error: 'reset_not_genesis' };
+  }
+  const allowed = KEY_LOG_SIGNER_MATRIX[record.type];
+  if (!allowed || !allowed.includes(record.signer)) {
+    return { ok: false, error: 'signer_not_allowed' };
   }
   if (record.seq !== ctx.head.seq + 1n) {
     return { ok: false, error: 'seq_gap' };
@@ -248,7 +298,11 @@ function cloneState(state: UserKeyState): UserKeyState {
   };
 }
 
-function applyRotateOrReset(state: UserKeyState, record: KeyLogRecord): ApplyKeyLogResult {
+function applyRootChange(
+  state: UserKeyState,
+  record: KeyLogRecord,
+  clearNodeCerts: boolean
+): ApplyKeyLogResult {
   let payload: ReturnType<typeof decodeRotateRootPayload>;
   try {
     payload = decodeRotateRootPayload(record.payload);
@@ -265,10 +319,19 @@ function applyRotateOrReset(state: UserKeyState, record: KeyLogRecord): ApplyKey
   state.rootEpoch = state.rootEpoch + 1;
   state.passkeys = new Map();
   state.totp = null;
-  return { ok: true, state, effects: [{ type: 'revokeAllSessions' }] };
+  const effects: KeyLogEffect[] = [{ type: 'revokeAllSessions' }];
+  if (clearNodeCerts) {
+    state.nodeCerts = new Map();
+    effects.push({ type: 'clearPeerCache' });
+  }
+  return { ok: true, state, effects };
 }
 
-function applyAdmitNode(state: UserKeyState, record: KeyLogRecord): ApplyKeyLogResult {
+async function applyAdmitNode(
+  state: UserKeyState,
+  record: KeyLogRecord,
+  ctx?: ApplyKeyLogCtx
+): Promise<ApplyKeyLogResult> {
   let payload: ReturnType<typeof decodeAdmitNodePayload>;
   try {
     payload = decodeAdmitNodePayload(record.payload);
@@ -283,7 +346,33 @@ function applyAdmitNode(state: UserKeyState, record: KeyLogRecord): ApplyKeyLogR
   } catch {
     return { ok: false, error: 'malformed_payload' };
   }
-  if (!verifyEd25519(payload.authorization_sig, payload.authorization_bytes, state.rootPublicKey)) {
+  if (authorization.signer === 'passkey') {
+    const credentialId = authorization.credential_id;
+    if (!credentialId) {
+      return { ok: false, error: 'bad_authorization_sig' };
+    }
+    const cose = state.passkeys.get(credentialId)?.public_key ?? null;
+    if (!cose || !ctx?.verifyPasskeyAssertion) {
+      return { ok: false, error: 'bad_authorization_sig' };
+    }
+    const ok = await ctx.verifyPasskeyAssertion({
+      recordBytes: payload.authorization_bytes,
+      sig: payload.authorization_sig,
+      credentialId,
+      publicKey: cose,
+      challenge: sha256(payload.authorization_bytes),
+    });
+    if (!ok) {
+      return { ok: false, error: 'bad_authorization_sig' };
+    }
+  } else if (authorization.signer === 'root') {
+    if (
+      payload.authorization_sig.length !== 64 ||
+      !verifyEd25519(payload.authorization_sig, payload.authorization_bytes, state.rootPublicKey)
+    ) {
+      return { ok: false, error: 'bad_authorization_sig' };
+    }
+  } else {
     return { ok: false, error: 'bad_authorization_sig' };
   }
   if (!verifyEd25519(payload.cert_sig, payload.certificate_bytes, authorization.enroll_pk)) {
@@ -303,22 +392,29 @@ function applyAdmitNode(state: UserKeyState, record: KeyLogRecord): ApplyKeyLogR
     authorizationSig: new Uint8Array(payload.authorization_sig),
     revoked: false,
   };
-  state.nodeCerts.set(nodeIdToHex(stored.nodeId), stored);
+  const hex = nodeIdToHex(stored.nodeId);
+  if (state.nodeCerts.has(hex)) {
+    return { ok: false, error: 'node_id_reused' };
+  }
+  state.nodeCerts.set(hex, stored);
   return { ok: true, state, effects: [] };
 }
 
-export function applyKeyLogRecord(
+export async function applyKeyLogRecord(
   state: UserKeyState,
   record: KeyLogRecord,
-  hash: Uint8Array
-): ApplyKeyLogResult {
+  hash: Uint8Array,
+  ctx?: ApplyKeyLogCtx
+): Promise<ApplyKeyLogResult> {
   const next = cloneState(state);
   let result: ApplyKeyLogResult;
   try {
     switch (record.type) {
       case 'rotate-root':
+        result = applyRootChange(next, record, false);
+        break;
       case 'reset-root':
-        result = applyRotateOrReset(next, record);
+        result = applyRootChange(next, record, true);
         break;
       case 'add-passkey': {
         const payload = decodeAddPasskeyPayload(record.payload);
@@ -345,7 +441,7 @@ export function applyKeyLogRecord(
         result = { ok: true, state: next, effects: [] };
         break;
       case 'admit-node':
-        result = applyAdmitNode(next, record);
+        result = await applyAdmitNode(next, record, ctx);
         break;
       case 'revoke-node': {
         const payload = decodeRevokeNodePayload(record.payload);
@@ -413,18 +509,35 @@ export async function verifyKeyLogChain(
     return { ok: false, error: 'missing_genesis' };
   }
   let state = emptyUserKeyState(new Uint8Array(32), undefined, genesis.root_epoch);
-  for (const { bytes, sig } of records) {
+  for (let i = 0; i < records.length; i++) {
+    const item = records[i];
+    if (!item) {
+      return { ok: false, error: 'malformed_payload' };
+    }
+    const { bytes, sig } = item;
+    let decoded: KeyLogRecord;
+    try {
+      decoded = decodeKeyLogRecord(bytes);
+    } catch {
+      return { ok: false, error: 'malformed_payload' };
+    }
+    if (decoded.type === 'reset-root' && i !== 0) {
+      return { ok: false, error: 'reset_not_genesis' };
+    }
     const verified = await verifyKeyLogRecord(bytes, sig, {
       head: state.head,
       rootEpoch: state.rootEpoch,
       rootPublicKey: state.rootPublicKey,
       resolvePasskey: (id) => state.passkeys.get(id)?.public_key ?? null,
       verifyPasskeyAssertion: options?.verifyPasskeyAssertion,
+      allowGenesis: i === 0,
     });
     if (!verified.ok) {
       return verified;
     }
-    const applied = applyKeyLogRecord(state, verified.record, verified.hash);
+    const applied = await applyKeyLogRecord(state, verified.record, verified.hash, {
+      verifyPasskeyAssertion: options?.verifyPasskeyAssertion,
+    });
     if (!applied.ok) {
       return applied;
     }

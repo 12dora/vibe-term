@@ -24,15 +24,19 @@ export function totpAadBytes(aad: TotpAad | Uint8Array): Uint8Array {
 export async function encryptTotpSecret(
   kTotp: Uint8Array,
   secret: Uint8Array,
-  aad: TotpAad | Uint8Array
+  aad: TotpAad | Uint8Array,
+  nonce?: Uint8Array
 ): Promise<SetTotpPayload> {
-  const nonce = randomBytes(GCM_NONCE_LENGTH);
+  const iv = nonce ? new Uint8Array(nonce) : randomBytes(GCM_NONCE_LENGTH);
+  if (iv.length !== GCM_NONCE_LENGTH) {
+    throw new Error('AES-GCM nonce must be 12 bytes');
+  }
   const key = await importAesKey(kTotp, ['encrypt']);
   const packed = new Uint8Array(
     await crypto.subtle.encrypt(
       {
         name: 'AES-GCM',
-        iv: toBufferSource(nonce),
+        iv: toBufferSource(iv),
         additionalData: toBufferSource(totpAadBytes(aad)),
         tagLength: 128,
       },
@@ -42,7 +46,7 @@ export async function encryptTotpSecret(
   );
   const ciphertext = packed.slice(0, packed.length - GCM_TAG_LENGTH);
   const tag = packed.slice(packed.length - GCM_TAG_LENGTH);
-  return { alg: TOTP_AEAD_ALG, nonce, ciphertext, tag };
+  return { alg: TOTP_AEAD_ALG, nonce: iv, ciphertext, tag };
 }
 
 export async function decryptTotpSecret(

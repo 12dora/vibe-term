@@ -4,6 +4,7 @@ import type { RootKey } from './root-key';
 import { verifyEd25519 } from './root-key';
 
 export const DELEGATION_TTL_MS = 18 * 60 * 60 * 1000;
+export const DELEGATION_CLOCK_SKEW_MS = 60_000;
 
 export type SignedDelegation = {
   delegation: Delegation;
@@ -11,9 +12,14 @@ export type SignedDelegation = {
   sig: Uint8Array;
 };
 
+export type VerifyDelegationTimesError = 'expired' | 'invalid_ttl' | 'issued_in_future';
+
 export type VerifyDelegationResult =
   | { ok: true; delegation: Delegation }
-  | { ok: false; error: 'expired' | 'bad_signature' | 'method_mismatch' };
+  | {
+      ok: false;
+      error: 'expired' | 'bad_signature' | 'method_mismatch' | 'invalid_ttl' | 'issued_in_future';
+    };
 
 export type VerifyDelegationPasskey = (args: {
   challenge: Uint8Array;
@@ -24,6 +30,23 @@ export type VerifyDelegationPasskey = (args: {
 
 function toMs(now: number | bigint): bigint {
   return typeof now === 'bigint' ? now : BigInt(now);
+}
+
+export function verifyDelegationTimes(
+  delegation: Delegation,
+  now: number | bigint
+): { ok: true } | { ok: false; error: VerifyDelegationTimesError } {
+  const nowMs = toMs(now);
+  if (delegation.exp - delegation.issued_at !== BigInt(DELEGATION_TTL_MS)) {
+    return { ok: false, error: 'invalid_ttl' };
+  }
+  if (delegation.issued_at > nowMs + BigInt(DELEGATION_CLOCK_SKEW_MS)) {
+    return { ok: false, error: 'issued_in_future' };
+  }
+  if (nowMs >= delegation.exp) {
+    return { ok: false, error: 'expired' };
+  }
+  return { ok: true };
 }
 
 export function createDelegation(
@@ -55,8 +78,9 @@ export function verifyDelegation(
   if (delegation.method !== 'root') {
     return { ok: false, error: 'method_mismatch' };
   }
-  if (toMs(ctx.now) >= delegation.exp) {
-    return { ok: false, error: 'expired' };
+  const times = verifyDelegationTimes(delegation, ctx.now);
+  if (!times.ok) {
+    return times;
   }
   const bytes = encodeDelegation(delegation);
   if (!verifyEd25519(sig, bytes, ctx.rootPublicKey)) {

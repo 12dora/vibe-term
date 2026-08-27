@@ -16,6 +16,7 @@ export const JOIN_TOKEN_BYTES = 96;
 export const JOIN_TOKEN_CHARS = 128;
 
 export type PasskeySigner = {
+  credentialId: string;
   sign(message: Uint8Array): Uint8Array | Promise<Uint8Array>;
 };
 
@@ -45,6 +46,10 @@ function toMs(now: number | bigint): bigint {
   return typeof now === 'bigint' ? now : BigInt(now);
 }
 
+function isPasskeySigner(signer: EnrollmentSigner): signer is PasskeySigner {
+  return typeof (signer as PasskeySigner).credentialId === 'string';
+}
+
 export async function createEnrollment(
   signer: EnrollmentSigner,
   opts: { uid: string; rootEpoch: number; now: number | bigint; ttlMs?: number }
@@ -52,12 +57,15 @@ export async function createEnrollment(
   const enroll = generateEd25519KeyPair();
   const issued = toMs(opts.now);
   const ttl = opts.ttlMs ?? ENROLLMENT_TTL_MS;
+  const passkey = isPasskeySigner(signer);
   const authorization: Authorization = {
     domain: DOMAIN_AUTHORIZATION,
     uid: opts.uid,
     enroll_pk: enroll.publicKey,
     exp: issued + BigInt(ttl),
     root_epoch: opts.rootEpoch,
+    signer: passkey ? 'passkey' : 'root',
+    credential_id: passkey ? signer.credentialId : null,
   };
   const authorizationBytes = encodeAuthorization(authorization);
   const authorizationSig = await Promise.resolve(signer.sign(authorizationBytes));

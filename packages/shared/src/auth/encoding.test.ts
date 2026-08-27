@@ -19,6 +19,7 @@ import {
   decodeDelegation,
   decodeKeyLogRecord,
   decodeLogin,
+  decodePasskeyAssertion,
   decodePeerTranscript,
   decodeRemovePasskeyPayload,
   decodeResetRootPayload,
@@ -35,6 +36,7 @@ import {
   encodeDelegation,
   encodeKeyLogRecord,
   encodeLogin,
+  encodePasskeyAssertion,
   encodePeerTranscript,
   encodeRemovePasskeyPayload,
   encodeResetRootPayload,
@@ -199,10 +201,14 @@ describe('signed-object round-trips', () => {
       enroll_pk: fill(32, 5),
       exp: 42n,
       root_epoch: 3,
+      signer: 'root' as const,
+      credential_id: null,
     };
     const decoded = decodeAuthorization(encodeAuthorization(value));
     expect(decoded.root_epoch).toBe(3);
     expect(decoded.exp).toBe(42n);
+    expect(decoded.signer).toBe('root');
+    expect(decoded.credential_id).toBeNull();
   });
 
   it('certificate', () => {
@@ -321,9 +327,187 @@ describe('key-log payload schemas', () => {
     );
     expect(admit.authorization_sig.length).toBe(64);
 
+    const assertion = encodePasskeyAssertion({
+      credential_id: 'cred-1',
+      client_data_json: fill(4, 0xaa),
+      authenticator_data: fill(4, 0xbb),
+      signature: fill(4, 0xcc),
+    });
+    const admitPass = decodeAdmitNodePayload(
+      encodeAdmitNodePayload({
+        authorization_bytes: fill(4, 1),
+        authorization_sig: assertion,
+        certificate_bytes: fill(5, 3),
+        cert_sig: fill(64, 4),
+      })
+    );
+    expect(admitPass.authorization_sig.length).not.toBe(64);
+    expect(bytesEqual(admitPass.authorization_sig, assertion)).toBe(true);
+
     const revoke = decodeRevokeNodePayload(
       encodeRevokeNodePayload({ node_id: fill(16, 9), reason: 'lost' })
     );
     expect(revoke.reason).toBe('lost');
+  });
+});
+
+const LOCKED = {
+  login:
+    '0d000000746d65782f6c6f67696e2f76310400000063682d310909090909090909090909090909090909090909090909090909090909090909060000006e6f64652d61080808080808080808080808080808080808080808080808080808080808080806000000757365722d31060000006e6f64652d65',
+  authorizationRoot:
+    '0e000000746d65782f656e726f6c6c2f763106000000757365722d3105050505050505050505050505050505050505050505050505050505050505052a00000000000000030000000000',
+  authorizationPasskey:
+    '0e000000746d65782f656e726f6c6c2f763106000000757365722d3105050505050505050505050505050505050505050505050505050505050505052a0000000000000003000000010106000000637265642d31',
+  certificate:
+    '10000000746d65782f6e6f6465636572742f763106000000757365722d31070707070707070707070707070707070101010101010101010101010101010101010101010101010101010101010101020202020202020202020202020202020202020202020202020202020202020203030303030303030303030303030303030303030303030303030303030303036300000000000000',
+  totpAad: '06000000757365722d31020000000900000000000000',
+  addPasskey:
+    '040000006372656408000000cccccccccccccccc0b0000006578616d706c652e636f6d1300000068747470733a2f2f6578616d706c652e636f6d040000000200000003000000757362030000006e666301000b0000006d756c74694465766963650400000079756269',
+  removePasskey: '0400000063726564',
+  rotateRoot:
+    '111111111111111111111111111111111111111111111111111111111111111122222222222222222222222222222222000001000300000001000000',
+  setTotp:
+    '070000004132353647434d01010101010101010101010108000000020202020202020203030303030303030303030303030303',
+  passkeyAssertion: '06000000637265642d3104000000aaaaaaaa04000000bbbbbbbb04000000cccccccc',
+  admitRoot:
+    '0400000001010101400000000202020202020202020202020202020202020202020202020202020202020202020202020202020202020202020202020202020202020202020202020202020205000000030303030304040404040404040404040404040404040404040404040404040404040404040404040404040404040404040404040404040404040404040404040404040404',
+  admitPasskey:
+    '04000000010101012200000006000000637265642d3104000000aaaaaaaa04000000bbbbbbbb04000000cccccccc05000000030303030304040404040404040404040404040404040404040404040404040404040404040404040404040404040404040404040404040404040404040404040404040404',
+  revoke: '09090909090909090909090909090909040000006c6f7374',
+} as const;
+
+describe('locked protocol bytes', () => {
+  it('login', () => {
+    expect(
+      bytesToHex(
+        encodeLogin({
+          domain: DOMAIN_LOGIN,
+          challenge_id: 'ch-1',
+          nonce: fill(32, 9),
+          target: 'node-a',
+          target_pk: fill(32, 8),
+          uid: 'user-1',
+          entry: 'node-e',
+        })
+      )
+    ).toBe(LOCKED.login);
+  });
+
+  it('authorization root and passkey forms', () => {
+    const base = {
+      domain: DOMAIN_AUTHORIZATION,
+      uid: 'user-1',
+      enroll_pk: fill(32, 5),
+      exp: 42n,
+      root_epoch: 3,
+    };
+    expect(bytesToHex(encodeAuthorization({ ...base, signer: 'root', credential_id: null }))).toBe(
+      LOCKED.authorizationRoot
+    );
+    expect(
+      bytesToHex(encodeAuthorization({ ...base, signer: 'passkey', credential_id: 'cred-1' }))
+    ).toBe(LOCKED.authorizationPasskey);
+  });
+
+  it('certificate', () => {
+    expect(
+      bytesToHex(
+        encodeCertificate({
+          domain: DOMAIN_CERTIFICATE,
+          uid: 'user-1',
+          node_id: fill(16, 7),
+          ed_pk: fill(32, 1),
+          x25519_pk: fill(32, 2),
+          enroll_pk: fill(32, 3),
+          issued_at: 99n,
+        })
+      )
+    ).toBe(LOCKED.certificate);
+  });
+
+  it('totpAad', () => {
+    expect(bytesToHex(encodeTotpAad({ uid: 'user-1', root_epoch: 2, seq: 9n }))).toBe(
+      LOCKED.totpAad
+    );
+  });
+
+  it('key-log payloads', () => {
+    expect(
+      bytesToHex(
+        encodeAddPasskeyPayload({
+          credential_id: 'cred',
+          public_key: fill(8, 0xcc),
+          rp_id: 'example.com',
+          origin: 'https://example.com',
+          counter: 4,
+          transports: ['usb', 'nfc'],
+          backup_eligible: true,
+          backup_state: false,
+          device_type: 'multiDevice',
+          name: 'yubi',
+        })
+      )
+    ).toBe(LOCKED.addPasskey);
+    expect(bytesToHex(encodeRemovePasskeyPayload({ credential_id: 'cred' }))).toBe(
+      LOCKED.removePasskey
+    );
+    const rotate = {
+      root_public_key: fill(32, 0x11),
+      kdf_params: {
+        salt: fill(16, 0x22),
+        memory_kib: 65536,
+        iterations: 3,
+        parallelism: 1,
+      },
+    };
+    expect(bytesToHex(encodeRotateRootPayload(rotate))).toBe(LOCKED.rotateRoot);
+    expect(bytesToHex(encodeResetRootPayload(rotate))).toBe(LOCKED.rotateRoot);
+    expect(
+      bytesToHex(
+        encodeSetTotpPayload({
+          alg: 'A256GCM',
+          nonce: fill(12, 1),
+          ciphertext: fill(8, 2),
+          tag: fill(16, 3),
+        })
+      )
+    ).toBe(LOCKED.setTotp);
+    expect(encodeClearTotpPayload().length).toBe(0);
+    expect(bytesToHex(encodeRevokeNodePayload({ node_id: fill(16, 9), reason: 'lost' }))).toBe(
+      LOCKED.revoke
+    );
+  });
+
+  it('passkey assertion and admit-node both proof forms', () => {
+    const assertion = {
+      credential_id: 'cred-1',
+      client_data_json: fill(4, 0xaa),
+      authenticator_data: fill(4, 0xbb),
+      signature: fill(4, 0xcc),
+    };
+    const assertionBytes = encodePasskeyAssertion(assertion);
+    expect(bytesToHex(assertionBytes)).toBe(LOCKED.passkeyAssertion);
+    expect(decodePasskeyAssertion(assertionBytes)).toEqual(assertion);
+
+    expect(
+      bytesToHex(
+        encodeAdmitNodePayload({
+          authorization_bytes: fill(4, 1),
+          authorization_sig: fill(64, 2),
+          certificate_bytes: fill(5, 3),
+          cert_sig: fill(64, 4),
+        })
+      )
+    ).toBe(LOCKED.admitRoot);
+    expect(
+      bytesToHex(
+        encodeAdmitNodePayload({
+          authorization_bytes: fill(4, 1),
+          authorization_sig: assertionBytes,
+          certificate_bytes: fill(5, 3),
+          cert_sig: fill(64, 4),
+        })
+      )
+    ).toBe(LOCKED.admitPasskey);
   });
 });

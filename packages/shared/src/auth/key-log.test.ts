@@ -1,10 +1,12 @@
 import { describe, expect, it } from 'bun:test';
 import {
   bytesEqual,
+  bytesToHex,
   encodeAddPasskeyPayload,
   encodeAdmitNodePayload,
   encodeClearTotpPayload,
   encodeKeyLogRecord,
+  encodePasskeyAssertion,
   encodeRemovePasskeyPayload,
   encodeRevokeNodePayload,
   encodeRotateRootPayload,
@@ -13,6 +15,7 @@ import {
 } from './encoding';
 import { createEnrollment, createNodeCertificate } from './enrollment';
 import {
+  KEY_LOG_SIGNER_MATRIX,
   applyKeyLogRecord,
   buildKeyLogRecord,
   computeRecordHash,
@@ -71,7 +74,7 @@ async function commit(
   if (!verified.ok) {
     throw new Error(verified.error);
   }
-  const applied = applyKeyLogRecord(state, verified.record, verified.hash);
+  const applied = await applyKeyLogRecord(state, verified.record, verified.hash);
   expect(applied.ok).toBe(true);
   if (!applied.ok) {
     throw new Error(applied.error);
@@ -250,16 +253,17 @@ describe('key-log chain', () => {
     });
     const aBytes = encodeKeyLogRecord(a);
     const bBytes = encodeKeyLogRecord(b);
-    expect(detectFork(aBytes, bBytes)).toBe(true);
-    expect(detectFork(aBytes, aBytes)).toBe(false);
+    const aSig = signKeyLogRecordWithRoot(r, aBytes);
+    const bSig = signKeyLogRecordWithRoot(r, bBytes);
+    expect(detectFork({ bytes: aBytes, sig: aSig }, { bytes: bBytes, sig: bSig })).toBe(true);
+    expect(detectFork({ bytes: aBytes, sig: aSig }, { bytes: aBytes, sig: aSig })).toBe(false);
 
-    const sig = signKeyLogRecordWithRoot(r, bBytes);
-    const verified = await verifyKeyLogRecord(bBytes, sig, {
+    const verified = await verifyKeyLogRecord(bBytes, bSig, {
       head: state.head,
       rootEpoch: 0,
       rootPublicKey: r.publicKey,
       resolvePasskey: () => null,
-      existingAtSeq: aBytes,
+      existingAtSeq: { bytes: aBytes, sig: aSig },
     });
     expect(verified).toEqual({ ok: false, error: 'fork' });
   });
@@ -316,7 +320,7 @@ describe('key-log chain', () => {
     const { verified: mismatchVerify } = await signAndVerify(state, r, mismatchRecord);
     expect(mismatchVerify.ok).toBe(true);
     if (mismatchVerify.ok) {
-      const applied = applyKeyLogRecord(state, mismatchVerify.record, mismatchVerify.hash);
+      const applied = await applyKeyLogRecord(state, mismatchVerify.record, mismatchVerify.hash);
       expect(applied).toEqual({ ok: false, error: 'enroll_pk_mismatch' });
     }
 
@@ -336,7 +340,7 @@ describe('key-log chain', () => {
     const { verified: badSigVerify } = await signAndVerify(state, r, badSigRecord);
     expect(badSigVerify.ok).toBe(true);
     if (badSigVerify.ok) {
-      expect(applyKeyLogRecord(state, badSigVerify.record, badSigVerify.hash)).toEqual({
+      expect(await applyKeyLogRecord(state, badSigVerify.record, badSigVerify.hash)).toEqual({
         ok: false,
         error: 'bad_authorization_sig',
       });
@@ -364,7 +368,7 @@ describe('key-log chain', () => {
     const { verified: uidVerify } = await signAndVerify(state, r, uidRecord);
     expect(uidVerify.ok).toBe(true);
     if (uidVerify.ok) {
-      expect(applyKeyLogRecord(state, uidVerify.record, uidVerify.hash)).toEqual({
+      expect(await applyKeyLogRecord(state, uidVerify.record, uidVerify.hash)).toEqual({
         ok: false,
         error: 'uid_mismatch',
       });
@@ -477,5 +481,415 @@ describe('key-log chain', () => {
 
     const noGenesis = await verifyKeyLogChain(records.slice(1), newRoot.publicKey);
     expect(noGenesis).toEqual({ ok: false, error: 'missing_genesis' });
+  });
+});
+
+const ADD_PASSKEY = encodeAddPasskeyPayload({
+  credential_id: 'cred-1',
+  public_key: new Uint8Array(8).fill(9),
+  rp_id: 'example.com',
+  origin: 'https://example.com',
+  counter: 0,
+  transports: [],
+  backup_eligible: false,
+  backup_state: false,
+  device_type: 'singleDevice',
+  name: 'key',
+});
+
+const KDF = {
+  salt: new Uint8Array(16).fill(5),
+  memory_kib: 65536,
+  iterations: 3,
+  parallelism: 1,
+};
+
+describe('reset-root is genesis only', () => {
+  it('rejects reset-root without allowGenesis even at seq 1', async () => {
+    const attacker = root(9);
+    const state = emptyUserKeyState(root(1).publicKey);
+    const record = buildKeyLogRecord(state.head, 0, {
+      uid: UID,
+      type: 'reset-root',
+      payload: encodeRotateRootPayload({
+        root_public_key: attacker.publicKey,
+        kdf_params: KDF,
+      }),
+      signer: 'root',
+      credential_id: null,
+    });
+    const bytes = encodeKeyLogRecord(record);
+    const sig = signKeyLogRecordWithRoot(attacker, bytes);
+    const denied = await verifyKeyLogRecord(bytes, sig, {
+      head: state.head,
+      rootEpoch: 0,
+      rootPublicKey: state.rootPublicKey,
+      resolvePasskey: () => null,
+    });
+    expect(denied).toEqual({ ok: false, error: 'reset_not_genesis' });
+
+    const allowed = await verifyKeyLogRecord(bytes, sig, {
+      head: state.head,
+      rootEpoch: 0,
+      rootPublicKey: state.rootPublicKey,
+      resolvePasskey: () => null,
+      allowGenesis: true,
+    });
+    expect(allowed.ok).toBe(true);
+  });
+
+  it('rejects a later self-signed reset-root after any head', async () => {
+    const r = root(1);
+    const attacker = root(9);
+    let state = emptyUserKeyState(r.publicKey);
+    state = (await commit(state, r, 'clear-totp', encodeClearTotpPayload())).state;
+    const record = buildKeyLogRecord(state.head, state.rootEpoch, {
+      uid: UID,
+      type: 'reset-root',
+      payload: encodeRotateRootPayload({
+        root_public_key: attacker.publicKey,
+        kdf_params: KDF,
+      }),
+      signer: 'root',
+      credential_id: null,
+    });
+    const bytes = encodeKeyLogRecord(record);
+    const sig = signKeyLogRecordWithRoot(attacker, bytes);
+    const verified = await verifyKeyLogRecord(bytes, sig, {
+      head: state.head,
+      rootEpoch: state.rootEpoch,
+      rootPublicKey: state.rootPublicKey,
+      resolvePasskey: () => null,
+      allowGenesis: true,
+    });
+    expect(verified).toEqual({ ok: false, error: 'reset_not_genesis' });
+  });
+
+  it('verifyKeyLogChain rejects a second reset-root', async () => {
+    const genesisRoot = root(3);
+    const attacker = root(9);
+    const rec1 = buildKeyLogRecord(genesisHead(), 0, {
+      uid: UID,
+      type: 'reset-root',
+      payload: encodeRotateRootPayload({
+        root_public_key: genesisRoot.publicKey,
+        kdf_params: KDF,
+      }),
+      signer: 'root',
+      credential_id: null,
+    });
+    const bytes1 = encodeKeyLogRecord(rec1);
+    const sig1 = signKeyLogRecordWithRoot(genesisRoot, bytes1);
+    const rec2 = buildKeyLogRecord({ seq: 1n, hash: computeRecordHash(bytes1, sig1) }, 1, {
+      uid: UID,
+      type: 'reset-root',
+      payload: encodeRotateRootPayload({
+        root_public_key: attacker.publicKey,
+        kdf_params: KDF,
+      }),
+      signer: 'root',
+      credential_id: null,
+    });
+    const bytes2 = encodeKeyLogRecord(rec2);
+    const sig2 = signKeyLogRecordWithRoot(attacker, bytes2);
+    const chain = await verifyKeyLogChain(
+      [
+        { bytes: bytes1, sig: sig1 },
+        { bytes: bytes2, sig: sig2 },
+      ],
+      attacker.publicKey
+    );
+    expect(chain).toEqual({ ok: false, error: 'reset_not_genesis' });
+  });
+});
+
+describe('signer matrix', () => {
+  it('exports the type/signer table', () => {
+    expect(KEY_LOG_SIGNER_MATRIX['rotate-root']).toEqual(['root']);
+    expect(KEY_LOG_SIGNER_MATRIX['reset-root']).toEqual(['root']);
+    expect(KEY_LOG_SIGNER_MATRIX['add-passkey']).toEqual(['root', 'passkey']);
+    expect(KEY_LOG_SIGNER_MATRIX['admit-node']).toEqual(['root', 'passkey']);
+  });
+
+  it('rejects passkey-signed rotate-root before verifying the assertion', async () => {
+    const r = root(1);
+    const newRoot = root(2);
+    let state = emptyUserKeyState(r.publicKey);
+    state = (await commit(state, r, 'add-passkey', ADD_PASSKEY)).state;
+    const record = buildKeyLogRecord(state.head, state.rootEpoch, {
+      uid: UID,
+      type: 'rotate-root',
+      payload: encodeRotateRootPayload({
+        root_public_key: newRoot.publicKey,
+        kdf_params: KDF,
+      }),
+      signer: 'passkey',
+      credential_id: 'cred-1',
+    });
+    const bytes = encodeKeyLogRecord(record);
+    let hooked = false;
+    const verified = await verifyKeyLogRecord(bytes, new Uint8Array(8), {
+      head: state.head,
+      rootEpoch: state.rootEpoch,
+      rootPublicKey: state.rootPublicKey,
+      resolvePasskey: (id) => state.passkeys.get(id)?.public_key ?? null,
+      verifyPasskeyAssertion: async () => {
+        hooked = true;
+        return true;
+      },
+    });
+    expect(verified).toEqual({ ok: false, error: 'signer_not_allowed' });
+    expect(hooked).toBe(false);
+  });
+});
+
+describe('fork detection covers sig', () => {
+  it('treats identical record bytes with different sigs as a fork', async () => {
+    const r = root(1);
+    const state = emptyUserKeyState(r.publicKey);
+    const record = buildKeyLogRecord(state.head, 0, {
+      uid: UID,
+      type: 'clear-totp',
+      payload: encodeClearTotpPayload(),
+      signer: 'root',
+      credential_id: null,
+    });
+    const bytes = encodeKeyLogRecord(record);
+    const sigA = signKeyLogRecordWithRoot(r, bytes);
+    const sigB = new Uint8Array(sigA);
+    sigB[0] ^= 0xff;
+    expect(detectFork({ bytes, sig: sigA }, { bytes, sig: sigB })).toBe(true);
+
+    const verified = await verifyKeyLogRecord(bytes, sigB, {
+      head: state.head,
+      rootEpoch: 0,
+      rootPublicKey: r.publicKey,
+      resolvePasskey: () => null,
+      existingAtSeq: { bytes, sig: sigA },
+    });
+    expect(verified).toEqual({ ok: false, error: 'fork' });
+
+    const byHash = await verifyKeyLogRecord(bytes, sigB, {
+      head: state.head,
+      rootEpoch: 0,
+      rootPublicKey: r.publicKey,
+      resolvePasskey: () => null,
+      existingAtSeq: computeRecordHash(bytes, sigA),
+    });
+    expect(byHash).toEqual({ ok: false, error: 'fork' });
+  });
+
+  it('locks computeRecordHash', () => {
+    const record = buildKeyLogRecord(genesisHead(), 0, {
+      uid: UID,
+      type: 'admit-node',
+      payload: new Uint8Array([0xaa, 0xbb]),
+      signer: 'root',
+      credential_id: null,
+    });
+    const bytes = encodeKeyLogRecord(record);
+    expect(bytesToHex(bytes)).toBe(
+      '0e000000746d65782f6b65796c6f672f763106000000757365722d3101000000000000000000000000000000000000000000000000000000000000000000000000000000000000000502000000aabb0000'
+    );
+    expect(bytesToHex(computeRecordHash(bytes, new Uint8Array(64).fill(0xab)))).toBe(
+      'fdf7acfc57598139c268e3a2fc8ddcea7fe115081cdf1f62122ef9f49c6b611e'
+    );
+  });
+});
+
+describe('reset-root vs rotate-root membership', () => {
+  it('reset-root clears nodeCerts and emits clearPeerCache; rotate-root keeps certs', async () => {
+    const r = root(1);
+    const newRoot = root(2);
+    let state = emptyUserKeyState(r.publicKey);
+    const enroll = await createEnrollment(r, { uid: UID, rootEpoch: 0, now: 1 });
+    const ed = generateEd25519KeyPair();
+    const x = generateX25519KeyPair();
+    const cert = createNodeCertificate(enroll.enrollSk, {
+      uid: UID,
+      edPk: ed.publicKey,
+      x25519Pk: x.publicKey,
+      enrollPk: enroll.enrollPk,
+      now: 1,
+    });
+    state = (
+      await commit(
+        state,
+        r,
+        'admit-node',
+        encodeAdmitNodePayload({
+          authorization_bytes: enroll.authorizationBytes,
+          authorization_sig: enroll.authorizationSig,
+          certificate_bytes: cert.certificateBytes,
+          cert_sig: cert.certSig,
+        })
+      )
+    ).state;
+    expect(state.nodeCerts.size).toBe(1);
+
+    const rotated = await commit(
+      state,
+      r,
+      'rotate-root',
+      encodeRotateRootPayload({ root_public_key: newRoot.publicKey, kdf_params: KDF })
+    );
+    expect(rotated.state.nodeCerts.size).toBe(1);
+    expect(rotated.effects).toEqual([{ type: 'revokeAllSessions' }]);
+
+    const resetRecord = buildKeyLogRecord(state.head, state.rootEpoch, {
+      uid: UID,
+      type: 'reset-root',
+      payload: encodeRotateRootPayload({
+        root_public_key: newRoot.publicKey,
+        kdf_params: KDF,
+      }),
+      signer: 'root',
+      credential_id: null,
+    });
+    const resetHash = computeRecordHash(encodeKeyLogRecord(resetRecord), new Uint8Array(64));
+    const reset = await applyKeyLogRecord(state, resetRecord, resetHash);
+    expect(reset.ok).toBe(true);
+    if (reset.ok) {
+      expect(reset.state.nodeCerts.size).toBe(0);
+      expect(reset.state.passkeys.size).toBe(0);
+      expect(reset.effects).toEqual([{ type: 'revokeAllSessions' }, { type: 'clearPeerCache' }]);
+    }
+  });
+});
+
+describe('admit-node node_id reuse', () => {
+  it('rejects a second admit of the same node_id, including after revoke', async () => {
+    const r = root(1);
+    let state = emptyUserKeyState(r.publicKey);
+    const enroll = await createEnrollment(r, { uid: UID, rootEpoch: 0, now: 1 });
+    const ed = generateEd25519KeyPair();
+    const x = generateX25519KeyPair();
+    const cert = createNodeCertificate(enroll.enrollSk, {
+      uid: UID,
+      edPk: ed.publicKey,
+      x25519Pk: x.publicKey,
+      enrollPk: enroll.enrollPk,
+      now: 1,
+      nodeId: new Uint8Array(16).fill(7),
+    });
+    const payload = encodeAdmitNodePayload({
+      authorization_bytes: enroll.authorizationBytes,
+      authorization_sig: enroll.authorizationSig,
+      certificate_bytes: cert.certificateBytes,
+      cert_sig: cert.certSig,
+    });
+    state = (await commit(state, r, 'admit-node', payload)).state;
+
+    const reuseRecord = buildKeyLogRecord(state.head, state.rootEpoch, {
+      uid: UID,
+      type: 'admit-node',
+      payload,
+      signer: 'root',
+      credential_id: null,
+    });
+    const { verified } = await signAndVerify(state, r, reuseRecord);
+    expect(verified.ok).toBe(true);
+    if (verified.ok) {
+      expect(await applyKeyLogRecord(state, verified.record, verified.hash)).toEqual({
+        ok: false,
+        error: 'node_id_reused',
+      });
+    }
+
+    state = (
+      await commit(
+        state,
+        r,
+        'revoke-node',
+        encodeRevokeNodePayload({ node_id: cert.nodeId, reason: 'lost' })
+      )
+    ).state;
+    const reuseAfterRevoke = buildKeyLogRecord(state.head, state.rootEpoch, {
+      uid: UID,
+      type: 'admit-node',
+      payload,
+      signer: 'root',
+      credential_id: null,
+    });
+    const after = await signAndVerify(state, r, reuseAfterRevoke);
+    expect(after.verified.ok).toBe(true);
+    if (after.verified.ok) {
+      expect(await applyKeyLogRecord(state, after.verified.record, after.verified.hash)).toEqual({
+        ok: false,
+        error: 'node_id_reused',
+      });
+    }
+  });
+
+  it('revoke-node on an unknown id stays unknown_node', async () => {
+    const r = root(1);
+    const state = emptyUserKeyState(r.publicKey);
+    const record = buildKeyLogRecord(state.head, 0, {
+      uid: UID,
+      type: 'revoke-node',
+      payload: encodeRevokeNodePayload({ node_id: new Uint8Array(16).fill(1), reason: 'gone' }),
+      signer: 'root',
+      credential_id: null,
+    });
+    const { verified } = await signAndVerify(state, r, record);
+    expect(verified.ok).toBe(true);
+    if (verified.ok) {
+      expect(await applyKeyLogRecord(state, verified.record, verified.hash)).toEqual({
+        ok: false,
+        error: 'unknown_node',
+      });
+    }
+  });
+
+  it('admits a passkey-signed authorization via verifyPasskeyAssertion', async () => {
+    const r = root(1);
+    let state = emptyUserKeyState(r.publicKey);
+    state = (await commit(state, r, 'add-passkey', ADD_PASSKEY)).state;
+    const assertion = encodePasskeyAssertion({
+      credential_id: 'cred-1',
+      client_data_json: new Uint8Array([1, 2, 3, 4]),
+      authenticator_data: new Uint8Array([5, 6, 7, 8]),
+      signature: new Uint8Array([9, 10, 11, 12]),
+    });
+    const enroll = await createEnrollment(
+      { credentialId: 'cred-1', sign: () => assertion },
+      { uid: UID, rootEpoch: 0, now: 1 }
+    );
+    const ed = generateEd25519KeyPair();
+    const x = generateX25519KeyPair();
+    const cert = createNodeCertificate(enroll.enrollSk, {
+      uid: UID,
+      edPk: ed.publicKey,
+      x25519Pk: x.publicKey,
+      enrollPk: enroll.enrollPk,
+      now: 1,
+    });
+    const record = buildKeyLogRecord(state.head, state.rootEpoch, {
+      uid: UID,
+      type: 'admit-node',
+      payload: encodeAdmitNodePayload({
+        authorization_bytes: enroll.authorizationBytes,
+        authorization_sig: enroll.authorizationSig,
+        certificate_bytes: cert.certificateBytes,
+        cert_sig: cert.certSig,
+      }),
+      signer: 'root',
+      credential_id: null,
+    });
+    const { verified } = await signAndVerify(state, r, record);
+    expect(verified.ok).toBe(true);
+    if (!verified.ok) {
+      throw new Error(verified.error);
+    }
+    const withoutHook = await applyKeyLogRecord(state, verified.record, verified.hash);
+    expect(withoutHook).toEqual({ ok: false, error: 'bad_authorization_sig' });
+    const withHook = await applyKeyLogRecord(state, verified.record, verified.hash, {
+      verifyPasskeyAssertion: async (args) =>
+        args.credentialId === 'cred-1' && bytesEqual(args.sig, assertion),
+    });
+    expect(withHook.ok).toBe(true);
+    if (withHook.ok) {
+      expect(withHook.state.nodeCerts.has(nodeIdToHex(cert.nodeId))).toBe(true);
+    }
   });
 });
