@@ -646,6 +646,107 @@ describe('PeerManager', () => {
     expect(managerA.transportOf(peer.nodeId)).toBe('dc');
   });
 
+  test('relay upgrades try DC then ws-secure; failed DC does not stick to the old link', async () => {
+    const { db, close } = createMigratedAuthDb();
+    fixtures.push({ close });
+    const store = new UserStore(db);
+    seedUser(store);
+    const self = seedNodeIdentity(store, 'user-1');
+    const peer = seedNodeIdentity(store, 'user-1');
+    const { createFakeNativeModule } = await import('./rtc/test-fakes');
+    const { RtcPeerManager } = await import('./rtc');
+    const fake = createFakeNativeModule();
+    const rtc = new RtcPeerManager({
+      loadNative: async () => fake.module,
+      iceConfigProvider: () => ({ stun: [], turn: null }),
+      identity: self,
+      userStore: store,
+    });
+    fixtures.push({ close: () => rtc.close() });
+    await rtc.ready();
+    rtc.connectToPeer = async () => {
+      throw new Error('dc-failed');
+    };
+    const [wsA, wsB] = createInMemoryLinkPair();
+    const managerA = new PeerManager({
+      identity: self,
+      userStore: store,
+      uplink: dummyUplink(self, store),
+      peerPort: 0,
+      startServer: false,
+      rtc,
+      linkFactory: async () => wsA,
+    });
+    const managerB = new PeerManager({
+      identity: peer,
+      userStore: store,
+      uplink: dummyUplink(peer, store),
+      peerPort: 0,
+      startServer: false,
+      linkFactory: async () => wsB,
+    });
+    fixtures.push({ close, stop: () => managerA.stop() });
+    fixtures.push({ close, stop: () => managerB.stop() });
+    const [relayA, relayB] = createInMemoryLinkPair();
+    expect(managerA.adoptLink(peer.nodeId, relayA, 'relay', self.nodeId)).toBe(relayA);
+    expect(managerB.adoptLink(self.nodeId, relayB, 'relay', self.nodeId)).toBe(relayB);
+    const first = await managerA.getLink(peer.nodeId);
+    expect(first).toBe(relayA);
+    await waitUntil(() => managerA.transportOf(peer.nodeId) === 'ws-secure', 5_000);
+    const upgraded = await managerA.getLink(peer.nodeId);
+    expect(upgraded).not.toBe(relayA);
+    expect(managerA.transportOf(peer.nodeId)).toBe('ws-secure');
+  });
+
+  test('upgrade keeps an in-flight stream on the old link; revoke closes active and retiring', async () => {
+    const { db, close } = createMigratedAuthDb();
+    fixtures.push({ close });
+    const store = new UserStore(db);
+    seedUser(store);
+    const self = seedNodeIdentity(store, 'user-1');
+    const peer = seedNodeIdentity(store, 'user-1');
+    const [relayA, relayB] = createInMemoryLinkPair();
+    const incomingP = new Promise<import('@tmex/shared/link').LinkStream>((resolve) =>
+      relayB.onStream(resolve)
+    );
+    const [wsA, wsHold] = createInMemoryLinkPair();
+    fixtures.push({ close: () => wsHold.close('test') });
+    const managerA = new PeerManager({
+      identity: self,
+      userStore: store,
+      uplink: dummyUplink(self, store),
+      peerPort: 0,
+      startServer: false,
+      idleMs: 60_000,
+      rtc: {
+        available: true,
+        connectToPeer: async () => {
+          throw new Error('skip-dc');
+        },
+      } as unknown as import('./rtc').RtcPeerManager,
+      linkFactory: async () => wsA,
+    });
+    fixtures.push({ close, stop: () => managerA.stop() });
+    expect(managerA.adoptLink(peer.nodeId, relayA, 'relay', self.nodeId)).toBe(relayA);
+    const oldStream = await relayA.openStream(new TextEncoder().encode('{"type":"keep"}'));
+    const incoming = await incomingP;
+    await oldStream.write(new TextEncoder().encode('still-alive'));
+    const first = await managerA.getLink(peer.nodeId);
+    expect(first).toBe(relayA);
+    await waitUntil(() => managerA.transportOf(peer.nodeId) === 'ws-secure', 5_000);
+    const upgraded = await managerA.getLink(peer.nodeId);
+    expect(upgraded).not.toBe(relayA);
+    const reader = incoming.readable.getReader();
+    const chunk = await reader.read();
+    expect(new TextDecoder().decode(chunk.value?.bytes)).toBe('still-alive');
+    const oldClosed = relayA.closed;
+    const newClosed = upgraded.closed;
+    managerA.onRevoked(peer.nodeId);
+    expect((await oldClosed).reason).toBeTruthy();
+    expect((await newClosed).reason).toBeTruthy();
+    incoming.end();
+  });
+
   test('caps concurrent streams per link', async () => {
     const { db, close } = createMigratedAuthDb();
     fixtures.push({ close });

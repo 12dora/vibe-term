@@ -912,6 +912,18 @@ describe('UplinkServer', () => {
       if (forwarded.t !== 'rtc.signal') throw new Error('expected signal');
       expect(forwarded.sdp).toBe('dc-offer');
       expect(forwarded.rtcSession).toBe(rtcSession);
+
+      sendCtl(a.nodeLink, {
+        t: 'rtc.signal',
+        rtcSession,
+        from: 'browser',
+        to: b.nodeId,
+        sdp: 'browser-flood',
+      });
+      await new Promise((r) => setTimeout(r, 30));
+      expect(b.inbox.drain().some((m) => m.t === 'rtc.signal' && m.sdp === 'browser-flood')).toBe(
+        false
+      );
       server.stop();
     } finally {
       close();

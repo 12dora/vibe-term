@@ -13,7 +13,9 @@ import { createMigratedAuthDb } from '../auth/test-db';
 import type { AuthDb } from '../auth/types';
 import type { GatewayRuntime } from '../runtime';
 import type { WebSocketServer } from '../ws';
-import { createMeshRuntime } from './mesh-runtime';
+import { GatewaySession } from '../ws/gateway-session';
+import { createFakeCarrier } from '../ws/test-helpers';
+import { SessionRegistry, createMeshRuntime } from './mesh-runtime';
 import { fakeSocketPair, waitUntil } from './test-support';
 
 function fakeGateway(db: AuthDb): GatewayRuntime {
@@ -205,5 +207,41 @@ describe('createMeshRuntime', () => {
     const res = await mesh.handleRequest(req, { upgrade: () => false });
     if (!(res instanceof Response)) throw new Error('expected Response');
     expect(await res.json()).toMatchObject({ mode: 'mesh' });
+  });
+});
+
+describe('SessionRegistry', () => {
+  test('keys connections independently so two tabs with the same sid do not clobber', () => {
+    const registry = new SessionRegistry();
+    const a = new GatewaySession({ primary: createFakeCarrier() });
+    const b = new GatewaySession({ primary: createFakeCarrier() });
+    registry.register({
+      connectionId: 'conn-a',
+      sid: 'sid-1',
+      uid: 'u1',
+      via: 'self',
+      session: a,
+    });
+    registry.register({
+      connectionId: 'conn-b',
+      sid: 'sid-1',
+      uid: 'u1',
+      via: 'self',
+      session: b,
+    });
+    expect(registry.get('sid-1')).toBeNull();
+    expect(registry.getByConnectionId('conn-a')?.session).toBe(a);
+    expect(registry.getByConnectionId('conn-b')?.session).toBe(b);
+    expect(registry.lookup('sid-1', 'self')).toEqual({
+      ok: false,
+      code: 'MULTIPLE_CONNECTIONS',
+    });
+    expect(registry.lookup('sid-1', 'self', 'conn-a')).toEqual({
+      ok: true,
+      connectionId: 'conn-a',
+    });
+    registry.unregisterSession(a);
+    expect(registry.getByConnectionId('conn-a')).toBeNull();
+    expect(registry.get('sid-1')?.session).toBe(b);
   });
 });

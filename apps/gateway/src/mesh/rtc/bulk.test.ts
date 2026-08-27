@@ -446,4 +446,29 @@ describe('BulkTransferService', () => {
   test('idleTimeoutMs defaults to 30s', () => {
     expect(BULK_IDLE_TIMEOUT_MS).toBe(30_000);
   });
+
+  test('verify failure and abortByOwner abort the channel', async () => {
+    const id = 'tx-verify';
+    const { harness, service, browser, node } = setup(`bulk:${id}`);
+    harness.addUpload(id, 'user-1', 3);
+    let live = true;
+    service.attachChannel(node, {
+      uid: 'user-1',
+      ownerKey: 'conn-1',
+      verify: () => live,
+    });
+    live = false;
+    browser.sendMessage(JSON.stringify({ op: 'put', transferId: id, size: 3 }));
+    await waitFor(() => jsonFromSent(node).some((m) => m.ok === false), 'forbidden');
+    expect(jsonFromSent(node).some((m) => m.code === 'forbidden')).toBe(true);
+
+    const id2 = 'tx-abort-owner';
+    const { harness: h2, service: s2, browser: b2, node: n2 } = setup(`bulk:${id2}`);
+    h2.addUpload(id2, 'user-1', 3);
+    s2.attachChannel(n2, { uid: 'user-1', ownerKey: 'conn-2' });
+    b2.sendMessage(JSON.stringify({ op: 'put', transferId: id2, size: 3 }));
+    b2.sendMessageBinary(Buffer.from([1]));
+    s2.abortByOwner('conn-2');
+    expect(h2.aborted).toContain(id2);
+  });
 });

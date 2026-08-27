@@ -99,6 +99,7 @@ export {
   type MeshRuntime,
   type MeshRuntimeConfig,
   type NetworkInterfacesFn,
+  type RegisterGatewaySessionInput,
   type RegisteredGatewaySession,
 } from './mesh-runtime';
 export { MeshHttpRuntime, type MeshHttpRuntimeOptions } from './mesh-http';

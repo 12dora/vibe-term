@@ -1,5 +1,8 @@
 import type { RtcSignalMessage, RtcSignalOwner, RtcSignalRouter } from '../mesh-deps';
 
+export const RTC_LOCAL_INBOX_MAX_SESSIONS = 32;
+export const RTC_LOCAL_INBOX_MAX_MESSAGES = 16;
+
 export type RtcSessionOwner = {
   browserSessionId: string;
   targetNodeId: string;
@@ -7,14 +10,22 @@ export type RtcSessionOwner = {
 
 export type SendCtl = (nodeId: string, msg: RtcSignalMessage) => void;
 
+export type ShouldCacheLocal = (signal: RtcSignalMessage, sourceNodeId?: string) => boolean;
+
 export type RtcSignalRouterOptions = {
   selfNodeId: string;
   sendCtl: SendCtl;
+  shouldCacheLocal?: ShouldCacheLocal;
+  maxInboxSessions?: number;
+  maxInboxMessages?: number;
 };
 
 export class MeshRtcSignalRouter implements RtcSignalRouter {
   private readonly selfNodeId: string;
   private readonly sendCtl: SendCtl;
+  private readonly shouldCacheLocal: ShouldCacheLocal | null;
+  private readonly maxInboxSessions: number;
+  private readonly maxInboxMessages: number;
   private readonly owners = new Map<string, RtcSessionOwner>();
   private readonly subscribers = new Set<(signal: RtcSignalMessage) => void>();
   private readonly localListeners = new Map<string, Set<(signal: RtcSignalMessage) => void>>();
@@ -23,6 +34,9 @@ export class MeshRtcSignalRouter implements RtcSignalRouter {
   constructor(opts: RtcSignalRouterOptions) {
     this.selfNodeId = opts.selfNodeId.toLowerCase();
     this.sendCtl = opts.sendCtl;
+    this.shouldCacheLocal = opts.shouldCacheLocal ?? null;
+    this.maxInboxSessions = opts.maxInboxSessions ?? RTC_LOCAL_INBOX_MAX_SESSIONS;
+    this.maxInboxMessages = opts.maxInboxMessages ?? RTC_LOCAL_INBOX_MAX_MESSAGES;
   }
 
   register(rtcSession: string, owner: RtcSessionOwner): void {
@@ -35,6 +49,7 @@ export class MeshRtcSignalRouter implements RtcSignalRouter {
   unregister(rtcSession: string): void {
     this.owners.delete(rtcSession);
     this.localListeners.delete(rtcSession);
+    this.localInbox.delete(rtcSession);
   }
 
   ownerOf(rtcSession: string): RtcSessionOwner | undefined {
@@ -85,15 +100,40 @@ export class MeshRtcSignalRouter implements RtcSignalRouter {
     };
   }
 
-  deliverLocal(signal: RtcSignalMessage): void {
+  deliverLocal(signal: RtcSignalMessage, sourceNodeId?: string): void {
     const locals = this.localListeners.get(signal.rtcSession);
     if (locals && locals.size > 0) {
       for (const cb of locals) cb(signal);
       return;
     }
-    const inbox = this.localInbox.get(signal.rtcSession) ?? [];
+    if (!this.canCache(signal, sourceNodeId)) return;
+    let inbox = this.localInbox.get(signal.rtcSession);
+    if (!inbox) {
+      if (this.localInbox.size >= this.maxInboxSessions) return;
+      inbox = [];
+      this.localInbox.set(signal.rtcSession, inbox);
+    }
+    if (inbox.length >= this.maxInboxMessages) return;
     inbox.push(signal);
-    this.localInbox.set(signal.rtcSession, inbox);
+  }
+
+  inboxSize(): number {
+    let n = 0;
+    for (const inbox of this.localInbox.values()) n += inbox.length;
+    return n;
+  }
+
+  inboxSessionCount(): number {
+    return this.localInbox.size;
+  }
+
+  private canCache(signal: RtcSignalMessage, sourceNodeId?: string): boolean {
+    if (this.shouldCacheLocal) {
+      return this.shouldCacheLocal(signal, sourceNodeId);
+    }
+    const owner = this.owners.get(signal.rtcSession);
+    if (!owner) return false;
+    return signal.to.toLowerCase() === this.selfNodeId;
   }
 
   receiveFromNode(fromNodeId: string, signal: RtcSignalMessage): void {

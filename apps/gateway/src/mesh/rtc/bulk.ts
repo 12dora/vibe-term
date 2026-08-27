@@ -12,6 +12,8 @@ export type BulkState = 'idle' | 'put' | 'get' | 'done' | 'eof' | 'aborted';
 
 export type BulkAttachContext = {
   uid: string;
+  ownerKey?: string;
+  verify?: () => boolean;
 };
 
 export type BulkTransferServiceOptions = {
@@ -29,6 +31,8 @@ type BulkControl = {
 type BulkChannel = {
   dc: DataChannelLike;
   uid: string;
+  ownerKey: string;
+  verify: (() => boolean) | null;
   labelId: string;
   transferId: string | null;
   state: BulkState;
@@ -110,6 +114,8 @@ export class BulkTransferService {
     const ch: BulkChannel = {
       dc,
       uid: ctx.uid,
+      ownerKey: ctx.ownerKey ?? ctx.uid,
+      verify: ctx.verify ?? null,
       labelId,
       transferId: labelId,
       state: 'idle',
@@ -134,8 +140,20 @@ export class BulkTransferService {
     }
   }
 
+  abortByOwner(ownerKey: string): void {
+    for (const ch of [...this.channels]) {
+      if (ch.ownerKey === ownerKey) {
+        this.finalize(ch, { code: 'aborted', cleanup: ch.state === 'put' || ch.state === 'get' });
+      }
+    }
+  }
+
   private onMessage(ch: BulkChannel, msg: string | Buffer | ArrayBuffer): void {
     if (ch.state === 'aborted' || ch.state === 'done' || ch.state === 'eof') return;
+    if (ch.verify && !ch.verify()) {
+      this.fail(ch, 'forbidden', { cleanup: ch.state === 'put' || ch.state === 'get' });
+      return;
+    }
     this.armIdle(ch);
 
     const bytes = typeof msg === 'string' ? new TextEncoder().encode(msg) : toUint8Array(msg);

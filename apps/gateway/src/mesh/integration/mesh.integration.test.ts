@@ -564,9 +564,6 @@ describe('mesh phase-2 integration', () => {
     const total = captured.reduce((n, c) => n + c.byteLength, 0);
     expect(total).toBeGreaterThan(16);
     const joined = concatCaptured(captured);
-    const magic = new Uint8Array([0x54, 0x58]);
-    expect(containsBytes(joined, magic)).toBe(false);
-    expect(containsAcrossChunks(captured, magic)).toBe(false);
     const openPlain = new TextEncoder().encode('{"type":"http"');
     const pathPlain = new TextEncoder().encode('/api/devices');
     const devicesPlain = new TextEncoder().encode('dev-b');
@@ -574,6 +571,7 @@ describe('mesh phase-2 integration', () => {
     expect(containsBytes(joined, pathPlain)).toBe(false);
     expect(containsBytes(joined, devicesPlain)).toBe(false);
     expect(containsAcrossChunks(captured, pathPlain)).toBe(false);
+    expect(containsAcrossChunks(captured, openPlain)).toBe(false);
     const keys = a.mesh.peers.sessionKeysOf(b.mesh.nodeId);
     expect(keys).not.toBeNull();
     const decrypted = await decryptInitiatorFrames(keys?.sendKey as Uint8Array, captured);

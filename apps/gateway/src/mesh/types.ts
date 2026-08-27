@@ -121,6 +121,7 @@ export type HttpStreamOpenPayload = {
 export type WsStreamOpenPayload = {
   type?: 'ws';
   auth: string;
+  connectionId?: string;
 };
 
 export type InboundRelayHandler = (stream: LinkStream, fromNodeId: string) => void;

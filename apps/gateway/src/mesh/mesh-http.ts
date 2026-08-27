@@ -6,6 +6,7 @@ import type { UserStore } from '../auth/user-store';
 import { type AuthKeyLogPublisher, AuthRoutes } from './auth-routes';
 import { Forwarder, rewriteSelf, takePendingForwardStream } from './forwarder';
 import {
+  type ConnectionLookup,
   MESH_FORWARD_WS_KIND,
   MESH_GATEWAY_WS_KIND,
   MESH_REJECT_4401_KIND,
@@ -20,6 +21,7 @@ import {
   type StreamOpener,
   WS_CLOSE_LOGIN_REQUIRED,
   WS_SESSION_VERIFY_MS,
+  X_TMEX_CONNECTION,
   isStandaloneRoles,
 } from './mesh-deps';
 import { MeshRoutes } from './mesh-routes';
@@ -47,6 +49,7 @@ export type MeshHttpRuntimeOptions = {
   primaryUserId?: string;
   hubPublicUrl?: string | null;
   trustProxy?: boolean;
+  connectionLookup?: ConnectionLookup;
 };
 
 const STATIC_PREFIXES = ['/assets/', '/static/', '/favicon', '/manifest'];
@@ -102,6 +105,7 @@ export class MeshHttpRuntime {
       rtcConfig: opts.rtc?.config,
       now: this.now,
       registerSocket: (ws, auth) => this.registerSocket(ws, auth),
+      connectionLookup: opts.connectionLookup,
     });
     this.auth = new AuthRoutes({
       roles: opts.roles,
@@ -156,12 +160,14 @@ export class MeshHttpRuntime {
       }
       return undefined;
     }
+    const headerConnectionId = req.headers.get(X_TMEX_CONNECTION)?.trim() || '';
     const upgraded = server.upgrade(req, {
       data: {
         kind: MESH_GATEWAY_WS_KIND,
         sid: auth.sid,
         uid: auth.userId,
         via: MESH_VIA_SELF,
+        ...(headerConnectionId ? { connectionId: headerConnectionId } : {}),
       },
     });
     if (!upgraded) {

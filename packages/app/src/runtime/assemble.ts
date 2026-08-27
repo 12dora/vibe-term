@@ -135,10 +135,10 @@ export async function assembleTmex(opts: AssembleTmexOptions = {}): Promise<Asse
         turnUsername: gatewayConfig.turnUsername,
         turnCredential: gatewayConfig.turnCredential,
         bindHost: process.env.TMEX_BIND_HOST || '127.0.0.1',
+        peerBindHost: gatewayConfig.peerBindHost,
       },
       hub: opts.hub,
       loadNative,
-      peerHostname: process.env.TMEX_PEER_BIND_HOST?.trim() || undefined,
     });
   }
 
@@ -208,7 +208,12 @@ export async function assembleTmex(opts: AssembleTmexOptions = {}): Promise<Asse
       }
       const kind = socketKind(ws);
       if (mesh && isMeshKind(kind)) {
-        const data = ws.data as { sid?: string; uid?: string; via?: string };
+        const data = ws.data as {
+          sid?: string;
+          uid?: string;
+          via?: string;
+          connectionId?: string;
+        };
         const sid = data.sid;
         const uid = data.uid;
         const via = data.via ?? MESH_VIA_SELF;
@@ -217,7 +222,11 @@ export async function assembleTmex(opts: AssembleTmexOptions = {}): Promise<Asse
           gateway.websocket.open(ws);
           const session = (ws.data as { session?: GatewaySession }).session;
           if (sid && uid && session) {
-            mesh.registerGatewaySession?.({ sid, uid, via, session });
+            const connectionId =
+              typeof data.connectionId === 'string' && data.connectionId
+                ? data.connectionId
+                : session.id;
+            mesh.registerGatewaySession?.({ connectionId, sid, uid, via, session });
           }
         }
         return;

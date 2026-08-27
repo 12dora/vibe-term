@@ -121,6 +121,7 @@ export class WebSocketServer
   private carrierSwitchAckHandler:
     | ((session: GatewaySession, epoch: number, rtcSession: string) => void)
     | null = null;
+  private sessionClosedHandler: ((session: GatewaySession) => void) | null = null;
 
   constructor(options: WebSocketServerOptions = {}) {
     this.deps = {
@@ -138,6 +139,10 @@ export class WebSocketServer
     handler: ((session: GatewaySession, epoch: number, rtcSession: string) => void) | null
   ): void {
     this.carrierSwitchAckHandler = handler;
+  }
+
+  setOnSessionClosed(handler: ((session: GatewaySession) => void) | null): void {
+    this.sessionClosedHandler = handler;
   }
 
   handleUpgrade(req: Request, server: Server<unknown>): Response | false | undefined {
@@ -381,6 +386,11 @@ export class WebSocketServer
     }
     session.closed = true;
     console.log('[ws] client disconnected');
+    try {
+      this.sessionClosedHandler?.(session);
+    } catch {
+      // mesh teardown
+    }
 
     const attached = session.carriers();
     for (const carrier of attached) {
@@ -546,11 +556,11 @@ export class WebSocketServer
     ws: GatewaySession,
     kind: number,
     payload: Uint8Array
-  ): 'sent' | 'backpressure' | 'closed' {
+  ): 'sent' | 'queued-backpressure' | 'blocked' | 'closed' {
     if (ws.closed) return 'closed';
     const carrier = ws.activeCarrier;
-    if (!gatewayWebSocketSendGuard.canSend(carrier)) {
-      return gatewayWebSocketSendGuard.isBackpressured(carrier) ? 'backpressure' : 'closed';
+    if (gatewayWebSocketSendGuard.isBackpressured(carrier)) {
+      return 'blocked';
     }
     const state = ws.borshState;
     const frames = encodePayloadFrames(kind, payload, state.seqGen, state.maxFrameBytes);
@@ -560,7 +570,7 @@ export class WebSocketServer
       state.maxFrameBytes
     );
     if (status === 'sent') return 'sent';
-    if (status === 'backpressured') return 'backpressure';
+    if (status === 'backpressured') return 'queued-backpressure';
     return 'closed';
   }
 

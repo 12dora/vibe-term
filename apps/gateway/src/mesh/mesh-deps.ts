@@ -9,6 +9,7 @@ export const MESH_VIA_SELF = 'self';
 
 export const X_TMEX_SET_SESSION = 'x-tmex-set-session';
 export const X_TMEX_SESSION_RENEWED = 'x-tmex-session-renewed';
+export const X_TMEX_CONNECTION = 'x-tmex-connection';
 
 export const LOGIN_RATE_LIMIT = 10;
 export const LOGIN_RATE_WINDOW_MS = 60_000;
@@ -108,6 +109,7 @@ export type RtcAuthorizeBrowserInput = {
   uid: string;
   via: string;
   sid?: string;
+  connectionId?: string;
   fpBrowser: DtlsFingerprint;
 };
 
@@ -154,6 +156,16 @@ export type MeshRtcDeps = {
   signals?: RtcSignalRouter;
   config?: RtcConfigProvider;
 };
+
+export type ConnectionLookupResult =
+  | { ok: true; connectionId: string }
+  | { ok: false; code: 'NO_CONNECTION' | 'MULTIPLE_CONNECTIONS' };
+
+export type ConnectionLookup = (input: {
+  sid: string;
+  via: string;
+  connectionId?: string | null;
+}) => ConnectionLookupResult;
 
 export type MeshRequestContext = {
   via: string;

@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, test } from 'bun:test';
 import type { HubRuntime } from '../../../../apps/gateway/src/hub';
+import { MESH_GATEWAY_WS_KIND } from '../../../../apps/gateway/src/mesh/mesh-deps';
 import type { MeshRuntime } from '../../../../apps/gateway/src/mesh/mesh-runtime';
 import type { GatewayRuntime } from '../../../../apps/gateway/src/runtime';
 import {
@@ -114,6 +115,54 @@ describe('assembleTmex role matrix', () => {
     expect(stops).toBe(2);
     await assembled.stop();
     expect(stops).toBe(2);
+  });
+
+  test('registers gateway WS with connectionId from upgrade data or session.id', async () => {
+    const registered: Array<{ connectionId: string; sid: string; uid: string; via: string }> = [];
+    const mesh = fakeMesh({
+      registerGatewaySession(entry) {
+        registered.push({
+          connectionId: entry.connectionId,
+          sid: entry.sid,
+          uid: entry.uid,
+          via: entry.via,
+        });
+      },
+    });
+    const gateway = fakeGateway({
+      websocket: {
+        backpressureLimit: 1024,
+        closeOnBackpressureLimit: true,
+        open(ws) {
+          (ws.data as { session?: { id: string } }).session = { id: 'generated-id' };
+        },
+        message() {},
+        drain() {},
+        close() {},
+        closeSession() {},
+      },
+    });
+    const assembled = await assembleTmex({
+      roles: { hub: false, node: true },
+      createGatewayRuntime: async () => gateway,
+      createMeshRuntime: async () => mesh,
+    });
+    assembled.websocket.open({
+      data: {
+        kind: MESH_GATEWAY_WS_KIND,
+        sid: 'sid-1',
+        uid: 'uid-1',
+        via: 'self',
+        connectionId: 'tab-a',
+      },
+    } as never);
+    assembled.websocket.open({
+      data: { kind: MESH_GATEWAY_WS_KIND, sid: 'sid-1', uid: 'uid-1', via: 'self' },
+    } as never);
+    expect(registered).toEqual([
+      { connectionId: 'tab-a', sid: 'sid-1', uid: 'uid-1', via: 'self' },
+      { connectionId: 'generated-id', sid: 'sid-1', uid: 'uid-1', via: 'self' },
+    ]);
   });
 
   test('standalone does not construct mesh and /api/auth/mode returns {mode:none}', async () => {

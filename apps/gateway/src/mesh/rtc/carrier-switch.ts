@@ -1,8 +1,8 @@
 import { wsBorsh } from '@tmex/shared';
-import type { Carrier, CarrierSendResult } from '../../ws/carrier';
+import type { Carrier } from '../../ws/carrier';
 import type { GatewaySession } from '../../ws/gateway-session';
 
-export type ControlSendStatus = CarrierSendResult;
+export type ControlSendStatus = 'sent' | 'queued-backpressure' | 'blocked' | 'closed';
 
 export type SendControl = (
   session: GatewaySession,
@@ -36,6 +36,11 @@ type SwitchState = {
   unsubClose: (() => void) | null;
   switchGeneration: number;
   unsubDrain: (() => void) | null;
+  closeWaiters: Array<(ok: boolean) => void>;
+};
+
+type CloseAwareCarrier = Carrier & {
+  onClose?(cb: () => void): void;
 };
 
 export class CarrierSwitchController {
@@ -84,11 +89,41 @@ export class CarrierSwitchController {
       }
       return;
     }
-    if (normalized === 'backpressure') {
+    if (normalized === 'queued-backpressure') {
+      void this.finishQueuedSwitch(session, state, carrier, generation);
+      return;
+    }
+    if (normalized === 'blocked') {
       void this.retryOutboundSwitch(session, state, carrier, generation, payload);
       return;
     }
     this.cancelPendingSwitch(session, state, carrier, generation);
+  }
+
+  notifyClosed(session: GatewaySession): void {
+    const state = this.states.get(session);
+    if (!state) return;
+    state.switchGeneration += 1;
+    const waiters = state.closeWaiters.splice(0);
+    for (const waiter of waiters) waiter(false);
+    state.unsubDrain?.();
+    state.unsubDrain = null;
+    const direct = state.direct;
+    state.direct = null;
+    state.pendingTo = null;
+    state.buffer.length = 0;
+    state.flushing = false;
+    if (direct) {
+      try {
+        direct.close(1000, 'session-closed');
+      } catch {
+        // already closing
+      }
+      if (session.activeCarrier === direct) {
+        session.switchActiveCarrier(session.primary);
+      }
+      session.detachCarrier(direct);
+    }
   }
 
   handleAck(session: GatewaySession, epoch: number, rtcSession = ''): void {
@@ -176,11 +211,29 @@ export class CarrierSwitchController {
       }
       return;
     }
-    if (status === 'backpressure') {
+    if (status === 'queued-backpressure') {
+      await this.finishQueuedSwitch(session, state, carrier, generation);
+      return;
+    }
+    if (status === 'blocked') {
       await this.retryOutboundSwitch(session, state, carrier, generation, null);
       return;
     }
     this.cancelPendingSwitch(session, state, carrier, generation);
+  }
+
+  private async finishQueuedSwitch(
+    session: GatewaySession,
+    state: SwitchState,
+    carrier: DirectCarrier,
+    generation: number
+  ): Promise<void> {
+    const drained = await this.waitDrain(session, state, generation);
+    if (!drained || state.switchGeneration !== generation || session.closed) {
+      this.cancelPendingSwitch(session, state, carrier, generation);
+      return;
+    }
+    session.switchActiveCarrier(carrier);
   }
 
   private async retryOutboundSwitch(
@@ -195,7 +248,11 @@ export class CarrierSwitchController {
       const drained = await this.waitDrain(session, state, generation);
       if (!drained) break;
       const status = normalizeControlStatus(await this.sendSwitch(session, frame));
-      if (status === 'sent') {
+      if (status === 'sent' || status === 'queued-backpressure') {
+        if (status === 'queued-backpressure') {
+          const drainedAgain = await this.waitDrain(session, state, generation);
+          if (!drainedAgain) break;
+        }
         if (state.switchGeneration === generation && !session.closed) {
           session.switchActiveCarrier(carrier);
         }
@@ -212,17 +269,24 @@ export class CarrierSwitchController {
     generation: number
   ): Promise<boolean> {
     if (session.closed || state.switchGeneration !== generation) return Promise.resolve(false);
-    const carrier = session.activeCarrier;
+    const carrier = session.activeCarrier as CloseAwareCarrier;
     return new Promise((resolve) => {
       let settled = false;
       const finish = (ok: boolean) => {
         if (settled) return;
         settled = true;
         state.unsubDrain = null;
+        const idx = state.closeWaiters.indexOf(onClosed);
+        if (idx >= 0) state.closeWaiters.splice(idx, 1);
         resolve(ok);
       };
       const onDrain = () => finish(true);
+      const onClosed = () => finish(false);
       carrier.onDrain(onDrain);
+      if (typeof carrier.onClose === 'function') {
+        carrier.onClose(onClosed);
+      }
+      state.closeWaiters.push(onClosed);
       state.unsubDrain = () => finish(false);
     });
   }
@@ -278,6 +342,7 @@ export class CarrierSwitchController {
         unsubClose: null,
         switchGeneration: 0,
         unsubDrain: null,
+        closeWaiters: [],
       };
       this.states.set(session, state);
     }
@@ -286,9 +351,11 @@ export class CarrierSwitchController {
 }
 
 function normalizeControlStatus(
-  status: ControlSendStatus | boolean | 'backpressured' | 'dropped' | undefined
+  status: ControlSendStatus | boolean | 'backpressure' | 'backpressured' | 'dropped' | undefined
 ): ControlSendStatus {
-  if (status === 'backpressure' || status === 'backpressured') return 'backpressure';
+  if (status === 'queued-backpressure') return 'queued-backpressure';
+  if (status === 'blocked') return 'blocked';
+  if (status === 'backpressure' || status === 'backpressured') return 'queued-backpressure';
   if (status === 'closed' || status === 'dropped' || status === false) return 'closed';
   return 'sent';
 }

@@ -425,7 +425,7 @@ export type AcceptWsStreamOptions = StreamAuthContext & {
   wsServer: WebSocketServer;
   onGatewaySession?: (
     session: GatewaySession,
-    auth: { sid: string; uid: string; via: string }
+    auth: { sid: string; uid: string; via: string; connectionId: string }
   ) => void;
   onGatewaySessionClose?: (session: GatewaySession) => void;
 };
@@ -444,9 +444,11 @@ export async function acceptWsStream(
   const sid = auth;
   const via = opts.peerNodeId;
   const uid = verified.uid;
+  const requestedId = typeof open.connectionId === 'string' ? open.connectionId.trim() : '';
   const carrier = new LinkStreamCarrier(stream);
   const attached = opts.wsServer.attachStreamSession(carrier);
-  opts.onGatewaySession?.(attached.session, { sid, uid: uid ?? '', via });
+  const connectionId = requestedId || attached.session.id;
+  opts.onGatewaySession?.(attached.session, { sid, uid: uid ?? '', via, connectionId });
   let tornDown = false;
   const teardown = (mode: 'end' | 'rst', reason?: string) => {
     if (tornDown) return;
@@ -502,14 +504,19 @@ export async function acceptWsStream(
 
 export async function openWsStream(
   link: LinkSession,
-  auth: string
+  auth: string,
+  connectionId?: string
 ): Promise<{
   stream: LinkStream;
   send: (bytes: Uint8Array) => Promise<void>;
   readable: ReadableStream<Uint8Array>;
   close: () => void;
 }> {
-  const payload: WsStreamOpenPayload = { type: 'ws', auth };
+  const payload: WsStreamOpenPayload = {
+    type: 'ws',
+    auth,
+    ...(connectionId ? { connectionId } : {}),
+  };
   const stream = await link.openStream(encodeJsonBytes(payload));
   return {
     stream,

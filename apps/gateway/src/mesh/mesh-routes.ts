@@ -6,6 +6,7 @@ import type { NodeSessionStore } from '../auth/node-session-store';
 import type { UserStore } from '../auth/user-store';
 import type { PublicAuthNode } from './auth-routes';
 import {
+  type ConnectionLookup,
   MESH_REJECT_4401_KIND,
   MESH_VIA_SELF,
   MESH_WS_KIND,
@@ -18,6 +19,7 @@ import {
   type RtcSignalMessage,
   type RtcSignalRouter,
   WS_CLOSE_LOGIN_REQUIRED,
+  X_TMEX_CONNECTION,
   getMeshRequestContext,
 } from './mesh-deps';
 import {
@@ -54,6 +56,7 @@ export type MeshRoutesDeps = {
   rtcConfig?: RtcConfigProvider;
   now?: () => number;
   registerSocket?: (ws: MeshServerWebSocket, auth: { sid: string; uid: string }) => void;
+  connectionLookup?: ConnectionLookup;
 };
 
 const STATUS_TO_U8: Record<string, number> = {
@@ -98,6 +101,9 @@ export class MeshRoutes {
     }
     if (path === '/api/mesh/rtc-config' && req.method === 'GET') {
       return requireSession(this.sessionDeps, () => this.handleRtcConfig())(req);
+    }
+    if (path === '/api/mesh/connection' && req.method === 'GET') {
+      return requireSession(this.sessionDeps, (r, auth) => this.handleConnection(r, auth))(req);
     }
     if (path === '/api/rtc/authorize' && req.method === 'POST') {
       return requireSession(this.sessionDeps, (r, auth) => this.handleRtcAuthorize(r, auth))(req);
@@ -260,6 +266,29 @@ export class MeshRoutes {
     return jsonBody({ stun: cfg.stun, turn: cfg.turn ?? null });
   }
 
+  private handleConnection(req: Request, auth: AuthenticateOk): Response {
+    if (!auth.sid) {
+      return jsonError('UNAUTHORIZED', 401);
+    }
+    const via = getMeshRequestContext(req).via || MESH_VIA_SELF;
+    const header = req.headers.get(X_TMEX_CONNECTION);
+    const resolved = this.deps.connectionLookup?.({
+      sid: auth.sid,
+      via,
+      connectionId: header?.trim() || null,
+    });
+    if (!resolved) {
+      return jsonError('NO_CONNECTION', 404);
+    }
+    if (!resolved.ok) {
+      const status = resolved.code === 'MULTIPLE_CONNECTIONS' ? 409 : 404;
+      return jsonError(resolved.code, status, {
+        hint: 'send x-tmex-connection matching this tab GatewayConnection',
+      });
+    }
+    return jsonBody({ connectionId: resolved.connectionId });
+  }
+
   private async handleRtcAuthorize(req: Request, auth: AuthenticateOk): Promise<Response> {
     if (!auth.userId) {
       return jsonError('UNAUTHORIZED', 401);
@@ -281,11 +310,26 @@ export class MeshRoutes {
     if (!auth.sid) {
       return jsonError('UNAUTHORIZED', 401);
     }
+    const bodyConnectionId = typeof body?.connectionId === 'string' ? body.connectionId.trim() : '';
+    const headerConnectionId = req.headers.get(X_TMEX_CONNECTION)?.trim() || '';
+    const requestedConnectionId = bodyConnectionId || headerConnectionId || null;
+    const resolved = this.deps.connectionLookup?.({
+      sid: auth.sid,
+      via,
+      connectionId: requestedConnectionId,
+    });
+    if (resolved && !resolved.ok) {
+      const status = resolved.code === 'MULTIPLE_CONNECTIONS' ? 409 : 404;
+      return jsonError(resolved.code, status, {
+        hint: 'send connectionId from GET /api/mesh/connection or x-tmex-connection',
+      });
+    }
     const granted = await this.deps.rtcFingerprint.authorizeBrowser({
       rtcSession,
       uid: auth.userId,
       via,
       sid: auth.sid,
+      ...(resolved?.ok ? { connectionId: resolved.connectionId } : {}),
       fpBrowser: { algorithm: fpBrowser.algorithm, value: fpBrowser.value },
     });
     if (!granted) {

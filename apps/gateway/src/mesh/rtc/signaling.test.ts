@@ -87,4 +87,47 @@ describe('MeshRtcSignalRouter', () => {
     router.deliverLocal({ rtcSession: 'sess-1', from: 'browser', to: 'aa', sdp: 'more' });
     expect(local).toEqual(['offer', 'more']);
   });
+
+  test('does not cache local signals without an owner or when target is not self', () => {
+    const router = new MeshRtcSignalRouter({
+      selfNodeId: 'aa',
+      sendCtl: () => {},
+    });
+    router.deliverLocal({ rtcSession: 'ghost', from: 'browser', to: 'aa', sdp: 'x' });
+    expect(router.inboxSessionCount()).toBe(0);
+    router.register('sess-1', { browserSessionId: 'b1', targetNodeId: 'aa' });
+    router.deliverLocal({ rtcSession: 'sess-1', from: 'browser', to: 'bb', sdp: 'x' });
+    expect(router.inboxSessionCount()).toBe(0);
+  });
+
+  test('shouldCacheLocal and hard caps stop a hostile-node flood', () => {
+    const authorized = new Set(['ok']);
+    const router = new MeshRtcSignalRouter({
+      selfNodeId: 'aa',
+      sendCtl: () => {},
+      shouldCacheLocal: (signal, source) =>
+        authorized.has(signal.rtcSession) && signal.to === 'aa' && source === 'entry',
+      maxInboxSessions: 2,
+      maxInboxMessages: 3,
+    });
+    for (let i = 0; i < 50; i++) {
+      router.deliverLocal(
+        { rtcSession: `flood-${i}`, from: 'browser', to: 'aa', sdp: 'x' },
+        'hostile'
+      );
+    }
+    expect(router.inboxSessionCount()).toBe(0);
+    router.deliverLocal({ rtcSession: 'ok', from: 'browser', to: 'aa', sdp: 'a' }, 'entry');
+    router.deliverLocal({ rtcSession: 'ok', from: 'browser', to: 'aa', sdp: 'b' }, 'entry');
+    router.deliverLocal({ rtcSession: 'ok', from: 'browser', to: 'aa', sdp: 'c' }, 'entry');
+    router.deliverLocal({ rtcSession: 'ok', from: 'browser', to: 'aa', sdp: 'd' }, 'entry');
+    expect(router.inboxSize()).toBe(3);
+    authorized.add('ok-2');
+    authorized.add('ok-3');
+    router.deliverLocal({ rtcSession: 'ok-2', from: 'browser', to: 'aa', sdp: 'e' }, 'entry');
+    router.deliverLocal({ rtcSession: 'ok-3', from: 'browser', to: 'aa', sdp: 'f' }, 'entry');
+    expect(router.inboxSessionCount()).toBe(2);
+    router.unregister('ok');
+    expect(router.inboxSessionCount()).toBe(1);
+  });
 });

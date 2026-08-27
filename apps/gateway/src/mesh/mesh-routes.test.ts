@@ -272,6 +272,112 @@ describe('mesh-routes', () => {
     }
   });
 
+  test('GET /api/mesh/connection and authorize bind connectionId; 409 when multiple', async () => {
+    const { MeshHttpRuntime } = await import('./mesh-http');
+    const mesh = await bootMesh();
+    try {
+      const lookups: Array<{ sid: string; via: string; connectionId?: string | null }> = [];
+      let mode: 'one' | 'many' | 'none' | 'match' = 'one';
+      const runtime = new MeshHttpRuntime({
+        roles: { hub: false, node: true },
+        nodeId: NODE_ID,
+        nodePk: NODE_PK,
+        userStore: mesh.userStore,
+        keyLogService: mesh.keyLogService,
+        challengeStore: mesh.challengeStore,
+        nodeSessionStore: mesh.nodeSessionStore,
+        peers: mesh.peers,
+        streams: mesh.streams,
+        publisher: { publish() {} },
+        rtc: {
+          fingerprint: {
+            authorizeBrowser: (input) => ({
+              nonce: new Uint8Array(32).fill(7),
+              fpNode: { algorithm: 'sha-256', value: input.connectionId ?? 'none' },
+            }),
+          },
+        },
+        connectionLookup: (input) => {
+          lookups.push(input);
+          if (mode === 'none') return { ok: false, code: 'NO_CONNECTION' };
+          if (mode === 'many' && !input.connectionId) {
+            return { ok: false, code: 'MULTIPLE_CONNECTIONS' };
+          }
+          return { ok: true, connectionId: input.connectionId || 'conn-latest' };
+        },
+        primaryUserId: mesh.boot.userId,
+      });
+      const { sid } = await challengeAndLogin(runtime, mesh.boot);
+      const cookie = `tmex_s_self=${sid}`;
+      const one = asResponse(
+        await runtime.handleRequest(
+          new Request('http://localhost/api/mesh/connection', { headers: { cookie } }),
+          dummyServer
+        )
+      );
+      expect(one.status).toBe(200);
+      expect(await one.json()).toEqual({ connectionId: 'conn-latest' });
+
+      mode = 'many';
+      const many = asResponse(
+        await runtime.handleRequest(
+          new Request('http://localhost/api/mesh/connection', { headers: { cookie } }),
+          dummyServer
+        )
+      );
+      expect(many.status).toBe(409);
+      expect((await many.json()).code).toBe('MULTIPLE_CONNECTIONS');
+
+      const headered = asResponse(
+        await runtime.handleRequest(
+          new Request('http://localhost/api/mesh/connection', {
+            headers: { cookie, 'x-tmex-connection': 'tab-a' },
+          }),
+          dummyServer
+        )
+      );
+      expect(headered.status).toBe(200);
+      expect(await headered.json()).toEqual({ connectionId: 'tab-a' });
+
+      const conflict = asResponse(
+        await runtime.handleRequest(
+          new Request('http://localhost/api/rtc/authorize', {
+            method: 'POST',
+            headers: { 'content-type': 'application/json', cookie },
+            body: JSON.stringify({
+              rtcSession: 's1',
+              fp_browser: { algorithm: 'sha-256', value: 'AA' },
+            }),
+          }),
+          dummyServer
+        )
+      );
+      expect(conflict.status).toBe(409);
+
+      const ok = asResponse(
+        await runtime.handleRequest(
+          new Request('http://localhost/api/rtc/authorize', {
+            method: 'POST',
+            headers: { 'content-type': 'application/json', cookie },
+            body: JSON.stringify({
+              rtcSession: 's1',
+              connectionId: 'tab-a',
+              fp_browser: { algorithm: 'sha-256', value: 'AA' },
+            }),
+          }),
+          dummyServer
+        )
+      );
+      expect(ok.status).toBe(200);
+      const body = (await ok.json()) as { fp_node: { value: string } };
+      expect(body.fp_node.value).toBe('tab-a');
+      expect(lookups.some((row) => row.connectionId === 'tab-a')).toBe(true);
+      runtime.stop();
+    } finally {
+      mesh.close();
+    }
+  });
+
   test('/mesh/ws requires session and broadcasts NODE_EVENT', async () => {
     const peers = new FakePeers();
     const mesh = await bootMesh({ peers });

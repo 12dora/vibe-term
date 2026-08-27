@@ -572,7 +572,7 @@ export class UplinkServer {
     if (live.nodeId !== dc.a && live.nodeId !== dc.b) return;
     const other = live.nodeId === dc.a ? dc.b : dc.a;
     if (msg.to !== other) return;
-    if (msg.from !== 'node' && msg.from !== 'browser') return;
+    if (msg.from !== 'node') return;
     this.ensureDcSession(live.userId, dc.a, dc.b);
     const target = this.registry.get(msg.to);
     if (!target?.authenticated || target.userId !== live.userId) return;

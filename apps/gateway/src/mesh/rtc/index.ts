@@ -76,7 +76,10 @@ export {
 } from './rtc-peer-manager';
 export {
   MeshRtcSignalRouter,
+  RTC_LOCAL_INBOX_MAX_MESSAGES,
+  RTC_LOCAL_INBOX_MAX_SESSIONS,
   type RtcSessionOwner,
   type RtcSignalRouterOptions,
   type SendCtl,
+  type ShouldCacheLocal,
 } from './signaling';

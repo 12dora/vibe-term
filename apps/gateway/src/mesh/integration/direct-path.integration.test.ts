@@ -13,6 +13,8 @@ import {
   normalizeFingerprint,
   signLogin,
 } from '@tmex/shared/auth';
+import { createInMemoryLinkPair } from '@tmex/shared/link';
+import { filesBulkHooks } from '../../api/files';
 import {
   KeyLogStore,
   NodeIdentityStore,
@@ -25,18 +27,29 @@ import {
 } from '../../auth';
 import { createMigratedAuthDb } from '../../auth/test-db';
 import type { AuthDb } from '../../auth/types';
+import { createUploadSession, removeUploadSession } from '../../files/transfer-session';
 import type { GatewayRuntime } from '../../runtime';
 import { WebSocketServer } from '../../ws';
-import { GatewaySession } from '../../ws/gateway-session';
-import { createFakeCarrier } from '../../ws/test-helpers';
-import { MESH_VIA_SELF, MESH_WS_KIND, setMeshRequestContext } from '../mesh-deps';
+import type { GatewaySession } from '../../ws/gateway-session';
+import {
+  MESH_VIA_SELF,
+  MESH_WS_KIND,
+  X_TMEX_CONNECTION,
+  setMeshRequestContext,
+} from '../mesh-deps';
 import { type MeshRuntime, createMeshRuntime } from '../mesh-runtime';
 import { SESS_CHANNEL_LABEL } from '../rtc';
+import { fragmentFrame } from '../rtc/fragmenter';
 import { type FakePeerConnection, createFakeNativeModule } from '../rtc/test-fakes';
+import { acceptWsStream, openWsStream } from '../stream-targets';
 import { waitUntil } from '../test-support';
+import { requestDispatchContext } from '../types';
 
 const PASSWORD = 'tmex-test';
 const dummyServer = { upgrade: () => false };
+
+const origGetTransferOwner = filesBulkHooks.getTransferOwner;
+const transferUids = new Map<string, string>();
 
 function fakeGateway(db: AuthDb, wsServer?: WebSocketServer): GatewayRuntime {
   const server = wsServer ?? new WebSocketServer();
@@ -45,7 +58,30 @@ function fakeGateway(db: AuthDb, wsServer?: WebSocketServer): GatewayRuntime {
     db,
     wsServer: server,
     handleRequest: () => undefined,
-    dispatchHttp: async () => new Response('not-found', { status: 404 }),
+    dispatchHttp: async (req, ctx) => {
+      requestDispatchContext.set(req, { uid: ctx.uid ?? '', viaNodeId: ctx.viaNodeId });
+      const path = new URL(req.url).pathname;
+      if (path === '/api/files/upload/init' && req.method === 'POST') {
+        const body = (await req.json()) as {
+          rootId?: string;
+          path?: string;
+          name?: string;
+          size?: number;
+        };
+        const session = createUploadSession({
+          rootId: body.rootId ?? 'r',
+          destDir: body.path ?? '/d',
+          name: body.name ?? 'a.bin',
+          size: typeof body.size === 'number' ? body.size : 1,
+        });
+        transferUids.set(session.id, ctx.uid ?? '');
+        return new Response(JSON.stringify({ uploadId: session.id, chunkSize: 8192 }), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        });
+      }
+      return new Response('not-found', { status: 404 });
+    },
     websocket: {
       backpressureLimit: 1024,
       closeOnBackpressureLimit: true,
@@ -127,6 +163,15 @@ async function loginSelf(
 describe('direct path integration', () => {
   const fixtures: Array<{ close: () => void; stop?: () => Promise<void> }> = [];
   afterEach(async () => {
+    filesBulkHooks.getTransferOwner = origGetTransferOwner;
+    for (const id of transferUids.keys()) {
+      try {
+        removeUploadSession(id);
+      } catch {
+        // already gone
+      }
+    }
+    transferUids.clear();
     while (fixtures.length > 0) {
       const item = fixtures.pop();
       await item?.stop?.();
@@ -174,12 +219,68 @@ describe('direct path integration', () => {
     fixtures.push({ close, stop: () => mesh.stop() });
     await mesh.start();
     await waitUntil(() => mesh.uplink.state === 'online', 5_000);
+    filesBulkHooks.getTransferOwner = (id) => {
+      const owner = origGetTransferOwner(id);
+      if (!owner) return null;
+      const uid = transferUids.get(id);
+      return uid != null ? { ...owner, uid } : owner;
+    };
+
     const sid = await loginSelf(mesh, boot);
     const cookie = `${nodeSessionCookieName(MESH_VIA_SELF)}=${sid}`;
+    const sessionStore = new NodeSessionStore(db);
+    const [linkA, linkB] = createInMemoryLinkPair();
+    const [linkA2, linkB2] = createInMemoryLinkPair();
+    const openedSessions: GatewaySession[] = [];
+    const accept = (stream: import('@tmex/shared/link').LinkStream) => {
+      void acceptWsStream(stream, {
+        peerNodeId: MESH_VIA_SELF,
+        sessionStore,
+        wsServer,
+        onGatewaySession: (session, auth) => {
+          mesh.registerGatewaySession({ ...auth, session });
+          openedSessions.push(session);
+        },
+      });
+    };
+    linkB.onStream(accept);
+    linkB2.onStream(accept);
+    const openedA = await openWsStream(linkA, sid, 'tab-a');
+    const openedB = await openWsStream(linkA2, sid, 'tab-b');
+    await waitUntil(() => openedSessions.length >= 2, 3_000);
+    const helloPayload = wsBorsh.encodePayload(wsBorsh.schema.HelloC2SSchema, {
+      clientImpl: 'direct-path-test',
+      clientVersion: 'test',
+      maxFrameBytes: wsBorsh.DEFAULT_MAX_FRAME_BYTES,
+      supportsCompression: false,
+      supportsDiffSnapshot: false,
+    });
+    await openedA.send(wsBorsh.encodeEnvelope(wsBorsh.KIND_HELLO_C2S, helloPayload, 1));
+    await openedB.send(wsBorsh.encodeEnvelope(wsBorsh.KIND_HELLO_C2S, helloPayload, 1));
+    const session = openedSessions[0] as GatewaySession;
+    const sessionB = openedSessions[1] as GatewaySession;
+    expect(session.id).not.toBe(sessionB.id);
 
-    const primary = createFakeCarrier();
-    const session = new GatewaySession({ primary });
-    mesh.registerGatewaySession({ sid, uid: boot.userId, via: MESH_VIA_SELF, session });
+    const listed = await callMesh(mesh, 'http://entry/api/mesh/connection', { cookie });
+    expect(listed.status).toBe(409);
+    const listedA = await callMesh(mesh, 'http://entry/api/mesh/connection', {
+      cookie,
+      headers: { [X_TMEX_CONNECTION]: 'tab-a' },
+    });
+    expect(listedA.status).toBe(200);
+    expect(await listedA.json()).toEqual({ connectionId: 'tab-a' });
+
+    const wrongConn = await callMesh(mesh, 'http://entry/api/rtc/authorize', {
+      method: 'POST',
+      cookie,
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        rtcSession: 'wrong-conn',
+        connectionId: 'no-such-tab',
+        fp_browser: { algorithm: 'sha-256', value: 'AA' },
+      }),
+    });
+    expect(wrongConn.status).toBe(404);
 
     const rtcSession = 'browser-direct-1';
     const browserPc = new fake.module.PeerConnection('browser', {
@@ -221,6 +322,7 @@ describe('direct path integration', () => {
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({
         rtcSession,
+        connectionId: 'tab-a',
         fp_browser: fpBrowser,
       }),
     });
@@ -250,8 +352,24 @@ describe('direct path integration', () => {
     dc.sendMessage(JSON.stringify({ nonce: granted.nonce }));
 
     await waitUntil(() => session.activeCarrier !== session.primary, 3_000);
-    expect(primary.sent.length).toBeGreaterThan(0);
-    const switchEnv = wsBorsh.decodeEnvelope(primary.sent[0] as Uint8Array);
+    expect(sessionB.activeCarrier).toBe(sessionB.primary);
+    const reader = openedA.readable.getReader();
+    const switchHold: { env: ReturnType<typeof wsBorsh.decodeEnvelope> | null } = { env: null };
+    void (async () => {
+      while (!switchHold.env) {
+        const chunk = await reader.read();
+        if (chunk.done || !chunk.value) return;
+        try {
+          const env = wsBorsh.decodeEnvelope(chunk.value);
+          if (env.kind === wsBorsh.KIND_CARRIER_SWITCH) switchHold.env = env;
+        } catch {
+          // ignore
+        }
+      }
+    })();
+    await waitUntil(() => switchHold.env != null, 3_000);
+    const switchEnv = switchHold.env;
+    if (!switchEnv) throw new Error('missing CARRIER_SWITCH');
     expect(switchEnv.kind).toBe(wsBorsh.KIND_CARRIER_SWITCH);
     const sent = wsBorsh.decodePayload(wsBorsh.schema.CarrierSwitchSchema, switchEnv.payload);
 
@@ -268,18 +386,80 @@ describe('direct path integration', () => {
     expect(direct).not.toBe(session.primary);
     expect(direct.send(new TextEncoder().encode('hello-direct'))).toBe('sent');
 
-    const bulk = browserPc.createDataChannel('bulk:xfer-1');
+    const bound = mesh.sessions.getByConnectionId('tab-a');
+    expect(session.closed).toBe(false);
+    expect(bound?.via).toBe(MESH_VIA_SELF);
+    expect(bound?.sid).toBe(sid);
+    expect(sessionStore.verify(sid, { viaNodeId: MESH_VIA_SELF, now: Date.now() }).ok).toBe(true);
+
+    const init = await gateway.dispatchHttp(
+      new Request('http://node/api/files/upload/init', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ rootId: 'r', path: '/d', name: 'a.bin', size: 1 }),
+      }),
+      { uid: boot.userId, viaNodeId: MESH_VIA_SELF }
+    );
+    expect(init.status).toBe(200);
+    const { uploadId } = (await init.json()) as { uploadId: string };
+
+    const bulk = browserPc.createDataChannel(`bulk:${uploadId}`);
     await new Promise<void>((resolve) => {
       bulk.onOpen(() => resolve());
       if (bulk.isOpen()) resolve();
     });
+    const nodePc = fake.connections.find((pc) => pc !== browserPc);
+    expect(nodePc?.inbound.map((dc) => dc.getLabel()) ?? []).toContain(`bulk:${uploadId}`);
+    expect(bulk.peer?.getLabel()).toBe(`bulk:${uploadId}`);
     const bulkReplies: string[] = [];
     bulk.onMessage((msg) => {
       bulkReplies.push(typeof msg === 'string' ? msg : new TextDecoder().decode(msg));
     });
-    bulk.sendMessage(JSON.stringify({ op: 'put', transferId: 'xfer-1', size: 1 }));
+    const put = JSON.stringify({ op: 'put', transferId: uploadId, size: 1 });
+    bulk.sendMessage(put);
+    if (bulkReplies.length === 0) bulk.peer?.emitMessage(put);
     await waitUntil(() => bulkReplies.length > 0, 2_000);
-    expect(bulkReplies.some((row) => row.includes('not_found') || row.includes('ok'))).toBe(true);
+    expect(bulkReplies.some((row) => row.includes('permission_denied'))).toBe(false);
+
+    const wrongOwner = await gateway.dispatchHttp(
+      new Request('http://node/api/files/upload/init', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ rootId: 'r', path: '/d', name: 'b.bin', size: 1 }),
+      }),
+      { uid: 'other-user', viaNodeId: MESH_VIA_SELF }
+    );
+    const { uploadId: otherId } = (await wrongOwner.json()) as { uploadId: string };
+    const bulkWrong = browserPc.createDataChannel(`bulk:${otherId}`);
+    await new Promise<void>((resolve) => {
+      bulkWrong.onOpen(() => resolve());
+      if (bulkWrong.isOpen()) resolve();
+    });
+    const wrongReplies: string[] = [];
+    bulkWrong.onMessage((msg) => {
+      wrongReplies.push(typeof msg === 'string' ? msg : new TextDecoder().decode(msg));
+    });
+    bulkWrong.sendMessage(JSON.stringify({ op: 'put', transferId: otherId, size: 1 }));
+    if (wrongReplies.length === 0) {
+      bulkWrong.peer?.emitMessage(JSON.stringify({ op: 'put', transferId: otherId, size: 1 }));
+    }
+    await waitUntil(() => wrongReplies.length > 0, 2_000);
+    expect(wrongReplies.some((row) => row.includes('permission_denied'))).toBe(true);
+
+    sessionStore.revoke(sid);
+    const ping = wsBorsh.encodeEnvelope(
+      wsBorsh.KIND_PING,
+      wsBorsh.encodePayload(wsBorsh.schema.PingPongSchema, { nonce: 1, timeMs: 0n }),
+      9
+    );
+    for (const part of fragmentFrame(1, ping, 16_384)) {
+      dc.sendMessageBinary(Buffer.from(part));
+    }
+    await waitUntil(() => session.closed, 3_000);
+    expect(session.closed).toBe(true);
+    expect(dc.closed).toBe(true);
+    openedA.close();
+    openedB.close();
   }, 15_000);
 
   test('node↔node DC signaling goes through real HubRuntime/UplinkServer', async () => {

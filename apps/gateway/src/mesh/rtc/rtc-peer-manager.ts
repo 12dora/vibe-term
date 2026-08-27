@@ -90,6 +90,7 @@ export type AcceptBrowserResult = {
   sid: string;
   via: string;
   rtcSession: string;
+  connectionId: string;
 };
 
 export type BrowserAuthorization = {
@@ -97,6 +98,7 @@ export type BrowserAuthorization = {
   uid: string;
   sid: string;
   via: string;
+  connectionId: string;
 };
 
 type BrowserRecord = {
@@ -104,6 +106,7 @@ type BrowserRecord = {
   uid: string;
   sid: string;
   via: string;
+  connectionId: string;
   nonce: Uint8Array | null;
   fpBrowser: DtlsFingerprint | null;
   fpNode: DtlsFingerprint | null;
@@ -301,6 +304,7 @@ export class RtcPeerManager implements RtcFingerprintProvider {
     rec.uid = input.uid;
     rec.sid = input.sid;
     rec.via = input.via;
+    rec.connectionId = input.connectionId ?? '';
     rec.fpBrowser = normalizeFingerprint(input.fpBrowser);
     rec.exp = this.now() + this.authorizeTtlMs;
     const fpNode = rec.fpNode ?? (await this.waitLocalFingerprint(rec.pc));
@@ -331,6 +335,7 @@ export class RtcPeerManager implements RtcFingerprintProvider {
     const uid = live.uid;
     const sid = live.sid;
     const via = live.via;
+    const connectionId = live.connectionId;
     const got = parseNonceMessage(nonceRaw);
     if (got !== encodeBase64url(nonce)) {
       this.browser.delete(rtcSession);
@@ -353,13 +358,24 @@ export class RtcPeerManager implements RtcFingerprintProvider {
       sid,
       via,
       rtcSession,
+      connectionId,
     };
   }
 
   authorizationOf(rtcSession: string): BrowserAuthorization | null {
     const rec = this.browser.get(rtcSession);
     if (!rec || rec.exp <= this.now()) return null;
-    return { rtcSession, uid: rec.uid, sid: rec.sid, via: rec.via };
+    return {
+      rtcSession,
+      uid: rec.uid,
+      sid: rec.sid,
+      via: rec.via,
+      connectionId: rec.connectionId,
+    };
+  }
+
+  notifySessionClosed(session: GatewaySession): void {
+    this.switcher?.notifyClosed(session);
   }
 
   attachDirect(session: GatewaySession, carrier: Carrier, options?: AttachDirectOptions): void {
@@ -418,6 +434,7 @@ export class RtcPeerManager implements RtcFingerprintProvider {
       uid: '',
       sid: '',
       via: '',
+      connectionId: '',
       nonce: null,
       fpBrowser: null,
       fpNode: null,

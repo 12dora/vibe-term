@@ -7,6 +7,7 @@ export class LinkStreamCarrier implements Carrier {
   private readonly stream: LinkStream;
   private readonly highWaterMark: number;
   private readonly drainCallbacks: Array<() => void> = [];
+  private readonly closeCallbacks: Array<() => void> = [];
   private readonly queue: Uint8Array[] = [];
   private pending = 0;
   private pumping = false;
@@ -22,10 +23,12 @@ export class LinkStreamCarrier implements Carrier {
       this.closing = true;
       this.queue.length = 0;
       this.pending = 0;
+      this.emitClose();
     });
     void stream.closed.then(() => {
       this.closed = true;
       this.closing = true;
+      this.emitClose();
     });
   }
 
@@ -50,6 +53,10 @@ export class LinkStreamCarrier implements Carrier {
     this.drainCallbacks.push(cb);
   }
 
+  onClose(cb: () => void): void {
+    this.closeCallbacks.push(cb);
+  }
+
   close(_code: number, _reason: string): void {
     if (this.closed || this.closing) return;
     this.closing = true;
@@ -61,10 +68,22 @@ export class LinkStreamCarrier implements Carrier {
     this.closing = true;
     this.queue.length = 0;
     this.pending = 0;
+    this.emitClose();
     try {
       this.stream.reset('carrier-terminate');
     } catch {
       // already reset
+    }
+  }
+
+  private emitClose(): void {
+    const cbs = this.closeCallbacks.splice(0);
+    for (const cb of cbs) {
+      try {
+        cb();
+      } catch {
+        // close listener
+      }
     }
   }
 

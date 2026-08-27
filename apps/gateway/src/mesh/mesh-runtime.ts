@@ -22,6 +22,7 @@ import type { GatewaySession } from '../ws/gateway-session';
 import { encodeJsonBytes } from './ctl';
 import {
   type CachedRtcConfig,
+  type ConnectionLookupResult,
   type KeyLogPublisher,
   MESH_VIA_SELF,
   type MeshHandleResult,
@@ -33,6 +34,7 @@ import {
   type RtcFingerprintProvider,
   type RtcSignalMessage,
   type StreamOpener,
+  WS_CLOSE_LOGIN_REQUIRED,
   getMeshRequestContext,
   requestDispatchContext,
   setMeshRequestContext,
@@ -87,40 +89,131 @@ export type CreateMeshRuntimeOptions = {
 };
 
 export type RegisteredGatewaySession = {
+  connectionId: string;
   sid: string;
   uid: string;
   via: string;
   session: GatewaySession;
+  lastVerifyAt: number;
+  pc?: { close(): void };
+};
+
+export type RegisterGatewaySessionInput = {
+  sid: string;
+  uid: string;
+  via: string;
+  session: GatewaySession;
+  connectionId?: string;
+  pc?: { close(): void };
 };
 
 export class SessionRegistry {
-  private readonly bySid = new Map<string, RegisteredGatewaySession>();
+  private readonly byConnection = new Map<string, RegisteredGatewaySession>();
   private readonly bySession = new WeakMap<GatewaySession, string>();
+  private readonly connectionsBySid = new Map<string, Set<string>>();
 
-  register(entry: RegisteredGatewaySession): void {
-    const prev = this.bySid.get(entry.sid);
+  register(entry: RegisterGatewaySessionInput): RegisteredGatewaySession {
+    const connectionId =
+      (typeof entry.connectionId === 'string' && entry.connectionId) || entry.session.id;
+    const prev = this.byConnection.get(connectionId);
     if (prev && prev.session !== entry.session) {
-      this.bySession.delete(prev.session);
+      this.drop(prev);
     }
-    this.bySid.set(entry.sid, entry);
-    this.bySession.set(entry.session, entry.sid);
+    const stored: RegisteredGatewaySession = {
+      connectionId,
+      sid: entry.sid,
+      uid: entry.uid,
+      via: entry.via,
+      session: entry.session,
+      lastVerifyAt: 0,
+      ...(entry.pc ? { pc: entry.pc } : {}),
+    };
+    this.byConnection.set(connectionId, stored);
+    this.bySession.set(entry.session, connectionId);
+    let set = this.connectionsBySid.get(entry.sid);
+    if (!set) {
+      set = new Set();
+      this.connectionsBySid.set(entry.sid, set);
+    }
+    set.add(connectionId);
+    return stored;
   }
 
   unregister(sid: string, session?: GatewaySession): void {
-    const cur = this.bySid.get(sid);
-    if (!cur) return;
-    if (session && cur.session !== session) return;
-    this.bySid.delete(sid);
-    this.bySession.delete(cur.session);
+    if (session) {
+      this.unregisterSession(session);
+      return;
+    }
+    for (const entry of this.listBySid(sid)) {
+      this.drop(entry);
+    }
   }
 
   unregisterSession(session: GatewaySession): void {
-    const sid = this.bySession.get(session);
-    if (sid) this.unregister(sid, session);
+    const connectionId = this.bySession.get(session);
+    if (!connectionId) return;
+    const entry = this.byConnection.get(connectionId);
+    if (entry) this.drop(entry);
   }
 
   get(sid: string): RegisteredGatewaySession | null {
-    return this.bySid.get(sid) ?? null;
+    const live = this.listBySid(sid);
+    return live.length === 1 ? (live[0] ?? null) : null;
+  }
+
+  getByConnectionId(connectionId: string): RegisteredGatewaySession | null {
+    const entry = this.byConnection.get(connectionId);
+    if (!entry || entry.session.closed) return null;
+    return entry;
+  }
+
+  getBySession(session: GatewaySession): RegisteredGatewaySession | null {
+    const connectionId = this.bySession.get(session);
+    return connectionId ? this.getByConnectionId(connectionId) : null;
+  }
+
+  listBySid(sid: string): RegisteredGatewaySession[] {
+    const ids = this.connectionsBySid.get(sid);
+    if (!ids) return [];
+    const out: RegisteredGatewaySession[] = [];
+    for (const id of ids) {
+      const entry = this.byConnection.get(id);
+      if (entry && !entry.session.closed) out.push(entry);
+    }
+    return out;
+  }
+
+  listByUid(uid: string): RegisteredGatewaySession[] {
+    const out: RegisteredGatewaySession[] = [];
+    for (const entry of this.byConnection.values()) {
+      if (entry.uid === uid && !entry.session.closed) out.push(entry);
+    }
+    return out;
+  }
+
+  lookup(sid: string, via: string, connectionId?: string | null): ConnectionLookupResult {
+    if (connectionId) {
+      const entry = this.getByConnectionId(connectionId);
+      if (entry && entry.sid === sid && entry.via === via) {
+        return { ok: true, connectionId: entry.connectionId };
+      }
+      return { ok: false, code: 'NO_CONNECTION' };
+    }
+    const matches = this.listBySid(sid).filter((entry) => entry.via === via);
+    if (matches.length === 0) return { ok: false, code: 'NO_CONNECTION' };
+    if (matches.length > 1) return { ok: false, code: 'MULTIPLE_CONNECTIONS' };
+    const only = matches[0];
+    if (!only) return { ok: false, code: 'NO_CONNECTION' };
+    return { ok: true, connectionId: only.connectionId };
+  }
+
+  private drop(entry: RegisteredGatewaySession): void {
+    this.byConnection.delete(entry.connectionId);
+    this.bySession.delete(entry.session);
+    const set = this.connectionsBySid.get(entry.sid);
+    if (!set) return;
+    set.delete(entry.connectionId);
+    if (set.size === 0) this.connectionsBySid.delete(entry.sid);
   }
 }
 
@@ -135,7 +228,7 @@ export type MeshRuntime = {
   readonly userStore: UserStore;
   readonly userKeyService: UserKeyService;
   lastNodeList: UplinkNodeList | null;
-  registerGatewaySession(entry: RegisteredGatewaySession): void;
+  registerGatewaySession(entry: RegisterGatewaySessionInput): void;
   unregisterGatewaySession(sidOrSession: string | GatewaySession): void;
   handleRequest(req: Request, server: MeshUpgradeServer): Promise<MeshHandleResult>;
   localUiGuard(req: Request): Response | null;
@@ -481,6 +574,8 @@ export async function createMeshRuntime(opts: CreateMeshRuntimeOptions): Promise
     handshakeTimeoutMs: opts.rtcHandshakeTimeoutMs,
     sendControl,
     deliverInbound: (session, bytes) => {
+      const entry = sessions.getBySession(session);
+      if (!entry || !verifyBoundSession(entry)) return;
       try {
         gateway.wsServer.handleMessage(session, Buffer.from(bytes));
       } catch {
@@ -492,6 +587,57 @@ export async function createMeshRuntime(opts: CreateMeshRuntimeOptions): Promise
     gateway.wsServer.setOnCarrierSwitchAck((session, epoch, rtcSession) => {
       rtc.handleCarrierSwitchAck(session, epoch, rtcSession);
     });
+  }
+  const wsServer = gateway.wsServer as {
+    setOnSessionClosed?: (handler: ((session: GatewaySession) => void) | null) => void;
+    closeSession?: (session: GatewaySession, code: number, reason: string) => void;
+  };
+  if (typeof wsServer.setOnSessionClosed === 'function') {
+    wsServer.setOnSessionClosed((session) => {
+      const entry = sessions.getBySession(session);
+      if (entry) teardownBinding(entry);
+      else rtc.notifySessionClosed(session);
+    });
+  }
+
+  const tearingDown = new WeakSet<GatewaySession>();
+
+  function verifyBoundSession(entry: RegisteredGatewaySession): boolean {
+    if (entry.session.closed) {
+      teardownBinding(entry);
+      return false;
+    }
+    const now = Date.now();
+    const verified = nodeSessionStore.verify(entry.sid, {
+      viaNodeId: entry.via,
+      now,
+    });
+    if (!verified.ok) {
+      teardownBinding(entry);
+      return false;
+    }
+    entry.lastVerifyAt = now;
+    return true;
+  }
+
+  function teardownBinding(entry: RegisteredGatewaySession): void {
+    if (tearingDown.has(entry.session)) return;
+    tearingDown.add(entry.session);
+    sessions.unregisterSession(entry.session);
+    rtc.notifySessionClosed(entry.session);
+    try {
+      entry.pc?.close();
+    } catch {
+      // already closed
+    }
+    bulk.abortByOwner(entry.connectionId);
+    if (!entry.session.closed && typeof wsServer.closeSession === 'function') {
+      try {
+        wsServer.closeSession(entry.session, WS_CLOSE_LOGIN_REQUIRED, 'NODE_LOGIN_REQUIRED');
+      } catch {
+        // already closed
+      }
+    }
   }
 
   const statusProvider = () => ({
@@ -642,10 +788,12 @@ export async function createMeshRuntime(opts: CreateMeshRuntimeOptions): Promise
       sessions.register({ ...auth, session });
     },
     onGatewaySessionClose: (session) => {
-      sessions.unregisterSession(session);
+      const entry = sessions.getBySession(session);
+      if (entry) teardownBinding(entry);
+      else sessions.unregisterSession(session);
     },
-    onBrowserSignal: (signal) => {
-      innerSignalsHolder.router?.deliverLocal(signal);
+    onBrowserSignal: (signal, fromNodeId) => {
+      innerSignalsHolder.router?.deliverLocal(signal, fromNodeId);
       startBrowserAcceptHolder.fn(signal.rtcSession);
     },
     ensureDcSession: (peerNodeId, rtcSession) => {
@@ -704,6 +852,19 @@ export async function createMeshRuntime(opts: CreateMeshRuntimeOptions): Promise
 
   const innerSignals = new MeshRtcSignalRouter({
     selfNodeId: identity.nodeIdHex,
+    shouldCacheLocal(signal, sourceNodeId) {
+      const auth = rtc.authorizationOf(signal.rtcSession);
+      if (!auth) return false;
+      if (signal.to.toLowerCase() !== identity.nodeIdHex.toLowerCase()) return false;
+      if (
+        sourceNodeId &&
+        auth.via !== MESH_VIA_SELF &&
+        sourceNodeId.toLowerCase() !== auth.via.toLowerCase()
+      ) {
+        return false;
+      }
+      return true;
+    },
     sendCtl(nodeId, msg) {
       if (msg.rtcSession.startsWith('dc:')) {
         hub?.uplink.ensureDcSession(userId, identity.nodeIdHex, nodeId);
@@ -760,17 +921,25 @@ export async function createMeshRuntime(opts: CreateMeshRuntimeOptions): Promise
     void rtc
       .acceptBrowser(rtcSession, signaling)
       .then((result) => {
-        const binding = sessions.get(result.sid);
+        const binding = result.connectionId
+          ? sessions.getByConnectionId(result.connectionId)
+          : sessions.get(result.sid);
         if (
           binding &&
           !binding.session.closed &&
           binding.uid === result.uid &&
-          binding.via === result.via
+          binding.via === result.via &&
+          binding.sid === result.sid
         ) {
+          binding.pc = result.pc;
           rtc.attachDirect(binding.session, result.carrier, { rtcSession: result.rtcSession });
           result.pc.onDataChannel((dc) => {
             if (parseBulkChannelLabel(dc.getLabel?.())) {
-              bulk.attachChannel(dc, { uid: result.uid });
+              bulk.attachChannel(dc, {
+                uid: result.uid,
+                ownerKey: binding.connectionId,
+                verify: () => verifyBoundSession(binding),
+              });
             }
           });
         } else {
@@ -779,10 +948,19 @@ export async function createMeshRuntime(opts: CreateMeshRuntimeOptions): Promise
           } catch {
             // ignore
           }
+          try {
+            result.pc.close();
+          } catch {
+            // ignore
+          }
         }
       })
       .catch(() => {
+        // handshake failed
+      })
+      .finally(() => {
         acceptingBrowser.delete(rtcSession);
+        innerSignals.unregister(rtcSession);
       });
   };
   startBrowserAcceptHolder.fn = startBrowserAccept;
@@ -835,6 +1013,7 @@ export async function createMeshRuntime(opts: CreateMeshRuntimeOptions): Promise
     primaryUserId: userId || undefined,
     hubPublicUrl: hubEndpointUrl(config),
     trustProxy: gatewayConfig.trustProxy,
+    connectionLookup: (input) => sessions.lookup(input.sid, input.via, input.connectionId),
   });
   httpHolder.runtime = http;
 
@@ -868,8 +1047,14 @@ export async function createMeshRuntime(opts: CreateMeshRuntimeOptions): Promise
     localUiGuard: (req) => http.localUiGuard(req),
     guardGatewayWebSocket: (req, server) => http.guardGatewayWebSocket(req, server),
     rewriteSelf: (req) => http.rewriteSelf(req),
-    closeSocketsForUser: (uid) => http.closeSocketsForUser(uid),
-    closeSocketsForSid: (sid) => http.closeSocketsForSid(sid),
+    closeSocketsForUser: (uid) => {
+      http.closeSocketsForUser(uid);
+      for (const entry of sessions.listByUid(uid)) teardownBinding(entry);
+    },
+    closeSocketsForSid: (sid) => {
+      http.closeSocketsForSid(sid);
+      for (const entry of sessions.listBySid(sid)) teardownBinding(entry);
+    },
     touchSocket: (ws) => http.touchSocket(ws),
     websocket: {
       open: (ws) => http.handleWebSocket.open(ws),
