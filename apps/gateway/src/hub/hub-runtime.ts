@@ -366,7 +366,13 @@ export class HubRuntime {
     if (this.userStore.getNode(hexId)) {
       return json({ error: 'node_exists' }, 409);
     }
-    this.userStore.markEnrollmentUsed(token.id, { nodeId: hexId, now });
+    const consumed = this.userStore.consumeEnrollmentToken(certificate.enroll_pk, {
+      nodeId: hexId,
+      now,
+    });
+    if (!consumed) {
+      return json({ error: 'reused' }, 400);
+    }
     this.userStore.createNode({
       id: hexId,
       userId: token.userId,
