@@ -32,6 +32,7 @@ function createSettings(): SiteSettings {
     sshReconnectDelaySeconds: 1,
     language: 'zh_CN',
     theme: 'dark',
+    disabledNotificationChannels: [],
     updatedAt: now,
   };
 }

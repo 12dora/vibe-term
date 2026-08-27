@@ -52,6 +52,33 @@ describe('parseIpv6ToBytes', () => {
     expect(parseIpv6ToBytes('1:2:3:4:5:6:7:8:9')).toBeNull();
     expect(parseIpv6ToBytes('1::2::3')).toBeNull();
   });
+
+  test('已知地址解析为 16 字节并可按 group 还原', () => {
+    const cases: Array<[string, string]> = [
+      ['::1', '0000:0000:0000:0000:0000:0000:0000:0001'],
+      ['1:2:3:4:5:6:7:8', '0001:0002:0003:0004:0005:0006:0007:0008'],
+      ['2001:db8::1', '2001:0db8:0000:0000:0000:0000:0000:0001'],
+      ['::ffff:10.0.0.1', '0000:0000:0000:0000:0000:ffff:0a00:0001'],
+    ];
+    for (const [input, groups] of cases) {
+      const bytes = requireBytes(input);
+      expect(bytes.length).toBe(16);
+      const restored: string[] = [];
+      for (let i = 0; i < 16; i += 2) {
+        restored.push(((bytes[i] << 8) | bytes[i + 1]).toString(16).padStart(4, '0'));
+      }
+      expect(restored.join(':')).toBe(groups);
+    }
+  });
+
+  test('拒绝更多畸形字面量', () => {
+    expect(parseIpv6ToBytes('')).toBeNull();
+    expect(parseIpv6ToBytes('localhost')).toBeNull();
+    expect(parseIpv6ToBytes('1.2.3.4')).toBeNull();
+    expect(parseIpv6ToBytes('gggg::1')).toBeNull();
+    expect(parseIpv6ToBytes('::ffff:999.0.0.1')).toBeNull();
+    expect(parseIpv6ToBytes('1:2:3:4:5:6:7:8::')).toBeNull();
+  });
 });
 
 describe('isPrivateIpv6Hostname', () => {

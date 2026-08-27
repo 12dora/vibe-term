@@ -9,6 +9,12 @@ import { getSiteSettings, updateDeviceRuntimeStatus } from '../db';
 import { t } from '../i18n';
 import { telegramService } from '../telegram/service';
 import { classifySshError } from '../ws/error-classify';
+import {
+  buildConnectionBridgeEvent,
+  isWithinThrottleWindow,
+  resolveConnectionBridgeEvent,
+  sweepExpiredThrottleKeys,
+} from './connection-bridge';
 
 export type ConnectionAlertSource = 'connect' | 'runtime' | 'close' | 'probe';
 
@@ -16,19 +22,6 @@ export type ConnectionEventEmitter = (
   eventType: EventType,
   event: Omit<WebhookEvent, 'eventType' | 'timestamp'>
 ) => void;
-
-// 桥接进事件系统的错误分类：连接级断开 → device_disconnect；tmux 不可用 → device_tmux_missing。
-// 认证/agent/配置类错误不属于设备连接生命周期，不桥接。
-const DISCONNECT_ERROR_TYPES = new Set([
-  'connection_closed',
-  'network_unreachable',
-  'connection_refused',
-  'timeout',
-  'host_not_found',
-  'handshake_failed',
-]);
-// runtime 来源是 tmux 命令级失败（高频且 session gone 另有 session_closed 事件），不桥接。
-const BRIDGE_EVENT_SOURCES = new Set<ConnectionAlertSource>(['close', 'connect', 'probe']);
 
 export interface ConnectionAlertInput {
   device: Device;
@@ -190,25 +183,13 @@ export class ConnectionAlertNotifier {
     friendlyMessage: string,
     sessionClosedEmitted: boolean
   ): void {
-    if (!this.eventEmitter || !BRIDGE_EVENT_SOURCES.has(source)) {
-      return;
-    }
-    let eventType: EventType | null = null;
-    if (errorType === 'tmux_unavailable') {
-      eventType = 'device_tmux_missing';
-    } else if (DISCONNECT_ERROR_TYPES.has(errorType)) {
-      eventType = 'device_disconnect';
-    }
-    if (!eventType) {
-      return;
-    }
-    // session gone 路径已另发 session_closed，跳过 device_disconnect 避免同一物理事件双发。
-    if (eventType === 'device_disconnect' && sessionClosedEmitted) {
-      return;
-    }
-    const key = `${device.id}:${eventType}`;
+    if (!this.eventEmitter) return;
+    const eventType = resolveConnectionBridgeEvent(source, errorType, sessionClosedEmitted);
+    if (!eventType) return;
+
     const now = Date.now();
-    if (now - (this.bridgeThrottleMap.get(key) ?? 0) < NOTIFY_THROTTLE_MS) {
+    const key = `${device.id}:${eventType}`;
+    if (isWithinThrottleWindow(this.bridgeThrottleMap.get(key), now, NOTIFY_THROTTLE_MS)) {
       return;
     }
 
@@ -219,28 +200,13 @@ export class ConnectionAlertNotifier {
       return;
     }
     try {
-      this.eventEmitter(eventType, {
-        site: { name: settings.siteName, url: settings.siteUrl },
-        device: { id: device.id, name: device.name, type: device.type, host: device.host },
-        // 与连接类的 session 名解析口径一致（未配置时缺省 'tmex'），便于消费端跨事件关联
-        tmux: { sessionName: device.session?.trim() || 'tmex' },
-        payload: { message: friendlyMessage },
-      });
+      this.eventEmitter(eventType, buildConnectionBridgeEvent(device, settings, friendlyMessage));
     } catch (emitErr) {
       console.error('[conn-alert] event emit failed:', emitErr);
       return;
     }
-    // 成功发射才消耗节流窗口（settings 读取或发射失败不白耗 5 分钟）；顺带惰性清理同设备过期键
     this.bridgeThrottleMap.set(key, now);
-    for (const [otherKey, ts] of this.bridgeThrottleMap) {
-      if (
-        otherKey !== key &&
-        otherKey.startsWith(`${device.id}:`) &&
-        now - ts >= NOTIFY_THROTTLE_MS
-      ) {
-        this.bridgeThrottleMap.delete(otherKey);
-      }
-    }
+    sweepExpiredThrottleKeys(this.bridgeThrottleMap, device.id, key, now, NOTIFY_THROTTLE_MS);
   }
 
   private shouldSendTelegram(deviceId: string, errorType: string): boolean {

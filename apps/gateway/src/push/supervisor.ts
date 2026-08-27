@@ -14,6 +14,7 @@ import type { TmuxEvent } from '../tmux-client/events';
 import { tmuxRuntimeRegistry } from '../tmux-client/registry';
 import { resolvePaneContext } from '../tmux/bell-context';
 import { connectionAlertNotifier } from './connection-alerts';
+import { dispatchTmuxPushEvent } from './tmux-push-events';
 
 interface PushConnectionEntry {
   deviceId: string;
@@ -403,44 +404,19 @@ export class PushSupervisor {
     }
 
     const settings = this.deps.getSettings();
-    const paneContext = resolvePaneContext({
-      deviceId,
-      siteUrl: settings.siteUrl,
-      snapshot: entry.lastSnapshot,
-      rawData: event.data,
+    await dispatchTmuxPushEvent({
+      event,
+      device,
+      settings,
+      paneContext: resolvePaneContext({
+        deviceId,
+        siteUrl: settings.siteUrl,
+        snapshot: entry.lastSnapshot,
+        rawData: event.data,
+      }),
+      notifyBell: this.deps.notifyBell,
+      notifyNotification: this.deps.notifyNotification,
     });
-
-    if (event.type === 'bell') {
-      await this.deps.notifyBell({
-        device,
-        settings,
-        bell: paneContext,
-      });
-      return;
-    }
-
-    if (event.type === 'notification') {
-      const raw = (event.data as Record<string, unknown> | undefined) ?? {};
-      const title = typeof raw.title === 'string' && raw.title ? raw.title : undefined;
-      const body = typeof raw.body === 'string' ? raw.body : '';
-      if (!title && !body) {
-        return;
-      }
-      const source =
-        raw.source === 'osc9' || raw.source === 'osc777' || raw.source === 'osc1337'
-          ? raw.source
-          : 'osc9';
-      await this.deps.notifyNotification({
-        device,
-        settings,
-        notification: {
-          ...paneContext,
-          source,
-          title,
-          body,
-        },
-      });
-    }
   }
 }
 

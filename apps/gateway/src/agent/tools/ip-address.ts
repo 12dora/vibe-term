@@ -1,3 +1,7 @@
+import { assembleIpv6Bytes, stripIpv6Decorators, tokenizeIpv6 } from './ipv6-parse';
+
+export { assembleIpv6Bytes, tokenizeIpv6 };
+
 const CANONICAL_IPV4_OCTET = /^(25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)$/;
 
 export function isCanonicalIpv4(host: string): boolean {
@@ -13,72 +17,11 @@ export function isPrivateIpv4(a: number, b: number): boolean {
   return false;
 }
 
-function parseIpv4Octets(text: string): [number, number, number, number] | null {
-  const parts = text.split('.');
-  if (!isCanonicalIpv4(text)) return null;
-  return [Number(parts[0]), Number(parts[1]), Number(parts[2]), Number(parts[3])];
-}
-
-function parseHexGroups(text: string): number[] | null {
-  if (text.length === 0) return [];
-  const tokens = text.split(':');
-  const groups: number[] = [];
-  for (const token of tokens) {
-    if (!/^[0-9a-f]{1,4}$/.test(token)) return null;
-    groups.push(Number.parseInt(token, 16));
-  }
-  return groups;
-}
-
 export function parseIpv6ToBytes(text: string): Uint8Array | null {
-  let host = text.trim().toLowerCase();
-  if (host.startsWith('[') && host.endsWith(']')) {
-    host = host.slice(1, -1);
-  }
-  const zoneIdx = host.indexOf('%');
-  if (zoneIdx >= 0) {
-    host = host.slice(0, zoneIdx);
-  }
-  if (!host.includes(':')) return null;
-
-  const lastColon = host.lastIndexOf(':');
-  const dotted = host.slice(lastColon + 1);
-  if (dotted.includes('.')) {
-    const octets = parseIpv4Octets(dotted);
-    if (!octets) return null;
-    const hi = ((octets[0] << 8) | octets[1]).toString(16);
-    const lo = ((octets[2] << 8) | octets[3]).toString(16);
-    host = `${host.slice(0, lastColon + 1)}${hi}:${lo}`;
-  }
-
-  const sides = host.split('::');
-  if (sides.length > 2) return null;
-
-  const bytes = new Uint8Array(16);
-  const writeGroups = (groups: number[], offsetGroups: number) => {
-    for (let i = 0; i < groups.length; i += 1) {
-      const value = groups[i] ?? 0;
-      const offset = (offsetGroups + i) * 2;
-      bytes[offset] = value >> 8;
-      bytes[offset + 1] = value & 0xff;
-    }
-  };
-
-  if (sides.length === 1) {
-    const groups = parseHexGroups(sides[0] ?? '');
-    if (!groups || groups.length !== 8) return null;
-    writeGroups(groups, 0);
-    return bytes;
-  }
-
-  const head = parseHexGroups(sides[0] ?? '');
-  const tail = parseHexGroups(sides[1] ?? '');
-  if (!head || !tail) return null;
-  const missing = 8 - head.length - tail.length;
-  if (missing < 1) return null;
-  writeGroups(head, 0);
-  writeGroups(tail, 8 - tail.length);
-  return bytes;
+  const host = stripIpv6Decorators(text);
+  const tokens = tokenizeIpv6(host);
+  if (!tokens) return null;
+  return assembleIpv6Bytes(tokens);
 }
 
 function isUnspecifiedOrLoopback(bytes: Uint8Array): boolean {
