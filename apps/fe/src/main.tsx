@@ -15,6 +15,7 @@ import { AppSidebar } from '@/components/page-layouts/components/app-sidebar';
 import { useAppMonoFont } from '@/lib/fonts/useAppMonoFont';
 import { NodeRuntimeBoundary } from '@/node/node-runtime-boundary';
 import { appNodeRuntimes, nodeQueryClient } from '@/node/node-runtimes';
+import { installSessionInterceptor } from '@tmex/api-client/auth/index';
 import { ConnectionIndicator } from '@tmex/panels';
 import { WatchEventsInit } from '@tmex/panels/watch';
 import { SELF_NODE_ID, useNodeRuntime } from '@tmex/stores';
@@ -230,6 +231,8 @@ const settingsModule = () => import('./pages/SettingsPage');
 const devicesModule = () => import('./pages/DevicesPage');
 const deviceModule = () => import('./pages/DevicePage');
 const fileModule = () => import('./pages/FilePage');
+const loginModule = () => import('./pages/LoginPage');
+const accountSecurityModule = () => import('./pages/AccountSecurityPage');
 
 // node 边界外壳：先建/取该 node 的运行时，再渲染外壳与页面
 function NodeShell() {
@@ -272,6 +275,8 @@ function pageRoutes() {
 
 // 路由配置 - Data 模式：/n/:nodeId/... 为显式 node，旧路由等价于 self（不做重定向）
 const router = createBrowserRouter([
+  { path: '/login', element: <PageWrapper moduleLoader={loginModule} /> },
+  { path: '/account/security', element: <PageWrapper moduleLoader={accountSecurityModule} /> },
   {
     path: '/n/:nodeId',
     Component: NodeShell,
@@ -283,6 +288,8 @@ const router = createBrowserRouter([
     children: pageRoutes(),
   },
 ]);
+
+installSessionInterceptor({ navigate: (to) => void router.navigate(to) });
 
 // 宿主根：entry（self）运行时常驻，供路由之外的外壳组件（Toaster 等）消费。
 function AppRoot() {
