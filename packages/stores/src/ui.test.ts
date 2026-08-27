@@ -1,49 +1,10 @@
 import { beforeEach, describe, expect, test } from 'bun:test';
+import { installWindowStorage } from './test-utils';
 import { createUIStore } from './ui';
 
-class MemoryStorage {
-  private values = new Map<string, string>();
+installWindowStorage();
 
-  get length(): number {
-    return this.values.size;
-  }
-
-  getItem(key: string): string | null {
-    return this.values.get(key) ?? null;
-  }
-
-  setItem(key: string, value: string): void {
-    this.values.set(key, value);
-  }
-
-  removeItem(key: string): void {
-    this.values.delete(key);
-  }
-
-  clear(): void {
-    this.values.clear();
-  }
-
-  key(index: number): string | null {
-    return Array.from(this.values.keys())[index] ?? null;
-  }
-}
-
-const storage =
-  (globalThis.localStorage as unknown as MemoryStorage | undefined) ?? new MemoryStorage();
-// @ts-ignore
-globalThis.localStorage = storage;
-if (typeof globalThis.window === 'undefined') {
-  // @ts-ignore
-  globalThis.window = { localStorage: storage, location: { origin: 'http://localhost:9663' } };
-} else {
-  // @ts-ignore
-  globalThis.window.localStorage = storage;
-  if (!globalThis.window.location) {
-    // @ts-ignore
-    globalThis.window.location = { origin: 'http://localhost:9663' };
-  }
-}
+const storage = globalThis.localStorage;
 
 let storeIndex = 0;
 

@@ -1,39 +1,9 @@
-import { describe, expect, mock, test } from 'bun:test';
+import { afterEach, describe, expect, mock, test } from 'bun:test';
 import { wsBorsh } from '@tmex/shared';
+import type { AppRuntime } from './app-runtime';
+import { installWindowStorage } from './test-utils';
 
-class MemStorage {
-  private store = new Map<string, string>();
-  get length(): number {
-    return this.store.size;
-  }
-  getItem(key: string): string | null {
-    return this.store.has(key) ? (this.store.get(key) as string) : null;
-  }
-  setItem(key: string, value: string): void {
-    this.store.set(key, value);
-  }
-  removeItem(key: string): void {
-    this.store.delete(key);
-  }
-  clear(): void {
-    this.store.clear();
-  }
-  key(index: number): string | null {
-    return Array.from(this.store.keys())[index] ?? null;
-  }
-}
-
-if (typeof globalThis.localStorage === 'undefined') {
-  // @ts-ignore
-  globalThis.localStorage = new MemStorage();
-}
-if (typeof globalThis.window === 'undefined') {
-  // @ts-ignore
-  globalThis.window = {
-    localStorage: globalThis.localStorage,
-    location: { origin: 'http://localhost:9663' },
-  } as unknown as Window & typeof globalThis;
-}
+installWindowStorage();
 
 const notificationsActual = await import('@tmex/notifications');
 mock.module('@tmex/notifications', () => ({
@@ -42,7 +12,7 @@ mock.module('@tmex/notifications', () => ({
 }));
 
 type MessageHandler = (msg: { kind: number; payload: Uint8Array }) => void;
-const messageHandlers: MessageHandler[] = [];
+const messageHandlers = new Set<MessageHandler>();
 
 const wsActual = await import('@tmex/ws-client');
 mock.module('@tmex/ws-client', () => ({
@@ -52,8 +22,10 @@ mock.module('@tmex/ws-client', () => ({
     isReady: () => true,
     onStateChange: () => () => {},
     onMessage: (handler: MessageHandler) => {
-      messageHandlers.push(handler);
-      return () => {};
+      messageHandlers.add(handler);
+      return () => {
+        messageHandlers.delete(handler);
+      };
     },
     onError: () => () => {},
     onLatency: () => () => {},
@@ -76,7 +48,15 @@ mock.module('@tmex/ws-client', () => ({
 const { createAppRuntime } = await import('./index');
 const KIND_TMUX_EVENT = 0x0207;
 
-function makeRuntime(hostManagedNotifications: boolean) {
+interface ManagedRuntime {
+  runtime: AppRuntime;
+  infos: string[];
+  errors: string[];
+}
+
+const openRuntimes: ManagedRuntime[] = [];
+
+function makeRuntime(hostManagedNotifications: boolean): ManagedRuntime {
   const infos: string[] = [];
   const errors: string[] = [];
   const runtime = createAppRuntime({
@@ -91,16 +71,27 @@ function makeRuntime(hostManagedNotifications: boolean) {
     },
   });
   runtime.stores.tmux.getState().ensureSocketConnected();
-  return { runtime, infos, errors };
+  const managed = { runtime, infos, errors };
+  openRuntimes.push(managed);
+  return managed;
 }
 
 function dispatchToAll(kind: number, payload: Uint8Array): void {
-  for (const handler of messageHandlers) {
+  for (const handler of [...messageHandlers]) {
     handler({ kind, payload });
   }
 }
 
 describe('hostManagedNotifications runtime feature', () => {
+  // runtime 与其 transport 都持有 onMessage handler，不回收会让后续用例收到上一用例的事件
+  afterEach(() => {
+    for (const { runtime } of openRuntimes.splice(0)) {
+      runtime.dispose();
+      runtime.transport.dispose();
+    }
+    expect(messageHandlers.size).toBe(0);
+  });
+
   test('suppresses terminal notification toast while keeping bell handling intact', async () => {
     const managed = makeRuntime(true);
     const unmanaged = makeRuntime(false);

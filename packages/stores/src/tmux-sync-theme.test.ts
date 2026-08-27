@@ -1,71 +1,21 @@
 import { beforeEach, describe, expect, mock, test } from 'bun:test';
+import { wsBorsh } from '@tmex/shared';
+import { installWindowStorage } from './test-utils';
 
-class MemStorage {
-  private store = new Map<string, string>();
-  get length(): number {
-    return this.store.size;
-  }
-  getItem(key: string): string | null {
-    return this.store.has(key) ? (this.store.get(key) as string) : null;
-  }
-  setItem(key: string, value: string): void {
-    this.store.set(key, value);
-  }
-  removeItem(key: string): void {
-    this.store.delete(key);
-  }
-  clear(): void {
-    this.store.clear();
-  }
-  key(index: number): string | null {
-    return Array.from(this.store.keys())[index] ?? null;
-  }
-}
-
-if (typeof globalThis.localStorage === 'undefined') {
-  const memStorage = new MemStorage();
-  // @ts-ignore
-  globalThis.localStorage = memStorage;
-}
-if (typeof globalThis.window === 'undefined') {
-  // @ts-ignore
-  globalThis.window = {
-    localStorage: globalThis.localStorage,
-    location: { origin: 'http://localhost:9663' },
-  } as unknown as Window & typeof globalThis;
-}
-
-mock.module('i18next', () => {
-  const changeLanguage = mock(() => Promise.resolve());
-  return { default: { changeLanguage, t: (k: string) => k } };
-});
-
-mock.module('sonner', () => ({
-  toast: mock(() => {}),
-}));
-
-const notificationsActual = await import('@tmex/notifications');
-mock.module('@tmex/notifications', () => ({
-  ...notificationsActual,
-  playBellSound: mock(() => {}),
-}));
+installWindowStorage();
 
 const sentMessages: Array<{ kind: number; payload: Uint8Array }> = [];
 const sendMock = mock((kind: number, payload: Uint8Array) => {
   sentMessages.push({ kind, payload });
+  return true;
 });
 const isReadyMock = mock(() => true);
 
-function makeBuildFn(kind: number) {
-  return (...args: unknown[]) => ({
-    kind,
-    payload: new TextEncoder().encode(JSON.stringify(args)),
-  });
-}
-
+// 只替换建连入口：命令编码走 ws-client 真实实现（Borsh），断言直接读 payload 里的字段。
 const wsActual = await import('@tmex/ws-client');
-mock.module('@tmex/ws-client', () => {
-  const stub = {
+mock.module('@tmex/ws-client', () => ({
+  ...wsActual,
+  getBorshClient: () => ({
     send: sendMock,
     isReady: isReadyMock,
     onStateChange: () => () => {},
@@ -79,64 +29,22 @@ mock.module('@tmex/ws-client', () => {
     hasConnectedOnce: true,
     latencyMs: null,
     serverCapabilities: [],
-  };
-  return {
-    ...wsActual,
-    getBorshClient: () => stub,
-    getSelectStateMachine: () => ({
-      dispatch: () => {},
-      cleanup: () => {},
-      getTransaction: () => null,
-    }),
-    generateSelectToken: () => new Uint8Array(16),
-    buildDeviceConnect: makeBuildFn(0x0101),
-    buildDeviceDisconnect: makeBuildFn(0x0103),
-    buildTmuxSelect: makeBuildFn(0x0201),
-    buildTmuxSelectWindow: makeBuildFn(0x0202),
-    buildTmuxCreateWindow: makeBuildFn(0x0203),
-    buildTmuxCloseWindow: makeBuildFn(0x0204),
-    buildTmuxClosePane: makeBuildFn(0x0205),
-    buildTmuxRenameWindow: makeBuildFn(0x0206),
-    buildTmuxSetWindowStyle: (deviceId: string, style: string) => ({
-      kind: 0x020a,
-      payload: new TextEncoder().encode(`${deviceId}|${style}`),
-    }),
-    buildTmuxReorderWindows: makeBuildFn(0x020b),
-    buildTmuxReorderPanes: makeBuildFn(0x020c),
-    buildTmuxSubscribePanes: makeBuildFn(0x020d),
-    buildTmuxFetchPaneHistory: makeBuildFn(0x020e),
-    buildTmuxResizePane: makeBuildFn(0x020f),
-    buildTmuxApplyStackedLayout: makeBuildFn(0x0210),
-    buildTmuxSplitPane: makeBuildFn(0x0211),
-    buildTmuxFocusPane: makeBuildFn(0x0212),
-    buildTmuxRenamePane: makeBuildFn(0x0213),
-    buildTmuxMovePane: makeBuildFn(0x0214),
-    buildTmuxBreakPane: makeBuildFn(0x0215),
-    buildTermInput: makeBuildFn(0x0301),
-    buildTermPaste: makeBuildFn(0x0302),
-    buildTermResize: makeBuildFn(0x0303),
-    buildTermSyncSize: makeBuildFn(0x0304),
-    buildAgentSubscribe: makeBuildFn(0x0601),
-    buildAgentUnsubscribe: makeBuildFn(0x0602),
-    buildSiteThemeUpdate: (theme: 'dark' | 'light') => ({
-      kind: 0x0801,
-      payload: new Uint8Array([theme === 'light' ? 1 : 0]),
-    }),
-  };
-});
-
-mock.module('@tmex/ws-client/pane-sink-registry', () => ({
-  beginPaneHistoryGate: () => {},
-  cleanupDevicePaneState: () => {},
-  dispatchPaneApplyHistory: () => {},
-  dispatchPaneHistory: () => false,
-  dispatchPaneOutput: () => {},
-  dispatchPaneReset: () => {},
+  }),
+  getSelectStateMachine: () => ({
+    dispatch: () => {},
+    cleanup: () => {},
+    getTransaction: () => null,
+    setCallbacks: () => {},
+  }),
 }));
 
 const { useTmuxStore, useUIStore } = await import('./index');
 
-const KIND_TMUX_SET_WINDOW_STYLE = 0x020a;
+const KIND_TMUX_SET_WINDOW_STYLE = wsBorsh.KIND_TMUX_SET_WINDOW_STYLE;
+
+function decodeWindowStyle(payload: Uint8Array) {
+  return wsBorsh.decodePayload(wsBorsh.schema.TmuxSetWindowStyleSchema, payload);
+}
 
 describe('useTmuxStore syncThemeAfterResize', () => {
   beforeEach(() => {
@@ -160,17 +68,16 @@ describe('useTmuxStore syncThemeAfterResize', () => {
 
     expect(sentMessages.length).toBe(1);
     expect(sentMessages[0].kind).toBe(KIND_TMUX_SET_WINDOW_STYLE);
-    const payloadText = new TextDecoder().decode(sentMessages[0].payload);
-    expect(payloadText).toContain('device-a');
-    expect(payloadText).toContain('bg=#e1e1e1');
+    const { deviceId, style } = decodeWindowStyle(sentMessages[0].payload);
+    expect(deviceId).toBe('device-a');
+    expect(style).toContain('bg=#e1e1e1');
   });
 
   test('syncThemeAfterResize uses dark style when UI theme is dark', () => {
     useUIStore.setState({ theme: 'dark' });
     useTmuxStore.getState().syncThemeAfterResize('device-a');
 
-    const payloadText = new TextDecoder().decode(sentMessages[0].payload);
-    expect(payloadText).toContain('bg=#262626');
+    expect(decodeWindowStyle(sentMessages[0].payload).style).toContain('bg=#262626');
   });
 
   test('syncThemeAfterResize skips when deviceId is empty', () => {

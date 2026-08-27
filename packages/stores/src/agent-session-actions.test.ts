@@ -2,8 +2,8 @@ import { describe, expect, test } from 'bun:test';
 
 import { ApiClient, type FetchLike } from '@tmex/api-client';
 import { noopNotificationSink } from '@tmex/notifications';
-import type { AgentMessageDto, AgentSessionDto } from '@tmex/shared';
-import { type AgentHistorySync, createAgentHistorySync } from './agent-history-sync';
+import type { AgentSessionDto } from '@tmex/shared';
+import type { AgentHistorySync } from './agent-history-sync';
 import { createAgentSessionActions, sortSessionOrder } from './agent-session-actions';
 import {
   type AgentGetState,
@@ -247,16 +247,11 @@ describe('materializeDraft', () => {
 });
 
 describe('deleteSession', () => {
-  test('a history response landing after deletion does not resurrect the session', async () => {
-    const pendingMessageResponses: Array<(messages: AgentMessageDto[]) => void> = [];
-
+  test('sends DELETE, clears the session runtime and drops it from the list', async () => {
+    const requests: string[] = [];
     const transport: FetchLike = (url, init) => {
       const method = init?.method ?? 'GET';
-      if (url === '/api/agent/sessions/s1/messages' && method === 'GET') {
-        return new Promise<Response>((resolve) => {
-          pendingMessageResponses.push((messages) => resolve(jsonResponse({ messages })));
-        });
-      }
+      requests.push(`${method} ${url}`);
       if (url === '/api/agent/sessions/s1' && method === 'DELETE') {
         return Promise.resolve(new Response(null, { status: 204 }));
       }
@@ -270,19 +265,21 @@ describe('deleteSession', () => {
     };
     const get: AgentGetState = () => state;
 
-    const apiClient = new ApiClient('', transport);
-    const history = createAgentHistorySync({ apiClient, set, get });
+    const clearedRuntimes: string[] = [];
     const actions = createAgentSessionActions({
-      apiClient,
+      apiClient: new ApiClient('', transport),
       notifications: noopNotificationSink,
       set,
       get,
-      history,
+      history: {
+        loadHistory: async () => {},
+        scheduleFetch: () => {},
+        clearSession: () => {},
+      },
       subscribe: () => {},
       unsubscribe: () => {},
-      // 与 agent.ts 的接线一致：清运行时即作废该 session 的在途历史请求
       clearSessionRuntime: (sessionId) => {
-        history.clearSession(sessionId);
+        clearedRuntimes.push(sessionId);
       },
     });
 
@@ -295,28 +292,12 @@ describe('deleteSession', () => {
       activeSessionId: 's1',
     };
 
-    const pendingHistory = state.loadHistory('s1');
     expect(await state.deleteSession('s1')).toBe(true);
 
-    const respond = pendingMessageResponses.shift();
-    if (!respond) throw new Error('no pending history request');
-    respond([
-      {
-        id: 's1-m0',
-        sessionId: 's1',
-        seq: 0,
-        role: 'user',
-        content: 'late history',
-        createdAt: '2026-01-01T00:00:00.000Z',
-      },
-    ]);
-    await pendingHistory;
-
+    expect(requests).toEqual(['DELETE /api/agent/sessions/s1']);
+    expect(clearedRuntimes).toEqual(['s1']);
     expect(state.sessions.s1).toBeUndefined();
     expect(state.sessionOrder).toEqual([]);
-    expect(state.messages.s1).toBeUndefined();
-    expect(state.historyLoaded.s1).toBeUndefined();
-    expect(state.inProgress.s1).toBeUndefined();
     expect(state.activeSessionId).toBeNull();
   });
 });

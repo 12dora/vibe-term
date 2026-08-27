@@ -1,42 +1,9 @@
-import { FeatureSet } from '@tmex/api-client';
 import { beforeEach, describe, expect, mock, test } from 'bun:test';
+import { FeatureSet } from '@tmex/api-client';
+import type { SiteSettings } from '@tmex/shared';
+import { installWindowStorage } from './test-utils';
 
-// localStorage polyfill（bun test node 环境无 localStorage，zustand persist 默认读 window.localStorage）
-class MemStorage {
-  private store = new Map<string, string>();
-  get length(): number {
-    return this.store.size;
-  }
-  getItem(key: string): string | null {
-    return this.store.has(key) ? (this.store.get(key) as string) : null;
-  }
-  setItem(key: string, value: string): void {
-    this.store.set(key, value);
-  }
-  removeItem(key: string): void {
-    this.store.delete(key);
-  }
-  clear(): void {
-    this.store.clear();
-  }
-  key(index: number): string | null {
-    return Array.from(this.store.keys())[index] ?? null;
-  }
-}
-const memStorage =
-  (globalThis.localStorage as unknown as MemStorage | undefined) ?? new MemStorage();
-// @ts-ignore
-globalThis.localStorage = memStorage;
-// @ts-ignore zustand persist 默认读 window.localStorage；site.ts 读 window.location.origin
-if (typeof globalThis.window === 'undefined') {
-  globalThis.window = {
-    localStorage: memStorage,
-    location: { origin: 'http://localhost:9663' },
-  } as unknown as Window & typeof globalThis;
-} else {
-  (globalThis.window as unknown as { localStorage: Storage }).localStorage =
-    memStorage as unknown as Storage;
-}
+installWindowStorage();
 
 mock.module('i18next', () => {
   const changeLanguage = mock(() => Promise.resolve());
@@ -61,6 +28,39 @@ const { useSiteStore, useUIStore } = await import('./index');
 
 const TMEX_UI_KEY = 'tmex-ui';
 
+function makeSiteSettings(overrides: Partial<SiteSettings> = {}): SiteSettings {
+  return {
+    siteName: 'tmex',
+    siteUrl: 'http://localhost',
+    bellThrottleSeconds: 6,
+    notificationThrottleSeconds: 3,
+    enableBrowserNotificationToast: true,
+    enableNotificationPush: true,
+    enableBellPush: true,
+    enableBellSound: true,
+    sshReconnectMaxRetries: 2,
+    sshReconnectDelaySeconds: 10,
+    language: 'en_US',
+    disabledNotificationChannels: [],
+    theme: 'dark',
+    updatedAt: new Date().toISOString(),
+    ...overrides,
+  };
+}
+
+function siteSettingsResponse(overrides: Partial<SiteSettings> = {}): typeof globalThis.fetch {
+  return mock(async (url: string | URL | Request) => {
+    const u = typeof url === 'string' ? url : url.toString();
+    if (u.includes('/api/settings/site')) {
+      return new Response(JSON.stringify({ settings: makeSiteSettings(overrides) }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      });
+    }
+    return new Response('Not Found', { status: 404 });
+  }) as unknown as typeof globalThis.fetch;
+}
+
 function readLocalStorageTheme(): 'dark' | 'light' | undefined {
   const raw = localStorage.getItem(TMEX_UI_KEY);
   if (!raw) return undefined;
@@ -70,13 +70,6 @@ function readLocalStorageTheme(): 'dark' | 'light' | undefined {
   } catch {
     return undefined;
   }
-}
-
-function setLocalStorageTheme(theme: 'dark' | 'light'): void {
-  const raw = localStorage.getItem(TMEX_UI_KEY) ?? '{"state":{}}';
-  const parsed = JSON.parse(raw) as { state?: { theme?: unknown } };
-  parsed.state = { ...(parsed.state ?? {}), theme };
-  localStorage.setItem(TMEX_UI_KEY, JSON.stringify(parsed));
 }
 
 describe('useSiteStore theme', () => {
@@ -89,39 +82,27 @@ describe('useSiteStore theme', () => {
     useUIStore.setState({ theme: 'dark' });
   });
 
-  test('DEFAULT_SETTINGS.theme 为 dark', () => {
-    expect(useSiteStore.getState().settings).toBeNull();
+  test('fetchSettings 失败时回落到 DEFAULT_SETTINGS，theme 为 dark', async () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = mock(
+      async () => new Response('boom', { status: 500 })
+    ) as unknown as typeof globalThis.fetch;
+
+    try {
+      useUIStore.setState({ theme: 'light' });
+      const settings = await useSiteStore.getState().fetchSettings();
+
+      expect(settings.theme).toBe('dark');
+      expect(useSiteStore.getState().settings?.theme).toBe('dark');
+      expect(useUIStore.getState().theme).toBe('dark');
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
   });
 
   test('fetchSettings 从 /api/settings/site 加载 theme', async () => {
     const originalFetch = globalThis.fetch;
-    globalThis.fetch = mock(async (url: string | URL | Request) => {
-      const u = typeof url === 'string' ? url : url.toString();
-      if (u.includes('/api/settings/site')) {
-        return new Response(
-          JSON.stringify({
-            settings: {
-              siteName: 'tmex',
-              siteUrl: 'http://localhost',
-              bellThrottleSeconds: 6,
-              notificationThrottleSeconds: 3,
-              enableBrowserNotificationToast: true,
-              enableNotificationPush: true,
-              enableBellPush: true,
-              enableBellSound: true,
-              sshReconnectMaxRetries: 2,
-              sshReconnectDelaySeconds: 10,
-              language: 'en_US',
-              disabledNotificationChannels: [],
-              theme: 'light',
-              updatedAt: new Date().toISOString(),
-            },
-          }),
-          { status: 200, headers: { 'content-type': 'application/json' } }
-        );
-      }
-      return new Response('Not Found', { status: 404 });
-    }) as unknown as typeof globalThis.fetch;
+    globalThis.fetch = siteSettingsResponse({ theme: 'light' });
 
     try {
       const settings = await useSiteStore.getState().fetchSettings();
@@ -133,24 +114,7 @@ describe('useSiteStore theme', () => {
   });
 
   test('updateTheme 乐观更新本地 state + 发 C2S', () => {
-    useSiteStore.setState({
-      settings: {
-        siteName: 'tmex',
-        siteUrl: 'http://localhost',
-        bellThrottleSeconds: 6,
-        notificationThrottleSeconds: 3,
-        enableBrowserNotificationToast: true,
-        enableNotificationPush: true,
-        enableBellPush: true,
-        enableBellSound: true,
-        sshReconnectMaxRetries: 2,
-        sshReconnectDelaySeconds: 10,
-        language: 'en_US',
-        disabledNotificationChannels: [],
-        theme: 'dark',
-        updatedAt: new Date().toISOString(),
-      },
-    });
+    useSiteStore.setState({ settings: makeSiteSettings({ theme: 'dark' }) });
     useUIStore.setState({ theme: 'dark' });
 
     useSiteStore.getState().updateTheme('light');
@@ -161,24 +125,7 @@ describe('useSiteStore theme', () => {
   });
 
   test('updateTheme 同时写 localStorage 作为离线 fallback', () => {
-    useSiteStore.setState({
-      settings: {
-        siteName: 'tmex',
-        siteUrl: 'http://localhost',
-        bellThrottleSeconds: 6,
-        notificationThrottleSeconds: 3,
-        enableBrowserNotificationToast: true,
-        enableNotificationPush: true,
-        enableBellPush: true,
-        enableBellSound: true,
-        sshReconnectMaxRetries: 2,
-        sshReconnectDelaySeconds: 10,
-        language: 'en_US',
-        disabledNotificationChannels: [],
-        theme: 'dark',
-        updatedAt: new Date().toISOString(),
-      },
-    });
+    useSiteStore.setState({ settings: makeSiteSettings({ theme: 'dark' }) });
     useUIStore.setState({ theme: 'dark' });
 
     useSiteStore.getState().updateTheme('light');
@@ -188,24 +135,7 @@ describe('useSiteStore theme', () => {
 
   test('离线场景：ws 未就绪时 updateTheme 只写 localStorage + 本地 state，不发 C2S', () => {
     isReadyMock.mockImplementation(() => false);
-    useSiteStore.setState({
-      settings: {
-        siteName: 'tmex',
-        siteUrl: 'http://localhost',
-        bellThrottleSeconds: 6,
-        notificationThrottleSeconds: 3,
-        enableBrowserNotificationToast: true,
-        enableNotificationPush: true,
-        enableBellPush: true,
-        enableBellSound: true,
-        sshReconnectMaxRetries: 2,
-        sshReconnectDelaySeconds: 10,
-        language: 'en_US',
-        disabledNotificationChannels: [],
-        theme: 'dark',
-        updatedAt: new Date().toISOString(),
-      },
-    });
+    useSiteStore.setState({ settings: makeSiteSettings({ theme: 'dark' }) });
     useUIStore.setState({ theme: 'dark' });
 
     useSiteStore.getState().updateTheme('light');
@@ -216,24 +146,7 @@ describe('useSiteStore theme', () => {
   });
 
   test('setThemeFromS2C 更新本地 state 但不回送 C2S', () => {
-    useSiteStore.setState({
-      settings: {
-        siteName: 'tmex',
-        siteUrl: 'http://localhost',
-        bellThrottleSeconds: 6,
-        notificationThrottleSeconds: 3,
-        enableBrowserNotificationToast: true,
-        enableNotificationPush: true,
-        enableBellPush: true,
-        enableBellSound: true,
-        sshReconnectMaxRetries: 2,
-        sshReconnectDelaySeconds: 10,
-        language: 'en_US',
-        disabledNotificationChannels: [],
-        theme: 'dark',
-        updatedAt: new Date().toISOString(),
-      },
-    });
+    useSiteStore.setState({ settings: makeSiteSettings({ theme: 'dark' }) });
     useUIStore.setState({ theme: 'dark' });
 
     useSiteStore.getState().setThemeFromS2C('light');
@@ -245,33 +158,7 @@ describe('useSiteStore theme', () => {
 
   test('useUIStore.theme 从 useSiteStore.theme 派生（fetchSettings 后同步）', async () => {
     const originalFetch = globalThis.fetch;
-    globalThis.fetch = mock(async (url: string | URL | Request) => {
-      const u = typeof url === 'string' ? url : url.toString();
-      if (u.includes('/api/settings/site')) {
-        return new Response(
-          JSON.stringify({
-            settings: {
-              siteName: 'tmex',
-              siteUrl: 'http://localhost',
-              bellThrottleSeconds: 6,
-              notificationThrottleSeconds: 3,
-              enableBrowserNotificationToast: true,
-              enableNotificationPush: true,
-              enableBellPush: true,
-              enableBellSound: true,
-              sshReconnectMaxRetries: 2,
-              sshReconnectDelaySeconds: 10,
-              language: 'en_US',
-              disabledNotificationChannels: [],
-              theme: 'dark',
-              updatedAt: new Date().toISOString(),
-            },
-          }),
-          { status: 200, headers: { 'content-type': 'application/json' } }
-        );
-      }
-      return new Response('Not Found', { status: 404 });
-    }) as unknown as typeof globalThis.fetch;
+    globalThis.fetch = siteSettingsResponse({ theme: 'dark' });
 
     try {
       useUIStore.setState({ theme: 'light' });
@@ -280,11 +167,6 @@ describe('useSiteStore theme', () => {
     } finally {
       globalThis.fetch = originalFetch;
     }
-  });
-
-  test('localStorage 作为离线 fallback：启动时先读 localStorage 即时反馈', () => {
-    setLocalStorageTheme('light');
-    expect(readLocalStorageTheme()).toBe('light');
   });
 
   test('useUIStore.setTheme 保留本地 state 更新（persist 写 localStorage）', () => {

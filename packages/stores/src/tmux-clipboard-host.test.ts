@@ -1,39 +1,8 @@
 import { describe, expect, mock, test } from 'bun:test';
 import { wsBorsh } from '@tmex/shared';
+import { installWindowStorage } from './test-utils';
 
-class MemStorage {
-  private store = new Map<string, string>();
-  get length(): number {
-    return this.store.size;
-  }
-  getItem(key: string): string | null {
-    return this.store.has(key) ? (this.store.get(key) as string) : null;
-  }
-  setItem(key: string, value: string): void {
-    this.store.set(key, value);
-  }
-  removeItem(key: string): void {
-    this.store.delete(key);
-  }
-  clear(): void {
-    this.store.clear();
-  }
-  key(index: number): string | null {
-    return Array.from(this.store.keys())[index] ?? null;
-  }
-}
-
-if (typeof globalThis.localStorage === 'undefined') {
-  // @ts-ignore
-  globalThis.localStorage = new MemStorage();
-}
-if (typeof globalThis.window === 'undefined') {
-  // @ts-ignore
-  globalThis.window = {
-    localStorage: globalThis.localStorage,
-    location: { origin: 'http://localhost:9663' },
-  } as unknown as Window & typeof globalThis;
-}
+installWindowStorage();
 
 const notificationsActual = await import('@tmex/notifications');
 mock.module('@tmex/notifications', () => ({
@@ -42,7 +11,7 @@ mock.module('@tmex/notifications', () => ({
 }));
 
 type MessageHandler = (msg: { kind: number; payload: Uint8Array }) => void;
-const messageHandlers: MessageHandler[] = [];
+const messageHandlers = new Set<MessageHandler>();
 
 const wsActual = await import('@tmex/ws-client');
 mock.module('@tmex/ws-client', () => ({
@@ -52,8 +21,10 @@ mock.module('@tmex/ws-client', () => ({
     isReady: () => true,
     onStateChange: () => () => {},
     onMessage: (handler: MessageHandler) => {
-      messageHandlers.push(handler);
-      return () => {};
+      messageHandlers.add(handler);
+      return () => {
+        messageHandlers.delete(handler);
+      };
     },
     onError: () => () => {},
     onLatency: () => () => {},
@@ -81,130 +52,101 @@ function dispatchClipboard(deviceId: string, paneId: string, text: string): void
     paneId,
     text,
   });
-  for (const handler of messageHandlers) {
+  for (const handler of [...messageHandlers]) {
     handler({ kind: wsBorsh.KIND_CLIPBOARD_WRITE, payload });
   }
 }
 
-describe('tmux clipboard write via injected host', () => {
-  test('当前 pane 且可见时经 host.writeClipboardText', async () => {
-    const written: string[] = [];
-    Object.defineProperty(globalThis, 'document', {
-      value: { visibilityState: 'visible' },
-      configurable: true,
-    });
+interface ClipboardCase {
+  storagePrefix: string;
+  visibility: 'visible' | 'hidden';
+  selectedPaneId: string;
+}
 
-    const runtime = createAppRuntime({
-      storagePrefix: 'test-clip-ok:',
-      t: (key) => String(key),
-      notifications: {
-        info: () => {},
-        success: () => {},
-        warning: () => {},
-        error: () => {},
+/**
+ * 建一个只保留剪贴板相关接线的 runtime，跑完 body 立即回收；
+ * runtime 与其 transport 都注册了 onMessage handler，不回收会让下个用例收到本用例的事件。
+ */
+async function withClipboardRuntime(
+  options: ClipboardCase,
+  body: (dispatch: (paneId: string, text: string) => void) => void | Promise<void>
+): Promise<string[]> {
+  const written: string[] = [];
+  Object.defineProperty(globalThis, 'document', {
+    value: { visibilityState: options.visibility },
+    configurable: true,
+  });
+
+  const runtime = createAppRuntime({
+    storagePrefix: options.storagePrefix,
+    t: (key) => String(key),
+    notifications: {
+      info: () => {},
+      success: () => {},
+      warning: () => {},
+      error: () => {},
+    },
+    host: {
+      navigate: () => {},
+      isMobile: () => false,
+      openMobileSidebar: () => {},
+      closeMobileSidebar: () => {},
+      writeClipboardText: async (text) => {
+        written.push(text);
       },
-      host: {
-        navigate: () => {},
-        isMobile: () => false,
-        openMobileSidebar: () => {},
-        closeMobileSidebar: () => {},
-        writeClipboardText: async (text) => {
-          written.push(text);
-        },
-        readClipboardText: async () => '',
-        openExternal: () => {},
-        reload: () => {},
-        saveFile: async () => {},
-      },
-    });
+      readClipboardText: async () => '',
+      openExternal: () => {},
+      reload: () => {},
+      saveFile: async () => {},
+    },
+  });
+
+  try {
     runtime.stores.tmux.getState().ensureSocketConnected();
     runtime.stores.tmux.setState({
-      selectedPanes: { 'dev-1': { windowId: '@1', paneId: '%1' } },
+      selectedPanes: { 'dev-1': { windowId: '@1', paneId: options.selectedPaneId } },
     });
+    await body((paneId, text) => dispatchClipboard('dev-1', paneId, text));
+  } finally {
+    runtime.dispose();
+    runtime.transport.dispose();
+  }
+  return written;
+}
 
-    dispatchClipboard('dev-1', '%1', 'remote-clip');
-    // writeClipboardText 是 async；给 microtask 一轮
-    await Promise.resolve();
+describe('tmux clipboard write via injected host', () => {
+  test('当前 pane 且可见时经 host.writeClipboardText', async () => {
+    const written = await withClipboardRuntime(
+      { storagePrefix: 'test-clip-ok:', visibility: 'visible', selectedPaneId: '%1' },
+      async (dispatch) => {
+        dispatch('%1', 'remote-clip');
+        // writeClipboardText 是 async；给 microtask 一轮
+        await Promise.resolve();
+      }
+    );
     expect(written).toEqual(['remote-clip']);
+    expect(messageHandlers.size).toBe(0);
   });
 
   test('非当前 pane 不写 clipboard', async () => {
-    const written: string[] = [];
-    Object.defineProperty(globalThis, 'document', {
-      value: { visibilityState: 'visible' },
-      configurable: true,
-    });
-
-    const runtime = createAppRuntime({
-      storagePrefix: 'test-clip-pane:',
-      t: (key) => String(key),
-      notifications: {
-        info: () => {},
-        success: () => {},
-        warning: () => {},
-        error: () => {},
-      },
-      host: {
-        navigate: () => {},
-        isMobile: () => false,
-        openMobileSidebar: () => {},
-        closeMobileSidebar: () => {},
-        writeClipboardText: async (text) => {
-          written.push(text);
-        },
-        readClipboardText: async () => '',
-        openExternal: () => {},
-        reload: () => {},
-        saveFile: async () => {},
-      },
-    });
-    runtime.stores.tmux.getState().ensureSocketConnected();
-    runtime.stores.tmux.setState({
-      selectedPanes: { 'dev-1': { windowId: '@1', paneId: '%1' } },
-    });
-
-    dispatchClipboard('dev-1', '%2', 'other-pane');
-    await Promise.resolve();
+    const written = await withClipboardRuntime(
+      { storagePrefix: 'test-clip-pane:', visibility: 'visible', selectedPaneId: '%1' },
+      async (dispatch) => {
+        dispatch('%2', 'other-pane');
+        await Promise.resolve();
+      }
+    );
     expect(written).toEqual([]);
   });
 
   test('不可见时不写 clipboard', async () => {
-    const written: string[] = [];
-    Object.defineProperty(globalThis, 'document', {
-      value: { visibilityState: 'hidden' },
-      configurable: true,
-    });
-
-    const runtime = createAppRuntime({
-      storagePrefix: 'test-clip-hidden:',
-      t: (key) => String(key),
-      notifications: {
-        info: () => {},
-        success: () => {},
-        warning: () => {},
-        error: () => {},
-      },
-      host: {
-        navigate: () => {},
-        isMobile: () => false,
-        openMobileSidebar: () => {},
-        closeMobileSidebar: () => {},
-        writeClipboardText: async (text) => {
-          written.push(text);
-        },
-        readClipboardText: async () => '',
-        openExternal: () => {},
-        reload: () => {},
-        saveFile: async () => {},
-      },
-    });
-    runtime.stores.tmux.getState().ensureSocketConnected();
-    runtime.stores.tmux.setState({
-      selectedPanes: { 'dev-1': { windowId: '@1', paneId: '%1' } },
-    });
-
-    dispatchClipboard('dev-1', '%1', 'hidden');
-    await Promise.resolve();
+    const written = await withClipboardRuntime(
+      { storagePrefix: 'test-clip-hidden:', visibility: 'hidden', selectedPaneId: '%1' },
+      async (dispatch) => {
+        dispatch('%1', 'hidden');
+        await Promise.resolve();
+      }
+    );
     expect(written).toEqual([]);
   });
 });
