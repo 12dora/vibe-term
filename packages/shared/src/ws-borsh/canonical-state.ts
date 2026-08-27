@@ -1,7 +1,8 @@
 import { b } from '@zorsh/zorsh';
+import { assertCanonicalEncoding } from './canonical-scan';
+import { assertCanonicalEventSemantics } from './canonical-state-validation';
 import {
   ERROR_FRAME_TOO_LARGE,
-  ERROR_INVALID_FRAME,
   ERROR_PAYLOAD_DECODE_FAILED,
   ERROR_UNSUPPORTED_PROTOCOL,
   WsBorshError,
@@ -303,20 +304,6 @@ export function assertCanonicalPayloadBounded(payload: Uint8Array): void {
   }
 }
 
-function assertCanonicalEncoding<T>(
-  schema: { serialize(value: T): Uint8Array },
-  decoded: T,
-  payload: Uint8Array
-): void {
-  const canonical = schema.serialize(decoded);
-  if (
-    canonical.byteLength !== payload.byteLength ||
-    canonical.some((byte, index) => byte !== payload[index])
-  ) {
-    throw new WsBorshError(ERROR_INVALID_FRAME, false, 'non-canonical payload encoding');
-  }
-}
-
 export function encodeCanonicalCommandPayload(command: CanonicalCommand): Uint8Array {
   const payload = CanonicalCommandEnvelopeSchema.serialize({
     protocolVersion: CANONICAL_STATE_PROTOCOL_VERSION,
@@ -341,19 +328,12 @@ export function decodeCanonicalCommandPayload(payload: Uint8Array): CanonicalCom
   if (decoded.protocolVersion !== CANONICAL_STATE_PROTOCOL_VERSION) {
     throw new WsBorshError(ERROR_UNSUPPORTED_PROTOCOL, false);
   }
-  assertCanonicalEncoding(CanonicalCommandEnvelopeSchema, decoded, payload);
+  assertCanonicalEncoding(CanonicalCommandEnvelopeSchema, payload);
   return decoded;
 }
 
 export function encodeCanonicalEventPayload(event: CanonicalEvent): Uint8Array {
-  const paneData = 'PaneData' in event ? event.PaneData : null;
-  if (
-    paneData &&
-    (paneData.seqEnd < paneData.seqStart ||
-      paneData.seqEnd - paneData.seqStart !== BigInt(paneData.data.byteLength))
-  ) {
-    throw new WsBorshError(ERROR_INVALID_FRAME, false, 'PaneData sequence range mismatch');
-  }
+  assertCanonicalEventSemantics(event);
   const payload = CanonicalEventEnvelopeSchema.serialize({
     protocolVersion: CANONICAL_STATE_PROTOCOL_VERSION,
     event,
@@ -377,6 +357,7 @@ export function decodeCanonicalEventPayload(payload: Uint8Array): CanonicalEvent
   if (decoded.protocolVersion !== CANONICAL_STATE_PROTOCOL_VERSION) {
     throw new WsBorshError(ERROR_UNSUPPORTED_PROTOCOL, false);
   }
-  assertCanonicalEncoding(CanonicalEventEnvelopeSchema, decoded, payload);
+  assertCanonicalEncoding(CanonicalEventEnvelopeSchema, payload);
+  assertCanonicalEventSemantics(decoded.event);
   return decoded;
 }
