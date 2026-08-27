@@ -1,4 +1,5 @@
-import { describe, expect, test } from 'bun:test';
+import { afterEach, describe, expect, spyOn, test } from 'bun:test';
+import * as db from '../db';
 import {
   DeviceConnectionRegistry,
   type DeviceConnectionRegistryHost,
@@ -63,5 +64,74 @@ describe('DeviceConnectionRegistry close generation', () => {
     const registry = new DeviceConnectionRegistry(host);
     registry.closeAll();
     expect(await registry.getOrCreate('device-z', {} as never)).toBeNull();
+  });
+});
+
+describe('DeviceConnectionRegistry reconnect exhaustion', () => {
+  const timeoutFns: Array<(...args: unknown[]) => unknown> = [];
+  let setTimeoutSpy: ReturnType<typeof spyOn> | undefined;
+  let settingsSpy: ReturnType<typeof spyOn> | undefined;
+
+  afterEach(() => {
+    setTimeoutSpy?.mockRestore();
+    settingsSpy?.mockRestore();
+    timeoutFns.length = 0;
+  });
+
+  test('retry limit deletes the dead entry so next getOrCreate is a fresh runtime', async () => {
+    settingsSpy = spyOn(db, 'getSiteSettings').mockReturnValue({
+      sshReconnectMaxRetries: 1,
+      sshReconnectDelaySeconds: 1,
+    } as ReturnType<typeof db.getSiteSettings>);
+    setTimeoutSpy = spyOn(globalThis, 'setTimeout').mockImplementation(((
+      fn: (...args: unknown[]) => unknown
+    ) => {
+      timeoutFns.push(fn);
+      return 0 as unknown as ReturnType<typeof setTimeout>;
+    }) as typeof setTimeout);
+
+    const events: Array<{ type: string; errorType?: string }> = [];
+    const createResults: Array<DeviceConnectionEntry | null> = [];
+    const host = {
+      deps: {
+        releaseRuntime: async () => {},
+      },
+      canonicalSessions: new Map(),
+      async createDeviceConnectionEntry() {
+        const next = createResults.shift();
+        return next ?? null;
+      },
+      releaseConnectionEntry() {},
+      broadcastDeviceEvent(
+        _entry: DeviceConnectionEntry,
+        payload: { type: string; errorType?: string }
+      ) {
+        events.push({ type: payload.type, errorType: payload.errorType });
+      },
+    } as unknown as DeviceConnectionRegistryHost;
+
+    const registry = new DeviceConnectionRegistry(host);
+    const ws = {
+      data: {
+        borshState: { selectedPanes: { 'dev-dead': '%0' } as Record<string, string | null> },
+      },
+    };
+    const dead = fakeEntry();
+    dead.clients.add(ws as never);
+    registry.connections.set('dev-dead', dead);
+
+    await registry.handleConnectionClose('dev-dead');
+    expect(timeoutFns.length).toBe(1);
+    await (timeoutFns.shift() as () => Promise<void>)();
+
+    expect(events.some((e) => e.errorType === 'reconnect_failed')).toBe(true);
+    expect(registry.connections.has('dev-dead')).toBe(false);
+    expect(registry.connections.get('dev-dead')).toBeUndefined();
+
+    const fresh = fakeEntry();
+    createResults.push(fresh);
+    const got = await registry.getOrCreate('dev-dead', ws as never);
+    expect(got).toBe(fresh);
+    expect(got).not.toBe(dead);
   });
 });

@@ -22,7 +22,12 @@ import {
   createBorshKindHandlers,
   dispatchBorshKind,
 } from './borsh-dispatcher';
-import { createBorshClientState, encodeCanonicalEvent } from './borsh/codec-borsh';
+import {
+  createBorshClientState,
+  encodeCanonicalEvent,
+  encodePayloadFrames,
+  sendToClient,
+} from './borsh/codec-borsh';
 import { sessionStateStore } from './borsh/session-state';
 import { switchBarrier } from './borsh/switch-barrier';
 import { CanonicalFeedSession } from './canonical-feed-session';
@@ -30,7 +35,6 @@ import {
   DeviceConnectionRegistry,
   type DeviceConnectionRegistryHost,
 } from './device-connection-registry';
-import { payloadNeedsChunking } from './frame-utils';
 import { GatewayActivityMetrics } from './gateway-activity-metrics';
 import { type GatewayMetricsHost, logTerminalOutputMetricsIfDue } from './gateway-metrics-log';
 import { LegacyFeedBroadcaster, type LegacyFeedHost } from './legacy-feed-broadcaster';
@@ -417,21 +421,9 @@ export class WebSocketServer
       return false;
     }
     const state = ws.data.borshState;
-
-    const originalSeq = state.seqGen();
-    if (!payloadNeedsChunking(payload.length, state.maxFrameBytes)) {
-      return gatewayWebSocketSendGuard.sendFrames(ws as ServerWebSocket<unknown>, [
-        wsBorsh.encodeEnvelope(kind, payload, originalSeq),
-      ]);
-    }
-    const chunked = wsBorsh.splitPayloadIntoChunks(payload, kind, originalSeq, {
-      maxFrameBytes: state.maxFrameBytes,
-      chunkStreamId: wsBorsh.generateChunkStreamId(),
-    });
-
-    return gatewayWebSocketSendGuard.sendFrames(
+    return sendToClient(
       ws as ServerWebSocket<unknown>,
-      chunked.chunks.map((chunk) => wsBorsh.encodeChunk(chunk, state.seqGen()))
+      encodePayloadFrames(kind, payload, state.seqGen, state.maxFrameBytes)
     );
   }
 

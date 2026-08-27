@@ -289,13 +289,12 @@ export class DeviceConnectionRegistry {
             return;
           }
 
-          const finalEvent: EventDevicePayload = {
+          this.finalizeReconnectFailure(deviceId, entry, {
             deviceId,
             type: 'error',
             errorType: 'reconnect_failed',
             message: t('sshError.reconnectFailed'),
-          };
-          this.host.broadcastDeviceEvent(entry, finalEvent);
+          });
           return;
         }
 
@@ -323,20 +322,27 @@ export class DeviceConnectionRegistry {
       return;
     }
 
-    const disconnected: EventDevicePayload = {
+    this.finalizeReconnectFailure(deviceId, entry, {
       deviceId,
       type: 'disconnected',
-    };
-    this.host.broadcastDeviceEvent(entry, disconnected);
+    });
+  }
 
-    for (const client of entry.clients) {
-      delete client.data.borshState.selectedPanes[deviceId];
-    }
+  finalizeReconnectFailure(
+    deviceId: string,
+    entry: DeviceConnectionEntry,
+    event: EventDevicePayload
+  ): void {
+    this.host.broadcastDeviceEvent(entry, event);
+    this.clearReconnectTimer(entry);
     for (const client of entry.canonicalClients ?? []) {
       this.host.canonicalSessions.get(client)?.detachDevice(deviceId);
     }
-
-    this.clearReconnectTimer(entry);
+    for (const client of entry.clients) {
+      delete client.data.borshState.selectedPanes[deviceId];
+    }
+    entry.clients.clear();
+    entry.canonicalClients?.clear();
     this.connections.delete(deviceId);
   }
 }

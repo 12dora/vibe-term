@@ -14,6 +14,7 @@ import {
   getMaxAgentMessageSeq,
   listPendingAgentConfirmations,
 } from '../db/agent';
+import { encodePayloadFrames, sendToClient } from '../ws/borsh/codec-borsh';
 import { gatewayWebSocketSendGuard } from '../ws/websocket-send-guard';
 
 export interface AgentHubClientState {
@@ -170,22 +171,9 @@ export class AgentWsHub {
         return;
       }
       const state = ws.data.borshState;
-      const originalSeq = state.seqGen();
-      const chunked = wsBorsh.splitPayloadIntoChunks(payloadBytes, kind, originalSeq, {
-        maxFrameBytes: state.maxFrameBytes,
-        chunkStreamId: wsBorsh.generateChunkStreamId(),
-      });
-
-      if (chunked.totalChunks === 0) {
-        gatewayWebSocketSendGuard.sendFrames(ws as ServerWebSocket<unknown>, [
-          wsBorsh.encodeEnvelope(kind, payloadBytes, originalSeq),
-        ]);
-        return;
-      }
-
-      gatewayWebSocketSendGuard.sendFrames(
+      sendToClient(
         ws as ServerWebSocket<unknown>,
-        chunked.chunks.map((chunk) => wsBorsh.encodeChunk(chunk, state.seqGen()))
+        encodePayloadFrames(kind, payloadBytes, state.seqGen, state.maxFrameBytes)
       );
     } catch (err) {
       console.error('[agent-ws-hub] failed to send payload:', err);

@@ -1,8 +1,9 @@
 import { wsBorsh } from '@tmex/shared';
 import type { ServerWebSocket } from 'bun';
-import { agentWsHub } from '../agent/ws-hub';
-import { decodeCanonicalCommand } from './borsh/codec-borsh';
+import { createAgentKindHandlers } from './agent-kind-handlers';
 import type { CanonicalFeedSession } from './canonical-feed-session';
+import { createCanonicalKindHandlers } from './canonical-kind-handlers';
+import { createTmuxKindHandlers } from './tmux-kind-handlers';
 import type { ClientState } from './types';
 
 type SchemaLike<T> = {
@@ -68,7 +69,7 @@ export type BorshKindHandler<T = unknown> = {
 
 export type BorshKindHandlerMap = ReadonlyMap<number, BorshKindHandler<unknown>>;
 
-function schemaHandler<T>(
+export function schemaHandler<T>(
   schema: SchemaLike<T>,
   handle: BorshKindHandler<T>['handle']
 ): BorshKindHandler<unknown> {
@@ -78,7 +79,7 @@ function schemaHandler<T>(
   };
 }
 
-function decoderHandler<T>(
+export function decoderHandler<T>(
   decode: (payload: Uint8Array) => T,
   handle: BorshKindHandler<T>['handle']
 ): BorshKindHandler<unknown> {
@@ -89,221 +90,11 @@ function decoderHandler<T>(
 }
 
 export function createBorshKindHandlers(host: BorshDispatchHost): BorshKindHandlerMap {
-  const handlers = new Map<number, BorshKindHandler<unknown>>([
-    [
-      wsBorsh.KIND_DEVICE_CONNECT,
-      schemaHandler(wsBorsh.schema.DeviceConnectSchema, async (ws, decoded) => {
-        await host.handleDeviceConnect(ws, decoded.deviceId);
-      }),
-    ],
-    [
-      wsBorsh.KIND_DEVICE_DISCONNECT,
-      schemaHandler(wsBorsh.schema.DeviceDisconnectSchema, (ws, decoded) => {
-        host.handleDeviceDisconnect(ws, decoded.deviceId);
-      }),
-    ],
-    [
-      wsBorsh.KIND_TMUX_SELECT,
-      schemaHandler(wsBorsh.schema.TmuxSelectSchema, (ws, decoded) => {
-        host.handleTmuxSelect(ws, decoded);
-      }),
-    ],
-    [
-      wsBorsh.KIND_TMUX_SELECT_WINDOW,
-      schemaHandler(wsBorsh.schema.TmuxSelectWindowSchema, (_ws, decoded) => {
-        host.handleTmuxSelectWindow(decoded.deviceId, decoded.windowId);
-      }),
-    ],
-    [
-      wsBorsh.KIND_TMUX_CREATE_WINDOW,
-      schemaHandler(wsBorsh.schema.TmuxCreateWindowSchema, (_ws, decoded) => {
-        host.handleCreateWindow(
-          decoded.deviceId,
-          decoded.name ?? undefined,
-          decoded.cwd ?? undefined
-        );
-      }),
-    ],
-    [
-      wsBorsh.KIND_TMUX_CLOSE_WINDOW,
-      schemaHandler(wsBorsh.schema.TmuxCloseWindowSchema, (_ws, decoded) => {
-        host.handleCloseWindow(decoded.deviceId, decoded.windowId);
-      }),
-    ],
-    [
-      wsBorsh.KIND_TMUX_CLOSE_PANE,
-      schemaHandler(wsBorsh.schema.TmuxClosePaneSchema, (_ws, decoded) => {
-        host.handleClosePane(decoded.deviceId, decoded.paneId);
-      }),
-    ],
-    [
-      wsBorsh.KIND_TMUX_RENAME_WINDOW,
-      schemaHandler(wsBorsh.schema.TmuxRenameWindowSchema, (_ws, decoded) => {
-        host.renameWindow(decoded.deviceId, decoded.windowId, decoded.name);
-      }),
-    ],
-    [
-      wsBorsh.KIND_TMUX_SET_WINDOW_STYLE,
-      schemaHandler(wsBorsh.schema.TmuxSetWindowStyleSchema, (_ws, decoded) => {
-        host.handleSetWindowStyle(decoded.deviceId, decoded.style);
-      }),
-    ],
-    [
-      wsBorsh.KIND_TMUX_REORDER_WINDOWS,
-      schemaHandler(wsBorsh.schema.TmuxReorderWindowsSchema, (_ws, decoded) => {
-        host.reorderWindows(decoded.deviceId, decoded.windowIds);
-      }),
-    ],
-    [
-      wsBorsh.KIND_TMUX_REORDER_PANES,
-      schemaHandler(wsBorsh.schema.TmuxReorderPanesSchema, (_ws, decoded) => {
-        host.reorderPanes(decoded.deviceId, decoded.windowId, decoded.paneIds);
-      }),
-    ],
-    [
-      wsBorsh.KIND_TMUX_SUBSCRIBE_PANES,
-      schemaHandler(wsBorsh.schema.TmuxSubscribePanesSchema, (ws, decoded) => {
-        host.handleSubscribePanes(ws, decoded.deviceId, decoded.paneIds);
-      }),
-    ],
-    [
-      wsBorsh.KIND_TMUX_FETCH_PANE_HISTORY,
-      schemaHandler(wsBorsh.schema.TmuxFetchPaneHistorySchema, (ws, decoded) => {
-        host.handleFetchPaneHistory(ws, decoded.deviceId, decoded.paneId, decoded.requestToken);
-      }),
-    ],
-    [
-      wsBorsh.KIND_TMUX_RESIZE_PANE,
-      schemaHandler(wsBorsh.schema.TmuxResizePaneSchema, (_ws, decoded) => {
-        host.handleResizePaneById(
-          decoded.deviceId,
-          decoded.paneId,
-          decoded.cols ?? undefined,
-          decoded.rows ?? undefined
-        );
-      }),
-    ],
-    [
-      wsBorsh.KIND_TMUX_APPLY_STACKED_LAYOUT,
-      schemaHandler(wsBorsh.schema.TmuxApplyStackedLayoutSchema, (_ws, decoded) => {
-        host.handleApplyStackedLayout(
-          decoded.deviceId,
-          decoded.windowId,
-          decoded.cols,
-          decoded.rows
-        );
-      }),
-    ],
-    [
-      wsBorsh.KIND_TMUX_SPLIT_PANE,
-      schemaHandler(wsBorsh.schema.TmuxSplitPaneSchema, (_ws, decoded) => {
-        host.handleSplitPane(
-          decoded.deviceId,
-          decoded.paneId,
-          decoded.direction,
-          decoded.cwd ?? undefined
-        );
-      }),
-    ],
-    [
-      wsBorsh.KIND_TMUX_FOCUS_PANE,
-      schemaHandler(wsBorsh.schema.TmuxFocusPaneSchema, (ws, decoded) => {
-        host.handleFocusPane(ws, decoded.deviceId, decoded.windowId, decoded.paneId);
-      }),
-    ],
-    [
-      wsBorsh.KIND_TMUX_RENAME_PANE,
-      schemaHandler(wsBorsh.schema.TmuxRenamePaneSchema, (_ws, decoded) => {
-        host.renamePane(decoded.deviceId, decoded.paneId, decoded.name);
-      }),
-    ],
-    [
-      wsBorsh.KIND_TMUX_MOVE_PANE,
-      schemaHandler(wsBorsh.schema.TmuxMovePaneSchema, (_ws, decoded) => {
-        host.handleMovePane(
-          decoded.deviceId,
-          decoded.srcPaneId,
-          decoded.dstPaneId,
-          decoded.position
-        );
-      }),
-    ],
-    [
-      wsBorsh.KIND_TMUX_BREAK_PANE,
-      schemaHandler(wsBorsh.schema.TmuxBreakPaneSchema, (_ws, decoded) => {
-        host.handleBreakPane(decoded.deviceId, decoded.paneId);
-      }),
-    ],
-    [
-      wsBorsh.KIND_TERM_INPUT,
-      schemaHandler(wsBorsh.schema.TermInputSchema, (_ws, decoded) => {
-        if (decoded.isComposing) return;
-        host.handleTermInput(
-          decoded.deviceId,
-          decoded.paneId,
-          new TextDecoder().decode(decoded.data)
-        );
-      }),
-    ],
-    [
-      wsBorsh.KIND_TERM_PASTE,
-      schemaHandler(wsBorsh.schema.TermPasteSchema, (_ws, decoded) => {
-        host.handleTermPaste(
-          decoded.deviceId,
-          decoded.paneId,
-          new TextDecoder().decode(decoded.data)
-        );
-      }),
-    ],
-    [
-      wsBorsh.KIND_TERM_RESIZE,
-      schemaHandler(wsBorsh.schema.TermResizeSchema, (_ws, decoded) => {
-        host.handleTermResize(decoded.deviceId, decoded.paneId, decoded.cols, decoded.rows);
-      }),
-    ],
-    [
-      wsBorsh.KIND_TERM_SYNC_SIZE,
-      schemaHandler(wsBorsh.schema.TermSyncSizeSchema, (_ws, decoded) => {
-        host.handleTermResize(decoded.deviceId, decoded.paneId, decoded.cols, decoded.rows);
-      }),
-    ],
-    [
-      wsBorsh.KIND_AGENT_SUBSCRIBE,
-      schemaHandler(wsBorsh.schema.AgentSubscribeSchema, async (ws, decoded) => {
-        await agentWsHub.subscribe(ws, decoded.sessionId);
-      }),
-    ],
-    [
-      wsBorsh.KIND_AGENT_UNSUBSCRIBE,
-      schemaHandler(wsBorsh.schema.AgentUnsubscribeSchema, (ws, decoded) => {
-        agentWsHub.unsubscribe(ws, decoded.sessionId);
-      }),
-    ],
-    [
-      wsBorsh.KIND_SITE_THEME_UPDATE,
-      schemaHandler(wsBorsh.schema.SiteThemeUpdateC2SSchema, (ws, decoded) => {
-        host.handleSiteThemeUpdate(ws, decoded);
-      }),
-    ],
-    [
-      wsBorsh.KIND_CANONICAL_COMMAND,
-      decoderHandler(decodeCanonicalCommand, async (ws, decoded, refSeq) => {
-        try {
-          await host.getOrCreateCanonicalSession(ws).handleCommand(decoded.command);
-        } catch (error) {
-          const protocolError = error instanceof wsBorsh.WsBorshError ? error : null;
-          host.sendError(
-            ws,
-            refSeq,
-            protocolError?.code ?? wsBorsh.ERROR_PAYLOAD_DECODE_FAILED,
-            protocolError?.message ?? 'Invalid canonical command',
-            protocolError?.retryable ?? false
-          );
-        }
-      }),
-    ],
+  return new Map([
+    ...createTmuxKindHandlers(host),
+    ...createAgentKindHandlers(host),
+    ...createCanonicalKindHandlers(host),
   ]);
-  return handlers;
 }
 
 export function decodeBorshKindPayload<T>(handler: BorshKindHandler<T>, payload: Uint8Array): T {

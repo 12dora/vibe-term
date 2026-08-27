@@ -1,10 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import type { PromptMarker } from '../../tmux-client/pane-stream-parser';
-import {
-  type RunCommandEmulator,
-  cleanTerminalText,
-  executeRunCommand,
-} from './run-command';
+import { type RunCommandEmulator, cleanTerminalText, executeRunCommand } from './run-command';
 
 const enc = new TextEncoder();
 
@@ -205,5 +201,27 @@ describe('executeRunCommand', () => {
     expect(sentSpace).toBe(true);
     expect(result.output).toContain('more output');
     void spaces;
+  });
+
+  test('多字节 UTF-8 超出字节上限时 truncated=true', async () => {
+    const fake = createFakeEmu();
+    const overflow = '你'.repeat(90_000);
+    const result = await executeRunCommand(
+      { command: 'echo', mode: 'posix', shell: 'bash', timeoutMs: 5000 },
+      {
+        emulator: fake.emu,
+        sendInput: (data) => {
+          const nonce = nonceOf(data);
+          setTimeout(() => {
+            fake.emit('echo; printf ...\r\n');
+            fake.emit(overflow);
+            fake.marker({ kind: 'D', exitCode: 0, params: ['0', `tmex=${nonce}`] });
+          }, 5);
+        },
+      }
+    );
+    expect(result.status).toBe('completed');
+    expect(result.truncated).toBe(true);
+    expect(new TextEncoder().encode(overflow).length).toBeGreaterThan(256 * 1024);
   });
 });

@@ -4,6 +4,7 @@ import { type Tool, tool } from 'ai';
 import { z } from 'zod';
 import { decrypt } from '../../crypto';
 import { type AgentSettingsRecord, getAgentSettings } from '../../db/agent';
+import { isCanonicalIpv4, isPrivateIpv4, isPrivateIpv6Bytes, parseIpv6ToBytes } from './ip-address';
 import { wrapUntrusted } from './untrusted';
 
 const WEB_SEARCH_MAX_RESULTS = 8;
@@ -50,14 +51,6 @@ function normalizeHostname(hostname: string): string {
   return value;
 }
 
-// 规范 IPv4 八位组：0-255、十进制、无前导零
-const CANONICAL_IPV4_OCTET = /^(25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)$/;
-
-function isCanonicalIpv4(host: string): boolean {
-  const parts = host.split('.');
-  return parts.length === 4 && parts.every((part) => CANONICAL_IPV4_OCTET.test(part));
-}
-
 // 数字形式 host（十进制/0x 十六进制/前导零八进制段，1-4 段）：
 // 非规范点分四段时是 IPv4 字面量的混淆写法（如 2130706433、127.1、0177.0.0.1、0x7f000001）
 function isNumericHost(host: string): boolean {
@@ -76,12 +69,8 @@ export function isPrivateHostname(hostname: string): boolean {
   }
 
   if (isCanonicalIpv4(host)) {
-    const [a, b] = host.split('.').map(Number);
-    if (a === 0 || a === 10 || a === 127) return true;
-    if (a === 169 && b === 254) return true;
-    if (a === 172 && b !== undefined && b >= 16 && b <= 31) return true;
-    if (a === 192 && b === 168) return true;
-    return false;
+    const octets = host.split('.').map(Number);
+    return isPrivateIpv4(octets[0] ?? 0, octets[1] ?? 0);
   }
 
   // 非规范数字形式（整数 IP、缺段、八进制/十六进制段）一律拒绝：
@@ -92,12 +81,9 @@ export function isPrivateHostname(hostname: string): boolean {
 
   // IPv6（URL.hostname 对 IPv6 字面量返回带括号形式，已剥除）
   if (host.includes(':')) {
-    if (host === '::1' || host === '::') return true;
-    if (host.startsWith('fc') || host.startsWith('fd')) return true; // fc00::/7（含 fd00::/8）
-    if (host.startsWith('fe80:')) return true; // link-local
-    if (host.startsWith('::ffff:')) {
-      return isPrivateHostname(host.slice('::ffff:'.length));
-    }
+    const bytes = parseIpv6ToBytes(host);
+    if (!bytes) return true;
+    return isPrivateIpv6Bytes(bytes);
   }
 
   return false;

@@ -86,7 +86,7 @@ export function encodeStateSnapshot(
   maxFrameBytes: number
 ): Uint8Array[] {
   const payload = wsBorsh.encodePayload(wsBorsh.schema.StateSnapshotSchema, params);
-  return encodeWithChunking(wsBorsh.KIND_STATE_SNAPSHOT, payload, seqGen, maxFrameBytes);
+  return encodePayloadFrames(wsBorsh.KIND_STATE_SNAPSHOT, payload, seqGen, maxFrameBytes);
 }
 
 export function encodeTmuxEvent(
@@ -111,7 +111,7 @@ export function encodeTermHistory(
   maxFrameBytes: number
 ): Uint8Array[] {
   const payload = wsBorsh.encodePayload(wsBorsh.schema.TermHistorySchema, params);
-  return encodeWithChunking(wsBorsh.KIND_TERM_HISTORY, payload, seqGen, maxFrameBytes);
+  return encodePayloadFrames(wsBorsh.KIND_TERM_HISTORY, payload, seqGen, maxFrameBytes);
 }
 
 export function encodeSwitchAck(
@@ -162,14 +162,12 @@ export function decodeCanonicalCommand(data: Uint8Array): wsBorsh.CanonicalComma
 
 // ========== 分片编码 ==========
 
-function encodeWithChunking(
+export function encodePayloadFrames(
   kind: number,
   payload: Uint8Array,
   seqGen: () => number,
   maxFrameBytes: number
 ): Uint8Array[] {
-  const messages: Uint8Array[] = [];
-
   const originalSeq = seqGen();
   const chunkResult = wsBorsh.splitPayloadIntoChunks(payload, kind, originalSeq, {
     maxFrameBytes,
@@ -177,16 +175,10 @@ function encodeWithChunking(
   });
 
   if (chunkResult.totalChunks === 0) {
-    // 不需要分片
-    messages.push(wsBorsh.encodeEnvelope(kind, payload, originalSeq));
-  } else {
-    // 发送 chunks
-    for (const chunk of chunkResult.chunks) {
-      messages.push(wsBorsh.encodeChunk(chunk, seqGen()));
-    }
+    return [wsBorsh.encodeEnvelope(kind, payload, originalSeq)];
   }
 
-  return messages;
+  return chunkResult.chunks.map((chunk) => wsBorsh.encodeChunk(chunk, seqGen()));
 }
 
 // ========== 发送工具 ==========
@@ -195,7 +187,8 @@ export function sendToClient(
   ws: ServerWebSocket<unknown>,
   data: Uint8Array | Uint8Array[]
 ): boolean {
-  return gatewayWebSocketSendGuard.sendFrames(ws, Array.isArray(data) ? data : [data]);
+  const frames = Array.isArray(data) ? data : [data];
+  return gatewayWebSocketSendGuard.sendFrames(ws, frames as readonly BufferSource[]);
 }
 
 // ========== 解码辅助函数 ==========

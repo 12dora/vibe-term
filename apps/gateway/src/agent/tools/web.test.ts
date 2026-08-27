@@ -64,6 +64,10 @@ describe('isPrivateHostname / validateFetchUrl（SSRF 拒绝表）', () => {
     'fd00::1',
     'fc00::1',
     'fe80::1',
+    '::ffff:7f00:1',
+    '[::ffff:7f00:1]',
+    '::ffff:10.0.0.1',
+    '::ffff:0a00:1',
     // 非规范数字形式 IPv4 字面量（混淆绕过写法）一律拒绝
     '2130706433',
     '127.1',

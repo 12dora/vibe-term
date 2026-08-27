@@ -9,6 +9,7 @@ import {
   decodePing,
   encodeDeviceConnected,
   encodeHelloS2C,
+  encodePayloadFrames,
   encodePong,
 } from './codec-borsh';
 import { sessionStateStore } from './session-state';
@@ -84,6 +85,42 @@ describe('borsh codec', () => {
     const envelope = wsBorsh.decodeEnvelope(connected);
 
     expect(envelope.kind).toBe(wsBorsh.KIND_DEVICE_CONNECTED);
+  });
+
+  it('unchunked encodePayloadFrames 使用原始 seq 且只消耗一次', () => {
+    let seq = 10;
+    const frames = encodePayloadFrames(
+      wsBorsh.KIND_PONG,
+      new Uint8Array([1, 2, 3]),
+      () => seq++,
+      1024
+    );
+    expect(frames.length).toBe(1);
+    const unchunked = frames[0];
+    expect(unchunked).toBeInstanceOf(Uint8Array);
+    if (!unchunked) return;
+    expect(wsBorsh.decodeEnvelope(unchunked).seq).toBe(10);
+    expect(seq).toBe(11);
+  });
+
+  it('chunked encodePayloadFrames 把原始 seq 写入 chunk，后续 seq 用于各帧', () => {
+    let seq = 5;
+    const frames = encodePayloadFrames(
+      wsBorsh.KIND_TERM_OUTPUT,
+      new Uint8Array(200),
+      () => seq++,
+      64
+    );
+    expect(frames.length).toBeGreaterThan(1);
+    const firstFrame = frames[0];
+    expect(firstFrame).toBeInstanceOf(Uint8Array);
+    if (!firstFrame) return;
+    const first = wsBorsh.decodeEnvelope(firstFrame);
+    expect(first.kind).toBe(wsBorsh.KIND_CHUNK);
+    expect(first.seq).toBe(6);
+    const chunk = wsBorsh.decodeChunk(first.payload);
+    expect(chunk.originalSeq).toBe(5);
+    expect(chunk.originalKind).toBe(wsBorsh.KIND_TERM_OUTPUT);
   });
 });
 

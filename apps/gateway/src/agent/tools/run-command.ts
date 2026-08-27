@@ -30,7 +30,10 @@ export interface RunCommandResult {
 export interface RunCommandEmulator {
   isAlternateScreen(): boolean;
   render(): string;
-  tap(tap: { onBytes?: (data: Uint8Array) => void; onMarker?: (marker: PromptMarker) => void }): () => void;
+  tap(tap: {
+    onBytes?: (data: Uint8Array) => void;
+    onMarker?: (marker: PromptMarker) => void;
+  }): () => void;
 }
 
 export interface RunCommandParams {
@@ -118,8 +121,7 @@ function lastNonEmptyLine(text: string): string {
 }
 
 // 从累积原始字节里剥掉第一行（命令回显），返回干净输出。
-function extractOutput(raw: string): { text: string; truncated: boolean } {
-  const truncated = raw.length >= OUTPUT_MAX_BYTES;
+function extractOutput(raw: string, truncated: boolean): { text: string; truncated: boolean } {
   const cleaned = cleanTerminalText(raw);
   const newlineIdx = cleaned.indexOf('\n');
   // 第一行是 shell 对输入行的回显（含我们注入的 wrapper），剥掉
@@ -159,8 +161,8 @@ export async function executeRunCommand(
     };
   }
 
-  // 累积流字节 + 标记
   const chunks: number[] = [];
+  let wasTruncated = false;
   let receivedMarker: PromptMarker | null = null;
   let nonce = '';
   const untap = deps.emulator.tap({
@@ -168,6 +170,8 @@ export async function executeRunCommand(
       for (const byte of data) {
         if (chunks.length < OUTPUT_MAX_BYTES) {
           chunks.push(byte);
+        } else {
+          wasTruncated = true;
         }
       }
     },
@@ -185,24 +189,21 @@ export async function executeRunCommand(
   };
 
   try {
-    const usePosix =
-      mode === 'posix' || (mode === 'auto' && exitCodeExpr(params.shell) !== null);
+    const usePosix = mode === 'posix' || (mode === 'auto' && exitCodeExpr(params.shell) !== null);
 
-    // cli：可选先关分页
     if (mode === 'cli' && params.disablePagingCommand) {
       deps.sendInput(`${params.disablePagingCommand}\r`);
       await sleepMs(200);
       chunks.length = 0;
+      wasTruncated = false;
     }
 
-    // 学习 cli 提示符（用于完成判定）
     const promptRegex = params.prompt
       ? new RegExp(params.prompt)
       : mode === 'cli'
         ? buildPromptRegex(lastNonEmptyLine(deps.emulator.render()))
         : null;
 
-    // 发送命令（POSIX 包裹隐形 OSC133 + nonce）
     if (usePosix) {
       nonce = makeNonce();
       const expr = exitCodeExpr(params.shell) ?? '$?';
@@ -212,111 +213,165 @@ export async function executeRunCommand(
       deps.sendInput(`${params.command}\r`);
     }
 
-    const expectRegex = params.expect ? new RegExp(params.expect) : null;
-    const deadline = now() + timeoutMs;
-    let idleStableSince = 0;
-    let lastLen = 0;
+    return finish(
+      await waitForCommandCompletion({
+        emulator: deps.emulator,
+        sendInput: deps.sendInput,
+        sleepMs,
+        now,
+        deadline: now() + timeoutMs,
+        usePosix,
+        getReceivedMarker: () => receivedMarker,
+        expectRegex: params.expect ? new RegExp(params.expect) : null,
+        promptRegex,
+        accumulated,
+        getWasTruncated: () => wasTruncated,
+      })
+    );
+  } finally {
+    untap();
+  }
+}
 
-    while (now() < deadline) {
-      await sleepMs(POLL_MS);
+function checkPager(cleanedNow: string, sendInput: (data: string) => void): boolean {
+  if (MORE_MARKERS.some((re) => re.test(cleanedNow.slice(-200)))) {
+    sendInput(' ');
+    return true;
+  }
+  return false;
+}
 
-      // alternate 屏（命令切进 TUI，如 vim/less）
-      if (deps.emulator.isAlternateScreen()) {
-        return finish({
-          output: extractOutput(accumulated()).text,
-          exitCode: null,
-          status: 'entered_tui',
-          likelyError: false,
-          truncated: false,
-        });
-      }
+function checkPosixCompletion(
+  usePosix: boolean,
+  receivedMarker: PromptMarker | null,
+  rawNow: string,
+  truncated: boolean
+): RunCommandResult | null {
+  if (!usePosix || !receivedMarker) return null;
+  const out = extractOutput(rawNow, truncated);
+  const err = detectError(out.text);
+  return {
+    output: out.text,
+    exitCode: receivedMarker.exitCode,
+    status: 'completed',
+    ...err,
+    truncated: out.truncated,
+  };
+}
 
-      const rawNow = accumulated();
-      const cleanedNow = cleanTerminalText(rawNow);
+function checkPromptCompletion(
+  promptRegex: RegExp | null,
+  rawNow: string,
+  truncated: boolean
+): RunCommandResult | null {
+  if (!promptRegex) return null;
+  const tail = lastNonEmptyLine(rawNow);
+  const out = extractOutput(rawNow, truncated);
+  if (promptRegex.test(tail) && out.text.length > 0) {
+    const err = detectError(out.text);
+    return {
+      output: out.text,
+      exitCode: null,
+      status: 'completed',
+      ...err,
+      truncated: out.truncated,
+    };
+  }
+  return null;
+}
 
-      // expect 命中
-      if (expectRegex?.test(cleanedNow)) {
-        const out = extractOutput(rawNow);
-        return finish({
-          output: out.text,
-          exitCode: null,
-          status: 'expect_matched',
-          likelyError: false,
-          truncated: out.truncated,
-        });
-      }
+interface CommandWaitParams {
+  emulator: RunCommandEmulator;
+  sendInput: (data: string) => void;
+  sleepMs: (ms: number) => Promise<void>;
+  now: () => number;
+  deadline: number;
+  usePosix: boolean;
+  getReceivedMarker: () => PromptMarker | null;
+  expectRegex: RegExp | null;
+  promptRegex: RegExp | null;
+  accumulated: () => string;
+  getWasTruncated: () => boolean;
+}
 
-      // POSIX：等到带 nonce 的 D 标记
-      if (usePosix && receivedMarker) {
-        const out = extractOutput(rawNow);
-        const err = detectError(out.text);
-        return finish({
-          output: out.text,
-          exitCode: (receivedMarker as PromptMarker).exitCode,
-          status: 'completed',
-          ...err,
-          truncated: out.truncated,
-        });
-      }
+async function waitForCommandCompletion(params: CommandWaitParams): Promise<RunCommandResult> {
+  let idleStableSince = 0;
+  let lastLen = 0;
 
-      // 分页：遇 --More-- 自动续翻
-      if (MORE_MARKERS.some((re) => re.test(cleanedNow.slice(-200)))) {
-        deps.sendInput(' ');
-        idleStableSince = 0;
-        continue;
-      }
+  while (params.now() < params.deadline) {
+    await params.sleepMs(POLL_MS);
 
-      // CLI / 非 POSIX：提示符在末尾重现 = 完成
-      if (promptRegex) {
-        const tail = lastNonEmptyLine(rawNow);
-        const out = extractOutput(rawNow);
-        if (promptRegex.test(tail) && out.text.length > 0) {
+    if (params.emulator.isAlternateScreen()) {
+      return {
+        output: extractOutput(params.accumulated(), params.getWasTruncated()).text,
+        exitCode: null,
+        status: 'entered_tui',
+        likelyError: false,
+        truncated: false,
+      };
+    }
+
+    const rawNow = params.accumulated();
+    const cleanedNow = cleanTerminalText(rawNow);
+    const truncated = params.getWasTruncated();
+
+    if (params.expectRegex?.test(cleanedNow)) {
+      const out = extractOutput(rawNow, truncated);
+      return {
+        output: out.text,
+        exitCode: null,
+        status: 'expect_matched',
+        likelyError: false,
+        truncated: out.truncated,
+      };
+    }
+
+    const posix = checkPosixCompletion(
+      params.usePosix,
+      params.getReceivedMarker(),
+      rawNow,
+      truncated
+    );
+    if (posix) return posix;
+
+    if (checkPager(cleanedNow, params.sendInput)) {
+      idleStableSince = 0;
+      continue;
+    }
+
+    const prompt = checkPromptCompletion(params.promptRegex, rawNow, truncated);
+    if (prompt) return prompt;
+
+    if (rawNow.length === lastLen) {
+      if (idleStableSince === 0) {
+        idleStableSince = params.now();
+      } else if (params.now() - idleStableSince >= 600) {
+        const out = extractOutput(rawNow, truncated);
+        if (out.text.length > 0 || params.now() - idleStableSince >= 1500) {
           const err = detectError(out.text);
-          return finish({
+          return {
             output: out.text,
             exitCode: null,
             status: 'completed',
             ...err,
             truncated: out.truncated,
-          });
+          };
         }
       }
-
-      // 输出静默判定（auto/posix 无标记回退）
-      if (rawNow.length === lastLen) {
-        if (idleStableSince === 0) {
-          idleStableSince = now();
-        } else if (now() - idleStableSince >= 600) {
-          const out = extractOutput(rawNow);
-          if (out.text.length > 0 || now() - idleStableSince >= 1500) {
-            const err = detectError(out.text);
-            return finish({
-              output: out.text,
-              exitCode: null,
-              status: 'completed',
-              ...err,
-              truncated: out.truncated,
-            });
-          }
-        }
-      } else {
-        idleStableSince = 0;
-        lastLen = rawNow.length;
-      }
+    } else {
+      idleStableSince = 0;
+      lastLen = rawNow.length;
     }
-
-    // 超时
-    const out = extractOutput(accumulated());
-    return finish({
-      output: out.text,
-      exitCode: null,
-      status: 'timeout',
-      ...detectError(out.text),
-      truncated: out.truncated,
-    });
-  } finally {
-    untap();
   }
+
+  const out = extractOutput(params.accumulated(), params.getWasTruncated());
+  return {
+    output: out.text,
+    exitCode: null,
+    status: 'timeout',
+    ...detectError(out.text),
+    truncated: out.truncated,
+  };
 }
 
 function buildPromptRegex(promptLine: string): RegExp | null {
