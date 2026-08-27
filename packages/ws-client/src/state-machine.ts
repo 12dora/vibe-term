@@ -181,6 +181,7 @@ export class SelectStateMachine {
   private deferredHistories = new Map<string, DeferredHistory>();
   private deferredFlushes = new Map<string, { paneId: string; buffer: Uint8Array[] }>();
   private deferredOutputs = new Map<string, Array<{ paneId: string; data: Uint8Array }>>();
+  private pendingRebases = new Map<string, Map<string, GatewayRebaseReason>>();
   private callbacks: SelectCallbacks;
   private historyCallbacks: HistoryCallbacks | null;
   private readonly ackTimeoutMs: number;
@@ -217,6 +218,9 @@ export class SelectStateMachine {
       this.replayDeferred(deviceId);
     }
     for (const deviceId of this.deferredOutputs.keys()) {
+      this.replayDeferred(deviceId);
+    }
+    for (const deviceId of this.pendingRebases.keys()) {
       this.replayDeferred(deviceId);
     }
   }
@@ -355,23 +359,26 @@ export class SelectStateMachine {
     // 更新状态
     transaction.state = 'HISTORY_APPLIED';
 
-    const history = this.historyCallbacks;
-    if (history) {
-      history.onResetTerminal(deviceId, transaction.paneId);
-      history.onApplyHistory(
-        deviceId,
-        transaction.paneId,
-        data,
-        event.alternateScreen,
-        event.modes
-      );
-    } else {
-      this.deferredHistories.set(deviceId, {
-        paneId: transaction.paneId,
-        data,
-        alternateScreen: event.alternateScreen,
-        modes: event.modes,
-      });
+    // 门控缓冲已溢出：画面改由 rebase 快照重建，此处提交 history 只会覆盖掉更新的快照
+    if (!transaction.outputGapped) {
+      const history = this.historyCallbacks;
+      if (history) {
+        history.onResetTerminal(deviceId, transaction.paneId);
+        history.onApplyHistory(
+          deviceId,
+          transaction.paneId,
+          data,
+          event.alternateScreen,
+          event.modes
+        );
+      } else {
+        this.deferredHistories.set(deviceId, {
+          paneId: transaction.paneId,
+          data,
+          alternateScreen: event.alternateScreen,
+          modes: event.modes,
+        });
+      }
     }
 
     this.armProgressDeadline(deviceId);
@@ -395,6 +402,7 @@ export class SelectStateMachine {
     }
 
     const commitWithoutHistory = transaction.state === 'ACKED';
+    const outputGapped = transaction.outputGapped;
 
     // 清除超时
     this.clearTimer(deviceId);
@@ -405,6 +413,13 @@ export class SelectStateMachine {
     // 停止输出门控并 flush
     const buffered = this.stopOutputBuffering(deviceId);
     const transactionPaneId = transaction.paneId;
+
+    // 缓冲已被溢出丢弃：不 reset、不回放残缺缓冲，画面由 rebase 快照重建
+    if (outputGapped) {
+      this.completeTransaction(deviceId);
+      this.replayDeferred(deviceId);
+      return;
+    }
 
     if (commitWithoutHistory) {
       if (this.historyCallbacks) {
@@ -559,7 +574,31 @@ export class SelectStateMachine {
     if (transaction) transaction.outputGapped = true;
 
     console.warn(`[select-sm] output buffer overflow on ${deviceId}:${paneId}, requesting rebase`);
-    this.callbacks.onRebaseRequired?.(deviceId, paneId, 'resource_exhausted');
+    this.requestRebase(deviceId, paneId, 'resource_exhausted');
+  }
+
+  // 宿主可能尚未注册回调（setCallbacks 晚到）：先按 pane 记账，回调补齐后立即补发，
+  // 否则这次缺口永远拿不到重建请求
+  private requestRebase(deviceId: string, paneId: string, reason: GatewayRebaseReason): void {
+    const onRebaseRequired = this.callbacks.onRebaseRequired;
+    if (onRebaseRequired) {
+      onRebaseRequired(deviceId, paneId, reason);
+      return;
+    }
+    const pending = this.pendingRebases.get(deviceId) ?? new Map<string, GatewayRebaseReason>();
+    pending.set(paneId, reason);
+    this.pendingRebases.set(deviceId, pending);
+  }
+
+  private flushPendingRebases(deviceId: string): void {
+    const onRebaseRequired = this.callbacks.onRebaseRequired;
+    if (!onRebaseRequired) return;
+    const pending = this.pendingRebases.get(deviceId);
+    if (!pending) return;
+    this.pendingRebases.delete(deviceId);
+    for (const [paneId, reason] of pending) {
+      onRebaseRequired(deviceId, paneId, reason);
+    }
   }
 
   // ========== 工具方法 ==========
@@ -573,6 +612,8 @@ export class SelectStateMachine {
   }
 
   private replayDeferred(deviceId: string): void {
+    this.flushPendingRebases(deviceId);
+
     const historyCallbacks = this.historyCallbacks;
     const resetPaneId = this.deferredResets.get(deviceId);
     if (resetPaneId !== undefined && historyCallbacks) {
@@ -690,6 +731,7 @@ export class SelectStateMachine {
     this.cancelTransaction(deviceId);
     this.outputGates.delete(deviceId);
     this.clearDeferred(deviceId);
+    this.pendingRebases.delete(deviceId);
     this.generations.delete(deviceId);
   }
 
@@ -703,6 +745,7 @@ export class SelectStateMachine {
     this.deferredHistories.clear();
     this.deferredFlushes.clear();
     this.deferredOutputs.clear();
+    this.pendingRebases.clear();
     for (const timer of this.timers.values()) {
       this.scheduler.cancel(timer);
     }
