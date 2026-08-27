@@ -57,6 +57,57 @@ export function terminalModesFromHistory(
   };
 }
 
+// 每页的规范化字节只算一次：history 每到一页都要整屏重排（新页恒更旧、终端无法向上插入），
+// 逐页 decode + 正则改写会随页数平方增长，而页对象在 TerminalSurface 里是稳定的副本。
+const historyPageChunks = new WeakMap<GatewayPaneHistoryPage, Uint8Array>();
+
+function historyPageChunk(page: GatewayPaneHistoryPage): Uint8Array {
+  const cached = historyPageChunks.get(page);
+  if (cached !== undefined) return cached;
+  // normalizeHistoryForTerminal 会吃掉页尾换行；不补回的话页与页、
+  // 最后一页与快照正文会粘在同一行，整屏随之错一行。
+  const chunk = new TextEncoder().encode(
+    `${normalizeHistoryForTerminal(new TextDecoder().decode(page.data))}\r\n`
+  );
+  historyPageChunks.set(page, chunk);
+  return chunk;
+}
+
+function concatChunks(chunks: readonly Uint8Array[]): Uint8Array {
+  let total = 0;
+  for (const chunk of chunks) total += chunk.byteLength;
+  const merged = new Uint8Array(total);
+  let offset = 0;
+  for (const chunk of chunks) {
+    merged.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return merged;
+}
+
+/**
+ * 首屏 + history 的完整重写载荷：清屏前缀、按行号升序的 history、快照正文。
+ * 一次性拼好再交给终端，避免每页一次 WASM write 与一次渲染调度。
+ */
+export function buildCanonicalSnapshotPayload(
+  snapshot: GatewayPaneScreenSnapshot,
+  historyPages: readonly GatewayPaneHistoryPage[]
+): Uint8Array {
+  // 快照正文是 gateway 用 '\n' 拼接的 capture-pane 行，和 history 一样是裸 LF；直接写进
+  // xterm 会阶梯式换行，必须与 history/live 两条路径一样补齐 CR。
+  const body = normalizeLiveOutputForTerminal(
+    startsWithBytes(snapshot.data, NORMAL_SCREEN_PREFIX) && historyPages.length > 0
+      ? snapshot.data.subarray(NORMAL_SCREEN_PREFIX.byteLength)
+      : snapshot.data,
+    false
+  ).normalized;
+  if (historyPages.length === 0) return body;
+  const chunks: Uint8Array[] = [NORMAL_SCREEN_PREFIX];
+  for (const page of historyPages) chunks.push(historyPageChunk(page));
+  chunks.push(body);
+  return concatChunks(chunks);
+}
+
 export function writeCanonicalSnapshot(
   target: CanonicalSnapshotTarget,
   snapshot: GatewayPaneScreenSnapshot,
@@ -74,27 +125,7 @@ export function writeCanonicalSnapshot(
       terminalModesFromHistory(snapshot.modes, (snapshot.modes & PANE_MODE_ALT_SCREEN) !== 0)
     );
   }
-  // 快照正文是 gateway 用 '\n' 拼接的 capture-pane 行，和 history 一样是裸 LF；直接写进
-  // xterm 会阶梯式换行，必须与 history/live 两条路径一样补齐 CR。
-  const body = normalizeLiveOutputForTerminal(
-    startsWithBytes(snapshot.data, NORMAL_SCREEN_PREFIX) && historyPages.length > 0
-      ? snapshot.data.subarray(NORMAL_SCREEN_PREFIX.byteLength)
-      : snapshot.data,
-    false
-  ).normalized;
-  if (historyPages.length === 0) {
-    target.terminal.write(body);
-  } else {
-    target.terminal.write(NORMAL_SCREEN_PREFIX);
-    const decoder = new TextDecoder();
-    for (const page of historyPages) {
-      target.terminal.write(normalizeHistoryForTerminal(decoder.decode(page.data)));
-      // normalizeHistoryForTerminal 会吃掉页尾换行；不补回的话页与页、
-      // 最后一页与快照正文会粘在同一行，整屏随之错一行。
-      target.terminal.write('\r\n');
-    }
-    target.terminal.write(body);
-  }
+  target.terminal.write(buildCanonicalSnapshotPayload(snapshot, historyPages));
   target.terminal.forceFullRepaint?.();
 }
 

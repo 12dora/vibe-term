@@ -5,6 +5,13 @@ import type {
   GatewayRebaseReason,
   GatewayTerminalData,
 } from '@tmex/ws-client';
+import {
+  type HistoryPageValidation,
+  type HistoryPageValidationContext,
+  validateHistoryPage,
+} from './terminal-history-validation';
+
+type HistoryPageRejection = Extract<HistoryPageValidation, { ok: false }>;
 
 const MAX_SURFACE_HISTORY_BYTES = 8 * 1024 * 1024;
 const MAX_SURFACE_HISTORY_PAGES = 64;
@@ -42,10 +49,6 @@ export interface TerminalSurfaceOptions<Target extends TerminalSurfaceTarget> {
   maxHistoryPages?: number;
 }
 
-function bytesEqual(left: Uint8Array, right: Uint8Array): boolean {
-  return left.byteLength === right.byteLength && left.every((byte, index) => byte === right[index]);
-}
-
 function copyHistoryCursor(cursor: GatewayHistoryCursor | null): GatewayHistoryCursor | null {
   return cursor
     ? {
@@ -75,6 +78,17 @@ function copyHistoryPage(page: GatewayPaneHistoryPage): GatewayPaneHistoryPage {
     data: Uint8Array.from(page.data),
     nextCursor: copyHistoryCursor(page.nextCursor),
   };
+}
+
+// gateway 的分页自新到旧回溯，新页恒排在已有页之前；这里按 lineStart 升序插入，
+// 行号相同时保留先到者在前，与此前 push + 稳定排序的结果完全一致。
+function insertHistoryPage(pages: GatewayPaneHistoryPage[], page: GatewayPaneHistoryPage): void {
+  const index = pages.findIndex((existing) => existing.lineStart > page.lineStart);
+  if (index < 0) {
+    pages.push(page);
+    return;
+  }
+  pages.splice(index, 0, page);
 }
 
 /**
@@ -167,46 +181,14 @@ export class TerminalSurface<Target extends TerminalSurfaceTarget> {
   }
 
   applyHistoryPage(page: GatewayPaneHistoryPage): boolean {
-    if (this.disposed || !this.target || !this.latestSnapshot || !this.nextHistoryCursor) {
+    const context = this.historyValidationContext();
+    if (!context) return false;
+    const verdict = validateHistoryPage(page, context);
+    if (!verdict.ok) {
+      this.rejectHistoryPage(verdict);
       return false;
     }
-    const expected = this.nextHistoryCursor;
-    if (
-      page.deviceId !== this.latestSnapshot.deviceId ||
-      page.paneId !== this.latestSnapshot.paneId ||
-      !bytesEqual(page.paneEpoch, this.latestSnapshot.paneEpoch) ||
-      !bytesEqual(page.paneEpoch, expected.paneEpoch) ||
-      !bytesEqual(page.historyEpoch, expected.historyEpoch) ||
-      page.lineEnd !== expected.beforeLine ||
-      page.lineStart > page.lineEnd
-    ) {
-      this.requestRecovery('cache_evicted');
-      return false;
-    }
-    if (
-      page.nextCursor &&
-      (!bytesEqual(page.nextCursor.paneEpoch, page.paneEpoch) ||
-        !bytesEqual(page.nextCursor.historyEpoch, page.historyEpoch) ||
-        page.nextCursor.beforeLine !== page.lineStart)
-    ) {
-      this.requestRecovery('cache_evicted');
-      return false;
-    }
-    if (
-      this.historyPages.length >= this.maxHistoryPages ||
-      this.historyBytes + page.data.byteLength > this.maxHistoryBytes
-    ) {
-      this.nextHistoryCursor = null;
-      return false;
-    }
-
-    const owned = copyHistoryPage(page);
-    this.historyPages.push(owned);
-    this.historyPages.sort((left, right) => left.lineStart - right.lineStart);
-    this.historyBytes += owned.data.byteLength;
-    this.nextHistoryCursor = copyHistoryCursor(owned.nextCursor);
-    this.options.writeSnapshot(this.target, this.latestSnapshot, this.historyPages);
-    this.options.onSnapshotApplied?.(this.target, this.latestSnapshot);
+    this.commitHistoryPage(page);
     return true;
   }
 
@@ -223,6 +205,40 @@ export class TerminalSurface<Target extends TerminalSurfaceTarget> {
     this.latestSnapshot = null;
     this.historyPages = [];
     this.historyBytes = 0;
+  }
+
+  private historyValidationContext(): HistoryPageValidationContext | null {
+    if (this.disposed || !this.target || !this.latestSnapshot || !this.nextHistoryCursor) {
+      return null;
+    }
+    return {
+      snapshot: this.latestSnapshot,
+      cursor: this.nextHistoryCursor,
+      pageCount: this.historyPages.length,
+      historyBytes: this.historyBytes,
+      maxHistoryPages: this.maxHistoryPages,
+      maxHistoryBytes: this.maxHistoryBytes,
+    };
+  }
+
+  private rejectHistoryPage(verdict: HistoryPageRejection): void {
+    if (verdict.action === 'recover') {
+      this.requestRecovery('cache_evicted');
+      return;
+    }
+    this.nextHistoryCursor = null;
+  }
+
+  private commitHistoryPage(page: GatewayPaneHistoryPage): void {
+    const target = this.target;
+    const snapshot = this.latestSnapshot;
+    if (!target || !snapshot) return;
+    const owned = copyHistoryPage(page);
+    insertHistoryPage(this.historyPages, owned);
+    this.historyBytes += owned.data.byteLength;
+    this.nextHistoryCursor = copyHistoryCursor(owned.nextCursor);
+    this.options.writeSnapshot(target, snapshot, this.historyPages);
+    this.options.onSnapshotApplied?.(target, snapshot);
   }
 
   private requestRecovery(reason: GatewayRebaseReason): void {

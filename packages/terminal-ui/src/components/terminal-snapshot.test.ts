@@ -167,7 +167,25 @@ describe('writeCanonicalSnapshot', () => {
     const target = createTarget();
     writeCanonicalSnapshot(target, snapshotOf('\x1b[2J\x1b[Hlive'), [pageOf('old\n')]);
 
-    expect(target.writes).toEqual(['\x1b[2J\x1b[H', 'old', '\r\n', 'live']);
+    expect(target.writes).toEqual(['\x1b[2J\x1b[Hold\r\nlive']);
+  });
+
+  test('整屏重写只发一次 write：多页 history 按数组顺序拼在同一载荷里', () => {
+    const target = createTarget();
+    writeCanonicalSnapshot(target, snapshotOf('\x1b[2J\x1b[Hlive'), [
+      pageOf('older\n'),
+      pageOf('newer\n'),
+    ]);
+
+    expect(target.writes).toEqual(['\x1b[2J\x1b[Holder\r\nnewer\r\nlive']);
+    expect(target.repaints).toBe(1);
+  });
+
+  test('页尾换行被补齐，空页只贡献一个换行', () => {
+    const target = createTarget();
+    writeCanonicalSnapshot(target, snapshotOf('\x1b[2J\x1b[Hlive'), [pageOf(''), pageOf('a\r\nb')]);
+
+    expect(target.writes).toEqual(['\x1b[2J\x1b[H\r\na\r\nb\r\nlive']);
   });
 
   test('keeps the snapshot clear prefix when the body carries no history', () => {
