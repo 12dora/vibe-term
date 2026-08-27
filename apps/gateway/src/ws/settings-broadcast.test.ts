@@ -2,8 +2,8 @@ import { beforeAll, describe, expect, test } from 'bun:test';
 import { wsBorsh } from '@tmex/shared';
 import { createDevice } from '../db';
 import { runMigrations } from '../db/migrate';
-import { createBorshClientState } from './borsh/codec-borsh';
 import { WebSocketServer } from './index';
+import { createBorshTestWs } from './test-helpers';
 
 beforeAll(() => {
   runMigrations();
@@ -21,13 +21,7 @@ beforeAll(() => {
 });
 
 function createMockClient() {
-  return {
-    data: { borshState: createBorshClientState() },
-    sent: [] as Uint8Array[],
-    send(message: Uint8Array) {
-      this.sent.push(message);
-    },
-  };
+  return createBorshTestWs();
 }
 
 function decodeSettingsUpdate(frame: Uint8Array): {

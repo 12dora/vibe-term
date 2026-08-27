@@ -2,9 +2,8 @@ import { beforeAll, describe, expect, test } from 'bun:test';
 import { wsBorsh } from '@tmex/shared';
 import { ensureSiteSettingsInitialized, getSiteSettings, updateSiteSettings } from '../db';
 import { runMigrations } from '../db/migrate';
-import { createBorshClientState } from './borsh/codec-borsh';
-import { sessionStateStore } from './borsh/session-state';
 import { WebSocketServer } from './index';
+import { createBorshTestWs, setupConnectionEntry } from './test-helpers';
 
 beforeAll(() => {
   runMigrations();
@@ -12,15 +11,7 @@ beforeAll(() => {
 });
 
 function createBorshWs() {
-  const ws = {
-    data: { borshState: createBorshClientState() },
-    sent: [] as Uint8Array[],
-    send(message: Uint8Array) {
-      this.sent.push(message);
-    },
-  } as any;
-  sessionStateStore.create(ws);
-  return ws;
+  return createBorshTestWs({ session: true });
 }
 
 // theme 更新现在还伴随 KIND_SETTINGS_UPDATE 通用事件，取最后一帧 SITE_THEME_UPDATE 解码
@@ -126,33 +117,23 @@ describe('WebSocketServer site theme update', () => {
     server.connectedClients = new Set([ws]);
 
     const setWindowStyleCalls: string[] = [];
-    server.connections.set('device-a', {
+    setupConnectionEntry(server, {
+      deviceId: 'device-a',
+      ws,
       runtime: {
         setWindowStyle(style: string) {
           setWindowStyleCalls.push(style);
         },
       },
-      detachRuntime: () => {},
-      clients: new Set([ws]),
-      lastSnapshot: null,
-      snapshotTimer: null,
-      snapshotPollTimer: null,
-      reconnectAttempts: 0,
-      reconnectTimer: null,
     });
-    server.connections.set('device-b', {
+    setupConnectionEntry(server, {
+      deviceId: 'device-b',
+      ws,
       runtime: {
         setWindowStyle(style: string) {
           setWindowStyleCalls.push(style);
         },
       },
-      detachRuntime: () => {},
-      clients: new Set([ws]),
-      lastSnapshot: null,
-      snapshotTimer: null,
-      snapshotPollTimer: null,
-      reconnectAttempts: 0,
-      reconnectTimer: null,
     });
 
     server.handleSiteThemeUpdate(ws, { theme: wsBorsh.SITE_THEME_LIGHT });

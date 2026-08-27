@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
+import { beforeAll, describe, expect, test } from 'bun:test';
 import { resolve } from 'node:path';
 import { createOpenAICompatible } from '@ai-sdk/openai-compatible';
 import type { AgentEventPayloadMap } from '@tmex/shared';
@@ -19,53 +19,18 @@ import { getDb as getOrmDb } from '../db/client';
 import { AgentRun, type AgentRunDeps, applyMessageWindow, isRetryableLlmError } from './run';
 import { asEmulatorSource, paneEmulatorRegistry } from './run-resource-scope';
 import {
+  chunk,
+  slowSseResponse,
+  sseResponse,
+  useMockChatServer,
+} from './test-support/mock-chat-server';
+import {
   type TerminalRuntimeLike,
   createTerminalToolContext,
   liveEmulator,
 } from './tools/terminal';
 
-// ========== mock LLM server（spike 模式） ==========
-
-interface ChatCompletionChunkDelta {
-  role?: string;
-  content?: string;
-  tool_calls?: Array<{
-    index: number;
-    id?: string;
-    type?: string;
-    function?: { name?: string; arguments?: string };
-  }>;
-}
-
-function chunk(delta: ChatCompletionChunkDelta, finishReason: string | null = null) {
-  return {
-    id: 'chatcmpl-test',
-    object: 'chat.completion.chunk',
-    created: 1700000000,
-    model: 'mock-model',
-    choices: [{ index: 0, delta, finish_reason: finishReason }],
-  };
-}
-
-function sseResponse(chunks: unknown[]): Response {
-  const body = `${chunks.map((c) => `data: ${JSON.stringify(c)}\n\n`).join('')}data: [DONE]\n\n`;
-  return new Response(body, { headers: { 'Content-Type': 'text/event-stream' } });
-}
-
-function slowSseResponse(chunks: unknown[], delayMs: number): Response {
-  const encoder = new TextEncoder();
-  const stream = new ReadableStream({
-    async start(controller) {
-      for (const c of chunks) {
-        controller.enqueue(encoder.encode(`data: ${JSON.stringify(c)}\n\n`));
-        await new Promise((r) => setTimeout(r, delayMs));
-      }
-      controller.enqueue(encoder.encode('data: [DONE]\n\n'));
-      controller.close();
-    },
-  });
-  return new Response(stream, { headers: { 'Content-Type': 'text/event-stream' } });
-}
+const createMockChatServer = useMockChatServer();
 
 /** 发完 chunks 后挂起不关闭（模拟上游 SSE stall），用于看门狗测试 */
 function hangingSseResponse(chunks: unknown[]): Response {
@@ -80,37 +45,6 @@ function hangingSseResponse(chunks: unknown[]): Response {
   });
   return new Response(stream, { headers: { 'Content-Type': 'text/event-stream' } });
 }
-
-interface RecordedRequest {
-  body: { messages: Array<Record<string, unknown>>; tools?: unknown[] };
-}
-
-function createMockChatServer(respond: (callIndex: number, req: RecordedRequest) => Response) {
-  const requests: RecordedRequest[] = [];
-  const server = Bun.serve({
-    port: 0,
-    fetch: async (req) => {
-      const url = new URL(req.url);
-      if (url.pathname !== '/v1/chat/completions' || req.method !== 'POST') {
-        return new Response('not found', { status: 404 });
-      }
-      const recorded: RecordedRequest = {
-        body: (await req.json()) as RecordedRequest['body'],
-      };
-      requests.push(recorded);
-      return respond(requests.length - 1, recorded);
-    },
-  });
-  return { server, requests, baseUrl: `http://127.0.0.1:${server.port}/v1` };
-}
-
-const servers: Array<ReturnType<typeof Bun.serve>> = [];
-
-afterAll(() => {
-  for (const server of servers) {
-    server.stop(true);
-  }
-});
 
 // ========== 测试基建 ==========
 
@@ -365,7 +299,6 @@ describe('AgentRun 核心循环', () => {
         chunk({}, 'stop'),
       ]);
     });
-    servers.push(mock.server);
 
     const harness = createHarness({ baseUrl: mock.baseUrl });
     appendAgentMessage(harness.session.id, 'user', { role: 'user', content: 'what is on screen?' });
@@ -439,7 +372,6 @@ describe('AgentRun 核心循环', () => {
         chunk({}, 'tool_calls'),
       ])
     );
-    servers.push(mock.server);
 
     const harness = createHarness({ baseUrl: mock.baseUrl, writeMode: 'confirm' });
     appendAgentMessage(harness.session.id, 'user', { role: 'user', content: 'run ls' });
@@ -489,7 +421,6 @@ describe('AgentRun 核心循环', () => {
         40
       )
     );
-    servers.push(mock.server);
 
     const harness = createHarness({ baseUrl: mock.baseUrl });
     appendAgentMessage(harness.session.id, 'user', { role: 'user', content: 'talk' });
@@ -529,7 +460,6 @@ describe('AgentRun 核心循环', () => {
         50
       )
     );
-    servers.push(mock.server);
 
     const harness = createHarness({ baseUrl: mock.baseUrl });
     appendAgentMessage(harness.session.id, 'user', { role: 'user', content: 'talk' });
@@ -555,7 +485,6 @@ describe('AgentRun 核心循环', () => {
         50
       )
     );
-    servers.push(mock.server);
 
     const harness = createHarness({ baseUrl: mock.baseUrl });
     appendAgentMessage(harness.session.id, 'user', { role: 'user', content: 'talk' });
@@ -592,7 +521,6 @@ describe('AgentRun 核心循环', () => {
       }
       return sseResponse([chunk({ role: 'assistant', content: 'done' }), chunk({}, 'stop')]);
     });
-    servers.push(mock.server);
 
     const harness = createHarness({
       baseUrl: mock.baseUrl,
@@ -636,7 +564,6 @@ describe('AgentRun 核心循环', () => {
       }
       return sseResponse([chunk({ role: 'assistant', content: 'done' }), chunk({}, 'stop')]);
     });
-    servers.push(mock.server);
 
     const paneId = '%fatal-streak';
     const harness = createHarness({ baseUrl: mock.baseUrl, paneId });
@@ -720,7 +647,6 @@ describe('AgentRun 核心循环', () => {
       // 发一个 assistant 片段后挂起不关闭，模拟上游 stall
       hangingSseResponse([chunk({ role: 'assistant', content: 'partial' })])
     );
-    servers.push(mock.server);
 
     const harness = createHarness({ baseUrl: mock.baseUrl, streamIdleTimeoutMs: 80 });
     appendAgentMessage(harness.session.id, 'user', { role: 'user', content: 'hi' });
@@ -739,7 +665,6 @@ describe('AgentRun 核心循环', () => {
     const mock = createMockChatServer(() =>
       sseResponse([chunk({ role: 'assistant', content: '' }), ...deltas, chunk({}, 'stop')])
     );
-    servers.push(mock.server);
 
     const harness = createHarness({ baseUrl: mock.baseUrl, deltaFlushIntervalMs: 50 });
     appendAgentMessage(harness.session.id, 'user', { role: 'user', content: 'count' });
@@ -761,7 +686,6 @@ describe('AgentRun 核心循环', () => {
       }
       return sseResponse([chunk({ role: 'assistant', content: 'recovered' }), chunk({}, 'stop')]);
     });
-    servers.push(mock.server);
 
     const harness = createHarness({ baseUrl: mock.baseUrl });
     appendAgentMessage(harness.session.id, 'user', { role: 'user', content: 'hello' });
@@ -780,7 +704,6 @@ describe('AgentRun 核心循环', () => {
 
   test('持续失败：外层重试耗尽后 status=error + lastError + notify', async () => {
     const mock = createMockChatServer(() => new Response('boom', { status: 500 }));
-    servers.push(mock.server);
 
     const harness = createHarness({ baseUrl: mock.baseUrl });
     appendAgentMessage(harness.session.id, 'user', { role: 'user', content: 'hello' });
@@ -799,7 +722,6 @@ describe('AgentRun 核心循环', () => {
     const mock = createMockChatServer(() =>
       sseResponse([chunk({ role: 'assistant', content: 'hi there' }), chunk({}, 'stop')])
     );
-    servers.push(mock.server);
 
     const harness = createHarness({
       baseUrl: mock.baseUrl,
@@ -821,7 +743,6 @@ describe('AgentRun 核心循环', () => {
     const mock = createMockChatServer(() =>
       sseResponse([chunk({ role: 'assistant', content: 'ok' }), chunk({}, 'stop')])
     );
-    servers.push(mock.server);
 
     const harness = createHarness({ baseUrl: mock.baseUrl, title: 'My Custom Title' });
     appendAgentMessage(harness.session.id, 'user', { role: 'user', content: 'hello' });
@@ -837,7 +758,6 @@ describe('AgentRun 核心循环', () => {
     const mock = createMockChatServer(() =>
       sseResponse([chunk({ role: 'assistant', content: 'ok' }), chunk({}, 'stop')])
     );
-    servers.push(mock.server);
 
     const harness = createHarness({ baseUrl: mock.baseUrl, title: 'New Session' });
     harness.deps.generateTitle = async () => {
@@ -857,7 +777,6 @@ describe('AgentRun 核心循环', () => {
     const mock = createMockChatServer(() =>
       sseResponse([chunk({ role: 'assistant', content: 'continuing' }), chunk({}, 'stop')])
     );
-    servers.push(mock.server);
 
     const harness = createHarness({ baseUrl: mock.baseUrl });
     // 模拟上一 turn abort 时 persistTruncatedText 落库的消息形态

@@ -1,53 +1,11 @@
 import { describe, expect, test } from 'bun:test';
-import type { WatchRuleRecord, WatchRuleStateRecord } from '../db/watch';
 import { compileWatchPattern, evaluateWatchRule, findLastMatch } from './evaluator';
+import { makeWatchRule, makeWatchRuleState } from './test-fixtures';
 
 const NOW = new Date('2026-06-13T12:00:00.000Z');
 
 function minutesBefore(minutes: number, base: Date = NOW): string {
   return new Date(base.getTime() - minutes * 60_000).toISOString();
-}
-
-function makeRule(overrides: Partial<WatchRuleRecord> = {}): WatchRuleRecord {
-  return {
-    id: 'rule-1',
-    name: 'test rule',
-    deviceId: 'device-1',
-    paneId: '%1',
-    enabled: true,
-    triggerType: 'match',
-    pattern: null,
-    patternFlags: '',
-    extractGroup: 0,
-    conditionPrompt: null,
-    providerId: null,
-    modelId: null,
-    confirmWithLlm: false,
-    summarizeWithLlm: false,
-    intervalSeconds: 30,
-    unchangedMinutes: null,
-    noMatchBehavior: 'reset',
-    fireMode: 'once',
-    cooldownSeconds: 600,
-    createdAt: NOW.toISOString(),
-    updatedAt: NOW.toISOString(),
-    ...overrides,
-  };
-}
-
-function makeState(overrides: Partial<WatchRuleStateRecord> = {}): WatchRuleStateRecord {
-  return {
-    ruleId: 'rule-1',
-    lastSampledAt: null,
-    lastValue: null,
-    lastValueChangedAt: null,
-    triggeredSinceChange: false,
-    lastTriggeredAt: null,
-    consecutiveErrors: 0,
-    lastError: null,
-    modelUnavailableNotified: false,
-    ...overrides,
-  };
 }
 
 describe('compileWatchPattern', () => {
@@ -83,7 +41,7 @@ describe('findLastMatch', () => {
 
 describe('match 型', () => {
   test('命中即 hit，matchedText 取最后一个命中', () => {
-    const rule = makeRule({ triggerType: 'match', pattern: 'ERROR: (\\w+)' });
+    const rule = makeWatchRule({ triggerType: 'match', pattern: 'ERROR: (\\w+)' });
     const output = evaluateWatchRule({
       screen: 'ERROR: first\nok\nERROR: second\n',
       rule,
@@ -97,35 +55,35 @@ describe('match 型', () => {
   });
 
   test('无命中不 hit', () => {
-    const rule = makeRule({ triggerType: 'match', pattern: 'ERROR' });
+    const rule = makeWatchRule({ triggerType: 'match', pattern: 'ERROR' });
     const output = evaluateWatchRule({ screen: 'all good\n', rule, state: null, now: NOW });
     expect(output.hit).toBe(false);
     expect(output.matchedText).toBeUndefined();
   });
 
   test('flags 生效（忽略大小写）且去重不报错', () => {
-    const rule = makeRule({ triggerType: 'match', pattern: 'error', patternFlags: 'gi' });
+    const rule = makeWatchRule({ triggerType: 'match', pattern: 'error', patternFlags: 'gi' });
     const output = evaluateWatchRule({ screen: 'ERROR here\n', rule, state: null, now: NOW });
     expect(output.hit).toBe(true);
     expect(output.matchedText).toBe('ERROR');
   });
 
   test('无效 pattern 返回规则错误而非 hit', () => {
-    const rule = makeRule({ triggerType: 'match', pattern: '([' });
+    const rule = makeWatchRule({ triggerType: 'match', pattern: '([' });
     const output = evaluateWatchRule({ screen: 'anything', rule, state: null, now: NOW });
     expect(output.hit).toBe(false);
     expect(output.error).toMatch(/invalid pattern/);
   });
 
   test('pattern 为空返回规则错误', () => {
-    const rule = makeRule({ triggerType: 'match', pattern: null });
+    const rule = makeWatchRule({ triggerType: 'match', pattern: null });
     const output = evaluateWatchRule({ screen: 'anything', rule, state: null, now: NOW });
     expect(output.hit).toBe(false);
     expect(output.error).toBe('pattern is empty');
   });
 
   test('repeat 模式 cooldown 内不 hit、过 cooldown 后恢复 hit', () => {
-    const rule = makeRule({
+    const rule = makeWatchRule({
       triggerType: 'match',
       pattern: 'ERROR',
       fireMode: 'repeat',
@@ -135,7 +93,7 @@ describe('match 型', () => {
     const inCooldown = evaluateWatchRule({
       screen: 'ERROR\n',
       rule,
-      state: makeState({ lastTriggeredAt: minutesBefore(5) }),
+      state: makeWatchRuleState({ lastTriggeredAt: minutesBefore(5) }),
       now: NOW,
     });
     expect(inCooldown.hit).toBe(false);
@@ -143,14 +101,14 @@ describe('match 型', () => {
     const afterCooldown = evaluateWatchRule({
       screen: 'ERROR\n',
       rule,
-      state: makeState({ lastTriggeredAt: minutesBefore(11) }),
+      state: makeWatchRuleState({ lastTriggeredAt: minutesBefore(11) }),
       now: NOW,
     });
     expect(afterCooldown.hit).toBe(true);
   });
 
   test('llm 型走 evaluator 返回错误', () => {
-    const rule = makeRule({ triggerType: 'llm', conditionPrompt: 'is it done?' });
+    const rule = makeWatchRule({ triggerType: 'llm', conditionPrompt: 'is it done?' });
     const output = evaluateWatchRule({ screen: 'x', rule, state: null, now: NOW });
     expect(output.hit).toBe(false);
     expect(output.error).toMatch(/llm rules/);
@@ -158,7 +116,7 @@ describe('match 型', () => {
 });
 
 describe('unchanged 型', () => {
-  const baseRule = makeRule({
+  const baseRule = makeWatchRule({
     triggerType: 'unchanged',
     pattern: '(\\d+)%',
     extractGroup: 1,
@@ -166,7 +124,12 @@ describe('unchanged 型', () => {
   });
 
   test('首次见到值：记录 lastValue 与计时起点，不 hit', () => {
-    const output = evaluateWatchRule({ screen: 'progress 42%\n', rule: baseRule, state: null, now: NOW });
+    const output = evaluateWatchRule({
+      screen: 'progress 42%\n',
+      rule: baseRule,
+      state: null,
+      now: NOW,
+    });
     expect(output.hit).toBe(false);
     expect(output.value).toBe('42');
     expect(output.stateUpdates).toEqual({
@@ -177,7 +140,7 @@ describe('unchanged 型', () => {
   });
 
   test('值变化：重置计时与 once 防重标记，不 hit', () => {
-    const state = makeState({
+    const state = makeWatchRuleState({
       lastValue: '42',
       lastValueChangedAt: minutesBefore(30),
       triggeredSinceChange: true,
@@ -192,7 +155,7 @@ describe('unchanged 型', () => {
   });
 
   test('值不变但未达阈值：不 hit、无状态更新', () => {
-    const state = makeState({ lastValue: '42', lastValueChangedAt: minutesBefore(9) });
+    const state = makeWatchRuleState({ lastValue: '42', lastValueChangedAt: minutesBefore(9) });
     const output = evaluateWatchRule({ screen: 'progress 42%\n', rule: baseRule, state, now: NOW });
     expect(output.hit).toBe(false);
     expect(output.value).toBe('42');
@@ -200,7 +163,7 @@ describe('unchanged 型', () => {
   });
 
   test('值不变达到阈值：hit 并报告 stuckMinutes', () => {
-    const state = makeState({ lastValue: '42', lastValueChangedAt: minutesBefore(25) });
+    const state = makeWatchRuleState({ lastValue: '42', lastValueChangedAt: minutesBefore(25) });
     const output = evaluateWatchRule({ screen: 'progress 42%\n', rule: baseRule, state, now: NOW });
     expect(output.hit).toBe(true);
     expect(output.value).toBe('42');
@@ -211,7 +174,7 @@ describe('unchanged 型', () => {
   });
 
   test('多个命中取屏幕最后一个的提取值', () => {
-    const state = makeState({ lastValue: '99', lastValueChangedAt: minutesBefore(25) });
+    const state = makeWatchRuleState({ lastValue: '99', lastValueChangedAt: minutesBefore(25) });
     const output = evaluateWatchRule({
       screen: 'old 10%\nnewer 50%\nlatest 99%\n',
       rule: baseRule,
@@ -223,7 +186,7 @@ describe('unchanged 型', () => {
   });
 
   test('once：triggeredSinceChange 已置位则不重复 hit', () => {
-    const state = makeState({
+    const state = makeWatchRuleState({
       lastValue: '42',
       lastValueChangedAt: minutesBefore(25),
       triggeredSinceChange: true,
@@ -233,7 +196,7 @@ describe('unchanged 型', () => {
   });
 
   test('repeat：cooldown 内不 hit，过 cooldown 再次 hit', () => {
-    const rule = makeRule({
+    const rule = makeWatchRule({
       ...baseRule,
       fireMode: 'repeat',
       cooldownSeconds: 600,
@@ -242,7 +205,7 @@ describe('unchanged 型', () => {
     const inCooldown = evaluateWatchRule({
       screen: 'progress 42%\n',
       rule,
-      state: makeState({
+      state: makeWatchRuleState({
         lastValue: '42',
         lastValueChangedAt: minutesBefore(40),
         triggeredSinceChange: true,
@@ -255,7 +218,7 @@ describe('unchanged 型', () => {
     const afterCooldown = evaluateWatchRule({
       screen: 'progress 42%\n',
       rule,
-      state: makeState({
+      state: makeWatchRuleState({
         lastValue: '42',
         lastValueChangedAt: minutesBefore(40),
         triggeredSinceChange: true,
@@ -267,7 +230,7 @@ describe('unchanged 型', () => {
   });
 
   test('无命中 + reset：清空计时（任务结束停止计时）', () => {
-    const state = makeState({
+    const state = makeWatchRuleState({
       lastValue: '42',
       lastValueChangedAt: minutesBefore(25),
       triggeredSinceChange: true,
@@ -288,15 +251,15 @@ describe('unchanged 型', () => {
   });
 
   test('无命中 + ignore：保持计时不动', () => {
-    const rule = makeRule({ ...baseRule, noMatchBehavior: 'ignore' });
-    const state = makeState({ lastValue: '42', lastValueChangedAt: minutesBefore(5) });
+    const rule = makeWatchRule({ ...baseRule, noMatchBehavior: 'ignore' });
+    const state = makeWatchRuleState({ lastValue: '42', lastValueChangedAt: minutesBefore(5) });
     const output = evaluateWatchRule({ screen: 'flickering frame\n', rule, state, now: NOW });
     expect(output.hit).toBe(false);
     expect(output.stateUpdates).toEqual({});
   });
 
   test('捕获组未参与匹配时按无命中处理', () => {
-    const rule = makeRule({
+    const rule = makeWatchRule({
       triggerType: 'unchanged',
       pattern: 'progress (\\d+)?',
       extractGroup: 1,
@@ -310,7 +273,7 @@ describe('unchanged 型', () => {
   });
 
   test('lastValueChangedAt 缺失时按值变化处理（自愈）', () => {
-    const state = makeState({ lastValue: '42', lastValueChangedAt: null });
+    const state = makeWatchRuleState({ lastValue: '42', lastValueChangedAt: null });
     const output = evaluateWatchRule({ screen: 'progress 42%\n', rule: baseRule, state, now: NOW });
     expect(output.hit).toBe(false);
     expect(output.stateUpdates.lastValueChangedAt).toBe(NOW.toISOString());

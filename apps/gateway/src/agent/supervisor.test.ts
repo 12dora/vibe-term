@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
+import { beforeAll, describe, expect, test } from 'bun:test';
 import { resolve } from 'node:path';
 import { createOpenAICompatible } from '@ai-sdk/openai-compatible';
 import { wsBorsh } from '@tmex/shared';
@@ -28,82 +28,16 @@ import {
   AgentSessionOrphanedError,
   AgentSupervisor,
 } from './supervisor';
+import {
+  chunk,
+  slowSseResponse,
+  sseResponse,
+  useMockChatServer,
+} from './test-support/mock-chat-server';
 import type { TerminalRuntimeLike } from './tools/terminal';
 import type { AgentWsHub } from './ws-hub';
 
-// ========== mock LLM server ==========
-
-interface ChatCompletionChunkDelta {
-  role?: string;
-  content?: string;
-  tool_calls?: Array<{
-    index: number;
-    id?: string;
-    type?: string;
-    function?: { name?: string; arguments?: string };
-  }>;
-}
-
-function chunk(delta: ChatCompletionChunkDelta, finishReason: string | null = null) {
-  return {
-    id: 'chatcmpl-test',
-    object: 'chat.completion.chunk',
-    created: 1700000000,
-    model: 'mock-model',
-    choices: [{ index: 0, delta, finish_reason: finishReason }],
-  };
-}
-
-function sseResponse(chunks: unknown[]): Response {
-  const body = `${chunks.map((c) => `data: ${JSON.stringify(c)}\n\n`).join('')}data: [DONE]\n\n`;
-  return new Response(body, { headers: { 'Content-Type': 'text/event-stream' } });
-}
-
-function slowSseResponse(chunks: unknown[], delayMs: number): Response {
-  const encoder = new TextEncoder();
-  const stream = new ReadableStream({
-    async start(controller) {
-      for (const c of chunks) {
-        controller.enqueue(encoder.encode(`data: ${JSON.stringify(c)}\n\n`));
-        await new Promise((r) => setTimeout(r, delayMs));
-      }
-      controller.enqueue(encoder.encode('data: [DONE]\n\n'));
-      controller.close();
-    },
-  });
-  return new Response(stream, { headers: { 'Content-Type': 'text/event-stream' } });
-}
-
-interface RecordedRequest {
-  body: { messages: Array<Record<string, unknown>> };
-}
-
-function createMockChatServer(respond: (callIndex: number, req: RecordedRequest) => Response) {
-  const requests: RecordedRequest[] = [];
-  const server = Bun.serve({
-    port: 0,
-    fetch: async (req) => {
-      const url = new URL(req.url);
-      if (url.pathname !== '/v1/chat/completions' || req.method !== 'POST') {
-        return new Response('not found', { status: 404 });
-      }
-      const recorded: RecordedRequest = {
-        body: (await req.json()) as RecordedRequest['body'],
-      };
-      requests.push(recorded);
-      return respond(requests.length - 1, recorded);
-    },
-  });
-  return { server, requests, baseUrl: `http://127.0.0.1:${server.port}/v1` };
-}
-
-const servers: Array<ReturnType<typeof Bun.serve>> = [];
-
-afterAll(() => {
-  for (const server of servers) {
-    server.stop(true);
-  }
-});
+const createMockChatServer = useMockChatServer();
 
 // ========== 测试基建 ==========
 
@@ -296,7 +230,6 @@ describe('AgentSupervisor - 互斥与基本流程', () => {
     const mock = createMockChatServer(() =>
       slowSseResponse([chunk({ role: 'assistant', content: 'thinking...' }), chunk({}, 'stop')], 60)
     );
-    servers.push(mock.server);
 
     const harness = createSupervisorHarness({ baseUrl: mock.baseUrl });
     await harness.supervisor.start();
@@ -332,7 +265,6 @@ describe('AgentSupervisor - 互斥与基本流程', () => {
     const mock = createMockChatServer(() =>
       slowSseResponse([chunk({ role: 'assistant', content: 'ok' }), chunk({}, 'stop')], 60)
     );
-    servers.push(mock.server);
 
     const harness = createSupervisorHarness({ baseUrl: mock.baseUrl });
     await harness.supervisor.start();
@@ -359,7 +291,6 @@ describe('AgentSupervisor - 互斥与基本流程', () => {
     const mock = createMockChatServer(() =>
       slowSseResponse([chunk({ role: 'assistant', content: 'ok' }), chunk({}, 'stop')], 60)
     );
-    servers.push(mock.server);
 
     const harness = createSupervisorHarness({ baseUrl: mock.baseUrl });
     await harness.supervisor.start();
@@ -372,7 +303,6 @@ describe('AgentSupervisor - 互斥与基本流程', () => {
 
   test('session 不存在抛 NotFound', async () => {
     const mock = createMockChatServer(() => sseResponse([chunk({}, 'stop')]));
-    servers.push(mock.server);
     const harness = createSupervisorHarness({ baseUrl: mock.baseUrl });
     await harness.supervisor.start();
 
@@ -386,7 +316,6 @@ describe('AgentSupervisor - 互斥与基本流程', () => {
 
   test('waiting_confirmation 且有 pending 时发消息抛 AwaitingConfirmation', async () => {
     const mock = createMockChatServer(() => sseResponse([chunk({}, 'stop')]));
-    servers.push(mock.server);
     const harness = createSupervisorHarness({
       baseUrl: mock.baseUrl,
       sessionStatus: 'waiting_confirmation',
@@ -408,7 +337,6 @@ describe('AgentSupervisor - 互斥与基本流程', () => {
     const mock = createMockChatServer(() =>
       slowSseResponse([chunk({ role: 'assistant', content: 'ok' }), chunk({}, 'stop')], 60)
     );
-    servers.push(mock.server);
     const harness = createSupervisorHarness({ baseUrl: mock.baseUrl });
     await harness.supervisor.start();
 
@@ -429,7 +357,6 @@ describe('AgentSupervisor - 互斥与基本流程', () => {
 
   test('orphan 会话（无设备绑定）拒绝发消息', async () => {
     const mock = createMockChatServer(() => sseResponse([chunk({}, 'stop')]));
-    servers.push(mock.server);
     const harness = createSupervisorHarness({ baseUrl: mock.baseUrl });
     await harness.supervisor.start();
 
@@ -467,7 +394,6 @@ describe('AgentSupervisor - 确认决策续跑', () => {
       }
       return sseResponse([chunk({ role: 'assistant', content: 'done' }), chunk({}, 'stop')]);
     });
-    servers.push(mock.server);
     return mock;
   }
 
@@ -561,7 +487,6 @@ describe('AgentSupervisor - stop 语义', () => {
         50
       )
     );
-    servers.push(mock.server);
 
     const harness = createSupervisorHarness({ baseUrl: mock.baseUrl });
     await harness.supervisor.start();
@@ -598,7 +523,6 @@ describe('AgentSupervisor - stop 语义', () => {
       }
       return sseResponse([chunk({ role: 'assistant', content: 'ok' }), chunk({}, 'stop')]);
     });
-    servers.push(mock.server);
 
     const harness = createSupervisorHarness({ baseUrl: mock.baseUrl, writeMode: 'confirm' });
     await harness.supervisor.start();
@@ -632,7 +556,6 @@ describe('AgentSupervisor - stop 语义', () => {
         60
       )
     );
-    servers.push(mock.server);
 
     const harness = createSupervisorHarness({ baseUrl: mock.baseUrl });
     await harness.supervisor.start();
@@ -689,7 +612,6 @@ describe('AgentSupervisor - stop 语义', () => {
     const mock = createMockChatServer(() =>
       sseResponse([chunk({ role: 'assistant', content: 'ok' }), chunk({}, 'stop')])
     );
-    servers.push(mock.server);
     const { harness, settleFirst, getCreateRunCount } = createTimedOutHangHarness(mock.baseUrl);
 
     await harness.supervisor.start();
@@ -722,7 +644,6 @@ describe('AgentSupervisor - stop 语义', () => {
     const mock = createMockChatServer(() =>
       sseResponse([chunk({ role: 'assistant', content: 'ok' }), chunk({}, 'stop')])
     );
-    servers.push(mock.server);
     const { harness, settleFirst, getCreateRunCount } = createTimedOutHangHarness(mock.baseUrl);
 
     await harness.supervisor.start();
@@ -754,7 +675,6 @@ describe('AgentSupervisor - stop 语义', () => {
     const mock = createMockChatServer(() =>
       sseResponse([chunk({ role: 'assistant', content: 'ok' }), chunk({}, 'stop')])
     );
-    servers.push(mock.server);
     const { harness, settleFirst, getCreateRunCount } = createTimedOutHangHarness(mock.baseUrl);
 
     await harness.supervisor.start();
@@ -778,7 +698,6 @@ describe('AgentSupervisor - stop 语义', () => {
     const mock = createMockChatServer(() =>
       sseResponse([chunk({ role: 'assistant', content: 'ok' }), chunk({}, 'stop')])
     );
-    servers.push(mock.server);
     const { harness, settleFirst, getCreateRunCount } = createTimedOutHangHarness(mock.baseUrl);
 
     await harness.supervisor.start();
@@ -807,7 +726,6 @@ describe('AgentSupervisor - stop 语义', () => {
     const mock = createMockChatServer(() =>
       sseResponse([chunk({ role: 'assistant', content: 'ok' }), chunk({}, 'stop')])
     );
-    servers.push(mock.server);
     const { harness, settleFirst, getCreateRunCount } = createTimedOutHangHarness(mock.baseUrl);
 
     await harness.supervisor.start();
@@ -836,7 +754,6 @@ describe('AgentSupervisor - stop 语义', () => {
     const mock = createMockChatServer(() =>
       sseResponse([chunk({ role: 'assistant', content: 'ok' }), chunk({}, 'stop')])
     );
-    servers.push(mock.server);
     const { harness, settleFirst, getCreateRunCount } = createTimedOutHangHarness(mock.baseUrl, {
       idleBeforeHang: true,
     });
@@ -874,7 +791,6 @@ describe('AgentSupervisor - stop 语义', () => {
         50
       )
     );
-    servers.push(mock.server);
 
     const harness = createSupervisorHarness({ baseUrl: mock.baseUrl });
     await harness.supervisor.start();
@@ -891,7 +807,7 @@ describe('AgentSupervisor - stop 语义', () => {
     expect(harness.supervisor.isSessionActive(harness.session.id)).toBe(false);
   });
 
-  test("stopSessionsForDevice：无活动 run 时直接落 error 并广播", async () => {
+  test('stopSessionsForDevice：无活动 run 时直接落 error 并广播', async () => {
     const harness = createSupervisorHarness({
       baseUrl: 'http://unused',
       sessionStatus: 'running',
@@ -904,13 +820,15 @@ describe('AgentSupervisor - stop 语义', () => {
     expect(session?.status).toBe('error');
     expect(session?.lastError).toMatch(/terminal connection lost|pane\/device unavailable/);
 
-    const newEvents = harness.broadcasts.slice(beforeCount).filter(
-      (b) =>
-        b.sessionId === harness.session.id &&
-        b.payload !== null &&
-        typeof b.payload === 'object' &&
-        (b.payload as { status?: string }).status === 'error'
-    );
+    const newEvents = harness.broadcasts
+      .slice(beforeCount)
+      .filter(
+        (b) =>
+          b.sessionId === harness.session.id &&
+          b.payload !== null &&
+          typeof b.payload === 'object' &&
+          (b.payload as { status?: string }).status === 'error'
+      );
     expect(newEvents.length).toBeGreaterThan(0);
   });
 
@@ -931,7 +849,6 @@ describe('AgentSupervisor - stop 语义', () => {
     const mock = createMockChatServer(() =>
       sseResponse([chunk({ role: 'assistant', content: 'ok' }), chunk({}, 'stop')])
     );
-    servers.push(mock.server);
 
     const harness = createSupervisorHarness({
       baseUrl: mock.baseUrl,
@@ -961,7 +878,6 @@ describe('AgentSupervisor - 重启恢复', () => {
     const mock = createMockChatServer(() =>
       sseResponse([chunk({ role: 'assistant', content: 'resumed' }), chunk({}, 'stop')])
     );
-    servers.push(mock.server);
 
     const harness = createSupervisorHarness({
       baseUrl: mock.baseUrl,
@@ -987,7 +903,6 @@ describe('AgentSupervisor - 重启恢复', () => {
     const mock = createMockChatServer(() =>
       sseResponse([chunk({ role: 'assistant', content: 'recovered' }), chunk({}, 'stop')])
     );
-    servers.push(mock.server);
 
     const harness = createSupervisorHarness({
       baseUrl: mock.baseUrl,
@@ -1056,7 +971,6 @@ describe('AgentSupervisor - 重启恢复', () => {
 
   test("恢复 status='waiting_confirmation'：pending 仍在则保持等待，不发起 run、不重发通知", async () => {
     const mock = createMockChatServer(() => sseResponse([chunk({}, 'stop')]));
-    servers.push(mock.server);
 
     const harness = createSupervisorHarness({
       baseUrl: mock.baseUrl,
@@ -1080,7 +994,6 @@ describe('AgentSupervisor - 重启恢复', () => {
 
   test("恢复 status='waiting_confirmation' 但 pending 丢失：自愈置 idle", async () => {
     const mock = createMockChatServer(() => sseResponse([chunk({}, 'stop')]));
-    servers.push(mock.server);
 
     const harness = createSupervisorHarness({
       baseUrl: mock.baseUrl,
@@ -1095,7 +1008,6 @@ describe('AgentSupervisor - 重启恢复', () => {
 describe('AgentSupervisor - syncProvider', () => {
   test('注入的 syncProvider 返回 status/pending/lastMessageSeq', async () => {
     const mock = createMockChatServer(() => sseResponse([chunk({}, 'stop')]));
-    servers.push(mock.server);
 
     const harness = createSupervisorHarness({
       baseUrl: mock.baseUrl,

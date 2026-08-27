@@ -2,10 +2,10 @@ import { afterEach, beforeAll, describe, expect, test } from 'bun:test';
 import type { StateSnapshotPayload } from '@tmex/shared';
 import { wsBorsh } from '@tmex/shared';
 import { runMigrations } from '../db/migrate';
-import { createBorshClientState } from './borsh/codec-borsh';
 import { sessionStateStore } from './borsh/session-state';
 import { switchBarrier } from './borsh/switch-barrier';
 import { WebSocketServer } from './index';
+import { createBorshTestWs, envelopeKind, setupConnectionEntry } from './test-helpers';
 
 // issue-45 bug 2 TDD 红测
 // 根因：apps/gateway/src/ws/index.ts:1304-1308 的 broadcastTerminalHistory 用
@@ -21,15 +21,7 @@ beforeAll(() => {
 });
 
 function createBorshWs(): any {
-  const ws = {
-    data: { borshState: createBorshClientState() },
-    sent: [] as Uint8Array[],
-    send(message: Uint8Array) {
-      this.sent.push(message);
-    },
-  } as any;
-  sessionStateStore.create(ws);
-  return ws;
+  return createBorshTestWs({ session: true });
 }
 
 function makeSplitSnapshot(): StateSnapshotPayload {
@@ -71,31 +63,15 @@ function makeSplitSnapshot(): StateSnapshotPayload {
 }
 
 function setupEntry(server: any, ws: any, snapshot: StateSnapshotPayload): any {
-  const entry = {
+  return setupConnectionEntry(server, {
+    ws,
+    lastSnapshot: snapshot,
     runtime: {
       requestSnapshot() {},
       selectPane() {},
       selectPaneWithSize() {},
     },
-    detachRuntime: () => {},
-    clients: new Set([ws]),
-    lastSnapshot: snapshot,
-    snapshotTimer: null,
-    snapshotPollTimer: null,
-    reconnectAttempts: 0,
-    reconnectTimer: null,
-  };
-  server.connections.set('device-a', entry);
-  return entry;
-}
-
-function envelopeKind(bytes: Uint8Array): number | null {
-  if (!wsBorsh.checkMagic(bytes)) return null;
-  try {
-    return wsBorsh.decodeEnvelope(bytes).kind;
-  } catch {
-    return null;
-  }
+  });
 }
 
 describe('issue-45 bug 2: broadcastTerminalHistory routes barrier history by transaction pane, not selectedPanes', () => {

@@ -2,10 +2,10 @@ import { afterEach, beforeAll, describe, expect, test } from 'bun:test';
 import type { StateSnapshotPayload } from '@tmex/shared';
 import { wsBorsh } from '@tmex/shared';
 import { runMigrations } from '../db/migrate';
-import { createBorshClientState } from './borsh/codec-borsh';
 import { sessionStateStore } from './borsh/session-state';
 import { switchBarrier } from './borsh/switch-barrier';
 import { WebSocketServer } from './index';
+import { createBorshTestWs, envelopeKind, setupConnectionEntry } from './test-helpers';
 
 // 跨 bug 干扰测试（issue #45 Task 12 场景 2）：bug 2 fix（broadcastTerminalHistory 按
 // ACKED 事务 context.paneId 路由）× 正常 pane 切换。
@@ -26,15 +26,7 @@ beforeAll(() => {
 });
 
 function createBorshWs(): any {
-  const ws = {
-    data: { borshState: createBorshClientState() },
-    sent: [] as Uint8Array[],
-    send(message: Uint8Array) {
-      this.sent.push(message);
-    },
-  } as any;
-  sessionStateStore.create(ws);
-  return ws;
+  return createBorshTestWs({ session: true });
 }
 
 function makeSinglePaneSnapshot(): StateSnapshotPayload {
@@ -84,31 +76,15 @@ function makeSinglePaneSnapshot(): StateSnapshotPayload {
 }
 
 function setupEntry(server: any, ws: any, snapshot: StateSnapshotPayload): any {
-  const entry = {
+  return setupConnectionEntry(server, {
+    ws,
+    lastSnapshot: snapshot,
     runtime: {
       requestSnapshot() {},
       selectPane() {},
       selectPaneWithSize() {},
     },
-    detachRuntime: () => {},
-    clients: new Set([ws]),
-    lastSnapshot: snapshot,
-    snapshotTimer: null,
-    snapshotPollTimer: null,
-    reconnectAttempts: 0,
-    reconnectTimer: null,
-  };
-  server.connections.set('device-a', entry);
-  return entry;
-}
-
-function envelopeKind(bytes: Uint8Array): number | null {
-  if (!wsBorsh.checkMagic(bytes)) return null;
-  try {
-    return wsBorsh.decodeEnvelope(bytes).kind;
-  } catch {
-    return null;
-  }
+  });
 }
 
 function startAckedTransaction(

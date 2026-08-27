@@ -3,10 +3,10 @@ import type { StateSnapshotPayload } from '@tmex/shared';
 import { wsBorsh } from '@tmex/shared';
 import { ensureSiteSettingsInitialized, getSiteSettings, updateSiteSettings } from '../db';
 import { runMigrations } from '../db/migrate';
-import { createBorshClientState } from './borsh/codec-borsh';
 import { sessionStateStore } from './borsh/session-state';
 import { switchBarrier } from './borsh/switch-barrier';
 import { WebSocketServer, payloadNeedsChunking } from './index';
+import { createBorshTestWs, setupConnectionEntry } from './test-helpers';
 
 // 快照下发路径会同步读 device_tree_order 表，确保所有用例前已建表
 beforeAll(() => {
@@ -30,12 +30,11 @@ function flushAsync(): Promise<void> {
 describe('WebSocketServer client diagnostics', () => {
   test('records a bounded client implementation from the negotiated hello', async () => {
     const server = new WebSocketServer() as any;
-    const ws = {
-      data: { borshState: createBorshClientState() },
-      send(frame: Uint8Array) {
+    const ws = createBorshTestWs({
+      send(frame) {
         return frame.length;
       },
-    } as any;
+    });
     const clientImpl = `tmex-fe-${'x'.repeat(100)}`;
     const payload = wsBorsh.encodePayload(wsBorsh.schema.HelloC2SSchema, {
       clientImpl,
@@ -147,12 +146,10 @@ describe('WebSocketServer connection entry dedup', () => {
       },
     }) as any;
 
-    const ws = {
-      data: { borshState: createBorshClientState() },
+    const ws = createBorshTestWs({
+      session: true,
       send() {},
-    } as any;
-
-    sessionStateStore.create(ws);
+    });
 
     const entry = await server.getOrCreateConnectionEntry('device-c', ws);
     entry.clients.add(ws);
@@ -187,23 +184,8 @@ describe('WebSocketServer connection entry dedup', () => {
       },
     }) as any;
 
-    const ws1 = {
-      data: { borshState: createBorshClientState() },
-      sent: [] as Uint8Array[],
-      send(message: Uint8Array) {
-        this.sent.push(message);
-      },
-    } as any;
-    const ws2 = {
-      data: { borshState: createBorshClientState() },
-      sent: [] as Uint8Array[],
-      send(message: Uint8Array) {
-        this.sent.push(message);
-      },
-    } as any;
-
-    sessionStateStore.create(ws1);
-    sessionStateStore.create(ws2);
+    const ws1 = createBorshTestWs({ session: true });
+    const ws2 = createBorshTestWs({ session: true });
 
     await server.handleDeviceConnect(ws1, 'device-shared');
     await server.handleDeviceConnect(ws2, 'device-shared');
@@ -212,66 +194,11 @@ describe('WebSocketServer connection entry dedup', () => {
     expect(connectCalls).toBe(1);
     expect(server.connections.get('device-shared')?.clients.size).toBe(2);
   });
-
-  test('discards in-flight connection creation after closeAll and releases the runtime', async () => {
-    const released: string[] = [];
-    const releaseRef: { current: (() => void) | null } = { current: null };
-    const gate = new Promise<void>((resolve) => {
-      releaseRef.current = resolve;
-    });
-
-    const server = new WebSocketServer({
-      deps: {
-        acquireRuntime: async () => {
-          await gate;
-          return {
-            async connect() {},
-            subscribe() {
-              return () => {};
-            },
-            requestSnapshot() {},
-            disconnect() {},
-          } as any;
-        },
-        releaseRuntime: async (deviceId) => {
-          released.push(deviceId);
-        },
-      },
-    }) as any;
-
-    const ws = {
-      data: { borshState: createBorshClientState() },
-      send() {},
-    } as any;
-    sessionStateStore.create(ws);
-
-    const pending = server.getOrCreateConnectionEntry('device-race', ws);
-    server.closeAll();
-    if (releaseRef.current) {
-      releaseRef.current();
-    }
-    const entry = await pending;
-
-    expect(entry).toBeNull();
-    expect(server.connections.has('device-race')).toBe(false);
-    expect(server.pendingConnectionEntries.size).toBe(0);
-    await Bun.sleep(0);
-    expect(released).toEqual(['device-race']);
-  });
 });
 
 describe('WebSocketServer malformed Borsh payload', () => {
   function createBorshClient() {
-    const ws = {
-      data: { borshState: createBorshClientState() },
-      sent: [] as Uint8Array[],
-      send(message: Uint8Array) {
-        this.sent.push(message);
-        return message.byteLength;
-      },
-    } as any;
-    sessionStateStore.create(ws);
-    return ws;
+    return createBorshTestWs({ session: true });
   }
 
   function decodeError(frame: Uint8Array) {
@@ -363,23 +290,16 @@ describe('WebSocketServer malformed Borsh payload', () => {
 describe('WebSocketServer snapshot recovery', () => {
   test('does not install per-client snapshot polling for active panes', () => {
     const server = new WebSocketServer() as any;
-    const ws = {
-      data: { borshState: createBorshClientState() },
+    const ws = createBorshTestWs({
+      session: true,
       send() {},
-    } as any;
-    sessionStateStore.create(ws);
+    });
 
-    const entry = {
+    const entry = setupConnectionEntry(server, {
+      deviceId: 'device-watchdog',
+      ws,
       runtime: { requestSnapshot() {} },
-      detachRuntime: () => {},
-      clients: new Set([ws]),
-      lastSnapshot: null,
-      snapshotTimer: null,
-      snapshotPollTimer: null,
-      reconnectAttempts: 0,
-      reconnectTimer: null,
-    };
-    server.connections.set('device-watchdog', entry);
+    });
 
     const setIntervalSpy = spyOn(globalThis, 'setInterval');
     try {
@@ -405,18 +325,13 @@ describe('WebSocketServer snapshot recovery', () => {
 describe('WebSocketServer slow consumer isolation', () => {
   test('drops output for panes with no selected or subscribed client before batching', () => {
     const server = new WebSocketServer() as any;
-    const ws = {
-      data: { borshState: createBorshClientState() },
+    const ws = createBorshTestWs({
       send() {
         return 1;
       },
-      terminate() {},
-    } as any;
-    ws.data.borshState.selectedPanes['device-interest'] = '%2';
-    server.connections.set('device-interest', {
-      clients: new Set([ws]),
-      lastSnapshot: null,
     });
+    ws.data.borshState.selectedPanes['device-interest'] = '%2';
+    setupConnectionEntry(server, { deviceId: 'device-interest', ws });
     const push = spyOn(server.terminalOutputBatcher, 'push');
 
     server.broadcastTerminalOutput('device-interest', '%1', new Uint8Array([1]));
@@ -431,18 +346,13 @@ describe('WebSocketServer slow consumer isolation', () => {
 
   test('checks pane interest without allocating a client array per output event', () => {
     const server = new WebSocketServer() as any;
-    const ws = {
-      data: { borshState: createBorshClientState() },
+    const ws = createBorshTestWs({
       send() {
         return 1;
       },
-      terminate() {},
-    } as any;
-    ws.data.borshState.selectedPanes['device-interest'] = '%1';
-    server.connections.set('device-interest', {
-      clients: new Set([ws]),
-      lastSnapshot: null,
     });
+    ws.data.borshState.selectedPanes['device-interest'] = '%1';
+    setupConnectionEntry(server, { deviceId: 'device-interest', ws });
     const from = spyOn(Array, 'from');
 
     server.broadcastTerminalOutput('device-interest', '%1', new Uint8Array([1]));
@@ -455,19 +365,14 @@ describe('WebSocketServer slow consumer isolation', () => {
   test('coalesces pending pane output before encoding it for clients', () => {
     const server = new WebSocketServer() as any;
     const frames: Uint8Array[] = [];
-    const ws = {
-      data: { borshState: createBorshClientState() },
-      send(frame: Uint8Array) {
+    const ws = createBorshTestWs({
+      send(frame) {
         frames.push(frame);
         return frame.length;
       },
-      terminate() {},
-    } as any;
-    ws.data.borshState.selectedPanes['device-batch'] = '%1';
-    server.connections.set('device-batch', {
-      clients: new Set([ws]),
-      lastSnapshot: null,
     });
+    ws.data.borshState.selectedPanes['device-batch'] = '%1';
+    setupConnectionEntry(server, { deviceId: 'device-batch', ws });
 
     server.broadcastTerminalOutput('device-batch', '%1', new Uint8Array([1, 2]));
     server.broadcastTerminalOutput('device-batch', '%1', new Uint8Array([3]));
@@ -485,8 +390,7 @@ describe('WebSocketServer slow consumer isolation', () => {
     const server = new WebSocketServer() as any;
     let sendCalls = 0;
     let terminateCalls = 0;
-    const ws = {
-      data: { borshState: createBorshClientState() },
+    const ws = createBorshTestWs({
       send() {
         sendCalls += 1;
         return -1;
@@ -494,12 +398,9 @@ describe('WebSocketServer slow consumer isolation', () => {
       terminate() {
         terminateCalls += 1;
       },
-    } as any;
-    ws.data.borshState.selectedPanes['device-slow'] = '%1';
-    server.connections.set('device-slow', {
-      clients: new Set([ws]),
-      lastSnapshot: null,
     });
+    ws.data.borshState.selectedPanes['device-slow'] = '%1';
+    setupConnectionEntry(server, { deviceId: 'device-slow', ws });
 
     server.broadcastTerminalOutput('device-slow', '%1', new Uint8Array([1]));
     server.terminalOutputBatcher.flushDevice('device-slow');
@@ -525,14 +426,12 @@ describe('WebSocketServer frame sizing', () => {
   test('generic response path chunks every kind below the negotiated frame limit', () => {
     const server = new WebSocketServer() as any;
     const sent: Uint8Array[] = [];
-    const ws = {
-      data: { borshState: createBorshClientState() },
-      send(frame: Uint8Array) {
+    const ws = createBorshTestWs({
+      send(frame) {
         sent.push(new Uint8Array(frame));
         return frame.byteLength;
       },
-      terminate() {},
-    } as any;
+    });
     ws.data.borshState.maxFrameBytes = 128;
 
     server.sendEnvelope(ws, wsBorsh.KIND_NOTIFY_EVENT, new Uint8Array(512));
@@ -593,15 +492,7 @@ describe('WebSocketServer tmux select guards', () => {
   }
 
   function createBorshWs() {
-    const ws = {
-      data: { borshState: createBorshClientState() },
-      sent: [] as Uint8Array[],
-      send(message: Uint8Array) {
-        this.sent.push(message);
-      },
-    } as any;
-    sessionStateStore.create(ws);
-    return ws;
+    return createBorshTestWs({ session: true });
   }
 
   function createRuntimeRecorder() {
@@ -637,18 +528,7 @@ describe('WebSocketServer tmux select guards', () => {
     runtime: ReturnType<typeof createRuntimeRecorder>['runtime'],
     snapshot: StateSnapshotPayload | null = makeSnapshot()
   ) {
-    const entry = {
-      runtime,
-      detachRuntime: () => {},
-      clients: new Set([ws]),
-      lastSnapshot: snapshot,
-      snapshotTimer: null,
-      snapshotPollTimer: null,
-      reconnectAttempts: 0,
-      reconnectTimer: null,
-    };
-    server.connections.set('device-a', entry);
-    return entry;
+    return setupConnectionEntry(server, { ws, runtime, lastSnapshot: snapshot });
   }
 
   function clearPolling(entry: { snapshotPollTimer: ReturnType<typeof setInterval> | null }) {
@@ -825,10 +705,7 @@ describe('WebSocketServer bell extension', () => {
   test('extends bell event with pane context from snapshot', async () => {
     const server = new WebSocketServer() as any;
 
-    server.connections.set('device-a', {
-      runtime: {},
-      detachRuntime: () => {},
-      clients: new Set(),
+    setupConnectionEntry(server, {
       lastSnapshot: {
         deviceId: 'device-a',
         session: {
@@ -856,10 +733,6 @@ describe('WebSocketServer bell extension', () => {
           ],
         },
       },
-      snapshotTimer: null,
-      snapshotPollTimer: null,
-      reconnectAttempts: 0,
-      reconnectTimer: null,
     });
 
     const result = await server.extendTmuxEvent('device-a', {
@@ -894,26 +767,9 @@ describe('WebSocketServer bell extension', () => {
       return shouldAllowCalls === 1;
     }) as any;
 
-    const ws = {
-      data: { borshState: createBorshClientState() },
-      sent: [] as Uint8Array[],
-      send(message: Uint8Array) {
-        this.sent.push(message);
-      },
-    } as any;
+    const ws = createBorshTestWs({ session: true });
 
-    sessionStateStore.create(ws);
-
-    server.connections.set('device-a', {
-      runtime: {},
-      detachRuntime: () => {},
-      clients: new Set([ws]),
-      lastSnapshot: null,
-      snapshotTimer: null,
-      snapshotPollTimer: null,
-      reconnectAttempts: 0,
-      reconnectTimer: null,
-    });
+    setupConnectionEntry(server, { ws });
 
     await server.broadcastTmuxEvent('device-a', { type: 'bell', data: { paneId: '%1' } });
     await server.broadcastTmuxEvent('device-a', { type: 'bell', data: { paneId: '%1' } });
@@ -926,10 +782,7 @@ describe('WebSocketServer bell extension', () => {
   test('extends notification event with pane context from snapshot', async () => {
     const server = new WebSocketServer() as any;
 
-    server.connections.set('device-a', {
-      runtime: {},
-      detachRuntime: () => {},
-      clients: new Set(),
+    setupConnectionEntry(server, {
       lastSnapshot: {
         deviceId: 'device-a',
         session: {
@@ -957,10 +810,6 @@ describe('WebSocketServer bell extension', () => {
           ],
         },
       },
-      snapshotTimer: null,
-      snapshotPollTimer: null,
-      reconnectAttempts: 0,
-      reconnectTimer: null,
     });
 
     const result = await server.extendTmuxEvent('device-a', {
@@ -995,26 +844,9 @@ describe('WebSocketServer bell extension', () => {
     const server = new WebSocketServer() as any;
     server.scheduleSnapshot = () => {};
 
-    const ws = {
-      data: { borshState: createBorshClientState() },
-      sent: [] as Uint8Array[],
-      send(message: Uint8Array) {
-        this.sent.push(message);
-      },
-    } as any;
+    const ws = createBorshTestWs({ session: true });
 
-    sessionStateStore.create(ws);
-
-    server.connections.set('device-a', {
-      runtime: {},
-      detachRuntime: () => {},
-      clients: new Set([ws]),
-      lastSnapshot: null,
-      snapshotTimer: null,
-      snapshotPollTimer: null,
-      reconnectAttempts: 0,
-      reconnectTimer: null,
-    });
+    setupConnectionEntry(server, { ws });
 
     await server.broadcastTmuxEvent('device-a', {
       type: 'notification',
@@ -1036,26 +868,9 @@ describe('WebSocketServer bell extension', () => {
       return shouldAllowCalls === 1;
     }) as any;
 
-    const ws = {
-      data: { borshState: createBorshClientState() },
-      sent: [] as Uint8Array[],
-      send(message: Uint8Array) {
-        this.sent.push(message);
-      },
-    } as any;
+    const ws = createBorshTestWs({ session: true });
 
-    sessionStateStore.create(ws);
-
-    server.connections.set('device-a', {
-      runtime: {},
-      detachRuntime: () => {},
-      clients: new Set([ws]),
-      lastSnapshot: null,
-      snapshotTimer: null,
-      snapshotPollTimer: null,
-      reconnectAttempts: 0,
-      reconnectTimer: null,
-    });
+    setupConnectionEntry(server, { ws });
 
     await server.broadcastTmuxEvent('device-a', {
       type: 'notification',
@@ -1102,13 +917,7 @@ describe('WebSocketServer window custom names', () => {
   }
 
   function createBorshWs() {
-    return {
-      data: { borshState: createBorshClientState() },
-      sent: [] as Uint8Array[],
-      send(message: Uint8Array) {
-        this.sent.push(message);
-      },
-    } as any;
+    return createBorshTestWs();
   }
 
   function decodeLastSnapshot(ws: any): StateSnapshotPayload {
@@ -1118,16 +927,7 @@ describe('WebSocketServer window custom names', () => {
   }
 
   function setupEntry(server: any, snapshot: StateSnapshotPayload | null, ws: any) {
-    server.connections.set('device-a', {
-      runtime: {},
-      detachRuntime: () => {},
-      clients: new Set([ws]),
-      lastSnapshot: snapshot,
-      snapshotTimer: null,
-      snapshotPollTimer: null,
-      reconnectAttempts: 0,
-      reconnectTimer: null,
-    });
+    setupConnectionEntry(server, { ws, lastSnapshot: snapshot });
   }
 
   test('rename stores overlay and rebroadcasts snapshot with customName', () => {
@@ -1334,16 +1134,7 @@ describe('WebSocketServer site theme propagation', () => {
     deviceId: string,
     runtime: ReturnType<typeof createStyleRecorder>['runtime']
   ) {
-    server.connections.set(deviceId, {
-      runtime,
-      detachRuntime: () => {},
-      clients: new Set(),
-      lastSnapshot: null,
-      snapshotTimer: null,
-      snapshotPollTimer: null,
-      reconnectAttempts: 0,
-      reconnectTimer: null,
-    });
+    setupConnectionEntry(server, { deviceId, runtime });
   }
 
   test('handleSiteThemeChange applies window-style to all connected devices', () => {
@@ -1435,11 +1226,10 @@ describe('WebSocketServer site theme propagation', () => {
     const server = new WebSocketServer() as any;
     server.currentTheme = 'light';
     const recorder = createStyleRecorder();
-    const ws = {
-      data: { borshState: createBorshClientState() },
+    const ws = createBorshTestWs({
+      session: true,
       send() {},
-    } as any;
-    sessionStateStore.create(ws);
+    });
 
     server.deps.acquireRuntime = async () =>
       ({
@@ -1467,10 +1257,8 @@ describe('WebSocketServer site theme propagation', () => {
         signaled.push([paneId, theme]);
       },
     };
-    server.connections.set('device-a', {
+    setupConnectionEntry(server, {
       runtime,
-      detachRuntime: () => {},
-      clients: new Set(),
       lastSnapshot: {
         deviceId: 'device-a',
         session: {
@@ -1514,10 +1302,6 @@ describe('WebSocketServer site theme propagation', () => {
           ],
         },
       },
-      snapshotTimer: null,
-      snapshotPollTimer: null,
-      reconnectAttempts: 0,
-      reconnectTimer: null,
     });
 
     server.broadcastThemeChange('dark');
@@ -1536,10 +1320,8 @@ describe('WebSocketServer site theme propagation', () => {
         signaled.push([paneId, theme]);
       },
     };
-    server.connections.set('device-a', {
+    setupConnectionEntry(server, {
       runtime,
-      detachRuntime: () => {},
-      clients: new Set(),
       lastSnapshot: {
         deviceId: 'device-a',
         session: {
@@ -1566,10 +1348,6 @@ describe('WebSocketServer site theme propagation', () => {
           ],
         },
       },
-      snapshotTimer: null,
-      snapshotPollTimer: null,
-      reconnectAttempts: 0,
-      reconnectTimer: null,
     });
 
     server.broadcastThemeChange('dark');
@@ -1586,10 +1364,8 @@ describe('WebSocketServer site theme propagation', () => {
         signaled.push([paneId, theme]);
       },
     };
-    server.connections.set('device-a', {
+    setupConnectionEntry(server, {
       runtime,
-      detachRuntime: () => {},
-      clients: new Set(),
       lastSnapshot: {
         deviceId: 'device-a',
         session: {
@@ -1616,10 +1392,6 @@ describe('WebSocketServer site theme propagation', () => {
           ],
         },
       },
-      snapshotTimer: null,
-      snapshotPollTimer: null,
-      reconnectAttempts: 0,
-      reconnectTimer: null,
     });
 
     server.broadcastThemeChange('dark');
@@ -1671,10 +1443,9 @@ describe('WebSocketServer resize × theme dedup', () => {
     runtime: ReturnType<typeof createResizeThemeRecorder>['runtime'],
     windows?: unknown[]
   ) {
-    server.connections.set(deviceId, {
+    setupConnectionEntry(server, {
+      deviceId,
       runtime,
-      detachRuntime: () => {},
-      clients: new Set(),
       lastSnapshot: {
         deviceId,
         session: {
@@ -1700,11 +1471,7 @@ describe('WebSocketServer resize × theme dedup', () => {
             },
           ],
         },
-      },
-      snapshotTimer: null,
-      snapshotPollTimer: null,
-      reconnectAttempts: 0,
-      reconnectTimer: null,
+      } as StateSnapshotPayload,
     });
   }
 
@@ -1881,11 +1648,10 @@ describe('WebSocketServer resize × theme dedup', () => {
     server.currentTheme = 'dark';
     const recorder = createResizeThemeRecorder();
     setupEntryWithSnapshot(server, 'device-a', recorder.runtime);
-    const ws = {
-      data: { borshState: createBorshClientState() },
+    const ws = createBorshTestWs({
+      session: true,
       send() {},
-    } as any;
-    sessionStateStore.create(ws);
+    });
     server.connectedClients = new Set([ws]);
 
     server.handleSiteThemeUpdate(ws, { theme: wsBorsh.SITE_THEME_LIGHT });

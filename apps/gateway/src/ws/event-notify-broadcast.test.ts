@@ -5,8 +5,8 @@ import { ensureSiteSettingsInitialized } from '../db';
 import { runMigrations } from '../db/migrate';
 import { registerEventNotifyBroadcaster } from '../events/broadcaster';
 import { EventNotifier } from '../events/index';
-import { createBorshClientState } from './borsh/codec-borsh';
 import { WebSocketServer } from './index';
+import { createBorshTestWs } from './test-helpers';
 
 beforeAll(() => {
   runMigrations();
@@ -14,13 +14,7 @@ beforeAll(() => {
 });
 
 function createMockClient() {
-  return {
-    data: { borshState: createBorshClientState() },
-    sent: [] as Uint8Array[],
-    send(message: Uint8Array) {
-      this.sent.push(message);
-    },
-  };
+  return createBorshTestWs();
 }
 
 function decodeEventNotify(frame: Uint8Array): {

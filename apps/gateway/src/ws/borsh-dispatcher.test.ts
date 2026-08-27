@@ -6,16 +6,10 @@ import {
   decodeBorshKindPayload,
   dispatchBorshKind,
 } from './borsh-dispatcher';
-import { createBorshClientState } from './borsh/codec-borsh';
+import { createBorshTestWs } from './test-helpers';
 
 function createWs() {
-  return {
-    data: { borshState: createBorshClientState() },
-    sent: [] as Uint8Array[],
-    send(message: Uint8Array) {
-      this.sent.push(message);
-    },
-  } as any;
+  return createBorshTestWs();
 }
 
 describe('borsh dispatcher', () => {

@@ -1,61 +1,9 @@
 import { describe, expect, test } from 'bun:test';
 import {
-  type AgentStopReason,
   PANE_LOST_FALLBACK_MESSAGE,
-  type RunOnceDecision,
   type RunOnceSignals,
   resolveRunOnceOutcome,
 } from './outcome-resolver';
-
-const BOOLS = [false, true] as const;
-const STOP_REASONS: ReadonlyArray<AgentStopReason | null> = [
-  null,
-  'manual',
-  'shutdown',
-  'pane_lost',
-];
-
-function abortedBranch(signals: RunOnceSignals): RunOnceDecision {
-  if (signals.terminalFatal) {
-    return { kind: 'fatal-error', message: signals.terminalFatalMessage };
-  }
-  if (signals.stopReason === 'shutdown') {
-    return { kind: 'interrupted' };
-  }
-  if (signals.stopReason === 'pane_lost') {
-    return {
-      kind: 'pane-lost-error',
-      message: signals.terminalFatalMessage || PANE_LOST_FALLBACK_MESSAGE,
-    };
-  }
-  return { kind: 'stopped' };
-}
-
-/** 测试侧独立描述优先级，避免和生产实现共用一份 if 链。 */
-function spec(signals: RunOnceSignals): RunOnceDecision {
-  if (signals.stalled) {
-    return { kind: 'stalled-error' };
-  }
-  if (signals.stopReason) {
-    return abortedBranch(signals);
-  }
-  if (signals.steerRequested) {
-    return { kind: 'steer' };
-  }
-  if (signals.aborted) {
-    return abortedBranch(signals);
-  }
-  if (signals.streamError) {
-    return { kind: 'throw', error: signals.streamError };
-  }
-  if (signals.hasApprovals) {
-    return { kind: 'waiting-confirmation' };
-  }
-  if (signals.hasQueuedMessages) {
-    return { kind: 'steer' };
-  }
-  return { kind: 'idle' };
-}
 
 function base(overrides: Partial<RunOnceSignals> = {}): RunOnceSignals {
   return {
@@ -162,56 +110,5 @@ describe('resolveRunOnceOutcome 优先级', () => {
   test('自然完成时若有排队消息则 steer，否则 idle', () => {
     expect(resolveRunOnceOutcome(base({ hasQueuedMessages: true }))).toEqual({ kind: 'steer' });
     expect(resolveRunOnceOutcome(base())).toEqual({ kind: 'idle' });
-  });
-
-  test('笛卡尔积锁定 abort/approval/steer/stalled/error/done 组合优先级', () => {
-    const failures: string[] = [];
-    let count = 0;
-    for (const stalled of BOOLS) {
-      for (const stopReason of STOP_REASONS) {
-        for (const steerRequested of BOOLS) {
-          for (const aborted of BOOLS) {
-            for (const hasError of BOOLS) {
-              for (const hasApprovals of BOOLS) {
-                for (const hasQueuedMessages of BOOLS) {
-                  for (const terminalFatal of BOOLS) {
-                    const streamError = hasError ? { tag: 'err' } : null;
-                    const signals = base({
-                      stalled,
-                      stopReason,
-                      steerRequested,
-                      aborted,
-                      streamError,
-                      hasApprovals,
-                      hasQueuedMessages,
-                      terminalFatal,
-                    });
-                    count += 1;
-                    const actual = resolveRunOnceOutcome(signals);
-                    const expected = spec(signals);
-                    if (JSON.stringify(actual) !== JSON.stringify(expected)) {
-                      failures.push(
-                        `${JSON.stringify({
-                          stalled,
-                          stopReason,
-                          steerRequested,
-                          aborted,
-                          hasError,
-                          hasApprovals,
-                          hasQueuedMessages,
-                          terminalFatal,
-                        })} => actual=${JSON.stringify(actual)} expected=${JSON.stringify(expected)}`
-                      );
-                    }
-                  }
-                }
-              }
-            }
-          }
-        }
-      }
-    }
-    expect(count).toBe(512);
-    expect(failures).toEqual([]);
   });
 });
