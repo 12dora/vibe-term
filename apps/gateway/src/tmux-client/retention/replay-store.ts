@@ -18,7 +18,7 @@ export class PaneReplayStore {
 
   createPane(paneId: string, paneEpoch: Uint8Array, known: boolean): PaneState {
     if (paneEpoch.byteLength !== 16) throw new Error('pane epoch must be 16 bytes');
-    return {
+    const state: PaneState = {
       paneId,
       paneEpoch: copyBytes(paneEpoch),
       known,
@@ -29,10 +29,13 @@ export class PaneReplayStore {
       graceUntil: null,
       hotUntil: null,
       lastTouchedAt: this.kernel.now(),
+      createOrder: this.kernel.nextCreateOrder++,
       replay: [],
       replayBytes: 0,
       checkpoint: null,
     };
+    this.kernel.syncHotIndex(state);
+    return state;
   }
 
   ensurePane(paneId: string, paneEpoch: Uint8Array, known: boolean): PaneState {
@@ -52,8 +55,10 @@ export class PaneReplayStore {
   rotatePaneEpoch(state: PaneState, paneEpoch: Uint8Array): void {
     const previousEpoch = state.paneEpoch;
     const previousSeq = state.latestSeq;
-    if (state.replayBytes > 0 || state.checkpoint !== null) {
+    const retained = this.kernel.paneRetainedBytes(state);
+    if (retained > 0) {
       this.recordEviction('epoch_changed');
+      this.kernel.adjustRetainedBytes(-retained);
     }
     state.paneEpoch = copyBytes(paneEpoch);
     state.latestSeq = 0n;
@@ -65,6 +70,7 @@ export class PaneReplayStore {
     state.explicitHot = false;
     state.graceUntil = null;
     state.hotUntil = null;
+    this.kernel.syncHotIndex(state);
     for (const consumer of this.kernel.consumers.values()) {
       const request = consumer.active.get(state.paneId) ?? consumer.hot.get(state.paneId);
       if (!request) continue;
@@ -91,6 +97,7 @@ export class PaneReplayStore {
     if (retain) {
       state.replay.push({ seqStart, seqEnd, data: ownedData, receivedAt: now });
       state.replayBytes += ownedData.byteLength;
+      this.kernel.adjustRetainedBytes(ownedData.byteLength);
     } else {
       state.dirtyWhileCold = true;
     }
@@ -161,6 +168,7 @@ export class PaneReplayStore {
       return false;
     }
     const now = this.kernel.now();
+    const previousBytes = state.checkpoint?.data.byteLength ?? 0;
     state.checkpoint = {
       ...checkpoint,
       paneEpoch: copyBytes(checkpoint.paneEpoch),
@@ -174,6 +182,7 @@ export class PaneReplayStore {
         : null,
       capturedAt: checkpoint.capturedAt,
     };
+    this.kernel.adjustRetainedBytes(state.checkpoint.data.byteLength - previousBytes);
     state.lastTouchedAt = now;
     return true;
   }

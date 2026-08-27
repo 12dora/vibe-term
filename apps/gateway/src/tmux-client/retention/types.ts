@@ -151,6 +151,7 @@ export interface PaneState {
   graceUntil: number | null;
   hotUntil: number | null;
   lastTouchedAt: number;
+  createOrder: number;
   replay: ReplayChunk[];
   replayBytes: number;
   checkpoint: PaneScreenCheckpoint | null;
