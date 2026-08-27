@@ -11,6 +11,12 @@ export class FakeDataChannel implements DataChannelLike {
   lowThreshold = 0;
   sent: Uint8Array[] = [];
   failNextSend = false;
+  /** After this many successful sends, further sends return false until `emitLow()`. */
+  succeedsBeforeBlock = Number.POSITIVE_INFINITY;
+  blockSend = false;
+  /** When a send is blocked, also close the channel (mid-frame failure). */
+  closeOnBlockedSend = false;
+  private successCount = 0;
   private pendingMessages: Array<string | Buffer | ArrayBuffer> = [];
   private readonly openCbs: Array<() => void> = [];
   private readonly closedCbs: Array<() => void> = [];
@@ -98,6 +104,8 @@ export class FakeDataChannel implements DataChannelLike {
   }
 
   emitLow(): void {
+    this.blockSend = false;
+    this.succeedsBeforeBlock = Number.POSITIVE_INFINITY;
     for (const cb of this.lowCbs) cb();
   }
 
@@ -111,6 +119,12 @@ export class FakeDataChannel implements DataChannelLike {
       this.failNextSend = false;
       return false;
     }
+    if (this.blockSend || this.successCount >= this.succeedsBeforeBlock) {
+      this.blockSend = true;
+      if (this.closeOnBlockedSend) this.close();
+      return false;
+    }
+    this.successCount += 1;
     const copy = copyBytes(bytes);
     this.sent.push(copy);
     const peer = this.peer;

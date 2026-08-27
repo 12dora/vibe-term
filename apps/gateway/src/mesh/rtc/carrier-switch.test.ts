@@ -27,7 +27,7 @@ describe('CarrierSwitchController', () => {
 
     barrier.attachDirect(session, direct);
     expect(session.direct).toBe(direct);
-    expect(session.activeCarrier).toBe(session.primary);
+    expect(session.activeCarrier).toBe(direct);
     expect(controls).toHaveLength(1);
     expect(controls[0]?.kind).toBe(wsBorsh.KIND_CARRIER_SWITCH);
     const sent = decodeSwitch(controls[0]?.payload as Uint8Array);
@@ -44,7 +44,7 @@ describe('CarrierSwitchController', () => {
 
     barrier.handleAck(session, 0);
     expect(delivered).toEqual([]);
-    expect(session.activeCarrier).toBe(session.primary);
+    expect(session.activeCarrier).toBe(direct);
 
     barrier.handleAck(session, 1);
     expect(session.activeCarrier).toBe(direct);
@@ -76,10 +76,51 @@ describe('CarrierSwitchController', () => {
     const replacement = createFakeCarrier() as DirectCarrier;
     barrier.attachDirect(session, replacement);
     expect(controls).toEqual([1, 2]);
+    expect(session.activeCarrier).toBe(replacement);
     barrier.handleAck(session, 1);
-    expect(session.activeCarrier).toBe(session.primary);
+    expect(session.activeCarrier).toBe(replacement);
     barrier.handleAck(session, 2);
     expect(session.activeCarrier).toBe(replacement);
+  });
+
+  test('sends CARRIER_SWITCH on the old carrier then immediately switches outbound to direct', () => {
+    const session = createGatewaySession();
+    const primary = session.primary as ReturnType<typeof createFakeCarrier>;
+    const [local, remote] = pairDataChannels('sess');
+    const direct = new DataChannelCarrier(local) as DirectCarrier;
+    const peer = new DataChannelCarrier(remote);
+    const outbound: string[] = [];
+    const inbound: string[] = [];
+    const activeAtSwitch: unknown[] = [];
+    peer.onMessage((bytes) => {
+      outbound.push(new TextDecoder().decode(bytes));
+    });
+    const barrier = new CarrierSwitchController({
+      sendControl(_session, _kind, _payload) {
+        activeAtSwitch.push(session.activeCarrier);
+      },
+      deliverInbound(_session, bytes) {
+        inbound.push(new TextDecoder().decode(bytes));
+      },
+    });
+
+    barrier.attachDirect(session, direct);
+    expect(activeAtSwitch).toEqual([session.primary]);
+    expect(session.activeCarrier).toBe(direct);
+
+    expect(session.activeCarrier.send(new TextEncoder().encode('X'))).toBe('sent');
+    expect(session.activeCarrier.send(new TextEncoder().encode('Y'))).toBe('sent');
+    expect(outbound).toEqual(['X', 'Y']);
+    expect(primary.sent).toEqual([]);
+
+    expect(peer.send(new TextEncoder().encode('A'))).toBe('sent');
+    expect(peer.send(new TextEncoder().encode('B'))).toBe('sent');
+    expect(inbound).toEqual([]);
+
+    barrier.handleAck(session, 1);
+    expect(session.activeCarrier).toBe(direct);
+    expect(inbound).toEqual(['A', 'B']);
+    expect(outbound).toEqual(['X', 'Y']);
   });
 
   test('direct close switches back to primary and sends CARRIER_SWITCH to primary', () => {

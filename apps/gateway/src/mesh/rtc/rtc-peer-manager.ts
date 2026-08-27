@@ -44,6 +44,8 @@ import type {
 import { toUint8Array } from './native';
 
 export const RTC_AUTHORIZE_TTL_MS = 120_000;
+export const RTC_AUTHORIZE_MAX = 64;
+export const RTC_AUTHORIZE_SWEEP_INTERVAL_MS = 15_000;
 export const SESS_CHANNEL_LABEL = 'sess';
 export const PEER_CHANNEL_LABEL = 'peer';
 export const CONNECT_TIMEOUT_MS = 15_000;
@@ -59,6 +61,9 @@ export type RtcPeerManagerOptions = {
   sendControl?: SendControl;
   deliverInbound?: (session: GatewaySession, bytes: Uint8Array) => void;
   handshakeTimeoutMs?: number;
+  authorizeTtlMs?: number;
+  authorizeMax?: number;
+  sweepIntervalMs?: number;
 };
 
 export type CreatedPeerConnection = {
@@ -91,7 +96,6 @@ type BrowserRecord = {
   fpNode: DtlsFingerprint | null;
   exp: number;
   pc: PeerConnectionLike;
-  used: boolean;
 };
 
 function sleep(ms: number): Promise<void> {
@@ -146,12 +150,16 @@ export class RtcPeerManager implements RtcFingerprintProvider {
   private readonly userStore: UserStore;
   private readonly now: () => number;
   private readonly handshakeTimeoutMs: number;
+  private readonly authorizeTtlMs: number;
+  private readonly authorizeMax: number;
   private readonly switcher: CarrierSwitchController | null;
   private readonly loadPromise: Promise<NodeDatachannelModule | null>;
   private native: NodeDatachannelModule | null = null;
   private readonly browser = new Map<string, BrowserRecord>();
+  private readonly livePcs = new Set<PeerConnectionLike>();
   private probePc: PeerConnectionLike | null = null;
   private probeFp: DtlsFingerprint | null = null;
+  private sweepTimer: ReturnType<typeof setInterval> | null = null;
 
   constructor(opts: RtcPeerManagerOptions) {
     this.identity = opts.identity;
@@ -160,6 +168,12 @@ export class RtcPeerManager implements RtcFingerprintProvider {
     this.userStore = opts.userStore;
     this.now = opts.now ?? Date.now;
     this.handshakeTimeoutMs = opts.handshakeTimeoutMs ?? CONNECT_TIMEOUT_MS;
+    this.authorizeTtlMs = opts.authorizeTtlMs ?? RTC_AUTHORIZE_TTL_MS;
+    this.authorizeMax = opts.authorizeMax ?? RTC_AUTHORIZE_MAX;
+    const sweepIntervalMs = opts.sweepIntervalMs ?? RTC_AUTHORIZE_SWEEP_INTERVAL_MS;
+    if (sweepIntervalMs > 0) {
+      this.sweepTimer = setInterval(() => this.sweepBrowser(), sweepIntervalMs);
+    }
     if (opts.sendControl) {
       const switchOpts: CarrierSwitchOptions = {
         sendControl: opts.sendControl,
@@ -228,6 +242,7 @@ export class RtcPeerManager implements RtcFingerprintProvider {
       `${self}->${peer}`,
       buildRtcIceConfig(this.iceConfigProvider())
     );
+    this.trackPc(pc);
     this.bindSignaling(pc, signaling, rtcSession, peer);
     const channelP = offerer
       ? Promise.resolve(pc.createDataChannel(PEER_CHANNEL_LABEL))
@@ -245,6 +260,7 @@ export class RtcPeerManager implements RtcFingerprintProvider {
         timeoutMs: this.handshakeTimeoutMs,
       });
       const link = new DataChannelLink(channel);
+      link.onClose(() => this.untrackAndClose(pc));
       if (hs.peerNodeId !== peer) {
         throw new PeerHandshakeError('protocol', 'connected peer node_id mismatch');
       }
@@ -255,12 +271,7 @@ export class RtcPeerManager implements RtcFingerprintProvider {
         role: offerer ? 'initiator' : 'acceptor',
       };
     } catch (err) {
-      // signaling subscription is 1:1 for the connection attempt
-      try {
-        pc.close();
-      } catch {
-        // ignore
-      }
+      this.untrackAndClose(pc);
       throw err;
     }
   }
@@ -270,11 +281,12 @@ export class RtcPeerManager implements RtcFingerprintProvider {
   ): Promise<RtcAuthorizeBrowserResult | null> {
     if (!(await this.ready())) return null;
     this.sweepBrowser();
-    const rec = this.ensureBrowser(input.rtcSession);
+    const existing = this.browser.get(input.rtcSession);
+    if (!existing && this.browser.size >= this.authorizeMax) return null;
+    const rec = this.createBrowser(input.rtcSession);
     rec.uid = input.uid;
     rec.fpBrowser = normalizeFingerprint(input.fpBrowser);
-    rec.exp = this.now() + RTC_AUTHORIZE_TTL_MS;
-    rec.used = false;
+    rec.exp = this.now() + this.authorizeTtlMs;
     const fpNode = rec.fpNode ?? (await this.waitLocalFingerprint(rec.pc));
     rec.fpNode = fpNode;
     rec.nonce = crypto.getRandomValues(new Uint8Array(32));
@@ -283,35 +295,43 @@ export class RtcPeerManager implements RtcFingerprintProvider {
 
   async acceptBrowser(rtcSession: string, signaling: RtcSignaling): Promise<AcceptBrowserResult> {
     await this.ready();
-    const rec = this.ensureBrowser(rtcSession);
+    this.sweepBrowser();
+    const rec = this.browser.get(rtcSession);
+    if (!rec || !rec.nonce || !rec.fpBrowser || rec.exp <= this.now()) {
+      throw new PeerHandshakeError('protocol', 'rtc session is not authorized');
+    }
     this.bindSignaling(rec.pc, signaling, rtcSession, this.identity.nodeId.toLowerCase());
     const channel = await waitDataChannel(rec.pc, this.handshakeTimeoutMs, SESS_CHANNEL_LABEL);
     await waitChannelOpen(channel, this.handshakeTimeoutMs);
     const nonceRaw = await waitFirstMessage(channel, this.handshakeTimeoutMs);
     this.sweepBrowser();
-    if (!rec.nonce || !rec.fpBrowser || rec.used || rec.exp <= this.now()) {
-      try {
-        rec.pc.close();
-      } catch {
-        // ignore
-      }
+    const live = this.browser.get(rtcSession);
+    if (!live || live !== rec || !live.nonce || !live.fpBrowser || live.exp <= this.now()) {
+      this.untrackAndClose(rec.pc);
       throw new PeerHandshakeError('protocol', 'rtc session is not authorized');
     }
+    const nonce = live.nonce;
+    const fpBrowser = live.fpBrowser;
+    const uid = live.uid;
     const got = parseNonceMessage(nonceRaw);
-    if (got !== encodeBase64url(rec.nonce)) {
-      rec.pc.close();
+    if (got !== encodeBase64url(nonce)) {
+      this.browser.delete(rtcSession);
+      this.untrackAndClose(rec.pc);
       throw new PeerHandshakeError('protocol', 'sess nonce mismatch');
     }
     const remote = rec.pc.remoteFingerprint();
-    if (!fingerprintsEqual(remote, rec.fpBrowser)) {
-      rec.pc.close();
+    if (!fingerprintsEqual(remote, fpBrowser)) {
+      this.browser.delete(rtcSession);
+      this.untrackAndClose(rec.pc);
       throw new PeerHandshakeError('protocol', 'browser dtls fingerprint mismatch');
     }
-    rec.used = true;
+    this.browser.delete(rtcSession);
+    const carrier = new DataChannelCarrier(channel);
+    carrier.onClose(() => this.untrackAndClose(rec.pc));
     return {
-      carrier: new DataChannelCarrier(channel),
+      carrier,
       pc: rec.pc,
-      uid: rec.uid,
+      uid,
     };
   }
 
@@ -333,15 +353,20 @@ export class RtcPeerManager implements RtcFingerprintProvider {
   }
 
   close(): void {
+    if (this.sweepTimer) {
+      clearInterval(this.sweepTimer);
+      this.sweepTimer = null;
+    }
     this.probePc?.close();
     this.probePc = null;
-    for (const rec of this.browser.values()) {
+    for (const pc of this.livePcs) {
       try {
-        rec.pc.close();
+        pc.close();
       } catch {
         // ignore
       }
     }
+    this.livePcs.clear();
     this.browser.clear();
   }
 
@@ -352,7 +377,7 @@ export class RtcPeerManager implements RtcFingerprintProvider {
     return this.native;
   }
 
-  private ensureBrowser(rtcSession: string): BrowserRecord {
+  private createBrowser(rtcSession: string): BrowserRecord {
     const existing = this.browser.get(rtcSession);
     if (existing) return existing;
     const native = this.requireNative();
@@ -360,15 +385,15 @@ export class RtcPeerManager implements RtcFingerprintProvider {
       `${this.identity.nodeId}:browser:${rtcSession}`,
       buildRtcIceConfig(this.iceConfigProvider())
     );
+    this.trackPc(pc);
     const rec: BrowserRecord = {
       rtcSession,
       uid: '',
       nonce: null,
       fpBrowser: null,
       fpNode: null,
-      exp: this.now() + RTC_AUTHORIZE_TTL_MS,
+      exp: this.now() + this.authorizeTtlMs,
       pc,
-      used: false,
     };
     this.browser.set(rtcSession, rec);
     return rec;
@@ -377,14 +402,23 @@ export class RtcPeerManager implements RtcFingerprintProvider {
   private sweepBrowser(): void {
     const now = this.now();
     for (const [id, rec] of this.browser) {
-      if (rec.exp <= now && !rec.used) {
-        try {
-          rec.pc.close();
-        } catch {
-          // ignore
-        }
+      if (rec.exp <= now) {
+        this.untrackAndClose(rec.pc);
         this.browser.delete(id);
       }
+    }
+  }
+
+  private trackPc(pc: PeerConnectionLike): void {
+    this.livePcs.add(pc);
+  }
+
+  private untrackAndClose(pc: PeerConnectionLike): void {
+    this.livePcs.delete(pc);
+    try {
+      pc.close();
+    } catch {
+      // ignore
     }
   }
 

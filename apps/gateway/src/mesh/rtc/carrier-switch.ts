@@ -50,6 +50,7 @@ export class CarrierSwitchController {
       state.unsubClose = () => {};
     }
     this.sendSwitch(session, state, 'direct');
+    session.switchActiveCarrier(carrier);
   }
 
   handleAck(session: GatewaySession, epoch: number): void {
@@ -59,7 +60,6 @@ export class CarrierSwitchController {
     const direct = session.direct ?? state.direct;
     if (!direct) return;
     state.pendingTo = null;
-    session.switchActiveCarrier(direct);
     this.flush(session, state);
   }
 

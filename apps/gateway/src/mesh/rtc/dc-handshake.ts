@@ -20,6 +20,8 @@ import type { DataChannelLike, PeerConnectionLike } from './native';
 import { sendBinary, toUint8Array } from './native';
 
 export const DC_HANDSHAKE_TIMEOUT_MS = 10_000;
+export const DC_HANDSHAKE_MAX_MESSAGE_BYTES = 4 * 1024;
+export const DC_HANDSHAKE_MAX_QUEUE = 8;
 
 function fingerprintsEqual(a: DtlsFingerprint, b: DtlsFingerprint): boolean {
   const left = normalizeFingerprint(a);
@@ -72,24 +74,74 @@ function parseHello(msg: Record<string, unknown>): {
   };
 }
 
-function recvQueue(channel: DataChannelLike): {
+function recvQueue(
+  channel: DataChannelLike,
+  pc: PeerConnectionLike,
+  limits: { maxMessageBytes: number; maxQueue: number }
+): {
   recv: () => Promise<Uint8Array>;
   stop: () => void;
 } {
   const pending: Uint8Array[] = [];
-  const waiters: Array<(bytes: Uint8Array) => void> = [];
+  const waiters: Array<{
+    resolve: (bytes: Uint8Array) => void;
+    reject: (err: Error) => void;
+  }> = [];
   let stopped = false;
+  let abortErr: PeerHandshakeError | null = null;
+
+  const abort = (message: string) => {
+    if (abortErr || stopped) return;
+    abortErr = new PeerHandshakeError('protocol', message);
+    stopped = true;
+    pending.length = 0;
+    const waiting = waiters.splice(0);
+    for (const waiter of waiting) waiter.reject(abortErr);
+    try {
+      channel.close();
+    } catch {
+      // already closed
+    }
+    try {
+      pc.close();
+    } catch {
+      // already closed
+    }
+  };
+
   channel.onMessage((msg) => {
     if (stopped) return;
     const bytes = toUint8Array(msg).slice();
+    if (bytes.byteLength > limits.maxMessageBytes) {
+      abort('dc handshake message too large');
+      return;
+    }
     const waiter = waiters.shift();
-    if (waiter) waiter(bytes);
-    else pending.push(bytes);
+    if (waiter) {
+      waiter.resolve(bytes);
+      return;
+    }
+    if (pending.length >= limits.maxQueue) {
+      abort('dc handshake receive queue overflow');
+      return;
+    }
+    pending.push(bytes);
   });
+  channel.onClosed(() => {
+    abort('dc handshake channel closed');
+  });
+
   return {
     recv: () => {
+      if (abortErr) return Promise.reject(abortErr);
       if (pending.length > 0) return Promise.resolve(pending.shift() as Uint8Array);
-      return new Promise((resolve) => waiters.push(resolve));
+      return new Promise((resolve, reject) => {
+        if (abortErr) {
+          reject(abortErr);
+          return;
+        }
+        waiters.push({ resolve, reject });
+      });
     },
     stop: () => {
       stopped = true;
@@ -133,7 +185,10 @@ export async function handshakeDataChannel(opts: {
     eph_x25519_pk: null,
     dtls_fingerprint: localFp,
   };
-  const queue = recvQueue(opts.channel);
+  const queue = recvQueue(opts.channel, opts.pc, {
+    maxMessageBytes: DC_HANDSHAKE_MAX_MESSAGE_BYTES,
+    maxQueue: DC_HANDSHAKE_MAX_QUEUE,
+  });
   const send = (msg: { t: string } & Record<string, unknown>) => {
     sendBinary(opts.channel, encodeCtlMessage(msg));
   };

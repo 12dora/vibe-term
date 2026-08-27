@@ -11,14 +11,23 @@ export {
   DataChannelCarrier,
 } from './data-channel-carrier';
 export { DataChannelLink } from './data-channel-link';
-export { DC_HANDSHAKE_TIMEOUT_MS, handshakeDataChannel } from './dc-handshake';
 export {
+  DC_HANDSHAKE_MAX_MESSAGE_BYTES,
+  DC_HANDSHAKE_MAX_QUEUE,
+  DC_HANDSHAKE_TIMEOUT_MS,
+  handshakeDataChannel,
+} from './dc-handshake';
+export {
+  DC_MAX_MESSAGE_BYTES,
   DEFAULT_FRAME_TIMEOUT_MS,
   DEFAULT_MAX_IN_FLIGHT,
   FRAGMENT_HEADER_SIZE,
   FRAGMENT_PAYLOAD_SIZE,
+  FragmentProtocolError,
   FrameReassembler,
+  MAX_REASSEMBLED_FRAME_BYTES,
   fragmentFrame,
+  fragmentPayloadSize,
 } from './fragmenter';
 export {
   type CandidateSignal,
@@ -31,12 +40,15 @@ export {
   encodeCandidateSignal,
   encodeSdpSignal,
   isEmptyCandidate,
+  parseTurnUri,
   peerRtcSession,
 } from './ice';
 export type {
   DataChannelInitLike,
   DataChannelLike,
   DtlsFingerprint,
+  IceRelayType,
+  IceServer,
   IceServerConfig,
   LoadNative,
   NodeDatachannelModule,
@@ -47,6 +59,8 @@ export { copyBytes, sendBinary, toUint8Array } from './native';
 export {
   CONNECT_TIMEOUT_MS,
   PEER_CHANNEL_LABEL,
+  RTC_AUTHORIZE_MAX,
+  RTC_AUTHORIZE_SWEEP_INTERVAL_MS,
   RTC_AUTHORIZE_TTL_MS,
   RtcPeerManager,
   SESS_CHANNEL_LABEL,

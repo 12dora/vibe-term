@@ -129,10 +129,11 @@ describe('carrier switch with GatewaySession (no native)', () => {
       },
     });
     barrier.attachDirect(session, direct);
-    expect(session.activeCarrier).toBe(session.primary);
+    expect(session.activeCarrier).toBe(direct);
     remote.sendMessageBinary(
       Buffer.from([0, 0, 0, 1, 0, 0, 1, 0, ...new TextEncoder().encode('one')])
     );
+    expect(delivered).toEqual([]);
     barrier.handleAck(session, 1);
     expect(session.activeCarrier).toBe(direct);
     expect(delivered).toEqual(['one']);
@@ -242,7 +243,6 @@ describe.skipIf(!nativeMod)('rtc loopback (node-datachannel)', () => {
         candidate: JSON.stringify({ candidate, mid }),
       });
     });
-    const acceptP = left.acceptBrowser(rtcSession, sigNode);
     const dc = browserPc.createDataChannel(SESS_CHANNEL_LABEL);
     await new Promise<void>((resolve, reject) => {
       const timer = setTimeout(() => reject(new Error('browser local desc timeout')), 10_000);
@@ -266,6 +266,7 @@ describe.skipIf(!nativeMod)('rtc loopback (node-datachannel)', () => {
       fpBrowser,
     });
     if (!auth) throw new Error('authorizeBrowser returned null');
+    const acceptP = left.acceptBrowser(rtcSession, sigNode);
     await new Promise<void>((resolve, reject) => {
       const timer = setTimeout(() => reject(new Error('sess open timeout')), 15_000);
       dc.onOpen(() => {

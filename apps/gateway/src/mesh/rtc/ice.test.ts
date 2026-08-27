@@ -11,14 +11,58 @@ import {
 } from './ice';
 
 describe('ice helpers', () => {
-  test('collects stun and turn urls', () => {
+  test('collects stun urls and structured TURN IceServer entries', () => {
     expect(collectIceServers({ stun: ['stun:a:1'], turn: null })).toEqual(['stun:a:1']);
     expect(
       collectIceServers({
         stun: ['stun:a:1'],
         turn: { url: 'turn:b:3478', username: 'u', credential: 'p' },
       })
-    ).toEqual(['stun:a:1', 'turn:b:3478']);
+    ).toEqual([
+      'stun:a:1',
+      { hostname: 'b', port: 3478, username: 'u', password: 'p', relayType: 'TurnUdp' },
+    ]);
+    expect(
+      collectIceServers({
+        stun: [],
+        turn: {
+          url: 'turns:relay.example:5349?transport=tcp',
+          username: 'u',
+          credential: 'secret',
+        },
+      })
+    ).toEqual([
+      {
+        hostname: 'relay.example',
+        port: 5349,
+        username: 'u',
+        password: 'secret',
+        relayType: 'TurnTls',
+      },
+    ]);
+    expect(
+      collectIceServers({
+        stun: [],
+        turn: { url: 'turn:nat.example:3478?transport=tcp', username: 'n', credential: 'c' },
+      })
+    ).toEqual([
+      { hostname: 'nat.example', port: 3478, username: 'n', password: 'c', relayType: 'TurnTcp' },
+    ]);
+    expect(
+      collectIceServers({
+        stun: ['stun:a:1'],
+        turn: {
+          hostname: 'kept.example',
+          port: 3478,
+          username: 'u',
+          password: 'p',
+          relayType: 'TurnUdp',
+        },
+      })
+    ).toEqual([
+      'stun:a:1',
+      { hostname: 'kept.example', port: 3478, username: 'u', password: 'p', relayType: 'TurnUdp' },
+    ]);
     expect(buildRtcIceConfig({ stun: ['stun:a:1'], turn: null }).iceServers).toEqual(['stun:a:1']);
   });
 

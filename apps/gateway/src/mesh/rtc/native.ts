@@ -3,13 +3,23 @@ export type DtlsFingerprint = {
   value: string;
 };
 
+export type IceRelayType = 'TurnUdp' | 'TurnTcp' | 'TurnTls';
+
+export type IceServer = {
+  hostname: string;
+  port: number;
+  username?: string;
+  password?: string;
+  relayType?: IceRelayType;
+};
+
 export type IceServerConfig = {
   stun: string[];
   turn: unknown;
 };
 
 export type RtcIceConfig = {
-  iceServers: unknown[];
+  iceServers: Array<string | IceServer>;
   enableIceUdpMux?: boolean;
   bindAddress?: string;
   certificatePemFile?: string;

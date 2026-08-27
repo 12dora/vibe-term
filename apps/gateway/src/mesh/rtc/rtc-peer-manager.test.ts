@@ -7,7 +7,7 @@ import type { RtcSignalMessage } from '../mesh-deps';
 import { seedNodeIdentity, seedUser } from '../test-support';
 import { PeerHandshakeError } from '../types';
 import type { RtcSignaling } from './ice';
-import { RtcPeerManager, SESS_CHANNEL_LABEL } from './rtc-peer-manager';
+import { RTC_AUTHORIZE_MAX, RtcPeerManager, SESS_CHANNEL_LABEL } from './rtc-peer-manager';
 import { type FakePeerConnection, createFakeNativeModule } from './test-fakes';
 
 function loopbackSignaling(): [RtcSignaling, RtcSignaling] {
@@ -185,8 +185,6 @@ describe('RtcPeerManager', () => {
         candidate: JSON.stringify({ candidate, mid }),
       });
     });
-    const acceptP = left.acceptBrowser(rtcSession, sigNode);
-    const dc = browserPc.createDataChannel(SESS_CHANNEL_LABEL);
     const fpBrowser = normalizeFingerprint(browserPc.fingerprint);
     const auth = await left.authorizeBrowser({
       rtcSession,
@@ -197,6 +195,8 @@ describe('RtcPeerManager', () => {
     expect(auth).not.toBeNull();
     expect(auth?.fpNode.algorithm).toBe('sha-256');
     expect(auth?.nonce.byteLength).toBe(32);
+    const acceptP = left.acceptBrowser(rtcSession, sigNode);
+    const dc = browserPc.createDataChannel(SESS_CHANNEL_LABEL);
 
     await new Promise<void>((resolve, reject) => {
       const timer = setTimeout(() => reject(new Error('sess open timeout')), 2000);
@@ -209,6 +209,8 @@ describe('RtcPeerManager', () => {
     const accepted = await acceptP;
     expect(accepted.uid).toBe('user-1');
     expect(accepted.carrier.send(new Uint8Array([1]))).toBe('sent');
+    accepted.carrier.close(1000, 'done');
+    expect((accepted.pc as FakePeerConnection).closed).toBe(true);
   });
 
   test('browser sess rejects a bad nonce', async () => {
@@ -235,16 +237,139 @@ describe('RtcPeerManager', () => {
         sdp: JSON.stringify({ type, sdp }),
       });
     });
-    const acceptP = left.acceptBrowser(rtcSession, sigNode);
-    const dc = browserPc.createDataChannel(SESS_CHANNEL_LABEL);
     await left.authorizeBrowser({
       rtcSession,
       uid: 'user-1',
       via: 'self',
       fpBrowser: normalizeFingerprint(browserPc.fingerprint),
     });
+    const acceptP = left.acceptBrowser(rtcSession, sigNode);
+    const dc = browserPc.createDataChannel(SESS_CHANNEL_LABEL);
     await new Promise<void>((resolve) => dc.onOpen(() => resolve()));
     dc.sendMessage(JSON.stringify({ nonce: encodeBase64url(new Uint8Array(32)) }));
     await expect(acceptP).rejects.toBeInstanceOf(PeerHandshakeError);
+  });
+
+  test('acceptBrowser rejects sessions that were never authorized', async () => {
+    const { left, fake } = setup();
+    await left.ready();
+    const [sigNode] = loopbackSignaling();
+    const before = fake.connections.length;
+    await expect(left.acceptBrowser('no-such-session', sigNode)).rejects.toBeInstanceOf(
+      PeerHandshakeError
+    );
+    expect(fake.connections.length).toBe(before);
+  });
+
+  test('authorizeBrowser refuses more than the global registry cap', async () => {
+    const { left } = setup();
+    await left.ready();
+    expect(RTC_AUTHORIZE_MAX).toBe(64);
+    const fp = { algorithm: 'sha-256', value: 'AA' };
+    const first = await left.authorizeBrowser({
+      rtcSession: 'cap-0',
+      uid: 'user-1',
+      via: 'self',
+      fpBrowser: fp,
+    });
+    expect(first).not.toBeNull();
+    for (let i = 1; i < RTC_AUTHORIZE_MAX; i++) {
+      const auth = await left.authorizeBrowser({
+        rtcSession: `cap-${i}`,
+        uid: 'user-1',
+        via: 'self',
+        fpBrowser: fp,
+      });
+      expect(auth).not.toBeNull();
+    }
+    const overflow = await left.authorizeBrowser({
+      rtcSession: 'cap-overflow',
+      uid: 'user-1',
+      via: 'self',
+      fpBrowser: fp,
+    });
+    expect(overflow).toBeNull();
+    const refresh = await left.authorizeBrowser({
+      rtcSession: 'cap-0',
+      uid: 'user-1',
+      via: 'self',
+      fpBrowser: fp,
+    });
+    expect(refresh).not.toBeNull();
+  });
+
+  test('TTL sweep timer closes expired unused records', async () => {
+    const { db, close } = createMigratedAuthDb();
+    fixtures.push({ close });
+    const store = new UserStore(db);
+    seedUser(store);
+    const identity = seedNodeIdentity(store, 'user-1');
+    const fake = createFakeNativeModule();
+    let now = 1_000;
+    const mgr = new RtcPeerManager({
+      loadNative: async () => fake.module,
+      iceConfigProvider: () => ({ stun: [], turn: null }),
+      identity,
+      userStore: store,
+      now: () => now,
+      authorizeTtlMs: 50,
+      sweepIntervalMs: 15,
+    });
+    fixtures.push({ close: () => mgr.close() });
+    await mgr.ready();
+    const auth = await mgr.authorizeBrowser({
+      rtcSession: 'ttl-sess',
+      uid: 'user-1',
+      via: 'self',
+      fpBrowser: { algorithm: 'sha-256', value: 'AA' },
+    });
+    expect(auth).not.toBeNull();
+    const pc = fake.connections.find((row) => row.name.includes('ttl-sess'));
+    expect(pc).toBeTruthy();
+    now = 1_200;
+    await new Promise((resolve) => setTimeout(resolve, 40));
+    expect(pc?.closed).toBe(true);
+    const [sigNode] = loopbackSignaling();
+    await expect(mgr.acceptBrowser('ttl-sess', sigNode)).rejects.toBeInstanceOf(PeerHandshakeError);
+  });
+
+  test('successful nonce consume removes the authorize record', async () => {
+    const { left, fake } = setup();
+    await left.ready();
+    const [sigNode, sigBrowser] = loopbackSignaling();
+    const rtcSession = 'consume-once';
+    const native = fake.module;
+    const browserPc = new native.PeerConnection('browser', {
+      iceServers: [],
+    }) as FakePeerConnection;
+    fixtures.push({ close: () => browserPc.close() });
+    sigBrowser.onMessage((msg) => {
+      if (msg.sdp) {
+        const parsed = JSON.parse(msg.sdp) as { type: string; sdp: string };
+        browserPc.setRemoteDescription(parsed.sdp, parsed.type);
+      }
+    });
+    browserPc.onLocalDescription((sdp, type) => {
+      sigBrowser.send({
+        rtcSession,
+        from: 'browser',
+        to: left.identity.nodeId,
+        sdp: JSON.stringify({ type, sdp }),
+      });
+    });
+    const auth = await left.authorizeBrowser({
+      rtcSession,
+      uid: 'user-1',
+      via: 'self',
+      fpBrowser: normalizeFingerprint(browserPc.fingerprint),
+    });
+    const acceptP = left.acceptBrowser(rtcSession, sigNode);
+    const dc = browserPc.createDataChannel(SESS_CHANNEL_LABEL);
+    await new Promise<void>((resolve) => dc.onOpen(() => resolve()));
+    dc.sendMessage(JSON.stringify({ nonce: encodeBase64url(auth?.nonce ?? new Uint8Array()) }));
+    await acceptP;
+    await expect(left.acceptBrowser(rtcSession, sigNode)).rejects.toBeInstanceOf(
+      PeerHandshakeError
+    );
   });
 });

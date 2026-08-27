@@ -1,31 +1,135 @@
 import type { RtcSignalMessage } from '../mesh-deps';
-import type { IceServerConfig, RtcIceConfig } from './native';
+import type { IceRelayType, IceServer, IceServerConfig, RtcIceConfig } from './native';
 
 export type SdpSignal = { type: string; sdp: string };
 export type CandidateSignal = { candidate: string; mid: string };
 
-export function collectIceServers(cfg: IceServerConfig): unknown[] {
-  const servers: unknown[] = [...cfg.stun];
-  const turn = cfg.turn;
-  if (!turn) return servers;
-  if (typeof turn === 'string') {
-    servers.push(turn);
-    return servers;
+const DEFAULT_TURN_PORT = 3478;
+const DEFAULT_TURNS_PORT = 5349;
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function relayTypeFor(scheme: string, transport: string | undefined): IceRelayType {
+  if (scheme === 'turns' || scheme === 'stuns') return 'TurnTls';
+  if (transport === 'tcp') return 'TurnTcp';
+  return 'TurnUdp';
+}
+
+function splitHostPort(hostport: string): { hostname: string; port: number | null } {
+  if (hostport.startsWith('[')) {
+    const end = hostport.indexOf(']');
+    if (end < 0) return { hostname: hostport, port: null };
+    const hostname = hostport.slice(1, end);
+    const rest = hostport.slice(end + 1);
+    if (rest.startsWith(':')) {
+      const port = Number(rest.slice(1));
+      return { hostname, port: Number.isFinite(port) ? port : null };
+    }
+    return { hostname, port: null };
   }
-  if (Array.isArray(turn)) {
-    for (const item of turn) servers.push(item);
-    return servers;
+  const colon = hostport.lastIndexOf(':');
+  if (colon > 0 && hostport.indexOf(':') === colon) {
+    const port = Number(hostport.slice(colon + 1));
+    if (Number.isFinite(port)) return { hostname: hostport.slice(0, colon), port };
   }
-  if (typeof turn === 'object') {
-    const rec = turn as Record<string, unknown>;
-    if (typeof rec.url === 'string') servers.push(rec.url);
-    else if (typeof rec.urls === 'string') servers.push(rec.urls);
-    else if (Array.isArray(rec.urls)) {
-      for (const url of rec.urls) servers.push(url);
-    } else if (typeof rec.hostname === 'string') {
-      servers.push(rec);
+  return { hostname: hostport, port: null };
+}
+
+export function parseTurnUri(url: string): IceServer | null {
+  const trimmed = url.trim();
+  const q = trimmed.indexOf('?');
+  const base = q >= 0 ? trimmed.slice(0, q) : trimmed;
+  const query = q >= 0 ? trimmed.slice(q + 1) : '';
+  const match = /^(turns?|stuns?):(.+)$/i.exec(base);
+  if (!match?.[1] || !match[2]) return null;
+  const scheme = match[1].toLowerCase();
+  const { hostname, port: parsedPort } = splitHostPort(match[2]);
+  if (!hostname) return null;
+  const params = new URLSearchParams(query);
+  const transport = params.get('transport')?.toLowerCase() ?? undefined;
+  const defaultPort =
+    scheme === 'turns' || scheme === 'stuns' ? DEFAULT_TURNS_PORT : DEFAULT_TURN_PORT;
+  return {
+    hostname,
+    port: parsedPort ?? defaultPort,
+    relayType: relayTypeFor(scheme, transport),
+  };
+}
+
+function credentialsOf(rec: Record<string, unknown>): { username?: string; password?: string } {
+  const username = typeof rec.username === 'string' ? rec.username : undefined;
+  const password =
+    typeof rec.password === 'string'
+      ? rec.password
+      : typeof rec.credential === 'string'
+        ? rec.credential
+        : undefined;
+  return { username, password };
+}
+
+function withCredentials(server: IceServer, rec: Record<string, unknown>): IceServer {
+  const { username, password } = credentialsOf(rec);
+  return {
+    ...server,
+    ...(username !== undefined ? { username } : {}),
+    ...(password !== undefined ? { password } : {}),
+  };
+}
+
+function fromStructured(rec: Record<string, unknown>): IceServer | null {
+  if (typeof rec.hostname !== 'string' || rec.hostname.length === 0) return null;
+  const port =
+    typeof rec.port === 'number' && Number.isFinite(rec.port) ? rec.port : DEFAULT_TURN_PORT;
+  const relayType =
+    rec.relayType === 'TurnUdp' || rec.relayType === 'TurnTcp' || rec.relayType === 'TurnTls'
+      ? rec.relayType
+      : undefined;
+  return withCredentials(
+    {
+      hostname: rec.hostname,
+      port,
+      ...(relayType ? { relayType } : {}),
+    },
+    rec
+  );
+}
+
+function fromUrl(url: string, rec?: Record<string, unknown>): string | IceServer {
+  const parsed = parseTurnUri(url);
+  if (!parsed) return url;
+  if (!rec) return parsed.relayType ? parsed : url;
+  const creds = credentialsOf(rec);
+  if (!creds.username && !creds.password) return url;
+  return withCredentials(parsed, rec);
+}
+
+function collectTurnEntry(value: unknown): Array<string | IceServer> {
+  if (typeof value === 'string') return [fromUrl(value)];
+  if (Array.isArray(value)) {
+    const out: Array<string | IceServer> = [];
+    for (const item of value) out.push(...collectTurnEntry(item));
+    return out;
+  }
+  if (!isRecord(value)) return [];
+  const structured = fromStructured(value);
+  if (structured) return [structured];
+  const urls: string[] = [];
+  if (typeof value.url === 'string') urls.push(value.url);
+  else if (typeof value.urls === 'string') urls.push(value.urls);
+  else if (Array.isArray(value.urls)) {
+    for (const url of value.urls) {
+      if (typeof url === 'string') urls.push(url);
     }
   }
+  return urls.map((url) => fromUrl(url, value));
+}
+
+export function collectIceServers(cfg: IceServerConfig): Array<string | IceServer> {
+  const servers: Array<string | IceServer> = [...cfg.stun];
+  if (!cfg.turn) return servers;
+  servers.push(...collectTurnEntry(cfg.turn));
   return servers;
 }
 
