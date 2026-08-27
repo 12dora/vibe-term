@@ -1,7 +1,8 @@
 import { mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { type APIRequestContext, type Page, expect, test } from '@playwright/test';
+import { type Page, expect, test } from '@playwright/test';
+import { createLocalDevice, waitForCanvasTerminal } from './helpers/device';
 import { createSinglePaneSession, ensureCleanSession, tmux } from './helpers/tmux';
 
 // 终端文件链接：识别输出中的文件路径，结合授权根 + pane cwd 判定有效性，
@@ -13,44 +14,6 @@ type VisibleTextRange = {
   startCol: number;
   endCol: number;
 };
-
-async function createDevice(
-  request: APIRequestContext,
-  sessionName: string,
-  name: string
-): Promise<string> {
-  const createRes = await request.post('/api/devices', {
-    data: {
-      name,
-      type: 'local',
-      session: sessionName,
-      authMode: 'auto',
-    },
-  });
-  expect(createRes.ok()).toBeTruthy();
-  const created = (await createRes.json()) as { device: { id: string } };
-  return created.device.id;
-}
-
-async function waitForCanvasTerminal(page: Page): Promise<void> {
-  await expect(page.getByTestId('device-page')).toBeVisible();
-  await expect(page.locator('.xterm').first()).toBeVisible({ timeout: 20_000 });
-  await expect
-    .poll(
-      () =>
-        page.evaluate(() => {
-          return {
-            renderer: (window as any).__tmexE2eTerminalRenderer ?? null,
-            hasCanvas: Boolean(document.querySelector('.xterm canvas')),
-          };
-        }),
-      { timeout: 20_000 }
-    )
-    .toEqual({
-      renderer: 'canvas',
-      hasCanvas: true,
-    });
-}
 
 async function findVisibleTextRange(page: Page, needle: string): Promise<VisibleTextRange | null> {
   return page.evaluate((target) => {
@@ -162,7 +125,7 @@ test('terminal: 有效文件路径与 URL 画虚线下划线，修饰键点击�
   writeFileSync(join(sandbox, 'hello.txt'), 'hello from file link');
   createSinglePaneSession(sessionName);
 
-  const deviceId = await createDevice(request, sessionName, `e2e-file-links-${Date.now()}`);
+  const deviceId = await createLocalDevice(request, sessionName, `e2e-file-links-${Date.now()}`);
   const rootRes = await request.post('/api/files/roots', {
     data: { deviceId, path: sandbox, enabled: true },
   });
@@ -219,7 +182,11 @@ test('terminal: 相对路径基于 pane cwd 解析后画下划线', async ({ pag
   writeFileSync(join(sandbox, 'rel.txt'), 'rel');
   createSinglePaneSession(sessionName);
 
-  const deviceId = await createDevice(request, sessionName, `e2e-file-links-rel-${Date.now()}`);
+  const deviceId = await createLocalDevice(
+    request,
+    sessionName,
+    `e2e-file-links-rel-${Date.now()}`
+  );
   const rootRes = await request.post('/api/files/roots', {
     data: { deviceId, path: sandbox, enabled: true },
   });

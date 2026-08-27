@@ -8,7 +8,6 @@
 
 | 用例 | 现象 | 根因分析 |
 |---|---|---|
-| `issue45-mouse-coordinate-diagnostic.spec.ts` | `TypeError: fetch failed` | 测试硬编码 `http://localhost:19663`（dev 端口），依赖一个跑着的 dev gateway 实例；无 dev server 时必失败。应改用 e2e 自身的 gateway（`request` fixture / 动态端口） |
 | `mobile-terminal-interactions.spec.ts` ×4 | 等待 `editor-shortcut-ctrl-c` 超时（element not found） | 测试期望 `editor-shortcut-*` testid，但 DevicePage 的 ShortcutsBar 显式传 `idPrefix="terminal-shortcut"`（f0a3f3f1 起），且 ui store 默认 `inputMode='direct'`——干净 localStorage 下首屏不存在该 testid。疑似 testid 约定变更后测试未跟进 |
 | `mobile-settings.spec.ts` | `settings-enable-browser-bell-toast` 不可见超时 | 移动视口下该设置项未渲染/testid 缺失，待排查（与上一条同期出现） |
 | `settings-llm.spec.ts` | select 下拉选项 `Tavily` click 超时 | 下拉弹层在该流程下未出现，疑组件交互时序，待排查 |

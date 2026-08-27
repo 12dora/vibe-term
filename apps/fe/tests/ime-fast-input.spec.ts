@@ -1,4 +1,10 @@
-import { type APIRequestContext, expect, test, type Page } from '@playwright/test';
+import { expect, test } from '@playwright/test';
+import {
+  createLocalDevice,
+  focusTerminal,
+  readVisibleTerminalText,
+  waitForCanvasTerminal,
+} from './helpers/device';
 import { createSinglePaneSession, ensureCleanSession, tmux } from './helpers/tmux';
 
 // issue-45 bug 4-C e2e 骨架：模拟连续 5 个汉字的 IME 合成事件序列，断言终端 canvas
@@ -16,7 +22,7 @@ test(
     const sessionName = `tmex-e2e-ime-fast-input-${Date.now()}`;
     createSinglePaneSession(sessionName);
 
-    const deviceId = await createDevice(
+    const deviceId = await createLocalDevice(
       request,
       sessionName,
       `e2e-ime-fast-input-${Date.now()}`
@@ -25,7 +31,7 @@ test(
     try {
       await page.goto(`/devices/${deviceId}`);
       await waitForCanvasTerminal(page);
-      await focusTerminalTextarea(page);
+      await focusTerminal(page, { waitForTextarea: true });
 
       // 用 page.evaluate 派发合成 CompositionEvent 序列：每个汉字走 start → update(s) → end。
       // 字符序列「你好世界！」分 5 次 composition 周期连续触发，覆盖 bug 4-C 的 rAF 漏画场景。
@@ -61,61 +67,6 @@ test(
     }
   }
 );
-
-async function createDevice(
-  request: APIRequestContext,
-  sessionName: string,
-  name: string
-): Promise<string> {
-  const createRes = await request.post('/api/devices', {
-    data: { name, type: 'local', session: sessionName, authMode: 'auto' },
-  });
-  expect(createRes.ok()).toBeTruthy();
-  const created = (await createRes.json()) as { device: { id: string } };
-  return created.device.id;
-}
-
-async function waitForCanvasTerminal(page: Page): Promise<void> {
-  await expect(page.getByTestId('device-page')).toBeVisible();
-  await expect(page.locator('.xterm').first()).toBeVisible({ timeout: 20_000 });
-  await expect
-    .poll(
-      () =>
-        page.evaluate(() => ({
-          renderer: (window as any).__tmexE2eTerminalRenderer ?? null,
-          hasCanvas: Boolean(document.querySelector('.xterm canvas')),
-        })),
-      { timeout: 20_000 }
-    )
-    .toEqual({ renderer: 'canvas', hasCanvas: true });
-}
-
-async function focusTerminalTextarea(page: Page): Promise<void> {
-  await expect
-    .poll(
-      () =>
-        page.evaluate(() => Boolean((globalThis as any).__tmexE2eXterm?.textarea)),
-      { timeout: 15_000 }
-    )
-    .toBeTruthy();
-  await page.locator('.xterm').first().click();
-}
-
-async function readVisibleTerminalText(page: Page): Promise<string> {
-  return page.evaluate(() => {
-    const term = (window as any).__tmexE2eXterm;
-    if (!term) return '';
-    const buffer = term.buffer.active;
-    const start = buffer.viewportY;
-    const end = Math.min(buffer.length, start + term.rows);
-    const lines: string[] = [];
-    for (let y = start; y < end; y += 1) {
-      const line = buffer.getLine(y);
-      lines.push(line ? line.translateToString(false) : '');
-    }
-    return lines.join('\n');
-  });
-}
 
 function capturePaneText(sessionName: string): string {
   try {

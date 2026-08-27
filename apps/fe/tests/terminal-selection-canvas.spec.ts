@@ -1,4 +1,9 @@
-import { type APIRequestContext, expect, test, type Page } from '@playwright/test';
+import { type Page, expect, test } from '@playwright/test';
+import {
+  createLocalDevice,
+  readVisibleTerminalText,
+  waitForCanvasTerminal,
+} from './helpers/device';
 import {
   createSinglePaneSession,
   createTwoPaneSession,
@@ -17,64 +22,6 @@ type VisibleTextRange = {
   startCol: number;
   endCol: number;
 };
-
-async function createDevice(
-  request: APIRequestContext,
-  sessionName: string,
-  name: string
-): Promise<string> {
-  const createRes = await request.post('/api/devices', {
-    data: {
-      name,
-      type: 'local',
-      session: sessionName,
-      authMode: 'auto',
-    },
-  });
-  expect(createRes.ok()).toBeTruthy();
-  const created = (await createRes.json()) as { device: { id: string } };
-  return created.device.id;
-}
-
-async function waitForCanvasTerminal(page: Page): Promise<void> {
-  await expect(page.getByTestId('device-page')).toBeVisible();
-  await expect(page.locator('.xterm').first()).toBeVisible({ timeout: 20_000 });
-  await expect
-    .poll(
-      () =>
-        page.evaluate(() => {
-          return {
-            renderer: (window as any).__tmexE2eTerminalRenderer ?? null,
-            hasCanvas: Boolean(document.querySelector('.xterm canvas')),
-          };
-        }),
-      { timeout: 20_000 }
-    )
-    .toEqual({
-      renderer: 'canvas',
-      hasCanvas: true,
-    });
-}
-
-async function readVisibleTerminalText(page: Page): Promise<string> {
-  return page.evaluate(() => {
-    const term = (window as any).__tmexE2eXterm;
-    if (!term) {
-      return '';
-    }
-
-    const buffer = term.buffer.active;
-    const start = buffer.viewportY;
-    const end = Math.min(buffer.length, start + term.rows);
-    const lines: string[] = [];
-    for (let y = start; y < end; y += 1) {
-      const line = buffer.getLine(y);
-      lines.push(line ? line.translateToString(false) : '');
-    }
-
-    return lines.join('\n');
-  });
-}
 
 async function findVisibleTextRange(page: Page, needle: string): Promise<VisibleTextRange> {
   const match = await page.evaluate((target) => {
@@ -188,7 +135,7 @@ test('desktop: canvas selection supports drag, double click, triple click and co
   const sessionName = `tmex-e2e-canvas-selection-${Date.now()}`;
   createTwoPaneSession(sessionName);
 
-  const deviceId = await createDevice(
+  const deviceId = await createLocalDevice(
     request,
     sessionName,
     `e2e-canvas-selection-${Date.now()}`
@@ -235,7 +182,7 @@ test('desktop: pane switch, reconnect and resize should clear canvas selection s
   const { paneIds, windowIds } = createTwoWindowSession(sessionName);
   expect(paneIds.length >= 2).toBeTruthy();
 
-  const deviceId = await createDevice(
+  const deviceId = await createLocalDevice(
     request,
     sessionName,
     `e2e-canvas-selection-reset-${Date.now()}`
@@ -279,7 +226,7 @@ test('desktop: dragging outside viewport should auto scroll and extend canvas se
   const sessionName = `tmex-e2e-canvas-selection-autoscroll-${Date.now()}`;
   createTwoPaneSession(sessionName);
 
-  const deviceId = await createDevice(
+  const deviceId = await createLocalDevice(
     request,
     sessionName,
     `e2e-canvas-selection-autoscroll-${Date.now()}`
@@ -346,7 +293,7 @@ test('desktop: selection toolbar copies via GUI and copy shortcut clears selecti
   const sessionName = `tmex-e2e-canvas-selection-toolbar-${Date.now()}`;
   createSinglePaneSession(sessionName);
 
-  const deviceId = await createDevice(
+  const deviceId = await createLocalDevice(
     request,
     sessionName,
     `e2e-canvas-selection-toolbar-${Date.now()}`

@@ -1,7 +1,8 @@
 import { readFileSync, writeFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { type APIRequestContext, type Page, expect, test } from '@playwright/test';
+import { type Page, expect, test } from '@playwright/test';
+import { createLocalDevice, readVisibleTerminalText } from './helpers/device';
 import { ensureCleanSession, tmux } from './helpers/tmux';
 
 // 鼠标手势补全回归（plan-01）：
@@ -23,22 +24,6 @@ function readLog(logPath: string): string {
   } catch {
     return '';
   }
-}
-
-async function readVisibleTerminalText(page: Page): Promise<string> {
-  return page.evaluate(() => {
-    const term = (window as any).__tmexE2eXterm;
-    if (!term) return '';
-    const buffer = term.buffer.active;
-    const start = buffer.viewportY;
-    const end = Math.min(buffer.length, start + term.rows);
-    const lines: string[] = [];
-    for (let y = start; y < end; y += 1) {
-      const line = buffer.getLine(y);
-      lines.push(line ? line.translateToString(false) : '');
-    }
-    return lines.join('\n');
-  });
 }
 
 async function waitFeButtonTracking(page: Page): Promise<void> {
@@ -68,20 +53,6 @@ function createTuiSession(
   return { paneId, windowId };
 }
 
-async function createDevice(request: APIRequestContext, sessionName: string): Promise<string> {
-  const createRes = await request.post('/api/devices', {
-    data: {
-      name: `${sessionName}-dev`,
-      type: 'local',
-      session: sessionName,
-      authMode: 'auto',
-    },
-  });
-  expect(createRes.ok()).toBeTruthy();
-  const created = (await createRes.json()) as { device: { id: string } };
-  return created.device.id;
-}
-
 test('desktop: shift+left drag bypasses reporting into local selection', async ({
   page,
   request,
@@ -94,7 +65,7 @@ test('desktop: shift+left drag bypasses reporting into local selection', async (
       timeout: 20_000,
     })
     .toBe('1');
-  const deviceId = await createDevice(request, sessionName);
+  const deviceId = await createLocalDevice(request, sessionName);
 
   try {
     await page.goto(`/devices/${deviceId}/windows/${windowId}/panes/${encodeURIComponent(paneId)}`);
@@ -149,7 +120,7 @@ test('desktop: bare hover motion reaches TUI under 1003 any-event tracking', asy
   await expect
     .poll(() => tmux(`display-message -p -t ${paneId} '#{mouse_all_flag}'`), { timeout: 20_000 })
     .toBe('1');
-  const deviceId = await createDevice(request, sessionName);
+  const deviceId = await createLocalDevice(request, sessionName);
 
   try {
     await page.goto(`/devices/${deviceId}/windows/${windowId}/panes/${encodeURIComponent(paneId)}`);

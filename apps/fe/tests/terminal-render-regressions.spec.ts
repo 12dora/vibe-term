@@ -2,6 +2,7 @@ import { mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { type Page, expect, test } from '@playwright/test';
+import { createLocalDevice, readTerminalLines } from './helpers/device';
 import {
   createSinglePaneSession,
   createTwoWindowSession,
@@ -26,18 +27,7 @@ async function readTerminalSize(page: Page): Promise<{ cols: number; rows: numbe
 
 // 前端终端"屏幕"（buffer 末尾 rows 行，即 tmux 视口对应区域）逐行文本
 async function readScreenLines(page: Page): Promise<string[]> {
-  return page.evaluate(() => {
-    const term = (window as any).__tmexE2eXterm;
-    if (!term) return [];
-    const buffer = term.buffer.active;
-    const start = buffer.baseY;
-    const lines: string[] = [];
-    for (let y = start; y < start + term.rows; y += 1) {
-      const line = buffer.getLine(y);
-      lines.push(line ? line.translateToString(true).trimEnd() : '');
-    }
-    return lines;
-  });
+  return readTerminalLines(page, { origin: 'screen', trim: true });
 }
 
 // ghostty-terminal 无 buffer.cursorY 兼容属性，读渲染缓存的视口光标（滚动在底部时
@@ -106,19 +96,6 @@ function renderSideBySide(feLines: string[], tmuxLines: string[], rows: number):
     );
   }
   return out.join('\n');
-}
-
-async function createDevice(
-  request: Parameters<Parameters<typeof test>[2]>[0]['request'],
-  name: string,
-  sessionName: string
-): Promise<string> {
-  const createRes = await request.post('/api/devices', {
-    data: { name, type: 'local', session: sessionName, authMode: 'auto' },
-  });
-  expect(createRes.ok()).toBeTruthy();
-  const created = (await createRes.json()) as { device: { id: string } };
-  return created.device.id;
 }
 
 // 截图终端区域并统计"非众数色"像素比例（在浏览器内解码，免 PNG 依赖）。
@@ -219,7 +196,7 @@ test('bug1: cold start onto a single-pane window renders existing content', asyn
   );
   await expect.poll(() => capturePaneScreen(paneId).join('\n')).toContain('COLD_START_MARKER');
 
-  const deviceId = await createDevice(request, `e2e-coldstart-${Date.now()}`, sessionName);
+  const deviceId = await createLocalDevice(request, sessionName, `e2e-coldstart-${Date.now()}`);
 
   try {
     // 冷启动：首次导航直落具体 window/pane 深链接（刷新/书签/标签页恢复场景）
@@ -271,7 +248,7 @@ test('bug2: switching to a single-pane window keeps inline TUI aligned', async (
   const paneB = paneIds[1] as string;
   const windowB = windowIds[1] as string;
 
-  const deviceId = await createDevice(request, `e2e-tui-align-${Date.now()}`, sessionName);
+  const deviceId = await createLocalDevice(request, sessionName, `e2e-tui-align-${Date.now()}`);
 
   try {
     await page.goto(`/devices/${deviceId}`);
@@ -363,7 +340,7 @@ test('bug3: full-viewport inline TUI redraw stays aligned', async ({ page, reque
   const sessionName = `tmex-e2e-fullredraw-${Date.now()}`;
   const { paneId } = createSinglePaneSession(sessionName);
 
-  const deviceId = await createDevice(request, `e2e-fullredraw-${Date.now()}`, sessionName);
+  const deviceId = await createLocalDevice(request, sessionName, `e2e-fullredraw-${Date.now()}`);
 
   try {
     await page.goto(`/devices/${deviceId}`);
@@ -442,7 +419,7 @@ test('bug3b: stdin-driven full-viewport inline TUI redraw stays aligned (no resi
   const sessionName = `tmex-e2e-stdinredraw-${Date.now()}`;
   const { paneId } = createSinglePaneSession(sessionName);
 
-  const deviceId = await createDevice(request, `e2e-stdinredraw-${Date.now()}`, sessionName);
+  const deviceId = await createLocalDevice(request, sessionName, `e2e-stdinredraw-${Date.now()}`);
 
   try {
     await page.goto(`/devices/${deviceId}`);
@@ -505,7 +482,7 @@ test('bug4: remote resize (another client) rebuilds local screen aligned', async
   const sessionName = `tmex-e2e-remote-resize-${Date.now()}`;
   const { paneId, windowId } = createSinglePaneSession(sessionName);
 
-  const deviceId = await createDevice(request, `e2e-remote-resize-${Date.now()}`, sessionName);
+  const deviceId = await createLocalDevice(request, sessionName, `e2e-remote-resize-${Date.now()}`);
 
   try {
     await page.goto(`/devices/${deviceId}`);

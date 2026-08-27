@@ -1,5 +1,6 @@
-import { type APIRequestContext, expect, test, type Page } from '@playwright/test';
-import { createSinglePaneSession, ensureCleanSession, tmux } from './helpers/tmux';
+import { type Page, expect, test } from '@playwright/test';
+import { createLocalDevice } from './helpers/device';
+import { createSinglePaneSession, ensureCleanSession } from './helpers/tmux';
 import { KIND, decodeEnvelope, decodeSiteThemeUpdateS2C } from './helpers/ws-borsh';
 
 // 跨设备主题广播 e2e：并发 last-writer-wins + 离线 fallback。
@@ -24,19 +25,6 @@ async function setThemeViaUI(page: Page, theme: 'dark' | 'light'): Promise<void>
   await expect(page.locator('html')).toHaveClass(
     wantDark ? /\bdark\b/ : /^[^]*$(?<!\bdark\b)/
   );
-}
-
-async function createDevice(
-  request: APIRequestContext,
-  sessionName: string,
-  name: string
-): Promise<string> {
-  const createRes = await request.post('/api/devices', {
-    data: { name, type: 'local', session: sessionName, authMode: 'auto' },
-  });
-  expect(createRes.ok()).toBeTruthy();
-  const created = (await createRes.json()) as { device: { id: string } };
-  return created.device.id;
 }
 
 async function readTerminalBackground(page: Page): Promise<string | null> {
@@ -82,7 +70,7 @@ test('theme-broadcast: concurrent last-writer-wins — two pages toggle differen
   const sessionName = `tmex-e2e-theme-lww-${Date.now()}`;
   createSinglePaneSession(sessionName);
 
-  const deviceId = await createDevice(request, sessionName, `e2e-theme-lww-${Date.now()}`);
+  const deviceId = await createLocalDevice(request, sessionName, `e2e-theme-lww-${Date.now()}`);
 
   const pageA = await browser.newPage({ viewport: { width: 1280, height: 800 } });
   const contextB = await browser.newContext({ viewport: { width: 1280, height: 800 } });
@@ -137,7 +125,7 @@ test('theme-broadcast: offline fallback — toggle while offline, sync after rec
   const sessionName = `tmex-e2e-theme-offline-${Date.now()}`;
   createSinglePaneSession(sessionName);
 
-  const deviceId = await createDevice(request, sessionName, `e2e-theme-offline-${Date.now()}`);
+  const deviceId = await createLocalDevice(request, sessionName, `e2e-theme-offline-${Date.now()}`);
 
   const pageA = await browser.newPage({ viewport: { width: 1280, height: 800 } });
   const contextB = await browser.newContext({ viewport: { width: 1280, height: 800 } });
@@ -193,7 +181,7 @@ test('theme-broadcast: serverTimestamp strictly monotonic across rapid toggles',
   const sessionName = `tmex-e2e-theme-ts-${Date.now()}`;
   createSinglePaneSession(sessionName);
 
-  const deviceId = await createDevice(request, sessionName, `e2e-theme-ts-${Date.now()}`);
+  const deviceId = await createLocalDevice(request, sessionName, `e2e-theme-ts-${Date.now()}`);
 
   const page = await browser.newPage({ viewport: { width: 1280, height: 800 } });
   const receiver = attachSiteThemeReceiver(page);

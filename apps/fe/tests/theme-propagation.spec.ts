@@ -1,5 +1,5 @@
-import { type APIRequestContext, expect, test, type Page } from '@playwright/test';
-import { execSync } from 'node:child_process';
+import { type Page, expect, test } from '@playwright/test';
+import { createLocalDevice } from './helpers/device';
 import { createSinglePaneSession, ensureCleanSession, tmux } from './helpers/tmux';
 import { KIND, decodeEnvelope, decodeSiteThemeUpdateS2C } from './helpers/ws-borsh';
 
@@ -27,19 +27,6 @@ async function setThemeViaUI(page: Page, theme: 'dark' | 'light'): Promise<void>
   await expect(page.locator('html')).toHaveClass(
     wantDark ? /\bdark\b/ : /^[^]*$(?<!\bdark\b)/
   );
-}
-
-async function createDevice(
-  request: APIRequestContext,
-  sessionName: string,
-  name: string
-): Promise<string> {
-  const createRes = await request.post('/api/devices', {
-    data: { name, type: 'local', session: sessionName, authMode: 'auto' },
-  });
-  expect(createRes.ok()).toBeTruthy();
-  const created = (await createRes.json()) as { device: { id: string } };
-  return created.device.id;
 }
 
 async function readTerminalBackground(page: Page): Promise<string | null> {
@@ -85,7 +72,7 @@ test('theme: single page — toggle dark/light flips xterm background color', as
   const sessionName = `tmex-e2e-theme-single-${Date.now()}`;
   createSinglePaneSession(sessionName);
 
-  const deviceId = await createDevice(request, sessionName, `e2e-theme-single-${Date.now()}`);
+  const deviceId = await createLocalDevice(request, sessionName, `e2e-theme-single-${Date.now()}`);
 
   try {
     await request.post('/api/settings/theme', { data: { theme: 'dark' } });
@@ -124,7 +111,7 @@ test('theme: gateway updates tmux window-style to match site theme', async ({
   const sessionName = `tmex-e2e-theme-wstyle-${Date.now()}`;
   createSinglePaneSession(sessionName);
 
-  const deviceId = await createDevice(request, sessionName, `e2e-theme-wstyle-${Date.now()}`);
+  const deviceId = await createLocalDevice(request, sessionName, `e2e-theme-wstyle-${Date.now()}`);
 
   try {
     await request.post('/api/settings/theme', { data: { theme: 'light' } });
@@ -170,77 +157,6 @@ test('theme: gateway updates tmux window-style to match site theme', async ({
   }
 });
 
-test.fixme('theme: OSC 11 query in pane gets tmux reply with current theme bg color', async ({
-  page,
-  request,
-}) => {
-  // tmux 原生代答 OSC 11，代答颜色取自 window-style bg。切主题后 window-style 更新，
-  // 新的 OSC 11 查询应得到新颜色。capture-pane 可捕获回复字节（tmux 将回复写入 pane 输出流）。
-  // 注意：gateway signalThemeChange 会向 pane stdin 注入 ESC[?997;2n，shell 会将其解释为
-  // 命令文本。故先发 C-c 清行，再启动 mock TUI（mock TUI 用 os.write 直接写 stdout，不走 shell）。
-  const sessionName = `tmex-e2e-theme-osc11-${Date.now()}`;
-  createSinglePaneSession(sessionName);
-
-  const deviceId = await createDevice(request, sessionName, `e2e-theme-osc11-${Date.now()}`);
-
-  const mockTuiPath = `/tmp/tmex-osc11-mock-${Date.now()}.py`;
-  const fs = await import('node:fs');
-  fs.writeFileSync(mockTuiPath, [
-    'import sys, os, time',
-    'time.sleep(1)',
-    'os.write(1, b"\\x1b]11;?\\x07")',
-    'time.sleep(2)',
-    'sys.stdout.buffer.write(b"DONE\\n")',
-    'sys.stdout.buffer.flush()',
-    'time.sleep(60)',
-  ].join('\n'));
-
-  function runMockTuiAndCapture(): string {
-    tmux(`send-keys -t ${sessionName}.0 C-c`);
-    tmux(`send-keys -t ${sessionName}.0 C-u`);
-    tmux(`send-keys -t ${sessionName}.0 "python3 ${mockTuiPath}" C-m`);
-    const deadline = Date.now() + 10_000;
-    let cap = '';
-    while (Date.now() < deadline) {
-      try {
-        cap = tmux(`capture-pane -p -e -t ${sessionName}.0`);
-        if (cap.includes('DONE')) return cap;
-      } catch {}
-      execSync('sleep 0.5');
-    }
-    return cap || tmux(`capture-pane -p -e -t ${sessionName}.0`);
-  }
-
-  try {
-    await request.post('/api/settings/theme', { data: { theme: 'dark' } });
-    await page.goto(`/devices/${deviceId}`);
-    await expect(page.getByTestId('device-page')).toBeVisible();
-    await expect(page.locator('.xterm').first()).toBeVisible({ timeout: 20_000 });
-    await page.waitForTimeout(3_000);
-
-    const darkCapture = runMockTuiAndCapture();
-    const darkReply = darkCapture.match(/11;rgb:([0-9a-f]{4})\/([0-9a-f]{4})\/([0-9a-f]{4})/);
-    expect(darkReply).toBeTruthy();
-
-    await request.post('/api/settings/theme', { data: { theme: 'light' } });
-    await page.waitForTimeout(2_000);
-
-    const lightCapture = runMockTuiAndCapture();
-    const lightReply = lightCapture.match(/11;rgb:([0-9a-f]{4})\/([0-9a-f]{4})\/([0-9a-f]{4})/);
-    expect(lightReply).toBeTruthy();
-
-    const darkR = darkReply![1]!.slice(0, 2);
-    const lightR = lightReply![1]!.slice(0, 2);
-    expect(darkR).not.toBe(lightR);
-  } finally {
-    try { tmux(`send-keys -t ${sessionName}.0 C-c`); } catch {}
-    await request.delete(`/api/devices/${deviceId}`);
-    await request.post('/api/settings/theme', { data: { theme: 'dark' } });
-    ensureCleanSession(sessionName);
-    try { fs.unlinkSync(mockTuiPath); } catch {}
-  }
-});
-
 test('theme: cross-page — A toggles theme, B syncs within 1s via WS broadcast', async ({
   browser,
   request,
@@ -248,7 +164,7 @@ test('theme: cross-page — A toggles theme, B syncs within 1s via WS broadcast'
   const sessionName = `tmex-e2e-theme-cross-${Date.now()}`;
   createSinglePaneSession(sessionName);
 
-  const deviceId = await createDevice(request, sessionName, `e2e-theme-cross-${Date.now()}`);
+  const deviceId = await createLocalDevice(request, sessionName, `e2e-theme-cross-${Date.now()}`);
 
   const pageA = await browser.newPage({ viewport: { width: 1280, height: 800 } });
   const contextB = await browser.newContext({ viewport: { width: 1280, height: 800 } });
@@ -301,7 +217,7 @@ test('theme: rapid theme toggle × browser resize keeps pane cols/rows stable', 
   const sessionName = `tmex-e2e-theme-resize-${Date.now()}`;
   const { paneId } = createSinglePaneSession(sessionName);
 
-  const deviceId = await createDevice(request, sessionName, `e2e-theme-resize-${Date.now()}`);
+  const deviceId = await createLocalDevice(request, sessionName, `e2e-theme-resize-${Date.now()}`);
 
   async function readTerminalSize(): Promise<{ cols: number; rows: number } | null> {
     return page.evaluate(() => {
