@@ -20,6 +20,8 @@ export const I18N_RESOURCES = {
       "collapse": "Collapse",
       "refresh": "Refresh",
       "retry": "Retry",
+      "pageLoadFailed": "Failed to load this page.",
+      "pageLoadFailedHint": "Check your network connection, then retry.",
       "test": "Test",
       "send": "Send",
       "success": "Success",
@@ -208,6 +210,8 @@ export const I18N_RESOURCES = {
         "fontFamily": "Font",
         "preview": "Preview",
         "savedInBrowser": "These settings are saved in this browser only.",
+        "loading": "Loading terminal settings…",
+        "loadFailed": "Terminal settings failed to load.",
         "shortcuts": {
           "title": "Custom Shortcuts",
           "savedOnServer": "Saved on the server and shared across all your browsers — changes take effect after you click Save.",
@@ -327,6 +331,7 @@ export const I18N_RESOURCES = {
         "updateFailed": "Failed to update directory",
         "deleteFailed": "Failed to remove directory",
         "toggleFailed": "Failed to update directory",
+        "loadFailed": "Failed to load directories",
         "deleteTitle": "Remove directory?",
         "deleteDesc": "Remove \"{{path}}\" from the whitelist? Files under it will no longer be accessible."
       },
@@ -830,6 +835,9 @@ export const I18N_RESOURCES = {
         "viewState": "Status",
         "lastTriggered": "Last triggered: {{time}}",
         "neverTriggered": "Never triggered",
+        "everySeconds": "Every {{seconds}}s",
+        "unchangedFor": "Unchanged for {{minutes}} min",
+        "loadFailed": "Failed to load watch rules",
         "deleteTitle": "Delete this rule?",
         "deleteDesc": "\"{{name}}\" will be permanently deleted.",
         "deleteConfirm": "Delete"
@@ -908,7 +916,8 @@ export const I18N_RESOURCES = {
         "samples": "Recent samples",
         "samplesEmpty": "No samples yet",
         "hit": "hit",
-        "none": "—"
+        "none": "—",
+        "loadFailed": "Failed to load rule status"
       },
       "toast": {
         "created": "Watch rule created",
@@ -1033,6 +1042,8 @@ export const I18N_RESOURCES = {
       "collapse": "收起",
       "refresh": "刷新",
       "retry": "重试",
+      "pageLoadFailed": "页面加载失败。",
+      "pageLoadFailedHint": "请检查网络连接后重试。",
       "test": "测试",
       "send": "发送",
       "success": "成功",
@@ -1221,6 +1232,8 @@ export const I18N_RESOURCES = {
         "fontFamily": "字体",
         "preview": "预览",
         "savedInBrowser": "这些设置仅保存在当前浏览器中。",
+        "loading": "正在加载终端设置……",
+        "loadFailed": "终端设置加载失败。",
         "shortcuts": {
           "title": "自定义快捷键",
           "savedOnServer": "保存在服务器、多端共享——修改后需点「保存」才生效。",
@@ -1340,6 +1353,7 @@ export const I18N_RESOURCES = {
         "updateFailed": "更新目录失败",
         "deleteFailed": "移除目录失败",
         "toggleFailed": "更新目录失败",
+        "loadFailed": "加载目录列表失败",
         "deleteTitle": "移除目录？",
         "deleteDesc": "将「{{path}}」移出白名单？该目录下的文件将不再可访问。"
       },
@@ -1843,6 +1857,9 @@ export const I18N_RESOURCES = {
         "viewState": "状态",
         "lastTriggered": "最近触发：{{time}}",
         "neverTriggered": "从未触发",
+        "everySeconds": "每 {{seconds}} 秒采样",
+        "unchangedFor": "{{minutes}} 分钟无变化",
+        "loadFailed": "加载监控规则失败",
         "deleteTitle": "删除该规则？",
         "deleteDesc": "“{{name}}”将被永久删除。",
         "deleteConfirm": "删除"
@@ -1921,7 +1938,8 @@ export const I18N_RESOURCES = {
         "samples": "近期样本",
         "samplesEmpty": "暂无样本",
         "hit": "命中",
-        "none": "—"
+        "none": "—",
+        "loadFailed": "加载规则状态失败"
       },
       "toast": {
         "created": "监控规则已创建",
@@ -2046,6 +2064,8 @@ export const I18N_RESOURCES = {
       "collapse": "折りたたむ",
       "refresh": "更新",
       "retry": "再試行",
+      "pageLoadFailed": "このページの読み込みに失敗しました。",
+      "pageLoadFailedHint": "ネットワーク接続を確認してから再試行してください。",
       "test": "テスト",
       "send": "送信",
       "success": "成功",
@@ -2234,6 +2254,8 @@ export const I18N_RESOURCES = {
         "fontFamily": "フォント",
         "preview": "プレビュー",
         "savedInBrowser": "これらの設定はこのブラウザにのみ保存されます。",
+        "loading": "ターミナル設定を読み込み中…",
+        "loadFailed": "ターミナル設定の読み込みに失敗しました。",
         "shortcuts": {
           "title": "カスタムショートカット",
           "savedOnServer": "サーバーに保存され、すべてのブラウザで共有されます。変更は「保存」後に反映されます。",
@@ -2353,6 +2375,7 @@ export const I18N_RESOURCES = {
         "updateFailed": "ディレクトリの更新に失敗しました",
         "deleteFailed": "ディレクトリの削除に失敗しました",
         "toggleFailed": "ディレクトリの更新に失敗しました",
+        "loadFailed": "ディレクトリの読み込みに失敗しました",
         "deleteTitle": "ディレクトリを削除しますか？",
         "deleteDesc": "「{{path}}」をホワイトリストから削除しますか？配下のファイルにアクセスできなくなります。"
       },
@@ -2856,6 +2879,9 @@ export const I18N_RESOURCES = {
         "viewState": "状態",
         "lastTriggered": "最終トリガー：{{time}}",
         "neverTriggered": "未トリガー",
+        "everySeconds": "{{seconds}} 秒ごとにサンプリング",
+        "unchangedFor": "{{minutes}} 分間変化なし",
+        "loadFailed": "監視ルールの読み込みに失敗しました",
         "deleteTitle": "このルールを削除しますか？",
         "deleteDesc": "「{{name}}」は完全に削除されます。",
         "deleteConfirm": "削除"
@@ -2934,7 +2960,8 @@ export const I18N_RESOURCES = {
         "samples": "直近サンプル",
         "samplesEmpty": "サンプルなし",
         "hit": "ヒット",
-        "none": "—"
+        "none": "—",
+        "loadFailed": "ルール状態の読み込みに失敗しました"
       },
       "toast": {
         "created": "監視ルールを作成しました",
