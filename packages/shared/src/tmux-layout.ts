@@ -29,12 +29,181 @@ export interface ParsedWindowLayout {
   root: TmuxLayoutNode;
 }
 
-interface ParseState {
-  input: string;
-  pos: number;
+export type LayoutToken =
+  | { kind: 'number'; value: number }
+  | { kind: 'x' }
+  | { kind: 'comma' }
+  | { kind: 'open-row' }
+  | { kind: 'close-row' }
+  | { kind: 'open-column' }
+  | { kind: 'close-column' };
+
+export interface BuiltLayoutNode {
+  node: TmuxLayoutNode;
+  next: number;
+}
+
+interface LayoutBounds {
+  width: number;
+  height: number;
+  x: number;
+  y: number;
+  next: number;
 }
 
 const CHECKSUM_PATTERN = /^[0-9a-fA-F]{4}$/;
+
+const SINGLE_CHAR_TOKENS: Record<string, Exclude<LayoutToken, { kind: 'number' }>> = {
+  x: { kind: 'x' },
+  ',': { kind: 'comma' },
+  '{': { kind: 'open-row' },
+  '}': { kind: 'close-row' },
+  '[': { kind: 'open-column' },
+  ']': { kind: 'close-column' },
+};
+
+export function tokenizeLayoutBody(input: string): LayoutToken[] | null {
+  const tokens: LayoutToken[] = [];
+  let i = 0;
+  while (i < input.length) {
+    const code = input.charCodeAt(i);
+    if (code >= 48 && code <= 57) {
+      const start = i;
+      while (i < input.length) {
+        const digit = input.charCodeAt(i);
+        if (digit < 48 || digit > 57) {
+          break;
+        }
+        i += 1;
+      }
+      tokens.push({ kind: 'number', value: Number.parseInt(input.slice(start, i), 10) });
+      continue;
+    }
+    const token = SINGLE_CHAR_TOKENS[input[i]];
+    if (!token) {
+      return null;
+    }
+    tokens.push(token);
+    i += 1;
+  }
+  return tokens;
+}
+
+function expectNumber(tokens: LayoutToken[], pos: number): { value: number; next: number } | null {
+  const token = tokens[pos];
+  if (token?.kind !== 'number') {
+    return null;
+  }
+  return { value: token.value, next: pos + 1 };
+}
+
+function expectKind(tokens: LayoutToken[], pos: number, kind: LayoutToken['kind']): number | null {
+  return tokens[pos]?.kind === kind ? pos + 1 : null;
+}
+
+function parseLayoutBounds(tokens: LayoutToken[], pos: number): LayoutBounds | null {
+  const width = expectNumber(tokens, pos);
+  if (!width) {
+    return null;
+  }
+  const afterX = expectKind(tokens, width.next, 'x');
+  if (afterX === null) {
+    return null;
+  }
+  const height = expectNumber(tokens, afterX);
+  if (!height) {
+    return null;
+  }
+  const afterFirstComma = expectKind(tokens, height.next, 'comma');
+  if (afterFirstComma === null) {
+    return null;
+  }
+  const x = expectNumber(tokens, afterFirstComma);
+  if (!x) {
+    return null;
+  }
+  const afterSecondComma = expectKind(tokens, x.next, 'comma');
+  if (afterSecondComma === null) {
+    return null;
+  }
+  const y = expectNumber(tokens, afterSecondComma);
+  if (!y) {
+    return null;
+  }
+  return { width: width.value, height: height.value, x: x.value, y: y.value, next: y.next };
+}
+
+function parseSplitChildren(
+  tokens: LayoutToken[],
+  pos: number,
+  closer: 'close-row' | 'close-column'
+): { children: TmuxLayoutNode[]; next: number } | null {
+  const children: TmuxLayoutNode[] = [];
+  let cursor = pos;
+  for (;;) {
+    const child = buildLayoutNode(tokens, cursor);
+    if (!child) {
+      return null;
+    }
+    children.push(child.node);
+    cursor = child.next;
+    if (tokens[cursor]?.kind === 'comma') {
+      cursor += 1;
+      continue;
+    }
+    if (tokens[cursor]?.kind === closer) {
+      return { children, next: cursor + 1 };
+    }
+    return null;
+  }
+}
+
+export function buildLayoutNode(tokens: LayoutToken[], pos: number): BuiltLayoutNode | null {
+  const bounds = parseLayoutBounds(tokens, pos);
+  if (!bounds) {
+    return null;
+  }
+
+  const next = tokens[bounds.next];
+  if (next?.kind === 'comma') {
+    const paneNumId = expectNumber(tokens, bounds.next + 1);
+    if (!paneNumId) {
+      return null;
+    }
+    return {
+      node: {
+        type: 'leaf',
+        paneNumId: paneNumId.value,
+        width: bounds.width,
+        height: bounds.height,
+        x: bounds.x,
+        y: bounds.y,
+      },
+      next: paneNumId.next,
+    };
+  }
+
+  if (next?.kind === 'open-row' || next?.kind === 'open-column') {
+    const closer = next.kind === 'open-row' ? 'close-row' : 'close-column';
+    const split = parseSplitChildren(tokens, bounds.next + 1, closer);
+    if (!split || split.children.length < 2) {
+      return null;
+    }
+    return {
+      node: {
+        type: next.kind === 'open-row' ? 'row' : 'column',
+        width: bounds.width,
+        height: bounds.height,
+        x: bounds.x,
+        y: bounds.y,
+        children: split.children,
+      },
+      next: split.next,
+    };
+  }
+
+  return null;
+}
 
 export function parseWindowLayout(layout: string): ParsedWindowLayout | null {
   if (typeof layout !== 'string' || layout.length < 6) {
@@ -44,97 +213,15 @@ export function parseWindowLayout(layout: string): ParsedWindowLayout | null {
   if (!CHECKSUM_PATTERN.test(checksum) || layout[4] !== ',') {
     return null;
   }
-  const state: ParseState = { input: layout, pos: 5 };
-  const root = parseNode(state);
-  if (!root || state.pos !== layout.length) {
+  const tokens = tokenizeLayoutBody(layout.slice(5));
+  if (!tokens) {
     return null;
   }
-  return { checksum, root };
-}
-
-function parseNumber(state: ParseState): number | null {
-  const start = state.pos;
-  while (state.pos < state.input.length) {
-    const code = state.input.charCodeAt(state.pos);
-    if (code < 48 || code > 57) {
-      break;
-    }
-    state.pos += 1;
-  }
-  if (state.pos === start) {
+  const root = buildLayoutNode(tokens, 0);
+  if (!root || root.next !== tokens.length) {
     return null;
   }
-  return Number.parseInt(state.input.slice(start, state.pos), 10);
-}
-
-function consume(state: ParseState, char: string): boolean {
-  if (state.input[state.pos] !== char) {
-    return false;
-  }
-  state.pos += 1;
-  return true;
-}
-
-function parseNode(state: ParseState): TmuxLayoutNode | null {
-  const width = parseNumber(state);
-  if (width === null || !consume(state, 'x')) {
-    return null;
-  }
-  const height = parseNumber(state);
-  if (height === null || !consume(state, ',')) {
-    return null;
-  }
-  const x = parseNumber(state);
-  if (x === null || !consume(state, ',')) {
-    return null;
-  }
-  const y = parseNumber(state);
-  if (y === null) {
-    return null;
-  }
-
-  const next = state.input[state.pos];
-  if (next === ',') {
-    state.pos += 1;
-    const paneNumId = parseNumber(state);
-    if (paneNumId === null) {
-      return null;
-    }
-    return { type: 'leaf', paneNumId, width, height, x, y };
-  }
-
-  if (next === '{' || next === '[') {
-    const closer = next === '{' ? '}' : ']';
-    state.pos += 1;
-    const children: TmuxLayoutNode[] = [];
-    for (;;) {
-      const child = parseNode(state);
-      if (!child) {
-        return null;
-      }
-      children.push(child);
-      if (consume(state, ',')) {
-        continue;
-      }
-      if (consume(state, closer)) {
-        break;
-      }
-      return null;
-    }
-    if (children.length < 2) {
-      return null;
-    }
-    return {
-      type: next === '{' ? 'row' : 'column',
-      width,
-      height,
-      x,
-      y,
-      children,
-    };
-  }
-
-  return null;
+  return { checksum, root: root.node };
 }
 
 export function collectLayoutLeaves(root: TmuxLayoutNode): TmuxLayoutLeaf[] {

@@ -34,77 +34,86 @@ const SLASH = 47; // '/'
 
 const PROBE_TIMEOUT_MS = 5000;
 
-/**
- * 净化来自 shell / 外部来源的路径串：剥离 ANSI 转义（CSI、OSC）与控制字符，按换行拆分后
- * 优先返回最后一个绝对路径行（应对 banner 出现在路径前/后的污染），否则返回最后一个非空行
- * （如版本号）。用码点判断实现，避免源码中出现不可见控制字符。
- * 修 issue#28：交互式 shell 的 .zshrc 会向 stdout 注入控制序列，trim() 无法清除中间的控制字符。
- */
-export function sanitizeBunPath(raw: string): string {
+function skipCsi(raw: string, bracketIndex: number): number {
+  let i = bracketIndex;
+  while (i + 1 < raw.length) {
+    const c = raw.charCodeAt(i + 1);
+    i += 1;
+    if (c >= 64 && c <= 126) {
+      break;
+    }
+  }
+  return i;
+}
+
+function skipOsc(raw: string, bracketIndex: number): number {
+  let i = bracketIndex;
+  while (i + 1 < raw.length) {
+    const c = raw.charCodeAt(i + 1);
+    if (c === BEL) {
+      return i + 1;
+    }
+    if (c === ESC && raw.charCodeAt(i + 2) === ST_TAIL) {
+      return i + 2;
+    }
+    i += 1;
+  }
+  return i;
+}
+
+export function stripAnsiEscapes(raw: string): string {
   let stripped = '';
   for (let i = 0; i < raw.length; i += 1) {
     const code = raw.charCodeAt(i);
-    if (code === ESC) {
-      const next = raw.charCodeAt(i + 1);
-      if (next === CSI_OPEN) {
-        // CSI 序列：ESC '[' ... 终止字节(0x40-0x7e)，整段跳过。
-        i += 1;
-        while (i + 1 < raw.length) {
-          const c = raw.charCodeAt(i + 1);
-          i += 1;
-          if (c >= 64 && c <= 126) {
-            break;
-          }
-        }
-      } else if (next === OSC_OPEN) {
-        // OSC 序列：ESC ']' ... 以 BEL(0x07) 或 ST(ESC '\') 终止，整段跳过。
-        i += 1;
-        while (i + 1 < raw.length) {
-          const c = raw.charCodeAt(i + 1);
-          if (c === BEL) {
-            i += 1;
-            break;
-          }
-          if (c === ESC && raw.charCodeAt(i + 2) === ST_TAIL) {
-            i += 2;
-            break;
-          }
-          i += 1;
-        }
-      }
-      // CSI/OSC 已整段跳过；裸 ESC 或其它 ESC 序列直接丢弃 ESC。
+    if (code !== ESC) {
+      stripped += raw[i];
       continue;
     }
-    stripped += raw[i];
+    const next = raw.charCodeAt(i + 1);
+    if (next === CSI_OPEN) {
+      i = skipCsi(raw, i + 1);
+    } else if (next === OSC_OPEN) {
+      i = skipOsc(raw, i + 1);
+    }
   }
+  return stripped;
+}
 
+function stripControlChars(value: string): string {
+  let cleaned = '';
+  for (let i = 0; i < value.length; i += 1) {
+    const code = value.charCodeAt(i);
+    if (code <= 31 || code === DEL) {
+      continue;
+    }
+    cleaned += value[i];
+  }
+  return cleaned;
+}
+
+export function extractSanitizedLines(text: string): string[] {
   const lines: string[] = [];
   let current = '';
   const flush = (): void => {
-    let cleaned = '';
-    for (let i = 0; i < current.length; i += 1) {
-      const code = current.charCodeAt(i);
-      if (code <= 31 || code === DEL) {
-        continue;
-      }
-      cleaned += current[i];
-    }
-    cleaned = cleaned.trim();
+    const cleaned = stripControlChars(current).trim();
     if (cleaned.length > 0) {
       lines.push(cleaned);
     }
     current = '';
   };
-  for (let i = 0; i < stripped.length; i += 1) {
-    const code = stripped.charCodeAt(i);
+  for (let i = 0; i < text.length; i += 1) {
+    const code = text.charCodeAt(i);
     if (code === LF || code === CR) {
       flush();
       continue;
     }
-    current += stripped[i];
+    current += text[i];
   }
   flush();
+  return lines;
+}
 
+export function selectPreferredBunPath(lines: string[]): string {
   if (lines.length === 0) {
     return '';
   }
@@ -114,6 +123,16 @@ export function sanitizeBunPath(raw: string): string {
     }
   }
   return lines[lines.length - 1];
+}
+
+/**
+ * 净化来自 shell / 外部来源的路径串：剥离 ANSI 转义（CSI、OSC）与控制字符，按换行拆分后
+ * 优先返回最后一个绝对路径行（应对 banner 出现在路径前/后的污染），否则返回最后一个非空行
+ * （如版本号）。用码点判断实现，避免源码中出现不可见控制字符。
+ * 修 issue#28：交互式 shell 的 .zshrc 会向 stdout 注入控制序列，trim() 无法清除中间的控制字符。
+ */
+export function sanitizeBunPath(raw: string): string {
+  return selectPreferredBunPath(extractSanitizedLines(stripAnsiEscapes(raw)));
 }
 
 /** 从命令行 flags / 环境变量读取用户显式指定的 bun 路径（--bun-path / TMEX_BUN_PATH）。 */
