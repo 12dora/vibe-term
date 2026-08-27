@@ -1,14 +1,29 @@
 import { useQuery } from '@tanstack/react-query';
 import { fetchDevices } from '@tmex/api-client';
-import { useTmuxStore } from '@tmex/stores';
+import { hostAppPath } from '@tmex/stores';
+import { useRuntime, useTmuxStore } from '@tmex/stores/react';
 import { createContext, useCallback, useContext, useEffect, useMemo } from 'react';
-import { useLocation } from 'react-router';
+import { matchPath, useLocation } from 'react-router';
 
 interface GlobalDeviceContextValue {
   ensureDeviceSubscribed: (deviceId: string) => void;
 }
 
 const GlobalDeviceContext = createContext<GlobalDeviceContextValue | null>(null);
+
+/** 本 runtime 的设备路由 pattern（多 node 下带 `/n/:nodeId` 前缀）。 */
+export function deviceRoutePattern(appPath: (path: string) => string): string {
+  return appPath('/devices/:deviceId');
+}
+
+/** 从 pathname 取本 runtime 路由形状下的 deviceId；不属于本 node 的路径返回 undefined。 */
+export function routeDeviceId(
+  pathname: string,
+  appPath: (path: string) => string
+): string | undefined {
+  const match = matchPath({ path: deviceRoutePattern(appPath), end: false }, pathname);
+  return match?.params.deviceId;
+}
 
 export function shouldEnsureRouteDeviceSubscription(
   deviceId: string | undefined,
@@ -33,13 +48,14 @@ interface GlobalDeviceProviderProps {
 
 export function GlobalDeviceProvider({ children }: GlobalDeviceProviderProps) {
   const location = useLocation();
+  const runtime = useRuntime();
   const connectTmuxDevice = useTmuxStore((state) => state.connectDevice);
   const disconnectTmuxDevice = useTmuxStore((state) => state.disconnectDevice);
   const connectedDevices = useTmuxStore((state) => state.connectedDevices);
 
   const { data: devicesData } = useQuery({
     queryKey: ['devices'],
-    queryFn: () => fetchDevices(),
+    queryFn: () => fetchDevices(runtime.apiClient),
     throwOnError: false,
   });
 
@@ -52,12 +68,13 @@ export function GlobalDeviceProvider({ children }: GlobalDeviceProviderProps) {
     [connectedDevices, connectTmuxDevice]
   );
 
+  const host = runtime.host;
   useEffect(() => {
-    const currentDeviceId = location.pathname.match(/^\/devices\/([^/]+)/)?.[1];
+    const currentDeviceId = routeDeviceId(location.pathname, (path) => hostAppPath(host, path));
     if (shouldEnsureRouteDeviceSubscription(currentDeviceId, devicesData)) {
       ensureDeviceSubscribed(currentDeviceId);
     }
-  }, [location.pathname, devicesData, ensureDeviceSubscribed]);
+  }, [location.pathname, devicesData, ensureDeviceSubscribed, host]);
 
   useEffect(() => {
     if (!devicesData) return;

@@ -2,7 +2,8 @@ import { Bot, ChevronRight, FolderClosed, Monitor, PanelsTopLeft } from 'lucide-
 import { type ComponentProps, type ComponentType, type ReactNode, Suspense, lazy } from 'react';
 import { useTranslation } from 'react-i18next';
 
-import { type SidebarSection, useUIStore } from '@tmex/stores';
+import type { SidebarSection } from '@tmex/stores';
+import { useUIStore } from '@tmex/stores/react';
 import { cn } from '@tmex/ui';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@tmex/ui/collapsible';
 import { Sidebar, SidebarContent, SidebarFooter, SidebarHeader } from '@tmex/ui/sidebar';

@@ -1,5 +1,4 @@
-import './lib/runtime-setup';
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { QueryClientProvider } from '@tanstack/react-query';
 import { formatDisplayVersion } from '@tmex/shared';
 import { type CSSProperties, StrictMode, useEffect, useState } from 'react';
 import { createRoot } from 'react-dom/client';
@@ -11,13 +10,15 @@ import './index.css';
 // 浏览器 console 打印 monorepo 版本（非 production 带 _dev 后缀）
 console.info(`tmex ${formatDisplayVersion(__MONOREPO_VERSION__, __IS_PROD__)}`);
 
-import { ConnectionIndicator } from '@tmex/panels';
 import { FlowBridges } from '@/components/flow-bridges';
-import { GlobalDeviceProvider } from '@/components/global-device-provider';
 import { AppSidebar } from '@/components/page-layouts/components/app-sidebar';
-import { WatchEventsInit } from '@tmex/panels/watch';
 import { useAppMonoFont } from '@/lib/fonts/useAppMonoFont';
-import { useSiteStore, useUIStore } from '@tmex/stores';
+import { NodeRuntimeBoundary } from '@/node/node-runtime-boundary';
+import { appNodeRuntimes, nodeQueryClient } from '@/node/node-runtimes';
+import { ConnectionIndicator } from '@tmex/panels';
+import { WatchEventsInit } from '@tmex/panels/watch';
+import { SELF_NODE_ID, useNodeRuntime } from '@tmex/stores';
+import { RuntimeProvider, useSiteStore, useUIStore } from '@tmex/stores/react';
 import { useKeyboardAvoidance } from '@tmex/terminal-ui';
 import { applyThemePreset, isThemePreset } from '@tmex/theme';
 import { Separator } from '@tmex/ui/separator';
@@ -43,6 +44,7 @@ function applyInitialTheme(): void {
 applyInitialTheme();
 
 // 主题预设（dormant preset 激活机制）：初始从持久化状态应用，变更时跟随。
+// UI 偏好是宿主级的（所有 node 共用一个 UIStore，key 仍为 tmex-ui），因此这里直接读裸 key。
 function applyInitialThemePreset(): void {
   try {
     const raw = localStorage.getItem('tmex-ui');
@@ -55,18 +57,15 @@ function applyInitialThemePreset(): void {
 }
 
 applyInitialThemePreset();
-useUIStore.subscribe((state) => {
-  applyThemePreset(state.themePreset);
-});
 
-const queryClient = new QueryClient({
-  defaultOptions: {
-    queries: {
-      staleTime: 5000,
-      retry: 1,
-    },
-  },
-});
+// 主题预设跟随共享 UI store（原先是模块级 useUIStore.subscribe，绑死默认 runtime）。
+function ThemePresetSync() {
+  const themePreset = useUIStore((state) => state.themePreset);
+  useEffect(() => {
+    applyThemePreset(themePreset);
+  }, [themePreset]);
+  return null;
+}
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type PageModule = Record<string, any>;
@@ -121,7 +120,7 @@ function ThemedToaster() {
   );
 }
 
-// Root layout: 包含全局 Provider 和 Sidebar
+// Root layout: 当前 node 边界内的外壳（sidebar + 内容区）
 function RootLayout() {
   // 把选中等宽字体派生到 --font-mono（全应用统一）并按需懒加载 woff2
   useAppMonoFont();
@@ -131,7 +130,7 @@ function RootLayout() {
     void loadCapabilities();
   }, [loadCapabilities]);
   return (
-    <GlobalDeviceProvider>
+    <>
       <WatchEventsInit />
       <SidebarProvider>
         <StatusBarSync />
@@ -139,7 +138,8 @@ function RootLayout() {
         <AppSidebar />
         <MainInset />
       </SidebarProvider>
-    </GlobalDeviceProvider>
+      <ConnectionIndicator />
+    </>
   );
 }
 
@@ -231,39 +231,72 @@ const devicesModule = () => import('./pages/DevicesPage');
 const deviceModule = () => import('./pages/DevicePage');
 const fileModule = () => import('./pages/FilePage');
 
-// 路由配置 - Data 模式
+// node 边界外壳：先建/取该 node 的运行时，再渲染外壳与页面
+function NodeShell() {
+  return (
+    <NodeRuntimeBoundary>
+      <RootLayout />
+    </NodeRuntimeBoundary>
+  );
+}
+
+// 页面路由在 `self`（旧路由）与 `/n/:nodeId` 两处各挂一份；路由对象不可共享，逐次新建。
+function pageRoutes() {
+  return [
+    {
+      index: true,
+      element: <PageWrapper moduleLoader={devicesModule} />,
+    },
+    {
+      path: 'devices',
+      element: <PageWrapper moduleLoader={devicesModule} />,
+    },
+    {
+      path: 'devices/:deviceId',
+      element: <PageWrapper moduleLoader={deviceModule} />,
+    },
+    {
+      path: 'devices/:deviceId/windows/:windowId/panes/:paneId',
+      element: <PageWrapper moduleLoader={deviceModule} />,
+    },
+    {
+      path: 'settings',
+      element: <PageWrapper moduleLoader={settingsModule} />,
+    },
+    {
+      path: 'file/:ref',
+      element: <PageWrapper moduleLoader={fileModule} />,
+    },
+  ];
+}
+
+// 路由配置 - Data 模式：/n/:nodeId/... 为显式 node，旧路由等价于 self（不做重定向）
 const router = createBrowserRouter([
   {
+    path: '/n/:nodeId',
+    Component: NodeShell,
+    children: pageRoutes(),
+  },
+  {
     path: '/',
-    Component: RootLayout,
-    children: [
-      {
-        index: true,
-        element: <PageWrapper moduleLoader={devicesModule} />,
-      },
-      {
-        path: 'devices',
-        element: <PageWrapper moduleLoader={devicesModule} />,
-      },
-      {
-        path: 'devices/:deviceId',
-        element: <PageWrapper moduleLoader={deviceModule} />,
-      },
-      {
-        path: 'devices/:deviceId/windows/:windowId/panes/:paneId',
-        element: <PageWrapper moduleLoader={deviceModule} />,
-      },
-      {
-        path: 'settings',
-        element: <PageWrapper moduleLoader={settingsModule} />,
-      },
-      {
-        path: 'file/:ref',
-        element: <PageWrapper moduleLoader={fileModule} />,
-      },
-    ],
+    Component: NodeShell,
+    children: pageRoutes(),
   },
 ]);
+
+// 宿主根：entry（self）运行时常驻，供路由之外的外壳组件（Toaster 等）消费。
+function AppRoot() {
+  const selfRuntime = useNodeRuntime(SELF_NODE_ID, appNodeRuntimes);
+  return (
+    <RuntimeProvider runtime={selfRuntime}>
+      <QueryClientProvider client={nodeQueryClient(SELF_NODE_ID)}>
+        <ThemePresetSync />
+        <RouterProvider router={router} />
+        <ThemedToaster />
+      </QueryClientProvider>
+    </RuntimeProvider>
+  );
+}
 
 const rootElement = document.getElementById('root');
 
@@ -278,11 +311,7 @@ void i18nReady
   .then(() => {
     createRoot(rootElement).render(
       <StrictMode>
-        <QueryClientProvider client={queryClient}>
-          <RouterProvider router={router} />
-          <ConnectionIndicator />
-          <ThemedToaster />
-        </QueryClientProvider>
+        <AppRoot />
       </StrictMode>
     );
   });

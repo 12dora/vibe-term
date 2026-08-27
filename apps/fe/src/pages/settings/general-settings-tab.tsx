@@ -1,6 +1,6 @@
 import { VersionTab } from '@tmex/panels/settings';
 import { I18N_MANIFEST, type LocaleCode } from '@tmex/shared';
-import { useSiteStore, useUIStore } from '@tmex/stores';
+import { useSiteStore, useUIStore } from '@tmex/stores/react';
 import { Card, CardContent, CardHeader, CardTitle } from '@tmex/ui/card';
 import { Input } from '@tmex/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@tmex/ui/select';

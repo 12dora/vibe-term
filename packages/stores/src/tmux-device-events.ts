@@ -2,7 +2,8 @@
 
 import { formatTerminalNotificationToast, useBellStore } from '@tmex/notifications';
 import type { EventDevicePayload, EventTmuxPayload } from '@tmex/shared';
-import type { RuntimeCore } from './runtime';
+import { toAppPath } from './app-navigation';
+import { type RuntimeCore, hostAppPath } from './runtime';
 import type { SiteStore } from './site';
 import type { TmuxGetState, TmuxSetState } from './tmux-state';
 
@@ -104,7 +105,8 @@ export function handleTmuxEvent(ctx: TmuxDomainEventContext, payload: EventTmuxP
         ? {
             label: 'Open',
             onClick: () => {
-              ctx.core.host.navigate(paneUrl);
+              // 服务端下发的是本 node 的绝对 URL；先取 pathname 再套本 runtime 的 node 前缀。
+              ctx.core.host.navigate(hostAppPath(ctx.core.host, toAppPath(paneUrl)));
             },
           }
         : undefined,

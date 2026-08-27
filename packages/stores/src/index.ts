@@ -1,11 +1,23 @@
-// 应用状态层：默认 runtime 的原名导出（单实例宿主零改动）+ 工厂与类型
+// 应用状态层：runtime 工厂、每 node 运行时管理器与纯函数工具。
+// 默认 runtime 与其原名 store 导出移到 `@tmex/stores/default-runtime`（见该文件注释）。
 
 export { createAppRuntime, type AppRuntime } from './app-runtime';
-export { defaultRuntime } from './default-runtime';
 export {
+  DEFAULT_RELEASE_GRACE_MS,
+  NodeConnectionManager,
+  SELF_NODE_ID,
+  nodeRuntimes,
+  nodeStoragePrefix,
+  normalizeNodeId,
+  useNodeRuntime,
+  type NodeConnectionManagerOptions,
+  type NodeRuntimeEntry,
+} from './node-connection-manager';
+export {
+  createBrowserHostServices,
   hostAppPath,
-  setDefaultNotificationSink,
   type AppRuntimeOptions,
+  type BrowserHostOptions,
   type HostServices,
   type RuntimeCore,
   type SaveFileInput,
@@ -27,28 +39,31 @@ export {
 export { createFileTreeStore, fileNodeKey, type FileTreeStore } from './file-tree';
 
 export * from './agent-thread';
-export { getSiteNameFallback, getSiteUrlFallback } from './site-fallback';
+export {
+  getSiteNameFallback,
+  getSiteUrlFallback,
+  setSiteFallbackReader,
+  type SiteFallbackSnapshot,
+} from './site-fallback';
 export { decodePaneIdFromUrlParam, encodePaneIdForUrl } from './tmux-url';
 export { decodeFileRef, encodeFileRef, fileRoute, type FileRef } from './file-url';
 export * from './terminal-meta';
-export { navigateToAppUrl } from './app-navigation';
+export {
+  USER_INITIATED_SELECTION_EVENT,
+  dispatchUserInitiatedSelection,
+  navigateToAppUrl,
+  toAppPath,
+  type UserInitiatedSelectionDetail,
+} from './app-navigation';
 export {
   bridgeCloseMobileSidebar,
   bridgeIsMobile,
   bridgeNavigate,
   bridgeOpenMobileSidebar,
+  resetFlowBridgesForTest,
   setNavigateBridge,
   setSidebarBridge,
 } from './flow-bridges';
-export { usePaneAgentState, type PaneAgentState } from './use-pane-agent-state';
-
-// ---- 默认 runtime 的原名 store 导出（拆包前公共 API，保持零改动消费） ----
-import { defaultRuntime } from './default-runtime';
-
-export const useUIStore = defaultRuntime.stores.ui;
-export const useSiteStore = defaultRuntime.stores.site;
-export const useTmuxStore = defaultRuntime.stores.tmux;
-export const useAgentStore = defaultRuntime.stores.agent;
-export const useFileTreeStore = defaultRuntime.stores.fileTree;
+export { selectPaneAgentState, type PaneAgentState } from './use-pane-agent-state';
 
 export type { AgentSessionDto, AgentSessionStatus } from '@tmex/shared';

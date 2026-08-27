@@ -1,18 +1,17 @@
 // React 绑定：按子树注入 AppRuntime + 各 store 的 context 便捷 hook。
-// terminal-ui / panels 经这些 hook 消费 store，保证多实例宿主下经 RuntimeProvider
-// 注入的 runtime 生效，而非绑死默认单例（缺省 context 值即默认 runtime，开源 fe 零改动）。
+// terminal-ui / panels 经这些 hook 消费 store。多 node 宿主每个 `/n/:nodeId` 边界注入
+// 各自的 runtime；context 没有缺省 runtime，漏包 Provider 直接抛错而不是静默落到别的 node。
 
 import { type ReactNode, createContext, useContext } from 'react';
 import type { AgentState } from './agent';
 import type { AppRuntime } from './app-runtime';
-import { defaultRuntime } from './default-runtime';
 import type { FileTreeState } from './file-tree';
 import type { SiteState } from './site';
 import type { TmuxState } from './tmux';
 import type { UIState } from './ui';
 import { type PaneAgentState, selectPaneAgentState } from './use-pane-agent-state';
 
-const RuntimeContext = createContext<AppRuntime>(defaultRuntime);
+const RuntimeContext = createContext<AppRuntime | null>(null);
 
 export function RuntimeProvider({
   runtime,
@@ -25,6 +24,15 @@ export function RuntimeProvider({
 }
 
 export function useRuntime(): AppRuntime {
+  const runtime = useContext(RuntimeContext);
+  if (!runtime) {
+    throw new Error('useRuntime must be used within <RuntimeProvider>');
+  }
+  return runtime;
+}
+
+/** 可选读取：宿主外壳里 Provider 之外的组件用（无 Provider 返回 null）。 */
+export function useOptionalRuntime(): AppRuntime | null {
   return useContext(RuntimeContext);
 }
 

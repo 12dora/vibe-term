@@ -53,7 +53,12 @@ describe('navigateToAppUrl', () => {
 
     expect(dispatched).toHaveLength(1);
     expect(dispatched[0].type).toBe('tmex:user-initiated-selection');
-    expect(dispatched[0].detail).toEqual({ deviceId: 'dev1', windowId: 'win2', paneId: '%1' });
+    expect(dispatched[0].detail).toEqual({
+      nodeId: 'self',
+      deviceId: 'dev1',
+      windowId: 'win2',
+      paneId: '%1',
+    });
 
     expect(navCalls).toEqual([
       { to: '/devices/dev1/windows/win2/panes/%251', opts: { replace: true } },
@@ -74,7 +79,12 @@ describe('navigateToAppUrl', () => {
     navigateToAppUrl('/devices/dev1/windows/win2/panes/p3');
 
     expect(dispatched).toHaveLength(1);
-    expect(dispatched[0].detail).toEqual({ deviceId: 'dev1', windowId: 'win2', paneId: 'p3' });
+    expect(dispatched[0].detail).toEqual({
+      nodeId: 'self',
+      deviceId: 'dev1',
+      windowId: 'win2',
+      paneId: 'p3',
+    });
     expect(navCalls).toEqual([
       { to: '/devices/dev1/windows/win2/panes/p3', opts: { replace: true } },
     ]);
@@ -86,7 +96,12 @@ describe('navigateToAppUrl', () => {
     navigateToAppUrl('http://127.0.0.1:9883/devices/dev1/windows/win2/panes/%251');
 
     expect(dispatched).toHaveLength(1);
-    expect(dispatched[0].detail).toEqual({ deviceId: 'dev1', windowId: 'win2', paneId: '%1' });
+    expect(dispatched[0].detail).toEqual({
+      nodeId: 'self',
+      deviceId: 'dev1',
+      windowId: 'win2',
+      paneId: '%1',
+    });
     // 导航目标是 pathname（去掉 loopback origin），避免整页跳到 127.0.0.1。
     expect(navCalls).toEqual([
       { to: '/devices/dev1/windows/win2/panes/%251', opts: { replace: true } },

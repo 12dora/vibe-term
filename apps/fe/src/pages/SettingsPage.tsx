@@ -6,6 +6,7 @@ import { toast } from 'sonner';
 
 import { parseApiError } from '@tmex/api-client';
 import { TerminalSettingsTab } from '@tmex/panels/settings';
+import { useRuntime } from '@tmex/stores/react';
 import { cn } from '@tmex/ui';
 import {
   AlertDialog,
@@ -121,11 +122,12 @@ export function PageTitle() {
 // Page actions component
 export function PageActions() {
   const { t } = useTranslation();
+  const { apiClient } = useRuntime();
   const [showRestartConfirm, setShowRestartConfirm] = useState(false);
 
   const restartMutation = useMutation({
     mutationFn: async () => {
-      const res = await fetch('/api/settings/restart', { method: 'POST' });
+      const res = await apiClient.fetch('/api/settings/restart', { method: 'POST' });
       if (!res.ok) {
         throw new Error(await parseApiError(res, t('settings.restartFailed')));
       }

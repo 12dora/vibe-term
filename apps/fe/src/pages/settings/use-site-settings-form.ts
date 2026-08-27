@@ -1,7 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { parseApiError } from '@tmex/api-client';
 import type { GetSiteSettingsResponse } from '@tmex/shared';
-import { useSiteStore } from '@tmex/stores';
+import { useRuntime, useSiteStore } from '@tmex/stores/react';
 import { useCallback, useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { toast } from 'sonner';
@@ -24,7 +24,8 @@ export interface SiteSettingsForm {
 export function useSiteSettingsForm(): SiteSettingsForm {
   const { t } = useTranslation();
   const queryClient = useQueryClient();
-  const { refreshSettings } = useSiteStore();
+  const { apiClient } = useRuntime();
+  const refreshSettings = useSiteStore((state) => state.refreshSettings);
 
   const [draft, setDraft] = useState<SiteSettingsDraft>(() =>
     createDefaultSiteSettingsDraft(window.location.origin)
@@ -34,7 +35,7 @@ export function useSiteSettingsForm(): SiteSettingsForm {
   const settingsQuery = useQuery({
     queryKey: ['site-settings'],
     queryFn: async () => {
-      const res = await fetch('/api/settings/site');
+      const res = await apiClient.fetch('/api/settings/site');
       if (!res.ok) {
         throw new Error(await parseApiError(res, t('settings.loadFailed')));
       }
@@ -53,7 +54,7 @@ export function useSiteSettingsForm(): SiteSettingsForm {
 
   const saveMutation = useMutation({
     mutationFn: async () => {
-      const res = await fetch('/api/settings/site', {
+      const res = await apiClient.fetch('/api/settings/site', {
         method: 'PATCH',
         headers: {
           'Content-Type': 'application/json',

@@ -175,7 +175,10 @@ export function DeviceConsoleActions({ deviceId, windowId, paneId }: DeviceConso
   };
 
   const handleJumpToLatest = () => {
-    window.dispatchEvent(new CustomEvent('tmex:jump-to-latest'));
+    // detail 带 nodeId：将来多 node 面板并存时接收方可按 node 过滤（当前同一时刻只有一个控制台）
+    window.dispatchEvent(
+      new CustomEvent('tmex:jump-to-latest', { detail: { nodeId: runtime.nodeId } })
+    );
   };
 
   const handleRefreshClick = () => {

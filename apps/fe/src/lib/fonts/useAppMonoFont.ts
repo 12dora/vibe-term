@@ -1,4 +1,4 @@
-import { useUIStore } from '@tmex/stores';
+import { useUIStore } from '@tmex/stores/react';
 import { loadTerminalFonts, resolveFontStack } from '@tmex/theme';
 import { useEffect } from 'react';
 

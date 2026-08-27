@@ -1,5 +1,4 @@
 import type { AgentState } from './agent';
-import { defaultRuntime } from './default-runtime';
 
 export type PaneAgentState = 'none' | 'bound' | 'generating';
 
@@ -30,9 +29,4 @@ export function selectPaneAgentState(
     return 'bound';
   }
   return 'none';
-}
-
-// 默认 runtime 版（单实例宿主）；context 版见 ./react（多实例宿主经 RuntimeProvider）
-export function usePaneAgentState(deviceId: string, paneId: string): PaneAgentState {
-  return defaultRuntime.stores.agent((state) => selectPaneAgentState(state, deviceId, paneId));
 }

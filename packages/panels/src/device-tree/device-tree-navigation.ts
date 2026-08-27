@@ -1,6 +1,11 @@
 import type { TmuxPane, TmuxWindow } from '@tmex/shared';
 import type { HostServices } from '@tmex/stores';
-import { decodePaneIdFromUrlParam, encodePaneIdForUrl, hostAppPath } from '@tmex/stores';
+import {
+  decodePaneIdFromUrlParam,
+  dispatchUserInitiatedSelection,
+  encodePaneIdForUrl,
+  hostAppPath,
+} from '@tmex/stores';
 import { useRuntime, useTmuxStore } from '@tmex/stores/react';
 import { useSidebar } from '@tmex/ui/sidebar';
 import { useCallback, useEffect, useMemo, useRef } from 'react';
@@ -127,7 +132,7 @@ export interface DeviceTreeNavigationApi {
 export function useDeviceTreeNavigationApi(): DeviceTreeNavigationApi {
   const navigate = useNavigate();
   const { isMobile, setOpenMobile } = useSidebar();
-  const { host } = useRuntime();
+  const { host, nodeId } = useRuntime();
   const selectWindow = useTmuxStore((state) => state.selectWindow);
   const snapshots = useTmuxStore((state) => state.snapshots);
 
@@ -150,16 +155,12 @@ export function useDeviceTreeNavigationApi(): DeviceTreeNavigationApi {
     ) => {
       pendingNavigationRef.current = null;
 
-      window.dispatchEvent(
-        new CustomEvent('tmex:user-initiated-selection', {
-          detail: { deviceId, windowId, paneId },
-        })
-      );
+      dispatchUserInitiatedSelection({ nodeId, deviceId, windowId, paneId });
       handleNavigate(buildPaneRoutePath(host, deviceId, windowId, paneId), {
         keepSidebarOpen: options?.keepSidebarOpen,
       });
     },
-    [handleNavigate, host]
+    [handleNavigate, host, nodeId]
   );
 
   useEffect(() => {

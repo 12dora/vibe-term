@@ -8,6 +8,7 @@ import { useParams } from 'react-router';
 
 import i18n from '@/i18n';
 import {
+  type ApiClient,
   type FileApiError,
   downloadFileWithProgress,
   fetchFileContent,
@@ -18,7 +19,8 @@ import { fileRawUrl } from '@tmex/api-client';
 import { CodeViewer } from '@tmex/panels/code-viewer';
 import { startTransferToast } from '@tmex/panels/files';
 import { MarkdownPreview } from '@tmex/panels/markdown';
-import { type FileRef, decodeFileRef, defaultRuntime } from '@tmex/stores';
+import { type AppRuntime, type FileRef, decodeFileRef } from '@tmex/stores';
+import { useRuntime } from '@tmex/stores/react';
 import { Button } from '@tmex/ui/button';
 
 function useFileRef(ref?: string): FileRef | null {
@@ -26,11 +28,23 @@ function useFileRef(ref?: string): FileRef | null {
 }
 
 // 应用内下载（与文件树菜单一致）：两段进度 Toast + 可取消；传输与宿主 save 分离。
-function triggerDownload(rootId: string, path: string, name: string): void {
+// 传输与保存都走当前 runtime（多 node 下不能落到 entry 的 client / host）。
+function triggerDownload(
+  runtime: Pick<AppRuntime, 'apiClient' | 'host'>,
+  rootId: string,
+  path: string,
+  name: string
+): void {
   const controller = new AbortController();
   const tt = startTransferToast(name, 'download', () => controller.abort());
-  void downloadFileWithProgress(rootId, path, name, { onLeg: tt.leg, signal: controller.signal })
-    .then((file) => defaultRuntime.host.saveFile(file))
+  void downloadFileWithProgress(
+    rootId,
+    path,
+    name,
+    { onLeg: tt.leg, signal: controller.signal },
+    runtime.apiClient
+  )
+    .then((file) => runtime.host.saveFile(file))
     .then(() => tt.success(i18n.t('files.transfer.downloaded', { name })))
     .catch(() => {
       if (controller.signal.aborted) tt.cancel();
@@ -66,11 +80,16 @@ function DownloadFallback({
   text,
 }: { rootId: string; path: string; name: string; text: string }) {
   const { t } = useTranslation();
+  const runtime = useRuntime();
   return (
     <div className="flex h-full flex-col items-center justify-center gap-4 px-6 text-center">
       <FileWarning className="size-10 text-muted-foreground/60" />
       <span className="text-sm text-muted-foreground break-all">{text}</span>
-      <Button variant="default" size="sm" onClick={() => triggerDownload(rootId, path, name)}>
+      <Button
+        variant="default"
+        size="sm"
+        onClick={() => triggerDownload(runtime, rootId, path, name)}
+      >
         <Download className="h-4 w-4" />
         {t('file.download')}
       </Button>
@@ -91,11 +110,16 @@ function FallbackCard({ rootId, stat }: { rootId: string; stat: FileStatResponse
   );
 }
 
-function ImageView({ rootId, path, name }: { rootId: string; path: string; name: string }) {
+function ImageView({
+  nodeId,
+  rootId,
+  path,
+  name,
+}: { nodeId: string; rootId: string; path: string; name: string }) {
   return (
     <div className="flex h-full w-full items-center justify-center overflow-auto p-4">
       <img
-        src={fileRawUrl(rootId, path)}
+        src={fileRawUrl(nodeId, rootId, path)}
         alt={name}
         className="max-h-full max-w-full object-contain"
         data-testid="file-image"
@@ -105,40 +129,61 @@ function ImageView({ rootId, path, name }: { rootId: string; path: string; name:
 }
 
 function MediaView({
+  nodeId,
   rootId,
   path,
   category,
-}: { rootId: string; path: string; category: FileCategory }) {
+}: { nodeId: string; rootId: string; path: string; category: FileCategory }) {
   if (category === 'audio') {
     return (
       <div className="flex h-full items-center justify-center p-6">
         {/* biome-ignore lint/a11y/useMediaCaption: 本地媒体文件预览，无字幕 */}
-        <audio controls src={fileRawUrl(rootId, path)} className="w-full max-w-xl" />
+        <audio controls src={fileRawUrl(nodeId, rootId, path)} className="w-full max-w-xl" />
       </div>
     );
   }
   return (
     <div className="flex h-full items-center justify-center p-4">
       {/* biome-ignore lint/a11y/useMediaCaption: 本地媒体文件预览，无字幕 */}
-      <video controls src={fileRawUrl(rootId, path)} className="max-h-full max-w-full" />
+      <video controls src={fileRawUrl(nodeId, rootId, path)} className="max-h-full max-w-full" />
     </div>
   );
 }
 
-function PdfView({ rootId, path, name }: { rootId: string; path: string; name: string }) {
-  return <iframe title={name} src={fileRawUrl(rootId, path)} className="h-full w-full border-0" />;
+function PdfView({
+  nodeId,
+  rootId,
+  path,
+  name,
+}: { nodeId: string; rootId: string; path: string; name: string }) {
+  return (
+    <iframe
+      title={name}
+      src={fileRawUrl(nodeId, rootId, path)}
+      className="h-full w-full border-0"
+    />
+  );
 }
 
 function TextView({
+  nodeId,
+  apiClient,
   rootId,
   path,
   category,
   name,
-}: { rootId: string; path: string; category: FileCategory; name: string }) {
+}: {
+  nodeId: string;
+  apiClient: ApiClient;
+  rootId: string;
+  path: string;
+  category: FileCategory;
+  name: string;
+}) {
   const { t } = useTranslation();
   const query = useQuery({
     queryKey: ['files', 'content', rootId, path],
-    queryFn: () => fetchFileContent(rootId, path),
+    queryFn: () => fetchFileContent(rootId, path, apiClient),
     retry: false,
     refetchOnWindowFocus: false,
   });
@@ -174,7 +219,7 @@ function TextView({
         <MarkdownPreview
           source={content}
           basePath={dirname(path)}
-          urlResolver={(imgPath) => fileRawUrl(rootId, imgPath)}
+          urlResolver={(imgPath) => fileRawUrl(nodeId, rootId, imgPath)}
           className="mx-auto max-w-3xl"
         />
       </div>
@@ -185,12 +230,13 @@ function TextView({
 
 export default function FilePage() {
   const { ref } = useParams();
+  const { nodeId, apiClient } = useRuntime();
   const fileRef = useFileRef(ref);
   const { t } = useTranslation();
 
   const statQuery = useQuery({
     queryKey: ['files', 'stat', fileRef?.rootId, fileRef?.path],
-    queryFn: () => fetchFileStat(fileRef?.rootId as string, fileRef?.path as string),
+    queryFn: () => fetchFileStat(fileRef?.rootId as string, fileRef?.path as string, apiClient),
     enabled: Boolean(fileRef),
     retry: false,
     refetchOnWindowFocus: false,
@@ -233,15 +279,24 @@ export default function FilePage() {
   const { rootId, path } = fileRef;
   switch (stat.category) {
     case 'image':
-      return <ImageView rootId={rootId} path={path} name={stat.name} />;
+      return <ImageView nodeId={nodeId} rootId={rootId} path={path} name={stat.name} />;
     case 'pdf':
-      return <PdfView rootId={rootId} path={path} name={stat.name} />;
+      return <PdfView nodeId={nodeId} rootId={rootId} path={path} name={stat.name} />;
     case 'audio':
     case 'video':
-      return <MediaView rootId={rootId} path={path} category={stat.category} />;
+      return <MediaView nodeId={nodeId} rootId={rootId} path={path} category={stat.category} />;
     default:
       if (TEXT_CATEGORIES.has(stat.category)) {
-        return <TextView rootId={rootId} path={path} category={stat.category} name={stat.name} />;
+        return (
+          <TextView
+            nodeId={nodeId}
+            apiClient={apiClient}
+            rootId={rootId}
+            path={path}
+            category={stat.category}
+            name={stat.name}
+          />
+        );
       }
       return <FallbackCard rootId={rootId} stat={stat} />;
   }
@@ -255,6 +310,8 @@ export function PageTitle({ ref }: { ref?: string }) {
 export function PageActions({ ref }: { ref?: string }) {
   const { t } = useTranslation();
   const queryClient = useQueryClient();
+  const runtime = useRuntime();
+  const nodeId = runtime.nodeId;
   const fileRef = ref ? decodeFileRef(ref) : null;
   if (!fileRef) return null;
   const { rootId, path } = fileRef;
@@ -276,7 +333,7 @@ export function PageActions({ ref }: { ref?: string }) {
         <RotateCw className="h-4 w-4" />
       </Button>
       <a
-        href={fileRawUrl(rootId, path)}
+        href={fileRawUrl(nodeId, rootId, path)}
         target="_blank"
         rel="noopener noreferrer"
         title={t('file.openRaw')}
@@ -290,7 +347,7 @@ export function PageActions({ ref }: { ref?: string }) {
         size="icon-sm"
         data-testid="file-download-action"
         title={t('file.download')}
-        onClick={() => triggerDownload(rootId, path, basename(path))}
+        onClick={() => triggerDownload(runtime, rootId, path, basename(path))}
       >
         <Download className="h-4 w-4" />
       </Button>

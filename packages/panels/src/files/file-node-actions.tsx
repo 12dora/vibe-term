@@ -49,7 +49,7 @@ export function useFileNodeActions(rootId: string, entry: FileEntryDto): FileNod
   const dragHandlers: FileNodeDragHandlers = {
     onDragStart: (e) => {
       // 拖到系统下载（仅 Chromium 生效，URL 必须绝对；其它浏览器静默无效，菜单「下载」兜底）
-      const absUrl = window.location.origin + fileDownloadUrl(rootId, entry.path);
+      const absUrl = window.location.origin + fileDownloadUrl(runtime.nodeId, rootId, entry.path);
       e.dataTransfer.setData('DownloadURL', `application/octet-stream:${entry.name}:${absUrl}`);
       e.dataTransfer.effectAllowed = 'copy';
     },

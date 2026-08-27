@@ -24,7 +24,7 @@ mock.module('@tmex/ws-client', () => {
   };
 });
 
-const { useSiteStore, useUIStore } = await import('./index');
+const { useSiteStore, useUIStore } = await import('./default-runtime');
 
 const TMEX_UI_KEY = 'tmex-ui';
 

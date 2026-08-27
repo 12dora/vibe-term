@@ -4,7 +4,8 @@
 import type { DeviceTreeNavigation, SidebarAgentAdapter } from '@tmex/panels/device-tree';
 import type { AgentSessionDto, TmuxPane } from '@tmex/shared';
 import { formatDateTime } from '@tmex/shared';
-import { useAgentStore, useSiteStore, useTmuxStore, useUIStore } from '@tmex/stores';
+import type { AppRuntime } from '@tmex/stores';
+import { useAgentStore, useRuntime, useSiteStore, useUIStore } from '@tmex/stores/react';
 import { cn } from '@tmex/ui';
 import {
   AlertDialog,
@@ -81,11 +82,12 @@ function useSidebarAgentSessions(): SidebarAgentSessionsContextValue {
 }
 
 export function SidebarAgentSessionsProvider({ children }: { children: ReactNode }) {
+  const runtime = useRuntime();
   useEffect(() => {
-    const store = useAgentStore.getState();
+    const store = runtime.stores.agent.getState();
     store.ensureInitialized();
     void store.loadSessions();
-  }, []);
+  }, [runtime]);
 
   const [sessionRenameCandidate, setSessionRenameCandidate] = useState<AgentSessionDto | null>(
     null
@@ -104,9 +106,9 @@ export function SidebarAgentSessionsProvider({ children }: { children: ReactNode
     if (!sessionRenameCandidate) return;
     const trimmed = sessionRenameValue.trim();
     if (!trimmed) return;
-    void useAgentStore.getState().renameSession(sessionRenameCandidate.id, trimmed);
+    void runtime.stores.agent.getState().renameSession(sessionRenameCandidate.id, trimmed);
     setSessionRenameCandidate(null);
-  }, [sessionRenameCandidate, sessionRenameValue]);
+  }, [runtime, sessionRenameCandidate, sessionRenameValue]);
 
   const requestDeleteSession = useCallback((session: AgentSessionDto) => {
     setSessionDeleteCandidate(session);
@@ -114,9 +116,9 @@ export function SidebarAgentSessionsProvider({ children }: { children: ReactNode
 
   const confirmDeleteSession = useCallback(() => {
     if (!sessionDeleteCandidate) return;
-    void useAgentStore.getState().deleteSession(sessionDeleteCandidate.id);
+    void runtime.stores.agent.getState().deleteSession(sessionDeleteCandidate.id);
     setSessionDeleteCandidate(null);
-  }, [sessionDeleteCandidate]);
+  }, [runtime, sessionDeleteCandidate]);
 
   const closeRenameDialog = useCallback(() => setSessionRenameCandidate(null), []);
   const closeDeleteDialog = useCallback(() => setSessionDeleteCandidate(null), []);
@@ -167,13 +169,15 @@ function useOrderedSessions(): AgentSessionDto[] {
 
 // Agent 聊天就在侧边栏内：导航到对应 pane 提供上下文，但移动端保持 Sheet 打开
 function useSelectSession(nav: DeviceTreeNavigation) {
+  const runtime = useRuntime();
   const expandSidebarSection = useUIStore((state) => state.expandSidebarSection);
   return useCallback(
     (session: AgentSessionDto) => {
-      useAgentStore.getState().setActiveSession(session.id);
+      runtime.stores.agent.getState().setActiveSession(session.id);
       expandSidebarSection('agent');
       if (session.deviceId && session.paneId) {
-        const windows = useTmuxStore.getState().snapshots[session.deviceId]?.session?.windows;
+        const windows =
+          runtime.stores.tmux.getState().snapshots[session.deviceId]?.session?.windows;
         const window = windows?.find((w) => w.panes.some((p) => p.id === session.paneId));
         if (window) {
           nav.navigateToPane(session.deviceId, window.id, session.paneId, {
@@ -182,19 +186,20 @@ function useSelectSession(nav: DeviceTreeNavigation) {
         }
       }
     },
-    [expandSidebarSection, nav]
+    [expandSidebarSection, nav, runtime]
   );
 }
 
 function createSessionForPane(
+  runtime: AppRuntime,
   nav: DeviceTreeNavigation,
   deviceId: string,
   windowId: string,
   pane: TmuxPane
 ) {
   nav.navigateToPane(deviceId, windowId, pane.id, { keepSidebarOpen: true });
-  useAgentStore.getState().startDraft(deviceId, pane.id, pane.title ?? null);
-  useUIStore.getState().expandSidebarSection('agent');
+  runtime.stores.agent.getState().startDraft(deviceId, pane.id, pane.title ?? null);
+  runtime.stores.ui.getState().expandSidebarSection('agent');
 }
 
 function SessionActionsMenu({
@@ -546,9 +551,17 @@ function AgentSessionDialogs() {
   );
 }
 
-export const sidebarAgentAdapter: SidebarAgentAdapter = {
-  onCreateSessionForPane: createSessionForPane,
-  PaneSessions: AgentPaneSessions,
-  OrphanSessions: AgentOrphanSessions,
-  Dialogs: AgentSessionDialogs,
-};
+// 适配器按当前 node 运行时构造：onCreateSessionForPane 不是 hook，只能闭包捕获 runtime。
+export function useSidebarAgentAdapter(): SidebarAgentAdapter {
+  const runtime = useRuntime();
+  return useMemo<SidebarAgentAdapter>(
+    () => ({
+      onCreateSessionForPane: (nav, deviceId, windowId, pane) =>
+        createSessionForPane(runtime, nav, deviceId, windowId, pane),
+      PaneSessions: AgentPaneSessions,
+      OrphanSessions: AgentOrphanSessions,
+      Dialogs: AgentSessionDialogs,
+    }),
+    [runtime]
+  );
+}

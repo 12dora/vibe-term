@@ -1,6 +1,4 @@
-import { useSiteStore } from '@tmex/stores';
-import { useTmuxStore } from '@tmex/stores';
-import { useUIStore } from '@tmex/stores';
+import { useSiteStore, useTmuxStore, useUIStore } from '@tmex/stores/react';
 import { useSidebar } from '@tmex/ui/sidebar';
 import { Moon, Settings, Sun, X } from 'lucide-react';
 import { useEffect } from 'react';

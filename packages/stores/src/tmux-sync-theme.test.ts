@@ -38,7 +38,7 @@ mock.module('@tmex/ws-client', () => ({
   }),
 }));
 
-const { useTmuxStore, useUIStore } = await import('./index');
+const { useTmuxStore, useUIStore } = await import('./default-runtime');
 
 const KIND_TMUX_SET_WINDOW_STYLE = wsBorsh.KIND_TMUX_SET_WINDOW_STYLE;
 
