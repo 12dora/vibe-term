@@ -249,6 +249,34 @@ describe('WeixinClient long-poll loop', () => {
     expect(calls).toBeGreaterThanOrEqual(2);
     expect(client.isRunning()).toBe(false);
   }, 10_000);
+
+  test('loadSyncBuf failure clears running state so a later start() works', async () => {
+    const cap: CapturedRequest[] = [];
+    const fetchImpl = scriptedFetch([{ ret: 0, msgs: [], get_updates_buf: 'next' }], cap);
+    const client = makeClient(fetchImpl);
+
+    await expect(
+      client.start({
+        loadSyncBuf: () => {
+          throw new Error('cursor load failed');
+        },
+      })
+    ).rejects.toThrow('cursor load failed');
+
+    expect(client.isRunning()).toBe(false);
+
+    const controller = new AbortController();
+    await client.start({
+      signal: controller.signal,
+      saveSyncBuf: () => {
+        controller.abort();
+      },
+    });
+
+    expect(client.isRunning()).toBe(false);
+    const updateCalls = cap.filter((c) => c.url.endsWith('/getupdates'));
+    expect(updateCalls.length).toBeGreaterThanOrEqual(1);
+  });
 });
 
 describe('WeixinClient.sendText', () => {
