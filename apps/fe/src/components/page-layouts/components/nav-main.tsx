@@ -43,7 +43,11 @@ export function NavMain({
             Boolean(item.items?.some((subItem) => isPathActive(pathname, subItem.url)));
           return (
             <Collapsible key={item.title} defaultOpen={active} render={<SidebarMenuItem />}>
-              <SidebarMenuButton isActive={active} render={<NavLink to={item.url} />}>
+              <SidebarMenuButton
+                isActive={active}
+                tooltip={t(item.title)}
+                render={<NavLink to={item.url} />}
+              >
                 <item.icon />
                 <span>{t(item.title)}</span>
               </SidebarMenuButton>
