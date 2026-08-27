@@ -43,6 +43,7 @@ export interface PaneStreamParserOptions {
   onNotification: (notification: PaneStreamNotification) => void;
   onPromptMarker?: (marker: PromptMarker) => void;
   onClipboardWrite?: (text: string) => void;
+  now?: () => number;
   // pane 内程序声明/撤销 DEC private mode 2031（主题变化通知订阅，CSI ?2031h / ?2031l）
   onThemeSubscription?: (subscribed: boolean) => void;
 }

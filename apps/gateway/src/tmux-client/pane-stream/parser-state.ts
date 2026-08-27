@@ -52,6 +52,7 @@ export type ParserState = {
   warnedTitleOverflow: boolean;
   warnedDcsOverflow: boolean;
   kittyPending: Map<string, KittyPending>;
+  lastClipboardWrite: { text: string; at: number } | null;
 };
 
 export type ParserContext = {
@@ -139,6 +140,7 @@ export function createParserState(): ParserState {
     warnedTitleOverflow: false,
     warnedDcsOverflow: false,
     kittyPending: new Map(),
+    lastClipboardWrite: null,
   };
 }
 

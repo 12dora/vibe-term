@@ -430,13 +430,15 @@ describe('pane stream parser', () => {
 describe('pane stream parser - OSC 52 clipboard', () => {
   function collectClipboard() {
     const writes: string[] = [];
+    const clock = { now: 0 };
     const parser = createPaneStreamParser({
       onTitle: () => {},
       onBell: () => {},
       onNotification: () => {},
       onClipboardWrite: (text) => writes.push(text),
+      now: () => clock.now,
     });
-    return { parser, writes };
+    return { parser, writes, clock };
   }
 
   const ST = bytes(0x1b, 0x5c);
@@ -496,6 +498,20 @@ describe('pane stream parser - OSC 52 clipboard', () => {
     const { parser, writes } = collectClipboard();
     parser.push(bytes(0x1b, ']', '52;p;aGVsbG8=', 0x07, 0x1b, ']', '52;c;aGVsbG8=', 0x07));
     expect(writes).toEqual(['hello']);
+  });
+
+  // Claude Code 的 TUI 一次拖选/双击会连发两条相同的 OSC 52;c（实测 pipe-pane），
+  // 各转发一次就是两条「已复制」提示。
+  test('identical clipboard writes within the dedup window are forwarded once', () => {
+    const { parser, writes, clock } = collectClipboard();
+    parser.push(bytes(0x1b, ']', '52;c;aGVsbG8=', 0x07, 0x1b, ']', '52;c;aGVsbG8=', 0x07));
+    expect(writes).toEqual(['hello']);
+    clock.now = 100;
+    parser.push(bytes(0x1b, ']', '52;c;d29ybGQ=', 0x07));
+    expect(writes).toEqual(['hello', 'world']);
+    clock.now = 1000;
+    parser.push(bytes(0x1b, ']', '52;c;d29ybGQ=', 0x07));
+    expect(writes).toEqual(['hello', 'world', 'world']);
   });
 
   test('primary-only writes are ignored', () => {
