@@ -4,7 +4,7 @@ import type { PromptMarker } from './pane-stream-parser';
 
 export const DEFAULT_COLS = 80;
 export const DEFAULT_ROWS = 24;
-export const DEFAULT_SCROLLBACK = 5000;
+export const DEFAULT_SCROLLBACK = 256;
 const CANONICAL_SCREEN_BYTE_LIMIT = 512 * 1024;
 
 export type EmulatorTerminalSink = {

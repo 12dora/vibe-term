@@ -1,4 +1,6 @@
 import { describe, expect, test } from 'bun:test';
+import { HeadlessTerminal } from 'ghostty-terminal/headless';
+import { getGhosttyBindings } from '../../../../packages/ghostty-terminal/src/ghostty-wasm';
 
 import type { PaneInfo } from './capture-history';
 import type { EmulatorStreamListener, EmulatorStreamSource } from './pane-emulator';
@@ -346,4 +348,47 @@ describe('seedFromRetention', () => {
     expect(retention.snapshotStats().activePanes).toBe(0);
     retention.dispose();
   });
+});
+
+const FIFTY_DEFAULT_EMULATORS = 50;
+const FILL_SCROLLBACK_LINES = 8000;
+const FIFTY_EMULATOR_WASM_MEMORY_LIMIT = 384 * 1024 * 1024;
+
+async function createDefaultHeadlessTerminals(count: number): Promise<HeadlessTerminal[]> {
+  const options = resolveEmulatorOptions(null);
+  const terms: HeadlessTerminal[] = [];
+  for (let i = 0; i < count; i += 1) {
+    terms.push(await HeadlessTerminal.create(options));
+  }
+  return terms;
+}
+
+function fillScrollback(term: HeadlessTerminal, lines: number): void {
+  const block = '\r\n'.repeat(500);
+  for (let written = 0; written < lines; written += 500) {
+    term.write(block);
+  }
+}
+
+describe('DEFAULT_SCROLLBACK budget', () => {
+  test('caps unused emulator history at a few hundred lines', () => {
+    expect(DEFAULT_SCROLLBACK).toBe(256);
+    expect(resolveEmulatorOptions(null).scrollback).toBe(256);
+  });
+
+  test('fifty default emulators stay under the shared wasm memory bound after filling history', async () => {
+    const bindings = await getGhosttyBindings();
+    const baseline = bindings.buffer().byteLength;
+    const terms = await createDefaultHeadlessTerminals(FIFTY_DEFAULT_EMULATORS);
+    try {
+      for (const term of terms) fillScrollback(term, FILL_SCROLLBACK_LINES);
+      terms[0]?.write('VISIBLE_TAIL\r\n');
+      expect(terms[0]?.render()).toContain('VISIBLE_TAIL');
+      expect(bindings.buffer().byteLength - baseline).toBeLessThan(
+        FIFTY_EMULATOR_WASM_MEMORY_LIMIT
+      );
+    } finally {
+      for (const term of terms) term.free();
+    }
+  }, 60_000);
 });
