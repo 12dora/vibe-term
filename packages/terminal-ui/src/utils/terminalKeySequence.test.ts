@@ -1,5 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import {
+  type CapturedShortcut,
+  type KeyChord,
   escapeForDisplay,
   keyEventToTerminalSequence,
   labelToSymbols,
@@ -91,6 +93,71 @@ describe('keyEventToTerminalSequence', () => {
   test('Ctrl+[（有控制码）→ \\x1b', () => {
     expect(keyEventToTerminalSequence({ key: '[', ctrlKey: true })?.payload).toBe('\x1b');
   });
+});
+
+describe('keyEventToTerminalSequence 查表覆盖', () => {
+  const cases: Array<[string, KeyChord, CapturedShortcut | null]> = [
+    // 方向键 / Home / End（csiFinal）
+    ['ArrowDown', { key: 'ArrowDown' }, { label: '↓', payload: '\x1b[B' }],
+    ['ArrowLeft', { key: 'ArrowLeft' }, { label: '←', payload: '\x1b[D' }],
+    ['Home', { key: 'Home' }, { label: 'Home', payload: '\x1b[H' }],
+    ['End', { key: 'End' }, { label: 'End', payload: '\x1b[F' }],
+    ['Shift+Home', { key: 'Home', shiftKey: true }, { label: 'SHIFT-Home', payload: '\x1b[1;2H' }],
+    [
+      'Cmd+ArrowLeft',
+      { key: 'ArrowLeft', metaKey: true },
+      { label: 'CMD-←', payload: '\x1b[1;9D' },
+    ],
+    [
+      'Ctrl+Alt+ArrowUp',
+      { key: 'ArrowUp', ctrlKey: true, altKey: true },
+      { label: 'CTRL-ALT-↑', payload: '\x1b[1;7A' },
+    ],
+    // csiNum 系
+    ['Insert', { key: 'Insert' }, { label: 'Insert', payload: '\x1b[2~' }],
+    ['PageUp', { key: 'PageUp' }, { label: 'PgUp', payload: '\x1b[5~' }],
+    ['PageDown', { key: 'PageDown' }, { label: 'PgDn', payload: '\x1b[6~' }],
+    [
+      'Shift+Delete',
+      { key: 'Delete', shiftKey: true },
+      { label: 'SHIFT-Delete', payload: '\x1b[3;2~' },
+    ],
+    // raw 系（Alt 前置 ESC）
+    ['Space', { key: ' ' }, { label: 'Space', payload: ' ' }],
+    ['Alt+Space', { key: ' ', altKey: true }, { label: 'ALT-Space', payload: '\x1b ' }],
+    ['Alt+Enter', { key: 'Enter', altKey: true }, { label: 'ALT-Enter', payload: '\x1b\r' }],
+    // Shift 专属组合只在纯 Shift 时生效，带别的修饰键回落到命名键
+    [
+      'Ctrl+Shift+Tab',
+      { key: 'Tab', ctrlKey: true, shiftKey: true },
+      { label: 'CTRL-SHIFT-Tab', payload: '\t' },
+    ],
+    // 功能键
+    ['F3', { key: 'F3' }, { label: 'F3', payload: '\x1bOR' }],
+    ['F12', { key: 'F12' }, { label: 'F12', payload: '\x1b[24~' }],
+    ['Shift+F5', { key: 'F5', shiftKey: true }, { label: 'SHIFT-F5', payload: '\x1b[15~' }],
+    // Ctrl + 符号控制码
+    ['Ctrl+\\', { key: '\\', ctrlKey: true }, { label: 'CTRL-\\', payload: '\x1c' }],
+    ['Ctrl+]', { key: ']', ctrlKey: true }, { label: 'CTRL-]', payload: '\x1d' }],
+    ['Ctrl+^', { key: '^', ctrlKey: true }, { label: 'CTRL-^', payload: '\x1e' }],
+    ['Ctrl+_', { key: '_', ctrlKey: true }, { label: 'CTRL-_', payload: '\x1f' }],
+    ['Ctrl+@', { key: '@', ctrlKey: true }, { label: 'CTRL-@', payload: '\x00' }],
+    ['Ctrl+?', { key: '?', ctrlKey: true }, { label: 'CTRL-?', payload: '\x7f' }],
+    // Ctrl+Alt+字母不落 Ctrl 控制码分支，且无符号控制码 → 拒绝捕获
+    ['Ctrl+Alt+x', { key: 'x', ctrlKey: true, altKey: true }, null],
+    // Cmd+字母不产生控制序列，按裸字符处理（沿用既有行为）
+    ['Cmd+c', { key: 'c', metaKey: true }, { label: 'c', payload: 'c' }],
+    // 不可识别
+    ['空 key', { key: '' }, null],
+    ['Unidentified', { key: 'Unidentified' }, null],
+    ['未知多字符键', { key: 'AudioVolumeUp' }, null],
+  ];
+
+  for (const [name, chord, expected] of cases) {
+    test(name, () => {
+      expect(keyEventToTerminalSequence(chord)).toEqual(expected);
+    });
+  }
 });
 
 describe('parseEscapeSequence', () => {

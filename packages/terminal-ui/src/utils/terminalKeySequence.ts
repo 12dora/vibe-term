@@ -87,6 +87,26 @@ const CTRL_SYMBOLS: Record<string, string> = {
   '?': '\x7f',
 };
 
+// 仅按下 Shift 的固定组合：优先于命名键表（Tab/Enter 的常规取值不带修饰语义）
+const SHIFT_ONLY_CHORDS: Record<string, CapturedShortcut> = {
+  Tab: { label: 'SHIFT-Tab', payload: '\x1b[Z' },
+  Enter: { label: 'SHIFT-Enter', payload: '\x1b[13;2u' },
+};
+
+/** 一次按键的修饰键派生量：CSI 修饰码与标签前缀。 */
+interface ModState {
+  /** CSI 修饰参数（1 = 无修饰） */
+  mod: number;
+  hasMod: boolean;
+  /** 标签前缀，如 `CTRL-SHIFT-` */
+  prefix: string;
+  shiftOnly: boolean;
+  /** Ctrl 且不含 Alt/Meta */
+  ctrlPlain: boolean;
+  /** Alt 且不含 Ctrl/Meta */
+  altPlain: boolean;
+}
+
 function computeModCode(e: KeyChord): number {
   return 1 + (e.shiftKey ? 1 : 0) + (e.altKey ? 2 : 0) + (e.ctrlKey ? 4 : 0) + (e.metaKey ? 8 : 0);
 }
@@ -100,6 +120,58 @@ function modPrefix(e: KeyChord): string {
   return parts.length ? `${parts.join('-')}-` : '';
 }
 
+function computeModState(e: KeyChord): ModState {
+  const mod = computeModCode(e);
+  return {
+    mod,
+    hasMod: mod !== 1,
+    prefix: modPrefix(e),
+    shiftOnly: Boolean(e.shiftKey) && !e.ctrlKey && !e.altKey && !e.metaKey,
+    ctrlPlain: Boolean(e.ctrlKey) && !e.altKey && !e.metaKey,
+    altPlain: Boolean(e.altKey) && !e.ctrlKey && !e.metaKey,
+  };
+}
+
+function namedKeyPayload(def: KeyDef, e: KeyChord, m: ModState): string {
+  if ('raw' in def) return e.altKey ? `\x1b${def.raw}` : def.raw;
+  if ('csiFinal' in def) {
+    return m.hasMod ? `\x1b[1;${m.mod}${def.csiFinal}` : `\x1b[${def.csiFinal}`;
+  }
+  return m.hasMod ? `\x1b[${def.csiNum};${m.mod}~` : `\x1b[${def.csiNum}~`;
+}
+
+/** 按顺序尝试的解析器；返回 null 表示不认领本次按键，交给下一个。 */
+type KeyResolver = (key: string, e: KeyChord, m: ModState) => CapturedShortcut | null;
+
+const RESOLVERS: KeyResolver[] = [
+  (key, _e, m) => (m.shiftOnly ? (SHIFT_ONLY_CHORDS[key] ?? null) : null),
+  // Ctrl + 字母 → 控制码 \x01..\x1a
+  (key, _e, m) => {
+    if (!m.ctrlPlain || !/^[a-zA-Z]$/.test(key)) return null;
+    const upper = key.toUpperCase();
+    return { label: `CTRL-${upper}`, payload: String.fromCharCode(upper.charCodeAt(0) - 64) };
+  },
+  (key, _e, m) => {
+    const fk = FUNCTION_KEYS[key];
+    return fk ? { label: m.prefix + key, payload: fk } : null;
+  },
+  (key, e, m) => {
+    const named = NAMED_KEYS[key];
+    return named ? { label: m.prefix + named.label, payload: namedKeyPayload(named, e, m) } : null;
+  },
+  // 单个可打印字符：Alt 前置 ESC；Ctrl 只认有控制码的符号，其余拒绝捕获
+  // （避免标签声称 CTRL 组合但只发裸字符）；无修饰时原样发送（shift 已体现在 key 上）
+  (key, e, m) => {
+    if (key.length !== 1) return null;
+    if (m.altPlain) return { label: `ALT-${key.toUpperCase()}`, payload: `\x1b${key}` };
+    if (e.ctrlKey) {
+      const cc = CTRL_SYMBOLS[key];
+      return cc === undefined ? null : { label: m.prefix + key, payload: cc };
+    }
+    return { label: key, payload: key };
+  },
+];
+
 /**
  * 把一次键盘事件转成终端控制序列 + 标签；无法识别（如纯修饰键）返回 null。
  */
@@ -107,63 +179,11 @@ export function keyEventToTerminalSequence(e: KeyChord): CapturedShortcut | null
   const key = e.key;
   if (!key || MODIFIER_ONLY.has(key)) return null;
 
-  const mod = computeModCode(e);
-  const hasMod = mod !== 1;
-  const prefix = modPrefix(e);
-
-  // Shift+Tab → reverse tab
-  if (key === 'Tab' && e.shiftKey && !e.ctrlKey && !e.altKey && !e.metaKey) {
-    return { label: 'SHIFT-Tab', payload: '\x1b[Z' };
+  const m = computeModState(e);
+  for (const resolve of RESOLVERS) {
+    const hit = resolve(key, e, m);
+    if (hit) return hit;
   }
-  // Shift+Enter → CSI u
-  if (key === 'Enter' && e.shiftKey && !e.ctrlKey && !e.altKey && !e.metaKey) {
-    return { label: 'SHIFT-Enter', payload: '\x1b[13;2u' };
-  }
-
-  // Ctrl + 字母 → 控制码 \x01..\x1a
-  if (e.ctrlKey && !e.altKey && !e.metaKey && /^[a-zA-Z]$/.test(key)) {
-    const upper = key.toUpperCase();
-    return { label: `CTRL-${upper}`, payload: String.fromCharCode(upper.charCodeAt(0) - 64) };
-  }
-
-  // 功能键
-  const fk = FUNCTION_KEYS[key];
-  if (fk) {
-    return { label: prefix + key, payload: fk };
-  }
-
-  // 命名特殊键
-  const named = NAMED_KEYS[key];
-  if (named) {
-    if ('raw' in named) {
-      const payload = e.altKey ? `\x1b${named.raw}` : named.raw;
-      return { label: prefix + named.label, payload };
-    }
-    if ('csiFinal' in named) {
-      const payload = hasMod ? `\x1b[1;${mod}${named.csiFinal}` : `\x1b[${named.csiFinal}`;
-      return { label: prefix + named.label, payload };
-    }
-    const payload = hasMod ? `\x1b[${named.csiNum};${mod}~` : `\x1b[${named.csiNum}~`;
-    return { label: prefix + named.label, payload };
-  }
-
-  // 单个可打印字符
-  if (key.length === 1) {
-    if (e.altKey && !e.ctrlKey && !e.metaKey) {
-      return { label: `ALT-${key.toUpperCase()}`, payload: `\x1b${key}` };
-    }
-    if (e.ctrlKey) {
-      const cc = CTRL_SYMBOLS[key];
-      // 无对应控制码的 Ctrl+字符（如 Ctrl+1）拒绝捕获，避免标签声称 CTRL 组合但只发裸字符
-      if (cc !== undefined) {
-        return { label: prefix + key, payload: cc };
-      }
-      return null;
-    }
-    // 普通字符（shift 已体现在 key 上）
-    return { label: key, payload: key };
-  }
-
   return null;
 }
 
