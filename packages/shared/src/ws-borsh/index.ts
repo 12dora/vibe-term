@@ -56,6 +56,10 @@ export {
   KIND_NOTIFY_EVENT,
   KIND_CANONICAL_COMMAND,
   KIND_CANONICAL_EVENT,
+  KIND_NODE_EVENT,
+  KIND_RTC_SIGNAL,
+  KIND_CARRIER_SWITCH,
+  KIND_CARRIER_SWITCH_ACK,
   isValidKind,
   kindToString,
 } from './kind';
@@ -128,6 +132,17 @@ export {
 export {
   SITE_THEME_DARK,
   SITE_THEME_LIGHT,
+} from './schema';
+
+// ========== mesh 事件枚举值 ==========
+export {
+  NODE_EVENT_STATUS_ONLINE,
+  NODE_EVENT_STATUS_OFFLINE,
+  NODE_EVENT_STATUS_REVOKED,
+  RTC_SIGNAL_FROM_BROWSER,
+  RTC_SIGNAL_FROM_NODE,
+  CARRIER_SWITCH_TO_DIRECT,
+  CARRIER_SWITCH_TO_PRIMARY,
 } from './schema';
 
 // ========== Agent/Watch 事件常量与 payload 类型 ==========

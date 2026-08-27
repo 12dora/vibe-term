@@ -72,6 +72,12 @@ export const KIND_NOTIFY_EVENT = 0x0803;
 export const KIND_CANONICAL_COMMAND = 0x0901;
 export const KIND_CANONICAL_EVENT = 0x0902;
 
+// ========== Mesh / hub (0x0A00-0x0AFF) ==========
+export const KIND_NODE_EVENT = 0x0a01;
+export const KIND_RTC_SIGNAL = 0x0a02;
+export const KIND_CARRIER_SWITCH = 0x0a03;
+export const KIND_CARRIER_SWITCH_ACK = 0x0a04;
+
 // ========== Kind 有效性检查 ==========
 const VALID_KINDS = new Set<number>([
   KIND_HELLO_C2S,
@@ -124,6 +130,10 @@ const VALID_KINDS = new Set<number>([
   KIND_NOTIFY_EVENT,
   KIND_CANONICAL_COMMAND,
   KIND_CANONICAL_EVENT,
+  KIND_NODE_EVENT,
+  KIND_RTC_SIGNAL,
+  KIND_CARRIER_SWITCH,
+  KIND_CARRIER_SWITCH_ACK,
 ]);
 
 export function isValidKind(kind: number): boolean {
@@ -182,6 +192,10 @@ export function kindToString(kind: number): string {
     [KIND_NOTIFY_EVENT]: 'NOTIFY_EVENT',
     [KIND_CANONICAL_COMMAND]: 'CANONICAL_COMMAND',
     [KIND_CANONICAL_EVENT]: 'CANONICAL_EVENT',
+    [KIND_NODE_EVENT]: 'NODE_EVENT',
+    [KIND_RTC_SIGNAL]: 'RTC_SIGNAL',
+    [KIND_CARRIER_SWITCH]: 'CARRIER_SWITCH',
+    [KIND_CARRIER_SWITCH_ACK]: 'CARRIER_SWITCH_ACK',
   };
   return kindMap[kind] ?? `UNKNOWN(0x${kind.toString(16).padStart(4, '0')})`;
 }

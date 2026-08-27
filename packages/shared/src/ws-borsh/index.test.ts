@@ -40,12 +40,29 @@ import {
   splitPayloadIntoChunks,
 } from './index';
 import {
+  KIND_CARRIER_SWITCH,
+  KIND_CARRIER_SWITCH_ACK,
+  KIND_NODE_EVENT,
+  KIND_RTC_SIGNAL,
+} from './kind';
+import {
   AgentEventSchema,
   AgentSubscribeSchema,
   AgentUnsubscribeSchema,
+  CARRIER_SWITCH_TO_DIRECT,
+  CARRIER_SWITCH_TO_PRIMARY,
+  CarrierSwitchAckSchema,
+  CarrierSwitchSchema,
   ClipboardWriteSchema,
   EventNotifyS2CSchema,
+  NODE_EVENT_STATUS_OFFLINE,
+  NODE_EVENT_STATUS_ONLINE,
+  NODE_EVENT_STATUS_REVOKED,
+  NodeEventSchema,
   PingPongSchema,
+  RTC_SIGNAL_FROM_BROWSER,
+  RTC_SIGNAL_FROM_NODE,
+  RtcSignalSchema,
   SiteThemeUpdateC2SSchema,
   SiteThemeUpdateS2CSchema,
   TmuxReorderPanesSchema,
@@ -622,5 +639,92 @@ describe('errors', () => {
   it('应该支持自定义消息', () => {
     const error = new WsBorshError(ERROR_INVALID_FRAME, false, 'custom message');
     expect(error.message).toBe('custom message');
+  });
+});
+
+describe('mesh / hub 协议消息', () => {
+  it('KIND_NODE_EVENT / RTC_SIGNAL / CARRIER_SWITCH / ACK 有效且可读名', () => {
+    expect(KIND_NODE_EVENT).toBe(0x0a01);
+    expect(KIND_RTC_SIGNAL).toBe(0x0a02);
+    expect(KIND_CARRIER_SWITCH).toBe(0x0a03);
+    expect(KIND_CARRIER_SWITCH_ACK).toBe(0x0a04);
+    expect(isValidKind(KIND_NODE_EVENT)).toBe(true);
+    expect(isValidKind(KIND_RTC_SIGNAL)).toBe(true);
+    expect(isValidKind(KIND_CARRIER_SWITCH)).toBe(true);
+    expect(isValidKind(KIND_CARRIER_SWITCH_ACK)).toBe(true);
+    expect(kindToString(KIND_NODE_EVENT)).toBe('NODE_EVENT');
+    expect(kindToString(KIND_RTC_SIGNAL)).toBe('RTC_SIGNAL');
+    expect(kindToString(KIND_CARRIER_SWITCH)).toBe('CARRIER_SWITCH');
+    expect(kindToString(KIND_CARRIER_SWITCH_ACK)).toBe('CARRIER_SWITCH_ACK');
+  });
+
+  it('NODE_EVENT payload roundtrip（含 option 字段）', () => {
+    const data = {
+      nodeId: 'aabbccddeeff00112233445566778899',
+      status: NODE_EVENT_STATUS_ONLINE,
+      reach: 'lan',
+      inventory: '{"devices":[]}',
+    };
+    const decoded = decodePayload(NodeEventSchema, encodePayload(NodeEventSchema, data));
+    expect(decoded).toEqual(data);
+
+    const offline = decodePayload(
+      NodeEventSchema,
+      encodePayload(NodeEventSchema, {
+        nodeId: 'n1',
+        status: NODE_EVENT_STATUS_OFFLINE,
+        reach: null,
+        inventory: null,
+      })
+    );
+    expect(offline.status).toBe(NODE_EVENT_STATUS_OFFLINE);
+    expect(offline.reach).toBeNull();
+    expect(offline.inventory).toBeNull();
+    expect(NODE_EVENT_STATUS_REVOKED).toBe(2);
+  });
+
+  it('RTC_SIGNAL payload roundtrip', () => {
+    const offer = decodePayload(
+      RtcSignalSchema,
+      encodePayload(RtcSignalSchema, {
+        rtcSession: 'sess-1',
+        from: RTC_SIGNAL_FROM_BROWSER,
+        to: 'node-b',
+        sdp: 'v=0',
+        candidate: null,
+      })
+    );
+    expect(offer.from).toBe(RTC_SIGNAL_FROM_BROWSER);
+    expect(offer.sdp).toBe('v=0');
+    expect(offer.candidate).toBeNull();
+
+    const ice = decodePayload(
+      RtcSignalSchema,
+      encodePayload(RtcSignalSchema, {
+        rtcSession: 'sess-1',
+        from: RTC_SIGNAL_FROM_NODE,
+        to: 'node-a',
+        sdp: null,
+        candidate: 'candidate:1',
+      })
+    );
+    expect(ice.from).toBe(RTC_SIGNAL_FROM_NODE);
+    expect(ice.candidate).toBe('candidate:1');
+  });
+
+  it('CARRIER_SWITCH / ACK payload roundtrip + envelope', () => {
+    const sw = decodePayload(
+      CarrierSwitchSchema,
+      encodePayload(CarrierSwitchSchema, { epoch: 3, to: CARRIER_SWITCH_TO_DIRECT })
+    );
+    expect(sw.epoch).toBe(3);
+    expect(sw.to).toBe(CARRIER_SWITCH_TO_DIRECT);
+
+    const ackPayload = encodePayload(CarrierSwitchAckSchema, { epoch: 3 });
+    const envelope = encodeEnvelope(KIND_CARRIER_SWITCH_ACK, ackPayload, 9);
+    const decodedEnv = decodeEnvelope(envelope);
+    expect(decodedEnv.kind).toBe(KIND_CARRIER_SWITCH_ACK);
+    expect(decodePayload(CarrierSwitchAckSchema, decodedEnv.payload).epoch).toBe(3);
+    expect(CARRIER_SWITCH_TO_PRIMARY).toBe(1);
   });
 });

@@ -452,4 +452,41 @@ export const EventNotifyS2CSchema = b.struct({
   timestamp: b.u64(),
 });
 
+// ========== Mesh / hub (KIND 0x0Axx) ==========
+// 枚举走 u8 下标，不使用 b.enum（与 SITE_THEME / 协议规范一致）。
+
+export const NODE_EVENT_STATUS_ONLINE = 0;
+export const NODE_EVENT_STATUS_OFFLINE = 1;
+export const NODE_EVENT_STATUS_REVOKED = 2;
+
+export const RTC_SIGNAL_FROM_BROWSER = 0;
+export const RTC_SIGNAL_FROM_NODE = 1;
+
+export const CARRIER_SWITCH_TO_DIRECT = 0;
+export const CARRIER_SWITCH_TO_PRIMARY = 1;
+
+export const NodeEventSchema = b.struct({
+  nodeId: b.string(),
+  status: b.u8(),
+  reach: OptionStringSchema,
+  inventory: OptionStringSchema,
+});
+
+export const RtcSignalSchema = b.struct({
+  rtcSession: b.string(),
+  from: b.u8(),
+  to: b.string(),
+  sdp: OptionStringSchema,
+  candidate: OptionStringSchema,
+});
+
+export const CarrierSwitchSchema = b.struct({
+  epoch: b.u32(),
+  to: b.u8(),
+});
+
+export const CarrierSwitchAckSchema = b.struct({
+  epoch: b.u32(),
+});
+
 export * from './canonical-state';
