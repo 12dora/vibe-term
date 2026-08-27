@@ -7,7 +7,7 @@ import {
   verifyEd25519,
   verifyNodeCertificate,
 } from '@tmex/shared/auth';
-import { type LinkSession, type WebSocketLike, WebSocketLink } from '@tmex/shared/link';
+import { type LinkSession, type ServerSocketAdapter, WebSocketLink } from '@tmex/shared/link';
 import { json, readJsonObjectBody } from '../api/http';
 import type { AuthDb } from '../auth/types';
 import type { UserStore } from '../auth/user-store';
@@ -31,9 +31,10 @@ export type HubUpgradeServer = {
   upgrade(req: Request, options?: { data?: unknown }): boolean;
 };
 
-export type HubServerWebSocket = WebSocketLike & {
+export type HubServerWebSocket = {
   data: HubUplinkSocketData & { adapter?: BunServerWsAdapter };
   send(data: Uint8Array | ArrayBuffer | ArrayBufferView | string): number | undefined;
+  close(code?: number, reason?: string): void;
 };
 
 export type HubRuntimeOptions = {
@@ -52,30 +53,49 @@ type StoredEnrollmentPayload = {
   entry_node_id: string | null;
 };
 
-export class BunServerWsAdapter implements WebSocketLike {
-  binaryType = 'arraybuffer';
-  readyState = 1;
-  onopen: ((ev?: unknown) => void) | null = null;
-  onmessage: ((ev: { data: unknown }) => void) | null = null;
-  onclose: ((ev?: { code?: number; reason?: string }) => void) | null = null;
+export class BunServerWsAdapter implements ServerSocketAdapter {
+  private messageCb: ((bytes: Uint8Array) => void) | null = null;
+  private closeCb: ((reason?: string) => void) | null = null;
+  private drainCb: (() => void) | null = null;
 
   constructor(private readonly socket: HubServerWebSocket) {}
 
-  send(data: Uint8Array): number | undefined {
-    return this.socket.send(data);
+  send(bytes: Uint8Array): number {
+    return this.socket.send(bytes) ?? bytes.byteLength;
   }
 
   close(code?: number, reason?: string): void {
     this.socket.close(code, reason);
   }
 
-  dispatchMessage(data: unknown): void {
-    this.onmessage?.({ data });
+  onMessage(cb: (bytes: Uint8Array) => void): void {
+    this.messageCb = cb;
   }
 
-  dispatchClose(code?: number, reason?: string): void {
-    this.readyState = 3;
-    this.onclose?.({ code, reason });
+  onClose(cb: (reason?: string) => void): void {
+    this.closeCb = cb;
+  }
+
+  onDrain(cb: () => void): void {
+    this.drainCb = cb;
+  }
+
+  dispatchMessage(data: string | ArrayBuffer | Uint8Array): void {
+    const bytes =
+      typeof data === 'string'
+        ? new TextEncoder().encode(data)
+        : data instanceof Uint8Array
+          ? data
+          : new Uint8Array(data);
+    this.messageCb?.(bytes);
+  }
+
+  dispatchClose(_code?: number, reason?: string): void {
+    this.closeCb?.(reason);
+  }
+
+  dispatchDrain(): void {
+    this.drainCb?.();
   }
 }
 
@@ -173,6 +193,10 @@ export class HubRuntime {
 
   handleUplinkClose(ws: HubServerWebSocket, code?: number, reason?: string): void {
     ws.data.adapter?.dispatchClose(code, reason);
+  }
+
+  handleUplinkDrain(ws: HubServerWebSocket): void {
+    ws.data.adapter?.dispatchDrain();
   }
 
   isUplinkSocket(ws: { data?: { kind?: string } }): boolean {
