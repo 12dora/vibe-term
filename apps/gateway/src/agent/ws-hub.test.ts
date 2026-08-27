@@ -59,6 +59,7 @@ const stubSync: AgentSyncEventPayload = {
   inProgressText: '',
   inProgressReasoning: '',
   pendingConfirmations: [],
+  queuedMessages: [],
   lastMessageSeq: -1,
 };
 

@@ -13,6 +13,7 @@ import {
   getAgentSessionById,
   getMaxAgentMessageSeq,
   listPendingAgentConfirmations,
+  listQueuedAgentMessages,
 } from '../db/agent';
 import { encodePayloadFrames, sendToClient } from '../ws/borsh/codec-borsh';
 import { gatewayWebSocketSendGuard } from '../ws/websocket-send-guard';
@@ -28,7 +29,7 @@ export type AgentHubClient = ServerWebSocket<AgentHubClientState>;
 
 export type AgentSyncProvider = (sessionId: string) => Promise<AgentSyncEventPayload | null>;
 
-// 默认 syncProvider：仅从 DB 读取 status / pending confirmations / lastMessageSeq。
+// 默认 syncProvider：从 DB 读取 status / pending confirmations / queuedMessages / lastMessageSeq。
 // 边界：进行中回合的累积文本（inProgressText/inProgressReasoning）只存在于 agent runtime 内存中，
 // Task 5 会通过 setSyncProvider 注入包含这些字段的真实实现，本实现恒为空串。
 async function dbSyncProvider(sessionId: string): Promise<AgentSyncEventPayload | null> {
@@ -48,6 +49,12 @@ async function dbSyncProvider(sessionId: string): Promise<AgentSyncEventPayload 
       toolName: c.toolName,
       input: c.inputJson,
       createdAt: c.createdAt,
+    })),
+    queuedMessages: listQueuedAgentMessages(sessionId).map((item) => ({
+      id: item.id,
+      seq: item.seq,
+      text: item.text,
+      createdAt: item.createdAt,
     })),
     lastMessageSeq: getMaxAgentMessageSeq(sessionId),
   };

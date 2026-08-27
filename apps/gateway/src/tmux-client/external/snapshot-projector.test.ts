@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import type { TmuxWindow } from '@tmex/shared';
+import type { StateSnapshotPayload, TmuxWindow } from '@tmex/shared';
 
 import {
   PANE_SNAPSHOT_FORMAT,
@@ -277,9 +277,14 @@ describe('SnapshotProjector.performSnapshot', () => {
     };
   }
 
+  type CapturedSnapshot = {
+    payload: StateSnapshotPayload;
+    baseRevision?: bigint;
+  };
+
   type FakeHost = SnapshotProjectorHost & {
     calls: string[][];
-    snapshots: unknown[];
+    snapshots: CapturedSnapshot[];
     pruned: string[][];
     themePruned: string[][];
     restored: number;
@@ -452,13 +457,17 @@ describe('SnapshotProjector.performSnapshot', () => {
     expect(host.restored).toBe(1);
     expect(host.success).toBe(1);
     expect(host.closures).toBe(1);
+    const projectedWindow = host.snapshotWindows.get('@1');
+    if (!projectedWindow) {
+      throw new Error('expected projected window @1');
+    }
     expect(host.snapshots[0]).toEqual({
       payload: {
         deviceId: 'dev-1',
         session: {
           id: '$1',
           name: 'tmex',
-          windows: [host.snapshotWindows.get('@1')],
+          windows: [projectedWindow],
         },
       },
       baseRevision: 3n,

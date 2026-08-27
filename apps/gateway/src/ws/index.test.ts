@@ -310,7 +310,7 @@ describe('WebSocketServer snapshot recovery', () => {
       server.refreshSnapshotPolling('device-watchdog');
       expect(setIntervalSpy).not.toHaveBeenCalled();
 
-      ws.data.borshState.selectedPanes['device-watchdog'] = undefined;
+      ws.data.borshState.selectedPanes['device-watchdog'] = null;
       server.refreshSnapshotPolling('device-watchdog');
       expect(entry.snapshotPollTimer).toBeNull();
     } finally {

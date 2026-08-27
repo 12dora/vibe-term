@@ -1,26 +1,23 @@
 import type { StateSnapshotPayload } from '@tmex/shared';
 import { wsBorsh } from '@tmex/shared';
+import type { ServerWebSocket } from 'bun';
 import { createBorshClientState } from './borsh/codec-borsh';
 import { sessionStateStore } from './borsh/session-state';
-import type { DeviceConnectionEntry } from './types';
+import type { ClientState, DeviceConnectionEntry } from './types';
 
-export interface BorshTestWs {
-  data: { borshState: ReturnType<typeof createBorshClientState> };
-  sent: Uint8Array[];
-  send(message: Uint8Array): number | undefined;
-  terminate(): void;
-}
+export type BorshTestWs = ServerWebSocket<ClientState> & { sent: Uint8Array[] };
 
 export interface CreateBorshTestWsOptions {
   session?: boolean;
-  send?: (this: BorshTestWs, message: Uint8Array) => number | undefined;
+  // biome-ignore lint/suspicious/noConfusingVoidType: send() {} fixtures must typecheck without a dummy return
+  send?: (message: Uint8Array) => number | undefined | void;
   terminate?: (this: BorshTestWs) => void;
 }
 
 export function createBorshTestWs(options: CreateBorshTestWsOptions = {}): BorshTestWs {
-  const ws: BorshTestWs = {
+  const ws = {
     data: { borshState: createBorshClientState() },
-    sent: [],
+    sent: [] as Uint8Array[],
     send(message: Uint8Array) {
       if (options.send) {
         return options.send.call(this, message);
@@ -31,9 +28,9 @@ export function createBorshTestWs(options: CreateBorshTestWsOptions = {}): Borsh
     terminate() {
       options.terminate?.call(this);
     },
-  };
+  } as BorshTestWs;
   if (options.session) {
-    sessionStateStore.create(ws as never);
+    sessionStateStore.create(ws);
   }
   return ws;
 }
