@@ -1,4 +1,5 @@
 import { useMutation, useQueryClient } from '@tanstack/react-query';
+import { parseApiError } from '@tmex/api-client';
 import type { WeixinAccountWithStats } from '@tmex/shared';
 import { useRuntime } from '@tmex/stores/react';
 import { AlertTriangle, Pencil, QrCode, Send, Trash2 } from 'lucide-react';
@@ -11,15 +12,6 @@ import { Button } from '@tmex/ui/button';
 import { Switch } from '@tmex/ui/switch';
 
 import { WeixinAccountLoginModal } from './weixin-account-login-modal';
-
-async function parseApiError(res: Response, fallback: string): Promise<string> {
-  try {
-    const payload = (await res.json()) as { error?: string };
-    return payload.error ?? fallback;
-  } catch {
-    return fallback;
-  }
-}
 
 interface WeixinAccountRowProps {
   account: WeixinAccountWithStats;

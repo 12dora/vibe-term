@@ -1,6 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { parseApiError } from '@tmex/api-client';
 import type { SystemInfo, UpdateCheckResult, UpgradeStatus } from '@tmex/shared';
-import { toBCP47 } from '@tmex/shared';
+import { formatDate } from '@tmex/shared';
 import { AlertTriangle, Download, Loader2, RefreshCw } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
@@ -20,15 +21,6 @@ import {
 } from '@tmex/ui/alert-dialog';
 import { Button } from '@tmex/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@tmex/ui/card';
-
-async function parseApiError(res: Response, fallback: string): Promise<string> {
-  try {
-    const payload = (await res.json()) as { error?: string };
-    return payload.error ?? fallback;
-  } catch {
-    return fallback;
-  }
-}
 
 function InfoRow({ label, value }: { label: string; value: React.ReactNode }) {
   return (
@@ -208,7 +200,7 @@ export function VersionTab() {
                 : t('settings.version.upToDate')}
               {update.publishedAt
                 ? ` · ${t('settings.version.publishedAt', {
-                    date: new Date(update.publishedAt).toLocaleDateString(toBCP47(language)),
+                    date: formatDate(update.publishedAt, language),
                   })}`
                 : ''}
             </span>

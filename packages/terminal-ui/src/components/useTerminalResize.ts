@@ -2,6 +2,7 @@ import type { CompatibleTerminalLike } from 'ghostty-terminal';
 import type { FitAddon } from 'ghostty-terminal';
 import { useCallback, useEffect, useRef } from 'react';
 import { shouldSyncOnViewportRestore } from '../utils/resizeSyncGuards';
+import { computeContainerSize } from './terminalMetrics';
 
 interface UseTerminalResizeOptions {
   deviceId: string;
@@ -78,33 +79,16 @@ export function useTerminalResize({
       return null;
     }
 
-    let cols: number;
-
-    try {
-      const proposed = fitAddon.proposeDimensions();
-      if (!proposed) {
-        throw new Error('fitAddon.proposeDimensions() returned null');
-      }
-      cols = Math.max(2, proposed.cols);
-    } catch {
-      const core = term._core;
-      const cellWidth = core?._renderService?.dimensions?.css?.cell?.width ?? 9;
-      const rect = getContainerRectRef.current?.();
-      if (!rect || rect.width === 0) {
-        return null;
-      }
-      cols = Math.max(2, Math.floor(rect.width / cellWidth));
-    }
-
-    const containerRect = getContainerRectRef.current?.();
-    if (!containerRect || containerRect.height === 0) {
+    const rect = getContainerRectRef.current?.();
+    if (!rect) {
       return null;
     }
-    const core = term._core;
-    const cellHeight = core?._renderService?.dimensions?.css?.cell?.height ?? 17;
-    const rows = Math.max(2, Math.floor(containerRect.height / cellHeight));
 
-    return { cols, rows };
+    return computeContainerSize({
+      rect,
+      cell: term._core?._renderService?.dimensions?.css?.cell,
+      proposeDimensions: () => fitAddon.proposeDimensions(),
+    });
   }, []);
 
   const applyTerminalSize = useCallback((cols: number, rows: number): void => {

@@ -1,9 +1,5 @@
 import { useMutation, useQueryClient } from '@tanstack/react-query';
-import type {
-  LlmProviderDto,
-  UpdateLlmProviderRequest,
-  UpdateLlmProviderResponse,
-} from '@tmex/shared';
+import type { LlmProviderDto, UpdateLlmProviderRequest } from '@tmex/shared';
 import { Loader2, Save } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
@@ -19,7 +15,7 @@ import {
   DialogTitle,
 } from '@tmex/ui/dialog';
 
-import { parseApiError } from '@tmex/api-client';
+import { updateLlmProvider } from '@tmex/api-client';
 import { useRuntime } from '@tmex/stores/react';
 import { LlmProviderModels, type ModelDraft } from './llm-provider-models';
 
@@ -59,15 +55,7 @@ export function LlmProviderModelsModal({
       const manualModels = models.filter((m) => m.source === 'manual').map((m) => m.id);
       const disabledModels = models.filter((m) => !m.enabled).map((m) => m.id);
       const payload: UpdateLlmProviderRequest = { manualModels, disabledModels };
-      const res = await apiClient.fetch(`/api/llm/providers/${provider.id}`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload),
-      });
-      if (!res.ok) {
-        throw new Error(await parseApiError(res, t('settings.llm.updateFailed')));
-      }
-      return (await res.json()) as UpdateLlmProviderResponse;
+      return updateLlmProvider(provider.id, payload, t('settings.llm.updateFailed'), apiClient);
     },
     onSuccess: async (data) => {
       await queryClient.invalidateQueries({ queryKey: ['llm-providers'] });

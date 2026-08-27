@@ -27,6 +27,20 @@ export {
 
 export { formatDisplayVersion } from './version';
 
+// ==================== 通用工具 ====================
+
+export {
+  type NormalizePosixPathOptions,
+  basename,
+  dirname,
+  normalizePosixPath,
+} from './posix-path';
+export { writeTextToClipboard } from './browser-clipboard';
+
+// ==================== 日期格式化 ====================
+
+export { type DateInput, formatDate, formatDateTime } from './format-date';
+
 // ==================== 领域契约 ====================
 
 export * from './contracts/system';
@@ -110,3 +124,6 @@ export {
   GATEWAY_CAPABILITIES,
   GATEWAY_CAPABILITY_CANONICAL_STATE_V1,
 } from './capabilities';
+
+export * from './network';
+export * from './tmux-version';

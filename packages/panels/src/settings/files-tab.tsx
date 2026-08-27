@@ -16,6 +16,7 @@ import {
   FileApiError,
   createFileRoot,
   deleteFileRoot,
+  fetchDevices,
   fetchFileRoots,
   updateFileRoot,
 } from '@tmex/api-client';
@@ -52,10 +53,6 @@ import {
   SelectValue,
 } from '@tmex/ui/select';
 import { Switch } from '@tmex/ui/switch';
-
-interface DevicesResponse {
-  devices: Device[];
-}
 
 const SETTINGS_FILE_ROOTS_QUERY_KEY = ['files', 'settings', 'roots'] as const;
 
@@ -138,13 +135,7 @@ function FilesSettingsTabInner({ deviceGroups, onRootsMutated }: FilesSettingsTa
 
   const devicesQuery = useQuery({
     queryKey: ['devices'],
-    queryFn: async () => {
-      const res = await apiClient.fetch('/api/devices');
-      if (!res.ok) {
-        throw new Error(`HTTP ${res.status}`);
-      }
-      return (await res.json()) as DevicesResponse;
-    },
+    queryFn: () => fetchDevices(apiClient),
     throwOnError: false,
     enabled: !deviceGroups,
   });

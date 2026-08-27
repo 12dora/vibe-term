@@ -3,7 +3,7 @@
 
 import type { DeviceTreeNavigation, SidebarAgentAdapter } from '@tmex/panels/device-tree';
 import type { AgentSessionDto, TmuxPane } from '@tmex/shared';
-import { toBCP47 } from '@tmex/shared';
+import { formatDateTime } from '@tmex/shared';
 import { useAgentStore, useSiteStore, useTmuxStore, useUIStore } from '@tmex/stores';
 import { cn } from '@tmex/ui';
 import {
@@ -362,9 +362,7 @@ function OrphanSessionsList({
           const meta = [
             session.originPaneTitle,
             session.originProcessName,
-            session.createdAt
-              ? new Date(session.createdAt).toLocaleString(toBCP47(language))
-              : null,
+            formatDateTime(session.createdAt, language),
           ].filter((value): value is string => Boolean(value));
           return (
             <div key={session.id} className="group relative">

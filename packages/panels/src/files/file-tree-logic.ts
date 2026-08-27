@@ -1,18 +1,9 @@
 // 文件树的纯逻辑：路径换算、展开态修正、上传前的体积分流、rsync 缺失的安装目标解析。
 
 import type { FileErrorCode, FileRootDto } from '@tmex/shared';
+import { basename as nodeBasename, dirname as parentOf } from '@tmex/shared';
 
-export function parentOf(p: string): string {
-  const idx = p.lastIndexOf('/');
-  if (idx <= 0) return '/';
-  return p.slice(0, idx);
-}
-
-export function nodeBasename(p: string): string {
-  const i = p.lastIndexOf('/');
-  const b = i >= 0 ? p.slice(i + 1) : p;
-  return b || p;
-}
+export { nodeBasename, parentOf };
 
 // 相对于树根的路径：剥离 root 前缀；root 自身返回 '.'。
 export function relativeToRoot(rootPath: string, path: string): string {

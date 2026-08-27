@@ -1,5 +1,6 @@
 import { useQuery } from '@tanstack/react-query';
-import type { TelegramBotWithStats } from '@tmex/shared';
+import { parseApiError } from '@tmex/api-client';
+import type { ListTelegramBotsResponse, TelegramBotWithStats } from '@tmex/shared';
 import { useRuntime } from '@tmex/stores/react';
 import { Plus } from 'lucide-react';
 import { useState } from 'react';
@@ -10,19 +11,6 @@ import { Card, CardContent, CardHeader, CardTitle } from '@tmex/ui/card';
 
 import { TelegramBotFormModal } from './telegram-bot-form-modal';
 import { TelegramBotRow } from './telegram-bot-row';
-
-interface TelegramBotsResponse {
-  bots: TelegramBotWithStats[];
-}
-
-async function parseApiError(res: Response, fallback: string): Promise<string> {
-  try {
-    const payload = (await res.json()) as { error?: string };
-    return payload.error ?? fallback;
-  } catch {
-    return fallback;
-  }
-}
 
 export function TelegramBotsTab() {
   const { t } = useTranslation();
@@ -38,7 +26,7 @@ export function TelegramBotsTab() {
       if (!res.ok) {
         throw new Error(await parseApiError(res, t('telegram.loadBotsFailed')));
       }
-      return (await res.json()) as TelegramBotsResponse;
+      return (await res.json()) as ListTelegramBotsResponse;
     },
   });
 

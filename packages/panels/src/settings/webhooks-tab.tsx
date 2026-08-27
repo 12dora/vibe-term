@@ -1,6 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { parseApiError } from '@tmex/api-client';
 import type { EventType, WebhookEndpoint } from '@tmex/shared';
-import { toBCP47 } from '@tmex/shared';
+import { formatDateTime } from '@tmex/shared';
 import { Loader2, Save, Trash2 } from 'lucide-react';
 import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
@@ -31,15 +32,6 @@ export const WEBHOOK_EVENT_OPTIONS: EventType[] = [
 
 interface WebhooksResponse {
   webhooks: WebhookEndpoint[];
-}
-
-async function parseApiError(res: Response, fallback: string): Promise<string> {
-  try {
-    const payload = (await res.json()) as { error?: string };
-    return payload.error ?? fallback;
-  } catch {
-    return fallback;
-  }
 }
 
 export function WebhooksTab() {
@@ -220,7 +212,7 @@ export function WebhooksTab() {
               <div className="min-w-0">
                 <div className="truncate text-sm font-medium">{webhook.url}</div>
                 <div className="text-xs text-muted-foreground">
-                  {new Date(webhook.createdAt).toLocaleString(toBCP47(language))}
+                  {formatDateTime(webhook.createdAt, language)}
                 </div>
               </div>
               <Button

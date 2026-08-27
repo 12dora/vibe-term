@@ -1,11 +1,11 @@
 import { useIsFetching, useQuery, useQueryClient } from '@tanstack/react-query';
-import type { Device, FileEntryDto, FileRootDto, SystemInfo } from '@tmex/shared';
+import type { FileEntryDto, FileRootDto, SystemInfo } from '@tmex/shared';
 import { Loader2, RotateCw } from 'lucide-react';
 import { useEffect, useMemo } from 'react';
 import { useTranslation } from 'react-i18next';
 import { matchPath, useLocation, useNavigate } from 'react-router';
 
-import { fetchFileRoots } from '@tmex/api-client';
+import { fetchDevices, fetchFileRoots, fetchLlmProviders } from '@tmex/api-client';
 import { decodeFileRef, fileRoute, hostAppPath } from '@tmex/stores';
 import { useFileTreeStore, useRuntime } from '@tmex/stores/react';
 import { cn } from '@tmex/ui';
@@ -24,13 +24,6 @@ import { useRsyncMissingToast } from './use-rsync-missing-toast';
 const DEFAULT_TRANSFER_MAX_BYTES = 2 * 1024 * 1024 * 1024;
 
 const INDENT_STEP = 12;
-
-interface ProvidersResponse {
-  providers: Array<{ id: string; enabled: boolean }>;
-}
-interface DevicesResponse {
-  devices: Device[];
-}
 
 function useSelectedFilePath(): { rootId: string; path: string } | null {
   const location = useLocation();
@@ -74,19 +67,11 @@ function FilesTabInner({ hideHeader }: FilesTabProps) {
   });
   const devicesQuery = useQuery({
     queryKey: ['devices'],
-    queryFn: async () => {
-      const res = await apiClient.fetch('/api/devices');
-      if (!res.ok) throw new Error('devices');
-      return (await res.json()) as DevicesResponse;
-    },
+    queryFn: () => fetchDevices(apiClient),
   });
   const providersQuery = useQuery({
     queryKey: ['llm-providers'],
-    queryFn: async () => {
-      const res = await apiClient.fetch('/api/llm/providers');
-      if (!res.ok) throw new Error('providers');
-      return (await res.json()) as ProvidersResponse;
-    },
+    queryFn: () => fetchLlmProviders(undefined, apiClient),
     throwOnError: false,
   });
   const systemInfoQuery = useQuery({

@@ -1,8 +1,8 @@
 import {
   isCopyShortcut,
   isPasteShortcut,
-  writeSelectionToClipboard,
   writeSelectionToCopyEvent,
+  writeTextToClipboard,
 } from './selection-clipboard';
 
 // Android Gboard 在 contenteditable 上对这些按键不发 keydown（报 keyCode 229），
@@ -76,7 +76,7 @@ export function bindKeyboardEvents(
     const selectionText = context.getSelectionText();
     if (selectionText && isCopyShortcut(event)) {
       event.preventDefault();
-      void writeSelectionToClipboard(selectionText).catch(() => {});
+      void writeTextToClipboard(selectionText).catch(() => {});
       context.clearSelection();
       state.copyShortcutSuppressed = true;
       context.clearTextarea();

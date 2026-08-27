@@ -1,21 +1,17 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import type { SiteSettings } from '@tmex/shared';
+import { parseApiError } from '@tmex/api-client';
+import type { GetSiteSettingsResponse } from '@tmex/shared';
 import { useSiteStore } from '@tmex/stores';
 import { useCallback, useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { toast } from 'sonner';
 import i18n from '../../i18n';
-import { parseApiError } from './parse-api-error';
 import {
   type SiteSettingsDraft,
   buildSiteSettingsPayload,
   createDefaultSiteSettingsDraft,
   siteSettingsToDraft,
 } from './site-settings-form';
-
-interface SiteSettingsResponse {
-  settings: SiteSettings;
-}
 
 export interface SiteSettingsForm {
   draft: SiteSettingsDraft;
@@ -42,7 +38,7 @@ export function useSiteSettingsForm(): SiteSettingsForm {
       if (!res.ok) {
         throw new Error(await parseApiError(res, t('settings.loadFailed')));
       }
-      return (await res.json()) as SiteSettingsResponse;
+      return (await res.json()) as GetSiteSettingsResponse;
     },
   });
 

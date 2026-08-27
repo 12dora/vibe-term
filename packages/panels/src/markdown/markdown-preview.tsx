@@ -1,4 +1,4 @@
-import { useRuntime } from '@tmex/stores/react';
+import { normalizePosixPath } from '@tmex/shared';
 import { cn } from '@tmex/ui';
 import ReactMarkdown, { type Components } from 'react-markdown';
 import rehypeHighlight from 'rehype-highlight';
@@ -9,42 +9,14 @@ import 'katex/dist/katex.min.css';
 import '../code-viewer/hljs-terminal-theme.css';
 import { MermaidBlock } from './mermaid-block';
 
-/** 简易 posix 路径规范化，处理 './' '../' 段 */
-function normalizePosix(path: string): string {
-  const isAbsolute = path.startsWith('/');
-  const segments = path.split('/');
-  const result: string[] = [];
-
-  for (const segment of segments) {
-    if (segment === '' || segment === '.') {
-      continue;
-    }
-    if (segment === '..') {
-      if (result.length > 0 && result[result.length - 1] !== '..') {
-        result.pop();
-      } else if (!isAbsolute) {
-        result.push('..');
-      }
-      continue;
-    }
-    result.push(segment);
-  }
-
-  const joined = result.join('/');
-  return isAbsolute ? `/${joined}` : joined;
-}
-
-/** 把归一化后的绝对路径映射为图片 URL；宿主可注入自有文件端点 */
+/** 把归一化后的绝对路径映射为图片 URL；宿主必须注入自有文件端点（含 rootId 等定位信息） */
 export type ImgUrlResolver = (absPath: string) => string;
-
-const defaultRawUrlResolver: ImgUrlResolver = (absPath) =>
-  `/api/files/raw?path=${encodeURIComponent(absPath)}`;
 
 /** 解析图片 src：外链/data 原样；绝对/相对路径经 resolver 转文件 URL（resolver 为 null 时不改写） */
 export function resolveImgSrc(
   src: string,
   basePath: string,
-  resolver: ImgUrlResolver | null = defaultRawUrlResolver
+  resolver: ImgUrlResolver | null
 ): string {
   if (/^(https?:)?\/\//.test(src) || src.startsWith('data:')) {
     return src;
@@ -54,12 +26,11 @@ export function resolveImgSrc(
   }
 
   if (src.startsWith('/')) {
-    return resolver(normalizePosix(src));
+    return resolver(normalizePosixPath(src));
   }
 
   const base = basePath.endsWith('/') ? basePath : `${basePath}/`;
-  const resolved = normalizePosix(`${base}${src}`);
-  return resolver(resolved);
+  return resolver(normalizePosixPath(`${base}${src}`));
 }
 
 function buildComponents(basePath: string, resolver: ImgUrlResolver | null): Components {
@@ -153,12 +124,10 @@ export function MarkdownPreview({
   source: string;
   basePath: string;
   className?: string;
-  /** 本地图片 URL 解析器；缺省在 filesUi 开启时用 /api/files/raw，关断且未注入时不改写 src */
+  /** 本地图片 URL 解析器；未注入时不改写 src（包内无法构造带 rootId 的文件 URL） */
   urlResolver?: ImgUrlResolver;
 }) {
-  const { features } = useRuntime();
-  const resolver = urlResolver ?? (features.filesUi ? defaultRawUrlResolver : null);
-  const components = buildComponents(basePath, resolver);
+  const components = buildComponents(basePath, urlResolver ?? null);
   return (
     <div className={cn('min-w-0 text-sm', className)}>
       <ReactMarkdown

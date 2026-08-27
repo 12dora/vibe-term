@@ -1,4 +1,5 @@
 import { useMutation, useQueryClient } from '@tanstack/react-query';
+import { parseApiError } from '@tmex/api-client';
 import type { TelegramBotWithStats } from '@tmex/shared';
 import { useRuntime } from '@tmex/stores/react';
 import { Pencil, Trash2, Users } from 'lucide-react';
@@ -10,15 +11,6 @@ import { Button } from '@tmex/ui/button';
 import { Switch } from '@tmex/ui/switch';
 
 import { TelegramBotChatsModal } from './telegram-bot-chats-modal';
-
-async function parseApiError(res: Response, fallback: string): Promise<string> {
-  try {
-    const payload = (await res.json()) as { error?: string };
-    return payload.error ?? fallback;
-  } catch {
-    return fallback;
-  }
-}
 
 interface TelegramBotRowProps {
   bot: TelegramBotWithStats;

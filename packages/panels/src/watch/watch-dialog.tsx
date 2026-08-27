@@ -8,7 +8,8 @@ import {
   watchRulesQueryKey,
 } from '@tmex/api-client';
 import type { WatchRuleDto } from '@tmex/shared';
-import { useRuntime } from '@tmex/stores/react';
+import { formatDateTime } from '@tmex/shared';
+import { useRuntime, useSiteStore } from '@tmex/stores/react';
 import {
   AlertDialog,
   AlertDialogAction,
@@ -45,17 +46,6 @@ interface WatchDialogProps {
   onOpenChange: (open: boolean) => void;
   deviceId: string;
   paneId: string;
-}
-
-function formatTime(value: string | null | undefined): string | null {
-  if (!value) {
-    return null;
-  }
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) {
-    return null;
-  }
-  return date.toLocaleString();
 }
 
 export function WatchDialog({ open, onOpenChange, deviceId, paneId }: WatchDialogProps) {
@@ -270,6 +260,7 @@ interface WatchRuleRowProps {
 function WatchRuleRow({ rule, onToggle, onEdit, onViewState, onDelete }: WatchRuleRowProps) {
   const { t } = useTranslation();
   const { apiClient } = useRuntime();
+  const language = useSiteStore((state) => state.settings?.language ?? 'en_US');
 
   const stateQuery = useQuery({
     queryKey: watchRuleStateQueryKey(rule.id),
@@ -277,7 +268,7 @@ function WatchRuleRow({ rule, onToggle, onEdit, onViewState, onDelete }: WatchRu
     throwOnError: false,
   });
 
-  const lastTriggeredAt = formatTime(stateQuery.data?.state?.lastTriggeredAt);
+  const lastTriggeredAt = formatDateTime(stateQuery.data?.state?.lastTriggeredAt, language);
 
   return (
     <div
@@ -345,6 +336,7 @@ interface WatchRuleStateViewProps {
 function WatchRuleStateView({ rule, onBack }: WatchRuleStateViewProps) {
   const { t } = useTranslation();
   const { apiClient } = useRuntime();
+  const language = useSiteStore((state) => state.settings?.language ?? 'en_US');
 
   const stateQuery = useQuery({
     queryKey: watchRuleStateQueryKey(rule.id),
@@ -358,13 +350,19 @@ function WatchRuleStateView({ rule, onBack }: WatchRuleStateViewProps) {
   const none = t('watch.state.none');
 
   const fields: Array<{ label: string; value: string }> = [
-    { label: t('watch.state.lastSampledAt'), value: formatTime(state?.lastSampledAt) ?? none },
+    {
+      label: t('watch.state.lastSampledAt'),
+      value: formatDateTime(state?.lastSampledAt, language) || none,
+    },
     { label: t('watch.state.lastValue'), value: state?.lastValue ?? none },
     {
       label: t('watch.state.lastValueChangedAt'),
-      value: formatTime(state?.lastValueChangedAt) ?? none,
+      value: formatDateTime(state?.lastValueChangedAt, language) || none,
     },
-    { label: t('watch.state.lastTriggeredAt'), value: formatTime(state?.lastTriggeredAt) ?? none },
+    {
+      label: t('watch.state.lastTriggeredAt'),
+      value: formatDateTime(state?.lastTriggeredAt, language) || none,
+    },
     {
       label: t('watch.state.consecutiveErrors'),
       value: state ? String(state.consecutiveErrors) : none,
@@ -409,7 +407,7 @@ function WatchRuleStateView({ rule, onBack }: WatchRuleStateViewProps) {
                     className="flex items-center gap-2 rounded bg-muted/60 px-2 py-1"
                   >
                     <span className="shrink-0 font-mono text-muted-foreground">
-                      {formatTime(sample.at) ?? sample.at}
+                      {formatDateTime(sample.at, language) || sample.at}
                     </span>
                     <span className="min-w-0 flex-1 truncate font-mono">
                       {sample.value ?? none}

@@ -1,6 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import type { TelegramBotChat } from '@tmex/shared';
-import { toBCP47 } from '@tmex/shared';
+import { parseApiError } from '@tmex/api-client';
+import type { ListTelegramBotChatsResponse, TelegramBotChat } from '@tmex/shared';
+import { formatDateTime } from '@tmex/shared';
 import { Send, Shield } from 'lucide-react';
 import { useMemo } from 'react';
 import { useTranslation } from 'react-i18next';
@@ -15,19 +16,6 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@tmex/ui/dialog';
-
-interface TelegramChatsResponse {
-  chats: TelegramBotChat[];
-}
-
-async function parseApiError(res: Response, fallback: string): Promise<string> {
-  try {
-    const payload = (await res.json()) as { error?: string };
-    return payload.error ?? fallback;
-  } catch {
-    return fallback;
-  }
-}
 
 interface TelegramBotChatsModalProps {
   open: boolean;
@@ -54,7 +42,7 @@ export function TelegramBotChatsModal({
       if (!res.ok) {
         throw new Error(await parseApiError(res, t('telegram.loadChatsFailed')));
       }
-      return (await res.json()) as TelegramChatsResponse;
+      return (await res.json()) as ListTelegramBotChatsResponse;
     },
   });
 
@@ -205,7 +193,7 @@ function ChatRow({ chat, pending, onApprove, onDelete, onTest }: ChatRowProps) {
         {t('telegram.chatId')}：{chat.chatId}
       </div>
       <div className="text-xs text-muted-foreground">
-        {new Date(chat.appliedAt).toLocaleString(toBCP47(language))}
+        {formatDateTime(chat.appliedAt, language)}
       </div>
 
       <div className="flex items-center justify-end gap-2 pt-1">

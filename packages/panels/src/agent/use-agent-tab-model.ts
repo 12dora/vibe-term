@@ -4,6 +4,7 @@ import { useEffect, useMemo } from 'react';
 import { useMatch, useNavigate } from 'react-router';
 
 import { useQuery } from '@tanstack/react-query';
+import { fetchDevices } from '@tmex/api-client';
 import type {
   AgentQueuedMessageDto,
   AgentSessionDto,
@@ -137,11 +138,7 @@ export function useAgentTabModel(): AgentTabModel {
 
   const { data: devicesData } = useQuery({
     queryKey: ['devices'],
-    queryFn: async () => {
-      const res = await runtime.apiClient.fetch('/api/devices');
-      if (!res.ok) throw new Error('Failed to load devices');
-      return res.json() as Promise<{ devices: Device[] }>;
-    },
+    queryFn: () => fetchDevices(runtime.apiClient),
     throwOnError: false,
   });
 

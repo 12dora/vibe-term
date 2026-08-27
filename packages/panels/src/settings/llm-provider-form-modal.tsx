@@ -1,11 +1,9 @@
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import type {
   CreateLlmProviderRequest,
-  CreateLlmProviderResponse,
   LlmProviderDto,
   LlmProviderProtocol,
   UpdateLlmProviderRequest,
-  UpdateLlmProviderResponse,
 } from '@tmex/shared';
 import { Loader2, Save } from 'lucide-react';
 import { useEffect, useState } from 'react';
@@ -24,7 +22,7 @@ import {
 import { Input } from '@tmex/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@tmex/ui/select';
 
-import { parseApiError } from '@tmex/api-client';
+import { createLlmProvider, updateLlmProvider } from '@tmex/api-client';
 import { useRuntime } from '@tmex/stores/react';
 
 const PROTOCOL_OPTIONS: LlmProviderProtocol[] = ['openai-chat', 'openai-responses'];
@@ -68,15 +66,7 @@ export function LlmProviderFormModal({ open, onOpenChange, provider }: LlmProvid
         apiKey: apiKey.trim(),
         enabled: true,
       };
-      const res = await apiClient.fetch('/api/llm/providers', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload),
-      });
-      if (!res.ok) {
-        throw new Error(await parseApiError(res, t('settings.llm.createFailed')));
-      }
-      return (await res.json()) as CreateLlmProviderResponse;
+      return createLlmProvider(payload, t('settings.llm.createFailed'), apiClient);
     },
     onSuccess: async (data) => {
       await queryClient.invalidateQueries({ queryKey: ['llm-providers'] });
@@ -105,15 +95,7 @@ export function LlmProviderFormModal({ open, onOpenChange, provider }: LlmProvid
       if (apiKey.trim()) {
         payload.apiKey = apiKey.trim();
       }
-      const res = await apiClient.fetch(`/api/llm/providers/${provider.id}`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload),
-      });
-      if (!res.ok) {
-        throw new Error(await parseApiError(res, t('settings.llm.updateFailed')));
-      }
-      return (await res.json()) as UpdateLlmProviderResponse;
+      return updateLlmProvider(provider.id, payload, t('settings.llm.updateFailed'), apiClient);
     },
     onSuccess: async (data) => {
       await queryClient.invalidateQueries({ queryKey: ['llm-providers'] });

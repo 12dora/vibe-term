@@ -1,7 +1,8 @@
 import { useQueryClient } from '@tanstack/react-query';
+import { parseApiError } from '@tmex/api-client';
 import type {
+  ListWeixinAccountUsersResponse,
   StartWeixinLoginResponse,
-  WeixinAccountUser,
   WeixinLoginStatusResponse,
 } from '@tmex/shared';
 import { useRuntime } from '@tmex/stores/react';
@@ -22,19 +23,6 @@ import {
 } from '@tmex/ui/dialog';
 
 const POLL_INTERVAL_MS = 1500;
-
-async function parseApiError(res: Response, fallback: string): Promise<string> {
-  try {
-    const payload = (await res.json()) as { error?: string };
-    return payload.error ?? fallback;
-  } catch {
-    return fallback;
-  }
-}
-
-interface WeixinUsersResponse {
-  users: WeixinAccountUser[];
-}
 
 interface WeixinAccountLoginModalProps {
   open: boolean;
@@ -97,7 +85,7 @@ export function WeixinAccountLoginModal({
         if (!res.ok) {
           throw new Error(await parseApiError(res, t('weixin.loginFailed')));
         }
-        const data = (await res.json()) as WeixinUsersResponse;
+        const data = (await res.json()) as ListWeixinAccountUsersResponse;
         if (genRef.current !== gen) return;
 
         // 新用户（首次绑定）或 lastInboundAt 变化（重新授权）＝扫码后的新消息。
@@ -171,7 +159,7 @@ export function WeixinAccountLoginModal({
           if (!usersRes.ok) {
             throw new Error(await parseApiError(usersRes, t('weixin.loginFailed')));
           }
-          const usersData = (await usersRes.json()) as WeixinUsersResponse;
+          const usersData = (await usersRes.json()) as ListWeixinAccountUsersResponse;
           if (genRef.current !== gen) return;
 
           const baseline = new Map<string, string | null>(

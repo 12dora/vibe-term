@@ -1,5 +1,6 @@
 import { useQuery } from '@tanstack/react-query';
-import type { WeixinAccountWithStats } from '@tmex/shared';
+import { parseApiError } from '@tmex/api-client';
+import type { ListWeixinAccountsResponse, WeixinAccountWithStats } from '@tmex/shared';
 import { useRuntime } from '@tmex/stores/react';
 import { Plus } from 'lucide-react';
 import { useState } from 'react';
@@ -10,19 +11,6 @@ import { Card, CardContent, CardHeader, CardTitle } from '@tmex/ui/card';
 
 import { WeixinAccountFormModal } from './weixin-account-form-modal';
 import { WeixinAccountRow } from './weixin-account-row';
-
-interface WeixinAccountsResponse {
-  accounts: WeixinAccountWithStats[];
-}
-
-async function parseApiError(res: Response, fallback: string): Promise<string> {
-  try {
-    const payload = (await res.json()) as { error?: string };
-    return payload.error ?? fallback;
-  } catch {
-    return fallback;
-  }
-}
 
 export function WeixinAccountsTab() {
   const { t } = useTranslation();
@@ -40,7 +28,7 @@ export function WeixinAccountsTab() {
       if (!res.ok) {
         throw new Error(await parseApiError(res, t('weixin.loadAccountsFailed')));
       }
-      return (await res.json()) as WeixinAccountsResponse;
+      return (await res.json()) as ListWeixinAccountsResponse;
     },
   });
 

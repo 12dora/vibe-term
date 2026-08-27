@@ -1,9 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import type {
-  AgentLlmSettingsDto,
-  LlmProviderDto,
-  UpdateAgentLlmSettingsRequest,
-} from '@tmex/shared';
+import type { LlmProviderDto, UpdateAgentLlmSettingsRequest } from '@tmex/shared';
 import { Loader2, Plus, Save } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
@@ -14,18 +10,10 @@ import { Card, CardContent, CardHeader, CardTitle } from '@tmex/ui/card';
 import { Input } from '@tmex/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@tmex/ui/select';
 
-import { parseApiError } from '@tmex/api-client';
+import { fetchAgentLlmSettings, fetchLlmProviders, parseApiError } from '@tmex/api-client';
 import { useRuntime } from '@tmex/stores/react';
 import { LlmProviderFormModal } from './llm-provider-form-modal';
 import { LlmProviderRow } from './llm-provider-row';
-
-interface ProvidersResponse {
-  providers: LlmProviderDto[];
-}
-
-interface LlmSettingsResponse {
-  settings: AgentLlmSettingsDto;
-}
 
 export function LlmProvidersTab() {
   const { t } = useTranslation();
@@ -36,13 +24,7 @@ export function LlmProvidersTab() {
 
   const providersQuery = useQuery({
     queryKey: ['llm-providers'],
-    queryFn: async () => {
-      const res = await apiClient.fetch('/api/llm/providers');
-      if (!res.ok) {
-        throw new Error(await parseApiError(res, t('settings.llm.loadFailed')));
-      }
-      return (await res.json()) as ProvidersResponse;
-    },
+    queryFn: () => fetchLlmProviders(t('settings.llm.loadFailed'), apiClient),
   });
 
   const providers = providersQuery.data?.providers ?? [];
@@ -111,13 +93,7 @@ function LlmDefaultsCard({ providers }: LlmDefaultsCardProps) {
 
   const settingsQuery = useQuery({
     queryKey: ['llm-settings'],
-    queryFn: async () => {
-      const res = await apiClient.fetch('/api/llm/settings');
-      if (!res.ok) {
-        throw new Error(await parseApiError(res, t('settings.llm.settingsLoadFailed')));
-      }
-      return (await res.json()) as LlmSettingsResponse;
-    },
+    queryFn: () => fetchAgentLlmSettings(t('settings.llm.settingsLoadFailed'), apiClient),
   });
 
   const serverDefaultProviderId = settingsQuery.data?.settings.defaultProviderId ?? null;

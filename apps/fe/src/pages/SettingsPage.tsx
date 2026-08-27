@@ -4,6 +4,7 @@ import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { toast } from 'sonner';
 
+import { parseApiError } from '@tmex/api-client';
 import { TerminalSettingsTab } from '@tmex/panels/settings';
 import { cn } from '@tmex/ui';
 import {
@@ -22,7 +23,6 @@ import { AISettingsTab } from './settings/ai-settings-tab';
 import { DevicesAndFilesTab } from './settings/devices-and-files-tab';
 import { GeneralSettingsTab } from './settings/general-settings-tab';
 import { NotificationSettingsTab } from './settings/notification-settings-tab';
-import { parseApiError } from './settings/parse-api-error';
 import { useSiteSettingsForm } from './settings/use-site-settings-form';
 
 // 灰色轨道(bg-muted)上嵌一个更亮的圆角药丸：亮色用 bg-background(白)，暗色用更亮的半透明覆盖，去边框。

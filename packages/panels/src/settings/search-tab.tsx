@@ -1,10 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import type {
-  AgentLlmSettingsDto,
-  AgentSearchProvider,
-  SearchProviderInfoDto,
-  UpdateAgentLlmSettingsRequest,
-} from '@tmex/shared';
+import { fetchAgentLlmSettings, parseApiError } from '@tmex/api-client';
+import type { AgentSearchProvider, UpdateAgentLlmSettingsRequest } from '@tmex/shared';
 import { useRuntime } from '@tmex/stores/react';
 import { Loader2, Save, Trash2 } from 'lucide-react';
 import { useEffect, useState } from 'react';
@@ -26,20 +22,6 @@ import { Card, CardContent, CardHeader, CardTitle } from '@tmex/ui/card';
 import { Input } from '@tmex/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@tmex/ui/select';
 
-interface LlmSettingsResponse {
-  settings: AgentLlmSettingsDto;
-  searchProviders?: SearchProviderInfoDto[];
-}
-
-async function parseApiError(res: Response, fallback: string): Promise<string> {
-  try {
-    const payload = (await res.json()) as { error?: string };
-    return payload.error ?? fallback;
-  } catch {
-    return fallback;
-  }
-}
-
 export function SearchTab() {
   const { t } = useTranslation();
   const queryClient = useQueryClient();
@@ -54,13 +36,7 @@ export function SearchTab() {
 
   const settingsQuery = useQuery({
     queryKey: ['llm-settings'],
-    queryFn: async () => {
-      const res = await apiClient.fetch('/api/llm/settings');
-      if (!res.ok) {
-        throw new Error(await parseApiError(res, t('settings.search.loadFailed')));
-      }
-      return (await res.json()) as LlmSettingsResponse;
-    },
+    queryFn: () => fetchAgentLlmSettings(t('settings.search.loadFailed'), apiClient),
   });
 
   const settings = settingsQuery.data?.settings;

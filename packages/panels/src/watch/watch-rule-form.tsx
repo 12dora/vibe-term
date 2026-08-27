@@ -1,6 +1,6 @@
 import { useMutation, useQuery } from '@tanstack/react-query';
-import { assistRegex, createWatchRule, updateWatchRule } from '@tmex/api-client';
-import type { AssistRegexResponse, ListLlmProvidersResponse, WatchRuleDto } from '@tmex/shared';
+import { assistRegex, createWatchRule, fetchLlmProviders, updateWatchRule } from '@tmex/api-client';
+import type { AssistRegexResponse, WatchRuleDto } from '@tmex/shared';
 import { useRuntime } from '@tmex/stores/react';
 import { cn } from '@tmex/ui';
 import { Button } from '@tmex/ui/button';
@@ -48,13 +48,7 @@ export function WatchRuleForm({ deviceId, paneId, rule, onSaved, onCancel }: Wat
 
   const providersQuery = useQuery({
     queryKey: ['llm-providers'],
-    queryFn: async () => {
-      const res = await apiClient.fetch('/api/llm/providers');
-      if (!res.ok) {
-        throw new Error('Failed to load providers');
-      }
-      return (await res.json()) as ListLlmProvidersResponse;
-    },
+    queryFn: () => fetchLlmProviders(undefined, apiClient),
     throwOnError: false,
   });
 

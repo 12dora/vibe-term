@@ -9,6 +9,7 @@ import {
   playBellSound,
 } from '@tmex/notifications';
 import type { TranslateFn } from '@tmex/notifications';
+import { writeTextToClipboard } from '@tmex/shared';
 import {
   type BorshWebSocketClient,
   type GatewayConnection,
@@ -148,7 +149,7 @@ export interface RuntimeFeatures {
   agentUi: boolean;
   /** 终端监控（watch）UI：关断时不渲染 watch 入口与对话框，也不发起 watch 查询 */
   watchUi: boolean;
-  /** 文件（files）UI：关断时不渲染文件面板与文件设置卡，也不发起 files 查询；markdown 预览不改写本地图片 src */
+  /** 文件（files）UI：关断时不渲染文件面板与文件设置卡，也不发起 files 查询 */
   filesUi: boolean;
   /** 宿主接管通知呈现：终端 notification 不再由包内弹 toast（bell 声与高亮不受影响） */
   hostManagedNotifications: boolean;
@@ -168,42 +169,6 @@ export interface RuntimeCore {
   storagePrefix: string;
   features: RuntimeFeatures;
   terminalFileLinks?: TerminalFileLinksProvider;
-}
-
-/** Browser 默认：Clipboard API 失败后 textarea + execCommand('copy') fallback。 */
-async function browserWriteClipboard(text: string): Promise<void> {
-  if (!text) {
-    return;
-  }
-
-  if (typeof navigator !== 'undefined' && navigator.clipboard?.writeText) {
-    try {
-      await navigator.clipboard.writeText(text);
-      return;
-    } catch {
-      // fall through to execCommand fallback
-    }
-  }
-
-  if (typeof document === 'undefined' || typeof document.execCommand !== 'function') {
-    throw new Error('clipboard unavailable');
-  }
-
-  const helper = document.createElement('textarea');
-  helper.value = text;
-  helper.setAttribute('readonly', 'true');
-  helper.style.position = 'fixed';
-  helper.style.left = '-9999px';
-  helper.style.top = '0';
-  document.body.appendChild(helper);
-  try {
-    helper.select();
-    if (!document.execCommand('copy')) {
-      throw new Error('execCommand copy failed');
-    }
-  } finally {
-    helper.remove();
-  }
 }
 
 async function browserReadClipboard(): Promise<string> {
@@ -255,7 +220,7 @@ const defaultHost: HostServices = {
   isMobile: bridgeIsMobile,
   openMobileSidebar: bridgeOpenMobileSidebar,
   closeMobileSidebar: bridgeCloseMobileSidebar,
-  writeClipboardText: browserWriteClipboard,
+  writeClipboardText: writeTextToClipboard,
   readClipboardText: browserReadClipboard,
   openExternal: browserOpenExternal,
   reload: browserReload,

@@ -1,5 +1,6 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import type { FileCategory, FileStatResponse } from '@tmex/shared';
+import { basename, dirname } from '@tmex/shared';
 import { Download, ExternalLink, FileWarning, Loader2, RotateCw } from 'lucide-react';
 import { type ReactNode, useMemo } from 'react';
 import { useTranslation } from 'react-i18next';
@@ -35,16 +36,6 @@ function triggerDownload(rootId: string, path: string, name: string): void {
       if (controller.signal.aborted) tt.cancel();
       else tt.fail(i18n.t('files.transfer.downloadFailed', { name }));
     });
-}
-
-function baseName(path: string): string {
-  const idx = path.lastIndexOf('/');
-  return idx >= 0 ? path.slice(idx + 1) : path;
-}
-
-function dirName(path: string): string {
-  const idx = path.lastIndexOf('/');
-  return idx > 0 ? path.slice(0, idx) : '/';
 }
 
 const TEXT_CATEGORIES: ReadonlySet<FileCategory> = new Set<FileCategory>([
@@ -180,7 +171,12 @@ function TextView({
   if (category === 'markdown') {
     return (
       <div className="h-full overflow-auto px-4 py-4 md:px-6">
-        <MarkdownPreview source={content} basePath={dirName(path)} className="mx-auto max-w-3xl" />
+        <MarkdownPreview
+          source={content}
+          basePath={dirname(path)}
+          urlResolver={(imgPath) => fileRawUrl(rootId, imgPath)}
+          className="mx-auto max-w-3xl"
+        />
       </div>
     );
   }
@@ -253,7 +249,7 @@ export default function FilePage() {
 
 export function PageTitle({ ref }: { ref?: string }) {
   const fileRef = ref ? decodeFileRef(ref) : null;
-  return <span className="truncate font-mono">{fileRef ? baseName(fileRef.path) : ''}</span>;
+  return <span className="truncate font-mono">{fileRef ? basename(fileRef.path) : ''}</span>;
 }
 
 export function PageActions({ ref }: { ref?: string }) {
@@ -294,7 +290,7 @@ export function PageActions({ ref }: { ref?: string }) {
         size="icon-sm"
         data-testid="file-download-action"
         title={t('file.download')}
-        onClick={() => triggerDownload(rootId, path, baseName(path))}
+        onClick={() => triggerDownload(rootId, path, basename(path))}
       >
         <Download className="h-4 w-4" />
       </Button>
