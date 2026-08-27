@@ -10,12 +10,14 @@ import {
   changePassword,
   clearTotp,
   confirmTotpSetup,
-  passkeysForOrigin,
   registerPasskey,
   removePasskey,
-  withRootSigner,
 } from '@/auth/account-security-actions';
-import type { RecordSigner } from '@/auth/key-log-actions';
+import {
+  type CredentialPromptHandle,
+  decodeRootPublicKey,
+  useCredentialPrompt,
+} from '@/auth/credential-prompt';
 import { clearSessionKey } from '@/auth/session-key-store';
 import { useAuthMode } from '@/auth/use-session-key';
 import type {
@@ -29,7 +31,7 @@ import { Button } from '@tmex/ui/button';
 import { Input } from '@tmex/ui/input';
 import { AlertTriangle, Fingerprint, KeyRound, Loader2, Trash2 } from 'lucide-react';
 import { QRCodeSVG } from 'qrcode.react';
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 
 export interface AccountSecurityPageProps {
@@ -117,6 +119,15 @@ function AccountSecurity({ mode: rawMode, api, reloadMode }: AccountSecurityProp
 
   useEffect(() => reloadPasskeys(), [reloadPasskeys]);
 
+  // 除 rotate-root（必须要旧根钥）与 set-totp（要 seed 派生 k_totp）外，
+  // 其余动作都可以用密码或本 origin 的 passkey 授权。
+  const prompt = useCredentialPrompt({
+    kdfParams: rawMode.kdfParams ?? PLACEHOLDER_KDF,
+    rootPublicKey: decodeRootPublicKey(rawMode.rootPublicKey),
+    passkeys,
+    passkeyAvailable: rawMode.passkeyAvailable,
+  });
+
   if (!rawMode.uid || !rawMode.kdfParams) {
     return (
       <div className="mx-auto w-full max-w-3xl p-5 text-sm text-muted-foreground">
@@ -130,11 +141,19 @@ function AccountSecurity({ mode: rawMode, api, reloadMode }: AccountSecurityProp
   return (
     <div className="mx-auto flex w-full max-w-3xl flex-col gap-4 p-3 sm:p-5">
       <PasswordSection mode={mode} api={api} uid={uid} onDone={reloadMode} />
-      <TotpSection mode={mode} api={api} uid={uid} passkeys={passkeys} onDone={reloadMode} />
+      <TotpSection
+        mode={mode}
+        api={api}
+        uid={uid}
+        passkeys={passkeys}
+        prompt={prompt}
+        onDone={reloadMode}
+      />
       <PasskeySection
         mode={mode}
         api={api}
         uid={uid}
+        prompt={prompt}
         passkeys={passkeys}
         listError={passkeysError}
         onDone={() => {
@@ -143,9 +162,18 @@ function AccountSecurity({ mode: rawMode, api, reloadMode }: AccountSecurityProp
         }}
       />
       <p className="px-1 text-xs text-muted-foreground">{t('auth.security.sessionKeyNote')}</p>
+      {prompt.dialog}
     </div>
   );
 }
+
+/** hook 不能条件调用；缺 kdf 参数时整页只渲染「用户不存在」，这份占位不会被用到。 */
+const PLACEHOLDER_KDF: AuthKdfParamsJson = {
+  salt: '',
+  memory_kib: 0,
+  iterations: 0,
+  parallelism: 0,
+};
 
 // ---------------------------------------------------------------------------
 // 改密
@@ -267,12 +295,14 @@ function TotpSection({
   api,
   uid,
   passkeys,
+  prompt,
   onDone,
 }: {
   mode: ResolvedMode;
   api: AuthApi;
   uid: string;
   passkeys: PasskeySummary[];
+  prompt: CredentialPromptHandle;
   onDone: () => void;
 }) {
   const { t } = useTranslation();
@@ -348,19 +378,16 @@ function TotpSection({
     setError(null);
   }, [draft]);
 
+  /** `clear-totp` 允许 passkey 签（不需要 seed），走统一的凭据对话框。 */
   const disable = useCallback(async () => {
     setError(null);
     setOk(false);
-    if (!password) {
-      setError(t('auth.security.passwordRequired'));
-      return;
-    }
     setBusy(true);
     try {
-      const result = await withRootSigner(password, mode.kdfParams, (signer) =>
-        clearTotp({ api, uid, signer })
-      );
-      setPassword('');
+      const result = await prompt.withSigner((signer) => clearTotp({ api, uid, signer }), {
+        purpose: 'totp',
+      });
+      if (!result) return;
       if (!result.ok) {
         setError(t(`auth.errors.${result.code}`, { defaultValue: result.code }));
         return;
@@ -372,7 +399,7 @@ function TotpSection({
     } finally {
       setBusy(false);
     }
-  }, [api, cancel, mode.kdfParams, onDone, password, t, uid]);
+  }, [api, cancel, onDone, prompt, t, uid]);
 
   return (
     <Section
@@ -381,14 +408,6 @@ function TotpSection({
         passkeys.length > 0 ? t('auth.security.totpPasskeyNote') : t('auth.security.totpNote')
       }
     >
-      <Input
-        type="password"
-        autoComplete="current-password"
-        placeholder={t('auth.security.currentPassword')}
-        value={password}
-        data-testid="security-totp-password"
-        onChange={(event) => setPassword(event.target.value)}
-      />
       {error ? <Feedback tone="error" text={error} /> : null}
       {ok ? <Feedback tone="ok" text={t('auth.security.totpDone')} /> : null}
       <div className="flex gap-2">
@@ -417,6 +436,15 @@ function TotpSection({
             {draft.otpauthUri}
           </code>
           <p className="text-xs text-muted-foreground">{t('auth.security.totpConfirmHint')}</p>
+          {/* set-totp 要用 seed 派生 k_totp，passkey 断言给不出 seed：这一步只能要密码。 */}
+          <Input
+            type="password"
+            autoComplete="current-password"
+            placeholder={t('auth.security.currentPassword')}
+            value={password}
+            data-testid="security-totp-password"
+            onChange={(event) => setPassword(event.target.value)}
+          />
           <Input
             inputMode="numeric"
             autoComplete="one-time-code"
@@ -460,6 +488,7 @@ function PasskeySection({
   api,
   uid,
   passkeys,
+  prompt,
   listError,
   onDone,
 }: {
@@ -467,43 +496,24 @@ function PasskeySection({
   api: AuthApi;
   uid: string;
   passkeys: PasskeySummary[];
+  prompt: CredentialPromptHandle;
   listError: string | null;
   onDone: () => void;
 }) {
   const { t } = useTranslation();
   const [name, setName] = useState('');
-  const [password, setPassword] = useState('');
-  const [signWithPasskey, setSignWithPasskey] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-
-  // 只有注册 origin 与当前 origin 一致的 passkey 才能在这里发起断言。
-  const usable = useMemo(() => passkeysForOrigin(passkeys), [passkeys]);
-
-  /**
-   * 签一条记录：passkey 分支从 `usable` 里取（不是列表第一把），
-   * 根钥分支走 `withRootSigner`，签完立刻清零 seed。
-   */
-  const runSigned = useCallback(
-    async <T,>(fn: (signer: RecordSigner) => Promise<T>): Promise<T> => {
-      if (signWithPasskey) {
-        if (usable.length === 0) throw new Error(t('auth.errors.PASSKEY_CREDENTIAL_UNKNOWN'));
-        return fn({ kind: 'passkey', credentialId: usable[0].credential_id });
-      }
-      if (!password) throw new Error(t('auth.security.passwordRequired'));
-      return withRootSigner(password, mode.kdfParams, fn);
-    },
-    [mode.kdfParams, password, signWithPasskey, t, usable]
-  );
 
   const add = useCallback(async () => {
     setError(null);
     setBusy(true);
     try {
-      const result = await runSigned((signer) =>
-        registerPasskey({ api, uid, name: name || 'passkey', signer })
+      const result = await prompt.withSigner(
+        (signer) => registerPasskey({ api, uid, name: name || 'passkey', signer }),
+        { purpose: 'passkey' }
       );
-      setPassword('');
+      if (!result) return;
       if (!result.ok) {
         setError(t(`auth.errors.${result.code}`, { defaultValue: result.code }));
         return;
@@ -515,17 +525,18 @@ function PasskeySection({
     } finally {
       setBusy(false);
     }
-  }, [api, name, onDone, runSigned, t, uid]);
+  }, [api, name, onDone, prompt, t, uid]);
 
   const remove = useCallback(
     async (credentialId: string) => {
       setError(null);
       setBusy(true);
       try {
-        const result = await runSigned((signer) =>
-          removePasskey({ api, uid, credentialId, signer })
+        const result = await prompt.withSigner(
+          (signer) => removePasskey({ api, uid, credentialId, signer }),
+          { purpose: 'passkey' }
         );
-        setPassword('');
+        if (!result) return;
         if (!result.ok) {
           setError(t(`auth.errors.${result.code}`, { defaultValue: result.code }));
           return;
@@ -537,7 +548,7 @@ function PasskeySection({
         setBusy(false);
       }
     },
-    [api, onDone, runSigned, t, uid]
+    [api, onDone, prompt, t, uid]
   );
 
   return (
@@ -587,28 +598,11 @@ function PasskeySection({
         onChange={(event) => setName(event.target.value)}
       />
 
-      {usable.length > 0 && mode.passkeyAvailable ? (
-        <label className="flex items-center gap-2 text-xs text-muted-foreground">
-          <input
-            type="checkbox"
-            checked={signWithPasskey}
-            data-testid="security-sign-with-passkey"
-            onChange={(event) => setSignWithPasskey(event.target.checked)}
-          />
+      {prompt.passkeys.length > 0 ? (
+        <p className="text-xs text-muted-foreground" data-testid="security-passkey-signing-note">
           {t('auth.security.signWithExistingPasskey')}
-        </label>
+        </p>
       ) : null}
-
-      {signWithPasskey ? null : (
-        <Input
-          type="password"
-          autoComplete="current-password"
-          placeholder={t('auth.security.currentPassword')}
-          value={password}
-          data-testid="security-passkey-password"
-          onChange={(event) => setPassword(event.target.value)}
-        />
-      )}
 
       {error ? <Feedback tone="error" text={error} /> : null}
 

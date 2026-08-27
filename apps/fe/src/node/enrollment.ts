@@ -6,9 +6,11 @@
 //   验证通过、且 pending 未过期时，才签 `admit-node`。不匹配的证书一律忽略并告警。
 // - `sk_sess` 不能签任何记录，admit / revoke 必须当场用根钥（密码）或 passkey。
 
-import type { RecordSigner } from '@/auth';
-import { buildSignedRecord } from '@/auth';
-import type { KeyLogHead, RootKey } from '@tmex/shared/auth';
+// 只从 key-log-actions 直接取：走 `@/auth` barrel 会把 React 组件一起拖进来。
+import type { RecordSigner } from '@/auth/key-log-actions';
+import { buildSignedRecord, enrollmentSignerFrom } from '@/auth/key-log-actions';
+import { ProtocolMismatchError } from '@tmex/api-client/auth/index';
+import type { KeyLogHead } from '@tmex/shared/auth';
 import {
   createEnrollment,
   decodeBase64url,
@@ -23,9 +25,6 @@ import {
 import type { HubApi } from './hub-api';
 
 export const PENDING_STORAGE_KEY = 'tmex.enrollment.pending';
-
-/** 刚做完密码 / passkey 交互后的免二次输入窗口（设计 §2 步骤 3）。 */
-export const SIGNER_REUSE_WINDOW_MS = 5 * 60 * 1000;
 
 /**
  * sessionStorage 里的一条待确认 enrollment。二进制字段一律 base64url。
@@ -183,57 +182,6 @@ export function isPendingExpired(pending: PendingEnrollment, now: number): boole
 }
 
 // ---------------------------------------------------------------------------
-// 5 分钟凭据复用（仅内存）
-// ---------------------------------------------------------------------------
-
-let rememberedSigner: { signer: RecordSigner; until: number } | null = null;
-let rememberedTimer: ReturnType<typeof setTimeout> | null = null;
-
-/** 根钥签名者的 seed 是根私钥：丢引用不够，必须显式清零。 */
-export function wipeSigner(signer: RecordSigner | null | undefined): void {
-  if (signer?.kind === 'root') signer.rootKey.seed.fill(0);
-}
-
-function dropRemembered(): void {
-  if (rememberedTimer !== null) {
-    clearTimeout(rememberedTimer);
-    rememberedTimer = null;
-  }
-  const previous = rememberedSigner;
-  rememberedSigner = null;
-  wipeSigner(previous?.signer);
-}
-
-/**
- * 记住刚做完的密码 / passkey 交互，5 分钟内自动签 admit-node。
- * 到期由定时器主动清零，而不是等下一次 `takeRememberedSigner()`——否则根私钥副本会一直留在堆里。
- */
-export function rememberSigner(signer: RecordSigner, now: number): void {
-  dropRemembered();
-  rememberedSigner = { signer, until: now + SIGNER_REUSE_WINDOW_MS };
-  rememberedTimer = setTimeout(() => {
-    rememberedTimer = null;
-    dropRemembered();
-  }, SIGNER_REUSE_WINDOW_MS);
-  // Node/Bun 下别让定时器吊住进程。
-  (rememberedTimer as { unref?: () => void }).unref?.();
-}
-
-export function takeRememberedSigner(now: number): RecordSigner | null {
-  if (!rememberedSigner) return null;
-  if (rememberedSigner.until <= now) {
-    dropRemembered();
-    return null;
-  }
-  return rememberedSigner.signer;
-}
-
-/** 复用窗口结束（用完 / 页面卸载 / 换用户）：立刻清零。 */
-export function forgetSigner(): void {
-  dropRemembered();
-}
-
-// ---------------------------------------------------------------------------
 // 证书匹配（唯一的检测入口）
 // ---------------------------------------------------------------------------
 
@@ -376,13 +324,32 @@ export interface CreateEnrollmentInput {
   hubApi: HubApi;
   uid: string;
   rootEpoch: number;
-  /** 根钥：join 串需要 `root_public_key`，因此**必须**能拿到根公钥。 */
-  rootKey: RootKey;
+  /** 授权签名者：根钥或 passkey（`Authorization.signer` 随之为 `root` / `passkey`）。 */
+  signer: RecordSigner;
+  /**
+   * 32 字节根公钥，来自 `GET /api/auth/mode` 的 `rootPublicKey`。
+   * join 串第二段是它——passkey 签授权时手上根本没有根钥，只能由服务端下发。
+   */
+  rootPublicKey: Uint8Array;
   /** `GET /api/auth/keylog/head` 的 head hash（join 串第三段）。 */
   keyLogHeadHash: Uint8Array;
   name?: string | null;
   now?: number;
   ttlMs?: number;
+}
+
+/** `/api/auth/mode` 的 `rootPublicKey`：缺失 / 长度不对即协议不兼容，绝不猜。 */
+export function requireRootPublicKey(mode: { rootPublicKey?: string | null }): Uint8Array {
+  const raw = mode.rootPublicKey;
+  if (!raw) throw new ProtocolMismatchError('rootPublicKey');
+  let bytes: Uint8Array;
+  try {
+    bytes = decodeBase64url(raw);
+  } catch {
+    throw new ProtocolMismatchError('rootPublicKey');
+  }
+  if (bytes.length !== 32) throw new ProtocolMismatchError('rootPublicKey');
+  return bytes;
 }
 
 /**
@@ -399,14 +366,22 @@ export interface CreatedEnrollment {
 /**
  * 生成一次性 enrollment 密钥对、签授权、送到 hub，并落一条**不含私钥**的 pending。
  *
- * join 串 = `base64url(enroll_sk ‖ root_public_key ‖ key_log_head_hash)`，因此只有根钥路径
- * 能生成完整 join 串。串一旦拼好，`enroll_sk` 立即清零：它此后只以字符串形态存在于本次返回值里。
+ * 授权可由根钥签（`authorization_sig` = 64 字节 Ed25519），也可由 passkey 签
+ * （`authorization_sig` = Borsh `PasskeyAssertion`，`credential_id` 写在 `Authorization` 里）；
+ * 两种都由 hub 的 `handleCreateEnrollment` 与各 node 的 `applyAdmitNode` 独立验证。
+ *
+ * join 串 = `base64url(enroll_sk ‖ root_public_key ‖ key_log_head_hash)`，其中根公钥来自
+ * `/api/auth/mode`（passkey 路径下浏览器根本没有根钥）。串一旦拼好，`enroll_sk` 立即清零：
+ * 它此后只以字符串形态存在于本次返回值里。
  */
 export async function createEnrollmentOnHub(
   input: CreateEnrollmentInput
 ): Promise<CreatedEnrollment> {
   const now = input.now ?? Date.now();
-  const enrollment = await createEnrollment(input.rootKey, {
+  if (input.rootPublicKey.length !== 32) {
+    throw new Error('root public key must be 32 bytes');
+  }
+  const enrollment = await createEnrollment(enrollmentSignerFrom(input.signer), {
     uid: input.uid,
     rootEpoch: input.rootEpoch,
     now,
@@ -426,7 +401,7 @@ export async function createEnrollmentOnHub(
       authorization_sig: authorizationSig,
       exp,
     });
-    joinToken = encodeJoinToken(enrollment.enrollSk, input.rootKey.publicKey, input.keyLogHeadHash);
+    joinToken = encodeJoinToken(enrollment.enrollSk, input.rootPublicKey, input.keyLogHeadHash);
     const pending: PendingEnrollment = {
       hubEnrollmentId: created.id,
       enrollPk,

@@ -1069,7 +1069,9 @@
         "DELEGATION_ISSUED_IN_FUTURE": "Delegation issued in the future, check the system clock",
         "PROTOCOL_MISMATCH": "The server did not return a required protocol field; aborted",
         "INVALID_NODE_ID": "Invalid node id",
-        "TOTP_CODE_REQUIRED": "Enter the 6-digit code"
+        "TOTP_CODE_REQUIRED": "Enter the 6-digit code",
+        "ROOT_KEY_MISMATCH": "Wrong password (the derived root public key does not match the server)",
+        "PASSKEY_ABORTED": "Passkey authorization was cancelled"
       },
       "security": {
         "title": "Account security",
@@ -1093,18 +1095,32 @@
         "passkeyUnavailable": "Passkeys are unavailable here (HTTPS and a domain name are required).",
         "passkeyName": "Passkey name",
         "registerPasskey": "Register passkey",
-        "signWithExistingPasskey": "Authorize with an existing passkey instead of a password",
+        "signWithExistingPasskey": "A passkey is registered for this entry: you can authorize with it instead of typing your password.",
         "sessionKeyNote": "The browser session key can only sign logins; every action above asks for your password or a passkey again.",
         "totpConfirm": "Confirm and enable",
         "totpConfirmHint": "Enter the 6-digit code shown by your authenticator; nothing is written to the key log until it verifies.",
         "totpCodeRequired": "Enter the 6-digit code",
         "totpDone": "TOTP enabled",
         "passkeyListFailed": "Failed to load passkeys: {{error}}"
+      },
+      "credential": {
+        "title": "Confirm it is you",
+        "hint": "This action is written to the key log and sk_sess may not sign it — authorize with your password or a passkey registered on this entry.",
+        "usePassword": "Use password",
+        "usePasskey": "Use passkey",
+        "passkeySelect": "Choose a passkey",
+        "purpose": {
+          "enroll": "Authorize a new node enrollment",
+          "admit": "Admit the new node",
+          "revoke": "Revoke a node",
+          "passkey": "Add or remove a passkey",
+          "totp": "Turn off TOTP"
+        }
       }
     },
     "nodes": {
       "title": "Nodes",
-      "subtitle": "All nodes of this account. Every management action writes a key-log record and requires your password.",
+      "subtitle": "Every node of this account. Management actions are written to the key log and need a password or passkey each time.",
       "empty": "No nodes",
       "self": "this entry",
       "hub": "hub",
@@ -1142,7 +1158,7 @@
       },
       "enrollment": {
         "title": "Add node",
-        "description": "Generates a one-time enrollment key pair signed by your root key. Run the join command on the new device. The join string contains a private key, is shown only once, and never reaches the hub.",
+        "description": "Generates a one-time enrollment key pair authorized by your root key or a passkey on this entry. Run the join command on the new device. The join string contains a private key, is shown once, and never reaches the hub.",
         "nameLabel": "Node name (optional)",
         "create": "Generate join string",
         "joinHint": "Run the command below on the new device. The join string is valid for 10 minutes.",
@@ -1150,7 +1166,6 @@
         "joinToken": "Join string",
         "pending": "Pending enrollment",
         "confirmPending": "Confirm",
-        "passwordPrompt": "Enter your password to sign this action",
         "admitted": "Node admitted",
         "unknownCertificate": "Received an unknown node certificate — ignored",
         "badCertSig": "Node certificate signature check failed — ignored",

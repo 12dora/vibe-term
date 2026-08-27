@@ -7,6 +7,7 @@ import type { AuthenticationResponseJSON, KeyLogHeadResponse } from '@tmex/api-c
 import { assertForChallenge } from '@tmex/api-client/auth/index';
 import type {
   AddPasskeyPayload,
+  EnrollmentSigner,
   KdfParams,
   KeyLogHead,
   KeyLogSignedRecord,
@@ -46,6 +47,41 @@ export type RecordSigner =
 
 const defaultAssert: AssertFn = (challenge, credentialId) =>
   assertForChallenge(challenge, { allowCredentials: [{ id: credentialId }] });
+
+/**
+ * 用一把 passkey 对任意字节串做一次专用断言，编码成 Borsh `PasskeyAssertion`。
+ *
+ * challenge 一律是 `sha256(待签字节)`：key-log 记录如此，enrollment 的 `Authorization`
+ * 也如此（`hub-runtime.handleCreateEnrollment` / `applyAdmitNode` 都按这个算）。
+ */
+export async function signWithPasskey(
+  signer: { credentialId: string; assert?: AssertFn },
+  message: Uint8Array
+): Promise<Uint8Array> {
+  const assertFn = signer.assert ?? defaultAssert;
+  const assertion = await assertFn(sha256(message), signer.credentialId);
+  if (assertion.id !== signer.credentialId) {
+    throw new Error('passkey assertion credential mismatch');
+  }
+  return encodePasskeyAssertion({
+    credential_id: assertion.id,
+    client_data_json: decodeBase64url(assertion.response.clientDataJSON),
+    authenticator_data: decodeBase64url(assertion.response.authenticatorData),
+    signature: decodeBase64url(assertion.response.signature),
+  });
+}
+
+/**
+ * `RecordSigner` → `@tmex/shared/auth` 的 `EnrollmentSigner`。
+ * 根钥直接就是 `EnrollmentSigner`（有 `sign`）；passkey 侧包一层断言。
+ */
+export function enrollmentSignerFrom(signer: RecordSigner): EnrollmentSigner {
+  if (signer.kind === 'root') return signer.rootKey;
+  return {
+    credentialId: signer.credentialId,
+    sign: (message) => signWithPasskey(signer, message),
+  };
+}
 
 export function headFromResponse(response: KeyLogHeadResponse): KeyLogHead {
   return { seq: BigInt(response.seq), hash: decodeBase64url(response.hash) };
@@ -107,20 +143,7 @@ export async function buildSignedRecord(input: BuildRecordInput): Promise<KeyLog
     credential_id: input.signer.credentialId,
   });
   const bytes = encodeKeyLogRecord(record);
-  const assertFn = input.signer.assert ?? defaultAssert;
-  const assertion = await assertFn(sha256(bytes), input.signer.credentialId);
-  if (assertion.id !== input.signer.credentialId) {
-    throw new Error('passkey assertion credential mismatch');
-  }
-  return {
-    bytes,
-    sig: encodePasskeyAssertion({
-      credential_id: assertion.id,
-      client_data_json: decodeBase64url(assertion.response.clientDataJSON),
-      authenticator_data: decodeBase64url(assertion.response.authenticatorData),
-      signature: decodeBase64url(assertion.response.signature),
-    }),
-  };
+  return { bytes, sig: await signWithPasskey(input.signer, bytes) };
 }
 
 /**

@@ -13,7 +13,8 @@ const { resetMeshNodesStateForTest, setMeshNodesStateForTest } = await import('@
 const { setPendingStorage, clearPendingEnrollments } = await import('@/node/enrollment');
 const NodesPageModule = await import('./NodesPage');
 const NodesPage = NodesPageModule.default;
-const { resolveHubPublicUrl } = NodesPageModule;
+const { canAutoSignAdmit, resolveHubPublicUrl } = NodesPageModule;
+const { rootKeyFromSeed } = await import('@tmex/shared/auth');
 
 const MODE: AuthModeResponse = {
   mode: 'mesh',
@@ -111,6 +112,19 @@ describe('NodesPage', () => {
   test('缺 uid / kdfParams 时不渲染任何管理动作', () => {
     const html = render({ ...MODE, uid: null, kdfParams: null });
     expect(html).not.toContain('data-testid="nodes-table"');
+  });
+});
+
+describe('canAutoSignAdmit', () => {
+  test('根钥可以后台自动签 admit-node', () => {
+    expect(
+      canAutoSignAdmit({ kind: 'root', rootKey: rootKeyFromSeed(new Uint8Array(32).fill(1)) })
+    ).toBe(true);
+  });
+
+  test('passkey 不行：认证器仪式必须由用户手势触发，留在「待确认」', () => {
+    expect(canAutoSignAdmit({ kind: 'passkey', credentialId: 'a' })).toBe(false);
+    expect(canAutoSignAdmit(null)).toBe(false);
   });
 });
 

@@ -4,6 +4,7 @@ export * from './session-key-store';
 export * from './use-session-key';
 export * from './key-log-actions';
 export * from './account-security-actions';
+export * from './credential-prompt';
 export * from './totp-uri';
 export { NodeLoginButton } from './NodeLoginButton';
 export type { NodeLoginButtonProps } from './NodeLoginButton';

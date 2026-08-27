@@ -1075,7 +1075,9 @@ export const I18N_RESOURCES = {
         "DELEGATION_ISSUED_IN_FUTURE": "Delegation issued in the future, check the system clock",
         "PROTOCOL_MISMATCH": "The server did not return a required protocol field; aborted",
         "INVALID_NODE_ID": "Invalid node id",
-        "TOTP_CODE_REQUIRED": "Enter the 6-digit code"
+        "TOTP_CODE_REQUIRED": "Enter the 6-digit code",
+        "ROOT_KEY_MISMATCH": "Wrong password (the derived root public key does not match the server)",
+        "PASSKEY_ABORTED": "Passkey authorization was cancelled"
       },
       "security": {
         "title": "Account security",
@@ -1099,18 +1101,32 @@ export const I18N_RESOURCES = {
         "passkeyUnavailable": "Passkeys are unavailable here (HTTPS and a domain name are required).",
         "passkeyName": "Passkey name",
         "registerPasskey": "Register passkey",
-        "signWithExistingPasskey": "Authorize with an existing passkey instead of a password",
+        "signWithExistingPasskey": "A passkey is registered for this entry: you can authorize with it instead of typing your password.",
         "sessionKeyNote": "The browser session key can only sign logins; every action above asks for your password or a passkey again.",
         "totpConfirm": "Confirm and enable",
         "totpConfirmHint": "Enter the 6-digit code shown by your authenticator; nothing is written to the key log until it verifies.",
         "totpCodeRequired": "Enter the 6-digit code",
         "totpDone": "TOTP enabled",
         "passkeyListFailed": "Failed to load passkeys: {{error}}"
+      },
+      "credential": {
+        "title": "Confirm it is you",
+        "hint": "This action is written to the key log and sk_sess may not sign it — authorize with your password or a passkey registered on this entry.",
+        "usePassword": "Use password",
+        "usePasskey": "Use passkey",
+        "passkeySelect": "Choose a passkey",
+        "purpose": {
+          "enroll": "Authorize a new node enrollment",
+          "admit": "Admit the new node",
+          "revoke": "Revoke a node",
+          "passkey": "Add or remove a passkey",
+          "totp": "Turn off TOTP"
+        }
       }
     },
     "nodes": {
       "title": "Nodes",
-      "subtitle": "All nodes of this account. Every management action writes a key-log record and requires your password.",
+      "subtitle": "Every node of this account. Management actions are written to the key log and need a password or passkey each time.",
       "empty": "No nodes",
       "self": "this entry",
       "hub": "hub",
@@ -1148,7 +1164,7 @@ export const I18N_RESOURCES = {
       },
       "enrollment": {
         "title": "Add node",
-        "description": "Generates a one-time enrollment key pair signed by your root key. Run the join command on the new device. The join string contains a private key, is shown only once, and never reaches the hub.",
+        "description": "Generates a one-time enrollment key pair authorized by your root key or a passkey on this entry. Run the join command on the new device. The join string contains a private key, is shown once, and never reaches the hub.",
         "nameLabel": "Node name (optional)",
         "create": "Generate join string",
         "joinHint": "Run the command below on the new device. The join string is valid for 10 minutes.",
@@ -1156,7 +1172,6 @@ export const I18N_RESOURCES = {
         "joinToken": "Join string",
         "pending": "Pending enrollment",
         "confirmPending": "Confirm",
-        "passwordPrompt": "Enter your password to sign this action",
         "admitted": "Node admitted",
         "unknownCertificate": "Received an unknown node certificate — ignored",
         "badCertSig": "Node certificate signature check failed — ignored",
@@ -2264,7 +2279,9 @@ export const I18N_RESOURCES = {
         "DELEGATION_ISSUED_IN_FUTURE": "授权签发时间在未来，请检查系统时钟",
         "PROTOCOL_MISMATCH": "服务端未下发必需的协议字段，已中止操作（请升级各节点）",
         "INVALID_NODE_ID": "节点标识不合法",
-        "TOTP_CODE_REQUIRED": "请输入 6 位动态验证码"
+        "TOTP_CODE_REQUIRED": "请输入 6 位动态验证码",
+        "ROOT_KEY_MISMATCH": "密码不正确（派生出的根公钥与服务端记录不一致）",
+        "PASSKEY_ABORTED": "passkey 授权被取消"
       },
       "security": {
         "title": "账号安全",
@@ -2288,18 +2305,32 @@ export const I18N_RESOURCES = {
         "passkeyUnavailable": "当前访问方式不支持 passkey（需要 HTTPS 与域名）。",
         "passkeyName": "passkey 名称",
         "registerPasskey": "注册 passkey",
-        "signWithExistingPasskey": "改用已有 passkey 授权（不必输入密码）",
+        "signWithExistingPasskey": "本入口已注册 passkey：确认时可以直接用它授权，不必输入密码。",
         "sessionKeyNote": "浏览器临时密钥只能用于登录；以上每个操作都会重新要求密码或 passkey。",
         "totpConfirm": "确认并启用",
         "totpConfirmHint": "请输入认证器当前显示的 6 位验证码；验证通过后才会写入密钥日志。",
         "totpCodeRequired": "请输入 6 位动态验证码",
         "totpDone": "TOTP 已启用",
         "passkeyListFailed": "passkey 列表加载失败：{{error}}"
+      },
+      "credential": {
+        "title": "确认身份",
+        "hint": "本次操作会写入密钥日志，sk_sess 不能签名——请用密码或本入口的 passkey 当场授权。",
+        "usePassword": "用密码授权",
+        "usePasskey": "用 passkey 授权",
+        "passkeySelect": "选择 passkey",
+        "purpose": {
+          "enroll": "生成新节点的注册授权",
+          "admit": "确认新节点加入",
+          "revoke": "吊销节点",
+          "passkey": "增删 passkey",
+          "totp": "关闭 TOTP"
+        }
       }
     },
     "nodes": {
       "title": "节点管理",
-      "subtitle": "本账号下的全部节点。所有管理动作都会写入密钥日志，需要当场输入密码。",
+      "subtitle": "本账号下的全部节点。所有管理动作都会写入密钥日志，需要当场用密码或 passkey 授权。",
       "empty": "暂无节点",
       "self": "本入口",
       "hub": "hub",
@@ -2337,7 +2368,7 @@ export const I18N_RESOURCES = {
       },
       "enrollment": {
         "title": "新增节点",
-        "description": "生成一次性注册密钥对并由根钥签授权，在新设备上执行 join 命令即可加入。join 串包含私钥，只显示这一次，不会经过 hub。",
+        "description": "生成一次性注册密钥对，并由根钥或本入口的 passkey 签授权；在新设备上执行 join 命令即可加入。join 串包含私钥，只显示这一次，不会经过 hub。",
         "nameLabel": "节点名称（可选）",
         "create": "生成 join 串",
         "joinHint": "在新设备上执行下面的命令；join 串 10 分钟内有效。",
@@ -2345,7 +2376,6 @@ export const I18N_RESOURCES = {
         "joinToken": "join 串",
         "pending": "待确认的注册",
         "confirmPending": "确认",
-        "passwordPrompt": "请输入密码以签署本次操作",
         "admitted": "节点已确认加入",
         "unknownCertificate": "收到未知节点证书，已忽略",
         "badCertSig": "节点证书签名校验失败，已忽略",
@@ -3453,7 +3483,9 @@ export const I18N_RESOURCES = {
         "DELEGATION_ISSUED_IN_FUTURE": "委任の発行時刻が未来です。システム時計を確認してください",
         "PROTOCOL_MISMATCH": "サーバーが必要なプロトコルフィールドを返さなかったため中止しました",
         "INVALID_NODE_ID": "ノード ID が不正です",
-        "TOTP_CODE_REQUIRED": "6 桁のコードを入力してください"
+        "TOTP_CODE_REQUIRED": "6 桁のコードを入力してください",
+        "ROOT_KEY_MISMATCH": "パスワードが違います（導出したルート公開鍵がサーバーの記録と一致しません）",
+        "PASSKEY_ABORTED": "passkey の承認がキャンセルされました"
       },
       "security": {
         "title": "アカウントセキュリティ",
@@ -3477,18 +3509,32 @@ export const I18N_RESOURCES = {
         "passkeyUnavailable": "現在のアクセス方法では passkey を利用できません（HTTPS とドメイン名が必要）。",
         "passkeyName": "passkey の名前",
         "registerPasskey": "passkey を登録",
-        "signWithExistingPasskey": "パスワードの代わりに既存の passkey で承認する",
+        "signWithExistingPasskey": "この入口には passkey が登録済みです。パスワードの代わりに passkey で承認できます。",
         "sessionKeyNote": "ブラウザのセッション鍵はログインにしか使えません。上記の操作ごとにパスワードまたは passkey を再度求めます。",
         "totpConfirm": "確認して有効化",
         "totpConfirmHint": "認証アプリに表示されている 6 桁のコードを入力してください。検証に成功するまでキーログには書き込みません。",
         "totpCodeRequired": "6 桁のコードを入力してください",
         "totpDone": "TOTP を有効にしました",
         "passkeyListFailed": "passkey 一覧の読み込みに失敗しました: {{error}}"
+      },
+      "credential": {
+        "title": "本人確認",
+        "hint": "この操作はキーログに書き込まれ、sk_sess では署名できません。パスワードかこの入口の passkey で承認してください。",
+        "usePassword": "パスワードで承認",
+        "usePasskey": "passkey で承認",
+        "passkeySelect": "passkey を選択",
+        "purpose": {
+          "enroll": "新しいノードの登録を承認",
+          "admit": "新しいノードの参加を確認",
+          "revoke": "ノードを失効",
+          "passkey": "passkey の追加・削除",
+          "totp": "TOTP を無効化"
+        }
       }
     },
     "nodes": {
       "title": "ノード管理",
-      "subtitle": "このアカウントの全ノード。管理操作はすべて鍵ログに記録され、その場でパスワードが必要です。",
+      "subtitle": "このアカウントの全ノード。管理操作はキーログに書き込まれ、その都度パスワードか passkey が必要です。",
       "empty": "ノードがありません",
       "self": "このエントリ",
       "hub": "hub",
@@ -3526,7 +3572,7 @@ export const I18N_RESOURCES = {
       },
       "enrollment": {
         "title": "ノードを追加",
-        "description": "ルート鍵で署名した一度きりの登録鍵ペアを生成します。新しい端末で join コマンドを実行してください。join 文字列は秘密鍵を含み、一度しか表示されず、hub を経由しません。",
+        "description": "ルート鍵またはこの入口の passkey で署名した使い捨ての登録鍵ペアを生成します。新しい端末で join コマンドを実行してください。join 文字列は秘密鍵を含み、一度だけ表示され、hub を経由しません。",
         "nameLabel": "ノード名（任意）",
         "create": "join 文字列を生成",
         "joinHint": "新しい端末で以下のコマンドを実行してください。join 文字列の有効期間は 10 分です。",
@@ -3534,7 +3580,6 @@ export const I18N_RESOURCES = {
         "joinToken": "join 文字列",
         "pending": "確認待ちの登録",
         "confirmPending": "確認",
-        "passwordPrompt": "この操作に署名するためパスワードを入力してください",
         "admitted": "ノードを承認しました",
         "unknownCertificate": "未知のノード証明書を受信したため無視しました",
         "badCertSig": "ノード証明書の署名検証に失敗したため無視しました",

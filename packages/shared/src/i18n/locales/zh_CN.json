@@ -1069,7 +1069,9 @@
         "DELEGATION_ISSUED_IN_FUTURE": "授权签发时间在未来，请检查系统时钟",
         "PROTOCOL_MISMATCH": "服务端未下发必需的协议字段，已中止操作（请升级各节点）",
         "INVALID_NODE_ID": "节点标识不合法",
-        "TOTP_CODE_REQUIRED": "请输入 6 位动态验证码"
+        "TOTP_CODE_REQUIRED": "请输入 6 位动态验证码",
+        "ROOT_KEY_MISMATCH": "密码不正确（派生出的根公钥与服务端记录不一致）",
+        "PASSKEY_ABORTED": "passkey 授权被取消"
       },
       "security": {
         "title": "账号安全",
@@ -1093,18 +1095,32 @@
         "passkeyUnavailable": "当前访问方式不支持 passkey（需要 HTTPS 与域名）。",
         "passkeyName": "passkey 名称",
         "registerPasskey": "注册 passkey",
-        "signWithExistingPasskey": "改用已有 passkey 授权（不必输入密码）",
+        "signWithExistingPasskey": "本入口已注册 passkey：确认时可以直接用它授权，不必输入密码。",
         "sessionKeyNote": "浏览器临时密钥只能用于登录；以上每个操作都会重新要求密码或 passkey。",
         "totpConfirm": "确认并启用",
         "totpConfirmHint": "请输入认证器当前显示的 6 位验证码；验证通过后才会写入密钥日志。",
         "totpCodeRequired": "请输入 6 位动态验证码",
         "totpDone": "TOTP 已启用",
         "passkeyListFailed": "passkey 列表加载失败：{{error}}"
+      },
+      "credential": {
+        "title": "确认身份",
+        "hint": "本次操作会写入密钥日志，sk_sess 不能签名——请用密码或本入口的 passkey 当场授权。",
+        "usePassword": "用密码授权",
+        "usePasskey": "用 passkey 授权",
+        "passkeySelect": "选择 passkey",
+        "purpose": {
+          "enroll": "生成新节点的注册授权",
+          "admit": "确认新节点加入",
+          "revoke": "吊销节点",
+          "passkey": "增删 passkey",
+          "totp": "关闭 TOTP"
+        }
       }
     },
     "nodes": {
       "title": "节点管理",
-      "subtitle": "本账号下的全部节点。所有管理动作都会写入密钥日志，需要当场输入密码。",
+      "subtitle": "本账号下的全部节点。所有管理动作都会写入密钥日志，需要当场用密码或 passkey 授权。",
       "empty": "暂无节点",
       "self": "本入口",
       "hub": "hub",
@@ -1142,7 +1158,7 @@
       },
       "enrollment": {
         "title": "新增节点",
-        "description": "生成一次性注册密钥对并由根钥签授权，在新设备上执行 join 命令即可加入。join 串包含私钥，只显示这一次，不会经过 hub。",
+        "description": "生成一次性注册密钥对，并由根钥或本入口的 passkey 签授权；在新设备上执行 join 命令即可加入。join 串包含私钥，只显示这一次，不会经过 hub。",
         "nameLabel": "节点名称（可选）",
         "create": "生成 join 串",
         "joinHint": "在新设备上执行下面的命令；join 串 10 分钟内有效。",
@@ -1150,7 +1166,6 @@
         "joinToken": "join 串",
         "pending": "待确认的注册",
         "confirmPending": "确认",
-        "passwordPrompt": "请输入密码以签署本次操作",
         "admitted": "节点已确认加入",
         "unknownCertificate": "收到未知节点证书，已忽略",
         "badCertSig": "节点证书签名校验失败，已忽略",

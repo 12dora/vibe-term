@@ -10,9 +10,14 @@
 //     且 pending 未过期时才签；不匹配的证书告警「收到未知节点证书」并忽略。
 
 import { NodeLoginButton } from '@/auth/NodeLoginButton';
-import { rootSignerFromPassword, withRootSigner } from '@/auth/account-security-actions';
+import {
+  type CredentialPromptHandle,
+  decodeRootPublicKey,
+  takeRememberedSigner,
+  useCredentialPrompt,
+  usePasskeys,
+} from '@/auth/credential-prompt';
 import { type RecordSigner, headFromResponse } from '@/auth/key-log-actions';
-import { deriveRootKey, kdfParamsFromJson } from '@/auth/key-log-actions';
 import { useAuthMode } from '@/auth/use-session-key';
 import {
   type CreatedEnrollment,
@@ -20,16 +25,14 @@ import {
   buildAdmitNodeRecord,
   buildRevokeNodeRecord,
   createEnrollmentOnHub,
-  forgetSigner,
   isPendingExpired,
   joinCommand,
   listPendingEnrollments,
   nextPendingExpiry,
   prunePendingEnrollments,
-  rememberSigner,
   removePendingEnrollment,
+  requireRootPublicKey,
   subscribePendingEnrollments,
-  takeRememberedSigner,
 } from '@/node/enrollment';
 import {
   type CertificateOutcome,
@@ -93,6 +96,14 @@ export default function NodesPage({ mode: modeOverride, api = defaultAuthApi }: 
 
 type ResolvedMode = AuthModeResponse & { uid: string; kdfParams: AuthKdfParamsJson };
 
+/** 没有 uid / kdf 参数时整页不渲染管理动作；hook 不能条件调用，故给个不会被用到的占位。 */
+const PLACEHOLDER_KDF: AuthKdfParamsJson = {
+  salt: '',
+  memory_kib: 0,
+  iterations: 0,
+  parallelism: 0,
+};
+
 function NodesView({ mode: rawMode, api }: { mode: AuthModeResponse; api: AuthApi }) {
   const { t } = useTranslation();
   const { nodes, refresh: refreshNodes } = useMeshNodes();
@@ -119,13 +130,22 @@ function NodesView({ mode: rawMode, api }: { mode: AuthModeResponse; api: AuthAp
     ? { ...rawMode, uid: rawMode.uid as string, kdfParams: rawMode.kdfParams as AuthKdfParamsJson }
     : null;
 
+  // 管理动作可以用密码，也可以用本入口已注册的 passkey（设计 §2「用户密钥」）。
+  const { passkeys } = usePasskeys(api, { enabled: hasCredentials && rawMode.passkeyAvailable });
+  const prompt = useCredentialPrompt({
+    kdfParams: mode?.kdfParams ?? PLACEHOLDER_KDF,
+    rootPublicKey: decodeRootPublicKey(rawMode.rootPublicKey),
+    passkeys,
+    passkeyAvailable: rawMode.passkeyAvailable,
+  });
+
   const refreshAll = useCallback(() => {
     refreshNodes();
     hub.refresh();
   }, [hub, refreshNodes]);
 
   const [expiredIds, setExpiredIds] = useState<string[]>([]);
-  const admit = useAdmitAction({ api, mode, hubApi: hub.hubApi, onDone: refreshAll });
+  const admit = useAdmitAction({ api, mode, hubApi: hub.hubApi, prompt, onDone: refreshAll });
 
   useEnrollmentWatch({
     pendings,
@@ -146,9 +166,6 @@ function NodesView({ mode: rawMode, api }: { mode: AuthModeResponse; api: AuthAp
     const timer = setTimeout(sweep, Math.max(0, next - Date.now()) + 1);
     return () => clearTimeout(timer);
   }, [pendings]);
-
-  // 离开页面即丢弃 5 分钟凭据复用窗口里的根钥副本。
-  useEffect(() => () => forgetSigner(), []);
 
   if (!mode) {
     return (
@@ -201,6 +218,7 @@ function NodesView({ mode: rawMode, api }: { mode: AuthModeResponse; api: AuthAp
         mode={mode}
         hubApi={hub.hubApi}
         hubOnline={hub.online}
+        prompt={prompt}
         pendings={pendings}
         onConfirm={(pending) => void admit.confirmManually(pending)}
         busyPendingId={admit.busyPendingId}
@@ -214,8 +232,11 @@ function NodesView({ mode: rawMode, api }: { mode: AuthModeResponse; api: AuthAp
         hubOnline={hub.online}
         mode={mode}
         api={api}
+        prompt={prompt}
         onChanged={refreshAll}
       />
+
+      {prompt.dialog}
     </div>
   );
 }
@@ -224,15 +245,28 @@ function NodesView({ mode: rawMode, api }: { mode: AuthModeResponse; api: AuthAp
 // admit 动作（自动 / 手动共用同一条路径）
 // ---------------------------------------------------------------------------
 
+/**
+ * 证书一到就自动签 `admit-node`——只有根钥签名者可以这么干。
+ *
+ * passkey 每签一次都要一次认证器仪式，而仪式必须由用户手势触发（Safari 强制要求，
+ * Chrome 也会因为缺少 user activation 拒掉）。后台自动发起注定失败，不如留在「待确认」：
+ * 用户点按钮时复用窗口里的凭证还在，不必再选一次 passkey。
+ */
+export function canAutoSignAdmit(signer: RecordSigner | null): boolean {
+  return signer?.kind === 'root';
+}
+
 function useAdmitAction({
   api,
   mode,
   hubApi,
+  prompt,
   onDone,
 }: {
   api: AuthApi;
   mode: ResolvedMode | null;
   hubApi: HubApi | null;
+  prompt: CredentialPromptHandle;
   onDone: () => void;
 }) {
   const { t } = useTranslation();
@@ -309,10 +343,8 @@ function useAdmitAction({
         return;
       }
       const signer = takeRememberedSigner(Date.now());
-      if (!signer) {
-        // 凭据复用窗口已过：留在「待确认」，等用户点确认按钮重新输入密码。
-        return;
-      }
+      // 复用窗口已过、或窗口里是 passkey：都留在「待确认」，等用户点按钮。
+      if (!signer || !canAutoSignAdmit(signer)) return;
       setBusyPendingId(outcome.pending.hubEnrollmentId);
       try {
         await signAdmit(outcome.pending, outcome.certificateBytes, outcome.certSig, signer);
@@ -325,17 +357,24 @@ function useAdmitAction({
     [signAdmit, t]
   );
 
-  /** 「待确认 / 重试」按钮：重新要密码，然后立刻向 hub 查一次本次 enrollment 的证书。 */
+  /**
+   * 「待确认 / 重试」按钮：要一次凭据（密码或 passkey，5 分钟窗口内可直接复用），
+   * 然后立刻向 hub 查一次本次 enrollment 的证书。
+   */
   const confirmManually = useCallback(
     async (pending: PendingEnrollment) => {
       if (!mode) return;
-      const password = globalThis.prompt?.(t('nodes.enrollment.passwordPrompt')) ?? '';
-      if (!password) return;
+      let signer: RecordSigner | null;
+      try {
+        // request() 会把签名者放进 5 分钟复用窗口，后续自动 admit 直接用它。
+        signer = await prompt.request({ purpose: 'admit', reuse: true });
+      } catch (err) {
+        toast.error(err instanceof Error ? err.message : String(err));
+        return;
+      }
+      if (!signer) return;
       setBusyPendingId(pending.hubEnrollmentId);
       try {
-        const signer = await rootSignerFromPassword(password, mode.kdfParams);
-        // 记住这次交互：后续自动 admit 复用它；离开页面 / 超时会清零。
-        rememberSigner(signer, Date.now());
         const candidates = hubApi ? await collectRedeemedCertificates(hubApi, [pending]) : [];
         for (const candidate of candidates) {
           const outcome = offerCertificate([pending], candidate, Date.now());
@@ -359,7 +398,7 @@ function useAdmitAction({
         setBusyPendingId(null);
       }
     },
-    [hubApi, mode, signAdmit, t]
+    [hubApi, mode, prompt, signAdmit, t]
   );
 
   return { handleOutcome, confirmManually, busyPendingId, hubUnconfirmedIds, admittedIds };
@@ -374,6 +413,7 @@ function EnrollmentSection({
   mode,
   hubApi,
   hubOnline,
+  prompt,
   pendings,
   onConfirm,
   busyPendingId,
@@ -384,6 +424,7 @@ function EnrollmentSection({
   mode: ResolvedMode;
   hubApi: HubApi | null;
   hubOnline: boolean;
+  prompt: CredentialPromptHandle;
   pendings: PendingEnrollment[];
   onConfirm: (pending: PendingEnrollment) => void;
   busyPendingId: string | null;
@@ -394,7 +435,6 @@ function EnrollmentSection({
   const { t } = useTranslation();
   const [open, setOpen] = useState(false);
   const [name, setName] = useState('');
-  const [password, setPassword] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   // join 串只在内存里、只显示这一次；admit / 过期后立即清掉。
@@ -412,26 +452,24 @@ function EnrollmentSection({
       setError(t('nodes.hubOffline'));
       return;
     }
-    if (!password) {
-      setError(t('auth.security.passwordRequired'));
-      return;
-    }
     setBusy(true);
     try {
       const rootEpoch = requireRootEpoch(mode);
+      // 根公钥来自服务端：passkey 签授权时浏览器手里根本没有根钥，join 串第二段只能靠它。
+      const rootPublicKey = requireRootPublicKey(mode);
+      // 设计 §2 步骤 3：这次交互进 5 分钟窗口，随后的 admit-node 自动复用，不再打扰用户。
+      const signer = await prompt.request({ purpose: 'enroll' });
+      if (!signer) return;
       const head = await api.keyLogHead();
-      const rootKey = await deriveRootKey(password, kdfParamsFromJson(mode.kdfParams));
-      setPassword('');
       const outcome = await createEnrollmentOnHub({
         hubApi,
         uid: mode.uid,
         rootEpoch,
-        rootKey,
+        signer,
+        rootPublicKey,
         keyLogHeadHash: headFromResponse(head).hash,
         name,
       });
-      // 设计 §2 步骤 3：enroll 那次交互后 5 分钟内自动签 admit-node，不再要一次密码。
-      rememberSigner({ kind: 'root', rootKey }, Date.now());
       setCreated(outcome);
       setName('');
     } catch (err) {
@@ -446,7 +484,7 @@ function EnrollmentSection({
     } finally {
       setBusy(false);
     }
-  }, [api, hubApi, mode, name, password, t]);
+  }, [api, hubApi, mode, name, prompt, t]);
 
   return (
     <section className="flex flex-col gap-3 rounded-xl border border-border bg-background p-4">
@@ -473,14 +511,6 @@ function EnrollmentSection({
             value={name}
             data-testid="nodes-enroll-name"
             onChange={(event) => setName(event.target.value)}
-          />
-          <Input
-            type="password"
-            autoComplete="current-password"
-            placeholder={t('auth.security.currentPassword')}
-            value={password}
-            data-testid="nodes-enroll-password"
-            onChange={(event) => setPassword(event.target.value)}
           />
           {error && <p className="text-xs text-destructive">{error}</p>}
           <div>
@@ -626,6 +656,7 @@ function NodesTable({
   hubOnline,
   mode,
   api,
+  prompt,
   onChanged,
 }: {
   rows: NodeRow[];
@@ -633,6 +664,7 @@ function NodesTable({
   hubOnline: boolean;
   mode: ResolvedMode;
   api: AuthApi;
+  prompt: CredentialPromptHandle;
   onChanged: () => void;
 }) {
   const { t } = useTranslation();
@@ -661,6 +693,7 @@ function NodesTable({
               hubOnline={hubOnline}
               mode={mode}
               api={api}
+              prompt={prompt}
               onChanged={onChanged}
             />
           ))}
@@ -696,6 +729,7 @@ function NodeRowView({
   hubOnline,
   mode,
   api,
+  prompt,
   onChanged,
 }: {
   row: NodeRow;
@@ -703,6 +737,7 @@ function NodeRowView({
   hubOnline: boolean;
   mode: ResolvedMode;
   api: AuthApi;
+  prompt: CredentialPromptHandle;
   onChanged: () => void;
 }) {
   const { t } = useTranslation();
@@ -730,31 +765,36 @@ function NodeRowView({
    * entry 先把签好的记录送 hub 等 ack，再本地 append。
    * 老实现「本地 append + 再调 hub revoke」是两条独立通道，先到的那条会让另一条报 `seq_gap`，
    * UI 误报 hub 失败；两条都失败时本地却已经把节点从列表里摘掉（见 F4-3 评审 Major）。
+   *
+   * 凭据走 `withSigner`（**不**进 5 分钟复用窗口）：吊销是破坏性动作，每次都要用户当场确认；
+   * 根钥路径签完立刻清零 seed。
    */
   const revoke = useCallback(async () => {
     const confirmed = globalThis.confirm?.(t('nodes.revoke.confirmText', { name: row.name }));
     if (!confirmed) return;
-    const password = globalThis.prompt?.(t('nodes.enrollment.passwordPrompt')) ?? '';
-    if (!password) return;
     const reason = globalThis.prompt?.(t('nodes.revoke.reasonPrompt')) ?? '';
     setBusy(true);
     try {
       const rootEpoch = requireRootEpoch(mode);
       const head = headFromResponse(await api.keyLogHead());
-      const result = await withRootSigner(password, mode.kdfParams, async (signer) => {
-        const record = await buildRevokeNodeRecord({
-          head,
-          rootEpoch,
-          uid: mode.uid,
-          nodeIdHex: row.id,
-          reason,
-          signer,
-        });
-        return api.appendKeyLog(
-          { bytes: encodeBase64url(record.bytes), sig: encodeBase64url(record.sig) },
-          { hubSync: true }
-        );
-      });
+      const result = await prompt.withSigner(
+        async (signer) => {
+          const record = await buildRevokeNodeRecord({
+            head,
+            rootEpoch,
+            uid: mode.uid,
+            nodeIdHex: row.id,
+            reason,
+            signer,
+          });
+          return api.appendKeyLog(
+            { bytes: encodeBase64url(record.bytes), sig: encodeBase64url(record.sig) },
+            { hubSync: true }
+          );
+        },
+        { purpose: 'revoke' }
+      );
+      if (!result) return;
       if (!result.ok) {
         toast.error(t(`auth.errors.${result.code}`, { defaultValue: result.code }));
         return;
@@ -777,7 +817,7 @@ function NodeRowView({
     } finally {
       setBusy(false);
     }
-  }, [api, mode, onChanged, row.id, row.name, t]);
+  }, [api, mode, onChanged, prompt, row.id, row.name, t]);
 
   const disabledHint = hubOnline ? undefined : t('nodes.hubOffline');
 

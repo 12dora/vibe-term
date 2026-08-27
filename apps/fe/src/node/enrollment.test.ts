@@ -3,13 +3,26 @@
 
 import { beforeEach, describe, expect, test } from 'bun:test';
 import {
+  SIGNER_REUSE_WINDOW_MS,
+  forgetSigner,
+  rememberSigner,
+  takeRememberedSigner,
+} from '@/auth/credential-prompt';
+import { buildAddPasskeyRecord } from '@/auth/key-log-actions';
+import type { AuthenticationResponseJSON } from '@tmex/api-client/auth/index';
+import type { VerifyPasskeyAssertion } from '@tmex/shared/auth';
+import {
   applyKeyLogRecord,
   computeRecordHash,
+  concatBytes,
   createEnrollment,
   createNodeCertificate,
   decodeAdmitNodePayload,
+  decodeAuthorization,
+  decodeBase64url,
   decodeJoinToken,
   decodeKeyLogRecord,
+  decodePasskeyAssertion,
   decodeRevokeNodePayload,
   emptyUserKeyState,
   encodeBase64url,
@@ -18,29 +31,29 @@ import {
   genesisHead,
   randomBytes,
   rootKeyFromSeed,
+  sha256,
+  signEd25519,
+  verifyEd25519,
   verifyKeyLogRecord,
 } from '@tmex/shared/auth';
 import type { PendingStorage } from './enrollment';
 import {
   PENDING_STORAGE_KEY,
   type PendingEnrollment,
-  SIGNER_REUSE_WINDOW_MS,
   addPendingEnrollment,
   buildAdmitNodeRecord,
   buildRevokeNodeRecord,
   clearPendingEnrollments,
   createEnrollmentOnHub,
   findPendingForCertificate,
-  forgetSigner,
   joinCommand,
   listPendingEnrollments,
   matchPendingCertificate,
   nextPendingExpiry,
   prunePendingEnrollments,
-  rememberSigner,
   removePendingEnrollment,
+  requireRootPublicKey,
   setPendingStorage,
-  takeRememberedSigner,
 } from './enrollment';
 import { offerCertificate } from './enrollment-watch';
 import type { HubApi } from './hub-api';
@@ -60,6 +73,98 @@ const ROOT_EPOCH = 3;
 const NOW = 1_700_000_000_000;
 
 const rootKey = rootKeyFromSeed(new Uint8Array(32).fill(0x42));
+
+// ---------------------------------------------------------------------------
+// 假 passkey：真实认证器签的是 `authenticator_data ‖ sha256(client_data_json)`，
+// challenge 写在 client_data 里。这里用 Ed25519 顶替 ES256，验签器与它对拍。
+// ---------------------------------------------------------------------------
+
+const CREDENTIAL_ID = 'cred-1';
+const passkeyPair = generateEd25519KeyPair();
+const AUTHENTICATOR_DATA = new Uint8Array(37).fill(0x11);
+
+function fakeAssert(challenge: Uint8Array, credentialId: string): AuthenticationResponseJSON {
+  const clientDataJSON = new TextEncoder().encode(
+    JSON.stringify({
+      type: 'webauthn.get',
+      challenge: encodeBase64url(challenge),
+      origin: 'https://hub.example',
+    })
+  );
+  const signature = signEd25519(
+    passkeyPair.secretKey,
+    concatBytes(AUTHENTICATOR_DATA, sha256(clientDataJSON))
+  );
+  return {
+    id: credentialId,
+    rawId: credentialId,
+    type: 'public-key',
+    clientExtensionResults: {},
+    response: {
+      clientDataJSON: encodeBase64url(clientDataJSON),
+      authenticatorData: encodeBase64url(AUTHENTICATOR_DATA),
+      signature: encodeBase64url(signature),
+    },
+  };
+}
+
+const passkeySigner = {
+  kind: 'passkey',
+  credentialId: CREDENTIAL_ID,
+  assert: (challenge: Uint8Array, credentialId: string) =>
+    Promise.resolve(fakeAssert(challenge, credentialId)),
+} as const;
+
+/** 共享验签器的 `verifyPasskeyAssertion` 钩子：解 Borsh 断言、核 challenge、验 Ed25519。 */
+const verifyPasskeyAssertion: VerifyPasskeyAssertion = ({
+  sig,
+  credentialId,
+  publicKey,
+  challenge,
+}) => {
+  const assertion = decodePasskeyAssertion(sig);
+  if (assertion.credential_id !== credentialId) return false;
+  const clientData = JSON.parse(new TextDecoder().decode(assertion.client_data_json)) as {
+    type: string;
+    challenge: string;
+  };
+  if (clientData.type !== 'webauthn.get') return false;
+  if (clientData.challenge !== encodeBase64url(challenge)) return false;
+  return verifyEd25519(
+    assertion.signature,
+    concatBytes(assertion.authenticator_data, sha256(assertion.client_data_json)),
+    publicKey
+  );
+};
+
+/** 一条由根钥签的 `add-passkey`：让状态机认识上面那把假 passkey。 */
+async function applyAddPasskey(state: ReturnType<typeof emptyUserKeyState>) {
+  const record = await buildAddPasskeyRecord({
+    head: state.head,
+    rootEpoch: ROOT_EPOCH,
+    uid: UID,
+    payload: {
+      credential_id: CREDENTIAL_ID,
+      public_key: passkeyPair.publicKey,
+      rp_id: 'hub.example',
+      origin: 'https://hub.example',
+      counter: 0,
+      transports: ['internal'],
+      backup_eligible: false,
+      backup_state: false,
+      device_type: 'singleDevice',
+      name: 'laptop',
+    },
+    signer: { kind: 'root', rootKey },
+  });
+  const applied = await applyKeyLogRecord(
+    state,
+    decodeKeyLogRecord(record.bytes),
+    computeRecordHash(record.bytes, record.sig)
+  );
+  if (!applied.ok) throw new Error(`add-passkey rejected: ${applied.error}`);
+  return applied.state;
+}
 
 async function makeEnrollment(now = NOW) {
   const enrollment = await createEnrollment(rootKey, {
@@ -180,10 +285,9 @@ describe('pending 存储', () => {
 describe('createEnrollmentOnHub', () => {
   const headHash = new Uint8Array(32).fill(7);
 
-  test('join 串只在返回值里，pending 不含私钥，且 enroll_sk 用后即清零', async () => {
-    const created: { enroll_pk: string }[] = [];
-    const hubApi = {
-      createEnrollment: (body: { enroll_pk: string }) => {
+  function fakeHub(created: Record<string, string>[]) {
+    return {
+      createEnrollment: (body: Record<string, string>) => {
         created.push(body);
         return Promise.resolve({
           ok: true,
@@ -193,12 +297,18 @@ describe('createEnrollmentOnHub', () => {
         });
       },
     } as unknown as HubApi;
+  }
+
+  test('join 串只在返回值里，pending 不含私钥，且 enroll_sk 用后即清零', async () => {
+    const created: Record<string, string>[] = [];
+    const hubApi = fakeHub(created);
 
     const outcome = await createEnrollmentOnHub({
       hubApi,
       uid: UID,
       rootEpoch: ROOT_EPOCH,
-      rootKey,
+      signer: { kind: 'root', rootKey },
+      rootPublicKey: rootKey.publicKey,
       keyLogHeadHash: headHash,
       name: 'studio',
       now: NOW,
@@ -217,6 +327,103 @@ describe('createEnrollmentOnHub', () => {
     expect(encodeBase64url(token.keyLogHeadHash)).toBe(encodeBase64url(headHash));
     expect(created).toHaveLength(1);
     expect(listPendingEnrollments()).toEqual([outcome.pending]);
+
+    // 根钥路径的授权签名仍是裸 64 字节 Ed25519。
+    const authorization = decodeAuthorization(decodeBase64url(outcome.pending.authorizationBytes));
+    expect(authorization.signer).toBe('root');
+    expect(authorization.credential_id).toBeNull();
+    expect(decodeBase64url(outcome.pending.authorizationSig)).toHaveLength(64);
+  });
+
+  test('passkey 签授权：signer=passkey、credential_id 落在授权里，sig 是 Borsh 断言', async () => {
+    const created: Record<string, string>[] = [];
+    const outcome = await createEnrollmentOnHub({
+      hubApi: fakeHub(created),
+      uid: UID,
+      rootEpoch: ROOT_EPOCH,
+      signer: passkeySigner,
+      rootPublicKey: rootKey.publicKey,
+      keyLogHeadHash: headHash,
+      name: 'studio',
+      now: NOW,
+    });
+
+    const authorizationBytes = decodeBase64url(outcome.pending.authorizationBytes);
+    const authorization = decodeAuthorization(authorizationBytes);
+    expect(authorization.signer).toBe('passkey');
+    expect(authorization.credential_id).toBe(CREDENTIAL_ID);
+    expect(authorization.uid).toBe(UID);
+    expect(authorization.root_epoch).toBe(ROOT_EPOCH);
+
+    // 断言字节不是 64 字节裸签名，而是 Borsh PasskeyAssertion，challenge = sha256(授权字节)。
+    const sig = decodeBase64url(outcome.pending.authorizationSig);
+    expect(sig.length).not.toBe(64);
+    expect(decodePasskeyAssertion(sig).credential_id).toBe(CREDENTIAL_ID);
+    expect(
+      verifyPasskeyAssertion({
+        recordBytes: authorizationBytes,
+        sig,
+        credentialId: CREDENTIAL_ID,
+        publicKey: passkeyPair.publicKey,
+        challenge: sha256(authorizationBytes),
+      })
+    ).toBe(true);
+
+    // 手上没有根钥也照样能拼 join 串：第二段来自 /api/auth/mode 的 rootPublicKey。
+    const token = decodeJoinToken(outcome.joinToken);
+    expect(encodeBase64url(token.rootPublicKey)).toBe(encodeBase64url(rootKey.publicKey));
+    expect(encodeBase64url(token.keyLogHeadHash)).toBe(encodeBase64url(headHash));
+    expect(created[0].authorization_sig).toBe(outcome.pending.authorizationSig);
+  });
+
+  test('断言返回的 credential 与请求的不一致时直接拒绝', async () => {
+    await expect(
+      createEnrollmentOnHub({
+        hubApi: fakeHub([]),
+        uid: UID,
+        rootEpoch: ROOT_EPOCH,
+        signer: {
+          kind: 'passkey',
+          credentialId: CREDENTIAL_ID,
+          assert: (challenge) => Promise.resolve(fakeAssert(challenge, 'other-cred')),
+        },
+        rootPublicKey: rootKey.publicKey,
+        keyLogHeadHash: headHash,
+        now: NOW,
+      })
+    ).rejects.toThrow('credential mismatch');
+  });
+
+  test('根公钥长度不对时不生成任何东西', async () => {
+    await expect(
+      createEnrollmentOnHub({
+        hubApi: fakeHub([]),
+        uid: UID,
+        rootEpoch: ROOT_EPOCH,
+        signer: { kind: 'root', rootKey },
+        rootPublicKey: new Uint8Array(16),
+        keyLogHeadHash: headHash,
+        now: NOW,
+      })
+    ).rejects.toThrow('32 bytes');
+    expect(listPendingEnrollments()).toEqual([]);
+  });
+});
+
+describe('requireRootPublicKey', () => {
+  test('base64url 的 32 字节根公钥原样解出', () => {
+    expect(
+      encodeBase64url(requireRootPublicKey({ rootPublicKey: encodeBase64url(rootKey.publicKey) }))
+    ).toBe(encodeBase64url(rootKey.publicKey));
+  });
+
+  test('缺失 / 长度不对 / 畸形一律按协议不兼容中止，绝不猜', () => {
+    expect(() => requireRootPublicKey({})).toThrow('rootPublicKey');
+    expect(() => requireRootPublicKey({ rootPublicKey: null })).toThrow('rootPublicKey');
+    expect(() =>
+      requireRootPublicKey({ rootPublicKey: encodeBase64url(new Uint8Array(16)) })
+    ).toThrow('rootPublicKey');
+    expect(() => requireRootPublicKey({ rootPublicKey: '@@@' })).toThrow('rootPublicKey');
   });
 });
 
@@ -329,6 +536,87 @@ describe('admit-node 记录', () => {
     expect(applied.state.nodeCerts.size).toBe(1);
   });
 
+  test('passkey 签的 admit-node：记录与内嵌授权都由断言验证，reducer 认下证书', async () => {
+    // 授权与记录都用同一把 passkey 签（enroll 与 admit 都不需要根钥在手）。
+    const created: Record<string, string>[] = [];
+    const outcome = await createEnrollmentOnHub({
+      hubApi: {
+        createEnrollment: (body: Record<string, string>) => {
+          created.push(body);
+          return Promise.resolve({ ok: true, id: 'e-pk', expires_at: NOW + 60_000 });
+        },
+      } as unknown as HubApi,
+      uid: UID,
+      rootEpoch: ROOT_EPOCH,
+      signer: passkeySigner,
+      rootPublicKey: rootKey.publicKey,
+      keyLogHeadHash: new Uint8Array(32).fill(7),
+      now: NOW,
+    });
+    const enrollSk = decodeJoinToken(outcome.joinToken).enrollSk;
+    const cert = makeCertificate(enrollSk, decodeBase64url(outcome.pending.enrollPk));
+
+    // 状态机先认下这把 passkey（一条根钥签的 add-passkey）。
+    let state = emptyUserKeyState(rootKey.publicKey, generateKdfParams(), ROOT_EPOCH);
+    state = await applyAddPasskey(state);
+    expect(state.passkeys.get(CREDENTIAL_ID)?.public_key).toEqual(passkeyPair.publicKey);
+
+    const record = await buildAdmitNodeRecord({
+      head: state.head,
+      rootEpoch: ROOT_EPOCH,
+      uid: UID,
+      pending: outcome.pending,
+      certificateBytes: cert.certificateBytes,
+      certSig: cert.certSig,
+      signer: passkeySigner,
+    });
+
+    const decoded = decodeKeyLogRecord(record.bytes);
+    expect(decoded.signer).toBe('passkey');
+    expect(decoded.credential_id).toBe(CREDENTIAL_ID);
+
+    const verified = await verifyKeyLogRecord(record.bytes, record.sig, {
+      head: state.head,
+      rootEpoch: ROOT_EPOCH,
+      rootPublicKey: rootKey.publicKey,
+      resolvePasskey: (id) => (id === CREDENTIAL_ID ? passkeyPair.publicKey : null),
+      verifyPasskeyAssertion,
+    });
+    expect(verified.ok).toBe(true);
+    if (!verified.ok) return;
+
+    const applied = await applyKeyLogRecord(
+      state,
+      verified.record,
+      computeRecordHash(record.bytes, record.sig),
+      { verifyPasskeyAssertion }
+    );
+    expect(applied.ok).toBe(true);
+    if (!applied.ok) return;
+    expect(applied.state.nodeCerts.size).toBe(1);
+  });
+
+  test('没有 verifyPasskeyAssertion 钩子时，passkey 记录一律 unknown_signer', async () => {
+    const { enrollment, pending } = await makeEnrollment();
+    const cert = makeCertificate(enrollment.enrollSk, enrollment.enrollPk);
+    const record = await buildAdmitNodeRecord({
+      head: genesisHead(),
+      rootEpoch: ROOT_EPOCH,
+      uid: UID,
+      pending,
+      certificateBytes: cert.certificateBytes,
+      certSig: cert.certSig,
+      signer: passkeySigner,
+    });
+    const verified = await verifyKeyLogRecord(record.bytes, record.sig, {
+      head: genesisHead(),
+      rootEpoch: ROOT_EPOCH,
+      rootPublicKey: rootKey.publicKey,
+      resolvePasskey: (id) => (id === CREDENTIAL_ID ? passkeyPair.publicKey : null),
+    });
+    expect(verified).toEqual({ ok: false, error: 'unknown_signer' });
+  });
+
   test('用错的根钥验签必然失败', async () => {
     const { enrollment, pending } = await makeEnrollment();
     const cert = makeCertificate(enrollment.enrollSk, enrollment.enrollPk);
@@ -381,6 +669,48 @@ describe('revoke-node 记录', () => {
       resolvePasskey: () => null,
     });
     expect(verified.ok).toBe(true);
+  });
+
+  test('passkey 也能签 revoke-node：signer/credential_id 落在记录里且验签通过', async () => {
+    const record = await buildRevokeNodeRecord({
+      head: genesisHead(),
+      rootEpoch: ROOT_EPOCH,
+      uid: UID,
+      nodeIdHex,
+      reason: '设备遗失',
+      signer: passkeySigner,
+    });
+    const decoded = decodeKeyLogRecord(record.bytes);
+    expect(decoded.signer).toBe('passkey');
+    expect(decoded.credential_id).toBe(CREDENTIAL_ID);
+    expect(decodePasskeyAssertion(record.sig).credential_id).toBe(CREDENTIAL_ID);
+
+    const verified = await verifyKeyLogRecord(record.bytes, record.sig, {
+      head: genesisHead(),
+      rootEpoch: ROOT_EPOCH,
+      rootPublicKey: rootKey.publicKey,
+      resolvePasskey: (id) => (id === CREDENTIAL_ID ? passkeyPair.publicKey : null),
+      verifyPasskeyAssertion,
+    });
+    expect(verified.ok).toBe(true);
+
+    // 断言被篡改就必须挂：challenge 绑的是记录字节本身。
+    const tampered = await buildRevokeNodeRecord({
+      head: genesisHead(),
+      rootEpoch: ROOT_EPOCH,
+      uid: UID,
+      nodeIdHex,
+      reason: '换了个理由',
+      signer: passkeySigner,
+    });
+    const crossed = await verifyKeyLogRecord(tampered.bytes, record.sig, {
+      head: genesisHead(),
+      rootEpoch: ROOT_EPOCH,
+      rootPublicKey: rootKey.publicKey,
+      resolvePasskey: (id) => (id === CREDENTIAL_ID ? passkeyPair.publicKey : null),
+      verifyPasskeyAssertion,
+    });
+    expect(crossed).toEqual({ ok: false, error: 'bad_signature' });
   });
 
   test('node id 长度不对直接拒绝', async () => {

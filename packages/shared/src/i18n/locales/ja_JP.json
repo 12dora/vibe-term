@@ -1069,7 +1069,9 @@
         "DELEGATION_ISSUED_IN_FUTURE": "委任の発行時刻が未来です。システム時計を確認してください",
         "PROTOCOL_MISMATCH": "サーバーが必要なプロトコルフィールドを返さなかったため中止しました",
         "INVALID_NODE_ID": "ノード ID が不正です",
-        "TOTP_CODE_REQUIRED": "6 桁のコードを入力してください"
+        "TOTP_CODE_REQUIRED": "6 桁のコードを入力してください",
+        "ROOT_KEY_MISMATCH": "パスワードが違います（導出したルート公開鍵がサーバーの記録と一致しません）",
+        "PASSKEY_ABORTED": "passkey の承認がキャンセルされました"
       },
       "security": {
         "title": "アカウントセキュリティ",
@@ -1093,18 +1095,32 @@
         "passkeyUnavailable": "現在のアクセス方法では passkey を利用できません（HTTPS とドメイン名が必要）。",
         "passkeyName": "passkey の名前",
         "registerPasskey": "passkey を登録",
-        "signWithExistingPasskey": "パスワードの代わりに既存の passkey で承認する",
+        "signWithExistingPasskey": "この入口には passkey が登録済みです。パスワードの代わりに passkey で承認できます。",
         "sessionKeyNote": "ブラウザのセッション鍵はログインにしか使えません。上記の操作ごとにパスワードまたは passkey を再度求めます。",
         "totpConfirm": "確認して有効化",
         "totpConfirmHint": "認証アプリに表示されている 6 桁のコードを入力してください。検証に成功するまでキーログには書き込みません。",
         "totpCodeRequired": "6 桁のコードを入力してください",
         "totpDone": "TOTP を有効にしました",
         "passkeyListFailed": "passkey 一覧の読み込みに失敗しました: {{error}}"
+      },
+      "credential": {
+        "title": "本人確認",
+        "hint": "この操作はキーログに書き込まれ、sk_sess では署名できません。パスワードかこの入口の passkey で承認してください。",
+        "usePassword": "パスワードで承認",
+        "usePasskey": "passkey で承認",
+        "passkeySelect": "passkey を選択",
+        "purpose": {
+          "enroll": "新しいノードの登録を承認",
+          "admit": "新しいノードの参加を確認",
+          "revoke": "ノードを失効",
+          "passkey": "passkey の追加・削除",
+          "totp": "TOTP を無効化"
+        }
       }
     },
     "nodes": {
       "title": "ノード管理",
-      "subtitle": "このアカウントの全ノード。管理操作はすべて鍵ログに記録され、その場でパスワードが必要です。",
+      "subtitle": "このアカウントの全ノード。管理操作はキーログに書き込まれ、その都度パスワードか passkey が必要です。",
       "empty": "ノードがありません",
       "self": "このエントリ",
       "hub": "hub",
@@ -1142,7 +1158,7 @@
       },
       "enrollment": {
         "title": "ノードを追加",
-        "description": "ルート鍵で署名した一度きりの登録鍵ペアを生成します。新しい端末で join コマンドを実行してください。join 文字列は秘密鍵を含み、一度しか表示されず、hub を経由しません。",
+        "description": "ルート鍵またはこの入口の passkey で署名した使い捨ての登録鍵ペアを生成します。新しい端末で join コマンドを実行してください。join 文字列は秘密鍵を含み、一度だけ表示され、hub を経由しません。",
         "nameLabel": "ノード名（任意）",
         "create": "join 文字列を生成",
         "joinHint": "新しい端末で以下のコマンドを実行してください。join 文字列の有効期間は 10 分です。",
@@ -1150,7 +1166,6 @@
         "joinToken": "join 文字列",
         "pending": "確認待ちの登録",
         "confirmPending": "確認",
-        "passwordPrompt": "この操作に署名するためパスワードを入力してください",
         "admitted": "ノードを承認しました",
         "unknownCertificate": "未知のノード証明書を受信したため無視しました",
         "badCertSig": "ノード証明書の署名検証に失敗したため無視しました",
