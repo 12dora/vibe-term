@@ -12,12 +12,12 @@ function toDate(value: DateInput): Date | null {
   return Number.isNaN(date.getTime()) ? null : date;
 }
 
-export function formatDateTime(value: DateInput, language: string): string {
+export function formatDateTime(value: DateInput, language: LocaleCode): string {
   const date = toDate(value);
-  return date ? date.toLocaleString(toBCP47(language as LocaleCode)) : '';
+  return date ? date.toLocaleString(toBCP47(language)) : '';
 }
 
-export function formatDate(value: DateInput, language: string): string {
+export function formatDate(value: DateInput, language: LocaleCode): string {
   const date = toDate(value);
-  return date ? date.toLocaleDateString(toBCP47(language as LocaleCode)) : '';
+  return date ? date.toLocaleDateString(toBCP47(language)) : '';
 }
