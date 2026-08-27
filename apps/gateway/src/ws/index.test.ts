@@ -1688,3 +1688,37 @@ describe('WebSocketServer resize × theme dedup', () => {
     expect(server.themeSignalLast.has('device-a')).toBe(false);
   });
 });
+
+describe('LegacyFeedBroadcaster pane observer counts', () => {
+  test('skips batching when nobody observes and returns counts to zero after disconnect', () => {
+    const server = new WebSocketServer() as any;
+    const ws = createBorshTestWs({
+      send() {
+        return 1;
+      },
+    });
+    setupConnectionEntry(server, { deviceId: 'device-obs', ws });
+    const push = spyOn(server.terminalOutputBatcher, 'push');
+    const feed = server.feed;
+
+    server.broadcastTerminalOutput('device-obs', '%1', new Uint8Array([1]));
+    expect(push).not.toHaveBeenCalled();
+    expect(feed.legacyPaneObserverCount('device-obs', '%1')).toBe(0);
+
+    ws.data.borshState.selectedPanes['device-obs'] = '%1';
+    feed.syncLegacyPaneObservers(ws, 'device-obs');
+    expect(feed.legacyPaneObserverCount('device-obs', '%1')).toBe(1);
+
+    server.broadcastTerminalOutput('device-obs', '%1', new Uint8Array([2]));
+    expect(push).toHaveBeenCalledTimes(1);
+
+    feed.releaseLegacyPaneObservers(ws, 'device-obs');
+    expect(feed.legacyPaneObserverCount('device-obs', '%1')).toBe(0);
+
+    server.broadcastTerminalOutput('device-obs', '%1', new Uint8Array([3]));
+    expect(push).toHaveBeenCalledTimes(1);
+
+    server.terminalOutputBatcher.discardDevice('device-obs');
+    push.mockRestore();
+  });
+});
