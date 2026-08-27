@@ -61,10 +61,6 @@ export function SideBarDeviceList({
 
   const { selectedDeviceId, selectedWindowId, selectedPaneId } = useDeviceTreeSelection();
 
-  const snapshots = useTmuxStore((state) => state.snapshots);
-  const deviceConnected = useTmuxStore((state) => state.deviceConnected);
-  const deviceErrors = useTmuxStore((state) => state.deviceErrors);
-  const deviceReconnecting = useTmuxStore((state) => state.deviceReconnecting);
   const closeWindow = useTmuxStore((state) => state.closeWindow);
   const language = useSiteStore((state) => state.settings?.language ?? 'en_US');
 
@@ -205,27 +201,28 @@ export function SideBarDeviceList({
   );
 
   const knownDeviceIds = useMemo(() => devices.map((device) => device.id), [devices]);
+  const sortedDeviceIds = useMemo(() => sortedDevices.map((d) => d.id), [sortedDevices]);
+
+  const reorderDevicesMutate = reorderDevicesMutation.mutate;
+  const handleReorderDevices = useCallback(
+    (nextIds: string[]) => reorderDevicesMutate(nextIds),
+    [reorderDevicesMutate]
+  );
 
   return (
     <SidebarGroup className="flex flex-col flex-1 min-h-0 pt-0">
       <ScrollArea className="flex-1 min-h-0">
         <div className="space-y-1.5 pb-2 pt-1 select-none [-webkit-user-select:none] [-webkit-touch-callout:none]">
           <SortableVerticalList
-            ids={sortedDevices.map((d) => d.id)}
+            ids={sortedDeviceIds}
             disabled={reorderDevicesMutation.isPending}
-            onReorder={(nextIds) => reorderDevicesMutation.mutate(nextIds)}
+            onReorder={handleReorderDevices}
           >
             {sortedDevices.map((device) => (
               <DeviceRow
                 key={device.id}
                 device={device}
-                windows={snapshots[device.id]?.session?.windows ?? null}
                 isExpanded={sidebarDeviceExpanded[expansionKey(device.id)] !== false}
-                isOnline={
-                  deviceConnected[device.id] === true &&
-                  !deviceErrors[device.id] &&
-                  !deviceReconnecting[device.id]
-                }
                 isSelected={device.id === selectedDeviceId}
                 selectedWindowId={selectedWindowId}
                 selectedPaneId={selectedPaneId}
