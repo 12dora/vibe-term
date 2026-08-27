@@ -13,8 +13,12 @@ import {
 
 type HistoryPageRejection = Extract<HistoryPageValidation, { ok: false }>;
 
-const MAX_SURFACE_HISTORY_BYTES = 8 * 1024 * 1024;
-const MAX_SURFACE_HISTORY_PAGES = 64;
+// history 预算对齐终端真正能留住的量：终端按 useTerminalBootSurface 的 TERMINAL_SCROLLBACK
+// 保留 10000 行回滚，再多缓存的分页只会被写进去后立刻被 ghostty 挤掉。
+// 字节上限 = 10000 行 × 200 字节/行（80~200 列一行原始 VT 的保守估计，含 SGR），约 1.9 MiB；
+// 分页上限 = ceil(10000 / 512)（gateway 单页最多 MAX_CAPTURE_LINES = 512 行）再留两页余量。
+const MAX_SURFACE_HISTORY_BYTES = 10_000 * 200;
+const MAX_SURFACE_HISTORY_PAGES = 22;
 
 export interface TerminalSurfaceTarget {
   dispose(): void;

@@ -10,6 +10,7 @@
 // history-refresh = 远端 resize 等触发的内容重建，不得携带本地尺寸上报，
 // 否则两个不同视口的客户端会互相抢 window 尺寸形成拉锯
 import { type PaneHistoryGateOptions, PaneHistoryGates } from './pane-history-gate';
+import { PaneOutputCoalescer, type PaneOutputCoalescerOptions } from './pane-output-coalescer';
 import type {
   GatewayPaneHistoryPage,
   GatewayPaneScreenSnapshot,
@@ -42,6 +43,7 @@ interface PendingPaneState {
 
 export interface PaneSinkRegistryOptions {
   historyGate?: PaneHistoryGateOptions;
+  outputCoalescer?: PaneOutputCoalescerOptions;
 }
 
 const MAX_PENDING_OUTPUT_BYTES = 2 * 1024 * 1024;
@@ -56,8 +58,12 @@ export class PaneSinkRegistry {
   private sinks = new Map<string, PaneSink>();
   private pending = new Map<string, PendingPaneState>();
   private readonly historyGates: PaneHistoryGates;
+  private readonly outputs: PaneOutputCoalescer;
 
   constructor(options: PaneSinkRegistryOptions = {}) {
+    this.outputs = new PaneOutputCoalescer((key, frame) => {
+      this.sinks.get(key)?.onOutput(frame.data, frame);
+    }, options.outputCoalescer);
     this.historyGates = new PaneHistoryGates(
       {
         flushFrame: (frame) => {
@@ -90,6 +96,8 @@ export class PaneSinkRegistry {
 
   registerPaneSink(deviceId: string, paneId: string, sink: PaneSink): () => void {
     const key = paneKey(deviceId, paneId);
+    // 换绑前把攒着的字节交回上一任 sink：跨 sink 拼接会把上一任的输出写进新终端
+    this.outputs.flush(key);
     this.sinks.set(key, sink);
 
     const state = this.pending.get(key);
@@ -109,13 +117,17 @@ export class PaneSinkRegistry {
       //（canonical 路径挂载后总会重新拉快照，丢弃无损）。
       if (state.reset || state.history || state.screen) {
         for (const frame of state.outputs) {
-          sink.onOutput(frame.data, frame);
+          this.outputs.push(key, frame);
         }
+        this.outputs.flush(key);
       }
     }
 
     return () => {
       if (this.sinks.get(key) === sink) {
+        // 注销时把在途字节冲给正在卸载的 sink（写进已 dispose 的渲染面是安全的空操作），
+        // 保持「任何 sink 状态变化都先 flush」这一条规则不出例外
+        this.outputs.flush(key);
         this.sinks.delete(key);
       }
     };
@@ -123,6 +135,7 @@ export class PaneSinkRegistry {
 
   dispatchPaneReset(deviceId: string, paneId: string, origin: PaneResetOrigin = 'select'): void {
     const key = paneKey(deviceId, paneId);
+    this.outputs.flush(key);
     const sink = this.sinks.get(key);
     if (sink) {
       sink.onReset(origin);
@@ -146,6 +159,7 @@ export class PaneSinkRegistry {
     modes: number
   ): void {
     const key = paneKey(deviceId, paneId);
+    this.outputs.flush(key);
     const sink = this.sinks.get(key);
     if (sink) {
       sink.onApplyHistory(data, alternateScreen, modes);
@@ -164,9 +178,8 @@ export class PaneSinkRegistry {
 
     if (this.historyGates.capture(frame)) return;
 
-    const sink = this.sinks.get(key);
-    if (sink) {
-      sink.onOutput(frame.data, frame);
+    if (this.sinks.has(key)) {
+      this.outputs.push(key, frame);
       return;
     }
 
@@ -186,6 +199,7 @@ export class PaneSinkRegistry {
 
   dispatchPaneScreenSnapshot(snapshot: GatewayPaneScreenSnapshot): void {
     const key = paneKey(snapshot.deviceId, snapshot.paneId);
+    this.outputs.flush(key);
     const sink = this.sinks.get(key);
     if (sink?.onScreenSnapshot) {
       sink.onScreenSnapshot(snapshot);
@@ -199,6 +213,7 @@ export class PaneSinkRegistry {
 
   dispatchPaneHistoryPage(page: GatewayPaneHistoryPage): void {
     const key = paneKey(page.deviceId, page.paneId);
+    this.outputs.flush(key);
     const sink = this.sinks.get(key);
     if (sink?.onHistoryPage) {
       sink.onHistoryPage(page);
@@ -216,6 +231,7 @@ export class PaneSinkRegistry {
 
   dispatchPaneRebase(deviceId: string, paneId: string, reason: GatewayRebaseReason): void {
     const key = paneKey(deviceId, paneId);
+    this.outputs.flush(key);
     const sink = this.sinks.get(key);
     if (sink?.onRebase) {
       sink.onRebase(reason);
@@ -253,6 +269,8 @@ export class PaneSinkRegistry {
     for (const frame of buffered) {
       this.dispatchPaneTerminalData(frame);
     }
+    // 门控放行的是一批已经攒好的字节，没有必要再等微任务边界
+    this.outputs.flush(paneKey(deviceId, paneId));
     return true;
   }
 
@@ -268,12 +286,15 @@ export class PaneSinkRegistry {
         this.pending.delete(key);
       }
     }
+    // 链路已断，在途字节是无主的流中片段：与 pending 缓冲同样直接丢弃，不再下发
+    this.outputs.discardMatching((key) => key.startsWith(prefix));
     this.historyGates.closeDevice(deviceId, { flush: false });
   }
 
   reset(): void {
     this.sinks.clear();
     this.pending.clear();
+    this.outputs.discardAll();
     this.historyGates.closeAll({ flush: false });
   }
 }

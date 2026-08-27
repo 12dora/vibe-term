@@ -278,7 +278,8 @@ describe('TerminalSurface history paging', () => {
   });
 
   test('64 页累积后终端内容按行号升序排列', async () => {
-    const harness = await createHarness();
+    // 页数上限由默认预算决定，这里只验证排序，显式放开上限
+    const harness = await createHarness({ maxHistoryPages: 64 });
     const pageCount = 64;
     harness.surface.replace(snapshotOf(SNAPSHOT_BODY, cursorOf(pageCount)));
     for (let index = pageCount; index > 0; index -= 1) {
