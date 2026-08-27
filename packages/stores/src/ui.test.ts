@@ -13,51 +13,66 @@ function createStore() {
   return createUIStore({ storagePrefix: `ui-sidebar-test-${storeIndex}-` });
 }
 
-describe('sidebar disclosure state', () => {
+describe('sidebar tab state', () => {
   beforeEach(() => {
     storage.clear();
   });
 
-  test('defaults to panes and files open with agent collapsed', () => {
-    expect(createStore().getState().sidebarSections).toEqual({
-      panes: true,
-      agent: false,
-      files: true,
-    });
+  test('defaults to the panes tab', () => {
+    expect(createStore().getState().sidebarTab).toBe('panes');
   });
 
-  test('keeps agent exclusive while panes and files can coexist', () => {
+  test('switches the active tab exclusively', () => {
     const store = createStore();
 
-    store.getState().setSidebarSectionOpen('agent', true);
-    expect(store.getState().sidebarSections).toEqual({ panes: false, agent: true, files: false });
+    store.getState().setSidebarTab('agent');
+    expect(store.getState().sidebarTab).toBe('agent');
 
-    store.getState().setSidebarSectionOpen('panes', true);
-    expect(store.getState().sidebarSections).toEqual({ panes: true, agent: false, files: false });
+    store.getState().setSidebarTab('files');
+    expect(store.getState().sidebarTab).toBe('files');
 
-    store.getState().setSidebarSectionOpen('files', true);
-    expect(store.getState().sidebarSections).toEqual({ panes: true, agent: false, files: true });
+    store.getState().setSidebarTab('panes');
+    expect(store.getState().sidebarTab).toBe('panes');
   });
 
-  test('closing a section affects only that section', () => {
-    const store = createStore();
+  test('does not persist the active tab', () => {
+    const prefix = `ui-sidebar-no-persist-${Date.now()}-`;
+    const store = createUIStore({ storagePrefix: prefix });
+    store.getState().setSidebarTab('files');
 
-    store.getState().setSidebarSectionOpen('files', false);
-    expect(store.getState().sidebarSections).toEqual({ panes: true, agent: false, files: false });
+    const persisted = JSON.parse(storage.getItem(`${prefix}tmex-ui`) ?? '{}') as {
+      state?: Record<string, unknown>;
+    };
+    expect(persisted.state && 'sidebarTab' in persisted.state).toBe(false);
+
+    expect(createUIStore({ storagePrefix: prefix }).getState().sidebarTab).toBe('panes');
   });
 
-  test('persists device disclosure and normalizes legacy overlapping sections', () => {
+  test('ignores legacy persisted sidebarTab and sidebarSections', () => {
     const prefix = `ui-sidebar-legacy-${Date.now()}-`;
     storage.setItem(
       `${prefix}tmex-ui`,
       JSON.stringify({
-        state: { sidebarSections: { panes: true, agent: true, files: true } },
+        state: {
+          sidebarTab: 'files',
+          sidebarSections: { panes: true, agent: true, files: true },
+          sidebarDeviceExpanded: { 'device-a': true },
+        },
         version: 0,
       })
     );
 
     const store = createUIStore({ storagePrefix: prefix });
-    expect(store.getState().sidebarSections).toEqual({ panes: false, agent: true, files: false });
+    expect(store.getState().sidebarTab).toBe('panes');
+    expect(
+      (store.getState() as unknown as Record<string, unknown>).sidebarSections
+    ).toBeUndefined();
+    expect(store.getState().sidebarDeviceExpanded).toEqual({ 'device-a': true });
+  });
+
+  test('persists device disclosure across store instances', () => {
+    const prefix = `ui-sidebar-device-${Date.now()}-`;
+    const store = createUIStore({ storagePrefix: prefix });
 
     store.getState().setSidebarDeviceExpanded('device-a', true);
     expect(store.getState().sidebarDeviceExpanded).toEqual({ 'device-a': true });

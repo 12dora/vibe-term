@@ -681,7 +681,7 @@ export const I18N_RESOURCES = {
       "closeWindow": "Close Window",
       "closePane": "Close Pane",
       "addDevice": "Add Device",
-      "section": {
+      "tab": {
         "panes": "Panes",
         "agent": "Agent",
         "files": "Files"
@@ -1691,7 +1691,7 @@ export const I18N_RESOURCES = {
       "closeWindow": "关闭窗口",
       "closePane": "关闭 pane",
       "addDevice": "添加设备",
-      "section": {
+      "tab": {
         "panes": "Panes",
         "agent": "Agent",
         "files": "Files"
@@ -2701,7 +2701,7 @@ export const I18N_RESOURCES = {
       "closeWindow": "ウィンドウを閉じる",
       "closePane": "ペインを閉じる",
       "addDevice": "デバイスを追加",
-      "section": {
+      "tab": {
         "panes": "Panes",
         "agent": "Agent",
         "files": "Files"

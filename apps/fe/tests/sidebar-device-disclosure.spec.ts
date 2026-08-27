@@ -3,7 +3,7 @@ import { decodePaneIdFromUrlParam } from '@tmex/stores';
 import { matchPath } from 'react-router';
 import { createTwoPaneSession, ensureCleanSession } from './helpers/tmux';
 
-test('sidebar: device disclosure and section rules persist without connection controls', async ({
+test('sidebar: device disclosure persists and tabs stay mutually exclusive without connection controls', async ({
   page,
   request,
 }) => {
@@ -52,34 +52,27 @@ test('sidebar: device disclosure and section rules persist without connection co
     ).toBeVisible();
     await expect(page.getByTestId(`device-card-connect-${deviceId}`)).toHaveCount(0);
 
-    const panesToggle = page.getByTestId('sidebar-section-toggle-panes');
-    const agentToggle = page.getByTestId('sidebar-section-toggle-agent');
-    const filesToggle = page.getByTestId('sidebar-section-toggle-files');
-    await expect(panesToggle).toHaveAttribute('aria-expanded', 'true');
-    await expect(agentToggle).toHaveAttribute('aria-expanded', 'false');
-    await expect(filesToggle).toHaveAttribute('aria-expanded', 'true');
+    // 侧边栏三 Tab 互斥，默认 Panes；只有当前 Tab 的内容被挂载
+    const panesTab = page.getByTestId('sidebar-tab-panes');
+    const agentTab = page.getByTestId('sidebar-tab-agent');
+    const filesTab = page.getByTestId('sidebar-tab-files');
+    await expect(panesTab).toHaveAttribute('aria-selected', 'true');
+    await expect(agentTab).toHaveAttribute('aria-selected', 'false');
+    await expect(filesTab).toHaveAttribute('aria-selected', 'false');
+    await expect(page.getByTestId(`device-item-${deviceId}`)).toBeVisible();
 
-    await agentToggle.click();
-    await expect(agentToggle).toHaveAttribute('aria-expanded', 'true');
-    await expect(panesToggle).toHaveAttribute('aria-expanded', 'false');
-    await expect(filesToggle).toHaveAttribute('aria-expanded', 'false');
+    await filesTab.click();
+    await expect(filesTab).toHaveAttribute('aria-selected', 'true');
+    await expect(panesTab).toHaveAttribute('aria-selected', 'false');
+    await expect(agentTab).toHaveAttribute('aria-selected', 'false');
+    await expect(page.getByTestId('files-tab')).toBeVisible();
+    await expect(page.getByTestId(`device-item-${deviceId}`)).toHaveCount(0);
 
+    // Tab 选择不持久化：刷新后回到默认的 Panes
     await page.reload();
-    await expect(agentToggle).toHaveAttribute('aria-expanded', 'true');
-    await expect(panesToggle).toHaveAttribute('aria-expanded', 'false');
-    await expect(filesToggle).toHaveAttribute('aria-expanded', 'false');
-
-    await panesToggle.click();
-    await expect(panesToggle).toHaveAttribute('aria-expanded', 'true');
-    await expect(agentToggle).toHaveAttribute('aria-expanded', 'false');
-    await filesToggle.click();
-    await expect(panesToggle).toHaveAttribute('aria-expanded', 'true');
-    await expect(filesToggle).toHaveAttribute('aria-expanded', 'true');
-
-    await page.reload();
-    await expect(panesToggle).toHaveAttribute('aria-expanded', 'true');
-    await expect(agentToggle).toHaveAttribute('aria-expanded', 'false');
-    await expect(filesToggle).toHaveAttribute('aria-expanded', 'true');
+    await expect(panesTab).toHaveAttribute('aria-selected', 'true');
+    await expect(agentTab).toHaveAttribute('aria-selected', 'false');
+    await expect(filesTab).toHaveAttribute('aria-selected', 'false');
 
     const deviceToggle = page.getByTestId(`device-expand-${deviceId}`);
     await expect(deviceToggle).toHaveAttribute('aria-expanded', 'true');

@@ -167,11 +167,11 @@ function useOrderedSessions(): AgentSessionDto[] {
 
 // Agent 聊天就在侧边栏内：导航到对应 pane 提供上下文，但移动端保持 Sheet 打开
 function useSelectSession(nav: DeviceTreeNavigation) {
-  const expandSidebarSection = useUIStore((state) => state.expandSidebarSection);
+  const setSidebarTab = useUIStore((state) => state.setSidebarTab);
   return useCallback(
     (session: AgentSessionDto) => {
       useAgentStore.getState().setActiveSession(session.id);
-      expandSidebarSection('agent');
+      setSidebarTab('agent');
       if (session.deviceId && session.paneId) {
         const windows = useTmuxStore.getState().snapshots[session.deviceId]?.session?.windows;
         const window = windows?.find((w) => w.panes.some((p) => p.id === session.paneId));
@@ -182,7 +182,7 @@ function useSelectSession(nav: DeviceTreeNavigation) {
         }
       }
     },
-    [expandSidebarSection, nav]
+    [setSidebarTab, nav]
   );
 }
 
@@ -194,7 +194,7 @@ function createSessionForPane(
 ) {
   nav.navigateToPane(deviceId, windowId, pane.id, { keepSidebarOpen: true });
   useAgentStore.getState().startDraft(deviceId, pane.id, pane.title ?? null);
-  useUIStore.getState().expandSidebarSection('agent');
+  useUIStore.getState().setSidebarTab('agent');
 }
 
 function SessionActionsMenu({

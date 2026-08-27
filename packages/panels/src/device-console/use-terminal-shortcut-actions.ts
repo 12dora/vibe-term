@@ -90,7 +90,7 @@ export function useTerminalShortcutActions({
       if (item.action === 'newAgentSession' && runtime.features.agentUi) {
         runtime.stores.agent.getState().startDraft(deviceId, resolvedPaneId, null);
         runtime.stores.ui.getState().setSidebarCollapsed(false);
-        runtime.stores.ui.getState().expandSidebarSection('agent');
+        runtime.stores.ui.getState().setSidebarTab('agent');
       }
     },
     [

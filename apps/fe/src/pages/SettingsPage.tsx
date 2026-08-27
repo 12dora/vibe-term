@@ -18,17 +18,12 @@ import {
   AlertDialogTitle,
 } from '@tmex/ui/alert-dialog';
 import { Button } from '@tmex/ui/button';
-import { Tabs, TabsList, TabsTrigger } from '@tmex/ui/tabs';
+import { Tabs, TabsList, TabsTrigger, pillTabTriggerClassName } from '@tmex/ui/tabs';
 import { AISettingsTab } from './settings/ai-settings-tab';
 import { DevicesAndFilesTab } from './settings/devices-and-files-tab';
 import { GeneralSettingsTab } from './settings/general-settings-tab';
 import { NotificationSettingsTab } from './settings/notification-settings-tab';
 import { useSiteSettingsForm } from './settings/use-site-settings-form';
-
-// 灰色轨道(bg-muted)上嵌一个更亮的圆角药丸：亮色用 bg-background(白)，暗色用更亮的半透明覆盖，去边框。
-// rounded-lg 与外层 rounded-xl 轨道同心收敛。（原侧边栏 Tabs 样式，侧边栏平铺后仅设置页使用）
-const tabTriggerClassName =
-  "rounded-lg data-active:bg-background data-active:text-foreground data-active:border-transparent group-data-[variant=default]/tabs-list:data-active:shadow-none dark:data-active:bg-input/60 dark:data-active:border-transparent text-[13px] transition-colors duration-200 [&_svg:not([class*='size-'])]:size-[15px]";
 
 type SettingsTab = 'general' | 'devicesAndFiles' | 'notifications' | 'ai' | 'terminal';
 
@@ -89,7 +84,7 @@ export default function SettingsPage() {
                 key={item.value}
                 value={item.value}
                 data-testid={item.testId}
-                className={cn(tabTriggerClassName, 'min-w-max gap-2 px-3.5')}
+                className={cn(pillTabTriggerClassName, 'min-w-max gap-2 px-3.5')}
               >
                 <Icon />
                 {item.label}

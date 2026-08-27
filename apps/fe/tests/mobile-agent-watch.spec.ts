@@ -46,33 +46,29 @@ test.describe
       );
       await expect(page.locator('.xterm').first()).toBeVisible({ timeout: 20_000 });
 
-      // 移动端：从顶栏打开 sidebar Sheet，显式展开 Agent 分区
+      // 移动端：从顶栏打开 sidebar Sheet，再切到 Agent Tab
       await page.getByTestId('mobile-sidebar-open').click();
       await expect(page.getByTestId('mobile-sidebar-sheet')).toBeVisible();
 
-      await page.getByTestId('sidebar-section-toggle-agent').click();
+      await page.getByTestId('sidebar-tab-agent').click();
+      await expect(page.getByTestId('sidebar-tab-agent')).toHaveAttribute('aria-selected', 'true');
 
       await expect(page.getByTestId('agent-tab')).toBeVisible();
 
-      // 当前 pane 自动起草；小屏下 Agent 分区内容可在分区内滚动，滚到输入框后可见可用
+      // 当前 pane 自动起草，输入框在视口内可见可用
       const textarea = page.getByTestId('agent-chat-input-textarea');
       await expect(textarea).toBeVisible();
       await textarea.scrollIntoViewIfNeeded();
       await expect(textarea).toBeInViewport();
       await expect(textarea).toBeEnabled();
 
-      // 模型选择器可见（Agent 分区头部）
+      // 模型选择器可见（Agent Tab 头部）
       await expect(page.getByTestId('agent-model-picker')).toBeVisible();
 
-      // Agent 展开时其他一级分区收起
-      await expect(page.getByTestId('sidebar-section-toggle-panes')).toHaveAttribute(
-        'aria-expanded',
-        'false'
-      );
-      await expect(page.getByTestId('sidebar-section-toggle-files')).toHaveAttribute(
-        'aria-expanded',
-        'false'
-      );
+      // 切回 Panes Tab：三 Tab 互斥，Agent 内容卸载，设备会话树可达
+      await page.getByTestId('sidebar-tab-panes').click();
+      await expect(page.getByTestId('sidebar-tab-panes')).toHaveAttribute('aria-selected', 'true');
+      await expect(page.getByTestId('agent-tab')).toHaveCount(0);
 
       // 关闭 Sheet 回到终端
       await page.getByTestId('mobile-sidebar-close').click();

@@ -155,7 +155,7 @@ function createSettingActions(state: AgentTabState) {
 
 export function useAgentTabActions(state: AgentTabState, view: AgentTabView): AgentTabActions {
   const navigate = useNavigate();
-  const expandSidebarSection = useUIStore((uiState) => uiState.expandSidebarSection);
+  const setSidebarTab = useUIStore((uiState) => uiState.setSidebarTab);
   return {
     ...createSessionActions(state, view),
     ...createMessageActions(state),
@@ -165,7 +165,7 @@ export function useAgentTabActions(state: AgentTabState, view: AgentTabView): Ag
       navigateToBinding(navigate, state.activeSession, view.binding);
     },
     onSwitchSession: () => {
-      expandSidebarSection('panes');
+      setSidebarTab('panes');
     },
   };
 }
