@@ -336,6 +336,10 @@ export class GhosttyBindings {
 
   private readonly decoder = new TextDecoder();
   private readonly encoder = new TextEncoder();
+  // view() 是渲染热路径上调用最频繁的方法（每 cell 十余次）。无参形态缓存整块 DataView，
+  // 仅在 memory.grow 换掉 ArrayBuffer（identity 变化）时重建。
+  private cachedViewBuffer: ArrayBuffer | null = null;
+  private cachedView: DataView | null = null;
 
   constructor(exports: GhosttyExports, layout: LayoutMap) {
     this.exports = exports;
@@ -350,8 +354,23 @@ export class GhosttyBindings {
     return new Uint8Array(this.buffer(), ptr, len);
   }
 
-  view(ptr = 0, len = this.buffer().byteLength - ptr): DataView {
-    return new DataView(this.buffer(), ptr, len);
+  view(ptr?: number, len?: number): DataView {
+    const buffer = this.buffer();
+
+    if (ptr === undefined && len === undefined) {
+      const cached = this.cachedView;
+      if (cached && this.cachedViewBuffer === buffer) {
+        return cached;
+      }
+
+      const created = new DataView(buffer);
+      this.cachedViewBuffer = buffer;
+      this.cachedView = created;
+      return created;
+    }
+
+    const offset = ptr ?? 0;
+    return new DataView(buffer, offset, len ?? buffer.byteLength - offset);
   }
 
   typeSize(typeName: string): number {
