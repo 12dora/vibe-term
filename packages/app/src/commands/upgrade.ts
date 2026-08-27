@@ -27,6 +27,33 @@ import { installService, stopService } from '../lib/service';
 import { asBoolean, asString } from '../lib/validate';
 import { readPackageVersion } from '../lib/version';
 import type { InstallMeta, ParsedArgs } from '../types';
+import {
+  type DirectEnableResult,
+  type EnableDirectOptions,
+  reenableDirectIfNeeded,
+} from './direct';
+
+export type ReenableDirectAfterUpgradeDeps = {
+  reenableDirectIfNeeded?: (options: EnableDirectOptions) => Promise<DirectEnableResult>;
+  log?: (message: string) => void;
+};
+
+export async function reenableDirectAfterUpgrade(
+  installDir: string,
+  deps: ReenableDirectAfterUpgradeDeps = {}
+): Promise<void> {
+  const reenable = deps.reenableDirectIfNeeded ?? reenableDirectIfNeeded;
+  const log = deps.log ?? ((message: string) => console.log(`[tmex] ${message}`));
+  try {
+    const result = await reenable({ installDir });
+    if (!result.ok) {
+      log(`direct re-enable skipped: ${result.reason}`);
+    }
+  } catch (error) {
+    const reason = error instanceof Error ? error.message : String(error);
+    log(`direct re-enable skipped: ${reason}`);
+  }
+}
 
 async function delegateUpgrade(parsed: ParsedArgs, targetVersion: string): Promise<void> {
   const args = ['--yes', `tmex-cli@${targetVersion}`, 'upgrade', '--apply-current-package'];
@@ -117,6 +144,7 @@ export async function runUpgrade(parsed: ParsedArgs): Promise<void> {
     await backupInstallArtifacts(installLayout, backupDir);
 
     await deployRuntimeFiles(packageLayout, installLayout);
+    await reenableDirectAfterUpgrade(installDir);
     if (await pathExists(installLayout.envPath)) {
       await mergeMissingEnvFileKeys(installLayout.envPath, hubEnvDefaults());
     }

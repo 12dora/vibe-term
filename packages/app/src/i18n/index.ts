@@ -1,20 +1,11 @@
+import { cliHelpText } from '../cli/help';
+
 export type CliLang = 'en' | 'zh-CN';
 
 type Vars = Record<string, string | number | boolean | undefined>;
 
 const MESSAGES: Record<CliLang, Record<string, string>> = {
   en: {
-    'cli.help': `tmex CLI
-
-Usage:
-  tmex init [--no-interactive --install-dir <path> --host <host> --port <port> --db-path <path> --autostart <true|false> --bun-path <path> --install-deps --skip-dep-check]
-  tmex doctor [--install-dir <path>] [--json] [--bun-path <path>] [--fix]
-  tmex upgrade [--version <version>] [--install-dir <path>] [--bun-path <path>]
-  tmex uninstall [--install-dir <path>] [--yes] [--purge]
-
-Global flags:
-  --lang <en|zh-CN>`,
-
     'cli.error.unknownCommand': 'Unknown command: {{command}}',
 
     'common.cancelled': 'Cancelled by user.',
@@ -130,10 +121,12 @@ Global flags:
     'deps.install.manual': 'Please install manually and retry.',
     'deps.install.sudoRequired': 'This operation requires sudo.',
     'deps.install.sudoUnavailable': 'sudo is not available. Please run as root or install sudo.',
-    'deps.install.nonInteractive': 'Missing dependency: {{dep}}. Use --install-deps to install automatically.',
+    'deps.install.nonInteractive':
+      'Missing dependency: {{dep}}. Use --install-deps to install automatically.',
     'deps.install.hint': 'Suggested install command: {{command}}',
     'deps.install.brewMissing': 'Homebrew not found. Install Homebrew first: https://brew.sh',
-    'deps.install.unknownDistro': 'Unable to detect Linux distribution. Please install {{dep}} manually.',
+    'deps.install.unknownDistro':
+      'Unable to detect Linux distribution. Please install {{dep}} manually.',
 
     'runtime.restartRequested': 'Restart requested; exiting for service manager restart.',
     'runtime.started': 'Service started on {{url}}',
@@ -143,9 +136,6 @@ Global flags:
     'runtime.notFound': 'Not Found',
   },
   'zh-CN': {
-    'cli.help':
-      'tmex CLI\n\n用法：\n  tmex init [--no-interactive --install-dir <path> --host <host> --port <port> --db-path <path> --autostart <true|false> --bun-path <path> --install-deps --skip-dep-check]\n  tmex doctor [--install-dir <path>] [--json] [--bun-path <path>] [--fix]\n  tmex upgrade [--version <version>] [--install-dir <path>] [--bun-path <path>]\n  tmex uninstall [--install-dir <path>] [--yes] [--purge]\n\n全局参数：\n  --lang <en|zh-CN>',
-
     'cli.error.unknownCommand': '未知命令：{{command}}',
 
     'common.cancelled': '已取消。',
@@ -299,6 +289,9 @@ function interpolate(template: string, vars: Vars | undefined): string {
 }
 
 export function t(key: string, vars?: Vars): string {
+  if (key === 'cli.help') {
+    return cliHelpText(currentLang);
+  }
   const table = MESSAGES[currentLang] ?? MESSAGES.en;
   const fallback = MESSAGES.en[key];
   const template = table[key] ?? fallback ?? key;

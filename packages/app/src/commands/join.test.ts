@@ -127,6 +127,7 @@ describe('hub join against fake hub', () => {
     const hubUrl = `http://127.0.0.1:${server.port}`;
 
     const node = await openAuth('standalone');
+    const logs: string[] = [];
     const joined = await runHubJoin(
       parseArgs(['hub', 'join', hubUrl, '--token', token, '--insecure-local']),
       hubUrl,
@@ -134,10 +135,11 @@ describe('hub join against fake hub', () => {
         auth: node,
         skipRestart: true,
         insecureLocal: true,
-        log: () => undefined,
+        log: (message) => logs.push(message),
       }
     );
     expect(joined.userId).toBe(user.id);
+    expect(logs.some((line) => /TMEX_PEER_PORT/.test(line) && /firewall/i.test(line))).toBe(true);
     const nodeUser = node.userStore.getById(user.id);
     expect(nodeUser).toBeTruthy();
     expect(node.keyLogStore.list(user.id).length).toBe(records.length);

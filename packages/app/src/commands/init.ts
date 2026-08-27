@@ -33,25 +33,51 @@ import {
 } from '../lib/install-layout';
 import { detectServiceManager } from '../lib/platform';
 import { promptConfirm, promptText } from '../lib/prompt';
-import {
-  DEFAULT_PEER_PORT,
-  DEFAULT_STUN_SERVERS,
-  type TmexRoleName,
-  parseTmexRoleName,
-} from '../lib/roles';
+import { DEFAULT_PEER_PORT, DEFAULT_STUN_SERVERS, parseTmexRoleName } from '../lib/roles';
 import { installService, serviceHint } from '../lib/service';
 import { checkTmuxVersion } from '../lib/tmux';
 import { asBoolean, asString, assertNonEmpty, parsePort } from '../lib/validate';
 import { readPackageVersion } from '../lib/version';
-import type { InitConfig as BaseInitConfig, InstallMeta, ParsedArgs } from '../types';
+import type { InitConfig, InstallMeta, ParsedArgs } from '../types';
+import {
+  type DirectEnableResult,
+  type EnableDirectOptions,
+  enableDirect,
+  shouldEnableDirectForRoles,
+} from './direct';
 
-export type InitConfig = BaseInitConfig & {
-  role: TmexRoleName;
-  hubUrl: string;
-  peerPort: number;
-  hubPublicUrl: string;
-  stunServers: string;
+export type { InitConfig };
+
+export type EnableDirectAfterInitDeps = {
+  enableDirect?: (options: EnableDirectOptions) => Promise<DirectEnableResult>;
+  log?: (message: string) => void;
 };
+
+export async function enableDirectAfterInit(
+  config: Pick<InitConfig, 'role' | 'installDir'>,
+  deps: EnableDirectAfterInitDeps = {}
+): Promise<void> {
+  if (!shouldEnableDirectForRoles(config.role)) {
+    return;
+  }
+  const enable = deps.enableDirect ?? enableDirect;
+  const log = deps.log ?? ((message: string) => console.log(`[tmex] ${message}`));
+  try {
+    const result = await enable({ installDir: config.installDir });
+    if (result.ok) {
+      if (result.skipped) {
+        log(`direct already enabled (${result.platformId} ${result.version})`);
+      } else {
+        log(`direct enabled (${result.platformId} ${result.version})`);
+      }
+    } else {
+      log(`direct enable skipped: ${result.reason}`);
+    }
+  } catch (error) {
+    const reason = error instanceof Error ? error.message : String(error);
+    log(`direct enable skipped: ${reason}`);
+  }
+}
 
 function mustGetStringFlag(flags: ParsedArgs['flags'], key: string): string {
   const value = asString(flags[key]);
@@ -297,6 +323,7 @@ export async function runInit(parsed: ParsedArgs): Promise<void> {
   await ensureDir(dirname(config.databasePath));
 
   await deployRuntimeFiles(packageLayout, installLayout);
+  await enableDirectAfterInit(config);
 
   const masterKey = generateMasterKey();
   const envValues = buildAppEnvValues({

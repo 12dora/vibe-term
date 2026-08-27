@@ -124,6 +124,7 @@ export async function writeRunScript(installLayout: InstallLayout, bunPath: stri
     '',
     `export TMEX_FE_DIST_DIR=${quotePosixShellArg(installLayout.feDir)}`,
     `export TMEX_MIGRATIONS_DIR=${quotePosixShellArg(installLayout.drizzleDir)}`,
+    `export TMEX_NATIVE_DIR=${quotePosixShellArg(installLayout.nativeDir)}`,
     '',
     `exec ${quotePosixShellArg(bunPath)} ${quotePosixShellArg(installLayout.runtimeServerPath)}`,
     '',

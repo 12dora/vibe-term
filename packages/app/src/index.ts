@@ -1,4 +1,3 @@
-import { cliHelpText } from './cli/help';
 import { runDoctor } from './commands/doctor';
 import { runInit } from './commands/init';
 import { runUninstall } from './commands/uninstall';
@@ -8,8 +7,8 @@ import { parseArgs, resolveNestedCommand } from './lib/args';
 import { loadInstallEnv } from './lib/local-auth';
 import type { ParsedArgs } from './types';
 
-function printHelp(lang: CliLang): void {
-  console.log(cliHelpText(lang));
+function printHelp(): void {
+  console.log(t('cli.help'));
 }
 
 async function dispatchDirect(parsed: ParsedArgs): Promise<void> {
@@ -42,6 +41,7 @@ const AUTH_COMMANDS = new Set([
 ]);
 
 export async function dispatchCli(parsed: ParsedArgs, lang: CliLang): Promise<void> {
+  setLang(lang);
   const nested = resolveNestedCommand(parsed);
   if (AUTH_COMMANDS.has(nested.name)) {
     await loadInstallEnv(parsed);
@@ -61,7 +61,7 @@ export async function dispatchCli(parsed: ParsedArgs, lang: CliLang): Promise<vo
       await runUninstall(parsed);
       return;
     case 'help':
-      printHelp(lang);
+      printHelp();
       return;
     case 'hub.user.add': {
       const { runHubUserAdd } = await import('./commands/hub');

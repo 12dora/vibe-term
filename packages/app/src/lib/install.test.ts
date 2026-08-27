@@ -71,6 +71,7 @@ describe('writeRunScript', () => {
     expect(script).toContain('export PATH="${HOME}/.bun/bin:${PATH:-}"');
     expect(script).toContain('export TMEX_FE_DIST_DIR=');
     expect(script).toContain('export TMEX_MIGRATIONS_DIR=');
+    expect(script).toContain(`export TMEX_NATIVE_DIR=${posixQuote(installLayout.nativeDir)}`);
     expect(script).toContain(
       `exec ${posixQuote('/usr/bin/bun')} ${posixQuote(installLayout.runtimeServerPath)}`
     );
@@ -95,6 +96,7 @@ describe('writeRunScript', () => {
     expect(script).toContain(`done < ${posixQuote(installLayout.envPath)}`);
     expect(script).toContain(`export TMEX_FE_DIST_DIR=${posixQuote(installLayout.feDir)}`);
     expect(script).toContain(`export TMEX_MIGRATIONS_DIR=${posixQuote(installLayout.drizzleDir)}`);
+    expect(script).toContain(`export TMEX_NATIVE_DIR=${posixQuote(installLayout.nativeDir)}`);
     expect(script).toContain(
       `exec ${posixQuote(bunPath)} ${posixQuote(installLayout.runtimeServerPath)}`
     );

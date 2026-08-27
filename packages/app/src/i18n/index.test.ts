@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, test } from 'bun:test';
+import { cliHelpText } from '../cli/help';
 import { normalizeLang, setLang, t } from './index';
 
 describe('i18n', () => {
@@ -22,5 +23,15 @@ describe('i18n', () => {
   test('switches language and interpolates vars', () => {
     setLang('zh-CN');
     expect(t('cli.error.unknownCommand', { command: 'foo' })).toBe('未知命令：foo');
+  });
+
+  test('cli.help is sourced from cliHelpText', () => {
+    setLang('en');
+    expect(t('cli.help')).toBe(cliHelpText('en'));
+    expect(t('cli.help')).toContain('tmex hub user add <username>');
+    expect(t('cli.help')).toContain('tmex direct enable|disable');
+    setLang('zh-CN');
+    expect(t('cli.help')).toBe(cliHelpText('zh-CN'));
+    expect(t('cli.help')).toContain('tmex hub join');
   });
 });

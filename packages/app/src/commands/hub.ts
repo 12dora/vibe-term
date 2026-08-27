@@ -31,7 +31,7 @@ import { readJsonFile } from '../lib/json-file';
 import type { LocalAuthContext } from '../lib/local-auth';
 import { openInstallAuth } from '../lib/local-auth';
 import { assertRootKeyMatches, deriveRootKey, resolvePassword } from '../lib/password';
-import { parseTmexRoles } from '../lib/roles';
+import { DEFAULT_PEER_PORT, parseTmexRoles } from '../lib/roles';
 import { restartService } from '../lib/service';
 import { fingerprintPublicKey, totpOtpauthUri } from '../lib/totp-uri';
 import { asString } from '../lib/validate';
@@ -308,7 +308,9 @@ export async function runHubJoin(
       await maybeRestart(parsed, io, ctx.installDir);
     }
     log(io, `joined hub ${hubUrl}`);
-    log(io, 'allow inbound TMEX_PEER_PORT (default 39001) for LAN direct links');
+    const peerPort =
+      ctx.env.TMEX_PEER_PORT || process.env.TMEX_PEER_PORT || String(DEFAULT_PEER_PORT);
+    log(io, `allow inbound TMEX_PEER_PORT (${peerPort}) on the LAN firewall for direct links`);
     return { userId: redeemed.user.id, hubUrl };
   });
 }

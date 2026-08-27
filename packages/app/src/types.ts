@@ -1,3 +1,5 @@
+import type { TmexRoleName } from './lib/roles';
+
 export interface ParsedArgs {
   command: string | null;
   positionals: string[];
@@ -15,6 +17,11 @@ export interface InitConfig {
   nonInteractive: boolean;
   installDeps: boolean;
   skipDepCheck: boolean;
+  role: TmexRoleName;
+  hubUrl: string;
+  hubPublicUrl: string;
+  peerPort: number;
+  stunServers: string;
 }
 
 export type CheckLevel = 'pass' | 'warn' | 'fail';
