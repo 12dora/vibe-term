@@ -1,529 +1,183 @@
 # tmex 部署指南
 
+生产安装走 npm 包 `tmex-cli`（launchd / systemd 用户服务 + SQLite），不要再用仓库里的 Docker Compose 或手写 JWT。多机 mesh、登录、passkey / TOTP、直连与排障见 [hub / node 运维指南](../hub/2026082800-hub-node-operations.md)。
+
+历史上本文中的 `JWT_SECRET`、`TMEX_ADMIN_PASSWORD`、OIDC、以及「用 `.env` 密码登录」均已删除：standalone 无应用层登录；加入 hub 后的身份是用户自持根钥，而不是网关签发的 JWT。
+
 ## 环境要求
 
-- **Docker**: 20.10+（推荐 Docker Compose 方式部署）
-- **Bun**: 1.0+（开发环境）
-- **Node.js**: 18+（仅前端开发需要）
-- **tmux**: 3.0+（如果使用本地设备）
+- **Bun**：1.3+（生产 runtime 与 CLI 鉴权命令）
+- **tmux**：3.0+（本机设备）
+- **macOS 或 Linux**（Windows 不安装服务；直连 native addon 另需 glibc，见运维指南平台表）
 
-## 快速开始（Docker Compose）
+开发调试用仓库内 `bun run dev`，走 `development.env`，端口与生产 9883 错开。三套环境见 [三套环境](../env/2026061301-three-tier-env.md)。**不要**用生产库或 `~/Library/Application Support/tmex/` 做开发。
 
-### 1. 克隆仓库
-
-```bash
-git clone <repository-url>
-cd tmex
-```
-
-### 2. 配置环境变量
+## 生产安装（tmex-cli）
 
 ```bash
-# 复制示例配置
-cp .env.example .env
-
-# 编辑 .env 文件，设置以下必需项
-vim .env
+npx tmex-cli@latest init
 ```
 
-必需配置项：
+默认角色 `standalone`（单机、无登录页）。要做公网入口：
 
 ```bash
-# 主密钥（用于加密敏感数据，生产环境必须设置）
-# 生成方式：head -c 32 /dev/urandom | base64
-TMEX_MASTER_KEY=YOUR_BASE64_ENCODED_32BYTE_KEY
-
-# 管理员密码
-TMEX_ADMIN_PASSWORD=your-secure-password
-
-# JWT 密钥
-JWT_SECRET=your-jwt-secret-min-32-characters-long
+npx tmex-cli@latest init --role hub,node
 ```
 
-可选配置项：
+随后 `hub user add`、`enroll`、各机 `hub join` 的完整步骤在运维指南。
+
+`init` 会：
+
+- 写入安装目录（macOS `~/Library/Application Support/tmex/`，Linux `~/.local/share/tmex/`）；
+- 生成 `app.env`（含 `TMEX_MASTER_KEY`、`TMEX_BIND_HOST`、`GATEWAY_PORT`、`DATABASE_URL` 及 mesh 相关键）；
+- 部署 `runtime/server.js`、前端静态资源、drizzle 迁移；
+- 写 `run.sh`（导出 `TMEX_FE_DIST_DIR` / `TMEX_MIGRATIONS_DIR` / `TMEX_NATIVE_DIR` 后 exec Bun）；
+- 按平台安装 launchd plist 或 systemd 用户单元。
+
+默认 HTTP：`127.0.0.1:9883`。本机浏览器打开该地址即可。需要局域网访问时再把 `app.env` 的 `TMEX_BIND_HOST` 改为 `0.0.0.0` 并重启，同时收紧防火墙。
+
+非交互示例：
 
 ```bash
-# 服务端口（默认 3000）
-TMEX_PORT=3000
-
-# Telegram Bot Token（可选，用于推送通知）
-TELEGRAM_BOT_TOKEN=your-bot-token
-
-# 基础 URL（用于生成 Webhook 回调地址）
-TMEX_BASE_URL=https://tmex.your-domain.com
+npx tmex-cli@latest init --role standalone --no-interactive \
+  --install-dir "$HOME/.local/share/tmex" \
+  --host 127.0.0.1 --port 9883 \
+  --db-path "$HOME/.local/share/tmex/data/tmex.db" \
+  --autostart true
 ```
 
-### 3. 启动服务
+全局还支持 `--install-dir`、`--lang en|zh-CN`、`--bun-path`。`doctor` 可检查安装；`--fix` 尝试修复。
+
+## 服务与日志
+
+服务名默认 `tmex`。定义只在 `init` / `upgrade` 时渲染，已运行实例不会热更新 unit / plist。
+
+**Linux（systemd 用户单元）：**
 
 ```bash
-# 构建并启动
-docker-compose up --build -d
-
-# 查看日志
-docker-compose logs -f
-
-# 等待服务就绪（约 10 秒）
-sleep 10
+systemctl --user status tmex.service -l --no-pager
+journalctl --user -u tmex.service -n 200 --no-pager
+journalctl --user -u tmex.service -f
 ```
 
-### 4. 验证部署
+unit 使用 `KillMode=process`，stop / restart / crash 只杀 tmex 主进程，不连带 tmux。跨 logout 存活需自行 `loginctl enable-linger <user>`，安装程序不会代开。详见 [进程存活](../service/2026061400-process-survival.md)。
+
+**macOS（launchd）：** plist 含 `AbandonProcessGroup=true`，语义同上。用 `launchctl` 查看对应 job；标准输出进系统日志。
+
+健康检查（mesh 下无会话只返回 `{status:'ok'}`）：
 
 ```bash
-# 健康检查
-curl http://localhost:3000/healthz
-
-# 预期输出：{"status":"ok"}
+curl -sS http://127.0.0.1:9883/healthz
 ```
 
-访问 `http://localhost:3000`，使用 `.env` 中设置的密码登录。
+## HTTPS 与反向代理
 
-## 开发环境部署
+生产建议在前面加 HTTPS（nginx、Caddy、Cloudflare Tunnel 均可）。Tunnel 指到 `127.0.0.1:9883` 时，必须在 `app.env` 设置 `TMEX_TRUST_PROXY=true` 并重启，否则 cookie 的 `Secure` 与 passkey origin 会按本机 HTTP 计算。细节与 WebSocket 反代注意点见运维指南「Cloudflare Tunnel」一节。
 
-### 1. 安装 Bun
+不要再为「登录」配置 JWT 或 OIDC；应用层会话由各 node 签发的 `node-session` cookie 承担。
+
+## 升级
+
+终端：
 
 ```bash
-curl -fsSL https://bun.sh/install | bash
-source ~/.bashrc
+npx tmex-cli@version upgrade
 ```
 
-### 2. 安装依赖
+`version` 换成目标版本或 `latest`。升级会停服务、部署新 runtime、只向 `app.env` **追加缺失键**、按需重下 native addon，再拉起服务。携带服务定义修复的那一次升级，其自身的 stop 仍按旧 kill 策略执行，可能掉一次 tmux。
 
-```bash
-cd tmex
-bun install
-```
+CLI 安装且 `canSelfUpdate` 时，设置页「版本与更新」可在程序内升级。发版流程见 [CLI 发布](../release/2026041300-cli-release-process.md) 与 [自更新](../update/2026061406-self-update.md)。
 
-### 3. 配置环境变量
-
-```bash
-export TMEX_MASTER_KEY=$(head -c 32 /dev/urandom | base64)
-export TMEX_ADMIN_PASSWORD=dev-password
-export JWT_SECRET=dev-jwt-secret
-export NODE_ENV=development
-export GATEWAY_PORT=8080
-export DATABASE_URL=/tmp/tmex.db
-```
-
-### 4. 启动 Gateway
-
-```bash
-cd apps/gateway
-bun dev
-
-# 服务运行在 http://0.0.0.0:8080
-```
-
-### 5. 启动 Frontend（新终端）
-
-```bash
-cd apps/fe
-bun dev --host
-
-# 服务运行在 http://0.0.0.0:3000
-# 本地访问: http://localhost:3000
-# 远程访问: http://<服务器IP>:3000
-```
-
-### 远程访问说明
-
-如果需要在其他机器访问：
-
-1. **确保服务绑定所有接口**（已默认配置）
-2. **开放防火墙端口**：
-   ```bash
-   # Ubuntu/Debian
-   sudo ufw allow 3000/tcp
-   sudo ufw allow 8080/tcp  # 如需直接访问 Gateway
-   
-   # CentOS/RHEL
-   sudo firewall-cmd --permanent --add-port=3000/tcp
-   sudo firewall-cmd --reload
-   ```
-3. **云服务器安全组**：在控制台添加 3000 端口入站规则
-
-## 生产环境部署
-
-### 使用 Docker Compose（推荐）
-
-#### 1. 准备服务器
-
-- 确保 Docker 和 Docker Compose 已安装
-- 开放所需端口（默认 3000）
-
-#### 2. 配置生产环境变量
-
-```bash
-# 生成强密钥
-export TMEX_MASTER_KEY=$(openssl rand -base64 32)
-export JWT_SECRET=$(openssl rand -base64 32)
-
-# 创建 .env 文件
-cat > .env << EOF
-NODE_ENV=production
-TMEX_MASTER_KEY=$TMEX_MASTER_KEY
-TMEX_ADMIN_PASSWORD=your-strong-admin-password
-TMEX_BASE_URL=https://tmex.your-domain.com
-JWT_SECRET=$JWT_SECRET
-JWT_EXPIRES_IN=24h
-TMEX_PORT=3000
-EOF
-```
-
-#### 3. 使用 HTTPS（推荐）
-
-方式一：使用反向代理（nginx/traefik）
-
-```yaml
-# docker-compose.override.yml
-version: '3.8'
-services:
-  fe:
-    expose:
-      - "80"
-    networks:
-      - tmex-network
-      - traefik-network
-    labels:
-      - "traefik.enable=true"
-      - "traefik.http.routers.tmex.rule=Host(\`tmex.your-domain.com\`)"
-      - "traefik.http.routers.tmex.tls.certresolver=letsencrypt"
-
-networks:
-  traefik-network:
-    external: true
-```
-
-方式二：使用 Cloudflare Tunnel
-
-```bash
-# 安装 cloudflared
-docker run --rm -v /tmp/cloudflared:/home/nonroot/.cloudflared \
-  cloudflare/cloudflared:latest tunnel login
-
-# 创建隧道
-docker run --rm -v /tmp/cloudflared:/home/nonroot/.cloudflared \
-  cloudflare/cloudflared:latest tunnel create tmex
-
-# 运行隧道
-docker run -d --name cloudflared \
-  --network tmex-network \
-  -v /tmp/cloudflared:/home/nonroot/.cloudflared \
-  cloudflare/cloudflared:latest tunnel run tmex
-```
-
-#### 4. 启动服务
-
-```bash
-docker-compose -f docker-compose.yml -f docker-compose.override.yml up -d
-```
-
-### 手动部署（无 Docker）
-
-#### 1. 安装依赖
-
-```bash
-# Ubuntu/Debian
-sudo apt-get update
-sudo apt-get install -y tmux curl
-
-# 安装 Bun
-curl -fsSL https://bun.sh/install | bash
-source ~/.bashrc
-```
-
-#### 2. 构建项目
-
-```bash
-cd tmex
-bun install
-
-# 构建 Gateway
-cd apps/gateway
-bun run build
-
-# 构建 Frontend
-cd ../fe
-bun run build
-```
-
-#### 3. 配置 systemd 服务
-
-Gateway 服务：
-
-```bash
-sudo tee /etc/systemd/system/tmex-gateway.service << 'EOF'
-[Unit]
-Description=tmex Gateway
-After=network.target
-
-[Service]
-Type=simple
-User=tmex
-WorkingDirectory=/opt/tmex/apps/gateway
-Environment=NODE_ENV=production
-Environment=TMEX_MASTER_KEY=your-master-key
-Environment=TMEX_ADMIN_PASSWORD=your-password
-Environment=JWT_SECRET=your-jwt-secret
-Environment=GATEWAY_PORT=8080
-Environment=DATABASE_URL=/var/lib/tmex/tmex.db
-ExecStart=/root/.bun/bin/bun dist/index.js
-Restart=always
-RestartSec=5
-
-[Install]
-WantedBy=multi-user.target
-EOF
-```
-
-Frontend 服务（使用 nginx）：
-
-```bash
-sudo tee /etc/nginx/sites-available/tmex << 'EOF'
-server {
-    listen 80;
-    server_name tmex.your-domain.com;
-    
-    root /opt/tmex/apps/fe/dist;
-    index index.html;
-
-    location /api {
-        proxy_pass http://localhost:8080;
-        proxy_http_version 1.1;
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-    }
-
-    location /ws {
-        proxy_pass http://localhost:8080;
-        proxy_http_version 1.1;
-        proxy_set_header Upgrade $http_upgrade;
-        proxy_set_header Connection "upgrade";
-    }
-
-    location / {
-        try_files $uri $uri/ /index.html;
-    }
-}
-EOF
-
-sudo ln -s /etc/nginx/sites-available/tmex /etc/nginx/sites-enabled/
-sudo nginx -t
-sudo systemctl reload nginx
-```
-
-启动服务：
-
-```bash
-sudo systemctl enable tmex-gateway
-sudo systemctl start tmex-gateway
-```
+卸载：`npx tmex-cli uninstall`；`--purge` 删除数据。
 
 ## SSH 设备配置
 
+加入 hub 之后，每台 node 内部仍是原来的 `local` / `ssh` 设备。在设备管理里添加 SSH 远程设备：
+
 ### 密码认证
 
-1. 在设备管理页面点击「添加设备」
-2. 选择类型：SSH 远程设备
-3. 填写主机、端口、用户名
-4. 认证方式选择：密码
-5. 输入密码并保存
+1. 添加设备，类型选 SSH。
+2. 填主机、端口、用户名。
+3. 认证方式选密码并保存。密码由 `TMEX_MASTER_KEY` 加密落库。
 
 ### 私钥认证
 
-1. 生成 SSH 密钥对（如无）：
-   ```bash
-   ssh-keygen -t ed25519 -C "tmex"
-   ```
-
-2. 将公钥添加到远程服务器：
-   ```bash
-   ssh-copy-id -i ~/.ssh/id_ed25519.pub user@remote-host
-   ```
-
-3. 在 tmex 中添加设备：
-   - 认证方式选择：私钥
-   - 复制私钥内容（`~/.ssh/id_ed25519`）粘贴到私钥字段
-
-### SSH Agent（推荐）
-
-适用于开发环境或密钥有密码的情况。
-
-**Docker Compose 方式**：
-
-```yaml
-# docker-compose.yml
-services:
-  gateway:
-    volumes:
-      - ${SSH_AUTH_SOCK}:/tmp/ssh-agent.sock
-    environment:
-      - SSH_AUTH_SOCK=/tmp/ssh-agent.sock
-```
-
-**本地运行方式**：
-
 ```bash
-# 确保 ssh-agent 已启动并添加了密钥
-ssh-add -l
-
-# 启动 gateway（自动读取 SSH_AUTH_SOCK）
-bun dev
+ssh-keygen -t ed25519 -C "tmex"
+ssh-copy-id -i ~/.ssh/id_ed25519.pub user@remote-host
 ```
+
+在 tmex 中认证方式选私钥，粘贴 `~/.ssh/id_ed25519` 内容。
+
+### SSH Agent
+
+适用于开发机或密钥有口令的情况。确保 `ssh-agent` 已启动且 `ssh-add -l` 能列出钥匙；gateway 进程继承 `SSH_AUTH_SOCK`。launchd / systemd 用户服务默认不一定有 agent 套接字，需要时在服务环境里显式传入。
 
 ### SSH Config 引用
 
-1. 确保 `~/.ssh/config` 已配置：
-   ```
-   Host myserver
-       HostName 192.168.1.100
-       User admin
-       IdentityFile ~/.ssh/id_ed25519
-   ```
-
-2. Docker 方式需要挂载 SSH 目录：
-   ```yaml
-   volumes:
-     - ~/.ssh:/home/bunuser/.ssh:ro
-   ```
-
-3. 在 tmex 中添加设备：
-   - 认证方式选择：SSH Config
-   - SSH Config 引用填写：myserver
+`~/.ssh/config` 已配置 `Host` 块时，认证方式选 SSH Config，引用填 Host 别名（如 `myserver`）。服务账户必须能读到该 config 与 `IdentityFile`。
 
 ## 备份与恢复
 
-### 备份数据库
+安装目录内需要一起备份：
+
+- `data/tmex.db`（WAL 模式下含 `-wal` / `-shm`）
+- `app.env`（尤其 `TMEX_MASTER_KEY`；库与 key 不匹配会启动失败，见 [排障](../operations/2026021200-db-key-mismatch-journald.md)）
 
 ```bash
-# Docker 方式
-docker exec tmex-gateway sqlite3 /data/tmex.db ".backup /data/tmex-backup.db"
-docker cp tmex-gateway:/data/tmex-backup.db ./tmex-backup-$(date +%Y%m%d).db
-
-# 本地方式
-sqlite3 /var/lib/tmex/tmex.db ".backup tmex-backup.db"
+# 示例：Linux 默认路径，先停服务再拷
+systemctl --user stop tmex.service
+cp -a ~/.local/share/tmex/data/tmex.db* ./backup/
+cp ~/.local/share/tmex/app.env ./backup/
+systemctl --user start tmex.service
 ```
 
-### 恢复数据库
-
-```bash
-# 停止服务
-docker-compose stop
-
-# 恢复数据
-docker cp ./tmex-backup.db tmex-gateway:/data/tmex.db
-
-# 重启服务
-docker-compose start
-```
-
-## 监控与日志
-
-### 查看日志
-
-```bash
-# Docker Compose
-docker-compose logs -f gateway
-docker-compose logs -f fe
-
-# 本地运行
-journalctl -u tmex-gateway -f
-```
-
-### 健康检查
-
-```bash
-# Gateway 健康检查
-curl http://localhost:8080/healthz
-
-# 完整功能检查
-./scripts/health-check.sh
-```
-
-## 更新升级
-
-### Docker Compose 方式
-
-```bash
-# 拉取最新代码
-git pull origin main
-
-# 重新构建并启动
-docker-compose down
-docker-compose up --build -d
-
-# 验证
-sleep 5
-curl http://localhost:3000/healthz
-```
-
-### 本地方式
-
-```bash
-# 拉取最新代码
-git pull origin main
-
-# 更新依赖
-bun install
-
-# 重新构建
-cd apps/gateway && bun run build
-cd ../fe && bun run build
-
-# 重启服务
-sudo systemctl restart tmex-gateway
-sudo systemctl restart nginx
-```
+恢复时必须同时放回对应的 `TMEX_MASTER_KEY`。不要把测试库拷进生产目录。mesh 节点身份在库内，只恢复单机库不会自动出现在其它入口，需保持各机备份一致或重新 `hub join`。
 
 ## 故障排查
 
-### 服务无法启动
+### 服务起不来
 
 ```bash
-# 检查日志
-docker-compose logs gateway
-
-# 检查环境变量
-docker-compose exec gateway env | grep TMEX
-
-# 检查数据库权限
-docker-compose exec gateway ls -la /data/
+# Linux
+systemctl --user status tmex.service -l --no-pager
+journalctl --user -u tmex.service -n 200 --no-pager
 ```
 
-### WebSocket 连接失败
+核对 `app.env` 里生产契约键是否齐全：`TMEX_MASTER_KEY`、`GATEWAY_PORT`、`TMEX_BIND_HOST`、`DATABASE_URL`。`run.sh` 必须能找到 `TMEX_FE_DIST_DIR` 与 `TMEX_MIGRATIONS_DIR`。
 
-1. 检查防火墙是否放行端口
-2. 检查 nginx 配置中的 WebSocket 代理设置
-3. 检查 JWT 是否过期（重新登录）
+### 打不开页面
 
-### SSH 连接失败
+1. 默认只绑 `127.0.0.1`，远程访问需要改 `TMEX_BIND_HOST` 或走 Tunnel。
+2. 防火墙 / 安全组是否放行你实际暴露的端口（本机 9883 通常不必对公网开放）。
+3. 反代是否升级 WebSocket（`/ws`、`/n/:id/ws`、`/mesh/ws`、`/hub/uplink`）。
 
-```bash
-# 测试 SSH 连通性
-docker-compose exec gateway ssh -v user@host
+### WebSocket 立刻断开
 
-# 检查密钥权限
-docker-compose exec gateway ls -la ~/.ssh/
-```
+mesh 角色下无 cookie 的 `/ws` 会以 **4401** 关闭并跳登录页，这不是 JWT 过期。见运维指南排障表。standalone 无此守卫。
+
+### SSH 连不上
+
+在运行 tmex 的同一用户下 `ssh -v user@host` 验证。核对密钥权限与 `SSH_AUTH_SOCK`。
 
 ### tmux 不可用
 
-```bash
-# 进入容器检查
-docker-compose exec gateway which tmux
-docker-compose exec gateway tmux -V
-```
+`tmux -V` 应 ≥ 3.0。服务 PATH 由 `run.sh` 补全；仍找不到时看 `install-meta.json` 的 bun / 依赖检测，或跑 `npx tmex-cli doctor`。
+
+登录、节点不可达、密钥日志分叉、直连降级等见运维指南，不要在本机生产目录里用手工改库的方式「修复」mesh 状态。
 
 ## 安全建议
 
-1. **强密码**: 使用至少 16 位的随机密码作为管理员密码
-2. **密钥管理**: 生产环境必须使用 TMEX_MASTER_KEY 加密敏感数据
-3. **HTTPS**: 生产环境强制使用 HTTPS
-4. **防火墙**: 仅开放必要的端口（80/443）
-5. **定期备份**: 设置定时任务备份数据库
-6. **更新**: 定期更新依赖和基础镜像
+1. 生产必须设置强随机 `TMEX_MASTER_KEY`，并与数据库一起备份。
+2. 口令按 argon2id 成本假设可被离线爆破来选；独立第二因素用 passkey。
+3. 对公网只暴露 HTTPS 反代；peer 口仅内网需要。
+4. Cloudflare Tunnel 等场景打开 `TMEX_TRUST_PROXY`，且反代不要把未校验的 `X-Forwarded-*` 传给不可信客户端后再绕过。
+5. 定期 `upgrade`；不要把生产 `app.env` 提交进 git。
 
 ## 参考
 
-- [tmux 文档](https://github.com/tmux/tmux/wiki)
-- [Bun 文档](https://bun.sh/docs)
-- [Docker Compose 文档](https://docs.docker.com/compose/)
+- [hub / node 运维指南](../hub/2026082800-hub-node-operations.md)
+- [架构设计](../hub/2026082700-hub-node-architecture.md)
+- [三套环境](../env/2026061301-three-tier-env.md)
+- [tmux](https://github.com/tmux/tmux/wiki)
+- [Bun](https://bun.sh/docs)
