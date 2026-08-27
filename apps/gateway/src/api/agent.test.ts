@@ -20,7 +20,8 @@ import {
 } from '../db/agent';
 import { getDb as getOrmDb } from '../db/client';
 import { createLlmProvider } from '../db/llm';
-import { handleAgentApiRequest } from './agent';
+import { createAgentRoutes } from './agent';
+import { dispatchRoutes } from './route';
 
 const TEST_DEVICE_ID = 'agent-api-test-device';
 let chatProviderId = '';
@@ -62,7 +63,11 @@ async function call(
     headers: { 'Content-Type': 'application/json' },
     body: body !== undefined ? JSON.stringify(body) : undefined,
   });
-  const response = await handleAgentApiRequest(req, path.split('?')[0]!, supervisor);
+  const pathname = new URL(req.url).pathname;
+  const response = await dispatchRoutes(req, pathname, createAgentRoutes(supervisor), {
+    server: {} as never,
+    path: pathname,
+  });
   if (!response) {
     throw new Error(`no route matched: ${method} ${path}`);
   }

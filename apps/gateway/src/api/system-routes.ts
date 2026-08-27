@@ -3,7 +3,6 @@ import { runtimeController } from '../control/runtime';
 import { getSiteSettings } from '../db';
 import { t } from '../i18n';
 import { handleCapabilitiesApiRequest } from './capabilities';
-import { handleFilesApiRequest } from './files';
 import { createGatewayOwnerProof } from './gateway-ownership';
 import { json, manifestJson } from './http';
 import { type ApiRoute, route } from './route';
@@ -54,14 +53,6 @@ export const tmuxTreeRoutes: ApiRoute[] = [
     method: '*',
     path: '/api/tmux/tree',
     handler: (req, _params, ctx) => handleTmuxTreeApiRequest(req, ctx.path),
-  }),
-];
-
-export const filesRoutes: ApiRoute[] = [
-  route({
-    method: '*',
-    path: '/api/files*',
-    handler: (req, _params, ctx) => handleFilesApiRequest(req, ctx.path),
   }),
 ];
 

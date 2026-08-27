@@ -2,41 +2,11 @@ import { getDeviceById, getDeviceTreeOrder } from '../db';
 import { t } from '../i18n';
 import { getTreeOverlayBridge } from '../settings/broadcaster';
 import { isTmuxPaneId } from '../tmux-client/snapshot-format';
+import { json } from './http';
+import { type ApiRoute, route } from './route';
 
 // window/pane 排序与自定义名的 REST 入口，与 WS 同源：写路径经 settings/broadcaster
 // 注册的桥复用 wsServer 的落库/内存 overlay 逻辑（含快照重广播与 'tree-order' 变更事件）。
-export function handleTreeOrderApiRequest(
-  req: Request,
-  path: string
-): Response | Promise<Response> | null {
-  const treeOrderMatch = path.match(/^\/api\/devices\/([^/]+)\/tree-order$/);
-  if (treeOrderMatch && req.method === 'GET') {
-    return handleGetTreeOrder(decodeURIComponent(treeOrderMatch[1]));
-  }
-  if (treeOrderMatch && req.method === 'PUT') {
-    return handlePutTreeOrder(req, decodeURIComponent(treeOrderMatch[1]));
-  }
-
-  const windowNameMatch = path.match(/^\/api\/devices\/([^/]+)\/windows\/([^/]+)\/name$/);
-  if (windowNameMatch && req.method === 'PATCH') {
-    return handlePatchWindowName(
-      req,
-      decodeURIComponent(windowNameMatch[1]),
-      decodeURIComponent(windowNameMatch[2])
-    );
-  }
-
-  const paneNameMatch = path.match(/^\/api\/devices\/([^/]+)\/panes\/([^/]+)\/name$/);
-  if (paneNameMatch && req.method === 'PATCH') {
-    return handlePatchPaneName(
-      req,
-      decodeURIComponent(paneNameMatch[1]),
-      decodeURIComponent(paneNameMatch[2])
-    );
-  }
-
-  return null;
-}
 
 function isStringArray(value: unknown): value is string[] {
   return Array.isArray(value) && value.every((item) => typeof item === 'string');
@@ -164,9 +134,31 @@ async function readNameBody(req: Request): Promise<string | null> {
   }
 }
 
-function json(data: unknown, status = 200): Response {
-  return new Response(JSON.stringify(data), {
-    status,
-    headers: { 'Content-Type': 'application/json' },
-  });
-}
+export const treeOrderRoutes: ApiRoute[] = [
+  route({
+    method: 'GET',
+    path: '/api/devices/:id/tree-order',
+    handler: (_req, params) => handleGetTreeOrder(decodeURIComponent(params.id)),
+  }),
+  route({
+    method: 'PUT',
+    path: '/api/devices/:id/tree-order',
+    handler: (req, params) => handlePutTreeOrder(req, decodeURIComponent(params.id)),
+  }),
+  route({
+    method: 'PATCH',
+    path: '/api/devices/:id/windows/:windowId/name',
+    handler: (req, params) =>
+      handlePatchWindowName(
+        req,
+        decodeURIComponent(params.id),
+        decodeURIComponent(params.windowId)
+      ),
+  }),
+  route({
+    method: 'PATCH',
+    path: '/api/devices/:id/panes/:paneId/name',
+    handler: (req, params) =>
+      handlePatchPaneName(req, decodeURIComponent(params.id), decodeURIComponent(params.paneId)),
+  }),
+];

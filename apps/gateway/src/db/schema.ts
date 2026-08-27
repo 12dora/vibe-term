@@ -1,21 +1,31 @@
 import { DEFAULT_TERMINAL_SHORTCUTS } from '@tmex/shared';
 import type {
+  AgentConfirmationStatus,
+  AgentMessageRole,
   AgentSearchProvider,
+  AgentSessionStatus,
+  AgentWriteMode,
   EventType,
   LlmProviderProtocol,
   TerminalShortcutItem,
+  WatchFireMode,
+  WatchNoMatchBehavior,
+  WatchTriggerType,
 } from '@tmex/shared';
 import { sql } from 'drizzle-orm';
 import { check, integer, sqliteTable, text, unique } from 'drizzle-orm/sqlite-core';
 
-export type { AgentSearchProvider, LlmProviderProtocol } from '@tmex/shared';
-export type AgentWriteMode = 'confirm' | 'auto';
-export type AgentSessionStatus = 'idle' | 'running' | 'waiting_confirmation' | 'stopped' | 'error';
-export type AgentMessageRole = 'system' | 'user' | 'assistant' | 'tool';
-export type AgentConfirmationStatus = 'pending' | 'approved' | 'denied' | 'cancelled';
-export type WatchTriggerType = 'match' | 'unchanged' | 'llm';
-export type WatchNoMatchBehavior = 'reset' | 'ignore';
-export type WatchFireMode = 'once' | 'repeat';
+export type {
+  AgentConfirmationStatus,
+  AgentMessageRole,
+  AgentSearchProvider,
+  AgentSessionStatus,
+  AgentWriteMode,
+  LlmProviderProtocol,
+  WatchFireMode,
+  WatchNoMatchBehavior,
+  WatchTriggerType,
+} from '@tmex/shared';
 
 export const siteSettings = sqliteTable(
   'site_settings',

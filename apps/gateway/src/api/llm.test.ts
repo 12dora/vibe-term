@@ -11,7 +11,8 @@ import { decrypt } from '../crypto';
 import { getAgentSettings } from '../db/agent';
 import { getDb as getOrmDb } from '../db/client';
 import { getLlmProviderById } from '../db/llm';
-import { handleLlmApiRequest } from './llm';
+import { llmRoutes } from './llm';
+import { dispatchRoutes } from './route';
 
 const servers: Array<ReturnType<typeof Bun.serve>> = [];
 
@@ -42,13 +43,18 @@ function createMockModelsServer(options: { status?: number; models?: string[] } 
   return { baseUrl: `http://127.0.0.1:${server.port}/v1` };
 }
 
+function dispatchLlm(req: Request) {
+  const path = new URL(req.url).pathname;
+  return dispatchRoutes(req, path, llmRoutes, { server: {} as never, path });
+}
+
 function callApi(method: string, path: string, body?: unknown): Response | Promise<Response> {
   const req = new Request(`http://localhost${path}`, {
     method,
     headers: { 'Content-Type': 'application/json' },
     body: body === undefined ? undefined : JSON.stringify(body),
   });
-  const response = handleLlmApiRequest(req, path);
+  const response = dispatchLlm(req);
   if (!response) {
     throw new Error(`no handler matched: ${method} ${path}`);
   }
@@ -140,8 +146,8 @@ describe('llm provider api', () => {
           headers: { 'Content-Type': 'application/json' },
           body: rawBody,
         });
-        const response = await handleLlmApiRequest(req, target.path);
-        expect(response).not.toBeNull();
+        const response = await dispatchLlm(req);
+        expect(response).toBeInstanceOf(Response);
         expect((response as Response).status).toBe(400);
         expect(((await (response as Response).json()) as { error: string }).error).toBeString();
       }
@@ -404,8 +410,8 @@ describe('llm settings api', () => {
     }
   });
 
-  test('unmatched llm paths return null from handler', () => {
+  test('unmatched llm paths return undefined from dispatcher', () => {
     const req = new Request('http://localhost/api/llm/unknown', { method: 'GET' });
-    expect(handleLlmApiRequest(req, '/api/llm/unknown')).toBeNull();
+    expect(dispatchLlm(req)).toBeUndefined();
   });
 });

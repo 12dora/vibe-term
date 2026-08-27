@@ -43,57 +43,8 @@ import {
 import { t } from '../i18n';
 import { tmuxRuntimeRegistry } from '../tmux-client/registry';
 import { parseAgentSessionConfig } from './agent-session-config';
-
-export function handleAgentApiRequest(
-  req: Request,
-  path: string,
-  supervisor: AgentSupervisor = agentSupervisor
-): Response | Promise<Response> | null {
-  if (path === '/api/agent/sessions' && req.method === 'GET') {
-    return handleListSessions(req);
-  }
-  if (path === '/api/agent/sessions' && req.method === 'POST') {
-    return handleCreateSession(req);
-  }
-  if (path.match(/^\/api\/agent\/sessions\/[^/]+$/) && req.method === 'GET') {
-    return handleGetSession(path.split('/')[4]);
-  }
-  if (path.match(/^\/api\/agent\/sessions\/[^/]+$/) && req.method === 'PATCH') {
-    return handleUpdateSession(req, path.split('/')[4]);
-  }
-  if (path.match(/^\/api\/agent\/sessions\/[^/]+$/) && req.method === 'DELETE') {
-    return handleDeleteSession(path.split('/')[4], supervisor);
-  }
-  if (path.match(/^\/api\/agent\/sessions\/[^/]+\/messages$/) && req.method === 'GET') {
-    return handleListMessages(req, path.split('/')[4]);
-  }
-  if (path.match(/^\/api\/agent\/sessions\/[^/]+\/messages$/) && req.method === 'POST') {
-    return handlePostMessage(req, path.split('/')[4], supervisor);
-  }
-  if (path.match(/^\/api\/agent\/sessions\/[^/]+\/queue$/) && req.method === 'GET') {
-    return handleListQueued(path.split('/')[4]);
-  }
-  if (path.match(/^\/api\/agent\/sessions\/[^/]+\/queue$/) && req.method === 'POST') {
-    return handleEnqueue(req, path.split('/')[4], supervisor);
-  }
-  if (path.match(/^\/api\/agent\/queue\/[^/]+$/) && req.method === 'PATCH') {
-    return handleEditQueued(req, path.split('/')[4], supervisor);
-  }
-  if (path.match(/^\/api\/agent\/queue\/[^/]+$/) && req.method === 'DELETE') {
-    return handleWithdrawQueued(path.split('/')[4], supervisor);
-  }
-  if (path.match(/^\/api\/agent\/sessions\/[^/]+\/stop$/) && req.method === 'POST') {
-    return handleStopSession(path.split('/')[4], supervisor);
-  }
-  if (path.match(/^\/api\/agent\/sessions\/[^/]+\/confirmations$/) && req.method === 'GET') {
-    return handleListConfirmations(path.split('/')[4]);
-  }
-  if (path.match(/^\/api\/agent\/confirmations\/[^/]+\/decide$/) && req.method === 'POST') {
-    return handleDecideConfirmation(req, path.split('/')[4], supervisor);
-  }
-
-  return null;
-}
+import { json, readJsonObjectBody } from './http';
+import { type ApiRoute, route } from './route';
 
 function toSessionDto(record: AgentSessionRecord): AgentSessionDto {
   return {
@@ -151,19 +102,6 @@ function toConfirmationDto(record: AgentConfirmationRecord): AgentConfirmationDt
     decidedAt: record.decidedAt,
     createdAt: record.createdAt,
   };
-}
-
-async function readJsonObjectBody(req: Request): Promise<Record<string, unknown> | null> {
-  let parsed: unknown;
-  try {
-    parsed = await req.json();
-  } catch {
-    return null;
-  }
-  if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
-    return null;
-  }
-  return parsed as Record<string, unknown>;
 }
 
 /**
@@ -523,11 +461,79 @@ function mapSupervisorError(error: unknown): Response {
   );
 }
 
-function json(data: unknown, status = 200): Response {
-  return new Response(JSON.stringify(data), {
-    status,
-    headers: {
-      'Content-Type': 'application/json',
-    },
-  });
+export function createAgentRoutes(supervisor: AgentSupervisor = agentSupervisor): ApiRoute[] {
+  return [
+    route({
+      method: 'GET',
+      path: '/api/agent/sessions',
+      handler: (req) => handleListSessions(req),
+    }),
+    route({
+      method: 'POST',
+      path: '/api/agent/sessions',
+      handler: (req) => handleCreateSession(req),
+    }),
+    route({
+      method: 'GET',
+      path: '/api/agent/sessions/:id',
+      handler: (_req, params) => handleGetSession(params.id),
+    }),
+    route({
+      method: 'PATCH',
+      path: '/api/agent/sessions/:id',
+      handler: (req, params) => handleUpdateSession(req, params.id),
+    }),
+    route({
+      method: 'DELETE',
+      path: '/api/agent/sessions/:id',
+      handler: (_req, params) => handleDeleteSession(params.id, supervisor),
+    }),
+    route({
+      method: 'GET',
+      path: '/api/agent/sessions/:id/messages',
+      handler: (req, params) => handleListMessages(req, params.id),
+    }),
+    route({
+      method: 'POST',
+      path: '/api/agent/sessions/:id/messages',
+      handler: (req, params) => handlePostMessage(req, params.id, supervisor),
+    }),
+    route({
+      method: 'GET',
+      path: '/api/agent/sessions/:id/queue',
+      handler: (_req, params) => handleListQueued(params.id),
+    }),
+    route({
+      method: 'POST',
+      path: '/api/agent/sessions/:id/queue',
+      handler: (req, params) => handleEnqueue(req, params.id, supervisor),
+    }),
+    route({
+      method: 'PATCH',
+      path: '/api/agent/queue/:id',
+      handler: (req, params) => handleEditQueued(req, params.id, supervisor),
+    }),
+    route({
+      method: 'DELETE',
+      path: '/api/agent/queue/:id',
+      handler: (_req, params) => handleWithdrawQueued(params.id, supervisor),
+    }),
+    route({
+      method: 'POST',
+      path: '/api/agent/sessions/:id/stop',
+      handler: (_req, params) => handleStopSession(params.id, supervisor),
+    }),
+    route({
+      method: 'GET',
+      path: '/api/agent/sessions/:id/confirmations',
+      handler: (_req, params) => handleListConfirmations(params.id),
+    }),
+    route({
+      method: 'POST',
+      path: '/api/agent/confirmations/:id/decide',
+      handler: (req, params) => handleDecideConfirmation(req, params.id, supervisor),
+    }),
+  ];
 }
+
+export const agentRoutes = createAgentRoutes();

@@ -5,6 +5,7 @@ import { pushSupervisor } from '../push/supervisor';
 import { getTreeOverlayBridge } from '../settings/broadcaster';
 import { getDeviceSnapshot } from '../tmux/snapshot-directory';
 import { applyCustomNamesOverlay, applyDeviceTreeOverlay } from '../ws/overlay-utils';
+import { json } from './http';
 
 export interface DeviceTreeEntry {
   deviceId: string;
@@ -52,11 +53,4 @@ async function handleGetTmuxTree(deviceId: string | null): Promise<Response> {
 
   const devices = getAllDevices().map((device) => resolveDeviceTree(device.id, device.name));
   return json({ devices });
-}
-
-function json(data: unknown, status = 200): Response {
-  return new Response(JSON.stringify(data), {
-    status,
-    headers: { 'Content-Type': 'application/json' },
-  });
 }

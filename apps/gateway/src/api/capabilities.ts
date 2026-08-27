@@ -1,6 +1,7 @@
 import { wsBorsh } from '@tmex/shared';
 import { API_VERSION, GATEWAY_CAPABILITIES } from '@tmex/shared';
 import { getDisplayVersion } from '../system/version';
+import { json } from './http';
 
 export function handleCapabilitiesApiRequest(req: Request, path: string): Response | null {
   if (path === '/api/capabilities' && req.method === 'GET') {
@@ -10,14 +11,11 @@ export function handleCapabilitiesApiRequest(req: Request, path: string): Respon
 }
 
 function handleGetCapabilities(): Response {
-  return new Response(
-    JSON.stringify({
-      serverImpl: 'tmex-gateway',
-      serverVersion: getDisplayVersion(),
-      apiVersion: API_VERSION,
-      wsProtocolVersion: wsBorsh.CURRENT_VERSION,
-      capabilities: [...GATEWAY_CAPABILITIES],
-    }),
-    { status: 200, headers: { 'Content-Type': 'application/json' } }
-  );
+  return json({
+    serverImpl: 'tmex-gateway',
+    serverVersion: getDisplayVersion(),
+    apiVersion: API_VERSION,
+    wsProtocolVersion: wsBorsh.CURRENT_VERSION,
+    capabilities: [...GATEWAY_CAPABILITIES],
+  });
 }

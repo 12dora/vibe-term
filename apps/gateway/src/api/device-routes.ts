@@ -17,7 +17,7 @@ import { broadcastSettingsUpdate } from '../settings/broadcaster';
 import { json } from './http';
 import { type ApiRoute, route } from './route';
 import { handleDeviceTestConnection } from './test-connection';
-import { handleTreeOrderApiRequest } from './tree-order';
+import { treeOrderRoutes } from './tree-order';
 
 function shouldReconnectPushSupervisor(existing: Device, updates: Partial<Device>): boolean {
   if (updates.type !== undefined && updates.type !== existing.type) return true;
@@ -201,9 +201,5 @@ export const deviceRoutes: ApiRoute[] = [
     path: '/api/devices/:id/test-connection',
     handler: (_req, params) => handleTestConnection(params.id),
   }),
-  route({
-    method: '*',
-    path: '/api/devices/*',
-    handler: (req, _params, ctx) => handleTreeOrderApiRequest(req, ctx.path),
-  }),
+  ...treeOrderRoutes,
 ];

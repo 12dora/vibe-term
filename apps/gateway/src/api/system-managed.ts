@@ -1,11 +1,5 @@
 import { MANAGED_EXTERNALLY, getSystemInfo } from '../system/info-public';
-
-function json(data: unknown, status = 200): Response {
-  return new Response(JSON.stringify(data), {
-    status,
-    headers: { 'Content-Type': 'application/json' },
-  });
-}
+import { json } from './http';
 
 export function handleManagedSystemApiRequest(req: Request, path: string): Response | undefined {
   if (path === '/api/system/info' && req.method === 'GET') {

@@ -4,6 +4,7 @@ import { getDeviceById } from '../db';
 import { t } from '../i18n';
 import { tmuxRuntimeRegistry } from '../tmux-client/registry';
 import { classifySshError } from '../ws/error-classify';
+import { json } from './http';
 
 interface ConnectionTestRuntime {
   connect(): Promise<void>;
@@ -22,15 +23,6 @@ function inferFailurePhase(errorType: string): TestConnectionResult['phase'] {
     return 'bootstrap';
   }
   return 'connect';
-}
-
-function json(data: unknown, status = 200): Response {
-  return new Response(JSON.stringify(data), {
-    status,
-    headers: {
-      'Content-Type': 'application/json',
-    },
-  });
 }
 
 export async function handleDeviceTestConnection(

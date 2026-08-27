@@ -1,8 +1,10 @@
 import type { Server } from 'bun';
 import { t } from '../i18n';
-import { agentRoutes } from './agent-routes';
+import { agentRoutes } from './agent';
 import { deviceRoutes } from './device-routes';
+import { filesRoutes } from './files';
 import { json } from './http';
+import { llmRoutes } from './llm';
 import { telegramRoutes, webhookRoutes, weixinRoutes } from './messaging-routes';
 import {
   type ApiRoute,
@@ -13,11 +15,11 @@ import {
 import { settingsRoutes } from './settings-routes';
 import {
   capabilitiesRoutes,
-  filesRoutes,
   healthRoutes,
   systemPrefixRoutes,
   tmuxTreeRoutes,
 } from './system-routes';
+import { watchRoutes } from './watch';
 
 export type { SystemApiHandler };
 
@@ -28,7 +30,9 @@ const apiRoutes: ApiRoute[] = [
   ...settingsRoutes,
   ...telegramRoutes,
   ...weixinRoutes,
+  ...llmRoutes,
   ...agentRoutes,
+  ...watchRoutes,
   ...filesRoutes,
   ...systemPrefixRoutes,
   ...webhookRoutes,

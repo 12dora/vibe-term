@@ -2,6 +2,7 @@ import type { ThemeMode } from '@tmex/shared';
 import { getSiteSettings, updateSiteSettings } from '../db';
 import { broadcastSettingsUpdate } from '../settings/broadcaster';
 import { broadcastSiteThemeUpdateS2C, broadcastThemeChange } from '../tmux/theme-broadcaster';
+import { json } from './http';
 
 const VALID_THEMES: readonly ThemeMode[] = ['dark', 'light'];
 
@@ -48,11 +49,4 @@ async function handleUpdateTheme(req: Request): Promise<Response> {
   broadcastSettingsUpdate('theme');
 
   return json({ theme: theme as ThemeMode, serverTimestamp });
-}
-
-function json(data: unknown, status = 200): Response {
-  return new Response(JSON.stringify(data), {
-    status,
-    headers: { 'Content-Type': 'application/json' },
-  });
 }

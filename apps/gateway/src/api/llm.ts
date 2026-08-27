@@ -23,6 +23,8 @@ import {
 import { t } from '../i18n';
 import { fetchProviderModels } from '../llm/provider-registry';
 import { broadcastSettingsUpdate } from '../settings/broadcaster';
+import { json, readJsonObjectBody } from './http';
+import { type ApiRoute, route } from './route';
 
 const PROTOCOLS: readonly LlmProviderProtocol[] = ['openai-chat', 'openai-responses'];
 
@@ -40,35 +42,6 @@ function toSearchProviderInfos(settings: AgentSettingsRecord): SearchProviderInf
     label: provider.label,
     isConfigured: provider.isConfigured(settings),
   }));
-}
-
-export function handleLlmApiRequest(
-  req: Request,
-  path: string
-): Response | Promise<Response> | null {
-  if (path === '/api/llm/providers' && req.method === 'GET') {
-    return handleListProviders();
-  }
-  if (path === '/api/llm/providers' && req.method === 'POST') {
-    return handleCreateProvider(req);
-  }
-  if (path.match(/^\/api\/llm\/providers\/[^/]+$/) && req.method === 'PATCH') {
-    return handleUpdateProvider(req, path.split('/')[4]);
-  }
-  if (path.match(/^\/api\/llm\/providers\/[^/]+$/) && req.method === 'DELETE') {
-    return handleDeleteProvider(path.split('/')[4]);
-  }
-  if (path.match(/^\/api\/llm\/providers\/[^/]+\/refresh-models$/) && req.method === 'POST') {
-    return handleRefreshProviderModels(path.split('/')[4]);
-  }
-  if (path === '/api/llm/settings' && req.method === 'GET') {
-    return handleGetSettings();
-  }
-  if (path === '/api/llm/settings' && req.method === 'PATCH') {
-    return handleUpdateSettings(req);
-  }
-
-  return null;
 }
 
 function toProviderDto(record: LlmProviderRecord): LlmProviderDto {
@@ -107,19 +80,6 @@ function isValidBaseUrl(value: string): boolean {
     return false;
   }
   return url.protocol === 'http:' || url.protocol === 'https:';
-}
-
-async function readJsonObjectBody(req: Request): Promise<Record<string, unknown> | null> {
-  let parsed: unknown;
-  try {
-    parsed = await req.json();
-  } catch {
-    return null;
-  }
-  if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
-    return null;
-  }
-  return parsed as Record<string, unknown>;
 }
 
 async function refreshModelsCache(
@@ -366,11 +326,32 @@ async function handleUpdateSettings(req: Request): Promise<Response> {
   return json({ settings: toSettingsDto(settings) });
 }
 
-function json(data: unknown, status = 200): Response {
-  return new Response(JSON.stringify(data), {
-    status,
-    headers: {
-      'Content-Type': 'application/json',
-    },
-  });
-}
+export const llmRoutes: ApiRoute[] = [
+  route({ method: 'GET', path: '/api/llm/providers', handler: () => handleListProviders() }),
+  route({
+    method: 'POST',
+    path: '/api/llm/providers',
+    handler: (req) => handleCreateProvider(req),
+  }),
+  route({
+    method: 'PATCH',
+    path: '/api/llm/providers/:id',
+    handler: (req, params) => handleUpdateProvider(req, params.id),
+  }),
+  route({
+    method: 'DELETE',
+    path: '/api/llm/providers/:id',
+    handler: (_req, params) => handleDeleteProvider(params.id),
+  }),
+  route({
+    method: 'POST',
+    path: '/api/llm/providers/:id/refresh-models',
+    handler: (_req, params) => handleRefreshProviderModels(params.id),
+  }),
+  route({ method: 'GET', path: '/api/llm/settings', handler: () => handleGetSettings() }),
+  route({
+    method: 'PATCH',
+    path: '/api/llm/settings',
+    handler: (req) => handleUpdateSettings(req),
+  }),
+];

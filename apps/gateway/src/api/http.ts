@@ -17,3 +17,16 @@ export function manifestJson(data: unknown, method: 'GET' | 'HEAD'): Response {
     },
   });
 }
+
+export async function readJsonObjectBody(req: Request): Promise<Record<string, unknown> | null> {
+  let parsed: unknown;
+  try {
+    parsed = await req.json();
+  } catch {
+    return null;
+  }
+  if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
+    return null;
+  }
+  return parsed as Record<string, unknown>;
+}

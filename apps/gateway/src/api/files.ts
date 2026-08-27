@@ -34,16 +34,11 @@ import {
 } from '../files/transfer-session';
 import { t } from '../i18n';
 import { broadcastSettingsUpdate } from '../settings/broadcaster';
+import { json } from './http';
+import { type ApiRoute, route } from './route';
 
 // 分块上传的 chunk 大小（前端按此切片，每个 PUT body ≤ 此值，远低于 Bun 默认 128MB body 上限）
 const UPLOAD_CHUNK_SIZE = 8 * 1024 * 1024;
-
-function json(data: unknown, status = 200, headers: Record<string, string> = {}): Response {
-  return new Response(JSON.stringify(data), {
-    status,
-    headers: { 'Content-Type': 'application/json', ...headers },
-  });
-}
 
 const CODE_STATUS: Record<FileErrorCode, number> = {
   invalid: 400,
@@ -224,7 +219,7 @@ async function handleUploadInit(req: Request): Promise<Response> {
   const rootId = typeof body.rootId === 'string' ? body.rootId : '';
   const destDir = typeof body.path === 'string' ? body.path : '';
   const rawName = typeof body.name === 'string' ? body.name : '';
-  const size = typeof body.size === 'number' && Number.isFinite(body.size) ? body.size : -1;
+  const size = typeof body.size === 'number' && Number.isSafeInteger(body.size) ? body.size : -1;
   if (!rootId || !destDir || !rawName || size < 0) {
     return json({ error: t('apiError.invalidRequest') }, 400);
   }
@@ -456,51 +451,66 @@ async function handleDownload(req: Request, url: URL): Promise<Response> {
   return new Response(body, { status: 200, headers: attachmentHeaders(name, mime, size) });
 }
 
-export function handleFilesApiRequest(
-  req: Request,
-  path: string
-): Response | Promise<Response> | undefined {
-  const url = new URL(req.url);
-
-  if (path === '/api/files/roots' && req.method === 'GET') return handleListRoots();
-  if (path === '/api/files/roots' && req.method === 'POST') return handleCreateRoot(req);
-  if (path.match(/^\/api\/files\/roots\/[^/]+$/) && req.method === 'PATCH') {
-    return handleUpdateRoot(req, decodeURIComponent(path.split('/')[4]));
-  }
-  if (path.match(/^\/api\/files\/roots\/[^/]+$/) && req.method === 'DELETE') {
-    return handleDeleteRoot(decodeURIComponent(path.split('/')[4]));
-  }
-
-  if (path === '/api/files/list' && req.method === 'GET') return handleList(url);
-  if (path === '/api/files/content' && req.method === 'GET') return handleContent(url);
-  if (path === '/api/files/stat' && req.method === 'GET') return handleStat(url);
-  if (path === '/api/files/raw' && req.method === 'GET') return handleRaw(url);
-  if (path === '/api/files/download' && req.method === 'GET') return handleDownload(req, url);
-  if (path === '/api/files/download/prepare' && req.method === 'POST') {
-    return handleDownloadPrepare(req);
-  }
-  const dlContentMatch = path.match(/^\/api\/files\/download\/([^/]+)\/content$/);
-  if (dlContentMatch && req.method === 'GET') {
-    return handleDownloadContent(decodeURIComponent(dlContentMatch[1]));
-  }
-  const dlCancelMatch = path.match(/^\/api\/files\/download\/([^/]+)$/);
-  if (dlCancelMatch && req.method === 'DELETE') {
-    return handleDownloadCancel(decodeURIComponent(dlCancelMatch[1]));
-  }
-
-  // 分块上传：init / chunk(PUT) / commit(POST 流式) / cancel(DELETE)
-  if (path === '/api/files/upload/init' && req.method === 'POST') return handleUploadInit(req);
-  const commitMatch = path.match(/^\/api\/files\/upload\/([^/]+)\/commit$/);
-  if (commitMatch && req.method === 'POST') {
-    return handleUploadCommit(decodeURIComponent(commitMatch[1]));
-  }
-  const uploadMatch = path.match(/^\/api\/files\/upload\/([^/]+)$/);
-  if (uploadMatch && req.method === 'PUT') {
-    return handleUploadChunk(req, decodeURIComponent(uploadMatch[1]), url);
-  }
-  if (uploadMatch && req.method === 'DELETE') {
-    return handleUploadCancel(decodeURIComponent(uploadMatch[1]));
-  }
-
-  return undefined;
-}
+export const filesRoutes: ApiRoute[] = [
+  route({ method: 'GET', path: '/api/files/roots', handler: () => handleListRoots() }),
+  route({ method: 'POST', path: '/api/files/roots', handler: (req) => handleCreateRoot(req) }),
+  route({
+    method: 'PATCH',
+    path: '/api/files/roots/:id',
+    handler: (req, params) => handleUpdateRoot(req, decodeURIComponent(params.id)),
+  }),
+  route({
+    method: 'DELETE',
+    path: '/api/files/roots/:id',
+    handler: (_req, params) => handleDeleteRoot(decodeURIComponent(params.id)),
+  }),
+  route({ method: 'GET', path: '/api/files/list', handler: (req) => handleList(new URL(req.url)) }),
+  route({
+    method: 'GET',
+    path: '/api/files/content',
+    handler: (req) => handleContent(new URL(req.url)),
+  }),
+  route({ method: 'GET', path: '/api/files/stat', handler: (req) => handleStat(new URL(req.url)) }),
+  route({ method: 'GET', path: '/api/files/raw', handler: (req) => handleRaw(new URL(req.url)) }),
+  route({
+    method: 'GET',
+    path: '/api/files/download',
+    handler: (req) => handleDownload(req, new URL(req.url)),
+  }),
+  route({
+    method: 'POST',
+    path: '/api/files/download/prepare',
+    handler: (req) => handleDownloadPrepare(req),
+  }),
+  route({
+    method: 'GET',
+    path: '/api/files/download/:id/content',
+    handler: (_req, params) => handleDownloadContent(decodeURIComponent(params.id)),
+  }),
+  route({
+    method: 'DELETE',
+    path: '/api/files/download/:id',
+    handler: (_req, params) => handleDownloadCancel(decodeURIComponent(params.id)),
+  }),
+  route({
+    method: 'POST',
+    path: '/api/files/upload/init',
+    handler: (req) => handleUploadInit(req),
+  }),
+  route({
+    method: 'POST',
+    path: '/api/files/upload/:id/commit',
+    handler: (_req, params) => handleUploadCommit(decodeURIComponent(params.id)),
+  }),
+  route({
+    method: 'PUT',
+    path: '/api/files/upload/:id',
+    handler: (req, params) =>
+      handleUploadChunk(req, decodeURIComponent(params.id), new URL(req.url)),
+  }),
+  route({
+    method: 'DELETE',
+    path: '/api/files/upload/:id',
+    handler: (_req, params) => handleUploadCancel(decodeURIComponent(params.id)),
+  }),
+];

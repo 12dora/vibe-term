@@ -1,19 +1,13 @@
 import type { StartUpgradeRequest } from '@tmex/shared';
 import { t } from '../i18n';
 import { MANAGED_EXTERNALLY, getSystemInfo, isManagedExternally } from '../system/info-public';
+import { json } from './http';
 
 // 构建期 define：managed compile 为 true，使自更新模块落入死分支并被剔除。
 declare const TMEX_MANAGED_BUILD: boolean | undefined;
 
 function isManagedBuild(): boolean {
   return typeof TMEX_MANAGED_BUILD !== 'undefined' && TMEX_MANAGED_BUILD === true;
-}
-
-function json(data: unknown, status = 200): Response {
-  return new Response(JSON.stringify(data), {
-    status,
-    headers: { 'Content-Type': 'application/json' },
-  });
 }
 
 function managedExternallyResponse(status = 403): Response {

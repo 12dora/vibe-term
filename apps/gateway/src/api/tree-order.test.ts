@@ -15,7 +15,8 @@ import {
   registerTreeOverlayBridge,
 } from '../settings/broadcaster';
 import { handleApiRequest } from './index';
-import { handleTreeOrderApiRequest } from './tree-order';
+import { dispatchRoutes } from './route';
+import { treeOrderRoutes } from './tree-order';
 
 const DEVICE_ID = 'tree-order-test-device';
 
@@ -72,7 +73,11 @@ async function call(
     headers: { 'Content-Type': 'application/json' },
     body: body !== undefined ? JSON.stringify(body) : undefined,
   });
-  const response = handleTreeOrderApiRequest(req, path);
+  const pathname = new URL(req.url).pathname;
+  const response = dispatchRoutes(req, pathname, treeOrderRoutes, {
+    server: {} as never,
+    path: pathname,
+  });
   if (!response) {
     throw new Error(`no route matched: ${method} ${path}`);
   }

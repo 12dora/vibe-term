@@ -29,6 +29,8 @@ import { resolveLanguageModel } from '../llm/provider-registry';
 import { tmuxRuntimeRegistry } from '../tmux-client/registry';
 import { compileWatchPattern } from '../watch/evaluator';
 import { type WatchService, watchService } from '../watch/service';
+import { json, readJsonObjectBody } from './http';
+import { type ApiRoute, route } from './route';
 import { buildEffectiveWatchRule } from './watch-rule-config';
 
 const ASSIST_PREVIEW_LIMIT = 20;
@@ -63,38 +65,6 @@ const defaultDeps: WatchApiDeps = {
   resolveModel: resolveLanguageModel,
   llmMaxRetries: 2,
 };
-
-export function handleWatchApiRequest(
-  req: Request,
-  path: string,
-  depsOverride: Partial<WatchApiDeps> = {}
-): Response | Promise<Response> | null {
-  const deps: WatchApiDeps = { ...defaultDeps, ...depsOverride };
-
-  if (path === '/api/watch/rules' && req.method === 'GET') {
-    return handleListRules(req);
-  }
-  if (path === '/api/watch/rules' && req.method === 'POST') {
-    return handleCreateRule(req, deps);
-  }
-  if (path === '/api/watch/assist-regex' && req.method === 'POST') {
-    return handleAssistRegex(req, deps);
-  }
-  if (path.match(/^\/api\/watch\/rules\/[^/]+$/) && req.method === 'GET') {
-    return handleGetRule(path.split('/')[4]);
-  }
-  if (path.match(/^\/api\/watch\/rules\/[^/]+$/) && req.method === 'PATCH') {
-    return handleUpdateRule(req, path.split('/')[4], deps);
-  }
-  if (path.match(/^\/api\/watch\/rules\/[^/]+$/) && req.method === 'DELETE') {
-    return handleDeleteRule(path.split('/')[4], deps);
-  }
-  if (path.match(/^\/api\/watch\/rules\/[^/]+\/state$/) && req.method === 'GET') {
-    return handleGetRuleState(path.split('/')[4], deps);
-  }
-
-  return null;
-}
 
 function toRuleDto(record: WatchRuleRecord): WatchRuleDto {
   return {
@@ -134,19 +104,6 @@ function toStateDto(record: WatchRuleStateRecord): WatchRuleStateDto {
     lastError: record.lastError,
     modelUnavailableNotified: record.modelUnavailableNotified,
   };
-}
-
-async function readJsonObjectBody(req: Request): Promise<Record<string, unknown> | null> {
-  let parsed: unknown;
-  try {
-    parsed = await req.json();
-  } catch {
-    return null;
-  }
-  if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
-    return null;
-  }
-  return parsed as Record<string, unknown>;
 }
 
 async function handleListRules(req: Request): Promise<Response> {
@@ -406,11 +363,41 @@ async function handleAssistRegex(req: Request, deps: WatchApiDeps): Promise<Resp
   });
 }
 
-function json(data: unknown, status = 200): Response {
-  return new Response(JSON.stringify(data), {
-    status,
-    headers: {
-      'Content-Type': 'application/json',
-    },
-  });
+export function createWatchRoutes(depsOverride: Partial<WatchApiDeps> = {}): ApiRoute[] {
+  const deps: WatchApiDeps = { ...defaultDeps, ...depsOverride };
+  return [
+    route({ method: 'GET', path: '/api/watch/rules', handler: (req) => handleListRules(req) }),
+    route({
+      method: 'POST',
+      path: '/api/watch/rules',
+      handler: (req) => handleCreateRule(req, deps),
+    }),
+    route({
+      method: 'POST',
+      path: '/api/watch/assist-regex',
+      handler: (req) => handleAssistRegex(req, deps),
+    }),
+    route({
+      method: 'GET',
+      path: '/api/watch/rules/:id',
+      handler: (_req, params) => handleGetRule(params.id),
+    }),
+    route({
+      method: 'PATCH',
+      path: '/api/watch/rules/:id',
+      handler: (req, params) => handleUpdateRule(req, params.id, deps),
+    }),
+    route({
+      method: 'DELETE',
+      path: '/api/watch/rules/:id',
+      handler: (_req, params) => handleDeleteRule(params.id, deps),
+    }),
+    route({
+      method: 'GET',
+      path: '/api/watch/rules/:id/state',
+      handler: (_req, params) => handleGetRuleState(params.id, deps),
+    }),
+  ];
 }
+
+export const watchRoutes = createWatchRoutes();

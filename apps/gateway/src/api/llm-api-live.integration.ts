@@ -1,4 +1,4 @@
-// LLM HTTP API 全链路实测：走真实 handleLlmApiRequest（非 mock）打真实 endpoint，
+// LLM HTTP API 全链路实测：走真实 llmRoutes（非 mock）打真实 endpoint，
 // 覆盖 UI 实际触发的路径——创建（自动拉模型）/ 列表 / 刷新模型 / 设默认 / 真实对话 /
 // provider 内置搜索工具 / 删除。凭证来自 test.env.local。
 //
@@ -11,7 +11,8 @@ import { migrate } from 'drizzle-orm/bun-sqlite/migrator';
 import { getDb as getOrmDb } from '../db/client';
 import { resolveLanguageModel, resolveProviderWebSearchTool } from '../llm/provider-registry';
 import { requireLiveEnv } from '../test-support/live-env';
-import { handleLlmApiRequest } from './llm';
+import { llmRoutes } from './llm';
+import { dispatchRoutes } from './route';
 
 const env = requireLiveEnv(
   ['TEST_LLM_BASE_URL', 'TEST_LLM_API_KEY', 'TEST_LLM_MODEL'],
@@ -26,9 +27,9 @@ async function api(method: string, path: string, body?: unknown): Promise<{ stat
     headers: body ? { 'Content-Type': 'application/json' } : undefined,
     body: body ? JSON.stringify(body) : undefined,
   });
-  const res = await handleLlmApiRequest(req, path);
+  const res = await dispatchRoutes(req, path, llmRoutes, { server: {} as never, path });
   if (!res) {
-    throw new Error(`handleLlmApiRequest 未匹配路由: ${method} ${path}`);
+    throw new Error(`llmRoutes 未匹配路由: ${method} ${path}`);
   }
   return { status: res.status, json: await res.json() };
 }

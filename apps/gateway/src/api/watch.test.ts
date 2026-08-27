@@ -15,7 +15,8 @@ import {
   upsertWatchRuleState,
 } from '../db/watch';
 import { encrypt } from '../crypto';
-import { type WatchApiDeps, handleWatchApiRequest } from './watch';
+import { dispatchRoutes } from './route';
+import { type WatchApiDeps, createWatchRoutes } from './watch';
 
 const TEST_DEVICE_ID = 'watch-api-test-device';
 let providerId = '';
@@ -101,7 +102,11 @@ async function call(
     headers: { 'Content-Type': 'application/json' },
     body: body !== undefined ? JSON.stringify(body) : undefined,
   });
-  const response = handleWatchApiRequest(req, path.split('?')[0] ?? path, deps);
+  const pathname = new URL(req.url).pathname;
+  const response = dispatchRoutes(req, pathname, createWatchRoutes(deps), {
+    server: {} as never,
+    path: pathname,
+  });
   if (!response) {
     throw new Error(`no route matched: ${method} ${path}`);
   }
