@@ -9,11 +9,14 @@ import type { GatewayPaneHistoryPage, GatewayPaneScreenSnapshot } from '@tmex/ws
 import type { GhosttyTerminalModeSnapshot } from 'ghostty-terminal';
 import {
   type CanonicalSnapshotTarget,
+  type HistoryRestoreTarget,
   NORMAL_SCREEN_PREFIX,
+  resolveHistoryRestoreGeometry,
   startsWithBytes,
   terminalModesFromHistory,
   writeCanonicalSnapshot,
   writeLiveOutput,
+  writeRestoredHistory,
 } from './terminal-snapshot';
 
 const encoder = new TextEncoder();
@@ -207,5 +210,132 @@ describe('writeLiveOutput', () => {
 
     expect(target.writes).toEqual(['one\r', '\ntwo\r\n']);
     expect(target.liveOutputEndedWithCR).toBe(false);
+  });
+});
+
+interface RecordingHistoryTarget extends HistoryRestoreTarget {
+  ops: string[];
+}
+
+function createHistoryTarget(cols: number, rows: number): RecordingHistoryTarget {
+  const size = { cols, rows };
+  const target: RecordingHistoryTarget = {
+    ops: [],
+    liveOutputEndedWithCR: false,
+    terminal: {
+      get cols() {
+        return size.cols;
+      },
+      get rows() {
+        return size.rows;
+      },
+      reset: () => {
+        target.ops.push('reset');
+      },
+      resize: (nextCols, nextRows) => {
+        size.cols = nextCols;
+        size.rows = nextRows;
+        target.ops.push(`resize:${nextCols}x${nextRows}`);
+      },
+      write: (data) => {
+        target.ops.push(`write:${typeof data === 'string' ? data : decoder.decode(data)}`);
+      },
+      restoreModeSnapshot: () => {
+        target.ops.push('modes');
+      },
+      forceFullRepaint: () => {
+        target.ops.push('repaint');
+      },
+    },
+  };
+  return target;
+}
+
+describe('resolveHistoryRestoreGeometry', () => {
+  test('returns the remote geometry when it differs from the terminal', () => {
+    expect(resolveHistoryRestoreGeometry({ cols: 120, rows: 45 }, { cols: 112, rows: 35 })).toEqual(
+      {
+        cols: 120,
+        rows: 45,
+      }
+    );
+  });
+
+  test('returns null when the geometry already matches or is unusable', () => {
+    expect(resolveHistoryRestoreGeometry({ cols: 112, rows: 35 }, { cols: 112, rows: 35 })).toBe(
+      null
+    );
+    expect(resolveHistoryRestoreGeometry(null, { cols: 112, rows: 35 })).toBe(null);
+    expect(resolveHistoryRestoreGeometry({ cols: 0, rows: 45 }, { cols: 112, rows: 35 })).toBe(
+      null
+    );
+    expect(resolveHistoryRestoreGeometry({ cols: 120, rows: 1 }, { cols: 112, rows: 35 })).toBe(
+      null
+    );
+    expect(resolveHistoryRestoreGeometry({ cols: 120.5, rows: 45 }, { cols: 112, rows: 35 })).toBe(
+      null
+    );
+  });
+});
+
+describe('writeRestoredHistory', () => {
+  // 回归（切窗往返只剩提示符）：legacy TERM_HISTORY 的行数与末尾光标恢复序列都以
+  // tmux pane 高度为基准。写进更矮的终端会把顶部挤进 scrollback，切窗回来只看得到
+  // 最后一行。canonical 路径靠 snapshot 自带的 rows/cols 对齐，legacy 路径必须在
+  // 写入前按 tmux 快照的 pane 尺寸对齐，且 resize 必须早于 write。
+  test('resizes to the tmux pane geometry before writing the capture', () => {
+    const target = createHistoryTarget(112, 35);
+
+    writeRestoredHistory(
+      target,
+      { data: 'PANE1_READY\nsh-3.2$ \n\x1b[43A\x1b[9G', alternateScreen: false, modes: 0 },
+      { cols: 120, rows: 45 }
+    );
+
+    expect(target.ops[0]).toBe('resize:120x45');
+    expect(target.ops.indexOf('resize:120x45')).toBeLessThan(
+      target.ops.findIndex((op) => op.startsWith('write:'))
+    );
+    expect(target.terminal.rows).toBe(45);
+    expect(target.ops.at(-1)).toBe('repaint');
+  });
+
+  test('does not resize when the terminal already matches the pane geometry', () => {
+    const target = createHistoryTarget(120, 45);
+
+    writeRestoredHistory(
+      target,
+      { data: 'a\nb', alternateScreen: false, modes: 0 },
+      {
+        cols: 120,
+        rows: 45,
+      }
+    );
+
+    expect(target.ops.some((op) => op.startsWith('resize:'))).toBe(false);
+  });
+
+  test('writes without resizing when the pane geometry is unknown', () => {
+    const target = createHistoryTarget(112, 35);
+
+    writeRestoredHistory(target, { data: 'a\nb', alternateScreen: false, modes: 0 }, null);
+
+    expect(target.ops.some((op) => op.startsWith('resize:'))).toBe(false);
+    expect(target.ops.some((op) => op.startsWith('write:'))).toBe(true);
+  });
+
+  test('aligns alt-screen restores too', () => {
+    const target = createHistoryTarget(112, 35);
+
+    writeRestoredHistory(
+      target,
+      { data: 'tui', alternateScreen: true, modes: 0 },
+      {
+        cols: 120,
+        rows: 45,
+      }
+    );
+
+    expect(target.ops[0]).toBe('resize:120x45');
   });
 });
