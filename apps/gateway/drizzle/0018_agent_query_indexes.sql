@@ -1,0 +1,2 @@
+CREATE INDEX `agent_confirmations_session_status_created_at_idx` ON `agent_confirmations` (`session_id`,`status`,`created_at`);--> statement-breakpoint
+CREATE INDEX `agent_queued_messages_session_seq_idx` ON `agent_queued_messages` (`session_id`,`seq`);

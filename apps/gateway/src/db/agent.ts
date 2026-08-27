@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, gt, max } from 'drizzle-orm';
+import { and, asc, desc, eq, gt, max, sql } from 'drizzle-orm';
 import { getDb as getOrmDb } from './client';
 import {
   type AgentConfirmationStatus,
@@ -196,34 +196,31 @@ export function deleteAgentSession(id: string): void {
   orm.delete(agentSessions).where(eq(agentSessions.id, id)).run();
 }
 
+function nextSessionSeqSql(
+  table: typeof agentMessages | typeof agentQueuedMessages,
+  sessionId: string
+) {
+  return sql`(select coalesce(max(${table.seq}), -1) + 1 from ${table} where ${table.sessionId} = ${sessionId})`;
+}
+
 export function appendAgentMessage(
   sessionId: string,
   role: AgentMessageRole,
   content: unknown
 ): AgentMessageRecord {
   const orm = getOrmDb();
-  const id = crypto.randomUUID();
-
-  orm.transaction((tx) => {
-    const current = tx
-      .select({ maxSeq: max(agentMessages.seq) })
-      .from(agentMessages)
-      .where(eq(agentMessages.sessionId, sessionId))
-      .get();
-
-    tx.insert(agentMessages)
-      .values({
-        id,
-        sessionId,
-        seq: (current?.maxSeq ?? -1) + 1,
-        role,
-        content,
-        createdAt: new Date().toISOString(),
-      })
-      .run();
-  });
-
-  const created = orm.select().from(agentMessages).where(eq(agentMessages.id, id)).get();
+  const created = orm
+    .insert(agentMessages)
+    .values({
+      id: crypto.randomUUID(),
+      sessionId,
+      seq: nextSessionSeqSql(agentMessages, sessionId),
+      role,
+      content,
+      createdAt: new Date().toISOString(),
+    })
+    .returning()
+    .get();
   if (!created) {
     throw new Error('failed to append agent message');
   }
@@ -257,30 +254,16 @@ export function getMaxAgentMessageSeq(sessionId: string): number {
 
 export function enqueueAgentMessage(sessionId: string, text: string): AgentQueuedMessageRecord {
   const orm = getOrmDb();
-  const id = crypto.randomUUID();
-
-  orm.transaction((tx) => {
-    const current = tx
-      .select({ maxSeq: max(agentQueuedMessages.seq) })
-      .from(agentQueuedMessages)
-      .where(eq(agentQueuedMessages.sessionId, sessionId))
-      .get();
-
-    tx.insert(agentQueuedMessages)
-      .values({
-        id,
-        sessionId,
-        seq: (current?.maxSeq ?? -1) + 1,
-        text,
-        createdAt: new Date().toISOString(),
-      })
-      .run();
-  });
-
   const created = orm
-    .select()
-    .from(agentQueuedMessages)
-    .where(eq(agentQueuedMessages.id, id))
+    .insert(agentQueuedMessages)
+    .values({
+      id: crypto.randomUUID(),
+      sessionId,
+      seq: nextSessionSeqSql(agentQueuedMessages, sessionId),
+      text,
+      createdAt: new Date().toISOString(),
+    })
+    .returning()
     .get();
   if (!created) {
     throw new Error('failed to enqueue agent message');

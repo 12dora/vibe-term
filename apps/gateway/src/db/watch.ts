@@ -89,6 +89,24 @@ export function getEnabledWatchRules(): WatchRuleRecord[] {
     .all();
 }
 
+export interface WatchRuleWithState {
+  rule: WatchRuleRecord;
+  state: WatchRuleStateRecord | null;
+}
+
+export function listWatchRulesWithState(): WatchRuleWithState[] {
+  const orm = getOrmDb();
+  return orm
+    .select({
+      rule: watchRules,
+      state: watchRuleState,
+    })
+    .from(watchRules)
+    .leftJoin(watchRuleState, eq(watchRuleState.ruleId, watchRules.id))
+    .orderBy(desc(watchRules.createdAt))
+    .all();
+}
+
 export function updateWatchRule(
   id: string,
   updates: Partial<Omit<WatchRuleRecord, 'id' | 'createdAt' | 'updatedAt'>>

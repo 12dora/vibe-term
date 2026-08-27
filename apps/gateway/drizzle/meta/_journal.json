@@ -127,6 +127,13 @@
       "when": 1784057182207,
       "tag": "0017_fixed_greymalkin",
       "breakpoints": true
+    },
+    {
+      "idx": 18,
+      "version": "6",
+      "when": 1787808955472,
+      "tag": "0018_agent_query_indexes",
+      "breakpoints": true
     }
   ]
 }
