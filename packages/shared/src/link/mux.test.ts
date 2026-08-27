@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'bun:test';
-import { FrameDecoder, encodeFrame, encodeFrameHeader } from './codec';
+import { FrameDecoder, encodeFrame, encodeFrameHeader, encodeWindowPayload } from './codec';
 import { createBytePipe, createInMemoryLinkPair } from './in-memory-link';
 import { LinkMux } from './mux';
 import { FrameOp } from './types';
@@ -169,5 +169,181 @@ describe('link mux', () => {
     expect(new TextDecoder().decode(await back)).toBe('{"t":"pong"}');
     a.close('done');
     expect((await a.closed).reason).toBe('done');
+  });
+
+  it('enqueues END behind in-flight writes and returns a promise', async () => {
+    const [a, b] = createInMemoryLinkPair();
+    const incomingP = new Promise<LinkStream>((resolve) => b.onStream(resolve));
+    const out = await a.openStream(new Uint8Array([1]));
+    const incoming = await incomingP;
+    const body = new Uint8Array([9, 8, 7]);
+    const writeP = out.write(body);
+    const endP = out.end();
+    expect(endP).toBeInstanceOf(Promise);
+    await endP;
+    await writeP;
+    await expect(out.write(new Uint8Array([1]))).rejects.toMatchObject({
+      code: 'closed',
+    });
+    const reader = incoming.readable.getReader();
+    const chunk = await reader.read();
+    expect(chunk.value?.bytes).toEqual(body);
+    expect((await reader.read()).done).toBe(true);
+    incoming.end();
+    a.close();
+  });
+
+  it('closes the link on WINDOW that is not 0 < delta <= outstanding', async () => {
+    const [t1, t2] = createBytePipe();
+    const mux = new LinkMux(t1, {
+      role: 'initiator',
+      streamWindow: 100,
+      maxLinkUnacked: 400,
+    });
+    t2.send(
+      encodeFrame({ streamId: 0, op: FrameOp.WINDOW, payload: encodeWindowPayload(0xffffffff) })
+    );
+    const info = await mux.closed;
+    expect(info.reason.toLowerCase()).toContain('window');
+  });
+
+  it('accepts WINDOW only up to outstanding and decrements global unacked by the same delta', async () => {
+    const [t1, t2] = createBytePipe();
+    const a = new LinkMux(t1, {
+      role: 'initiator',
+      streamWindow: 100,
+      maxLinkUnacked: 200,
+    });
+    const out = await a.openStream(new Uint8Array([1]));
+    await out.write(new Uint8Array(100).fill(1));
+    t2.send(
+      encodeFrame({
+        streamId: out.id,
+        op: FrameOp.WINDOW,
+        payload: encodeWindowPayload(40),
+      })
+    );
+    await out.write(new Uint8Array(40).fill(2));
+    let extraResolved = false;
+    const extra = out.write(new Uint8Array([3])).then(() => {
+      extraResolved = true;
+    });
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(extraResolved).toBe(false);
+    t2.send(
+      encodeFrame({
+        streamId: out.id,
+        op: FrameOp.WINDOW,
+        payload: encodeWindowPayload(200),
+      })
+    );
+    const info = await a.closed;
+    expect(info.reason.toLowerCase()).toContain('window');
+    await expect(extra).rejects.toBeInstanceOf(Error);
+  });
+
+  it('releases remaining outstanding on RST so later streams can send', async () => {
+    const [t1, t2] = createBytePipe();
+    const initiator = new LinkMux(t1, {
+      role: 'initiator',
+      streamWindow: 10,
+      maxLinkUnacked: 30,
+    });
+    const acceptor = new LinkMux(t2, {
+      role: 'acceptor',
+      streamWindow: 10,
+      maxLinkUnacked: 30,
+    });
+    const remote: LinkStream[] = [];
+    acceptor.onStream((stream) => remote.push(stream));
+    for (let i = 0; i < 3; i++) {
+      const out = await initiator.openStream(new Uint8Array([i]));
+      await out.write(new Uint8Array(10).fill(i));
+      const incoming = remote[i];
+      expect(incoming).toBeDefined();
+      incoming?.reset('stop');
+      expect((await out.closed).reason).toBe('rst');
+    }
+    const extra = await initiator.openStream(new Uint8Array([9]));
+    await extra.write(new Uint8Array(10).fill(9));
+    extra.end();
+    initiator.close();
+  });
+
+  it('releases remaining outstanding on local RST', async () => {
+    const [t1, t2] = createBytePipe();
+    const initiator = new LinkMux(t1, {
+      role: 'initiator',
+      streamWindow: 10,
+      maxLinkUnacked: 10,
+    });
+    new LinkMux(t2, { role: 'acceptor', streamWindow: 10, maxLinkUnacked: 10 });
+    const out = await initiator.openStream(new Uint8Array([1]));
+    await out.write(new Uint8Array(10).fill(1));
+    out.reset('local');
+    expect((await out.closed).reason).toBe('rst');
+    const extra = await initiator.openStream(new Uint8Array([2]));
+    await extra.write(new Uint8Array(10).fill(2));
+    extra.end();
+    initiator.close();
+  });
+
+  it('ignores a late WINDOW after RST instead of double-counting credit', async () => {
+    const [t1, t2] = createBytePipe();
+    const a = new LinkMux(t1, {
+      role: 'initiator',
+      streamWindow: 100,
+      maxLinkUnacked: 200,
+    });
+    const b = new LinkMux(t2, {
+      role: 'acceptor',
+      streamWindow: 100,
+      maxLinkUnacked: 200,
+    });
+    const remote: LinkStream[] = [];
+    b.onStream((stream) => remote.push(stream));
+    const first = await a.openStream(new Uint8Array([1]));
+    await first.write(new Uint8Array(100).fill(1));
+    const second = await a.openStream(new Uint8Array([2]));
+    await second.write(new Uint8Array(100).fill(2));
+    remote[0]?.reset('gone');
+    expect((await first.closed).reason).toBe('rst');
+    t2.send(
+      encodeFrame({
+        streamId: first.id,
+        op: FrameOp.WINDOW,
+        payload: encodeWindowPayload(100),
+      })
+    );
+    const third = await a.openStream(new Uint8Array([3]));
+    await third.write(new Uint8Array(100).fill(3));
+    const fourth = await a.openStream(new Uint8Array([4]));
+    const extra = fourth.write(new Uint8Array([4]));
+    const info = await a.closed;
+    expect(info.reason).toContain('unacked');
+    await expect(extra).rejects.toBeInstanceOf(Error);
+    b.close();
+  });
+
+  it('rejects remote OPEN with the local role parity instead of overwriting the id', async () => {
+    const [t1, t2] = createBytePipe();
+    const mux = new LinkMux(t1, { role: 'initiator' });
+    t2.send(encodeFrame({ streamId: 1, op: FrameOp.OPEN, payload: new Uint8Array([7]) }));
+    const info = await mux.closed;
+    expect(info.reason.toLowerCase()).toMatch(/parity|open/);
+    await expect(mux.openStream(new Uint8Array([1]))).rejects.toBeInstanceOf(Error);
+  });
+
+  it('rejects remote OPEN that is not strictly increasing', async () => {
+    const [t1, t2] = createBytePipe();
+    const mux = new LinkMux(t1, { role: 'initiator' });
+    const incoming: LinkStream[] = [];
+    mux.onStream((stream) => incoming.push(stream));
+    t2.send(encodeFrame({ streamId: 4, op: FrameOp.OPEN, payload: new Uint8Array([1]) }));
+    t2.send(encodeFrame({ streamId: 2, op: FrameOp.OPEN, payload: new Uint8Array([2]) }));
+    const info = await mux.closed;
+    expect(info.reason.toLowerCase()).toMatch(/increas|open/);
+    expect(incoming).toHaveLength(1);
+    expect(incoming[0]?.id).toBe(4);
   });
 });

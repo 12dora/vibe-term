@@ -1,23 +1,38 @@
 import { LinkMux, type LinkMuxOptions } from './mux';
-import type { ByteTransport, LinkCloseInfo, LinkCtl, LinkSession, LinkStream } from './types';
+import {
+  type ByteTransport,
+  type LinkCloseInfo,
+  type LinkCtl,
+  LinkError,
+  type LinkSession,
+  type LinkStream,
+} from './types';
 
 /**
- * Minimal WebSocket surface used by WebSocketLink.
- * Browser/Bun `WebSocket` matches this. Gateway wraps Bun `ServerWebSocket` as:
- * `{ send(bytes); close(); onmessage; onclose }` without this package importing Bun types.
+ * Adapter for wrapping a Bun `ServerWebSocket` outside this package.
+ * `send` matches Bun: `>0` accepted, `-1` queued with backpressure, `0` discarded.
  */
-export interface WebSocketLike {
-  send(data: Uint8Array): number | undefined;
+export interface ServerSocketAdapter {
+  send(bytes: Uint8Array): number;
   close(code?: number, reason?: string): void;
-  binaryType?: string;
-  readyState?: number;
-  onopen?: ((ev?: unknown) => void) | null;
-  onmessage?: ((ev: { data: unknown }) => void) | null;
-  onclose?: ((ev?: { code?: number; reason?: string }) => void) | null;
-  addEventListener?: (type: string, listener: (ev: unknown) => void) => void;
+  onMessage(cb: (bytes: Uint8Array) => void): void;
+  onClose(cb: (reason?: string) => void): void;
+  onDrain(cb: () => void): void;
 }
 
+export type WebSocketTransportInput = WebSocket | ServerSocketAdapter;
+
 const WS_OPEN = 1;
+const CLIENT_HIGH_WATER = 4 * 1024 * 1024;
+const CLIENT_LOW_WATER = 1 * 1024 * 1024;
+const CLIENT_POLL_MS = 16;
+
+function isServerSocketAdapter(value: WebSocketTransportInput): value is ServerSocketAdapter {
+  return (
+    typeof (value as ServerSocketAdapter).onDrain === 'function' &&
+    typeof (value as ServerSocketAdapter).onMessage === 'function'
+  );
+}
 
 function toUint8Array(data: unknown): Uint8Array | null {
   if (data instanceof Uint8Array) return data;
@@ -28,80 +43,145 @@ function toUint8Array(data: unknown): Uint8Array | null {
   return null;
 }
 
-export function websocketTransport(ws: WebSocketLike): ByteTransport {
-  if (ws.binaryType !== undefined) {
-    ws.binaryType = 'arraybuffer';
-  }
+type QueueItem = {
+  bytes: Uint8Array;
+  resolve: () => void;
+  reject: (err: Error) => void;
+};
 
+type QueuedTransportHooks = {
+  kind: 'client' | 'server';
+  send: (bytes: Uint8Array) => number | undefined;
+  bufferedAmount?: () => number;
+  onDrain?: (cb: () => void) => void;
+  close: (code?: number, reason?: string) => void;
+  onMessage: (cb: (bytes: Uint8Array) => void) => void;
+  onClose: (cb: (reason?: string) => void) => void;
+  isOpen: () => boolean;
+  onOpen?: (cb: () => void) => void;
+};
+
+function createQueuedTransport(hooks: QueuedTransportHooks): ByteTransport {
+  const queue: QueueItem[] = [];
   const dataCbs: Array<(bytes: Uint8Array) => void> = [];
   const closeCbs: Array<(reason?: string) => void> = [];
-  const pending: Uint8Array[] = [];
-  let opened = ws.readyState === undefined || ws.readyState === WS_OPEN;
-  let closed = ws.readyState === 2 || ws.readyState === 3;
+  let pumping = false;
+  let paused = false;
+  let closed = false;
+  let pollTimer: ReturnType<typeof setTimeout> | null = null;
+  let opened = hooks.isOpen();
 
-  const flushPending = () => {
-    if (!opened || closed) return;
-    for (const chunk of pending) {
-      ws.send(chunk);
-    }
-    pending.length = 0;
+  const rejectQueue = (err: Error) => {
+    for (const item of queue) item.reject(err);
+    queue.length = 0;
   };
 
-  const handleMessage = (data: unknown) => {
-    const bytes = toUint8Array(data);
-    if (!bytes) return;
-    for (const cb of dataCbs) cb(bytes);
-  };
-
-  const handleClose = (reason?: string) => {
+  const finishClose = (reason: string) => {
     if (closed) return;
     closed = true;
-    pending.length = 0;
-    for (const cb of closeCbs) cb(reason);
+    paused = false;
+    if (pollTimer !== null) {
+      clearTimeout(pollTimer);
+      pollTimer = null;
+    }
+    rejectQueue(new LinkError('closed', reason));
+    for (const cb of closeCbs) {
+      try {
+        cb(reason);
+      } catch {
+        // listener errors must not break the transport
+      }
+    }
   };
 
-  if (typeof ws.addEventListener === 'function') {
-    ws.addEventListener('open', () => {
-      opened = true;
-      flushPending();
-    });
-    ws.addEventListener('message', (ev) => {
-      handleMessage((ev as { data?: unknown }).data);
-    });
-    ws.addEventListener('close', (ev) => {
-      const closeEv = ev as { reason?: string };
-      handleClose(closeEv.reason || 'ws-closed');
-    });
-  } else {
-    const prevOpen = ws.onopen;
-    const prevMessage = ws.onmessage;
-    const prevClose = ws.onclose;
-    ws.onopen = (ev) => {
-      opened = true;
-      flushPending();
-      prevOpen?.(ev);
-    };
-    ws.onmessage = (ev) => {
-      prevMessage?.(ev);
-      handleMessage(ev.data);
-    };
-    ws.onclose = (ev) => {
-      prevClose?.(ev);
-      handleClose(ev?.reason || 'ws-closed');
-    };
-  }
+  const fail = (reason: string) => {
+    if (closed) return;
+    finishClose(reason);
+    try {
+      hooks.close(1000, reason);
+    } catch {
+      // already closed
+    }
+  };
+
+  const scheduleClientPoll = () => {
+    if (pollTimer !== null || closed) return;
+    pollTimer = setTimeout(() => {
+      pollTimer = null;
+      if (closed) return;
+      const buffered = hooks.bufferedAmount?.() ?? 0;
+      if (buffered < CLIENT_LOW_WATER) {
+        paused = false;
+        void pump();
+      } else {
+        scheduleClientPoll();
+      }
+    }, CLIENT_POLL_MS);
+  };
+
+  const pump = () => {
+    if (pumping || closed) return;
+    pumping = true;
+    try {
+      while (queue.length > 0 && !closed && opened && !paused) {
+        const item = queue[0];
+        if (!item) break;
+        let result: number | undefined;
+        try {
+          result = hooks.send(item.bytes);
+        } catch (err) {
+          queue.shift();
+          const message = err instanceof Error ? err.message : 'ws send failed';
+          item.reject(err instanceof Error ? err : new LinkError('closed', message));
+          fail(message);
+          return;
+        }
+        if (hooks.kind === 'server') {
+          if (result === 0) {
+            queue.shift();
+            item.reject(new LinkError('closed', 'websocket send discarded'));
+            fail('websocket send discarded');
+            return;
+          }
+          if (result === -1) {
+            paused = true;
+          }
+        } else if ((hooks.bufferedAmount?.() ?? 0) > CLIENT_HIGH_WATER) {
+          paused = true;
+          scheduleClientPoll();
+        }
+        queue.shift();
+        item.resolve();
+      }
+    } finally {
+      pumping = false;
+    }
+  };
+
+  hooks.onMessage((bytes) => {
+    if (closed) return;
+    for (const cb of dataCbs) cb(bytes);
+  });
+  hooks.onClose((reason) => {
+    finishClose(reason ?? 'ws-closed');
+  });
+  hooks.onDrain?.(() => {
+    if (closed) return;
+    paused = false;
+    pump();
+  });
+  hooks.onOpen?.(() => {
+    opened = true;
+    pump();
+  });
 
   return {
-    send(bytes: Uint8Array): void | Promise<void> {
-      if (closed) return;
-      if (!opened) {
-        pending.push(bytes.slice());
-        return;
-      }
-      const result = ws.send(bytes);
-      if (typeof result === 'number' && result === 0) {
-        return;
-      }
+    send(bytes: Uint8Array): Promise<void> {
+      if (closed) return Promise.reject(new LinkError('closed', 'websocket is closed'));
+      return new Promise<void>((resolve, reject) => {
+        queue.push({ bytes: bytes.slice(), resolve, reject });
+        pump();
+      });
     },
     onData(cb) {
       dataCbs.push(cb);
@@ -110,20 +190,61 @@ export function websocketTransport(ws: WebSocketLike): ByteTransport {
       closeCbs.push(cb);
     },
     close(reason?: string) {
-      if (closed) return;
-      closed = true;
-      pending.length = 0;
-      try {
-        ws.close(1000, reason);
-      } catch {
-        try {
-          ws.close();
-        } catch {
-          // already closed
-        }
-      }
+      fail(reason ?? 'closed');
     },
   };
+}
+
+/** Standard DOM/Bun client `WebSocket` (`send(): void`, event listeners). */
+export function createClientWebSocketTransport(ws: WebSocket): ByteTransport {
+  if (ws.binaryType !== undefined) {
+    ws.binaryType = 'arraybuffer';
+  }
+  return createQueuedTransport({
+    kind: 'client',
+    send: (bytes) => {
+      ws.send(bytes);
+      return undefined;
+    },
+    bufferedAmount: () => ws.bufferedAmount,
+    close: (code, reason) => {
+      ws.close(code, reason);
+    },
+    onMessage: (cb) => {
+      ws.addEventListener('message', (ev) => {
+        const bytes = toUint8Array((ev as MessageEvent).data);
+        if (bytes) cb(bytes);
+      });
+    },
+    onClose: (cb) => {
+      ws.addEventListener('close', (ev) => {
+        cb((ev as CloseEvent).reason || 'ws-closed');
+      });
+    },
+    isOpen: () => ws.readyState === WS_OPEN,
+    onOpen: (cb) => {
+      if (ws.readyState === WS_OPEN) return;
+      ws.addEventListener('open', () => cb());
+    },
+  });
+}
+
+export function createServerSocketTransport(adapter: ServerSocketAdapter): ByteTransport {
+  return createQueuedTransport({
+    kind: 'server',
+    send: (bytes) => adapter.send(bytes),
+    close: (code, reason) => adapter.close(code, reason),
+    onMessage: (cb) => adapter.onMessage(cb),
+    onClose: (cb) => adapter.onClose(cb),
+    onDrain: (cb) => adapter.onDrain(cb),
+    isOpen: () => true,
+  });
+}
+
+export function websocketTransport(socket: WebSocketTransportInput): ByteTransport {
+  return isServerSocketAdapter(socket)
+    ? createServerSocketTransport(socket)
+    : createClientWebSocketTransport(socket);
 }
 
 export type WebSocketLinkOptions = {
@@ -133,11 +254,15 @@ export type WebSocketLinkOptions = {
   maxLinkUnacked?: number;
 };
 
+/**
+ * LinkSession over a client `WebSocket` or a `ServerSocketAdapter`
+ * wrapping a Bun `ServerWebSocket`.
+ */
 export class WebSocketLink implements LinkSession {
   private readonly mux: LinkMux;
 
-  constructor(ws: WebSocketLike, opts: WebSocketLinkOptions) {
-    this.mux = new LinkMux(websocketTransport(ws), opts);
+  constructor(socket: WebSocketTransportInput, opts: WebSocketLinkOptions) {
+    this.mux = new LinkMux(websocketTransport(socket), opts);
   }
 
   get ctl(): LinkCtl {

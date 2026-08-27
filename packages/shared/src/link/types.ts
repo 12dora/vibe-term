@@ -55,7 +55,8 @@ export interface LinkStream {
   readonly readable: ReadableStream<StreamChunk>;
   /** Resolves once the bytes are accepted into the send window. Rejects on RST / link close. */
   write(bytes: Uint8Array, opts?: WriteOptions): Promise<void>;
-  end(): void;
+  /** Half-close our send direction after previously queued writes. New writes reject immediately. */
+  end(): Promise<void>;
   reset(reason?: string): void;
   readonly closed: Promise<StreamCloseInfo>;
   /** Fired once on peer RST or link close (not on a clean bilateral END). */

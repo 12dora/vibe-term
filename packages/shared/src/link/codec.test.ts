@@ -110,4 +110,53 @@ describe('link codec', () => {
     });
     expect(peekFrameHeader(encoded.slice(0, 9))).toBeNull();
   });
+
+  it('reassembles a 1 MiB frame delivered as 1-byte chunks in well under a second', () => {
+    const payload = new Uint8Array(MAX_FRAME_PAYLOAD).fill(7);
+    const encoded = encodeFrame({ streamId: 1, op: FrameOp.DATA, payload });
+    const decoder = new FrameDecoder();
+    const start = performance.now();
+    let frames: ReturnType<FrameDecoder['push']> = [];
+    for (let i = 0; i < encoded.byteLength; i++) {
+      const emitted = decoder.push(encoded.subarray(i, i + 1));
+      if (emitted.length > 0) frames = emitted;
+    }
+    const elapsed = performance.now() - start;
+    expect(frames).toHaveLength(1);
+    expect(frames[0]?.payload.byteLength).toBe(MAX_FRAME_PAYLOAD);
+    expect(frames[0]?.payload[0]).toBe(7);
+    expect(frames[0]?.payload[MAX_FRAME_PAYLOAD - 1]).toBe(7);
+    expect(elapsed).toBeLessThan(1000);
+  });
+
+  it('emits three complete frames and retains a half frame from coalesced input', () => {
+    const a = encodeFrame({ streamId: 1, op: FrameOp.DATA, payload: new Uint8Array([1]) });
+    const b = encodeFrame({ streamId: 2, op: FrameOp.END });
+    const c = encodeFrame({ streamId: 3, op: FrameOp.RST, payload: new TextEncoder().encode('x') });
+    const d = encodeFrame({
+      streamId: 4,
+      op: FrameOp.DATA,
+      payload: new Uint8Array([9, 8, 7, 6, 5, 4]),
+    });
+    const half = Math.floor(d.byteLength / 2);
+    const joined = new Uint8Array(a.byteLength + b.byteLength + c.byteLength + half);
+    let offset = 0;
+    for (const part of [a, b, c]) {
+      joined.set(part, offset);
+      offset += part.byteLength;
+    }
+    joined.set(d.subarray(0, half), offset);
+
+    const decoder = new FrameDecoder();
+    const first = decoder.push(joined);
+    expect(first.map((frame) => frame.op)).toEqual([FrameOp.DATA, FrameOp.END, FrameOp.RST]);
+    expect(first.map((frame) => frame.streamId)).toEqual([1, 2, 3]);
+    expect(decoder.pending).toBe(half);
+
+    const rest = decoder.push(d.subarray(half));
+    expect(rest).toHaveLength(1);
+    expect(rest[0]?.streamId).toBe(4);
+    expect(rest[0]?.payload).toEqual(new Uint8Array([9, 8, 7, 6, 5, 4]));
+    expect(decoder.pending).toBe(0);
+  });
 });

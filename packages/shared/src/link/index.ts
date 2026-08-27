@@ -14,7 +14,10 @@ export { createBytePipe, createInMemoryLinkPair } from './in-memory-link';
 export {
   WebSocketLink,
   websocketTransport,
-  type WebSocketLike,
+  createClientWebSocketTransport,
+  createServerSocketTransport,
+  type ServerSocketAdapter,
+  type WebSocketTransportInput,
   type WebSocketLinkOptions,
 } from './websocket-link';
 export {

@@ -115,9 +115,14 @@ export type FrameDecoderOptions = {
 /**
  * Incremental frame decoder. Transports may split or coalesce arbitrarily;
  * push() returns every complete frame and retains a remainder.
+ *
+ * Chunks are kept in a list with a read cursor. Bytes are concatenated only
+ * when a complete frame is available (or sliced from a single chunk).
  */
 export class FrameDecoder {
-  private buffer = new Uint8Array(0);
+  private readonly chunks: Uint8Array[] = [];
+  private cursor = 0;
+  private buffered = 0;
   private readonly maxPayload: number;
 
   constructor(opts?: FrameDecoderOptions) {
@@ -126,42 +131,91 @@ export class FrameDecoder {
 
   push(chunk: Uint8Array): Frame[] {
     if (chunk.byteLength === 0) return [];
-    if (this.buffer.byteLength === 0) {
-      this.buffer = chunk.slice();
-    } else {
-      const next = new Uint8Array(this.buffer.byteLength + chunk.byteLength);
-      next.set(this.buffer);
-      next.set(chunk, this.buffer.byteLength);
-      this.buffer = next;
-    }
+    this.chunks.push(chunk);
+    this.buffered += chunk.byteLength;
 
     const frames: Frame[] = [];
-    let offset = 0;
-    while (this.buffer.byteLength - offset >= FRAME_HEADER_SIZE) {
-      const length = readU32LE(this.buffer, offset + 6);
+    while (this.buffered >= FRAME_HEADER_SIZE) {
+      const length = this.peekU32(6);
       if (length > this.maxPayload) {
         throw new LinkError('oversize', `frame payload ${length} exceeds ${this.maxPayload}`);
       }
       const total = FRAME_HEADER_SIZE + length;
-      if (this.buffer.byteLength - offset < total) break;
-      const op = u8(this.buffer, offset + 4);
+      if (this.buffered < total) break;
+      const op = this.peekU8(4);
       if (!isFrameOp(op)) {
         throw new LinkError('protocol', `invalid frame op ${op}`);
       }
+      const raw = this.take(total);
       frames.push({
-        streamId: readU32LE(this.buffer, offset),
+        streamId: readU32LE(raw, 0),
         op,
-        flags: u8(this.buffer, offset + 5),
-        payload: this.buffer.slice(offset + FRAME_HEADER_SIZE, offset + total),
+        flags: u8(raw, 5),
+        payload: raw.slice(FRAME_HEADER_SIZE),
       });
-      offset += total;
     }
-
-    this.buffer = offset === 0 ? this.buffer : this.buffer.slice(offset);
     return frames;
   }
 
   get pending(): number {
-    return this.buffer.byteLength;
+    return this.buffered;
+  }
+
+  private peekU8(at: number): number {
+    let skip = this.cursor;
+    let need = at;
+    for (const chunk of this.chunks) {
+      const available = chunk.byteLength - skip;
+      if (need < available) {
+        return u8(chunk, skip + need);
+      }
+      need -= available;
+      skip = 0;
+    }
+    throw new LinkError('protocol', `buffer offset ${at} out of range`);
+  }
+
+  private peekU32(at: number): number {
+    return (
+      (this.peekU8(at) |
+        (this.peekU8(at + 1) << 8) |
+        (this.peekU8(at + 2) << 16) |
+        (this.peekU8(at + 3) << 24)) >>>
+      0
+    );
+  }
+
+  private take(n: number): Uint8Array {
+    const first = this.chunks[0];
+    if (first && first.byteLength - this.cursor >= n) {
+      const out = first.slice(this.cursor, this.cursor + n);
+      this.cursor += n;
+      this.buffered -= n;
+      if (this.cursor >= first.byteLength) {
+        this.chunks.shift();
+        this.cursor = 0;
+      }
+      return out;
+    }
+
+    const out = new Uint8Array(n);
+    let copied = 0;
+    while (copied < n) {
+      const chunk = this.chunks[0];
+      if (!chunk) {
+        throw new LinkError('protocol', 'decoder underrun');
+      }
+      const available = chunk.byteLength - this.cursor;
+      const want = Math.min(available, n - copied);
+      out.set(chunk.subarray(this.cursor, this.cursor + want), copied);
+      copied += want;
+      this.cursor += want;
+      this.buffered -= want;
+      if (this.cursor >= chunk.byteLength) {
+        this.chunks.shift();
+        this.cursor = 0;
+      }
+    }
+    return out;
   }
 }

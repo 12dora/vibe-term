@@ -183,8 +183,19 @@ export function byteTransportFromStream(stream: LinkStream): ByteTransport {
 /**
  * Encrypts/decrypts mux frames over an inner byte transport (typically a hub relay stream).
  *
- * Wire frame: plaintext 10-byte header with `len = ciphertext‖tag` ‖ ciphertext ‖ tag.
- * AAD is the 10-byte **plaintext** header (`len` = original payload length).
+ * Interop / wire format (per encrypted mux frame):
+ *   `[streamId u32 LE][op u8][flags u8][len u32 LE][ciphertext][tag 16]`
+ *   `len` = ciphertext length + tag (16) = plaintext payload length + 16
+ *   AAD = the 10-byte **wire** header actually sent (with that `len`)
+ *   nonce = u32 direction LE ‖ u64 counter LE
+ *   ciphertext‖tag is WebCrypto AES-256-GCM output (`tagLength: 128`)
+ *
+ * Decrypt uses the received wire header as AAD, then rebuilds a plaintext
+ * mux header with `len = plaintext.length` before handing bytes to LinkMux.
+ *
+ * Send path is a link-level queue: assign counter → encrypt → inner.send
+ * run serially so wire order equals counter order. Any encrypt/send failure
+ * closes the channel and rejects the rest of the queue.
  */
 export class SecureChannelLink implements ByteTransport {
   private readonly inner: ByteTransport;
@@ -206,6 +217,7 @@ export class SecureChannelLink implements ByteTransport {
   private rekeyFired = false;
   private decrypting = false;
   private readonly pendingIncoming: Uint8Array[] = [];
+  private sendChain: Promise<void> = Promise.resolve();
 
   constructor(inner: ByteTransport, opts: SecureChannelOptions) {
     this.inner = inner;
@@ -234,48 +246,13 @@ export class SecureChannelLink implements ByteTransport {
     this.rekeyCbs.push(cb);
   }
 
-  async send(bytes: Uint8Array): Promise<void> {
-    await this.ready;
-    if (this.closed) {
-      throw new LinkError('closed', 'secure channel is closed');
-    }
-    const frames = this.outbound.push(bytes);
-    for (const frame of frames) {
-      if (this.sendCounter >= SC_REKEY_COUNTER) {
-        this.fireRekey();
-        throw new LinkError('rekey', 'secure channel rekey required');
-      }
-      const ptHeader = encodeFrameHeader(
-        frame.streamId,
-        frame.op,
-        frame.flags,
-        frame.payload.byteLength
-      );
-      const nonce = buildAesGcmNonce(this.sendDirection, this.sendCounter);
-      this.sendCounter += 1n;
-      const ciphertext = new Uint8Array(
-        await crypto.subtle.encrypt(
-          {
-            name: 'AES-GCM',
-            iv: asBufferSource(nonce),
-            additionalData: asBufferSource(ptHeader),
-            tagLength: 128,
-          },
-          this.sendKey,
-          asBufferSource(frame.payload)
-        )
-      );
-      const wireHeader = encodeFrameHeader(
-        frame.streamId,
-        frame.op,
-        frame.flags,
-        ciphertext.byteLength
-      );
-      const wire = new Uint8Array(FRAME_HEADER_SIZE + ciphertext.byteLength);
-      wire.set(wireHeader, 0);
-      wire.set(ciphertext, FRAME_HEADER_SIZE);
-      await this.inner.send(wire);
-    }
+  send(bytes: Uint8Array): Promise<void> {
+    const run = this.sendChain.then(() => this.sendSerialized(bytes));
+    this.sendChain = run.then(
+      () => undefined,
+      () => undefined
+    );
+    return run;
   }
 
   onData(cb: (bytes: Uint8Array) => void): void {
@@ -288,6 +265,47 @@ export class SecureChannelLink implements ByteTransport {
 
   close(reason?: string): void {
     this.finishClose(reason);
+  }
+
+  private async sendSerialized(bytes: Uint8Array): Promise<void> {
+    await this.ready;
+    if (this.closed) {
+      throw new LinkError('closed', 'secure channel is closed');
+    }
+    const frames = this.outbound.push(bytes);
+    try {
+      for (const frame of frames) {
+        if (this.sendCounter >= SC_REKEY_COUNTER) {
+          this.fireRekey();
+          throw new LinkError('rekey', 'secure channel rekey required');
+        }
+        const wireLen = frame.payload.byteLength + GCM_TAG_LENGTH;
+        const wireHeader = encodeFrameHeader(frame.streamId, frame.op, frame.flags, wireLen);
+        const nonce = buildAesGcmNonce(this.sendDirection, this.sendCounter);
+        this.sendCounter += 1n;
+        const ciphertext = new Uint8Array(
+          await crypto.subtle.encrypt(
+            {
+              name: 'AES-GCM',
+              iv: asBufferSource(nonce),
+              additionalData: asBufferSource(wireHeader),
+              tagLength: 128,
+            },
+            this.sendKey,
+            asBufferSource(frame.payload)
+          )
+        );
+        const wire = new Uint8Array(FRAME_HEADER_SIZE + ciphertext.byteLength);
+        wire.set(wireHeader, 0);
+        wire.set(ciphertext, FRAME_HEADER_SIZE);
+        await this.inner.send(wire);
+      }
+    } catch (err) {
+      if (err instanceof LinkError && err.code === 'rekey') throw err;
+      const message = err instanceof Error ? err.message : 'secure send failed';
+      this.finishClose(message);
+      throw err instanceof LinkError ? err : new LinkError('closed', message);
+    }
   }
 
   private async importKeys(sendRaw: Uint8Array, recvRaw: Uint8Array): Promise<void> {
@@ -343,15 +361,14 @@ export class SecureChannelLink implements ByteTransport {
     if (ciphertextAndTag.byteLength < GCM_TAG_LENGTH) {
       throw new LinkError('protocol', 'secure frame shorter than GCM tag');
     }
-    const ptLen = ciphertextAndTag.byteLength - GCM_TAG_LENGTH;
-    const ptHeader = encodeFrameHeader(streamId, op, flags, ptLen);
+    const wireHeader = encodeFrameHeader(streamId, op, flags, ciphertextAndTag.byteLength);
     const nonce = buildAesGcmNonce(this.recvDirection, this.recvCounter);
     const plaintext = new Uint8Array(
       await crypto.subtle.decrypt(
         {
           name: 'AES-GCM',
           iv: asBufferSource(nonce),
-          additionalData: asBufferSource(ptHeader),
+          additionalData: asBufferSource(wireHeader),
           tagLength: 128,
         },
         this.recvKey,
@@ -359,6 +376,7 @@ export class SecureChannelLink implements ByteTransport {
       )
     );
     this.recvCounter += 1n;
+    const ptHeader = encodeFrameHeader(streamId, op, flags, plaintext.byteLength);
     const out = new Uint8Array(FRAME_HEADER_SIZE + plaintext.byteLength);
     out.set(ptHeader, 0);
     out.set(plaintext, FRAME_HEADER_SIZE);

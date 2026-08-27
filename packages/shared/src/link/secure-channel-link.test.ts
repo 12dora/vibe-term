@@ -139,12 +139,8 @@ describe('SecureChannelLink', () => {
     expect(header).toBeDefined();
     if (!header) throw new Error('expected wire header');
     const ct = wire2.slice(FRAME_HEADER_SIZE);
-    const ptHeader = encodeFrameHeader(
-      header.streamId,
-      header.op,
-      header.flags,
-      ct.byteLength - GCM_TAG_LENGTH
-    );
+    expect(header.length).toBe(ct.byteLength);
+    const wireHeader = wire2.slice(0, FRAME_HEADER_SIZE);
     const recvKey = await crypto.subtle.importKey(
       'raw',
       keys.sendKey as unknown as BufferSource,
@@ -156,13 +152,66 @@ describe('SecureChannelLink', () => {
       {
         name: 'AES-GCM',
         iv: buildAesGcmNonce(SC_DIRECTION_INITIATOR, 1n) as unknown as BufferSource,
-        additionalData: ptHeader as unknown as BufferSource,
+        additionalData: wireHeader as unknown as BufferSource,
         tagLength: 128,
       },
       recvKey,
       ct as unknown as BufferSource
     );
     expect(new Uint8Array(good)).toEqual(new Uint8Array([4, 5, 6]));
+    await expect(
+      crypto.subtle.decrypt(
+        {
+          name: 'AES-GCM',
+          iv: buildAesGcmNonce(SC_DIRECTION_INITIATOR, 0n) as unknown as BufferSource,
+          additionalData: wireHeader as unknown as BufferSource,
+          tagLength: 128,
+        },
+        recvKey,
+        ct as unknown as BufferSource
+      )
+    ).rejects.toBeDefined();
+  });
+
+  it('uses the sent wire header as GCM AAD (len = ciphertext+tag)', async () => {
+    const keys = deriveSecureChannelKeys(sharedSecret, transcriptHash, nodeA, nodeB);
+    const { inner, sentA } = recordingPipe();
+    const scA = new SecureChannelLink(inner[0], {
+      ...keys,
+      ...secureChannelDirections('initiator'),
+    });
+    await scA.send(
+      encodeFrame({ streamId: 5, op: FrameOp.DATA, payload: new Uint8Array([9, 8, 7]) })
+    );
+    const captured = sentA[0];
+    expect(captured).toBeDefined();
+    if (!captured) throw new Error('expected wire frame');
+    const header = peekFrameHeader(captured);
+    expect(header).toBeDefined();
+    if (!header) throw new Error('expected wire header');
+    const ct = captured.slice(FRAME_HEADER_SIZE);
+    expect(header.length).toBe(ct.byteLength);
+    expect(header.length).toBe(3 + GCM_TAG_LENGTH);
+    const wireHeader = captured.slice(0, FRAME_HEADER_SIZE);
+    const ptHeader = encodeFrameHeader(header.streamId, header.op, header.flags, 3);
+    const recvKey = await crypto.subtle.importKey(
+      'raw',
+      keys.sendKey as unknown as BufferSource,
+      { name: 'AES-GCM' },
+      false,
+      ['decrypt']
+    );
+    const good = await crypto.subtle.decrypt(
+      {
+        name: 'AES-GCM',
+        iv: buildAesGcmNonce(SC_DIRECTION_INITIATOR, 0n) as unknown as BufferSource,
+        additionalData: wireHeader as unknown as BufferSource,
+        tagLength: 128,
+      },
+      recvKey,
+      ct as unknown as BufferSource
+    );
+    expect(new Uint8Array(good)).toEqual(new Uint8Array([9, 8, 7]));
     await expect(
       crypto.subtle.decrypt(
         {
@@ -250,5 +299,107 @@ describe('SecureChannelLink', () => {
     expect(x25519SharedSecret(a.secretKey, b.publicKey)).toEqual(
       x25519SharedSecret(b.secretKey, a.publicKey)
     );
+  });
+
+  it('serializes concurrent sends so wire order matches counter order', async () => {
+    const keys = deriveSecureChannelKeys(sharedSecret, transcriptHash, nodeA, nodeB);
+    const { inner, sentA } = recordingPipe();
+    const scA = new SecureChannelLink(inner[0], {
+      ...keys,
+      ...secureChannelDirections('initiator'),
+    });
+    const received: Uint8Array[] = [];
+    const scB = new SecureChannelLink(inner[1], {
+      sendKey: keys.recvKey,
+      recvKey: keys.sendKey,
+      ...secureChannelDirections('acceptor'),
+    });
+    scB.onData((bytes) => received.push(bytes.slice()));
+    const large = encodeFrame({
+      streamId: 1,
+      op: FrameOp.DATA,
+      payload: new Uint8Array(1024 * 1024).fill(1),
+    });
+    const tiny = encodeFrame({
+      streamId: 1,
+      op: FrameOp.DATA,
+      payload: new Uint8Array([7]),
+    });
+    await Promise.all([scA.send(large), scA.send(tiny)]);
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    expect(sentA).toHaveLength(2);
+    const first = sentA[0];
+    const second = sentA[1];
+    expect(first).toBeDefined();
+    expect(second).toBeDefined();
+    if (!first || !second) throw new Error('expected two wire frames');
+    expect(first.byteLength).toBeGreaterThan(second.byteLength);
+    const recvKey = await crypto.subtle.importKey(
+      'raw',
+      keys.sendKey as unknown as BufferSource,
+      { name: 'AES-GCM' },
+      false,
+      ['decrypt']
+    );
+    const firstHeader = first.slice(0, FRAME_HEADER_SIZE);
+    const secondHeader = second.slice(0, FRAME_HEADER_SIZE);
+    await crypto.subtle.decrypt(
+      {
+        name: 'AES-GCM',
+        iv: buildAesGcmNonce(SC_DIRECTION_INITIATOR, 0n) as unknown as BufferSource,
+        additionalData: firstHeader as unknown as BufferSource,
+        tagLength: 128,
+      },
+      recvKey,
+      first.slice(FRAME_HEADER_SIZE) as unknown as BufferSource
+    );
+    await crypto.subtle.decrypt(
+      {
+        name: 'AES-GCM',
+        iv: buildAesGcmNonce(SC_DIRECTION_INITIATOR, 1n) as unknown as BufferSource,
+        additionalData: secondHeader as unknown as BufferSource,
+        tagLength: 128,
+      },
+      recvKey,
+      second.slice(FRAME_HEADER_SIZE) as unknown as BufferSource
+    );
+    expect(received).toHaveLength(2);
+    expect(received[0]?.byteLength).toBeGreaterThan(received[1]?.byteLength ?? 0);
+  });
+
+  it('closes the channel and rejects the rest of the queue on send failure', async () => {
+    const keys = deriveSecureChannelKeys(sharedSecret, transcriptHash, nodeA, nodeB);
+    const [rawA] = createBytePipe();
+    let sends = 0;
+    const inner: ByteTransport = {
+      send(bytes) {
+        sends += 1;
+        if (sends >= 2) throw new Error('boom');
+        return rawA.send(bytes);
+      },
+      onData(cb) {
+        rawA.onData(cb);
+      },
+      onClose(cb) {
+        rawA.onClose(cb);
+      },
+      close(reason) {
+        rawA.close(reason);
+      },
+    };
+    const sc = new SecureChannelLink(inner, {
+      ...keys,
+      ...secureChannelDirections('initiator'),
+    });
+    const closed = new Promise<string | undefined>((resolve) => sc.onClose(resolve));
+    const frame = encodeFrame({ streamId: 1, op: FrameOp.DATA, payload: new Uint8Array([1]) });
+    const p1 = sc.send(frame);
+    const p2 = sc.send(frame);
+    const p3 = sc.send(frame);
+    await expect(p1).resolves.toBeUndefined();
+    await expect(p2).rejects.toBeDefined();
+    await expect(p3).rejects.toBeDefined();
+    expect(await closed).toBeDefined();
+    await expect(sc.send(frame)).rejects.toMatchObject({ code: 'closed' });
   });
 });

@@ -57,6 +57,7 @@ class MuxStream implements LinkStream {
 
   sendWindow: number;
   recvAdvertised: number;
+  outstanding = 0;
   sendClosed = false;
   recvClosed = false;
   dead = false;
@@ -67,6 +68,7 @@ class MuxStream implements LinkStream {
   private resolveClosed!: (info: StreamCloseInfo) => void;
   private closedSettled = false;
   private writeChain: Promise<void> = Promise.resolve();
+  private endPromise: Promise<void> | null = null;
   private waiters: Waiter[] = [];
   private recvBuf: StreamChunk[] = [];
   private pullWaiter: (() => void) | null = null;
@@ -111,6 +113,10 @@ class MuxStream implements LinkStream {
   }
 
   write(bytes: Uint8Array, opts?: WriteOptions): Promise<void> {
+    if (this.dead) return Promise.reject(this.deadError());
+    if (this.sendClosed) {
+      return Promise.reject(new LinkError('closed', 'stream send direction is closed'));
+    }
     const run = this.writeChain.then(() => this.writeInternal(bytes, opts));
     this.writeChain = run.then(
       () => undefined,
@@ -119,14 +125,22 @@ class MuxStream implements LinkStream {
     return run;
   }
 
-  end(): void {
+  end(): Promise<void> {
     if (this.isCtl) {
       throw new LinkError('protocol', 'ctl stream cannot END');
     }
-    if (this.dead || this.sendClosed) return;
+    if (this.dead) return Promise.resolve();
+    if (this.sendClosed) {
+      return this.endPromise ?? Promise.resolve();
+    }
     this.sendClosed = true;
-    this.mux.sendFrame({ streamId: this.id, op: FrameOp.END });
-    this.maybeFinishEnd();
+    const run = this.writeChain.then(() => this.sendEnd());
+    this.writeChain = run.then(
+      () => undefined,
+      () => undefined
+    );
+    this.endPromise = run;
+    return run;
   }
 
   reset(reason?: string): void {
@@ -237,15 +251,13 @@ class MuxStream implements LinkStream {
 
   private async writeInternal(bytes: Uint8Array, opts?: WriteOptions): Promise<void> {
     if (this.dead) throw this.deadError();
-    if (this.sendClosed) {
-      throw new LinkError('closed', 'stream send direction is closed');
-    }
     if (bytes.byteLength === 0 && !opts?.head) return;
 
     let offset = 0;
     let first = true;
     if (bytes.byteLength === 0 && opts?.head) {
       await this.waitForSendCredit();
+      if (this.dead) throw this.deadError();
       this.takeSendCredit(0);
       await this.mux.sendFrame({
         streamId: this.id,
@@ -258,10 +270,8 @@ class MuxStream implements LinkStream {
 
     while (offset < bytes.byteLength) {
       if (this.dead) throw this.deadError();
-      if (this.sendClosed) {
-        throw new LinkError('closed', 'stream send direction is closed');
-      }
       await this.waitForSendCredit();
+      if (this.dead) throw this.deadError();
       const n = Math.min(bytes.byteLength - offset, this.sendWindow, this.mux.maxFramePayload);
       if (n <= 0) continue;
       const slice = bytes.subarray(offset, offset + n);
@@ -278,8 +288,15 @@ class MuxStream implements LinkStream {
     }
   }
 
+  private async sendEnd(): Promise<void> {
+    if (this.dead) return;
+    await this.mux.sendFrame({ streamId: this.id, op: FrameOp.END });
+    this.maybeFinishEnd();
+  }
+
   private takeSendCredit(n: number): void {
     this.sendWindow -= n;
+    this.outstanding += n;
     this.mux.addUnacked(n);
   }
 
@@ -364,6 +381,7 @@ export class LinkMux implements LinkSession {
   private readonly ctlInbox: Uint8Array[] = [];
   private readonly ctlOutbox: Uint8Array[] = [];
   private nextStreamId: number;
+  private remoteMaxStreamId = 0;
   private unacked = 0;
   private closedFlag = false;
   private resolveClosed!: (info: LinkCloseInfo) => void;
@@ -487,6 +505,7 @@ export class LinkMux implements LinkSession {
   resetStream(stream: MuxStream, reason?: string): void {
     if (stream.dead) return;
     const payload = encodeRstReason(reason);
+    this.releaseOutstanding(stream);
     void this.sendFrame({
       streamId: stream.id,
       op: FrameOp.RST,
@@ -506,7 +525,15 @@ export class LinkMux implements LinkSession {
   }
 
   forgetStream(id: number): void {
+    const stream = this.streams.get(id);
+    if (stream) this.releaseOutstanding(stream);
     this.streams.delete(id);
+  }
+
+  releaseOutstanding(stream: MuxStream): void {
+    if (stream.outstanding <= 0) return;
+    this.unacked = Math.max(0, this.unacked - stream.outstanding);
+    stream.outstanding = 0;
   }
 
   protocolError(message: string): void {
@@ -532,6 +559,10 @@ export class LinkMux implements LinkSession {
     const id = this.nextStreamId;
     if (id === 0 || id > 0xfffffff0) {
       throw new LinkError('protocol', 'stream id exhausted');
+    }
+    if (this.streams.has(id)) {
+      this.protocolError(`local stream id ${id} already exists`);
+      throw new LinkError('protocol', `local stream id ${id} already exists`);
     }
     this.nextStreamId += 2;
     return id;
@@ -607,10 +638,21 @@ export class LinkMux implements LinkSession {
       this.protocolError('OPEN on ctl stream');
       return;
     }
+    const remoteOdd = this.role === 'acceptor';
+    const isOdd = (frame.streamId & 1) === 1;
+    if (isOdd !== remoteOdd) {
+      this.protocolError(`OPEN stream ${frame.streamId} has wrong parity for ${this.role}`);
+      return;
+    }
+    if (frame.streamId <= this.remoteMaxStreamId) {
+      this.protocolError(`OPEN stream ${frame.streamId} is not strictly increasing`);
+      return;
+    }
     if (this.streams.has(frame.streamId)) {
       this.protocolError(`OPEN for existing stream ${frame.streamId}`);
       return;
     }
+    this.remoteMaxStreamId = frame.streamId;
     const stream = new MuxStream(this, frame.streamId, copyBytes(frame.payload));
     this.streams.set(frame.streamId, stream);
     if (this.streamListeners.length === 0) {
@@ -632,6 +674,7 @@ export class LinkMux implements LinkSession {
       return;
     }
     const message = rstReason(payload);
+    this.releaseOutstanding(stream);
     stream.abort({ reason: 'rst', message });
     this.streams.delete(stream.id);
   }
@@ -644,7 +687,18 @@ export class LinkMux implements LinkSession {
       this.protocolError(err instanceof Error ? err.message : 'invalid WINDOW');
       return;
     }
-    this.unacked = Math.max(0, this.unacked - delta);
+    if (delta <= 0 || delta > stream.outstanding) {
+      this.protocolError(
+        `invalid WINDOW delta ${delta} on stream ${stream.id} (outstanding ${stream.outstanding})`
+      );
+      return;
+    }
+    if (stream.sendWindow + delta > this.streamWindow) {
+      this.protocolError(`WINDOW would exceed initial window on stream ${stream.id}`);
+      return;
+    }
+    stream.outstanding -= delta;
+    this.unacked -= delta;
     stream.creditSendWindow(delta);
   }
 
@@ -670,6 +724,7 @@ export class LinkMux implements LinkSession {
     this.closedFlag = true;
     this.closeReason = reason;
     for (const stream of this.streams.values()) {
+      this.releaseOutstanding(stream);
       stream.abort({ reason: 'link-closed', message: reason });
     }
     this.streams.clear();
