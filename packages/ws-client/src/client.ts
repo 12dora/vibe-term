@@ -2,7 +2,12 @@
 // 门面：组合心跳、重连退避与协议分发，对外维持连接状态与订阅接口
 
 import { wsBorsh } from '@tmex/shared';
-import { type ActiveCarrier, CarrierSwitchBarrier, type DirectCarrierLike } from './carrier-switch';
+import {
+  type ActiveCarrier,
+  type AttachDirectOptions,
+  CarrierSwitchBarrier,
+  type DirectCarrierLike,
+} from './carrier-switch';
 import { HeartbeatController } from './heartbeat-controller';
 import { type BorshMessage, type ChunkProgress, ProtocolDispatcher } from './protocol-dispatcher';
 import { ReconnectController } from './reconnect-controller';
@@ -451,9 +456,10 @@ export class BorshWebSocketClient {
   /**
    * 挂上直连载体。此刻仍走 primary：要等服务端在 primary 上发来
    * `CARRIER_SWITCH{to:'direct'}`，屏障排空缓冲并回 ACK 之后才真正切换。
+   * `options.rtcSession` 把切换绑定到本次 attempt（见 `CarrierSwitchBarrier`）。
    */
-  attachDirectCarrier(carrier: DirectCarrierLike): void {
-    this.ensureBarrier().attachDirect(carrier);
+  attachDirectCarrier(carrier: DirectCarrierLike, options?: AttachDirectOptions): void {
+    this.ensureBarrier().attachDirect(carrier, options);
   }
 
   /** 主动摘掉直连（控制器放弃/停止时调用），回落 primary。 */

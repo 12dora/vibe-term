@@ -1,8 +1,14 @@
 import { wsBorsh } from '@tmex/shared';
-import type { Carrier } from '../../ws/carrier';
+import type { Carrier, CarrierSendResult } from '../../ws/carrier';
 import type { GatewaySession } from '../../ws/gateway-session';
 
-export type SendControl = (session: GatewaySession, kind: number, payload: Uint8Array) => void;
+export type ControlSendStatus = CarrierSendResult;
+
+export type SendControl = (
+  session: GatewaySession,
+  kind: number,
+  payload: Uint8Array
+) => ControlSendStatus | Promise<ControlSendStatus> | void;
 
 export type DeliverInbound = (session: GatewaySession, bytes: Uint8Array) => void;
 
@@ -23,6 +29,8 @@ type SwitchState = {
   buffer: Uint8Array[];
   direct: DirectCarrier | null;
   unsubClose: (() => void) | null;
+  switchGeneration: number;
+  unsubDrain: (() => void) | null;
 };
 
 export class CarrierSwitchController {
@@ -41,6 +49,10 @@ export class CarrierSwitchController {
     state.buffer.length = 0;
     state.flushing = false;
     state.unsubClose?.();
+    state.unsubDrain?.();
+    state.unsubDrain = null;
+    state.switchGeneration += 1;
+    const generation = state.switchGeneration;
     session.attachCarrier(carrier, 'direct');
     if (carrier.onMessage) {
       carrier.onMessage((bytes) => this.handleDirectInbound(session, bytes));
@@ -49,8 +61,24 @@ export class CarrierSwitchController {
       carrier.onClose(() => this.handleDirectClose(session, carrier));
       state.unsubClose = () => {};
     }
-    this.sendSwitch(session, state, 'direct');
-    session.switchActiveCarrier(carrier);
+    const payload = this.beginSwitch(state, 'direct');
+    const status = this.sendControl(session, wsBorsh.KIND_CARRIER_SWITCH, payload);
+    if (this.isThenable(status)) {
+      void this.finishOutboundSwitch(session, state, carrier, generation, status);
+      return;
+    }
+    const normalized = normalizeControlStatus(status);
+    if (normalized === 'sent') {
+      if (state.switchGeneration === generation && !session.closed) {
+        session.switchActiveCarrier(carrier);
+      }
+      return;
+    }
+    if (normalized === 'backpressure') {
+      void this.retryOutboundSwitch(session, state, carrier, generation, payload);
+      return;
+    }
+    this.cancelPendingSwitch(session, state, carrier, generation);
   }
 
   handleAck(session: GatewaySession, epoch: number): void {
@@ -91,18 +119,125 @@ export class CarrierSwitchController {
       state.buffer.length = 0;
       state.flushing = false;
       state.pendingTo = null;
-      this.sendSwitch(session, state, 'primary');
+      state.switchGeneration += 1;
+      state.unsubDrain?.();
+      state.unsubDrain = null;
+      const payload = this.beginSwitch(state, 'primary');
+      void this.sendControl(session, wsBorsh.KIND_CARRIER_SWITCH, payload);
     }
   }
 
-  private sendSwitch(session: GatewaySession, state: SwitchState, to: 'direct' | 'primary'): void {
+  private beginSwitch(state: SwitchState, to: 'direct' | 'primary'): Uint8Array {
     state.epoch = (state.epoch + 1) >>> 0;
     state.pendingTo = to === 'direct' ? 'direct' : null;
-    const payload = wsBorsh.encodePayload(wsBorsh.schema.CarrierSwitchSchema, {
+    return wsBorsh.encodePayload(wsBorsh.schema.CarrierSwitchSchema, {
       epoch: state.epoch,
       to: to === 'direct' ? wsBorsh.CARRIER_SWITCH_TO_DIRECT : wsBorsh.CARRIER_SWITCH_TO_PRIMARY,
+      rtcSession: '',
     });
-    this.sendControl(session, wsBorsh.KIND_CARRIER_SWITCH, payload);
+  }
+
+  private async finishOutboundSwitch(
+    session: GatewaySession,
+    state: SwitchState,
+    carrier: DirectCarrier,
+    generation: number,
+    pending: Promise<ControlSendStatus>
+  ): Promise<void> {
+    let status: ControlSendStatus;
+    try {
+      status = normalizeControlStatus(await pending);
+    } catch {
+      this.cancelPendingSwitch(session, state, carrier, generation);
+      return;
+    }
+    if (status === 'sent') {
+      if (state.switchGeneration === generation && !session.closed) {
+        session.switchActiveCarrier(carrier);
+      }
+      return;
+    }
+    if (status === 'backpressure') {
+      await this.retryOutboundSwitch(session, state, carrier, generation, null);
+      return;
+    }
+    this.cancelPendingSwitch(session, state, carrier, generation);
+  }
+
+  private async retryOutboundSwitch(
+    session: GatewaySession,
+    state: SwitchState,
+    carrier: DirectCarrier,
+    generation: number,
+    payload: Uint8Array | null
+  ): Promise<void> {
+    const frame =
+      payload ??
+      wsBorsh.encodePayload(wsBorsh.schema.CarrierSwitchSchema, {
+        epoch: state.epoch,
+        to: wsBorsh.CARRIER_SWITCH_TO_DIRECT,
+        rtcSession: '',
+      });
+    while (state.switchGeneration === generation && !session.closed) {
+      const drained = await this.waitDrain(session, state, generation);
+      if (!drained) break;
+      const status = normalizeControlStatus(
+        await this.sendControl(session, wsBorsh.KIND_CARRIER_SWITCH, frame)
+      );
+      if (status === 'sent') {
+        if (state.switchGeneration === generation && !session.closed) {
+          session.switchActiveCarrier(carrier);
+        }
+        return;
+      }
+      if (status === 'closed') break;
+    }
+    this.cancelPendingSwitch(session, state, carrier, generation);
+  }
+
+  private waitDrain(
+    session: GatewaySession,
+    state: SwitchState,
+    generation: number
+  ): Promise<boolean> {
+    if (session.closed || state.switchGeneration !== generation) return Promise.resolve(false);
+    const carrier = session.activeCarrier;
+    return new Promise((resolve) => {
+      let settled = false;
+      const finish = (ok: boolean) => {
+        if (settled) return;
+        settled = true;
+        state.unsubDrain = null;
+        resolve(ok);
+      };
+      const onDrain = () => finish(true);
+      carrier.onDrain(onDrain);
+      state.unsubDrain = () => finish(false);
+    });
+  }
+
+  private cancelPendingSwitch(
+    session: GatewaySession,
+    state: SwitchState,
+    carrier: DirectCarrier,
+    generation: number
+  ): void {
+    if (state.switchGeneration !== generation) return;
+    state.unsubDrain?.();
+    state.unsubDrain = null;
+    state.pendingTo = null;
+    if (state.direct === carrier) {
+      state.direct = null;
+      state.buffer.length = 0;
+      if (session.activeCarrier === carrier) {
+        session.switchActiveCarrier(session.primary);
+      }
+      session.detachCarrier(carrier);
+    }
+  }
+
+  private isThenable(value: unknown): value is Promise<ControlSendStatus> {
+    return typeof value === 'object' && value !== null && 'then' in value;
   }
 
   private flush(session: GatewaySession, state: SwitchState): void {
@@ -129,9 +264,19 @@ export class CarrierSwitchController {
         buffer: [],
         direct: null,
         unsubClose: null,
+        switchGeneration: 0,
+        unsubDrain: null,
       };
       this.states.set(session, state);
     }
     return state;
   }
+}
+
+function normalizeControlStatus(
+  status: ControlSendStatus | void | boolean | 'backpressured' | 'dropped'
+): ControlSendStatus {
+  if (status === 'backpressure' || status === 'backpressured') return 'backpressure';
+  if (status === 'closed' || status === 'dropped' || status === false) return 'closed';
+  return 'sent';
 }

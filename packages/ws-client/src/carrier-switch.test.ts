@@ -23,10 +23,12 @@ function frameLabel(bytes: Uint8Array): string {
   return wsBorsh.decodePayload(wsBorsh.schema.TermInputSchema, envelope.payload).paneId;
 }
 
-function switchFrame(epoch: number, to: 'direct' | 'primary'): Uint8Array {
+/** `rtcSession` 缺省空串 = 老 node 不带 attempt 标识。 */
+function switchFrame(epoch: number, to: 'direct' | 'primary', rtcSession = ''): Uint8Array {
   const payload = wsBorsh.encodePayload(wsBorsh.schema.CarrierSwitchSchema, {
     epoch,
     to: to === 'direct' ? wsBorsh.CARRIER_SWITCH_TO_DIRECT : wsBorsh.CARRIER_SWITCH_TO_PRIMARY,
+    rtcSession,
   });
   return wsBorsh.encodeEnvelope(wsBorsh.KIND_CARRIER_SWITCH, payload, 0);
 }
@@ -99,13 +101,21 @@ function harness(options: Partial<CarrierSwitchBarrierOptions> = {}): Harness {
   } as Harness;
 }
 
-function ackEpochs(frames: Uint8Array[]): number[] {
+function acks(frames: Uint8Array[]): Array<{ epoch: number; rtcSession: string }> {
   return frames
     .filter((f) => peekEnvelopeKind(f) === wsBorsh.KIND_CARRIER_SWITCH_ACK)
     .map((f) => {
       const envelope = wsBorsh.decodeEnvelope(f);
-      return wsBorsh.decodePayload(wsBorsh.schema.CarrierSwitchAckSchema, envelope.payload).epoch;
+      const payload = wsBorsh.decodePayload(
+        wsBorsh.schema.CarrierSwitchAckSchema,
+        envelope.payload
+      );
+      return { epoch: payload.epoch, rtcSession: payload.rtcSession };
     });
+}
+
+function ackEpochs(frames: Uint8Array[]): number[] {
+  return acks(frames).map((a) => a.epoch);
 }
 
 describe('peekEnvelopeKind', () => {
@@ -366,10 +376,104 @@ describe('CarrierSwitchBarrier', () => {
     const h = harness();
     const ack = wsBorsh.encodeEnvelope(
       wsBorsh.KIND_CARRIER_SWITCH_ACK,
-      wsBorsh.encodePayload(wsBorsh.schema.CarrierSwitchAckSchema, { epoch: 1 }),
+      wsBorsh.encodePayload(wsBorsh.schema.CarrierSwitchAckSchema, {
+        epoch: 1,
+        rtcSession: 'br:a',
+      }),
       0
     );
     h.barrier.handlePrimaryInbound(ack);
     expect(h.delivered).toEqual([]);
+  });
+});
+
+describe('CarrierSwitchBarrier —— 切换帧绑定 attempt（rtcSession）', () => {
+  test('匹配当前 attempt 才切换，ACK 回显 rtcSession', () => {
+    const h = harness();
+    const direct = new FakeCarrier();
+    h.barrier.attachDirect(direct, { rtcSession: 'br:a' });
+
+    h.barrier.handlePrimaryInbound(switchFrame(1, 'direct', 'br:a'));
+    expect(h.barrier.activeCarrier).toBe('direct');
+    expect(acks(h.primary)).toEqual([{ epoch: 1, rtcSession: 'br:a' }]);
+  });
+
+  test('attempt A 的迟到切换帧在 B 挂上之后被忽略（不切换、不回 ACK）', () => {
+    const h = harness();
+    const a = new FakeCarrier();
+    h.barrier.attachDirect(a, { rtcSession: 'br:a' });
+
+    // A 的通道先没了，控制器换 attempt B 重来
+    a.simulateClose();
+    const b = new FakeCarrier();
+    h.barrier.attachDirect(b, { rtcSession: 'br:b' });
+
+    // primary 拥塞：A 的 to:'direct' 现在才到
+    h.barrier.handlePrimaryInbound(switchFrame(1, 'direct', 'br:a'));
+    expect(h.barrier.activeCarrier).toBe('primary');
+    expect(h.barrier.currentPhase).toBe('pending-direct');
+    expect(acks(h.primary)).toEqual([]);
+
+    // B 自己的切换帧照常生效
+    h.barrier.handlePrimaryInbound(switchFrame(2, 'direct', 'br:b'));
+    expect(h.barrier.activeCarrier).toBe('direct');
+    expect(acks(h.primary)).toEqual([{ epoch: 2, rtcSession: 'br:b' }]);
+  });
+
+  test('直连缓冲的帧不会被上一次 attempt 的迟到帧排空', () => {
+    const h = harness();
+    const a = new FakeCarrier();
+    h.barrier.attachDirect(a, { rtcSession: 'br:a' });
+    a.simulateClose();
+
+    const b = new FakeCarrier();
+    h.barrier.attachDirect(b, { rtcSession: 'br:b' });
+    b.deliver(dataFrame('d1'));
+    expect(h.barrier.bufferedCount).toBe(1);
+
+    h.barrier.handlePrimaryInbound(switchFrame(1, 'direct', 'br:a'));
+    expect(h.delivered).toEqual([]);
+    expect(h.barrier.bufferedCount).toBe(1);
+
+    h.barrier.handlePrimaryInbound(switchFrame(2, 'direct', 'br:b'));
+    expect(h.delivered).toEqual(['d1']);
+  });
+
+  test('别的 attempt 的 to:primary 也不生效', () => {
+    const h = harness();
+    const direct = new FakeCarrier();
+    h.barrier.attachDirect(direct, { rtcSession: 'br:a' });
+    h.barrier.handlePrimaryInbound(switchFrame(1, 'direct', 'br:a'));
+
+    h.barrier.handlePrimaryInbound(switchFrame(2, 'primary', 'br:other'));
+    expect(h.barrier.activeCarrier).toBe('direct');
+    expect(h.resumes).toBe(0);
+
+    h.barrier.handlePrimaryInbound(switchFrame(2, 'primary', 'br:a'));
+    expect(h.barrier.activeCarrier).toBe('primary');
+    expect(h.resumes).toBe(1);
+  });
+
+  test('老 node 不带 rtcSession：只有一次 attempt 时接受，重挂之后拒绝', () => {
+    const h = harness();
+    const first = new FakeCarrier();
+    h.barrier.attachDirect(first, { rtcSession: 'br:a' });
+    h.barrier.handlePrimaryInbound(switchFrame(1, 'direct'));
+    expect(h.barrier.activeCarrier).toBe('direct');
+    expect(acks(h.primary)).toEqual([{ epoch: 1, rtcSession: '' }]);
+
+    first.simulateClose();
+    const second = new FakeCarrier();
+    h.barrier.attachDirect(second, { rtcSession: 'br:b' });
+    h.barrier.handlePrimaryInbound(switchFrame(2, 'direct'));
+    expect(h.barrier.activeCarrier).toBe('primary');
+  });
+
+  test('宿主没登记 rtcSession 时不做绑定校验（兼容老宿主）', () => {
+    const h = harness();
+    const direct = new FakeCarrier();
+    h.barrier.attachDirect(direct);
+    h.barrier.handlePrimaryInbound(switchFrame(1, 'direct', 'br:whatever'));
+    expect(h.barrier.activeCarrier).toBe('direct');
   });
 });

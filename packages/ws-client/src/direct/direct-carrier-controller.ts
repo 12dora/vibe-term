@@ -72,7 +72,7 @@ export const DEFAULT_NETWORK_CHANGE_DEBOUNCE_MS = 800;
 
 /** 控制器只用到连接的这三个方法，避免与 `GatewayConnection` 循环依赖。 */
 export interface GatewayConnectionLike {
-  attachDirectCarrier(carrier: DirectCarrierLike): void;
+  attachDirectCarrier(carrier: DirectCarrierLike, options?: { rtcSession?: string }): void;
   detachDirectCarrier?(): void;
   /** 屏障完成切换（并已回 ACK）后才通知；控制器据此才认为直连真正生效。 */
   onCarrierChange?(handler: (active: 'primary' | 'direct') => void): () => void;
@@ -657,7 +657,8 @@ export class DirectCarrierController {
       );
     });
     this.subscribeCarrierChange(attempt);
-    this.options.connection.attachDirectCarrier(carrier);
+    // 登记本次 attempt 的 rtcSession：屏障据此丢弃上一次 attempt 迟到的切换帧。
+    this.options.connection.attachDirectCarrier(carrier, { rtcSession: attempt.rtcSession });
     // 没有 onCarrierChange 的宿主（老测试桩）退化成「挂上即生效」。
     if (!this.options.connection.onCarrierChange) this.activate(attempt);
   }

@@ -56,7 +56,7 @@ export interface DirectDataChannelCarrierOptions {
   highWaterBytes?: number;
   lowWaterBytes?: number;
   maxQueuedBytes?: number;
-  /** 对端 SCTP 的 `maxMessageSize`；据此把分片载荷压到 `min(65528, 它 - 8)`。 */
+  /** 协商到的 SCTP `maxMessageSize`；**只作用于出站**：分片载荷压到 `min(65528, 它 - 8)`。 */
   maxMessageBytes?: number;
   /** 协议违规 / 半帧失败导致载体自毁时的原因回调（诊断用）。 */
   onProtocolError?: (reason: string) => void;
@@ -84,13 +84,13 @@ export class DirectDataChannelCarrier {
     this.maxQueuedBytes = options.maxQueuedBytes ?? DC_MAX_QUEUED_BYTES;
     this.payloadSize = effectiveFragmentPayloadSize(options.maxMessageBytes);
     this.onProtocolError = options.onProtocolError ?? null;
+    // 入站上限恒为协议值：`sctp.maxMessageSize` 描述的是**本端能发多大**（常见 256 KiB，
+    // 甚至 Infinity），拿它放宽入站只会让对端的超大消息绕过 `chunk-too-large` 并放大内存。
     this.reassembler =
       options.reassembler ??
       new FrameReassembler({
-        maxMessageBytes: Math.max(
-          MAX_DC_MESSAGE_BYTES,
-          options.maxMessageBytes ?? MAX_DC_MESSAGE_BYTES
-        ),
+        maxMessageBytes: MAX_DC_MESSAGE_BYTES,
+        maxFrameBytes: MAX_FRAME_BYTES,
         onViolation: (reason: FragmentViolation) => this.failProtocol(`inbound ${reason}`),
       });
     channel.binaryType = 'arraybuffer';

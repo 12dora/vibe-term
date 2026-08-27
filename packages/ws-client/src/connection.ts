@@ -1,7 +1,7 @@
 // Gateway 连接工厂：把 WS 客户端、pane-sink 注册表、选择状态机按连接组装。
 // 多连接宿主每个 gateway 建一份；单连接宿主继续使用各模块的默认实例。
 
-import type { ActiveCarrier, DirectCarrierLike } from './carrier-switch';
+import type { ActiveCarrier, AttachDirectOptions, DirectCarrierLike } from './carrier-switch';
 import {
   type BorshClientOptions,
   BorshWebSocketClient,
@@ -106,7 +106,7 @@ export interface GatewayConnection {
   paneSinks: PaneSinkRegistry;
   selectMachine: SelectStateMachine;
   /** 挂载直连载体（`DirectCarrierController` 在 `sess` 首帧鉴权通过后调用）。 */
-  attachDirectCarrier(carrier: DirectCarrierLike): void;
+  attachDirectCarrier(carrier: DirectCarrierLike, options?: AttachDirectOptions): void;
   /** 摘掉直连，回落 primary。 */
   detachDirectCarrier(): void;
   /** 当前活跃载体。 */
@@ -146,8 +146,8 @@ export function createGatewayConnection(options: GatewayConnectionOptions = {}):
     paneSinks,
     selectMachine,
     directDiagnostics: null,
-    attachDirectCarrier(carrier) {
-      client.attachDirectCarrier(carrier);
+    attachDirectCarrier(carrier, options) {
+      client.attachDirectCarrier(carrier, options);
     },
     detachDirectCarrier() {
       client.detachDirectCarrier();

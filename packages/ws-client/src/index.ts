@@ -26,6 +26,7 @@ export {
   CarrierSwitchBarrier,
   peekEnvelopeKind,
   type ActiveCarrier,
+  type AttachDirectOptions,
   type CarrierSwitchBarrierOptions,
   type DirectCarrierLike,
 } from './carrier-switch';

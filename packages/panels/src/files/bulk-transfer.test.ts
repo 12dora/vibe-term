@@ -58,7 +58,11 @@ function uploadGateway(): Recorded & { commits: string[] } {
 function fakeBulk(overrides: Partial<FileBulkClient> = {}): FileBulkClient {
   return {
     isAvailable: () => true,
-    upload: async () => ({ ok: true }),
+    // 默认按「全部字节都送到了」上报进度：面板会核对送出字节数与登记的 size
+    upload: async (req) => {
+      req.onProgress?.(req.size, req.size);
+      return { ok: true };
+    },
     download: () =>
       new ReadableStream<Uint8Array>({
         start(controller) {
@@ -221,6 +225,52 @@ describe('uploadFileWithTransport', () => {
     expect(gw.calls.filter((c) => c === 'POST /api/files/upload/init')).toHaveLength(1);
   });
 
+  test('送出字节数与 init 登记的 size 不符时回落 REST（不 commit 截断文件）', async () => {
+    const gw = uploadGateway();
+    const bulk = fakeBulk({
+      upload: async (req) => {
+        req.onProgress?.(req.size - 3, req.size); // 少送 3 字节却回 ok
+        return { ok: true };
+      },
+    });
+    const path = await uploadFileWithTransport('node-a', 'r1', '/dest', fileOf(20), {}, gw.client, {
+      resolveBulk: () => bulk,
+    });
+    expect(path).toBe('relay');
+    expect(gw.calls).toContain('DELETE /api/files/upload/u1');
+    expect(gw.commits).toEqual(['u2']);
+  });
+
+  test('清理期间用户取消：抛标准 AbortError 而不是原始传输错误', async () => {
+    const controller = new AbortController();
+    const gw = recorder((method, path) => {
+      if (method === 'POST' && path === '/api/files/upload/init') {
+        return json({ uploadId: 'u1', chunkSize: 1024 });
+      }
+      if (method === 'DELETE') {
+        controller.abort(); // DELETE 回收期间用户点了取消
+        return new Response('', { status: 200 });
+      }
+      return null;
+    });
+    const bulk = fakeBulk({
+      upload: async () => {
+        throw new Error('bulk channel closed');
+      },
+    });
+    await expect(
+      uploadFileWithTransport(
+        'node-a',
+        'r1',
+        '/dest',
+        fileOf(10),
+        { signal: controller.signal },
+        gw.client,
+        { resolveBulk: () => bulk }
+      )
+    ).rejects.toMatchObject({ name: 'AbortError' });
+  });
+
   test('self 永不走直连', async () => {
     const gw = uploadGateway();
     let resolved = 0;
@@ -343,6 +393,93 @@ describe('downloadFileWithTransport', () => {
           },
         }),
     });
+    await expect(
+      downloadFileWithTransport(
+        'node-a',
+        'r1',
+        '/a.bin',
+        'a.bin',
+        { signal: controller.signal },
+        gw.client,
+        { resolveBulk: () => bulk }
+      )
+    ).rejects.toMatchObject({ name: 'AbortError' });
+    expect(gw.calls.filter((c) => c.includes('/content'))).toHaveLength(0);
+  });
+
+  test('收到的字节超过 prepare 声明的 size：取消流并整次回落 REST', async () => {
+    const gw = downloadGateway(4);
+    let canceled = 0;
+    const bulk = fakeBulk({
+      download: () =>
+        new ReadableStream<Uint8Array>({
+          start(controller) {
+            controller.enqueue(new Uint8Array(8).fill(1)); // 声明 4 字节却狂灌
+          },
+          cancel() {
+            canceled += 1;
+          },
+        }),
+    });
+
+    const file = await downloadFileWithTransport('node-a', 'r1', '/a.bin', 'a.bin', {}, gw.client, {
+      resolveBulk: () => bulk,
+    });
+
+    expect(file.transferPath).toBe('relay');
+    expect(canceled).toBe(1);
+    expect(await blobBytes(file.blob)).toEqual(new Uint8Array(4).fill(9));
+    expect(gw.calls).toEqual([
+      'POST /api/files/download/prepare',
+      'DELETE /api/files/download/d1',
+      'POST /api/files/download/prepare',
+      'GET /api/files/download/d1/content',
+    ]);
+  });
+
+  test('node 提前 eof（字节数不足）：当作 bulk 失败重新 prepare 走 REST', async () => {
+    const gw = downloadGateway(6);
+    const bulk = fakeBulk({
+      download: () =>
+        new ReadableStream<Uint8Array>({
+          start(controller) {
+            controller.enqueue(new Uint8Array(2).fill(1));
+            controller.close();
+          },
+        }),
+    });
+
+    const file = await downloadFileWithTransport('node-a', 'r1', '/a.bin', 'a.bin', {}, gw.client, {
+      resolveBulk: () => bulk,
+    });
+
+    expect(file.transferPath).toBe('relay');
+    // 截断内容不得作为结果返回
+    expect(await blobBytes(file.blob)).toEqual(new Uint8Array(6).fill(9));
+    expect(gw.calls).toContain('DELETE /api/files/download/d1');
+  });
+
+  test('清理期间用户取消：抛标准 AbortError 而不是原始传输错误', async () => {
+    const controller = new AbortController();
+    const gw = recorder((method, path) => {
+      if (method === 'POST' && path === '/api/files/download/prepare') {
+        return ndjson([{ type: 'done', downloadId: 'd1', size: 4, name: 'a.bin' }]);
+      }
+      if (method === 'DELETE') {
+        controller.abort();
+        return new Response('', { status: 200 });
+      }
+      return null;
+    });
+    const bulk = fakeBulk({
+      download: () =>
+        new ReadableStream<Uint8Array>({
+          start(streamController) {
+            streamController.error(new Error('bulk channel closed'));
+          },
+        }),
+    });
+
     await expect(
       downloadFileWithTransport(
         'node-a',

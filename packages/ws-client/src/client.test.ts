@@ -699,10 +699,11 @@ class FakeDirectCarrier {
   }
 }
 
-function carrierSwitchFrame(epoch: number, to: 'direct' | 'primary'): Uint8Array {
+function carrierSwitchFrame(epoch: number, to: 'direct' | 'primary', rtcSession = ''): Uint8Array {
   const payload = wsBorsh.encodePayload(wsBorsh.schema.CarrierSwitchSchema, {
     epoch,
     to: to === 'direct' ? wsBorsh.CARRIER_SWITCH_TO_DIRECT : wsBorsh.CARRIER_SWITCH_TO_PRIMARY,
+    rtcSession,
   });
   return wsBorsh.encodeEnvelope(wsBorsh.KIND_CARRIER_SWITCH, payload, 0);
 }
@@ -845,6 +846,23 @@ describe('直连载体（attachDirectCarrier / activeCarrier）', () => {
     expect(client.activeCarrier).toBe('primary');
     client.send(wsBorsh.KIND_PING, new Uint8Array(0));
     expect(carrier.sent.length).toBe(0);
+
+    client.disconnect();
+  });
+
+  test('attachDirectCarrier 登记 rtcSession：别的 attempt 的切换帧不生效', () => {
+    const socket = new FakeSocket();
+    const client = readyClient(socket);
+    const carrier = new FakeDirectCarrier();
+    client.attachDirectCarrier(carrier, { rtcSession: 'br:b' });
+
+    socket.deliver(carrierSwitchFrame(1, 'direct', 'br:a'));
+    expect(client.activeCarrier).toBe('primary');
+    expect(sentAckEpochs(socket)).toEqual([]);
+
+    socket.deliver(carrierSwitchFrame(2, 'direct', 'br:b'));
+    expect(client.activeCarrier).toBe('direct');
+    expect(sentAckEpochs(socket)).toEqual([2]);
 
     client.disconnect();
   });

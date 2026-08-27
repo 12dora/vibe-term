@@ -10,6 +10,12 @@
 //
 // epoch 单调递增：`epoch <= applied` 的切换帧一律当作陈旧丢弃，也不回 ACK。
 //
+// epoch 只是**会话级**的序号，分不清「哪一次直连 attempt」：attempt A 关闭后启动 attempt B，
+// A 的旧 `to:'direct'` 帧若在 B 挂上之后才从拥塞的 primary 上到达，只看 epoch 会把它应用到 B，
+// 于是 B 在 node 还没接受它的 nonce 时就被当成活跃载体（输入丢失 / bulk 被吞）。因此切换帧
+// 携带 `rtcSession`，`attachDirect(carrier, {rtcSession})` 登记期望值，不匹配的一律忽略；
+// ACK 原样回显该值。老 node 发空串时按「只有一次 attempt」宽容接受。
+//
 // 四个阶段（`active === 'primary'` 一个值分不清「还没切进去」和「已经切回来」）：
 //   primary        —— 没有直连载体；
 //   pending-direct —— 载体已挂上、还没收到 `to:'direct'`：**只有这个阶段缓冲**直连入站帧；
@@ -68,6 +74,8 @@ export function peekEnvelopeKind(bytes: Uint8Array): number | null {
 interface SwitchFrame {
   epoch: number;
   to: ActiveCarrier;
+  /** 发起本次切换的直连 attempt；空串 = 老 node 没带。 */
+  rtcSession: string;
 }
 
 function decodeSwitch(bytes: Uint8Array): SwitchFrame | null {
@@ -77,10 +85,17 @@ function decodeSwitch(bytes: Uint8Array): SwitchFrame | null {
     return {
       epoch: payload.epoch,
       to: payload.to === wsBorsh.CARRIER_SWITCH_TO_PRIMARY ? 'primary' : 'direct',
+      rtcSession: payload.rtcSession,
     };
   } catch {
     return null;
   }
+}
+
+/** 挂载直连时登记的 attempt 信息。 */
+export interface AttachDirectOptions {
+  /** 本次 attempt 的 `rtcSession`；登记后只接受携带同值（或空串兼容）的切换帧。 */
+  rtcSession?: string;
 }
 
 export class CarrierSwitchBarrier {
@@ -92,6 +107,10 @@ export class CarrierSwitchBarrier {
   private buffered: Uint8Array[] = [];
   private bufferedBytes = 0;
   private appliedEpoch = 0;
+  /** 当前载体所属 attempt 的 rtcSession；null = 宿主没登记，不做绑定校验。 */
+  private expectedRtcSession: string | null = null;
+  /** 本次 primary 会话里挂过几次直连；>1 时不再接受不带 rtcSession 的老式切换帧。 */
+  private attachSeq = 0;
 
   constructor(options: CarrierSwitchBarrierOptions) {
     this.options = options;
@@ -121,9 +140,11 @@ export class CarrierSwitchBarrier {
    * 挂载直连载体。此刻**还不切换**：要等 node 在 primary 上发来 `CARRIER_SWITCH{to:'direct'}`。
    * 已有直连则先关掉旧的。
    */
-  attachDirect(carrier: DirectCarrierLike): void {
+  attachDirect(carrier: DirectCarrierLike, options: AttachDirectOptions = {}): void {
     const previous = this.direct;
     this.direct = carrier;
+    this.expectedRtcSession = options.rtcSession || null;
+    this.attachSeq += 1;
     this.dropBuffer();
     this.setPhase('pending-direct');
     if (previous && previous !== carrier) {
@@ -195,6 +216,7 @@ export class CarrierSwitchBarrier {
   handleDirectClose(carrier?: DirectCarrierLike): void {
     if (carrier && this.direct && carrier !== this.direct) return;
     this.direct = null;
+    this.expectedRtcSession = null;
     // 关闭时**不排空**：缓冲里的帧排在 primary 队尾会乱序，缺口交给 resume。
     const lostBuffered = this.dropBuffer();
     const wasDirect = this.phase === 'direct';
@@ -206,6 +228,8 @@ export class CarrierSwitchBarrier {
   closeDirect(): void {
     const direct = this.direct;
     this.direct = null;
+    this.expectedRtcSession = null;
+    this.attachSeq = 0;
     this.dropBuffer();
     this.setPhase('primary');
     this.appliedEpoch = 0;
@@ -228,6 +252,13 @@ export class CarrierSwitchBarrier {
     const frame = decodeSwitch(bytes);
     if (!frame) return;
     if (frame.epoch <= this.appliedEpoch) return; // 陈旧 epoch：忽略，且不回 ACK
+    if (!this.matchesAttempt(frame)) {
+      // 上一次 attempt 的迟到帧：不能拿它激活当前载体，也不回 ACK。
+      console.warn(
+        `[carrier-switch] drop switch from stale attempt: got "${frame.rtcSession}", expected "${this.expectedRtcSession ?? ''}"`
+      );
+      return;
+    }
 
     if (frame.to === 'direct') {
       if (!this.direct) return; // 还没挂上载体，不认这次切换（node 会在下个 epoch 重来）
@@ -236,7 +267,7 @@ export class CarrierSwitchBarrier {
       this.flushBuffered();
       this.setPhase('direct');
       // ACK 必须走**旧载体**（primary），否则 node 在收到 ACK 前不认直连入站。
-      this.options.sendPrimary(this.encodeAck(frame.epoch));
+      this.options.sendPrimary(this.encodeAck(frame.epoch, frame.rtcSession));
       return;
     }
 
@@ -249,10 +280,23 @@ export class CarrierSwitchBarrier {
     if (wasDirect || lostBuffered) this.options.resumeSubscribedPanes?.();
   }
 
+  /**
+   * 切换帧是否属于当前 attempt：
+   * 宿主没登记期望值时不校验；老 node 不带 `rtcSession`（空串）只在唯一一次 attempt 时接受。
+   */
+  private matchesAttempt(frame: SwitchFrame): boolean {
+    const expected = this.expectedRtcSession;
+    if (!expected) return true;
+    if (frame.rtcSession === expected) return true;
+    if (frame.rtcSession === '') return this.attachSeq === 1;
+    return false;
+  }
+
   /** 缓冲超限：关掉直连（控制器会退避重连），保住 primary 并触发一次 resume。 */
   private abortDirect(): void {
     const direct = this.direct;
     this.direct = null;
+    this.expectedRtcSession = null;
     this.dropBuffer();
     this.setPhase('primary');
     if (direct) {
@@ -265,8 +309,11 @@ export class CarrierSwitchBarrier {
     this.options.resumeSubscribedPanes?.();
   }
 
-  private encodeAck(epoch: number): Uint8Array {
-    const payload = wsBorsh.encodePayload(wsBorsh.schema.CarrierSwitchAckSchema, { epoch });
+  private encodeAck(epoch: number, rtcSession: string): Uint8Array {
+    const payload = wsBorsh.encodePayload(wsBorsh.schema.CarrierSwitchAckSchema, {
+      epoch,
+      rtcSession,
+    });
     return wsBorsh.encodeEnvelope(
       wsBorsh.KIND_CARRIER_SWITCH_ACK,
       payload,

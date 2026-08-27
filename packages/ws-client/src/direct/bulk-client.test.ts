@@ -11,6 +11,7 @@ import {
   registerBulkClient,
 } from './bulk-client';
 import type { RTCDataChannelLike } from './data-channel-carrier';
+import { ManualClock } from './test-fakes';
 
 class FakeBulkChannel implements RTCDataChannelLike {
   readyState = 'connecting';
@@ -453,6 +454,85 @@ describe('BulkClient.download', () => {
     controller.abort();
     await expect(pending).rejects.toMatchObject({ name: 'AbortError' });
     expect(source.channel.control.some((c) => c.op === 'abort')).toBe(true);
+  });
+});
+
+describe('BulkClient 操作级空闲超时', () => {
+  function clocked(clock: ManualClock, options: Record<string, unknown> = {}) {
+    const source = new FakeSource();
+    const client = new BulkClient(source, {
+      idleTimeoutMs: 30_000,
+      setTimeoutFn: clock.setTimeoutFn,
+      clearTimeoutFn: clock.clearTimeoutFn,
+      ...options,
+    });
+    return { source, client };
+  }
+
+  test('上传：通道开了但对端不回 {ok} → abort + 关通道 + timeout（调用方据此回落 REST）', async () => {
+    const clock = new ManualClock();
+    const { source, client } = clocked(clock, { frameSize: 1024 });
+    const pending = client.upload({ transferId: 'idle-1', size: 8, source: blobOf(8) });
+    await flush();
+    expect(source.channel.control.some((c) => c.op === 'done')).toBe(true);
+
+    clock.advance(30_000);
+    await expect(pending).rejects.toMatchObject({ code: 'timeout' });
+    expect(source.channel.control.some((c) => c.op === 'abort')).toBe(true);
+    expect(source.channel.closeCount).toBe(1);
+  });
+
+  test('上传：每发出一帧都续期，慢速大文件不会被误杀', async () => {
+    const clock = new ManualClock();
+    const { source, client } = clocked(clock, {
+      frameSize: 100,
+      highWaterBytes: 150,
+      lowWaterBytes: 50,
+    });
+    source.bufferedPerFrame = 200; // 每帧发完即背压，靠 drain 一帧一帧推进
+    const pending = client.upload({ transferId: 'idle-2', size: 500, source: blobOf(500) });
+    await flush();
+    const channel = source.channel;
+    expect(channel.data.length).toBe(1);
+
+    for (let i = 0; i < 4; i++) {
+      clock.advance(20_000); // 单次间隔小于 30 s
+      channel.drain();
+      await flush();
+    }
+    expect(channel.sentBytes).toBe(500); // 累计 80 s 也没被超时打断
+
+    channel.deliverControl({ ok: true });
+    await expect(pending).resolves.toEqual({ ok: true });
+  });
+
+  test('下载：对端既不发数据也不回 eof → error 流并 abort', async () => {
+    const clock = new ManualClock();
+    const { source, client } = clocked(clock, { frameSize: 64 });
+    const pending = readAll(client.download({ transferId: 'idle-3' }));
+    await flush();
+    expect(source.channel.control[0]).toEqual({ op: 'get' });
+
+    clock.advance(30_000);
+    await expect(pending).rejects.toMatchObject({ code: 'timeout' });
+    expect(source.channel.control.some((c) => c.op === 'abort')).toBe(true);
+    expect(source.channel.closeCount).toBe(1);
+  });
+
+  test('下载：每收到一帧都续期', async () => {
+    const clock = new ManualClock();
+    const { source, client } = clocked(clock, { frameSize: 64 });
+    const pending = readAll(client.download({ transferId: 'idle-4' }));
+    await flush();
+    const channel = source.channel;
+
+    for (let i = 0; i < 3; i++) {
+      clock.advance(20_000);
+      channel.deliverData(bytes(8));
+    }
+    clock.advance(20_000);
+    channel.deliverControl({ op: 'eof' });
+    expect((await pending).byteLength).toBe(24);
   });
 });
 

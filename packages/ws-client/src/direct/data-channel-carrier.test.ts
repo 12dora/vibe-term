@@ -153,6 +153,34 @@ describe('DirectDataChannelCarrier', () => {
     expect(reasons).toEqual(['inbound bad-total']);
   });
 
+  test('入站上限恒为 64 KiB：协商到更大的 maxMessageSize 也不放宽', () => {
+    const channel = openChannel();
+    const reasons: string[] = [];
+    // 常见浏览器的 sctp.maxMessageSize 是 256 KiB，这只描述本端能发多大
+    const carrier = new DirectDataChannelCarrier(channel, {
+      maxMessageBytes: 256 * 1024,
+      onProtocolError: (reason) => reasons.push(reason),
+    });
+    const received: Uint8Array[] = [];
+    carrier.onMessage((bytes) => received.push(bytes));
+
+    const oversized = new Uint8Array(MAX_DC_MESSAGE_BYTES + 1);
+    oversized[6] = 1; // total = 1，只有尺寸越界
+    channel.deliver(oversized);
+
+    expect(reasons).toEqual(['inbound chunk-too-large']);
+    expect(carrier.isClosed).toBe(true);
+    expect(received).toEqual([]);
+  });
+
+  test('出站仍按协商到的 maxMessageSize 分片（入站上限不受其影响）', () => {
+    const channel = openChannel();
+    const carrier = new DirectDataChannelCarrier(channel, { maxMessageBytes: 256 * 1024 });
+    expect(carrier.send(new Uint8Array(FRAGMENT_PAYLOAD_SIZE + 1))).toBe('sent');
+    expect((channel.sent[0] as Uint8Array).byteLength).toBe(MAX_DC_MESSAGE_BYTES);
+    expect(channel.sent.length).toBe(2);
+  });
+
   test('onClose 只回调一次（close() 与对端关闭都收敛到同一处）', () => {
     const channel = openChannel();
     const carrier = new DirectDataChannelCarrier(channel);

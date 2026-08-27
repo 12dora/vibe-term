@@ -480,13 +480,17 @@ export const RtcSignalSchema = b.struct({
   candidate: OptionStringSchema,
 });
 
+// `rtcSession` 把切换绑定到具体的直连 attempt：浏览器只接受与当前载体同 session 的切换帧，
+// ACK 原样回显。空串 = 未携带（老 node），由接收方按「只有一个待定 attempt」宽容处理。
 export const CarrierSwitchSchema = b.struct({
   epoch: b.u32(),
   to: b.u8(),
+  rtcSession: b.string(),
 });
 
 export const CarrierSwitchAckSchema = b.struct({
   epoch: b.u32(),
+  rtcSession: b.string(),
 });
 
 export const ENROLL_REDEEMED_MAX_CERT_BYTES = 2048;

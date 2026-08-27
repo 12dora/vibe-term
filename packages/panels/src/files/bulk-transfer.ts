@@ -77,6 +77,23 @@ function isAbortError(err: unknown): boolean {
   return err instanceof Error && err.name === 'AbortError';
 }
 
+function abortError(): Error {
+  if (typeof DOMException === 'function') return new DOMException('Aborted', 'AbortError');
+  const err = new Error('Aborted');
+  err.name = 'AbortError';
+  return err;
+}
+
+/**
+ * 取消语义：清理（DELETE 回收）期间用户点了取消时，抛的必须是标准 `AbortError`，
+ * 否则调用方按 `err.name === 'AbortError'` 判断会漏判。已经是 AbortError 的原样上抛。
+ * 没被取消则原地返回，由调用方决定是否回落 REST。
+ */
+function rethrowIfCanceled(err: unknown, signal?: AbortSignal | null): void {
+  if (isAbortError(err)) throw err;
+  if (signal?.aborted) throw abortError();
+}
+
 function pickBulk(nodeId: string, deps?: BulkTransferDeps): FileBulkClient | null {
   if (!nodeId || nodeId === SELF_NODE_ID) return null;
   const resolve = deps?.resolveBulk ?? ((id: string) => getBulkClient(id) as FileBulkClient | null);
@@ -152,12 +169,16 @@ async function uploadViaBulk(
     // leg1：浏览器 → node（直连 DataChannel）
     onLeg?.(1, { pct: total === 0 ? 100 : 0, detail: detail(0) });
     const startedAt = performance.now();
+    // 送出的字节数必须与 init 登记的一致：多了 bulk 客户端自己会 abort，少了 node 会回
+    // `{ok:false, invalid}`；这里再自己核一遍，避免任何一侧漏判后把截断文件 commit 上去。
+    let sentBytes = 0;
     const result = await bulk.upload({
       transferId: uploadId,
       size: total,
       source: file,
       signal,
       onProgress: (sent) => {
+        sentBytes = sent;
         const elapsed = (performance.now() - startedAt) / 1000;
         onLeg?.(1, {
           pct: total > 0 ? Math.round((sent / total) * 100) : 100,
@@ -167,10 +188,12 @@ async function uploadViaBulk(
       },
     });
     if (!result.ok) throw new FileApiError(500, `bulk_${result.code}`);
+    if (sentBytes !== total)
+      throw new FileApiError(500, `bulk_size_mismatch:${sentBytes}/${total}`);
     onLeg?.(1, { pct: 100, detail: detail(total) });
   } catch (err) {
     if (uploadId) await deleteQuietly(client, `/api/files/upload/${uploadId}`);
-    if (isAbortError(err) || signal?.aborted) throw err;
+    rethrowIfCanceled(err, signal);
     throw new BulkStageError(err);
   }
 
@@ -239,7 +262,7 @@ export async function downloadFileWithTransport(
       return { name: prepared.name, blob, transferPath: 'direct' };
     } catch (err) {
       if (downloadId) await deleteQuietly(client, `/api/files/download/${downloadId}`);
-      if (isAbortError(err) || opts.signal?.aborted) throw err;
+      rethrowIfCanceled(err, opts.signal);
       // 回落：重跑一次完整 REST（prepare 会重新拉一份临时文件）
     }
   }
@@ -272,10 +295,30 @@ async function drainBulkDownload(
   });
   const reader = stream.getReader();
   const chunks: Uint8Array[] = [];
-  for (;;) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    if (value) chunks.push(value);
+  // 收到的字节必须与 prepare 声明的 size 严格相等：多了会无限撑爆页面内存，
+  // 少了（node 提前 eof）会把截断内容当成完整文件保存下来。两种都当 bulk 失败回落 REST。
+  let received = 0;
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      if (!value) continue;
+      received += value.byteLength;
+      if (received > size) {
+        throw new FileApiError(500, `bulk_size_overflow:${received}/${size}`);
+      }
+      chunks.push(value);
+    }
+    if (received !== size) {
+      throw new FileApiError(500, `bulk_size_mismatch:${received}/${size}`);
+    }
+  } catch (err) {
+    try {
+      await reader.cancel();
+    } catch {
+      // 流可能已经 error；取消只是尽力向 node 发 abort
+    }
+    throw err;
   }
   onLeg?.(2, { pct: 100, detail: detail(size) });
   return new Blob(chunks as BlobPart[]);

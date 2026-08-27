@@ -281,12 +281,15 @@ export class FakeApiClient implements DirectApiClientLike {
  */
 export class FakeConnection {
   readonly attached: DirectCarrierLike[] = [];
+  /** 每次挂载登记的 attempt rtcSession（与 `attached` 同序）。 */
+  readonly attachedSessions: Array<string | undefined> = [];
   detachCount = 0;
   active: 'primary' | 'direct' = 'primary';
   private readonly carrierHandlers = new Set<(active: 'primary' | 'direct') => void>();
 
-  attachDirectCarrier(carrier: DirectCarrierLike): void {
+  attachDirectCarrier(carrier: DirectCarrierLike, options?: { rtcSession?: string }): void {
     this.attached.push(carrier);
+    this.attachedSessions.push(options?.rtcSession);
   }
 
   detachDirectCarrier(): void {

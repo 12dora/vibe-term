@@ -722,17 +722,35 @@ describe('mesh / hub 协议消息', () => {
   it('CARRIER_SWITCH / ACK payload roundtrip + envelope', () => {
     const sw = decodePayload(
       CarrierSwitchSchema,
-      encodePayload(CarrierSwitchSchema, { epoch: 3, to: CARRIER_SWITCH_TO_DIRECT })
+      encodePayload(CarrierSwitchSchema, {
+        epoch: 3,
+        to: CARRIER_SWITCH_TO_DIRECT,
+        rtcSession: 'br:abc',
+      })
     );
     expect(sw.epoch).toBe(3);
     expect(sw.to).toBe(CARRIER_SWITCH_TO_DIRECT);
+    expect(sw.rtcSession).toBe('br:abc');
 
-    const ackPayload = encodePayload(CarrierSwitchAckSchema, { epoch: 3 });
+    const ackPayload = encodePayload(CarrierSwitchAckSchema, { epoch: 3, rtcSession: 'br:abc' });
     const envelope = encodeEnvelope(KIND_CARRIER_SWITCH_ACK, ackPayload, 9);
     const decodedEnv = decodeEnvelope(envelope);
     expect(decodedEnv.kind).toBe(KIND_CARRIER_SWITCH_ACK);
-    expect(decodePayload(CarrierSwitchAckSchema, decodedEnv.payload).epoch).toBe(3);
+    const ack = decodePayload(CarrierSwitchAckSchema, decodedEnv.payload);
+    expect(ack.epoch).toBe(3);
+    expect(ack.rtcSession).toBe('br:abc');
     expect(CARRIER_SWITCH_TO_PRIMARY).toBe(1);
+
+    // 老 node 不带 session：空串同样可编解码，接收方按宽容规则处理
+    const legacy = decodePayload(
+      CarrierSwitchSchema,
+      encodePayload(CarrierSwitchSchema, {
+        epoch: 4,
+        to: CARRIER_SWITCH_TO_PRIMARY,
+        rtcSession: '',
+      })
+    );
+    expect(legacy.rtcSession).toBe('');
   });
 
   it('ENROLL_REDEEMED payload roundtrip + envelope', () => {

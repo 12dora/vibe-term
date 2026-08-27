@@ -23,6 +23,12 @@ import {
 export const BULK_CHANNEL_PREFIX = 'bulk:';
 export const BULK_FRAME_SIZE = 64 * 1024;
 export const DEFAULT_BULK_OPEN_TIMEOUT_MS = 15_000;
+/**
+ * 操作级空闲超时：通道 open 之后，只要有合法的数据/控制帧收发就续期。
+ * 没有它，「通道能开但对端根本不实现 bulk」（缺接线的 node / 老版本）会让上传永远等 `{ok}`、
+ * 下载流永远不结束，面板也就永远不会整次回落 REST。
+ */
+export const DEFAULT_BULK_IDLE_TIMEOUT_MS = 30_000;
 
 export type BulkResult = { ok: true } | { ok: false; code: string };
 
@@ -65,6 +71,8 @@ export interface BulkClientOptions {
   highWaterBytes?: number;
   lowWaterBytes?: number;
   openTimeoutMs?: number;
+  /** 操作级空闲超时（收发任一方向的帧都会续期）；缺省 30 s。 */
+  idleTimeoutMs?: number;
   setTimeoutFn?: (fn: () => void, ms: number) => unknown;
   clearTimeoutFn?: (handle: unknown) => void;
 }
@@ -154,6 +162,9 @@ class BulkChannelSession {
   private readonly openWaiters: Array<{ resolve: () => void; reject: (err: Error) => void }> = [];
   private closed = false;
   private opened = false;
+  private idleHandle: unknown = null;
+  private idleMs = 0;
+  private idleFire: (() => void) | null = null;
 
   constructor(
     readonly channel: RTCDataChannelLike,
@@ -201,6 +212,32 @@ class BulkChannelSession {
     });
   }
 
+  /** 启动空闲看门狗；`ms <= 0` 视为关闭该守卫。 */
+  armIdle(ms: number, onTimeout: () => void): void {
+    if (!Number.isFinite(ms) || ms <= 0) return;
+    this.idleMs = ms;
+    this.idleFire = onTimeout;
+    this.touchIdle();
+  }
+
+  /** 有合法收发即续期。 */
+  touchIdle(): void {
+    if (!this.idleFire) return;
+    if (this.idleHandle !== null) this.cancelTimer(this.idleHandle);
+    this.idleHandle = this.schedule(() => {
+      this.idleHandle = null;
+      const fire = this.idleFire;
+      this.idleFire = null;
+      fire?.();
+    }, this.idleMs);
+  }
+
+  disarmIdle(): void {
+    if (this.idleHandle !== null) this.cancelTimer(this.idleHandle);
+    this.idleHandle = null;
+    this.idleFire = null;
+  }
+
   sendControl(value: Record<string, unknown>): void {
     if (this.closed || this.channel.readyState !== 'open') return;
     try {
@@ -217,6 +254,7 @@ class BulkChannelSession {
     }
     try {
       this.channel.send(bytes);
+      this.touchIdle();
       return;
     } catch (err) {
       if (this.channel.readyState !== 'open') {
@@ -228,6 +266,7 @@ class BulkChannelSession {
       }
       try {
         this.channel.send(bytes);
+        this.touchIdle();
       } catch {
         throw err instanceof Error ? err : new BulkTransferError('unknown', 'bulk send failed');
       }
@@ -263,17 +302,22 @@ class BulkChannelSession {
     if (this.closed) return;
     if (typeof data === 'string') {
       const control = parseControlJson(data);
-      if (control) this.onControl?.(control);
+      if (!control) return;
+      this.touchIdle();
+      this.onControl?.(control);
       return;
     }
     const bytes = toBytes(data);
     if (!bytes) return;
     if (this.binaryIsData) {
+      this.touchIdle();
       this.onData?.(bytes.slice());
       return;
     }
     const control = parseControlJson(new TextDecoder().decode(bytes));
-    if (control) this.onControl?.(control);
+    if (!control) return;
+    this.touchIdle();
+    this.onControl?.(control);
   }
 
   private markOpen(): void {
@@ -285,6 +329,7 @@ class BulkChannelSession {
   private markClosed(): void {
     if (this.closed) return;
     this.closed = true;
+    this.disarmIdle();
     for (const waiter of this.openWaiters.splice(0)) {
       waiter.reject(new BulkTransferError('closed', 'bulk channel closed'));
     }
@@ -308,6 +353,7 @@ export class BulkClient {
   private readonly highWater: number;
   private readonly lowWater: number;
   private readonly openTimeoutMs: number;
+  private readonly idleTimeoutMs: number;
   private readonly schedule: (fn: () => void, ms: number) => unknown;
   private readonly cancelTimer: (handle: unknown) => void;
 
@@ -319,6 +365,7 @@ export class BulkClient {
     this.highWater = options.highWaterBytes ?? DC_HIGH_WATER_BYTES;
     this.lowWater = options.lowWaterBytes ?? DC_LOW_WATER_BYTES;
     this.openTimeoutMs = options.openTimeoutMs ?? DEFAULT_BULK_OPEN_TIMEOUT_MS;
+    this.idleTimeoutMs = options.idleTimeoutMs ?? DEFAULT_BULK_IDLE_TIMEOUT_MS;
     this.schedule =
       options.setTimeoutFn ?? ((fn, ms) => (globalThis as typeof global).setTimeout(fn, ms));
     this.cancelTimer =
@@ -377,6 +424,12 @@ export class BulkClient {
       await Promise.race([session.ready(this.openTimeoutMs), replyPromise]);
       if (reply) return reply;
 
+      // 对端不实现 bulk 时通道照样 open：靠空闲超时收敛，调用方才能整次回落 REST。
+      session.armIdle(this.idleTimeoutMs, () => {
+        session.sendControl({ op: 'abort' });
+        failReply(new BulkTransferError('timeout', 'bulk upload idle timeout'));
+        session.close();
+      });
       session.sendControl({ op: 'put', transferId: req.transferId, size: req.size });
       req.onProgress?.(0, req.size);
 
@@ -493,6 +546,10 @@ export class BulkClient {
         try {
           await active.ready(this.openTimeoutMs);
           if (finished) return;
+          // 通道开了但对端一直不发数据/不回 eof：空闲超时 → abort + error 流 → 调用方回落 REST。
+          active.armIdle(this.idleTimeoutMs, () => {
+            fail(new BulkTransferError('timeout', 'bulk download idle timeout'));
+          });
           active.sendControl({ op: 'get' });
         } catch (err) {
           fail(err instanceof Error ? err : new BulkTransferError('unknown', 'bulk open failed'));
