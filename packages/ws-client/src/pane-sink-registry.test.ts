@@ -12,6 +12,7 @@ import {
   registerPaneSink,
   resetPaneSinkRegistryForTest,
 } from './pane-sink-registry';
+import type { GatewayTerminalData } from './transport';
 
 function createRecordingSink() {
   const events: Array<{ type: string; data?: string; alternateScreen?: boolean }> = [];
@@ -32,6 +33,18 @@ function createOriginRecordingSink() {
     onOutput: () => {},
   };
   return { sink, origins };
+}
+
+function createFrameRecordingSink() {
+  const frames: GatewayTerminalData[] = [];
+  const sink: PaneSink = {
+    onReset: () => {},
+    onApplyHistory: () => {},
+    onOutput: (_data, frame) => {
+      if (frame) frames.push(frame);
+    },
+  };
+  return { sink, frames };
 }
 
 const encode = (text: string) => new TextEncoder().encode(text);
@@ -223,6 +236,86 @@ describe('pane-sink-registry', () => {
     registerPaneSink('dev', '%2', later.sink);
 
     expect(later.origins).toEqual(['select']);
+  });
+
+  test('history gate 命中后回放保留 paneEpoch/seq 元数据', () => {
+    const registry = new PaneSinkRegistry();
+    const { sink, frames } = createFrameRecordingSink();
+    registry.registerPaneSink('dev', '%4', sink);
+
+    const token = new Uint8Array(16).fill(2);
+    const paneEpoch = new Uint8Array(16).fill(5);
+    registry.beginPaneHistoryGate('dev', '%4', token);
+    registry.dispatchPaneTerminalData({
+      deviceId: 'dev',
+      paneId: '%4',
+      paneEpoch,
+      seqStart: 10n,
+      seqEnd: 16n,
+      data: encode('gated'),
+    });
+    expect(frames).toEqual([]);
+
+    expect(registry.dispatchPaneHistory('dev', '%4', token, 'H', false, 0)).toBe(true);
+    expect(frames).toEqual([
+      {
+        deviceId: 'dev',
+        paneId: '%4',
+        paneEpoch,
+        seqStart: 10n,
+        seqEnd: 16n,
+        data: encode('gated'),
+      },
+    ]);
+  });
+
+  test('history gate 超时兜底放行时同样保留 paneEpoch/seq 元数据', async () => {
+    const registry = new PaneSinkRegistry({ historyGate: { timeoutMs: 5 } });
+    const { sink, frames } = createFrameRecordingSink();
+    registry.registerPaneSink('dev', '%6', sink);
+
+    const paneEpoch = new Uint8Array(16).fill(8);
+    registry.beginPaneHistoryGate('dev', '%6', new Uint8Array(16).fill(3));
+    registry.dispatchPaneTerminalData({
+      deviceId: 'dev',
+      paneId: '%6',
+      paneEpoch,
+      seqStart: 4n,
+      seqEnd: 9n,
+      data: encode('late'),
+    });
+    expect(frames).toEqual([]);
+
+    await Bun.sleep(30);
+
+    expect(frames).toEqual([
+      {
+        deviceId: 'dev',
+        paneId: '%6',
+        paneEpoch,
+        seqStart: 4n,
+        seqEnd: 9n,
+        data: encode('late'),
+      },
+    ]);
+  });
+
+  test('history gate 缓冲超限时丢弃缓冲并请求 rebase', () => {
+    const registry = new PaneSinkRegistry({ historyGate: { maxBufferedBytes: 8 } });
+    const reasons: string[] = [];
+    const { sink, frames } = createFrameRecordingSink();
+    registry.registerPaneSink('dev', '%7', { ...sink, onRebase: (reason) => reasons.push(reason) });
+
+    const token = new Uint8Array(16).fill(6);
+    registry.beginPaneHistoryGate('dev', '%7', token);
+    registry.dispatchPaneOutput('dev', '%7', encode('0123456789'));
+
+    expect(reasons).toEqual(['resource_exhausted']);
+    expect(frames).toEqual([]);
+    // 门控已被撤下：后续输出直通，且过期 history 不再被消费
+    registry.dispatchPaneOutput('dev', '%7', encode('after'));
+    expect(frames.map((frame) => new TextDecoder().decode(frame.data))).toEqual(['after']);
+    expect(registry.dispatchPaneHistory('dev', '%7', token, 'H', false, 0)).toBe(false);
   });
 
   test('gate 命中的 history 在 sink 挂载前到达时，重放为 history-refresh', () => {
