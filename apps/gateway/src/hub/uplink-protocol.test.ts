@@ -130,8 +130,27 @@ describe('uplink-protocol', () => {
         cert_sig: certSig,
         enroll_pk: enrollPk,
         node_id: 'ab'.repeat(16),
-      }).t
-    ).toBe('enroll.redeemed');
+        entry_sid: 'sid-1',
+      })
+    ).toEqual({
+      t: 'enroll.redeemed',
+      certificate: cert,
+      cert_sig: certSig,
+      enroll_pk: enrollPk,
+      node_id: 'ab'.repeat(16),
+      entry_sid: 'sid-1',
+    });
+    expect(() =>
+      decodeUplinkCtl(
+        JSON.stringify({
+          t: 'enroll.redeemed',
+          certificate: cert,
+          cert_sig: certSig,
+          enroll_pk: enrollPk,
+          node_id: 'short',
+        })
+      )
+    ).toThrow(UplinkCtlError);
   });
 
   test('拒绝 unknown t 与畸形字段', () => {

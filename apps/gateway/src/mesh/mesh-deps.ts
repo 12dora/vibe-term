@@ -89,8 +89,13 @@ export type StreamOpener = {
   openWsStream(link: LinkSession, auth: string): Promise<OpenedWsStream>;
 };
 
+export type KeyLogHubAck = { ok: true; seq: bigint | number } | { ok: false; error: string };
+
 export type KeyLogPublisher = {
   publish(record: { bytes: Uint8Array; sig: Uint8Array }): Promise<void> | void;
+  publishAndAck?(record: { bytes: Uint8Array; sig: Uint8Array }): Promise<KeyLogHubAck>;
+  queryHubHead?(): Promise<{ seq: bigint | number; hash: Uint8Array } | null>;
+  queryKeyLogAt?(seq: bigint): Promise<{ bytes: Uint8Array; sig: Uint8Array } | null>;
 };
 
 export type DtlsFingerprint = {

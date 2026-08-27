@@ -90,6 +90,7 @@ export type EnrollRedeemedMessage = {
   cert_sig: string;
   enroll_pk: string;
   node_id: string;
+  entry_sid?: string;
 };
 
 export type UplinkCtlMessage =
@@ -116,7 +117,9 @@ export const UPLINK_CTL_MAX_DEPTH = 8;
 export const UPLINK_CTL_MAX_ARRAY_LEN = 1024;
 export const UPLINK_CTL_MAX_STRING_LEN = 4 * 1024;
 export const UPLINK_CTL_MAX_ENDPOINTS = 32;
+export const UPLINK_CTL_MAX_CERT_BYTES = 2048;
 export const UPLINK_CTL_MAX_U64 = 18446744073709551615n;
+const NODE_ID_HEX_RE = /^[0-9a-f]{32}$/i;
 
 export function seqToWire(seq: bigint | number): number | string {
   const value = typeof seq === 'bigint' ? seq : BigInt(seq);
@@ -226,13 +229,7 @@ export function decodeUplinkCtl(input: Uint8Array | string): UplinkCtlMessage {
     case 'rtc.signal':
       return decodeRtcSignal(obj);
     case 'enroll.redeemed':
-      return {
-        t: 'enroll.redeemed',
-        certificate: bytesToB64url(b64urlToBytes(requireString(obj, 'certificate'))),
-        cert_sig: bytesToB64url(b64urlToBytes(requireString(obj, 'cert_sig'), 64)),
-        enroll_pk: bytesToB64url(b64urlToBytes(requireString(obj, 'enroll_pk'), 32)),
-        node_id: requireNonEmptyString(obj, 'node_id'),
-      };
+      return decodeEnrollRedeemed(obj);
   }
   throw new UplinkCtlError(`unknown t: ${t}`);
 }
@@ -341,6 +338,32 @@ function decodeNodeListEntry(value: unknown): NodeListEntry {
     direct_capable: requireBoolean(obj, 'direct_capable'),
     version: typeof version === 'string' ? version : null,
   };
+}
+
+function decodeEnrollRedeemed(obj: Record<string, unknown>): EnrollRedeemedMessage {
+  const certBytes = b64urlToBytes(requireString(obj, 'certificate'));
+  if (certBytes.byteLength > UPLINK_CTL_MAX_CERT_BYTES) {
+    throw new UplinkCtlError('certificate too large');
+  }
+  const msg: EnrollRedeemedMessage = {
+    t: 'enroll.redeemed',
+    certificate: bytesToB64url(certBytes),
+    cert_sig: bytesToB64url(b64urlToBytes(requireString(obj, 'cert_sig'), 64)),
+    enroll_pk: bytesToB64url(b64urlToBytes(requireString(obj, 'enroll_pk'), 32)),
+    node_id: requireNodeIdHex(obj, 'node_id'),
+  };
+  if (obj.entry_sid !== undefined && obj.entry_sid !== null) {
+    msg.entry_sid = requireNonEmptyString(obj, 'entry_sid');
+  }
+  return msg;
+}
+
+function requireNodeIdHex(obj: Record<string, unknown>, key: string): string {
+  const value = requireNonEmptyString(obj, key);
+  if (!NODE_ID_HEX_RE.test(value)) {
+    throw new UplinkCtlError(`invalid ${key}`);
+  }
+  return value;
 }
 
 function decodeRtcSignal(obj: Record<string, unknown>): RtcSignalMessage {

@@ -143,13 +143,25 @@ describe('mesh-routes', () => {
       const enrollPk = new Uint8Array(32).fill(1);
       const certificate = new Uint8Array([9, 8, 7]);
       const certSig = new Uint8Array(64).fill(2);
+      const otherFrames: Uint8Array[] = [];
+      const other = {
+        data: { kind: MESH_WS_KIND, sid: `${sid}-other`, uid: mesh.boot.userId },
+        send(d: Uint8Array) {
+          otherFrames.push(d);
+          return d.byteLength;
+        },
+        close() {},
+      } as MeshServerWebSocket;
+      mesh.runtime.handleWebSocket.open(other);
       mesh.runtime.mesh.forwardEnrollRedeemed({
         enrollPk,
         certificate,
         certSig,
         nodeId: PEER_ID,
+        entrySid: sid,
       });
       expect(frames).toHaveLength(1);
+      expect(otherFrames).toHaveLength(0);
       const frame = frames[0];
       if (!frame) throw new Error('missing ENROLL_REDEEMED frame');
       const env = wsBorsh.decodeEnvelope(frame);
@@ -159,6 +171,14 @@ describe('mesh-routes', () => {
       expect(payload.enrollPk).toEqual(enrollPk);
       expect(payload.certificate).toEqual(certificate);
       expect(payload.certSig).toEqual(certSig);
+      mesh.runtime.mesh.forwardEnrollRedeemed({
+        enrollPk,
+        certificate,
+        certSig,
+        nodeId: PEER_ID,
+      });
+      expect(frames).toHaveLength(1);
+      expect(otherFrames).toHaveLength(0);
     } finally {
       mesh.close();
     }

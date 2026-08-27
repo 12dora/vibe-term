@@ -75,6 +75,9 @@ export {
   type UplinkWsFactory,
 } from './uplink-client';
 export {
+  UPLINK_CTL_MAX_BYTES,
+  UPLINK_CTL_MAX_CERT_BYTES,
+  UPLINK_CTL_MAX_STRING_LEN,
   UPLINK_CTL_TYPES,
   decodeUplinkCtl,
   encodeUplinkCtl,

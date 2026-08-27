@@ -167,7 +167,19 @@ export class MeshRoutes {
     certificate: Uint8Array;
     certSig: Uint8Array;
     nodeId: string;
+    entrySid?: string;
   }): void {
+    if (!msg.entrySid) return;
+    try {
+      wsBorsh.schema.assertEnrollRedeemedFields({
+        enrollPk: msg.enrollPk,
+        certificate: msg.certificate,
+        certSig: msg.certSig,
+        nodeId: msg.nodeId,
+      });
+    } catch {
+      return;
+    }
     const payload = wsBorsh.encodePayload(wsBorsh.schema.EnrollRedeemedSchema, {
       enrollPk: msg.enrollPk,
       certificate: msg.certificate,
@@ -175,7 +187,14 @@ export class MeshRoutes {
       nodeId: msg.nodeId,
     });
     const frame = wsBorsh.encodeEnvelope(wsBorsh.KIND_ENROLL_REDEEMED, payload, ++this.seq);
-    this.broadcast(frame);
+    for (const ws of this.meshSockets) {
+      if (ws.data.sid !== msg.entrySid) continue;
+      try {
+        ws.send(frame);
+      } catch {
+        this.meshSockets.delete(ws);
+      }
+    }
   }
 
   private collectNodes(req: Request | null): MeshNodeDto[] {

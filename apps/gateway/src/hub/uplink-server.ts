@@ -1,5 +1,6 @@
 import {
   bytesEqual,
+  computeRecordHash,
   decodeCertificate,
   decodeKeyLogRecord,
   encodeBase64url,
@@ -180,7 +181,7 @@ export class UplinkServer {
         this.send(entry.link, msg);
       }
     } catch {
-      if (!this.stopped) throw new Error('broadcast_failed');
+      // broadcast is best-effort after persist/ack
     }
   }
 
@@ -226,7 +227,11 @@ export class UplinkServer {
   }
 
   private send(link: LinkSession, msg: UplinkCtlMessage): void {
-    link.ctl.send(encodeUplinkCtl(msg));
+    try {
+      link.ctl.send(encodeUplinkCtl(msg));
+    } catch {
+      // a dead uplink must never throw out of persist/ack
+    }
   }
 
   private enqueueCtl(link: LinkSession, bytes: Uint8Array): void {
@@ -443,19 +448,48 @@ export class UplinkServer {
     }
     const result = await this.keyLogSource.append(live.userId, { bytes, sig });
     if (result.ok) {
-      await this.applyAppendEffects(live.userId, result);
       if (id) {
         this.send(live.link, { t: 'key.log.ack', id, ok: true, seq: seqToWire(result.seq) });
       }
+      await this.runAppendEffects(live.userId, result);
+      return;
+    }
+    const replayed = await this.identicalHeadRecord(live.userId, bytes, sig);
+    if (replayed) {
+      if (id) {
+        this.send(live.link, { t: 'key.log.ack', id, ok: true, seq: seqToWire(replayed.seq) });
+      }
+      await this.runAppendEffects(
+        live.userId,
+        this.replayedAppendSuccess(bytes, sig, replayed.seq)
+      );
       return;
     }
     if (id) {
-      const replayed = await this.identicalHeadRecord(live.userId, bytes, sig);
-      if (replayed) {
-        this.send(live.link, { t: 'key.log.ack', id, ok: true, seq: seqToWire(replayed.seq) });
-        return;
-      }
       this.send(live.link, { t: 'key.log.ack', id, ok: false, error: result.error });
+    }
+  }
+
+  private replayedAppendSuccess(
+    bytes: Uint8Array,
+    sig: Uint8Array,
+    seq: bigint
+  ): HubKeyLogAppendSuccess {
+    const record = decodeKeyLogRecord(bytes);
+    return {
+      ok: true,
+      seq,
+      hash: computeRecordHash(bytes, sig),
+      effects: [],
+      record: { type: record.type, payload: record.payload },
+    };
+  }
+
+  private async runAppendEffects(userId: string, result: HubKeyLogAppendSuccess): Promise<void> {
+    try {
+      await this.applyAppendEffects(userId, result);
+    } catch {
+      // effects are retried on identical-record replay
     }
   }
 

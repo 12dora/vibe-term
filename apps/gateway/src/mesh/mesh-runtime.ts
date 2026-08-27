@@ -295,6 +295,7 @@ export async function createMeshRuntime(opts: CreateMeshRuntimeOptions): Promise
           publicUrl: hubEndpointUrl(config),
           stun: config.stunServers,
           turn: (turnConfig(config) as HubTurnConfig) ?? null,
+          nodeId: identity.nodeIdHex,
         },
         authenticate: (req) => {
           const result = authenticateRequest(req, {
@@ -306,6 +307,7 @@ export async function createMeshRuntime(opts: CreateMeshRuntimeOptions): Promise
           return {
             userId: result.userId,
             entryNodeId: via === MESH_VIA_SELF ? identity.nodeIdHex : via,
+            sid: result.sid,
           };
         },
       }))
@@ -353,6 +355,8 @@ export async function createMeshRuntime(opts: CreateMeshRuntimeOptions): Promise
     ),
   });
 
+  const httpHolder: { runtime: MeshHttpRuntime | null } = { runtime: null };
+
   const uplink = new UplinkClient({
     hubUrl: hubEndpointUrl(config),
     identity: { nodeId: identity.nodeIdHex, edSecretKey: identity.edPrivateKey },
@@ -363,6 +367,15 @@ export async function createMeshRuntime(opts: CreateMeshRuntimeOptions): Promise
     wsFactory: opts.wsFactory,
     scheduler: opts.scheduler,
     pingIntervalMs: opts.pingIntervalMs,
+    onEnrollRedeemed: (msg) => {
+      httpHolder.runtime?.mesh.forwardEnrollRedeemed({
+        enrollPk: msg.enroll_pk,
+        certificate: msg.certificate,
+        certSig: msg.cert_sig,
+        nodeId: msg.nodeId,
+        entrySid: msg.entrySid,
+      });
+    },
     onNodeList: (list) => {
       lastNodeList = list;
       lastRtc = {
@@ -415,7 +428,6 @@ export async function createMeshRuntime(opts: CreateMeshRuntimeOptions): Promise
     },
   });
 
-  const httpHolder: { runtime: MeshHttpRuntime | null } = { runtime: null };
   const noopUpgrade: MeshUpgradeServer = { upgrade: () => false };
 
   const dispatchInboundHttp = async (request: Request, ctx: DispatchContext): Promise<Response> => {
@@ -506,6 +518,13 @@ export async function createMeshRuntime(opts: CreateMeshRuntimeOptions): Promise
         // uplink offline
       }
     },
+    async publishAndAck(record) {
+      const ack = await uplink.appendAndAck(record);
+      if (ack.ok) return { ok: true, seq: ack.seq ?? 0n };
+      return { ok: false, error: ack.error ?? 'hub_error' };
+    },
+    queryHubHead: () => uplink.queryHubHead(),
+    queryKeyLogAt: (seq) => uplink.queryKeyLogAt(seq),
   };
 
   const innerSignals = new MeshRtcSignalRouter({
@@ -579,6 +598,7 @@ export async function createMeshRuntime(opts: CreateMeshRuntimeOptions): Promise
       },
     },
     primaryUserId: userId || undefined,
+    hubPublicUrl: hubEndpointUrl(config),
     trustProxy: gatewayConfig.trustProxy,
   });
   httpHolder.runtime = http;

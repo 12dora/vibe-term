@@ -58,6 +58,7 @@ export type HubRuntimeOptions = {
 type StoredEnrollmentPayload = {
   authorization_b64: string;
   entry_node_id: string | null;
+  entry_sid?: string | null;
   certificate_b64?: string;
   cert_sig_b64?: string;
   node_id?: string;
@@ -428,6 +429,7 @@ export class HubRuntime {
     const payload: StoredEnrollmentPayload = {
       authorization_b64: encodeBase64url(authorizationBytes),
       entry_node_id: auth.entryNodeId,
+      ...(auth.sid ? { entry_sid: auth.sid } : {}),
     };
     const token = this.userStore.createEnrollmentToken({
       id: crypto.randomUUID(),
@@ -492,6 +494,7 @@ export class HubRuntime {
     }
     const hexId = nodeIdToHex(certificate.node_id);
     const now = this.now();
+    let replayUserId: string | null = null;
     try {
       this.db.transaction((tx) => {
         const store = new UserStore(tx as AuthDb);
@@ -500,6 +503,13 @@ export class HubRuntime {
           throw new RedeemAbort('unknown_enrollment', 400);
         }
         if (fresh.usedAt !== null) {
+          const prev = parseStoredEnrollment(fresh.authorizationJson);
+          if (
+            prev?.certificate_b64 === encodeBase64url(certBytes) &&
+            prev?.cert_sig_b64 === encodeBase64url(certSig)
+          ) {
+            throw new RedeemReplay(fresh.userId);
+          }
           throw new RedeemAbort('reused', 400);
         }
         const userRow = store.getById(fresh.userId);
@@ -538,26 +548,34 @@ export class HubRuntime {
         });
       });
     } catch (err) {
-      if (err instanceof RedeemAbort) {
+      if (err instanceof RedeemReplay) {
+        replayUserId = err.userId;
+      } else if (err instanceof RedeemAbort) {
         return json({ error: err.error }, err.status);
+      } else {
+        throw err;
       }
-      throw err;
     }
-    const user = this.userStore.getById(token.userId);
-    if (!user) {
-      return json({ error: 'user_not_found' }, 500);
-    }
-    const records = await this.keyLogSource.list(user.id);
-    const certs = this.userStore.listCerts().filter((c) => c.userId === user.id);
-    if (stored.entry_node_id) {
+    if (!replayUserId && stored.entry_node_id) {
       this.uplink.sendTo(stored.entry_node_id, {
         t: 'enroll.redeemed',
         certificate: encodeBase64url(certBytes),
         cert_sig: encodeBase64url(certSig),
         enroll_pk: encodeBase64url(certificate.enroll_pk),
         node_id: hexId,
+        ...(stored.entry_sid ? { entry_sid: stored.entry_sid } : {}),
       });
     }
+    return this.redeemSuccessPayload(replayUserId ?? token.userId);
+  }
+
+  private async redeemSuccessPayload(userId: string): Promise<Response> {
+    const user = this.userStore.getById(userId);
+    if (!user) {
+      return json({ error: 'user_not_found' }, 500);
+    }
+    const records = await this.keyLogSource.list(user.id);
+    const certs = this.userStore.listCerts().filter((c) => c.userId === user.id);
     return json({
       user: {
         id: user.id,
@@ -595,6 +613,13 @@ class RedeemAbort extends Error {
   }
 }
 
+class RedeemReplay extends Error {
+  constructor(readonly userId: string) {
+    super('redeem-replay');
+    this.name = 'RedeemReplay';
+  }
+}
+
 function requireBodyString(body: Record<string, unknown>, key: string): string {
   const value = body[key];
   if (typeof value !== 'string' || value.length === 0) {
@@ -612,6 +637,7 @@ function parseStoredEnrollment(raw: string): StoredEnrollmentPayload | null {
     return {
       authorization_b64: obj.authorization_b64,
       entry_node_id: typeof obj.entry_node_id === 'string' ? obj.entry_node_id : null,
+      entry_sid: typeof obj.entry_sid === 'string' ? obj.entry_sid : undefined,
       certificate_b64: typeof obj.certificate_b64 === 'string' ? obj.certificate_b64 : undefined,
       cert_sig_b64: typeof obj.cert_sig_b64 === 'string' ? obj.cert_sig_b64 : undefined,
       node_id: typeof obj.node_id === 'string' ? obj.node_id : undefined,

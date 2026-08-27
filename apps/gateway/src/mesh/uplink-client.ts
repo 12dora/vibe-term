@@ -165,6 +165,7 @@ export class UplinkClient {
   private keyLogForked = false;
   private onlineAt = 0;
   private customConnect: ((signal: AbortSignal) => Promise<void>) | null = null;
+  lastKeyLogHead: { seq: bigint; hash: Uint8Array } | null = null;
 
   constructor(opts: UplinkClientOptions) {
     this.hubUrl = opts.hubUrl;
@@ -464,6 +465,7 @@ export class UplinkClient {
 
   private ingestNodeList(list: UplinkNodeList): void {
     const now = this.scheduler.now();
+    this.lastKeyLogHead = list.key_log_head;
     if (list.hub) {
       this.userStore.upsertHubMeta({
         nodeId: list.hub.nodeId,
@@ -527,6 +529,40 @@ export class UplinkClient {
       return;
     }
     this.onNodeListCb?.(list);
+  }
+
+  async queryHubHead(): Promise<{ seq: bigint; hash: Uint8Array } | null> {
+    return this.lastKeyLogHead;
+  }
+
+  async queryKeyLogAt(
+    seq: bigint,
+    timeoutMs = UPLINK_KEY_LOG_ACK_TIMEOUT_MS
+  ): Promise<{ bytes: Uint8Array; sig: Uint8Array } | null> {
+    if (!this.link || this.state !== 'online' || this.pendingKeyLog) return null;
+    const records = await new Promise<UplinkKeyLogRecord[]>((resolve) => {
+      const timer = setTimeout(() => {
+        if (this.pendingKeyLog) {
+          this.pendingKeyLog = null;
+          resolve([]);
+        }
+      }, timeoutMs);
+      this.pendingKeyLog = {
+        resolve: (rows) => {
+          clearTimeout(timer);
+          resolve(rows);
+        },
+      };
+      try {
+        this.link?.ctl.send(encodeUplinkCtl({ t: 'key.log.req', from_seq: seq }));
+      } catch {
+        clearTimeout(timer);
+        this.pendingKeyLog = null;
+        resolve([]);
+      }
+    });
+    const found = records.find((row) => row.seq === seq);
+    return found ? { bytes: found.bytes, sig: found.sig } : null;
   }
 
   async appendAndAck(

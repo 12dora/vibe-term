@@ -101,6 +101,7 @@ export type UplinkEnrollRedeemed = {
   cert_sig: Uint8Array;
   enroll_pk: Uint8Array;
   nodeId: string;
+  entrySid?: string;
 };
 
 export type UplinkCtlMessage =
@@ -119,9 +120,51 @@ export type UplinkCtlMessage =
   | UplinkEnrollRedeemed;
 
 const TYPE_SET = new Set<string>(UPLINK_CTL_TYPES);
+const NODE_ID_HEX_RE = /^[0-9a-f]{32}$/i;
 
-function requireB64(value: unknown, field: string): Uint8Array {
-  return decodeBase64url(requireString(value, field));
+export const UPLINK_CTL_MAX_BYTES = 64 * 1024;
+export const UPLINK_CTL_MAX_DEPTH = 8;
+export const UPLINK_CTL_MAX_ARRAY_LEN = 1024;
+export const UPLINK_CTL_MAX_STRING_LEN = 4 * 1024;
+export const UPLINK_CTL_MAX_CERT_BYTES = 2048;
+
+function requireB64(value: unknown, field: string, expectedLen?: number): Uint8Array {
+  const bytes = decodeBase64url(requireString(value, field));
+  if (expectedLen !== undefined && bytes.byteLength !== expectedLen) {
+    throw new Error(`ctl field ${field} expected ${expectedLen} bytes`);
+  }
+  return bytes;
+}
+
+function requireNodeIdHex(value: unknown, field: string): string {
+  const id = requireString(value, field);
+  if (!NODE_ID_HEX_RE.test(id)) {
+    throw new Error(`ctl field ${field} must be 32-hex`);
+  }
+  return id;
+}
+
+function assertCtlBounds(value: unknown, depth: number): void {
+  if (depth > UPLINK_CTL_MAX_DEPTH) {
+    throw new Error('ctl too deep');
+  }
+  if (typeof value === 'string' && value.length > UPLINK_CTL_MAX_STRING_LEN) {
+    throw new Error('ctl string too long');
+  }
+  if (Array.isArray(value)) {
+    if (value.length > UPLINK_CTL_MAX_ARRAY_LEN) {
+      throw new Error('ctl array too long');
+    }
+    for (const item of value) {
+      assertCtlBounds(item, depth + 1);
+    }
+    return;
+  }
+  if (value && typeof value === 'object') {
+    for (const item of Object.values(value as Record<string, unknown>)) {
+      assertCtlBounds(item, depth + 1);
+    }
+  }
 }
 
 function requireNumber(value: unknown, field: string): number {
@@ -147,7 +190,11 @@ function parseNodeInfo(value: unknown): UplinkNodeInfo {
 }
 
 export function decodeUplinkCtl(bytes: Uint8Array): UplinkCtlMessage {
+  if (bytes.byteLength > UPLINK_CTL_MAX_BYTES) {
+    throw new Error('ctl too large');
+  }
   const parsed = decodeJsonBytes(bytes);
+  assertCtlBounds(parsed, 0);
   if (!isRecord(parsed) || typeof parsed.t !== 'string') {
     throw new Error('uplink ctl must be a JSON object with t');
   }
@@ -265,14 +312,22 @@ export function decodeUplinkCtl(bytes: Uint8Array): UplinkCtlMessage {
         candidate: optionalString(parsed.candidate, 'candidate'),
       };
     }
-    case 'enroll.redeemed':
-      return {
+    case 'enroll.redeemed': {
+      const certificate = requireB64(parsed.certificate, 'certificate');
+      if (certificate.byteLength > UPLINK_CTL_MAX_CERT_BYTES) {
+        throw new Error('ctl field certificate too large');
+      }
+      const msg: UplinkEnrollRedeemed = {
         t: 'enroll.redeemed',
-        certificate: requireB64(parsed.certificate, 'certificate'),
-        cert_sig: requireB64(parsed.cert_sig, 'cert_sig'),
-        enroll_pk: requireB64(parsed.enroll_pk, 'enroll_pk'),
-        nodeId: requireString(parsed.node_id, 'node_id'),
+        certificate,
+        cert_sig: requireB64(parsed.cert_sig, 'cert_sig', 64),
+        enroll_pk: requireB64(parsed.enroll_pk, 'enroll_pk', 32),
+        nodeId: requireNodeIdHex(parsed.node_id, 'node_id'),
       };
+      const entrySid = optionalString(parsed.entry_sid, 'entry_sid');
+      if (entrySid) msg.entrySid = entrySid;
+      return msg;
+    }
   }
 }
 
@@ -281,7 +336,7 @@ function parseHubInfo(value: unknown): UplinkHubInfo {
     throw new Error('node.list hub must be an object');
   }
   return {
-    nodeId: requireString(value.nodeId, 'hub.nodeId'),
+    nodeId: requireNodeIdHex(value.nodeId, 'hub.nodeId'),
     publicUrl: requireString(value.publicUrl, 'hub.publicUrl'),
   };
 }
@@ -348,6 +403,7 @@ export function encodeUplinkCtl(msg: UplinkCtlMessage): Uint8Array {
         cert_sig: encodeBase64url(msg.cert_sig),
         enroll_pk: encodeBase64url(msg.enroll_pk),
         node_id: msg.nodeId,
+        ...(msg.entrySid ? { entry_sid: msg.entrySid } : {}),
       });
   }
 }

@@ -1,6 +1,11 @@
 import { describe, expect, test } from 'bun:test';
 import { encodeBase64url, randomBytes } from '@tmex/shared/auth';
-import { decodeUplinkCtl, encodeUplinkCtl, uplinkWsUrl } from './uplink-protocol';
+import {
+  UPLINK_CTL_MAX_CERT_BYTES,
+  decodeUplinkCtl,
+  encodeUplinkCtl,
+  uplinkWsUrl,
+} from './uplink-protocol';
 
 describe('uplink-protocol', () => {
   test('round-trips auth, ping, status, and node.list with b64url binaries', () => {
@@ -86,6 +91,7 @@ describe('uplink-protocol', () => {
         cert_sig: certSig,
         enroll_pk: enrollPk,
         nodeId: 'bb'.repeat(16),
+        entrySid: 'sid-creator',
       })
     );
     expect(redeemed).toEqual({
@@ -94,7 +100,68 @@ describe('uplink-protocol', () => {
       cert_sig: certSig,
       enroll_pk: enrollPk,
       nodeId: 'bb'.repeat(16),
+      entrySid: 'sid-creator',
     });
+  });
+
+  test('rejects enroll.redeemed field bounds and oversized ctl', () => {
+    const enrollPk = randomBytes(32);
+    const cert = randomBytes(8);
+    const certSig = randomBytes(64);
+    const nodeId = 'bb'.repeat(16);
+    expect(() =>
+      decodeUplinkCtl(
+        new TextEncoder().encode(
+          JSON.stringify({
+            t: 'enroll.redeemed',
+            certificate: encodeBase64url(cert),
+            cert_sig: encodeBase64url(certSig),
+            enroll_pk: encodeBase64url(randomBytes(16)),
+            node_id: nodeId,
+          })
+        )
+      )
+    ).toThrow(/32 bytes/);
+    expect(() =>
+      decodeUplinkCtl(
+        new TextEncoder().encode(
+          JSON.stringify({
+            t: 'enroll.redeemed',
+            certificate: encodeBase64url(cert),
+            cert_sig: encodeBase64url(randomBytes(32)),
+            enroll_pk: encodeBase64url(enrollPk),
+            node_id: nodeId,
+          })
+        )
+      )
+    ).toThrow(/64 bytes/);
+    expect(() =>
+      decodeUplinkCtl(
+        new TextEncoder().encode(
+          JSON.stringify({
+            t: 'enroll.redeemed',
+            certificate: encodeBase64url(cert),
+            cert_sig: encodeBase64url(certSig),
+            enroll_pk: encodeBase64url(enrollPk),
+            node_id: 'not-a-node-id',
+          })
+        )
+      )
+    ).toThrow(/32-hex/);
+    expect(() =>
+      decodeUplinkCtl(
+        new TextEncoder().encode(
+          JSON.stringify({
+            t: 'enroll.redeemed',
+            certificate: encodeBase64url(new Uint8Array(UPLINK_CTL_MAX_CERT_BYTES + 1)),
+            cert_sig: encodeBase64url(certSig),
+            enroll_pk: encodeBase64url(enrollPk),
+            node_id: nodeId,
+          })
+        )
+      )
+    ).toThrow(/too large/);
+    expect(() => decodeUplinkCtl(new Uint8Array(65 * 1024))).toThrow(/too large/);
   });
 
   test('rejects unknown t', () => {

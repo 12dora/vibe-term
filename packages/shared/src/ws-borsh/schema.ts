@@ -489,11 +489,36 @@ export const CarrierSwitchAckSchema = b.struct({
   epoch: b.u32(),
 });
 
+export const ENROLL_REDEEMED_MAX_CERT_BYTES = 2048;
+export const ENROLL_REDEEMED_NODE_ID_RE = /^[0-9a-f]{32}$/i;
+
 export const EnrollRedeemedSchema = b.struct({
-  enrollPk: b.bytes(),
+  enrollPk: b.bytes(32),
   certificate: b.bytes(),
-  certSig: b.bytes(),
+  certSig: b.bytes(64),
   nodeId: b.string(),
 });
+
+export type EnrollRedeemedPayload = {
+  enrollPk: Uint8Array;
+  certificate: Uint8Array;
+  certSig: Uint8Array;
+  nodeId: string;
+};
+
+export function assertEnrollRedeemedFields(data: EnrollRedeemedPayload): void {
+  if (data.enrollPk.byteLength !== 32) {
+    throw new Error('enrollPk must be 32 bytes');
+  }
+  if (data.certSig.byteLength !== 64) {
+    throw new Error('certSig must be 64 bytes');
+  }
+  if (data.certificate.byteLength > ENROLL_REDEEMED_MAX_CERT_BYTES) {
+    throw new Error('certificate too large');
+  }
+  if (!ENROLL_REDEEMED_NODE_ID_RE.test(data.nodeId)) {
+    throw new Error('nodeId must be 32-hex');
+  }
+}
 
 export * from './canonical-state';

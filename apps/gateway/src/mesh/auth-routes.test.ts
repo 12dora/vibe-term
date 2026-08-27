@@ -25,6 +25,7 @@ import { encodePasskeyAssertionSig, verifyRegistration } from '../auth/passkey';
 import { createMigratedAuthDb } from '../auth/test-db';
 import { UserKeyService } from '../auth/user-key-service';
 import { UserStore } from '../auth/user-store';
+import type { AuthKeyLogPublisher } from './auth-routes';
 import {
   type MeshRtcDeps,
   type OpenedWsStream,
@@ -148,6 +149,7 @@ export async function bootMesh(options?: {
   peers?: FakePeers;
   streams?: FakeStreams;
   rtc?: MeshRtcDeps;
+  publisher?: AuthKeyLogPublisher;
 }) {
   const { db, close } = createMigratedAuthDb();
   const userStore = new UserStore(db);
@@ -169,7 +171,7 @@ export async function bootMesh(options?: {
     nodeSessionStore,
     peers,
     streams,
-    publisher: {
+    publisher: options?.publisher ?? {
       publish(record) {
         published.push(record);
       },
@@ -513,6 +515,217 @@ describe('auth-routes', () => {
     }
   });
 
+  test('hub=sync hub rejection does not persist a forking record', async () => {
+    const mesh = await bootMesh();
+    try {
+      const runtime = new MeshHttpRuntime({
+        roles: { hub: false, node: true },
+        nodeId: NODE_ID,
+        nodePk: NODE_PK,
+        userStore: mesh.userStore,
+        keyLogService: mesh.keyLogService,
+        challengeStore: mesh.challengeStore,
+        nodeSessionStore: mesh.nodeSessionStore,
+        peers: mesh.peers,
+        streams: mesh.streams,
+        publisher: {
+          publish() {},
+          async publishAndAck() {
+            return { ok: false, error: 'fork' };
+          },
+        },
+        primaryUserId: mesh.boot.userId,
+      });
+      const { sid } = await challengeAndLogin(runtime, mesh.boot);
+      const { buildKeyLogRecord, encodeKeyLogRecord, signKeyLogRecordWithRoot } = await import(
+        '@tmex/shared/auth'
+      );
+      const state = mesh.keyLogService.currentState(mesh.boot.userId);
+      const rec = buildKeyLogRecord(state.head, state.rootEpoch, {
+        uid: mesh.boot.userId,
+        type: 'clear-totp',
+        payload: encodeClearTotpPayload(),
+        signer: 'root',
+        credential_id: null,
+      });
+      const bytes = encodeKeyLogRecord(rec);
+      const sig = signKeyLogRecordWithRoot(mesh.boot.rootKey, bytes);
+      const res = await call(runtime, 'http://localhost/api/auth/keylog?hub=sync', {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          cookie: `tmex_s_self=${sid}`,
+        },
+        body: JSON.stringify({
+          bytes: encodeBase64url(bytes),
+          sig: encodeBase64url(sig),
+        }),
+      });
+      expect(res.status).toBe(409);
+      expect((await res.json()).code).toBe('fork');
+      expect(mesh.keyLogService.currentState(mesh.boot.userId).head.seq).toBe(state.head.seq);
+      runtime.stop();
+    } finally {
+      mesh.close();
+    }
+  });
+
+  test('node role POST /api/auth/keylog defaults to hub-sync', async () => {
+    const mesh = await bootMesh();
+    try {
+      const { sid } = await challengeAndLogin(mesh.runtime, mesh.boot);
+      const { buildKeyLogRecord, encodeKeyLogRecord, signKeyLogRecordWithRoot } = await import(
+        '@tmex/shared/auth'
+      );
+      const state = mesh.keyLogService.currentState(mesh.boot.userId);
+      const rec = buildKeyLogRecord(state.head, state.rootEpoch, {
+        uid: mesh.boot.userId,
+        type: 'clear-totp',
+        payload: encodeClearTotpPayload(),
+        signer: 'root',
+        credential_id: null,
+      });
+      const bytes = encodeKeyLogRecord(rec);
+      const sig = signKeyLogRecordWithRoot(mesh.boot.rootKey, bytes);
+      const res = await call(mesh.runtime, 'http://localhost/api/auth/keylog', {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          cookie: `tmex_s_self=${sid}`,
+        },
+        body: JSON.stringify({
+          bytes: encodeBase64url(bytes),
+          sig: encodeBase64url(sig),
+        }),
+      });
+      expect(res.status).toBe(409);
+      expect((await res.json()).code).toBe('unavailable');
+      expect(mesh.keyLogService.currentState(mesh.boot.userId).head.seq).toBe(state.head.seq);
+      expect(mesh.published).toHaveLength(0);
+    } finally {
+      mesh.close();
+    }
+  });
+
+  test('hub=sync timeout retries then treats matching hub head as acked', async () => {
+    const mesh = await bootMesh();
+    try {
+      const { buildKeyLogRecord, computeRecordHash, encodeKeyLogRecord, signKeyLogRecordWithRoot } =
+        await import('@tmex/shared/auth');
+      const state = mesh.keyLogService.currentState(mesh.boot.userId);
+      const rec = buildKeyLogRecord(state.head, state.rootEpoch, {
+        uid: mesh.boot.userId,
+        type: 'clear-totp',
+        payload: encodeClearTotpPayload(),
+        signer: 'root',
+        credential_id: null,
+      });
+      const bytes = encodeKeyLogRecord(rec);
+      const sig = signKeyLogRecordWithRoot(mesh.boot.rootKey, bytes);
+      const hash = computeRecordHash(bytes, sig);
+      let calls = 0;
+      const runtime = new MeshHttpRuntime({
+        roles: { hub: false, node: true },
+        nodeId: NODE_ID,
+        nodePk: NODE_PK,
+        userStore: mesh.userStore,
+        keyLogService: mesh.keyLogService,
+        challengeStore: mesh.challengeStore,
+        nodeSessionStore: mesh.nodeSessionStore,
+        peers: mesh.peers,
+        streams: mesh.streams,
+        publisher: {
+          publish() {},
+          async publishAndAck() {
+            calls += 1;
+            return { ok: false, error: 'timeout' };
+          },
+          async queryHubHead() {
+            return { seq: rec.seq, hash };
+          },
+        },
+        primaryUserId: mesh.boot.userId,
+      });
+      const { sid } = await challengeAndLogin(runtime, mesh.boot);
+      const ok = await call(runtime, 'http://localhost/api/auth/keylog?hub=sync', {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          cookie: `tmex_s_self=${sid}`,
+        },
+        body: JSON.stringify({
+          bytes: encodeBase64url(bytes),
+          sig: encodeBase64url(sig),
+        }),
+      });
+      expect(ok.status).toBe(200);
+      expect(calls).toBe(2);
+      expect(((await ok.json()) as { hubAck: boolean }).hubAck).toBe(true);
+      expect(mesh.keyLogService.currentState(mesh.boot.userId).head.seq).toBe(state.head.seq + 1n);
+      runtime.stop();
+    } finally {
+      mesh.close();
+    }
+  });
+
+  test('hub=sync timeout then mismatched hub head returns 504 HUB_TIMEOUT', async () => {
+    const mesh = await bootMesh();
+    try {
+      const runtime = new MeshHttpRuntime({
+        roles: { hub: false, node: true },
+        nodeId: NODE_ID,
+        nodePk: NODE_PK,
+        userStore: mesh.userStore,
+        keyLogService: mesh.keyLogService,
+        challengeStore: mesh.challengeStore,
+        nodeSessionStore: mesh.nodeSessionStore,
+        peers: mesh.peers,
+        streams: mesh.streams,
+        publisher: {
+          publish() {},
+          async publishAndAck() {
+            return { ok: false, error: 'timeout' };
+          },
+          async queryHubHead() {
+            return { seq: 99n, hash: new Uint8Array(32).fill(9) };
+          },
+        },
+        primaryUserId: mesh.boot.userId,
+      });
+      const { sid } = await challengeAndLogin(runtime, mesh.boot);
+      const { buildKeyLogRecord, encodeKeyLogRecord, signKeyLogRecordWithRoot } = await import(
+        '@tmex/shared/auth'
+      );
+      const state = mesh.keyLogService.currentState(mesh.boot.userId);
+      const rec = buildKeyLogRecord(state.head, state.rootEpoch, {
+        uid: mesh.boot.userId,
+        type: 'clear-totp',
+        payload: encodeClearTotpPayload(),
+        signer: 'root',
+        credential_id: null,
+      });
+      const bytes = encodeKeyLogRecord(rec);
+      const sig = signKeyLogRecordWithRoot(mesh.boot.rootKey, bytes);
+      const res = await call(runtime, 'http://localhost/api/auth/keylog?hub=sync', {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          cookie: `tmex_s_self=${sid}`,
+        },
+        body: JSON.stringify({
+          bytes: encodeBase64url(bytes),
+          sig: encodeBase64url(sig),
+        }),
+      });
+      expect(res.status).toBe(504);
+      expect((await res.json()).code).toBe('HUB_TIMEOUT');
+      expect(mesh.keyLogService.currentState(mesh.boot.userId).head.seq).toBe(state.head.seq);
+      runtime.stop();
+    } finally {
+      mesh.close();
+    }
+  });
+
   test('login happy path sets cookie + x-tmex-set-session', async () => {
     const mesh = await bootMesh();
     try {
@@ -715,7 +928,7 @@ describe('auth-routes', () => {
   });
 
   test('keylog apply forwards to publisher; fork → 409', async () => {
-    const mesh = await bootMesh();
+    const mesh = await bootMesh({ roles: { hub: true, node: true } });
     try {
       const { sid } = await challengeAndLogin(mesh.runtime, mesh.boot);
       const { buildKeyLogRecord, encodeKeyLogRecord, signKeyLogRecordWithRoot } = await import(

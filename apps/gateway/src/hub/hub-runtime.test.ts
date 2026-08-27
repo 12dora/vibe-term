@@ -112,7 +112,11 @@ describe('HubRuntime HTTP', () => {
         userStore,
         keyLogSource,
         config: { publicUrl: 'https://hub.example', stun: ['stun:x'] },
-        authenticate: () => ({ userId: user.id, entryNodeId: entry.nodeId }),
+        authenticate: () => ({
+          userId: user.id,
+          entryNodeId: entry.nodeId,
+          sid: 'creator-sid',
+        }),
         now: () => now,
         heartbeatIntervalMs: 60_000,
       });
@@ -212,6 +216,7 @@ describe('HubRuntime HTTP', () => {
         expect(pushed.enroll_pk).toBe(encodeBase64url(enrollment.enrollPk));
         expect(pushed.node_id).toBe(nodeIdToHex(cert.nodeId));
         expect(pushed.certificate).toBe(encodeBase64url(cert.certificateBytes));
+        expect(pushed.entry_sid).toBe('creator-sid');
       }
 
       const redeemedGet = await hub.handleRequest(
@@ -238,11 +243,38 @@ describe('HubRuntime HTTP', () => {
       expect(laptop?.certificate).toBe(encodeBase64url(cert.certificateBytes));
       expect(laptop?.cert_sig).toBe(encodeBase64url(cert.certSig));
 
-      const reused = await redeemReq();
-      expect(reused).not.toBeUndefined();
-      if (!reused) throw new Error('expected reused response');
-      expect(reused.status).toBe(400);
-      expect(await reused.json()).toEqual({ error: 'reused' });
+      const replayed = await redeemReq();
+      expect(replayed).not.toBeUndefined();
+      if (!replayed) throw new Error('expected idempotent redeem response');
+      expect(replayed.status).toBe(200);
+      const replayedBody = (await replayed.json()) as {
+        user: { id: string };
+        user_key_log: unknown[];
+      };
+      expect(replayedBody.user.id).toBe(user.id);
+      expect(replayedBody.user_key_log).toHaveLength(1);
+
+      const otherCert = createNodeCertificate(enrollment.enrollSk, {
+        uid: user.id,
+        edPk: generateEd25519KeyPair().publicKey,
+        x25519Pk: generateX25519KeyPair().publicKey,
+        enrollPk: enrollment.enrollPk,
+        now,
+      });
+      const different = await hub.handleRequest(
+        new Request('http://hub/api/hub/enrollments/redeem', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({
+            certificate: encodeBase64url(otherCert.certificateBytes),
+            cert_sig: encodeBase64url(otherCert.certSig),
+            name: 'other',
+          }),
+        }),
+        dummyServer
+      );
+      expect(different?.status).toBe(400);
+      expect(await different?.json()).toEqual({ error: 'reused' });
 
       const wrongEnroll = await createEnrollment(user.root, {
         uid: user.id,

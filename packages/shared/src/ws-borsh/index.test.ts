@@ -55,6 +55,7 @@ import {
   CarrierSwitchAckSchema,
   CarrierSwitchSchema,
   ClipboardWriteSchema,
+  ENROLL_REDEEMED_MAX_CERT_BYTES,
   EnrollRedeemedSchema,
   EventNotifyS2CSchema,
   NODE_EVENT_STATUS_OFFLINE,
@@ -70,6 +71,7 @@ import {
   TmuxReorderPanesSchema,
   TmuxReorderWindowsSchema,
   WatchEventSchema,
+  assertEnrollRedeemedFields,
 } from './schema';
 
 describe('codec', () => {
@@ -752,5 +754,28 @@ describe('mesh / hub 协议消息', () => {
       4
     );
     expect(decodeEnvelope(frame).kind).toBe(KIND_ENROLL_REDEEMED);
+  });
+
+  it('ENROLL_REDEEMED 拒绝错误长度的 enrollPk/certSig 与过长证书', () => {
+    const good = {
+      enrollPk: new Uint8Array(32).fill(1),
+      certificate: new Uint8Array([9, 8, 7]),
+      certSig: new Uint8Array(64).fill(2),
+      nodeId: 'aa'.repeat(16),
+    };
+    assertEnrollRedeemedFields(good);
+    expect(() =>
+      encodePayload(EnrollRedeemedSchema, { ...good, enrollPk: new Uint8Array(16) })
+    ).toThrow(/Bytes length mismatch/);
+    expect(() =>
+      encodePayload(EnrollRedeemedSchema, { ...good, certSig: new Uint8Array(32) })
+    ).toThrow(/Bytes length mismatch/);
+    expect(() =>
+      assertEnrollRedeemedFields({
+        ...good,
+        certificate: new Uint8Array(ENROLL_REDEEMED_MAX_CERT_BYTES + 1),
+      })
+    ).toThrow(/certificate too large/);
+    expect(() => assertEnrollRedeemedFields({ ...good, nodeId: 'not-hex' })).toThrow(/32-hex/);
   });
 });

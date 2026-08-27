@@ -43,6 +43,7 @@ export type HubRuntimeConfig = {
 export type HubAuthResult = {
   userId: string;
   entryNodeId: string;
+  sid?: string | null;
 };
 
 export type HubAuthenticate = (

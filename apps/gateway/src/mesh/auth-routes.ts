@@ -1,5 +1,6 @@
 import {
   type Delegation,
+  applyKeyLogRecord,
   bytesEqual,
   computeRecordHash,
   decodeBase64url,
@@ -11,6 +12,7 @@ import {
   encodeBase64url,
   verifyDelegation,
   verifyDelegationTimes,
+  verifyKeyLogRecord,
   verifyLogin,
   verifyTotpCode,
 } from '@tmex/shared/auth';
@@ -23,12 +25,15 @@ import {
   createRegistrationOptions,
   decodePasskeyAssertionSig,
   makeVerifyDelegationPasskey,
+  makeVerifyPasskeyAssertion,
   verifyRegistration,
 } from '../auth/passkey';
 import type { UserKeyService } from '../auth/user-key-service';
 import { kdfParamsFromJson } from '../auth/user-key-service';
 import type { UserKeyRecord, UserRecord, UserStore } from '../auth/user-store';
 import {
+  type KeyLogHubAck,
+  type KeyLogPublisher,
   LOGIN_CHALLENGE_TTL_MS,
   LOGIN_RATE_LIMIT,
   LOGIN_RATE_WINDOW_MS,
@@ -47,12 +52,9 @@ import {
   requireSession,
 } from './session-middleware';
 
-export type KeyLogHubAck = { ok: true; seq: bigint | number } | { ok: false; error: string };
+export type { KeyLogHubAck };
 
-export type AuthKeyLogPublisher = {
-  publish(record: { bytes: Uint8Array; sig: Uint8Array }): Promise<void> | void;
-  publishAndAck?(record: { bytes: Uint8Array; sig: Uint8Array }): Promise<KeyLogHubAck>;
-};
+export type AuthKeyLogPublisher = KeyLogPublisher;
 
 export type PublicAuthNode = {
   id: string;
@@ -495,22 +497,16 @@ export class AuthRoutes {
     } catch {
       return jsonError('MALFORMED', 400);
     }
-    const hubSync = new URL(req.url).searchParams.get('hub') === 'sync';
-    let hubAck: boolean | undefined;
-    let hubError: string | undefined;
+    const hubSync = this.usesHubSync(req);
     if (hubSync) {
-      const ack = await this.syncToHub({ bytes, sig });
-      hubAck = ack.ok;
-      if (!ack.ok) {
-        hubError = ack.error;
-      }
+      return this.handleKeyLogHubSync(userId, bytes, sig);
     }
     const applied = await this.deps.keyLogService.apply(userId, { bytes, sig });
     if (!applied.ok) {
       const replayed = this.identicalAppliedRecord(userId, bytes, sig);
       if (replayed) {
         this.deps.onKeyLogEffects?.(userId, []);
-        return this.keyLogSuccess(replayed.seq, replayed.hash, hubSync, hubAck, hubError);
+        return this.keyLogSuccess(replayed.seq, replayed.hash, false);
       }
       if (applied.error === 'fork') {
         return jsonError('KEY_LOG_FORK', 409);
@@ -518,14 +514,85 @@ export class AuthRoutes {
       return jsonError(applied.error, 400);
     }
     this.deps.onKeyLogEffects?.(userId, applied.effects);
-    if (!hubSync) {
-      try {
-        await this.deps.publisher.publish({ bytes, sig });
-      } catch {
-        // local apply is authoritative; hub fan-out is best-effort
-      }
+    try {
+      await this.deps.publisher.publish({ bytes, sig });
+    } catch {
+      // local apply is authoritative; hub fan-out is best-effort
     }
-    return this.keyLogSuccess(applied.seq, applied.hash, hubSync, hubAck, hubError);
+    return this.keyLogSuccess(applied.seq, applied.hash, false);
+  }
+
+  private usesHubSync(req: Request): boolean {
+    if (new URL(req.url).searchParams.get('hub') === 'sync') return true;
+    return Boolean(this.deps.roles.node) && !this.deps.roles.hub;
+  }
+
+  private async handleKeyLogHubSync(
+    userId: string,
+    bytes: Uint8Array,
+    sig: Uint8Array
+  ): Promise<Response> {
+    const preview = await this.previewKeyLog(userId, bytes, sig);
+    if (!preview.ok) {
+      if (preview.error === 'fork') {
+        return jsonError('KEY_LOG_FORK', 409);
+      }
+      return jsonError(preview.error, 400);
+    }
+    const ack = await this.syncToHub({ bytes, sig });
+    if (!ack.ok) {
+      if (ack.error === 'HUB_TIMEOUT') {
+        return jsonError('HUB_TIMEOUT', 504);
+      }
+      return jsonError(ack.error, 409);
+    }
+    const applied = await this.deps.keyLogService.apply(userId, { bytes, sig });
+    if (!applied.ok) {
+      const replayed = this.identicalAppliedRecord(userId, bytes, sig);
+      if (replayed) {
+        this.deps.onKeyLogEffects?.(userId, []);
+        return this.keyLogSuccess(replayed.seq, replayed.hash, true, true);
+      }
+      if (applied.error === 'fork') {
+        return jsonError('KEY_LOG_FORK', 409);
+      }
+      return jsonError(applied.error, 400);
+    }
+    this.deps.onKeyLogEffects?.(userId, applied.effects);
+    return this.keyLogSuccess(applied.seq, applied.hash, true, true);
+  }
+
+  private async previewKeyLog(
+    userId: string,
+    bytes: Uint8Array,
+    sig: Uint8Array
+  ): Promise<{ ok: true } | { ok: false; error: string }> {
+    if (this.identicalAppliedRecord(userId, bytes, sig)) {
+      return { ok: true };
+    }
+    try {
+      const state = this.deps.keyLogService.currentState(userId);
+      const verifyPasskeyAssertion = makeVerifyPasskeyAssertion(this.deps.userStore);
+      const verified = await verifyKeyLogRecord(bytes, sig, {
+        head: state.head,
+        rootEpoch: state.rootEpoch,
+        rootPublicKey: state.rootPublicKey,
+        resolvePasskey: (id) => state.passkeys.get(id)?.public_key ?? null,
+        verifyPasskeyAssertion,
+      });
+      if (!verified.ok) {
+        return verified;
+      }
+      const applied = await applyKeyLogRecord(state, verified.record, verified.hash, {
+        verifyPasskeyAssertion,
+      });
+      if (!applied.ok) {
+        return { ok: false, error: applied.error };
+      }
+      return { ok: true };
+    } catch {
+      return { ok: false, error: 'malformed_payload' };
+    }
   }
 
   private async syncToHub(record: {
@@ -535,11 +602,56 @@ export class AuthRoutes {
     if (!this.deps.publisher.publishAndAck) {
       return { ok: false, error: 'unavailable' };
     }
-    try {
-      return await this.deps.publisher.publishAndAck(record);
-    } catch (err) {
-      return { ok: false, error: err instanceof Error ? err.message : 'hub_error' };
+    const first = await this.safePublishAndAck(record);
+    if (first.ok) return first;
+    if (first.error !== 'timeout') return first;
+    const retry = await this.safePublishAndAck(record);
+    if (retry.ok) return retry;
+    if (retry.error !== 'timeout') return retry;
+    if (await this.hubAlreadyHasRecord(record)) {
+      let seq: bigint | number = 0;
+      try {
+        seq = decodeKeyLogRecord(record.bytes).seq;
+      } catch {
+        seq = 0;
+      }
+      return { ok: true, seq };
     }
+    return { ok: false, error: 'HUB_TIMEOUT' };
+  }
+
+  private async safePublishAndAck(record: {
+    bytes: Uint8Array;
+    sig: Uint8Array;
+  }): Promise<KeyLogHubAck> {
+    const publishAndAck = this.deps.publisher.publishAndAck;
+    if (!publishAndAck) {
+      return { ok: false, error: 'unavailable' };
+    }
+    try {
+      return await publishAndAck(record);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'hub_error';
+      return { ok: false, error: message === 'timeout' ? 'timeout' : message };
+    }
+  }
+
+  private async hubAlreadyHasRecord(record: {
+    bytes: Uint8Array;
+    sig: Uint8Array;
+  }): Promise<boolean> {
+    try {
+      const seq = decodeKeyLogRecord(record.bytes).seq;
+      const remote = await this.deps.publisher.queryKeyLogAt?.(seq);
+      if (remote && bytesEqual(remote.bytes, record.bytes) && bytesEqual(remote.sig, record.sig)) {
+        return true;
+      }
+    } catch {
+      // fall through to head hash
+    }
+    const head = await this.deps.publisher.queryHubHead?.();
+    if (!head) return false;
+    return bytesEqual(head.hash, computeRecordHash(record.bytes, record.sig));
   }
 
   private identicalAppliedRecord(

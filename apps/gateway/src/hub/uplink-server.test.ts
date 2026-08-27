@@ -393,6 +393,106 @@ describe('UplinkServer', () => {
     }
   });
 
+  test('dead uplink send 不打断 append persist', async () => {
+    const { db, close } = createMigratedAuthDb();
+    try {
+      const { userStore, keyLogSource, service } = createHubTestStack(db);
+      const user = seedUser(userStore);
+      const first = signUserRecord(
+        service,
+        user.id,
+        user.root,
+        'clear-totp',
+        encodeClearTotpPayload()
+      );
+      expect((await keyLogSource.append(user.id, first)).ok).toBe(true);
+      const { server } = makeServer(db, userStore, keyLogSource);
+      const a = await authNode(server, userStore, user.id, { name: 'a' });
+      const before = await keyLogSource.head(user.id);
+      const next = signUserRecord(
+        service,
+        user.id,
+        user.root,
+        'clear-totp',
+        encodeClearTotpPayload()
+      );
+      a.hubLink.ctl.send = () => {
+        throw new Error('dead');
+      };
+      sendCtl(a.nodeLink, {
+        t: 'key.log.append',
+        bytes: encodeBase64url(next.bytes),
+        sig: encodeBase64url(next.sig),
+        id: 'dead-1',
+      });
+      const start = Date.now();
+      while (Date.now() - start < 1_000) {
+        const head = await keyLogSource.head(user.id);
+        if (head.seq === before.seq + 1n) break;
+        await new Promise((r) => setTimeout(r, 10));
+      }
+      expect((await keyLogSource.head(user.id)).seq).toBe(before.seq + 1n);
+      expect(a.hubLink.closed).toBeInstanceOf(Promise);
+      server.stop();
+    } finally {
+      close();
+    }
+  });
+
+  test('相同记录重试会补跑 effects / 再广播 node.list', async () => {
+    const { db, close } = createMigratedAuthDb();
+    try {
+      const { userStore, keyLogSource, service } = createHubTestStack(db);
+      const user = seedUser(userStore);
+      const first = signUserRecord(
+        service,
+        user.id,
+        user.root,
+        'clear-totp',
+        encodeClearTotpPayload()
+      );
+      expect((await keyLogSource.append(user.id, first)).ok).toBe(true);
+      const { server } = makeServer(db, userStore, keyLogSource);
+      const a = await authNode(server, userStore, user.id, { name: 'a' });
+      const b = await authNode(server, userStore, user.id, { name: 'b' });
+      await takeUntil(a.inbox, 'node.list');
+      const next = signUserRecord(
+        service,
+        user.id,
+        user.root,
+        'clear-totp',
+        encodeClearTotpPayload()
+      );
+      sendCtl(a.nodeLink, {
+        t: 'key.log.append',
+        bytes: encodeBase64url(next.bytes),
+        sig: encodeBase64url(next.sig),
+        id: 'dup-1',
+      });
+      const firstAck = await takeUntil(a.inbox, 'key.log.ack');
+      expect(firstAck.t).toBe('key.log.ack');
+      if (firstAck.t === 'key.log.ack') expect(firstAck.ok).toBe(true);
+      await takeUntil(b.inbox, 'node.list');
+      sendCtl(a.nodeLink, {
+        t: 'key.log.append',
+        bytes: encodeBase64url(next.bytes),
+        sig: encodeBase64url(next.sig),
+        id: 'dup-2',
+      });
+      const ack = await takeUntil(a.inbox, 'key.log.ack');
+      expect(ack.t).toBe('key.log.ack');
+      if (ack.t === 'key.log.ack') {
+        expect(ack.ok).toBe(true);
+        expect(ack.id).toBe('dup-2');
+      }
+      const update = await takeUntil(b.inbox, 'node.list');
+      expect(update.t).toBe('node.list');
+      server.stop();
+    } finally {
+      close();
+    }
+  });
+
   test('伪造 admit-node / revoke-node / rotate-root 失败且 head 不前进', async () => {
     const { db, close } = createMigratedAuthDb();
     try {

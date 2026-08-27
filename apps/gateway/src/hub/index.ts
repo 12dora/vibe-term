@@ -11,6 +11,7 @@ export { patchNode, type NodePatch } from './node-persistence';
 export {
   UPLINK_CTL_MAX_ARRAY_LEN,
   UPLINK_CTL_MAX_BYTES,
+  UPLINK_CTL_MAX_CERT_BYTES,
   UPLINK_CTL_MAX_DEPTH,
   UPLINK_CTL_MAX_ENDPOINTS,
   UPLINK_CTL_MAX_STRING_LEN,
