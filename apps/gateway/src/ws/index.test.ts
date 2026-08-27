@@ -1,17 +1,21 @@
 import { beforeAll, describe, expect, spyOn, test } from 'bun:test';
 import type { StateSnapshotPayload } from '@tmex/shared';
 import { wsBorsh } from '@tmex/shared';
+import { agentWsHub } from '../agent/ws-hub';
 import { ensureSiteSettingsInitialized, getSiteSettings, updateSiteSettings } from '../db';
 import { runMigrations } from '../db/migrate';
 import { sessionStateStore } from './borsh/session-state';
 import { switchBarrier } from './borsh/switch-barrier';
+import { logTerminalOutputMetricsIfDue } from './gateway-metrics-log';
 import { WebSocketServer, payloadNeedsChunking } from './index';
+import { TerminalOutputMetrics } from './terminal-output-metrics';
 import {
   createBorshTestWs,
   createFakeCarrier,
   createGatewaySession,
   setupConnectionEntry,
 } from './test-helpers';
+import { gatewayWebSocketSendGuard } from './websocket-send-guard';
 
 // 快照下发路径会同步读 device_tree_order 表，确保所有用例前已建表
 beforeAll(() => {
@@ -47,7 +51,7 @@ describe('WebSocketServer client diagnostics', () => {
     await server.handleBorshMessage(ws, wsBorsh.KIND_HELLO_C2S, 1, payload);
 
     expect(ws.data.borshState.clientImpl).toBe(clientImpl.slice(0, 64));
-    server.handleClose(ws);
+    server.closeSession(ws, 1000, 'test cleanup');
   });
 });
 
@@ -1731,5 +1735,187 @@ describe('WebSocketServer.attachStreamSession', () => {
     expect(envelope.kind).toBe(wsBorsh.KIND_HELLO_S2C);
     attached.onClose();
     expect(server.connectedClients.has(attached.session)).toBe(false);
+  });
+});
+
+function encodeHelloFrame(clientImpl: string): Uint8Array {
+  const payload = wsBorsh.encodePayload(wsBorsh.schema.HelloC2SSchema, {
+    clientImpl,
+    clientVersion: 'test',
+    maxFrameBytes: wsBorsh.DEFAULT_MAX_FRAME_BYTES,
+    supportsCompression: false,
+    supportsDiffSnapshot: false,
+  });
+  return wsBorsh.encodeEnvelope(wsBorsh.KIND_HELLO_C2S, payload, 1);
+}
+
+describe('WebSocketServer session/carrier close semantics', () => {
+  test('closeSession closes both carriers and removes the session from every registry', () => {
+    const server = new WebSocketServer();
+    const session = createGatewaySession({ session: true });
+    const direct = createFakeCarrier();
+    server.handleOpen(session);
+    session.attachCarrier(direct, 'direct');
+    session.switchActiveCarrier(direct);
+    server.getOrCreateCanonicalSession(session);
+    const entry = setupConnectionEntry(server, { deviceId: 'dev-close', ws: session });
+    const removeClient = spyOn(agentWsHub, 'removeClient');
+    const cleanupBarrier = spyOn(switchBarrier, 'cleanupClient');
+
+    server.closeSession(session, 1012, 'Gateway runtime restarting');
+
+    expect(session.closed).toBe(true);
+    expect(session.direct).toBeNull();
+    expect(session.activeCarrier).toBe(session.primary);
+    expect((session.primary as ReturnType<typeof createFakeCarrier>).closeCalls).toEqual([
+      { code: 1012, reason: 'Gateway runtime restarting' },
+    ]);
+    expect(direct.closeCalls).toEqual([{ code: 1012, reason: 'Gateway runtime restarting' }]);
+    expect(server.connectedClients.has(session)).toBe(false);
+    expect(server.canonicalSessions.has(session)).toBe(false);
+    expect(sessionStateStore.get(session)).toBeUndefined();
+    expect(entry.clients.has(session)).toBe(false);
+    expect(removeClient).toHaveBeenCalledWith(session);
+    expect(cleanupBarrier).toHaveBeenCalledWith(session);
+    removeClient.mockRestore();
+    cleanupBarrier.mockRestore();
+  });
+
+  test('handleCarrierClose of an already-closed session is a no-op', () => {
+    const server = new WebSocketServer();
+    const session = createGatewaySession();
+    const direct = createFakeCarrier();
+    server.handleOpen(session);
+    session.attachCarrier(direct, 'direct');
+    server.closeSession(session, 1012, 'restart');
+    const primaryCloses = (session.primary as ReturnType<typeof createFakeCarrier>).closeCalls
+      .length;
+    const directCloses = direct.closeCalls.length;
+
+    server.handleCarrierClose(session, session.primary, 1006, 'late bun close');
+    server.handleCarrierClose(session, direct, 1006, 'late direct close');
+
+    expect(session.closed).toBe(true);
+    expect((session.primary as ReturnType<typeof createFakeCarrier>).closeCalls.length).toBe(
+      primaryCloses
+    );
+    expect(direct.closeCalls.length).toBe(directCloses);
+    expect(server.connectedClients.has(session)).toBe(false);
+  });
+
+  test('non-active direct close detaches only and the session survives', () => {
+    const server = new WebSocketServer();
+    const session = createGatewaySession();
+    const direct = createFakeCarrier();
+    server.handleOpen(session);
+    session.attachCarrier(direct, 'direct');
+    server.getOrCreateCanonicalSession(session);
+
+    server.handleCarrierClose(session, direct, 1006, 'direct dropped');
+
+    expect(session.closed).toBe(false);
+    expect(session.direct).toBeNull();
+    expect(session.activeCarrier).toBe(session.primary);
+    expect(server.connectedClients.has(session)).toBe(true);
+    expect(server.canonicalSessions.has(session)).toBe(true);
+    expect((session.primary as ReturnType<typeof createFakeCarrier>).closeCalls).toEqual([]);
+  });
+
+  test('active direct close detaches and switches active back to primary', () => {
+    const server = new WebSocketServer();
+    const session = createGatewaySession();
+    const direct = createFakeCarrier();
+    server.handleOpen(session);
+    session.attachCarrier(direct, 'direct');
+    session.switchActiveCarrier(direct);
+
+    server.handleCarrierClose(session, direct, 1006, 'active direct dropped');
+
+    expect(session.closed).toBe(false);
+    expect(session.direct).toBeNull();
+    expect(session.activeCarrier).toBe(session.primary);
+    expect(server.connectedClients.has(session)).toBe(true);
+    expect((session.primary as ReturnType<typeof createFakeCarrier>).closeCalls).toEqual([]);
+  });
+
+  test('primary close while direct is active closes both and drops later inbound on direct', () => {
+    const server = new WebSocketServer();
+    const attached = server.attachStreamSession(createFakeCarrier());
+    const { session } = attached;
+    const direct = createFakeCarrier();
+    session.attachCarrier(direct, 'direct');
+    session.switchActiveCarrier(direct);
+    const canonical = server.getOrCreateCanonicalSession(session);
+    const onDrain = spyOn(canonical, 'onDrain');
+
+    server.handleCarrierClose(session, session.primary, 1006, 'primary closed');
+
+    expect(session.closed).toBe(true);
+    expect(direct.closeCalls).toEqual([{ code: 1006, reason: 'primary closed' }]);
+    expect(server.connectedClients.has(session)).toBe(false);
+
+    const sentBefore = direct.sent.length;
+    attached.onMessage(encodeHelloFrame('after-close'));
+    server.handleMessage(session, Buffer.from(encodeHelloFrame('after-close-direct')));
+    server.handleDrain(session, direct);
+    expect(direct.sent.length).toBe(sentBefore);
+    expect(onDrain).not.toHaveBeenCalled();
+    onDrain.mockRestore();
+  });
+
+  test('attachStreamSession onClose while direct is active closes both carriers', () => {
+    const server = new WebSocketServer();
+    const primary = createFakeCarrier();
+    const attached = server.attachStreamSession(primary);
+    const direct = createFakeCarrier();
+    attached.session.attachCarrier(direct, 'direct');
+    attached.session.switchActiveCarrier(direct);
+
+    attached.onClose();
+
+    expect(attached.session.closed).toBe(true);
+    expect(primary.closeCalls.length).toBe(1);
+    expect(direct.closeCalls.length).toBe(1);
+    expect(server.connectedClients.has(attached.session)).toBe(false);
+  });
+
+  test('metrics snapshot covers every attached carrier and logs carrier field names', () => {
+    const server = new WebSocketServer();
+    const session = createGatewaySession({
+      carrier: createFakeCarrier({ send: () => 'backpressure', bufferedAmount: 5 }),
+    });
+    const direct = createFakeCarrier({ send: () => 'backpressure', bufferedAmount: 7 });
+    server.handleOpen(session);
+    session.attachCarrier(direct, 'direct');
+    session.switchActiveCarrier(direct);
+    gatewayWebSocketSendGuard.sendFrames(session.primary, [new Uint8Array([1])]);
+    gatewayWebSocketSendGuard.sendFrames(direct, [new Uint8Array([2])]);
+
+    const logs: string[] = [];
+    const logSpy = spyOn(console, 'log').mockImplementation((message: unknown) => {
+      if (typeof message === 'string') logs.push(message);
+    });
+    try {
+      logTerminalOutputMetricsIfDue({
+        connectedClients: server.connectedClients,
+        connections: server.connections,
+        canonicalSessions: server.canonicalSessions,
+        terminalOutputBatcher: server.terminalOutputBatcher,
+        terminalOutputMetrics: new TerminalOutputMetrics(1, 0),
+        gatewayActivityMetrics: server.gatewayActivityMetrics,
+      });
+    } finally {
+      logSpy.mockRestore();
+      gatewayWebSocketSendGuard.forget(session.primary);
+      gatewayWebSocketSendGuard.forget(direct);
+      server.closeSession(session, 1000, 'metrics cleanup');
+    }
+
+    const metricsLog = logs.find((line) => line.startsWith('[ws-metrics] terminal_output'));
+    expect(metricsLog).toBeDefined();
+    expect(metricsLog).toContain('ws_backpressured_carriers=2');
+    expect(metricsLog).toContain('ws_unavailable_carriers=0');
+    expect(metricsLog).not.toContain('ws_backpressured_sessions=');
+    expect(metricsLog).not.toContain('ws_unavailable_sessions=');
   });
 });

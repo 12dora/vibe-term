@@ -7,6 +7,7 @@ import type { DeviceConnectionEntry } from './types';
 
 export interface FakeCarrier extends Carrier {
   sent: Uint8Array[];
+  closeCalls: Array<{ code: number; reason: string }>;
 }
 
 export interface CreateFakeCarrierOptions {
@@ -26,6 +27,7 @@ export function createFakeCarrier(options: CreateFakeCarrierOptions = {}): FakeC
   const drainCallbacks: Array<() => void> = [];
   const carrier: FakeCarrier = {
     sent: [],
+    closeCalls: [],
     send(bytes) {
       if (options.send) {
         const result = options.send.call(carrier, bytes);
@@ -42,7 +44,9 @@ export function createFakeCarrier(options: CreateFakeCarrierOptions = {}): FakeC
     onDrain(cb) {
       drainCallbacks.push(cb);
     },
-    close() {},
+    close(code, reason) {
+      carrier.closeCalls.push({ code, reason });
+    },
     terminate() {
       options.terminate?.call(carrier);
     },

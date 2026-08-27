@@ -26,13 +26,20 @@ interface ManagedGatewayRuntime {
     message: (ws: Bun.ServerWebSocket<unknown>, message: string | Buffer) => void;
     drain: (ws: Bun.ServerWebSocket<unknown>) => void;
     close: (ws: Bun.ServerWebSocket<unknown>, code: number, reason: string) => void;
+    closeSession: (session: GatewaySession, code: number, reason: string) => void;
   };
   onRestartRequested: (listener: () => Promise<void> | void) => void;
   stop: () => Promise<void>;
 }
 
-const RUNTIME_RESTART_CLOSE_CODE = 1012;
-const RUNTIME_RESTART_CLOSE_REASON = 'Gateway runtime restarting';
+type RuntimeSessionCloser = {
+  websocket: {
+    closeSession: (session: GatewaySession, code: number, reason: string) => void;
+  };
+};
+
+export const RUNTIME_RESTART_CLOSE_CODE = 1012;
+export const RUNTIME_RESTART_CLOSE_REASON = 'Gateway runtime restarting';
 
 function armRestart(runtime: ManagedGatewayRuntime): Promise<void> {
   return new Promise<void>((resolve) => {
@@ -44,25 +51,20 @@ function socketSession(ws: Bun.ServerWebSocket<unknown>): GatewaySession | undef
   return (ws as Bun.ServerWebSocket<GatewaySocketData>).data?.session;
 }
 
-function closeRuntimeWebSockets(
-  socketOwners: Map<GatewaySession, ManagedGatewayRuntime>,
-  runtime: ManagedGatewayRuntime
+export function closeRuntimeWebSockets(
+  socketOwners: Map<GatewaySession, RuntimeSessionCloser>,
+  runtime: RuntimeSessionCloser
 ): unknown {
   let firstError: unknown;
   for (const [session, owner] of socketOwners) {
     if (owner !== runtime) continue;
     socketOwners.delete(session);
     try {
-      owner.websocket.close(
-        session as unknown as Bun.ServerWebSocket<unknown>,
+      owner.websocket.closeSession(
+        session,
         RUNTIME_RESTART_CLOSE_CODE,
         RUNTIME_RESTART_CLOSE_REASON
       );
-    } catch (error) {
-      firstError ??= error;
-    }
-    try {
-      session.activeCarrier.close(RUNTIME_RESTART_CLOSE_CODE, RUNTIME_RESTART_CLOSE_REASON);
     } catch (error) {
       firstError ??= error;
     }
@@ -256,11 +258,13 @@ async function runManagedGateway(): Promise<void> {
   }
 }
 
-const managedArgs = parseManagedGatewayArgs(process.argv.slice(2));
+if (import.meta.main) {
+  const managedArgs = parseManagedGatewayArgs(process.argv.slice(2));
 
-if (managedArgs.version) {
-  console.log(`tmex-gateway ${embeddedVersion()}`);
-} else {
-  applyManagedTmuxNamespace(process.env, managedArgs.tmuxNamespace);
-  await runManagedGateway();
+  if (managedArgs.version) {
+    console.log(`tmex-gateway ${embeddedVersion()}`);
+  } else {
+    applyManagedTmuxNamespace(process.env, managedArgs.tmuxNamespace);
+    await runManagedGateway();
+  }
 }

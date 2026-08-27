@@ -169,6 +169,9 @@ export class WebSocketServer
   handleOpen(ws: ServerWebSocket<GatewaySocketData> | GatewaySession): void {
     console.log('[ws] client connected');
     const session = ws instanceof GatewaySession ? ws : this.bindSocket(ws);
+    session.onCarrierDetached = (carrier) => {
+      gatewayWebSocketSendGuard.forget(carrier);
+    };
     sessionStateStore.create(session);
     this.connectedClients.add(session);
   }
@@ -186,10 +189,11 @@ export class WebSocketServer
     return {
       session,
       onMessage: (bytes) => {
+        if (session.closed) return;
         this.handleMessage(session, Buffer.from(bytes));
       },
       onClose: () => {
-        this.handleClose(session);
+        this.handleCarrierClose(session, carrier);
       },
     };
   }
@@ -203,6 +207,9 @@ export class WebSocketServer
     }
 
     const { session } = this.bindingOf(ws);
+    if (session.closed) {
+      return;
+    }
     const data = new Uint8Array(message);
 
     if (!wsBorsh.checkMagic(data)) {
@@ -260,6 +267,9 @@ export class WebSocketServer
   handleDrain(ws: ServerWebSocket<GatewaySocketData> | GatewaySession, carrier?: Carrier): void {
     const binding = this.bindingOf(ws);
     const session = binding.session;
+    if (session.closed) {
+      return;
+    }
     const drained = carrier ?? binding.carrier;
     if (drained instanceof BunSocketCarrier) {
       drained.emitDrain();
@@ -337,26 +347,48 @@ export class WebSocketServer
     }
   }
 
-  handleClose(ws: ServerWebSocket<GatewaySocketData> | GatewaySession): void {
-    console.log('[ws] client disconnected');
-    const { session, carrier } = this.bindingOf(ws);
-    if (carrier !== session.primary && session.direct === carrier) {
-      session.detachCarrier(carrier);
-      gatewayWebSocketSendGuard.forget(carrier);
+  handleCarrierClose(
+    session: GatewaySession,
+    carrier: Carrier,
+    code = 1006,
+    reason = 'carrier closed'
+  ): void {
+    if (session.closed) {
       return;
     }
-    this.closeSession(session);
+    if (carrier === session.primary) {
+      this.closeSession(session, code, reason);
+      return;
+    }
+    if (session.direct === carrier) {
+      session.detachCarrier(carrier);
+    }
   }
 
-  private closeSession(session: GatewaySession): void {
+  closeSession(session: GatewaySession, code: number, reason: string): void {
+    if (session.closed) {
+      return;
+    }
     session.closed = true;
+    console.log('[ws] client disconnected');
+
+    const attached = session.carriers();
+    for (const carrier of attached) {
+      gatewayWebSocketSendGuard.forget(carrier);
+    }
+    for (const carrier of attached) {
+      try {
+        carrier.close(code, reason);
+      } catch {
+        // The carrier may already be closing.
+      }
+    }
+    if (session.direct) {
+      session.detachCarrier(session.direct);
+    }
+
     this.canonicalSessions.get(session)?.close();
     this.canonicalSessions.delete(session);
-    gatewayWebSocketSendGuard.forget(session.activeCarrier);
-    gatewayWebSocketSendGuard.forget(session.primary);
-    if (session.direct) {
-      gatewayWebSocketSendGuard.forget(session.direct);
-    }
     this.connectedClients.delete(session);
     switchBarrier.cleanupClient(session);
     sessionStateStore.cleanup(session);
@@ -394,6 +426,9 @@ export class WebSocketServer
     refSeq: number,
     payload: Uint8Array
   ): Promise<void> {
+    if (ws.closed) {
+      return;
+    }
     try {
       const state = ws.borshState;
       this.gatewayActivityMetrics.recordInbound(kind, payload.length);

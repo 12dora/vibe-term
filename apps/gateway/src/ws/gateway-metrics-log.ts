@@ -25,7 +25,7 @@ export function logTerminalOutputMetricsIfDue(host: GatewayMetricsHost): void {
   const metrics = host.terminalOutputMetrics.takeIfDue(Date.now(), {
     batch: host.terminalOutputBatcher.snapshotStats(),
     websocket: gatewayWebSocketSendGuard.snapshotStats(
-      Array.from(host.connectedClients, (session) => session.activeCarrier)
+      Array.from(host.connectedClients, (session) => session.carriers()).flat()
     ),
     canonical: {
       pendingPaneGaps: canonicalSessionStats.reduce(
@@ -69,8 +69,8 @@ export function logTerminalOutputMetricsIfDue(host: GatewayMetricsHost): void {
       `batch_queue_pane_limit_bytes=${metrics.queues.batch.perPaneBytesLimit} ` +
       `ws_queue_bytes=${metrics.queues.websocket.queuedBytes} ` +
       `ws_queue_limit_bytes=${metrics.queues.websocket.queuedBytesLimit} ` +
-      `ws_backpressured_sessions=${metrics.queues.websocket.backpressuredSessions} ` +
-      `ws_unavailable_sessions=${metrics.queues.websocket.unavailableSessions} ` +
+      `ws_backpressured_carriers=${metrics.queues.websocket.backpressuredSessions} ` +
+      `ws_unavailable_carriers=${metrics.queues.websocket.unavailableSessions} ` +
       `ws_terminations_by_reason=${wsTerminationReasons || 'none'} ` +
       `canonical_pending_gaps=${metrics.queues.canonical.pendingPaneGaps} ` +
       `canonical_pending_gap_limit=${metrics.queues.canonical.pendingPaneGapLimit} ` +

@@ -4,6 +4,9 @@ import type { Carrier } from './carrier';
 
 export type CarrierRole = 'primary' | 'direct';
 
+const DIRECT_REPLACED_CLOSE_CODE = 1000;
+const DIRECT_REPLACED_CLOSE_REASON = 'direct carrier replaced';
+
 export class GatewaySession {
   readonly id: string;
   borshState: BorshSessionState;
@@ -12,6 +15,7 @@ export class GatewaySession {
   direct: Carrier | null = null;
   activeCarrier: Carrier;
   closed = false;
+  onCarrierDetached: ((carrier: Carrier) => void) | null = null;
 
   constructor(options: {
     id?: string;
@@ -26,10 +30,29 @@ export class GatewaySession {
     this.state = options.state ?? createSessionState();
   }
 
+  carriers(): Carrier[] {
+    return this.direct ? [this.primary, this.direct] : [this.primary];
+  }
+
   attachCarrier(carrier: Carrier, role: CarrierRole): void {
     if (this.closed) return;
+    if (carrier === this.primary || carrier === this.direct) {
+      throw new Error('carrier is already attached to this session');
+    }
     if (role === 'primary') {
       return;
+    }
+    const previous = this.direct;
+    if (previous) {
+      if (this.activeCarrier === previous) {
+        this.activeCarrier = this.primary;
+      }
+      this.detachCarrier(previous);
+      try {
+        previous.close(DIRECT_REPLACED_CLOSE_CODE, DIRECT_REPLACED_CLOSE_REASON);
+      } catch {
+        // The previous direct may already be closing.
+      }
     }
     this.direct = carrier;
   }
@@ -40,9 +63,10 @@ export class GatewaySession {
       if (this.activeCarrier === carrier) {
         this.activeCarrier = this.primary;
       }
+      this.onCarrierDetached?.(carrier);
       return;
     }
-    if (carrier === this.primary && this.direct) {
+    if (carrier === this.primary && this.direct && !this.closed) {
       this.activeCarrier = this.direct;
     }
   }

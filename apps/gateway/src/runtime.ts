@@ -1,6 +1,7 @@
 import { agentSupervisor } from './agent/supervisor';
 import { type SystemApiHandler, handleApiRequest } from './api';
 import { json } from './api/http';
+import type { AuthDb } from './auth/types';
 import { config } from './config';
 import { runtimeController } from './control/runtime';
 import {
@@ -9,6 +10,7 @@ import {
   getSiteSettings,
 } from './db';
 import { ensureAgentSettingsInitialized } from './db/agent';
+import { getDb as getOrmDb } from './db/client';
 import { runMigrations } from './db/migrate';
 import { eventNotifier } from './events';
 import { registerEventNotifyBroadcaster } from './events/broadcaster';
@@ -37,6 +39,8 @@ interface GatewayRuntimeOptions {
 
 export interface GatewayRuntime {
   readonly port: number;
+  readonly db: AuthDb;
+  readonly wsServer: WebSocketServer;
   handleRequest: (
     req: Request,
     bunServer: Bun.Server<unknown>
@@ -49,6 +53,7 @@ export interface GatewayRuntime {
     message: (ws: Bun.ServerWebSocket<unknown>, message: string | Buffer) => void;
     drain: (ws: Bun.ServerWebSocket<unknown>) => void;
     close: (ws: Bun.ServerWebSocket<unknown>, code: number, reason: string) => void;
+    closeSession: (session: GatewaySocketData['session'], code: number, reason: string) => void;
   };
   onRestartRequested: (listener: () => Promise<void> | void) => void;
   stop: () => Promise<void>;
@@ -80,6 +85,7 @@ export async function createGatewayRuntime(
   sweepOrphanTransferTemps();
 
   const wsServer = new WebSocketServer();
+  const db = getOrmDb();
   wsServer.currentTheme = getSiteSettings().theme;
   connectionAlertNotifier.setBroadcaster((deviceId, payload) => {
     wsServer.broadcastDeviceError(deviceId, payload);
@@ -126,6 +132,8 @@ export async function createGatewayRuntime(
 
   return {
     port: config.port,
+    db,
+    wsServer,
     handleRequest(req, bunServer) {
       const url = new URL(req.url);
 
@@ -163,10 +171,17 @@ export async function createGatewayRuntime(
         wsServer.handleMessage(ws as Bun.ServerWebSocket<GatewaySocketData>, message);
       },
       drain(ws) {
-        wsServer.handleDrain(ws as Bun.ServerWebSocket<GatewaySocketData>);
+        const data = (ws as Bun.ServerWebSocket<GatewaySocketData>).data;
+        if (!data?.session || data.session.closed) return;
+        wsServer.handleDrain(data.session, data.carrier);
       },
-      close(ws, _code, _reason) {
-        wsServer.handleClose(ws as Bun.ServerWebSocket<GatewaySocketData>);
+      close(ws, code, reason) {
+        const data = (ws as Bun.ServerWebSocket<GatewaySocketData>).data;
+        if (!data?.session || !data.carrier) return;
+        wsServer.handleCarrierClose(data.session, data.carrier, code, reason);
+      },
+      closeSession(session, code, reason) {
+        wsServer.closeSession(session, code, reason);
       },
     },
     onRestartRequested(listener) {
