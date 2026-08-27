@@ -200,6 +200,10 @@ const handlers: TmuxEventHandlers = {
     ctx.getSite().getState().setThemeFromS2C(event.theme);
   },
 
+  'settings-update': (event, ctx) => {
+    ctx.getSite().getState().handleSettingsUpdate(event.namespace);
+  },
+
   'transport-error': (event) => {
     console.error('[tmux] gateway transport error:', event.error);
   },

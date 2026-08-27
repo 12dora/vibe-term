@@ -106,6 +106,8 @@ export type GatewayTransportEvent =
     }
   | { type: 'clipboard-write'; deviceId: string; paneId: string; text: string }
   | { type: 'site-theme-update'; theme: 'dark' | 'light' }
+  // 服务端设置变更的缓存失效信号；namespace 保持 wire 原样（服务端可新增取值，客户端按需匹配）
+  | { type: 'settings-update'; namespace: string }
   | { type: 'transport-error'; error: Error };
 
 export type GatewayTransportEventHandler = (event: GatewayTransportEvent) => void;

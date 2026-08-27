@@ -16,6 +16,11 @@ export interface SiteState {
   loadCapabilities: () => Promise<void>;
   updateTheme: (theme: ThemeMode) => void;
   setThemeFromS2C: (theme: ThemeMode) => void;
+  /**
+   * S2C 设置变更信号的缓存失效入口。只有 'site' 对应本 store 缓存的 SiteSettings；
+   * 'theme' 另有 SITE_THEME_UPDATE 专用帧，其余 namespace 的缓存在各自消费方（react-query）。
+   */
+  handleSettingsUpdate: (namespace: string) => void;
 }
 
 const DEFAULT_SETTINGS: SiteSettings = {
@@ -125,6 +130,17 @@ export function createSiteStore(
         const msg = buildSiteThemeUpdate(theme);
         core.client.send(msg.kind, msg.payload);
       }
+    },
+
+    handleSettingsUpdate: (namespace) => {
+      if (namespace !== 'site') {
+        return;
+      }
+      void get()
+        .refreshSettings()
+        .catch(() => {
+          // refreshSettings 内部已记录失败；失效信号丢一次不影响后续读取
+        });
     },
 
     setThemeFromS2C: (theme) => {

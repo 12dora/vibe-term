@@ -61,6 +61,10 @@ function siteSettingsResponse(overrides: Partial<SiteSettings> = {}): typeof glo
   }) as unknown as typeof globalThis.fetch;
 }
 
+function flushAsync(): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, 0));
+}
+
 function readLocalStorageTheme(): 'dark' | 'light' | undefined {
   const raw = localStorage.getItem(TMEX_UI_KEY);
   if (!raw) return undefined;
@@ -176,6 +180,65 @@ describe('useSiteStore theme', () => {
 
     expect(useUIStore.getState().theme).toBe('light');
     expect(readLocalStorageTheme()).toBe('light');
+  });
+});
+
+describe('useSiteStore handleSettingsUpdate', () => {
+  beforeEach(() => {
+    useSiteStore.setState({ settings: null, loading: false });
+  });
+
+  test("namespace 'site' 重新拉取设置并覆盖本地缓存", async () => {
+    const originalFetch = globalThis.fetch;
+    const fetchMock = siteSettingsResponse({ siteName: 'renamed' });
+    globalThis.fetch = fetchMock;
+
+    try {
+      useSiteStore.setState({ settings: makeSiteSettings({ siteName: 'stale' }) });
+
+      useSiteStore.getState().handleSettingsUpdate('site');
+      await flushAsync();
+
+      expect(useSiteStore.getState().settings?.siteName).toBe('renamed');
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  test('其它 namespace 不触发 REST 重拉', () => {
+    const originalFetch = globalThis.fetch;
+    const fetchMock = siteSettingsResponse();
+    globalThis.fetch = fetchMock;
+
+    try {
+      for (const namespace of ['theme', 'llm', 'webhooks', 'tree-order']) {
+        useSiteStore.getState().handleSettingsUpdate(namespace);
+      }
+
+      expect(fetchMock).not.toHaveBeenCalled();
+      expect(useSiteStore.getState().loading).toBe(false);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  test('重拉失败时静默保留旧缓存，不抛未处理拒绝', async () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = mock(
+      async () => new Response('boom', { status: 500 })
+    ) as unknown as typeof globalThis.fetch;
+
+    try {
+      useSiteStore.setState({ settings: makeSiteSettings({ siteName: 'kept' }) });
+
+      useSiteStore.getState().handleSettingsUpdate('site');
+      await flushAsync();
+
+      expect(useSiteStore.getState().settings?.siteName).toBe('kept');
+      expect(useSiteStore.getState().loading).toBe(false);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
   });
 });
 

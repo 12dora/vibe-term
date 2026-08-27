@@ -117,6 +117,13 @@ const MESSAGE_DECODERS = new Map<number, MessageDecoder>([
     },
   ],
   [
+    wsBorsh.KIND_SETTINGS_UPDATE,
+    (payload, emit) => {
+      const decoded = wsBorsh.decodePayload(wsBorsh.schema.SettingsUpdateS2CSchema, payload);
+      emit({ type: 'settings-update', namespace: decoded.namespace });
+    },
+  ],
+  [
     wsBorsh.KIND_ERROR,
     (payload, emit) => {
       const decoded = wsBorsh.decodePayload(wsBorsh.schema.ErrorSchema, payload);
