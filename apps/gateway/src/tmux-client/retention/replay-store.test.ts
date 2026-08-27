@@ -36,4 +36,40 @@ describe('pane replay store', () => {
     expect(miss.gap?.reason).toBe('pane_gap');
     expect(miss.gap?.availableSeq).toBe(4n);
   });
+
+  test('readHistory covers exact start, mid-chunk, past end, and evicted range', () => {
+    const kernel = new RetentionKernel({ scheduleTimers: false });
+    const replay = new PaneReplayStore(kernel);
+    const state = replay.createPane('%1', EPOCH_A, true);
+    state.mode = 'active';
+    kernel.panes.set('%1', state);
+    replay.append(state, encoder.encode('ab'), 0);
+    replay.append(state, encoder.encode('cd'), 0);
+
+    const exactStart = replay.readHistory('%1', { paneEpoch: EPOCH_A, terminalSeq: 0n }, 64);
+    expect(exactStart?.gap).toBeNull();
+    expect(decoder.decode(exactStart?.data ?? new Uint8Array())).toBe('');
+    expect(exactStart?.seqStart).toBe(0n);
+    expect(exactStart?.seqEnd).toBe(0n);
+    expect(exactStart?.nextCursor).toBeNull();
+
+    const midChunk = replay.readHistory('%1', { paneEpoch: EPOCH_A, terminalSeq: 3n }, 64);
+    expect(decoder.decode(midChunk?.data ?? new Uint8Array())).toBe('abc');
+    expect(midChunk?.seqStart).toBe(0n);
+    expect(midChunk?.seqEnd).toBe(3n);
+    expect(midChunk?.nextCursor).toBeNull();
+
+    const pastEnd = replay.readHistory('%1', { paneEpoch: EPOCH_A, terminalSeq: 9n }, 64);
+    expect(pastEnd?.gap?.reason).toBe('pane_gap');
+    expect(pastEnd?.seqStart).toBe(4n);
+    expect(pastEnd?.seqEnd).toBe(4n);
+    expect(pastEnd?.nextCursor).toBeNull();
+
+    const dropped = state.replay.shift();
+    if (dropped) state.replayBytes -= dropped.data.byteLength;
+    const evicted = replay.readHistory('%1', { paneEpoch: EPOCH_A, terminalSeq: 1n }, 64);
+    expect(evicted?.gap?.reason).toBe('cache_evicted');
+    expect(evicted?.seqStart).toBe(4n);
+    expect(evicted?.seqEnd).toBe(4n);
+  });
 });

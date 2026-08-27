@@ -9,6 +9,14 @@
 
 import { HeadlessTerminal } from 'ghostty-terminal/headless';
 import type { PaneInfo } from './capture-history';
+import {
+  DEFAULT_SCROLLBACK,
+  hasRetentionSource,
+  resolveEmulatorOptions,
+  seedFromPaneText,
+  seedFromRetention,
+  subscribePaneStream,
+} from './pane-emulator-create';
 import type {
   PaneIdentity,
   PaneReplayPlan,
@@ -41,8 +49,6 @@ export interface PaneEmulatorTap {
   onMarker?: (marker: PromptMarker) => void;
 }
 
-const DEFAULT_SCROLLBACK = 5000;
-
 export class PaneEmulator {
   private readonly byteSubs = new Set<(data: Uint8Array) => void>();
   private readonly markerSubs = new Set<(marker: PromptMarker) => void>();
@@ -63,76 +69,23 @@ export class PaneEmulator {
     opts?: { scrollback?: number }
   ): Promise<PaneEmulator> {
     const info = await source.getPaneInfo(paneId).catch(() => null);
-    const cols = info?.cols && info.cols > 0 ? info.cols : 80;
-    const rows = info?.rows && info.rows > 0 ? info.rows : 24;
-    const terminal = await HeadlessTerminal.create({
-      cols,
-      rows,
-      scrollback: opts?.scrollback ?? DEFAULT_SCROLLBACK,
-    });
+    const terminal = await HeadlessTerminal.create(resolveEmulatorOptions(info, opts));
     const emulator = new PaneEmulator(paneId, terminal);
 
-    const getPaneIdentity = source.getPaneIdentity;
-    const attachPaneConsumer = source.attachPaneConsumer;
-    const captureCanonicalScreen = source.captureCanonicalScreen;
-    const readPaneReplay = source.readPaneReplay;
-    if (getPaneIdentity && attachPaneConsumer && captureCanonicalScreen && readPaneReplay) {
-      const identity = getPaneIdentity.call(source, paneId);
-      if (!identity) {
-        terminal.free();
-        throw new Error(`pane not found: ${paneId}`);
-      }
-      const lease = attachPaneConsumer.call(source, {
-        onData: (segment) => emulator.feed(segment.data),
-      });
-      emulator.paneLease = lease;
-      let checkpoint: PaneScreenCheckpoint | null;
-      try {
-        lease.applySubscriptions(1n, [{ paneId, paneEpoch: identity.paneEpoch, cursor: null }], []);
-        checkpoint = await captureCanonicalScreen.call(source, paneId, 512 * 1024);
-      } catch (error) {
-        lease.close();
-        emulator.paneLease = null;
-        terminal.free();
-        throw error;
-      }
-      if (!checkpoint) {
-        lease.close();
-        emulator.paneLease = null;
-        terminal.free();
-        throw new Error(`pane screen unavailable: ${paneId}`);
-      }
-      terminal.write(checkpoint.data);
-      const replay = readPaneReplay.call(source, paneId, {
-        paneEpoch: checkpoint.paneEpoch,
-        terminalSeq: checkpoint.baseSeq,
-      });
-      if (!replay || replay.gap) {
-        lease.close();
-        emulator.paneLease = null;
-        terminal.free();
-        throw new Error(`pane replay unavailable after screen capture: ${paneId}`);
-      }
-      for (const segment of replay.segments) terminal.write(segment.data);
-      emulator.unsubscribe = source.subscribe({
-        onPromptMarker: (pid, marker) => {
-          if (pid === paneId) emulator.emitMarker(marker);
-        },
+    if (hasRetentionSource(source)) {
+      emulator.paneLease = await seedFromRetention(source, paneId, terminal, (data) =>
+        emulator.feed(data)
+      );
+      emulator.unsubscribe = subscribePaneStream(source, paneId, {
+        onMarker: (marker) => emulator.emitMarker(marker),
       });
       return emulator;
     }
 
-    const seed = await source.capturePaneText(paneId, { historyLines: 0 }).catch(() => '');
-    if (seed) terminal.write(`${seed.replace(/\r?\n/g, '\r\n')}\r\n`);
-    emulator.unsubscribe = source.subscribe({
-      onTerminalOutput: (pid, data) => {
-        if (pid === paneId) emulator.feed(data);
-      },
-      onPromptMarker: (pid, marker) => {
-        if (pid === paneId) {
-          emulator.emitMarker(marker);
-        }
-      },
+    await seedFromPaneText(source, paneId, terminal);
+    emulator.unsubscribe = subscribePaneStream(source, paneId, {
+      onOutput: (data) => emulator.feed(data),
+      onMarker: (marker) => emulator.emitMarker(marker),
     });
     return emulator;
   }

@@ -240,6 +240,56 @@ describe('getExpectedPaneIds / emitSnapshot', () => {
     ]);
   });
 
+  test('snapshot output is identical for shuffled tmux window and pane rows', () => {
+    const windowLines = ['@3|2|0|layout-c|late', '@1|0|1|layout-a|main', '@2|1|0|layout-b|mid'];
+    const paneLines = [
+      '%5|@2|1|0|40|24|40|0|0|right|zsh|/tmp',
+      '%2|@1|1|0|40|24|40|0|1|side|vim|/src',
+      '%4|@2|0|1|40|24|0|0|0|left|bash|/tmp',
+      '%1|@1|0|1|40|24|0|0|1|bash|node|/home',
+      '%9|@3|0|0|80|24|0|0|0|only|sh|/opt',
+    ];
+
+    function project(shuffledWindows: string[], shuffledPanes: string[]) {
+      const parsed = parseSnapshotWindows(shuffledWindows, ctx);
+      parseSnapshotPanes(shuffledPanes, parsed.windows, ctx);
+      const snapshots: StateSnapshotPayload[] = [];
+      emitSnapshot({
+        deviceId: 'dev-1',
+        snapshotSession: { id: '$1', name: 'tmex' },
+        snapshotWindows: parsed.windows,
+        callbacks: {
+          onSnapshot: (payload) => snapshots.push(payload),
+        },
+      });
+      return {
+        paneIds: getExpectedPaneIds(parsed.windows),
+        snapshots,
+        activeWindowId: parsed.activeWindowId,
+      };
+    }
+
+    const canonical = project(windowLines, paneLines);
+    const shuffled = project(
+      [windowLines[1] ?? '', windowLines[2] ?? '', windowLines[0] ?? ''],
+      [
+        paneLines[4] ?? '',
+        paneLines[0] ?? '',
+        paneLines[3] ?? '',
+        paneLines[1] ?? '',
+        paneLines[2] ?? '',
+      ]
+    );
+
+    expect(canonical.paneIds).toEqual(['%1', '%2', '%4', '%5', '%9']);
+    expect(shuffled).toEqual(canonical);
+    expect(canonical.snapshots[0]?.session?.windows.map((window) => window.id)).toEqual([
+      '@1',
+      '@2',
+      '@3',
+    ]);
+  });
+
   test('emits a null session when snapshotSession is missing', () => {
     const snapshots: unknown[] = [];
     emitSnapshot({
@@ -472,6 +522,37 @@ describe('SnapshotProjector.performSnapshot', () => {
       },
       baseRevision: 3n,
     });
+  });
+
+  test('performSnapshot emits the same windows for shuffled tmux list output', async () => {
+    const host = createHost();
+    host.setResponse(
+      `display-message -p -t tmex #{session_id}${SNAPSHOT_FIELD_SEPARATOR}#{session_name}`,
+      ok('$1|tmex\n')
+    );
+    host.setResponse(
+      `list-windows -t tmex -F ${WINDOW_SNAPSHOT_FORMAT}`,
+      ok('@2|1|0|layout-b|mid\n@1|0|1|layout-a|main\n')
+    );
+    host.setResponse(
+      `list-panes -s -t tmex -F ${PANE_SNAPSHOT_FORMAT}`,
+      ok(
+        '%2|@1|1|0|40|24|40|0|1|side|vim|/src\n%1|@1|0|1|40|24|0|0|1|bash|node|/home\n%3|@2|0|0|80|24|0|0|0|only|sh|/opt\n'
+      )
+    );
+
+    await new SnapshotProjector(host).performSnapshot();
+
+    expect(host.pruned).toEqual([['%1', '%2', '%3']]);
+    expect(host.snapshots[0]?.payload.session?.windows.map((window) => window.id)).toEqual([
+      '@1',
+      '@2',
+    ]);
+    expect(
+      host.snapshots[0]?.payload.session?.windows.map((window) =>
+        window.panes.map((pane) => pane.id)
+      )
+    ).toEqual([['%1', '%2'], ['%3']]);
   });
 
   test('aborts before parsing when shouldAbortSnapshot returns true', async () => {

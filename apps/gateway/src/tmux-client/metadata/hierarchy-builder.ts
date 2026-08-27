@@ -1,5 +1,18 @@
-import { type StateSnapshotPayload, wsBorsh } from '@tmex/shared';
+import {
+  type StateSnapshotPayload,
+  type TmuxPane,
+  type TmuxSession,
+  type TmuxWindow,
+  wsBorsh,
+} from '@tmex/shared';
 
+import {
+  applyPaneHints,
+  pickFallbackName,
+  setDefinedStringField,
+  setDefinedU16Field,
+  setTruthyStringField,
+} from './hierarchy-fields';
 import {
   type PaneFieldHints,
   type PendingUpsert,
@@ -28,79 +41,101 @@ export class MetadataHierarchyBuilder {
 
   buildDesired(snapshot: StateSnapshotPayload): Map<string, PendingUpsert> {
     const desired = new Map<string, PendingUpsert>();
+    const device = this.buildDevice();
+    putRecord(desired, device);
+    const server = this.buildServer(device.key);
+    putRecord(desired, server);
+    if (!snapshot.session) return desired;
+    this.addSession(desired, snapshot.session, server.key);
+    return desired;
+  }
+
+  private buildDevice(): PendingUpsert {
     const device = this.newRecord(wsBorsh.SOURCE_ENTITY_DEVICE, this.host.deviceId, null);
     device.fields.set(wsBorsh.SOURCE_FIELD_NAME, stringValue(this.host.deviceName));
     device.fields.set(wsBorsh.SOURCE_FIELD_CONNECTED, boolValue(true));
-    desired.set(keyId(device.key), device);
+    return device;
+  }
 
-    const server = this.newRecord(wsBorsh.SOURCE_ENTITY_SERVER, SERVER_NATIVE_ID, device.key);
+  private buildServer(deviceKey: wsBorsh.SourceEntityKey): PendingUpsert {
+    const server = this.newRecord(wsBorsh.SOURCE_ENTITY_SERVER, SERVER_NATIVE_ID, deviceKey);
     server.fields.set(wsBorsh.SOURCE_FIELD_CONNECTED, boolValue(true));
-    desired.set(keyId(server.key), server);
-    if (!snapshot.session) return desired;
+    return server;
+  }
 
-    const session = this.newRecord(wsBorsh.SOURCE_ENTITY_SESSION, snapshot.session.id, server.key);
-    session.fields.set(wsBorsh.SOURCE_FIELD_NAME, stringValue(snapshot.session.name));
-    desired.set(keyId(session.key), session);
+  private addSession(
+    desired: Map<string, PendingUpsert>,
+    session: TmuxSession,
+    serverKey: wsBorsh.SourceEntityKey
+  ): void {
+    const record = this.buildSession(session, serverKey);
+    putRecord(desired, record);
+    this.addWindows(desired, session.windows, record.key);
+  }
 
-    for (const window of snapshot.session.windows) {
-      const windowRecord = this.newRecord(wsBorsh.SOURCE_ENTITY_WINDOW, window.id, session.key);
-      windowRecord.fields.set(wsBorsh.SOURCE_FIELD_NAME, stringValue(window.name));
-      windowRecord.fields.set(wsBorsh.SOURCE_FIELD_INDEX, u32Value(window.index));
-      windowRecord.fields.set(wsBorsh.SOURCE_FIELD_ACTIVE, boolValue(window.active));
-      if (window.layout !== undefined) {
-        windowRecord.fields.set(wsBorsh.SOURCE_FIELD_LAYOUT, stringValue(window.layout));
-      }
-      const windowCustomName = this.host.getWindowCustomName(window.id) ?? window.customName;
-      if (windowCustomName) {
-        windowRecord.fields.set(wsBorsh.SOURCE_FIELD_CUSTOM_NAME, stringValue(windowCustomName));
-      }
-      desired.set(keyId(windowRecord.key), windowRecord);
+  private buildSession(session: TmuxSession, serverKey: wsBorsh.SourceEntityKey): PendingUpsert {
+    const record = this.newRecord(wsBorsh.SOURCE_ENTITY_SESSION, session.id, serverKey);
+    record.fields.set(wsBorsh.SOURCE_FIELD_NAME, stringValue(session.name));
+    return record;
+  }
 
-      for (const pane of window.panes) {
-        const paneRecord = this.newRecord(wsBorsh.SOURCE_ENTITY_PANE, pane.id, windowRecord.key);
-        paneRecord.fields.set(wsBorsh.SOURCE_FIELD_INDEX, u32Value(pane.index));
-        paneRecord.fields.set(wsBorsh.SOURCE_FIELD_ACTIVE, boolValue(pane.active));
-        paneRecord.fields.set(wsBorsh.SOURCE_FIELD_WIDTH, u16Value(pane.width));
-        paneRecord.fields.set(wsBorsh.SOURCE_FIELD_HEIGHT, u16Value(pane.height));
-        if (pane.left !== undefined)
-          paneRecord.fields.set(wsBorsh.SOURCE_FIELD_LEFT, u16Value(pane.left));
-        if (pane.top !== undefined)
-          paneRecord.fields.set(wsBorsh.SOURCE_FIELD_TOP, u16Value(pane.top));
-        if (pane.title !== undefined)
-          paneRecord.fields.set(wsBorsh.SOURCE_FIELD_TITLE, stringValue(pane.title));
-        if (pane.currentPath !== undefined) {
-          paneRecord.fields.set(wsBorsh.SOURCE_FIELD_CURRENT_PATH, stringValue(pane.currentPath));
-        }
-        if (pane.currentCommand !== undefined) {
-          paneRecord.fields.set(
-            wsBorsh.SOURCE_FIELD_CURRENT_COMMAND,
-            stringValue(pane.currentCommand)
-          );
-        }
-        const paneEpoch = this.host.ensurePaneEpoch(pane.id);
-        if (!paneEpoch) throw new Error('server epoch must be established before pane projection');
-        paneRecord.fields.set(wsBorsh.SOURCE_FIELD_PANE_EPOCH, { Bytes16: copyBytes(paneEpoch) });
-        const paneCustomName = this.host.getPaneCustomName(pane.id) ?? pane.customName;
-        if (paneCustomName) {
-          paneRecord.fields.set(wsBorsh.SOURCE_FIELD_CUSTOM_NAME, stringValue(paneCustomName));
-        }
-        const hints = this.host.takeUnknownPaneHints(pane.id);
-        if (hints?.title !== undefined) {
-          paneRecord.fields.set(wsBorsh.SOURCE_FIELD_TITLE, stringValue(hints.title));
-        }
-        if (hints?.currentPath !== undefined) {
-          paneRecord.fields.set(wsBorsh.SOURCE_FIELD_CURRENT_PATH, stringValue(hints.currentPath));
-        }
-        if (hints?.currentCommand !== undefined) {
-          paneRecord.fields.set(
-            wsBorsh.SOURCE_FIELD_CURRENT_COMMAND,
-            stringValue(hints.currentCommand)
-          );
-        }
-        desired.set(keyId(paneRecord.key), paneRecord);
-      }
+  private addWindows(
+    desired: Map<string, PendingUpsert>,
+    windows: readonly TmuxWindow[],
+    sessionKey: wsBorsh.SourceEntityKey
+  ): void {
+    for (const window of windows) {
+      const record = this.buildWindow(window, sessionKey);
+      putRecord(desired, record);
+      this.addPanes(desired, window.panes, record.key);
     }
-    return desired;
+  }
+
+  private buildWindow(window: TmuxWindow, sessionKey: wsBorsh.SourceEntityKey): PendingUpsert {
+    const record = this.newRecord(wsBorsh.SOURCE_ENTITY_WINDOW, window.id, sessionKey);
+    record.fields.set(wsBorsh.SOURCE_FIELD_NAME, stringValue(window.name));
+    record.fields.set(wsBorsh.SOURCE_FIELD_INDEX, u32Value(window.index));
+    record.fields.set(wsBorsh.SOURCE_FIELD_ACTIVE, boolValue(window.active));
+    setDefinedStringField(record.fields, wsBorsh.SOURCE_FIELD_LAYOUT, window.layout);
+    setTruthyStringField(
+      record.fields,
+      wsBorsh.SOURCE_FIELD_CUSTOM_NAME,
+      pickFallbackName(this.host.getWindowCustomName(window.id), window.customName)
+    );
+    return record;
+  }
+
+  private addPanes(
+    desired: Map<string, PendingUpsert>,
+    panes: readonly TmuxPane[],
+    windowKey: wsBorsh.SourceEntityKey
+  ): void {
+    for (const pane of panes) {
+      putRecord(desired, this.buildPane(pane, windowKey));
+    }
+  }
+
+  private buildPane(pane: TmuxPane, windowKey: wsBorsh.SourceEntityKey): PendingUpsert {
+    const record = this.newRecord(wsBorsh.SOURCE_ENTITY_PANE, pane.id, windowKey);
+    record.fields.set(wsBorsh.SOURCE_FIELD_INDEX, u32Value(pane.index));
+    record.fields.set(wsBorsh.SOURCE_FIELD_ACTIVE, boolValue(pane.active));
+    record.fields.set(wsBorsh.SOURCE_FIELD_WIDTH, u16Value(pane.width));
+    record.fields.set(wsBorsh.SOURCE_FIELD_HEIGHT, u16Value(pane.height));
+    setDefinedU16Field(record.fields, wsBorsh.SOURCE_FIELD_LEFT, pane.left);
+    setDefinedU16Field(record.fields, wsBorsh.SOURCE_FIELD_TOP, pane.top);
+    setDefinedStringField(record.fields, wsBorsh.SOURCE_FIELD_TITLE, pane.title);
+    setDefinedStringField(record.fields, wsBorsh.SOURCE_FIELD_CURRENT_PATH, pane.currentPath);
+    setDefinedStringField(record.fields, wsBorsh.SOURCE_FIELD_CURRENT_COMMAND, pane.currentCommand);
+    const paneEpoch = this.host.ensurePaneEpoch(pane.id);
+    if (!paneEpoch) throw new Error('server epoch must be established before pane projection');
+    record.fields.set(wsBorsh.SOURCE_FIELD_PANE_EPOCH, { Bytes16: copyBytes(paneEpoch) });
+    setTruthyStringField(
+      record.fields,
+      wsBorsh.SOURCE_FIELD_CUSTOM_NAME,
+      pickFallbackName(this.host.getPaneCustomName(pane.id), pane.customName)
+    );
+    applyPaneHints(record.fields, this.host.takeUnknownPaneHints(pane.id));
+    return record;
   }
 
   newRecord(
@@ -121,4 +156,8 @@ export class MetadataHierarchyBuilder {
       fields: new Map(),
     };
   }
+}
+
+function putRecord(desired: Map<string, PendingUpsert>, record: PendingUpsert): void {
+  desired.set(keyId(record.key), record);
 }

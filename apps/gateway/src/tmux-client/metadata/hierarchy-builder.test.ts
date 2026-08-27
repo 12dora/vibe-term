@@ -94,6 +94,67 @@ describe('MetadataHierarchyBuilder', () => {
     expect(desired.size).toBe(2);
   });
 
+  test.each([
+    {
+      name: 'host window custom name wins',
+      hostWindow: 'host-win',
+      snapshotWindow: 'from-snapshot',
+      hostPane: 'host-pane',
+      snapshotPane: 'pane-snap',
+      expectedWindow: 'host-win',
+      expectedPane: 'host-pane',
+    },
+    {
+      name: 'snapshot custom names are used when host has none',
+      hostWindow: undefined,
+      snapshotWindow: 'from-snapshot',
+      hostPane: undefined,
+      snapshotPane: 'pane-snap',
+      expectedWindow: 'from-snapshot',
+      expectedPane: 'pane-snap',
+    },
+    {
+      name: 'empty host custom names do not fall back and omit the field',
+      hostWindow: '',
+      snapshotWindow: 'from-snapshot',
+      hostPane: '',
+      snapshotPane: 'pane-snap',
+      expectedWindow: undefined,
+      expectedPane: undefined,
+    },
+  ])(
+    '$name',
+    ({ hostWindow, snapshotWindow, hostPane, snapshotPane, expectedWindow, expectedPane }) => {
+      const payload = snapshot();
+      const window = payload.session?.windows[0];
+      const pane = window?.panes[0];
+      if (window) window.customName = snapshotWindow;
+      if (pane) pane.customName = snapshotPane;
+      const builder = new MetadataHierarchyBuilder({
+        deviceId: 'device-a',
+        deviceName: 'Developer Mac',
+        getServerEpoch: () => SERVER_EPOCH,
+        getWindowCustomName: () => hostWindow,
+        getPaneCustomName: () => hostPane,
+        ensurePaneEpoch: () => new Uint8Array(16).fill(7),
+        takeUnknownPaneHints: () => undefined,
+      });
+      const desired = builder.buildDesired(payload);
+      const windowRecord = desired.get(
+        keyId({ entityKind: wsBorsh.SOURCE_ENTITY_WINDOW, nativeId: '@1' })
+      );
+      const paneRecord = desired.get(
+        keyId({ entityKind: wsBorsh.SOURCE_ENTITY_PANE, nativeId: '%1' })
+      );
+      expect(windowRecord?.fields.get(wsBorsh.SOURCE_FIELD_CUSTOM_NAME)).toEqual(
+        expectedWindow === undefined ? undefined : { String: expectedWindow }
+      );
+      expect(paneRecord?.fields.get(wsBorsh.SOURCE_FIELD_CUSTOM_NAME)).toEqual(
+        expectedPane === undefined ? undefined : { String: expectedPane }
+      );
+    }
+  );
+
   test('throws when creating a record before the server epoch is ready', () => {
     const builder = new MetadataHierarchyBuilder({
       deviceId: 'device-a',
