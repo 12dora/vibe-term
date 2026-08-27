@@ -1,6 +1,11 @@
 import { t } from '../i18n';
 import { checkBunVersion } from './bun';
-import { detectLinuxDistro, detectPackageManager, type PackageManagerFamily } from './linux-distro';
+import {
+  type LinuxDistroInfo,
+  type PackageManagerFamily,
+  detectLinuxDistro as detectLinuxDistroDefault,
+  detectPackageManager,
+} from './linux-distro';
 import { runCommand } from './process';
 import { promptConfirm } from './prompt';
 import { checkTmuxVersion } from './tmux';
@@ -43,17 +48,26 @@ export function planBunInstall(): InstallCommand[] {
   ];
 }
 
+export interface PlanTmuxInstallDeps {
+  isCommandAvailable?: (command: string) => Promise<boolean>;
+  detectLinuxDistro?: () => Promise<LinuxDistroInfo | null>;
+}
+
 export async function planTmuxInstall(
-  platform: NodeJS.Platform = process.platform
+  platform: NodeJS.Platform = process.platform,
+  deps: PlanTmuxInstallDeps = {}
 ): Promise<InstallCommand[]> {
+  const commandAvailable = deps.isCommandAvailable ?? isCommandAvailable;
+  const detectDistro = deps.detectLinuxDistro ?? detectLinuxDistroDefault;
+
   if (platform === 'darwin') {
-    const brewAvailable = await isCommandAvailable('brew');
+    const brewAvailable = await commandAvailable('brew');
     if (!brewAvailable) return [];
     return [TMUX_INSTALL_COMMANDS.brew!];
   }
 
   if (platform === 'linux') {
-    const distro = await detectLinuxDistro();
+    const distro = await detectDistro();
     const pm = detectPackageManager(distro, platform);
     const cmd = TMUX_INSTALL_COMMANDS[pm];
     if (cmd) return [cmd];
@@ -88,7 +102,7 @@ export async function getInstallHintAsync(
   }
 
   if (platform === 'linux') {
-    const distro = await detectLinuxDistro();
+    const distro = await detectLinuxDistroDefault();
     const pm = detectPackageManager(distro, platform);
     const cmd = TMUX_INSTALL_COMMANDS[pm];
     if (cmd) {
@@ -108,8 +122,12 @@ async function isCommandAvailable(command: string): Promise<boolean> {
   return result !== null && result.code === 0;
 }
 
+export function isRootUid(uid: number | undefined): boolean {
+  return uid === 0;
+}
+
 export function isRoot(): boolean {
-  return process.getuid?.() === 0;
+  return isRootUid(process.getuid?.());
 }
 
 export async function isSudoAvailable(): Promise<boolean> {
@@ -120,9 +138,12 @@ export async function isSudoAvailable(): Promise<boolean> {
   return result !== null && result.code === 0;
 }
 
-function resolveCommand(cmd: InstallCommand): string {
+export function resolveInstallCommand(
+  cmd: InstallCommand,
+  uid: number | undefined = process.getuid?.()
+): string {
   if (!cmd.requiresSudo) return cmd.command;
-  if (isRoot()) return cmd.command;
+  if (isRootUid(uid)) return cmd.command;
   return `sudo ${cmd.command}`;
 }
 
@@ -141,7 +162,7 @@ export async function executeDependencyInstall(
   }
 
   const cmd = plan.commands[0]!;
-  const fullCommand = resolveCommand(cmd);
+  const fullCommand = resolveInstallCommand(cmd);
 
   if (cmd.requiresSudo && !isRoot()) {
     if (options.nonInteractive) {
