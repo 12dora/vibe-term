@@ -1,0 +1,77 @@
+// 直连（DataChannel）承载的诊断接口。
+//
+// 现状：`GatewayConnection` 还没有 `DirectCarrierController`（F3-1 的活），因此这里只定义
+// **契约**与一个恒为 primary 的桩实现，UI（设备页头部徽标 / ICE 诊断弹层）先按契约写。
+// F3-1 落地后，只需让 `GatewayConnection` 暴露 `directDiagnostics: DirectDiagnosticsSource`，
+// `resolveDirectDiagnostics()` 就会自动取到真实值，UI 与本文件都不用改。
+
+/** 浏览器 ↔ node 的当前承载：`primary` = 经 entry 转发的 WS；`direct` = WebRTC DataChannel。 */
+export type DirectCarrierPath = 'primary' | 'direct';
+
+/** ICE 诊断明细；F3-1 从 `RTCPeerConnection.getStats()` 填充，未知一律 `null`。 */
+export interface DirectIceDiagnostics {
+  /** `RTCPeerConnection.connectionState` */
+  connectionState: string | null;
+  /** `RTCPeerConnection.iceConnectionState` */
+  iceConnectionState: string | null;
+  /** 选中候选对的本端候选类型（host / srflx / prflx / relay） */
+  localCandidateType: string | null;
+  /** 选中候选对的对端候选类型 */
+  remoteCandidateType: string | null;
+  /** 选中候选对的可读描述，形如 `host → srflx` */
+  selectedPair: string | null;
+}
+
+export interface DirectDiagnostics {
+  path: DirectCarrierPath;
+  /** 往返时延（毫秒）；未知为 `null`。 */
+  rtt: number | null;
+  ice: DirectIceDiagnostics | null;
+}
+
+/** 可订阅的诊断源：`get()` 取快照，`subscribe()` 在快照变化时回调（供 useSyncExternalStore）。 */
+export interface DirectDiagnosticsSource {
+  get(): DirectDiagnostics;
+  subscribe(listener: () => void): () => void;
+}
+
+/** 无直连能力时的恒定快照。引用稳定，`useSyncExternalStore` 不会因它重渲染。 */
+export const PRIMARY_ONLY_DIAGNOSTICS: DirectDiagnostics = Object.freeze({
+  path: 'primary',
+  rtt: null,
+  ice: null,
+});
+
+const NOOP_UNSUBSCRIBE = (): void => undefined;
+
+/** 恒为 `primary` 的桩诊断源（F3-1 之前的唯一实现）。 */
+export function createStubDirectDiagnosticsSource(): DirectDiagnosticsSource {
+  return {
+    get: () => PRIMARY_ONLY_DIAGNOSTICS,
+    subscribe: () => NOOP_UNSUBSCRIBE,
+  };
+}
+
+const STUB_SOURCE = createStubDirectDiagnosticsSource();
+
+interface MaybeDiagnosticsCarrier {
+  directDiagnostics?: unknown;
+}
+
+function isDiagnosticsSource(value: unknown): value is DirectDiagnosticsSource {
+  if (!value || typeof value !== 'object') return false;
+  const candidate = value as Partial<DirectDiagnosticsSource>;
+  return typeof candidate.get === 'function' && typeof candidate.subscribe === 'function';
+}
+
+/**
+ * 从一个 `GatewayConnection`（或任何对象）上取诊断源；没有就返回恒 primary 的桩。
+ * 鸭子类型是刻意的：F3-1 给 connection 挂上 `directDiagnostics` 后此处零改动生效。
+ */
+export function resolveDirectDiagnostics(connection: unknown): DirectDiagnosticsSource {
+  const carrier = connection as MaybeDiagnosticsCarrier | null | undefined;
+  if (carrier && isDiagnosticsSource(carrier.directDiagnostics)) {
+    return carrier.directDiagnostics;
+  }
+  return STUB_SOURCE;
+}

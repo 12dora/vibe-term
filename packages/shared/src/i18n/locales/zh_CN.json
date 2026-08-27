@@ -680,7 +680,12 @@
         "agent": "Agent",
         "files": "Files"
       },
-      "orphanedSessions": "孤立会话"
+      "orphanedSessions": "孤立会话",
+      "node": {
+        "offline": "离线",
+        "noKnownDevices": "无已知设备",
+        "noDevices": "该节点暂无设备"
+      }
     },
     "agent": {
       "error": {
@@ -1081,6 +1086,86 @@
         "registerPasskey": "注册 passkey",
         "signWithExistingPasskey": "改用已有 passkey 授权（不必输入密码）",
         "sessionKeyNote": "浏览器临时密钥只能用于登录；以上每个操作都会重新要求密码或 passkey。"
+      }
+    },
+    "nodes": {
+      "title": "节点管理",
+      "subtitle": "本账号下的全部节点。所有管理动作都会写入密钥日志，需要当场输入密码。",
+      "empty": "暂无节点",
+      "self": "本入口",
+      "hub": "hub",
+      "loggedIn": "已登录",
+      "hubOffline": "hub 不可达，管理动作已禁用。",
+      "columns": {
+        "name": "名称",
+        "status": "状态",
+        "reach": "到达路径",
+        "version": "版本",
+        "lastSeen": "最近心跳",
+        "direct": "直连能力",
+        "login": "登录状态",
+        "fingerprint": "公钥指纹",
+        "actions": "操作"
+      },
+      "status": {
+        "online": "在线",
+        "offline": "离线",
+        "revoked": "已吊销"
+      },
+      "reach": {
+        "lan": "内网直连",
+        "relay": "中转",
+        "none": "不可达"
+      },
+      "actions": {
+        "addNode": "新增节点",
+        "rename": "重命名",
+        "revoke": "吊销",
+        "refresh": "刷新",
+        "copy": "复制",
+        "copied": "已复制",
+        "accountSecurity": "账号安全"
+      },
+      "enrollment": {
+        "title": "新增节点",
+        "description": "生成一次性注册密钥对并由根钥签授权，在新设备上执行 join 命令即可加入。join 串包含私钥，只显示这一次，不会经过 hub。",
+        "nameLabel": "节点名称（可选）",
+        "create": "生成 join 串",
+        "joinHint": "在新设备上执行下面的命令；join 串 10 分钟内有效。",
+        "joinCommand": "join 命令",
+        "joinToken": "join 串",
+        "pending": "待确认的注册",
+        "confirmPending": "确认",
+        "passwordPrompt": "请输入密码以签署本次操作",
+        "admitted": "节点已确认加入",
+        "unknownCertificate": "收到未知节点证书，已忽略",
+        "badCertSig": "节点证书签名校验失败，已忽略",
+        "expired": "注册授权已过期，请重新生成",
+        "noCertificateYet": "尚未收到该节点的证书，请稍后再试"
+      },
+      "rename": {
+        "save": "保存",
+        "done": "已重命名"
+      },
+      "revoke": {
+        "confirmText": "确定吊销节点「{{name}}」？该节点将立即失去访问权，且证书不可恢复。",
+        "reasonPrompt": "吊销原因（可留空）",
+        "done": "已吊销",
+        "hubFailed": "记录已写入密钥日志，但同步到 hub 失败：{{error}}",
+        "selfBlocked": "不能吊销当前入口自身"
+      },
+      "badge": {
+        "direct": "直连",
+        "primary": "经入口",
+        "rttUnknown": "RTT 未知",
+        "iceTitle": "ICE 诊断",
+        "icePlaceholder": "直连尚未启用，暂无 ICE 诊断数据。",
+        "connectionState": "连接状态",
+        "iceState": "ICE 状态",
+        "localCandidate": "本端候选",
+        "remoteCandidate": "对端候选",
+        "selectedPair": "候选对",
+        "unknown": "未知"
       }
     }
   }

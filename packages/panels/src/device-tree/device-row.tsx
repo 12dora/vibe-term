@@ -6,6 +6,7 @@ import { useTranslation } from 'react-i18next';
 import { DeviceStatusBadge } from '../device-status-badge';
 import type { DeviceTreeNavigation, SidebarAgentAdapter } from './agent-adapter';
 import { SortableVerticalList, useSortableRow } from './device-tree-dnd';
+import { NodeBadge, type NodeBadgeInfo } from './node-badge';
 import { WindowRow } from './window-row';
 
 export interface DeviceRowProps {
@@ -27,6 +28,8 @@ export interface DeviceRowProps {
   onWatchPane: (deviceId: string, paneId: string) => void;
   agent?: SidebarAgentAdapter;
   nav: DeviceTreeNavigation;
+  /** 多 node 聚合侧边栏的 node 徽标；单 node 宿主不传。 */
+  nodeBadge?: NodeBadgeInfo;
 }
 
 export function DeviceRow({
@@ -48,6 +51,7 @@ export function DeviceRow({
   onWatchPane,
   agent,
   nav,
+  nodeBadge,
 }: DeviceRowProps) {
   const { t } = useTranslation();
   const { stores } = useRuntime();
@@ -85,6 +89,7 @@ export function DeviceRow({
           <DeviceIcon className="h-4 w-4 text-muted-foreground shrink-0" />
           <span className="flex-1 truncate text-xs font-medium">{device.name}</span>
 
+          {nodeBadge && <NodeBadge info={nodeBadge} />}
           <DeviceStatusBadge deviceId={device.id} className="shrink-0" />
           <span
             data-testid={`device-online-status-${device.id}`}

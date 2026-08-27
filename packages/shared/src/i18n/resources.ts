@@ -686,7 +686,12 @@ export const I18N_RESOURCES = {
         "agent": "Agent",
         "files": "Files"
       },
-      "orphanedSessions": "Orphaned sessions"
+      "orphanedSessions": "Orphaned sessions",
+      "node": {
+        "offline": "offline",
+        "noKnownDevices": "No known devices",
+        "noDevices": "No devices on this node"
+      }
     },
     "agent": {
       "error": {
@@ -1087,6 +1092,86 @@ export const I18N_RESOURCES = {
         "registerPasskey": "Register passkey",
         "signWithExistingPasskey": "Authorize with an existing passkey instead of a password",
         "sessionKeyNote": "The browser session key can only sign logins; every action above asks for your password or a passkey again."
+      }
+    },
+    "nodes": {
+      "title": "Nodes",
+      "subtitle": "All nodes of this account. Every management action writes a key-log record and requires your password.",
+      "empty": "No nodes",
+      "self": "this entry",
+      "hub": "hub",
+      "loggedIn": "Signed in",
+      "hubOffline": "Hub unreachable — management actions are disabled.",
+      "columns": {
+        "name": "Name",
+        "status": "Status",
+        "reach": "Reach",
+        "version": "Version",
+        "lastSeen": "Last heartbeat",
+        "direct": "Direct",
+        "login": "Login",
+        "fingerprint": "Fingerprint",
+        "actions": "Actions"
+      },
+      "status": {
+        "online": "Online",
+        "offline": "Offline",
+        "revoked": "Revoked"
+      },
+      "reach": {
+        "lan": "LAN",
+        "relay": "Relay",
+        "none": "Unreachable"
+      },
+      "actions": {
+        "addNode": "Add node",
+        "rename": "Rename",
+        "revoke": "Revoke",
+        "refresh": "Refresh",
+        "copy": "Copy",
+        "copied": "Copied",
+        "accountSecurity": "Account security"
+      },
+      "enrollment": {
+        "title": "Add node",
+        "description": "Generates a one-time enrollment key pair signed by your root key. Run the join command on the new device. The join string contains a private key, is shown only once, and never reaches the hub.",
+        "nameLabel": "Node name (optional)",
+        "create": "Generate join string",
+        "joinHint": "Run the command below on the new device. The join string is valid for 10 minutes.",
+        "joinCommand": "Join command",
+        "joinToken": "Join string",
+        "pending": "Pending enrollment",
+        "confirmPending": "Confirm",
+        "passwordPrompt": "Enter your password to sign this action",
+        "admitted": "Node admitted",
+        "unknownCertificate": "Received an unknown node certificate — ignored",
+        "badCertSig": "Node certificate signature check failed — ignored",
+        "expired": "Enrollment authorization expired, please create a new one",
+        "noCertificateYet": "No certificate for this enrollment yet, try again later"
+      },
+      "rename": {
+        "save": "Save",
+        "done": "Renamed"
+      },
+      "revoke": {
+        "confirmText": "Revoke node \"{{name}}\"? It loses access immediately and its certificate cannot be restored.",
+        "reasonPrompt": "Reason (optional)",
+        "done": "Revoked",
+        "hubFailed": "Record written to the key log, but syncing to the hub failed: {{error}}",
+        "selfBlocked": "Cannot revoke the current entry itself"
+      },
+      "badge": {
+        "direct": "Direct",
+        "primary": "Via entry",
+        "rttUnknown": "RTT unknown",
+        "iceTitle": "ICE diagnostics",
+        "icePlaceholder": "Direct carrier is not enabled yet, no ICE data.",
+        "connectionState": "Connection state",
+        "iceState": "ICE state",
+        "localCandidate": "Local candidate",
+        "remoteCandidate": "Remote candidate",
+        "selectedPair": "Selected pair",
+        "unknown": "unknown"
       }
     }
   }
@@ -1773,7 +1858,12 @@ export const I18N_RESOURCES = {
         "agent": "Agent",
         "files": "Files"
       },
-      "orphanedSessions": "孤立会话"
+      "orphanedSessions": "孤立会话",
+      "node": {
+        "offline": "离线",
+        "noKnownDevices": "无已知设备",
+        "noDevices": "该节点暂无设备"
+      }
     },
     "agent": {
       "error": {
@@ -2174,6 +2264,86 @@ export const I18N_RESOURCES = {
         "registerPasskey": "注册 passkey",
         "signWithExistingPasskey": "改用已有 passkey 授权（不必输入密码）",
         "sessionKeyNote": "浏览器临时密钥只能用于登录；以上每个操作都会重新要求密码或 passkey。"
+      }
+    },
+    "nodes": {
+      "title": "节点管理",
+      "subtitle": "本账号下的全部节点。所有管理动作都会写入密钥日志，需要当场输入密码。",
+      "empty": "暂无节点",
+      "self": "本入口",
+      "hub": "hub",
+      "loggedIn": "已登录",
+      "hubOffline": "hub 不可达，管理动作已禁用。",
+      "columns": {
+        "name": "名称",
+        "status": "状态",
+        "reach": "到达路径",
+        "version": "版本",
+        "lastSeen": "最近心跳",
+        "direct": "直连能力",
+        "login": "登录状态",
+        "fingerprint": "公钥指纹",
+        "actions": "操作"
+      },
+      "status": {
+        "online": "在线",
+        "offline": "离线",
+        "revoked": "已吊销"
+      },
+      "reach": {
+        "lan": "内网直连",
+        "relay": "中转",
+        "none": "不可达"
+      },
+      "actions": {
+        "addNode": "新增节点",
+        "rename": "重命名",
+        "revoke": "吊销",
+        "refresh": "刷新",
+        "copy": "复制",
+        "copied": "已复制",
+        "accountSecurity": "账号安全"
+      },
+      "enrollment": {
+        "title": "新增节点",
+        "description": "生成一次性注册密钥对并由根钥签授权，在新设备上执行 join 命令即可加入。join 串包含私钥，只显示这一次，不会经过 hub。",
+        "nameLabel": "节点名称（可选）",
+        "create": "生成 join 串",
+        "joinHint": "在新设备上执行下面的命令；join 串 10 分钟内有效。",
+        "joinCommand": "join 命令",
+        "joinToken": "join 串",
+        "pending": "待确认的注册",
+        "confirmPending": "确认",
+        "passwordPrompt": "请输入密码以签署本次操作",
+        "admitted": "节点已确认加入",
+        "unknownCertificate": "收到未知节点证书，已忽略",
+        "badCertSig": "节点证书签名校验失败，已忽略",
+        "expired": "注册授权已过期，请重新生成",
+        "noCertificateYet": "尚未收到该节点的证书，请稍后再试"
+      },
+      "rename": {
+        "save": "保存",
+        "done": "已重命名"
+      },
+      "revoke": {
+        "confirmText": "确定吊销节点「{{name}}」？该节点将立即失去访问权，且证书不可恢复。",
+        "reasonPrompt": "吊销原因（可留空）",
+        "done": "已吊销",
+        "hubFailed": "记录已写入密钥日志，但同步到 hub 失败：{{error}}",
+        "selfBlocked": "不能吊销当前入口自身"
+      },
+      "badge": {
+        "direct": "直连",
+        "primary": "经入口",
+        "rttUnknown": "RTT 未知",
+        "iceTitle": "ICE 诊断",
+        "icePlaceholder": "直连尚未启用，暂无 ICE 诊断数据。",
+        "connectionState": "连接状态",
+        "iceState": "ICE 状态",
+        "localCandidate": "本端候选",
+        "remoteCandidate": "对端候选",
+        "selectedPair": "候选对",
+        "unknown": "未知"
       }
     }
   }
@@ -2860,7 +3030,12 @@ export const I18N_RESOURCES = {
         "agent": "Agent",
         "files": "Files"
       },
-      "orphanedSessions": "孤立セッション"
+      "orphanedSessions": "孤立セッション",
+      "node": {
+        "offline": "オフライン",
+        "noKnownDevices": "既知のデバイスなし",
+        "noDevices": "このノードにデバイスはありません"
+      }
     },
     "agent": {
       "error": {
@@ -3261,6 +3436,86 @@ export const I18N_RESOURCES = {
         "registerPasskey": "passkey を登録",
         "signWithExistingPasskey": "パスワードの代わりに既存の passkey で承認する",
         "sessionKeyNote": "ブラウザのセッション鍵はログインにしか使えません。上記の操作ごとにパスワードまたは passkey を再度求めます。"
+      }
+    },
+    "nodes": {
+      "title": "ノード管理",
+      "subtitle": "このアカウントの全ノード。管理操作はすべて鍵ログに記録され、その場でパスワードが必要です。",
+      "empty": "ノードがありません",
+      "self": "このエントリ",
+      "hub": "hub",
+      "loggedIn": "ログイン済み",
+      "hubOffline": "hub に到達できないため、管理操作は無効です。",
+      "columns": {
+        "name": "名前",
+        "status": "状態",
+        "reach": "到達経路",
+        "version": "バージョン",
+        "lastSeen": "最終ハートビート",
+        "direct": "直接接続",
+        "login": "ログイン",
+        "fingerprint": "公開鍵フィンガープリント",
+        "actions": "操作"
+      },
+      "status": {
+        "online": "オンライン",
+        "offline": "オフライン",
+        "revoked": "失効済み"
+      },
+      "reach": {
+        "lan": "LAN 直接",
+        "relay": "中継",
+        "none": "到達不可"
+      },
+      "actions": {
+        "addNode": "ノードを追加",
+        "rename": "名前を変更",
+        "revoke": "失効",
+        "refresh": "更新",
+        "copy": "コピー",
+        "copied": "コピーしました",
+        "accountSecurity": "アカウントセキュリティ"
+      },
+      "enrollment": {
+        "title": "ノードを追加",
+        "description": "ルート鍵で署名した一度きりの登録鍵ペアを生成します。新しい端末で join コマンドを実行してください。join 文字列は秘密鍵を含み、一度しか表示されず、hub を経由しません。",
+        "nameLabel": "ノード名（任意）",
+        "create": "join 文字列を生成",
+        "joinHint": "新しい端末で以下のコマンドを実行してください。join 文字列の有効期間は 10 分です。",
+        "joinCommand": "join コマンド",
+        "joinToken": "join 文字列",
+        "pending": "確認待ちの登録",
+        "confirmPending": "確認",
+        "passwordPrompt": "この操作に署名するためパスワードを入力してください",
+        "admitted": "ノードを承認しました",
+        "unknownCertificate": "未知のノード証明書を受信したため無視しました",
+        "badCertSig": "ノード証明書の署名検証に失敗したため無視しました",
+        "expired": "登録認可の有効期限が切れています。作り直してください",
+        "noCertificateYet": "まだ証明書を受信していません。後でもう一度お試しください"
+      },
+      "rename": {
+        "save": "保存",
+        "done": "名前を変更しました"
+      },
+      "revoke": {
+        "confirmText": "ノード「{{name}}」を失効しますか？直ちにアクセス権を失い、証明書は復元できません。",
+        "reasonPrompt": "失効理由（任意）",
+        "done": "失効しました",
+        "hubFailed": "鍵ログには記録されましたが、hub への同期に失敗しました：{{error}}",
+        "selfBlocked": "現在のエントリ自身は失効できません"
+      },
+      "badge": {
+        "direct": "直接接続",
+        "primary": "エントリ経由",
+        "rttUnknown": "RTT 不明",
+        "iceTitle": "ICE 診断",
+        "icePlaceholder": "直接接続は未対応のため ICE データはありません。",
+        "connectionState": "接続状態",
+        "iceState": "ICE 状態",
+        "localCandidate": "ローカル候補",
+        "remoteCandidate": "リモート候補",
+        "selectedPair": "選択された候補ペア",
+        "unknown": "不明"
       }
     }
   }

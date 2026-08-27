@@ -680,7 +680,12 @@
         "agent": "Agent",
         "files": "Files"
       },
-      "orphanedSessions": "孤立セッション"
+      "orphanedSessions": "孤立セッション",
+      "node": {
+        "offline": "オフライン",
+        "noKnownDevices": "既知のデバイスなし",
+        "noDevices": "このノードにデバイスはありません"
+      }
     },
     "agent": {
       "error": {
@@ -1081,6 +1086,86 @@
         "registerPasskey": "passkey を登録",
         "signWithExistingPasskey": "パスワードの代わりに既存の passkey で承認する",
         "sessionKeyNote": "ブラウザのセッション鍵はログインにしか使えません。上記の操作ごとにパスワードまたは passkey を再度求めます。"
+      }
+    },
+    "nodes": {
+      "title": "ノード管理",
+      "subtitle": "このアカウントの全ノード。管理操作はすべて鍵ログに記録され、その場でパスワードが必要です。",
+      "empty": "ノードがありません",
+      "self": "このエントリ",
+      "hub": "hub",
+      "loggedIn": "ログイン済み",
+      "hubOffline": "hub に到達できないため、管理操作は無効です。",
+      "columns": {
+        "name": "名前",
+        "status": "状態",
+        "reach": "到達経路",
+        "version": "バージョン",
+        "lastSeen": "最終ハートビート",
+        "direct": "直接接続",
+        "login": "ログイン",
+        "fingerprint": "公開鍵フィンガープリント",
+        "actions": "操作"
+      },
+      "status": {
+        "online": "オンライン",
+        "offline": "オフライン",
+        "revoked": "失効済み"
+      },
+      "reach": {
+        "lan": "LAN 直接",
+        "relay": "中継",
+        "none": "到達不可"
+      },
+      "actions": {
+        "addNode": "ノードを追加",
+        "rename": "名前を変更",
+        "revoke": "失効",
+        "refresh": "更新",
+        "copy": "コピー",
+        "copied": "コピーしました",
+        "accountSecurity": "アカウントセキュリティ"
+      },
+      "enrollment": {
+        "title": "ノードを追加",
+        "description": "ルート鍵で署名した一度きりの登録鍵ペアを生成します。新しい端末で join コマンドを実行してください。join 文字列は秘密鍵を含み、一度しか表示されず、hub を経由しません。",
+        "nameLabel": "ノード名（任意）",
+        "create": "join 文字列を生成",
+        "joinHint": "新しい端末で以下のコマンドを実行してください。join 文字列の有効期間は 10 分です。",
+        "joinCommand": "join コマンド",
+        "joinToken": "join 文字列",
+        "pending": "確認待ちの登録",
+        "confirmPending": "確認",
+        "passwordPrompt": "この操作に署名するためパスワードを入力してください",
+        "admitted": "ノードを承認しました",
+        "unknownCertificate": "未知のノード証明書を受信したため無視しました",
+        "badCertSig": "ノード証明書の署名検証に失敗したため無視しました",
+        "expired": "登録認可の有効期限が切れています。作り直してください",
+        "noCertificateYet": "まだ証明書を受信していません。後でもう一度お試しください"
+      },
+      "rename": {
+        "save": "保存",
+        "done": "名前を変更しました"
+      },
+      "revoke": {
+        "confirmText": "ノード「{{name}}」を失効しますか？直ちにアクセス権を失い、証明書は復元できません。",
+        "reasonPrompt": "失効理由（任意）",
+        "done": "失効しました",
+        "hubFailed": "鍵ログには記録されましたが、hub への同期に失敗しました：{{error}}",
+        "selfBlocked": "現在のエントリ自身は失効できません"
+      },
+      "badge": {
+        "direct": "直接接続",
+        "primary": "エントリ経由",
+        "rttUnknown": "RTT 不明",
+        "iceTitle": "ICE 診断",
+        "icePlaceholder": "直接接続は未対応のため ICE データはありません。",
+        "connectionState": "接続状態",
+        "iceState": "ICE 状態",
+        "localCandidate": "ローカル候補",
+        "remoteCandidate": "リモート候補",
+        "selectedPair": "選択された候補ペア",
+        "unknown": "不明"
       }
     }
   }

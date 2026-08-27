@@ -680,7 +680,12 @@
         "agent": "Agent",
         "files": "Files"
       },
-      "orphanedSessions": "Orphaned sessions"
+      "orphanedSessions": "Orphaned sessions",
+      "node": {
+        "offline": "offline",
+        "noKnownDevices": "No known devices",
+        "noDevices": "No devices on this node"
+      }
     },
     "agent": {
       "error": {
@@ -1081,6 +1086,86 @@
         "registerPasskey": "Register passkey",
         "signWithExistingPasskey": "Authorize with an existing passkey instead of a password",
         "sessionKeyNote": "The browser session key can only sign logins; every action above asks for your password or a passkey again."
+      }
+    },
+    "nodes": {
+      "title": "Nodes",
+      "subtitle": "All nodes of this account. Every management action writes a key-log record and requires your password.",
+      "empty": "No nodes",
+      "self": "this entry",
+      "hub": "hub",
+      "loggedIn": "Signed in",
+      "hubOffline": "Hub unreachable — management actions are disabled.",
+      "columns": {
+        "name": "Name",
+        "status": "Status",
+        "reach": "Reach",
+        "version": "Version",
+        "lastSeen": "Last heartbeat",
+        "direct": "Direct",
+        "login": "Login",
+        "fingerprint": "Fingerprint",
+        "actions": "Actions"
+      },
+      "status": {
+        "online": "Online",
+        "offline": "Offline",
+        "revoked": "Revoked"
+      },
+      "reach": {
+        "lan": "LAN",
+        "relay": "Relay",
+        "none": "Unreachable"
+      },
+      "actions": {
+        "addNode": "Add node",
+        "rename": "Rename",
+        "revoke": "Revoke",
+        "refresh": "Refresh",
+        "copy": "Copy",
+        "copied": "Copied",
+        "accountSecurity": "Account security"
+      },
+      "enrollment": {
+        "title": "Add node",
+        "description": "Generates a one-time enrollment key pair signed by your root key. Run the join command on the new device. The join string contains a private key, is shown only once, and never reaches the hub.",
+        "nameLabel": "Node name (optional)",
+        "create": "Generate join string",
+        "joinHint": "Run the command below on the new device. The join string is valid for 10 minutes.",
+        "joinCommand": "Join command",
+        "joinToken": "Join string",
+        "pending": "Pending enrollment",
+        "confirmPending": "Confirm",
+        "passwordPrompt": "Enter your password to sign this action",
+        "admitted": "Node admitted",
+        "unknownCertificate": "Received an unknown node certificate — ignored",
+        "badCertSig": "Node certificate signature check failed — ignored",
+        "expired": "Enrollment authorization expired, please create a new one",
+        "noCertificateYet": "No certificate for this enrollment yet, try again later"
+      },
+      "rename": {
+        "save": "Save",
+        "done": "Renamed"
+      },
+      "revoke": {
+        "confirmText": "Revoke node \"{{name}}\"? It loses access immediately and its certificate cannot be restored.",
+        "reasonPrompt": "Reason (optional)",
+        "done": "Revoked",
+        "hubFailed": "Record written to the key log, but syncing to the hub failed: {{error}}",
+        "selfBlocked": "Cannot revoke the current entry itself"
+      },
+      "badge": {
+        "direct": "Direct",
+        "primary": "Via entry",
+        "rttUnknown": "RTT unknown",
+        "iceTitle": "ICE diagnostics",
+        "icePlaceholder": "Direct carrier is not enabled yet, no ICE data.",
+        "connectionState": "Connection state",
+        "iceState": "ICE state",
+        "localCandidate": "Local candidate",
+        "remoteCandidate": "Remote candidate",
+        "selectedPair": "Selected pair",
+        "unknown": "unknown"
       }
     }
   }

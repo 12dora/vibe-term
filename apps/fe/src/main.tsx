@@ -233,6 +233,7 @@ const deviceModule = () => import('./pages/DevicePage');
 const fileModule = () => import('./pages/FilePage');
 const loginModule = () => import('./pages/LoginPage');
 const accountSecurityModule = () => import('./pages/AccountSecurityPage');
+const nodesModule = () => import('./pages/NodesPage');
 
 // node 边界外壳：先建/取该 node 的运行时，再渲染外壳与页面
 function NodeShell() {
@@ -277,6 +278,7 @@ function pageRoutes() {
 const router = createBrowserRouter([
   { path: '/login', element: <PageWrapper moduleLoader={loginModule} /> },
   { path: '/account/security', element: <PageWrapper moduleLoader={accountSecurityModule} /> },
+  { path: '/nodes', element: <PageWrapper moduleLoader={nodesModule} /> },
   {
     path: '/n/:nodeId',
     Component: NodeShell,

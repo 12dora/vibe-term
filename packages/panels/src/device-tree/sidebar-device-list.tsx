@@ -18,6 +18,7 @@ import { DeviceRow } from './device-row';
 import { useDeviceTreeDialogs } from './device-tree-dialogs';
 import { SortableVerticalList } from './device-tree-dnd';
 import { useDeviceTreeNavigationApi, useDeviceTreeSelection } from './device-tree-navigation';
+import type { NodeBadgeInfo } from './node-badge';
 
 type DeviceListItem = Device & {
   lastError?: string | null;
@@ -35,6 +36,10 @@ export interface SideBarDeviceListProps {
   devicesQueryKey?: readonly unknown[];
   /** agent 会话装饰；未传时不渲染任何 agent 面 */
   agent?: SidebarAgentAdapter;
+  /** 多 node 聚合侧边栏的 node 徽标；单 node / standalone 宿主不传，渲染结果保持原样 */
+  nodeBadge?: NodeBadgeInfo;
+  /** 无设备时的空态文案；缺省沿用 `sidebar.noDevices` */
+  emptyLabel?: string;
 }
 
 export function SideBarDeviceList({
@@ -42,6 +47,8 @@ export function SideBarDeviceList({
   expansionKeyFor,
   devicesQueryKey,
   agent,
+  nodeBadge,
+  emptyLabel,
 }: SideBarDeviceListProps) {
   const { t } = useTranslation();
   const runtime = useRuntime();
@@ -229,12 +236,13 @@ export function SideBarDeviceList({
                 onWatchPane={requestWatchPane}
                 agent={agentAdapter}
                 nav={nav}
+                nodeBadge={nodeBadge}
               />
             ))}
           </SortableVerticalList>
           {sortedDevices.length === 0 && (
             <div className="text-center text-sm text-muted-foreground py-4">
-              {t('sidebar.noDevices')}
+              {emptyLabel ?? t('sidebar.noDevices')}
             </div>
           )}
 
