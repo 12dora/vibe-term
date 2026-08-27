@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { compareTmuxVersion, MIN_TMUX_VERSION, parseTmuxVersion } from './tmux-version';
+import { MIN_TMUX_VERSION, compareTmuxVersion, parseTmuxVersion } from './tmux-version';
 
 describe('parseTmuxVersion', () => {
   test('parses release versions', () => {

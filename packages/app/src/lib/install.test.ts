@@ -3,7 +3,7 @@ import { spawnSync } from 'node:child_process';
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
-import { quotePosixShellArg, writeRunScript } from './install';
+import { buildAppEnvValues, quotePosixShellArg, writeRunScript } from './install';
 import { createInstallLayout } from './install-layout';
 
 function posixQuote(value: string): string {
@@ -14,6 +14,19 @@ const tempDirs: string[] = [];
 
 afterEach(async () => {
   await Promise.all(tempDirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true })));
+});
+
+describe('buildAppEnvValues', () => {
+  test('brackets IPv6 hosts in TMEX_BASE_URL', () => {
+    const values = buildAppEnvValues({
+      host: '2001:db8::1',
+      port: 9883,
+      databasePath: '/tmp/tmex.db',
+      masterKey: 'key',
+    });
+    expect(values.TMEX_BASE_URL).toBe('http://[2001:db8::1]:9883');
+    expect(values.TMEX_BIND_HOST).toBe('2001:db8::1');
+  });
 });
 
 describe('quotePosixShellArg', () => {

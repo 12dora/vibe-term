@@ -1,6 +1,7 @@
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { formatHttpEndpoint, rewriteWildcardBindHost } from '../../../shared/src/network';
 import { defaultInstallDir } from '../constants';
 import { t } from '../i18n';
 import { checkBunVersion, readExplicitBunPath } from '../lib/bun';
@@ -54,10 +55,8 @@ async function verifyHealth(installLayout: ReturnType<typeof createInstallLayout
 
   const env = await readEnvFile(installLayout.envPath).catch(() => ({}));
   const port = String(env.GATEWAY_PORT || '9883');
-  const hostFromEnv = String(env.TMEX_BIND_HOST || '127.0.0.1');
-  const host = hostFromEnv === '0.0.0.0' ? '127.0.0.1' : hostFromEnv;
-
-  const url = `http://${host}:${port}/healthz`;
+  const host = rewriteWildcardBindHost(String(env.TMEX_BIND_HOST || '127.0.0.1'));
+  const url = formatHttpEndpoint(host, port, '/healthz');
   const startedAt = Date.now();
   let lastError: Error | null = null;
 

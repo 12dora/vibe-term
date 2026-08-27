@@ -2,6 +2,7 @@ import { randomBytes } from 'node:crypto';
 import { chmod, copyFile, rm } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { dirname, isAbsolute, join, resolve } from 'node:path';
+import { formatHttpEndpoint } from '../../../shared/src/network';
 import type { InstallMeta } from '../types';
 import { copyDirectory, ensureDir, pathExists, writeText } from './fs-utils';
 import type { InstallLayout, PackageLayout } from './install-layout';
@@ -25,7 +26,7 @@ export function buildAppEnvValues(input: AppEnvInput): Record<string, string> {
     GATEWAY_PORT: String(input.port),
     DATABASE_URL: input.databasePath,
     TMEX_MASTER_KEY: input.masterKey,
-    TMEX_BASE_URL: `http://${input.host}:${input.port}`,
+    TMEX_BASE_URL: formatHttpEndpoint(input.host, input.port),
     TMEX_SITE_NAME: 'tmex',
   };
 }

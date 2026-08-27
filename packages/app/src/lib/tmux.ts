@@ -1,10 +1,13 @@
-import { MIN_TMUX_VERSION } from '../constants';
+import {
+  MIN_TMUX_VERSION,
+  type TmuxVersion,
+  compareTmuxVersion,
+  parseTmuxVersion,
+} from '../../../shared/src/tmux-version';
 import { runCommand } from './process';
 
-export interface TmuxVersion {
-  major: number;
-  minor: number;
-}
+export type { TmuxVersion };
+export { compareTmuxVersion, parseTmuxVersion };
 
 export interface TmuxCheckResult {
   ok: boolean;
@@ -12,24 +15,6 @@ export interface TmuxCheckResult {
   version?: TmuxVersion;
   versionRaw?: string;
   reason?: 'not-found' | 'version-too-low';
-}
-
-export function parseTmuxVersion(versionOutput: string): TmuxVersion | null {
-  const match = versionOutput.match(/(\d+)\.(\d+)/);
-  if (!match) return null;
-  return {
-    major: Number.parseInt(match[1] as string, 10),
-    minor: Number.parseInt(match[2] as string, 10),
-  };
-}
-
-export function compareTmuxVersion(
-  current: TmuxVersion | null,
-  min: TmuxVersion
-): boolean {
-  if (!current) return true;
-  if (current.major !== min.major) return current.major > min.major;
-  return current.minor >= min.minor;
 }
 
 export async function checkTmuxVersion(

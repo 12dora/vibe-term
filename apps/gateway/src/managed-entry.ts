@@ -7,6 +7,7 @@
  * 构建：`bun scripts/build-managed.ts`（`bun build --compile`）。
  */
 
+import { formatHttpEndpoint } from '../../../packages/shared/src/network';
 import { applyManagedTmuxNamespace, parseManagedGatewayArgs } from './managed-args';
 
 declare const TMEX_MONOREPO_VERSION: string | undefined;
@@ -83,10 +84,6 @@ function runtimeUnavailableResponse(): Response {
     status: 503,
     headers: { 'retry-after': '1' },
   });
-}
-
-function formatEndpoint(host: string, port: number): string {
-  return host.includes(':') ? `[${host}]:${port}` : `${host}:${port}`;
 }
 
 function embeddedVersion(): string {
@@ -201,7 +198,7 @@ async function runManagedGateway(): Promise<void> {
       host: managedHost,
       port: actualPort,
     });
-    console.log(`[gateway] listening on ${formatEndpoint(ready.host, ready.port)}`);
+    console.log(`[gateway] listening on ${formatHttpEndpoint(ready.host, ready.port)}`);
 
     while (true) {
       await restartRequested;
