@@ -1,7 +1,25 @@
 // Gateway 会话/设备/选择 状态机存储
 // 参考: docs/ws-protocol/2026021403-ws-state-machines.md
 
+import { wsBorsh } from '@tmex/shared';
 import type { ServerWebSocket } from 'bun';
+import { type BorshClientState, encodeCanonicalEvent, sendToClient } from './codec-borsh';
+
+export const DEFAULT_OUTPUT_GATE_MAX_FRAMES = 1000;
+export const DEFAULT_OUTPUT_GATE_MAX_BYTES = 8 * 1024 * 1024;
+export const DEFAULT_THROTTLE_PRUNE_INTERVAL_MS = 30_000;
+
+export interface SessionStateStoreOptions {
+  now?: () => number;
+  maxOutputBufferBytes?: number;
+  maxOutputBufferFrames?: number;
+  throttlePruneIntervalMs?: number;
+}
+
+function clientBorshState(ws: ServerWebSocket<unknown>): BorshClientState | undefined {
+  const data = ws.data as { borshState?: BorshClientState } | null | undefined;
+  return data?.borshState;
+}
 
 // ========== WS 连接状态机 ==========
 
@@ -67,7 +85,10 @@ export type OutputGateState = 'FLOWING' | 'BUFFERING';
 export interface OutputGateContext {
   state: OutputGateState;
   buffer: Uint8Array[];
+  bufferBytes: number;
   maxBufferSize: number;
+  maxBufferBytes: number;
+  overflowed: boolean;
 }
 
 // ========== Bell 状态机 ==========
@@ -97,10 +118,23 @@ export interface SessionState {
 
   // Notification 频控 (按 deviceId+paneId+source)
   notificationThrottles: Map<string, BellThrottleContext>;
+  lastNotificationPruneAt: number;
 }
 
 export class SessionStateStore {
   private states = new Map<ServerWebSocket<unknown>, SessionState>();
+  private readonly now: () => number;
+  private readonly maxOutputBufferBytes: number;
+  private readonly maxOutputBufferFrames: number;
+  private readonly throttlePruneIntervalMs: number;
+
+  constructor(options: SessionStateStoreOptions = {}) {
+    this.now = options.now ?? Date.now;
+    this.maxOutputBufferBytes = options.maxOutputBufferBytes ?? DEFAULT_OUTPUT_GATE_MAX_BYTES;
+    this.maxOutputBufferFrames = options.maxOutputBufferFrames ?? DEFAULT_OUTPUT_GATE_MAX_FRAMES;
+    this.throttlePruneIntervalMs =
+      options.throttlePruneIntervalMs ?? DEFAULT_THROTTLE_PRUNE_INTERVAL_MS;
+  }
 
   create(ws: ServerWebSocket<unknown>): SessionState {
     const now = Date.now();
@@ -116,6 +150,7 @@ export class SessionStateStore {
       outputGates: new Map(),
       bellThrottles: new Map(),
       notificationThrottles: new Map(),
+      lastNotificationPruneAt: 0,
     };
     this.states.set(ws, state);
     return state;
@@ -353,7 +388,10 @@ export class SessionStateStore {
       ctx = {
         state: 'FLOWING',
         buffer: [],
-        maxBufferSize: 1000, // 最大缓冲 1000 条
+        bufferBytes: 0,
+        maxBufferSize: this.maxOutputBufferFrames,
+        maxBufferBytes: this.maxOutputBufferBytes,
+        overflowed: false,
       };
       state.outputGates.set(deviceId, ctx);
     }
@@ -365,7 +403,9 @@ export class SessionStateStore {
     if (!ctx) return;
 
     ctx.state = 'BUFFERING';
-    ctx.buffer = []; // 清空旧缓冲
+    ctx.buffer = [];
+    ctx.bufferBytes = 0;
+    ctx.overflowed = false;
   }
 
   stopOutputBuffering(ws: ServerWebSocket<unknown>, deviceId: string): Uint8Array[] {
@@ -375,20 +415,56 @@ export class SessionStateStore {
     ctx.state = 'FLOWING';
     const buffered = [...ctx.buffer];
     ctx.buffer = [];
+    ctx.bufferBytes = 0;
+    ctx.overflowed = false;
     return buffered;
   }
 
   bufferOutput(ws: ServerWebSocket<unknown>, deviceId: string, data: Uint8Array): boolean {
     const ctx = this.getOrCreateOutputGate(ws, deviceId);
-    if (!ctx || ctx.state !== 'BUFFERING') return false;
+    if (!ctx || ctx.state !== 'BUFFERING' || ctx.overflowed) return false;
 
-    if (ctx.buffer.length >= ctx.maxBufferSize) {
-      console.warn(`[session-state] Output buffer overflow for ${deviceId}`);
-      ctx.buffer.shift(); // 丢弃最旧的数据
+    const nextBytes = ctx.bufferBytes + data.byteLength;
+    if (ctx.buffer.length >= ctx.maxBufferSize || nextBytes > ctx.maxBufferBytes) {
+      this.overflowOutputGate(ws, deviceId, ctx);
+      return false;
     }
 
     ctx.buffer.push(data);
+    ctx.bufferBytes = nextBytes;
     return true;
+  }
+
+  private overflowOutputGate(
+    ws: ServerWebSocket<unknown>,
+    deviceId: string,
+    ctx: OutputGateContext
+  ): void {
+    ctx.buffer = [];
+    ctx.bufferBytes = 0;
+    ctx.overflowed = true;
+    console.warn(`[session-state] Output buffer overflow for ${deviceId}`);
+    this.emitResourceExhaustedGap(ws);
+  }
+
+  private emitResourceExhaustedGap(ws: ServerWebSocket<unknown>): void {
+    const borshState = clientBorshState(ws);
+    if (!borshState) return;
+    try {
+      const frame = encodeCanonicalEvent(
+        {
+          SourceGap: {
+            reason: wsBorsh.SOURCE_GAP_REASON_RESOURCE_EXHAUSTED,
+            scope: { Stream: {} },
+          },
+        },
+        borshState.seqGen(),
+        borshState.maxFrameBytes
+      );
+      sendToClient(ws, frame);
+    } catch (error) {
+      console.warn('[session-state] Failed to emit SourceGap after output overflow:', error);
+    }
   }
 
   isBuffering(ws: ServerWebSocket<unknown>, deviceId: string): boolean {
@@ -440,7 +516,8 @@ export class SessionStateStore {
     if (!state) return false;
 
     const key = `${deviceId}:${paneId}:${source}`;
-    const now = Date.now();
+    const now = this.now();
+    this.pruneNotificationThrottles(state, now);
 
     let ctx = state.notificationThrottles.get(key);
     if (!ctx) {
@@ -459,6 +536,16 @@ export class SessionStateStore {
     ctx.lastBellAt = now;
     ctx.throttleSeconds = throttleSeconds;
     return true;
+  }
+
+  private pruneNotificationThrottles(state: SessionState, now: number): void {
+    if (now - state.lastNotificationPruneAt < this.throttlePruneIntervalMs) return;
+    state.lastNotificationPruneAt = now;
+    for (const [key, ctx] of state.notificationThrottles) {
+      if (now - ctx.lastBellAt >= ctx.throttleSeconds * 1000) {
+        state.notificationThrottles.delete(key);
+      }
+    }
   }
 
   // ========== 清理操作 ==========

@@ -158,7 +158,7 @@ export class WebSocketServer
       return;
     }
 
-    const data = new Uint8Array(message);
+    const data: Uint8Array = message;
 
     if (!wsBorsh.checkMagic(data)) {
       this.sendError(ws, null, wsBorsh.ERROR_INVALID_FRAME, 'Missing magic bytes', false);
@@ -287,6 +287,7 @@ export class WebSocketServer
     switchBarrier.cleanupClient(ws);
     sessionStateStore.cleanup(ws);
     agentWsHub.removeClient(ws);
+    this.feed.releaseLegacyPaneObservers(ws);
 
     for (const [deviceId, entry] of this.connections) {
       entry.canonicalClients?.delete(ws);
@@ -518,6 +519,14 @@ export class WebSocketServer
 
   handleDeviceDisconnect(ws: ServerWebSocket<ClientState>, deviceId: string): void {
     this.registry.handleDeviceDisconnect(ws, deviceId);
+  }
+
+  syncLegacyPaneObservers(ws: ServerWebSocket<ClientState>, deviceId: string): void {
+    this.feed.syncLegacyPaneObservers(ws, deviceId);
+  }
+
+  releaseLegacyPaneObservers(ws: ServerWebSocket<ClientState>, deviceId?: string): void {
+    this.feed.releaseLegacyPaneObservers(ws, deviceId);
   }
 
   handleTmuxSelect(

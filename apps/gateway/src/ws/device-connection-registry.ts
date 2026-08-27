@@ -29,6 +29,7 @@ export interface DeviceConnectionRegistryHost {
     payload: NonNullable<DeviceConnectionEntry['lastSnapshot']>
   ): Uint8Array;
   broadcastDeviceEvent(entry: DeviceConnectionEntry, payload: EventDevicePayload): void;
+  releaseLegacyPaneObservers(ws: ServerWebSocket<ClientState>, deviceId?: string): void;
 }
 
 export class DeviceConnectionRegistry {
@@ -246,6 +247,7 @@ export class DeviceConnectionRegistry {
   handleDeviceDisconnect(ws: ServerWebSocket<ClientState>, deviceId: string): void {
     this.bumpConnectGeneration(ws, deviceId);
     this.host.canonicalSessions.get(ws)?.detachDevice(deviceId);
+    this.host.releaseLegacyPaneObservers?.(ws, deviceId);
     const entry = this.connections.get(deviceId);
     if (entry) {
       entry.clients.delete(ws);
@@ -368,6 +370,7 @@ export class DeviceConnectionRegistry {
       this.host.canonicalSessions.get(client)?.detachDevice(deviceId);
     }
     for (const client of entry.clients) {
+      this.host.releaseLegacyPaneObservers?.(client, deviceId);
       delete client.data.borshState.selectedPanes[deviceId];
     }
     entry.clients.clear();
