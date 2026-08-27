@@ -48,6 +48,28 @@ describe('canonical transaction sender', () => {
     expect(events.some((event) => 'ScreenCommit' in event)).toBe(false);
   });
 
+  test('sendFitted skips the frame-size check but still refuses a closed session', () => {
+    const events: wsBorsh.CanonicalEvent[] = [];
+    let closed = false;
+    const sender = new CanonicalTransactionSender({
+      sizer: new CanonicalFrameSizer(64),
+      sendEvent: (event) => {
+        events.push(event);
+        return true;
+      },
+      isClosed: () => closed,
+      getServerEpoch: () => SERVER_EPOCH,
+    });
+    const oversized: wsBorsh.CanonicalEvent = {
+      Error: { requestId: REQUEST_ID, code: 1, message: 'x'.repeat(200), retryable: false },
+    };
+    expect(sender.send(oversized)).toBe(false);
+    expect(sender.sendFitted(oversized)).toBe(true);
+    closed = true;
+    expect(sender.sendFitted(oversized)).toBe(false);
+    expect(events).toHaveLength(1);
+  });
+
   test('truncates error messages to 512 bytes on the wire field', () => {
     const events: wsBorsh.CanonicalEvent[] = [];
     const sender = new CanonicalTransactionSender({

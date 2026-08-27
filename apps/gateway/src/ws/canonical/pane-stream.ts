@@ -185,7 +185,7 @@ export class CanonicalPaneStream {
           data,
         },
       };
-      const result = this.options.sender.send(event);
+      const result = this.options.sender.sendFitted(event);
       if (result === 'backpressured') {
         this.paneDataDeliveries += 1;
         this.paneDataBytes += data.byteLength;
