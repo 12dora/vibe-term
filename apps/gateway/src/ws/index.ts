@@ -118,6 +118,8 @@ export class WebSocketServer
     return this.theme.themeSignalLast;
   }
 
+  private carrierSwitchAckHandler: ((session: GatewaySession, epoch: number) => void) | null = null;
+
   constructor(options: WebSocketServerOptions = {}) {
     this.deps = {
       ...defaultDeps,
@@ -128,6 +130,10 @@ export class WebSocketServer
     this.overlays = new SnapshotOverlayStore(this);
     this.feed = new LegacyFeedBroadcaster(this);
     this.borshHandlers = createBorshKindHandlers(this);
+  }
+
+  setOnCarrierSwitchAck(handler: ((session: GatewaySession, epoch: number) => void) | null): void {
+    this.carrierSwitchAckHandler = handler;
   }
 
   handleUpgrade(req: Request, server: Server<unknown>): Response | false | undefined {
@@ -445,6 +451,12 @@ export class WebSocketServer
 
       if (kind === wsBorsh.KIND_PING) {
         this.handlePing(ws, refSeq, payload);
+        return;
+      }
+
+      if (kind === wsBorsh.KIND_CARRIER_SWITCH_ACK) {
+        const ack = wsBorsh.decodePayload(wsBorsh.schema.CarrierSwitchAckSchema, payload);
+        this.carrierSwitchAckHandler?.(ws, Number(ack.epoch));
         return;
       }
 

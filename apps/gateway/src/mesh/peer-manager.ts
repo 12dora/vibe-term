@@ -1,16 +1,20 @@
 import { decodeBase64url, encodeBase64url } from '@tmex/shared/auth';
-import type {
-  LinkSession,
-  LinkStream,
-  ServerSocketAdapter,
-  WebSocketTransportInput,
+import {
+  LinkMux,
+  type LinkSession,
+  type LinkStream,
+  type ServerSocketAdapter,
+  type WebSocketTransportInput,
 } from '@tmex/shared/link';
 import type { NodeSessionStore } from '../auth/node-session-store';
 import type { UserStore } from '../auth/user-store';
 import type { WebSocketServer } from '../ws';
 import { defaultScheduler, encodeJsonBytes, isRecord, parseSeq } from './ctl';
+import type { RtcSignalMessage } from './mesh-deps';
 import { handshakeRelay, handshakeWsDirect, parseOpenPayload } from './peer-protocol';
 import { PeerServer } from './peer-server';
+import type { RtcPeerManager } from './rtc';
+import type { RtcSignaling } from './rtc/ice';
 import { acceptHttpStream, acceptWsStream, classifyOpenPayload } from './stream-targets';
 import {
   type DispatchHttp,
@@ -53,7 +57,14 @@ export type PeerManagerOptions = {
   wsFactory?: (url: string) => WebSocketTransportInput | Promise<WebSocketTransportInput>;
   startServer?: boolean;
   maxConcurrentStreams?: number;
+  rtc?: RtcPeerManager;
+  linkFactory?: PeerLinkFactory;
 };
+
+export type PeerLinkFactory = (
+  peerNodeId: string,
+  signal: AbortSignal
+) => Promise<LinkSession | null>;
 
 type LivePeer = {
   session: LinkSession;
@@ -161,6 +172,10 @@ export class PeerManager {
   ) => WebSocketTransportInput | Promise<WebSocketTransportInput>;
   private readonly live = new Map<string, LivePeer>();
   private readonly pending = new Map<string, Promise<LinkSession>>();
+  private readonly rtc: RtcPeerManager | null;
+  private readonly linkFactory: PeerLinkFactory | null;
+  private readonly rtcListeners = new Map<string, Set<(msg: RtcSignalMessage) => void>>();
+  private readonly rtcInbox = new Map<string, RtcSignalMessage[]>();
   private readonly server: PeerServer | null;
   private stopped = false;
   private generation = 0;
@@ -189,6 +204,8 @@ export class PeerManager {
     this.idleMs = opts.idleMs ?? PEER_IDLE_MS;
     this.maxConcurrentStreams = opts.maxConcurrentStreams ?? PEER_MAX_CONCURRENT_STREAMS;
     this.wsFactory = opts.wsFactory ?? ((url: string) => new WebSocket(url));
+    this.rtc = opts.rtc ?? null;
+    this.linkFactory = opts.linkFactory ?? null;
     this.uplink.setOnRelayStream((stream, from) => {
       void this.acceptRelay(stream, from);
     });
@@ -215,6 +232,7 @@ export class PeerManager {
   }
 
   async stop(): Promise<void> {
+    if (this.stopped) return;
     this.stopped = true;
     this.generation += 1;
     this.stopAbort.abort();
@@ -224,8 +242,55 @@ export class PeerManager {
     }
   }
 
+  getLive(nodeId: string): LinkSession | null {
+    const cert = this.userStore.getCert(nodeId);
+    if (cert?.revokedLogSeq != null) {
+      this.onRevoked(nodeId);
+      return null;
+    }
+    return this.live.get(nodeId)?.session ?? null;
+  }
+
+  adoptLink(
+    peerNodeId: string,
+    session: LinkSession,
+    transport: PeerTransportKind = 'ws-secure',
+    initiatedBy?: string
+  ): LinkSession | null {
+    return this.track(session, peerNodeId, transport, initiatedBy ?? peerNodeId, this.generation);
+  }
+
+  receiveRtcSignal(fromNodeId: string, msg: RtcSignalMessage): void {
+    const listeners = this.rtcListeners.get(fromNodeId);
+    if (listeners && listeners.size > 0) {
+      for (const cb of listeners) {
+        try {
+          cb(msg);
+        } catch {
+          // listener errors must not break signaling
+        }
+      }
+      return;
+    }
+    const inbox = this.rtcInbox.get(fromNodeId) ?? [];
+    inbox.push(msg);
+    this.rtcInbox.set(fromNodeId, inbox);
+    if (
+      this.shouldTryDc(fromNodeId) &&
+      !this.live.has(fromNodeId) &&
+      !this.pending.has(fromNodeId)
+    ) {
+      void this.getLink(fromNodeId).catch(() => undefined);
+    }
+  }
+
   async getLink(nodeId: string): Promise<LinkSession> {
     if (this.stopped) throw new NodeUnreachableError(nodeId, 'peer manager stopped');
+    const cert = this.userStore.getCert(nodeId);
+    if (cert?.revokedLogSeq != null) {
+      this.onRevoked(nodeId);
+      throw new NodeUnreachableError(nodeId, 'revoked');
+    }
     const existing = this.live.get(nodeId);
     if (existing) return existing.session;
     const inflight = this.pending.get(nodeId);
@@ -252,9 +317,16 @@ export class PeerManager {
   listReach(): Map<string, PeerReach> {
     const out = new Map<string, PeerReach>();
     for (const peer of this.userStore.listPeers()) {
+      const cert = this.userStore.getCert(peer.nodeId);
+      if (cert?.revokedLogSeq != null) continue;
       out.set(peer.nodeId, null);
     }
     for (const [id, live] of this.live) {
+      const cert = this.userStore.getCert(id);
+      if (cert?.revokedLogSeq != null) {
+        this.onRevoked(id);
+        continue;
+      }
       out.set(id, live.transport === 'relay' ? 'relay' : 'lan');
     }
     return out;
@@ -264,9 +336,119 @@ export class PeerManager {
     return this.generation;
   }
 
+  private shouldTryDc(nodeId: string): boolean {
+    if (!this.rtc?.available) return false;
+    const peer = this.userStore.listPeers().find((row) => row.nodeId === nodeId);
+    if (peer && peer.directCapable === false) return false;
+    return true;
+  }
+
+  private signalingFor(peerNodeId: string): RtcSignaling {
+    return {
+      send: (msg) => this.sendRtcSignal(peerNodeId, msg),
+      onMessage: (cb) => {
+        let set = this.rtcListeners.get(peerNodeId);
+        if (!set) {
+          set = new Set();
+          this.rtcListeners.set(peerNodeId, set);
+        }
+        set.add(cb);
+        const inbox = this.rtcInbox.get(peerNodeId);
+        if (inbox && inbox.length > 0) {
+          this.rtcInbox.delete(peerNodeId);
+          for (const msg of inbox) cb(msg);
+        }
+      },
+    };
+  }
+
+  private sendRtcSignal(peerNodeId: string, msg: RtcSignalMessage): void {
+    const payload = {
+      t: 'rtc.signal' as const,
+      rtcSession: msg.rtcSession,
+      from: msg.from,
+      to: msg.to,
+      ...(msg.sdp ? { sdp: msg.sdp } : {}),
+      ...(msg.candidate ? { candidate: msg.candidate } : {}),
+    };
+    const live = this.live.get(peerNodeId);
+    if (live && live.transport !== 'dc') {
+      live.session.ctl.send(encodeJsonBytes(payload));
+      return;
+    }
+    try {
+      this.uplink.sendCtl(payload);
+    } catch {
+      // uplink offline
+    }
+  }
+
+  private async dialDc(
+    nodeId: string,
+    gen: number,
+    signal: AbortSignal
+  ): Promise<LinkSession | null> {
+    if (!this.rtc) return null;
+    const result = await abortable(
+      this.rtc.connectToPeer(nodeId, this.signalingFor(nodeId)),
+      signal
+    );
+    if (this.stopped || gen !== this.generation) {
+      try {
+        result.pc.close();
+      } catch {
+        // ignore
+      }
+      throw new Error('stopped');
+    }
+    const session = new LinkMux(result.link, { role: result.role });
+    const kept = this.track(session, result.peerNodeId, 'dc', this.identity.nodeId, gen);
+    if (!kept) return null;
+    return kept;
+  }
+
   private async dial(nodeId: string): Promise<LinkSession> {
     const gen = this.currentGeneration();
     const signal = this.stopAbort.signal;
+    if (this.shouldTryDc(nodeId)) {
+      try {
+        const dc = await this.dialDc(nodeId, gen, signal);
+        if (dc) return dc;
+      } catch (err) {
+        if (this.stopped || gen !== this.generation) {
+          throw err instanceof NodeUnreachableError
+            ? err
+            : new NodeUnreachableError(nodeId, 'peer manager stopped');
+        }
+        const live = this.live.get(nodeId);
+        if (live) return live.session;
+      }
+    }
+    if (this.linkFactory) {
+      try {
+        const session = await abortable(Promise.resolve(this.linkFactory(nodeId, signal)), signal);
+        if (session) {
+          if (this.stopped || gen !== this.generation) {
+            try {
+              session.close('stopped');
+            } catch {
+              // ignore
+            }
+            throw new NodeUnreachableError(nodeId, 'peer manager stopped');
+          }
+          const kept = this.track(session, nodeId, 'ws-secure', this.identity.nodeId, gen);
+          if (kept) return kept;
+        }
+      } catch (err) {
+        if (this.stopped || gen !== this.generation) {
+          throw err instanceof NodeUnreachableError
+            ? err
+            : new NodeUnreachableError(nodeId, 'peer manager stopped');
+        }
+        const live = this.live.get(nodeId);
+        if (live) return live.session;
+      }
+    }
     const cached = this.userStore.listPeers().find((row) => row.nodeId === nodeId);
     const endpoints = cached ? parseEndpoints(cached.endpointsJson, this.server?.port) : [];
     for (const url of endpoints) {
@@ -557,6 +739,17 @@ export class PeerManager {
       case 'key.log.res':
         void this.applyKeyLogRes(msg);
         return;
+      case 'rtc.signal': {
+        const signal: RtcSignalMessage = {
+          rtcSession: typeof msg.rtcSession === 'string' ? msg.rtcSession : '',
+          from: msg.from === 'browser' ? 'browser' : 'node',
+          to: typeof msg.to === 'string' ? msg.to : '',
+          sdp: typeof msg.sdp === 'string' ? msg.sdp : null,
+          candidate: typeof msg.candidate === 'string' ? msg.candidate : null,
+        };
+        this.receiveRtcSignal(live.peerNodeId, signal);
+        return;
+      }
       default:
         return;
     }

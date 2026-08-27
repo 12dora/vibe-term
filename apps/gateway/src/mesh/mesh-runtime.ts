@@ -1,3 +1,4 @@
+import os from 'node:os';
 import { type LinkSession, createInMemoryLinkPair } from '@tmex/shared/link';
 import {
   ChallengeStore,
@@ -16,7 +17,7 @@ import { HubRuntime, type HubTurnConfig } from '../hub';
 import { createHubKeyLogSource } from '../hub/hub-key-log-source';
 import type { GatewayRuntime } from '../runtime';
 import { getDisplayVersion } from '../system/version';
-import { backoffDelayMs } from './ctl';
+import { encodeJsonBytes } from './ctl';
 import {
   type CachedRtcConfig,
   type KeyLogPublisher,
@@ -27,25 +28,20 @@ import {
   type NodeEventPayload,
   type OpenedWsStream,
   type PeerLinkProvider,
+  type RtcFingerprintProvider,
   type RtcSignalMessage,
-  type RtcSignalOwner,
-  type RtcSignalRouter,
   type StreamOpener,
   getMeshRequestContext,
   requestDispatchContext,
   setMeshRequestContext,
 } from './mesh-deps';
 import { MeshHttpRuntime } from './mesh-http';
-import { PeerManager } from './peer-manager';
+import { type PeerLinkFactory, PeerManager } from './peer-manager';
+import { type LoadNative, MeshRtcSignalRouter, RtcPeerManager } from './rtc';
 import { authenticateRequest } from './session-middleware';
 import { openHttpStream, openWsStream } from './stream-targets';
-import type { DispatchContext, KeyLogApplier, MeshScheduler, UplinkState } from './types';
-import {
-  UPLINK_BACKOFF_MAX_MS,
-  UPLINK_BACKOFF_MIN_MS,
-  UplinkClient,
-  type UplinkWsFactory,
-} from './uplink-client';
+import type { DispatchContext, KeyLogApplier, MeshScheduler } from './types';
+import { UplinkClient, type UplinkWsFactory } from './uplink-client';
 import type { UplinkNodeList, UplinkRtcSignal } from './uplink-protocol';
 
 const ZERO_HASH = new Uint8Array(32);
@@ -67,12 +63,18 @@ export type CreateMeshRuntimeOptions = {
   gateway: GatewayRuntime;
   config: MeshRuntimeConfig;
   hub?: HubRuntime;
+  /** Same-process hub to attach an in-memory uplink to (remote node in hub+A+B tests). */
+  uplinkHub?: HubRuntime;
   wsFactory?: UplinkWsFactory;
   peerHostname?: string | string[];
   startPeerServer?: boolean;
   pingIntervalMs?: number;
   scheduler?: MeshScheduler;
   userId?: string;
+  loadNative?: LoadNative;
+  networkInterfaces?: () => NodeJS.Dict<os.NetworkInterfaceInfo[]>;
+  linkFactory?: PeerLinkFactory;
+  rtcHandshakeTimeoutMs?: number;
 };
 
 export type MeshRuntime = {
@@ -81,6 +83,7 @@ export type MeshRuntime = {
   readonly hub: HubRuntime | null;
   readonly uplink: UplinkClient;
   readonly peers: PeerManager;
+  readonly rtc: RtcPeerManager;
   readonly userStore: UserStore;
   readonly userKeyService: UserKeyService;
   lastNodeList: UplinkNodeList | null;
@@ -101,21 +104,50 @@ export type MeshRuntime = {
   stop(): Promise<void>;
 };
 
-type UplinkInternals = {
-  bindLink(link: LinkSession, generation: number): void;
-  authenticate(link: LinkSession, signal: AbortSignal): Promise<void>;
-  setState(state: UplinkState): void;
-  startHeartbeat(link: LinkSession, generation: number): void;
-  tearDownLink(reason: string): void;
-  waitUntilClosed(signal: AbortSignal): Promise<void>;
-  connectGeneration: number;
-  stopAbort: AbortController | null;
-  loop: Promise<void> | null;
-  scheduler: MeshScheduler;
-};
+export type NetworkInterfacesFn = () => NodeJS.Dict<os.NetworkInterfaceInfo[]>;
 
-function uplinkInternals(uplink: UplinkClient): UplinkInternals {
-  return uplink as unknown as UplinkInternals;
+export function enumeratePeerEndpoints(
+  port: number,
+  interfaces: NodeJS.Dict<os.NetworkInterfaceInfo[]> = os.networkInterfaces()
+): string[] {
+  const urls: string[] = [];
+  const seen = new Set<string>();
+  for (const addrs of Object.values(interfaces)) {
+    if (!addrs) continue;
+    for (const addr of addrs) {
+      if (addr.internal) continue;
+      const family = addr.family as string | number;
+      const isV4 = family === 'IPv4' || family === 4;
+      const isV6 = family === 'IPv6' || family === 6;
+      if (!isV4 && !isV6) continue;
+      if (addr.address.includes('%')) continue;
+      const host = isV6 ? `[${addr.address}]` : addr.address;
+      const url = `ws://${host}:${port}/peer`;
+      if (seen.has(url)) continue;
+      seen.add(url);
+      urls.push(url);
+    }
+  }
+  return urls;
+}
+
+function peerFromDcSession(selfNodeId: string, rtcSession: string): string | null {
+  if (!rtcSession.startsWith('dc:')) return null;
+  const rest = rtcSession.slice(3);
+  const idx = rest.indexOf(':');
+  if (idx <= 0) return null;
+  const a = rest.slice(0, idx);
+  const b = rest.slice(idx + 1);
+  const self = selfNodeId.toLowerCase();
+  if (a === self) return b;
+  if (b === self) return a;
+  return null;
+}
+
+function resolvePeerBindHost(explicit?: string | string[]): string | string[] | undefined {
+  if (explicit !== undefined) return explicit;
+  const env = process.env.TMEX_PEER_BIND_HOST?.trim();
+  return env ? env : undefined;
 }
 
 function turnConfig(config: MeshRuntimeConfig): CachedRtcConfig['turn'] {
@@ -149,47 +181,6 @@ function createKeyLogApplier(keyLogStore: KeyLogStore, keys: UserKeyService): Ke
       }));
     },
   };
-}
-
-function startInMemoryUplink(uplink: UplinkClient, hub: HubRuntime): void {
-  const internals = uplinkInternals(uplink);
-  if (internals.loop) return;
-  internals.stopAbort = new AbortController();
-  const signal = internals.stopAbort.signal;
-  internals.loop = (async () => {
-    let attempt = 0;
-    while (!signal.aborted) {
-      internals.setState('connecting');
-      const [nodeLink, hubLink] = createInMemoryLinkPair();
-      const generation = ++internals.connectGeneration;
-      uplink.link = nodeLink;
-      internals.bindLink(nodeLink, generation);
-      const authed = internals.authenticate(nodeLink, signal);
-      hub.attachLocalNode(hubLink);
-      try {
-        await authed;
-        if (signal.aborted || generation !== internals.connectGeneration) {
-          throw new Error('aborted');
-        }
-        internals.setState('online');
-        uplink.sendStatus();
-        internals.startHeartbeat(nodeLink, generation);
-        attempt = 0;
-        await internals.waitUntilClosed(signal);
-      } catch {
-        internals.tearDownLink('connect-failed');
-        internals.setState('offline');
-        if (signal.aborted) return;
-        const delay = backoffDelayMs(attempt, UPLINK_BACKOFF_MIN_MS, UPLINK_BACKOFF_MAX_MS);
-        attempt += 1;
-        try {
-          await internals.scheduler.sleep(delay, signal);
-        } catch {
-          return;
-        }
-      }
-    }
-  })();
 }
 
 async function openAdaptedWsStream(link: LinkSession, auth: string): Promise<OpenedWsStream> {
@@ -321,14 +312,45 @@ export async function createMeshRuntime(opts: CreateMeshRuntimeOptions): Promise
     : (opts.hub ?? null);
 
   const peerHolder: { manager: PeerManager | null } = { manager: null };
+  const interfacesFn = opts.networkInterfaces ?? os.networkInterfaces;
+  const loadNative: LoadNative = opts.loadNative ?? (async () => null);
+
+  const rtc = new RtcPeerManager({
+    loadNative,
+    iceConfigProvider: () => lastRtc ?? { stun: config.stunServers, turn: turnConfig(config) },
+    identity: { nodeId: identity.nodeIdHex, edSecretKey: identity.edPrivateKey },
+    userStore,
+    handshakeTimeoutMs: opts.rtcHandshakeTimeoutMs,
+    sendControl: (session, kind, payload) => {
+      try {
+        gateway.wsServer.sendEnvelope(session, kind, payload);
+      } catch {
+        // fake / partial wsServer in tests
+      }
+    },
+    deliverInbound: (session, bytes) => {
+      try {
+        gateway.wsServer.handleMessage(session, Buffer.from(bytes));
+      } catch {
+        // fake / partial wsServer in tests
+      }
+    },
+  });
+  if (typeof gateway.wsServer.setOnCarrierSwitchAck === 'function') {
+    gateway.wsServer.setOnCarrierSwitchAck((session, epoch) => {
+      rtc.handleCarrierSwitchAck(session, epoch);
+    });
+  }
+
   const statusProvider = () => ({
     version: getDisplayVersion(),
     tmux: true,
-    direct_capable: false,
+    direct_capable: rtc.available,
     inventory: {},
-    endpoints: peerHolder.manager?.listenPort
-      ? [`ws://127.0.0.1:${peerHolder.manager.listenPort}/peer`]
-      : [],
+    endpoints: enumeratePeerEndpoints(
+      peerHolder.manager?.listenPort ?? config.peerPort,
+      interfacesFn()
+    ),
   });
 
   const uplink = new UplinkClient({
@@ -348,6 +370,12 @@ export async function createMeshRuntime(opts: CreateMeshRuntimeOptions): Promise
         turn: list.rtc.turn ?? null,
       };
       for (const node of list.nodes) {
+        const cert = userStore.getCert(node.id);
+        if (cert?.revokedLogSeq != null) {
+          peerHolder.manager?.onRevoked(node.id);
+          emitNodeEvent({ nodeId: node.id, status: 'revoked' });
+          continue;
+        }
         emitNodeEvent({
           nodeId: node.id,
           status: node.online ? 'online' : 'offline',
@@ -356,6 +384,13 @@ export async function createMeshRuntime(opts: CreateMeshRuntimeOptions): Promise
               ? node.inventory
               : JSON.stringify(node.inventory ?? null),
         });
+      }
+      for (const peer of userStore.listPeers()) {
+        if (peer.nodeId === identity.nodeIdHex) continue;
+        const cert = userStore.getCert(peer.nodeId);
+        if (cert?.revokedLogSeq != null) {
+          peerHolder.manager?.onRevoked(peer.nodeId);
+        }
       }
     },
     onRtcSignal: (msg: UplinkRtcSignal) => {
@@ -366,6 +401,10 @@ export async function createMeshRuntime(opts: CreateMeshRuntimeOptions): Promise
         sdp: msg.sdp,
         candidate: msg.candidate,
       };
+      const dcPeer = peerFromDcSession(identity.nodeIdHex, msg.rtcSession);
+      if (dcPeer) {
+        peerHolder.manager?.receiveRtcSignal(dcPeer, signal);
+      }
       for (const cb of signalListeners) {
         try {
           cb(signal);
@@ -421,9 +460,11 @@ export async function createMeshRuntime(opts: CreateMeshRuntimeOptions): Promise
     sessionStore: nodeSessionStore,
     dispatchHttp: dispatchInboundHttp,
     wsServer: gateway.wsServer,
-    hostname: opts.peerHostname,
+    hostname: resolvePeerBindHost(opts.peerHostname),
     startServer: opts.startPeerServer,
     scheduler: opts.scheduler,
+    rtc,
+    linkFactory: opts.linkFactory,
   });
   peerHolder.manager = peerManager;
 
@@ -467,24 +508,53 @@ export async function createMeshRuntime(opts: CreateMeshRuntimeOptions): Promise
     },
   };
 
-  const signals: RtcSignalRouter = {
-    send(signal, _owner?: RtcSignalOwner) {
+  const innerSignals = new MeshRtcSignalRouter({
+    selfNodeId: identity.nodeIdHex,
+    sendCtl(nodeId, msg) {
+      const live = peerManager.getLive(nodeId);
+      if (live) {
+        live.ctl.send(
+          encodeJsonBytes({
+            t: 'rtc.signal',
+            rtcSession: msg.rtcSession,
+            from: msg.from,
+            to: msg.to,
+            ...(msg.sdp ? { sdp: msg.sdp } : {}),
+            ...(msg.candidate ? { candidate: msg.candidate } : {}),
+          })
+        );
+        return;
+      }
       try {
         uplink.sendCtl({
           t: 'rtc.signal',
-          rtcSession: signal.rtcSession,
-          from: signal.from,
-          to: signal.to,
-          ...(signal.sdp ? { sdp: signal.sdp } : {}),
-          ...(signal.candidate ? { candidate: signal.candidate } : {}),
+          rtcSession: msg.rtcSession,
+          from: msg.from,
+          to: msg.to,
+          ...(msg.sdp ? { sdp: msg.sdp } : {}),
+          ...(msg.candidate ? { candidate: msg.candidate } : {}),
         });
       } catch {
         // uplink offline
       }
     },
-    subscribe(cb) {
+  });
+  const fingerprint: RtcFingerprintProvider = rtc;
+  const signals = {
+    send(signal: RtcSignalMessage, owner?: { uid: string; sid: string }) {
+      if (owner && signal.from === 'browser' && !innerSignals.ownerOf(signal.rtcSession)) {
+        innerSignals.register(signal.rtcSession, {
+          browserSessionId: owner.sid,
+          targetNodeId: signal.to,
+        });
+      }
+      innerSignals.send(signal, owner);
+    },
+    subscribe(cb: (signal: RtcSignalMessage) => void) {
+      const offRouter = innerSignals.subscribe(cb);
       signalListeners.add(cb);
       return () => {
+        offRouter();
         signalListeners.delete(cb);
       };
     },
@@ -502,6 +572,7 @@ export async function createMeshRuntime(opts: CreateMeshRuntimeOptions): Promise
     streams,
     publisher,
     rtc: {
+      fingerprint,
       signals,
       config: {
         getRtcConfig: () => lastRtc,
@@ -512,12 +583,16 @@ export async function createMeshRuntime(opts: CreateMeshRuntimeOptions): Promise
   });
   httpHolder.runtime = http;
 
+  const uplinkHub = hub ?? opts.uplinkHub ?? null;
+  let stopPromise: Promise<void> | null = null;
+
   const runtime: MeshRuntime = {
     nodeId: identity.nodeIdHex,
     identity,
     hub,
     uplink,
     peers: peerManager,
+    rtc,
     userStore,
     userKeyService: keyLogService,
     get lastNodeList() {
@@ -540,17 +615,29 @@ export async function createMeshRuntime(opts: CreateMeshRuntimeOptions): Promise
       close: (ws, code, reason) => http.handleWebSocket.close(ws, code, reason),
     },
     async start() {
+      await rtc.ready();
       await peerManager.start();
-      if (hub) {
-        startInMemoryUplink(uplink, hub);
+      if (uplinkHub) {
+        const target = uplinkHub;
+        uplink.start(async (signal) => {
+          const [nodeLink, hubLink] = createInMemoryLinkPair();
+          const online = uplink.connectWithLink(nodeLink, signal);
+          target.attachLocalNode(hubLink);
+          await online;
+        });
       } else {
         uplink.start();
       }
     },
     async stop() {
-      await peerManager.stop();
-      await uplink.stop();
-      http.stop();
+      if (stopPromise) return stopPromise;
+      stopPromise = (async () => {
+        await peerManager.stop();
+        await uplink.stop();
+        http.stop();
+        rtc.close();
+      })();
+      return stopPromise;
     },
   };
   return runtime;

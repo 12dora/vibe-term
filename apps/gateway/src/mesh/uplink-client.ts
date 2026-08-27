@@ -28,6 +28,7 @@ import type {
 import {
   type UplinkCtlMessage,
   type UplinkEnrollRedeemed,
+  type UplinkKeyLogAck,
   type UplinkKeyLogRecord,
   type UplinkNodeList,
   type UplinkRtcSignal,
@@ -43,6 +44,7 @@ export const UPLINK_BACKOFF_MAX_MS = 60_000;
 export const UPLINK_CONNECT_TIMEOUT_MS = 10_000;
 export const UPLINK_AUTH_TIMEOUT_MS = 10_000;
 export const UPLINK_STABLE_UPTIME_MS = 30_000;
+export const UPLINK_KEY_LOG_ACK_TIMEOUT_MS = 10_000;
 
 export type UplinkWsFactory = (
   url: string
@@ -159,8 +161,10 @@ export class UplinkClient {
   private pendingKeyLog: {
     resolve: (records: UplinkKeyLogRecord[]) => void;
   } | null = null;
+  private readonly pendingAcks = new Map<string, (ack: UplinkKeyLogAck) => void>();
   private keyLogForked = false;
   private onlineAt = 0;
+  private customConnect: ((signal: AbortSignal) => Promise<void>) | null = null;
 
   constructor(opts: UplinkClientOptions) {
     this.hubUrl = opts.hubUrl;
@@ -193,10 +197,32 @@ export class UplinkClient {
     this.relayHandler = handler;
   }
 
-  start(): void {
+  start(connectOnce?: (signal: AbortSignal) => Promise<void>): void {
     if (this.loop) return;
     this.stopAbort = new AbortController();
+    this.customConnect = connectOnce ?? null;
     this.loop = this.runLoop(this.stopAbort.signal);
+  }
+
+  /**
+   * Bind, authenticate, and mark online against an already-open LinkSession.
+   * Resolves once `auth.ok` lands. Used by the WS loop and by in-memory hub,node.
+   */
+  async connectWithLink(link: LinkSession, signal?: AbortSignal): Promise<void> {
+    if (!this.stopAbort) {
+      this.stopAbort = new AbortController();
+    }
+    const effective = signal ?? this.stopAbort.signal;
+    const generation = ++this.connectGeneration;
+    this.link = link;
+    this.bindLink(link, generation);
+    await this.authenticate(link, effective);
+    if (effective.aborted || generation !== this.connectGeneration) {
+      throw new Error('aborted');
+    }
+    this.setState('online');
+    this.sendStatus();
+    this.startHeartbeat(link, generation);
   }
 
   async stop(): Promise<void> {
@@ -265,7 +291,11 @@ export class UplinkClient {
     while (!signal.aborted) {
       this.setState('connecting');
       try {
-        await this.connectOnce(signal);
+        if (this.customConnect) {
+          await this.customConnect(signal);
+        } else {
+          await this.connectOnce(signal);
+        }
         this.onlineAt = this.scheduler.now();
         await this.waitUntilClosed(signal);
         if (signal.aborted) return;
@@ -299,17 +329,8 @@ export class UplinkClient {
     const url = uplinkWsUrl(this.hubUrl);
     const ws = await this.wsFactory(url);
     await waitSocketOpen(ws, signal, this.connectTimeoutMs);
-    const generation = ++this.connectGeneration;
     const link = new WebSocketLink(ws, { role: 'initiator' });
-    this.link = link;
-    this.bindLink(link, generation);
-    await this.authenticate(link, signal);
-    if (signal.aborted || generation !== this.connectGeneration) {
-      throw new Error('aborted');
-    }
-    this.setState('online');
-    this.sendStatus();
-    this.startHeartbeat(link, generation);
+    await this.connectWithLink(link, signal);
   }
 
   private bindLink(link: LinkSession, generation: number): void {
@@ -398,6 +419,12 @@ export class UplinkClient {
         this.pendingKeyLog?.resolve(msg.records);
         this.pendingKeyLog = null;
         return;
+      case 'key.log.ack': {
+        const waiter = this.pendingAcks.get(msg.id);
+        this.pendingAcks.delete(msg.id);
+        waiter?.(msg);
+        return;
+      }
       case 'rtc.signal':
         this.onRtcSignalCb?.(msg);
         return;
@@ -437,6 +464,14 @@ export class UplinkClient {
 
   private ingestNodeList(list: UplinkNodeList): void {
     const now = this.scheduler.now();
+    if (list.hub) {
+      this.userStore.upsertHubMeta({
+        nodeId: list.hub.nodeId,
+        publicUrl: list.hub.publicUrl,
+        now,
+        listVersion: list.version,
+      });
+    }
     for (const node of list.nodes) {
       if (node.id === this.identity.nodeId) continue;
       this.userStore.upsertPeer({
@@ -467,6 +502,7 @@ export class UplinkClient {
       return;
     }
     if (local.seq > target.seq) {
+      await this.pushMissingToHub(target.seq);
       this.onNodeListCb?.(list);
       return;
     }
@@ -491,6 +527,51 @@ export class UplinkClient {
       return;
     }
     this.onNodeListCb?.(list);
+  }
+
+  async appendAndAck(
+    record: { bytes: Uint8Array; sig: Uint8Array },
+    timeoutMs = UPLINK_KEY_LOG_ACK_TIMEOUT_MS
+  ): Promise<UplinkKeyLogAck> {
+    if (!this.link || this.state !== 'online') {
+      return { t: 'key.log.ack', id: '', ok: false, error: 'offline' };
+    }
+    const id = crypto.randomUUID();
+    return new Promise((resolve) => {
+      const timer = setTimeout(() => {
+        this.pendingAcks.delete(id);
+        resolve({ t: 'key.log.ack', id, ok: false, error: 'timeout' });
+      }, timeoutMs);
+      this.pendingAcks.set(id, (ack) => {
+        clearTimeout(timer);
+        resolve(ack);
+      });
+      try {
+        this.link?.ctl.send(
+          encodeUplinkCtl({
+            t: 'key.log.append',
+            bytes: record.bytes,
+            sig: record.sig,
+            id,
+          })
+        );
+      } catch {
+        this.pendingAcks.delete(id);
+        clearTimeout(timer);
+        resolve({ t: 'key.log.ack', id, ok: false, error: 'offline' });
+      }
+    });
+  }
+
+  private async pushMissingToHub(hubSeq: bigint): Promise<void> {
+    const listed = await this.keyLogApplier.list?.(this.userId, hubSeq + 1n);
+    if (!listed || listed.length === 0) return;
+    const sorted = [...listed].sort((a, b) => (a.seq < b.seq ? -1 : a.seq > b.seq ? 1 : 0));
+    for (const row of sorted) {
+      if (row.seq <= hubSeq) continue;
+      const ack = await this.appendAndAck({ bytes: row.bytes, sig: row.sig });
+      if (!ack.ok) return;
+    }
   }
 
   private requestKeyLog(fromSeq: bigint): Promise<UplinkKeyLogRecord[]> {
@@ -544,6 +625,11 @@ export class UplinkClient {
     const pending = this.pendingKeyLog;
     this.pendingKeyLog = null;
     pending?.resolve([]);
+    const acks = [...this.pendingAcks.entries()];
+    this.pendingAcks.clear();
+    for (const [id, waiter] of acks) {
+      waiter({ t: 'key.log.ack', id, ok: false, error: 'offline' });
+    }
     const link = this.link;
     this.link = null;
     this.authPhase = 'idle';

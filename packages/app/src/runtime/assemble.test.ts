@@ -2,7 +2,12 @@ import { afterEach, describe, expect, test } from 'bun:test';
 import type { HubRuntime } from '../../../../apps/gateway/src/hub';
 import type { MeshRuntime } from '../../../../apps/gateway/src/mesh/mesh-runtime';
 import type { GatewayRuntime } from '../../../../apps/gateway/src/runtime';
-import { assembleTmex, installShutdownHandlers } from './assemble';
+import {
+  SHUTDOWN_TIMEOUT_MS,
+  assembleTmex,
+  installShutdownHandlers,
+  meshShutdownNeeded,
+} from './assemble';
 
 function fakeGateway(overrides?: Partial<GatewayRuntime>): GatewayRuntime {
   return {
@@ -76,6 +81,38 @@ describe('assembleTmex role matrix', () => {
     } else {
       process.env.TMEX_ROLES = originalRoles;
     }
+  });
+
+  test('standalone does not install mesh shutdown handlers', () => {
+    expect(meshShutdownNeeded({ hub: false, node: false })).toBe(false);
+    expect(meshShutdownNeeded({ hub: false, node: true })).toBe(true);
+    expect(meshShutdownNeeded({ hub: true, node: true })).toBe(true);
+    expect(SHUTDOWN_TIMEOUT_MS).toBe(20_000);
+  });
+
+  test('stop is idempotent and shares one promise across concurrent callers', async () => {
+    let stops = 0;
+    const gateway = fakeGateway({
+      async stop() {
+        stops += 1;
+      },
+    });
+    const mesh = fakeMesh({
+      async stop() {
+        stops += 1;
+      },
+    });
+    const assembled = await assembleTmex({
+      roles: { hub: false, node: true },
+      createGatewayRuntime: async () => gateway,
+      createMeshRuntime: async () => mesh,
+    });
+    const [a, b] = await Promise.all([assembled.stop(), assembled.stop()]);
+    expect(a).toBeUndefined();
+    expect(b).toBeUndefined();
+    expect(stops).toBe(2);
+    await assembled.stop();
+    expect(stops).toBe(2);
   });
 
   test('standalone does not construct mesh and /api/auth/mode returns {mode:none}', async () => {

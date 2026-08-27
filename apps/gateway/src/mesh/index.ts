@@ -84,3 +84,20 @@ export {
   type UplinkNodeList,
   type UplinkRtcSignal,
 } from './uplink-protocol';
+export {
+  createMeshRuntime,
+  enumeratePeerEndpoints,
+  type CreateMeshRuntimeOptions,
+  type MeshRuntime,
+  type MeshRuntimeConfig,
+  type NetworkInterfacesFn,
+} from './mesh-runtime';
+export { MeshHttpRuntime, type MeshHttpRuntimeOptions } from './mesh-http';
+export {
+  CarrierSwitchController,
+  DataChannelCarrier,
+  DataChannelLink,
+  MeshRtcSignalRouter,
+  RtcPeerManager,
+  type LoadNative,
+} from './rtc';

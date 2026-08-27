@@ -3,7 +3,7 @@ import { resolve } from 'node:path';
 import { CryptoDecryptError } from '../../../../apps/gateway/src/crypto/errors';
 import { getDisplayVersion } from '../../../../apps/gateway/src/system/version';
 import { t } from '../i18n';
-import { assembleTmex, installShutdownHandlers } from './assemble';
+import { assembleTmex, installShutdownHandlers, meshShutdownNeeded } from './assemble';
 
 function resolveStaticRoot(): string {
   if (process.env.TMEX_FE_DIST_DIR) {
@@ -37,10 +37,12 @@ async function main(): Promise<void> {
     process.exit(0);
   });
 
-  installShutdownHandlers(async () => {
-    await assembled.stop();
-    server.stop(true);
-  });
+  if (meshShutdownNeeded(assembled.roles)) {
+    installShutdownHandlers(async () => {
+      await assembled.stop();
+      server.stop(true);
+    });
+  }
 
   console.log(`[tmex] ${t('runtime.started', { url: `http://${host}:${port}` })}`);
 }

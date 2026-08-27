@@ -453,6 +453,105 @@ describe('UplinkClient', () => {
     await new Promise((resolve) => setTimeout(resolve, 30));
     expect(received.filter((row) => row.includes('key.log.req'))).toHaveLength(1);
   });
+
+  test('persists hub meta from node.list and pushes missing records when local is ahead', async () => {
+    const { db, close } = createMigratedAuthDb();
+    fixtures.push({ close });
+    const userStore = new UserStore(db);
+    seedUser(userStore);
+    const [clientWs, hubWs] = fakeSocketPair();
+    const hub = new WebSocketLink(hubWs, { role: 'acceptor' });
+    const received: string[] = [];
+    hub.ctl.onMessage((bytes) => received.push(new TextDecoder().decode(bytes)));
+    const rec4 = { seq: 4n, bytes: randomBytes(8), sig: randomBytes(64) };
+    const rec5 = { seq: 5n, bytes: randomBytes(8), sig: randomBytes(64) };
+    const client = new UplinkClient({
+      hubUrl: 'https://hub.example.com',
+      identity: { nodeId: 'ab'.repeat(16), edSecretKey: randomBytes(32) },
+      userId: 'user-1',
+      keyLogApplier: {
+        async head() {
+          return { seq: 5n, hash: randomBytes(32) };
+        },
+        async applyMany() {
+          return { applied: 0 };
+        },
+        async list() {
+          return [rec4, rec5];
+        },
+      },
+      userStore,
+      statusProvider: () => status(),
+      wsFactory: () => clientWs,
+    });
+    fixtures.push({ close, stop: () => client.stop() });
+    client.start();
+    await waitUntil(() => client.link !== null);
+    hub.ctl.send(encodeUplinkCtl({ t: 'auth.challenge', nonce: encodeBase64url(randomBytes(32)) }));
+    hub.ctl.send(encodeUplinkCtl({ t: 'auth.ok' }));
+    await waitUntil(() => client.state === 'online');
+    hub.ctl.send(
+      encodeUplinkCtl({
+        t: 'node.list',
+        version: 9,
+        key_log_head: { seq: 3n, hash: randomBytes(32) },
+        rtc: { stun: [], turn: null },
+        nodes: [],
+        hub: { nodeId: 'ff'.repeat(16), publicUrl: 'https://hub.example.com' },
+      })
+    );
+    await waitUntil(() => userStore.getHubMeta()?.nodeId === 'ff'.repeat(16));
+    expect(userStore.getHubMeta()?.publicUrl).toBe('https://hub.example.com');
+    await waitUntil(() => received.some((row) => row.includes('key.log.append')));
+    const first = JSON.parse(received.find((row) => row.includes('key.log.append')) ?? '{}') as {
+      t?: string;
+      id?: string;
+    };
+    expect(first.id).toBeTruthy();
+    hub.ctl.send(encodeUplinkCtl({ t: 'key.log.ack', id: first.id ?? '', ok: true, seq: 4n }));
+    await waitUntil(() => received.filter((row) => row.includes('key.log.append')).length >= 2);
+    const second = received
+      .map((row) => JSON.parse(row) as { t?: string; id?: string })
+      .filter((row) => row.t === 'key.log.append')[1];
+    hub.ctl.send(encodeUplinkCtl({ t: 'key.log.ack', id: second?.id ?? '', ok: true, seq: 5n }));
+  });
+
+  test('appendAndAck waits for key.log.ack', async () => {
+    const { db, close } = createMigratedAuthDb();
+    fixtures.push({ close });
+    const userStore = new UserStore(db);
+    seedUser(userStore);
+    const [clientWs, hubWs] = fakeSocketPair();
+    const hub = new WebSocketLink(hubWs, { role: 'acceptor' });
+    const received: string[] = [];
+    hub.ctl.onMessage((bytes) => received.push(new TextDecoder().decode(bytes)));
+    const client = new UplinkClient({
+      hubUrl: 'https://hub.example.com',
+      identity: { nodeId: 'ab'.repeat(16), edSecretKey: randomBytes(32) },
+      userId: 'user-1',
+      keyLogApplier: dummyApplier(),
+      userStore,
+      statusProvider: () => status(),
+      wsFactory: () => clientWs,
+    });
+    fixtures.push({ close, stop: () => client.stop() });
+    client.start();
+    await waitUntil(() => client.link !== null);
+    hub.ctl.send(encodeUplinkCtl({ t: 'auth.challenge', nonce: encodeBase64url(randomBytes(32)) }));
+    hub.ctl.send(encodeUplinkCtl({ t: 'auth.ok' }));
+    await waitUntil(() => client.state === 'online');
+    const bytes = randomBytes(8);
+    const sig = randomBytes(64);
+    const pending = client.appendAndAck({ bytes, sig });
+    await waitUntil(() => received.some((row) => row.includes('key.log.append')));
+    const sent = JSON.parse(received.find((row) => row.includes('key.log.append')) ?? '{}') as {
+      id?: string;
+    };
+    hub.ctl.send(encodeUplinkCtl({ t: 'key.log.ack', id: sent.id ?? '', ok: true, seq: 12n }));
+    const ack = await pending;
+    expect(ack.ok).toBe(true);
+    expect(ack.seq).toBe(12n);
+  });
 });
 
 function dummyApplier() {

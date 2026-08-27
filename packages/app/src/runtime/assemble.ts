@@ -20,12 +20,18 @@ import {
   type MeshRuntime,
   createMeshRuntime,
 } from '../../../../apps/gateway/src/mesh/mesh-runtime';
+import type { LoadNative } from '../../../../apps/gateway/src/mesh/rtc';
 import { applyLocalRenewal } from '../../../../apps/gateway/src/mesh/session-middleware';
 import type { GatewayRuntime } from '../../../../apps/gateway/src/runtime';
+import { loadNodeDatachannel } from '../lib/native-datachannel';
 import { createTmexGatewayRuntime } from './gateway';
 import { serveFrontend as defaultServeFrontend } from './serve-frontend';
 
-export const SHUTDOWN_TIMEOUT_MS = 5_000;
+export const SHUTDOWN_TIMEOUT_MS = 20_000;
+
+export function meshShutdownNeeded(roles: TmexRoles): boolean {
+  return roles.hub || roles.node;
+}
 
 export type AssembleTmexOptions = {
   roles?: TmexRoles;
@@ -34,6 +40,8 @@ export type AssembleTmexOptions = {
   createMeshRuntime?: (opts: CreateMeshRuntimeOptions) => Promise<MeshRuntime>;
   serveFrontend?: (req: Request, staticRoot: string) => Promise<Response>;
   hub?: HubRuntime;
+  loadNative?: LoadNative;
+  nativeDir?: string;
 };
 
 export type AssembledTmex = {
@@ -106,6 +114,13 @@ export async function assembleTmex(opts: AssembleTmexOptions = {}): Promise<Asse
 
   let mesh: MeshRuntime | null = null;
   if (roles.node) {
+    const nativeDir = opts.nativeDir ?? process.env.TMEX_NATIVE_DIR ?? '';
+    const loadNative: LoadNative =
+      opts.loadNative ??
+      (async () => {
+        if (!nativeDir) return null;
+        return loadNodeDatachannel({ nativeDir });
+      });
     mesh = await createMesh({
       db: gateway.db,
       gateway,
@@ -121,6 +136,8 @@ export async function assembleTmex(opts: AssembleTmexOptions = {}): Promise<Asse
         bindHost: process.env.TMEX_BIND_HOST || '127.0.0.1',
       },
       hub: opts.hub,
+      loadNative,
+      peerHostname: process.env.TMEX_PEER_BIND_HOST?.trim() || undefined,
     });
   }
 
@@ -253,6 +270,8 @@ export async function assembleTmex(opts: AssembleTmexOptions = {}): Promise<Asse
     },
   };
 
+  let stopPromise: Promise<void> | null = null;
+
   return {
     roles,
     gateway,
@@ -264,9 +283,13 @@ export async function assembleTmex(opts: AssembleTmexOptions = {}): Promise<Asse
       await mesh?.start();
     },
     async stop() {
-      await mesh?.stop();
-      hub?.stop();
-      await gateway.stop();
+      if (stopPromise) return stopPromise;
+      stopPromise = (async () => {
+        await mesh?.stop();
+        hub?.stop();
+        await gateway.stop();
+      })();
+      return stopPromise;
     },
   };
 }
