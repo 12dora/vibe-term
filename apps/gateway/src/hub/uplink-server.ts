@@ -1,12 +1,22 @@
-import { decodeCertificate, encodeBase64url, randomBytes, verifyEd25519 } from '@tmex/shared/auth';
+import {
+  decodeCertificate,
+  encodeBase64url,
+  nodeIdToHex,
+  randomBytes,
+  verifyEd25519,
+} from '@tmex/shared/auth';
 import type { LinkSession, LinkStream } from '@tmex/shared/link';
 import type { AuthDb } from '../auth/types';
 import type { UserStore } from '../auth/user-store';
 import { patchNode } from './node-persistence';
 import type { NodeRegistry } from './node-registry';
 import {
+  HUB_AUTH_TIMEOUT_MS,
   HUB_HEARTBEAT_INTERVAL_MS,
   HUB_HEARTBEAT_MISS_LIMIT,
+  HUB_RTC_MAX_SESSIONS,
+  HUB_RTC_TTL_MS,
+  type HubKeyLogAppendSuccess,
   type HubKeyLogSource,
   type HubRuntimeConfig,
 } from './types';
@@ -21,9 +31,21 @@ import {
   seqToWire,
 } from './uplink-protocol';
 
-export type RtcSessionRegistration = {
+export type RegisterRtcSessionInput = {
+  userId: string;
+  browserSessionId: string;
   fromNodeId: string;
   toNodeId: string;
+  ttlMs?: number;
+};
+
+export type RtcSessionRegistration = {
+  rtcSession: string;
+  userId: string;
+  browserSessionId: string;
+  fromNodeId: string;
+  toNodeId: string;
+  expiresAt: number;
 };
 
 export type UplinkServerOptions = {
@@ -35,6 +57,8 @@ export type UplinkServerOptions = {
   now?: () => number;
   heartbeatIntervalMs?: number;
   heartbeatMissLimit?: number;
+  authTimeoutMs?: number;
+  rtcMaxSessions?: number;
 };
 
 type PendingAuth = {
@@ -47,6 +71,7 @@ type LiveConnection = {
   link: LinkSession;
   generation: number;
   misses: number;
+  awaitingPong: boolean;
   heartbeat: ReturnType<typeof setInterval> | null;
 };
 
@@ -62,10 +87,16 @@ export class UplinkServer {
   private readonly now: () => number;
   private readonly heartbeatIntervalMs: number;
   private readonly heartbeatMissLimit: number;
+  private readonly authTimeoutMs: number;
+  private readonly rtcMaxSessions: number;
   private readonly pending = new WeakMap<LinkSession, PendingAuth>();
   private readonly live = new Map<LinkSession, LiveConnection>();
+  private readonly accepted = new Set<LinkSession>();
+  private readonly authTimers = new Map<LinkSession, ReturnType<typeof setTimeout>>();
+  private readonly ctlQueues = new WeakMap<LinkSession, Promise<void>>();
   private readonly rtcSessions = new Map<string, RtcSessionRegistration>();
   private listVersion = 0;
+  private stopped = false;
 
   constructor(opts: UplinkServerOptions) {
     this.db = opts.db;
@@ -76,14 +107,18 @@ export class UplinkServer {
     this.now = opts.now ?? Date.now;
     this.heartbeatIntervalMs = opts.heartbeatIntervalMs ?? HUB_HEARTBEAT_INTERVAL_MS;
     this.heartbeatMissLimit = opts.heartbeatMissLimit ?? HUB_HEARTBEAT_MISS_LIMIT;
+    this.authTimeoutMs = opts.authTimeoutMs ?? HUB_AUTH_TIMEOUT_MS;
+    this.rtcMaxSessions = opts.rtcMaxSessions ?? HUB_RTC_MAX_SESSIONS;
   }
 
   accept(link: LinkSession): void {
     const nonce = randomBytes(32);
+    this.accepted.add(link);
     this.pending.set(link, { nonce });
+    this.armAuthTimer(link);
     this.send(link, { t: 'auth.challenge', nonce: encodeBase64url(nonce) });
     link.ctl.onMessage((bytes) => {
-      void this.onCtl(link, bytes);
+      this.enqueueCtl(link, bytes);
     });
     link.onStream((stream) => {
       void this.onIncomingStream(link, stream);
@@ -93,8 +128,25 @@ export class UplinkServer {
     });
   }
 
-  registerRtcSession(rtcSession: string, reg: RtcSessionRegistration): void {
-    this.rtcSessions.set(rtcSession, reg);
+  registerRtcSession(input: RegisterRtcSessionInput): string | null {
+    this.sweepRtcSessions();
+    if (this.rtcSessions.size >= this.rtcMaxSessions) {
+      return null;
+    }
+    if (!this.rtcNodesOwnedBy(input.userId, input.fromNodeId, input.toNodeId)) {
+      return null;
+    }
+    const rtcSession = encodeBase64url(randomBytes(16));
+    const ttlMs = input.ttlMs ?? HUB_RTC_TTL_MS;
+    this.rtcSessions.set(rtcSession, {
+      rtcSession,
+      userId: input.userId,
+      browserSessionId: input.browserSessionId,
+      fromNodeId: input.fromNodeId,
+      toNodeId: input.toNodeId,
+      expiresAt: this.now() + ttlMs,
+    });
+    return rtcSession;
   }
 
   unregisterRtcSession(rtcSession: string): void {
@@ -109,9 +161,15 @@ export class UplinkServer {
   }
 
   async broadcastNodeList(userId: string): Promise<void> {
-    const msg = await this.buildNodeList(userId);
-    for (const entry of this.registry.listForBroadcast(userId)) {
-      this.send(entry.link, msg);
+    if (this.stopped) return;
+    try {
+      const msg = await this.buildNodeList(userId);
+      if (this.stopped) return;
+      for (const entry of this.registry.listForBroadcast(userId)) {
+        this.send(entry.link, msg);
+      }
+    } catch {
+      if (!this.stopped) throw new Error('broadcast_failed');
     }
   }
 
@@ -122,11 +180,37 @@ export class UplinkServer {
     return true;
   }
 
+  async applyAppendEffects(userId: string, result: HubKeyLogAppendSuccess): Promise<void> {
+    if (result.record.type === 'rotate-root' || result.record.type === 'reset-root') {
+      this.userStore.invalidateUnusedEnrollmentTokens(userId, this.now());
+    }
+    for (const effect of result.effects) {
+      if (effect.type === 'revokeSessionsVia') {
+        this.evictRevokedNode(nodeIdToHex(effect.nodeId));
+      }
+    }
+    for (const entry of this.registry.listForBroadcast(userId)) {
+      if (this.certIsRevoked(entry.nodeId)) {
+        this.evictRevokedNode(entry.nodeId);
+      }
+    }
+    await this.broadcastNodeList(userId);
+  }
+
   stop(): void {
+    this.stopped = true;
+    const links = [...this.accepted];
     for (const live of this.live.values()) {
       this.clearHeartbeat(live);
     }
     this.live.clear();
+    for (const link of links) {
+      this.clearAuthTimer(link);
+      link.close('hub-stop');
+    }
+    this.accepted.clear();
+    this.authTimers.clear();
+    this.rtcSessions.clear();
     this.registry.closeAll('hub-stop');
   }
 
@@ -134,11 +218,26 @@ export class UplinkServer {
     link.ctl.send(encodeUplinkCtl(msg));
   }
 
+  private enqueueCtl(link: LinkSession, bytes: Uint8Array): void {
+    const prev = this.ctlQueues.get(link) ?? Promise.resolve();
+    const next = prev
+      .catch(() => undefined)
+      .then(() => this.onCtl(link, bytes))
+      .catch(() => {
+        if (this.accepted.has(link)) {
+          link.close('ctl-error');
+        }
+      });
+    this.ctlQueues.set(link, next);
+  }
+
   private async onCtl(link: LinkSession, bytes: Uint8Array): Promise<void> {
+    if (this.stopped || !this.accepted.has(link)) return;
     let msg: UplinkCtlMessage;
     try {
       msg = decodeUplinkCtl(bytes);
     } catch {
+      link.close('protocol_error');
       return;
     }
     const live = this.live.get(link);
@@ -148,13 +247,17 @@ export class UplinkServer {
       }
       return;
     }
-    live.misses = 0;
+    if (!this.assertLiveCert(live)) return;
     this.registry.touch(live.nodeId, this.now());
     switch (msg.t) {
       case 'ping':
         this.send(link, { t: 'pong' });
         return;
       case 'pong':
+        if (live.awaitingPong) {
+          live.awaitingPong = false;
+          live.misses = 0;
+        }
         return;
       case 'node.status':
         await this.handleNodeStatus(live, msg);
@@ -180,6 +283,7 @@ export class UplinkServer {
   ): Promise<void> {
     const pending = this.pending.get(link);
     this.pending.delete(link);
+    this.clearAuthTimer(link);
     if (!pending) {
       link.close('auth-timeout');
       return;
@@ -232,6 +336,7 @@ export class UplinkServer {
       link,
       generation: registered.generation,
       misses: 0,
+      awaitingPong: false,
       heartbeat: null,
     };
     this.live.set(link, live);
@@ -244,46 +349,51 @@ export class UplinkServer {
     live: LiveConnection,
     msg: Extract<UplinkCtlMessage, { t: 'node.status' }>
   ): Promise<void> {
+    if (this.stopped || !this.assertLiveCert(live)) return;
     const now = this.now();
     const inventoryJson = stringifyJson(msg.inventory);
     const endpointsJson = stringifyJson(msg.endpoints);
-    const existing = this.userStore.getNode(live.nodeId);
-    if (!existing) {
-      this.userStore.createNode({
-        id: live.nodeId,
-        userId: live.userId,
-        name: live.nodeId,
-        status: 'enrolled',
-        lastSeenAt: now,
-        version: msg.version,
-        directCapable: msg.direct_capable,
-        inventoryJson,
-        inventoryVersion: 1,
-        endpointsJson,
-        now,
-      });
-    } else {
-      patchNode(this.db, live.nodeId, {
-        lastSeenAt: now,
-        version: msg.version,
-        directCapable: msg.direct_capable,
-        inventoryJson,
-        inventoryVersion: existing.inventoryVersion + 1,
-        endpointsJson,
-      });
+    try {
+      const existing = this.userStore.getNode(live.nodeId);
+      if (!existing) {
+        this.userStore.createNode({
+          id: live.nodeId,
+          userId: live.userId,
+          name: live.nodeId,
+          status: 'enrolled',
+          lastSeenAt: now,
+          version: msg.version,
+          directCapable: msg.direct_capable,
+          inventoryJson,
+          inventoryVersion: 1,
+          endpointsJson,
+          now,
+        });
+      } else {
+        patchNode(this.db, live.nodeId, {
+          lastSeenAt: now,
+          version: msg.version,
+          directCapable: msg.direct_capable,
+          inventoryJson,
+          inventoryVersion: existing.inventoryVersion + 1,
+          endpointsJson,
+        });
+      }
+      this.registry.updateMeta(
+        live.nodeId,
+        {
+          version: msg.version,
+          tmux: msg.tmux,
+          directCapable: msg.direct_capable,
+          inventory: msg.inventory,
+          endpoints: msg.endpoints,
+        },
+        now
+      );
+      await this.broadcastNodeList(live.userId);
+    } catch {
+      if (!this.stopped) throw new Error('node_status_failed');
     }
-    this.registry.updateMeta(
-      live.nodeId,
-      {
-        version: msg.version,
-        tmux: msg.tmux,
-        directCapable: msg.direct_capable,
-        inventory: msg.inventory,
-        endpoints: msg.endpoints,
-      },
-      now
-    );
-    await this.broadcastNodeList(live.userId);
   }
 
   private async handleKeyLogReq(live: LiveConnection, fromSeqWire: number | string): Promise<void> {
@@ -310,16 +420,23 @@ export class UplinkServer {
       bytes = b64urlToBytes(bytesB64);
       sig = b64urlToBytes(sigB64, 64);
     } catch {
+      live.link.close('protocol_error');
       return;
     }
     const result = await this.keyLogSource.append(live.userId, { bytes, sig });
     if (!result.ok) return;
-    await this.broadcastNodeList(live.userId);
+    await this.applyAppendEffects(live.userId, result);
   }
 
   private handleRtcSignal(live: LiveConnection, msg: RtcSignalMessage): void {
+    this.sweepRtcSessions();
     const reg = this.rtcSessions.get(msg.rtcSession);
     if (!reg) return;
+    if (reg.userId !== live.userId) return;
+    if (!this.rtcNodesOwnedBy(reg.userId, reg.fromNodeId, reg.toNodeId)) {
+      this.rtcSessions.delete(msg.rtcSession);
+      return;
+    }
     if (msg.from === 'browser') {
       if (live.nodeId !== reg.fromNodeId || msg.to !== reg.toNodeId) return;
     } else if (msg.from === 'node') {
@@ -328,7 +445,7 @@ export class UplinkServer {
       return;
     }
     const target = this.registry.get(msg.to);
-    if (!target?.authenticated) return;
+    if (!target?.authenticated || target.userId !== reg.userId) return;
     this.send(target.link, msg);
   }
 
@@ -338,22 +455,22 @@ export class UplinkServer {
       stream.reset('unauthenticated');
       return;
     }
+    if (!this.assertLiveCert(live)) {
+      stream.reset('revoked');
+      return;
+    }
     const open = parseRelayOpen(stream.openPayload);
     if (!open) {
       stream.reset('invalid-relay');
       return;
     }
-    const initiator = this.userStore.getNode(live.nodeId) ?? this.userStore.getCert(live.nodeId);
-    const targetRow = this.userStore.getNode(open.to);
     const targetCert = this.userStore.getCert(open.to);
-    const initiatorUser = initiator && 'userId' in initiator ? initiator.userId : live.userId;
-    const targetUser = targetRow?.userId ?? targetCert?.userId;
-    if (!targetUser || targetUser !== initiatorUser) {
-      stream.reset('cross-user');
+    if (!targetCert || targetCert.revokedLogSeq !== null) {
+      stream.reset(targetCert ? 'revoked' : 'unknown-cert');
       return;
     }
-    if (targetRow?.status === 'revoked' || targetCert?.revokedLogSeq !== null) {
-      stream.reset('revoked');
+    if (targetCert.userId !== live.userId) {
+      stream.reset('cross-user');
       return;
     }
     const targetEntry = this.registry.get(open.to);
@@ -384,11 +501,14 @@ export class UplinkServer {
       this.clearHeartbeat(live);
       return;
     }
-    live.misses += 1;
-    if (live.misses > this.heartbeatMissLimit) {
+    if (live.awaitingPong) {
+      live.misses += 1;
+    }
+    if (live.misses >= this.heartbeatMissLimit) {
       live.link.close('heartbeat-timeout');
       return;
     }
+    live.awaitingPong = true;
     this.send(live.link, { t: 'ping' });
   }
 
@@ -399,16 +519,91 @@ export class UplinkServer {
     }
   }
 
+  private armAuthTimer(link: LinkSession): void {
+    this.clearAuthTimer(link);
+    const timer = setTimeout(() => {
+      this.authTimers.delete(link);
+      if (!this.live.has(link) && this.accepted.has(link)) {
+        this.pending.delete(link);
+        link.close('auth-timeout');
+      }
+    }, this.authTimeoutMs);
+    this.authTimers.set(link, timer);
+  }
+
+  private clearAuthTimer(link: LinkSession): void {
+    const timer = this.authTimers.get(link);
+    if (timer !== undefined) {
+      clearTimeout(timer);
+      this.authTimers.delete(link);
+    }
+  }
+
   private onLinkClosed(link: LinkSession): void {
     this.pending.delete(link);
+    this.clearAuthTimer(link);
+    this.accepted.delete(link);
     const live = this.live.get(link);
-    if (!live) return;
     this.live.delete(link);
+    if (!live) return;
     this.clearHeartbeat(live);
+    this.dropRtcForNode(live.nodeId);
     const removed = this.registry.remove(live.nodeId, live.generation);
-    if (!removed) return;
+    if (!removed || this.stopped) return;
     patchNode(this.db, live.nodeId, { lastSeenAt: this.now() });
     void this.broadcastNodeList(live.userId);
+  }
+
+  private assertLiveCert(live: LiveConnection): boolean {
+    if (this.certIsRevoked(live.nodeId)) {
+      this.evictRevokedNode(live.nodeId);
+      return false;
+    }
+    return true;
+  }
+
+  private certIsRevoked(nodeId: string): boolean {
+    const cert = this.userStore.getCert(nodeId);
+    return !cert || cert.revokedLogSeq !== null;
+  }
+
+  private evictRevokedNode(nodeId: string): void {
+    patchNode(this.db, nodeId, { status: 'revoked' });
+    this.dropRtcForNode(nodeId);
+    const entry = this.registry.get(nodeId);
+    if (!entry) return;
+    const live = this.live.get(entry.link);
+    if (live) {
+      this.clearHeartbeat(live);
+      this.live.delete(entry.link);
+    }
+    this.registry.remove(nodeId, entry.generation);
+    entry.link.close('revoked');
+  }
+
+  private dropRtcForNode(nodeId: string): void {
+    for (const [id, reg] of this.rtcSessions) {
+      if (reg.fromNodeId === nodeId || reg.toNodeId === nodeId) {
+        this.rtcSessions.delete(id);
+      }
+    }
+  }
+
+  private sweepRtcSessions(): void {
+    const now = this.now();
+    for (const [id, reg] of this.rtcSessions) {
+      if (reg.expiresAt <= now) {
+        this.rtcSessions.delete(id);
+      }
+    }
+  }
+
+  private rtcNodesOwnedBy(userId: string, fromNodeId: string, toNodeId: string): boolean {
+    const fromCert = this.userStore.getCert(fromNodeId);
+    const toCert = this.userStore.getCert(toNodeId);
+    if (!fromCert || !toCert) return false;
+    if (fromCert.revokedLogSeq !== null || toCert.revokedLogSeq !== null) return false;
+    return fromCert.userId === userId && toCert.userId === userId;
   }
 
   private async buildNodeList(userId: string): Promise<NodeListMessage> {

@@ -1,3 +1,20 @@
+import type { KeyLogEffect, KeyLogType } from '@tmex/shared/auth';
+
+export type HubKeyLogAppendSuccess = {
+  ok: true;
+  seq: bigint;
+  hash: Uint8Array;
+  effects: KeyLogEffect[];
+  record: { type: KeyLogType; payload: Uint8Array };
+};
+
+export type HubKeyLogAppendFailure = {
+  ok: false;
+  error: string;
+};
+
+export type HubKeyLogAppendResult = HubKeyLogAppendSuccess | HubKeyLogAppendFailure;
+
 export interface HubKeyLogSource {
   head(userId: string): Promise<{ seq: bigint; hash: Uint8Array }>;
   list(
@@ -7,7 +24,7 @@ export interface HubKeyLogSource {
   append(
     userId: string,
     record: { bytes: Uint8Array; sig: Uint8Array }
-  ): Promise<{ ok: true; seq: bigint; hash: Uint8Array } | { ok: false; error: string }>;
+  ): Promise<HubKeyLogAppendResult>;
 }
 
 export type HubTurnConfig = {
@@ -36,6 +53,9 @@ export const HUB_UPLINK_WS_KIND = 'hub-uplink';
 
 export const HUB_HEARTBEAT_INTERVAL_MS = 15_000;
 export const HUB_HEARTBEAT_MISS_LIMIT = 3;
+export const HUB_AUTH_TIMEOUT_MS = 10_000;
+export const HUB_RTC_TTL_MS = 120_000;
+export const HUB_RTC_MAX_SESSIONS = 1024;
 
 export type HubUplinkSocketData = {
   kind: typeof HUB_UPLINK_WS_KIND;

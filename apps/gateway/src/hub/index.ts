@@ -5,9 +5,16 @@ export {
   type HubServerWebSocket,
   type HubUpgradeServer,
 } from './hub-runtime';
+export { createHubKeyLogSource } from './hub-key-log-source';
 export { NodeRegistry, type NodeRegistryMeta, type RegisteredNode } from './node-registry';
 export { patchNode, type NodePatch } from './node-persistence';
 export {
+  UPLINK_CTL_MAX_ARRAY_LEN,
+  UPLINK_CTL_MAX_BYTES,
+  UPLINK_CTL_MAX_DEPTH,
+  UPLINK_CTL_MAX_ENDPOINTS,
+  UPLINK_CTL_MAX_STRING_LEN,
+  UPLINK_CTL_MAX_U64,
   UPLINK_CTL_TYPES,
   UplinkCtlError,
   b64urlToBytes,
@@ -36,16 +43,23 @@ export {
 } from './uplink-protocol';
 export {
   UplinkServer,
+  type RegisterRtcSessionInput,
   type RtcSessionRegistration,
   type UplinkServerOptions,
 } from './uplink-server';
 export {
+  HUB_AUTH_TIMEOUT_MS,
   HUB_HEARTBEAT_INTERVAL_MS,
   HUB_HEARTBEAT_MISS_LIMIT,
+  HUB_RTC_MAX_SESSIONS,
+  HUB_RTC_TTL_MS,
   HUB_UPLINK_PATH,
   HUB_UPLINK_WS_KIND,
   type HubAuthResult,
   type HubAuthenticate,
+  type HubKeyLogAppendFailure,
+  type HubKeyLogAppendResult,
+  type HubKeyLogAppendSuccess,
   type HubKeyLogSource,
   type HubRuntimeConfig,
   type HubTurnConfig,

@@ -1,19 +1,25 @@
 import {
   bytesEqual,
   decodeAuthorization,
+  decodeBase64url,
   decodeCertificate,
+  decodeKeyLogRecord,
+  decodeRevokeNodePayload,
   encodeBase64url,
   nodeIdToHex,
+  sha256,
   verifyEd25519,
   verifyNodeCertificate,
 } from '@tmex/shared/auth';
 import { type LinkSession, type ServerSocketAdapter, WebSocketLink } from '@tmex/shared/link';
 import { json, readJsonObjectBody } from '../api/http';
+import { makeVerifyPasskeyAssertion } from '../auth/passkey';
 import type { AuthDb } from '../auth/types';
-import type { UserStore } from '../auth/user-store';
+import { UserStore } from '../auth/user-store';
 import { patchNode } from './node-persistence';
 import { NodeRegistry } from './node-registry';
 import {
+  HUB_AUTH_TIMEOUT_MS,
   HUB_HEARTBEAT_INTERVAL_MS,
   HUB_HEARTBEAT_MISS_LIMIT,
   HUB_UPLINK_PATH,
@@ -25,7 +31,7 @@ import {
   type HubUplinkSocketData,
 } from './types';
 import { b64urlToBytes } from './uplink-protocol';
-import { type RtcSessionRegistration, UplinkServer } from './uplink-server';
+import { type RegisterRtcSessionInput, UplinkServer } from './uplink-server';
 
 export type HubUpgradeServer = {
   upgrade(req: Request, options?: { data?: unknown }): boolean;
@@ -46,6 +52,7 @@ export type HubRuntimeOptions = {
   now?: () => number;
   heartbeatIntervalMs?: number;
   heartbeatMissLimit?: number;
+  authTimeoutMs?: number;
 };
 
 type StoredEnrollmentPayload = {
@@ -124,6 +131,7 @@ export class HubRuntime {
       now: this.now,
       heartbeatIntervalMs: opts.heartbeatIntervalMs ?? HUB_HEARTBEAT_INTERVAL_MS,
       heartbeatMissLimit: opts.heartbeatMissLimit ?? HUB_HEARTBEAT_MISS_LIMIT,
+      authTimeoutMs: opts.authTimeoutMs ?? HUB_AUTH_TIMEOUT_MS,
     });
   }
 
@@ -131,8 +139,8 @@ export class HubRuntime {
     this.uplink.accept(link);
   }
 
-  registerRtcSession(rtcSession: string, reg: RtcSessionRegistration): void {
-    this.uplink.registerRtcSession(rtcSession, reg);
+  registerRtcSession(input: RegisterRtcSessionInput): string | null {
+    return this.uplink.registerRtcSession(input);
   }
 
   stop(): void {
@@ -175,7 +183,7 @@ export class HubRuntime {
       const nodeId = revoke[1];
       if (!nodeId) return json({ error: 'not_found' }, 404);
       if (req.method !== 'POST') return json({ error: 'method_not_allowed' }, 405);
-      return this.withAuth(req, (auth) => this.handleRevoke(decodeURIComponent(nodeId), auth));
+      return this.withAuth(req, (auth) => this.handleRevoke(req, decodeURIComponent(nodeId), auth));
     }
     return json({ error: 'not_found' }, 404);
   }
@@ -244,14 +252,44 @@ export class HubRuntime {
     return json({ ok: true, id: nodeId, name: name.trim() });
   }
 
-  private async handleRevoke(nodeId: string, auth: HubAuthResult): Promise<Response> {
-    const node = this.userStore.getNode(nodeId);
-    if (!node || node.userId !== auth.userId) {
+  private async handleRevoke(req: Request, nodeId: string, auth: HubAuthResult): Promise<Response> {
+    const cert = this.userStore.getCert(nodeId);
+    if (!cert || cert.userId !== auth.userId) {
       return json({ error: 'not_found' }, 404);
     }
-    patchNode(this.db, nodeId, { status: 'revoked' });
-    this.uplink.disconnect(nodeId, 'revoked');
-    await this.uplink.broadcastNodeList(auth.userId);
+    const body = await readJsonObjectBody(req);
+    if (!body) return json({ error: 'invalid_body' }, 400);
+    let bytes: Uint8Array;
+    let sig: Uint8Array;
+    try {
+      bytes = b64urlToBytes(requireBodyString(body, 'bytes'));
+      sig = b64urlToBytes(requireBodyString(body, 'sig'), 64);
+    } catch (err) {
+      return json({ error: err instanceof Error ? err.message : 'invalid_fields' }, 400);
+    }
+    let record: ReturnType<typeof decodeKeyLogRecord>;
+    try {
+      record = decodeKeyLogRecord(bytes);
+    } catch {
+      return json({ error: 'bad_record' }, 400);
+    }
+    if (record.type !== 'revoke-node') {
+      return json({ error: 'not_revoke_node' }, 400);
+    }
+    let payload: ReturnType<typeof decodeRevokeNodePayload>;
+    try {
+      payload = decodeRevokeNodePayload(record.payload);
+    } catch {
+      return json({ error: 'bad_payload' }, 400);
+    }
+    if (nodeIdToHex(payload.node_id) !== nodeId) {
+      return json({ error: 'node_mismatch' }, 400);
+    }
+    const result = await this.keyLogSource.append(auth.userId, { bytes, sig });
+    if (!result.ok) {
+      return json({ error: result.error }, 400);
+    }
+    await this.uplink.applyAppendEffects(auth.userId, result);
     return json({ ok: true, id: nodeId, status: 'revoked' });
   }
 
@@ -266,12 +304,9 @@ export class HubRuntime {
     try {
       enrollPk = b64urlToBytes(requireBodyString(body, 'enroll_pk'), 32);
       authorizationBytes = b64urlToBytes(requireBodyString(body, 'authorization'));
-      authorizationSig = b64urlToBytes(requireBodyString(body, 'authorization_sig'), 64);
+      authorizationSig = b64urlToBytes(requireBodyString(body, 'authorization_sig'));
     } catch (err) {
       return json({ error: err instanceof Error ? err.message : 'invalid_fields' }, 400);
-    }
-    if (!verifyEd25519(authorizationSig, authorizationBytes, user.rootPublicKey)) {
-      return json({ error: 'bad_authorization_sig' }, 400);
     }
     let authorization: ReturnType<typeof decodeAuthorization>;
     try {
@@ -287,6 +322,42 @@ export class HubRuntime {
     }
     if (!bytesEqual(authorization.enroll_pk, enrollPk)) {
       return json({ error: 'enroll_pk_mismatch' }, 400);
+    }
+    if (authorization.signer === 'root') {
+      if (
+        authorizationSig.byteLength !== 64 ||
+        !verifyEd25519(authorizationSig, authorizationBytes, user.rootPublicKey)
+      ) {
+        return json({ error: 'bad_authorization_sig' }, 400);
+      }
+    } else if (authorization.signer === 'passkey') {
+      const credentialId = authorization.credential_id;
+      if (!credentialId) {
+        return json({ error: 'missing_credential_id' }, 400);
+      }
+      let credentialIdBytes: Uint8Array;
+      try {
+        credentialIdBytes = decodeBase64url(credentialId);
+      } catch {
+        return json({ error: 'bad_authorization' }, 400);
+      }
+      const storedKey = this.userStore.getKeyByCredentialId(credentialIdBytes);
+      if (!storedKey || storedKey.userId !== user.id) {
+        return json({ error: 'unknown_passkey' }, 400);
+      }
+      const verify = makeVerifyPasskeyAssertion(this.userStore);
+      const ok = await verify({
+        recordBytes: authorizationBytes,
+        sig: authorizationSig,
+        credentialId,
+        publicKey: storedKey.publicKey,
+        challenge: sha256(authorizationBytes),
+      });
+      if (!ok) {
+        return json({ error: 'bad_authorization_sig' }, 400);
+      }
+    } else {
+      return json({ error: 'bad_authorization' }, 400);
     }
     const now = this.now();
     const authExp = Number(authorization.exp);
@@ -336,13 +407,6 @@ export class HubRuntime {
     if (!token) {
       return json({ error: 'unknown_enrollment' }, 400);
     }
-    const now = this.now();
-    if (token.usedAt !== null) {
-      return json({ error: 'reused' }, 400);
-    }
-    if (token.expiresAt <= now) {
-      return json({ error: 'expired' }, 400);
-    }
     if (!verifyNodeCertificate(certBytes, certSig, token.enrollPublicKey)) {
       return json({ error: 'bad_cert_sig' }, 400);
     }
@@ -363,24 +427,52 @@ export class HubRuntime {
       return json({ error: 'uid_mismatch' }, 400);
     }
     const hexId = nodeIdToHex(certificate.node_id);
-    if (this.userStore.getNode(hexId)) {
-      return json({ error: 'node_exists' }, 409);
+    const now = this.now();
+    try {
+      this.db.transaction((tx) => {
+        const store = new UserStore(tx as AuthDb);
+        const fresh = store.getEnrollmentTokenByEnrollPublicKey(certificate.enroll_pk);
+        if (!fresh) {
+          throw new RedeemAbort('unknown_enrollment', 400);
+        }
+        if (fresh.usedAt !== null) {
+          throw new RedeemAbort('reused', 400);
+        }
+        const userRow = store.getById(fresh.userId);
+        if (!userRow) {
+          throw new RedeemAbort('user_not_found', 500);
+        }
+        if (authorization.root_epoch !== userRow.rootEpoch) {
+          throw new RedeemAbort('epoch_mismatch', 400);
+        }
+        if (fresh.expiresAt <= now) {
+          throw new RedeemAbort('expired', 400);
+        }
+        if (store.getNode(hexId)) {
+          throw new RedeemAbort('node_exists', 409);
+        }
+        const consumed = store.consumeEnrollmentToken(certificate.enroll_pk, {
+          nodeId: hexId,
+          now,
+        });
+        if (!consumed) {
+          throw new RedeemAbort('reused', 400);
+        }
+        store.createNode({
+          id: hexId,
+          userId: fresh.userId,
+          name,
+          status: 'enrolled',
+          version: version || null,
+          now,
+        });
+      });
+    } catch (err) {
+      if (err instanceof RedeemAbort) {
+        return json({ error: err.error }, err.status);
+      }
+      throw err;
     }
-    const consumed = this.userStore.consumeEnrollmentToken(certificate.enroll_pk, {
-      nodeId: hexId,
-      now,
-    });
-    if (!consumed) {
-      return json({ error: 'reused' }, 400);
-    }
-    this.userStore.createNode({
-      id: hexId,
-      userId: token.userId,
-      name,
-      status: 'enrolled',
-      version: version || null,
-      now,
-    });
     const user = this.userStore.getById(token.userId);
     if (!user) {
       return json({ error: 'user_not_found' }, 500);
@@ -419,6 +511,16 @@ export class HubRuntime {
         revoked_log_seq: c.revokedLogSeq,
       })),
     });
+  }
+}
+
+class RedeemAbort extends Error {
+  constructor(
+    readonly error: string,
+    readonly status: number
+  ) {
+    super(error);
+    this.name = 'RedeemAbort';
   }
 }
 

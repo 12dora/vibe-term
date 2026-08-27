@@ -460,6 +460,21 @@ export class UserStore {
       .returning({ id: enrollmentTokens.id })
       .all().length;
   }
+
+  invalidateUnusedEnrollmentTokens(userId: string, now: number): number {
+    return this.db
+      .update(enrollmentTokens)
+      .set({ expiresAt: now })
+      .where(
+        and(
+          eq(enrollmentTokens.userId, userId),
+          isNull(enrollmentTokens.usedAt),
+          gt(enrollmentTokens.expiresAt, now)
+        )
+      )
+      .returning({ id: enrollmentTokens.id })
+      .all().length;
+  }
 }
 
 function toUser(row: typeof users.$inferSelect): UserRecord {

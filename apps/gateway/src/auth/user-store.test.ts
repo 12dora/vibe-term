@@ -264,4 +264,76 @@ describe('UserStore', () => {
       close();
     }
   });
+
+  test('invalidateUnusedEnrollmentTokens expires unused tokens of that user only', () => {
+    const { db, close } = createMigratedAuthDb();
+    try {
+      const store = new UserStore(db);
+      seedUser(store);
+      store.create({
+        id: 'user-2',
+        username: 'bob',
+        rootPublicKey: ROOT_PK,
+        rootEpoch: 0,
+        kdfParamsJson: '{"kdf":"argon2id"}',
+        keyLogHeadSeq: 0,
+        keyLogHeadHash: HEAD_HASH,
+        now: 1_000,
+      });
+      store.createNode({
+        id: 'node-a',
+        userId: 'user-1',
+        name: 'hub',
+        now: 5_000,
+      });
+
+      const unusedPk = Uint8Array.from({ length: 32 }, () => 41);
+      const usedPk = Uint8Array.from({ length: 32 }, () => 42);
+      const otherUserPk = Uint8Array.from({ length: 32 }, () => 43);
+      const alreadyExpiredPk = Uint8Array.from({ length: 32 }, () => 44);
+      store.createEnrollmentToken({
+        id: 'tok-unused',
+        userId: 'user-1',
+        enrollPublicKey: unusedPk,
+        authorizationJson: '{}',
+        authorizationSig: AUTH_SIG,
+        expiresAt: 5_000,
+      });
+      store.createEnrollmentToken({
+        id: 'tok-used',
+        userId: 'user-1',
+        enrollPublicKey: usedPk,
+        authorizationJson: '{}',
+        authorizationSig: AUTH_SIG,
+        expiresAt: 5_000,
+      });
+      store.markEnrollmentUsed('tok-used', { nodeId: 'node-a', now: 50 });
+      store.createEnrollmentToken({
+        id: 'tok-bob',
+        userId: 'user-2',
+        enrollPublicKey: otherUserPk,
+        authorizationJson: '{}',
+        authorizationSig: AUTH_SIG,
+        expiresAt: 5_000,
+      });
+      store.createEnrollmentToken({
+        id: 'tok-expired',
+        userId: 'user-1',
+        enrollPublicKey: alreadyExpiredPk,
+        authorizationJson: '{}',
+        authorizationSig: AUTH_SIG,
+        expiresAt: 80,
+      });
+
+      expect(store.invalidateUnusedEnrollmentTokens('user-1', 100)).toBe(1);
+      expect(store.getEnrollmentTokenByEnrollPublicKey(unusedPk)?.expiresAt).toBe(100);
+      expect(store.getEnrollmentTokenByEnrollPublicKey(usedPk)?.expiresAt).toBe(5_000);
+      expect(store.getEnrollmentTokenByEnrollPublicKey(usedPk)?.usedAt).toBe(50);
+      expect(store.getEnrollmentTokenByEnrollPublicKey(otherUserPk)?.expiresAt).toBe(5_000);
+      expect(store.getEnrollmentTokenByEnrollPublicKey(alreadyExpiredPk)?.expiresAt).toBe(80);
+      expect(store.consumeEnrollmentToken(unusedPk, { nodeId: 'node-a', now: 100 })).toBeNull();
+    } finally {
+      close();
+    }
+  });
 });

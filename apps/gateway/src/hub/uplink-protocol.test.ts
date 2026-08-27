@@ -115,5 +115,56 @@ describe('uplink-protocol', () => {
     expect(seqFromWire(3)).toBe(3n);
     expect(seqFromWire('9')).toBe(9n);
     expect(() => seqFromWire(-1)).toThrow(UplinkCtlError);
+    expect(() => seqFromWire(1.5)).toThrow(UplinkCtlError);
+    expect(() => seqFromWire(Number.MAX_SAFE_INTEGER + 1)).toThrow(UplinkCtlError);
+    expect(seqFromWire('18446744073709551615')).toBe(18446744073709551615n);
+    expect(() => seqFromWire('18446744073709551616')).toThrow(UplinkCtlError);
+    expect(() => seqFromWire('123456789012345678901')).toThrow(UplinkCtlError);
+  });
+
+  test('拒绝 oversized / deep JSON / 过长 string', () => {
+    const huge = 'a'.repeat(65 * 1024);
+    expect(() => decodeUplinkCtl(`{"t":"ping","x":"${huge}"}`)).toThrow(UplinkCtlError);
+
+    let deep: unknown = 1;
+    for (let i = 0; i < 10; i++) deep = { k: deep };
+    expect(() =>
+      decodeUplinkCtl(
+        JSON.stringify({
+          t: 'node.status',
+          version: '1',
+          tmux: false,
+          direct_capable: false,
+          inventory: deep,
+          endpoints: [],
+        })
+      )
+    ).toThrow(UplinkCtlError);
+
+    expect(() =>
+      decodeUplinkCtl(
+        JSON.stringify({
+          t: 'node.status',
+          version: '1',
+          tmux: false,
+          direct_capable: false,
+          inventory: { blob: 'x'.repeat(4097) },
+          endpoints: [],
+        })
+      )
+    ).toThrow(UplinkCtlError);
+
+    expect(() =>
+      decodeUplinkCtl(
+        JSON.stringify({
+          t: 'node.status',
+          version: '1',
+          tmux: false,
+          direct_capable: false,
+          inventory: {},
+          endpoints: Array.from({ length: 33 }, () => ({ host: '10.0.0.1' })),
+        })
+      )
+    ).toThrow(UplinkCtlError);
   });
 });

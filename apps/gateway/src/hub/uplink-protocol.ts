@@ -98,6 +98,13 @@ const KNOWN_TYPES = new Set<string>(UPLINK_CTL_TYPES);
 const textEncoder = new TextEncoder();
 const textDecoder = new TextDecoder();
 
+export const UPLINK_CTL_MAX_BYTES = 64 * 1024;
+export const UPLINK_CTL_MAX_DEPTH = 8;
+export const UPLINK_CTL_MAX_ARRAY_LEN = 1024;
+export const UPLINK_CTL_MAX_STRING_LEN = 4 * 1024;
+export const UPLINK_CTL_MAX_ENDPOINTS = 32;
+export const UPLINK_CTL_MAX_U64 = 18446744073709551615n;
+
 export function seqToWire(seq: bigint | number): number | string {
   const value = typeof seq === 'bigint' ? seq : BigInt(seq);
   return value <= BigInt(Number.MAX_SAFE_INTEGER) ? Number(value) : value.toString();
@@ -105,15 +112,19 @@ export function seqToWire(seq: bigint | number): number | string {
 
 export function seqFromWire(value: number | string): bigint {
   if (typeof value === 'number') {
-    if (!Number.isInteger(value) || value < 0) {
+    if (!Number.isSafeInteger(value) || value < 0) {
       throw new UplinkCtlError('invalid seq');
     }
     return BigInt(value);
   }
-  if (typeof value !== 'string' || !/^[0-9]+$/.test(value)) {
+  if (typeof value !== 'string' || !/^[0-9]{1,20}$/.test(value)) {
     throw new UplinkCtlError('invalid seq');
   }
-  return BigInt(value);
+  const n = BigInt(value);
+  if (n > UPLINK_CTL_MAX_U64) {
+    throw new UplinkCtlError('invalid seq');
+  }
+  return n;
 }
 
 export function bytesToB64url(bytes: Uint8Array): string {
@@ -141,6 +152,11 @@ export function encodeUplinkCtl(msg: UplinkCtlMessage): Uint8Array {
 }
 
 export function decodeUplinkCtl(input: Uint8Array | string): UplinkCtlMessage {
+  const byteLength =
+    typeof input === 'string' ? textEncoder.encode(input).byteLength : input.byteLength;
+  if (byteLength > UPLINK_CTL_MAX_BYTES) {
+    throw new UplinkCtlError('ctl too large');
+  }
   const text = typeof input === 'string' ? input : textDecoder.decode(input);
   let parsed: unknown;
   try {
@@ -148,6 +164,7 @@ export function decodeUplinkCtl(input: Uint8Array | string): UplinkCtlMessage {
   } catch {
     throw new UplinkCtlError('invalid json');
   }
+  assertCtlBounds(parsed, 0);
   if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
     throw new UplinkCtlError('invalid ctl');
   }
@@ -181,7 +198,7 @@ export function decodeUplinkCtl(input: Uint8Array | string): UplinkCtlMessage {
         tmux: requireBoolean(obj, 'tmux'),
         direct_capable: requireBoolean(obj, 'direct_capable'),
         inventory: obj.inventory ?? null,
-        endpoints: obj.endpoints ?? null,
+        endpoints: requireEndpoints(obj.endpoints),
       };
     case 'node.list':
       return decodeNodeList(obj);
@@ -265,7 +282,7 @@ function decodeNodeListEntry(value: unknown): NodeListEntry {
     id: requireNonEmptyString(obj, 'id'),
     name: requireString(obj, 'name'),
     online: requireBoolean(obj, 'online'),
-    endpoints: obj.endpoints ?? null,
+    endpoints: requireEndpoints(obj.endpoints),
     inventory: obj.inventory ?? null,
     direct_capable: requireBoolean(obj, 'direct_capable'),
     version: typeof version === 'string' ? version : null,
@@ -352,4 +369,35 @@ function requireSeq(obj: Record<string, unknown>, key: string): number | string 
     return value;
   }
   throw new UplinkCtlError(`invalid ${key}`);
+}
+
+function requireEndpoints(value: unknown): unknown {
+  if (value === undefined || value === null) return null;
+  if (Array.isArray(value) && value.length > UPLINK_CTL_MAX_ENDPOINTS) {
+    throw new UplinkCtlError('too many endpoints');
+  }
+  return value;
+}
+
+function assertCtlBounds(value: unknown, depth: number): void {
+  if (depth > UPLINK_CTL_MAX_DEPTH) {
+    throw new UplinkCtlError('ctl too deep');
+  }
+  if (typeof value === 'string' && value.length > UPLINK_CTL_MAX_STRING_LEN) {
+    throw new UplinkCtlError('ctl string too long');
+  }
+  if (Array.isArray(value)) {
+    if (value.length > UPLINK_CTL_MAX_ARRAY_LEN) {
+      throw new UplinkCtlError('ctl array too long');
+    }
+    for (const item of value) {
+      assertCtlBounds(item, depth + 1);
+    }
+    return;
+  }
+  if (value && typeof value === 'object') {
+    for (const item of Object.values(value as Record<string, unknown>)) {
+      assertCtlBounds(item, depth + 1);
+    }
+  }
 }

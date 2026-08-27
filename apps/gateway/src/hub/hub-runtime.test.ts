@@ -1,39 +1,50 @@
 import { describe, expect, test } from 'bun:test';
+import type { AuthenticationResponseJSON, RegistrationResponseJSON } from '@simplewebauthn/server';
 import {
   createEnrollment,
   createNodeCertificate,
   decodeBase64url,
   encodeBase64url,
+  encodeClearTotpPayload,
+  encodeRevokeNodePayload,
+  encodeRotateRootPayload,
   generateEd25519KeyPair,
+  generateKdfParams,
   generateX25519KeyPair,
   nodeIdToHex,
+  randomBytes,
+  rootKeyFromSeed,
+  sha256,
 } from '@tmex/shared/auth';
 import { createInMemoryLinkPair } from '@tmex/shared/link';
+import { encodePasskeyAssertionSig, verifyRegistration } from '../auth/passkey';
 import { createMigratedAuthDb } from '../auth/test-db';
-import { UserStore } from '../auth/user-store';
 import { HubRuntime } from './hub-runtime';
 import {
-  MemoryHubKeyLog,
+  createHubTestStack,
   ctlInbox,
   seedAdmittedNode,
   seedUser,
   sendCtl,
   signAuth,
+  signUserRecord,
 } from './hub-test-helpers';
 import { HUB_UPLINK_PATH, HUB_UPLINK_WS_KIND } from './types';
 
 const dummyServer = { upgrade: () => true };
+const RP_ID = 'localhost';
+const ORIGIN = 'http://localhost:19663';
 
 describe('HubRuntime HTTP', () => {
   test('管理 API 需要鉴权', async () => {
     const { db, close } = createMigratedAuthDb();
     try {
-      const store = new UserStore(db);
-      seedUser(store);
+      const { userStore, keyLogSource } = createHubTestStack(db);
+      seedUser(userStore);
       const hub = new HubRuntime({
         db,
-        userStore: store,
-        keyLogSource: new MemoryHubKeyLog(),
+        userStore,
+        keyLogSource,
         config: { publicUrl: 'https://hub.example', stun: [] },
         authenticate: () => null,
       });
@@ -57,11 +68,11 @@ describe('HubRuntime HTTP', () => {
   test('GET /hub/uplink 走 upgrade', async () => {
     const { db, close } = createMigratedAuthDb();
     try {
-      const store = new UserStore(db);
+      const { userStore, keyLogSource } = createHubTestStack(db);
       const hub = new HubRuntime({
         db,
-        userStore: store,
-        keyLogSource: new MemoryHubKeyLog(),
+        userStore,
+        keyLogSource,
         config: { publicUrl: 'https://hub.example', stun: [] },
         authenticate: () => null,
       });
@@ -85,15 +96,21 @@ describe('HubRuntime HTTP', () => {
     const { db, close } = createMigratedAuthDb();
     try {
       let now = 2_000_000;
-      const store = new UserStore(db);
-      const user = seedUser(store, { now });
-      const entry = seedAdmittedNode(store, user.id, { name: 'entry', now });
-      const keyLog = new MemoryHubKeyLog();
-      keyLog.seed(user.id, [{ bytes: new Uint8Array([1]), sig: new Uint8Array(64) }]);
+      const { userStore, keyLogSource, service } = createHubTestStack(db);
+      const user = seedUser(userStore, { now });
+      const entry = seedAdmittedNode(userStore, user.id, { name: 'entry', now });
+      const seededLog = signUserRecord(
+        service,
+        user.id,
+        user.root,
+        'clear-totp',
+        encodeClearTotpPayload()
+      );
+      expect((await keyLogSource.append(user.id, seededLog)).ok).toBe(true);
       const hub = new HubRuntime({
         db,
-        userStore: store,
-        keyLogSource: keyLog,
+        userStore,
+        keyLogSource,
         config: { publicUrl: 'https://hub.example', stun: ['stun:x'] },
         authenticate: () => ({ userId: user.id, entryNodeId: entry.nodeId }),
         now: () => now,
@@ -171,7 +188,7 @@ describe('HubRuntime HTTP', () => {
       expect(body.user.username).toBe('alice');
       expect(body.user.root_public_key).toBe(encodeBase64url(user.root.publicKey));
       expect(body.user_key_log).toHaveLength(1);
-      expect(store.getNode(nodeIdToHex(cert.nodeId))?.name).toBe('laptop');
+      expect(userStore.getNode(nodeIdToHex(cert.nodeId))?.name).toBe('laptop');
 
       const pushed = await inbox.take();
       expect(pushed.t).toBe('enroll.redeemed');
@@ -278,16 +295,16 @@ describe('HubRuntime HTTP', () => {
     }
   });
 
-  test('GET /api/hub/nodes 与 rename / revoke', async () => {
+  test('GET /api/hub/nodes 与 rename；revoke 必须带签名 revoke-node 记录', async () => {
     const { db, close } = createMigratedAuthDb();
     try {
-      const store = new UserStore(db);
-      const user = seedUser(store);
-      const node = seedAdmittedNode(store, user.id, { name: 'old' });
+      const { userStore, keyLogSource, service } = createHubTestStack(db);
+      const user = seedUser(userStore);
+      const node = seedAdmittedNode(userStore, user.id, { name: 'old' });
       const hub = new HubRuntime({
         db,
-        userStore: store,
-        keyLogSource: new MemoryHubKeyLog(),
+        userStore,
+        keyLogSource,
         config: { publicUrl: 'https://hub.example', stun: [] },
         authenticate: () => ({ userId: user.id, entryNodeId: node.nodeId }),
         heartbeatIntervalMs: 60_000,
@@ -309,7 +326,14 @@ describe('HubRuntime HTTP', () => {
         dummyServer
       );
       expect(renamed?.status).toBe(200);
-      expect(store.getNode(node.nodeId)?.name).toBe('studio');
+      expect(userStore.getNode(node.nodeId)?.name).toBe('studio');
+
+      const sessionOnly = await hub.handleRequest(
+        new Request(`http://hub/api/hub/nodes/${node.nodeId}/revoke`, { method: 'POST' }),
+        dummyServer
+      );
+      expect(sessionOnly?.status).toBe(400);
+      expect(userStore.getNode(node.nodeId)?.status).toBe('enrolled');
 
       const [nodeLink, hubLink] = createInMemoryLinkPair();
       const inbox = ctlInbox(nodeLink);
@@ -324,16 +348,440 @@ describe('HubRuntime HTTP', () => {
       await inbox.take();
       await inbox.take();
       const closed = hubLink.closed;
+      const rec = signUserRecord(
+        service,
+        user.id,
+        user.root,
+        'revoke-node',
+        encodeRevokeNodePayload({ node_id: node.nodeIdBytes, reason: 'lost' })
+      );
       const revoked = await hub.handleRequest(
-        new Request(`http://hub/api/hub/nodes/${node.nodeId}/revoke`, { method: 'POST' }),
+        new Request(`http://hub/api/hub/nodes/${node.nodeId}/revoke`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({
+            bytes: encodeBase64url(rec.bytes),
+            sig: encodeBase64url(rec.sig),
+          }),
+        }),
         dummyServer
       );
       expect(revoked?.status).toBe(200);
-      expect(store.getNode(node.nodeId)?.status).toBe('revoked');
+      expect(userStore.getNode(node.nodeId)?.status).toBe('revoked');
+      expect(userStore.getCert(node.nodeId)?.revokedLogSeq).not.toBeNull();
       expect((await closed).reason).toBe('revoked');
       hub.stop();
     } finally {
       close();
     }
   });
+
+  test('rotate-root 后旧 enrollment redeem 返回 epoch_mismatch 并作废未用 token', async () => {
+    const { db, close } = createMigratedAuthDb();
+    try {
+      const now = 3_000_000;
+      const { userStore, keyLogSource, service } = createHubTestStack(db);
+      const user = seedUser(userStore, { now });
+      const hub = new HubRuntime({
+        db,
+        userStore,
+        keyLogSource,
+        config: { publicUrl: 'https://hub.example', stun: [] },
+        authenticate: () => ({ userId: user.id, entryNodeId: 'entry' }),
+        now: () => now,
+      });
+      const enrollment = await createEnrollment(user.root, {
+        uid: user.id,
+        rootEpoch: 0,
+        now,
+        ttlMs: 60_000,
+      });
+      const created = await hub.handleRequest(
+        new Request('http://hub/api/hub/enrollments', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({
+            enroll_pk: encodeBase64url(enrollment.enrollPk),
+            authorization: encodeBase64url(enrollment.authorizationBytes),
+            authorization_sig: encodeBase64url(enrollment.authorizationSig),
+            exp: now + 60_000,
+          }),
+        }),
+        dummyServer
+      );
+      expect(created?.status).toBe(201);
+
+      const newRoot = rootKeyFromSeed(randomBytes(32));
+      const rotated = signUserRecord(
+        service,
+        user.id,
+        user.root,
+        'rotate-root',
+        encodeRotateRootPayload({
+          root_public_key: newRoot.publicKey,
+          kdf_params: generateKdfParams(),
+        })
+      );
+      const applied = await keyLogSource.append(user.id, rotated);
+      expect(applied.ok).toBe(true);
+      if (applied.ok) {
+        await hub.uplink.applyAppendEffects(user.id, applied);
+      }
+      expect(userStore.getEnrollmentTokenByEnrollPublicKey(enrollment.enrollPk)?.expiresAt).toBe(
+        now
+      );
+
+      const ed = generateEd25519KeyPair();
+      const x = generateX25519KeyPair();
+      const cert = createNodeCertificate(enrollment.enrollSk, {
+        uid: user.id,
+        edPk: ed.publicKey,
+        x25519Pk: x.publicKey,
+        enrollPk: enrollment.enrollPk,
+        now,
+      });
+      const redeem = await hub.handleRequest(
+        new Request('http://hub/api/hub/enrollments/redeem', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({
+            certificate: encodeBase64url(cert.certificateBytes),
+            cert_sig: encodeBase64url(cert.certSig),
+            name: 'stale',
+            version: '1',
+          }),
+        }),
+        dummyServer
+      );
+      expect(redeem?.status).toBe(400);
+      expect(await redeem?.json()).toEqual({ error: 'epoch_mismatch' });
+      hub.stop();
+    } finally {
+      close();
+    }
+  });
+
+  test('passkey signer 的 enrollment 通过 WebAuthn assertion 校验', async () => {
+    const { db, close } = createMigratedAuthDb();
+    try {
+      const now = 4_000_000;
+      const { userStore, keyLogSource } = createHubTestStack(db);
+      const user = seedUser(userStore, { now });
+      const authenticator = await createEs256Authenticator();
+      const challenge = randomBytes(32);
+      const registration = await authenticator.register({
+        challenge,
+        rpId: RP_ID,
+        origin: ORIGIN,
+        counter: 0,
+      });
+      const payload = await verifyRegistration({
+        response: registration,
+        expectedChallenge: encodeBase64url(challenge),
+        origin: ORIGIN,
+        rpId: RP_ID,
+      });
+      expect(payload).not.toBeNull();
+      if (!payload) throw new Error('registration failed');
+      userStore.insertKey({
+        id: 'key-1',
+        userId: user.id,
+        credentialId: decodeBase64url(payload.credential_id),
+        publicKey: payload.public_key,
+        rpId: payload.rp_id,
+        origin: payload.origin,
+        counter: payload.counter,
+        transports: payload.transports,
+        name: 'synth',
+        logSeq: 1,
+        now,
+      });
+
+      let counter = 1;
+      const enrollment = await createEnrollment(
+        {
+          credentialId: payload.credential_id,
+          async sign(message: Uint8Array) {
+            const assertion = await authenticator.assert({
+              challenge: sha256(message),
+              rpId: RP_ID,
+              origin: ORIGIN,
+              counter: counter++,
+            });
+            return encodePasskeyAssertionSig(assertion);
+          },
+        },
+        { uid: user.id, rootEpoch: 0, now, ttlMs: 10_000 }
+      );
+      const hub = new HubRuntime({
+        db,
+        userStore,
+        keyLogSource,
+        config: { publicUrl: 'https://hub.example', stun: [] },
+        authenticate: () => ({ userId: user.id, entryNodeId: 'entry' }),
+        now: () => now,
+      });
+      const created = await hub.handleRequest(
+        new Request('http://hub/api/hub/enrollments', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({
+            enroll_pk: encodeBase64url(enrollment.enrollPk),
+            authorization: encodeBase64url(enrollment.authorizationBytes),
+            authorization_sig: encodeBase64url(enrollment.authorizationSig),
+            exp: now + 10_000,
+          }),
+        }),
+        dummyServer
+      );
+      expect(created?.status).toBe(201);
+
+      const rootEnrollment = await createEnrollment(user.root, {
+        uid: user.id,
+        rootEpoch: 0,
+        now,
+        ttlMs: 10_000,
+      });
+      const createdRoot = await hub.handleRequest(
+        new Request('http://hub/api/hub/enrollments', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({
+            enroll_pk: encodeBase64url(rootEnrollment.enrollPk),
+            authorization: encodeBase64url(rootEnrollment.authorizationBytes),
+            authorization_sig: encodeBase64url(rootEnrollment.authorizationSig),
+            exp: now + 10_000,
+          }),
+        }),
+        dummyServer
+      );
+      expect(createdRoot?.status).toBe(201);
+
+      const badPasskey = await hub.handleRequest(
+        new Request('http://hub/api/hub/enrollments', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({
+            enroll_pk: encodeBase64url(enrollment.enrollPk),
+            authorization: encodeBase64url(enrollment.authorizationBytes),
+            authorization_sig: encodeBase64url(randomBytes(64)),
+            exp: now + 10_000,
+          }),
+        }),
+        dummyServer
+      );
+      expect(badPasskey?.status).toBe(400);
+      hub.stop();
+    } finally {
+      close();
+    }
+  });
 });
+
+async function createEs256Authenticator() {
+  const keyPair = await crypto.subtle.generateKey({ name: 'ECDSA', namedCurve: 'P-256' }, true, [
+    'sign',
+    'verify',
+  ]);
+  const jwk = await crypto.subtle.exportKey('jwk', keyPair.publicKey);
+  const x = decodeBase64url(jwk.x ?? '');
+  const y = decodeBase64url(jwk.y ?? '');
+  const credentialId = randomBytes(16);
+  const coseKey = encodeCoseEs256(x, y);
+
+  return {
+    credentialId,
+    async register(input: {
+      challenge: Uint8Array;
+      rpId: string;
+      origin: string;
+      counter: number;
+    }): Promise<RegistrationResponseJSON> {
+      const authData = makeAuthData({
+        rpId: input.rpId,
+        flags: 0x45,
+        counter: input.counter,
+        attested: {
+          aaguid: new Uint8Array(16),
+          credentialId,
+          coseKey,
+        },
+      });
+      const clientData = makeClientData('webauthn.create', input.challenge, input.origin);
+      const attestationObject = cborMap([
+        ['fmt', 'none'],
+        ['attStmt', EMPTY_MAP],
+        ['authData', authData],
+      ]);
+      const id = encodeBase64url(credentialId);
+      return {
+        id,
+        rawId: id,
+        type: 'public-key',
+        response: {
+          clientDataJSON: encodeBase64url(clientData),
+          attestationObject: encodeBase64url(attestationObject),
+          transports: ['internal'],
+        },
+        clientExtensionResults: {},
+      };
+    },
+    async assert(input: {
+      challenge: Uint8Array;
+      rpId: string;
+      origin: string;
+      counter: number;
+    }): Promise<AuthenticationResponseJSON> {
+      const authData = makeAuthData({
+        rpId: input.rpId,
+        flags: 0x05,
+        counter: input.counter,
+      });
+      const clientData = makeClientData('webauthn.get', input.challenge, input.origin);
+      const signed = concatBytes(authData, sha256(clientData));
+      const raw = new Uint8Array(
+        await crypto.subtle.sign(
+          { name: 'ECDSA', hash: 'SHA-256' },
+          keyPair.privateKey,
+          signed.slice()
+        )
+      );
+      const id = encodeBase64url(credentialId);
+      return {
+        id,
+        rawId: id,
+        type: 'public-key',
+        response: {
+          clientDataJSON: encodeBase64url(clientData),
+          authenticatorData: encodeBase64url(authData),
+          signature: encodeBase64url(ieeeP1363ToDer(raw)),
+        },
+        clientExtensionResults: {},
+      };
+    },
+  };
+}
+
+const EMPTY_MAP = Symbol('empty-map');
+
+function encodeCoseEs256(x: Uint8Array, y: Uint8Array): Uint8Array {
+  return cborMap([
+    [1, 2],
+    [3, -7],
+    [-1, 1],
+    [-2, x],
+    [-3, y],
+  ]);
+}
+
+function makeClientData(type: string, challenge: Uint8Array, origin: string): Uint8Array {
+  return new TextEncoder().encode(
+    JSON.stringify({
+      type,
+      challenge: encodeBase64url(challenge),
+      origin,
+      crossOrigin: false,
+    })
+  );
+}
+
+function makeAuthData(opts: {
+  rpId: string;
+  flags: number;
+  counter: number;
+  attested?: { aaguid: Uint8Array; credentialId: Uint8Array; coseKey: Uint8Array };
+}): Uint8Array {
+  const rpIdHash = sha256(new TextEncoder().encode(opts.rpId));
+  const count = new Uint8Array(4);
+  new DataView(count.buffer).setUint32(0, opts.counter >>> 0, false);
+  const parts: Uint8Array[] = [rpIdHash, Uint8Array.of(opts.flags), count];
+  if (opts.attested) {
+    const idLen = new Uint8Array(2);
+    new DataView(idLen.buffer).setUint16(0, opts.attested.credentialId.length, false);
+    parts.push(opts.attested.aaguid, idLen, opts.attested.credentialId, opts.attested.coseKey);
+  }
+  return concatBytes(...parts);
+}
+
+function concatBytes(...parts: Uint8Array[]): Uint8Array {
+  const total = parts.reduce((sum, part) => sum + part.length, 0);
+  const out = new Uint8Array(total);
+  let offset = 0;
+  for (const part of parts) {
+    out.set(part, offset);
+    offset += part.length;
+  }
+  return out;
+}
+
+function cborHead(major: number, n: number): Uint8Array {
+  if (n < 24) {
+    return Uint8Array.of((major << 5) | n);
+  }
+  if (n < 256) {
+    return Uint8Array.of((major << 5) | 24, n);
+  }
+  if (n < 65536) {
+    return Uint8Array.of((major << 5) | 25, (n >> 8) & 0xff, n & 0xff);
+  }
+  throw new Error('cbor length too large');
+}
+
+function cborInt(n: number): Uint8Array {
+  if (n >= 0) {
+    return cborHead(0, n);
+  }
+  return cborHead(1, -1 - n);
+}
+
+function cborBytes(bytes: Uint8Array): Uint8Array {
+  return concatBytes(cborHead(2, bytes.length), bytes);
+}
+
+function cborText(value: string): Uint8Array {
+  const encoded = new TextEncoder().encode(value);
+  return concatBytes(cborHead(3, encoded.length), encoded);
+}
+
+function cborValue(value: unknown): Uint8Array {
+  if (value === EMPTY_MAP) {
+    return cborHead(5, 0);
+  }
+  if (value instanceof Uint8Array) {
+    return cborBytes(value);
+  }
+  if (typeof value === 'string') {
+    return cborText(value);
+  }
+  if (typeof value === 'number') {
+    return cborInt(value);
+  }
+  throw new Error('unsupported cbor value');
+}
+
+function cborMap(entries: Array<[number | string, unknown]>): Uint8Array {
+  const parts: Uint8Array[] = [cborHead(5, entries.length)];
+  for (const [key, value] of entries) {
+    parts.push(typeof key === 'string' ? cborText(key) : cborInt(key));
+    parts.push(cborValue(value));
+  }
+  return concatBytes(...parts);
+}
+
+function ieeeP1363ToDer(raw: Uint8Array): Uint8Array {
+  const half = raw.length / 2;
+  const r = derInt(raw.subarray(0, half));
+  const s = derInt(raw.subarray(half));
+  const body = concatBytes(Uint8Array.of(0x02, r.length), r, Uint8Array.of(0x02, s.length), s);
+  return concatBytes(Uint8Array.of(0x30, body.length), body);
+}
+
+function derInt(bytes: Uint8Array): Uint8Array {
+  let start = 0;
+  while (start < bytes.length - 1 && bytes[start] === 0) start += 1;
+  const trimmed = bytes.subarray(start);
+  if ((trimmed[0] ?? 0) & 0x80) {
+    return concatBytes(Uint8Array.of(0), trimmed);
+  }
+  return trimmed;
+}
