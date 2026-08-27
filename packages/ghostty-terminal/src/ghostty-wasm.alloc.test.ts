@@ -70,6 +70,7 @@ type FakeOptions = {
 function createTrackedBindings(options: FakeOptions = {}) {
   const memory = new WebAssembly.Memory({ initial: 2 });
   const live = new Map<number, { kind: string; len: number }>();
+  const terminalSetCalls: Array<{ option: number; ptr: number }> = [];
   let next = 64;
 
   const alloc = (kind: string, len: number): number => {
@@ -101,7 +102,10 @@ function createTrackedBindings(options: FakeOptions = {}) {
     ghostty_wasm_free_u8: (ptr: number) => free('u8', ptr),
     ghostty_wasm_alloc_usize: () => alloc('usize', 4),
     ghostty_wasm_free_usize: (ptr: number) => free('usize', ptr),
-    ghostty_terminal_set: () => options.terminalSetResult ?? 0,
+    ghostty_terminal_set: (_terminal: number, option: number, ptr: number) => {
+      terminalSetCalls.push({ option, ptr });
+      return options.terminalSetResult ?? 0;
+    },
     ghostty_terminal_get: (_terminal: number, data: number, outPtr: number) => {
       new DataView(memory.buffer).setUint16(outPtr, data === 1 ? 80 : 24, true);
       return 0;
@@ -132,8 +136,12 @@ function createTrackedBindings(options: FakeOptions = {}) {
   return {
     bindings: new GhosttyBindings(exports, LAYOUT as unknown as FakeLayout),
     liveAllocations: live,
+    memory,
+    terminalSetCalls,
   };
 }
+
+const OPT_COLOR_FOREGROUND = 11;
 
 const THEME: GhosttyTheme = {
   background: '#111111',
@@ -180,6 +188,36 @@ describe('setTerminalTheme 分配记账', () => {
     expect(() => bindings.setTerminalTheme(1, { ...THEME, brightCyan: '#zz' })).toThrow(
       'expected #RRGGBB color'
     );
+    expect(liveAllocations.size).toBe(0);
+  });
+
+  // 长度校验不足以挡住非 16 进制字符：Number.parseInt('zz', 16) → NaN，
+  // DataView 会把 NaN 写成 0，结果是"非法颜色静默变成黑色"而不是抛错。
+  test('长度合法但含非 16 进制字符的颜色必须被拒绝', () => {
+    const { bindings, liveAllocations } = createTrackedBindings();
+
+    expect(() => bindings.setTerminalTheme(1, { ...THEME, foreground: '#zzzzzz' })).toThrow(
+      'expected #RRGGBB color'
+    );
+    expect(liveAllocations.size).toBe(0);
+
+    expect(() => bindings.setTerminalTheme(1, { ...THEME, brightCyan: '#12345g' })).toThrow(
+      'expected #RRGGBB color'
+    );
+    expect(liveAllocations.size).toBe(0);
+  });
+
+  test('大小写混写的合法颜色按 16 进制正确解析', () => {
+    const { bindings, liveAllocations, memory, terminalSetCalls } = createTrackedBindings();
+
+    bindings.setTerminalTheme(1, { ...THEME, foreground: '#AbCdEf' });
+
+    const foreground = terminalSetCalls.find((call) => call.option === OPT_COLOR_FOREGROUND);
+    expect(foreground).toBeDefined();
+    if (!foreground) {
+      return;
+    }
+    expect([...new Uint8Array(memory.buffer, foreground.ptr, 3)]).toEqual([0xab, 0xcd, 0xef]);
     expect(liveAllocations.size).toBe(0);
   });
 

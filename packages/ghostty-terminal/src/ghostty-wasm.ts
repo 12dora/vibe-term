@@ -203,9 +203,11 @@ function assertResult(result: number, action: string): void {
   throw new Error(`${action} failed with result ${result}`);
 }
 
+const HEX_RGB_PATTERN = /^[0-9a-fA-F]{6}$/;
+
 function parseHexRgb(hex: string): [number, number, number] {
   const normalized = hex.trim().replace(/^#/, '');
-  if (normalized.length !== 6) {
+  if (!HEX_RGB_PATTERN.test(normalized)) {
     throw new Error(`expected #RRGGBB color, received: ${hex}`);
   }
 
