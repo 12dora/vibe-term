@@ -11,6 +11,7 @@ import {
   randomBytes,
   rootKeyFromSeed,
   signEd25519,
+  uplinkAuthMessage,
   signKeyLogRecordWithRoot,
 } from '@tmex/shared/auth';
 import type { LinkSession } from '@tmex/shared/link';
@@ -141,8 +142,10 @@ export function signUserRecord(
   return { bytes, sig };
 }
 
-export function signAuth(secretKey: Uint8Array, nonce: Uint8Array): string {
-  return encodeBase64url(signEd25519(secretKey, nonce));
+export const TEST_HUB_HOST = 'hub.example';
+
+export function signAuth(secretKey: Uint8Array, nonce: Uint8Array, hubHost = TEST_HUB_HOST): string {
+  return encodeBase64url(signEd25519(secretKey, uplinkAuthMessage(nonce, hubHost)));
 }
 
 export type CtlInbox = {

@@ -5,9 +5,11 @@ export {
 export {
   PEER_CONNECT_TIMEOUT_MS,
   PEER_IDLE_MS,
+  PEER_MAX_CONCURRENT_STREAMS,
   PEER_MISSED_PONG_LIMIT,
   PEER_PING_INTERVAL_MS,
   PeerManager,
+  winningDialInitiator,
   type PeerManagerOptions,
 } from './peer-manager';
 export {
@@ -16,6 +18,7 @@ export {
   openWebSocketLink,
   parseOpenPayload,
   wrapBunPeerSocket,
+  WS_SECURE_TRANSCRIPT_PATH,
   type PeerCtlMessage,
   type PeerHandshakeResult,
   type PeerHelloWire,
@@ -25,6 +28,7 @@ export {
   PEER_HANDSHAKE_RATE_LIMIT,
   PEER_HANDSHAKE_RATE_WINDOW_MS,
   PeerServer,
+  isWebSocketUpgradeRequest,
   type PeerServerOptions,
 } from './peer-server';
 export {
@@ -34,16 +38,20 @@ export {
   isAuthSkippedPath,
   openHttpStream,
   openWsStream,
+  stripForwardedRequestHeaders,
+  stripSetCookieHeaders,
   type StreamAuthContext,
 } from './stream-targets';
-export { NodeUnreachableError, PeerHandshakeError } from './types';
+export { NodeUnreachableError, PeerHandshakeError, requestDispatchContext } from './types';
 export type {
   DataChannelLinkSlot,
+  DispatchContext,
   DispatchHttp,
   EstablishedPeerLink,
   HttpStreamOpenPayload,
   InboundRelayHandler,
   KeyLogApplier,
+  KeyLogForkEvent,
   MeshIdentity,
   MeshNodeId,
   MeshScheduler,
@@ -55,10 +63,13 @@ export type {
   WsStreamOpenPayload,
 } from './types';
 export {
+  UPLINK_AUTH_TIMEOUT_MS,
   UPLINK_BACKOFF_MAX_MS,
   UPLINK_BACKOFF_MIN_MS,
+  UPLINK_CONNECT_TIMEOUT_MS,
   UPLINK_MISSED_PONG_LIMIT,
   UPLINK_PING_INTERVAL_MS,
+  UPLINK_STABLE_UPTIME_MS,
   UplinkClient,
   type UplinkClientOptions,
   type UplinkWsFactory,

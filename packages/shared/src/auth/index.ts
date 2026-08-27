@@ -210,3 +210,12 @@ export {
   verifyTranscript,
 } from './peer-handshake';
 export type { PeerSessionKeys } from './peer-handshake';
+
+export {
+  DOMAIN_UPLINK_AUTH,
+  UplinkAuthSchema,
+  decodeUplinkAuth,
+  hubHostFromUrl,
+  uplinkAuthMessage,
+} from './uplink-auth';
+export type { UplinkAuth } from './uplink-auth';

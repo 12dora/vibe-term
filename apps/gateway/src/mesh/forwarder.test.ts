@@ -4,6 +4,7 @@ import {
   FakePeers,
   FakeStreams,
   NODE_ID,
+  asResponse,
   bootMesh,
   call,
   challengeAndLogin,
@@ -13,8 +14,10 @@ import { getSelfRewrite } from './forwarder';
 import {
   MESH_FORWARD_CSP,
   MESH_FORWARD_WS_KIND,
+  MESH_REJECT_4401_KIND,
   type MeshServerWebSocket,
   X_TMEX_SET_SESSION,
+  isMeshRewritten,
 } from './mesh-deps';
 import { WS_CLOSE_LOGIN_REQUIRED } from './mesh-deps';
 
@@ -22,13 +25,16 @@ const OTHER = 'bb'.repeat(16);
 const dummyLink = {} as LinkSession;
 
 describe('forwarder', () => {
-  test('self fallthrough rewrites path and returns null for gateway routes', async () => {
+  test('self fallthrough rewrites path and returns rewritten Request', async () => {
     const mesh = await bootMesh();
     try {
       const req = new Request('http://localhost/n/self/api/devices');
       const res = await mesh.runtime.handleRequest(req, dummyServer);
-      expect(res).toBeNull();
+      expect(isMeshRewritten(res)).toBe(true);
+      if (!isMeshRewritten(res)) throw new Error('expected rewrite');
+      expect(new URL(res.rewritten.url).pathname).toBe('/api/devices');
       expect(getSelfRewrite(req)).toBe('/api/devices');
+      expect(mesh.runtime.rewriteSelf(req)).not.toBeNull();
     } finally {
       mesh.close();
     }
@@ -49,12 +55,14 @@ describe('forwarder', () => {
     const peers = new FakePeers();
     const mesh = await bootMesh({ peers });
     try {
-      const res = await mesh.runtime.handleRequest(
-        new Request('http://localhost/n/deadbeefdeadbeefdeadbeefdeadbeef/api/ping'),
-        dummyServer
+      const res = asResponse(
+        await mesh.runtime.handleRequest(
+          new Request('http://localhost/n/deadbeefdeadbeefdeadbeefdeadbeef/api/ping'),
+          dummyServer
+        )
       );
-      expect(res?.status).toBe(503);
-      expect(await res?.json()).toEqual({
+      expect(res.status).toBe(503);
+      expect(await res.json()).toEqual({
         code: 'NODE_UNREACHABLE',
         nodeId: 'deadbeefdeadbeefdeadbeefdeadbeef',
       });
@@ -77,29 +85,31 @@ describe('forwarder', () => {
     });
     const mesh = await bootMesh({ peers, streams });
     try {
-      const svg = await mesh.runtime.handleRequest(
-        new Request(`http://localhost/n/${OTHER}/api/file`, {
-          headers: {
-            cookie: 'tmex_s_self=abc',
-            authorization: 'Bearer x',
-            host: 'evil.example',
-            connection: 'keep-alive',
-            upgrade: 'websocket',
-            'proxy-authorization': 'x',
-            'x-forwarded-for': '1.1.1.1',
-            accept: 'image/*',
-          },
-        }),
-        dummyServer
+      const svg = asResponse(
+        await mesh.runtime.handleRequest(
+          new Request(`http://localhost/n/${OTHER}/api/file`, {
+            headers: {
+              cookie: 'tmex_s_self=abc',
+              authorization: 'Bearer x',
+              host: 'evil.example',
+              connection: 'keep-alive',
+              upgrade: 'websocket',
+              'proxy-authorization': 'x',
+              'x-forwarded-for': '1.1.1.1',
+              accept: 'image/*',
+            },
+          }),
+          dummyServer
+        )
       );
-      expect(svg?.status).toBe(200);
-      expect(svg?.headers.get('content-type')).toBe('application/octet-stream');
-      expect(svg?.headers.get('content-disposition')).toBe('attachment');
-      expect(svg?.headers.get('x-evil')).toBeNull();
-      expect(svg?.headers.get('set-cookie')).toBeNull();
-      expect(svg?.headers.get('content-security-policy')).toBe(MESH_FORWARD_CSP);
-      expect(svg?.headers.get('x-content-type-options')).toBe('nosniff');
-      expect(svg?.headers.get('cache-control')).toBe('no-store');
+      expect(svg.status).toBe(200);
+      expect(svg.headers.get('content-type')).toBe('application/octet-stream');
+      expect(svg.headers.get('content-disposition')).toBe('attachment');
+      expect(svg.headers.get('x-evil')).toBeNull();
+      expect(svg.headers.get('set-cookie')).toBeNull();
+      expect(svg.headers.get('content-security-policy')).toBe(MESH_FORWARD_CSP);
+      expect(svg.headers.get('x-content-type-options')).toBe('nosniff');
+      expect(svg.headers.get('cache-control')).toBe('no-store');
       expect(streams.lastOpen?.headers.cookie).toBeUndefined();
       expect(streams.lastOpen?.headers.authorization).toBeUndefined();
       expect(streams.lastOpen?.headers.host).toBeUndefined();
@@ -109,22 +119,26 @@ describe('forwarder', () => {
       streams.nextResponse = new Response('<html></html>', {
         headers: { 'content-type': 'text/html; charset=utf-8' },
       });
-      const html = await mesh.runtime.handleRequest(
-        new Request(`http://localhost/n/${OTHER}/api/page`),
-        dummyServer
+      const html = asResponse(
+        await mesh.runtime.handleRequest(
+          new Request(`http://localhost/n/${OTHER}/api/page`),
+          dummyServer
+        )
       );
-      expect(html?.headers.get('content-type')).toBe('application/octet-stream');
-      expect(html?.headers.get('content-disposition')).toBe('attachment');
+      expect(html.headers.get('content-type')).toBe('application/octet-stream');
+      expect(html.headers.get('content-disposition')).toBe('attachment');
 
       streams.nextResponse = new Response(new Uint8Array([1, 2, 3]), {
         headers: { 'content-type': 'image/png' },
       });
-      const png = await mesh.runtime.handleRequest(
-        new Request(`http://localhost/n/${OTHER}/api/img`),
-        dummyServer
+      const png = asResponse(
+        await mesh.runtime.handleRequest(
+          new Request(`http://localhost/n/${OTHER}/api/img`),
+          dummyServer
+        )
       );
-      expect(png?.headers.get('content-type')).toBe('image/png');
-      expect(png?.headers.get('content-disposition')).toBeNull();
+      expect(png.headers.get('content-type')).toBe('image/png');
+      expect(png.headers.get('content-disposition')).toBeNull();
     } finally {
       mesh.close();
     }
@@ -140,12 +154,14 @@ describe('forwarder', () => {
     });
     const mesh = await bootMesh({ peers, streams });
     try {
-      const res = await mesh.runtime.handleRequest(
-        new Request(`http://localhost/n/${OTHER}/api/devices`),
-        dummyServer
+      const res = asResponse(
+        await mesh.runtime.handleRequest(
+          new Request(`http://localhost/n/${OTHER}/api/devices`),
+          dummyServer
+        )
       );
-      expect(res?.status).toBe(401);
-      expect(await res?.json()).toEqual({
+      expect(res.status).toBe(401);
+      expect(await res.json()).toEqual({
         error: 'missing auth',
         code: 'NODE_LOGIN_REQUIRED',
         nodeId: OTHER,
@@ -168,18 +184,21 @@ describe('forwarder', () => {
     });
     const mesh = await bootMesh({ peers, streams });
     try {
-      const res = await mesh.runtime.handleRequest(
-        new Request(`http://localhost/n/${OTHER}/api/auth/login`, {
-          method: 'POST',
-          headers: { 'content-type': 'application/json' },
-          body: '{}',
-        }),
-        dummyServer
+      const res = asResponse(
+        await mesh.runtime.handleRequest(
+          new Request(`http://localhost/n/${OTHER}/api/auth/login`, {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: '{}',
+          }),
+          dummyServer
+        )
       );
-      const cookie = res?.headers.get('set-cookie') ?? '';
+      const cookie = res.headers.get('set-cookie') ?? '';
       expect(cookie).toContain(`tmex_s_${OTHER}=sessidvalue`);
       expect(cookie).toContain('HttpOnly');
       expect(cookie).toContain('Max-Age=64800');
+      expect(res.headers.get(X_TMEX_SET_SESSION)).toBeNull();
       expect(streams.lastOpen?.auth).toBeNull();
     } finally {
       mesh.close();
@@ -192,8 +211,7 @@ describe('forwarder', () => {
     const streams = new FakeStreams();
     const mesh = await bootMesh({ peers, streams });
     try {
-      const { res } = await challengeAndLogin(mesh.runtime, mesh.boot);
-      const { sid } = (await res.json()) as { sid: string };
+      const { sid } = await challengeAndLogin(mesh.runtime, mesh.boot);
       let data: { kind?: string; token?: string; auth?: string } | undefined;
       const server = {
         upgrade(_req: Request, opts?: { data?: unknown }) {
@@ -248,9 +266,10 @@ describe('forwarder', () => {
         server
       );
       expect(res).toBeUndefined();
+      expect(data?.kind).toBe(MESH_REJECT_4401_KIND);
       let closed: number | undefined;
       const ws = {
-        data: data ?? { kind: MESH_FORWARD_WS_KIND, auth: null },
+        data: data ?? { kind: MESH_REJECT_4401_KIND, auth: null },
         send() {},
         close(code?: number) {
           closed = code;
@@ -258,6 +277,71 @@ describe('forwarder', () => {
       } as MeshServerWebSocket;
       mesh.runtime.handleWebSocket.open(ws);
       expect(closed).toBe(WS_CLOSE_LOGIN_REQUIRED);
+    } finally {
+      mesh.close();
+    }
+  });
+
+  test('401 augmentation reads at most 64 KiB and drops representation headers', async () => {
+    const peers = new FakePeers();
+    peers.links.set(OTHER, dummyLink);
+    const streams = new FakeStreams();
+    const huge = 'x'.repeat(80 * 1024);
+    streams.nextResponse = new Response(huge, {
+      status: 401,
+      headers: {
+        'content-type': 'text/plain',
+        'content-length': String(huge.length),
+        'content-range': 'bytes 0-10/11',
+        etag: '"abc"',
+        'content-disposition': 'inline',
+      },
+    });
+    const mesh = await bootMesh({ peers, streams });
+    try {
+      const res = asResponse(
+        await mesh.runtime.handleRequest(
+          new Request(`http://localhost/n/${OTHER}/api/devices`),
+          dummyServer
+        )
+      );
+      expect(res.status).toBe(401);
+      expect(res.headers.get('content-length')).toBeNull();
+      expect(res.headers.get('content-range')).toBeNull();
+      expect(res.headers.get('etag')).toBeNull();
+      expect(res.headers.get('content-disposition')).toBeNull();
+      const body = (await res.json()) as { message?: string; code: string; nodeId: string };
+      expect(body.code).toBe('NODE_LOGIN_REQUIRED');
+      expect(body.nodeId).toBe(OTHER);
+      expect(body.message?.length).toBe(64 * 1024);
+    } finally {
+      mesh.close();
+    }
+  });
+
+  test('logout x-tmex-set-session ;0 clears the target cookie', async () => {
+    const peers = new FakePeers();
+    peers.links.set(OTHER, dummyLink);
+    const streams = new FakeStreams();
+    streams.nextResponse = new Response(JSON.stringify({ ok: true }), {
+      status: 200,
+      headers: {
+        'content-type': 'application/json',
+        [X_TMEX_SET_SESSION]: ';0',
+      },
+    });
+    const mesh = await bootMesh({ peers, streams });
+    try {
+      const res = asResponse(
+        await mesh.runtime.handleRequest(
+          new Request(`http://localhost/n/${OTHER}/api/auth/logout`, { method: 'POST' }),
+          dummyServer
+        )
+      );
+      const cookie = res.headers.get('set-cookie') ?? '';
+      expect(cookie).toContain(`tmex_s_${OTHER}=`);
+      expect(cookie).toContain('Max-Age=0');
+      expect(res.headers.get(X_TMEX_SET_SESSION)).toBeNull();
     } finally {
       mesh.close();
     }

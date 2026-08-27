@@ -5,12 +5,22 @@ import {
   parseTmexRoles,
 } from '../../../../apps/gateway/src/config';
 import type { HubRuntime, HubServerWebSocket } from '../../../../apps/gateway/src/hub';
-import { MESH_FORWARD_WS_KIND, MESH_WS_KIND } from '../../../../apps/gateway/src/mesh/mesh-deps';
+import {
+  MESH_FORWARD_WS_KIND,
+  MESH_GATEWAY_WS_KIND,
+  MESH_REJECT_4401_KIND,
+  MESH_VIA_SELF,
+  MESH_WS_KIND,
+  getMeshRequestContext,
+  isMeshRewritten,
+  setMeshRequestContext,
+} from '../../../../apps/gateway/src/mesh/mesh-deps';
 import {
   type CreateMeshRuntimeOptions,
   type MeshRuntime,
   createMeshRuntime,
 } from '../../../../apps/gateway/src/mesh/mesh-runtime';
+import { applyLocalRenewal } from '../../../../apps/gateway/src/mesh/session-middleware';
 import type { GatewayRuntime } from '../../../../apps/gateway/src/runtime';
 import { createTmexGatewayRuntime } from './gateway';
 import { serveFrontend as defaultServeFrontend } from './serve-frontend';
@@ -57,7 +67,32 @@ function socketKind(ws: { data?: unknown }): string | undefined {
 }
 
 function isMeshKind(kind: string | undefined): boolean {
-  return kind === MESH_WS_KIND || kind === MESH_FORWARD_WS_KIND;
+  return (
+    kind === MESH_WS_KIND ||
+    kind === MESH_FORWARD_WS_KIND ||
+    kind === MESH_REJECT_4401_KIND ||
+    kind === MESH_GATEWAY_WS_KIND
+  );
+}
+
+function clientIpFromServer(server: Bun.Server<unknown>, req: Request): string | undefined {
+  try {
+    const info = server.requestIP(req);
+    if (info?.address) return info.address;
+  } catch {
+    // requestIP is unavailable in some test fakes
+  }
+  return undefined;
+}
+
+function seedLocalContext(req: Request, bunServer: Bun.Server<unknown>): void {
+  const existing = getMeshRequestContext(req);
+  setMeshRequestContext(req, {
+    ...existing,
+    via: existing.via || MESH_VIA_SELF,
+    clientIp: existing.clientIp ?? clientIpFromServer(bunServer, req),
+    trustProxy: gatewayConfig.trustProxy,
+  });
 }
 
 export async function assembleTmex(opts: AssembleTmexOptions = {}): Promise<AssembledTmex> {
@@ -91,23 +126,58 @@ export async function assembleTmex(opts: AssembleTmexOptions = {}): Promise<Asse
 
   const hub = mesh?.hub ?? opts.hub ?? null;
 
-  const fetch: AssembledTmex['fetch'] = async (req, bunServer) => {
+  const dispatch = async (
+    req: Request,
+    bunServer: Bun.Server<unknown>,
+    rewritten: boolean
+  ): Promise<Response | undefined> => {
+    seedLocalContext(req, bunServer);
+
     if (hub) {
       const hubResp = await hub.handleRequest(req, bunServer);
       if (hubResp instanceof Response) return hubResp;
     }
+
     if (mesh) {
       const path = new URL(req.url).pathname;
       if (path.startsWith('/api/')) {
         const blocked = mesh.localUiGuard(req);
         if (blocked) return blocked;
       }
+      if (path === '/ws' || path === '/n/self/ws' || path === `/n/${mesh.nodeId}/ws`) {
+        const wsGuard = mesh.guardGatewayWebSocket(req, bunServer);
+        if (wsGuard !== null) return wsGuard ?? undefined;
+      }
       const meshResp = await mesh.handleRequest(req, bunServer);
-      if (meshResp instanceof Response) return meshResp;
+      if (isMeshRewritten(meshResp) && !rewritten) {
+        return dispatch(meshResp.rewritten, bunServer, true);
+      }
+      if (meshResp instanceof Response) {
+        return applyLocalRenewal(req, meshResp);
+      }
+      if (meshResp === undefined) return undefined;
+    } else {
+      const path = new URL(req.url).pathname;
+      if (path === '/api/auth/mode' && req.method === 'GET') {
+        return new Response(JSON.stringify({ mode: 'none' }), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        });
+      }
     }
+
     const gatewayResp = await gateway.handleRequest(req, bunServer);
-    if (gatewayResp instanceof Response) return gatewayResp;
+    if (gatewayResp instanceof Response) {
+      return mesh ? applyLocalRenewal(req, gatewayResp) : gatewayResp;
+    }
+    if (gatewayResp === undefined && new URL(req.url).pathname === '/ws') {
+      return undefined;
+    }
     return serveFrontend(req, staticRoot);
+  };
+
+  const fetch: AssembledTmex['fetch'] = async (req, bunServer) => {
+    return dispatch(req, bunServer, false);
   };
 
   const websocket: GatewayRuntime['websocket'] = {
@@ -121,6 +191,9 @@ export async function assembleTmex(opts: AssembleTmexOptions = {}): Promise<Asse
       const kind = socketKind(ws);
       if (mesh && isMeshKind(kind)) {
         mesh.websocket.open(ws as never);
+        if (kind === MESH_GATEWAY_WS_KIND) {
+          gateway.websocket.open(ws);
+        }
         return;
       }
       gateway.websocket.open(ws);
@@ -132,7 +205,15 @@ export async function assembleTmex(opts: AssembleTmexOptions = {}): Promise<Asse
       }
       const kind = socketKind(ws);
       if (mesh && isMeshKind(kind)) {
+        if (kind === MESH_GATEWAY_WS_KIND) {
+          if (!mesh.touchSocket(ws as never)) return;
+          gateway.websocket.message(ws, message);
+          return;
+        }
         mesh.websocket.message(ws as never, message);
+        return;
+      }
+      if (mesh && !mesh.touchSocket(ws as never)) {
         return;
       }
       gateway.websocket.message(ws, message);
@@ -143,7 +224,7 @@ export async function assembleTmex(opts: AssembleTmexOptions = {}): Promise<Asse
         return;
       }
       const kind = socketKind(ws);
-      if (mesh && isMeshKind(kind)) {
+      if (mesh && isMeshKind(kind) && kind !== MESH_GATEWAY_WS_KIND) {
         mesh.websocket.drain(ws as never);
         return;
       }
@@ -155,9 +236,15 @@ export async function assembleTmex(opts: AssembleTmexOptions = {}): Promise<Asse
         return;
       }
       const kind = socketKind(ws);
-      if (mesh && isMeshKind(kind)) {
+      if (mesh) {
         mesh.websocket.close(ws as never, code, reason);
-        return;
+        if (
+          kind === MESH_WS_KIND ||
+          kind === MESH_FORWARD_WS_KIND ||
+          kind === MESH_REJECT_4401_KIND
+        ) {
+          return;
+        }
       }
       gateway.websocket.close(ws, code, reason);
     },

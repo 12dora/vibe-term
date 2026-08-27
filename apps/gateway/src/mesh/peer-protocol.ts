@@ -13,6 +13,7 @@ import {
   verifyTranscript,
 } from '@tmex/shared/auth';
 import {
+  type ByteTransport,
   LinkMux,
   type LinkSession,
   type LinkStream,
@@ -22,6 +23,7 @@ import {
   type WebSocketTransportInput,
   byteTransportFromStream,
   secureChannelDirections,
+  websocketTransport,
   x25519SharedSecret,
 } from '@tmex/shared/link';
 import type { UserStore } from '../auth/user-store';
@@ -274,36 +276,128 @@ async function exchangeHelloAndSig(
   return { peerNodeId, peerHello, selfHello, transcriptBytes, ephSk: eph.secretKey };
 }
 
+/**
+ * Interim LAN path uses transcript `path: 'relay'` (same HKDF binding as hub
+ * relay). `'dc'` is reserved for Phase 3 DataChannel + DTLS fingerprints.
+ */
+export const WS_SECURE_TRANSCRIPT_PATH = 'relay' as const;
+
+function createHandshakeGate(inner: ByteTransport): {
+  send: (bytes: Uint8Array) => void | Promise<void>;
+  recv: () => Promise<Uint8Array>;
+  finish: () => ByteTransport;
+  fail: (reason: string) => void;
+} {
+  type Waiter = { resolve: (bytes: Uint8Array) => void; reject: (err: Error) => void };
+  let phase: 'hs' | 'up' = 'hs';
+  const pending: Uint8Array[] = [];
+  const waiters: Waiter[] = [];
+  const dataCbs: Array<(bytes: Uint8Array) => void> = [];
+  const closeCbs: Array<(reason?: string) => void> = [];
+  let closedReason: string | null = null;
+
+  inner.onData((bytes) => {
+    if (phase === 'hs') {
+      const waiter = waiters.shift();
+      if (waiter) waiter.resolve(bytes);
+      else pending.push(bytes);
+      return;
+    }
+    for (const cb of dataCbs) cb(bytes);
+  });
+  inner.onClose((reason) => {
+    closedReason = reason ?? 'closed';
+    if (phase === 'hs') {
+      const err = new PeerHandshakeError('protocol', closedReason);
+      for (const waiter of waiters.splice(0)) waiter.reject(err);
+    }
+    for (const cb of closeCbs) cb(reason);
+  });
+
+  return {
+    send: (bytes) => inner.send(bytes),
+    recv: () => {
+      if (closedReason) {
+        return Promise.reject(new PeerHandshakeError('protocol', closedReason));
+      }
+      if (pending.length > 0) {
+        return Promise.resolve(pending.shift() as Uint8Array);
+      }
+      return new Promise((resolve, reject) => waiters.push({ resolve, reject }));
+    },
+    finish: () => {
+      phase = 'up';
+      return {
+        send: (bytes) => inner.send(bytes),
+        onData(cb) {
+          dataCbs.push(cb);
+          while (pending.length > 0) cb(pending.shift() as Uint8Array);
+        },
+        onClose(cb) {
+          closeCbs.push(cb);
+          if (closedReason) cb(closedReason);
+        },
+        close(reason) {
+          inner.close(reason);
+        },
+      };
+    },
+    fail: (reason) => {
+      try {
+        inner.close(reason);
+      } catch {
+        // already closed
+      }
+    },
+  };
+}
+
 export async function handshakeWsDirect(opts: {
-  link: LinkSession;
+  socket: WebSocketTransportInput;
+  role: 'initiator' | 'acceptor';
   identity: MeshIdentity;
   userStore: UserStore;
   timeoutMs?: number;
 }): Promise<PeerHandshakeResult> {
+  const inner = websocketTransport(opts.socket);
+  const gate = createHandshakeGate(inner);
   try {
     const result = await exchangeHelloAndSig(
       {
-        send: (bytes) => opts.link.ctl.send(bytes),
-        recv: ctlPushRecv((cb) => opts.link.ctl.onMessage(cb)),
+        send: (bytes) => gate.send(bytes),
+        recv: () => gate.recv(),
       },
       {
         identity: opts.identity,
         userStore: opts.userStore,
-        path: 'dc',
+        path: WS_SECURE_TRANSCRIPT_PATH,
         timeoutMs: opts.timeoutMs ?? HANDSHAKE_TIMEOUT_MS,
       }
     );
+    const peerEph = result.peerHello.eph_x25519_pk;
+    if (!peerEph) {
+      throw new PeerHandshakeError('protocol', 'ws-secure hello missing eph_x25519_pk');
+    }
+    const shared = x25519SharedSecret(result.ephSk, peerEph);
+    const selfId = hexToBytes(opts.identity.nodeId);
+    const peerId = hexToBytes(result.peerNodeId);
+    const keys = derivePeerSessionKeys(shared, result.transcriptBytes, selfId, peerId);
+    const directions = secureChannelDirections(opts.role);
+    const secure = new SecureChannelLink(gate.finish(), {
+      sendKey: keys.sendKey,
+      recvKey: keys.recvKey,
+      ...directions,
+    });
+    const session = new LinkMux(secure, { role: opts.role });
     return {
-      session: opts.link,
+      session,
       peerNodeId: result.peerNodeId,
-      transport: 'ws-direct',
+      transport: 'ws-secure',
+      sendKey: keys.sendKey,
+      recvKey: keys.recvKey,
     };
   } catch (err) {
-    try {
-      opts.link.close(err instanceof Error ? err.message : 'handshake-failed');
-    } catch {
-      // already closed
-    }
+    gate.fail(err instanceof Error ? err.message : 'handshake-failed');
     throw err;
   }
 }

@@ -11,7 +11,7 @@ import {
   makeVerifyPasskeyAssertion,
 } from '../auth';
 import type { AuthDb } from '../auth/types';
-import type { TmexRoles } from '../config';
+import { type TmexRoles, config as gatewayConfig } from '../config';
 import { HubRuntime, type HubTurnConfig } from '../hub';
 import { createHubKeyLogSource } from '../hub/hub-key-log-source';
 import type { GatewayRuntime } from '../runtime';
@@ -21,21 +21,25 @@ import {
   type CachedRtcConfig,
   type KeyLogPublisher,
   MESH_VIA_SELF,
+  type MeshHandleResult,
   type MeshServerWebSocket,
   type MeshUpgradeServer,
   type NodeEventPayload,
   type OpenedWsStream,
   type PeerLinkProvider,
   type RtcSignalMessage,
+  type RtcSignalOwner,
   type RtcSignalRouter,
   type StreamOpener,
   getMeshRequestContext,
+  requestDispatchContext,
+  setMeshRequestContext,
 } from './mesh-deps';
 import { MeshHttpRuntime } from './mesh-http';
 import { PeerManager } from './peer-manager';
 import { authenticateRequest } from './session-middleware';
 import { openHttpStream, openWsStream } from './stream-targets';
-import type { KeyLogApplier, MeshScheduler, UplinkState } from './types';
+import type { DispatchContext, KeyLogApplier, MeshScheduler, UplinkState } from './types';
 import {
   UPLINK_BACKOFF_MAX_MS,
   UPLINK_BACKOFF_MIN_MS,
@@ -80,8 +84,13 @@ export type MeshRuntime = {
   readonly userStore: UserStore;
   readonly userKeyService: UserKeyService;
   lastNodeList: UplinkNodeList | null;
-  handleRequest(req: Request, server: MeshUpgradeServer): Promise<Response | null | undefined>;
+  handleRequest(req: Request, server: MeshUpgradeServer): Promise<MeshHandleResult>;
   localUiGuard(req: Request): Response | null;
+  guardGatewayWebSocket(req: Request, server: MeshUpgradeServer): Response | null | undefined;
+  rewriteSelf(req: Request): Request | null;
+  closeSocketsForUser(uid: string): void;
+  closeSocketsForSid(sid: string): void;
+  touchSocket(ws: MeshServerWebSocket): boolean;
   websocket: {
     open: (ws: MeshServerWebSocket) => void;
     message: (ws: MeshServerWebSocket, message: string | Buffer) => void;
@@ -243,6 +252,13 @@ function resolveUserId(userStore: UserStore, nodeIdHex: string, explicit?: strin
   return userStore.getCert(nodeIdHex)?.userId ?? '';
 }
 
+function hubEndpointUrl(config: MeshRuntimeConfig): string {
+  if (config.roles.hub) {
+    return config.hubPublicUrl ?? config.hubUrl ?? 'http://127.0.0.1';
+  }
+  return config.hubUrl ?? 'http://127.0.0.1';
+}
+
 export async function createMeshRuntime(opts: CreateMeshRuntimeOptions): Promise<MeshRuntime> {
   const { db, gateway, config } = opts;
   const userStore = new UserStore(db);
@@ -285,7 +301,7 @@ export async function createMeshRuntime(opts: CreateMeshRuntimeOptions): Promise
         userStore,
         keyLogSource: createHubKeyLogSource(keyLogService, keyLogStore),
         config: {
-          publicUrl: config.hubPublicUrl ?? config.hubUrl ?? 'http://127.0.0.1',
+          publicUrl: hubEndpointUrl(config),
           stun: config.stunServers,
           turn: (turnConfig(config) as HubTurnConfig) ?? null,
         },
@@ -316,7 +332,7 @@ export async function createMeshRuntime(opts: CreateMeshRuntimeOptions): Promise
   });
 
   const uplink = new UplinkClient({
-    hubUrl: config.hubUrl ?? 'http://127.0.0.1',
+    hubUrl: hubEndpointUrl(config),
     identity: { nodeId: identity.nodeIdHex, edSecretKey: identity.edPrivateKey },
     userId,
     keyLogApplier: applier,
@@ -360,6 +376,41 @@ export async function createMeshRuntime(opts: CreateMeshRuntimeOptions): Promise
     },
   });
 
+  const httpHolder: { runtime: MeshHttpRuntime | null } = { runtime: null };
+  const noopUpgrade: MeshUpgradeServer = { upgrade: () => false };
+
+  const dispatchInboundHttp = async (request: Request, ctx: DispatchContext): Promise<Response> => {
+    const trusted = requestDispatchContext.get(request);
+    const via = trusted?.viaNodeId ?? ctx.viaNodeId;
+    const uid = trusted?.uid ?? ctx.uid;
+    const renewedExpiresAt = trusted?.renewedExpiresAt ?? ctx.renewedExpiresAt;
+    setMeshRequestContext(request, {
+      via,
+      uid,
+      clientIp: `peer:${via}`,
+      ...(renewedExpiresAt !== undefined ? { renewedExpiresAt } : {}),
+    });
+    requestDispatchContext.set(request, {
+      uid,
+      viaNodeId: via,
+      ...(renewedExpiresAt !== undefined ? { renewedExpiresAt } : {}),
+    });
+    const meshHttp = httpHolder.runtime;
+    if (meshHttp) {
+      const meshRes = await meshHttp.handleRequest(request, noopUpgrade);
+      if (meshRes instanceof Response) return meshRes;
+    }
+    if (config.roles.hub && hub) {
+      const hubRes = await hub.handleRequest(request, noopUpgrade);
+      if (hubRes instanceof Response) return hubRes;
+    }
+    return gateway.dispatchHttp(request, {
+      uid,
+      viaNodeId: via,
+      ...(renewedExpiresAt !== undefined ? { renewedExpiresAt } : {}),
+    });
+  };
+
   const peerManager = new PeerManager({
     identity: { nodeId: identity.nodeIdHex, edSecretKey: identity.edPrivateKey },
     userStore,
@@ -368,7 +419,7 @@ export async function createMeshRuntime(opts: CreateMeshRuntimeOptions): Promise
     keyLogApplier: applier,
     statusProvider,
     sessionStore: nodeSessionStore,
-    dispatchHttp: (request, ctx) => gateway.dispatchHttp(request, ctx),
+    dispatchHttp: dispatchInboundHttp,
     wsServer: gateway.wsServer,
     hostname: opts.peerHostname,
     startServer: opts.startPeerServer,
@@ -417,7 +468,7 @@ export async function createMeshRuntime(opts: CreateMeshRuntimeOptions): Promise
   };
 
   const signals: RtcSignalRouter = {
-    send(signal) {
+    send(signal, _owner?: RtcSignalOwner) {
       try {
         uplink.sendCtl({
           t: 'rtc.signal',
@@ -457,7 +508,9 @@ export async function createMeshRuntime(opts: CreateMeshRuntimeOptions): Promise
       },
     },
     primaryUserId: userId || undefined,
+    trustProxy: gatewayConfig.trustProxy,
   });
+  httpHolder.runtime = http;
 
   const runtime: MeshRuntime = {
     nodeId: identity.nodeIdHex,
@@ -475,6 +528,11 @@ export async function createMeshRuntime(opts: CreateMeshRuntimeOptions): Promise
     },
     handleRequest: (req, server) => http.handleRequest(req, server),
     localUiGuard: (req) => http.localUiGuard(req),
+    guardGatewayWebSocket: (req, server) => http.guardGatewayWebSocket(req, server),
+    rewriteSelf: (req) => http.rewriteSelf(req),
+    closeSocketsForUser: (uid) => http.closeSocketsForUser(uid),
+    closeSocketsForSid: (sid) => http.closeSocketsForSid(sid),
+    touchSocket: (ws) => http.touchSocket(ws),
     websocket: {
       open: (ws) => http.handleWebSocket.open(ws),
       message: (ws, message) => http.handleWebSocket.message(ws, message),

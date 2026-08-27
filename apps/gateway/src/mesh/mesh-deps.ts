@@ -1,5 +1,9 @@
 import type { LinkSession } from '@tmex/shared/link';
 import type { TmexRoles } from '../config';
+import { type DispatchContext, requestDispatchContext } from './types';
+
+export { requestDispatchContext };
+export type { DispatchContext };
 
 export const MESH_VIA_SELF = 'self';
 
@@ -11,9 +15,13 @@ export const LOGIN_RATE_WINDOW_MS = 60_000;
 export const LOGIN_CHALLENGE_TTL_MS = 60_000;
 export const PASSKEY_REGISTER_TTL_MS = 60_000;
 export const RTC_AUTHORIZE_TTL_MS = 120_000;
+export const WS_SESSION_VERIFY_MS = 5 * 60 * 1000;
+export const AUTH_401_BODY_LIMIT = 64 * 1024;
 
 export const MESH_WS_KIND = 'mesh-event';
 export const MESH_FORWARD_WS_KIND = 'mesh-forward-ws';
+export const MESH_REJECT_4401_KIND = 'mesh-reject-4401';
+export const MESH_GATEWAY_WS_KIND = 'gateway-ws';
 export const WS_CLOSE_LOGIN_REQUIRED = 4401;
 
 export const MESH_FORWARD_CSP = "sandbox; default-src 'none'; base-uri 'none'; form-action 'none'";
@@ -90,8 +98,22 @@ export type DtlsFingerprint = {
   value: string;
 };
 
+export type RtcAuthorizeBrowserInput = {
+  rtcSession: string;
+  uid: string;
+  via: string;
+  fpBrowser: DtlsFingerprint;
+};
+
+export type RtcAuthorizeBrowserResult = {
+  nonce: Uint8Array;
+  fpNode: DtlsFingerprint;
+};
+
 export type RtcFingerprintProvider = {
-  getFingerprint(): DtlsFingerprint | Promise<DtlsFingerprint>;
+  authorizeBrowser(
+    input: RtcAuthorizeBrowserInput
+  ): RtcAuthorizeBrowserResult | null | Promise<RtcAuthorizeBrowserResult | null>;
 };
 
 export type RtcSignalMessage = {
@@ -102,8 +124,13 @@ export type RtcSignalMessage = {
   candidate?: string | null;
 };
 
+export type RtcSignalOwner = {
+  uid: string;
+  sid: string;
+};
+
 export type RtcSignalRouter = {
-  send(signal: RtcSignalMessage): void;
+  send(signal: RtcSignalMessage, owner?: RtcSignalOwner): void;
   subscribe(cb: (signal: RtcSignalMessage) => void): () => void;
 };
 
@@ -127,16 +154,55 @@ export type MeshRequestContext = {
   auth?: string | null;
   clientIp?: string;
   selfRewrite?: string;
+  sid?: string | null;
+  uid?: string | null;
+  renewedExpiresAt?: number;
+  trustProxy?: boolean;
 };
+
+export type MeshRewritten = { rewritten: Request };
+
+export type MeshHandleResult = Response | MeshRewritten | null | undefined;
 
 const requestContext = new WeakMap<Request, MeshRequestContext>();
 
 export function setMeshRequestContext(req: Request, ctx: MeshRequestContext): void {
   requestContext.set(req, ctx);
+  const existing = requestDispatchContext.get(req);
+  requestDispatchContext.set(req, {
+    uid: ctx.uid ?? existing?.uid ?? null,
+    viaNodeId: ctx.via,
+    ...(ctx.renewedExpiresAt !== undefined
+      ? { renewedExpiresAt: ctx.renewedExpiresAt }
+      : existing?.renewedExpiresAt !== undefined
+        ? { renewedExpiresAt: existing.renewedExpiresAt }
+        : {}),
+  });
 }
 
 export function getMeshRequestContext(req: Request): MeshRequestContext {
-  return requestContext.get(req) ?? { via: MESH_VIA_SELF };
+  const local = requestContext.get(req);
+  const dispatch = requestDispatchContext.get(req);
+  const via = dispatch?.viaNodeId ?? local?.via ?? MESH_VIA_SELF;
+  return {
+    via,
+    auth: local?.auth,
+    clientIp: local?.clientIp,
+    selfRewrite: local?.selfRewrite,
+    sid: local?.sid ?? null,
+    uid: dispatch?.uid ?? local?.uid ?? null,
+    renewedExpiresAt: dispatch?.renewedExpiresAt ?? local?.renewedExpiresAt,
+    trustProxy: local?.trustProxy,
+  };
+}
+
+export function isMeshRewritten(value: unknown): value is MeshRewritten {
+  return (
+    typeof value === 'object' &&
+    value !== null &&
+    'rewritten' in value &&
+    (value as MeshRewritten).rewritten instanceof Request
+  );
 }
 
 export function isStandaloneRoles(roles: MeshRoles): boolean {
@@ -147,11 +213,20 @@ export type MeshUpgradeServer = {
   upgrade(req: Request, options?: { data?: unknown }): boolean;
 };
 
+export type MeshSocketKind =
+  | typeof MESH_WS_KIND
+  | typeof MESH_FORWARD_WS_KIND
+  | typeof MESH_REJECT_4401_KIND
+  | typeof MESH_GATEWAY_WS_KIND;
+
 export type MeshSocketData = {
-  kind: typeof MESH_WS_KIND | typeof MESH_FORWARD_WS_KIND;
+  kind: MeshSocketKind;
   nodeId?: string;
   auth?: string | null;
   token?: string;
+  sid?: string | null;
+  uid?: string | null;
+  via?: string;
 };
 
 export type MeshServerWebSocket = {
@@ -160,3 +235,12 @@ export type MeshServerWebSocket = {
   send(data: Uint8Array | ArrayBuffer | ArrayBufferView | string): number | undefined;
   close(code?: number, reason?: string): void;
 };
+
+export function parseSetSessionHeader(value: string): { sid: string; maxAgeSec: number } | null {
+  const split = value.indexOf(';');
+  if (split === -1) return null;
+  const sid = value.slice(0, split).trim();
+  const maxAgeSec = Number(value.slice(split + 1).trim());
+  if (!Number.isFinite(maxAgeSec)) return null;
+  return { sid, maxAgeSec };
+}

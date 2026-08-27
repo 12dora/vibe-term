@@ -56,4 +56,25 @@ describe('LinkStreamCarrier', () => {
     carrier2.terminate();
     await aborted;
   });
+
+  test('close drains already-accepted frames before END', async () => {
+    const [a, b] = createInMemoryLinkPair();
+    const incomingP = new Promise<import('@tmex/shared/link').LinkStream>((resolve) =>
+      b.onStream(resolve)
+    );
+    const out = await a.openStream(new Uint8Array([1]));
+    const incoming = await incomingP;
+    const carrier = new LinkStreamCarrier(out);
+    expect(carrier.send(new TextEncoder().encode('one'))).toBe('sent');
+    expect(carrier.send(new TextEncoder().encode('two'))).toBe('sent');
+    carrier.close(1000, 'bye');
+    expect(carrier.send(new TextEncoder().encode('three'))).toBe('closed');
+    const reader = incoming.readable.getReader();
+    const first = await reader.read();
+    const second = await reader.read();
+    const done = await reader.read();
+    expect(new TextDecoder().decode(first.value?.bytes)).toBe('one');
+    expect(new TextDecoder().decode(second.value?.bytes)).toBe('two');
+    expect(done.done).toBe(true);
+  });
 });

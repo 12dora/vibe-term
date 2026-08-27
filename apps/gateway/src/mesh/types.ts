@@ -28,6 +28,12 @@ export type KeyLogApplier = {
   ): Promise<{ seq: bigint; bytes: Uint8Array; sig: Uint8Array }[]>;
 };
 
+export type KeyLogForkEvent = {
+  userId: string;
+  local: { seq: bigint; hash: Uint8Array };
+  remote: { seq: bigint; hash: Uint8Array };
+};
+
 export type MeshScheduler = {
   now(): number;
   sleep(ms: number, signal?: AbortSignal): Promise<void>;
@@ -37,11 +43,13 @@ export type MeshScheduler = {
 export type UplinkState = 'offline' | 'connecting' | 'online';
 
 /**
- * Path 1 is WebRTC DataChannel in Phase 3 (B3-1). Until then the peer-port
- * signaling WebSocket carries the mux directly (`ws-direct`).
- * `dc` is reserved so DataChannelLink can drop in without a wire-format change.
+ * Path 1 data plane is a real WebRTC DataChannel in Phase 3 (B3-1).
+ * Until then the peer-port WebSocket carries `SecureChannelLink` (`ws-secure`)
+ * with the same handshake (`eph_x25519_pk`) and transcript `path: 'relay'` as
+ * hub relay. `'dc'` is reserved for the DataChannel binding that includes
+ * DTLS fingerprints — do not use it on the interim WS path.
  */
-export type PeerTransportKind = 'ws-direct' | 'relay' | 'dc';
+export type PeerTransportKind = 'ws-secure' | 'relay' | 'dc';
 
 /** Phase 3 extension point — B3-1 fills this with a DataChannel-backed LinkSession. */
 export type DataChannelLinkSlot = {
@@ -57,7 +65,16 @@ export type EstablishedPeerLink = {
   transport: PeerTransportKind;
 };
 
-export type DispatchHttp = (request: Request, ctx: { uid: string }) => Promise<Response>;
+export type DispatchContext = {
+  uid: string | null;
+  viaNodeId: string;
+  renewedExpiresAt?: number;
+};
+
+/** Trusted mesh routing context for a Request built by `acceptHttpStream`. */
+export const requestDispatchContext = new WeakMap<Request, DispatchContext>();
+
+export type DispatchHttp = (request: Request, ctx: DispatchContext) => Promise<Response>;
 
 export class NodeUnreachableError extends Error {
   readonly code = 'NODE_UNREACHABLE';

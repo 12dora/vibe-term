@@ -1,8 +1,10 @@
 import {
   decodeCertificate,
   encodeBase64url,
+  hubHostFromUrl,
   nodeIdToHex,
   randomBytes,
+  uplinkAuthMessage,
   verifyEd25519,
 } from '@tmex/shared/auth';
 import type { LinkSession, LinkStream } from '@tmex/shared/link';
@@ -316,7 +318,7 @@ export class UplinkServer {
       link.close('bad-sig');
       return;
     }
-    if (!verifyEd25519(sig, pending.nonce, edPk)) {
+    if (!verifyEd25519(sig, uplinkAuthMessage(pending.nonce, hubHostFromUrl(this.config.publicUrl)), edPk)) {
       link.close('unauthorized');
       return;
     }

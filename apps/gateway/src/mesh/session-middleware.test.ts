@@ -1,8 +1,13 @@
 import { describe, expect, test } from 'bun:test';
 import { NODE_SESSION_RENEW_THROTTLE_MS } from '../auth/node-session-store';
-import { bootMesh, call, challengeAndLogin } from './auth-routes.test';
-import { X_TMEX_SESSION_RENEWED } from './mesh-deps';
-import { authenticateRequest, requireSession } from './session-middleware';
+import { asResponse, bootMesh, call, challengeAndLogin } from './auth-routes.test';
+import { X_TMEX_SESSION_RENEWED, requestDispatchContext, setMeshRequestContext } from './mesh-deps';
+import {
+  authenticateRequest,
+  isHttps,
+  publicRequestUrl,
+  requireSession,
+} from './session-middleware';
 
 describe('session-middleware', () => {
   test('standalone bypasses with uid=null', async () => {
@@ -27,16 +32,14 @@ describe('session-middleware', () => {
     let now = Date.now();
     const mesh = await bootMesh({ now: () => now });
     try {
-      const { res } = await challengeAndLogin(mesh.runtime, mesh.boot);
-      const { sid } = (await res.json()) as { sid: string };
+      const { sid } = await challengeAndLogin(mesh.runtime, mesh.boot);
       now += NODE_SESSION_RENEW_THROTTLE_MS + 1000;
       const req = new Request('http://localhost/api/auth/passkey/register/options', {
         method: 'POST',
         headers: { cookie: `tmex_s_self=${sid}` },
       });
-      const out = await mesh.runtime.handleRequest(req, { upgrade: () => false });
-      expect(out).toBeTruthy();
-      expect(out?.headers.get(X_TMEX_SESSION_RENEWED)).toBeTruthy();
+      const out = asResponse(await mesh.runtime.handleRequest(req, { upgrade: () => false }));
+      expect(out.headers.get(X_TMEX_SESSION_RENEWED)).toBeTruthy();
     } finally {
       mesh.close();
     }
@@ -60,11 +63,10 @@ describe('session-middleware', () => {
   test('stream via uses injected auth sid not cookie', async () => {
     const mesh = await bootMesh();
     try {
-      const { res } = await challengeAndLogin(mesh.runtime, mesh.boot, {
+      const { sid } = await challengeAndLogin(mesh.runtime, mesh.boot, {
         via: 'entry-a',
         entry: 'entry-a',
       });
-      const { sid } = (await res.json()) as { sid: string };
       const req = new Request('http://localhost/api/auth/logout', {
         method: 'POST',
         headers: { cookie: 'tmex_s_self=wrong' },
@@ -81,5 +83,65 @@ describe('session-middleware', () => {
     } finally {
       mesh.close();
     }
+  });
+
+  test('local renewal attaches x-tmex-session-renewed to later authed responses', async () => {
+    let now = Date.now();
+    const mesh = await bootMesh({ now: () => now });
+    try {
+      const { sid } = await challengeAndLogin(mesh.runtime, mesh.boot);
+      now += NODE_SESSION_RENEW_THROTTLE_MS + 1000;
+      const req = new Request('http://localhost/api/auth/logout', {
+        method: 'POST',
+        headers: { cookie: `tmex_s_self=${sid}` },
+      });
+      const out = asResponse(await mesh.runtime.handleRequest(req, { upgrade: () => false }));
+      expect(out.headers.get(X_TMEX_SESSION_RENEWED)).toBeTruthy();
+    } finally {
+      mesh.close();
+    }
+  });
+
+  test('TMEX_TRUST_PROXY only applies to via=self', () => {
+    const req = new Request('http://127.0.0.1:19663/api/auth/mode', {
+      headers: {
+        'x-forwarded-proto': 'https',
+        'x-forwarded-host': 'app.example.com',
+      },
+    });
+    setMeshRequestContext(req, { via: 'self', trustProxy: true });
+    expect(publicRequestUrl(req).origin).toBe('https://app.example.com');
+    expect(isHttps(req)).toBe(true);
+
+    const forwarded = new Request('http://127.0.0.1:19663/api/auth/mode', {
+      headers: {
+        'x-forwarded-proto': 'https',
+        'x-forwarded-host': 'app.example.com',
+      },
+    });
+    setMeshRequestContext(forwarded, { via: 'entry-node', trustProxy: true });
+    expect(publicRequestUrl(forwarded).origin).toBe('http://127.0.0.1:19663');
+    expect(isHttps(forwarded)).toBe(false);
+  });
+
+  test('requestDispatchContext via is the trusted source', () => {
+    const meshPromise = bootMesh();
+    return meshPromise.then((mesh) => {
+      try {
+        const req = new Request('http://localhost/api/devices');
+        setMeshRequestContext(req, { via: 'self', auth: 'cookie-sid' });
+        requestDispatchContext.set(req, { uid: 'user-1', viaNodeId: 'peer-node' });
+        const auth = authenticateRequest(req, {
+          roles: { hub: false, node: true },
+          nodeSessionStore: mesh.nodeSessionStore,
+        });
+        expect(auth.ok).toBe(true);
+        if (auth.ok) {
+          expect(auth.userId).toBe('user-1');
+        }
+      } finally {
+        mesh.close();
+      }
+    });
   });
 });

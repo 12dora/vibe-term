@@ -15,11 +15,20 @@ export class FakeServerSocket implements ServerSocketAdapter {
   private readonly messageCbs: Array<(bytes: Uint8Array) => void> = [];
   private readonly closeCbs: Array<(reason?: string) => void> = [];
   private readonly drainCbs: Array<() => void> = [];
+  private readonly pending: Uint8Array[] = [];
 
   send(bytes: Uint8Array): number {
     if (this.closed || !this.peer) return 0;
     const copy = bytes.slice();
-    for (const cb of this.peer.messageCbs) cb(copy);
+    const peer = this.peer;
+    queueMicrotask(() => {
+      if (peer.closed) return;
+      if (peer.messageCbs.length === 0) {
+        peer.pending.push(copy);
+        return;
+      }
+      for (const cb of peer.messageCbs) cb(copy);
+    });
     return bytes.byteLength;
   }
 
@@ -39,6 +48,13 @@ export class FakeServerSocket implements ServerSocketAdapter {
 
   onMessage(cb: (bytes: Uint8Array) => void): void {
     this.messageCbs.push(cb);
+    if (this.pending.length === 0) return;
+    queueMicrotask(() => {
+      const queued = this.pending.splice(0);
+      for (const bytes of queued) {
+        for (const listener of this.messageCbs) listener(bytes);
+      }
+    });
   }
 
   onClose(cb: (reason?: string) => void): void {

@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, test } from 'bun:test';
 import { generateEd25519KeyPair } from '@tmex/shared/auth';
-import { WebSocketLink, createInMemoryLinkPair } from '@tmex/shared/link';
+import { createInMemoryLinkPair } from '@tmex/shared/link';
 import { createMigratedAuthDb } from '../auth/test-db';
 import { UserStore } from '../auth/user-store';
 import { handshakeRelay, handshakeWsDirect } from './peer-protocol';
@@ -23,19 +23,19 @@ describe('peer handshake', () => {
     return { store, a, b };
   }
 
-  test('ws-direct handshake succeeds both ways', async () => {
+  test('ws-secure handshake encrypts the mux like relay', async () => {
     const { store, a, b } = setup();
     const [wsA, wsB] = fakeSocketPair();
-    const linkA = new WebSocketLink(wsA, { role: 'initiator' });
-    const linkB = new WebSocketLink(wsB, { role: 'acceptor' });
     const [ha, hb] = await Promise.all([
-      handshakeWsDirect({ link: linkA, identity: a, userStore: store }),
-      handshakeWsDirect({ link: linkB, identity: b, userStore: store }),
+      handshakeWsDirect({ socket: wsA, role: 'initiator', identity: a, userStore: store }),
+      handshakeWsDirect({ socket: wsB, role: 'acceptor', identity: b, userStore: store }),
     ]);
-    expect(ha.transport).toBe('ws-direct');
-    expect(hb.transport).toBe('ws-direct');
+    expect(ha.transport).toBe('ws-secure');
+    expect(hb.transport).toBe('ws-secure');
     expect(ha.peerNodeId).toBe(b.nodeId);
     expect(hb.peerNodeId).toBe(a.nodeId);
+    expect(ha.sendKey).toEqual(hb.recvKey);
+    expect(ha.recvKey).toEqual(hb.sendKey);
 
     const incoming = new Promise((resolve) => hb.session.onStream(resolve));
     const stream = await ha.session.openStream(new TextEncoder().encode('{"type":"ctl-test"}'));
@@ -52,11 +52,14 @@ describe('peer handshake', () => {
     seedUser(empty, 'user-1');
     const stranger = seedNodeIdentity(empty, 'user-1');
     const [wsA, wsB] = fakeSocketPair();
-    const linkA = new WebSocketLink(wsA, { role: 'initiator' });
-    const linkB = new WebSocketLink(wsB, { role: 'acceptor' });
     const results = await Promise.allSettled([
-      handshakeWsDirect({ link: linkA, identity: a, userStore: store }),
-      handshakeWsDirect({ link: linkB, identity: stranger, userStore: store }),
+      handshakeWsDirect({ socket: wsA, role: 'initiator', identity: a, userStore: store }),
+      handshakeWsDirect({
+        socket: wsB,
+        role: 'acceptor',
+        identity: stranger,
+        userStore: store,
+      }),
     ]);
     expect(results.some((row) => row.status === 'rejected')).toBe(true);
     const rejected = results.find((row) => row.status === 'rejected') as PromiseRejectedResult;
@@ -68,11 +71,9 @@ describe('peer handshake', () => {
     const { store, a, b } = setup();
     store.markCertRevoked(b.nodeId, 9);
     const [wsA, wsB] = fakeSocketPair();
-    const linkA = new WebSocketLink(wsA, { role: 'initiator' });
-    const linkB = new WebSocketLink(wsB, { role: 'acceptor' });
     const results = await Promise.allSettled([
-      handshakeWsDirect({ link: linkA, identity: a, userStore: store }),
-      handshakeWsDirect({ link: linkB, identity: b, userStore: store }),
+      handshakeWsDirect({ socket: wsA, role: 'initiator', identity: a, userStore: store }),
+      handshakeWsDirect({ socket: wsB, role: 'acceptor', identity: b, userStore: store }),
     ]);
     const rejected = results.filter((row) => row.status === 'rejected');
     expect(rejected.length).toBeGreaterThan(0);
@@ -87,16 +88,16 @@ describe('peer handshake', () => {
     const { store, a, b } = setup();
     const wrong = generateEd25519KeyPair();
     const [wsA, wsB] = fakeSocketPair();
-    const linkA = new WebSocketLink(wsA, { role: 'initiator' });
-    const linkB = new WebSocketLink(wsB, { role: 'acceptor' });
     const results = await Promise.allSettled([
       handshakeWsDirect({
-        link: linkA,
+        socket: wsA,
+        role: 'initiator',
         identity: a,
         userStore: store,
       }),
       handshakeWsDirect({
-        link: linkB,
+        socket: wsB,
+        role: 'acceptor',
         identity: { nodeId: b.nodeId, edSecretKey: wrong.secretKey },
         userStore: store,
       }),

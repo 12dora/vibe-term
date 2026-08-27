@@ -46,6 +46,11 @@ function fakeMesh(overrides?: Partial<MeshRuntime> & { hub?: HubRuntime | null }
     hub: overrides?.hub ?? null,
     handleRequest: async () => null,
     localUiGuard: () => null,
+    guardGatewayWebSocket: () => null,
+    rewriteSelf: () => null,
+    closeSocketsForUser() {},
+    closeSocketsForSid() {},
+    touchSocket: () => true,
     websocket: {
       open() {},
       message() {},
@@ -73,7 +78,7 @@ describe('assembleTmex role matrix', () => {
     }
   });
 
-  test('standalone does not construct mesh and /api/auth/mode falls to gateway 404', async () => {
+  test('standalone does not construct mesh and /api/auth/mode returns {mode:none}', async () => {
     process.env.TMEX_ROLES = 'standalone';
     let meshBuilt = 0;
     const gateway = fakeGateway({
@@ -100,7 +105,11 @@ describe('assembleTmex role matrix', () => {
 
     const mode = await assembled.fetch(new Request('http://127.0.0.1/api/auth/mode'), dummyServer);
     expect(mode).toBeInstanceOf(Response);
-    expect(mode?.status).toBe(404);
+    expect(mode?.status).toBe(200);
+    expect(await mode?.json()).toEqual({ mode: 'none' });
+
+    const devices = await assembled.fetch(new Request('http://127.0.0.1/api/devices'), dummyServer);
+    expect(devices?.status).toBe(404);
 
     const login = await assembled.fetch(new Request('http://127.0.0.1/login'), dummyServer);
     expect(await login?.text()).toBe('spa');
@@ -296,6 +305,7 @@ describe('assembleTmex role matrix', () => {
       'gw-open',
       'gw-message',
       'gw-drain',
+      'mesh-close',
       'gw-close',
     ]);
   });
@@ -325,6 +335,95 @@ describe('assembleTmex role matrix', () => {
     });
     await assembled.stop();
     expect(order).toEqual(['mesh', 'hub', 'gateway']);
+  });
+
+  test('assembler injects clientIp, rewrites /n/self, and guards /ws', async () => {
+    const seen: string[] = [];
+    let capturedIp: string | undefined;
+    const { getMeshRequestContext } = await import('../../../../apps/gateway/src/mesh/mesh-deps');
+    const mesh = fakeMesh({
+      localUiGuard(req) {
+        capturedIp = getMeshRequestContext(req).clientIp;
+        seen.push(`guard:${new URL(req.url).pathname}`);
+        return null;
+      },
+      async handleRequest(req) {
+        seen.push(`mesh:${new URL(req.url).pathname}`);
+        const path = new URL(req.url).pathname;
+        if (path.startsWith('/n/self/')) {
+          return { rewritten: new Request('http://127.0.0.1/api/devices') };
+        }
+        return null;
+      },
+      guardGatewayWebSocket(req) {
+        seen.push(`ws:${new URL(req.url).pathname}`);
+        return new Response('blocked-ws', { status: 401 });
+      },
+    });
+    const gateway = fakeGateway({
+      handleRequest(req) {
+        seen.push(`gateway:${new URL(req.url).pathname}`);
+        return new Response('gw');
+      },
+    });
+    const assembled = await assembleTmex({
+      roles: { hub: false, node: true },
+      createGatewayRuntime: async () => gateway,
+      createMeshRuntime: async () => mesh,
+    });
+    const server = {
+      upgrade: () => false,
+      requestIP: () => ({ address: '203.0.113.9', family: 'IPv4', port: 443 }),
+    } as unknown as Bun.Server<unknown>;
+
+    const rewritten = await assembled.fetch(
+      new Request('http://127.0.0.1/n/self/api/devices'),
+      server
+    );
+    expect(await rewritten?.text()).toBe('gw');
+    expect(capturedIp).toBe('203.0.113.9');
+    expect(seen).toEqual([
+      'mesh:/n/self/api/devices',
+      'guard:/api/devices',
+      'mesh:/api/devices',
+      'gateway:/api/devices',
+    ]);
+
+    seen.length = 0;
+    const ws = await assembled.fetch(new Request('http://127.0.0.1/ws'), server);
+    expect(await ws?.text()).toBe('blocked-ws');
+    expect(seen).toEqual(['ws:/ws']);
+  });
+
+  test('local gateway responses get x-tmex-session-renewed from attached auth', async () => {
+    const { setMeshRequestContext, X_TMEX_SESSION_RENEWED } = await import(
+      '../../../../apps/gateway/src/mesh/mesh-deps'
+    );
+    const mesh = fakeMesh({
+      localUiGuard(req) {
+        setMeshRequestContext(req, {
+          via: 'self',
+          sid: 'sess',
+          uid: 'user-1',
+          renewedExpiresAt: Date.now() + 60_000,
+        });
+        return null;
+      },
+    });
+    const gateway = fakeGateway({
+      handleRequest() {
+        return new Response(JSON.stringify({ ok: true }), {
+          headers: { 'content-type': 'application/json' },
+        });
+      },
+    });
+    const assembled = await assembleTmex({
+      roles: { hub: false, node: true },
+      createGatewayRuntime: async () => gateway,
+      createMeshRuntime: async () => mesh,
+    });
+    const res = await assembled.fetch(new Request('http://127.0.0.1/api/devices'), dummyServer);
+    expect(res?.headers.get(X_TMEX_SESSION_RENEWED)).toBeTruthy();
   });
 
   test('fake Bun.serve captures fetch and websocket from the assembly', async () => {

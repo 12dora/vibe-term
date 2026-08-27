@@ -16,6 +16,7 @@ import { eventNotifier } from './events';
 import { registerEventNotifyBroadcaster } from './events/broadcaster';
 import { sweepOrphanTransferTemps } from './files/transfer-session';
 import { t } from './i18n';
+import { type DispatchContext, requestDispatchContext } from './mesh/types';
 import { connectionAlertNotifier } from './push/connection-alerts';
 import { pushSupervisor } from './push/supervisor';
 import { registerSettingsBroadcaster, registerTreeOverlayBridge } from './settings/broadcaster';
@@ -45,7 +46,7 @@ export interface GatewayRuntime {
     req: Request,
     bunServer: Bun.Server<unknown>
   ) => Response | Promise<Response> | undefined;
-  dispatchHttp: (request: Request, ctx: { uid: string }) => Promise<Response>;
+  dispatchHttp: (request: Request, ctx: DispatchContext) => Promise<Response>;
   websocket: {
     backpressureLimit: number;
     closeOnBackpressureLimit: boolean;
@@ -154,7 +155,8 @@ export async function createGatewayRuntime(
 
       return undefined;
     },
-    async dispatchHttp(request, _ctx) {
+    async dispatchHttp(request, ctx) {
+      requestDispatchContext.set(request, ctx);
       const url = new URL(request.url);
       if (url.pathname.startsWith('/api/') || url.pathname === '/healthz') {
         return handleApiRequest(request, undefined, systemApiHandler);

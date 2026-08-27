@@ -1,25 +1,27 @@
 import { wsBorsh } from '@tmex/shared';
 import { decodeCertificate, encodeBase64url } from '@tmex/shared/auth';
 import { readJsonObjectBody } from '../api/http';
-import type { ChallengeStore } from '../auth/challenge-store';
 import { nodeSessionCookieName, parseCookies } from '../auth/cookies';
 import type { NodeSessionStore } from '../auth/node-session-store';
 import type { UserStore } from '../auth/user-store';
+import type { PublicAuthNode } from './auth-routes';
 import {
+  MESH_REJECT_4401_KIND,
   MESH_VIA_SELF,
   MESH_WS_KIND,
   type MeshRoles,
   type MeshServerWebSocket,
   type MeshUpgradeServer,
   type PeerLinkProvider,
-  RTC_AUTHORIZE_TTL_MS,
   type RtcConfigProvider,
   type RtcFingerprintProvider,
   type RtcSignalMessage,
   type RtcSignalRouter,
+  WS_CLOSE_LOGIN_REQUIRED,
   getMeshRequestContext,
 } from './mesh-deps';
 import {
+  type AuthenticateOk,
   type SessionMiddlewareDeps,
   authenticateRequest,
   jsonBody,
@@ -44,13 +46,13 @@ export type MeshRoutesDeps = {
   nodeId: string;
   nodePk: Uint8Array;
   userStore: UserStore;
-  challengeStore: ChallengeStore;
   nodeSessionStore: NodeSessionStore;
   peers: PeerLinkProvider;
   rtcFingerprint?: RtcFingerprintProvider;
   rtcSignals?: RtcSignalRouter;
   rtcConfig?: RtcConfigProvider;
   now?: () => number;
+  registerSocket?: (ws: MeshServerWebSocket, auth: { sid: string; uid: string }) => void;
 };
 
 const STATUS_TO_U8: Record<string, number> = {
@@ -91,15 +93,13 @@ export class MeshRoutes {
   async handle(req: Request, server: MeshUpgradeServer): Promise<Response | null | undefined> {
     const path = new URL(req.url).pathname;
     if (path === '/api/mesh/nodes' && req.method === 'GET') {
-      return this.handleNodes(req);
+      return requireSession(this.sessionDeps, (r) => this.handleNodes(r))(req);
     }
     if (path === '/api/mesh/rtc-config' && req.method === 'GET') {
-      return this.handleRtcConfig();
+      return requireSession(this.sessionDeps, () => this.handleRtcConfig())(req);
     }
     if (path === '/api/rtc/authorize' && req.method === 'POST') {
-      return requireSession(this.sessionDeps, (r, auth) => this.handleRtcAuthorize(r, auth.userId))(
-        req
-      );
+      return requireSession(this.sessionDeps, (r, auth) => this.handleRtcAuthorize(r, auth))(req);
     }
     if (path === '/mesh/ws' && req.method === 'GET') {
       return this.handleMeshWsUpgrade(req, server);
@@ -110,8 +110,19 @@ export class MeshRoutes {
     return null;
   }
 
+  publicNodes(): PublicAuthNode[] {
+    return this.collectNodes(null).map((n) => ({
+      id: n.id,
+      name: n.name,
+      online: n.online,
+    }));
+  }
+
   handleMeshSocketOpen(ws: MeshServerWebSocket): void {
     this.meshSockets.add(ws);
+    if (ws.data.sid && ws.data.uid) {
+      this.deps.registerSocket?.(ws, { sid: ws.data.sid, uid: ws.data.uid });
+    }
   }
 
   handleMeshSocketMessage(ws: MeshServerWebSocket, message: unknown): void {
@@ -122,17 +133,24 @@ export class MeshRoutes {
       const env = wsBorsh.decodeEnvelope(bytes);
       if (env.kind !== wsBorsh.KIND_RTC_SIGNAL) return;
       const payload = wsBorsh.decodePayload(wsBorsh.schema.RtcSignalSchema, env.payload);
-      this.deps.rtcSignals.send({
-        rtcSession: payload.rtcSession,
-        from: payload.from === wsBorsh.RTC_SIGNAL_FROM_NODE ? 'node' : 'browser',
-        to: payload.to,
-        sdp: payload.sdp,
-        candidate: payload.candidate,
-      });
+      if (payload.from === wsBorsh.RTC_SIGNAL_FROM_NODE) {
+        return;
+      }
+      const uid = ws.data.uid;
+      const sid = ws.data.sid;
+      this.deps.rtcSignals.send(
+        {
+          rtcSession: payload.rtcSession,
+          from: 'browser',
+          to: payload.to,
+          sdp: payload.sdp,
+          candidate: payload.candidate,
+        },
+        uid && sid ? { uid, sid } : undefined
+      );
     } catch {
       // drop malformed frames
     }
-    void ws;
   }
 
   handleMeshSocketClose(ws: MeshServerWebSocket): void {
@@ -140,7 +158,11 @@ export class MeshRoutes {
   }
 
   private handleNodes(req: Request): Response {
-    const cookies = parseCookies(req.headers.get('cookie'));
+    return jsonBody({ nodes: this.collectNodes(req) });
+  }
+
+  private collectNodes(req: Request | null): MeshNodeDto[] {
+    const cookies = req ? parseCookies(req.headers.get('cookie')) : new Map<string, string>();
     const reach = this.deps.peers.listReach();
     const certs = this.deps.userStore.listCerts().filter((c) => c.revokedLogSeq == null);
     const peers = this.deps.userStore.listPeers();
@@ -162,7 +184,7 @@ export class MeshRoutes {
         }
       }
       const isSelf = id === this.deps.nodeId;
-      const r = isSelf ? (reach.get(id) ?? null) : (reach.get(id) ?? null);
+      const r = reach.get(id) ?? null;
       const loggedIn = isSelf
         ? cookies.has(nodeSessionCookieName(MESH_VIA_SELF))
         : cookies.has(nodeSessionCookieName(id));
@@ -190,7 +212,7 @@ export class MeshRoutes {
         loggedIn,
       });
     }
-    return jsonBody({ nodes });
+    return nodes;
   }
 
   private handleRtcConfig(): Response {
@@ -198,8 +220,8 @@ export class MeshRoutes {
     return jsonBody({ stun: cfg.stun, turn: cfg.turn ?? null });
   }
 
-  private async handleRtcAuthorize(req: Request, userId: string | null): Promise<Response> {
-    if (!userId) {
+  private async handleRtcAuthorize(req: Request, auth: AuthenticateOk): Promise<Response> {
+    if (!auth.userId) {
       return jsonError('UNAUTHORIZED', 401);
     }
     if (!this.deps.rtcFingerprint) {
@@ -215,26 +237,41 @@ export class MeshRoutes {
     if (typeof fpBrowser.algorithm !== 'string' || typeof fpBrowser.value !== 'string') {
       return jsonError('MALFORMED', 400);
     }
-    const created = this.deps.challengeStore.create({
-      uid: userId,
-      entryNodeId: getMeshRequestContext(req).via || MESH_VIA_SELF,
-      kind: 'rtc-authorize',
-      ttlMs: RTC_AUTHORIZE_TTL_MS,
-      payload: { rtcSession, fp_browser: fpBrowser },
+    const via = getMeshRequestContext(req).via || MESH_VIA_SELF;
+    const granted = await this.deps.rtcFingerprint.authorizeBrowser({
+      rtcSession,
+      uid: auth.userId,
+      via,
+      fpBrowser: { algorithm: fpBrowser.algorithm, value: fpBrowser.value },
     });
-    const fpNode = await this.deps.rtcFingerprint.getFingerprint();
+    if (!granted) {
+      return jsonError('DIRECT_UNAVAILABLE', 503);
+    }
     return jsonBody({
-      nonce: encodeBase64url(created.nonce),
-      fp_node: fpNode,
+      nonce: encodeBase64url(granted.nonce),
+      fp_node: granted.fpNode,
     });
   }
 
   private handleMeshWsUpgrade(req: Request, server: MeshUpgradeServer): Response | undefined {
     const result = authenticateRequest(req, this.sessionDeps);
-    if (!result.ok) {
-      return jsonError('UNAUTHORIZED', 401);
+    if (!result.ok || !result.sid || !result.userId) {
+      const upgraded = server.upgrade(req, {
+        data: { kind: MESH_REJECT_4401_KIND },
+      });
+      if (!upgraded) {
+        return jsonError('UNAUTHORIZED', 401);
+      }
+      return undefined;
     }
-    const ok = server.upgrade(req, { data: { kind: MESH_WS_KIND } });
+    const ok = server.upgrade(req, {
+      data: {
+        kind: MESH_WS_KIND,
+        sid: result.sid,
+        uid: result.userId,
+        via: MESH_VIA_SELF,
+      },
+    });
     if (!ok) {
       return jsonError('upgrade_failed', 500);
     }

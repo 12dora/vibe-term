@@ -1,4 +1,5 @@
 import type { Server } from 'bun';
+import { type DispatchContext, requestDispatchContext } from '../mesh/types';
 
 export type HttpMethod = 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE' | 'HEAD';
 export type RouteMethod = HttpMethod | readonly HttpMethod[] | '*';
@@ -12,6 +13,7 @@ export interface ApiRouteContext {
   server?: Server<unknown>;
   path: string;
   systemApiHandler?: SystemApiHandler;
+  mesh?: DispatchContext;
 }
 
 type ExtractParam<S extends string> = S extends `:${infer P}` ? P : never;
@@ -79,11 +81,13 @@ export function dispatchRoutes(
   routes: readonly ApiRoute[],
   ctx: ApiRouteContext
 ): Response | Promise<Response> | undefined {
+  const mesh = ctx.mesh ?? requestDispatchContext.get(req);
+  const routed: ApiRouteContext = mesh ? { ...ctx, mesh } : ctx;
   for (const candidate of routes) {
     if (!methodMatches(req.method, candidate.method)) continue;
     const params = matchPath(pathname, candidate.path);
     if (!params) continue;
-    const result = candidate.handler(req, params, ctx);
+    const result = candidate.handler(req, params, routed);
     if (result) return result;
   }
   return undefined;

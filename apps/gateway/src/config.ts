@@ -171,6 +171,10 @@ export const config = {
   turnUrl: getOptionalEnv('TMEX_TURN_URL'),
   turnUsername: getOptionalEnv('TMEX_TURN_USERNAME'),
   turnCredential: getOptionalEnv('TMEX_TURN_CREDENTIAL'),
+  // When true, local Bun-socket requests (via=self) honour x-forwarded-proto /
+  // x-forwarded-host for public origin, Secure cookies, and passkeyAvailable.
+  // Never applied to forwarded (via ≠ self) requests. Default false.
+  trustProxy: getBooleanEnv('TMEX_TRUST_PROXY', false),
 
   // 环境
   isDev: getEnv('NODE_ENV', 'development') === 'development',

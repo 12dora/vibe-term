@@ -18,6 +18,7 @@ async function loadConfigWith(env: Record<string, string | undefined>): Promise<
   turnUrl: string | null;
   turnUsername: string | null;
   turnCredential: string | null;
+  trustProxy: boolean;
 }> {
   const saved = new Map<string, string | undefined>();
   for (const [key, value] of Object.entries(env)) {
@@ -44,6 +45,7 @@ async function loadConfigWith(env: Record<string, string | undefined>): Promise<
         turnUrl: string | null;
         turnUsername: string | null;
         turnCredential: string | null;
+        trustProxy: boolean;
       };
     };
     return mod.config;
@@ -247,5 +249,16 @@ describe('config hub/node env', () => {
 
   test('rejects invalid TMEX_ROLES at config load', async () => {
     await expect(loadConfigWith({ TMEX_ROLES: 'hub' })).rejects.toThrow('TMEX_ROLES');
+  });
+});
+
+describe('config.trustProxy', () => {
+  test('defaults to false and accepts 1/true/yes', async () => {
+    const off = await loadConfigWith({ TMEX_TRUST_PROXY: undefined });
+    expect(off.trustProxy).toBe(false);
+    const on = await loadConfigWith({ TMEX_TRUST_PROXY: 'true' });
+    expect(on.trustProxy).toBe(true);
+    const one = await loadConfigWith({ TMEX_TRUST_PROXY: '1' });
+    expect(one.trustProxy).toBe(true);
   });
 });

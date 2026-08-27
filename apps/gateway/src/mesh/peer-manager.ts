@@ -1,10 +1,9 @@
 import { decodeBase64url, encodeBase64url } from '@tmex/shared/auth';
-import {
-  type LinkSession,
-  type LinkStream,
-  type ServerSocketAdapter,
-  WebSocketLink,
-  type WebSocketTransportInput,
+import type {
+  LinkSession,
+  LinkStream,
+  ServerSocketAdapter,
+  WebSocketTransportInput,
 } from '@tmex/shared/link';
 import type { NodeSessionStore } from '../auth/node-session-store';
 import type { UserStore } from '../auth/user-store';
@@ -29,6 +28,12 @@ export const PEER_IDLE_MS = 5 * 60 * 1000;
 export const PEER_CONNECT_TIMEOUT_MS = 3_000;
 export const PEER_PING_INTERVAL_MS = 15_000;
 export const PEER_MISSED_PONG_LIMIT = 3;
+export const PEER_MAX_CONCURRENT_STREAMS = 256;
+
+/** Connection initiated by the lexicographically smaller nodeId wins a simultaneous dial. */
+export function winningDialInitiator(selfNodeId: string, peerNodeId: string): string {
+  return selfNodeId < peerNodeId ? selfNodeId : peerNodeId;
+}
 
 export type PeerManagerOptions = {
   identity: MeshIdentity;
@@ -47,12 +52,15 @@ export type PeerManagerOptions = {
   hostname?: string | string[];
   wsFactory?: (url: string) => WebSocketTransportInput | Promise<WebSocketTransportInput>;
   startServer?: boolean;
+  maxConcurrentStreams?: number;
 };
 
 type LivePeer = {
   session: LinkSession;
   peerNodeId: string;
   transport: PeerTransportKind;
+  initiatedBy: string;
+  generation: number;
   streams: number;
   lastStreamAt: number;
   idleTimer: { clear: () => void } | null;
@@ -67,12 +75,54 @@ function isServerSocketAdapter(value: WebSocketTransportInput): value is ServerS
   );
 }
 
-function waitSocketOpen(ws: WebSocketTransportInput, timeoutMs: number): Promise<void> {
+function abortable<T>(promise: Promise<T>, signal: AbortSignal): Promise<T> {
+  if (signal.aborted) {
+    return Promise.reject(signal.reason ?? new Error('aborted'));
+  }
+  return new Promise((resolve, reject) => {
+    const onAbort = () => {
+      reject(signal.reason ?? new Error('aborted'));
+    };
+    signal.addEventListener('abort', onAbort, { once: true });
+    promise.then(
+      (value) => {
+        signal.removeEventListener('abort', onAbort);
+        resolve(value);
+      },
+      (err) => {
+        signal.removeEventListener('abort', onAbort);
+        reject(err);
+      }
+    );
+  });
+}
+
+function waitSocketOpen(
+  ws: WebSocketTransportInput,
+  timeoutMs: number,
+  signal?: AbortSignal
+): Promise<void> {
   if (isServerSocketAdapter(ws)) return Promise.resolve();
   const socket = ws as WebSocket;
   if (socket.readyState === 1) return Promise.resolve();
   return new Promise((resolve, reject) => {
     let settled = false;
+    const finish = (err?: Error) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      signal?.removeEventListener('abort', onAbort);
+      if (err) reject(err);
+      else resolve();
+    };
+    const onAbort = () => {
+      try {
+        socket.close(1000, 'stopped');
+      } catch {
+        // ignore
+      }
+      finish(new Error('aborted'));
+    };
     const timer = setTimeout(() => {
       try {
         socket.close(1000, 'connect-timeout');
@@ -81,13 +131,11 @@ function waitSocketOpen(ws: WebSocketTransportInput, timeoutMs: number): Promise
       }
       finish(new Error('connect-timeout'));
     }, timeoutMs);
-    const finish = (err?: Error) => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timer);
-      if (err) reject(err);
-      else resolve();
-    };
+    if (signal?.aborted) {
+      onAbort();
+      return;
+    }
+    signal?.addEventListener('abort', onAbort, { once: true });
     socket.addEventListener('open', () => finish(), { once: true });
     socket.addEventListener('close', (ev) => finish(new Error(ev.reason || 'ws-closed')), {
       once: true,
@@ -107,6 +155,7 @@ export class PeerManager {
   private readonly wsServer?: WebSocketServer;
   private readonly connectTimeoutMs: number;
   private readonly idleMs: number;
+  private readonly maxConcurrentStreams: number;
   private readonly wsFactory: (
     url: string
   ) => WebSocketTransportInput | Promise<WebSocketTransportInput>;
@@ -114,6 +163,8 @@ export class PeerManager {
   private readonly pending = new Map<string, Promise<LinkSession>>();
   private readonly server: PeerServer | null;
   private stopped = false;
+  private generation = 0;
+  private stopAbort = new AbortController();
 
   constructor(opts: PeerManagerOptions) {
     this.identity = opts.identity;
@@ -136,6 +187,7 @@ export class PeerManager {
     this.wsServer = opts.wsServer;
     this.connectTimeoutMs = opts.connectTimeoutMs ?? PEER_CONNECT_TIMEOUT_MS;
     this.idleMs = opts.idleMs ?? PEER_IDLE_MS;
+    this.maxConcurrentStreams = opts.maxConcurrentStreams ?? PEER_MAX_CONCURRENT_STREAMS;
     this.wsFactory = opts.wsFactory ?? ((url: string) => new WebSocket(url));
     this.uplink.setOnRelayStream((stream, from) => {
       void this.acceptRelay(stream, from);
@@ -147,8 +199,8 @@ export class PeerManager {
         port: opts.peerPort,
         hostname: opts.hostname,
         scheduler: this.scheduler,
-        onAccept: (link) => {
-          void this.acceptDirect(link);
+        onAccept: (socket) => {
+          void this.acceptDirect(socket);
         },
       });
     }
@@ -164,6 +216,8 @@ export class PeerManager {
 
   async stop(): Promise<void> {
     this.stopped = true;
+    this.generation += 1;
+    this.stopAbort.abort();
     this.server?.stop();
     for (const peer of [...this.live.values()]) {
       this.dropPeer(peer.peerNodeId, 'stopped');
@@ -180,6 +234,11 @@ export class PeerManager {
     this.pending.set(nodeId, attempt);
     try {
       return await attempt;
+    } catch (err) {
+      const live = this.live.get(nodeId);
+      if (live) return live.session;
+      if (err instanceof NodeUnreachableError) throw err;
+      throw new NodeUnreachableError(nodeId, err instanceof Error ? err.message : 'unreachable');
     } finally {
       this.pending.delete(nodeId);
     }
@@ -201,16 +260,32 @@ export class PeerManager {
     return out;
   }
 
+  private currentGeneration(): number {
+    return this.generation;
+  }
+
   private async dial(nodeId: string): Promise<LinkSession> {
+    const gen = this.currentGeneration();
+    const signal = this.stopAbort.signal;
     const cached = this.userStore.listPeers().find((row) => row.nodeId === nodeId);
     const endpoints = cached ? parseEndpoints(cached.endpointsJson, this.server?.port) : [];
     for (const url of endpoints) {
-      try {
-        const session = await this.dialDirect(url, nodeId);
-        return session;
-      } catch {
-        // try next
+      if (this.stopped || gen !== this.generation) {
+        throw new NodeUnreachableError(nodeId, 'peer manager stopped');
       }
+      try {
+        const session = await this.dialDirect(url, nodeId, gen, signal);
+        return session;
+      } catch (err) {
+        if (this.stopped || gen !== this.generation) throw err;
+        const live = this.live.get(nodeId);
+        if (live) return live.session;
+      }
+    }
+    const already = this.live.get(nodeId);
+    if (already) return already.session;
+    if (this.stopped || gen !== this.generation) {
+      throw new NodeUnreachableError(nodeId, 'peer manager stopped');
     }
     try {
       const stream = await this.uplink.openRelay(nodeId);
@@ -224,20 +299,43 @@ export class PeerManager {
         result.session.close('peer-id-mismatch');
         throw new NodeUnreachableError(nodeId, 'relay peer id mismatch');
       }
-      this.track(result.session, result.peerNodeId, 'relay');
-      return result.session;
+      const kept = this.track(
+        result.session,
+        result.peerNodeId,
+        'relay',
+        this.identity.nodeId,
+        gen
+      );
+      if (!kept) {
+        throw new NodeUnreachableError(nodeId, 'simultaneous-dial');
+      }
+      return kept;
     } catch (err) {
       if (err instanceof NodeUnreachableError) throw err;
       throw new NodeUnreachableError(nodeId, err instanceof Error ? err.message : 'unreachable');
     }
   }
 
-  private async dialDirect(url: string, expectedId: string): Promise<LinkSession> {
-    const ws = await this.wsFactory(url);
-    await waitSocketOpen(ws, this.connectTimeoutMs);
-    const link = new WebSocketLink(ws, { role: 'initiator' });
+  private async dialDirect(
+    url: string,
+    expectedId: string,
+    gen: number,
+    signal: AbortSignal
+  ): Promise<LinkSession> {
+    const ws = await abortable(Promise.resolve(this.wsFactory(url)), signal);
+    await waitSocketOpen(ws, this.connectTimeoutMs, signal);
+    if (this.stopped || gen !== this.generation) {
+      try {
+        if (isServerSocketAdapter(ws)) ws.close(1000, 'stopped');
+        else (ws as WebSocket).close(1000, 'stopped');
+      } catch {
+        // ignore
+      }
+      throw new Error('stopped');
+    }
     const result = await handshakeWsDirect({
-      link,
+      socket: ws,
+      role: 'initiator',
       identity: this.identity,
       userStore: this.userStore,
     });
@@ -245,28 +343,46 @@ export class PeerManager {
       result.session.close('peer-id-mismatch');
       throw new Error('peer-id-mismatch');
     }
-    this.track(result.session, result.peerNodeId, 'ws-direct');
-    return result.session;
+    if (this.stopped || gen !== this.generation) {
+      result.session.close('stopped');
+      throw new Error('stopped');
+    }
+    const kept = this.track(
+      result.session,
+      result.peerNodeId,
+      'ws-secure',
+      this.identity.nodeId,
+      gen
+    );
+    if (!kept) throw new Error('simultaneous-dial');
+    return kept;
   }
 
-  private async acceptDirect(link: LinkSession): Promise<void> {
+  private async acceptDirect(socket: ServerSocketAdapter): Promise<void> {
+    const gen = this.currentGeneration();
     try {
       const result = await handshakeWsDirect({
-        link,
+        socket,
+        role: 'acceptor',
         identity: this.identity,
         userStore: this.userStore,
       });
-      this.track(result.session, result.peerNodeId, 'ws-direct');
+      if (this.stopped || gen !== this.generation) {
+        result.session.close('stopped');
+        return;
+      }
+      this.track(result.session, result.peerNodeId, 'ws-secure', result.peerNodeId, gen);
     } catch {
       try {
-        link.close('handshake-failed');
+        socket.close(1000, 'handshake-failed');
       } catch {
         // already closed
       }
     }
   }
 
-  private async acceptRelay(stream: LinkStream, _from: string): Promise<void> {
+  private async acceptRelay(stream: LinkStream, from: string): Promise<void> {
+    const gen = this.currentGeneration();
     try {
       const result = await handshakeRelay({
         stream,
@@ -274,7 +390,11 @@ export class PeerManager {
         identity: this.identity,
         userStore: this.userStore,
       });
-      this.track(result.session, result.peerNodeId, 'relay');
+      if (this.stopped || gen !== this.generation) {
+        result.session.close('stopped');
+        return;
+      }
+      this.track(result.session, result.peerNodeId, 'relay', from || result.peerNodeId, gen);
     } catch {
       try {
         stream.reset('handshake-failed');
@@ -284,15 +404,44 @@ export class PeerManager {
     }
   }
 
-  private track(session: LinkSession, peerNodeId: string, transport: PeerTransportKind): void {
+  private preferredInitiator(peerNodeId: string): string {
+    return winningDialInitiator(this.identity.nodeId, peerNodeId);
+  }
+
+  private track(
+    session: LinkSession,
+    peerNodeId: string,
+    transport: PeerTransportKind,
+    initiatedBy: string,
+    gen: number
+  ): LinkSession | null {
+    if (this.stopped || gen !== this.generation) {
+      try {
+        session.close('stale');
+      } catch {
+        // already closed
+      }
+      return null;
+    }
     const prev = this.live.get(peerNodeId);
     if (prev && prev.session !== session) {
+      const winner = this.preferredInitiator(peerNodeId);
+      if (initiatedBy !== winner && prev.initiatedBy === winner) {
+        try {
+          session.close('simultaneous-dial');
+        } catch {
+          // already closed
+        }
+        return prev.session;
+      }
       this.dropPeer(peerNodeId, 'replaced');
     }
     const live: LivePeer = {
       session,
       peerNodeId,
       transport,
+      initiatedBy,
+      generation: gen,
       streams: 0,
       lastStreamAt: this.scheduler.now(),
       idleTimer: null,
@@ -304,17 +453,37 @@ export class PeerManager {
     this.armIdle(live);
     this.startPing(live);
     this.sendPeerStatus(live);
+    return session;
   }
 
   private bindSession(live: LivePeer): void {
     const { session, peerNodeId } = live;
     const origOpen = session.openStream.bind(session);
     session.openStream = async (openPayload: Uint8Array) => {
+      if (this.live.get(peerNodeId) !== live) {
+        throw new Error('peer link replaced');
+      }
+      if (live.streams >= this.maxConcurrentStreams) {
+        throw new Error('too-many-streams');
+      }
       const stream = await origOpen(openPayload);
       this.onLocalStream(live, stream);
       return stream;
     };
     session.onStream((stream) => {
+      if (this.live.get(peerNodeId) !== live) {
+        stream.reset('stale-link');
+        return;
+      }
+      const kind = classifyOpenPayload(stream.openPayload);
+      if (kind === 'unknown' || kind === 'relay') {
+        stream.reset('unknown-stream-type');
+        return;
+      }
+      if (live.streams >= this.maxConcurrentStreams) {
+        stream.reset('too-many-streams');
+        return;
+      }
       this.onLocalStream(live, stream);
       this.handleInboundStream(peerNodeId, stream);
     });
@@ -333,6 +502,7 @@ export class PeerManager {
     live.lastStreamAt = this.scheduler.now();
     this.clearIdle(live);
     void stream.closed.then(() => {
+      if (this.live.get(live.peerNodeId) !== live) return;
       live.streams = Math.max(0, live.streams - 1);
       live.lastStreamAt = this.scheduler.now();
       if (live.streams === 0) this.armIdle(live);
@@ -500,6 +670,7 @@ export class PeerManager {
 
   private armIdle(live: LivePeer): void {
     this.clearIdle(live);
+    if (this.live.get(live.peerNodeId) !== live) return;
     if (live.streams > 0) return;
     const startedAt = this.scheduler.now();
     live.idleTimer = this.scheduler.interval(

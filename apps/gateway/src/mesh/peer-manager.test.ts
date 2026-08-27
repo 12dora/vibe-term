@@ -2,7 +2,7 @@ import { afterEach, describe, expect, test } from 'bun:test';
 import { createInMemoryLinkPair } from '@tmex/shared/link';
 import { createMigratedAuthDb } from '../auth/test-db';
 import { UserStore } from '../auth/user-store';
-import { PeerManager } from './peer-manager';
+import { PeerManager, winningDialInitiator } from './peer-manager';
 import { handshakeRelay } from './peer-protocol';
 import {
   ImmediateScheduler,
@@ -251,5 +251,156 @@ describe('PeerManager', () => {
     fixtures.push({ close, stop: () => manager.stop() });
     manager.onRevoked(peer.nodeId);
     expect(store.listPeers().find((row) => row.nodeId === peer.nodeId)).toBeUndefined();
+  });
+
+  test('unknown OPEN type is RST and not counted against idle', async () => {
+    const { db, close } = createMigratedAuthDb();
+    fixtures.push({ close });
+    const store = new UserStore(db);
+    seedUser(store);
+    const self = seedNodeIdentity(store, 'user-1');
+    const peer = seedNodeIdentity(store, 'user-1');
+    const scheduler = new ImmediateScheduler();
+    const managerA = new PeerManager({
+      identity: self,
+      userStore: store,
+      uplink: dummyUplink(self, store),
+      peerPort: 0,
+      hostname: '127.0.0.1',
+      startServer: true,
+      idleMs: 50,
+      scheduler,
+    });
+    fixtures.push({ close, stop: () => managerA.stop() });
+    await managerA.start();
+    store.upsertPeer({
+      nodeId: self.nodeId,
+      name: 'self',
+      endpointsJson: JSON.stringify([`ws://127.0.0.1:${managerA.listenPort}/peer`]),
+      inventoryJson: '{}',
+      directCapable: false,
+      lastSeenAt: Date.now(),
+      listVersion: 1,
+    });
+    const managerB = new PeerManager({
+      identity: peer,
+      userStore: store,
+      uplink: dummyUplink(peer, store),
+      peerPort: 0,
+      startServer: false,
+      idleMs: 50,
+      scheduler,
+    });
+    fixtures.push({ close, stop: () => managerB.stop() });
+    const link = await managerB.getLink(self.nodeId);
+    const stream = await link.openStream(
+      new TextEncoder().encode(JSON.stringify({ type: 'nope' }))
+    );
+    expect((await stream.closed).reason).toBe('rst');
+    expect(managerB.listReach().get(self.nodeId)).toBe('lan');
+    scheduler.nowMs += 100;
+    scheduler.tickIntervals();
+    await waitUntil(() => managerB.listReach().get(self.nodeId) !== 'lan');
+  });
+
+  test('stop cancels an in-flight dial so a late handshake cannot re-arm idle', async () => {
+    const { db, close } = createMigratedAuthDb();
+    fixtures.push({ close });
+    const store = new UserStore(db);
+    seedUser(store);
+    const self = seedNodeIdentity(store, 'user-1');
+    const peer = seedNodeIdentity(store, 'user-1');
+    store.upsertPeer({
+      nodeId: peer.nodeId,
+      name: 'peer',
+      endpointsJson: JSON.stringify(['ws://127.0.0.1:1/peer']),
+      inventoryJson: '{}',
+      directCapable: false,
+      lastSeenAt: Date.now(),
+      listVersion: 1,
+    });
+    let release: ((ws: import('@tmex/shared/link').WebSocketTransportInput) => void) | undefined;
+    const manager = new PeerManager({
+      identity: self,
+      userStore: store,
+      uplink: dummyUplink(self, store),
+      peerPort: 0,
+      startServer: false,
+      connectTimeoutMs: 5_000,
+      wsFactory: () =>
+        new Promise((resolve) => {
+          release = resolve;
+        }),
+    });
+    fixtures.push({ close, stop: () => manager.stop() });
+    const pending = manager.getLink(peer.nodeId);
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    await manager.stop();
+    await expect(pending).rejects.toBeInstanceOf(NodeUnreachableError);
+    release?.(fakeSocketPair()[0]);
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    expect(manager.listReach().get(peer.nodeId)).toBeNull();
+  });
+
+  test('simultaneous dial keeps the initiator with the lexicographically smaller nodeId', () => {
+    const small = '01'.repeat(16);
+    const large = 'ff'.repeat(16);
+    expect(winningDialInitiator(small, large)).toBe(small);
+    expect(winningDialInitiator(large, small)).toBe(small);
+  });
+
+  test('caps concurrent streams per link', async () => {
+    const { db, close } = createMigratedAuthDb();
+    fixtures.push({ close });
+    const store = new UserStore(db);
+    seedUser(store);
+    const self = seedNodeIdentity(store, 'user-1');
+    const peer = seedNodeIdentity(store, 'user-1');
+    const hang = () => new Promise<Response>(() => {});
+    const managerA = new PeerManager({
+      identity: self,
+      userStore: store,
+      uplink: dummyUplink(self, store),
+      peerPort: 0,
+      hostname: '127.0.0.1',
+      startServer: true,
+      maxConcurrentStreams: 1,
+      sessionStore: {
+        verify: () => ({ ok: true, session: { userId: 'user-1' } }),
+      } as unknown as import('../auth/node-session-store').NodeSessionStore,
+      dispatchHttp: hang,
+    });
+    fixtures.push({ close, stop: () => managerA.stop() });
+    await managerA.start();
+    store.upsertPeer({
+      nodeId: self.nodeId,
+      name: 'self',
+      endpointsJson: JSON.stringify([`ws://127.0.0.1:${managerA.listenPort}/peer`]),
+      inventoryJson: '{}',
+      directCapable: false,
+      lastSeenAt: Date.now(),
+      listVersion: 1,
+    });
+    const managerB = new PeerManager({
+      identity: peer,
+      userStore: store,
+      uplink: dummyUplink(peer, store),
+      peerPort: 0,
+      startServer: false,
+      maxConcurrentStreams: 1,
+      sessionStore: {
+        verify: () => ({ ok: true, session: { userId: 'user-1' } }),
+      } as unknown as import('../auth/node-session-store').NodeSessionStore,
+      dispatchHttp: hang,
+    });
+    fixtures.push({ close, stop: () => managerB.stop() });
+    const link = await managerB.getLink(self.nodeId);
+    const first = await link.openStream(
+      new TextEncoder().encode('{"type":"http","method":"GET","path":"/"}')
+    );
+    await expect(
+      link.openStream(new TextEncoder().encode('{"type":"http","method":"GET","path":"/"}'))
+    ).rejects.toThrow('too-many-streams');
+    first.end();
   });
 });

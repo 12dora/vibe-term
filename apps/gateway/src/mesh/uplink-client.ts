@@ -1,4 +1,11 @@
-import { decodeBase64url, encodeBase64url, signEd25519 } from '@tmex/shared/auth';
+import {
+  bytesEqual,
+  decodeBase64url,
+  encodeBase64url,
+  hubHostFromUrl,
+  signEd25519,
+  uplinkAuthMessage,
+} from '@tmex/shared/auth';
 import {
   type LinkSession,
   type LinkStream,
@@ -12,6 +19,7 @@ import { parseOpenPayload } from './peer-protocol';
 import type {
   InboundRelayHandler,
   KeyLogApplier,
+  KeyLogForkEvent,
   MeshIdentity,
   MeshScheduler,
   UplinkState,
@@ -20,6 +28,7 @@ import type {
 import {
   type UplinkCtlMessage,
   type UplinkEnrollRedeemed,
+  type UplinkKeyLogRecord,
   type UplinkNodeList,
   type UplinkRtcSignal,
   decodeUplinkCtl,
@@ -31,6 +40,9 @@ export const UPLINK_PING_INTERVAL_MS = 15_000;
 export const UPLINK_MISSED_PONG_LIMIT = 3;
 export const UPLINK_BACKOFF_MIN_MS = 1_000;
 export const UPLINK_BACKOFF_MAX_MS = 60_000;
+export const UPLINK_CONNECT_TIMEOUT_MS = 10_000;
+export const UPLINK_AUTH_TIMEOUT_MS = 10_000;
+export const UPLINK_STABLE_UPTIME_MS = 30_000;
 
 export type UplinkWsFactory = (
   url: string
@@ -53,44 +65,65 @@ export type UplinkClientOptions = {
   onNodeList?: (list: UplinkNodeList) => void;
   onRtcSignal?: (msg: UplinkRtcSignal) => void;
   onEnrollRedeemed?: (msg: UplinkEnrollRedeemed) => void;
+  onKeyLogFork?: (event: KeyLogForkEvent) => void;
   wsFactory?: UplinkWsFactory;
   scheduler?: MeshScheduler;
   pingIntervalMs?: number;
+  connectTimeoutMs?: number;
+  authTimeoutMs?: number;
 };
 
 function defaultWsFactory(url: string): WebSocketTransportInput {
   return new WebSocket(url);
 }
 
-function waitSocketOpen(ws: WebSocketTransportInput, signal: AbortSignal): Promise<void> {
+function waitSocketOpen(
+  ws: WebSocketTransportInput,
+  signal: AbortSignal,
+  timeoutMs: number
+): Promise<void> {
   if (isServerSocketAdapter(ws)) return Promise.resolve();
   const socket = ws as WebSocket;
   if (socket.readyState === 1) return Promise.resolve();
   return new Promise((resolve, reject) => {
-    const onAbort = () => reject(signal.reason ?? new Error('aborted'));
+    let settled = false;
+    const finish = (err?: Error) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      signal.removeEventListener('abort', onAbort);
+      if (err) reject(err);
+      else resolve();
+    };
+    const onAbort = () => {
+      try {
+        socket.close(1000, 'aborted');
+      } catch {
+        // ignore
+      }
+      finish(signal.reason instanceof Error ? signal.reason : new Error('aborted'));
+    };
+    const timer = setTimeout(() => {
+      try {
+        socket.close(1000, 'connect-timeout');
+      } catch {
+        // ignore
+      }
+      finish(new Error('connect-timeout'));
+    }, timeoutMs);
     if (signal.aborted) {
       onAbort();
       return;
     }
-    signal.addEventListener('abort', onAbort, { once: true });
-    socket.addEventListener(
-      'open',
-      () => {
-        signal.removeEventListener('abort', onAbort);
-        resolve();
-      },
-      { once: true }
-    );
-    socket.addEventListener(
-      'close',
-      (ev) => {
-        signal.removeEventListener('abort', onAbort);
-        reject(new Error(ev.reason || 'ws-closed'));
-      },
-      { once: true }
-    );
+    signal.addEventListener('abort', onAbort);
+    socket.addEventListener('open', () => finish(), { once: true });
+    socket.addEventListener('close', (ev) => finish(new Error(ev.reason || 'ws-closed')), {
+      once: true,
+    });
   });
 }
+
+type AuthPhase = 'idle' | 'awaiting-challenge' | 'challenge-accepted';
 
 export class UplinkClient {
   readonly identity: MeshIdentity;
@@ -99,15 +132,19 @@ export class UplinkClient {
   state: UplinkState = 'offline';
 
   private readonly hubUrl: string;
+  private readonly hubHost: string;
   private readonly keyLogApplier: KeyLogApplier;
   private readonly userStore: UserStore;
   private readonly statusProvider: () => UplinkStatus;
   private readonly onNodeListCb?: (list: UplinkNodeList) => void;
   private readonly onRtcSignalCb?: (msg: UplinkRtcSignal) => void;
   private readonly onEnrollRedeemedCb?: (msg: UplinkEnrollRedeemed) => void;
+  private readonly onKeyLogForkCb?: (event: KeyLogForkEvent) => void;
   private readonly wsFactory: UplinkWsFactory;
   private readonly scheduler: MeshScheduler;
   private readonly pingIntervalMs: number;
+  private readonly connectTimeoutMs: number;
+  private readonly authTimeoutMs: number;
   private readonly stateListeners: Array<(state: UplinkState) => void> = [];
   private relayHandler: InboundRelayHandler | null = null;
   private loop: Promise<void> | null = null;
@@ -117,9 +154,17 @@ export class UplinkClient {
   private lastStatusJson = '';
   private connectGeneration = 0;
   private authWaiter: { resolve: () => void; reject: (err: Error) => void } | null = null;
+  private authPhase: AuthPhase = 'idle';
+  private catchUpChain: Promise<void> = Promise.resolve();
+  private pendingKeyLog: {
+    resolve: (records: UplinkKeyLogRecord[]) => void;
+  } | null = null;
+  private keyLogForked = false;
+  private onlineAt = 0;
 
   constructor(opts: UplinkClientOptions) {
     this.hubUrl = opts.hubUrl;
+    this.hubHost = hubHostFromUrl(opts.hubUrl);
     this.identity = opts.identity;
     this.userId = opts.userId;
     this.keyLogApplier = opts.keyLogApplier;
@@ -128,9 +173,12 @@ export class UplinkClient {
     this.onNodeListCb = opts.onNodeList;
     this.onRtcSignalCb = opts.onRtcSignal;
     this.onEnrollRedeemedCb = opts.onEnrollRedeemed;
+    this.onKeyLogForkCb = opts.onKeyLogFork;
     this.wsFactory = opts.wsFactory ?? defaultWsFactory;
     this.scheduler = opts.scheduler ?? defaultScheduler();
     this.pingIntervalMs = opts.pingIntervalMs ?? UPLINK_PING_INTERVAL_MS;
+    this.connectTimeoutMs = opts.connectTimeoutMs ?? UPLINK_CONNECT_TIMEOUT_MS;
+    this.authTimeoutMs = opts.authTimeoutMs ?? UPLINK_AUTH_TIMEOUT_MS;
   }
 
   onStateChange(cb: (state: UplinkState) => void): () => void {
@@ -218,8 +266,20 @@ export class UplinkClient {
       this.setState('connecting');
       try {
         await this.connectOnce(signal);
-        attempt = 0;
+        this.onlineAt = this.scheduler.now();
         await this.waitUntilClosed(signal);
+        if (signal.aborted) return;
+        const uptime = this.scheduler.now() - this.onlineAt;
+        this.tearDownLink('disconnected');
+        this.setState('offline');
+        if (uptime >= UPLINK_STABLE_UPTIME_MS) attempt = 0;
+        const delay = backoffDelayMs(attempt, UPLINK_BACKOFF_MIN_MS, UPLINK_BACKOFF_MAX_MS);
+        attempt += 1;
+        try {
+          await this.scheduler.sleep(delay, signal);
+        } catch {
+          return;
+        }
       } catch {
         this.tearDownLink('connect-failed');
         this.setState('offline');
@@ -238,7 +298,7 @@ export class UplinkClient {
   private async connectOnce(signal: AbortSignal): Promise<void> {
     const url = uplinkWsUrl(this.hubUrl);
     const ws = await this.wsFactory(url);
-    await waitSocketOpen(ws, signal);
+    await waitSocketOpen(ws, signal, this.connectTimeoutMs);
     const generation = ++this.connectGeneration;
     const link = new WebSocketLink(ws, { role: 'initiator' });
     this.link = link;
@@ -274,15 +334,29 @@ export class UplinkClient {
 
   private authenticate(link: LinkSession, signal: AbortSignal): Promise<void> {
     return new Promise((resolve, reject) => {
+      this.authPhase = 'awaiting-challenge';
+      const timer = setTimeout(() => finish(new Error('auth-timeout')), this.authTimeoutMs);
       const finish = (err?: Error) => {
         if (!this.authWaiter) return;
         this.authWaiter = null;
+        clearTimeout(timer);
         signal.removeEventListener('abort', onAbort);
-        if (err) reject(err);
-        else resolve();
+        if (err) {
+          this.authPhase = 'idle';
+          try {
+            link.close(err.message);
+          } catch {
+            // already closed
+          }
+          reject(err);
+        } else {
+          resolve();
+        }
       };
       const onAbort = () => finish(new Error('aborted'));
       if (signal.aborted) {
+        clearTimeout(timer);
+        this.authPhase = 'idle';
         reject(signal.reason ?? new Error('aborted'));
         return;
       }
@@ -302,21 +376,14 @@ export class UplinkClient {
   private handleCtl(msg: UplinkCtlMessage): void {
     switch (msg.t) {
       case 'auth.challenge': {
-        if (this.link) {
-          const nonce = decodeBase64url(msg.nonce);
-          const sig = signEd25519(this.identity.edSecretKey, nonce);
-          this.link.ctl.send(
-            encodeUplinkCtl({
-              t: 'auth.response',
-              node_id: this.identity.nodeId,
-              sig: encodeBase64url(sig),
-            })
-          );
-        }
+        this.acceptChallenge(msg.nonce);
         return;
       }
       case 'auth.ok':
-        this.authWaiter?.resolve();
+        if (this.authPhase === 'challenge-accepted') {
+          this.authPhase = 'idle';
+          this.authWaiter?.resolve();
+        }
         return;
       case 'pong':
         this.missedPongs = 0;
@@ -325,10 +392,11 @@ export class UplinkClient {
         this.link?.ctl.send(encodeUplinkCtl({ t: 'pong' }));
         return;
       case 'node.list':
-        void this.applyNodeList(msg);
+        this.ingestNodeList(msg);
         return;
       case 'key.log.res':
-        void this.keyLogApplier.applyMany(this.userId, msg.records);
+        this.pendingKeyLog?.resolve(msg.records);
+        this.pendingKeyLog = null;
         return;
       case 'rtc.signal':
         this.onRtcSignalCb?.(msg);
@@ -341,7 +409,33 @@ export class UplinkClient {
     }
   }
 
-  private async applyNodeList(list: UplinkNodeList): Promise<void> {
+  private acceptChallenge(nonceB64: string): void {
+    if (this.authPhase !== 'awaiting-challenge' || !this.link) {
+      return;
+    }
+    let nonce: Uint8Array;
+    try {
+      nonce = decodeBase64url(nonceB64);
+    } catch {
+      this.authWaiter?.reject(new Error('bad-nonce'));
+      return;
+    }
+    if (nonce.byteLength !== 32) {
+      this.authWaiter?.reject(new Error('bad-nonce'));
+      return;
+    }
+    this.authPhase = 'challenge-accepted';
+    const sig = signEd25519(this.identity.edSecretKey, uplinkAuthMessage(nonce, this.hubHost));
+    this.link.ctl.send(
+      encodeUplinkCtl({
+        t: 'auth.response',
+        node_id: this.identity.nodeId,
+        sig: encodeBase64url(sig),
+      })
+    );
+  }
+
+  private ingestNodeList(list: UplinkNodeList): void {
     const now = this.scheduler.now();
     for (const node of list.nodes) {
       if (node.id === this.identity.nodeId) continue;
@@ -355,15 +449,65 @@ export class UplinkClient {
         listVersion: list.version,
       });
     }
-    this.onNodeListCb?.(list);
-    try {
-      const head = await this.keyLogApplier.head(this.userId);
-      if (list.key_log_head.seq > head.seq) {
-        this.link?.ctl.send(encodeUplinkCtl({ t: 'key.log.req', from_seq: head.seq + 1n }));
+    this.catchUpChain = this.catchUpChain
+      .then(() => this.catchUpFromList(list))
+      .catch(() => undefined);
+  }
+
+  private async catchUpFromList(list: UplinkNodeList): Promise<void> {
+    if (this.keyLogForked) return;
+    const target = list.key_log_head;
+    let local = await this.keyLogApplier.head(this.userId);
+    if (local.seq === target.seq) {
+      if (!bytesEqual(local.hash, target.hash)) {
+        this.failFork(local, target);
+        return;
       }
-    } catch {
-      // applier unavailable
+      this.onNodeListCb?.(list);
+      return;
     }
+    if (local.seq > target.seq) {
+      this.onNodeListCb?.(list);
+      return;
+    }
+    while (!this.keyLogForked && local.seq < target.seq) {
+      const before = local;
+      const records = await this.requestKeyLog(local.seq + 1n);
+      if (this.keyLogForked) return;
+      if (records.length === 0) break;
+      const sorted = [...records].sort((a, b) => (a.seq < b.seq ? -1 : a.seq > b.seq ? 1 : 0));
+      if (sorted[0] && sorted[0].seq !== before.seq + 1n) break;
+      const result = await this.keyLogApplier.applyMany(
+        this.userId,
+        sorted.map((row) => ({ bytes: row.bytes, sig: row.sig }))
+      );
+      if (result.error) break;
+      local = await this.keyLogApplier.head(this.userId);
+      if (local.seq === before.seq) break;
+    }
+    if (this.keyLogForked) return;
+    if (local.seq === target.seq && !bytesEqual(local.hash, target.hash)) {
+      this.failFork(local, target);
+      return;
+    }
+    this.onNodeListCb?.(list);
+  }
+
+  private requestKeyLog(fromSeq: bigint): Promise<UplinkKeyLogRecord[]> {
+    if (!this.link || this.pendingKeyLog) return Promise.resolve([]);
+    return new Promise((resolve) => {
+      this.pendingKeyLog = { resolve };
+      this.link?.ctl.send(encodeUplinkCtl({ t: 'key.log.req', from_seq: fromSeq }));
+    });
+  }
+
+  private failFork(
+    local: { seq: bigint; hash: Uint8Array },
+    remote: { seq: bigint; hash: Uint8Array }
+  ): void {
+    this.keyLogForked = true;
+    this.onKeyLogForkCb?.({ userId: this.userId, local, remote });
+    this.tearDownLink('key_log_fork');
   }
 
   private startHeartbeat(link: LinkSession, generation: number): void {
@@ -397,9 +541,16 @@ export class UplinkClient {
 
   private tearDownLink(reason: string): void {
     this.stopHeartbeat();
+    const pending = this.pendingKeyLog;
+    this.pendingKeyLog = null;
+    pending?.resolve([]);
     const link = this.link;
     this.link = null;
+    this.authPhase = 'idle';
     this.connectGeneration += 1;
+    if (this.authWaiter) {
+      this.authWaiter.reject(new Error(reason));
+    }
     if (this.state === 'online') {
       this.setState('connecting');
     }

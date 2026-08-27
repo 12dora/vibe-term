@@ -156,4 +156,30 @@ describe('createMeshRuntime', () => {
     await mesh.stop();
     expect(order).toEqual(['peer', 'uplink']);
   });
+
+  test('exposes gateway WS guard and inbound mesh handleRequest for peer via', async () => {
+    const { db, close } = createMigratedAuthDb();
+    const [clientWs] = fakeSocketPair();
+    const mesh = await createMeshRuntime({
+      db,
+      gateway: fakeGateway(db),
+      config: {
+        roles: { hub: false, node: true },
+        hubUrl: 'http://127.0.0.1:9',
+        peerPort: 0,
+        stunServers: [],
+      },
+      wsFactory: () => clientWs,
+      peerHostname: '127.0.0.1',
+      startPeerServer: false,
+    });
+    fixtures.push({ close, stop: () => mesh.stop() });
+    expect(typeof mesh.guardGatewayWebSocket).toBe('function');
+    const { setMeshRequestContext } = await import('./mesh-deps');
+    const req = new Request('http://localhost/api/auth/mode');
+    setMeshRequestContext(req, { via: 'peer-node', clientIp: 'peer:peer-node' });
+    const res = await mesh.handleRequest(req, { upgrade: () => false });
+    if (!(res instanceof Response)) throw new Error('expected Response');
+    expect(await res.json()).toMatchObject({ mode: 'mesh' });
+  });
 });

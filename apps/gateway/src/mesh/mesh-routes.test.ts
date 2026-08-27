@@ -10,12 +10,18 @@ import {
   FakePeers,
   NODE_ID,
   NODE_PK,
+  asResponse,
   bootMesh,
   call,
   challengeAndLogin,
   dummyServer,
 } from './auth-routes.test';
-import { MESH_WS_KIND, type MeshServerWebSocket } from './mesh-deps';
+import {
+  MESH_REJECT_4401_KIND,
+  MESH_WS_KIND,
+  type MeshServerWebSocket,
+  WS_CLOSE_LOGIN_REQUIRED,
+} from './mesh-deps';
 
 const PEER_ID = 'cc'.repeat(16);
 const REVOKED_ID = 'dd'.repeat(16);
@@ -70,8 +76,7 @@ describe('mesh-routes', () => {
         authorizationSig: new Uint8Array(64),
         revokedLogSeq: 9,
       });
-      const { res } = await challengeAndLogin(mesh.runtime, mesh.boot);
-      const { sid } = (await res.json()) as { sid: string };
+      const { sid } = await challengeAndLogin(mesh.runtime, mesh.boot);
       const list = await call(mesh.runtime, 'http://localhost/api/mesh/nodes', {
         headers: { cookie: `tmex_s_self=${sid}; tmex_s_${PEER_ID}=xyz` },
       });
@@ -114,7 +119,12 @@ describe('mesh-routes', () => {
       },
     });
     try {
-      const cfg = await call(mesh.runtime, 'http://localhost/api/mesh/rtc-config');
+      const denied = await call(mesh.runtime, 'http://localhost/api/mesh/rtc-config');
+      expect(denied.status).toBe(401);
+      const { sid } = await challengeAndLogin(mesh.runtime, mesh.boot);
+      const cfg = await call(mesh.runtime, 'http://localhost/api/mesh/rtc-config', {
+        headers: { cookie: `tmex_s_self=${sid}` },
+      });
       expect(await cfg.json()).toEqual({ stun: ['stun:ex'], turn: null });
     } finally {
       mesh.close();
@@ -122,8 +132,7 @@ describe('mesh-routes', () => {
 
     const noRtc = await bootMesh();
     try {
-      const { res } = await challengeAndLogin(noRtc.runtime, noRtc.boot);
-      const { sid } = (await res.json()) as { sid: string };
+      const { sid } = await challengeAndLogin(noRtc.runtime, noRtc.boot);
       const authz = await call(noRtc.runtime, 'http://localhost/api/rtc/authorize', {
         method: 'POST',
         headers: {
@@ -156,29 +165,33 @@ describe('mesh-routes', () => {
         publisher: { publish() {} },
         rtc: {
           fingerprint: {
-            getFingerprint: () => ({ algorithm: 'sha-256', value: 'BB' }),
+            authorizeBrowser: () => ({
+              nonce: new Uint8Array(32).fill(7),
+              fpNode: { algorithm: 'sha-256', value: 'BB' },
+            }),
           },
         },
         primaryUserId: withFp.boot.userId,
       });
-      const { res } = await challengeAndLogin(runtime, withFp.boot);
-      const { sid } = (await res.json()) as { sid: string };
-      const ok = await runtime.handleRequest(
-        new Request('http://localhost/api/rtc/authorize', {
-          method: 'POST',
-          headers: {
-            'content-type': 'application/json',
-            cookie: `tmex_s_self=${sid}`,
-          },
-          body: JSON.stringify({
-            rtcSession: 's1',
-            fp_browser: { algorithm: 'sha-256', value: 'AA' },
+      const { sid } = await challengeAndLogin(runtime, withFp.boot);
+      const ok = asResponse(
+        await runtime.handleRequest(
+          new Request('http://localhost/api/rtc/authorize', {
+            method: 'POST',
+            headers: {
+              'content-type': 'application/json',
+              cookie: `tmex_s_self=${sid}`,
+            },
+            body: JSON.stringify({
+              rtcSession: 's1',
+              fp_browser: { algorithm: 'sha-256', value: 'AA' },
+            }),
           }),
-        }),
-        dummyServer
+          dummyServer
+        )
       );
-      expect(ok?.status).toBe(200);
-      const body = (await ok?.json()) as { nonce: string; fp_node: { value: string } };
+      expect(ok.status).toBe(200);
+      const body = (await ok.json()) as { nonce: string; fp_node: { value: string } };
       expect(body.fp_node.value).toBe('BB');
       expect(body.nonce.length).toBeGreaterThan(10);
       runtime.stop();
@@ -191,18 +204,35 @@ describe('mesh-routes', () => {
     const peers = new FakePeers();
     const mesh = await bootMesh({ peers });
     try {
+      let rejectData: unknown;
+      const denyServer = {
+        upgrade(_req: Request, opts?: { data?: unknown }) {
+          rejectData = opts?.data;
+          return true;
+        },
+      };
       const denied = await mesh.runtime.handleRequest(
         new Request('http://localhost/mesh/ws'),
-        dummyServer
+        denyServer
       );
-      expect(denied?.status).toBe(401);
+      expect(denied).toBeUndefined();
+      expect(rejectData).toEqual({ kind: MESH_REJECT_4401_KIND });
+      let closed: number | undefined;
+      const rejectWs = {
+        data: { kind: MESH_REJECT_4401_KIND },
+        send() {},
+        close(code?: number) {
+          closed = code;
+        },
+      } as MeshServerWebSocket;
+      mesh.runtime.handleWebSocket.open(rejectWs);
+      expect(closed).toBe(WS_CLOSE_LOGIN_REQUIRED);
 
-      const { res } = await challengeAndLogin(mesh.runtime, mesh.boot);
-      const { sid } = (await res.json()) as { sid: string };
-      let data: unknown;
+      const { sid } = await challengeAndLogin(mesh.runtime, mesh.boot);
+      let data: { kind?: string; sid?: string; uid?: string } | undefined;
       const server = {
         upgrade(_req: Request, opts?: { data?: unknown }) {
-          data = opts?.data;
+          data = opts?.data as typeof data;
           return true;
         },
       };
@@ -211,16 +241,21 @@ describe('mesh-routes', () => {
         server
       );
       expect(up).toBeUndefined();
-      expect(data).toEqual({ kind: MESH_WS_KIND });
+      expect(data?.kind).toBe(MESH_WS_KIND);
+      expect(data?.sid).toBe(sid);
+      expect(data?.uid).toBe(mesh.boot.userId);
 
       const frames: Uint8Array[] = [];
+      let loggedOut: number | undefined;
       const ws = {
-        data: { kind: MESH_WS_KIND },
+        data: { kind: MESH_WS_KIND, sid, uid: mesh.boot.userId },
         send(d: Uint8Array) {
           frames.push(d);
           return d.byteLength;
         },
-        close() {},
+        close(code?: number) {
+          loggedOut = code;
+        },
       } as MeshServerWebSocket;
       mesh.runtime.handleWebSocket.open(ws);
       peers.emit({ nodeId: PEER_ID, status: 'online' });
@@ -229,8 +264,59 @@ describe('mesh-routes', () => {
       if (!frame) throw new Error('missing NODE_EVENT frame');
       const env = wsBorsh.decodeEnvelope(frame);
       expect(env.kind).toBe(wsBorsh.KIND_NODE_EVENT);
+
+      const logout = await call(mesh.runtime, 'http://localhost/api/auth/logout', {
+        method: 'POST',
+        headers: { cookie: `tmex_s_self=${sid}` },
+      });
+      expect(logout.status).toBe(200);
+      expect(loggedOut).toBe(WS_CLOSE_LOGIN_REQUIRED);
+    } finally {
+      mesh.close();
+    }
+  });
+
+  test('/mesh/ws RTC_SIGNAL from browsers is forced from=browser and node frames are ignored', async () => {
+    const sent: Array<{ from: string; owner?: { uid: string; sid: string } }> = [];
+    const mesh = await bootMesh({
+      rtc: {
+        signals: {
+          send(signal, owner) {
+            sent.push({ from: signal.from, owner });
+          },
+          subscribe() {
+            return () => {};
+          },
+        },
+      },
+    });
+    try {
+      const { sid } = await challengeAndLogin(mesh.runtime, mesh.boot);
+      const ws = {
+        data: { kind: MESH_WS_KIND, sid, uid: mesh.boot.userId },
+        send() {},
+        close() {},
+      } as MeshServerWebSocket;
+      mesh.runtime.handleWebSocket.open(ws);
+      const nodeFrame = encodeRtcSignal(wsBorsh.RTC_SIGNAL_FROM_NODE);
+      mesh.runtime.handleWebSocket.message(ws, nodeFrame);
+      expect(sent).toEqual([]);
+      const browserFrame = encodeRtcSignal(wsBorsh.RTC_SIGNAL_FROM_BROWSER);
+      mesh.runtime.handleWebSocket.message(ws, browserFrame);
+      expect(sent).toEqual([{ from: 'browser', owner: { uid: mesh.boot.userId, sid } }]);
     } finally {
       mesh.close();
     }
   });
 });
+
+function encodeRtcSignal(from: number): Uint8Array {
+  const payload = wsBorsh.encodePayload(wsBorsh.schema.RtcSignalSchema, {
+    rtcSession: 'sess-1',
+    from,
+    to: 'node-a',
+    sdp: 'offer',
+    candidate: null,
+  });
+  return wsBorsh.encodeEnvelope(wsBorsh.KIND_RTC_SIGNAL, payload, 1);
+}

@@ -63,15 +63,16 @@ export function defaultScheduler(): import('./types').MeshScheduler {
           reject(signal.reason ?? new Error('aborted'));
           return;
         }
-        const timer = setTimeout(resolve, ms);
-        signal?.addEventListener(
-          'abort',
-          () => {
-            clearTimeout(timer);
-            reject(signal.reason ?? new Error('aborted'));
-          },
-          { once: true }
-        );
+        const onAbort = () => {
+          clearTimeout(timer);
+          signal?.removeEventListener('abort', onAbort);
+          reject(signal?.reason ?? new Error('aborted'));
+        };
+        const timer = setTimeout(() => {
+          signal?.removeEventListener('abort', onAbort);
+          resolve();
+        }, ms);
+        signal?.addEventListener('abort', onAbort);
       });
     },
     interval(fn, ms) {

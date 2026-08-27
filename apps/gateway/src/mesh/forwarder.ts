@@ -1,10 +1,14 @@
 import type { LinkSession } from '@tmex/shared/link';
 import { buildSetCookie, nodeSessionCookieName, parseCookies } from '../auth/cookies';
 import {
+  AUTH_401_BODY_LIMIT,
   MESH_ALLOWED_MIME,
   MESH_FORWARD_CSP,
   MESH_FORWARD_WS_KIND,
+  MESH_REJECT_4401_KIND,
   MESH_VIA_SELF,
+  type MeshHandleResult,
+  type MeshRewritten,
   type MeshServerWebSocket,
   type MeshUpgradeServer,
   type OpenedWsStream,
@@ -14,6 +18,7 @@ import {
   X_TMEX_SESSION_RENEWED,
   X_TMEX_SET_SESSION,
   getMeshRequestContext,
+  parseSetSessionHeader,
   setMeshRequestContext,
 } from './mesh-deps';
 import { isHttps, jsonError } from './session-middleware';
@@ -32,13 +37,20 @@ const RESPONSE_ALLOW = new Set([
   'content-disposition',
 ]);
 
+const DROP_ON_401_REWRITE = new Set([
+  'content-length',
+  'content-range',
+  'etag',
+  'content-disposition',
+]);
+
 export type ForwarderDeps = {
   nodeId: string;
   peers: PeerLinkProvider;
   streams: StreamOpener;
 };
 
-export type ForwardResult = Response | null | undefined;
+export type ForwardResult = MeshHandleResult;
 
 const selfRewrites = new WeakMap<Request, string>();
 
@@ -52,6 +64,30 @@ export function parseNodePrefix(pathname: string): { nodeId: string; rest: strin
   const nodeId = decodeURIComponent(match[1] ?? '');
   const rest = match[2] && match[2].length > 0 ? match[2] : '/';
   return { nodeId, rest };
+}
+
+export function rewriteSelf(req: Request, localNodeId: string): Request | null {
+  const url = new URL(req.url);
+  const parsed = parseNodePrefix(url.pathname);
+  if (!parsed) return null;
+  if (parsed.nodeId !== MESH_VIA_SELF && parsed.nodeId !== localNodeId) return null;
+  return rewriteRequest(req, parsed.rest + url.search);
+}
+
+export function rewriteRequest(req: Request, rewrite: string): Request {
+  const url = new URL(req.url);
+  const q = rewrite.indexOf('?');
+  if (q === -1) {
+    url.pathname = rewrite;
+    url.search = '';
+  } else {
+    url.pathname = rewrite.slice(0, q);
+    url.search = rewrite.slice(q);
+  }
+  const inner = new Request(url, req);
+  const ctx = getMeshRequestContext(req);
+  setMeshRequestContext(inner, { ...ctx, via: MESH_VIA_SELF, selfRewrite: undefined });
+  return inner;
 }
 
 export class Forwarder {
@@ -115,12 +151,12 @@ export class Forwarder {
     return id === MESH_VIA_SELF || id === this.deps.nodeId;
   }
 
-  private handleSelf(req: Request, rest: string, search: string): null {
+  private handleSelf(req: Request, rest: string, search: string): MeshRewritten {
     const rewrite = rest + search;
     selfRewrites.set(req, rewrite);
     const ctx = getMeshRequestContext(req);
     setMeshRequestContext(req, { ...ctx, via: MESH_VIA_SELF, selfRewrite: rewrite });
-    return null;
+    return { rewritten: rewriteRequest(req, rewrite) };
   }
 
   private async handleRemoteHttp(
@@ -175,7 +211,7 @@ export class Forwarder {
     const auth = parseCookies(req.headers.get('cookie')).get(nodeSessionCookieName(nodeId)) ?? null;
     if (!auth) {
       const upgraded = server.upgrade(req, {
-        data: { kind: MESH_FORWARD_WS_KIND, nodeId, auth: null },
+        data: { kind: MESH_REJECT_4401_KIND, nodeId, auth: null },
       });
       if (!upgraded) {
         return jsonError('UNAUTHORIZED', 401, { code: 'NODE_LOGIN_REQUIRED', nodeId });
@@ -213,6 +249,9 @@ export class Forwarder {
     let contentDisposition: string | null = null;
     upstream.headers.forEach((value, key) => {
       const lower = key.toLowerCase();
+      if (lower === X_TMEX_SET_SESSION) {
+        return;
+      }
       if (lower === 'content-type') {
         contentType = value;
         return;
@@ -238,7 +277,7 @@ export class Forwarder {
 
     const setSession = upstream.headers.get(X_TMEX_SET_SESSION);
     if (setSession) {
-      const parsed = parseSetSession(setSession);
+      const parsed = parseSetSessionHeader(setSession);
       if (parsed) {
         headers.append(
           'set-cookie',
@@ -270,7 +309,7 @@ export class Forwarder {
       return new Response(upstream.body, { status: upstream.status, headers });
     }
 
-    const raw = await upstream.text();
+    const raw = await readBodyLimited(upstream, AUTH_401_BODY_LIMIT);
     let body: Record<string, unknown> = { code: 'NODE_LOGIN_REQUIRED', nodeId };
     try {
       const parsed = JSON.parse(raw) as unknown;
@@ -280,15 +319,10 @@ export class Forwarder {
     } catch {
       if (raw) body.message = raw;
     }
-    if (
-      !headers.has('content-type') ||
-      headers.get('content-type') === 'application/octet-stream'
-    ) {
-      headers.set('content-type', 'application/json');
-      headers.delete('content-disposition');
-    } else {
-      headers.set('content-type', 'application/json');
+    for (const name of DROP_ON_401_REWRITE) {
+      headers.delete(name);
     }
+    headers.set('content-type', 'application/json');
     return new Response(JSON.stringify(body), { status: 401, headers });
   }
 }
@@ -334,13 +368,46 @@ function baseMime(contentType: string): string {
   return (semi === -1 ? trimmed : trimmed.slice(0, semi)).trim();
 }
 
-function parseSetSession(value: string): { sid: string; maxAgeSec: number } | null {
-  const split = value.indexOf(';');
-  if (split === -1) return null;
-  const sid = value.slice(0, split).trim();
-  const maxAgeSec = Number(value.slice(split + 1).trim());
-  if (!sid || !Number.isFinite(maxAgeSec)) return null;
-  return { sid, maxAgeSec };
+async function readBodyLimited(response: Response, limit: number): Promise<string> {
+  const reader = response.body?.getReader();
+  if (!reader) {
+    return '';
+  }
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      if (!value || value.byteLength === 0) continue;
+      const remaining = limit - total;
+      if (remaining <= 0) {
+        await reader.cancel();
+        break;
+      }
+      if (value.byteLength > remaining) {
+        chunks.push(value.slice(0, remaining));
+        total = limit;
+        await reader.cancel();
+        break;
+      }
+      chunks.push(value);
+      total += value.byteLength;
+    }
+  } catch {
+    try {
+      await reader.cancel();
+    } catch {
+      // ignore
+    }
+  }
+  const out = new Uint8Array(total);
+  let offset = 0;
+  for (const chunk of chunks) {
+    out.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return new TextDecoder().decode(out);
 }
 
 function toBytes(message: unknown): Uint8Array | null {

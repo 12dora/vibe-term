@@ -10,6 +10,7 @@ export class LinkStreamCarrier implements Carrier {
   private readonly queue: Uint8Array[] = [];
   private pending = 0;
   private pumping = false;
+  private closing = false;
   private closed = false;
   private aboveHigh = false;
 
@@ -18,14 +19,18 @@ export class LinkStreamCarrier implements Carrier {
     this.highWaterMark = opts?.highWaterMark ?? LINK_STREAM_BACKPRESSURE_BYTES;
     stream.onAbort(() => {
       this.closed = true;
+      this.closing = true;
+      this.queue.length = 0;
+      this.pending = 0;
     });
     void stream.closed.then(() => {
       this.closed = true;
+      this.closing = true;
     });
   }
 
   send(bytes: Uint8Array): CarrierSendResult {
-    if (this.closed) return 'closed';
+    if (this.closed || this.closing) return 'closed';
     const copy = bytes.slice();
     this.queue.push(copy);
     this.pending += copy.byteLength;
@@ -46,18 +51,16 @@ export class LinkStreamCarrier implements Carrier {
   }
 
   close(_code: number, _reason: string): void {
-    if (this.closed) return;
-    this.closed = true;
-    try {
-      this.stream.end();
-    } catch {
-      // already ended
-    }
+    if (this.closed || this.closing) return;
+    this.closing = true;
+    void this.pump();
   }
 
   terminate(): void {
-    if (this.closed) return;
     this.closed = true;
+    this.closing = true;
+    this.queue.length = 0;
+    this.pending = 0;
     try {
       this.stream.reset('carrier-terminate');
     } catch {
@@ -92,8 +95,19 @@ export class LinkStreamCarrier implements Carrier {
           }
         }
       }
+      if (this.closing && !this.closed && this.queue.length === 0) {
+        try {
+          await this.stream.end();
+        } catch {
+          // already ended
+        }
+        this.closed = true;
+      }
     } finally {
       this.pumping = false;
+      if (!this.closed && this.queue.length > 0) {
+        void this.pump();
+      }
     }
   }
 }

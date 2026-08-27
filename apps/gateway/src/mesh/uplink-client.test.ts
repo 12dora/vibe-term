@@ -1,11 +1,20 @@
 import { afterEach, describe, expect, test } from 'bun:test';
-import { encodeBase64url, randomBytes } from '@tmex/shared/auth';
+import {
+  decodeBase64url,
+  encodeBase64url,
+  generateEd25519KeyPair,
+  hubHostFromUrl,
+  randomBytes,
+  uplinkAuthMessage,
+  verifyEd25519,
+} from '@tmex/shared/auth';
 import { WebSocketLink } from '@tmex/shared/link';
 import { createMigratedAuthDb } from '../auth/test-db';
 import { UserStore } from '../auth/user-store';
 import { ImmediateScheduler, fakeSocketPair, seedUser, waitUntil } from './test-support';
 import type { KeyLogApplier, UplinkStatus } from './types';
 import { UplinkClient } from './uplink-client';
+import { decodeUplinkCtl } from './uplink-protocol';
 import { encodeUplinkCtl } from './uplink-protocol';
 
 function status(over: Partial<UplinkStatus> = {}): UplinkStatus {
@@ -210,4 +219,249 @@ describe('UplinkClient', () => {
     for (let i = 0; i < 4; i++) scheduler.tickIntervals();
     await waitUntil(() => client.state !== 'online');
   });
+
+  test('signs uplinkAuthMessage once while authenticating and ignores a second challenge', async () => {
+    const { db, close } = createMigratedAuthDb();
+    fixtures.push({ close });
+    const userStore = new UserStore(db);
+    seedUser(userStore);
+    const keys = generateEd25519KeyPair();
+    const [clientWs, hubWs] = fakeSocketPair();
+    const hub = new WebSocketLink(hubWs, { role: 'acceptor' });
+    const received: Uint8Array[] = [];
+    hub.ctl.onMessage((bytes) => received.push(bytes.slice()));
+    const hubUrl = 'https://hub.example.com';
+    const client = new UplinkClient({
+      hubUrl,
+      identity: { nodeId: 'ab'.repeat(16), edSecretKey: keys.secretKey },
+      userId: 'user-1',
+      keyLogApplier: dummyApplier(),
+      userStore,
+      statusProvider: () => status(),
+      wsFactory: () => clientWs,
+    });
+    fixtures.push({ close, stop: () => client.stop() });
+    client.start();
+    await waitUntil(() => client.link !== null);
+
+    const nonce = randomBytes(32);
+    hub.ctl.send(encodeUplinkCtl({ t: 'auth.challenge', nonce: encodeBase64url(nonce) }));
+    await waitUntil(() => received.length > 0);
+    const response = received
+      .map((row) => decodeUplinkCtl(row))
+      .find((msg) => msg.t === 'auth.response');
+    expect(response?.t).toBe('auth.response');
+    if (response?.t !== 'auth.response') throw new Error('expected auth.response');
+    const sig = decodeBase64url(response.sig);
+    expect(
+      verifyEd25519(sig, uplinkAuthMessage(nonce, hubHostFromUrl(hubUrl)), keys.publicKey)
+    ).toBe(true);
+    expect(verifyEd25519(sig, nonce, keys.publicKey)).toBe(false);
+
+    const before = received.length;
+    hub.ctl.send(encodeUplinkCtl({ t: 'auth.challenge', nonce: encodeBase64url(randomBytes(32)) }));
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    expect(received.length).toBe(before);
+  });
+
+  test('does not sign a challenge whose nonce is not 32 bytes', async () => {
+    const { db, close } = createMigratedAuthDb();
+    fixtures.push({ close });
+    const userStore = new UserStore(db);
+    seedUser(userStore);
+    const [clientWs, hubWs] = fakeSocketPair();
+    const hub = new WebSocketLink(hubWs, { role: 'acceptor' });
+    const received: string[] = [];
+    hub.ctl.onMessage((bytes) => received.push(new TextDecoder().decode(bytes)));
+    const client = new UplinkClient({
+      hubUrl: 'https://hub.example.com',
+      identity: { nodeId: 'ab'.repeat(16), edSecretKey: randomBytes(32) },
+      userId: 'user-1',
+      keyLogApplier: dummyApplier(),
+      userStore,
+      statusProvider: () => status(),
+      wsFactory: () => clientWs,
+    });
+    fixtures.push({ close, stop: () => client.stop() });
+    client.start();
+    await waitUntil(() => client.link !== null);
+    hub.ctl.send(encodeUplinkCtl({ t: 'auth.challenge', nonce: encodeBase64url(randomBytes(16)) }));
+    await new Promise((resolve) => setTimeout(resolve, 40));
+    expect(received.some((row) => row.includes('auth.response'))).toBe(false);
+  });
+
+  test('connect timeout and auth timeout close the socket and back off', async () => {
+    const { db, close } = createMigratedAuthDb();
+    fixtures.push({ close });
+    const userStore = new UserStore(db);
+    seedUser(userStore);
+    const scheduler = new ImmediateScheduler();
+    let calls = 0;
+    const client = new UplinkClient({
+      hubUrl: 'https://hub.example.com',
+      identity: { nodeId: 'ab'.repeat(16), edSecretKey: randomBytes(32) },
+      userId: 'user-1',
+      keyLogApplier: dummyApplier(),
+      userStore,
+      statusProvider: () => status(),
+      scheduler,
+      connectTimeoutMs: 20,
+      authTimeoutMs: 20,
+      wsFactory: () => {
+        calls += 1;
+        return {
+          readyState: 0,
+          addEventListener() {},
+          close() {},
+        } as unknown as WebSocket;
+      },
+    });
+    fixtures.push({ close, stop: () => client.stop() });
+    client.start();
+    await waitUntil(() => calls >= 2);
+    expect(scheduler.sleeps).toBeGreaterThanOrEqual(1);
+  });
+
+  test('unexpected close after auth backs off instead of hot-looping', async () => {
+    const { db, close } = createMigratedAuthDb();
+    fixtures.push({ close });
+    const userStore = new UserStore(db);
+    seedUser(userStore);
+    const scheduler = new ImmediateScheduler();
+    const [clientWs, hubWs] = fakeSocketPair();
+    const hub = new WebSocketLink(hubWs, { role: 'acceptor' });
+    hub.ctl.onMessage(() => {});
+    let calls = 0;
+    const client = new UplinkClient({
+      hubUrl: 'https://hub.example.com',
+      identity: { nodeId: 'ab'.repeat(16), edSecretKey: randomBytes(32) },
+      userId: 'user-1',
+      keyLogApplier: dummyApplier(),
+      userStore,
+      statusProvider: () => status(),
+      scheduler,
+      wsFactory: () => {
+        calls += 1;
+        if (calls === 1) return clientWs;
+        return fakeSocketPair()[0];
+      },
+    });
+    fixtures.push({ close, stop: () => client.stop() });
+    client.start();
+    await waitUntil(() => client.link !== null);
+    hub.ctl.send(encodeUplinkCtl({ t: 'auth.challenge', nonce: encodeBase64url(randomBytes(32)) }));
+    hub.ctl.send(encodeUplinkCtl({ t: 'auth.ok' }));
+    await waitUntil(() => client.state === 'online');
+    const sleepsBefore = scheduler.sleeps;
+    clientWs.close(1000, 'hub-gone');
+    await waitUntil(() => scheduler.sleeps > sleepsBefore);
+    expect(client.state).not.toBe('online');
+  });
+
+  test('same seq different hash surfaces key_log_fork and does not send key.log.req', async () => {
+    const { db, close } = createMigratedAuthDb();
+    fixtures.push({ close });
+    const userStore = new UserStore(db);
+    seedUser(userStore);
+    const [clientWs, hubWs] = fakeSocketPair();
+    const hub = new WebSocketLink(hubWs, { role: 'acceptor' });
+    const received: string[] = [];
+    hub.ctl.onMessage((bytes) => received.push(new TextDecoder().decode(bytes)));
+    const forks: unknown[] = [];
+    const localHash = new Uint8Array(32).fill(1);
+    const remoteHash = new Uint8Array(32).fill(2);
+    const client = new UplinkClient({
+      hubUrl: 'https://hub.example.com',
+      identity: { nodeId: 'ab'.repeat(16), edSecretKey: randomBytes(32) },
+      userId: 'user-1',
+      keyLogApplier: {
+        async head() {
+          return { seq: 3n, hash: localHash };
+        },
+        async applyMany() {
+          return { applied: 0 };
+        },
+      },
+      userStore,
+      statusProvider: () => status(),
+      onKeyLogFork: (event) => forks.push(event),
+      wsFactory: () => clientWs,
+    });
+    fixtures.push({ close, stop: () => client.stop() });
+    client.start();
+    await waitUntil(() => client.link !== null);
+    hub.ctl.send(encodeUplinkCtl({ t: 'auth.challenge', nonce: encodeBase64url(randomBytes(32)) }));
+    hub.ctl.send(encodeUplinkCtl({ t: 'auth.ok' }));
+    await waitUntil(() => client.state === 'online');
+    hub.ctl.send(
+      encodeUplinkCtl({
+        t: 'node.list',
+        version: 1,
+        key_log_head: { seq: 3n, hash: remoteHash },
+        rtc: { stun: [], turn: null },
+        nodes: [],
+      })
+    );
+    await waitUntil(() => forks.length === 1);
+    expect(received.some((row) => row.includes('key.log.req'))).toBe(false);
+  });
+
+  test('does not send a second key.log.req while catch-up is in flight', async () => {
+    const { db, close } = createMigratedAuthDb();
+    fixtures.push({ close });
+    const userStore = new UserStore(db);
+    seedUser(userStore);
+    const [clientWs, hubWs] = fakeSocketPair();
+    const hub = new WebSocketLink(hubWs, { role: 'acceptor' });
+    const received: string[] = [];
+    hub.ctl.onMessage((bytes) => received.push(new TextDecoder().decode(bytes)));
+    const client = new UplinkClient({
+      hubUrl: 'https://hub.example.com',
+      identity: { nodeId: 'ab'.repeat(16), edSecretKey: randomBytes(32) },
+      userId: 'user-1',
+      keyLogApplier: dummyApplier(),
+      userStore,
+      statusProvider: () => status(),
+      wsFactory: () => clientWs,
+    });
+    fixtures.push({ close, stop: () => client.stop() });
+    client.start();
+    await waitUntil(() => client.link !== null);
+    hub.ctl.send(encodeUplinkCtl({ t: 'auth.challenge', nonce: encodeBase64url(randomBytes(32)) }));
+    hub.ctl.send(encodeUplinkCtl({ t: 'auth.ok' }));
+    await waitUntil(() => client.state === 'online');
+    const head = { seq: 5n, hash: randomBytes(32) };
+    hub.ctl.send(
+      encodeUplinkCtl({
+        t: 'node.list',
+        version: 1,
+        key_log_head: head,
+        rtc: { stun: [], turn: null },
+        nodes: [],
+      })
+    );
+    hub.ctl.send(
+      encodeUplinkCtl({
+        t: 'node.list',
+        version: 2,
+        key_log_head: head,
+        rtc: { stun: [], turn: null },
+        nodes: [],
+      })
+    );
+    await waitUntil(() => received.filter((row) => row.includes('key.log.req')).length >= 1);
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    expect(received.filter((row) => row.includes('key.log.req'))).toHaveLength(1);
+  });
 });
+
+function dummyApplier() {
+  return {
+    async head() {
+      return { seq: 0n, hash: new Uint8Array(32) };
+    },
+    async applyMany() {
+      return { applied: 0 };
+    },
+  };
+}

@@ -1,14 +1,17 @@
+import type { KeyLogEffect } from '@tmex/shared/auth';
 import type { ChallengeStore } from '../auth/challenge-store';
 import type { NodeSessionStore } from '../auth/node-session-store';
 import type { UserKeyService } from '../auth/user-key-service';
 import type { UserStore } from '../auth/user-store';
 import { AuthRoutes } from './auth-routes';
-import { Forwarder, getSelfRewrite, takePendingForwardStream } from './forwarder';
+import { Forwarder, rewriteSelf, takePendingForwardStream } from './forwarder';
 import {
-  type KeyLogPublisher,
   MESH_FORWARD_WS_KIND,
+  MESH_GATEWAY_WS_KIND,
+  MESH_REJECT_4401_KIND,
   MESH_VIA_SELF,
   MESH_WS_KIND,
+  type MeshHandleResult,
   type MeshRoles,
   type MeshRtcDeps,
   type MeshServerWebSocket,
@@ -16,12 +19,17 @@ import {
   type PeerLinkProvider,
   type StreamOpener,
   WS_CLOSE_LOGIN_REQUIRED,
-  getMeshRequestContext,
+  WS_SESSION_VERIFY_MS,
   isStandaloneRoles,
-  setMeshRequestContext,
 } from './mesh-deps';
 import { MeshRoutes } from './mesh-routes';
-import { type SessionMiddlewareDeps, authenticateRequest, jsonError } from './session-middleware';
+import {
+  type SessionMiddlewareDeps,
+  authenticateRequest,
+  consumeSetSessionForBrowser,
+  jsonBody,
+  jsonError,
+} from './session-middleware';
 
 export type MeshHttpRuntimeOptions = {
   roles: MeshRoles;
@@ -33,19 +41,32 @@ export type MeshHttpRuntimeOptions = {
   nodeSessionStore: NodeSessionStore;
   peers: PeerLinkProvider;
   streams: StreamOpener;
-  publisher: KeyLogPublisher;
+  publisher: KeyLogPublisherLike;
   rtc?: MeshRtcDeps;
   now?: () => number;
   primaryUserId?: string;
+  trustProxy?: boolean;
+};
+
+type KeyLogPublisherLike = {
+  publish(record: { bytes: Uint8Array; sig: Uint8Array }): Promise<void> | void;
 };
 
 const STATIC_PREFIXES = ['/assets/', '/static/', '/favicon', '/manifest'];
 const PUBLIC_API = new Set([
   '/api/auth/mode',
+  '/api/auth/nodes',
   '/api/auth/challenge',
   '/api/auth/login',
   '/api/auth/passkey/login/options',
 ]);
+
+type RegisteredSocket = {
+  ws: MeshServerWebSocket;
+  sid: string;
+  uid: string;
+  lastVerifyAt: number;
+};
 
 export class MeshHttpRuntime {
   readonly auth: AuthRoutes;
@@ -53,14 +74,38 @@ export class MeshHttpRuntime {
   readonly forwarder: Forwarder;
   private readonly sessionDeps: SessionMiddlewareDeps;
   private readonly roles: MeshRoles;
+  private readonly nodeId: string;
+  private readonly sockets = new Set<RegisteredSocket>();
+  private readonly now: () => number;
 
   constructor(opts: MeshHttpRuntimeOptions) {
     this.roles = opts.roles;
+    this.nodeId = opts.nodeId;
+    this.now = opts.now ?? (() => Date.now());
     this.sessionDeps = {
       roles: opts.roles,
       nodeSessionStore: opts.nodeSessionStore,
-      now: opts.now,
+      now: this.now,
+      trustProxy: opts.trustProxy,
     };
+    this.forwarder = new Forwarder({
+      nodeId: opts.nodeId,
+      peers: opts.peers,
+      streams: opts.streams,
+    });
+    this.mesh = new MeshRoutes({
+      roles: opts.roles,
+      nodeId: opts.nodeId,
+      nodePk: opts.nodePk,
+      userStore: opts.userStore,
+      nodeSessionStore: opts.nodeSessionStore,
+      peers: opts.peers,
+      rtcFingerprint: opts.rtc?.fingerprint,
+      rtcSignals: opts.rtc?.signals,
+      rtcConfig: opts.rtc?.config,
+      now: this.now,
+      registerSocket: (ws, auth) => this.registerSocket(ws, auth),
+    });
     this.auth = new AuthRoutes({
       roles: opts.roles,
       nodeId: opts.nodeId,
@@ -70,55 +115,140 @@ export class MeshHttpRuntime {
       challengeStore: opts.challengeStore,
       nodeSessionStore: opts.nodeSessionStore,
       publisher: opts.publisher,
-      now: opts.now,
+      now: this.now,
       primaryUserId: opts.primaryUserId,
-    });
-    this.mesh = new MeshRoutes({
-      roles: opts.roles,
-      nodeId: opts.nodeId,
-      nodePk: opts.nodePk,
-      userStore: opts.userStore,
-      challengeStore: opts.challengeStore,
-      nodeSessionStore: opts.nodeSessionStore,
-      peers: opts.peers,
-      rtcFingerprint: opts.rtc?.fingerprint,
-      rtcSignals: opts.rtc?.signals,
-      rtcConfig: opts.rtc?.config,
-      now: opts.now,
-    });
-    this.forwarder = new Forwarder({
-      nodeId: opts.nodeId,
-      peers: opts.peers,
-      streams: opts.streams,
+      listPublicNodes: () => this.mesh.publicNodes(),
+      onLogout: (userId) => this.closeSocketsForUser(userId),
+      onKeyLogEffects: (userId, effects) => this.applyKeyLogEffects(userId, effects),
     });
   }
 
   stop(): void {
     this.mesh.stop();
+    this.sockets.clear();
   }
 
-  async handleRequest(
-    req: Request,
-    server: MeshUpgradeServer
-  ): Promise<Response | null | undefined> {
+  rewriteSelf(req: Request): Request | null {
+    return rewriteSelf(req, this.nodeId);
+  }
+
+  async handleRequest(req: Request, server: MeshUpgradeServer): Promise<MeshHandleResult> {
     const forwarded = await this.forwarder.handle(req, server);
     if (forwarded !== null) {
-      return forwarded;
+      return this.finalizeHandle(req, forwarded);
     }
-    const rewrite = getSelfRewrite(req);
-    if (rewrite) {
-      const inner = rewriteRequest(req, rewrite);
-      const handled = await this.dispatchLocal(inner, server);
-      if (handled !== null) {
-        return handled;
-      }
+    return this.finalizeHandle(req, await this.dispatchLocal(req, server));
+  }
+
+  guardGatewayWebSocket(req: Request, server: MeshUpgradeServer): Response | null | undefined {
+    if (isStandaloneRoles(this.roles)) {
       return null;
     }
-    return this.dispatchLocal(req, server);
+    const path = new URL(req.url).pathname;
+    if (path !== '/ws' && path !== '/n/self/ws' && path !== `/n/${this.nodeId}/ws`) {
+      return null;
+    }
+    const auth = authenticateRequest(req, this.sessionDeps);
+    if (!auth.ok || !auth.sid || !auth.userId) {
+      const upgraded = server.upgrade(req, {
+        data: { kind: MESH_REJECT_4401_KIND, via: MESH_VIA_SELF },
+      });
+      if (!upgraded) {
+        return jsonError('UNAUTHORIZED', 401);
+      }
+      return undefined;
+    }
+    const upgraded = server.upgrade(req, {
+      data: {
+        kind: MESH_GATEWAY_WS_KIND,
+        sid: auth.sid,
+        uid: auth.userId,
+        via: MESH_VIA_SELF,
+      },
+    });
+    if (!upgraded) {
+      return jsonError('upgrade_failed', 500);
+    }
+    return undefined;
+  }
+
+  closeSocketsForUser(uid: string): void {
+    for (const entry of [...this.sockets]) {
+      if (entry.uid === uid) {
+        this.closeRegistered(entry, WS_CLOSE_LOGIN_REQUIRED, 'NODE_LOGIN_REQUIRED');
+      }
+    }
+  }
+
+  closeSocketsForSid(sid: string): void {
+    for (const entry of [...this.sockets]) {
+      if (entry.sid === sid) {
+        this.closeRegistered(entry, WS_CLOSE_LOGIN_REQUIRED, 'NODE_LOGIN_REQUIRED');
+      }
+    }
+  }
+
+  applyKeyLogEffects(userId: string, effects: KeyLogEffect[]): void {
+    let closeAll = false;
+    for (const effect of effects) {
+      if (effect.type === 'revokeAllSessions') {
+        closeAll = true;
+      } else if (effect.type === 'revokeSessionsByCredential') {
+        closeAll = true;
+      } else if (effect.type === 'revokeSessionsVia') {
+        closeAll = true;
+      }
+    }
+    if (closeAll) {
+      this.closeSocketsForUser(userId);
+    }
+    this.sweepInvalidSockets();
+  }
+
+  touchSocket(ws: MeshServerWebSocket): boolean {
+    if (ws.data?.kind === MESH_REJECT_4401_KIND) {
+      return false;
+    }
+    const entry = this.findSocket(ws);
+    if (!entry) {
+      return true;
+    }
+    const now = this.now();
+    if (now - entry.lastVerifyAt < WS_SESSION_VERIFY_MS) {
+      return true;
+    }
+    entry.lastVerifyAt = now;
+    if (!entry.sid) {
+      this.closeRegistered(entry, WS_CLOSE_LOGIN_REQUIRED, 'NODE_LOGIN_REQUIRED');
+      return false;
+    }
+    const verified = this.sessionDeps.nodeSessionStore.verify(entry.sid, {
+      viaNodeId: MESH_VIA_SELF,
+      now,
+    });
+    if (!verified.ok) {
+      this.closeRegistered(entry, WS_CLOSE_LOGIN_REQUIRED, 'NODE_LOGIN_REQUIRED');
+      return false;
+    }
+    return true;
   }
 
   handleWebSocket = {
     open: (ws: MeshServerWebSocket): void => {
+      if (ws.data?.kind === MESH_REJECT_4401_KIND) {
+        try {
+          ws.close(WS_CLOSE_LOGIN_REQUIRED, 'NODE_LOGIN_REQUIRED');
+        } catch {
+          // ignore
+        }
+        return;
+      }
+      if (ws.data?.kind === MESH_GATEWAY_WS_KIND) {
+        if (ws.data.sid && ws.data.uid) {
+          this.registerSocket(ws, { sid: ws.data.sid, uid: ws.data.uid });
+        }
+        return;
+      }
       if (ws.data?.kind === MESH_WS_KIND) {
         this.mesh.handleMeshSocketOpen(ws);
         return;
@@ -145,6 +275,9 @@ export class MeshHttpRuntime {
       }
     },
     message: (ws: MeshServerWebSocket, message: unknown): void => {
+      if (!this.touchSocket(ws)) {
+        return;
+      }
       if (ws.data?.kind === MESH_WS_KIND) {
         this.mesh.handleMeshSocketMessage(ws, message);
         return;
@@ -154,6 +287,7 @@ export class MeshHttpRuntime {
       }
     },
     close: (ws: MeshServerWebSocket, code?: number, reason?: string): void => {
+      this.unregisterSocket(ws);
       if (ws.data?.kind === MESH_WS_KIND) {
         this.mesh.handleMeshSocketClose(ws);
         return;
@@ -183,6 +317,8 @@ export class MeshHttpRuntime {
       if (!auth.ok) {
         return jsonError('UNAUTHORIZED', 401);
       }
+    } else {
+      authenticateRequest(req, this.sessionDeps);
     }
     return null;
   }
@@ -191,28 +327,75 @@ export class MeshHttpRuntime {
     req: Request,
     server: MeshUpgradeServer
   ): Promise<Response | null | undefined> {
+    const path = new URL(req.url).pathname;
+    if (path === '/healthz' && !isStandaloneRoles(this.roles)) {
+      const auth = authenticateRequest(req, this.sessionDeps);
+      if (!auth.ok) {
+        return jsonBody({ status: 'ok' });
+      }
+      return null;
+    }
     const authRes = await this.auth.handle(req);
     if (authRes) return authRes;
     const meshRes = await this.mesh.handle(req, server);
     if (meshRes !== null) return meshRes;
     return null;
   }
-}
 
-function rewriteRequest(req: Request, rewrite: string): Request {
-  const url = new URL(req.url);
-  const q = rewrite.indexOf('?');
-  if (q === -1) {
-    url.pathname = rewrite;
-    url.search = '';
-  } else {
-    url.pathname = rewrite.slice(0, q);
-    url.search = rewrite.slice(q);
+  private finalizeHandle(req: Request, result: MeshHandleResult): MeshHandleResult {
+    if (result instanceof Response) {
+      return consumeSetSessionForBrowser(req, result);
+    }
+    return result;
   }
-  const inner = new Request(url, req);
-  const ctx = getMeshRequestContext(req);
-  setMeshRequestContext(inner, { ...ctx, via: MESH_VIA_SELF, selfRewrite: undefined });
-  return inner;
+
+  private registerSocket(ws: MeshServerWebSocket, auth: { sid: string; uid: string }): void {
+    this.unregisterSocket(ws);
+    this.sockets.add({
+      ws,
+      sid: auth.sid,
+      uid: auth.uid,
+      lastVerifyAt: this.now(),
+    });
+  }
+
+  private unregisterSocket(ws: MeshServerWebSocket): void {
+    for (const entry of this.sockets) {
+      if (entry.ws === ws) {
+        this.sockets.delete(entry);
+        return;
+      }
+    }
+  }
+
+  private findSocket(ws: MeshServerWebSocket): RegisteredSocket | undefined {
+    for (const entry of this.sockets) {
+      if (entry.ws === ws) return entry;
+    }
+    return undefined;
+  }
+
+  private closeRegistered(entry: RegisteredSocket, code: number, reason: string): void {
+    this.sockets.delete(entry);
+    try {
+      entry.ws.close(code, reason);
+    } catch {
+      // ignore
+    }
+  }
+
+  private sweepInvalidSockets(): void {
+    const now = this.now();
+    for (const entry of [...this.sockets]) {
+      const verified = this.sessionDeps.nodeSessionStore.verify(entry.sid, {
+        viaNodeId: MESH_VIA_SELF,
+        now,
+      });
+      if (!verified.ok) {
+        this.closeRegistered(entry, WS_CLOSE_LOGIN_REQUIRED, 'NODE_LOGIN_REQUIRED');
+      }
+    }
+  }
 }
 
 function isStaticAsset(path: string): boolean {

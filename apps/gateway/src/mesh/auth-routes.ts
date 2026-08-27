@@ -12,20 +12,20 @@ import {
   verifyLogin,
   verifyTotpCode,
 } from '@tmex/shared/auth';
-import type { VerifyDelegationPasskey } from '@tmex/shared/auth';
+import type { KeyLogEffect, VerifyDelegationPasskey } from '@tmex/shared/auth';
 import { readJsonObjectBody } from '../api/http';
 import type { ChallengeStore } from '../auth/challenge-store';
-import { buildClearCookie, buildSetCookie, nodeSessionCookieName } from '../auth/cookies';
 import { NODE_SESSION_TTL_MS, type NodeSessionStore } from '../auth/node-session-store';
 import {
   createAuthenticationOptions,
   createRegistrationOptions,
+  decodePasskeyAssertionSig,
   makeVerifyDelegationPasskey,
   verifyRegistration,
 } from '../auth/passkey';
 import type { UserKeyService } from '../auth/user-key-service';
 import { kdfParamsFromJson } from '../auth/user-key-service';
-import type { UserRecord, UserStore } from '../auth/user-store';
+import type { UserKeyRecord, UserRecord, UserStore } from '../auth/user-store';
 import {
   type KeyLogPublisher,
   LOGIN_CHALLENGE_TTL_MS,
@@ -40,11 +40,17 @@ import {
 } from './mesh-deps';
 import {
   type SessionMiddlewareDeps,
-  isHttps,
   jsonBody,
   jsonError,
+  publicRequestUrl,
   requireSession,
 } from './session-middleware';
+
+export type PublicAuthNode = {
+  id: string;
+  name: string;
+  online: boolean;
+};
 
 export type AuthRoutesDeps = {
   roles: MeshRoles;
@@ -58,6 +64,9 @@ export type AuthRoutesDeps = {
   now?: () => number;
   verifyDelegationPasskey?: VerifyDelegationPasskey;
   primaryUserId?: string;
+  listPublicNodes?: () => PublicAuthNode[];
+  onLogout?: (userId: string) => void;
+  onKeyLogEffects?: (userId: string, effects: KeyLogEffect[]) => void;
 };
 
 export class AuthRoutes {
@@ -79,6 +88,9 @@ export class AuthRoutes {
     const path = new URL(req.url).pathname;
     if (path === '/api/auth/mode' && req.method === 'GET') {
       return this.handleMode(req);
+    }
+    if (path === '/api/auth/nodes' && req.method === 'GET') {
+      return this.handlePublicNodes();
     }
     if (path === '/api/auth/challenge' && req.method === 'POST') {
       return this.handleChallenge(req);
@@ -139,6 +151,13 @@ export class AuthRoutes {
       passkeyAvailable: isPasskeyAvailable(origin),
       totpEnabled: user?.totpRecordSeq != null,
     });
+  }
+
+  private handlePublicNodes(): Response {
+    const nodes = this.deps.listPublicNodes?.() ?? [
+      { id: this.deps.nodeId, name: 'self', online: true },
+    ];
+    return jsonBody({ nodes });
   }
 
   private async handleChallenge(req: Request): Promise<Response> {
@@ -274,29 +293,21 @@ export class AuthRoutes {
         'content-type': 'application/json',
         [X_TMEX_SET_SESSION]: `${issued.sid};${maxAgeSec || Math.floor(NODE_SESSION_TTL_MS / 1000)}`,
       });
-      const via = getMeshRequestContext(req).via || MESH_VIA_SELF;
-      if (via === MESH_VIA_SELF) {
-        headers.append(
-          'set-cookie',
-          buildSetCookie(nodeSessionCookieName(MESH_VIA_SELF), issued.sid, {
-            maxAgeSec: maxAgeSec || Math.floor(NODE_SESSION_TTL_MS / 1000),
-            secure: isHttps(req),
-          })
-        );
-      }
-      return jsonBody({ sid: issued.sid, expires_at: issued.expiresAt }, 200, headers);
+      return jsonBody({ expires_at: issued.expiresAt }, 200, headers);
     } catch {
       return fail('MALFORMED', 400);
     }
   }
 
-  private handleLogout(req: Request, userId: string | null): Response {
-    if (!userId) {
-      return jsonBody({ ok: true });
+  private handleLogout(_req: Request, userId: string | null): Response {
+    if (userId) {
+      this.deps.nodeSessionStore.revokeAllForUser(userId, this.now());
+      this.deps.onLogout?.(userId);
     }
-    this.deps.nodeSessionStore.revokeAllForUser(userId, this.now());
-    const headers = new Headers({ 'content-type': 'application/json' });
-    headers.append('set-cookie', buildClearCookie(nodeSessionCookieName(MESH_VIA_SELF)));
+    const headers = new Headers({
+      'content-type': 'application/json',
+      [X_TMEX_SET_SESSION]: ';0',
+    });
     return jsonBody({ ok: true }, 200, headers);
   }
 
@@ -433,6 +444,7 @@ export class AuthRoutes {
       }
       return jsonError(applied.error, 400);
     }
+    this.deps.onKeyLogEffects?.(userId, applied.effects);
     try {
       await this.deps.publisher.publish({ bytes, sig });
     } catch {
@@ -468,9 +480,21 @@ export class AuthRoutes {
     if (!delegation.credential_id) {
       return { ok: false, code: 'DELEGATION_BAD_SIGNATURE' };
     }
-    let assertion: unknown;
+    if (delegation.uid !== user.id) {
+      return { ok: false, code: 'DELEGATION_BAD_SIGNATURE' };
+    }
+    let stored: UserKeyRecord | null;
     try {
-      assertion = JSON.parse(new TextDecoder().decode(delegationSig));
+      stored = this.deps.userStore.getKeyByCredentialId(decodeBase64url(delegation.credential_id));
+    } catch {
+      stored = null;
+    }
+    if (!stored || stored.userId !== user.id) {
+      return { ok: false, code: 'DELEGATION_BAD_SIGNATURE' };
+    }
+    let assertion: ReturnType<typeof decodePasskeyAssertionSig>;
+    try {
+      assertion = decodePasskeyAssertionSig(delegationSig);
     } catch {
       return { ok: false, code: 'DELEGATION_BAD_SIGNATURE' };
     }
@@ -588,7 +612,7 @@ export function findPrimaryUser(store: UserStore, primaryUserId?: string): UserR
 }
 
 export function requestOrigin(req: Request): string {
-  return req.headers.get('origin') ?? new URL(req.url).origin;
+  return req.headers.get('origin') ?? publicRequestUrl(req).origin;
 }
 
 export function rpIdFromOrigin(origin: string): string {
