@@ -18,6 +18,7 @@ export interface InstallLayout {
   resourcesDir: string;
   feDir: string;
   drizzleDir: string;
+  nativeDir: string;
   envPath: string;
   runScriptPath: string;
   metaPath: string;
@@ -31,6 +32,7 @@ export function createInstallLayout(installDir: string): InstallLayout {
     resourcesDir: join(installDir, 'resources'),
     feDir: join(installDir, 'resources', 'fe-dist'),
     drizzleDir: join(installDir, 'resources', 'gateway-drizzle'),
+    nativeDir: join(installDir, 'native'),
     envPath: join(installDir, 'app.env'),
     runScriptPath: join(installDir, 'run.sh'),
     metaPath: join(installDir, 'install-meta.json'),
