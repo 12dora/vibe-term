@@ -177,6 +177,7 @@ export function createTmuxStore(
           };
         });
 
+        lastConnectSentAt.delete(deviceId);
         core.selectMachine().cleanup(deviceId);
         selection.cancelReselect(deviceId);
         paneSubscriptions.clearDevice(deviceId);

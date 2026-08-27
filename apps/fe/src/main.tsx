@@ -130,10 +130,13 @@ function RootLayout() {
   useEffect(() => {
     void loadCapabilities();
   }, [loadCapabilities]);
+  // 桌面端展开/折叠受控于持久化的 ui store，刷新后保留，且 setSidebarCollapsed 能真正开合侧栏
+  const sidebarCollapsed = useUIStore((state) => state.sidebarCollapsed);
+  const setSidebarCollapsed = useUIStore((state) => state.setSidebarCollapsed);
   return (
     <GlobalDeviceProvider>
       <WatchEventsInit />
-      <SidebarProvider>
+      <SidebarProvider open={!sidebarCollapsed} onOpenChange={(open) => setSidebarCollapsed(!open)}>
         <StatusBarSync />
         <FlowBridges />
         <AppSidebar />

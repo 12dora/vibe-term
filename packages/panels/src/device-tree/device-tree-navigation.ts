@@ -55,6 +55,21 @@ export function buildPaneRoutePath(
   );
 }
 
+/**
+ * matchPath 接收的是 location.pathname，其中 paneId 仍保留 URL 编码；只在这里解码一次，
+ * 再交给 tmux URL 工具保持与 useParams 路径一致。
+ * 手工敲坏的 `%` 序列（如 `/panes/%zz`）会让 decodeURIComponent 抛 URIError 并整棵侧边栏白屏，
+ * 这里降级成原样返回，让选择落空而不是崩溃。
+ */
+export function safeDecodePaneParam(value: string | undefined): string | undefined {
+  if (!value) return undefined;
+  try {
+    return decodeURIComponent(value);
+  } catch {
+    return value;
+  }
+}
+
 export function parseDeviceTreeSelection(
   pathname: string,
   patterns: DeviceTreeRoutePatterns
@@ -64,11 +79,7 @@ export function parseDeviceTreeSelection(
   return {
     selectedDeviceId: paneMatch?.params.deviceId ?? deviceMatch?.params.deviceId,
     selectedWindowId: paneMatch?.params.windowId,
-    // matchPath 接收的是 location.pathname，其中 paneId 仍保留 URL 编码；只在这里解码一次，
-    // 再交给 tmux URL 工具保持与 useParams 路径一致。
-    selectedPaneId: decodePaneIdFromUrlParam(
-      paneMatch?.params.paneId ? decodeURIComponent(paneMatch.params.paneId) : undefined
-    ),
+    selectedPaneId: decodePaneIdFromUrlParam(safeDecodePaneParam(paneMatch?.params.paneId)),
   };
 }
 
@@ -103,6 +114,79 @@ export function resolvePendingNavigation(
   };
 }
 
+export interface PendingNavigationTimers {
+  setTimer: (fn: () => void, ms: number) => unknown;
+  clearTimer: (handle: unknown) => void;
+}
+
+export interface PendingNavigationSlotOptions {
+  ttlMs?: number;
+  timers?: PendingNavigationTimers;
+}
+
+/**
+ * pending 导航的单槽存储：写入即挂 TTL 定时器，到期自行清空。
+ * 只靠 snapshots 变化去判过期的话，目标设备一直不推快照时这条 pending 会无限存活，
+ * 之后突然到货就会抢走用户早已改过的选择。
+ */
+export interface PendingNavigationSlot {
+  get(): PendingNavigation | null;
+  set(pending: PendingNavigation): void;
+  clear(): void;
+  dispose(): void;
+}
+
+const defaultTimers: PendingNavigationTimers = {
+  setTimer: (fn, ms) => setTimeout(fn, ms),
+  clearTimer: (handle) => clearTimeout(handle as ReturnType<typeof setTimeout>),
+};
+
+export function createPendingNavigationSlot(
+  options: PendingNavigationSlotOptions = {}
+): PendingNavigationSlot {
+  const ttlMs = options.ttlMs ?? PENDING_NAVIGATION_TTL_MS;
+  const timers = options.timers ?? defaultTimers;
+
+  let pending: PendingNavigation | null = null;
+  let handle: unknown = null;
+
+  const cancelTimer = () => {
+    if (handle === null) return;
+    timers.clearTimer(handle);
+    handle = null;
+  };
+
+  return {
+    get: () => pending,
+    set: (next) => {
+      cancelTimer();
+      pending = next;
+      handle = timers.setTimer(() => {
+        handle = null;
+        pending = null;
+      }, ttlMs);
+    },
+    clear: () => {
+      cancelTimer();
+      pending = null;
+    },
+    dispose: () => {
+      cancelTimer();
+      pending = null;
+    },
+  };
+}
+
+function usePendingNavigationSlot(): PendingNavigationSlot {
+  const slotRef = useRef<PendingNavigationSlot | null>(null);
+  if (slotRef.current === null) slotRef.current = createPendingNavigationSlot();
+  const slot = slotRef.current;
+
+  useEffect(() => () => slot.dispose(), [slot]);
+
+  return slot;
+}
+
 export function useDeviceTreeSelection(): DeviceTreeSelection {
   const { host } = useRuntime();
   const { pathname } = useLocation();
@@ -131,7 +215,7 @@ export function useDeviceTreeNavigationApi(): DeviceTreeNavigationApi {
   const selectWindow = useTmuxStore((state) => state.selectWindow);
   const snapshots = useTmuxStore((state) => state.snapshots);
 
-  const pendingNavigationRef = useRef<PendingNavigation | null>(null);
+  const pendingNavigation = usePendingNavigationSlot();
 
   const handleNavigate = useCallback(
     (to: string, options?: NavigateOptions) => {
@@ -148,7 +232,7 @@ export function useDeviceTreeNavigationApi(): DeviceTreeNavigationApi {
       paneId: string,
       options?: { keepSidebarOpen?: boolean }
     ) => {
-      pendingNavigationRef.current = null;
+      pendingNavigation.clear();
 
       window.dispatchEvent(
         new CustomEvent('tmex:user-initiated-selection', {
@@ -159,23 +243,23 @@ export function useDeviceTreeNavigationApi(): DeviceTreeNavigationApi {
         keepSidebarOpen: options?.keepSidebarOpen,
       });
     },
-    [handleNavigate, host]
+    [handleNavigate, host, pendingNavigation]
   );
 
   useEffect(() => {
     const outcome = resolvePendingNavigation(
-      pendingNavigationRef.current,
+      pendingNavigation.get(),
       (deviceId) => snapshots[deviceId]?.session?.windows,
       Date.now()
     );
     if (outcome.status === 'expired') {
-      pendingNavigationRef.current = null;
+      pendingNavigation.clear();
       return;
     }
     if (outcome.status !== 'ready') return;
-    pendingNavigationRef.current = null;
+    pendingNavigation.clear();
     navigateToPane(outcome.deviceId, outcome.windowId, outcome.paneId);
-  }, [snapshots, navigateToPane]);
+  }, [snapshots, navigateToPane, pendingNavigation]);
 
   const navigateToWindow = useCallback(
     (deviceId: string, windowId: string, panes: TmuxPane[]) => {
@@ -184,12 +268,12 @@ export function useDeviceTreeNavigationApi(): DeviceTreeNavigationApi {
       const activePane = pickActivePane(panes);
       if (activePane) {
         navigateToPane(deviceId, windowId, activePane.id);
-        pendingNavigationRef.current = null;
+        pendingNavigation.clear();
       } else {
-        pendingNavigationRef.current = { deviceId, windowId, at: Date.now() };
+        pendingNavigation.set({ deviceId, windowId, at: Date.now() });
       }
     },
-    [navigateToPane, selectWindow]
+    [navigateToPane, selectWindow, pendingNavigation]
   );
 
   const nav = useMemo<DeviceTreeNavigation>(() => ({ navigateToPane }), [navigateToPane]);

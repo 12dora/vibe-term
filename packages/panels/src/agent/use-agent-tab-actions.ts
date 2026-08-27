@@ -7,6 +7,7 @@ import type { AgentSessionDto, AgentWriteMode } from '@tmex/shared';
 import { useUIStore } from '@tmex/stores/react';
 
 import type { BindingInfo } from './agent-binding';
+import { canRebindToRoute } from './agent-route-sync';
 import type { AgentTabView } from './agent-tab-view';
 import type { AgentStoreHandle, AgentTabState } from './use-agent-tab-state';
 
@@ -66,7 +67,10 @@ function createSessionActions(state: AgentTabState, view: AgentTabView) {
       void agentStore.getState().sendMessage(activeSession.id, view.retryText);
     },
     onRebind: () => {
+      // 后端只接受 paneId：跨设备的路由 pane 不能改绑，否则会把别的设备的 pane id 写进本会话
       if (!activeSession || !routePaneId) return;
+      if (!canRebindToRoute(activeSession, { deviceId: routeDeviceId, paneId: routePaneId }))
+        return;
       void agentStore.getState().rebindPane(activeSession.id, routePaneId);
     },
     onModelChange: (providerId: string | null, modelId: string) => {

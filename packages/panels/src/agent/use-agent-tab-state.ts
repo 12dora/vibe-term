@@ -21,6 +21,7 @@ import type {
 import { useAgentStore, useRuntime, useTmuxStore } from '@tmex/stores/react';
 
 import { type SnapshotMap, findPaneTitle } from './agent-binding';
+import { shouldRedraftForRoute } from './agent-route-sync';
 
 export type AgentStoreHandle = AppRuntime['stores']['agent'];
 
@@ -44,10 +45,17 @@ interface AgentSessionSlice {
   defaultWriteMode: AgentWriteMode;
 }
 
-export interface AgentTabState extends RoutePane, AgentSessionSlice {
+interface DevicesSlice {
+  devices: Device[] | undefined;
+  /** devices 查询尚未拿到结果（首个 pending 或重试中） */
+  devicesLoading: boolean;
+  /** devices 查询失败：设备列表不可信，不能据此判定会话孤立 */
+  devicesError: boolean;
+}
+
+export interface AgentTabState extends RoutePane, AgentSessionSlice, DevicesSlice {
   agentStore: AgentStoreHandle;
   snapshots: SnapshotMap;
-  devices: Device[] | undefined;
 }
 
 function useRoutePane(snapshots: SnapshotMap): RoutePane {
@@ -97,13 +105,13 @@ function useAgentSessionSlice(): AgentSessionSlice {
   };
 }
 
-function useDevices(runtime: AppRuntime): Device[] | undefined {
-  const { data } = useQuery({
+function useDevices(runtime: AppRuntime): DevicesSlice {
+  const { data, isPending, isError } = useQuery({
     queryKey: ['devices'],
     queryFn: () => fetchDevices(runtime.apiClient),
     throwOnError: false,
   });
-  return data?.devices;
+  return { devices: data?.devices, devicesLoading: isPending, devicesError: isError };
 }
 
 function useSessionsBootstrap(agentStore: AgentStoreHandle): void {
@@ -129,6 +137,31 @@ function useAutoDraft(
   }, [activeSession, draft, routeDeviceId, routePaneId, routePaneTitle, agentStore]);
 }
 
+/**
+ * 路由 pane 切换后草稿仍绑在旧 pane：按当前路由重新起草，
+ * 否则发送会物化到上一个 pane。未发送的预填 prompt 一并带到新草稿。
+ */
+function useSyncDraftToRoute(
+  agentStore: AgentStoreHandle,
+  activeSession: AgentSessionDto | undefined,
+  draft: DraftSession | null,
+  route: RoutePane
+): void {
+  const { routeDeviceId, routePaneId, routePaneTitle } = route;
+  useEffect(() => {
+    if (!routeDeviceId || !routePaneId) return;
+    const redraft = shouldRedraftForRoute(
+      draft,
+      { deviceId: routeDeviceId, paneId: routePaneId },
+      Boolean(activeSession)
+    );
+    if (!redraft) return;
+    agentStore
+      .getState()
+      .startDraft(routeDeviceId, routePaneId, routePaneTitle, draft?.prompt ?? null);
+  }, [activeSession, draft, routeDeviceId, routePaneId, routePaneTitle, agentStore]);
+}
+
 export function useAgentTabState(): AgentTabState {
   const runtime = useRuntime();
   const agentStore = runtime.stores.agent;
@@ -139,6 +172,7 @@ export function useAgentTabState(): AgentTabState {
 
   useSessionsBootstrap(agentStore);
   useAutoDraft(agentStore, session.activeSession, session.draft, route);
+  useSyncDraftToRoute(agentStore, session.activeSession, session.draft, route);
 
-  return { agentStore, snapshots, devices, ...route, ...session };
+  return { agentStore, snapshots, ...devices, ...route, ...session };
 }

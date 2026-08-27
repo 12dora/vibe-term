@@ -8,6 +8,7 @@ import type { Device } from '@tmex/shared';
 import { toBCP47 } from '@tmex/shared';
 import { hostAppPath } from '@tmex/stores';
 import { useRuntime, useSiteStore, useTmuxStore, useUIStore } from '@tmex/stores/react';
+import { Button } from '@tmex/ui/button';
 import { ScrollArea } from '@tmex/ui/scroll-area';
 import { SidebarGroup } from '@tmex/ui/sidebar';
 import { useCallback, useEffect, useMemo, useRef } from 'react';
@@ -67,11 +68,12 @@ export function SideBarDeviceList({
   const closeWindow = useTmuxStore((state) => state.closeWindow);
   const language = useSiteStore((state) => state.settings?.language ?? 'en_US');
 
-  const { data: devicesData } = useQuery({
+  const devicesQuery = useQuery({
     queryKey,
     queryFn: () => fetchDevices(runtime.apiClient),
     throwOnError: false,
   });
+  const devicesData = devicesQuery.data;
 
   const hydrateDeviceErrors = useTmuxStore((state) => state.hydrateDeviceErrors);
 
@@ -210,6 +212,7 @@ export function SideBarDeviceList({
         <div className="space-y-1.5 pb-2 pt-1 select-none [-webkit-user-select:none] [-webkit-touch-callout:none]">
           <SortableVerticalList
             ids={sortedDevices.map((d) => d.id)}
+            disabled={reorderDevicesMutation.isPending}
             onReorder={(nextIds) => reorderDevicesMutation.mutate(nextIds)}
           >
             {sortedDevices.map((device) => (
@@ -241,11 +244,29 @@ export function SideBarDeviceList({
               />
             ))}
           </SortableVerticalList>
-          {sortedDevices.length === 0 && (
-            <div className="text-center text-sm text-muted-foreground py-4">
-              {t('sidebar.noDevices')}
-            </div>
-          )}
+          {sortedDevices.length === 0 &&
+            (devicesQuery.isError ? (
+              <div
+                data-testid="sidebar-devices-error"
+                className="flex flex-col items-center gap-2 py-4 text-center"
+              >
+                <span className="text-sm text-muted-foreground">{t('device.loadFailed')}</span>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  data-testid="sidebar-devices-retry"
+                  disabled={devicesQuery.isFetching}
+                  onClick={() => void devicesQuery.refetch()}
+                >
+                  {t('common.retry')}
+                </Button>
+              </div>
+            ) : (
+              <div className="text-center text-sm text-muted-foreground py-4">
+                {t('sidebar.noDevices')}
+              </div>
+            ))}
 
           {agentAdapter && (
             <agentAdapter.OrphanSessions nav={nav} knownDeviceIds={knownDeviceIds} />

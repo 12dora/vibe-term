@@ -2,20 +2,13 @@ import { useBellStore } from '@tmex/notifications';
 import type { TmuxPane } from '@tmex/shared';
 import { useRuntime } from '@tmex/stores/react';
 import { cn } from '@tmex/ui';
-import {
-  FolderOpen,
-  GripVertical,
-  Pencil,
-  Plus,
-  Radar,
-  SquareSplitHorizontal,
-  SquareSplitVertical,
-  X,
-} from 'lucide-react';
+import { GripVertical } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import type { DeviceTreeNavigation, SidebarAgentAdapter } from './agent-adapter';
-import { type DeviceActionItem, DeviceActionsMenu } from './device-actions-menu';
+import { DeviceActionsMenu } from './device-actions-menu';
+import { buildPaneActions } from './device-tree-actions';
 import { useSortableRow } from './device-tree-dnd';
+import { RowLabel, processSubtitle } from './row-label';
 
 function PaneBellIcon({ paneId }: { paneId: string }) {
   const ringing = useBellStore((state) => Boolean(state.ringingPanes[paneId]));
@@ -56,65 +49,19 @@ export function PaneRow({
     pane.id
   );
 
-  const items: DeviceActionItem[] = [
-    {
-      key: 'rename',
-      testId: `pane-menu-rename-${pane.id}`,
-      icon: Pencil,
-      label: t('window.rename'),
-      onSelect: () => onRenamePane(deviceId, pane.id),
-    },
-  ];
-  if (agent) {
-    items.push({
-      key: 'new-session',
-      testId: `pane-menu-new-session-${pane.id}`,
-      icon: Plus,
-      label: t('agent.session.new'),
-      onSelect: () => agent.onCreateSessionForPane(nav, deviceId, windowId, pane),
-    });
-  }
-  if (pane.currentPath) {
-    items.push({
-      key: 'new-in-cwd',
-      icon: FolderOpen,
-      label: t('window.newInCwd'),
-      onSelect: () => stores.tmux.getState().createWindow(deviceId, undefined, pane.currentPath),
-    });
-  }
-  items.push(
-    {
-      key: 'split-right',
-      testId: `pane-split-right-${pane.id}`,
-      icon: SquareSplitHorizontal,
-      label: t('window.splitRight'),
-      onSelect: () =>
-        stores.tmux.getState().splitPane(deviceId, pane.id, 'right', pane.currentPath),
-    },
-    {
-      key: 'split-down',
-      testId: `pane-split-down-${pane.id}`,
-      icon: SquareSplitVertical,
-      label: t('window.splitDown'),
-      onSelect: () => stores.tmux.getState().splitPane(deviceId, pane.id, 'down', pane.currentPath),
-    }
-  );
-  if (features.watchUi) {
-    items.push({
-      key: 'watch',
-      testId: `pane-watch-${pane.id}`,
-      icon: Radar,
-      label: t('watch.openMonitor'),
-      onSelect: () => onWatchPane(deviceId, pane.id),
-    });
-  }
-  items.push({
-    key: 'close',
-    testId: `pane-menu-close-${pane.id}`,
-    icon: X,
-    label: t('window.closePane'),
-    destructive: true,
-    onSelect: () => onClosePane(deviceId, windowId, pane.id),
+  const items = buildPaneActions({
+    t,
+    pane,
+    watchUi: features.watchUi,
+    onRename: () => onRenamePane(deviceId, pane.id),
+    onCreateSession: agent
+      ? () => agent.onCreateSessionForPane(nav, deviceId, windowId, pane)
+      : undefined,
+    onCreateWindowInCwd: (cwd) => stores.tmux.getState().createWindow(deviceId, undefined, cwd),
+    onSplit: (paneId, direction, cwd) =>
+      stores.tmux.getState().splitPane(deviceId, paneId, direction, cwd),
+    onWatch: (paneId) => onWatchPane(deviceId, paneId),
+    onClose: () => onClosePane(deviceId, windowId, pane.id),
   });
 
   return (
@@ -150,18 +97,10 @@ export function PaneRow({
         >
           <PaneBellIcon paneId={pane.id} />
           {/* 多 pane 窗口的窗口行不再展示细节，pane 行呈现完整的标题 + 进程@路径 */}
-          <span className="flex-1 min-w-0">
-            <span className="font-mono text-[11px] leading-tight font-medium line-clamp-2 [overflow-wrap:break-word]">
-              {pane.customName || pane.title || t('window.pane')}
-            </span>
-            {pane.currentCommand && (
-              <span className="font-mono text-[10.5px] leading-tight text-muted-foreground line-clamp-1 break-all">
-                {pane.currentPath
-                  ? `${pane.currentCommand}@${pane.currentPath}`
-                  : pane.currentCommand}
-              </span>
-            )}
-          </span>
+          <RowLabel
+            title={pane.customName || pane.title || t('window.pane')}
+            subtitle={processSubtitle(pane.currentCommand, pane.currentPath)}
+          />
         </button>
 
         <DeviceActionsMenu

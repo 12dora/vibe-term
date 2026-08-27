@@ -44,22 +44,30 @@ export function reorderIdsByDragEnd(ids: readonly string[], event: DragEndEvent)
 export interface SortableVerticalListProps {
   ids: string[];
   onReorder: (nextIds: string[]) => void;
+  /** 上一次重排还在飞时置真：并发的重排请求会让先发后到的旧顺序覆盖新顺序 */
+  disabled?: boolean;
   children: ReactNode;
 }
 
 /** 设备树三层共用的竖向排序容器；自身不产生 DOM 节点 */
-export function SortableVerticalList({ ids, onReorder, children }: SortableVerticalListProps) {
+export function SortableVerticalList({
+  ids,
+  onReorder,
+  disabled = false,
+  children,
+}: SortableVerticalListProps) {
   const sensors = useDeviceTreeSensors();
   return (
     <DndContext
       sensors={sensors}
       collisionDetection={closestCenter}
       onDragEnd={(event) => {
+        if (disabled) return;
         const nextIds = reorderIdsByDragEnd(ids, event);
         if (nextIds) onReorder(nextIds);
       }}
     >
-      <SortableContext items={ids} strategy={verticalListSortingStrategy}>
+      <SortableContext items={ids} strategy={verticalListSortingStrategy} disabled={disabled}>
         {children}
       </SortableContext>
     </DndContext>

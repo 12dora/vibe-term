@@ -100,3 +100,27 @@ describe('sidebar tab state', () => {
     expect(store.getState().sidebarDeviceExpanded).toEqual({});
   });
 });
+
+describe('sidebar collapse state', () => {
+  beforeEach(() => {
+    storage.clear();
+  });
+
+  test('defaults to expanded', () => {
+    expect(createStore().getState().sidebarCollapsed).toBe(false);
+  });
+
+  test('persists collapse across store instances', () => {
+    const prefix = `ui-sidebar-collapsed-${Date.now()}-`;
+    const store = createUIStore({ storagePrefix: prefix });
+
+    store.getState().setSidebarCollapsed(true);
+
+    const persisted = JSON.parse(storage.getItem(`${prefix}tmex-ui`) ?? '{}') as {
+      state?: { sidebarCollapsed?: boolean };
+    };
+    expect(persisted.state?.sidebarCollapsed).toBe(true);
+
+    expect(createUIStore({ storagePrefix: prefix }).getState().sidebarCollapsed).toBe(true);
+  });
+});

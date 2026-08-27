@@ -1,6 +1,6 @@
 import { useIsFetching, useQuery, useQueryClient } from '@tanstack/react-query';
 import type { FileEntryDto, FileRootDto, SystemInfo } from '@tmex/shared';
-import { Loader2, RotateCw } from 'lucide-react';
+import { Loader2, RotateCw, TriangleAlert } from 'lucide-react';
 import { useEffect, useMemo } from 'react';
 import { useTranslation } from 'react-i18next';
 import { matchPath, useLocation, useNavigate } from 'react-router';
@@ -147,7 +147,27 @@ function FilesTabInner({ hideHeader }: FilesTabProps) {
               {t('common.loading')}
             </div>
           )}
-          {!rootsQuery.isLoading && roots.length === 0 && (
+          {/* 加载失败与「没有可访问目录」是两种状态：失败时给重试，不能显示成空态 */}
+          {rootsQuery.isError && (
+            <div
+              data-testid="files-roots-error"
+              className="flex flex-col items-center gap-2 px-3 py-6 text-center"
+            >
+              <span className="flex items-center gap-1.5 text-xs text-destructive/80">
+                <TriangleAlert className="h-3.5 w-3.5 shrink-0" />
+                {t('files.error.unknown')}
+              </span>
+              <Button
+                variant="outline"
+                size="xs"
+                data-testid="files-roots-retry"
+                onClick={() => void rootsQuery.refetch()}
+              >
+                {t('common.retry')}
+              </Button>
+            </div>
+          )}
+          {!rootsQuery.isLoading && !rootsQuery.isError && roots.length === 0 && (
             <div className="px-3 py-6 text-center text-xs text-muted-foreground">
               {t('files.noRoots')}
             </div>

@@ -4,22 +4,15 @@ import { buildWindowTitleParts } from '@tmex/stores';
 import { useRuntime } from '@tmex/stores/react';
 import { cn } from '@tmex/ui';
 import { useSidebar } from '@tmex/ui/sidebar';
-import {
-  FolderOpen,
-  GripVertical,
-  Pencil,
-  Plus,
-  Radar,
-  SquareSplitHorizontal,
-  SquareSplitVertical,
-  X,
-} from 'lucide-react';
+import { GripVertical } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import type { DeviceTreeNavigation, SidebarAgentAdapter } from './agent-adapter';
-import { type DeviceActionItem, DeviceActionsMenu } from './device-actions-menu';
+import { DeviceActionsMenu } from './device-actions-menu';
+import { buildWindowActions } from './device-tree-actions';
 import { SortableVerticalList, useSortableRow } from './device-tree-dnd';
 import { pickActivePane } from './device-tree-navigation';
 import { PaneRow } from './pane-row';
+import { RowLabel, processSubtitle } from './row-label';
 
 function WindowBellIcon({ paneIds }: { paneIds: string[] }) {
   const ringing = useBellStore((state) => paneIds.some((id) => state.ringingPanes[id]));
@@ -66,7 +59,6 @@ export function WindowRow({
   const hasMultiplePanes = tmuxWindow.panes.length > 1;
   const titleParts = buildWindowTitleParts(tmuxWindow);
   const activePane = pickActivePane(tmuxWindow.panes);
-  const activePaneCwd = activePane?.currentPath;
 
   const selectedPaneInWindow = tmuxWindow.panes.find((pane) => pane.id === selectedPaneId);
   const isPaneSelected =
@@ -76,76 +68,22 @@ export function WindowRow({
     tmuxWindow.id
   );
 
-  const items: DeviceActionItem[] = [
-    {
-      key: 'rename',
-      testId: `window-menu-rename-${tmuxWindow.id}`,
-      icon: Pencil,
-      label: t('window.rename'),
-      onSelect: () => onRenameWindow(deviceId, tmuxWindow.id),
-    },
-  ];
-  if (agent) {
-    items.push({
-      key: 'new-session',
-      testId: `window-menu-new-session-${tmuxWindow.id}`,
-      icon: Plus,
-      label: t('agent.session.new'),
-      onSelect: () =>
-        agent.onCreateSessionForPane(
-          nav,
-          deviceId,
-          tmuxWindow.id,
-          selectedPaneInWindow || tmuxWindow.panes[0]
-        ),
-    });
-  }
-  if (activePaneCwd) {
-    items.push({
-      key: 'new-in-cwd',
-      icon: FolderOpen,
-      label: t('window.newInCwd'),
-      onSelect: () => stores.tmux.getState().createWindow(deviceId, undefined, activePaneCwd),
-    });
-  }
-  if (activePane) {
-    items.push(
-      {
-        key: 'split-right',
-        testId: `window-menu-split-right-${tmuxWindow.id}`,
-        icon: SquareSplitHorizontal,
-        label: t('window.splitRight'),
-        onSelect: () =>
-          stores.tmux
-            .getState()
-            .splitPane(deviceId, activePane.id, 'right', activePane.currentPath),
-      },
-      {
-        key: 'split-down',
-        testId: `window-menu-split-down-${tmuxWindow.id}`,
-        icon: SquareSplitVertical,
-        label: t('window.splitDown'),
-        onSelect: () =>
-          stores.tmux.getState().splitPane(deviceId, activePane.id, 'down', activePane.currentPath),
-      }
-    );
-    if (features.watchUi) {
-      items.push({
-        key: 'watch',
-        testId: `window-menu-watch-${tmuxWindow.id}`,
-        icon: Radar,
-        label: t('watch.openMonitor'),
-        onSelect: () => onWatchPane(deviceId, activePane.id),
-      });
-    }
-  }
-  items.push({
-    key: 'close',
-    testId: `window-menu-close-${tmuxWindow.id}`,
-    icon: X,
-    label: t('window.close'),
-    destructive: true,
-    onSelect: () => onCloseWindow(deviceId, tmuxWindow.id),
+  // 零 pane 的窗口（快照到达前的中间态）没有可挂 agent 会话的目标，菜单项必须整条消失
+  const sessionTargetPane = selectedPaneInWindow ?? tmuxWindow.panes[0];
+  const items = buildWindowActions({
+    t,
+    tmuxWindow,
+    watchUi: features.watchUi,
+    onRename: () => onRenameWindow(deviceId, tmuxWindow.id),
+    onCreateSession:
+      agent && sessionTargetPane
+        ? () => agent.onCreateSessionForPane(nav, deviceId, tmuxWindow.id, sessionTargetPane)
+        : undefined,
+    onCreateWindowInCwd: (cwd) => stores.tmux.getState().createWindow(deviceId, undefined, cwd),
+    onSplit: (paneId, direction, cwd) =>
+      stores.tmux.getState().splitPane(deviceId, paneId, direction, cwd),
+    onWatch: (paneId) => onWatchPane(deviceId, paneId),
+    onClose: () => onCloseWindow(deviceId, tmuxWindow.id),
   });
 
   return (
@@ -186,18 +124,10 @@ export function WindowRow({
               {t('window.paneCount', { count: tmuxWindow.panes.length })}
             </span>
           ) : (
-            <span className="flex-1 min-w-0">
-              <span className="font-mono text-[11px] leading-tight font-medium line-clamp-2 [overflow-wrap:break-word]">
-                {titleParts.title}
-              </span>
-              {titleParts.processName && (
-                <span className="font-mono text-[10.5px] leading-tight text-muted-foreground line-clamp-1 break-all">
-                  {activePaneCwd
-                    ? `${titleParts.processName}@${activePaneCwd}`
-                    : titleParts.processName}
-                </span>
-              )}
-            </span>
+            <RowLabel
+              title={titleParts.title}
+              subtitle={processSubtitle(titleParts.processName, activePane?.currentPath)}
+            />
           )}
         </button>
 

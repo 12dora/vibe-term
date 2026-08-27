@@ -5,6 +5,7 @@ import type { DraftSession } from '@tmex/stores';
 import { lastUserMessageText } from '@tmex/stores';
 
 import { type BindingInfo, resolveBinding } from './agent-binding';
+import { canRebindToRoute } from './agent-route-sync';
 import type { AgentTabState } from './use-agent-tab-state';
 
 export interface AgentTabView {
@@ -41,13 +42,13 @@ function deriveBinding(state: AgentTabState): BindingInfo | null {
 
 /** 孤立会话：设备缺失 / 不在列表 / pane 在快照中已不存在 → 仅可只读查看 */
 function isOrphanSession(state: AgentTabState, binding: BindingInfo | null): boolean {
-  const { activeSession, devices } = state;
+  const { activeSession, devices, devicesLoading, devicesError } = state;
   if (!activeSession) return false;
-  return (
-    !activeSession.deviceId ||
-    !devices?.some((device) => device.id === activeSession.deviceId) ||
-    binding?.state === 'invalid'
-  );
+  if (!activeSession.deviceId) return true;
+  if (binding?.state === 'invalid') return true;
+  // devices 未加载完成或加载失败时列表不可信，不能据此判定孤立（否则会误禁用输入）
+  if (devicesLoading || devicesError || !devices) return false;
+  return !devices.some((device) => device.id === activeSession.deviceId);
 }
 
 function hasPaneMismatch(state: AgentTabState): boolean {
@@ -83,7 +84,7 @@ function deriveStatusView(state: AgentTabState, isOrphan: boolean) {
     showNewSession: Boolean(activeSession && (messages?.length ?? 0) > 0),
     newSessionDisabled: !routeDeviceId || !routePaneId,
     showPaneMismatch: Boolean(activeSession && !isOrphan && hasPaneMismatch(state)),
-    canRebind: Boolean(routePaneId),
+    canRebind: canRebindToRoute(activeSession, { deviceId: routeDeviceId, paneId: routePaneId }),
     errorText: activeSession?.status === 'error' ? activeSession.lastError : null,
     retryText: lastUserMessageText(messages),
   };
