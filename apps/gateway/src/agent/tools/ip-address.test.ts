@@ -73,6 +73,8 @@ describe('isPrivateIpv6Hostname', () => {
   test('link-local fe80::/10 视为私有', () => {
     expect(isPrivateIpv6Hostname('fe80::1')).toBe(true);
     expect(isPrivateIpv6Hostname('fe80::1%eth0')).toBe(true);
+    expect(isPrivateIpv6Hostname('fec0::1')).toBe(true);
+    expect(isPrivateIpv6Hostname('feff::1')).toBe(true);
   });
 
   test('公网 v6 放行', () => {

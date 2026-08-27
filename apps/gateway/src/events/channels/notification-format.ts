@@ -106,8 +106,9 @@ export function buildGenericRawView(event: WebhookEvent, settings: SiteSettings)
     `${t('notification.pane')}：${formatIndexAndId(event.tmux?.paneIndex, event.tmux?.paneId)}`,
   ];
   lines.push(...buildPaneMetaLines(event));
-  if (typeof event.payload?.message === 'string') {
-    lines.push(`${t('notification.message')}：${event.payload.message}`);
+  const message = event.payload?.message;
+  if (typeof message === 'string' && message.length > 0) {
+    lines.push(`${t('notification.message')}：${message}`);
   }
   return {
     lines,

@@ -62,4 +62,10 @@ describe('notification-format raw views', () => {
       false
     );
   });
+
+  test('generic view omits the message line when the message is empty', () => {
+    const withMessage = buildGenericRawView(makeEvent(), SETTINGS).lines.length;
+    const empty = buildGenericRawView(makeEvent({ payload: { message: '' } }), SETTINGS);
+    expect(empty.lines.length).toBe(withMessage - 1);
+  });
 });

@@ -99,7 +99,7 @@ export function isPrivateIpv6Bytes(bytes: Uint8Array): boolean {
   if (bytes.length !== 16) return false;
   if (isUnspecifiedOrLoopback(bytes)) return true;
   if (((bytes[0] ?? 0) & 0xfe) === 0xfc) return true;
-  if (bytes[0] === 0xfe && ((bytes[1] ?? 0) & 0xc0) === 0x80) return true;
+  if (bytes[0] === 0xfe && ((bytes[1] ?? 0) & 0x80) === 0x80) return true;
   if (isIpv4Mapped(bytes)) {
     return isPrivateIpv4(bytes[12] ?? 0, bytes[13] ?? 0);
   }
