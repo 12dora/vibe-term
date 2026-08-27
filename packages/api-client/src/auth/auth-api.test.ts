@@ -2,6 +2,7 @@ import { describe, expect, test } from 'bun:test';
 import { ApiClient } from '../client';
 import { InvalidNodeIdError } from '../node-url';
 import { AuthApi, nodeAuthPath } from './auth-api';
+import { NoPasskeyForOriginError } from './types';
 
 const NODE_A = '0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a';
 
@@ -152,5 +153,46 @@ describe('AuthApi', () => {
     const nodes = await api.listNodes();
     expect(nodes.map((n) => n.id)).toEqual(['a', 'b']);
     expect(calls[0].url).toBe('/api/mesh/nodes');
+  });
+});
+
+describe('passkeyLoginOptions 的 origin 过滤（B2-8）', () => {
+  test('404 NO_PASSKEY_FOR_ORIGIN → 可判别的类型化错误，不是泛化 Error', async () => {
+    const { api } = recorder([
+      new Response(JSON.stringify({ code: 'NO_PASSKEY_FOR_ORIGIN' }), { status: 404 }),
+    ]);
+
+    const error = await api.passkeyLoginOptions('alice', 'DELEGATION').then(
+      () => null,
+      (err: unknown) => err
+    );
+
+    expect(error).toBeInstanceOf(NoPasskeyForOriginError);
+    // 登录页据此提示「本入口没有可用 passkey」
+    expect((error as NoPasskeyForOriginError).code).toBe('NO_PASSKEY_FOR_ORIGIN');
+  });
+
+  test('别的 404（UNKNOWN_USER）不冒充成「本入口没有 passkey」', async () => {
+    const { api } = recorder([
+      new Response(JSON.stringify({ code: 'UNKNOWN_USER' }), { status: 404 }),
+    ]);
+    const error = await api.passkeyLoginOptions('alice', 'DELEGATION').then(
+      () => null,
+      (err: unknown) => err
+    );
+    expect(error).not.toBeInstanceOf(NoPasskeyForOriginError);
+    expect((error as Error).message).toBe('UNKNOWN_USER');
+  });
+
+  test('200 原样返回后端已按精确 origin 过滤过的 allowCredentials', async () => {
+    const { api, calls } = recorder([
+      new Response(
+        JSON.stringify({ challenge: 'CH', rpId: 'node.example', allowCredentials: [{ id: 'a' }] }),
+        { status: 200 }
+      ),
+    ]);
+    const options = await api.passkeyLoginOptions('alice', 'DELEGATION');
+    expect(options.allowCredentials).toEqual([{ id: 'a' }]);
+    expect(calls[0].url).toBe('/api/auth/passkey/login/options');
   });
 });

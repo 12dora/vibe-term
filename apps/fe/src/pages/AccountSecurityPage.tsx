@@ -10,6 +10,7 @@ import {
   changePassword,
   clearTotp,
   confirmTotpSetup,
+  isPasskeyUsableHere,
   registerPasskey,
   removePasskey,
 } from '@/auth/account-security-actions';
@@ -566,28 +567,45 @@ function PasskeySection({
 
       {passkeys.length > 0 ? (
         <ul className="flex flex-col gap-1" data-testid="security-passkey-list">
-          {passkeys.map((passkey) => (
-            <li
-              key={passkey.credential_id}
-              className="flex items-center justify-between gap-2 rounded-lg bg-muted/50 px-2 py-1.5 text-xs"
-            >
-              <span className="truncate">
-                {passkey.name || passkey.credential_id}
-                <span className="ml-2 text-muted-foreground">{passkey.origin}</span>
-              </span>
-              <Button
-                type="button"
-                variant="destructive"
-                size="xs"
-                disabled={busy}
-                onClick={() => void remove(passkey.credential_id)}
-                data-testid={`security-passkey-remove-${passkey.credential_id}`}
+          {passkeys.map((passkey) => {
+            // 本入口用不了的凭证（`usableHere===false`，B2-8）灰掉：它在这里既签不了记录
+            // 也登不了录，但仍然要能看见、能删。
+            const usable = isPasskeyUsableHere(passkey);
+            return (
+              <li
+                key={passkey.credential_id}
+                className={`flex items-center justify-between gap-2 rounded-lg px-2 py-1.5 text-xs ${
+                  usable ? 'bg-muted/50' : 'bg-muted/20 opacity-60'
+                }`}
+                data-usable-here={usable ? 'true' : 'false'}
+                data-testid={`security-passkey-row-${passkey.credential_id}`}
               >
-                <Trash2 />
-                {t('common.delete')}
-              </Button>
-            </li>
-          ))}
+                <span className="truncate">
+                  {passkey.name || passkey.credential_id}
+                  <span className="ml-2 text-muted-foreground">{passkey.origin}</span>
+                  {usable ? null : (
+                    <span
+                      className="ml-2 text-muted-foreground"
+                      data-testid={`security-passkey-other-origin-${passkey.credential_id}`}
+                    >
+                      {t('auth.security.passkeyOtherOrigin')}
+                    </span>
+                  )}
+                </span>
+                <Button
+                  type="button"
+                  variant="destructive"
+                  size="xs"
+                  disabled={busy}
+                  onClick={() => void remove(passkey.credential_id)}
+                  data-testid={`security-passkey-remove-${passkey.credential_id}`}
+                >
+                  <Trash2 />
+                  {t('common.delete')}
+                </Button>
+              </li>
+            );
+          })}
         </ul>
       ) : null}
 

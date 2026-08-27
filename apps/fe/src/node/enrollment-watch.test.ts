@@ -10,7 +10,11 @@ import {
   rootKeyFromSeed,
 } from '@tmex/shared/auth';
 import type { PendingEnrollment } from './enrollment';
-import { collectRedeemedCertificates, offerCertificate } from './enrollment-watch';
+import {
+  collectRedeemedCertificates,
+  offerCertificate,
+  outcomesForCandidates,
+} from './enrollment-watch';
 import type { HubApi, HubEnrollmentStatus } from './hub-api';
 import { decodeMeshFrame } from './mesh-events';
 
@@ -127,5 +131,51 @@ describe('ENROLL_REDEEMED 推送 → offerCertificate', () => {
 
   test('decodeMeshFrame 是推送侧的唯一入口（非法帧不会变成候选）', () => {
     expect(decodeMeshFrame(new Uint8Array([0, 1, 2]))).toBeNull();
+  });
+});
+
+describe('轮询路径的 outcome 上报', () => {
+  test('对不上任何 pending 的证书也要上报 unknown（与推送路径一致）', async () => {
+    const { pending } = await fixture();
+    const other = await createEnrollment(rootKey, { uid: UID, rootEpoch: 1, now: NOW });
+    const ed = generateEd25519KeyPair();
+    const x = generateEd25519KeyPair();
+    const stranger = createNodeCertificate(other.enrollSk, {
+      uid: UID,
+      edPk: ed.publicKey,
+      x25519Pk: x.publicKey,
+      enrollPk: other.enrollPk,
+      now: NOW,
+    });
+
+    const outcomes = outcomesForCandidates(
+      [pending],
+      [
+        {
+          certificate: encodeBase64url(stranger.certificateBytes),
+          certSig: encodeBase64url(stranger.certSig),
+        },
+      ],
+      NOW
+    );
+
+    // 之前这里被 `if (outcome.kind !== 'unknown')` 吃掉了，UI 收不到告警
+    expect(outcomes).toEqual([{ kind: 'unknown' }]);
+  });
+
+  test('多份候选逐一上报，顺序不变', async () => {
+    const { pending, cert } = await fixture();
+    const outcomes = outcomesForCandidates(
+      [pending],
+      [
+        { certificate: 'not-base64url!!', certSig: 'x' },
+        {
+          certificate: encodeBase64url(cert.certificateBytes),
+          certSig: encodeBase64url(cert.certSig),
+        },
+      ],
+      NOW
+    );
+    expect(outcomes.map((row) => row.kind)).toEqual(['unknown', 'admit']);
   });
 });

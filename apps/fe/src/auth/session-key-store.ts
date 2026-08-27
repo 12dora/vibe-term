@@ -238,6 +238,8 @@ export interface EstablishFromPasskeyOptions {
   origin?: string;
   /** 已知的 passkey 元数据（含注册 origin）；缺省尝试 `GET /api/auth/passkeys`。 */
   passkeys?: PasskeySummary[] | null;
+  /** 会话密钥对生成器（测试注入）：拿到同一把 `sk_sess` 才能断言失败时它被清零。 */
+  generateSessionKeyPair?: () => { publicKey: Uint8Array; secretKey: Uint8Array };
 }
 
 export class PasskeyCredentialUnknownError extends Error {
@@ -254,121 +256,163 @@ function currentOrigin(override?: string): string {
 }
 
 /**
- * 从 `allowCredentials` 里挑一把**属于当前 origin / RP** 的凭证。
+ * 凭证选择结果。
  *
- * 不能盲取第一把：用户在 node A、node B 各注册过 passkey 时，从 B 登录若 A 的凭证排在前面，
- * 浏览器会被迫用属于 A 的 RP 的凭证并以 `NotAllowedError` 失败（见 F4-1 评审 Major）。
- * 后端已按精确 origin 过滤；这里再用 `/api/auth/passkeys` 的 `origin` / `rp_id` 兜一层，
- * 没有元数据可用时才退回列表顺序。
+ * - `bind`：已经能唯一确定凭证，直接写进 delegation，只做一次仪式；
+ * - `browser`：**不由前端挑**，把这份列表原样交给 WebAuthn，让浏览器 / 认证器选；
+ * - `none`：当前 origin 一把可用的都没有。
+ */
+export type PasskeySelection =
+  | { kind: 'bind'; credentialId: string }
+  | { kind: 'browser'; allowCredentials: PublicKeyCredentialDescriptorJSON[] }
+  | { kind: 'none' };
+
+/**
+ * 决定这次断言用哪把凭证。
+ *
+ * **绝不回退到 `allowCredentials[0]`**：用户在 node A、node B 各注册过 passkey 时，从 B 登录
+ * 若 A 的凭证排在前面，盲取第一把会把仪式锁死在属于 A 的凭证上并以 `NotAllowedError` 失败
+ * （见 F4-1 / F4-fix 评审 Major）。取而代之：
+ *
+ * - 有可信 origin 元数据（登录后的 `/api/auth/passkeys`）→ 只留 `origin` **精确相等**的，
+ *   没有 rp_id 回退；一把也不剩就是 `none`。
+ * - 没有元数据（登录前通常没有会话，拉不到列表）→ 交给浏览器：后端已按精确 origin 过滤过
+ *   登录 options，列表里每一把都能用，由认证器决定用户手上到底有哪一把。
+ *   只剩一把时退化成 `bind`（那不是「挑」，本来就只有一个候选），省掉一次探测仪式。
  */
 export function selectPasskeyCredential(input: {
   allowCredentials?: PublicKeyCredentialDescriptorJSON[];
   passkeys?: PasskeySummary[] | null;
-  rpId?: string;
   origin: string;
   preferredId?: string;
-}): string | null {
-  const ids = (input.allowCredentials ?? []).map((row) => row.id).filter(Boolean);
-  if (ids.length === 0) return null;
-  if (input.preferredId) return ids.includes(input.preferredId) ? input.preferredId : null;
+}): PasskeySelection {
+  const rows = (input.allowCredentials ?? []).filter((row) => Boolean(row.id));
+  if (rows.length === 0) return { kind: 'none' };
+  if (input.preferredId) {
+    return rows.some((row) => row.id === input.preferredId)
+      ? { kind: 'bind', credentialId: input.preferredId }
+      : { kind: 'none' };
+  }
 
   const known = input.passkeys ?? null;
   if (known && known.length > 0) {
     const byId = new Map(known.map((row) => [row.credential_id, row]));
-    const sameOrigin = ids.filter((id) => byId.get(id)?.origin === input.origin);
-    if (sameOrigin.length > 0) return sameOrigin[0];
-    if (input.rpId) {
-      const sameRp = ids.filter((id) => byId.get(id)?.rp_id === input.rpId);
-      if (sameRp.length > 0) return sameRp[0];
-    }
-    // 有元数据但没有一把属于当前 origin / RP：宁可报「本入口没有可用 passkey」，
+    const sameOrigin = rows.filter((row) => byId.get(row.id)?.origin === input.origin);
+    if (sameOrigin.length === 1) return { kind: 'bind', credentialId: sameOrigin[0].id };
+    if (sameOrigin.length > 1) return { kind: 'browser', allowCredentials: sameOrigin };
+    // 有元数据但没有一把属于当前 origin：宁可报「本入口没有可用 passkey」，
     // 也不要拿别的 origin 的凭证去发起注定失败的仪式。
-    const anyKnown = ids.some((id) => byId.has(id));
-    if (anyKnown) return null;
+    if (rows.some((row) => byId.has(row.id))) return { kind: 'none' };
   }
-  return ids[0];
+  if (rows.length === 1) return { kind: 'bind', credentialId: rows[0].id };
+  return { kind: 'browser', allowCredentials: rows };
 }
 
 /**
  * passkey 路径：delegation 里必须先写死 credential_id（challenge = sha256(borsh(delegation))），
  * 而凭证列表只有 entry 知道——所以先用一个探测 delegation 换回 `allowCredentials`，
- * 选定凭证后再用最终 delegation 换一次 options，仪式只做一次。
+ * 选定凭证后再用最终 delegation 换一次 options。
  * 断言整体以 Borsh `PasskeyAssertion` 编码作为 `delegation_sig`。
+ *
+ * 凭证由 `selectPasskeyCredential()` 决定，前端**不做**「取第一把」这种猜测。候选不唯一且没有
+ * 可信 origin 元数据时（登录前多半如此），先把服务端那份 `allowCredentials` **原样**交给
+ * WebAuthn 做一次探测仪式，由浏览器 / 认证器选出用户手上真正有的那把，再用它绑定最终
+ * delegation 做正式仪式——协议要求 challenge 覆盖 credential_id，这一步换不掉。
+ * 单候选（后端按精确 origin 过滤后的常态）只做一次仪式。
+ *
+ * `sk_sess` 从生成起就在 `try/finally` 里：用户取消仪式、options 请求失败、origin 选不出凭证，
+ * 都会立刻清零，只有成功交给全局 session store 才转移所有权（见 F4-fix 评审 Minor）。
  */
 export async function establishSessionFromPasskey(
   opts: EstablishFromPasskeyOptions
 ): Promise<SessionKeyInfo> {
   const api = opts.api ?? defaultAuthApi;
   const now = opts.now ?? Date.now();
-  const sess = generateEd25519KeyPair();
+  const sess = (opts.generateSessionKeyPair ?? generateEd25519KeyPair)();
+  let owned = false;
 
-  const buildFor = (credentialId: string) =>
-    buildPasskeyDelegation({ uid: opts.uid, sessPk: sess.publicKey, now, credentialId });
+  try {
+    const buildFor = (credentialId: string) =>
+      buildPasskeyDelegation({ uid: opts.uid, sessPk: sess.publicKey, now, credentialId });
 
-  let credentialId = opts.credentialId ?? '';
-  let delegation = buildFor(credentialId);
-  let options = await api.passkeyLoginOptions(
-    opts.uid,
-    encodeBase64url(encodeDelegation(delegation))
-  );
-  if (!credentialId) {
-    // 登录前通常没有会话，`/api/auth/passkeys` 会失败——那时只能信后端的 origin 过滤。
-    let passkeys = opts.passkeys ?? null;
-    if (passkeys === null && opts.passkeys === undefined) {
-      passkeys = await api.listPasskeys().catch(() => null);
-    }
-    const picked = selectPasskeyCredential({
-      allowCredentials: options.allowCredentials,
-      passkeys,
-      rpId: options.rpId,
-      origin: currentOrigin(opts.origin),
-    });
-    if (!picked) throw new PasskeyCredentialUnknownError();
-    credentialId = picked;
-    delegation = buildFor(credentialId);
-    options = await api.passkeyLoginOptions(
+    let credentialId = opts.credentialId ?? '';
+    let delegation = buildFor(credentialId);
+    let options = await api.passkeyLoginOptions(
       opts.uid,
       encodeBase64url(encodeDelegation(delegation))
     );
-  }
-  // 只允许用 delegation 里绑定的那把凭证，否则断言与 credential_id 对不上。
-  const assertion = await startAuthentication({
-    ...options,
-    allowCredentials: [{ id: credentialId }],
-  });
-  if (assertion.id !== credentialId) {
-    throw new Error('passkey assertion credential mismatch');
-  }
+    if (!credentialId) {
+      // 登录前通常没有会话，`/api/auth/passkeys` 会失败——那时只能信后端的 origin 过滤。
+      let passkeys = opts.passkeys ?? null;
+      if (passkeys === null && opts.passkeys === undefined) {
+        passkeys = await api.listPasskeys().catch(() => null);
+      }
+      const selection = selectPasskeyCredential({
+        allowCredentials: options.allowCredentials,
+        passkeys,
+        origin: currentOrigin(opts.origin),
+      });
+      if (selection.kind === 'none') throw new PasskeyCredentialUnknownError();
+      if (selection.kind === 'browser') {
+        // 探测仪式：列表原样下发，浏览器选谁我们就绑谁。这份断言签的是探测 delegation
+        // （credential_id 为空），服务端一定拒绝，拿来当凭证也没用。
+        const probe = await startAuthentication({
+          ...options,
+          allowCredentials: selection.allowCredentials,
+        });
+        credentialId = probe.id;
+      } else {
+        credentialId = selection.credentialId;
+      }
+      delegation = buildFor(credentialId);
+      options = await api.passkeyLoginOptions(
+        opts.uid,
+        encodeBase64url(encodeDelegation(delegation))
+      );
+    }
+    // 只允许用 delegation 里绑定的那把凭证，否则断言与 credential_id 对不上。
+    const assertion = await startAuthentication({
+      ...options,
+      allowCredentials: [{ id: credentialId }],
+    });
+    if (assertion.id !== credentialId) {
+      throw new Error('passkey assertion credential mismatch');
+    }
 
-  const delegationBytes = encodeDelegation(delegation);
-  const delegationSig = encodePasskeyAssertion({
-    credential_id: assertion.id,
-    client_data_json: decodeBase64url(assertion.response.clientDataJSON),
-    authenticator_data: decodeBase64url(assertion.response.authenticatorData),
-    signature: decodeBase64url(assertion.response.signature),
-  });
+    const delegationBytes = encodeDelegation(delegation);
+    const delegationSig = encodePasskeyAssertion({
+      credential_id: assertion.id,
+      client_data_json: decodeBase64url(assertion.response.clientDataJSON),
+      authenticator_data: decodeBase64url(assertion.response.authenticatorData),
+      signature: decodeBase64url(assertion.response.signature),
+    });
 
-  clearSessionKey();
-  current = {
-    info: {
-      uid: opts.uid,
-      entryNodeId: opts.entryNodeId,
-      method: 'passkey',
-      issuedAt: Number(delegation.issued_at),
-      expiresAt: Number(delegation.exp),
-      hasTotp: false,
-      credentialId,
-    },
-    sessSk: sess.secretKey,
-    sessPk: sess.publicKey,
-    delegation,
-    delegationBytes,
-    delegationSig,
-    kTotp: null,
-    totpCode: null,
-  };
-  notifyState();
-  return current.info;
+    clearSessionKey();
+    current = {
+      info: {
+        uid: opts.uid,
+        entryNodeId: opts.entryNodeId,
+        method: 'passkey',
+        issuedAt: Number(delegation.issued_at),
+        expiresAt: Number(delegation.exp),
+        hasTotp: false,
+        credentialId,
+      },
+      sessSk: sess.secretKey,
+      sessPk: sess.publicKey,
+      delegation,
+      delegationBytes,
+      delegationSig,
+      kTotp: null,
+      totpCode: null,
+    };
+    // 所有权已交给 session store（`clearSessionKey()` 负责它的清零）。
+    owned = true;
+    notifyState();
+    return current.info;
+  } finally {
+    if (!owned) sess.secretKey.fill(0);
+  }
 }
 
 // ---------------------------------------------------------------------------

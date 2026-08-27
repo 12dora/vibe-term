@@ -53,6 +53,19 @@ export function offerCertificate(
   return { kind: 'unknown' };
 }
 
+/**
+ * 一批候选证书 → 要上报的 outcome。**推送与轮询共用同一份**，`unknown` 同样上报：
+ * 轮询查的是本次 enrollment 的 id，hub 却回了一份对不上任何 pending 的证书，
+ * 这是真正的异常信号，静默丢弃等于隐藏「收到未知节点证书」告警（见 F4-fix 评审 Minor）。
+ */
+export function outcomesForCandidates(
+  pendings: PendingEnrollment[],
+  candidates: CertificateCandidate[],
+  now: number
+): CertificateOutcome[] {
+  return candidates.map((candidate) => offerCertificate(pendings, candidate, now));
+}
+
 /** 逐条 pending 向 hub 查 redeem 结果，返回已 redeem 的证书候选。 */
 export async function collectRedeemedCertificates(
   hubApi: HubApi,
@@ -137,10 +150,7 @@ export function useEnrollmentWatch(options: EnrollmentWatchOptions): void {
         return;
       }
       if (cancelled) return;
-      for (const candidate of candidates) {
-        const outcome = offerCertificate(rows, candidate, now());
-        if (outcome.kind !== 'unknown') emit(outcome);
-      }
+      for (const outcome of outcomesForCandidates(rows, candidates, now())) emit(outcome);
     };
 
     void tick();

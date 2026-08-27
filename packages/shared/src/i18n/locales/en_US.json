@@ -108,7 +108,8 @@
       "localDevice": "Local Device",
       "subtitle": "{{username}}@{{host}}:{{port}}",
       "modify": "Modify Device",
-      "delete": "Delete"
+      "delete": "Delete",
+      "directFallbackToast": "Direct connection dropped; recent input may not have been delivered"
     },
     "terminal": {
       "keyboardBehavior": {
@@ -1071,7 +1072,8 @@
         "INVALID_NODE_ID": "Invalid node id",
         "TOTP_CODE_REQUIRED": "Enter the 6-digit code",
         "ROOT_KEY_MISMATCH": "Wrong password (the derived root public key does not match the server)",
-        "PASSKEY_ABORTED": "Passkey authorization was cancelled"
+        "PASSKEY_ABORTED": "Passkey authorization was cancelled",
+        "NO_PASSKEY_FOR_ORIGIN": "No passkey is available on this entry (your credentials belong to other entry origins)"
       },
       "security": {
         "title": "Account security",
@@ -1101,7 +1103,8 @@
         "totpConfirmHint": "Enter the 6-digit code shown by your authenticator; nothing is written to the key log until it verifies.",
         "totpCodeRequired": "Enter the 6-digit code",
         "totpDone": "TOTP enabled",
-        "passkeyListFailed": "Failed to load passkeys: {{error}}"
+        "passkeyListFailed": "Failed to load passkeys: {{error}}",
+        "passkeyOtherOrigin": "(belongs to another entry — unusable here)"
       },
       "credential": {
         "title": "Confirm it is you",
@@ -1171,9 +1174,10 @@
         "badCertSig": "Node certificate signature check failed — ignored",
         "expired": "Enrollment authorization expired, please create a new one",
         "noCertificateYet": "No certificate for this enrollment yet, try again later",
-        "hubNotConfirmed": "Hub has not confirmed yet, retry later",
+        "hubNotConfirmed": "Hub has not confirmed; nothing was written locally either — retry sends the same record",
         "retryHub": "Retry",
-        "missingHubUrl": "The hub did not provide a public URL; cannot build the join command"
+        "missingHubUrl": "The hub did not provide a public URL; cannot build the join command",
+        "staleRecord": "The key log moved on, so this record is void; please confirm again"
       },
       "rename": {
         "save": "Save",
@@ -1183,7 +1187,7 @@
         "confirmText": "Revoke node \"{{name}}\"? It loses access immediately and its certificate cannot be restored.",
         "reasonPrompt": "Reason (optional)",
         "done": "Revoked",
-        "hubFailed": "Record written to the key log, but syncing to the hub failed: {{error}}",
+        "hubFailed": "Hub has not confirmed, so the revocation did not take effect (nothing was written locally either); please retry: {{error}}",
         "selfBlocked": "Cannot revoke the current entry itself"
       },
       "badge": {

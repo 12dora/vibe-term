@@ -108,7 +108,8 @@
       "localDevice": "本地设备",
       "subtitle": "{{username}}@{{host}}:{{port}}",
       "modify": "修改设备",
-      "delete": "删除"
+      "delete": "删除",
+      "directFallbackToast": "直连已断开，最近输入可能未送达"
     },
     "terminal": {
       "keyboardBehavior": {
@@ -1071,7 +1072,8 @@
         "INVALID_NODE_ID": "节点标识不合法",
         "TOTP_CODE_REQUIRED": "请输入 6 位动态验证码",
         "ROOT_KEY_MISMATCH": "密码不正确（派生出的根公钥与服务端记录不一致）",
-        "PASSKEY_ABORTED": "passkey 授权被取消"
+        "PASSKEY_ABORTED": "passkey 授权被取消",
+        "NO_PASSKEY_FOR_ORIGIN": "本入口没有可用的 passkey（已注册的凭证属于其它入口地址）"
       },
       "security": {
         "title": "账号安全",
@@ -1101,7 +1103,8 @@
         "totpConfirmHint": "请输入认证器当前显示的 6 位验证码；验证通过后才会写入密钥日志。",
         "totpCodeRequired": "请输入 6 位动态验证码",
         "totpDone": "TOTP 已启用",
-        "passkeyListFailed": "passkey 列表加载失败：{{error}}"
+        "passkeyListFailed": "passkey 列表加载失败：{{error}}",
+        "passkeyOtherOrigin": "（属于其它入口，本入口不可用）"
       },
       "credential": {
         "title": "确认身份",
@@ -1171,9 +1174,10 @@
         "badCertSig": "节点证书签名校验失败，已忽略",
         "expired": "注册授权已过期，请重新生成",
         "noCertificateYet": "尚未收到该节点的证书，请稍后再试",
-        "hubNotConfirmed": "hub 未确认，稍后重试",
+        "hubNotConfirmed": "hub 未确认，本地也未写入，可原样重试",
         "retryHub": "重试",
-        "missingHubUrl": "hub 未提供对外地址，无法生成 join 命令"
+        "missingHubUrl": "hub 未提供对外地址，无法生成 join 命令",
+        "staleRecord": "密钥日志已变化，这条记录已作废，请重新确认"
       },
       "rename": {
         "save": "保存",
@@ -1183,7 +1187,7 @@
         "confirmText": "确定吊销节点「{{name}}」？该节点将立即失去访问权，且证书不可恢复。",
         "reasonPrompt": "吊销原因（可留空）",
         "done": "已吊销",
-        "hubFailed": "记录已写入密钥日志，但同步到 hub 失败：{{error}}",
+        "hubFailed": "hub 未确认，吊销未生效（本地密钥日志也未写入），请重试：{{error}}",
         "selfBlocked": "不能吊销当前入口自身"
       },
       "badge": {

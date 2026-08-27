@@ -12,6 +12,7 @@ import {
 } from '@tmex/shared/auth';
 import {
   clearSessionKey,
+  establishSessionFromPasskey,
   establishSessionFromSeed,
   getSessionKey,
   hasSessionKey,
@@ -328,17 +329,34 @@ describe('selectPasskeyCredential', () => {
         passkeys,
         origin: 'https://node-b.example',
       })
-    ).toBe('cred-b');
+    ).toEqual({ kind: 'bind', credentialId: 'cred-b' });
   });
 
-  test('当前 origin 没有可用凭证时返回 null（不拿别的 origin 的凑数）', () => {
+  test('当前 origin 没有可用凭证时返回 none（不拿别的 origin 的凑数）', () => {
     expect(
       selectPasskeyCredential({
         allowCredentials: [A, B],
         passkeys,
         origin: 'https://node-c.example',
       })
-    ).toBeNull();
+    ).toEqual({ kind: 'none' });
+  });
+
+  test('rp_id 相同但端口不同（origin 不等）同样不可用', () => {
+    expect(
+      selectPasskeyCredential({
+        allowCredentials: [A],
+        passkeys: [
+          {
+            credential_id: 'cred-a',
+            name: 'A',
+            rp_id: 'node-a.example',
+            origin: 'https://node-a.example:8443',
+          },
+        ],
+        origin: 'https://node-a.example',
+      })
+    ).toEqual({ kind: 'none' });
   });
 
   test('拿不到 passkey 元数据（登录前无会话）时信后端的过滤结果', () => {
@@ -348,7 +366,30 @@ describe('selectPasskeyCredential', () => {
         passkeys: null,
         origin: 'https://node-b.example',
       })
-    ).toBe('cred-b');
+    ).toEqual({ kind: 'bind', credentialId: 'cred-b' });
+  });
+
+  test('没有元数据且候选不止一把：原样交给浏览器，绝不取第一把', () => {
+    expect(
+      selectPasskeyCredential({
+        allowCredentials: [A, B],
+        passkeys: null,
+        origin: 'https://node-b.example',
+      })
+    ).toEqual({ kind: 'browser', allowCredentials: [A, B] });
+  });
+
+  test('同一 origin 有多把时也交给浏览器选（只把范围收到该 origin）', () => {
+    expect(
+      selectPasskeyCredential({
+        allowCredentials: [A, B],
+        passkeys: [
+          { credential_id: 'cred-a', name: 'A', rp_id: 'n.example', origin: 'https://n.example' },
+          { credential_id: 'cred-b', name: 'B', rp_id: 'n.example', origin: 'https://n.example' },
+        ],
+        origin: 'https://n.example',
+      })
+    ).toEqual({ kind: 'browser', allowCredentials: [A, B] });
   });
 
   test('显式指定的凭证必须在 allowCredentials 里', () => {
@@ -359,6 +400,122 @@ describe('selectPasskeyCredential', () => {
         origin: 'https://node-a.example',
         preferredId: 'cred-b',
       })
-    ).toBeNull();
+    ).toEqual({ kind: 'none' });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// passkey 登录：sk_sess 的所有权 + 后端 origin 过滤的 404（B2-8）
+// ---------------------------------------------------------------------------
+
+function passkeyApi(options: {
+  optionsStatus?: number;
+  optionsBody?: unknown;
+  allowCredentials?: { id: string }[];
+}): { api: AuthApi; calls: number } {
+  const state = { calls: 0 };
+  const client = new ApiClient('', (url) => {
+    if (url === '/api/auth/passkey/login/options') {
+      state.calls += 1;
+      const status = options.optionsStatus ?? 200;
+      if (status !== 200) {
+        return Promise.resolve(Response.json(options.optionsBody ?? {}, { status }));
+      }
+      return Promise.resolve(
+        Response.json({
+          challenge: encodeBase64url(fill(32, 0x77)),
+          rpId: 'node.example',
+          allowCredentials: (options.allowCredentials ?? [{ id: 'cred-a' }]).map((row) => ({
+            id: row.id,
+            type: 'public-key',
+          })),
+        })
+      );
+    }
+    if (url === '/api/auth/passkeys') {
+      return Promise.resolve(new Response('unauthorized', { status: 401 }));
+    }
+    return Promise.resolve(new Response('not found', { status: 404 }));
+  });
+  return {
+    api: new AuthApi(client),
+    get calls() {
+      return state.calls;
+    },
+  };
+}
+
+describe('establishSessionFromPasskey', () => {
+  afterEach(() => clearSessionKey());
+
+  test('仪式失败（本环境没有 WebAuthn，等价于用户取消）时 sk_sess 立刻清零', async () => {
+    const { api } = passkeyApi({});
+    const secretKey = fill(64, 0x9a);
+
+    await expect(
+      establishSessionFromPasskey({
+        uid: UID,
+        entryNodeId: ENTRY,
+        api,
+        origin: 'https://node.example',
+        passkeys: null,
+        generateSessionKeyPair: () => ({ publicKey: fill(32, 0x9b), secretKey }),
+      })
+    ).rejects.toThrow();
+
+    expect(secretKey.every((byte) => byte === 0)).toBe(true);
+    expect(hasSessionKey()).toBe(false);
+  });
+
+  test('本 origin 没有可用 passkey（404 NO_PASSKEY_FOR_ORIGIN）：可判别错误 + 清零，不回退', async () => {
+    const { api } = passkeyApi({
+      optionsStatus: 404,
+      optionsBody: { code: 'NO_PASSKEY_FOR_ORIGIN' },
+    });
+    const secretKey = fill(64, 0x8a);
+
+    const error = await establishSessionFromPasskey({
+      uid: UID,
+      entryNodeId: ENTRY,
+      api,
+      origin: 'https://node.example',
+      passkeys: null,
+      generateSessionKeyPair: () => ({ publicKey: fill(32, 0x8b), secretKey }),
+    }).then(
+      () => null,
+      (err: unknown) => err
+    );
+
+    expect((error as { code?: string })?.code).toBe('NO_PASSKEY_FOR_ORIGIN');
+    expect(secretKey.every((byte) => byte === 0)).toBe(true);
+    expect(hasSessionKey()).toBe(false);
+  });
+
+  test('已知元数据里本 origin 一把都没有：不去做仪式，直接报「本入口没有可用 passkey」', async () => {
+    const passkey = passkeyApi({ allowCredentials: [{ id: 'cred-a' }] });
+    const { api } = passkey;
+
+    const error = await establishSessionFromPasskey({
+      uid: UID,
+      entryNodeId: ENTRY,
+      api,
+      origin: 'https://other.example',
+      passkeys: [
+        {
+          credential_id: 'cred-a',
+          name: 'A',
+          rp_id: 'node.example',
+          origin: 'https://node.example',
+        },
+      ],
+      generateSessionKeyPair: () => ({ publicKey: fill(32, 0x7b), secretKey: fill(64, 0x7a) }),
+    }).then(
+      () => null,
+      (err: unknown) => err
+    );
+
+    expect((error as { code?: string })?.code).toBe('PASSKEY_CREDENTIAL_UNKNOWN');
+    // 只有那次探测 options：绑定凭证的第二次请求与仪式都不该发生
+    expect(passkey.calls).toBe(1);
   });
 });

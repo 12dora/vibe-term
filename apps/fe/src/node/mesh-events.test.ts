@@ -35,6 +35,40 @@ function enrollRedeemedFrame(payload: {
   return wsBorsh.encodeEnvelope(KIND_ENROLL_REDEEMED, body, 1);
 }
 
+/**
+ * 手工拼 borsh 字节：`enroll_pk` / `cert_sig` 已是定长字段，长度不对的载荷用 schema
+ * **编不出来**，只能像真实攻击者那样直接发畸形字节。
+ * 布局：`enroll_pk`(定长) ‖ u32 len ‖ certificate ‖ `cert_sig`(定长) ‖ u32 len ‖ nodeId(utf8)。
+ */
+function rawEnrollRedeemedFrame(payload: {
+  enrollPk: Uint8Array;
+  certificate: Uint8Array;
+  certSig: Uint8Array;
+  nodeId: string;
+}): Uint8Array {
+  const nodeId = new TextEncoder().encode(payload.nodeId);
+  const u32 = (value: number) => {
+    const out = new Uint8Array(4);
+    new DataView(out.buffer).setUint32(0, value, true);
+    return out;
+  };
+  const parts = [
+    payload.enrollPk,
+    u32(payload.certificate.length),
+    payload.certificate,
+    payload.certSig,
+    u32(nodeId.length),
+    nodeId,
+  ];
+  const body = new Uint8Array(parts.reduce((sum, part) => sum + part.length, 0));
+  let offset = 0;
+  for (const part of parts) {
+    body.set(part, offset);
+    offset += part.length;
+  }
+  return wsBorsh.encodeEnvelope(KIND_ENROLL_REDEEMED, body, 1);
+}
+
 class FakeSocket implements MeshSocketLike {
   binaryType = '';
   onopen: ((event: unknown) => void) | null = null;
@@ -186,24 +220,63 @@ describe('decodeMeshFrame', () => {
     });
   });
 
-  test('ENROLL_REDEEMED 缺证书 / 签名长度不对时作废', () => {
+  test('ENROLL_REDEEMED 缺证书 / 签名长度不对 / nodeId 不是 32-hex 时作废', () => {
+    const NODE_ID = 'a'.repeat(32);
+    // 证书为空：长度合法但内容没意义，照样作废。
     expect(
       decodeMeshFrame(
         enrollRedeemedFrame({
           enrollPk: new Uint8Array(32).fill(3),
           certificate: new Uint8Array(0),
           certSig: new Uint8Array(64),
+          nodeId: NODE_ID,
+        })
+      )
+    ).toBeNull();
+
+    // nodeId 不是 32-hex：`assertEnrollRedeemedFields` 拦下。
+    expect(
+      decodeMeshFrame(
+        enrollRedeemedFrame({
+          enrollPk: new Uint8Array(32).fill(3),
+          certificate: new Uint8Array(20).fill(1),
+          certSig: new Uint8Array(64),
           nodeId: 'x',
+        })
+      )
+    ).toBeNull();
+
+    // `certSig` / `enroll_pk` 长度不对的帧连**编码**都通不过（schema 已收紧成定长），
+    // 只能手工拼字节——真正的攻击者也只能这么发。
+    expect(
+      decodeMeshFrame(
+        rawEnrollRedeemedFrame({
+          enrollPk: new Uint8Array(32).fill(3),
+          certificate: new Uint8Array(20).fill(1),
+          certSig: new Uint8Array(10),
+          nodeId: NODE_ID,
         })
       )
     ).toBeNull();
     expect(
       decodeMeshFrame(
+        rawEnrollRedeemedFrame({
+          enrollPk: new Uint8Array(16).fill(3),
+          certificate: new Uint8Array(20).fill(1),
+          certSig: new Uint8Array(64),
+          nodeId: NODE_ID,
+        })
+      )
+    ).toBeNull();
+
+    // 证书超过 2048 字节上限。
+    expect(
+      decodeMeshFrame(
         enrollRedeemedFrame({
           enrollPk: new Uint8Array(32).fill(3),
-          certificate: new Uint8Array(20),
-          certSig: new Uint8Array(10),
-          nodeId: 'x',
+          certificate: new Uint8Array(2049).fill(1),
+          certSig: new Uint8Array(64),
+          nodeId: NODE_ID,
         })
       )
     ).toBeNull();

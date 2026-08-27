@@ -237,7 +237,9 @@ describe('WS 4401（会话失效）', () => {
       setTimeoutFn: clock.schedule,
       clearTimeoutFn: clock.cancel,
       onUnauthorized: (nodeId) => unauthorized.push(nodeId),
-      createConnection: (nodeId) => {
+      // 自建工厂**必须**拿到关闭码回调：manager 主动递给它，工厂没有忘记的余地。
+      createConnection: (nodeId, onClose) => {
+        onCloseByNode.set(nodeId, onClose);
         const connection = makeConnection();
         return {
           ...connection,
@@ -246,32 +248,37 @@ describe('WS 4401（会话失效）', () => {
         };
       },
     });
-    // 宿主自建连接时由 notifyClose 把关闭码转回来（fe 的 node-runtimes 就是这么接的）。
-    return { manager, closed, unauthorized, onCloseByNode };
+    /** 模拟底层 socket 关闭：走工厂拿到的那个回调，而不是手动 notifyClose。 */
+    const socketClose = (nodeId: string, code: number) => {
+      const onClose = onCloseByNode.get(nodeId);
+      if (!onClose) throw new Error(`no onClose handed to the factory for ${nodeId}`);
+      onClose(code);
+    };
+    return { manager, closed, unauthorized, socketClose };
   }
 
-  test('4401 停连接并按 node 派发一次鉴权事件', () => {
-    const { manager, closed, unauthorized } = harness();
+  test('4401 停连接并按 node 派发一次鉴权事件（关闭码来自工厂拿到的回调）', () => {
+    const { manager, closed, unauthorized, socketClose } = harness();
     manager.acquire(NODE_A);
-    manager.notifyClose(NODE_A, WS_UNAUTHORIZED_CLOSE_CODE);
+    socketClose(NODE_A, WS_UNAUTHORIZED_CLOSE_CODE);
     expect(closed).toEqual([NODE_A]);
     expect(unauthorized).toEqual([NODE_A]);
     manager.disposeAll();
   });
 
   test('self 的 4401 同样走这条路径', () => {
-    const { manager, unauthorized } = harness();
+    const { manager, unauthorized, socketClose } = harness();
     manager.acquire('self');
-    manager.notifyClose('', WS_UNAUTHORIZED_CLOSE_CODE);
+    socketClose('self', WS_UNAUTHORIZED_CLOSE_CODE);
     expect(unauthorized).toEqual(['self']);
     manager.disposeAll();
   });
 
   test('其它关闭码不做任何事（正常重连交给 ws-client）', () => {
-    const { manager, closed, unauthorized } = harness();
+    const { manager, closed, unauthorized, socketClose } = harness();
     manager.acquire(NODE_A);
-    manager.notifyClose(NODE_A, 1006);
-    manager.notifyClose(NODE_A, 1000);
+    socketClose(NODE_A, 1006);
+    socketClose(NODE_A, 1000);
     expect(closed).toEqual([]);
     expect(unauthorized).toEqual([]);
     manager.disposeAll();

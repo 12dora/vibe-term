@@ -15,16 +15,23 @@ import { sonnerNotificationSink } from '@/lib/sonner-notification-sink';
 import { QueryClient } from '@tanstack/react-query';
 import { createNodeApiClient, isSelfNode, nodeWsUrl } from '@tmex/api-client';
 import type { NotificationSink } from '@tmex/notifications';
-import { type AppRuntime, NodeConnectionManager, normalizeNodeId } from '@tmex/stores';
+import {
+  type AppRuntime,
+  NodeConnectionManager,
+  type NodeConnectionManagerOptions,
+  normalizeNodeId,
+} from '@tmex/stores';
 import {
   BulkClient,
   DirectCarrierController,
   type DirectSignalMessage,
   type DirectSignalingTransport,
   type GatewayConnection,
+  type SocketFactory,
   createGatewayConnection,
   registerBulkClient,
 } from '@tmex/ws-client';
+import i18n from 'i18next';
 import { type MeshEventSource, sharedMeshEvents } from './mesh-events';
 
 /**
@@ -78,13 +85,16 @@ class MeshRtcSignalHub {
 const meshRtcSignals = new MeshRtcSignalHub(() => sharedMeshEvents());
 
 export interface NodeDirectWiring {
-  createConnection?: (nodeId: string) => GatewayConnection;
+  /** 自建连接（测试注入）。**必须**把第二个参数接到真 socket 的 `onclose` 上。 */
+  createConnection?: (nodeId: string, onClose: (code: number) => void) => GatewayConnection;
   createController?: (
     nodeId: string,
     connection: GatewayConnection
   ) => DirectCarrierController | null;
   /** WS 关闭码回调（宿主用它识别 4401）。 */
   onClose?: (code: number) => void;
+  /** 覆盖底层 socket 工厂（测试注入）：其余接线保持生产路径不变。 */
+  socketFactory?: SocketFactory;
   /** 取该 node 的运行时（测试注入）；缺省从 `appNodeRuntimes` 取已建好的那份。 */
   resolveRuntime?: (nodeId: string) => AppRuntime | null;
   /** 直连断开提示的出口（测试注入）；缺省用 runtime 自己的 sink。 */
@@ -129,6 +139,14 @@ function mountedPaneIds(
   return [...ids];
 }
 
+/** 直连断开提示的文案 key（locale 里有正式条目，不再靠 `defaultValue` 兜底）。 */
+const DIRECT_FALLBACK_KEY = 'device.directFallbackToast';
+
+/** runtime 还没建好时它自己的 `t` 也没有，退到宿主的全局 i18n 实例。 */
+function directFallbackText(runtime: AppRuntime | null): string {
+  return runtime?.t(DIRECT_FALLBACK_KEY) || i18n.t(DIRECT_FALLBACK_KEY) || DIRECT_FALLBACK_KEY;
+}
+
 /**
  * 切回 primary（含直连异常关闭）后的补齐：
  * 1. 重发该 device 的整份 pane 订阅——`mountPane()` 拿到的释放函数**立刻调用**，
@@ -154,11 +172,7 @@ function resumeSubscribedPanes(
       for (const paneId of paneIds) tmux.requestPaneScreen(deviceId, paneId);
     }
   }
-  const message =
-    runtime?.t('device.directFallbackToast', {
-      defaultValue: '直连已断开，最近输入可能未送达',
-    }) ?? '直连已断开，最近输入可能未送达';
-  sink.warning(message);
+  sink.warning(directFallbackText(runtime));
 }
 
 /**
@@ -169,14 +183,18 @@ export function createNodeConnection(
   nodeId: string,
   wiring: NodeDirectWiring = {}
 ): GatewayConnection {
+  // 关闭码回调对两条工厂路径都是**必给**的：自建工厂不接它，4401 就没人处理，
+  // ws-client 会一路重连到被反复关掉（见 F4-fix 评审 Major）。
+  const onClose = wiring.onClose ?? (() => undefined);
   const connection = (
     wiring.createConnection ??
-    ((id) =>
+    ((id, close) =>
       createGatewayConnection({
         wsUrl: nodeWsUrl(id),
-        ...(wiring.onClose ? { onClose: wiring.onClose } : {}),
+        onClose: close,
+        ...(wiring.socketFactory ? { socketFactory: wiring.socketFactory } : {}),
       }))
-  )(nodeId);
+  )(nodeId, onClose);
   if (isSelfNode(nodeId)) return connection;
 
   const controller = (wiring.createController ?? defaultController)(nodeId, connection);
@@ -197,17 +215,28 @@ export function createNodeConnection(
   return connection;
 }
 
-export const appNodeRuntimes: NodeConnectionManager = new NodeConnectionManager({
-  // 宿主只有一个 toaster，全部 node 共用同一个通知出口（不再经全局可变默认 sink）。
-  notifications: sonnerNotificationSink,
-  createConnection: (nodeId) =>
-    createNodeConnection(nodeId, {
-      // 自建连接绕过了 manager 的默认工厂，关闭码要自己转回去，4401 才有人处理。
-      onClose: (code) => appNodeRuntimes.notifyClose(nodeId, code),
-    }),
-  // 引用计数归零、runtime 真正回收时一并释放该 node 的查询缓存。
-  onDispose: (nodeId) => disposeNodeQueryClient(nodeId),
-});
+/**
+ * 宿主的 manager 接线。**生产与测试走同一份**：4401 的关闭码从真 socket → `createNodeConnection`
+ * → manager 这条链上任何一环断了，测试就会红（不允许再用手动 `notifyClose()` 假装接通）。
+ *
+ * `wiring` 只用来注入底层 socket 工厂之类的测试替身，接线本身不可覆盖。
+ */
+export function createAppNodeRuntimes(
+  overrides: NodeConnectionManagerOptions = {},
+  wiring: Pick<NodeDirectWiring, 'socketFactory' | 'createController'> = {}
+): NodeConnectionManager {
+  return new NodeConnectionManager({
+    // 宿主只有一个 toaster，全部 node 共用同一个通知出口（不再经全局可变默认 sink）。
+    notifications: sonnerNotificationSink,
+    // manager 把关闭码回调递进来，直接转给底层连接：4401 由 manager 统一处理。
+    createConnection: (nodeId, onClose) => createNodeConnection(nodeId, { ...wiring, onClose }),
+    // 引用计数归零、runtime 真正回收时一并释放该 node 的查询缓存。
+    onDispose: (nodeId) => disposeNodeQueryClient(nodeId),
+    ...overrides,
+  });
+}
+
+export const appNodeRuntimes: NodeConnectionManager = createAppNodeRuntimes();
 
 function createNodeQueryClient(): QueryClient {
   return new QueryClient({

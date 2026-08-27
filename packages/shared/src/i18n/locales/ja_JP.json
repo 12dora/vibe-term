@@ -108,7 +108,8 @@
       "localDevice": "ローカルデバイス",
       "subtitle": "{{username}}@{{host}}:{{port}}",
       "modify": "デバイスを変更",
-      "delete": "削除"
+      "delete": "削除",
+      "directFallbackToast": "直接接続が切断されました。直近の入力が届いていない可能性があります"
     },
     "terminal": {
       "keyboardBehavior": {
@@ -1071,7 +1072,8 @@
         "INVALID_NODE_ID": "ノード ID が不正です",
         "TOTP_CODE_REQUIRED": "6 桁のコードを入力してください",
         "ROOT_KEY_MISMATCH": "パスワードが違います（導出したルート公開鍵がサーバーの記録と一致しません）",
-        "PASSKEY_ABORTED": "passkey の承認がキャンセルされました"
+        "PASSKEY_ABORTED": "passkey の承認がキャンセルされました",
+        "NO_PASSKEY_FOR_ORIGIN": "この入口で使える passkey がありません（登録済みの資格情報は別の入口のものです）"
       },
       "security": {
         "title": "アカウントセキュリティ",
@@ -1101,7 +1103,8 @@
         "totpConfirmHint": "認証アプリに表示されている 6 桁のコードを入力してください。検証に成功するまでキーログには書き込みません。",
         "totpCodeRequired": "6 桁のコードを入力してください",
         "totpDone": "TOTP を有効にしました",
-        "passkeyListFailed": "passkey 一覧の読み込みに失敗しました: {{error}}"
+        "passkeyListFailed": "passkey 一覧の読み込みに失敗しました: {{error}}",
+        "passkeyOtherOrigin": "（別の入口のもの。ここでは使用できません）"
       },
       "credential": {
         "title": "本人確認",
@@ -1171,9 +1174,10 @@
         "badCertSig": "ノード証明書の署名検証に失敗したため無視しました",
         "expired": "登録認可の有効期限が切れています。作り直してください",
         "noCertificateYet": "まだ証明書を受信していません。後でもう一度お試しください",
-        "hubNotConfirmed": "hub が未確認です。後で再試行してください",
+        "hubNotConfirmed": "hub が未確認です。ローカルにも未書き込みのため、同じ記録のまま再試行できます",
         "retryHub": "再試行",
-        "missingHubUrl": "hub の公開 URL が無いため join コマンドを生成できません"
+        "missingHubUrl": "hub の公開 URL が無いため join コマンドを生成できません",
+        "staleRecord": "鍵ログが進んだためこの記録は無効です。もう一度確認してください"
       },
       "rename": {
         "save": "保存",
@@ -1183,7 +1187,7 @@
         "confirmText": "ノード「{{name}}」を失効しますか？直ちにアクセス権を失い、証明書は復元できません。",
         "reasonPrompt": "失効理由（任意）",
         "done": "失効しました",
-        "hubFailed": "鍵ログには記録されましたが、hub への同期に失敗しました：{{error}}",
+        "hubFailed": "hub が未確認のため失効は反映されていません（ローカルの鍵ログにも未書き込み）。再試行してください：{{error}}",
         "selfBlocked": "現在のエントリ自身は失効できません"
       },
       "badge": {

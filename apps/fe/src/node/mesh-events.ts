@@ -119,13 +119,10 @@ export function decodeMeshFrame(data: Uint8Array): MeshFrame | null {
     }
     if (envelope.kind === KIND_ENROLL_REDEEMED) {
       const payload = wsBorsh.decodePayload(wsBorsh.schema.EnrollRedeemedSchema, envelope.payload);
-      if (
-        payload.enrollPk.length === 0 ||
-        payload.certificate.length === 0 ||
-        payload.certSig.length !== 64
-      ) {
-        return null;
-      }
+      // 字段边界（`enroll_pk` 32 / `cert_sig` 64 / 证书上限 / `node_id` 32-hex）与 node、hub
+      // 两侧共用同一份判定；不合规一律抛，由外层 catch 变成 `null`（帧作废）。
+      wsBorsh.schema.assertEnrollRedeemedFields(payload);
+      if (payload.certificate.length === 0) return null;
       return {
         kind: 'enroll-redeemed',
         payload: {

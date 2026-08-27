@@ -114,7 +114,8 @@ export const I18N_RESOURCES = {
       "localDevice": "Local Device",
       "subtitle": "{{username}}@{{host}}:{{port}}",
       "modify": "Modify Device",
-      "delete": "Delete"
+      "delete": "Delete",
+      "directFallbackToast": "Direct connection dropped; recent input may not have been delivered"
     },
     "terminal": {
       "keyboardBehavior": {
@@ -1077,7 +1078,8 @@ export const I18N_RESOURCES = {
         "INVALID_NODE_ID": "Invalid node id",
         "TOTP_CODE_REQUIRED": "Enter the 6-digit code",
         "ROOT_KEY_MISMATCH": "Wrong password (the derived root public key does not match the server)",
-        "PASSKEY_ABORTED": "Passkey authorization was cancelled"
+        "PASSKEY_ABORTED": "Passkey authorization was cancelled",
+        "NO_PASSKEY_FOR_ORIGIN": "No passkey is available on this entry (your credentials belong to other entry origins)"
       },
       "security": {
         "title": "Account security",
@@ -1107,7 +1109,8 @@ export const I18N_RESOURCES = {
         "totpConfirmHint": "Enter the 6-digit code shown by your authenticator; nothing is written to the key log until it verifies.",
         "totpCodeRequired": "Enter the 6-digit code",
         "totpDone": "TOTP enabled",
-        "passkeyListFailed": "Failed to load passkeys: {{error}}"
+        "passkeyListFailed": "Failed to load passkeys: {{error}}",
+        "passkeyOtherOrigin": "(belongs to another entry — unusable here)"
       },
       "credential": {
         "title": "Confirm it is you",
@@ -1177,9 +1180,10 @@ export const I18N_RESOURCES = {
         "badCertSig": "Node certificate signature check failed — ignored",
         "expired": "Enrollment authorization expired, please create a new one",
         "noCertificateYet": "No certificate for this enrollment yet, try again later",
-        "hubNotConfirmed": "Hub has not confirmed yet, retry later",
+        "hubNotConfirmed": "Hub has not confirmed; nothing was written locally either — retry sends the same record",
         "retryHub": "Retry",
-        "missingHubUrl": "The hub did not provide a public URL; cannot build the join command"
+        "missingHubUrl": "The hub did not provide a public URL; cannot build the join command",
+        "staleRecord": "The key log moved on, so this record is void; please confirm again"
       },
       "rename": {
         "save": "Save",
@@ -1189,7 +1193,7 @@ export const I18N_RESOURCES = {
         "confirmText": "Revoke node \"{{name}}\"? It loses access immediately and its certificate cannot be restored.",
         "reasonPrompt": "Reason (optional)",
         "done": "Revoked",
-        "hubFailed": "Record written to the key log, but syncing to the hub failed: {{error}}",
+        "hubFailed": "Hub has not confirmed, so the revocation did not take effect (nothing was written locally either); please retry: {{error}}",
         "selfBlocked": "Cannot revoke the current entry itself"
       },
       "badge": {
@@ -1318,7 +1322,8 @@ export const I18N_RESOURCES = {
       "localDevice": "本地设备",
       "subtitle": "{{username}}@{{host}}:{{port}}",
       "modify": "修改设备",
-      "delete": "删除"
+      "delete": "删除",
+      "directFallbackToast": "直连已断开，最近输入可能未送达"
     },
     "terminal": {
       "keyboardBehavior": {
@@ -2281,7 +2286,8 @@ export const I18N_RESOURCES = {
         "INVALID_NODE_ID": "节点标识不合法",
         "TOTP_CODE_REQUIRED": "请输入 6 位动态验证码",
         "ROOT_KEY_MISMATCH": "密码不正确（派生出的根公钥与服务端记录不一致）",
-        "PASSKEY_ABORTED": "passkey 授权被取消"
+        "PASSKEY_ABORTED": "passkey 授权被取消",
+        "NO_PASSKEY_FOR_ORIGIN": "本入口没有可用的 passkey（已注册的凭证属于其它入口地址）"
       },
       "security": {
         "title": "账号安全",
@@ -2311,7 +2317,8 @@ export const I18N_RESOURCES = {
         "totpConfirmHint": "请输入认证器当前显示的 6 位验证码；验证通过后才会写入密钥日志。",
         "totpCodeRequired": "请输入 6 位动态验证码",
         "totpDone": "TOTP 已启用",
-        "passkeyListFailed": "passkey 列表加载失败：{{error}}"
+        "passkeyListFailed": "passkey 列表加载失败：{{error}}",
+        "passkeyOtherOrigin": "（属于其它入口，本入口不可用）"
       },
       "credential": {
         "title": "确认身份",
@@ -2381,9 +2388,10 @@ export const I18N_RESOURCES = {
         "badCertSig": "节点证书签名校验失败，已忽略",
         "expired": "注册授权已过期，请重新生成",
         "noCertificateYet": "尚未收到该节点的证书，请稍后再试",
-        "hubNotConfirmed": "hub 未确认，稍后重试",
+        "hubNotConfirmed": "hub 未确认，本地也未写入，可原样重试",
         "retryHub": "重试",
-        "missingHubUrl": "hub 未提供对外地址，无法生成 join 命令"
+        "missingHubUrl": "hub 未提供对外地址，无法生成 join 命令",
+        "staleRecord": "密钥日志已变化，这条记录已作废，请重新确认"
       },
       "rename": {
         "save": "保存",
@@ -2393,7 +2401,7 @@ export const I18N_RESOURCES = {
         "confirmText": "确定吊销节点「{{name}}」？该节点将立即失去访问权，且证书不可恢复。",
         "reasonPrompt": "吊销原因（可留空）",
         "done": "已吊销",
-        "hubFailed": "记录已写入密钥日志，但同步到 hub 失败：{{error}}",
+        "hubFailed": "hub 未确认，吊销未生效（本地密钥日志也未写入），请重试：{{error}}",
         "selfBlocked": "不能吊销当前入口自身"
       },
       "badge": {
@@ -2522,7 +2530,8 @@ export const I18N_RESOURCES = {
       "localDevice": "ローカルデバイス",
       "subtitle": "{{username}}@{{host}}:{{port}}",
       "modify": "デバイスを変更",
-      "delete": "削除"
+      "delete": "削除",
+      "directFallbackToast": "直接接続が切断されました。直近の入力が届いていない可能性があります"
     },
     "terminal": {
       "keyboardBehavior": {
@@ -3485,7 +3494,8 @@ export const I18N_RESOURCES = {
         "INVALID_NODE_ID": "ノード ID が不正です",
         "TOTP_CODE_REQUIRED": "6 桁のコードを入力してください",
         "ROOT_KEY_MISMATCH": "パスワードが違います（導出したルート公開鍵がサーバーの記録と一致しません）",
-        "PASSKEY_ABORTED": "passkey の承認がキャンセルされました"
+        "PASSKEY_ABORTED": "passkey の承認がキャンセルされました",
+        "NO_PASSKEY_FOR_ORIGIN": "この入口で使える passkey がありません（登録済みの資格情報は別の入口のものです）"
       },
       "security": {
         "title": "アカウントセキュリティ",
@@ -3515,7 +3525,8 @@ export const I18N_RESOURCES = {
         "totpConfirmHint": "認証アプリに表示されている 6 桁のコードを入力してください。検証に成功するまでキーログには書き込みません。",
         "totpCodeRequired": "6 桁のコードを入力してください",
         "totpDone": "TOTP を有効にしました",
-        "passkeyListFailed": "passkey 一覧の読み込みに失敗しました: {{error}}"
+        "passkeyListFailed": "passkey 一覧の読み込みに失敗しました: {{error}}",
+        "passkeyOtherOrigin": "（別の入口のもの。ここでは使用できません）"
       },
       "credential": {
         "title": "本人確認",
@@ -3585,9 +3596,10 @@ export const I18N_RESOURCES = {
         "badCertSig": "ノード証明書の署名検証に失敗したため無視しました",
         "expired": "登録認可の有効期限が切れています。作り直してください",
         "noCertificateYet": "まだ証明書を受信していません。後でもう一度お試しください",
-        "hubNotConfirmed": "hub が未確認です。後で再試行してください",
+        "hubNotConfirmed": "hub が未確認です。ローカルにも未書き込みのため、同じ記録のまま再試行できます",
         "retryHub": "再試行",
-        "missingHubUrl": "hub の公開 URL が無いため join コマンドを生成できません"
+        "missingHubUrl": "hub の公開 URL が無いため join コマンドを生成できません",
+        "staleRecord": "鍵ログが進んだためこの記録は無効です。もう一度確認してください"
       },
       "rename": {
         "save": "保存",
@@ -3597,7 +3609,7 @@ export const I18N_RESOURCES = {
         "confirmText": "ノード「{{name}}」を失効しますか？直ちにアクセス権を失い、証明書は復元できません。",
         "reasonPrompt": "失効理由（任意）",
         "done": "失効しました",
-        "hubFailed": "鍵ログには記録されましたが、hub への同期に失敗しました：{{error}}",
+        "hubFailed": "hub が未確認のため失効は反映されていません（ローカルの鍵ログにも未書き込み）。再試行してください：{{error}}",
         "selfBlocked": "現在のエントリ自身は失効できません"
       },
       "badge": {

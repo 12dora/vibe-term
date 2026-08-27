@@ -12,12 +12,13 @@ import { buildSignedRecord, enrollmentSignerFrom } from '@/auth/key-log-actions'
 import { ProtocolMismatchError } from '@tmex/api-client/auth/index';
 import type { KeyLogHead } from '@tmex/shared/auth';
 import {
+  JOIN_TOKEN_BYTES,
+  JOIN_TOKEN_CHARS,
   createEnrollment,
   decodeBase64url,
   decodeCertificate,
   encodeAdmitNodePayload,
   encodeBase64url,
-  encodeJoinToken,
   encodeRevokeNodePayload,
   hexToBytes,
   verifyNodeCertificate,
@@ -89,14 +90,36 @@ function notify(): void {
   for (const listener of listeners) listener();
 }
 
+/** 可以落盘的字段——公开投影**只**由它们组成，多出来的一律丢掉。 */
+const PUBLIC_FIELDS = [
+  'hubEnrollmentId',
+  'enrollPk',
+  'authorizationBytes',
+  'authorizationSig',
+  'exp',
+  'name',
+  'createdAt',
+] as const;
+
 /**
- * 反序列化守卫。带 `enrollSk` / `joinToken` 的旧格式一律丢弃（不迁移）：
+ * 秘密味道的字段名。`enrollSk`（sk）、`joinToken`（token）都被它命中，
+ * 将来若有别的分支往这里塞秘密，也会被同一条规则拦下。
+ */
+const SECRET_FIELD_RE = /sk|secret|token|seed|priv|password|passphrase|credential/i;
+
+function isSecretLikeField(key: string): boolean {
+  if ((PUBLIC_FIELDS as readonly string[]).includes(key)) return false;
+  return SECRET_FIELD_RE.test(key);
+}
+
+/**
+ * 反序列化守卫。带 `enrollSk` / `joinToken` 或任何秘密味道字段的记录一律丢弃（不迁移）：
  * 那是不该存在的秘密，读回来只会把它再写一遍。
  */
 function isPending(value: unknown): value is PendingEnrollment {
   if (!value || typeof value !== 'object') return false;
   const row = value as Record<string, unknown>;
-  if ('enrollSk' in row || 'joinToken' in row) return false;
+  if (Object.keys(row).some(isSecretLikeField)) return false;
   return (
     typeof row.hubEnrollmentId === 'string' &&
     typeof row.enrollPk === 'string' &&
@@ -106,6 +129,41 @@ function isPending(value: unknown): value is PendingEnrollment {
   );
 }
 
+/** 只保留公开字段：来路不明的多余字段（含将来新增的秘密）都不会再被写回去。 */
+function publicProjection(row: PendingEnrollment): PendingEnrollment {
+  return {
+    hubEnrollmentId: row.hubEnrollmentId,
+    enrollPk: row.enrollPk,
+    authorizationBytes: row.authorizationBytes,
+    authorizationSig: row.authorizationSig,
+    exp: row.exp,
+    name: typeof row.name === 'string' ? row.name : null,
+    createdAt: typeof row.createdAt === 'number' ? row.createdAt : 0,
+  };
+}
+
+function writeStorage(rows: PendingEnrollment[]): void {
+  const store = storage();
+  if (!store) return;
+  try {
+    if (rows.length === 0) store.removeItem(PENDING_STORAGE_KEY);
+    else store.setItem(PENDING_STORAGE_KEY, JSON.stringify(rows));
+  } catch {
+    // 隐私模式下 sessionStorage 会抛；内存态仍然有效，刷新后丢失即可。
+  }
+}
+
+/**
+ * 加载 + **就地净化**。
+ *
+ * 光把旧格式从内存结果里 `filter` 掉不够：含 `enroll_sk` 的原始 JSON 仍留在 sessionStorage 里，
+ * 升级后同源脚本照样能取走 enrollment 私钥抢先 redeem（见 F4-fix 评审 Blocker）。
+ * 因此只要读到的内容不是「恰好等于公开投影」，就**先删 key**（哪怕随后的回写抛异常，
+ * 秘密也已经不在盘上了），再把公开投影写回去。
+ *
+ * 注意：本函数是 `useSyncExternalStore` 的 `getSnapshot`，**绝不能** `notify()`——
+ * 那会在渲染期同步触发订阅者。净化只碰存储与 cache，快照本身在这一次读取里就是终值。
+ */
 export function listPendingEnrollments(): PendingEnrollment[] {
   if (cache) return cache;
   const store = storage();
@@ -113,26 +171,28 @@ export function listPendingEnrollments(): PendingEnrollment[] {
     cache = [];
     return cache;
   }
+  let raw: string | null = null;
+  let rows: PendingEnrollment[] = [];
   try {
-    const raw = store.getItem(PENDING_STORAGE_KEY);
+    raw = store.getItem(PENDING_STORAGE_KEY);
     const parsed: unknown = raw ? JSON.parse(raw) : [];
-    cache = Array.isArray(parsed) ? parsed.filter(isPending) : [];
+    rows = Array.isArray(parsed) ? parsed.filter(isPending).map(publicProjection) : [];
   } catch {
-    cache = [];
+    rows = [];
   }
+  const clean = rows.length === 0 ? null : JSON.stringify(rows);
+  if (raw !== null && raw !== clean) {
+    store.removeItem(PENDING_STORAGE_KEY);
+    if (clean !== null) writeStorage(rows);
+  }
+  cache = rows;
   return cache;
 }
 
 function persist(next: PendingEnrollment[]): void {
-  cache = next;
-  const store = storage();
-  if (store) {
-    try {
-      store.setItem(PENDING_STORAGE_KEY, JSON.stringify(next));
-    } catch {
-      // 隐私模式下 sessionStorage 会抛；内存态仍然有效，刷新后丢失即可。
-    }
-  }
+  const rows = next.map(publicProjection);
+  cache = rows;
+  writeStorage(rows);
   notify();
 }
 
@@ -179,6 +239,145 @@ export function nextPendingExpiry(rows: PendingEnrollment[]): number | null {
 
 export function isPendingExpired(pending: PendingEnrollment, now: number): boolean {
   return pending.exp <= now;
+}
+
+// ---------------------------------------------------------------------------
+// hub 未确认的记录（仅内存）
+// ---------------------------------------------------------------------------
+
+/** 已签好、随时可以原样重发的记录（base64url）。 */
+export interface SignedRecord {
+  bytes: string;
+  sig: string;
+}
+
+/**
+ * `POST /api/auth/keylog?hub=sync` 的失败分类（B2-6 契约）。
+ *
+ * 服务端在 hub 确认之前**不落库**：hub 明确拒绝 → 409 `{code:<hubError>}`，等 ack 超时 →
+ * 504 `{code:'HUB_TIMEOUT'}`，两种情况本地密钥日志都没动。因此：
+ *
+ * - `unconfirmed`：hub 只是没答应下来（不可达 / 超时）。本地 head 没动，同一份字节仍然接得上，
+ *   重试**原样重发**即可。按新 head 重签一个 seq 才是危险的：entry 到了 6、hub 停在 5 时，
+ *   重签出来的 7 会让 hub 永久 `seq_gap`（评审 Major 里那条不可恢复的分叉）。
+ * - `stale`：这条记录的位置不对（fork / seq_gap）。同一份字节永远不会被接受，必须重新取 head
+ *   重签，因此要把暂存的记录丢掉。
+ * - `rejected`：记录本身有问题（签名、权限等），重发重签都没用。
+ */
+export type KeyLogSyncFailure = 'unconfirmed' | 'stale' | 'rejected';
+
+const UNCONFIRMED_CODES = new Set([
+  'HUB_TIMEOUT',
+  'hub_timeout',
+  'timeout',
+  'unavailable',
+  'hub_unavailable',
+  'uplink_down',
+]);
+const STALE_CODES = new Set(['KEY_LOG_FORK', 'fork', 'seq_gap', 'stale']);
+
+export function classifyKeyLogFailure(code: string): KeyLogSyncFailure {
+  if (UNCONFIRMED_CODES.has(code)) return 'unconfirmed';
+  if (STALE_CODES.has(code)) return 'stale';
+  return 'rejected';
+}
+
+export type AdmitDisposition =
+  | { kind: 'admitted' }
+  | { kind: 'unconfirmed' }
+  | { kind: 'stale' }
+  | { kind: 'error'; code: string };
+
+/** hub=sync 的响应 → UI 该做什么。页面与测试共用同一份判定。 */
+export function admitDisposition(
+  result: { ok: true; hubAck?: boolean } | { ok: false; code: string }
+): AdmitDisposition {
+  if (result.ok) {
+    // B2-6 之后 200 不再带 `hubAck:false`；万一遇到（旧版 entry），一律当未确认。
+    return result.hubAck === true ? { kind: 'admitted' } : { kind: 'unconfirmed' };
+  }
+  const failure = classifyKeyLogFailure(result.code);
+  if (failure === 'unconfirmed') return { kind: 'unconfirmed' };
+  if (failure === 'stale') return { kind: 'stale' };
+  return { kind: 'error', code: result.code };
+}
+
+/**
+ * hub 未确认的 admit 记录。**只在内存里**（记录本身不含秘密，但也没有落盘的必要），
+ * 放在模块级而不是组件 state：用户切走再回来仍然要能重发同一份字节。
+ */
+const unconfirmedRecords = new Map<string, SignedRecord>();
+const unconfirmedListeners = new Set<() => void>();
+let unconfirmedIds: string[] = [];
+
+function notifyUnconfirmed(): void {
+  unconfirmedIds = [...unconfirmedRecords.keys()];
+  for (const listener of unconfirmedListeners) listener();
+}
+
+export function subscribeUnconfirmedRecords(listener: () => void): () => void {
+  unconfirmedListeners.add(listener);
+  return () => {
+    unconfirmedListeners.delete(listener);
+  };
+}
+
+/** `useSyncExternalStore` 的快照：引用稳定，只在集合变化时换新数组。 */
+export function listUnconfirmedRecordIds(): string[] {
+  return unconfirmedIds;
+}
+
+export function unconfirmedRecord(pendingId: string): SignedRecord | null {
+  return unconfirmedRecords.get(pendingId) ?? null;
+}
+
+export function forgetUnconfirmedRecord(pendingId: string): void {
+  if (unconfirmedRecords.delete(pendingId)) notifyUnconfirmed();
+}
+
+export function clearUnconfirmedRecords(): void {
+  if (unconfirmedRecords.size === 0) return;
+  unconfirmedRecords.clear();
+  notifyUnconfirmed();
+}
+
+/**
+ * 这条 pending 现在该做什么。
+ *
+ * **`resend` 永远优先于 `sign`**：只要手上还有一份 hub 未确认的记录，就原样重发它。
+ * 轮询每 5 s 会重新看到同一张证书，若那时按新 head 再签一条，就会造出另一个 seq，
+ * hub 缺了中间那条便永久 `seq_gap`（评审 Major 里那条不可恢复的分叉）。
+ */
+export function admitPlan(pendingId: string, canSign: boolean): 'resend' | 'sign' | 'wait' {
+  if (unconfirmedRecords.has(pendingId)) return 'resend';
+  return canSign ? 'sign' : 'wait';
+}
+
+/**
+ * 送一条**已签好**的 admit 记录，并按结果决定要不要把它留着重发。
+ *
+ * 重试路径拿的就是这里存下的对象（`unconfirmedRecord()`），字节完全相同——重试**绝不**重新
+ * 取 head、重新签名。
+ */
+export async function submitAdmitRecord(
+  api: {
+    appendKeyLog(
+      body: SignedRecord,
+      opts?: { hubSync?: boolean }
+    ): Promise<{ ok: true; hubAck?: boolean } | { ok: false; code: string }>;
+  },
+  pendingId: string,
+  record: SignedRecord
+): Promise<AdmitDisposition> {
+  const disposition = admitDisposition(await api.appendKeyLog(record, { hubSync: true }));
+  if (disposition.kind === 'unconfirmed') {
+    unconfirmedRecords.set(pendingId, record);
+    notifyUnconfirmed();
+  } else {
+    // 确认成功、或这条字节已经作废：都不该再留着让用户重发。
+    forgetUnconfirmedRecord(pendingId);
+  }
+  return disposition;
 }
 
 // ---------------------------------------------------------------------------
@@ -387,21 +586,25 @@ export async function createEnrollmentOnHub(
     now,
     ttlMs: input.ttlMs,
   });
-  const enrollPk = encodeBase64url(enrollment.enrollPk);
-  const authorizationBytes = encodeBase64url(enrollment.authorizationBytes);
-  const authorizationSig = encodeBase64url(enrollment.authorizationSig);
-  const ttl = input.ttlMs ?? 10 * 60 * 1000;
-  const exp = now + ttl;
-
-  let joinToken: string;
+  // 私钥从**产出的那一刻**起就归这个 try 管：中间任何一步抛异常（编码、hub 请求失败、
+  // join 串拼装失败）都不会把 `enroll_sk` 留在堆里。
   try {
+    const enrollPk = encodeBase64url(enrollment.enrollPk);
+    const authorizationBytes = encodeBase64url(enrollment.authorizationBytes);
+    const authorizationSig = encodeBase64url(enrollment.authorizationSig);
+    const ttl = input.ttlMs ?? 10 * 60 * 1000;
+    const exp = now + ttl;
     const created = await input.hubApi.createEnrollment({
       enroll_pk: enrollPk,
       authorization: authorizationBytes,
       authorization_sig: authorizationSig,
       exp,
     });
-    joinToken = encodeJoinToken(enrollment.enrollSk, input.rootPublicKey, input.keyLogHeadHash);
+    const joinToken = encodeJoinTokenZeroing(
+      enrollment.enrollSk,
+      input.rootPublicKey,
+      input.keyLogHeadHash
+    );
     const pending: PendingEnrollment = {
       hubEnrollmentId: created.id,
       enrollPk,
@@ -420,14 +623,77 @@ export async function createEnrollmentOnHub(
 }
 
 /**
+ * `base64url(enroll_sk ‖ root_public_key ‖ key_log_head_hash)`，**并把 96 字节临时缓冲清零**。
+ *
+ * 没有直接用 `@tmex/shared/auth` 的 `encodeJoinToken()`：它在内部另建一份含 `enroll_sk` 的
+ * 96 字节数组且从不清零，调用方够不着那份副本（见 F4-fix 评审 Major）。这里自己拼、自己清，
+ * 布局与长度校验与共享实现逐字对齐（`decodeJoinToken()` 是它的反函数）。
+ * 共享实现同样应当在 `finally` 里清零——CLI 侧还在用它，需由 `packages/shared` 的负责人处理。
+ */
+export function encodeJoinTokenZeroing(
+  enrollSk: Uint8Array,
+  rootPublicKey: Uint8Array,
+  keyLogHeadHash: Uint8Array,
+  /** 仅测试注入：拿到同一块缓冲才能断言它确实被清零。 */
+  scratch?: Uint8Array
+): string {
+  if (enrollSk.length !== 32 || rootPublicKey.length !== 32 || keyLogHeadHash.length !== 32) {
+    throw new Error('join token fields must each be 32 bytes');
+  }
+  const raw = scratch ?? new Uint8Array(JOIN_TOKEN_BYTES);
+  if (raw.length !== JOIN_TOKEN_BYTES) {
+    throw new Error(`join token buffer must be ${JOIN_TOKEN_BYTES} bytes`);
+  }
+  try {
+    raw.set(enrollSk, 0);
+    raw.set(rootPublicKey, 32);
+    raw.set(keyLogHeadHash, 64);
+    const token = encodeBase64url(raw);
+    if (token.length !== JOIN_TOKEN_CHARS) {
+      throw new Error(`join token must be ${JOIN_TOKEN_CHARS} chars`);
+    }
+    return token;
+  } finally {
+    raw.fill(0);
+  }
+}
+
+/**
+ * hub 对外地址是否可以拼进要让用户粘贴执行的命令。
+ *
+ * 只认 https（本机回环允许 http，与 secure context 的判定一致），且不带用户名/密码。
+ * hub 返回的值不是可信输入：`https://hub.example; touch /tmp/pwn` 这种畸形值一旦拼进命令，
+ * 用户粘贴即执行（见 F4-fix 评审 Major）。这里先判 URL 合法，再由 `shellQuote()` 兜底。
+ */
+export function isTrustedHubUrl(value: string | null | undefined): boolean {
+  if (!value) return false;
+  let url: URL;
+  try {
+    url = new URL(value);
+  } catch {
+    return false;
+  }
+  if (url.username || url.password) return false;
+  if (url.protocol === 'https:') return true;
+  if (url.protocol !== 'http:') return false;
+  const host = url.hostname.toLowerCase();
+  return host === 'localhost' || host === '127.0.0.1' || host === '[::1]' || host === '::1';
+}
+
+/**
  * 展示给用户的 join 命令。
  * `hubPublicUrl` 必须来自 hub（enrollment 创建响应或 `/api/auth/mode`）：
  * 用当前页面 origin 会让从普通 node entry 发起的 enrollment 把新设备指到没有 HubRuntime
  * 的机器上，redeem 直接 404（见 F4-3 评审 Blocker）。
+ *
+ * URL 与 token 一律经 `shellQuote()`；URL 还必须先过 `isTrustedHubUrl()`。
  */
 export function joinCommand(hubPublicUrl: string, token: string, name?: string | null): string {
+  if (!isTrustedHubUrl(hubPublicUrl)) {
+    throw new Error('hub public url must be an https url');
+  }
   const suffix = name?.trim() ? ` --name ${shellQuote(name.trim())}` : '';
-  return `npx tmex-cli hub join ${hubPublicUrl} --token ${token}${suffix}`;
+  return `npx tmex-cli hub join ${shellQuote(hubPublicUrl)} --token ${shellQuote(token)}${suffix}`;
 }
 
 function shellQuote(value: string): string {

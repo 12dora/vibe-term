@@ -2,6 +2,7 @@
 
 import { type ApiClient, defaultApiClient, parseApiError } from '../client';
 import { SELF_NODE_ID, resolveNodeUrl } from '../node-url';
+import { NoPasskeyForOriginError } from './types';
 import type {
   AuthChallengeResponse,
   AuthLoginErrorCode,
@@ -154,7 +155,13 @@ export class AuthApi {
       body: JSON.stringify({ uid, delegation }),
     });
     if (!res.ok) {
-      throw new Error(await parseApiError(res, 'Failed to create passkey login options'));
+      // 404 `NO_PASSKEY_FOR_ORIGIN`（B2-8）是「本入口没有可用 passkey」这一确定结论，
+      // 必须以可判别的类型抛出：调用方据此提示用户，而不是当成未知失败去猜、去回退。
+      const code = await readCode(res, '');
+      if (res.status === 404 && code === 'NO_PASSKEY_FOR_ORIGIN') {
+        throw new NoPasskeyForOriginError();
+      }
+      throw new Error(code || 'Failed to create passkey login options');
     }
     return (await res.json()) as PublicKeyCredentialRequestOptionsJSON;
   }

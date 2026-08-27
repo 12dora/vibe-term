@@ -58,8 +58,14 @@ export interface NodeConnectionManagerOptions {
   onDispose?: (nodeId: string) => void;
   /** WS 4401 的处理（测试注入）；缺省派发全局 / 单 node 的鉴权事件。 */
   onUnauthorized?: (nodeId: string) => void;
-  /** 测试注入点 */
-  createConnection?: (nodeId: string) => GatewayConnection;
+  /**
+   * 宿主自建连接（如 fe 的直连包装）。
+   *
+   * `onClose` 是**必传给底层连接**的关闭码回调：自建工厂绕过了下面的默认工厂，不把它接到
+   * 真正的 socket 上，4401 就没有人处理，ws-client 会一直重连到被反复关掉
+   * （见 F4-fix 评审 Major）。因此这里由 manager 主动把回调递给工厂，工厂没有借口忘记它。
+   */
+  createConnection?: (nodeId: string, onClose: (code: number) => void) => GatewayConnection;
   createApiClient?: (nodeId: string) => ApiClient;
   createRuntime?: (options: AppRuntimeOptions) => AppRuntime;
   setTimeoutFn?: (fn: () => void, ms: number) => unknown;
@@ -119,12 +125,10 @@ export class NodeConnectionManager {
   }
 
   private create(nodeId: string): EntryRecord {
+    const onClose = (code: number) => this.notifyClose(nodeId, code);
     const connection =
-      this.options.createConnection?.(nodeId) ??
-      createGatewayConnection({
-        wsUrl: nodeWsUrl(nodeId),
-        onClose: (code) => this.notifyClose(nodeId, code),
-      });
+      this.options.createConnection?.(nodeId, onClose) ??
+      createGatewayConnection({ wsUrl: nodeWsUrl(nodeId), onClose });
     const apiClient = this.options.createApiClient?.(nodeId) ?? createNodeApiClient(nodeId);
 
     const runtimeOptions: AppRuntimeOptions = {

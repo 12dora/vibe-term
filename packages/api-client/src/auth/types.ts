@@ -39,6 +39,21 @@ export interface AuthModeResponse {
   hubPublicUrl?: string | null;
 }
 
+/**
+ * `POST /api/auth/passkey/login/options` 的 404 `{code:'NO_PASSKEY_FOR_ORIGIN'}`（B2-8）：
+ * 该 origin 下一把可用凭证都没有（用户可能存在，但凭证都注册在别的 origin）。
+ *
+ * 这是**业务结果不是网络错误**：调用方必须据此提示「本入口没有可用 passkey」，
+ * 绝不能回退到未过滤的凭证列表或盲取第一把。
+ */
+export class NoPasskeyForOriginError extends Error {
+  readonly code = 'NO_PASSKEY_FOR_ORIGIN';
+  constructor() {
+    super('no passkey registered for this origin');
+    this.name = 'NoPasskeyForOriginError';
+  }
+}
+
 /** mesh 模式下缺少协议必备字段（如 `rootEpoch`）。 */
 export class ProtocolMismatchError extends Error {
   readonly code = 'PROTOCOL_MISMATCH';
@@ -191,6 +206,13 @@ export interface PasskeySummary {
   device_type?: string;
   created_at?: number;
   log_seq?: number | string;
+  /**
+   * 服务端判定：`row.origin === 本次请求的可信 origin`（B2-8）。
+   *
+   * 服务端的判定优于前端拿 `location.origin` 自己比——反代场景下前端看到的 origin
+   * 未必是断言时真正用的那个。旧 entry 不下发该字段，此时按 `origin` 字符串全等兜底。
+   */
+  usableHere?: boolean;
 }
 
 /** `GET /n/<hub>/api/hub/enrollments/:id`：redeem 后带证书。 */

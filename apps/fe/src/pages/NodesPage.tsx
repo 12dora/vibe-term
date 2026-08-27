@@ -22,17 +22,26 @@ import { useAuthMode } from '@/auth/use-session-key';
 import {
   type CreatedEnrollment,
   type PendingEnrollment,
+  type SignedRecord,
+  admitPlan,
   buildAdmitNodeRecord,
   buildRevokeNodeRecord,
+  classifyKeyLogFailure,
   createEnrollmentOnHub,
+  forgetUnconfirmedRecord,
   isPendingExpired,
+  isTrustedHubUrl,
   joinCommand,
   listPendingEnrollments,
+  listUnconfirmedRecordIds,
   nextPendingExpiry,
   prunePendingEnrollments,
   removePendingEnrollment,
   requireRootPublicKey,
+  submitAdmitRecord,
   subscribePendingEnrollments,
+  subscribeUnconfirmedRecords,
+  unconfirmedRecord,
 } from '@/node/enrollment';
 import {
   type CertificateOutcome,
@@ -271,10 +280,45 @@ function useAdmitAction({
 }) {
   const { t } = useTranslation();
   const [busyPendingId, setBusyPendingId] = useState<string | null>(null);
-  /** hub 未确认的 pending：保留待确认状态并给出重试入口。 */
-  const [hubUnconfirmedIds, setHubUnconfirmedIds] = useState<string[]>([]);
   /** 已 admit 掉的 pending（用于清掉页面上对应的 join 串）。 */
   const [admittedIds, setAdmittedIds] = useState<string[]>([]);
+  /**
+   * hub 未确认的 pending：保留待确认状态并给出重试入口。记录本身存在模块级 store 里，
+   * 切走再回来仍然能原样重发（B2-6：未确认时服务端什么都没落库，同一条记录仍然有效）。
+   */
+  const hubUnconfirmedIds = useSyncExternalStore(
+    subscribeUnconfirmedRecords,
+    listUnconfirmedRecordIds,
+    listUnconfirmedRecordIds
+  );
+
+  /** 把一条**已签好**的 admit 记录送出去，并按 B2-6 的码处理结果。 */
+  const submitAdmit = useCallback(
+    async (pending: PendingEnrollment, record: SignedRecord) => {
+      const id = pending.hubEnrollmentId;
+      // hub=sync：entry 先把记录送 hub 并等 ack，确认之前本地什么都不写。
+      const disposition = await submitAdmitRecord(api, id, record);
+      if (disposition.kind === 'unconfirmed') {
+        // hub 没确认就删 pending 会把 enroll 授权丢掉，而新 node 永远成不了 mesh 成员。
+        toast.warning(t('nodes.enrollment.hubNotConfirmed'));
+        return;
+      }
+      if (disposition.kind === 'stale') {
+        // fork / seq_gap：这份字节永远不会被接受，让用户重新签一条。
+        toast.error(t('nodes.enrollment.staleRecord'));
+        return;
+      }
+      if (disposition.kind === 'error') {
+        toast.error(t(`auth.errors.${disposition.code}`, { defaultValue: disposition.code }));
+        return;
+      }
+      removePendingEnrollment(id);
+      setAdmittedIds((ids) => [...ids, id]);
+      toast.success(t('nodes.enrollment.admitted'));
+      onDone();
+    },
+    [api, onDone, t]
+  );
 
   const signAdmit = useCallback(
     async (
@@ -288,6 +332,7 @@ function useAdmitAction({
       // 取 head 是异步的：这中间 pending 可能已经过期，过期后签出来的 admit 也不该被接受。
       if (isPendingExpired(pending, Date.now())) {
         toast.error(t('nodes.enrollment.expired'));
+        forgetUnconfirmedRecord(pending.hubEnrollmentId);
         removePendingEnrollment(pending.hubEnrollmentId);
         setAdmittedIds((ids) => [...ids, pending.hubEnrollmentId]);
         return;
@@ -301,30 +346,12 @@ function useAdmitAction({
         certSig,
         signer,
       });
-      // hub=sync：entry 先把记录送 hub 并等 ack 再本地 append。
-      const result = await api.appendKeyLog(
-        { bytes: encodeBase64url(record.bytes), sig: encodeBase64url(record.sig) },
-        { hubSync: true }
-      );
-      if (!result.ok) {
-        toast.error(t(`auth.errors.${result.code}`, { defaultValue: result.code }));
-        return;
-      }
-      if (result.hubAck !== true) {
-        // hub 没确认就删 pending 会把 enroll 授权丢掉，而新 node 永远成不了 mesh 成员。
-        setHubUnconfirmedIds((ids) =>
-          ids.includes(pending.hubEnrollmentId) ? ids : [...ids, pending.hubEnrollmentId]
-        );
-        toast.warning(t('nodes.enrollment.hubNotConfirmed'));
-        return;
-      }
-      setHubUnconfirmedIds((ids) => ids.filter((id) => id !== pending.hubEnrollmentId));
-      removePendingEnrollment(pending.hubEnrollmentId);
-      setAdmittedIds((ids) => [...ids, pending.hubEnrollmentId]);
-      toast.success(t('nodes.enrollment.admitted'));
-      onDone();
+      await submitAdmit(pending, {
+        bytes: encodeBase64url(record.bytes),
+        sig: encodeBase64url(record.sig),
+      });
     },
-    [api, mode, onDone, t]
+    [api, mode, submitAdmit, t]
   );
 
   /** 轮询 / 推送检测出的结果。已过期或签名坏的直接告警；能自动签就自动签。 */
@@ -342,28 +369,49 @@ function useAdmitAction({
         );
         return;
       }
+      const id = outcome.pending.hubEnrollmentId;
       const signer = takeRememberedSigner(Date.now());
       // 复用窗口已过、或窗口里是 passkey：都留在「待确认」，等用户点按钮。
-      if (!signer || !canAutoSignAdmit(signer)) return;
-      setBusyPendingId(outcome.pending.hubEnrollmentId);
+      const plan = admitPlan(id, canAutoSignAdmit(signer));
+      if (plan === 'wait') return;
+      setBusyPendingId(id);
       try {
-        await signAdmit(outcome.pending, outcome.certificateBytes, outcome.certSig, signer);
+        const stored = unconfirmedRecord(id);
+        if (plan === 'resend' && stored) await submitAdmit(outcome.pending, stored);
+        else if (signer) {
+          await signAdmit(outcome.pending, outcome.certificateBytes, outcome.certSig, signer);
+        }
       } catch (err) {
         toast.error(err instanceof Error ? err.message : String(err));
       } finally {
         setBusyPendingId(null);
       }
     },
-    [signAdmit, t]
+    [signAdmit, submitAdmit, t]
   );
 
   /**
-   * 「待确认 / 重试」按钮：要一次凭据（密码或 passkey，5 分钟窗口内可直接复用），
-   * 然后立刻向 hub 查一次本次 enrollment 的证书。
+   * 「待确认 / 重试」按钮。
+   *
+   * 该 pending 手上还留着一条 hub 未确认的记录时，**只重发这份字节**：不要凭据、不取新 head、
+   * 不重新签名。B2-6 保证未确认时服务端没落库，本地 head 没动，原记录仍然接得上；
+   * 而重签会按（可能已推进的）本地 head 产生新 seq，一旦 hub 缺中间那条就永久拒绝。
    */
   const confirmManually = useCallback(
     async (pending: PendingEnrollment) => {
       if (!mode) return;
+      const stored = unconfirmedRecord(pending.hubEnrollmentId);
+      if (stored) {
+        setBusyPendingId(pending.hubEnrollmentId);
+        try {
+          await submitAdmit(pending, stored);
+        } catch (err) {
+          toast.error(err instanceof Error ? err.message : String(err));
+        } finally {
+          setBusyPendingId(null);
+        }
+        return;
+      }
       let signer: RecordSigner | null;
       try {
         // request() 会把签名者放进 5 分钟复用窗口，后续自动 admit 直接用它。
@@ -398,7 +446,7 @@ function useAdmitAction({
         setBusyPendingId(null);
       }
     },
-    [hubApi, mode, prompt, signAdmit, t]
+    [hubApi, mode, prompt, signAdmit, submitAdmit, t]
   );
 
   return { handleOutcome, confirmManually, busyPendingId, hubUnconfirmedIds, admittedIds };
@@ -473,6 +521,9 @@ function EnrollmentSection({
       setCreated(outcome);
       setName('');
     } catch (err) {
+      // 走到这里说明 enrollment 没建成（多半是 hub 请求失败）：复用窗口里的根钥没有任何
+      // 后续动作会用到，立刻清零，不要等 5 分钟定时器（见 F4-fix 评审 Major「所有权式清零」）。
+      prompt.forget();
       const code = (err as { code?: string })?.code;
       setError(
         code
@@ -595,13 +646,15 @@ function EnrollmentSection({
 
 /**
  * join 命令里的 hub 地址：**只**来自 hub —— enrollment 创建响应的 `public_url`，
- * 或 `/api/auth/mode` 的 `hubPublicUrl`。两者都没有就不生成命令。
+ * 或 `/api/auth/mode` 的 `hubPublicUrl`。两者都没有、或值不是可信 https URL 就不生成命令：
+ * 它会被原样拼进一条让用户粘贴执行的 shell 命令，畸形值等于命令注入（见 F4-fix 评审 Major）。
  */
 export function resolveHubPublicUrl(
   created: { hubPublicUrl: string | null } | null,
   mode: { hubPublicUrl?: string | null }
 ): string | null {
-  return created?.hubPublicUrl ?? mode.hubPublicUrl ?? null;
+  const url = created?.hubPublicUrl ?? mode.hubPublicUrl ?? null;
+  return isTrustedHubUrl(url) ? url : null;
 }
 
 function CopyableCode({
@@ -796,7 +849,18 @@ function NodeRowView({
       );
       if (!result) return;
       if (!result.ok) {
-        toast.error(t(`auth.errors.${result.code}`, { defaultValue: result.code }));
+        // B2-6：hub 未确认时服务端一条都没落库（409 / 504），撤销**没有生效**——
+        // 文案必须这么说，否则用户会以为节点已经吊销掉了。
+        const failure = classifyKeyLogFailure(result.code);
+        if (failure === 'unconfirmed') {
+          toast.warning(t('nodes.revoke.hubFailed', { error: result.code }));
+          return;
+        }
+        toast.error(
+          failure === 'stale'
+            ? t('nodes.enrollment.staleRecord')
+            : t(`auth.errors.${result.code}`, { defaultValue: result.code })
+        );
         return;
       }
       if (result.hubAck !== true) {

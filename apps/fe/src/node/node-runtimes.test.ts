@@ -6,9 +6,13 @@ import type { AppRuntime } from '@tmex/stores';
 import {
   type DirectCarrierController,
   type GatewayConnection,
+  type WebSocketLike,
   getBulkClient,
 } from '@tmex/ws-client';
-import { createNodeConnection } from './node-runtimes';
+import { createAppNodeRuntimes, createNodeConnection, nodeQueryClient } from './node-runtimes';
+
+/** 直连断开提示的 i18n key：locale 里已有正式条目，测试里的假 `t` 原样返回 key。 */
+const DIRECT_FALLBACK_KEY = 'device.directFallbackToast';
 
 interface FakeConnection extends GatewayConnection {
   resumeHook: (() => void) | null;
@@ -231,7 +235,7 @@ describe('resume 钩子（切回 primary 的补齐）', () => {
       ['device-a', '%1'],
       ['device-a', '%2'],
     ]);
-    expect(calls.warnings).toEqual(['直连已断开，最近输入可能未送达']);
+    expect(calls.warnings).toEqual([DIRECT_FALLBACK_KEY]);
   });
 
   test('没有挂载中的 pane 时不重发订阅，但仍然提示', () => {
@@ -265,6 +269,130 @@ describe('resume 钩子（切回 primary 的补齐）', () => {
     });
 
     expect(() => base.resumeHook?.()).not.toThrow();
-    expect(warnings).toEqual(['直连已断开，最近输入可能未送达']);
+    expect(warnings).toEqual([DIRECT_FALLBACK_KEY]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 4401 / QueryClient 回收：走**生产那份接线**（createAppNodeRuntimes），
+// 只把底层 socket 换成假的。手动调 manager.notifyClose() 是掩盖接线缺失，这里一次都不调。
+// ---------------------------------------------------------------------------
+
+class FakeSocket implements WebSocketLike {
+  readyState = 1;
+  binaryType: 'blob' | 'arraybuffer' = 'arraybuffer';
+  onopen: ((event?: unknown) => void) | null = null;
+  onmessage: ((event: { data: ArrayBuffer | string }) => void) | null = null;
+  onclose: ((event?: unknown) => void) | null = null;
+  onerror: ((event?: unknown) => void) | null = null;
+  sent: unknown[] = [];
+  closed: number[] = [];
+
+  constructor(readonly url: string) {}
+
+  send(data: ArrayBufferLike | ArrayBufferView | string): void {
+    this.sent.push(data);
+  }
+  close(code?: number): void {
+    this.readyState = 3;
+    this.closed.push(code ?? 1000);
+  }
+  /** 服务端主动关闭（会话失效 → 4401）。 */
+  serverClose(code: number): void {
+    this.readyState = 3;
+    this.onclose?.({ code });
+  }
+}
+
+function hostManager(options: {
+  onUnauthorized?: (nodeId: string) => void;
+  onDispose?: (nodeId: string) => void;
+  sockets: FakeSocket[];
+}) {
+  return createAppNodeRuntimes(
+    {
+      ...(options.onUnauthorized ? { onUnauthorized: options.onUnauthorized } : {}),
+      ...(options.onDispose ? { onDispose: options.onDispose } : {}),
+      // 连接是被测对象，保持真实；runtime / apiClient 与本用例无关，换成替身。
+      createApiClient: () => ({}) as never,
+      createRuntime: () => ({ dispose: () => {} }) as unknown as AppRuntime,
+      setTimeoutFn: () => 0,
+      clearTimeoutFn: () => {},
+    },
+    {
+      socketFactory: (url: string) => {
+        const socket = new FakeSocket(url);
+        options.sockets.push(socket);
+        return socket;
+      },
+      // 直连控制器与 4401 无关，且会去开真 RTCPeerConnection。
+      createController: () => null,
+    }
+  );
+}
+
+const NODE_HEX_A = 'a'.repeat(32);
+const NODE_HEX_B = 'b'.repeat(32);
+const NODE_HEX_C = 'c'.repeat(32);
+
+describe('4401 通过真实宿主接线传到 manager', () => {
+  test('真 ws-client 连接被 4401 关闭 → 派发该 node 的鉴权事件并停连接', () => {
+    const sockets: FakeSocket[] = [];
+    const unauthorized: string[] = [];
+    const manager = hostManager({ sockets, onUnauthorized: (id) => unauthorized.push(id) });
+
+    const entry = manager.get(NODE_HEX_A);
+    entry.connection.client.connect();
+    expect(sockets.length).toBe(1);
+
+    sockets[0].serverClose(4401);
+
+    expect(unauthorized).toEqual([NODE_HEX_A]);
+    manager.disposeAll();
+  });
+
+  test('普通关闭码不派发鉴权事件（否则每次断线都跳登录）', () => {
+    const sockets: FakeSocket[] = [];
+    const unauthorized: string[] = [];
+    const manager = hostManager({ sockets, onUnauthorized: (id) => unauthorized.push(id) });
+
+    const entry = manager.get(NODE_HEX_B);
+    entry.connection.client.connect();
+    sockets[0].serverClose(1006);
+
+    expect(unauthorized).toEqual([]);
+    manager.disposeAll();
+  });
+
+  test('self 的 4401 同样经真实连接传回来', () => {
+    const sockets: FakeSocket[] = [];
+    const unauthorized: string[] = [];
+    const manager = hostManager({ sockets, onUnauthorized: (id) => unauthorized.push(id) });
+
+    const entry = manager.get('self');
+    entry.connection.client.connect();
+    sockets[0].serverClose(4401);
+
+    expect(unauthorized).toEqual(['self']);
+    manager.disposeAll();
+  });
+});
+
+describe('QueryClient 随 runtime 一起回收', () => {
+  test('生产接线里 dispose 会释放该 node 的 QueryClient', () => {
+    const sockets: FakeSocket[] = [];
+    const manager = hostManager({ sockets });
+
+    manager.get(NODE_HEX_C);
+    const before = nodeQueryClient(NODE_HEX_C);
+    before.setQueryData(['probe'], 1);
+
+    manager.dispose(NODE_HEX_C);
+
+    // 释放过了：再取是一个全新的 client，旧缓存不会跟着复活。
+    const after = nodeQueryClient(NODE_HEX_C);
+    expect(after).not.toBe(before);
+    expect(after.getQueryData(['probe'])).toBeUndefined();
+    manager.disposeAll();
   });
 });

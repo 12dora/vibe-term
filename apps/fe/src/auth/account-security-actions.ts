@@ -72,6 +72,8 @@ export interface ChangePasswordInput {
   newPassword: string;
   /** 当前 kdf 参数（来自 `/api/auth/mode`）。 */
   currentKdfParams: { salt: string; memory_kib: number; iterations: number; parallelism: number };
+  /** 根钥派生（测试注入）：拿到同一把根钥、并模拟第二次 Argon2 失败。 */
+  deriveRootKey?: (password: string, kdfParams: KdfParams) => Promise<RootKey>;
 }
 
 /**
@@ -81,26 +83,28 @@ export interface ChangePasswordInput {
 export async function changePassword(input: ChangePasswordInput): Promise<KeyLogAppendResult> {
   const api = input.api ?? defaultAuthApi;
   const head = await api.keyLogHead();
-  const oldRootKey = await rootKeyFrom(
-    input.oldPassword,
-    kdfParamsFromJson(input.currentKdfParams)
-  );
-  const newKdfParams = generateKdfParams();
-  const newRootKey = await rootKeyFrom(input.newPassword, newKdfParams);
-
+  const derive = input.deriveRootKey ?? rootKeyFrom;
+  const oldRootKey = await derive(input.oldPassword, kdfParamsFromJson(input.currentKdfParams));
+  // 旧根钥从**派生成功的那一刻**起就归这个 try 管：第二次 Argon2（内存压力下会抛）失败时，
+  // 旧实现的 `finally` 还没建立，旧根私钥就此留在堆里（见 F4-fix 评审 Major）。
   try {
-    const record = buildRotateRootRecord({
-      head: headFromResponse(head),
-      rootEpoch: head.rootEpoch,
-      uid: input.uid,
-      oldRootKey,
-      newRootPublicKey: newRootKey.publicKey,
-      newKdfParams,
-    });
-    return await append(api, record);
+    const newKdfParams = generateKdfParams();
+    const newRootKey = await derive(input.newPassword, newKdfParams);
+    try {
+      const record = buildRotateRootRecord({
+        head: headFromResponse(head),
+        rootEpoch: head.rootEpoch,
+        uid: input.uid,
+        oldRootKey,
+        newRootPublicKey: newRootKey.publicKey,
+        newKdfParams,
+      });
+      return await append(api, record);
+    } finally {
+      newRootKey.seed.fill(0);
+    }
   } finally {
     oldRootKey.seed.fill(0);
-    newRootKey.seed.fill(0);
   }
 }
 
@@ -267,25 +271,33 @@ export async function removePasskey(input: RemovePasskeyInput): Promise<KeyLogAp
 }
 
 /**
- * 只保留注册 origin 与当前 origin 一致的 passkey。
+ * 只保留注册 origin 与当前 origin **完全一致**的 passkey。
  *
- * passkey 绑定注册时的精确 origin：拿 node A 的凭证在 node B 发起断言，浏览器直接
- * `NotAllowedError`。签记录时必须从这个子集里选，不能盲取列表第一把（见 F4-1 评审 Major）。
+ * passkey 绑定注册时的精确 origin（scheme + host + port）：拿 node A 的凭证在 node B 发起
+ * 断言，浏览器直接 `NotAllowedError`。签记录时必须从这个子集里选，不能盲取列表第一把
+ * （见 F4-1 评审 Major）。
+ *
+ * **没有 `rp_id` 回退**：凭证注册于 `https://node.example:8443`、当前页面是
+ * `https://node.example` 时，两者 rp_id 相同但 origin 不同，后端按注册 origin 验断言必然拒绝；
+ * 把它标成「可用」只会给用户一个注定失败的按钮（见 F4-fix 评审 Major）。
  */
 export function passkeysForOrigin(passkeys: PasskeySummary[], origin?: string): PasskeySummary[] {
+  return passkeys.filter((row) => isPasskeyUsableHere(row, origin));
+}
+
+/**
+ * 这把凭证能不能在**当前入口**发起断言。
+ *
+ * 服务端下发的 `usableHere`（B2-8：`row.origin === 本次请求的可信 origin`）优先——反代之后
+ * 浏览器看到的 origin 未必是断言真正用的那个，服务端的判定才作数。旧 entry 不带该字段时，
+ * 退回 origin 字符串全等（同样没有 `rp_id` 回退）。
+ */
+export function isPasskeyUsableHere(row: PasskeySummary, origin?: string): boolean {
+  if (typeof row.usableHere === 'boolean') return row.usableHere;
   const current =
     origin ?? (globalThis as { location?: { origin?: string } }).location?.origin ?? '';
-  if (!current) return passkeys;
-  const exact = passkeys.filter((row) => row.origin === current);
-  if (exact.length > 0) return exact;
-  // origin 对不上时退一步按 rp_id 匹配主机名（同 RP 的不同端口/子路径）。
-  let host = '';
-  try {
-    host = new URL(current).hostname;
-  } catch {
-    host = '';
-  }
-  return host ? passkeys.filter((row) => row.rp_id === host) : [];
+  if (!current) return true;
+  return row.origin === current;
 }
 
 /** 根据密码现场造一个「根钥签名者」。调用方负责清零；能用 `withRootSigner` 就别用它。 */

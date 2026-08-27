@@ -19,6 +19,7 @@ import {
   beginTotpSetup,
   changePassword,
   confirmTotpSetup,
+  isPasskeyUsableHere,
   passkeysForOrigin,
   withRootSigner,
 } from './account-security-actions';
@@ -40,7 +41,7 @@ interface Posted {
   sig: Uint8Array;
 }
 
-function mockApi(): { api: AuthApi; posted: Posted[] } {
+function mockApi(options: { keylogStatus?: number } = {}): { api: AuthApi; posted: Posted[] } {
   const posted: Posted[] = [];
   const client = new ApiClient('', (url, init) => {
     if (url === '/api/auth/keylog/head') {
@@ -56,7 +57,7 @@ function mockApi(): { api: AuthApi; posted: Posted[] } {
     if (url === '/api/auth/keylog') {
       const body = JSON.parse(String(init?.body)) as { bytes: string; sig: string };
       posted.push({ bytes: decodeBase64url(body.bytes), sig: decodeBase64url(body.sig) });
-      return Promise.resolve(new Response('', { status: 200 }));
+      return Promise.resolve(new Response('', { status: options.keylogStatus ?? 200 }));
     }
     return Promise.resolve(new Response('not found', { status: 404 }));
   });
@@ -205,10 +206,96 @@ describe('passkeysForOrigin', () => {
     ]);
   });
 
-  test('origin 完全不匹配时按 rp_id 的主机名兜底，仍不返回别的 RP', () => {
-    expect(
-      passkeysForOrigin(rows, 'https://b.example:8443').map((row) => row.credential_id)
-    ).toEqual(['b']);
+  test('rp_id 相同但端口不同（origin 不等）也不算可用——没有 rp_id 回退', () => {
+    expect(passkeysForOrigin(rows, 'https://b.example:8443')).toEqual([]);
     expect(passkeysForOrigin(rows, 'https://c.example')).toEqual([]);
+  });
+
+  test('服务端下发的 usableHere 优先于前端自己比 origin', () => {
+    const served = [
+      { ...rows[0], usableHere: true },
+      { ...rows[1], usableHere: false },
+    ];
+    // 反代之后浏览器看到的 origin 未必是断言真正用的那个：服务端说了算。
+    expect(passkeysForOrigin(served, 'https://b.example').map((row) => row.credential_id)).toEqual([
+      'a',
+    ]);
+  });
+
+  test('isPasskeyUsableHere：没有 usableHere 时退回 origin 全等', () => {
+    expect(isPasskeyUsableHere(rows[0], 'https://a.example')).toBe(true);
+    expect(isPasskeyUsableHere(rows[0], 'https://a.example:8443')).toBe(false);
+    expect(isPasskeyUsableHere({ ...rows[0], usableHere: false }, 'https://a.example')).toBe(false);
+  });
+});
+
+describe('changePassword 的根钥所有权', () => {
+  test('第二次 Argon2 失败时，旧根钥的 seed 仍然被清零', async () => {
+    const { api } = mockApi();
+    const oldRootKey = rootKeyFromSeed(new Uint8Array(32).fill(0x21));
+    let calls = 0;
+
+    await expect(
+      changePassword({
+        api,
+        uid: UID,
+        oldPassword: 'old-secret',
+        newPassword: 'new-secret',
+        currentKdfParams: KDF_JSON,
+        deriveRootKey: (_password, _params) => {
+          calls += 1;
+          // 第二次派生（新密码）在内存压力下抛出——旧实现的 finally 那时还没建立
+          if (calls === 2) return Promise.reject(new Error('argon2 out of memory'));
+          return Promise.resolve(oldRootKey);
+        },
+      })
+    ).rejects.toThrow('argon2 out of memory');
+
+    expect(calls).toBe(2);
+    expect(oldRootKey.seed.every((byte) => byte === 0)).toBe(true);
+  });
+
+  test('成功路径同样清零新旧两把根钥', async () => {
+    const { api, posted } = mockApi();
+    const keys = [
+      rootKeyFromSeed(new Uint8Array(32).fill(0x31)),
+      rootKeyFromSeed(new Uint8Array(32).fill(0x32)),
+    ];
+    let calls = 0;
+
+    const result = await changePassword({
+      api,
+      uid: UID,
+      oldPassword: 'old-secret',
+      newPassword: 'new-secret',
+      currentKdfParams: KDF_JSON,
+      deriveRootKey: () => Promise.resolve(keys[calls++]),
+    });
+
+    expect(result).toMatchObject({ ok: true });
+    expect(posted).toHaveLength(1);
+    expect(keys[0].seed.every((byte) => byte === 0)).toBe(true);
+    expect(keys[1].seed.every((byte) => byte === 0)).toBe(true);
+  });
+
+  test('append 失败也照样清零', async () => {
+    const { api } = mockApi({ keylogStatus: 500 });
+    const keys = [
+      rootKeyFromSeed(new Uint8Array(32).fill(0x41)),
+      rootKeyFromSeed(new Uint8Array(32).fill(0x42)),
+    ];
+    let calls = 0;
+
+    await changePassword({
+      api,
+      uid: UID,
+      oldPassword: 'old-secret',
+      newPassword: 'new-secret',
+      currentKdfParams: KDF_JSON,
+      deriveRootKey: () => Promise.resolve(keys[calls++]),
+    });
+
+    expect(keys[0].seed.every((byte) => byte === 0)).toBe(true);
+    expect(keys[1].seed.every((byte) => byte === 0)).toBe(true);
   });
 });
