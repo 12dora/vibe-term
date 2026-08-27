@@ -22,10 +22,10 @@
 
 ## 当前实现链路（现状 = `lift`）
 
-- `apps/fe/src/hooks/use-virtual-keyboard-offset.ts`：监听 `visualViewport` resize/scroll + window resize + document focusin/focusout（RAF 防抖）；仅当 `document.activeElement.closest('[data-virtual-keyboard-avoid]')` 命中时输出 inset。
-- `apps/fe/src/utils/virtualKeyboard.ts`：`computeVirtualKeyboardOffset` = `round(innerHeight - viewportHeight - offsetTop)`，`scale≠1` 或 `<60px` 归零；`needsManualKeyboardAvoidance()` 触屏检测。
+- `packages/terminal-ui/src/hooks/use-keyboard-avoidance.ts`：监听 `visualViewport` resize/scroll + window resize + document focusin/focusout（RAF 防抖）；仅当 `document.activeElement.closest('[data-virtual-keyboard-avoid]')` 命中时输出 inset。
+- `packages/terminal-ui/src/utils/virtualKeyboard.ts`：`computeVirtualKeyboardOffset` = `round(innerHeight - viewportHeight - offsetTop)`，`scale≠1` 或 `<60px` 归零；`needsManualKeyboardAvoidance()` 触屏检测。
 - `apps/fe/src/main.tsx` `MainInset`：`offset>0` 时给 `SidebarInset`（`<main>`）加 `transform: translateY(-offset)` + `transition 0.12s`；底部 safe-area 填充 div 与 offset 联动。
-- 标记点：`DevicePage.tsx` 终端容器（L896）、editor textarea 容器（L973）的 `data-virtual-keyboard-avoid`。
+- 标记点：`packages/panels/src/device-console/terminal-stage.tsx` 的终端容器与 `editor-input-panel.tsx` 的 editor textarea 容器上的 `data-virtual-keyboard-avoid`。
 
 ## 设计
 
@@ -35,7 +35,7 @@
 
 ### 避让计算重构
 
-新增 `apps/fe/src/hooks/use-keyboard-avoidance.ts`，替代 `MainInset` 内联逻辑，返回结构化结果：
+新增 `packages/terminal-ui/src/hooks/use-keyboard-avoidance.ts`，替代 `MainInset` 内联逻辑，返回结构化结果：
 
 ```ts
 type KeyboardAvoidance =
@@ -44,21 +44,22 @@ type KeyboardAvoidance =
   | { strategy: 'height'; height: number };      // resize
 ```
 
-复用 `use-virtual-keyboard-offset` 的事件接线与 `computeVirtualKeyboardOffset`，按 `mode` 分发：
+沿用原 `use-virtual-keyboard-offset` 的事件接线与 `computeVirtualKeyboardOffset`（两者现同在 `packages/terminal-ui`），按 `mode` 分发：
 
 - `lift`：`transform`，`offset = inset`。
 - `resize`：`height`，`height = innerHeight - inset`（触发终端既有 `ResizeObserver` → resize 链路，无需新写 resize 逻辑）。
-- `follow`：`transform`，`offset = clamp(光标自然底 + margin - 键盘顶, 0, inset)`；键盘打开期间用 RAF 轮询光标位置（光标移动不发 viewport 事件）。光标拿不到（终端未聚焦 / 编辑器模式 / 光标隐藏）时回退到 `inset`（等价 `lift`）。
+- `follow`：`transform`，`offset = clamp(光标自然底 + margin - 键盘顶, 0, inset + 快捷键栏高度)`；键盘打开期间用 RAF 轮询光标位置（光标移动不发 viewport 事件）。光标拿不到（终端未聚焦 / 编辑器模式 / 光标隐藏）时回退到 `inset`（等价 `lift`）。
 
 纯函数 `computeCursorFollowOffset`（放 `virtualKeyboard.ts`，可单测）：
 
 ```
 keyboardTopClientY = innerHeight - inset
 naturalBottom      = cursorBottomClientY + appliedOffset   // 加回当前已应用的位移
-offset             = clamp(round(naturalBottom + margin - keyboardTopClientY), 0, inset)
+offset             = clamp(round(naturalBottom + margin - keyboardTopClientY), 0, maxOffset)
+// maxOffset 默认 inset；follow 模式传 inset + 快捷键栏高度
 ```
 
-`clamp` 上界 `inset` 是**避免露白**的核心：位移绝不超过键盘高度，否则 `<main>` 底边升过键盘顶、暴露下方空白。`naturalBottom = 当前 client 底 + appliedOffset`：因 transform 把元素上移了 `appliedOffset`，加回即得未位移的自然坐标，计算对自身位移稳定收敛（不抖动）。坐标用 `innerHeight - inset` 表示键盘顶 client Y，兼容旧版 iOS（`offsetTop>0`）。
+`clamp` 上界是**避免露白**的核心：默认为 `inset`，位移不超过键盘高度，否则 `<main>` 底边升过键盘顶、暴露下方空白。`follow` 模式下 direct 输入的快捷键栏会浮到键盘正上方（hook 写 CSS 变量 `--tmex-shortcut-lift = inset - offset`，ShortcutsBar 据此再 `translateY`，与 `<main>` 的 `-offset` 叠加后总位移恰为 `-inset`），栏本身填住了那段空白，因此上界放宽到 `inset + 快捷键栏高度`，让光标能停在浮动栏之上而不被它遮挡。`naturalBottom = 当前 client 底 + appliedOffset`：因 transform 把元素上移了 `appliedOffset`，加回即得未位移的自然坐标，计算对自身位移稳定收敛（不抖动）。坐标用 `innerHeight - inset` 表示键盘顶 client Y，兼容旧版 iOS（`offsetTop>0`）。
 
 ### 光标位置获取（跨包，模式 `follow` 专用）
 
@@ -68,12 +69,12 @@ offset             = clamp(round(naturalBottom + margin - keyboardTopClientY), 0
 - 新增 public `getCursorViewportRect(): { top: number; bottom: number } | null`：仅当本终端聚焦（`document.activeElement === this.textarea`）且光标可见有值时返回 `screenElement.getBoundingClientRect().top + cursor.y * cellHeight` 的 client 上/下沿；否则 `null`。复用持久 `this.renderState`，**不**像 `syncTextareaPositionToCursor` 那样每次新建临时 render state。
 - `types.ts` `CompatibleTerminalLike` 增可选 `getCursorViewportRect?()`。
 
-桥接：新增 `apps/fe/src/utils/keyboard-cursor-bridge.ts` 单例（`registerCursorRectGetter` / `readActiveCursorRect`）。`Terminal.tsx` 在 `instance` 就绪时注册其 getter，卸载/切换时注销（守卫只清自己）。getter 内部按聚焦判定，天然解决「编辑器模式 / 多终端」——非聚焦终端返回 `null`。
+桥接：新增 `packages/terminal-ui/src/utils/keyboard-cursor-bridge.ts` 单例（`registerCursorRectGetter` / `readActiveCursorRect`）。`Terminal.tsx` 在 `instance` 就绪时注册其 getter，卸载/切换时注销（守卫只清自己）。getter 内部按聚焦判定，天然解决「编辑器模式 / 多终端」——非聚焦终端返回 `null`。
 
 ### 入口与弹窗
 
 - 入口：`DevicePage.tsx` `PageActions` 末尾加一个 `Button variant=ghost size=icon-sm` + lucide `Settings2` 图标，全屏尺寸显示（不门控）。
-- 弹窗：新建 `apps/fe/src/components/settings/keyboard-behavior-sheet.tsx`，用 `ui/sheet.tsx` `side="bottom"`，大屏 `sm:mx-auto sm:max-w-md sm:rounded-t-2xl` 居中限宽。三张选项卡片（模式名 + 一句文案 + 选中 Check），点选立即 `setKeyboardBehaviorMode`（无保存按钮，满足「实时影响」）。
+- 弹窗：新建 `packages/panels/src/settings/terminal-settings-sheet.tsx`，用 `ui/sheet.tsx` `side="bottom"`，大屏 `sm:mx-auto sm:max-w-md sm:rounded-t-2xl` 居中限宽。三张选项卡片（模式名 + 一句文案 + 选中 Check），点选立即 `setKeyboardBehaviorMode`（无保存按钮，满足「实时影响」）。
 
 ### i18n
 

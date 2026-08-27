@@ -59,6 +59,6 @@ terminal agent 的系统提示词原先由 `apps/gateway/src/agent/prompts.ts` �
 
 ## 验收
 
-- `bun test`（gateway 473 / shared 49）全绿，含 jsx 渲染、system-prompt 组装、`getPaneInfo` 解析与临时 socket integration、注入封装、secret-scan 正负样本、redaction middleware（user/system 不消毒）、supervisor 凭证告警广播。
+- gateway 与 shared 的 `bun test` 全绿，覆盖 jsx 渲染、system-prompt 组装、`getPaneInfo` 解析与临时 socket integration、注入封装、secret-scan 正负样本、redaction middleware（user/system 不消毒）、supervisor 凭证告警广播。
 - `bun build src/index.ts --target bun` 通过（Bun 转译 tsx）。
 - 前端 `tsc --noEmit` 通过。

@@ -97,9 +97,9 @@ tmex 同时监听 BEL（`\a`）和常见的 OSC 通知序列（OSC 9、OSC 99、
 
 在设置页添加一个或多个 Telegram Bot，然后审批允许接收告警的聊天。tmex 会在 bell 事件、Agent 确认请求、Watch 触发和出错时发送通知。每个 Bot 可服务多个聊天，你也可以随时撤销授权。
 
-**Q：SSH 主机开启大量 pane 后，为什么部分通知或输出会丢失？**
+**Q：SSH 主机开启大量 pane 会不会耗尽 `MaxSessions`？**
 
-tmex 为每个 pane 开启独立的远程读取通道。OpenSSH 默认 `MaxSessions=10`，pane 数量较多时会耗尽该限制。请在目标主机的 `sshd_config` 中将 `MaxSessions` 调整为至少 `pane 数量 + 3`，然后重启 sshd。
+不会。tmex 早期确实为每个 pane 开一条远程读取通道，现在一台设备的所有 pane 复用**同一条 tmux control-mode 通道**，另有一条常驻命令通道，以及一次性命令与文件传输用的短生命周期通道。通道数不再随 pane 数增长，OpenSSH 默认的 `MaxSessions=10` 通常够用。只有当你同时还在对同一主机跑 rsync 传输和自己的 SSH 会话时，才需要调高该值。
 
 **Q：为什么 tmex 默认不开启 OSC passthrough？**
 

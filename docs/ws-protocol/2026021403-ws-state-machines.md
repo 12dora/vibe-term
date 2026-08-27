@@ -1,8 +1,21 @@
 # ws-borsh-v1 状态机设计（Gateway + FE）
 
-> 状态：设计稿（未实现 / 迁移中）。
+> 状态：**已实现**。本文是当前行为的规范说明，不是待办设计稿。
 >
 > 目标：用明确状态机替代分散的隐式逻辑，保证 pane 切换、history/live 合并、resize、bell 的确定性。
+>
+> 代码索引：
+>
+> | 状态机 | 实现 |
+> | --- | --- |
+> | WS 连接 / 重连 / 心跳（FE） | `packages/ws-client/src/{connection,reconnect-controller,heartbeat-controller}.ts` |
+> | 选择事务 + 输出门控（FE） | `packages/ws-client/src/state-machine.ts`（`SelectStateMachine`、`SelectTransactionState`、`OutputGateState`） |
+> | history 分页门控（FE） | `packages/ws-client/src/pane-history-gate.ts` |
+> | 切换屏障（Gateway） | `apps/gateway/src/ws/borsh/switch-barrier.ts`（`SwitchBarrier`） |
+> | 设备连接 entry（Gateway） | `apps/gateway/src/ws/device-connection-registry.ts` |
+> | canonical feed（Gateway） | `apps/gateway/src/ws/canonical-feed-session.ts`、`apps/gateway/src/ws/canonical/` |
+>
+> 第 3、4 节是切换屏障的 FE 侧；Gateway 侧时序、超时降级与验收用例见 `docs/terminal/2026021404-terminal-switch-barrier-design.md`。
 
 ## 设计原则
 
@@ -152,7 +165,8 @@
 
 不变量：
 
-- BUFFERING 期间绝不直接 write 到 xterm。
+- BUFFERING 期间绝不直接 write 到终端（当前底座为 Ghostty wasm，见 `docs/terminal/2026041600-ghostty-wasm-runtime.md`）。
+- 缓冲有显式字节上限，超限时丢弃最旧数据并靠后续 snapshot 恢复，不形成无界积压。
 
 ---
 
@@ -166,7 +180,8 @@
 
 ### 规则
 
-- Resize 触发源：ResizeObserver + FitAddon。
+- Resize 触发源：ResizeObserver + `FitAddon`（`ghostty-terminal` 提供的兼容实现）。
+- 实现见 `packages/terminal-ui/src/components/terminal-resize-{reporter,scheduler}.ts`。
 - 去重：cols/rows 未变化不发送。
 - debounce：80ms。
 - `TMUX_SELECT` 可以携带 cols/rows 作为首包同步。
@@ -196,7 +211,7 @@
 
 ## 7) Gateway 侧设备连接状态机（DeviceConnectionEntry）
 
-> 对应 `apps/gateway/src/ws/index.ts` 的 device entry 管理与重连。
+> 对应 `apps/gateway/src/ws/device-connection-registry.ts` 的 device entry 管理与重连（由 `apps/gateway/src/ws/index.ts` 装配）。
 
 ### 状态
 

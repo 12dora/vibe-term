@@ -13,7 +13,7 @@ tmex 在页面右边栏提供一个 AI Agent 对话面板。Agent 运行在 gate
 
 ## 架构
 
-代码位于 `apps/gateway/src/agent/`（服务端）与 `apps/fe/src/components/agent-panel/` + `apps/fe/src/stores/agent.ts`（前端）。
+代码位于 `apps/gateway/src/agent/`（服务端）与 `packages/panels/src/agent/` + `packages/stores/src/agent.ts`（前端）。
 
 ### 服务端组件
 
@@ -39,7 +39,9 @@ tmex 在页面右边栏提供一个 AI Agent 对话面板。Agent 运行在 gate
 
 ### 接口分工
 
-- **REST**：用户消息（`POST /api/agent/sessions/:id/messages`，运行中 409）、停止、确认决策（`POST /api/agent/confirmations/:id/decide`）。确认走 REST 是为了统一路径（通知链接、未来 Telegram 按钮）。
+- **REST**：用户消息（`POST /api/agent/sessions/:id/messages`）、停止、确认决策（`POST /api/agent/confirmations/:id/decide`）。确认走 REST 是为了统一路径（通知链接、未来 Telegram 按钮）。
+  - **运行中不再拒绝**：`AgentSupervisor.sendMessage` 发现该 session 有 active run 时把消息**入队**（`agent_queued_messages`），返回 `201 { queued }` 并广播队列；`steer=true` 时额外请求立即注入当前 run。队列可经 `GET/POST /api/agent/sessions/:id/queue`、`PATCH/DELETE /api/agent/queue/:id` 查看、追加、改写、撤回。
+  - 仍返回 409 的只有真正的冲突态：`waiting_confirmation` 且有 pending confirmation（须先决策）、session 正在 stopping、重复 decide。
 - **WS（Borsh）**：客户端只有 `AGENT_SUBSCRIBE`(0x0601)/`AGENT_UNSUBSCRIBE`(0x0602)；服务端单一 `AGENT_EVENT`(0x0603)，`eventType: u8` + JSON payload，避免协议 lockstep。eventType 见 `packages/shared/src/ws-borsh/agent.ts`：1=sync 2=status 3=text_delta 4=reasoning_delta 5=tool_call 6=tool_result 7=confirmation_request 8=confirmation_resolved 9=message_persisted 10=error 11=turn_finished。
 
 ### 事件流（一轮带确认的 turn）
@@ -89,7 +91,7 @@ tmex 在页面右边栏提供一个 AI Agent 对话面板。Agent 运行在 gate
 4. **agent 跨多 pane 操作**：单 session 单 pane 绑定，跨 pane 需多 session。
 5. **同回合多确认须全部决定后才续跑**：AI SDK 的 `collectToolApprovals` 只消费最后一条 tool 消息的 approval responses，supervisor 按"全部决定后合并一条 tool 消息"处理（`appendApprovalResponsesIfReady`）。
 6. **WS 背压**：delta 广播未做按订阅者背压控制，慢消费者可能积压（前端有 40ms 节流缓解）。
-7. **waiting_confirmation 时投递新消息返回 409**：要求先决策，避免悬空 approval-request 炸掉下一轮模型请求。
+7. **waiting_confirmation 且有 pending confirmation 时投递新消息返回 409**：要求先决策，避免悬空 approval-request 炸掉下一轮模型请求（其余运行中场景已改为入队，见「接口分工」）。
 8. **error 重试链路时长**：SDK 内部重试 × run 级重试全程约 60-70s，前端无进度感知，可后续暴露配置。
 9. **agent_turn_finished 通知**：仅 deps 级开关（默认开），无用户级持久化设置项。
 

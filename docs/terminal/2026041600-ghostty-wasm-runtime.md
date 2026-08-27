@@ -53,7 +53,7 @@ WebUI 终端底座已从原先的 xterm 直连实现切换为 Ghostty wasm 兼�
 
 ## 初始化链路
 
-入口在 `apps/fe/src/components/terminal/Terminal.tsx`。
+入口在 `packages/terminal-ui/src/components/Terminal.tsx`。
 
 组件挂载后会调用 `createTerminalController(...)`，创建过程位于 `packages/ghostty-terminal/src/terminal.ts`：
 
@@ -159,9 +159,9 @@ WebUI 终端底座已从原先的 xterm 直连实现切换为 Ghostty wasm 兼�
   - Ghostty wasm 导出封装、结构体布局读写、formatter/key/paste 调用。
 - `packages/ghostty-terminal/src/terminal.ts`
   - 终端控制器、DOM 适配、输入事件桥接、渲染和兼容 buffer。
-- `apps/fe/src/components/terminal/Terminal.tsx`
+- `packages/terminal-ui/src/components/Terminal.tsx`
   - 与 ws-borsh、主题、输入模式、resize hook 和页面层 contract 的连接点。
-- `apps/fe/src/components/terminal/useTerminalResize.ts`
+- `packages/terminal-ui/src/components/useTerminalResize.ts`
   - 容器测量、sync/resize 防抖和尺寸上报策略。
 
 ## 当前边界

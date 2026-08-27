@@ -1,14 +1,16 @@
-# tmex-ws-borsh-v1：WebSocket 二进制协议规范（设计稿）
+# tmex-ws-borsh-v1：WebSocket 二进制协议规范
 
-> 状态：设计稿（未实现 / 迁移中）。
+> 状态：**已实现**，本文是 wire 格式的唯一真源。
 >
-> 适用范围：`apps/gateway` <-> `apps/fe`。
+> 适用范围：`apps/gateway` <-> `apps/fe` / `packages/ws-client`。
 >
-> 编解码实现：统一放在 `packages/shared/src/ws-borsh/`，两端复用。
+> 编解码实现：统一放在 `packages/shared/src/ws-borsh/`（`kind.ts` 定义 kind 常量，`schema.ts` 定义结构，`codec.ts` 收发），两端复用。
+>
+> 状态机与屏障行为见 `docs/ws-protocol/2026021403-ws-state-machines.md` 与 `docs/terminal/2026021404-terminal-switch-barrier-design.md`。
 
 ## 背景
 
-当前链路存在这些结构性问题：
+本协议引入前，链路存在这些结构性问题：
 
 - 协议混合（JSON + 自定义二进制 output），难以做一致的顺序保证与版本演进。
 - pane 切换与 history/live 合并缺少事务屏障，容易出现乱序、丢失、重复。
@@ -198,7 +200,7 @@ export const EnvelopeSchema = b.struct({
 - `selectedVersion: u16`（当前 1）
 - `maxFrameBytes: u32`（服务端可接收最大帧）
 - `heartbeatIntervalMs: u32`（默认 15000）
-- `capabilities: vec(string)`（当前：`tmex-ws-borsh-v1`、`tmex-agent-v1`）
+- `capabilities: vec(string)`——唯一真源是 `packages/shared/src/capabilities.ts` 的 `GATEWAY_CAPABILITIES`，REST `GET /api/capabilities` 与 WS `HELLO_S2C` 共用该常量。当前为 `tmex-ws-borsh-v1`、`tmex-agent-v1`、`tmex-split-v1`、`canonical-state-v1`。
 
 ### PING/PONG（0x0003/0x0004）
 
@@ -347,7 +349,7 @@ export const EnvelopeSchema = b.struct({
   - `paneUrl: option(string)`
   - `paneTitle: option(string)`
   - `paneCurrentCommand: option(string)`
-- output：保留空 schema（`{}`），当前仍通过 `TERM_CHUNK` / `TERM_HISTORY` 传输终端字节流。
+- output：保留空 schema（`{}`），终端字节流不走事件，而是通过 `TERM_OUTPUT`（0x0305）/ `TERM_HISTORY`（0x0306）传输。
 - notification：
   - `source: u8`（1=`osc9`，2=`osc777`，3=`osc1337`，4=`osc99`）
   - `title: option(string)`
