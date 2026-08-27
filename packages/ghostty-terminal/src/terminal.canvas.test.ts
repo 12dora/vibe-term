@@ -1,227 +1,21 @@
 import { afterAll, afterEach, describe, expect, mock, test } from 'bun:test';
-import * as realGhosttyWasm from './ghostty-wasm';
-import * as realRenderState from './render-state';
-// mock.module 前的导出值快照：namespace import 是 live binding，mock 生效后
-// realGhosttyWasm.* 会跟着变成 fake，还原必须用 mock 前拷出的值。
-const realGhosttyWasmSnapshot = { ...realGhosttyWasm };
-const realRenderStateSnapshot = { ...realRenderState };
-import type { GhosttyTheme } from './types';
+import {
+  type FakeBindings,
+  type FakeDom,
+  type FakeElement,
+  type FakeEvent,
+  type FakeWindowTarget,
+  TEST_THEME,
+  createFakeBindings,
+  findCanvasByLayer,
+  findElementByClass,
+  findElementsByTag,
+  installFakeDom,
+  mockGhosttyWasm,
+  restoreRealTerminalModules,
+} from './test-support/fake-dom';
 
-type FakeEvent = {
-  type: string;
-  data?: string | null;
-  inputType?: string;
-  isComposing?: boolean;
-  keyCode?: number;
-  button?: number;
-  buttons?: number;
-  clientX?: number;
-  clientY?: number;
-  deltaX?: number;
-  deltaY?: number;
-  deltaMode?: number;
-  detail?: number;
-  key?: string;
-  code?: string;
-  repeat?: boolean;
-  shiftKey?: boolean;
-  ctrlKey?: boolean;
-  altKey?: boolean;
-  metaKey?: boolean;
-  cancelable?: boolean;
-  defaultPrevented?: boolean;
-  target?: EventTarget | null;
-  currentTarget?: EventTarget | null;
-  preventDefault?: () => void;
-  clipboardData?: { getData: (type: string) => string };
-};
-
-type EventListener = (event: FakeEvent) => void;
-type RafCallback = (timestamp: number) => void;
-
-class FakeCanvasContext2D {
-  fillStyle = '';
-  strokeStyle = '';
-  font = '';
-  lineWidth = 1;
-  textBaseline = 'top';
-  imageSmoothingEnabled = false;
-  globalAlpha = 1;
-  operations: Array<Record<string, unknown>> = [];
-
-  clearRect(x: number, y: number, width: number, height: number): void {
-    this.operations.push({ type: 'clearRect', x, y, width, height });
-  }
-
-  fillRect(x: number, y: number, width: number, height: number): void {
-    this.operations.push({
-      type: 'fillRect',
-      x,
-      y,
-      width,
-      height,
-      fillStyle: this.fillStyle,
-      globalAlpha: this.globalAlpha,
-    });
-  }
-
-  fillText(text: string, x: number, y: number): void {
-    this.operations.push({
-      type: 'fillText',
-      text,
-      x,
-      y,
-      fillStyle: this.fillStyle,
-      font: this.font,
-    });
-  }
-
-  strokeRect(x: number, y: number, width: number, height: number): void {
-    this.operations.push({
-      type: 'strokeRect',
-      x,
-      y,
-      width,
-      height,
-      strokeStyle: this.strokeStyle,
-    });
-  }
-
-  setTransform(a: number, b: number, c: number, d: number, e: number, f: number): void {
-    this.operations.push({ type: 'setTransform', a, b, c, d, e, f });
-  }
-
-  measureText(): {
-    fontBoundingBoxAscent: number;
-    fontBoundingBoxDescent: number;
-    actualBoundingBoxAscent: number;
-    actualBoundingBoxDescent: number;
-    width: number;
-  } {
-    const px = Number.parseFloat(this.font) || 13;
-    return {
-      fontBoundingBoxAscent: px * 0.8,
-      fontBoundingBoxDescent: px * 0.3,
-      actualBoundingBoxAscent: px * 0.7,
-      actualBoundingBoxDescent: px * 0.2,
-      width: px * 0.6,
-    };
-  }
-}
-
-class FakeElement {
-  tagName: string;
-  ownerDocument: FakeDocument;
-  parentElement: FakeElement | null = null;
-  children: FakeElement[] = [];
-  style: Record<string, string> = {};
-  dataset: Record<string, string> = {};
-  className = '';
-  textContent = '';
-  innerHTML = '';
-  value = '';
-  readOnly = false;
-  tabIndex = 0;
-  spellcheck = false;
-  autocapitalize = '';
-  autocomplete = '';
-  attributes = new Map<string, string>();
-  private rect = { width: 0, height: 0, left: 0, top: 0 };
-  private listeners = new Map<string, EventListener[]>();
-
-  constructor(tagName: string, ownerDocument: FakeDocument) {
-    this.tagName = tagName.toUpperCase();
-    this.ownerDocument = ownerDocument;
-  }
-
-  appendChild(child: FakeElement): FakeElement {
-    child.parentElement = this;
-    this.children.push(child);
-    return child;
-  }
-
-  remove(): void {
-    if (!this.parentElement) {
-      return;
-    }
-
-    this.parentElement.children = this.parentElement.children.filter((child) => child !== this);
-    this.parentElement = null;
-  }
-
-  setAttribute(name: string, value: string): void {
-    this.attributes.set(name, value);
-  }
-
-  addEventListener(type: string, listener: EventListener): void {
-    const listeners = this.listeners.get(type) ?? [];
-    listeners.push(listener);
-    this.listeners.set(type, listeners);
-  }
-
-  removeEventListener(type: string, listener: EventListener): void {
-    const listeners = this.listeners.get(type) ?? [];
-    this.listeners.set(
-      type,
-      listeners.filter((current) => current !== listener)
-    );
-  }
-
-  dispatchEvent(event: FakeEvent): boolean {
-    event.target ??= this as unknown as EventTarget;
-    event.currentTarget = this as unknown as EventTarget;
-    event.defaultPrevented ??= false;
-    event.preventDefault ??= () => {
-      event.defaultPrevented = true;
-    };
-    const listeners = this.listeners.get(event.type) ?? [];
-    for (const listener of listeners) {
-      listener(event);
-    }
-
-    return !event.defaultPrevented;
-  }
-
-  focus(): void {
-    this.ownerDocument.activeElement = this;
-  }
-
-  blur(): void {
-    if (this.ownerDocument.activeElement === this) {
-      this.ownerDocument.activeElement = null;
-    }
-  }
-
-  getBoundingClientRect(): {
-    width: number;
-    height: number;
-    left: number;
-    top: number;
-    right: number;
-    bottom: number;
-  } {
-    return {
-      ...this.rect,
-      right: this.rect.left + this.rect.width,
-      bottom: this.rect.top + this.rect.height,
-    };
-  }
-
-  setBoundingClientRect(rect: {
-    width: number;
-    height: number;
-    left?: number;
-    top?: number;
-  }): void {
-    this.rect = {
-      width: rect.width,
-      height: rect.height,
-      left: rect.left ?? 0,
-      top: rect.top ?? 0,
-    };
-  }
-}
-
+// 鼠标 / 滚轮事件是本文件独有的扩展：其它 issue45 测试只派发 composition 事件。
 class FakeMouseEvent {
   readonly type: string;
   readonly button: number;
@@ -307,291 +101,8 @@ class FakeWheelEvent extends FakeMouseEvent {
   }
 }
 
-class FakeWindowTarget {
-  document: FakeDocument;
-  innerWidth = 1280;
-  private listeners = new Map<string, EventListener[]>();
-
-  constructor(document: FakeDocument) {
-    this.document = document;
-  }
-
-  addEventListener(type: string, listener: EventListener): void {
-    const listeners = this.listeners.get(type) ?? [];
-    listeners.push(listener);
-    this.listeners.set(type, listeners);
-  }
-
-  removeEventListener(type: string, listener: EventListener): void {
-    const listeners = this.listeners.get(type) ?? [];
-    this.listeners.set(
-      type,
-      listeners.filter((current) => current !== listener)
-    );
-  }
-
-  dispatchEvent(event: FakeEvent): boolean {
-    event.target ??= this as unknown as EventTarget;
-    event.currentTarget = this as unknown as EventTarget;
-    event.defaultPrevented ??= false;
-    event.preventDefault ??= () => {
-      event.defaultPrevented = true;
-    };
-    const listeners = this.listeners.get(event.type) ?? [];
-    for (const listener of listeners) {
-      listener(event);
-    }
-
-    return !event.defaultPrevented;
-  }
-}
-
-class FakeCanvasElement extends FakeElement {
-  width = 0;
-  height = 0;
-  readonly context = new FakeCanvasContext2D();
-
-  getContext(_kind: string): FakeCanvasContext2D {
-    return this.context;
-  }
-}
-
-class FakeDocument {
-  activeElement: FakeElement | null = null;
-  body: FakeElement;
-
-  constructor() {
-    this.body = new FakeElement('body', this);
-  }
-
-  createElement(tagName: string): FakeElement {
-    if (tagName.toLowerCase() === 'canvas') {
-      return new FakeCanvasElement(tagName, this);
-    }
-
-    return new FakeElement(tagName, this);
-  }
-}
-
-type FakeBindings = {
-  createTerminal: (...args: any[]) => number;
-  setTerminalTheme: (...args: any[]) => void;
-  createKeyEncoder: () => number;
-  createMouseEncoder: () => number;
-  freeKeyEncoder: (...args: any[]) => void;
-  freeMouseEncoder: (...args: any[]) => void;
-  freeTerminal: (...args: any[]) => void;
-  resizeTerminal: (...args: any[]) => void;
-  writeVt: (...args: any[]) => void;
-  resetTerminal: (...args: any[]) => void;
-  resetMouseEncoder: (...args: any[]) => void;
-  readScrollbar: (...args: any[]) => { total: number; offset: number; len: number };
-  scrollViewportDelta: (...args: any[]) => void;
-  scrollViewportTop: (...args: any[]) => void;
-  scrollViewportBottom: (...args: any[]) => void;
-  isTerminalModeEnabled: (...args: any[]) => boolean;
-  setTerminalMode: (...args: any[]) => void;
-  encodePaste: (...args: any[]) => string;
-  encodeKeyEvent: (...args: any[]) => string;
-  encodeMouseEvent: (...args: any[]) => string | null;
-  formatViewport: (...args: any[]) => string;
-  formatViewportCalls: number;
-  modeState?: Set<number>;
-  scrollDeltaCalls?: number[];
-  mouseEventCalls?: any[];
-  keyEventCalls?: any[];
-};
-
-function findElementsByTag(root: FakeElement | null, tagName: string): FakeElement[] {
-  if (!root) {
-    return [];
-  }
-
-  const results: FakeElement[] = [];
-  const target = tagName.toUpperCase();
-  const stack = [root];
-  while (stack.length > 0) {
-    const current = stack.pop();
-    if (!current) {
-      continue;
-    }
-
-    if (current.tagName === target) {
-      results.push(current);
-    }
-
-    stack.push(...current.children);
-  }
-
-  return results;
-}
-
-function findCanvasByLayer(root: FakeElement | null, layer: string): FakeCanvasElement | null {
-  return (
-    (findElementsByTag(root, 'canvas').find(
-      (element) => (element as FakeCanvasElement).dataset.layer === layer
-    ) as FakeCanvasElement | undefined) ?? null
-  );
-}
-
-function findElementByClass(root: FakeElement | null, className: string): FakeElement | null {
-  if (!root) {
-    return null;
-  }
-
-  const stack = [root];
-  while (stack.length > 0) {
-    const current = stack.pop();
-    if (!current) {
-      continue;
-    }
-
-    if (current.className === className) {
-      return current;
-    }
-
-    stack.push(...current.children);
-  }
-
-  return null;
-}
-
-function createFakeBindings(): FakeBindings {
-  let formatViewportCalls = 0;
-  const modeState = new Set<number>();
-  const scrollDeltaCalls: number[] = [];
-  const mouseEventCalls: any[] = [];
-  const keyEventCalls: any[] = [];
-
-  return {
-    createTerminal: () => 1,
-    setTerminalTheme: () => {},
-    createKeyEncoder: () => 2,
-    createMouseEncoder: () => 3,
-    freeKeyEncoder: () => {},
-    freeMouseEncoder: () => {},
-    freeTerminal: () => {},
-    resizeTerminal: () => {},
-    writeVt: () => {},
-    resetTerminal: () => {},
-    resetMouseEncoder: () => {},
-    readScrollbar: () => ({ total: 24, offset: 0, len: 24 }),
-    scrollViewportDelta: (_terminal: number, amount: number) => {
-      scrollDeltaCalls.push(amount);
-    },
-    scrollViewportTop: () => {},
-    scrollViewportBottom: () => {},
-    isTerminalModeEnabled: (_terminal: number, mode: number) => modeState.has(mode),
-    setTerminalMode: (_terminal: number, mode: number, enabled: boolean) => {
-      if (enabled) modeState.add(mode);
-      else modeState.delete(mode);
-    },
-    encodePaste: () => '',
-    encodeKeyEvent: (
-      _encoder: number,
-      _terminal: number,
-      options: { action: string; keyCode: number; mods: number }
-    ) => {
-      keyEventCalls.push(options);
-      return `key:${options.action}:${options.keyCode}:${options.mods}`;
-    },
-    encodeMouseEvent: (_encoder: number, _terminal: number, options: Record<string, unknown>) => {
-      mouseEventCalls.push(options);
-      return `mouse:${String(options.action)}:${String(options.button ?? 'none')}`;
-    },
-    formatViewport: () => {
-      formatViewportCalls += 1;
-      return '';
-    },
-    get formatViewportCalls() {
-      return formatViewportCalls;
-    },
-    modeState,
-    scrollDeltaCalls,
-    mouseEventCalls,
-    keyEventCalls,
-  };
-}
-
-function installFakeDom(): {
-  document: FakeDocument;
-  flushAnimationFrames: () => Promise<void>;
-  pendingAnimationFrames: () => number;
-  cancelledFrames: number[];
-  restore: () => void;
-} {
-  const document = new FakeDocument();
-  const windowTarget = new FakeWindowTarget(document);
-  const previousDocument = (globalThis as any).document;
-  const previousWindow = (globalThis as any).window;
-  const previousNavigator = (globalThis as any).navigator;
-  const previousHTMLElement = (globalThis as any).HTMLElement;
-  const previousHTMLCanvasElement = (globalThis as any).HTMLCanvasElement;
-  const previousHTMLTextAreaElement = (globalThis as any).HTMLTextAreaElement;
-  const previousHTMLDivElement = (globalThis as any).HTMLDivElement;
-  const previousMouseEvent = (globalThis as any).MouseEvent;
-  const previousWheelEvent = (globalThis as any).WheelEvent;
-  const previousRequestAnimationFrame = globalThis.requestAnimationFrame;
-  const previousCancelAnimationFrame = globalThis.cancelAnimationFrame;
-
-  const rafQueue = new Map<number, RafCallback>();
-  const cancelledFrames: number[] = [];
-  let nextAnimationFrameId = 1;
-
-  (globalThis as any).document = document;
-  (globalThis as any).window = windowTarget;
-  (globalThis as any).navigator = {
-    clipboard: {
-      readText: async () => '',
-      writeText: async () => {},
-    },
-  };
-  (globalThis as any).HTMLElement = FakeElement;
-  (globalThis as any).HTMLCanvasElement = FakeCanvasElement;
-  (globalThis as any).HTMLTextAreaElement = FakeElement;
-  (globalThis as any).HTMLDivElement = FakeElement;
-  (globalThis as any).MouseEvent = FakeMouseEvent;
-  (globalThis as any).WheelEvent = FakeWheelEvent;
-  globalThis.requestAnimationFrame = ((callback: RafCallback) => {
-    const id = nextAnimationFrameId;
-    nextAnimationFrameId += 1;
-    rafQueue.set(id, callback);
-    return id;
-  }) as typeof requestAnimationFrame;
-  globalThis.cancelAnimationFrame = ((id: number) => {
-    cancelledFrames.push(id);
-    rafQueue.delete(id);
-  }) as typeof cancelAnimationFrame;
-
-  return {
-    document,
-    async flushAnimationFrames(): Promise<void> {
-      const queued = [...rafQueue.entries()];
-      rafQueue.clear();
-      for (const [id, callback] of queued) {
-        if (!cancelledFrames.includes(id)) {
-          callback(0);
-        }
-      }
-    },
-    pendingAnimationFrames(): number {
-      return rafQueue.size;
-    },
-    cancelledFrames,
-    restore(): void {
-      (globalThis as any).document = previousDocument;
-      (globalThis as any).window = previousWindow;
-      (globalThis as any).navigator = previousNavigator;
-      (globalThis as any).HTMLElement = previousHTMLElement;
-      (globalThis as any).HTMLCanvasElement = previousHTMLCanvasElement;
-      (globalThis as any).HTMLTextAreaElement = previousHTMLTextAreaElement;
-      (globalThis as any).HTMLDivElement = previousHTMLDivElement;
-      (globalThis as any).MouseEvent = previousMouseEvent;
-      (globalThis as any).WheelEvent = previousWheelEvent;
-      globalThis.requestAnimationFrame = previousRequestAnimationFrame;
-      globalThis.cancelAnimationFrame = previousCancelAnimationFrame;
-    },
-  };
+function installCanvasDom(): FakeDom {
+  return installFakeDom({ mouseEvent: FakeMouseEvent, wheelEvent: FakeWheelEvent });
 }
 
 function installLocalFileFetch(): () => void {
@@ -607,13 +118,7 @@ function installLocalFileFetch(): () => void {
 
 async function loadControllerModule(bindings: FakeBindings, version: number) {
   mock.restore();
-  mock.module('./ghostty-wasm', () => {
-    return {
-      ...realGhosttyWasmSnapshot,
-      keyboardEventToGhosttyMods: () => 0,
-      getGhosttyBindings: async () => bindings,
-    };
-  });
+  mockGhosttyWasm(bindings);
   mock.module('./render-state', () => {
     const rows = Array.from({ length: 24 }, (_, index) => ({
       y: index,
@@ -688,38 +193,10 @@ async function loadControllerModule(bindings: FakeBindings, version: number) {
   return import(`./terminal.ts?controller=${version}`);
 }
 
-const TEST_THEME: GhosttyTheme = {
-  background: '#111111',
-  foreground: '#eeeeee',
-  cursor: '#ffffff',
-  selectionBackground: '#334455',
-  black: '#000000',
-  red: '#aa0000',
-  green: '#00aa00',
-  yellow: '#aa5500',
-  blue: '#0000aa',
-  magenta: '#aa00aa',
-  cyan: '#00aaaa',
-  white: '#aaaaaa',
-  brightBlack: '#555555',
-  brightRed: '#ff5555',
-  brightGreen: '#55ff55',
-  brightYellow: '#ffff55',
-  brightBlue: '#5555ff',
-  brightMagenta: '#ff55ff',
-  brightCyan: '#55ffff',
-  brightWhite: '#ffffff',
-};
-
-// bun 的 mock.module 是全局持久的（mock.restore 不还原），文件跑完必须显式还原，
-// 否则污染同一进程中后续测试文件（如 headless.test.ts 拿到 fake bindings）。
-afterAll(() => {
-  mock.module('./ghostty-wasm', () => ({ ...realGhosttyWasmSnapshot }));
-  mock.module('./render-state', () => ({ ...realRenderStateSnapshot }));
-});
+afterAll(restoreRealTerminalModules);
 
 describe('GhosttyTerminalController canvas baseline', () => {
-  let dom: ReturnType<typeof installFakeDom> | null = null;
+  let dom: FakeDom | null = null;
   let importVersion = 0;
 
   afterEach(() => {
@@ -729,7 +206,7 @@ describe('GhosttyTerminalController canvas baseline', () => {
   });
 
   test('open should render through canvas without formatter fallback', async () => {
-    dom = installFakeDom();
+    dom = installCanvasDom();
     const bindings = createFakeBindings();
     importVersion += 1;
     const { createTerminalController } = await loadControllerModule(bindings, importVersion);
@@ -754,7 +231,7 @@ describe('GhosttyTerminalController canvas baseline', () => {
   });
 
   test('dispose should cancel queued render frames and remove helper textarea', async () => {
-    dom = installFakeDom();
+    dom = installCanvasDom();
     const bindings = createFakeBindings();
     importVersion += 1;
     const { createTerminalController } = await loadControllerModule(bindings, importVersion);
@@ -784,7 +261,7 @@ describe('GhosttyTerminalController canvas baseline', () => {
   });
 
   test('input event should emit committed text when compositionend data is empty', async () => {
-    dom = installFakeDom();
+    dom = installCanvasDom();
     const bindings = createFakeBindings();
     importVersion += 1;
     const { createTerminalController } = await loadControllerModule(bindings, importVersion);
@@ -826,7 +303,7 @@ describe('GhosttyTerminalController canvas baseline', () => {
   // 删除一律走 beforeinput 的 deleteContent* inputType 且 data 为空；必须按等价
   // 按键编码补发，否则退格被丢弃。keyCode：Backspace=53，Delete=68。
   test('beforeinput deleteContentBackward should emit Backspace key (Android)', async () => {
-    dom = installFakeDom();
+    dom = installCanvasDom();
     const bindings = createFakeBindings();
     importVersion += 1;
     const { createTerminalController } = await loadControllerModule(bindings, importVersion);
@@ -868,7 +345,7 @@ describe('GhosttyTerminalController canvas baseline', () => {
   });
 
   test('beforeinput deleteContentForward should emit Delete key (Android)', async () => {
-    dom = installFakeDom();
+    dom = installCanvasDom();
     const bindings = createFakeBindings();
     importVersion += 1;
     const { createTerminalController } = await loadControllerModule(bindings, importVersion);
@@ -909,7 +386,7 @@ describe('GhosttyTerminalController canvas baseline', () => {
   // Android 的 Enter 同样不发 keydown，换行走 beforeinput 的 insertLineBreak/
   // insertParagraph 且 data 为空。keyCode：Enter=58。
   test('beforeinput insertLineBreak should emit Enter key (Android)', async () => {
-    dom = installFakeDom();
+    dom = installCanvasDom();
     const bindings = createFakeBindings();
     importVersion += 1;
     const { createTerminalController } = await loadControllerModule(bindings, importVersion);
@@ -946,7 +423,7 @@ describe('GhosttyTerminalController canvas baseline', () => {
 
   // 组字过程中的删除（autocorrect 删除待选区）不应发到终端，等 compositionend 统一提交
   test('beforeinput delete during composition should be ignored', async () => {
-    dom = installFakeDom();
+    dom = installCanvasDom();
     const bindings = createFakeBindings();
     importVersion += 1;
     const { createTerminalController } = await loadControllerModule(bindings, importVersion);
@@ -987,7 +464,7 @@ describe('GhosttyTerminalController canvas baseline', () => {
   });
 
   test('wheel should keep local viewport scrolling when mouse and alt-scroll modes are disabled', async () => {
-    dom = installFakeDom();
+    dom = installCanvasDom();
     const bindings = createFakeBindings();
     importVersion += 1;
     const { createTerminalController } = await loadControllerModule(bindings, importVersion);
@@ -1018,7 +495,7 @@ describe('GhosttyTerminalController canvas baseline', () => {
   });
 
   test('pixel wheel should accumulate before local viewport scrolling', async () => {
-    dom = installFakeDom();
+    dom = installCanvasDom();
     const bindings = createFakeBindings();
     importVersion += 1;
     const { createTerminalController } = await loadControllerModule(bindings, importVersion);
@@ -1046,7 +523,7 @@ describe('GhosttyTerminalController canvas baseline', () => {
   });
 
   test('line wheel delta should be used directly for viewport scrolling', async () => {
-    dom = installFakeDom();
+    dom = installCanvasDom();
     const bindings = createFakeBindings();
     importVersion += 1;
     const { createTerminalController } = await loadControllerModule(bindings, importVersion);
@@ -1073,7 +550,7 @@ describe('GhosttyTerminalController canvas baseline', () => {
   });
 
   test('wheel should emit mouse input when mouse reporting is enabled', async () => {
-    dom = installFakeDom();
+    dom = installCanvasDom();
     const bindings = createFakeBindings();
     bindings.modeState?.add(1000);
     importVersion += 1;
@@ -1108,7 +585,7 @@ describe('GhosttyTerminalController canvas baseline', () => {
   });
 
   test('wheel should emit app scroll input when alt-screen and alt-scroll are enabled without mouse reporting', async () => {
-    dom = installFakeDom();
+    dom = installCanvasDom();
     const bindings = createFakeBindings();
     bindings.modeState?.add(1007);
     bindings.modeState?.add(1049);
@@ -1141,7 +618,7 @@ describe('GhosttyTerminalController canvas baseline', () => {
   });
 
   test('mouse reporting should win over alt-scroll for wheel routing', async () => {
-    dom = installFakeDom();
+    dom = installCanvasDom();
     const bindings = createFakeBindings();
     bindings.modeState?.add(1000);
     bindings.modeState?.add(1007);
@@ -1179,7 +656,7 @@ describe('GhosttyTerminalController canvas baseline', () => {
   });
 
   test('mouse drag should emit app mouse input instead of local selection when mouse reporting is enabled', async () => {
-    dom = installFakeDom();
+    dom = installCanvasDom();
     const bindings = createFakeBindings();
     bindings.modeState?.add(1000);
     importVersion += 1;
@@ -1237,7 +714,7 @@ describe('GhosttyTerminalController canvas baseline', () => {
   });
 
   test('middle and right mouse press should emit app mouse input when mouse reporting is enabled', async () => {
-    dom = installFakeDom();
+    dom = installCanvasDom();
     const bindings = createFakeBindings();
     bindings.modeState?.add(1000);
     importVersion += 1;
@@ -1279,7 +756,7 @@ describe('GhosttyTerminalController canvas baseline', () => {
   });
 
   test('exported terminal modes can be restored after reset', async () => {
-    dom = installFakeDom();
+    dom = installCanvasDom();
     const bindings = createFakeBindings();
     bindings.modeState?.add(1000);
     bindings.modeState?.add(1006);
@@ -1311,7 +788,7 @@ describe('GhosttyTerminalController canvas baseline', () => {
   // round(31.2)/2 = 15.5）。鼠标上报必须与渲染 / hitTest 用同一未取整 cell 尺寸：
   // 取整成 16 后 floor(y/16)+1 从视觉第 ~17 行起行号少 1（opencode 下半屏点击/拖拽偏一行）。
   test('mouse input should pass unrounded cell dimensions to the encoder (dpr=2 half-pixel cell)', async () => {
-    dom = installFakeDom();
+    dom = installCanvasDom();
     const previousDpr = (globalThis as any).devicePixelRatio;
     (globalThis as any).devicePixelRatio = 2;
 
@@ -1401,7 +878,7 @@ describe('GhosttyTerminalController canvas baseline', () => {
 
   // xterm 约定：鼠标上报模式下 Shift+左键拖拽绕过上报、走本地文本选择（唯一的复制入口）
   test('shift+left drag bypasses mouse reporting into local selection', async () => {
-    dom = installFakeDom();
+    dom = installCanvasDom();
     const { bindings, terminal, screen, windowTarget } = await setupMouseTerminal([1000, 1006]);
 
     screen?.dispatchEvent(
@@ -1456,7 +933,7 @@ describe('GhosttyTerminalController canvas baseline', () => {
 
   // 真实终端只在跨 cell 时发 motion：同 cell 的 mousemove 必须去重
   test('drag motion within one cell is deduplicated until crossing cells', async () => {
-    dom = installFakeDom();
+    dom = installCanvasDom();
     const { bindings, screen, windowTarget } = await setupMouseTerminal([1002, 1006]);
 
     screen?.dispatchEvent(
@@ -1516,7 +993,7 @@ describe('GhosttyTerminalController canvas baseline', () => {
 
   // 1016（SGR-pixels）语义是像素粒度，同 cell 去重必须停用
   test('sgr-pixels mode (1016) disables motion dedupe', async () => {
-    dom = installFakeDom();
+    dom = installCanvasDom();
     const { bindings, screen, windowTarget } = await setupMouseTerminal([1002, 1006, 1016]);
 
     screen?.dispatchEvent(
@@ -1551,7 +1028,7 @@ describe('GhosttyTerminalController canvas baseline', () => {
 
   // 1003 any-event tracking：裸悬停（无按钮）也要上报 motion，且受同 cell 去重约束
   test('hover motion is reported under any-event tracking (1003)', async () => {
-    dom = installFakeDom();
+    dom = installCanvasDom();
     const { bindings, screen } = await setupMouseTerminal([1003, 1006]);
 
     screen?.dispatchEvent(
@@ -1582,7 +1059,7 @@ describe('GhosttyTerminalController canvas baseline', () => {
   });
 
   test('hover motion with shift held is not reported (local override)', async () => {
-    dom = installFakeDom();
+    dom = installCanvasDom();
     const { bindings, screen } = await setupMouseTerminal([1003, 1006]);
 
     screen?.dispatchEvent(
@@ -1598,7 +1075,7 @@ describe('GhosttyTerminalController canvas baseline', () => {
   });
 
   test('hover motion is not reported under button-event tracking (1002)', async () => {
-    dom = installFakeDom();
+    dom = installCanvasDom();
     const { bindings, screen } = await setupMouseTerminal([1002, 1006]);
 
     screen?.dispatchEvent(
@@ -1614,7 +1091,7 @@ describe('GhosttyTerminalController canvas baseline', () => {
 
   // 水平滚轮：SGR 按钮 6/7（66/67），仅上报模式消费 deltaX
   test('horizontal wheel emits buttons 6/7 when mouse reporting is enabled', async () => {
-    dom = installFakeDom();
+    dom = installCanvasDom();
     const { bindings, terminal } = await setupMouseTerminal([1000, 1006]);
 
     (terminal.element as unknown as FakeElement).dispatchEvent(
@@ -1640,7 +1117,7 @@ describe('GhosttyTerminalController canvas baseline', () => {
   });
 
   test('horizontal wheel is ignored without mouse reporting', async () => {
-    dom = installFakeDom();
+    dom = installCanvasDom();
     const { bindings, terminal } = await setupMouseTerminal([]);
 
     (terminal.element as unknown as FakeElement).dispatchEvent(
@@ -1658,7 +1135,7 @@ describe('GhosttyTerminalController canvas baseline', () => {
 
   // 触摸手势 API：press/motion/release 三态上报；返回 false = 上报模式未开启
   test('sendTouchMouseEvent reports press/motion/release with left button', async () => {
-    dom = installFakeDom();
+    dom = installCanvasDom();
     const { bindings, terminal } = await setupMouseTerminal([1002, 1006]);
 
     expect(terminal.isMouseReporting?.()).toBeTrue();
@@ -1677,7 +1154,7 @@ describe('GhosttyTerminalController canvas baseline', () => {
   });
 
   test('sendTouchMouseEvent returns false when mouse reporting is off', async () => {
-    dom = installFakeDom();
+    dom = installCanvasDom();
     const { bindings, terminal } = await setupMouseTerminal([]);
 
     expect(terminal.isMouseReporting?.()).toBeFalse();
@@ -1689,7 +1166,7 @@ describe('GhosttyTerminalController canvas baseline', () => {
 
   // 触摸手势被消费后，浏览器随后的 compat 鼠标事件必须被忽略（防 tap 双触发/清掉长按选择）
   test('noteTouchHandled suppresses synthetic mouse events within the window', async () => {
-    dom = installFakeDom();
+    dom = installCanvasDom();
     const { bindings, terminal, screen } = await setupMouseTerminal([1000, 1006]);
 
     terminal.noteTouchHandled?.();
@@ -1896,7 +1373,7 @@ describe('ghostty mouse protocol bindings', () => {
 });
 
 describe('CanvasRenderer', () => {
-  let dom: ReturnType<typeof installFakeDom> | null = null;
+  let dom: FakeDom | null = null;
 
   afterEach(() => {
     dom?.restore();
@@ -1904,7 +1381,7 @@ describe('CanvasRenderer', () => {
   });
 
   test('renders full frames, skips clean frames and tracks dirty rows', async () => {
-    dom = installFakeDom();
+    dom = installCanvasDom();
     const { CanvasRenderer } = await import(`./canvas-renderer.ts?renderer=${Date.now()}`);
     const screen = dom.document.createElement('div');
     dom.document.body.appendChild(screen);
@@ -2110,7 +1587,7 @@ describe('CanvasRenderer', () => {
   });
 
   test('draws on integer device pixels with fractional cell size and dpr', async () => {
-    dom = installFakeDom();
+    dom = installCanvasDom();
     const previousDpr = (globalThis as any).devicePixelRatio;
     (globalThis as any).devicePixelRatio = 2;
 
@@ -2233,7 +1710,7 @@ describe('CanvasRenderer', () => {
   });
 
   test('block elements are drawn as exact cell rects instead of font glyphs', async () => {
-    dom = installFakeDom();
+    dom = installCanvasDom();
     const { CanvasRenderer } = await import(`./canvas-renderer.ts?renderer-block=${Date.now()}`);
     const screen = dom.document.createElement('div');
     dom.document.body.appendChild(screen);
@@ -2339,7 +1816,7 @@ describe('CanvasRenderer', () => {
     const previousDpr = (globalThis as any).devicePixelRatio;
     (globalThis as any).devicePixelRatio = 1;
     try {
-      dom = installFakeDom();
+      dom = installCanvasDom();
       const { CanvasRenderer } = await import(
         `./canvas-renderer.ts?issue45-red-clean=${Date.now()}`
       );
@@ -2430,7 +1907,7 @@ describe('CanvasRenderer', () => {
     const previousDpr = (globalThis as any).devicePixelRatio;
     (globalThis as any).devicePixelRatio = 1;
     try {
-      dom = installFakeDom();
+      dom = installCanvasDom();
       const { CanvasRenderer } = await import(
         `./canvas-renderer.ts?issue45-guard-partial=${Date.now()}`
       );
@@ -2592,7 +2069,7 @@ describe('SelectionModel', () => {
 });
 
 describe('GhosttyTerminalController clipboard and selection API', () => {
-  let dom: ReturnType<typeof installFakeDom> | null = null;
+  let dom: FakeDom | null = null;
   let importVersion = 1000;
 
   afterEach(() => {
@@ -2629,7 +2106,7 @@ describe('GhosttyTerminalController clipboard and selection API', () => {
   }
 
   test('copy shortcut should copy once, clear selection, then let Ctrl+C reach the terminal', async () => {
-    dom = installFakeDom();
+    dom = installCanvasDom();
     const bindings = createFakeBindings();
     const writes: string[] = [];
     (
@@ -2660,7 +2137,7 @@ describe('GhosttyTerminalController clipboard and selection API', () => {
   });
 
   test('paste shortcuts should bypass key encoding so the browser paste event flows through', async () => {
-    dom = installFakeDom();
+    dom = installCanvasDom();
     const bindings = createFakeBindings();
     bindings.encodePaste = (_terminal: number, data: string) => `paste:${data}`;
 
@@ -2692,7 +2169,7 @@ describe('GhosttyTerminalController clipboard and selection API', () => {
   });
 
   test('touch selection API should drive selection state and notify listeners', async () => {
-    dom = installFakeDom();
+    dom = installCanvasDom();
     const bindings = createFakeBindings();
     const { terminal } = await setupTerminal(bindings);
 
@@ -2720,7 +2197,7 @@ describe('GhosttyTerminalController clipboard and selection API', () => {
 
   // Bug 1: resize cols/rows 未变时不应清 selection（geometry effect 抖动导致无效 resize）
   test('resize with unchanged cols/rows should preserve selection', async () => {
-    dom = installFakeDom();
+    dom = installCanvasDom();
     const bindings = createFakeBindings();
     const { terminal } = await setupTerminal(bindings);
 
@@ -2738,7 +2215,7 @@ describe('GhosttyTerminalController clipboard and selection API', () => {
   // e2e（apps/fe/tests）把 controller 当作 window.__tmexE2eXterm 直接读这些入口做
   // 光标/行列对齐校验。它们必须是公开只读接口，不能退化成内部字段。
   test('cellDimensions should expose the live cell object shared with _core', async () => {
-    dom = installFakeDom();
+    dom = installCanvasDom();
     const bindings = createFakeBindings();
     const { terminal } = await setupTerminal(bindings);
 
@@ -2753,7 +2230,7 @@ describe('GhosttyTerminalController clipboard and selection API', () => {
   });
 
   test('lastCursor should expose the cursor of the latest render snapshot', async () => {
-    dom = installFakeDom();
+    dom = installCanvasDom();
     const bindings = createFakeBindings();
     const { terminal } = await setupTerminal(bindings);
 
@@ -2781,7 +2258,7 @@ describe('GhosttyTerminalController clipboard and selection API', () => {
   // 它们不在 CompatibleTerminalLike 的必选部分，重构时最容易被无声删掉（曾因此挂掉
   // terminal-render-regressions / terminal-mouse-row-alignment 两个 e2e）。
   test('controller should keep every member the e2e probes read', async () => {
-    dom = installFakeDom();
+    dom = installCanvasDom();
     const bindings = createFakeBindings();
     const { terminal } = await setupTerminal(bindings);
     terminal.refresh();
@@ -2819,7 +2296,7 @@ describe('GhosttyTerminalController clipboard and selection API', () => {
   // resize 先写 cols/rows 再调 WASM：WASM 抛错后控制器尺寸与内核尺寸永久错位，
   // 且同尺寸重试会被开头的相等判断早退掉，永远修不回来。
   test('failed WASM resize should keep cols/rows so the same size can be retried', async () => {
-    dom = installFakeDom();
+    dom = installCanvasDom();
     const bindings = createFakeBindings();
     const attempts: Array<{ cols: number; rows: number }> = [];
     let failResize = false;
@@ -2857,7 +2334,7 @@ describe('GhosttyTerminalController clipboard and selection API', () => {
   // resize 会重排软换行与 scrollback 行号，按绝对行号缓存的行模型全部作废；
   // 不清缓存则选择文本 / 高亮 / 链接检测会读到 resize 前的模型。
   test('successful resize should invalidate the absolute-row line cache', async () => {
-    dom = installFakeDom();
+    dom = installCanvasDom();
     const bindings = createFakeBindings();
     let viewportOffset = 0;
     bindings.readScrollbar = () => ({
@@ -2888,7 +2365,7 @@ describe('GhosttyTerminalController clipboard and selection API', () => {
   });
 
   test('resize with changed cols/rows should clear selection', async () => {
-    dom = installFakeDom();
+    dom = installCanvasDom();
     const bindings = createFakeBindings();
     const { terminal } = await setupTerminal(bindings);
 
