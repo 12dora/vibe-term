@@ -1,4 +1,4 @@
-import { and, eq, isNull, lte } from 'drizzle-orm';
+import { and, eq, gt, isNull, lte } from 'drizzle-orm';
 import { enrollmentTokens, nodeCerts, nodes, peerCache, userKeys, users } from '../db/schema';
 import { toBuffer, toBytes } from './binary';
 import type { AuthDb, NodeStatus } from './types';
@@ -422,6 +422,25 @@ export class UserStore {
       .select()
       .from(enrollmentTokens)
       .where(eq(enrollmentTokens.enrollPublicKey, toBuffer(enrollPublicKey)))
+      .get();
+    return row ? toEnrollment(row) : null;
+  }
+
+  consumeEnrollmentToken(
+    enrollPublicKey: Uint8Array,
+    input: { nodeId: string; now: number }
+  ): EnrollmentTokenRecord | null {
+    const row = this.db
+      .update(enrollmentTokens)
+      .set({ usedAt: input.now, nodeId: input.nodeId })
+      .where(
+        and(
+          eq(enrollmentTokens.enrollPublicKey, toBuffer(enrollPublicKey)),
+          isNull(enrollmentTokens.usedAt),
+          gt(enrollmentTokens.expiresAt, input.now)
+        )
+      )
+      .returning()
       .get();
     return row ? toEnrollment(row) : null;
   }

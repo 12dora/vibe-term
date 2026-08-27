@@ -215,4 +215,53 @@ describe('UserStore', () => {
       close();
     }
   });
+
+  test('consumeEnrollmentToken is atomic: second consume and expired return null', () => {
+    const { db, close } = createMigratedAuthDb();
+    try {
+      const store = new UserStore(db);
+      seedUser(store);
+      store.createNode({
+        id: 'node-a',
+        userId: 'user-1',
+        name: 'hub',
+        now: 5_000,
+      });
+
+      const livePk = Uint8Array.from({ length: 32 }, () => 31);
+      store.createEnrollmentToken({
+        id: 'tok-live',
+        userId: 'user-1',
+        enrollPublicKey: livePk,
+        authorizationJson: '{}',
+        authorizationSig: AUTH_SIG,
+        expiresAt: 500,
+      });
+      const first = store.consumeEnrollmentToken(livePk, { nodeId: 'node-a', now: 50 });
+      expect(first).not.toBeNull();
+      expect(first?.id).toBe('tok-live');
+      expect(first?.usedAt).toBe(50);
+      expect(first?.nodeId).toBe('node-a');
+
+      const second = store.consumeEnrollmentToken(livePk, { nodeId: 'node-b', now: 60 });
+      expect(second).toBeNull();
+      expect(store.getEnrollmentTokenByEnrollPublicKey(livePk)?.nodeId).toBe('node-a');
+      expect(store.getEnrollmentTokenByEnrollPublicKey(livePk)?.usedAt).toBe(50);
+
+      const expiredPk = Uint8Array.from({ length: 32 }, () => 32);
+      store.createEnrollmentToken({
+        id: 'tok-exp',
+        userId: 'user-1',
+        enrollPublicKey: expiredPk,
+        authorizationJson: '{}',
+        authorizationSig: AUTH_SIG,
+        expiresAt: 100,
+      });
+      expect(store.consumeEnrollmentToken(expiredPk, { nodeId: 'node-a', now: 100 })).toBeNull();
+      expect(store.consumeEnrollmentToken(expiredPk, { nodeId: 'node-a', now: 101 })).toBeNull();
+      expect(store.getEnrollmentTokenByEnrollPublicKey(expiredPk)?.usedAt).toBeNull();
+    } finally {
+      close();
+    }
+  });
 });

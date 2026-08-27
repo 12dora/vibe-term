@@ -43,6 +43,7 @@ export {
   verifyRegistration,
   type CreateAuthenticationOptionsInput,
   type CreateRegistrationOptionsInput,
+  type MakeVerifyDelegationPasskeyOptions,
   type VerifyAssertionCredential,
   type VerifyAssertionInput,
   type VerifyAssertionResult,

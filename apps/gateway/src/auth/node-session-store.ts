@@ -23,14 +23,18 @@ export interface NodeSessionRecord {
   revokedAt: number | null;
 }
 
-export interface IssueNodeSessionInput {
+type IssueNodeSessionBase = {
   userId: string;
   viaNodeId: string;
   sessPublicKey: Uint8Array;
-  delegationMethod: DelegationMethod;
-  credentialId?: Uint8Array | null;
   now: number;
-}
+};
+
+export type IssueNodeSessionInput = IssueNodeSessionBase &
+  (
+    | { delegationMethod: 'root'; credentialId?: null }
+    | { delegationMethod: 'passkey'; credentialId: Uint8Array }
+  );
 
 export type NodeSessionVerifyResult =
   | { ok: true; session: NodeSessionRecord; renewedExpiresAt?: number }
@@ -44,9 +48,15 @@ export class NodeSessionStore {
     expiresAt: number;
     hardExpiresAt: number;
   } {
+    if (input.delegationMethod === 'passkey') {
+      if (!input.credentialId || input.credentialId.byteLength === 0) {
+        throw new Error('passkey session requires credentialId');
+      }
+    }
     const sidBytes = crypto.getRandomValues(new Uint8Array(32));
     const expiresAt = input.now + NODE_SESSION_TTL_MS;
     const hardExpiresAt = input.now + NODE_SESSION_HARD_TTL_MS;
+    const credentialId = input.delegationMethod === 'passkey' ? toBuffer(input.credentialId) : null;
     this.db
       .insert(nodeSessions)
       .values({
@@ -55,7 +65,7 @@ export class NodeSessionStore {
         viaNodeId: input.viaNodeId,
         sessPublicKey: toBuffer(input.sessPublicKey),
         delegationMethod: input.delegationMethod,
-        credentialId: input.credentialId ? toBuffer(input.credentialId) : null,
+        credentialId,
         issuedAt: input.now,
         expiresAt,
         hardExpiresAt,

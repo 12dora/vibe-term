@@ -2,6 +2,7 @@ import { describe, expect, test } from 'bun:test';
 import { bytesEqual } from '../bytes';
 import { users } from '../db/schema';
 import {
+  type IssueNodeSessionInput,
   NODE_SESSION_HARD_TTL_MS,
   NODE_SESSION_RENEW_THROTTLE_MS,
   NODE_SESSION_TTL_MS,
@@ -222,6 +223,53 @@ describe('NodeSessionStore', () => {
         ok: false,
         reason: 'revoked',
       });
+    } finally {
+      close();
+    }
+  });
+
+  test('issue requires credentialId for passkey and allows root without it', () => {
+    const { store, close } = storeWithUser();
+    try {
+      const root = store.issue({
+        userId: 'user-1',
+        viaNodeId: 'self',
+        sessPublicKey: SESS_PK,
+        delegationMethod: 'root',
+        now: 0,
+      });
+      const rootOk = store.verify(root.sid, { viaNodeId: 'self', now: 0 });
+      expect(rootOk.ok).toBe(true);
+      if (rootOk.ok) {
+        expect(rootOk.session.delegationMethod).toBe('root');
+        expect(rootOk.session.credentialId).toBeNull();
+      }
+
+      const passkey = store.issue({
+        userId: 'user-1',
+        viaNodeId: 'self',
+        sessPublicKey: SESS_PK,
+        delegationMethod: 'passkey',
+        credentialId: CRED_A,
+        now: 0,
+      });
+      const passkeyOk = store.verify(passkey.sid, { viaNodeId: 'self', now: 0 });
+      expect(passkeyOk.ok).toBe(true);
+      if (passkeyOk.ok) {
+        expect(passkeyOk.session.delegationMethod).toBe('passkey');
+        expect(passkeyOk.session.credentialId).not.toBeNull();
+        expect(bytesEqual(passkeyOk.session.credentialId ?? new Uint8Array(), CRED_A)).toBe(true);
+      }
+
+      expect(() =>
+        store.issue({
+          userId: 'user-1',
+          viaNodeId: 'self',
+          sessPublicKey: SESS_PK,
+          delegationMethod: 'passkey',
+          now: 0,
+        } as IssueNodeSessionInput)
+      ).toThrow();
     } finally {
       close();
     }

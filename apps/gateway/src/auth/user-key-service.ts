@@ -13,11 +13,13 @@ import type {
 import {
   applyKeyLogRecord,
   buildKeyLogRecord,
+  computeRecordHash,
   decodeBase64url,
   decodeKeyLogRecord,
   decodeResetRootPayload,
   decodeSetTotpPayload,
   deriveSeed,
+  detectFork,
   encodeBase64url,
   encodeKeyLogRecord,
   encodeResetRootPayload,
@@ -197,6 +199,14 @@ export class UserKeyService {
   }
 
   async apply(userId: string, input: ApplyKeyLogInput): Promise<ApplyKeyLogServiceResult> {
+    return this.applyInternal(userId, input, { allowGenesis: false });
+  }
+
+  private async applyInternal(
+    userId: string,
+    input: ApplyKeyLogInput,
+    opts: { allowGenesis: boolean }
+  ): Promise<ApplyKeyLogServiceResult> {
     let record: ReturnType<typeof decodeKeyLogRecord>;
     try {
       record = decodeKeyLogRecord(input.bytes);
@@ -218,13 +228,23 @@ export class UserKeyService {
       resolvePasskey: (id) => state.passkeys.get(id)?.public_key ?? null,
       verifyPasskeyAssertion: this.verifyPasskeyAssertion,
       existingAtSeq: existing ? { bytes: existing.bytes, sig: existing.sig } : undefined,
-      allowGenesis: state.head.seq === 0n,
+      allowGenesis: opts.allowGenesis,
     });
     if (!verified.ok) {
       return verified;
     }
 
-    const applied = await applyKeyLogRecord(state, verified.record, verified.hash, {
+    return this.commitVerified(userId, input, verified.record, verified.hash, state);
+  }
+
+  private async commitVerified(
+    userId: string,
+    input: ApplyKeyLogInput,
+    record: ReturnType<typeof decodeKeyLogRecord>,
+    hash: Uint8Array,
+    previous: UserKeyState
+  ): Promise<ApplyKeyLogServiceResult> {
+    const applied = await applyKeyLogRecord(previous, record, hash, {
       verifyPasskeyAssertion: this.verifyPasskeyAssertion,
     });
     if (!applied.ok) {
@@ -239,8 +259,11 @@ export class UserKeyService {
         const nodeSessionStore = new (this.nodeSessionStore.constructor as typeof NodeSessionStore)(
           tx as AuthDb
         );
-        const again = keyLogStore.getAtSeq(userId, Number(verified.record.seq));
-        if (again && !bytesEqual(again.bytes, input.bytes)) {
+        const again = keyLogStore.getAtSeq(userId, Number(record.seq));
+        if (
+          again &&
+          detectFork({ bytes: again.bytes, sig: again.sig }, { bytes: input.bytes, sig: input.sig })
+        ) {
           throw new ForkCollision();
         }
         persistApplied({
@@ -248,12 +271,12 @@ export class UserKeyService {
           keyLogStore,
           nodeSessionStore,
           userId,
-          previous: state,
+          previous,
           next: applied.state,
-          record: verified.record,
+          record,
           bytes: input.bytes,
           sig: input.sig,
-          hash: verified.hash,
+          hash,
           effects: applied.effects,
           now,
         });
@@ -267,8 +290,8 @@ export class UserKeyService {
 
     return {
       ok: true,
-      seq: Number(verified.record.seq),
-      hash: verified.hash,
+      seq: Number(record.seq),
+      hash,
       effects: applied.effects,
     };
   }
@@ -348,7 +371,7 @@ export class UserKeyService {
     });
     const bytes = encodeKeyLogRecord(record);
     const sig = signKeyLogRecordWithRoot(rootKey, bytes);
-    const applied = await this.apply(user.id, { bytes, sig });
+    const applied = await this.applyInternal(user.id, { bytes, sig }, { allowGenesis: true });
     if (!applied.ok) {
       throw new Error(`bootstrap genesis apply failed: ${applied.error}`);
     }
@@ -436,9 +459,19 @@ export class UserKeyService {
       this.userStore.setTotpRecordSeq(genesisUid, null, now);
     }
 
-    const applied = await this.applyMany(genesisUid, records);
-    if (!applied.ok) {
-      return { ok: false, error: applied.error };
+    for (const item of records) {
+      let decoded: ReturnType<typeof decodeKeyLogRecord>;
+      try {
+        decoded = decodeKeyLogRecord(item.bytes);
+      } catch {
+        return { ok: false, error: 'malformed_payload' };
+      }
+      const state = this.currentState(genesisUid);
+      const hash = computeRecordHash(item.bytes, item.sig);
+      const committed = await this.commitVerified(genesisUid, item, decoded, hash, state);
+      if (!committed.ok) {
+        return { ok: false, error: committed.error };
+      }
     }
     return { ok: true, state: this.currentState(genesisUid) };
   }

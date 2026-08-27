@@ -3,9 +3,11 @@ import {
   applyKeyLogRecord,
   buildKeyLogRecord,
   bytesEqual,
+  decodeAuthorization,
   emptyUserKeyState,
   encodeAdmitNodePayload,
   encodeKeyLogRecord,
+  encodePasskeyAssertion,
   signKeyLogRecordWithRoot,
   verifyKeyLogRecord,
 } from '@tmex/shared/auth';
@@ -87,6 +89,32 @@ describe('node-identity-service', () => {
       });
       expect(persisted.ok).toBe(true);
       expect(userStore.getCert(identity.nodeIdHex)).not.toBeNull();
+    } finally {
+      close();
+    }
+  });
+
+  test('selfSignedNodeCertificate passkey path carries credentialId on Authorization', async () => {
+    const { db, close } = createMigratedAuthDb();
+    try {
+      const identity = await ensureNodeIdentity(new NodeIdentityStore(db));
+      const assertion = encodePasskeyAssertion({
+        credential_id: 'cred-1',
+        client_data_json: new Uint8Array([1, 2, 3, 4]),
+        authenticator_data: new Uint8Array([5, 6, 7, 8]),
+        signature: new Uint8Array([9, 10, 11, 12]),
+      });
+      const admit = await selfSignedNodeCertificate(
+        identity,
+        { credentialId: 'cred-1', sign: () => assertion },
+        { uid: 'user-1', rootEpoch: 1, now: 99 }
+      );
+      const auth = decodeAuthorization(admit.authorization_bytes);
+      expect(auth.signer).toBe('passkey');
+      expect(auth.credential_id).toBe('cred-1');
+      expect(auth.uid).toBe('user-1');
+      expect(auth.root_epoch).toBe(1);
+      expect(bytesEqual(admit.authorization_sig, assertion)).toBe(true);
     } finally {
       close();
     }

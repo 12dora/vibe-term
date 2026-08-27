@@ -13,7 +13,13 @@ import type {
 } from '@simplewebauthn/server';
 import type { AddPasskeyPayload, Delegation, VerifyPasskeyAssertion } from '@tmex/shared/auth';
 import type { VerifyDelegationPasskey } from '@tmex/shared/auth';
-import { decodeBase64url, encodeBase64url } from '@tmex/shared/auth';
+import {
+  decodeBase64url,
+  decodePasskeyAssertion,
+  encodeBase64url,
+  encodePasskeyAssertion,
+  verifyDelegationTimes,
+} from '@tmex/shared/auth';
 import type { UserStore } from './user-store';
 
 export type CreateRegistrationOptionsInput = {
@@ -56,17 +62,33 @@ export type VerifyAssertionResult =
   | { ok: true; newCounter: number; userVerified: boolean }
   | { ok: false };
 
-/**
- * Passkey-signed key-log `sig` encoding:
- * UTF-8 bytes of `JSON.stringify(AuthenticationResponseJSON)`.
- * Challenge for that assertion is `sha256(recordBytes)` (base64url in clientDataJSON).
- */
+export type MakeVerifyDelegationPasskeyOptions = {
+  now?: () => number;
+};
+
 export function encodePasskeyAssertionSig(assertion: AuthenticationResponseJSON): Uint8Array {
-  return new TextEncoder().encode(JSON.stringify(assertion));
+  return encodePasskeyAssertion({
+    credential_id: assertion.id,
+    client_data_json: decodeBase64url(assertion.response.clientDataJSON),
+    authenticator_data: decodeBase64url(assertion.response.authenticatorData),
+    signature: decodeBase64url(assertion.response.signature),
+  });
 }
 
 export function decodePasskeyAssertionSig(sig: Uint8Array): AuthenticationResponseJSON {
-  return JSON.parse(new TextDecoder().decode(sig)) as AuthenticationResponseJSON;
+  const decoded = decodePasskeyAssertion(sig);
+  const id = decoded.credential_id;
+  return {
+    id,
+    rawId: id,
+    type: 'public-key',
+    response: {
+      clientDataJSON: encodeBase64url(decoded.client_data_json),
+      authenticatorData: encodeBase64url(decoded.authenticator_data),
+      signature: encodeBase64url(decoded.signature),
+    },
+    clientExtensionResults: {},
+  };
 }
 
 export async function createRegistrationOptions(
@@ -187,17 +209,25 @@ export function makeVerifyPasskeyAssertion(userStore: UserStore): VerifyPasskeyA
   };
 }
 
-export function makeVerifyDelegationPasskey(userStore: UserStore): VerifyDelegationPasskey {
+export function makeVerifyDelegationPasskey(
+  userStore: UserStore,
+  options?: MakeVerifyDelegationPasskeyOptions
+): VerifyDelegationPasskey {
+  const now = options?.now ?? (() => Date.now());
   return async ({
     challenge,
     assertion,
     credentialId,
+    delegation,
   }: {
     challenge: Uint8Array;
     delegation: Delegation;
     assertion: unknown;
     credentialId: string;
   }) => {
+    if (!verifyDelegationTimes(delegation, now()).ok) {
+      return false;
+    }
     const stored = userStore.getKeyByCredentialId(decodeBase64url(credentialId));
     if (!stored) {
       return false;

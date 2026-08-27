@@ -1,4 +1,4 @@
-import type { AdmitNodePayload, RootKey } from '@tmex/shared/auth';
+import type { AdmitNodePayload, EnrollmentSigner } from '@tmex/shared/auth';
 import {
   createEnrollment,
   createNodeCertificate,
@@ -56,10 +56,10 @@ export async function ensureNodeIdentity(
 
 export async function selfSignedNodeCertificate(
   identity: NodeIdentityKeys,
-  rootKey: RootKey,
+  signer: EnrollmentSigner,
   opts: { uid: string; rootEpoch: number; now: number | bigint }
 ): Promise<AdmitNodePayload> {
-  const enrollment = await createEnrollment(rootKey, {
+  const enrollment = await createEnrollment(signer, {
     uid: opts.uid,
     rootEpoch: opts.rootEpoch,
     now: opts.now,

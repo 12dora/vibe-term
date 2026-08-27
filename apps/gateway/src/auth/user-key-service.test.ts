@@ -5,10 +5,12 @@ import {
   encodeAdmitNodePayload,
   encodeClearTotpPayload,
   encodeKeyLogRecord,
+  encodeResetRootPayload,
   encodeRevokeNodePayload,
   encodeRotateRootPayload,
   encodeSetTotpPayload,
   generateKdfParams,
+  genesisHead,
   rootKeyFromSeed,
   signKeyLogRecordWithRoot,
 } from '@tmex/shared/auth';
@@ -17,7 +19,7 @@ import { ensureNodeIdentity, selfSignedNodeCertificate } from './node-identity-s
 import { NodeIdentityStore } from './node-identity-store';
 import { NodeSessionStore } from './node-session-store';
 import { createMigratedAuthDb } from './test-db';
-import { UserKeyService } from './user-key-service';
+import { UserKeyService, kdfParamsToJson } from './user-key-service';
 import { UserStore } from './user-store';
 
 function createService(db: ReturnType<typeof createMigratedAuthDb>['db']) {
@@ -284,6 +286,168 @@ describe('UserKeyService', () => {
     } finally {
       src.close();
       dst.close();
+    }
+  });
+
+  test('remote reset-root at head 0 is rejected with reset_not_genesis', async () => {
+    const { db, close } = createMigratedAuthDb();
+    try {
+      const { service, userStore, keyLogStore } = createService(db);
+      const kdf = generateKdfParams();
+      const root = rootKeyFromSeed(new Uint8Array(32).fill(3));
+      const user = userStore.create({
+        id: 'user-remote',
+        username: 'remote',
+        rootPublicKey: new Uint8Array(32),
+        rootEpoch: 0,
+        kdfParamsJson: kdfParamsToJson(kdf),
+        keyLogHeadSeq: 0,
+        keyLogHeadHash: new Uint8Array(32),
+        now: 1,
+      });
+      const payload = encodeResetRootPayload({
+        root_public_key: root.publicKey,
+        kdf_params: kdf,
+      });
+      const record = buildKeyLogRecord(genesisHead(), 0, {
+        uid: user.id,
+        type: 'reset-root',
+        payload,
+        signer: 'root',
+        credential_id: null,
+      });
+      const bytes = encodeKeyLogRecord(record);
+      const sig = signKeyLogRecordWithRoot(root, bytes);
+      const applied = await service.apply(user.id, { bytes, sig });
+      expect(applied).toEqual({ ok: false, error: 'reset_not_genesis' });
+      expect(keyLogStore.list(user.id)).toHaveLength(0);
+      expect(userStore.getById(user.id)?.keyLogHeadSeq).toBe(0);
+
+      const many = await service.applyMany(user.id, [{ bytes, sig }]);
+      expect(many).toEqual({ ok: false, applied: 0, error: 'reset_not_genesis' });
+    } finally {
+      close();
+    }
+  });
+
+  test('reset-root clearPeerCache effect deletes all peer_cache rows', async () => {
+    const { db, close } = createMigratedAuthDb();
+    try {
+      const { service, userStore } = createService(db);
+      await service.bootstrapUser({ username: 'peers', password: 'pw' });
+      userStore.upsertPeer({
+        nodeId: 'aa'.repeat(16),
+        name: 'studio',
+        endpointsJson: '[]',
+        inventoryJson: '{}',
+        directCapable: false,
+        lastSeenAt: 1,
+        listVersion: 1,
+      });
+      userStore.upsertPeer({
+        nodeId: 'bb'.repeat(16),
+        name: 'lab',
+        endpointsJson: '[]',
+        inventoryJson: '{}',
+        directCapable: true,
+        lastSeenAt: 2,
+        listVersion: 2,
+      });
+      expect(userStore.listPeers()).toHaveLength(2);
+      await service.bootstrapUser({ username: 'peers', password: 'next' });
+      expect(userStore.listPeers()).toHaveLength(0);
+    } finally {
+      close();
+    }
+  });
+
+  test('admit-node of a reused node_id returns node_id_reused and leaves DB unchanged', async () => {
+    const { db, close } = createMigratedAuthDb();
+    try {
+      const { service, userStore } = createService(db);
+      const boot = await service.bootstrapUser({ username: 'reuse', password: 'pw' });
+      const identity = await ensureNodeIdentity(new NodeIdentityStore(db));
+      const admit = await selfSignedNodeCertificate(identity, boot.rootKey, {
+        uid: boot.userId,
+        rootEpoch: boot.rootEpoch,
+        now: Date.now(),
+      });
+      const first = await service.signAndApply(boot.userId, boot.rootKey, {
+        type: 'admit-node',
+        payload: encodeAdmitNodePayload(admit),
+      });
+      expect(first.ok).toBe(true);
+      const headBefore = userStore.getById(boot.userId)?.keyLogHeadSeq;
+
+      const again = await selfSignedNodeCertificate(identity, boot.rootKey, {
+        uid: boot.userId,
+        rootEpoch: boot.rootEpoch,
+        now: Date.now(),
+      });
+      const reused = await service.signAndApply(boot.userId, boot.rootKey, {
+        type: 'admit-node',
+        payload: encodeAdmitNodePayload(again),
+      });
+      expect(reused).toEqual({ ok: false, error: 'node_id_reused' });
+      expect(userStore.getById(boot.userId)?.keyLogHeadSeq).toBe(headBefore);
+      expect(userStore.getCert(identity.nodeIdHex)?.revokedLogSeq).toBeNull();
+
+      const revoked = await service.signAndApply(boot.userId, boot.rootKey, {
+        type: 'revoke-node',
+        payload: encodeRevokeNodePayload({ node_id: identity.nodeId, reason: 'lost' }),
+      });
+      expect(revoked.ok).toBe(true);
+      const afterRevoke = await service.signAndApply(boot.userId, boot.rootKey, {
+        type: 'admit-node',
+        payload: encodeAdmitNodePayload(again),
+      });
+      expect(afterRevoke).toEqual({ ok: false, error: 'node_id_reused' });
+      expect(userStore.getCert(identity.nodeIdHex)?.revokedLogSeq).not.toBeNull();
+    } finally {
+      close();
+    }
+  });
+
+  test('same bytes with a different sig at an existing seq is a fork and does not mutate DB', async () => {
+    const { db, close } = createMigratedAuthDb();
+    try {
+      const { service, keyLogStore, userStore } = createService(db);
+      const boot = await service.bootstrapUser({ username: 'forksig', password: 'pw' });
+      const first = await service.signAndApply(boot.userId, boot.rootKey, {
+        type: 'clear-totp',
+        payload: encodeClearTotpPayload(),
+      });
+      expect(first.ok).toBe(true);
+      const existing = keyLogStore.getAtSeq(boot.userId, 2);
+      if (!existing) {
+        throw new Error('missing seq 2');
+      }
+      const mutatedSig = new Uint8Array(existing.sig);
+      mutatedSig[0] ^= 0xff;
+      expect(bytesEqual(mutatedSig, existing.sig)).toBe(false);
+
+      const logsBefore = keyLogStore.list(boot.userId);
+      const headBefore = userStore.getById(boot.userId);
+
+      const forked = await service.apply(boot.userId, {
+        bytes: existing.bytes,
+        sig: mutatedSig,
+      });
+      expect(forked).toEqual({ ok: false, error: 'fork' });
+      const logsAfter = keyLogStore.list(boot.userId);
+      expect(logsAfter).toHaveLength(logsBefore.length);
+      expect(
+        bytesEqual(logsAfter[1]?.sig ?? new Uint8Array(), logsBefore[1]?.sig ?? new Uint8Array())
+      ).toBe(true);
+      expect(userStore.getById(boot.userId)?.keyLogHeadSeq).toBe(headBefore?.keyLogHeadSeq);
+      expect(
+        bytesEqual(
+          userStore.getById(boot.userId)?.keyLogHeadHash ?? new Uint8Array(),
+          headBefore?.keyLogHeadHash ?? new Uint8Array()
+        )
+      ).toBe(true);
+    } finally {
+      close();
     }
   });
 });
