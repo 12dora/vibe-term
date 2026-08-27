@@ -6,12 +6,18 @@ import {
   JOIN_TOKEN_CHARS,
   createNodeCertificate,
   decodeJoinToken,
+  encodeBase64url,
   randomBytes,
   rootKeyFromSeed,
 } from '../../../shared/src/auth';
 import { parseArgs } from '../lib/args';
 import { type LocalAuthContext, openLocalAuth } from '../lib/local-auth';
-import { fakeLocalRedeem, runEnroll } from './enroll';
+import {
+  fakeLocalRedeem,
+  pollHubNodesForCertificate,
+  pollLocalEnrollmentRedeem,
+  runEnroll,
+} from './enroll';
 import { runHubUserAdd } from './hub';
 
 const MIGRATIONS = resolve(import.meta.dir, '../../../../apps/gateway/drizzle');
@@ -78,5 +84,196 @@ describe('enroll', () => {
     const user = auth.userStore.getByUsername('frank');
     if (!user) throw new Error('missing frank');
     expect(auth.userStore.listCertsByUser(user.id).length).toBe(2);
+  });
+
+  test('SIGINT abort ends the wait loop and prints the Nodes page hint', async () => {
+    const auth = await openLocalAuth({
+      memory: true,
+      migrationsFolder: MIGRATIONS,
+      env: {
+        TMEX_MASTER_KEY: process.env.TMEX_MASTER_KEY || '',
+        TMEX_ROLES: 'hub,node',
+        TMEX_HUB_PUBLIC_URL: 'https://hub.example',
+      },
+    });
+    handles.push(auth);
+    await runHubUserAdd(parsed, 'gina', {
+      auth,
+      password: 'enroll-pass-word',
+      log: () => undefined,
+    });
+    const controller = new AbortController();
+    const logs: string[] = [];
+    const result = await runEnroll(parsed, {
+      auth,
+      password: 'enroll-pass-word',
+      log: (message) => logs.push(message),
+      pollIntervalMs: 5,
+      signal: controller.signal,
+      pollRedeemed: async () => {
+        controller.abort();
+        return null;
+      },
+    });
+    expect(result.admitted).toBe(false);
+    expect(logs.some((line) => /Nodes page/i.test(line))).toBe(true);
+  });
+
+  test('hub poller reads certificate_b64 from authorizationJson after redeem', async () => {
+    const auth = await openLocalAuth({
+      memory: true,
+      migrationsFolder: MIGRATIONS,
+      env: {
+        TMEX_MASTER_KEY: process.env.TMEX_MASTER_KEY || '',
+        TMEX_ROLES: 'hub,node',
+        TMEX_HUB_PUBLIC_URL: 'https://hub.example',
+      },
+    });
+    handles.push(auth);
+    await runHubUserAdd(parsed, 'hank', {
+      auth,
+      password: 'enroll-pass-word',
+      log: () => undefined,
+    });
+    const identity = await ensureNodeIdentity(auth.identityStore);
+    const created = await runEnroll(parsed, {
+      auth,
+      password: 'enroll-pass-word',
+      log: () => undefined,
+      wait: false,
+    });
+    const decoded = decodeJoinToken(created.token);
+    const enrollPk = rootKeyFromSeed(decoded.enrollSk).publicKey;
+    const user = auth.userStore.getByUsername('hank');
+    if (!user) throw new Error('missing hank');
+    const realCert = createNodeCertificate(decoded.enrollSk, {
+      uid: user.id,
+      edPk: identity.edPublicKey,
+      x25519Pk: identity.x25519PublicKey,
+      enrollPk,
+      now: Date.now(),
+      nodeId: randomBytes(16),
+    });
+    await fakeLocalRedeem(auth, {
+      enrollPk,
+      certificateBytes: realCert.certificateBytes,
+      certSig: realCert.certSig,
+      name: 'joined',
+    });
+    const candidate = await pollLocalEnrollmentRedeem(auth, enrollPk);
+    expect(candidate).not.toBeNull();
+    expect(candidate?.certificateBytes).toEqual(realCert.certificateBytes);
+    expect(candidate?.certSig).toEqual(realCert.certSig);
+  });
+
+  test('non-hub enroll sends totp when mode.totpEnabled', async () => {
+    const auth = await openLocalAuth({
+      memory: true,
+      migrationsFolder: MIGRATIONS,
+      env: {
+        TMEX_MASTER_KEY: process.env.TMEX_MASTER_KEY || '',
+        TMEX_ROLES: 'node',
+        TMEX_HUB_URL: '',
+      },
+    });
+    handles.push(auth);
+    await runHubUserAdd(parsed, 'ivy', {
+      auth,
+      password: 'enroll-pass-word',
+      log: () => undefined,
+    });
+    let loginBody: Record<string, unknown> | null = null;
+    const nonce = encodeBase64url(randomBytes(32));
+    const nodePk = encodeBase64url(randomBytes(32));
+    const server = Bun.serve({
+      hostname: '127.0.0.1',
+      port: 0,
+      async fetch(req) {
+        const url = new URL(req.url);
+        if (url.pathname === '/api/auth/mode') {
+          return Response.json({
+            mode: 'mesh',
+            nodeId: 'self',
+            uid: auth.userStore.getByUsername('ivy')?.id,
+            totpEnabled: true,
+          });
+        }
+        if (url.pathname === '/api/auth/challenge') {
+          return Response.json({ challenge_id: 'c1', nonce, nodePk });
+        }
+        if (url.pathname === '/api/auth/login') {
+          loginBody = (await req.json()) as Record<string, unknown>;
+          return Response.json({ sid: 'sid-1', expires_at: Date.now() + 60_000 });
+        }
+        if (url.pathname === '/api/hub/enrollments' && req.method === 'POST') {
+          return Response.json({ ok: true, id: 'enroll-1' }, { status: 201 });
+        }
+        return new Response('nope', { status: 404 });
+      },
+    });
+    const hubUrl = `http://127.0.0.1:${server.port}`;
+    auth.env.TMEX_HUB_URL = hubUrl;
+    const result = await runEnroll(parsed, {
+      auth,
+      password: 'enroll-pass-word',
+      totpCode: '123456',
+      wait: false,
+      log: () => undefined,
+      fetcher: (input, init) => fetch(input, init),
+      joinUrl: hubUrl,
+    });
+    server.stop();
+    expect(result.admitted).toBe(false);
+    expect(loginBody).toBeTruthy();
+    const totp = loginBody?.totp as { code?: string; k_totp?: string } | undefined;
+    expect(totp?.code).toBe('123456');
+    expect(typeof totp?.k_totp).toBe('string');
+    expect(totp?.k_totp?.length).toBeGreaterThan(10);
+  });
+
+  test('pollHubNodesForCertificate matches enroll_pk on hub node list', async () => {
+    const enrollSk = randomBytes(32);
+    const enrollPk = rootKeyFromSeed(enrollSk).publicKey;
+    const wanted = createNodeCertificate(enrollSk, {
+      uid: 'user-1',
+      edPk: randomBytes(32),
+      x25519Pk: randomBytes(32),
+      enrollPk,
+      now: Date.now(),
+      nodeId: randomBytes(16),
+    });
+    const otherSk = randomBytes(32);
+    const other = createNodeCertificate(otherSk, {
+      uid: 'user-1',
+      edPk: randomBytes(32),
+      x25519Pk: randomBytes(32),
+      enrollPk: rootKeyFromSeed(otherSk).publicKey,
+      now: Date.now(),
+      nodeId: randomBytes(16),
+    });
+    const result = await pollHubNodesForCertificate({
+      baseUrl: 'https://hub.example',
+      cookieHeader: 'tmex_s_self=x',
+      enrollPk,
+      fetcher: async () =>
+        new Response(
+          JSON.stringify({
+            nodes: [
+              {
+                id: 'aa',
+                certificate: encodeBase64url(other.certificateBytes),
+                cert_sig: encodeBase64url(other.certSig),
+              },
+              {
+                id: 'bb',
+                certificate: encodeBase64url(wanted.certificateBytes),
+                cert_sig: encodeBase64url(wanted.certSig),
+              },
+            ],
+          })
+        ),
+    });
+    expect(result?.certificateBytes).toEqual(wanted.certificateBytes);
+    expect(result?.certSig).toEqual(wanted.certSig);
   });
 });

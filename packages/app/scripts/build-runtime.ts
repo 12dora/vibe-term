@@ -38,6 +38,21 @@ runBunBuild([
   `TMEX_MONOREPO_VERSION="${version}"`,
 ]);
 
+runBunBuild([
+  'build',
+  'src/cli-auth-entry.ts',
+  '--outfile',
+  './dist/runtime/cli-auth.js',
+  '--target',
+  'bun',
+  '--format',
+  'esm',
+  '--external',
+  'cpu-features',
+  '--define',
+  `TMEX_MONOREPO_VERSION="${version}"`,
+]);
+
 function verifyVendoredNativeBundle(): void {
   const workDir = mkdtempSync(join(tmpdir(), 'tmex-native-bundle-'));
   try {
@@ -131,11 +146,13 @@ verifyVendoredNativeBundle();
 verifyCryptoBundles();
 
 const serverJs = join(pkgRoot, 'dist/runtime/server.js');
+const cliAuthJs = join(pkgRoot, 'dist/runtime/cli-auth.js');
 try {
   mkdirSync(join(pkgRoot, 'dist/runtime'), { recursive: true });
   console.log(`[build:runtime] server.js ${statSync(serverJs).size} bytes`);
+  console.log(`[build:runtime] cli-auth.js ${statSync(cliAuthJs).size} bytes`);
 } catch {
-  console.warn('[build:runtime] server.js size unavailable');
+  console.warn('[build:runtime] runtime bundle size unavailable');
 }
 
 const copy = spawnSync('bash', ['./scripts/copy-runtime-assets.sh'], {

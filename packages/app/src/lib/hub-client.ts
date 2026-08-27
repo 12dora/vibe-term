@@ -15,6 +15,7 @@ export type HubAuthMode = {
   nodeId: string | null;
   uid: string | null;
   username: string | null;
+  totpEnabled: boolean;
   kdfParams: {
     salt: string;
     memory_kib: number;
@@ -53,11 +54,29 @@ export type RedeemResponse = {
 
 export type HubFetch = typeof fetch;
 
+export type HubNodeListItem = {
+  id: string;
+  name?: string;
+  certificate?: string;
+  cert_sig?: string;
+  enrollment_token_id?: string;
+};
+
+export const REDEEM_NETWORK_RETRY_LIMIT = 3;
+
 function joinUrl(base: string, path: string): string {
   return `${base.replace(/\/+$/, '')}${path}`;
 }
 
-export function assertHubJoinUrl(raw: string, insecureLocal = false): URL {
+function withRedirectError(init?: RequestInit): RequestInit {
+  return { ...init, redirect: 'error' };
+}
+
+export function assertHubJoinUrl(
+  raw: string,
+  insecureLocal = false,
+  nodeEnv = process.env.NODE_ENV
+): URL {
   let url: URL;
   try {
     url = new URL(raw);
@@ -69,11 +88,23 @@ export function assertHubJoinUrl(raw: string, insecureLocal = false): URL {
   }
   const localHost = url.hostname === '127.0.0.1' || url.hostname === 'localhost';
   if (url.protocol === 'http:' && insecureLocal && localHost) {
+    if (nodeEnv === 'production') {
+      throw new Error('--insecure-local is not allowed when NODE_ENV=production');
+    }
     return url;
   }
   throw new Error(
     'hub join requires https: (use --insecure-local only for http://127.0.0.1 or http://localhost)'
   );
+}
+
+export function isNetworkFetchError(error: unknown): boolean {
+  if (!(error instanceof Error)) return false;
+  if (error.message.startsWith('redeem failed:')) return false;
+  if (error.message.startsWith('auth ')) return false;
+  if (error.message.startsWith('create enrollment failed:')) return false;
+  if (error.message.startsWith('list nodes failed:')) return false;
+  return true;
 }
 
 async function readJson(response: Response): Promise<Record<string, unknown>> {
@@ -90,7 +121,7 @@ export async function fetchAuthMode(
   baseUrl: string,
   fetcher: HubFetch = fetch
 ): Promise<HubAuthMode> {
-  const response = await fetcher(joinUrl(baseUrl, '/api/auth/mode'));
+  const response = await fetcher(joinUrl(baseUrl, '/api/auth/mode'), withRedirectError());
   const body = await readJson(response);
   if (!response.ok) {
     throw new Error(`auth mode failed: HTTP ${response.status}`);
@@ -100,6 +131,7 @@ export async function fetchAuthMode(
     nodeId: typeof body.nodeId === 'string' ? body.nodeId : null,
     uid: typeof body.uid === 'string' ? body.uid : null,
     username: typeof body.username === 'string' ? body.username : null,
+    totpEnabled: body.totpEnabled === true,
     kdfParams:
       body.kdfParams && typeof body.kdfParams === 'object'
         ? (body.kdfParams as HubAuthMode['kdfParams'])
@@ -112,15 +144,19 @@ export async function loginWithRootKey(options: {
   rootKey: RootKey;
   uid: string;
   fetcher?: HubFetch;
+  totp?: { code: string; kTotp: Uint8Array };
 }): Promise<HubLoginResult> {
   const fetcher = options.fetcher ?? fetch;
   const mode = await fetchAuthMode(options.baseUrl, fetcher);
   const uid = options.uid;
-  const challengeRes = await fetcher(joinUrl(options.baseUrl, '/api/auth/challenge'), {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ uid }),
-  });
+  const challengeRes = await fetcher(
+    joinUrl(options.baseUrl, '/api/auth/challenge'),
+    withRedirectError({
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ uid }),
+    })
+  );
   const challengeBody = await readJson(challengeRes);
   if (!challengeRes.ok) {
     throw new Error(
@@ -147,16 +183,26 @@ export async function loginWithRootKey(options: {
     entry: 'self',
   });
   const sig = signLogin(sess.secretKey, login);
-  const loginRes = await fetcher(joinUrl(options.baseUrl, '/api/auth/login'), {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({
-      login: encodeBase64url(encodeLogin(login)),
-      sig: encodeBase64url(sig),
-      delegation: encodeBase64url(encodeDelegation(signed.delegation)),
-      delegation_sig: encodeBase64url(signed.sig),
-    }),
-  });
+  const loginPayload: Record<string, unknown> = {
+    login: encodeBase64url(encodeLogin(login)),
+    sig: encodeBase64url(sig),
+    delegation: encodeBase64url(encodeDelegation(signed.delegation)),
+    delegation_sig: encodeBase64url(signed.sig),
+  };
+  if (options.totp) {
+    loginPayload.totp = {
+      code: options.totp.code,
+      k_totp: encodeBase64url(options.totp.kTotp),
+    };
+  }
+  const loginRes = await fetcher(
+    joinUrl(options.baseUrl, '/api/auth/login'),
+    withRedirectError({
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(loginPayload),
+    })
+  );
   const loginBody = await readJson(loginRes);
   if (!loginRes.ok) {
     throw new Error(
@@ -186,19 +232,22 @@ export async function postEnrollment(options: {
   fetcher?: HubFetch;
 }): Promise<{ ok: boolean; id?: string; expires_at?: number }> {
   const fetcher = options.fetcher ?? fetch;
-  const response = await fetcher(joinUrl(options.baseUrl, '/api/hub/enrollments'), {
-    method: 'POST',
-    headers: {
-      'content-type': 'application/json',
-      cookie: options.cookieHeader,
-    },
-    body: JSON.stringify({
-      enroll_pk: encodeBase64url(options.enrollPk),
-      authorization: encodeBase64url(options.authorization),
-      authorization_sig: encodeBase64url(options.authorizationSig),
-      exp: options.exp,
-    }),
-  });
+  const response = await fetcher(
+    joinUrl(options.baseUrl, '/api/hub/enrollments'),
+    withRedirectError({
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        cookie: options.cookieHeader,
+      },
+      body: JSON.stringify({
+        enroll_pk: encodeBase64url(options.enrollPk),
+        authorization: encodeBase64url(options.authorization),
+        authorization_sig: encodeBase64url(options.authorizationSig),
+        exp: options.exp,
+      }),
+    })
+  );
   const body = await readJson(response);
   if (!response.ok) {
     throw new Error(
@@ -221,7 +270,7 @@ export async function redeemEnrollment(options: {
   fetcher?: HubFetch;
 }): Promise<RedeemResponse> {
   const fetcher = options.fetcher ?? fetch;
-  const response = await fetcher(joinUrl(options.baseUrl, '/api/hub/enrollments/redeem'), {
+  const init = withRedirectError({
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({
@@ -231,30 +280,45 @@ export async function redeemEnrollment(options: {
       version: options.version ?? '',
     }),
   });
-  const body = await readJson(response);
-  if (!response.ok) {
-    throw new Error(
-      `redeem failed: HTTP ${response.status} ${String(body.error ?? body.code ?? '')}`
-    );
+  let lastError: unknown;
+  for (let attempt = 1; attempt <= REDEEM_NETWORK_RETRY_LIMIT; attempt++) {
+    try {
+      const response = await fetcher(joinUrl(options.baseUrl, '/api/hub/enrollments/redeem'), init);
+      const body = await readJson(response);
+      if (!response.ok) {
+        throw new Error(
+          `redeem failed: HTTP ${response.status} ${String(body.error ?? body.code ?? '')}`
+        );
+      }
+      return body as unknown as RedeemResponse;
+    } catch (error) {
+      lastError = error;
+      if (!isNetworkFetchError(error) || attempt >= REDEEM_NETWORK_RETRY_LIMIT) {
+        throw error;
+      }
+    }
   }
-  return body as unknown as RedeemResponse;
+  throw lastError instanceof Error ? lastError : new Error(String(lastError));
 }
 
 export async function listHubNodes(options: {
   baseUrl: string;
   cookieHeader: string;
   fetcher?: HubFetch;
-}): Promise<Array<{ id: string; name?: string }>> {
+}): Promise<HubNodeListItem[]> {
   const fetcher = options.fetcher ?? fetch;
-  const response = await fetcher(joinUrl(options.baseUrl, '/api/hub/nodes'), {
-    headers: { cookie: options.cookieHeader },
-  });
+  const response = await fetcher(
+    joinUrl(options.baseUrl, '/api/hub/nodes'),
+    withRedirectError({
+      headers: { cookie: options.cookieHeader },
+    })
+  );
   const body = await readJson(response);
   if (!response.ok) {
     throw new Error(`list nodes failed: HTTP ${response.status}`);
   }
   const nodes = Array.isArray(body.nodes) ? body.nodes : [];
-  return nodes.filter((item): item is { id: string; name?: string } => {
+  return nodes.filter((item): item is HubNodeListItem => {
     return Boolean(item) && typeof (item as { id?: unknown }).id === 'string';
   });
 }

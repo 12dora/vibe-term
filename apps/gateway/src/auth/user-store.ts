@@ -146,6 +146,8 @@ export interface CreateEnrollmentTokenInput {
   expiresAt: number;
 }
 
+export const HUB_META_PEER_ID = 'hub';
+
 export class UserStore {
   constructor(private readonly db: AuthDb) {}
 
@@ -363,6 +365,42 @@ export class UserStore {
     this.db.delete(peerCache).where(eq(peerCache.nodeId, nodeId)).run();
   }
 
+  getHubMeta(): { nodeId: string; publicUrl: string } | null {
+    const row = this.db
+      .select()
+      .from(peerCache)
+      .where(eq(peerCache.nodeId, HUB_META_PEER_ID))
+      .get();
+    if (!row) return null;
+    try {
+      const parsed: unknown = JSON.parse(row.inventoryJson);
+      if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return null;
+      const obj = parsed as Record<string, unknown>;
+      if (typeof obj.nodeId !== 'string' || obj.nodeId.length === 0) return null;
+      if (typeof obj.publicUrl !== 'string' || obj.publicUrl.length === 0) return null;
+      return { nodeId: obj.nodeId, publicUrl: obj.publicUrl };
+    } catch {
+      return null;
+    }
+  }
+
+  upsertHubMeta(input: {
+    nodeId: string;
+    publicUrl: string;
+    now: number;
+    listVersion?: number;
+  }): void {
+    this.upsertPeer({
+      nodeId: HUB_META_PEER_ID,
+      name: input.nodeId,
+      endpointsJson: JSON.stringify([input.publicUrl]),
+      inventoryJson: JSON.stringify({ nodeId: input.nodeId, publicUrl: input.publicUrl }),
+      directCapable: false,
+      lastSeenAt: input.now,
+      listVersion: input.listVersion ?? 0,
+    });
+  }
+
   createNode(input: CreateNodeInput): NodeRecord {
     this.db
       .insert(nodes)
@@ -426,13 +464,33 @@ export class UserStore {
     return row ? toEnrollment(row) : null;
   }
 
+  getEnrollmentTokenById(id: string): EnrollmentTokenRecord | null {
+    const row = this.db.select().from(enrollmentTokens).where(eq(enrollmentTokens.id, id)).get();
+    return row ? toEnrollment(row) : null;
+  }
+
+  getEnrollmentTokenByNodeId(nodeId: string): EnrollmentTokenRecord | null {
+    const row = this.db
+      .select()
+      .from(enrollmentTokens)
+      .where(eq(enrollmentTokens.nodeId, nodeId))
+      .get();
+    return row ? toEnrollment(row) : null;
+  }
+
   consumeEnrollmentToken(
     enrollPublicKey: Uint8Array,
-    input: { nodeId: string; now: number }
+    input: { nodeId: string; now: number; authorizationJson?: string }
   ): EnrollmentTokenRecord | null {
     const row = this.db
       .update(enrollmentTokens)
-      .set({ usedAt: input.now, nodeId: input.nodeId })
+      .set({
+        usedAt: input.now,
+        nodeId: input.nodeId,
+        ...(input.authorizationJson !== undefined
+          ? { authorizationJson: input.authorizationJson }
+          : {}),
+      })
       .where(
         and(
           eq(enrollmentTokens.enrollPublicKey, toBuffer(enrollPublicKey)),

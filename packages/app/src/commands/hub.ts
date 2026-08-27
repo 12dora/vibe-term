@@ -1,22 +1,24 @@
-import {
-  ensureNodeIdentity,
-  selfSignedNodeCertificate,
-} from '../../../../apps/gateway/src/auth/node-identity-service';
+import { ensureNodeIdentity } from '../../../../apps/gateway/src/auth/node-identity-service';
 import { kdfParamsFromJson } from '../../../../apps/gateway/src/auth/user-key-service';
 import { enrollmentTokens, nodes } from '../../../../apps/gateway/src/db/schema';
 import {
   bytesEqual,
   createNodeCertificate,
+  decodeAdmitNodePayload,
+  decodeAuthorization,
   decodeBase64url,
+  decodeCertificate,
   decodeJoinToken,
+  decodeKeyLogRecord,
   deriveTotpKey,
-  encodeAdmitNodePayload,
+  encodeBase64url,
   encodeRotateRootPayload,
   encodeSetTotpPayload,
   encryptTotpSecret,
   generateKdfParams,
   randomBytes,
   rootKeyFromSeed,
+  verifyKeyLogChain,
 } from '../../../shared/src/auth';
 import { readEnvFile, writeEnvFile } from '../lib/env-file';
 import { pathExists } from '../lib/fs-utils';
@@ -32,7 +34,7 @@ import type { LocalAuthContext } from '../lib/local-auth';
 import { openInstallAuth } from '../lib/local-auth';
 import { assertRootKeyMatches, deriveRootKey, resolvePassword } from '../lib/password';
 import { DEFAULT_PEER_PORT, parseTmexRoles } from '../lib/roles';
-import { restartService } from '../lib/service';
+import { restartService, stopService } from '../lib/service';
 import { fingerprintPublicKey, totpOtpauthUri } from '../lib/totp-uri';
 import { asString } from '../lib/validate';
 import type { ParsedArgs } from '../types';
@@ -49,6 +51,9 @@ export type HubIo = {
   fetcher?: typeof fetch;
   insecureLocal?: boolean;
   skipRestart?: boolean;
+  stop?: (serviceName: string, installDir: string) => Promise<void>;
+  nodeEnv?: string;
+  totpCode?: string;
 };
 
 function log(io: HubIo | undefined, message: string): void {
@@ -88,20 +93,37 @@ async function writeRolesAndHubUrl(envPath: string, roles: string, hubUrl: strin
   await writeEnvFile(envPath, env);
 }
 
+async function resolveServiceName(parsed: ParsedArgs, installDir: string): Promise<string> {
+  let serviceName = asString(parsed.flags['service-name']) || 'tmex';
+  if (!installDir) return serviceName;
+  const layout = createInstallLayout(installDir);
+  if (await pathExists(layout.metaPath)) {
+    const meta = await readJsonFile<InstallMeta>(layout.metaPath);
+    serviceName = meta.serviceName;
+  }
+  return serviceName;
+}
+
 async function maybeRestart(
   parsed: ParsedArgs,
   io: HubIo | undefined,
   installDir: string
 ): Promise<void> {
-  if (io?.skipRestart) return;
-  const layout = createInstallLayout(installDir);
-  let serviceName = asString(parsed.flags['service-name']) || 'tmex';
-  if (await pathExists(layout.metaPath)) {
-    const meta = await readJsonFile<InstallMeta>(layout.metaPath);
-    serviceName = meta.serviceName;
-  }
-  const restart = io?.restart ?? restartService;
+  const restart = io?.restart ?? (io?.skipRestart ? undefined : restartService);
+  if (!restart) return;
+  const serviceName = await resolveServiceName(parsed, installDir);
   await restart(serviceName, installDir);
+}
+
+async function maybeStop(
+  parsed: ParsedArgs,
+  io: HubIo | undefined,
+  installDir: string
+): Promise<void> {
+  const stop = io?.stop ?? (io?.skipRestart ? undefined : stopService);
+  if (!stop) return;
+  const serviceName = await resolveServiceName(parsed, installDir);
+  await stop(serviceName, installDir);
 }
 
 export async function runHubUserAdd(
@@ -119,20 +141,16 @@ export async function runHubUserAdd(
     confirmPrompt: 'Confirm password',
   });
   return await withAuth(parsed, io, async (ctx) => {
-    const boot = await ctx.userKeys.bootstrapUser({ username, password });
+    if (ctx.userStore.getByUsername(username)) {
+      throw new Error(`user already exists: ${username} (use mesh reset-root to replace the root)`);
+    }
     const identity = await ensureNodeIdentity(ctx.identityStore);
-    const admit = await selfSignedNodeCertificate(identity, boot.rootKey, {
-      uid: boot.userId,
-      rootEpoch: boot.rootEpoch,
+    const boot = await ctx.userKeys.bootstrapUserWithSelfAdmit({
+      username,
+      password,
+      identity,
       now: nowMs(io),
     });
-    const applied = await ctx.userKeys.signAndApply(boot.userId, boot.rootKey, {
-      type: 'admit-node',
-      payload: encodeAdmitNodePayload(admit),
-    });
-    if (!applied.ok) {
-      throw new Error(`admit-node failed: ${applied.error}`);
-    }
     const fingerprint = fingerprintPublicKey(boot.rootPublicKey);
     log(io, `user ${username} created`);
     log(io, `root public key fingerprint: ${fingerprint}`);
@@ -235,10 +253,13 @@ export async function runHubUserReset(
   io: HubIo = {}
 ): Promise<{ wiped: number }> {
   return await withAuth(parsed, io, async (ctx) => {
+    await maybeStop(parsed, io, ctx.installDir);
     const rows = ctx.db.select().from(nodes).all();
     ctx.db.delete(nodes).run();
     ctx.db.delete(enrollmentTokens).run();
     log(io, 'hub registry reset (nodes and enrollment tokens wiped)');
+    log(io, 'node_certs kept; revoke compromised nodes with revoke-node before they re-register');
+    await maybeRestart(parsed, io, ctx.installDir);
     return { wiped: rows.length };
   });
 }
@@ -259,12 +280,14 @@ export async function runHubJoin(
     throw new Error('hub join requires --token');
   }
   const insecureLocal = parsed.flags['insecure-local'] === true || io.insecureLocal === true;
-  const hubUrl = assertHubJoinUrl(urlRaw, insecureLocal).toString().replace(/\/+$/, '');
+  const hubUrl = assertHubJoinUrl(urlRaw, insecureLocal, io.nodeEnv ?? process.env.NODE_ENV)
+    .toString()
+    .replace(/\/+$/, '');
   const decoded = decodeJoinToken(token);
   const name = asString(parsed.flags.name) || 'node';
 
   return await withAuth(parsed, io, async (ctx) => {
-    const identity = await ensureNodeIdentity(ctx.identityStore, { hubUrl });
+    const identity = await ensureNodeIdentity(ctx.identityStore);
     let uid: string | null = null;
     try {
       const mode = await fetchAuthMode(hubUrl, io.fetcher);
@@ -293,7 +316,14 @@ export async function runHubJoin(
       name,
       fetcher: io.fetcher,
     });
-    await applyJoinPayload(ctx, redeemed, decoded.rootPublicKey, decoded.keyLogHeadHash);
+    await commitVerifiedJoin(ctx, {
+      redeemed,
+      expectedRootPublicKey: decoded.rootPublicKey,
+      anchorHash: decoded.keyLogHeadHash,
+      certificateBytes: cert.certificateBytes,
+      hubUrl,
+      identity,
+    });
 
     const currentRoles = parseTmexRoles(ctx.env.TMEX_ROLES ?? process.env.TMEX_ROLES);
     const nextRole = currentRoles.hub ? 'hub,node' : 'node';
@@ -303,7 +333,6 @@ export async function runHubJoin(
       process.env.TMEX_ROLES = nextRole;
       process.env.TMEX_HUB_URL = hubUrl;
     }
-    await persistHubUrl(ctx, hubUrl);
     if (ctx.installDir) {
       await maybeRestart(parsed, io, ctx.installDir);
     }
@@ -315,39 +344,123 @@ export async function runHubJoin(
   });
 }
 
-async function applyJoinPayload(
+async function commitVerifiedJoin(
   ctx: LocalAuthContext,
-  redeemed: RedeemResponse,
-  expectedRootPublicKey: Uint8Array,
-  expectedHeadHash: Uint8Array
+  input: {
+    redeemed: RedeemResponse;
+    expectedRootPublicKey: Uint8Array;
+    anchorHash: Uint8Array;
+    certificateBytes: Uint8Array;
+    hubUrl: string;
+    identity: Awaited<ReturnType<typeof ensureNodeIdentity>>;
+  }
 ): Promise<void> {
-  const records = redeemed.user_key_log.map((item) => ({
+  const records = input.redeemed.user_key_log.map((item) => ({
     bytes: decodeBase64url(item.bytes),
     sig: decodeBase64url(item.sig),
   }));
-  const verified = await ctx.userKeys.verifyChainForJoin(
+  const preview = await verifyKeyLogChain(records, input.expectedRootPublicKey);
+  if (!preview.ok) {
+    throw new Error(`key log rejected: ${preview.error}`);
+  }
+  let genesisUid: string;
+  try {
+    genesisUid = decodeKeyLogRecord(records[0]?.bytes ?? new Uint8Array()).uid;
+  } catch {
+    throw new Error('key log rejected: missing_genesis');
+  }
+  const certUid = decodeCertificate(input.certificateBytes).uid;
+  if (certUid !== genesisUid || input.redeemed.user.id !== genesisUid) {
+    throw new Error('join uid mismatch');
+  }
+  assertChainUids(records, genesisUid);
+  assertResponseCertsMatchProjections(input.redeemed, preview.state, genesisUid);
+
+  const loaded = await ctx.identityStore.load();
+  const committed = await ctx.userKeys.commitJoin({
     records,
-    expectedRootPublicKey,
-    expectedHeadHash
-  );
-  if (!verified.ok) {
-    throw new Error(`key log rejected: ${verified.error}`);
+    expectedRootPublicKey: input.expectedRootPublicKey,
+    anchorHash: input.anchorHash,
+    username: input.redeemed.user.username || genesisUid,
+    expectedUserId: genesisUid,
+    identity: {
+      nodeId: input.identity.nodeIdHex,
+      hubUrl: input.hubUrl,
+      edPrivateKey: input.identity.edPrivateKey,
+      x25519PrivateKey: input.identity.x25519PrivateKey,
+      certificateJson:
+        loaded?.certificateJson ??
+        JSON.stringify({
+          x25519PublicKey: encodeBase64url(input.identity.x25519PublicKey),
+        }),
+      certSig: loaded?.certSig ?? new Uint8Array(0),
+    },
+  });
+  if (!committed.ok) {
+    throw new Error(`key log rejected: ${committed.error}`);
   }
-  if (!bytesEqual(verified.state.rootPublicKey, expectedRootPublicKey)) {
-    throw new Error('key log rejected: root mismatch');
+}
+
+function assertChainUids(records: Array<{ bytes: Uint8Array }>, genesisUid: string): void {
+  for (const item of records) {
+    const decoded = decodeKeyLogRecord(item.bytes);
+    if (decoded.uid !== genesisUid) {
+      throw new Error('join uid mismatch');
+    }
+    if (decoded.type !== 'admit-node') continue;
+    const payload = decodeAdmitNodePayload(decoded.payload);
+    const authorization = decodeAuthorization(payload.authorization_bytes);
+    const certificate = decodeCertificate(payload.certificate_bytes);
+    if (authorization.uid !== genesisUid || certificate.uid !== genesisUid) {
+      throw new Error('join uid mismatch');
+    }
   }
-  const userId = redeemed.user.id;
+}
+
+function assertResponseCertsMatchProjections(
+  redeemed: RedeemResponse,
+  state: {
+    nodeCerts: Map<
+      string,
+      {
+        certificateBytes: Uint8Array;
+        certSig: Uint8Array;
+        authorizationBytes: Uint8Array;
+        authorizationSig: Uint8Array;
+        revoked: boolean;
+      }
+    >;
+  },
+  userId: string
+): void {
+  if (redeemed.node_certs.length === 0) return;
+  if (redeemed.node_certs.length !== state.nodeCerts.size) {
+    throw new Error('node_certs mismatch');
+  }
   for (const cert of redeemed.node_certs) {
-    ctx.userStore.upsertCert({
-      nodeId: cert.node_id,
-      userId: cert.user_id || userId,
-      admitRecordSeq: cert.admit_record_seq,
-      certificateBytes: decodeBase64url(cert.certificate),
-      certSig: decodeBase64url(cert.cert_sig),
-      authorizationBytes: decodeBase64url(cert.authorization),
-      authorizationSig: decodeBase64url(cert.authorization_sig),
-      revokedLogSeq: cert.revoked_log_seq,
-    });
+    const projected = state.nodeCerts.get(cert.node_id);
+    if (!projected) {
+      throw new Error('node_certs mismatch');
+    }
+    if ((cert.user_id || userId) !== userId) {
+      throw new Error('node_certs mismatch');
+    }
+    if (!bytesEqual(decodeBase64url(cert.certificate), projected.certificateBytes)) {
+      throw new Error('node_certs mismatch');
+    }
+    if (!bytesEqual(decodeBase64url(cert.cert_sig), projected.certSig)) {
+      throw new Error('node_certs mismatch');
+    }
+    if (!bytesEqual(decodeBase64url(cert.authorization), projected.authorizationBytes)) {
+      throw new Error('node_certs mismatch');
+    }
+    if (!bytesEqual(decodeBase64url(cert.authorization_sig), projected.authorizationSig)) {
+      throw new Error('node_certs mismatch');
+    }
+    const revoked = cert.revoked_log_seq != null;
+    if (revoked !== projected.revoked) {
+      throw new Error('node_certs mismatch');
+    }
   }
 }
 

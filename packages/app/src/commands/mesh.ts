@@ -1,8 +1,4 @@
-import {
-  ensureNodeIdentity,
-  selfSignedNodeCertificate,
-} from '../../../../apps/gateway/src/auth/node-identity-service';
-import { encodeAdmitNodePayload } from '../../../shared/src/auth';
+import { ensureNodeIdentity } from '../../../../apps/gateway/src/auth/node-identity-service';
 import { type LocalAuthContext, openInstallAuth } from '../lib/local-auth';
 import { resolvePassword } from '../lib/password';
 import { isStandaloneRoles, parseTmexRoles } from '../lib/roles';
@@ -56,20 +52,13 @@ export async function runMeshResetRoot(
       throw new Error('no local user to reset; run hub user add first');
     }
     const username = first.username;
-    const boot = await ctx.userKeys.bootstrapUser({ username, password });
     const identity = await ensureNodeIdentity(ctx.identityStore);
-    const admit = await selfSignedNodeCertificate(identity, boot.rootKey, {
-      uid: boot.userId,
-      rootEpoch: boot.rootEpoch,
+    const boot = await ctx.userKeys.bootstrapUserWithSelfAdmit({
+      username,
+      password,
+      identity,
       now: io.now?.() ?? Date.now(),
     });
-    const applied = await ctx.userKeys.signAndApply(boot.userId, boot.rootKey, {
-      type: 'admit-node',
-      payload: encodeAdmitNodePayload(admit),
-    });
-    if (!applied.ok) {
-      throw new Error(`admit-node failed: ${applied.error}`);
-    }
     const fingerprint = fingerprintPublicKey(boot.rootPublicKey);
     log(io, `root reset for ${username}; re-enroll other machines`);
     log(io, `root public key fingerprint: ${fingerprint}`);

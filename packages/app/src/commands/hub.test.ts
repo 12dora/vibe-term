@@ -129,6 +129,24 @@ describe('hub user commands', () => {
     expect(bytesEqual(plain, enrolled.secret)).toBe(true);
   });
 
+  test('hub user add refuses an existing username', async () => {
+    const auth = await openHubAuth();
+    authHandles.push(auth);
+    await runHubUserAdd(parsed, 'alice', {
+      auth,
+      password: 'tmex-test-pass',
+      log: () => undefined,
+    });
+    await expect(
+      runHubUserAdd(parsed, 'alice', {
+        auth,
+        password: 'other-pass-word',
+        log: () => undefined,
+      })
+    ).rejects.toThrow(/already exists/);
+    expect(auth.userStore.getByUsername('alice')).toBeTruthy();
+  });
+
   test('hub user reset wipes nodes and enrollment tokens', async () => {
     const auth = await openHubAuth();
     authHandles.push(auth);
@@ -151,8 +169,23 @@ describe('hub user commands', () => {
       authorizationSig: new Uint8Array(64),
       expiresAt: Date.now() + 60_000,
     });
-    const wiped = await runHubUserReset(parsed, { auth, log: () => undefined });
+    const events: string[] = [];
+    const wiped = await runHubUserReset(parsed, {
+      auth,
+      log: () => undefined,
+      skipRestart: true,
+      stop: async () => {
+        events.push('stop');
+        expect(auth.userStore.listNodes().length).toBeGreaterThan(0);
+      },
+      restart: async () => {
+        events.push('restart');
+        expect(auth.userStore.listNodes()).toEqual([]);
+      },
+    });
     expect(wiped.wiped).toBeGreaterThan(0);
+    expect(events).toEqual(['stop', 'restart']);
     expect(auth.userStore.listNodes()).toEqual([]);
+    expect(auth.userStore.listCertsByUser(added.userId).length).toBe(1);
   });
 });

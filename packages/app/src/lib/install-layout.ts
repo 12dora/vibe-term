@@ -15,6 +15,8 @@ export interface InstallLayout {
   installDir: string;
   runtimeDir: string;
   runtimeServerPath: string;
+  runtimeCliAuthPath: string;
+  bunBin?: string;
   resourcesDir: string;
   feDir: string;
   drizzleDir: string;
@@ -29,6 +31,7 @@ export function createInstallLayout(installDir: string): InstallLayout {
     installDir,
     runtimeDir: join(installDir, 'runtime'),
     runtimeServerPath: join(installDir, 'runtime', 'server.js'),
+    runtimeCliAuthPath: join(installDir, 'runtime', 'cli-auth.js'),
     resourcesDir: join(installDir, 'resources'),
     feDir: join(installDir, 'resources', 'fe-dist'),
     drizzleDir: join(installDir, 'resources', 'gateway-drizzle'),

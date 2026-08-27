@@ -13,13 +13,14 @@ import type {
 import {
   applyKeyLogRecord,
   buildKeyLogRecord,
-  computeRecordHash,
   decodeBase64url,
   decodeKeyLogRecord,
   decodeResetRootPayload,
   decodeSetTotpPayload,
   deriveSeed,
   detectFork,
+  emptyUserKeyState,
+  encodeAdmitNodePayload,
   encodeBase64url,
   encodeKeyLogRecord,
   encodeResetRootPayload,
@@ -29,10 +30,14 @@ import {
   nodeIdToHex,
   rootKeyFromSeed,
   signKeyLogRecordWithRoot,
-  verifyKeyLogChain,
   verifyKeyLogRecord,
 } from '@tmex/shared/auth';
+import { encrypt } from '../crypto';
+import { nodeIdentity } from '../db/schema';
+import { toBuffer } from './binary';
 import { type KeyLogStore, projectPayloadJson } from './key-log-store';
+import { type NodeIdentityKeys, selfSignedNodeCertificate } from './node-identity-service';
+import type { SaveNodeIdentityInput } from './node-identity-store';
 import type { NodeSessionStore } from './node-session-store';
 import type { AuthDb } from './types';
 import type { UserStore } from './user-store';
@@ -75,6 +80,45 @@ export type SignAndApplyFields = {
 export type VerifyChainForJoinResult =
   | { ok: true; state: UserKeyState }
   | { ok: false; error: string };
+
+export type VerifyChainForJoinOptions = {
+  anchorHash?: Uint8Array;
+};
+
+export type CommitJoinInput = {
+  records: ApplyKeyLogInput[];
+  expectedRootPublicKey: Uint8Array;
+  anchorHash: Uint8Array;
+  username: string;
+  expectedUserId: string;
+  identity?: SaveNodeIdentityInput;
+  now?: number;
+};
+
+export type BootstrapSelfAdmitInput = {
+  username: string;
+  password: string;
+  identity: NodeIdentityKeys;
+  now?: number;
+};
+
+type JoinReplayStep = {
+  input: ApplyKeyLogInput;
+  record: ReturnType<typeof decodeKeyLogRecord>;
+  hash: Uint8Array;
+  previous: UserKeyState;
+  next: UserKeyState;
+  effects: KeyLogEffect[];
+};
+
+type JoinReplaySuccess = {
+  ok: true;
+  genesisUid: string;
+  state: UserKeyState;
+  steps: JoinReplayStep[];
+};
+
+const IDENTITY_ROW_ID = 1;
 
 export type UserKeyServiceDeps = {
   db: AuthDb;
@@ -413,65 +457,380 @@ export class UserKeyService {
   async verifyChainForJoin(
     records: ApplyKeyLogInput[],
     expectedRootPublicKey: Uint8Array,
-    expectedHeadHash: Uint8Array
+    expectedHeadHash: Uint8Array,
+    options?: VerifyChainForJoinOptions
   ): Promise<VerifyChainForJoinResult> {
-    const chain = await verifyKeyLogChain(records, expectedRootPublicKey, expectedHeadHash, {
+    const replay = await this.replayJoinChain(
+      records,
+      expectedRootPublicKey,
+      options?.anchorHash ?? expectedHeadHash
+    );
+    if (!replay.ok) {
+      return replay;
+    }
+    return this.persistJoinReplay({
+      replay,
+      username: replay.genesisUid,
+      now: Date.now(),
+    });
+  }
+
+  async commitJoin(input: CommitJoinInput): Promise<VerifyChainForJoinResult> {
+    const replay = await this.replayJoinChain(
+      input.records,
+      input.expectedRootPublicKey,
+      input.anchorHash
+    );
+    if (!replay.ok) {
+      return replay;
+    }
+    if (replay.genesisUid !== input.expectedUserId) {
+      return { ok: false, error: 'uid_mismatch' };
+    }
+    let encryptedIdentity: EncryptedIdentity | undefined;
+    if (input.identity) {
+      encryptedIdentity = await encryptIdentity(input.identity);
+    }
+    return this.persistJoinReplay({
+      replay,
+      username: input.username,
+      now: input.now ?? Date.now(),
+      identity: encryptedIdentity,
+    });
+  }
+
+  async bootstrapUserWithSelfAdmit(input: BootstrapSelfAdmitInput): Promise<BootstrapUserResult> {
+    const kdfParams = generateKdfParams();
+    const seed = await deriveSeed(input.password, kdfParams);
+    const rootKey = rootKeyFromSeed(seed);
+    const now = input.now ?? Date.now();
+    const existing = this.userStore.getByUsername(input.username);
+    const userId = existing?.id ?? crypto.randomUUID();
+    const genesisEpoch = existing?.rootEpoch ?? 0;
+
+    const genesisPayload = encodeResetRootPayload({
+      root_public_key: rootKey.publicKey,
+      kdf_params: kdfParams,
+    });
+    const genesisRecord = buildKeyLogRecord(genesisHead(), genesisEpoch, {
+      uid: userId,
+      type: 'reset-root',
+      payload: genesisPayload,
+      signer: 'root',
+      credential_id: null,
+    });
+    const genesisBytes = encodeKeyLogRecord(genesisRecord);
+    const genesisSig = signKeyLogRecordWithRoot(rootKey, genesisBytes);
+    const genesisInput: ApplyKeyLogInput = { bytes: genesisBytes, sig: genesisSig };
+
+    let state = emptyUserKeyState(new Uint8Array(32), undefined, genesisEpoch);
+    const genesisVerified = await verifyKeyLogRecord(genesisBytes, genesisSig, {
+      head: state.head,
+      rootEpoch: state.rootEpoch,
+      rootPublicKey: state.rootPublicKey,
+      resolvePasskey: () => null,
+      verifyPasskeyAssertion: this.verifyPasskeyAssertion,
+      allowGenesis: true,
+    });
+    if (!genesisVerified.ok) {
+      throw new Error(`bootstrap genesis verify failed: ${genesisVerified.error}`);
+    }
+    const genesisApplied = await applyKeyLogRecord(
+      state,
+      genesisVerified.record,
+      genesisVerified.hash,
+      { verifyPasskeyAssertion: this.verifyPasskeyAssertion }
+    );
+    if (!genesisApplied.ok) {
+      throw new Error(`bootstrap genesis apply failed: ${genesisApplied.error}`);
+    }
+    const genesisStep: JoinReplayStep = {
+      input: genesisInput,
+      record: genesisVerified.record,
+      hash: genesisVerified.hash,
+      previous: state,
+      next: genesisApplied.state,
+      effects: genesisApplied.effects,
+    };
+    state = genesisApplied.state;
+
+    const admit = await selfSignedNodeCertificate(input.identity, rootKey, {
+      uid: userId,
+      rootEpoch: state.rootEpoch,
+      now,
+    });
+    const admitRecord = buildKeyLogRecord(state.head, state.rootEpoch, {
+      uid: userId,
+      type: 'admit-node',
+      payload: encodeAdmitNodePayload(admit),
+      signer: 'root',
+      credential_id: null,
+    });
+    const admitBytes = encodeKeyLogRecord(admitRecord);
+    const admitSig = signKeyLogRecordWithRoot(rootKey, admitBytes);
+    const admitInput: ApplyKeyLogInput = { bytes: admitBytes, sig: admitSig };
+    const admitVerified = await verifyKeyLogRecord(admitBytes, admitSig, {
+      head: state.head,
+      rootEpoch: state.rootEpoch,
+      rootPublicKey: state.rootPublicKey,
+      resolvePasskey: (id) => state.passkeys.get(id)?.public_key ?? null,
       verifyPasskeyAssertion: this.verifyPasskeyAssertion,
     });
-    if (!chain.ok) {
-      return chain;
+    if (!admitVerified.ok) {
+      throw new Error(`bootstrap admit-node verify failed: ${admitVerified.error}`);
     }
+    const admitApplied = await applyKeyLogRecord(state, admitVerified.record, admitVerified.hash, {
+      verifyPasskeyAssertion: this.verifyPasskeyAssertion,
+    });
+    if (!admitApplied.ok) {
+      throw new Error(`bootstrap admit-node apply failed: ${admitApplied.error}`);
+    }
+    const admitStep: JoinReplayStep = {
+      input: admitInput,
+      record: admitVerified.record,
+      hash: admitVerified.hash,
+      previous: state,
+      next: admitApplied.state,
+      effects: admitApplied.effects,
+    };
 
-    let genesisUid: string;
+    this.db.transaction((tx) => {
+      const userStore = new (this.userStore.constructor as typeof UserStore)(tx as AuthDb);
+      const keyLogStore = new (this.keyLogStore.constructor as typeof KeyLogStore)(tx as AuthDb);
+      const nodeSessionStore = new (this.nodeSessionStore.constructor as typeof NodeSessionStore)(
+        tx as AuthDb
+      );
+      if (!existing) {
+        userStore.create({
+          id: userId,
+          username: input.username,
+          rootPublicKey: new Uint8Array(32),
+          rootEpoch: genesisEpoch,
+          kdfParamsJson: kdfParamsToJson(kdfParams),
+          totpRecordSeq: null,
+          keyLogHeadSeq: 0,
+          keyLogHeadHash: ZERO_HASH,
+          now,
+        });
+      } else {
+        keyLogStore.deleteAll(userId);
+        userStore.deleteKeysByUser(userId);
+        nodeSessionStore.deleteAllForUser(userId);
+        userStore.deleteCertsByUser(userId);
+        userStore.setTotpRecordSeq(userId, null, now);
+        userStore.setKeyLogHead(userId, { seq: 0, hash: ZERO_HASH, now });
+        userStore.updateRoot(userId, {
+          rootPublicKey: new Uint8Array(32),
+          rootEpoch: genesisEpoch,
+          kdfParamsJson: kdfParamsToJson(kdfParams),
+          now,
+        });
+      }
+      persistApplied({
+        userStore,
+        keyLogStore,
+        nodeSessionStore,
+        userId,
+        previous: genesisStep.previous,
+        next: genesisStep.next,
+        record: genesisStep.record,
+        bytes: genesisStep.input.bytes,
+        sig: genesisStep.input.sig,
+        hash: genesisStep.hash,
+        effects: genesisStep.effects,
+        now,
+      });
+      persistApplied({
+        userStore,
+        keyLogStore,
+        nodeSessionStore,
+        userId,
+        previous: admitStep.previous,
+        next: admitStep.next,
+        record: admitStep.record,
+        bytes: admitStep.input.bytes,
+        sig: admitStep.input.sig,
+        hash: admitStep.hash,
+        effects: admitStep.effects,
+        now,
+      });
+    });
+
+    const next = this.userStore.getById(userId);
+    if (!next) {
+      throw new Error('bootstrap user missing after self-admit');
+    }
+    return {
+      userId,
+      rootPublicKey: next.rootPublicKey,
+      rootEpoch: next.rootEpoch,
+      rootKey,
+    };
+  }
+
+  private async replayJoinChain(
+    records: ApplyKeyLogInput[],
+    expectedRootPublicKey: Uint8Array,
+    anchorHash: Uint8Array
+  ): Promise<JoinReplaySuccess | { ok: false; error: string }> {
+    const first = records[0];
+    if (!first) {
+      return { ok: false, error: 'missing_genesis' };
+    }
+    let genesis: ReturnType<typeof decodeKeyLogRecord>;
     try {
-      genesisUid = decodeKeyLogRecord(records[0]?.bytes ?? new Uint8Array()).uid;
+      genesis = decodeKeyLogRecord(first.bytes);
     } catch {
       return { ok: false, error: 'missing_genesis' };
     }
-
-    const existing = this.userStore.getById(genesisUid);
-    if (existing && this.keyLogStore.list(genesisUid).length > 0) {
-      return { ok: false, error: 'not_empty' };
+    if (genesis.type !== 'reset-root' || genesis.seq !== 1n) {
+      return { ok: false, error: 'missing_genesis' };
     }
 
-    const now = Date.now();
-    if (!existing) {
-      const genesis = decodeKeyLogRecord(records[0].bytes);
-      let kdfJson = kdfParamsToJson(DEFAULT_KDF);
-      try {
-        kdfJson = kdfParamsToJson(decodeResetRootPayload(genesis.payload).kdf_params);
-      } catch {
-        // keep default
+    let state = emptyUserKeyState(new Uint8Array(32), undefined, genesis.root_epoch);
+    const steps: JoinReplayStep[] = [];
+    let anchorFound = false;
+    let epochAtAnchor: number | null = null;
+
+    for (let i = 0; i < records.length; i++) {
+      const item = records[i];
+      if (!item) {
+        return { ok: false, error: 'malformed_payload' };
       }
-      this.userStore.create({
-        id: genesisUid,
-        username: genesisUid,
-        rootPublicKey: new Uint8Array(32),
-        rootEpoch: genesis.root_epoch,
-        kdfParamsJson: kdfJson,
-        totpRecordSeq: null,
-        keyLogHeadSeq: 0,
-        keyLogHeadHash: ZERO_HASH,
-        now,
-      });
-    } else {
-      this.userStore.setKeyLogHead(genesisUid, { seq: 0, hash: ZERO_HASH, now });
-      this.userStore.setTotpRecordSeq(genesisUid, null, now);
-    }
-
-    for (const item of records) {
       let decoded: ReturnType<typeof decodeKeyLogRecord>;
       try {
         decoded = decodeKeyLogRecord(item.bytes);
       } catch {
         return { ok: false, error: 'malformed_payload' };
       }
-      const state = this.currentState(genesisUid);
-      const hash = computeRecordHash(item.bytes, item.sig);
-      const committed = await this.commitVerified(genesisUid, item, decoded, hash, state);
-      if (!committed.ok) {
-        return { ok: false, error: committed.error };
+      if (decoded.type === 'reset-root' && i !== 0) {
+        return { ok: false, error: 'reset_not_genesis' };
       }
+      const verified = await verifyKeyLogRecord(item.bytes, item.sig, {
+        head: state.head,
+        rootEpoch: state.rootEpoch,
+        rootPublicKey: state.rootPublicKey,
+        resolvePasskey: (id) => state.passkeys.get(id)?.public_key ?? null,
+        verifyPasskeyAssertion: this.verifyPasskeyAssertion,
+        allowGenesis: i === 0,
+      });
+      if (!verified.ok) {
+        return { ok: false, error: verified.error };
+      }
+      const applied = await applyKeyLogRecord(state, verified.record, verified.hash, {
+        verifyPasskeyAssertion: this.verifyPasskeyAssertion,
+      });
+      if (!applied.ok) {
+        return { ok: false, error: applied.error };
+      }
+      const hash = verified.hash;
+      if (bytesEqual(hash, anchorHash)) {
+        anchorFound = true;
+        epochAtAnchor = applied.state.rootEpoch;
+      } else if (anchorFound) {
+        if (decoded.type === 'rotate-root' || decoded.type === 'reset-root') {
+          return { ok: false, error: 'epoch_changed' };
+        }
+        if (epochAtAnchor != null && applied.state.rootEpoch !== epochAtAnchor) {
+          return { ok: false, error: 'epoch_changed' };
+        }
+      }
+      steps.push({
+        input: item,
+        record: verified.record,
+        hash,
+        previous: state,
+        next: applied.state,
+        effects: applied.effects,
+      });
+      state = applied.state;
+    }
+
+    if (!anchorFound) {
+      return { ok: false, error: 'anchor_missing' };
+    }
+    if (!bytesEqual(state.rootPublicKey, expectedRootPublicKey)) {
+      return { ok: false, error: 'root_mismatch' };
+    }
+    return { ok: true, genesisUid: genesis.uid, state, steps };
+  }
+
+  private persistJoinReplay(args: {
+    replay: JoinReplaySuccess;
+    username: string;
+    now: number;
+    identity?: EncryptedIdentity;
+  }): VerifyChainForJoinResult {
+    const { replay, username, now, identity } = args;
+    const genesisUid = replay.genesisUid;
+    const existing = this.userStore.getById(genesisUid);
+    if (existing && this.keyLogStore.list(genesisUid).length > 0) {
+      return { ok: false, error: 'not_empty' };
+    }
+
+    const first = replay.steps[0];
+    if (!first) {
+      return { ok: false, error: 'missing_genesis' };
+    }
+    let kdfJson = kdfParamsToJson(DEFAULT_KDF);
+    try {
+      kdfJson = kdfParamsToJson(decodeResetRootPayload(first.record.payload).kdf_params);
+    } catch {
+      // keep default
+    }
+
+    try {
+      this.db.transaction((tx) => {
+        const userStore = new (this.userStore.constructor as typeof UserStore)(tx as AuthDb);
+        const keyLogStore = new (this.keyLogStore.constructor as typeof KeyLogStore)(tx as AuthDb);
+        const nodeSessionStore = new (this.nodeSessionStore.constructor as typeof NodeSessionStore)(
+          tx as AuthDb
+        );
+        const again = userStore.getById(genesisUid);
+        if (again && keyLogStore.list(genesisUid).length > 0) {
+          throw new JoinNotEmpty();
+        }
+        if (!again) {
+          userStore.create({
+            id: genesisUid,
+            username,
+            rootPublicKey: new Uint8Array(32),
+            rootEpoch: first.record.root_epoch,
+            kdfParamsJson: kdfJson,
+            totpRecordSeq: null,
+            keyLogHeadSeq: 0,
+            keyLogHeadHash: ZERO_HASH,
+            now,
+          });
+        } else {
+          userStore.setKeyLogHead(genesisUid, { seq: 0, hash: ZERO_HASH, now });
+          userStore.setTotpRecordSeq(genesisUid, null, now);
+        }
+        for (const step of replay.steps) {
+          persistApplied({
+            userStore,
+            keyLogStore,
+            nodeSessionStore,
+            userId: genesisUid,
+            previous: step.previous,
+            next: step.next,
+            record: step.record,
+            bytes: step.input.bytes,
+            sig: step.input.sig,
+            hash: step.hash,
+            effects: step.effects,
+            now,
+          });
+        }
+        if (identity) {
+          persistEncryptedIdentity(tx as AuthDb, identity);
+        }
+      });
+    } catch (err) {
+      if (err instanceof JoinNotEmpty) {
+        return { ok: false, error: 'not_empty' };
+      }
+      throw err;
     }
     return { ok: true, state: this.currentState(genesisUid) };
   }
@@ -481,6 +840,61 @@ class ForkCollision extends Error {
   constructor() {
     super('fork');
   }
+}
+
+class JoinNotEmpty extends Error {
+  constructor() {
+    super('not_empty');
+  }
+}
+
+type EncryptedIdentity = {
+  nodeId: string;
+  hubUrl: string | null;
+  privateKey: string;
+  x25519PrivateKey: string;
+  certificateJson: string;
+  certSig: Uint8Array;
+};
+
+async function encryptIdentity(input: SaveNodeIdentityInput): Promise<EncryptedIdentity> {
+  const [privateKey, x25519PrivateKey] = await Promise.all([
+    encrypt(toBuffer(input.edPrivateKey).toString('base64')),
+    encrypt(toBuffer(input.x25519PrivateKey).toString('base64')),
+  ]);
+  return {
+    nodeId: input.nodeId,
+    hubUrl: input.hubUrl,
+    privateKey,
+    x25519PrivateKey,
+    certificateJson: input.certificateJson,
+    certSig: input.certSig,
+  };
+}
+
+function persistEncryptedIdentity(db: AuthDb, identity: EncryptedIdentity): void {
+  db.insert(nodeIdentity)
+    .values({
+      id: IDENTITY_ROW_ID,
+      nodeId: identity.nodeId,
+      hubUrl: identity.hubUrl,
+      privateKey: identity.privateKey,
+      x25519PrivateKey: identity.x25519PrivateKey,
+      certificateJson: identity.certificateJson,
+      certSig: toBuffer(identity.certSig),
+    })
+    .onConflictDoUpdate({
+      target: nodeIdentity.id,
+      set: {
+        nodeId: identity.nodeId,
+        hubUrl: identity.hubUrl,
+        privateKey: identity.privateKey,
+        x25519PrivateKey: identity.x25519PrivateKey,
+        certificateJson: identity.certificateJson,
+        certSig: toBuffer(identity.certSig),
+      },
+    })
+    .run();
 }
 
 function bytesEqual(a: Uint8Array, b: Uint8Array): boolean {

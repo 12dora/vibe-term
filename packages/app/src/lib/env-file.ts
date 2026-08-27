@@ -1,4 +1,4 @@
-import { readFile, writeFile } from 'node:fs/promises';
+import { readFile, rename, writeFile } from 'node:fs/promises';
 
 export function parseEnvContent(content: string): Record<string, string> {
   const result: Record<string, string> = {};
@@ -35,7 +35,9 @@ export async function writeEnvFile(
   filePath: string,
   values: Record<string, string>
 ): Promise<void> {
-  await writeFile(filePath, stringifyEnv(values), { encoding: 'utf8', mode: 0o600 });
+  const tempPath = `${filePath}.${process.pid}.${Date.now()}.tmp`;
+  await writeFile(tempPath, stringifyEnv(values), { encoding: 'utf8', mode: 0o600 });
+  await rename(tempPath, filePath);
 }
 
 export function mergeMissingKeys(

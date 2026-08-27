@@ -36,6 +36,19 @@ describe('env-file', () => {
     expect(added).not.toContain('TMEX_ROLES');
   });
 
+  test('writeEnvFile replaces via temp file then rename', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'tmex-env-atomic-'));
+    try {
+      const path = join(dir, 'app.env');
+      await writeEnvFile(path, { A: '1' });
+      await writeEnvFile(path, { A: '2', B: '3' });
+      const env = await readEnvFile(path);
+      expect(env).toEqual({ A: '2', B: '3' });
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
   test('upgrade merge writes only missing app.env keys', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'tmex-env-'));
     try {

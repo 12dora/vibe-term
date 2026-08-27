@@ -2,17 +2,21 @@ import { kdfParamsFromJson } from '../../../../apps/gateway/src/auth/user-key-se
 import {
   type AdmitNodePayload,
   ENROLLMENT_TTL_MS,
+  bytesEqual,
   createEnrollment,
+  decodeBase64url,
   decodeCertificate,
+  deriveTotpKey,
   encodeAdmitNodePayload,
   encodeBase64url,
   encodeJoinToken,
   nodeIdToHex,
 } from '../../../shared/src/auth';
 import { parseDurationMs } from '../lib/duration';
-import { loginWithRootKey, postEnrollment } from '../lib/hub-client';
+import { fetchAuthMode, listHubNodes, loginWithRootKey, postEnrollment } from '../lib/hub-client';
 import { type LocalAuthContext, openInstallAuth } from '../lib/local-auth';
 import { assertRootKeyMatches, deriveRootKey, resolvePassword } from '../lib/password';
+import { promptPassword } from '../lib/prompt';
 import { parseTmexRoles } from '../lib/roles';
 import { asString } from '../lib/validate';
 import type { ParsedArgs } from '../types';
@@ -98,6 +102,24 @@ function hubJoinUrl(ctx: LocalAuthContext, io?: EnrollIo): string {
   );
 }
 
+export function parseEnrollmentAuthorizationJson(json: string): AdmitCandidate | null {
+  try {
+    const parsed = JSON.parse(json) as {
+      certificate_b64?: unknown;
+      cert_sig_b64?: unknown;
+    };
+    if (typeof parsed.certificate_b64 !== 'string' || typeof parsed.cert_sig_b64 !== 'string') {
+      return null;
+    }
+    return {
+      certificateBytes: decodeBase64url(parsed.certificate_b64),
+      certSig: decodeBase64url(parsed.cert_sig_b64),
+    };
+  } catch {
+    return null;
+  }
+}
+
 export async function fakeLocalRedeem(
   ctx: LocalAuthContext,
   input: {
@@ -114,7 +136,22 @@ export async function fakeLocalRedeem(
   const certificate = decodeCertificate(input.certificateBytes);
   const nodeId = nodeIdToHex(certificate.node_id);
   const now = Date.now();
-  ctx.userStore.markEnrollmentUsed(token.id, { nodeId, now });
+  let stored: Record<string, unknown> = {};
+  try {
+    stored = JSON.parse(token.authorizationJson) as Record<string, unknown>;
+  } catch {
+    stored = {};
+  }
+  const authorizationJson = JSON.stringify({
+    ...stored,
+    certificate_b64: encodeBase64url(input.certificateBytes),
+    cert_sig_b64: encodeBase64url(input.certSig),
+  });
+  const sqlite = ctx.sqlite as { run: (query: string, params?: unknown[]) => void };
+  sqlite.run(
+    'UPDATE enrollment_tokens SET used_at = ?, node_id = ?, authorization_json = ? WHERE id = ?',
+    [now, nodeId, authorizationJson, token.id]
+  );
   if (!ctx.userStore.getNode(nodeId)) {
     ctx.userStore.createNode({
       id: nodeId,
@@ -129,15 +166,45 @@ export async function fakeLocalRedeem(
   });
 }
 
-function localRedeemPoller(
+export async function pollLocalEnrollmentRedeem(
   ctx: LocalAuthContext,
   enrollPk: Uint8Array
-): () => Promise<AdmitCandidate | null> {
-  return async () => {
-    const token = ctx.userStore.getEnrollmentTokenByEnrollPublicKey(enrollPk);
-    if (!token?.usedAt) return null;
-    return redeemMailbox.get(mailboxKey(enrollPk)) ?? null;
-  };
+): Promise<AdmitCandidate | null> {
+  const token = ctx.userStore.getEnrollmentTokenByEnrollPublicKey(enrollPk);
+  if (!token?.usedAt || !token.nodeId) return null;
+  if (!ctx.userStore.getNode(token.nodeId)) return null;
+  return parseEnrollmentAuthorizationJson(token.authorizationJson);
+}
+
+export async function pollHubNodesForCertificate(options: {
+  baseUrl: string;
+  cookieHeader: string;
+  enrollPk: Uint8Array;
+  fetcher?: typeof fetch;
+}): Promise<AdmitCandidate | null> {
+  const nodes = await listHubNodes(options);
+  for (const node of nodes) {
+    if (typeof node.certificate !== 'string' || typeof node.cert_sig !== 'string') continue;
+    try {
+      const certificateBytes = decodeBase64url(node.certificate);
+      const cert = decodeCertificate(certificateBytes);
+      if (!bytesEqual(cert.enroll_pk, options.enrollPk)) continue;
+      return { certificateBytes, certSig: decodeBase64url(node.cert_sig) };
+    } catch {
+      // skip malformed hub node certificates
+    }
+  }
+  return null;
+}
+
+async function resolveTotpCode(io?: EnrollIo): Promise<string> {
+  if (io?.totpCode) {
+    if (!io.totpCode) {
+      throw new Error('TOTP code cannot be empty');
+    }
+    return io.totpCode;
+  }
+  return await promptPassword('TOTP code', { envKey: 'TMEX_TOTP', confirm: false });
 }
 
 export async function runEnroll(
@@ -177,6 +244,7 @@ export async function runEnroll(
     const token = encodeJoinToken(enrollment.enrollSk, user.rootPublicKey, user.keyLogHeadHash);
     const roles = parseTmexRoles(ctx.env.TMEX_ROLES ?? process.env.TMEX_ROLES);
 
+    let remoteSession: { cookieHeader: string; hubUrl: string } | null = null;
     if (roles.hub) {
       ctx.userStore.createEnrollmentToken({
         id: crypto.randomUUID(),
@@ -194,12 +262,25 @@ export async function runEnroll(
       if (!hubUrl) {
         throw new Error('TMEX_HUB_URL is required to enroll from a non-hub node');
       }
+      const mode = await fetchAuthMode(hubUrl, io.fetcher);
+      let totp: { code: string; kTotp: Uint8Array } | undefined;
+      if (mode.totpEnabled) {
+        const code = await resolveTotpCode(io);
+        totp = {
+          code,
+          kTotp: deriveTotpKey(rootKey.seed, user.id, user.rootEpoch),
+        };
+      }
       const session = await loginWithRootKey({
         baseUrl: hubUrl,
         rootKey,
         uid: user.id,
         fetcher: io.fetcher,
+        totp,
       });
+      if (totp) {
+        totp.kTotp.fill(0);
+      }
       await postEnrollment({
         baseUrl: hubUrl,
         cookieHeader: session.cookieHeader,
@@ -209,6 +290,7 @@ export async function runEnroll(
         exp: now + ttlMs,
         fetcher: io.fetcher,
       });
+      remoteSession = { cookieHeader: session.cookieHeader, hubUrl };
     }
 
     const joinUrl = hubJoinUrl(ctx, io);
@@ -221,15 +303,29 @@ export async function runEnroll(
       return { token, joinCommand, admitted: false };
     }
 
+    const remote = remoteSession;
     const poll =
-      io.pollRedeemed ?? (roles.hub ? localRedeemPoller(ctx, enrollment.enrollPk) : null);
+      io.pollRedeemed ??
+      (roles.hub
+        ? () => pollLocalEnrollmentRedeem(ctx, enrollment.enrollPk)
+        : remote
+          ? () =>
+              pollHubNodesForCertificate({
+                baseUrl: remote.hubUrl,
+                cookieHeader: remote.cookieHeader,
+                enrollPk: enrollment.enrollPk,
+                fetcher: io.fetcher,
+              })
+          : null);
     const interval = io.pollIntervalMs ?? 1000;
-    const signal = io.signal;
+    const controller = io.signal ? null : new AbortController();
+    const signal = io.signal ?? controller?.signal;
     let admitted = false;
     const onSigint = (): void => {
       log(io, 'confirm in the Nodes page');
+      controller?.abort();
     };
-    if (!signal && typeof process.on === 'function') {
+    if (controller && typeof process.on === 'function') {
       process.on('SIGINT', onSigint);
     }
     try {
@@ -261,7 +357,7 @@ export async function runEnroll(
         }
       }
     } finally {
-      if (!signal && typeof process.off === 'function') {
+      if (controller && typeof process.off === 'function') {
         process.off('SIGINT', onSigint);
       }
     }

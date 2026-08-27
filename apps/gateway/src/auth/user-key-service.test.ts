@@ -450,4 +450,187 @@ describe('UserKeyService', () => {
       close();
     }
   });
+
+  test('verifyChainForJoin accepts extra set-totp after the enrollment anchor', async () => {
+    const src = createMigratedAuthDb();
+    const dst = createMigratedAuthDb();
+    try {
+      const a = createService(src.db);
+      const boot = await a.service.bootstrapUser({ username: 'anchor', password: 'pw' });
+      const enrollHead = a.service.currentState(boot.userId).head.hash;
+      const totp = await a.service.signAndApply(boot.userId, boot.rootKey, {
+        type: 'set-totp',
+        payload: encodeSetTotpPayload({
+          alg: 'A256GCM',
+          nonce: new Uint8Array(12).fill(1),
+          ciphertext: new Uint8Array(4).fill(2),
+          tag: new Uint8Array(16).fill(3),
+        }),
+      });
+      expect(totp.ok).toBe(true);
+      const chain = a.keyLogStore.list(boot.userId).map((row) => ({
+        bytes: row.bytes,
+        sig: row.sig,
+      }));
+      const srcState = a.service.currentState(boot.userId);
+      const b = createService(dst.db);
+      const joined = await b.service.verifyChainForJoin(chain, srcState.rootPublicKey, enrollHead, {
+        anchorHash: enrollHead,
+      });
+      expect(joined.ok).toBe(true);
+      if (!joined.ok) {
+        throw new Error(joined.error);
+      }
+      expect(bytesEqual(joined.state.rootPublicKey, srcState.rootPublicKey)).toBe(true);
+      expect(b.keyLogStore.list(boot.userId)).toHaveLength(2);
+      expect(joined.state.totp?.alg).toBe('A256GCM');
+    } finally {
+      src.close();
+      dst.close();
+    }
+  });
+
+  test('verifyChainForJoin rejects rotate-root after the enrollment anchor', async () => {
+    const src = createMigratedAuthDb();
+    const dst = createMigratedAuthDb();
+    try {
+      const a = createService(src.db);
+      const boot = await a.service.bootstrapUser({ username: 'rotated', password: 'pw' });
+      const enrollHead = a.service.currentState(boot.userId).head.hash;
+      const newRoot = rootKeyFromSeed(new Uint8Array(32).fill(11));
+      const rotated = await a.service.signAndApply(boot.userId, boot.rootKey, {
+        type: 'rotate-root',
+        payload: encodeRotateRootPayload({
+          root_public_key: newRoot.publicKey,
+          kdf_params: generateKdfParams(),
+        }),
+      });
+      expect(rotated.ok).toBe(true);
+      const chain = a.keyLogStore.list(boot.userId).map((row) => ({
+        bytes: row.bytes,
+        sig: row.sig,
+      }));
+      const b = createService(dst.db);
+      const joined = await b.service.verifyChainForJoin(chain, boot.rootPublicKey, enrollHead, {
+        anchorHash: enrollHead,
+      });
+      expect(joined.ok).toBe(false);
+      if (joined.ok) {
+        throw new Error('expected rotate after anchor to be rejected');
+      }
+      expect(joined.error).toBe('epoch_changed');
+      expect(b.userStore.getById(boot.userId)).toBeNull();
+    } finally {
+      src.close();
+      dst.close();
+    }
+  });
+
+  test('commitJoin writes user, log, certs and identity in one shot', async () => {
+    const src = createMigratedAuthDb();
+    const dst = createMigratedAuthDb();
+    try {
+      const a = createService(src.db);
+      const boot = await a.service.bootstrapUser({ username: 'joiner', password: 'pw' });
+      const identityStore = new NodeIdentityStore(src.db);
+      const identity = await ensureNodeIdentity(identityStore);
+      const admit = await selfSignedNodeCertificate(identity, boot.rootKey, {
+        uid: boot.userId,
+        rootEpoch: boot.rootEpoch,
+        now: Date.now(),
+      });
+      const admitted = await a.service.signAndApply(boot.userId, boot.rootKey, {
+        type: 'admit-node',
+        payload: encodeAdmitNodePayload(admit),
+      });
+      expect(admitted.ok).toBe(true);
+      const chain = a.keyLogStore.list(boot.userId).map((row) => ({
+        bytes: row.bytes,
+        sig: row.sig,
+      }));
+      const srcState = a.service.currentState(boot.userId);
+      const b = createService(dst.db);
+      const destIdentity = await ensureNodeIdentity(new NodeIdentityStore(dst.db));
+      const committed = await b.service.commitJoin({
+        records: chain,
+        expectedRootPublicKey: srcState.rootPublicKey,
+        anchorHash: srcState.head.hash,
+        username: 'joiner',
+        expectedUserId: boot.userId,
+        identity: {
+          nodeId: destIdentity.nodeIdHex,
+          hubUrl: 'https://hub.example',
+          edPrivateKey: destIdentity.edPrivateKey,
+          x25519PrivateKey: destIdentity.x25519PrivateKey,
+          certificateJson: JSON.stringify({
+            x25519PublicKey: Buffer.from(destIdentity.x25519PublicKey).toString('base64url'),
+          }),
+          certSig: new Uint8Array(0),
+        },
+      });
+      expect(committed.ok).toBe(true);
+      expect(b.userStore.getById(boot.userId)?.username).toBe('joiner');
+      expect(b.keyLogStore.list(boot.userId)).toHaveLength(2);
+      expect(b.userStore.listCertsByUser(boot.userId).length).toBe(1);
+      const loaded = await new NodeIdentityStore(dst.db).load();
+      expect(loaded?.hubUrl).toBe('https://hub.example');
+      expect(loaded?.nodeId).toBe(destIdentity.nodeIdHex);
+    } finally {
+      src.close();
+      dst.close();
+    }
+  });
+
+  test('bootstrapUserWithSelfAdmit commits genesis and admit-node together', async () => {
+    const { db, close } = createMigratedAuthDb();
+    try {
+      const { service, userStore, keyLogStore } = createService(db);
+      const identity = await ensureNodeIdentity(new NodeIdentityStore(db));
+      const boot = await service.bootstrapUserWithSelfAdmit({
+        username: 'selfish',
+        password: 'pw-self-admit',
+        identity,
+      });
+      expect(boot.rootEpoch).toBe(1);
+      expect(userStore.getByUsername('selfish')?.id).toBe(boot.userId);
+      expect(keyLogStore.list(boot.userId).map((row) => row.seq)).toEqual([1, 2]);
+      expect(userStore.listCertsByUser(boot.userId).length).toBe(1);
+      expect(userStore.getCert(identity.nodeIdHex)?.userId).toBe(boot.userId);
+    } finally {
+      close();
+    }
+  });
+
+  test('bootstrapUserWithSelfAdmit reset keeps username and replaces log in one commit', async () => {
+    const { db, close } = createMigratedAuthDb();
+    try {
+      const { service, userStore, keyLogStore } = createService(db);
+      const identity = await ensureNodeIdentity(new NodeIdentityStore(db));
+      const first = await service.bootstrapUserWithSelfAdmit({
+        username: 'resetme',
+        password: 'first-pass',
+        identity,
+      });
+      const oldCert = userStore.getCert(identity.nodeIdHex);
+      const reset = await service.bootstrapUserWithSelfAdmit({
+        username: 'resetme',
+        password: 'second-pass',
+        identity,
+      });
+      expect(reset.userId).toBe(first.userId);
+      expect(reset.rootEpoch).toBeGreaterThan(first.rootEpoch);
+      expect(userStore.getById(first.userId)?.username).toBe('resetme');
+      expect(keyLogStore.list(first.userId).map((row) => row.seq)).toEqual([1, 2]);
+      const nextCert = userStore.getCert(identity.nodeIdHex);
+      expect(nextCert).not.toBeNull();
+      expect(
+        bytesEqual(
+          oldCert?.certificateBytes ?? new Uint8Array(),
+          nextCert?.certificateBytes ?? new Uint8Array()
+        )
+      ).toBe(false);
+    } finally {
+      close();
+    }
+  });
 });

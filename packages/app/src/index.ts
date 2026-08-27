@@ -4,7 +4,7 @@ import { runUninstall } from './commands/uninstall';
 import { runUpgrade } from './commands/upgrade';
 import { type CliLang, normalizeLang, setLang, t } from './i18n';
 import { parseArgs, resolveNestedCommand } from './lib/args';
-import { loadInstallEnv } from './lib/local-auth';
+import { AUTH_COMMANDS, resolveAuthSpawnPlan, spawnAuthCli } from './lib/auth-spawn';
 import type { ParsedArgs } from './types';
 
 function printHelp(): void {
@@ -29,22 +29,21 @@ async function dispatchDirect(parsed: ParsedArgs): Promise<void> {
   }
 }
 
-const AUTH_COMMANDS = new Set([
-  'hub.user.add',
-  'hub.user.passwd',
-  'hub.user.totp',
-  'hub.user.reset',
-  'hub.join',
-  'hub.leave',
-  'mesh.reset-root',
-  'enroll',
-]);
-
-export async function dispatchCli(parsed: ParsedArgs, lang: CliLang): Promise<void> {
+export async function dispatchCli(
+  parsed: ParsedArgs,
+  lang: CliLang,
+  options?: { argv?: string[] }
+): Promise<void> {
   setLang(lang);
   const nested = resolveNestedCommand(parsed);
   if (AUTH_COMMANDS.has(nested.name)) {
-    await loadInstallEnv(parsed);
+    const argv = options?.argv ?? reconstructArgv(parsed);
+    const plan = await resolveAuthSpawnPlan(parsed, argv);
+    const result = await spawnAuthCli(plan);
+    if (result.code !== 0) {
+      process.exitCode = result.code;
+    }
+    return;
   }
 
   switch (nested.name) {
@@ -63,46 +62,6 @@ export async function dispatchCli(parsed: ParsedArgs, lang: CliLang): Promise<vo
     case 'help':
       printHelp();
       return;
-    case 'hub.user.add': {
-      const { runHubUserAdd } = await import('./commands/hub');
-      await runHubUserAdd(parsed, nested.rest[0] ?? '');
-      return;
-    }
-    case 'hub.user.passwd': {
-      const { runHubUserPasswd } = await import('./commands/hub');
-      await runHubUserPasswd(parsed, nested.rest[0] ?? '');
-      return;
-    }
-    case 'hub.user.totp': {
-      const { runHubUserTotp } = await import('./commands/hub');
-      await runHubUserTotp(parsed, nested.rest[0] ?? '');
-      return;
-    }
-    case 'hub.user.reset': {
-      const { runHubUserReset } = await import('./commands/hub');
-      await runHubUserReset(parsed);
-      return;
-    }
-    case 'hub.join': {
-      const { runHubJoin } = await import('./commands/hub');
-      await runHubJoin(parsed, nested.rest[0] ?? '');
-      return;
-    }
-    case 'hub.leave': {
-      const { runHubLeave } = await import('./commands/hub');
-      await runHubLeave(parsed);
-      return;
-    }
-    case 'mesh.reset-root': {
-      const { runMeshResetRoot } = await import('./commands/mesh');
-      await runMeshResetRoot(parsed);
-      return;
-    }
-    case 'enroll': {
-      const { runEnroll } = await import('./commands/enroll');
-      await runEnroll(parsed);
-      return;
-    }
     case 'direct':
       await dispatchDirect(parsed);
       return;
@@ -113,12 +72,27 @@ export async function dispatchCli(parsed: ParsedArgs, lang: CliLang): Promise<vo
   }
 }
 
+function reconstructArgv(parsed: ParsedArgs): string[] {
+  const argv: string[] = [];
+  if (parsed.command) argv.push(parsed.command);
+  argv.push(...parsed.positionals);
+  for (const [key, value] of Object.entries(parsed.flags)) {
+    if (value === true) {
+      argv.push(`--${key}`);
+    } else if (typeof value === 'string') {
+      argv.push(`--${key}`, value);
+    }
+  }
+  return argv;
+}
+
 export async function main(): Promise<void> {
-  const parsed = parseArgs(process.argv.slice(2));
+  const argv = process.argv.slice(2);
+  const parsed = parseArgs(argv);
   const requestedLang =
     (typeof parsed.flags.lang === 'string' ? parsed.flags.lang : undefined) ||
     process.env.TMEX_CLI_LANG;
   const lang = normalizeLang(requestedLang);
   setLang(lang);
-  await dispatchCli(parsed, lang);
+  await dispatchCli(parsed, lang, { argv });
 }
