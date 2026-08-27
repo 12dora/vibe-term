@@ -155,6 +155,24 @@ export interface MeshNodesResponse {
   nodes: MeshNode[];
 }
 
+/** `x-tmex-connection`：把请求绑到本标签页的那条 Gateway WS。 */
+export const X_TMEX_CONNECTION_HEADER = 'x-tmex-connection';
+
+/** `GET /api/mesh/connection` 的 200 响应。 */
+export interface MeshConnectionResponse {
+  connectionId: string;
+}
+
+/**
+ * `NO_CONNECTION`：该 sid 在目标 node 上没有 live 的 Gateway WS（primary 还没连上 / 刚断）。
+ * `MULTIPLE_CONNECTIONS`：同 sid 有多条（多标签），必须带 `x-tmex-connection` 才能定位。
+ */
+export type MeshConnectionErrorCode = 'NO_CONNECTION' | 'MULTIPLE_CONNECTIONS';
+
+export type MeshConnectionResult =
+  | { ok: true; connectionId: string }
+  | { ok: false; status: number; code: MeshConnectionErrorCode | string };
+
 /** `GET /api/auth/nodes` 的单行（**公开**，不含公钥 / inventory）。登录页在登录前用它。 */
 export interface PublicNode {
   id: string;

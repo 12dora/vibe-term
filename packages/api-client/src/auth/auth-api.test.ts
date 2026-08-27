@@ -156,6 +156,68 @@ describe('AuthApi', () => {
   });
 });
 
+describe('AuthApi.getConnection（F3-4）', () => {
+  test('200 → 带 node 前缀取到 connectionId', async () => {
+    const { api, calls } = recorder([
+      new Response(JSON.stringify({ connectionId: 'conn-1' }), { status: 200 }),
+    ]);
+    expect(await api.getConnection(NODE_A)).toEqual({ ok: true, connectionId: 'conn-1' });
+    expect(calls[0].url).toBe(`/n/${NODE_A}/api/mesh/connection`);
+    expect(calls[0].init?.headers).toBeUndefined();
+  });
+
+  test('传 connectionId 时带 x-tmex-connection 头（多标签定位）', async () => {
+    const { api, calls } = recorder([
+      new Response(JSON.stringify({ connectionId: 'conn-2' }), { status: 200 }),
+    ]);
+    expect(await api.getConnection('self', 'conn-2')).toEqual({ ok: true, connectionId: 'conn-2' });
+    expect(calls[0].url).toBe('/api/mesh/connection');
+    expect(calls[0].init?.headers).toEqual({ 'x-tmex-connection': 'conn-2' });
+  });
+
+  test('404 NO_CONNECTION 不抛异常，透出 status + code', async () => {
+    const { api } = recorder([
+      new Response(JSON.stringify({ code: 'NO_CONNECTION' }), { status: 404 }),
+    ]);
+    expect(await api.getConnection(NODE_A)).toEqual({
+      ok: false,
+      status: 404,
+      code: 'NO_CONNECTION',
+    });
+  });
+
+  test('409 MULTIPLE_CONNECTIONS 同样透出，由调用方决定等待策略', async () => {
+    const { api } = recorder([
+      new Response(JSON.stringify({ code: 'MULTIPLE_CONNECTIONS', hint: 'send header' }), {
+        status: 409,
+      }),
+    ]);
+    expect(await api.getConnection(NODE_A)).toEqual({
+      ok: false,
+      status: 409,
+      code: 'MULTIPLE_CONNECTIONS',
+    });
+  });
+
+  test('200 但缺 connectionId → MALFORMED', async () => {
+    const { api } = recorder([new Response(JSON.stringify({}), { status: 200 })]);
+    expect(await api.getConnection(NODE_A)).toEqual({
+      ok: false,
+      status: 200,
+      code: 'MALFORMED',
+    });
+  });
+
+  test('无 body 的 500 回落到 CONNECTION_LOOKUP_FAILED', async () => {
+    const { api } = recorder([new Response('', { status: 500 })]);
+    expect(await api.getConnection(NODE_A)).toEqual({
+      ok: false,
+      status: 500,
+      code: 'CONNECTION_LOOKUP_FAILED',
+    });
+  });
+});
+
 describe('passkeyLoginOptions 的 origin 过滤（B2-8）', () => {
   test('404 NO_PASSKEY_FOR_ORIGIN → 可判别的类型化错误，不是泛化 Error', async () => {
     const { api } = recorder([

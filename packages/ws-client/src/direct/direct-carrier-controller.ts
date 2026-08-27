@@ -2,10 +2,13 @@
 //
 // 生命周期（浏览器恒为 offerer）；**每次尝试都是一代全新的 attempt**：新的 generation、
 // 新的 `rtcSession`、新的 `AbortController`、新的 `RTCPeerConnection`：
+//   0. `GET /api/mesh/connection` 取本标签页 Gateway WS 的 `connectionId`（每次尝试都重取）
 //   1. `GET /api/mesh/rtc-config` 取 ICE 配置
 //   2. 建 `RTCPeerConnection`，开 `sess` 通道（ordered + reliable）
 //   3. `createOffer()` + `setLocalDescription()`，从 `localDescription.sdp` 解出 `fp_browser`
-//   4. `POST /api/rtc/authorize {rtcSession, fp_browser}` → `{nonce, fp_node}`
+//   4. `POST /api/rtc/authorize {rtcSession, fp_browser, connectionId}`（同时带
+//      `x-tmex-connection` 头）→ `{nonce, fp_node}`；node 据 connectionId 把直连挂到
+//      本标签页那条 Gateway WS 上（同 sid 多标签时不带它会 409）
 //   5. 经注入的信令通道发 offer，随后才放本地 ICE 候选出去（entry 要先见到本 rtcSession
 //      的 offer 才认候选）；收到 answer 后**核对远端 SDP 指纹 == fp_node**，
 //      不一致立即放弃（这是挡失陷 hub 做 DTLS 中间人的那道绑定，绝不重试）
@@ -25,6 +28,8 @@
 //
 // 失败重试：1 s 起指数退避、上限 30 s、最多 5 次，之后停在 `failed` 直到 `retry()` /
 // `online` / `navigator.connection` 变化 / 信令恢复。指纹不匹配、鉴权被拒（4xx）不重试。
+// `NO_CONNECTION` / `MULTIPLE_CONNECTIONS` 例外：退避解决不了，改成挂在 primary 状态上等
+// 它连上 / 重连过再重来一轮，且不消耗重试次数。
 
 import type { DirectCarrierLike } from '../carrier-switch';
 import { DirectDataChannelCarrier, type RTCDataChannelLike } from './data-channel-carrier';
@@ -59,6 +64,8 @@ export type DirectCarrierState = 'idle' | 'connecting' | 'active' | 'failed';
 export const SESS_CHANNEL_LABEL = 'sess';
 export const RTC_CONFIG_PATH = '/api/mesh/rtc-config';
 export const RTC_AUTHORIZE_PATH = '/api/rtc/authorize';
+export const MESH_CONNECTION_PATH = '/api/mesh/connection';
+export const X_TMEX_CONNECTION_HEADER = 'x-tmex-connection';
 
 export const DEFAULT_RETRY_BASE_MS = 1000;
 export const DEFAULT_RETRY_MAX_MS = 30_000;
@@ -70,12 +77,26 @@ export const DEFAULT_ICE_DISCONNECT_GRACE_MS = 5000;
 /** `navigator.connection` 的 `change` 抖动很密，去抖后再重连。 */
 export const DEFAULT_NETWORK_CHANGE_DEBOUNCE_MS = 800;
 
-/** 控制器只用到连接的这三个方法，避免与 `GatewayConnection` 循环依赖。 */
+/**
+ * primary（Gateway WS）的状态源。`BorshWebSocketClient` 结构上即满足，
+ * 宿主把整个 `GatewayConnection` 传进来时自动可用。
+ *
+ * 控制器只在「connectionId 取不到」时用它：node 侧的 `connectionId` 是**每条 Gateway WS**
+ * 一个身份，primary 没连上（404）或同 sid 有多条（409）时，只有 primary 重新连过才可能变。
+ */
+export interface PrimaryStatusLike {
+  isReady?(): boolean;
+  onStateChange?(handler: (state: string) => void): () => void;
+}
+
+/** 控制器只用到连接的这几个成员，避免与 `GatewayConnection` 循环依赖。 */
 export interface GatewayConnectionLike {
   attachDirectCarrier(carrier: DirectCarrierLike, options?: { rtcSession?: string }): void;
   detachDirectCarrier?(): void;
   /** 屏障完成切换（并已回 ACK）后才通知；控制器据此才认为直连真正生效。 */
   onCarrierChange?(handler: (active: 'primary' | 'direct') => void): () => void;
+  /** primary WS 客户端；缺省时 connectionId 相关的等待退化成普通退避重试。 */
+  readonly client?: PrimaryStatusLike;
 }
 
 /** 事件源的最小结构子集（`window` / `navigator.connection` 都满足）。 */
@@ -121,6 +142,8 @@ interface Attempt {
   readonly id: number;
   readonly rtcSession: string;
   readonly abort: AbortController;
+  /** 本次尝试绑定的 Gateway WS 身份；老 node 没有该路由时为 `null`（退化成旧行为）。 */
+  connectionId: string | null;
   pc: RTCPeerConnectionLike | null;
   channel: RTCDataChannelLike | null;
   carrier: DirectDataChannelCarrier | null;
@@ -219,6 +242,7 @@ export class DirectCarrierController {
   private connectionChangeHandler: (() => void) | null = null;
   private unsubscribeSignalingReady: (() => void) | null = null;
   private unsubscribeCarrierChange: (() => void) | null = null;
+  private unsubscribePrimaryWait: (() => void) | null = null;
 
   private route: DirectRoute | null = null;
   private rttMs: number | null = null;
@@ -308,6 +332,7 @@ export class DirectCarrierController {
     }
     this.attempts = 0;
     this.clearRetryTimer();
+    this.clearPrimaryWait();
     this.teardownAttempt('retry');
     this.connect();
   }
@@ -315,6 +340,7 @@ export class DirectCarrierController {
   stop(): void {
     this.started = false;
     this.clearRetryTimer();
+    this.clearPrimaryWait();
     this.stopStatsPolling();
     this.removeNetworkListeners();
     this.removeSignalingReadyListener();
@@ -332,10 +358,15 @@ export class DirectCarrierController {
       this.setState('failed', 'signaling not ready');
       return;
     }
+    this.clearPrimaryWait();
     this.setState('connecting', null);
     const attempt = this.beginAttempt();
     void this.runAttempt(attempt).catch((err) => {
       if (this.attempt !== attempt) return;
+      if (err instanceof DirectPrimaryWaitError) {
+        this.failWaitingPrimary(err.message, err.mode);
+        return;
+      }
       const fatal = err instanceof DirectAuthorizeError && err.fatal;
       this.failAttempt(err instanceof Error ? err.message : String(err), !fatal);
     });
@@ -348,6 +379,7 @@ export class DirectCarrierController {
       id: this.generation,
       rtcSession: this.options.rtcSession ?? randomSessionId(),
       abort: new AbortController(),
+      connectionId: null,
       pc: null,
       channel: null,
       carrier: null,
@@ -382,6 +414,10 @@ export class DirectCarrierController {
   }
 
   private async runAttempt(attempt: Attempt): Promise<void> {
+    // 先定位本标签页的 Gateway WS：拿不到就根本不该建 PeerConnection（省一次 ICE 收集）。
+    attempt.connectionId = await this.fetchConnectionId(attempt);
+    if (this.stale(attempt)) return;
+
     const config = await this.fetchRtcConfig(attempt);
     if (this.stale(attempt)) return;
 
@@ -468,17 +504,72 @@ export class DirectCarrierController {
     }
   }
 
+  /**
+   * `GET /api/mesh/connection`：取本标签页那条 Gateway WS 在目标 node 上的 `connectionId`。
+   * **每次尝试都要重取**——primary 重连会换一条 WS，缓存下来的旧值会把直连挂到已死的会话上。
+   *
+   * 浏览器的 `WebSocket` 构造函数不能带自定义请求头，也读不到 upgrade 响应头，
+   * HELLO 帧（Borsh）在 B2-10 里也明确不改，所以拿 `connectionId` 只有这一条 REST 路径。
+   *
+   * - `404 NO_CONNECTION`：primary 还没在 node 上登记（刚开页面 / 刚断线）→ 等 primary 连上再来。
+   * - `409 MULTIPLE_CONNECTIONS`：同 sid 多条 live WS，node 无法定位到本标签页 → 这段时间
+   *   直连建不了，等 primary 重连过再试（届时 sid 上的连接分布会变）。
+   * - 其它非 2xx（老 node 上该路由返回 405、5xx 等）：5xx 退避重试，其余退化成不带
+   *   connectionId 的旧行为——单连接时 node 侧照样能唯一定位。
+   */
+  private async fetchConnectionId(attempt: Attempt): Promise<string | null> {
+    let res: Response;
+    try {
+      res = await this.options.apiClient.fetch(MESH_CONNECTION_PATH, {
+        signal: attempt.abort.signal,
+      });
+    } catch (err) {
+      if (this.stale(attempt)) return null;
+      throw new DirectAuthorizeError(
+        err instanceof Error
+          ? `connection lookup failed: ${err.message}`
+          : 'connection lookup failed',
+        false
+      );
+    }
+    if (res.ok) {
+      const body = (await res.json().catch(() => null)) as { connectionId?: unknown } | null;
+      if (typeof body?.connectionId === 'string' && body.connectionId) return body.connectionId;
+      throw new DirectAuthorizeError('connection lookup response malformed', true);
+    }
+    const code = await readErrorCode(res);
+    const wait = primaryWaitFor(res.status, code);
+    if (wait) throw new DirectPrimaryWaitError(`connection lookup: ${code}`, wait);
+    if (res.status >= 500) {
+      throw new DirectAuthorizeError(`connection lookup failed (${res.status})`, false);
+    }
+    return null;
+  }
+
   private async authorize(
     attempt: Attempt,
     fpBrowser: DtlsFingerprint
   ): Promise<{ nonce: string; fpNode: DtlsFingerprint }> {
+    const connectionId = attempt.connectionId;
     const res = await this.options.apiClient.fetch(RTC_AUTHORIZE_PATH, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ rtcSession: attempt.rtcSession, fp_browser: fpBrowser }),
+      headers: {
+        'Content-Type': 'application/json',
+        ...(connectionId ? { [X_TMEX_CONNECTION_HEADER]: connectionId } : {}),
+      },
+      body: JSON.stringify({
+        rtcSession: attempt.rtcSession,
+        fp_browser: fpBrowser,
+        ...(connectionId ? { connectionId } : {}),
+      }),
       signal: attempt.abort.signal,
     });
     if (!res.ok) {
+      // connectionId 在 GET 与 authorize 之间失效（primary 重连 / 又开了一个标签页）：
+      // 这不是配置错误，按「等 primary」处理，别当成 4xx 永久失败卡死在 failed。
+      const code = await readErrorCode(res);
+      const wait = primaryWaitFor(res.status, code);
+      if (wait) throw new DirectPrimaryWaitError(`authorize: ${code}`, wait);
       // 4xx 是配置/权限问题，重试没有意义；5xx（如 DIRECT_UNAVAILABLE）才退避重试。
       throw new DirectAuthorizeError(`authorize failed (${res.status})`, res.status < 500);
     }
@@ -698,6 +789,63 @@ export class DirectCarrierController {
     this.setState('failed', reason);
     if (!retryable || !this.started) return;
     this.scheduleRetry();
+  }
+
+  /**
+   * connectionId 定位不到本标签页：这不是退避能解决的问题（多标签时重试多少次都是 409），
+   * 所以**不消耗重试次数**，挂在 primary 的状态上等它重连过再来一轮。
+   */
+  private failWaitingPrimary(reason: string, mode: PrimaryWaitMode): void {
+    this.teardownAttempt(reason);
+    this.stopStatsPolling();
+    this.route = null;
+    this.rttMs = null;
+    this.setState('failed', reason);
+    if (!this.started) return;
+    this.waitForPrimary(mode);
+  }
+
+  /**
+   * `open`：等 primary 进入 READY（已经 READY 说明只是登记竞态，退避重试即可）。
+   * `reconnect`：必须先看到 primary 掉出 READY 再回到 READY——同 sid 的连接分布只有
+   * 这时才可能变。宿主没给状态源（老测试桩）时退回普通退避，绝不静默卡死。
+   */
+  private waitForPrimary(mode: PrimaryWaitMode): void {
+    const status = this.options.connection.client;
+    const subscribe = status?.onStateChange;
+    if (!status || !subscribe) {
+      this.scheduleRetry();
+      return;
+    }
+    const ready = status.isReady?.() ?? false;
+    if (mode === 'open' && ready) {
+      this.scheduleRetry();
+      return;
+    }
+    this.clearPrimaryWait();
+    let sawDown = !ready;
+    this.unsubscribePrimaryWait = subscribe.call(status, (state) => {
+      if (!this.started) return;
+      if (state !== PRIMARY_READY_STATE) {
+        sawDown = true;
+        return;
+      }
+      if (!sawDown) return;
+      this.clearPrimaryWait();
+      this.attempts = 0;
+      this.clearRetryTimer();
+      this.connect();
+    });
+  }
+
+  private clearPrimaryWait(): void {
+    const unsubscribe = this.unsubscribePrimaryWait;
+    this.unsubscribePrimaryWait = null;
+    try {
+      unsubscribe?.();
+    } catch {
+      // 已注销
+    }
   }
 
   /** 直连载体没了（通道关闭 / primary 断开导致屏障关掉直连）：退避重连。 */
@@ -984,6 +1132,43 @@ class DirectAuthorizeError extends Error {
     super(message);
     this.name = 'DirectAuthorizeError';
   }
+}
+
+/** 等 primary 的两种姿势：等它连上（`open`）/ 等它重连过一次（`reconnect`）。 */
+type PrimaryWaitMode = 'open' | 'reconnect';
+
+/** `BorshWebSocketClient` 完成 HELLO 后的状态名。 */
+const PRIMARY_READY_STATE = 'READY';
+
+class DirectPrimaryWaitError extends Error {
+  constructor(
+    message: string,
+    readonly mode: PrimaryWaitMode
+  ) {
+    super(message);
+    this.name = 'DirectPrimaryWaitError';
+  }
+}
+
+/**
+ * 只认**带明确 code** 的那两个状态：老 node 上 `/api/mesh/connection` 落到
+ * `/api/mesh/*` 的 405、或路由缺失的裸 404，都不该被误判成「等 primary」而永久挂起。
+ */
+function primaryWaitFor(status: number, code: string): PrimaryWaitMode | null {
+  if (status === 404 && code === 'NO_CONNECTION') return 'open';
+  if (status === 409 && code === 'MULTIPLE_CONNECTIONS') return 'reconnect';
+  return null;
+}
+
+async function readErrorCode(res: Response): Promise<string> {
+  try {
+    const body = (await res.json()) as { code?: unknown; error?: unknown };
+    if (typeof body?.code === 'string') return body.code;
+    if (typeof body?.error === 'string') return body.error;
+  } catch {
+    // 非 JSON 或空 body
+  }
+  return '';
 }
 
 function sameIce(a: DirectIceDiagnostics | null, b: DirectIceDiagnostics | null): boolean {

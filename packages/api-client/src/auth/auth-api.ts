@@ -2,7 +2,7 @@
 
 import { type ApiClient, defaultApiClient, parseApiError } from '../client';
 import { SELF_NODE_ID, resolveNodeUrl } from '../node-url';
-import { NoPasskeyForOriginError } from './types';
+import { NoPasskeyForOriginError, X_TMEX_CONNECTION_HEADER } from './types';
 import type {
   AuthChallengeResponse,
   AuthLoginErrorCode,
@@ -12,6 +12,8 @@ import type {
   KeyLogAppendRequest,
   KeyLogAppendResult,
   KeyLogHeadResponse,
+  MeshConnectionResponse,
+  MeshConnectionResult,
   MeshNode,
   MeshNodesResponse,
   PasskeyRegistrationVerified,
@@ -83,6 +85,32 @@ export class AuthApi {
     }
     const payload = (await res.json()) as PublicNodesResponse;
     return payload.nodes ?? [];
+  }
+
+  /**
+   * `GET /api/mesh/connection`（**需会话**）：拿到本标签页那条 Gateway WS 在目标 node
+   * 上的 `connectionId`。直连授权（`POST /api/rtc/authorize`）必须带它，否则同 sid 多标签
+   * 时 node 不知道把直连挂到哪条会话上。
+   *
+   * 失败不抛异常：`404 NO_CONNECTION`（primary 还没连上）与 `409 MULTIPLE_CONNECTIONS`
+   * （多标签且没带 `x-tmex-connection`）都是调用方要分别处理的正常状态。
+   */
+  async getConnection(nodeId: string, connectionId?: string): Promise<MeshConnectionResult> {
+    const res = await this.client.fetch(nodeAuthPath(nodeId, '/api/mesh/connection'), {
+      ...(connectionId ? { headers: { [X_TMEX_CONNECTION_HEADER]: connectionId } } : {}),
+    });
+    if (!res.ok) {
+      return {
+        ok: false,
+        status: res.status,
+        code: await readCode(res, 'CONNECTION_LOOKUP_FAILED'),
+      };
+    }
+    const payload = (await res.json()) as Partial<MeshConnectionResponse>;
+    if (typeof payload.connectionId !== 'string' || !payload.connectionId) {
+      return { ok: false, status: res.status, code: 'MALFORMED' };
+    }
+    return { ok: true, connectionId: payload.connectionId };
   }
 
   async challenge(nodeId: string, uid: string): Promise<AuthChallengeResponse> {

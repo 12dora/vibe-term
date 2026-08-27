@@ -2,6 +2,7 @@
 
 import type { DirectCarrierLike } from '../carrier-switch';
 import type { RTCDataChannelLike } from './data-channel-carrier';
+import type { PrimaryStatusLike } from './direct-carrier-controller';
 import type {
   DirectApiClientLike,
   DirectSignalMessage,
@@ -247,7 +248,7 @@ export interface FakeApiRoute {
 }
 
 export class FakeApiClient implements DirectApiClientLike {
-  readonly calls: Array<{ path: string; body: unknown }> = [];
+  readonly calls: Array<{ path: string; body: unknown; headers: Record<string, string> }> = [];
   readonly routes = new Map<string, FakeApiRoute>();
 
   constructor(routes: Record<string, FakeApiRoute> = {}) {
@@ -263,7 +264,13 @@ export class FakeApiClient implements DirectApiClientLike {
         body = init.body;
       }
     }
-    this.calls.push({ path, body });
+    const headers: Record<string, string> = {};
+    for (const [key, value] of Object.entries(
+      (init?.headers as Record<string, string> | undefined) ?? {}
+    )) {
+      headers[key.toLowerCase()] = value;
+    }
+    this.calls.push({ path, body, headers });
     const route = this.routes.get(path) ?? { status: 404, body: { error: 'not_found' } };
     const status = route.status ?? 200;
     return Promise.resolve(
@@ -286,6 +293,35 @@ export class FakeConnection {
   detachCount = 0;
   active: 'primary' | 'direct' = 'primary';
   private readonly carrierHandlers = new Set<(active: 'primary' | 'direct') => void>();
+  private readonly primaryHandlers = new Set<(state: string) => void>();
+  private primaryState = 'READY';
+  /** 是否暴露 `client`（模拟不带 primary 状态源的老宿主）。 */
+  exposePrimaryStatus = true;
+
+  /** 与 `GatewayConnection.client` 同形：控制器只用 `isReady` / `onStateChange`。 */
+  get client(): PrimaryStatusLike | undefined {
+    if (!this.exposePrimaryStatus) return undefined;
+    return {
+      isReady: () => this.primaryState === 'READY',
+      onStateChange: (cb) => {
+        this.primaryHandlers.add(cb);
+        return () => {
+          this.primaryHandlers.delete(cb);
+        };
+      },
+    };
+  }
+
+  /** 模拟 primary（Gateway WS）状态迁移。 */
+  setPrimaryState(state: string): void {
+    if (this.primaryState === state) return;
+    this.primaryState = state;
+    for (const cb of [...this.primaryHandlers]) cb(state);
+  }
+
+  get primaryHandlerCount(): number {
+    return this.primaryHandlers.size;
+  }
 
   attachDirectCarrier(carrier: DirectCarrierLike, options?: { rtcSession?: string }): void {
     this.attached.push(carrier);

@@ -2,8 +2,10 @@ import { describe, expect, test } from 'bun:test';
 import {
   DirectCarrierController,
   type DirectCarrierControllerOptions,
+  MESH_CONNECTION_PATH,
   RTC_AUTHORIZE_PATH,
   RTC_CONFIG_PATH,
+  X_TMEX_CONNECTION_HEADER,
   buildIceServers,
 } from './direct-carrier-controller';
 import {
@@ -21,6 +23,7 @@ import {
 
 const NODE_ID = 'node-b';
 const NONCE = 'bm9uY2UtMzJieXRlcw';
+const CONNECTION_ID = 'conn-tab-1';
 
 function normalized(value: string): string {
   return value.replace(/:/g, '').toUpperCase();
@@ -66,6 +69,7 @@ interface Setup {
 
 function setup(overrides: Partial<DirectCarrierControllerOptions> = {}): Setup {
   const api = new FakeApiClient({
+    [MESH_CONNECTION_PATH]: { body: { connectionId: CONNECTION_ID } },
     [RTC_CONFIG_PATH]: { body: { stun: ['stun:stun.example:3478'], turn: null } },
     [RTC_AUTHORIZE_PATH]: {
       body: { nonce: NONCE, fp_node: { algorithm: 'sha-256', value: FP_NODE_VALUE } },
@@ -164,11 +168,16 @@ describe('DirectCarrierController happy path', () => {
     s.controller.start();
     await flush();
 
-    expect(s.api.calls[0]?.path).toBe(RTC_CONFIG_PATH);
+    // connectionId 先取：拿不到就不该白建一条 PeerConnection
+    expect(s.api.calls.map((c) => c.path).slice(0, 2)).toEqual([
+      MESH_CONNECTION_PATH,
+      RTC_CONFIG_PATH,
+    ]);
     const authorize = s.api.calls.find((c) => c.path === RTC_AUTHORIZE_PATH);
     expect(authorize?.body).toEqual({
       rtcSession: s.session(),
       fp_browser: { algorithm: 'sha-256', value: normalized(FP_BROWSER_VALUE) },
+      connectionId: CONNECTION_ID,
     });
 
     const offer = s.signaling.sent[0];
@@ -228,6 +237,157 @@ describe('DirectCarrierController happy path', () => {
     s.signaling.deliver({ ...answerSignal(s), from: 'browser' });
     await flush();
     expect(s.pc().remoteDescription).toBeNull();
+  });
+});
+
+describe('DirectCarrierController connectionId 绑定（F3-4）', () => {
+  test('authorize 同时用 body 与 x-tmex-connection 头带上 connectionId', async () => {
+    const s = setup();
+    s.controller.start();
+    await flush();
+
+    const authorize = s.api.calls.find((c) => c.path === RTC_AUTHORIZE_PATH);
+    expect((authorize?.body as { connectionId?: string }).connectionId).toBe(CONNECTION_ID);
+    expect(authorize?.headers[X_TMEX_CONNECTION_HEADER]).toBe(CONNECTION_ID);
+  });
+
+  test('每次尝试都重取 connectionId：primary 重连后换成新值', async () => {
+    const s = setup();
+    s.controller.start();
+    await flush();
+    expect(s.api.calls.filter((c) => c.path === MESH_CONNECTION_PATH).length).toBe(1);
+
+    s.api.routes.set(MESH_CONNECTION_PATH, { body: { connectionId: 'conn-tab-2' } });
+    s.controller.retry();
+    await flush();
+
+    const lookups = s.api.calls.filter((c) => c.path === MESH_CONNECTION_PATH);
+    expect(lookups.length).toBe(2);
+    const ids = s.api.calls
+      .filter((c) => c.path === RTC_AUTHORIZE_PATH)
+      .map((c) => (c.body as { connectionId?: string }).connectionId);
+    expect(ids).toEqual([CONNECTION_ID, 'conn-tab-2']);
+  });
+
+  test('409 MULTIPLE_CONNECTIONS：不建 PC、不消耗退避，等 primary 重连过再来', async () => {
+    const s = setup();
+    s.api.routes.set(MESH_CONNECTION_PATH, {
+      status: 409,
+      body: { code: 'MULTIPLE_CONNECTIONS', hint: 'send x-tmex-connection' },
+    });
+    s.controller.start();
+    await flush();
+
+    expect(s.controller.getState()).toBe('failed');
+    expect(s.controller.reason).toContain('MULTIPLE_CONNECTIONS');
+    // 退避定时器一个都不排：多标签下重试多少次都还是 409
+    expect(s.clock.pendingDelays).toEqual([]);
+    expect(s.peers.length).toBe(0);
+    expect(s.api.calls.some((c) => c.path === RTC_AUTHORIZE_PATH)).toBe(false);
+    expect(s.connection.primaryHandlerCount).toBe(1);
+
+    // primary 只是抖一下还没回来：不重来
+    s.connection.setPrimaryState('WS_CONNECTING');
+    await flush();
+    expect(s.peers.length).toBe(0);
+
+    // 重连完成（此时只剩本标签页）→ 立刻重来一轮并跑通
+    s.api.routes.set(MESH_CONNECTION_PATH, { body: { connectionId: 'conn-tab-3' } });
+    s.connection.setPrimaryState('READY');
+    await flush();
+    expect(s.controller.getState()).toBe('connecting');
+    expect(s.connection.primaryHandlerCount).toBe(0);
+    const authorize = s.api.calls.find((c) => c.path === RTC_AUTHORIZE_PATH);
+    expect((authorize?.body as { connectionId?: string }).connectionId).toBe('conn-tab-3');
+  });
+
+  test('404 NO_CONNECTION 且 primary 未就绪：等它连上；已就绪则按登记竞态退避重试', async () => {
+    const waiting = setup();
+    waiting.api.routes.set(MESH_CONNECTION_PATH, { status: 404, body: { code: 'NO_CONNECTION' } });
+    waiting.connection.setPrimaryState('RECONNECT_BACKOFF');
+    waiting.controller.start();
+    await flush();
+
+    expect(waiting.controller.getState()).toBe('failed');
+    expect(waiting.clock.pendingDelays).toEqual([]);
+    waiting.api.routes.set(MESH_CONNECTION_PATH, { body: { connectionId: CONNECTION_ID } });
+    waiting.connection.setPrimaryState('READY');
+    await flush();
+    expect(waiting.controller.getState()).toBe('connecting');
+    expect(waiting.api.calls.some((c) => c.path === RTC_AUTHORIZE_PATH)).toBe(true);
+
+    const racing = setup();
+    racing.api.routes.set(MESH_CONNECTION_PATH, { status: 404, body: { code: 'NO_CONNECTION' } });
+    racing.controller.start();
+    await flush();
+    expect(racing.controller.getState()).toBe('failed');
+    expect(racing.clock.pendingDelays).toEqual([1000]);
+  });
+
+  test('authorize 自己回 409 时同样改成等 primary，而不是当 4xx 永久失败', async () => {
+    const s = setup();
+    s.api.routes.set(RTC_AUTHORIZE_PATH, {
+      status: 409,
+      body: { code: 'MULTIPLE_CONNECTIONS' },
+    });
+    s.controller.start();
+    await flush();
+
+    expect(s.controller.getState()).toBe('failed');
+    expect(s.clock.pendingDelays).toEqual([]);
+    expect(s.connection.primaryHandlerCount).toBe(1);
+  });
+
+  test('老 node（该路由 405）退化成不带 connectionId 的旧行为', async () => {
+    const s = setup();
+    s.api.routes.set(MESH_CONNECTION_PATH, {
+      status: 405,
+      body: { code: 'method_not_allowed' },
+    });
+    s.controller.start();
+    await flush();
+
+    const authorize = s.api.calls.find((c) => c.path === RTC_AUTHORIZE_PATH);
+    expect(authorize?.body).toEqual({
+      rtcSession: s.session(),
+      fp_browser: { algorithm: 'sha-256', value: normalized(FP_BROWSER_VALUE) },
+    });
+    expect(authorize?.headers[X_TMEX_CONNECTION_HEADER]).toBeUndefined();
+    expect(s.controller.getState()).toBe('connecting');
+  });
+
+  test('lookup 5xx 走普通退避；宿主没有 primary 状态源时 409 也退回退避', async () => {
+    const server = setup();
+    server.api.routes.set(MESH_CONNECTION_PATH, { status: 503, body: { code: 'UNAVAILABLE' } });
+    server.controller.start();
+    await flush();
+    expect(server.controller.getState()).toBe('failed');
+    expect(server.clock.pendingDelays).toEqual([1000]);
+
+    const legacy = setup();
+    legacy.connection.exposePrimaryStatus = false;
+    legacy.api.routes.set(MESH_CONNECTION_PATH, {
+      status: 409,
+      body: { code: 'MULTIPLE_CONNECTIONS' },
+    });
+    legacy.controller.start();
+    await flush();
+    expect(legacy.controller.getState()).toBe('failed');
+    expect(legacy.clock.pendingDelays).toEqual([1000]);
+  });
+
+  test('stop() 注销 primary 等待订阅', async () => {
+    const s = setup();
+    s.api.routes.set(MESH_CONNECTION_PATH, {
+      status: 409,
+      body: { code: 'MULTIPLE_CONNECTIONS' },
+    });
+    s.controller.start();
+    await flush();
+    expect(s.connection.primaryHandlerCount).toBe(1);
+
+    s.controller.stop();
+    expect(s.connection.primaryHandlerCount).toBe(0);
   });
 });
 
