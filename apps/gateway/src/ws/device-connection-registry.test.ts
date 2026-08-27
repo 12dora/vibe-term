@@ -1,10 +1,12 @@
 import { afterEach, describe, expect, spyOn, test } from 'bun:test';
+import { wsBorsh } from '@tmex/shared';
 import * as db from '../db';
 import {
   DeviceConnectionRegistry,
   type DeviceConnectionRegistryHost,
 } from './device-connection-registry';
-import type { DeviceConnectionEntry } from './types';
+import { createBorshTestWs } from './test-helpers';
+import { type DeviceConnectionEntry, RUNTIME_IDLE_GRACE_MS } from './types';
 
 function fakeEntry(): DeviceConnectionEntry {
   return {
@@ -133,5 +135,71 @@ describe('DeviceConnectionRegistry reconnect exhaustion', () => {
     const got = await registry.getOrCreate('dev-dead', ws as never);
     expect(got).toBe(fresh);
     expect(got).not.toBe(dead);
+  });
+});
+
+describe('DeviceConnectionRegistry pending connect vs disconnect', () => {
+  const idleTimers: Array<() => void> = [];
+  let setTimeoutSpy: ReturnType<typeof spyOn> | undefined;
+
+  afterEach(() => {
+    setTimeoutSpy?.mockRestore();
+    idleTimers.length = 0;
+  });
+
+  test('disconnect during pending getOrCreate does not emit device-connected and releases the entry', async () => {
+    setTimeoutSpy = spyOn(globalThis, 'setTimeout').mockImplementation(((
+      fn: (...args: unknown[]) => unknown,
+      delay?: number
+    ) => {
+      if (delay === RUNTIME_IDLE_GRACE_MS) {
+        idleTimers.push(fn as () => void);
+      }
+      return 0 as unknown as ReturnType<typeof setTimeout>;
+    }) as typeof setTimeout);
+
+    const released: string[] = [];
+    const kinds: number[] = [];
+    const releaseRef: { current: (() => void) | null } = { current: null };
+    const gate = new Promise<void>((resolve) => {
+      releaseRef.current = resolve;
+    });
+    const created = fakeEntry();
+    created.runtime = { requestSnapshot() {} } as DeviceConnectionEntry['runtime'];
+
+    const host = {
+      canonicalSessions: new Map(),
+      async createDeviceConnectionEntry() {
+        await gate;
+        return created;
+      },
+      releaseConnectionEntry(deviceId: string, entry: DeviceConnectionEntry) {
+        released.push(deviceId);
+        expect(entry).toBe(created);
+      },
+      sendEnvelope(_ws: unknown, kind: number) {
+        kinds.push(kind);
+      },
+    } as unknown as DeviceConnectionRegistryHost;
+
+    const registry = new DeviceConnectionRegistry(host);
+    const ws = createBorshTestWs();
+
+    const pendingConnect = registry.handleDeviceConnect(ws, 'device-race');
+    registry.handleDeviceDisconnect(ws, 'device-race');
+    if (releaseRef.current) {
+      releaseRef.current();
+    }
+    await pendingConnect;
+
+    expect(kinds).toEqual([wsBorsh.KIND_DEVICE_DISCONNECTED]);
+    expect(kinds).not.toContain(wsBorsh.KIND_DEVICE_CONNECTED);
+    expect(created.clients.size).toBe(0);
+
+    expect(idleTimers.length).toBe(1);
+    idleTimers[0]();
+    expect(released).toEqual(['device-race']);
+    expect(registry.connections.size).toBe(0);
+    expect(registry.pendingConnectionEntries.size).toBe(0);
   });
 });

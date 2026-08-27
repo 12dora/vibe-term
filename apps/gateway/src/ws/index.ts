@@ -279,6 +279,7 @@ export class WebSocketServer
   handleClose(ws: ServerWebSocket<ClientState>): void {
     console.log('[ws] client disconnected');
 
+    this.registry.abandonSocket(ws);
     this.canonicalSessions.get(ws)?.close();
     this.canonicalSessions.delete(ws);
     gatewayWebSocketSendGuard.forget(ws as ServerWebSocket<unknown>);

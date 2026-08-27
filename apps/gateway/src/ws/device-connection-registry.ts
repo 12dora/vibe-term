@@ -36,6 +36,10 @@ export class DeviceConnectionRegistry {
   pendingConnectionEntries = new Map<string, Promise<DeviceConnectionEntry | null>>();
   private closed = false;
   private generation = 0;
+  private readonly connectGenerations = new WeakMap<
+    ServerWebSocket<ClientState>,
+    Map<string, number>
+  >();
 
   constructor(private readonly host: DeviceConnectionRegistryHost) {}
 
@@ -189,8 +193,32 @@ export class DeviceConnectionRegistry {
     }
   }
 
+  private bumpConnectGeneration(ws: ServerWebSocket<ClientState>, deviceId: string): number {
+    let gens = this.connectGenerations.get(ws);
+    if (!gens) {
+      gens = new Map();
+      this.connectGenerations.set(ws, gens);
+    }
+    const next = (gens.get(deviceId) ?? 0) + 1;
+    gens.set(deviceId, next);
+    return next;
+  }
+
+  private connectGenerationOf(ws: ServerWebSocket<ClientState>, deviceId: string): number {
+    return this.connectGenerations.get(ws)?.get(deviceId) ?? 0;
+  }
+
+  abandonSocket(ws: ServerWebSocket<ClientState>): void {
+    this.connectGenerations.delete(ws);
+  }
+
   async handleDeviceConnect(ws: ServerWebSocket<ClientState>, deviceId: string): Promise<void> {
+    const connectGen = this.bumpConnectGeneration(ws, deviceId);
     const entry = await this.getOrCreate(deviceId, ws);
+    if (this.connectGenerationOf(ws, deviceId) !== connectGen) {
+      if (entry) this.scheduleConnectionEntryRelease(deviceId, entry);
+      return;
+    }
     if (!entry) return;
 
     entry.clients.add(ws);
@@ -216,6 +244,7 @@ export class DeviceConnectionRegistry {
   }
 
   handleDeviceDisconnect(ws: ServerWebSocket<ClientState>, deviceId: string): void {
+    this.bumpConnectGeneration(ws, deviceId);
     this.host.canonicalSessions.get(ws)?.detachDevice(deviceId);
     const entry = this.connections.get(deviceId);
     if (entry) {
