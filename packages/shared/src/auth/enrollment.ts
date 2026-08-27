@@ -90,6 +90,7 @@ export function encodeJoinToken(
   raw.set(rootPublicKey, 32);
   raw.set(keyLogHeadHash, 64);
   const token = encodeBase64url(raw);
+  raw.fill(0);
   if (token.length !== JOIN_TOKEN_CHARS) {
     throw new Error(`join token must be ${JOIN_TOKEN_CHARS} chars`);
   }
