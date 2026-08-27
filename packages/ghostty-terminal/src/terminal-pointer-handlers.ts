@@ -170,6 +170,13 @@ function createDragMoveListener(context: PointerEventContext): (event: MouseEven
       });
       return;
     }
+    // 拖到窗口外松开时 mouseup 不会派发，拖拽会连同自动滚动一直挂着：
+    // 下一次没有按键的 mousemove 即视为本次拖拽已结束。
+    if (event.buttons === 0) {
+      context.mouse.dragActive = false;
+      context.finishPointerSelection(event);
+      return;
+    }
     context.updatePointerSelection(event);
   };
 }

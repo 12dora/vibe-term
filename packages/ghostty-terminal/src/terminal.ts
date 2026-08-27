@@ -570,7 +570,7 @@ export class GhosttyTerminalController implements CompatibleTerminalLike {
     this.disposed = true;
 
     this.renderCoordinator.cancelPending();
-    this.selection.stopAutoScroll();
+    this.selection.dispose();
     this.updateSelectionTextProbe(null);
     this.clearDomEventListeners();
     this.dom.cancelScrollbarFade();

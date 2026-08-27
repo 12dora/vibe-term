@@ -106,6 +106,11 @@ function installCanvasDom(): FakeDom {
   return installFakeDom({ mouseEvent: FakeMouseEvent, wheelEvent: FakeWheelEvent });
 }
 
+// 自动滚动 interval 是 48ms，等两拍足够观察到它是否还在跑。
+function waitForAutoScrollTicks(): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, 160));
+}
+
 function installLocalFileFetch(): () => void {
   const previousFetch = globalThis.fetch;
   (globalThis as any).fetch = async (input: RequestInfo | URL) => {
@@ -930,6 +935,44 @@ describe('GhosttyTerminalController canvas baseline', () => {
       }) as unknown as FakeEvent
     );
     expect(bindings.mouseEventCalls?.length ?? 0).toBeGreaterThan(0);
+  });
+
+  // 拖到窗口外松开鼠标时浏览器不会派发 mouseup：自动滚动必须在下一次
+  // buttons=0 的 mousemove 上收尾，否则 48ms 的 interval 会一直滚下去。
+  test('drag auto-scroll stops when the mouse button is released outside the window', async () => {
+    dom = installCanvasDom();
+    const { bindings, screen, windowTarget } = await setupMouseTerminal([]);
+
+    screen?.dispatchEvent(
+      new FakeMouseEvent('mousedown', {
+        clientX: 10,
+        clientY: 8,
+        button: 0,
+        buttons: 1,
+      }) as unknown as FakeEvent
+    );
+    windowTarget.dispatchEvent(
+      new FakeMouseEvent('mousemove', {
+        clientX: 10,
+        clientY: 900,
+        buttons: 1,
+      }) as unknown as FakeEvent
+    );
+
+    await waitForAutoScrollTicks();
+    expect(bindings.scrollDeltaCalls.length).toBeGreaterThan(0);
+
+    windowTarget.dispatchEvent(
+      new FakeMouseEvent('mousemove', {
+        clientX: 10,
+        clientY: 900,
+        buttons: 0,
+      }) as unknown as FakeEvent
+    );
+    const afterRelease = bindings.scrollDeltaCalls.length;
+
+    await waitForAutoScrollTicks();
+    expect(bindings.scrollDeltaCalls.length).toBe(afterRelease);
   });
 
   // 真实终端只在跨 cell 时发 motion：同 cell 的 mousemove 必须去重
@@ -2362,6 +2405,43 @@ describe('GhosttyTerminalController clipboard and selection API', () => {
     terminal.resize(terminal.cols + 4, terminal.rows);
 
     expect(firstCellOf(0)).toBeNull();
+  });
+
+  // 起手点必然落在选择表面内，不该有自动滚动；退化尺寸（隐藏面板 / 0 高度）下若在
+  // begin 里起 interval，就再没有指针输入能喂停它，会一直滚 + 一直渲染。
+  test('starting a selection should not leave an auto-scroll interval running', async () => {
+    dom = installCanvasDom();
+    const bindings = createFakeBindings();
+    const { terminal } = await setupTerminal(bindings);
+
+    expect(terminal.startTouchSelection(4, 4, 'word')).toBeTrue();
+
+    await waitForAutoScrollTicks();
+
+    expect(bindings.scrollDeltaCalls.length).toBe(0);
+  });
+
+  // 拖拽中途销毁终端：WASM 句柄与 render-state 已释放，残留的 interval 再回调
+  // 就会打到悬空资源（TypeError: resources.bindings is undefined）。
+  test('dispose during drag auto-scroll should clear the interval', async () => {
+    dom = installCanvasDom();
+    const bindings = createFakeBindings();
+    const { terminal } = await setupTerminal(bindings);
+    const screen = findElementByClass(terminal.element as unknown as FakeElement, 'xterm-screen');
+    screen?.setBoundingClientRect({ width: 960, height: 480, left: 0, top: 0 });
+
+    expect(terminal.startTouchSelection(4, 4, 'word')).toBeTrue();
+    terminal.updateTouchSelection(4, 900);
+
+    await waitForAutoScrollTicks();
+    expect(bindings.scrollDeltaCalls.length).toBeGreaterThan(0);
+
+    terminal.dispose();
+    const afterDispose = bindings.scrollDeltaCalls.length;
+
+    await waitForAutoScrollTicks();
+    expect(bindings.scrollDeltaCalls.length).toBe(afterDispose);
+    expect(terminal.startTouchSelection(4, 4, 'word')).toBeFalse();
   });
 
   test('resize with changed cols/rows should clear selection', async () => {

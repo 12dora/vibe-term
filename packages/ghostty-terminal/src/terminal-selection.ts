@@ -60,6 +60,7 @@ export class TerminalSelection {
   private state: SelectionState = createEmptySelectionState();
   private drag: PointerDragState = createPointerDragState();
   private autoScrollTimer: ReturnType<typeof setInterval> | null = null;
+  private disposed = false;
 
   constructor(private readonly context: SelectionHostContext) {}
 
@@ -91,7 +92,19 @@ export class TerminalSelection {
     this.stopAutoScroll();
   }
 
+  // 宿主销毁后 WASM 句柄与 render-state 已释放，任何回调都会打到悬空资源上：
+  // 停掉自动滚动并让所有入口彻底失效。
+  dispose(): void {
+    this.disposed = true;
+    this.drag.active = false;
+    this.stopAutoScroll();
+  }
+
   begin(clientX: number, clientY: number, mode: SelectionMode): boolean {
+    if (this.disposed) {
+      return false;
+    }
+
     const point = this.context.hitTest(clientX, clientY);
     if (!point) {
       return false;
@@ -112,13 +125,14 @@ export class TerminalSelection {
       },
       (line) => this.context.getLineModel(line)
     );
-    this.updateAutoScroll();
+    // 按下点必然落在选择表面内，这里起不了自动滚动；退化尺寸（隐藏面板、0 高度）下
+    // 反而会起一个没有后续指针输入喂养、永不停止的 interval，故只由 update 驱动。
     this.context.render();
     return true;
   }
 
   update(clientX: number, clientY: number): void {
-    if (!this.drag.active) {
+    if (this.disposed || !this.drag.active) {
       return;
     }
 
@@ -138,7 +152,7 @@ export class TerminalSelection {
   }
 
   finishPointerDrag(event: MouseEvent): PointerDragEnd {
-    if (!this.drag.active || event.button !== 0) {
+    if (this.disposed || !this.drag.active || event.button !== 0) {
       return 'ignored';
     }
 
@@ -161,7 +175,7 @@ export class TerminalSelection {
     this.drag.active = false;
   }
 
-  stopAutoScroll(): void {
+  private stopAutoScroll(): void {
     if (this.autoScrollTimer === null) {
       return;
     }
@@ -171,7 +185,7 @@ export class TerminalSelection {
   }
 
   private updateAutoScroll(): void {
-    if (!this.drag.active || this.drag.lastClientY === null) {
+    if (this.disposed || !this.drag.active || this.drag.lastClientY === null) {
       this.stopAutoScroll();
       return;
     }
@@ -199,7 +213,12 @@ export class TerminalSelection {
   }
 
   private stepAutoScroll(): void {
-    if (!this.drag.active || this.drag.lastClientX === null || this.drag.lastClientY === null) {
+    if (
+      this.disposed ||
+      !this.drag.active ||
+      this.drag.lastClientX === null ||
+      this.drag.lastClientY === null
+    ) {
       this.stopAutoScroll();
       return;
     }
