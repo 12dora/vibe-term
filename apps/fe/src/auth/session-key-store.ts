@@ -6,7 +6,13 @@
 //   * sk_sess 只能签 login，不得签任何 user_key_log 记录。
 //   * TOTP 只在 delegation.method === 'root' 且用户开了 TOTP 时随登录下发。
 
-import type { AuthApi, MeshNode } from '@tmex/api-client/auth/index';
+import { SELF_NODE_ID } from '@tmex/api-client';
+import type {
+  AuthApi,
+  MeshNode,
+  PasskeySummary,
+  PublicKeyCredentialDescriptorJSON,
+} from '@tmex/api-client/auth/index';
 import { defaultAuthApi } from '@tmex/api-client/auth/index';
 import { startAuthentication } from '@tmex/api-client/auth/index';
 import type { Delegation } from '@tmex/shared/auth';
@@ -224,10 +230,14 @@ export async function establishSessionFromPassword(
 export interface EstablishFromPasskeyOptions {
   uid: string;
   entryNodeId: string;
-  /** 指定用哪一把；不给则用 entry 下发的 allowCredentials 里的第一把。 */
+  /** 指定用哪一把；不给则按当前 origin / RP 过滤后再选。 */
   credentialId?: string;
   api?: AuthApi;
   now?: number;
+  /** 当前 origin（测试注入）；缺省读 `location.origin`。 */
+  origin?: string;
+  /** 已知的 passkey 元数据（含注册 origin）；缺省尝试 `GET /api/auth/passkeys`。 */
+  passkeys?: PasskeySummary[] | null;
 }
 
 export class PasskeyCredentialUnknownError extends Error {
@@ -236,6 +246,47 @@ export class PasskeyCredentialUnknownError extends Error {
     super('no passkey credential available for this entry');
     this.name = 'PasskeyCredentialUnknownError';
   }
+}
+
+function currentOrigin(override?: string): string {
+  if (override) return override;
+  return (globalThis as { location?: { origin?: string } }).location?.origin ?? '';
+}
+
+/**
+ * 从 `allowCredentials` 里挑一把**属于当前 origin / RP** 的凭证。
+ *
+ * 不能盲取第一把：用户在 node A、node B 各注册过 passkey 时，从 B 登录若 A 的凭证排在前面，
+ * 浏览器会被迫用属于 A 的 RP 的凭证并以 `NotAllowedError` 失败（见 F4-1 评审 Major）。
+ * 后端已按精确 origin 过滤；这里再用 `/api/auth/passkeys` 的 `origin` / `rp_id` 兜一层，
+ * 没有元数据可用时才退回列表顺序。
+ */
+export function selectPasskeyCredential(input: {
+  allowCredentials?: PublicKeyCredentialDescriptorJSON[];
+  passkeys?: PasskeySummary[] | null;
+  rpId?: string;
+  origin: string;
+  preferredId?: string;
+}): string | null {
+  const ids = (input.allowCredentials ?? []).map((row) => row.id).filter(Boolean);
+  if (ids.length === 0) return null;
+  if (input.preferredId) return ids.includes(input.preferredId) ? input.preferredId : null;
+
+  const known = input.passkeys ?? null;
+  if (known && known.length > 0) {
+    const byId = new Map(known.map((row) => [row.credential_id, row]));
+    const sameOrigin = ids.filter((id) => byId.get(id)?.origin === input.origin);
+    if (sameOrigin.length > 0) return sameOrigin[0];
+    if (input.rpId) {
+      const sameRp = ids.filter((id) => byId.get(id)?.rp_id === input.rpId);
+      if (sameRp.length > 0) return sameRp[0];
+    }
+    // 有元数据但没有一把属于当前 origin / RP：宁可报「本入口没有可用 passkey」，
+    // 也不要拿别的 origin 的凭证去发起注定失败的仪式。
+    const anyKnown = ids.some((id) => byId.has(id));
+    if (anyKnown) return null;
+  }
+  return ids[0];
 }
 
 /**
@@ -261,8 +312,19 @@ export async function establishSessionFromPasskey(
     encodeBase64url(encodeDelegation(delegation))
   );
   if (!credentialId) {
-    credentialId = options.allowCredentials?.[0]?.id ?? '';
-    if (!credentialId) throw new PasskeyCredentialUnknownError();
+    // 登录前通常没有会话，`/api/auth/passkeys` 会失败——那时只能信后端的 origin 过滤。
+    let passkeys = opts.passkeys ?? null;
+    if (passkeys === null && opts.passkeys === undefined) {
+      passkeys = await api.listPasskeys().catch(() => null);
+    }
+    const picked = selectPasskeyCredential({
+      allowCredentials: options.allowCredentials,
+      passkeys,
+      rpId: options.rpId,
+      origin: currentOrigin(opts.origin),
+    });
+    if (!picked) throw new PasskeyCredentialUnknownError();
+    credentialId = picked;
     delegation = buildFor(credentialId);
     options = await api.passkeyLoginOptions(
       opts.uid,
@@ -317,7 +379,15 @@ export interface LoginToNodeOptions {
   api?: AuthApi;
   /** 已知的 node 行（避免 fan-out 时每个 node 各拉一次列表）。 */
   node?: MeshNode;
+  /**
+   * entry 自身的第一次登录：`/api/mesh/nodes` 需要会话，此时还拿不到自己的公钥，
+   * 只能先登录、再用新会话拉列表回头核对（`verifySelfPublicKey`）。仅 `self` 允许。
+   */
+  selfBootstrap?: boolean;
 }
+
+/** self bootstrap 登录时用过的 nodePk，登录后必须与 mesh 列表里的公钥核对。 */
+let selfChallengePk: Uint8Array | null = null;
 
 /**
  * 对单台 node 执行设计 §2「登录」的 1–3 步。
@@ -331,16 +401,17 @@ export async function loginToNode(
   const session = getSessionKey();
   if (!current || !session) return { ok: false, code: 'NO_SESSION_KEY' };
   const api = opts.api ?? defaultAuthApi;
+  const bootstrap = opts.selfBootstrap === true && nodeId === SELF_NODE_ID;
 
   let node = opts.node;
-  if (!node) {
+  if (!node && !bootstrap) {
     try {
       node = (await api.listNodes()).find((item) => item.id === nodeId);
     } catch {
       return { ok: false, code: 'NETWORK_ERROR' };
     }
   }
-  if (!node) return { ok: false, code: 'UNKNOWN_NODE' };
+  if (!node && !bootstrap) return { ok: false, code: 'UNKNOWN_NODE' };
 
   const needsTotp = session.method === 'root' && session.hasTotp;
   if (needsTotp && !(current.kTotp && current.totpCode)) {
@@ -355,8 +426,12 @@ export async function loginToNode(
   }
 
   const targetPk = decodeBase64url(challenge.nodePk);
-  if (!bytesEqual(targetPk, decodeBase64url(node.publicKey))) {
-    return { ok: false, code: 'NODE_PK_MISMATCH' };
+  if (node) {
+    if (!bytesEqual(targetPk, decodeBase64url(node.publicKey))) {
+      return { ok: false, code: 'NODE_PK_MISMATCH' };
+    }
+  } else {
+    selfChallengePk = targetPk;
   }
 
   const login = buildLogin({
@@ -398,28 +473,78 @@ export interface FanOutOptions {
   api?: AuthApi;
   /** 已登录的 node 是否跳过，默认跳过。 */
   skipLoggedIn?: boolean;
+  /** entry 自身在列表里的显示名（`/api/auth/nodes` 或 mode 提供）。 */
+  entryName?: string;
+}
+
+export interface FanOutResult {
+  rows: NodeLoginProgress[];
+  /** 至少有一台 node 登录成功（entry 自身也算）。只有为真才允许跳到 `next`。 */
+  anyOk: boolean;
+  /**
+   * `/api/mesh/nodes` 拉取失败。**与「没有其它目标」是两回事**：
+   * 列表失败时后续受保护请求还会 401，不能当成登录完成（见 F4-1 评审 Minor）。
+   */
+  listFailed: boolean;
 }
 
 /**
- * 对 `/api/mesh/nodes` 中当前在线的每个 node 并行执行登录，进度写入 progress store。
+ * 设计 §2「登录页体验」的 fan-out：
+ *
+ *   1. 先登录 entry 自身（`self`）——`/api/mesh/nodes` 需要会话，没有 `tmex_s_self` 就拿不到公钥；
+ *   2. 用新会话拉 `/api/mesh/nodes`，顺带核对自己的公钥与第 1 步 challenge 里的 `nodePk`；
+ *   3. 对其余在线 node 并行登录。
+ *
  * 完成后清掉一次性 TOTP 码。
  */
-export async function loginToAllReachable(opts: FanOutOptions = {}): Promise<NodeLoginProgress[]> {
+export async function loginToAllReachable(opts: FanOutOptions = {}): Promise<FanOutResult> {
   const api = opts.api ?? defaultAuthApi;
   const skipLoggedIn = opts.skipLoggedIn ?? true;
+  const entryName = opts.entryName ?? SELF_NODE_ID;
+
+  setProgress([{ nodeId: SELF_NODE_ID, nodeName: entryName, status: 'pending' }]);
+  const selfResult = await loginToNode(SELF_NODE_ID, { api, selfBootstrap: true });
+  patchProgress(
+    SELF_NODE_ID,
+    selfResult.ok ? { status: 'ok' } : { status: 'error', code: selfResult.code }
+  );
+  if (!selfResult.ok) {
+    clearTotpCode();
+    return { rows: progress, anyOk: false, listFailed: false };
+  }
 
   let nodes: MeshNode[];
   try {
     nodes = await api.listNodes();
   } catch {
-    setProgress([]);
-    return [];
+    clearTotpCode();
+    return { rows: progress, anyOk: true, listFailed: true };
   }
 
-  const targets = nodes.filter((node) => node.online && !(skipLoggedIn && node.loggedIn));
-  setProgress(
-    targets.map((node) => ({ nodeId: node.id, nodeName: node.name, status: 'pending' as const }))
+  const entryNodeId = current?.info.entryNodeId ?? null;
+  const selfRow = entryNodeId ? nodes.find((node) => node.id === entryNodeId) : undefined;
+  if (selfRow && selfChallengePk) {
+    // 登录后回头核对：hub 掉包 entry 公钥的话，这里能发现（会话已建立，但列表是权威成员集）。
+    if (!bytesEqual(selfChallengePk, decodeBase64url(selfRow.publicKey))) {
+      patchProgress(SELF_NODE_ID, { status: 'error', code: 'NODE_PK_MISMATCH' });
+      clearSessionKey();
+      clearTotpCode();
+      return { rows: progress, anyOk: false, listFailed: false };
+    }
+  }
+  selfChallengePk = null;
+
+  const targets = nodes.filter(
+    (node) => node.id !== entryNodeId && node.online && !(skipLoggedIn && node.loggedIn)
   );
+  setProgress([
+    ...progress,
+    ...targets.map((node) => ({
+      nodeId: node.id,
+      nodeName: node.name,
+      status: 'pending' as const,
+    })),
+  ]);
 
   await Promise.all(
     targets.map(async (node) => {
@@ -429,7 +554,11 @@ export async function loginToAllReachable(opts: FanOutOptions = {}): Promise<Nod
   );
 
   clearTotpCode();
-  return progress;
+  return {
+    rows: progress,
+    anyOk: progress.some((row) => row.status === 'ok'),
+    listFailed: false,
+  };
 }
 
 /** 全部登出：对每台 node fan-out `POST /n/:T/api/auth/logout`，随后丢弃会话钥。 */

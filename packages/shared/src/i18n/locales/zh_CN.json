@@ -1030,7 +1030,8 @@
         "credentialsRequired": "请填写用户名与密码",
         "totpRequired": "请输入动态验证码",
         "allNodesFailed": "所有节点均登录失败",
-        "nodeListFailed": "节点列表加载失败，请重试"
+        "nodeListFailed": "节点列表加载失败，请重试",
+        "willSignIn": "本次将登录以下节点："
       },
       "node": {
         "loginToThisNode": "登录此节点",

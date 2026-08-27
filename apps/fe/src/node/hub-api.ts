@@ -5,6 +5,7 @@
 // 转发器代到 hub 机；**不能**用当前路由 node 的 ApiClient，否则会变成 `/n/a/n/hub/...`。
 
 import { type ApiClient, defaultApiClient, resolveNodeUrl } from '@tmex/api-client';
+import type { HubEnrollmentStatus } from '@tmex/api-client/auth/index';
 
 /** `GET /n/<hub>/api/hub/nodes` 的单行（见 `apps/gateway/src/hub/hub-runtime.ts`）。 */
 export interface HubNodeRow {
@@ -16,10 +17,7 @@ export interface HubNodeRow {
   version: string | null;
   last_seen_at: number | null;
   direct_capable: boolean;
-  /**
-   * base64url(borsh(Certificate))。**后端目前不返回**，是 admit 流程能自动完成的前提，
-   * 见 `sub/f4-3-result.md`「后端待补」。存在时 `enroll_pk` 匹配即可自动签 `admit-node`。
-   */
+  /** base64url(borsh(Certificate))：已 admit 的 node 才有。 */
   certificate?: string;
   /** base64url，64 字节。与 `certificate` 同批下发。 */
   cert_sig?: string;
@@ -29,7 +27,11 @@ export interface HubEnrollmentCreated {
   ok: boolean;
   id: string;
   expires_at: number;
+  /** hub 的对外可达地址；join 命令**只能**用它。 */
+  public_url?: string;
 }
+
+export type { HubEnrollmentStatus };
 
 export class HubApiError extends Error {
   constructor(
@@ -80,14 +82,14 @@ export class HubApi {
     if (!res.ok) throw await readError(res, 'rename_failed');
   }
 
-  /** `bytes`/`sig` 是签好的 `revoke-node` 记录（base64url）；hub 会自己把它 append 进 key-log。 */
-  async revoke(nodeId: string, record: { bytes: string; sig: string }): Promise<void> {
-    const res = await this.client.fetch(this.path(`/nodes/${encodeURIComponent(nodeId)}/revoke`), {
-      method: 'POST',
-      headers: JSON_HEADERS,
-      body: JSON.stringify(record),
-    });
-    if (!res.ok) throw await readError(res, 'revoke_failed');
+  /**
+   * `GET /n/<hub>/api/hub/enrollments/:id`：redeem 后带 `{certificate, cert_sig, node_id}`。
+   * `/mesh/ws` 的 `ENROLL_REDEEMED` 推送丢失时（页面刚打开、WS 断线）由它兜底。
+   */
+  async getEnrollment(id: string): Promise<HubEnrollmentStatus> {
+    const res = await this.client.fetch(this.path(`/enrollments/${encodeURIComponent(id)}`));
+    if (!res.ok) throw await readError(res, 'enrollment_status_failed');
+    return (await res.json()) as HubEnrollmentStatus;
   }
 
   async createEnrollment(body: {

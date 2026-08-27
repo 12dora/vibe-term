@@ -9,7 +9,7 @@ import { SELF_NODE_ID } from '@tmex/api-client';
 import type { AuthApi, AuthModeResponse, MeshNode } from '@tmex/api-client/auth/index';
 import { defaultAuthApi } from '@tmex/api-client/auth/index';
 import { bytesToHex, decodeBase64url, sha256 } from '@tmex/shared/auth';
-import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
+import { useCallback, useEffect, useMemo, useState, useSyncExternalStore } from 'react';
 import { HubApi, type HubNodeRow } from './hub-api';
 import { type MeshEventSource, type NodeEventPayload, sharedMeshEvents } from './mesh-events';
 
@@ -124,7 +124,7 @@ export function mergeNodes(
       loggedIn: node.loggedIn,
       inventory: node.inventory ?? null,
       isSelf: context.entryNodeId != null && node.id === context.entryNodeId,
-      isHub: context.hubNodeId != null && node.id === context.hubNodeId,
+      isHub: node.isHub === true || (context.hubNodeId != null && node.id === context.hubNodeId),
       lastSeenAt: hub?.last_seen_at ?? null,
       status: hub?.status ?? null,
       certificate: hub?.certificate ?? null,
@@ -134,37 +134,17 @@ export function mergeNodes(
 }
 
 /**
- * hub 机 node 的候选顺序（契约里没有 hub 标志位时的启发式，见任务书）：
- * 1. inventory 显式标了 hub 角色的 node；
- * 2. entry 自身（hub,node 同机是默认部署形态，一次本地请求就能确定）；
- * 3. 其余 `reach !== null` 的在线 node。
+ * hub 机 node 的 id。**只认契约字段**：`/api/mesh/nodes` 的 `isHub`（hub 经 `node.list`
+ * 下发、node 侧持久化），以及 `/api/auth/mode` 的 `hubNodeId`。
+ *
+ * 之前那套「inventory 猜角色 → entry 自身 → 任意在线 node」的启发式已删除：逐个探测
+ * `/n/<id>/api/hub/nodes` 会把管理面请求发给不是 hub 的机器，第一个恰好返回 200 的还会被
+ * 当成 hub。
  */
-export function hubCandidates(nodes: MeshNode[], entryNodeId: string | null): string[] {
-  const flagged: string[] = [];
-  const rest: string[] = [];
-  for (const node of nodes) {
-    if (inventoryMarksHub(node.inventory)) flagged.push(node.id);
-  }
-  const selfNode = entryNodeId ? nodes.find((node) => node.id === entryNodeId) : undefined;
-  if (selfNode && !flagged.includes(selfNode.id)) rest.push(selfNode.id);
-  for (const node of nodes) {
-    if (flagged.includes(node.id) || rest.includes(node.id)) continue;
-    if (node.online && reachOf(node.reach) !== null) rest.push(node.id);
-  }
-  return [...flagged, ...rest];
-}
-
-function inventoryMarksHub(inventory: unknown): boolean {
-  if (!inventory || typeof inventory !== 'object') return false;
-  const record = inventory as { hub?: unknown; roles?: unknown };
-  if (record.hub === true) return true;
-  if (typeof record.roles === 'string') {
-    return record.roles.split(',').some((role) => role.trim() === 'hub');
-  }
-  if (Array.isArray(record.roles)) {
-    return record.roles.some((role) => role === 'hub');
-  }
-  return false;
+export function findHubNodeId(nodes: MeshNode[], modeHubNodeId?: string | null): string | null {
+  const flagged = nodes.find((node) => node.isHub === true);
+  if (flagged) return flagged.id;
+  return modeHubNodeId || null;
 }
 
 // ---------------------------------------------------------------------------
@@ -351,90 +331,72 @@ export interface HubNodeState {
 
 export interface UseHubNodeOptions {
   enabled?: boolean;
-  /** 覆盖候选探测（测试注入）。 */
+  /** 覆盖列表请求（测试注入）。 */
   probe?: (nodeId: string) => Promise<HubNodeRow[]>;
-  /** 已知 hub nodeId 时跳过探测。 */
+  /** `/api/auth/mode` 下发的 hub nodeId；mesh 列表还没到时用它。 */
   hubNodeId?: string | null;
   pollIntervalMs?: number;
 }
 
 /**
- * 发现 hub 机的 node 并拉取 `GET /n/<hub>/api/hub/nodes`。
- * 契约里没有 hub 标志位，按 `hubCandidates()` 的顺序逐个探测，第一个 200 的即为 hub。
+ * 定位 hub 机的 node（`isHub` / `mode.hubNodeId`）并拉取 `GET /n/<hub>/api/hub/nodes`。
+ * 定位不到就直接判定 hub 不可达，**不再**逐个探测其它 node。
  */
-export function useHubNode(
-  nodes: MeshNode[],
-  entryNodeId: string | null,
-  options: UseHubNodeOptions = {}
-): HubNodeState {
+export function useHubNode(nodes: MeshNode[], options: UseHubNodeOptions = {}): HubNodeState {
   const enabled = options.enabled ?? true;
   const pollIntervalMs = options.pollIntervalMs ?? DEFAULT_POLL_MS;
-  const [resolved, setResolved] = useState<string | null>(options.hubNodeId ?? null);
   const [hubNodes, setHubNodes] = useState<HubNodeRow[] | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const candidates = useMemo(
-    () => (options.hubNodeId ? [options.hubNodeId] : hubCandidates(nodes, entryNodeId)),
-    [nodes, entryNodeId, options.hubNodeId]
+  const resolved = useMemo(
+    () => findHubNodeId(nodes, options.hubNodeId),
+    [nodes, options.hubNodeId]
   );
   const probe = options.probe;
-  // 已确定过的 hub 只影响探测顺序，不该成为「重新探测」的触发条件，因此走 ref 而不是依赖。
-  const resolvedRef = useRef<string | null>(resolved);
-  resolvedRef.current = resolved;
 
-  const probeHub = useCallback(
+  const loadHub = useCallback(
     async (isCancelled: () => boolean) => {
-      if (!enabled || candidates.length === 0) {
+      if (!enabled || !resolved) {
         setHubNodes(null);
         return;
       }
       setLoading(true);
-      const previous = resolvedRef.current;
-      const ordered = previous
-        ? [previous, ...candidates.filter((id) => id !== previous)]
-        : candidates;
-      let lastError: string | null = null;
-      for (const nodeId of ordered) {
-        try {
-          const rows = probe ? await probe(nodeId) : await new HubApi(nodeId).listNodes();
-          if (isCancelled()) return;
-          setResolved(nodeId);
-          setHubNodes(rows);
-          setError(null);
-          setLoading(false);
-          return;
-        } catch (err) {
-          lastError = err instanceof Error ? err.message : String(err);
-        }
+      try {
+        const rows = probe ? await probe(resolved) : await new HubApi(resolved).listNodes();
+        if (isCancelled()) return;
+        setHubNodes(rows);
+        setError(null);
+      } catch (err) {
+        if (isCancelled()) return;
+        setHubNodes(null);
+        setError(err instanceof Error ? err.message : String(err));
+      } finally {
+        if (!isCancelled()) setLoading(false);
       }
-      if (isCancelled()) return;
-      setHubNodes(null);
-      setError(lastError);
-      setLoading(false);
     },
-    [candidates, enabled, probe]
+    [enabled, probe, resolved]
   );
 
   useEffect(() => {
     let cancelled = false;
-    void probeHub(() => cancelled);
+    void loadHub(() => cancelled);
     return () => {
       cancelled = true;
     };
-  }, [probeHub]);
+  }, [loadHub]);
 
   useEffect(() => {
     if (!enabled || pollIntervalMs <= 0) return;
     let cancelled = false;
-    const timer = setInterval(() => void probeHub(() => cancelled), pollIntervalMs);
+    const timer = setInterval(() => void loadHub(() => cancelled), pollIntervalMs);
     return () => {
       cancelled = true;
       clearInterval(timer);
     };
-  }, [enabled, pollIntervalMs, probeHub]);
+  }, [enabled, pollIntervalMs, loadHub]);
 
-  const refresh = useCallback(() => void probeHub(() => false), [probeHub]);
+  const refresh = useCallback(() => void loadHub(() => false), [loadHub]);
   const hubApi = useMemo(() => (resolved ? new HubApi(resolved) : null), [resolved]);
 
   return {

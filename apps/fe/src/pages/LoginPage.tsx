@@ -2,6 +2,7 @@
 // standalone（`/api/auth/mode` 返回 `mode:'none'`）下整页不渲染。
 
 import {
+  clearSessionKey,
   clearTotpCode,
   establishSessionFromPasskey,
   establishSessionFromPassword,
@@ -10,12 +11,12 @@ import {
   setTotpCode,
 } from '@/auth/session-key-store';
 import { useAuthMode, useLoginProgress } from '@/auth/use-session-key';
-import type { AuthApi, AuthModeResponse } from '@tmex/api-client/auth/index';
-import { defaultAuthApi } from '@tmex/api-client/auth/index';
+import type { AuthApi, AuthModeResponse, PublicNode } from '@tmex/api-client/auth/index';
+import { defaultAuthApi, requireRootEpoch } from '@tmex/api-client/auth/index';
 import { Button } from '@tmex/ui/button';
 import { Input } from '@tmex/ui/input';
 import { AlertTriangle, CheckCircle2, Fingerprint, Loader2, ShieldCheck } from 'lucide-react';
-import { type FormEvent, useCallback, useEffect, useState } from 'react';
+import { type FormEvent, useCallback, useEffect, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Link, useNavigate, useSearchParams } from 'react-router';
 
@@ -68,6 +69,28 @@ function LoginForm({ mode, api }: LoginFormProps) {
 
   const canUsePasskey = mode.passkeyAvailable && mode.passkeysForThisOrigin;
 
+  // 登录前只能读公开的 `/api/auth/nodes`（无公钥）：用来告诉用户这次会登录哪些节点。
+  const [publicNodes, setPublicNodes] = useState<PublicNode[] | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    api
+      .listPublicNodes()
+      .then((rows) => {
+        if (!cancelled) setPublicNodes(rows);
+      })
+      .catch(() => {
+        if (!cancelled) setPublicNodes(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [api]);
+
+  const entryName = useMemo(
+    () => publicNodes?.find((row) => row.id === mode.nodeId)?.name ?? mode.nodeId,
+    [publicNodes, mode.nodeId]
+  );
+
   // `login.uid` / `delegation.uid` / k_totp 的 HKDF info 用的都是 **user id**，
   // 输入框里的是用户名——只有在与 mode 返回的用户名一致时才能安全地换成 uid。
   const resolveUid = useCallback((): string => {
@@ -88,20 +111,29 @@ function LoginForm({ mode, api }: LoginFormProps) {
       clearTotpCode();
       if (!result.ok) {
         setError(t(`auth.errors.${result.code}`, { defaultValue: result.code }));
+        clearSessionKey();
         setPhase('idle');
         return;
       }
       setPhase('done');
       return;
     }
-    const rows = await loginToAllReachable({ api });
-    if (rows.length > 0 && rows.every((row) => row.status === 'error')) {
+    const outcome = await loginToAllReachable({ api, entryName });
+    if (!outcome.anyOk) {
+      // 一台都没成：刚建的会话钥已经没用了，留着只会让后续请求继续 401。
+      clearSessionKey();
       setError(t('auth.login.allNodesFailed'));
       setPhase('idle');
       return;
     }
+    if (outcome.listFailed) {
+      // 「没有其它目标」与「列表加载失败」必须区分：后者不能当成登录完成跳走。
+      setError(t('auth.login.nodeListFailed'));
+      setPhase('idle');
+      return;
+    }
     setPhase('done');
-  }, [api, t, targetNode]);
+  }, [api, entryName, t, targetNode]);
 
   const onSubmit = useCallback(
     async (event: FormEvent) => {
@@ -123,12 +155,14 @@ function LoginForm({ mode, api }: LoginFormProps) {
       setBusy(true);
       setPhase('deriving');
       try {
+        // rootEpoch 缺失即协议不兼容：按 0 派生 k_totp 会在 rotate 过根钥后把账号远程锁死。
+        const rootEpoch = requireRootEpoch(mode);
         await establishSessionFromPassword({
           password,
           kdfParams: mode.kdfParams,
           uid: resolveUid(),
           entryNodeId: mode.nodeId,
-          rootEpoch: mode.rootEpoch ?? 0,
+          rootEpoch,
           hasTotp: Boolean(mode.totpEnabled),
           totpCode: totp || undefined,
         });
@@ -138,7 +172,14 @@ function LoginForm({ mode, api }: LoginFormProps) {
         if (mode.totpEnabled && totp) setTotpCode(totp);
         await runFanOut();
       } catch (err) {
-        setError(err instanceof Error ? err.message : String(err));
+        const code = (err as { code?: string })?.code;
+        setError(
+          code
+            ? t(`auth.errors.${code}`, { defaultValue: code })
+            : err instanceof Error
+              ? err.message
+              : String(err)
+        );
         setPhase('idle');
       } finally {
         setBusy(false);
@@ -268,6 +309,22 @@ function LoginForm({ mode, api }: LoginFormProps) {
         >
           {t('auth.login.registerPasskeyHere')}
         </Link>
+
+        {progress.length === 0 && publicNodes && publicNodes.length > 0 ? (
+          // 登录前只有公开列表可用（无公钥）：告诉用户这次会登录哪些节点。
+          <ul
+            className="flex flex-col gap-1 border-t border-border pt-3 text-xs text-muted-foreground"
+            data-testid="login-targets"
+          >
+            <li className="font-medium">{t('auth.login.willSignIn')}</li>
+            {publicNodes.map((row) => (
+              <li key={row.id} className="flex items-center justify-between gap-2">
+                <span className="truncate">{row.name || row.id}</span>
+                <span>{row.online ? t('nodes.status.online') : t('nodes.status.offline')}</span>
+              </li>
+            ))}
+          </ul>
+        ) : null}
 
         {progress.length > 0 ? (
           <ul

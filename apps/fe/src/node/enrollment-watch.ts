@@ -1,47 +1,20 @@
 // 待确认 enrollment 的证书检测。
 //
-// 后端现状：hub 收到 redeem 后只向**发起 enrollment 的 entry 的 ctl 流**推 `enroll.redeemed`，
-// `/mesh/ws` 的 `NODE_EVENT` 不带证书，`GET /api/mesh/nodes` 与 `GET /n/<hub>/api/hub/nodes`
-// 也都不返回 `certificate` / `cert_sig`。因此这里做两件事：
+// 证书有两条到达路径，二者都汇进**唯一**的判定入口 `offerCertificate()`：
+//   1. 推送：hub 收到 redeem 后经 uplink 通知发起 enrollment 的 entry，entry 再以
+//      `ENROLL_REDEEMED` 帧转发到 `/mesh/ws`（`mesh-events.ts` 解码后多播）。
+//   2. 轮询：`GET /n/<hub>/api/hub/enrollments/:id` 按 enrollment id 查 redeem 结果。
+//      页面刚打开、WS 断线或推送丢失时由它兜底。
 //
-// 1. `offerCertificate()` 是**唯一**的检测入口——将来后端补上推送（或在列表里补两个字段）后，
-//    只要把证书喂给它即可，匹配与 admit 触发逻辑零改动。
-// 2. 在 pending 存在期间每 5 秒轮询两个列表，把其中**已经带上** `certificate` / `cert_sig`
-//    的行喂给 `offerCertificate()`。字段缺失时轮询什么也不做，pending 停在「待确认」，
-//    用户点确认按钮走同一条路径。
+// 两条路径的证书都必须过 `enroll_pk` 匹配 + `cert_sig` 验签 + pending 未过期三关。
 
-import type { MeshNode } from '@tmex/api-client/auth/index';
-import { defaultAuthApi } from '@tmex/api-client/auth/index';
 import { useEffect, useRef } from 'react';
 import type { CertificateCandidate, PendingEnrollment } from './enrollment';
 import { findPendingForCertificate } from './enrollment';
-import type { HubApi, HubNodeRow } from './hub-api';
+import type { HubApi } from './hub-api';
+import { type MeshEventSource, sharedMeshEvents } from './mesh-events';
 
 export const ENROLLMENT_POLL_INTERVAL_MS = 5000;
-
-type MeshNodeWithCert = MeshNode & { certificate?: string; cert_sig?: string };
-
-/** 从 hub 节点列表里抽出带证书的行（字段是前向兼容的，目前后端不返回）。 */
-export function certificatesFromHubNodes(rows: HubNodeRow[]): CertificateCandidate[] {
-  const out: CertificateCandidate[] = [];
-  for (const row of rows) {
-    if (row.certificate && row.cert_sig) {
-      out.push({ certificate: row.certificate, certSig: row.cert_sig });
-    }
-  }
-  return out;
-}
-
-/** 从 mesh 节点列表里抽出带证书的行（同上，前向兼容）。 */
-export function certificatesFromMeshNodes(nodes: MeshNode[]): CertificateCandidate[] {
-  const out: CertificateCandidate[] = [];
-  for (const node of nodes as MeshNodeWithCert[]) {
-    if (node.certificate && node.cert_sig) {
-      out.push({ certificate: node.certificate, certSig: node.cert_sig });
-    }
-  }
-  return out;
-}
 
 export type CertificateOutcome =
   | {
@@ -80,21 +53,43 @@ export function offerCertificate(
   return { kind: 'unknown' };
 }
 
+/** 逐条 pending 向 hub 查 redeem 结果，返回已 redeem 的证书候选。 */
+export async function collectRedeemedCertificates(
+  hubApi: HubApi,
+  pendings: PendingEnrollment[]
+): Promise<CertificateCandidate[]> {
+  const rows = await Promise.all(
+    pendings.map(async (pending) => {
+      try {
+        const status = await hubApi.getEnrollment(pending.hubEnrollmentId);
+        if (status.status !== 'redeemed' || !status.certificate || !status.cert_sig) return null;
+        return { certificate: status.certificate, certSig: status.cert_sig };
+      } catch {
+        return null;
+      }
+    })
+  );
+  return rows.filter((row): row is CertificateCandidate => row !== null);
+}
+
 export interface EnrollmentWatchOptions {
   pendings: PendingEnrollment[];
   hubApi: HubApi | null;
   enabled?: boolean;
   intervalMs?: number;
   now?: () => number;
-  /** 覆盖候选来源（测试注入）。 */
+  /** 覆盖轮询来源（测试注入）。 */
   collect?: () => Promise<CertificateCandidate[]>;
+  /** 覆盖推送来源（测试注入）；缺省用宿主共享的 `/mesh/ws`。 */
+  events?: MeshEventSource;
   onOutcome: (outcome: CertificateOutcome) => void;
 }
 
 /**
- * pending 存在期间轮询证书。轮询到的证书**不会**触发「未知节点证书」告警：
- * 列表里本来就有一堆与本次 enrollment 无关的旧证书，那是正常状态而不是攻击信号。
- * 该告警只由推送路径（将来的 `enroll.redeemed`）在 `offerCertificate` 返回 `unknown` 时发出。
+ * pending 存在期间订阅推送 + 轮询证书。
+ *
+ * 轮询查的是**本次 enrollment 的 id**，返回的证书必定属于自己，因此与推送一样，
+ * `unknown` 结果是真正的异常信号（收到不属于任何 pending 的证书），照常上报。
  */
 export function useEnrollmentWatch(options: EnrollmentWatchOptions): void {
   const { pendings, hubApi, onOutcome } = options;
@@ -102,10 +97,25 @@ export function useEnrollmentWatch(options: EnrollmentWatchOptions): void {
   const intervalMs = options.intervalMs ?? ENROLLMENT_POLL_INTERVAL_MS;
   const nowFn = options.now ?? Date.now;
   const collect = options.collect;
+  const events = options.events;
 
   const stateRef = useRef({ pendings, hubApi, onOutcome, nowFn, collect });
   stateRef.current = { pendings, hubApi, onOutcome, nowFn, collect };
 
+  // 推送：hub → entry → `/mesh/ws`。
+  useEffect(() => {
+    if (!enabled) return;
+    const source = events ?? sharedMeshEvents();
+    source.start();
+    return source.onEnrollRedeemed((event) => {
+      const { pendings: rows, onOutcome: emit, nowFn: now } = stateRef.current;
+      emit(
+        offerCertificate(rows, { certificate: event.certificate, certSig: event.certSig }, now())
+      );
+    });
+  }, [enabled, events]);
+
+  // 轮询兜底。
   useEffect(() => {
     if (!enabled) return;
     let cancelled = false;
@@ -121,18 +131,8 @@ export function useEnrollmentWatch(options: EnrollmentWatchOptions): void {
       if (rows.length === 0) return;
       let candidates: CertificateCandidate[] = [];
       try {
-        if (custom) {
-          candidates = await custom();
-        } else {
-          const [hubRows, meshNodes] = await Promise.all([
-            hub ? hub.listNodes().catch(() => [] as HubNodeRow[]) : Promise.resolve([]),
-            defaultAuthApi.listNodes().catch(() => [] as MeshNode[]),
-          ]);
-          candidates = [
-            ...certificatesFromHubNodes(hubRows),
-            ...certificatesFromMeshNodes(meshNodes),
-          ];
-        }
+        if (custom) candidates = await custom();
+        else if (hub) candidates = await collectRedeemedCertificates(hub, rows);
       } catch {
         return;
       }

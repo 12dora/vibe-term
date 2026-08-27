@@ -3,7 +3,12 @@
 //
 // 该连接**只属于 entry（self）**：mesh 事件是入口对整张 mesh 的视图，不按 node 分身。
 
+import { handleGlobalUnauthorized } from '@tmex/api-client/auth/index';
 import { wsBorsh } from '@tmex/shared';
+import { encodeBase64url } from '@tmex/shared/auth';
+
+/** 会话在连接期间失效时服务端的关闭码（B2-2b 契约）。 */
+export const WS_UNAUTHORIZED_CLOSE_CODE = 4401;
 
 export type NodeEventStatus = 'online' | 'offline' | 'revoked';
 export type NodeReach = 'lan' | 'relay' | null;
@@ -24,14 +29,42 @@ export interface RtcSignalPayload {
   candidate: string | null;
 }
 
+/** hub 收到 redeem 后经 entry 转发给发起页面的证书（设计 §2 步骤 3）。 */
+export interface EnrollRedeemedPayload {
+  /** base64url，32 字节：本次 enrollment 的公钥，页面据此匹配 pending。 */
+  enrollPk: string;
+  /** base64url(borsh(Certificate)) */
+  certificate: string;
+  /** base64url，64 字节 */
+  certSig: string;
+  /** 32 位小写 hex */
+  nodeId: string;
+}
+
 export type MeshFrame =
   | { kind: 'node-event'; payload: NodeEventPayload }
-  | { kind: 'rtc-signal'; payload: RtcSignalPayload };
+  | { kind: 'rtc-signal'; payload: RtcSignalPayload }
+  | { kind: 'enroll-redeemed'; payload: EnrollRedeemedPayload };
 
-function statusFromWire(status: number): NodeEventStatus {
+/** `ENROLL_REDEEMED`（B2-5）：线上是原始字节，页面侧一律转成 base64url 再走证书匹配。 */
+export const KIND_ENROLL_REDEEMED = wsBorsh.KIND_ENROLL_REDEEMED;
+
+/**
+ * 枚举严格 allowlist：未知值一律让整帧作废。
+ * 滚动升级时把未知 status 当成 `online`、把未知来源当成 `browser` 会把离线节点标成在线、
+ * 把不明信令交给直连控制器（见 F4-3 评审 Minor）。
+ */
+function statusFromWire(status: number): NodeEventStatus | null {
+  if (status === wsBorsh.NODE_EVENT_STATUS_ONLINE) return 'online';
   if (status === wsBorsh.NODE_EVENT_STATUS_OFFLINE) return 'offline';
   if (status === wsBorsh.NODE_EVENT_STATUS_REVOKED) return 'revoked';
-  return 'online';
+  return null;
+}
+
+function fromFromWire(from: number): 'browser' | 'node' | null {
+  if (from === wsBorsh.RTC_SIGNAL_FROM_BROWSER) return 'browser';
+  if (from === wsBorsh.RTC_SIGNAL_FROM_NODE) return 'node';
+  return null;
 }
 
 function reachFromWire(reach: string | null): NodeReach {
@@ -47,17 +80,23 @@ function parseInventory(raw: string | null): unknown {
   }
 }
 
-/** 解一帧 mesh WS 二进制；非 mesh kind 或畸形帧一律返回 `null`（不抛，避免打断收流）。 */
+/**
+ * 解一帧 mesh WS 二进制；协议版本不符、未知枚举值、非 mesh kind 或畸形帧一律返回 `null`
+ * （不抛，避免打断收流）。
+ */
 export function decodeMeshFrame(data: Uint8Array): MeshFrame | null {
   try {
     const envelope = wsBorsh.decodeEnvelope(data);
+    if (envelope.version !== wsBorsh.CURRENT_VERSION) return null;
     if (envelope.kind === wsBorsh.KIND_NODE_EVENT) {
       const payload = wsBorsh.decodePayload(wsBorsh.schema.NodeEventSchema, envelope.payload);
+      const status = statusFromWire(payload.status);
+      if (!status) return null;
       return {
         kind: 'node-event',
         payload: {
           nodeId: payload.nodeId,
-          status: statusFromWire(payload.status),
+          status,
           reach: reachFromWire(payload.reach),
           inventory: parseInventory(payload.inventory),
         },
@@ -65,14 +104,35 @@ export function decodeMeshFrame(data: Uint8Array): MeshFrame | null {
     }
     if (envelope.kind === wsBorsh.KIND_RTC_SIGNAL) {
       const payload = wsBorsh.decodePayload(wsBorsh.schema.RtcSignalSchema, envelope.payload);
+      const from = fromFromWire(payload.from);
+      if (!from) return null;
       return {
         kind: 'rtc-signal',
         payload: {
           rtcSession: payload.rtcSession,
-          from: payload.from === wsBorsh.RTC_SIGNAL_FROM_NODE ? 'node' : 'browser',
+          from,
           to: payload.to,
           sdp: payload.sdp,
           candidate: payload.candidate,
+        },
+      };
+    }
+    if (envelope.kind === KIND_ENROLL_REDEEMED) {
+      const payload = wsBorsh.decodePayload(wsBorsh.schema.EnrollRedeemedSchema, envelope.payload);
+      if (
+        payload.enrollPk.length === 0 ||
+        payload.certificate.length === 0 ||
+        payload.certSig.length !== 64
+      ) {
+        return null;
+      }
+      return {
+        kind: 'enroll-redeemed',
+        payload: {
+          enrollPk: encodeBase64url(payload.enrollPk),
+          certificate: encodeBase64url(payload.certificate),
+          certSig: encodeBase64url(payload.certSig),
+          nodeId: payload.nodeId,
         },
       };
     }
@@ -118,15 +178,28 @@ export type MeshSocketFactory = (url: string) => MeshSocketLike;
 export interface MeshEventSourceOptions {
   url?: string;
   socketFactory?: MeshSocketFactory;
-  /** 重连退避基数（ms），第 n 次重连等 `base * 2^(n-1)`，上限 `maxDelayMs`。 */
+  /** 重连退避基数（ms），第 n 次重连等 `base * 2^(n-1)` 再乘一个 [0.5,1] 的抖动，上限 `maxDelayMs`。 */
   baseDelayMs?: number;
   maxDelayMs?: number;
+  /** 认为「连接已稳定」的时长；只有稳定过或收到过有效帧才重置退避计数。 */
+  stableAfterMs?: number;
   setTimeoutFn?: (fn: () => void, ms: number) => unknown;
   clearTimeoutFn?: (handle: unknown) => void;
+  /** 抖动因子来源（测试注入）；返回 [0,1)。 */
+  random?: () => number;
+  nowFn?: () => number;
+  /** 4401（会话失效）时的处理；缺省派发全局未授权并跳登录页。 */
+  onUnauthorized?: () => void;
 }
 
 const DEFAULT_BASE_DELAY_MS = 1000;
-const DEFAULT_MAX_DELAY_MS = 30_000;
+const DEFAULT_MAX_DELAY_MS = 60_000;
+const DEFAULT_STABLE_AFTER_MS = 10_000;
+
+function closeCodeOf(event: unknown): number | null {
+  const code = (event as { code?: unknown } | null | undefined)?.code;
+  return typeof code === 'number' ? code : null;
+}
 
 function defaultSocketFactory(url: string): MeshSocketLike {
   const ctor = (globalThis as { WebSocket?: new (url: string) => MeshSocketLike }).WebSocket;
@@ -153,17 +226,25 @@ export class MeshEventSource {
   private readonly socketFactory: MeshSocketFactory;
   private readonly baseDelayMs: number;
   private readonly maxDelayMs: number;
+  private readonly stableAfterMs: number;
   private readonly schedule: (fn: () => void, ms: number) => unknown;
   private readonly cancel: (handle: unknown) => void;
+  private readonly random: () => number;
+  private readonly now: () => number;
+  private readonly onUnauthorized: () => void;
 
   private socket: MeshSocketLike | null = null;
   private timer: unknown = null;
   private attempt = 0;
   private started = false;
   private connectedFlag = false;
+  private openedAt = 0;
+  private sawValidFrame = false;
+  private unauthorizedFlag = false;
 
   private readonly nodeListeners = new Set<(event: NodeEventPayload) => void>();
   private readonly statusListeners = new Set<() => void>();
+  private readonly enrollListeners = new Set<(event: EnrollRedeemedPayload) => void>();
   private rtcHandler: ((signal: RtcSignalPayload) => void) | null = null;
 
   constructor(options: MeshEventSourceOptions = {}) {
@@ -171,27 +252,42 @@ export class MeshEventSource {
     this.socketFactory = options.socketFactory ?? defaultSocketFactory;
     this.baseDelayMs = options.baseDelayMs ?? DEFAULT_BASE_DELAY_MS;
     this.maxDelayMs = options.maxDelayMs ?? DEFAULT_MAX_DELAY_MS;
+    this.stableAfterMs = options.stableAfterMs ?? DEFAULT_STABLE_AFTER_MS;
     this.schedule =
       options.setTimeoutFn ?? ((fn, ms) => (globalThis as typeof global).setTimeout(fn, ms));
     this.cancel =
       options.clearTimeoutFn ??
       ((handle) => (globalThis as typeof global).clearTimeout(handle as never));
+    this.random = options.random ?? Math.random;
+    this.now = options.nowFn ?? Date.now;
+    this.onUnauthorized = options.onUnauthorized ?? (() => handleGlobalUnauthorized('/mesh/ws'));
   }
 
   get connected(): boolean {
     return this.connectedFlag;
   }
 
-  /** 第 `attempt` 次重连的等待时长（attempt 从 1 起）。 */
+  /** 会话失效（4401）后置位；此后不再重连，直到调用方重新 `start()`。 */
+  get unauthorized(): boolean {
+    return this.unauthorizedFlag;
+  }
+
+  /**
+   * 第 `attempt` 次重连的等待时长（attempt 从 1 起）：
+   * `base * 2^(n-1)` 截到 `maxDelayMs`，再乘 [0.5, 1] 的抖动——
+   * 服务恢复时大量页面同时重连会把刚起来的 gateway 再打挂。
+   */
   retryDelay(attempt: number): number {
     const exponent = Math.max(0, attempt - 1);
-    return Math.min(this.maxDelayMs, this.baseDelayMs * 2 ** exponent);
+    const capped = Math.min(this.maxDelayMs, this.baseDelayMs * 2 ** exponent);
+    return Math.round(capped * (0.5 + this.random() * 0.5));
   }
 
   start(): void {
     if (this.started) return;
     this.started = true;
     this.attempt = 0;
+    this.unauthorizedFlag = false;
     this.open();
   }
 
@@ -228,6 +324,14 @@ export class MeshEventSource {
     };
   }
 
+  /** 订阅 hub 转发过来的 redeem 证书（Nodes 页据此自动 admit）。 */
+  onEnrollRedeemed(listener: (event: EnrollRedeemedPayload) => void): () => void {
+    this.enrollListeners.add(listener);
+    return () => {
+      this.enrollListeners.delete(listener);
+    };
+  }
+
   /** Phase 3 的直连控制器在此登记；返回注销函数。 */
   setRtcSignalHandler(handler: ((signal: RtcSignalPayload) => void) | null): () => void {
     this.rtcHandler = handler;
@@ -257,17 +361,29 @@ export class MeshEventSource {
       return;
     }
     this.socket = socket;
+    // 服务端会「接受升级后立刻 4401 关闭」，所以 open 本身不代表鉴权通过：
+    // 在这里清零退避会让客户端每秒 open→reset→close 一次，永远进不了指数退避。
     socket.onopen = () => {
-      this.attempt = 0;
+      if (this.socket !== socket) return;
+      this.openedAt = this.now();
+      this.sawValidFrame = false;
       this.setConnected(true);
     };
     socket.onmessage = (event) => {
+      if (this.socket !== socket) return;
       const bytes = toBytes(event.data);
       if (!bytes) return;
       const frame = decodeMeshFrame(bytes);
       if (!frame) return;
+      // 收到一帧合法业务数据即视为连接可用，可以重置退避。
+      this.sawValidFrame = true;
+      this.attempt = 0;
       if (frame.kind === 'node-event') {
         for (const listener of this.nodeListeners) listener(frame.payload);
+        return;
+      }
+      if (frame.kind === 'enroll-redeemed') {
+        for (const listener of this.enrollListeners) listener(frame.payload);
         return;
       }
       this.rtcHandler?.(frame.payload);
@@ -275,10 +391,25 @@ export class MeshEventSource {
     socket.onerror = () => {
       // close 事件随后必到，重连统一在 onclose 里处理。
     };
-    socket.onclose = () => {
+    socket.onclose = (event) => {
       if (this.socket !== socket) return;
       this.socket = null;
+      const wasConnected = this.connectedFlag;
       this.setConnected(false);
+      if (closeCodeOf(event) === WS_UNAUTHORIZED_CLOSE_CODE) {
+        // 会话已失效：继续重连只会被反复关掉，必须停下并派发一次全局未授权。
+        this.started = false;
+        this.unauthorizedFlag = true;
+        this.attempt = 0;
+        this.onUnauthorized();
+        return;
+      }
+      if (
+        wasConnected &&
+        (this.sawValidFrame || this.now() - this.openedAt >= this.stableAfterMs)
+      ) {
+        this.attempt = 0;
+      }
       this.scheduleReconnect();
     };
   }

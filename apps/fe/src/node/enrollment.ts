@@ -27,21 +27,26 @@ export const PENDING_STORAGE_KEY = 'tmex.enrollment.pending';
 /** 刚做完密码 / passkey 交互后的免二次输入窗口（设计 §2 步骤 3）。 */
 export const SIGNER_REUSE_WINDOW_MS = 5 * 60 * 1000;
 
-/** sessionStorage 里的一条待确认 enrollment。二进制字段一律 base64url。 */
+/**
+ * sessionStorage 里的一条待确认 enrollment。二进制字段一律 base64url。
+ *
+ * **绝不包含 `enroll_sk`，也不包含含 `enroll_sk` 的 join 串**：只要落盘，任何后续加载的同源
+ * 脚本就能取走 enrollment 私钥、伪造节点证书并抢先 redeem（见 F4-1 评审 Blocker）。
+ * admit 只需要 `enroll_pk` + 授权 + 证书，这些都是公开数据，刷新页面后仍能停在「待确认」。
+ * join 串只在内存里、只显示这一次。
+ */
 export interface PendingEnrollment {
-  /** hub 返回的 enrollment id。 */
-  id: string;
-  uid: string;
-  rootEpoch: number;
+  /** hub 返回的 enrollment id（轮询 `GET /api/hub/enrollments/:id` 用）。 */
+  hubEnrollmentId: string;
+  /** base64url，32 字节：一次性注册公钥。证书匹配的唯一依据。 */
   enrollPk: string;
-  enrollSk: string;
-  authorization: string;
+  /** base64url(borsh(Authorization))。 */
+  authorizationBytes: string;
+  /** base64url，64 字节 / borsh(PasskeyAssertion)。 */
   authorizationSig: string;
   /** 授权过期时间（毫秒）。过期后 pending 不可再 admit。 */
   exp: number;
-  /** 展示给用户的 join 串（含 enroll_sk，不进 hub）。 */
-  joinToken: string;
-  /** 用户给新节点起的名字，拼进 join 命令。 */
+  /** 用户给新节点起的名字（非敏感，仅用于列表展示）。 */
   name: string | null;
   createdAt: number;
 }
@@ -85,18 +90,20 @@ function notify(): void {
   for (const listener of listeners) listener();
 }
 
+/**
+ * 反序列化守卫。带 `enrollSk` / `joinToken` 的旧格式一律丢弃（不迁移）：
+ * 那是不该存在的秘密，读回来只会把它再写一遍。
+ */
 function isPending(value: unknown): value is PendingEnrollment {
   if (!value || typeof value !== 'object') return false;
   const row = value as Record<string, unknown>;
+  if ('enrollSk' in row || 'joinToken' in row) return false;
   return (
-    typeof row.id === 'string' &&
-    typeof row.uid === 'string' &&
+    typeof row.hubEnrollmentId === 'string' &&
     typeof row.enrollPk === 'string' &&
-    typeof row.enrollSk === 'string' &&
-    typeof row.authorization === 'string' &&
+    typeof row.authorizationBytes === 'string' &&
     typeof row.authorizationSig === 'string' &&
-    typeof row.exp === 'number' &&
-    typeof row.joinToken === 'string'
+    typeof row.exp === 'number'
   );
 }
 
@@ -138,11 +145,14 @@ export function subscribePendingEnrollments(listener: () => void): () => void {
 }
 
 export function addPendingEnrollment(pending: PendingEnrollment): void {
-  persist([...listPendingEnrollments().filter((row) => row.id !== pending.id), pending]);
+  persist([
+    ...listPendingEnrollments().filter((row) => row.hubEnrollmentId !== pending.hubEnrollmentId),
+    pending,
+  ]);
 }
 
 export function removePendingEnrollment(id: string): void {
-  const next = listPendingEnrollments().filter((row) => row.id !== id);
+  const next = listPendingEnrollments().filter((row) => row.hubEnrollmentId !== id);
   persist(next);
 }
 
@@ -150,12 +160,22 @@ export function clearPendingEnrollments(): void {
   persist([]);
 }
 
-/** 丢弃已过期的 pending（UI 每次渲染前调用，避免出现永远确认不了的行）。 */
+/** 丢弃已过期的 pending，返回**被丢掉的**那些（UI 据此清掉对应的 join 串展示）。 */
 export function prunePendingEnrollments(now: number): PendingEnrollment[] {
   const rows = listPendingEnrollments();
   const alive = rows.filter((row) => row.exp > now);
-  if (alive.length !== rows.length) persist(alive);
-  return alive;
+  if (alive.length === rows.length) return [];
+  persist(alive);
+  return rows.filter((row) => row.exp <= now);
+}
+
+/** 最早的过期时刻；没有 pending 时返回 `null`（用于安排一次性清理定时器）。 */
+export function nextPendingExpiry(rows: PendingEnrollment[]): number | null {
+  let min: number | null = null;
+  for (const row of rows) {
+    if (min === null || row.exp < min) min = row.exp;
+  }
+  return min;
 }
 
 export function isPendingExpired(pending: PendingEnrollment, now: number): boolean {
@@ -167,22 +187,50 @@ export function isPendingExpired(pending: PendingEnrollment, now: number): boole
 // ---------------------------------------------------------------------------
 
 let rememberedSigner: { signer: RecordSigner; until: number } | null = null;
+let rememberedTimer: ReturnType<typeof setTimeout> | null = null;
 
+/** 根钥签名者的 seed 是根私钥：丢引用不够，必须显式清零。 */
+export function wipeSigner(signer: RecordSigner | null | undefined): void {
+  if (signer?.kind === 'root') signer.rootKey.seed.fill(0);
+}
+
+function dropRemembered(): void {
+  if (rememberedTimer !== null) {
+    clearTimeout(rememberedTimer);
+    rememberedTimer = null;
+  }
+  const previous = rememberedSigner;
+  rememberedSigner = null;
+  wipeSigner(previous?.signer);
+}
+
+/**
+ * 记住刚做完的密码 / passkey 交互，5 分钟内自动签 admit-node。
+ * 到期由定时器主动清零，而不是等下一次 `takeRememberedSigner()`——否则根私钥副本会一直留在堆里。
+ */
 export function rememberSigner(signer: RecordSigner, now: number): void {
+  dropRemembered();
   rememberedSigner = { signer, until: now + SIGNER_REUSE_WINDOW_MS };
+  rememberedTimer = setTimeout(() => {
+    rememberedTimer = null;
+    dropRemembered();
+  }, SIGNER_REUSE_WINDOW_MS);
+  // Node/Bun 下别让定时器吊住进程。
+  (rememberedTimer as { unref?: () => void }).unref?.();
 }
 
 export function takeRememberedSigner(now: number): RecordSigner | null {
   if (!rememberedSigner) return null;
   if (rememberedSigner.until <= now) {
-    rememberedSigner = null;
+    dropRemembered();
     return null;
   }
   return rememberedSigner.signer;
 }
 
+/** 复用窗口结束（用完 / 页面卸载 / 换用户）：立刻清零。 */
 export function forgetSigner(): void {
-  rememberedSigner = null;
+  dropRemembered();
 }
 
 // ---------------------------------------------------------------------------
@@ -277,7 +325,7 @@ export function buildAdmitNodeRecord(input: AdmitInput): Promise<{
   sig: Uint8Array;
 }> {
   const payload = encodeAdmitNodePayload({
-    authorization_bytes: decodeBase64url(input.pending.authorization),
+    authorization_bytes: decodeBase64url(input.pending.authorizationBytes),
     authorization_sig: decodeBase64url(input.pending.authorizationSig),
     certificate_bytes: new Uint8Array(input.certificateBytes),
     cert_sig: new Uint8Array(input.certSig),
@@ -338,15 +386,25 @@ export interface CreateEnrollmentInput {
 }
 
 /**
- * 生成一次性 enrollment 密钥对、签授权、送到 hub，并落一条 pending。
+ * 创建结果：`pending` 可持久化（全是公开数据），`joinToken` **只在内存**、只显示这一次。
+ * `hubPublicUrl` 来自 hub 的 enrollment 创建响应，join 命令只能用它。
+ */
+export interface CreatedEnrollment {
+  pending: PendingEnrollment;
+  /** `base64url(enroll_sk ‖ root_public_key ‖ key_log_head_hash)`，含私钥，绝不落盘。 */
+  joinToken: string;
+  hubPublicUrl: string | null;
+}
+
+/**
+ * 生成一次性 enrollment 密钥对、签授权、送到 hub，并落一条**不含私钥**的 pending。
  *
- * join 串 = `base64url(enroll_sk ‖ root_public_key ‖ key_log_head_hash)`，因此**只有根钥路径**
- * 能生成完整 join 串：passkey 签授权时浏览器没有根公钥（`/api/auth/mode` 未下发）。
- * 见结果文档「后端待补」。
+ * join 串 = `base64url(enroll_sk ‖ root_public_key ‖ key_log_head_hash)`，因此只有根钥路径
+ * 能生成完整 join 串。串一旦拼好，`enroll_sk` 立即清零：它此后只以字符串形态存在于本次返回值里。
  */
 export async function createEnrollmentOnHub(
   input: CreateEnrollmentInput
-): Promise<PendingEnrollment> {
+): Promise<CreatedEnrollment> {
   const now = input.now ?? Date.now();
   const enrollment = await createEnrollment(input.rootKey, {
     uid: input.uid,
@@ -355,39 +413,43 @@ export async function createEnrollmentOnHub(
     ttlMs: input.ttlMs,
   });
   const enrollPk = encodeBase64url(enrollment.enrollPk);
-  const authorization = encodeBase64url(enrollment.authorizationBytes);
+  const authorizationBytes = encodeBase64url(enrollment.authorizationBytes);
   const authorizationSig = encodeBase64url(enrollment.authorizationSig);
   const ttl = input.ttlMs ?? 10 * 60 * 1000;
   const exp = now + ttl;
-  const created = await input.hubApi.createEnrollment({
-    enroll_pk: enrollPk,
-    authorization,
-    authorization_sig: authorizationSig,
-    exp,
-  });
-  const joinToken = encodeJoinToken(
-    enrollment.enrollSk,
-    input.rootKey.publicKey,
-    input.keyLogHeadHash
-  );
-  const pending: PendingEnrollment = {
-    id: created.id,
-    uid: input.uid,
-    rootEpoch: input.rootEpoch,
-    enrollPk,
-    enrollSk: encodeBase64url(enrollment.enrollSk),
-    authorization,
-    authorizationSig,
-    exp: created.expires_at ?? exp,
-    joinToken,
-    name: input.name?.trim() ? input.name.trim() : null,
-    createdAt: now,
-  };
-  addPendingEnrollment(pending);
-  return pending;
+
+  let joinToken: string;
+  try {
+    const created = await input.hubApi.createEnrollment({
+      enroll_pk: enrollPk,
+      authorization: authorizationBytes,
+      authorization_sig: authorizationSig,
+      exp,
+    });
+    joinToken = encodeJoinToken(enrollment.enrollSk, input.rootKey.publicKey, input.keyLogHeadHash);
+    const pending: PendingEnrollment = {
+      hubEnrollmentId: created.id,
+      enrollPk,
+      authorizationBytes,
+      authorizationSig,
+      exp: created.expires_at ?? exp,
+      name: input.name?.trim() ? input.name.trim() : null,
+      createdAt: now,
+    };
+    addPendingEnrollment(pending);
+    return { pending, joinToken, hubPublicUrl: created.public_url ?? null };
+  } finally {
+    // join 串已经是字符串了，字节副本立刻清零；失败路径同样不留私钥。
+    enrollment.enrollSk.fill(0);
+  }
 }
 
-/** 展示给用户的 join 命令。 */
+/**
+ * 展示给用户的 join 命令。
+ * `hubPublicUrl` 必须来自 hub（enrollment 创建响应或 `/api/auth/mode`）：
+ * 用当前页面 origin 会让从普通 node entry 发起的 enrollment 把新设备指到没有 HubRuntime
+ * 的机器上，redeem 直接 404（见 F4-3 评审 Blocker）。
+ */
 export function joinCommand(hubPublicUrl: string, token: string, name?: string | null): string {
   const suffix = name?.trim() ? ` --name ${shellQuote(name.trim())}` : '';
   return `npx tmex-cli hub join ${hubPublicUrl} --token ${token}${suffix}`;

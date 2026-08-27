@@ -977,6 +977,7 @@ export type TranslationKey =
   | 'auth.login.totpRequired'
   | 'auth.login.allNodesFailed'
   | 'auth.login.nodeListFailed'
+  | 'auth.login.willSignIn'
   | 'auth.node'
   | 'auth.node.loginToThisNode'
   | 'auth.node.loggingIn'

@@ -16,8 +16,9 @@ export interface AuthKdfParamsJson {
  * `uid` 是 **user id**，不是用户名：`login.uid`、`delegation.uid` 与 `k_totp` 的 HKDF info
  * 都必须用它（gateway `auth-routes.ts` 用 `user.id` 校验）；`username` 只用于展示与预填。
  *
- * `rootEpoch` 为派生 `k_totp` 所必需（HKDF salt 含 root_epoch）。**gateway 目前尚未返回**，
- * 缺失时按 0 退化——用户 rotate 过根钥后 TOTP 登录会失败，见结果文档「待协调」。
+ * `rootEpoch` 为派生 `k_totp` 所必需（HKDF salt 含 root_epoch），mesh 模式下**必填**：
+ * 缺失时一律按协议不兼容中止，绝不退化成 0——用户 rotate 过根钥后按 0 派生会让所有 node
+ * 返回 `TOTP_INVALID`，可能远程锁死账号（见 F4-1 评审 Blocker）。
  */
 export interface AuthModeResponse {
   mode: 'none' | 'mesh';
@@ -28,7 +29,35 @@ export interface AuthModeResponse {
   passkeysForThisOrigin: boolean;
   passkeyAvailable: boolean;
   totpEnabled?: boolean;
-  rootEpoch?: number;
+  /** mesh 模式必填；standalone 与「没有主用户」时为 `null`。 */
+  rootEpoch?: number | null;
+  /** base64url，32 字节：当前根公钥。join 串第二段用它。 */
+  rootPublicKey?: string | null;
+  /** hub 机所在 node 的 id（本机即 hub 时为自身 id）。 */
+  hubNodeId?: string | null;
+  /** hub 的对外可达地址；join 命令只能用它，绝不能退化成入口 origin。 */
+  hubPublicUrl?: string | null;
+}
+
+/** mesh 模式下缺少协议必备字段（如 `rootEpoch`）。 */
+export class ProtocolMismatchError extends Error {
+  readonly code = 'PROTOCOL_MISMATCH';
+  constructor(readonly field: string) {
+    super(`auth protocol mismatch: missing ${field}`);
+    this.name = 'ProtocolMismatchError';
+  }
+}
+
+/**
+ * mesh 模式下读取 `rootEpoch`：缺失即协议不兼容，抛错中止。
+ * **绝不允许**返回默认值 0。
+ */
+export function requireRootEpoch(mode: Pick<AuthModeResponse, 'rootEpoch'>): number {
+  const epoch = mode.rootEpoch;
+  if (typeof epoch !== 'number' || !Number.isInteger(epoch) || epoch < 0) {
+    throw new ProtocolMismatchError('rootEpoch');
+  }
+  return epoch;
 }
 
 /** `POST /n/:T/api/auth/challenge` 响应。 */
@@ -60,8 +89,11 @@ export interface AuthLoginRequest {
   };
 }
 
+/**
+ * 登录成功体**只有** `expires_at`（B2-2b-fix 契约）：sid 走内部头 `x-tmex-set-session`，
+ * 由 entry 转成 `Set-Cookie` 后删除，浏览器永远拿不到。
+ */
 export interface AuthLoginResponse {
-  sid: string;
   expires_at: number;
 }
 
@@ -87,7 +119,7 @@ export interface NodeLoginRequiredBody {
   nodeId: string;
 }
 
-/** `GET /api/mesh/nodes` 的单行。 */
+/** `GET /api/mesh/nodes` 的单行（**需会话**）。 */
 export interface MeshNode {
   id: string;
   name: string;
@@ -100,10 +132,23 @@ export interface MeshNode {
   direct_capable: boolean;
   inventory?: unknown;
   loggedIn: boolean;
+  /** 该 node 是否是 hub 机（来自 hub 下发的 `node.list`，node 侧持久化）。 */
+  isHub?: boolean;
 }
 
 export interface MeshNodesResponse {
   nodes: MeshNode[];
+}
+
+/** `GET /api/auth/nodes` 的单行（**公开**，不含公钥 / inventory）。登录页在登录前用它。 */
+export interface PublicNode {
+  id: string;
+  name: string;
+  online: boolean;
+}
+
+export interface PublicNodesResponse {
+  nodes: PublicNode[];
 }
 
 /**
@@ -115,7 +160,7 @@ export interface KeyLogHeadResponse {
   /** base64url，32 字节；genesis 为 32 个 0 */
   hash: string;
   rootEpoch: number;
-  uid: string;
+  uid?: string;
 }
 
 /** `POST /api/auth/keylog` 请求体。 */
@@ -126,16 +171,37 @@ export interface KeyLogAppendRequest {
   sig: string;
 }
 
-export type KeyLogAppendResult = { ok: true } | { ok: false; code: 'KEY_LOG_FORK' | (string & {}) };
+/**
+ * `POST /api/auth/keylog` 结果。
+ *
+ * `hub=sync` 模式下 entry 先把记录送 hub 并等 ack，再本地 append，响应带 `hubAck`：
+ * 只有 `hubAck === true` 才代表 hub 已持久化该记录，admit / revoke 必须据此决定是否清 pending。
+ */
+export type KeyLogAppendResult =
+  | { ok: true; seq?: number | string; hash?: string; hubAck?: boolean; hubError?: string }
+  | { ok: false; code: 'KEY_LOG_FORK' | (string & {}) };
 
-/** `GET /api/auth/passkeys`（可选端点；404 时按空列表处理）。 */
+/** `GET /api/auth/passkeys`（需会话）。 */
 export interface PasskeySummary {
   credential_id: string;
-  name: string;
+  name: string | null;
   rp_id: string;
+  /** 注册时的精确 origin；跨 origin 选凭证时按它过滤。 */
   origin: string;
   device_type?: string;
   created_at?: number;
+  log_seq?: number | string;
+}
+
+/** `GET /n/<hub>/api/hub/enrollments/:id`：redeem 后带证书。 */
+export interface HubEnrollmentStatus {
+  status: 'pending' | 'redeemed';
+  enroll_pk: string;
+  /** base64url(borsh(Certificate))；`status==='redeemed'` 时存在。 */
+  certificate?: string;
+  /** base64url，64 字节。 */
+  cert_sig?: string;
+  node_id?: string;
 }
 
 // ---------------------------------------------------------------------------

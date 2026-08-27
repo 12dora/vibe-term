@@ -1036,7 +1036,8 @@ export const I18N_RESOURCES = {
         "credentialsRequired": "Enter a username and password",
         "totpRequired": "Enter the authenticator code",
         "allNodesFailed": "Sign-in failed on every node",
-        "nodeListFailed": "Failed to load the node list, please retry"
+        "nodeListFailed": "Failed to load the node list, please retry",
+        "willSignIn": "Will sign in to:"
       },
       "node": {
         "loginToThisNode": "Log in to this node",
@@ -2224,7 +2225,8 @@ export const I18N_RESOURCES = {
         "credentialsRequired": "请填写用户名与密码",
         "totpRequired": "请输入动态验证码",
         "allNodesFailed": "所有节点均登录失败",
-        "nodeListFailed": "节点列表加载失败，请重试"
+        "nodeListFailed": "节点列表加载失败，请重试",
+        "willSignIn": "本次将登录以下节点："
       },
       "node": {
         "loginToThisNode": "登录此节点",
@@ -3412,7 +3414,8 @@ export const I18N_RESOURCES = {
         "credentialsRequired": "ユーザー名とパスワードを入力してください",
         "totpRequired": "認証コードを入力してください",
         "allNodesFailed": "すべてのノードでログインに失敗しました",
-        "nodeListFailed": "ノード一覧の読み込みに失敗しました。再試行してください"
+        "nodeListFailed": "ノード一覧の読み込みに失敗しました。再試行してください",
+        "willSignIn": "次のノードにログインします："
       },
       "node": {
         "loginToThisNode": "このノードにログイン",

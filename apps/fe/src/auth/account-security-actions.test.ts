@@ -14,7 +14,14 @@ import {
   rootKeyFromSeed,
   verifyKeyLogRecord,
 } from '@tmex/shared/auth';
-import { changePassword, setTotp } from './account-security-actions';
+import { totpCode } from '@tmex/shared/auth';
+import {
+  beginTotpSetup,
+  changePassword,
+  confirmTotpSetup,
+  passkeysForOrigin,
+  withRootSigner,
+} from './account-security-actions';
 
 // 单测用便宜的 argon2 参数（真实参数 64 MiB / t=3 太慢）。
 const KDF_JSON = {
@@ -99,19 +106,48 @@ describe('changePassword', () => {
   }, 20000);
 });
 
-describe('setTotp', () => {
-  test('密钥用 k_totp 加密，AAD 绑定 uid/epoch/seq，且返回可扫的 otpauth URI', async () => {
+describe('TOTP 两段式设置', () => {
+  const secret = new Uint8Array(20).fill(0x0f);
+  const NOW_SEC = 1_700_000_000;
+
+  test('第一段只生成密钥与 URI，不写任何 key-log 记录', () => {
     const { api, posted } = mockApi();
-    const secret = new Uint8Array(20).fill(0x0f);
-    const { result, otpauthUri } = await setTotp({
+    void api;
+    const draft = beginTotpSetup({ uid: UID, issuer: 'tmex', secret });
+    expect(draft.otpauthUri.startsWith('otpauth://totp/tmex:alice?')).toBe(true);
+    expect(posted).toHaveLength(0);
+  });
+
+  test('验证码不对时直接拒绝，仍然不写记录', async () => {
+    const { api, posted } = mockApi();
+    const outcome = await confirmTotpSetup({
       api,
       uid: UID,
       password: 'old-secret',
       currentKdfParams: KDF_JSON,
       secret,
+      code: '000000',
+      now: NOW_SEC,
     });
-    expect(result).toEqual({ ok: true });
-    expect(otpauthUri.startsWith('otpauth://totp/tmex:alice?')).toBe(true);
+    expect(outcome).toEqual({ ok: false, code: 'TOTP_INVALID' });
+    expect(posted).toHaveLength(0);
+  }, 20000);
+
+  test('验证码正确后才追加 set-totp：密钥用 k_totp 加密，AAD 绑定 uid/epoch/seq', async () => {
+    const { api, posted } = mockApi();
+    const outcome = await confirmTotpSetup({
+      api,
+      uid: UID,
+      password: 'old-secret',
+      currentKdfParams: KDF_JSON,
+      secret,
+      code: totpCode(secret, NOW_SEC),
+      now: NOW_SEC,
+    });
+    expect(outcome.ok).toBe(true);
+    if (!outcome.ok) return;
+    expect(outcome.result).toMatchObject({ ok: true });
+    expect(posted).toHaveLength(1);
 
     const record = decodeKeyLogRecord(posted[0].bytes);
     expect(record.type).toBe('set-totp');
@@ -131,4 +167,48 @@ describe('setTotp', () => {
     });
     expect(plain).toEqual(new Uint8Array(20).fill(0x0f));
   }, 20000);
+});
+
+describe('withRootSigner', () => {
+  test('回调返回后 seed 立刻清零', async () => {
+    let captured: Uint8Array | null = null;
+    await withRootSigner('old-secret', KDF_JSON, (signer) => {
+      expect(signer.kind).toBe('root');
+      if (signer.kind === 'root') captured = signer.rootKey.seed;
+      return Promise.resolve(1);
+    });
+    expect(captured).not.toBeNull();
+    expect((captured as unknown as Uint8Array).every((byte) => byte === 0)).toBe(true);
+  }, 20000);
+
+  test('回调抛异常也照样清零', async () => {
+    let captured: Uint8Array | null = null;
+    await expect(
+      withRootSigner('old-secret', KDF_JSON, (signer) => {
+        if (signer.kind === 'root') captured = signer.rootKey.seed;
+        throw new Error('boom');
+      })
+    ).rejects.toThrow('boom');
+    expect((captured as unknown as Uint8Array).every((byte) => byte === 0)).toBe(true);
+  }, 20000);
+});
+
+describe('passkeysForOrigin', () => {
+  const rows = [
+    { credential_id: 'a', name: 'A', rp_id: 'a.example', origin: 'https://a.example' },
+    { credential_id: 'b', name: 'B', rp_id: 'b.example', origin: 'https://b.example' },
+  ];
+
+  test('只留当前 origin 的凭证', () => {
+    expect(passkeysForOrigin(rows, 'https://b.example').map((row) => row.credential_id)).toEqual([
+      'b',
+    ]);
+  });
+
+  test('origin 完全不匹配时按 rp_id 的主机名兜底，仍不返回别的 RP', () => {
+    expect(
+      passkeysForOrigin(rows, 'https://b.example:8443').map((row) => row.credential_id)
+    ).toEqual(['b']);
+    expect(passkeysForOrigin(rows, 'https://c.example')).toEqual([]);
+  });
 });

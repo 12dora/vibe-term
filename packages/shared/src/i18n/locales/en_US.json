@@ -1030,7 +1030,8 @@
         "credentialsRequired": "Enter a username and password",
         "totpRequired": "Enter the authenticator code",
         "allNodesFailed": "Sign-in failed on every node",
-        "nodeListFailed": "Failed to load the node list, please retry"
+        "nodeListFailed": "Failed to load the node list, please retry",
+        "willSignIn": "Will sign in to:"
       },
       "node": {
         "loginToThisNode": "Log in to this node",

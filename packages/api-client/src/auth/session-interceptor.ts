@@ -3,8 +3,8 @@
 //   * `/n/:id/*` 转发回来的 401 `{code:'NODE_LOGIN_REQUIRED', nodeId}` → 只派发事件，
 //     由该 node 所在的行/侧边栏显示「登录此节点」，绝不把整页踢去登录页。
 
-import { type ResponseHook, addResponseHook } from '../client';
-import { SELF_NODE_ID } from './auth-api';
+import { type ResponseHook, addResponseHook, urlPathname } from '../client';
+import { SELF_NODE_ID, isValidNodeId } from '../node-url';
 import { NODE_LOGIN_REQUIRED } from './types';
 
 export const AUTH_REQUIRED_EVENT = 'auth:required';
@@ -81,10 +81,22 @@ function goToLogin(): void {
   }
 }
 
-/** 从 `/n/<id>/api/...` 里取出 nodeId；无前缀即 entry 自身。 */
+/**
+ * 从 `/n/<id>/api/...` 里取出 nodeId；无前缀即 entry 自身。
+ * 传入的必须是**已拼上 baseUrl 的**路径（`ResponseHookContext.pathname`），
+ * 否则每 node runtime 的相对路径会被误判成 self。
+ */
 export function nodeIdFromPath(path: string): string {
-  const match = /^\/n\/([^/?#]+)(?:[/?#]|$)/.exec(path);
-  return match ? decodeURIComponent(match[1]) : SELF_NODE_ID;
+  const match = /^\/n\/([^/?#]+)(?:[/?#]|$)/.exec(urlPathname(path));
+  if (!match) return SELF_NODE_ID;
+  let raw: string;
+  try {
+    raw = decodeURIComponent(match[1]);
+  } catch {
+    return SELF_NODE_ID;
+  }
+  // 不是规范 node id 的前缀不可信，按 self 处理（真正的路径拼接侧已由 assertNodeId 拦截）。
+  return isValidNodeId(raw) ? raw : SELF_NODE_ID;
 }
 
 type ErrorBody = { code?: unknown; nodeId?: unknown };
@@ -128,7 +140,9 @@ export function handleGlobalUnauthorized(path = ''): void {
 
 export const sessionResponseHook: ResponseHook = (res, ctx) => {
   if (res.status !== 401) return;
-  void handleUnauthorized(res, ctx.path);
+  // 必须用 pathname（含 baseUrl）而不是调用方相对 path，否则 node runtime 的 401 会被
+  // 当成 entry 自身未登录，把整页踢去登录页。
+  void handleUnauthorized(res, ctx.pathname);
 };
 
 let uninstall: (() => void) | null = null;

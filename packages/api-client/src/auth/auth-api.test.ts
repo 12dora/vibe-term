@@ -1,6 +1,9 @@
 import { describe, expect, test } from 'bun:test';
 import { ApiClient } from '../client';
+import { InvalidNodeIdError } from '../node-url';
 import { AuthApi, nodeAuthPath } from './auth-api';
+
+const NODE_A = '0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a';
 
 type Call = { url: string; init?: RequestInit };
 
@@ -19,9 +22,13 @@ describe('nodeAuthPath', () => {
     expect(nodeAuthPath('self', '/api/auth/login')).toBe('/api/auth/login');
   });
 
-  test('其余 node 加 `/n/<id>` 前缀并转义', () => {
-    expect(nodeAuthPath('node-a', '/api/auth/login')).toBe('/n/node-a/api/auth/login');
-    expect(nodeAuthPath('a/b', '/api/auth/login')).toBe('/n/a%2Fb/api/auth/login');
+  test('其余 node 加 `/n/<id>` 前缀', () => {
+    expect(nodeAuthPath(NODE_A, '/api/auth/login')).toBe(`/n/${NODE_A}/api/auth/login`);
+  });
+
+  test('与 node-url 共用同一个校验：非法 nodeId 直接抛', () => {
+    expect(() => nodeAuthPath('a/b', '/api/auth/login')).toThrow(InvalidNodeIdError);
+    expect(() => nodeAuthPath('..', '/api/auth/login')).toThrow(InvalidNodeIdError);
   });
 });
 
@@ -41,9 +48,9 @@ describe('AuthApi', () => {
         status: 200,
       }),
     ]);
-    const out = await api.challenge('node-a', 'alice');
+    const out = await api.challenge(NODE_A, 'alice');
     expect(out.challenge_id).toBe('c1');
-    expect(calls[0].url).toBe('/n/node-a/api/auth/challenge');
+    expect(calls[0].url).toBe(`/n/${NODE_A}/api/auth/challenge`);
     expect(calls[0].init?.method).toBe('POST');
     expect(JSON.parse(String(calls[0].init?.body))).toEqual({ uid: 'alice' });
   });
@@ -52,7 +59,7 @@ describe('AuthApi', () => {
     const { api } = recorder([
       new Response(JSON.stringify({ code: 'TOTP_REQUIRED' }), { status: 401 }),
     ]);
-    const result = await api.login('node-a', {
+    const result = await api.login(NODE_A, {
       login: 'a',
       sig: 'b',
       delegation: 'c',
@@ -82,9 +89,60 @@ describe('AuthApi', () => {
     });
   });
 
-  test('listPasskeys 在端点缺失（404）时返回空列表', async () => {
-    const { api } = recorder([new Response('', { status: 404 })]);
-    expect(await api.listPasskeys()).toEqual([]);
+  test('listPasskeys 打真实端点；失败一律抛错而不是静默空列表', async () => {
+    const { api, calls } = recorder([
+      new Response(JSON.stringify({ passkeys: [{ credential_id: 'c1' }] }), { status: 200 }),
+    ]);
+    expect(await api.listPasskeys()).toEqual([{ credential_id: 'c1' }] as never);
+    expect(calls[0].url).toBe('/api/auth/passkeys');
+
+    const failing = recorder([new Response('', { status: 404 })]);
+    await expect(failing.api.listPasskeys()).rejects.toThrow();
+  });
+
+  test('keyLogHead 打 /api/auth/keylog/head', async () => {
+    const { api, calls } = recorder([
+      new Response(JSON.stringify({ seq: 3, hash: 'AA', rootEpoch: 1 }), { status: 200 }),
+    ]);
+    expect(await api.keyLogHead()).toMatchObject({ seq: 3, rootEpoch: 1 });
+    expect(calls[0].url).toBe('/api/auth/keylog/head');
+  });
+
+  test('listPublicNodes 打公开的 /api/auth/nodes', async () => {
+    const { api, calls } = recorder([
+      new Response(JSON.stringify({ nodes: [{ id: 'a', name: 'A', online: true }] }), {
+        status: 200,
+      }),
+    ]);
+    expect((await api.listPublicNodes()).map((row) => row.id)).toEqual(['a']);
+    expect(calls[0].url).toBe('/api/auth/nodes');
+  });
+
+  test('appendKeyLog(hubSync) 走 ?hub=sync 并透出 hubAck', async () => {
+    const { api, calls } = recorder([
+      new Response(JSON.stringify({ ok: true, seq: 9, hash: 'HH', hubAck: true }), { status: 200 }),
+    ]);
+    expect(await api.appendKeyLog({ bytes: 'x', sig: 'y' }, { hubSync: true })).toEqual({
+      ok: true,
+      seq: 9,
+      hash: 'HH',
+      hubAck: true,
+      hubError: undefined,
+    });
+    expect(calls[0].url).toBe('/api/auth/keylog?hub=sync');
+  });
+
+  test('hub 未确认时 hubAck=false 原样透出（调用方据此保留 pending）', async () => {
+    const { api } = recorder([
+      new Response(JSON.stringify({ ok: true, seq: 9, hubAck: false, hubError: 'uplink down' }), {
+        status: 200,
+      }),
+    ]);
+    expect(await api.appendKeyLog({ bytes: 'x', sig: 'y' }, { hubSync: true })).toMatchObject({
+      ok: true,
+      hubAck: false,
+      hubError: 'uplink down',
+    });
   });
 
   test('listNodes 解包 nodes 字段', async () => {

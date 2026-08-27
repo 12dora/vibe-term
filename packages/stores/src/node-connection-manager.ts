@@ -15,6 +15,10 @@ import {
   nodeWsUrl,
   normalizeNodeId,
 } from '@tmex/api-client';
+import {
+  handleGlobalUnauthorized,
+  handleNodeLoginRequired,
+} from '@tmex/api-client/auth/session-interceptor';
 import type { NotificationSink } from '@tmex/notifications';
 import { type GatewayConnection, createGatewayConnection } from '@tmex/ws-client';
 import { useEffect } from 'react';
@@ -26,6 +30,9 @@ export { SELF_NODE_ID, normalizeNodeId } from '@tmex/api-client';
 
 /** 引用计数归零后的默认释放宽限期 */
 export const DEFAULT_RELEASE_GRACE_MS = 30_000;
+
+/** 会话在连接期间失效时服务端的关闭码（B2-2b 契约：`/ws`、`/n/:id/ws`、`/mesh/ws` 一致）。 */
+export const WS_UNAUTHORIZED_CLOSE_CODE = 4401;
 
 /** localStorage key 前缀：self 沿用旧 key（无前缀），其余按 node 隔离。 */
 export function nodeStoragePrefix(nodeId: string): string {
@@ -47,6 +54,10 @@ export interface NodeConnectionManagerOptions {
   runtimeOptions?: (nodeId: string) => AppRuntimeOptions;
   /** 全部 node 共用的通知出口（宿主只有一个 toaster） */
   notifications?: NotificationSink;
+  /** runtime 真正被回收时的回调（宿主据此释放该 node 的 QueryClient 等外挂资源）。 */
+  onDispose?: (nodeId: string) => void;
+  /** WS 4401 的处理（测试注入）；缺省派发全局 / 单 node 的鉴权事件。 */
+  onUnauthorized?: (nodeId: string) => void;
   /** 测试注入点 */
   createConnection?: (nodeId: string) => GatewayConnection;
   createApiClient?: (nodeId: string) => ApiClient;
@@ -87,10 +98,33 @@ export class NodeConnectionManager {
     return this.sharedUiStore;
   }
 
+  /**
+   * WS 以 4401 关闭 = 该 node 的会话已失效。继续重连只会被反复关掉，所以先停连接，
+   * 再按 self / 目标 node 派发一次鉴权事件：self → 全局跳登录页；其余 → 该行显示「登录此节点」。
+   */
+  /** 宿主自建连接（如 fe 的直连包装）时把关闭码转回来，走同一条 4401 处理路径。 */
+  notifyClose(nodeId: string, code: number): void {
+    if (code === WS_UNAUTHORIZED_CLOSE_CODE) this.handleUnauthorized(normalizeNodeId(nodeId));
+  }
+
+  private handleUnauthorized(nodeId: string): void {
+    const record = this.records.get(nodeId);
+    record?.entry.connection.client.disconnect();
+    if (this.options.onUnauthorized) {
+      this.options.onUnauthorized(nodeId);
+      return;
+    }
+    if (nodeId === SELF_NODE_ID) handleGlobalUnauthorized('/ws');
+    else handleNodeLoginRequired(nodeId, nodeWsUrl(nodeId));
+  }
+
   private create(nodeId: string): EntryRecord {
     const connection =
       this.options.createConnection?.(nodeId) ??
-      createGatewayConnection({ wsUrl: nodeWsUrl(nodeId) });
+      createGatewayConnection({
+        wsUrl: nodeWsUrl(nodeId),
+        onClose: (code) => this.notifyClose(nodeId, code),
+      });
     const apiClient = this.options.createApiClient?.(nodeId) ?? createNodeApiClient(nodeId);
 
     const runtimeOptions: AppRuntimeOptions = {
@@ -178,6 +212,7 @@ export class NodeConnectionManager {
     this.records.delete(id);
     record.entry.runtime.dispose();
     record.entry.connection.dispose();
+    this.options.onDispose?.(id);
   }
 
   disposeAll(): void {

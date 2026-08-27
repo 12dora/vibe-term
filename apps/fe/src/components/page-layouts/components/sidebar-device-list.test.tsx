@@ -43,16 +43,27 @@ function render(ui: React.ReactNode): string {
 describe('toSidebarEntries', () => {
   test('entry 自身映射成 self 并恒为已登录（本地 UI 已过 guard）', () => {
     const entries = toSidebarEntries(
-      [meshNode({ id: 'entry', name: 'entry', loggedIn: false }), meshNode({ id: 'remote' })],
-      'entry'
+      [
+        meshNode({
+          id: '0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e',
+          name: '0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e',
+          loggedIn: false,
+        }),
+        meshNode({ id: '0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c' }),
+      ],
+      '0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e'
     );
     expect(entries[0]).toMatchObject({
-      id: 'entry',
+      id: '0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e',
       runtimeNodeId: 'self',
       isSelf: true,
       loggedIn: true,
     });
-    expect(entries[1]).toMatchObject({ id: 'remote', runtimeNodeId: 'remote', isSelf: false });
+    expect(entries[1]).toMatchObject({
+      id: '0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c',
+      runtimeNodeId: '0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c',
+      isSelf: false,
+    });
   });
 
   test('entryNodeId 未知时没有 node 被当成 self', () => {
@@ -82,8 +93,8 @@ describe('SidebarNodeSection', () => {
     const html = render(
       <SidebarNodeSection
         node={{
-          id: 'remote',
-          runtimeNodeId: 'remote',
+          id: '0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c',
+          runtimeNodeId: '0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c',
           name: 'studio',
           online: false,
           loggedIn: true,
@@ -92,12 +103,12 @@ describe('SidebarNodeSection', () => {
         }}
       />
     );
-    expect(html).toContain('data-testid="sidebar-node-offline-remote"');
+    expect(html).toContain('data-testid="sidebar-node-offline-0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c"');
     expect(html).toContain('data-testid="sidebar-node-offline-device-d1"');
-    expect(html).toContain('href="/n/remote/devices/d1"');
+    expect(html).toContain('href="/n/0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c/devices/d1"');
     expect(html).toContain('书房');
     // 徽标灰显
-    expect(html).toContain('data-testid="node-badge-remote"');
+    expect(html).toContain('data-testid="node-badge-0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c"');
     expect(html).toContain('data-online="false"');
     // 未渲染任何设备树
     expect(html).not.toContain('data-testid="device-item-');
@@ -107,8 +118,8 @@ describe('SidebarNodeSection', () => {
     const html = render(
       <SidebarNodeSection
         node={{
-          id: 'remote',
-          runtimeNodeId: 'remote',
+          id: '0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c',
+          runtimeNodeId: '0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c',
           name: 'studio',
           online: true,
           loggedIn: false,
@@ -117,8 +128,8 @@ describe('SidebarNodeSection', () => {
         }}
       />
     );
-    expect(html).toContain('data-testid="sidebar-node-login-remote"');
-    expect(html).toContain('data-testid="node-login-remote"');
+    expect(html).toContain('data-testid="sidebar-node-login-0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c"');
+    expect(html).toContain('data-testid="node-login-0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c"');
     expect(html).not.toContain('data-testid="device-item-');
   });
 
@@ -126,8 +137,8 @@ describe('SidebarNodeSection', () => {
     const html = render(
       <SidebarNodeSection
         node={{
-          id: 'remote',
-          runtimeNodeId: 'remote',
+          id: '0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c',
+          runtimeNodeId: '0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c',
           name: 'studio',
           online: true,
           loggedIn: true,
@@ -136,12 +147,12 @@ describe('SidebarNodeSection', () => {
         }}
       />
     );
-    expect(html).toContain('data-testid="sidebar-node-remote"');
-    expect(html).toContain('data-testid="node-badge-remote"');
+    expect(html).toContain('data-testid="sidebar-node-0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c"');
+    expect(html).toContain('data-testid="node-badge-0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c"');
     expect(html).toContain('data-online="true"');
     // 设备树挂在该 node 的运行时下，且拿到了 node 徽标
     expect(html).toContain('data-testid="runtime-device-list"');
-    expect(html).toContain('data-node="remote"');
+    expect(html).toContain('data-node="0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c"');
   });
 });
 

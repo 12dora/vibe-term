@@ -51,19 +51,21 @@ function renderAt(path: string): string {
 
 describe('NodeRuntimeBoundary', () => {
   test('/n/:nodeId 路由渲染对应 node 的运行时', () => {
-    const markup = renderAt('/n/node-a/devices/d1');
-    expect(markup).toContain('data-node-id="node-a"');
-    expect(markup).toContain('data-base-url="/n/node-a"');
-    expect(markup).toContain('data-storage-prefix="n:node-a:"');
-    expect(markup).toContain('data-app-path="/n/node-a/devices/d1"');
+    const markup = renderAt('/n/0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a/devices/d1');
+    expect(markup).toContain('data-node-id="0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a"');
+    expect(markup).toContain('data-base-url="/n/0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a"');
+    expect(markup).toContain('data-storage-prefix="n:0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a:"');
+    expect(markup).toContain('data-app-path="/n/0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a/devices/d1"');
   });
 
   test('不同 nodeId 渲染不同运行时', () => {
-    const a = renderAt('/n/node-a/devices/d1');
-    const b = renderAt('/n/node-b/devices/d1');
-    expect(a).toContain('data-base-url="/n/node-a"');
-    expect(b).toContain('data-base-url="/n/node-b"');
-    expect(appNodeRuntimes.get('node-a').runtime).not.toBe(appNodeRuntimes.get('node-b').runtime);
+    const a = renderAt('/n/0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a/devices/d1');
+    const b = renderAt('/n/0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b/devices/d1');
+    expect(a).toContain('data-base-url="/n/0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a"');
+    expect(b).toContain('data-base-url="/n/0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b"');
+    expect(appNodeRuntimes.get('0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a').runtime).not.toBe(
+      appNodeRuntimes.get('0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b').runtime
+    );
   });
 
   test('旧路由（无 /n 前缀）等价于 self：URL 与 storage key 与单 node 时一致', () => {
@@ -88,9 +90,9 @@ interface DevicesData {
 describe('每 node 的 QueryClient 缓存隔离', () => {
   test('不同 node 的 QueryClient 是不同实例，缓存互不可见', () => {
     const selfClient = nodeQueryClient('self');
-    const aClient = nodeQueryClient('node-a');
+    const aClient = nodeQueryClient('0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a');
     expect(selfClient).not.toBe(aClient);
-    expect(nodeQueryClient('node-a')).toBe(aClient);
+    expect(nodeQueryClient('0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a')).toBe(aClient);
 
     const devicesKey = ['devices'] as const;
     selfClient.setQueryData<DevicesData>(devicesKey, { devices: [{ id: 'self-device' }] });

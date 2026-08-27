@@ -16,6 +16,7 @@ import {
   encryptTotpSecret,
   generateKdfParams,
   rootKeyFromSeed,
+  verifyTotpCode,
 } from '@tmex/shared/auth';
 import type { RecordSigner } from './key-log-actions';
 import {
@@ -45,6 +46,25 @@ async function rootKeyFrom(password: string, kdfParams: KdfParams): Promise<Root
   return rootKey;
 }
 
+/**
+ * 用密码现场派生根钥，交给 `fn` 用完后**在 `finally` 里清零** `RootKey.seed`。
+ *
+ * 直接 `await rootSignerFromPassword(...)` 再签名会把根私钥副本留在堆里直到 GC——
+ * 清 TOTP、增删 passkey、admit / revoke 都是这样泄漏的（见 F4-1 评审 Major）。
+ */
+export async function withRootSigner<T>(
+  password: string,
+  kdfParams: { salt: string; memory_kib: number; iterations: number; parallelism: number },
+  fn: (signer: RecordSigner) => Promise<T> | T
+): Promise<T> {
+  const rootKey = await rootKeyFrom(password, kdfParamsFromJson(kdfParams));
+  try {
+    return await fn({ kind: 'root', rootKey });
+  } finally {
+    rootKey.seed.fill(0);
+  }
+}
+
 export interface ChangePasswordInput {
   api?: AuthApi;
   uid: string;
@@ -68,39 +88,81 @@ export async function changePassword(input: ChangePasswordInput): Promise<KeyLog
   const newKdfParams = generateKdfParams();
   const newRootKey = await rootKeyFrom(input.newPassword, newKdfParams);
 
-  const record = buildRotateRootRecord({
-    head: headFromResponse(head),
-    rootEpoch: head.rootEpoch,
-    uid: input.uid,
-    oldRootKey,
-    newRootPublicKey: newRootKey.publicKey,
-    newKdfParams,
-  });
-  oldRootKey.seed.fill(0);
-  newRootKey.seed.fill(0);
-  return append(api, record);
+  try {
+    const record = buildRotateRootRecord({
+      head: headFromResponse(head),
+      rootEpoch: head.rootEpoch,
+      uid: input.uid,
+      oldRootKey,
+      newRootPublicKey: newRootKey.publicKey,
+      newKdfParams,
+    });
+    return await append(api, record);
+  } finally {
+    oldRootKey.seed.fill(0);
+    newRootKey.seed.fill(0);
+  }
 }
 
-export interface SetTotpInput {
-  api?: AuthApi;
+/** 两段式 TOTP 的第一段：只生成并展示密钥，**不写任何记录**。 */
+export interface BeginTotpSetupInput {
   uid: string;
-  password: string;
-  currentKdfParams: { salt: string; memory_kib: number; iterations: number; parallelism: number };
-  /** 允许注入，便于「先展示 URI 再确认」的两段式 UI。 */
-  secret?: Uint8Array;
   issuer?: string;
+  /** 允许注入（测试）。 */
+  secret?: Uint8Array;
 }
 
-export interface SetTotpResult {
-  result: KeyLogAppendResult;
+export interface TotpSetupDraft {
+  /** 原始密钥字节。确认成功或放弃时调用方要负责清零。 */
+  secret: Uint8Array;
   otpauthUri: string;
 }
 
 /**
- * 设置 TOTP：`k_totp = HKDF(seed, "tmex-totp"‖root_epoch, uid)`，
- * 密钥以 AES-256-GCM 加密后写进 `set-totp` payload，AAD = borsh({uid, root_epoch, seq})。
+ * 生成待确认的 TOTP 密钥。
+ *
+ * 先写 key-log 再展示 QR 的老流程有个致命缺口：写成功后页面刷新 / 崩溃 / 用户没来得及扫码，
+ * 账号就已经要求一个用户从未保存的密钥，之后登录会被锁死（见 F4-1 评审 Major）。
  */
-export async function setTotp(input: SetTotpInput): Promise<SetTotpResult> {
+export function beginTotpSetup(input: BeginTotpSetupInput): TotpSetupDraft {
+  const secret = input.secret ?? generateTotpSecret();
+  return {
+    secret,
+    otpauthUri: buildOtpauthUri({ secret, account: input.uid, issuer: input.issuer }),
+  };
+}
+
+export interface ConfirmTotpSetupInput {
+  api?: AuthApi;
+  uid: string;
+  password: string;
+  currentKdfParams: { salt: string; memory_kib: number; iterations: number; parallelism: number };
+  /** `beginTotpSetup()` 生成的密钥。 */
+  secret: Uint8Array;
+  /** 用户从认证器读到的 6 位码，本地先验一遍。 */
+  code: string;
+  /** 秒级 UNIX 时间（测试注入）。 */
+  now?: number;
+}
+
+export type ConfirmTotpSetupResult =
+  | { ok: true; result: KeyLogAppendResult }
+  | { ok: false; code: 'TOTP_INVALID' };
+
+/**
+ * 两段式 TOTP 的第二段：**先本地校验用户输入的验证码**，通过后才追加 `set-totp`。
+ *
+ * `k_totp = HKDF(seed, "tmex-totp"‖root_epoch, uid)`，密钥以 AES-256-GCM 加密后写进 payload，
+ * AAD = borsh({uid, root_epoch, seq})。
+ */
+export async function confirmTotpSetup(
+  input: ConfirmTotpSetupInput
+): Promise<ConfirmTotpSetupResult> {
+  const nowSec = input.now ?? Math.floor(Date.now() / 1000);
+  if (!verifyTotpCode(input.secret, input.code.trim(), nowSec)) {
+    return { ok: false, code: 'TOTP_INVALID' };
+  }
+
   const api = input.api ?? defaultAuthApi;
   const head = await api.keyLogHead();
   const kdfParams = kdfParamsFromJson(input.currentKdfParams);
@@ -109,31 +171,25 @@ export async function setTotp(input: SetTotpInput): Promise<SetTotpResult> {
   const kTotp = deriveTotpKey(seed, input.uid, head.rootEpoch);
   seed.fill(0);
 
-  const secret = input.secret ?? generateTotpSecret();
-  const headValue = headFromResponse(head);
-  const payload = await encryptTotpSecret(kTotp, secret, {
-    uid: input.uid,
-    root_epoch: head.rootEpoch,
-    seq: headValue.seq + 1n,
-  });
-  kTotp.fill(0);
-
-  const record = await buildSetTotpRecord({
-    head: headValue,
-    rootEpoch: head.rootEpoch,
-    uid: input.uid,
-    payload,
-    signer: { kind: 'root', rootKey },
-  });
-  rootKey.seed.fill(0);
-
-  const otpauthUri = buildOtpauthUri({
-    secret,
-    account: input.uid,
-    issuer: input.issuer,
-  });
-  secret.fill(0);
-  return { result: await append(api, record), otpauthUri };
+  try {
+    const headValue = headFromResponse(head);
+    const payload = await encryptTotpSecret(kTotp, input.secret, {
+      uid: input.uid,
+      root_epoch: head.rootEpoch,
+      seq: headValue.seq + 1n,
+    });
+    const record = await buildSetTotpRecord({
+      head: headValue,
+      rootEpoch: head.rootEpoch,
+      uid: input.uid,
+      payload,
+      signer: { kind: 'root', rootKey },
+    });
+    return { ok: true, result: await append(api, record) };
+  } finally {
+    kTotp.fill(0);
+    rootKey.seed.fill(0);
+  }
 }
 
 export interface SignerInput {
@@ -210,7 +266,29 @@ export async function removePasskey(input: RemovePasskeyInput): Promise<KeyLogAp
   return append(api, record);
 }
 
-/** 根据密码现场造一个「根钥签名者」。 */
+/**
+ * 只保留注册 origin 与当前 origin 一致的 passkey。
+ *
+ * passkey 绑定注册时的精确 origin：拿 node A 的凭证在 node B 发起断言，浏览器直接
+ * `NotAllowedError`。签记录时必须从这个子集里选，不能盲取列表第一把（见 F4-1 评审 Major）。
+ */
+export function passkeysForOrigin(passkeys: PasskeySummary[], origin?: string): PasskeySummary[] {
+  const current =
+    origin ?? (globalThis as { location?: { origin?: string } }).location?.origin ?? '';
+  if (!current) return passkeys;
+  const exact = passkeys.filter((row) => row.origin === current);
+  if (exact.length > 0) return exact;
+  // origin 对不上时退一步按 rp_id 匹配主机名（同 RP 的不同端口/子路径）。
+  let host = '';
+  try {
+    host = new URL(current).hostname;
+  } catch {
+    host = '';
+  }
+  return host ? passkeys.filter((row) => row.rp_id === host) : [];
+}
+
+/** 根据密码现场造一个「根钥签名者」。调用方负责清零；能用 `withRootSigner` 就别用它。 */
 export async function rootSignerFromPassword(
   password: string,
   kdfParams: { salt: string; memory_kib: number; iterations: number; parallelism: number }

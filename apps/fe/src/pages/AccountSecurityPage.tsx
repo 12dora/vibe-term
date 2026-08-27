@@ -5,12 +5,15 @@
 // 一个链接即可复用，且 standalone 下整页返回 null，不会在设置里留一个空 tab。
 
 import {
+  type TotpSetupDraft,
+  beginTotpSetup,
   changePassword,
   clearTotp,
+  confirmTotpSetup,
+  passkeysForOrigin,
   registerPasskey,
   removePasskey,
-  rootSignerFromPassword,
-  setTotp,
+  withRootSigner,
 } from '@/auth/account-security-actions';
 import type { RecordSigner } from '@/auth/key-log-actions';
 import { clearSessionKey } from '@/auth/session-key-store';
@@ -26,7 +29,7 @@ import { Button } from '@tmex/ui/button';
 import { Input } from '@tmex/ui/input';
 import { AlertTriangle, Fingerprint, KeyRound, Loader2, Trash2 } from 'lucide-react';
 import { QRCodeSVG } from 'qrcode.react';
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 
 export interface AccountSecurityPageProps {
@@ -97,12 +100,19 @@ type ResolvedMode = AuthModeResponse & { uid: string; kdfParams: AuthKdfParamsJs
 function AccountSecurity({ mode: rawMode, api, reloadMode }: AccountSecurityProps) {
   const { t } = useTranslation();
   const [passkeys, setPasskeys] = useState<PasskeySummary[]>([]);
+  const [passkeysError, setPasskeysError] = useState<string | null>(null);
 
   const reloadPasskeys = useCallback(() => {
     api
       .listPasskeys()
-      .then(setPasskeys)
-      .catch(() => setPasskeys([]));
+      .then((rows) => {
+        setPasskeys(rows);
+        setPasskeysError(null);
+      })
+      .catch((err: unknown) => {
+        setPasskeys([]);
+        setPasskeysError(err instanceof Error ? err.message : String(err));
+      });
   }, [api]);
 
   useEffect(() => reloadPasskeys(), [reloadPasskeys]);
@@ -126,6 +136,7 @@ function AccountSecurity({ mode: rawMode, api, reloadMode }: AccountSecurityProp
         api={api}
         uid={uid}
         passkeys={passkeys}
+        listError={passkeysError}
         onDone={() => {
           reloadPasskeys();
           reloadMode();
@@ -268,60 +279,100 @@ function TotpSection({
   const [password, setPassword] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [uri, setUri] = useState<string | null>(null);
+  const [ok, setOk] = useState(false);
+  // 第一阶段的草稿：密钥只在内存，用户确认验证码之前不会写任何 key-log 记录。
+  const [draft, setDraft] = useState<TotpSetupDraft | null>(null);
+  const [code, setCode] = useState('');
 
-  const enable = useCallback(async () => {
+  // 组件卸载时清掉未确认的密钥字节。
+  useEffect(
+    () => () => {
+      draft?.secret.fill(0);
+    },
+    [draft]
+  );
+
+  const begin = useCallback(() => {
     setError(null);
-    setUri(null);
+    setOk(false);
+    setCode('');
+    setDraft(beginTotpSetup({ uid, issuer: 'tmex' }));
+  }, [uid]);
+
+  const confirm = useCallback(async () => {
+    setError(null);
+    if (!draft) return;
     if (!password) {
       setError(t('auth.security.passwordRequired'));
       return;
     }
+    if (!/^\d{6,8}$/.test(code.trim())) {
+      setError(t('auth.security.totpCodeRequired'));
+      return;
+    }
     setBusy(true);
     try {
-      const { result, otpauthUri } = await setTotp({
+      const outcome = await confirmTotpSetup({
         api,
         uid,
         password,
         currentKdfParams: mode.kdfParams,
+        secret: draft.secret,
+        code,
       });
       setPassword('');
-      if (!result.ok) {
-        setError(t(`auth.errors.${result.code}`, { defaultValue: result.code }));
+      if (!outcome.ok) {
+        setError(t('auth.errors.TOTP_INVALID'));
         return;
       }
-      setUri(otpauthUri);
+      if (!outcome.result.ok) {
+        setError(t(`auth.errors.${outcome.result.code}`, { defaultValue: outcome.result.code }));
+        return;
+      }
+      draft.secret.fill(0);
+      setDraft(null);
+      setCode('');
+      setOk(true);
       onDone();
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
       setBusy(false);
     }
-  }, [api, mode.kdfParams, onDone, password, t, uid]);
+  }, [api, code, draft, mode.kdfParams, onDone, password, t, uid]);
+
+  const cancel = useCallback(() => {
+    draft?.secret.fill(0);
+    setDraft(null);
+    setCode('');
+    setError(null);
+  }, [draft]);
 
   const disable = useCallback(async () => {
     setError(null);
+    setOk(false);
     if (!password) {
       setError(t('auth.security.passwordRequired'));
       return;
     }
     setBusy(true);
     try {
-      const signer = await rootSignerFromPassword(password, mode.kdfParams);
+      const result = await withRootSigner(password, mode.kdfParams, (signer) =>
+        clearTotp({ api, uid, signer })
+      );
       setPassword('');
-      const result = await clearTotp({ api, uid, signer });
       if (!result.ok) {
         setError(t(`auth.errors.${result.code}`, { defaultValue: result.code }));
         return;
       }
-      setUri(null);
+      cancel();
       onDone();
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
       setBusy(false);
     }
-  }, [api, mode.kdfParams, onDone, password, t, uid]);
+  }, [api, cancel, mode.kdfParams, onDone, password, t, uid]);
 
   return (
     <Section
@@ -339,14 +390,9 @@ function TotpSection({
         onChange={(event) => setPassword(event.target.value)}
       />
       {error ? <Feedback tone="error" text={error} /> : null}
+      {ok ? <Feedback tone="ok" text={t('auth.security.totpDone')} /> : null}
       <div className="flex gap-2">
-        <Button
-          type="button"
-          disabled={busy}
-          onClick={() => void enable()}
-          data-testid="security-totp-set"
-        >
-          {busy ? <Loader2 className="animate-spin" /> : null}
+        <Button type="button" disabled={busy} onClick={begin} data-testid="security-totp-set">
           {mode.totpEnabled ? t('auth.security.totpReset') : t('auth.security.totpSet')}
         </Button>
         {mode.totpEnabled ? (
@@ -361,13 +407,44 @@ function TotpSection({
           </Button>
         ) : null}
       </div>
-      {uri ? (
+      {draft ? (
         <div className="flex flex-col items-start gap-2" data-testid="security-totp-uri">
           <p className="text-xs text-muted-foreground">{t('auth.security.totpScanNow')}</p>
           <div className="rounded-lg bg-white p-2">
-            <QRCodeSVG value={uri} size={160} />
+            <QRCodeSVG value={draft.otpauthUri} size={160} />
           </div>
-          <code className="w-full break-all rounded-lg bg-muted p-2 text-[11px]">{uri}</code>
+          <code className="w-full break-all rounded-lg bg-muted p-2 text-[11px]">
+            {draft.otpauthUri}
+          </code>
+          <p className="text-xs text-muted-foreground">{t('auth.security.totpConfirmHint')}</p>
+          <Input
+            inputMode="numeric"
+            autoComplete="one-time-code"
+            placeholder="000000"
+            value={code}
+            data-testid="security-totp-code"
+            onChange={(event) => setCode(event.target.value.replace(/\D/g, '').slice(0, 8))}
+          />
+          <div className="flex gap-2">
+            <Button
+              type="button"
+              disabled={busy}
+              onClick={() => void confirm()}
+              data-testid="security-totp-confirm"
+            >
+              {busy ? <Loader2 className="animate-spin" /> : null}
+              {t('auth.security.totpConfirm')}
+            </Button>
+            <Button
+              type="button"
+              variant="outline"
+              disabled={busy}
+              onClick={cancel}
+              data-testid="security-totp-cancel"
+            >
+              {t('common.cancel')}
+            </Button>
+          </div>
         </div>
       ) : null}
     </Section>
@@ -383,12 +460,14 @@ function PasskeySection({
   api,
   uid,
   passkeys,
+  listError,
   onDone,
 }: {
   mode: ResolvedMode;
   api: AuthApi;
   uid: string;
   passkeys: PasskeySummary[];
+  listError: string | null;
   onDone: () => void;
 }) {
   const { t } = useTranslation();
@@ -398,21 +477,33 @@ function PasskeySection({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const buildSigner = useCallback(async (): Promise<RecordSigner> => {
-    if (signWithPasskey && passkeys.length > 0) {
-      return { kind: 'passkey', credentialId: passkeys[0].credential_id };
-    }
-    if (!password) throw new Error(t('auth.security.passwordRequired'));
-    return rootSignerFromPassword(password, mode.kdfParams);
-  }, [mode.kdfParams, passkeys, password, signWithPasskey, t]);
+  // 只有注册 origin 与当前 origin 一致的 passkey 才能在这里发起断言。
+  const usable = useMemo(() => passkeysForOrigin(passkeys), [passkeys]);
+
+  /**
+   * 签一条记录：passkey 分支从 `usable` 里取（不是列表第一把），
+   * 根钥分支走 `withRootSigner`，签完立刻清零 seed。
+   */
+  const runSigned = useCallback(
+    async <T,>(fn: (signer: RecordSigner) => Promise<T>): Promise<T> => {
+      if (signWithPasskey) {
+        if (usable.length === 0) throw new Error(t('auth.errors.PASSKEY_CREDENTIAL_UNKNOWN'));
+        return fn({ kind: 'passkey', credentialId: usable[0].credential_id });
+      }
+      if (!password) throw new Error(t('auth.security.passwordRequired'));
+      return withRootSigner(password, mode.kdfParams, fn);
+    },
+    [mode.kdfParams, password, signWithPasskey, t, usable]
+  );
 
   const add = useCallback(async () => {
     setError(null);
     setBusy(true);
     try {
-      const signer = await buildSigner();
+      const result = await runSigned((signer) =>
+        registerPasskey({ api, uid, name: name || 'passkey', signer })
+      );
       setPassword('');
-      const result = await registerPasskey({ api, uid, name: name || 'passkey', signer });
       if (!result.ok) {
         setError(t(`auth.errors.${result.code}`, { defaultValue: result.code }));
         return;
@@ -424,16 +515,17 @@ function PasskeySection({
     } finally {
       setBusy(false);
     }
-  }, [api, buildSigner, name, onDone, t, uid]);
+  }, [api, name, onDone, runSigned, t, uid]);
 
   const remove = useCallback(
     async (credentialId: string) => {
       setError(null);
       setBusy(true);
       try {
-        const signer = await buildSigner();
+        const result = await runSigned((signer) =>
+          removePasskey({ api, uid, credentialId, signer })
+        );
         setPassword('');
-        const result = await removePasskey({ api, uid, credentialId, signer });
         if (!result.ok) {
           setError(t(`auth.errors.${result.code}`, { defaultValue: result.code }));
           return;
@@ -445,7 +537,7 @@ function PasskeySection({
         setBusy(false);
       }
     },
-    [api, buildSigner, onDone, t, uid]
+    [api, onDone, runSigned, t, uid]
   );
 
   return (
@@ -457,6 +549,10 @@ function PasskeySection({
           : t('auth.security.passkeyUnavailable')
       }
     >
+      {listError ? (
+        <Feedback tone="error" text={t('auth.security.passkeyListFailed', { error: listError })} />
+      ) : null}
+
       {passkeys.length > 0 ? (
         <ul className="flex flex-col gap-1" data-testid="security-passkey-list">
           {passkeys.map((passkey) => (
@@ -491,7 +587,7 @@ function PasskeySection({
         onChange={(event) => setName(event.target.value)}
       />
 
-      {passkeys.length > 0 && mode.passkeyAvailable ? (
+      {usable.length > 0 && mode.passkeyAvailable ? (
         <label className="flex items-center gap-2 text-xs text-muted-foreground">
           <input
             type="checkbox"

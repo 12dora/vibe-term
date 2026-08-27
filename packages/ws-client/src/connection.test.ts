@@ -81,3 +81,69 @@ describe('BorshWebSocketClient url 注入', () => {
     expect(client.getUrl()).toBe('ws://injected.example/ws');
   });
 });
+
+describe('onClose 关闭码回调', () => {
+  function fakeSocket() {
+    return {
+      readyState: 0,
+      binaryType: 'arraybuffer' as const,
+      onopen: null as ((event?: unknown) => void) | null,
+      onmessage: null as ((event: { data: ArrayBuffer | string }) => void) | null,
+      onclose: null as ((event?: unknown) => void) | null,
+      onerror: null as ((event?: unknown) => void) | null,
+      send() {},
+      close() {},
+    };
+  }
+
+  test('把 CloseEvent.code 透给宿主，并且不影响 client 自己的收敛', () => {
+    const codes: number[] = [];
+    let socket: ReturnType<typeof fakeSocket> | null = null;
+    const conn = createGatewayConnection({
+      wsUrl: 'ws://x/ws',
+      socketFactory: () => {
+        socket = fakeSocket();
+        return socket;
+      },
+      onClose: (code) => codes.push(code),
+    });
+    conn.client.connect();
+    expect(socket).not.toBeNull();
+    // client 装的是自己的 onclose；shim 会先调 onClose(code) 再转给它。
+    (socket as unknown as { onclose: (event: unknown) => void }).onclose({ code: 4401 });
+    expect(codes).toEqual([4401]);
+    expect(conn.client.getState()).not.toBe('READY');
+    conn.dispose();
+  });
+
+  test('取不到 code 时按 1006 上报', () => {
+    const codes: number[] = [];
+    let socket: ReturnType<typeof fakeSocket> | null = null;
+    const conn = createGatewayConnection({
+      wsUrl: 'ws://x/ws',
+      socketFactory: () => {
+        socket = fakeSocket();
+        return socket;
+      },
+      onClose: (code) => codes.push(code),
+    });
+    conn.client.connect();
+    (socket as unknown as { onclose: (event: unknown) => void }).onclose({});
+    expect(codes).toEqual([1006]);
+    conn.dispose();
+  });
+
+  test('不传 onClose 时 socketFactory 原样透传（零改动路径）', () => {
+    let created = 0;
+    const conn = createGatewayConnection({
+      wsUrl: 'ws://x/ws',
+      socketFactory: () => {
+        created += 1;
+        return fakeSocket();
+      },
+    });
+    conn.client.connect();
+    expect(created).toBe(1);
+    conn.dispose();
+  });
+});

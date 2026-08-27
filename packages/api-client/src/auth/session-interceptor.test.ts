@@ -9,6 +9,9 @@ import {
   uninstallSessionInterceptor,
 } from './session-interceptor';
 
+const NODE_B = '0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b';
+const NODE_C = '0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c';
+
 function setup() {
   const events: AuthRequiredDetail[] = [];
   const navigated: string[] = [];
@@ -21,8 +24,8 @@ function setup() {
   return { events, navigated, offEvent };
 }
 
-function clientReturning(res: () => Response): ApiClient {
-  return new ApiClient('', () => Promise.resolve(res()));
+function clientReturning(res: () => Response, baseUrl = ''): ApiClient {
+  return new ApiClient(baseUrl, () => Promise.resolve(res()));
 }
 
 // 钩子派发是 fire-and-forget 的（要 clone().json()），等一个微任务队列排空。
@@ -42,10 +45,15 @@ describe('nodeIdFromPath', () => {
     expect(nodeIdFromPath('/n')).toBe('self');
   });
 
-  test('`/n/:id` 前缀取出 nodeId 并解码', () => {
-    expect(nodeIdFromPath('/n/node-a/api/devices')).toBe('node-a');
-    expect(nodeIdFromPath('/n/node%20b/api/x?q=1')).toBe('node b');
-    expect(nodeIdFromPath('/n/node-c')).toBe('node-c');
+  test('`/n/:id` 前缀取出规范 nodeId', () => {
+    expect(nodeIdFromPath(`/n/${NODE_B}/api/devices`)).toBe(NODE_B);
+    expect(nodeIdFromPath(`/n/${NODE_C}/api/x?q=1`)).toBe(NODE_C);
+    expect(nodeIdFromPath(`/n/${NODE_C}`)).toBe(NODE_C);
+  });
+
+  test('不是规范 node id 的前缀按 self 处理', () => {
+    expect(nodeIdFromPath('/n/node b/api/x')).toBe('self');
+    expect(nodeIdFromPath('/n/../api/x')).toBe('self');
   });
 });
 
@@ -64,24 +72,35 @@ describe('session interceptor', () => {
     const { events, navigated } = setup();
     const client = clientReturning(
       () =>
-        new Response(JSON.stringify({ code: 'NODE_LOGIN_REQUIRED', nodeId: 'node-b' }), {
+        new Response(JSON.stringify({ code: 'NODE_LOGIN_REQUIRED', nodeId: NODE_B }), {
           status: 401,
         })
     );
-    await client.fetch('/n/node-b/api/devices');
+    await client.fetch(`/n/${NODE_B}/api/devices`);
     await flush();
 
-    expect(events).toEqual([{ nodeId: 'node-b', scope: 'node', path: '/n/node-b/api/devices' }]);
+    expect(events).toEqual([{ nodeId: NODE_B, scope: 'node', path: `/n/${NODE_B}/api/devices` }]);
     expect(navigated).toEqual([]);
   });
 
   test('转发路径上无 code 的 401 也按 node 处理，不跳转', async () => {
     const { events, navigated } = setup();
     const client = clientReturning(() => new Response('nope', { status: 401 }));
-    await client.fetch('/n/node-c/api/devices');
+    await client.fetch(`/n/${NODE_C}/api/devices`);
     await flush();
 
-    expect(events).toEqual([{ nodeId: 'node-c', scope: 'node', path: '/n/node-c/api/devices' }]);
+    expect(events).toEqual([{ nodeId: NODE_C, scope: 'node', path: `/n/${NODE_C}/api/devices` }]);
+    expect(navigated).toEqual([]);
+  });
+
+  test('node runtime 的相对路径 + baseUrl 前缀：401 归该 node，不把整页踢去登录页', async () => {
+    const { events, navigated } = setup();
+    // 每 node runtime 都是 `new ApiClient('/n/<id>')` 再 fetch('/api/devices')。
+    const client = clientReturning(() => new Response('nope', { status: 401 }), `/n/${NODE_C}`);
+    await client.fetch('/api/devices');
+    await flush();
+
+    expect(events).toEqual([{ nodeId: NODE_C, scope: 'node', path: `/n/${NODE_C}/api/devices` }]);
     expect(navigated).toEqual([]);
   });
 
@@ -99,9 +118,11 @@ describe('session interceptor', () => {
     setup();
     const client = clientReturning(
       () =>
-        new Response(JSON.stringify({ code: 'NODE_LOGIN_REQUIRED', nodeId: 'n1' }), { status: 401 })
+        new Response(JSON.stringify({ code: 'NODE_LOGIN_REQUIRED', nodeId: NODE_B }), {
+          status: 401,
+        })
     );
-    const res = await client.fetch('/n/n1/api/devices');
+    const res = await client.fetch(`/n/${NODE_B}/api/devices`);
     const payload = (await res.json()) as { code: string };
     expect(payload.code).toBe('NODE_LOGIN_REQUIRED');
     await flush();

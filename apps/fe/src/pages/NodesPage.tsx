@@ -10,17 +10,21 @@
 //     且 pending 未过期时才签；不匹配的证书告警「收到未知节点证书」并忽略。
 
 import { NodeLoginButton } from '@/auth/NodeLoginButton';
-import { rootSignerFromPassword } from '@/auth/account-security-actions';
+import { rootSignerFromPassword, withRootSigner } from '@/auth/account-security-actions';
 import { type RecordSigner, headFromResponse } from '@/auth/key-log-actions';
 import { deriveRootKey, kdfParamsFromJson } from '@/auth/key-log-actions';
 import { useAuthMode } from '@/auth/use-session-key';
 import {
+  type CreatedEnrollment,
   type PendingEnrollment,
   buildAdmitNodeRecord,
   buildRevokeNodeRecord,
   createEnrollmentOnHub,
+  forgetSigner,
+  isPendingExpired,
   joinCommand,
   listPendingEnrollments,
+  nextPendingExpiry,
   prunePendingEnrollments,
   rememberSigner,
   removePendingEnrollment,
@@ -29,8 +33,7 @@ import {
 } from '@/node/enrollment';
 import {
   type CertificateOutcome,
-  certificatesFromHubNodes,
-  certificatesFromMeshNodes,
+  collectRedeemedCertificates,
   offerCertificate,
   useEnrollmentWatch,
 } from '@/node/enrollment-watch';
@@ -43,7 +46,7 @@ import {
   useMeshNodes,
 } from '@/node/mesh-nodes';
 import type { AuthApi, AuthKdfParamsJson, AuthModeResponse } from '@tmex/api-client/auth/index';
-import { defaultAuthApi } from '@tmex/api-client/auth/index';
+import { defaultAuthApi, requireRootEpoch } from '@tmex/api-client/auth/index';
 import { encodeBase64url } from '@tmex/shared/auth';
 import { Button } from '@tmex/ui/button';
 import { Input } from '@tmex/ui/input';
@@ -99,7 +102,7 @@ function NodesView({ mode: rawMode, api }: { mode: AuthModeResponse; api: AuthAp
     setEntryNodeId(entryNodeId);
   }, [entryNodeId]);
 
-  const hub = useHubNode(nodes, entryNodeId);
+  const hub = useHubNode(nodes, { hubNodeId: rawMode.hubNodeId ?? null });
   const rows = useMemo(
     () => mergeNodes(nodes, hub.hubNodes, { entryNodeId, hubNodeId: hub.hubNodeId }),
     [nodes, hub.hubNodes, hub.hubNodeId, entryNodeId]
@@ -121,18 +124,31 @@ function NodesView({ mode: rawMode, api }: { mode: AuthModeResponse; api: AuthAp
     hub.refresh();
   }, [hub, refreshNodes]);
 
+  const [expiredIds, setExpiredIds] = useState<string[]>([]);
   const admit = useAdmitAction({ api, mode, hubApi: hub.hubApi, onDone: refreshAll });
 
-  // 后端补上 `enroll.redeemed` 推送前，pending 存在期间轮询证书。
   useEnrollmentWatch({
     pendings,
     hubApi: hub.hubApi,
     onOutcome: (outcome) => void admit.handleOutcome(outcome),
   });
 
+  // 过期清理必须是**定时**的：页面一直开着时，十分钟前建的 pending 不能继续留在
+  // 内存与 sessionStorage 里，对应的 join 串也不能继续留在 DOM（见 F4-3 评审 Major）。
   useEffect(() => {
-    prunePendingEnrollments(Date.now());
-  }, []);
+    const sweep = () => {
+      const removed = prunePendingEnrollments(Date.now());
+      if (removed.length > 0) setExpiredIds(removed.map((row) => row.hubEnrollmentId));
+    };
+    sweep();
+    const next = nextPendingExpiry(pendings);
+    if (next === null) return;
+    const timer = setTimeout(sweep, Math.max(0, next - Date.now()) + 1);
+    return () => clearTimeout(timer);
+  }, [pendings]);
+
+  // 离开页面即丢弃 5 分钟凭据复用窗口里的根钥副本。
+  useEffect(() => () => forgetSigner(), []);
 
   if (!mode) {
     return (
@@ -188,6 +204,8 @@ function NodesView({ mode: rawMode, api }: { mode: AuthModeResponse; api: AuthAp
         pendings={pendings}
         onConfirm={(pending) => void admit.confirmManually(pending)}
         busyPendingId={admit.busyPendingId}
+        hubUnconfirmedIds={admit.hubUnconfirmedIds}
+        clearedIds={[...expiredIds, ...admit.admittedIds]}
       />
 
       <NodesTable
@@ -219,6 +237,10 @@ function useAdmitAction({
 }) {
   const { t } = useTranslation();
   const [busyPendingId, setBusyPendingId] = useState<string | null>(null);
+  /** hub 未确认的 pending：保留待确认状态并给出重试入口。 */
+  const [hubUnconfirmedIds, setHubUnconfirmedIds] = useState<string[]>([]);
+  /** 已 admit 掉的 pending（用于清掉页面上对应的 join 串）。 */
+  const [admittedIds, setAdmittedIds] = useState<string[]>([]);
 
   const signAdmit = useCallback(
     async (
@@ -229,24 +251,42 @@ function useAdmitAction({
     ) => {
       if (!mode) return;
       const head = headFromResponse(await api.keyLogHead());
+      // 取 head 是异步的：这中间 pending 可能已经过期，过期后签出来的 admit 也不该被接受。
+      if (isPendingExpired(pending, Date.now())) {
+        toast.error(t('nodes.enrollment.expired'));
+        removePendingEnrollment(pending.hubEnrollmentId);
+        setAdmittedIds((ids) => [...ids, pending.hubEnrollmentId]);
+        return;
+      }
       const record = await buildAdmitNodeRecord({
         head,
-        rootEpoch: mode.rootEpoch ?? 0,
+        rootEpoch: requireRootEpoch(mode),
         uid: mode.uid,
         pending,
         certificateBytes,
         certSig,
         signer,
       });
-      const result = await api.appendKeyLog({
-        bytes: encodeBase64url(record.bytes),
-        sig: encodeBase64url(record.sig),
-      });
+      // hub=sync：entry 先把记录送 hub 并等 ack 再本地 append。
+      const result = await api.appendKeyLog(
+        { bytes: encodeBase64url(record.bytes), sig: encodeBase64url(record.sig) },
+        { hubSync: true }
+      );
       if (!result.ok) {
         toast.error(t(`auth.errors.${result.code}`, { defaultValue: result.code }));
         return;
       }
-      removePendingEnrollment(pending.id);
+      if (result.hubAck !== true) {
+        // hub 没确认就删 pending 会把 enroll 授权丢掉，而新 node 永远成不了 mesh 成员。
+        setHubUnconfirmedIds((ids) =>
+          ids.includes(pending.hubEnrollmentId) ? ids : [...ids, pending.hubEnrollmentId]
+        );
+        toast.warning(t('nodes.enrollment.hubNotConfirmed'));
+        return;
+      }
+      setHubUnconfirmedIds((ids) => ids.filter((id) => id !== pending.hubEnrollmentId));
+      removePendingEnrollment(pending.hubEnrollmentId);
+      setAdmittedIds((ids) => [...ids, pending.hubEnrollmentId]);
       toast.success(t('nodes.enrollment.admitted'));
       onDone();
     },
@@ -273,7 +313,7 @@ function useAdmitAction({
         // 凭据复用窗口已过：留在「待确认」，等用户点确认按钮重新输入密码。
         return;
       }
-      setBusyPendingId(outcome.pending.id);
+      setBusyPendingId(outcome.pending.hubEnrollmentId);
       try {
         await signAdmit(outcome.pending, outcome.certificateBytes, outcome.certSig, signer);
       } catch (err) {
@@ -285,24 +325,18 @@ function useAdmitAction({
     [signAdmit, t]
   );
 
-  /** 「待确认」按钮：重新要密码，然后立刻做一轮证书检测。 */
+  /** 「待确认 / 重试」按钮：重新要密码，然后立刻向 hub 查一次本次 enrollment 的证书。 */
   const confirmManually = useCallback(
     async (pending: PendingEnrollment) => {
       if (!mode) return;
       const password = globalThis.prompt?.(t('nodes.enrollment.passwordPrompt')) ?? '';
       if (!password) return;
-      setBusyPendingId(pending.id);
+      setBusyPendingId(pending.hubEnrollmentId);
       try {
         const signer = await rootSignerFromPassword(password, mode.kdfParams);
+        // 记住这次交互：后续自动 admit 复用它；离开页面 / 超时会清零。
         rememberSigner(signer, Date.now());
-        const [hubRows, meshNodes] = await Promise.all([
-          hubApi ? hubApi.listNodes().catch(() => []) : Promise.resolve([]),
-          api.listNodes().catch(() => []),
-        ]);
-        const candidates = [
-          ...certificatesFromHubNodes(hubRows),
-          ...certificatesFromMeshNodes(meshNodes),
-        ];
+        const candidates = hubApi ? await collectRedeemedCertificates(hubApi, [pending]) : [];
         for (const candidate of candidates) {
           const outcome = offerCertificate([pending], candidate, Date.now());
           if (outcome.kind === 'admit') {
@@ -325,10 +359,10 @@ function useAdmitAction({
         setBusyPendingId(null);
       }
     },
-    [api, hubApi, mode, signAdmit, t]
+    [hubApi, mode, signAdmit, t]
   );
 
-  return { handleOutcome, confirmManually, busyPendingId };
+  return { handleOutcome, confirmManually, busyPendingId, hubUnconfirmedIds, admittedIds };
 }
 
 // ---------------------------------------------------------------------------
@@ -343,6 +377,8 @@ function EnrollmentSection({
   pendings,
   onConfirm,
   busyPendingId,
+  hubUnconfirmedIds,
+  clearedIds,
 }: {
   api: AuthApi;
   mode: ResolvedMode;
@@ -351,6 +387,9 @@ function EnrollmentSection({
   pendings: PendingEnrollment[];
   onConfirm: (pending: PendingEnrollment) => void;
   busyPendingId: string | null;
+  hubUnconfirmedIds: string[];
+  /** 已 admit / 已过期的 pending id：对应的 join 串必须立刻从 DOM 里消失。 */
+  clearedIds: string[];
 }) {
   const { t } = useTranslation();
   const [open, setOpen] = useState(false);
@@ -358,9 +397,14 @@ function EnrollmentSection({
   const [password, setPassword] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [created, setCreated] = useState<PendingEnrollment | null>(null);
+  // join 串只在内存里、只显示这一次；admit / 过期后立即清掉。
+  const [created, setCreated] = useState<CreatedEnrollment | null>(null);
 
-  const hubUrl = hubPublicUrl();
+  useEffect(() => {
+    if (created && clearedIds.includes(created.pending.hubEnrollmentId)) setCreated(null);
+  }, [clearedIds, created]);
+
+  const hubUrl = resolveHubPublicUrl(created, mode);
 
   const submit = useCallback(async () => {
     setError(null);
@@ -374,27 +418,35 @@ function EnrollmentSection({
     }
     setBusy(true);
     try {
+      const rootEpoch = requireRootEpoch(mode);
       const head = await api.keyLogHead();
       const rootKey = await deriveRootKey(password, kdfParamsFromJson(mode.kdfParams));
       setPassword('');
-      const pending = await createEnrollmentOnHub({
+      const outcome = await createEnrollmentOnHub({
         hubApi,
         uid: mode.uid,
-        rootEpoch: mode.rootEpoch ?? 0,
+        rootEpoch,
         rootKey,
         keyLogHeadHash: headFromResponse(head).hash,
         name,
       });
       // 设计 §2 步骤 3：enroll 那次交互后 5 分钟内自动签 admit-node，不再要一次密码。
       rememberSigner({ kind: 'root', rootKey }, Date.now());
-      setCreated(pending);
+      setCreated(outcome);
       setName('');
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+      const code = (err as { code?: string })?.code;
+      setError(
+        code
+          ? t(`auth.errors.${code}`, { defaultValue: code })
+          : err instanceof Error
+            ? err.message
+            : String(err)
+      );
     } finally {
       setBusy(false);
     }
-  }, [api, hubApi, mode.kdfParams, mode.rootEpoch, mode.uid, name, password, t]);
+  }, [api, hubApi, mode, name, password, t]);
 
   return (
     <section className="flex flex-col gap-3 rounded-xl border border-border bg-background p-4">
@@ -445,51 +497,66 @@ function EnrollmentSection({
         </div>
       )}
 
-      {created && (
-        <div
-          className="flex flex-col gap-2 rounded-lg bg-muted/50 p-2"
-          data-testid="nodes-join-info"
-        >
-          <p className="text-xs text-muted-foreground">{t('nodes.enrollment.joinHint')}</p>
-          <CopyableCode
-            label={t('nodes.enrollment.joinCommand')}
-            value={joinCommand(hubUrl, created.joinToken, created.name)}
-            testId="nodes-join-command"
-          />
-          <CopyableCode
-            label={t('nodes.enrollment.joinToken')}
-            value={created.joinToken}
-            testId="nodes-join-token"
-          />
-        </div>
-      )}
+      {created &&
+        (hubUrl ? (
+          <div
+            className="flex flex-col gap-2 rounded-lg bg-muted/50 p-2"
+            data-testid="nodes-join-info"
+          >
+            <p className="text-xs text-muted-foreground">{t('nodes.enrollment.joinHint')}</p>
+            <CopyableCode
+              label={t('nodes.enrollment.joinCommand')}
+              value={joinCommand(hubUrl, created.joinToken, created.pending.name)}
+              testId="nodes-join-command"
+            />
+            <CopyableCode
+              label={t('nodes.enrollment.joinToken')}
+              value={created.joinToken}
+              testId="nodes-join-token"
+            />
+          </div>
+        ) : (
+          // hub 没给出对外地址就不能编 join 命令：用入口 origin 会把新设备指到没有
+          // HubRuntime 的机器，redeem 直接 404（见 F4-3 评审 Blocker）。
+          <p className="text-xs text-destructive" data-testid="nodes-join-no-url">
+            {t('nodes.enrollment.missingHubUrl')}
+          </p>
+        ))}
 
       {pendings.length > 0 && (
         <ul className="flex flex-col gap-1" data-testid="nodes-pending-list">
-          {pendings.map((pending) => (
-            <li
-              key={pending.id}
-              className="flex items-center justify-between gap-2 rounded-lg bg-muted/50 px-2 py-1.5 text-xs"
-              data-testid={`nodes-pending-${pending.id}`}
-            >
-              <span className="truncate">
-                {t('nodes.enrollment.pending')}
-                <span className="ml-2 font-mono text-muted-foreground">
-                  {pending.name ?? pending.enrollPk.slice(0, 12)}
-                </span>
-              </span>
-              <Button
-                type="button"
-                size="xs"
-                disabled={busyPendingId === pending.id}
-                onClick={() => onConfirm(pending)}
-                data-testid={`nodes-pending-confirm-${pending.id}`}
+          {pendings.map((pending) => {
+            const id = pending.hubEnrollmentId;
+            const unconfirmed = hubUnconfirmedIds.includes(id);
+            return (
+              <li
+                key={id}
+                className="flex items-center justify-between gap-2 rounded-lg bg-muted/50 px-2 py-1.5 text-xs"
+                data-testid={`nodes-pending-${id}`}
               >
-                {busyPendingId === pending.id ? <Loader2 className="animate-spin" /> : <Check />}
-                {t('nodes.enrollment.confirmPending')}
-              </Button>
-            </li>
-          ))}
+                <span className="truncate">
+                  {unconfirmed
+                    ? t('nodes.enrollment.hubNotConfirmed')
+                    : t('nodes.enrollment.pending')}
+                  <span className="ml-2 font-mono text-muted-foreground">
+                    {pending.name ?? pending.enrollPk.slice(0, 12)}
+                  </span>
+                </span>
+                <Button
+                  type="button"
+                  size="xs"
+                  disabled={busyPendingId === id}
+                  onClick={() => onConfirm(pending)}
+                  data-testid={`nodes-pending-confirm-${id}`}
+                >
+                  {busyPendingId === id ? <Loader2 className="animate-spin" /> : <Check />}
+                  {unconfirmed
+                    ? t('nodes.enrollment.retryHub')
+                    : t('nodes.enrollment.confirmPending')}
+                </Button>
+              </li>
+            );
+          })}
         </ul>
       )}
     </section>
@@ -497,12 +564,14 @@ function EnrollmentSection({
 }
 
 /**
- * join 命令里的 hub 地址。后端目前没有把 hub 的 `config.publicUrl` 下发给浏览器
- * （见结果文档「后端待补」），退化成当前页面 origin——hub,node 同机时它就是对的。
+ * join 命令里的 hub 地址：**只**来自 hub —— enrollment 创建响应的 `public_url`，
+ * 或 `/api/auth/mode` 的 `hubPublicUrl`。两者都没有就不生成命令。
  */
-export function hubPublicUrl(): string {
-  const origin = (globalThis as { location?: { origin?: string } }).location?.origin;
-  return origin ?? 'https://<hub-public-url>';
+export function resolveHubPublicUrl(
+  created: { hubPublicUrl: string | null } | null,
+  mode: { hubPublicUrl?: string | null }
+): string | null {
+  return created?.hubPublicUrl ?? mode.hubPublicUrl ?? null;
 }
 
 function CopyableCode({
@@ -656,8 +725,13 @@ function NodeRowView({
     }
   }, [hubApi, nameDraft, onChanged, row.id, t]);
 
+  /**
+   * 吊销：**只有一条路径**——`POST /api/auth/keylog?hub=sync`。
+   * entry 先把签好的记录送 hub 等 ack，再本地 append。
+   * 老实现「本地 append + 再调 hub revoke」是两条独立通道，先到的那条会让另一条报 `seq_gap`，
+   * UI 误报 hub 失败；两条都失败时本地却已经把节点从列表里摘掉（见 F4-3 评审 Major）。
+   */
   const revoke = useCallback(async () => {
-    if (!hubApi) return;
     const confirmed = globalThis.confirm?.(t('nodes.revoke.confirmText', { name: row.name }));
     if (!confirmed) return;
     const password = globalThis.prompt?.(t('nodes.enrollment.passwordPrompt')) ?? '';
@@ -665,39 +739,45 @@ function NodeRowView({
     const reason = globalThis.prompt?.(t('nodes.revoke.reasonPrompt')) ?? '';
     setBusy(true);
     try {
-      const signer = await rootSignerFromPassword(password, mode.kdfParams);
+      const rootEpoch = requireRootEpoch(mode);
       const head = headFromResponse(await api.keyLogHead());
-      const record = await buildRevokeNodeRecord({
-        head,
-        rootEpoch: mode.rootEpoch ?? 0,
-        uid: mode.uid,
-        nodeIdHex: row.id,
-        reason,
-        signer,
+      const result = await withRootSigner(password, mode.kdfParams, async (signer) => {
+        const record = await buildRevokeNodeRecord({
+          head,
+          rootEpoch,
+          uid: mode.uid,
+          nodeIdHex: row.id,
+          reason,
+          signer,
+        });
+        return api.appendKeyLog(
+          { bytes: encodeBase64url(record.bytes), sig: encodeBase64url(record.sig) },
+          { hubSync: true }
+        );
       });
-      const body = { bytes: encodeBase64url(record.bytes), sig: encodeBase64url(record.sig) };
-      const appended = await api.appendKeyLog(body);
-      // hub 也要拿到同一条记录（它据此断开 uplink 并置 nodes.status=revoked）。
-      // 两侧是同一条 `{bytes, sig}`，重复 append 不构成分叉；hub 侧失败只降级为告警。
-      let hubError: string | null = null;
-      try {
-        await hubApi.revoke(row.id, body);
-      } catch (err) {
-        hubError = err instanceof Error ? err.message : String(err);
-      }
-      if (!appended.ok) {
-        toast.error(t(`auth.errors.${appended.code}`, { defaultValue: appended.code }));
+      if (!result.ok) {
+        toast.error(t(`auth.errors.${result.code}`, { defaultValue: result.code }));
         return;
       }
-      if (hubError) toast.warning(t('nodes.revoke.hubFailed', { error: hubError }));
-      else toast.success(t('nodes.revoke.done'));
+      if (result.hubAck !== true) {
+        toast.warning(t('nodes.revoke.hubFailed', { error: result.hubError ?? '' }));
+        return;
+      }
+      toast.success(t('nodes.revoke.done'));
       onChanged();
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : String(err));
+      const code = (err as { code?: string })?.code;
+      toast.error(
+        code
+          ? t(`auth.errors.${code}`, { defaultValue: code })
+          : err instanceof Error
+            ? err.message
+            : String(err)
+      );
     } finally {
       setBusy(false);
     }
-  }, [api, hubApi, mode.kdfParams, mode.rootEpoch, mode.uid, onChanged, row.id, row.name, t]);
+  }, [api, mode, onChanged, row.id, row.name, t]);
 
   const disabledHint = hubOnline ? undefined : t('nodes.hubOffline');
 

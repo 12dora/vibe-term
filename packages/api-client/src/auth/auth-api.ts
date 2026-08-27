@@ -1,6 +1,7 @@
 // mesh 鉴权 REST 客户端。所有 `/n/:T/...` 路径由 nodeId 决定，`self` 退化为不带前缀的旧路由。
 
 import { type ApiClient, defaultApiClient, parseApiError } from '../client';
+import { SELF_NODE_ID, resolveNodeUrl } from '../node-url';
 import type {
   AuthChallengeResponse,
   AuthLoginErrorCode,
@@ -16,15 +17,19 @@ import type {
   PasskeySummary,
   PublicKeyCredentialCreationOptionsJSON,
   PublicKeyCredentialRequestOptionsJSON,
+  PublicNode,
+  PublicNodesResponse,
   RegistrationResponseJSON,
 } from './types';
 
-/** entry 自身的 nodeId 占位符（与后端路由 `/n/:nodeId` 的 self 语义一致）。 */
-export const SELF_NODE_ID = 'self';
+export { SELF_NODE_ID };
 
-/** `self` → 原路径；其余 → `/n/<id>` 前缀。与 F4-2 的 `node-url.ts` 语义一致。 */
+/**
+ * `self` → 原路径；其余 → `/n/<id>` 前缀。
+ * 与 `node-url.ts` 共用同一个 `assertNodeId`：非法 nodeId 直接抛，不靠 URL 编码兜底。
+ */
 export function nodeAuthPath(nodeId: string, path: string): string {
-  return nodeId === SELF_NODE_ID ? path : `/n/${encodeURIComponent(nodeId)}${path}`;
+  return resolveNodeUrl(nodeId, path);
 }
 
 export type LoginResult =
@@ -56,12 +61,26 @@ export class AuthApi {
     return (await res.json()) as AuthModeResponse;
   }
 
+  /** `GET /api/mesh/nodes`（**需会话**）：含公钥 / inventory / loggedIn / isHub。 */
   async listNodes(): Promise<MeshNode[]> {
     const res = await this.client.fetch('/api/mesh/nodes');
     if (!res.ok) {
       throw new Error(await parseApiError(res, 'Failed to load mesh nodes'));
     }
     const payload = (await res.json()) as MeshNodesResponse;
+    return payload.nodes ?? [];
+  }
+
+  /**
+   * `GET /api/auth/nodes`（**公开**）：只有 `{id, name, online}`。
+   * 登录页在拿到 `tmex_s_self` 之前只能用它——公钥要登录后才下发。
+   */
+  async listPublicNodes(): Promise<PublicNode[]> {
+    const res = await this.client.fetch('/api/auth/nodes');
+    if (!res.ok) {
+      throw new Error(await parseApiError(res, 'Failed to load nodes'));
+    }
+    const payload = (await res.json()) as PublicNodesResponse;
     return payload.nodes ?? [];
   }
 
@@ -140,10 +159,9 @@ export class AuthApi {
     return (await res.json()) as PublicKeyCredentialRequestOptionsJSON;
   }
 
-  /** 端点尚未上线时（404）返回空列表，账号安全页只显示「添加」。 */
+  /** `GET /api/auth/passkeys`（需会话）。失败一律抛错，不再静默退化成空列表。 */
   async listPasskeys(): Promise<PasskeySummary[]> {
     const res = await this.client.fetch('/api/auth/passkeys');
-    if (res.status === 404) return [];
     if (!res.ok) {
       throw new Error(await parseApiError(res, 'Failed to load passkeys'));
     }
@@ -151,6 +169,7 @@ export class AuthApi {
     return payload.passkeys ?? [];
   }
 
+  /** `GET /api/auth/keylog/head`（需会话）。构造任何记录都要它给出的 `prev_hash` 与 epoch。 */
   async keyLogHead(): Promise<KeyLogHeadResponse> {
     const res = await this.client.fetch('/api/auth/keylog/head');
     if (!res.ok) {
@@ -159,15 +178,41 @@ export class AuthApi {
     return (await res.json()) as KeyLogHeadResponse;
   }
 
-  /** 409 `{code:'KEY_LOG_FORK'}` 是业务结果不是异常，必须让 UI 显式报「密钥日志分叉」。 */
-  async appendKeyLog(body: KeyLogAppendRequest): Promise<KeyLogAppendResult> {
-    const res = await this.client.fetch('/api/auth/keylog', {
+  /**
+   * 409 `{code:'KEY_LOG_FORK'}` 是业务结果不是异常，必须让 UI 显式报「密钥日志分叉」。
+   *
+   * `hubSync` → `POST /api/auth/keylog?hub=sync`：entry 先把记录发给 hub 并等 ack 再本地 append，
+   * 响应带 `hubAck`。admit / revoke **只有** `hubAck === true` 才能清掉 pending / 认为撤销生效。
+   */
+  async appendKeyLog(
+    body: KeyLogAppendRequest,
+    opts: { hubSync?: boolean } = {}
+  ): Promise<KeyLogAppendResult> {
+    const path = opts.hubSync ? '/api/auth/keylog?hub=sync' : '/api/auth/keylog';
+    const res = await this.client.fetch(path, {
       method: 'POST',
       headers: JSON_HEADERS,
       body: JSON.stringify(body),
     });
-    if (res.ok) return { ok: true };
-    return { ok: false, code: await readCode(res, 'KEY_LOG_REJECTED') };
+    if (!res.ok) return { ok: false, code: await readCode(res, 'KEY_LOG_REJECTED') };
+    try {
+      const payload = (await res.json()) as {
+        seq?: number | string;
+        hash?: string;
+        hubAck?: boolean;
+        hubError?: string;
+      };
+      return {
+        ok: true,
+        seq: payload.seq,
+        hash: payload.hash,
+        // 非 hub=sync 模式没有 hubAck 字段，保持 undefined（调用方只在 hubSync 下判定）。
+        hubAck: payload.hubAck,
+        hubError: payload.hubError,
+      };
+    } catch {
+      return { ok: true };
+    }
   }
 }
 

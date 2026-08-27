@@ -62,8 +62,10 @@ function renderFilePage(nodeId: string, rootId: string, path: string, category: 
 
 describe('FilePage 媒体 URL 带 node 前缀', () => {
   test('非 self node 的图片 src', () => {
-    const markup = renderFilePage('node-a', 'r1', '/a.png', 'image');
-    expect(markup).toContain('/n/node-a/api/files/raw?rootId=r1&amp;path=%2Fa.png');
+    const markup = renderFilePage('0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a', 'r1', '/a.png', 'image');
+    expect(markup).toContain(
+      '/n/0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a/api/files/raw?rootId=r1&amp;path=%2Fa.png'
+    );
   });
 
   test('self 的图片 src 与旧行为一致（无前缀）', () => {
@@ -73,26 +75,30 @@ describe('FilePage 媒体 URL 带 node 前缀', () => {
   });
 
   test('非 self node 的视频 / PDF src', () => {
-    expect(renderFilePage('node-a', 'r1', '/v.mp4', 'video')).toContain(
-      '/n/node-a/api/files/raw?rootId=r1&amp;path=%2Fv.mp4'
+    expect(renderFilePage('0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a', 'r1', '/v.mp4', 'video')).toContain(
+      '/n/0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a/api/files/raw?rootId=r1&amp;path=%2Fv.mp4'
     );
-    expect(renderFilePage('node-a', 'r1', '/d.pdf', 'pdf')).toContain(
-      '/n/node-a/api/files/raw?rootId=r1&amp;path=%2Fd.pdf'
+    expect(renderFilePage('0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a', 'r1', '/d.pdf', 'pdf')).toContain(
+      '/n/0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a/api/files/raw?rootId=r1&amp;path=%2Fd.pdf'
     );
   });
 
   test('markdown 图片 resolver 带 node 前缀', () => {
-    const markup = renderFilePage('node-a', 'r1', '/doc.md', 'markdown');
-    expect(markup).toContain('/n/node-a/api/files/raw?rootId=r1&amp;path=img%2Fa.png');
+    const markup = renderFilePage('0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a', 'r1', '/doc.md', 'markdown');
+    expect(markup).toContain(
+      '/n/0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a/api/files/raw?rootId=r1&amp;path=img%2Fa.png'
+    );
   });
 
   test('PageActions 的「打开原始文件」链接带 node 前缀', () => {
-    const runtime = appNodeRuntimes.get('node-b').runtime;
+    const runtime = appNodeRuntimes.get('0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b').runtime;
     const markup = renderToStaticMarkup(
       <RuntimeProvider runtime={runtime}>
         <PageActions ref={encodeFileRef('r1', '/a.png')} />
       </RuntimeProvider>
     );
-    expect(markup).toContain('href="/n/node-b/api/files/raw?rootId=r1&amp;path=%2Fa.png"');
+    expect(markup).toContain(
+      'href="/n/0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b/api/files/raw?rootId=r1&amp;path=%2Fa.png"'
+    );
   });
 });

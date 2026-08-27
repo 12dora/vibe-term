@@ -2,7 +2,10 @@
 
 import { describe, expect, test } from 'bun:test';
 import { wsBorsh } from '@tmex/shared';
+import { encodeBase64url } from '@tmex/shared/auth';
 import {
+  type EnrollRedeemedPayload,
+  KIND_ENROLL_REDEEMED,
   MeshEventSource,
   type MeshSocketLike,
   type NodeEventPayload,
@@ -20,6 +23,16 @@ function nodeEventFrame(payload: {
 }): Uint8Array {
   const body = wsBorsh.encodePayload(wsBorsh.schema.NodeEventSchema, payload);
   return wsBorsh.encodeEnvelope(wsBorsh.KIND_NODE_EVENT, body, 1);
+}
+
+function enrollRedeemedFrame(payload: {
+  enrollPk: Uint8Array;
+  certificate: Uint8Array;
+  certSig: Uint8Array;
+  nodeId: string;
+}): Uint8Array {
+  const body = wsBorsh.encodePayload(wsBorsh.schema.EnrollRedeemedSchema, payload);
+  return wsBorsh.encodeEnvelope(KIND_ENROLL_REDEEMED, body, 1);
 }
 
 class FakeSocket implements MeshSocketLike {
@@ -43,8 +56,8 @@ class FakeSocket implements MeshSocketLike {
   emit(data: unknown): void {
     this.onmessage?.({ data });
   }
-  drop(): void {
-    this.onclose?.({});
+  drop(code?: number): void {
+    this.onclose?.(code === undefined ? {} : { code });
   }
 }
 
@@ -118,6 +131,83 @@ describe('decodeMeshFrame', () => {
     expect(decodeMeshFrame(other)).toBeNull();
     expect(decodeMeshFrame(new Uint8Array([1, 2, 3]))).toBeNull();
   });
+
+  test('未知 status 枚举整帧作废，而不是当成 online', () => {
+    const frame = nodeEventFrame({ nodeId: 'a', status: 99, reach: 'lan', inventory: null });
+    expect(decodeMeshFrame(frame)).toBeNull();
+  });
+
+  test('未知 RTC_SIGNAL.from 整帧作废，而不是当成 browser', () => {
+    const body = wsBorsh.encodePayload(wsBorsh.schema.RtcSignalSchema, {
+      rtcSession: 's',
+      from: 42,
+      to: 'x',
+      sdp: null,
+      candidate: null,
+    });
+    expect(decodeMeshFrame(wsBorsh.encodeEnvelope(wsBorsh.KIND_RTC_SIGNAL, body, 0))).toBeNull();
+  });
+
+  test('协议版本不符整帧作废', () => {
+    const body = wsBorsh.encodePayload(wsBorsh.schema.NodeEventSchema, {
+      nodeId: 'a',
+      status: 0,
+      reach: null,
+      inventory: null,
+    });
+    const frame = wsBorsh.encodeEnvelope(
+      wsBorsh.KIND_NODE_EVENT,
+      body,
+      0,
+      0,
+      wsBorsh.CURRENT_VERSION + 1
+    );
+    expect(decodeMeshFrame(frame)).toBeNull();
+  });
+
+  test('ENROLL_REDEEMED 解出 hub 转发的证书（字节转 base64url）', () => {
+    const enrollPk = new Uint8Array(32).fill(3);
+    const certificate = new Uint8Array(20).fill(4);
+    const certSig = new Uint8Array(64).fill(5);
+    const frame = enrollRedeemedFrame({
+      enrollPk,
+      certificate,
+      certSig,
+      nodeId: 'a'.repeat(32),
+    });
+    expect(decodeMeshFrame(frame)).toEqual({
+      kind: 'enroll-redeemed',
+      payload: {
+        enrollPk: encodeBase64url(enrollPk),
+        certificate: encodeBase64url(certificate),
+        certSig: encodeBase64url(certSig),
+        nodeId: 'a'.repeat(32),
+      } satisfies EnrollRedeemedPayload,
+    });
+  });
+
+  test('ENROLL_REDEEMED 缺证书 / 签名长度不对时作废', () => {
+    expect(
+      decodeMeshFrame(
+        enrollRedeemedFrame({
+          enrollPk: new Uint8Array(32).fill(3),
+          certificate: new Uint8Array(0),
+          certSig: new Uint8Array(64),
+          nodeId: 'x',
+        })
+      )
+    ).toBeNull();
+    expect(
+      decodeMeshFrame(
+        enrollRedeemedFrame({
+          enrollPk: new Uint8Array(32).fill(3),
+          certificate: new Uint8Array(20),
+          certSig: new Uint8Array(10),
+          nodeId: 'x',
+        })
+      )
+    ).toBeNull();
+  });
 });
 
 describe('meshWsUrl', () => {
@@ -132,9 +222,11 @@ describe('meshWsUrl', () => {
 });
 
 describe('MeshEventSource', () => {
-  function harness() {
+  function harness(options: { random?: () => number } = {}) {
     const sockets: FakeSocket[] = [];
     const timers: { fn: () => void; ms: number }[] = [];
+    const unauthorized: number[] = [];
+    const clock = { now: 1_000_000 };
     const source = new MeshEventSource({
       url: 'ws://x/mesh/ws',
       socketFactory: () => {
@@ -144,13 +236,18 @@ describe('MeshEventSource', () => {
       },
       baseDelayMs: 100,
       maxDelayMs: 1000,
+      stableAfterMs: 10_000,
+      // 抖动因子固定成 1 → 退避取上界，断言可确定。
+      random: options.random ?? (() => 1),
+      nowFn: () => clock.now,
+      onUnauthorized: () => unauthorized.push(1),
       setTimeoutFn: (fn, ms) => {
         timers.push({ fn, ms });
         return timers.length;
       },
       clearTimeoutFn: () => undefined,
     });
-    return { source, sockets, timers };
+    return { source, sockets, timers, unauthorized, clock };
   }
 
   test('NODE_EVENT 多播给全部订阅者，注销后不再收到', () => {
@@ -196,8 +293,8 @@ describe('MeshEventSource', () => {
     source.stop();
   });
 
-  test('断线后按指数退避重连，连上即重置退避', () => {
-    const { source, sockets, timers } = harness();
+  test('断线后按指数退避重连；只有稳定连接才重置退避', () => {
+    const { source, sockets, timers, clock } = harness();
     source.start();
     sockets[0].open();
 
@@ -215,17 +312,56 @@ describe('MeshEventSource', () => {
     expect(timers.at(-1)?.ms).toBe(400);
     timers.at(-1)?.fn();
 
+    // open 之后立刻被关（4401 之外的原因）：退避不重置，继续翻倍。
     sockets[3].open();
     sockets[3].drop();
+    expect(timers.at(-1)?.ms).toBe(800);
+    timers.at(-1)?.fn();
+
+    // 稳定 10 s 后再断才重置。
+    sockets[4].open();
+    clock.now += 10_000;
+    sockets[4].drop();
     expect(timers.at(-1)?.ms).toBe(100);
     source.stop();
   });
 
-  test('退避有上限', () => {
+  test('收到一帧合法数据即视为连接可用，重置退避', () => {
+    const { source, sockets, timers } = harness();
+    source.start();
+    sockets[0].drop();
+    timers.at(-1)?.fn();
+    sockets[1].drop();
+    expect(timers.at(-1)?.ms).toBe(200);
+    timers.at(-1)?.fn();
+
+    sockets[2].open();
+    sockets[2].emit(nodeEventFrame({ nodeId: 'a', status: 0, reach: 'lan', inventory: null }));
+    sockets[2].drop();
+    expect(timers.at(-1)?.ms).toBe(100);
+    source.stop();
+  });
+
+  test('4401：停止重连并派发一次全局未授权', () => {
+    const { source, sockets, timers, unauthorized } = harness();
+    source.start();
+    sockets[0].open();
+    sockets[0].drop(4401);
+    expect(unauthorized).toHaveLength(1);
+    expect(timers).toHaveLength(0);
+    expect(source.unauthorized).toBe(true);
+    expect(source.connected).toBe(false);
+  });
+
+  test('退避有上限，且带 [0.5,1] 抖动', () => {
     const { source } = harness();
     expect(source.retryDelay(1)).toBe(100);
     expect(source.retryDelay(4)).toBe(800);
     expect(source.retryDelay(10)).toBe(1000);
+
+    const jittered = harness({ random: () => 0 }).source;
+    expect(jittered.retryDelay(1)).toBe(50);
+    expect(jittered.retryDelay(10)).toBe(500);
   });
 
   test('stop 后不再重连', () => {

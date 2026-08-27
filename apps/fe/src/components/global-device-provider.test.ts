@@ -3,7 +3,7 @@ import { nodeAppPath } from '@tmex/api-client';
 import { routeDeviceId, shouldEnsureRouteDeviceSubscription } from './global-device-provider';
 
 const selfAppPath = (path: string) => nodeAppPath('self', path);
-const nodeAAppPath = (path: string) => nodeAppPath('node-a', path);
+const nodeAAppPath = (path: string) => nodeAppPath('0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a', path);
 
 describe('routeDeviceId', () => {
   test('self runtime 匹配旧路由', () => {
@@ -13,12 +13,18 @@ describe('routeDeviceId', () => {
   });
 
   test('self runtime 不认领别的 node 的路径', () => {
-    expect(routeDeviceId('/n/node-a/devices/device-a', selfAppPath)).toBeUndefined();
+    expect(
+      routeDeviceId('/n/0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a/devices/device-a', selfAppPath)
+    ).toBeUndefined();
   });
 
   test('node runtime 只匹配自己的 /n/:nodeId 路径', () => {
-    expect(routeDeviceId('/n/node-a/devices/device-a', nodeAAppPath)).toBe('device-a');
-    expect(routeDeviceId('/n/node-b/devices/device-a', nodeAAppPath)).toBeUndefined();
+    expect(
+      routeDeviceId('/n/0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a/devices/device-a', nodeAAppPath)
+    ).toBe('device-a');
+    expect(
+      routeDeviceId('/n/0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b/devices/device-a', nodeAAppPath)
+    ).toBeUndefined();
     expect(routeDeviceId('/devices/device-a', nodeAAppPath)).toBeUndefined();
   });
 });

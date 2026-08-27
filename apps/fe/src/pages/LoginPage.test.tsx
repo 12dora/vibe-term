@@ -6,7 +6,7 @@ import LoginPage from './LoginPage';
 
 const BASE: AuthModeResponse = {
   mode: 'mesh',
-  nodeId: 'entry-1',
+  nodeId: '0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e',
   uid: 'user-1',
   username: 'alice',
   kdfParams: { salt: 'AAAAAAAAAAAAAAAAAAAAAA', memory_kib: 65536, iterations: 3, parallelism: 1 },

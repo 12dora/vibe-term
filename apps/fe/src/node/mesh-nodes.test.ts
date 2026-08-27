@@ -5,7 +5,7 @@ import type { MeshNode } from '@tmex/api-client/auth/index';
 import { bytesToHex, encodeBase64url, sha256 } from '@tmex/shared/auth';
 import type { HubNodeRow } from './hub-api';
 import {
-  hubCandidates,
+  findHubNodeId,
   mergeNodes,
   patchNodesWithEvent,
   publicKeyFingerprint,
@@ -159,27 +159,33 @@ describe('mergeNodes', () => {
   });
 });
 
-describe('hubCandidates', () => {
-  test('inventory 标了 hub 角色的排最前', () => {
-    const rows = [
-      node({ id: 'a' }),
-      node({ id: 'b', inventory: { roles: 'hub,node' } }),
-      node({ id: 'entry' }),
-    ];
-    expect(hubCandidates(rows, 'entry')).toEqual(['b', 'entry', 'a']);
+describe('findHubNodeId', () => {
+  test('只认 mesh 列表里的 isHub 标志位', () => {
+    const rows = [node({ id: 'a' }), node({ id: 'b', isHub: true }), node({ id: 'entry' })];
+    expect(findHubNodeId(rows, null)).toBe('b');
   });
 
-  test('没有标志位时 entry 自身优先，其次可达的在线 node', () => {
-    const rows = [
-      node({ id: 'a', online: false, reach: null }),
-      node({ id: 'b', reach: 'relay' }),
-      node({ id: 'entry' }),
-    ];
-    expect(hubCandidates(rows, 'entry')).toEqual(['entry', 'b']);
+  test('列表还没到时用 /api/auth/mode 的 hubNodeId', () => {
+    expect(findHubNodeId([], 'hub-1')).toBe('hub-1');
   });
 
-  test('inventory.hub === true 同样识别', () => {
-    const rows = [node({ id: 'h', inventory: { hub: true } })];
-    expect(hubCandidates(rows, null)).toEqual(['h']);
+  test('inventory 里的 hub 角色不再被当成标志位（启发式已删除）', () => {
+    const rows = [node({ id: 'h', inventory: { roles: 'hub,node' } }), node({ id: 'entry' })];
+    expect(findHubNodeId(rows, null)).toBeNull();
+  });
+
+  test('isHub 优先于 mode 的 hubNodeId', () => {
+    const rows = [node({ id: 'b', isHub: true })];
+    expect(findHubNodeId(rows, 'stale')).toBe('b');
+  });
+});
+
+describe('mergeNodes 的 isHub', () => {
+  test('mesh 行自带 isHub 时不依赖上下文的 hubNodeId', () => {
+    const rows = mergeNodes([node({ id: 'x', isHub: true })], null, {
+      entryNodeId: null,
+      hubNodeId: null,
+    });
+    expect(rows[0].isHub).toBe(true);
   });
 });

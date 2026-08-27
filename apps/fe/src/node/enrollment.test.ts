@@ -8,6 +8,7 @@ import {
   createEnrollment,
   createNodeCertificate,
   decodeAdmitNodePayload,
+  decodeJoinToken,
   decodeKeyLogRecord,
   decodeRevokeNodePayload,
   emptyUserKeyState,
@@ -28,10 +29,13 @@ import {
   buildAdmitNodeRecord,
   buildRevokeNodeRecord,
   clearPendingEnrollments,
+  createEnrollmentOnHub,
   findPendingForCertificate,
+  forgetSigner,
   joinCommand,
   listPendingEnrollments,
   matchPendingCertificate,
+  nextPendingExpiry,
   prunePendingEnrollments,
   rememberSigner,
   removePendingEnrollment,
@@ -39,6 +43,7 @@ import {
   takeRememberedSigner,
 } from './enrollment';
 import { offerCertificate } from './enrollment-watch';
+import type { HubApi } from './hub-api';
 
 function memoryStorage(): PendingStorage & { dump(): Record<string, string> } {
   const values = new Map<string, string>();
@@ -63,15 +68,11 @@ async function makeEnrollment(now = NOW) {
     now,
   });
   const pending: PendingEnrollment = {
-    id: 'enroll-1',
-    uid: UID,
-    rootEpoch: ROOT_EPOCH,
+    hubEnrollmentId: 'enroll-1',
     enrollPk: encodeBase64url(enrollment.enrollPk),
-    enrollSk: encodeBase64url(enrollment.enrollSk),
-    authorization: encodeBase64url(enrollment.authorizationBytes),
+    authorizationBytes: encodeBase64url(enrollment.authorizationBytes),
     authorizationSig: encodeBase64url(enrollment.authorizationSig),
     exp: now + 10 * 60 * 1000,
-    joinToken: 'x'.repeat(128),
     name: 'studio',
     createdAt: now,
   };
@@ -112,22 +113,110 @@ describe('pending 存储', () => {
     expect(listPendingEnrollments()).toEqual([pending]);
   });
 
+  test('落盘内容里绝不出现 enroll_sk 或 join 串', async () => {
+    const { enrollment, pending } = await makeEnrollment();
+    addPendingEnrollment(pending);
+    const raw = storage.dump()[PENDING_STORAGE_KEY];
+    expect(raw).not.toContain(encodeBase64url(enrollment.enrollSk));
+    const parsed = JSON.parse(raw) as Record<string, unknown>[];
+    expect(Object.keys(parsed[0]).sort()).toEqual([
+      'authorizationBytes',
+      'authorizationSig',
+      'createdAt',
+      'enrollPk',
+      'exp',
+      'hubEnrollmentId',
+      'name',
+    ]);
+  });
+
+  test('旧格式（含 enrollSk / joinToken）读回时整条丢弃，不再写回', async () => {
+    storage.setItem(
+      PENDING_STORAGE_KEY,
+      JSON.stringify([
+        {
+          hubEnrollmentId: 'legacy',
+          enrollPk: 'pk',
+          enrollSk: 'SECRET',
+          authorizationBytes: 'a',
+          authorizationSig: 's',
+          exp: NOW + 1000,
+          joinToken: 'x'.repeat(128),
+        },
+      ])
+    );
+    setPendingStorage(storage);
+    expect(listPendingEnrollments()).toEqual([]);
+  });
+
   test('同 id 覆盖而不是重复追加，删除后为空', async () => {
     const { pending } = await makeEnrollment();
     addPendingEnrollment(pending);
     addPendingEnrollment({ ...pending, name: 'renamed' });
     expect(listPendingEnrollments()).toHaveLength(1);
     expect(listPendingEnrollments()[0].name).toBe('renamed');
-    removePendingEnrollment(pending.id);
+    removePendingEnrollment(pending.hubEnrollmentId);
     expect(listPendingEnrollments()).toEqual([]);
   });
 
-  test('过期 pending 被 prune 掉', async () => {
+  test('过期 pending 被 prune 掉，并返回被丢弃的那些', async () => {
     const { pending } = await makeEnrollment();
     addPendingEnrollment(pending);
-    expect(prunePendingEnrollments(pending.exp - 1)).toHaveLength(1);
-    expect(prunePendingEnrollments(pending.exp + 1)).toHaveLength(0);
+    expect(prunePendingEnrollments(pending.exp - 1)).toHaveLength(0);
+    expect(listPendingEnrollments()).toHaveLength(1);
+    expect(prunePendingEnrollments(pending.exp + 1)).toEqual([pending]);
     expect(listPendingEnrollments()).toEqual([]);
+  });
+
+  test('nextPendingExpiry 取最早的过期时刻', async () => {
+    const { pending } = await makeEnrollment();
+    expect(nextPendingExpiry([])).toBeNull();
+    expect(
+      nextPendingExpiry([pending, { ...pending, hubEnrollmentId: 'b', exp: pending.exp - 5 }])
+    ).toBe(pending.exp - 5);
+  });
+});
+
+describe('createEnrollmentOnHub', () => {
+  const headHash = new Uint8Array(32).fill(7);
+
+  test('join 串只在返回值里，pending 不含私钥，且 enroll_sk 用后即清零', async () => {
+    const created: { enroll_pk: string }[] = [];
+    const hubApi = {
+      createEnrollment: (body: { enroll_pk: string }) => {
+        created.push(body);
+        return Promise.resolve({
+          ok: true,
+          id: 'e-1',
+          expires_at: NOW + 60_000,
+          public_url: 'https://hub.example',
+        });
+      },
+    } as unknown as HubApi;
+
+    const outcome = await createEnrollmentOnHub({
+      hubApi,
+      uid: UID,
+      rootEpoch: ROOT_EPOCH,
+      rootKey,
+      keyLogHeadHash: headHash,
+      name: 'studio',
+      now: NOW,
+    });
+
+    expect(outcome.joinToken).toHaveLength(128);
+    expect(outcome.hubPublicUrl).toBe('https://hub.example');
+    expect(outcome.pending.hubEnrollmentId).toBe('e-1');
+    expect(Object.keys(outcome.pending)).not.toContain('enrollSk');
+    expect(JSON.stringify(outcome.pending)).not.toContain(outcome.joinToken);
+
+    // join 串里前 32 字节就是 enroll_sk；此刻内存里的那份必须已经清零。
+    const token = decodeJoinToken(outcome.joinToken);
+    expect(token.enrollSk.some((byte) => byte !== 0)).toBe(true);
+    expect(encodeBase64url(token.rootPublicKey)).toBe(encodeBase64url(rootKey.publicKey));
+    expect(encodeBase64url(token.keyLogHeadHash)).toBe(encodeBase64url(headHash));
+    expect(created).toHaveLength(1);
+    expect(listPendingEnrollments()).toEqual([outcome.pending]);
   });
 });
 
@@ -225,7 +314,7 @@ describe('admit-node 记录', () => {
     expect(verified.record.type).toBe('admit-node');
 
     const payload = decodeAdmitNodePayload(verified.record.payload);
-    expect(encodeBase64url(payload.authorization_bytes)).toBe(pending.authorization);
+    expect(encodeBase64url(payload.authorization_bytes)).toBe(pending.authorizationBytes);
     expect(encodeBase64url(payload.authorization_sig)).toBe(pending.authorizationSig);
     expect(encodeBase64url(payload.certificate_bytes)).toBe(encodeBase64url(cert.certificateBytes));
 
@@ -310,11 +399,28 @@ describe('revoke-node 记录', () => {
 
 describe('凭据复用窗口', () => {
   test('5 分钟内可复用，超时即失效', () => {
-    const signer = { kind: 'root', rootKey } as const;
+    const throwaway = rootKeyFromSeed(new Uint8Array(32).fill(0x77));
+    const signer = { kind: 'root', rootKey: throwaway } as const;
     rememberSigner(signer, NOW);
     expect(takeRememberedSigner(NOW + SIGNER_REUSE_WINDOW_MS - 1)).toBe(signer);
     expect(takeRememberedSigner(NOW + SIGNER_REUSE_WINDOW_MS)).toBeNull();
     expect(takeRememberedSigner(NOW)).toBeNull();
+  });
+
+  test('窗口结束 / 换 signer 时根钥 seed 被清零，而不是只丢引用', () => {
+    const first = rootKeyFromSeed(new Uint8Array(32).fill(0x21));
+    rememberSigner({ kind: 'root', rootKey: first }, NOW);
+    // 超时读一次即触发清理
+    expect(takeRememberedSigner(NOW + SIGNER_REUSE_WINDOW_MS)).toBeNull();
+    expect(first.seed.every((byte) => byte === 0)).toBe(true);
+
+    const second = rootKeyFromSeed(new Uint8Array(32).fill(0x22));
+    rememberSigner({ kind: 'root', rootKey: second }, NOW);
+    const third = rootKeyFromSeed(new Uint8Array(32).fill(0x23));
+    rememberSigner({ kind: 'root', rootKey: third }, NOW);
+    expect(second.seed.every((byte) => byte === 0)).toBe(true);
+    forgetSigner();
+    expect(third.seed.every((byte) => byte === 0)).toBe(true);
   });
 });
 
