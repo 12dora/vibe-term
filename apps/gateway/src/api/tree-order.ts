@@ -12,6 +12,53 @@ function isStringArray(value: unknown): value is string[] {
   return Array.isArray(value) && value.every((item) => typeof item === 'string');
 }
 
+function isPaneOrderMap(value: unknown): value is Record<string, string[]> {
+  return (
+    typeof value === 'object' &&
+    value !== null &&
+    !Array.isArray(value) &&
+    Object.values(value).every(isStringArray)
+  );
+}
+
+export type TreeOrderPatch = {
+  windows?: string[];
+  panes?: Record<string, string[]>;
+};
+
+export function parseTreeOrderBody(
+  body: unknown
+): { ok: true; patch: TreeOrderPatch } | { ok: false } {
+  if (!body || typeof body !== 'object' || Array.isArray(body)) return { ok: false };
+  const record = body as { windows?: unknown; panes?: unknown };
+  const patch: TreeOrderPatch = {};
+  if (record.windows !== undefined) {
+    if (!isStringArray(record.windows)) return { ok: false };
+    patch.windows = record.windows;
+  }
+  if (record.panes !== undefined) {
+    if (!isPaneOrderMap(record.panes)) return { ok: false };
+    patch.panes = record.panes;
+  }
+  if (patch.windows === undefined && patch.panes === undefined) return { ok: false };
+  return { ok: true, patch };
+}
+
+function applyTreeOrderPatch(
+  bridge: NonNullable<ReturnType<typeof getTreeOverlayBridge>>,
+  deviceId: string,
+  patch: TreeOrderPatch
+): void {
+  if (patch.windows !== undefined) {
+    bridge.reorderWindows(deviceId, patch.windows);
+  }
+  if (patch.panes !== undefined) {
+    for (const [windowId, paneIds] of Object.entries(patch.panes)) {
+      bridge.reorderPanes(deviceId, windowId, paneIds);
+    }
+  }
+}
+
 async function handleGetTreeOrder(deviceId: string): Promise<Response> {
   if (!getDeviceById(deviceId)) {
     return json({ error: t('apiError.deviceNotFound') }, 404);
@@ -33,28 +80,15 @@ async function handlePutTreeOrder(req: Request, deviceId: string): Promise<Respo
     return json({ error: t('apiError.deviceNotFound') }, 404);
   }
 
-  let body: { windows?: unknown; panes?: unknown };
+  let body: unknown;
   try {
-    body = (await req.json()) as { windows?: unknown; panes?: unknown };
+    body = await req.json();
   } catch {
     return json({ error: t('apiError.invalidRequest') }, 400);
   }
 
-  const hasWindows = body.windows !== undefined;
-  const hasPanes = body.panes !== undefined;
-  if (!hasWindows && !hasPanes) {
-    return json({ error: t('apiError.invalidRequest') }, 400);
-  }
-  if (hasWindows && !isStringArray(body.windows)) {
-    return json({ error: t('apiError.invalidRequest') }, 400);
-  }
-  if (
-    hasPanes &&
-    (typeof body.panes !== 'object' ||
-      body.panes === null ||
-      Array.isArray(body.panes) ||
-      !Object.values(body.panes).every(isStringArray))
-  ) {
+  const parsed = parseTreeOrderBody(body);
+  if (!parsed.ok) {
     return json({ error: t('apiError.invalidRequest') }, 400);
   }
 
@@ -63,15 +97,7 @@ async function handlePutTreeOrder(req: Request, deviceId: string): Promise<Respo
     return json({ error: 'settings service not ready' }, 503);
   }
 
-  if (hasWindows) {
-    bridge.reorderWindows(deviceId, body.windows as string[]);
-  }
-  if (hasPanes) {
-    for (const [windowId, paneIds] of Object.entries(body.panes as Record<string, string[]>)) {
-      bridge.reorderPanes(deviceId, windowId, paneIds);
-    }
-  }
-
+  applyTreeOrderPatch(bridge, deviceId, parsed.patch);
   const order = getDeviceTreeOrder(deviceId);
   return json({ deviceId, windows: order.windows, panes: order.panes });
 }

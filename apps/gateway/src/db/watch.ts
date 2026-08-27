@@ -34,29 +34,60 @@ export interface CreateWatchRuleInput {
   cooldownSeconds?: number;
 }
 
+const WATCH_RULE_CREATE_DEFAULTS = {
+  enabled: true,
+  pattern: null,
+  patternFlags: '',
+  extractGroup: 0,
+  conditionPrompt: null,
+  providerId: null,
+  modelId: null,
+  confirmWithLlm: false,
+  summarizeWithLlm: false,
+  intervalSeconds: 30,
+  unchangedMinutes: null,
+  noMatchBehavior: 'reset',
+  fireMode: 'once',
+  cooldownSeconds: 600,
+} as const;
+
+type WatchRuleDefaultKey = keyof typeof WATCH_RULE_CREATE_DEFAULTS;
+
+export type WatchRuleCreateDefaults = {
+  name: string;
+  deviceId: string;
+  paneId: string;
+  triggerType: WatchTriggerType;
+} & {
+  [K in WatchRuleDefaultKey]: Exclude<CreateWatchRuleInput[K], undefined>;
+};
+
+export function applyWatchRuleCreateDefaults(input: CreateWatchRuleInput): WatchRuleCreateDefaults {
+  const optional = { ...WATCH_RULE_CREATE_DEFAULTS } as Pick<
+    WatchRuleCreateDefaults,
+    WatchRuleDefaultKey
+  >;
+  for (const key of Object.keys(WATCH_RULE_CREATE_DEFAULTS) as WatchRuleDefaultKey[]) {
+    const value = input[key];
+    if (value !== undefined) {
+      (optional as Record<string, unknown>)[key] = value;
+    }
+  }
+  return {
+    name: input.name,
+    deviceId: input.deviceId,
+    paneId: input.paneId,
+    triggerType: input.triggerType,
+    ...optional,
+  };
+}
+
 export function createWatchRule(input: CreateWatchRuleInput): WatchRuleRecord {
   const orm = getOrmDb();
   const now = new Date().toISOString();
   const row: typeof watchRules.$inferInsert = {
     id: crypto.randomUUID(),
-    name: input.name,
-    deviceId: input.deviceId,
-    paneId: input.paneId,
-    enabled: input.enabled ?? true,
-    triggerType: input.triggerType,
-    pattern: input.pattern ?? null,
-    patternFlags: input.patternFlags ?? '',
-    extractGroup: input.extractGroup ?? 0,
-    conditionPrompt: input.conditionPrompt ?? null,
-    providerId: input.providerId ?? null,
-    modelId: input.modelId ?? null,
-    confirmWithLlm: input.confirmWithLlm ?? false,
-    summarizeWithLlm: input.summarizeWithLlm ?? false,
-    intervalSeconds: input.intervalSeconds ?? 30,
-    unchangedMinutes: input.unchangedMinutes ?? null,
-    noMatchBehavior: input.noMatchBehavior ?? 'reset',
-    fireMode: input.fireMode ?? 'once',
-    cooldownSeconds: input.cooldownSeconds ?? 600,
+    ...applyWatchRuleCreateDefaults(input),
     createdAt: now,
     updatedAt: now,
   };

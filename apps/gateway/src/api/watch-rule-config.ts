@@ -136,23 +136,66 @@ function parseRuleFields(
   return applyConfigFields<WatchRuleUpdates>(body, RULE_FIELD_SPECS, undefined);
 }
 
-function validateRuleSemantics(input: WatchRuleEffective): string | null {
+function coalesceDefined<T>(patched: T | undefined, existing: T | undefined, fallback: T): T {
+  if (patched !== undefined) return patched;
+  if (existing !== undefined) return existing;
+  return fallback;
+}
+
+export function parseWatchTriggerType(
+  patch: Record<string, unknown>,
+  existing: WatchRuleExisting | null
+): FieldParseResult<WatchTriggerType> {
+  if (patch.triggerType !== undefined) {
+    return parseEnumField(patch.triggerType, TRIGGER_TYPES, t('apiError.watchTriggerTypeInvalid'));
+  }
+  if (existing) return { ok: true, value: existing.triggerType };
+  return { ok: false, error: t('apiError.watchTriggerTypeInvalid') };
+}
+
+export function mergeWatchRuleEffective(
+  existing: WatchRuleExisting | null,
+  fields: WatchRuleUpdates,
+  triggerType: WatchTriggerType
+): WatchRuleEffective {
+  return {
+    triggerType,
+    pattern: coalesceDefined(fields.pattern, existing?.pattern, null),
+    patternFlags: coalesceDefined(fields.patternFlags, existing?.patternFlags, ''),
+    unchangedMinutes: coalesceDefined(fields.unchangedMinutes, existing?.unchangedMinutes, null),
+    conditionPrompt: coalesceDefined(fields.conditionPrompt, existing?.conditionPrompt, null),
+    intervalSeconds: coalesceDefined(
+      fields.intervalSeconds,
+      existing?.intervalSeconds,
+      triggerType === 'llm' ? 60 : 30
+    ),
+  };
+}
+
+function validatePatternTrigger(input: WatchRuleEffective): string | null {
+  if (!input.pattern) {
+    return t('apiError.watchPatternRequired');
+  }
+  try {
+    compileWatchPattern(input.pattern, input.patternFlags);
+  } catch (error) {
+    return t('apiError.watchPatternInvalid', {
+      detail: error instanceof Error ? error.message : String(error),
+    });
+  }
+  if (
+    input.triggerType === 'unchanged' &&
+    (!input.unchangedMinutes || input.unchangedMinutes <= 0)
+  ) {
+    return t('apiError.watchUnchangedMinutesInvalid');
+  }
+  return null;
+}
+
+export function validateRuleSemantics(input: WatchRuleEffective): string | null {
   if (input.triggerType === 'match' || input.triggerType === 'unchanged') {
-    if (!input.pattern) {
-      return t('apiError.watchPatternRequired');
-    }
-    try {
-      compileWatchPattern(input.pattern, input.patternFlags);
-    } catch (error) {
-      return t('apiError.watchPatternInvalid', {
-        detail: error instanceof Error ? error.message : String(error),
-      });
-    }
-    if (input.triggerType === 'unchanged') {
-      if (!input.unchangedMinutes || input.unchangedMinutes <= 0) {
-        return t('apiError.watchUnchangedMinutesInvalid');
-      }
-    }
+    const error = validatePatternTrigger(input);
+    if (error) return error;
   } else if (!input.conditionPrompt?.trim()) {
     return t('apiError.watchConditionPromptRequired');
   }
@@ -169,51 +212,18 @@ export function buildEffectiveWatchRule(
   existing: WatchRuleExisting | null,
   patch: Record<string, unknown>
 ): BuildEffectiveWatchRuleResult {
-  if (patch.triggerType !== undefined) {
-    if (!TRIGGER_TYPES.includes(patch.triggerType as WatchTriggerType)) {
-      return { ok: false, error: t('apiError.watchTriggerTypeInvalid') };
-    }
-  } else if (!existing) {
-    return { ok: false, error: t('apiError.watchTriggerTypeInvalid') };
-  }
+  const trigger = parseWatchTriggerType(patch, existing);
+  if (!trigger.ok) return trigger;
 
   const parsed = parseRuleFields(patch);
-  if (!parsed.ok) {
-    return parsed;
-  }
+  if (!parsed.ok) return parsed;
 
   const updates: WatchRuleUpdates = { ...parsed.fields };
   if (patch.triggerType !== undefined) {
-    updates.triggerType = patch.triggerType as WatchTriggerType;
+    updates.triggerType = trigger.value;
   }
 
-  const triggerType = updates.triggerType ?? existing?.triggerType;
-  if (!triggerType) {
-    return { ok: false, error: t('apiError.watchTriggerTypeInvalid') };
-  }
-
-  const effective: WatchRuleEffective = {
-    triggerType,
-    pattern:
-      parsed.fields.pattern !== undefined ? parsed.fields.pattern : (existing?.pattern ?? null),
-    patternFlags:
-      parsed.fields.patternFlags !== undefined
-        ? parsed.fields.patternFlags
-        : (existing?.patternFlags ?? ''),
-    unchangedMinutes:
-      parsed.fields.unchangedMinutes !== undefined
-        ? parsed.fields.unchangedMinutes
-        : (existing?.unchangedMinutes ?? null),
-    conditionPrompt:
-      parsed.fields.conditionPrompt !== undefined
-        ? parsed.fields.conditionPrompt
-        : (existing?.conditionPrompt ?? null),
-    intervalSeconds:
-      parsed.fields.intervalSeconds !== undefined
-        ? parsed.fields.intervalSeconds
-        : (existing?.intervalSeconds ?? (triggerType === 'llm' ? 60 : 30)),
-  };
-
+  const effective = mergeWatchRuleEffective(existing, parsed.fields, trigger.value);
   const semanticError = validateRuleSemantics(effective);
   if (semanticError) {
     return { ok: false, error: semanticError };

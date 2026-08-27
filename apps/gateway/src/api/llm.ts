@@ -4,9 +4,8 @@ import type {
   LlmProviderDto,
   LlmProviderProtocol,
   SearchProviderInfoDto,
-  UpdateAgentLlmSettingsRequest,
 } from '@tmex/shared';
-import { getSearchProvider, getSearchProviders } from '../agent/tools/web';
+import { getSearchProviders } from '../agent/tools/web';
 import { encrypt } from '../crypto';
 import { getAgentSettings, updateAgentSettings } from '../db/agent';
 import type { AgentSettingsRecord } from '../db/agent';
@@ -33,17 +32,10 @@ import {
   uniqueTrimmedStrings,
 } from './config-field';
 import { json, readJsonObjectBody } from './http';
+import { type AgentLlmSettingsDraft, parseUpdateSettingsFields } from './llm-settings-fields';
 import { type ApiRoute, route } from './route';
 
 const PROTOCOLS: readonly LlmProviderProtocol[] = ['openai-chat', 'openai-responses'];
-
-// 白名单由 registry 驱动：'none'（固定语义）+ 已注册 provider id
-function isValidSearchProvider(value: unknown): value is string {
-  if (typeof value !== 'string') {
-    return false;
-  }
-  return value === 'none' || getSearchProvider(value) !== undefined;
-}
 
 function toSearchProviderInfos(settings: AgentSettingsRecord): SearchProviderInfoDto[] {
   return getSearchProviders().map((provider) => ({
@@ -278,56 +270,32 @@ async function handleGetSettings(): Promise<Response> {
   });
 }
 
+async function toAgentSettingsPatch(
+  draft: AgentLlmSettingsDraft
+): Promise<Parameters<typeof updateAgentSettings>[0]> {
+  const { tavilyApiKey, braveApiKey, ...rest } = draft;
+  const updates: Parameters<typeof updateAgentSettings>[0] = { ...rest };
+  if (tavilyApiKey !== undefined) {
+    updates.tavilyApiKeyEnc = tavilyApiKey ? await encrypt(tavilyApiKey) : null;
+  }
+  if (braveApiKey !== undefined) {
+    updates.braveApiKeyEnc = braveApiKey ? await encrypt(braveApiKey) : null;
+  }
+  return updates;
+}
+
 async function handleUpdateSettings(req: Request): Promise<Response> {
   const raw = await readJsonObjectBody(req);
   if (!raw) {
     return json({ error: t('apiError.invalidRequest') }, 400);
   }
-  const body = raw as UpdateAgentLlmSettingsRequest;
-  const updates: Parameters<typeof updateAgentSettings>[0] = {};
 
-  if (body.searchProvider !== undefined) {
-    if (!isValidSearchProvider(body.searchProvider)) {
-      return json({ error: t('apiError.llmSearchProviderInvalid') }, 400);
-    }
-    updates.searchProvider = body.searchProvider;
+  const parsed = parseUpdateSettingsFields(raw);
+  if (!parsed.ok) {
+    return json({ error: parsed.error }, 400);
   }
 
-  if (body.defaultProviderId !== undefined) {
-    if (body.defaultProviderId !== null && typeof body.defaultProviderId !== 'string') {
-      return json({ error: t('apiError.invalidRequest') }, 400);
-    }
-    if (body.defaultProviderId !== null && !getLlmProviderById(body.defaultProviderId)) {
-      return json({ error: t('apiError.llmDefaultProviderNotFound') }, 400);
-    }
-    updates.defaultProviderId = body.defaultProviderId;
-  }
-
-  if (body.defaultModelId !== undefined) {
-    if (body.defaultModelId !== null && typeof body.defaultModelId !== 'string') {
-      return json({ error: t('apiError.invalidRequest') }, 400);
-    }
-    updates.defaultModelId = body.defaultModelId;
-  }
-
-  // key 缺省表示不修改，空串表示清除
-  if (body.tavilyApiKey !== undefined) {
-    if (typeof body.tavilyApiKey !== 'string') {
-      return json({ error: t('apiError.invalidRequest') }, 400);
-    }
-    const value = body.tavilyApiKey.trim();
-    updates.tavilyApiKeyEnc = value ? await encrypt(value) : null;
-  }
-
-  if (body.braveApiKey !== undefined) {
-    if (typeof body.braveApiKey !== 'string') {
-      return json({ error: t('apiError.invalidRequest') }, 400);
-    }
-    const value = body.braveApiKey.trim();
-    updates.braveApiKeyEnc = value ? await encrypt(value) : null;
-  }
-
-  const settings = updateAgentSettings(updates);
+  const settings = updateAgentSettings(await toAgentSettingsPatch(parsed.fields));
   broadcastSettingsUpdate('llm');
   return json({ settings: toSettingsDto(settings) });
 }

@@ -1,4 +1,4 @@
-import type { CreateDeviceRequest, Device, UpdateDeviceRequest } from '@tmex/shared';
+import type { CreateDeviceRequest, Device } from '@tmex/shared';
 import { v4 as uuidv4 } from 'uuid';
 import { encrypt } from '../crypto';
 import {
@@ -14,25 +14,25 @@ import { t } from '../i18n';
 import { connectionAlertNotifier } from '../push/connection-alerts';
 import { pushSupervisor } from '../push/supervisor';
 import { broadcastSettingsUpdate } from '../settings/broadcaster';
-import { json } from './http';
+import {
+  type DeviceUpdateDraft,
+  nextDevicePushAction,
+  parseDeviceUpdateFields,
+} from './device-patch';
+import { json, readJsonObjectBody } from './http';
 import { type ApiRoute, route } from './route';
 import { handleDeviceTestConnection } from './test-connection';
 import { treeOrderRoutes } from './tree-order';
 
-function shouldReconnectPushSupervisor(existing: Device, updates: Partial<Device>): boolean {
-  if (updates.type !== undefined && updates.type !== existing.type) return true;
-  if (updates.host !== undefined && updates.host !== existing.host) return true;
-  if (updates.port !== undefined && updates.port !== existing.port) return true;
-  if (updates.username !== undefined && updates.username !== existing.username) return true;
-  if (updates.sshConfigRef !== undefined && updates.sshConfigRef !== existing.sshConfigRef)
-    return true;
-  if (updates.session !== undefined && updates.session !== existing.session) return true;
-  if (updates.authMode !== undefined && updates.authMode !== existing.authMode) return true;
-  if (updates.passwordEnc !== undefined) return true;
-  if (updates.privateKeyEnc !== undefined) return true;
-  if (updates.privateKeyPassphraseEnc !== undefined) return true;
-
-  return false;
+async function encryptSecretFields(draft: DeviceUpdateDraft): Promise<Partial<Device>> {
+  const { password, privateKey, privateKeyPassphrase, ...rest } = draft;
+  const updates: Partial<Device> = { ...rest };
+  if (password !== undefined) updates.passwordEnc = await encrypt(password);
+  if (privateKey !== undefined) updates.privateKeyEnc = await encrypt(privateKey);
+  if (privateKeyPassphrase !== undefined) {
+    updates.privateKeyPassphraseEnc = await encrypt(privateKeyPassphrase);
+  }
+  return updates;
 }
 
 function enrichDeviceWithRuntime(device: Device): Device & {
@@ -111,34 +111,25 @@ async function handleUpdateDevice(req: Request, id: string): Promise<Response> {
     return json({ error: t('apiError.deviceNotFound') }, 404);
   }
 
-  const body = (await req.json()) as UpdateDeviceRequest;
-  const updates: Partial<Device> = {};
-
-  if (body.name !== undefined) updates.name = body.name;
-  if (body.host !== undefined) updates.host = body.host;
-  if (body.port !== undefined) updates.port = body.port;
-  if (body.username !== undefined) updates.username = body.username;
-  if (body.sshConfigRef !== undefined) updates.sshConfigRef = body.sshConfigRef;
-  if (body.session !== undefined) updates.session = body.session;
-  if (body.defaultWorkingDir !== undefined)
-    updates.defaultWorkingDir = body.defaultWorkingDir.trim() || undefined;
-  if (body.authMode !== undefined) updates.authMode = body.authMode;
-  if (body.password !== undefined) updates.passwordEnc = await encrypt(body.password);
-  if (body.privateKey !== undefined) updates.privateKeyEnc = await encrypt(body.privateKey);
-  if (body.privateKeyPassphrase !== undefined) {
-    updates.privateKeyPassphraseEnc = await encrypt(body.privateKeyPassphrase);
+  const raw = await readJsonObjectBody(req);
+  if (!raw) {
+    return json({ error: t('apiError.invalidRequest') }, 400);
   }
 
+  const parsed = parseDeviceUpdateFields(raw);
+  if (!parsed.ok) {
+    return json({ error: parsed.error }, 400);
+  }
+
+  const updates = await encryptSecretFields(parsed.fields);
   updateDevice(id, updates);
   broadcastSettingsUpdate('devices');
 
-  if (shouldReconnectPushSupervisor(existing, updates)) {
+  const action = nextDevicePushAction(existing, updates);
+  if (action.type === 'reconnect') {
     await pushSupervisor.reconnect(id);
-  } else if (
-    updates.defaultWorkingDir !== undefined &&
-    updates.defaultWorkingDir !== existing.defaultWorkingDir
-  ) {
-    pushSupervisor.updateDefaultWorkingDir(id, updates.defaultWorkingDir);
+  } else if (action.type === 'workingDir') {
+    pushSupervisor.updateDefaultWorkingDir(id, action.dir);
   }
 
   const device = getDeviceById(id);
