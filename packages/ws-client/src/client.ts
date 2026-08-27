@@ -384,6 +384,11 @@ export class BorshWebSocketClient {
     this.setState('HELLO_NEGOTIATING');
   }
 
+  /**
+   * 返回值语义：`true` = 已写进当前载体；`false` = **未立刻上线**（未就绪时进
+   * `pendingMessages`，或直连处于背压、整帧已排进直连队列）。两种情况数据都没丢，
+   * 调用方不需要也不应该重发。
+   */
   send(kind: number, payload: Uint8Array): boolean {
     if (!this.isReady()) {
       // 未就绪，加入队列
@@ -401,27 +406,29 @@ export class BorshWebSocketClient {
       chunkStreamId: wsBorsh.generateChunkStreamId(),
     });
 
+    let flushed = true;
     if (chunkResult.totalChunks === 0) {
       // 不需要分片
       const envelope = wsBorsh.encodeEnvelope(kind, payload, seq);
-      this.sendRaw(envelope);
+      flushed = this.sendRaw(envelope);
     } else {
       // 发送分片
       for (const chunk of chunkResult.chunks) {
         const chunkEnvelope = wsBorsh.encodeChunk(chunk, this.nextSeq());
-        this.sendRaw(chunkEnvelope);
+        if (!this.sendRaw(chunkEnvelope)) flushed = false;
       }
     }
 
-    return true;
+    return flushed;
   }
 
-  private sendRaw(data: Uint8Array): void {
+  /** 返回是否已真正写出；`false` 表示直连在背压中、整帧已排队等待排水。 */
+  private sendRaw(data: Uint8Array): boolean {
     if (this.barrier) {
-      this.barrier.send(data);
-      return;
+      return this.barrier.send(data) === 'sent';
     }
     this.sendPrimaryRaw(data);
+    return true;
   }
 
   private sendPrimaryRaw(data: Uint8Array): void {

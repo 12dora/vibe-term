@@ -2,7 +2,13 @@ import { describe, expect, test } from 'bun:test';
 import {
   FRAGMENT_HEADER_SIZE,
   FRAGMENT_PAYLOAD_SIZE,
+  FragmentBoundsError,
+  type FragmentViolation,
   FrameReassembler,
+  MAX_DC_MESSAGE_BYTES,
+  MAX_FRAGMENTS_PER_FRAME,
+  MAX_FRAME_BYTES,
+  effectiveFragmentPayloadSize,
   fragmentFrame,
 } from './fragmenter';
 
@@ -102,5 +108,97 @@ describe('FrameReassembler', () => {
     // frameId=1 已被淘汰
     expect(reassembler.push((frames[0] as Uint8Array[])[1] as Uint8Array)).toBeNull();
     expect(reassembler.push((frames[2] as Uint8Array[])[1] as Uint8Array)).not.toBeNull();
+  });
+});
+
+describe('分片尺寸边界（双向强制）', () => {
+  test('常量：消息含头 64 KiB、载荷 65528、帧 1 MiB、最多 17 片', () => {
+    expect(MAX_DC_MESSAGE_BYTES).toBe(65536);
+    expect(FRAGMENT_PAYLOAD_SIZE).toBe(65528);
+    expect(MAX_FRAME_BYTES).toBe(1048576);
+    expect(MAX_FRAGMENTS_PER_FRAME).toBe(17);
+    expect(FRAGMENT_HEADER_SIZE + FRAGMENT_PAYLOAD_SIZE).toBe(MAX_DC_MESSAGE_BYTES);
+  });
+
+  test('effectiveFragmentPayloadSize = min(65528, maxMessageSize - 8)', () => {
+    expect(effectiveFragmentPayloadSize(undefined)).toBe(FRAGMENT_PAYLOAD_SIZE);
+    expect(effectiveFragmentPayloadSize(262_144)).toBe(FRAGMENT_PAYLOAD_SIZE);
+    expect(effectiveFragmentPayloadSize(16_384)).toBe(16_376);
+    expect(effectiveFragmentPayloadSize(4)).toBe(FRAGMENT_PAYLOAD_SIZE);
+  });
+
+  test('发送端：帧 > 1 MiB、载荷参数越界、分片数 > 17 都抛 FragmentBoundsError', () => {
+    expect(() => fragmentFrame(1, new Uint8Array(MAX_FRAME_BYTES + 1))).toThrow(
+      FragmentBoundsError
+    );
+    expect(() => fragmentFrame(1, new Uint8Array(8), FRAGMENT_PAYLOAD_SIZE + 1)).toThrow(
+      FragmentBoundsError
+    );
+    expect(() => fragmentFrame(1, new Uint8Array(8), 0)).toThrow(FragmentBoundsError);
+    // 分片载荷被对端 maxMessageSize 压小时，1 MiB 的帧会超过 17 片
+    expect(() => fragmentFrame(1, new Uint8Array(MAX_FRAME_BYTES), 16_376)).toThrow(
+      FragmentBoundsError
+    );
+    // 恰好 1 MiB / 65528 = 17 片，允许
+    expect(fragmentFrame(1, new Uint8Array(MAX_FRAME_BYTES)).length).toBe(MAX_FRAGMENTS_PER_FRAME);
+  });
+
+  test('接收端：total 越界 / 单条消息过大 / 累计超帧上限都上报 violation 并丢弃', () => {
+    const seen: FragmentViolation[] = [];
+    const reassembler = new FrameReassembler({ onViolation: (reason) => seen.push(reason) });
+
+    // total=65535（恶意目标 node 的经典手法）
+    const hugeTotal = new Uint8Array(FRAGMENT_HEADER_SIZE + 1);
+    hugeTotal[4] = 0;
+    hugeTotal[5] = 0;
+    hugeTotal[6] = 0xff;
+    hugeTotal[7] = 0xff;
+    expect(reassembler.push(hugeTotal)).toBeNull();
+    expect(seen).toEqual(['bad-total']);
+
+    // 单条消息超过 64 KiB
+    expect(reassembler.push(new Uint8Array(MAX_DC_MESSAGE_BYTES + 1))).toBeNull();
+    expect(seen[seen.length - 1]).toBe('chunk-too-large');
+
+    expect(reassembler.push(new Uint8Array(4))).toBeNull();
+    expect(seen[seen.length - 1]).toBe('chunk-too-short');
+    expect(reassembler.bufferedBytes).toBe(0);
+  });
+
+  test('累计字节超过 1 MiB 帧上限时上报 frame-too-large 并丢弃该帧', () => {
+    const seen: FragmentViolation[] = [];
+    // 声明 total=17 但每片都塞满 65528：第 17 片会越过 1 MiB
+    const reassembler = new FrameReassembler({
+      maxFrameBytes: 4 * FRAGMENT_PAYLOAD_SIZE - 1,
+      onViolation: (reason) => seen.push(reason),
+    });
+    const parts = fragmentFrame(1, payload(FRAGMENT_PAYLOAD_SIZE * 4));
+    expect(parts.length).toBe(4);
+    for (const part of parts) reassembler.push(part);
+    expect(seen).toEqual(['frame-too-large']);
+    expect(reassembler.bufferedBytes).toBe(0);
+  });
+
+  test('全局累计上限：多个半截帧一起超限也上报并丢弃', () => {
+    const seen: FragmentViolation[] = [];
+    const reassembler = new FrameReassembler({
+      maxPendingBytes: FRAGMENT_PAYLOAD_SIZE * 2,
+      onViolation: (reason) => seen.push(reason),
+    });
+    for (const id of [1, 2, 3]) {
+      const parts = fragmentFrame(id, payload(FRAGMENT_PAYLOAD_SIZE * 2, id));
+      reassembler.push(parts[0] as Uint8Array);
+    }
+    expect(seen).toEqual(['pending-bytes-exceeded']);
+    expect(reassembler.bufferedBytes).toBe(FRAGMENT_PAYLOAD_SIZE * 2);
+  });
+
+  test('集齐后释放累计字节', () => {
+    const reassembler = new FrameReassembler();
+    const parts = fragmentFrame(1, payload(FRAGMENT_PAYLOAD_SIZE + 10));
+    reassembler.push(parts[0] as Uint8Array);
+    expect(reassembler.bufferedBytes).toBe(FRAGMENT_PAYLOAD_SIZE);
+    expect(reassembler.push(parts[1] as Uint8Array)).not.toBeNull();
+    expect(reassembler.bufferedBytes).toBe(0);
   });
 });

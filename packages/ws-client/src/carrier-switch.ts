@@ -9,10 +9,21 @@
 // primary 断开则会话整体结束，直连随之关闭（`closeDirect()`）。
 //
 // epoch 单调递增：`epoch <= applied` 的切换帧一律当作陈旧丢弃，也不回 ACK。
+//
+// 四个阶段（`active === 'primary'` 一个值分不清「还没切进去」和「已经切回来」）：
+//   primary        —— 没有直连载体；
+//   pending-direct —— 载体已挂上、还没收到 `to:'direct'`：**只有这个阶段缓冲**直连入站帧；
+//   direct         —— 已切换：直连入站直接投递；
+//   pending-primary—— 已切回 primary、载体还在：直连上迟到的帧一律**丢弃**，靠 resume 补。
+// 缓冲只在收到匹配 epoch 的 `to:'direct'` 时排空；`to:'primary'` 与载体关闭一律丢弃缓冲
+// 并触发 resume——关闭时排空会把直连帧插到 primary 上排在切换帧之前的旧帧后面，造成乱序，
+// 切回后再排空还会在恢复结果之后重复写入终端。
 
 import { wsBorsh } from '@tmex/shared';
 
 export type ActiveCarrier = 'primary' | 'direct';
+
+export type CarrierPhase = 'primary' | 'pending-direct' | 'direct' | 'pending-primary';
 
 /** 屏障对直连载体的最小要求；`DirectDataChannelCarrier` 天然满足。 */
 export interface DirectCarrierLike {
@@ -21,6 +32,13 @@ export interface DirectCarrierLike {
   onClose(cb: () => void): void;
   close(): void;
 }
+
+/** 出站结果：`backpressure` = 已被直连排队、暂停继续压帧（不是失败，也不能改走 primary）。 */
+export type BarrierSendResult = 'sent' | 'backpressure';
+
+/** 屏障缓冲上限：与协议的单帧上限一致，超限即放弃这次直连。 */
+export const MAX_BUFFERED_BYTES = 1024 * 1024;
+export const MAX_BUFFERED_FRAMES = 64;
 
 export interface CarrierSwitchBarrierOptions {
   /** 把一帧交给协议分发（等价于 primary 的 onmessage 路径）。 */
@@ -33,6 +51,8 @@ export interface CarrierSwitchBarrierOptions {
   onCarrierChange?: (active: ActiveCarrier) => void;
   /** 切回 primary 时触发已订阅 pane 的 resume。 */
   resumeSubscribedPanes?: () => void;
+  maxBufferedBytes?: number;
+  maxBufferedFrames?: number;
 }
 
 /** 从 envelope 头部第 4、5 字节直接读 kind（LE u16），避免为每帧做完整反序列化。 */
@@ -65,17 +85,27 @@ function decodeSwitch(bytes: Uint8Array): SwitchFrame | null {
 
 export class CarrierSwitchBarrier {
   private readonly options: CarrierSwitchBarrierOptions;
+  private readonly maxBufferedBytes: number;
+  private readonly maxBufferedFrames: number;
   private direct: DirectCarrierLike | null = null;
-  private active: ActiveCarrier = 'primary';
+  private phase: CarrierPhase = 'primary';
   private buffered: Uint8Array[] = [];
+  private bufferedBytes = 0;
   private appliedEpoch = 0;
 
   constructor(options: CarrierSwitchBarrierOptions) {
     this.options = options;
+    this.maxBufferedBytes = options.maxBufferedBytes ?? MAX_BUFFERED_BYTES;
+    this.maxBufferedFrames = options.maxBufferedFrames ?? MAX_BUFFERED_FRAMES;
   }
 
   get activeCarrier(): ActiveCarrier {
-    return this.active;
+    return this.phase === 'direct' ? 'direct' : 'primary';
+  }
+
+  /** 仅测试与诊断。 */
+  get currentPhase(): CarrierPhase {
+    return this.phase;
   }
 
   get hasDirect(): boolean {
@@ -94,9 +124,9 @@ export class CarrierSwitchBarrier {
   attachDirect(carrier: DirectCarrierLike): void {
     const previous = this.direct;
     this.direct = carrier;
-    this.buffered = [];
+    this.dropBuffer();
+    this.setPhase('pending-direct');
     if (previous && previous !== carrier) {
-      if (this.active === 'direct') this.setActive('primary');
       try {
         previous.close();
       } catch {
@@ -126,59 +156,72 @@ export class CarrierSwitchBarrier {
       return;
     }
     if (kind === wsBorsh.KIND_CARRIER_SWITCH_ACK) return;
-    if (this.active === 'primary') {
-      // 屏障：切换通知还没到，先缓冲，保证跨切换不乱序。
-      this.buffered.push(bytes);
+    if (this.phase === 'direct') {
+      this.options.deliver(bytes);
       return;
     }
-    this.options.deliver(bytes);
+    if (this.phase !== 'pending-direct') {
+      // 已切回 primary（或还没挂载）：迟到的直连帧丢弃，缺口由 resume 补齐。
+      return;
+    }
+    // 屏障：切换通知还没到，先缓冲，保证跨切换不乱序。
+    if (
+      this.buffered.length + 1 > this.maxBufferedFrames ||
+      this.bufferedBytes + bytes.byteLength > this.maxBufferedBytes
+    ) {
+      // primary 上的切换通知迟迟不到而直连在猛灌数据：放弃这次直连，保住 primary。
+      this.abortDirect();
+      return;
+    }
+    this.buffered.push(bytes);
+    this.bufferedBytes += bytes.byteLength;
   }
 
   /** 出站：按活跃载体路由；直连已关则就地回落 primary。 */
-  send(bytes: Uint8Array): void {
+  send(bytes: Uint8Array): BarrierSendResult {
     const direct = this.direct;
-    if (this.active === 'direct' && direct) {
+    if (this.phase === 'direct' && direct) {
       const result = direct.send(bytes);
-      if (result !== 'closed') return;
+      if (result === 'sent') return 'sent';
+      // 已排进直连的整帧队列：不能再往 primary 发一份，否则重复且乱序。
+      if (result === 'backpressure') return 'backpressure';
       this.handleDirectClose(direct);
     }
     this.options.sendPrimary(bytes);
+    return 'sent';
   }
 
   /** 直连关闭：回落 primary 并触发 resume（node 的切回通知可能永远到不了）。 */
   handleDirectClose(carrier?: DirectCarrierLike): void {
     if (carrier && this.direct && carrier !== this.direct) return;
     this.direct = null;
-    this.flushBuffered();
-    if (this.active === 'direct') {
-      this.setActive('primary');
-      this.options.resumeSubscribedPanes?.();
-    }
+    // 关闭时**不排空**：缓冲里的帧排在 primary 队尾会乱序，缺口交给 resume。
+    const lostBuffered = this.dropBuffer();
+    const wasDirect = this.phase === 'direct';
+    this.setPhase('primary');
+    if (wasDirect || lostBuffered) this.options.resumeSubscribedPanes?.();
   }
 
   /** primary 断开 → 会话整体结束，直连随之关闭。 */
   closeDirect(): void {
     const direct = this.direct;
-    if (!direct) {
-      this.reset();
-      return;
-    }
     this.direct = null;
+    this.dropBuffer();
+    this.setPhase('primary');
+    this.appliedEpoch = 0;
+    if (!direct) return;
     try {
       direct.close();
     } catch {
       // 已在关闭中
     }
-    if (this.active === 'direct') this.setActive('primary');
-    this.buffered = [];
-    this.appliedEpoch = 0;
   }
 
   /** 重连后 node 侧是全新会话，epoch 从 0 重新计。 */
   reset(): void {
-    this.buffered = [];
+    this.dropBuffer();
     this.appliedEpoch = 0;
-    if (this.active === 'direct') this.setActive('primary');
+    this.setPhase(this.direct ? 'pending-direct' : 'primary');
   }
 
   private applySwitch(bytes: Uint8Array): void {
@@ -188,20 +231,38 @@ export class CarrierSwitchBarrier {
 
     if (frame.to === 'direct') {
       if (!this.direct) return; // 还没挂上载体，不认这次切换（node 会在下个 epoch 重来）
+      if (this.phase === 'direct') return; // 已经在直连上，不重复切
       this.appliedEpoch = frame.epoch;
       this.flushBuffered();
-      this.setActive('direct');
+      this.setPhase('direct');
       // ACK 必须走**旧载体**（primary），否则 node 在收到 ACK 前不认直连入站。
       this.options.sendPrimary(this.encodeAck(frame.epoch));
       return;
     }
 
     this.appliedEpoch = frame.epoch;
-    this.flushBuffered();
-    if (this.active === 'direct') {
-      this.setActive('primary');
-      this.options.resumeSubscribedPanes?.();
+    const lostBuffered = this.dropBuffer();
+    const wasDirect = this.phase === 'direct';
+    if (wasDirect || this.phase === 'pending-direct') {
+      this.setPhase(this.direct ? 'pending-primary' : 'primary');
     }
+    if (wasDirect || lostBuffered) this.options.resumeSubscribedPanes?.();
+  }
+
+  /** 缓冲超限：关掉直连（控制器会退避重连），保住 primary 并触发一次 resume。 */
+  private abortDirect(): void {
+    const direct = this.direct;
+    this.direct = null;
+    this.dropBuffer();
+    this.setPhase('primary');
+    if (direct) {
+      try {
+        direct.close();
+      } catch {
+        // 已在关闭中
+      }
+    }
+    this.options.resumeSubscribedPanes?.();
   }
 
   private encodeAck(epoch: number): Uint8Array {
@@ -217,12 +278,23 @@ export class CarrierSwitchBarrier {
     if (this.buffered.length === 0) return;
     const pending = this.buffered;
     this.buffered = [];
+    this.bufferedBytes = 0;
     for (const frame of pending) this.options.deliver(frame);
   }
 
-  private setActive(next: ActiveCarrier): void {
-    if (this.active === next) return;
-    this.active = next;
-    this.options.onCarrierChange?.(next);
+  /** 丢弃缓冲；返回是否真的丢掉了帧（据此决定要不要 resume）。 */
+  private dropBuffer(): boolean {
+    if (this.buffered.length === 0) return false;
+    this.buffered = [];
+    this.bufferedBytes = 0;
+    return true;
+  }
+
+  private setPhase(next: CarrierPhase): void {
+    if (this.phase === next) return;
+    const before = this.activeCarrier;
+    this.phase = next;
+    const after = this.activeCarrier;
+    if (before !== after) this.options.onCarrierChange?.(after);
   }
 }

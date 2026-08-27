@@ -21,6 +21,8 @@ export interface StatsReportLike {
 }
 
 export interface RTCPeerConnectionLike {
+  /** `RTCSctpTransport`：只用 `maxMessageSize` 决定分片载荷。 */
+  readonly sctp?: { readonly maxMessageSize?: number } | null;
   readonly localDescription: SessionDescriptionLike | null;
   readonly remoteDescription: SessionDescriptionLike | null;
   readonly connectionState: string;
@@ -58,10 +60,18 @@ export interface DirectSignalMessage {
   candidate: string | null;
 }
 
-/** 注入的信令通道：控制器不认识 `/mesh/ws`，只认识这两个方法。 */
+/**
+ * 注入的信令通道：控制器不认识 `/mesh/ws`，只认识这几个方法。
+ *
+ * `send` 必须**如实返回是否送出**（`/mesh/ws` 未连接时为 `false`）：吞掉失败会让 offer /
+ * candidate 静默丢失，控制器只能干等超时。`isReady` / `onReady` 可选——没有实现时控制器
+ * 视为始终就绪（老实现零改动），实现了则未就绪期间不开新 attempt、信令排队、恢复即重试。
+ */
 export interface DirectSignalingTransport {
-  send(signal: DirectSignalMessage): void;
+  send(signal: DirectSignalMessage): boolean | Promise<boolean>;
   onSignal(cb: (signal: DirectSignalMessage) => void): () => void;
+  isReady?(): boolean;
+  onReady?(cb: (ready: boolean) => void): () => void;
 }
 
 /** `ApiClient` 的最小子集（node 前缀已由调用方注入）。 */

@@ -1,6 +1,11 @@
 import { describe, expect, test } from 'bun:test';
 import { wsBorsh } from '@tmex/shared';
-import { CarrierSwitchBarrier, type DirectCarrierLike, peekEnvelopeKind } from './carrier-switch';
+import {
+  CarrierSwitchBarrier,
+  type CarrierSwitchBarrierOptions,
+  type DirectCarrierLike,
+  peekEnvelopeKind,
+} from './carrier-switch';
 
 function dataFrame(text: string, seq = 0): Uint8Array {
   const payload = wsBorsh.encodePayload(wsBorsh.schema.TermInputSchema, {
@@ -69,7 +74,7 @@ interface Harness {
   resumes: number;
 }
 
-function harness(): Harness {
+function harness(options: Partial<CarrierSwitchBarrierOptions> = {}): Harness {
   const delivered: string[] = [];
   const primary: Uint8Array[] = [];
   const changes: string[] = [];
@@ -81,6 +86,7 @@ function harness(): Harness {
     resumeSubscribedPanes: () => {
       resumes += 1;
     },
+    ...options,
   });
   return {
     barrier,
@@ -245,6 +251,115 @@ describe('CarrierSwitchBarrier', () => {
     h.barrier.attachDirect(second);
     expect(first.closed).toBe(true);
     expect(h.barrier.activeCarrier).toBe('primary');
+  });
+
+  test('四阶段：primary → pending-direct → direct → pending-primary', () => {
+    const h = harness();
+    expect(h.barrier.currentPhase).toBe('primary');
+
+    const direct = new FakeCarrier();
+    h.barrier.attachDirect(direct);
+    expect(h.barrier.currentPhase).toBe('pending-direct');
+
+    h.barrier.handlePrimaryInbound(switchFrame(1, 'direct'));
+    expect(h.barrier.currentPhase).toBe('direct');
+
+    h.barrier.handlePrimaryInbound(switchFrame(2, 'primary'));
+    // 载体还在，但已经切回 primary：迟到的直连帧要丢，不能再缓冲也不能投递
+    expect(h.barrier.currentPhase).toBe('pending-primary');
+    expect(h.barrier.activeCarrier).toBe('primary');
+  });
+
+  test('切回 primary 后迟到的直连帧被丢弃（不投递、不缓冲、不重复排空）', () => {
+    const h = harness();
+    const direct = new FakeCarrier();
+    h.barrier.attachDirect(direct);
+    h.barrier.handlePrimaryInbound(switchFrame(1, 'direct'));
+    h.barrier.handlePrimaryInbound(switchFrame(2, 'primary'));
+    const before = [...h.delivered];
+
+    direct.deliver(dataFrame('late-1'));
+    direct.deliver(dataFrame('late-2'));
+    expect(h.delivered).toEqual(before);
+    expect(h.barrier.bufferedCount).toBe(0);
+
+    // 之后即使载体关闭也不会把它们排空出来
+    direct.simulateClose();
+    expect(h.delivered).toEqual(before);
+  });
+
+  test('通道关闭时**不**排空缓冲：缓冲帧排在 primary 旧帧之后会乱序，改由 resume 补齐', () => {
+    const h = harness();
+    const direct = new FakeCarrier();
+    h.barrier.attachDirect(direct);
+
+    direct.deliver(dataFrame('d1'));
+    expect(h.barrier.bufferedCount).toBe(1);
+
+    direct.simulateClose();
+    expect(h.delivered).toEqual([]);
+    expect(h.barrier.bufferedCount).toBe(0);
+    // 缓冲里的帧丢了 = node→浏览器方向有缺口，必须触发一次 resume
+    expect(h.resumes).toBe(1);
+
+    // 关闭后 primary 上排在切换帧之前的旧帧照常按序投递
+    h.barrier.handlePrimaryInbound(dataFrame('p1'));
+    expect(h.delivered).toEqual(['p1']);
+  });
+
+  test('to:primary 到达时丢弃缓冲并 resume（不排空）', () => {
+    const h = harness();
+    const direct = new FakeCarrier();
+    h.barrier.attachDirect(direct);
+    direct.deliver(dataFrame('d1'));
+
+    h.barrier.handlePrimaryInbound(switchFrame(1, 'primary'));
+    expect(h.delivered).toEqual([]);
+    expect(h.barrier.bufferedCount).toBe(0);
+    expect(h.resumes).toBe(1);
+  });
+
+  test('缓冲字节超限：放弃这次直连、保住 primary 并 resume', () => {
+    const h = harness({ maxBufferedBytes: 200 });
+    const direct = new FakeCarrier();
+    h.barrier.attachDirect(direct);
+
+    direct.deliver(dataFrame('a'.repeat(60)));
+    expect(h.barrier.bufferedCount).toBe(1);
+    direct.deliver(dataFrame('b'.repeat(200)));
+
+    expect(direct.closed).toBe(true);
+    expect(h.barrier.hasDirect).toBe(false);
+    expect(h.barrier.activeCarrier).toBe('primary');
+    expect(h.barrier.bufferedCount).toBe(0);
+    expect(h.delivered).toEqual([]);
+    expect(h.resumes).toBe(1);
+  });
+
+  test('缓冲帧数超限同样放弃直连', () => {
+    const h = harness({ maxBufferedFrames: 2 });
+    const direct = new FakeCarrier();
+    h.barrier.attachDirect(direct);
+    direct.deliver(dataFrame('d1'));
+    direct.deliver(dataFrame('d2'));
+    expect(h.barrier.bufferedCount).toBe(2);
+    direct.deliver(dataFrame('d3'));
+    expect(direct.closed).toBe(true);
+    expect(h.barrier.bufferedCount).toBe(0);
+  });
+
+  test('出站背压：整帧已排进直连队列，不再往 primary 补发一份', () => {
+    const h = harness();
+    const direct = new FakeCarrier();
+    h.barrier.attachDirect(direct);
+    h.barrier.handlePrimaryInbound(switchFrame(1, 'direct'));
+    const acks = h.primary.length;
+
+    direct.sendResult = 'backpressure';
+    expect(h.barrier.send(dataFrame('out'))).toBe('backpressure');
+    expect(direct.sent.length).toBe(1);
+    expect(h.primary.length).toBe(acks); // primary 上没有重复的一份
+    expect(h.barrier.activeCarrier).toBe('direct');
   });
 
   test('CARRIER_SWITCH_ACK 是浏览器出站帧，入站收到一律丢弃不上抛', () => {

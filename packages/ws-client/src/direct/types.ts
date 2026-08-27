@@ -5,6 +5,8 @@
 // F3-1 落地后，只需让 `GatewayConnection` 暴露 `directDiagnostics: DirectDiagnosticsSource`，
 // `resolveDirectDiagnostics()` 就会自动取到真实值，UI 与本文件都不用改。
 
+import type { DirectRoute } from './ice-stats';
+
 /** 浏览器 ↔ node 的当前承载：`primary` = 经 entry 转发的 WS；`direct` = WebRTC DataChannel。 */
 export type DirectCarrierPath = 'primary' | 'direct';
 
@@ -23,7 +25,14 @@ export interface DirectIceDiagnostics {
 }
 
 export interface DirectDiagnostics {
+  /** 当前承载：primary（经 entry 转发）/ direct（DataChannel）。 */
   path: DirectCarrierPath;
+  /**
+   * 直连的**网络路径**（由 `getStats()` 的选中候选对推出），与 `path` 是两回事：
+   * `path` 回答「走不走直连」，`route` 回答「直连走的是内网 / IPv6 / 打洞 / TURN」。
+   * 未建立直连时为 `null`。
+   */
+  route: DirectRoute | null;
   /** 往返时延（毫秒）；未知为 `null`。 */
   rtt: number | null;
   ice: DirectIceDiagnostics | null;
@@ -38,6 +47,7 @@ export interface DirectDiagnosticsSource {
 /** 无直连能力时的恒定快照。引用稳定，`useSyncExternalStore` 不会因它重渲染。 */
 export const PRIMARY_ONLY_DIAGNOSTICS: DirectDiagnostics = Object.freeze({
   path: 'primary',
+  route: null,
   rtt: null,
   ice: null,
 });

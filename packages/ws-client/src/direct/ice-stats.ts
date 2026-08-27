@@ -25,8 +25,15 @@ function candidateAddress(report: Record<string, unknown>): string | null {
 }
 
 /**
- * 找出选中的候选对。优先 `transport.selectedCandidatePairId`（规范推荐），
- * 回落到 `nominated && state==='succeeded'`，再回落到任意 `succeeded`。
+ * 找出选中的候选对，按可信度从高到低：
+ *   1. `transport.selectedCandidatePairId`（[WebRTC Stats] 定义的「当前承载流量的候选对」）
+ *   2. `nominated && state === 'succeeded'`
+ *   3. 非标准的 `selected === true`（老浏览器）
+ *   4. 任意 `succeeded`
+ * 顺序不能把第 4 条提到第 3 条前面：兼容性浏览器会同时留着多个 succeeded pair，
+ * 取第一条可能显示的是根本没承载流量的候选类型（实际走 TURN 却显示 v4-p2p）。
+ *
+ * [WebRTC Stats]: https://www.w3.org/TR/webrtc-stats/
  */
 export function readSelectedPair(report: StatsReportLike): SelectedPairStats | null {
   const byId = new Map<string, Record<string, unknown>>();
@@ -49,8 +56,8 @@ export function readSelectedPair(report: StatsReportLike): SelectedPairStats | n
   const pair =
     (selectedPairId ? byId.get(selectedPairId) : undefined) ??
     pairs.find((p) => p.nominated === true && str(p.state) === 'succeeded') ??
-    pairs.find((p) => str(p.state) === 'succeeded') ??
-    pairs.find((p) => p.selected === true);
+    pairs.find((p) => p.selected === true) ??
+    pairs.find((p) => str(p.state) === 'succeeded');
   if (!pair) return null;
 
   const localId = str(pair.localCandidateId);

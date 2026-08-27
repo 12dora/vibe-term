@@ -1,22 +1,34 @@
 // 浏览器 ↔ 目标 node 的直连控制器（设计 §3「直连授权」/「载体切换屏障」、§4「连接层」）。
 //
-// 生命周期（浏览器恒为 offerer）：
+// 生命周期（浏览器恒为 offerer）；**每次尝试都是一代全新的 attempt**：新的 generation、
+// 新的 `rtcSession`、新的 `AbortController`、新的 `RTCPeerConnection`：
 //   1. `GET /api/mesh/rtc-config` 取 ICE 配置
 //   2. 建 `RTCPeerConnection`，开 `sess` 通道（ordered + reliable）
 //   3. `createOffer()` + `setLocalDescription()`，从 `localDescription.sdp` 解出 `fp_browser`
 //   4. `POST /api/rtc/authorize {rtcSession, fp_browser}` → `{nonce, fp_node}`
-//   5. 经注入的信令通道发 offer 与 ICE 候选；收到 answer 后**核对远端 SDP 指纹 == fp_node**，
+//   5. 经注入的信令通道发 offer，随后才放本地 ICE 候选出去（entry 要先见到本 rtcSession
+//      的 offer 才认候选）；收到 answer 后**核对远端 SDP 指纹 == fp_node**，
 //      不一致立即放弃（这是挡失陷 hub 做 DTLS 中间人的那道绑定，绝不重试）
 //   6. 通道 open → 直接在通道上写一条**未分片**的 JSON `{"nonce":"..."}`（node 侧
 //      `RtcPeerManager.acceptBrowser` 在挂载载体前先读走这一条裸消息）
-//   7. 用该通道建 `DirectDataChannelCarrier`，交给连接的切换屏障
+//   7. 用该通道建 `DirectDataChannelCarrier`，交给连接的切换屏障；**此时仍是 `connecting`**，
+//      直到屏障处理完 `CARRIER_SWITCH{to:'direct'}` 并回了 ACK（`onCarrierChange('direct')`）
+//      才置 `active`、清零重试计数、开始 stats 轮询。
 //
-// 失败重试：1 s 起指数退避、上限 30 s、最多 5 次，之后停在 `failed` 直到 `retry()` 或
-// `online` 事件。指纹不匹配、鉴权被拒（4xx）不重试。
+// 关键的几条时序约束（都被 f3-1 评审点名过）：
+// - attempt 在**任何 await 之前**就登记好，回调 / catch / teardown 一律先比对 generation；
+//   被替换的 attempt 必定 `pc.close()`，REST 请求带 `AbortSignal`。
+// - 每次尝试换新的 `rtcSession`：node 侧按它缓存 BrowserRecord / PeerConnection，
+//   复用旧值会取回已关闭或 `used=true` 的记录，重连永远起不来。
+// - 信令严格串行：本地候选在 offer 发出前排队，远端候选在 `setRemoteDescription` 完成前排队。
+// - 信令通道（`/mesh/ws`）未就绪时不开 attempt、信令入队；恢复时重置退避并立刻重试。
+//
+// 失败重试：1 s 起指数退避、上限 30 s、最多 5 次，之后停在 `failed` 直到 `retry()` /
+// `online` / `navigator.connection` 变化 / 信令恢复。指纹不匹配、鉴权被拒（4xx）不重试。
 
 import type { DirectCarrierLike } from '../carrier-switch';
 import { DirectDataChannelCarrier, type RTCDataChannelLike } from './data-channel-carrier';
-import { fingerprintsEqual, parseSdpFingerprint } from './fingerprint';
+import { type DtlsFingerprint, fingerprintsEqual, parseSdpFingerprint } from './fingerprint';
 import {
   type DirectRoute,
   type SelectedPairStats,
@@ -28,6 +40,7 @@ import type {
   DirectApiClientLike,
   DirectSignalMessage,
   DirectSignalingTransport,
+  IceCandidateLike,
   IceServerLike,
   RTCPeerConnectionLike,
   RtcAuthorizeResponse,
@@ -52,11 +65,23 @@ export const DEFAULT_RETRY_MAX_MS = 30_000;
 export const DEFAULT_MAX_ATTEMPTS = 5;
 export const DEFAULT_CONNECT_TIMEOUT_MS = 15_000;
 export const DEFAULT_STATS_INTERVAL_MS = 2000;
+/** `iceConnectionState === 'disconnected'` 的宽限期：撑过短暂抖动，超时就回落 primary。 */
+export const DEFAULT_ICE_DISCONNECT_GRACE_MS = 5000;
+/** `navigator.connection` 的 `change` 抖动很密，去抖后再重连。 */
+export const DEFAULT_NETWORK_CHANGE_DEBOUNCE_MS = 800;
 
-/** 控制器只用到连接的这两个方法，避免与 `GatewayConnection` 循环依赖。 */
+/** 控制器只用到连接的这三个方法，避免与 `GatewayConnection` 循环依赖。 */
 export interface GatewayConnectionLike {
   attachDirectCarrier(carrier: DirectCarrierLike): void;
   detachDirectCarrier?(): void;
+  /** 屏障完成切换（并已回 ACK）后才通知；控制器据此才认为直连真正生效。 */
+  onCarrierChange?(handler: (active: 'primary' | 'direct') => void): () => void;
+}
+
+/** 事件源的最小结构子集（`window` / `navigator.connection` 都满足）。 */
+export interface EventTargetLike {
+  addEventListener(type: string, cb: () => void): void;
+  removeEventListener(type: string, cb: () => void): void;
 }
 
 export interface DirectCarrierControllerOptions {
@@ -68,30 +93,55 @@ export interface DirectCarrierControllerOptions {
   connection: GatewayConnectionLike;
   /** 缺省 `new RTCPeerConnection(config)`。 */
   rtcFactory?: RtcPeerConnectionFactory;
-  /** 缺省随机生成；node 侧按此串登记授权。 */
+  /**
+   * 固定 rtcSession（仅测试用）。生产环境**必须**每次尝试换新值，
+   * 传了这里就等于所有重试共用一个 session id。
+   */
   rtcSession?: string;
   retryBaseMs?: number;
   retryMaxMs?: number;
   maxAttempts?: number;
   connectTimeoutMs?: number;
   statsIntervalMs?: number;
+  iceDisconnectGraceMs?: number;
+  networkChangeDebounceMs?: number;
   setTimeoutFn?: (fn: () => void, ms: number) => unknown;
   clearTimeoutFn?: (handle: unknown) => void;
-  /** 网络变化事件源，缺省 `globalThis`（监听 `online`）。 */
-  networkEvents?: {
-    addEventListener(type: string, cb: () => void): void;
-    removeEventListener(type: string, cb: () => void): void;
-  };
+  /** `online` 事件源，缺省 `globalThis`。 */
+  networkEvents?: EventTargetLike;
+  /** Network Information API（`navigator.connection`）的 `change` 事件源；缺省自动探测。 */
+  connectionEvents?: EventTargetLike | null;
   onStateChange?: (state: DirectCarrierState, reason: string | null) => void;
 }
 
+type SignalPart = { sdp?: string; candidate?: string };
+
 interface Attempt {
-  pc: RTCPeerConnectionLike;
-  channel: RTCDataChannelLike;
+  /** 单调递增的代号：所有回调都靠它判断自己是不是当代。 */
+  readonly id: number;
+  readonly rtcSession: string;
+  readonly abort: AbortController;
+  pc: RTCPeerConnectionLike | null;
+  channel: RTCDataChannelLike | null;
   carrier: DirectDataChannelCarrier | null;
+  nonce: string | null;
+  fpNode: DtlsFingerprint | null;
   unsubscribeSignal: () => void;
   timeoutHandle: unknown;
+  iceGraceHandle: unknown;
   cancelled: boolean;
+  /** offer 已排进 outbox：此后本地候选才能跟着排（entry 要先见到 offer）。 */
+  offerQueued: boolean;
+  /** `setRemoteDescription` 已完成：此前远端候选只排队。 */
+  remoteReady: boolean;
+  /** offer 之前就产生的本地候选。 */
+  pendingLocalCandidates: SignalPart[];
+  pendingRemoteCandidates: IceCandidateLike[];
+  /** 出站信令队列：FIFO，送不出去就留在队头，等信令 ready 再泵。 */
+  outbox: SignalPart[];
+  pumping: boolean;
+  /** 串行化入站信令处理（answer 与紧随其后的候选不能并发）。 */
+  chain: Promise<void>;
 }
 
 function toStringArray(value: unknown): string[] {
@@ -142,9 +192,15 @@ function defaultRtcFactory(config: { iceServers: IceServerLike[] }): RTCPeerConn
   return new ctor(config) as unknown as RTCPeerConnectionLike;
 }
 
+function defaultConnectionEvents(): EventTargetLike | null {
+  const nav = (globalThis as { navigator?: { connection?: unknown } }).navigator;
+  const conn = nav?.connection as Partial<EventTargetLike> | undefined;
+  if (!conn || typeof conn.addEventListener !== 'function') return null;
+  return conn as EventTargetLike;
+}
+
 export class DirectCarrierController {
   readonly nodeId: string;
-  readonly rtcSession: string;
 
   private readonly options: DirectCarrierControllerOptions;
   private readonly schedule: (fn: () => void, ms: number) => unknown;
@@ -153,11 +209,16 @@ export class DirectCarrierController {
   private state: DirectCarrierState = 'idle';
   private failureReason: string | null = null;
   private attempt: Attempt | null = null;
+  private generation = 0;
   private attempts = 0;
   private retryHandle: unknown = null;
   private statsHandle: unknown = null;
+  private networkDebounceHandle: unknown = null;
   private started = false;
   private onlineHandler: (() => void) | null = null;
+  private connectionChangeHandler: (() => void) | null = null;
+  private unsubscribeSignalingReady: (() => void) | null = null;
+  private unsubscribeCarrierChange: (() => void) | null = null;
 
   private route: DirectRoute | null = null;
   private rttMs: number | null = null;
@@ -168,7 +229,6 @@ export class DirectCarrierController {
   constructor(options: DirectCarrierControllerOptions) {
     this.options = options;
     this.nodeId = options.nodeId;
-    this.rtcSession = options.rtcSession ?? randomSessionId();
     this.schedule =
       options.setTimeoutFn ?? ((fn, ms) => (globalThis as typeof global).setTimeout(fn, ms));
     this.cancelTimer =
@@ -180,6 +240,11 @@ export class DirectCarrierController {
 
   getState(): DirectCarrierState {
     return this.state;
+  }
+
+  /** 当前 attempt 的 rtcSession（每次尝试都会换）。 */
+  get rtcSession(): string | null {
+    return this.attempt?.rtcSession ?? null;
   }
 
   /** 由 `getStats()` 推出的网络路径；未建立直连时为 `null`。 */
@@ -200,6 +265,19 @@ export class DirectCarrierController {
     return this.snapshot;
   }
 
+  /**
+   * 在**已鉴权**的 PC 上再开一条通道（`bulk:<transferId>` 走这里，见 `bulk-client.ts`）。
+   * 只有 `active` 才允许——鉴权与指纹绑定是在 `sess` 通道建立时完成的，未 active 时
+   * PC 要么不存在要么还没通过绑定校验。
+   */
+  createDataChannel(label: string, init?: { ordered?: boolean }): RTCDataChannelLike {
+    const pc = this.attempt?.pc;
+    if (this.state !== 'active' || !pc) {
+      throw new Error('direct carrier not active');
+    }
+    return pc.createDataChannel(label, init);
+  }
+
   /** 供 `useSyncExternalStore` 消费；快照引用只在内容变化时更新。 */
   readonly diagnosticsSource: DirectDiagnosticsSource = {
     get: () => this.snapshot,
@@ -217,11 +295,12 @@ export class DirectCarrierController {
     if (this.started) return;
     this.started = true;
     this.attempts = 0;
-    this.installNetworkListener();
+    this.installNetworkListeners();
+    this.installSignalingReadyListener();
     this.connect();
   }
 
-  /** 重置退避计数并立即重连（UI 的「重试直连」按钮 / `online` 事件）。 */
+  /** 重置退避计数并立即重连（UI 的「重试直连」按钮 / 网络或信令恢复）。 */
   retry(): void {
     if (!this.started) {
       this.start();
@@ -237,7 +316,8 @@ export class DirectCarrierController {
     this.started = false;
     this.clearRetryTimer();
     this.stopStatsPolling();
-    this.removeNetworkListener();
+    this.removeNetworkListeners();
+    this.removeSignalingReadyListener();
     this.teardownAttempt('stopped');
     this.setState('idle', null);
   }
@@ -247,87 +327,139 @@ export class DirectCarrierController {
   private connect(): void {
     if (!this.started) return;
     if (this.attempt) return;
+    // 信令没通就别浪费一次 attempt：offer 发不出去，只会走到超时再退避。
+    if (!this.signalingReady()) {
+      this.setState('failed', 'signaling not ready');
+      return;
+    }
     this.setState('connecting', null);
-    void this.runAttempt().catch((err) => {
+    const attempt = this.beginAttempt();
+    void this.runAttempt(attempt).catch((err) => {
+      if (this.attempt !== attempt) return;
       const fatal = err instanceof DirectAuthorizeError && err.fatal;
       this.failAttempt(err instanceof Error ? err.message : String(err), !fatal);
     });
   }
 
-  private async runAttempt(): Promise<void> {
-    const config = await this.fetchRtcConfig();
-    if (!this.started) return;
+  /** 在**任何 await 之前**登记 attempt：否则并发 `retry()` 会开出两条 PeerConnection。 */
+  private beginAttempt(): Attempt {
+    this.generation += 1;
+    const attempt: Attempt = {
+      id: this.generation,
+      rtcSession: this.options.rtcSession ?? randomSessionId(),
+      abort: new AbortController(),
+      pc: null,
+      channel: null,
+      carrier: null,
+      nonce: null,
+      fpNode: null,
+      unsubscribeSignal: () => {},
+      timeoutHandle: null,
+      iceGraceHandle: null,
+      cancelled: false,
+      offerQueued: false,
+      remoteReady: false,
+      pendingLocalCandidates: [],
+      pendingRemoteCandidates: [],
+      outbox: [],
+      pumping: false,
+      chain: Promise.resolve(),
+    };
+    this.attempt = attempt;
+    attempt.timeoutHandle = this.schedule(() => {
+      attempt.timeoutHandle = null;
+      if (this.stale(attempt)) return;
+      this.failAttempt('direct connect timeout', true);
+    }, this.options.connectTimeoutMs ?? DEFAULT_CONNECT_TIMEOUT_MS);
+    attempt.unsubscribeSignal = this.options.signaling.onSignal((signal) => {
+      this.enqueueSignal(attempt, signal);
+    });
+    return attempt;
+  }
+
+  private stale(attempt: Attempt): boolean {
+    return attempt.cancelled || this.attempt !== attempt || !this.started;
+  }
+
+  private async runAttempt(attempt: Attempt): Promise<void> {
+    const config = await this.fetchRtcConfig(attempt);
+    if (this.stale(attempt)) return;
 
     const factory = this.options.rtcFactory ?? defaultRtcFactory;
     const pc = factory({ iceServers: buildIceServers(config) });
+    if (this.stale(attempt)) {
+      // 这一代已被替换：新建的 PC 必须就地关掉，否则泄漏
+      closeQuietly(pc);
+      return;
+    }
+    attempt.pc = pc;
     const channel = pc.createDataChannel(SESS_CHANNEL_LABEL, { ordered: true });
-
-    const attempt: Attempt = {
-      pc,
-      channel,
-      carrier: null,
-      unsubscribeSignal: () => {},
-      timeoutHandle: null,
-      cancelled: false,
-    };
-    this.attempt = attempt;
-
-    attempt.timeoutHandle = this.schedule(() => {
-      if (this.attempt === attempt && this.state !== 'active') {
-        this.failAttempt('direct connect timeout', true);
-      }
-    }, this.options.connectTimeoutMs ?? DEFAULT_CONNECT_TIMEOUT_MS);
+    attempt.channel = channel;
 
     pc.onicecandidate = (event) => {
+      if (this.stale(attempt)) return;
       const candidate = event.candidate;
       if (!candidate || !candidate.candidate) return;
-      this.sendSignal({
+      const part: SignalPart = {
         candidate: JSON.stringify({ candidate: candidate.candidate, mid: candidate.sdpMid ?? '0' }),
-      });
+      };
+      // offer 还没排上队时先攒着：entry 要先见到本 rtcSession 的 offer 才认候选。
+      if (!attempt.offerQueued) {
+        attempt.pendingLocalCandidates.push(part);
+        return;
+      }
+      this.queueSignal(attempt, part);
     };
     pc.onconnectionstatechange = () => {
+      if (this.stale(attempt)) return;
       this.refreshIceSnapshot();
       const s = pc.connectionState;
-      if (s === 'failed' || s === 'closed') {
-        if (this.attempt === attempt) this.failAttempt(`peer connection ${s}`, true);
-      }
+      if (s === 'failed' || s === 'closed') this.failAttempt(`peer connection ${s}`, true);
     };
-    pc.oniceconnectionstatechange = () => this.refreshIceSnapshot();
+    pc.oniceconnectionstatechange = () => {
+      if (this.stale(attempt)) return;
+      this.refreshIceSnapshot();
+      this.handleIceConnectionState(attempt, pc.iceConnectionState);
+    };
 
     const offer = await pc.createOffer();
     await pc.setLocalDescription(offer);
-    if (attempt.cancelled || !this.started) return;
+    if (this.stale(attempt)) return;
 
     const localSdp = pc.localDescription?.sdp ?? offer.sdp ?? '';
+    // 本地 SDP 用同一个严格解析器：`m=application` 段生效的那条 sha-256。
     const fpBrowser = parseSdpFingerprint(localSdp);
     if (!fpBrowser) {
       this.failAttempt('local DTLS fingerprint unavailable', true);
       return;
     }
 
-    const granted = await this.authorize(fpBrowser);
-    if (attempt.cancelled || !this.started) return;
+    const granted = await this.authorize(attempt, fpBrowser);
+    if (this.stale(attempt)) return;
+    attempt.nonce = granted.nonce;
+    attempt.fpNode = granted.fpNode;
 
-    attempt.unsubscribeSignal = this.options.signaling.onSignal((signal) => {
-      void this.handleSignal(attempt, granted.fpNode, signal);
-    });
-
-    this.sendSignal({ sdp: JSON.stringify({ type: offer.type, sdp: localSdp }) });
+    // outbox 是 FIFO：offer 先入队，之后的候选自然排在它后面，不会插队到 offer 前。
+    this.queueSignal(attempt, { sdp: JSON.stringify({ type: offer.type, sdp: localSdp }) });
+    attempt.offerQueued = true;
+    for (const part of attempt.pendingLocalCandidates.splice(0)) this.queueSignal(attempt, part);
 
     channel.onopen = () => {
-      if (attempt.cancelled || this.attempt !== attempt) return;
-      this.activate(attempt, granted.nonce);
+      if (this.stale(attempt)) return;
+      this.mountCarrier(attempt);
     };
     channel.onclose = () => {
-      if (this.attempt !== attempt) return;
+      if (this.stale(attempt)) return;
       this.handleCarrierGone('direct channel closed');
     };
-    if (channel.readyState === 'open') this.activate(attempt, granted.nonce);
+    if (channel.readyState === 'open') this.mountCarrier(attempt);
   }
 
-  private async fetchRtcConfig(): Promise<RtcConfigResponse | null> {
+  private async fetchRtcConfig(attempt: Attempt): Promise<RtcConfigResponse | null> {
     try {
-      const res = await this.options.apiClient.fetch(RTC_CONFIG_PATH);
+      const res = await this.options.apiClient.fetch(RTC_CONFIG_PATH, {
+        signal: attempt.abort.signal,
+      });
       if (!res.ok) return null;
       return (await res.json()) as RtcConfigResponse;
     } catch {
@@ -336,14 +468,15 @@ export class DirectCarrierController {
     }
   }
 
-  private async authorize(fpBrowser: {
-    algorithm: string;
-    value: string;
-  }): Promise<{ nonce: string; fpNode: { algorithm: string; value: string } }> {
+  private async authorize(
+    attempt: Attempt,
+    fpBrowser: DtlsFingerprint
+  ): Promise<{ nonce: string; fpNode: DtlsFingerprint }> {
     const res = await this.options.apiClient.fetch(RTC_AUTHORIZE_PATH, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ rtcSession: this.rtcSession, fp_browser: fpBrowser }),
+      body: JSON.stringify({ rtcSession: attempt.rtcSession, fp_browser: fpBrowser }),
+      signal: attempt.abort.signal,
     });
     if (!res.ok) {
       // 4xx 是配置/权限问题，重试没有意义；5xx（如 DIRECT_UNAVAILABLE）才退避重试。
@@ -362,56 +495,192 @@ export class DirectCarrierController {
     return { nonce: body.nonce, fpNode: { algorithm: fp.algorithm, value: fp.value } };
   }
 
-  private async handleSignal(
-    attempt: Attempt,
-    fpNode: { algorithm: string; value: string },
-    signal: DirectSignalMessage
-  ): Promise<void> {
-    if (attempt.cancelled || this.attempt !== attempt) return;
-    if (signal.rtcSession !== this.rtcSession || signal.from !== 'node') return;
-    try {
-      if (signal.sdp) {
-        const parsed = JSON.parse(signal.sdp) as { type?: unknown; sdp?: unknown };
-        if (typeof parsed.sdp !== 'string') return;
-        const type = typeof parsed.type === 'string' ? parsed.type : 'answer';
-        // 指纹绑定：先核对再 setRemoteDescription，不一致就不让 DTLS 起来。
-        const fpRemote = parseSdpFingerprint(parsed.sdp);
-        if (!fingerprintsEqual(fpRemote, fpNode)) {
-          this.failAttempt('node DTLS fingerprint mismatch', false);
-          return;
-        }
-        await attempt.pc.setRemoteDescription({ type, sdp: parsed.sdp });
+  // ========== 信令 ==========
+
+  private signalingReady(): boolean {
+    const signaling = this.options.signaling;
+    return signaling.isReady ? signaling.isReady() : true;
+  }
+
+  /** 逐条串行处理：answer 与紧随其后的候选并发时会丢候选。 */
+  private enqueueSignal(attempt: Attempt, signal: DirectSignalMessage): void {
+    if (this.stale(attempt)) return;
+    if (signal.rtcSession !== attempt.rtcSession || signal.from !== 'node') return;
+    attempt.chain = attempt.chain.then(async () => {
+      if (this.stale(attempt)) return;
+      try {
+        await this.processSignal(attempt, signal);
+      } catch {
+        // 单条畸形信令不该拖垮整次尝试；超时兜底会收敛。
+      }
+    });
+  }
+
+  private async processSignal(attempt: Attempt, signal: DirectSignalMessage): Promise<void> {
+    const pc = attempt.pc;
+    if (!pc) return;
+    if (signal.sdp) {
+      const parsed = JSON.parse(signal.sdp) as { type?: unknown; sdp?: unknown };
+      if (typeof parsed.sdp !== 'string') return;
+      const type = typeof parsed.type === 'string' ? parsed.type : 'answer';
+      // 指纹绑定：先核对再 setRemoteDescription，不一致就不让 DTLS 起来。
+      const fpRemote = parseSdpFingerprint(parsed.sdp);
+      if (!fingerprintsEqual(fpRemote, attempt.fpNode)) {
+        this.failAttempt('node DTLS fingerprint mismatch', false);
         return;
       }
-      if (signal.candidate) {
-        const parsed = JSON.parse(signal.candidate) as { candidate?: unknown; mid?: unknown };
-        if (typeof parsed.candidate !== 'string' || !parsed.candidate) return;
-        await attempt.pc.addIceCandidate({
-          candidate: parsed.candidate,
-          sdpMid: typeof parsed.mid === 'string' ? parsed.mid : '0',
-        });
+      await pc.setRemoteDescription({ type, sdp: parsed.sdp });
+      if (this.stale(attempt)) return;
+      attempt.remoteReady = true;
+      const queued = attempt.pendingRemoteCandidates.splice(0);
+      for (const candidate of queued) {
+        try {
+          await pc.addIceCandidate(candidate);
+        } catch {
+          // 单条候选失败不影响其余
+        }
+        if (this.stale(attempt)) return;
       }
-    } catch {
-      // 单条畸形信令不该拖垮整次尝试；超时兜底会收敛。
+      return;
+    }
+    if (!signal.candidate) return;
+    const parsed = JSON.parse(signal.candidate) as { candidate?: unknown; mid?: unknown };
+    if (typeof parsed.candidate !== 'string' || !parsed.candidate) return;
+    const candidate: IceCandidateLike = {
+      candidate: parsed.candidate,
+      sdpMid: typeof parsed.mid === 'string' ? parsed.mid : '0',
+    };
+    // `setRemoteDescription` 没完成时 `addIceCandidate` 会抛，候选就永久丢了。
+    if (!attempt.remoteReady) {
+      attempt.pendingRemoteCandidates.push(candidate);
+      return;
+    }
+    await pc.addIceCandidate(candidate);
+  }
+
+  private queueSignal(attempt: Attempt, part: SignalPart): void {
+    attempt.outbox.push(part);
+    void this.pumpOutbox(attempt);
+  }
+
+  /**
+   * 按序泵出 outbox：送不出去（`/mesh/ws` 断开返回 `false`）就把这条留在队头，
+   * 等 `onReady` 再泵。丢一条候选就可能让本可建立的直连一路超时。
+   */
+  private async pumpOutbox(attempt: Attempt): Promise<void> {
+    if (attempt.pumping) return;
+    attempt.pumping = true;
+    try {
+      while (!this.stale(attempt) && attempt.outbox.length > 0) {
+        if (!this.signalingReady()) return;
+        const part = attempt.outbox[0];
+        if (!part) return;
+        let ok = false;
+        try {
+          ok = await this.options.signaling.send({
+            rtcSession: attempt.rtcSession,
+            from: 'browser',
+            to: this.nodeId,
+            sdp: part.sdp ?? null,
+            candidate: part.candidate ?? null,
+          });
+        } catch {
+          ok = false;
+        }
+        if (this.stale(attempt) || !ok) return;
+        attempt.outbox.shift();
+      }
+    } finally {
+      attempt.pumping = false;
     }
   }
 
-  private activate(attempt: Attempt, nonce: string): void {
+  private installSignalingReadyListener(): void {
+    const signaling = this.options.signaling;
+    if (!signaling.onReady || this.unsubscribeSignalingReady) return;
+    this.unsubscribeSignalingReady = signaling.onReady((ready) => {
+      if (!this.started || !ready) return;
+      // mesh WS 恢复：退避重来一轮，别停在 failed 等用户刷新页面。
+      this.attempts = 0;
+      const attempt = this.attempt;
+      if (attempt && !attempt.cancelled) {
+        void this.pumpOutbox(attempt);
+        return;
+      }
+      this.clearRetryTimer();
+      this.connect();
+    });
+  }
+
+  private removeSignalingReadyListener(): void {
+    const unsubscribe = this.unsubscribeSignalingReady;
+    this.unsubscribeSignalingReady = null;
+    try {
+      unsubscribe?.();
+    } catch {
+      // 已注销
+    }
+  }
+
+  // ========== 载体挂载与激活 ==========
+
+  /**
+   * 通道 open：发首帧 nonce、建载体挂进屏障。**不置 active**——node 可能因为 nonce /
+   * session 绑定失败立刻关掉通道，此时若已清零重试计数，退避永远从 1 s 重来、
+   * 也永远到不了上限；诊断还会长期显示「direct」而实际仍走 primary。
+   */
+  private mountCarrier(attempt: Attempt): void {
     if (attempt.carrier) return;
+    const channel = attempt.channel;
+    const nonce = attempt.nonce;
+    if (!channel || nonce == null) return;
     // 首帧 nonce 必须是**裸的**未分片 JSON：node 在挂载载体前先读走这一条。
     try {
-      attempt.channel.send(new TextEncoder().encode(JSON.stringify({ nonce })));
+      channel.send(new TextEncoder().encode(JSON.stringify({ nonce })));
     } catch (err) {
       this.failAttempt(err instanceof Error ? err.message : 'nonce send failed', true);
       return;
     }
-    const carrier = new DirectDataChannelCarrier(attempt.channel);
+    // 分片层的协议违规会自毁载体，随后走同一条 onClose；原因单独记下来供诊断。
+    const failure: { reason: string | null } = { reason: null };
+    const carrier = new DirectDataChannelCarrier(channel, {
+      maxMessageBytes: attempt.pc?.sctp?.maxMessageSize,
+      onProtocolError: (reason) => {
+        failure.reason = reason;
+      },
+    });
     attempt.carrier = carrier;
     carrier.onClose(() => {
-      if (this.attempt !== attempt) return;
-      this.handleCarrierGone('direct channel closed');
+      if (this.stale(attempt)) return;
+      this.handleCarrierGone(
+        failure.reason ? `direct protocol violation: ${failure.reason}` : 'direct channel closed'
+      );
     });
+    this.subscribeCarrierChange(attempt);
     this.options.connection.attachDirectCarrier(carrier);
+    // 没有 onCarrierChange 的宿主（老测试桩）退化成「挂上即生效」。
+    if (!this.options.connection.onCarrierChange) this.activate(attempt);
+  }
+
+  private subscribeCarrierChange(attempt: Attempt): void {
+    const subscribe = this.options.connection.onCarrierChange;
+    if (!subscribe) return;
+    this.unsubscribeCarrierChange?.();
+    this.unsubscribeCarrierChange = subscribe.call(this.options.connection, (active) => {
+      if (this.stale(attempt)) return;
+      if (active === 'direct') {
+        this.activate(attempt);
+        return;
+      }
+      // 切回 primary：这条直连已经不承载业务了，按载体失效处理（退避后重来）。
+      if (this.state === 'active') this.handleCarrierGone('switched back to primary');
+    });
+  }
+
+  /** 屏障已切换并回过 ACK：这时候才算真的 active。 */
+  private activate(attempt: Attempt): void {
+    if (this.stale(attempt) || !attempt.carrier) return;
+    if (this.state === 'active') return;
     this.attempts = 0;
     this.clearAttemptTimeout(attempt);
     this.setState('active', null);
@@ -432,18 +701,37 @@ export class DirectCarrierController {
 
   /** 直连载体没了（通道关闭 / primary 断开导致屏障关掉直连）：退避重连。 */
   private handleCarrierGone(reason: string): void {
-    this.teardownAttempt(reason);
-    this.stopStatsPolling();
-    this.route = null;
-    this.rttMs = null;
-    this.setState('failed', reason);
-    if (this.started) this.scheduleRetry();
+    this.failAttempt(reason, true);
+  }
+
+  /**
+   * ICE 状态机：`disconnected` 只是「暂时收不到对端」，给 5 s 宽限；持续到期就当断了，
+   * 立刻回落 primary 并以全新 attempt / rtcSession 重来——Wi-Fi 切蜂窝往往不产生
+   * `online` 事件，干等浏览器宣告 failed 期间的输入全部丢在废通道上。
+   */
+  private handleIceConnectionState(attempt: Attempt, state: string): void {
+    if (state === 'disconnected') {
+      if (attempt.iceGraceHandle != null) return;
+      attempt.iceGraceHandle = this.schedule(() => {
+        attempt.iceGraceHandle = null;
+        if (this.stale(attempt)) return;
+        this.failAttempt('ice disconnected', true);
+      }, this.options.iceDisconnectGraceMs ?? DEFAULT_ICE_DISCONNECT_GRACE_MS);
+      return;
+    }
+    if (attempt.iceGraceHandle != null && (state === 'connected' || state === 'completed')) {
+      this.cancelTimer(attempt.iceGraceHandle);
+      attempt.iceGraceHandle = null;
+    }
+    if (state === 'failed' || state === 'closed') {
+      this.failAttempt(`ice ${state}`, true);
+    }
   }
 
   private scheduleRetry(): void {
     if (this.retryHandle != null) return;
     const maxAttempts = this.options.maxAttempts ?? DEFAULT_MAX_ATTEMPTS;
-    if (this.attempts >= maxAttempts) return; // 停在 failed，等 retry() / online
+    if (this.attempts >= maxAttempts) return; // 停在 failed，等 retry() / 网络或信令恢复
     const base = this.options.retryBaseMs ?? DEFAULT_RETRY_BASE_MS;
     const max = this.options.retryMaxMs ?? DEFAULT_RETRY_MAX_MS;
     const delay = Math.min(max, base * 2 ** this.attempts);
@@ -480,26 +768,41 @@ export class DirectCarrierController {
     this.attempt = null;
     attempt.cancelled = true;
     this.clearAttemptTimeout(attempt);
+    if (attempt.iceGraceHandle != null) {
+      this.cancelTimer(attempt.iceGraceHandle);
+      attempt.iceGraceHandle = null;
+    }
+    try {
+      attempt.abort.abort();
+    } catch {
+      // AbortController 不会抛，保险起见
+    }
     try {
       attempt.unsubscribeSignal();
     } catch {
       // 信令已注销
     }
-    attempt.channel.onopen = null;
-    attempt.channel.onclose = null;
-    attempt.pc.onicecandidate = null;
-    attempt.pc.onconnectionstatechange = null;
-    attempt.pc.oniceconnectionstatechange = null;
+    try {
+      this.unsubscribeCarrierChange?.();
+    } catch {
+      // 已注销
+    }
+    this.unsubscribeCarrierChange = null;
+    if (attempt.channel) {
+      attempt.channel.onopen = null;
+      attempt.channel.onclose = null;
+    }
+    if (attempt.pc) {
+      attempt.pc.onicecandidate = null;
+      attempt.pc.onconnectionstatechange = null;
+      attempt.pc.oniceconnectionstatechange = null;
+    }
     try {
       attempt.carrier?.close();
     } catch {
       // 已关闭
     }
-    try {
-      attempt.pc.close();
-    } catch {
-      // 已关闭
-    }
+    if (attempt.pc) closeQuietly(attempt.pc);
     this.options.connection.detachDirectCarrier?.();
   }
 
@@ -530,10 +833,11 @@ export class DirectCarrierController {
   /** 立即抓一次 stats（测试用；正常由轮询驱动）。 */
   async pollStats(): Promise<void> {
     const attempt = this.attempt;
-    if (!attempt) return;
+    const pc = attempt?.pc;
+    if (!attempt || !pc) return;
     let pair: SelectedPairStats | null = null;
     try {
-      pair = readSelectedPair(await attempt.pc.getStats());
+      pair = readSelectedPair(await pc.getStats());
     } catch {
       pair = null;
     }
@@ -541,8 +845,8 @@ export class DirectCarrierController {
     this.route = deriveRoute(pair);
     this.rttMs = pair?.rttMs ?? null;
     this.ice = {
-      connectionState: attempt.pc.connectionState || null,
-      iceConnectionState: attempt.pc.iceConnectionState || null,
+      connectionState: pc.connectionState || null,
+      iceConnectionState: pc.iceConnectionState || null,
       localCandidateType: pair?.localCandidateType ?? null,
       remoteCandidateType: pair?.remoteCandidateType ?? null,
       selectedPair: describePair(pair),
@@ -551,11 +855,11 @@ export class DirectCarrierController {
   }
 
   private refreshIceSnapshot(): void {
-    const attempt = this.attempt;
-    if (!attempt) return;
+    const pc = this.attempt?.pc;
+    if (!pc) return;
     this.ice = {
-      connectionState: attempt.pc.connectionState || null,
-      iceConnectionState: attempt.pc.iceConnectionState || null,
+      connectionState: pc.connectionState || null,
+      iceConnectionState: pc.iceConnectionState || null,
       localCandidateType: this.ice?.localCandidateType ?? null,
       remoteCandidateType: this.ice?.remoteCandidateType ?? null,
       selectedPair: this.ice?.selectedPair ?? null,
@@ -564,14 +868,17 @@ export class DirectCarrierController {
   }
 
   private publish(): void {
+    const active = this.state === 'active';
     const next: DirectDiagnostics = {
-      path: this.state === 'active' ? 'direct' : 'primary',
-      rtt: this.state === 'active' ? this.rttMs : null,
-      ice: this.state === 'active' || this.state === 'connecting' ? this.ice : null,
+      path: active ? 'direct' : 'primary',
+      route: active ? this.route : null,
+      rtt: active ? this.rttMs : null,
+      ice: active || this.state === 'connecting' ? this.ice : null,
     };
     const prev = this.snapshot;
     if (
       prev.path === next.path &&
+      prev.route === next.route &&
       prev.rtt === next.rtt &&
       sameIce(prev.ice ?? null, next.ice ?? null)
     ) {
@@ -601,42 +908,70 @@ export class DirectCarrierController {
     this.options.onStateChange?.(state, reason);
   }
 
-  private sendSignal(part: { sdp?: string; candidate?: string }): void {
-    try {
-      this.options.signaling.send({
-        rtcSession: this.rtcSession,
-        from: 'browser',
-        to: this.nodeId,
-        sdp: part.sdp ?? null,
-        candidate: part.candidate ?? null,
-      });
-    } catch {
-      // 信令通道断开时丢弃；重连后由新一次尝试重来
+  private installNetworkListeners(): void {
+    const online = this.resolveNetworkEvents();
+    if (online?.addEventListener && !this.onlineHandler) {
+      const handler = () => this.handleNetworkChange(0);
+      online.addEventListener('online', handler);
+      this.onlineHandler = handler;
+    }
+    // Wi-Fi ↔ 蜂窝切换通常不触发 `online`，只有 Network Information API 的 change。
+    const conn = this.resolveConnectionEvents();
+    if (conn?.addEventListener && !this.connectionChangeHandler) {
+      const handler = () =>
+        this.handleNetworkChange(
+          this.options.networkChangeDebounceMs ?? DEFAULT_NETWORK_CHANGE_DEBOUNCE_MS
+        );
+      conn.addEventListener('change', handler);
+      this.connectionChangeHandler = handler;
     }
   }
 
-  private installNetworkListener(): void {
-    if (this.onlineHandler) return;
-    const target =
-      this.options.networkEvents ??
-      (globalThis as unknown as DirectCarrierControllerOptions['networkEvents']);
-    if (!target?.addEventListener) return;
-    const handler = () => {
+  private handleNetworkChange(debounceMs: number): void {
+    if (!this.started) return;
+    if (this.networkDebounceHandle != null) {
+      this.cancelTimer(this.networkDebounceHandle);
+      this.networkDebounceHandle = null;
+    }
+    if (debounceMs <= 0) {
+      this.retry();
+      return;
+    }
+    this.networkDebounceHandle = this.schedule(() => {
+      this.networkDebounceHandle = null;
       if (!this.started) return;
       this.retry();
-    };
-    target.addEventListener('online', handler);
-    this.onlineHandler = handler;
+    }, debounceMs);
   }
 
-  private removeNetworkListener(): void {
-    const handler = this.onlineHandler;
-    if (!handler) return;
+  private removeNetworkListeners(): void {
+    if (this.networkDebounceHandle != null) {
+      this.cancelTimer(this.networkDebounceHandle);
+      this.networkDebounceHandle = null;
+    }
+    const onlineHandler = this.onlineHandler;
     this.onlineHandler = null;
-    const target =
-      this.options.networkEvents ??
-      (globalThis as unknown as DirectCarrierControllerOptions['networkEvents']);
-    target?.removeEventListener?.('online', handler);
+    if (onlineHandler) this.resolveNetworkEvents()?.removeEventListener?.('online', onlineHandler);
+    const connHandler = this.connectionChangeHandler;
+    this.connectionChangeHandler = null;
+    if (connHandler) this.resolveConnectionEvents()?.removeEventListener?.('change', connHandler);
+  }
+
+  private resolveNetworkEvents(): EventTargetLike | null {
+    return this.options.networkEvents ?? (globalThis as unknown as EventTargetLike) ?? null;
+  }
+
+  private resolveConnectionEvents(): EventTargetLike | null {
+    if (this.options.connectionEvents !== undefined) return this.options.connectionEvents;
+    return defaultConnectionEvents();
+  }
+}
+
+function closeQuietly(pc: RTCPeerConnectionLike): void {
+  try {
+    pc.close();
+  } catch {
+    // 已关闭
   }
 }
 

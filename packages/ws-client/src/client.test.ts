@@ -671,13 +671,14 @@ describe('建连同步失败', () => {
 class FakeDirectCarrier {
   readonly sent: Uint8Array[] = [];
   closed = false;
+  sendResult: 'sent' | 'backpressure' = 'sent';
   private messageCb: ((bytes: Uint8Array) => void) | null = null;
   private closeCb: (() => void) | null = null;
 
   send(bytes: Uint8Array): 'sent' | 'backpressure' | 'closed' {
     if (this.closed) return 'closed';
     this.sent.push(bytes);
-    return 'sent';
+    return this.sendResult;
   }
 
   onMessage(cb: (bytes: Uint8Array) => void): void {
@@ -777,6 +778,26 @@ describe('直连载体（attachDirectCarrier / activeCarrier）', () => {
     const beforeDirect = carrier.sent.length;
     client.send(wsBorsh.KIND_PING, new Uint8Array(0));
     expect(carrier.sent.length).toBe(beforeDirect + 1);
+
+    client.disconnect();
+  });
+
+  test('直连背压：send() 返回 false（帧已排进直连队列），不改走 primary 也不重复发', () => {
+    const socket = new FakeSocket();
+    const client = readyClient(socket);
+    const carrier = new FakeDirectCarrier();
+    client.attachDirectCarrier(carrier);
+    socket.deliver(carrierSwitchFrame(1, 'direct'));
+    const primaryBefore = socket.sent.length;
+
+    carrier.sendResult = 'backpressure';
+    expect(client.send(wsBorsh.KIND_PING, new Uint8Array(0))).toBe(false);
+    expect(carrier.sent.length).toBe(1);
+    expect(socket.sent.length).toBe(primaryBefore);
+
+    carrier.sendResult = 'sent';
+    expect(client.send(wsBorsh.KIND_PING, new Uint8Array(0))).toBe(true);
+    expect(carrier.sent.length).toBe(2);
 
     client.disconnect();
   });

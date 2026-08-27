@@ -43,10 +43,15 @@ export class FakeDataChannel implements RTCDataChannelLike {
 
   readonly sent: Uint8Array[] = [];
   throwOnSend = false;
+  /** 第 N 条（0 起）及之后的 `send` 抛错，用于构造「整帧发到一半失败」。 */
+  throwOnSendAfter: number | null = null;
   closeCount = 0;
 
   send(data: ArrayBufferView | ArrayBuffer | string): void {
     if (this.throwOnSend) throw new Error('send failed');
+    if (this.throwOnSendAfter !== null && this.sent.length >= this.throwOnSendAfter) {
+      throw new Error('send failed');
+    }
     if (typeof data === 'string') {
       this.sent.push(new TextEncoder().encode(data));
       return;
@@ -158,6 +163,11 @@ export class FakePeerConnection implements RTCPeerConnectionLike {
     this.connectionState = state;
     this.onconnectionstatechange?.();
   }
+
+  setIceConnectionState(state: string): void {
+    this.iceConnectionState = state;
+    this.oniceconnectionstatechange?.();
+  }
 }
 
 /** stats 报告构造：`RTCStatsReport` 只需 `forEach`。 */
@@ -172,9 +182,15 @@ export function statsReport(entries: Array<Record<string, unknown>>): StatsRepor
 export class FakeSignaling implements DirectSignalingTransport {
   readonly sent: DirectSignalMessage[] = [];
   private readonly handlers = new Set<(signal: DirectSignalMessage) => void>();
+  private readonly readyHandlers = new Set<(ready: boolean) => void>();
+  private ready = true;
+  /** 是否暴露 `isReady` / `onReady`（模拟不带就绪状态的老实现）。 */
+  exposeReadiness = true;
 
-  send(signal: DirectSignalMessage): void {
+  send(signal: DirectSignalMessage): boolean {
+    if (!this.ready) return false;
     this.sent.push(signal);
+    return true;
   }
 
   onSignal(cb: (signal: DirectSignalMessage) => void): () => void {
@@ -182,6 +198,30 @@ export class FakeSignaling implements DirectSignalingTransport {
     return () => {
       this.handlers.delete(cb);
     };
+  }
+
+  isReady(): boolean {
+    return this.exposeReadiness ? this.ready : true;
+  }
+
+  onReady(cb: (ready: boolean) => void): () => void {
+    if (!this.exposeReadiness) return () => {};
+    this.readyHandlers.add(cb);
+    return () => {
+      this.readyHandlers.delete(cb);
+    };
+  }
+
+  /** 模拟 `/mesh/ws` 断开 / 恢复。 */
+  setReady(ready: boolean): void {
+    if (this.ready === ready) return;
+    this.ready = ready;
+    if (!this.exposeReadiness) return;
+    for (const cb of [...this.readyHandlers]) cb(ready);
+  }
+
+  get candidates(): DirectSignalMessage[] {
+    return this.sent.filter((signal) => signal.candidate !== null);
   }
 
   get handlerCount(): number {
@@ -235,9 +275,15 @@ export class FakeApiClient implements DirectApiClientLike {
   }
 }
 
+/**
+ * 屏障的替身：`attachDirectCarrier` 之后**不会**自动切换，必须显式
+ * `switchTo('direct')`（等价于屏障处理完 `CARRIER_SWITCH` 并回了 ACK）。
+ */
 export class FakeConnection {
   readonly attached: DirectCarrierLike[] = [];
   detachCount = 0;
+  active: 'primary' | 'direct' = 'primary';
+  private readonly carrierHandlers = new Set<(active: 'primary' | 'direct') => void>();
 
   attachDirectCarrier(carrier: DirectCarrierLike): void {
     this.attached.push(carrier);
@@ -245,6 +291,20 @@ export class FakeConnection {
 
   detachDirectCarrier(): void {
     this.detachCount += 1;
+    this.switchTo('primary');
+  }
+
+  onCarrierChange(handler: (active: 'primary' | 'direct') => void): () => void {
+    this.carrierHandlers.add(handler);
+    return () => {
+      this.carrierHandlers.delete(handler);
+    };
+  }
+
+  switchTo(active: 'primary' | 'direct'): void {
+    if (this.active === active) return;
+    this.active = active;
+    for (const handler of [...this.carrierHandlers]) handler(active);
   }
 }
 

@@ -58,8 +58,10 @@ interface Setup {
   connection: FakeConnection;
   clock: ManualClock;
   network: FakeNetworkEvents;
+  netInfo: FakeNetworkEvents;
   peers: FakePeerConnection[];
   pc(): FakePeerConnection;
+  session(): string;
 }
 
 function setup(overrides: Partial<DirectCarrierControllerOptions> = {}): Setup {
@@ -73,6 +75,7 @@ function setup(overrides: Partial<DirectCarrierControllerOptions> = {}): Setup {
   const connection = new FakeConnection();
   const clock = new ManualClock();
   const network = new FakeNetworkEvents();
+  const netInfo = new FakeNetworkEvents();
   const peers: FakePeerConnection[] = [];
 
   const controller = new DirectCarrierController({
@@ -80,7 +83,6 @@ function setup(overrides: Partial<DirectCarrierControllerOptions> = {}): Setup {
     apiClient: api,
     signaling,
     connection,
-    rtcSession: 'rs-1',
     rtcFactory: () => {
       const pc = new FakePeerConnection();
       peers.push(pc);
@@ -89,6 +91,7 @@ function setup(overrides: Partial<DirectCarrierControllerOptions> = {}): Setup {
     setTimeoutFn: clock.setTimeoutFn,
     clearTimeoutFn: clock.clearTimeoutFn,
     networkEvents: network,
+    connectionEvents: netInfo,
     ...overrides,
   });
 
@@ -99,18 +102,24 @@ function setup(overrides: Partial<DirectCarrierControllerOptions> = {}): Setup {
     connection,
     clock,
     network,
+    netInfo,
     peers,
     pc: () => {
       const last = peers[peers.length - 1];
       if (!last) throw new Error('no peer connection created');
       return last;
     },
+    session: () => {
+      const session = controller.rtcSession;
+      if (!session) throw new Error('no rtcSession');
+      return session;
+    },
   };
 }
 
-function answerSignal(fingerprint = FP_NODE_VALUE, rtcSession = 'rs-1') {
+function answerSignal(s: Setup, fingerprint = FP_NODE_VALUE, rtcSession?: string) {
   return {
-    rtcSession,
+    rtcSession: rtcSession ?? s.session(),
     from: 'node' as const,
     to: NODE_ID,
     sdp: JSON.stringify({ type: 'answer', sdp: sdpWithFingerprint(fingerprint, 'answer') }),
@@ -118,12 +127,15 @@ function answerSignal(fingerprint = FP_NODE_VALUE, rtcSession = 'rs-1') {
   };
 }
 
+/** 建连 + 屏障切换：只有 `onCarrierChange('direct')` 之后控制器才算 active。 */
 async function reachActive(s: Setup): Promise<void> {
   s.controller.start();
   await flush();
-  s.signaling.deliver(answerSignal());
+  s.signaling.deliver(answerSignal(s));
   await flush();
   s.pc().channel.open();
+  await flush();
+  s.connection.switchTo('direct');
   await flush();
 }
 
@@ -155,7 +167,7 @@ describe('DirectCarrierController happy path', () => {
     expect(s.api.calls[0]?.path).toBe(RTC_CONFIG_PATH);
     const authorize = s.api.calls.find((c) => c.path === RTC_AUTHORIZE_PATH);
     expect(authorize?.body).toEqual({
-      rtcSession: 'rs-1',
+      rtcSession: s.session(),
       fp_browser: { algorithm: 'sha-256', value: normalized(FP_BROWSER_VALUE) },
     });
 
@@ -184,14 +196,17 @@ describe('DirectCarrierController happy path', () => {
     await flush();
 
     s.pc().emitCandidate('candidate:1 1 udp 1 10.0.0.1 5000 typ host', '0');
-    const candidateSignal = s.signaling.sent.find((sig) => sig.candidate);
+    await flush();
+    const candidateSignal = s.signaling.candidates[0];
     expect(JSON.parse(candidateSignal?.candidate ?? '{}')).toEqual({
       candidate: 'candidate:1 1 udp 1 10.0.0.1 5000 typ host',
       mid: '0',
     });
 
+    s.signaling.deliver(answerSignal(s));
+    await flush();
     s.signaling.deliver({
-      rtcSession: 'rs-1',
+      rtcSession: s.session(),
       from: 'node',
       to: NODE_ID,
       sdp: null,
@@ -209,8 +224,8 @@ describe('DirectCarrierController happy path', () => {
     s.controller.start();
     await flush();
 
-    s.signaling.deliver(answerSignal(FP_NODE_VALUE, 'other-session'));
-    s.signaling.deliver({ ...answerSignal(), from: 'browser' });
+    s.signaling.deliver(answerSignal(s, FP_NODE_VALUE, 'other-session'));
+    s.signaling.deliver({ ...answerSignal(s), from: 'browser' });
     await flush();
     expect(s.pc().remoteDescription).toBeNull();
   });
@@ -222,15 +237,44 @@ describe('DirectCarrierController 指纹绑定', () => {
     s.controller.start();
     await flush();
 
-    s.signaling.deliver(answerSignal(FP_BROWSER_VALUE));
+    s.signaling.deliver(answerSignal(s, FP_BROWSER_VALUE));
     await flush();
 
     expect(s.controller.getState()).toBe('failed');
     expect(s.controller.reason).toContain('fingerprint mismatch');
-    expect(s.pc().remoteDescription).toBeNull();
-    expect(s.pc().closeCount).toBe(1);
+    expect(s.peers[0]?.remoteDescription).toBeNull();
+    expect(s.peers[0]?.closeCount).toBe(1);
     expect(s.connection.attached.length).toBe(0);
     expect(s.clock.pendingDelays).toEqual([]);
+  });
+
+  test('answer 的 m=application 段被注入攻击者指纹（session 级仍是 fp_node）同样拒绝', async () => {
+    const s = setup();
+    s.controller.start();
+    await flush();
+
+    const spoofed = [
+      'v=0',
+      'o=- 1 2 IN IP4 127.0.0.1',
+      's=-',
+      't=0 0',
+      `a=fingerprint:sha-256 ${FP_NODE_VALUE}`,
+      'm=application 9 UDP/DTLS/SCTP webrtc-datachannel',
+      `a=fingerprint:sha-256 ${FP_BROWSER_VALUE}`,
+      'a=mid:0',
+    ].join('\r\n');
+    s.signaling.deliver({
+      rtcSession: s.session(),
+      from: 'node',
+      to: NODE_ID,
+      sdp: JSON.stringify({ type: 'answer', sdp: spoofed }),
+      candidate: null,
+    });
+    await flush();
+
+    expect(s.controller.getState()).toBe('failed');
+    expect(s.controller.reason).toContain('fingerprint mismatch');
+    expect(s.peers[0]?.remoteDescription).toBeNull();
   });
 
   test('authorize 返回 4xx 时不重试；5xx 时退避重试', async () => {
@@ -247,6 +291,227 @@ describe('DirectCarrierController 指纹绑定', () => {
     await flush();
     expect(retryable.controller.getState()).toBe('failed');
     expect(retryable.clock.pendingDelays).toEqual([1000]);
+  });
+});
+
+describe('DirectCarrierController attempt 生命周期', () => {
+  test('每次尝试换新的 rtcSession（node 按它缓存 PeerConnection）', async () => {
+    const s = setup({ maxAttempts: 3 });
+    s.controller.start();
+    await flush();
+    const first = s.session();
+
+    s.controller.retry();
+    await flush();
+    const second = s.session();
+    expect(second).not.toBe(first);
+    // authorize 用的是各自 attempt 的 session
+    const sessions = s.api.calls
+      .filter((c) => c.path === RTC_AUTHORIZE_PATH)
+      .map((c) => (c.body as { rtcSession: string }).rtcSession);
+    expect(sessions).toEqual([first, second]);
+    // 旧 session 的 answer 不再被接受
+    s.signaling.deliver(answerSignal(s, FP_NODE_VALUE, first));
+    await flush();
+    expect(s.pc().remoteDescription).toBeNull();
+  });
+
+  test('retry() 关掉被替换 attempt 的 PeerConnection', async () => {
+    const s = setup();
+    s.controller.start();
+    await flush();
+    const first = s.pc();
+
+    s.controller.retry();
+    await flush();
+    expect(first.closeCount).toBe(1);
+    expect(s.pc()).not.toBe(first);
+    expect(s.peers.length).toBe(2);
+  });
+
+  test('RTC 配置请求未回时 retry()：不会并发两个 attempt', async () => {
+    let release: () => void = () => {};
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const s = setup();
+    const originalFetch = s.api.fetch.bind(s.api);
+    let firstConfig = true;
+    s.api.fetch = async (path: string, init?: RequestInit) => {
+      if (path === RTC_CONFIG_PATH && firstConfig) {
+        firstConfig = false;
+        await gate;
+      }
+      return originalFetch(path, init);
+    };
+
+    s.controller.start();
+    await flush(1);
+    // 第一次 attempt 卡在 rtc-config 上，此时网络事件触发 retry()
+    s.network.emit('online');
+    await flush();
+    expect(s.peers.length).toBe(1); // 第二代已建 PC，第一代还卡着
+
+    release();
+    await flush();
+    // 第一代恢复后发现自己已被替换：既不建 PC 也不覆盖 this.attempt
+    expect(s.peers.length).toBe(1);
+    expect(s.api.calls.filter((c) => c.path === RTC_AUTHORIZE_PATH).length).toBe(1);
+    expect(s.controller.getState()).toBe('connecting');
+
+    // 当代仍可正常走完
+    s.signaling.deliver(answerSignal(s));
+    await flush();
+    s.pc().channel.open();
+    await flush();
+    s.connection.switchTo('direct');
+    expect(s.controller.getState()).toBe('active');
+  });
+
+  test('旧 attempt 的失败不会拆掉新 attempt', async () => {
+    const s = setup();
+    s.controller.start();
+    await flush();
+    const stalePc = s.pc();
+
+    s.controller.retry();
+    await flush();
+    const current = s.pc();
+    expect(current).not.toBe(stalePc);
+
+    // 旧 PC 迟来的 failed 回调（已注销，但即使触发也必须按 generation 忽略）
+    stalePc.onconnectionstatechange?.();
+    stalePc.setConnectionState('failed');
+    await flush();
+    expect(s.controller.getState()).toBe('connecting');
+    expect(current.closeCount).toBe(0);
+  });
+});
+
+describe('DirectCarrierController 信令就绪', () => {
+  test('信令未就绪时不开 attempt；恢复后重置退避并重连', async () => {
+    const s = setup();
+    s.signaling.setReady(false);
+    s.controller.start();
+    await flush();
+    expect(s.peers.length).toBe(0);
+    expect(s.controller.getState()).toBe('failed');
+
+    s.signaling.setReady(true);
+    await flush();
+    expect(s.peers.length).toBe(1);
+    expect(s.controller.getState()).toBe('connecting');
+  });
+
+  test('attempt 中途信令断开：信令排队，恢复后按序补发（offer 在候选之前）', async () => {
+    const s = setup();
+    s.controller.start();
+    await flush();
+    expect(s.signaling.sent.length).toBe(1);
+
+    s.signaling.setReady(false);
+    s.pc().emitCandidate('candidate:1 1 udp 1 10.0.0.1 5000 typ host');
+    s.pc().emitCandidate('candidate:2 1 udp 1 10.0.0.2 5000 typ host');
+    await flush();
+    expect(s.signaling.candidates.length).toBe(0);
+
+    s.signaling.setReady(true);
+    await flush();
+    expect(s.signaling.candidates.length).toBe(2);
+    expect(JSON.parse(s.signaling.candidates[0]?.candidate ?? '{}').candidate).toContain(
+      'candidate:1'
+    );
+  });
+
+  test('offer 送不出去时后续候选不会插到 offer 前面', async () => {
+    const s = setup();
+    s.signaling.setReady(false);
+    s.controller.start();
+    await flush();
+    // 未就绪 → 连 attempt 都没开
+    expect(s.signaling.sent.length).toBe(0);
+
+    s.signaling.setReady(true);
+    await flush();
+    s.pc().emitCandidate('candidate:1 1 udp 1 10.0.0.1 5000 typ host');
+    await flush();
+    expect(s.signaling.sent[0]?.sdp).not.toBeNull();
+    expect(s.signaling.sent[1]?.candidate).not.toBeNull();
+  });
+});
+
+describe('DirectCarrierController 载体切换与激活', () => {
+  test('通道 open 只是挂载：仍是 connecting，超时未撤销', async () => {
+    const s = setup({ connectTimeoutMs: 5000 });
+    s.controller.start();
+    await flush();
+    s.signaling.deliver(answerSignal(s));
+    await flush();
+    s.pc().channel.open();
+    await flush();
+
+    expect(s.connection.attached.length).toBe(1);
+    expect(s.controller.getState()).toBe('connecting');
+    expect(s.clock.pendingDelays).toEqual([5000]);
+
+    s.connection.switchTo('direct');
+    expect(s.controller.getState()).toBe('active');
+    // 连接超时已撤销，只剩 stats 轮询；再走过原超时点也不会判失败
+    expect(s.clock.pendingDelays).toEqual([2000]);
+    s.clock.advance(6000);
+    await flush();
+    expect(s.controller.getState()).toBe('active');
+  });
+
+  test('node 挂载后立刻关通道：重试计数不清零，退避继续增长', async () => {
+    const s = setup({ maxAttempts: 3 });
+    s.controller.start();
+    await flush();
+    s.signaling.deliver(answerSignal(s));
+    await flush();
+    s.pc().channel.open();
+    await flush();
+    // 没有 CARRIER_SWITCH，node 直接因 nonce 校验失败关掉通道
+    s.pc().channel.simulateClose();
+    await flush();
+    expect(s.controller.getState()).toBe('failed');
+    expect(s.clock.pendingDelays).toEqual([1000]);
+
+    s.clock.advance(1000);
+    await flush();
+    s.signaling.deliver(answerSignal(s));
+    await flush();
+    s.pc().channel.open();
+    await flush();
+    s.pc().channel.simulateClose();
+    await flush();
+    // 从 1 s 重来的话这里还是 1000
+    expect(s.clock.pendingDelays).toEqual([2000]);
+  });
+
+  test('入站分片协议违规：载体自毁，控制器按失败退避并给出原因', async () => {
+    const s = setup();
+    await reachActive(s);
+
+    // total=65535 的恶意分片
+    const malicious = new Uint8Array(16);
+    malicious[6] = 0xff;
+    malicious[7] = 0xff;
+    s.pc().channel.deliver(malicious);
+    await flush();
+
+    expect(s.controller.getState()).toBe('failed');
+    expect(s.controller.reason).toContain('protocol violation');
+    expect(s.clock.pendingDelays).toEqual([1000]);
+  });
+
+  test('切回 primary（onCarrierChange）按载体失效处理，退避重连', async () => {
+    const s = setup();
+    await reachActive(s);
+    s.connection.switchTo('primary');
+    await flush();
+    expect(s.controller.getState()).toBe('failed');
+    expect(s.clock.pendingDelays).toEqual([1000]);
   });
 });
 
@@ -303,7 +568,62 @@ describe('DirectCarrierController 退避与网络变化', () => {
 
     s.controller.stop();
     expect(s.network.count('online')).toBe(0);
+    expect(s.netInfo.count('change')).toBe(0);
     expect(s.controller.getState()).toBe('idle');
+  });
+
+  test('navigator.connection 的 change 去抖后重连（Wi-Fi → 蜂窝不发 online）', async () => {
+    const s = setup({ maxAttempts: 1, networkChangeDebounceMs: 800 });
+    s.api.routes.set(RTC_AUTHORIZE_PATH, { status: 503, body: {} });
+    s.controller.start();
+    await flush();
+    s.clock.advance(1000);
+    await flush();
+    const before = s.peers.length;
+
+    s.netInfo.emit('change');
+    s.netInfo.emit('change');
+    s.netInfo.emit('change');
+    await flush();
+    expect(s.peers.length).toBe(before); // 去抖窗口内不动
+
+    s.clock.advance(800);
+    await flush();
+    expect(s.peers.length).toBe(before + 1); // 只重连一次
+  });
+
+  test('iceConnectionState=disconnected 宽限 5 s 后回落 primary 并重来', async () => {
+    const s = setup({ iceDisconnectGraceMs: 5000 });
+    await reachActive(s);
+    const pc = s.pc();
+
+    pc.setIceConnectionState('disconnected');
+    await flush();
+    expect(s.controller.getState()).toBe('active');
+
+    s.clock.advance(4999);
+    await flush();
+    expect(s.controller.getState()).toBe('active');
+
+    s.clock.advance(1);
+    await flush();
+    expect(s.controller.getState()).toBe('failed');
+    expect(s.controller.reason).toContain('ice disconnected');
+    expect(pc.closeCount).toBe(1);
+    expect(s.connection.detachCount).toBeGreaterThan(0);
+    expect(s.clock.pendingDelays).toEqual([1000]);
+  });
+
+  test('disconnected 在宽限期内恢复 connected 时不回落', async () => {
+    const s = setup({ iceDisconnectGraceMs: 5000 });
+    await reachActive(s);
+    s.pc().setIceConnectionState('disconnected');
+    await flush();
+    s.pc().setIceConnectionState('connected');
+    await flush();
+    s.clock.advance(10_000);
+    await flush();
+    expect(s.controller.getState()).toBe('active');
   });
 
   test('直连通道被关闭（如 primary 断开触发屏障 closeDirect）后退避重连', async () => {
@@ -312,6 +632,7 @@ describe('DirectCarrierController 退避与网络变化', () => {
     expect(s.controller.getState()).toBe('active');
 
     s.pc().channel.simulateClose();
+    await flush();
     expect(s.controller.getState()).toBe('failed');
     expect(s.clock.pendingDelays).toEqual([1000]);
     expect(s.connection.detachCount).toBeGreaterThan(0);
@@ -340,7 +661,7 @@ describe('DirectCarrierController 退避与网络变化', () => {
 });
 
 describe('DirectCarrierController 诊断', () => {
-  test('从 getStats 推出 path 与 rtt，并写进 ICE 诊断', async () => {
+  test('从 getStats 推出 route 与 rtt，并写进 ICE 诊断快照', async () => {
     const s = setup();
     await reachActive(s);
     s.pc().connectionState = 'connected';
@@ -365,6 +686,8 @@ describe('DirectCarrierController 诊断', () => {
 
     const diag = s.controller.diagnostics();
     expect(diag.path).toBe('direct');
+    // route 与 path 分开发布：path 只说走不走直连，route 说直连走的哪条网络路径
+    expect(diag.route).toBe('lan');
     expect(diag.ice).toMatchObject({
       connectionState: 'connected',
       localCandidateType: 'host',
@@ -373,7 +696,7 @@ describe('DirectCarrierController 诊断', () => {
     });
   });
 
-  test('TURN 候选 → path=turn；未 active 时 path 为 null', async () => {
+  test('TURN 候选 → route=turn；未 active 时 route / path 均为 null', async () => {
     const s = setup();
     await reachActive(s);
     s.pc().stats = statsReport([
@@ -390,9 +713,11 @@ describe('DirectCarrierController 诊断', () => {
     ]);
     await s.controller.pollStats();
     expect(s.controller.path).toBe('turn');
+    expect(s.controller.diagnostics().route).toBe('turn');
 
     s.controller.stop();
     expect(s.controller.path).toBeNull();
+    expect(s.controller.diagnostics().route).toBeNull();
   });
 
   test('diagnosticsSource 快照引用稳定，变化时通知订阅者', async () => {
@@ -411,5 +736,18 @@ describe('DirectCarrierController 诊断', () => {
     unsubscribe();
     const stable = s.controller.diagnosticsSource.get();
     expect(s.controller.diagnosticsSource.get()).toBe(stable);
+  });
+
+  test('createDataChannel 只在 active 时可用（bulk 通道走它）', async () => {
+    const s = setup();
+    expect(() => s.controller.createDataChannel('bulk:1')).toThrow('direct carrier not active');
+
+    await reachActive(s);
+    const channel = s.controller.createDataChannel('bulk:1', { ordered: true });
+    expect(channel).toBeDefined();
+    expect(s.pc().channels.length).toBe(2);
+
+    s.controller.stop();
+    expect(() => s.controller.createDataChannel('bulk:2')).toThrow('direct carrier not active');
   });
 });
