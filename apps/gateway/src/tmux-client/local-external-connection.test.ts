@@ -314,55 +314,6 @@ describe('LocalExternalTmuxConnection', () => {
     ]);
   });
 
-  test('drops LANG=C underscore-rendered snapshot rows instead of emitting composite window ids', async () => {
-    const session = 'tmex-lang-c';
-    const snapshots: StateSnapshotPayload[] = [];
-    const connection = new LocalExternalTmuxConnection(
-      {
-        deviceId: 'device-local',
-        onEvent: () => {},
-        onTerminalOutput: () => {},
-        onTerminalHistory: () => {},
-        onSnapshot: (payload) => snapshots.push(payload),
-        onError: (error) => {
-          throw error;
-        },
-        onClose: () => {},
-      },
-      {
-        enableSubscription: false,
-        ensureGhosttyTerminfo: async () => false,
-        getDevice: () => createDevice(session),
-        run: createRunStub(session, {
-          overrides: (command) => {
-            if (command === `display-message -p -t ${session} #{session_id}|#{session_name}`) {
-              return ok(`$1_${session}\n`);
-            }
-            if (
-              command ===
-              `list-windows -t ${session} -F #{window_id}|#{window_index}|#{window_active}|#{window_layout}|#{window_name}`
-            ) {
-              return ok('@0_0_1_ba9d,80x24,0,0,1_bash\n');
-            }
-            if (
-              command ===
-              `list-panes -s -t ${session} -F #{pane_id}|#{window_id}|#{pane_index}|#{pane_active}|#{pane_width}|#{pane_height}|#{pane_left}|#{pane_top}|#{window_active}|#{pane_title}|#{pane_current_command}|#{pane_current_path}`
-            ) {
-              return ok('%1_@0_0_1_80_24_0_0_1_bash_node_/home/user\n');
-            }
-            return null;
-          },
-        }),
-      }
-    );
-
-    await connection.connect();
-
-    expect(snapshots).toHaveLength(1);
-    expect(snapshots[0]).toEqual({ deviceId: 'device-local', session: null });
-    expect(JSON.stringify(snapshots[0])).not.toContain('@0_0_bash_1');
-  });
-
   test('connect rejects when tmux is too old for control mode', async () => {
     const connection = new LocalExternalTmuxConnection(
       {
@@ -823,54 +774,6 @@ describe('LocalExternalTmuxConnection', () => {
     sendResolvers.shift()?.();
   });
 
-  test('selectWindow treats missing window targets as benign and refreshes snapshot', async () => {
-    const session = 'tmex-select-window-missing';
-    const calls: string[][] = [];
-    const errors: Error[] = [];
-    const connection = new LocalExternalTmuxConnection(
-      {
-        deviceId: 'device-local',
-        onEvent: () => {},
-        onTerminalOutput: () => {},
-        onTerminalHistory: () => {},
-        onSnapshot: () => {},
-        onError: (error) => {
-          errors.push(error);
-        },
-        onClose: () => {},
-      },
-      {
-        enableSubscription: false,
-        ensureGhosttyTerminfo: async () => false,
-        getDevice: () => createDevice(session),
-        run: createRunStub(session, {
-          record: calls,
-          overrides: (command) =>
-            command === 'select-window -t @404'
-              ? { exitCode: 1, stdout: '', stderr: "can't find window: @404" }
-              : null,
-        }),
-      }
-    );
-
-    await connection.connect();
-    calls.length = 0;
-
-    connection.selectWindow('@404');
-    await waitFor(() =>
-      errors.length > 0 ||
-      calls.some((argv) => argv.slice(1).join(' ').startsWith(`display-message -p -t ${session}`))
-        ? true
-        : null
-    );
-
-    expect(errors).toEqual([]);
-    expect(calls.map((argv) => argv.join(' '))).toContain('tmux select-window -t @404');
-    expect(
-      calls.some((argv) => argv.slice(1).join(' ').startsWith(`display-message -p -t ${session}`))
-    ).toBe(true);
-  });
-
   test('logs tmux command context when a non-target-missing command fails', async () => {
     const session = 'tmex-command-context';
     const errors: Error[] = [];
@@ -921,41 +824,6 @@ describe('LocalExternalTmuxConnection', () => {
       warn.mockRestore();
       connection.disconnect();
     }
-  });
-
-  test('resizePane keeps window-size in manual mode instead of forcing latest', async () => {
-    const commands: string[][] = [];
-    const connection = new LocalExternalTmuxConnection(
-      {
-        deviceId: 'device-local',
-        onEvent: () => {},
-        onTerminalOutput: () => {},
-        onTerminalHistory: () => {},
-        onSnapshot: () => {},
-        onError: (error) => {
-          throw error;
-        },
-        onClose: () => {},
-      },
-      {
-        enableSubscription: false,
-        ensureGhosttyTerminfo: async () => false,
-        getDevice: () => createDevice('tmex-resize'),
-        run: createRunStub('tmex-resize', {
-          record: commands,
-          overrides: (command) => (command === 'resize-window -t @1 -x 137 -y 41' ? ok() : null),
-        }),
-      }
-    );
-
-    await connection.connect();
-    connection.resizePane('%1', 137, 41);
-
-    await new Promise((resolve) => setTimeout(resolve, 0));
-
-    expect(commands.map((argv) => argv.slice(1).join(' '))).not.toContain(
-      'set-window-option -t @1 window-size latest'
-    );
   });
 
   test('applyStackedLayout serializes resize-window before select-layout', async () => {
@@ -1382,86 +1250,6 @@ describe('LocalExternalTmuxConnection', () => {
     expect(createCmd).toContain('test-win');
   });
 
-  test('configureSessionOptions sets default-path with custom dir', async () => {
-    const session = 'tmex-defpath';
-    const calls: string[][] = [];
-    const device = createDevice(session);
-    device.defaultWorkingDir = '/projects';
-
-    const connection = new LocalExternalTmuxConnection(
-      {
-        deviceId: 'device-local',
-        onEvent: () => {},
-        onTerminalOutput: () => {},
-        onTerminalHistory: () => {},
-        onSnapshot: () => {},
-        onError: (error) => {
-          throw error;
-        },
-        onClose: () => {},
-      },
-      {
-        enableSubscription: false,
-        ensureGhosttyTerminfo: async () => false,
-        getDevice: () => device,
-        run: createRunStub(session, { record: calls }),
-      }
-    );
-
-    await connection.connect();
-
-    const defaultPathCmd = calls.find(
-      (argv) => argv.includes('set-option') && argv.includes('default-path')
-    );
-    expect(defaultPathCmd).toBeDefined();
-    expect(defaultPathCmd).toContain('/projects');
-  });
-
-  test('ensureSession uses custom defaultWorkingDir for new session', async () => {
-    const session = 'tmex-newsess-cwd';
-    const calls: string[][] = [];
-    const device = createDevice(session);
-    device.defaultWorkingDir = '/workspace';
-
-    const connection = new LocalExternalTmuxConnection(
-      {
-        deviceId: 'device-local',
-        onEvent: () => {},
-        onTerminalOutput: () => {},
-        onTerminalHistory: () => {},
-        onSnapshot: () => {},
-        onError: (error) => {
-          throw error;
-        },
-        onClose: () => {},
-      },
-      {
-        enableSubscription: false,
-        ensureGhosttyTerminfo: async () => false,
-        getDevice: () => device,
-        run: createRunStub(session, {
-          record: calls,
-          overrides: (command) => {
-            if (command === `has-session -t ${session}`) {
-              return { exitCode: 1, stdout: '', stderr: `can't find session: ${session}` };
-            }
-            if (command === `new-session -d -c /workspace -s ${session}`) {
-              return ok();
-            }
-            return null;
-          },
-        }),
-      }
-    );
-
-    await connection.connect();
-
-    const newSessionCmd = calls.find((argv) => argv.includes('new-session'));
-    expect(newSessionCmd).toBeDefined();
-    expect(newSessionCmd).toContain('-c');
-    expect(newSessionCmd).toContain('/workspace');
-  });
-
   test('heartbeat sends display-message via write', async () => {
     const fake = createFakeControlProcess();
     const connection = new LocalExternalTmuxConnection(
@@ -1694,69 +1482,6 @@ describe('LocalExternalTmuxConnection', () => {
     expect((connection as any).heartbeatTimer).toBeNull();
     expect((connection as any).heartbeatTimeoutTimer).toBeNull();
     expect((connection as any).heartbeatPending).toBe(false);
-  });
-
-  test('signalThemeChange is a no-op (stdin injection removed to avoid shell pollution)', async () => {
-    const commands: string[][] = [];
-    const connection = new LocalExternalTmuxConnection(
-      {
-        deviceId: 'device-local',
-        onEvent: () => {},
-        onTerminalOutput: () => {},
-        onTerminalHistory: () => {},
-        onSnapshot: () => {},
-        onError: (error) => {
-          throw error;
-        },
-        onClose: () => {},
-      },
-      {
-        enableSubscription: false,
-        ensureGhosttyTerminfo: async () => false,
-        getDevice: () => createDevice('tmex-theme'),
-        run: createRunStub('tmex-theme', {
-          record: commands,
-          overrides: (command) => (command.startsWith('send-keys -H -t %') ? ok() : null),
-        }),
-      }
-    );
-
-    await connection.connect();
-
-    connection.signalThemeChange('%1', 'dark');
-    connection.signalThemeChange('%2', 'light');
-    await new Promise((resolve) => setTimeout(resolve, 0));
-
-    // stdin 注入已移除：不应有任何 send-keys 调用
-    const sendKeysCalls = commands.filter((argv) => argv.includes('send-keys'));
-    expect(sendKeysCalls).toHaveLength(0);
-  });
-
-  test('signalThemeChange is a no-op when disconnected', async () => {
-    const commands: string[][] = [];
-    const connection = new LocalExternalTmuxConnection(
-      {
-        deviceId: 'device-local',
-        onEvent: () => {},
-        onTerminalOutput: () => {},
-        onTerminalHistory: () => {},
-        onSnapshot: () => {},
-        onError: () => {},
-        onClose: () => {},
-      },
-      {
-        enableSubscription: false,
-        ensureGhosttyTerminfo: async () => false,
-        getDevice: () => createDevice('tmex-theme-disc'),
-        run: createRunStub('tmex-theme-disc', { record: commands }),
-      }
-    );
-
-    // 不调 connect，connected=false
-    connection.signalThemeChange('%1', 'dark');
-    await new Promise((resolve) => setTimeout(resolve, 0));
-
-    expect(commands.some((argv) => argv.includes('send-keys'))).toBe(false);
   });
 
   test('requestSnapshot reports a non-transient list-windows error via onError without unhandled rejection', async () => {

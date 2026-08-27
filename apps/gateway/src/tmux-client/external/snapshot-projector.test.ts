@@ -512,4 +512,33 @@ describe('SnapshotProjector.performSnapshot', () => {
       { payload: { deviceId: 'dev-1', session: null }, baseRevision: undefined },
     ]);
   });
+
+  test('drops underscore-rendered snapshot rows instead of emitting composite tmux ids', async () => {
+    const host = createHost();
+    host.setResponse(
+      `display-message -p -t tmex #{session_id}${SNAPSHOT_FIELD_SEPARATOR}#{session_name}`,
+      ok('$1_tmex\n')
+    );
+    host.setResponse(`list-windows -t tmex -F ${WINDOW_SNAPSHOT_FORMAT}`, ok('@0_0_bash_1\n'));
+    host.setResponse(
+      `list-panes -s -t tmex -F ${PANE_SNAPSHOT_FORMAT}`,
+      ok('%1_@0_0_bash_1_80_24_1_node_/home/user\n')
+    );
+
+    const originalWarn = console.warn;
+    console.warn = () => {};
+    try {
+      await new SnapshotProjector(host).performSnapshot();
+    } finally {
+      console.warn = originalWarn;
+    }
+
+    expect(host.snapshots).toHaveLength(1);
+    expect(host.snapshots[0]).toEqual({
+      payload: { deviceId: 'dev-1', session: null },
+      baseRevision: 3n,
+    });
+    expect(JSON.stringify(host.snapshots[0]?.payload)).not.toContain('@0_0_bash_1');
+    expect(host.snapshotSession).toBeNull();
+  });
 });

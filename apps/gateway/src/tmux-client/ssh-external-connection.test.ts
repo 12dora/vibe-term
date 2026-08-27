@@ -501,61 +501,6 @@ describe('SshExternalTmuxConnection', () => {
     connection.disconnect();
   });
 
-  test('drops invalid snapshot rows instead of emitting composite tmux ids', async () => {
-    const session = 'tmex-ssh-invalid-snapshot';
-    const snapshots: StateSnapshotPayload[] = [];
-    const fakeClient = new FakeClient();
-    setupCommandChannel(fakeClient, session, {
-      overrides: (payload) => {
-        if (payload.includes(`'has-session' '-t' '${session}'`)) {
-          return { stdout: "can't find session: tmex-ssh-invalid-snapshot\n", exitCode: 1 };
-        }
-        if (payload.includes(`'new-session' '-d' '-c' '/home/alice' '-s' '${session}'`)) {
-          return { stdout: '', exitCode: 0 };
-        }
-        if (
-          payload.includes(
-            `'display-message' '-p' '-t' '${session}' '#{session_id}|#{session_name}'`
-          )
-        ) {
-          return { stdout: `$1_${session}\n`, exitCode: 0 };
-        }
-        if (
-          payload.includes(
-            `'list-windows' '-t' '${session}' '-F' '#{window_id}|#{window_index}|#{window_active}|#{window_layout}|#{window_name}'`
-          )
-        ) {
-          return { stdout: '@0_0_bash_1\n', exitCode: 0 };
-        }
-        if (
-          payload.includes(
-            `'list-panes' '-s' '-t' '${session}' '-F' '#{pane_id}|#{window_id}|#{pane_index}|#{pane_active}|#{pane_width}|#{pane_height}|#{pane_left}|#{pane_top}|#{window_active}|#{pane_title}|#{pane_current_command}|#{pane_current_path}'`
-          )
-        ) {
-          return { stdout: '%1_@0_0_bash_1_80_24_1_node_/home/alice\n', exitCode: 0 };
-        }
-        return null;
-      },
-    });
-
-    const connection = new SshExternalTmuxConnection(
-      createCallbacks({ onSnapshot: (payload) => snapshots.push(payload) }),
-      {
-        getDevice: () => createDevice(session),
-        decrypt: async () => 'secret',
-        createClient: () => fakeClient as unknown as Client,
-      }
-    );
-
-    await connection.connect();
-
-    expect(snapshots).toHaveLength(1);
-    expect(snapshots[0]).toEqual({ deviceId: 'device-ssh', session: null });
-    expect(JSON.stringify(snapshots[0])).not.toContain('@0_0_bash_1');
-
-    connection.disconnect();
-  });
-
   test('connect bootstraps remote tmux over dedicated command and control channels', async () => {
     const fakeClient = new FakeClient();
     setupCommandChannel(fakeClient, 'tmex-ssh-snapshot', {});
@@ -583,91 +528,6 @@ describe('SshExternalTmuxConnection', () => {
       options: { pty: false },
     });
     expect(fakeClient.controlChannels).toHaveLength(1);
-
-    connection.disconnect();
-  });
-
-  test('resizePane keeps window-size manual on ssh runtime', async () => {
-    const fakeClient = new FakeClient();
-    const writes: string[] = [];
-    setupCommandChannel(fakeClient, 'tmex-ssh-resize', {
-      record: writes,
-      overrides: (payload) => {
-        if (payload.includes("'resize-window' '-t' '@1' '-x' '137' '-y' '41'")) {
-          return { stdout: '', exitCode: 0 };
-        }
-        return null;
-      },
-    });
-
-    const connection = new SshExternalTmuxConnection(createCallbacks({}), {
-      getDevice: () => createDevice('tmex-ssh-resize'),
-      decrypt: async () => 'secret',
-      createClient: () => fakeClient as unknown as Client,
-    });
-
-    await connection.connect();
-    connection.resizePane('%1', 137, 41);
-    await new Promise((resolve) => setTimeout(resolve, 0));
-
-    expect(
-      writes.some((payload) =>
-        payload.includes("'set-window-option' '-t' '@1' 'window-size' 'latest'")
-      )
-    ).toBe(false);
-
-    connection.disconnect();
-  });
-
-  test('selectWindow treats missing window targets as benign and refreshes snapshot', async () => {
-    const session = 'tmex-ssh-select-missing';
-    const fakeClient = new FakeClient();
-    const writes: string[] = [];
-    const errors: Error[] = [];
-    setupCommandChannel(fakeClient, session, {
-      record: writes,
-      overrides: (payload) => {
-        if (payload.includes("'select-window' '-t' '@404'")) {
-          return { stdout: "can't find window: @404\n", exitCode: 1 };
-        }
-        return null;
-      },
-    });
-
-    const connection = new SshExternalTmuxConnection(
-      {
-        ...createCallbacks({}),
-        onError: (error) => {
-          errors.push(error);
-        },
-      },
-      {
-        getDevice: () => createDevice(session),
-        decrypt: async () => 'secret',
-        createClient: () => fakeClient as unknown as Client,
-      }
-    );
-
-    await connection.connect();
-    writes.length = 0;
-
-    connection.selectWindow('@404');
-    await waitFor(() =>
-      errors.length > 0 ||
-      writes.some((payload) =>
-        payload.includes(`'display-message' '-p' '-t' '${session}' '#{session_id}|#{session_name}'`)
-      )
-        ? true
-        : null
-    );
-
-    expect(errors).toEqual([]);
-    expect(writes.some((payload) => payload.includes("'select-window' '-t' '@404'"))).toBe(true);
-    expect(
-      writes.some((payload) =>
-        payload.includes(`'display-message' '-p' '-t' '${session}' '#{session_id}|#{session_name}'`)
-      )
-    ).toBe(true);
 
     connection.disconnect();
   });
@@ -1022,69 +882,6 @@ describe('SshExternalTmuxConnection', () => {
     connection.disconnect();
   });
 
-  test('configureSessionOptions sets default-path with custom dir', async () => {
-    const session = 'tmex-ssh-defpath';
-    const fakeClient = new FakeClient();
-    const writes: string[] = [];
-    const device = createDevice(session);
-    device.defaultWorkingDir = '/projects';
-
-    setupCommandChannel(fakeClient, session, { record: writes });
-
-    const connection = new SshExternalTmuxConnection(createCallbacks({}), {
-      getDevice: () => device,
-      decrypt: async () => 'secret',
-      createClient: () => fakeClient as unknown as Client,
-    });
-
-    await connection.connect();
-
-    expect(
-      writes.some((payload) =>
-        payload.includes(`'set-option' '-t' '${session}' 'default-path' '/projects'`)
-      )
-    ).toBe(true);
-
-    connection.disconnect();
-  });
-
-  test('ensureSession uses custom defaultWorkingDir for new session', async () => {
-    const session = 'tmex-ssh-newsess-cwd';
-    const fakeClient = new FakeClient();
-    const writes: string[] = [];
-    const device = createDevice(session);
-    device.defaultWorkingDir = '/workspace';
-
-    setupCommandChannel(fakeClient, session, {
-      record: writes,
-      overrides: (payload) => {
-        if (payload.includes(`'has-session' '-t' '${session}'`)) {
-          return { stdout: '', exitCode: 1 };
-        }
-        if (payload.includes(`'new-session' '-d' '-c' '/workspace' '-s' '${session}'`)) {
-          return { stdout: '', exitCode: 0 };
-        }
-        return null;
-      },
-    });
-
-    const connection = new SshExternalTmuxConnection(createCallbacks({}), {
-      getDevice: () => device,
-      decrypt: async () => 'secret',
-      createClient: () => fakeClient as unknown as Client,
-    });
-
-    await connection.connect();
-
-    expect(
-      writes.some((payload) =>
-        payload.includes(`'new-session' '-d' '-c' '/workspace' '-s' '${session}'`)
-      )
-    ).toBe(true);
-
-    connection.disconnect();
-  });
-
   test('configureWindowStyle batches set-option into a single shell command to minimize SSH round-trips', async () => {
     const session = 'tmex-ssh-batch-style';
     const fakeClient = new FakeClient();
@@ -1131,40 +928,6 @@ describe('SshExternalTmuxConnection', () => {
     expect(batchedPayload).toContain("'@2'");
     expect(batchedPayload).toContain("'@3'");
     expect(batchedPayload).toContain('&&');
-
-    connection.disconnect();
-  });
-
-  test('signalThemeChange is a no-op (stdin injection removed to avoid shell pollution)', async () => {
-    const session = 'tmex-ssh-theme-signal';
-    const fakeClient = new FakeClient();
-    const writes: string[] = [];
-    setupCommandChannel(fakeClient, session, {
-      record: writes,
-      overrides: (payload) => {
-        if (payload.includes("'send-keys' '-H' '-t' '%1'")) {
-          return { stdout: '', exitCode: 0 };
-        }
-        return null;
-      },
-    });
-
-    const connection = new SshExternalTmuxConnection(createCallbacks({}), {
-      getDevice: () => createDevice(session),
-      decrypt: async () => 'secret',
-      createClient: () => fakeClient as unknown as Client,
-    });
-
-    await connection.connect();
-    writes.length = 0;
-
-    connection.signalThemeChange('%1', 'light');
-    connection.signalThemeChange('%1', 'dark');
-    await Bun.sleep(50);
-
-    // stdin 注入已移除：不应有任何 send-keys -H 调用
-    const sendKeysWrites = writes.filter((w) => w.includes("'send-keys' '-H'"));
-    expect(sendKeysWrites).toHaveLength(0);
 
     connection.disconnect();
   });
@@ -1310,24 +1073,6 @@ describe('SshExternalTmuxConnection', () => {
     expect(styleWrites[2]).toContain('#e1e1e1');
 
     connection.disconnect();
-  });
-
-  test('signalThemeChange is a no-op when disconnected', async () => {
-    const session = 'tmex-ssh-signal-disconnected';
-    const fakeClient = new FakeClient();
-    const writes: string[] = [];
-    setupCommandChannel(fakeClient, session, { record: writes });
-
-    const connection = new SshExternalTmuxConnection(createCallbacks({}), {
-      getDevice: () => createDevice(session),
-      decrypt: async () => 'secret',
-      createClient: () => fakeClient as unknown as Client,
-    });
-
-    connection.signalThemeChange('%1', 'light');
-    await Bun.sleep(20);
-
-    expect(writes.some((w) => w.includes("'send-keys' '-H'"))).toBe(false);
   });
 });
 

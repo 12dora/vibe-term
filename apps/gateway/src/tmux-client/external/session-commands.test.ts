@@ -322,4 +322,43 @@ describe('SessionCommands', () => {
     expect(events).toEqual([{ type: 'pane-active', data: { windowId: '@2', paneId: '%8' } }]);
     expect(snapshots).toEqual([1]);
   });
+
+  test('selectWindow treats missing window targets as benign and refreshes snapshot', async () => {
+    const { host, allowCalls, snapshots, failures, responses } = createHost();
+    const errors: Error[] = [];
+    host.callbacks.onError = (error) => {
+      errors.push(error);
+    };
+    responses.set('select-window -t @404', fail("can't find window: @404"));
+
+    new SessionCommands(host).selectWindow('@404');
+    await Bun.sleep(0);
+
+    expect(errors).toEqual([]);
+    expect(failures).toEqual([]);
+    expect(allowCalls.map((argv) => argv.join(' '))).toEqual(['select-window -t @404']);
+    expect(snapshots.length).toBeGreaterThan(0);
+    expect(host.activeWindowId).toBeNull();
+  });
+
+  test('resizePane keeps window-size in manual mode instead of forcing latest', async () => {
+    const { host, allowCalls, failures, responses } = createHost();
+    host.snapshotWindows.set('@1', {
+      id: '@1',
+      index: 0,
+      name: 'main',
+      active: true,
+      panes: [{ id: '%1' } as TmuxWindow['panes'][number]],
+    });
+    responses.set('resize-window -t @1 -x 137 -y 41', ok());
+
+    new SessionCommands(host).resizePane('%1', 137, 41);
+    await Bun.sleep(0);
+
+    expect(failures).toEqual([]);
+    expect(allowCalls.map((argv) => argv.join(' '))).toEqual(['resize-window -t @1 -x 137 -y 41']);
+    expect(allowCalls.map((argv) => argv.join(' '))).not.toContain(
+      'set-window-option -t @1 window-size latest'
+    );
+  });
 });

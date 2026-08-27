@@ -40,6 +40,14 @@ describe('ThemeSubscriptionController', () => {
     ]);
   });
 
+  test('signalThemeChange is a no-op when disconnected', () => {
+    const { host, sent } = createHost({ connected: false });
+    const controller = new ThemeSubscriptionController(host);
+    controller.tracker.note('%1', true);
+    controller.signalThemeChange('%1', 'dark');
+    expect(sent).toEqual([]);
+  });
+
   test('note and clear persist @tmex_2031 pane options', async () => {
     const { host, argvLog } = createHost();
     const controller = new ThemeSubscriptionController(host);
