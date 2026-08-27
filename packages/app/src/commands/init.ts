@@ -10,11 +10,11 @@ import {
 import { t } from '../i18n';
 import { checkBunVersion, readExplicitBunPath } from '../lib/bun';
 import {
+  type DepInstallPlan,
   executeDependencyInstall,
   getInstallHintAsync,
   planBunInstall,
   planTmuxInstall,
-  type DepInstallPlan,
 } from '../lib/dep-install';
 import { writeEnvFile } from '../lib/env-file';
 import { ensureDir, pathExists } from '../lib/fs-utils';
@@ -33,11 +33,25 @@ import {
 } from '../lib/install-layout';
 import { detectServiceManager } from '../lib/platform';
 import { promptConfirm, promptText } from '../lib/prompt';
+import {
+  DEFAULT_PEER_PORT,
+  DEFAULT_STUN_SERVERS,
+  type TmexRoleName,
+  parseTmexRoleName,
+} from '../lib/roles';
 import { installService, serviceHint } from '../lib/service';
 import { checkTmuxVersion } from '../lib/tmux';
 import { asBoolean, asString, assertNonEmpty, parsePort } from '../lib/validate';
 import { readPackageVersion } from '../lib/version';
-import type { InitConfig, InstallMeta, ParsedArgs } from '../types';
+import type { InitConfig as BaseInitConfig, InstallMeta, ParsedArgs } from '../types';
+
+export type InitConfig = BaseInitConfig & {
+  role: TmexRoleName;
+  hubUrl: string;
+  peerPort: number;
+  hubPublicUrl: string;
+  stunServers: string;
+};
 
 function mustGetStringFlag(flags: ParsedArgs['flags'], key: string): string {
   const value = asString(flags[key]);
@@ -85,6 +99,14 @@ async function buildInitConfig(parsed: ParsedArgs): Promise<InitConfig> {
       'service-name'
     );
 
+    const role = parseTmexRoleName(asString(parsed.flags.role) || 'standalone');
+    const hubUrl = asString(parsed.flags['hub-url']) || '';
+    const peerPort = parsePort(asString(parsed.flags['peer-port']) || String(DEFAULT_PEER_PORT));
+    const hubPublicUrl = asString(parsed.flags['hub-public-url']) || '';
+    if (role === 'hub,node' && !hubPublicUrl) {
+      throw new Error('init --role hub,node requires --hub-public-url in non-interactive mode');
+    }
+
     return {
       installDir,
       host,
@@ -96,6 +118,11 @@ async function buildInitConfig(parsed: ParsedArgs): Promise<InitConfig> {
       nonInteractive,
       installDeps,
       skipDepCheck,
+      role,
+      hubUrl,
+      peerPort,
+      hubPublicUrl,
+      stunServers: asString(parsed.flags['stun-servers']) || DEFAULT_STUN_SERVERS,
     };
   }
 
@@ -139,6 +166,34 @@ async function buildInitConfig(parsed: ParsedArgs): Promise<InitConfig> {
   );
   const serviceName = assertNonEmpty(serviceNamePrompt, 'service-name');
 
+  const role = parseTmexRoleName(
+    (await promptText(
+      { nonInteractive: false },
+      'Role (standalone|node|hub,node)',
+      asString(parsed.flags.role) || 'standalone'
+    )) || 'standalone'
+  );
+  const hubUrl = await promptText(
+    { nonInteractive: false },
+    'Hub URL (TMEX_HUB_URL, empty allowed)',
+    asString(parsed.flags['hub-url']) || ''
+  );
+  const peerPort = parsePort(
+    (await promptText(
+      { nonInteractive: false },
+      'Peer port (TMEX_PEER_PORT)',
+      asString(parsed.flags['peer-port']) || String(DEFAULT_PEER_PORT)
+    )) || String(DEFAULT_PEER_PORT)
+  );
+  let hubPublicUrl = asString(parsed.flags['hub-public-url']) || '';
+  if (role === 'hub,node') {
+    hubPublicUrl = await promptText(
+      { nonInteractive: false },
+      'Hub public URL (TMEX_HUB_PUBLIC_URL)',
+      hubPublicUrl
+    );
+  }
+
   return {
     installDir,
     host,
@@ -150,6 +205,11 @@ async function buildInitConfig(parsed: ParsedArgs): Promise<InitConfig> {
     nonInteractive,
     installDeps,
     skipDepCheck,
+    role,
+    hubUrl,
+    peerPort,
+    hubPublicUrl,
+    stunServers: asString(parsed.flags['stun-servers']) || DEFAULT_STUN_SERVERS,
   };
 }
 
@@ -190,9 +250,10 @@ export async function runInit(parsed: ParsedArgs): Promise<void> {
   if (!config.skipDepCheck) {
     const tmux = await checkTmuxVersion();
     if (!tmux.ok) {
-      const reason = tmux.reason === 'version-too-low'
-        ? t('tmux.versionTooLow', { version: tmux.versionRaw || '' })
-        : t('tmux.notFound');
+      const reason =
+        tmux.reason === 'version-too-low'
+          ? t('tmux.versionTooLow', { version: tmux.versionRaw || '' })
+          : t('tmux.notFound');
       await handleDepFailure('tmux', config, reason);
     }
   }
@@ -243,6 +304,11 @@ export async function runInit(parsed: ParsedArgs): Promise<void> {
     port: config.port,
     databasePath: config.databasePath,
     masterKey,
+    role: config.role,
+    hubUrl: config.hubUrl,
+    peerPort: config.peerPort,
+    hubPublicUrl: config.hubPublicUrl,
+    stunServers: config.stunServers,
   });
   await writeEnvFile(installLayout.envPath, envValues);
   await writeRunScript(installLayout, bun.path);

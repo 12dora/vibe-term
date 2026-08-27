@@ -27,6 +27,22 @@ describe('buildAppEnvValues', () => {
     expect(values.TMEX_BASE_URL).toBe('http://[2001:db8::1]:9883');
     expect(values.TMEX_BIND_HOST).toBe('2001:db8::1');
   });
+
+  test('writes hub env keys with defaults', () => {
+    const values = buildAppEnvValues({
+      host: '127.0.0.1',
+      port: 9883,
+      databasePath: '/tmp/tmex.db',
+      masterKey: 'key',
+      role: 'hub,node',
+      hubPublicUrl: 'https://hub.example',
+    });
+    expect(values.TMEX_ROLES).toBe('hub,node');
+    expect(values.TMEX_HUB_URL).toBe('');
+    expect(values.TMEX_PEER_PORT).toBe('39001');
+    expect(values.TMEX_HUB_PUBLIC_URL).toBe('https://hub.example');
+    expect(values.TMEX_STUN_SERVERS).toBe('stun:stun.l.google.com:19302');
+  });
 });
 
 describe('quotePosixShellArg', () => {

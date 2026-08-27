@@ -37,3 +37,30 @@ export async function writeEnvFile(
 ): Promise<void> {
   await writeFile(filePath, stringifyEnv(values), { encoding: 'utf8', mode: 0o600 });
 }
+
+export function mergeMissingKeys(
+  existing: Record<string, string>,
+  defaults: Record<string, string>
+): { next: Record<string, string>; added: string[] } {
+  const next = { ...existing };
+  const added: string[] = [];
+  for (const [key, value] of Object.entries(defaults)) {
+    if (!(key in next)) {
+      next[key] = value;
+      added.push(key);
+    }
+  }
+  return { next, added };
+}
+
+export async function mergeMissingEnvFileKeys(
+  filePath: string,
+  defaults: Record<string, string>
+): Promise<string[]> {
+  const existing = await readEnvFile(filePath);
+  const { next, added } = mergeMissingKeys(existing, defaults);
+  if (added.length > 0) {
+    await writeEnvFile(filePath, next);
+  }
+  return added;
+}

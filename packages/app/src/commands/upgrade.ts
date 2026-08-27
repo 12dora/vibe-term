@@ -6,11 +6,12 @@ import { defaultInstallDir } from '../constants';
 import { t } from '../i18n';
 import { checkBunVersion, readExplicitBunPath } from '../lib/bun';
 import { getInstallHint } from '../lib/dep-install';
-import { readEnvFile } from '../lib/env-file';
+import { mergeMissingEnvFileKeys, readEnvFile } from '../lib/env-file';
 import { pathExists } from '../lib/fs-utils';
 import {
   backupInstallArtifacts,
   deployRuntimeFiles,
+  hubEnvDefaults,
   restoreInstallArtifacts,
   writeInstallMeta,
   writeRunScript,
@@ -116,6 +117,9 @@ export async function runUpgrade(parsed: ParsedArgs): Promise<void> {
     await backupInstallArtifacts(installLayout, backupDir);
 
     await deployRuntimeFiles(packageLayout, installLayout);
+    if (await pathExists(installLayout.envPath)) {
+      await mergeMissingEnvFileKeys(installLayout.envPath, hubEnvDefaults());
+    }
     await writeRunScript(installLayout, bun.path);
 
     const cliVersion = await readPackageVersion(packageLayout.packageRoot);

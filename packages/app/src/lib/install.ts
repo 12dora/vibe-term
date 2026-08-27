@@ -7,6 +7,7 @@ import type { InstallMeta } from '../types';
 import { copyDirectory, ensureDir, pathExists, writeText } from './fs-utils';
 import type { InstallLayout, PackageLayout } from './install-layout';
 import { writeJsonFile } from './json-file';
+import { DEFAULT_PEER_PORT, DEFAULT_STUN_SERVERS, type TmexRoleName } from './roles';
 
 export function generateMasterKey(): string {
   return randomBytes(32).toString('base64');
@@ -17,6 +18,28 @@ export interface AppEnvInput {
   port: number;
   databasePath: string;
   masterKey: string;
+  role?: TmexRoleName;
+  hubUrl?: string;
+  peerPort?: number;
+  hubPublicUrl?: string;
+  stunServers?: string;
+}
+
+export function hubEnvDefaults(input?: {
+  role?: TmexRoleName;
+  hubUrl?: string;
+  peerPort?: number;
+  hubPublicUrl?: string;
+  stunServers?: string;
+}): Record<string, string> {
+  const role = input?.role ?? 'standalone';
+  return {
+    TMEX_ROLES: role,
+    TMEX_HUB_URL: input?.hubUrl ?? '',
+    TMEX_PEER_PORT: String(input?.peerPort ?? DEFAULT_PEER_PORT),
+    TMEX_HUB_PUBLIC_URL: input?.hubPublicUrl ?? '',
+    TMEX_STUN_SERVERS: input?.stunServers ?? DEFAULT_STUN_SERVERS,
+  };
 }
 
 export function buildAppEnvValues(input: AppEnvInput): Record<string, string> {
@@ -28,6 +51,7 @@ export function buildAppEnvValues(input: AppEnvInput): Record<string, string> {
     TMEX_MASTER_KEY: input.masterKey,
     TMEX_BASE_URL: formatHttpEndpoint(input.host, input.port),
     TMEX_SITE_NAME: 'tmex',
+    ...hubEnvDefaults(input),
   };
 }
 

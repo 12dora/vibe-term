@@ -338,3 +338,50 @@ export async function serviceHint(serviceName: string): Promise<string> {
   }
   return t('service.hint.none');
 }
+
+export async function restartService(serviceName: string, installDir?: string): Promise<void> {
+  const manager = await detectServiceManager();
+  if (manager === 'systemd-user') {
+    const restart = await runCommand('systemctl', ['--user', 'restart', serviceName]);
+    if (restart.code !== 0) {
+      throw new Error(
+        t('service.systemd.restartFailed', {
+          detail: restart.stderr || restart.stdout,
+        })
+      );
+    }
+    return;
+  }
+
+  if (manager === 'launchd') {
+    const uid = String(process.getuid?.() ?? 0);
+    const label = launchdLabel(serviceName);
+    const kick = await runCommand('launchctl', ['kickstart', '-k', `gui/${uid}/${label}`]);
+    if (kick.code === 0) {
+      return;
+    }
+
+    const launchAgentsPath = launchdLaunchAgentsPlistPath(serviceName);
+    const localPath = installDir ? launchdLocalPlistPath(serviceName, installDir) : null;
+    const targetPath = (await pathExists(launchAgentsPath))
+      ? launchAgentsPath
+      : localPath && (await pathExists(localPath))
+        ? localPath
+        : null;
+    if (!targetPath) {
+      throw new Error(t('service.launchd.bootstrapFailed', { detail: kick.stderr || kick.stdout }));
+    }
+    await runCommand('launchctl', ['bootout', `gui/${uid}`, targetPath]).catch(() => null);
+    const bootstrap = await runCommand('launchctl', ['bootstrap', `gui/${uid}`, targetPath]);
+    if (bootstrap.code !== 0) {
+      throw new Error(
+        t('service.launchd.bootstrapFailed', {
+          detail: bootstrap.stderr || bootstrap.stdout,
+        })
+      );
+    }
+    return;
+  }
+
+  throw new Error(t('service.install.unsupportedPlatform', { platform: process.platform }));
+}
