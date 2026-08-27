@@ -77,13 +77,17 @@ export function collectKnownPaneIds(
 /**
  * 会话是否仍挂在某个存活 pane 上；否则归入孤立会话区，避免 pane 被关掉后会话从侧边栏消失。
  * 设备快照尚未加载（设备离线/未订阅）时按「仍挂载」处理，防止快照到达前后在孤立区闪现。
+ * devicesReady 为 false（设备列表 pending/失败）时 knownDeviceIds 为空，此时不做设备存在性判定，
+ * 否则加载中所有绑定会话都会被误判为孤立，请求失败时更会永久误判。
  */
 export function isSessionAttached(
   session: AgentSessionDto,
   knownDeviceIds: ReadonlySet<string>,
-  panesByDevice: ReadonlyMap<string, ReadonlySet<string>>
+  panesByDevice: ReadonlyMap<string, ReadonlySet<string>>,
+  devicesReady: boolean
 ): boolean {
   if (!session.deviceId || !session.paneId) return false;
+  if (!devicesReady) return true;
   if (!knownDeviceIds.has(session.deviceId)) return false;
   const panes = panesByDevice.get(session.deviceId);
   if (!panes) return true;

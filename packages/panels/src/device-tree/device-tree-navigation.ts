@@ -114,6 +114,20 @@ export function resolvePendingNavigation(
   };
 }
 
+/**
+ * pending 导航只在用户仍停留在目标设备的路由上时有效。
+ * 否则用户点完无 pane 的窗口后立刻走普通 NavLink 去别处（如 /devices），
+ * 5s 内到货的快照仍会把他拽回那个 pane。
+ */
+export function pendingNavigationSurvivesPath(
+  pending: PendingNavigation | null,
+  pathname: string,
+  patterns: DeviceTreeRoutePatterns
+): boolean {
+  if (!pending) return false;
+  return parseDeviceTreeSelection(pathname, patterns).selectedDeviceId === pending.deviceId;
+}
+
 export interface PendingNavigationTimers {
   setTimer: (fn: () => void, ms: number) => unknown;
   clearTimer: (handle: unknown) => void;
@@ -214,8 +228,19 @@ export function useDeviceTreeNavigationApi(): DeviceTreeNavigationApi {
   const { host } = useRuntime();
   const selectWindow = useTmuxStore((state) => state.selectWindow);
   const snapshots = useTmuxStore((state) => state.snapshots);
+  const { pathname } = useLocation();
+  const patterns = useMemo(() => deviceTreeRoutePatterns(host), [host]);
 
   const pendingNavigation = usePendingNavigationSlot();
+
+  // 路由离开目标设备即作废 pending：普通 NavLink 跳转不会经过 navigateToPane，
+  // 否则 TTL 内到货的快照会把用户从新页面拽回旧 pane
+  useEffect(() => {
+    const pending = pendingNavigation.get();
+    if (!pending) return;
+    if (pendingNavigationSurvivesPath(pending, pathname, patterns)) return;
+    pendingNavigation.clear();
+  }, [pathname, patterns, pendingNavigation]);
 
   const handleNavigate = useCallback(
     (to: string, options?: NavigateOptions) => {

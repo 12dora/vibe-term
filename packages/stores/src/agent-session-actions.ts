@@ -41,6 +41,14 @@ export function sortSessionOrder(sessions: Record<string, AgentSessionDto | unde
     .map((session) => session.id);
 }
 
+/** 任何替换 sessions 的路径都必须经此重算 sessionOrder，否则新的 updatedAt 不会反映到列表顺序 */
+function withSessionOrder(sessions: Record<string, AgentSessionDto | undefined>): {
+  sessions: Record<string, AgentSessionDto | undefined>;
+  sessionOrder: string[];
+} {
+  return { sessions, sessionOrder: sortSessionOrder(sessions) };
+}
+
 export interface AgentSessionActionsDeps {
   apiClient: ApiClient;
   notifications: NotificationSink;
@@ -72,6 +80,9 @@ export function createAgentSessionActions(deps: AgentSessionActionsDeps): AgentS
   let draftSequence = 0;
   // 草稿物化的 in-flight 去重：同一草稿的并发调用共享同一个请求，避免重复建会话
   const materializing = new Map<string, Promise<AgentSessionDto | null>>();
+  // 列表拉取的 in-flight 去重：StrictMode 双 effect 与快速切 tab 会并发触发，
+  // 两个响应先后落盘时后到的旧响应会盖掉本地更新的会话状态
+  let loadingSessions: Promise<void> | null = null;
 
   function reportError(error: unknown): void {
     notifications.error(error instanceof Error ? error.message : String(error));
@@ -102,15 +113,11 @@ export function createAgentSessionActions(deps: AgentSessionActionsDeps): AgentS
         },
         apiClient
       );
-      set((prev) => {
-        const sessions = { ...prev.sessions, [session.id]: session };
-        return {
-          sessions,
-          sessionOrder: sortSessionOrder(sessions),
-          messages: { ...prev.messages, [session.id]: [] },
-          historyLoaded: { ...prev.historyLoaded, [session.id]: true },
-        };
-      });
+      set((prev) => ({
+        ...withSessionOrder({ ...prev.sessions, [session.id]: session }),
+        messages: { ...prev.messages, [session.id]: [] },
+        historyLoaded: { ...prev.historyLoaded, [session.id]: true },
+      }));
       return session;
     } catch (error) {
       reportError(error);
@@ -140,29 +147,34 @@ export function createAgentSessionActions(deps: AgentSessionActionsDeps): AgentS
     return session;
   }
 
-  return {
-    async loadSessions() {
-      try {
-        const sessionList = await fetchAgentSessions(apiClient);
-        set(() => {
-          const sessions: Record<string, AgentSessionDto> = {};
-          for (const session of sessionList) {
-            sessions[session.id] = session;
-          }
-          return {
-            sessions,
-            sessionOrder: sortSessionOrder(sessions),
-            sessionsLoaded: true,
-          };
-        });
-        // 持久化的 activeSessionId 可能已被别端删除
-        const state = get();
-        if (state.activeSessionId && !state.sessions[state.activeSessionId]) {
-          state.setActiveSession(null);
+  async function loadSessionsRequest(): Promise<void> {
+    try {
+      const sessionList = await fetchAgentSessions(apiClient);
+      set(() => {
+        const sessions: Record<string, AgentSessionDto> = {};
+        for (const session of sessionList) {
+          sessions[session.id] = session;
         }
-      } catch (error) {
-        console.error('[agent] loadSessions failed:', error);
+        return { ...withSessionOrder(sessions), sessionsLoaded: true };
+      });
+      // 持久化的 activeSessionId 可能已被别端删除
+      const state = get();
+      if (state.activeSessionId && !state.sessions[state.activeSessionId]) {
+        state.setActiveSession(null);
       }
+    } catch (error) {
+      console.error('[agent] loadSessions failed:', error);
+    }
+  }
+
+  return {
+    loadSessions() {
+      if (loadingSessions) return loadingSessions;
+      const pending = loadSessionsRequest().finally(() => {
+        if (loadingSessions === pending) loadingSessions = null;
+      });
+      loadingSessions = pending;
+      return pending;
     },
 
     async refreshSession(sessionId) {
@@ -173,10 +185,7 @@ export function createAgentSessionActions(deps: AgentSessionActionsDeps): AgentS
           await get().loadSessions();
           return;
         }
-        set((prev) => {
-          const sessions = { ...prev.sessions, [sessionId]: refreshed };
-          return { sessions, sessionOrder: sortSessionOrder(sessions) };
-        });
+        set((prev) => withSessionOrder({ ...prev.sessions, [sessionId]: refreshed }));
       } catch (error) {
         console.error('[agent] refreshSession failed:', error);
       }
@@ -217,10 +226,7 @@ export function createAgentSessionActions(deps: AgentSessionActionsDeps): AgentS
           'Failed to rename agent session',
           apiClient
         );
-        set((prev) => {
-          const sessions = { ...prev.sessions, [sessionId]: session };
-          return { sessions, sessionOrder: sortSessionOrder(sessions) };
-        });
+        set((prev) => withSessionOrder({ ...prev.sessions, [sessionId]: session }));
         return true;
       } catch (error) {
         reportError(error);
@@ -249,8 +255,7 @@ export function createAgentSessionActions(deps: AgentSessionActionsDeps): AgentS
           const queued = { ...prev.queued };
           delete queued[sessionId];
           return {
-            sessions,
-            sessionOrder: sortSessionOrder(sessions),
+            ...withSessionOrder(sessions),
             messages,
             historyLoaded,
             inProgress,
@@ -273,7 +278,7 @@ export function createAgentSessionActions(deps: AgentSessionActionsDeps): AgentS
           'Failed to update write mode',
           apiClient
         );
-        set((prev) => ({ sessions: { ...prev.sessions, [sessionId]: session } }));
+        set((prev) => withSessionOrder({ ...prev.sessions, [sessionId]: session }));
       } catch (error) {
         reportError(error);
       }
@@ -287,7 +292,7 @@ export function createAgentSessionActions(deps: AgentSessionActionsDeps): AgentS
           'Failed to update control chars setting',
           apiClient
         );
-        set((prev) => ({ sessions: { ...prev.sessions, [sessionId]: session } }));
+        set((prev) => withSessionOrder({ ...prev.sessions, [sessionId]: session }));
       } catch (error) {
         reportError(error);
       }
@@ -305,7 +310,7 @@ export function createAgentSessionActions(deps: AgentSessionActionsDeps): AgentS
           'Failed to update model',
           apiClient
         );
-        set((prev) => ({ sessions: { ...prev.sessions, [sessionId]: session } }));
+        set((prev) => withSessionOrder({ ...prev.sessions, [sessionId]: session }));
       } catch (error) {
         reportError(error);
       }
@@ -319,7 +324,7 @@ export function createAgentSessionActions(deps: AgentSessionActionsDeps): AgentS
           'Failed to rebind pane',
           apiClient
         );
-        set((prev) => ({ sessions: { ...prev.sessions, [sessionId]: session } }));
+        set((prev) => withSessionOrder({ ...prev.sessions, [sessionId]: session }));
       } catch (error) {
         reportError(error);
       }
@@ -343,12 +348,12 @@ export function createAgentSessionActions(deps: AgentSessionActionsDeps): AgentS
                 ...prev.messages,
                 [sessionId]: mergeMessages(prev.messages[sessionId], [message]),
               },
-              sessions: session
-                ? {
+              ...(session
+                ? withSessionOrder({
                     ...prev.sessions,
                     [sessionId]: { ...session, status: 'running', lastError: null },
-                  }
-                : prev.sessions,
+                  })
+                : {}),
             };
           });
         }
@@ -434,7 +439,7 @@ export function createAgentSessionActions(deps: AgentSessionActionsDeps): AgentS
       try {
         const stopped = await stopAgentSession(sessionId, apiClient);
         if (stopped) {
-          set((prev) => ({ sessions: { ...prev.sessions, [sessionId]: stopped } }));
+          set((prev) => withSessionOrder({ ...prev.sessions, [sessionId]: stopped }));
         }
       } catch (error) {
         reportError(error);

@@ -36,6 +36,8 @@ export interface SidebarAgentAdapter {
   OrphanSessions: ComponentType<{
     nav: DeviceTreeNavigation;
     knownDeviceIds: readonly string[];
+    /** 设备列表查询是否已成功返回；false 时 knownDeviceIds 不可用于判定设备是否存在 */
+    devicesReady: boolean;
   }>;
   /** 会话重命名/删除等对话框（挂在设备树根部） */
   Dialogs: ComponentType;

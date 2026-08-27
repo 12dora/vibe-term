@@ -167,28 +167,35 @@ describe('isSessionAttached', () => {
 
   test('attached when the pane still exists', () => {
     const item = session({ id: 'a', deviceId: 'd1', paneId: '%1' });
-    expect(isSessionAttached(item, known, panesByDevice)).toBe(true);
+    expect(isSessionAttached(item, known, panesByDevice, true)).toBe(true);
   });
 
   test('detached when the device still exists but the pane is gone', () => {
     const item = session({ id: 'a', deviceId: 'd1', paneId: '%9' });
-    expect(isSessionAttached(item, known, panesByDevice)).toBe(false);
+    expect(isSessionAttached(item, known, panesByDevice, true)).toBe(false);
   });
 
   test('detached when the device is unknown', () => {
     const item = session({ id: 'a', deviceId: 'gone', paneId: '%1' });
-    expect(isSessionAttached(item, known, panesByDevice)).toBe(false);
+    expect(isSessionAttached(item, known, panesByDevice, true)).toBe(false);
   });
 
   test('detached when the session has no pane binding', () => {
-    expect(isSessionAttached(session({ id: 'a' }), known, panesByDevice)).toBe(false);
-    expect(isSessionAttached(session({ id: 'b', deviceId: 'd1' }), known, panesByDevice)).toBe(
-      false
-    );
+    expect(isSessionAttached(session({ id: 'a' }), known, panesByDevice, true)).toBe(false);
+    expect(
+      isSessionAttached(session({ id: 'b', deviceId: 'd1' }), known, panesByDevice, true)
+    ).toBe(false);
   });
 
   test('treated as attached while the device snapshot has not loaded yet', () => {
     const item = session({ id: 'a', deviceId: 'd1', paneId: '%1' });
-    expect(isSessionAttached(item, known, new Map())).toBe(true);
+    expect(isSessionAttached(item, known, new Map(), true)).toBe(true);
+  });
+
+  test('bound sessions stay attached while the device list is not ready', () => {
+    const bound = session({ id: 'a', deviceId: 'gone', paneId: '%9' });
+    expect(isSessionAttached(bound, new Set(), new Map(), false)).toBe(true);
+    // 未绑定 pane 的会话与设备列表无关，始终算孤立
+    expect(isSessionAttached(session({ id: 'b' }), new Set(), new Map(), false)).toBe(false);
   });
 });

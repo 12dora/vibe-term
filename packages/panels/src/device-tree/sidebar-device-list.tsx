@@ -269,7 +269,11 @@ export function SideBarDeviceList({
             ))}
 
           {agentAdapter && (
-            <agentAdapter.OrphanSessions nav={nav} knownDeviceIds={knownDeviceIds} />
+            <agentAdapter.OrphanSessions
+              nav={nav}
+              knownDeviceIds={knownDeviceIds}
+              devicesReady={devicesQuery.isSuccess}
+            />
           )}
         </div>
       </ScrollArea>

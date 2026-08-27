@@ -90,9 +90,11 @@ function AgentPaneSessions({
 function AgentOrphanSessions({
   nav,
   knownDeviceIds,
+  devicesReady,
 }: {
   nav: DeviceTreeNavigation;
   knownDeviceIds: readonly string[];
+  devicesReady: boolean;
 }) {
   const { t } = useTranslation();
   const [open, setOpen] = useState(false);
@@ -104,8 +106,10 @@ function AgentOrphanSessions({
   const orphanSessions = useMemo(() => {
     const known = new Set(knownDeviceIds);
     const panesByDevice = collectKnownPaneIds(snapshots);
-    return orderedSessions.filter((session) => !isSessionAttached(session, known, panesByDevice));
-  }, [orderedSessions, knownDeviceIds, snapshots]);
+    return orderedSessions.filter(
+      (session) => !isSessionAttached(session, known, panesByDevice, devicesReady)
+    );
+  }, [orderedSessions, knownDeviceIds, snapshots, devicesReady]);
 
   if (orphanSessions.length === 0) return null;
   return (

@@ -9,6 +9,7 @@ import {
   createPendingNavigationSlot,
   deviceTreeRoutePatterns,
   parseDeviceTreeSelection,
+  pendingNavigationSurvivesPath,
   pickActivePane,
   resolvePendingNavigation,
   safeDecodePaneParam,
@@ -197,6 +198,33 @@ describe('resolvePendingNavigation', () => {
         PENDING_NAVIGATION_TTL_MS
       ).status
     ).toBe('ready');
+  });
+});
+
+describe('pendingNavigationSurvivesPath', () => {
+  const pending = { deviceId: 'dev-1', windowId: '@2', at: 0 };
+
+  test('survives while the route still points at the target device', () => {
+    expect(pendingNavigationSurvivesPath(pending, '/devices/dev-1', patterns)).toBe(true);
+    expect(
+      pendingNavigationSurvivesPath(pending, '/devices/dev-1/windows/@9/panes/%251', patterns)
+    ).toBe(true);
+  });
+
+  test('dies once the user navigates away from the target device', () => {
+    expect(pendingNavigationSurvivesPath(pending, '/devices', patterns)).toBe(false);
+    expect(pendingNavigationSurvivesPath(pending, '/devices/dev-2', patterns)).toBe(false);
+    expect(pendingNavigationSurvivesPath(pending, '/settings/llm', patterns)).toBe(false);
+  });
+
+  test('is false without a pending navigation', () => {
+    expect(pendingNavigationSurvivesPath(null, '/devices/dev-1', patterns)).toBe(false);
+  });
+
+  test('honours the host route prefix', () => {
+    const hostPatterns = deviceTreeRoutePatterns(prefixedHost);
+    expect(pendingNavigationSurvivesPath(pending, '/app/devices/dev-1', hostPatterns)).toBe(true);
+    expect(pendingNavigationSurvivesPath(pending, '/devices/dev-1', hostPatterns)).toBe(false);
   });
 });
 
