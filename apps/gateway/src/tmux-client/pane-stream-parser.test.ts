@@ -489,6 +489,22 @@ describe('pane stream parser - OSC 52 clipboard', () => {
     expect(writes).toEqual(['hello']);
   });
 
+  // pane 内编辑器（nvim `clipboard=unnamed,unnamedplus`，内置 OSC 52 provider 把 `*` 映到 p、
+  // `+` 映到 c）双击选词或拖拽选择时，一次复制会连发 primary + clipboard 两条 OSC 52。
+  // 两条都当剪贴板写就是「写两次剪贴板、弹两条已复制提示」。
+  test('primary + clipboard pair from a single copy writes the clipboard once', () => {
+    const { parser, writes } = collectClipboard();
+    parser.push(bytes(0x1b, ']', '52;p;aGVsbG8=', 0x07, 0x1b, ']', '52;c;aGVsbG8=', 0x07));
+    expect(writes).toEqual(['hello']);
+  });
+
+  test('primary-only writes are ignored', () => {
+    const { parser, writes } = collectClipboard();
+    const output = parser.push(bytes('X', 0x1b, ']', '52;p;aGVsbG8=', 0x07, 'Y'));
+    expect(Array.from(output)).toEqual([0x58, 0x59]);
+    expect(writes).toEqual([]);
+  });
+
   test('tmux passthrough wrapped OSC 52', () => {
     const { parser, writes } = collectClipboard();
     // DCS tmux; ESC ESC ] 52;c;aGVsbG8= BEL ESC \
