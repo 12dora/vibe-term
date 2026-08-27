@@ -23,6 +23,7 @@
   "dependencies": {
     "@ai-sdk/openai": "^3.0.71",
     "@ai-sdk/openai-compatible": "^2.0.50",
+    "@simplewebauthn/server": "13.3.3",
     "@tmex/shared": "workspace:*",
     "ai": "^6.0.203",
     "drizzle-orm": "^0.45.1",

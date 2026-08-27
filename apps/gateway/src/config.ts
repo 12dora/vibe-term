@@ -71,6 +71,49 @@ function getGatewayOwnerToken(): string | null {
   return value.toLowerCase();
 }
 
+export type TmexRoles = { hub: boolean; node: boolean };
+
+export function parseTmexRoles(raw: string | undefined): TmexRoles {
+  const value = (raw ?? 'standalone').trim();
+  if (value === '' || value === 'standalone') {
+    return { hub: false, node: false };
+  }
+  if (value === 'node') {
+    return { hub: false, node: true };
+  }
+  if (value === 'hub,node') {
+    return { hub: true, node: true };
+  }
+  throw new Error('TMEX_ROLES must be one of standalone | node | hub,node');
+}
+
+export function parsePeerPort(raw: string | undefined): number {
+  const value = (raw ?? '39001').trim() || '39001';
+  if (!/^\d+$/.test(value)) {
+    throw new Error('TMEX_PEER_PORT must be a decimal integer');
+  }
+  const port = Number(value);
+  if (!Number.isInteger(port) || port < 1 || port > 65535) {
+    throw new Error('TMEX_PEER_PORT must be an integer in 1..65535');
+  }
+  return port;
+}
+
+export function parseStunServers(raw: string | undefined): string[] {
+  if (!raw) {
+    return [];
+  }
+  return raw
+    .split(',')
+    .map((item) => item.trim())
+    .filter((item) => item.length > 0);
+}
+
+function getOptionalEnv(key: string): string | null {
+  const value = process.env[key]?.trim();
+  return value ? value : null;
+}
+
 export const config = {
   // 核心安全配置（生产环境建议配置，用于加密敏感字段）
   masterKey: process.env.TMEX_MASTER_KEY,
@@ -116,6 +159,15 @@ export const config = {
     10
   ),
   languageDefault: getEnv('TMEX_DEFAULT_LANGUAGE', 'en_US'),
+
+  roles: parseTmexRoles(process.env.TMEX_ROLES),
+  hubUrl: getOptionalEnv('TMEX_HUB_URL'),
+  hubPublicUrl: getOptionalEnv('TMEX_HUB_PUBLIC_URL'),
+  peerPort: parsePeerPort(process.env.TMEX_PEER_PORT),
+  stunServers: parseStunServers(process.env.TMEX_STUN_SERVERS),
+  turnUrl: getOptionalEnv('TMEX_TURN_URL'),
+  turnUsername: getOptionalEnv('TMEX_TURN_USERNAME'),
+  turnCredential: getOptionalEnv('TMEX_TURN_CREDENTIAL'),
 
   // 环境
   isDev: getEnv('NODE_ENV', 'development') === 'development',

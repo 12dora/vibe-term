@@ -1,0 +1,508 @@
+import { and, eq, isNull, lte } from 'drizzle-orm';
+import { enrollmentTokens, nodeCerts, nodes, peerCache, userKeys, users } from '../db/schema';
+import { toBuffer, toBytes } from './binary';
+import type { AuthDb, NodeStatus } from './types';
+
+export interface UserRecord {
+  id: string;
+  username: string;
+  rootPublicKey: Uint8Array;
+  rootEpoch: number;
+  kdfParamsJson: string;
+  totpRecordSeq: number | null;
+  keyLogHeadSeq: number;
+  keyLogHeadHash: Uint8Array;
+  createdAt: number;
+  updatedAt: number;
+}
+
+export interface CreateUserInput {
+  id: string;
+  username: string;
+  rootPublicKey: Uint8Array;
+  rootEpoch: number;
+  kdfParamsJson: string;
+  totpRecordSeq?: number | null;
+  keyLogHeadSeq: number;
+  keyLogHeadHash: Uint8Array;
+  now: number;
+}
+
+export interface UserKeyRecord {
+  id: string;
+  userId: string;
+  credentialId: Uint8Array;
+  publicKey: Uint8Array;
+  rpId: string;
+  origin: string;
+  counter: number;
+  transports: string[];
+  name: string | null;
+  logSeq: number;
+  createdAt: number;
+}
+
+export interface InsertUserKeyInput {
+  id: string;
+  userId: string;
+  credentialId: Uint8Array;
+  publicKey: Uint8Array;
+  rpId: string;
+  origin: string;
+  counter: number;
+  transports?: string[];
+  name?: string | null;
+  logSeq: number;
+  now: number;
+}
+
+export interface NodeCertRecord {
+  nodeId: string;
+  userId: string;
+  admitRecordSeq: number;
+  certificateBytes: Uint8Array;
+  certSig: Uint8Array;
+  authorizationBytes: Uint8Array;
+  authorizationSig: Uint8Array;
+  revokedLogSeq: number | null;
+}
+
+export interface UpsertNodeCertInput {
+  nodeId: string;
+  userId: string;
+  admitRecordSeq: number;
+  certificateBytes: Uint8Array;
+  certSig: Uint8Array;
+  authorizationBytes: Uint8Array;
+  authorizationSig: Uint8Array;
+  revokedLogSeq?: number | null;
+}
+
+export interface PeerCacheRecord {
+  nodeId: string;
+  name: string;
+  endpointsJson: string;
+  inventoryJson: string;
+  directCapable: boolean;
+  lastSeenAt: number | null;
+  listVersion: number;
+}
+
+export interface UpsertPeerCacheInput {
+  nodeId: string;
+  name: string;
+  endpointsJson: string;
+  inventoryJson: string;
+  directCapable: boolean;
+  lastSeenAt: number | null;
+  listVersion: number;
+}
+
+export interface NodeRecord {
+  id: string;
+  userId: string;
+  name: string;
+  status: NodeStatus;
+  lastSeenAt: number | null;
+  version: string | null;
+  directCapable: boolean;
+  inventoryJson: string;
+  inventoryVersion: number;
+  endpointsJson: string;
+  createdAt: number;
+}
+
+export interface CreateNodeInput {
+  id: string;
+  userId: string;
+  name: string;
+  status?: NodeStatus;
+  lastSeenAt?: number | null;
+  version?: string | null;
+  directCapable?: boolean;
+  inventoryJson?: string;
+  inventoryVersion?: number;
+  endpointsJson?: string;
+  now: number;
+}
+
+export interface EnrollmentTokenRecord {
+  id: string;
+  userId: string;
+  enrollPublicKey: Uint8Array;
+  authorizationJson: string;
+  authorizationSig: Uint8Array;
+  expiresAt: number;
+  usedAt: number | null;
+  nodeId: string | null;
+}
+
+export interface CreateEnrollmentTokenInput {
+  id: string;
+  userId: string;
+  enrollPublicKey: Uint8Array;
+  authorizationJson: string;
+  authorizationSig: Uint8Array;
+  expiresAt: number;
+}
+
+export class UserStore {
+  constructor(private readonly db: AuthDb) {}
+
+  getByUsername(username: string): UserRecord | null {
+    const row = this.db.select().from(users).where(eq(users.username, username)).get();
+    return row ? toUser(row) : null;
+  }
+
+  getById(id: string): UserRecord | null {
+    const row = this.db.select().from(users).where(eq(users.id, id)).get();
+    return row ? toUser(row) : null;
+  }
+
+  create(input: CreateUserInput): UserRecord {
+    this.db
+      .insert(users)
+      .values({
+        id: input.id,
+        username: input.username,
+        rootPublicKey: toBuffer(input.rootPublicKey),
+        rootEpoch: input.rootEpoch,
+        kdfParamsJson: input.kdfParamsJson,
+        totpRecordSeq: input.totpRecordSeq ?? null,
+        keyLogHeadSeq: input.keyLogHeadSeq,
+        keyLogHeadHash: toBuffer(input.keyLogHeadHash),
+        createdAt: input.now,
+        updatedAt: input.now,
+      })
+      .run();
+    const created = this.getById(input.id);
+    if (!created) {
+      throw new Error('failed to create user');
+    }
+    return created;
+  }
+
+  updateRoot(
+    userId: string,
+    input: { rootPublicKey: Uint8Array; rootEpoch: number; kdfParamsJson: string; now: number }
+  ): void {
+    this.db
+      .update(users)
+      .set({
+        rootPublicKey: toBuffer(input.rootPublicKey),
+        rootEpoch: input.rootEpoch,
+        kdfParamsJson: input.kdfParamsJson,
+        updatedAt: input.now,
+      })
+      .where(eq(users.id, userId))
+      .run();
+  }
+
+  setKeyLogHead(userId: string, input: { seq: number; hash: Uint8Array; now: number }): void {
+    this.db
+      .update(users)
+      .set({
+        keyLogHeadSeq: input.seq,
+        keyLogHeadHash: toBuffer(input.hash),
+        updatedAt: input.now,
+      })
+      .where(eq(users.id, userId))
+      .run();
+  }
+
+  setTotpRecordSeq(userId: string, seq: number | null, now: number): void {
+    this.db
+      .update(users)
+      .set({ totpRecordSeq: seq, updatedAt: now })
+      .where(eq(users.id, userId))
+      .run();
+  }
+
+  listKeysByUser(userId: string): UserKeyRecord[] {
+    return this.db.select().from(userKeys).where(eq(userKeys.userId, userId)).all().map(toUserKey);
+  }
+
+  getKeyByCredentialId(credentialId: Uint8Array): UserKeyRecord | null {
+    const row = this.db
+      .select()
+      .from(userKeys)
+      .where(eq(userKeys.credentialId, toBuffer(credentialId)))
+      .get();
+    return row ? toUserKey(row) : null;
+  }
+
+  insertKey(input: InsertUserKeyInput): UserKeyRecord {
+    this.db
+      .insert(userKeys)
+      .values({
+        id: input.id,
+        userId: input.userId,
+        credentialId: toBuffer(input.credentialId),
+        publicKey: toBuffer(input.publicKey),
+        rpId: input.rpId,
+        origin: input.origin,
+        counter: input.counter,
+        transports: input.transports ?? [],
+        name: input.name ?? null,
+        logSeq: input.logSeq,
+        createdAt: input.now,
+      })
+      .run();
+    const created = this.getKeyByCredentialId(input.credentialId);
+    if (!created) {
+      throw new Error('failed to insert user key');
+    }
+    return created;
+  }
+
+  updateKeyCounter(credentialId: Uint8Array, counter: number): void {
+    this.db
+      .update(userKeys)
+      .set({ counter })
+      .where(eq(userKeys.credentialId, toBuffer(credentialId)))
+      .run();
+  }
+
+  deleteKey(id: string): void {
+    this.db.delete(userKeys).where(eq(userKeys.id, id)).run();
+  }
+
+  listCerts(): NodeCertRecord[] {
+    return this.db.select().from(nodeCerts).all().map(toNodeCert);
+  }
+
+  getCert(nodeId: string): NodeCertRecord | null {
+    const row = this.db.select().from(nodeCerts).where(eq(nodeCerts.nodeId, nodeId)).get();
+    return row ? toNodeCert(row) : null;
+  }
+
+  upsertCert(input: UpsertNodeCertInput): void {
+    this.db
+      .insert(nodeCerts)
+      .values({
+        nodeId: input.nodeId,
+        userId: input.userId,
+        admitRecordSeq: input.admitRecordSeq,
+        certificateBytes: toBuffer(input.certificateBytes),
+        certSig: toBuffer(input.certSig),
+        authorizationBytes: toBuffer(input.authorizationBytes),
+        authorizationSig: toBuffer(input.authorizationSig),
+        revokedLogSeq: input.revokedLogSeq ?? null,
+      })
+      .onConflictDoUpdate({
+        target: nodeCerts.nodeId,
+        set: {
+          userId: input.userId,
+          admitRecordSeq: input.admitRecordSeq,
+          certificateBytes: toBuffer(input.certificateBytes),
+          certSig: toBuffer(input.certSig),
+          authorizationBytes: toBuffer(input.authorizationBytes),
+          authorizationSig: toBuffer(input.authorizationSig),
+          revokedLogSeq: input.revokedLogSeq ?? null,
+        },
+      })
+      .run();
+  }
+
+  markCertRevoked(nodeId: string, revokedLogSeq: number): void {
+    this.db.update(nodeCerts).set({ revokedLogSeq }).where(eq(nodeCerts.nodeId, nodeId)).run();
+  }
+
+  listPeers(): PeerCacheRecord[] {
+    return this.db.select().from(peerCache).all().map(toPeer);
+  }
+
+  upsertPeer(input: UpsertPeerCacheInput): void {
+    this.db
+      .insert(peerCache)
+      .values({
+        nodeId: input.nodeId,
+        name: input.name,
+        endpointsJson: input.endpointsJson,
+        inventoryJson: input.inventoryJson,
+        directCapable: input.directCapable,
+        lastSeenAt: input.lastSeenAt,
+        listVersion: input.listVersion,
+      })
+      .onConflictDoUpdate({
+        target: peerCache.nodeId,
+        set: {
+          name: input.name,
+          endpointsJson: input.endpointsJson,
+          inventoryJson: input.inventoryJson,
+          directCapable: input.directCapable,
+          lastSeenAt: input.lastSeenAt,
+          listVersion: input.listVersion,
+        },
+      })
+      .run();
+  }
+
+  deletePeer(nodeId: string): void {
+    this.db.delete(peerCache).where(eq(peerCache.nodeId, nodeId)).run();
+  }
+
+  createNode(input: CreateNodeInput): NodeRecord {
+    this.db
+      .insert(nodes)
+      .values({
+        id: input.id,
+        userId: input.userId,
+        name: input.name,
+        status: input.status ?? 'enrolled',
+        lastSeenAt: input.lastSeenAt ?? null,
+        version: input.version ?? null,
+        directCapable: input.directCapable ?? false,
+        inventoryJson: input.inventoryJson ?? '{}',
+        inventoryVersion: input.inventoryVersion ?? 0,
+        endpointsJson: input.endpointsJson ?? '[]',
+        createdAt: input.now,
+      })
+      .run();
+    const created = this.getNode(input.id);
+    if (!created) {
+      throw new Error('failed to create node');
+    }
+    return created;
+  }
+
+  getNode(id: string): NodeRecord | null {
+    const row = this.db.select().from(nodes).where(eq(nodes.id, id)).get();
+    return row ? toNode(row) : null;
+  }
+
+  listNodes(): NodeRecord[] {
+    return this.db.select().from(nodes).all().map(toNode);
+  }
+
+  createEnrollmentToken(input: CreateEnrollmentTokenInput): EnrollmentTokenRecord {
+    this.db
+      .insert(enrollmentTokens)
+      .values({
+        id: input.id,
+        userId: input.userId,
+        enrollPublicKey: toBuffer(input.enrollPublicKey),
+        authorizationJson: input.authorizationJson,
+        authorizationSig: toBuffer(input.authorizationSig),
+        expiresAt: input.expiresAt,
+        usedAt: null,
+        nodeId: null,
+      })
+      .run();
+    const created = this.getEnrollmentTokenByEnrollPublicKey(input.enrollPublicKey);
+    if (!created) {
+      throw new Error('failed to create enrollment token');
+    }
+    return created;
+  }
+
+  getEnrollmentTokenByEnrollPublicKey(enrollPublicKey: Uint8Array): EnrollmentTokenRecord | null {
+    const row = this.db
+      .select()
+      .from(enrollmentTokens)
+      .where(eq(enrollmentTokens.enrollPublicKey, toBuffer(enrollPublicKey)))
+      .get();
+    return row ? toEnrollment(row) : null;
+  }
+
+  markEnrollmentUsed(id: string, input: { nodeId: string; now: number }): void {
+    this.db
+      .update(enrollmentTokens)
+      .set({ usedAt: input.now, nodeId: input.nodeId })
+      .where(eq(enrollmentTokens.id, id))
+      .run();
+  }
+
+  sweepExpiredEnrollmentTokens(now: number): number {
+    return this.db
+      .delete(enrollmentTokens)
+      .where(and(lte(enrollmentTokens.expiresAt, now), isNull(enrollmentTokens.usedAt)))
+      .returning({ id: enrollmentTokens.id })
+      .all().length;
+  }
+}
+
+function toUser(row: typeof users.$inferSelect): UserRecord {
+  return {
+    id: row.id,
+    username: row.username,
+    rootPublicKey: toBytes(row.rootPublicKey),
+    rootEpoch: row.rootEpoch,
+    kdfParamsJson: row.kdfParamsJson,
+    totpRecordSeq: row.totpRecordSeq,
+    keyLogHeadSeq: row.keyLogHeadSeq,
+    keyLogHeadHash: toBytes(row.keyLogHeadHash),
+    createdAt: row.createdAt,
+    updatedAt: row.updatedAt,
+  };
+}
+
+function toUserKey(row: typeof userKeys.$inferSelect): UserKeyRecord {
+  return {
+    id: row.id,
+    userId: row.userId,
+    credentialId: toBytes(row.credentialId),
+    publicKey: toBytes(row.publicKey),
+    rpId: row.rpId,
+    origin: row.origin,
+    counter: row.counter,
+    transports: row.transports,
+    name: row.name,
+    logSeq: row.logSeq,
+    createdAt: row.createdAt,
+  };
+}
+
+function toNodeCert(row: typeof nodeCerts.$inferSelect): NodeCertRecord {
+  return {
+    nodeId: row.nodeId,
+    userId: row.userId,
+    admitRecordSeq: row.admitRecordSeq,
+    certificateBytes: toBytes(row.certificateBytes),
+    certSig: toBytes(row.certSig),
+    authorizationBytes: toBytes(row.authorizationBytes),
+    authorizationSig: toBytes(row.authorizationSig),
+    revokedLogSeq: row.revokedLogSeq,
+  };
+}
+
+function toPeer(row: typeof peerCache.$inferSelect): PeerCacheRecord {
+  return {
+    nodeId: row.nodeId,
+    name: row.name,
+    endpointsJson: row.endpointsJson,
+    inventoryJson: row.inventoryJson,
+    directCapable: row.directCapable,
+    lastSeenAt: row.lastSeenAt,
+    listVersion: row.listVersion,
+  };
+}
+
+function toNode(row: typeof nodes.$inferSelect): NodeRecord {
+  return {
+    id: row.id,
+    userId: row.userId,
+    name: row.name,
+    status: row.status as NodeStatus,
+    lastSeenAt: row.lastSeenAt,
+    version: row.version,
+    directCapable: row.directCapable,
+    inventoryJson: row.inventoryJson,
+    inventoryVersion: row.inventoryVersion,
+    endpointsJson: row.endpointsJson,
+    createdAt: row.createdAt,
+  };
+}
+
+function toEnrollment(row: typeof enrollmentTokens.$inferSelect): EnrollmentTokenRecord {
+  return {
+    id: row.id,
+    userId: row.userId,
+    enrollPublicKey: toBytes(row.enrollPublicKey),
+    authorizationJson: row.authorizationJson,
+    authorizationSig: toBytes(row.authorizationSig),
+    expiresAt: row.expiresAt,
+    usedAt: row.usedAt,
+    nodeId: row.nodeId,
+  };
+}

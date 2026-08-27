@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { resolveTmuxBin } from './config';
+import { parsePeerPort, parseStunServers, parseTmexRoles, resolveTmuxBin } from './config';
 
 // config 是模块级常量（import 时快照 process.env），
 // 用 query-busting 动态 import 在不同 env 下重新求值。
@@ -10,6 +10,14 @@ async function loadConfigWith(env: Record<string, string | undefined>): Promise<
   bindHost: string;
   tmuxBin: string;
   gatewayOwnerToken: string | null;
+  roles: { hub: boolean; node: boolean };
+  hubUrl: string | null;
+  hubPublicUrl: string | null;
+  peerPort: number;
+  stunServers: string[];
+  turnUrl: string | null;
+  turnUsername: string | null;
+  turnCredential: string | null;
 }> {
   const saved = new Map<string, string | undefined>();
   for (const [key, value] of Object.entries(env)) {
@@ -28,6 +36,14 @@ async function loadConfigWith(env: Record<string, string | undefined>): Promise<
         bindHost: string;
         tmuxBin: string;
         gatewayOwnerToken: string | null;
+        roles: { hub: boolean; node: boolean };
+        hubUrl: string | null;
+        hubPublicUrl: string | null;
+        peerPort: number;
+        stunServers: string[];
+        turnUrl: string | null;
+        turnUsername: string | null;
+        turnCredential: string | null;
       };
     };
     return mod.config;
@@ -153,5 +169,76 @@ describe('config.gatewayOwnerToken', () => {
     await expect(loadConfigWith({ TMEX_GATEWAY_OWNER_TOKEN: 'not-a-token' })).rejects.toThrow(
       'exactly 32 bytes'
     );
+  });
+});
+
+describe('parseTmexRoles', () => {
+  test('defaults to standalone and accepts the three legal values', () => {
+    expect(parseTmexRoles(undefined)).toEqual({ hub: false, node: false });
+    expect(parseTmexRoles('')).toEqual({ hub: false, node: false });
+    expect(parseTmexRoles('standalone')).toEqual({ hub: false, node: false });
+    expect(parseTmexRoles('node')).toEqual({ hub: false, node: true });
+    expect(parseTmexRoles('hub,node')).toEqual({ hub: true, node: true });
+  });
+
+  test('rejects anything else including pure hub and reordered roles', () => {
+    for (const raw of ['hub', 'node,hub', 'standalone,node', 'hub,node,node', 'HUB,NODE']) {
+      expect(() => parseTmexRoles(raw)).toThrow('TMEX_ROLES');
+    }
+  });
+});
+
+describe('parsePeerPort / parseStunServers', () => {
+  test('peer port defaults to 39001 and rejects out-of-range values', () => {
+    expect(parsePeerPort(undefined)).toBe(39001);
+    expect(parsePeerPort('')).toBe(39001);
+    expect(parsePeerPort('443')).toBe(443);
+    expect(() => parsePeerPort('0')).toThrow('TMEX_PEER_PORT');
+    expect(() => parsePeerPort('65536')).toThrow('TMEX_PEER_PORT');
+    expect(() => parsePeerPort('abc')).toThrow('TMEX_PEER_PORT');
+  });
+
+  test('stun servers split on commas and drop empty items', () => {
+    expect(parseStunServers(undefined)).toEqual([]);
+    expect(parseStunServers('stun:a, stun:b,,stun:c')).toEqual(['stun:a', 'stun:b', 'stun:c']);
+  });
+});
+
+describe('config hub/node env', () => {
+  test('defaults roles to standalone and peerPort to 39001', async () => {
+    const config = await loadConfigWith({
+      TMEX_ROLES: undefined,
+      TMEX_PEER_PORT: undefined,
+      TMEX_HUB_URL: undefined,
+      TMEX_STUN_SERVERS: undefined,
+    });
+    expect(config.roles).toEqual({ hub: false, node: false });
+    expect(config.peerPort).toBe(39001);
+    expect(config.hubUrl).toBeNull();
+    expect(config.stunServers).toEqual([]);
+  });
+
+  test('parses hub,node role and related URLs', async () => {
+    const config = await loadConfigWith({
+      TMEX_ROLES: 'hub,node',
+      TMEX_HUB_URL: 'https://hub.example',
+      TMEX_HUB_PUBLIC_URL: 'https://hub.example',
+      TMEX_PEER_PORT: '39001',
+      TMEX_STUN_SERVERS: 'stun:stun.l.google.com:19302',
+      TMEX_TURN_URL: 'turn:turn.example:3478',
+      TMEX_TURN_USERNAME: 'u',
+      TMEX_TURN_CREDENTIAL: 'p',
+    });
+    expect(config.roles).toEqual({ hub: true, node: true });
+    expect(config.hubUrl).toBe('https://hub.example');
+    expect(config.hubPublicUrl).toBe('https://hub.example');
+    expect(config.stunServers).toEqual(['stun:stun.l.google.com:19302']);
+    expect(config.turnUrl).toBe('turn:turn.example:3478');
+    expect(config.turnUsername).toBe('u');
+    expect(config.turnCredential).toBe('p');
+  });
+
+  test('rejects invalid TMEX_ROLES at config load', async () => {
+    await expect(loadConfigWith({ TMEX_ROLES: 'hub' })).rejects.toThrow('TMEX_ROLES');
   });
 });
