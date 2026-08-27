@@ -1707,3 +1707,29 @@ describe('WebSocketServer carrier drain isolation', () => {
     onDrain.mockRestore();
   });
 });
+
+describe('WebSocketServer.attachStreamSession', () => {
+  test('creates a GatewaySession with the given carrier as primary and routes HELLO', async () => {
+    const server = new WebSocketServer();
+    const carrier = createFakeCarrier();
+    const attached = server.attachStreamSession(carrier);
+    expect(server.connectedClients.has(attached.session)).toBe(true);
+    expect(attached.session.primary).toBe(carrier);
+
+    const payload = wsBorsh.encodePayload(wsBorsh.schema.HelloC2SSchema, {
+      clientImpl: 'stream-session',
+      clientVersion: 'test',
+      maxFrameBytes: wsBorsh.DEFAULT_MAX_FRAME_BYTES,
+      supportsCompression: false,
+      supportsDiffSnapshot: false,
+    });
+    attached.onMessage(wsBorsh.encodeEnvelope(wsBorsh.KIND_HELLO_C2S, payload, 1));
+    await flushAsync();
+
+    expect(carrier.sent.length).toBeGreaterThan(0);
+    const envelope = wsBorsh.decodeEnvelope(carrier.sent[0] as Uint8Array);
+    expect(envelope.kind).toBe(wsBorsh.KIND_HELLO_S2C);
+    attached.onClose();
+    expect(server.connectedClients.has(attached.session)).toBe(false);
+  });
+});

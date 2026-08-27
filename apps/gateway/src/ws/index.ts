@@ -173,6 +173,27 @@ export class WebSocketServer
     this.connectedClients.add(session);
   }
 
+  attachStreamSession(carrier: Carrier): {
+    session: GatewaySession;
+    onMessage: (bytes: Uint8Array) => void;
+    onClose: () => void;
+  } {
+    const session = new GatewaySession({ primary: carrier });
+    this.handleOpen(session);
+    carrier.onDrain(() => {
+      this.handleDrain(session, carrier);
+    });
+    return {
+      session,
+      onMessage: (bytes) => {
+        this.handleMessage(session, Buffer.from(bytes));
+      },
+      onClose: () => {
+        this.handleClose(session);
+      },
+    };
+  }
+
   handleMessage(
     ws: ServerWebSocket<GatewaySocketData> | GatewaySession,
     message: string | Buffer

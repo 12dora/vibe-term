@@ -41,7 +41,7 @@ const apiRoutes: ApiRoute[] = [
 
 export function handleApiRequest(
   req: Request,
-  _server: Server<unknown>,
+  _server?: Server<unknown>,
   systemApiHandler?: SystemApiHandler
 ): Response | Promise<Response> {
   const path = new URL(req.url).pathname;

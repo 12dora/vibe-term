@@ -9,7 +9,7 @@ export type SystemApiHandler = (
 ) => Response | Promise<Response> | undefined;
 
 export interface ApiRouteContext {
-  server: Server<unknown>;
+  server?: Server<unknown>;
   path: string;
   systemApiHandler?: SystemApiHandler;
 }
