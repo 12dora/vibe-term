@@ -4,6 +4,33 @@
 /** fetch-like：接收已拼好 baseUrl 的绝对/相对 URL 与原始 RequestInit。 */
 export type FetchLike = (input: string, init?: RequestInit) => Promise<Response>;
 
+/** 响应钩子：只读观察，不得消费 body（需要读 body 请先 `res.clone()`）。 */
+export type ResponseHook = (res: Response, ctx: { path: string; url: string }) => void;
+
+const responseHooks = new Set<ResponseHook>();
+
+/** 注册全局响应钩子（401 会话拦截等），返回反注册函数。 */
+export function addResponseHook(hook: ResponseHook): () => void {
+  responseHooks.add(hook);
+  return () => {
+    responseHooks.delete(hook);
+  };
+}
+
+export function clearResponseHooks(): void {
+  responseHooks.clear();
+}
+
+function runResponseHooks(res: Response, ctx: { path: string; url: string }): void {
+  for (const hook of responseHooks) {
+    try {
+      hook(res, ctx);
+    } catch {
+      // 钩子异常不得影响请求本身
+    }
+  }
+}
+
 export class ApiClient {
   constructor(
     readonly baseUrl: string = '',
@@ -16,11 +43,15 @@ export class ApiClient {
 
   fetch(path: string, init?: RequestInit): Promise<Response> {
     const url = this.url(path);
-    if (this.transport) {
-      return this.transport(url, init);
-    }
     // 每次调用时读取 globalThis.fetch，禁止在模块加载或构造时捕获。
-    return globalThis.fetch(url, init);
+    const pending = this.transport ? this.transport(url, init) : globalThis.fetch(url, init);
+    if (responseHooks.size === 0) {
+      return pending;
+    }
+    return pending.then((res) => {
+      runResponseHooks(res, { path, url });
+      return res;
+    });
   }
 }
 
