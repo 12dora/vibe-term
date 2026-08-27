@@ -278,10 +278,14 @@ export class MeshRoutes {
       return jsonError('MALFORMED', 400);
     }
     const via = getMeshRequestContext(req).via || MESH_VIA_SELF;
+    if (!auth.sid) {
+      return jsonError('UNAUTHORIZED', 401);
+    }
     const granted = await this.deps.rtcFingerprint.authorizeBrowser({
       rtcSession,
       uid: auth.userId,
       via,
+      sid: auth.sid,
       fpBrowser: { algorithm: fpBrowser.algorithm, value: fpBrowser.value },
     });
     if (!granted) {

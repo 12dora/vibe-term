@@ -16,6 +16,13 @@ import {
   signEd25519,
   signLogin,
 } from '@tmex/shared/auth';
+import {
+  FrameDecoder,
+  GCM_TAG_LENGTH,
+  SC_DIRECTION_INITIATOR,
+  buildAesGcmNonce,
+  encodeFrameHeader,
+} from '@tmex/shared/link';
 import { type LinkSession, createInMemoryLinkPair } from '@tmex/shared/link';
 import {
   KeyLogStore,
@@ -37,6 +44,7 @@ import { MESH_FORWARD_WS_KIND, MESH_VIA_SELF, setMeshRequestContext } from '../m
 import { type MeshRuntime, createMeshRuntime } from '../mesh-runtime';
 import { RtcPeerManager } from '../rtc';
 import { createFakeNativeModule } from '../rtc/test-fakes';
+import { openHttpStream, openWsStream } from '../stream-targets';
 import { waitUntil } from '../test-support';
 
 const PASSWORD = 'tmex-test';
@@ -229,7 +237,7 @@ describe('mesh phase-2 integration', () => {
     }
   });
 
-  async function bootHubA() {
+  async function bootHubA(opts?: { linkFactory?: boolean; loadNative?: () => Promise<unknown> }) {
     const { db, close } = createMigratedAuthDb();
     const identity = await ensureNodeIdentity(new NodeIdentityStore(db));
     const userStore = new UserStore(db);
@@ -263,8 +271,9 @@ describe('mesh phase-2 integration', () => {
       startPeerServer: false,
       pingIntervalMs: 60_000,
       networkInterfaces: () => ({}),
-      linkFactory: peerLinkFactory(identity.nodeIdHex, holderB),
-      loadNative: async () => null,
+      linkFactory:
+        opts?.linkFactory === false ? undefined : peerLinkFactory(identity.nodeIdHex, holderB),
+      loadNative: (opts?.loadNative as never) ?? (async () => null),
     });
     fixtures.push({ close, stop: () => mesh.stop() });
     await mesh.start();
@@ -364,6 +373,10 @@ describe('mesh phase-2 integration', () => {
     expect(joined.ok).toBe(true);
 
     const abortHook = { aborted: false, cleanup: 0 };
+    let resolveUploadReady: () => void = () => {};
+    const uploadReady = new Promise<void>((resolve) => {
+      resolveUploadReady = resolve;
+    });
     const connectedDevices: string[] = [];
     const wsServer = new WebSocketServer({
       deps: {
@@ -403,10 +416,12 @@ describe('mesh phase-2 integration', () => {
         if (path === '/api/upload') {
           await new Promise<void>((resolve) => {
             if (request.signal.aborted) {
+              resolveUploadReady();
               resolve();
               return;
             }
             request.signal.addEventListener('abort', () => resolve(), { once: true });
+            resolveUploadReady();
           });
           return new Response('aborted', { status: 499 });
         }
@@ -446,6 +461,7 @@ describe('mesh phase-2 integration', () => {
       cookie,
       sid,
       abortHook,
+      uploadReady,
       connectedDevices,
       wsServer,
       close,
@@ -523,7 +539,7 @@ describe('mesh phase-2 integration', () => {
   });
 
   test('relay path carries SecureChannel ciphertext (no Borsh magic, no JSON body)', async () => {
-    const a = await bootHubA();
+    const a = await bootHubA({ linkFactory: false });
     const b = await enrollNodeB(a, { linkFactory: false });
     const captured: Uint8Array[] = [];
     const orig = a.mesh.uplink.openRelay.bind(a.mesh.uplink);
@@ -544,11 +560,25 @@ describe('mesh phase-2 integration', () => {
       cookie: jar,
     });
     expect(devices.status).toBe(200);
-    const joined = Buffer.concat(captured);
-    const asText = joined.toString('utf8');
-    expect(asText.includes('dev-b')).toBe(false);
-    expect(asText.includes('B box')).toBe(false);
-    expect(asText.includes('/api/devices')).toBe(false);
+    expect(captured.length).toBeGreaterThan(0);
+    const total = captured.reduce((n, c) => n + c.byteLength, 0);
+    expect(total).toBeGreaterThan(16);
+    const joined = concatCaptured(captured);
+    const magic = new Uint8Array([0x54, 0x58]);
+    expect(containsBytes(joined, magic)).toBe(false);
+    expect(containsAcrossChunks(captured, magic)).toBe(false);
+    const openPlain = new TextEncoder().encode('{"type":"http"');
+    const pathPlain = new TextEncoder().encode('/api/devices');
+    const devicesPlain = new TextEncoder().encode('dev-b');
+    expect(containsBytes(joined, openPlain)).toBe(false);
+    expect(containsBytes(joined, pathPlain)).toBe(false);
+    expect(containsBytes(joined, devicesPlain)).toBe(false);
+    expect(containsAcrossChunks(captured, pathPlain)).toBe(false);
+    const keys = a.mesh.peers.sessionKeysOf(b.mesh.nodeId);
+    expect(keys).not.toBeNull();
+    const decrypted = await decryptInitiatorFrames(keys?.sendKey as Uint8Array, captured);
+    const decText = new TextDecoder().decode(decrypted);
+    expect(decText.includes('/api/devices') || decText.includes('http')).toBe(true);
   });
 
   test('upload abort aborts the target Request.signal and runs cleanup', async () => {
@@ -571,8 +601,7 @@ describe('mesh phase-2 integration', () => {
     });
     setMeshRequestContext(req, { via: MESH_VIA_SELF, clientIp: '127.0.0.1' });
     const pending = a.mesh.handleRequest(req, dummyServer);
-    await waitUntil(() => true, 50).catch(() => undefined);
-    await Bun.sleep(30);
+    await b.uploadReady;
     ac.abort();
     await pending.catch(() => undefined);
     await waitUntil(() => b.abortHook.aborted, 3_000);
@@ -624,20 +653,38 @@ describe('mesh phase-2 integration', () => {
   });
 
   test('compromise: A node key cannot obtain B http/ws/relay and cannot forge a session', async () => {
-    const a = await bootHubA();
-    const b = await enrollNodeB(a);
-    const denied = await callMesh(a.mesh, `http://entry/n/${b.mesh.nodeId}/api/devices`);
-    expect([401, 503]).toContain(denied.status);
-    const ws = await a.mesh.handleRequest(
-      (() => {
-        const req = new Request(`http://entry/n/${b.mesh.nodeId}/ws`);
-        setMeshRequestContext(req, { via: MESH_VIA_SELF, clientIp: '127.0.0.1' });
-        return req;
-      })(),
-      dummyServer
-    );
-    expect(ws).toBeInstanceOf(Response);
-    if (ws instanceof Response) expect([401, 503]).toContain(ws.status);
+    const a = await bootHubA({ linkFactory: false });
+    const b = await enrollNodeB(a, { linkFactory: false });
+    const link = await a.mesh.peers.getLink(b.mesh.nodeId);
+    expect(a.mesh.peers.transportOf(b.mesh.nodeId)).toBe('relay');
+    const http = await openHttpStream(link, {
+      type: 'http',
+      method: 'GET',
+      path: '/api/devices',
+      origin: 'http://entry',
+      auth: 'forged-sid-not-issued',
+    });
+    expect(http.status).toBe(401);
+    expect(http.status).not.toBe(503);
+    const httpBody = (await http.json()) as { error?: string; code?: string };
+    expect(httpBody.error ?? httpBody.code).toBe('unknown');
+
+    let wsReset = '';
+    try {
+      const opened = await openWsStream(link, 'forged-sid-not-issued');
+      await Promise.race([
+        opened.stream.closed.then(() => {
+          wsReset = 'closed';
+        }),
+        Bun.sleep(1_000).then(() => {
+          wsReset = 'timeout';
+        }),
+      ]);
+      opened.close();
+    } catch (err) {
+      wsReset = err instanceof Error ? err.message : 'error';
+    }
+    expect(wsReset === 'timeout').toBe(false);
 
     const sess = generateEd25519KeyPair();
     const ch = await callMesh(b.mesh, 'http://b/api/auth/challenge', {
@@ -655,19 +702,24 @@ describe('mesh phase-2 integration', () => {
       uid: a.boot.userId,
       entry: MESH_VIA_SELF,
     });
+    const validDel = createDelegation(a.boot.rootKey, {
+      uid: a.boot.userId,
+      sessPk: sess.publicKey,
+      now: Date.now(),
+    });
     const forged = await callMesh(b.mesh, 'http://b/api/auth/login', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({
         login: encodeBase64url(encodeLogin(login)),
         sig: encodeBase64url(signLogin(sess.secretKey, login)),
-        delegation: encodeBase64url(randomBytesSafe(80)),
-        delegation_sig: encodeBase64url(
-          signEd25519(a.mesh.identity.edPrivateKey, randomBytesSafe(32))
-        ),
+        delegation: encodeBase64url(validDel.bytes),
+        delegation_sig: encodeBase64url(signEd25519(a.mesh.identity.edPrivateKey, validDel.bytes)),
       }),
     });
-    expect(forged.ok).toBe(false);
+    expect(forged.status).toBe(401);
+    expect(forged.status).not.toBe(503);
+    expect(((await forged.json()) as { code?: string }).code).toBe('DELEGATION_BAD_SIGNATURE');
   });
 
   test('compromise: hub DB cannot mint a credential B accepts; forged node.list is ignored', async () => {
@@ -686,16 +738,60 @@ describe('mesh phase-2 integration', () => {
     expect(forgedAdmit.ok).toBe(false);
 
     const ghostId = 'ff'.repeat(16);
-    a.mesh.userStore.upsertPeer({
-      nodeId: ghostId,
-      name: 'ghost',
-      endpointsJson: JSON.stringify(['ws://10.0.0.9:9/peer']),
-      inventoryJson: '{}',
-      directCapable: false,
-      lastSeenAt: Date.now(),
-      listVersion: 99,
+    let dials = 0;
+    const probe = Bun.serve({
+      hostname: '127.0.0.1',
+      port: 0,
+      fetch() {
+        return new Response('no', { status: 404 });
+      },
+      websocket: {
+        open() {
+          dials += 1;
+        },
+        message() {},
+        close() {},
+      },
     });
-    await expect(a.mesh.peers.getLink(ghostId)).rejects.toBeTruthy();
+    fixtures.push({ close: () => probe.stop(true) });
+    const list = a.mesh.lastNodeList;
+    expect(list).not.toBeNull();
+    a.mesh.hub?.uplink.sendTo(a.mesh.nodeId, {
+      t: 'node.list',
+      version: (list?.version ?? 1) + 100,
+      key_log_head: {
+        seq: Number(list?.key_log_head.seq ?? 0),
+        hash: encodeBase64url(list?.key_log_head.hash ?? new Uint8Array(32)),
+      },
+      rtc: { stun: list?.rtc.stun ?? [], turn: (list?.rtc.turn as never) ?? null },
+      nodes: [
+        ...(list?.nodes ?? []).map((n) => ({
+          id: n.id,
+          name: n.name,
+          online: n.online,
+          endpoints: n.endpoints,
+          inventory: n.inventory,
+          direct_capable: n.direct_capable,
+          version: n.version,
+        })),
+        {
+          id: ghostId,
+          name: 'ghost',
+          online: true,
+          endpoints: [`ws://127.0.0.1:${probe.port}/peer`],
+          inventory: {},
+          direct_capable: false,
+          version: 'ghost',
+        },
+      ],
+    });
+    await waitUntil(() => a.mesh.lastNodeList?.version !== list?.version, 3_000).catch(
+      () => undefined
+    );
+    await Bun.sleep(50);
+    expect(a.mesh.userStore.listPeers().some((p) => p.nodeId === ghostId)).toBe(false);
+    await expect(a.mesh.peers.getLink(ghostId)).rejects.toMatchObject({ message: 'not admitted' });
+    expect(dials).toBe(0);
     const toB = await loginRemote(a.mesh, b.mesh, a.boot, b.cookie);
     expect(toB.status).toBe(200);
   });
@@ -759,4 +855,87 @@ function randomBytesSafe(n: number): Uint8Array {
   const out = new Uint8Array(n);
   crypto.getRandomValues(out);
   return out;
+}
+
+function concatCaptured(chunks: Uint8Array[]): Uint8Array {
+  const total = chunks.reduce((n, c) => n + c.byteLength, 0);
+  const out = new Uint8Array(total);
+  let off = 0;
+  for (const c of chunks) {
+    out.set(c, off);
+    off += c.byteLength;
+  }
+  return out;
+}
+
+function containsBytes(hay: Uint8Array, needle: Uint8Array): boolean {
+  if (needle.byteLength === 0 || hay.byteLength < needle.byteLength) return false;
+  outer: for (let i = 0; i <= hay.byteLength - needle.byteLength; i++) {
+    for (let j = 0; j < needle.byteLength; j++) {
+      if (hay[i + j] !== needle[j]) continue outer;
+    }
+    return true;
+  }
+  return false;
+}
+
+function containsAcrossChunks(chunks: Uint8Array[], needle: Uint8Array): boolean {
+  if (containsBytes(concatCaptured(chunks), needle)) return true;
+  for (let i = 0; i < chunks.length - 1; i++) {
+    const window = concatCaptured(chunks.slice(i, i + 2));
+    if (containsBytes(window, needle)) return true;
+  }
+  return false;
+}
+
+async function decryptInitiatorFrames(
+  sendKey: Uint8Array,
+  chunks: Uint8Array[]
+): Promise<Uint8Array> {
+  const encrypted: Uint8Array[] = [];
+  for (const chunk of chunks) {
+    if (chunk.byteLength > 0 && chunk[0] === 0x7b) continue;
+    encrypted.push(chunk);
+  }
+  const decoder = new FrameDecoder({ maxPayload: 1_048_576 + GCM_TAG_LENGTH });
+  const key = await crypto.subtle.importKey(
+    'raw',
+    sendKey as unknown as BufferSource,
+    { name: 'AES-GCM' },
+    false,
+    ['decrypt']
+  );
+  const parts: Uint8Array[] = [];
+  let counter = 0n;
+  for (const chunk of encrypted) {
+    const frames = decoder.push(chunk);
+    for (const frame of frames) {
+      const header = encodeFrameHeader(
+        frame.streamId,
+        frame.op,
+        frame.flags,
+        frame.payload.byteLength
+      );
+      const nonce = buildAesGcmNonce(SC_DIRECTION_INITIATOR, counter);
+      counter += 1n;
+      try {
+        const plain = new Uint8Array(
+          await crypto.subtle.decrypt(
+            {
+              name: 'AES-GCM',
+              iv: nonce as unknown as BufferSource,
+              additionalData: header as unknown as BufferSource,
+              tagLength: 128,
+            },
+            key,
+            frame.payload as unknown as BufferSource
+          )
+        );
+        parts.push(plain);
+      } catch {
+        // not a matching frame
+      }
+    }
+  }
+  return concatCaptured(parts);
 }

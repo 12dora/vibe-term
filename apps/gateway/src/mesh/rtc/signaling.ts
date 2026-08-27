@@ -18,6 +18,7 @@ export class MeshRtcSignalRouter implements RtcSignalRouter {
   private readonly owners = new Map<string, RtcSessionOwner>();
   private readonly subscribers = new Set<(signal: RtcSignalMessage) => void>();
   private readonly localListeners = new Map<string, Set<(signal: RtcSignalMessage) => void>>();
+  private readonly localInbox = new Map<string, RtcSignalMessage[]>();
 
   constructor(opts: RtcSignalRouterOptions) {
     this.selfNodeId = opts.selfNodeId.toLowerCase();
@@ -74,9 +75,25 @@ export class MeshRtcSignalRouter implements RtcSignalRouter {
       this.localListeners.set(rtcSession, set);
     }
     set.add(cb);
+    const inbox = this.localInbox.get(rtcSession);
+    if (inbox && inbox.length > 0) {
+      this.localInbox.delete(rtcSession);
+      for (const msg of inbox) cb(msg);
+    }
     return () => {
       set?.delete(cb);
     };
+  }
+
+  deliverLocal(signal: RtcSignalMessage): void {
+    const locals = this.localListeners.get(signal.rtcSession);
+    if (locals && locals.size > 0) {
+      for (const cb of locals) cb(signal);
+      return;
+    }
+    const inbox = this.localInbox.get(signal.rtcSession) ?? [];
+    inbox.push(signal);
+    this.localInbox.set(signal.rtcSession, inbox);
   }
 
   receiveFromNode(fromNodeId: string, signal: RtcSignalMessage): void {
@@ -89,10 +106,7 @@ export class MeshRtcSignalRouter implements RtcSignalRouter {
 
   private forwardToNode(nodeId: string, signal: RtcSignalMessage): void {
     if (nodeId === this.selfNodeId) {
-      const locals = this.localListeners.get(signal.rtcSession);
-      if (locals) {
-        for (const cb of locals) cb(signal);
-      }
+      this.deliverLocal(signal);
       return;
     }
     this.sendCtl(nodeId, signal);

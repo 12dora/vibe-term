@@ -71,4 +71,20 @@ describe('MeshRtcSignalRouter', () => {
     });
     expect(browser[0]?.candidate).toBe('x');
   });
+
+  test('deliverLocal buffers until onLocal and then live-delivers', () => {
+    const router = new MeshRtcSignalRouter({
+      selfNodeId: 'aa',
+      sendCtl: () => {
+        throw new Error('should not sendCtl for local');
+      },
+    });
+    router.register('sess-1', { browserSessionId: 'b1', targetNodeId: 'aa' });
+    router.deliverLocal({ rtcSession: 'sess-1', from: 'browser', to: 'aa', sdp: 'offer' });
+    const local: string[] = [];
+    router.onLocal('sess-1', (msg) => local.push(msg.sdp ?? ''));
+    expect(local).toEqual(['offer']);
+    router.deliverLocal({ rtcSession: 'sess-1', from: 'browser', to: 'aa', sdp: 'more' });
+    expect(local).toEqual(['offer', 'more']);
+  });
 });

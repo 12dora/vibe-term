@@ -86,11 +86,22 @@ export type AcceptBrowserResult = {
   carrier: DataChannelCarrier;
   pc: PeerConnectionLike;
   uid: string;
+  sid: string;
+  via: string;
+};
+
+export type BrowserAuthorization = {
+  rtcSession: string;
+  uid: string;
+  sid: string;
+  via: string;
 };
 
 type BrowserRecord = {
   rtcSession: string;
   uid: string;
+  sid: string;
+  via: string;
   nonce: Uint8Array | null;
   fpBrowser: DtlsFingerprint | null;
   fpNode: DtlsFingerprint | null;
@@ -285,6 +296,8 @@ export class RtcPeerManager implements RtcFingerprintProvider {
     if (!existing && this.browser.size >= this.authorizeMax) return null;
     const rec = this.createBrowser(input.rtcSession);
     rec.uid = input.uid;
+    rec.sid = input.sid ?? '';
+    rec.via = input.via;
     rec.fpBrowser = normalizeFingerprint(input.fpBrowser);
     rec.exp = this.now() + this.authorizeTtlMs;
     const fpNode = rec.fpNode ?? (await this.waitLocalFingerprint(rec.pc));
@@ -313,6 +326,8 @@ export class RtcPeerManager implements RtcFingerprintProvider {
     const nonce = live.nonce;
     const fpBrowser = live.fpBrowser;
     const uid = live.uid;
+    const sid = live.sid;
+    const via = live.via;
     const got = parseNonceMessage(nonceRaw);
     if (got !== encodeBase64url(nonce)) {
       this.browser.delete(rtcSession);
@@ -332,7 +347,15 @@ export class RtcPeerManager implements RtcFingerprintProvider {
       carrier,
       pc: rec.pc,
       uid,
+      sid,
+      via,
     };
+  }
+
+  authorizationOf(rtcSession: string): BrowserAuthorization | null {
+    const rec = this.browser.get(rtcSession);
+    if (!rec || rec.exp <= this.now()) return null;
+    return { rtcSession, uid: rec.uid, sid: rec.sid, via: rec.via };
   }
 
   attachDirect(session: GatewaySession, carrier: Carrier): void {
@@ -389,6 +412,8 @@ export class RtcPeerManager implements RtcFingerprintProvider {
     const rec: BrowserRecord = {
       rtcSession,
       uid: '',
+      sid: '',
+      via: '',
       nonce: null,
       fpBrowser: null,
       fpNode: null,

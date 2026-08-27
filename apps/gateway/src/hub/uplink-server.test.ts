@@ -889,6 +889,35 @@ describe('UplinkServer', () => {
     }
   });
 
+  test('forwards deterministic dc:A:B signals without prior registerRtcSession', async () => {
+    const { db, close } = createMigratedAuthDb();
+    try {
+      const { userStore, keyLogSource } = createHubTestStack(db);
+      const user = seedUser(userStore);
+      const { server } = makeServer(db, userStore, keyLogSource);
+      const a = await authNode(server, userStore, user.id, { name: 'entry' });
+      const b = await authNode(server, userStore, user.id, { name: 'target' });
+      await takeUntil(a.inbox, 'node.list');
+      const lo = a.nodeId < b.nodeId ? a.nodeId : b.nodeId;
+      const hi = a.nodeId < b.nodeId ? b.nodeId : a.nodeId;
+      const rtcSession = `dc:${lo}:${hi}`;
+      sendCtl(a.nodeLink, {
+        t: 'rtc.signal',
+        rtcSession,
+        from: 'node',
+        to: b.nodeId,
+        sdp: 'dc-offer',
+      });
+      const forwarded = await takeUntil(b.inbox, 'rtc.signal');
+      if (forwarded.t !== 'rtc.signal') throw new Error('expected signal');
+      expect(forwarded.sdp).toBe('dc-offer');
+      expect(forwarded.rtcSession).toBe(rtcSession);
+      server.stop();
+    } finally {
+      close();
+    }
+  });
+
   test('未认证 uplink 超时关闭；stop 也会关掉未认证链接', async () => {
     const { db, close } = createMigratedAuthDb();
     try {

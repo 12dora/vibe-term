@@ -8,6 +8,7 @@ export type SendControl = (
   session: GatewaySession,
   kind: number,
   payload: Uint8Array
+  // biome-ignore lint/suspicious/noConfusingVoidType: existing callers return void; treated as sent
 ) => ControlSendStatus | Promise<ControlSendStatus> | void;
 
 export type DeliverInbound = (session: GatewaySession, bytes: Uint8Array) => void;
@@ -274,6 +275,7 @@ export class CarrierSwitchController {
 }
 
 function normalizeControlStatus(
+  // biome-ignore lint/suspicious/noConfusingVoidType: void/undefined send results mean the frame was accepted
   status: ControlSendStatus | void | boolean | 'backpressured' | 'dropped'
 ): ControlSendStatus {
   if (status === 'backpressure' || status === 'backpressured') return 'backpressure';

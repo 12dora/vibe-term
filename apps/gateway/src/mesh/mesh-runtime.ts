@@ -1,5 +1,6 @@
 import os from 'node:os';
 import { type LinkSession, createInMemoryLinkPair } from '@tmex/shared/link';
+import { filesBulkHooks } from '../api/files';
 import {
   ChallengeStore,
   KeyLogStore,
@@ -17,6 +18,7 @@ import { HubRuntime, type HubTurnConfig } from '../hub';
 import { createHubKeyLogSource } from '../hub/hub-key-log-source';
 import type { GatewayRuntime } from '../runtime';
 import { getDisplayVersion } from '../system/version';
+import type { GatewaySession } from '../ws/gateway-session';
 import { encodeJsonBytes } from './ctl';
 import {
   type CachedRtcConfig,
@@ -37,7 +39,13 @@ import {
 } from './mesh-deps';
 import { MeshHttpRuntime } from './mesh-http';
 import { type PeerLinkFactory, PeerManager } from './peer-manager';
-import { type LoadNative, MeshRtcSignalRouter, RtcPeerManager } from './rtc';
+import {
+  type ControlSendStatus,
+  type LoadNative,
+  MeshRtcSignalRouter,
+  RtcPeerManager,
+} from './rtc';
+import { BulkTransferService, parseBulkChannelLabel } from './rtc/bulk';
 import { authenticateRequest } from './session-middleware';
 import { openHttpStream, openWsStream } from './stream-targets';
 import type { DispatchContext, KeyLogApplier, MeshScheduler } from './types';
@@ -77,6 +85,44 @@ export type CreateMeshRuntimeOptions = {
   rtcHandshakeTimeoutMs?: number;
 };
 
+export type RegisteredGatewaySession = {
+  sid: string;
+  uid: string;
+  via: string;
+  session: GatewaySession;
+};
+
+export class SessionRegistry {
+  private readonly bySid = new Map<string, RegisteredGatewaySession>();
+  private readonly bySession = new WeakMap<GatewaySession, string>();
+
+  register(entry: RegisteredGatewaySession): void {
+    const prev = this.bySid.get(entry.sid);
+    if (prev && prev.session !== entry.session) {
+      this.bySession.delete(prev.session);
+    }
+    this.bySid.set(entry.sid, entry);
+    this.bySession.set(entry.session, entry.sid);
+  }
+
+  unregister(sid: string, session?: GatewaySession): void {
+    const cur = this.bySid.get(sid);
+    if (!cur) return;
+    if (session && cur.session !== session) return;
+    this.bySid.delete(sid);
+    this.bySession.delete(cur.session);
+  }
+
+  unregisterSession(session: GatewaySession): void {
+    const sid = this.bySession.get(session);
+    if (sid) this.unregister(sid, session);
+  }
+
+  get(sid: string): RegisteredGatewaySession | null {
+    return this.bySid.get(sid) ?? null;
+  }
+}
+
 export type MeshRuntime = {
   readonly nodeId: string;
   readonly identity: NodeIdentityKeys;
@@ -84,9 +130,12 @@ export type MeshRuntime = {
   readonly uplink: UplinkClient;
   readonly peers: PeerManager;
   readonly rtc: RtcPeerManager;
+  readonly sessions: SessionRegistry;
   readonly userStore: UserStore;
   readonly userKeyService: UserKeyService;
   lastNodeList: UplinkNodeList | null;
+  registerGatewaySession(entry: RegisteredGatewaySession): void;
+  unregisterGatewaySession(sidOrSession: string | GatewaySession): void;
   handleRequest(req: Request, server: MeshUpgradeServer): Promise<MeshHandleResult>;
   localUiGuard(req: Request): Response | null;
   guardGatewayWebSocket(req: Request, server: MeshUpgradeServer): Response | null | undefined;
@@ -106,6 +155,80 @@ export type MeshRuntime = {
 
 export type NetworkInterfacesFn = () => NodeJS.Dict<os.NetworkInterfaceInfo[]>;
 
+function stripZoneId(address: string): string {
+  const cut = address.indexOf('%');
+  return cut === -1 ? address : address.slice(0, cut);
+}
+
+function parseIpv4Octets(address: string): number[] | null {
+  const parts = address.split('.');
+  if (parts.length !== 4) return null;
+  const octets: number[] = [];
+  for (const part of parts) {
+    if (!/^\d{1,3}$/.test(part)) return null;
+    const n = Number(part);
+    if (!Number.isInteger(n) || n < 0 || n > 255) return null;
+    octets.push(n);
+  }
+  return octets;
+}
+
+function parseIpv6Words(address: string): number[] | null {
+  const bare = stripZoneId(address).toLowerCase();
+  if (bare.includes('.')) return null;
+  const compressed = bare.split('::');
+  if (compressed.length > 2) return null;
+  const parseGroup = (raw: string): number[] | null => {
+    if (!raw) return [];
+    const parts = raw.split(':');
+    const words: number[] = [];
+    for (const part of parts) {
+      if (!/^[0-9a-f]{1,4}$/.test(part)) return null;
+      words.push(Number.parseInt(part, 16));
+    }
+    return words;
+  };
+  if (compressed.length === 1) {
+    const words = parseGroup(compressed[0] ?? '');
+    return words && words.length === 8 ? words : null;
+  }
+  const left = parseGroup(compressed[0] ?? '');
+  const right = parseGroup(compressed[1] ?? '');
+  if (!left || !right) return null;
+  const missing = 8 - left.length - right.length;
+  if (missing < 0) return null;
+  return [...left, ...Array(missing).fill(0), ...right];
+}
+
+export function isAdvertisablePeerAddress(addr: os.NetworkInterfaceInfo): boolean {
+  if (addr.internal) return false;
+  const family = addr.family as string | number;
+  const isV4 = family === 'IPv4' || family === 4;
+  const isV6 = family === 'IPv6' || family === 6;
+  if (isV4) {
+    const octets = parseIpv4Octets(stripZoneId(addr.address));
+    if (!octets) return false;
+    const a = octets[0] ?? 0;
+    const b = octets[1] ?? 0;
+    if (a === 0 && b === 0 && (octets[2] ?? 0) === 0 && (octets[3] ?? 0) === 0) return false;
+    if (a === 127) return false;
+    if (a === 169 && b === 254) return false;
+    if (a >= 224 && a <= 239) return false;
+    return true;
+  }
+  if (isV6) {
+    const words = parseIpv6Words(addr.address);
+    if (!words) return false;
+    if (words.every((w) => w === 0)) return false;
+    if (words.slice(0, 7).every((w) => w === 0) && words[7] === 1) return false;
+    const w0 = words[0] ?? 0;
+    if ((w0 & 0xffc0) === 0xfe80) return false;
+    if ((w0 & 0xff00) === 0xff00) return false;
+    return true;
+  }
+  return false;
+}
+
 export function enumeratePeerEndpoints(
   port: number,
   interfaces: NodeJS.Dict<os.NetworkInterfaceInfo[]> = os.networkInterfaces()
@@ -115,13 +238,10 @@ export function enumeratePeerEndpoints(
   for (const addrs of Object.values(interfaces)) {
     if (!addrs) continue;
     for (const addr of addrs) {
-      if (addr.internal) continue;
+      if (!isAdvertisablePeerAddress(addr)) continue;
       const family = addr.family as string | number;
-      const isV4 = family === 'IPv4' || family === 4;
       const isV6 = family === 'IPv6' || family === 6;
-      if (!isV4 && !isV6) continue;
-      if (addr.address.includes('%')) continue;
-      const host = isV6 ? `[${addr.address}]` : addr.address;
+      const host = isV6 ? `[${stripZoneId(addr.address)}]` : stripZoneId(addr.address);
       const url = `ws://${host}:${port}/peer`;
       if (seen.has(url)) continue;
       seen.add(url);
@@ -314,8 +434,34 @@ export async function createMeshRuntime(opts: CreateMeshRuntimeOptions): Promise
     : (opts.hub ?? null);
 
   const peerHolder: { manager: PeerManager | null } = { manager: null };
+  const innerSignalsHolder: { router: MeshRtcSignalRouter | null } = { router: null };
+  const startBrowserAcceptHolder: { fn: (rtcSession: string) => void } = { fn() {} };
   const interfacesFn = opts.networkInterfaces ?? os.networkInterfaces;
   const loadNative: LoadNative = opts.loadNative ?? (async () => null);
+
+  const sessions = new SessionRegistry();
+  const bulk = new BulkTransferService({ files: filesBulkHooks });
+  const acceptingBrowser = new Set<string>();
+
+  const sendControl = (
+    session: GatewaySession,
+    kind: number,
+    payload: Uint8Array
+  ): ControlSendStatus => {
+    try {
+      const ws = gateway.wsServer as {
+        sendControl?: (s: GatewaySession, k: number, p: Uint8Array) => ControlSendStatus;
+        sendEnvelope?: (s: GatewaySession, k: number, p: Uint8Array) => void;
+      };
+      if (typeof ws.sendControl === 'function') {
+        return ws.sendControl(session, kind, payload);
+      }
+      ws.sendEnvelope?.(session, kind, payload);
+      return 'sent';
+    } catch {
+      return 'closed';
+    }
+  };
 
   const rtc = new RtcPeerManager({
     loadNative,
@@ -323,13 +469,7 @@ export async function createMeshRuntime(opts: CreateMeshRuntimeOptions): Promise
     identity: { nodeId: identity.nodeIdHex, edSecretKey: identity.edPrivateKey },
     userStore,
     handshakeTimeoutMs: opts.rtcHandshakeTimeoutMs,
-    sendControl: (session, kind, payload) => {
-      try {
-        gateway.wsServer.sendEnvelope(session, kind, payload);
-      } catch {
-        // fake / partial wsServer in tests
-      }
-    },
+    sendControl,
     deliverInbound: (session, bytes) => {
       try {
         gateway.wsServer.handleMessage(session, Buffer.from(bytes));
@@ -384,9 +524,12 @@ export async function createMeshRuntime(opts: CreateMeshRuntimeOptions): Promise
       };
       for (const node of list.nodes) {
         const cert = userStore.getCert(node.id);
-        if (cert?.revokedLogSeq != null) {
-          peerHolder.manager?.onRevoked(node.id);
-          emitNodeEvent({ nodeId: node.id, status: 'revoked' });
+        if (!cert || (userId && cert.userId !== userId) || cert.revokedLogSeq != null) {
+          userStore.deletePeer(node.id);
+          if (cert?.revokedLogSeq != null) {
+            peerHolder.manager?.onRevoked(node.id);
+            emitNodeEvent({ nodeId: node.id, status: 'revoked' });
+          }
           continue;
         }
         emitNodeEvent({
@@ -401,8 +544,12 @@ export async function createMeshRuntime(opts: CreateMeshRuntimeOptions): Promise
       for (const peer of userStore.listPeers()) {
         if (peer.nodeId === identity.nodeIdHex) continue;
         const cert = userStore.getCert(peer.nodeId);
-        if (cert?.revokedLogSeq != null) {
-          peerHolder.manager?.onRevoked(peer.nodeId);
+        if (!cert || (userId && cert.userId !== userId) || cert.revokedLogSeq != null) {
+          if (cert?.revokedLogSeq != null) {
+            peerHolder.manager?.onRevoked(peer.nodeId);
+          } else {
+            userStore.deletePeer(peer.nodeId);
+          }
         }
       }
     },
@@ -417,6 +564,10 @@ export async function createMeshRuntime(opts: CreateMeshRuntimeOptions): Promise
       const dcPeer = peerFromDcSession(identity.nodeIdHex, msg.rtcSession);
       if (dcPeer) {
         peerHolder.manager?.receiveRtcSignal(dcPeer, signal);
+      }
+      if (signal.from === 'browser') {
+        innerSignalsHolder.router?.deliverLocal(signal);
+        startBrowserAcceptHolder.fn(signal.rtcSession);
       }
       for (const cb of signalListeners) {
         try {
@@ -477,6 +628,20 @@ export async function createMeshRuntime(opts: CreateMeshRuntimeOptions): Promise
     scheduler: opts.scheduler,
     rtc,
     linkFactory: opts.linkFactory,
+    onGatewaySession: (session, auth) => {
+      sessions.register({ ...auth, session });
+    },
+    onGatewaySessionClose: (session) => {
+      sessions.unregisterSession(session);
+    },
+    onBrowserSignal: (signal) => {
+      innerSignalsHolder.router?.deliverLocal(signal);
+      startBrowserAcceptHolder.fn(signal.rtcSession);
+    },
+    ensureDcSession: (peerNodeId, rtcSession) => {
+      if (!rtcSession.startsWith('dc:')) return;
+      hub?.uplink.ensureDcSession(userId, identity.nodeIdHex, peerNodeId);
+    },
   });
   peerHolder.manager = peerManager;
 
@@ -530,6 +695,9 @@ export async function createMeshRuntime(opts: CreateMeshRuntimeOptions): Promise
   const innerSignals = new MeshRtcSignalRouter({
     selfNodeId: identity.nodeIdHex,
     sendCtl(nodeId, msg) {
+      if (msg.rtcSession.startsWith('dc:')) {
+        hub?.uplink.ensureDcSession(userId, identity.nodeIdHex, nodeId);
+      }
       const live = peerManager.getLive(nodeId);
       if (live) {
         live.ctl.send(
@@ -558,6 +726,57 @@ export async function createMeshRuntime(opts: CreateMeshRuntimeOptions): Promise
       }
     },
   });
+  innerSignalsHolder.router = innerSignals;
+
+  const startBrowserAccept = (rtcSession: string) => {
+    if (!rtcSession || acceptingBrowser.has(rtcSession)) return;
+    const auth = rtc.authorizationOf(rtcSession);
+    if (!auth) return;
+    acceptingBrowser.add(rtcSession);
+    if (!innerSignals.ownerOf(rtcSession)) {
+      innerSignals.register(rtcSession, {
+        browserSessionId: auth.sid,
+        targetNodeId: identity.nodeIdHex,
+      });
+    }
+    const signaling = {
+      send: (msg: RtcSignalMessage) => {
+        innerSignals.send(msg);
+      },
+      onMessage: (cb: (msg: RtcSignalMessage) => void) => {
+        innerSignals.onLocal(rtcSession, cb);
+      },
+    };
+    void rtc
+      .acceptBrowser(rtcSession, signaling)
+      .then((result) => {
+        const binding = sessions.get(result.sid);
+        if (
+          binding &&
+          !binding.session.closed &&
+          binding.uid === result.uid &&
+          binding.via === result.via
+        ) {
+          rtc.attachDirect(binding.session, result.carrier);
+          result.pc.onDataChannel((dc) => {
+            if (parseBulkChannelLabel(dc.getLabel?.())) {
+              bulk.attachChannel(dc, { uid: result.uid });
+            }
+          });
+        } else {
+          try {
+            result.carrier.close(1000, 'session-mismatch');
+          } catch {
+            // ignore
+          }
+        }
+      })
+      .catch(() => {
+        acceptingBrowser.delete(rtcSession);
+      });
+  };
+  startBrowserAcceptHolder.fn = startBrowserAccept;
+
   const fingerprint: RtcFingerprintProvider = rtc;
   const signals = {
     send(signal: RtcSignalMessage, owner?: { uid: string; sid: string }) {
@@ -566,6 +785,12 @@ export async function createMeshRuntime(opts: CreateMeshRuntimeOptions): Promise
           browserSessionId: owner.sid,
           targetNodeId: signal.to,
         });
+      }
+      if (
+        signal.from === 'browser' &&
+        signal.to.toLowerCase() === identity.nodeIdHex.toLowerCase()
+      ) {
+        startBrowserAccept(signal.rtcSession);
       }
       innerSignals.send(signal, owner);
     },
@@ -613,8 +838,16 @@ export async function createMeshRuntime(opts: CreateMeshRuntimeOptions): Promise
     uplink,
     peers: peerManager,
     rtc,
+    sessions,
     userStore,
     userKeyService: keyLogService,
+    registerGatewaySession(entry) {
+      sessions.register(entry);
+    },
+    unregisterGatewaySession(sidOrSession) {
+      if (typeof sidOrSession === 'string') sessions.unregister(sidOrSession);
+      else sessions.unregisterSession(sidOrSession);
+    },
     get lastNodeList() {
       return lastNodeList;
     },
@@ -652,10 +885,31 @@ export async function createMeshRuntime(opts: CreateMeshRuntimeOptions): Promise
     async stop() {
       if (stopPromise) return stopPromise;
       stopPromise = (async () => {
-        await peerManager.stop();
-        await uplink.stop();
-        http.stop();
-        rtc.close();
+        try {
+          await peerManager.stop();
+        } catch (err) {
+          console.error('[tmex] peer stop failed', err);
+        }
+        try {
+          await uplink.stop();
+        } catch (err) {
+          console.error('[tmex] uplink stop failed', err);
+        }
+        try {
+          http.stop();
+        } catch (err) {
+          console.error('[tmex] mesh http stop failed', err);
+        }
+        try {
+          rtc.close();
+        } catch (err) {
+          console.error('[tmex] rtc stop failed', err);
+        }
+        try {
+          bulk.close();
+        } catch (err) {
+          console.error('[tmex] bulk stop failed', err);
+        }
       })();
       return stopPromise;
     },

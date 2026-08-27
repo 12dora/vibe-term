@@ -78,6 +78,73 @@ describe('enumeratePeerEndpoints', () => {
     });
     expect(urls).toEqual(['ws://192.0.2.10:9/peer']);
   });
+
+  test('skips IPv4 link-local, unspecified, multicast and IPv6 link-local without zone id', () => {
+    const urls = enumeratePeerEndpoints(39001, {
+      en0: [
+        {
+          address: '169.254.10.20',
+          netmask: '255.255.0.0',
+          family: 'IPv4',
+          mac: '',
+          internal: false,
+          cidr: '169.254.10.20/16',
+        },
+        {
+          address: '0.0.0.0',
+          netmask: '0.0.0.0',
+          family: 'IPv4',
+          mac: '',
+          internal: false,
+          cidr: '0.0.0.0/0',
+        },
+        {
+          address: '224.0.0.1',
+          netmask: '240.0.0.0',
+          family: 'IPv4',
+          mac: '',
+          internal: false,
+          cidr: '224.0.0.1/4',
+        },
+        {
+          address: 'fe80::aabb',
+          netmask: 'ffff:ffff:ffff:ffff::',
+          family: 'IPv6',
+          mac: '',
+          internal: false,
+          cidr: 'fe80::aabb/64',
+          scopeid: 0,
+        },
+        {
+          address: 'ff02::1',
+          netmask: 'ffff::',
+          family: 'IPv6',
+          mac: '',
+          internal: false,
+          cidr: 'ff02::1/16',
+          scopeid: 0,
+        },
+        {
+          address: '::',
+          netmask: '::',
+          family: 'IPv6',
+          mac: '',
+          internal: false,
+          cidr: '::/0',
+          scopeid: 0,
+        },
+        {
+          address: '192.0.2.8',
+          netmask: '255.255.255.0',
+          family: 'IPv4',
+          mac: '',
+          internal: false,
+          cidr: '192.0.2.8/24',
+        },
+      ],
+    });
+    expect(urls).toEqual(['ws://192.0.2.8:39001/peer']);
+  });
 });
 
 describe('UplinkClient.connectWithLink', () => {

@@ -498,6 +498,154 @@ describe('PeerManager', () => {
     inn.end();
   });
 
+  test('getLink refuses un-admitted nodes and does not dial a reachable endpoint', async () => {
+    const { db, close } = createMigratedAuthDb();
+    fixtures.push({ close });
+    const store = new UserStore(db);
+    seedUser(store);
+    const self = seedNodeIdentity(store, 'user-1');
+    const ghostId = 'ff'.repeat(16);
+    let dials = 0;
+    const server = Bun.serve({
+      hostname: '127.0.0.1',
+      port: 0,
+      fetch() {
+        return new Response('no', { status: 404 });
+      },
+      websocket: {
+        open() {
+          dials += 1;
+        },
+        message() {},
+        close() {},
+      },
+    });
+    fixtures.push({ close: () => server.stop(true) });
+    store.upsertPeer({
+      nodeId: ghostId,
+      name: 'ghost',
+      endpointsJson: JSON.stringify([`ws://127.0.0.1:${server.port}/peer`]),
+      inventoryJson: '{}',
+      directCapable: false,
+      lastSeenAt: Date.now(),
+      listVersion: 1,
+    });
+    const manager = new PeerManager({
+      identity: self,
+      userStore: store,
+      uplink: dummyUplink(self, store),
+      peerPort: 0,
+      startServer: false,
+      connectTimeoutMs: 200,
+    });
+    fixtures.push({ close, stop: () => manager.stop() });
+    await expect(manager.getLink(ghostId)).rejects.toMatchObject({ message: 'not admitted' });
+    expect(dials).toBe(0);
+    expect(manager.listReach().has(ghostId)).toBe(false);
+  });
+
+  test('upgrades a live relay to dc and keeps in-flight streams on the old link', async () => {
+    const { db, close } = createMigratedAuthDb();
+    fixtures.push({ close });
+    const store = new UserStore(db);
+    seedUser(store);
+    const self = seedNodeIdentity(store, 'user-1');
+    const peer = seedNodeIdentity(store, 'user-1');
+    store.upsertPeer({
+      nodeId: peer.nodeId,
+      name: 'peer',
+      endpointsJson: '[]',
+      inventoryJson: '{}',
+      directCapable: true,
+      lastSeenAt: Date.now(),
+      listVersion: 1,
+    });
+    const { createFakeNativeModule } = await import('./rtc/test-fakes');
+    const { RtcPeerManager } = await import('./rtc');
+    const fake = createFakeNativeModule();
+    const ice = () => ({ stun: [] as string[], turn: null });
+    const rtcA = new RtcPeerManager({
+      loadNative: async () => fake.module,
+      iceConfigProvider: ice,
+      identity: self,
+      userStore: store,
+      handshakeTimeoutMs: 2_000,
+    });
+    const rtcB = new RtcPeerManager({
+      loadNative: async () => fake.module,
+      iceConfigProvider: ice,
+      identity: peer,
+      userStore: store,
+      handshakeTimeoutMs: 2_000,
+    });
+    fixtures.push({ close: () => rtcA.close() });
+    fixtures.push({ close: () => rtcB.close() });
+    await rtcA.ready();
+    await rtcB.ready();
+    const holderA: { manager: PeerManager | null } = { manager: null };
+    const holderB: { manager: PeerManager | null } = { manager: null };
+    const forward = (
+      target: { manager: PeerManager | null },
+      fromId: string,
+      msg: {
+        t: string;
+        rtcSession?: string;
+        from?: string;
+        to?: string;
+        sdp?: string;
+        candidate?: string;
+      }
+    ) => {
+      if (msg.t !== 'rtc.signal' || !target.manager) return;
+      target.manager.receiveRtcSignal(fromId, {
+        rtcSession: msg.rtcSession ?? '',
+        from: msg.from === 'browser' ? 'browser' : 'node',
+        to: msg.to ?? '',
+        sdp: msg.sdp ?? null,
+        candidate: msg.candidate ?? null,
+      });
+    };
+    const uplinkA = dummyUplink(self, store);
+    uplinkA.state = 'online';
+    uplinkA.sendCtl = (msg) => forward(holderB, self.nodeId, msg as never);
+    const uplinkB = dummyUplink(peer, store);
+    uplinkB.state = 'online';
+    uplinkB.sendCtl = (msg) => forward(holderA, peer.nodeId, msg as never);
+    const managerA = new PeerManager({
+      identity: self,
+      userStore: store,
+      uplink: uplinkA,
+      peerPort: 0,
+      startServer: false,
+      rtc: rtcA,
+    });
+    const managerB = new PeerManager({
+      identity: peer,
+      userStore: store,
+      uplink: uplinkB,
+      peerPort: 0,
+      startServer: false,
+      rtc: rtcB,
+    });
+    holderA.manager = managerA;
+    holderB.manager = managerB;
+    fixtures.push({ close, stop: () => managerA.stop() });
+    fixtures.push({ close, stop: () => managerB.stop() });
+
+    const [relayA, relayB] = createInMemoryLinkPair();
+    expect(managerA.adoptLink(peer.nodeId, relayA, 'relay', self.nodeId)).toBe(relayA);
+    expect(managerB.adoptLink(self.nodeId, relayB, 'relay', self.nodeId)).toBe(relayB);
+    expect(managerA.transportOf(peer.nodeId)).toBe('relay');
+
+    const first = await managerA.getLink(peer.nodeId);
+    expect(first).toBe(relayA);
+    void managerB.getLink(self.nodeId);
+    await waitUntil(() => managerA.transportOf(peer.nodeId) === 'dc', 5_000);
+    const upgraded = await managerA.getLink(peer.nodeId);
+    expect(upgraded).not.toBe(relayA);
+    expect(managerA.transportOf(peer.nodeId)).toBe('dc');
+  });
+
   test('caps concurrent streams per link', async () => {
     const { db, close } = createMigratedAuthDb();
     fixtures.push({ close });

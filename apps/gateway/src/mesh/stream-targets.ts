@@ -2,6 +2,7 @@ import { wsBorsh } from '@tmex/shared';
 import type { LinkSession, LinkStream } from '@tmex/shared/link';
 import type { NodeSessionStore } from '../auth/node-session-store';
 import type { WebSocketServer } from '../ws';
+import type { GatewaySession } from '../ws/gateway-session';
 import { encodeJsonBytes, isRecord } from './ctl';
 import { LinkStreamCarrier } from './link-stream-carrier';
 import { X_TMEX_SESSION_RENEWED } from './mesh-deps';
@@ -420,9 +421,18 @@ async function readHttpHead(stream: LinkStream): Promise<{
   }
 }
 
+export type AcceptWsStreamOptions = StreamAuthContext & {
+  wsServer: WebSocketServer;
+  onGatewaySession?: (
+    session: GatewaySession,
+    auth: { sid: string; uid: string; via: string }
+  ) => void;
+  onGatewaySessionClose?: (session: GatewaySession) => void;
+};
+
 export async function acceptWsStream(
   stream: LinkStream,
-  opts: StreamAuthContext & { wsServer: WebSocketServer }
+  opts: AcceptWsStreamOptions
 ): Promise<void> {
   const open = parseOpenPayload(stream.openPayload) ?? {};
   const auth = typeof open.auth === 'string' ? open.auth : '';
@@ -436,10 +446,16 @@ export async function acceptWsStream(
   const uid = verified.uid;
   const carrier = new LinkStreamCarrier(stream);
   const attached = opts.wsServer.attachStreamSession(carrier);
+  opts.onGatewaySession?.(attached.session, { sid, uid: uid ?? '', via });
   let tornDown = false;
   const teardown = (mode: 'end' | 'rst', reason?: string) => {
     if (tornDown) return;
     tornDown = true;
+    try {
+      opts.onGatewaySessionClose?.(attached.session);
+    } catch {
+      // registry
+    }
     try {
       attached.onClose();
     } catch {

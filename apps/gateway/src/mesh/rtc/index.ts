@@ -1,6 +1,7 @@
 export {
   CarrierSwitchController,
   type CarrierSwitchOptions,
+  type ControlSendStatus,
   type DeliverInbound,
   type DirectCarrier,
   type SendControl,
@@ -67,6 +68,7 @@ export {
   type AcceptBrowserResult,
   type AuthorizeBrowserInput,
   type AuthorizeBrowserResult,
+  type BrowserAuthorization,
   type CreatedPeerConnection,
   type DcPeerConnectResult,
   type IceConfigProvider,

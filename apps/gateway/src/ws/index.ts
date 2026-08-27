@@ -538,6 +538,28 @@ export class WebSocketServer
     this.sendChunked(ws, kind, payload);
   }
 
+  sendControl(
+    ws: GatewaySession,
+    kind: number,
+    payload: Uint8Array
+  ): 'sent' | 'backpressure' | 'closed' {
+    if (ws.closed) return 'closed';
+    const carrier = ws.activeCarrier;
+    if (!gatewayWebSocketSendGuard.canSend(carrier)) {
+      return gatewayWebSocketSendGuard.isBackpressured(carrier) ? 'backpressure' : 'closed';
+    }
+    const state = ws.borshState;
+    const frames = encodePayloadFrames(kind, payload, state.seqGen, state.maxFrameBytes);
+    const status = gatewayWebSocketSendGuard.sendFramesStatus(
+      carrier,
+      frames as readonly BufferSource[],
+      state.maxFrameBytes
+    );
+    if (status === 'sent') return 'sent';
+    if (status === 'backpressured') return 'backpressure';
+    return 'closed';
+  }
+
   sendChunked(ws: GatewaySession, kind: number, payload: Uint8Array): boolean {
     const carrier = ws.activeCarrier;
     if (!gatewayWebSocketSendGuard.canSend(carrier)) {

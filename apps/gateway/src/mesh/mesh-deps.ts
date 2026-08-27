@@ -107,6 +107,7 @@ export type RtcAuthorizeBrowserInput = {
   rtcSession: string;
   uid: string;
   via: string;
+  sid?: string;
   fpBrowser: DtlsFingerprint;
 };
 

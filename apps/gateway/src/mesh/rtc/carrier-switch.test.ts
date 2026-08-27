@@ -140,6 +140,78 @@ describe('CarrierSwitchController', () => {
     local.close();
     expect(session.activeCarrier).toBe(session.primary);
     expect(session.direct).toBeNull();
-    expect(controls[1]).toEqual({ epoch: 2, to: wsBorsh.CARRIER_SWITCH_TO_PRIMARY });
+    expect(controls[1]?.epoch).toBe(2);
+    expect(controls[1]?.to).toBe(wsBorsh.CARRIER_SWITCH_TO_PRIMARY);
+  });
+
+  test('waits for onDrain after backpressure then switches outbound only once sent', async () => {
+    const drain: Array<() => void> = [];
+    let mode: 'sent' | 'backpressure' | 'closed' = 'backpressure';
+    const primary = {
+      sent: [] as Uint8Array[],
+      send(bytes: Uint8Array) {
+        if (mode === 'sent') this.sent.push(bytes);
+        return mode;
+      },
+      bufferedAmount: () => 0,
+      onDrain(cb: () => void) {
+        drain.push(cb);
+      },
+      close() {},
+      terminate() {},
+    };
+    const session = createGatewaySession({ carrier: primary });
+    const [local] = pairDataChannels('sess');
+    const direct = new DataChannelCarrier(local) as DirectCarrier;
+    const barrier = new CarrierSwitchController({
+      sendControl(_session, _kind, payload) {
+        return primary.send(payload);
+      },
+      deliverInbound() {},
+    });
+
+    barrier.attachDirect(session, direct);
+    expect(session.activeCarrier).toBe(session.primary);
+    expect(primary.sent).toHaveLength(0);
+
+    mode = 'sent';
+    for (const cb of drain) cb();
+    await Bun.sleep(0);
+    expect(session.activeCarrier).toBe(direct);
+    expect(primary.sent).toHaveLength(1);
+    expect(decodeSwitch(primary.sent[0] as Uint8Array).to).toBe(wsBorsh.CARRIER_SWITCH_TO_DIRECT);
+  });
+
+  test('cancels the switch if the old carrier closes during backpressure', async () => {
+    const drain: Array<() => void> = [];
+    const primary = {
+      sent: [] as Uint8Array[],
+      send() {
+        return 'backpressure' as const;
+      },
+      bufferedAmount: () => 0,
+      onDrain(cb: () => void) {
+        drain.push(cb);
+      },
+      close() {},
+      terminate() {},
+    };
+    const session = createGatewaySession({ carrier: primary });
+    const [local] = pairDataChannels('sess');
+    const direct = new DataChannelCarrier(local) as DirectCarrier;
+    const barrier = new CarrierSwitchController({
+      sendControl() {
+        return 'backpressure';
+      },
+      deliverInbound() {},
+    });
+
+    barrier.attachDirect(session, direct);
+    expect(session.activeCarrier).toBe(session.primary);
+    session.closed = true;
+    for (const cb of drain) cb();
+    await Bun.sleep(0);
+    expect(session.activeCarrier).toBe(session.primary);
+    expect(session.direct).toBeNull();
   });
 });

@@ -9,6 +9,8 @@ export {
   PEER_MISSED_PONG_LIMIT,
   PEER_PING_INTERVAL_MS,
   PeerManager,
+  PEER_TRANSPORT_RANK,
+  comparePeerTransport,
   winningDialInitiator,
   type PeerManagerOptions,
 } from './peer-manager';
@@ -40,6 +42,7 @@ export {
   openWsStream,
   stripForwardedRequestHeaders,
   stripSetCookieHeaders,
+  type AcceptWsStreamOptions,
   type StreamAuthContext,
 } from './stream-targets';
 export { NodeUnreachableError, PeerHandshakeError, requestDispatchContext } from './types';
@@ -90,10 +93,13 @@ export {
 export {
   createMeshRuntime,
   enumeratePeerEndpoints,
+  isAdvertisablePeerAddress,
+  SessionRegistry,
   type CreateMeshRuntimeOptions,
   type MeshRuntime,
   type MeshRuntimeConfig,
   type NetworkInterfacesFn,
+  type RegisteredGatewaySession,
 } from './mesh-runtime';
 export { MeshHttpRuntime, type MeshHttpRuntimeOptions } from './mesh-http';
 export {

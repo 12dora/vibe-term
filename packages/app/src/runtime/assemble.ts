@@ -23,6 +23,7 @@ import {
 import type { LoadNative } from '../../../../apps/gateway/src/mesh/rtc';
 import { applyLocalRenewal } from '../../../../apps/gateway/src/mesh/session-middleware';
 import type { GatewayRuntime } from '../../../../apps/gateway/src/runtime';
+import type { GatewaySession } from '../../../../apps/gateway/src/ws/gateway-session';
 import { loadNodeDatachannel } from '../lib/native-datachannel';
 import { createTmexGatewayRuntime } from './gateway';
 import { serveFrontend as defaultServeFrontend } from './serve-frontend';
@@ -207,9 +208,17 @@ export async function assembleTmex(opts: AssembleTmexOptions = {}): Promise<Asse
       }
       const kind = socketKind(ws);
       if (mesh && isMeshKind(kind)) {
+        const data = ws.data as { sid?: string; uid?: string; via?: string };
+        const sid = data.sid;
+        const uid = data.uid;
+        const via = data.via ?? MESH_VIA_SELF;
         mesh.websocket.open(ws as never);
         if (kind === MESH_GATEWAY_WS_KIND) {
           gateway.websocket.open(ws);
+          const session = (ws.data as { session?: GatewaySession }).session;
+          if (sid && uid && session) {
+            mesh.registerGatewaySession?.({ sid, uid, via, session });
+          }
         }
         return;
       }
@@ -254,6 +263,8 @@ export async function assembleTmex(opts: AssembleTmexOptions = {}): Promise<Asse
       }
       const kind = socketKind(ws);
       if (mesh) {
+        const session = (ws.data as { session?: GatewaySession }).session;
+        if (session) mesh.unregisterGatewaySession?.(session);
         mesh.websocket.close(ws as never, code, reason);
         if (
           kind === MESH_WS_KIND ||
@@ -285,9 +296,21 @@ export async function assembleTmex(opts: AssembleTmexOptions = {}): Promise<Asse
     async stop() {
       if (stopPromise) return stopPromise;
       stopPromise = (async () => {
-        await mesh?.stop();
-        hub?.stop();
-        await gateway.stop();
+        try {
+          await mesh?.stop();
+        } catch (err) {
+          console.error('[tmex] mesh stop failed', err);
+        }
+        try {
+          hub?.stop();
+        } catch (err) {
+          console.error('[tmex] hub stop failed', err);
+        }
+        try {
+          await gateway.stop();
+        } catch (err) {
+          console.error('[tmex] gateway stop failed', err);
+        }
       })();
       return stopPromise;
     },
@@ -300,44 +323,60 @@ export type ShutdownHooks = {
   timeoutMs?: number;
 };
 
+export function createProcessShutdown(
+  stop: () => Promise<void>,
+  hooks: ShutdownHooks = {}
+): () => Promise<void> {
+  const exit = hooks.exit ?? ((code) => process.exit(code));
+  const timeoutMs = hooks.timeoutMs ?? SHUTDOWN_TIMEOUT_MS;
+  let promise: Promise<void> | null = null;
+  return () => {
+    if (promise) return promise;
+    promise = new Promise<void>((resolve) => {
+      let finished = false;
+      const timer = setTimeout(() => {
+        if (finished) return;
+        finished = true;
+        exit(1);
+        resolve();
+      }, timeoutMs);
+      void Promise.resolve()
+        .then(stop)
+        .then(
+          () => {
+            if (finished) return;
+            finished = true;
+            clearTimeout(timer);
+            exit(0);
+            resolve();
+          },
+          () => {
+            if (finished) return;
+            finished = true;
+            clearTimeout(timer);
+            exit(1);
+            resolve();
+          }
+        );
+    });
+    return promise;
+  };
+}
+
 export function installShutdownHandlers(
   stop: () => Promise<void>,
   hooks: ShutdownHooks = {}
-): void {
+): () => Promise<void> {
   const on =
     hooks.on ??
     ((event, listener) => {
       process.on(event as NodeJS.Signals, listener as NodeJS.SignalsListener);
     });
-  const exit = hooks.exit ?? ((code) => process.exit(code));
-  const timeoutMs = hooks.timeoutMs ?? SHUTDOWN_TIMEOUT_MS;
-  let stopping = false;
+  const run = createProcessShutdown(stop, hooks);
   const handler = () => {
-    if (stopping) return;
-    stopping = true;
-    let finished = false;
-    const timer = setTimeout(() => {
-      if (finished) return;
-      finished = true;
-      exit(1);
-    }, timeoutMs);
-    void Promise.resolve()
-      .then(stop)
-      .then(
-        () => {
-          if (finished) return;
-          finished = true;
-          clearTimeout(timer);
-          exit(0);
-        },
-        () => {
-          if (finished) return;
-          finished = true;
-          clearTimeout(timer);
-          exit(1);
-        }
-      );
+    void run();
   };
   on('SIGINT', handler);
   on('SIGTERM', handler);
+  return run;
 }

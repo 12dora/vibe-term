@@ -190,11 +190,13 @@ describe('RtcPeerManager', () => {
       rtcSession,
       uid: 'user-1',
       via: 'self',
+      sid: 'sid-browser-1',
       fpBrowser,
     });
     expect(auth).not.toBeNull();
     expect(auth?.fpNode.algorithm).toBe('sha-256');
     expect(auth?.nonce.byteLength).toBe(32);
+    expect(left.authorizationOf(rtcSession)?.sid).toBe('sid-browser-1');
     const acceptP = left.acceptBrowser(rtcSession, sigNode);
     const dc = browserPc.createDataChannel(SESS_CHANNEL_LABEL);
 
@@ -208,6 +210,9 @@ describe('RtcPeerManager', () => {
     dc.sendMessage(JSON.stringify({ nonce: encodeBase64url(auth?.nonce ?? new Uint8Array()) }));
     const accepted = await acceptP;
     expect(accepted.uid).toBe('user-1');
+    expect(accepted.sid).toBe('sid-browser-1');
+    expect(accepted.via).toBe('self');
+    expect(left.authorizationOf(rtcSession)).toBeNull();
     expect(accepted.carrier.send(new Uint8Array([1]))).toBe('sent');
     accepted.carrier.close(1000, 'done');
     expect((accepted.pc as FakePeerConnection).closed).toBe(true);

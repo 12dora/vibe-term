@@ -39,6 +39,16 @@ export function winningDialInitiator(selfNodeId: string, peerNodeId: string): st
   return selfNodeId < peerNodeId ? selfNodeId : peerNodeId;
 }
 
+export const PEER_TRANSPORT_RANK: Record<PeerTransportKind, number> = {
+  dc: 3,
+  'ws-secure': 2,
+  relay: 1,
+};
+
+export function comparePeerTransport(a: PeerTransportKind, b: PeerTransportKind): number {
+  return PEER_TRANSPORT_RANK[a] - PEER_TRANSPORT_RANK[b];
+}
+
 export type PeerManagerOptions = {
   identity: MeshIdentity;
   userStore: UserStore;
@@ -59,6 +69,13 @@ export type PeerManagerOptions = {
   maxConcurrentStreams?: number;
   rtc?: RtcPeerManager;
   linkFactory?: PeerLinkFactory;
+  onGatewaySession?: (
+    session: import('../ws/gateway-session').GatewaySession,
+    auth: { sid: string; uid: string; via: string }
+  ) => void;
+  onGatewaySessionClose?: (session: import('../ws/gateway-session').GatewaySession) => void;
+  onBrowserSignal?: (msg: RtcSignalMessage) => void;
+  ensureDcSession?: (peerNodeId: string, rtcSession: string) => void;
 };
 
 export type PeerLinkFactory = (
@@ -77,6 +94,9 @@ type LivePeer = {
   idleTimer: { clear: () => void } | null;
   pingTimer: { clear: () => void } | null;
   missedPongs: number;
+  retiring: boolean;
+  sendKey?: Uint8Array;
+  recvKey?: Uint8Array;
 };
 
 function isServerSocketAdapter(value: WebSocketTransportInput): value is ServerSocketAdapter {
@@ -174,6 +194,17 @@ export class PeerManager {
   private readonly pending = new Map<string, Promise<LinkSession>>();
   private readonly rtc: RtcPeerManager | null;
   private readonly linkFactory: PeerLinkFactory | null;
+  private readonly onGatewaySession:
+    | ((
+        session: import('../ws/gateway-session').GatewaySession,
+        auth: { sid: string; uid: string; via: string }
+      ) => void)
+    | null;
+  private readonly onGatewaySessionClose:
+    | ((session: import('../ws/gateway-session').GatewaySession) => void)
+    | null;
+  private readonly onBrowserSignal: ((msg: RtcSignalMessage) => void) | null;
+  private readonly ensureDcSession: ((peerNodeId: string, rtcSession: string) => void) | null;
   private readonly rtcListeners = new Map<string, Set<(msg: RtcSignalMessage) => void>>();
   private readonly rtcInbox = new Map<string, RtcSignalMessage[]>();
   private readonly server: PeerServer | null;
@@ -206,6 +237,10 @@ export class PeerManager {
     this.wsFactory = opts.wsFactory ?? ((url: string) => new WebSocket(url));
     this.rtc = opts.rtc ?? null;
     this.linkFactory = opts.linkFactory ?? null;
+    this.onGatewaySession = opts.onGatewaySession ?? null;
+    this.onGatewaySessionClose = opts.onGatewaySessionClose ?? null;
+    this.onBrowserSignal = opts.onBrowserSignal ?? null;
+    this.ensureDcSession = opts.ensureDcSession ?? null;
     this.uplink.setOnRelayStream((stream, from) => {
       void this.acceptRelay(stream, from);
     });
@@ -243,12 +278,23 @@ export class PeerManager {
   }
 
   getLive(nodeId: string): LinkSession | null {
-    const cert = this.userStore.getCert(nodeId);
-    if (cert?.revokedLogSeq != null) {
-      this.onRevoked(nodeId);
+    if (!this.isTrusted(nodeId)) {
+      if (this.userStore.getCert(nodeId)?.revokedLogSeq != null) {
+        this.onRevoked(nodeId);
+      }
       return null;
     }
     return this.live.get(nodeId)?.session ?? null;
+  }
+
+  transportOf(nodeId: string): PeerTransportKind | null {
+    return this.live.get(nodeId)?.transport ?? null;
+  }
+
+  sessionKeysOf(nodeId: string): { sendKey: Uint8Array; recvKey: Uint8Array } | null {
+    const live = this.live.get(nodeId);
+    if (!live?.sendKey || !live.recvKey) return null;
+    return { sendKey: live.sendKey, recvKey: live.recvKey };
   }
 
   adoptLink(
@@ -261,6 +307,11 @@ export class PeerManager {
   }
 
   receiveRtcSignal(fromNodeId: string, msg: RtcSignalMessage): void {
+    if (msg.from === 'browser') {
+      this.onBrowserSignal?.(msg);
+      return;
+    }
+    if (!this.isTrusted(fromNodeId)) return;
     const listeners = this.rtcListeners.get(fromNodeId);
     if (listeners && listeners.size > 0) {
       for (const cb of listeners) {
@@ -275,10 +326,11 @@ export class PeerManager {
     const inbox = this.rtcInbox.get(fromNodeId) ?? [];
     inbox.push(msg);
     this.rtcInbox.set(fromNodeId, inbox);
+    const live = this.live.get(fromNodeId);
     if (
       this.shouldTryDc(fromNodeId) &&
-      !this.live.has(fromNodeId) &&
-      !this.pending.has(fromNodeId)
+      !this.pending.has(fromNodeId) &&
+      (!live || this.wantsUpgrade(live))
     ) {
       void this.getLink(fromNodeId).catch(() => undefined);
     }
@@ -286,13 +338,18 @@ export class PeerManager {
 
   async getLink(nodeId: string): Promise<LinkSession> {
     if (this.stopped) throw new NodeUnreachableError(nodeId, 'peer manager stopped');
-    const cert = this.userStore.getCert(nodeId);
-    if (cert?.revokedLogSeq != null) {
-      this.onRevoked(nodeId);
-      throw new NodeUnreachableError(nodeId, 'revoked');
-    }
+    this.requireTrusted(nodeId);
     const existing = this.live.get(nodeId);
-    if (existing) return existing.session;
+    if (existing) {
+      if (this.wantsUpgrade(existing) && !this.pending.has(nodeId)) {
+        const upgrade = this.dial(nodeId);
+        this.pending.set(nodeId, upgrade);
+        void upgrade.finally(() => {
+          if (this.pending.get(nodeId) === upgrade) this.pending.delete(nodeId);
+        });
+      }
+      return existing.session;
+    }
     const inflight = this.pending.get(nodeId);
     if (inflight) return inflight;
     const attempt = this.dial(nodeId);
@@ -317,14 +374,12 @@ export class PeerManager {
   listReach(): Map<string, PeerReach> {
     const out = new Map<string, PeerReach>();
     for (const peer of this.userStore.listPeers()) {
-      const cert = this.userStore.getCert(peer.nodeId);
-      if (cert?.revokedLogSeq != null) continue;
+      if (!this.isTrusted(peer.nodeId)) continue;
       out.set(peer.nodeId, null);
     }
     for (const [id, live] of this.live) {
-      const cert = this.userStore.getCert(id);
-      if (cert?.revokedLogSeq != null) {
-        this.onRevoked(id);
+      if (!this.isTrusted(id)) {
+        if (this.userStore.getCert(id)?.revokedLogSeq != null) this.onRevoked(id);
         continue;
       }
       out.set(id, live.transport === 'relay' ? 'relay' : 'lan');
@@ -332,8 +387,41 @@ export class PeerManager {
     return out;
   }
 
+  private rememberKeys(peerNodeId: string, sendKey?: Uint8Array, recvKey?: Uint8Array): void {
+    if (!sendKey || !recvKey) return;
+    const live = this.live.get(peerNodeId);
+    if (!live) return;
+    live.sendKey = sendKey;
+    live.recvKey = recvKey;
+  }
+
   private currentGeneration(): number {
     return this.generation;
+  }
+
+  private isTrusted(nodeId: string): boolean {
+    const cert = this.userStore.getCert(nodeId);
+    if (!cert || cert.revokedLogSeq != null) return false;
+    const uid = this.uplink.userId;
+    if (uid && cert.userId !== uid) return false;
+    return true;
+  }
+
+  private requireTrusted(nodeId: string): void {
+    const cert = this.userStore.getCert(nodeId);
+    if (cert?.revokedLogSeq != null) {
+      this.onRevoked(nodeId);
+      throw new NodeUnreachableError(nodeId, 'revoked');
+    }
+    if (!cert || (this.uplink.userId && cert.userId !== this.uplink.userId)) {
+      throw new NodeUnreachableError(nodeId, 'not admitted');
+    }
+  }
+
+  private wantsUpgrade(live: LivePeer): boolean {
+    if (live.retiring) return false;
+    if (live.transport === 'dc') return false;
+    return this.shouldTryDc(live.peerNodeId);
   }
 
   private shouldTryDc(nodeId: string): boolean {
@@ -376,6 +464,7 @@ export class PeerManager {
       live.session.ctl.send(encodeJsonBytes(payload));
       return;
     }
+    this.ensureDcSession?.(peerNodeId, msg.rtcSession);
     try {
       this.uplink.sendCtl(payload);
     } catch {
@@ -402,7 +491,8 @@ export class PeerManager {
       throw new Error('stopped');
     }
     const session = new LinkMux(result.link, { role: result.role });
-    const kept = this.track(session, result.peerNodeId, 'dc', this.identity.nodeId, gen);
+    const initiatedBy = result.role === 'initiator' ? this.identity.nodeId : result.peerNodeId;
+    const kept = this.track(session, result.peerNodeId, 'dc', initiatedBy, gen);
     if (!kept) return null;
     return kept;
   }
@@ -491,6 +581,7 @@ export class PeerManager {
       if (!kept) {
         throw new NodeUnreachableError(nodeId, 'simultaneous-dial');
       }
+      this.rememberKeys(result.peerNodeId, result.sendKey, result.recvKey);
       return kept;
     } catch (err) {
       if (err instanceof NodeUnreachableError) throw err;
@@ -537,6 +628,7 @@ export class PeerManager {
       gen
     );
     if (!kept) throw new Error('simultaneous-dial');
+    this.rememberKeys(result.peerNodeId, result.sendKey, result.recvKey);
     return kept;
   }
 
@@ -554,6 +646,7 @@ export class PeerManager {
         return;
       }
       this.track(result.session, result.peerNodeId, 'ws-secure', result.peerNodeId, gen);
+      this.rememberKeys(result.peerNodeId, result.sendKey, result.recvKey);
     } catch {
       try {
         socket.close(1000, 'handshake-failed');
@@ -577,6 +670,7 @@ export class PeerManager {
         return;
       }
       this.track(result.session, result.peerNodeId, 'relay', from || result.peerNodeId, gen);
+      this.rememberKeys(result.peerNodeId, result.sendKey, result.recvKey);
     } catch {
       try {
         stream.reset('handshake-failed');
@@ -607,16 +701,27 @@ export class PeerManager {
     }
     const prev = this.live.get(peerNodeId);
     if (prev && prev.session !== session) {
-      const winner = this.preferredInitiator(peerNodeId);
-      if (initiatedBy !== winner && prev.initiatedBy === winner) {
+      const rank = comparePeerTransport(transport, prev.transport);
+      if (rank < 0) {
         try {
-          session.close('simultaneous-dial');
+          session.close('lower-priority');
         } catch {
           // already closed
         }
         return prev.session;
       }
-      this.dropPeer(peerNodeId, 'replaced');
+      if (rank === 0) {
+        const winner = this.preferredInitiator(peerNodeId);
+        if (initiatedBy !== winner && prev.initiatedBy === winner) {
+          try {
+            session.close('simultaneous-dial');
+          } catch {
+            // already closed
+          }
+          return prev.session;
+        }
+      }
+      this.retirePeer(prev, 'replaced');
     }
     const live: LivePeer = {
       session,
@@ -629,6 +734,7 @@ export class PeerManager {
       idleTimer: null,
       pingTimer: null,
       missedPongs: 0,
+      retiring: false,
     };
     this.live.set(peerNodeId, live);
     this.bindSession(live);
@@ -684,10 +790,14 @@ export class PeerManager {
     live.lastStreamAt = this.scheduler.now();
     this.clearIdle(live);
     void stream.closed.then(() => {
-      if (this.live.get(live.peerNodeId) !== live) return;
       live.streams = Math.max(0, live.streams - 1);
       live.lastStreamAt = this.scheduler.now();
-      if (live.streams === 0) this.armIdle(live);
+      if (live.streams > 0) return;
+      if (live.retiring) {
+        this.finishRetire(live);
+        return;
+      }
+      if (this.live.get(live.peerNodeId) === live) this.armIdle(live);
     });
   }
 
@@ -716,6 +826,8 @@ export class PeerManager {
         sessionStore: this.sessionStore,
         wsServer: this.wsServer,
         now: () => this.scheduler.now(),
+        onGatewaySession: this.onGatewaySession ?? undefined,
+        onGatewaySessionClose: this.onGatewaySessionClose ?? undefined,
       });
     }
   }
@@ -747,6 +859,10 @@ export class PeerManager {
           sdp: typeof msg.sdp === 'string' ? msg.sdp : null,
           candidate: typeof msg.candidate === 'string' ? msg.candidate : null,
         };
+        if (signal.from === 'browser') {
+          this.onBrowserSignal?.(signal);
+          return;
+        }
         this.receiveRtcSignal(live.peerNodeId, signal);
         return;
       }
@@ -756,6 +872,7 @@ export class PeerManager {
   }
 
   private async applyPeerStatus(live: LivePeer, msg: Record<string, unknown>): Promise<void> {
+    if (!this.isTrusted(live.peerNodeId)) return;
     const peerNodeId = live.peerNodeId;
     const name = typeof msg.name === 'string' ? msg.name : peerNodeId;
     const existing = this.userStore.listPeers().find((row) => row.nodeId === peerNodeId);
@@ -890,8 +1007,28 @@ export class PeerManager {
     const live = this.live.get(nodeId);
     if (!live) return;
     this.live.delete(nodeId);
+    this.finishRetire(live, reason);
+  }
+
+  private retirePeer(prev: LivePeer, reason: string): void {
+    if (this.live.get(prev.peerNodeId) === prev) {
+      this.live.delete(prev.peerNodeId);
+    }
+    this.clearIdle(prev);
+    prev.pingTimer?.clear();
+    prev.pingTimer = null;
+    if (prev.streams > 0) {
+      prev.retiring = true;
+      return;
+    }
+    this.finishRetire(prev, reason);
+  }
+
+  private finishRetire(live: LivePeer, reason = 'replaced'): void {
+    live.retiring = false;
     this.clearIdle(live);
     live.pingTimer?.clear();
+    live.pingTimer = null;
     try {
       live.session.close(reason);
     } catch {

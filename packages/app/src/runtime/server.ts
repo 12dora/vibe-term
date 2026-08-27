@@ -3,7 +3,12 @@ import { resolve } from 'node:path';
 import { CryptoDecryptError } from '../../../../apps/gateway/src/crypto/errors';
 import { getDisplayVersion } from '../../../../apps/gateway/src/system/version';
 import { t } from '../i18n';
-import { assembleTmex, installShutdownHandlers, meshShutdownNeeded } from './assemble';
+import {
+  assembleTmex,
+  createProcessShutdown,
+  installShutdownHandlers,
+  meshShutdownNeeded,
+} from './assemble';
 
 function resolveStaticRoot(): string {
   if (process.env.TMEX_FE_DIST_DIR) {
@@ -30,19 +35,20 @@ async function main(): Promise<void> {
 
   await assembled.start();
 
+  const runShutdown = meshShutdownNeeded(assembled.roles)
+    ? installShutdownHandlers(async () => {
+        await assembled.stop();
+        server.stop(true);
+      })
+    : createProcessShutdown(async () => {
+        await assembled.stop();
+        server.stop(true);
+      });
+
   assembled.gateway.onRestartRequested(async () => {
     console.log(`[tmex] ${t('runtime.restartRequested')}`);
-    await assembled.stop();
-    server.stop(true);
-    process.exit(0);
+    await runShutdown();
   });
-
-  if (meshShutdownNeeded(assembled.roles)) {
-    installShutdownHandlers(async () => {
-      await assembled.stop();
-      server.stop(true);
-    });
-  }
 
   console.log(`[tmex] ${t('runtime.started', { url: `http://${host}:${port}` })}`);
 }

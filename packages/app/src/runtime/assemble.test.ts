@@ -5,6 +5,7 @@ import type { GatewayRuntime } from '../../../../apps/gateway/src/runtime';
 import {
   SHUTDOWN_TIMEOUT_MS,
   assembleTmex,
+  createProcessShutdown,
   installShutdownHandlers,
   meshShutdownNeeded,
 } from './assemble';
@@ -347,6 +348,35 @@ describe('assembleTmex role matrix', () => {
     ]);
   });
 
+  test('stop continues hub and gateway when mesh.stop throws', async () => {
+    const order: string[] = [];
+    const hub = fakeHub({
+      stop() {
+        order.push('hub');
+        throw new Error('hub-fail');
+      },
+    });
+    const mesh = fakeMesh({
+      hub,
+      async stop() {
+        order.push('mesh');
+        throw new Error('mesh-fail');
+      },
+    });
+    const gateway = fakeGateway({
+      async stop() {
+        order.push('gateway');
+      },
+    });
+    const assembled = await assembleTmex({
+      roles: { hub: true, node: true },
+      createGatewayRuntime: async () => gateway,
+      createMeshRuntime: async () => mesh,
+    });
+    await assembled.stop();
+    expect(order).toEqual(['mesh', 'hub', 'gateway']);
+  });
+
   test('shutdown order is mesh (peer+uplink) → hub → gateway', async () => {
     const order: string[] = [];
     const hub = fakeHub({
@@ -514,6 +544,34 @@ describe('installShutdownHandlers', () => {
     await Bun.sleep(20);
     expect(order).toEqual(['stop']);
     expect(exited).toBe(0);
+  });
+
+  test('restart and signals share one shutdown promise and 20s budget', async () => {
+    const handlers = new Map<string, () => void>();
+    let exits = 0;
+    let stops = 0;
+    const run = installShutdownHandlers(
+      async () => {
+        stops += 1;
+        await Bun.sleep(20);
+      },
+      {
+        on: (event, fn) => {
+          handlers.set(event, fn as () => void);
+          return process;
+        },
+        exit: () => {
+          exits += 1;
+        },
+        timeoutMs: 1_000,
+      }
+    );
+    const restart = run();
+    handlers.get('SIGINT')?.();
+    await Promise.all([restart, run()]);
+    expect(stops).toBe(1);
+    expect(exits).toBe(1);
+    expect(createProcessShutdown).toBeTypeOf('function');
   });
 
   test('exits 1 if stop exceeds timeout', async () => {
