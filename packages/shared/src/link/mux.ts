@@ -1,0 +1,681 @@
+import { FrameDecoder, decodeWindowPayload, encodeFrame, encodeWindowPayload } from './codec';
+import {
+  type ByteTransport,
+  CTL_STREAM_ID,
+  FLAG_HEAD,
+  type Frame,
+  FrameOp,
+  INITIAL_STREAM_WINDOW,
+  type LinkCloseInfo,
+  type LinkCtl,
+  LinkError,
+  type LinkRole,
+  type LinkSession,
+  type LinkStream,
+  MAX_FRAME_PAYLOAD,
+  MAX_LINK_UNACKED,
+  type StreamChunk,
+  type StreamCloseInfo,
+  type WriteOptions,
+} from './types';
+
+export type LinkMuxOptions = {
+  role: LinkRole;
+  streamWindow?: number;
+  maxFramePayload?: number;
+  maxLinkUnacked?: number;
+};
+
+type Waiter = {
+  resolve: () => void;
+  reject: (err: Error) => void;
+};
+
+function copyBytes(bytes: Uint8Array): Uint8Array {
+  return bytes.slice();
+}
+
+function rstReason(payload: Uint8Array): string | undefined {
+  if (payload.byteLength === 0) return undefined;
+  try {
+    return new TextDecoder().decode(payload);
+  } catch {
+    return undefined;
+  }
+}
+
+function encodeRstReason(reason?: string): Uint8Array {
+  if (!reason) return new Uint8Array(0);
+  return new TextEncoder().encode(reason);
+}
+
+class MuxStream implements LinkStream {
+  readonly id: number;
+  readonly openPayload: Uint8Array;
+  readonly readable: ReadableStream<StreamChunk>;
+  readonly closed: Promise<StreamCloseInfo>;
+
+  sendWindow: number;
+  recvAdvertised: number;
+  sendClosed = false;
+  recvClosed = false;
+  dead = false;
+
+  private readonly mux: LinkMux;
+  private readonly abortCbs: Array<() => void> = [];
+  private aborted = false;
+  private resolveClosed!: (info: StreamCloseInfo) => void;
+  private closedSettled = false;
+  private writeChain: Promise<void> = Promise.resolve();
+  private waiters: Waiter[] = [];
+  private recvBuf: StreamChunk[] = [];
+  private pullWaiter: (() => void) | null = null;
+  private outController: ReadableStreamDefaultController<StreamChunk> | null = null;
+  private readonly isCtl: boolean;
+
+  constructor(mux: LinkMux, id: number, openPayload: Uint8Array) {
+    this.mux = mux;
+    this.id = id;
+    this.openPayload = openPayload;
+    this.isCtl = id === CTL_STREAM_ID;
+    this.sendWindow = mux.streamWindow;
+    this.recvAdvertised = mux.streamWindow;
+    this.closed = new Promise((resolve) => {
+      this.resolveClosed = resolve;
+    });
+    this.readable = new ReadableStream<StreamChunk>(
+      {
+        start: (controller) => {
+          this.outController = controller;
+        },
+        pull: () => {
+          if (this.recvBuf.length > 0 || this.recvClosed || this.dead) {
+            this.flushReadable();
+            return;
+          }
+          return new Promise<void>((resolve) => {
+            this.pullWaiter = () => {
+              this.flushReadable();
+              resolve();
+            };
+          });
+        },
+        cancel: (reason) => {
+          if (this.dead || this.isCtl) return;
+          const message = reason instanceof Error ? reason.message : String(reason ?? 'cancelled');
+          this.mux.resetStream(this, message);
+        },
+      },
+      { highWaterMark: 0 }
+    );
+  }
+
+  write(bytes: Uint8Array, opts?: WriteOptions): Promise<void> {
+    const run = this.writeChain.then(() => this.writeInternal(bytes, opts));
+    this.writeChain = run.then(
+      () => undefined,
+      () => undefined
+    );
+    return run;
+  }
+
+  end(): void {
+    if (this.isCtl) {
+      throw new LinkError('protocol', 'ctl stream cannot END');
+    }
+    if (this.dead || this.sendClosed) return;
+    this.sendClosed = true;
+    this.mux.sendFrame({ streamId: this.id, op: FrameOp.END });
+    this.maybeFinishEnd();
+  }
+
+  reset(reason?: string): void {
+    if (this.isCtl) {
+      throw new LinkError('protocol', 'ctl stream cannot RST');
+    }
+    if (this.dead) return;
+    this.mux.resetStream(this, reason);
+  }
+
+  onAbort(cb: () => void): void {
+    if (this.aborted) {
+      cb();
+      return;
+    }
+    this.abortCbs.push(cb);
+  }
+
+  creditSendWindow(delta: number): void {
+    this.sendWindow += delta;
+    this.flushWaiters();
+  }
+
+  async waitForSendCredit(): Promise<void> {
+    if (this.dead) {
+      throw this.deadError();
+    }
+    if (this.sendWindow > 0) return;
+    await new Promise<void>((resolve, reject) => {
+      this.waiters.push({ resolve, reject });
+    });
+    if (this.dead) {
+      throw this.deadError();
+    }
+  }
+
+  onIncomingData(bytes: Uint8Array, head: boolean): void {
+    if (this.dead || this.recvClosed) {
+      if (!this.isCtl && !this.dead) {
+        this.mux.resetUnknown(this.id);
+      }
+      return;
+    }
+    if (bytes.byteLength > this.recvAdvertised) {
+      this.mux.protocolError(`stream ${this.id} exceeded receive window`);
+      return;
+    }
+    this.recvAdvertised -= bytes.byteLength;
+    if (this.isCtl) {
+      this.mux.deliverCtl(bytes);
+      this.mux.sendWindowCredit(this, bytes.byteLength);
+      return;
+    }
+    this.recvBuf.push({ bytes, head });
+    this.wakePull();
+  }
+
+  onPeerEnd(): void {
+    if (this.isCtl) {
+      this.mux.protocolError('END on ctl stream');
+      return;
+    }
+    if (this.dead || this.recvClosed) return;
+    this.recvClosed = true;
+    this.wakePull();
+    this.maybeFinishEnd();
+  }
+
+  abort(info: StreamCloseInfo): void {
+    if (this.dead && this.closedSettled) return;
+    this.dead = true;
+    this.sendClosed = true;
+    this.recvClosed = true;
+    const err = new LinkError(info.reason, info.message ?? info.reason);
+    for (const waiter of this.waiters) waiter.reject(err);
+    this.waiters = [];
+    this.recvBuf = [];
+    this.wakePull();
+    if (this.outController) {
+      try {
+        this.outController.close();
+      } catch {
+        // already closed
+      }
+    }
+    if (info.reason !== 'end') {
+      this.fireAbort();
+    }
+    this.settleClosed(info);
+  }
+
+  fireAbort(): void {
+    if (this.aborted) return;
+    this.aborted = true;
+    for (const cb of this.abortCbs) {
+      try {
+        cb();
+      } catch {
+        // listener errors must not break the mux
+      }
+    }
+    this.abortCbs.length = 0;
+  }
+
+  consumeFromReadable(byteLength: number): void {
+    this.mux.sendWindowCredit(this, byteLength);
+  }
+
+  private async writeInternal(bytes: Uint8Array, opts?: WriteOptions): Promise<void> {
+    if (this.dead) throw this.deadError();
+    if (this.sendClosed) {
+      throw new LinkError('closed', 'stream send direction is closed');
+    }
+    if (bytes.byteLength === 0 && !opts?.head) return;
+
+    let offset = 0;
+    let first = true;
+    if (bytes.byteLength === 0 && opts?.head) {
+      await this.waitForSendCredit();
+      this.takeSendCredit(0);
+      await this.mux.sendFrame({
+        streamId: this.id,
+        op: FrameOp.DATA,
+        flags: FLAG_HEAD,
+        payload: new Uint8Array(0),
+      });
+      return;
+    }
+
+    while (offset < bytes.byteLength) {
+      if (this.dead) throw this.deadError();
+      if (this.sendClosed) {
+        throw new LinkError('closed', 'stream send direction is closed');
+      }
+      await this.waitForSendCredit();
+      const n = Math.min(bytes.byteLength - offset, this.sendWindow, this.mux.maxFramePayload);
+      if (n <= 0) continue;
+      const slice = bytes.subarray(offset, offset + n);
+      this.takeSendCredit(n);
+      const flags = first && opts?.head ? FLAG_HEAD : 0;
+      first = false;
+      await this.mux.sendFrame({
+        streamId: this.id,
+        op: FrameOp.DATA,
+        flags,
+        payload: slice,
+      });
+      offset += n;
+    }
+  }
+
+  private takeSendCredit(n: number): void {
+    this.sendWindow -= n;
+    this.mux.addUnacked(n);
+  }
+
+  private flushWaiters(): void {
+    while (this.waiters.length > 0 && this.sendWindow > 0 && !this.dead) {
+      const waiter = this.waiters.shift();
+      waiter?.resolve();
+    }
+  }
+
+  private flushReadable(): void {
+    const controller = this.outController;
+    if (!controller) return;
+    if (this.dead) {
+      try {
+        controller.close();
+      } catch {
+        // already closed
+      }
+      return;
+    }
+    if (this.recvBuf.length === 0) {
+      if (this.recvClosed) {
+        try {
+          controller.close();
+        } catch {
+          // already closed
+        }
+      }
+      return;
+    }
+    const chunk = this.recvBuf.shift();
+    if (!chunk) return;
+    try {
+      controller.enqueue(chunk);
+    } catch {
+      return;
+    }
+    this.consumeFromReadable(chunk.bytes.byteLength);
+  }
+
+  private wakePull(): void {
+    const waiter = this.pullWaiter;
+    if (!waiter) return;
+    this.pullWaiter = null;
+    waiter();
+  }
+
+  private maybeFinishEnd(): void {
+    if (this.dead) return;
+    if (this.sendClosed && this.recvClosed) {
+      this.settleClosed({ reason: 'end' });
+      this.mux.forgetStream(this.id);
+    }
+  }
+
+  private settleClosed(info: StreamCloseInfo): void {
+    if (this.closedSettled) return;
+    this.closedSettled = true;
+    this.resolveClosed(info);
+  }
+
+  private deadError(): LinkError {
+    return new LinkError('closed', 'stream is closed');
+  }
+}
+
+export class LinkMux implements LinkSession {
+  readonly role: LinkRole;
+  readonly streamWindow: number;
+  readonly maxFramePayload: number;
+  readonly maxLinkUnacked: number;
+  readonly ctl: LinkCtl;
+  readonly closed: Promise<LinkCloseInfo>;
+
+  private readonly transport: ByteTransport;
+  private readonly decoder: FrameDecoder;
+  private readonly streams = new Map<number, MuxStream>();
+  private readonly streamListeners: Array<(stream: LinkStream) => void> = [];
+  private readonly pendingIncoming: LinkStream[] = [];
+  private readonly ctlListeners: Array<(bytes: Uint8Array) => void> = [];
+  private readonly ctlInbox: Uint8Array[] = [];
+  private readonly ctlOutbox: Uint8Array[] = [];
+  private nextStreamId: number;
+  private unacked = 0;
+  private closedFlag = false;
+  private resolveClosed!: (info: LinkCloseInfo) => void;
+  private handling = false;
+  private readonly pendingChunks: Uint8Array[] = [];
+  private ctlFlushing = false;
+  private closeReason = 'closed';
+
+  constructor(transport: ByteTransport, opts: LinkMuxOptions) {
+    this.transport = transport;
+    this.role = opts.role;
+    this.streamWindow = opts.streamWindow ?? INITIAL_STREAM_WINDOW;
+    this.maxFramePayload = opts.maxFramePayload ?? MAX_FRAME_PAYLOAD;
+    this.maxLinkUnacked = opts.maxLinkUnacked ?? MAX_LINK_UNACKED;
+    this.nextStreamId = opts.role === 'initiator' ? 1 : 2;
+    this.decoder = new FrameDecoder({ maxPayload: this.maxFramePayload });
+    this.closed = new Promise((resolve) => {
+      this.resolveClosed = resolve;
+    });
+
+    const ctl = new MuxStream(this, CTL_STREAM_ID, new Uint8Array(0));
+    this.streams.set(CTL_STREAM_ID, ctl);
+
+    this.ctl = {
+      send: (bytes) => {
+        this.ctlOutbox.push(copyBytes(bytes));
+        void this.flushCtlOutbox();
+      },
+      onMessage: (cb) => {
+        this.ctlListeners.push(cb);
+        if (this.ctlInbox.length === 0) return;
+        const queued = this.ctlInbox.splice(0);
+        for (const msg of queued) cb(msg);
+      },
+    };
+
+    transport.onData((bytes) => {
+      this.pendingChunks.push(bytes);
+      this.drainIncoming();
+    });
+    transport.onClose((reason) => {
+      this.finishClose(reason ?? 'transport-closed');
+    });
+  }
+
+  async openStream(openPayload: Uint8Array): Promise<LinkStream> {
+    this.assertOpen();
+    const id = this.allocStreamId();
+    const payload = copyBytes(openPayload);
+    const stream = new MuxStream(this, id, payload);
+    this.streams.set(id, stream);
+    await this.sendFrame({
+      streamId: id,
+      op: FrameOp.OPEN,
+      payload,
+    });
+    return stream;
+  }
+
+  onStream(cb: (stream: LinkStream) => void): void {
+    this.streamListeners.push(cb);
+    if (this.pendingIncoming.length === 0) return;
+    const queued = this.pendingIncoming.splice(0);
+    for (const stream of queued) cb(stream);
+  }
+
+  close(reason?: string): void {
+    if (this.closedFlag) return;
+    this.closeReason = reason ?? 'closed';
+    try {
+      this.transport.close(reason);
+    } catch {
+      // transport may already be gone
+    }
+    this.finishClose(this.closeReason);
+  }
+
+  sendFrame(frame: {
+    streamId: number;
+    op: number;
+    flags?: number;
+    payload?: Uint8Array;
+  }): Promise<void> {
+    if (this.closedFlag) {
+      return Promise.reject(new LinkError('closed', this.closeReason));
+    }
+    let encoded: Uint8Array;
+    try {
+      encoded = encodeFrame(frame);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'encode error';
+      this.protocolError(message);
+      return Promise.reject(err instanceof Error ? err : new LinkError('protocol', message));
+    }
+    try {
+      return Promise.resolve(this.transport.send(encoded)).then(() => undefined);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'send error';
+      this.finishClose(message);
+      return Promise.reject(err instanceof Error ? err : new LinkError('closed', message));
+    }
+  }
+
+  addUnacked(n: number): void {
+    this.unacked += n;
+    if (this.unacked > this.maxLinkUnacked) {
+      this.protocolError(`link unacked outbound ${this.unacked} exceeds ${this.maxLinkUnacked}`);
+    }
+  }
+
+  sendWindowCredit(stream: MuxStream, delta: number): void {
+    if (delta <= 0 || this.closedFlag || stream.dead) return;
+    stream.recvAdvertised += delta;
+    void this.sendFrame({
+      streamId: stream.id,
+      op: FrameOp.WINDOW,
+      payload: encodeWindowPayload(delta),
+    });
+  }
+
+  resetStream(stream: MuxStream, reason?: string): void {
+    if (stream.dead) return;
+    const payload = encodeRstReason(reason);
+    void this.sendFrame({
+      streamId: stream.id,
+      op: FrameOp.RST,
+      payload,
+    });
+    stream.abort({ reason: 'rst', message: reason });
+    this.streams.delete(stream.id);
+  }
+
+  resetUnknown(streamId: number): void {
+    if (this.closedFlag || streamId === CTL_STREAM_ID) return;
+    void this.sendFrame({
+      streamId,
+      op: FrameOp.RST,
+      payload: encodeRstReason('unknown stream'),
+    });
+  }
+
+  forgetStream(id: number): void {
+    this.streams.delete(id);
+  }
+
+  protocolError(message: string): void {
+    this.close(message);
+  }
+
+  deliverCtl(bytes: Uint8Array): void {
+    const copy = copyBytes(bytes);
+    if (this.ctlListeners.length === 0) {
+      this.ctlInbox.push(copy);
+      return;
+    }
+    for (const cb of this.ctlListeners) {
+      try {
+        cb(copy);
+      } catch {
+        // listener errors must not break the mux
+      }
+    }
+  }
+
+  private allocStreamId(): number {
+    const id = this.nextStreamId;
+    if (id === 0 || id > 0xfffffff0) {
+      throw new LinkError('protocol', 'stream id exhausted');
+    }
+    this.nextStreamId += 2;
+    return id;
+  }
+
+  private assertOpen(): void {
+    if (this.closedFlag) {
+      throw new LinkError('closed', this.closeReason);
+    }
+  }
+
+  private drainIncoming(): void {
+    if (this.handling) return;
+    this.handling = true;
+    try {
+      while (this.pendingChunks.length > 0 && !this.closedFlag) {
+        const chunk = this.pendingChunks.shift();
+        if (!chunk) break;
+        try {
+          const frames = this.decoder.push(chunk);
+          for (const frame of frames) {
+            if (this.closedFlag) break;
+            this.handleFrame(frame);
+          }
+        } catch (err) {
+          const message = err instanceof Error ? err.message : 'decode error';
+          this.protocolError(message);
+          break;
+        }
+      }
+    } finally {
+      this.handling = false;
+    }
+  }
+
+  private handleFrame(frame: Frame): void {
+    const { streamId, op } = frame;
+    if (op === FrameOp.OPEN) {
+      this.handleOpen(frame);
+      return;
+    }
+    if (streamId === CTL_STREAM_ID && (op === FrameOp.END || op === FrameOp.RST)) {
+      this.protocolError('ctl stream cannot END or RST');
+      return;
+    }
+    const stream = this.streams.get(streamId);
+    if (!stream) {
+      if (op === FrameOp.DATA || op === FrameOp.END) {
+        this.resetUnknown(streamId);
+      }
+      return;
+    }
+    switch (op) {
+      case FrameOp.DATA:
+        stream.onIncomingData(frame.payload, (frame.flags & FLAG_HEAD) !== 0);
+        break;
+      case FrameOp.END:
+        stream.onPeerEnd();
+        break;
+      case FrameOp.RST:
+        this.handleRst(stream, frame.payload);
+        break;
+      case FrameOp.WINDOW:
+        this.handleWindow(stream, frame.payload);
+        break;
+      default:
+        this.protocolError(`invalid frame op ${op}`);
+    }
+  }
+
+  private handleOpen(frame: Frame): void {
+    if (frame.streamId === CTL_STREAM_ID) {
+      this.protocolError('OPEN on ctl stream');
+      return;
+    }
+    if (this.streams.has(frame.streamId)) {
+      this.protocolError(`OPEN for existing stream ${frame.streamId}`);
+      return;
+    }
+    const stream = new MuxStream(this, frame.streamId, copyBytes(frame.payload));
+    this.streams.set(frame.streamId, stream);
+    if (this.streamListeners.length === 0) {
+      this.pendingIncoming.push(stream);
+      return;
+    }
+    for (const cb of this.streamListeners) {
+      try {
+        cb(stream);
+      } catch {
+        // listener errors must not break the mux
+      }
+    }
+  }
+
+  private handleRst(stream: MuxStream, payload: Uint8Array): void {
+    if (stream.id === CTL_STREAM_ID) {
+      this.protocolError('RST on ctl stream');
+      return;
+    }
+    const message = rstReason(payload);
+    stream.abort({ reason: 'rst', message });
+    this.streams.delete(stream.id);
+  }
+
+  private handleWindow(stream: MuxStream, payload: Uint8Array): void {
+    let delta: number;
+    try {
+      delta = decodeWindowPayload(payload);
+    } catch (err) {
+      this.protocolError(err instanceof Error ? err.message : 'invalid WINDOW');
+      return;
+    }
+    this.unacked = Math.max(0, this.unacked - delta);
+    stream.creditSendWindow(delta);
+  }
+
+  private async flushCtlOutbox(): Promise<void> {
+    if (this.ctlFlushing) return;
+    this.ctlFlushing = true;
+    const ctl = this.streams.get(CTL_STREAM_ID);
+    try {
+      while (this.ctlOutbox.length > 0 && ctl && !this.closedFlag) {
+        const msg = this.ctlOutbox.shift();
+        if (!msg) break;
+        await ctl.write(msg);
+      }
+    } catch {
+      // write rejects on close/RST; ctl cannot RST, so this is link close
+    } finally {
+      this.ctlFlushing = false;
+    }
+  }
+
+  private finishClose(reason: string): void {
+    if (this.closedFlag) return;
+    this.closedFlag = true;
+    this.closeReason = reason;
+    for (const stream of this.streams.values()) {
+      stream.abort({ reason: 'link-closed', message: reason });
+    }
+    this.streams.clear();
+    this.pendingIncoming.length = 0;
+    this.ctlInbox.length = 0;
+    this.ctlOutbox.length = 0;
+    this.resolveClosed({ reason });
+  }
+}
