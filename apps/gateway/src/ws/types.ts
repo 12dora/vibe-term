@@ -1,31 +1,26 @@
 import type { StateSnapshotPayload } from '@tmex/shared';
-import type { ServerWebSocket } from 'bun';
 import type { DeviceTreeOrderRecord } from '../db';
 import { getDeviceTreeOrder, setPaneOrder, setWindowOrder } from '../db';
 import type { DeviceSessionRuntime } from '../tmux-client/device-session-runtime';
 import { tmuxRuntimeRegistry } from '../tmux-client/registry';
-import type { BorshClientState } from './borsh/codec-borsh';
+import type { BunSocketCarrier } from './carrier';
+import type { GatewaySession } from './gateway-session';
 
-export interface ClientState {
-  borshState: BorshClientState;
-}
-
-export type SwitchBarrierSocket = ServerWebSocket<unknown & { borshState?: BorshClientState }>;
-
-export function asSwitchBarrierSocket(ws: ServerWebSocket<ClientState>): SwitchBarrierSocket {
-  return ws as SwitchBarrierSocket;
+export interface GatewaySocketData {
+  session: GatewaySession;
+  carrier: BunSocketCarrier;
 }
 
 export interface DeviceConnectionEntry {
   runtime: DeviceSessionRuntime;
   detachRuntime: (() => void) | null;
-  clients: Set<ServerWebSocket<ClientState>>;
+  clients: Set<GatewaySession>;
   lastSnapshot: StateSnapshotPayload | null;
   snapshotTimer: ReturnType<typeof setTimeout> | null;
   snapshotPollTimer: ReturnType<typeof setInterval> | null;
   reconnectAttempts: number;
   reconnectTimer: ReturnType<typeof setTimeout> | null;
-  canonicalClients?: Set<ServerWebSocket<ClientState>>;
+  canonicalClients?: Set<GatewaySession>;
   idleReleaseTimer?: ReturnType<typeof setTimeout> | null;
 }
 

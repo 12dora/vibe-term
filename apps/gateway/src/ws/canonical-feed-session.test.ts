@@ -17,6 +17,7 @@ import {
 } from './canonical-feed-session';
 import type { CanonicalSendResult } from './canonical/types';
 import { GATEWAY_TERM_OUTPUT_BATCH_DELAY_MS } from './terminal-output-batcher';
+import { createFakeCarrier } from './test-helpers';
 import { WebSocketSendGuard } from './websocket-send-guard';
 
 const awaitPaneDataFlush = () => Bun.sleep(GATEWAY_TERM_OUTPUT_BATCH_DELAY_MS + 4);
@@ -131,10 +132,10 @@ function target(deviceId = 'device-a') {
 function createGuardedSender() {
   const events: wsBorsh.CanonicalEvent[] = [];
   const terminateReasons: string[] = [];
-  let nextStatus = 1;
+  let nextStatus: 'sent' | 'backpressure' = 'sent';
   let sendCalls = 0;
   let terminateCalls = 0;
-  const socket = {
+  const carrier = createFakeCarrier({
     send() {
       sendCalls += 1;
       return nextStatus;
@@ -142,17 +143,15 @@ function createGuardedSender() {
     terminate() {
       terminateCalls += 1;
     },
-    getBufferedAmount() {
-      return 0;
-    },
-  };
+  });
   const guard = new WebSocketSendGuard({
     timeoutMs: 5_000,
     onTerminate: (reason) => terminateReasons.push(reason),
   });
   const sendEvent = (event: wsBorsh.CanonicalEvent): CanonicalSendResult => {
-    nextStatus = 'SourceGap' in event && !events.some((item) => 'SourceGap' in item) ? -1 : 1;
-    const status = guard.sendFramesStatus(socket as never, [new Uint8Array([1])]);
+    nextStatus =
+      'SourceGap' in event && !events.some((item) => 'SourceGap' in item) ? 'backpressure' : 'sent';
+    const status = guard.sendFramesStatus(carrier, [new Uint8Array([1])]);
     if (status !== 'dropped') events.push(event);
     if (status === 'backpressured') return 'backpressured';
     return status === 'sent';
@@ -165,7 +164,7 @@ function createGuardedSender() {
     terminateCalls: () => terminateCalls,
     sourceGapCount: () => events.filter((event) => 'SourceGap' in event).length,
     drainGuard() {
-      guard.handleDrain(socket as never);
+      guard.handleDrain(carrier);
     },
   };
 }

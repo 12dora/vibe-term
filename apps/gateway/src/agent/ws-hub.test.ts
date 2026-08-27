@@ -5,32 +5,17 @@ import { wsBorsh } from '@tmex/shared';
 import { migrate } from 'drizzle-orm/bun-sqlite/migrator';
 import { appendAgentMessage, createAgentConfirmation, createAgentSession } from '../db/agent';
 import { getDb as getOrmDb } from '../db/client';
-import { type AgentHubClient, AgentWsHub } from './ws-hub';
+import { createGatewaySession } from '../ws/test-helpers';
+import { AgentWsHub } from './ws-hub';
 
-interface MockWs {
-  data: { borshState: { seqGen: () => number; maxFrameBytes: number } };
-  sent: Uint8Array[];
-  send: (data: Uint8Array) => void;
+function createMockWs(options?: Parameters<typeof createGatewaySession>[0]) {
+  return createGatewaySession(options);
 }
 
-function createMockWs(): MockWs {
-  const ws: MockWs = {
-    data: {
-      borshState: {
-        seqGen: wsBorsh.createSeqGenerator(),
-        maxFrameBytes: wsBorsh.DEFAULT_MAX_FRAME_BYTES,
-      },
-    },
-    sent: [],
-    send(data: Uint8Array) {
-      ws.sent.push(data);
-    },
-  };
-  return ws;
-}
-
-function asClient(ws: MockWs): AgentHubClient {
-  return ws as unknown as AgentHubClient;
+function requireFrame(frames: Uint8Array[], index = 0): Uint8Array {
+  const frame = frames[index];
+  if (!frame) throw new Error(`expected frame at ${index}`);
+  return frame;
 }
 
 function decodeAgentEvent(data: Uint8Array) {
@@ -74,10 +59,10 @@ describe('AgentWsHub', () => {
     });
     const ws = createMockWs();
 
-    await hub.subscribe(asClient(ws), 'session-1');
+    await hub.subscribe(ws, 'session-1');
 
     expect(ws.sent.length).toBe(1);
-    const event = decodeAgentEvent(ws.sent[0]!);
+    const event = decodeAgentEvent(requireFrame(ws.sent));
     expect(event.sessionId).toBe('session-1');
     expect(event.seq).toBe(0);
     expect(event.eventType).toBe(wsBorsh.AGENT_EVENT_SYNC);
@@ -88,7 +73,7 @@ describe('AgentWsHub', () => {
     const hub = new AgentWsHub({ syncProvider: async () => null });
     const ws = createMockWs();
 
-    await hub.subscribe(asClient(ws), 'missing-session');
+    await hub.subscribe(ws, 'missing-session');
     expect(ws.sent.length).toBe(0);
   });
 
@@ -98,20 +83,25 @@ describe('AgentWsHub', () => {
     const otherSubscriber = createMockWs();
     const nonSubscriber = createMockWs();
 
-    hub.registerClient(asClient(nonSubscriber));
-    await hub.subscribe(asClient(subscriber), 'session-a');
-    await hub.subscribe(asClient(otherSubscriber), 'session-b');
+    hub.registerClient(nonSubscriber);
+    await hub.subscribe(subscriber, 'session-a');
+    await hub.subscribe(otherSubscriber, 'session-b');
 
-    hub.broadcastAgentEvent('session-a', wsBorsh.AGENT_EVENT_TEXT_DELTA, {
-      messageId: 'm1',
-      delta: 'hi',
-    }, 5);
+    hub.broadcastAgentEvent(
+      'session-a',
+      wsBorsh.AGENT_EVENT_TEXT_DELTA,
+      {
+        messageId: 'm1',
+        delta: 'hi',
+      },
+      5
+    );
 
     expect(subscriber.sent.length).toBe(1);
     expect(otherSubscriber.sent.length).toBe(0);
     expect(nonSubscriber.sent.length).toBe(0);
 
-    const event = decodeAgentEvent(subscriber.sent[0]!);
+    const event = decodeAgentEvent(requireFrame(subscriber.sent));
     expect(event.sessionId).toBe('session-a');
     expect(event.seq).toBe(5);
     expect(event.eventType).toBe(wsBorsh.AGENT_EVENT_TEXT_DELTA);
@@ -122,8 +112,8 @@ describe('AgentWsHub', () => {
     const hub = new AgentWsHub({ syncProvider: async () => null });
     const ws = createMockWs();
 
-    await hub.subscribe(asClient(ws), 'session-a');
-    hub.unsubscribe(asClient(ws), 'session-a');
+    await hub.subscribe(ws, 'session-a');
+    hub.unsubscribe(ws, 'session-a');
 
     hub.broadcastAgentEvent('session-a', wsBorsh.AGENT_EVENT_STATUS, { status: 'running' }, 1);
     expect(ws.sent.length).toBe(0);
@@ -133,11 +123,11 @@ describe('AgentWsHub', () => {
     const hub = new AgentWsHub({ syncProvider: async () => null });
     const ws = createMockWs();
 
-    hub.registerClient(asClient(ws));
-    await hub.subscribe(asClient(ws), 'session-a');
-    await hub.subscribe(asClient(ws), 'session-b');
+    hub.registerClient(ws);
+    await hub.subscribe(ws, 'session-a');
+    await hub.subscribe(ws, 'session-b');
 
-    hub.removeClient(asClient(ws));
+    hub.removeClient(ws);
 
     hub.broadcastAgentEvent('session-a', wsBorsh.AGENT_EVENT_STATUS, { status: 'running' }, 1);
     hub.broadcastAgentEvent('session-b', wsBorsh.AGENT_EVENT_STATUS, { status: 'running' }, 1);
@@ -153,8 +143,8 @@ describe('AgentWsHub', () => {
     const client2 = createMockWs();
     const unregistered = createMockWs();
 
-    hub.registerClient(asClient(client1));
-    hub.registerClient(asClient(client2));
+    hub.registerClient(client1);
+    hub.registerClient(client2);
 
     hub.broadcastWatchEvent('rule-1', 'device-1', '%1', wsBorsh.WATCH_EVENT_TRIGGERED, {
       summary: 'matched',
@@ -165,7 +155,7 @@ describe('AgentWsHub', () => {
     expect(client2.sent.length).toBe(1);
     expect(unregistered.sent.length).toBe(0);
 
-    const event = decodeWatchEvent(client1.sent[0]!);
+    const event = decodeWatchEvent(requireFrame(client1.sent));
     expect(event.ruleId).toBe('rule-1');
     expect(event.deviceId).toBe('device-1');
     expect(event.paneId).toBe('%1');
@@ -183,8 +173,8 @@ describe('AgentWsHub', () => {
     });
     const ws = createMockWs();
 
-    const pending = hub.subscribe(asClient(ws), 'session-a');
-    hub.unsubscribe(asClient(ws), 'session-a');
+    const pending = hub.subscribe(ws, 'session-a');
+    hub.unsubscribe(ws, 'session-a');
     resolveSync(stubSync);
     await pending;
 
@@ -204,10 +194,10 @@ describe('AgentWsHub', () => {
 
     const hub = new AgentWsHub();
     const ws = createMockWs();
-    await hub.subscribe(asClient(ws), session.id);
+    await hub.subscribe(ws, session.id);
 
     expect(ws.sent.length).toBe(1);
-    const event = decodeAgentEvent(ws.sent[0]!);
+    const event = decodeAgentEvent(requireFrame(ws.sent));
     expect(event.eventType).toBe(wsBorsh.AGENT_EVENT_SYNC);
     const sync = event.json as AgentSyncEventPayload;
     expect(sync.status).toBe('idle');
@@ -227,9 +217,9 @@ describe('AgentWsHub', () => {
   test('payload 超过 maxFrameBytes 时走分片路径且可重组', async () => {
     const hub = new AgentWsHub({ syncProvider: async () => null });
     const ws = createMockWs();
-    ws.data.borshState.maxFrameBytes = 256;
+    ws.borshState.maxFrameBytes = 256;
 
-    await hub.subscribe(asClient(ws), 'session-big');
+    await hub.subscribe(ws, 'session-big');
 
     const bigDelta = 'x'.repeat(2048);
     hub.broadcastAgentEvent(
@@ -252,8 +242,9 @@ describe('AgentWsHub', () => {
     }
 
     expect(message).not.toBeNull();
-    expect(message!.kind).toBe(wsBorsh.KIND_AGENT_EVENT);
-    const decoded = wsBorsh.decodePayload(wsBorsh.schema.AgentEventSchema, message!.payload);
+    if (!message) throw new Error('expected reassembled message');
+    expect(message.kind).toBe(wsBorsh.KIND_AGENT_EVENT);
+    const decoded = wsBorsh.decodePayload(wsBorsh.schema.AgentEventSchema, message.payload);
     expect(decoded.sessionId).toBe('session-big');
     expect(decoded.seq).toBe(7);
     expect(decoded.eventType).toBe(wsBorsh.AGENT_EVENT_TEXT_DELTA);
@@ -263,35 +254,36 @@ describe('AgentWsHub', () => {
 
   test('单个订阅者 send 抛错不影响其他订阅者收到广播', async () => {
     const hub = new AgentWsHub({ syncProvider: async () => null });
-    const broken = createMockWs();
-    broken.send = () => {
-      throw new Error('connection closed');
-    };
+    const broken = createMockWs({
+      send() {
+        throw new Error('connection closed');
+      },
+    });
     const healthy = createMockWs();
 
-    await hub.subscribe(asClient(broken), 'session-a');
-    await hub.subscribe(asClient(healthy), 'session-a');
+    await hub.subscribe(broken, 'session-a');
+    await hub.subscribe(healthy, 'session-a');
 
     hub.broadcastAgentEvent('session-a', wsBorsh.AGENT_EVENT_STATUS, { status: 'running' }, 1);
 
     expect(healthy.sent.length).toBe(1);
-    const event = decodeAgentEvent(healthy.sent[0]!);
+    const event = decodeAgentEvent(requireFrame(healthy.sent));
     expect(event.eventType).toBe(wsBorsh.AGENT_EVENT_STATUS);
     expect(event.json).toEqual({ status: 'running' });
 
-    hub.registerClient(asClient(broken));
-    hub.registerClient(asClient(healthy));
+    hub.registerClient(broken);
+    hub.registerClient(healthy);
     hub.broadcastWatchEvent('rule-1', 'device-1', '%1', wsBorsh.WATCH_EVENT_TRIGGERED, {
       summary: 'matched',
     });
     expect(healthy.sent.length).toBe(2);
-    expect(decodeWatchEvent(healthy.sent[1]!).json).toEqual({ summary: 'matched' });
+    expect(decodeWatchEvent(requireFrame(healthy.sent, 1)).json).toEqual({ summary: 'matched' });
   });
 
   test('默认 syncProvider 对不存在的 session 不回发', async () => {
     const hub = new AgentWsHub();
     const ws = createMockWs();
-    await hub.subscribe(asClient(ws), crypto.randomUUID());
+    await hub.subscribe(ws, crypto.randomUUID());
     expect(ws.sent.length).toBe(0);
   });
 });

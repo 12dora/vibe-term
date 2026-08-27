@@ -8,7 +8,6 @@ import type {
   AgentSyncEventPayload,
   WatchEventPayloadMap,
 } from '@tmex/shared';
-import type { ServerWebSocket } from 'bun';
 import {
   getAgentSessionById,
   getMaxAgentMessageSeq,
@@ -16,16 +15,8 @@ import {
   listQueuedAgentMessages,
 } from '../db/agent';
 import { encodePayloadFrames, sendToClient } from '../ws/borsh/codec-borsh';
+import type { GatewaySession } from '../ws/gateway-session';
 import { gatewayWebSocketSendGuard } from '../ws/websocket-send-guard';
-
-export interface AgentHubClientState {
-  borshState: {
-    seqGen: () => number;
-    maxFrameBytes: number;
-  };
-}
-
-export type AgentHubClient = ServerWebSocket<AgentHubClientState>;
 
 export type AgentSyncProvider = (sessionId: string) => Promise<AgentSyncEventPayload | null>;
 
@@ -65,8 +56,8 @@ interface AgentWsHubOptions {
 }
 
 export class AgentWsHub {
-  private clients = new Set<AgentHubClient>();
-  private subscriptions = new Map<string, Set<AgentHubClient>>();
+  private clients = new Set<GatewaySession>();
+  private subscriptions = new Map<string, Set<GatewaySession>>();
   private syncProvider: AgentSyncProvider;
 
   constructor(options: AgentWsHubOptions = {}) {
@@ -77,43 +68,42 @@ export class AgentWsHub {
     this.syncProvider = provider;
   }
 
-  registerClient(ws: AgentHubClient): void {
-    this.clients.add(ws);
+  registerClient(session: GatewaySession): void {
+    this.clients.add(session);
   }
 
-  removeClient(ws: AgentHubClient): void {
-    this.clients.delete(ws);
+  removeClient(session: GatewaySession): void {
+    this.clients.delete(session);
     for (const [sessionId, subscribers] of this.subscriptions) {
-      subscribers.delete(ws);
+      subscribers.delete(session);
       if (subscribers.size === 0) {
         this.subscriptions.delete(sessionId);
       }
     }
   }
 
-  async subscribe(ws: AgentHubClient, sessionId: string): Promise<void> {
+  async subscribe(session: GatewaySession, sessionId: string): Promise<void> {
     let subscribers = this.subscriptions.get(sessionId);
     if (!subscribers) {
       subscribers = new Set();
       this.subscriptions.set(sessionId, subscribers);
     }
-    subscribers.add(ws);
+    subscribers.add(session);
 
     try {
       const sync = await this.syncProvider(sessionId);
       if (!sync) return;
-      // 等待 syncProvider 期间客户端可能已退订/断开
-      if (!subscribers.has(ws)) return;
-      this.sendAgentEvent(ws, sessionId, wsBorsh.AGENT_EVENT_SYNC, sync, 0);
+      if (!subscribers.has(session)) return;
+      this.sendAgentEvent(session, sessionId, wsBorsh.AGENT_EVENT_SYNC, sync, 0);
     } catch (err) {
       console.error(`[agent-ws-hub] sync for session ${sessionId} failed:`, err);
     }
   }
 
-  unsubscribe(ws: AgentHubClient, sessionId: string): void {
+  unsubscribe(session: GatewaySession, sessionId: string): void {
     const subscribers = this.subscriptions.get(sessionId);
     if (!subscribers) return;
-    subscribers.delete(ws);
+    subscribers.delete(session);
     if (subscribers.size === 0) {
       this.subscriptions.delete(sessionId);
     }
@@ -129,8 +119,8 @@ export class AgentWsHub {
     if (!subscribers?.size) return;
 
     const payloadBytes = encodeAgentEventPayload(sessionId, eventType, payload, seq);
-    for (const ws of subscribers) {
-      this.sendPayload(ws, wsBorsh.KIND_AGENT_EVENT, payloadBytes);
+    for (const session of subscribers) {
+      this.sendPayload(session, wsBorsh.KIND_AGENT_EVENT, payloadBytes);
     }
   }
 
@@ -152,35 +142,36 @@ export class AgentWsHub {
       payload: encodeJsonBytes(payload),
     });
 
-    for (const ws of this.clients) {
-      this.sendPayload(ws, wsBorsh.KIND_WATCH_EVENT, payloadBytes);
+    for (const session of this.clients) {
+      this.sendPayload(session, wsBorsh.KIND_WATCH_EVENT, payloadBytes);
     }
   }
 
   private sendAgentEvent<K extends keyof AgentEventPayloadMap>(
-    ws: AgentHubClient,
+    session: GatewaySession,
     sessionId: string,
     eventType: K,
     payload: AgentEventPayloadMap[K],
     seq: number
   ): void {
     this.sendPayload(
-      ws,
+      session,
       wsBorsh.KIND_AGENT_EVENT,
       encodeAgentEventPayload(sessionId, eventType, payload, seq)
     );
   }
 
-  // 与 WebSocketServer.sendEnvelope/sendChunked 保持一致的封包方式
-  private sendPayload(ws: AgentHubClient, kind: number, payloadBytes: Uint8Array): void {
+  private sendPayload(session: GatewaySession, kind: number, payloadBytes: Uint8Array): void {
     try {
-      if (!gatewayWebSocketSendGuard.canSend(ws as ServerWebSocket<unknown>)) {
+      const carrier = session.activeCarrier;
+      if (!gatewayWebSocketSendGuard.canSend(carrier)) {
         return;
       }
-      const state = ws.data.borshState;
+      const state = session.borshState;
       sendToClient(
-        ws as ServerWebSocket<unknown>,
-        encodePayloadFrames(kind, payloadBytes, state.seqGen, state.maxFrameBytes)
+        carrier,
+        encodePayloadFrames(kind, payloadBytes, state.seqGen, state.maxFrameBytes),
+        state.maxFrameBytes
       );
     } catch (err) {
       console.error('[agent-ws-hub] failed to send payload:', err);
@@ -192,7 +183,6 @@ function encodeJsonBytes(payload: unknown): Uint8Array {
   return new TextEncoder().encode(JSON.stringify(payload ?? null));
 }
 
-// zorsh u8 对越界值静默环绕，编码前兜底断言
 function assertU8EventType(eventType: number): void {
   if (!Number.isInteger(eventType) || eventType < 0 || eventType > 255) {
     throw new RangeError(`eventType out of u8 range: ${eventType}`);

@@ -1,39 +1,112 @@
 import type { StateSnapshotPayload } from '@tmex/shared';
 import { wsBorsh } from '@tmex/shared';
-import type { ServerWebSocket } from 'bun';
-import { createBorshClientState } from './borsh/codec-borsh';
 import { sessionStateStore } from './borsh/session-state';
-import type { ClientState, DeviceConnectionEntry } from './types';
+import type { Carrier, CarrierSendResult } from './carrier';
+import { GatewaySession } from './gateway-session';
+import type { DeviceConnectionEntry } from './types';
 
-export type BorshTestWs = ServerWebSocket<ClientState> & { sent: Uint8Array[] };
+export interface FakeCarrier extends Carrier {
+  sent: Uint8Array[];
+}
 
-export interface CreateBorshTestWsOptions {
-  session?: boolean;
+export interface CreateFakeCarrierOptions {
   // biome-ignore lint/suspicious/noConfusingVoidType: send() {} fixtures must typecheck without a dummy return
-  send?: (message: Uint8Array) => number | undefined | void;
-  terminate?: (this: BorshTestWs) => void;
+  send?: (this: FakeCarrier, message: Uint8Array) => CarrierSendResult | number | undefined | void;
+  terminate?: (this: FakeCarrier) => void;
+  bufferedAmount?: number;
 }
 
-export function createBorshTestWs(options: CreateBorshTestWsOptions = {}): BorshTestWs {
-  const ws = {
-    data: { borshState: createBorshClientState() },
-    sent: [] as Uint8Array[],
-    send(message: Uint8Array) {
-      if (options.send) {
-        return options.send.call(this, message);
-      }
-      this.sent.push(message);
-      return message.byteLength;
-    },
-    terminate() {
-      options.terminate?.call(this);
-    },
-  } as BorshTestWs;
-  if (options.session) {
-    sessionStateStore.create(ws);
-  }
-  return ws;
+function mapNumericSend(status: number): CarrierSendResult {
+  if (status > 0) return 'sent';
+  if (status === -1) return 'backpressure';
+  return 'closed';
 }
+
+export function createFakeCarrier(options: CreateFakeCarrierOptions = {}): FakeCarrier {
+  const drainCallbacks: Array<() => void> = [];
+  const carrier: FakeCarrier = {
+    sent: [],
+    send(bytes) {
+      if (options.send) {
+        const result = options.send.call(carrier, bytes);
+        if (typeof result === 'number') return mapNumericSend(result);
+        if (result === undefined) return 'sent';
+        return result;
+      }
+      carrier.sent.push(bytes);
+      return 'sent';
+    },
+    bufferedAmount() {
+      return options.bufferedAmount ?? 0;
+    },
+    onDrain(cb) {
+      drainCallbacks.push(cb);
+    },
+    close() {},
+    terminate() {
+      options.terminate?.call(carrier);
+    },
+  };
+  return carrier;
+}
+
+export interface CreateGatewaySessionOptions {
+  session?: boolean;
+  send?: CreateFakeCarrierOptions['send'];
+  terminate?: CreateFakeCarrierOptions['terminate'];
+  carrier?: Carrier;
+}
+
+export type BorshTestWs = GatewaySession & {
+  sent: Uint8Array[];
+  data: {
+    borshState: GatewaySession['borshState'];
+    session: GatewaySession;
+    carrier: Carrier;
+  };
+  // biome-ignore lint/suspicious/noConfusingVoidType: send() {} fixtures must typecheck without a dummy return
+  send: (message: Uint8Array) => number | undefined | void;
+  terminate: () => void;
+};
+
+export function createGatewaySession(options: CreateGatewaySessionOptions = {}): BorshTestWs {
+  const carrier = (options.carrier as FakeCarrier | undefined) ?? createFakeCarrier(options);
+  const session = new GatewaySession({ primary: carrier });
+  const data = {
+    borshState: session.borshState,
+    session,
+    carrier,
+  };
+  Object.defineProperty(data, 'borshState', {
+    get: () => session.borshState,
+    set: (value: GatewaySession['borshState']) => {
+      session.borshState = value;
+    },
+    enumerable: true,
+    configurable: true,
+  });
+  const testSession = session as BorshTestWs;
+  Object.defineProperty(testSession, 'sent', {
+    get: () => ('sent' in carrier ? carrier.sent : []),
+  });
+  Object.defineProperty(testSession, 'data', {
+    value: data,
+    writable: true,
+  });
+  testSession.send = (message) => {
+    const result = carrier.send(message);
+    if (result === 'sent') return message.byteLength;
+    if (result === 'backpressure') return -1;
+    return 0;
+  };
+  testSession.terminate = () => carrier.terminate();
+  if (options.session) {
+    sessionStateStore.create(session);
+  }
+  return testSession;
+}
+
+export const createBorshTestWs = createGatewaySession;
 
 export interface SetupConnectionEntryOptions {
   deviceId?: string;

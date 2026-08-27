@@ -1,18 +1,13 @@
 import type { ThemeMode } from '@tmex/shared';
 import { wsBorsh } from '@tmex/shared';
-import type { ServerWebSocket } from 'bun';
 import type { DeviceTreeOrderRecord } from '../db';
 import type { SettingsNamespace } from '../settings/broadcaster';
 import { isTmuxPaneId, isTmuxWindowId } from '../tmux-client/snapshot-format';
 import { switchBarrier } from './borsh/switch-barrier';
 import { parseWindowLayoutSize } from './frame-utils';
+import type { GatewaySession } from './gateway-session';
 import type { TerminalOutputBatcher } from './terminal-output-batcher';
-import {
-  type ClientState,
-  type DeviceConnectionEntry,
-  type WebSocketServerDeps,
-  asSwitchBarrierSocket,
-} from './types';
+import type { DeviceConnectionEntry, WebSocketServerDeps } from './types';
 
 export interface TmuxCommandHost {
   readonly connections: Map<string, DeviceConnectionEntry>;
@@ -23,13 +18,13 @@ export interface TmuxCommandHost {
   readonly terminalOutputBatcher: TerminalOutputBatcher;
   readonly deps: WebSocketServerDeps;
   sendError(
-    ws: ServerWebSocket<ClientState>,
+    session: GatewaySession,
     refSeq: number | null,
     code: number,
     message: string,
     retryable: boolean
   ): void;
-  sendChunked(ws: ServerWebSocket<ClientState>, kind: number, payload: Uint8Array): boolean;
+  sendChunked(session: GatewaySession, kind: number, payload: Uint8Array): boolean;
   refreshSnapshotPolling(deviceId: string): void;
   broadcastSettingsUpdate(namespace: SettingsNamespace): void;
   broadcastThemeChange(theme: 'dark' | 'light'): void;
@@ -92,7 +87,7 @@ export function canSelectPane(
 
 export function handleTmuxSelect(
   host: TmuxCommandHost,
-  ws: ServerWebSocket<ClientState>,
+  session: GatewaySession,
   data: wsBorsh.b.infer<typeof wsBorsh.schema.TmuxSelectSchema>
 ): void {
   const deviceId = data.deviceId;
@@ -105,7 +100,7 @@ export function handleTmuxSelect(
   if (!canSelectPane(entry, deviceId, windowId, paneId)) return;
 
   host.terminalOutputBatcher.flushDevice(deviceId);
-  const started = switchBarrier.startTransaction(asSwitchBarrierSocket(ws), {
+  const started = switchBarrier.startTransaction(session, {
     deviceId,
     windowId,
     paneId,
@@ -117,7 +112,7 @@ export function handleTmuxSelect(
 
   if (!started) {
     host.sendError(
-      ws,
+      session,
       null,
       wsBorsh.ERROR_SELECT_CONFLICT,
       'Failed to start select transaction',
@@ -126,9 +121,9 @@ export function handleTmuxSelect(
     return;
   }
 
-  ws.data.borshState.selectedPanes[deviceId] = paneId;
+  session.borshState.selectedPanes[deviceId] = paneId;
   host.refreshSnapshotPolling(deviceId);
-  switchBarrier.sendSwitchAck(asSwitchBarrierSocket(ws), deviceId);
+  switchBarrier.sendSwitchAck(session, deviceId);
 
   const cols = data.cols ?? null;
   const rows = data.rows ?? null;
@@ -379,7 +374,7 @@ export function reorderPanes(
 
 export function handleSubscribePanes(
   host: TmuxCommandHost,
-  ws: ServerWebSocket<ClientState>,
+  session: GatewaySession,
   deviceId: string,
   paneIds: string[]
 ): void {
@@ -399,16 +394,16 @@ export function handleSubscribePanes(
 
   host.terminalOutputBatcher.flushDevice(deviceId);
   if (accepted.size > 0) {
-    ws.data.borshState.subscribedPanes[deviceId] = accepted;
+    session.borshState.subscribedPanes[deviceId] = accepted;
   } else {
-    delete ws.data.borshState.subscribedPanes[deviceId];
+    delete session.borshState.subscribedPanes[deviceId];
   }
   host.refreshSnapshotPolling(deviceId);
 }
 
 export function handleFetchPaneHistory(
   host: TmuxCommandHost,
-  ws: ServerWebSocket<ClientState>,
+  session: GatewaySession,
   deviceId: string,
   paneId: string,
   requestToken: Uint8Array
@@ -429,7 +424,7 @@ export function handleFetchPaneHistory(
         modes: captured.modes,
         data: new TextEncoder().encode(captured.data),
       });
-      host.sendChunked(ws, wsBorsh.KIND_TERM_HISTORY, payloadBytes);
+      host.sendChunked(session, wsBorsh.KIND_TERM_HISTORY, payloadBytes);
     })
     .catch((error) => {
       console.warn(`[ws] fetch pane history failed on ${deviceId}/${paneId}:`, error);
@@ -502,7 +497,7 @@ export function handleSplitPane(
 
 export function handleFocusPane(
   host: TmuxCommandHost,
-  ws: ServerWebSocket<ClientState>,
+  session: GatewaySession,
   deviceId: string,
   windowId: string,
   paneId: string
@@ -511,7 +506,7 @@ export function handleFocusPane(
   if (!entry) return;
   if (!canSelectPane(entry, deviceId, windowId, paneId)) return;
 
-  ws.data.borshState.selectedPanes[deviceId] = paneId;
+  session.borshState.selectedPanes[deviceId] = paneId;
   host.refreshSnapshotPolling(deviceId);
   entry.runtime.focusPane(windowId, paneId);
 }

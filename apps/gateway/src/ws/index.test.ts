@@ -6,7 +6,12 @@ import { runMigrations } from '../db/migrate';
 import { sessionStateStore } from './borsh/session-state';
 import { switchBarrier } from './borsh/switch-barrier';
 import { WebSocketServer, payloadNeedsChunking } from './index';
-import { createBorshTestWs, setupConnectionEntry } from './test-helpers';
+import {
+  createBorshTestWs,
+  createFakeCarrier,
+  createGatewaySession,
+  setupConnectionEntry,
+} from './test-helpers';
 
 // 快照下发路径会同步读 device_tree_order 表，确保所有用例前已建表
 beforeAll(() => {
@@ -14,13 +19,7 @@ beforeAll(() => {
 });
 
 function createMockWs() {
-  return {
-    data: { selectedPanes: {} as Record<string, string | null> },
-    sent: [] as string[],
-    send(message: string) {
-      this.sent.push(message);
-    },
-  };
+  return createGatewaySession();
 }
 
 function flushAsync(): Promise<void> {
@@ -1686,5 +1685,25 @@ describe('WebSocketServer resize × theme dedup', () => {
     server.releaseConnectionEntry('device-a', entry);
     expect(server.lastBroadcastTheme.has('device-a')).toBe(false);
     expect(server.themeSignalLast.has('device-a')).toBe(false);
+  });
+});
+
+describe('WebSocketServer carrier drain isolation', () => {
+  test('drain from a stale carrier does not advance canonical state', () => {
+    const server = new WebSocketServer() as any;
+    const session = createGatewaySession({ session: true });
+    const stale = createFakeCarrier();
+    session.attachCarrier(stale, 'direct');
+    expect(session.activeCarrier).toBe(session.primary);
+
+    const canonical = server.getOrCreateCanonicalSession(session);
+    const onDrain = spyOn(canonical, 'onDrain');
+
+    server.handleDrain(session, stale);
+    expect(onDrain).not.toHaveBeenCalled();
+
+    server.handleDrain(session, session.activeCarrier);
+    expect(onDrain).toHaveBeenCalledTimes(1);
+    onDrain.mockRestore();
   });
 });

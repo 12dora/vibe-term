@@ -1,25 +1,27 @@
 import { describe, expect, test } from 'bun:test';
-
+import type { CarrierSendResult } from './carrier';
+import { createFakeCarrier } from './test-helpers';
 import { GATEWAY_WS_BACKPRESSURE_LIMIT_BYTES, WebSocketSendGuard } from './websocket-send-guard';
 
-function createSocket(statuses: number[], maxFrameBytes?: number) {
+function createCarrier(statuses: Array<CarrierSendResult | 'throw'>, bufferedAmount = 37) {
   let sendCalls = 0;
   let terminateCalls = 0;
-  return {
-    socket: {
-      data: maxFrameBytes === undefined ? undefined : { borshState: { maxFrameBytes } },
-      send() {
-        const status = statuses[Math.min(sendCalls, statuses.length - 1)] ?? 1;
-        sendCalls += 1;
-        return status;
-      },
-      terminate() {
-        terminateCalls += 1;
-      },
-      getBufferedAmount() {
-        return 37;
-      },
+  const carrier = createFakeCarrier({
+    bufferedAmount,
+    send() {
+      const status = statuses[Math.min(sendCalls, statuses.length - 1)] ?? 'sent';
+      sendCalls += 1;
+      if (status === 'throw') {
+        throw new Error('send failed');
+      }
+      return status;
     },
+    terminate() {
+      terminateCalls += 1;
+    },
+  });
+  return {
+    carrier,
     sendCalls: () => sendCalls,
     terminateCalls: () => terminateCalls,
   };
@@ -28,54 +30,52 @@ function createSocket(statuses: number[], maxFrameBytes?: number) {
 describe('WebSocketSendGuard', () => {
   test('resumes after a backpressured frame drains without any skipped frame', () => {
     const guard = new WebSocketSendGuard({ timeoutMs: 1000, onTerminate: () => {} });
-    const target = createSocket([-1, 4]);
+    const target = createCarrier(['backpressure', 'sent']);
 
-    expect(guard.sendFrames(target.socket as never, [new Uint8Array([1])])).toBe(false);
+    expect(guard.sendFrames(target.carrier, [new Uint8Array([1])])).toBe(false);
     expect(target.sendCalls()).toBe(1);
     expect(target.terminateCalls()).toBe(0);
 
-    guard.handleDrain(target.socket as never);
+    guard.handleDrain(target.carrier);
 
     expect(target.terminateCalls()).toBe(0);
-    expect(guard.sendFrames(target.socket as never, [new Uint8Array([2])])).toBe(true);
+    expect(guard.sendFrames(target.carrier, [new Uint8Array([2])])).toBe(true);
     expect(target.sendCalls()).toBe(2);
   });
 
-  test('reports backpressured when Bun accepts a frame with status -1', () => {
+  test('reports backpressured when the carrier accepts a frame with backpressure', () => {
     const guard = new WebSocketSendGuard({ timeoutMs: 1000, onTerminate: () => {} });
-    const target = createSocket([-1, 4]);
+    const target = createCarrier(['backpressure', 'sent']);
 
-    expect(guard.sendFramesStatus(target.socket as never, [new Uint8Array([1])])).toBe(
-      'backpressured'
-    );
-    expect(guard.isBackpressured(target.socket as never)).toBe(true);
-    expect(guard.sendFrames(target.socket as never, [new Uint8Array([2])])).toBe(false);
+    expect(guard.sendFramesStatus(target.carrier, [new Uint8Array([1])])).toBe('backpressured');
+    expect(guard.isBackpressured(target.carrier)).toBe(true);
+    expect(guard.sendFrames(target.carrier, [new Uint8Array([2])])).toBe(false);
 
-    guard.handleDrain(target.socket as never);
+    guard.handleDrain(target.carrier);
     expect(target.terminateCalls()).toBe(1);
   });
 
   test('terminates on drain when live frames were skipped during backpressure', () => {
     const guard = new WebSocketSendGuard({ timeoutMs: 1000, onTerminate: () => {} });
-    const target = createSocket([-1]);
+    const target = createCarrier(['backpressure']);
 
-    expect(guard.sendFrames(target.socket as never, [new Uint8Array([1])])).toBe(false);
-    expect(guard.sendFrames(target.socket as never, [new Uint8Array([2])])).toBe(false);
+    expect(guard.sendFrames(target.carrier, [new Uint8Array([1])])).toBe(false);
+    expect(guard.sendFrames(target.carrier, [new Uint8Array([2])])).toBe(false);
     expect(target.sendCalls()).toBe(1);
 
-    guard.handleDrain(target.socket as never);
+    guard.handleDrain(target.carrier);
 
     expect(target.terminateCalls()).toBe(1);
-    expect(guard.sendFrames(target.socket as never, [new Uint8Array([3])])).toBe(false);
+    expect(guard.sendFrames(target.carrier, [new Uint8Array([3])])).toBe(false);
     expect(target.sendCalls()).toBe(1);
   });
 
   test('marks a partial chunk batch as skipped and isolates it after drain', () => {
     const guard = new WebSocketSendGuard({ timeoutMs: 1000, onTerminate: () => {} });
-    const target = createSocket([-1]);
+    const target = createCarrier(['backpressure']);
 
     expect(
-      guard.sendFrames(target.socket as never, [
+      guard.sendFrames(target.carrier, [
         new Uint8Array([1]),
         new Uint8Array([2]),
         new Uint8Array([3]),
@@ -83,59 +83,59 @@ describe('WebSocketSendGuard', () => {
     ).toBe(false);
     expect(target.sendCalls()).toBe(1);
 
-    guard.handleDrain(target.socket as never);
+    guard.handleDrain(target.carrier);
     expect(target.terminateCalls()).toBe(1);
   });
 
   test('lets a stateful sender mark an abandoned continuation as a stream gap', () => {
     const guard = new WebSocketSendGuard({ timeoutMs: 1000, onTerminate: () => {} });
-    const target = createSocket([-1]);
+    const target = createCarrier(['backpressure']);
 
-    expect(guard.sendFrames(target.socket as never, [new Uint8Array([1])])).toBe(false);
-    guard.markStreamGap(target.socket as never);
-    guard.handleDrain(target.socket as never);
+    expect(guard.sendFrames(target.carrier, [new Uint8Array([1])])).toBe(false);
+    guard.markStreamGap(target.carrier);
+    guard.handleDrain(target.carrier);
 
     expect(target.terminateCalls()).toBe(1);
   });
 
-  test('terminates a socket that stays backpressured past the deadline', async () => {
+  test('terminates a carrier that stays backpressured past the deadline', async () => {
     const guard = new WebSocketSendGuard({ timeoutMs: 10, onTerminate: () => {} });
-    const target = createSocket([-1]);
+    const target = createCarrier(['backpressure']);
 
-    expect(guard.sendFrames(target.socket as never, [new Uint8Array([1])])).toBe(false);
+    expect(guard.sendFrames(target.carrier, [new Uint8Array([1])])).toBe(false);
     await Bun.sleep(30);
 
     expect(target.terminateCalls()).toBe(1);
   });
 
-  test('terminates immediately when Bun reports a dropped frame', () => {
+  test('terminates immediately when the carrier reports a closed send', () => {
     const guard = new WebSocketSendGuard({ timeoutMs: 1000, onTerminate: () => {} });
-    const target = createSocket([0]);
+    const target = createCarrier(['closed']);
 
-    expect(guard.sendFrames(target.socket as never, [new Uint8Array([1])])).toBe(false);
+    expect(guard.sendFrames(target.carrier, [new Uint8Array([1])])).toBe(false);
     expect(target.terminateCalls()).toBe(1);
   });
 
-  test('rejects every frame that exceeds the negotiated maximum before calling Bun', () => {
+  test('rejects every frame that exceeds the negotiated maximum before sending', () => {
     const reasons: string[] = [];
     const guard = new WebSocketSendGuard({
       timeoutMs: 1000,
       onTerminate: (reason) => reasons.push(reason),
     });
-    const target = createSocket([1], 4);
+    const target = createCarrier(['sent']);
 
-    expect(guard.sendFrames(target.socket as never, [new Uint8Array(5)])).toBe(false);
+    expect(guard.sendFrames(target.carrier, [new Uint8Array(5)], 4)).toBe(false);
     expect(target.sendCalls()).toBe(0);
     expect(target.terminateCalls()).toBe(1);
     expect(reasons).toEqual(['oversized_frame']);
   });
 
-  test('forget cancels the backpressure deadline for a closed socket', async () => {
+  test('forget cancels the backpressure deadline for a closed carrier', async () => {
     const guard = new WebSocketSendGuard({ timeoutMs: 10, onTerminate: () => {} });
-    const target = createSocket([-1]);
+    const target = createCarrier(['backpressure']);
 
-    expect(guard.sendFrames(target.socket as never, [new Uint8Array([1])])).toBe(false);
-    guard.forget(target.socket as never);
+    expect(guard.sendFrames(target.carrier, [new Uint8Array([1])])).toBe(false);
+    guard.forget(target.carrier);
     await Bun.sleep(30);
 
     expect(target.terminateCalls()).toBe(0);
@@ -143,11 +143,11 @@ describe('WebSocketSendGuard', () => {
 
   test('reports bounded queue gauges and content-free termination reasons', () => {
     const guard = new WebSocketSendGuard({ timeoutMs: 1000, onTerminate: () => {} });
-    const target = createSocket([-1]);
+    const target = createCarrier(['backpressure']);
 
-    expect(guard.sendFrames(target.socket as never, [new Uint8Array([1])])).toBe(false);
+    expect(guard.sendFrames(target.carrier, [new Uint8Array([1])])).toBe(false);
 
-    expect(guard.snapshotStats([target.socket as never])).toMatchObject({
+    expect(guard.snapshotStats([target.carrier])).toMatchObject({
       sessions: 1,
       backpressuredSessions: 1,
       unavailableSessions: 0,
@@ -162,6 +162,27 @@ describe('WebSocketSendGuard', () => {
         oversized_frame: 0,
       },
     });
-    guard.forget(target.socket as never);
+    guard.forget(target.carrier);
+  });
+
+  test('keys backpressure independently per carrier on one session', () => {
+    const guard = new WebSocketSendGuard({ timeoutMs: 1000, onTerminate: () => {} });
+    const primary = createCarrier(['backpressure', 'sent']);
+    const direct = createCarrier(['sent']);
+
+    expect(guard.sendFramesStatus(primary.carrier, [new Uint8Array([1])])).toBe('backpressured');
+    expect(guard.isBackpressured(primary.carrier)).toBe(true);
+    expect(guard.isBackpressured(direct.carrier)).toBe(false);
+    expect(guard.sendFrames(direct.carrier, [new Uint8Array([2])])).toBe(true);
+    expect(direct.sendCalls()).toBe(1);
+    expect(primary.sendCalls()).toBe(1);
+
+    guard.handleDrain(direct.carrier);
+    expect(direct.terminateCalls()).toBe(0);
+    expect(guard.isBackpressured(primary.carrier)).toBe(true);
+
+    guard.handleDrain(primary.carrier);
+    expect(primary.terminateCalls()).toBe(0);
+    expect(guard.sendFrames(primary.carrier, [new Uint8Array([3])])).toBe(true);
   });
 });

@@ -1,6 +1,5 @@
 import type { EventDevicePayload, StateSnapshotPayload } from '@tmex/shared';
 import { wsBorsh } from '@tmex/shared';
-import type { ServerWebSocket } from 'bun';
 import { getSiteSettings } from '../db';
 import { t } from '../i18n';
 import type { TmuxEvent } from '../tmux-client/events';
@@ -9,9 +8,10 @@ import { sessionStateStore } from './borsh/session-state';
 import { switchBarrier } from './borsh/switch-barrier';
 import { classifySshError } from './error-classify';
 import type { GatewayActivityMetrics } from './gateway-activity-metrics';
+import type { GatewaySession } from './gateway-session';
 import type { TerminalOutputBatcher } from './terminal-output-batcher';
 import type { TerminalOutputMetrics } from './terminal-output-metrics';
-import { type ClientState, type DeviceConnectionEntry, asSwitchBarrierSocket } from './types';
+import type { DeviceConnectionEntry } from './types';
 
 export interface LegacyFeedHost {
   readonly connections: Map<string, DeviceConnectionEntry>;
@@ -19,20 +19,20 @@ export interface LegacyFeedHost {
   readonly terminalOutputMetrics: TerminalOutputMetrics;
   readonly gatewayActivityMetrics: GatewayActivityMetrics;
   terminalOutputEventsUntilMetricsCheck: number;
-  sendEnvelope(ws: ServerWebSocket<ClientState>, kind: number, payload: Uint8Array): void;
-  sendChunked(ws: ServerWebSocket<ClientState>, kind: number, payload: Uint8Array): boolean;
+  sendEnvelope(session: GatewaySession, kind: number, payload: Uint8Array): void;
+  sendChunked(session: GatewaySession, kind: number, payload: Uint8Array): boolean;
   encodeSnapshotWithOverlays(payload: StateSnapshotPayload): Uint8Array;
   reportTerminalOutputMetricsIfDue(): void;
 }
 
 export function clientWantsPaneOutput(
-  client: ServerWebSocket<ClientState>,
+  client: GatewaySession,
   deviceId: string,
   paneId: string
 ): boolean {
   return (
-    client.data.borshState.selectedPanes[deviceId] === paneId ||
-    (client.data.borshState.subscribedPanes[deviceId]?.has(paneId) ?? false)
+    client.borshState.selectedPanes[deviceId] === paneId ||
+    (client.borshState.subscribedPanes[deviceId]?.has(paneId) ?? false)
   );
 }
 
@@ -231,7 +231,7 @@ export class LegacyFeedBroadcaster {
     let payloadBytes: Uint8Array | null = null;
     for (const client of entry.clients) {
       if (entry.canonicalClients?.has(client)) continue;
-      const isFocused = client.data.borshState.selectedPanes[deviceId] === paneId;
+      const isFocused = client.borshState.selectedPanes[deviceId] === paneId;
       if (!clientWantsPaneOutput(client, deviceId, paneId)) {
         continue;
       }
@@ -266,7 +266,7 @@ export class LegacyFeedBroadcaster {
     for (const client of entry.clients) {
       if (
         !entry.canonicalClients?.has(client) &&
-        client.data.borshState.selectedPanes[deviceId] !== paneId
+        client.borshState.selectedPanes[deviceId] !== paneId
       ) {
         continue;
       }
@@ -289,10 +289,10 @@ export class LegacyFeedBroadcaster {
 
     for (const client of entry.clients) {
       if (entry.canonicalClients?.has(client)) continue;
-      const txPaneId = switchBarrier.getTransactionPaneId(asSwitchBarrierSocket(client), deviceId);
+      const txPaneId = switchBarrier.getTransactionPaneId(client, deviceId);
       if (txPaneId !== null && txPaneId === paneId) {
         switchBarrier.sendTermHistory(
-          asSwitchBarrierSocket(client),
+          client,
           deviceId,
           paneId,
           historyBytes,
@@ -303,9 +303,9 @@ export class LegacyFeedBroadcaster {
         continue;
       }
 
-      if (client.data.borshState.selectedPanes[deviceId] === paneId) {
+      if (client.borshState.selectedPanes[deviceId] === paneId) {
         switchBarrier.sendTermHistory(
-          asSwitchBarrierSocket(client),
+          client,
           deviceId,
           paneId,
           historyBytes,

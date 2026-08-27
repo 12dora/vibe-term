@@ -2,13 +2,14 @@
 
 import { describe, expect, it } from 'bun:test';
 import { wsBorsh } from '@tmex/shared';
-import { createBorshClientState, encodePayloadFrames } from './codec-borsh';
+import { createGatewaySession } from '../test-helpers';
+import { createBorshSessionState, encodePayloadFrames } from './codec-borsh';
 import { sessionStateStore } from './session-state';
 import { switchBarrier } from './switch-barrier';
 
 describe('borsh codec', () => {
-  it('应该创建 BorshClientState', () => {
-    const state = createBorshClientState();
+  it('应该创建 BorshSessionState', () => {
+    const state = createBorshSessionState();
     expect(state.negotiated).toBe(false);
     expect(state.clientImpl).toBeNull();
     expect(state.maxFrameBytes).toBe(wsBorsh.DEFAULT_MAX_FRAME_BYTES);
@@ -17,7 +18,7 @@ describe('borsh codec', () => {
   });
 
   it('应该编码和解码 HELLO', () => {
-    const state = createBorshClientState();
+    const state = createBorshSessionState();
     const seq = state.seqGen();
 
     const helloS2C = {
@@ -43,7 +44,7 @@ describe('borsh codec', () => {
   });
 
   it('应该编码和解码 PING/PONG', () => {
-    const state = createBorshClientState();
+    const state = createBorshSessionState();
     const seq = state.seqGen();
 
     const ping = {
@@ -72,7 +73,7 @@ describe('borsh codec', () => {
   });
 
   it('应该编码 DEVICE_CONNECTED', () => {
-    const state = createBorshClientState();
+    const state = createBorshSessionState();
     const seq = state.seqGen();
 
     const payload = wsBorsh.encodePayload(wsBorsh.schema.DeviceConnectedSchema, {
@@ -126,45 +127,43 @@ describe('borsh codec', () => {
 
 describe('session state store', () => {
   it('应该创建 session state', () => {
-    const mockWs = { remoteAddress: '127.0.0.1' } as any;
-    const state = sessionStateStore.create(mockWs);
+    const session = createGatewaySession();
+    const state = sessionStateStore.create(session);
 
     expect(state).toBeDefined();
     expect(state.wsConnection.state).toBe('IDLE');
     expect(state.deviceConnections.size).toBe(0);
+    expect(state.wsConnection.seq).toBe(0);
   });
 
   it('应该管理设备连接状态', () => {
-    const mockWs = { remoteAddress: '127.0.0.1' } as any;
-    sessionStateStore.create(mockWs);
+    const session = createGatewaySession();
+    sessionStateStore.create(session);
 
     const deviceId = 'device-1';
 
-    // 初始状态
-    const ctx = sessionStateStore.getOrCreateDeviceConnection(mockWs, deviceId);
+    const ctx = sessionStateStore.getOrCreateDeviceConnection(session, deviceId);
     expect(ctx).toBeDefined();
     expect(ctx?.state).toBe('DETACHED');
 
-    // 状态转移
-    const transitioned = sessionStateStore.transitionDeviceState(mockWs, deviceId, 'CONNECTING');
+    const transitioned = sessionStateStore.transitionDeviceState(session, deviceId, 'CONNECTING');
     expect(transitioned).toBe(true);
 
-    const updated = sessionStateStore.getOrCreateDeviceConnection(mockWs, deviceId);
+    const updated = sessionStateStore.getOrCreateDeviceConnection(session, deviceId);
     expect(updated?.state).toBe('CONNECTING');
   });
 
   it('应该管理选择事务', () => {
-    const mockWs = { remoteAddress: '127.0.0.1' } as any;
-    sessionStateStore.create(mockWs);
+    const session = createGatewaySession();
+    sessionStateStore.create(session);
 
     const deviceId = 'device-1';
     const windowId = '@1';
     const paneId = '%2';
     const selectToken = new Uint8Array(16).fill(0xab);
 
-    // 启动事务
     const started = sessionStateStore.startSelectTransaction(
-      mockWs,
+      session,
       deviceId,
       windowId,
       paneId,
@@ -172,59 +171,63 @@ describe('session state store', () => {
     );
     expect(started).toBe(true);
 
-    const ctx = sessionStateStore.getOrCreateSelectTransaction(mockWs, deviceId);
+    const ctx = sessionStateStore.getOrCreateSelectTransaction(session, deviceId);
     expect(ctx?.state).toBe('SELECTING');
     expect(ctx?.windowId).toBe(windowId);
     expect(ctx?.paneId).toBe(paneId);
 
-    // 状态转移
-    sessionStateStore.transitionSelectState(mockWs, deviceId, 'ACKED');
+    sessionStateStore.transitionSelectState(session, deviceId, 'ACKED');
     expect(ctx?.state).toBe('ACKED');
   });
 
   it('应该缓冲输出', () => {
-    const mockWs = { remoteAddress: '127.0.0.1' } as any;
-    sessionStateStore.create(mockWs);
+    const session = createGatewaySession();
+    sessionStateStore.create(session);
 
     const deviceId = 'device-1';
 
-    // 开始缓冲
-    sessionStateStore.startOutputBuffering(mockWs, deviceId);
-    expect(sessionStateStore.isBuffering(mockWs, deviceId)).toBe(true);
+    sessionStateStore.startOutputBuffering(session, deviceId);
+    expect(sessionStateStore.isBuffering(session, deviceId)).toBe(true);
 
-    // 缓冲数据
     const data1 = new Uint8Array([1, 2, 3]);
     const data2 = new Uint8Array([4, 5, 6]);
-    sessionStateStore.bufferOutput(mockWs, deviceId, data1);
-    sessionStateStore.bufferOutput(mockWs, deviceId, data2);
+    sessionStateStore.bufferOutput(session, deviceId, data1);
+    sessionStateStore.bufferOutput(session, deviceId, data2);
 
-    // 停止缓冲并获取数据
-    const buffered = sessionStateStore.stopOutputBuffering(mockWs, deviceId);
+    const buffered = sessionStateStore.stopOutputBuffering(session, deviceId);
     expect(buffered.length).toBe(2);
     expect(buffered[0]).toEqual(data1);
     expect(buffered[1]).toEqual(data2);
-    expect(sessionStateStore.isBuffering(mockWs, deviceId)).toBe(false);
+    expect(sessionStateStore.isBuffering(session, deviceId)).toBe(false);
+  });
+
+  it('两套 seq 在 attach 第二载体后都不重置', () => {
+    const session = createGatewaySession({ session: true });
+    expect(session.borshState.seqGen()).toBe(1);
+    expect(session.borshState.seqGen()).toBe(2);
+    session.state.wsConnection.seq = 9;
+
+    const extra = createGatewaySession().primary;
+    session.attachCarrier(extra, 'direct');
+    session.switchActiveCarrier(extra);
+
+    expect(session.borshState.seqGen()).toBe(3);
+    expect(session.state.wsConnection.seq).toBe(9);
+    expect(sessionStateStore.incrementSeq(session)).toBe(10);
   });
 });
 
 describe('switch barrier', () => {
   it('应该管理事务生命周期', () => {
-    const mockWs = {
-      remoteAddress: '127.0.0.1',
-      data: { borshState: createBorshClientState() },
-      send: () => {},
-    } as any;
-
-    sessionStateStore.create(mockWs);
+    const session = createGatewaySession({ session: true });
 
     const deviceId = 'device-1';
     const windowId = '@1';
     const paneId = '%2';
     const selectToken = crypto.getRandomValues(new Uint8Array(16));
 
-    // 启动事务
     const started = switchBarrier.startTransaction(
-      mockWs,
+      session,
       {
         deviceId,
         windowId,
@@ -240,39 +243,25 @@ describe('switch barrier', () => {
     );
     expect(started).toBe(true);
 
-    // 验证 token
-    const token = switchBarrier.getSelectToken(mockWs, deviceId);
+    const token = switchBarrier.getSelectToken(session, deviceId);
     expect(token).toEqual(selectToken);
 
-    // 验证 token
-    const valid = switchBarrier.validateToken(mockWs, deviceId, selectToken);
-    expect(valid).toBe(true);
+    expect(switchBarrier.validateToken(session, deviceId, selectToken)).toBe(true);
 
     const invalidToken = crypto.getRandomValues(new Uint8Array(16));
-    const invalid = switchBarrier.validateToken(mockWs, deviceId, invalidToken);
-    expect(invalid).toBe(false);
+    expect(switchBarrier.validateToken(session, deviceId, invalidToken)).toBe(false);
 
-    // 清理
-    switchBarrier.cleanupClient(mockWs);
+    switchBarrier.cleanupClient(session);
   });
 
   it('重复 TERM_HISTORY 不应重复发包', () => {
-    const sentFrames: Uint8Array[] = [];
-    const mockWs = {
-      remoteAddress: '127.0.0.1',
-      data: { borshState: createBorshClientState() },
-      send: (data: Uint8Array) => {
-        sentFrames.push(data);
-      },
-    } as any;
-
-    sessionStateStore.create(mockWs);
+    const session = createGatewaySession({ session: true });
 
     const deviceId = 'device-history';
     const selectToken = crypto.getRandomValues(new Uint8Array(16));
 
     expect(
-      switchBarrier.startTransaction(mockWs, {
+      switchBarrier.startTransaction(session, {
         deviceId,
         windowId: '@1',
         paneId: '%1',
@@ -283,19 +272,19 @@ describe('switch barrier', () => {
       })
     ).toBe(true);
 
-    switchBarrier.sendSwitchAck(mockWs, deviceId);
+    switchBarrier.sendSwitchAck(session, deviceId);
     switchBarrier.sendTermHistory(
-      mockWs,
+      session,
       deviceId,
       '%1',
       new TextEncoder().encode('READY_MARKER\n'),
       false,
       0
     );
-    const firstCount = sentFrames.length;
+    const firstCount = session.sent.length;
 
     switchBarrier.sendTermHistory(
-      mockWs,
+      session,
       deviceId,
       '%1',
       new TextEncoder().encode('READY_MARKER\n'),
@@ -303,25 +292,13 @@ describe('switch barrier', () => {
       0
     );
 
-    expect(sentFrames.length).toBe(firstCount);
-    switchBarrier.cleanupClient(mockWs);
+    expect(session.sent.length).toBe(firstCount);
+    switchBarrier.cleanupClient(session);
   });
 
-  it('不应因相同 remoteAddress 导致不同客户端事务冲突', () => {
-    const ws1 = {
-      remoteAddress: '127.0.0.1',
-      data: { borshState: createBorshClientState() },
-      send: () => {},
-    } as any;
-
-    const ws2 = {
-      remoteAddress: '127.0.0.1',
-      data: { borshState: createBorshClientState() },
-      send: () => {},
-    } as any;
-
-    sessionStateStore.create(ws1);
-    sessionStateStore.create(ws2);
+  it('不同 session 的事务互不干扰', () => {
+    const ws1 = createGatewaySession({ session: true });
+    const ws2 = createGatewaySession({ session: true });
 
     const deviceId = 'device-1';
     const token1 = crypto.getRandomValues(new Uint8Array(16));
@@ -359,20 +336,39 @@ describe('switch barrier', () => {
     switchBarrier.cleanupClient(ws2);
   });
 
-  it('history 超时且 sendLiveResume 提前 return 时应兜底解除门控', () => {
-    const mockWs = {
-      remoteAddress: '127.0.0.1',
-      data: { borshState: createBorshClientState() },
-      send: () => {},
-    } as any;
+  it('carrier 切换后 pending 事务仍在同一 session 上', () => {
+    const session = createGatewaySession({ session: true });
+    const direct = createGatewaySession().primary;
+    const deviceId = 'device-switch';
+    const token = crypto.getRandomValues(new Uint8Array(16));
 
-    sessionStateStore.create(mockWs);
+    expect(
+      switchBarrier.startTransaction(session, {
+        deviceId,
+        windowId: '@1',
+        paneId: '%1',
+        selectToken: token,
+        wantHistory: false,
+        cols: null,
+        rows: null,
+      })
+    ).toBe(true);
+
+    session.attachCarrier(direct, 'direct');
+    session.switchActiveCarrier(direct);
+
+    expect(switchBarrier.validateToken(session, deviceId, token)).toBe(true);
+    switchBarrier.cleanupClient(session);
+  });
+
+  it('history 超时且 sendLiveResume 提前 return 时应兜底解除门控', () => {
+    const session = createGatewaySession({ session: true });
 
     const deviceId = 'device-gate-leak';
     const selectToken = crypto.getRandomValues(new Uint8Array(16));
 
     expect(
-      switchBarrier.startTransaction(mockWs, {
+      switchBarrier.startTransaction(session, {
         deviceId,
         windowId: '@1',
         paneId: '%1',
@@ -383,18 +379,24 @@ describe('switch barrier', () => {
       })
     ).toBe(true);
 
-    switchBarrier.sendSwitchAck(mockWs, deviceId);
-    expect(sessionStateStore.isBuffering(mockWs, deviceId)).toBe(true);
+    switchBarrier.sendSwitchAck(session, deviceId);
+    expect(sessionStateStore.isBuffering(session, deviceId)).toBe(true);
 
-    // 制造 sendLiveResume 提前 return: borshState 缺失命中 `if (!borshState) return`
-    mockWs.data.borshState = undefined;
+    session.borshState = undefined as never;
 
-    // 直接触发 history 超时, 无需等真实定时器
-    (switchBarrier as any).handleTimeout(mockWs, deviceId, 'history', selectToken);
+    (
+      switchBarrier as unknown as {
+        handleTimeout: (
+          target: typeof session,
+          id: string,
+          stage: 'ack' | 'history',
+          token: Uint8Array
+        ) => void;
+      }
+    ).handleTimeout(session, deviceId, 'history', selectToken);
 
-    // 兜底解除门控生效: 不应残留 BUFFERING
-    expect(sessionStateStore.isBuffering(mockWs, deviceId)).toBe(false);
+    expect(sessionStateStore.isBuffering(session, deviceId)).toBe(false);
 
-    switchBarrier.cleanupClient(mockWs);
+    switchBarrier.cleanupClient(session);
   });
 });

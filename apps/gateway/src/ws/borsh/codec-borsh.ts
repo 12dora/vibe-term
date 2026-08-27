@@ -2,10 +2,10 @@
 // 封装 ws-borsh 协议,提供面向 Gateway 的便捷接口
 
 import { type b, wsBorsh } from '@tmex/shared';
-import type { ServerWebSocket } from 'bun';
+import type { Carrier } from '../carrier';
 import { gatewayWebSocketSendGuard } from '../websocket-send-guard';
 
-export interface BorshClientState {
+export interface BorshSessionState {
   seqGen: () => number;
   negotiated: boolean;
   clientImpl: string | null;
@@ -16,7 +16,7 @@ export interface BorshClientState {
   subscribedPanes: Record<string, Set<string>>;
 }
 
-export function createBorshClientState(): BorshClientState {
+export function createBorshSessionState(): BorshSessionState {
   return {
     seqGen: wsBorsh.createSeqGenerator(),
     negotiated: false,
@@ -103,9 +103,14 @@ export function encodePayloadFrames(
 }
 
 export function sendToClient(
-  ws: ServerWebSocket<unknown>,
-  data: Uint8Array | Uint8Array[]
+  carrier: Carrier,
+  data: Uint8Array | Uint8Array[],
+  maxFrameBytes?: number | null
 ): boolean {
   const frames = Array.isArray(data) ? data : [data];
-  return gatewayWebSocketSendGuard.sendFrames(ws, frames as readonly BufferSource[]);
+  return gatewayWebSocketSendGuard.sendFrames(
+    carrier,
+    frames as readonly BufferSource[],
+    maxFrameBytes
+  );
 }

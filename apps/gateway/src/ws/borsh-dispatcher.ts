@@ -1,20 +1,19 @@
 import { wsBorsh } from '@tmex/shared';
-import type { ServerWebSocket } from 'bun';
 import { createAgentKindHandlers } from './agent-kind-handlers';
 import type { CanonicalFeedSession } from './canonical-feed-session';
 import { createCanonicalKindHandlers } from './canonical-kind-handlers';
+import type { GatewaySession } from './gateway-session';
 import { createTmuxKindHandlers } from './tmux-kind-handlers';
-import type { ClientState } from './types';
 
 type SchemaLike<T> = {
   deserialize: (data: Uint8Array) => T;
 };
 
 export interface BorshDispatchHost {
-  handleDeviceConnect(ws: ServerWebSocket<ClientState>, deviceId: string): Promise<void>;
-  handleDeviceDisconnect(ws: ServerWebSocket<ClientState>, deviceId: string): void;
+  handleDeviceConnect(session: GatewaySession, deviceId: string): Promise<void>;
+  handleDeviceDisconnect(session: GatewaySession, deviceId: string): void;
   handleTmuxSelect(
-    ws: ServerWebSocket<ClientState>,
+    session: GatewaySession,
     data: wsBorsh.b.infer<typeof wsBorsh.schema.TmuxSelectSchema>
   ): void;
   handleTmuxSelectWindow(deviceId: string, windowId: string): void;
@@ -25,9 +24,9 @@ export interface BorshDispatchHost {
   handleSetWindowStyle(deviceId: string, style: string): void;
   reorderWindows(deviceId: string, windowIds: string[]): void;
   reorderPanes(deviceId: string, windowId: string, paneIds: string[]): void;
-  handleSubscribePanes(ws: ServerWebSocket<ClientState>, deviceId: string, paneIds: string[]): void;
+  handleSubscribePanes(session: GatewaySession, deviceId: string, paneIds: string[]): void;
   handleFetchPaneHistory(
-    ws: ServerWebSocket<ClientState>,
+    session: GatewaySession,
     deviceId: string,
     paneId: string,
     requestToken: Uint8Array
@@ -36,7 +35,7 @@ export interface BorshDispatchHost {
   handleApplyStackedLayout(deviceId: string, windowId: string, cols: number, rows: number): void;
   handleSplitPane(deviceId: string, paneId: string, direction: number, cwd?: string): void;
   handleFocusPane(
-    ws: ServerWebSocket<ClientState>,
+    session: GatewaySession,
     deviceId: string,
     windowId: string,
     paneId: string
@@ -48,12 +47,12 @@ export interface BorshDispatchHost {
   handleTermPaste(deviceId: string, paneId: string, data: string): void;
   handleTermResize(deviceId: string, paneId: string, cols: number, rows: number): void;
   handleSiteThemeUpdate(
-    ws: ServerWebSocket<ClientState>,
+    session: GatewaySession,
     decoded: wsBorsh.b.infer<typeof wsBorsh.schema.SiteThemeUpdateC2SSchema>
   ): void;
-  getOrCreateCanonicalSession(ws: ServerWebSocket<ClientState>): CanonicalFeedSession;
+  getOrCreateCanonicalSession(session: GatewaySession): CanonicalFeedSession;
   sendError(
-    ws: ServerWebSocket<ClientState>,
+    session: GatewaySession,
     refSeq: number | null,
     code: number,
     message: string,
@@ -64,7 +63,7 @@ export interface BorshDispatchHost {
 export type BorshKindHandler<T = unknown> = {
   schema?: SchemaLike<T>;
   decode?: (payload: Uint8Array) => T;
-  handle: (ws: ServerWebSocket<ClientState>, decoded: T, refSeq: number) => void | Promise<void>;
+  handle: (session: GatewaySession, decoded: T, refSeq: number) => void | Promise<void>;
 };
 
 export type BorshKindHandlerMap = ReadonlyMap<number, BorshKindHandler<unknown>>;
@@ -75,7 +74,7 @@ export function schemaHandler<T>(
 ): BorshKindHandler<unknown> {
   return {
     schema,
-    handle: (ws, decoded, refSeq) => handle(ws, decoded as T, refSeq),
+    handle: (session, decoded, refSeq) => handle(session, decoded as T, refSeq),
   };
 }
 
@@ -85,7 +84,7 @@ export function decoderHandler<T>(
 ): BorshKindHandler<unknown> {
   return {
     decode,
-    handle: (ws, decoded, refSeq) => handle(ws, decoded as T, refSeq),
+    handle: (session, decoded, refSeq) => handle(session, decoded as T, refSeq),
   };
 }
 
@@ -118,16 +117,16 @@ export function decodeBorshKindPayload<T>(handler: BorshKindHandler<T>, payload:
 export async function dispatchBorshKind(
   handlers: BorshKindHandlerMap,
   host: Pick<BorshDispatchHost, 'sendError'>,
-  ws: ServerWebSocket<ClientState>,
+  session: GatewaySession,
   kind: number,
   refSeq: number,
   payload: Uint8Array
 ): Promise<void> {
   const handler = handlers.get(kind);
   if (!handler) {
-    host.sendError(ws, refSeq, wsBorsh.ERROR_UNKNOWN_KIND, `Unknown kind: ${kind}`, false);
+    host.sendError(session, refSeq, wsBorsh.ERROR_UNKNOWN_KIND, `Unknown kind: ${kind}`, false);
     return;
   }
   const decoded = decodeBorshKindPayload(handler, payload);
-  await handler.handle(ws, decoded, refSeq);
+  await handler.handle(session, decoded, refSeq);
 }

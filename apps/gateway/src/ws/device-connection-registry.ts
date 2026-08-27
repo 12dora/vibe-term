@@ -1,13 +1,12 @@
 import type { EventDevicePayload, ThemeMode } from '@tmex/shared';
 import { getTmuxWindowStyle, wsBorsh } from '@tmex/shared';
-import type { ServerWebSocket } from 'bun';
 import { getSiteSettings } from '../db';
 import { t } from '../i18n';
 import type { DeviceSessionRuntime } from '../tmux-client/device-session-runtime';
 import type { CanonicalFeedSession } from './canonical-feed-session';
 import { classifySshError } from './error-classify';
+import type { GatewaySession } from './gateway-session';
 import {
-  type ClientState,
   type DeviceConnectionEntry,
   RUNTIME_IDLE_GRACE_MS,
   type WebSocketServerDeps,
@@ -16,15 +15,15 @@ import {
 export interface DeviceConnectionRegistryHost {
   readonly deps: WebSocketServerDeps;
   readonly currentTheme: ThemeMode | null;
-  readonly canonicalSessions: Map<ServerWebSocket<ClientState>, CanonicalFeedSession>;
+  readonly canonicalSessions: Map<GatewaySession, CanonicalFeedSession>;
   createDeviceConnectionEntry(
     deviceId: string,
-    ws: ServerWebSocket<ClientState>
+    session: GatewaySession
   ): Promise<DeviceConnectionEntry | null>;
   attachRuntime(deviceId: string, runtime: DeviceSessionRuntime): () => void;
   releaseConnectionEntry(deviceId: string, entry: DeviceConnectionEntry): void;
-  sendEnvelope(ws: ServerWebSocket<ClientState>, kind: number, payload: Uint8Array): void;
-  sendChunked(ws: ServerWebSocket<ClientState>, kind: number, payload: Uint8Array): boolean;
+  sendEnvelope(session: GatewaySession, kind: number, payload: Uint8Array): void;
+  sendChunked(session: GatewaySession, kind: number, payload: Uint8Array): boolean;
   encodeSnapshotWithOverlays(
     payload: NonNullable<DeviceConnectionEntry['lastSnapshot']>
   ): Uint8Array;
@@ -91,7 +90,7 @@ export class DeviceConnectionRegistry {
 
   async getOrCreate(
     deviceId: string,
-    ws: ServerWebSocket<ClientState>
+    session: GatewaySession
   ): Promise<DeviceConnectionEntry | null> {
     if (this.closed) return null;
 
@@ -108,7 +107,7 @@ export class DeviceConnectionRegistry {
 
     const generation = this.generation;
     const creationPromise: Promise<DeviceConnectionEntry | null> = this.host
-      .createDeviceConnectionEntry(deviceId, ws)
+      .createDeviceConnectionEntry(deviceId, session)
       .then((createdEntry) => {
         if (this.closed || this.generation !== generation) {
           if (createdEntry) {
@@ -143,7 +142,7 @@ export class DeviceConnectionRegistry {
 
   async createEntry(
     deviceId: string,
-    ws: ServerWebSocket<ClientState>
+    session: GatewaySession
   ): Promise<DeviceConnectionEntry | null> {
     let runtime: DeviceSessionRuntime | null = null;
     let detachRuntime: (() => void) | null = null;
@@ -175,7 +174,7 @@ export class DeviceConnectionRegistry {
       }
       const errorInfo = classifySshError(err instanceof Error ? err : new Error(String(err)));
       this.host.sendEnvelope(
-        ws,
+        session,
         wsBorsh.KIND_DEVICE_EVENT,
         wsBorsh.encodeDeviceEventPayload({
           deviceId,
@@ -189,48 +188,48 @@ export class DeviceConnectionRegistry {
     }
   }
 
-  async handleDeviceConnect(ws: ServerWebSocket<ClientState>, deviceId: string): Promise<void> {
-    const entry = await this.getOrCreate(deviceId, ws);
+  async handleDeviceConnect(session: GatewaySession, deviceId: string): Promise<void> {
+    const entry = await this.getOrCreate(deviceId, session);
     if (!entry) return;
 
-    entry.clients.add(ws);
+    entry.clients.add(session);
     this.clearIdleReleaseTimer(entry);
-    ws.data.borshState.selectedPanes[deviceId] ??= null;
+    session.borshState.selectedPanes[deviceId] ??= null;
 
-    const canonicalSession = this.host.canonicalSessions.get(ws);
+    const canonicalSession = this.host.canonicalSessions.get(session);
     if (canonicalSession) await canonicalSession.attachDevice(deviceId, entry.runtime);
 
     const connectedPayload = wsBorsh.encodePayload(wsBorsh.schema.DeviceConnectedSchema, {
       deviceId,
     });
-    this.host.sendEnvelope(ws, wsBorsh.KIND_DEVICE_CONNECTED, connectedPayload);
+    this.host.sendEnvelope(session, wsBorsh.KIND_DEVICE_CONNECTED, connectedPayload);
 
     if (entry.lastSnapshot) {
-      if (!entry.canonicalClients?.has(ws)) {
+      if (!entry.canonicalClients?.has(session)) {
         const snapshotBytes = this.host.encodeSnapshotWithOverlays(entry.lastSnapshot);
-        this.host.sendChunked(ws, wsBorsh.KIND_STATE_SNAPSHOT, snapshotBytes);
+        this.host.sendChunked(session, wsBorsh.KIND_STATE_SNAPSHOT, snapshotBytes);
       }
     } else {
       entry.runtime.requestSnapshot();
     }
   }
 
-  handleDeviceDisconnect(ws: ServerWebSocket<ClientState>, deviceId: string): void {
-    this.host.canonicalSessions.get(ws)?.detachDevice(deviceId);
+  handleDeviceDisconnect(session: GatewaySession, deviceId: string): void {
+    this.host.canonicalSessions.get(session)?.detachDevice(deviceId);
     const entry = this.connections.get(deviceId);
     if (entry) {
-      entry.clients.delete(ws);
+      entry.clients.delete(session);
       this.clearSnapshotPollTimer(entry);
       this.scheduleConnectionEntryRelease(deviceId, entry);
     }
 
-    delete ws.data.borshState.selectedPanes[deviceId];
-    delete ws.data.borshState.subscribedPanes[deviceId];
+    delete session.borshState.selectedPanes[deviceId];
+    delete session.borshState.subscribedPanes[deviceId];
 
     const disconnectedPayload = wsBorsh.encodePayload(wsBorsh.schema.DeviceDisconnectedSchema, {
       deviceId,
     });
-    this.host.sendEnvelope(ws, wsBorsh.KIND_DEVICE_DISCONNECTED, disconnectedPayload);
+    this.host.sendEnvelope(session, wsBorsh.KIND_DEVICE_DISCONNECTED, disconnectedPayload);
   }
 
   async handleConnectionClose(deviceId: string): Promise<void> {
@@ -339,7 +338,7 @@ export class DeviceConnectionRegistry {
       this.host.canonicalSessions.get(client)?.detachDevice(deviceId);
     }
     for (const client of entry.clients) {
-      delete client.data.borshState.selectedPanes[deviceId];
+      delete client.borshState.selectedPanes[deviceId];
     }
     entry.clients.clear();
     entry.canonicalClients?.clear();

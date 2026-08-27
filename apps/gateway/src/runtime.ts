@@ -23,6 +23,7 @@ import { registerThemeBroadcaster } from './tmux/theme-broadcaster';
 import { watchService } from './watch/service';
 import { weixinService } from './weixin/service';
 import { WebSocketServer } from './ws';
+import type { GatewaySocketData } from './ws/types';
 import { GATEWAY_WS_BACKPRESSURE_LIMIT_BYTES } from './ws/websocket-send-guard';
 
 interface GatewayRuntimeOptions {
@@ -146,16 +147,16 @@ export async function createGatewayRuntime(
       backpressureLimit: GATEWAY_WS_BACKPRESSURE_LIMIT_BYTES,
       closeOnBackpressureLimit: true,
       open(ws) {
-        wsServer.handleOpen(ws as any);
+        wsServer.handleOpen(ws as Bun.ServerWebSocket<GatewaySocketData>);
       },
       message(ws, message) {
-        wsServer.handleMessage(ws as any, message);
+        wsServer.handleMessage(ws as Bun.ServerWebSocket<GatewaySocketData>, message);
       },
       drain(ws) {
-        wsServer.handleDrain(ws as any);
+        wsServer.handleDrain(ws as Bun.ServerWebSocket<GatewaySocketData>);
       },
       close(ws, _code, _reason) {
-        wsServer.handleClose(ws as any);
+        wsServer.handleClose(ws as Bun.ServerWebSocket<GatewaySocketData>);
       },
     },
     onRestartRequested(listener) {

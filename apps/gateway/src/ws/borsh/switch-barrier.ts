@@ -2,25 +2,20 @@
 // 处理 TMUX_SELECT 事务: ACK -> HISTORY -> LIVE_RESUME
 // 参考: docs/terminal/2026021404-terminal-switch-barrier-design.md
 
-import type { ServerWebSocket } from 'bun';
+import type { GatewaySession } from '../gateway-session';
 import { gatewayWebSocketSendGuard } from '../websocket-send-guard';
 import {
-  type BorshClientState,
   encodeLiveResume,
   encodeSwitchAck,
   encodeTermHistory,
   encodeTermOutput,
   sendToClient,
 } from './codec-borsh';
-import { type SessionState, sessionStateStore } from './session-state';
-
-// ========== 配置 ==========
+import { sessionStateStore } from './session-state';
 
 const SWITCH_ACK_TIMEOUT_MS = 1500;
 const HISTORY_TIMEOUT_MS = 1500;
 const LIVE_RESUME_DELAY_MS = 450;
-
-// ========== 切换屏障管理器 ==========
 
 export interface SwitchBarrierContext {
   deviceId: string;
@@ -39,18 +34,14 @@ export interface SwitchBarrierCallbacks {
   onTimeout?: (stage: 'ack' | 'history') => void;
 }
 
+type PendingTransaction = {
+  context: SwitchBarrierContext;
+  callbacks: SwitchBarrierCallbacks;
+  timers: ReturnType<typeof setTimeout>[];
+};
+
 export class SwitchBarrier {
-  private pendingTransactions = new Map<
-    ServerWebSocket<unknown>,
-    Map<
-      string, // deviceId
-      {
-        context: SwitchBarrierContext;
-        callbacks: SwitchBarrierCallbacks;
-        timers: ReturnType<typeof setTimeout>[];
-      }
-    >
-  >();
+  private pendingTransactions = new Map<GatewaySession, Map<string, PendingTransaction>>();
 
   private tokensEqual(a: Uint8Array, b: Uint8Array): boolean {
     if (a.length !== b.length) return false;
@@ -60,60 +51,49 @@ export class SwitchBarrier {
     return true;
   }
 
-  private getOrCreateDeviceMap(ws: ServerWebSocket<unknown>): Map<
-    string,
-    {
-      context: SwitchBarrierContext;
-      callbacks: SwitchBarrierCallbacks;
-      timers: ReturnType<typeof setTimeout>[];
-    }
-  > {
-    const existing = this.pendingTransactions.get(ws);
+  private getOrCreateDeviceMap(session: GatewaySession): Map<string, PendingTransaction> {
+    const existing = this.pendingTransactions.get(session);
     if (existing) return existing;
-    const created = new Map();
-    this.pendingTransactions.set(ws, created);
+    const created = new Map<string, PendingTransaction>();
+    this.pendingTransactions.set(session, created);
     return created;
   }
 
-  private getPending(ws: ServerWebSocket<unknown>, deviceId: string) {
-    return this.pendingTransactions.get(ws)?.get(deviceId);
+  private getPending(session: GatewaySession, deviceId: string) {
+    return this.pendingTransactions.get(session)?.get(deviceId);
   }
 
-  private setPending(
-    ws: ServerWebSocket<unknown>,
-    deviceId: string,
-    value: {
-      context: SwitchBarrierContext;
-      callbacks: SwitchBarrierCallbacks;
-      timers: ReturnType<typeof setTimeout>[];
-    }
-  ): void {
-    this.getOrCreateDeviceMap(ws).set(deviceId, value);
+  private setPending(session: GatewaySession, deviceId: string, value: PendingTransaction): void {
+    this.getOrCreateDeviceMap(session).set(deviceId, value);
   }
 
-  private deletePending(ws: ServerWebSocket<unknown>, deviceId: string): void {
-    const map = this.pendingTransactions.get(ws);
+  private deletePending(session: GatewaySession, deviceId: string): void {
+    const map = this.pendingTransactions.get(session);
     if (!map) return;
     map.delete(deviceId);
     if (map.size === 0) {
-      this.pendingTransactions.delete(ws);
+      this.pendingTransactions.delete(session);
     }
+  }
+
+  private sendOnSession(session: GatewaySession, data: Uint8Array | Uint8Array[]): boolean {
+    const borshState = session.borshState;
+    if (!borshState) return false;
+    return sendToClient(session.activeCarrier, data, borshState.maxFrameBytes);
   }
 
   /**
    * 启动一个新的选择事务
    */
   startTransaction(
-    ws: ServerWebSocket<unknown & { borshState?: BorshClientState }>,
+    session: GatewaySession,
     context: SwitchBarrierContext,
     callbacks: SwitchBarrierCallbacks = {}
   ): boolean {
-    // 取消任何进行中的事务
-    this.cancelTransaction(ws, context.deviceId);
+    this.cancelTransaction(session, context.deviceId);
 
-    // 初始化状态机
     const started = sessionStateStore.startSelectTransaction(
-      ws,
+      session,
       context.deviceId,
       context.windowId,
       context.paneId,
@@ -127,14 +107,13 @@ export class SwitchBarrier {
 
     const timers: ReturnType<typeof setTimeout>[] = [];
 
-    // 设置超时定时器
     timers.push(
       setTimeout(() => {
-        this.handleTimeout(ws, context.deviceId, 'ack', context.selectToken);
+        this.handleTimeout(session, context.deviceId, 'ack', context.selectToken);
       }, SWITCH_ACK_TIMEOUT_MS)
     );
 
-    this.setPending(ws, context.deviceId, {
+    this.setPending(session, context.deviceId, {
       context,
       callbacks,
       timers,
@@ -146,31 +125,25 @@ export class SwitchBarrier {
   /**
    * 发送 SWITCH_ACK
    */
-  sendSwitchAck(
-    ws: ServerWebSocket<unknown & { borshState?: BorshClientState }>,
-    deviceId: string
-  ): void {
-    const pending = this.getPending(ws, deviceId);
+  sendSwitchAck(session: GatewaySession, deviceId: string): void {
+    const pending = this.getPending(session, deviceId);
     if (!pending) return;
-    const selectState = sessionStateStore.getOrCreateSelectTransaction(ws, deviceId)?.state;
+    const selectState = sessionStateStore.getOrCreateSelectTransaction(session, deviceId)?.state;
     if (selectState !== 'SELECTING') {
       return;
     }
 
     const { context } = pending;
-    const borshState = ws.data?.borshState;
+    const borshState = session.borshState;
     if (!borshState) return;
 
-    // 清除 ACK 超时定时器
     const ackTimer = pending.timers.shift();
     if (ackTimer) clearTimeout(ackTimer);
 
-    // 更新状态机
-    if (!sessionStateStore.transitionSelectState(ws, deviceId, 'ACKED')) {
+    if (!sessionStateStore.transitionSelectState(session, deviceId, 'ACKED')) {
       return;
     }
 
-    // 发送 ACK
     const seq = borshState.seqGen();
     const ackData = encodeSwitchAck(
       {
@@ -182,25 +155,23 @@ export class SwitchBarrier {
       seq
     );
 
-    if (!sendToClient(ws, ackData)) {
-      gatewayWebSocketSendGuard.markStreamGap(ws);
-      this.completeTransaction(ws, deviceId);
+    if (!this.sendOnSession(session, ackData)) {
+      gatewayWebSocketSendGuard.markStreamGap(session.activeCarrier);
+      this.completeTransaction(session, deviceId);
       return;
     }
 
-    // 设置 HISTORY 超时
     if (context.wantHistory) {
       pending.timers.push(
         setTimeout(() => {
-          this.handleTimeout(ws, deviceId, 'history', context.selectToken);
+          this.handleTimeout(session, deviceId, 'history', context.selectToken);
         }, HISTORY_TIMEOUT_MS)
       );
     } else {
-      // 不需要 history，也要延迟解除屏障，给“快速连续切换”留出取消窗口。
       const expectedToken = context.selectToken;
       pending.timers.push(
         setTimeout(() => {
-          this.sendLiveResume(ws, deviceId, expectedToken);
+          this.sendLiveResume(session, deviceId, expectedToken);
         }, LIVE_RESUME_DELAY_MS)
       );
     }
@@ -212,16 +183,16 @@ export class SwitchBarrier {
    * 发送 TERM_HISTORY
    */
   sendTermHistory(
-    ws: ServerWebSocket<unknown & { borshState?: BorshClientState }>,
+    session: GatewaySession,
     deviceId: string,
     paneId: string,
     historyData: Uint8Array,
     alternateScreen: boolean,
     modes: number
   ): void {
-    const pending = this.getPending(ws, deviceId);
+    const pending = this.getPending(session, deviceId);
     if (!pending) return;
-    const selectState = sessionStateStore.getOrCreateSelectTransaction(ws, deviceId)?.state;
+    const selectState = sessionStateStore.getOrCreateSelectTransaction(session, deviceId)?.state;
     if (selectState !== 'ACKED') {
       return;
     }
@@ -230,19 +201,16 @@ export class SwitchBarrier {
     if (context.paneId !== paneId) {
       return;
     }
-    const borshState = ws.data?.borshState;
+    const borshState = session.borshState;
     if (!borshState) return;
 
-    // 清除 HISTORY 超时定时器
     const historyTimer = pending.timers.shift();
     if (historyTimer) clearTimeout(historyTimer);
 
-    // 更新状态机。重复 history 直接丢弃，避免重复发包。
-    if (!sessionStateStore.transitionSelectState(ws, deviceId, 'HISTORY_APPLIED')) {
+    if (!sessionStateStore.transitionSelectState(session, deviceId, 'HISTORY_APPLIED')) {
       return;
     }
 
-    // 发送 HISTORY
     const historyMessages = encodeTermHistory(
       {
         deviceId,
@@ -257,19 +225,18 @@ export class SwitchBarrier {
       borshState.maxFrameBytes
     );
 
-    if (!sendToClient(ws, historyMessages)) {
-      gatewayWebSocketSendGuard.markStreamGap(ws);
-      this.completeTransaction(ws, deviceId);
+    if (!this.sendOnSession(session, historyMessages)) {
+      gatewayWebSocketSendGuard.markStreamGap(session.activeCarrier);
+      this.completeTransaction(session, deviceId);
       return;
     }
 
     pending.callbacks.onHistorySent?.();
 
-    // history 发送完成后延迟解除屏障，给“快速连续切换”留出取消窗口。
     const expectedToken = context.selectToken;
     pending.timers.push(
       setTimeout(() => {
-        this.sendLiveResume(ws, deviceId, expectedToken);
+        this.sendLiveResume(session, deviceId, expectedToken);
       }, LIVE_RESUME_DELAY_MS)
     );
   }
@@ -277,14 +244,10 @@ export class SwitchBarrier {
   /**
    * 发送 LIVE_RESUME
    */
-  sendLiveResume(
-    ws: ServerWebSocket<unknown & { borshState?: BorshClientState }>,
-    deviceId: string,
-    expectedToken?: Uint8Array
-  ): void {
-    const pending = this.getPending(ws, deviceId);
+  sendLiveResume(session: GatewaySession, deviceId: string, expectedToken?: Uint8Array): void {
+    const pending = this.getPending(session, deviceId);
     if (!pending) return;
-    const selectState = sessionStateStore.getOrCreateSelectTransaction(ws, deviceId)?.state;
+    const selectState = sessionStateStore.getOrCreateSelectTransaction(session, deviceId)?.state;
     if (selectState !== 'ACKED' && selectState !== 'HISTORY_APPLIED') {
       return;
     }
@@ -293,24 +256,20 @@ export class SwitchBarrier {
     if (expectedToken && !this.tokensEqual(context.selectToken, expectedToken)) {
       return;
     }
-    const borshState = ws.data?.borshState;
+    const borshState = session.borshState;
     if (!borshState) return;
 
-    // 清除所有定时器
     for (const timer of pending.timers) {
       clearTimeout(timer);
     }
     pending.timers = [];
 
-    // 更新状态机到 LIVE
-    if (!sessionStateStore.transitionSelectState(ws, deviceId, 'LIVE')) {
+    if (!sessionStateStore.transitionSelectState(session, deviceId, 'LIVE')) {
       return;
     }
 
-    // 获取缓冲的输出
-    const bufferedOutput = sessionStateStore.stopOutputBuffering(ws, deviceId);
+    const bufferedOutput = sessionStateStore.stopOutputBuffering(session, deviceId);
 
-    // 发送 LIVE_RESUME
     const seq = borshState.seqGen();
     const liveResumeData = encodeLiveResume(
       {
@@ -321,13 +280,12 @@ export class SwitchBarrier {
       seq
     );
 
-    if (!sendToClient(ws, liveResumeData)) {
-      gatewayWebSocketSendGuard.markStreamGap(ws);
-      this.completeTransaction(ws, deviceId);
+    if (!this.sendOnSession(session, liveResumeData)) {
+      gatewayWebSocketSendGuard.markStreamGap(session.activeCarrier);
+      this.completeTransaction(session, deviceId);
       return;
     }
 
-    // flush 缓冲输出（LIVE_RESUME 之后发送，保证顺序）
     for (const data of bufferedOutput) {
       const outputSeq = borshState.seqGen();
       const outputData = encodeTermOutput(
@@ -339,46 +297,31 @@ export class SwitchBarrier {
         },
         outputSeq
       );
-      if (!sendToClient(ws, outputData)) {
-        gatewayWebSocketSendGuard.markStreamGap(ws);
+      if (!this.sendOnSession(session, outputData)) {
+        gatewayWebSocketSendGuard.markStreamGap(session.activeCarrier);
         break;
       }
     }
 
-    // 完成事务
-    this.completeTransaction(ws, deviceId);
+    this.completeTransaction(session, deviceId);
 
     pending.callbacks.onLiveResumed?.();
   }
 
-  /**
-   * 获取当前 ACKED 事务的目标 paneId，用于 history 路由。
-   *
-   * 仅在事务处于 ACKED 阶段时返回 context.paneId，其他状态或无事务返回 null。
-   * broadcastTerminalHistory 在 selectedPanes 检查之前调用此方法路由 barrier history：
-   * split 翻转后前端 focusPane 把 selectedPanes 改为新 pane，但旧 pane 的 barrier
-   * 事务仍卡在 ACKED，按事务 context.paneId 路由才能保证 history 投递到 barrier 而不被丢弃。
-   */
-  getTransactionPaneId(ws: ServerWebSocket<unknown>, deviceId: string): string | null {
-    const pending = this.getPending(ws, deviceId);
+  getTransactionPaneId(session: GatewaySession, deviceId: string): string | null {
+    const pending = this.getPending(session, deviceId);
     if (!pending) return null;
-    const selectState = sessionStateStore.getOrCreateSelectTransaction(ws, deviceId)?.state;
+    const selectState = sessionStateStore.getOrCreateSelectTransaction(session, deviceId)?.state;
     if (selectState !== 'ACKED') return null;
     return pending.context.paneId;
   }
 
-  /**
-   * 获取当前事务的 token
-   */
-  getSelectToken(ws: ServerWebSocket<unknown>, deviceId: string): Uint8Array | null {
-    return this.getPending(ws, deviceId)?.context.selectToken ?? null;
+  getSelectToken(session: GatewaySession, deviceId: string): Uint8Array | null {
+    return this.getPending(session, deviceId)?.context.selectToken ?? null;
   }
 
-  /**
-   * 验证 token 是否匹配当前事务
-   */
-  validateToken(ws: ServerWebSocket<unknown>, deviceId: string, token: Uint8Array): boolean {
-    const currentToken = this.getSelectToken(ws, deviceId);
+  validateToken(session: GatewaySession, deviceId: string, token: Uint8Array): boolean {
+    const currentToken = this.getSelectToken(session, deviceId);
     if (!currentToken) return false;
 
     if (currentToken.length !== token.length) return false;
@@ -388,30 +331,21 @@ export class SwitchBarrier {
     return true;
   }
 
-  /**
-   * 检查是否应该缓冲输出
-   */
-  shouldBufferOutput(ws: ServerWebSocket<unknown>, deviceId: string): boolean {
-    return sessionStateStore.isBuffering(ws, deviceId);
+  shouldBufferOutput(session: GatewaySession, deviceId: string): boolean {
+    return sessionStateStore.isBuffering(session, deviceId);
   }
 
-  /**
-   * 缓冲输出数据
-   */
-  bufferOutput(ws: ServerWebSocket<unknown>, deviceId: string, data: Uint8Array): boolean {
-    return sessionStateStore.bufferOutput(ws, deviceId, data);
+  bufferOutput(session: GatewaySession, deviceId: string, data: Uint8Array): boolean {
+    return sessionStateStore.bufferOutput(session, deviceId, data);
   }
 
-  /**
-   * 处理超时
-   */
   private handleTimeout(
-    ws: ServerWebSocket<unknown>,
+    session: GatewaySession,
     deviceId: string,
     stage: 'ack' | 'history',
     expectedToken?: Uint8Array
   ): void {
-    const pending = this.getPending(ws, deviceId);
+    const pending = this.getPending(session, deviceId);
     if (!pending) return;
     if (expectedToken && !this.tokensEqual(pending.context.selectToken, expectedToken)) {
       return;
@@ -420,75 +354,52 @@ export class SwitchBarrier {
     console.warn(`[switch-barrier] Transaction timeout at stage: ${stage} for ${deviceId}`);
 
     if (stage === 'history') {
-      // history 超时: 允许无 history 进入 live，保证不阻塞
-      this.sendLiveResume(ws as any, deviceId, expectedToken);
-      // 兜底: sendLiveResume 可能提前 return 未解除门控, 这里无条件解除避免永久 BUFFERING
-      sessionStateStore.stopOutputBuffering(ws, deviceId);
+      this.sendLiveResume(session, deviceId, expectedToken);
+      sessionStateStore.stopOutputBuffering(session, deviceId);
       pending.callbacks.onTimeout?.(stage);
       return;
     }
 
-    // ACK 超时视为失败
-    sessionStateStore.transitionSelectState(ws, deviceId, 'SELECT_FAILED');
-    sessionStateStore.stopOutputBuffering(ws, deviceId);
+    sessionStateStore.transitionSelectState(session, deviceId, 'SELECT_FAILED');
+    sessionStateStore.stopOutputBuffering(session, deviceId);
 
-    // 回调
     pending.callbacks.onTimeout?.(stage);
 
-    // 清理事务
-    this.cleanupTransaction(ws, deviceId);
+    this.cleanupTransaction(session, deviceId);
   }
 
-  /**
-   * 取消进行中的事务
-   */
-  cancelTransaction(ws: ServerWebSocket<unknown>, deviceId: string): void {
-    const pending = this.getPending(ws, deviceId);
+  cancelTransaction(session: GatewaySession, deviceId: string): void {
+    const pending = this.getPending(session, deviceId);
     if (!pending) return;
 
-    // 清除定时器
     for (const timer of pending.timers) {
       clearTimeout(timer);
     }
 
-    // 解除输出门控
-    sessionStateStore.stopOutputBuffering(ws, deviceId);
+    sessionStateStore.stopOutputBuffering(session, deviceId);
 
-    // 清理
-    this.cleanupTransaction(ws, deviceId);
+    this.cleanupTransaction(session, deviceId);
   }
 
-  /**
-   * 完成事务
-   */
-  private completeTransaction(ws: ServerWebSocket<unknown>, deviceId: string): void {
-    // 更新状态机为 STABLE
-    if (!sessionStateStore.transitionSelectState(ws, deviceId, 'STABLE')) {
+  private completeTransaction(session: GatewaySession, deviceId: string): void {
+    if (!sessionStateStore.transitionSelectState(session, deviceId, 'STABLE')) {
       return;
     }
 
-    // 清理
-    this.cleanupTransaction(ws, deviceId);
+    this.cleanupTransaction(session, deviceId);
   }
 
-  /**
-   * 清理事务数据
-   */
-  private cleanupTransaction(ws: ServerWebSocket<unknown>, deviceId: string): void {
-    this.deletePending(ws, deviceId);
+  private cleanupTransaction(session: GatewaySession, deviceId: string): void {
+    this.deletePending(session, deviceId);
   }
 
-  /**
-   * 清理客户端的所有事务
-   */
-  cleanupClient(ws: ServerWebSocket<unknown>): void {
-    const deviceMap = this.pendingTransactions.get(ws);
+  cleanupClient(session: GatewaySession): void {
+    const deviceMap = this.pendingTransactions.get(session);
     if (!deviceMap) return;
     for (const deviceId of Array.from(deviceMap.keys())) {
-      this.cancelTransaction(ws, deviceId);
+      this.cancelTransaction(session, deviceId);
     }
   }
 }
 
-// 全局单例
 export const switchBarrier = new SwitchBarrier();

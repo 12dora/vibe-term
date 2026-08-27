@@ -1,16 +1,16 @@
 import type { EventType, ThemeMode, WebhookEvent } from '@tmex/shared';
 import { getTmuxWindowStyle, wsBorsh } from '@tmex/shared';
-import type { ServerWebSocket } from 'bun';
 import { updateSiteSettings } from '../db';
 import type { SettingsNamespace } from '../settings/broadcaster';
-import type { ClientState, DeviceConnectionEntry } from './types';
+import type { GatewaySession } from './gateway-session';
+import type { DeviceConnectionEntry } from './types';
 
 export interface ThemeSettingsHost {
-  readonly connectedClients: Set<ServerWebSocket<ClientState>>;
+  readonly connectedClients: Set<GatewaySession>;
   readonly connections: Map<string, DeviceConnectionEntry>;
-  sendEnvelope(ws: ServerWebSocket<ClientState>, kind: number, payload: Uint8Array): void;
+  sendEnvelope(session: GatewaySession, kind: number, payload: Uint8Array): void;
   sendError(
-    ws: ServerWebSocket<ClientState>,
+    session: GatewaySession,
     refSeq: number | null,
     code: number,
     message: string,
@@ -35,12 +35,12 @@ export class ThemeSettingsBroadcaster {
   }
 
   handleSiteThemeUpdate(
-    ws: ServerWebSocket<ClientState>,
+    session: GatewaySession,
     decoded: wsBorsh.b.infer<typeof wsBorsh.schema.SiteThemeUpdateC2SSchema>
   ): void {
     if (decoded.theme !== wsBorsh.SITE_THEME_DARK && decoded.theme !== wsBorsh.SITE_THEME_LIGHT) {
       this.host.sendError(
-        ws,
+        session,
         null,
         wsBorsh.ERROR_PAYLOAD_DECODE_FAILED,
         `invalid theme value: ${decoded.theme}`,

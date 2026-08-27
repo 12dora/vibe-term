@@ -22,21 +22,19 @@ import {
   createBorshKindHandlers,
   dispatchBorshKind,
 } from './borsh-dispatcher';
-import {
-  createBorshClientState,
-  encodeCanonicalEvent,
-  encodePayloadFrames,
-  sendToClient,
-} from './borsh/codec-borsh';
+import { encodeCanonicalEvent, encodePayloadFrames, sendToClient } from './borsh/codec-borsh';
 import { sessionStateStore } from './borsh/session-state';
 import { switchBarrier } from './borsh/switch-barrier';
 import { CanonicalFeedSession } from './canonical-feed-session';
+import type { Carrier } from './carrier';
+import { BunSocketCarrier } from './carrier';
 import {
   DeviceConnectionRegistry,
   type DeviceConnectionRegistryHost,
 } from './device-connection-registry';
 import { GatewayActivityMetrics } from './gateway-activity-metrics';
 import { type GatewayMetricsHost, logTerminalOutputMetricsIfDue } from './gateway-metrics-log';
+import { GatewaySession } from './gateway-session';
 import { LegacyFeedBroadcaster, type LegacyFeedHost } from './legacy-feed-broadcaster';
 import { type SnapshotOverlayHost, SnapshotOverlayStore } from './snapshot-overlays';
 import { TerminalOutputBatcher } from './terminal-output-batcher';
@@ -45,8 +43,8 @@ import { ThemeSettingsBroadcaster, type ThemeSettingsHost } from './theme-settin
 import type { TmuxCommandHost } from './tmux-command-handlers';
 import * as tmuxCommands from './tmux-command-handlers';
 import {
-  type ClientState,
   type DeviceConnectionEntry,
+  type GatewaySocketData,
   type WebSocketServerDeps,
   type WebSocketServerOptions,
   defaultDeps,
@@ -79,8 +77,8 @@ export class WebSocketServer
     }
   });
 
-  connectedClients = new Set<ServerWebSocket<ClientState>>();
-  readonly canonicalSessions = new Map<ServerWebSocket<ClientState>, CanonicalFeedSession>();
+  connectedClients = new Set<GatewaySession>();
+  readonly canonicalSessions = new Map<GatewaySession, CanonicalFeedSession>();
   readonly deps: WebSocketServerDeps;
   private readonly registry: DeviceConnectionRegistry;
   private readonly theme: ThemeSettingsBroadcaster;
@@ -139,29 +137,55 @@ export class WebSocketServer
     }
 
     const success = server.upgrade(req, {
-      data: {
-        borshState: createBorshClientState(),
-      } satisfies ClientState,
+      data: {} as GatewaySocketData,
     });
 
     return success ? undefined : new Response('Upgrade failed', { status: 500 });
   }
 
-  handleOpen(ws: ServerWebSocket<ClientState>): void {
-    console.log('[ws] client connected');
-    sessionStateStore.create(ws);
-    this.connectedClients.add(ws);
+  private bindSocket(ws: ServerWebSocket<GatewaySocketData>): GatewaySession {
+    if (ws.data?.session instanceof GatewaySession) {
+      return ws.data.session;
+    }
+    const carrier = new BunSocketCarrier(ws);
+    const session = new GatewaySession({ primary: carrier });
+    ws.data = { session, carrier };
+    return session;
   }
 
-  handleMessage(ws: ServerWebSocket<ClientState>, message: string | Buffer): void {
+  private bindingOf(ws: ServerWebSocket<GatewaySocketData> | GatewaySession): {
+    session: GatewaySession;
+    carrier: Carrier;
+  } {
+    if (ws instanceof GatewaySession) {
+      return { session: ws, carrier: ws.activeCarrier };
+    }
+    return {
+      session: ws.data.session,
+      carrier: ws.data.carrier,
+    };
+  }
+
+  handleOpen(ws: ServerWebSocket<GatewaySocketData> | GatewaySession): void {
+    console.log('[ws] client connected');
+    const session = ws instanceof GatewaySession ? ws : this.bindSocket(ws);
+    sessionStateStore.create(session);
+    this.connectedClients.add(session);
+  }
+
+  handleMessage(
+    ws: ServerWebSocket<GatewaySocketData> | GatewaySession,
+    message: string | Buffer
+  ): void {
     if (typeof message === 'string') {
       return;
     }
 
+    const { session } = this.bindingOf(ws);
     const data = new Uint8Array(message);
 
     if (!wsBorsh.checkMagic(data)) {
-      this.sendError(ws, null, wsBorsh.ERROR_INVALID_FRAME, 'Missing magic bytes', false);
+      this.sendError(session, null, wsBorsh.ERROR_INVALID_FRAME, 'Missing magic bytes', false);
       return;
     }
 
@@ -171,7 +195,7 @@ export class WebSocketServer
     } catch (err) {
       const e = err instanceof wsBorsh.WsBorshError ? err : null;
       this.sendError(
-        ws,
+        session,
         null,
         e?.code ?? wsBorsh.ERROR_INVALID_FRAME,
         e?.message ?? 'Invalid envelope',
@@ -180,7 +204,7 @@ export class WebSocketServer
       return;
     }
 
-    const clientState = ws.data.borshState;
+    const clientState = session.borshState;
 
     if (envelope.kind === wsBorsh.KIND_CHUNK) {
       try {
@@ -189,12 +213,17 @@ export class WebSocketServer
         if (!reassembled) {
           return;
         }
-        void this.handleBorshMessage(ws, reassembled.kind, reassembled.seq, reassembled.payload);
+        void this.handleBorshMessage(
+          session,
+          reassembled.kind,
+          reassembled.seq,
+          reassembled.payload
+        );
         return;
       } catch (err) {
         const e = err instanceof wsBorsh.WsBorshError ? err : null;
         this.sendError(
-          ws,
+          session,
           null,
           e?.code ?? wsBorsh.ERROR_INVALID_FRAME,
           e?.message ?? 'Invalid chunk',
@@ -204,64 +233,75 @@ export class WebSocketServer
       }
     }
 
-    void this.handleBorshMessage(ws, envelope.kind, envelope.seq, envelope.payload);
+    void this.handleBorshMessage(session, envelope.kind, envelope.seq, envelope.payload);
   }
 
-  handleDrain(ws: ServerWebSocket<ClientState>): void {
-    gatewayWebSocketSendGuard.handleDrain(ws as ServerWebSocket<unknown>);
-    this.canonicalSessions.get(ws)?.onDrain();
+  handleDrain(ws: ServerWebSocket<GatewaySocketData> | GatewaySession, carrier?: Carrier): void {
+    const binding = this.bindingOf(ws);
+    const session = binding.session;
+    const drained = carrier ?? binding.carrier;
+    if (drained instanceof BunSocketCarrier) {
+      drained.emitDrain();
+    }
+    gatewayWebSocketSendGuard.handleDrain(drained);
+    if (!session.handleCarrierDrain(drained)) {
+      return;
+    }
+    this.canonicalSessions.get(session)?.onDrain();
   }
 
-  getOrCreateCanonicalSession(ws: ServerWebSocket<ClientState>): CanonicalFeedSession {
-    const existing = this.canonicalSessions.get(ws);
+  getOrCreateCanonicalSession(session: GatewaySession): CanonicalFeedSession {
+    const existing = this.canonicalSessions.get(session);
     if (existing) return existing;
-    const session = new CanonicalFeedSession({
-      maxFrameBytes: ws.data.borshState.maxFrameBytes,
-      sendEvent: (event) => this.sendCanonicalEvent(ws, event),
+    const canonical = new CanonicalFeedSession({
+      maxFrameBytes: session.borshState.maxFrameBytes,
+      sendEvent: (event) => this.sendCanonicalEvent(session, event),
       resolveRuntime: async (deviceId) => {
-        const entry = await this.getOrCreateConnectionEntry(deviceId, ws);
+        const entry = await this.getOrCreateConnectionEntry(deviceId, session);
         if (!entry) return null;
         entry.canonicalClients ??= new Set();
-        entry.canonicalClients.add(ws);
+        entry.canonicalClients.add(session);
         this.registry.clearIdleReleaseTimer(entry);
         return entry.runtime;
       },
       initialDeviceIds: () =>
         Array.from(this.connections, ([deviceId, entry]) =>
-          entry.clients.has(ws) ? deviceId : null
+          entry.clients.has(session) ? deviceId : null
         ).filter((deviceId): deviceId is string => deviceId !== null),
       onDeviceAttached: (deviceId, runtime) => {
         const entry = this.connections.get(deviceId);
         if (!entry || entry.runtime !== runtime) return;
         entry.canonicalClients ??= new Set();
-        entry.canonicalClients.add(ws);
+        entry.canonicalClients.add(session);
         this.registry.clearIdleReleaseTimer(entry);
       },
       onDeviceDetached: (deviceId, runtime) => {
         const entry = this.connections.get(deviceId);
         if (!entry || entry.runtime !== runtime) return;
-        entry.canonicalClients?.delete(ws);
+        entry.canonicalClients?.delete(session);
         this.registry.scheduleConnectionEntryRelease(deviceId, entry);
       },
     });
-    this.canonicalSessions.set(ws, session);
-    return session;
+    this.canonicalSessions.set(session, canonical);
+    return canonical;
   }
 
   private sendCanonicalEvent(
-    ws: ServerWebSocket<ClientState>,
+    session: GatewaySession,
     event: wsBorsh.CanonicalEvent
   ): boolean | 'backpressured' {
     const terminalBytes = 'PaneData' in event ? event.PaneData.data.byteLength : null;
     try {
       const frame = encodeCanonicalEvent(
         event,
-        ws.data.borshState.seqGen(),
-        ws.data.borshState.maxFrameBytes
+        session.borshState.seqGen(),
+        session.borshState.maxFrameBytes
       );
-      const status = gatewayWebSocketSendGuard.sendFramesStatus(ws as ServerWebSocket<unknown>, [
-        frame as unknown as BufferSource,
-      ]);
+      const status = gatewayWebSocketSendGuard.sendFramesStatus(
+        session.activeCarrier,
+        [frame as unknown as BufferSource],
+        session.borshState.maxFrameBytes
+      );
       if (terminalBytes !== null) {
         this.terminalOutputMetrics.recordCanonicalRecipient(terminalBytes, status === 'sent');
       }
@@ -276,22 +316,36 @@ export class WebSocketServer
     }
   }
 
-  handleClose(ws: ServerWebSocket<ClientState>): void {
+  handleClose(ws: ServerWebSocket<GatewaySocketData> | GatewaySession): void {
     console.log('[ws] client disconnected');
+    const { session, carrier } = this.bindingOf(ws);
+    if (carrier !== session.primary && session.direct === carrier) {
+      session.detachCarrier(carrier);
+      gatewayWebSocketSendGuard.forget(carrier);
+      return;
+    }
+    this.closeSession(session);
+  }
 
-    this.canonicalSessions.get(ws)?.close();
-    this.canonicalSessions.delete(ws);
-    gatewayWebSocketSendGuard.forget(ws as ServerWebSocket<unknown>);
-    this.connectedClients.delete(ws);
-    switchBarrier.cleanupClient(ws);
-    sessionStateStore.cleanup(ws);
-    agentWsHub.removeClient(ws);
+  private closeSession(session: GatewaySession): void {
+    session.closed = true;
+    this.canonicalSessions.get(session)?.close();
+    this.canonicalSessions.delete(session);
+    gatewayWebSocketSendGuard.forget(session.activeCarrier);
+    gatewayWebSocketSendGuard.forget(session.primary);
+    if (session.direct) {
+      gatewayWebSocketSendGuard.forget(session.direct);
+    }
+    this.connectedClients.delete(session);
+    switchBarrier.cleanupClient(session);
+    sessionStateStore.cleanup(session);
+    agentWsHub.removeClient(session);
 
     for (const [deviceId, entry] of this.connections) {
-      entry.canonicalClients?.delete(ws);
-      if (entry.clients.delete(ws)) {
-        delete ws.data.borshState.selectedPanes[deviceId];
-        delete ws.data.borshState.subscribedPanes[deviceId];
+      entry.canonicalClients?.delete(session);
+      if (entry.clients.delete(session)) {
+        delete session.borshState.selectedPanes[deviceId];
+        delete session.borshState.subscribedPanes[deviceId];
       }
       this.refreshSnapshotPolling(deviceId);
       this.registry.scheduleConnectionEntryRelease(deviceId, entry);
@@ -314,13 +368,13 @@ export class WebSocketServer
   }
 
   async handleBorshMessage(
-    ws: ServerWebSocket<ClientState>,
+    ws: GatewaySession,
     kind: number,
     refSeq: number,
     payload: Uint8Array
   ): Promise<void> {
     try {
-      const state = ws.data.borshState;
+      const state = ws.borshState;
       this.gatewayActivityMetrics.recordInbound(kind, payload.length);
 
       if (kind !== wsBorsh.KIND_HELLO_C2S && !state.negotiated) {
@@ -355,7 +409,7 @@ export class WebSocketServer
     }
   }
 
-  private handleHello(ws: ServerWebSocket<ClientState>, refSeq: number, payload: Uint8Array): void {
+  private handleHello(ws: GatewaySession, refSeq: number, payload: Uint8Array): void {
     let hello: wsBorsh.b.infer<typeof wsBorsh.schema.HelloC2SSchema>;
     try {
       hello = wsBorsh.decodePayload(wsBorsh.schema.HelloC2SSchema, payload);
@@ -374,9 +428,9 @@ export class WebSocketServer
     const serverMaxFrameBytes = wsBorsh.DEFAULT_MAX_FRAME_BYTES;
     const effectiveMaxFrameBytes = Math.min(hello.maxFrameBytes, serverMaxFrameBytes);
 
-    ws.data.borshState.negotiated = true;
-    ws.data.borshState.clientImpl = hello.clientImpl.slice(0, 64);
-    ws.data.borshState.maxFrameBytes = effectiveMaxFrameBytes;
+    ws.borshState.negotiated = true;
+    ws.borshState.clientImpl = hello.clientImpl.slice(0, 64);
+    ws.borshState.maxFrameBytes = effectiveMaxFrameBytes;
     agentWsHub.registerClient(ws);
 
     const helloS2C: wsBorsh.b.infer<typeof wsBorsh.schema.HelloS2CSchema> = {
@@ -392,7 +446,7 @@ export class WebSocketServer
     this.sendEnvelope(ws, wsBorsh.KIND_HELLO_S2C, payloadBytes);
   }
 
-  private handlePing(ws: ServerWebSocket<ClientState>, refSeq: number, payload: Uint8Array): void {
+  private handlePing(ws: GatewaySession, refSeq: number, payload: Uint8Array): void {
     try {
       const ping = wsBorsh.decodePayload(wsBorsh.schema.PingPongSchema, payload);
       const pongPayload = wsBorsh.encodePayload(wsBorsh.schema.PingPongSchema, {
@@ -412,23 +466,25 @@ export class WebSocketServer
     }
   }
 
-  sendEnvelope(ws: ServerWebSocket<ClientState>, kind: number, payload: Uint8Array): void {
+  sendEnvelope(ws: GatewaySession, kind: number, payload: Uint8Array): void {
     this.sendChunked(ws, kind, payload);
   }
 
-  sendChunked(ws: ServerWebSocket<ClientState>, kind: number, payload: Uint8Array): boolean {
-    if (!gatewayWebSocketSendGuard.canSend(ws as ServerWebSocket<unknown>)) {
+  sendChunked(ws: GatewaySession, kind: number, payload: Uint8Array): boolean {
+    const carrier = ws.activeCarrier;
+    if (!gatewayWebSocketSendGuard.canSend(carrier)) {
       return false;
     }
-    const state = ws.data.borshState;
+    const state = ws.borshState;
     return sendToClient(
-      ws as ServerWebSocket<unknown>,
-      encodePayloadFrames(kind, payload, state.seqGen, state.maxFrameBytes)
+      carrier,
+      encodePayloadFrames(kind, payload, state.seqGen, state.maxFrameBytes),
+      state.maxFrameBytes
     );
   }
 
   sendError(
-    ws: ServerWebSocket<ClientState>,
+    ws: GatewaySession,
     refSeq: number | null,
     code: number,
     message: string,
@@ -445,14 +501,14 @@ export class WebSocketServer
 
   async getOrCreateConnectionEntry(
     deviceId: string,
-    ws: ServerWebSocket<ClientState>
+    ws: GatewaySession
   ): Promise<DeviceConnectionEntry | null> {
     return this.registry.getOrCreate(deviceId, ws);
   }
 
   async createDeviceConnectionEntry(
     deviceId: string,
-    ws: ServerWebSocket<ClientState>
+    ws: GatewaySession
   ): Promise<DeviceConnectionEntry | null> {
     return this.registry.createEntry(deviceId, ws);
   }
@@ -511,16 +567,16 @@ export class WebSocketServer
     this.registry.clearSnapshotPollTimer(entry);
   }
 
-  async handleDeviceConnect(ws: ServerWebSocket<ClientState>, deviceId: string): Promise<void> {
+  async handleDeviceConnect(ws: GatewaySession, deviceId: string): Promise<void> {
     await this.registry.handleDeviceConnect(ws, deviceId);
   }
 
-  handleDeviceDisconnect(ws: ServerWebSocket<ClientState>, deviceId: string): void {
+  handleDeviceDisconnect(ws: GatewaySession, deviceId: string): void {
     this.registry.handleDeviceDisconnect(ws, deviceId);
   }
 
   handleTmuxSelect(
-    ws: ServerWebSocket<ClientState>,
+    ws: GatewaySession,
     data: wsBorsh.b.infer<typeof wsBorsh.schema.TmuxSelectSchema>
   ): void {
     tmuxCommands.handleTmuxSelect(this, ws, data);
@@ -582,7 +638,7 @@ export class WebSocketServer
   }
 
   handleSiteThemeUpdate(
-    ws: ServerWebSocket<ClientState>,
+    ws: GatewaySession,
     decoded: wsBorsh.b.infer<typeof wsBorsh.schema.SiteThemeUpdateC2SSchema>
   ): void {
     this.theme.handleSiteThemeUpdate(ws, decoded);
@@ -624,16 +680,12 @@ export class WebSocketServer
     tmuxCommands.reorderPanes(this, deviceId, windowId, paneIds);
   }
 
-  handleSubscribePanes(
-    ws: ServerWebSocket<ClientState>,
-    deviceId: string,
-    paneIds: string[]
-  ): void {
+  handleSubscribePanes(ws: GatewaySession, deviceId: string, paneIds: string[]): void {
     tmuxCommands.handleSubscribePanes(this, ws, deviceId, paneIds);
   }
 
   handleFetchPaneHistory(
-    ws: ServerWebSocket<ClientState>,
+    ws: GatewaySession,
     deviceId: string,
     paneId: string,
     requestToken: Uint8Array
@@ -653,12 +705,7 @@ export class WebSocketServer
     tmuxCommands.handleSplitPane(this, deviceId, paneId, direction, cwd);
   }
 
-  handleFocusPane(
-    ws: ServerWebSocket<ClientState>,
-    deviceId: string,
-    windowId: string,
-    paneId: string
-  ): void {
+  handleFocusPane(ws: GatewaySession, deviceId: string, windowId: string, paneId: string): void {
     tmuxCommands.handleFocusPane(this, ws, deviceId, windowId, paneId);
   }
 

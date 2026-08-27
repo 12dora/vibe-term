@@ -1,7 +1,7 @@
 // Gateway 会话/设备/选择 状态机存储
 // 参考: docs/ws-protocol/2026021403-ws-state-machines.md
 
-import type { ServerWebSocket } from 'bun';
+import type { GatewaySession } from '../gateway-session';
 
 // ========== WS 连接状态机 ==========
 
@@ -99,40 +99,43 @@ export interface SessionState {
   notificationThrottles: Map<string, BellThrottleContext>;
 }
 
+export function createSessionState(): SessionState {
+  const now = Date.now();
+  return {
+    wsConnection: {
+      state: 'IDLE',
+      connectedAt: null,
+      lastActivityAt: now,
+      seq: 0,
+    },
+    deviceConnections: new Map(),
+    selectTransactions: new Map(),
+    outputGates: new Map(),
+    bellThrottles: new Map(),
+    notificationThrottles: new Map(),
+  };
+}
+
 export class SessionStateStore {
-  private states = new Map<ServerWebSocket<unknown>, SessionState>();
+  private states = new Map<GatewaySession, SessionState>();
 
-  create(ws: ServerWebSocket<unknown>): SessionState {
-    const now = Date.now();
-    const state: SessionState = {
-      wsConnection: {
-        state: 'IDLE',
-        connectedAt: null,
-        lastActivityAt: now,
-        seq: 0,
-      },
-      deviceConnections: new Map(),
-      selectTransactions: new Map(),
-      outputGates: new Map(),
-      bellThrottles: new Map(),
-      notificationThrottles: new Map(),
-    };
-    this.states.set(ws, state);
-    return state;
+  create(session: GatewaySession): SessionState {
+    this.states.set(session, session.state);
+    return session.state;
   }
 
-  get(ws: ServerWebSocket<unknown>): SessionState | undefined {
-    return this.states.get(ws);
+  get(session: GatewaySession): SessionState | undefined {
+    return this.states.get(session);
   }
 
-  delete(ws: ServerWebSocket<unknown>): void {
-    this.states.delete(ws);
+  delete(session: GatewaySession): void {
+    this.states.delete(session);
   }
 
   // ========== WS 连接状态操作 ==========
 
-  transitionWsState(ws: ServerWebSocket<unknown>, newState: WsConnectionState): boolean {
-    const state = this.states.get(ws);
+  transitionWsState(session: GatewaySession, newState: WsConnectionState): boolean {
+    const state = this.states.get(session);
     if (!state) return false;
 
     const oldState = state.wsConnection.state;
@@ -161,15 +164,15 @@ export class SessionStateStore {
     return true;
   }
 
-  updateLastActivity(ws: ServerWebSocket<unknown>): void {
-    const state = this.states.get(ws);
+  updateLastActivity(session: GatewaySession): void {
+    const state = this.states.get(session);
     if (state) {
       state.wsConnection.lastActivityAt = Date.now();
     }
   }
 
-  incrementSeq(ws: ServerWebSocket<unknown>): number {
-    const state = this.states.get(ws);
+  incrementSeq(session: GatewaySession): number {
+    const state = this.states.get(session);
     if (!state) return 0;
     state.wsConnection.seq += 1;
     return state.wsConnection.seq;
@@ -178,10 +181,10 @@ export class SessionStateStore {
   // ========== 设备连接状态操作 ==========
 
   getOrCreateDeviceConnection(
-    ws: ServerWebSocket<unknown>,
+    session: GatewaySession,
     deviceId: string
   ): DeviceConnectionContext | undefined {
-    const state = this.states.get(ws);
+    const state = this.states.get(session);
     if (!state) return undefined;
 
     let ctx = state.deviceConnections.get(deviceId);
@@ -199,11 +202,11 @@ export class SessionStateStore {
   }
 
   transitionDeviceState(
-    ws: ServerWebSocket<unknown>,
+    session: GatewaySession,
     deviceId: string,
     newState: DeviceConnectionState
   ): boolean {
-    const ctx = this.getOrCreateDeviceConnection(ws, deviceId);
+    const ctx = this.getOrCreateDeviceConnection(session, deviceId);
     if (!ctx) return false;
 
     const oldState = ctx.state;
@@ -241,10 +244,10 @@ export class SessionStateStore {
   // ========== 选择事务状态操作 ==========
 
   getOrCreateSelectTransaction(
-    ws: ServerWebSocket<unknown>,
+    session: GatewaySession,
     deviceId: string
   ): SelectTransactionContext | undefined {
-    const state = this.states.get(ws);
+    const state = this.states.get(session);
     if (!state) return undefined;
 
     let ctx = state.selectTransactions.get(deviceId);
@@ -266,13 +269,13 @@ export class SessionStateStore {
   }
 
   startSelectTransaction(
-    ws: ServerWebSocket<unknown>,
+    session: GatewaySession,
     deviceId: string,
     windowId: string,
     paneId: string,
     selectToken: Uint8Array
   ): boolean {
-    const ctx = this.getOrCreateSelectTransaction(ws, deviceId);
+    const ctx = this.getOrCreateSelectTransaction(session, deviceId);
     if (!ctx) return false;
 
     // 重置之前的状态
@@ -286,17 +289,17 @@ export class SessionStateStore {
     ctx.liveResumedAt = null;
 
     // 同时启动输出门控
-    this.startOutputBuffering(ws, deviceId);
+    this.startOutputBuffering(session, deviceId);
 
     return true;
   }
 
   transitionSelectState(
-    ws: ServerWebSocket<unknown>,
+    session: GatewaySession,
     deviceId: string,
     newState: SelectTransactionState
   ): boolean {
-    const ctx = this.getOrCreateSelectTransaction(ws, deviceId);
+    const ctx = this.getOrCreateSelectTransaction(session, deviceId);
     if (!ctx) return false;
 
     const oldState = ctx.state;
@@ -341,11 +344,8 @@ export class SessionStateStore {
 
   // ========== 输出门控操作 ==========
 
-  getOrCreateOutputGate(
-    ws: ServerWebSocket<unknown>,
-    deviceId: string
-  ): OutputGateContext | undefined {
-    const state = this.states.get(ws);
+  getOrCreateOutputGate(session: GatewaySession, deviceId: string): OutputGateContext | undefined {
+    const state = this.states.get(session);
     if (!state) return undefined;
 
     let ctx = state.outputGates.get(deviceId);
@@ -360,16 +360,16 @@ export class SessionStateStore {
     return ctx;
   }
 
-  startOutputBuffering(ws: ServerWebSocket<unknown>, deviceId: string): void {
-    const ctx = this.getOrCreateOutputGate(ws, deviceId);
+  startOutputBuffering(session: GatewaySession, deviceId: string): void {
+    const ctx = this.getOrCreateOutputGate(session, deviceId);
     if (!ctx) return;
 
     ctx.state = 'BUFFERING';
     ctx.buffer = []; // 清空旧缓冲
   }
 
-  stopOutputBuffering(ws: ServerWebSocket<unknown>, deviceId: string): Uint8Array[] {
-    const ctx = this.getOrCreateOutputGate(ws, deviceId);
+  stopOutputBuffering(session: GatewaySession, deviceId: string): Uint8Array[] {
+    const ctx = this.getOrCreateOutputGate(session, deviceId);
     if (!ctx) return [];
 
     ctx.state = 'FLOWING';
@@ -378,8 +378,8 @@ export class SessionStateStore {
     return buffered;
   }
 
-  bufferOutput(ws: ServerWebSocket<unknown>, deviceId: string, data: Uint8Array): boolean {
-    const ctx = this.getOrCreateOutputGate(ws, deviceId);
+  bufferOutput(session: GatewaySession, deviceId: string, data: Uint8Array): boolean {
+    const ctx = this.getOrCreateOutputGate(session, deviceId);
     if (!ctx || ctx.state !== 'BUFFERING') return false;
 
     if (ctx.buffer.length >= ctx.maxBufferSize) {
@@ -391,20 +391,20 @@ export class SessionStateStore {
     return true;
   }
 
-  isBuffering(ws: ServerWebSocket<unknown>, deviceId: string): boolean {
-    const ctx = this.getOrCreateOutputGate(ws, deviceId);
+  isBuffering(session: GatewaySession, deviceId: string): boolean {
+    const ctx = this.getOrCreateOutputGate(session, deviceId);
     return ctx?.state === 'BUFFERING';
   }
 
   // ========== Bell 频控操作 ==========
 
   shouldAllowBell(
-    ws: ServerWebSocket<unknown>,
+    session: GatewaySession,
     deviceId: string,
     paneId: string,
     throttleSeconds: number
   ): boolean {
-    const state = this.states.get(ws);
+    const state = this.states.get(session);
     if (!state) return false;
 
     const key = `${deviceId}:${paneId}`;
@@ -430,13 +430,13 @@ export class SessionStateStore {
   }
 
   shouldAllowNotification(
-    ws: ServerWebSocket<unknown>,
+    session: GatewaySession,
     deviceId: string,
     paneId: string,
     source: string,
     throttleSeconds: number
   ): boolean {
-    const state = this.states.get(ws);
+    const state = this.states.get(session);
     if (!state) return false;
 
     const key = `${deviceId}:${paneId}:${source}`;
@@ -463,8 +463,8 @@ export class SessionStateStore {
 
   // ========== 清理操作 ==========
 
-  cleanupDevice(ws: ServerWebSocket<unknown>, deviceId: string): void {
-    const state = this.states.get(ws);
+  cleanupDevice(session: GatewaySession, deviceId: string): void {
+    const state = this.states.get(session);
     if (!state) return;
 
     state.deviceConnections.delete(deviceId);
@@ -485,8 +485,8 @@ export class SessionStateStore {
     }
   }
 
-  cleanup(ws: ServerWebSocket<unknown>): void {
-    this.states.delete(ws);
+  cleanup(session: GatewaySession): void {
+    this.states.delete(session);
   }
 }
 

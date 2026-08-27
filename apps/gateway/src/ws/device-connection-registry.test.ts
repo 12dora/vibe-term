@@ -4,6 +4,7 @@ import {
   DeviceConnectionRegistry,
   type DeviceConnectionRegistryHost,
 } from './device-connection-registry';
+import { createGatewaySession } from './test-helpers';
 import type { DeviceConnectionEntry } from './types';
 
 function fakeEntry(): DeviceConnectionEntry {
@@ -111,13 +112,10 @@ describe('DeviceConnectionRegistry reconnect exhaustion', () => {
     } as unknown as DeviceConnectionRegistryHost;
 
     const registry = new DeviceConnectionRegistry(host);
-    const ws = {
-      data: {
-        borshState: { selectedPanes: { 'dev-dead': '%0' } as Record<string, string | null> },
-      },
-    };
+    const ws = createGatewaySession();
+    ws.borshState.selectedPanes['dev-dead'] = '%0';
     const dead = fakeEntry();
-    dead.clients.add(ws as never);
+    dead.clients.add(ws);
     registry.connections.set('dev-dead', dead);
 
     await registry.handleConnectionClose('dev-dead');
@@ -130,7 +128,7 @@ describe('DeviceConnectionRegistry reconnect exhaustion', () => {
 
     const fresh = fakeEntry();
     createResults.push(fresh);
-    const got = await registry.getOrCreate('dev-dead', ws as never);
+    const got = await registry.getOrCreate('dev-dead', ws);
     expect(got).toBe(fresh);
     expect(got).not.toBe(dead);
   });

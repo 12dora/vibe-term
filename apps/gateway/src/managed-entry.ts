@@ -9,6 +9,8 @@
 
 import { formatHttpEndpoint } from '../../../packages/shared/src/network';
 import { applyManagedTmuxNamespace, parseManagedGatewayArgs } from './managed-args';
+import type { GatewaySession } from './ws/gateway-session';
+import type { GatewaySocketData } from './ws/types';
 
 declare const TMEX_MONOREPO_VERSION: string | undefined;
 
@@ -38,21 +40,29 @@ function armRestart(runtime: ManagedGatewayRuntime): Promise<void> {
   });
 }
 
+function socketSession(ws: Bun.ServerWebSocket<unknown>): GatewaySession | undefined {
+  return (ws as Bun.ServerWebSocket<GatewaySocketData>).data?.session;
+}
+
 function closeRuntimeWebSockets(
-  socketOwners: Map<Bun.ServerWebSocket<unknown>, ManagedGatewayRuntime>,
+  socketOwners: Map<GatewaySession, ManagedGatewayRuntime>,
   runtime: ManagedGatewayRuntime
 ): unknown {
   let firstError: unknown;
-  for (const [ws, owner] of socketOwners) {
+  for (const [session, owner] of socketOwners) {
     if (owner !== runtime) continue;
-    socketOwners.delete(ws);
+    socketOwners.delete(session);
     try {
-      owner.websocket.close(ws, RUNTIME_RESTART_CLOSE_CODE, RUNTIME_RESTART_CLOSE_REASON);
+      owner.websocket.close(
+        session as unknown as Bun.ServerWebSocket<unknown>,
+        RUNTIME_RESTART_CLOSE_CODE,
+        RUNTIME_RESTART_CLOSE_REASON
+      );
     } catch (error) {
       firstError ??= error;
     }
     try {
-      ws.close(RUNTIME_RESTART_CLOSE_CODE, RUNTIME_RESTART_CLOSE_REASON);
+      session.activeCarrier.close(RUNTIME_RESTART_CLOSE_CODE, RUNTIME_RESTART_CLOSE_REASON);
     } catch (error) {
       firstError ??= error;
     }
@@ -61,7 +71,7 @@ function closeRuntimeWebSockets(
 }
 
 async function retireRuntime(
-  socketOwners: Map<Bun.ServerWebSocket<unknown>, ManagedGatewayRuntime>,
+  socketOwners: Map<GatewaySession, ManagedGatewayRuntime>,
   runtime: ManagedGatewayRuntime
 ): Promise<void> {
   const socketError = closeRuntimeWebSockets(socketOwners, runtime);
@@ -139,7 +149,7 @@ async function runManagedGateway(): Promise<void> {
 
   let activeRuntime: ManagedGatewayRuntime | null = await createRuntime();
   let restartRequested = armRestart(activeRuntime);
-  const socketOwners = new Map<Bun.ServerWebSocket<unknown>, ManagedGatewayRuntime>();
+  const socketOwners = new Map<GatewaySession, ManagedGatewayRuntime>();
   const initialWebSocket = activeRuntime.websocket;
   let server: Bun.Server<unknown> | null = null;
 
@@ -168,11 +178,15 @@ async function runManagedGateway(): Promise<void> {
             ws.close(RUNTIME_RESTART_CLOSE_CODE, RUNTIME_RESTART_CLOSE_REASON);
             return;
           }
-          socketOwners.set(ws, runtime);
           runtime.websocket.open(ws);
+          const session = socketSession(ws);
+          if (session) {
+            socketOwners.set(session, runtime);
+          }
         },
         message(ws, message) {
-          const runtime = socketOwners.get(ws);
+          const session = socketSession(ws);
+          const runtime = session ? socketOwners.get(session) : undefined;
           if (!runtime) {
             ws.close(RUNTIME_RESTART_CLOSE_CODE, RUNTIME_RESTART_CLOSE_REASON);
             return;
@@ -180,11 +194,14 @@ async function runManagedGateway(): Promise<void> {
           runtime.websocket.message(ws, message);
         },
         drain(ws) {
-          socketOwners.get(ws)?.websocket.drain(ws);
+          const session = socketSession(ws);
+          if (!session) return;
+          socketOwners.get(session)?.websocket.drain(ws);
         },
         close(ws, code, reason) {
-          const runtime = socketOwners.get(ws);
-          socketOwners.delete(ws);
+          const session = socketSession(ws);
+          const runtime = session ? socketOwners.get(session) : undefined;
+          if (session) socketOwners.delete(session);
           runtime?.websocket.close(ws, code, reason);
         },
       },

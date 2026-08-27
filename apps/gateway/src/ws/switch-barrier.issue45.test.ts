@@ -5,7 +5,12 @@ import { runMigrations } from '../db/migrate';
 import { sessionStateStore } from './borsh/session-state';
 import { switchBarrier } from './borsh/switch-barrier';
 import { WebSocketServer } from './index';
-import { createBorshTestWs, envelopeKind, setupConnectionEntry } from './test-helpers';
+import {
+  type BorshTestWs,
+  createBorshTestWs,
+  envelopeKind,
+  setupConnectionEntry,
+} from './test-helpers';
 
 // issue-45 bug 2 TDD 红测
 // 根因：apps/gateway/src/ws/index.ts:1304-1308 的 broadcastTerminalHistory 用
@@ -20,7 +25,7 @@ beforeAll(() => {
   runMigrations();
 });
 
-function createBorshWs(): any {
+function createBorshWs(): BorshTestWs {
   return createBorshTestWs({ session: true });
 }
 
@@ -75,13 +80,13 @@ function setupEntry(server: any, ws: any, snapshot: StateSnapshotPayload): any {
 }
 
 describe('issue-45 bug 2: broadcastTerminalHistory routes barrier history by transaction pane, not selectedPanes', () => {
-  let ws: any;
+  let ws: BorshTestWs | undefined;
 
   afterEach(() => {
     if (ws) {
       switchBarrier.cleanupClient(ws);
       sessionStateStore.delete(ws);
-      ws = undefined as any;
+      ws = undefined;
     }
   });
 

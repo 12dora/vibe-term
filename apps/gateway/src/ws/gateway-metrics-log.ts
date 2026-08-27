@@ -1,18 +1,18 @@
-import type { ServerWebSocket } from 'bun';
 import type { CanonicalFeedSession } from './canonical-feed-session';
 import {
   type GatewayActivityMetrics,
   collectCanonicalStateMetrics,
 } from './gateway-activity-metrics';
+import type { GatewaySession } from './gateway-session';
 import type { TerminalOutputBatcher } from './terminal-output-batcher';
 import type { TerminalOutputMetrics } from './terminal-output-metrics';
-import type { ClientState, DeviceConnectionEntry } from './types';
+import type { DeviceConnectionEntry } from './types';
 import { gatewayWebSocketSendGuard } from './websocket-send-guard';
 
 export interface GatewayMetricsHost {
-  readonly connectedClients: Set<ServerWebSocket<ClientState>>;
+  readonly connectedClients: Set<GatewaySession>;
   readonly connections: Map<string, DeviceConnectionEntry>;
-  readonly canonicalSessions: Map<ServerWebSocket<ClientState>, CanonicalFeedSession>;
+  readonly canonicalSessions: Map<GatewaySession, CanonicalFeedSession>;
   readonly terminalOutputBatcher: TerminalOutputBatcher;
   readonly terminalOutputMetrics: TerminalOutputMetrics;
   readonly gatewayActivityMetrics: GatewayActivityMetrics;
@@ -25,7 +25,7 @@ export function logTerminalOutputMetricsIfDue(host: GatewayMetricsHost): void {
   const metrics = host.terminalOutputMetrics.takeIfDue(Date.now(), {
     batch: host.terminalOutputBatcher.snapshotStats(),
     websocket: gatewayWebSocketSendGuard.snapshotStats(
-      host.connectedClients as Set<ServerWebSocket<unknown>>
+      Array.from(host.connectedClients, (session) => session.activeCarrier)
     ),
     canonical: {
       pendingPaneGaps: canonicalSessionStats.reduce(
@@ -110,7 +110,7 @@ export function logGatewayActivityMetricsIfDue(host: GatewayMetricsHost): void {
   let otherClients = 0;
   let unnegotiatedClients = 0;
   for (const client of host.connectedClients) {
-    const clientImpl = client.data.borshState.clientImpl;
+    const clientImpl = client.borshState.clientImpl;
     if (clientImpl === null) {
       unnegotiatedClients += 1;
     } else if (clientImpl === 'tmex-fe') {

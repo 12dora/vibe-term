@@ -1,4 +1,4 @@
-import type { ServerWebSocket } from 'bun';
+import type { Carrier } from './carrier';
 
 export const GATEWAY_WS_BACKPRESSURE_LIMIT_BYTES = 1_048_576;
 export const GATEWAY_WS_BACKPRESSURE_TIMEOUT_MS = 5_000;
@@ -37,19 +37,22 @@ function frameByteLength(frame: string | BufferSource): number {
   return frame.byteLength;
 }
 
-function negotiatedFrameLimit(ws: ServerWebSocket<unknown>): number | null {
-  const state = (
-    ws as unknown as {
-      data?: { borshState?: { maxFrameBytes?: unknown } };
-    }
-  ).data?.borshState;
-  const value = state?.maxFrameBytes;
-  return typeof value === 'number' && Number.isSafeInteger(value) && value > 0 ? value : null;
+function toUint8Array(frame: string | BufferSource): Uint8Array {
+  if (typeof frame === 'string') {
+    return new TextEncoder().encode(frame);
+  }
+  if (frame instanceof Uint8Array) {
+    return frame;
+  }
+  if (frame instanceof ArrayBuffer) {
+    return new Uint8Array(frame);
+  }
+  return new Uint8Array(frame.buffer, frame.byteOffset, frame.byteLength);
 }
 
 export class WebSocketSendGuard {
-  private readonly states = new WeakMap<ServerWebSocket<unknown>, BackpressureState>();
-  private readonly unavailable = new WeakSet<ServerWebSocket<unknown>>();
+  private readonly states = new WeakMap<Carrier, BackpressureState>();
+  private readonly unavailable = new WeakSet<Carrier>();
   private readonly timeoutMs: number;
   private readonly onTerminate: NonNullable<WebSocketSendGuardOptions['onTerminate']>;
   private readonly terminationsByReason: Record<TerminationReason, number> = {
@@ -68,11 +71,11 @@ export class WebSocketSendGuard {
       });
   }
 
-  canSend(ws: ServerWebSocket<unknown>): boolean {
-    if (this.unavailable.has(ws)) {
+  canSend(carrier: Carrier): boolean {
+    if (this.unavailable.has(carrier)) {
       return false;
     }
-    const state = this.states.get(ws);
+    const state = this.states.get(carrier);
     if (!state) {
       return true;
     }
@@ -80,28 +83,34 @@ export class WebSocketSendGuard {
     return false;
   }
 
-  isBackpressured(ws: ServerWebSocket<unknown>): boolean {
-    return this.states.has(ws);
+  isBackpressured(carrier: Carrier): boolean {
+    return this.states.has(carrier);
   }
 
-  sendFrames(ws: ServerWebSocket<unknown>, frames: readonly (string | BufferSource)[]): boolean {
-    return this.sendFramesStatus(ws, frames) === 'sent';
+  sendFrames(
+    carrier: Carrier,
+    frames: readonly (string | BufferSource)[],
+    maxFrameBytes?: number | null
+  ): boolean {
+    return this.sendFramesStatus(carrier, frames, maxFrameBytes) === 'sent';
   }
 
   sendFramesStatus(
-    ws: ServerWebSocket<unknown>,
-    frames: readonly (string | BufferSource)[]
+    carrier: Carrier,
+    frames: readonly (string | BufferSource)[],
+    maxFrameBytes?: number | null
   ): WebSocketSendStatus {
-    if (!this.canSend(ws)) {
+    if (!this.canSend(carrier)) {
       return 'dropped';
     }
 
-    const maxFrameBytes = negotiatedFrameLimit(ws);
     if (
-      maxFrameBytes !== null &&
+      maxFrameBytes != null &&
+      Number.isSafeInteger(maxFrameBytes) &&
+      maxFrameBytes > 0 &&
       frames.some((frame) => frame !== undefined && frameByteLength(frame) > maxFrameBytes)
     ) {
-      this.terminate(ws, 'oversized_frame');
+      this.terminate(carrier, 'oversized_frame');
       return 'dropped';
     }
 
@@ -111,31 +120,31 @@ export class WebSocketSendGuard {
         continue;
       }
 
-      let status: number | undefined;
+      let status: ReturnType<Carrier['send']>;
       try {
-        status = ws.send(frame as Parameters<ServerWebSocket<unknown>['send']>[0]);
+        status = carrier.send(toUint8Array(frame));
       } catch {
-        this.terminate(ws, 'dropped_frame');
+        this.terminate(carrier, 'dropped_frame');
         return 'dropped';
       }
 
-      if (status === -1) {
+      if (status === 'backpressure') {
         const state: BackpressureState = {
           skippedFrame: index + 1 < frames.length,
           timer: setTimeout(() => {
-            if (this.states.get(ws) !== state) {
+            if (this.states.get(carrier) !== state) {
               return;
             }
-            this.states.delete(ws);
-            this.terminate(ws, 'backpressure_timeout');
+            this.states.delete(carrier);
+            this.terminate(carrier, 'backpressure_timeout');
           }, this.timeoutMs),
         };
-        this.states.set(ws, state);
+        this.states.set(carrier, state);
         return 'backpressured';
       }
 
-      if (status === 0) {
-        this.terminate(ws, 'dropped_frame');
+      if (status === 'closed') {
+        this.terminate(carrier, 'dropped_frame');
         return 'dropped';
       }
     }
@@ -143,47 +152,47 @@ export class WebSocketSendGuard {
     return 'sent';
   }
 
-  handleDrain(ws: ServerWebSocket<unknown>): void {
-    const state = this.states.get(ws);
+  handleDrain(carrier: Carrier): void {
+    const state = this.states.get(carrier);
     if (!state) {
       return;
     }
     clearTimeout(state.timer);
-    this.states.delete(ws);
+    this.states.delete(carrier);
     if (state.skippedFrame) {
-      this.terminate(ws, 'backpressure_gap');
+      this.terminate(carrier, 'backpressure_gap');
     }
   }
 
-  markStreamGap(ws: ServerWebSocket<unknown>): void {
-    const state = this.states.get(ws);
+  markStreamGap(carrier: Carrier): void {
+    const state = this.states.get(carrier);
     if (state) {
       state.skippedFrame = true;
     }
   }
 
-  forget(ws: ServerWebSocket<unknown>): void {
-    const state = this.states.get(ws);
+  forget(carrier: Carrier): void {
+    const state = this.states.get(carrier);
     if (state) {
       clearTimeout(state.timer);
-      this.states.delete(ws);
+      this.states.delete(carrier);
     }
-    this.unavailable.delete(ws);
+    this.unavailable.delete(carrier);
   }
 
-  snapshotStats(sockets: Iterable<ServerWebSocket<unknown>>): WebSocketSendGuardStats {
+  snapshotStats(carriers: Iterable<Carrier>): WebSocketSendGuardStats {
     let sessions = 0;
     let backpressuredSessions = 0;
     let unavailableSessions = 0;
     let queuedBytes = 0;
-    for (const socket of sockets) {
+    for (const carrier of carriers) {
       sessions += 1;
-      if (this.states.has(socket)) backpressuredSessions += 1;
-      if (this.unavailable.has(socket)) unavailableSessions += 1;
+      if (this.states.has(carrier)) backpressuredSessions += 1;
+      if (this.unavailable.has(carrier)) unavailableSessions += 1;
       try {
-        queuedBytes += Math.max(0, socket.getBufferedAmount());
+        queuedBytes += Math.max(0, carrier.bufferedAmount());
       } catch {
-        // A concurrently closing socket contributes zero queued bytes.
+        // A concurrently closing carrier contributes zero queued bytes.
       }
     }
     return {
@@ -198,17 +207,17 @@ export class WebSocketSendGuard {
     };
   }
 
-  private terminate(ws: ServerWebSocket<unknown>, reason: TerminationReason): void {
-    if (this.unavailable.has(ws)) {
+  private terminate(carrier: Carrier, reason: TerminationReason): void {
+    if (this.unavailable.has(carrier)) {
       return;
     }
-    this.unavailable.add(ws);
+    this.unavailable.add(carrier);
     this.terminationsByReason[reason] += 1;
     this.onTerminate(reason);
     try {
-      ws.terminate();
+      carrier.terminate();
     } catch {
-      // The socket may already be closing.
+      // The carrier may already be closing.
     }
   }
 }

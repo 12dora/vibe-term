@@ -5,7 +5,12 @@ import { runMigrations } from '../db/migrate';
 import { sessionStateStore } from './borsh/session-state';
 import { switchBarrier } from './borsh/switch-barrier';
 import { WebSocketServer } from './index';
-import { createBorshTestWs, envelopeKind, setupConnectionEntry } from './test-helpers';
+import {
+  type BorshTestWs,
+  createBorshTestWs,
+  envelopeKind,
+  setupConnectionEntry,
+} from './test-helpers';
 
 // 跨 bug 干扰测试（issue #45 Task 12 场景 2）：bug 2 fix（broadcastTerminalHistory 按
 // ACKED 事务 context.paneId 路由）× 正常 pane 切换。
@@ -25,7 +30,7 @@ beforeAll(() => {
   runMigrations();
 });
 
-function createBorshWs(): any {
+function createBorshWs(): BorshTestWs {
   return createBorshTestWs({ session: true });
 }
 
@@ -88,7 +93,7 @@ function setupEntry(server: any, ws: any, snapshot: StateSnapshotPayload): any {
 }
 
 function startAckedTransaction(
-  ws: any,
+  ws: BorshTestWs,
   deviceId: string,
   windowId: string,
   paneId: string
@@ -110,13 +115,13 @@ function startAckedTransaction(
 }
 
 describe('issue45 cross-bug: bug 2 (transaction pane routing) x normal pane switch', () => {
-  let ws: any;
+  let ws: BorshTestWs | undefined;
 
   afterEach(() => {
     if (ws) {
       switchBarrier.cleanupClient(ws);
       sessionStateStore.delete(ws);
-      ws = undefined as any;
+      ws = undefined;
     }
   });
 
