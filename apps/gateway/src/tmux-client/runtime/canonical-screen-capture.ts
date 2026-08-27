@@ -1,9 +1,12 @@
 import { PANE_MODE_ALT_SCREEN, PANE_MODE_FLAGS_PRESENT, encodePaneModes } from '@tmex/shared';
 
+import { bytesEqual, concatBytes, truncateUtf8Tail } from '../../bytes';
 import type { PaneInfo } from '../capture-history';
 import type { AtomicPaneCapture } from '../control-mode-capture';
 import type { PaneHistoryCaptureInfo, PaneHistoryCursor } from '../pane-history-reader';
 import type { PaneIdentity, PaneScreenCheckpoint, PaneTerminalCursor } from '../pane-retention';
+
+export { concatBytes, truncateUtf8Tail };
 
 export interface CanonicalScreenCaptureHost {
   getPaneIdentity(paneId: string): PaneIdentity | null;
@@ -142,27 +145,4 @@ export class CanonicalScreenCapture {
     this.host.storeScreenCheckpoint(checkpoint);
     return checkpoint;
   }
-}
-
-function bytesEqual(left: Uint8Array, right: Uint8Array): boolean {
-  return left.byteLength === right.byteLength && left.every((byte, index) => byte === right[index]);
-}
-
-export function truncateUtf8Tail(value: Uint8Array, byteLimit: number): Uint8Array {
-  let start = Math.max(0, value.byteLength - byteLimit);
-  while (start < value.byteLength && (value[start] ?? 0) >= 0x80 && (value[start] ?? 0) < 0xc0) {
-    start += 1;
-  }
-  return value.slice(start);
-}
-
-export function concatBytes(...values: Uint8Array[]): Uint8Array {
-  const total = values.reduce((sum, value) => sum + value.byteLength, 0);
-  const result = new Uint8Array(total);
-  let offset = 0;
-  for (const value of values) {
-    result.set(value, offset);
-    offset += value.byteLength;
-  }
-  return result;
 }

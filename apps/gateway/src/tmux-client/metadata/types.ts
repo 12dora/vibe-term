@@ -1,5 +1,7 @@
 import type { wsBorsh } from '@tmex/shared';
 
+import { bytesEqual, copyBytes } from '../../bytes';
+
 export const DEFAULT_FLUSH_INTERVAL_MS = 8;
 export const MAX_PENDING_BYTES = 4 * 1024 * 1024;
 export const MAX_UNKNOWN_PANES = 256;
@@ -59,13 +61,7 @@ export function defaultCreateEpoch(): Uint8Array {
   return crypto.getRandomValues(new Uint8Array(16));
 }
 
-export function copyBytes(value: Uint8Array): Uint8Array {
-  return Uint8Array.from(value);
-}
-
-export function bytesEqual(left: Uint8Array, right: Uint8Array): boolean {
-  return left.byteLength === right.byteLength && left.every((byte, index) => byte === right[index]);
-}
+export { bytesEqual, copyBytes };
 
 export function cloneKey(key: wsBorsh.SourceEntityKey): wsBorsh.SourceEntityKey {
   return { ...key, serverEpoch: copyBytes(key.serverEpoch) };

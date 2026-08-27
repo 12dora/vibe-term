@@ -58,6 +58,32 @@ describe('WeixinChannel gating & formatting', () => {
     });
   });
 
+  test('does not HTML-escape pane title or process (plain text)', async () => {
+    await withMockSend(async (calls) => {
+      updateSiteSettings({ enableBellPush: true });
+      await weixinChannel.notify(
+        'terminal_bell',
+        makeEvent({
+          eventType: 'terminal_bell',
+          tmux: {
+            windowId: '@1',
+            paneId: '%1',
+            windowIndex: 7,
+            paneIndex: 3,
+            paneTitle: 'vim <main>',
+            paneCurrentCommand: 'bash & nvim',
+          },
+        })
+      );
+      const text = calls[0]?.text ?? '';
+      expect(text).toContain('vim <main>');
+      expect(text).toContain('bash & nvim');
+      expect(text).not.toContain('&lt;');
+      expect(text).not.toContain('&amp;');
+      updateSiteSettings({ enableBellPush: false });
+    });
+  });
+
   test('skips notification & generic events when notification push disabled', async () => {
     await withMockSend(async (calls) => {
       updateSiteSettings({ enableNotificationPush: false });

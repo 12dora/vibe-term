@@ -13,7 +13,6 @@ import { config } from '../config';
 import { getDeviceById } from '../db';
 import { type FileRootRecord, getFileRootById } from '../db/file-roots';
 import { MAX_ENTRIES, MAX_TEXT_BYTES, categorize, mimeOf } from './categorize';
-import { enqueueDeviceJob } from './queue';
 import {
   type RsyncEntry,
   RsyncMissingLocalError,
@@ -22,33 +21,16 @@ import {
   parseListOnly,
   runRsync,
 } from './rsync';
-import {
-  RsyncAuthError,
-  buildRsyncDeviceSpec,
-  rsyncCopyArgs,
-  rsyncListArgs,
-  rsyncUploadArgs,
-} from './ssh-command';
+import { type FileOpResult, fail, ok, withDeviceRsync } from './rsync-operation';
+import { type RsyncDeviceSpec, rsyncCopyArgs, rsyncListArgs, rsyncUploadArgs } from './ssh-command';
+
+export type { FileOpResult };
 
 const RAW_MAX_BYTES = 50 * 1024 * 1024;
 const LIST_TIMEOUT_MS = 20_000;
 const COPY_TIMEOUT_MS = 60_000;
 // 传输（上传推送 / 下载拉取）空闲超时：有进度即重置，故对慢速大文件友好
 const TRANSFER_IDLE_TIMEOUT_MS = 120_000;
-
-export type FileOpResult<T> =
-  | { ok: true; data: T }
-  | { ok: false; code: FileErrorCode; detail?: string };
-
-function ok<T>(data: T): FileOpResult<T> {
-  return { ok: true, data };
-}
-function fail(
-  code: FileErrorCode,
-  detail?: string
-): { ok: false; code: FileErrorCode; detail?: string } {
-  return { ok: false, code, detail };
-}
 
 // ---- posix 路径工具（gateway 仅运行于 unix） ----
 function posixNormalize(p: string): string {
@@ -156,53 +138,48 @@ function looksBinary(buf: Buffer): boolean {
   return false;
 }
 
-export async function listDirectory(
+async function withNormalizedRsync<T>(
   rootId: string,
-  inputPath: string | null
-): Promise<FileOpResult<ListFilesResponse>> {
+  inputPath: string | null,
+  fn: (ctx: { spec: RsyncDeviceSpec; path: string }) => Promise<FileOpResult<T>>
+): Promise<FileOpResult<T>> {
   const r = resolveContext(rootId);
   if (!r.ok) return fail(r.code);
   const { root, device } = r.ctx;
   const norm = checkAndNormalize(device, root.path, inputPath ?? root.path);
   if (!norm.ok) return fail(norm.code);
+  return withDeviceRsync(device, (spec) => fn({ spec, path: norm.path }));
+}
 
-  return enqueueDeviceJob(device.id, async () => {
-    let spec: Awaited<ReturnType<typeof buildRsyncDeviceSpec>>;
+export async function listDirectory(
+  rootId: string,
+  inputPath: string | null
+): Promise<FileOpResult<ListFilesResponse>> {
+  return withNormalizedRsync(rootId, inputPath, async ({ spec, path }) => {
+    const listPath = path.endsWith('/') ? path : `${path}/`;
+    let res: Awaited<ReturnType<typeof runRsync>>;
     try {
-      spec = await buildRsyncDeviceSpec(device);
+      res = await runRsync(rsyncListArgs(spec, listPath), {
+        env: spec.env,
+        timeoutMs: LIST_TIMEOUT_MS,
+      });
     } catch (error) {
-      if (error instanceof RsyncAuthError) return fail(error.code, error.message);
+      if (error instanceof RsyncMissingLocalError) return fail('rsync_missing_local');
       throw error;
     }
-    try {
-      const listPath = norm.path.endsWith('/') ? norm.path : `${norm.path}/`;
-      let res: Awaited<ReturnType<typeof runRsync>>;
-      try {
-        res = await runRsync(rsyncListArgs(spec, listPath), {
-          env: spec.env,
-          timeoutMs: LIST_TIMEOUT_MS,
-        });
-      } catch (error) {
-        if (error instanceof RsyncMissingLocalError) return fail('rsync_missing_local');
-        throw error;
-      }
-      if (res.exitCode !== 0)
-        return fail(classifyRsyncFailure(res.exitCode, res.stderr), res.stderr);
+    if (res.exitCode !== 0) return fail(classifyRsyncFailure(res.exitCode, res.stderr), res.stderr);
 
-      const parsed = parseListOnly(res.stdout);
-      const truncated = parsed.length > MAX_ENTRIES;
-      const slice = truncated ? parsed.slice(0, MAX_ENTRIES) : parsed;
-      const entries = slice.map((e) => entryToDto(e, norm.path));
-      sortEntries(entries);
-      return ok({ path: norm.path, entries, truncated });
-    } finally {
-      spec.cleanup();
-    }
+    const parsed = parseListOnly(res.stdout);
+    const truncated = parsed.length > MAX_ENTRIES;
+    const slice = truncated ? parsed.slice(0, MAX_ENTRIES) : parsed;
+    const entries = slice.map((e) => entryToDto(e, path));
+    sortEntries(entries);
+    return ok({ path, entries, truncated });
   });
 }
 
 async function statViaRsync(
-  spec: Awaited<ReturnType<typeof buildRsyncDeviceSpec>>,
+  spec: RsyncDeviceSpec,
   normPath: string
 ): Promise<FileOpResult<RsyncEntry>> {
   let res: Awaited<ReturnType<typeof runRsync>>;
@@ -225,44 +202,27 @@ export async function statFile(
   rootId: string,
   inputPath: string
 ): Promise<FileOpResult<FileStatResponse>> {
-  const r = resolveContext(rootId);
-  if (!r.ok) return fail(r.code);
-  const { root, device } = r.ctx;
-  const norm = checkAndNormalize(device, root.path, inputPath);
-  if (!norm.ok) return fail(norm.code);
-
-  return enqueueDeviceJob(device.id, async () => {
-    let spec: Awaited<ReturnType<typeof buildRsyncDeviceSpec>>;
-    try {
-      spec = await buildRsyncDeviceSpec(device);
-    } catch (error) {
-      if (error instanceof RsyncAuthError) return fail(error.code, error.message);
-      throw error;
-    }
-    try {
-      const st = await statViaRsync(spec, norm.path);
-      if (!st.ok) return st;
-      const name = posixBasename(norm.path);
-      const isDir = st.data.type === 'dir';
-      const type = isDir ? 'dir' : st.data.type === 'symlink' ? 'symlink' : 'file';
-      return ok<FileStatResponse>({
-        path: norm.path,
-        name,
-        type,
-        category: isDir ? 'directory' : categorize(name),
-        size: isDir ? 0 : (st.data.size ?? 0),
-        modifiedAt: st.data.modifiedAt,
-        mime: isDir ? null : mimeOf(name),
-        isSymlink: st.data.type === 'symlink',
-      });
-    } finally {
-      spec.cleanup();
-    }
+  return withNormalizedRsync(rootId, inputPath, async ({ spec, path }) => {
+    const st = await statViaRsync(spec, path);
+    if (!st.ok) return st;
+    const name = posixBasename(path);
+    const isDir = st.data.type === 'dir';
+    const type = isDir ? 'dir' : st.data.type === 'symlink' ? 'symlink' : 'file';
+    return ok<FileStatResponse>({
+      path,
+      name,
+      type,
+      category: isDir ? 'directory' : categorize(name),
+      size: isDir ? 0 : (st.data.size ?? 0),
+      modifiedAt: st.data.modifiedAt,
+      mime: isDir ? null : mimeOf(name),
+      isSymlink: st.data.type === 'symlink',
+    });
   });
 }
 
 async function copyToBuffer(
-  spec: Awaited<ReturnType<typeof buildRsyncDeviceSpec>>,
+  spec: RsyncDeviceSpec,
   normPath: string
 ): Promise<FileOpResult<Buffer>> {
   const dir = mkdtempSync(join(tmpdir(), 'tmex-rfile-'));
@@ -293,44 +253,27 @@ export async function readTextFile(
   rootId: string,
   inputPath: string
 ): Promise<FileOpResult<FileContentResponse>> {
-  const r = resolveContext(rootId);
-  if (!r.ok) return fail(r.code);
-  const { root, device } = r.ctx;
-  const norm = checkAndNormalize(device, root.path, inputPath);
-  if (!norm.ok) return fail(norm.code);
+  return withNormalizedRsync(rootId, inputPath, async ({ spec, path }) => {
+    const st = await statViaRsync(spec, path);
+    if (!st.ok) return st;
+    if (st.data.type === 'dir') return fail('is_directory');
+    if (st.data.size != null && st.data.size > MAX_TEXT_BYTES) return fail('too_large');
 
-  return enqueueDeviceJob(device.id, async () => {
-    let spec: Awaited<ReturnType<typeof buildRsyncDeviceSpec>>;
-    try {
-      spec = await buildRsyncDeviceSpec(device);
-    } catch (error) {
-      if (error instanceof RsyncAuthError) return fail(error.code, error.message);
-      throw error;
-    }
-    try {
-      const st = await statViaRsync(spec, norm.path);
-      if (!st.ok) return st;
-      if (st.data.type === 'dir') return fail('is_directory');
-      if (st.data.size != null && st.data.size > MAX_TEXT_BYTES) return fail('too_large');
+    const buf = await copyToBuffer(spec, path);
+    if (!buf.ok) return buf;
+    if (buf.data.length > MAX_TEXT_BYTES) return fail('too_large');
+    if (looksBinary(buf.data)) return fail('binary');
 
-      const buf = await copyToBuffer(spec, norm.path);
-      if (!buf.ok) return buf;
-      if (buf.data.length > MAX_TEXT_BYTES) return fail('too_large');
-      if (looksBinary(buf.data)) return fail('binary');
-
-      const name = posixBasename(norm.path);
-      return ok<FileContentResponse>({
-        path: norm.path,
-        name,
-        category: categorize(name),
-        encoding: 'utf-8',
-        content: buf.data.toString('utf-8'),
-        size: st.data.size ?? buf.data.length,
-        truncated: false,
-      });
-    } finally {
-      spec.cleanup();
-    }
+    const name = posixBasename(path);
+    return ok<FileContentResponse>({
+      path,
+      name,
+      category: categorize(name),
+      encoding: 'utf-8',
+      content: buf.data.toString('utf-8'),
+      size: st.data.size ?? buf.data.length,
+      truncated: false,
+    });
   });
 }
 
@@ -344,35 +287,18 @@ export async function readRawFile(
   rootId: string,
   inputPath: string
 ): Promise<FileOpResult<RawFileData>> {
-  const r = resolveContext(rootId);
-  if (!r.ok) return fail(r.code);
-  const { root, device } = r.ctx;
-  const norm = checkAndNormalize(device, root.path, inputPath);
-  if (!norm.ok) return fail(norm.code);
+  return withNormalizedRsync(rootId, inputPath, async ({ spec, path }) => {
+    const st = await statViaRsync(spec, path);
+    if (!st.ok) return st;
+    if (st.data.type === 'dir') return fail('is_directory');
+    if (st.data.size != null && st.data.size > RAW_MAX_BYTES) return fail('too_large');
 
-  return enqueueDeviceJob(device.id, async () => {
-    let spec: Awaited<ReturnType<typeof buildRsyncDeviceSpec>>;
-    try {
-      spec = await buildRsyncDeviceSpec(device);
-    } catch (error) {
-      if (error instanceof RsyncAuthError) return fail(error.code, error.message);
-      throw error;
-    }
-    try {
-      const st = await statViaRsync(spec, norm.path);
-      if (!st.ok) return st;
-      if (st.data.type === 'dir') return fail('is_directory');
-      if (st.data.size != null && st.data.size > RAW_MAX_BYTES) return fail('too_large');
+    const buf = await copyToBuffer(spec, path);
+    if (!buf.ok) return buf;
+    if (buf.data.length > RAW_MAX_BYTES) return fail('too_large');
 
-      const buf = await copyToBuffer(spec, norm.path);
-      if (!buf.ok) return buf;
-      if (buf.data.length > RAW_MAX_BYTES) return fail('too_large');
-
-      const name = posixBasename(norm.path);
-      return ok<RawFileData>({ data: new Uint8Array(buf.data), name, mime: mimeOf(name) });
-    } finally {
-      spec.cleanup();
-    }
+    const name = posixBasename(path);
+    return ok<RawFileData>({ data: new Uint8Array(buf.data), name, mime: mimeOf(name) });
   });
 }
 
@@ -401,45 +327,27 @@ export async function pushFileToDevice(
 ): Promise<FileOpResult<{ uploaded: string }>> {
   const safeName = sanitizeUploadName(name);
   if (!safeName) return fail('invalid');
-  const r = resolveContext(rootId);
-  if (!r.ok) return fail(r.code);
-  const { root, device } = r.ctx;
   // 目标文件尚不存在，只能校验已存在的 destDir（local 分支 realpathSync 防符号链接逃逸）。
-  const norm = checkAndNormalize(device, root.path, destDir);
-  if (!norm.ok) return fail(norm.code);
+  return withNormalizedRsync(rootId, destDir, async ({ spec, path }) => {
+    const destStat = await statViaRsync(spec, path);
+    if (!destStat.ok) return destStat;
+    if (destStat.data.type !== 'dir') return fail('not_a_directory');
 
-  return enqueueDeviceJob(device.id, async () => {
-    let spec: Awaited<ReturnType<typeof buildRsyncDeviceSpec>>;
+    const remoteDest = posixJoin(path, safeName);
+    let res: Awaited<ReturnType<typeof runRsync>>;
     try {
-      spec = await buildRsyncDeviceSpec(device);
+      res = await runRsync(rsyncUploadArgs(spec, srcPath, remoteDest), {
+        env: spec.env,
+        onProgress: opts.onProgress,
+        idleTimeoutMs: TRANSFER_IDLE_TIMEOUT_MS,
+        signal: opts.signal,
+      });
     } catch (error) {
-      if (error instanceof RsyncAuthError) return fail(error.code, error.message);
+      if (error instanceof RsyncMissingLocalError) return fail('rsync_missing_local');
       throw error;
     }
-    try {
-      const destStat = await statViaRsync(spec, norm.path);
-      if (!destStat.ok) return destStat;
-      if (destStat.data.type !== 'dir') return fail('not_a_directory');
-
-      const remoteDest = posixJoin(norm.path, safeName);
-      let res: Awaited<ReturnType<typeof runRsync>>;
-      try {
-        res = await runRsync(rsyncUploadArgs(spec, srcPath, remoteDest), {
-          env: spec.env,
-          onProgress: opts.onProgress,
-          idleTimeoutMs: TRANSFER_IDLE_TIMEOUT_MS,
-          signal: opts.signal,
-        });
-      } catch (error) {
-        if (error instanceof RsyncMissingLocalError) return fail('rsync_missing_local');
-        throw error;
-      }
-      if (res.exitCode !== 0)
-        return fail(classifyRsyncFailure(res.exitCode, res.stderr), res.stderr);
-      return ok({ uploaded: safeName });
-    } finally {
-      spec.cleanup();
-    }
+    if (res.exitCode !== 0) return fail(classifyRsyncFailure(res.exitCode, res.stderr), res.stderr);
+    return ok({ uploaded: safeName });
   });
 }
 
@@ -458,66 +366,49 @@ export async function pullFileFromDevice(
   inputPath: string,
   opts: TransferOptions = {}
 ): Promise<FileOpResult<PulledFile>> {
-  const r = resolveContext(rootId);
-  if (!r.ok) return fail(r.code);
-  const { root, device } = r.ctx;
-  const norm = checkAndNormalize(device, root.path, inputPath);
-  if (!norm.ok) return fail(norm.code);
+  return withNormalizedRsync(rootId, inputPath, async ({ spec, path }) => {
+    const st = await statViaRsync(spec, path);
+    if (!st.ok) return st;
+    if (st.data.type === 'dir') return fail('is_directory');
+    if (st.data.size != null && st.data.size > config.transferMaxBytes) return fail('too_large');
 
-  return enqueueDeviceJob(device.id, async () => {
-    let spec: Awaited<ReturnType<typeof buildRsyncDeviceSpec>>;
+    const dir = mkdtempSync(join(tmpdir(), 'tmex-dl-'));
+    const dest = join(dir, 'f');
+    const cleanup = () => {
+      try {
+        rmSync(dir, { recursive: true, force: true });
+      } catch {
+        // best-effort
+      }
+    };
+    let res: Awaited<ReturnType<typeof runRsync>>;
     try {
-      spec = await buildRsyncDeviceSpec(device);
+      res = await runRsync(rsyncCopyArgs(spec, path, dest), {
+        env: spec.env,
+        onProgress: opts.onProgress,
+        idleTimeoutMs: TRANSFER_IDLE_TIMEOUT_MS,
+        signal: opts.signal,
+      });
     } catch (error) {
-      if (error instanceof RsyncAuthError) return fail(error.code, error.message);
+      cleanup();
+      if (error instanceof RsyncMissingLocalError) return fail('rsync_missing_local');
       throw error;
     }
-    try {
-      const st = await statViaRsync(spec, norm.path);
-      if (!st.ok) return st;
-      if (st.data.type === 'dir') return fail('is_directory');
-      if (st.data.size != null && st.data.size > config.transferMaxBytes) return fail('too_large');
-
-      const dir = mkdtempSync(join(tmpdir(), 'tmex-dl-'));
-      const dest = join(dir, 'f');
-      const cleanup = () => {
-        try {
-          rmSync(dir, { recursive: true, force: true });
-        } catch {
-          // best-effort
-        }
-      };
-      let res: Awaited<ReturnType<typeof runRsync>>;
-      try {
-        res = await runRsync(rsyncCopyArgs(spec, norm.path, dest), {
-          env: spec.env,
-          onProgress: opts.onProgress,
-          idleTimeoutMs: TRANSFER_IDLE_TIMEOUT_MS,
-          signal: opts.signal,
-        });
-      } catch (error) {
-        cleanup();
-        if (error instanceof RsyncMissingLocalError) return fail('rsync_missing_local');
-        throw error;
-      }
-      if (res.exitCode !== 0) {
-        cleanup();
-        return fail(classifyRsyncFailure(res.exitCode, res.stderr), res.stderr);
-      }
-      const name = posixBasename(norm.path);
-      let size = st.data.size ?? 0;
-      try {
-        size = statSync(dest).size;
-      } catch {
-        // 退回 stat 大小
-      }
-      if (size > config.transferMaxBytes) {
-        cleanup();
-        return fail('too_large');
-      }
-      return ok<PulledFile>({ tmpPath: dest, size, name, mime: mimeOf(name), cleanup });
-    } finally {
-      spec.cleanup();
+    if (res.exitCode !== 0) {
+      cleanup();
+      return fail(classifyRsyncFailure(res.exitCode, res.stderr), res.stderr);
     }
+    const name = posixBasename(path);
+    let size = st.data.size ?? 0;
+    try {
+      size = statSync(dest).size;
+    } catch {
+      // 退回 stat 大小
+    }
+    if (size > config.transferMaxBytes) {
+      cleanup();
+      return fail('too_large');
+    }
+    return ok<PulledFile>({ tmpPath: dest, size, name, mime: mimeOf(name), cleanup });
   });
 }

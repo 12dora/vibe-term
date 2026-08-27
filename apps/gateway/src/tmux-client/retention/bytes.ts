@@ -1,16 +1,7 @@
+import { bytesEqual, bytesHex, copyBytes } from '../../bytes';
 import type { PaneIdentity, PaneState, PaneSubscriptionRequest } from './types';
 
-export function copyBytes(value: Uint8Array): Uint8Array {
-  return Uint8Array.from(value);
-}
-
-export function bytesEqual(left: Uint8Array, right: Uint8Array): boolean {
-  return left.byteLength === right.byteLength && left.every((byte, index) => byte === right[index]);
-}
-
-export function bytesHex(value: Uint8Array): string {
-  return Array.from(value, (byte) => byte.toString(16).padStart(2, '0')).join('');
-}
+export { bytesEqual, bytesHex, copyBytes };
 
 export function safeCallback(action: () => void): void {
   try {

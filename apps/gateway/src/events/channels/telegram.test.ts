@@ -77,4 +77,29 @@ describe('TelegramChannel lifecycle event gating', () => {
       updateSiteSettings({ enableBellPush: false, enableNotificationPush: false });
     });
   });
+
+  test('HTML-escapes pane title and process without leaking raw tags', async () => {
+    await withMockSend(async (calls) => {
+      updateSiteSettings({ enableBellPush: true });
+      await telegramChannel.notify(
+        'terminal_bell',
+        makeEvent({
+          eventType: 'terminal_bell',
+          tmux: {
+            windowId: '@1',
+            paneId: '%1',
+            windowIndex: 7,
+            paneIndex: 3,
+            paneTitle: 'vim <main>',
+            paneCurrentCommand: 'bash & nvim',
+          },
+        })
+      );
+      const text = calls[0]?.text ?? '';
+      expect(text).toContain('vim &lt;main&gt;');
+      expect(text).toContain('bash &amp; nvim');
+      expect(text).not.toContain('vim <main>');
+      updateSiteSettings({ enableBellPush: false });
+    });
+  });
 });

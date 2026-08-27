@@ -1,3 +1,5 @@
+import { bytesEqual, bytesHex, concatBytes, copyBytes, truncateUtf8Tail } from '../bytes';
+
 export const DEFAULT_HISTORY_SESSION_TTL_MS = 60_000;
 export const DEFAULT_MAX_HISTORY_SESSIONS = 32;
 export const DEFAULT_MAX_HISTORY_PAGE_BYTES = 256 * 1024;
@@ -56,18 +58,6 @@ export class PaneHistoryCursorError extends Error {
   }
 }
 
-function copyBytes(value: Uint8Array): Uint8Array {
-  return Uint8Array.from(value);
-}
-
-function bytesEqual(left: Uint8Array, right: Uint8Array): boolean {
-  return left.byteLength === right.byteLength && left.every((byte, index) => byte === right[index]);
-}
-
-function bytesHex(value: Uint8Array): string {
-  return Array.from(value, (byte) => byte.toString(16).padStart(2, '0')).join('');
-}
-
 function randomEpoch(): Uint8Array {
   return crypto.getRandomValues(new Uint8Array(16));
 }
@@ -81,24 +71,6 @@ function splitCapturedRows(value: string): string[] {
 async function hashRow(value: string): Promise<string> {
   const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(value));
   return bytesHex(new Uint8Array(digest));
-}
-
-function truncateUtf8Tail(value: Uint8Array, byteLimit: number): Uint8Array {
-  let start = Math.max(0, value.byteLength - byteLimit);
-  while (start < value.byteLength && (value[start] ?? 0) >= 0x80 && (value[start] ?? 0) < 0xc0) {
-    start += 1;
-  }
-  return value.slice(start);
-}
-
-function concatBytes(values: readonly Uint8Array[], total: number): Uint8Array {
-  const result = new Uint8Array(total);
-  let offset = 0;
-  for (const value of values) {
-    result.set(value, offset);
-    offset += value.byteLength;
-  }
-  return result;
 }
 
 export class PaneHistoryReader {
@@ -126,7 +98,11 @@ export class PaneHistoryReader {
     this.maxPageBytes = options.maxPageBytes ?? DEFAULT_MAX_HISTORY_PAGE_BYTES;
   }
 
-  createCursor(paneId: string, paneEpoch: Uint8Array, beforeLine: number): PaneHistoryCursor | null {
+  createCursor(
+    paneId: string,
+    paneEpoch: Uint8Array,
+    beforeLine: number
+  ): PaneHistoryCursor | null {
     if (beforeLine <= 0) return null;
     const now = this.now();
     this.sweep(now);
@@ -262,7 +238,7 @@ export class PaneHistoryReader {
       lineStart,
       lineEnd: beforeLine,
       truncated,
-      data: concatBytes(selected, selectedBytes),
+      data: concatBytes(...selected),
       nextCursor: lineStart > 0 ? this.toCursor(session) : null,
     };
   }
