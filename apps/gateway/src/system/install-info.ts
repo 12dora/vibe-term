@@ -54,7 +54,7 @@ function deploymentFromPlatform(platform: string | undefined): GatewayDeployment
 /**
  * 判定安装方式。仅 production 才可能存在 CLI 安装产物（install-meta.json）；
  * dev/test 一律视为非 CLI（自更新本就在非 production 禁用）。
- * production 下无 install-meta（docker / 手动部署）→ 非 CLI 安装。
+ * production 下无 install-meta（手动部署）→ 非 CLI 安装。
  */
 export function getInstallInfo(): InstallInfo {
   if (!config.isProd) {

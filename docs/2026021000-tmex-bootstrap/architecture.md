@@ -37,7 +37,6 @@ tmex/
 │   │   │   ├── ws/       # WebSocket 服务器
 │   │   │   ├── config.ts # 配置管理
 │   │   │   └── index.ts  # 入口
-│   │   ├── Dockerfile
 │   │   └── package.json
 │   │
 │   └── fe/               # React 前端
@@ -49,8 +48,6 @@ tmex/
 │       │   ├── stores/      # Zustand 状态
 │       │   ├── main.tsx     # 入口
 │       │   └── index.css    # 样式
-│       ├── Dockerfile
-│       ├── nginx.conf
 │       └── package.json
 │
 ├── packages/
@@ -60,7 +57,6 @@ tmex/
 │
 ├── docs/                 # 技术文档
 ├── prompt-archives/      # Plan/Prompt 存档
-├── docker-compose.yml
 ├── package.json          # Workspace 配置
 └── biome.json            # 代码规范
 ```
@@ -118,19 +114,6 @@ TMEX_BELL_THROTTLE_SECONDS=6
 TMEX_SSH_RECONNECT_MAX_RETRIES=2
 TMEX_SSH_RECONNECT_DELAY_SECONDS=10
 TMEX_PORT=3000
-```
-
-### Docker Compose 部署
-
-```bash
-# 启动
-docker-compose up -d
-
-# 查看日志
-docker-compose logs -f
-
-# 停止
-docker-compose down
 ```
 
 ### 开发环境

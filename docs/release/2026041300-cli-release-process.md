@@ -145,7 +145,7 @@ npx --yes tmex-cli@<version> doctor --lang en
 
 「monorepo 版本」= 发布的 `tmex-cli` 版本（`packages/app/package.json.version`），是前后端唯一真相源。
 
-- **构建期注入**：`build:runtime`（`packages/app/scripts/build-runtime.ts`）与 docker 的 `apps/gateway` `build`（`apps/gateway/scripts/build.ts`）读该版本，经 `bun build --define TMEX_MONOREPO_VERSION="x.y.z"` 烧进 bundle；前端 `vite.config.ts` 同样 `define __MONOREPO_VERSION__`。运行时 `apps/gateway/src/system/version.ts` 用 `typeof` 守卫读取，dev 回退读仓库 `package.json`。**所以发版顺序必须是「先 `release:tmex` bump，再 `build`」**。
+- **构建期注入**：`build:runtime`（`packages/app/scripts/build-runtime.ts`）读该版本，经 `bun build --define TMEX_MONOREPO_VERSION="x.y.z"` 烧进 bundle；前端 `vite.config.ts` 同样 `define __MONOREPO_VERSION__`。运行时 `apps/gateway/src/system/version.ts` 用 `typeof` 守卫读取，dev 回退读仓库 `package.json`。**所以发版顺序必须是「先 `release:tmex` bump，再 `build`」**。
 - **CHANGELOG 随包发布**：`packages/app/CHANGELOG.md` 已在 `files` 中，每个发布版只含该版本日志。程序内「检查更新」时 gateway 从 `https://cdn.jsdelivr.net/npm/tmex-cli@<latest>/CHANGELOG.md` 拉取展示（拉不到则回退「版本号 + 发布时间」，如历史无 changelog 的版本）。
 - **程序内自更新**：设置页「版本与更新」触发后，gateway 以 `bun add`（无视缓存）下载目标版本，再 detached 执行 `tmex upgrade --apply-current-package` 完成停服务 → 部署 → 重启。仅 `production` + CLI 安装可用。详见 [自更新与版本展示](../update/2026061406-self-update.md) 与 [发版与 changelog 流程](2026061406-release-changelog-flow.md)。
 
