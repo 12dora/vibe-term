@@ -23,6 +23,71 @@ export {
 } from './connection';
 
 export {
+  CarrierSwitchBarrier,
+  peekEnvelopeKind,
+  type ActiveCarrier,
+  type CarrierSwitchBarrierOptions,
+  type DirectCarrierLike,
+} from './carrier-switch';
+
+export {
+  DirectCarrierController,
+  buildIceServers,
+  SESS_CHANNEL_LABEL,
+  type DirectCarrierControllerOptions,
+  type DirectCarrierState,
+  type GatewayConnectionLike,
+} from './direct/direct-carrier-controller';
+
+export {
+  DirectDataChannelCarrier,
+  DC_HIGH_WATER_BYTES,
+  DC_LOW_WATER_BYTES,
+  type CarrierSendResult,
+  type RTCDataChannelLike,
+} from './direct/data-channel-carrier';
+
+export {
+  FrameReassembler,
+  fragmentFrame,
+  FRAGMENT_HEADER_SIZE,
+  FRAGMENT_PAYLOAD_SIZE,
+} from './direct/fragmenter';
+
+export {
+  deriveRoute,
+  describePair,
+  readSelectedPair,
+  type DirectRoute,
+  type SelectedPairStats,
+} from './direct/ice-stats';
+
+export {
+  fingerprintsEqual,
+  normalizeFingerprint,
+  parseSdpFingerprint,
+  type DtlsFingerprint,
+} from './direct/fingerprint';
+
+export type {
+  DirectApiClientLike,
+  DirectSignalMessage,
+  DirectSignalingTransport,
+  RTCPeerConnectionLike,
+  RtcPeerConnectionFactory,
+} from './direct/rtc-types';
+
+export {
+  PRIMARY_ONLY_DIAGNOSTICS,
+  createStubDirectDiagnosticsSource,
+  resolveDirectDiagnostics,
+  type DirectCarrierPath,
+  type DirectDiagnostics,
+  type DirectDiagnosticsSource,
+  type DirectIceDiagnostics,
+} from './direct/types';
+
+export {
   WebSocketGatewayTransport,
   LazyWebSocketGatewayTransport,
   createSharedGatewayTransport,

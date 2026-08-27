@@ -664,3 +664,195 @@ describe('建连同步失败', () => {
     client.disconnect();
   });
 });
+
+// ========== 直连载体与切换屏障（F3-1） ==========
+
+/** 屏障侧的假直连载体。 */
+class FakeDirectCarrier {
+  readonly sent: Uint8Array[] = [];
+  closed = false;
+  private messageCb: ((bytes: Uint8Array) => void) | null = null;
+  private closeCb: (() => void) | null = null;
+
+  send(bytes: Uint8Array): 'sent' | 'backpressure' | 'closed' {
+    if (this.closed) return 'closed';
+    this.sent.push(bytes);
+    return 'sent';
+  }
+
+  onMessage(cb: (bytes: Uint8Array) => void): void {
+    this.messageCb = cb;
+  }
+
+  onClose(cb: () => void): void {
+    this.closeCb = cb;
+  }
+
+  close(): void {
+    this.closed = true;
+    this.closeCb?.();
+  }
+
+  deliver(bytes: Uint8Array): void {
+    this.messageCb?.(bytes);
+  }
+}
+
+function carrierSwitchFrame(epoch: number, to: 'direct' | 'primary'): Uint8Array {
+  const payload = wsBorsh.encodePayload(wsBorsh.schema.CarrierSwitchSchema, {
+    epoch,
+    to: to === 'direct' ? wsBorsh.CARRIER_SWITCH_TO_DIRECT : wsBorsh.CARRIER_SWITCH_TO_PRIMARY,
+  });
+  return wsBorsh.encodeEnvelope(wsBorsh.KIND_CARRIER_SWITCH, payload, 0);
+}
+
+function eventNotifyFrame(eventType: string): Uint8Array {
+  const payload = wsBorsh.encodePayload(wsBorsh.schema.EventNotifyS2CSchema, {
+    eventType,
+    eventJson: '{}',
+    timestamp: BigInt(0),
+  });
+  return wsBorsh.encodeEnvelope(wsBorsh.KIND_NOTIFY_EVENT, payload, 1);
+}
+
+function readyClient(socket: FakeSocket): BorshWebSocketClient {
+  const client = new BorshWebSocketClient({
+    url: 'ws://example.test/ws',
+    socketFactory: () => socket,
+    heartbeatIntervalMs: 60_000,
+  });
+  client.connect();
+  socket.open();
+  socket.deliver(helloS2CFrame());
+  return client;
+}
+
+function sentAckEpochs(socket: FakeSocket): number[] {
+  const out: number[] = [];
+  for (const frame of socket.sent) {
+    if (!(frame instanceof Uint8Array)) continue;
+    const envelope = wsBorsh.decodeEnvelope(frame);
+    if (envelope.kind !== wsBorsh.KIND_CARRIER_SWITCH_ACK) continue;
+    out.push(wsBorsh.decodePayload(wsBorsh.schema.CarrierSwitchAckSchema, envelope.payload).epoch);
+  }
+  return out;
+}
+
+describe('直连载体（attachDirectCarrier / activeCarrier）', () => {
+  test('未挂直连时 activeCarrier 恒为 primary，收发路径不变', () => {
+    const socket = new FakeSocket();
+    const client = readyClient(socket);
+    expect(client.activeCarrier).toBe('primary');
+
+    const messages: number[] = [];
+    client.onMessage((message) => messages.push(message.kind));
+    socket.deliver(eventNotifyFrame('demo'));
+    expect(messages).toEqual([wsBorsh.KIND_NOTIFY_EVENT]);
+
+    client.disconnect();
+  });
+
+  test('CARRIER_SWITCH 到达后切到直连：ACK 走 primary，出站改走直连，入站缓冲被排空', () => {
+    const socket = new FakeSocket();
+    const client = readyClient(socket);
+    const carrier = new FakeDirectCarrier();
+    const changes: string[] = [];
+    client.onCarrierChange((active) => changes.push(active));
+    client.attachDirectCarrier(carrier);
+    expect(client.activeCarrier).toBe('primary');
+
+    const kinds: number[] = [];
+    client.onMessage((message) => kinds.push(message.kind));
+
+    // 切换通知之前直连上到的帧先缓冲
+    carrier.deliver(eventNotifyFrame('buffered'));
+    expect(kinds).toEqual([]);
+
+    socket.deliver(carrierSwitchFrame(1, 'direct'));
+    expect(kinds).toEqual([wsBorsh.KIND_NOTIFY_EVENT]);
+    expect(client.activeCarrier).toBe('direct');
+    expect(changes).toEqual(['direct']);
+    expect(sentAckEpochs(socket)).toEqual([1]);
+
+    const beforeDirect = carrier.sent.length;
+    client.send(wsBorsh.KIND_PING, new Uint8Array(0));
+    expect(carrier.sent.length).toBe(beforeDirect + 1);
+
+    client.disconnect();
+  });
+
+  test('切回 primary 触发 resumeSubscribedPanes 钩子', () => {
+    const socket = new FakeSocket();
+    const client = readyClient(socket);
+    let resumes = 0;
+    client.setResumeSubscribedPanes(() => {
+      resumes += 1;
+    });
+    client.attachDirectCarrier(new FakeDirectCarrier());
+    socket.deliver(carrierSwitchFrame(1, 'direct'));
+    socket.deliver(carrierSwitchFrame(2, 'primary'));
+
+    expect(client.activeCarrier).toBe('primary');
+    expect(resumes).toBe(1);
+
+    client.disconnect();
+  });
+
+  test('primary 断开 → 直连随之关闭并回落 primary', () => {
+    const socket = new FakeSocket();
+    const client = readyClient(socket);
+    const carrier = new FakeDirectCarrier();
+    client.attachDirectCarrier(carrier);
+    socket.deliver(carrierSwitchFrame(1, 'direct'));
+    expect(client.activeCarrier).toBe('direct');
+
+    socket.simulateClose();
+    expect(carrier.closed).toBe(true);
+    expect(client.activeCarrier).toBe('primary');
+
+    client.disconnect();
+  });
+
+  test('detachDirectCarrier() 主动回落 primary', () => {
+    const socket = new FakeSocket();
+    const client = readyClient(socket);
+    const carrier = new FakeDirectCarrier();
+    client.attachDirectCarrier(carrier);
+    socket.deliver(carrierSwitchFrame(1, 'direct'));
+
+    client.detachDirectCarrier();
+    expect(client.activeCarrier).toBe('primary');
+    client.send(wsBorsh.KIND_PING, new Uint8Array(0));
+    expect(carrier.sent.length).toBe(0);
+
+    client.disconnect();
+  });
+
+  test('createGatewayConnection 透出 activeCarrier / onCarrierChange / directDiagnostics', () => {
+    const socket = new FakeSocket();
+    const connection = createGatewayConnection({
+      wsUrl: 'ws://example.test/ws',
+      socketFactory: () => socket,
+      clientOptions: { heartbeatIntervalMs: 60_000 },
+    });
+    connection.client.connect();
+    socket.open();
+    socket.deliver(helloS2CFrame());
+
+    expect(connection.activeCarrier).toBe('primary');
+    expect(connection.directDiagnostics).toBeNull();
+
+    const changes: string[] = [];
+    connection.onCarrierChange((active) => changes.push(active));
+    connection.attachDirectCarrier(new FakeDirectCarrier());
+    socket.deliver(carrierSwitchFrame(1, 'direct'));
+
+    expect(connection.activeCarrier).toBe('direct');
+    expect(changes).toEqual(['direct']);
+
+    connection.detachDirectCarrier();
+    expect(connection.activeCarrier).toBe('primary');
+
+    connection.dispose();
+  });
+});

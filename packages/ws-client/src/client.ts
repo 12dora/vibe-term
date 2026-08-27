@@ -2,6 +2,7 @@
 // 门面：组合心跳、重连退避与协议分发，对外维持连接状态与订阅接口
 
 import { wsBorsh } from '@tmex/shared';
+import { type ActiveCarrier, CarrierSwitchBarrier, type DirectCarrierLike } from './carrier-switch';
 import { HeartbeatController } from './heartbeat-controller';
 import { type BorshMessage, type ChunkProgress, ProtocolDispatcher } from './protocol-dispatcher';
 import { ReconnectController } from './reconnect-controller';
@@ -38,6 +39,14 @@ export type SocketFactory = (url: string) => WebSocketLike;
 // DOM 的 onmessage 事件参数是 MessageEvent，在 strictFunctionTypes 下与 WebSocketLike 的
 // 结构化参数互不可赋值（参数逆变）。把这层不兼容收敛在此一处断言，不向接口撒 any。
 const defaultSocketFactory: SocketFactory = (url) => new WebSocket(url) as unknown as WebSocketLike;
+
+/** 屏障内部一律用 Uint8Array；交回 dispatcher 时零拷贝还原成 ArrayBuffer。 */
+function toArrayBuffer(bytes: Uint8Array): ArrayBuffer {
+  if (bytes.byteOffset === 0 && bytes.byteLength === bytes.buffer.byteLength) {
+    return bytes.buffer as ArrayBuffer;
+  }
+  return bytes.slice().buffer as ArrayBuffer;
+}
 
 const DEFAULT_OPTIONS: BorshClientOptions = {
   clientImpl: 'tmex-fe',
@@ -108,6 +117,11 @@ export class BorshWebSocketClient {
   // visibilitychange
   private visibilityHandler: (() => void) | null = null;
   private lastVisibilityReconnectAt = 0;
+
+  // 直连载体（F3-1）：懒建，未挂载直连时整条路径与之前完全一致
+  private barrier: CarrierSwitchBarrier | null = null;
+  private carrierChangeHandlers: Set<(active: ActiveCarrier) => void> = new Set();
+  private resumeSubscribedPanes: (() => void) | null = null;
 
   // 待发送队列
   private pendingMessages: Array<{ kind: number; payload: Uint8Array }> = [];
@@ -229,6 +243,10 @@ export class BorshWebSocketClient {
 
       socket.onmessage = (event) => {
         if (this.ws !== socket) return;
+        if (this.barrier && typeof event.data !== 'string') {
+          this.barrier.handlePrimaryInbound(new Uint8Array(event.data));
+          return;
+        }
         this.dispatcher.handleFrame(event.data);
       };
 
@@ -258,6 +276,7 @@ export class BorshWebSocketClient {
     this.setState('CLOSED');
     this.clearTimers();
     this.dispatcher.reset();
+    this.barrier?.closeDirect();
     this.latencyMs = null;
 
     if (this.ws) {
@@ -318,6 +337,9 @@ export class BorshWebSocketClient {
   private handleClose(): void {
     this.heartbeat.stop();
     this.dispatcher.reset();
+    // primary 断开 = 会话整体结束，直连随之关闭（设计 §3 步骤 4）；
+    // 重连后是全新会话，epoch 从 0 重来。
+    this.barrier?.closeDirect();
 
     if (this.state === 'CLOSED') {
       return;
@@ -395,6 +417,14 @@ export class BorshWebSocketClient {
   }
 
   private sendRaw(data: Uint8Array): void {
+    if (this.barrier) {
+      this.barrier.send(data);
+      return;
+    }
+    this.sendPrimaryRaw(data);
+  }
+
+  private sendPrimaryRaw(data: Uint8Array): void {
     if (this.ws?.readyState === WS_OPEN) {
       this.ws.send(data);
     }
@@ -407,6 +437,55 @@ export class BorshWebSocketClient {
         this.send(msg.kind, msg.payload);
       }
     }
+  }
+
+  // ========== 直连载体（设计 §3「载体切换屏障」） ==========
+
+  /**
+   * 挂上直连载体。此刻仍走 primary：要等服务端在 primary 上发来
+   * `CARRIER_SWITCH{to:'direct'}`，屏障排空缓冲并回 ACK 之后才真正切换。
+   */
+  attachDirectCarrier(carrier: DirectCarrierLike): void {
+    this.ensureBarrier().attachDirect(carrier);
+  }
+
+  /** 主动摘掉直连（控制器放弃/停止时调用），回落 primary。 */
+  detachDirectCarrier(): void {
+    this.barrier?.handleDirectClose();
+  }
+
+  get activeCarrier(): ActiveCarrier {
+    return this.barrier?.activeCarrier ?? 'primary';
+  }
+
+  onCarrierChange(handler: (active: ActiveCarrier) => void): () => void {
+    this.carrierChangeHandlers.add(handler);
+    return () => this.carrierChangeHandlers.delete(handler);
+  }
+
+  /** 切回 primary 时触发的补齐钩子（宿主注入：对已订阅 pane 重新 resume）。 */
+  setResumeSubscribedPanes(fn: (() => void) | null): void {
+    this.resumeSubscribedPanes = fn;
+  }
+
+  private ensureBarrier(): CarrierSwitchBarrier {
+    if (this.barrier) return this.barrier;
+    this.barrier = new CarrierSwitchBarrier({
+      deliver: (bytes) => this.dispatcher.handleFrame(toArrayBuffer(bytes)),
+      sendPrimary: (bytes) => this.sendPrimaryRaw(bytes),
+      nextSeq: () => this.nextSeq(),
+      onCarrierChange: (active) => {
+        for (const handler of this.carrierChangeHandlers) {
+          try {
+            handler(active);
+          } catch (err) {
+            console.error('[borsh-client] Carrier change handler error:', err);
+          }
+        }
+      },
+      resumeSubscribedPanes: () => this.resumeSubscribedPanes?.(),
+    });
+    return this.barrier;
   }
 
   // ========== 心跳 ==========
@@ -485,6 +564,7 @@ export class BorshWebSocketClient {
 
   reconnect(): void {
     this.clearTimers();
+    this.barrier?.closeDirect();
     this.latencyMs = null;
     if (this.ws) {
       this.ws.onclose = null;

@@ -1,8 +1,9 @@
 // 设备页头部徽标的数据源：浏览器↔node 的承载与 RTT，以及 entry↔node 的到达路径。
 //
-// 直连（DataChannel）尚未落地（F3-1），`resolveDirectDiagnostics()` 在 connection 上找不到
-// `directDiagnostics` 时返回恒为 `primary` 的桩——契约与桩都在
-// `packages/ws-client/src/direct/types.ts`，F3-1 只需给 `GatewayConnection` 挂上真实实现。
+// 数据来自 `DirectCarrierController.diagnosticsSource`——`node-runtimes.ts` 在给非 self 的
+// node 建连时把它挂到 `connection.directDiagnostics`。connection 上没有（`self`、或直连
+// 不可用）时 `resolveDirectDiagnostics()` 回落到恒为 `primary` 的桩，契约与桩都在
+// `packages/ws-client/src/direct/types.ts`。
 
 import type { DirectDiagnostics } from '@tmex/ws-client/direct/types';
 import { resolveDirectDiagnostics } from '@tmex/ws-client/direct/types';

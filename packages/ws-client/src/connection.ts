@@ -1,7 +1,9 @@
 // Gateway 连接工厂：把 WS 客户端、pane-sink 注册表、选择状态机按连接组装。
 // 多连接宿主每个 gateway 建一份；单连接宿主继续使用各模块的默认实例。
 
+import type { ActiveCarrier, DirectCarrierLike } from './carrier-switch';
 import { type BorshClientOptions, BorshWebSocketClient, type SocketFactory } from './client';
+import type { DirectDiagnosticsSource } from './direct/types';
 import { PaneSinkRegistry } from './pane-sink-registry';
 import { type SelectCallbacks, SelectStateMachine } from './state-machine';
 import { type GatewayTransport, WebSocketGatewayTransport } from './transport';
@@ -27,6 +29,18 @@ export interface GatewayConnection {
   transport: GatewayTransport;
   paneSinks: PaneSinkRegistry;
   selectMachine: SelectStateMachine;
+  /** 挂载直连载体（`DirectCarrierController` 在 `sess` 首帧鉴权通过后调用）。 */
+  attachDirectCarrier(carrier: DirectCarrierLike): void;
+  /** 摘掉直连，回落 primary。 */
+  detachDirectCarrier(): void;
+  /** 当前活跃载体。 */
+  readonly activeCarrier: ActiveCarrier;
+  onCarrierChange(handler: (active: ActiveCarrier) => void): () => void;
+  /**
+   * 直连诊断源。由宿主在建连时挂上 `DirectCarrierController.diagnosticsSource`；
+   * 为空时 `resolveDirectDiagnostics()` 回落到恒为 primary 的桩。
+   */
+  directDiagnostics: DirectDiagnosticsSource | null;
   dispose(): void;
 }
 
@@ -47,6 +61,19 @@ export function createGatewayConnection(options: GatewayConnectionOptions = {}):
     transport,
     paneSinks,
     selectMachine,
+    directDiagnostics: null,
+    attachDirectCarrier(carrier) {
+      client.attachDirectCarrier(carrier);
+    },
+    detachDirectCarrier() {
+      client.detachDirectCarrier();
+    },
+    get activeCarrier() {
+      return client.activeCarrier;
+    },
+    onCarrierChange(handler) {
+      return client.onCarrierChange(handler);
+    },
     dispose() {
       selectMachine.cleanupAll();
       paneSinks.reset();
