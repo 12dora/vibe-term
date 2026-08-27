@@ -332,10 +332,6 @@ export class PaneSinkRegistry {
 // 默认实例与模块级代理（保持既有调用面不变）
 const defaultRegistry = new PaneSinkRegistry();
 
-export function getDefaultPaneSinkRegistry(): PaneSinkRegistry {
-  return defaultRegistry;
-}
-
 export function registerPaneSink(deviceId: string, paneId: string, sink: PaneSink): () => void {
   return defaultRegistry.registerPaneSink(deviceId, paneId, sink);
 }

@@ -4,7 +4,6 @@ export {
   BorshWebSocketClient,
   defaultWsUrl,
   getBorshClient,
-  resetBorshClient,
   type BorshClientOptions,
   type ConnectionState,
   type BorshMessage,
@@ -45,7 +44,6 @@ export {
 
 export {
   PaneSinkRegistry,
-  getDefaultPaneSinkRegistry,
   type PaneSink,
   type PaneResetOrigin,
 } from './pane-sink-registry';
@@ -53,7 +51,6 @@ export {
 export {
   SelectStateMachine,
   getSelectStateMachine,
-  resetSelectStateMachine,
   type SelectTransactionState,
   type SelectTransaction,
   type OutputGateState,
@@ -101,16 +98,5 @@ export {
   buildAgentSubscribe,
   buildAgentUnsubscribe,
   buildSiteThemeUpdate,
-  decodeDeviceConnected,
-  decodeDeviceDisconnected,
-  decodeDeviceEvent,
-  decodeStateSnapshot,
-  decodeTmuxEvent,
-  decodeTermOutput,
-  decodeTermHistory,
-  decodeSwitchAck,
-  decodeLiveResume,
-  decodeError,
-  decodeSiteThemeUpdate,
   type TmuxSelectParams,
 } from './message-builder';

@@ -2,12 +2,12 @@ import { describe, expect, test } from 'bun:test';
 import {
   buildLineModel,
   createEmptySelectionState,
-  lineModelFromText,
   projectSelectionRects,
   resolvePointerSelection,
   serializeSelectionText,
   updateSelectionFocus,
 } from './selection-model';
+import { lineModelFromText } from './test-support/selection-line-model';
 import type { GhosttyCellWidthKind, GhosttyRenderCell } from './types';
 
 function cell(

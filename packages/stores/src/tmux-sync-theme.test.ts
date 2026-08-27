@@ -83,13 +83,11 @@ mock.module('@tmex/ws-client', () => {
   return {
     ...wsActual,
     getBorshClient: () => stub,
-    resetBorshClient: () => {},
     getSelectStateMachine: () => ({
       dispatch: () => {},
       cleanup: () => {},
       getTransaction: () => null,
     }),
-    resetSelectStateMachine: () => {},
     generateSelectToken: () => new Uint8Array(16),
     buildDeviceConnect: makeBuildFn(0x0101),
     buildDeviceDisconnect: makeBuildFn(0x0103),
@@ -124,29 +122,6 @@ mock.module('@tmex/ws-client', () => {
       kind: 0x0801,
       payload: new Uint8Array([theme === 'light' ? 1 : 0]),
     }),
-    decodeDeviceConnected: () => ({ deviceId: '' }),
-    decodeDeviceDisconnected: () => ({ deviceId: '' }),
-    decodeDeviceEvent: () => ({ type: 'disconnected', deviceId: '' }),
-    decodeStateSnapshot: () => ({ deviceId: '', session: { id: '', name: '', windows: [] } }),
-    decodeTmuxEvent: () => ({ type: 'bell', deviceId: '', data: {} }),
-    decodeTermOutput: () => ({ deviceId: '', paneId: '', encoding: 1, data: new Uint8Array() }),
-    decodeTermHistory: () => ({
-      deviceId: '',
-      paneId: '',
-      selectToken: new Uint8Array(16),
-      encoding: 1,
-      alternateScreen: false,
-      data: new Uint8Array(),
-    }),
-    decodeSwitchAck: () => ({
-      deviceId: '',
-      windowId: '',
-      paneId: '',
-      selectToken: new Uint8Array(16),
-    }),
-    decodeLiveResume: () => ({ deviceId: '', paneId: '', selectToken: new Uint8Array(16) }),
-    decodeError: () => ({ refSeq: 0, code: 0, message: '', retryable: false }),
-    decodeSiteThemeUpdate: () => ({ theme: 0, serverTimestamp: 0n }),
   };
 });
 

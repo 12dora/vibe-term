@@ -1,7 +1,7 @@
 // FE Borsh 消息构建器
 // 提供便捷的 API 构建各种消息
 
-import { type b, wsBorsh } from '@tmex/shared';
+import { wsBorsh } from '@tmex/shared';
 
 // ========== 生成 selectToken ==========
 
@@ -358,66 +358,4 @@ export function buildSiteThemeUpdate(theme: 'dark' | 'light'): {
     theme: theme === 'light' ? wsBorsh.SITE_THEME_LIGHT : wsBorsh.SITE_THEME_DARK,
   });
   return { kind: wsBorsh.KIND_SITE_THEME_UPDATE, payload };
-}
-
-// ========== S2C 消息解码 ==========
-
-export function decodeDeviceConnected(payload: Uint8Array): { deviceId: string } {
-  return wsBorsh.decodePayload(wsBorsh.schema.DeviceConnectedSchema, payload);
-}
-
-export function decodeDeviceDisconnected(payload: Uint8Array): { deviceId: string } {
-  return wsBorsh.decodePayload(wsBorsh.schema.DeviceDisconnectedSchema, payload);
-}
-
-export function decodeDeviceEvent(
-  payload: Uint8Array
-): b.infer<typeof wsBorsh.schema.DeviceEventSchema> {
-  return wsBorsh.decodePayload(wsBorsh.schema.DeviceEventSchema, payload);
-}
-
-export function decodeStateSnapshot(
-  payload: Uint8Array
-): b.infer<typeof wsBorsh.schema.StateSnapshotSchema> {
-  return wsBorsh.decodePayload(wsBorsh.schema.StateSnapshotSchema, payload);
-}
-
-export function decodeTmuxEvent(
-  payload: Uint8Array
-): b.infer<typeof wsBorsh.schema.TmuxEventSchema> {
-  return wsBorsh.decodePayload(wsBorsh.schema.TmuxEventSchema, payload);
-}
-
-export function decodeTermOutput(
-  payload: Uint8Array
-): b.infer<typeof wsBorsh.schema.TermOutputSchema> {
-  return wsBorsh.decodePayload(wsBorsh.schema.TermOutputSchema, payload);
-}
-
-export function decodeTermHistory(
-  payload: Uint8Array
-): b.infer<typeof wsBorsh.schema.TermHistorySchema> {
-  return wsBorsh.decodePayload(wsBorsh.schema.TermHistorySchema, payload);
-}
-
-export function decodeSwitchAck(
-  payload: Uint8Array
-): b.infer<typeof wsBorsh.schema.SwitchAckSchema> {
-  return wsBorsh.decodePayload(wsBorsh.schema.SwitchAckSchema, payload);
-}
-
-export function decodeLiveResume(
-  payload: Uint8Array
-): b.infer<typeof wsBorsh.schema.LiveResumeSchema> {
-  return wsBorsh.decodePayload(wsBorsh.schema.LiveResumeSchema, payload);
-}
-
-export function decodeError(payload: Uint8Array): b.infer<typeof wsBorsh.schema.ErrorSchema> {
-  return wsBorsh.decodePayload(wsBorsh.schema.ErrorSchema, payload);
-}
-
-export function decodeSiteThemeUpdate(
-  payload: Uint8Array
-): b.infer<typeof wsBorsh.schema.SiteThemeUpdateS2CSchema> {
-  return wsBorsh.decodePayload(wsBorsh.schema.SiteThemeUpdateS2CSchema, payload);
 }

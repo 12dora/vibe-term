@@ -14,6 +14,7 @@ import {
   mockGhosttyWasm,
   restoreRealTerminalModules,
 } from './test-support/fake-dom';
+import { lineModelFromText } from './test-support/selection-line-model';
 
 // 鼠标 / 滚轮事件是本文件独有的扩展：其它 issue45 测试只派发 composition 事件。
 class FakeMouseEvent {
@@ -1994,7 +1995,6 @@ describe('SelectionModel', () => {
   test('supports character drag, word double click, line triple click and serialization', async () => {
     const {
       createEmptySelectionState,
-      lineModelFromText,
       projectSelectionRects,
       resolvePointerSelection,
       serializeSelectionText,

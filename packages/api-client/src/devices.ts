@@ -31,18 +31,6 @@ export async function fetchDevices(client: ApiClient = defaultApiClient): Promis
   return (await res.json()) as DevicesResponse;
 }
 
-export async function fetchDevice(
-  deviceId: string,
-  client: ApiClient = defaultApiClient
-): Promise<DeviceWithRuntime> {
-  const res = await client.fetch(`/api/devices/${deviceId}`);
-  if (!res.ok) {
-    throw new Error(await parseApiError(res, 'Failed to load device'));
-  }
-  const payload = (await res.json()) as { device: DeviceWithRuntime };
-  return payload.device;
-}
-
 export async function createDevice(
   body: CreateDeviceRequest,
   errorFallback = 'Failed to create device',

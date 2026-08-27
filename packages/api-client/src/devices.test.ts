@@ -4,7 +4,6 @@ import { ApiClient } from './client';
 import {
   createDevice,
   deleteDevice,
-  fetchDevice,
   fetchDevices,
   reorderDevices,
   testDeviceConnection,
@@ -54,23 +53,6 @@ describe('fetchDevices', () => {
 
     const withoutError = new StubApiClient([new Response('oops', { status: 500 })]);
     await expect(fetchDevices(withoutError)).rejects.toThrow('Failed to load devices');
-  });
-});
-
-describe('fetchDevice', () => {
-  test('GET /api/devices/:id，拆开 { device } 信封', async () => {
-    const client = new StubApiClient([jsonResponse({ device: { id: 'dev-1', name: 'Laptop' } })]);
-
-    const device = await fetchDevice('dev-1', client);
-
-    expect(client.calls[0].path).toBe('/api/devices/dev-1');
-    expect(client.calls[0].init).toBeUndefined();
-    expect(device.name).toBe('Laptop');
-  });
-
-  test('404 抛出服务端 error 文案', async () => {
-    const client = new StubApiClient([jsonResponse({ error: 'device not found' }, 404)]);
-    await expect(fetchDevice('missing', client)).rejects.toThrow('device not found');
   });
 });
 

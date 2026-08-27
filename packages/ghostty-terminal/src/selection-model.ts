@@ -70,12 +70,6 @@ export function buildLineModel(
   return { colChars, contentCols: computeContentCols(colChars), wrappedToNext };
 }
 
-/** 把纯文本视为全窄字符行（每字符一列），供测试与简单场景使用 */
-export function lineModelFromText(text: string, wrappedToNext = false): SelectionLineModel {
-  const colChars = Array.from(text);
-  return { colChars, contentCols: computeContentCols(colChars), wrappedToNext };
-}
-
 function clampColumn(model: SelectionLineModel, col: number): number {
   return Math.max(0, Math.min(Math.max(model.colChars.length - 1, 0), Math.floor(col)));
 }

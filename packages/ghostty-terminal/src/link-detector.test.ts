@@ -4,7 +4,8 @@ import {
   detectLinksInWrappedLines,
   detectMatchesInWrappedLines,
 } from './link-detector';
-import { type SelectionLineModel, lineModelFromText } from './selection-model';
+import type { SelectionLineModel } from './selection-model';
+import { lineModelFromText } from './test-support/selection-line-model';
 
 function model(colChars: (string | null)[], wrappedToNext = false): SelectionLineModel {
   let contentCols = 0;

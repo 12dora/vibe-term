@@ -659,10 +659,3 @@ export function getSelectStateMachine(callbacks?: SelectCallbacks): SelectStateM
   }
   return globalStateMachine;
 }
-
-export function resetSelectStateMachine(): void {
-  if (globalStateMachine) {
-    globalStateMachine.cleanupAll();
-    globalStateMachine = null;
-  }
-}

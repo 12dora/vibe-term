@@ -514,10 +514,3 @@ export function getBorshClient(): BorshWebSocketClient {
   }
   return globalClient;
 }
-
-export function resetBorshClient(): void {
-  if (globalClient) {
-    globalClient.disconnect();
-    globalClient = null;
-  }
-}
