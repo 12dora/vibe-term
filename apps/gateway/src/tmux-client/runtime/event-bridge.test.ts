@@ -5,7 +5,7 @@ import type { DeviceSessionRuntimeListener } from '../device-session-runtime';
 import { MetadataProjection } from '../metadata-projection';
 import { PaneHistoryReader } from '../pane-history-reader';
 import { PaneRetention } from '../pane-retention';
-import { RuntimeEventBridge } from './event-bridge';
+import { RuntimeEventBridge, stateSnapshotsEqual } from './event-bridge';
 
 const SERVER_EPOCH = new Uint8Array(16).fill(1);
 
@@ -135,5 +135,19 @@ describe('RuntimeEventBridge', () => {
     host.metadata.flushPending();
     expect(snapshotPaneTitle(lastSnapshot)).toBe('patched');
     expect(patches).toEqual([1]);
+  });
+
+  test('stateSnapshotsEqual compares session/window/pane keys structurally', () => {
+    const left = snapshot('shell');
+    expect(stateSnapshotsEqual(null, left)).toBe(false);
+    expect(stateSnapshotsEqual(left, snapshot('shell'))).toBe(true);
+    expect(stateSnapshotsEqual(left, snapshot('other'))).toBe(false);
+    expect(stateSnapshotsEqual(left, { ...left, deviceId: 'other' })).toBe(false);
+    expect(
+      stateSnapshotsEqual(
+        { deviceId: 'device-a', session: null },
+        { deviceId: 'device-a', session: null }
+      )
+    ).toBe(true);
   });
 });

@@ -3,7 +3,6 @@
 // assist-regex 用 LLM 生成正则（可带当前屏幕做上下文），返回前服务端试编译 + 试跑 preview。
 
 import type {
-  AssistRegexRequest,
   CreateWatchRuleRequest,
   UpdateWatchRuleRequest,
   WatchRuleDto,
@@ -279,87 +278,131 @@ function buildAssistPrompt(description: string, screen: string | null): string {
   return lines.join('\n');
 }
 
-async function handleAssistRegex(req: Request, deps: WatchApiDeps): Promise<Response> {
-  const raw = await readJsonObjectBody(req);
-  if (!raw) {
-    return json({ error: t('apiError.invalidRequest') }, 400);
-  }
-  const body = raw as unknown as AssistRegexRequest;
+type AssistRegexParsed = {
+  description: string;
+  providerId: string | null;
+  modelId: string | null;
+  deviceId: string;
+  paneId: string;
+};
 
-  const description = typeof body.description === 'string' ? body.description.trim() : '';
+function parseAssistRegexBody(
+  raw: Record<string, unknown>
+): { ok: true; value: AssistRegexParsed } | { ok: false; response: Response } {
+  const description = typeof raw.description === 'string' ? raw.description.trim() : '';
   if (!description) {
-    return json({ error: t('apiError.watchAssistDescriptionRequired') }, 400);
+    return {
+      ok: false,
+      response: json({ error: t('apiError.watchAssistDescriptionRequired') }, 400),
+    };
   }
 
   let providerId: string | null = null;
-  if (body.providerId !== undefined && body.providerId !== null) {
-    if (typeof body.providerId !== 'string' || !getLlmProviderById(body.providerId)) {
-      return json({ error: t('apiError.llmProviderNotFound') }, 400);
+  if (raw.providerId !== undefined && raw.providerId !== null) {
+    if (typeof raw.providerId !== 'string' || !getLlmProviderById(raw.providerId)) {
+      return { ok: false, response: json({ error: t('apiError.llmProviderNotFound') }, 400) };
     }
-    providerId = body.providerId;
-  }
-  const modelId =
-    typeof body.modelId === 'string' && body.modelId.trim() ? body.modelId.trim() : null;
-
-  let screen: string | null = null;
-  const deviceId = typeof body.deviceId === 'string' ? body.deviceId.trim() : '';
-  const paneId = typeof body.paneId === 'string' ? body.paneId.trim() : '';
-  if (deviceId && paneId) {
-    if (!getDeviceById(deviceId)) {
-      return json({ error: t('apiError.deviceNotFound') }, 404);
-    }
-    try {
-      screen = await deps.captureScreen(deviceId, paneId);
-    } catch (error) {
-      // 取屏失败降级为无屏幕上下文，不阻断生成
-      console.warn(`[api/watch] assist-regex capture failed for ${deviceId}/${paneId}:`, error);
-      screen = null;
-    }
+    providerId = raw.providerId;
   }
 
-  let object: z.infer<typeof assistSchema>;
+  return {
+    ok: true,
+    value: {
+      description,
+      providerId,
+      modelId: typeof raw.modelId === 'string' && raw.modelId.trim() ? raw.modelId.trim() : null,
+      deviceId: typeof raw.deviceId === 'string' ? raw.deviceId.trim() : '',
+      paneId: typeof raw.paneId === 'string' ? raw.paneId.trim() : '',
+    },
+  };
+}
+
+async function captureAssistScreen(
+  deviceId: string,
+  paneId: string,
+  deps: WatchApiDeps
+): Promise<{ ok: true; screen: string | null } | { ok: false; response: Response }> {
+  if (!deviceId || !paneId) return { ok: true, screen: null };
+  if (!getDeviceById(deviceId)) {
+    return { ok: false, response: json({ error: t('apiError.deviceNotFound') }, 404) };
+  }
   try {
-    const model = await deps.resolveModel(providerId, modelId);
+    return { ok: true, screen: await deps.captureScreen(deviceId, paneId) };
+  } catch (error) {
+    console.warn(`[api/watch] assist-regex capture failed for ${deviceId}/${paneId}:`, error);
+    return { ok: true, screen: null };
+  }
+}
+
+async function generateAssistRegexObject(
+  parsed: AssistRegexParsed,
+  screen: string | null,
+  deps: WatchApiDeps
+): Promise<{ ok: true; object: z.infer<typeof assistSchema> } | { ok: false; response: Response }> {
+  try {
+    const model = await deps.resolveModel(parsed.providerId, parsed.modelId);
     const result = await generateObject({
       model,
       schema: assistSchema,
-      prompt: buildAssistPrompt(description, screen),
+      prompt: buildAssistPrompt(parsed.description, screen),
       maxRetries: deps.llmMaxRetries,
     });
-    object = result.object;
+    return { ok: true, object: result.object };
   } catch (error) {
     const detail = error instanceof Error ? error.message : String(error);
-    return json({ error: t('apiError.watchAssistModelUnavailable', { detail }) }, 502);
+    return {
+      ok: false,
+      response: json({ error: t('apiError.watchAssistModelUnavailable', { detail }) }, 502),
+    };
   }
+}
 
-  // 模型产物在服务端试编译，失败视为上游错误
-  let regex: RegExp;
+function compileAssistRegex(
+  object: z.infer<typeof assistSchema>
+): { ok: true; regex: RegExp } | { ok: false; response: Response } {
   try {
-    regex = compileWatchPattern(object.pattern, object.flags);
+    return { ok: true, regex: compileWatchPattern(object.pattern, object.flags) };
   } catch (error) {
     const detail = error instanceof Error ? error.message : String(error);
-    return json({ error: t('apiError.watchPatternInvalid', { detail }) }, 502);
+    return {
+      ok: false,
+      response: json({ error: t('apiError.watchPatternInvalid', { detail }) }, 502),
+    };
   }
+}
 
+function collectAssistPreview(regex: RegExp, screen: string | null): string[] {
   const preview: string[] = [];
-  if (screen) {
-    regex.lastIndex = 0;
-    let match = regex.exec(screen);
-    while (match !== null && preview.length < ASSIST_PREVIEW_LIMIT) {
-      preview.push(match[0]);
-      if (match.index === regex.lastIndex) {
-        regex.lastIndex += 1;
-      }
-      match = regex.exec(screen);
+  if (!screen) return preview;
+  regex.lastIndex = 0;
+  let match = regex.exec(screen);
+  while (match !== null && preview.length < ASSIST_PREVIEW_LIMIT) {
+    preview.push(match[0]);
+    if (match.index === regex.lastIndex) {
+      regex.lastIndex += 1;
     }
+    match = regex.exec(screen);
   }
+  return preview;
+}
 
+async function handleAssistRegex(req: Request, deps: WatchApiDeps): Promise<Response> {
+  const raw = await readJsonObjectBody(req);
+  if (!raw) return json({ error: t('apiError.invalidRequest') }, 400);
+  const parsed = parseAssistRegexBody(raw);
+  if (!parsed.ok) return parsed.response;
+  const captured = await captureAssistScreen(parsed.value.deviceId, parsed.value.paneId, deps);
+  if (!captured.ok) return captured.response;
+  const generated = await generateAssistRegexObject(parsed.value, captured.screen, deps);
+  if (!generated.ok) return generated.response;
+  const compiled = compileAssistRegex(generated.object);
+  if (!compiled.ok) return compiled.response;
   return json({
-    pattern: object.pattern,
-    flags: object.flags,
-    extractGroup: object.extractGroup >= 0 ? object.extractGroup : 0,
-    explanation: object.explanation,
-    preview,
+    pattern: generated.object.pattern,
+    flags: generated.object.flags,
+    extractGroup: generated.object.extractGroup >= 0 ? generated.object.extractGroup : 0,
+    explanation: generated.object.explanation,
+    preview: collectAssistPreview(compiled.regex, captured.screen),
   });
 }
 

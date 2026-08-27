@@ -102,57 +102,52 @@ export class RuntimeEventBridge {
   }
 }
 
+const SESSION_COMPARE_KEYS = ['id', 'name'] as const;
+const WINDOW_COMPARE_KEYS = ['id', 'name', 'customName', 'index', 'active', 'layout'] as const;
+const PANE_COMPARE_KEYS = [
+  'id',
+  'windowId',
+  'index',
+  'title',
+  'customName',
+  'currentCommand',
+  'currentPath',
+  'active',
+  'width',
+  'height',
+  'left',
+  'top',
+] as const;
+
+function recordsEqualByKeys<T>(left: T, right: T, keys: readonly (keyof T)[]): boolean {
+  return keys.every((key) => left[key] === right[key]);
+}
+
+function alignedEqual<T>(
+  left: readonly T[],
+  right: readonly T[],
+  equal: (a: T, b: T) => boolean
+): boolean {
+  if (left.length !== right.length) return false;
+  for (let index = 0; index < left.length; index += 1) {
+    const previous = left[index];
+    const next = right[index];
+    if (!previous || !next || !equal(previous, next)) return false;
+  }
+  return true;
+}
+
 export function stateSnapshotsEqual(
   left: StateSnapshotPayload | null,
   right: StateSnapshotPayload
 ): boolean {
   if (!left || left.deviceId !== right.deviceId) return false;
   if (!left.session || !right.session) return left.session === right.session;
-  if (
-    left.session.id !== right.session.id ||
-    left.session.name !== right.session.name ||
-    left.session.windows.length !== right.session.windows.length
-  ) {
-    return false;
-  }
-  for (let windowIndex = 0; windowIndex < left.session.windows.length; windowIndex += 1) {
-    const previousWindow = left.session.windows[windowIndex];
-    const nextWindow = right.session.windows[windowIndex];
-    if (
-      !previousWindow ||
-      !nextWindow ||
-      previousWindow.id !== nextWindow.id ||
-      previousWindow.name !== nextWindow.name ||
-      previousWindow.customName !== nextWindow.customName ||
-      previousWindow.index !== nextWindow.index ||
-      previousWindow.active !== nextWindow.active ||
-      previousWindow.layout !== nextWindow.layout ||
-      previousWindow.panes.length !== nextWindow.panes.length
-    ) {
-      return false;
-    }
-    for (let paneIndex = 0; paneIndex < previousWindow.panes.length; paneIndex += 1) {
-      const previousPane = previousWindow.panes[paneIndex];
-      const nextPane = nextWindow.panes[paneIndex];
-      if (
-        !previousPane ||
-        !nextPane ||
-        previousPane.id !== nextPane.id ||
-        previousPane.windowId !== nextPane.windowId ||
-        previousPane.index !== nextPane.index ||
-        previousPane.title !== nextPane.title ||
-        previousPane.customName !== nextPane.customName ||
-        previousPane.currentCommand !== nextPane.currentCommand ||
-        previousPane.currentPath !== nextPane.currentPath ||
-        previousPane.active !== nextPane.active ||
-        previousPane.width !== nextPane.width ||
-        previousPane.height !== nextPane.height ||
-        previousPane.left !== nextPane.left ||
-        previousPane.top !== nextPane.top
-      ) {
-        return false;
-      }
-    }
-  }
-  return true;
+  if (!recordsEqualByKeys(left.session, right.session, SESSION_COMPARE_KEYS)) return false;
+  return alignedEqual(left.session.windows, right.session.windows, (previousWindow, nextWindow) => {
+    if (!recordsEqualByKeys(previousWindow, nextWindow, WINDOW_COMPARE_KEYS)) return false;
+    return alignedEqual(previousWindow.panes, nextWindow.panes, (previousPane, nextPane) =>
+      recordsEqualByKeys(previousPane, nextPane, PANE_COMPARE_KEYS)
+    );
+  });
 }

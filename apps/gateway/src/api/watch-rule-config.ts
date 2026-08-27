@@ -3,6 +3,14 @@ import { getLlmProviderById } from '../db/llm';
 import type { WatchRuleRecord } from '../db/watch';
 import { t } from '../i18n';
 import { compileWatchPattern } from '../watch/evaluator';
+import {
+  type ConfigFieldSpec,
+  type FieldParseResult,
+  applyConfigFields,
+  parseBooleanField,
+  parseEnumField,
+  parseIntegerField,
+} from './config-field';
 
 const TRIGGER_TYPES: readonly WatchTriggerType[] = ['match', 'unchanged', 'llm'];
 const NO_MATCH_BEHAVIORS: readonly WatchNoMatchBehavior[] = ['reset', 'ignore'];
@@ -49,129 +57,83 @@ export type BuildEffectiveWatchRuleResult =
   | { ok: true; updates: WatchRuleUpdates; effective: WatchRuleEffective }
   | { ok: false; error: string };
 
+function invalidRequest(): string {
+  return t('apiError.invalidRequest');
+}
+
+function parseNullablePattern(raw: unknown): FieldParseResult<string | null> {
+  if (raw !== null && typeof raw !== 'string') return { ok: false, error: invalidRequest() };
+  return { ok: true, value: typeof raw === 'string' && raw ? raw : null };
+}
+
+function parseNullablePrompt(raw: unknown): FieldParseResult<string | null> {
+  if (raw !== null && typeof raw !== 'string') return { ok: false, error: invalidRequest() };
+  return { ok: true, value: typeof raw === 'string' && raw.trim() ? raw : null };
+}
+
+function parseProviderIdField(raw: unknown): FieldParseResult<string | null> {
+  if (raw === null) return { ok: true, value: null };
+  if (typeof raw !== 'string' || !getLlmProviderById(raw)) {
+    return { ok: false, error: t('apiError.llmProviderNotFound') };
+  }
+  return { ok: true, value: raw };
+}
+
+function parseModelIdField(raw: unknown): FieldParseResult<string | null> {
+  if (raw === null) return { ok: true, value: null };
+  if (typeof raw !== 'string') return { ok: false, error: invalidRequest() };
+  return { ok: true, value: raw.trim() || null };
+}
+
+function parseNullablePositiveInt(raw: unknown, error: string): FieldParseResult<number | null> {
+  if (raw === null) return { ok: true, value: null };
+  return parseIntegerField(raw, error, (n) => n > 0);
+}
+
+const RULE_FIELD_SPECS: ConfigFieldSpec<unknown>[] = [
+  { name: 'enabled', parse: (raw) => parseBooleanField(raw, invalidRequest()) },
+  { name: 'pattern', parse: parseNullablePattern },
+  {
+    name: 'patternFlags',
+    parse: (raw) =>
+      typeof raw === 'string' ? { ok: true, value: raw } : { ok: false, error: invalidRequest() },
+  },
+  {
+    name: 'extractGroup',
+    parse: (raw) => parseIntegerField(raw, t('apiError.watchExtractGroupInvalid'), (n) => n >= 0),
+  },
+  { name: 'conditionPrompt', parse: parseNullablePrompt },
+  { name: 'providerId', parse: parseProviderIdField },
+  { name: 'modelId', parse: parseModelIdField },
+  { name: 'confirmWithLlm', parse: (raw) => parseBooleanField(raw, invalidRequest()) },
+  { name: 'summarizeWithLlm', parse: (raw) => parseBooleanField(raw, invalidRequest()) },
+  {
+    name: 'intervalSeconds',
+    parse: (raw) => parseIntegerField(raw, invalidRequest()),
+  },
+  {
+    name: 'unchangedMinutes',
+    parse: (raw) => parseNullablePositiveInt(raw, t('apiError.watchUnchangedMinutesInvalid')),
+  },
+  {
+    name: 'noMatchBehavior',
+    parse: (raw) =>
+      parseEnumField(raw, NO_MATCH_BEHAVIORS, t('apiError.watchNoMatchBehaviorInvalid')),
+  },
+  {
+    name: 'fireMode',
+    parse: (raw) => parseEnumField(raw, FIRE_MODES, t('apiError.watchFireModeInvalid')),
+  },
+  {
+    name: 'cooldownSeconds',
+    parse: (raw) => parseIntegerField(raw, t('apiError.watchCooldownInvalid'), (n) => n >= 0),
+  },
+];
+
 function parseRuleFields(
   body: Record<string, unknown>
 ): { ok: true; fields: WatchRuleUpdates } | { ok: false; error: string } {
-  const fields: WatchRuleUpdates = {};
-
-  if (body.enabled !== undefined) {
-    if (typeof body.enabled !== 'boolean') {
-      return { ok: false, error: t('apiError.invalidRequest') };
-    }
-    fields.enabled = body.enabled;
-  }
-
-  if (body.pattern !== undefined) {
-    if (body.pattern !== null && typeof body.pattern !== 'string') {
-      return { ok: false, error: t('apiError.invalidRequest') };
-    }
-    fields.pattern = typeof body.pattern === 'string' && body.pattern ? body.pattern : null;
-  }
-
-  if (body.patternFlags !== undefined) {
-    if (typeof body.patternFlags !== 'string') {
-      return { ok: false, error: t('apiError.invalidRequest') };
-    }
-    fields.patternFlags = body.patternFlags;
-  }
-
-  if (body.extractGroup !== undefined) {
-    if (
-      typeof body.extractGroup !== 'number' ||
-      !Number.isInteger(body.extractGroup) ||
-      body.extractGroup < 0
-    ) {
-      return { ok: false, error: t('apiError.watchExtractGroupInvalid') };
-    }
-    fields.extractGroup = body.extractGroup;
-  }
-
-  if (body.conditionPrompt !== undefined) {
-    if (body.conditionPrompt !== null && typeof body.conditionPrompt !== 'string') {
-      return { ok: false, error: t('apiError.invalidRequest') };
-    }
-    fields.conditionPrompt =
-      typeof body.conditionPrompt === 'string' && body.conditionPrompt.trim()
-        ? body.conditionPrompt
-        : null;
-  }
-
-  if (body.providerId !== undefined) {
-    if (body.providerId === null) {
-      fields.providerId = null;
-    } else if (typeof body.providerId !== 'string' || !getLlmProviderById(body.providerId)) {
-      return { ok: false, error: t('apiError.llmProviderNotFound') };
-    } else {
-      fields.providerId = body.providerId;
-    }
-  }
-
-  if (body.modelId !== undefined) {
-    if (body.modelId === null) {
-      fields.modelId = null;
-    } else if (typeof body.modelId !== 'string') {
-      return { ok: false, error: t('apiError.invalidRequest') };
-    } else {
-      fields.modelId = body.modelId.trim() || null;
-    }
-  }
-
-  for (const key of ['confirmWithLlm', 'summarizeWithLlm'] as const) {
-    if (body[key] !== undefined) {
-      if (typeof body[key] !== 'boolean') {
-        return { ok: false, error: t('apiError.invalidRequest') };
-      }
-      fields[key] = body[key];
-    }
-  }
-
-  if (body.intervalSeconds !== undefined) {
-    if (typeof body.intervalSeconds !== 'number' || !Number.isInteger(body.intervalSeconds)) {
-      return { ok: false, error: t('apiError.invalidRequest') };
-    }
-    fields.intervalSeconds = body.intervalSeconds;
-  }
-
-  if (body.unchangedMinutes !== undefined) {
-    if (body.unchangedMinutes === null) {
-      fields.unchangedMinutes = null;
-    } else if (
-      typeof body.unchangedMinutes !== 'number' ||
-      !Number.isInteger(body.unchangedMinutes) ||
-      body.unchangedMinutes <= 0
-    ) {
-      return { ok: false, error: t('apiError.watchUnchangedMinutesInvalid') };
-    } else {
-      fields.unchangedMinutes = body.unchangedMinutes;
-    }
-  }
-
-  if (body.noMatchBehavior !== undefined) {
-    if (!NO_MATCH_BEHAVIORS.includes(body.noMatchBehavior as WatchNoMatchBehavior)) {
-      return { ok: false, error: t('apiError.watchNoMatchBehaviorInvalid') };
-    }
-    fields.noMatchBehavior = body.noMatchBehavior as WatchNoMatchBehavior;
-  }
-
-  if (body.fireMode !== undefined) {
-    if (!FIRE_MODES.includes(body.fireMode as WatchFireMode)) {
-      return { ok: false, error: t('apiError.watchFireModeInvalid') };
-    }
-    fields.fireMode = body.fireMode as WatchFireMode;
-  }
-
-  if (body.cooldownSeconds !== undefined) {
-    if (
-      typeof body.cooldownSeconds !== 'number' ||
-      !Number.isInteger(body.cooldownSeconds) ||
-      body.cooldownSeconds < 0
-    ) {
-      return { ok: false, error: t('apiError.watchCooldownInvalid') };
-    }
-    fields.cooldownSeconds = body.cooldownSeconds;
-  }
-
-  return { ok: true, fields };
+  return applyConfigFields<WatchRuleUpdates>(body, RULE_FIELD_SPECS, undefined);
 }
 
 function validateRuleSemantics(input: WatchRuleEffective): string | null {

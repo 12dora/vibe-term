@@ -3,6 +3,13 @@ import { HOSTED_TOOL_KEYS } from '../agent/tools/hosted';
 import { type AgentSessionRecord, getAgentSettings } from '../db/agent';
 import { getLlmProviderById } from '../db/llm';
 import { t } from '../i18n';
+import {
+  type ConfigFieldSpec,
+  type FieldParseResult,
+  applyConfigFields,
+  parseBooleanField,
+  parseEnumField,
+} from './config-field';
 
 const WRITE_MODES: readonly AgentWriteMode[] = ['confirm', 'auto'];
 const MAX_STEPS_MIN = 1;
@@ -91,166 +98,155 @@ function validateMaxSteps(value: unknown): number | { error: string } {
   return parsed;
 }
 
+type AgentFieldMode = 'create' | 'update';
+
+interface AgentFieldCtx {
+  mode: AgentFieldMode;
+  existing?: AgentSessionConfigExisting;
+  fields: Record<string, unknown>;
+}
+
+function isCreate(ctx: AgentFieldCtx): boolean {
+  return ctx.mode === 'create';
+}
+
+function parseProviderIdValue(raw: unknown): FieldParseResult<string | null> {
+  if (raw === null) return { ok: true, value: null };
+  if (typeof raw !== 'string' || !getLlmProviderById(raw)) {
+    return { ok: false, error: t('apiError.llmProviderNotFound') };
+  }
+  return { ok: true, value: raw };
+}
+
+function parseModelIdValue(raw: unknown, ctx: AgentFieldCtx): FieldParseResult<string> {
+  if (raw === undefined || (raw === null && ctx.mode === 'create')) {
+    const modelId = getAgentSettings().defaultModelId;
+    if (!modelId) return { ok: false, error: t('apiError.llmNoDefaultModel') };
+    return { ok: true, value: modelId };
+  }
+  if (typeof raw !== 'string' || !raw.trim()) {
+    return { ok: false, error: t('apiError.invalidRequest') };
+  }
+  return { ok: true, value: raw.trim() };
+}
+
+function parseSystemPromptValue(raw: unknown): FieldParseResult<string | null> {
+  if (raw !== null && typeof raw !== 'string') {
+    return { ok: false, error: t('apiError.invalidRequest') };
+  }
+  return { ok: true, value: raw };
+}
+
+function parseMaxStepsValue(raw: unknown): FieldParseResult<number> {
+  const validated = validateMaxSteps(raw);
+  if (typeof validated !== 'number') return { ok: false, error: validated.error };
+  return { ok: true, value: validated };
+}
+
+function parseHostedToolsValue(raw: unknown, ctx: AgentFieldCtx): FieldParseResult<string[]> {
+  const providerId =
+    ctx.fields.providerId !== undefined
+      ? (ctx.fields.providerId as string | null)
+      : (ctx.existing?.providerId ?? null);
+  const hostedTools = parseProviderHostedTools(raw, providerId);
+  if ('error' in hostedTools) return { ok: false, error: hostedTools.error };
+  return { ok: true, value: hostedTools.value };
+}
+
+function createDefault<T>(value: T): (ctx: AgentFieldCtx) => AbsentActionFor<T> {
+  return (ctx) => (isCreate(ctx) ? { default: value } : 'omit');
+}
+
+type AbsentActionFor<T> = 'omit' | 'parse' | { default: T };
+
+const AGENT_SESSION_FIELDS: ConfigFieldSpec<unknown, AgentFieldCtx>[] = [
+  {
+    name: 'providerId',
+    parse: parseProviderIdValue,
+    onAbsent: createDefault(null),
+    nullIsAbsent: isCreate,
+  },
+  {
+    name: 'modelId',
+    parse: parseModelIdValue,
+    onAbsent: (ctx) => (isCreate(ctx) ? 'parse' : 'omit'),
+    nullIsAbsent: isCreate,
+  },
+  {
+    name: 'systemPrompt',
+    parse: parseSystemPromptValue,
+    onAbsent: createDefault(null),
+  },
+  {
+    name: 'writeMode',
+    parse: (raw) => parseEnumField(raw, WRITE_MODES, t('apiError.agentWriteModeInvalid')),
+  },
+  {
+    name: 'useProviderWebSearch',
+    parse: (raw) => parseBooleanField(raw, t('apiError.invalidRequest')),
+    onAbsent: createDefault(false),
+  },
+  {
+    name: 'providerHostedTools',
+    parse: parseHostedToolsValue,
+    onAbsent: createDefault<string[]>([]),
+  },
+  {
+    name: 'allowControlChars',
+    parse: (raw) => parseBooleanField(raw, t('apiError.invalidRequest')),
+    onAbsent: createDefault(false),
+  },
+  {
+    name: 'maxStepsPerTurn',
+    parse: parseMaxStepsValue,
+  },
+];
+
+function effectiveProviderId(
+  fields: { providerId?: string | null },
+  existing?: AgentSessionConfigExisting
+): string | null {
+  return fields.providerId !== undefined ? fields.providerId : (existing?.providerId ?? null);
+}
+
+function validateWebSearchIfNeeded(
+  fields: { providerId?: string | null; useProviderWebSearch?: boolean },
+  existing?: AgentSessionConfigExisting
+): string | null {
+  const enabled = existing
+    ? (fields.useProviderWebSearch ?? existing.useProviderWebSearch)
+    : Boolean(fields.useProviderWebSearch);
+  if (!enabled) return null;
+  return validateProviderWebSearch(effectiveProviderId(fields, existing));
+}
+
 function parseCreateAgentSessionConfig(
   raw: Record<string, unknown>
 ): { ok: true; config: CreateAgentSessionConfig } | { ok: false; error: string } {
-  let providerId: string | null = null;
-  if (raw.providerId !== undefined && raw.providerId !== null) {
-    if (typeof raw.providerId !== 'string' || !getLlmProviderById(raw.providerId)) {
-      return { ok: false, error: t('apiError.llmProviderNotFound') };
-    }
-    providerId = raw.providerId;
-  }
-
-  let modelId: string | null = null;
-  if (raw.modelId !== undefined && raw.modelId !== null) {
-    if (typeof raw.modelId !== 'string' || !raw.modelId.trim()) {
-      return { ok: false, error: t('apiError.invalidRequest') };
-    }
-    modelId = raw.modelId.trim();
-  } else {
-    modelId = getAgentSettings().defaultModelId;
-  }
-  if (!modelId) {
-    return { ok: false, error: t('apiError.llmNoDefaultModel') };
-  }
-
-  if (raw.writeMode !== undefined && !WRITE_MODES.includes(raw.writeMode as AgentWriteMode)) {
-    return { ok: false, error: t('apiError.agentWriteModeInvalid') };
-  }
-
-  if (raw.useProviderWebSearch !== undefined && typeof raw.useProviderWebSearch !== 'boolean') {
-    return { ok: false, error: t('apiError.invalidRequest') };
-  }
-  if (raw.useProviderWebSearch) {
-    const error = validateProviderWebSearch(providerId);
-    if (error) {
-      return { ok: false, error };
-    }
-  }
-
-  const hostedTools = parseProviderHostedTools(raw.providerHostedTools, providerId);
-  if ('error' in hostedTools) {
-    return { ok: false, error: hostedTools.error };
-  }
-
-  if (raw.allowControlChars !== undefined && typeof raw.allowControlChars !== 'boolean') {
-    return { ok: false, error: t('apiError.invalidRequest') };
-  }
-
-  if (
-    raw.systemPrompt !== undefined &&
-    raw.systemPrompt !== null &&
-    typeof raw.systemPrompt !== 'string'
-  ) {
-    return { ok: false, error: t('apiError.invalidRequest') };
-  }
-
-  let maxStepsPerTurn: number | undefined;
-  if (raw.maxStepsPerTurn !== undefined) {
-    const validated = validateMaxSteps(raw.maxStepsPerTurn);
-    if (typeof validated !== 'number') {
-      return { ok: false, error: validated.error };
-    }
-    maxStepsPerTurn = validated;
-  }
-
-  const config: CreateAgentSessionConfig = {
-    providerId,
-    modelId,
-    systemPrompt: (raw.systemPrompt as string | null | undefined) ?? null,
-    useProviderWebSearch: (raw.useProviderWebSearch as boolean | undefined) ?? false,
-    providerHostedTools: hostedTools.value,
-    allowControlChars: (raw.allowControlChars as boolean | undefined) ?? false,
-  };
-  if (raw.writeMode !== undefined) {
-    config.writeMode = raw.writeMode as AgentWriteMode;
-  }
-  if (maxStepsPerTurn !== undefined) {
-    config.maxStepsPerTurn = maxStepsPerTurn;
-  }
-  return { ok: true, config };
+  const parsed = applyConfigFields<CreateAgentSessionConfig, AgentFieldCtx>(
+    raw,
+    AGENT_SESSION_FIELDS,
+    { mode: 'create', fields: {} }
+  );
+  if (!parsed.ok) return parsed;
+  const error = validateWebSearchIfNeeded(parsed.fields);
+  if (error) return { ok: false, error };
+  return { ok: true, config: parsed.fields };
 }
 
 function parseUpdateAgentSessionConfig(
   raw: Record<string, unknown>,
   existing: AgentSessionConfigExisting
 ): { ok: true; config: UpdateAgentSessionConfig } | { ok: false; error: string } {
-  const config: UpdateAgentSessionConfig = {};
-
-  if (raw.providerId !== undefined) {
-    if (raw.providerId === null) {
-      config.providerId = null;
-    } else if (typeof raw.providerId !== 'string' || !getLlmProviderById(raw.providerId)) {
-      return { ok: false, error: t('apiError.llmProviderNotFound') };
-    } else {
-      config.providerId = raw.providerId;
-    }
-  }
-
-  if (raw.modelId !== undefined) {
-    if (typeof raw.modelId !== 'string' || !raw.modelId.trim()) {
-      return { ok: false, error: t('apiError.invalidRequest') };
-    }
-    config.modelId = raw.modelId.trim();
-  }
-
-  if (raw.systemPrompt !== undefined) {
-    if (raw.systemPrompt !== null && typeof raw.systemPrompt !== 'string') {
-      return { ok: false, error: t('apiError.invalidRequest') };
-    }
-    config.systemPrompt = raw.systemPrompt;
-  }
-
-  if (raw.writeMode !== undefined) {
-    if (!WRITE_MODES.includes(raw.writeMode as AgentWriteMode)) {
-      return { ok: false, error: t('apiError.agentWriteModeInvalid') };
-    }
-    config.writeMode = raw.writeMode as AgentWriteMode;
-  }
-
-  if (raw.useProviderWebSearch !== undefined) {
-    if (typeof raw.useProviderWebSearch !== 'boolean') {
-      return { ok: false, error: t('apiError.invalidRequest') };
-    }
-    config.useProviderWebSearch = raw.useProviderWebSearch;
-  }
-
-  if (raw.providerHostedTools !== undefined) {
-    const effectiveProviderId =
-      config.providerId !== undefined ? config.providerId : existing.providerId;
-    const hostedTools = parseProviderHostedTools(raw.providerHostedTools, effectiveProviderId);
-    if ('error' in hostedTools) {
-      return { ok: false, error: hostedTools.error };
-    }
-    config.providerHostedTools = hostedTools.value;
-  }
-
-  if (raw.allowControlChars !== undefined) {
-    if (typeof raw.allowControlChars !== 'boolean') {
-      return { ok: false, error: t('apiError.invalidRequest') };
-    }
-    config.allowControlChars = raw.allowControlChars;
-  }
-
-  if (raw.maxStepsPerTurn !== undefined) {
-    const validated = validateMaxSteps(raw.maxStepsPerTurn);
-    if (typeof validated !== 'number') {
-      return { ok: false, error: validated.error };
-    }
-    config.maxStepsPerTurn = validated;
-  }
-
-  if (config.useProviderWebSearch ?? existing.useProviderWebSearch) {
-    const effectiveProviderId =
-      config.providerId !== undefined ? config.providerId : existing.providerId;
-    const error = validateProviderWebSearch(effectiveProviderId);
-    if (error) {
-      return { ok: false, error };
-    }
-  }
-
-  return { ok: true, config };
+  const parsed = applyConfigFields<UpdateAgentSessionConfig, AgentFieldCtx>(
+    raw,
+    AGENT_SESSION_FIELDS,
+    { mode: 'update', existing, fields: {} }
+  );
+  if (!parsed.ok) return parsed;
+  const error = validateWebSearchIfNeeded(parsed.fields, existing);
+  if (error) return { ok: false, error };
+  return { ok: true, config: parsed.fields };
 }
 
 export function parseAgentSessionConfig(

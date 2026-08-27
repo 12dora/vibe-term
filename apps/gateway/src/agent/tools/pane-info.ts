@@ -1,5 +1,6 @@
 import { type Tool, tool } from 'ai';
 import { z } from 'zod';
+import type { PaneInfo } from '../../tmux-client/capture-history';
 import { getDeviceSnapshot } from '../../tmux/snapshot-directory';
 import {
   type TerminalToolContext,
@@ -48,6 +49,38 @@ export function findPaneInSnapshot(
   return { found: false, snapshotExists: true };
 }
 
+function overlaySnapshotFields(
+  info: PaneInfo,
+  snapshot: SnapshotPaneContext | null
+): SnapshotPaneContext {
+  return {
+    title: info.title ?? snapshot?.title ?? null,
+    currentPath: info.currentPath ?? snapshot?.currentPath ?? null,
+    windowName: info.windowName ?? snapshot?.windowName ?? null,
+    windowId: info.windowId ?? snapshot?.windowId ?? null,
+    sessionId: info.sessionId ?? snapshot?.sessionId ?? null,
+    sessionName: info.sessionName ?? snapshot?.sessionName ?? null,
+    splitPaneCount: info.splitPaneCount ?? snapshot?.splitPaneCount ?? null,
+  };
+}
+
+function formatPaneInfo(
+  info: PaneInfo,
+  snapshot: SnapshotPaneContext | null,
+  alternateScreen: boolean
+) {
+  return {
+    ...info,
+    alternateScreen,
+    ...overlaySnapshotFields(info, snapshot),
+    term: info.term ?? process.env.TERM ?? null,
+    termProgram: info.termProgram ?? process.env.TERM_PROGRAM ?? null,
+    locale: info.locale ?? process.env.LANG ?? process.env.LC_ALL ?? null,
+    encoding: info.encoding ?? 'utf-8',
+    capturedAt: new Date().toISOString(),
+  };
+}
+
 export function createGetPaneInfoTool(ctx: TerminalToolContext): Tool {
   return tool({
     description:
@@ -55,58 +88,19 @@ export function createGetPaneInfoTool(ctx: TerminalToolContext): Tool {
     inputSchema: z.object({}),
     execute: async () => {
       const aliveError = checkRuntimeAlive(ctx);
-      if (aliveError) {
-        return aliveError;
-      }
+      if (aliveError) return aliveError;
       const runtime = ctx.getRuntime();
-      if (!runtime) {
-        return failTool(ctx, 'Terminal connection is not available.');
-      }
+      if (!runtime) return failTool(ctx, 'Terminal connection is not available.');
       try {
         const info = await runtime.getPaneInfo(ctx.paneId);
         const emulator = liveEmulator(ctx);
         const alternateScreen = emulator ? emulator.isAlternateScreen() : info.alternateScreen;
-
         const lookup = findPaneInSnapshot(ctx.deviceId, ctx.paneId);
-        if (lookup.found) {
-          ctx.onSuccess();
-          return {
-            ...info,
-            alternateScreen,
-            title: info.title ?? lookup.context.title,
-            currentPath: info.currentPath ?? lookup.context.currentPath,
-            windowName: info.windowName ?? lookup.context.windowName,
-            windowId: info.windowId ?? lookup.context.windowId,
-            sessionId: info.sessionId ?? lookup.context.sessionId,
-            sessionName: info.sessionName ?? lookup.context.sessionName,
-            splitPaneCount: info.splitPaneCount ?? lookup.context.splitPaneCount,
-            term: info.term ?? process.env.TERM ?? null,
-            termProgram: info.termProgram ?? process.env.TERM_PROGRAM ?? null,
-            locale: info.locale ?? process.env.LANG ?? process.env.LC_ALL ?? null,
-            encoding: info.encoding ?? 'utf-8',
-            capturedAt: new Date().toISOString(),
-          };
-        }
-        if (lookup.snapshotExists) {
+        if (!lookup.found && lookup.snapshotExists) {
           return failTool(ctx, 'Bound pane no longer exists in snapshot.');
         }
         ctx.onSuccess();
-        return {
-          ...info,
-          alternateScreen,
-          title: info.title ?? null,
-          currentPath: info.currentPath ?? null,
-          windowName: info.windowName ?? null,
-          windowId: info.windowId ?? null,
-          sessionId: info.sessionId ?? null,
-          sessionName: info.sessionName ?? null,
-          splitPaneCount: info.splitPaneCount ?? null,
-          term: info.term ?? process.env.TERM ?? null,
-          termProgram: info.termProgram ?? process.env.TERM_PROGRAM ?? null,
-          locale: info.locale ?? process.env.LANG ?? process.env.LC_ALL ?? null,
-          encoding: info.encoding ?? 'utf-8',
-          capturedAt: new Date().toISOString(),
-        };
+        return formatPaneInfo(info, lookup.found ? lookup.context : null, alternateScreen);
       } catch (error) {
         return failTool(ctx, `Failed to read pane info: ${toToolErrorMessage(error)}`);
       }

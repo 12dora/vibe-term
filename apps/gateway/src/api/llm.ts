@@ -5,7 +5,6 @@ import type {
   LlmProviderProtocol,
   SearchProviderInfoDto,
   UpdateAgentLlmSettingsRequest,
-  UpdateLlmProviderRequest,
 } from '@tmex/shared';
 import { getSearchProvider, getSearchProviders } from '../agent/tools/web';
 import { encrypt } from '../crypto';
@@ -13,6 +12,7 @@ import { getAgentSettings, updateAgentSettings } from '../db/agent';
 import type { AgentSettingsRecord } from '../db/agent';
 import {
   type LlmProviderRecord,
+  type UpdateLlmProviderInput,
   computeProviderModels,
   createLlmProvider,
   deleteLlmProvider,
@@ -23,6 +23,15 @@ import {
 import { t } from '../i18n';
 import { fetchProviderModels } from '../llm/provider-registry';
 import { broadcastSettingsUpdate } from '../settings/broadcaster';
+import {
+  type ConfigFieldSpec,
+  type FieldParseResult,
+  applyConfigFields,
+  parseBooleanField,
+  parseEnumField,
+  parseStringArrayField,
+  uniqueTrimmedStrings,
+} from './config-field';
 import { json, readJsonObjectBody } from './http';
 import { type ApiRoute, route } from './route';
 
@@ -150,79 +159,76 @@ async function handleCreateProvider(req: Request): Promise<Response> {
   return json({ provider: toProviderDto(provider), ...(modelsError ? { modelsError } : {}) }, 201);
 }
 
+type ProviderUpdateDraft = UpdateLlmProviderInput & { apiKey?: string };
+
+function parseTrimmedModelList(raw: unknown): FieldParseResult<string[]> {
+  const parsed = parseStringArrayField(raw, t('apiError.invalidRequest'));
+  if (!parsed.ok) return parsed;
+  return { ok: true, value: uniqueTrimmedStrings(parsed.value) };
+}
+
+const PROVIDER_UPDATE_FIELDS: ConfigFieldSpec<unknown>[] = [
+  {
+    name: 'name',
+    parse: (raw) => {
+      const name = typeof raw === 'string' ? raw.trim() : '';
+      if (!name) return { ok: false, error: t('apiError.llmProviderNameRequired') };
+      return { ok: true, value: name };
+    },
+  },
+  {
+    name: 'protocol',
+    parse: (raw) => parseEnumField(raw, PROTOCOLS, t('apiError.llmProviderProtocolInvalid')),
+  },
+  {
+    name: 'baseUrl',
+    parse: (raw) => {
+      const baseUrl = typeof raw === 'string' ? raw.trim() : '';
+      if (!isValidBaseUrl(baseUrl)) {
+        return { ok: false, error: t('apiError.llmProviderBaseUrlInvalid') };
+      }
+      return { ok: true, value: baseUrl };
+    },
+  },
+  {
+    name: 'apiKey',
+    parse: (raw) =>
+      typeof raw === 'string'
+        ? { ok: true, value: raw.trim() }
+        : { ok: false, error: t('apiError.invalidRequest') },
+  },
+  {
+    name: 'enabled',
+    parse: (raw) => parseBooleanField(raw, t('apiError.invalidRequest')),
+  },
+  { name: 'manualModels', parse: parseTrimmedModelList },
+  { name: 'disabledModels', parse: parseTrimmedModelList },
+];
+
+function parseUpdateProviderFields(
+  raw: Record<string, unknown>
+): { ok: true; draft: ProviderUpdateDraft } | { ok: false; error: string } {
+  const parsed = applyConfigFields<ProviderUpdateDraft>(raw, PROVIDER_UPDATE_FIELDS, undefined);
+  if (!parsed.ok) return parsed;
+  return { ok: true, draft: parsed.fields };
+}
+
 async function handleUpdateProvider(req: Request, id: string): Promise<Response> {
   const existing = getLlmProviderById(id);
-  if (!existing) {
-    return json({ error: t('apiError.llmProviderNotFound') }, 404);
-  }
+  if (!existing) return json({ error: t('apiError.llmProviderNotFound') }, 404);
 
   const raw = await readJsonObjectBody(req);
-  if (!raw) {
-    return json({ error: t('apiError.invalidRequest') }, 400);
-  }
-  const body = raw as UpdateLlmProviderRequest;
-  const updates: Parameters<typeof updateLlmProvider>[1] = {};
+  if (!raw) return json({ error: t('apiError.invalidRequest') }, 400);
 
-  if (body.name !== undefined) {
-    const name = typeof body.name === 'string' ? body.name.trim() : '';
-    if (!name) {
-      return json({ error: t('apiError.llmProviderNameRequired') }, 400);
-    }
-    updates.name = name;
-  }
+  const parsed = parseUpdateProviderFields(raw);
+  if (!parsed.ok) return json({ error: parsed.error }, 400);
 
-  if (body.protocol !== undefined) {
-    if (!PROTOCOLS.includes(body.protocol)) {
-      return json({ error: t('apiError.llmProviderProtocolInvalid') }, 400);
-    }
-    updates.protocol = body.protocol;
-  }
-
-  if (body.baseUrl !== undefined) {
-    const baseUrl = typeof body.baseUrl === 'string' ? body.baseUrl.trim() : '';
-    if (!isValidBaseUrl(baseUrl)) {
-      return json({ error: t('apiError.llmProviderBaseUrlInvalid') }, 400);
-    }
-    updates.baseUrl = baseUrl;
-  }
-
-  // apiKey 留空或缺省表示不修改
-  if (body.apiKey !== undefined && typeof body.apiKey !== 'string') {
-    return json({ error: t('apiError.invalidRequest') }, 400);
-  }
-  const apiKey = body.apiKey?.trim();
-  if (apiKey) {
-    updates.apiKeyEnc = await encrypt(apiKey);
-  }
-
-  if (body.enabled !== undefined) {
-    if (typeof body.enabled !== 'boolean') {
-      return json({ error: t('apiError.invalidRequest') }, 400);
-    }
-    updates.enabled = body.enabled;
-  }
-
-  const isStringArray = (value: unknown): value is string[] =>
-    Array.isArray(value) && value.every((item) => typeof item === 'string');
-
-  if (body.manualModels !== undefined) {
-    if (!isStringArray(body.manualModels)) {
-      return json({ error: t('apiError.invalidRequest') }, 400);
-    }
-    updates.manualModels = [...new Set(body.manualModels.map((m) => m.trim()).filter(Boolean))];
-  }
-
-  if (body.disabledModels !== undefined) {
-    if (!isStringArray(body.disabledModels)) {
-      return json({ error: t('apiError.invalidRequest') }, 400);
-    }
-    updates.disabledModels = [...new Set(body.disabledModels.map((m) => m.trim()).filter(Boolean))];
-  }
+  const { apiKey, ...fieldUpdates } = parsed.draft;
+  const updates: UpdateLlmProviderInput = { ...fieldUpdates };
+  if (apiKey) updates.apiKeyEnc = await encrypt(apiKey);
 
   let provider = updateLlmProvider(id, updates);
-  if (!provider) {
-    return json({ error: t('apiError.llmProviderNotFound') }, 404);
-  }
+  if (!provider) return json({ error: t('apiError.llmProviderNotFound') }, 404);
   broadcastSettingsUpdate('llm');
 
   const credentialsChanged =
