@@ -20,6 +20,8 @@ import { createContext, useContext, useState } from 'react';
 import type { ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
 
+import { actionBrief, asText, isRecord } from './tool-brief';
+
 export interface ToolCardConfirmation {
   id: string;
   toolCallId: string;
@@ -32,30 +34,6 @@ interface ToolCallCardProps {
   className?: string;
 }
 
-const I18N_TOOL_NAMES = [
-  'send_input',
-  'read_screen',
-  'web_search',
-  'fetch_url',
-  'run_command',
-  'get_pane_info',
-];
-
-const KNOWN_BODY_TOOL_NAMES = ['send_input', 'read_screen', 'web_search', 'fetch_url'];
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
-
-function asText(value: unknown): string {
-  if (typeof value === 'string') return value;
-  try {
-    return JSON.stringify(value, null, 2);
-  } catch {
-    return String(value);
-  }
-}
-
 function callErrorText(call: UiToolCall): string | null {
   if (isRecord(call.output) && typeof call.output.error === 'string') {
     return call.output.error;
@@ -64,21 +42,6 @@ function callErrorText(call: UiToolCall): string | null {
     return asText(call.output);
   }
   return null;
-}
-
-function toolIcon(toolName: string): ReactNode {
-  switch (toolName) {
-    case 'send_input':
-      return <KeyboardIcon className="size-3.5" />;
-    case 'read_screen':
-      return <MonitorIcon className="size-3.5" />;
-    case 'web_search':
-      return <SearchIcon className="size-3.5" />;
-    case 'fetch_url':
-      return <GlobeIcon className="size-3.5" />;
-    default:
-      return <WrenchIcon className="size-3.5" />;
-  }
 }
 
 const DetailsExpandedContext = createContext(false);
@@ -331,69 +294,156 @@ function GenericBody({ call, hideOutput }: { call: UiToolCall; hideOutput?: bool
   );
 }
 
-function actionBrief(call: UiToolCall): string {
-  const input = isRecord(call.input) ? call.input : {};
-  switch (call.toolName) {
-    case 'send_input': {
-      const parts: string[] = [];
-      const text = typeof input.text === 'string' ? input.text : '';
-      if (text) parts.push(text.slice(0, 40));
-      const combos = Array.isArray(input.combos) ? input.combos : [];
-      const keys = Array.isArray(input.keys) ? input.keys : [];
-      const keyCount = combos.length + keys.length;
-      if (keyCount > 0) parts.push(`+${keyCount} key${keyCount > 1 ? 's' : ''}`);
-      return parts.join(' · ') || '(empty)';
-    }
-    case 'read_screen': {
-      const output = isRecord(call.output) ? call.output : {};
-      const rows = typeof output.rows === 'number' ? output.rows : null;
-      return rows !== null ? `(${rows} rows)` : '(screen)';
-    }
-    case 'run_command': {
-      const cmd = typeof input.command === 'string' ? input.command : '';
-      return cmd.slice(0, 60) || '(command)';
-    }
-    case 'web_search': {
-      const query = typeof input.query === 'string' ? input.query : '';
-      return query.slice(0, 60) || '(query)';
-    }
-    case 'fetch_url': {
-      const url = typeof input.url === 'string' ? input.url : '';
-      return url.slice(0, 60) || '(url)';
-    }
-    case 'get_pane_info':
-      return '(pane info)';
-    default: {
-      const s = asText(call.input);
-      return s.slice(0, 60) || '';
-    }
+interface ToolView {
+  icon: ReactNode;
+  /** 缺省时用 GenericBody 展示原始 input/output */
+  Body?: (props: { call: UiToolCall }) => ReactNode;
+}
+
+/** 已知工具的图标与详情渲染；键同时决定工具名是否走 i18n 展示名 */
+const TOOL_VIEWS = new Map<string, ToolView>([
+  ['send_input', { icon: <KeyboardIcon className="size-3.5" />, Body: SendInputBody }],
+  ['read_screen', { icon: <MonitorIcon className="size-3.5" />, Body: ReadScreenBody }],
+  ['web_search', { icon: <SearchIcon className="size-3.5" />, Body: WebSearchBody }],
+  ['fetch_url', { icon: <GlobeIcon className="size-3.5" />, Body: FetchUrlBody }],
+  ['run_command', { icon: <WrenchIcon className="size-3.5" /> }],
+  ['get_pane_info', { icon: <WrenchIcon className="size-3.5" /> }],
+]);
+
+const FALLBACK_ICON = <WrenchIcon className="size-3.5" />;
+
+interface ToolCallStatus {
+  pendingApproval: boolean;
+  denied: boolean;
+  errorText: string | null;
+  deniedReason: string;
+  running: boolean;
+}
+
+function toolCallStatus(call: UiToolCall, confirmationId: string | undefined): ToolCallStatus {
+  const pendingApproval = Boolean(confirmationId) && !call.resolved;
+  const denied = call.resolved && call.denied;
+  return {
+    pendingApproval,
+    denied,
+    errorText: call.resolved && !denied ? callErrorText(call) : null,
+    deniedReason: denied && typeof call.output === 'string' ? call.output : '',
+    running: !call.resolved && !pendingApproval,
+  };
+}
+
+/** 四态互斥：运行中 / 出错 / 被拒 / 成功；待确认（未 resolved 且非运行）不显示图标 */
+function ToolStatusIcon({ call, status }: { call: UiToolCall; status: ToolCallStatus }) {
+  if (status.running) {
+    return <Loader2Icon className="text-muted-foreground size-3 shrink-0 animate-spin" />;
   }
+  if (!call.resolved) return null;
+  if (status.errorText !== null) {
+    return <CircleAlertIcon className="text-destructive size-3 shrink-0" />;
+  }
+  if (status.denied) {
+    return <XIcon className="text-destructive size-3 shrink-0" />;
+  }
+  return <CheckIcon className="size-3 shrink-0 text-emerald-500" />;
+}
+
+function ToolApproval({
+  call,
+  confirmationId,
+  onDecide,
+}: {
+  call: UiToolCall;
+  confirmationId: string;
+  onDecide?: (confirmationId: string, approved: boolean) => void;
+}) {
+  const { t } = useTranslation();
+  return (
+    <div
+      data-testid={`agent-tool-approval-${call.toolCallId}`}
+      className="flex items-center gap-2 pt-1"
+    >
+      <span className="text-muted-foreground min-w-0 flex-1 text-xs">
+        {t('agent.confirm.title')}
+      </span>
+      <Button
+        data-testid="agent-confirm-approve"
+        size="xs"
+        variant="secondary"
+        onClick={() => onDecide?.(confirmationId, true)}
+      >
+        <CheckIcon />
+        {t('agent.confirm.approve')}
+      </Button>
+      <Button
+        data-testid="agent-confirm-deny"
+        size="xs"
+        variant="destructive"
+        onClick={() => onDecide?.(confirmationId, false)}
+      >
+        <XIcon />
+        {t('agent.confirm.deny')}
+      </Button>
+    </div>
+  );
+}
+
+function ToolDetailsDialog({
+  call,
+  view,
+  icon,
+  label,
+  open,
+  onOpenChange,
+}: {
+  call: UiToolCall;
+  view: ToolView | undefined;
+  icon: ReactNode;
+  label: string;
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+}) {
+  const images = extractToolImages(call);
+  const Body = view?.Body;
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="flex max-h-[80vh] max-w-2xl flex-col gap-3 overflow-hidden sm:max-w-2xl">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-1.5 text-sm">
+            {icon}
+            <span>{label}</span>
+          </DialogTitle>
+        </DialogHeader>
+        <div className="text-muted-foreground flex flex-col gap-3 overflow-auto text-xs">
+          <DetailsExpandedContext.Provider value={true}>
+            {Body ? (
+              <Body call={call} />
+            ) : (
+              <GenericBody call={call} hideOutput={images.length > 0} />
+            )}
+            <ToolImages images={images} />
+          </DetailsExpandedContext.Provider>
+        </div>
+      </DialogContent>
+    </Dialog>
+  );
 }
 
 export function ToolCallCard({ call, confirmationId, onDecide, className }: ToolCallCardProps) {
   const { t } = useTranslation();
   const [dialogOpen, setDialogOpen] = useState(false);
-  const pendingApproval = Boolean(confirmationId) && !call.resolved;
-  const denied = call.resolved && call.denied;
-  const errorText = call.resolved && !denied ? callErrorText(call) : null;
-  const running = !call.resolved && !pendingApproval;
-  const deniedReason = denied && typeof call.output === 'string' ? call.output : '';
-
-  const toolLabel = I18N_TOOL_NAMES.includes(call.toolName)
-    ? t(`agent.tool.${call.toolName}`)
-    : call.toolName;
-
-  const images = extractToolImages(call);
-  const hasKnownBody = KNOWN_BODY_TOOL_NAMES.includes(call.toolName);
+  const status = toolCallStatus(call, confirmationId);
+  const view = TOOL_VIEWS.get(call.toolName);
+  const icon = view?.icon ?? FALLBACK_ICON;
+  const toolLabel = view ? t(`agent.tool.${call.toolName}`) : call.toolName;
 
   return (
     <div
       data-tool-name={call.toolName}
-      data-tool-denied={denied || undefined}
+      data-tool-denied={status.denied || undefined}
       className={cn(
         'border-border bg-card flex max-w-full min-w-0 flex-col gap-1.5 self-start rounded-lg border p-2',
-        errorText !== null && 'border-destructive/50',
-        denied && 'opacity-80',
+        status.errorText !== null && 'border-destructive/50',
+        status.denied && 'opacity-80',
         className
       )}
     >
@@ -403,76 +453,36 @@ export function ToolCallCard({ call, confirmationId, onDecide, className }: Tool
         data-testid={`agent-tool-card-${call.toolCallId}`}
         className="border-border bg-card/50 hover:bg-accent/50 flex max-w-full min-w-0 items-center gap-1.5 rounded-md border px-1.5 py-1 text-xs transition-colors"
       >
-        {toolIcon(call.toolName)}
+        {icon}
         <span className="min-w-0 shrink-0 font-medium truncate">{toolLabel}</span>
         <span className="text-muted-foreground min-w-0 flex-1 truncate">{actionBrief(call)}</span>
-        {running && <Loader2Icon className="text-muted-foreground size-3 shrink-0 animate-spin" />}
-        {call.resolved && !denied && errorText === null && (
-          <CheckIcon className="size-3 shrink-0 text-emerald-500" />
-        )}
-        {errorText !== null && <CircleAlertIcon className="text-destructive size-3 shrink-0" />}
-        {denied && <XIcon className="text-destructive size-3 shrink-0" />}
+        <ToolStatusIcon call={call} status={status} />
       </button>
 
-      {errorText !== null && (
-        <p className="text-destructive text-xs break-words whitespace-pre-wrap">{errorText}</p>
-      )}
-
-      {deniedReason && (
-        <p className="text-muted-foreground text-xs break-words whitespace-pre-wrap">
-          {deniedReason}
+      {status.errorText !== null && (
+        <p className="text-destructive text-xs break-words whitespace-pre-wrap">
+          {status.errorText}
         </p>
       )}
 
-      {pendingApproval && confirmationId && (
-        <div
-          data-testid={`agent-tool-approval-${call.toolCallId}`}
-          className="flex items-center gap-2 pt-1"
-        >
-          <span className="text-muted-foreground min-w-0 flex-1 text-xs">
-            {t('agent.confirm.title')}
-          </span>
-          <Button
-            data-testid="agent-confirm-approve"
-            size="xs"
-            variant="secondary"
-            onClick={() => onDecide?.(confirmationId, true)}
-          >
-            <CheckIcon />
-            {t('agent.confirm.approve')}
-          </Button>
-          <Button
-            data-testid="agent-confirm-deny"
-            size="xs"
-            variant="destructive"
-            onClick={() => onDecide?.(confirmationId, false)}
-          >
-            <XIcon />
-            {t('agent.confirm.deny')}
-          </Button>
-        </div>
+      {status.deniedReason && (
+        <p className="text-muted-foreground text-xs break-words whitespace-pre-wrap">
+          {status.deniedReason}
+        </p>
       )}
 
-      <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
-        <DialogContent className="flex max-h-[80vh] max-w-2xl flex-col gap-3 overflow-hidden sm:max-w-2xl">
-          <DialogHeader>
-            <DialogTitle className="flex items-center gap-1.5 text-sm">
-              {toolIcon(call.toolName)}
-              <span>{toolLabel}</span>
-            </DialogTitle>
-          </DialogHeader>
-          <div className="text-muted-foreground flex flex-col gap-3 overflow-auto text-xs">
-            <DetailsExpandedContext.Provider value={true}>
-              {call.toolName === 'send_input' && <SendInputBody call={call} />}
-              {call.toolName === 'read_screen' && <ReadScreenBody call={call} />}
-              {call.toolName === 'web_search' && <WebSearchBody call={call} />}
-              {call.toolName === 'fetch_url' && <FetchUrlBody call={call} />}
-              {!hasKnownBody && <GenericBody call={call} hideOutput={images.length > 0} />}
-              <ToolImages images={images} />
-            </DetailsExpandedContext.Provider>
-          </div>
-        </DialogContent>
-      </Dialog>
+      {status.pendingApproval && confirmationId && (
+        <ToolApproval call={call} confirmationId={confirmationId} onDecide={onDecide} />
+      )}
+
+      <ToolDetailsDialog
+        call={call}
+        view={view}
+        icon={icon}
+        label={toolLabel}
+        open={dialogOpen}
+        onOpenChange={setDialogOpen}
+      />
     </div>
   );
 }
