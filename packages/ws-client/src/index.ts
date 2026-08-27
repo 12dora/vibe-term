@@ -40,6 +40,24 @@ export {
 } from './direct/direct-carrier-controller';
 
 export {
+  BulkClient,
+  BulkTransferError,
+  bulkChannelLabel,
+  clearBulkClients,
+  getBulkClient,
+  iterateBulkFrames,
+  registerBulkClient,
+  BULK_CHANNEL_PREFIX,
+  BULK_FRAME_SIZE,
+  DEFAULT_BULK_OPEN_TIMEOUT_MS,
+  type BulkChannelSource,
+  type BulkClientOptions,
+  type BulkDownloadRequest,
+  type BulkResult,
+  type BulkUploadRequest,
+} from './direct/bulk-client';
+
+export {
   DirectDataChannelCarrier,
   DC_HIGH_WATER_BYTES,
   DC_LOW_WATER_BYTES,
