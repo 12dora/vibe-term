@@ -2238,6 +2238,57 @@ describe('GhosttyTerminalController clipboard and selection API', () => {
     disposable.dispose();
   });
 
+  // 分屏回归：同一页挂多个控制器时，__tmexE2eTerminalSelectionText 是唯一的全局探针，
+  // 每个控制器每帧都会写它。空闲 pane 的任意一帧曾把有选区 pane 的探针抹成 null，而渲染
+  // 循环按需调度、本 pane 空闲后不会再写回来，探针就永久停在 null
+  //（e2e terminal-selection-canvas「双击选词」在满负载全量运行下随机读到 null）。
+  test('an idle controller frame must not erase the selection probe owned by another pane', async () => {
+    dom = installCanvasDom();
+    const bindings = createFakeBindings();
+    importVersion += 1;
+    const { createTerminalController } = await loadControllerModule(bindings, importVersion);
+
+    const activeDom = dom;
+    const openPane = async () => {
+      const terminal = await createTerminalController({
+        theme: TEST_THEME,
+        fontFamily: 'monospace',
+        fontSize: 13,
+        scrollback: 1000,
+      });
+      const container = activeDom.document.createElement('div');
+      container.setBoundingClientRect({ width: 960, height: 480 });
+      activeDom.document.body.appendChild(container);
+      terminal.open(container as unknown as HTMLElement);
+      return terminal;
+    };
+
+    const paneA = await openPane();
+    const paneB = await openPane();
+    const probe = () => (globalThis as any).__tmexE2eTerminalSelectionText ?? null;
+
+    expect(paneA.startTouchSelection(4, 4, 'word')).toBeTrue();
+    paneA.endTouchSelection();
+    expect(probe()).toBe('mock-canvas-line');
+
+    paneB.refresh();
+    expect(probe()).toBe('mock-canvas-line');
+
+    // 归属者自己清空仍然生效
+    paneA.clearSelection();
+    expect(probe()).toBeNull();
+
+    // 归属释放后，另一个 pane 能正常接管探针，且原归属者的空闲帧不再抹掉它
+    expect(paneB.startTouchSelection(4, 4, 'word')).toBeTrue();
+    expect(probe()).toBe('mock-canvas-line');
+    paneA.refresh();
+    expect(probe()).toBe('mock-canvas-line');
+
+    // 归属者被销毁时释放探针
+    paneB.dispose();
+    expect(probe()).toBeNull();
+  });
+
   // Bug 1: resize cols/rows 未变时不应清 selection（geometry effect 抖动导致无效 resize）
   test('resize with unchanged cols/rows should preserve selection', async () => {
     dom = installCanvasDom();
