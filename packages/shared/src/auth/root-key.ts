@@ -1,0 +1,87 @@
+import { ed25519, x25519 } from '@noble/curves/ed25519.js';
+import { argon2id } from 'hash-wasm';
+import { type KdfParams, randomBytes } from './encoding';
+
+export const ARGON2ID_MEMORY_KIB = 65536;
+export const ARGON2ID_ITERATIONS = 3;
+export const ARGON2ID_PARALLELISM = 1;
+export const ARGON2ID_HASH_LENGTH = 32;
+export const KDF_SALT_LENGTH = 16;
+
+export interface RootKey {
+  readonly publicKey: Uint8Array;
+  readonly seed: Uint8Array;
+  sign(message: Uint8Array): Uint8Array;
+}
+
+export interface Ed25519KeyPair {
+  secretKey: Uint8Array;
+  publicKey: Uint8Array;
+}
+
+export interface X25519KeyPair {
+  secretKey: Uint8Array;
+  publicKey: Uint8Array;
+}
+
+export function generateKdfParams(): KdfParams {
+  return {
+    salt: randomBytes(KDF_SALT_LENGTH),
+    memory_kib: ARGON2ID_MEMORY_KIB,
+    iterations: ARGON2ID_ITERATIONS,
+    parallelism: ARGON2ID_PARALLELISM,
+  };
+}
+
+export async function deriveSeed(password: string, kdfParams: KdfParams): Promise<Uint8Array> {
+  const normalized = password.normalize('NFKC');
+  const digest = await argon2id({
+    password: new TextEncoder().encode(normalized),
+    salt: new Uint8Array(kdfParams.salt),
+    parallelism: kdfParams.parallelism,
+    iterations: kdfParams.iterations,
+    memorySize: kdfParams.memory_kib,
+    hashLength: ARGON2ID_HASH_LENGTH,
+    outputType: 'binary',
+  });
+  return digest;
+}
+
+export function rootKeyFromSeed(seed: Uint8Array): RootKey {
+  if (seed.length !== 32) {
+    throw new Error('Ed25519 seed must be 32 bytes');
+  }
+  const owned = new Uint8Array(seed);
+  const publicKey = ed25519.getPublicKey(owned);
+  return {
+    publicKey,
+    seed: owned,
+    sign(message: Uint8Array): Uint8Array {
+      return ed25519.sign(message, owned);
+    },
+  };
+}
+
+export function signEd25519(secretKey: Uint8Array, message: Uint8Array): Uint8Array {
+  return ed25519.sign(message, secretKey);
+}
+
+export function verifyEd25519(
+  signature: Uint8Array,
+  message: Uint8Array,
+  publicKey: Uint8Array
+): boolean {
+  try {
+    return ed25519.verify(signature, message, publicKey, { zip215: false });
+  } catch {
+    return false;
+  }
+}
+
+export function generateEd25519KeyPair(): Ed25519KeyPair {
+  return ed25519.keygen();
+}
+
+export function generateX25519KeyPair(): X25519KeyPair {
+  return x25519.keygen();
+}
