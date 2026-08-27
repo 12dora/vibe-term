@@ -5,7 +5,7 @@ import { CarrierSwitchController, type DirectCarrier } from './carrier-switch';
 import { DataChannelCarrier } from './data-channel-carrier';
 import { pairDataChannels } from './test-fakes';
 
-function decodeSwitch(payload: Uint8Array): { epoch: number; to: number } {
+function decodeSwitch(payload: Uint8Array): { epoch: number; to: number; rtcSession: string } {
   return wsBorsh.decodePayload(wsBorsh.schema.CarrierSwitchSchema, payload);
 }
 
@@ -19,6 +19,7 @@ describe('CarrierSwitchController', () => {
     const barrier = new CarrierSwitchController({
       sendControl(_session, kind, payload) {
         controls.push({ kind, payload });
+        return 'sent';
       },
       deliverInbound(_session, bytes) {
         delivered.push(new TextDecoder().decode(bytes));
@@ -66,6 +67,7 @@ describe('CarrierSwitchController', () => {
         if (kind === wsBorsh.KIND_CARRIER_SWITCH) {
           controls.push(decodeSwitch(payload).epoch);
         }
+        return 'sent';
       },
       deliverInbound() {},
     });
@@ -98,6 +100,7 @@ describe('CarrierSwitchController', () => {
     const barrier = new CarrierSwitchController({
       sendControl(_session, _kind, _payload) {
         activeAtSwitch.push(session.activeCarrier);
+        return 'sent';
       },
       deliverInbound(_session, bytes) {
         inbound.push(new TextDecoder().decode(bytes));
@@ -131,6 +134,7 @@ describe('CarrierSwitchController', () => {
     const barrier = new CarrierSwitchController({
       sendControl(_session, kind, payload) {
         if (kind === wsBorsh.KIND_CARRIER_SWITCH) controls.push(decodeSwitch(payload));
+        return 'sent';
       },
       deliverInbound() {},
     });
@@ -213,5 +217,95 @@ describe('CarrierSwitchController', () => {
     await Bun.sleep(0);
     expect(session.activeCarrier).toBe(session.primary);
     expect(session.direct).toBeNull();
+  });
+
+  test('CARRIER_SWITCH carries rtcSession for both direct and primary', () => {
+    const session = createGatewaySession();
+    const [local] = pairDataChannels('sess');
+    const direct = new DataChannelCarrier(local) as DirectCarrier;
+    const controls: Array<{ epoch: number; to: number; rtcSession: string }> = [];
+    const barrier = new CarrierSwitchController({
+      sendControl(_session, kind, payload) {
+        if (kind === wsBorsh.KIND_CARRIER_SWITCH) controls.push(decodeSwitch(payload));
+        return 'sent';
+      },
+      deliverInbound() {},
+    });
+    barrier.attachDirect(session, direct, { rtcSession: 'br:attempt-a' });
+    expect(controls[0]).toEqual({
+      epoch: 1,
+      to: wsBorsh.CARRIER_SWITCH_TO_DIRECT,
+      rtcSession: 'br:attempt-a',
+    });
+    local.close();
+    expect(controls[1]).toEqual({
+      epoch: 2,
+      to: wsBorsh.CARRIER_SWITCH_TO_PRIMARY,
+      rtcSession: 'br:attempt-a',
+    });
+  });
+
+  test('handleAck accepts only when epoch and rtcSession both match', () => {
+    const session = createGatewaySession();
+    const [local, remote] = pairDataChannels('sess');
+    const direct = new DataChannelCarrier(local) as DirectCarrier;
+    const delivered: string[] = [];
+    const barrier = new CarrierSwitchController({
+      sendControl() {
+        return 'sent';
+      },
+      deliverInbound(_session, bytes) {
+        delivered.push(new TextDecoder().decode(bytes));
+      },
+    });
+    barrier.attachDirect(session, direct, { rtcSession: 'br:attempt-a' });
+    remote.sendMessageBinary(
+      Buffer.from([0, 0, 0, 1, 0, 0, 1, 0, ...new TextEncoder().encode('A')])
+    );
+    expect(delivered).toEqual([]);
+
+    barrier.handleAck(session, 1, 'br:other');
+    expect(delivered).toEqual([]);
+    barrier.handleAck(session, 99, 'br:attempt-a');
+    expect(delivered).toEqual([]);
+    barrier.handleAck(session, 1, 'br:attempt-a');
+    expect(delivered).toEqual(['A']);
+  });
+
+  test('stale ACK from a previous attempt is ignored after re-attach', () => {
+    const session = createGatewaySession();
+    const [firstLocal, firstRemote] = pairDataChannels('sess');
+    const first = new DataChannelCarrier(firstLocal) as DirectCarrier;
+    const delivered: string[] = [];
+    const barrier = new CarrierSwitchController({
+      sendControl() {
+        return 'sent';
+      },
+      deliverInbound(_session, bytes) {
+        delivered.push(new TextDecoder().decode(bytes));
+      },
+    });
+    barrier.attachDirect(session, first, { rtcSession: 'br:a' });
+    firstRemote.sendMessageBinary(
+      Buffer.from([0, 0, 0, 1, 0, 0, 1, 0, ...new TextEncoder().encode('old')])
+    );
+
+    const [secondLocal, secondRemote] = pairDataChannels('sess');
+    const second = new DataChannelCarrier(secondLocal) as DirectCarrier;
+    barrier.attachDirect(session, second, { rtcSession: 'br:b' });
+    secondRemote.sendMessageBinary(
+      Buffer.from([0, 0, 0, 1, 0, 0, 1, 0, ...new TextEncoder().encode('new')])
+    );
+    expect(delivered).toEqual([]);
+
+    barrier.handleAck(session, 1, 'br:a');
+    expect(delivered).toEqual([]);
+    expect(session.activeCarrier).toBe(second);
+
+    barrier.handleAck(session, 2, 'br:a');
+    expect(delivered).toEqual([]);
+
+    barrier.handleAck(session, 2, 'br:b');
+    expect(delivered).toEqual(['new']);
   });
 });

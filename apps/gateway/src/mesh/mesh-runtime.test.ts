@@ -72,6 +72,30 @@ describe('createMeshRuntime', () => {
     expect(mesh.uplink.state === 'connecting' || mesh.uplink.state === 'online').toBe(true);
   });
 
+  test('MeshRuntimeConfig.peerBindHost is threaded to PeerServer when peerHostname is omitted', async () => {
+    const { db, close } = createMigratedAuthDb();
+    const [clientWs] = fakeSocketPair();
+    const mesh = await createMeshRuntime({
+      db,
+      gateway: fakeGateway(db),
+      config: {
+        roles: { hub: false, node: true },
+        hubUrl: 'http://127.0.0.1:9',
+        peerPort: 0,
+        stunServers: [],
+        peerBindHost: ['127.0.0.1'],
+      },
+      wsFactory: () => clientWs,
+    });
+    fixtures.push({ close, stop: () => mesh.stop() });
+    await mesh.start();
+    const port = mesh.peers.listenPort;
+    expect(port).toBeGreaterThan(0);
+    const res = await fetch(`http://127.0.0.1:${port}/peer`);
+    expect(res.status).toBe(426);
+    await expect(fetch(`http://[::1]:${port}/peer`)).rejects.toThrow();
+  });
+
   test('hub,node role uses in-memory uplink, attachLocalNode, auth handshake, and node.list', async () => {
     const { db, close } = createMigratedAuthDb();
     const userStore = new UserStore(db);

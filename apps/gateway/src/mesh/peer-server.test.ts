@@ -1,10 +1,15 @@
 import { afterEach, describe, expect, test } from 'bun:test';
 import { PeerServer } from './peer-server';
+import { DEFAULT_PEER_BIND_HOSTS } from './types';
 
 describe('PeerServer', () => {
   const servers: PeerServer[] = [];
   afterEach(() => {
     while (servers.length) servers.pop()?.stop();
+  });
+
+  test('defaults to dual-stack bind hosts', () => {
+    expect(DEFAULT_PEER_BIND_HOSTS).toEqual(['::', '0.0.0.0']);
   });
 
   test('tries each bind host and only throws when none succeed', async () => {

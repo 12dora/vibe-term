@@ -1,14 +1,17 @@
 import { afterEach, describe, expect, test } from 'bun:test';
+import { wsBorsh } from '@tmex/shared';
 import { encodeBase64url, normalizeFingerprint } from '@tmex/shared/auth';
 import { LinkMux } from '@tmex/shared/link';
 import { createMigratedAuthDb } from '../../auth/test-db';
 import { UserStore } from '../../auth/user-store';
+import { createGatewaySession } from '../../ws/test-helpers';
 import type { RtcSignalMessage } from '../mesh-deps';
 import { seedNodeIdentity, seedUser } from '../test-support';
 import { PeerHandshakeError } from '../types';
+import { DataChannelCarrier } from './data-channel-carrier';
 import type { RtcSignaling } from './ice';
 import { RTC_AUTHORIZE_MAX, RtcPeerManager, SESS_CHANNEL_LABEL } from './rtc-peer-manager';
-import { type FakePeerConnection, createFakeNativeModule } from './test-fakes';
+import { type FakePeerConnection, createFakeNativeModule, pairDataChannels } from './test-fakes';
 
 function loopbackSignaling(): [RtcSignaling, RtcSignaling] {
   const aCbs: Array<(msg: RtcSignalMessage) => void> = [];
@@ -246,6 +249,7 @@ describe('RtcPeerManager', () => {
       rtcSession,
       uid: 'user-1',
       via: 'self',
+      sid: 'sid-bad-nonce',
       fpBrowser: normalizeFingerprint(browserPc.fingerprint),
     });
     const acceptP = left.acceptBrowser(rtcSession, sigNode);
@@ -275,6 +279,7 @@ describe('RtcPeerManager', () => {
       rtcSession: 'cap-0',
       uid: 'user-1',
       via: 'self',
+      sid: 'sid-cap-0',
       fpBrowser: fp,
     });
     expect(first).not.toBeNull();
@@ -283,6 +288,7 @@ describe('RtcPeerManager', () => {
         rtcSession: `cap-${i}`,
         uid: 'user-1',
         via: 'self',
+        sid: `sid-cap-${i}`,
         fpBrowser: fp,
       });
       expect(auth).not.toBeNull();
@@ -291,6 +297,7 @@ describe('RtcPeerManager', () => {
       rtcSession: 'cap-overflow',
       uid: 'user-1',
       via: 'self',
+      sid: 'sid-overflow',
       fpBrowser: fp,
     });
     expect(overflow).toBeNull();
@@ -298,6 +305,7 @@ describe('RtcPeerManager', () => {
       rtcSession: 'cap-0',
       uid: 'user-1',
       via: 'self',
+      sid: 'sid-cap-0',
       fpBrowser: fp,
     });
     expect(refresh).not.toBeNull();
@@ -326,6 +334,7 @@ describe('RtcPeerManager', () => {
       rtcSession: 'ttl-sess',
       uid: 'user-1',
       via: 'self',
+      sid: 'sid-ttl',
       fpBrowser: { algorithm: 'sha-256', value: 'AA' },
     });
     expect(auth).not.toBeNull();
@@ -366,6 +375,7 @@ describe('RtcPeerManager', () => {
       rtcSession,
       uid: 'user-1',
       via: 'self',
+      sid: 'sid-consume',
       fpBrowser: normalizeFingerprint(browserPc.fingerprint),
     });
     const acceptP = left.acceptBrowser(rtcSession, sigNode);
@@ -376,5 +386,64 @@ describe('RtcPeerManager', () => {
     await expect(left.acceptBrowser(rtcSession, sigNode)).rejects.toBeInstanceOf(
       PeerHandshakeError
     );
+  });
+
+  test('authorizeBrowser requires sid and does not create a PC without it', async () => {
+    const { left, fake } = setup();
+    await left.ready();
+    const before = fake.connections.length;
+    const missing = await left.authorizeBrowser({
+      rtcSession: 'no-sid',
+      uid: 'user-1',
+      via: 'self',
+      fpBrowser: { algorithm: 'sha-256', value: 'AA' },
+    });
+    expect(missing).toBeNull();
+    expect(fake.connections.length).toBe(before);
+    const empty = await left.authorizeBrowser({
+      rtcSession: 'empty-sid',
+      uid: 'user-1',
+      via: 'self',
+      sid: '',
+      fpBrowser: { algorithm: 'sha-256', value: 'AA' },
+    });
+    expect(empty).toBeNull();
+    expect(fake.connections.length).toBe(before);
+  });
+
+  test('attachDirect forwards rtcSession into CARRIER_SWITCH and ACK matching', async () => {
+    const { db, close } = createMigratedAuthDb();
+    fixtures.push({ close });
+    const store = new UserStore(db);
+    seedUser(store);
+    const identity = seedNodeIdentity(store, 'user-1');
+    const fake = createFakeNativeModule();
+    const controls: Array<{ epoch: number; rtcSession: string }> = [];
+    const mgr = new RtcPeerManager({
+      loadNative: async () => fake.module,
+      iceConfigProvider: () => ({ stun: [], turn: null }),
+      identity,
+      userStore: store,
+      sendControl(_session, kind, payload) {
+        if (kind === wsBorsh.KIND_CARRIER_SWITCH) {
+          const decoded = wsBorsh.decodePayload(wsBorsh.schema.CarrierSwitchSchema, payload);
+          controls.push({ epoch: decoded.epoch, rtcSession: decoded.rtcSession });
+        }
+        return 'sent';
+      },
+      deliverInbound() {},
+    });
+    fixtures.push({ close: () => mgr.close() });
+    await mgr.ready();
+    const session = createGatewaySession();
+    const [local, remote] = pairDataChannels('sess');
+    const carrier = new DataChannelCarrier(local);
+    mgr.attachDirect(session, carrier, { rtcSession: 'br:from-accept' });
+    expect(controls).toEqual([{ epoch: 1, rtcSession: 'br:from-accept' }]);
+    remote.sendMessageBinary(
+      Buffer.from([0, 0, 0, 1, 0, 0, 1, 0, ...new TextEncoder().encode('A')])
+    );
+    mgr.handleCarrierSwitchAck(session, 1, 'br:stale');
+    mgr.handleCarrierSwitchAck(session, 1, 'br:from-accept');
   });
 });

@@ -8,8 +8,11 @@ export type SendControl = (
   session: GatewaySession,
   kind: number,
   payload: Uint8Array
-  // biome-ignore lint/suspicious/noConfusingVoidType: existing callers return void; treated as sent
-) => ControlSendStatus | Promise<ControlSendStatus> | void;
+) => ControlSendStatus | Promise<ControlSendStatus>;
+
+export type AttachDirectOptions = {
+  rtcSession?: string;
+};
 
 export type DeliverInbound = (session: GatewaySession, bytes: Uint8Array) => void;
 
@@ -29,6 +32,7 @@ type SwitchState = {
   flushing: boolean;
   buffer: Uint8Array[];
   direct: DirectCarrier | null;
+  rtcSession: string;
   unsubClose: (() => void) | null;
   switchGeneration: number;
   unsubDrain: (() => void) | null;
@@ -44,9 +48,14 @@ export class CarrierSwitchController {
     this.deliverInbound = opts.deliverInbound;
   }
 
-  attachDirect(session: GatewaySession, carrier: DirectCarrier): void {
+  attachDirect(
+    session: GatewaySession,
+    carrier: DirectCarrier,
+    options?: AttachDirectOptions
+  ): void {
     const state = this.ensure(session);
     state.direct = carrier;
+    state.rtcSession = options?.rtcSession ?? '';
     state.buffer.length = 0;
     state.flushing = false;
     state.unsubClose?.();
@@ -63,7 +72,7 @@ export class CarrierSwitchController {
       state.unsubClose = () => {};
     }
     const payload = this.beginSwitch(state, 'direct');
-    const status = this.sendControl(session, wsBorsh.KIND_CARRIER_SWITCH, payload);
+    const status = this.sendSwitch(session, payload);
     if (this.isThenable(status)) {
       void this.finishOutboundSwitch(session, state, carrier, generation, status);
       return;
@@ -82,10 +91,11 @@ export class CarrierSwitchController {
     this.cancelPendingSwitch(session, state, carrier, generation);
   }
 
-  handleAck(session: GatewaySession, epoch: number): void {
+  handleAck(session: GatewaySession, epoch: number, rtcSession = ''): void {
     const state = this.states.get(session);
     if (!state || state.pendingTo !== 'direct') return;
     if (epoch !== state.epoch) return;
+    if (rtcSession !== state.rtcSession) return;
     const direct = session.direct ?? state.direct;
     if (!direct) return;
     state.pendingTo = null;
@@ -124,18 +134,26 @@ export class CarrierSwitchController {
       state.unsubDrain?.();
       state.unsubDrain = null;
       const payload = this.beginSwitch(state, 'primary');
-      void this.sendControl(session, wsBorsh.KIND_CARRIER_SWITCH, payload);
+      void this.sendSwitch(session, payload);
     }
   }
 
   private beginSwitch(state: SwitchState, to: 'direct' | 'primary'): Uint8Array {
     state.epoch = (state.epoch + 1) >>> 0;
     state.pendingTo = to === 'direct' ? 'direct' : null;
+    return this.encodeSwitch(state, to);
+  }
+
+  private encodeSwitch(state: SwitchState, to: 'direct' | 'primary'): Uint8Array {
     return wsBorsh.encodePayload(wsBorsh.schema.CarrierSwitchSchema, {
       epoch: state.epoch,
       to: to === 'direct' ? wsBorsh.CARRIER_SWITCH_TO_DIRECT : wsBorsh.CARRIER_SWITCH_TO_PRIMARY,
-      rtcSession: '',
+      rtcSession: state.rtcSession,
     });
+  }
+
+  private sendSwitch(session: GatewaySession, payload: Uint8Array) {
+    return this.sendControl(session, wsBorsh.KIND_CARRIER_SWITCH, payload);
   }
 
   private async finishOutboundSwitch(
@@ -172,19 +190,11 @@ export class CarrierSwitchController {
     generation: number,
     payload: Uint8Array | null
   ): Promise<void> {
-    const frame =
-      payload ??
-      wsBorsh.encodePayload(wsBorsh.schema.CarrierSwitchSchema, {
-        epoch: state.epoch,
-        to: wsBorsh.CARRIER_SWITCH_TO_DIRECT,
-        rtcSession: '',
-      });
+    const frame = payload ?? this.encodeSwitch(state, 'direct');
     while (state.switchGeneration === generation && !session.closed) {
       const drained = await this.waitDrain(session, state, generation);
       if (!drained) break;
-      const status = normalizeControlStatus(
-        await this.sendControl(session, wsBorsh.KIND_CARRIER_SWITCH, frame)
-      );
+      const status = normalizeControlStatus(await this.sendSwitch(session, frame));
       if (status === 'sent') {
         if (state.switchGeneration === generation && !session.closed) {
           session.switchActiveCarrier(carrier);
@@ -264,6 +274,7 @@ export class CarrierSwitchController {
         flushing: false,
         buffer: [],
         direct: null,
+        rtcSession: '',
         unsubClose: null,
         switchGeneration: 0,
         unsubDrain: null,
@@ -275,8 +286,7 @@ export class CarrierSwitchController {
 }
 
 function normalizeControlStatus(
-  // biome-ignore lint/suspicious/noConfusingVoidType: void/undefined send results mean the frame was accepted
-  status: ControlSendStatus | void | boolean | 'backpressured' | 'dropped'
+  status: ControlSendStatus | boolean | 'backpressured' | 'dropped' | undefined
 ): ControlSendStatus {
   if (status === 'backpressure' || status === 'backpressured') return 'backpressure';
   if (status === 'closed' || status === 'dropped' || status === false) return 'closed';

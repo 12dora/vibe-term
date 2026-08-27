@@ -118,7 +118,9 @@ export class WebSocketServer
     return this.theme.themeSignalLast;
   }
 
-  private carrierSwitchAckHandler: ((session: GatewaySession, epoch: number) => void) | null = null;
+  private carrierSwitchAckHandler:
+    | ((session: GatewaySession, epoch: number, rtcSession: string) => void)
+    | null = null;
 
   constructor(options: WebSocketServerOptions = {}) {
     this.deps = {
@@ -132,7 +134,9 @@ export class WebSocketServer
     this.borshHandlers = createBorshKindHandlers(this);
   }
 
-  setOnCarrierSwitchAck(handler: ((session: GatewaySession, epoch: number) => void) | null): void {
+  setOnCarrierSwitchAck(
+    handler: ((session: GatewaySession, epoch: number, rtcSession: string) => void) | null
+  ): void {
     this.carrierSwitchAckHandler = handler;
   }
 
@@ -456,7 +460,7 @@ export class WebSocketServer
 
       if (kind === wsBorsh.KIND_CARRIER_SWITCH_ACK) {
         const ack = wsBorsh.decodePayload(wsBorsh.schema.CarrierSwitchAckSchema, payload);
-        this.carrierSwitchAckHandler?.(ws, Number(ack.epoch));
+        this.carrierSwitchAckHandler?.(ws, Number(ack.epoch), ack.rtcSession);
         return;
       }
 

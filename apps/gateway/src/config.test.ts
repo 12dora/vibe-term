@@ -1,5 +1,11 @@
 import { describe, expect, test } from 'bun:test';
-import { parsePeerPort, parseStunServers, parseTmexRoles, resolveTmuxBin } from './config';
+import {
+  parsePeerBindHost,
+  parsePeerPort,
+  parseStunServers,
+  parseTmexRoles,
+  resolveTmuxBin,
+} from './config';
 
 // config 是模块级常量（import 时快照 process.env），
 // 用 query-busting 动态 import 在不同 env 下重新求值。
@@ -15,6 +21,7 @@ async function loadConfigWith(env: Record<string, string | undefined>): Promise<
   hubPublicUrl: string | null;
   peerPort: number;
   stunServers: string[];
+  peerBindHost: string[];
   turnUrl: string | null;
   turnUsername: string | null;
   turnCredential: string | null;
@@ -42,6 +49,7 @@ async function loadConfigWith(env: Record<string, string | undefined>): Promise<
         hubPublicUrl: string | null;
         peerPort: number;
         stunServers: string[];
+        peerBindHost: string[];
         turnUrl: string | null;
         turnUsername: string | null;
         turnCredential: string | null;
@@ -197,6 +205,20 @@ describe('parseTmexRoles', () => {
   });
 });
 
+describe('parsePeerBindHost', () => {
+  test('defaults to dual-stack :: and 0.0.0.0', () => {
+    expect(parsePeerBindHost(undefined)).toEqual(['::', '0.0.0.0']);
+    expect(parsePeerBindHost('')).toEqual(['::', '0.0.0.0']);
+    expect(parsePeerBindHost('  ,  , ')).toEqual(['::', '0.0.0.0']);
+  });
+
+  test('splits comma-separated hosts and drops empty items', () => {
+    expect(parsePeerBindHost('127.0.0.1')).toEqual(['127.0.0.1']);
+    expect(parsePeerBindHost('127.0.0.1, ::, 0.0.0.0')).toEqual(['127.0.0.1', '::', '0.0.0.0']);
+    expect(parsePeerBindHost('::1,,0.0.0.0')).toEqual(['::1', '0.0.0.0']);
+  });
+});
+
 describe('parsePeerPort / parseStunServers', () => {
   test('peer port defaults to 39001 and rejects out-of-range values', () => {
     expect(parsePeerPort(undefined)).toBe(39001);
@@ -225,6 +247,12 @@ describe('config hub/node env', () => {
     expect(config.peerPort).toBe(39001);
     expect(config.hubUrl).toBeNull();
     expect(config.stunServers).toEqual([]);
+    expect(config.peerBindHost).toEqual(['::', '0.0.0.0']);
+  });
+
+  test('parses TMEX_PEER_BIND_HOST comma-separated list', async () => {
+    const config = await loadConfigWith({ TMEX_PEER_BIND_HOST: '127.0.0.1,::1' });
+    expect(config.peerBindHost).toEqual(['127.0.0.1', '::1']);
   });
 
   test('parses hub,node role and related URLs', async () => {

@@ -476,6 +476,8 @@ export class UplinkClient {
     }
     for (const node of list.nodes) {
       if (node.id === this.identity.nodeId) continue;
+      const cert = this.userStore.getCert(node.id);
+      if (!cert || cert.userId !== this.userId || cert.revokedLogSeq != null) continue;
       this.userStore.upsertPeer({
         nodeId: node.id,
         name: node.name,

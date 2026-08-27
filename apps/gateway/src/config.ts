@@ -112,6 +112,19 @@ export function parseStunServers(raw: string | undefined): string[] {
     .filter((item) => item.length > 0);
 }
 
+export const DEFAULT_PEER_BIND_HOSTS = ['::', '0.0.0.0'] as const;
+
+export function parsePeerBindHost(raw: string | undefined): string[] {
+  if (!raw) {
+    return [...DEFAULT_PEER_BIND_HOSTS];
+  }
+  const hosts = raw
+    .split(',')
+    .map((item) => item.trim())
+    .filter((item) => item.length > 0);
+  return hosts.length > 0 ? hosts : [...DEFAULT_PEER_BIND_HOSTS];
+}
+
 function getOptionalEnv(key: string): string | null {
   const value = process.env[key]?.trim();
   return value ? value : null;
@@ -168,6 +181,7 @@ export const config = {
   hubPublicUrl: getOptionalEnv('TMEX_HUB_PUBLIC_URL'),
   peerPort: parsePeerPort(process.env.TMEX_PEER_PORT),
   stunServers: parseStunServers(process.env.TMEX_STUN_SERVERS),
+  peerBindHost: parsePeerBindHost(process.env.TMEX_PEER_BIND_HOST),
   turnUrl: getOptionalEnv('TMEX_TURN_URL'),
   turnUsername: getOptionalEnv('TMEX_TURN_USERNAME'),
   turnCredential: getOptionalEnv('TMEX_TURN_CREDENTIAL'),

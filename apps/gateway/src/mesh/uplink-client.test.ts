@@ -85,6 +85,7 @@ describe('UplinkClient', () => {
     expect(received.some((row) => row.includes('node.status'))).toBe(true);
 
     const peerId = 'cd'.repeat(16);
+    admitPeer(userStore, peerId);
     const recBytes = randomBytes(8);
     const recSig = randomBytes(64);
     hub.ctl.send(
@@ -552,7 +553,113 @@ describe('UplinkClient', () => {
     expect(ack.ok).toBe(true);
     expect(ack.seq).toBe(12n);
   });
+
+  test('node.list does not upsert unknown, cross-user, or revoked nodes into peer_cache', async () => {
+    const { db, close } = createMigratedAuthDb();
+    fixtures.push({ close });
+    const userStore = new UserStore(db);
+    seedUser(userStore);
+    seedUser(userStore, 'user-2');
+    const unknownId = '11'.repeat(16);
+    const otherUserId = '22'.repeat(16);
+    const revokedId = '33'.repeat(16);
+    const admittedId = '44'.repeat(16);
+    admitPeer(userStore, otherUserId, 'user-2');
+    admitPeer(userStore, revokedId, 'user-1', 7);
+    admitPeer(userStore, admittedId);
+    const [clientWs, hubWs] = fakeSocketPair();
+    const hub = new WebSocketLink(hubWs, { role: 'acceptor' });
+    hub.ctl.onMessage(() => {});
+    const lists: unknown[] = [];
+    const client = new UplinkClient({
+      hubUrl: 'https://hub.example.com',
+      identity: { nodeId: 'ab'.repeat(16), edSecretKey: randomBytes(32) },
+      userId: 'user-1',
+      keyLogApplier: dummyApplier(),
+      userStore,
+      statusProvider: () => status(),
+      onNodeList: (list) => lists.push(list),
+      wsFactory: () => clientWs,
+    });
+    fixtures.push({ close, stop: () => client.stop() });
+    client.start();
+    await waitUntil(() => client.link !== null);
+    hub.ctl.send(encodeUplinkCtl({ t: 'auth.challenge', nonce: encodeBase64url(randomBytes(32)) }));
+    hub.ctl.send(encodeUplinkCtl({ t: 'auth.ok' }));
+    await waitUntil(() => client.state === 'online');
+    hub.ctl.send(
+      encodeUplinkCtl({
+        t: 'node.list',
+        version: 3,
+        key_log_head: { seq: 0n, hash: new Uint8Array(32) },
+        rtc: { stun: [], turn: null },
+        nodes: [
+          {
+            id: unknownId,
+            name: 'unknown',
+            online: true,
+            endpoints: ['ws://10.0.0.9:39001/peer'],
+            inventory: {},
+            direct_capable: true,
+            version: '1.0.0',
+          },
+          {
+            id: otherUserId,
+            name: 'other-user',
+            online: true,
+            endpoints: ['ws://10.0.0.8:39001/peer'],
+            inventory: {},
+            direct_capable: true,
+            version: '1.0.0',
+          },
+          {
+            id: revokedId,
+            name: 'revoked',
+            online: true,
+            endpoints: ['ws://10.0.0.7:39001/peer'],
+            inventory: {},
+            direct_capable: true,
+            version: '1.0.0',
+          },
+          {
+            id: admittedId,
+            name: 'admitted',
+            online: true,
+            endpoints: ['ws://10.0.0.6:39001/peer'],
+            inventory: { devices: [1] },
+            direct_capable: true,
+            version: '1.0.0',
+          },
+        ],
+      })
+    );
+    await waitUntil(() => lists.length === 1);
+    const cached = userStore
+      .listPeers()
+      .map((row) => row.nodeId)
+      .sort();
+    expect(cached).toEqual([admittedId]);
+    expect(userStore.listPeers().find((row) => row.nodeId === admittedId)?.name).toBe('admitted');
+  });
 });
+
+function admitPeer(
+  store: UserStore,
+  nodeId: string,
+  userId = 'user-1',
+  revokedLogSeq?: number
+): void {
+  store.upsertCert({
+    nodeId,
+    userId,
+    admitRecordSeq: 1,
+    certificateBytes: randomBytes(8),
+    certSig: randomBytes(64),
+    authorizationBytes: randomBytes(8),
+    authorizationSig: randomBytes(64),
+    revokedLogSeq: revokedLogSeq ?? null,
+  });
+}
 
 function dummyApplier() {
   return {

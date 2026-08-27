@@ -1,7 +1,7 @@
 import type { ServerSocketAdapter } from '@tmex/shared/link';
 import { defaultScheduler } from './ctl';
 import { wrapBunPeerSocket } from './peer-protocol';
-import type { MeshScheduler } from './types';
+import { DEFAULT_PEER_BIND_HOSTS, type MeshScheduler, type PeerBindHost } from './types';
 
 export const PEER_HANDSHAKE_RATE_LIMIT = 10;
 export const PEER_HANDSHAKE_RATE_WINDOW_MS = 60_000;
@@ -14,7 +14,7 @@ type PeerSocketData = {
 
 export type PeerServerOptions = {
   port: number;
-  hostname?: string | string[];
+  hostname?: PeerBindHost;
   onAccept: (socket: ServerSocketAdapter, remoteIp: string) => void;
   handshakeLimitPerMin?: number;
   scheduler?: MeshScheduler;
@@ -106,7 +106,7 @@ export class PeerServer {
       ? Array.isArray(this.opts.hostname)
         ? this.opts.hostname
         : [this.opts.hostname]
-      : ['::', '0.0.0.0'];
+      : [...DEFAULT_PEER_BIND_HOSTS];
     let port = this.opts.port;
     const errors: string[] = [];
     for (const hostname of hosts) {

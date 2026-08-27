@@ -16,6 +16,7 @@ import type {
 import type { MeshIdentity } from '../types';
 import { PeerHandshakeError } from '../types';
 import {
+  type AttachDirectOptions,
   CarrierSwitchController,
   type CarrierSwitchOptions,
   type DirectCarrier,
@@ -88,6 +89,7 @@ export type AcceptBrowserResult = {
   uid: string;
   sid: string;
   via: string;
+  rtcSession: string;
 };
 
 export type BrowserAuthorization = {
@@ -291,12 +293,13 @@ export class RtcPeerManager implements RtcFingerprintProvider {
     input: RtcAuthorizeBrowserInput
   ): Promise<RtcAuthorizeBrowserResult | null> {
     if (!(await this.ready())) return null;
+    if (!input.sid) return null;
     this.sweepBrowser();
     const existing = this.browser.get(input.rtcSession);
     if (!existing && this.browser.size >= this.authorizeMax) return null;
     const rec = this.createBrowser(input.rtcSession);
     rec.uid = input.uid;
-    rec.sid = input.sid ?? '';
+    rec.sid = input.sid;
     rec.via = input.via;
     rec.fpBrowser = normalizeFingerprint(input.fpBrowser);
     rec.exp = this.now() + this.authorizeTtlMs;
@@ -349,6 +352,7 @@ export class RtcPeerManager implements RtcFingerprintProvider {
       uid,
       sid,
       via,
+      rtcSession,
     };
   }
 
@@ -358,17 +362,17 @@ export class RtcPeerManager implements RtcFingerprintProvider {
     return { rtcSession, uid: rec.uid, sid: rec.sid, via: rec.via };
   }
 
-  attachDirect(session: GatewaySession, carrier: Carrier): void {
+  attachDirect(session: GatewaySession, carrier: Carrier, options?: AttachDirectOptions): void {
     if (this.switcher) {
-      this.switcher.attachDirect(session, carrier as DirectCarrier);
+      this.switcher.attachDirect(session, carrier as DirectCarrier, options);
       return;
     }
     session.attachCarrier(carrier, 'direct');
     session.switchActiveCarrier(carrier);
   }
 
-  handleCarrierSwitchAck(session: GatewaySession, epoch: number): void {
-    this.switcher?.handleAck(session, epoch);
+  handleCarrierSwitchAck(session: GatewaySession, epoch: number, rtcSession = ''): void {
+    this.switcher?.handleAck(session, epoch, rtcSession);
   }
 
   handleDirectClose(session: GatewaySession, carrier?: Carrier): void {

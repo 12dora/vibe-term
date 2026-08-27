@@ -3,6 +3,10 @@ import type { UserStore } from '../auth/user-store';
 
 export type MeshNodeId = string;
 
+/** Hosts `PeerServer` binds. Default is dual-stack. */
+export type PeerBindHost = string | string[];
+export const DEFAULT_PEER_BIND_HOSTS: readonly string[] = ['::', '0.0.0.0'];
+
 export type MeshIdentity = {
   nodeId: MeshNodeId;
   edSecretKey: Uint8Array;

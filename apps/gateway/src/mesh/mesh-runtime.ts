@@ -48,7 +48,7 @@ import {
 import { BulkTransferService, parseBulkChannelLabel } from './rtc/bulk';
 import { authenticateRequest } from './session-middleware';
 import { openHttpStream, openWsStream } from './stream-targets';
-import type { DispatchContext, KeyLogApplier, MeshScheduler } from './types';
+import type { DispatchContext, KeyLogApplier, MeshScheduler, PeerBindHost } from './types';
 import { UplinkClient, type UplinkWsFactory } from './uplink-client';
 import type { UplinkNodeList, UplinkRtcSignal } from './uplink-protocol';
 
@@ -64,6 +64,7 @@ export type MeshRuntimeConfig = {
   turnUsername?: string | null;
   turnCredential?: string | null;
   bindHost?: string;
+  peerBindHost?: PeerBindHost;
 };
 
 export type CreateMeshRuntimeOptions = {
@@ -74,7 +75,7 @@ export type CreateMeshRuntimeOptions = {
   /** Same-process hub to attach an in-memory uplink to (remote node in hub+A+B tests). */
   uplinkHub?: HubRuntime;
   wsFactory?: UplinkWsFactory;
-  peerHostname?: string | string[];
+  peerHostname?: PeerBindHost;
   startPeerServer?: boolean;
   pingIntervalMs?: number;
   scheduler?: MeshScheduler;
@@ -264,10 +265,19 @@ function peerFromDcSession(selfNodeId: string, rtcSession: string): string | nul
   return null;
 }
 
-function resolvePeerBindHost(explicit?: string | string[]): string | string[] | undefined {
-  if (explicit !== undefined) return explicit;
-  const env = process.env.TMEX_PEER_BIND_HOST?.trim();
-  return env ? env : undefined;
+function splitPeerBindHosts(value: string | string[]): string[] {
+  const parts = Array.isArray(value) ? value : value.split(',');
+  const hosts = parts.map((item) => item.trim()).filter((item) => item.length > 0);
+  return hosts.length > 0 ? hosts : [...gatewayConfig.peerBindHost];
+}
+
+function resolvePeerBindHost(
+  explicit?: string | string[],
+  fromConfig?: string | string[]
+): string[] {
+  if (explicit !== undefined) return splitPeerBindHosts(explicit);
+  if (fromConfig !== undefined) return splitPeerBindHosts(fromConfig);
+  return [...gatewayConfig.peerBindHost];
 }
 
 function turnConfig(config: MeshRuntimeConfig): CachedRtcConfig['turn'] {
@@ -479,8 +489,8 @@ export async function createMeshRuntime(opts: CreateMeshRuntimeOptions): Promise
     },
   });
   if (typeof gateway.wsServer.setOnCarrierSwitchAck === 'function') {
-    gateway.wsServer.setOnCarrierSwitchAck((session, epoch) => {
-      rtc.handleCarrierSwitchAck(session, epoch);
+    gateway.wsServer.setOnCarrierSwitchAck((session, epoch, rtcSession) => {
+      rtc.handleCarrierSwitchAck(session, epoch, rtcSession);
     });
   }
 
@@ -623,7 +633,7 @@ export async function createMeshRuntime(opts: CreateMeshRuntimeOptions): Promise
     sessionStore: nodeSessionStore,
     dispatchHttp: dispatchInboundHttp,
     wsServer: gateway.wsServer,
-    hostname: resolvePeerBindHost(opts.peerHostname),
+    hostname: resolvePeerBindHost(opts.peerHostname, config.peerBindHost),
     startServer: opts.startPeerServer,
     scheduler: opts.scheduler,
     rtc,
@@ -757,7 +767,7 @@ export async function createMeshRuntime(opts: CreateMeshRuntimeOptions): Promise
           binding.uid === result.uid &&
           binding.via === result.via
         ) {
-          rtc.attachDirect(binding.session, result.carrier);
+          rtc.attachDirect(binding.session, result.carrier, { rtcSession: result.rtcSession });
           result.pc.onDataChannel((dc) => {
             if (parseBulkChannelLabel(dc.getLabel?.())) {
               bulk.attachChannel(dc, { uid: result.uid });

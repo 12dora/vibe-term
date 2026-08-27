@@ -123,7 +123,9 @@ describe('carrier switch with GatewaySession (no native)', () => {
     const direct = new DataChannelCarrier(local) as DirectCarrier;
     const delivered: string[] = [];
     const barrier = new CarrierSwitchController({
-      sendControl() {},
+      sendControl() {
+        return 'sent';
+      },
       deliverInbound(_session, bytes) {
         delivered.push(new TextDecoder().decode(bytes));
       },
@@ -263,6 +265,7 @@ describe.skipIf(!nativeMod)('rtc loopback (node-datachannel)', () => {
       rtcSession,
       uid: 'user-1',
       via: 'self',
+      sid: 'sid-integ-1',
       fpBrowser,
     });
     if (!auth) throw new Error('authorizeBrowser returned null');
