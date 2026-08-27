@@ -1,5 +1,10 @@
-import { t } from '../i18n';
-import { checkBunVersion } from './bun';
+import {
+  type DependencyInstallRunnerDeps,
+  confirmInstall,
+  resolveInstallPlan,
+  runInstallCommand,
+  verifyInstalledDependency,
+} from './dependency-install-runner';
 import {
   type LinuxDistroInfo,
   type PackageManagerFamily,
@@ -7,8 +12,11 @@ import {
   detectPackageManager,
 } from './linux-distro';
 import { runCommand } from './process';
-import { promptConfirm } from './prompt';
-import { checkTmuxVersion } from './tmux';
+
+export type {
+  DependencyInstallOptions,
+  DependencyInstallRunnerDeps,
+} from './dependency-install-runner';
 
 export type DepName = 'bun' | 'tmux';
 
@@ -28,12 +36,27 @@ export interface DepInstallPlan {
 }
 
 const TMUX_INSTALL_COMMANDS: Record<PackageManagerFamily, InstallCommand | null> = {
-  brew: { label: 'Homebrew', command: 'brew install tmux', requiresSudo: false, packageManager: 'brew' },
+  brew: {
+    label: 'Homebrew',
+    command: 'brew install tmux',
+    requiresSudo: false,
+    packageManager: 'brew',
+  },
   apt: { label: 'apt', command: 'apt install -y tmux', requiresSudo: true, packageManager: 'apt' },
   dnf: { label: 'dnf', command: 'dnf install -y tmux', requiresSudo: true, packageManager: 'dnf' },
-  pacman: { label: 'pacman', command: 'pacman -S --noconfirm tmux', requiresSudo: true, packageManager: 'pacman' },
+  pacman: {
+    label: 'pacman',
+    command: 'pacman -S --noconfirm tmux',
+    requiresSudo: true,
+    packageManager: 'pacman',
+  },
   apk: { label: 'apk', command: 'apk add tmux', requiresSudo: true, packageManager: 'apk' },
-  zypper: { label: 'zypper', command: 'zypper install -y tmux', requiresSudo: true, packageManager: 'zypper' },
+  zypper: {
+    label: 'zypper',
+    command: 'zypper install -y tmux',
+    requiresSudo: true,
+    packageManager: 'zypper',
+  },
   unknown: null,
 };
 
@@ -62,8 +85,9 @@ export async function planTmuxInstall(
 
   if (platform === 'darwin') {
     const brewAvailable = await commandAvailable('brew');
-    if (!brewAvailable) return [];
-    return [TMUX_INSTALL_COMMANDS.brew!];
+    const brew = TMUX_INSTALL_COMMANDS.brew;
+    if (!brewAvailable || !brew) return [];
+    return [brew];
   }
 
   if (platform === 'linux') {
@@ -149,84 +173,12 @@ export function resolveInstallCommand(
 
 export async function executeDependencyInstall(
   plan: DepInstallPlan,
-  options: { nonInteractive: boolean; autoConfirm: boolean }
+  options: { nonInteractive: boolean; autoConfirm: boolean },
+  deps: DependencyInstallRunnerDeps = {}
 ): Promise<boolean> {
-  if (plan.commands.length === 0) {
-    if (plan.dep === 'tmux' && process.platform === 'darwin') {
-      console.error(`[tmex] ${t('deps.install.brewMissing')}`);
-    } else {
-      console.error(`[tmex] ${t('deps.install.unknownDistro', { dep: plan.dep })}`);
-    }
-    console.error(`[tmex] ${t('deps.install.manual')}`);
-    return false;
-  }
-
-  const cmd = plan.commands[0]!;
-  const fullCommand = resolveInstallCommand(cmd);
-
-  if (cmd.requiresSudo && !isRoot()) {
-    if (options.nonInteractive) {
-      const sudoOk = await isSudoAvailable();
-      if (!sudoOk) {
-        console.error(`[tmex] ${t('deps.install.sudoUnavailable')}`);
-        return false;
-      }
-    }
-  }
-
-  console.log(`[tmex] ${t('deps.install.hint', { command: fullCommand })}`);
-
-  if (!options.autoConfirm) {
-    if (options.nonInteractive) {
-      console.error(`[tmex] ${t('deps.install.nonInteractive', { dep: plan.dep })}`);
-      return false;
-    }
-
-    const confirmed = await promptConfirm(
-      { nonInteractive: false },
-      t('deps.install.confirm', { dep: plan.dep }),
-      true
-    );
-    if (!confirmed) return false;
-  }
-
-  console.log(`[tmex] ${t('deps.install.running', { dep: plan.dep })}`);
-
-  const parts = fullCommand.split(' ');
-  const bin = parts[0]!;
-  const args = parts.slice(1);
-
-  if (fullCommand.includes('|')) {
-    const result = await runCommand('sh', ['-c', fullCommand], { stdio: 'inherit' }).catch(() => null);
-    if (!result || result.code !== 0) {
-      console.error(`[tmex] ${t('deps.install.failed', { dep: plan.dep })}`);
-      console.error(`[tmex] ${t('deps.install.manual')}`);
-      return false;
-    }
-  } else {
-    const result = await runCommand(bin, args, { stdio: 'inherit' }).catch(() => null);
-    if (!result || result.code !== 0) {
-      console.error(`[tmex] ${t('deps.install.failed', { dep: plan.dep })}`);
-      console.error(`[tmex] ${t('deps.install.manual')}`);
-      return false;
-    }
-  }
-
-  if (plan.dep === 'bun') {
-    const check = await checkBunVersion();
-    if (check.ok) {
-      console.log(`[tmex] ${t('deps.install.success', { dep: plan.dep })}`);
-      return true;
-    }
-  } else {
-    const check = await checkTmuxVersion();
-    if (check.ok) {
-      console.log(`[tmex] ${t('deps.install.success', { dep: plan.dep })}`);
-      return true;
-    }
-  }
-
-  console.error(`[tmex] ${t('deps.install.failed', { dep: plan.dep })}`);
-  console.error(`[tmex] ${t('deps.install.manual')}`);
-  return false;
+  const resolved = await resolveInstallPlan(plan, options, deps);
+  if (!resolved.ok) return false;
+  if (!(await confirmInstall(plan, options, deps))) return false;
+  if (!(await runInstallCommand(plan.dep, resolved.fullCommand, deps))) return false;
+  return verifyInstalledDependency(plan.dep, deps);
 }
