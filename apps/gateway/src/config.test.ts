@@ -175,14 +175,21 @@ describe('config.gatewayOwnerToken', () => {
 describe('parseTmexRoles', () => {
   test('defaults to standalone and accepts the three legal values', () => {
     expect(parseTmexRoles(undefined)).toEqual({ hub: false, node: false });
-    expect(parseTmexRoles('')).toEqual({ hub: false, node: false });
     expect(parseTmexRoles('standalone')).toEqual({ hub: false, node: false });
     expect(parseTmexRoles('node')).toEqual({ hub: false, node: true });
     expect(parseTmexRoles('hub,node')).toEqual({ hub: true, node: true });
   });
 
   test('rejects anything else including pure hub and reordered roles', () => {
-    for (const raw of ['hub', 'node,hub', 'standalone,node', 'hub,node,node', 'HUB,NODE']) {
+    for (const raw of [
+      '',
+      '   ',
+      'hub',
+      'node,hub',
+      'standalone,node',
+      'hub,node,node',
+      'HUB,NODE',
+    ]) {
       expect(() => parseTmexRoles(raw)).toThrow('TMEX_ROLES');
     }
   });

@@ -74,8 +74,11 @@ function getGatewayOwnerToken(): string | null {
 export type TmexRoles = { hub: boolean; node: boolean };
 
 export function parseTmexRoles(raw: string | undefined): TmexRoles {
-  const value = (raw ?? 'standalone').trim();
-  if (value === '' || value === 'standalone') {
+  if (raw === undefined) {
+    return { hub: false, node: false };
+  }
+  const value = raw.trim();
+  if (value === 'standalone') {
     return { hub: false, node: false };
   }
   if (value === 'node') {
