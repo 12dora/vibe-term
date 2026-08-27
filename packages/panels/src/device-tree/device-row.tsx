@@ -3,8 +3,10 @@ import { useRuntime } from '@tmex/stores/react';
 import { cn } from '@tmex/ui';
 import { ChevronRight, Globe, GripVertical, Monitor, Plus } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
+import type { DeviceConnectionAdapter } from '../device-connection';
 import { DeviceStatusBadge } from '../device-status-badge';
 import type { DeviceTreeNavigation, SidebarAgentAdapter } from './agent-adapter';
+import { DeviceConnectionControl } from './device-connection-control';
 import { SortableVerticalList, useSortableRow } from './device-tree-dnd';
 import { WindowRow } from './window-row';
 
@@ -27,6 +29,8 @@ export interface DeviceRowProps {
   onWatchPane: (deviceId: string, paneId: string) => void;
   agent?: SidebarAgentAdapter;
   nav: DeviceTreeNavigation;
+  /** 宿主连接管理；未传时不渲染连接开关，行为与内嵌宿主一致 */
+  connection?: DeviceConnectionAdapter;
 }
 
 export function DeviceRow({
@@ -48,6 +52,7 @@ export function DeviceRow({
   onWatchPane,
   agent,
   nav,
+  connection,
 }: DeviceRowProps) {
   const { t } = useTranslation();
   const { stores } = useRuntime();
@@ -55,6 +60,10 @@ export function DeviceRow({
   const { setNodeRef, setDragHandleRef, style, isDragging, dragHandleProps } = useSortableRow(
     device.id
   );
+
+  const status = connection?.status(device.id) ?? (isOnline ? 'connected' : 'disconnected');
+  const isIntentionallyDisconnected = connection?.isIntentionallyDisconnected(device.id) ?? false;
+  const showTree = isExpanded && !isIntentionallyDisconnected;
 
   return (
     <div
@@ -86,15 +95,15 @@ export function DeviceRow({
           <span className="flex-1 truncate text-xs font-medium">{device.name}</span>
 
           <DeviceStatusBadge deviceId={device.id} className="shrink-0" />
-          <span
-            data-testid={`device-online-status-${device.id}`}
-            data-online={isOnline}
-            aria-label={isOnline ? t('device.connected') : t('device.disconnected')}
-            title={isOnline ? t('device.connected') : t('device.disconnected')}
-            className={cn(
-              'h-2 w-2 shrink-0 rounded-full',
-              isOnline ? 'bg-emerald-500' : 'bg-gray-400'
-            )}
+          <DeviceConnectionControl
+            deviceId={device.id}
+            status={status}
+            connection={connection}
+            onConnect={() => onExpandedChange(device.id, true)}
+            onDisconnect={() => {
+              connection?.disconnect(device.id);
+              onExpandedChange(device.id, false);
+            }}
           />
           <button
             type="button"
@@ -112,7 +121,7 @@ export function DeviceRow({
         </div>
       </div>
 
-      {isExpanded && (
+      {showTree && (
         <div
           data-testid={`device-tree-${device.id}`}
           className="space-y-1.5 py-1.5 pr-1.5 pl-10 [@media(any-pointer:coarse)]:space-y-2"

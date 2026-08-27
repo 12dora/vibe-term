@@ -1,4 +1,6 @@
 import { expect, test } from '@playwright/test';
+import { createLocalDevice } from './helpers/device';
+import { createSinglePaneSession, ensureCleanSession } from './helpers/tmux';
 
 test('devices: SSH Config field only appears for configRef auth mode (ui)', async ({ page }) => {
   await page.goto('/devices');
@@ -39,11 +41,18 @@ test('devices: create/edit/delete local device (ui)', async ({ page }) => {
   await page.getByTestId('device-name-input').fill(initialName);
   await page.getByTestId('device-dialog-save').click();
 
-  const createdCard = page.locator(`[data-testid="device-card"][data-device-name="${initialName}"]`);
+  const createdCard = page.locator(
+    `[data-testid="device-card"][data-device-name="${initialName}"]`
+  );
   await expect(createdCard).toBeVisible();
 
   const deviceId = await createdCard.getAttribute('data-device-id');
   expect(deviceId).toBeTruthy();
+
+  // 卡片上的连接入口指向设备页
+  const connectLink = createdCard.locator(`[data-testid="device-card-connect-${deviceId}"]`);
+  await expect(connectLink).toBeVisible();
+  await expect(connectLink).toHaveAttribute('href', `/devices/${deviceId}`);
 
   await createdCard.locator(`[data-testid="device-card-actions-${deviceId}"]`).click();
   await page.getByTestId(`device-card-edit-${deviceId}`).click();
@@ -66,4 +75,31 @@ test('devices: create/edit/delete local device (ui)', async ({ page }) => {
   await expect(
     page.locator(`[data-testid="device-card"][data-device-name="${updatedName}"]`)
   ).toHaveCount(0);
+});
+
+test('devices: card connect entry navigates to the device page', async ({ page, request }) => {
+  const sessionName = `tmex-e2e-devices-connect-${Date.now()}`;
+  createSinglePaneSession(sessionName);
+  let deviceId: string | undefined;
+
+  try {
+    deviceId = await createLocalDevice(request, sessionName, `e2e-devices-connect-${Date.now()}`);
+
+    await page.goto('/devices');
+    await expect(page.getByTestId('devices-page')).toBeVisible();
+
+    const connectLink = page.getByTestId(`device-card-connect-${deviceId}`);
+    await expect(connectLink).toBeVisible();
+    await expect(connectLink).toHaveAttribute('href', `/devices/${deviceId}`);
+
+    await connectLink.click();
+    await expect(page).toHaveURL(`/devices/${deviceId}`);
+    await expect(page.getByTestId('device-page')).toBeVisible();
+    await expect(page.locator('.xterm').first()).toBeVisible({ timeout: 20_000 });
+  } finally {
+    if (deviceId) {
+      await request.delete(`/api/devices/${deviceId}`).catch(() => undefined);
+    }
+    ensureCleanSession(sessionName);
+  }
 });

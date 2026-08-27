@@ -11,6 +11,7 @@ import { useUIStore } from '@tmex/stores/react';
 import { type TerminalRef, XTERM_THEME_DARK, XTERM_THEME_LIGHT } from '@tmex/terminal-ui';
 import { useCallback, useMemo, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
+import type { DeviceConnectionAdapter } from '../device-connection';
 import { EditorInputPanel } from './editor-input-panel';
 import { TerminalStage } from './terminal-stage';
 import { useConsoleTargets } from './use-console-targets';
@@ -32,6 +33,8 @@ export interface DeviceConsoleProps {
    *  缺省沿用 buildBrowserTitle（`[siteName]label`）与 siteName 复原。 */
   formatBrowserTitle?: (label: string | null) => string;
   prepareTerminalResources?: (fontId: string, fontSize: number) => Promise<void>;
+  /** 宿主连接管理；未传时不显示主动断开占位 */
+  connection?: DeviceConnectionAdapter;
 }
 
 function NoDeviceNotice() {
@@ -52,6 +55,7 @@ export function DeviceConsole({
   devicesQueryKey = defaultDevicesQueryKey,
   formatBrowserTitle,
   prepareTerminalResources,
+  connection,
 }: DeviceConsoleProps) {
   const terminalContainerRef = useRef<HTMLDivElement>(null);
   const terminalRef = useRef<TerminalRef>(null);
@@ -71,6 +75,10 @@ export function DeviceConsole({
 
   const targets = useConsoleTargets({ deviceId, windowId, resolvedPaneId, devicesQueryKey });
   const { windows, selectedWindow, selectedPane, deviceConnected, isReconnecting } = targets;
+
+  const isIntentionallyDisconnected = Boolean(
+    deviceId && connection?.isIntentionallyDisconnected(deviceId)
+  );
 
   const prepareResources = useCallback(
     () => prepareTerminalResources?.(terminalFontId, terminalFontSize) ?? Promise.resolve(),
@@ -137,6 +145,7 @@ export function DeviceConsole({
         selection={selection}
         deviceConnected={deviceConnected}
         isReconnecting={isReconnecting}
+        isIntentionallyDisconnected={isIntentionallyDisconnected}
         isMobile={isMobile}
         inputMode={inputMode}
         uiTheme={uiTheme}

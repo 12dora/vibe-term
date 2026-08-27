@@ -106,6 +106,7 @@ export type TranslationKey =
   | 'device.connected'
   | 'device.disconnect'
   | 'device.disconnected'
+  | 'device.connectToStart'
   | 'device.connecting'
   | 'device.dragHandle'
   | 'device.reorderFailed'

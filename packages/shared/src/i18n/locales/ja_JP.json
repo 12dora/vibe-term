@@ -93,6 +93,7 @@
       "connected": "接続済み",
       "disconnect": "切断",
       "disconnected": "切断済み",
+      "connectToStart": "デバイスに接続して開始してください。",
       "connecting": "接続中...",
       "dragHandle": "ドラッグしてデバイスを並べ替え",
       "reorderFailed": "デバイスの並べ替えに失敗しました",

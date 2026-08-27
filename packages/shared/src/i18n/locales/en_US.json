@@ -93,6 +93,7 @@
       "connected": "Connected",
       "disconnect": "Disconnect",
       "disconnected": "Disconnected",
+      "connectToStart": "Connect to this device to get started.",
       "connecting": "Connecting...",
       "dragHandle": "Drag to reorder device",
       "reorderFailed": "Failed to reorder devices",

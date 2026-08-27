@@ -3,11 +3,12 @@ import { SideBarDeviceList as DeviceTreeSideBarDeviceList } from '@tmex/panels/d
 import { SidebarAgentSessionsProvider, sidebarAgentAdapter } from './sidebar-agent-sessions';
 
 export function SideBarDeviceList() {
-  const { ensureDeviceSubscribed } = useGlobalDevice();
+  const { ensureDeviceSubscribed, connection } = useGlobalDevice();
   return (
     <SidebarAgentSessionsProvider>
       <DeviceTreeSideBarDeviceList
         ensureDeviceSubscribed={ensureDeviceSubscribed}
+        connection={connection}
         agent={sidebarAgentAdapter}
       />
     </SidebarAgentSessionsProvider>

@@ -1,9 +1,10 @@
 import { expect, test } from '@playwright/test';
 import { decodePaneIdFromUrlParam } from '@tmex/stores';
 import { matchPath } from 'react-router';
-import { createTwoPaneSession, ensureCleanSession } from './helpers/tmux';
+import { createLocalDevice } from './helpers/device';
+import { createSinglePaneSession, createTwoPaneSession, ensureCleanSession } from './helpers/tmux';
 
-test('sidebar: device disclosure persists and tabs stay mutually exclusive without connection controls', async ({
+test('sidebar: device disclosure persists and tabs stay mutually exclusive', async ({
   page,
   request,
 }) => {
@@ -50,7 +51,6 @@ test('sidebar: device disclosure persists and tabs stay mutually exclusive witho
     await expect(
       page.locator(`[data-testid="device-card"][data-device-id="${offlineDeviceId}"]`)
     ).toBeVisible();
-    await expect(page.getByTestId(`device-card-connect-${deviceId}`)).toHaveCount(0);
 
     // 侧边栏三 Tab 互斥，默认 Panes；只有当前 Tab 的内容被挂载
     const panesTab = page.getByTestId('sidebar-tab-panes');
@@ -99,8 +99,6 @@ test('sidebar: device disclosure persists and tabs stay mutually exclusive witho
       Number.parseFloat(getComputedStyle(node).paddingLeft)
     );
     expect(treePaddingLeft).toBeGreaterThanOrEqual(40);
-    await expect(page.getByTestId(`device-connect-${deviceId}`)).toHaveCount(0);
-    await expect(page.getByTestId(`device-disconnect-${deviceId}`)).toHaveCount(0);
 
     await deviceToggle.click();
     await expect(page.getByTestId(`window-item-${windowId}`)).toHaveCount(0);
@@ -142,6 +140,73 @@ test('sidebar: device disclosure persists and tabs stay mutually exclusive witho
     }
     if (offlineDeviceId) {
       await request.delete(`/api/devices/${offlineDeviceId}`).catch(() => undefined);
+    }
+    ensureCleanSession(sessionName);
+  }
+});
+
+test('sidebar: device disconnect intent hides the tree, shows the placeholder and persists across reload', async ({
+  page,
+  request,
+}) => {
+  const sessionName = `tmex-e2e-device-connect-${Date.now()}`;
+  const { windowId } = createSinglePaneSession(sessionName);
+  let deviceId: string | undefined;
+
+  try {
+    deviceId = await createLocalDevice(request, sessionName, `e2e-device-connect-${Date.now()}`);
+
+    await page.goto(`/devices/${deviceId}`);
+    await page.evaluate(() => window.localStorage.clear());
+    await page.reload();
+
+    const connectButton = page.getByTestId(`device-connect-${deviceId}`);
+    const disconnectButton = page.getByTestId(`device-disconnect-${deviceId}`);
+    const deviceToggle = page.getByTestId(`device-expand-${deviceId}`);
+    const deviceStatus = page.getByTestId(`device-online-status-${deviceId}`);
+    const deviceTree = page.getByTestId(`device-tree-${deviceId}`);
+    const windowItem = page.getByTestId(`window-item-${windowId}`);
+    const placeholder = page.getByTestId('device-disconnected-placeholder');
+
+    // 进入设备路由自动订阅：电源按钮处于「断开」态，状态点在线，窗口树可见
+    await expect(page.getByTestId('device-page')).toBeVisible();
+    await expect(disconnectButton).toBeVisible({ timeout: 20_000 });
+    await expect(connectButton).toHaveCount(0);
+    await expect(deviceStatus).toHaveAttribute('data-online', 'true', { timeout: 20_000 });
+    await expect(deviceStatus).toHaveAttribute('data-status', 'connected', { timeout: 20_000 });
+    await expect(deviceTree).toBeVisible({ timeout: 20_000 });
+    await expect(windowItem).toBeVisible({ timeout: 20_000 });
+    await expect(placeholder).toHaveCount(0);
+
+    // 显式断开：按钮翻转为「连接」，设备收起、窗口树消失，终端区域出现占位
+    await disconnectButton.click();
+    await expect(connectButton).toBeVisible({ timeout: 20_000 });
+    await expect(disconnectButton).toHaveCount(0);
+    await expect(deviceTree).toBeHidden({ timeout: 20_000 });
+    await expect(windowItem).toHaveCount(0);
+    await expect(deviceToggle).toHaveAttribute('aria-expanded', 'false');
+    await expect(deviceStatus).toHaveAttribute('data-online', 'false', { timeout: 20_000 });
+    await expect(placeholder).toBeVisible({ timeout: 20_000 });
+
+    // 断开意图持久化：刷新后仍不自动订阅
+    await page.reload();
+    await expect(connectButton).toBeVisible({ timeout: 20_000 });
+    await expect(disconnectButton).toHaveCount(0);
+    await expect(deviceTree).toBeHidden({ timeout: 20_000 });
+    await expect(deviceStatus).toHaveAttribute('data-online', 'false', { timeout: 20_000 });
+    await expect(placeholder).toBeVisible({ timeout: 20_000 });
+
+    // 重新连接：窗口树回来，占位消失
+    await connectButton.click();
+    await expect(disconnectButton).toBeVisible({ timeout: 20_000 });
+    await expect(connectButton).toHaveCount(0);
+    await expect(deviceTree).toBeVisible({ timeout: 20_000 });
+    await expect(windowItem).toBeVisible({ timeout: 20_000 });
+    await expect(deviceStatus).toHaveAttribute('data-online', 'true', { timeout: 20_000 });
+    await expect(placeholder).toHaveCount(0);
+  } finally {
+    if (deviceId) {
+      await request.delete(`/api/devices/${deviceId}`).catch(() => undefined);
     }
     ensureCleanSession(sessionName);
   }

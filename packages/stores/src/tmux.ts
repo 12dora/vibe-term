@@ -166,10 +166,15 @@ export function createTmuxStore(
       disconnectDevice(deviceId) {
         if (!deviceId) return;
 
+        // 主动断开立即落地断开态，不等网关 device-disconnected 事件
         set((prev) => {
           const nextConnected = new Set(prev.connectedDevices);
           nextConnected.delete(deviceId);
-          return { connectedDevices: nextConnected };
+          return {
+            connectedDevices: nextConnected,
+            deviceConnected: { ...prev.deviceConnected, [deviceId]: false },
+            deviceReconnecting: { ...prev.deviceReconnecting, [deviceId]: undefined },
+          };
         });
 
         core.selectMachine().cleanup(deviceId);

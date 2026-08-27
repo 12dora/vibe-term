@@ -13,6 +13,7 @@ import { SidebarGroup } from '@tmex/ui/sidebar';
 import { useCallback, useEffect, useMemo, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
 import { toast } from 'sonner';
+import type { DeviceConnectionAdapter } from '../device-connection';
 import type { SidebarAgentAdapter } from './agent-adapter';
 import { DeviceRow } from './device-row';
 import { useDeviceTreeDialogs } from './device-tree-dialogs';
@@ -35,6 +36,8 @@ export interface SideBarDeviceListProps {
   devicesQueryKey?: readonly unknown[];
   /** agent 会话装饰；未传时不渲染任何 agent 面 */
   agent?: SidebarAgentAdapter;
+  /** 宿主连接管理；未传时不渲染连接开关，展开仍走 ensureDeviceSubscribed */
+  connection?: DeviceConnectionAdapter;
 }
 
 export function SideBarDeviceList({
@@ -42,6 +45,7 @@ export function SideBarDeviceList({
   expansionKeyFor,
   devicesQueryKey,
   agent,
+  connection,
 }: SideBarDeviceListProps) {
   const { t } = useTranslation();
   const runtime = useRuntime();
@@ -149,11 +153,15 @@ export function SideBarDeviceList({
   const handleDeviceExpandedChange = useCallback(
     (deviceId: string, expanded: boolean) => {
       setSidebarDeviceExpanded(expansionKey(deviceId), expanded);
-      if (expanded) {
+      // 收起只影响树的可见性，断开必须走 Power 按钮
+      if (!expanded) return;
+      if (connection) {
+        connection.connect(deviceId);
+      } else {
         ensureDeviceSubscribed(deviceId);
       }
     },
-    [ensureDeviceSubscribed, setSidebarDeviceExpanded, expansionKey]
+    [connection, ensureDeviceSubscribed, setSidebarDeviceExpanded, expansionKey]
   );
 
   useEffect(() => {
@@ -229,6 +237,7 @@ export function SideBarDeviceList({
                 onWatchPane={requestWatchPane}
                 agent={agentAdapter}
                 nav={nav}
+                connection={connection}
               />
             ))}
           </SortableVerticalList>

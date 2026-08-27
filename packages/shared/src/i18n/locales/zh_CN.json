@@ -93,6 +93,7 @@
       "connected": "已连接",
       "disconnect": "断开",
       "disconnected": "已断开",
+      "connectToStart": "连接设备后即可开始使用。",
       "connecting": "连接中...",
       "dragHandle": "拖动以调整设备顺序",
       "reorderFailed": "设备排序失败",
