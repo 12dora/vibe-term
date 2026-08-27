@@ -1,4 +1,5 @@
 import os from 'node:os';
+import { encodeBase64url } from '@tmex/shared/auth';
 import { type LinkSession, createInMemoryLinkPair } from '@tmex/shared/link';
 import { filesBulkHooks } from '../api/files';
 import {
@@ -88,8 +89,15 @@ export type CreateMeshRuntimeOptions = {
   rtcHandshakeTimeoutMs?: number;
 };
 
+export const CONNECTION_ID_BYTES = 32;
+
+export function generateConnectionId(): string {
+  return encodeBase64url(crypto.getRandomValues(new Uint8Array(CONNECTION_ID_BYTES)));
+}
+
 export type RegisteredGatewaySession = {
   connectionId: string;
+  cid?: string;
   sid: string;
   uid: string;
   via: string;
@@ -104,20 +112,58 @@ export type RegisterGatewaySessionInput = {
   via: string;
   session: GatewaySession;
   connectionId?: string;
+  cid?: string;
   pc?: { close(): void };
 };
+
+export type RegisterGatewaySessionResult =
+  | { ok: true; entry: RegisteredGatewaySession }
+  | { ok: false; code: 'DUPLICATE_CONNECTION' | 'DUPLICATE_CID' };
+
+function cidIndexKey(sid: string, via: string, cid: string): string {
+  return `${sid}\0${via}\0${cid}`;
+}
+
+function normalizeCid(value: string | undefined | null): string {
+  return typeof value === 'string' ? value.trim() : '';
+}
 
 export class SessionRegistry {
   private readonly byConnection = new Map<string, RegisteredGatewaySession>();
   private readonly bySession = new WeakMap<GatewaySession, string>();
   private readonly connectionsBySid = new Map<string, Set<string>>();
+  private readonly byCid = new Map<string, string>();
 
-  register(entry: RegisterGatewaySessionInput): RegisteredGatewaySession {
-    const connectionId =
-      (typeof entry.connectionId === 'string' && entry.connectionId) || entry.session.id;
-    const prev = this.byConnection.get(connectionId);
-    if (prev && prev.session !== entry.session) {
-      this.drop(prev);
+  register(entry: RegisterGatewaySessionInput): RegisterGatewaySessionResult {
+    const cid = normalizeCid(entry.cid);
+    const providedId =
+      typeof entry.connectionId === 'string' && entry.connectionId.trim()
+        ? entry.connectionId.trim()
+        : '';
+    if (providedId) {
+      const prev = this.byConnection.get(providedId);
+      if (prev && prev.session !== entry.session && !prev.session.closed) {
+        return { ok: false, code: 'DUPLICATE_CONNECTION' };
+      }
+    }
+    if (cid) {
+      const existingId = this.byCid.get(cidIndexKey(entry.sid, entry.via, cid));
+      if (existingId) {
+        const existing = this.byConnection.get(existingId);
+        if (existing && existing.session !== entry.session && !existing.session.closed) {
+          return { ok: false, code: 'DUPLICATE_CID' };
+        }
+      }
+    }
+    let connectionId = providedId;
+    if (!connectionId) {
+      do {
+        connectionId = generateConnectionId();
+      } while (this.byConnection.has(connectionId));
+    }
+    const prevSame = this.byConnection.get(connectionId);
+    if (prevSame && prevSame.session === entry.session) {
+      this.drop(prevSame);
     }
     const stored: RegisteredGatewaySession = {
       connectionId,
@@ -126,6 +172,7 @@ export class SessionRegistry {
       via: entry.via,
       session: entry.session,
       lastVerifyAt: 0,
+      ...(cid ? { cid } : {}),
       ...(entry.pc ? { pc: entry.pc } : {}),
     };
     this.byConnection.set(connectionId, stored);
@@ -136,7 +183,8 @@ export class SessionRegistry {
       this.connectionsBySid.set(entry.sid, set);
     }
     set.add(connectionId);
-    return stored;
+    if (cid) this.byCid.set(cidIndexKey(entry.sid, entry.via, cid), connectionId);
+    return { ok: true, entry: stored };
   }
 
   unregister(sid: string, session?: GatewaySession): void {
@@ -191,7 +239,22 @@ export class SessionRegistry {
     return out;
   }
 
-  lookup(sid: string, via: string, connectionId?: string | null): ConnectionLookupResult {
+  lookup(
+    sid: string,
+    via: string,
+    connectionId?: string | null,
+    cid?: string | null
+  ): ConnectionLookupResult {
+    const nonce = normalizeCid(cid);
+    if (nonce) {
+      const id = this.byCid.get(cidIndexKey(sid, via, nonce));
+      if (!id) return { ok: false, code: 'NO_CONNECTION' };
+      const entry = this.getByConnectionId(id);
+      if (entry && entry.sid === sid && entry.via === via) {
+        return { ok: true, connectionId: entry.connectionId };
+      }
+      return { ok: false, code: 'NO_CONNECTION' };
+    }
     if (connectionId) {
       const entry = this.getByConnectionId(connectionId);
       if (entry && entry.sid === sid && entry.via === via) {
@@ -210,6 +273,7 @@ export class SessionRegistry {
   private drop(entry: RegisteredGatewaySession): void {
     this.byConnection.delete(entry.connectionId);
     this.bySession.delete(entry.session);
+    if (entry.cid) this.byCid.delete(cidIndexKey(entry.sid, entry.via, entry.cid));
     const set = this.connectionsBySid.get(entry.sid);
     if (!set) return;
     set.delete(entry.connectionId);
@@ -228,7 +292,7 @@ export type MeshRuntime = {
   readonly userStore: UserStore;
   readonly userKeyService: UserKeyService;
   lastNodeList: UplinkNodeList | null;
-  registerGatewaySession(entry: RegisterGatewaySessionInput): void;
+  registerGatewaySession(entry: RegisterGatewaySessionInput): RegisterGatewaySessionResult;
   unregisterGatewaySession(sidOrSession: string | GatewaySession): void;
   handleRequest(req: Request, server: MeshUpgradeServer): Promise<MeshHandleResult>;
   localUiGuard(req: Request): Response | null;
@@ -406,8 +470,12 @@ function createKeyLogApplier(keyLogStore: KeyLogStore, keys: UserKeyService): Ke
   };
 }
 
-async function openAdaptedWsStream(link: LinkSession, auth: string): Promise<OpenedWsStream> {
-  const opened = await openWsStream(link, auth);
+async function openAdaptedWsStream(
+  link: LinkSession,
+  auth: string,
+  cid?: string
+): Promise<OpenedWsStream> {
+  const opened = await openWsStream(link, auth, cid);
   const messageCbs: Array<(bytes: Uint8Array) => void> = [];
   const closeCbs: Array<(info: { code?: number; reason?: string }) => void> = [];
   let closed = false;
@@ -581,6 +649,10 @@ export async function createMeshRuntime(opts: CreateMeshRuntimeOptions): Promise
       } catch {
         // fake / partial wsServer in tests
       }
+    },
+    verifyInbound: (session) => {
+      const entry = sessions.getBySession(session);
+      return entry ? verifyBoundSession(entry) : false;
     },
   });
   if (typeof gateway.wsServer.setOnCarrierSwitchAck === 'function') {
@@ -784,9 +856,7 @@ export async function createMeshRuntime(opts: CreateMeshRuntimeOptions): Promise
     scheduler: opts.scheduler,
     rtc,
     linkFactory: opts.linkFactory,
-    onGatewaySession: (session, auth) => {
-      sessions.register({ ...auth, session });
-    },
+    onGatewaySession: (session, auth) => sessions.register({ ...auth, session }).ok,
     onGatewaySessionClose: (session) => {
       const entry = sessions.getBySession(session);
       if (entry) teardownBinding(entry);
@@ -830,7 +900,7 @@ export async function createMeshRuntime(opts: CreateMeshRuntimeOptions): Promise
         body,
         signal
       ),
-    openWsStream: (link, auth) => openAdaptedWsStream(link, auth),
+    openWsStream: (link, auth, cid) => openAdaptedWsStream(link, auth, cid),
   };
 
   const publisher: KeyLogPublisher = {
@@ -914,9 +984,7 @@ export async function createMeshRuntime(opts: CreateMeshRuntimeOptions): Promise
       send: (msg: RtcSignalMessage) => {
         innerSignals.send(msg);
       },
-      onMessage: (cb: (msg: RtcSignalMessage) => void) => {
-        innerSignals.onLocal(rtcSession, cb);
-      },
+      onMessage: (cb: (msg: RtcSignalMessage) => void) => innerSignals.onLocal(rtcSession, cb),
     };
     void rtc
       .acceptBrowser(rtcSession, signaling)
@@ -929,7 +997,8 @@ export async function createMeshRuntime(opts: CreateMeshRuntimeOptions): Promise
           !binding.session.closed &&
           binding.uid === result.uid &&
           binding.via === result.via &&
-          binding.sid === result.sid
+          binding.sid === result.sid &&
+          verifyBoundSession(binding)
         ) {
           binding.pc = result.pc;
           rtc.attachDirect(binding.session, result.carrier, { rtcSession: result.rtcSession });
@@ -1013,7 +1082,8 @@ export async function createMeshRuntime(opts: CreateMeshRuntimeOptions): Promise
     primaryUserId: userId || undefined,
     hubPublicUrl: hubEndpointUrl(config),
     trustProxy: gatewayConfig.trustProxy,
-    connectionLookup: (input) => sessions.lookup(input.sid, input.via, input.connectionId),
+    connectionLookup: (input) =>
+      sessions.lookup(input.sid, input.via, input.connectionId, input.cid),
   });
   httpHolder.runtime = http;
 
@@ -1031,7 +1101,7 @@ export async function createMeshRuntime(opts: CreateMeshRuntimeOptions): Promise
     userStore,
     userKeyService: keyLogService,
     registerGatewaySession(entry) {
-      sessions.register(entry);
+      return sessions.register(entry);
     },
     unregisterGatewaySession(sidOrSession) {
       if (typeof sidOrSession === 'string') sessions.unregister(sidOrSession);

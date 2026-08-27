@@ -82,19 +82,20 @@ describe('mesh-http', () => {
     const mesh = await bootMesh();
     try {
       const { sid } = await challengeAndLogin(mesh.runtime, mesh.boot);
-      let data: { kind?: string; sid?: string; uid?: string } | undefined;
+      let data: { kind?: string; sid?: string; uid?: string; cid?: string } | undefined;
       const server = {
         upgrade(_req: Request, opts?: { data?: unknown }) {
           data = opts?.data as typeof data;
           return true;
         },
       };
-      const req = new Request('http://localhost/ws', {
+      const req = new Request('http://localhost/ws?cid=tab-nonce', {
         headers: { cookie: `tmex_s_self=${sid}` },
       });
       expect(mesh.runtime.guardGatewayWebSocket(req, server)).toBeUndefined();
       expect(data?.kind).toBe(MESH_GATEWAY_WS_KIND);
       expect(data?.sid).toBe(sid);
+      expect(data?.cid).toBe('tab-nonce');
       let closed: number | undefined;
       const ws = {
         data: {

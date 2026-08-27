@@ -87,7 +87,7 @@ export type StreamOpener = {
     body: ReadableStream<Uint8Array> | null,
     signal: AbortSignal
   ): Promise<Response>;
-  openWsStream(link: LinkSession, auth: string): Promise<OpenedWsStream>;
+  openWsStream(link: LinkSession, auth: string, cid?: string): Promise<OpenedWsStream>;
 };
 
 export type KeyLogHubAck = { ok: true; seq: bigint | number } | { ok: false; error: string };
@@ -165,6 +165,7 @@ export type ConnectionLookup = (input: {
   sid: string;
   via: string;
   connectionId?: string | null;
+  cid?: string | null;
 }) => ConnectionLookupResult;
 
 export type MeshRequestContext = {
@@ -245,6 +246,7 @@ export type MeshSocketData = {
   sid?: string | null;
   uid?: string | null;
   via?: string;
+  cid?: string;
 };
 
 export type MeshServerWebSocket = {

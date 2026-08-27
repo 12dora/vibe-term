@@ -215,20 +215,24 @@ describe('SessionRegistry', () => {
     const registry = new SessionRegistry();
     const a = new GatewaySession({ primary: createFakeCarrier() });
     const b = new GatewaySession({ primary: createFakeCarrier() });
-    registry.register({
-      connectionId: 'conn-a',
-      sid: 'sid-1',
-      uid: 'u1',
-      via: 'self',
-      session: a,
-    });
-    registry.register({
-      connectionId: 'conn-b',
-      sid: 'sid-1',
-      uid: 'u1',
-      via: 'self',
-      session: b,
-    });
+    expect(
+      registry.register({
+        connectionId: 'conn-a',
+        sid: 'sid-1',
+        uid: 'u1',
+        via: 'self',
+        session: a,
+      }).ok
+    ).toBe(true);
+    expect(
+      registry.register({
+        connectionId: 'conn-b',
+        sid: 'sid-1',
+        uid: 'u1',
+        via: 'self',
+        session: b,
+      }).ok
+    ).toBe(true);
     expect(registry.get('sid-1')).toBeNull();
     expect(registry.getByConnectionId('conn-a')?.session).toBe(a);
     expect(registry.getByConnectionId('conn-b')?.session).toBe(b);
@@ -243,5 +247,80 @@ describe('SessionRegistry', () => {
     registry.unregisterSession(a);
     expect(registry.getByConnectionId('conn-a')).toBeNull();
     expect(registry.get('sid-1')?.session).toBe(b);
+  });
+
+  test('generates a server connectionId and maps cid scoped to sid+via', () => {
+    const registry = new SessionRegistry();
+    const a = new GatewaySession({ primary: createFakeCarrier() });
+    const first = registry.register({
+      sid: 'sid-1',
+      uid: 'u1',
+      via: 'self',
+      cid: 'nonce-a',
+      session: a,
+    });
+    expect(first.ok).toBe(true);
+    if (!first.ok) throw new Error('expected ok');
+    expect(first.entry.connectionId).toMatch(/^[A-Za-z0-9_-]{43}$/);
+    expect(first.entry.connectionId).not.toBe('nonce-a');
+    expect(first.entry.connectionId).not.toBe(a.id);
+    expect(registry.lookup('sid-1', 'self', null, 'nonce-a')).toEqual({
+      ok: true,
+      connectionId: first.entry.connectionId,
+    });
+    expect(registry.lookup('sid-1', 'other', null, 'nonce-a')).toEqual({
+      ok: false,
+      code: 'NO_CONNECTION',
+    });
+  });
+
+  test('rejects a duplicate connectionId and keeps the previous session', () => {
+    const registry = new SessionRegistry();
+    const a = new GatewaySession({ primary: createFakeCarrier() });
+    const b = new GatewaySession({ primary: createFakeCarrier() });
+    expect(
+      registry.register({
+        connectionId: 'fixed-id',
+        sid: 'sid-1',
+        uid: 'u1',
+        via: 'self',
+        session: a,
+      }).ok
+    ).toBe(true);
+    const dup = registry.register({
+      connectionId: 'fixed-id',
+      sid: 'sid-1',
+      uid: 'u1',
+      via: 'self',
+      session: b,
+    });
+    expect(dup).toEqual({ ok: false, code: 'DUPLICATE_CONNECTION' });
+    expect(registry.getByConnectionId('fixed-id')?.session).toBe(a);
+    expect(a.closed).toBe(false);
+    expect(b.closed).toBe(false);
+  });
+
+  test('rejects a duplicate cid in the same sid+via scope', () => {
+    const registry = new SessionRegistry();
+    const a = new GatewaySession({ primary: createFakeCarrier() });
+    const b = new GatewaySession({ primary: createFakeCarrier() });
+    const first = registry.register({
+      sid: 'sid-1',
+      uid: 'u1',
+      via: 'self',
+      cid: 'same-nonce',
+      session: a,
+    });
+    expect(first.ok).toBe(true);
+    const dup = registry.register({
+      sid: 'sid-1',
+      uid: 'u1',
+      via: 'self',
+      cid: 'same-nonce',
+      session: b,
+    });
+    expect(dup).toEqual({ ok: false, code: 'DUPLICATE_CID' });
+    if (!first.ok) throw new Error('expected ok');
+    expect(registry.getByConnectionId(first.entry.connectionId)?.session).toBe(a);
   });
 });

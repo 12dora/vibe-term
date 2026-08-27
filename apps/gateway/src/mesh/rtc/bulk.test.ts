@@ -471,4 +471,26 @@ describe('BulkTransferService', () => {
     s2.abortByOwner('conn-2');
     expect(h2.aborted).toContain(id2);
   });
+
+  test('download verifies before every data frame and EOF and aborts on failure', async () => {
+    const id = 'tx-dl-verify';
+    const payload = new Uint8Array(BULK_FRAME_SIZE + 5).fill(7);
+    const { harness, service, browser, node } = setup(`bulk:${id}`);
+    harness.addDownload(id, 'user-1', payload);
+    let calls = 0;
+    service.attachChannel(node, {
+      uid: 'user-1',
+      verify: () => {
+        calls += 1;
+        return calls < 3;
+      },
+    });
+    browser.sendMessage(JSON.stringify({ op: 'get' }));
+    await waitFor(
+      () => jsonFromSent(node).some((m) => m.ok === false && m.code === 'forbidden'),
+      'download forbidden'
+    );
+    expect(jsonFromSent(node).some((m) => m.op === 'eof')).toBe(false);
+    expect(harness.aborted).toContain(id);
+  });
 });

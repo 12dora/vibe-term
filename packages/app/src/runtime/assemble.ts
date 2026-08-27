@@ -11,6 +11,7 @@ import {
   MESH_REJECT_4401_KIND,
   MESH_VIA_SELF,
   MESH_WS_KIND,
+  WS_CLOSE_LOGIN_REQUIRED,
   getMeshRequestContext,
   isMeshRewritten,
   setMeshRequestContext,
@@ -212,7 +213,7 @@ export async function assembleTmex(opts: AssembleTmexOptions = {}): Promise<Asse
           sid?: string;
           uid?: string;
           via?: string;
-          connectionId?: string;
+          cid?: string;
         };
         const sid = data.sid;
         const uid = data.uid;
@@ -222,11 +223,17 @@ export async function assembleTmex(opts: AssembleTmexOptions = {}): Promise<Asse
           gateway.websocket.open(ws);
           const session = (ws.data as { session?: GatewaySession }).session;
           if (sid && uid && session) {
-            const connectionId =
-              typeof data.connectionId === 'string' && data.connectionId
-                ? data.connectionId
-                : session.id;
-            mesh.registerGatewaySession?.({ connectionId, sid, uid, via, session });
+            const cid = typeof data.cid === 'string' && data.cid.trim() ? data.cid.trim() : '';
+            const registered = mesh.registerGatewaySession?.({
+              sid,
+              uid,
+              via,
+              session,
+              ...(cid ? { cid } : {}),
+            });
+            if (registered && !registered.ok) {
+              gateway.websocket.closeSession(session, WS_CLOSE_LOGIN_REQUIRED, registered.code);
+            }
           }
         }
         return;

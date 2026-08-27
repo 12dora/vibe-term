@@ -190,5 +190,5 @@ export function isEmptyCandidate(candidate: string): boolean {
 
 export type RtcSignaling = {
   send: (msg: RtcSignalMessage) => void;
-  onMessage: (cb: (msg: RtcSignalMessage) => void) => void;
+  onMessage: (cb: (msg: RtcSignalMessage) => void) => () => void;
 };

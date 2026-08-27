@@ -747,6 +747,58 @@ describe('PeerManager', () => {
     incoming.end();
   });
 
+  test('failed DC attempts unsubscribe signaling listeners so the count stays stable', async () => {
+    const { db, close } = createMigratedAuthDb();
+    fixtures.push({ close });
+    const store = new UserStore(db);
+    seedUser(store);
+    const self = seedNodeIdentity(store, 'user-1');
+    const peer = seedNodeIdentity(store, 'user-1');
+    let deliveries = 0;
+    let attempts = 0;
+    let tryDc = true;
+    const managerA = new PeerManager({
+      identity: self,
+      userStore: store,
+      uplink: dummyUplink(self, store),
+      peerPort: 0,
+      startServer: false,
+      rtc: {
+        get available() {
+          return tryDc;
+        },
+        connectToPeer: async (
+          _id: string,
+          signaling: { onMessage: (cb: (msg: unknown) => void) => () => void }
+        ) => {
+          attempts += 1;
+          signaling.onMessage(() => {
+            deliveries += 1;
+          });
+          throw new Error('dc-failed');
+        },
+      } as unknown as import('./rtc').RtcPeerManager,
+    });
+    fixtures.push({ close, stop: () => managerA.stop() });
+    const [relayA, relayB] = createInMemoryLinkPair();
+    fixtures.push({ close: () => relayB.close('test') });
+    expect(managerA.adoptLink(peer.nodeId, relayA, 'relay', self.nodeId)).toBe(relayA);
+    await waitUntil(() => {
+      void managerA.getLink(peer.nodeId);
+      return attempts >= 3;
+    }, 5_000);
+    expect(attempts).toBeGreaterThanOrEqual(3);
+    tryDc = false;
+    await Bun.sleep(20);
+    managerA.receiveRtcSignal(peer.nodeId, {
+      rtcSession: 'dc:x:y',
+      from: 'node',
+      to: self.nodeId,
+      sdp: 'leftover',
+    });
+    expect(deliveries).toBe(0);
+  });
+
   test('caps concurrent streams per link', async () => {
     const { db, close } = createMigratedAuthDb();
     fixtures.push({ close });

@@ -61,6 +61,28 @@ describe('CarrierSwitchController', () => {
     expect(delivered).toEqual(['A', 'B', 'C']);
   });
 
+  test('verifyInbound gates frames before they enter the ACK barrier buffer', () => {
+    const session = createGatewaySession();
+    const [local, remote] = pairDataChannels('sess');
+    const direct = new DataChannelCarrier(local) as DirectCarrier;
+    const delivered: string[] = [];
+    const barrier = new CarrierSwitchController({
+      sendControl() {
+        return 'sent';
+      },
+      deliverInbound(_session, bytes) {
+        delivered.push(new TextDecoder().decode(bytes));
+      },
+      verifyInbound: () => false,
+    });
+    barrier.attachDirect(session, direct);
+    remote.sendMessageBinary(
+      Buffer.from([0, 0, 0, 1, 0, 0, 1, 0, ...new TextEncoder().encode('A')])
+    );
+    barrier.handleAck(session, 1);
+    expect(delivered).toEqual([]);
+  });
+
   test('ignores ACK for a stale epoch after a later switch', () => {
     const session = createGatewaySession();
     const [local] = pairDataChannels('sess');

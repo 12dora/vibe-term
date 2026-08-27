@@ -271,11 +271,14 @@ export class MeshRoutes {
       return jsonError('UNAUTHORIZED', 401);
     }
     const via = getMeshRequestContext(req).via || MESH_VIA_SELF;
-    const header = req.headers.get(X_TMEX_CONNECTION);
+    const url = new URL(req.url);
+    const cid = url.searchParams.get('cid')?.trim() || null;
+    const header = req.headers.get(X_TMEX_CONNECTION)?.trim() || null;
     const resolved = this.deps.connectionLookup?.({
       sid: auth.sid,
       via,
-      connectionId: header?.trim() || null,
+      cid,
+      connectionId: cid ? null : header,
     });
     if (!resolved) {
       return jsonError('NO_CONNECTION', 404);
@@ -283,7 +286,7 @@ export class MeshRoutes {
     if (!resolved.ok) {
       const status = resolved.code === 'MULTIPLE_CONNECTIONS' ? 409 : 404;
       return jsonError(resolved.code, status, {
-        hint: 'send x-tmex-connection matching this tab GatewayConnection',
+        hint: 'open Gateway WS with ?cid=<tab-nonce> then GET /api/mesh/connection?cid=',
       });
     }
     return jsonBody({ connectionId: resolved.connectionId });

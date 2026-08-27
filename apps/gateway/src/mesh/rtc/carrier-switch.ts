@@ -21,9 +21,12 @@ export type DirectCarrier = Carrier & {
   onClose?(cb: () => void): void;
 };
 
+export type VerifyInbound = (session: GatewaySession) => boolean;
+
 export type CarrierSwitchOptions = {
   sendControl: SendControl;
   deliverInbound: DeliverInbound;
+  verifyInbound?: VerifyInbound;
 };
 
 type SwitchState = {
@@ -46,11 +49,13 @@ type CloseAwareCarrier = Carrier & {
 export class CarrierSwitchController {
   private readonly sendControl: SendControl;
   private readonly deliverInbound: DeliverInbound;
+  private readonly verifyInbound: VerifyInbound | null;
   private readonly states = new WeakMap<GatewaySession, SwitchState>();
 
   constructor(opts: CarrierSwitchOptions) {
     this.sendControl = opts.sendControl;
     this.deliverInbound = opts.deliverInbound;
+    this.verifyInbound = opts.verifyInbound ?? null;
   }
 
   attachDirect(
@@ -138,6 +143,7 @@ export class CarrierSwitchController {
   }
 
   handleDirectInbound(session: GatewaySession, bytes: Uint8Array): void {
+    if (!this.allowInbound(session)) return;
     const state = this.states.get(session);
     if (!state) {
       this.deliverInbound(session, bytes);
@@ -315,10 +321,19 @@ export class CarrierSwitchController {
     return typeof value === 'object' && value !== null && 'then' in value;
   }
 
+  private allowInbound(session: GatewaySession): boolean {
+    if (!this.verifyInbound) return true;
+    return this.verifyInbound(session);
+  }
+
   private flush(session: GatewaySession, state: SwitchState): void {
     state.flushing = true;
     try {
       while (state.buffer.length > 0) {
+        if (!this.allowInbound(session)) {
+          state.buffer.length = 0;
+          break;
+        }
         const next = state.buffer.shift();
         if (!next) break;
         this.deliverInbound(session, next);

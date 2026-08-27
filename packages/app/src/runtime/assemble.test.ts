@@ -117,16 +117,27 @@ describe('assembleTmex role matrix', () => {
     expect(stops).toBe(2);
   });
 
-  test('registers gateway WS with connectionId from upgrade data or session.id', async () => {
-    const registered: Array<{ connectionId: string; sid: string; uid: string; via: string }> = [];
+  test('registers gateway WS with cid from the upgrade query, not a client connectionId', async () => {
+    const registered: Array<{ cid?: string; sid: string; uid: string; via: string }> = [];
     const mesh = fakeMesh({
       registerGatewaySession(entry) {
         registered.push({
-          connectionId: entry.connectionId,
+          cid: entry.cid,
           sid: entry.sid,
           uid: entry.uid,
           via: entry.via,
         });
+        return {
+          ok: true as const,
+          entry: {
+            connectionId: 'server-id',
+            sid: entry.sid,
+            uid: entry.uid,
+            via: entry.via,
+            session: entry.session,
+            lastVerifyAt: 0,
+          },
+        };
       },
     });
     const gateway = fakeGateway({
@@ -153,15 +164,15 @@ describe('assembleTmex role matrix', () => {
         sid: 'sid-1',
         uid: 'uid-1',
         via: 'self',
-        connectionId: 'tab-a',
+        cid: 'tab-nonce',
       },
     } as never);
     assembled.websocket.open({
       data: { kind: MESH_GATEWAY_WS_KIND, sid: 'sid-1', uid: 'uid-1', via: 'self' },
     } as never);
     expect(registered).toEqual([
-      { connectionId: 'tab-a', sid: 'sid-1', uid: 'uid-1', via: 'self' },
-      { connectionId: 'generated-id', sid: 'sid-1', uid: 'uid-1', via: 'self' },
+      { cid: 'tab-nonce', sid: 'sid-1', uid: 'uid-1', via: 'self' },
+      { cid: undefined, sid: 'sid-1', uid: 'uid-1', via: 'self' },
     ]);
   });
 

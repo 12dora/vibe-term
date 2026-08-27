@@ -425,8 +425,8 @@ export type AcceptWsStreamOptions = StreamAuthContext & {
   wsServer: WebSocketServer;
   onGatewaySession?: (
     session: GatewaySession,
-    auth: { sid: string; uid: string; via: string; connectionId: string }
-  ) => void;
+    auth: { sid: string; uid: string; via: string; cid?: string }
+  ) => boolean | undefined;
   onGatewaySessionClose?: (session: GatewaySession) => void;
 };
 
@@ -444,11 +444,13 @@ export async function acceptWsStream(
   const sid = auth;
   const via = opts.peerNodeId;
   const uid = verified.uid;
-  const requestedId = typeof open.connectionId === 'string' ? open.connectionId.trim() : '';
+  const cidRaw =
+    (typeof open.cid === 'string' && open.cid) ||
+    (typeof open.connectionId === 'string' && open.connectionId) ||
+    '';
+  const cid = cidRaw.trim();
   const carrier = new LinkStreamCarrier(stream);
   const attached = opts.wsServer.attachStreamSession(carrier);
-  const connectionId = requestedId || attached.session.id;
-  opts.onGatewaySession?.(attached.session, { sid, uid: uid ?? '', via, connectionId });
   let tornDown = false;
   const teardown = (mode: 'end' | 'rst', reason?: string) => {
     if (tornDown) return;
@@ -470,6 +472,16 @@ export async function acceptWsStream(
       // already closed
     }
   };
+  const accepted = opts.onGatewaySession?.(attached.session, {
+    sid,
+    uid: uid ?? '',
+    via,
+    ...(cid ? { cid } : {}),
+  });
+  if (accepted === false) {
+    teardown('rst', 'duplicate-connection');
+    return;
+  }
   stream.onAbort(() => teardown('rst', 'peer-rst'));
   const reader = stream.readable.getReader();
   try {
@@ -505,7 +517,7 @@ export async function acceptWsStream(
 export async function openWsStream(
   link: LinkSession,
   auth: string,
-  connectionId?: string
+  cid?: string
 ): Promise<{
   stream: LinkStream;
   send: (bytes: Uint8Array) => Promise<void>;
@@ -515,7 +527,7 @@ export async function openWsStream(
   const payload: WsStreamOpenPayload = {
     type: 'ws',
     auth,
-    ...(connectionId ? { connectionId } : {}),
+    ...(cid ? { cid } : {}),
   };
   const stream = await link.openStream(encodeJsonBytes(payload));
   return {

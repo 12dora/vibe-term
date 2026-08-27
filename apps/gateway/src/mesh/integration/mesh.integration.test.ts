@@ -832,6 +832,10 @@ describe('mesh phase-2 integration', () => {
         },
         onMessage: (cb) => {
           aCbs.push(cb as never);
+          return () => {
+            const idx = aCbs.indexOf(cb as never);
+            if (idx >= 0) aCbs.splice(idx, 1);
+          };
         },
       }),
       right.connectToPeer(a.mesh.nodeId, {
@@ -840,6 +844,10 @@ describe('mesh phase-2 integration', () => {
         },
         onMessage: (cb) => {
           bCbs.push(cb as never);
+          return () => {
+            const idx = bCbs.indexOf(cb as never);
+            if (idx >= 0) bCbs.splice(idx, 1);
+          };
         },
       }),
     ]);

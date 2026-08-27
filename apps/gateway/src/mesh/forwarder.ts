@@ -224,9 +224,10 @@ export class Forwarder {
     } catch {
       return jsonError('NODE_UNREACHABLE', 503, { nodeId });
     }
+    const cid = new URL(req.url).searchParams.get('cid')?.trim() || '';
     let stream: OpenedWsStream;
     try {
-      stream = await this.deps.streams.openWsStream(link, auth);
+      stream = await this.deps.streams.openWsStream(link, auth, cid || undefined);
     } catch {
       return jsonError('NODE_UNREACHABLE', 503, { nodeId });
     }

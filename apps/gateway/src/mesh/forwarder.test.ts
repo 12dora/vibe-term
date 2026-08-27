@@ -228,6 +228,7 @@ describe('forwarder', () => {
       expect(upgrade).toBeUndefined();
       expect(data?.kind).toBe(MESH_FORWARD_WS_KIND);
       expect(streams.wsAuth).toBe('remote-sid');
+      expect(streams.wsCid).toBeUndefined();
 
       const sent: Uint8Array[] = [];
       const ws = {
@@ -244,6 +245,34 @@ describe('forwarder', () => {
       streams.lastWs?.pushFromRemote(new Uint8Array([9, 9]));
       expect(sent[0]).toEqual(new Uint8Array([9, 9]));
       void sid;
+    } finally {
+      mesh.close();
+    }
+  });
+
+  test('/n/:id/ws?cid= passes the client nonce through openWsStream', async () => {
+    const peers = new FakePeers();
+    peers.links.set(OTHER, dummyLink);
+    const streams = new FakeStreams();
+    const mesh = await bootMesh({ peers, streams });
+    try {
+      let data: { kind?: string } | undefined;
+      const server = {
+        upgrade(_req: Request, opts?: { data?: unknown }) {
+          data = opts?.data as typeof data;
+          return true;
+        },
+      };
+      const upgrade = await mesh.runtime.handleRequest(
+        new Request(`http://localhost/n/${OTHER}/ws?cid=tab-nonce`, {
+          headers: { cookie: `tmex_s_${OTHER}=remote-sid` },
+        }),
+        server
+      );
+      expect(upgrade).toBeUndefined();
+      expect(data?.kind).toBe(MESH_FORWARD_WS_KIND);
+      expect(streams.wsAuth).toBe('remote-sid');
+      expect(streams.wsCid).toBe('tab-nonce');
     } finally {
       mesh.close();
     }

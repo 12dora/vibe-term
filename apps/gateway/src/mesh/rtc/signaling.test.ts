@@ -130,4 +130,24 @@ describe('MeshRtcSignalRouter', () => {
     router.unregister('ok');
     expect(router.inboxSessionCount()).toBe(1);
   });
+
+  test('authorization checks run before listener lookup so foreign signals are dropped', () => {
+    const delivered: string[] = [];
+    const router = new MeshRtcSignalRouter({
+      selfNodeId: 'aa',
+      sendCtl: () => {},
+      shouldCacheLocal: (signal, source) =>
+        signal.rtcSession === 'ok' && signal.to === 'aa' && source === 'entry',
+    });
+    router.onLocal('ok', (msg) => delivered.push(msg.sdp ?? ''));
+    router.deliverLocal({ rtcSession: 'ok', from: 'node', to: 'aa', sdp: 'hostile' }, 'hostile');
+    router.deliverLocal({ rtcSession: 'ok', from: 'node', to: 'bb', sdp: 'wrong-to' }, 'entry');
+    router.deliverLocal(
+      { rtcSession: 'other', from: 'node', to: 'aa', sdp: 'wrong-sess' },
+      'entry'
+    );
+    expect(delivered).toEqual([]);
+    router.deliverLocal({ rtcSession: 'ok', from: 'node', to: 'aa', sdp: 'good' }, 'entry');
+    expect(delivered).toEqual(['good']);
+  });
 });

@@ -91,8 +91,10 @@ export {
   type UplinkRtcSignal,
 } from './uplink-protocol';
 export {
+  CONNECTION_ID_BYTES,
   createMeshRuntime,
   enumeratePeerEndpoints,
+  generateConnectionId,
   isAdvertisablePeerAddress,
   SessionRegistry,
   type CreateMeshRuntimeOptions,
@@ -100,6 +102,7 @@ export {
   type MeshRuntimeConfig,
   type NetworkInterfacesFn,
   type RegisterGatewaySessionInput,
+  type RegisterGatewaySessionResult,
   type RegisteredGatewaySession,
 } from './mesh-runtime';
 export { MeshHttpRuntime, type MeshHttpRuntimeOptions } from './mesh-http';

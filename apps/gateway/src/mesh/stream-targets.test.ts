@@ -11,7 +11,7 @@ import { createGatewayRuntime } from '../runtime';
 import { WebSocketServer } from '../ws';
 import { LinkStreamCarrier } from './link-stream-carrier';
 import { acceptHttpStream, acceptWsStream, openHttpStream, openWsStream } from './stream-targets';
-import { seedUser } from './test-support';
+import { seedUser, waitUntil } from './test-support';
 import { requestDispatchContext } from './types';
 
 beforeAll(() => {
@@ -169,6 +169,39 @@ describe('http/ws stream targets', () => {
     expect(first.value).toBeDefined();
     const envelope = wsBorsh.decodeEnvelope(first.value as Uint8Array);
     expect(envelope.kind).toBe(wsBorsh.KIND_HELLO_S2C);
+    opened.close();
+  });
+
+  test('openWsStream carries cid as a client nonce for the accepting node', async () => {
+    const server = new WebSocketServer();
+    const { db, close } = createMigratedAuthDb();
+    fixtures.push({ close });
+    const store = new NodeSessionStore(db);
+    const userStore = new UserStore(db);
+    seedUser(userStore);
+    const sid = store.issue({
+      userId: 'user-1',
+      viaNodeId: 'entry-1',
+      sessPublicKey: new Uint8Array(32),
+      delegationMethod: 'root',
+      now: Date.now(),
+    });
+    const seen: Array<{ sid: string; uid: string; via: string; cid?: string }> = [];
+    const [a, b] = createInMemoryLinkPair();
+    b.onStream((stream) => {
+      void acceptWsStream(stream, {
+        peerNodeId: 'entry-1',
+        sessionStore: store,
+        wsServer: server,
+        onGatewaySession(_session, auth) {
+          seen.push(auth);
+          return true;
+        },
+      });
+    });
+    const opened = await openWsStream(a, sid.sid, 'tab-nonce');
+    await waitUntil(() => seen.length === 1, 2_000);
+    expect(seen).toEqual([{ sid: sid.sid, uid: 'user-1', via: 'entry-1', cid: 'tab-nonce' }]);
     opened.close();
   });
 

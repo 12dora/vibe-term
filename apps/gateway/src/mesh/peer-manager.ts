@@ -72,8 +72,8 @@ export type PeerManagerOptions = {
   linkFactory?: PeerLinkFactory;
   onGatewaySession?: (
     session: import('../ws/gateway-session').GatewaySession,
-    auth: { sid: string; uid: string; via: string; connectionId: string }
-  ) => void;
+    auth: { sid: string; uid: string; via: string; cid?: string }
+  ) => boolean | undefined;
   onGatewaySessionClose?: (session: import('../ws/gateway-session').GatewaySession) => void;
   onBrowserSignal?: (msg: RtcSignalMessage, fromNodeId?: string) => void;
   ensureDcSession?: (peerNodeId: string, rtcSession: string) => void;
@@ -96,6 +96,7 @@ type LivePeer = {
   pingTimer: { clear: () => void } | null;
   missedPongs: number;
   retiring: boolean;
+  unsubRtc: (() => void) | null;
   sendKey?: Uint8Array;
   recvKey?: Uint8Array;
 };
@@ -199,8 +200,8 @@ export class PeerManager {
   private readonly onGatewaySession:
     | ((
         session: import('../ws/gateway-session').GatewaySession,
-        auth: { sid: string; uid: string; via: string; connectionId: string }
-      ) => void)
+        auth: { sid: string; uid: string; via: string; cid?: string }
+      ) => boolean | undefined)
     | null;
   private readonly onGatewaySessionClose:
     | ((session: import('../ws/gateway-session').GatewaySession) => void)
@@ -280,6 +281,8 @@ export class PeerManager {
     for (const nodeId of [...this.retiring.keys()]) {
       this.forceCloseRetiring(nodeId, 'stopped');
     }
+    this.rtcListeners.clear();
+    this.rtcInbox.clear();
   }
 
   getLive(nodeId: string): LinkSession | null {
@@ -462,6 +465,10 @@ export class PeerManager {
           this.rtcInbox.delete(peerNodeId);
           for (const msg of inbox) cb(msg);
         }
+        return () => {
+          set?.delete(cb);
+          if (set && set.size === 0) this.rtcListeners.delete(peerNodeId);
+        };
       },
     };
   }
@@ -488,29 +495,54 @@ export class PeerManager {
     }
   }
 
+  private releaseRtcAttempt(peerNodeId: string, unsub: (() => void) | null): void {
+    unsub?.();
+    this.rtcInbox.delete(peerNodeId);
+  }
+
   private async dialDc(
     nodeId: string,
     gen: number,
     signal: AbortSignal
   ): Promise<LinkSession | null> {
     if (!this.rtc) return null;
-    const result = await abortable(
-      this.rtc.connectToPeer(nodeId, this.signalingFor(nodeId)),
-      signal
-    );
-    if (this.stopped || gen !== this.generation) {
-      try {
-        result.pc.close();
-      } catch {
-        // ignore
+    const signaling = this.signalingFor(nodeId);
+    let unsub: (() => void) | null = null;
+    const wrapped: RtcSignaling = {
+      send: (msg) => signaling.send(msg),
+      onMessage: (cb) => {
+        unsub = signaling.onMessage(cb);
+        return unsub;
+      },
+    };
+    try {
+      const result = await abortable(this.rtc.connectToPeer(nodeId, wrapped), signal);
+      if (this.stopped || gen !== this.generation) {
+        this.releaseRtcAttempt(nodeId, unsub);
+        unsub = null;
+        try {
+          result.pc.close();
+        } catch {
+          // ignore
+        }
+        throw new Error('stopped');
       }
-      throw new Error('stopped');
+      const session = new LinkMux(result.link, { role: result.role });
+      const initiatedBy = result.role === 'initiator' ? this.identity.nodeId : result.peerNodeId;
+      const kept = this.track(session, result.peerNodeId, 'dc', initiatedBy, gen);
+      if (kept === session) {
+        const live = this.live.get(result.peerNodeId);
+        if (live) live.unsubRtc = unsub;
+        unsub = null;
+        return kept;
+      }
+      this.releaseRtcAttempt(nodeId, unsub);
+      unsub = null;
+      return kept;
+    } catch (err) {
+      this.releaseRtcAttempt(nodeId, unsub);
+      throw err;
     }
-    const session = new LinkMux(result.link, { role: result.role });
-    const initiatedBy = result.role === 'initiator' ? this.identity.nodeId : result.peerNodeId;
-    const kept = this.track(session, result.peerNodeId, 'dc', initiatedBy, gen);
-    if (!kept) return null;
-    return kept;
   }
 
   private async dial(nodeId: string): Promise<LinkSession> {
@@ -765,6 +797,7 @@ export class PeerManager {
       pingTimer: null,
       missedPongs: 0,
       retiring: false,
+      unsubRtc: null,
     };
     this.live.set(peerNodeId, live);
     this.bindSession(live);
@@ -1067,6 +1100,11 @@ export class PeerManager {
   }
 
   private finishRetire(live: LivePeer, reason = 'replaced'): void {
+    if (live.unsubRtc) {
+      live.unsubRtc();
+      live.unsubRtc = null;
+    }
+    this.rtcInbox.delete(live.peerNodeId);
     live.retiring = false;
     const set = this.retiring.get(live.peerNodeId);
     if (set) {

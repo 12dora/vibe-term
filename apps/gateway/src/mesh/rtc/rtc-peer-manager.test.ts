@@ -35,12 +35,16 @@ function loopbackSignaling(): [RtcSignaling, RtcSignaling] {
     cbs: Array<(msg: RtcSignalMessage) => void>,
     inbox: RtcSignalMessage[],
     cb: (msg: RtcSignalMessage) => void
-  ): void {
+  ): () => void {
     cbs.push(cb);
     while (inbox.length > 0) {
       const next = inbox.shift();
       if (next) cb(next);
     }
+    return () => {
+      const idx = cbs.indexOf(cb);
+      if (idx >= 0) cbs.splice(idx, 1);
+    };
   }
 
   return [

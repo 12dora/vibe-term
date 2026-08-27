@@ -109,6 +109,7 @@ export class FakeStreams implements StreamOpener {
   nextResponse: Response = new Response('ok');
   lastWs: FakeWs | null = null;
   wsAuth: string | null = null;
+  wsCid: string | undefined;
 
   async openHttpStream(
     _link: LinkSession,
@@ -132,8 +133,9 @@ export class FakeStreams implements StreamOpener {
     return this.nextResponse;
   }
 
-  async openWsStream(_link: LinkSession, auth: string): Promise<OpenedWsStream> {
+  async openWsStream(_link: LinkSession, auth: string, cid?: string): Promise<OpenedWsStream> {
     this.wsAuth = auth;
+    this.wsCid = cid;
     this.lastWs = new FakeWs();
     return this.lastWs;
   }

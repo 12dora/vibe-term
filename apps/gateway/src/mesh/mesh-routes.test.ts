@@ -276,7 +276,12 @@ describe('mesh-routes', () => {
     const { MeshHttpRuntime } = await import('./mesh-http');
     const mesh = await bootMesh();
     try {
-      const lookups: Array<{ sid: string; via: string; connectionId?: string | null }> = [];
+      const lookups: Array<{
+        sid: string;
+        via: string;
+        connectionId?: string | null;
+        cid?: string | null;
+      }> = [];
       let mode: 'one' | 'many' | 'none' | 'match' = 'one';
       const runtime = new MeshHttpRuntime({
         roles: { hub: false, node: true },
@@ -300,8 +305,11 @@ describe('mesh-routes', () => {
         connectionLookup: (input) => {
           lookups.push(input);
           if (mode === 'none') return { ok: false, code: 'NO_CONNECTION' };
-          if (mode === 'many' && !input.connectionId) {
+          if (mode === 'many' && !input.connectionId && !input.cid) {
             return { ok: false, code: 'MULTIPLE_CONNECTIONS' };
+          }
+          if (input.cid) {
+            return { ok: true, connectionId: `server-for-${input.cid}` };
           }
           return { ok: true, connectionId: input.connectionId || 'conn-latest' };
         },
@@ -338,6 +346,18 @@ describe('mesh-routes', () => {
       );
       expect(headered.status).toBe(200);
       expect(await headered.json()).toEqual({ connectionId: 'tab-a' });
+
+      const byCid = asResponse(
+        await runtime.handleRequest(
+          new Request('http://localhost/api/mesh/connection?cid=tab-nonce', {
+            headers: { cookie },
+          }),
+          dummyServer
+        )
+      );
+      expect(byCid.status).toBe(200);
+      expect(await byCid.json()).toEqual({ connectionId: 'server-for-tab-nonce' });
+      expect(lookups.some((row) => row.cid === 'tab-nonce')).toBe(true);
 
       const conflict = asResponse(
         await runtime.handleRequest(

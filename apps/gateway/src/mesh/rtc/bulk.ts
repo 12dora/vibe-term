@@ -296,6 +296,7 @@ export class BulkTransferService {
             if (!(await this.sendFrame(ch, pending))) return;
           }
           if (ch.state === 'get' && ch.dc.isOpen()) {
+            if (!this.ensureVerified(ch)) return;
             ch.state = 'eof';
             this.clearIdle(ch);
             sendJson(ch.dc, { op: 'eof' });
@@ -318,13 +319,22 @@ export class BulkTransferService {
     }
   }
 
+  private ensureVerified(ch: BulkChannel): boolean {
+    if (!ch.verify) return true;
+    if (ch.verify()) return true;
+    this.fail(ch, 'forbidden', { cleanup: ch.state === 'put' || ch.state === 'get' });
+    return false;
+  }
+
   private async sendFrame(ch: BulkChannel, bytes: Uint8Array): Promise<boolean> {
     await this.waitDrain(ch);
     if (ch.state !== 'get' || !ch.dc.isOpen()) return false;
+    if (!this.ensureVerified(ch)) return false;
     if (sendBinary(ch.dc, bytes)) return true;
     if (!ch.dc.isOpen()) return false;
     await this.waitDrain(ch);
     if (ch.state !== 'get' || !ch.dc.isOpen()) return false;
+    if (!this.ensureVerified(ch)) return false;
     return sendBinary(ch.dc, bytes);
   }
 

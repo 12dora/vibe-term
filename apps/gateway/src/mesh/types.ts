@@ -121,6 +121,7 @@ export type HttpStreamOpenPayload = {
 export type WsStreamOpenPayload = {
   type?: 'ws';
   auth: string;
+  cid?: string;
   connectionId?: string;
 };
 

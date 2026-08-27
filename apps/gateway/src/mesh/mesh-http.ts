@@ -160,14 +160,17 @@ export class MeshHttpRuntime {
       }
       return undefined;
     }
-    const headerConnectionId = req.headers.get(X_TMEX_CONNECTION)?.trim() || '';
+    const cid =
+      new URL(req.url).searchParams.get('cid')?.trim() ||
+      req.headers.get(X_TMEX_CONNECTION)?.trim() ||
+      '';
     const upgraded = server.upgrade(req, {
       data: {
         kind: MESH_GATEWAY_WS_KIND,
         sid: auth.sid,
         uid: auth.userId,
         via: MESH_VIA_SELF,
-        ...(headerConnectionId ? { connectionId: headerConnectionId } : {}),
+        ...(cid ? { cid } : {}),
       },
     });
     if (!upgraded) {

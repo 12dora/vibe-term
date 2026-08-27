@@ -101,12 +101,12 @@ export class MeshRtcSignalRouter implements RtcSignalRouter {
   }
 
   deliverLocal(signal: RtcSignalMessage, sourceNodeId?: string): void {
+    if (!this.canCache(signal, sourceNodeId)) return;
     const locals = this.localListeners.get(signal.rtcSession);
     if (locals && locals.size > 0) {
       for (const cb of locals) cb(signal);
       return;
     }
-    if (!this.canCache(signal, sourceNodeId)) return;
     let inbox = this.localInbox.get(signal.rtcSession);
     if (!inbox) {
       if (this.localInbox.size >= this.maxInboxSessions) return;

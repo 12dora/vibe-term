@@ -5,6 +5,7 @@ export {
   type DeliverInbound,
   type DirectCarrier,
   type SendControl,
+  type VerifyInbound,
 } from './carrier-switch';
 export {
   DC_HIGH_WATER_BYTES,
