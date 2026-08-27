@@ -992,7 +992,11 @@ export const I18N_RESOURCES = {
         "downloaded": "Downloaded {{name}}",
         "downloadFailed": "Failed to download {{name}}",
         "dragDownloadStarted": "Started downloading {{name}} (handled by browser)",
-        "tooLarge": "{{name}} exceeds the size limit ({{max}})"
+        "tooLarge": "{{name}} exceeds the size limit ({{max}})",
+        "pathDirect": "Direct",
+        "pathRelay": "Relay",
+        "pathDirectHint": "Peer-to-peer transfer with the device",
+        "pathRelayHint": "Relayed through the hub"
       },
       "agentLaunch": {
         "connectFailed": "Failed to connect to the device",
@@ -2176,7 +2180,11 @@ export const I18N_RESOURCES = {
         "downloaded": "已下载 {{name}}",
         "downloadFailed": "下载 {{name}} 失败",
         "dragDownloadStarted": "已开始下载 {{name}}（由浏览器接管）",
-        "tooLarge": "{{name}} 超过大小上限（{{max}}）"
+        "tooLarge": "{{name}} 超过大小上限（{{max}}）",
+        "pathDirect": "直连",
+        "pathRelay": "中转",
+        "pathDirectHint": "与设备点对点直连传输",
+        "pathRelayHint": "经 hub 中转传输"
       },
       "agentLaunch": {
         "connectFailed": "连接设备失败",
@@ -3360,7 +3368,11 @@ export const I18N_RESOURCES = {
         "downloaded": "{{name}} をダウンロードしました",
         "downloadFailed": "{{name}} のダウンロードに失敗しました",
         "dragDownloadStarted": "{{name}} のダウンロードを開始（ブラウザが処理）",
-        "tooLarge": "{{name}} はサイズ上限（{{max}}）を超えています"
+        "tooLarge": "{{name}} はサイズ上限（{{max}}）を超えています",
+        "pathDirect": "直接接続",
+        "pathRelay": "中継",
+        "pathDirectHint": "デバイスとの P2P 直接転送",
+        "pathRelayHint": "hub 経由の中継転送"
       },
       "agentLaunch": {
         "connectFailed": "デバイスへの接続に失敗しました",

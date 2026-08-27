@@ -986,7 +986,11 @@
         "downloaded": "{{name}} をダウンロードしました",
         "downloadFailed": "{{name}} のダウンロードに失敗しました",
         "dragDownloadStarted": "{{name}} のダウンロードを開始（ブラウザが処理）",
-        "tooLarge": "{{name}} はサイズ上限（{{max}}）を超えています"
+        "tooLarge": "{{name}} はサイズ上限（{{max}}）を超えています",
+        "pathDirect": "直接接続",
+        "pathRelay": "中継",
+        "pathDirectHint": "デバイスとの P2P 直接転送",
+        "pathRelayHint": "hub 経由の中継転送"
       },
       "agentLaunch": {
         "connectFailed": "デバイスへの接続に失敗しました",

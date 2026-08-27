@@ -1,6 +1,6 @@
 // 文件叶子的动作：应用内下载（流式 + 可取消进度 Toast）、拖到 OS 下载、右键菜单内容。
 
-import { downloadFileWithProgress, fileDownloadUrl } from '@tmex/api-client';
+import { fileDownloadUrl } from '@tmex/api-client';
 import type { FileEntryDto, FileRootDto } from '@tmex/shared';
 import { useRuntime } from '@tmex/stores/react';
 import { ContextMenuContent, ContextMenuItem, ContextMenuSeparator } from '@tmex/ui/context-menu';
@@ -9,6 +9,7 @@ import type { DragEvent } from 'react';
 import { useCallback } from 'react';
 import { useTranslation } from 'react-i18next';
 import { toast } from 'sonner';
+import { downloadFileWithTransport } from './bulk-transfer';
 import { CommonNodeMenuItems, NodeMenuHeader } from './node-menu';
 import { startTransferToast } from './transfer-toast';
 
@@ -31,14 +32,15 @@ export function useFileNodeActions(rootId: string, entry: FileEntryDto): FileNod
     const controller = new AbortController();
     const tt = startTransferToast(entry.name, 'download', () => controller.abort());
     try {
-      const file = await downloadFileWithProgress(
+      const { name, blob } = await downloadFileWithTransport(
+        runtime.nodeId,
         rootId,
         entry.path,
         entry.name,
-        { onLeg: tt.leg, signal: controller.signal },
+        { onLeg: tt.leg, signal: controller.signal, onPath: (p) => tt.setPath?.(p) },
         runtime.apiClient
       );
-      await runtime.host.saveFile(file);
+      await runtime.host.saveFile({ name, blob });
       tt.success(t('files.transfer.downloaded', { name: entry.name }));
     } catch {
       if (controller.signal.aborted) tt.cancel();

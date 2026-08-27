@@ -1,11 +1,12 @@
 // 目录节点的上传入口：外部文件拖入 + 右键菜单选择文件，逐文件分块上传并显示可取消的进度 Toast。
 
 import { useQueryClient } from '@tanstack/react-query';
-import { formatBytes, uploadFileChunked } from '@tmex/api-client';
+import { formatBytes } from '@tmex/api-client';
 import { useFileTreeStore, useRuntime } from '@tmex/stores/react';
 import { type ChangeEvent, type DragEvent, useCallback, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { toast } from 'sonner';
+import { uploadFileWithTransport } from './bulk-transfer';
 import { dataTransferHasFiles, planUpload } from './file-tree-logic';
 import { startTransferToast } from './transfer-toast';
 
@@ -61,11 +62,12 @@ export function useDirectoryUpload(
         const controller = new AbortController();
         const tt = startTransferToast(file.name, 'upload', () => controller.abort());
         try {
-          await uploadFileChunked(
+          await uploadFileWithTransport(
+            runtime.nodeId,
             rootId,
             path,
             file,
-            { onLeg: tt.leg, signal: controller.signal },
+            { onLeg: tt.leg, signal: controller.signal, onPath: (p) => tt.setPath?.(p) },
             runtime.apiClient
           );
           tt.success(t('files.upload.success', { name: file.name }));
@@ -77,7 +79,7 @@ export function useDirectoryUpload(
       expand(rootId, path);
       void queryClient.invalidateQueries({ queryKey: ['files', 'list', rootId, path] });
     },
-    [expand, path, queryClient, rootId, runtime.apiClient, t, transferMaxBytes]
+    [expand, path, queryClient, rootId, runtime.apiClient, runtime.nodeId, t, transferMaxBytes]
   );
 
   const dropZoneProps: DropZoneProps = {

@@ -986,7 +986,11 @@
         "downloaded": "Downloaded {{name}}",
         "downloadFailed": "Failed to download {{name}}",
         "dragDownloadStarted": "Started downloading {{name}} (handled by browser)",
-        "tooLarge": "{{name}} exceeds the size limit ({{max}})"
+        "tooLarge": "{{name}} exceeds the size limit ({{max}})",
+        "pathDirect": "Direct",
+        "pathRelay": "Relay",
+        "pathDirectHint": "Peer-to-peer transfer with the device",
+        "pathRelayHint": "Relayed through the hub"
       },
       "agentLaunch": {
         "connectFailed": "Failed to connect to the device",

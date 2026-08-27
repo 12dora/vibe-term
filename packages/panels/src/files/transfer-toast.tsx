@@ -1,15 +1,32 @@
 import { toast } from 'sonner';
 
-import i18next from 'i18next';
 import type { LegProgress } from '@tmex/api-client';
 import { Progress } from '@tmex/ui/progress';
+import i18next from 'i18next';
 
 export type TransferDirection = 'upload' | 'download';
+
+/** 本次传输实际走的通道（与 `bulk-transfer.ts` 的 `TransferPath` 同义）。 */
+export type TransferToastPath = 'direct' | 'relay';
 
 interface ToastModel {
   fileName: string;
   direction: TransferDirection;
   legs: [LegProgress, LegProgress];
+  path: TransferToastPath | null;
+}
+
+function PathBadge({ path }: { path: TransferToastPath }) {
+  const direct = path === 'direct';
+  return (
+    <span
+      data-testid="transfer-path-badge"
+      title={i18next.t(direct ? 'files.transfer.pathDirectHint' : 'files.transfer.pathRelayHint')}
+      className="shrink-0 rounded border px-1 text-[10px] leading-4 text-muted-foreground"
+    >
+      {i18next.t(direct ? 'files.transfer.pathDirect' : 'files.transfer.pathRelay')}
+    </span>
+  );
 }
 
 function legLabel(direction: TransferDirection, leg: 1 | 2): string {
@@ -41,7 +58,10 @@ function LegRow({ label, leg }: { label: string; leg: LegProgress }) {
 function WorkingBody({ m }: { m: ToastModel }) {
   return (
     <div className="flex w-full flex-col gap-2" data-testid="transfer-toast">
-      <span className="min-w-0 truncate text-sm font-medium">{m.fileName}</span>
+      <div className="flex min-w-0 items-center gap-2">
+        <span className="min-w-0 truncate text-sm font-medium">{m.fileName}</span>
+        {m.path ? <PathBadge path={m.path} /> : null}
+      </div>
       <LegRow label={legLabel(m.direction, 1)} leg={m.legs[0]} />
       <LegRow label={legLabel(m.direction, 2)} leg={m.legs[1]} />
     </div>
@@ -50,6 +70,8 @@ function WorkingBody({ m }: { m: ToastModel }) {
 
 export interface TransferToast {
   leg: (n: 1 | 2, p: LegProgress) => void;
+  /** 传输路径确定后调用，在文件名旁显示 direct / relay 徽标。 */
+  setPath?: (path: TransferToastPath) => void;
   success: (message: string) => void;
   fail: (message: string) => void;
   cancel: () => void;
@@ -68,6 +90,7 @@ export function startTransferToast(
     fileName,
     direction,
     legs: [{ pct: 0 }, { pct: 0 }],
+    path: null,
   };
   let lastRender = 0;
 
@@ -97,6 +120,12 @@ export function startTransferToast(
       // 100% 立即渲染（保证完成段显示满格），否则节流
       if (p.pct < 100 && now - lastRender < 100) return;
       lastRender = now;
+      renderWorking();
+    },
+    setPath(path) {
+      if (model.path === path) return;
+      model.path = path;
+      lastRender = performance.now();
       renderWorking();
     },
     success(message) {
