@@ -131,7 +131,9 @@ export class AuthRoutes {
       );
     }
     if (path === '/api/auth/passkeys' && req.method === 'GET') {
-      return requireSession(this.sessionDeps, (_r, auth) => this.handlePasskeys(auth.userId))(req);
+      return requireSession(this.sessionDeps, (r, auth) => this.handlePasskeys(r, auth.userId))(
+        req
+      );
     }
     if (path === '/api/auth/keylog' && req.method === 'POST') {
       return requireSession(this.sessionDeps, (r, auth) => this.handleKeyLog(r, auth.userId))(req);
@@ -409,8 +411,8 @@ export class AuthRoutes {
     return jsonBody({
       credential_id: verified.credential_id,
       public_key: encodeBase64url(verified.public_key),
-      rp_id: verified.rp_id,
-      origin: verified.origin,
+      rp_id: payload.rpId ?? verified.rp_id,
+      origin: payload.origin ?? verified.origin,
       counter: verified.counter,
       transports: verified.transports,
       backup_eligible: verified.backup_eligible,
@@ -437,7 +439,10 @@ export class AuthRoutes {
     }
     const origin = requestOrigin(req);
     const rpId = rpIdFromOrigin(origin);
-    const keys = this.deps.userStore.listKeysByUser(user.id);
+    const keys = this.deps.userStore.listKeysByUser(user.id).filter((k) => k.origin === origin);
+    if (keys.length === 0) {
+      return jsonError('NO_PASSKEY_FOR_ORIGIN', 404);
+    }
     const options = await createAuthenticationOptions({
       rpId,
       allowCredentials: keys.map((k) => ({
@@ -466,10 +471,11 @@ export class AuthRoutes {
     }
   }
 
-  private handlePasskeys(userId: string | null): Response {
+  private handlePasskeys(req: Request, userId: string | null): Response {
     if (!userId) {
       return jsonError('UNAUTHORIZED', 401);
     }
+    const origin = requestOrigin(req);
     const passkeys = this.deps.userStore.listKeysByUser(userId).map((k) => ({
       credential_id: encodeBase64url(k.credentialId),
       name: k.name,
@@ -477,6 +483,7 @@ export class AuthRoutes {
       origin: k.origin,
       created_at: k.createdAt,
       log_seq: k.logSeq,
+      usableHere: k.origin === origin,
     }));
     return jsonBody({ passkeys });
   }

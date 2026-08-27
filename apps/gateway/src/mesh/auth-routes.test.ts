@@ -198,14 +198,20 @@ export async function bootMesh(options?: {
 export async function call(
   runtime: MeshHttpRuntime,
   url: string,
-  init?: RequestInit & { via?: string; clientIp?: string; authSid?: string }
+  init?: RequestInit & {
+    via?: string;
+    clientIp?: string;
+    authSid?: string;
+    trustProxy?: boolean;
+  }
 ): Promise<Response> {
   const req = new Request(url, init);
-  if (init?.via || init?.clientIp || init?.authSid) {
+  if (init?.via || init?.clientIp || init?.authSid || init?.trustProxy) {
     setMeshRequestContext(req, {
       via: init.via ?? 'self',
       clientIp: init.clientIp,
       auth: init.authSid,
+      trustProxy: init.trustProxy,
     });
   }
   let res = await runtime.handleRequest(req, dummyServer);
@@ -306,6 +312,58 @@ export async function challengeAndLogin(
     clientIp: tweak?.clientIp,
   });
   return { res, sid: res.ok ? sidFromLogin(res) : '', challengeId, nonce, del };
+}
+
+function insertPasskeyRow(
+  userStore: UserStore,
+  userId: string,
+  opts: { origin: string; rpId: string; fill: number; name?: string }
+): Uint8Array {
+  const credentialId = new Uint8Array(16).fill(opts.fill);
+  userStore.insertKey({
+    id: crypto.randomUUID(),
+    userId,
+    credentialId,
+    publicKey: new Uint8Array(32).fill(opts.fill),
+    rpId: opts.rpId,
+    origin: opts.origin,
+    counter: 0,
+    name: opts.name ?? `key-${opts.fill}`,
+    logSeq: 1,
+    now: Date.now(),
+  });
+  return credentialId;
+}
+
+async function requestPasskeyLoginOptions(
+  mesh: Awaited<ReturnType<typeof bootMesh>>,
+  origin: string | null,
+  extra?: {
+    headers?: Record<string, string>;
+    trustProxy?: boolean;
+    via?: string;
+  }
+): Promise<Response> {
+  const sess = generateEd25519KeyPair();
+  const del = createDelegation(mesh.boot.rootKey, {
+    uid: mesh.boot.userId,
+    sessPk: sess.publicKey,
+    now: Date.now(),
+  });
+  return call(mesh.runtime, 'http://127.0.0.1:19663/api/auth/passkey/login/options', {
+    method: 'POST',
+    headers: {
+      'content-type': 'application/json',
+      ...(origin ? { origin } : {}),
+      ...extra?.headers,
+    },
+    body: JSON.stringify({
+      uid: mesh.boot.userId,
+      delegation: encodeBase64url(encodeDelegation(del.delegation)),
+    }),
+    via: extra?.via,
+    trustProxy: extra?.trustProxy,
+  });
 }
 
 describe('auth-routes', () => {
@@ -899,10 +957,8 @@ describe('auth-routes', () => {
           }),
         }
       );
-      expect(loginOpts.status).toBe(200);
-      const lo = (await loginOpts.json()) as { challenge: string; userVerification: string };
-      expect(lo.userVerification).toBe('required');
-      expect(lo.challenge).toBeTruthy();
+      expect(loginOpts.status).toBe(404);
+      expect((await loginOpts.json()).code).toBe('NO_PASSKEY_FOR_ORIGIN');
     } finally {
       mesh.close();
     }
@@ -1191,6 +1247,229 @@ describe('auth-routes', () => {
       });
       expect(res.status).toBe(401);
       expect((await res.json()).code).toBe('DELEGATION_BAD_SIGNATURE');
+    } finally {
+      mesh.close();
+    }
+  });
+
+  test('passkey login/options allowCredentials is exact-origin only; empty → 404', async () => {
+    const mesh = await bootMesh();
+    try {
+      const originA = 'http://localhost:19663';
+      const originB = 'https://other.example:8443';
+      const credA = insertPasskeyRow(mesh.userStore, mesh.boot.userId, {
+        origin: originA,
+        rpId: 'localhost',
+        fill: 11,
+      });
+      const credB = insertPasskeyRow(mesh.userStore, mesh.boot.userId, {
+        origin: originB,
+        rpId: 'other.example',
+        fill: 12,
+      });
+      const idA = encodeBase64url(credA);
+      const idB = encodeBase64url(credB);
+
+      const fromA = await requestPasskeyLoginOptions(mesh, originA);
+      expect(fromA.status).toBe(200);
+      const bodyA = (await fromA.json()) as {
+        rpId: string;
+        allowCredentials: Array<{ id: string }>;
+        userVerification: string;
+      };
+      expect(bodyA.rpId).toBe('localhost');
+      expect(bodyA.userVerification).toBe('required');
+      expect(bodyA.allowCredentials.map((c) => c.id)).toEqual([idA]);
+      expect(bodyA.allowCredentials.map((c) => c.id)).not.toContain(idB);
+
+      const fromB = await requestPasskeyLoginOptions(mesh, originB);
+      expect(fromB.status).toBe(200);
+      const bodyB = (await fromB.json()) as {
+        rpId: string;
+        allowCredentials: Array<{ id: string }>;
+      };
+      expect(bodyB.rpId).toBe('other.example');
+      expect(bodyB.allowCredentials.map((c) => c.id)).toEqual([idB]);
+
+      const fromC = await requestPasskeyLoginOptions(mesh, 'https://unrelated.example');
+      expect(fromC.status).toBe(404);
+      expect((await fromC.json()).code).toBe('NO_PASSKEY_FOR_ORIGIN');
+    } finally {
+      mesh.close();
+    }
+  });
+
+  test('passkey login/options trusted origin follows TMEX_TRUST_PROXY rules', async () => {
+    const mesh = await bootMesh();
+    try {
+      const forwardedOrigin = 'https://app.example.com';
+      const forwardedCred = insertPasskeyRow(mesh.userStore, mesh.boot.userId, {
+        origin: forwardedOrigin,
+        rpId: 'app.example.com',
+        fill: 21,
+      });
+      const localCred = insertPasskeyRow(mesh.userStore, mesh.boot.userId, {
+        origin: 'http://127.0.0.1:19663',
+        rpId: '127.0.0.1',
+        fill: 22,
+      });
+      const forwardedHeaders = {
+        'content-type': 'application/json',
+        'x-forwarded-proto': 'https',
+        'x-forwarded-host': 'app.example.com',
+      };
+      const forwardedId = encodeBase64url(forwardedCred);
+      const localId = encodeBase64url(localCred);
+
+      const trusted = await requestPasskeyLoginOptions(mesh, null, {
+        headers: forwardedHeaders,
+        trustProxy: true,
+        via: 'self',
+      });
+      expect(trusted.status).toBe(200);
+      const trustedBody = (await trusted.json()) as {
+        rpId: string;
+        allowCredentials: Array<{ id: string }>;
+      };
+      expect(trustedBody.rpId).toBe('app.example.com');
+      expect(trustedBody.allowCredentials.map((c) => c.id)).toEqual([forwardedId]);
+
+      const untrusted = await requestPasskeyLoginOptions(mesh, null, {
+        headers: forwardedHeaders,
+        via: 'self',
+      });
+      expect(untrusted.status).toBe(200);
+      const untrustedBody = (await untrusted.json()) as {
+        rpId: string;
+        allowCredentials: Array<{ id: string }>;
+      };
+      expect(untrustedBody.rpId).toBe('127.0.0.1');
+      expect(untrustedBody.allowCredentials.map((c) => c.id)).toEqual([localId]);
+
+      const viaPeer = await requestPasskeyLoginOptions(mesh, null, {
+        headers: forwardedHeaders,
+        trustProxy: true,
+        via: 'entry-node',
+      });
+      expect(viaPeer.status).toBe(200);
+      const viaPeerBody = (await viaPeer.json()) as {
+        rpId: string;
+        allowCredentials: Array<{ id: string }>;
+      };
+      expect(viaPeerBody.rpId).toBe('127.0.0.1');
+      expect(viaPeerBody.allowCredentials.map((c) => c.id)).toEqual([localId]);
+    } finally {
+      mesh.close();
+    }
+  });
+
+  test('GET /api/auth/passkeys marks usableHere by exact origin match', async () => {
+    const mesh = await bootMesh();
+    try {
+      const { sid } = await challengeAndLogin(mesh.runtime, mesh.boot);
+      const originHere = 'http://localhost:19663';
+      insertPasskeyRow(mesh.userStore, mesh.boot.userId, {
+        origin: originHere,
+        rpId: 'localhost',
+        fill: 31,
+        name: 'here',
+      });
+      insertPasskeyRow(mesh.userStore, mesh.boot.userId, {
+        origin: 'https://other.example:8443',
+        rpId: 'other.example',
+        fill: 32,
+        name: 'elsewhere',
+      });
+      const keys = await call(mesh.runtime, 'http://localhost/api/auth/passkeys', {
+        headers: { cookie: `tmex_s_self=${sid}`, origin: originHere },
+      });
+      expect(keys.status).toBe(200);
+      const body = (await keys.json()) as {
+        passkeys: Array<{
+          name: string | null;
+          origin: string;
+          rp_id: string;
+          usableHere: boolean;
+        }>;
+      };
+      expect(body.passkeys).toHaveLength(2);
+      const here = body.passkeys.find((k) => k.name === 'here');
+      const elsewhere = body.passkeys.find((k) => k.name === 'elsewhere');
+      expect(here?.origin).toBe(originHere);
+      expect(here?.rp_id).toBe('localhost');
+      expect(here?.usableHere).toBe(true);
+      expect(elsewhere?.origin).toBe('https://other.example:8443');
+      expect(elsewhere?.rp_id).toBe('other.example');
+      expect(elsewhere?.usableHere).toBe(false);
+    } finally {
+      mesh.close();
+    }
+  });
+
+  test('passkey register/options uses trusted origin for rpId; verify stores that origin', async () => {
+    const mesh = await bootMesh();
+    try {
+      const { sid } = await challengeAndLogin(mesh.runtime, mesh.boot);
+      const trustedOrigin = 'https://node.example:8443';
+      const opts = await call(mesh.runtime, 'http://localhost/api/auth/passkey/register/options', {
+        method: 'POST',
+        headers: {
+          cookie: `tmex_s_self=${sid}`,
+          origin: trustedOrigin,
+        },
+      });
+      expect(opts.status).toBe(200);
+      const options = (await opts.json()) as {
+        challenge: string;
+        challenge_id: string;
+        rp: { id: string };
+      };
+      expect(options.rp.id).toBe('node.example');
+
+      const authenticator = await createEs256Authenticator();
+      const registration = await authenticator.register({
+        challenge: decodeBase64url(options.challenge),
+        rpId: 'node.example',
+        origin: trustedOrigin,
+        counter: 0,
+      });
+      const verified = await call(
+        mesh.runtime,
+        'http://localhost/api/auth/passkey/register/verify',
+        {
+          method: 'POST',
+          headers: {
+            'content-type': 'application/json',
+            cookie: `tmex_s_self=${sid}`,
+            origin: 'http://localhost:19663',
+          },
+          body: JSON.stringify({
+            challenge_id: options.challenge_id,
+            response: registration,
+          }),
+        }
+      );
+      expect(verified.status).toBe(200);
+      const payload = (await verified.json()) as { origin: string; rp_id: string };
+      expect(payload.origin).toBe(trustedOrigin);
+      expect(payload.rp_id).toBe('node.example');
+
+      const proxied = await call(
+        mesh.runtime,
+        'http://localhost/api/auth/passkey/register/options',
+        {
+          method: 'POST',
+          headers: {
+            cookie: `tmex_s_self=${sid}`,
+            'x-forwarded-proto': 'https',
+            'x-forwarded-host': 'app.example.com',
+          },
+          trustProxy: true,
+          via: 'self',
+        }
+      );
+      expect(proxied.status).toBe(200);
+      expect(((await proxied.json()) as { rp: { id: string } }).rp.id).toBe('app.example.com');
     } finally {
       mesh.close();
     }

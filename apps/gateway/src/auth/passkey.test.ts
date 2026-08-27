@@ -314,6 +314,129 @@ describe('passkey', () => {
       close();
     }
   });
+
+  test('verifiers bind stored origin/rpId and reject uid mismatch', async () => {
+    const { db, close } = createMigratedAuthDb();
+    try {
+      const users = new UserStore(db);
+      users.create({
+        id: 'user-1',
+        username: 'alice',
+        rootPublicKey: new Uint8Array(32).fill(1),
+        rootEpoch: 1,
+        kdfParamsJson: '{}',
+        keyLogHeadSeq: 1,
+        keyLogHeadHash: new Uint8Array(32),
+        now: 1,
+      });
+      users.create({
+        id: 'user-2',
+        username: 'bob',
+        rootPublicKey: new Uint8Array(32).fill(2),
+        rootEpoch: 1,
+        kdfParamsJson: '{}',
+        keyLogHeadSeq: 1,
+        keyLogHeadHash: new Uint8Array(32),
+        now: 1,
+      });
+      const authenticator = await createEs256Authenticator();
+      const challenge = randomBytes(32);
+      const registration = await authenticator.register({
+        challenge,
+        rpId: RP_ID,
+        origin: ORIGIN,
+        counter: 0,
+      });
+      const payload = await verifyRegistration({
+        response: registration,
+        expectedChallenge: encodeBase64url(challenge),
+        origin: ORIGIN,
+        rpId: RP_ID,
+      });
+      if (!payload) {
+        throw new Error('registration failed');
+      }
+      expect(payload.origin).toBe(ORIGIN);
+      expect(payload.rp_id).toBe(RP_ID);
+      users.insertKey({
+        id: 'key-1',
+        userId: 'user-1',
+        credentialId: decodeBase64url(payload.credential_id),
+        publicKey: payload.public_key,
+        rpId: payload.rp_id,
+        origin: payload.origin,
+        counter: payload.counter,
+        transports: payload.transports,
+        name: 'synth',
+        logSeq: 1,
+        now: 2,
+      });
+
+      const now = 1_700_000_000_000;
+      const verifyDelegation = makeVerifyDelegationPasskey(users, { now: () => now });
+      const verifyRecord = makeVerifyPasskeyAssertion(users);
+      const delegation = {
+        domain: 'tmex/delegation/v1',
+        uid: 'user-1',
+        sess_pk: new Uint8Array(32),
+        issued_at: BigInt(now),
+        exp: BigInt(now) + BigInt(DELEGATION_TTL_MS),
+        method: 'passkey' as const,
+        credential_id: payload.credential_id,
+      };
+
+      const foreignOrigin = 'https://other.example:8443';
+      const originMismatchChallenge = randomBytes(32);
+      const originMismatchAssertion = await authenticator.assert({
+        challenge: originMismatchChallenge,
+        rpId: RP_ID,
+        origin: foreignOrigin,
+        counter: 1,
+      });
+      const originRejected = await verifyDelegation({
+        challenge: originMismatchChallenge,
+        delegation,
+        assertion: originMismatchAssertion,
+        credentialId: payload.credential_id,
+      });
+      expect(originRejected).toBe(false);
+
+      const recordBytes = randomBytes(40);
+      const recordChallenge = sha256(recordBytes);
+      const recordMismatch = await authenticator.assert({
+        challenge: recordChallenge,
+        rpId: 'other.example',
+        origin: foreignOrigin,
+        counter: 2,
+      });
+      const recordRejected = await verifyRecord({
+        recordBytes,
+        sig: encodePasskeyAssertionSig(recordMismatch),
+        credentialId: payload.credential_id,
+        publicKey: payload.public_key,
+        challenge: recordChallenge,
+      });
+      expect(recordRejected).toBe(false);
+
+      const uidMismatchChallenge = randomBytes(32);
+      const uidMismatchAssertion = await authenticator.assert({
+        challenge: uidMismatchChallenge,
+        rpId: RP_ID,
+        origin: ORIGIN,
+        counter: 3,
+      });
+      const uidRejected = await verifyDelegation({
+        challenge: uidMismatchChallenge,
+        delegation: { ...delegation, uid: 'user-2' },
+        assertion: uidMismatchAssertion,
+        credentialId: payload.credential_id,
+      });
+      expect(uidRejected).toBe(false);
+      expect(users.getKeyByCredentialId(decodeBase64url(payload.credential_id))?.counter).toBe(0);
+    } finally {
+      close();
+    }
+  });
 });
 
 async function createEs256Authenticator() {

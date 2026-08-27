@@ -127,7 +127,7 @@ export async function verifyRegistration(
     credential_id: info.credential.id,
     public_key: new Uint8Array(info.credential.publicKey),
     rp_id: info.rpID ?? input.rpId,
-    origin: info.origin,
+    origin: input.origin,
     counter: info.credential.counter,
     transports: info.credential.transports ?? [],
     backup_eligible: info.credentialDeviceType === 'multiDevice',
@@ -229,7 +229,7 @@ export function makeVerifyDelegationPasskey(
       return false;
     }
     const stored = userStore.getKeyByCredentialId(decodeBase64url(credentialId));
-    if (!stored) {
+    if (!stored || stored.userId !== delegation.uid) {
       return false;
     }
     const result = await verifyAssertion({
