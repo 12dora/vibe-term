@@ -10,6 +10,8 @@ REPO_ROOT="$(cd "${HUB_E2E}/../.." && pwd)"
 export TMEX_REPO_ROOT="${TMEX_REPO_ROOT:-${REPO_ROOT}}"
 LOCAL_COMPOSE=(docker compose -p tmex-split-local -f "${ROOT}/docker-compose.local.yml")
 # RSSH：一个可执行文件，把参数当远端命令执行（例如封装 sshpass/ssh 的脚本）；凭据不入库。
+# RSYNC_SSH：rsync -e 使用的 ssh 命令（同样由调用方提供，可含 sshpass 包装），例如 RSYNC_SSH=/path/to/ssh-wrap。
+RSYNC_SSH="${RSYNC_SSH:?set RSYNC_SSH to an ssh command for rsync -e (e.g. a wrapper script that adds -p/-o/sshpass)}"
 RSSH="${RSSH:?set RSSH to an ssh wrapper script, e.g. RSSH=/path/to/rssh (runs: rssh '<remote command>')}"
 HUB_PUBLIC_URL="${TMEX_HUB_PUBLIC_URL:-https://ai.example.com:18443}"
 HUB_HOST="ai.example.com"
