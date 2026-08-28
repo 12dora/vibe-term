@@ -78,10 +78,13 @@ type PendingAuth = {
 
 type CtlQueueState = {
   depth: number;
+  bytes: number;
   tail: Promise<void>;
 };
 
-export const HUB_CTL_QUEUE_MAX = 8;
+// 按消息数与累计字节双重上限：合法突发（并发 rtc.signal + key.log.req）远超 8 条，但都是小帧
+export const HUB_CTL_QUEUE_MAX = 256;
+export const HUB_CTL_QUEUE_MAX_BYTES = 4 * 1024 * 1024;
 
 type LiveConnection = {
   nodeId: string;
@@ -536,14 +539,15 @@ export class UplinkServer {
     }
     let q = this.ctlQueues.get(link);
     if (!q) {
-      q = { depth: 0, tail: Promise.resolve() };
+      q = { depth: 0, bytes: 0, tail: Promise.resolve() };
       this.ctlQueues.set(link, q);
     }
-    if (q.depth >= HUB_CTL_QUEUE_MAX) {
+    if (q.depth >= HUB_CTL_QUEUE_MAX || q.bytes + bytes.byteLength > HUB_CTL_QUEUE_MAX_BYTES) {
       link.close('ctl-overflow');
       return Promise.resolve();
     }
     q.depth += 1;
+    q.bytes += bytes.byteLength;
     const run = q.tail.catch(() => undefined).then(() => this.onCtl(link, bytes));
     q.tail = run
       .catch(() => {
@@ -553,6 +557,7 @@ export class UplinkServer {
       })
       .finally(() => {
         q.depth = Math.max(0, q.depth - 1);
+        q.bytes = Math.max(0, q.bytes - bytes.byteLength);
       });
     return run.then(
       () => undefined,

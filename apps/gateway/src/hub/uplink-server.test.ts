@@ -39,6 +39,7 @@ import type { HubKeyLogSource } from './types';
 import type { UplinkCtlMessage } from './uplink-protocol';
 import { KEY_LOG_PAGE_MAX_BYTES } from './uplink-protocol';
 import {
+  HUB_CTL_QUEUE_MAX,
   HUB_KEY_LOG_REQ_BURST,
   HUB_KEY_LOG_REQ_STATE_MAX,
   KeyLogReqLimiter,
@@ -1008,7 +1009,7 @@ describe('UplinkServer', () => {
       const closed = node.hubLink.closed;
       sendCtl(node.nodeLink, { t: 'key.log.req', from_seq: 1 });
       await new Promise((r) => setTimeout(r, 20));
-      for (let i = 0; i < 32; i++) {
+      for (let i = 0; i < HUB_CTL_QUEUE_MAX + 8; i++) {
         sendCtl(node.nodeLink, { t: 'ping' });
       }
       expect((await closed).reason).toBe('ctl-overflow');
