@@ -30,15 +30,23 @@ RUN NODE_ARCH="$([ "${TARGETARCH}" = "arm64" ] && echo arm64 || echo x64)" \
     && node --version \
     && npm --version
 
-# 钉死 Bun 1.3.14（fetch / WebSocket 均认 NODE_EXTRA_CA_CERTS）
-RUN for i in 1 2 3 4 5; do \
-      curl -fsSL --retry 3 https://bun.sh/install | bash -s "bun-v${BUN_VERSION}" && break; \
-      echo "bun install attempt $i failed, retrying" && sleep 5; \
-    done \
+# 钉死 Bun 1.3.14（fetch / WebSocket 均认 NODE_EXTRA_CA_CERTS）。
+# 优先使用构建上下文 build/bun-linux-<arch>.zip（本机预下载，避免目标机访问 github 不稳定），缺失时再联网安装。
+COPY build/ /tmp/build/
+RUN BUN_ARCH="$([ "${TARGETARCH}" = "arm64" ] && echo aarch64 || echo x64)" \
+    && if [ -f "/tmp/build/bun-linux-${BUN_ARCH}.zip" ]; then \
+         unzip -q "/tmp/build/bun-linux-${BUN_ARCH}.zip" -d /tmp/bunzip \
+         && install -m 755 "/tmp/bunzip/bun-linux-${BUN_ARCH}/bun" /usr/local/bin/bun \
+         && rm -rf /tmp/bunzip; \
+       else \
+         for i in 1 2 3 4 5; do \
+           curl -fsSL --retry 3 https://bun.sh/install | bash -s "bun-v${BUN_VERSION}" && break; \
+           echo "bun install attempt $i failed, retrying" && sleep 5; \
+         done; \
+       fi \
     && bun --version
 
-COPY build/tmex-cli.tgz /tmp/tmex-cli.tgz
-RUN mkdir -p /opt/tmex-pkg /opt/tmex/runtime /opt/tmex/resources /opt/tmex/native /var/lib/tmex \
+RUN cp /tmp/build/tmex-cli.tgz /tmp/tmex-cli.tgz && mkdir -p /opt/tmex-pkg /opt/tmex/runtime /opt/tmex/resources /opt/tmex/native /var/lib/tmex \
     && tar -xzf /tmp/tmex-cli.tgz -C /opt/tmex-pkg \
     && cp -a /opt/tmex-pkg/package/dist/runtime/. /opt/tmex/runtime/ \
     && cp -a /opt/tmex-pkg/package/resources/fe-dist /opt/tmex/resources/fe-dist \
@@ -46,7 +54,7 @@ RUN mkdir -p /opt/tmex-pkg /opt/tmex/runtime /opt/tmex/resources /opt/tmex/nativ
     && test -f /opt/tmex/runtime/server.js \
     && test -f /opt/tmex/runtime/cli-auth.js \
     && test -f /opt/tmex-pkg/package/bin/tmex.js \
-    && rm -f /tmp/tmex-cli.tgz
+    && rm -rf /tmp/tmex-cli.tgz /tmp/build
 
 COPY entrypoint.sh /usr/local/bin/tmex-entrypoint.sh
 RUN chmod 755 /usr/local/bin/tmex-entrypoint.sh
