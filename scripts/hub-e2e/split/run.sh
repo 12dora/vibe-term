@@ -1212,8 +1212,15 @@ run_direct_scenarios() {
   driver nodes.ts wait-direct-capable --base-url http://node-a:9883 --cookie-file /out/cookies-entry.json \
     --name self --timeout 60000
   local dc_a_rc=$?
-  driver login.ts --base-url http://node-a:9883 --username "${USER_NAME}" --password "${PASSWORD}" \
-    --target-node-id "${target_id}" --out /out/cookies-entry.json
+  local login_try
+  for login_try in $(seq 1 12); do
+    if driver login.ts --base-url http://node-a:9883 --username "${USER_NAME}" --password "${PASSWORD}" \
+      --target-node-id "${target_id}" --out /out/cookies-entry.json; then
+      break
+    fi
+    log "login to ${target_id} via node-a failed (attempt ${login_try}); retrying"
+    sleep 5
+  done
   driver nodes.ts wait-direct-capable --base-url http://node-a:9883 --cookie-file /out/cookies-entry.json \
     --name "${target_id}" --timeout 60000
   local dc_t_rc=$?
