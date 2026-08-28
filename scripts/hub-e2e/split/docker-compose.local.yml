@@ -48,7 +48,7 @@ services:
 
   driver:
     image: tmex-e2e:split
-      container_name: tmex-split-driver
+    container_name: tmex-split-driver
     hostname: driver
     init: true
     working_dir: /workspace
