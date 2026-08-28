@@ -1,6 +1,16 @@
 import type { DataChannelLike } from './native';
+import { rtcLog } from './rtc-log';
 
 export const FANOUT_MAX_PENDING_MESSAGES = 32;
+
+export type FanoutOptions = {
+  peer?: string;
+};
+
+export type FanoutDataChannel = DataChannelLike & {
+  reinjectMessages(msgs: Array<string | Buffer | ArrayBuffer>): void;
+  shiftPendingMessage(): string | Buffer | ArrayBuffer | undefined;
+};
 
 function addListener<T>(list: T[], item: T): () => void {
   list.push(item);
@@ -10,7 +20,11 @@ function addListener<T>(list: T[], item: T): () => void {
   };
 }
 
-export function fanoutDataChannel(channel: DataChannelLike): DataChannelLike {
+export function fanoutDataChannel(
+  channel: DataChannelLike,
+  opts?: FanoutOptions
+): FanoutDataChannel {
+  const peer = opts?.peer ?? 'unknown';
   const open: Array<() => void> = [];
   const closed: Array<() => void> = [];
   const error: Array<(err: string) => void> = [];
@@ -19,6 +33,28 @@ export function fanoutDataChannel(channel: DataChannelLike): DataChannelLike {
   const pendingMessages: Array<string | Buffer | ArrayBuffer> = [];
   let closedFired = false;
   let errorFired: string | null = null;
+
+  const overflow = (dropped: number) => {
+    if (closedFired) return;
+    closedFired = true;
+    pendingMessages.length = 0;
+    rtcLog('buffer overflow', { peer, dropped });
+    try {
+      channel.close();
+    } catch {
+      // already closed
+    }
+    for (const cb of [...closed]) cb();
+  };
+
+  const enqueue = (msg: string | Buffer | ArrayBuffer) => {
+    if (closedFired) return;
+    if (pendingMessages.length >= FANOUT_MAX_PENDING_MESSAGES) {
+      overflow(pendingMessages.length + 1);
+      return;
+    }
+    pendingMessages.push(msg);
+  };
 
   channel.onOpen(() => {
     if (closedFired) return;
@@ -34,9 +70,9 @@ export function fanoutDataChannel(channel: DataChannelLike): DataChannelLike {
     for (const cb of [...error]) cb(err);
   });
   channel.onMessage((msg) => {
+    if (closedFired) return;
     if (message.length === 0) {
-      if (pendingMessages.length >= FANOUT_MAX_PENDING_MESSAGES) pendingMessages.shift();
-      pendingMessages.push(msg);
+      enqueue(msg);
       return;
     }
     for (const cb of [...message]) cb(msg);
@@ -74,9 +110,36 @@ export function fanoutDataChannel(channel: DataChannelLike): DataChannelLike {
     onMessage: (cb) => {
       const unsub = addListener(message, cb);
       const queued = pendingMessages.splice(0);
-      for (const next of queued) cb(next);
+      for (let i = 0; i < queued.length; i++) {
+        if (!message.includes(cb)) {
+          pendingMessages.push(...queued.slice(i));
+          break;
+        }
+        const next = queued[i];
+        if (next !== undefined) cb(next);
+      }
       return unsub;
     },
     getLabel: channel.getLabel ? () => channel.getLabel?.() ?? '' : undefined,
+    shiftPendingMessage() {
+      if (closedFired) return undefined;
+      return pendingMessages.shift();
+    },
+    reinjectMessages(msgs) {
+      if (closedFired || msgs.length === 0) return;
+      if (message.length === 0) {
+        const combined = [...msgs, ...pendingMessages];
+        if (combined.length > FANOUT_MAX_PENDING_MESSAGES) {
+          overflow(combined.length);
+          return;
+        }
+        pendingMessages.length = 0;
+        pendingMessages.push(...combined);
+        return;
+      }
+      for (const msg of msgs) {
+        for (const cb of [...message]) cb(msg);
+      }
+    },
   };
 }

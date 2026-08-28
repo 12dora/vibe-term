@@ -1,4 +1,5 @@
 import type { ByteTransport } from '@tmex/shared/link';
+import { FANOUT_MAX_PENDING_MESSAGES } from './channel-fanout';
 import { DC_HIGH_WATER_BYTES, DC_LOW_WATER_BYTES } from './data-channel-carrier';
 import {
   FragmentProtocolError,
@@ -14,6 +15,7 @@ import {
 } from './liveness';
 import type { DataChannelLike } from './native';
 import { copyBytes, sendBinary, toUint8Array } from './native';
+import { rtcLog } from './rtc-log';
 
 export type DataChannelLinkOptions = RtcLivenessClock & {
   reassembler?: FrameReassembler;
@@ -43,9 +45,11 @@ export class DataChannelLink implements ByteTransport {
   private opened: boolean;
   private closeReason = 'closed';
   private liveness: ChannelLiveness | null = null;
+  private readonly peer: string | undefined;
 
   constructor(channel: DataChannelLike, opts?: DataChannelLinkOptions) {
     this.channel = channel;
+    this.peer = opts?.peer;
     try {
       this.payloadSize = fragmentPayloadSize(channel.maxMessageSize());
     } catch (err) {
@@ -175,7 +179,14 @@ export class DataChannelLink implements ByteTransport {
 
   private dispatchFrame(frame: Uint8Array): void {
     if (this.dataCbs.length === 0) {
-      if (this.pendingFrames.length >= 32) this.pendingFrames.shift();
+      if (this.pendingFrames.length >= FANOUT_MAX_PENDING_MESSAGES) {
+        rtcLog('buffer overflow', {
+          peer: this.peer ?? 'unknown',
+          dropped: this.pendingFrames.length + 1,
+        });
+        this.close('buffer-overflow');
+        return;
+      }
       this.pendingFrames.push(frame);
       return;
     }

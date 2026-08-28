@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { fanoutDataChannel } from './channel-fanout';
+import { FANOUT_MAX_PENDING_MESSAGES, fanoutDataChannel } from './channel-fanout';
 import { FakeDataChannel, pairDataChannels } from './test-fakes';
 
 function textOf(msg: string | Buffer | ArrayBuffer): string {
@@ -8,6 +8,19 @@ function textOf(msg: string | Buffer | ArrayBuffer): string {
 }
 
 describe('fanoutDataChannel', () => {
+  test('shiftPendingMessage takes the first buffered frame and leaves the rest', () => {
+    const [a, b] = pairDataChannels('peer');
+    const fan = fanoutDataChannel(b);
+    expect(a.sendMessage('nonce')).toBe(true);
+    expect(a.sendMessage('frame')).toBe(true);
+    expect(textOf(fan.shiftPendingMessage() ?? '')).toBe('nonce');
+    const later: string[] = [];
+    fan.onMessage((msg) => {
+      later.push(textOf(msg));
+    });
+    expect(later).toEqual(['frame']);
+  });
+
   test('buffers messages while no listener is attached and replays them in order', () => {
     const [a, b] = pairDataChannels('peer');
     const fan = fanoutDataChannel(b);
@@ -68,5 +81,55 @@ describe('fanoutDataChannel', () => {
       err = e;
     });
     expect(err).toBe('boom');
+  });
+
+  test('closes the channel on buffer overflow instead of dropping frames', () => {
+    const [a, b] = pairDataChannels('peer');
+    const fan = fanoutDataChannel(b, { peer: 'node-b' });
+    const lines: string[] = [];
+    const orig = console.log;
+    console.log = (...args: unknown[]) => {
+      lines.push(args.map(String).join(' '));
+    };
+    try {
+      for (let i = 0; i < FANOUT_MAX_PENDING_MESSAGES + 1; i++) {
+        expect(a.sendMessage(String(i))).toBe(true);
+      }
+      expect(fan.isOpen()).toBe(false);
+      expect(b.closed).toBe(true);
+      expect(
+        lines.some(
+          (line) =>
+            line.includes('[mesh][rtc] buffer overflow') &&
+            line.includes('peer=node-b') &&
+            line.includes('dropped=')
+        )
+      ).toBe(true);
+      const later: string[] = [];
+      fan.onMessage((msg) => {
+        later.push(textOf(msg));
+      });
+      expect(later).toEqual([]);
+    } finally {
+      console.log = orig;
+    }
+  });
+
+  test('reinjectMessages prepends leftovers ahead of frames that arrived after detach', () => {
+    const [a, b] = pairDataChannels('peer');
+    const fan = fanoutDataChannel(b);
+    const early: string[] = [];
+    const unsub: unknown = fan.onMessage((msg) => {
+      early.push(textOf(msg));
+    });
+    expect(typeof unsub).toBe('function');
+    if (typeof unsub === 'function') unsub();
+    expect(a.sendMessage('after-detach')).toBe(true);
+    fan.reinjectMessages([Buffer.from('leftover')]);
+    const later: string[] = [];
+    fan.onMessage((msg) => {
+      later.push(textOf(msg));
+    });
+    expect(later).toEqual(['leftover', 'after-detach']);
   });
 });

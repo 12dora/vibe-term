@@ -5,8 +5,12 @@ import { createMigratedAuthDb } from '../auth/test-db';
 import { UserStore } from '../auth/user-store';
 import { defaultScheduler } from './ctl';
 import {
+  PEER_DC_UPGRADE_RETRY_DELAYS_MS,
+  PEER_DC_UPGRADE_RETRY_TAIL_MS,
   PEER_RTC_WAKE_COOLDOWN_MS,
   PEER_RTC_WAKE_NONCE_CACHE,
+  PEER_RTC_WAKE_VERIFY_BURST,
+  PEER_RTC_WAKE_VERIFY_WINDOW_MS,
   PEER_UPGRADE_BACKOFF_CAP_MS,
   PEER_UPGRADE_COOLDOWN_MS,
   PeerManager,
@@ -14,6 +18,8 @@ import {
 } from './peer-manager';
 import { handshakeRelay } from './peer-protocol';
 import { encodeRtcWakeSdp, peerRtcSession } from './rtc/ice';
+import type { RtcLivenessOptions } from './rtc/rtc-peer-manager';
+import { FakeClock } from './rtc/test-fakes';
 import {
   ImmediateScheduler,
   fakeSocketPair,
@@ -78,6 +84,7 @@ async function setupDirectRtcPair(
     largeDirectCapable?: boolean;
     now?: () => number;
     scheduler?: MeshScheduler;
+    liveness?: RtcLivenessOptions | false;
   }
 ) {
   const { db, close } = createMigratedAuthDb();
@@ -109,6 +116,7 @@ async function setupDirectRtcPair(
     identity: small,
     userStore: store,
     handshakeTimeoutMs: 2_000,
+    liveness: opts?.liveness,
   });
   const rtcLarge = new RtcPeerManager({
     loadNative: async () => fake.module,
@@ -116,6 +124,7 @@ async function setupDirectRtcPair(
     identity: large,
     userStore: store,
     handshakeTimeoutMs: 2_000,
+    liveness: opts?.liveness,
   });
   fixtures.push({ close: () => rtcSmall.close() });
   fixtures.push({ close: () => rtcLarge.close() });
@@ -1289,7 +1298,7 @@ describe('PeerManager', () => {
     expect(managerLarge.transportOf(small.nodeId)).toBeNull();
   });
 
-  test('receiver applies cooldown before signature verification so invalid wakes cannot bypass it', async () => {
+  test('a forged wake does not commit cooldown so a legitimate wake can still dial', async () => {
     const clock = { ms: Date.now() };
     const { small, large, managerSmall, fake } = await setupDirectRtcPair(fixtures, {
       now: () => clock.ms,
@@ -1322,18 +1331,48 @@ describe('PeerManager', () => {
         secretKey: large.edSecretKey,
       })
     );
-    await Bun.sleep(20);
-    expect(fake.connections).toHaveLength(0);
-    clock.ms += PEER_RTC_WAKE_COOLDOWN_MS + 1;
-    inject(
+    await waitUntil(() => fake.connections.length > 0, 2_000);
+  });
+
+  test('wake verification is bounded by a per-peer token bucket', async () => {
+    expect(PEER_RTC_WAKE_VERIFY_BURST).toBe(5);
+    expect(PEER_RTC_WAKE_VERIFY_WINDOW_MS).toBe(5_000);
+    const clock = { ms: Date.now() };
+    const { small, large, managerSmall, fake } = await setupDirectRtcPair(fixtures, {
+      now: () => clock.ms,
+    });
+    const session = peerRtcSession(small.nodeId, large.nodeId);
+    const inject = (sdp: string) => {
+      managerSmall.receiveRtcSignal(large.nodeId, {
+        rtcSession: session,
+        from: 'node',
+        to: small.nodeId,
+        sdp,
+      });
+    };
+    const forged = () =>
+      encodeRtcWakeSdp({
+        from: large.nodeId,
+        to: small.nodeId,
+        rtcSession: session,
+        issuedAt: clock.ms,
+        secretKey: generateEd25519KeyPair().secretKey,
+      });
+    const good = () =>
       encodeRtcWakeSdp({
         from: large.nodeId,
         to: small.nodeId,
         rtcSession: session,
         issuedAt: clock.ms,
         secretKey: large.edSecretKey,
-      })
-    );
+      });
+    for (let i = 0; i < PEER_RTC_WAKE_VERIFY_BURST; i++) inject(forged());
+    expect(fake.connections).toHaveLength(0);
+    inject(good());
+    await Bun.sleep(20);
+    expect(fake.connections).toHaveLength(0);
+    clock.ms += PEER_RTC_WAKE_VERIFY_WINDOW_MS / PEER_RTC_WAKE_VERIFY_BURST + 1;
+    inject(good());
     await waitUntil(() => fake.connections.length > 0, 2_000);
   });
 
@@ -1558,5 +1597,161 @@ describe('PeerManager', () => {
     managerLarge.notifyPeerEndpointsChanged(small.nodeId);
     await waitUntil(() => managerLarge.transportOf(small.nodeId) === 'dc', 5_000);
     await waitUntil(() => managerSmall.transportOf(large.nodeId) === 'dc', 5_000);
+  });
+
+  test('dc liveness timeout falls back within timeout+interval and respects wake cooldown', async () => {
+    const clock = new FakeClock();
+    const { small, large, managerSmall, managerLarge, fake, wakes } = await setupDirectRtcPair(
+      fixtures,
+      {
+        liveness: {
+          intervalMs: 30,
+          timeoutMs: 100,
+          now: clock.now,
+          setTimeoutFn: clock.setTimeout,
+          clearTimeoutFn: clock.clearTimeout,
+        },
+      }
+    );
+    await managerLarge.getLink(small.nodeId);
+    await waitUntil(() => managerLarge.transportOf(small.nodeId) === 'dc', 5_000);
+    await waitUntil(() => managerSmall.transportOf(large.nodeId) === 'dc', 5_000);
+    const firstWakes = wakes.length;
+    const afterDc = fake.connections.length;
+    const lines: string[] = [];
+    const orig = console.log;
+    console.log = (...args: unknown[]) => {
+      lines.push(args.map(String).join(' '));
+    };
+    try {
+      for (const pc of fake.connections) {
+        for (const dc of [...pc.created, ...pc.inbound]) {
+          dc.dropSend = true;
+        }
+      }
+      clock.advance(100 + 30);
+      await waitUntil(() => managerLarge.transportOf(small.nodeId) !== 'dc', 2_000);
+      expect(managerLarge.transportOf(small.nodeId)).not.toBe('dc');
+      await waitUntil(() => managerSmall.transportOf(large.nodeId) !== 'dc', 2_000);
+      expect(
+        lines.some(
+          (line) => line.includes('[mesh][rtc] liveness timeout') && line.includes('idle_ms=')
+        )
+      ).toBe(true);
+    } finally {
+      console.log = orig;
+    }
+
+    managerSmall.receiveRtcSignal(large.nodeId, {
+      rtcSession: peerRtcSession(small.nodeId, large.nodeId),
+      from: 'node',
+      to: small.nodeId,
+      sdp: encodeRtcWakeSdp({
+        from: large.nodeId,
+        to: small.nodeId,
+        rtcSession: peerRtcSession(small.nodeId, large.nodeId),
+        issuedAt: Date.now(),
+        secretKey: large.edSecretKey,
+      }),
+    });
+    await Bun.sleep(30);
+    expect(fake.connections.length).toBe(afterDc);
+    expect(wakes.length).toBe(firstWakes);
+
+    void managerLarge.getLink(small.nodeId).catch(() => undefined);
+    await Bun.sleep(30);
+    expect(wakes.length).toBe(firstWakes);
+  });
+
+  test('direct-link loss retries upgrade on the bounded schedule while relay stays up', async () => {
+    expect(PEER_DC_UPGRADE_RETRY_DELAYS_MS).toEqual([5_000, 15_000, 30_000, 60_000]);
+    expect(PEER_DC_UPGRADE_RETRY_TAIL_MS).toBe(120_000);
+    const inner = defaultScheduler();
+    let nowMs = inner.now();
+    const queued: Array<{
+      ms: number;
+      resolve: () => void;
+      reject: (err: unknown) => void;
+      signal?: AbortSignal;
+      onAbort: () => void;
+    }> = [];
+    const scheduler: MeshScheduler & { flushMs: (ms: number) => void } = {
+      now: () => nowMs,
+      interval: inner.interval.bind(inner),
+      sleep(ms, signal) {
+        if (signal?.aborted) {
+          return Promise.reject(signal.reason ?? new Error('aborted'));
+        }
+        return new Promise((resolve, reject) => {
+          const onAbort = () => {
+            const idx = queued.findIndex((row) => row.resolve === resolve);
+            if (idx >= 0) queued.splice(idx, 1);
+            reject(signal?.reason ?? new Error('aborted'));
+          };
+          queued.push({ ms, resolve, reject, signal, onAbort });
+          signal?.addEventListener('abort', onAbort, { once: true });
+        });
+      },
+      flushMs(ms) {
+        nowMs += ms;
+        const rows = queued.filter((row) => row.ms === ms);
+        for (const row of rows) {
+          const idx = queued.indexOf(row);
+          if (idx >= 0) queued.splice(idx, 1);
+          row.signal?.removeEventListener('abort', row.onAbort);
+          row.resolve();
+        }
+      },
+    };
+    const { small, large, managerSmall, managerLarge } = await setupDirectRtcPair(fixtures, {
+      scheduler,
+      now: () => nowMs,
+    });
+    await managerLarge.getLink(small.nodeId);
+    await waitUntil(() => managerLarge.transportOf(small.nodeId) === 'dc', 5_000);
+    await waitUntil(() => managerSmall.transportOf(large.nodeId) === 'dc', 5_000);
+
+    managerLarge.getLive(small.nodeId)?.close('drop-dc');
+    managerSmall.getLive(large.nodeId)?.close('drop-dc');
+    await waitUntil(() => managerLarge.transportOf(small.nodeId) === null, 2_000);
+    await waitUntil(() => managerSmall.transportOf(large.nodeId) === null, 2_000);
+
+    const lines: string[] = [];
+    const orig = console.log;
+    console.log = (...args: unknown[]) => {
+      lines.push(args.map(String).join(' '));
+    };
+    try {
+      const [relayLarge, relaySmall] = createInMemoryLinkPair();
+      echoQuiesceCaps(relaySmall);
+      echoQuiesceCaps(relayLarge);
+      expect(managerLarge.adoptLink(small.nodeId, relayLarge, 'relay', large.nodeId)).toBe(
+        relayLarge
+      );
+      expect(managerSmall.adoptLink(large.nodeId, relaySmall, 'relay', large.nodeId)).toBe(
+        relaySmall
+      );
+      await waitUntil(() => managerLarge.quiesceCapableOf(small.nodeId));
+      await waitUntil(() => managerSmall.quiesceCapableOf(large.nodeId));
+      expect(managerLarge.transportOf(small.nodeId)).toBe('relay');
+      await waitUntil(
+        () =>
+          queued.some((row) => row.ms === PEER_DC_UPGRADE_RETRY_DELAYS_MS[0]) &&
+          lines.some(
+            (line) =>
+              line.includes('[mesh][rtc] upgrade retry') &&
+              line.includes(`peer=${small.nodeId}`) &&
+              line.includes('attempt=1') &&
+              line.includes(`in_ms=${PEER_DC_UPGRADE_RETRY_DELAYS_MS[0]}`)
+          ),
+        2_000
+      );
+      scheduler.flushMs(PEER_DC_UPGRADE_RETRY_DELAYS_MS[0]);
+      await waitUntil(() => managerLarge.transportOf(small.nodeId) === 'dc', 5_000);
+      await waitUntil(() => managerSmall.transportOf(large.nodeId) === 'dc', 5_000);
+      expect(queued.some((row) => row.ms === PEER_DC_UPGRADE_RETRY_DELAYS_MS[1])).toBe(false);
+    } finally {
+      console.log = orig;
+    }
   });
 });

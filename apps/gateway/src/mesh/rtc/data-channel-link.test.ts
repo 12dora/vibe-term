@@ -191,4 +191,34 @@ describe('DataChannelLink', () => {
       right.close();
     }
   });
+
+  test('closes the channel on pending-frame overflow instead of dropping', async () => {
+    const [a, b] = pairDataChannels('peer');
+    const left = new DataChannelLink(a);
+    const right = new DataChannelLink(b, { peer: 'peer-b' });
+    const lines: string[] = [];
+    const orig = console.log;
+    console.log = (...args: unknown[]) => {
+      lines.push(args.map(String).join(' '));
+    };
+    try {
+      const sends: Array<Promise<void>> = [];
+      for (let i = 0; i < 33; i++) {
+        sends.push(left.send(new Uint8Array([i])).catch(() => undefined));
+      }
+      await Promise.all(sends);
+      expect(b.closed).toBe(true);
+      expect(
+        lines.some(
+          (line) =>
+            line.includes('[mesh][rtc] buffer overflow') &&
+            line.includes('peer=peer-b') &&
+            line.includes('dropped=')
+        )
+      ).toBe(true);
+    } finally {
+      console.log = orig;
+      left.close();
+    }
+  });
 });

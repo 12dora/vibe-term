@@ -9,6 +9,7 @@ import type { RtcSignalMessage } from '../mesh-deps';
 import { seedNodeIdentity, seedUser } from '../test-support';
 import { PeerHandshakeError } from '../types';
 import { DataChannelCarrier } from './data-channel-carrier';
+import { fragmentFrame } from './fragmenter';
 import type { RtcSignaling } from './ice';
 import { RTC_AUTHORIZE_MAX, RtcPeerManager, SESS_CHANNEL_LABEL } from './rtc-peer-manager';
 import { type FakePeerConnection, createFakeNativeModule, pairDataChannels } from './test-fakes';
@@ -246,6 +247,72 @@ describe('RtcPeerManager', () => {
     expect(accepted.carrier.send(new Uint8Array([1]))).toBe('sent');
     accepted.carrier.close(1000, 'done');
     expect((accepted.pc as FakePeerConnection).closed).toBe(true);
+  });
+
+  test('browser sess nonce plus the first carrier frame back-to-back reaches the carrier', async () => {
+    const { left, fake } = setup();
+    await left.ready();
+    const [sigNode, sigBrowser] = loopbackSignaling();
+    const rtcSession = 'browser-sess-handoff';
+    const native = fake.module;
+    const browserPc = new native.PeerConnection('browser', {
+      iceServers: [],
+    }) as FakePeerConnection;
+    fixtures.push({ close: () => browserPc.close() });
+
+    sigBrowser.onMessage((msg) => {
+      if (msg.sdp) {
+        const parsed = JSON.parse(msg.sdp) as { type: string; sdp: string };
+        browserPc.setRemoteDescription(parsed.sdp, parsed.type);
+      }
+      if (msg.candidate) {
+        const parsed = JSON.parse(msg.candidate) as { candidate: string; mid: string };
+        if (parsed.candidate) browserPc.addRemoteCandidate(parsed.candidate, parsed.mid);
+      }
+    });
+    browserPc.onLocalDescription((sdp, type) => {
+      sigBrowser.send({
+        rtcSession,
+        from: 'browser',
+        to: left.identity.nodeId,
+        sdp: JSON.stringify({ type, sdp }),
+      });
+    });
+    browserPc.onLocalCandidate((candidate, mid) => {
+      if (!candidate) return;
+      sigBrowser.send({
+        rtcSession,
+        from: 'browser',
+        to: left.identity.nodeId,
+        candidate: JSON.stringify({ candidate, mid }),
+      });
+    });
+    const auth = await left.authorizeBrowser({
+      rtcSession,
+      uid: 'user-1',
+      via: 'self',
+      sid: 'sid-browser-handoff',
+      fpBrowser: normalizeFingerprint(browserPc.fingerprint),
+    });
+    expect(auth).not.toBeNull();
+    const acceptP = left.acceptBrowser(rtcSession, sigNode);
+    const dc = browserPc.createDataChannel(SESS_CHANNEL_LABEL);
+    await new Promise<void>((resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error('sess open timeout')), 2000);
+      dc.onOpen(() => {
+        clearTimeout(timer);
+        resolve();
+      });
+    });
+    const firstFrame = new Uint8Array([7, 8, 9]);
+    dc.sendMessage(JSON.stringify({ nonce: encodeBase64url(auth?.nonce ?? new Uint8Array()) }));
+    for (const part of fragmentFrame(1, firstFrame)) {
+      dc.sendMessageBinary(Buffer.from(part));
+    }
+    const accepted = await acceptP;
+    const got = new Promise<Uint8Array>((resolve) => accepted.carrier.onMessage(resolve));
+    expect(await got).toEqual(firstFrame);
+    accepted.carrier.close(1000, 'done');
   });
 
   test('browser sess rejects a bad nonce', async () => {

@@ -11,7 +11,59 @@ import {
   DC_HANDSHAKE_MAX_QUEUE,
   handshakeDataChannel,
 } from './dc-handshake';
+import type { DataChannelLike } from './native';
 import { type FakePeerConnection, createFakeNativeModule, pairDataChannels } from './test-fakes';
+
+function isSigMessage(msg: string | Buffer | ArrayBuffer): boolean {
+  try {
+    const text = typeof msg === 'string' ? msg : new TextDecoder().decode(msg);
+    const parsed = JSON.parse(text) as { t?: string };
+    return parsed.t === 'sig';
+  } catch {
+    return false;
+  }
+}
+
+function holdSigMessages(inner: DataChannelLike): DataChannelLike & { release: () => void } {
+  let holding = true;
+  const held: Array<string | Buffer | ArrayBuffer> = [];
+  const listeners: Array<(msg: string | Buffer | ArrayBuffer) => void> = [];
+  inner.onMessage((msg) => {
+    if (holding && isSigMessage(msg)) {
+      held.push(msg);
+      return;
+    }
+    for (const cb of [...listeners]) cb(msg);
+  });
+  return {
+    close: () => inner.close(),
+    sendMessage: (msg) => inner.sendMessage(msg),
+    sendMessageBinary: (buffer) => inner.sendMessageBinary(buffer),
+    isOpen: () => inner.isOpen(),
+    bufferedAmount: () => inner.bufferedAmount(),
+    maxMessageSize: () => inner.maxMessageSize(),
+    setBufferedAmountLowThreshold: (bytes) => inner.setBufferedAmountLowThreshold(bytes),
+    onBufferedAmountLow: (cb) => inner.onBufferedAmountLow(cb),
+    onOpen: (cb) => inner.onOpen(cb),
+    onClosed: (cb) => inner.onClosed(cb),
+    onError: (cb) => inner.onError(cb),
+    onMessage: (cb) => {
+      listeners.push(cb);
+      return () => {
+        const idx = listeners.indexOf(cb);
+        if (idx >= 0) listeners.splice(idx, 1);
+      };
+    },
+    getLabel: inner.getLabel ? () => inner.getLabel?.() ?? '' : undefined,
+    release() {
+      holding = false;
+      const queued = held.splice(0);
+      for (const msg of queued) {
+        for (const cb of [...listeners]) cb(msg);
+      }
+    },
+  };
+}
 
 describe('handshakeDataChannel', () => {
   const fixtures: Array<{ close: () => void }> = [];
@@ -162,6 +214,69 @@ describe('handshakeDataChannel', () => {
     expect((await reader.read()).value?.bytes).toEqual(payload);
     expect(linkClosed).toBe(0);
     expect(pair.fanB.isOpen()).toBe(true);
+    out.end();
+    inn.end();
+  });
+
+  test('delayed sig then immediate OPEN is handed back to the later-attached link', async () => {
+    const { db, close } = createMigratedAuthDb();
+    fixtures.push({ close });
+    const store = new UserStore(db);
+    seedUser(store);
+    const a = seedNodeIdentity(store, 'user-1');
+    const b = seedNodeIdentity(store, 'user-1');
+    const fake = createFakeNativeModule();
+    const pcA = new fake.module.PeerConnection('hs-a', { iceServers: [] }) as FakePeerConnection;
+    const pcB = new fake.module.PeerConnection('hs-b', { iceServers: [] }) as FakePeerConnection;
+    pcA.remoteFp = pcB.fingerprint;
+    pcB.remoteFp = pcA.fingerprint;
+    fixtures.push({ close: () => pcA.close() });
+    fixtures.push({ close: () => pcB.close() });
+    const [dcA, dcB] = pairDataChannels('peer');
+    const heldB = holdSigMessages(dcB);
+    const fanA = fanoutDataChannel(dcA);
+    const fanB = fanoutDataChannel(heldB);
+
+    const hsA = handshakeDataChannel({
+      channel: fanA,
+      pc: pcA,
+      identity: a,
+      userStore: store,
+      localFingerprint: pcA.fingerprint,
+      timeoutMs: 1_000,
+    });
+    const hsB = handshakeDataChannel({
+      channel: fanB,
+      pc: pcB,
+      identity: b,
+      userStore: store,
+      localFingerprint: pcB.fingerprint,
+      timeoutMs: 1_000,
+    });
+    await hsA;
+
+    const initiator = a.nodeId.toLowerCase() < b.nodeId.toLowerCase();
+    const linkA = new DataChannelLink(fanA);
+    const muxA = new LinkMux(linkA, { role: initiator ? 'initiator' : 'acceptor' });
+    const open = new TextEncoder().encode('{"type":"http"}');
+    const opened = muxA.openStream(open);
+    const payload = new Uint8Array([9, 8, 7]);
+    await Promise.resolve();
+    heldB.release();
+    await hsB;
+
+    const linkB = new DataChannelLink(fanB);
+    const muxB = new LinkMux(linkB, { role: initiator ? 'acceptor' : 'initiator' });
+    const incoming = new Promise<import('@tmex/shared/link').LinkStream>((resolve) =>
+      muxB.onStream(resolve)
+    );
+    const out = await opened;
+    const inn = await incoming;
+    expect(inn.openPayload).toEqual(open);
+    const reader = inn.readable.getReader();
+    await out.write(payload);
+    expect((await reader.read()).value?.bytes).toEqual(payload);
+    expect(fanB.isOpen()).toBe(true);
     out.end();
     inn.end();
   });

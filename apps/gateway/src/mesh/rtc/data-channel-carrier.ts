@@ -1,4 +1,5 @@
 import type { Carrier, CarrierSendResult } from '../../ws/carrier';
+import { FANOUT_MAX_PENDING_MESSAGES } from './channel-fanout';
 import {
   FragmentProtocolError,
   FrameReassembler,
@@ -8,6 +9,7 @@ import {
 import { encodeLivenessChunk, parseLivenessChunk } from './liveness';
 import type { DataChannelLike } from './native';
 import { copyBytes, sendBinary, toUint8Array } from './native';
+import { rtcLog } from './rtc-log';
 
 export const DC_HIGH_WATER_BYTES = 4 * 1024 * 1024;
 export const DC_LOW_WATER_BYTES = 1 * 1024 * 1024;
@@ -28,9 +30,11 @@ export class DataChannelCarrier implements Carrier {
   private nextFrameId = 1;
   private closed = false;
   private remainder: OutboundFrame | null = null;
+  private readonly peer: string | undefined;
 
-  constructor(channel: DataChannelLike, opts?: { reassembler?: FrameReassembler }) {
+  constructor(channel: DataChannelLike, opts?: { reassembler?: FrameReassembler; peer?: string }) {
     this.channel = channel;
+    this.peer = opts?.peer;
     try {
       this.payloadSize = fragmentPayloadSize(channel.maxMessageSize());
     } catch (err) {
@@ -75,7 +79,14 @@ export class DataChannelCarrier implements Carrier {
       }
       if (!frame) return;
       if (this.messageCbs.length === 0) {
-        if (this.pendingFrames.length >= 32) this.pendingFrames.shift();
+        if (this.pendingFrames.length >= FANOUT_MAX_PENDING_MESSAGES) {
+          rtcLog('buffer overflow', {
+            peer: this.peer ?? 'unknown',
+            dropped: this.pendingFrames.length + 1,
+          });
+          this.failClosed();
+          return;
+        }
         this.pendingFrames.push(frame);
         return;
       }

@@ -23,7 +23,7 @@ import {
   type SendControl,
   type VerifyInbound,
 } from './carrier-switch';
-import { fanoutDataChannel } from './channel-fanout';
+import { type FanoutDataChannel, fanoutDataChannel } from './channel-fanout';
 import { DataChannelCarrier } from './data-channel-carrier';
 import { DataChannelLink, type DataChannelLinkOptions } from './data-channel-link';
 import { handshakeDataChannel } from './dc-handshake';
@@ -290,7 +290,8 @@ export class RtcPeerManager implements RtcFingerprintProvider {
       : waitDataChannel(pc, this.handshakeTimeoutMs, undefined, peerNodeId);
     try {
       const channel = fanoutDataChannel(
-        await withTimeout(channelP, this.handshakeTimeoutMs, 'datachannel missing')
+        await withTimeout(channelP, this.handshakeTimeoutMs, 'datachannel missing'),
+        { peer: peerNodeId }
       );
       bindChannelDiagnostics(channel, peerNodeId);
       await waitChannelOpen(channel, this.handshakeTimeoutMs);
@@ -375,7 +376,8 @@ export class RtcPeerManager implements RtcFingerprintProvider {
     let keepSignaling = false;
     try {
       const channel = fanoutDataChannel(
-        await waitDataChannel(rec.pc, this.handshakeTimeoutMs, SESS_CHANNEL_LABEL)
+        await waitDataChannel(rec.pc, this.handshakeTimeoutMs, SESS_CHANNEL_LABEL),
+        { peer: rtcSession }
       );
       await waitChannelOpen(channel, this.handshakeTimeoutMs);
       const nonceRaw = await waitFirstMessage(channel, this.handshakeTimeoutMs);
@@ -404,7 +406,7 @@ export class RtcPeerManager implements RtcFingerprintProvider {
         throw new PeerHandshakeError('protocol', 'browser dtls fingerprint mismatch');
       }
       this.browser.delete(rtcSession);
-      const carrier = new DataChannelCarrier(channel);
+      const carrier = new DataChannelCarrier(channel, { peer: rtcSession });
       carrier.onClose(() => {
         unsubSignaling();
         this.untrackAndClose(rec.pc);
@@ -687,11 +689,19 @@ function waitFirstMessage(
   dc: DataChannelLike,
   timeoutMs: number
 ): Promise<string | Buffer | ArrayBuffer> {
-  return withTimeout(
-    new Promise((resolve) => {
-      dc.onMessage((msg) => resolve(msg));
-    }),
-    timeoutMs,
-    'sess nonce timeout'
-  );
+  const shifted = (dc as FanoutDataChannel).shiftPendingMessage?.();
+  if (shifted !== undefined) return Promise.resolve(shifted);
+  let unsub: (() => void) | undefined;
+  const first = new Promise<string | Buffer | ArrayBuffer>((resolve) => {
+    const ret: unknown = dc.onMessage((msg) => {
+      unsub?.();
+      unsub = undefined;
+      resolve(msg);
+    });
+    if (typeof ret === 'function') unsub = ret as () => void;
+  });
+  return withTimeout(first, timeoutMs, 'sess nonce timeout').finally(() => {
+    unsub?.();
+    unsub = undefined;
+  });
 }

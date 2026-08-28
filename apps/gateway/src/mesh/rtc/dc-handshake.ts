@@ -16,6 +16,7 @@ import type { UserStore } from '../../auth/user-store';
 import { decodeJsonBytes, encodeCtlMessage, isRecord, requireString } from '../ctl';
 import type { MeshIdentity } from '../types';
 import { PeerHandshakeError } from '../types';
+import type { FanoutDataChannel } from './channel-fanout';
 import type { DataChannelLike, PeerConnectionLike } from './native';
 import { sendBinary, toUint8Array } from './native';
 
@@ -80,7 +81,7 @@ function recvQueue(
   limits: { maxMessageBytes: number; maxQueue: number }
 ): {
   recv: () => Promise<Uint8Array>;
-  stop: () => void;
+  stop: () => Uint8Array[];
 } {
   const pending: Uint8Array[] = [];
   const waiters: Array<{
@@ -151,8 +152,29 @@ function recvQueue(
     stop: () => {
       stopped = true;
       detach();
+      return pending.splice(0);
     },
   };
+}
+
+function isHandshakeCtl(bytes: Uint8Array): boolean {
+  try {
+    const parsed = decodeJsonBytes(bytes);
+    return isRecord(parsed) && (parsed.t === 'hello' || parsed.t === 'sig');
+  } catch {
+    return false;
+  }
+}
+
+function reinjectHandshakeLeftovers(channel: DataChannelLike, leftovers: Uint8Array[]): void {
+  const replay = leftovers.filter((bytes) => !isHandshakeCtl(bytes));
+  if (replay.length === 0) return;
+  const inject = (channel as FanoutDataChannel).reinjectMessages;
+  if (typeof inject !== 'function') return;
+  inject.call(
+    channel,
+    replay.map((bytes) => Buffer.from(bytes))
+  );
 }
 
 function withTimeout<T>(promise: Promise<T>, ms: number, message: string): Promise<T> {
@@ -216,6 +238,7 @@ export async function handshakeDataChannel(opts: {
   let peerNodeId = '';
   let gotSig: Uint8Array | null = null;
   let sentSig = false;
+  const leftovers: Uint8Array[] = [];
 
   const sendSigIfReady = () => {
     if (sentSig || !peerHello) return;
@@ -230,9 +253,16 @@ export async function handshakeDataChannel(opts: {
       (async () => {
         while (!peerHello || !gotSig) {
           const bytes = await queue.recv();
-          const parsed = decodeJsonBytes(bytes);
+          let parsed: unknown;
+          try {
+            parsed = decodeJsonBytes(bytes);
+          } catch {
+            leftovers.push(bytes);
+            continue;
+          }
           if (!isRecord(parsed) || typeof parsed.t !== 'string') {
-            throw new PeerHandshakeError('protocol', 'dc handshake frame must be JSON with t');
+            leftovers.push(bytes);
+            continue;
           }
           if (parsed.t === 'hello') {
             const hello = parseHello(parsed);
@@ -242,6 +272,8 @@ export async function handshakeDataChannel(opts: {
             sendSigIfReady();
           } else if (parsed.t === 'sig') {
             gotSig = decodeBase64url(requireString(parsed.sig, 'sig'));
+          } else {
+            leftovers.push(bytes);
           }
         }
       })(),
@@ -250,7 +282,7 @@ export async function handshakeDataChannel(opts: {
     );
   } finally {
     clearInterval(helloTimer);
-    queue.stop();
+    leftovers.push(...queue.stop());
   }
 
   const finishedHello = peerHello;
@@ -274,5 +306,6 @@ export async function handshakeDataChannel(opts: {
   if (!fingerprintsEqual(advertised, remote)) {
     throw new PeerHandshakeError('protocol', 'dtls fingerprint mismatch');
   }
+  reinjectHandshakeLeftovers(opts.channel, leftovers);
   return { peerNodeId, peerHello: finishedHello };
 }

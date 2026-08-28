@@ -120,4 +120,32 @@ describe('DataChannelCarrier', () => {
     expect(got).toEqual([]);
     expect(b.sent.some((chunk) => parseLivenessChunk(chunk) === 'pong')).toBe(true);
   });
+
+  test('closes the channel on pending-frame overflow instead of dropping', () => {
+    const [a, b] = pairDataChannels();
+    const left = new DataChannelCarrier(a);
+    const right = new DataChannelCarrier(b, { peer: 'sess-1' });
+    const lines: string[] = [];
+    const orig = console.log;
+    console.log = (...args: unknown[]) => {
+      lines.push(args.map(String).join(' '));
+    };
+    try {
+      for (let i = 0; i < 32; i++) {
+        expect(left.send(new Uint8Array([i]))).toBe('sent');
+      }
+      left.send(new Uint8Array([32]));
+      expect(b.closed).toBe(true);
+      expect(
+        lines.some(
+          (line) =>
+            line.includes('[mesh][rtc] buffer overflow') &&
+            line.includes('peer=sess-1') &&
+            line.includes('dropped=')
+        )
+      ).toBe(true);
+    } finally {
+      console.log = orig;
+    }
+  });
 });
