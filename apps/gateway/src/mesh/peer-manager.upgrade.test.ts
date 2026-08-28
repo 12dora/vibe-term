@@ -967,4 +967,43 @@ describe('PeerManager upgrade review fixes', () => {
     scheduler.tickIntervals();
     expect((await replacementClosed).reason).toBe('park-timeout');
   });
+
+  test('openStream on the session getLink returned still works after a later upgrade swap', async () => {
+    const { db, close } = createMigratedAuthDb();
+    fixtures.push({ close });
+    const store = new UserStore(db);
+    seedUser(store);
+    const self = seedNodeIdentity(store, 'user-1');
+    const peer = seedNodeIdentity(store, 'user-1');
+    const managerA = new PeerManager({
+      identity: self,
+      userStore: store,
+      uplink: failingUplink(self, store),
+      peerPort: 0,
+      startServer: false,
+    });
+    fixtures.push({ close, stop: () => managerA.stop() });
+    const [relayA, relayB] = createInMemoryLinkPair();
+    echoQuiesceCaps(relayB);
+    expect(managerA.adoptLink(peer.nodeId, relayA, 'relay', self.nodeId)).toBe(relayA);
+    await waitUntil(() => managerA.quiesceCapableOf(peer.nodeId));
+    const incomingP = new Promise<import('@tmex/shared/link').LinkStream>((resolve) =>
+      relayB.onStream(resolve)
+    );
+    const held = await managerA.getLink(peer.nodeId);
+    expect(held).toBe(relayA);
+    const [wsA, wsB] = createInMemoryLinkPair();
+    fixtures.push({ close: () => wsB.close('test') });
+    echoQuiesceCaps(wsB);
+    expect(managerA.adoptLink(peer.nodeId, wsA, 'ws-secure', self.nodeId)).toBe(wsA);
+    expect(managerA.transportOf(peer.nodeId)).toBe('ws-secure');
+    const outbound = await held.openStream(HTTP_OPEN);
+    const inbound = await incomingP;
+    await outbound.write(new TextEncoder().encode('held-link'));
+    await outbound.end();
+    const reader = inbound.readable.getReader();
+    const chunk = await reader.read();
+    expect(new TextDecoder().decode(chunk.value?.bytes)).toBe('held-link');
+    inbound.end();
+  });
 });

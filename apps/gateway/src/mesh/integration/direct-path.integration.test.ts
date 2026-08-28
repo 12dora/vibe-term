@@ -39,7 +39,7 @@ import { type MeshRuntime, createMeshRuntime } from '../mesh-runtime';
 import { SESS_CHANNEL_LABEL } from '../rtc';
 import { fragmentFrame } from '../rtc/fragmenter';
 import { type FakePeerConnection, createFakeNativeModule } from '../rtc/test-fakes';
-import { acceptWsStream, openWsStream } from '../stream-targets';
+import { acceptWsStream, openHttpStream, openWsStream } from '../stream-targets';
 import { waitUntil } from '../test-support';
 import { requestDispatchContext } from '../types';
 
@@ -899,4 +899,223 @@ describe('direct path integration', () => {
     out.end();
     inn.end();
   }, 15_000);
+
+  test('8 MiB HTTP stream over relay completes while a DC upgrade retry is failing', async () => {
+    const EIGHT_MIB = 8 * 1024 * 1024;
+    const body = new Uint8Array(EIGHT_MIB);
+    for (let i = 0; i < body.byteLength; i++) body[i] = i & 0xff;
+    const fake = createFakeNativeModule();
+    const loadNative = async () => fake.module;
+
+    const { db, close } = createMigratedAuthDb();
+    const identity = await ensureNodeIdentity(new NodeIdentityStore(db));
+    const userStore = new UserStore(db);
+    const keyLogStore = new KeyLogStore(db);
+    const nodeSessionStore = new NodeSessionStore(db);
+    const keys = new UserKeyService({
+      db,
+      userStore,
+      keyLogStore,
+      nodeSessionStore,
+      verifyPasskeyAssertion: makeVerifyPasskeyAssertion(userStore),
+    });
+    const boot = await keys.bootstrapUserWithSelfAdmit({
+      username: 'alice',
+      password: PASSWORD,
+      identity,
+    });
+    const meshA = await createMeshRuntime({
+      db,
+      gateway: fakeGateway(db),
+      userId: boot.userId,
+      config: {
+        roles: { hub: true, node: true },
+        hubUrl: null,
+        hubPublicUrl: 'http://hub.example',
+        peerPort: 39021,
+        stunServers: [],
+      },
+      startPeerServer: false,
+      pingIntervalMs: 60_000,
+      networkInterfaces: () => ({}),
+      loadNative,
+    });
+    fixtures.push({ close, stop: () => meshA.stop() });
+    await meshA.start();
+    await waitUntil(() => meshA.uplink.state === 'online', 5_000);
+
+    const { db: dbB, close: closeB } = createMigratedAuthDb();
+    const identityB = await ensureNodeIdentity(new NodeIdentityStore(dbB));
+    const now = Date.now();
+    const enrollment = await createEnrollment(boot.rootKey, {
+      uid: boot.userId,
+      rootEpoch: boot.rootEpoch,
+      now,
+      ttlMs: 60_000,
+    });
+    const sid = await loginSelf(meshA, boot);
+    const cookie = `${nodeSessionCookieName(MESH_VIA_SELF)}=${sid}`;
+    const created = await meshA.hub?.handleRequest(
+      (() => {
+        const req = new Request('http://hub/api/hub/enrollments', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json', cookie },
+          body: JSON.stringify({
+            enroll_pk: encodeBase64url(enrollment.enrollPk),
+            authorization: encodeBase64url(enrollment.authorizationBytes),
+            authorization_sig: encodeBase64url(enrollment.authorizationSig),
+            exp: now + 60_000,
+          }),
+        });
+        setMeshRequestContext(req, { via: MESH_VIA_SELF, clientIp: '127.0.0.1' });
+        return req;
+      })(),
+      dummyServer
+    );
+    expect(created?.status).toBe(201);
+    const cert = createNodeCertificate(enrollment.enrollSk, {
+      uid: boot.userId,
+      edPk: identityB.edPublicKey,
+      x25519Pk: identityB.x25519PublicKey,
+      enrollPk: enrollment.enrollPk,
+      now,
+      nodeId: identityB.nodeId,
+    });
+    const redeemed = await meshA.hub?.handleRequest(
+      new Request('http://hub/api/hub/enrollments/redeem', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          certificate: encodeBase64url(cert.certificateBytes),
+          cert_sig: encodeBase64url(cert.certSig),
+          name: 'node-b',
+          version: 'test',
+        }),
+      }),
+      dummyServer
+    );
+    expect(redeemed?.status).toBe(200);
+    const admitted = await keys.signAndApply(boot.userId, boot.rootKey, {
+      type: 'admit-node',
+      payload: encodeAdmitNodePayload({
+        authorization_bytes: enrollment.authorizationBytes,
+        authorization_sig: enrollment.authorizationSig,
+        certificate_bytes: cert.certificateBytes,
+        cert_sig: cert.certSig,
+      }),
+    });
+    expect(admitted.ok).toBe(true);
+    const rows = keyLogStore.list(boot.userId);
+    const head = keyLogStore.head(boot.userId);
+    const bUserStore = new UserStore(dbB);
+    const bKeyLog = new KeyLogStore(dbB);
+    const bSessions = new NodeSessionStore(dbB);
+    const bKeys = new UserKeyService({
+      db: dbB,
+      userStore: bUserStore,
+      keyLogStore: bKeyLog,
+      nodeSessionStore: bSessions,
+      verifyPasskeyAssertion: makeVerifyPasskeyAssertion(bUserStore),
+    });
+    const joined = await bKeys.verifyChainForJoin(
+      rows.map((row) => ({ bytes: row.bytes, sig: row.sig })),
+      boot.rootPublicKey,
+      head?.hash ?? new Uint8Array(32)
+    );
+    expect(joined.ok).toBe(true);
+
+    const meshB = await createMeshRuntime({
+      db: dbB,
+      gateway: {
+        ...fakeGateway(dbB),
+        dispatchHttp: async () =>
+          new Response(body, {
+            status: 200,
+            headers: {
+              'content-type': 'application/octet-stream',
+              'content-length': String(EIGHT_MIB),
+            },
+          }),
+      },
+      userId: boot.userId,
+      config: {
+        roles: { hub: false, node: true },
+        hubUrl: 'http://hub.example',
+        peerPort: 39022,
+        stunServers: [],
+      },
+      uplinkHub: meshA.hub ?? undefined,
+      startPeerServer: false,
+      pingIntervalMs: 60_000,
+      networkInterfaces: () => ({}),
+      loadNative,
+    });
+    fixtures.push({ close: closeB, stop: () => meshB.stop() });
+    await meshB.start();
+    await waitUntil(() => meshB.uplink.state === 'online', 5_000);
+    await waitUntil(
+      () => meshA.lastNodeList?.nodes.some((n) => n.id === meshB.nodeId && n.online) === true,
+      5_000
+    );
+
+    await Promise.all([meshA.peers.getLink(meshB.nodeId), meshB.peers.getLink(meshA.nodeId)]);
+    await waitUntil(() => meshA.peers.transportOf(meshB.nodeId) === 'dc', 8_000);
+    expect(meshA.peers.transportOf(meshB.nodeId)).toBe('dc');
+
+    meshA.rtc.connectToPeer = async () => {
+      await Bun.sleep(5_000);
+      throw new Error('dc-redial-blocked');
+    };
+    meshB.rtc.connectToPeer = async () => {
+      await Bun.sleep(5_000);
+      throw new Error('dc-redial-blocked');
+    };
+
+    meshA.peers.getLive(meshB.nodeId)?.close('drop-dc');
+    meshB.peers.getLive(meshA.nodeId)?.close('drop-dc');
+    await waitUntil(() => meshA.peers.transportOf(meshB.nodeId) !== 'dc', 5_000);
+    await waitUntil(() => meshB.peers.transportOf(meshA.nodeId) !== 'dc', 5_000);
+
+    const [relayA, relayB] = createInMemoryLinkPair();
+    expect(meshA.peers.adoptLink(meshB.nodeId, relayA, 'relay', meshA.nodeId)).toBe(relayA);
+    expect(meshB.peers.adoptLink(meshA.nodeId, relayB, 'relay', meshA.nodeId)).toBe(relayB);
+    await waitUntil(() => meshA.peers.quiesceCapableOf(meshB.nodeId), 2_000);
+    await waitUntil(() => meshB.peers.quiesceCapableOf(meshA.nodeId), 2_000);
+    expect(meshA.peers.transportOf(meshB.nodeId)).toBe('relay');
+
+    const sess = generateEd25519KeyPair();
+    const issued = new NodeSessionStore(dbB).issue({
+      userId: boot.userId,
+      viaNodeId: meshA.nodeId,
+      sessPublicKey: sess.publicKey,
+      now: Date.now(),
+      delegationMethod: 'root',
+    });
+
+    const link = await meshA.peers.getLink(meshB.nodeId);
+    expect(link).toBe(relayA);
+    expect(meshA.peers.transportOf(meshB.nodeId)).toBe('relay');
+    const seenDuring: Array<string | null> = [];
+    const poll = setInterval(() => {
+      seenDuring.push(meshA.peers.transportOf(meshB.nodeId));
+    }, 50);
+    try {
+      const res = await openHttpStream(link, {
+        type: 'http',
+        method: 'GET',
+        path: '/api/files/raw',
+        origin: 'http://entry',
+        auth: issued.sid,
+      });
+      expect(res.status).toBe(200);
+      const received = new Uint8Array(await res.arrayBuffer());
+      expect(received.byteLength).toBe(EIGHT_MIB);
+      expect(received).toEqual(body);
+    } finally {
+      clearInterval(poll);
+    }
+    expect(seenDuring.every((kind) => kind === 'relay')).toBe(true);
+    expect(meshA.peers.transportOf(meshB.nodeId)).toBe('relay');
+    expect(await meshA.peers.getLink(meshB.nodeId)).toBe(relayA);
+  }, 20_000);
 });

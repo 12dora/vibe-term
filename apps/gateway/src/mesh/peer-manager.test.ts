@@ -1868,4 +1868,401 @@ describe('PeerManager', () => {
     }
     expect(unhandled).toEqual([]);
   });
+
+  function hangingRtc(): {
+    rtc: RtcPeerManager;
+    fail: (err?: Error) => void;
+    attempts: () => number;
+  } {
+    let attempts = 0;
+    const waiters: Array<(err: Error) => void> = [];
+    const rtc = {
+      available: true,
+      connectToPeer: () => {
+        attempts += 1;
+        return new Promise<never>((_, reject) => {
+          waiters.push(reject);
+        });
+      },
+    } as unknown as RtcPeerManager;
+    return {
+      rtc,
+      fail(err = new Error('dc-handshake-failed')) {
+        for (const reject of waiters.splice(0)) reject(err);
+      },
+      attempts: () => attempts,
+    };
+  }
+
+  async function adoptQuiesced(
+    manager: PeerManager,
+    peerNodeId: string,
+    session: import('@tmex/shared/link').LinkSession,
+    remote: import('@tmex/shared/link').LinkSession,
+    transport: 'relay' | 'ws-secure' | 'dc',
+    initiatedBy: string
+  ): Promise<void> {
+    echoQuiesceCaps(remote);
+    expect(manager.adoptLink(peerNodeId, session, transport, initiatedBy)).toBe(session);
+    await waitUntil(() => manager.quiesceCapableOf(peerNodeId));
+  }
+
+  test('getLink returns the live established link immediately during an in-flight DC upgrade', async () => {
+    const { db, close } = createMigratedAuthDb();
+    fixtures.push({ close });
+    const store = new UserStore(db);
+    seedUser(store);
+    const self = seedNodeIdentity(store, 'user-1');
+    const peer = seedNodeIdentity(store, 'user-1');
+    store.upsertPeer({
+      nodeId: peer.nodeId,
+      name: 'peer',
+      endpointsJson: '[]',
+      inventoryJson: '{}',
+      directCapable: true,
+      lastSeenAt: Date.now(),
+      listVersion: 1,
+    });
+    const hanging = hangingRtc();
+    const manager = new PeerManager({
+      identity: self,
+      userStore: store,
+      uplink: dummyUplink(self, store, async () => {
+        throw new Error('no-relay');
+      }),
+      peerPort: 0,
+      startServer: false,
+      rtc: hanging.rtc,
+    });
+    fixtures.push({ close, stop: () => manager.stop() });
+    const [relayLocal, relayRemote] = createInMemoryLinkPair();
+    await adoptQuiesced(manager, peer.nodeId, relayLocal, relayRemote, 'relay', self.nodeId);
+
+    const first = await manager.getLink(peer.nodeId);
+    expect(first).toBe(relayLocal);
+    await waitUntil(() => hanging.attempts() >= 1, 2_000);
+
+    const t0 = performance.now();
+    const again = await manager.getLink(peer.nodeId);
+    expect(performance.now() - t0).toBeLessThan(50);
+    expect(again).toBe(relayLocal);
+    expect(manager.transportOf(peer.nodeId)).toBe('relay');
+  });
+
+  test('transportOf never reports dc while a DC handshake is still in flight', async () => {
+    const { db, close } = createMigratedAuthDb();
+    fixtures.push({ close });
+    const store = new UserStore(db);
+    seedUser(store);
+    const self = seedNodeIdentity(store, 'user-1');
+    const peer = seedNodeIdentity(store, 'user-1');
+    store.upsertPeer({
+      nodeId: peer.nodeId,
+      name: 'peer',
+      endpointsJson: '[]',
+      inventoryJson: '{}',
+      directCapable: true,
+      lastSeenAt: Date.now(),
+      listVersion: 1,
+    });
+    const hanging = hangingRtc();
+    const seen: Array<string | null> = [];
+    const manager = new PeerManager({
+      identity: self,
+      userStore: store,
+      uplink: dummyUplink(self, store, async () => {
+        throw new Error('no-relay');
+      }),
+      peerPort: 0,
+      startServer: false,
+      rtc: hanging.rtc,
+    });
+    fixtures.push({ close, stop: () => manager.stop() });
+    const [relayLocal, relayRemote] = createInMemoryLinkPair();
+    await adoptQuiesced(manager, peer.nodeId, relayLocal, relayRemote, 'relay', self.nodeId);
+    void manager.getLink(peer.nodeId);
+    await waitUntil(() => hanging.attempts() >= 1, 2_000);
+    for (let i = 0; i < 20; i++) {
+      seen.push(manager.transportOf(peer.nodeId));
+      await Bun.sleep(5);
+    }
+    expect(seen.every((kind) => kind === 'relay')).toBe(true);
+    expect(seen.includes('dc')).toBe(false);
+  });
+
+  test('a stream opened during a failing DC upgrade stays on the established link', async () => {
+    const { db, close } = createMigratedAuthDb();
+    fixtures.push({ close });
+    const store = new UserStore(db);
+    seedUser(store);
+    const self = seedNodeIdentity(store, 'user-1');
+    const peer = seedNodeIdentity(store, 'user-1');
+    store.upsertPeer({
+      nodeId: peer.nodeId,
+      name: 'peer',
+      endpointsJson: '[]',
+      inventoryJson: '{}',
+      directCapable: true,
+      lastSeenAt: Date.now(),
+      listVersion: 1,
+    });
+    const hanging = hangingRtc();
+    const manager = new PeerManager({
+      identity: self,
+      userStore: store,
+      uplink: dummyUplink(self, store, async () => {
+        throw new Error('no-relay');
+      }),
+      peerPort: 0,
+      startServer: false,
+      rtc: hanging.rtc,
+    });
+    fixtures.push({ close, stop: () => manager.stop() });
+    const [relayLocal, relayRemote] = createInMemoryLinkPair();
+    await adoptQuiesced(manager, peer.nodeId, relayLocal, relayRemote, 'relay', self.nodeId);
+    const incomingP = new Promise<import('@tmex/shared/link').LinkStream>((resolve) =>
+      relayRemote.onStream(resolve)
+    );
+    void manager.getLink(peer.nodeId);
+    await waitUntil(() => hanging.attempts() >= 1, 2_000);
+
+    const link = await manager.getLink(peer.nodeId);
+    expect(link).toBe(relayLocal);
+    const outbound = await link.openStream(new TextEncoder().encode('{"type":"keep"}'));
+    const inbound = await incomingP;
+    await outbound.write(new TextEncoder().encode('before-fail'));
+    hanging.fail(new Error('ice-timeout'));
+    await Bun.sleep(30);
+    expect(manager.transportOf(peer.nodeId)).toBe('relay');
+    await outbound.write(new TextEncoder().encode('after-fail'));
+    await outbound.end();
+    const reader = inbound.readable.getReader();
+    const chunks: string[] = [];
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      if (value) chunks.push(new TextDecoder().decode(value.bytes));
+    }
+    expect(chunks.join('')).toBe('before-failafter-fail');
+    inbound.end();
+  });
+
+  test('after DC loss with relay alive, getLink never binds a stream to a DC dial that fails after 5s', async () => {
+    const { db, close } = createMigratedAuthDb();
+    fixtures.push({ close });
+    const store = new UserStore(db);
+    seedUser(store);
+    const self = seedNodeIdentity(store, 'user-1');
+    const peer = seedNodeIdentity(store, 'user-1');
+    store.upsertPeer({
+      nodeId: peer.nodeId,
+      name: 'peer',
+      endpointsJson: '[]',
+      inventoryJson: '{}',
+      directCapable: true,
+      lastSeenAt: Date.now(),
+      listVersion: 1,
+    });
+    let rejectDial: (err: Error) => void = () => {};
+    let dials = 0;
+    const rtc = {
+      available: true,
+      connectToPeer: () => {
+        dials += 1;
+        return new Promise<never>((_, reject) => {
+          rejectDial = reject;
+        });
+      },
+    } as unknown as RtcPeerManager;
+    const manager = new PeerManager({
+      identity: self,
+      userStore: store,
+      uplink: dummyUplink(self, store, async () => {
+        throw new Error('no-relay');
+      }),
+      peerPort: 0,
+      startServer: false,
+      rtc,
+    });
+    fixtures.push({ close, stop: () => manager.stop() });
+
+    const [dcLocal, dcRemote] = createInMemoryLinkPair();
+    await adoptQuiesced(manager, peer.nodeId, dcLocal, dcRemote, 'dc', self.nodeId);
+    dcLocal.close('drop-dc');
+    await waitUntil(() => manager.transportOf(peer.nodeId) === null);
+
+    const [relayLocal, relayRemote] = createInMemoryLinkPair();
+    const boundSessions: import('@tmex/shared/link').LinkSession[] = [];
+    const origOpen = relayLocal.openStream.bind(relayLocal);
+    relayLocal.openStream = async (payload) => {
+      boundSessions.push(relayLocal);
+      return origOpen(payload);
+    };
+    await adoptQuiesced(manager, peer.nodeId, relayLocal, relayRemote, 'relay', self.nodeId);
+
+    const incomingP = new Promise<import('@tmex/shared/link').LinkStream>((resolve) =>
+      relayRemote.onStream(resolve)
+    );
+    const t0 = performance.now();
+    const link = await manager.getLink(peer.nodeId);
+    expect(performance.now() - t0).toBeLessThan(50);
+    expect(link).toBe(relayLocal);
+    expect(manager.transportOf(peer.nodeId)).toBe('relay');
+
+    const outbound = await link.openStream(new TextEncoder().encode('{"type":"http"}'));
+    expect(boundSessions).toEqual([relayLocal]);
+    const inbound = await incomingP;
+    await outbound.write(new TextEncoder().encode('payload'));
+    await waitUntil(() => dials >= 1, 2_000);
+    for (let i = 0; i < 10; i++) {
+      expect(manager.transportOf(peer.nodeId)).toBe('relay');
+      await Bun.sleep(10);
+    }
+    await Bun.sleep(50);
+    rejectDial(new Error('dc-handshake-failed-after-5s'));
+    await Bun.sleep(30);
+    expect(manager.transportOf(peer.nodeId)).toBe('relay');
+    await outbound.write(new TextEncoder().encode('-ok'));
+    await outbound.end();
+    const reader = inbound.readable.getReader();
+    const chunks: string[] = [];
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      if (value) chunks.push(new TextDecoder().decode(value.bytes));
+    }
+    expect(chunks.join('')).toBe('payload-ok');
+    expect(await manager.getLink(peer.nodeId)).toBe(relayLocal);
+    inbound.end();
+  });
+
+  test('getLink waiting on a DC-first dial returns as soon as a live fallback is established', async () => {
+    const { db, close } = createMigratedAuthDb();
+    fixtures.push({ close });
+    const store = new UserStore(db);
+    seedUser(store);
+    const self = seedNodeIdentity(store, 'user-1');
+    const peer = seedNodeIdentity(store, 'user-1');
+    store.upsertPeer({
+      nodeId: peer.nodeId,
+      name: 'peer',
+      endpointsJson: '[]',
+      inventoryJson: '{}',
+      directCapable: true,
+      lastSeenAt: Date.now(),
+      listVersion: 1,
+    });
+    const hanging = hangingRtc();
+    const manager = new PeerManager({
+      identity: self,
+      userStore: store,
+      uplink: dummyUplink(self, store, async () => {
+        throw new Error('no-relay');
+      }),
+      peerPort: 0,
+      startServer: false,
+      rtc: hanging.rtc,
+    });
+    fixtures.push({ close, stop: () => manager.stop() });
+    const pending = manager.getLink(peer.nodeId);
+    await waitUntil(() => hanging.attempts() >= 1, 2_000);
+    const [relayLocal, relayRemote] = createInMemoryLinkPair();
+    echoQuiesceCaps(relayRemote);
+    expect(manager.adoptLink(peer.nodeId, relayLocal, 'relay', self.nodeId)).toBe(relayLocal);
+    const link = await Promise.race([
+      pending,
+      Bun.sleep(200).then(() => {
+        throw new Error('getLink kept waiting for DC after a live relay existed');
+      }),
+    ]);
+    expect(link).toBe(relayLocal);
+    expect(manager.transportOf(peer.nodeId)).toBe('relay');
+  });
+
+  test('after DC death getLink uses a fallback without waiting for a hanging DC re-dial', async () => {
+    const { db, close } = createMigratedAuthDb();
+    fixtures.push({ close });
+    const store = new UserStore(db);
+    seedUser(store);
+    const self = seedNodeIdentity(store, 'user-1');
+    const peer = seedNodeIdentity(store, 'user-1');
+    store.upsertPeer({
+      nodeId: peer.nodeId,
+      name: 'peer',
+      endpointsJson: '[]',
+      inventoryJson: '{}',
+      directCapable: true,
+      lastSeenAt: Date.now(),
+      listVersion: 1,
+    });
+    const hanging = hangingRtc();
+    const [wsLocal, wsRemote] = createInMemoryLinkPair();
+    fixtures.push({ close: () => wsRemote.close('test') });
+    const manager = new PeerManager({
+      identity: self,
+      userStore: store,
+      uplink: dummyUplink(self, store, async () => {
+        throw new Error('no-relay');
+      }),
+      peerPort: 0,
+      startServer: false,
+      rtc: hanging.rtc,
+      linkFactory: async () => wsLocal,
+    });
+    fixtures.push({ close, stop: () => manager.stop() });
+    const [dcLocal, dcRemote] = createInMemoryLinkPair();
+    await adoptQuiesced(manager, peer.nodeId, dcLocal, dcRemote, 'dc', self.nodeId);
+    dcLocal.close('drop-dc');
+    await waitUntil(() => manager.transportOf(peer.nodeId) === null, 2_000);
+
+    const t0 = performance.now();
+    const link = await manager.getLink(peer.nodeId);
+    expect(performance.now() - t0).toBeLessThan(100);
+    expect(link).toBe(wsLocal);
+    expect(manager.transportOf(peer.nodeId)).toBe('ws-secure');
+  });
+
+  test('DC loss promotes a still-open retiring fallback so getLink does not wait on DC', async () => {
+    const { db, close } = createMigratedAuthDb();
+    fixtures.push({ close });
+    const store = new UserStore(db);
+    seedUser(store);
+    const self = seedNodeIdentity(store, 'user-1');
+    const peer = seedNodeIdentity(store, 'user-1');
+    store.upsertPeer({
+      nodeId: peer.nodeId,
+      name: 'peer',
+      endpointsJson: '[]',
+      inventoryJson: '{}',
+      directCapable: true,
+      lastSeenAt: Date.now(),
+      listVersion: 1,
+    });
+    const hanging = hangingRtc();
+    const manager = new PeerManager({
+      identity: self,
+      userStore: store,
+      uplink: dummyUplink(self, store, async () => {
+        throw new Error('no-relay');
+      }),
+      peerPort: 0,
+      startServer: false,
+      rtc: hanging.rtc,
+    });
+    fixtures.push({ close, stop: () => manager.stop() });
+    const [relayLocal, relayRemote] = createInMemoryLinkPair();
+    await adoptQuiesced(manager, peer.nodeId, relayLocal, relayRemote, 'relay', self.nodeId);
+    const [dcLocal, dcRemote] = createInMemoryLinkPair();
+    echoQuiesceCaps(dcRemote);
+    expect(manager.adoptLink(peer.nodeId, dcLocal, 'dc', self.nodeId)).toBe(dcLocal);
+    expect(manager.transportOf(peer.nodeId)).toBe('dc');
+    dcLocal.close('drop-dc');
+    await waitUntil(() => manager.transportOf(peer.nodeId) !== 'dc', 2_000);
+
+    const t0 = performance.now();
+    const link = await manager.getLink(peer.nodeId);
+    expect(performance.now() - t0).toBeLessThan(50);
+    expect(link).toBe(relayLocal);
+    expect(manager.transportOf(peer.nodeId)).toBe('relay');
+  });
 });

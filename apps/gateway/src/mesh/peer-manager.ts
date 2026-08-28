@@ -174,6 +174,10 @@ type TransportWaiter = {
   resolve: (ok: boolean) => void;
 };
 
+type LiveWaiter = {
+  resolve: (session: LinkSession) => void;
+};
+
 type ParkedInbound = {
   session: LinkSession;
   transport: PeerTransportKind;
@@ -279,6 +283,8 @@ export class PeerManager {
   private readonly parkedSessions = new WeakSet<LinkSession>();
   private readonly retiring = new Map<string, Set<LivePeer>>();
   private readonly pending = new Map<string, Promise<LinkSession>>();
+  private readonly upgrading = new Map<string, Promise<LinkSession>>();
+  private readonly liveWaiters = new Map<string, LiveWaiter[]>();
   private readonly rtc: RtcPeerManager | null;
   private readonly linkFactory: PeerLinkFactory | null;
   private readonly onGatewaySession:
@@ -396,6 +402,8 @@ export class PeerManager {
       for (const waiter of waiters) waiter.resolve(false);
       this.transportWaiters.delete(nodeId);
     }
+    this.liveWaiters.clear();
+    this.upgrading.clear();
     this.abortDeferredRtcWakes();
     this.wakeGate.clear();
     this.incomingWakeGate.clear();
@@ -500,6 +508,7 @@ export class PeerManager {
     if (
       this.shouldTryDc(fromNodeId) &&
       !this.pending.has(fromNodeId) &&
+      !this.upgrading.has(fromNodeId) &&
       (!live || this.wantsUpgrade(live))
     ) {
       void this.getLink(fromNodeId).catch(() => undefined);
@@ -515,18 +524,21 @@ export class PeerManager {
       return existing.session;
     }
     const inflight = this.pending.get(nodeId);
-    if (inflight) return inflight;
+    if (inflight) return this.awaitEstablishedOrDial(nodeId, inflight);
     const attempt = this.dial(nodeId);
     this.pending.set(nodeId, attempt);
+    void attempt
+      .catch(() => undefined)
+      .finally(() => {
+        if (this.pending.get(nodeId) === attempt) this.pending.delete(nodeId);
+      });
     try {
-      return await attempt;
+      return await this.awaitEstablishedOrDial(nodeId, attempt);
     } catch (err) {
       const live = this.live.get(nodeId);
       if (live) return live.session;
       if (err instanceof NodeUnreachableError) throw err;
       throw new NodeUnreachableError(nodeId, err instanceof Error ? err.message : 'unreachable');
-    } finally {
-      this.pending.delete(nodeId);
     }
   }
 
@@ -542,6 +554,8 @@ export class PeerManager {
     this.rtcWakeNonces.delete(nodeId.toLowerCase());
     this.cancelDcUpgradeRetry(nodeId);
     this.lostDirect.delete(nodeId);
+    this.upgrading.delete(nodeId);
+    this.liveWaiters.delete(nodeId);
     this.failTransportWaiters(nodeId);
   }
 
@@ -700,7 +714,7 @@ export class PeerManager {
       this.ensureGate(nodeId).coalesced = true;
       return;
     }
-    if (this.pending.has(nodeId)) {
+    if (this.pending.has(nodeId) || this.upgrading.has(nodeId)) {
       this.ensureGate(nodeId).coalesced = true;
       return;
     }
@@ -715,13 +729,17 @@ export class PeerManager {
   }
 
   private queueUpgrade(nodeId: string): void {
+    if (this.upgrading.has(nodeId)) {
+      this.ensureGate(nodeId).coalesced = true;
+      return;
+    }
     const before = this.live.get(nodeId)?.session ?? null;
     const upgrade = this.runUpgradeDial(nodeId, before);
-    this.pending.set(nodeId, upgrade);
+    this.upgrading.set(nodeId, upgrade);
     void upgrade
       .catch(() => undefined)
       .finally(() => {
-        if (this.pending.get(nodeId) === upgrade) this.pending.delete(nodeId);
+        if (this.upgrading.get(nodeId) === upgrade) this.upgrading.delete(nodeId);
         if (this.upgradeGate.get(nodeId)?.coalesced && !this.stopped) {
           this.scheduleCoalescedUpgrade(nodeId);
         }
@@ -796,7 +814,7 @@ export class PeerManager {
     rtcLog('signal recv', { peer: fromNodeId, kind: 'wake' });
     if (this.live.get(fromNodeId)?.transport === 'dc') return;
     if (!this.shouldTryDc(fromNodeId)) return;
-    if (this.pending.has(fromNodeId)) return;
+    if (this.pending.has(fromNodeId) || this.upgrading.has(fromNodeId)) return;
     const live = this.live.get(fromNodeId);
     if (live && !this.wantsUpgrade(live)) return;
     void this.getLink(fromNodeId).catch(() => undefined);
@@ -936,7 +954,7 @@ export class PeerManager {
         }
         if (!this.shouldTryDc(nodeId) || !this.live.get(nodeId)) return;
         this.maybeUpgrade(nodeId, { cooldown: true });
-        const pending = this.pending.get(nodeId);
+        const pending = this.upgrading.get(nodeId) ?? this.pending.get(nodeId);
         if (pending) {
           void pending
             .finally(() => {
@@ -1054,6 +1072,61 @@ export class PeerManager {
     }
     if (keep.length > 0) this.transportWaiters.set(nodeId, keep);
     else this.transportWaiters.delete(nodeId);
+  }
+
+  private notifyLive(nodeId: string, session: LinkSession): void {
+    const waiters = this.liveWaiters.get(nodeId);
+    if (!waiters || waiters.length === 0) return;
+    this.liveWaiters.delete(nodeId);
+    for (const waiter of waiters) waiter.resolve(session);
+  }
+
+  private waitForLive(nodeId: string): { promise: Promise<LinkSession>; cancel: () => void } {
+    let waiter: LiveWaiter | undefined;
+    const promise = new Promise<LinkSession>((resolve) => {
+      waiter = { resolve };
+      const list = this.liveWaiters.get(nodeId) ?? [];
+      list.push(waiter);
+      this.liveWaiters.set(nodeId, list);
+    });
+    return {
+      promise,
+      cancel: () => {
+        if (!waiter) return;
+        const list = this.liveWaiters.get(nodeId);
+        if (!list) return;
+        const next = list.filter((row) => row !== waiter);
+        if (next.length > 0) this.liveWaiters.set(nodeId, next);
+        else this.liveWaiters.delete(nodeId);
+      },
+    };
+  }
+
+  private async awaitEstablishedOrDial(
+    nodeId: string,
+    dial: Promise<LinkSession>
+  ): Promise<LinkSession> {
+    const current = this.live.get(nodeId);
+    if (current) return current.session;
+    const liveWait = this.waitForLive(nodeId);
+    try {
+      const winner = await Promise.race([
+        dial.then(
+          (session) => ({ ok: true as const, session }),
+          (err: unknown) => ({ ok: false as const, err })
+        ),
+        liveWait.promise.then((session) => ({ ok: true as const, session })),
+      ]);
+      const live = this.live.get(nodeId);
+      if (live) {
+        this.maybeUpgrade(nodeId, { cooldown: true, userPath: true });
+        return live.session;
+      }
+      if (!winner.ok) throw winner.err;
+      return winner.session;
+    } finally {
+      liveWait.cancel();
+    }
   }
 
   private failTransportWaiters(nodeId: string): void {
@@ -1178,7 +1251,8 @@ export class PeerManager {
     };
 
     let dcError: unknown = null;
-    if (PEER_TRANSPORT_RANK.dc > floor && this.shouldTryDc(nodeId)) {
+    const skipForegroundDc = !existingLive && this.lostDirect.has(nodeId);
+    if (PEER_TRANSPORT_RANK.dc > floor && this.shouldTryDc(nodeId) && !skipForegroundDc) {
       try {
         const dc = await this.dialDc(nodeId, gen, signal);
         if (dc) return dc;
@@ -1204,6 +1278,19 @@ export class PeerManager {
     const already = this.live.get(nodeId);
     if (already) return already.session;
     throwIfStopped();
+
+    if (skipForegroundDc && PEER_TRANSPORT_RANK.dc > floor && this.shouldTryDc(nodeId)) {
+      try {
+        const dc = await this.dialDc(nodeId, gen, signal);
+        if (dc) return dc;
+      } catch (err) {
+        dcError = err;
+        throwIfStopped(err);
+      }
+      const afterDc = this.live.get(nodeId);
+      if (afterDc) return afterDc.session;
+      throwIfStopped();
+    }
 
     if (dcError != null || (PEER_TRANSPORT_RANK.dc > floor && this.shouldTryDc(nodeId))) {
       rtcLog('dial failed', {
@@ -1470,6 +1557,7 @@ export class PeerManager {
     this.startPing(live);
     this.sendPeerStatus(live);
     this.notifyTransport(peerNodeId);
+    this.notifyLive(peerNodeId, session);
     if (transport === 'dc') {
       this.lostDirect.delete(peerNodeId);
       this.cancelDcUpgradeRetry(peerNodeId);
@@ -1483,7 +1571,7 @@ export class PeerManager {
     const { session, peerNodeId } = live;
     const origOpen = session.openStream.bind(session);
     session.openStream = async (openPayload: Uint8Array) => {
-      if (live.retiring || this.live.get(peerNodeId) !== live) {
+      if (live.finishRetired) {
         throw new Error('peer link replaced');
       }
       if (live.streams >= this.maxConcurrentStreams) {
@@ -1813,8 +1901,36 @@ export class PeerManager {
       gate.nextEligibleAt = 0;
       gate.coalesced = false;
     }
+    this.promoteRetiring(nodeId);
     this.activateParked(nodeId);
     if (wasDc) this.armDcUpgradeRetry(nodeId);
+  }
+
+  private promoteRetiring(nodeId: string): boolean {
+    if (this.live.get(nodeId)) return false;
+    const set = this.retiring.get(nodeId);
+    if (!set || set.size === 0) return false;
+    let best: LivePeer | null = null;
+    for (const row of set) {
+      if (row.finishRetired) continue;
+      if (!best || comparePeerTransport(row.transport, best.transport) > 0) best = row;
+    }
+    if (!best) return false;
+    set.delete(best);
+    if (set.size === 0) this.retiring.delete(nodeId);
+    best.retiring = false;
+    best.retiredAt = 0;
+    best.retireTimer?.clear();
+    best.retireTimer = null;
+    best.gotQuiesceAck = false;
+    best.gotPeerQuiesce = false;
+    this.live.set(nodeId, best);
+    this.armIdle(best);
+    this.startPing(best);
+    this.sendPeerStatus(best);
+    this.notifyTransport(nodeId);
+    this.notifyLive(nodeId, best.session);
+    return true;
   }
 
   private parkInbound(
