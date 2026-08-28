@@ -161,6 +161,10 @@ export class UserStore {
     return row ? toUser(row) : null;
   }
 
+  listUsers(): UserRecord[] {
+    return this.db.select().from(users).all().map(toUser);
+  }
+
   create(input: CreateUserInput): UserRecord {
     this.db
       .insert(users)

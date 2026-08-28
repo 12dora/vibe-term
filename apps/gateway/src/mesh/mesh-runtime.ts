@@ -532,7 +532,14 @@ async function openAdaptedWsStream(
 
 function resolveUserId(userStore: UserStore, nodeIdHex: string, explicit?: string): string {
   if (explicit) return explicit;
-  return userStore.getCert(nodeIdHex)?.userId ?? '';
+  const self = userStore.getCert(nodeIdHex);
+  if (self?.userId) return self.userId;
+  for (const cert of userStore.listCerts()) {
+    if (cert.userId) return cert.userId;
+  }
+  const listed = userStore.listUsers();
+  if (listed.length === 1 && listed[0]) return listed[0].id;
+  return '';
 }
 
 function hubEndpointUrl(config: MeshRuntimeConfig): string {
@@ -877,19 +884,14 @@ export async function createMeshRuntime(opts: CreateMeshRuntimeOptions): Promise
 
   const peers: PeerLinkProvider = {
     getLink: (nodeId) => peerManager.getLink(nodeId),
-    listReach: () => {
-      const reach = peerManager.listReach();
-      const list = lastNodeList;
-      if (!list || uplink.state !== 'online') return reach;
-      for (const node of list.nodes) {
-        if (node.id === identity.nodeIdHex || !node.online) continue;
-        const cert = userStore.getCert(node.id);
-        if (!cert || (userId && cert.userId !== userId) || cert.revokedLogSeq != null) continue;
-        if (reach.get(node.id) == null) {
-          reach.set(node.id, 'relay');
-        }
+    listReach: () => peerManager.listReach(),
+    listHubOnline: () => {
+      const ids = new Set<string>();
+      if (!lastNodeList) return ids;
+      for (const node of lastNodeList.nodes) {
+        if (node.online) ids.add(node.id);
       }
-      return reach;
+      return ids;
     },
     onNodeEvent: (cb) => {
       nodeEvents.add(cb);

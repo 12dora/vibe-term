@@ -62,9 +62,9 @@ export type NodeListMessage = {
   hub?: NodeListHubInfo;
 };
 
-export type KeyLogReqMessage = { t: 'key.log.req'; from_seq: number | string };
+export type KeyLogReqMessage = { t: 'key.log.req'; from_seq: number | string; id?: string };
 export type KeyLogRecordWire = { seq: number | string; bytes: string; sig: string };
-export type KeyLogResMessage = { t: 'key.log.res'; records: KeyLogRecordWire[] };
+export type KeyLogResMessage = { t: 'key.log.res'; records: KeyLogRecordWire[]; id?: string };
 export type KeyLogAppendMessage = { t: 'key.log.append'; bytes: string; sig: string; id?: string };
 export type KeyLogAckMessage = {
   t: 'key.log.ack';
@@ -218,10 +218,19 @@ export function decodeUplinkCtl(input: Uint8Array | string): UplinkCtlMessage {
       };
     case 'node.list':
       return decodeNodeList(obj);
-    case 'key.log.req':
-      return { t: 'key.log.req', from_seq: requireSeq(obj, 'from_seq') };
-    case 'key.log.res':
-      return { t: 'key.log.res', records: requireKeyLogRecords(obj.records) };
+    case 'key.log.req': {
+      const req: KeyLogReqMessage = { t: 'key.log.req', from_seq: requireSeq(obj, 'from_seq') };
+      if (obj.id !== undefined && obj.id !== null) req.id = requireNonEmptyString(obj, 'id');
+      return req;
+    }
+    case 'key.log.res': {
+      const res: KeyLogResMessage = {
+        t: 'key.log.res',
+        records: requireKeyLogRecords(obj.records),
+      };
+      if (obj.id !== undefined && obj.id !== null) res.id = requireNonEmptyString(obj, 'id');
+      return res;
+    }
     case 'key.log.append':
       return decodeKeyLogAppend(obj);
     case 'key.log.ack':

@@ -305,7 +305,7 @@ export class UplinkServer {
         await this.handleNodeStatus(live, msg);
         return;
       case 'key.log.req':
-        await this.handleKeyLogReq(live, msg.from_seq);
+        await this.handleKeyLogReq(live, msg);
         return;
       case 'key.log.append':
         await this.handleKeyLogAppend(live, msg.bytes, msg.sig, msg.id);
@@ -444,9 +444,15 @@ export class UplinkServer {
     }
   }
 
-  private async handleKeyLogReq(live: LiveConnection, fromSeqWire: number | string): Promise<void> {
-    const fromSeq = BigInt(fromSeqWire);
+  private async handleKeyLogReq(
+    live: LiveConnection,
+    msg: Extract<UplinkCtlMessage, { t: 'key.log.req' }>
+  ): Promise<void> {
+    const fromSeq = BigInt(msg.from_seq);
     const records = await this.keyLogSource.list(live.userId, fromSeq);
+    console.warn(
+      `[hub] key.log.req node=${live.nodeId} from_seq=${fromSeq.toString()} records=${records.length}`
+    );
     this.send(live.link, {
       t: 'key.log.res',
       records: records.map((r) => ({
@@ -454,6 +460,7 @@ export class UplinkServer {
         bytes: bytesToB64url(r.bytes),
         sig: bytesToB64url(r.sig),
       })),
+      ...(msg.id ? { id: msg.id } : {}),
     });
   }
 

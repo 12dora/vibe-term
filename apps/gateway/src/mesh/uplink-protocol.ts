@@ -69,9 +69,9 @@ export type UplinkNodeList = {
   hub?: UplinkHubInfo;
 };
 
-export type UplinkKeyLogReq = { t: 'key.log.req'; from_seq: bigint };
+export type UplinkKeyLogReq = { t: 'key.log.req'; from_seq: bigint; id?: string };
 export type UplinkKeyLogRecord = { seq: bigint; bytes: Uint8Array; sig: Uint8Array };
-export type UplinkKeyLogRes = { t: 'key.log.res'; records: UplinkKeyLogRecord[] };
+export type UplinkKeyLogRes = { t: 'key.log.res'; records: UplinkKeyLogRecord[]; id?: string };
 export type UplinkKeyLogAppend = {
   t: 'key.log.append';
   bytes: Uint8Array;
@@ -256,13 +256,20 @@ export function decodeUplinkCtl(bytes: Uint8Array): UplinkCtlMessage {
       }
       return list;
     }
-    case 'key.log.req':
-      return { t: 'key.log.req', from_seq: parseSeq(parsed.from_seq, 'from_seq') };
+    case 'key.log.req': {
+      const req: UplinkKeyLogReq = {
+        t: 'key.log.req',
+        from_seq: parseSeq(parsed.from_seq, 'from_seq'),
+      };
+      const reqId = optionalString(parsed.id, 'id');
+      if (reqId) req.id = reqId;
+      return req;
+    }
     case 'key.log.res': {
       if (!Array.isArray(parsed.records)) {
         throw new Error('key.log.res records must be an array');
       }
-      return {
+      const res: UplinkKeyLogRes = {
         t: 'key.log.res',
         records: parsed.records.map((row, i) => {
           if (!isRecord(row)) throw new Error(`key.log.res records[${i}] must be an object`);
@@ -273,6 +280,9 @@ export function decodeUplinkCtl(bytes: Uint8Array): UplinkCtlMessage {
           };
         }),
       };
+      const resId = optionalString(parsed.id, 'id');
+      if (resId) res.id = resId;
+      return res;
     }
     case 'key.log.append': {
       const append: UplinkKeyLogAppend = {
@@ -363,7 +373,11 @@ export function encodeUplinkCtl(msg: UplinkCtlMessage): Uint8Array {
         ...(msg.hub ? { hub: msg.hub } : {}),
       });
     case 'key.log.req':
-      return encodeCtlMessage({ t: 'key.log.req', from_seq: seqToJson(msg.from_seq) });
+      return encodeCtlMessage({
+        t: 'key.log.req',
+        from_seq: seqToJson(msg.from_seq),
+        ...(msg.id ? { id: msg.id } : {}),
+      });
     case 'key.log.res':
       return encodeCtlMessage({
         t: 'key.log.res',
@@ -372,6 +386,7 @@ export function encodeUplinkCtl(msg: UplinkCtlMessage): Uint8Array {
           bytes: encodeBase64url(row.bytes),
           sig: encodeBase64url(row.sig),
         })),
+        ...(msg.id ? { id: msg.id } : {}),
       });
     case 'key.log.append':
       return encodeCtlMessage({

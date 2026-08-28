@@ -14,8 +14,7 @@ import { UserStore } from '../auth/user-store';
 import { ImmediateScheduler, fakeSocketPair, seedUser, waitUntil } from './test-support';
 import type { KeyLogApplier, UplinkStatus } from './types';
 import { UplinkClient } from './uplink-client';
-import { decodeUplinkCtl } from './uplink-protocol';
-import { encodeUplinkCtl } from './uplink-protocol';
+import { type UplinkNodeList, decodeUplinkCtl, encodeUplinkCtl } from './uplink-protocol';
 
 function status(over: Partial<UplinkStatus> = {}): UplinkStatus {
   return {
@@ -45,12 +44,18 @@ describe('UplinkClient', () => {
     const userStore = new UserStore(db);
     seedUser(userStore);
     const applied: { bytes: Uint8Array; sig: Uint8Array }[] = [];
+    const hash1 = new Uint8Array(32);
+    hash1[0] = 1;
+    const hash3 = new Uint8Array(32);
+    hash3[0] = 3;
+    let seq = 1n;
     const applier: KeyLogApplier = {
       async head() {
-        return { seq: 1n, hash: new Uint8Array(32) };
+        return { seq, hash: seq === 1n ? hash1 : hash3 };
       },
       async applyMany(_userId, records) {
         applied.push(...records);
+        seq = 3n;
         return { applied: records.length };
       },
     };
@@ -92,7 +97,7 @@ describe('UplinkClient', () => {
       encodeUplinkCtl({
         t: 'node.list',
         version: 4,
-        key_log_head: { seq: 3n, hash: randomBytes(32) },
+        key_log_head: { seq: 3n, hash: hash3 },
         rtc: { stun: [], turn: null },
         nodes: [
           {
@@ -718,6 +723,238 @@ describe('UplinkClient', () => {
     expect(userStore.getHubMeta()?.nodeId).toBe('ff'.repeat(16));
     expect(userStore.listPeers().find((row) => row.nodeId === lateId)?.name).toBe('late');
     expect(lists).toHaveLength(1);
+  });
+
+  test('key.log.req timeout does not finish node.list as synced', async () => {
+    const { db, close } = createMigratedAuthDb();
+    fixtures.push({ close });
+    const userStore = new UserStore(db);
+    seedUser(userStore);
+    const [clientWs, hubWs] = fakeSocketPair();
+    const hub = new WebSocketLink(hubWs, { role: 'acceptor' });
+    const received: string[] = [];
+    hub.ctl.onMessage((bytes) => received.push(new TextDecoder().decode(bytes)));
+    const lists: unknown[] = [];
+    const client = new UplinkClient({
+      hubUrl: 'https://hub.example.com',
+      identity: { nodeId: 'ab'.repeat(16), edSecretKey: randomBytes(32) },
+      userId: 'user-1',
+      keyLogApplier: dummyApplier(),
+      userStore,
+      statusProvider: () => status(),
+      onNodeList: (list) => lists.push(list),
+      wsFactory: () => clientWs,
+      keyLogTimeoutMs: 40,
+      keyLogRetryLimit: 0,
+    });
+    fixtures.push({ close, stop: () => client.stop() });
+    client.start();
+    await waitUntil(() => client.link !== null);
+    hub.ctl.send(encodeUplinkCtl({ t: 'auth.challenge', nonce: encodeBase64url(randomBytes(32)) }));
+    hub.ctl.send(encodeUplinkCtl({ t: 'auth.ok' }));
+    await waitUntil(() => client.state === 'online');
+    hub.ctl.send(
+      encodeUplinkCtl({
+        t: 'node.list',
+        version: 4,
+        key_log_head: { seq: 3n, hash: randomBytes(32) },
+        rtc: { stun: [], turn: null },
+        nodes: [],
+      })
+    );
+    await waitUntil(() => received.some((row) => row.includes('key.log.req')));
+    await new Promise((resolve) => setTimeout(resolve, 80));
+    expect(lists).toHaveLength(0);
+  });
+
+  test('newer node.list wins if an older catch-up later finishes', async () => {
+    const { db, close } = createMigratedAuthDb();
+    fixtures.push({ close });
+    const userStore = new UserStore(db);
+    seedUser(userStore);
+    const peerId = 'cd'.repeat(16);
+    admitPeer(userStore, peerId);
+    const [clientWs, hubWs] = fakeSocketPair();
+    const hub = new WebSocketLink(hubWs, { role: 'acceptor' });
+    const received: string[] = [];
+    hub.ctl.onMessage((bytes) => received.push(new TextDecoder().decode(bytes)));
+    const lists: UplinkNodeList[] = [];
+    const hash1 = new Uint8Array(32);
+    hash1[0] = 1;
+    const hash2 = new Uint8Array(32);
+    hash2[0] = 2;
+    let seq = 1n;
+    const client = new UplinkClient({
+      hubUrl: 'https://hub.example.com',
+      identity: { nodeId: 'ab'.repeat(16), edSecretKey: randomBytes(32) },
+      userId: 'user-1',
+      keyLogApplier: {
+        async head() {
+          return { seq, hash: seq === 1n ? hash1 : hash2 };
+        },
+        async applyMany(_userId, records) {
+          seq += BigInt(records.length);
+          return { applied: records.length };
+        },
+      },
+      userStore,
+      statusProvider: () => status(),
+      onNodeList: (list) => lists.push(list),
+      wsFactory: () => clientWs,
+    });
+    fixtures.push({ close, stop: () => client.stop() });
+    client.start();
+    await waitUntil(() => client.link !== null);
+    hub.ctl.send(encodeUplinkCtl({ t: 'auth.challenge', nonce: encodeBase64url(randomBytes(32)) }));
+    hub.ctl.send(encodeUplinkCtl({ t: 'auth.ok' }));
+    await waitUntil(() => client.state === 'online');
+    const head = { seq: 2n, hash: hash2 };
+    const recBytes = randomBytes(8);
+    const recSig = randomBytes(64);
+    hub.ctl.send(
+      encodeUplinkCtl({
+        t: 'node.list',
+        version: 1,
+        key_log_head: head,
+        rtc: { stun: [], turn: null },
+        nodes: [
+          {
+            id: peerId,
+            name: 'old-name',
+            online: true,
+            endpoints: ['ws://10.0.0.1:39001/peer'],
+            inventory: {},
+            direct_capable: false,
+            version: '1',
+          },
+        ],
+      })
+    );
+    await waitUntil(() => received.some((row) => row.includes('key.log.req')));
+    hub.ctl.send(
+      encodeUplinkCtl({
+        t: 'node.list',
+        version: 2,
+        key_log_head: head,
+        rtc: { stun: [], turn: null },
+        nodes: [
+          {
+            id: peerId,
+            name: 'new-name',
+            online: true,
+            endpoints: ['ws://10.0.0.2:39001/peer'],
+            inventory: {},
+            direct_capable: true,
+            version: '2',
+          },
+        ],
+      })
+    );
+    const req = JSON.parse(received.find((row) => row.includes('key.log.req')) ?? '{}') as {
+      id?: string;
+    };
+    hub.ctl.send(
+      encodeUplinkCtl({
+        t: 'key.log.res',
+        records: [{ seq: 2n, bytes: recBytes, sig: recSig }],
+        ...(req.id ? { id: req.id } : {}),
+      })
+    );
+    await waitUntil(() => lists.length >= 1);
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    expect(userStore.listPeers().find((row) => row.nodeId === peerId)?.name).toBe('new-name');
+    expect(lists.at(-1)?.version).toBe(2);
+  });
+
+  test('ignores node.list and key-log frames until auth.ok', async () => {
+    const { db, close } = createMigratedAuthDb();
+    fixtures.push({ close });
+    const userStore = new UserStore(db);
+    seedUser(userStore);
+    const [clientWs, hubWs] = fakeSocketPair();
+    const hub = new WebSocketLink(hubWs, { role: 'acceptor' });
+    hub.ctl.onMessage(() => {});
+    const lists: unknown[] = [];
+    const client = new UplinkClient({
+      hubUrl: 'https://hub.example.com',
+      identity: { nodeId: 'ab'.repeat(16), edSecretKey: randomBytes(32) },
+      userId: 'user-1',
+      keyLogApplier: dummyApplier(),
+      userStore,
+      statusProvider: () => status(),
+      onNodeList: (list) => lists.push(list),
+      wsFactory: () => clientWs,
+    });
+    fixtures.push({ close, stop: () => client.stop() });
+    client.start();
+    await waitUntil(() => client.link !== null);
+    hub.ctl.send(encodeUplinkCtl({ t: 'auth.challenge', nonce: encodeBase64url(randomBytes(32)) }));
+    hub.ctl.send(
+      encodeUplinkCtl({
+        t: 'node.list',
+        version: 9,
+        key_log_head: { seq: 0n, hash: new Uint8Array(32) },
+        rtc: { stun: [], turn: null },
+        nodes: [],
+        hub: { nodeId: 'ff'.repeat(16), publicUrl: 'https://evil.example' },
+      })
+    );
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    expect(userStore.getHubMeta()).toBeNull();
+    expect(lists).toHaveLength(0);
+    hub.ctl.send(encodeUplinkCtl({ t: 'auth.ok' }));
+    await waitUntil(() => client.state === 'online');
+    hub.ctl.send(
+      encodeUplinkCtl({
+        t: 'node.list',
+        version: 10,
+        key_log_head: { seq: 0n, hash: new Uint8Array(32) },
+        rtc: { stun: [], turn: null },
+        nodes: [],
+        hub: { nodeId: 'aa'.repeat(16), publicUrl: 'https://hub.example.com' },
+      })
+    );
+    await waitUntil(() => userStore.getHubMeta()?.nodeId === 'aa'.repeat(16));
+    expect(userStore.getHubMeta()?.publicUrl).toBe('https://hub.example.com');
+  });
+
+  test('ctl decode errors are warned with type and length, not the payload', async () => {
+    const { db, close } = createMigratedAuthDb();
+    fixtures.push({ close });
+    const userStore = new UserStore(db);
+    seedUser(userStore);
+    const [clientWs, hubWs] = fakeSocketPair();
+    const hub = new WebSocketLink(hubWs, { role: 'acceptor' });
+    hub.ctl.onMessage(() => {});
+    const warnings: string[] = [];
+    const orig = console.warn;
+    console.warn = (...args: unknown[]) => {
+      warnings.push(args.map(String).join(' '));
+    };
+    const client = new UplinkClient({
+      hubUrl: 'https://hub.example.com',
+      identity: { nodeId: 'ab'.repeat(16), edSecretKey: randomBytes(32) },
+      userId: 'user-1',
+      keyLogApplier: dummyApplier(),
+      userStore,
+      statusProvider: () => status(),
+      wsFactory: () => clientWs,
+    });
+    fixtures.push({
+      close,
+      stop: async () => {
+        console.warn = orig;
+        await client.stop();
+      },
+    });
+    client.start();
+    await waitUntil(() => client.link !== null);
+    const payload = '{"t":"node.list","secret":"should-not-log"}';
+    hub.ctl.send(new TextEncoder().encode(payload));
+    await waitUntil(() => warnings.some((row) => row.includes('decode')));
+    expect(warnings.some((row) => row.includes('node.list'))).toBe(true);
+    expect(warnings.some((row) => row.includes(String(payload.length)))).toBe(true);
+    expect(warnings.join('\n')).not.toContain('should-not-log');
   });
 });
 

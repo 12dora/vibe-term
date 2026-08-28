@@ -45,6 +45,8 @@ export const UPLINK_CONNECT_TIMEOUT_MS = 10_000;
 export const UPLINK_AUTH_TIMEOUT_MS = 10_000;
 export const UPLINK_STABLE_UPTIME_MS = 30_000;
 export const UPLINK_KEY_LOG_ACK_TIMEOUT_MS = 10_000;
+export const UPLINK_KEY_LOG_RETRY_LIMIT = 3;
+export const UPLINK_CTL_WARN_INTERVAL_MS = 5_000;
 
 export type UplinkWsFactory = (
   url: string
@@ -73,6 +75,8 @@ export type UplinkClientOptions = {
   pingIntervalMs?: number;
   connectTimeoutMs?: number;
   authTimeoutMs?: number;
+  keyLogTimeoutMs?: number;
+  keyLogRetryLimit?: number;
 };
 
 function defaultWsFactory(url: string): WebSocketTransportInput {
@@ -147,6 +151,8 @@ export class UplinkClient {
   private readonly pingIntervalMs: number;
   private readonly connectTimeoutMs: number;
   private readonly authTimeoutMs: number;
+  private readonly keyLogTimeoutMs: number;
+  private readonly keyLogRetryLimit: number;
   private readonly stateListeners: Array<(state: UplinkState) => void> = [];
   private relayHandler: InboundRelayHandler | null = null;
   private loop: Promise<void> | null = null;
@@ -159,8 +165,14 @@ export class UplinkClient {
   private authPhase: AuthPhase = 'idle';
   private catchUpChain: Promise<void> = Promise.resolve();
   private pendingKeyLog: {
+    id: string;
     resolve: (records: UplinkKeyLogRecord[]) => void;
+    reject: (err: Error) => void;
   } | null = null;
+  private authenticated = false;
+  private listEpoch = 0;
+  private latestList: UplinkNodeList | null = null;
+  private lastCtlWarnAt = 0;
   private readonly pendingAcks = new Map<string, (ack: UplinkKeyLogAck) => void>();
   private keyLogForked = false;
   private onlineAt = 0;
@@ -184,6 +196,8 @@ export class UplinkClient {
     this.pingIntervalMs = opts.pingIntervalMs ?? UPLINK_PING_INTERVAL_MS;
     this.connectTimeoutMs = opts.connectTimeoutMs ?? UPLINK_CONNECT_TIMEOUT_MS;
     this.authTimeoutMs = opts.authTimeoutMs ?? UPLINK_AUTH_TIMEOUT_MS;
+    this.keyLogTimeoutMs = opts.keyLogTimeoutMs ?? UPLINK_KEY_LOG_ACK_TIMEOUT_MS;
+    this.keyLogRetryLimit = opts.keyLogRetryLimit ?? UPLINK_KEY_LOG_RETRY_LIMIT;
   }
 
   onStateChange(cb: (state: UplinkState) => void): () => void {
@@ -337,10 +351,18 @@ export class UplinkClient {
   private bindLink(link: LinkSession, generation: number): void {
     link.ctl.onMessage((bytes) => {
       if (generation !== this.connectGeneration) return;
+      let type = '';
       try {
-        this.handleCtl(decodeUplinkCtl(bytes));
-      } catch {
-        // ignore malformed ctl
+        const msg = decodeUplinkCtl(bytes);
+        type = msg.t;
+        try {
+          this.handleCtl(msg);
+        } catch (err) {
+          this.warnCtl('handler', type, bytes.byteLength, err);
+        }
+      } catch (err) {
+        type = ctlTypeHint(bytes);
+        this.warnCtl('decode', type, bytes.byteLength, err);
       }
     });
     link.onStream((stream) => {
@@ -404,6 +426,7 @@ export class UplinkClient {
       case 'auth.ok':
         if (this.authPhase === 'challenge-accepted') {
           this.authPhase = 'idle';
+          this.authenticated = true;
           this.authWaiter?.resolve();
         }
         return;
@@ -413,13 +436,22 @@ export class UplinkClient {
       case 'ping':
         this.link?.ctl.send(encodeUplinkCtl({ t: 'pong' }));
         return;
+      default:
+        break;
+    }
+    if (!this.authenticated) return;
+    switch (msg.t) {
       case 'node.list':
         this.ingestNodeList(msg);
         return;
-      case 'key.log.res':
-        this.pendingKeyLog?.resolve(msg.records);
+      case 'key.log.res': {
+        const pending = this.pendingKeyLog;
+        if (!pending) return;
+        if (msg.id && msg.id !== pending.id) return;
         this.pendingKeyLog = null;
+        pending.resolve(msg.records);
         return;
+      }
       case 'key.log.ack': {
         const waiter = this.pendingAcks.get(msg.id);
         this.pendingAcks.delete(msg.id);
@@ -465,6 +497,8 @@ export class UplinkClient {
 
   private ingestNodeList(list: UplinkNodeList): void {
     this.lastKeyLogHead = list.key_log_head;
+    this.latestList = list;
+    const epoch = ++this.listEpoch;
     if (list.hub) {
       this.userStore.upsertHubMeta({
         nodeId: list.hub.nodeId,
@@ -475,8 +509,10 @@ export class UplinkClient {
     }
     this.persistAdmittedPeers(list);
     this.catchUpChain = this.catchUpChain
-      .then(() => this.catchUpFromList(list))
-      .catch(() => undefined);
+      .then(() => this.catchUpFromList(list, epoch))
+      .catch((err) => {
+        this.warnCtl('handler', 'key-log.catch-up', 0, err);
+      });
   }
 
   private persistAdmittedPeers(list: UplinkNodeList): void {
@@ -497,49 +533,121 @@ export class UplinkClient {
     }
   }
 
-  private finishNodeList(list: UplinkNodeList): void {
+  private finishNodeList(epoch: number): void {
+    if (epoch !== this.listEpoch) return;
+    const list = this.latestList;
+    if (!list) return;
     this.persistAdmittedPeers(list);
     this.onNodeListCb?.(list);
   }
 
-  private async catchUpFromList(list: UplinkNodeList): Promise<void> {
-    if (this.keyLogForked) return;
+  private async catchUpFromList(list: UplinkNodeList, epoch: number): Promise<void> {
+    if (this.keyLogForked || !this.authenticated) return;
+    if (!this.userId) {
+      console.warn('[uplink] key-log catch-up skipped: empty userId');
+      return;
+    }
     const target = list.key_log_head;
     let local = await this.keyLogApplier.head(this.userId);
+    if (local.seq !== target.seq) {
+      console.warn(
+        `[uplink] key-log catch-up start local=${local.seq.toString()} target=${target.seq.toString()}`
+      );
+    }
     if (local.seq === target.seq) {
       if (!bytesEqual(local.hash, target.hash)) {
         this.failFork(local, target);
         return;
       }
-      this.finishNodeList(list);
+      this.finishNodeList(epoch);
       return;
     }
     if (local.seq > target.seq) {
       await this.pushMissingToHub(target.seq);
-      this.finishNodeList(list);
+      this.finishNodeList(epoch);
       return;
     }
-    while (!this.keyLogForked && local.seq < target.seq) {
+    let retries = 0;
+    while (!this.keyLogForked && this.authenticated && local.seq < target.seq) {
+      if (epoch !== this.listEpoch) return;
       const before = local;
-      const records = await this.requestKeyLog(local.seq + 1n);
+      let records: UplinkKeyLogRecord[];
+      try {
+        records = await this.requestKeyLog(before.seq + 1n);
+      } catch (err) {
+        retries += 1;
+        const message = err instanceof Error ? err.message : String(err);
+        console.warn(
+          `[uplink] key-log catch-up request failed local=${before.seq.toString()} err=${message} retry=${retries}`
+        );
+        if (retries > this.keyLogRetryLimit) {
+          this.tearDownLink('key-log-catch-up-failed');
+          return;
+        }
+        try {
+          await this.scheduler.sleep(backoffDelayMs(retries - 1, 200, 2_000));
+        } catch {
+          return;
+        }
+        continue;
+      }
       if (this.keyLogForked) return;
-      if (records.length === 0) break;
+      if (records.length === 0) {
+        retries += 1;
+        console.warn(
+          `[uplink] key-log catch-up empty res local=${before.seq.toString()} target=${target.seq.toString()} retry=${retries}`
+        );
+        if (retries > this.keyLogRetryLimit) {
+          this.tearDownLink('key-log-catch-up-failed');
+          return;
+        }
+        try {
+          await this.scheduler.sleep(backoffDelayMs(retries - 1, 200, 2_000));
+        } catch {
+          return;
+        }
+        continue;
+      }
       const sorted = [...records].sort((a, b) => (a.seq < b.seq ? -1 : a.seq > b.seq ? 1 : 0));
-      if (sorted[0] && sorted[0].seq !== before.seq + 1n) break;
+      if (sorted[0] && sorted[0].seq !== before.seq + 1n) {
+        console.warn(
+          `[uplink] key-log catch-up seq gap want=${(before.seq + 1n).toString()} got=${sorted[0].seq.toString()}`
+        );
+        this.tearDownLink('key-log-seq-gap');
+        return;
+      }
       const result = await this.keyLogApplier.applyMany(
         this.userId,
         sorted.map((row) => ({ bytes: row.bytes, sig: row.sig }))
       );
-      if (result.error) break;
+      if (result.error) {
+        console.warn(
+          `[uplink] key-log applyMany rejected: ${result.error} applied=${result.applied}`
+        );
+        return;
+      }
       local = await this.keyLogApplier.head(this.userId);
-      if (local.seq === before.seq) break;
+      if (local.seq === before.seq) {
+        console.warn('[uplink] key-log catch-up stalled: head did not advance');
+        return;
+      }
+      retries = 0;
     }
     if (this.keyLogForked) return;
     if (local.seq === target.seq && !bytesEqual(local.hash, target.hash)) {
       this.failFork(local, target);
       return;
     }
-    this.finishNodeList(list);
+    if (local.seq < target.seq) {
+      console.warn(
+        `[uplink] key-log catch-up incomplete local=${local.seq.toString()} target=${target.seq.toString()}`
+      );
+      return;
+    }
+    console.warn(
+      `[uplink] key-log catch-up result local=${local.seq.toString()} target=${target.seq.toString()}`
+    );
+    this.finishNodeList(epoch);
   }
 
   async queryHubHead(): Promise<{ seq: bigint; hash: Uint8Array } | null> {
@@ -550,28 +658,15 @@ export class UplinkClient {
     seq: bigint,
     timeoutMs = UPLINK_KEY_LOG_ACK_TIMEOUT_MS
   ): Promise<{ bytes: Uint8Array; sig: Uint8Array } | null> {
-    if (!this.link || this.state !== 'online' || this.pendingKeyLog) return null;
-    const records = await new Promise<UplinkKeyLogRecord[]>((resolve) => {
-      const timer = setTimeout(() => {
-        if (this.pendingKeyLog) {
-          this.pendingKeyLog = null;
-          resolve([]);
-        }
-      }, timeoutMs);
-      this.pendingKeyLog = {
-        resolve: (rows) => {
-          clearTimeout(timer);
-          resolve(rows);
-        },
-      };
-      try {
-        this.link?.ctl.send(encodeUplinkCtl({ t: 'key.log.req', from_seq: seq }));
-      } catch {
-        clearTimeout(timer);
-        this.pendingKeyLog = null;
-        resolve([]);
-      }
-    });
+    if (!this.link || this.state !== 'online' || this.pendingKeyLog || !this.authenticated) {
+      return null;
+    }
+    let records: UplinkKeyLogRecord[];
+    try {
+      records = await this.requestKeyLog(seq, timeoutMs);
+    } catch {
+      return null;
+    }
     const found = records.find((row) => row.seq === seq);
     return found ? { bytes: found.bytes, sig: found.sig } : null;
   }
@@ -621,27 +716,42 @@ export class UplinkClient {
     }
   }
 
-  private requestKeyLog(fromSeq: bigint): Promise<UplinkKeyLogRecord[]> {
-    if (!this.link || this.pendingKeyLog) return Promise.resolve([]);
-    return new Promise((resolve) => {
+  private requestKeyLog(
+    fromSeq: bigint,
+    timeoutMs = this.keyLogTimeoutMs
+  ): Promise<UplinkKeyLogRecord[]> {
+    if (!this.link || !this.authenticated) {
+      return Promise.reject(new Error('uplink-offline'));
+    }
+    if (this.pendingKeyLog) {
+      return Promise.reject(new Error('key-log-pending'));
+    }
+    const id = crypto.randomUUID();
+    console.warn(`[uplink] key.log.req from_seq=${fromSeq.toString()} id=${id}`);
+    return new Promise((resolve, reject) => {
       const timer = setTimeout(() => {
-        if (this.pendingKeyLog) {
+        if (this.pendingKeyLog?.id === id) {
           this.pendingKeyLog = null;
-          resolve([]);
+          reject(new Error('key-log-timeout'));
         }
-      }, UPLINK_KEY_LOG_ACK_TIMEOUT_MS);
+      }, timeoutMs);
       this.pendingKeyLog = {
+        id,
         resolve: (rows) => {
           clearTimeout(timer);
           resolve(rows);
         },
+        reject: (err) => {
+          clearTimeout(timer);
+          reject(err);
+        },
       };
       try {
-        this.link?.ctl.send(encodeUplinkCtl({ t: 'key.log.req', from_seq: fromSeq }));
-      } catch {
+        this.link?.ctl.send(encodeUplinkCtl({ t: 'key.log.req', from_seq: fromSeq, id }));
+      } catch (err) {
         clearTimeout(timer);
         this.pendingKeyLog = null;
-        resolve([]);
+        reject(err instanceof Error ? err : new Error('key-log-send-failed'));
       }
     });
   }
@@ -688,7 +798,7 @@ export class UplinkClient {
     this.stopHeartbeat();
     const pending = this.pendingKeyLog;
     this.pendingKeyLog = null;
-    pending?.resolve([]);
+    pending?.reject(new Error(reason));
     const acks = [...this.pendingAcks.entries()];
     this.pendingAcks.clear();
     for (const [id, waiter] of acks) {
@@ -697,6 +807,8 @@ export class UplinkClient {
     const link = this.link;
     this.link = null;
     this.authPhase = 'idle';
+    this.authenticated = false;
+    this.latestList = null;
     this.connectGeneration += 1;
     if (this.authWaiter) {
       this.authWaiter.reject(new Error(reason));
@@ -709,6 +821,14 @@ export class UplinkClient {
     } catch {
       // already closed
     }
+  }
+
+  private warnCtl(kind: 'decode' | 'handler', type: string, length: number, err: unknown): void {
+    const now = this.scheduler.now();
+    if (now - this.lastCtlWarnAt < UPLINK_CTL_WARN_INTERVAL_MS) return;
+    this.lastCtlWarnAt = now;
+    const message = err instanceof Error ? err.message : String(err);
+    console.warn(`[uplink] ctl ${kind} error type=${type || '?'} len=${length} err=${message}`);
   }
 
   private waitUntilClosed(signal: AbortSignal): Promise<void> {
@@ -727,6 +847,19 @@ export class UplinkClient {
       });
     });
   }
+}
+
+function ctlTypeHint(bytes: Uint8Array): string {
+  try {
+    const parsed: unknown = JSON.parse(new TextDecoder().decode(bytes));
+    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+      const t = (parsed as { t?: unknown }).t;
+      if (typeof t === 'string') return t;
+    }
+  } catch {
+    // ignore
+  }
+  return '';
 }
 
 function jsonText(value: unknown): string {

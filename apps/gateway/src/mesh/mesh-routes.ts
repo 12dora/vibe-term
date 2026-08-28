@@ -206,6 +206,7 @@ export class MeshRoutes {
   private collectNodes(req: Request | null): MeshNodeDto[] {
     const cookies = req ? parseCookies(req.headers.get('cookie')) : new Map<string, string>();
     const reach = this.deps.peers.listReach();
+    const hubOnline = this.deps.peers.listHubOnline?.() ?? new Set<string>();
     const certs = this.deps.userStore.listCerts().filter((c) => c.revokedLogSeq == null);
     const peers = this.deps.userStore.listPeers();
     const peerById = new Map(peers.map((p) => [p.nodeId, p]));
@@ -230,6 +231,7 @@ export class MeshRoutes {
       }
       const isSelf = id === this.deps.nodeId;
       const r = reach.get(id) ?? null;
+      const online = isSelf ? true : hubOnline.has(id) || r === 'lan' || r === 'relay';
       const loggedIn = isSelf
         ? cookies.has(nodeSessionCookieName(MESH_VIA_SELF))
         : cookies.has(nodeSessionCookieName(id));
@@ -249,7 +251,7 @@ export class MeshRoutes {
         id,
         name: peer?.name ?? (isSelf ? 'self' : id),
         publicKey: encodeBase64url(publicKey),
-        online: isSelf ? true : r === 'lan' || r === 'relay',
+        online,
         reach: r,
         version,
         direct_capable: peer?.directCapable ?? false,

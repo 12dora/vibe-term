@@ -114,6 +114,43 @@ describe('mesh-routes', () => {
     }
   });
 
+  test('GET /api/mesh/nodes keeps hub-list online without inventing reach', async () => {
+    const peers = new FakePeers();
+    peers.hubOnline.add(PEER_ID);
+    const mesh = await bootMesh({ peers });
+    try {
+      mesh.userStore.upsertCert({
+        nodeId: PEER_ID,
+        userId: mesh.boot.userId,
+        admitRecordSeq: 2,
+        certificateBytes: encodeCertificate({
+          domain: DOMAIN_CERTIFICATE,
+          uid: mesh.boot.userId,
+          node_id: hexToBytes(PEER_ID),
+          ed_pk: new Uint8Array(32).fill(4),
+          x25519_pk: new Uint8Array(32).fill(5),
+          enroll_pk: new Uint8Array(32).fill(6),
+          issued_at: 1n,
+        }),
+        certSig: new Uint8Array(64),
+        authorizationBytes: new Uint8Array(8),
+        authorizationSig: new Uint8Array(64),
+      });
+      const { sid } = await challengeAndLogin(mesh.runtime, mesh.boot);
+      const list = await call(mesh.runtime, 'http://localhost/api/mesh/nodes', {
+        headers: { cookie: `tmex_s_self=${sid}` },
+      });
+      const body = (await list.json()) as {
+        nodes: Array<{ id: string; online: boolean; reach: string | null }>;
+      };
+      const peer = body.nodes.find((n) => n.id === PEER_ID);
+      expect(peer?.online).toBe(true);
+      expect(peer?.reach).toBeNull();
+    } finally {
+      mesh.close();
+    }
+  });
+
   test('GET /api/mesh/nodes marks the persisted hub and broadcasts ENROLL_REDEEMED', async () => {
     const peers = new FakePeers();
     const mesh = await bootMesh({ peers });

@@ -63,6 +63,12 @@ export class FakePeers implements PeerLinkProvider {
     return this.reach;
   }
 
+  hubOnline = new Set<string>();
+
+  listHubOnline(): Set<string> {
+    return this.hubOnline;
+  }
+
   onNodeEvent(
     cb: (e: { nodeId: string; status: 'online' | 'offline' | 'revoked' }) => void
   ): () => void {

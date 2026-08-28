@@ -283,7 +283,12 @@ describe('mesh phase-2 integration', () => {
 
   async function enrollNodeB(
     a: Awaited<ReturnType<typeof bootHubA>>,
-    opts?: { linkFactory?: boolean; loadNative?: () => Promise<unknown> }
+    opts?: {
+      linkFactory?: boolean;
+      loadNative?: () => Promise<unknown>;
+      admitBeforeCopy?: boolean;
+      passUserId?: boolean;
+    }
   ) {
     const { db, close } = createMigratedAuthDb();
     const identity = await ensureNodeIdentity(new NodeIdentityStore(db));
@@ -341,16 +346,20 @@ describe('mesh phase-2 integration', () => {
     );
     expect(redeemed?.status).toBe(200);
 
-    const admitted = await a.keys.signAndApply(a.boot.userId, a.boot.rootKey, {
-      type: 'admit-node',
-      payload: encodeAdmitNodePayload({
-        authorization_bytes: enrollment.authorizationBytes,
-        authorization_sig: enrollment.authorizationSig,
-        certificate_bytes: cert.certificateBytes,
-        cert_sig: cert.certSig,
-      }),
+    const admitPayload = encodeAdmitNodePayload({
+      authorization_bytes: enrollment.authorizationBytes,
+      authorization_sig: enrollment.authorizationSig,
+      certificate_bytes: cert.certificateBytes,
+      cert_sig: cert.certSig,
     });
-    expect(admitted.ok).toBe(true);
+    const admitBeforeCopy = opts?.admitBeforeCopy !== false;
+    if (admitBeforeCopy) {
+      const admitted = await a.keys.signAndApply(a.boot.userId, a.boot.rootKey, {
+        type: 'admit-node',
+        payload: admitPayload,
+      });
+      expect(admitted.ok).toBe(true);
+    }
 
     const rows = a.keyLogStore.list(a.boot.userId);
     const head = a.keyLogStore.head(a.boot.userId);
@@ -428,11 +437,19 @@ describe('mesh phase-2 integration', () => {
         return new Response('not-found', { status: 404 });
       },
     });
+    if (!admitBeforeCopy) {
+      const admitted = await a.keys.signAndApply(a.boot.userId, a.boot.rootKey, {
+        type: 'admit-node',
+        payload: admitPayload,
+      });
+      expect(admitted.ok).toBe(true);
+    }
+
     const holderA: { mesh: MeshRuntime | null } = { mesh: a.mesh };
     const mesh = await createMeshRuntime({
       db,
       gateway,
-      userId: a.boot.userId,
+      ...(opts?.passUserId === false ? {} : { userId: a.boot.userId }),
       config: {
         roles: { hub: false, node: true },
         hubUrl: 'http://hub.example',
@@ -920,6 +937,18 @@ describe('mesh phase-2 integration', () => {
     await waitUntil(() => restarted.uplink.state === 'online', 5_000);
     const mode2 = await callMesh(restarted, 'http://a/api/auth/mode');
     expect(((await mode2.json()) as { hubNodeId: string | null }).hubNodeId).toBe(hub.mesh.nodeId);
+  }, 30_000);
+
+  test('redeem-before-admit node catch-up applies own cert without explicit userId', async () => {
+    const hub = await bootHubA({ linkFactory: false });
+    const node = await enrollNodeB(hub, {
+      linkFactory: false,
+      admitBeforeCopy: false,
+      passUserId: false,
+    });
+    expect(node.mesh.uplink.userId).toBe(hub.boot.userId);
+    await waitUntil(() => node.mesh.userStore.getCert(node.mesh.nodeId) != null, 8_000);
+    expect(node.mesh.userStore.getCert(hub.mesh.nodeId)).not.toBeNull();
   }, 30_000);
 });
 

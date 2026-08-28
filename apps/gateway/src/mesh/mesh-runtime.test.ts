@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from 'bun:test';
-import { encodeAdmitNodePayload } from '@tmex/shared/auth';
+import { encodeAdmitNodePayload, randomBytes } from '@tmex/shared/auth';
 import {
   KeyLogStore,
   NodeIdentityStore,
@@ -16,7 +16,7 @@ import type { WebSocketServer } from '../ws';
 import { GatewaySession } from '../ws/gateway-session';
 import { createFakeCarrier } from '../ws/test-helpers';
 import { SessionRegistry, createMeshRuntime } from './mesh-runtime';
-import { fakeSocketPair, waitUntil } from './test-support';
+import { fakeSocketPair, seedUser, waitUntil } from './test-support';
 
 function fakeGateway(db: AuthDb): GatewayRuntime {
   return {
@@ -207,6 +207,58 @@ describe('createMeshRuntime', () => {
     const res = await mesh.handleRequest(req, { upgrade: () => false });
     if (!(res instanceof Response)) throw new Error('expected Response');
     expect(await res.json()).toMatchObject({ mode: 'mesh' });
+  });
+
+  test('resolves userId from hub cert when this node has not been admitted yet', async () => {
+    const { db, close } = createMigratedAuthDb();
+    const userStore = new UserStore(db);
+    seedUser(userStore);
+    userStore.upsertCert({
+      nodeId: 'ff'.repeat(16),
+      userId: 'user-1',
+      admitRecordSeq: 2,
+      certificateBytes: randomBytes(8),
+      certSig: randomBytes(64),
+      authorizationBytes: randomBytes(8),
+      authorizationSig: randomBytes(64),
+      revokedLogSeq: null,
+    });
+    const [clientWs] = fakeSocketPair();
+    const mesh = await createMeshRuntime({
+      db,
+      gateway: fakeGateway(db),
+      config: {
+        roles: { hub: false, node: true },
+        hubUrl: 'http://127.0.0.1:9',
+        peerPort: 0,
+        stunServers: [],
+      },
+      wsFactory: () => clientWs,
+      startPeerServer: false,
+    });
+    fixtures.push({ close, stop: () => mesh.stop() });
+    expect(mesh.uplink.userId).toBe('user-1');
+    expect(userStore.getCert(mesh.nodeId)).toBeNull();
+  });
+
+  test('resolves userId from the sole users row when no certs exist yet', async () => {
+    const { db, close } = createMigratedAuthDb();
+    seedUser(new UserStore(db));
+    const [clientWs] = fakeSocketPair();
+    const mesh = await createMeshRuntime({
+      db,
+      gateway: fakeGateway(db),
+      config: {
+        roles: { hub: false, node: true },
+        hubUrl: 'http://127.0.0.1:9',
+        peerPort: 0,
+        stunServers: [],
+      },
+      wsFactory: () => clientWs,
+      startPeerServer: false,
+    });
+    fixtures.push({ close, stop: () => mesh.stop() });
+    expect(mesh.uplink.userId).toBe('user-1');
   });
 });
 

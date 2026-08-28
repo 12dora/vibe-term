@@ -61,6 +61,7 @@ export type NodeEventPayload = {
 export type PeerLinkProvider = {
   getLink(nodeId: string): Promise<LinkSession>;
   listReach(): Map<string, PeerReachKind>;
+  listHubOnline?(): ReadonlySet<string>;
   onNodeEvent(cb: (event: NodeEventPayload) => void): () => void;
 };
 
