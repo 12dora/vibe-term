@@ -49,6 +49,7 @@ export const PASSWORD = 'tmex-test';
 export class FakePeers implements PeerLinkProvider {
   readonly links = new Map<string, LinkSession>();
   readonly reach = new Map<string, 'lan' | 'relay' | null>();
+  readonly transport = new Map<string, 'ws-secure' | 'relay' | 'dc' | null>();
   readonly listeners = new Set<
     (e: { nodeId: string; status: 'online' | 'offline' | 'revoked' }) => void
   >();
@@ -61,6 +62,10 @@ export class FakePeers implements PeerLinkProvider {
 
   listReach(): Map<string, 'lan' | 'relay' | null> {
     return this.reach;
+  }
+
+  transportOf(nodeId: string): 'ws-secure' | 'relay' | 'dc' | null {
+    return this.transport.get(nodeId) ?? null;
   }
 
   hubOnline = new Set<string>();

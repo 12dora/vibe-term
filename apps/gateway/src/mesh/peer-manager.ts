@@ -21,7 +21,8 @@ import type { RtcSignalMessage } from './mesh-deps';
 import { handshakeRelay, handshakeWsDirect, parseOpenPayload } from './peer-protocol';
 import { PeerServer } from './peer-server';
 import type { RtcPeerManager } from './rtc';
-import type { RtcSignaling } from './rtc/ice';
+import { type RtcSignaling, encodeRtcWakeSdp, isRtcWakeSdp, peerRtcSession } from './rtc/ice';
+import { rtcLog } from './rtc/rtc-log';
 import { acceptHttpStream, acceptWsStream, classifyOpenPayload } from './stream-targets';
 import {
   type DispatchHttp,
@@ -50,6 +51,7 @@ export const PEER_RETIRE_MIN_MS = 5_000;
 export const PEER_RETIRE_QUIET_MS = 2_000;
 export const PEER_RETIRE_MAX_MS = 30_000;
 export const RTC_PEER_INBOX_MAX_MESSAGES = 32;
+export const PEER_RTC_WAKE_COOLDOWN_MS = 5_000;
 
 /** Connection initiated by the lexicographically smaller nodeId wins a simultaneous dial. */
 export function winningDialInitiator(selfNodeId: string, peerNodeId: string): string {
@@ -132,6 +134,16 @@ type UpgradeGate = {
   failures: number;
   coalesced: boolean;
   scheduled: boolean;
+};
+
+type WakeGate = {
+  pending: boolean;
+  nextEligibleAt: number;
+};
+
+type TransportWaiter = {
+  kind: PeerTransportKind;
+  resolve: (ok: boolean) => void;
 };
 
 type ParkedInbound = {
@@ -256,6 +268,8 @@ export class PeerManager {
   private readonly rtcInbox = new Map<string, RtcSignalMessage[]>();
   private readonly server: PeerServer | null;
   private readonly upgradeGate = new Map<string, UpgradeGate>();
+  private readonly wakeGate = new Map<string, WakeGate>();
+  private readonly transportWaiters = new Map<string, TransportWaiter[]>();
   private upgradeInflight = 0;
   private readonly upgradeWaiters: Array<() => void> = [];
   private upgradeScan: { clear: () => void } | null = null;
@@ -346,6 +360,11 @@ export class PeerManager {
     }
     this.rtcListeners.clear();
     this.rtcInbox.clear();
+    for (const [nodeId, waiters] of this.transportWaiters) {
+      for (const waiter of waiters) waiter.resolve(false);
+      this.transportWaiters.delete(nodeId);
+    }
+    this.wakeGate.clear();
   }
 
   getLive(nodeId: string): LinkSession | null {
@@ -360,6 +379,37 @@ export class PeerManager {
 
   transportOf(nodeId: string): PeerTransportKind | null {
     return this.live.get(nodeId)?.transport ?? null;
+  }
+
+  async waitForTransport(
+    nodeId: string,
+    kind: PeerTransportKind,
+    timeoutMs: number
+  ): Promise<boolean> {
+    if (this.transportOf(nodeId) === kind) return true;
+    if (this.stopped || timeoutMs <= 0) return false;
+    return new Promise((resolve) => {
+      let settled = false;
+      const finish = (ok: boolean) => {
+        if (settled) return;
+        settled = true;
+        const list = this.transportWaiters.get(nodeId);
+        if (list) {
+          const next = list.filter((row) => row !== waiter);
+          if (next.length > 0) this.transportWaiters.set(nodeId, next);
+          else this.transportWaiters.delete(nodeId);
+        }
+        resolve(ok);
+      };
+      const waiter: TransportWaiter = { kind, resolve: () => finish(true) };
+      const list = this.transportWaiters.get(nodeId) ?? [];
+      list.push(waiter);
+      this.transportWaiters.set(nodeId, list);
+      void this.scheduler.sleep(timeoutMs, this.stopAbort.signal).then(
+        () => finish(false),
+        () => finish(false)
+      );
+    });
   }
 
   sessionKeysOf(nodeId: string): { sendKey: Uint8Array; recvKey: Uint8Array } | null {
@@ -383,6 +433,11 @@ export class PeerManager {
       return;
     }
     if (!this.isTrusted(fromNodeId)) return;
+    if (isRtcWakeSdp(msg.sdp)) {
+      rtcLog('signal recv', { peer: fromNodeId, kind: 'wake' });
+      this.handleRtcWake(fromNodeId);
+      return;
+    }
     const listeners = this.rtcListeners.get(fromNodeId);
     if (listeners && listeners.size > 0) {
       for (const cb of listeners) {
@@ -438,6 +493,7 @@ export class PeerManager {
     this.forceCloseRetiring(nodeId, 'revoked');
     this.userStore.deletePeer(nodeId);
     this.upgradeGate.delete(nodeId);
+    this.wakeGate.delete(nodeId);
   }
 
   notifyPeerEndpointsChanged(nodeId?: string): void {
@@ -650,6 +706,56 @@ export class PeerManager {
     return true;
   }
 
+  private handleRtcWake(fromNodeId: string): void {
+    if (this.stopped) return;
+    if (this.live.get(fromNodeId)?.transport === 'dc') return;
+    if (!this.shouldTryDc(fromNodeId)) return;
+    if (this.pending.has(fromNodeId)) return;
+    const live = this.live.get(fromNodeId);
+    if (live && !this.wantsUpgrade(live)) return;
+    void this.getLink(fromNodeId).catch(() => undefined);
+  }
+
+  private maybeSendRtcWake(peerNodeId: string): void {
+    if (this.identity.nodeId.toLowerCase() < peerNodeId.toLowerCase()) return;
+    if (this.live.get(peerNodeId)?.transport === 'dc') return;
+    if (!this.shouldTryDc(peerNodeId)) return;
+    let gate = this.wakeGate.get(peerNodeId);
+    if (!gate) {
+      gate = { pending: false, nextEligibleAt: 0 };
+      this.wakeGate.set(peerNodeId, gate);
+    }
+    const now = this.scheduler.now();
+    if (gate.pending || now < gate.nextEligibleAt) return;
+    gate.pending = true;
+    gate.nextEligibleAt = now + PEER_RTC_WAKE_COOLDOWN_MS;
+    rtcLog('signal send', { peer: peerNodeId, kind: 'wake' });
+    this.sendRtcSignal(peerNodeId, {
+      rtcSession: peerRtcSession(this.identity.nodeId, peerNodeId),
+      from: 'node',
+      to: peerNodeId,
+      sdp: encodeRtcWakeSdp(),
+    });
+  }
+
+  private clearRtcWake(peerNodeId: string): void {
+    const gate = this.wakeGate.get(peerNodeId);
+    if (gate) gate.pending = false;
+  }
+
+  private notifyTransport(nodeId: string): void {
+    const current = this.transportOf(nodeId);
+    const waiters = this.transportWaiters.get(nodeId);
+    if (!waiters || waiters.length === 0) return;
+    const keep: TransportWaiter[] = [];
+    for (const waiter of waiters) {
+      if (current === waiter.kind) waiter.resolve(true);
+      else keep.push(waiter);
+    }
+    if (keep.length > 0) this.transportWaiters.set(nodeId, keep);
+    else this.transportWaiters.delete(nodeId);
+  }
+
   private signalingFor(peerNodeId: string): RtcSignaling {
     return {
       send: (msg) => this.sendRtcSignal(peerNodeId, msg),
@@ -715,8 +821,10 @@ export class PeerManager {
         return unsub;
       },
     };
+    const connectP = this.rtc.connectToPeer(nodeId, wrapped);
+    this.maybeSendRtcWake(nodeId);
     try {
-      const result = await abortable(this.rtc.connectToPeer(nodeId, wrapped), signal);
+      const result = await abortable(connectP, signal);
       if (this.stopped || gen !== this.generation) {
         this.releaseRtcAttempt(nodeId, unsub);
         unsub = null;
@@ -742,10 +850,13 @@ export class PeerManager {
     } catch (err) {
       this.releaseRtcAttempt(nodeId, unsub);
       throw err;
+    } finally {
+      this.clearRtcWake(nodeId);
     }
   }
 
   private async dial(nodeId: string): Promise<LinkSession> {
+    await Promise.resolve();
     const gen = this.currentGeneration();
     const signal = this.stopAbort.signal;
     const existingLive = this.live.get(nodeId);
@@ -759,16 +870,25 @@ export class PeerManager {
         : new NodeUnreachableError(nodeId, 'peer manager stopped');
     };
 
+    let dcError: unknown = null;
     if (PEER_TRANSPORT_RANK.dc > floor && this.shouldTryDc(nodeId)) {
       try {
         const dc = await this.dialDc(nodeId, gen, signal);
         if (dc) return dc;
       } catch (err) {
+        dcError = err;
         throwIfStopped(err);
       }
     }
 
     if (PEER_TRANSPORT_RANK['ws-secure'] > floor) {
+      if (dcError) {
+        rtcLog('dial failed', {
+          peer: nodeId,
+          reason: dcError instanceof Error ? dcError.message : String(dcError),
+          fallback: 'ws-secure',
+        });
+      }
       const ws = await this.dialWsSecure(nodeId, gen, signal);
       if (ws) return ws;
       throwIfStopped();
@@ -777,6 +897,19 @@ export class PeerManager {
     const already = this.live.get(nodeId);
     if (already) return already.session;
     throwIfStopped();
+
+    if (dcError != null || (PEER_TRANSPORT_RANK.dc > floor && this.shouldTryDc(nodeId))) {
+      rtcLog('dial failed', {
+        peer: nodeId,
+        reason:
+          dcError instanceof Error
+            ? dcError.message
+            : dcError
+              ? String(dcError)
+              : 'datachannel unavailable',
+        fallback: 'relay',
+      });
+    }
 
     try {
       const stream = await this.uplink.openRelay(nodeId);
@@ -1029,6 +1162,7 @@ export class PeerManager {
     this.armIdle(live);
     this.startPing(live);
     this.sendPeerStatus(live);
+    this.notifyTransport(peerNodeId);
     return session;
   }
 
@@ -1347,6 +1481,7 @@ export class PeerManager {
       this.live.delete(nodeId);
       this.finishRetire(live, reason);
     }
+    this.notifyTransport(nodeId);
     if (this.stopped || reason === 'revoked') {
       this.dropParked(nodeId, reason);
       return;

@@ -188,6 +188,51 @@ export function isEmptyCandidate(candidate: string): boolean {
   return candidate.trim().length === 0;
 }
 
+export const RTC_WAKE_TYPE = 'rtc.wake';
+
+export function encodeRtcWakeSdp(): string {
+  return JSON.stringify({ type: RTC_WAKE_TYPE });
+}
+
+export function isRtcWakeSdp(sdp: string | null | undefined): boolean {
+  if (!sdp) return false;
+  try {
+    const parsed = JSON.parse(sdp) as { type?: unknown; sdp?: unknown };
+    return parsed.type === RTC_WAKE_TYPE && parsed.sdp === undefined;
+  } catch {
+    return false;
+  }
+}
+
+const CANDIDATE_TYPE_RE = /\btyp\s+(host|srflx|prflx|relay)\b/i;
+const IPV4_RE = /\b(?:\d{1,3}\.){3}\d{1,3}\b/g;
+const IPV6_RE = /\b(?:[0-9a-f]{1,4}:){2,7}[0-9a-f]{0,4}\b/gi;
+
+export function parseIceCandidateType(candidate: string): string | null {
+  const match = CANDIDATE_TYPE_RE.exec(candidate);
+  return match?.[1]?.toLowerCase() ?? null;
+}
+
+export function maskIceAddress(addr: string): string {
+  if (/^\d{1,3}(?:\.\d{1,3}){3}$/.test(addr)) {
+    const parts = addr.split('.');
+    return `${parts[0]}.${parts[1]}.${parts[2]}.0`;
+  }
+  if (addr.includes(':')) {
+    const parts = addr.split(':').filter((part) => part.length > 0);
+    if (parts.length >= 3) return `${parts[0]}:${parts[1]}:${parts[2]}::`;
+    if (parts.length === 2) return `${parts[0]}:${parts[1]}::`;
+    if (parts.length === 1) return `${parts[0]}::`;
+  }
+  return addr;
+}
+
+export function maskIceCandidate(candidate: string): string {
+  return candidate
+    .replace(IPV4_RE, (ip) => maskIceAddress(ip))
+    .replace(IPV6_RE, (ip) => maskIceAddress(ip));
+}
+
 export type RtcSignaling = {
   send: (msg: RtcSignalMessage) => void;
   onMessage: (cb: (msg: RtcSignalMessage) => void) => () => void;

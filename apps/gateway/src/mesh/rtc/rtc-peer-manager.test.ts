@@ -450,4 +450,72 @@ describe('RtcPeerManager', () => {
     mgr.handleCarrierSwitchAck(session, 1, 'br:stale');
     mgr.handleCarrierSwitchAck(session, 1, 'br:from-accept');
   });
+
+  test('connectToPeer emits structured rtc logs without SDP or credentials', async () => {
+    const { left, right, a, b } = setup();
+    const lines: string[] = [];
+    const orig = console.log;
+    console.log = (...args: unknown[]) => {
+      lines.push(args.map(String).join(' '));
+    };
+    try {
+      const [sigA, sigB] = loopbackSignaling();
+      await Promise.all([left.connectToPeer(b.nodeId, sigA), right.connectToPeer(a.nodeId, sigB)]);
+    } finally {
+      console.log = orig;
+    }
+    const rtc = lines.filter((line) => line.startsWith('[mesh][rtc]'));
+    expect(rtc.some((line) => line.includes('dial start'))).toBe(true);
+    expect(
+      rtc.some((line) => line.includes('role=offerer') || line.includes('role=answerer'))
+    ).toBe(true);
+    expect(rtc.some((line) => line.includes('signal send') && line.includes('kind=sdp'))).toBe(
+      true
+    );
+    expect(rtc.some((line) => line.includes('datachannel open'))).toBe(true);
+    expect(rtc.join('\n')).not.toContain('ice-pwd');
+    expect(rtc.join('\n')).not.toMatch(/a=fingerprint:/);
+  });
+
+  test('ice failed summary lists local and remote candidate types', async () => {
+    const { left, a, b, fake } = setup();
+    await left.ready();
+    const lines: string[] = [];
+    const orig = console.log;
+    console.log = (...args: unknown[]) => {
+      lines.push(args.map(String).join(' '));
+    };
+    try {
+      const signaling: RtcSignaling = {
+        send() {},
+        onMessage(cb) {
+          cb({
+            rtcSession: `dc:${a.nodeId}:${b.nodeId}`,
+            from: 'node',
+            to: a.nodeId,
+            candidate: JSON.stringify({
+              candidate: 'candidate:2 1 UDP 1 203.0.113.44 9 typ srflx',
+              mid: '0',
+            }),
+          });
+          return () => {};
+        },
+      };
+      const connect = left.connectToPeer(b.nodeId, signaling);
+      await Bun.sleep(20);
+      const pc = fake.connections.find((row) => row.name.includes(b.nodeId.toLowerCase()));
+      expect(pc).toBeTruthy();
+      pc?.emitLocalCandidate('candidate:1 1 UDP 1 10.0.1.55 9 typ host', '0');
+      pc?.emitIceState('failed');
+      await expect(connect).rejects.toBeTruthy();
+    } finally {
+      console.log = orig;
+    }
+    const summary = lines.find((line) => line.includes('ice failed'));
+    expect(summary).toBeTruthy();
+    expect(summary).toContain(`peer=${b.nodeId}`);
+    expect(summary).toMatch(/local_types=\[.*host.*\]/);
+    expect(summary).toMatch(/remote_types=\[.*srflx.*\]/);
+    expect(summary).not.toContain('203.0.113.44');
+  });
 });

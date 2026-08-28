@@ -30,6 +30,7 @@ describe('mesh-routes', () => {
   test('GET /api/mesh/nodes merges certs, peer_cache, reach, loggedIn; includes self; drops revoked', async () => {
     const peers = new FakePeers();
     peers.reach.set(PEER_ID, 'lan');
+    peers.transport.set(PEER_ID, 'dc');
     const mesh = await bootMesh({ peers });
     try {
       mesh.userStore.upsertCert({
@@ -87,6 +88,7 @@ describe('mesh-routes', () => {
           publicKey: string;
           online: boolean;
           reach: string | null;
+          transport: 'ws-secure' | 'relay' | 'dc' | null;
           loggedIn: boolean;
           direct_capable: boolean;
           version: string | null;
@@ -104,6 +106,7 @@ describe('mesh-routes', () => {
       expect(peer?.name).toBe('studio');
       expect(peer?.online).toBe(true);
       expect(peer?.reach).toBe('lan');
+      expect(peer?.transport).toBe('dc');
       expect(peer?.loggedIn).toBe(true);
       expect(peer?.direct_capable).toBe(true);
       expect(peer?.version).toBe('1.2.3');

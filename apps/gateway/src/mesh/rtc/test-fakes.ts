@@ -154,9 +154,15 @@ export class FakePeerConnection implements PeerConnectionLike {
   localSdp: { type: string; sdp: string } | null = null;
   created: FakeDataChannel[] = [];
   inbound: FakeDataChannel[] = [];
+  pcState = 'new';
+  ice = 'new';
+  gathering = 'new';
   private readonly localDescCbs: Array<(sdp: string, type: string) => void> = [];
   private readonly localCandCbs: Array<(candidate: string, mid: string) => void> = [];
   private readonly dataChannelCbs: Array<(dc: DataChannelLike) => void> = [];
+  private readonly stateCbs: Array<(state: string) => void> = [];
+  private readonly iceCbs: Array<(state: string) => void> = [];
+  private readonly gatheringCbs: Array<(state: string) => void> = [];
   private remote: FakePeerConnection | null = null;
 
   constructor(name: string, _config: RtcIceConfig) {
@@ -210,9 +216,75 @@ export class FakePeerConnection implements PeerConnectionLike {
 
   addRemoteCandidate(_candidate: string, _mid: string): void {}
 
+  state(): string {
+    return this.pcState;
+  }
+
+  iceState(): string {
+    return this.ice;
+  }
+
+  gatheringState(): string {
+    return this.gathering;
+  }
+
+  onStateChange(cb: (state: string) => void): void {
+    this.stateCbs.push(cb);
+  }
+
+  onIceStateChange(cb: (state: string) => void): void {
+    this.iceCbs.push(cb);
+  }
+
+  onGatheringStateChange(cb: (state: string) => void): void {
+    this.gatheringCbs.push(cb);
+  }
+
+  getSelectedCandidatePair(): {
+    local: { address: string; type: string; candidate: string };
+    remote: { address: string; type: string; candidate: string };
+  } | null {
+    if (this.ice !== 'connected' && this.ice !== 'completed') return null;
+    return {
+      local: {
+        address: '127.0.0.1',
+        type: 'host',
+        candidate: 'candidate:1 1 UDP 1 127.0.0.1 9 typ host',
+      },
+      remote: {
+        address: '127.0.0.1',
+        type: 'host',
+        candidate: 'candidate:1 1 UDP 1 127.0.0.1 9 typ host',
+      },
+    };
+  }
+
+  emitIceState(state: string): void {
+    if (this.ice === state) return;
+    this.ice = state;
+    for (const cb of this.iceCbs) cb(state);
+  }
+
+  emitPeerState(state: string): void {
+    if (this.pcState === state) return;
+    this.pcState = state;
+    for (const cb of this.stateCbs) cb(state);
+  }
+
+  emitGatheringState(state: string): void {
+    if (this.gathering === state) return;
+    this.gathering = state;
+    for (const cb of this.gatheringCbs) cb(state);
+  }
+
+  emitLocalCandidate(candidate: string, mid = '0'): void {
+    for (const cb of this.localCandCbs) cb(candidate, mid);
+  }
+
   createDataChannel(label: string, _config?: unknown): FakeDataChannel {
     const dc = new FakeDataChannel(label);
     this.created.push(dc);
+    this.emitGatheringState('gathering');
     if (!this.localSdp) this.emitLocal('offer');
     this.tryOpen();
     this.remote?.tryOpen();
@@ -257,6 +329,8 @@ export class FakePeerConnection implements PeerConnectionLike {
   private tryOpen(): void {
     const remote = this.remote;
     if (!remote || !this.localSdp || !remote.localSdp) return;
+    if (!this.remoteFp) this.remoteFp = remote.fingerprint;
+    if (!remote.remoteFp) remote.remoteFp = this.fingerprint;
     const offerer =
       this.localSdp.type === 'offer' ? this : remote.localSdp.type === 'offer' ? remote : this;
     const answerer = offerer === this ? remote : this;
@@ -276,6 +350,12 @@ export class FakePeerConnection implements PeerConnectionLike {
       remoteDc.markOpen();
       for (const cb of answerer.dataChannelCbs) cb(remoteDc);
     }
+    this.emitGatheringState('complete');
+    remote.emitGatheringState('complete');
+    this.emitIceState('connected');
+    remote.emitIceState('connected');
+    this.emitPeerState('connected');
+    remote.emitPeerState('connected');
   }
 }
 

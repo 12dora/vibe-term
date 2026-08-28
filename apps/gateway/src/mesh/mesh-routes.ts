@@ -38,6 +38,7 @@ export type MeshNodeDto = {
   publicKey: string;
   online: boolean;
   reach: 'lan' | 'relay' | null;
+  transport: 'ws-secure' | 'relay' | 'dc' | null;
   version: string | null;
   direct_capable: boolean;
   inventory: unknown;
@@ -261,6 +262,7 @@ export class MeshRoutes {
         publicKey: encodeBase64url(publicKey),
         online,
         reach: r,
+        transport: isSelf ? null : (this.deps.peers.transportOf?.(id) ?? null),
         version,
         direct_capable: directCapable,
         inventory,

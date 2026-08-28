@@ -131,6 +131,10 @@ npx tmex-cli hub join https://tmex.example.com --token <join 串> [--name 书房
 
 表格：在线 / 离线、到达路径、版本、直连能力、登录状态、公钥指纹（sha256 前 16 hex）。self 行不能吊销当前入口。
 
+`GET /api/mesh/nodes` 除兼容字段 `reach`（`lan` / `relay` / `null`，`lan` 不区分 WS 与 DataChannel）外还有 `transport`：`ws-secure` | `relay` | `dc` | `null`。要确认跨 NAT 直连是否真的建起来，看对端 `transport === "dc"`，不要只看 `reach=lan` 或 `direct_capable=true`（后者只表示允许尝试 DC）。
+
+node↔node WebRTC 由 **nodeId 字典序较小的一侧发 offer**。业务请求只发生在较大 id 一侧时，该侧会经已认证的 hub `rtc.signal` 通道发一条 `sdp={"type":"rtc.wake"}` 唤醒较小 id 去 `getLink`；hub 只转发、不解释。同一对端同时只允许一条 pending wake，并有冷却；已是 `dc` 的忽略。`node.list` / 对端 `direct_capable` 翻成 true 时两边都会 `maybeUpgrade()`。已打开的 node↔node stream 留在旧链路上，**不会**随 carrier-switch 迁到 DC（carrier-switch 只服务浏览器 `sess`）；新 stream 在 `waitForTransport(id, 'dc')` 成功后再开才会走 DC。
+
 | 动作 | 行为 |
 |---|---|
 | 新增节点 | 凭据对话框（密码或本 origin 的 passkey）签 enrollment 授权，POST hub；展示 join 命令。签名者进入 5 分钟复用窗口 |
@@ -243,6 +247,7 @@ npx tmex-cli hub user reset
 | HTTP 504 `HUB_TIMEOUT` | `keylog?hub=sync` 等 hub ACK 超时，且对不上已提交记录 | 本地不落库；Nodes 页保留 pending，点「重试」。hub 恢复后再试 |
 | 503 `DIRECT_UNAVAILABLE` | native 未装载、authorize 登记满（64）或 RTC 不可用 | `direct enable`；看 `TMEX_NATIVE_DIR` 与 `native/manifest.json`；装不了的平台接受 relay |
 | 直连降级到 relay | ICE 失败、一端 `direct_capable=false`、或 `direct disable` | 预期行为。功能应仍可用，徽标变为 `relay` / `turn`。持续失败查 STUN/TURN 与 NAT |
+| 两边 `direct_capable=true` 但 `transport` 不是 `dc` | 只走了 hub relay / LAN WS，或升级尚未完成 | 日志前缀 `[mesh][rtc]`。应先有 `dial start role=offerer\|answerer`，较大 id 侧有 `kind=wake`，随后 `signal send/recv kind=sdp`。没有 `dial start` 说明没人拨号；只有 answerer 没有 wake/offer 是旧 bug。`ice failed … local_types=[host] remote_types=[…]` 且无 `srflx` → STUN 不可达；两边都有 `srflx` 仍失败 → 对称 NAT，需要 `TMEX_TURN_*`。`datachannel open` 才算 DC 握手成功。不要把完整 SDP / ICE 密码打进日志 |
 | `PROTOCOL_MISMATCH` | `/api/auth/mode` 缺 `rootEpoch` / `rootPublicKey` 等 mesh 必填字段 | 服务角色不是 mesh，或旧进程未起来 |
 | join 失败 `https` / `--insecure-local` | 非 HTTPS，或 production 用了 insecure | 换成系统信任链下的 HTTPS |
 | join `key log rejected` / `epoch_changed` | 签发 token 之后发生了 `rotate-root` / `reset-root` | 重新 enroll |

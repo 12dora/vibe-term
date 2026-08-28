@@ -34,6 +34,8 @@ import {
   encodeCandidateSignal,
   encodeSdpSignal,
   isEmptyCandidate,
+  maskIceAddress,
+  parseIceCandidateType,
   peerRtcSession,
 } from './ice';
 import type {
@@ -44,6 +46,13 @@ import type {
   PeerConnectionLike,
 } from './native';
 import { toUint8Array } from './native';
+import {
+  type IceCandidateTrace,
+  createIceCandidateTrace,
+  rtcLog,
+  rtcLogCandidate,
+  rtcLogIceFailed,
+} from './rtc-log';
 
 export const RTC_AUTHORIZE_TTL_MS = 120_000;
 export const RTC_AUTHORIZE_MAX = 64;
@@ -257,17 +266,25 @@ export class RtcPeerManager implements RtcFingerprintProvider {
     const peer = peerNodeId.toLowerCase();
     const offerer = self < peer;
     const rtcSession = peerRtcSession(self, peer);
-    const pc = new native.PeerConnection(
-      `${self}->${peer}`,
-      buildRtcIceConfig(this.iceConfigProvider())
-    );
+    const ice = this.iceConfigProvider();
+    const role = offerer ? 'offerer' : 'answerer';
+    rtcLog('dial start', {
+      peer: peerNodeId,
+      role,
+      stun_count: ice.stun.length,
+      turn_enabled: Boolean(ice.turn),
+    });
+    const pc = new native.PeerConnection(`${self}->${peer}`, buildRtcIceConfig(ice));
     this.trackPc(pc);
-    const unsubSignaling = this.bindSignaling(pc, signaling, rtcSession, peer);
+    const trace = createIceCandidateTrace();
+    const unsubDiag = attachPcDiagnostics(pc, peerNodeId, trace);
+    const unsubSignaling = this.bindSignaling(pc, signaling, rtcSession, peer, trace);
     const channelP = offerer
-      ? Promise.resolve(pc.createDataChannel(PEER_CHANNEL_LABEL))
-      : waitDataChannel(pc, this.handshakeTimeoutMs);
+      ? Promise.resolve(logCreatedChannel(pc.createDataChannel(PEER_CHANNEL_LABEL), peerNodeId))
+      : waitDataChannel(pc, this.handshakeTimeoutMs, undefined, peerNodeId);
     try {
       const channel = await withTimeout(channelP, this.handshakeTimeoutMs, 'datachannel missing');
+      bindChannelDiagnostics(channel, peerNodeId);
       await waitChannelOpen(channel, this.handshakeTimeoutMs);
       const localFp = await this.waitLocalFingerprint(pc);
       const hs = await handshakeDataChannel({
@@ -281,10 +298,12 @@ export class RtcPeerManager implements RtcFingerprintProvider {
       const link = new DataChannelLink(channel);
       if (hs.peerNodeId !== peer) {
         unsubSignaling();
+        unsubDiag();
         throw new PeerHandshakeError('protocol', 'connected peer node_id mismatch');
       }
       link.onClose(() => {
         unsubSignaling();
+        unsubDiag();
         this.untrackAndClose(pc);
       });
       return {
@@ -294,7 +313,12 @@ export class RtcPeerManager implements RtcFingerprintProvider {
         role: offerer ? 'initiator' : 'acceptor',
       };
     } catch (err) {
+      rtcLog('dial failed', {
+        peer: peerNodeId,
+        reason: err instanceof Error ? err.message : String(err),
+      });
       unsubSignaling();
+      unsubDiag();
       this.untrackAndClose(pc);
       throw err;
     }
@@ -507,9 +531,12 @@ export class RtcPeerManager implements RtcFingerprintProvider {
     pc: PeerConnectionLike,
     signaling: RtcSignaling,
     rtcSession: string,
-    to: string
+    to: string,
+    trace?: IceCandidateTrace
   ): () => void {
+    const iceTrace = trace ?? createIceCandidateTrace();
     pc.onLocalDescription((sdp, type) => {
+      rtcLog('signal send', { peer: to, kind: 'sdp', sdp_type: type });
       signaling.send({
         rtcSession,
         from: 'node',
@@ -519,6 +546,7 @@ export class RtcPeerManager implements RtcFingerprintProvider {
     });
     pc.onLocalCandidate((candidate, mid) => {
       if (isEmptyCandidate(candidate)) return;
+      rtcLogCandidate('send', to, candidate, iceTrace);
       signaling.send({
         rtcSession,
         from: 'node',
@@ -529,11 +557,15 @@ export class RtcPeerManager implements RtcFingerprintProvider {
     const apply = (msg: RtcSignalMessage) => {
       if (msg.sdp) {
         const decoded = decodeSdpSignal(msg.sdp);
-        if (decoded) pc.setRemoteDescription(decoded.sdp, decoded.type);
+        if (decoded) {
+          rtcLog('signal recv', { peer: to, kind: 'sdp', sdp_type: decoded.type });
+          pc.setRemoteDescription(decoded.sdp, decoded.type);
+        }
       }
       if (msg.candidate) {
         const decoded = decodeCandidateSignal(msg.candidate);
         if (decoded && !isEmptyCandidate(decoded.candidate)) {
+          rtcLogCandidate('recv', to, decoded.candidate, iceTrace);
           pc.addRemoteCandidate(decoded.candidate, decoded.mid);
         }
       }
@@ -542,15 +574,76 @@ export class RtcPeerManager implements RtcFingerprintProvider {
   }
 }
 
+function logCreatedChannel(dc: DataChannelLike, peer: string): DataChannelLike {
+  rtcLog('datachannel created', { peer, label: dc.getLabel?.() ?? PEER_CHANNEL_LABEL });
+  return dc;
+}
+
+function attachPcDiagnostics(
+  pc: PeerConnectionLike,
+  peer: string,
+  trace: IceCandidateTrace
+): () => void {
+  let iceFailedLogged = false;
+  const logIceFailed = () => {
+    if (iceFailedLogged) return;
+    iceFailedLogged = true;
+    rtcLogIceFailed(peer, trace);
+  };
+  pc.onGatheringStateChange?.((state) => {
+    rtcLog('gathering', { peer, state });
+  });
+  pc.onIceStateChange?.((state) => {
+    rtcLog('ice', { peer, state });
+    if (state === 'failed') logIceFailed();
+    if (state === 'connected' || state === 'completed') {
+      const pair = pc.getSelectedCandidatePair?.();
+      if (pair) {
+        rtcLog('selected pair', {
+          peer,
+          local_type:
+            pair.local?.type ?? parseIceCandidateType(pair.local?.candidate ?? '') ?? undefined,
+          remote_type:
+            pair.remote?.type ?? parseIceCandidateType(pair.remote?.candidate ?? '') ?? undefined,
+          local_addr: pair.local?.address ? maskIceAddress(pair.local.address) : undefined,
+          remote_addr: pair.remote?.address ? maskIceAddress(pair.remote.address) : undefined,
+        });
+      }
+    }
+  });
+  pc.onStateChange?.((state) => {
+    rtcLog('peer state', { peer, state });
+    if (state === 'failed') logIceFailed();
+  });
+  return () => {
+    iceFailedLogged = true;
+  };
+}
+
+function bindChannelDiagnostics(dc: DataChannelLike, peer: string): void {
+  const label = dc.getLabel?.() ?? PEER_CHANNEL_LABEL;
+  dc.onOpen(() => {
+    rtcLog('datachannel open', { peer, label });
+  });
+  dc.onError((err) => {
+    rtcLog('datachannel error', { peer, label, err });
+  });
+  dc.onClosed(() => {
+    rtcLog('datachannel closed', { peer, label });
+  });
+}
+
 function waitDataChannel(
   pc: PeerConnectionLike,
   timeoutMs: number,
-  label?: string
+  label?: string,
+  peer?: string
 ): Promise<DataChannelLike> {
   return withTimeout(
     new Promise((resolve) => {
       pc.onDataChannel((dc) => {
         if (label && dc.getLabel && dc.getLabel() !== label) return;
+        if (peer) rtcLog('datachannel received', { peer, label: dc.getLabel?.() ?? label ?? '' });
         resolve(dc);
       });
     }),
@@ -560,7 +653,9 @@ function waitDataChannel(
 }
 
 function waitChannelOpen(dc: DataChannelLike, timeoutMs: number): Promise<void> {
-  if (dc.isOpen()) return Promise.resolve();
+  if (dc.isOpen()) {
+    return Promise.resolve();
+  }
   return withTimeout(
     new Promise((resolve, reject) => {
       dc.onOpen(() => resolve());

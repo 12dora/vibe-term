@@ -143,6 +143,8 @@ export interface MeshNode {
   online: boolean;
   /** `lan` / `relay` / null（不可达） */
   reach: string | null;
+  /** Actual peer-link transport. `reach` stays lan/relay/null for compatibility. */
+  transport?: 'ws-secure' | 'relay' | 'dc' | null;
   version: string | null;
   direct_capable: boolean;
   inventory?: unknown;

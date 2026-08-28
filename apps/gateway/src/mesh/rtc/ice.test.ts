@@ -5,8 +5,13 @@ import {
   decodeCandidateSignal,
   decodeSdpSignal,
   encodeCandidateSignal,
+  encodeRtcWakeSdp,
   encodeSdpSignal,
   isEmptyCandidate,
+  isRtcWakeSdp,
+  maskIceAddress,
+  maskIceCandidate,
+  parseIceCandidateType,
   peerRtcSession,
 } from './ice';
 
@@ -79,5 +84,36 @@ describe('ice helpers', () => {
   test('peerRtcSession is stable regardless of argument order', () => {
     expect(peerRtcSession('aa', 'bb')).toBe(peerRtcSession('bb', 'aa'));
     expect(peerRtcSession('aa', 'bb')).toBe('dc:aa:bb');
+  });
+
+  test('wake sdp is distinguishable and does not decode as a real description', () => {
+    const wake = encodeRtcWakeSdp();
+    expect(isRtcWakeSdp(wake)).toBe(true);
+    expect(decodeSdpSignal(wake)).toBeNull();
+    expect(isRtcWakeSdp(encodeSdpSignal({ type: 'offer', sdp: 'v=0' }))).toBe(false);
+    expect(isRtcWakeSdp(null)).toBe(false);
+  });
+
+  test('parses ICE candidate type and masks addresses to /24 or last octet', () => {
+    expect(parseIceCandidateType('candidate:1 1 UDP 1 10.0.1.55 9 typ host')).toBe('host');
+    expect(
+      parseIceCandidateType(
+        'candidate:2 1 UDP 1 203.0.113.44 3478 typ srflx raddr 10.0.1.55 rport 9'
+      )
+    ).toBe('srflx');
+    expect(parseIceCandidateType('candidate:3 1 UDP 1 192.0.2.8 9 typ prflx')).toBe('prflx');
+    expect(parseIceCandidateType('candidate:4 1 UDP 1 198.51.100.2 9 typ relay')).toBe('relay');
+    expect(maskIceAddress('10.0.1.55')).toBe('10.0.1.0');
+    expect(maskIceAddress('203.0.113.44')).toBe('203.0.113.0');
+    expect(maskIceAddress('2001:db8:abcd:0012:0000:0000:0000:00ff')).toBe('2001:db8:abcd::');
+    expect(
+      maskIceCandidate('candidate:2 1 UDP 1 203.0.113.44 3478 typ srflx raddr 10.0.1.55 rport 9')
+    ).toContain('203.0.113.0');
+    expect(
+      maskIceCandidate('candidate:2 1 UDP 1 203.0.113.44 3478 typ srflx raddr 10.0.1.55 rport 9')
+    ).not.toContain('203.0.113.44');
+    expect(
+      maskIceCandidate('candidate:2 1 UDP 1 203.0.113.44 3478 typ srflx raddr 10.0.1.55 rport 9')
+    ).not.toContain('10.0.1.55');
   });
 });

@@ -58,6 +58,110 @@ function dummyUplink(
   return client;
 }
 
+const SMALL_NODE_ID = new Uint8Array(16).fill(0x01);
+const LARGE_NODE_ID = new Uint8Array(16).fill(0xff);
+
+async function setupDirectRtcPair(
+  fixtures: Array<{ close: () => void; stop?: () => Promise<void> }>,
+  opts?: { smallDirectCapable?: boolean; largeDirectCapable?: boolean }
+) {
+  const { db, close } = createMigratedAuthDb();
+  fixtures.push({ close });
+  const store = new UserStore(db);
+  seedUser(store);
+  const small = seedNodeIdentity(store, 'user-1', { nodeId: SMALL_NODE_ID });
+  const large = seedNodeIdentity(store, 'user-1', { nodeId: LARGE_NODE_ID });
+  const upsert = (nodeId: string, name: string, directCapable: boolean) => {
+    store.upsertPeer({
+      nodeId,
+      name,
+      endpointsJson: '[]',
+      inventoryJson: '{}',
+      directCapable,
+      lastSeenAt: Date.now(),
+      listVersion: 1,
+    });
+  };
+  upsert(small.nodeId, 'small', opts?.smallDirectCapable ?? true);
+  upsert(large.nodeId, 'large', opts?.largeDirectCapable ?? true);
+  const { createFakeNativeModule } = await import('./rtc/test-fakes');
+  const { RtcPeerManager } = await import('./rtc');
+  const fake = createFakeNativeModule();
+  const ice = () => ({ stun: ['stun:stun.example:3478'] as string[], turn: null });
+  const rtcSmall = new RtcPeerManager({
+    loadNative: async () => fake.module,
+    iceConfigProvider: ice,
+    identity: small,
+    userStore: store,
+    handshakeTimeoutMs: 2_000,
+  });
+  const rtcLarge = new RtcPeerManager({
+    loadNative: async () => fake.module,
+    iceConfigProvider: ice,
+    identity: large,
+    userStore: store,
+    handshakeTimeoutMs: 2_000,
+  });
+  fixtures.push({ close: () => rtcSmall.close() });
+  fixtures.push({ close: () => rtcLarge.close() });
+  await rtcSmall.ready();
+  await rtcLarge.ready();
+  const holderSmall: { manager: PeerManager | null } = { manager: null };
+  const holderLarge: { manager: PeerManager | null } = { manager: null };
+  const wakes: string[] = [];
+  const forward = (
+    target: { manager: PeerManager | null },
+    fromId: string,
+    msg: {
+      t: string;
+      rtcSession?: string;
+      from?: string;
+      to?: string;
+      sdp?: string;
+      candidate?: string;
+    }
+  ) => {
+    if (msg.t !== 'rtc.signal' || !target.manager) return;
+    if (typeof msg.sdp === 'string' && msg.sdp.includes('rtc.wake')) {
+      wakes.push(fromId);
+    }
+    target.manager.receiveRtcSignal(fromId, {
+      rtcSession: msg.rtcSession ?? '',
+      from: msg.from === 'browser' ? 'browser' : 'node',
+      to: msg.to ?? '',
+      sdp: msg.sdp ?? null,
+      candidate: msg.candidate ?? null,
+    });
+  };
+  const uplinkSmall = dummyUplink(small, store);
+  uplinkSmall.state = 'online';
+  uplinkSmall.sendCtl = (msg) => forward(holderLarge, small.nodeId, msg as never);
+  const uplinkLarge = dummyUplink(large, store);
+  uplinkLarge.state = 'online';
+  uplinkLarge.sendCtl = (msg) => forward(holderSmall, large.nodeId, msg as never);
+  const managerSmall = new PeerManager({
+    identity: small,
+    userStore: store,
+    uplink: uplinkSmall,
+    peerPort: 0,
+    startServer: false,
+    rtc: rtcSmall,
+  });
+  const managerLarge = new PeerManager({
+    identity: large,
+    userStore: store,
+    uplink: uplinkLarge,
+    peerPort: 0,
+    startServer: false,
+    rtc: rtcLarge,
+  });
+  holderSmall.manager = managerSmall;
+  holderLarge.manager = managerLarge;
+  fixtures.push({ close, stop: () => managerSmall.stop() });
+  fixtures.push({ close, stop: () => managerLarge.stop() });
+  return { store, small, large, managerSmall, managerLarge, wakes };
+}
+
 function echoQuiesceCaps(session: import('@tmex/shared/link').LinkSession): void {
   let helloReplied = false;
   session.ctl.onMessage((bytes) => {
@@ -992,5 +1096,78 @@ describe('PeerManager', () => {
     managerA.notifyPeerEndpointsChanged(peer.nodeId);
     await waitUntil(() => dials === 2, 2_000);
     expect(managerA.transportOf(peer.nodeId)).toBe('relay');
+  });
+
+  test('single-sided getLink from the larger node id still establishes dc via wake', async () => {
+    const { small, large, managerSmall, managerLarge, wakes } = await setupDirectRtcPair(fixtures);
+    expect(large.nodeId.toLowerCase() > small.nodeId.toLowerCase()).toBe(true);
+    const link = await managerLarge.getLink(small.nodeId);
+    expect(link).toBeTruthy();
+    await waitUntil(() => managerLarge.transportOf(small.nodeId) === 'dc', 5_000);
+    await waitUntil(() => managerSmall.transportOf(large.nodeId) === 'dc', 5_000);
+    expect(managerLarge.transportOf(small.nodeId)).toBe('dc');
+    expect(managerSmall.transportOf(large.nodeId)).toBe('dc');
+    expect(wakes.length).toBeGreaterThanOrEqual(1);
+    expect(wakes.every((from) => from === large.nodeId)).toBe(true);
+  });
+
+  test('rtc wake is coalesced and ignored once the peer is already dc', async () => {
+    const { small, large, managerLarge, wakes } = await setupDirectRtcPair(fixtures);
+    const first = managerLarge.getLink(small.nodeId);
+    const second = managerLarge.getLink(small.nodeId);
+    await Promise.all([first, second]);
+    await waitUntil(() => managerLarge.transportOf(small.nodeId) === 'dc', 5_000);
+    const sent = wakes.length;
+    expect(sent).toBe(1);
+    managerLarge.receiveRtcSignal(small.nodeId, {
+      rtcSession: `dc:${small.nodeId}:${large.nodeId}`,
+      from: 'node',
+      to: large.nodeId,
+      sdp: JSON.stringify({ type: 'rtc.wake' }),
+    });
+    await Bun.sleep(20);
+    expect(wakes.length).toBe(sent);
+    expect(managerLarge.transportOf(small.nodeId)).toBe('dc');
+  });
+
+  test('waitForTransport resolves early for dc and returns false on timeout', async () => {
+    const { small, large, managerLarge } = await setupDirectRtcPair(fixtures);
+    const timedOut = await managerLarge.waitForTransport(small.nodeId, 'dc', 30);
+    expect(timedOut).toBe(false);
+    const waiting = managerLarge.waitForTransport(small.nodeId, 'dc', 5_000);
+    await managerLarge.getLink(small.nodeId);
+    expect(await waiting).toBe(true);
+    expect(await managerLarge.waitForTransport(small.nodeId, 'dc', 50)).toBe(true);
+  });
+
+  test('flipping direct_capable schedules upgrade so a larger-id live relay still reaches dc', async () => {
+    const { store, small, large, managerSmall, managerLarge } = await setupDirectRtcPair(fixtures, {
+      smallDirectCapable: false,
+      largeDirectCapable: true,
+    });
+    const [relayLarge, relaySmall] = createInMemoryLinkPair();
+    echoQuiesceCaps(relaySmall);
+    echoQuiesceCaps(relayLarge);
+    expect(managerLarge.adoptLink(small.nodeId, relayLarge, 'relay', large.nodeId)).toBe(
+      relayLarge
+    );
+    expect(managerSmall.adoptLink(large.nodeId, relaySmall, 'relay', large.nodeId)).toBe(
+      relaySmall
+    );
+    await waitUntil(() => managerLarge.quiesceCapableOf(small.nodeId));
+    await waitUntil(() => managerSmall.quiesceCapableOf(large.nodeId));
+    expect(managerLarge.transportOf(small.nodeId)).toBe('relay');
+    store.upsertPeer({
+      nodeId: small.nodeId,
+      name: 'small',
+      endpointsJson: '[]',
+      inventoryJson: '{}',
+      directCapable: true,
+      lastSeenAt: Date.now(),
+      listVersion: 2,
+    });
+    managerLarge.notifyPeerEndpointsChanged(small.nodeId);
+    await waitUntil(() => managerLarge.transportOf(small.nodeId) === 'dc', 5_000);
+    await waitUntil(() => managerSmall.transportOf(large.nodeId) === 'dc', 5_000);
   });
 });

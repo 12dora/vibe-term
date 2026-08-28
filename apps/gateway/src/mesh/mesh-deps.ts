@@ -49,6 +49,8 @@ export type MeshRoles = TmexRoles;
 
 export type PeerReachKind = 'lan' | 'relay' | null;
 
+export type PeerTransportKind = 'ws-secure' | 'relay' | 'dc';
+
 export type NodeEventStatus = 'online' | 'offline' | 'revoked';
 
 export type NodeEventPayload = {
@@ -65,6 +67,7 @@ export type PeerLinkProvider = {
   getLink(nodeId: string): Promise<LinkSession>;
   listReach(): Map<string, PeerReachKind>;
   listHubOnline?(): ReadonlySet<string>;
+  transportOf?(nodeId: string): PeerTransportKind | null;
   onNodeEvent(cb: (event: NodeEventPayload) => void): () => void;
 };
 

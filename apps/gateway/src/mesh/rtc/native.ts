@@ -52,6 +52,11 @@ export interface DataChannelLike {
   getLabel?(): string;
 }
 
+export type IceCandidatePairLike = {
+  local?: { address?: string; type?: string; candidate?: string };
+  remote?: { address?: string; type?: string; candidate?: string };
+};
+
 export interface PeerConnectionLike {
   close(): void;
   setLocalDescription?(type?: string, init?: unknown): void;
@@ -64,6 +69,13 @@ export interface PeerConnectionLike {
   onLocalCandidate(cb: (candidate: string, mid: string) => void): void;
   onDataChannel(cb: (dc: DataChannelLike) => void): void;
   maxMessageSize(): number;
+  state?(): string;
+  iceState?(): string;
+  gatheringState?(): string;
+  onStateChange?(cb: (state: string) => void): void;
+  onIceStateChange?(cb: (state: string) => void): void;
+  onGatheringStateChange?(cb: (state: string) => void): void;
+  getSelectedCandidatePair?(): IceCandidatePairLike | null;
 }
 
 export interface NodeDatachannelModule {

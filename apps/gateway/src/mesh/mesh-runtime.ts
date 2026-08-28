@@ -937,6 +937,7 @@ export async function createMeshRuntime(opts: CreateMeshRuntimeOptions): Promise
   const peers: PeerLinkProvider = {
     getLink: (nodeId) => peerManager.getLink(nodeId),
     listReach: () => peerManager.listReach(),
+    transportOf: (nodeId) => peerManager.transportOf(nodeId),
     listHubOnline: () => {
       const ids = new Set<string>();
       if (!hubPresenceLive || uplink.state !== 'online' || !lastNodeList) return ids;
