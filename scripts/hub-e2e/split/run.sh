@@ -345,6 +345,33 @@ sync_clocks() {
   return 0
 }
 
+# 直连/TURN 依赖 UDP 能到公网 hub 机；macOS 上 TUN 代理会把 UDP 吞掉，绕过办法是加一条主机路由。
+preflight_udp() {
+  local target_port="${1:-3478}"
+  local probe
+  probe="$(docker exec tmex-split-driver bun /workspace/scripts/hub-e2e/split/udp-probe.ts "${HUB_IP}" "${target_port}" 2>/dev/null || true)"
+  if [[ "${probe}" == reply* ]]; then
+    log "udp preflight: ${HUB_IP}:${target_port} reachable (${probe})"
+    return 0
+  fi
+  log "WARNING: udp preflight: no STUN/TURN reply from ${HUB_IP}:${target_port}; direct path (D/H/I) will stay on relay"
+  if [[ "$(uname -s)" == "Darwin" ]]; then
+    local iface gateway
+    iface="$(route -n get "${HUB_IP}" 2>/dev/null | awk '/interface:/ {print $2}')"
+    gateway="$(netstat -rn -f inet 2>/dev/null | awk '$1 == "default" && $NF !~ /utun/ {print $2; exit}')"
+    if [[ "${iface}" == utun* && -n "${gateway}" ]]; then
+      log "default route goes through ${iface} (TUN proxy). Bypass it with a host route:"
+      log "    sudo route -n add -host ${HUB_IP} ${gateway}      # remove later: sudo route -n delete -host ${HUB_IP}"
+      if sudo -n route -n add -host "${HUB_IP}" "${gateway}" >/dev/null 2>&1; then
+        log "host route added (passwordless sudo); re-probing"
+        preflight_udp "${target_port}"
+        return $?
+      fi
+    fi
+  fi
+  return 1
+}
+
 # ---------- setup ----------
 log "rsync harness to remote"
 rsync -az -e "${RSYNC_SSH}" \
@@ -359,6 +386,7 @@ TMEX_TARBALL="${TARBALL}" TMEX_E2E_SKIP_BUILD="${TMEX_E2E_SKIP_BUILD:-1}" \
   bash "${ROOT}/setup-local.sh"
 
 sync_clocks || log "clock sync imperfect, login may hit DELEGATION_ISSUED_IN_FUTURE"
+preflight_udp "${TMEX_E2E_UDP_PROBE_PORT:-3478}" || true
 
 # ---------- A ----------
 set +e

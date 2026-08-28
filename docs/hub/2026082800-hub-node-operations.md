@@ -274,6 +274,8 @@ npx tmex-cli hub user reset
 4. 文件直连 `bulk` 失败即整次改走 REST 重传。
 5. IPv6 ICE 候选未做现场实测。
 6. `TMEX_TRUST_PROXY` / `TMEX_TURN_*` / `TMEX_PEER_BIND_HOST` 不会被 `init` 写入，必须手改 `app.env`。
+7. TURN 只支持 UDP：node 侧 ICE 由 node-datachannel（libjuice）实现，`turn:…?transport=tcp` / `turns:` 不会产生 relay 候选（2026-08-28 实测，两端均无 relay 候选）。hub 机若被上游过滤入站 UDP（部分 VPS 默认如此，`tcpdump` 在网卡上看不到任何 UDP），则 node↔hub 机的直连与 TURN 兜底都不可用，只能走 relay；需换有 UDP 入站的机器部署 TURN。
+8. 对称 NAT（同一 socket 对不同目标映射出不同端口，如 Docker Desktop 出口）之间无法打洞，必须 TURN；macOS 上 TUN 模式代理会吞掉 UDP，做直连验证时要给 hub/TURN 的 IP 加主机路由绕过（`sudo route -n add -host <ip> <网关>`）。
 
 ## 参考
 
