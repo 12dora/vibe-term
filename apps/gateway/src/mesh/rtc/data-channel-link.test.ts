@@ -2,7 +2,7 @@ import { describe, expect, test } from 'bun:test';
 import { FrameOp, LinkMux, encodeFrame, encodeWindowPayload } from '@tmex/shared/link';
 import { fanoutDataChannel } from './channel-fanout';
 import { DC_HIGH_WATER_BYTES } from './data-channel-carrier';
-import { DataChannelLink } from './data-channel-link';
+import { DC_FLUSH_RETRY_MS, DataChannelLink } from './data-channel-link';
 import { FRAGMENT_HEADER_SIZE, FRAGMENT_PAYLOAD_SIZE } from './fragmenter';
 import { parseLivenessChunk } from './liveness';
 import { FakeClock, pairDataChannels } from './test-fakes';
@@ -171,6 +171,7 @@ describe('DataChannelLink', () => {
     clock.advance(30);
     expect(app).toEqual([]);
     expect(a.sent.some((chunk) => parseLivenessChunk(chunk) === 'ping')).toBe(true);
+    clock.advance(DC_FLUSH_RETRY_MS);
     expect(b.sent.some((chunk) => parseLivenessChunk(chunk) === 'pong')).toBe(true);
     left.close();
     right.close();
@@ -326,6 +327,7 @@ describe('DataChannelLink', () => {
 
     a.buffered = 0;
     a.emitLow();
+    clock.advance(DC_FLUSH_RETRY_MS);
     await dataSent;
     expect(dataResolved).toBe(true);
     left.close();
@@ -417,6 +419,58 @@ describe('DataChannelLink', () => {
     expect((await extraRead).value?.bytes).toEqual(new Uint8Array([2]));
     out.end();
     inn.end();
+    left.close();
+    right.close();
+  });
+
+  test('treats a native send that returns false but raises bufferedAmount as accepted', async () => {
+    const [a, b] = pairDataChannels('peer');
+    a.acceptButReturnFalse = true;
+    const left = new DataChannelLink(a, { liveness: false });
+    const right = new DataChannelLink(b, { liveness: false });
+    const payload = new Uint8Array(FRAGMENT_PAYLOAD_SIZE + 4).fill(3);
+    await left.send(payload);
+    expect(a.sent.length).toBe(2);
+    expect(a.buffered).toBe(payload.byteLength + 2 * FRAGMENT_HEADER_SIZE);
+    left.close();
+    right.close();
+  });
+
+  test('WINDOW from a keeping-up reader still transmits when native onMessage has not unwound', async () => {
+    const [a, b] = pairDataChannels('peer');
+    a.dropSendsFromReceiveCallback = true;
+    b.dropSendsFromReceiveCallback = true;
+    a.holdReceiveCallbackMs = 1;
+    b.holdReceiveCallbackMs = 1;
+    const left = new DataChannelLink(a, { liveness: false });
+    const right = new DataChannelLink(b, { liveness: false });
+    const muxA = new LinkMux(left, { role: 'initiator', streamWindow: 1024 });
+    const muxB = new LinkMux(right, { role: 'acceptor', streamWindow: 1024 });
+    const incoming = new Promise<import('@tmex/shared/link').LinkStream>((resolve) =>
+      muxB.onStream(resolve)
+    );
+    const out = await muxA.openStream(new Uint8Array([1]));
+    const inn = await incoming;
+    const reader = inn.readable.getReader();
+
+    const got: Uint8Array[] = [];
+    const readP = (async () => {
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        if (value) got.push(value.bytes);
+      }
+    })();
+
+    await out.write(new Uint8Array(1024).fill(1));
+    await out.write(new Uint8Array(1024).fill(2));
+    await out.end();
+    await inn.end();
+    await readP;
+
+    expect(got.map((chunk) => chunk.byteLength)).toEqual([1024, 1024]);
+    expect(got[0]?.[0]).toBe(1);
+    expect(got[1]?.[0]).toBe(2);
     left.close();
     right.close();
   });

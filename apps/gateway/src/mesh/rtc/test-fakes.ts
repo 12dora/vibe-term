@@ -11,10 +11,14 @@ export class FakeDataChannel implements DataChannelLike {
   lowThreshold = 0;
   sent: Uint8Array[] = [];
   failNextSend = false;
+  /** Queue the payload but return false (native SCTP may still accept the message). */
+  acceptButReturnFalse = false;
   /** Swallow the payload after a successful send (black-hole / one-way cut). */
   dropSend = false;
   dropSendsFromReceiveCallback = false;
   inboundDepth = 0;
+  /** Keep inboundDepth raised until this many ms after onMessage returns (native stack + microtasks). */
+  holdReceiveCallbackMs = 0;
   /** After this many successful sends, further sends return false until `emitLow()`. */
   succeedsBeforeBlock = Number.POSITIVE_INFINITY;
   blockSend = false;
@@ -144,6 +148,10 @@ export class FakeDataChannel implements DataChannelLike {
     this.successCount += 1;
     const copy = copyBytes(bytes);
     this.sent.push(copy);
+    if (this.acceptButReturnFalse) {
+      this.buffered += copy.byteLength;
+      return false;
+    }
     if (this.dropSend) return true;
     const peer = this.peer;
     if (peer?.open && !peer.closed) {
@@ -162,7 +170,13 @@ export class FakeDataChannel implements DataChannelLike {
     try {
       cb(msg);
     } finally {
-      this.inboundDepth -= 1;
+      if (this.holdReceiveCallbackMs > 0) {
+        setTimeout(() => {
+          this.inboundDepth = Math.max(0, this.inboundDepth - 1);
+        }, this.holdReceiveCallbackMs);
+      } else {
+        this.inboundDepth -= 1;
+      }
     }
   }
 }

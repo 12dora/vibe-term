@@ -82,8 +82,7 @@ export class DataChannelLink implements ByteTransport {
   private flushAgain = false;
   private flushRetryHandle: unknown = null;
   private lowThresholdDropped = false;
-  private receiving = false;
-  private flushAfterReceive = false;
+  private callbackDepth = 0;
 
   constructor(channel: DataChannelLike, opts?: DataChannelLinkOptions) {
     this.channel = channel;
@@ -105,7 +104,7 @@ export class DataChannelLink implements ByteTransport {
     this.opened = channel.isOpen();
     channel.setBufferedAmountLowThreshold(DC_LOW_WATER_BYTES);
     channel.onBufferedAmountLow(() => {
-      this.flush();
+      this.armFlushRetry(DC_FLUSH_RETRY_MS);
     });
     channel.onOpen(() => {
       this.opened = true;
@@ -113,8 +112,7 @@ export class DataChannelLink implements ByteTransport {
     });
     channel.onMessage((msg) => {
       if (this.closed) return;
-      this.receiving = true;
-      try {
+      this.runChannelCallback(() => {
         if (isDcHandshakeWire(msg)) return;
         const bytes = copyBytes(toUint8Array(msg));
         this.liveness?.noteInbound();
@@ -141,13 +139,7 @@ export class DataChannelLink implements ByteTransport {
         }
         if (!frame) return;
         this.dispatchFrame(frame);
-      } finally {
-        this.receiving = false;
-        if (this.flushAfterReceive) {
-          this.flushAfterReceive = false;
-          this.armFlushRetry(0);
-        }
-      }
+      });
     });
     channel.onClosed(() => {
       this.finishClose('channel-closed');
@@ -208,10 +200,24 @@ export class DataChannelLink implements ByteTransport {
     }
   }
 
+  private runChannelCallback(fn: () => void): void {
+    if (this.closed) return;
+    this.callbackDepth += 1;
+    try {
+      fn();
+    } finally {
+      this.setTimeoutFn(() => {
+        this.callbackDepth = Math.max(0, this.callbackDepth - 1);
+        if (this.closed) return;
+        this.flush();
+      }, DC_FLUSH_RETRY_MS);
+    }
+  }
+
   private flush(): void {
     if (!this.opened || this.closed) return;
-    if (this.receiving) {
-      this.flushAfterReceive = true;
+    if (this.callbackDepth > 0) {
+      this.armFlushRetry(DC_FLUSH_RETRY_MS);
       return;
     }
     if (this.flushActive) {
@@ -272,10 +278,15 @@ export class DataChannelLink implements ByteTransport {
 
   private trySendRaw(bytes: Uint8Array, bypassHighWater: boolean): boolean {
     if (this.closed || !this.opened || !this.channel.isOpen()) return false;
+    if (this.callbackDepth > 0) return false;
     if (!bypassHighWater && this.channel.bufferedAmount() > DC_HIGH_WATER_BYTES) {
       return false;
     }
-    if (!sendBinary(this.channel, bytes)) {
+    const before = this.channel.bufferedAmount();
+    const ok = sendBinary(this.channel, bytes);
+    const after = this.channel.bufferedAmount();
+    const accepted = ok || after > before;
+    if (!accepted) {
       if (!this.channel.isOpen()) {
         this.finishClose('channel-closed');
         return false;
@@ -369,7 +380,7 @@ export class DataChannelLink implements ByteTransport {
     this.closeReason = reason;
     this.pendingPing = false;
     this.pendingPong = false;
-    this.flushAfterReceive = false;
+    this.callbackDepth = 0;
     this.clearFlushRetry();
     this.liveness?.stop();
     this.liveness = null;

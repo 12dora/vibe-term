@@ -50,17 +50,25 @@ class RateLimitedDataChannel implements DataChannelLike {
   private readonly delayMs: number;
   private readonly sendCap: number;
   inboundDepth = 0;
+  holdReceiveCallbackMs = 0;
   readonly wire: Uint8Array[] = [];
 
   constructor(
     label: string,
-    opts: { tickMs: number; bytesPerTick: number; delayMs: number; sendCap: number }
+    opts: {
+      tickMs: number;
+      bytesPerTick: number;
+      delayMs: number;
+      sendCap: number;
+      holdReceiveCallbackMs?: number;
+    }
   ) {
     this.label = label;
     this.tickMs = opts.tickMs;
     this.bytesPerTick = opts.bytesPerTick;
     this.delayMs = opts.delayMs;
     this.sendCap = opts.sendCap;
+    this.holdReceiveCallbackMs = opts.holdReceiveCallbackMs ?? 0;
   }
 
   getLabel(): string {
@@ -153,7 +161,13 @@ class RateLimitedDataChannel implements DataChannelLike {
     try {
       cb(msg);
     } finally {
-      this.inboundDepth -= 1;
+      if (this.holdReceiveCallbackMs > 0) {
+        setTimeout(() => {
+          this.inboundDepth = Math.max(0, this.inboundDepth - 1);
+        }, this.holdReceiveCallbackMs);
+      } else {
+        this.inboundDepth -= 1;
+      }
     }
   }
 
@@ -214,12 +228,13 @@ class RateLimitedDataChannel implements DataChannelLike {
   }
 }
 
-function pairRateLimitedChannels(): SlowDcPair {
+function pairRateLimitedChannels(holdReceiveCallbackMs = 0): SlowDcPair {
   const opts = {
     tickMs: SLOW_DC_TICK_MS,
     bytesPerTick: SLOW_DC_BYTES_PER_TICK,
     delayMs: SLOW_DC_DELAY_MS,
     sendCap: SLOW_DC_SEND_CAP,
+    holdReceiveCallbackMs,
   };
   const a = new RateLimitedDataChannel('peer', opts);
   const b = new RateLimitedDataChannel('peer', opts);
@@ -657,6 +672,186 @@ describe('HTTP-style bulk over PeerManager DataChannel', () => {
       expect(pair.b.wire.some((chunk) => muxOpFromDcChunk(chunk) === FrameOp.WINDOW)).toBe(true);
       expect(pair.a.closed).toBe(false);
       expect(pair.b.closed).toBe(false);
+      expect(leftClose).toBeUndefined();
+      expect(rightClose).toBeUndefined();
+    },
+    { timeout: 60_000 }
+  );
+
+  test(
+    '8 MiB with a keeping-up consumer on a delayed DC still credits WINDOW after onMessage',
+    async () => {
+      const pair = pairRateLimitedChannels(1);
+      fixtures.push({ close: pair.close });
+      const left = new DataChannelLink(pair.a, {
+        peer: 'hub',
+        intervalMs: 3_000,
+        timeoutMs: 10_000,
+      });
+      const right = new DataChannelLink(pair.b, {
+        peer: 'node-a',
+        intervalMs: 3_000,
+        timeoutMs: 10_000,
+      });
+      let leftClose: string | undefined;
+      let rightClose: string | undefined;
+      left.onClose((reason) => {
+        leftClose = reason;
+      });
+      right.onClose((reason) => {
+        rightClose = reason;
+      });
+      fixtures.push({ close: () => left.close() });
+      fixtures.push({ close: () => right.close() });
+
+      const muxA = new LinkMux(left, { role: 'initiator' });
+      const muxB = new LinkMux(right, { role: 'acceptor' });
+      const incomingP = new Promise<import('@tmex/shared/link').LinkStream>((resolve) =>
+        muxB.onStream(resolve)
+      );
+      const out = await muxA.openStream(new TextEncoder().encode('{"type":"http"}'));
+      const inn = await incomingP;
+      const reader = inn.readable.getReader();
+      const head = new TextEncoder().encode(
+        '{"status":200,"headers":{"content-type":"application/octet-stream"}}'
+      );
+      await out.write(head, { head: true });
+      expect((await reader.read()).value?.head).toBe(true);
+
+      const body = fillPattern(new Uint8Array(EIGHT_MIB));
+      const expectedHash = await sha256Hex(body);
+      let writeErr: unknown = null;
+      let aborted = false;
+      inn.onAbort(() => {
+        aborted = true;
+      });
+      const writeP = (async () => {
+        for (const chunk of bunLikeChunks(body)) {
+          await out.write(chunk);
+        }
+        await out.end();
+      })().catch((err) => {
+        writeErr = err;
+      });
+
+      const got: Uint8Array[] = [];
+      const readP = (async () => {
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          if (value) got.push(value.bytes);
+        }
+      })();
+
+      await Promise.all([writeP, readP]);
+      expect(writeErr).toBeNull();
+      expect(aborted).toBe(false);
+      await inn.end();
+      expect((await inn.closed).reason).toBe('end');
+      expect((await out.closed).reason).toBe('end');
+
+      const received = concatChunks(got);
+      expect(received.byteLength).toBe(EIGHT_MIB);
+      expect(await sha256Hex(received)).toBe(expectedHash);
+      expect(pair.b.wire.some((chunk) => muxOpFromDcChunk(chunk) === FrameOp.WINDOW)).toBe(true);
+      expect(leftClose).toBeUndefined();
+      expect(rightClose).toBeUndefined();
+    },
+    { timeout: 60_000 }
+  );
+
+  test(
+    '8 MiB immediately after a DC re-dial completes without aborting at one mux window',
+    async () => {
+      const first = pairRateLimitedChannels(1);
+      fixtures.push({ close: first.close });
+      const left0 = new DataChannelLink(first.a, { liveness: false });
+      const right0 = new DataChannelLink(first.b, { liveness: false });
+      fixtures.push({ close: () => left0.close() });
+      fixtures.push({ close: () => right0.close() });
+      const muxA0 = new LinkMux(left0, { role: 'initiator' });
+      const muxB0 = new LinkMux(right0, { role: 'acceptor' });
+      const incoming0 = new Promise<import('@tmex/shared/link').LinkStream>((resolve) =>
+        muxB0.onStream(resolve)
+      );
+      const probe = await muxA0.openStream(new TextEncoder().encode('{"type":"http"}'));
+      const inn0 = await incoming0;
+      await probe.write(new TextEncoder().encode('{"status":200}'), { head: true });
+      const r0 = inn0.readable.getReader();
+      expect((await r0.read()).value?.head).toBe(true);
+      await probe.end();
+      await inn0.end();
+      left0.close();
+      right0.close();
+      first.close();
+
+      const pair = pairRateLimitedChannels(1);
+      fixtures.push({ close: pair.close });
+      const left = new DataChannelLink(pair.a, {
+        peer: 'hub',
+        intervalMs: 3_000,
+        timeoutMs: 10_000,
+      });
+      const right = new DataChannelLink(pair.b, {
+        peer: 'node-a',
+        intervalMs: 3_000,
+        timeoutMs: 10_000,
+      });
+      let leftClose: string | undefined;
+      let rightClose: string | undefined;
+      left.onClose((reason) => {
+        leftClose = reason;
+      });
+      right.onClose((reason) => {
+        rightClose = reason;
+      });
+      fixtures.push({ close: () => left.close() });
+      fixtures.push({ close: () => right.close() });
+
+      const muxA = new LinkMux(left, { role: 'initiator' });
+      const muxB = new LinkMux(right, { role: 'acceptor' });
+      const incomingP = new Promise<import('@tmex/shared/link').LinkStream>((resolve) =>
+        muxB.onStream(resolve)
+      );
+      const out = await muxA.openStream(new TextEncoder().encode('{"type":"http"}'));
+      const inn = await incomingP;
+      const reader = inn.readable.getReader();
+      const head = new TextEncoder().encode(
+        '{"status":200,"headers":{"content-type":"application/octet-stream"}}'
+      );
+      await out.write(head, { head: true });
+      expect((await reader.read()).value?.head).toBe(true);
+
+      const body = fillPattern(new Uint8Array(EIGHT_MIB));
+      const expectedHash = await sha256Hex(body);
+      let writeErr: unknown = null;
+      let aborted = false;
+      inn.onAbort(() => {
+        aborted = true;
+      });
+      const writeP = (async () => {
+        for (const chunk of bunLikeChunks(body)) {
+          await out.write(chunk);
+        }
+        await out.end();
+      })().catch((err) => {
+        writeErr = err;
+      });
+      const got: Uint8Array[] = [];
+      const readP = (async () => {
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          if (value) got.push(value.bytes);
+        }
+      })();
+      await Promise.all([writeP, readP]);
+      expect(writeErr).toBeNull();
+      expect(aborted).toBe(false);
+      const received = concatChunks(got);
+      expect(received.byteLength).toBe(EIGHT_MIB);
+      expect(await sha256Hex(received)).toBe(expectedHash);
+      expect(pair.b.wire.some((chunk) => muxOpFromDcChunk(chunk) === FrameOp.WINDOW)).toBe(true);
       expect(leftClose).toBeUndefined();
       expect(rightClose).toBeUndefined();
     },

@@ -53,6 +53,14 @@ function encodeRstReason(reason?: string): Uint8Array {
   return new TextEncoder().encode(reason);
 }
 
+function muxTrace(event: string, fields: Record<string, unknown>): void {
+  const bits: string[] = [];
+  for (const [key, value] of Object.entries(fields)) {
+    bits.push(`${key}=${String(value)}`);
+  }
+  console.warn(`[mesh][mux] ${event} ${bits.join(' ')}`);
+}
+
 class MuxStream implements LinkStream {
   readonly id: number;
   readonly openPayload: Uint8Array;
@@ -516,6 +524,7 @@ export class LinkMux implements LinkSession {
 
   resetStream(stream: MuxStream, reason?: string): void {
     if (stream.dead) return;
+    muxTrace('rst send', { stream: stream.id, reason: reason ?? '' });
     const payload = encodeRstReason(reason);
     this.releaseOutstanding(stream);
     void this.sendFrame({
@@ -549,6 +558,7 @@ export class LinkMux implements LinkSession {
   }
 
   protocolError(message: string): void {
+    muxTrace('protocolError', { reason: message });
     this.close(message);
   }
 
@@ -713,6 +723,7 @@ export class LinkMux implements LinkSession {
       return;
     }
     const message = rstReason(payload);
+    muxTrace('rst recv', { stream: stream.id, reason: message ?? '' });
     this.releaseOutstanding(stream);
     stream.abort({ reason: 'rst', message });
     this.streams.delete(stream.id);

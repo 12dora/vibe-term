@@ -403,6 +403,12 @@ export async function openHttpStream(
       abortedAfterHead = true;
       failBody(new Error('http stream aborted'));
     });
+    void stream.closed.then((info) => {
+      if (info.reason === 'end') return;
+      console.warn(
+        `[mesh][http] stream closed after head reason=${info.reason} message=${info.message ?? ''} sent=${sent}`
+      );
+    });
 
     const responseBody = new ReadableStream<Uint8Array>({
       async start(controller) {
