@@ -1,7 +1,7 @@
 import { type Page, expect, test } from '@playwright/test';
 import { createLocalDevice } from './helpers/device';
 import { createSinglePaneSession, ensureCleanSession } from './helpers/tmux';
-import { KIND, decodeEnvelope, decodeSiteThemeUpdateS2C } from './helpers/ws-borsh';
+import { KIND, decodeEnvelope, decodeSiteThemeUpdateS2C, isGatewayWsUrl } from './helpers/ws-borsh';
 
 // 跨设备主题广播 e2e：并发 last-writer-wins + 离线 fallback。
 // T10 实现 WS 广播 KIND_SITE_THEME_UPDATE；T11 实现前端 useSiteStore.setThemeFromS2C；
@@ -53,7 +53,7 @@ function attachSiteThemeReceiver(page: Page): {
 } {
   const received: Array<{ theme: number; serverTimestamp: bigint }> = [];
   page.on('websocket', (ws) => {
-    if (!ws.url().endsWith('/ws')) return;
+    if (!isGatewayWsUrl(ws.url())) return;
     ws.on('framereceived', ({ payload }) => {
       const envelope = decodeEnvelope(payload as Buffer);
       if (!envelope || envelope.kind !== KIND.SITE_THEME_UPDATE) return;

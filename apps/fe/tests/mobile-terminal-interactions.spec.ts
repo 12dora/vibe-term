@@ -1,5 +1,5 @@
 import { expect, test } from '@playwright/test';
-import { KIND, decodeEnvelope, decodeTermInput } from './helpers/ws-borsh';
+import { KIND, decodeEnvelope, decodeTermInput, isGatewayWsUrl } from './helpers/ws-borsh';
 import { createTwoPaneSession, ensureCleanSession, tmux } from './helpers/tmux';
 
 test.use({ viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: true });
@@ -97,7 +97,7 @@ test('mobile: editor interactions keep focus and send ws messages', async ({ pag
   const sentInputs: Array<{ deviceId: string; data: string }> = [];
 
   page.on('websocket', (ws) => {
-    if (!ws.url().endsWith('/ws')) return;
+    if (!isGatewayWsUrl(ws.url())) return;
     ws.on('framesent', ({ payload }) => {
       const envelope = decodeEnvelope(payload as Buffer);
       if (!envelope || envelope.kind !== KIND.TERM_INPUT) return;
@@ -161,7 +161,7 @@ test('mobile: direct input falls back to compositionend data for ime symbols', a
   const sentInputs: Array<{ deviceId: string; data: string; isComposing: boolean }> = [];
 
   page.on('websocket', (ws) => {
-    if (!ws.url().endsWith('/ws')) return;
+    if (!isGatewayWsUrl(ws.url())) return;
     ws.on('framesent', ({ payload }) => {
       const envelope = decodeEnvelope(payload as Buffer);
       if (!envelope || envelope.kind !== KIND.TERM_INPUT) return;
@@ -239,7 +239,7 @@ test('mobile: cancelled ime composition should not send fallback text', async ({
   const sentInputs: Array<{ deviceId: string; data: string; isComposing: boolean }> = [];
 
   page.on('websocket', (ws) => {
-    if (!ws.url().endsWith('/ws')) return;
+    if (!isGatewayWsUrl(ws.url())) return;
     ws.on('framesent', ({ payload }) => {
       const envelope = decodeEnvelope(payload as Buffer);
       if (!envelope || envelope.kind !== KIND.TERM_INPUT) return;

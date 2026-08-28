@@ -1,6 +1,6 @@
 import { expect, test, type Page } from '@playwright/test';
 import { createTwoPaneSession, ensureCleanSession, tmux } from './helpers/tmux';
-import { KIND, decodeEnvelope, decodeTermInput } from './helpers/ws-borsh';
+import { KIND, decodeEnvelope, decodeTermInput, isGatewayWsUrl } from './helpers/ws-borsh';
 
 function launchVimWithMouse(paneId: string): void {
   tmux(`send-keys -t ${paneId} C-c`);
@@ -53,7 +53,7 @@ test('desktop: sidebar new-window click does not inject SGR mouse sequences into
   let createWindowSent = 0;
 
   page.on('websocket', (ws) => {
-    if (!ws.url().endsWith('/ws')) return;
+    if (!isGatewayWsUrl(ws.url())) return;
     ws.on('framesent', ({ payload }) => {
       const envelope = decodeEnvelope(payload as Buffer);
       if (!envelope) return;

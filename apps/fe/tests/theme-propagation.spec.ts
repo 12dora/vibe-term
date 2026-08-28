@@ -1,7 +1,7 @@
 import { type Page, expect, test } from '@playwright/test';
 import { createLocalDevice } from './helpers/device';
 import { createSinglePaneSession, ensureCleanSession, tmux } from './helpers/tmux';
-import { KIND, decodeEnvelope, decodeSiteThemeUpdateS2C } from './helpers/ws-borsh';
+import { KIND, decodeEnvelope, decodeSiteThemeUpdateS2C, isGatewayWsUrl } from './helpers/ws-borsh';
 
 // 主题动态传递 e2e：前端切主题 → gateway 广播 WS SITE_THEME_UPDATE + setWindowStyle +
 // stdin 注入主题通知序列。覆盖单网页 xterm 背景色变化、tmux window-style 更新、OSC 11
@@ -55,7 +55,7 @@ function attachSiteThemeReceiver(page: Page): {
 } {
   const received: Array<{ theme: number; serverTimestamp: bigint }> = [];
   page.on('websocket', (ws) => {
-    if (!ws.url().endsWith('/ws')) return;
+    if (!isGatewayWsUrl(ws.url())) return;
     ws.on('framereceived', ({ payload }) => {
       const envelope = decodeEnvelope(payload as Buffer);
       if (!envelope || envelope.kind !== KIND.SITE_THEME_UPDATE) return;

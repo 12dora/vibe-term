@@ -1,12 +1,5 @@
 import { expect, test } from '@playwright/test';
-import {
-  KIND,
-  decodeEnvelope,
-  decodeLiveResume,
-  decodeSwitchAck,
-  decodeTermHistory,
-  decodeTmuxSelect,
-} from './helpers/ws-borsh';
+import { KIND, decodeEnvelope, decodeLiveResume, decodeSwitchAck, decodeTermHistory, decodeTmuxSelect, isGatewayWsUrl } from './helpers/ws-borsh';
 import { createTwoWindowSession, ensureCleanSession } from './helpers/tmux';
 
 // 桌面分屏时代，同窗切 pane 走轻量 FOCUS_PANE（无 barrier）；
@@ -39,7 +32,7 @@ test('ws-borsh: TMUX_SELECT carries cols/rows and barrier order is ACK->HISTORY-
   let targetPaneId: string | null = null;
 
   page.on('websocket', (ws) => {
-    if (!ws.url().endsWith('/ws')) return;
+    if (!isGatewayWsUrl(ws.url())) return;
 
     ws.on('framesent', ({ payload }) => {
       const envelope = decodeEnvelope(payload as Buffer);
@@ -151,7 +144,7 @@ test('ws-borsh: rapid select cancels previous transaction (no LIVE_RESUME for ol
   const liveResumes: string[] = [];
 
   page.on('websocket', (ws) => {
-    if (!ws.url().endsWith('/ws')) return;
+    if (!isGatewayWsUrl(ws.url())) return;
 
     ws.on('framesent', ({ payload }) => {
       const envelope = decodeEnvelope(payload as Buffer);

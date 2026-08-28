@@ -1,7 +1,7 @@
 import { type APIRequestContext, type Page, devices, expect, test } from '@playwright/test';
 import type { KeyboardBehaviorMode } from '../src/stores/ui';
 import { createSinglePaneSession, ensureCleanSession } from './helpers/tmux';
-import { KIND, decodeEnvelope } from './helpers/ws-borsh';
+import { KIND, decodeEnvelope, isGatewayWsUrl } from './helpers/ws-borsh';
 
 // Android 形态：非 iOS UA + 触屏，needsManualKeyboardAvoidance 才会启用避让
 test.use({ ...devices['Pixel 5'] });
@@ -61,7 +61,7 @@ async function bootstrap(
 
   let resizeFrames = 0;
   page.on('websocket', (ws) => {
-    if (!ws.url().endsWith('/ws')) return;
+    if (!isGatewayWsUrl(ws.url())) return;
     ws.on('framesent', ({ payload }) => {
       const envelope = decodeEnvelope(payload as Buffer);
       if (!envelope) return;

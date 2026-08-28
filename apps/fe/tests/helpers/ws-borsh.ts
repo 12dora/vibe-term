@@ -1,3 +1,13 @@
+// gateway 的 WS 端点。URL 带 per-socket 的 `?cid=` nonce（多 node 下服务端靠它认连接），
+// 因此不能用 endsWith('/ws') 判断。
+export function isGatewayWsUrl(url: string): boolean {
+  try {
+    return new URL(url).pathname.endsWith('/ws');
+  } catch {
+    return false;
+  }
+}
+
 export interface WsBorshEnvelope {
   version: number;
   kind: number;

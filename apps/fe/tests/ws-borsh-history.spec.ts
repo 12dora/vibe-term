@@ -1,6 +1,7 @@
 import { expect, test, type Page } from '@playwright/test';
 import { wsBorsh } from '@tmex/shared';
 import { createTwoPaneSession, ensureCleanSession } from './helpers/tmux';
+import { isGatewayWsUrl } from './helpers/ws-borsh';
 
 async function readVisibleTerminalText(page: Page): Promise<string> {
   return page.evaluate(() => {
@@ -39,7 +40,7 @@ test('ws-borsh: applies TERM_HISTORY on initial load (shows pane ready marker)',
   const reassembler = new wsBorsh.ChunkReassembler();
 
   page.on('websocket', (socket) => {
-    if (!socket.url().endsWith('/ws')) return;
+    if (!isGatewayWsUrl(socket.url())) return;
 
     socket.on('framesent', (frame) => {
       const payload = frame.payload;

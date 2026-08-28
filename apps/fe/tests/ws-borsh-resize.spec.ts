@@ -5,7 +5,7 @@ import {
   ensureCleanSession,
   getPaneSize,
 } from './helpers/tmux';
-import { KIND, decodeEnvelope } from './helpers/ws-borsh';
+import { KIND, decodeEnvelope, isGatewayWsUrl } from './helpers/ws-borsh';
 
 async function readTerminalSize(page: Page): Promise<{
   cols: number;
@@ -43,7 +43,7 @@ function attachResizeFrameCounter(page: Page): {
   const counts = { resize: 0, sync: 0 };
 
   page.on('websocket', (ws) => {
-    if (!ws.url().endsWith('/ws')) return;
+    if (!isGatewayWsUrl(ws.url())) return;
     ws.on('framesent', ({ payload }) => {
       const envelope = decodeEnvelope(payload as Buffer);
       if (!envelope) return;
@@ -82,7 +82,7 @@ test('ws-borsh: resize does not spam TERM_RESIZE frames', async ({ page, request
   let resizeCount = 0;
 
   page.on('websocket', (ws) => {
-    if (!ws.url().endsWith('/ws')) return;
+    if (!isGatewayWsUrl(ws.url())) return;
     ws.on('framesent', ({ payload }) => {
       const envelope = decodeEnvelope(payload as Buffer);
       if (!envelope) return;
