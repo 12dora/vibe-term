@@ -94,6 +94,10 @@ export class PeerServer {
     );
   }
 
+  get listening(): boolean {
+    return this.servers.length > 0;
+  }
+
   get port(): number {
     return this.servers[0]?.port ?? this.opts.port;
   }

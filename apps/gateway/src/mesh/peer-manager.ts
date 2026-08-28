@@ -122,6 +122,9 @@ type LivePeer = {
   unsubRtc: (() => void) | null;
   sendKey?: Uint8Array;
   recvKey?: Uint8Array;
+  quiesceCapable: boolean;
+  helloReplied: boolean;
+  probeSent: boolean;
 };
 
 type UpgradeGate = {
@@ -296,7 +299,12 @@ export class PeerManager {
   }
 
   get listenPort(): number | null {
-    return this.server?.port ?? null;
+    if (!this.server?.listening) return null;
+    return this.server.port;
+  }
+
+  quiesceCapableOf(nodeId: string): boolean {
+    return this.live.get(nodeId)?.quiesceCapable === true;
   }
 
   async start(): Promise<void> {
@@ -391,7 +399,7 @@ export class PeerManager {
     this.requireTrusted(nodeId);
     const existing = this.live.get(nodeId);
     if (existing) {
-      this.maybeUpgrade(nodeId, { cooldown: false });
+      this.maybeUpgrade(nodeId, { cooldown: true, userPath: true });
       return existing.session;
     }
     const inflight = this.pending.get(nodeId);
@@ -466,7 +474,7 @@ export class PeerManager {
     const cert = this.userStore.getCert(nodeId);
     if (!cert || cert.revokedLogSeq != null) return false;
     const uid = this.uplink.userId;
-    if (uid && cert.userId !== uid) return false;
+    if (!uid || cert.userId !== uid) return false;
     return true;
   }
 
@@ -476,7 +484,7 @@ export class PeerManager {
       this.onRevoked(nodeId);
       throw new NodeUnreachableError(nodeId, 'revoked');
     }
-    if (!cert || (this.uplink.userId && cert.userId !== this.uplink.userId)) {
+    if (!cert || !this.uplink.userId || cert.userId !== this.uplink.userId) {
       throw new NodeUnreachableError(nodeId, 'not admitted');
     }
   }
@@ -562,11 +570,18 @@ export class PeerManager {
     next?.();
   }
 
-  private maybeUpgrade(nodeId: string, opts: { cooldown: boolean }): void {
+  private maybeUpgrade(nodeId: string, opts: { cooldown: boolean; userPath?: boolean }): void {
     if (this.stopped) return;
     if (!this.isTrusted(nodeId)) return;
     const live = this.live.get(nodeId);
     if (!live || !this.wantsUpgrade(live)) return;
+    if (!live.quiesceCapable) {
+      this.probeQuiesce(live);
+      if (!(opts.userPath && live.streams === 0)) {
+        this.ensureGate(nodeId).coalesced = true;
+        return;
+      }
+    }
     if (this.pending.has(nodeId)) {
       this.ensureGate(nodeId).coalesced = true;
       return;
@@ -767,7 +782,8 @@ export class PeerManager {
         result.peerNodeId,
         'relay',
         this.identity.nodeId,
-        gen
+        gen,
+        result.quiesceCapable
       );
       if (!kept) {
         throw new NodeUnreachableError(nodeId, 'simultaneous-dial');
@@ -859,7 +875,8 @@ export class PeerManager {
       result.peerNodeId,
       'ws-secure',
       this.identity.nodeId,
-      gen
+      gen,
+      result.quiesceCapable
     );
     if (!kept) throw new Error('simultaneous-dial');
     this.rememberKeys(result.peerNodeId, result.sendKey, result.recvKey);
@@ -879,7 +896,14 @@ export class PeerManager {
         result.session.close('stopped');
         return;
       }
-      this.track(result.session, result.peerNodeId, 'ws-secure', result.peerNodeId, gen);
+      this.track(
+        result.session,
+        result.peerNodeId,
+        'ws-secure',
+        result.peerNodeId,
+        gen,
+        result.quiesceCapable
+      );
       this.rememberKeys(result.peerNodeId, result.sendKey, result.recvKey);
     } catch {
       try {
@@ -903,7 +927,14 @@ export class PeerManager {
         result.session.close('stopped');
         return;
       }
-      this.track(result.session, result.peerNodeId, 'relay', from || result.peerNodeId, gen);
+      this.track(
+        result.session,
+        result.peerNodeId,
+        'relay',
+        from || result.peerNodeId,
+        gen,
+        result.quiesceCapable
+      );
       this.rememberKeys(result.peerNodeId, result.sendKey, result.recvKey);
     } catch {
       try {
@@ -923,7 +954,8 @@ export class PeerManager {
     peerNodeId: string,
     transport: PeerTransportKind,
     initiatedBy: string,
-    gen: number
+    gen: number,
+    quiesceCapable = false
   ): LinkSession | null {
     if (this.stopped || gen !== this.generation) {
       try {
@@ -977,9 +1009,13 @@ export class PeerManager {
       finishRetired: false,
       lastAdvertisedStatusJson: '',
       unsubRtc: null,
+      quiesceCapable,
+      helloReplied: false,
+      probeSent: false,
     };
     this.live.set(peerNodeId, live);
     this.bindSession(live);
+    if (!live.quiesceCapable) this.sendLinkHello(live);
     this.armIdle(live);
     this.startPing(live);
     this.sendPeerStatus(live);
@@ -1095,8 +1131,29 @@ export class PeerManager {
       case 'pong':
         live.missedPongs = 0;
         return;
+      case 'link.hello': {
+        const caps = Array.isArray(msg.caps) ? msg.caps : [];
+        if (caps.includes('quiesce')) this.markQuiesceCapable(live);
+        if (!live.helloReplied) {
+          live.helloReplied = true;
+          this.sendLinkHello(live);
+        }
+        return;
+      }
+      case 'link.quiesce.probe':
+        this.markQuiesceCapable(live);
+        try {
+          live.session.ctl.send(encodeJsonBytes({ t: 'link.quiesce.probe.ack' }));
+        } catch {
+          // link may already be closing
+        }
+        return;
+      case 'link.quiesce.probe.ack':
+        this.markQuiesceCapable(live);
+        return;
       case 'link.quiesce':
         live.gotPeerQuiesce = true;
+        this.markQuiesceCapable(live);
         try {
           live.session.ctl.send(encodeJsonBytes({ t: 'link.quiesce.ack' }));
         } catch {
@@ -1106,6 +1163,7 @@ export class PeerManager {
         return;
       case 'link.quiesce.ack':
         live.gotQuiesceAck = true;
+        this.markQuiesceCapable(live);
         if (live.retiring) this.maybeFinishRetire(live);
         return;
       case 'node.status':
@@ -1318,20 +1376,47 @@ export class PeerManager {
 
   private maybeFinishRetire(live: LivePeer, reason = 'replaced'): void {
     if (!live.retiring || live.finishRetired) return;
+    if (live.streams > 0) return;
     const now = this.scheduler.now();
     const elapsed = now - live.retiredAt;
-    if (elapsed >= PEER_RETIRE_MAX_MS) {
+    if (live.gotQuiesceAck && live.gotPeerQuiesce) {
       this.finishRetire(live, reason);
       return;
     }
-    if (live.streams > 0) return;
-    if (live.gotQuiesceAck && live.gotPeerQuiesce) {
+    if (elapsed >= PEER_RETIRE_MAX_MS) {
       this.finishRetire(live, reason);
       return;
     }
     const quietFor = live.zeroStreamsSince > 0 ? now - live.zeroStreamsSince : 0;
     if (elapsed >= PEER_RETIRE_MIN_MS && quietFor >= PEER_RETIRE_QUIET_MS) {
       this.finishRetire(live, reason);
+    }
+  }
+
+  private sendLinkHello(live: LivePeer): void {
+    try {
+      live.session.ctl.send(encodeJsonBytes({ t: 'link.hello', caps: ['quiesce'] }));
+    } catch {
+      // link may already be closing
+    }
+  }
+
+  private probeQuiesce(live: LivePeer): void {
+    if (live.probeSent || live.quiesceCapable) return;
+    live.probeSent = true;
+    try {
+      live.session.ctl.send(encodeJsonBytes({ t: 'link.quiesce.probe' }));
+    } catch {
+      // link may already be closing
+    }
+  }
+
+  private markQuiesceCapable(live: LivePeer): void {
+    const already = live.quiesceCapable;
+    live.quiesceCapable = true;
+    if (already || live.retiring) return;
+    if (this.upgradeGate.get(live.peerNodeId)?.coalesced) {
+      this.maybeUpgrade(live.peerNodeId, { cooldown: true });
     }
   }
 

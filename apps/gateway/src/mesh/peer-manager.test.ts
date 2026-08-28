@@ -2,7 +2,12 @@ import { afterEach, describe, expect, test } from 'bun:test';
 import { createInMemoryLinkPair } from '@tmex/shared/link';
 import { createMigratedAuthDb } from '../auth/test-db';
 import { UserStore } from '../auth/user-store';
-import { PEER_UPGRADE_COOLDOWN_MS, PeerManager, winningDialInitiator } from './peer-manager';
+import {
+  PEER_UPGRADE_BACKOFF_CAP_MS,
+  PEER_UPGRADE_COOLDOWN_MS,
+  PeerManager,
+  winningDialInitiator,
+} from './peer-manager';
 import { handshakeRelay } from './peer-protocol';
 import {
   ImmediateScheduler,
@@ -51,6 +56,27 @@ function dummyUplink(
     client.link = createInMemoryLinkPair()[0];
   }
   return client;
+}
+
+function echoQuiesceCaps(session: import('@tmex/shared/link').LinkSession): void {
+  let helloReplied = false;
+  session.ctl.onMessage((bytes) => {
+    let msg: { t?: string };
+    try {
+      msg = JSON.parse(new TextDecoder().decode(bytes)) as { t?: string };
+    } catch {
+      return;
+    }
+    if (msg.t === 'link.hello' && !helloReplied) {
+      helloReplied = true;
+      session.ctl.send(
+        new TextEncoder().encode(JSON.stringify({ t: 'link.hello', caps: ['quiesce'] }))
+      );
+    }
+    if (msg.t === 'link.quiesce.probe') {
+      session.ctl.send(new TextEncoder().encode(JSON.stringify({ t: 'link.quiesce.probe.ack' })));
+    }
+  });
 }
 
 describe('PeerManager', () => {
@@ -706,6 +732,7 @@ describe('PeerManager', () => {
     const self = seedNodeIdentity(store, 'user-1');
     const peer = seedNodeIdentity(store, 'user-1');
     const [relayA, relayB] = createInMemoryLinkPair();
+    echoQuiesceCaps(relayB);
     const incomingP = new Promise<import('@tmex/shared/link').LinkStream>((resolve) =>
       relayB.onStream(resolve)
     );
@@ -728,6 +755,7 @@ describe('PeerManager', () => {
     });
     fixtures.push({ close, stop: () => managerA.stop() });
     expect(managerA.adoptLink(peer.nodeId, relayA, 'relay', self.nodeId)).toBe(relayA);
+    await waitUntil(() => managerA.quiesceCapableOf(peer.nodeId));
     const oldStream = await relayA.openStream(new TextEncoder().encode('{"type":"keep"}'));
     const incoming = await incomingP;
     await oldStream.write(new TextEncoder().encode('still-alive'));
@@ -757,12 +785,14 @@ describe('PeerManager', () => {
     let deliveries = 0;
     let attempts = 0;
     let tryDc = true;
+    const scheduler = new ImmediateScheduler();
     const managerA = new PeerManager({
       identity: self,
       userStore: store,
       uplink: dummyUplink(self, store),
       peerPort: 0,
       startServer: false,
+      scheduler,
       rtc: {
         get available() {
           return tryDc;
@@ -784,6 +814,7 @@ describe('PeerManager', () => {
     fixtures.push({ close: () => relayB.close('test') });
     expect(managerA.adoptLink(peer.nodeId, relayA, 'relay', self.nodeId)).toBe(relayA);
     await waitUntil(() => {
+      scheduler.nowMs += PEER_UPGRADE_BACKOFF_CAP_MS;
       void managerA.getLink(peer.nodeId);
       return attempts >= 3;
     }, 5_000);
@@ -945,8 +976,10 @@ describe('PeerManager', () => {
       },
     });
     fixtures.push({ close, stop: () => managerA.stop() });
-    const [relayA] = createInMemoryLinkPair();
+    const [relayA, relayB] = createInMemoryLinkPair();
+    echoQuiesceCaps(relayB);
     expect(managerA.adoptLink(peer.nodeId, relayA, 'relay', self.nodeId)).toBe(relayA);
+    await waitUntil(() => managerA.quiesceCapableOf(peer.nodeId));
     managerA.notifyPeerEndpointsChanged(peer.nodeId);
     await waitUntil(() => dials === 1, 2_000);
     managerA.notifyPeerEndpointsChanged(peer.nodeId);

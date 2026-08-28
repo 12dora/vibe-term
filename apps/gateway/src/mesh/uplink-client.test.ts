@@ -1250,6 +1250,247 @@ describe('UplinkClient', () => {
     await second;
   });
 
+  test('head list and applyMany throws enter the retry machine and tear down, fork stays hard', async () => {
+    const { db, close } = createMigratedAuthDb();
+    fixtures.push({ close });
+    const userStore = new UserStore(db);
+    seedUser(userStore);
+    const listsHead: unknown[] = [];
+    const head = await bootOnline({
+      userStore,
+      applier: {
+        async head() {
+          throw new Error('head-io');
+        },
+        async applyMany() {
+          return { applied: 0 };
+        },
+      },
+      onNodeList: (list) => listsHead.push(list),
+      keyLogRetryLimit: 0,
+    });
+    head.hub.ctl.send(
+      encodeUplinkCtl({
+        t: 'node.list',
+        version: 1,
+        key_log_head: { seq: 3n, hash: new Uint8Array(32).fill(3) },
+        rtc: { stun: [], turn: null },
+        nodes: [],
+      })
+    );
+    await waitUntil(() => head.client.state !== 'online' || head.client.link === null);
+    expect(listsHead).toHaveLength(0);
+    expect(head.client.state).not.toBe('online');
+    await head.client.stop();
+
+    const listsList: unknown[] = [];
+    const listed = await bootOnline({
+      userStore,
+      applier: {
+        async head() {
+          return { seq: 4n, hash: randomBytes(32) };
+        },
+        async applyMany() {
+          return { applied: 0 };
+        },
+        async list() {
+          throw new Error('list-io');
+        },
+      },
+      onNodeList: (list) => listsList.push(list),
+      keyLogRetryLimit: 0,
+    });
+    listed.hub.ctl.send(
+      encodeUplinkCtl({
+        t: 'node.list',
+        version: 1,
+        key_log_head: { seq: 3n, hash: randomBytes(32) },
+        rtc: { stun: [], turn: null },
+        nodes: [],
+      })
+    );
+    await waitUntil(() => listed.client.state !== 'online' || listed.client.link === null);
+    expect(listsList).toHaveLength(0);
+    expect(listed.client.state).not.toBe('online');
+    await listed.client.stop();
+
+    const listsApply: unknown[] = [];
+    const thrown = await bootOnline({
+      userStore,
+      applier: {
+        async head() {
+          return { seq: 1n, hash: new Uint8Array(32).fill(1) };
+        },
+        async applyMany() {
+          throw new Error('apply-io');
+        },
+      },
+      onNodeList: (list) => listsApply.push(list),
+      keyLogRetryLimit: 0,
+    });
+    thrown.hub.ctl.send(
+      encodeUplinkCtl({
+        t: 'node.list',
+        version: 1,
+        key_log_head: { seq: 3n, hash: new Uint8Array(32).fill(3) },
+        rtc: { stun: [], turn: null },
+        nodes: [],
+      })
+    );
+    await waitUntil(() => thrown.received.some((row) => row.includes('key.log.req')));
+    const req = JSON.parse(thrown.received.find((row) => row.includes('key.log.req')) ?? '{}') as {
+      id?: string;
+    };
+    thrown.hub.ctl.send(
+      encodeUplinkCtl({
+        t: 'key.log.res',
+        records: [{ seq: 2n, bytes: randomBytes(8), sig: randomBytes(64) }],
+        ...(req.id ? { id: req.id } : {}),
+      })
+    );
+    await waitUntil(() => thrown.client.state !== 'online' || thrown.client.link === null);
+    expect(listsApply).toHaveLength(0);
+    expect(thrown.client.state).not.toBe('online');
+  });
+
+  test('stale catch-up from a previous generation cannot failFork the replacement connection', async () => {
+    const { db, close } = createMigratedAuthDb();
+    fixtures.push({ close });
+    const userStore = new UserStore(db);
+    seedUser(userStore);
+    const forks: KeyLogForkEvent[] = [];
+    const lists: UplinkNodeList[] = [];
+    const hungHead = { release() {} };
+    let headCalls = 0;
+    const hash0 = new Uint8Array(32);
+    const [clientWs, hubWs] = fakeSocketPair();
+    const hub = new WebSocketLink(hubWs, { role: 'acceptor' });
+    hub.ctl.onMessage(() => {});
+    const client = new UplinkClient({
+      hubUrl: 'https://hub.example.com',
+      identity: { nodeId: 'ab'.repeat(16), edSecretKey: randomBytes(32) },
+      userId: 'user-1',
+      keyLogApplier: {
+        async head() {
+          headCalls += 1;
+          if (headCalls === 1) {
+            await new Promise<void>((resolve) => {
+              hungHead.release = resolve;
+            });
+          }
+          return { seq: 0n, hash: hash0 };
+        },
+        async applyMany() {
+          return { applied: 0, error: 'fork' };
+        },
+      },
+      userStore,
+      statusProvider: () => status(),
+      onNodeList: (list) => lists.push(list),
+      onKeyLogFork: (event) => forks.push(event),
+    });
+    fixtures.push({ close, stop: () => client.stop() });
+    const firstLink = new WebSocketLink(clientWs, { role: 'initiator' });
+    const first = client.connectWithLink(firstLink);
+    hub.ctl.send(encodeUplinkCtl({ t: 'auth.challenge', nonce: encodeBase64url(randomBytes(32)) }));
+    hub.ctl.send(encodeUplinkCtl({ t: 'auth.ok' }));
+    await first;
+    hub.ctl.send(
+      encodeUplinkCtl({
+        t: 'node.list',
+        version: 1,
+        key_log_head: { seq: 3n, hash: new Uint8Array(32).fill(3) },
+        rtc: { stun: [], turn: null },
+        nodes: [],
+      })
+    );
+    await waitUntil(() => headCalls === 1);
+
+    const [nextClientWs, nextHubWs] = fakeSocketPair();
+    const nextHub = new WebSocketLink(nextHubWs, { role: 'acceptor' });
+    nextHub.ctl.onMessage(() => {});
+    const nextLink = new WebSocketLink(nextClientWs, { role: 'initiator' });
+    const second = client.connectWithLink(nextLink);
+    nextHub.ctl.send(
+      encodeUplinkCtl({ t: 'auth.challenge', nonce: encodeBase64url(randomBytes(32)) })
+    );
+    nextHub.ctl.send(encodeUplinkCtl({ t: 'auth.ok' }));
+    await second;
+    nextHub.ctl.send(
+      encodeUplinkCtl({
+        t: 'node.list',
+        version: 1,
+        key_log_head: { seq: 0n, hash: hash0 },
+        rtc: { stun: [], turn: null },
+        nodes: [],
+        hub: { nodeId: 'bb'.repeat(16), publicUrl: 'https://gen2.example' },
+      })
+    );
+    await waitUntil(() => lists.length === 1);
+    expect(client.state).toBe('online');
+    hungHead.release();
+    await new Promise((resolve) => setTimeout(resolve, 40));
+    expect(forks).toHaveLength(0);
+    expect(client.state).toBe('online');
+    expect(lists).toHaveLength(1);
+  });
+
+  test('replacing an online connection leaves online immediately and gates outbound and inbound OPEN', async () => {
+    const { db, close } = createMigratedAuthDb();
+    fixtures.push({ close });
+    const userStore = new UserStore(db);
+    seedUser(userStore);
+    const [clientWs, hubWs] = fakeSocketPair();
+    const hub = new WebSocketLink(hubWs, { role: 'acceptor' });
+    hub.ctl.onMessage(() => {});
+    const client = new UplinkClient({
+      hubUrl: 'https://hub.example.com',
+      identity: { nodeId: 'ab'.repeat(16), edSecretKey: randomBytes(32) },
+      userId: 'user-1',
+      keyLogApplier: dummyApplier(),
+      userStore,
+      statusProvider: () => status(),
+    });
+    fixtures.push({ close, stop: () => client.stop() });
+    const firstLink = new WebSocketLink(clientWs, { role: 'initiator' });
+    const first = client.connectWithLink(firstLink);
+    hub.ctl.send(encodeUplinkCtl({ t: 'auth.challenge', nonce: encodeBase64url(randomBytes(32)) }));
+    hub.ctl.send(encodeUplinkCtl({ t: 'auth.ok' }));
+    await first;
+    expect(client.state).toBe('online');
+
+    const [nextClientWs, nextHubWs] = fakeSocketPair();
+    const nextHub = new WebSocketLink(nextHubWs, { role: 'acceptor' });
+    nextHub.ctl.onMessage(() => {});
+    const nextLink = new WebSocketLink(nextClientWs, { role: 'initiator' });
+    const second = client.connectWithLink(nextLink);
+    await waitUntil(() => client.link === nextLink);
+    expect(client.state).not.toBe('online');
+    expect(() => client.sendCtl({ t: 'ping' })).toThrow(/not online/);
+    await expect(client.openRelay('cd'.repeat(16))).rejects.toThrow(/not online/);
+    client.sendStatus();
+    const ack = await client.appendAndAck({ bytes: randomBytes(8), sig: randomBytes(64) }, 50);
+    expect(ack.ok).toBe(false);
+    expect(ack.error).toBe('offline');
+
+    const opened = await nextHub.openStream(
+      new TextEncoder().encode(JSON.stringify({ to: 'ab'.repeat(16), from: 'cd'.repeat(16) }))
+    );
+    let inboundReason = '';
+    void opened.closed.then((info) => {
+      inboundReason = info.reason;
+    });
+    await waitUntil(() => inboundReason !== '');
+    expect(inboundReason === 'unauthenticated' || inboundReason === 'rst').toBe(true);
+
+    nextHub.ctl.send(
+      encodeUplinkCtl({ t: 'auth.challenge', nonce: encodeBase64url(randomBytes(32)) })
+    );
+    nextHub.ctl.send(encodeUplinkCtl({ t: 'auth.ok' }));
+    await second;
+    expect(client.state).toBe('online');
+  });
+
   test('key.log.res without id is dropped when the outstanding request has an id', async () => {
     const { db, close } = createMigratedAuthDb();
     fixtures.push({ close });

@@ -64,6 +64,8 @@ export type UplinkServerOptions = {
   heartbeatMissLimit?: number;
   authTimeoutMs?: number;
   rtcMaxSessions?: number;
+  keyLogReqStateMax?: number;
+  keyLogReqIdleTtlMs?: number;
 };
 
 type PendingAuth = {
@@ -86,6 +88,8 @@ const textEncoder = new TextEncoder();
 export const HUB_KEY_LOG_REQ_RATE_PER_MIN = 10;
 export const HUB_KEY_LOG_REQ_BURST = 20;
 export const HUB_KEY_LOG_REQ_LOG_INTERVAL_MS = 10_000;
+export const HUB_KEY_LOG_REQ_STATE_MAX = 1024;
+export const HUB_KEY_LOG_REQ_IDLE_TTL_MS = 10 * 60 * 1000;
 
 class TokenBucket {
   private tokens: number;
@@ -112,6 +116,60 @@ class TokenBucket {
   }
 }
 
+class IdleLruMap<T> {
+  private readonly items = new Map<string, { value: T; lastAt: number }>();
+
+  constructor(
+    private readonly max: number,
+    private readonly ttlMs: number
+  ) {}
+
+  get size(): number {
+    return this.items.size;
+  }
+
+  get(key: string, now: number): T | undefined {
+    this.sweep(now);
+    return this.items.get(key)?.value;
+  }
+
+  touch(key: string, now: number): T | undefined {
+    this.sweep(now);
+    const row = this.items.get(key);
+    if (!row) return undefined;
+    row.lastAt = now;
+    this.items.delete(key);
+    this.items.set(key, row);
+    return row.value;
+  }
+
+  set(key: string, value: T, now: number): T {
+    this.sweep(now);
+    this.items.delete(key);
+    this.items.set(key, { value, lastAt: now });
+    while (this.items.size > this.max) {
+      const oldest = this.items.keys().next().value;
+      if (oldest === undefined) break;
+      this.items.delete(oldest);
+    }
+    return value;
+  }
+
+  delete(key: string): void {
+    this.items.delete(key);
+  }
+
+  clear(): void {
+    this.items.clear();
+  }
+
+  sweep(now: number): void {
+    for (const [key, row] of this.items) {
+      if (now - row.lastAt >= this.ttlMs) this.items.delete(key);
+    }
+  }
+}
+
 export class UplinkServer {
   private readonly db: AuthDb;
   private readonly userStore: UserStore;
@@ -131,8 +189,8 @@ export class UplinkServer {
   private readonly rtcSessions = new Map<string, RtcSessionRegistration>();
   private listVersion = 0;
   private stopped = false;
-  private readonly keyLogReqBuckets = new Map<string, TokenBucket>();
-  private readonly keyLogReqLogs = new Map<string, { lastAt: number; suppressed: number }>();
+  private readonly keyLogReqBuckets: IdleLruMap<TokenBucket>;
+  private readonly keyLogReqLogs: IdleLruMap<{ lastAt: number; suppressed: number }>;
 
   constructor(opts: UplinkServerOptions) {
     this.db = opts.db;
@@ -145,6 +203,14 @@ export class UplinkServer {
     this.heartbeatMissLimit = opts.heartbeatMissLimit ?? HUB_HEARTBEAT_MISS_LIMIT;
     this.authTimeoutMs = opts.authTimeoutMs ?? HUB_AUTH_TIMEOUT_MS;
     this.rtcMaxSessions = opts.rtcMaxSessions ?? HUB_RTC_MAX_SESSIONS;
+    this.keyLogReqBuckets = new IdleLruMap(
+      opts.keyLogReqStateMax ?? HUB_KEY_LOG_REQ_STATE_MAX,
+      opts.keyLogReqIdleTtlMs ?? HUB_KEY_LOG_REQ_IDLE_TTL_MS
+    );
+    this.keyLogReqLogs = new IdleLruMap(
+      opts.keyLogReqStateMax ?? HUB_KEY_LOG_REQ_STATE_MAX,
+      opts.keyLogReqIdleTtlMs ?? HUB_KEY_LOG_REQ_IDLE_TTL_MS
+    );
     if (opts.config.nodeId) {
       this.userStore.upsertHubMeta({
         nodeId: opts.config.nodeId,
@@ -280,7 +346,13 @@ export class UplinkServer {
     this.accepted.clear();
     this.authTimers.clear();
     this.rtcSessions.clear();
+    this.keyLogReqBuckets.clear();
+    this.keyLogReqLogs.clear();
     this.registry.closeAll('hub-stop');
+  }
+
+  get keyLogReqBucketCount(): number {
+    return this.keyLogReqBuckets.size;
   }
 
   private send(link: LinkSession, msg: UplinkCtlMessage): void {
@@ -479,13 +551,17 @@ export class UplinkServer {
     live: LiveConnection,
     msg: Extract<UplinkCtlMessage, { t: 'key.log.req' }>
   ): Promise<void> {
-    let bucket = this.keyLogReqBuckets.get(live.nodeId);
+    const now = this.now();
+    let bucket = this.keyLogReqBuckets.touch(live.nodeId, now);
     if (!bucket) {
-      bucket = new TokenBucket(HUB_KEY_LOG_REQ_RATE_PER_MIN, HUB_KEY_LOG_REQ_BURST);
-      this.keyLogReqBuckets.set(live.nodeId, bucket);
+      bucket = this.keyLogReqBuckets.set(
+        live.nodeId,
+        new TokenBucket(HUB_KEY_LOG_REQ_RATE_PER_MIN, HUB_KEY_LOG_REQ_BURST),
+        now
+      );
     }
     const fromSeq = BigInt(msg.from_seq);
-    if (!bucket.take(this.now())) {
+    if (!bucket.take(now)) {
       this.warnKeyLogReq(live.nodeId, fromSeq, 0, true);
       return;
     }
@@ -504,7 +580,7 @@ export class UplinkServer {
 
   private warnKeyLogReq(nodeId: string, fromSeq: bigint, records: number, limited: boolean): void {
     const now = this.now();
-    const prev = this.keyLogReqLogs.get(nodeId);
+    const prev = this.keyLogReqLogs.get(nodeId, now);
     if (prev && now - prev.lastAt < HUB_KEY_LOG_REQ_LOG_INTERVAL_MS) {
       prev.suppressed += 1;
       return;
@@ -516,7 +592,7 @@ export class UplinkServer {
     console.warn(
       `[hub] key.log.req node=${nodeId} from_seq=${fromSeq.toString()} records=${records}${extra ? ` ${extra}` : ''}`
     );
-    this.keyLogReqLogs.set(nodeId, { lastAt: now, suppressed: 0 });
+    this.keyLogReqLogs.set(nodeId, { lastAt: now, suppressed: 0 }, now);
   }
 
   private async handleKeyLogAppend(
@@ -761,6 +837,8 @@ export class UplinkServer {
 
   private evictRevokedNode(nodeId: string): void {
     patchNode(this.db, nodeId, { status: 'revoked' });
+    this.keyLogReqBuckets.delete(nodeId);
+    this.keyLogReqLogs.delete(nodeId);
     this.dropRtcForNode(nodeId);
     const entry = this.registry.get(nodeId);
     if (!entry) return;

@@ -63,7 +63,7 @@ function isServerSocketAdapter(value: WebSocketTransportInput): value is ServerS
 export type UplinkClientOptions = {
   hubUrl: string;
   identity: MeshIdentity;
-  userId: string;
+  userId: string | (() => string);
   keyLogApplier: KeyLogApplier;
   userStore: UserStore;
   statusProvider: () => UplinkStatus;
@@ -134,9 +134,13 @@ type AuthPhase = 'idle' | 'awaiting-challenge' | 'challenge-accepted';
 
 export class UplinkClient {
   readonly identity: MeshIdentity;
-  readonly userId: string;
+  private readonly userIdOf: () => string;
   link: LinkSession | null = null;
   state: UplinkState = 'offline';
+
+  get userId(): string {
+    return this.userIdOf();
+  }
 
   private readonly hubUrl: string;
   private readonly hubHost: string;
@@ -186,7 +190,8 @@ export class UplinkClient {
     this.hubUrl = opts.hubUrl;
     this.hubHost = hubHostFromUrl(opts.hubUrl);
     this.identity = opts.identity;
-    this.userId = opts.userId;
+    const uid = opts.userId;
+    this.userIdOf = typeof uid === 'function' ? uid : () => uid;
     this.keyLogApplier = opts.keyLogApplier;
     this.userStore = opts.userStore;
     this.statusProvider = opts.statusProvider;
@@ -263,14 +268,14 @@ export class UplinkClient {
 
   sendCtl(msg: UplinkCtlMessage): void {
     const link = this.link;
-    if (!link || this.state !== 'online') {
+    if (!link || this.state !== 'online' || !this.isAuthenticated()) {
       throw new Error('uplink is not online');
     }
     link.ctl.send(encodeUplinkCtl(msg));
   }
 
   sendStatus(): void {
-    if (this.state !== 'online' || !this.link) return;
+    if (this.state !== 'online' || !this.link || !this.isAuthenticated()) return;
     const status = this.statusProvider();
     this.lastStatusJson = jsonStable(status);
     this.link.ctl.send(
@@ -295,7 +300,7 @@ export class UplinkClient {
 
   async openRelay(toNodeId: string): Promise<LinkStream> {
     const link = this.link;
-    if (!link || this.state !== 'online') {
+    if (!link || this.state !== 'online' || !this.isAuthenticated()) {
       throw new Error('uplink is not online');
     }
     return link.openStream(new TextEncoder().encode(JSON.stringify({ to: toNodeId })));
@@ -379,6 +384,10 @@ export class UplinkClient {
     });
     link.onStream((stream) => {
       if (generation !== this.connectGeneration) return;
+      if (this.authenticatedGeneration !== generation) {
+        stream.reset('unauthenticated');
+        return;
+      }
       const open = parseOpenPayload(stream.openPayload);
       const to = typeof open?.to === 'string' ? open.to : '';
       const from = typeof open?.from === 'string' ? open.from : '';
@@ -524,6 +533,7 @@ export class UplinkClient {
     this.listVersionWatermark = list.version;
     this.lastKeyLogHead = list.key_log_head;
     this.latestList = list;
+    const generation = this.connectGeneration;
     const epoch = ++this.listEpoch;
     if (list.hub) {
       this.userStore.upsertHubMeta({
@@ -535,7 +545,10 @@ export class UplinkClient {
     }
     this.persistAdmittedPeers(list);
     this.catchUpChain = this.catchUpChain
-      .then(() => this.catchUpFromList(list, epoch))
+      .then(() => {
+        if (generation !== this.connectGeneration) return;
+        return this.catchUpFromList(list, epoch, generation);
+      })
       .catch((err) => {
         this.warnCtl('handler', 'key-log.catch-up', 0, err);
       });
@@ -559,22 +572,49 @@ export class UplinkClient {
     }
   }
 
-  private finishNodeList(epoch: number): void {
-    if (epoch !== this.listEpoch) return;
+  private finishNodeList(epoch: number, generation: number): void {
+    if (epoch !== this.listEpoch || generation !== this.connectGeneration) return;
     const list = this.latestList;
     if (!list) return;
     this.persistAdmittedPeers(list);
     this.onNodeListCb?.(list);
   }
 
-  private async catchUpFromList(list: UplinkNodeList, epoch: number): Promise<void> {
-    if (this.keyLogForked || !this.isAuthenticated()) return;
+  private catchUpAlive(generation: number): boolean {
+    return generation === this.connectGeneration && this.isAuthenticated() && !this.keyLogForked;
+  }
+
+  private catchUpCurrent(epoch: number, generation: number): boolean {
+    return this.catchUpAlive(generation) && epoch === this.listEpoch;
+  }
+
+  private async catchUpFromList(
+    list: UplinkNodeList,
+    epoch: number,
+    generation: number
+  ): Promise<void> {
+    if (!this.catchUpCurrent(epoch, generation)) return;
     if (!this.userId) {
       console.warn('[uplink] key-log catch-up skipped: empty userId');
+      this.finishNodeList(epoch, generation);
       return;
     }
     const target = list.key_log_head;
-    let local = await this.keyLogApplier.head(this.userId);
+    let retries = 0;
+    let local: { seq: bigint; hash: Uint8Array } | null = null;
+    while (this.catchUpCurrent(epoch, generation)) {
+      try {
+        local = await this.keyLogApplier.head(this.userId);
+        break;
+      } catch (err) {
+        if (!this.catchUpCurrent(epoch, generation)) return;
+        retries += 1;
+        const message = err instanceof Error ? err.message : String(err);
+        console.warn(`[uplink] key-log head failed err=${message} retry=${retries}`);
+        if (!(await this.retryOrTearDown(retries, 'key-log-head-failed'))) return;
+      }
+    }
+    if (!local || !this.catchUpCurrent(epoch, generation)) return;
     if (local.seq !== target.seq) {
       console.warn(
         `[uplink] key-log catch-up start local=${local.seq.toString()} target=${target.seq.toString()}`
@@ -585,31 +625,42 @@ export class UplinkClient {
         this.failFork(local, target);
         return;
       }
-      this.finishNodeList(epoch);
+      this.finishNodeList(epoch, generation);
       return;
     }
     if (local.seq > target.seq) {
-      let retries = 0;
-      while (true) {
-        if (epoch !== this.listEpoch || this.keyLogForked || !this.isAuthenticated()) return;
-        const pushed = await this.pushMissingToHub(target.seq);
+      retries = 0;
+      while (this.catchUpCurrent(epoch, generation)) {
+        let pushed = false;
+        try {
+          pushed = await this.pushMissingToHub(target.seq);
+        } catch (err) {
+          if (!this.catchUpCurrent(epoch, generation)) return;
+          retries += 1;
+          const message = err instanceof Error ? err.message : String(err);
+          console.warn(`[uplink] key-log list/push failed err=${message} retry=${retries}`);
+          if (!(await this.retryOrTearDown(retries, 'key-log-push-failed'))) return;
+          continue;
+        }
+        if (!this.catchUpCurrent(epoch, generation)) return;
         if (pushed) {
-          this.finishNodeList(epoch);
+          this.finishNodeList(epoch, generation);
           return;
         }
         retries += 1;
         if (!(await this.retryOrTearDown(retries, 'key-log-push-failed'))) return;
       }
+      return;
     }
-    let retries = 0;
-    while (!this.keyLogForked && this.isAuthenticated() && local.seq < target.seq) {
-      if (epoch !== this.listEpoch) return;
+    retries = 0;
+    while (this.catchUpCurrent(epoch, generation) && local.seq < target.seq) {
       const before = local;
       let records: UplinkKeyLogRecord[];
       try {
         records = await this.requestKeyLog(before.seq + 1n);
       } catch (err) {
-        if (epoch !== this.listEpoch || !this.isAuthenticated()) return;
+        if (!this.catchUpAlive(generation)) return;
+        if (epoch !== this.listEpoch) return;
         retries += 1;
         const message = err instanceof Error ? err.message : String(err);
         console.warn(
@@ -618,9 +669,9 @@ export class UplinkClient {
         if (!(await this.retryOrTearDown(retries, 'key-log-catch-up-failed'))) return;
         continue;
       }
-      if (this.keyLogForked) return;
+      if (!this.catchUpAlive(generation)) return;
       if (records.length === 0) {
-        if (epoch !== this.listEpoch || !this.isAuthenticated()) return;
+        if (epoch !== this.listEpoch) return;
         retries += 1;
         console.warn(
           `[uplink] key-log catch-up empty res local=${before.seq.toString()} target=${target.seq.toString()} retry=${retries}`
@@ -636,17 +687,39 @@ export class UplinkClient {
         this.tearDownLink('key-log-seq-gap');
         return;
       }
-      const result = await this.keyLogApplier.applyMany(
-        this.userId,
-        sorted.map((row) => ({ bytes: row.bytes, sig: row.sig }))
-      );
-      local = await this.keyLogApplier.head(this.userId);
+      let result: { applied: number; error?: string };
+      try {
+        result = await this.keyLogApplier.applyMany(
+          this.userId,
+          sorted.map((row) => ({ bytes: row.bytes, sig: row.sig }))
+        );
+      } catch (err) {
+        if (!this.catchUpAlive(generation)) return;
+        if (epoch !== this.listEpoch) return;
+        retries += 1;
+        const message = err instanceof Error ? err.message : String(err);
+        console.warn(`[uplink] key-log applyMany threw err=${message} retry=${retries}`);
+        if (!(await this.retryOrTearDown(retries, 'key-log-apply-failed'))) return;
+        continue;
+      }
+      try {
+        local = await this.keyLogApplier.head(this.userId);
+      } catch (err) {
+        if (!this.catchUpAlive(generation)) return;
+        if (epoch !== this.listEpoch) return;
+        retries += 1;
+        const message = err instanceof Error ? err.message : String(err);
+        console.warn(`[uplink] key-log head failed err=${message} retry=${retries}`);
+        if (!(await this.retryOrTearDown(retries, 'key-log-head-failed'))) return;
+        continue;
+      }
+      if (!this.catchUpAlive(generation)) return;
       if (result.error === 'fork') {
         this.failFork(local, target);
         return;
       }
+      if (epoch !== this.listEpoch) return;
       if (result.error) {
-        if (epoch !== this.listEpoch || !this.isAuthenticated()) return;
         console.warn(
           `[uplink] key-log applyMany rejected: ${result.error} applied=${result.applied}`
         );
@@ -655,7 +728,6 @@ export class UplinkClient {
         continue;
       }
       if (local.seq === before.seq) {
-        if (epoch !== this.listEpoch || !this.isAuthenticated()) return;
         console.warn('[uplink] key-log catch-up stalled: head did not advance');
         retries += 1;
         if (!(await this.retryOrTearDown(retries, 'key-log-stalled'))) return;
@@ -663,7 +735,7 @@ export class UplinkClient {
       }
       retries = 0;
     }
-    if (this.keyLogForked || !this.isAuthenticated() || epoch !== this.listEpoch) return;
+    if (!local || !this.catchUpCurrent(epoch, generation)) return;
     if (local.seq === target.seq && !bytesEqual(local.hash, target.hash)) {
       this.failFork(local, target);
       return;
@@ -678,7 +750,7 @@ export class UplinkClient {
     console.warn(
       `[uplink] key-log catch-up result local=${local.seq.toString()} target=${target.seq.toString()}`
     );
-    this.finishNodeList(epoch);
+    this.finishNodeList(epoch, generation);
   }
 
   private async retryOrTearDown(retries: number, reason: string): Promise<boolean> {
@@ -719,7 +791,7 @@ export class UplinkClient {
     record: { bytes: Uint8Array; sig: Uint8Array },
     timeoutMs = UPLINK_KEY_LOG_ACK_TIMEOUT_MS
   ): Promise<UplinkKeyLogAck> {
-    if (!this.link || this.state !== 'online') {
+    if (!this.link || this.state !== 'online' || !this.isAuthenticated()) {
       return { t: 'key.log.ack', id: '', ok: false, error: 'offline' };
     }
     const id = crypto.randomUUID();
@@ -848,11 +920,14 @@ export class UplinkClient {
     this.authPhase = 'idle';
     this.authenticatedGeneration = 0;
     this.latestList = null;
-    this.listEpoch = 0;
+    this.catchUpChain = Promise.resolve();
     this.listVersionWatermark = Number.NEGATIVE_INFINITY;
     this.keyLogResMissingIdWarned = false;
     this.lastStatusJson = '';
     this.missedPongs = 0;
+    if (this.state === 'online') {
+      this.setState('connecting');
+    }
   }
 
   private tearDownLink(reason: string): void {

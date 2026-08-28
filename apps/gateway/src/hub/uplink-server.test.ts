@@ -48,6 +48,8 @@ function makeServer(
     authTimeoutMs?: number;
     rtcMaxSessions?: number;
     now?: () => number;
+    keyLogReqStateMax?: number;
+    keyLogReqIdleTtlMs?: number;
   }
 ) {
   const registry = new NodeRegistry();
@@ -62,6 +64,8 @@ function makeServer(
     authTimeoutMs: extras?.authTimeoutMs ?? 60_000,
     rtcMaxSessions: extras?.rtcMaxSessions,
     now: extras?.now,
+    keyLogReqStateMax: extras?.keyLogReqStateMax,
+    keyLogReqIdleTtlMs: extras?.keyLogReqIdleTtlMs,
   });
   return { server, registry };
 }
@@ -1078,6 +1082,97 @@ describe('UplinkServer', () => {
       expect(later[1]).toContain('suppressed=2');
       console.warn = orig;
       server.stop();
+    } finally {
+      close();
+    }
+  });
+
+  test('key.log.req buckets are LRU+TTL, survive reconnect, clear on stop, and drop on revoke', async () => {
+    const { db, close } = createMigratedAuthDb();
+    try {
+      const { userStore, keyLogSource } = createHubTestStack(db);
+      const user = seedUser(userStore);
+      let now = 1_000;
+      let listCalls = 0;
+      const counted: HubKeyLogSource = {
+        head: (userId) => keyLogSource.head(userId),
+        list: async (userId, fromSeq) => {
+          listCalls += 1;
+          return keyLogSource.list(userId, fromSeq);
+        },
+        append: (userId, record) => keyLogSource.append(userId, record),
+      };
+      const { server } = makeServer(db, userStore, counted, {
+        now: () => now,
+        keyLogReqStateMax: 2,
+        keyLogReqIdleTtlMs: 5_000,
+      });
+      const node = await authNode(server, userStore, user.id);
+      node.inbox.drain();
+      for (let i = 0; i < 20; i++) {
+        sendCtl(node.nodeLink, { t: 'key.log.req', from_seq: 1, id: `burst-${i}` });
+      }
+      let got = 0;
+      const deadline = Date.now() + 1_000;
+      while (Date.now() < deadline && got < 20) {
+        try {
+          const msg = await node.inbox.take(40);
+          if (msg.t === 'key.log.res') got += 1;
+        } catch {
+          break;
+        }
+      }
+      expect(got).toBe(20);
+      expect(listCalls).toBe(20);
+      node.nodeLink.close('reconnect');
+      await node.hubLink.closed;
+
+      const [nodeLink2, hubLink2] = createInMemoryLinkPair();
+      const inbox2 = ctlInbox(nodeLink2);
+      server.accept(hubLink2);
+      const challenge = await inbox2.take();
+      expect(challenge.t).toBe('auth.challenge');
+      if (challenge.t !== 'auth.challenge') throw new Error('expected challenge');
+      sendCtl(nodeLink2, {
+        t: 'auth.response',
+        node_id: node.nodeId,
+        sig: signAuth(node.ed.secretKey, decodeBase64url(challenge.nonce)),
+      });
+      await inbox2.take();
+      await inbox2.take();
+      inbox2.drain();
+      sendCtl(nodeLink2, { t: 'key.log.req', from_seq: 1, id: 'after-reconnect' });
+      await new Promise((resolve) => setTimeout(resolve, 40));
+      expect(listCalls).toBe(20);
+
+      const otherA = await authNode(server, userStore, user.id);
+      const otherB = await authNode(server, userStore, user.id);
+      otherA.inbox.drain();
+      otherB.inbox.drain();
+      sendCtl(otherA.nodeLink, { t: 'key.log.req', from_seq: 1, id: 'lru-a' });
+      sendCtl(otherB.nodeLink, { t: 'key.log.req', from_seq: 1, id: 'lru-b' });
+      await otherA.inbox.take();
+      await otherB.inbox.take();
+      expect(server.keyLogReqBucketCount).toBeLessThanOrEqual(2);
+
+      now += 5_001;
+      sendCtl(otherB.nodeLink, { t: 'key.log.req', from_seq: 1, id: 'ttl-sweep' });
+      await otherB.inbox.take();
+      expect(server.keyLogReqBucketCount).toBe(1);
+
+      const victim = await authNode(server, userStore, user.id);
+      victim.inbox.drain();
+      sendCtl(victim.nodeLink, { t: 'key.log.req', from_seq: 1, id: 'pre-revoke' });
+      await victim.inbox.take();
+      const cert = userStore.getCert(victim.nodeId);
+      if (!cert) throw new Error('missing cert');
+      userStore.upsertCert({ ...cert, revokedLogSeq: 9 });
+      sendCtl(victim.nodeLink, { t: 'ping' });
+      await victim.hubLink.closed;
+      expect(server.keyLogReqBucketCount).toBe(1);
+
+      server.stop();
+      expect(server.keyLogReqBucketCount).toBe(0);
     } finally {
       close();
     }

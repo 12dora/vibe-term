@@ -24,7 +24,13 @@ import type { WebSocketServer } from '../ws';
 import { GatewaySession } from '../ws/gateway-session';
 import { createFakeCarrier } from '../ws/test-helpers';
 import { SessionRegistry, createMeshRuntime } from './mesh-runtime';
-import { ImmediateScheduler, fakeSocketPair, seedUser, waitUntil } from './test-support';
+import {
+  ImmediateScheduler,
+  fakeSocketPair,
+  seedNodeIdentity,
+  seedUser,
+  waitUntil,
+} from './test-support';
 import { decodeUplinkCtl, encodeUplinkCtl } from './uplink-protocol';
 
 function fakeGateway(db: AuthDb): GatewayRuntime {
@@ -86,6 +92,7 @@ describe('createMeshRuntime', () => {
 
   test('MeshRuntimeConfig.peerBindHost is threaded to PeerServer when peerHostname is omitted', async () => {
     const { db, close } = createMigratedAuthDb();
+    seedUser(new UserStore(db));
     const [clientWs] = fakeSocketPair();
     const mesh = await createMeshRuntime({
       db,
@@ -445,6 +452,178 @@ describe('createMeshRuntime', () => {
     };
     expect(offlineBody.nodes.find((n) => n.id === peerId)?.online).toBe(false);
     expect(mesh.lastNodeList?.nodes.find((n) => n.id === peerId)?.online).toBe(true);
+  });
+
+  test('node role with empty userId does not bind the peer listener', async () => {
+    const { db, close } = createMigratedAuthDb();
+    const [emptyWs] = fakeSocketPair();
+    const mesh = await createMeshRuntime({
+      db,
+      gateway: fakeGateway(db),
+      config: {
+        roles: { hub: false, node: true },
+        hubUrl: 'http://127.0.0.1:9',
+        peerPort: 0,
+        stunServers: [],
+      },
+      wsFactory: () => emptyWs,
+      peerHostname: '127.0.0.1',
+    });
+    fixtures.push({ close, stop: () => mesh.stop() });
+    await mesh.start();
+    expect(mesh.uplink.userId).toBe('');
+    expect(mesh.peers.listenPort).toBeNull();
+    expect(mesh.uplink.state).toBe('offline');
+  });
+
+  test('hub empty db binds deny-all then works after hub user add without restart', async () => {
+    const { db, close } = createMigratedAuthDb();
+    const mesh = await createMeshRuntime({
+      db,
+      gateway: fakeGateway(db),
+      config: {
+        roles: { hub: true, node: true },
+        hubUrl: null,
+        hubPublicUrl: 'http://127.0.0.1',
+        peerPort: 0,
+        stunServers: [],
+      },
+      peerHostname: '127.0.0.1',
+    });
+    fixtures.push({ close, stop: () => mesh.stop() });
+    await mesh.start();
+    expect(mesh.uplink.userId).toBe('');
+    expect(mesh.peers.listenPort).toBeGreaterThan(0);
+    const boot = await mesh.userKeyService.bootstrapUserWithSelfAdmit({
+      username: 'hub',
+      password: 'pw',
+      identity: mesh.identity,
+    });
+    expect(mesh.uplink.userId).toBe(boot.userId);
+    const peer = seedNodeIdentity(mesh.userStore, boot.userId);
+    mesh.userStore.upsertPeer({
+      nodeId: peer.nodeId,
+      name: 'peer',
+      endpointsJson: '[]',
+      inventoryJson: '{}',
+      directCapable: false,
+      lastSeenAt: Date.now(),
+      listVersion: 1,
+    });
+    expect(mesh.peers.listReach().has(peer.nodeId)).toBe(true);
+  });
+
+  test('hub presence is fresh only after the current generation finishes catch-up and offlines de-dupe', async () => {
+    const { db, close } = createMigratedAuthDb();
+    const userStore = new UserStore(db);
+    seedUser(userStore);
+    const peerId = 'cd'.repeat(16);
+    userStore.upsertCert({
+      nodeId: peerId,
+      userId: 'user-1',
+      admitRecordSeq: 1,
+      certificateBytes: encodeCertificate({
+        domain: DOMAIN_CERTIFICATE,
+        uid: 'user-1',
+        node_id: hexToBytes(peerId),
+        ed_pk: new Uint8Array(32).fill(4),
+        x25519_pk: new Uint8Array(32).fill(5),
+        enroll_pk: new Uint8Array(32).fill(6),
+        issued_at: 1n,
+      }),
+      certSig: randomBytes(64),
+      authorizationBytes: randomBytes(8),
+      authorizationSig: randomBytes(64),
+      revokedLogSeq: null,
+    });
+    const [clientWs, hubWs] = fakeSocketPair();
+    const hub = new WebSocketLink(hubWs, { role: 'acceptor' });
+    hub.ctl.onMessage(() => {});
+    const events: Array<{ nodeId: string; status: string }> = [];
+    const sockets: { current: ReturnType<typeof fakeSocketPair>[0] } = { current: clientWs };
+    const mesh = await createMeshRuntime({
+      db,
+      gateway: fakeGateway(db),
+      config: {
+        roles: { hub: false, node: true },
+        hubUrl: 'http://127.0.0.1:9',
+        peerPort: 0,
+        stunServers: [],
+      },
+      wsFactory: () => sockets.current,
+      startPeerServer: false,
+    });
+    fixtures.push({ close, stop: () => mesh.stop() });
+    mesh.onNodeEvent((event) => {
+      events.push({ nodeId: event.nodeId, status: event.status });
+    });
+    await mesh.start();
+    await waitUntil(() => mesh.uplink.link !== null);
+    hub.ctl.send(encodeUplinkCtl({ t: 'auth.challenge', nonce: encodeBase64url(randomBytes(32)) }));
+    hub.ctl.send(encodeUplinkCtl({ t: 'auth.ok' }));
+    await waitUntil(() => mesh.uplink.state === 'online');
+    const listedPre = await mesh.handleRequest(new Request('http://localhost/api/auth/nodes'), {
+      upgrade: () => false,
+    });
+    if (!(listedPre instanceof Response)) throw new Error('expected Response');
+    const preBody = (await listedPre.json()) as { nodes: Array<{ id: string; online: boolean }> };
+    expect(preBody.nodes.find((n) => n.id === peerId)?.online ?? false).toBe(false);
+
+    hub.ctl.send(
+      encodeUplinkCtl({
+        t: 'node.list',
+        version: 1,
+        key_log_head: { seq: 0n, hash: new Uint8Array(32) },
+        rtc: { stun: [], turn: null },
+        nodes: [
+          {
+            id: peerId,
+            name: 'peer',
+            online: true,
+            endpoints: [],
+            inventory: {},
+            direct_capable: false,
+            version: '1.0.0',
+          },
+        ],
+      })
+    );
+    await waitUntil(() => mesh.lastNodeList !== null);
+    const listed = await mesh.handleRequest(new Request('http://localhost/api/auth/nodes'), {
+      upgrade: () => false,
+    });
+    if (!(listed instanceof Response)) throw new Error('expected Response');
+    const onlineBody = (await listed.json()) as { nodes: Array<{ id: string; online: boolean }> };
+    expect(onlineBody.nodes.find((n) => n.id === peerId)?.online).toBe(true);
+
+    clientWs.close(1000, 'hub-gone');
+    await waitUntil(() => mesh.uplink.state !== 'online');
+    const offlineCount = events.filter((e) => e.nodeId === peerId && e.status === 'offline').length;
+    expect(offlineCount).toBe(1);
+
+    const [clientWs2, hubWs2] = fakeSocketPair();
+    const hub2 = new WebSocketLink(hubWs2, { role: 'acceptor' });
+    hub2.ctl.onMessage(() => {});
+    sockets.current = clientWs2;
+    await waitUntil(() => mesh.uplink.link !== null && mesh.uplink.state !== 'offline', 5_000);
+    hub2.ctl.send(
+      encodeUplinkCtl({ t: 'auth.challenge', nonce: encodeBase64url(randomBytes(32)) })
+    );
+    hub2.ctl.send(encodeUplinkCtl({ t: 'auth.ok' }));
+    await waitUntil(() => mesh.uplink.state === 'online', 5_000);
+    const listedStale = await mesh.handleRequest(new Request('http://localhost/api/auth/nodes'), {
+      upgrade: () => false,
+    });
+    if (!(listedStale instanceof Response)) throw new Error('expected Response');
+    const staleBody = (await listedStale.json()) as {
+      nodes: Array<{ id: string; online: boolean }>;
+    };
+    expect(staleBody.nodes.find((n) => n.id === peerId)?.online ?? false).toBe(false);
+
+    clientWs2.close(1000, 'hub-gone-again');
+    await waitUntil(() => mesh.uplink.state !== 'online');
+    const offlineAfter = events.filter((e) => e.nodeId === peerId && e.status === 'offline').length;
+    expect(offlineAfter).toBe(1);
   });
 
   test('re-advertises node.status endpoints when network interfaces change', async () => {

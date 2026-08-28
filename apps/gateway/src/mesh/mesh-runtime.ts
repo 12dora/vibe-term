@@ -310,6 +310,7 @@ export type MeshRuntime = {
   };
   start(): Promise<void>;
   stop(): Promise<void>;
+  onNodeEvent(cb: (event: NodeEventPayload) => void): () => void;
 };
 
 export type NetworkInterfacesFn = () => NodeJS.Dict<os.NetworkInterfaceInfo[]>;
@@ -575,9 +576,12 @@ export async function createMeshRuntime(opts: CreateMeshRuntimeOptions): Promise
     verifyPasskeyAssertion: makeVerifyPasskeyAssertion(userStore),
   });
   const applier = createKeyLogApplier(keyLogStore, keyLogService);
-  const userId = resolveUserId(userStore, identity.nodeIdHex, opts.userId) ?? '';
+  const userIdOf = () => resolveUserId(userStore, identity.nodeIdHex, opts.userId) ?? '';
   const nodeEvents = new Set<(event: NodeEventPayload) => void>();
+  const lastEmittedNodeStatus = new Map<string, NodeEventPayload['status']>();
   const emitNodeEvent = (event: NodeEventPayload) => {
+    if (lastEmittedNodeStatus.get(event.nodeId) === event.status) return;
+    lastEmittedNodeStatus.set(event.nodeId, event.status);
     for (const cb of nodeEvents) {
       try {
         cb(event);
@@ -744,11 +748,12 @@ export async function createMeshRuntime(opts: CreateMeshRuntimeOptions): Promise
   };
 
   const httpHolder: { runtime: MeshHttpRuntime | null } = { runtime: null };
+  let hubPresenceLive = false;
 
   const uplink = new UplinkClient({
     hubUrl: hubEndpointUrl(config),
     identity: { nodeId: identity.nodeIdHex, edSecretKey: identity.edPrivateKey },
-    userId,
+    userId: userIdOf,
     keyLogApplier: applier,
     userStore,
     statusProvider,
@@ -766,6 +771,7 @@ export async function createMeshRuntime(opts: CreateMeshRuntimeOptions): Promise
     },
     onNodeList: (list) => {
       lastNodeList = list;
+      hubPresenceLive = true;
       lastRtc = {
         stun: list.rtc.stun,
         turn: list.rtc.turn ?? null,
@@ -773,7 +779,8 @@ export async function createMeshRuntime(opts: CreateMeshRuntimeOptions): Promise
       for (const node of list.nodes) {
         if (node.id === HUB_META_PEER_ID) continue;
         const cert = userStore.getCert(node.id);
-        if (!cert || (userId && cert.userId !== userId) || cert.revokedLogSeq != null) {
+        const uid = userIdOf();
+        if (!cert || !uid || cert.userId !== uid || cert.revokedLogSeq != null) {
           userStore.deletePeer(node.id);
           if (cert?.revokedLogSeq != null) {
             peerHolder.manager?.onRevoked(node.id);
@@ -796,7 +803,8 @@ export async function createMeshRuntime(opts: CreateMeshRuntimeOptions): Promise
       for (const peer of userStore.listPeers()) {
         if (peer.nodeId === identity.nodeIdHex || peer.nodeId === HUB_META_PEER_ID) continue;
         const cert = userStore.getCert(peer.nodeId);
-        if (!cert || (userId && cert.userId !== userId) || cert.revokedLogSeq != null) {
+        const uid = userIdOf();
+        if (!cert || !uid || cert.userId !== uid || cert.revokedLogSeq != null) {
           if (cert?.revokedLogSeq != null) {
             peerHolder.manager?.onRevoked(peer.nodeId);
           } else {
@@ -892,12 +900,11 @@ export async function createMeshRuntime(opts: CreateMeshRuntimeOptions): Promise
     },
     ensureDcSession: (peerNodeId, rtcSession) => {
       if (!rtcSession.startsWith('dc:')) return;
-      hub?.uplink.ensureDcSession(userId, identity.nodeIdHex, peerNodeId);
+      hub?.uplink.ensureDcSession(userIdOf(), identity.nodeIdHex, peerNodeId);
     },
   });
   peerHolder.manager = peerManager;
 
-  let hubPresenceLive = false;
   uplink.onStateChange((state) => {
     const live = state === 'online';
     if (hubPresenceLive && !live && lastNodeList) {
@@ -909,7 +916,7 @@ export async function createMeshRuntime(opts: CreateMeshRuntimeOptions): Promise
         emitNodeEvent({ nodeId: node.id, status: 'offline' });
       }
     }
-    hubPresenceLive = live;
+    if (!live) hubPresenceLive = false;
   });
 
   const peers: PeerLinkProvider = {
@@ -917,7 +924,7 @@ export async function createMeshRuntime(opts: CreateMeshRuntimeOptions): Promise
     listReach: () => peerManager.listReach(),
     listHubOnline: () => {
       const ids = new Set<string>();
-      if (uplink.state !== 'online' || !lastNodeList) return ids;
+      if (!hubPresenceLive || uplink.state !== 'online' || !lastNodeList) return ids;
       for (const node of lastNodeList.nodes) {
         if (node.online) ids.add(node.id);
       }
@@ -984,7 +991,7 @@ export async function createMeshRuntime(opts: CreateMeshRuntimeOptions): Promise
     },
     sendCtl(nodeId, msg) {
       if (msg.rtcSession.startsWith('dc:')) {
-        hub?.uplink.ensureDcSession(userId, identity.nodeIdHex, nodeId);
+        hub?.uplink.ensureDcSession(userIdOf(), identity.nodeIdHex, nodeId);
       }
       const live = peerManager.getLive(nodeId);
       if (live) {
@@ -1127,7 +1134,7 @@ export async function createMeshRuntime(opts: CreateMeshRuntimeOptions): Promise
       },
     },
     selfStatus: statusProvider,
-    primaryUserId: userId || undefined,
+    primaryUserId: userIdOf() || undefined,
     hubPublicUrl: hubEndpointUrl(config),
     trustProxy: gatewayConfig.trustProxy,
     connectionLookup: (input) =>
@@ -1180,10 +1187,15 @@ export async function createMeshRuntime(opts: CreateMeshRuntimeOptions): Promise
       drain() {},
       close: (ws, code, reason) => http.handleWebSocket.close(ws, code, reason),
     },
+    onNodeEvent(cb) {
+      nodeEvents.add(cb);
+      return () => {
+        nodeEvents.delete(cb);
+      };
+    },
     async start() {
       await rtc.ready();
-      await peerManager.start();
-      if (!userId) {
+      if (!userIdOf()) {
         const empty = userStore.listUsers().length === 0 && userStore.listCerts().length === 0;
         if (config.roles.hub && empty) {
           console.warn(
@@ -1196,6 +1208,7 @@ export async function createMeshRuntime(opts: CreateMeshRuntimeOptions): Promise
           return;
         }
       }
+      await peerManager.start();
       if (uplinkHub) {
         const target = uplinkHub;
         uplink.start(async (signal) => {
