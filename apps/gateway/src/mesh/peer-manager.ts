@@ -1,4 +1,4 @@
-import { decodeBase64url, encodeBase64url } from '@tmex/shared/auth';
+import { decodeBase64url, decodeCertificate, encodeBase64url } from '@tmex/shared/auth';
 import {
   LinkMux,
   type LinkSession,
@@ -21,8 +21,18 @@ import type { RtcSignalMessage } from './mesh-deps';
 import { handshakeRelay, handshakeWsDirect, parseOpenPayload } from './peer-protocol';
 import { PeerServer } from './peer-server';
 import type { RtcPeerManager } from './rtc';
-import { type RtcSignaling, encodeRtcWakeSdp, isRtcWakeSdp, peerRtcSession } from './rtc/ice';
-import { rtcLog } from './rtc/rtc-log';
+import {
+  RTC_WAKE_DOMAIN,
+  RTC_WAKE_MAX_SKEW_MS,
+  type RtcSignaling,
+  type RtcWakeFields,
+  encodeRtcWakeSdp,
+  isRtcWakeSdp,
+  parseRtcWakeSdp,
+  peerRtcSession,
+  verifyRtcWakeSignature,
+} from './rtc/ice';
+import { rtcLog, rtcLogRateLimited } from './rtc/rtc-log';
 import { acceptHttpStream, acceptWsStream, classifyOpenPayload } from './stream-targets';
 import {
   type DispatchHttp,
@@ -52,6 +62,7 @@ export const PEER_RETIRE_QUIET_MS = 2_000;
 export const PEER_RETIRE_MAX_MS = 30_000;
 export const RTC_PEER_INBOX_MAX_MESSAGES = 32;
 export const PEER_RTC_WAKE_COOLDOWN_MS = 5_000;
+export const PEER_RTC_WAKE_NONCE_CACHE = 256;
 
 /** Connection initiated by the lexicographically smaller nodeId wins a simultaneous dial. */
 export function winningDialInitiator(selfNodeId: string, peerNodeId: string): string {
@@ -137,7 +148,12 @@ type UpgradeGate = {
 };
 
 type WakeGate = {
-  pending: boolean;
+  inflight: boolean;
+  nextEligibleAt: number;
+  deferredAbort: AbortController | null;
+};
+
+type IncomingWakeGate = {
   nextEligibleAt: number;
 };
 
@@ -269,6 +285,8 @@ export class PeerManager {
   private readonly server: PeerServer | null;
   private readonly upgradeGate = new Map<string, UpgradeGate>();
   private readonly wakeGate = new Map<string, WakeGate>();
+  private readonly incomingWakeGate = new Map<string, IncomingWakeGate>();
+  private readonly rtcWakeNonces = new Map<string, true>();
   private readonly transportWaiters = new Map<string, TransportWaiter[]>();
   private upgradeInflight = 0;
   private readonly upgradeWaiters: Array<() => void> = [];
@@ -364,7 +382,10 @@ export class PeerManager {
       for (const waiter of waiters) waiter.resolve(false);
       this.transportWaiters.delete(nodeId);
     }
+    this.abortDeferredRtcWakes();
     this.wakeGate.clear();
+    this.incomingWakeGate.clear();
+    this.rtcWakeNonces.clear();
   }
 
   getLive(nodeId: string): LinkSession | null {
@@ -390,9 +411,14 @@ export class PeerManager {
     if (this.stopped || timeoutMs <= 0) return false;
     return new Promise((resolve) => {
       let settled = false;
+      const timeoutAbort = new AbortController();
+      const onStop = () => timeoutAbort.abort();
+      this.stopAbort.signal.addEventListener('abort', onStop, { once: true });
       const finish = (ok: boolean) => {
         if (settled) return;
         settled = true;
+        this.stopAbort.signal.removeEventListener('abort', onStop);
+        timeoutAbort.abort();
         const list = this.transportWaiters.get(nodeId);
         if (list) {
           const next = list.filter((row) => row !== waiter);
@@ -401,13 +427,15 @@ export class PeerManager {
         }
         resolve(ok);
       };
-      const waiter: TransportWaiter = { kind, resolve: () => finish(true) };
+      const waiter: TransportWaiter = { kind, resolve: finish };
       const list = this.transportWaiters.get(nodeId) ?? [];
       list.push(waiter);
       this.transportWaiters.set(nodeId, list);
-      void this.scheduler.sleep(timeoutMs, this.stopAbort.signal).then(
+      void this.scheduler.sleep(timeoutMs, timeoutAbort.signal).then(
         () => finish(false),
-        () => finish(false)
+        () => {
+          if (!settled) finish(false);
+        }
       );
     });
   }
@@ -434,8 +462,7 @@ export class PeerManager {
     }
     if (!this.isTrusted(fromNodeId)) return;
     if (isRtcWakeSdp(msg.sdp)) {
-      rtcLog('signal recv', { peer: fromNodeId, kind: 'wake' });
-      this.handleRtcWake(fromNodeId);
+      this.handleIncomingRtcWake(fromNodeId, msg);
       return;
     }
     const listeners = this.rtcListeners.get(fromNodeId);
@@ -493,7 +520,10 @@ export class PeerManager {
     this.forceCloseRetiring(nodeId, 'revoked');
     this.userStore.deletePeer(nodeId);
     this.upgradeGate.delete(nodeId);
+    this.releaseRtcWakeAttempt(nodeId);
     this.wakeGate.delete(nodeId);
+    this.incomingWakeGate.delete(nodeId);
+    this.failTransportWaiters(nodeId);
   }
 
   notifyPeerEndpointsChanged(nodeId?: string): void {
@@ -706,8 +736,41 @@ export class PeerManager {
     return true;
   }
 
-  private handleRtcWake(fromNodeId: string): void {
+  private handleIncomingRtcWake(fromNodeId: string, msg: RtcSignalMessage): void {
     if (this.stopped) return;
+    const now = this.scheduler.now();
+    let gate = this.incomingWakeGate.get(fromNodeId);
+    if (!gate) {
+      gate = { nextEligibleAt: 0 };
+      this.incomingWakeGate.set(fromNodeId, gate);
+    }
+    if (now < gate.nextEligibleAt) {
+      rtcLogRateLimited(`wake:rate:${fromNodeId}`, 'signal recv', {
+        peer: fromNodeId,
+        kind: 'wake',
+        dropped: 'rate',
+      });
+      return;
+    }
+    const wake = parseRtcWakeSdp(msg.sdp);
+    if (!wake || !this.acceptSignedRtcWake(fromNodeId, msg, wake)) {
+      rtcLogRateLimited(`wake:auth:${fromNodeId}`, 'signal recv', {
+        peer: fromNodeId,
+        kind: 'wake',
+        dropped: 'auth',
+      });
+      return;
+    }
+    if (this.identity.nodeId.toLowerCase() >= fromNodeId.toLowerCase()) {
+      rtcLogRateLimited(`wake:role:${fromNodeId}`, 'signal recv', {
+        peer: fromNodeId,
+        kind: 'wake',
+        dropped: 'not-offerer',
+      });
+      return;
+    }
+    gate.nextEligibleAt = now + PEER_RTC_WAKE_COOLDOWN_MS;
+    rtcLog('signal recv', { peer: fromNodeId, kind: 'wake' });
     if (this.live.get(fromNodeId)?.transport === 'dc') return;
     if (!this.shouldTryDc(fromNodeId)) return;
     if (this.pending.has(fromNodeId)) return;
@@ -716,31 +779,123 @@ export class PeerManager {
     void this.getLink(fromNodeId).catch(() => undefined);
   }
 
-  private maybeSendRtcWake(peerNodeId: string): void {
-    if (this.identity.nodeId.toLowerCase() < peerNodeId.toLowerCase()) return;
-    if (this.live.get(peerNodeId)?.transport === 'dc') return;
-    if (!this.shouldTryDc(peerNodeId)) return;
+  private acceptSignedRtcWake(
+    fromNodeId: string,
+    msg: RtcSignalMessage,
+    wake: RtcWakeFields
+  ): boolean {
+    if (wake.domain !== RTC_WAKE_DOMAIN) return false;
+    if (wake.from.toLowerCase() !== fromNodeId.toLowerCase()) return false;
+    if (wake.to.toLowerCase() !== this.identity.nodeId.toLowerCase()) return false;
+    const session = peerRtcSession(wake.from, wake.to);
+    if (wake.rtcSession.toLowerCase() !== session.toLowerCase()) return false;
+    if (msg.rtcSession && msg.rtcSession.toLowerCase() !== session.toLowerCase()) return false;
+    if (Math.abs(this.scheduler.now() - wake.issued_at) > RTC_WAKE_MAX_SKEW_MS) return false;
+    if (!this.isTrusted(wake.from)) return false;
+    const cert = this.userStore.getCert(wake.from);
+    if (!cert || cert.revokedLogSeq != null) return false;
+    let edPk: Uint8Array;
+    try {
+      edPk = decodeCertificate(cert.certificateBytes).ed_pk;
+    } catch {
+      return false;
+    }
+    if (!verifyRtcWakeSignature(wake, edPk)) return false;
+    return this.rememberRtcWakeNonce(wake.nonce);
+  }
+
+  private rememberRtcWakeNonce(nonce: string): boolean {
+    if (this.rtcWakeNonces.has(nonce)) return false;
+    if (this.rtcWakeNonces.size >= PEER_RTC_WAKE_NONCE_CACHE) {
+      const oldest = this.rtcWakeNonces.keys().next().value;
+      if (oldest !== undefined) this.rtcWakeNonces.delete(oldest);
+    }
+    this.rtcWakeNonces.set(nonce, true);
+    return true;
+  }
+
+  private ensureWakeGate(peerNodeId: string): WakeGate {
     let gate = this.wakeGate.get(peerNodeId);
     if (!gate) {
-      gate = { pending: false, nextEligibleAt: 0 };
+      gate = { inflight: false, nextEligibleAt: 0, deferredAbort: null };
       this.wakeGate.set(peerNodeId, gate);
     }
+    return gate;
+  }
+
+  private abortDeferredRtcWakes(): void {
+    for (const gate of this.wakeGate.values()) {
+      this.disarmDeferredRtcWake(gate);
+    }
+  }
+
+  private disarmDeferredRtcWake(gate: WakeGate): void {
+    gate.deferredAbort?.abort();
+    gate.deferredAbort = null;
+  }
+
+  private armDeferredRtcWake(peerNodeId: string, gate: WakeGate): void {
+    if (gate.deferredAbort || this.stopped) return;
+    const delay = Math.max(0, gate.nextEligibleAt - this.scheduler.now());
+    const abort = new AbortController();
+    gate.deferredAbort = abort;
+    const onStop = () => abort.abort();
+    this.stopAbort.signal.addEventListener('abort', onStop, { once: true });
+    void this.scheduler.sleep(delay, abort.signal).then(
+      () => {
+        this.stopAbort.signal.removeEventListener('abort', onStop);
+        if (gate.deferredAbort === abort) gate.deferredAbort = null;
+        if (this.stopped) return;
+        gate.nextEligibleAt = Math.min(gate.nextEligibleAt, this.scheduler.now());
+        this.dispatchRtcWake(peerNodeId);
+      },
+      () => {
+        this.stopAbort.signal.removeEventListener('abort', onStop);
+        if (gate.deferredAbort === abort) gate.deferredAbort = null;
+      }
+    );
+  }
+
+  private releaseRtcWakeAttempt(peerNodeId: string): void {
+    const gate = this.wakeGate.get(peerNodeId);
+    if (!gate) return;
+    gate.inflight = false;
+    this.disarmDeferredRtcWake(gate);
+  }
+
+  private maybeSendRtcWake(peerNodeId: string): void {
+    this.dispatchRtcWake(peerNodeId);
+  }
+
+  private dispatchRtcWake(peerNodeId: string): void {
+    if (this.identity.nodeId.toLowerCase() < peerNodeId.toLowerCase()) return;
+    if (this.live.get(peerNodeId)?.transport === 'dc') {
+      this.releaseRtcWakeAttempt(peerNodeId);
+      return;
+    }
+    if (!this.shouldTryDc(peerNodeId)) return;
+    const gate = this.ensureWakeGate(peerNodeId);
+    if (gate.inflight) return;
     const now = this.scheduler.now();
-    if (gate.pending || now < gate.nextEligibleAt) return;
-    gate.pending = true;
+    if (now < gate.nextEligibleAt) {
+      this.armDeferredRtcWake(peerNodeId, gate);
+      return;
+    }
+    gate.inflight = true;
     gate.nextEligibleAt = now + PEER_RTC_WAKE_COOLDOWN_MS;
     rtcLog('signal send', { peer: peerNodeId, kind: 'wake' });
     this.sendRtcSignal(peerNodeId, {
       rtcSession: peerRtcSession(this.identity.nodeId, peerNodeId),
       from: 'node',
       to: peerNodeId,
-      sdp: encodeRtcWakeSdp(),
+      sdp: encodeRtcWakeSdp({
+        from: this.identity.nodeId,
+        to: peerNodeId,
+        rtcSession: peerRtcSession(this.identity.nodeId, peerNodeId),
+        issuedAt: now,
+        secretKey: this.identity.edSecretKey,
+      }),
     });
-  }
-
-  private clearRtcWake(peerNodeId: string): void {
-    const gate = this.wakeGate.get(peerNodeId);
-    if (gate) gate.pending = false;
   }
 
   private notifyTransport(nodeId: string): void {
@@ -754,6 +909,13 @@ export class PeerManager {
     }
     if (keep.length > 0) this.transportWaiters.set(nodeId, keep);
     else this.transportWaiters.delete(nodeId);
+  }
+
+  private failTransportWaiters(nodeId: string): void {
+    const waiters = this.transportWaiters.get(nodeId);
+    if (!waiters || waiters.length === 0) return;
+    this.transportWaiters.delete(nodeId);
+    for (const waiter of waiters) waiter.resolve(false);
   }
 
   private signalingFor(peerNodeId: string): RtcSignaling {
@@ -851,7 +1013,7 @@ export class PeerManager {
       this.releaseRtcAttempt(nodeId, unsub);
       throw err;
     } finally {
-      this.clearRtcWake(nodeId);
+      this.releaseRtcWakeAttempt(nodeId);
     }
   }
 
@@ -1481,6 +1643,7 @@ export class PeerManager {
       this.live.delete(nodeId);
       this.finishRetire(live, reason);
     }
+    this.incomingWakeGate.delete(nodeId);
     this.notifyTransport(nodeId);
     if (this.stopped || reason === 'revoked') {
       this.dropParked(nodeId, reason);

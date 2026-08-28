@@ -1,14 +1,18 @@
 import { afterEach, describe, expect, test } from 'bun:test';
+import { generateEd25519KeyPair, randomBytes } from '@tmex/shared/auth';
 import { createInMemoryLinkPair } from '@tmex/shared/link';
 import { createMigratedAuthDb } from '../auth/test-db';
 import { UserStore } from '../auth/user-store';
+import { defaultScheduler } from './ctl';
 import {
+  PEER_RTC_WAKE_COOLDOWN_MS,
   PEER_UPGRADE_BACKOFF_CAP_MS,
   PEER_UPGRADE_COOLDOWN_MS,
   PeerManager,
   winningDialInitiator,
 } from './peer-manager';
 import { handshakeRelay } from './peer-protocol';
+import { encodeRtcWakeSdp, peerRtcSession } from './rtc/ice';
 import {
   ImmediateScheduler,
   fakeSocketPair,
@@ -16,7 +20,12 @@ import {
   seedUser,
   waitUntil,
 } from './test-support';
-import { type KeyLogApplier, NodeUnreachableError, type UplinkStatus } from './types';
+import {
+  type KeyLogApplier,
+  type MeshScheduler,
+  NodeUnreachableError,
+  type UplinkStatus,
+} from './types';
 import { UplinkClient } from './uplink-client';
 
 function dummyApplier(): KeyLogApplier {
@@ -63,7 +72,12 @@ const LARGE_NODE_ID = new Uint8Array(16).fill(0xff);
 
 async function setupDirectRtcPair(
   fixtures: Array<{ close: () => void; stop?: () => Promise<void> }>,
-  opts?: { smallDirectCapable?: boolean; largeDirectCapable?: boolean }
+  opts?: {
+    smallDirectCapable?: boolean;
+    largeDirectCapable?: boolean;
+    now?: () => number;
+    scheduler?: MeshScheduler;
+  }
 ) {
   const { db, close } = createMigratedAuthDb();
   fixtures.push({ close });
@@ -146,6 +160,8 @@ async function setupDirectRtcPair(
     peerPort: 0,
     startServer: false,
     rtc: rtcSmall,
+    now: opts?.now,
+    scheduler: opts?.scheduler,
   });
   const managerLarge = new PeerManager({
     identity: large,
@@ -154,12 +170,14 @@ async function setupDirectRtcPair(
     peerPort: 0,
     startServer: false,
     rtc: rtcLarge,
+    now: opts?.now,
+    scheduler: opts?.scheduler,
   });
   holderSmall.manager = managerSmall;
   holderLarge.manager = managerLarge;
   fixtures.push({ close, stop: () => managerSmall.stop() });
   fixtures.push({ close, stop: () => managerLarge.stop() });
-  return { store, small, large, managerSmall, managerLarge, wakes };
+  return { store, small, large, managerSmall, managerLarge, wakes, fake };
 }
 
 function echoQuiesceCaps(session: import('@tmex/shared/link').LinkSession): void {
@@ -1138,6 +1156,224 @@ describe('PeerManager', () => {
     await managerLarge.getLink(small.nodeId);
     expect(await waiting).toBe(true);
     expect(await managerLarge.waitForTransport(small.nodeId, 'dc', 50)).toBe(true);
+  });
+
+  test('waitForTransport resolves false when stop() runs before transport arrives', async () => {
+    const { small, large, managerLarge } = await setupDirectRtcPair(fixtures);
+    const waiting = managerLarge.waitForTransport(small.nodeId, 'dc', 30_000);
+    await managerLarge.stop();
+    expect(await waiting).toBe(false);
+  });
+
+  test('waitForTransport cancels the timeout sleep after an early dc success', async () => {
+    const inner = defaultScheduler();
+    const state = { active: 0 };
+    const scheduler: MeshScheduler = {
+      now: inner.now,
+      sleep(ms, signal) {
+        state.active += 1;
+        return inner.sleep(ms, signal).finally(() => {
+          state.active -= 1;
+        });
+      },
+      interval: inner.interval.bind(inner),
+    };
+    const { small, large, managerLarge } = await setupDirectRtcPair(fixtures, { scheduler });
+    const waiting = managerLarge.waitForTransport(small.nodeId, 'dc', 30_000);
+    await managerLarge.getLink(small.nodeId);
+    expect(await waiting).toBe(true);
+    await waitUntil(() => state.active === 0, 1_000);
+    expect(state.active).toBe(0);
+  });
+
+  test('revoking a peer resolves outstanding waitForTransport waiters false', async () => {
+    const { store, small, large, managerLarge } = await setupDirectRtcPair(fixtures);
+    const waiting = managerLarge.waitForTransport(small.nodeId, 'dc', 30_000);
+    store.markCertRevoked(small.nodeId, 9);
+    managerLarge.onRevoked(small.nodeId);
+    expect(await waiting).toBe(false);
+  });
+
+  test('unsigned, bad-signature, skewed, replayed, and spoofed-from wakes do not create a PeerConnection', async () => {
+    const clock = { ms: Date.now() };
+    const { small, large, managerSmall, fake } = await setupDirectRtcPair(fixtures, {
+      now: () => clock.ms,
+    });
+    const session = peerRtcSession(small.nodeId, large.nodeId);
+    const inject = (sdp: string) => {
+      managerSmall.receiveRtcSignal(large.nodeId, {
+        rtcSession: session,
+        from: 'node',
+        to: small.nodeId,
+        sdp,
+      });
+    };
+    inject(JSON.stringify({ type: 'rtc.wake' }));
+    expect(fake.connections).toHaveLength(0);
+
+    clock.ms += PEER_RTC_WAKE_COOLDOWN_MS + 1;
+    const other = generateEd25519KeyPair();
+    inject(
+      encodeRtcWakeSdp({
+        from: large.nodeId,
+        to: small.nodeId,
+        rtcSession: session,
+        issuedAt: clock.ms,
+        secretKey: other.secretKey,
+      })
+    );
+    expect(fake.connections).toHaveLength(0);
+
+    clock.ms += PEER_RTC_WAKE_COOLDOWN_MS + 1;
+    inject(
+      encodeRtcWakeSdp({
+        from: large.nodeId,
+        to: small.nodeId,
+        rtcSession: session,
+        issuedAt: clock.ms - 120_000,
+        secretKey: large.edSecretKey,
+      })
+    );
+    expect(fake.connections).toHaveLength(0);
+
+    clock.ms += PEER_RTC_WAKE_COOLDOWN_MS + 1;
+
+    const nonce = randomBytes(16);
+    const good = encodeRtcWakeSdp({
+      from: large.nodeId,
+      to: small.nodeId,
+      rtcSession: session,
+      issuedAt: clock.ms,
+      secretKey: large.edSecretKey,
+      nonce,
+    });
+    inject(good);
+    await waitUntil(() => fake.connections.length > 0, 2_000);
+    const afterGood = fake.connections.length;
+    clock.ms += PEER_RTC_WAKE_COOLDOWN_MS + 1;
+    inject(good);
+    await Bun.sleep(20);
+    expect(fake.connections).toHaveLength(afterGood);
+
+    clock.ms += PEER_RTC_WAKE_COOLDOWN_MS + 1;
+    inject(
+      encodeRtcWakeSdp({
+        from: small.nodeId,
+        to: large.nodeId,
+        rtcSession: session,
+        issuedAt: clock.ms,
+        secretKey: large.edSecretKey,
+      })
+    );
+    await Bun.sleep(20);
+    expect(fake.connections).toHaveLength(afterGood);
+  });
+
+  test('receiver drops wake when it is not the offerer for the pair', async () => {
+    const { small, large, managerLarge, fake } = await setupDirectRtcPair(fixtures);
+    managerLarge.receiveRtcSignal(small.nodeId, {
+      rtcSession: peerRtcSession(small.nodeId, large.nodeId),
+      from: 'node',
+      to: large.nodeId,
+      sdp: encodeRtcWakeSdp({
+        from: small.nodeId,
+        to: large.nodeId,
+        rtcSession: peerRtcSession(small.nodeId, large.nodeId),
+        issuedAt: Date.now(),
+        secretKey: small.edSecretKey,
+      }),
+    });
+    await Bun.sleep(30);
+    expect(fake.connections).toHaveLength(0);
+    expect(managerLarge.transportOf(small.nodeId)).toBeNull();
+  });
+
+  test('receiver rate-limits wake handling before logging', async () => {
+    const lines: string[] = [];
+    const orig = console.log;
+    console.log = (...args: unknown[]) => {
+      lines.push(args.map(String).join(' '));
+    };
+    try {
+      const { small, large, managerSmall } = await setupDirectRtcPair(fixtures);
+      const session = peerRtcSession(small.nodeId, large.nodeId);
+      const payload = encodeRtcWakeSdp({
+        from: large.nodeId,
+        to: small.nodeId,
+        rtcSession: session,
+        issuedAt: Date.now(),
+        secretKey: large.edSecretKey,
+      });
+      const inject = () => {
+        managerSmall.receiveRtcSignal(large.nodeId, {
+          rtcSession: session,
+          from: 'node',
+          to: small.nodeId,
+          sdp: payload,
+        });
+      };
+      inject();
+      inject();
+      inject();
+      const wakeLines = lines.filter((line) => line.includes('kind=wake'));
+      expect(wakeLines.length).toBeLessThanOrEqual(2);
+    } finally {
+      console.log = orig;
+    }
+  });
+
+  test('sender cooldown defers a needed wake instead of swallowing it', async () => {
+    const inner = defaultScheduler();
+    const queued: Array<{
+      resolve: () => void;
+      reject: (err: unknown) => void;
+      signal?: AbortSignal;
+      onAbort: () => void;
+    }> = [];
+    const scheduler: MeshScheduler & { flush: () => void } = {
+      now: inner.now,
+      interval: inner.interval.bind(inner),
+      sleep(ms, signal) {
+        if (signal?.aborted) {
+          return Promise.reject(signal.reason ?? new Error('aborted'));
+        }
+        return new Promise((resolve, reject) => {
+          const onAbort = () => {
+            const idx = queued.findIndex((row) => row.resolve === resolve);
+            if (idx >= 0) queued.splice(idx, 1);
+            reject(signal?.reason ?? new Error('aborted'));
+          };
+          queued.push({ resolve, reject, signal, onAbort });
+          signal?.addEventListener('abort', onAbort, { once: true });
+        });
+      },
+      flush() {
+        const rows = queued.splice(0);
+        for (const row of rows) {
+          row.signal?.removeEventListener('abort', row.onAbort);
+          row.resolve();
+        }
+      },
+    };
+    const { small, large, managerSmall, managerLarge, wakes } = await setupDirectRtcPair(fixtures, {
+      scheduler,
+    });
+    await managerLarge.getLink(small.nodeId);
+    await waitUntil(() => managerLarge.transportOf(small.nodeId) === 'dc', 5_000);
+    await waitUntil(() => managerSmall.transportOf(large.nodeId) === 'dc', 5_000);
+    const firstWakes = wakes.length;
+    managerLarge.getLive(small.nodeId)?.close('drop-dc');
+    managerSmall.getLive(large.nodeId)?.close('drop-dc');
+    await waitUntil(() => managerLarge.transportOf(small.nodeId) === null, 2_000);
+    const relink = managerLarge.getLink(small.nodeId);
+    await Bun.sleep(30);
+    expect(wakes.length).toBe(firstWakes);
+    expect(queued.length).toBeGreaterThan(0);
+    scheduler.flush();
+    await waitUntil(() => wakes.length > firstWakes, 2_000);
+    await relink;
+    await waitUntil(() => managerLarge.transportOf(small.nodeId) === 'dc', 5_000);
+    await waitUntil(() => managerSmall.transportOf(large.nodeId) === 'dc', 5_000);
   });
 
   test('flipping direct_capable schedules upgrade so a larger-id live relay still reaches dc', async () => {

@@ -1,5 +1,13 @@
 import { describe, expect, test } from 'bun:test';
 import {
+  encodeBase64url,
+  generateEd25519KeyPair,
+  randomBytes,
+  signEd25519,
+} from '@tmex/shared/auth';
+import {
+  RTC_WAKE_DOMAIN,
+  RTC_WAKE_MAX_SKEW_MS,
   buildRtcIceConfig,
   collectIceServers,
   decodeCandidateSignal,
@@ -12,7 +20,10 @@ import {
   maskIceAddress,
   maskIceCandidate,
   parseIceCandidateType,
+  parseRtcWakeSdp,
   peerRtcSession,
+  rtcWakeCanonicalBytes,
+  verifyRtcWakeSignature,
 } from './ice';
 
 describe('ice helpers', () => {
@@ -87,11 +98,72 @@ describe('ice helpers', () => {
   });
 
   test('wake sdp is distinguishable and does not decode as a real description', () => {
-    const wake = encodeRtcWakeSdp();
+    const pair = generateEd25519KeyPair();
+    const from = 'aa'.repeat(16);
+    const to = 'bb'.repeat(16);
+    const wake = encodeRtcWakeSdp({
+      from,
+      to,
+      rtcSession: peerRtcSession(from, to),
+      issuedAt: 1_700_000_000_000,
+      secretKey: pair.secretKey,
+    });
     expect(isRtcWakeSdp(wake)).toBe(true);
     expect(decodeSdpSignal(wake)).toBeNull();
     expect(isRtcWakeSdp(encodeSdpSignal({ type: 'offer', sdp: 'v=0' }))).toBe(false);
     expect(isRtcWakeSdp(null)).toBe(false);
+    const parsed = parseRtcWakeSdp(wake);
+    expect(parsed).not.toBeNull();
+    if (!parsed) return;
+    expect(parsed.domain).toBe(RTC_WAKE_DOMAIN);
+    expect(parsed.from).toBe(from);
+    expect(parsed.to).toBe(to);
+    expect(verifyRtcWakeSignature(parsed, pair.publicKey)).toBe(true);
+    const other = generateEd25519KeyPair();
+    expect(verifyRtcWakeSignature(parsed, other.publicKey)).toBe(false);
+  });
+
+  test('wake signature covers domain/from/to/rtcSession/nonce/issued_at', () => {
+    const pair = generateEd25519KeyPair();
+    const from = '11'.repeat(16);
+    const to = '22'.repeat(16);
+    const nonce = encodeBase64url(randomBytes(16));
+    const issued_at = 1_700_000_000_000;
+    const rtcSession = peerRtcSession(from, to);
+    const sig = encodeBase64url(
+      signEd25519(pair.secretKey, rtcWakeCanonicalBytes({ from, to, rtcSession, nonce, issued_at }))
+    );
+    expect(
+      verifyRtcWakeSignature(
+        {
+          type: 'rtc.wake',
+          domain: RTC_WAKE_DOMAIN,
+          from,
+          to,
+          rtcSession,
+          nonce,
+          issued_at,
+          sig,
+        },
+        pair.publicKey
+      )
+    ).toBe(true);
+    expect(
+      verifyRtcWakeSignature(
+        {
+          type: 'rtc.wake',
+          domain: RTC_WAKE_DOMAIN,
+          from: to,
+          to: from,
+          rtcSession,
+          nonce,
+          issued_at,
+          sig,
+        },
+        pair.publicKey
+      )
+    ).toBe(false);
+    expect(RTC_WAKE_MAX_SKEW_MS).toBe(60_000);
   });
 
   test('parses ICE candidate type and masks addresses to /24 or last octet', () => {
@@ -106,6 +178,10 @@ describe('ice helpers', () => {
     expect(maskIceAddress('10.0.1.55')).toBe('10.0.1.0');
     expect(maskIceAddress('203.0.113.44')).toBe('203.0.113.0');
     expect(maskIceAddress('2001:db8:abcd:0012:0000:0000:0000:00ff')).toBe('2001:db8:abcd::');
+    expect(maskIceAddress('::ffff:192.168.1.42')).toBe('::ffff:192.168.1.0');
+    expect(maskIceAddress('[::ffff:192.168.1.42]:5000')).toBe('[::ffff:192.168.1.0]:5000');
+    expect(maskIceAddress('[2001:db8:abcd:0012::1]:3478')).toBe('[2001:db8:abcd::]:3478');
+    expect(maskIceAddress('192.168.1.42:3478')).toBe('192.168.1.0:3478');
     expect(
       maskIceCandidate('candidate:2 1 UDP 1 203.0.113.44 3478 typ srflx raddr 10.0.1.55 rport 9')
     ).toContain('203.0.113.0');

@@ -18,11 +18,11 @@ export class FakeDataChannel implements DataChannelLike {
   closeOnBlockedSend = false;
   private successCount = 0;
   private pendingMessages: Array<string | Buffer | ArrayBuffer> = [];
-  private readonly openCbs: Array<() => void> = [];
-  private readonly closedCbs: Array<() => void> = [];
-  private readonly errorCbs: Array<(err: string) => void> = [];
-  private readonly lowCbs: Array<() => void> = [];
-  private readonly messageCbs: Array<(msg: string | Buffer | ArrayBuffer) => void> = [];
+  private openCb: (() => void) | null = null;
+  private closedCb: (() => void) | null = null;
+  private errorCb: ((err: string) => void) | null = null;
+  private lowCb: (() => void) | null = null;
+  private messageCb: ((msg: string | Buffer | ArrayBuffer) => void) | null = null;
 
   constructor(label: string) {
     this.label = label;
@@ -40,7 +40,7 @@ export class FakeDataChannel implements DataChannelLike {
   markOpen(): void {
     if (this.open || this.closed) return;
     this.open = true;
-    for (const cb of this.openCbs) cb();
+    this.openCb?.();
   }
 
   close(): void {
@@ -49,7 +49,7 @@ export class FakeDataChannel implements DataChannelLike {
     this.open = false;
     const peer = this.peer;
     this.peer = null;
-    for (const cb of this.closedCbs) cb();
+    this.closedCb?.();
     if (peer && !peer.closed) peer.close();
   }
 
@@ -78,25 +78,24 @@ export class FakeDataChannel implements DataChannelLike {
   }
 
   onBufferedAmountLow(cb: () => void): void {
-    this.lowCbs.push(cb);
+    this.lowCb = cb;
   }
 
   onOpen(cb: () => void): void {
-    this.openCbs.push(cb);
+    this.openCb = cb;
     if (this.open) cb();
   }
 
   onClosed(cb: () => void): void {
-    this.closedCbs.push(cb);
+    this.closedCb = cb;
   }
 
   onError(cb: (err: string) => void): void {
-    this.errorCbs.push(cb);
+    this.errorCb = cb;
   }
 
   onMessage(cb: (msg: string | Buffer | ArrayBuffer) => void): void {
-    this.messageCbs.length = 0;
-    this.messageCbs.push(cb);
+    this.messageCb = cb;
     while (this.pendingMessages.length > 0) {
       const next = this.pendingMessages.shift();
       if (next !== undefined) cb(next);
@@ -106,11 +105,15 @@ export class FakeDataChannel implements DataChannelLike {
   emitLow(): void {
     this.blockSend = false;
     this.succeedsBeforeBlock = Number.POSITIVE_INFINITY;
-    for (const cb of this.lowCbs) cb();
+    this.lowCb?.();
   }
 
   emitMessage(msg: string | Buffer | ArrayBuffer): void {
-    for (const cb of this.messageCbs) cb(msg);
+    this.messageCb?.(msg);
+  }
+
+  emitError(err: string): void {
+    this.errorCb?.(err);
   }
 
   private dispatch(bytes: Uint8Array): boolean {
@@ -130,8 +133,8 @@ export class FakeDataChannel implements DataChannelLike {
     const peer = this.peer;
     if (peer?.open && !peer.closed) {
       const payload = Buffer.from(copy);
-      if (peer.messageCbs.length === 0) peer.pendingMessages.push(payload);
-      else for (const cb of peer.messageCbs) cb(payload);
+      if (!peer.messageCb) peer.pendingMessages.push(payload);
+      else peer.messageCb(payload);
     }
     return true;
   }
@@ -157,12 +160,12 @@ export class FakePeerConnection implements PeerConnectionLike {
   pcState = 'new';
   ice = 'new';
   gathering = 'new';
-  private readonly localDescCbs: Array<(sdp: string, type: string) => void> = [];
-  private readonly localCandCbs: Array<(candidate: string, mid: string) => void> = [];
-  private readonly dataChannelCbs: Array<(dc: DataChannelLike) => void> = [];
-  private readonly stateCbs: Array<(state: string) => void> = [];
-  private readonly iceCbs: Array<(state: string) => void> = [];
-  private readonly gatheringCbs: Array<(state: string) => void> = [];
+  private localDescCb: ((sdp: string, type: string) => void) | null = null;
+  private localCandCb: ((candidate: string, mid: string) => void) | null = null;
+  private dataChannelCb: ((dc: DataChannelLike) => void) | null = null;
+  private stateCb: ((state: string) => void) | null = null;
+  private iceCb: ((state: string) => void) | null = null;
+  private gatheringCb: ((state: string) => void) | null = null;
   private remote: FakePeerConnection | null = null;
 
   constructor(name: string, _config: RtcIceConfig) {
@@ -229,15 +232,15 @@ export class FakePeerConnection implements PeerConnectionLike {
   }
 
   onStateChange(cb: (state: string) => void): void {
-    this.stateCbs.push(cb);
+    this.stateCb = cb;
   }
 
   onIceStateChange(cb: (state: string) => void): void {
-    this.iceCbs.push(cb);
+    this.iceCb = cb;
   }
 
   onGatheringStateChange(cb: (state: string) => void): void {
-    this.gatheringCbs.push(cb);
+    this.gatheringCb = cb;
   }
 
   getSelectedCandidatePair(): {
@@ -262,23 +265,23 @@ export class FakePeerConnection implements PeerConnectionLike {
   emitIceState(state: string): void {
     if (this.ice === state) return;
     this.ice = state;
-    for (const cb of this.iceCbs) cb(state);
+    this.iceCb?.(state);
   }
 
   emitPeerState(state: string): void {
     if (this.pcState === state) return;
     this.pcState = state;
-    for (const cb of this.stateCbs) cb(state);
+    this.stateCb?.(state);
   }
 
   emitGatheringState(state: string): void {
     if (this.gathering === state) return;
     this.gathering = state;
-    for (const cb of this.gatheringCbs) cb(state);
+    this.gatheringCb?.(state);
   }
 
   emitLocalCandidate(candidate: string, mid = '0'): void {
-    for (const cb of this.localCandCbs) cb(candidate, mid);
+    this.localCandCb?.(candidate, mid);
   }
 
   createDataChannel(label: string, _config?: unknown): FakeDataChannel {
@@ -292,16 +295,16 @@ export class FakePeerConnection implements PeerConnectionLike {
   }
 
   onLocalDescription(cb: (sdp: string, type: string) => void): void {
-    this.localDescCbs.push(cb);
+    this.localDescCb = cb;
     if (this.localSdp) cb(this.localSdp.sdp, this.localSdp.type);
   }
 
   onLocalCandidate(cb: (candidate: string, mid: string) => void): void {
-    this.localCandCbs.push(cb);
+    this.localCandCb = cb;
   }
 
   onDataChannel(cb: (dc: DataChannelLike) => void): void {
-    this.dataChannelCbs.push(cb);
+    this.dataChannelCb = cb;
     for (const dc of this.inbound) cb(dc);
   }
 
@@ -322,8 +325,8 @@ export class FakePeerConnection implements PeerConnectionLike {
   private emitLocal(type: string): void {
     const sdp = this.fingerprintSdp();
     this.localSdp = { type, sdp };
-    for (const cb of this.localDescCbs) cb(sdp, type);
-    for (const cb of this.localCandCbs) cb('candidate:1 1 UDP 1 127.0.0.1 9 typ host', '0');
+    this.localDescCb?.(sdp, type);
+    this.localCandCb?.('candidate:1 1 UDP 1 127.0.0.1 9 typ host', '0');
   }
 
   private tryOpen(): void {
@@ -348,7 +351,7 @@ export class FakePeerConnection implements PeerConnectionLike {
       localDc.pair(remoteDc);
       localDc.markOpen();
       remoteDc.markOpen();
-      for (const cb of answerer.dataChannelCbs) cb(remoteDc);
+      answerer.dataChannelCb?.(remoteDc);
     }
     this.emitGatheringState('complete');
     remote.emitGatheringState('complete');

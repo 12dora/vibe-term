@@ -141,6 +141,29 @@ describe('RtcPeerManager', () => {
     inn.end();
   });
 
+  test('datachannel diagnostics and DataChannelLink both observe open and close', async () => {
+    const lines: string[] = [];
+    const orig = console.log;
+    console.log = (...args: unknown[]) => {
+      lines.push(args.map(String).join(' '));
+    };
+    try {
+      const { left, right, a, b } = setup();
+      const [sigA, sigB] = loopbackSignaling();
+      const [la] = await Promise.all([
+        left.connectToPeer(b.nodeId, sigA),
+        right.connectToPeer(a.nodeId, sigB),
+      ]);
+      expect(lines.some((line) => line.includes('datachannel open'))).toBe(true);
+      const closed = new Promise<string | undefined>((resolve) => la.link.onClose(resolve));
+      la.link.close('bye');
+      expect(await closed).toBe('bye');
+      expect(lines.some((line) => line.includes('datachannel closed'))).toBe(true);
+    } finally {
+      console.log = orig;
+    }
+  });
+
   test('rejects fingerprint mismatch', async () => {
     const { left, right, a, b } = setup({ mismatch: true });
     const [sigA, sigB] = loopbackSignaling();

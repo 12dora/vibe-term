@@ -1,3 +1,10 @@
+import {
+  decodeBase64url,
+  encodeBase64url,
+  randomBytes,
+  signEd25519,
+  verifyEd25519,
+} from '@tmex/shared/auth';
 import type { RtcSignalMessage } from '../mesh-deps';
 import type { IceRelayType, IceServer, IceServerConfig, RtcIceConfig } from './native';
 
@@ -189,9 +196,95 @@ export function isEmptyCandidate(candidate: string): boolean {
 }
 
 export const RTC_WAKE_TYPE = 'rtc.wake';
+export const RTC_WAKE_DOMAIN = 'tmex-rtc-wake';
+export const RTC_WAKE_MAX_SKEW_MS = 60_000;
+export const RTC_WAKE_NONCE_BYTES = 16;
 
-export function encodeRtcWakeSdp(): string {
-  return JSON.stringify({ type: RTC_WAKE_TYPE });
+export type RtcWakeFields = {
+  type: typeof RTC_WAKE_TYPE;
+  domain: typeof RTC_WAKE_DOMAIN;
+  from: string;
+  to: string;
+  rtcSession: string;
+  nonce: string;
+  issued_at: number;
+  sig: string;
+};
+
+export type RtcWakeSignInput = {
+  from: string;
+  to: string;
+  rtcSession: string;
+  nonce: string;
+  issued_at: number;
+};
+
+export function rtcWakeCanonicalBytes(fields: RtcWakeSignInput): Uint8Array {
+  return new TextEncoder().encode(
+    JSON.stringify({
+      domain: RTC_WAKE_DOMAIN,
+      from: fields.from,
+      to: fields.to,
+      rtcSession: fields.rtcSession,
+      nonce: fields.nonce,
+      issued_at: fields.issued_at,
+    })
+  );
+}
+
+export function encodeRtcWakeSdp(opts: {
+  from: string;
+  to: string;
+  rtcSession: string;
+  issuedAt: number;
+  secretKey: Uint8Array;
+  nonce?: Uint8Array;
+}): string {
+  const nonce = encodeBase64url(opts.nonce ?? randomBytes(RTC_WAKE_NONCE_BYTES));
+  const issued_at = opts.issuedAt;
+  const canonical = rtcWakeCanonicalBytes({
+    from: opts.from,
+    to: opts.to,
+    rtcSession: opts.rtcSession,
+    nonce,
+    issued_at,
+  });
+  const payload: RtcWakeFields = {
+    type: RTC_WAKE_TYPE,
+    domain: RTC_WAKE_DOMAIN,
+    from: opts.from,
+    to: opts.to,
+    rtcSession: opts.rtcSession,
+    nonce,
+    issued_at,
+    sig: encodeBase64url(signEd25519(opts.secretKey, canonical)),
+  };
+  return JSON.stringify(payload);
+}
+
+export function parseRtcWakeSdp(sdp: string | null | undefined): RtcWakeFields | null {
+  if (!sdp) return null;
+  try {
+    const parsed = JSON.parse(sdp) as Record<string, unknown>;
+    if (parsed.type !== RTC_WAKE_TYPE || parsed.sdp !== undefined) return null;
+    if (parsed.domain !== RTC_WAKE_DOMAIN) return null;
+    if (typeof parsed.from !== 'string' || typeof parsed.to !== 'string') return null;
+    if (typeof parsed.rtcSession !== 'string' || typeof parsed.nonce !== 'string') return null;
+    if (typeof parsed.issued_at !== 'number' || !Number.isFinite(parsed.issued_at)) return null;
+    if (typeof parsed.sig !== 'string') return null;
+    return {
+      type: RTC_WAKE_TYPE,
+      domain: RTC_WAKE_DOMAIN,
+      from: parsed.from,
+      to: parsed.to,
+      rtcSession: parsed.rtcSession,
+      nonce: parsed.nonce,
+      issued_at: parsed.issued_at,
+      sig: parsed.sig,
+    };
+  } catch {
+    return null;
+  }
 }
 
 export function isRtcWakeSdp(sdp: string | null | undefined): boolean {
@@ -204,27 +297,78 @@ export function isRtcWakeSdp(sdp: string | null | undefined): boolean {
   }
 }
 
+export function verifyRtcWakeSignature(wake: RtcWakeFields, edPk: Uint8Array): boolean {
+  try {
+    const sig = decodeBase64url(wake.sig);
+    if (sig.byteLength !== 64) return false;
+    return verifyEd25519(
+      sig,
+      rtcWakeCanonicalBytes({
+        from: wake.from,
+        to: wake.to,
+        rtcSession: wake.rtcSession,
+        nonce: wake.nonce,
+        issued_at: wake.issued_at,
+      }),
+      edPk
+    );
+  } catch {
+    return false;
+  }
+}
+
 const CANDIDATE_TYPE_RE = /\btyp\s+(host|srflx|prflx|relay)\b/i;
 const IPV4_RE = /\b(?:\d{1,3}\.){3}\d{1,3}\b/g;
 const IPV6_RE = /\b(?:[0-9a-f]{1,4}:){2,7}[0-9a-f]{0,4}\b/gi;
+const IPV4_HOST_RE = /^\d{1,3}(?:\.\d{1,3}){3}$/;
+const IPV4_MAPPED_RE = /^(?:(?:0{0,4}:)*:?|::)ffff:(\d{1,3}(?:\.\d{1,3}){3})$/i;
 
 export function parseIceCandidateType(candidate: string): string | null {
   const match = CANDIDATE_TYPE_RE.exec(candidate);
   return match?.[1]?.toLowerCase() ?? null;
 }
 
+function maskIpv4Host(host: string): string {
+  const parts = host.split('.');
+  return `${parts[0]}.${parts[1]}.${parts[2]}.0`;
+}
+
+function maskIpv6Host(host: string): string {
+  const mapped = IPV4_MAPPED_RE.exec(host);
+  if (mapped?.[1]) return `::ffff:${maskIpv4Host(mapped[1])}`;
+  const parts = host.split(':').filter((part) => part.length > 0);
+  if (parts.length >= 3) return `${parts[0]}:${parts[1]}:${parts[2]}::`;
+  if (parts.length === 2) return `${parts[0]}:${parts[1]}::`;
+  if (parts.length === 1) return `${parts[0]}::`;
+  return host;
+}
+
+function splitIceHostPort(addr: string): { host: string; port: string | null; bracketed: boolean } {
+  const trimmed = addr.trim();
+  if (trimmed.startsWith('[')) {
+    const end = trimmed.indexOf(']');
+    if (end > 0) {
+      const host = trimmed.slice(1, end);
+      const rest = trimmed.slice(end + 1);
+      const port = rest.startsWith(':') && rest.length > 1 ? rest.slice(1) : null;
+      return { host, port, bracketed: true };
+    }
+  }
+  const v4port = /^(\d{1,3}(?:\.\d{1,3}){3}):(\d+)$/.exec(trimmed);
+  if (v4port?.[1] && v4port[2]) {
+    return { host: v4port[1], port: v4port[2], bracketed: false };
+  }
+  return { host: trimmed, port: null, bracketed: false };
+}
+
 export function maskIceAddress(addr: string): string {
-  if (/^\d{1,3}(?:\.\d{1,3}){3}$/.test(addr)) {
-    const parts = addr.split('.');
-    return `${parts[0]}.${parts[1]}.${parts[2]}.0`;
-  }
-  if (addr.includes(':')) {
-    const parts = addr.split(':').filter((part) => part.length > 0);
-    if (parts.length >= 3) return `${parts[0]}:${parts[1]}:${parts[2]}::`;
-    if (parts.length === 2) return `${parts[0]}:${parts[1]}::`;
-    if (parts.length === 1) return `${parts[0]}::`;
-  }
-  return addr;
+  const { host, port, bracketed } = splitIceHostPort(addr);
+  let masked: string;
+  if (IPV4_HOST_RE.test(host)) masked = maskIpv4Host(host);
+  else if (host.includes(':')) masked = maskIpv6Host(host);
+  else masked = host;
+  if (bracketed) return port ? `[${masked}]:${port}` : `[${masked}]`;
+  return port ? `${masked}:${port}` : masked;
 }
 
 export function maskIceCandidate(candidate: string): string {

@@ -34,7 +34,11 @@ export {
 export {
   type CandidateSignal,
   type RtcSignaling,
+  type RtcWakeFields,
   type SdpSignal,
+  RTC_WAKE_DOMAIN,
+  RTC_WAKE_MAX_SKEW_MS,
+  RTC_WAKE_NONCE_BYTES,
   RTC_WAKE_TYPE,
   buildRtcIceConfig,
   collectIceServers,
@@ -48,8 +52,11 @@ export {
   maskIceAddress,
   maskIceCandidate,
   parseIceCandidateType,
+  parseRtcWakeSdp,
   parseTurnUri,
   peerRtcSession,
+  rtcWakeCanonicalBytes,
+  verifyRtcWakeSignature,
 } from './ice';
 export type {
   DataChannelInitLike,

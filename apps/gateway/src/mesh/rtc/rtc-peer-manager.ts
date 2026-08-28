@@ -23,6 +23,7 @@ import {
   type SendControl,
   type VerifyInbound,
 } from './carrier-switch';
+import { fanoutDataChannel } from './channel-fanout';
 import { DataChannelCarrier } from './data-channel-carrier';
 import { DataChannelLink } from './data-channel-link';
 import { handshakeDataChannel } from './dc-handshake';
@@ -283,7 +284,9 @@ export class RtcPeerManager implements RtcFingerprintProvider {
       ? Promise.resolve(logCreatedChannel(pc.createDataChannel(PEER_CHANNEL_LABEL), peerNodeId))
       : waitDataChannel(pc, this.handshakeTimeoutMs, undefined, peerNodeId);
     try {
-      const channel = await withTimeout(channelP, this.handshakeTimeoutMs, 'datachannel missing');
+      const channel = fanoutDataChannel(
+        await withTimeout(channelP, this.handshakeTimeoutMs, 'datachannel missing')
+      );
       bindChannelDiagnostics(channel, peerNodeId);
       await waitChannelOpen(channel, this.handshakeTimeoutMs);
       const localFp = await this.waitLocalFingerprint(pc);
@@ -360,7 +363,9 @@ export class RtcPeerManager implements RtcFingerprintProvider {
     );
     let keepSignaling = false;
     try {
-      const channel = await waitDataChannel(rec.pc, this.handshakeTimeoutMs, SESS_CHANNEL_LABEL);
+      const channel = fanoutDataChannel(
+        await waitDataChannel(rec.pc, this.handshakeTimeoutMs, SESS_CHANNEL_LABEL)
+      );
       await waitChannelOpen(channel, this.handshakeTimeoutMs);
       const nonceRaw = await waitFirstMessage(channel, this.handshakeTimeoutMs);
       this.sweepBrowser();
