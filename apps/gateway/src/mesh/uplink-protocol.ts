@@ -50,7 +50,7 @@ export type UplinkNodeInfo = {
   endpoints: unknown;
   inventory: unknown;
   direct_capable: boolean;
-  version: string;
+  version: string | null;
 };
 
 export type UplinkKeyLogHead = {
@@ -185,7 +185,7 @@ function parseNodeInfo(value: unknown): UplinkNodeInfo {
     endpoints: value.endpoints ?? [],
     inventory: value.inventory ?? {},
     direct_capable: requireBoolean(value.direct_capable, 'nodes[].direct_capable'),
-    version: requireString(value.version, 'nodes[].version'),
+    version: optionalString(value.version, 'nodes[].version') ?? null,
   };
 }
 

@@ -57,6 +57,33 @@ describe('uplink-protocol', () => {
     if (listed.t !== 'node.list') throw new Error('expected node.list');
     expect(listed.hub).toEqual({ nodeId: 'aa'.repeat(16), publicUrl: 'https://hub.example' });
 
+    const hubWire = decodeUplinkCtl(
+      new TextEncoder().encode(
+        JSON.stringify({
+          t: 'node.list',
+          version: 4,
+          key_log_head: { seq: 2, hash: encodeBase64url(hash) },
+          rtc: { stun: [], turn: null },
+          hub: { nodeId: 'aa'.repeat(16), publicUrl: 'https://hub.example' },
+          nodes: [
+            {
+              id: 'bb'.repeat(16),
+              name: 'node-b',
+              online: true,
+              endpoints: [],
+              inventory: {},
+              direct_capable: false,
+              version: null,
+            },
+          ],
+        })
+      )
+    );
+    expect(hubWire.t).toBe('node.list');
+    if (hubWire.t !== 'node.list') throw new Error('expected node.list');
+    expect(hubWire.nodes[0]?.version).toBeNull();
+    expect(hubWire.hub).toEqual({ nodeId: 'aa'.repeat(16), publicUrl: 'https://hub.example' });
+
     const res = decodeUplinkCtl(
       encodeUplinkCtl({
         t: 'key.log.res',

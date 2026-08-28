@@ -754,7 +754,7 @@ export class UplinkServer {
           endpoints: live?.meta.endpoints ?? parseJson(n.endpointsJson, []),
           inventory: live?.meta.inventory ?? parseJson(n.inventoryJson, {}),
           direct_capable: live?.meta.directCapable ?? n.directCapable,
-          version: live?.meta.version ?? n.version,
+          version: live?.meta.version ?? n.version ?? '',
         };
       });
     const hubNodeId = this.config.nodeId ?? this.userStore.getHubMeta()?.nodeId;

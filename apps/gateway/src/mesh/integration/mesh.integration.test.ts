@@ -465,6 +465,7 @@ describe('mesh phase-2 integration', () => {
       connectedDevices,
       wsServer,
       close,
+      db,
     };
   }
 
@@ -855,6 +856,71 @@ describe('mesh phase-2 integration', () => {
     left.close();
     right.close();
   });
+
+  test('already-uplinked node A learns late-joining node B, hub_meta, and can login via /n/B', async () => {
+    const hub = await bootHubA({ linkFactory: false });
+    const nodeA = await enrollNodeB(hub, { linkFactory: false });
+    const sidA = await loginSelf(nodeA.mesh, hub.boot);
+    const cookieA = `${nodeSessionCookieName(MESH_VIA_SELF)}=${sidA}`;
+
+    const nodeB = await enrollNodeB(hub, { linkFactory: false });
+
+    await waitUntil(() => nodeA.mesh.userStore.getCert(nodeB.mesh.nodeId) != null, 8_000);
+    await waitUntil(() => nodeA.mesh.userStore.getHubMeta()?.nodeId === hub.mesh.nodeId, 8_000);
+
+    const mode = await callMesh(nodeA.mesh, 'http://a/api/auth/mode');
+    expect(mode.status).toBe(200);
+    const modeBody = (await mode.json()) as { hubNodeId: string | null };
+    expect(modeBody.hubNodeId).toBe(hub.mesh.nodeId);
+
+    const listed = await callMesh(nodeA.mesh, 'http://a/api/mesh/nodes', { cookie: cookieA });
+    expect(listed.status).toBe(200);
+    const body = (await listed.json()) as {
+      nodes: Array<{ id: string; online: boolean; isHub: boolean }>;
+    };
+    const hubRow = body.nodes.find((n) => n.id === hub.mesh.nodeId);
+    const bRow = body.nodes.find((n) => n.id === nodeB.mesh.nodeId);
+    expect(hubRow?.isHub).toBe(true);
+    expect(bRow?.online).toBe(true);
+
+    const remote = await loginRemote(nodeA.mesh, nodeB.mesh, hub.boot, cookieA);
+    expect(remote.status).toBe(200);
+    const bSid = sidFromResponse(remote, nodeB.mesh.nodeId);
+    const jar = `${cookieA}; ${nodeSessionCookieName(nodeB.mesh.nodeId)}=${bSid}`;
+    const devices = await callMesh(nodeA.mesh, `http://a/n/${nodeB.mesh.nodeId}/api/devices`, {
+      cookie: jar,
+    });
+    expect(devices.status).toBe(200);
+    expect(await devices.json()).toEqual({ devices: [{ id: 'dev-b', name: 'B box' }] });
+
+    await nodeA.mesh.stop();
+    const restarted = await createMeshRuntime({
+      db: nodeA.db,
+      gateway: fakeGateway(nodeA.db, { devicesBody: { devices: [{ id: 'dev-a' }] } }),
+      userId: hub.boot.userId,
+      config: {
+        roles: { hub: false, node: true },
+        hubUrl: 'http://hub.example',
+        peerPort: 39013,
+        stunServers: [],
+      },
+      uplinkHub: hub.mesh.hub ?? undefined,
+      startPeerServer: false,
+      pingIntervalMs: 60_000,
+      networkInterfaces: () => ({}),
+      loadNative: async () => null,
+    });
+    fixtures.push({ close: nodeA.close, stop: () => restarted.stop() });
+    expect(restarted.userStore.getHubMeta()?.nodeId).toBe(hub.mesh.nodeId);
+    expect(restarted.userStore.getCert(nodeB.mesh.nodeId)).not.toBeNull();
+    expect(restarted.userStore.listPeers().some((row) => row.nodeId === nodeB.mesh.nodeId)).toBe(
+      true
+    );
+    await restarted.start();
+    await waitUntil(() => restarted.uplink.state === 'online', 5_000);
+    const mode2 = await callMesh(restarted, 'http://a/api/auth/mode');
+    expect(((await mode2.json()) as { hubNodeId: string | null }).hubNodeId).toBe(hub.mesh.nodeId);
+  }, 30_000);
 });
 
 function randomBytesSafe(n: number): Uint8Array {

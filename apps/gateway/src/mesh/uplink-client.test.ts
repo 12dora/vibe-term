@@ -641,6 +641,84 @@ describe('UplinkClient', () => {
     expect(cached).toEqual([admittedId]);
     expect(userStore.listPeers().find((row) => row.nodeId === admittedId)?.name).toBe('admitted');
   });
+
+  test('node.list catch-up persists a newly admitted peer after key.log apply', async () => {
+    const { db, close } = createMigratedAuthDb();
+    fixtures.push({ close });
+    const userStore = new UserStore(db);
+    seedUser(userStore);
+    const lateId = '55'.repeat(16);
+    const hash1 = new Uint8Array(32);
+    hash1[0] = 1;
+    const hash2 = new Uint8Array(32);
+    hash2[0] = 2;
+    let seq = 1n;
+    const recBytes = randomBytes(8);
+    const recSig = randomBytes(64);
+    const [clientWs, hubWs] = fakeSocketPair();
+    const hub = new WebSocketLink(hubWs, { role: 'acceptor' });
+    const received: string[] = [];
+    hub.ctl.onMessage((bytes) => received.push(new TextDecoder().decode(bytes)));
+    const lists: unknown[] = [];
+    const client = new UplinkClient({
+      hubUrl: 'https://hub.example.com',
+      identity: { nodeId: 'ab'.repeat(16), edSecretKey: randomBytes(32) },
+      userId: 'user-1',
+      keyLogApplier: {
+        async head() {
+          return { seq, hash: seq === 1n ? hash1 : hash2 };
+        },
+        async applyMany(_userId, records) {
+          admitPeer(userStore, lateId);
+          seq = 2n;
+          return { applied: records.length };
+        },
+      },
+      userStore,
+      statusProvider: () => status(),
+      onNodeList: (list) => lists.push(list),
+      wsFactory: () => clientWs,
+    });
+    fixtures.push({ close, stop: () => client.stop() });
+    client.start();
+    await waitUntil(() => client.link !== null);
+    hub.ctl.send(encodeUplinkCtl({ t: 'auth.challenge', nonce: encodeBase64url(randomBytes(32)) }));
+    hub.ctl.send(encodeUplinkCtl({ t: 'auth.ok' }));
+    await waitUntil(() => client.state === 'online');
+    hub.ctl.send(
+      encodeUplinkCtl({
+        t: 'node.list',
+        version: 6,
+        key_log_head: { seq: 2n, hash: hash2 },
+        rtc: { stun: [], turn: null },
+        hub: { nodeId: 'ff'.repeat(16), publicUrl: 'https://hub.example.com' },
+        nodes: [
+          {
+            id: lateId,
+            name: 'late',
+            online: true,
+            endpoints: ['ws://10.0.0.5:39001/peer'],
+            inventory: { devices: [2] },
+            direct_capable: false,
+            version: '1.0.2',
+          },
+        ],
+      })
+    );
+    await waitUntil(() => received.some((row) => row.includes('key.log.req')));
+    expect(userStore.getCert(lateId)).toBeNull();
+    hub.ctl.send(
+      encodeUplinkCtl({
+        t: 'key.log.res',
+        records: [{ seq: 2n, bytes: recBytes, sig: recSig }],
+      })
+    );
+    await waitUntil(() => userStore.getCert(lateId) !== null);
+    await waitUntil(() => userStore.listPeers().some((row) => row.nodeId === lateId));
+    expect(userStore.getHubMeta()?.nodeId).toBe('ff'.repeat(16));
+    expect(userStore.listPeers().find((row) => row.nodeId === lateId)?.name).toBe('late');
+    expect(lists).toHaveLength(1);
+  });
 });
 
 function admitPeer(

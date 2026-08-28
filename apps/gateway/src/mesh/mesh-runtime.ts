@@ -14,6 +14,7 @@ import {
   makeVerifyPasskeyAssertion,
 } from '../auth';
 import type { AuthDb } from '../auth/types';
+import { HUB_META_PEER_ID } from '../auth/user-store';
 import { type TmexRoles, config as gatewayConfig } from '../config';
 import { HubRuntime, type HubTurnConfig } from '../hub';
 import { createHubKeyLogSource } from '../hub/hub-key-log-source';
@@ -751,6 +752,7 @@ export async function createMeshRuntime(opts: CreateMeshRuntimeOptions): Promise
         turn: list.rtc.turn ?? null,
       };
       for (const node of list.nodes) {
+        if (node.id === HUB_META_PEER_ID) continue;
         const cert = userStore.getCert(node.id);
         if (!cert || (userId && cert.userId !== userId) || cert.revokedLogSeq != null) {
           userStore.deletePeer(node.id);
@@ -770,7 +772,7 @@ export async function createMeshRuntime(opts: CreateMeshRuntimeOptions): Promise
         });
       }
       for (const peer of userStore.listPeers()) {
-        if (peer.nodeId === identity.nodeIdHex) continue;
+        if (peer.nodeId === identity.nodeIdHex || peer.nodeId === HUB_META_PEER_ID) continue;
         const cert = userStore.getCert(peer.nodeId);
         if (!cert || (userId && cert.userId !== userId) || cert.revokedLogSeq != null) {
           if (cert?.revokedLogSeq != null) {
@@ -875,7 +877,20 @@ export async function createMeshRuntime(opts: CreateMeshRuntimeOptions): Promise
 
   const peers: PeerLinkProvider = {
     getLink: (nodeId) => peerManager.getLink(nodeId),
-    listReach: () => peerManager.listReach(),
+    listReach: () => {
+      const reach = peerManager.listReach();
+      const list = lastNodeList;
+      if (!list || uplink.state !== 'online') return reach;
+      for (const node of list.nodes) {
+        if (node.id === identity.nodeIdHex || !node.online) continue;
+        const cert = userStore.getCert(node.id);
+        if (!cert || (userId && cert.userId !== userId) || cert.revokedLogSeq != null) continue;
+        if (reach.get(node.id) == null) {
+          reach.set(node.id, 'relay');
+        }
+      }
+      return reach;
+    },
     onNodeEvent: (cb) => {
       nodeEvents.add(cb);
       return () => {

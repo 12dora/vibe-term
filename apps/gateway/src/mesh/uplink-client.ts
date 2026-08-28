@@ -464,16 +464,23 @@ export class UplinkClient {
   }
 
   private ingestNodeList(list: UplinkNodeList): void {
-    const now = this.scheduler.now();
     this.lastKeyLogHead = list.key_log_head;
     if (list.hub) {
       this.userStore.upsertHubMeta({
         nodeId: list.hub.nodeId,
         publicUrl: list.hub.publicUrl,
-        now,
+        now: this.scheduler.now(),
         listVersion: list.version,
       });
     }
+    this.persistAdmittedPeers(list);
+    this.catchUpChain = this.catchUpChain
+      .then(() => this.catchUpFromList(list))
+      .catch(() => undefined);
+  }
+
+  private persistAdmittedPeers(list: UplinkNodeList): void {
+    const now = this.scheduler.now();
     for (const node of list.nodes) {
       if (node.id === this.identity.nodeId) continue;
       const cert = this.userStore.getCert(node.id);
@@ -488,9 +495,11 @@ export class UplinkClient {
         listVersion: list.version,
       });
     }
-    this.catchUpChain = this.catchUpChain
-      .then(() => this.catchUpFromList(list))
-      .catch(() => undefined);
+  }
+
+  private finishNodeList(list: UplinkNodeList): void {
+    this.persistAdmittedPeers(list);
+    this.onNodeListCb?.(list);
   }
 
   private async catchUpFromList(list: UplinkNodeList): Promise<void> {
@@ -502,12 +511,12 @@ export class UplinkClient {
         this.failFork(local, target);
         return;
       }
-      this.onNodeListCb?.(list);
+      this.finishNodeList(list);
       return;
     }
     if (local.seq > target.seq) {
       await this.pushMissingToHub(target.seq);
-      this.onNodeListCb?.(list);
+      this.finishNodeList(list);
       return;
     }
     while (!this.keyLogForked && local.seq < target.seq) {
@@ -530,7 +539,7 @@ export class UplinkClient {
       this.failFork(local, target);
       return;
     }
-    this.onNodeListCb?.(list);
+    this.finishNodeList(list);
   }
 
   async queryHubHead(): Promise<{ seq: bigint; hash: Uint8Array } | null> {
@@ -615,8 +624,25 @@ export class UplinkClient {
   private requestKeyLog(fromSeq: bigint): Promise<UplinkKeyLogRecord[]> {
     if (!this.link || this.pendingKeyLog) return Promise.resolve([]);
     return new Promise((resolve) => {
-      this.pendingKeyLog = { resolve };
-      this.link?.ctl.send(encodeUplinkCtl({ t: 'key.log.req', from_seq: fromSeq }));
+      const timer = setTimeout(() => {
+        if (this.pendingKeyLog) {
+          this.pendingKeyLog = null;
+          resolve([]);
+        }
+      }, UPLINK_KEY_LOG_ACK_TIMEOUT_MS);
+      this.pendingKeyLog = {
+        resolve: (rows) => {
+          clearTimeout(timer);
+          resolve(rows);
+        },
+      };
+      try {
+        this.link?.ctl.send(encodeUplinkCtl({ t: 'key.log.req', from_seq: fromSeq }));
+      } catch {
+        clearTimeout(timer);
+        this.pendingKeyLog = null;
+        resolve([]);
+      }
     });
   }
 
