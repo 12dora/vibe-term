@@ -13,9 +13,14 @@ import type {
 import {
   applyKeyLogRecord,
   buildKeyLogRecord,
+  decodeAddPasskeyPayload,
+  decodeAdmitNodePayload,
   decodeBase64url,
+  decodeCertificate,
   decodeKeyLogRecord,
+  decodeRemovePasskeyPayload,
   decodeResetRootPayload,
+  decodeRevokeNodePayload,
   decodeSetTotpPayload,
   deriveSeed,
   detectFork,
@@ -316,14 +321,16 @@ export class UserKeyService {
           keyLogStore,
           nodeSessionStore,
           userId,
-          previous,
-          next: applied.state,
           record,
           bytes: input.bytes,
           sig: input.sig,
           hash,
           effects: applied.effects,
           now,
+          nextHead: applied.state.head,
+          nextRootPublicKey: applied.state.rootPublicKey,
+          nextRootEpoch: applied.state.rootEpoch,
+          nextKdfParams: applied.state.kdfParams,
         });
       });
     } catch (err) {
@@ -378,9 +385,11 @@ export class UserKeyService {
       input: ApplyKeyLogInput;
       record: ReturnType<typeof decodeKeyLogRecord>;
       hash: Uint8Array;
-      previous: UserKeyState;
-      next: UserKeyState;
       effects: KeyLogEffect[];
+      nextHead: { seq: bigint; hash: Uint8Array };
+      nextRootPublicKey: Uint8Array;
+      nextRootEpoch: number;
+      nextKdfParams: KdfParams;
     };
     const prepared: Prepared[] = [];
     let state = this.currentState(userId);
@@ -418,9 +427,14 @@ export class UserKeyService {
         input,
         record: verified.record,
         hash: verified.hash,
-        previous: state,
-        next: applied.state,
         effects: applied.effects,
+        nextHead: {
+          seq: applied.state.head.seq,
+          hash: new Uint8Array(applied.state.head.hash),
+        },
+        nextRootPublicKey: new Uint8Array(applied.state.rootPublicKey),
+        nextRootEpoch: applied.state.rootEpoch,
+        nextKdfParams: applied.state.kdfParams,
       });
       state = applied.state;
     }
@@ -452,14 +466,16 @@ export class UserKeyService {
             keyLogStore,
             nodeSessionStore,
             userId,
-            previous: step.previous,
-            next: step.next,
             record: step.record,
             bytes: step.input.bytes,
             sig: step.input.sig,
             hash: step.hash,
             effects: step.effects,
             now,
+            nextHead: step.nextHead,
+            nextRootPublicKey: step.nextRootPublicKey,
+            nextRootEpoch: step.nextRootEpoch,
+            nextKdfParams: step.nextKdfParams,
           });
         }
       });
@@ -483,8 +499,8 @@ export class UserKeyService {
     return {
       ok: true,
       applied: prepared.length,
-      seq: Number(last.next.head.seq),
-      hash: last.next.head.hash,
+      seq: Number(last.nextHead.seq),
+      hash: last.nextHead.hash,
     };
   }
 
@@ -498,12 +514,13 @@ export class UserKeyService {
   async list(
     userId: string,
     fromSeq: bigint,
-    signal?: AbortSignal
+    signal?: AbortSignal,
+    limit?: number
   ): Promise<{ seq: bigint; bytes: Uint8Array; sig: Uint8Array }[]> {
     if (signal?.aborted) {
       throw signal.reason instanceof Error ? signal.reason : new Error('aborted');
     }
-    return this.keyLogStore.list(userId, Number(fromSeq)).map((row) => ({
+    return this.keyLogStore.list(userId, Number(fromSeq), limit).map((row) => ({
       seq: BigInt(row.seq),
       bytes: row.bytes,
       sig: row.sig,
@@ -773,28 +790,32 @@ export class UserKeyService {
         keyLogStore,
         nodeSessionStore,
         userId,
-        previous: genesisStep.previous,
-        next: genesisStep.next,
         record: genesisStep.record,
         bytes: genesisStep.input.bytes,
         sig: genesisStep.input.sig,
         hash: genesisStep.hash,
         effects: genesisStep.effects,
         now,
+        nextHead: genesisStep.next.head,
+        nextRootPublicKey: genesisStep.next.rootPublicKey,
+        nextRootEpoch: genesisStep.next.rootEpoch,
+        nextKdfParams: genesisStep.next.kdfParams,
       });
       persistApplied({
         userStore,
         keyLogStore,
         nodeSessionStore,
         userId,
-        previous: admitStep.previous,
-        next: admitStep.next,
         record: admitStep.record,
         bytes: admitStep.input.bytes,
         sig: admitStep.input.sig,
         hash: admitStep.hash,
         effects: admitStep.effects,
         now,
+        nextHead: admitStep.next.head,
+        nextRootPublicKey: admitStep.next.rootPublicKey,
+        nextRootEpoch: admitStep.next.rootEpoch,
+        nextKdfParams: admitStep.next.kdfParams,
       });
       (tx as AuthDb)
         .update(nodeIdentity)
@@ -959,14 +980,16 @@ export class UserKeyService {
             keyLogStore,
             nodeSessionStore,
             userId: genesisUid,
-            previous: step.previous,
-            next: step.next,
             record: step.record,
             bytes: step.input.bytes,
             sig: step.input.sig,
             hash: step.hash,
             effects: step.effects,
             now,
+            nextHead: step.next.head,
+            nextRootPublicKey: step.next.rootPublicKey,
+            nextRootEpoch: step.next.rootEpoch,
+            nextKdfParams: step.next.kdfParams,
           });
         }
         if (identity) {
@@ -1076,14 +1099,16 @@ function persistApplied(args: {
   keyLogStore: KeyLogStore;
   nodeSessionStore: NodeSessionStore;
   userId: string;
-  previous: UserKeyState;
-  next: UserKeyState;
   record: ReturnType<typeof decodeKeyLogRecord>;
   bytes: Uint8Array;
   sig: Uint8Array;
   hash: Uint8Array;
   effects: KeyLogEffect[];
   now: number;
+  nextHead: { seq: bigint; hash: Uint8Array };
+  nextRootPublicKey: Uint8Array;
+  nextRootEpoch: number;
+  nextKdfParams: KdfParams;
 }): void {
   const seq = Number(args.record.seq);
   args.keyLogStore.append({
@@ -1100,14 +1125,14 @@ function persistApplied(args: {
   });
 
   args.userStore.updateRoot(args.userId, {
-    rootPublicKey: args.next.rootPublicKey,
-    rootEpoch: args.next.rootEpoch,
-    kdfParamsJson: kdfParamsToJson(args.next.kdfParams),
+    rootPublicKey: args.nextRootPublicKey,
+    rootEpoch: args.nextRootEpoch,
+    kdfParamsJson: kdfParamsToJson(args.nextKdfParams),
     now: args.now,
   });
   args.userStore.setKeyLogHead(args.userId, {
-    seq: Number(args.next.head.seq),
-    hash: args.next.head.hash,
+    seq: Number(args.nextHead.seq),
+    hash: args.nextHead.hash,
     now: args.now,
   });
 
@@ -1124,62 +1149,46 @@ function persistApplied(args: {
   }
 
   if (args.record.type === 'add-passkey') {
-    for (const [credentialId, payload] of args.next.passkeys) {
-      if (!args.previous.passkeys.has(credentialId)) {
-        args.userStore.insertKey({
-          id: crypto.randomUUID(),
-          userId: args.userId,
-          credentialId: decodeBase64url(payload.credential_id),
-          publicKey: payload.public_key,
-          rpId: payload.rp_id,
-          origin: payload.origin,
-          counter: payload.counter,
-          transports: payload.transports,
-          name: payload.name || null,
-          logSeq: seq,
-          now: args.now,
-        });
-      }
-    }
+    const payload = decodeAddPasskeyPayload(args.record.payload);
+    args.userStore.insertKey({
+      id: crypto.randomUUID(),
+      userId: args.userId,
+      credentialId: decodeBase64url(payload.credential_id),
+      publicKey: payload.public_key,
+      rpId: payload.rp_id,
+      origin: payload.origin,
+      counter: payload.counter,
+      transports: payload.transports,
+      name: payload.name || null,
+      logSeq: seq,
+      now: args.now,
+    });
   } else if (args.record.type === 'remove-passkey') {
-    for (const [credentialId] of args.previous.passkeys) {
-      if (!args.next.passkeys.has(credentialId)) {
-        const row = args.userStore.getKeyByCredentialId(decodeBase64url(credentialId));
-        if (row) {
-          args.userStore.deleteKey(row.id);
-        }
-      }
+    const payload = decodeRemovePasskeyPayload(args.record.payload);
+    const row = args.userStore.getKeyByCredentialId(decodeBase64url(payload.credential_id));
+    if (row) {
+      args.userStore.deleteKey(row.id);
     }
   }
 
   if (args.record.type === 'admit-node') {
-    for (const [hex, cert] of args.next.nodeCerts) {
-      const prev = args.previous.nodeCerts.get(hex);
-      if (
-        !prev ||
-        prev.revoked !== cert.revoked ||
-        !bytesEqual(prev.certificateBytes, cert.certificateBytes)
-      ) {
-        args.userStore.upsertCert({
-          nodeId: hex,
-          userId: args.userId,
-          admitRecordSeq: seq,
-          certificateBytes: cert.certificateBytes,
-          certSig: cert.certSig,
-          authorizationBytes: cert.authorizationBytes,
-          authorizationSig: cert.authorizationSig,
-          revokedLogSeq: cert.revoked ? seq : null,
-        });
-      }
-    }
+    const payload = decodeAdmitNodePayload(args.record.payload);
+    const certificate = decodeCertificate(payload.certificate_bytes);
+    args.userStore.upsertCert({
+      nodeId: nodeIdToHex(certificate.node_id),
+      userId: args.userId,
+      admitRecordSeq: seq,
+      certificateBytes: payload.certificate_bytes,
+      certSig: payload.cert_sig,
+      authorizationBytes: payload.authorization_bytes,
+      authorizationSig: payload.authorization_sig,
+      revokedLogSeq: null,
+    });
   } else if (args.record.type === 'revoke-node') {
-    for (const [hex, cert] of args.next.nodeCerts) {
-      const prev = args.previous.nodeCerts.get(hex);
-      if (cert.revoked && prev && !prev.revoked) {
-        args.userStore.markCertRevoked(hex, seq);
-        args.userStore.deletePeer(hex);
-      }
-    }
+    const payload = decodeRevokeNodePayload(args.record.payload);
+    const hex = nodeIdToHex(payload.node_id);
+    args.userStore.markCertRevoked(hex, seq);
+    args.userStore.deletePeer(hex);
   }
 
   for (const effect of args.effects) {

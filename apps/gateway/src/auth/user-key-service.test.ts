@@ -692,4 +692,44 @@ describe('UserKeyService', () => {
       close();
     }
   });
+
+  test('applyMany 2000 records commits atomically without per-step state snapshots', async () => {
+    const { db, close } = createMigratedAuthDb();
+    try {
+      const { service, keyLogStore, userStore } = createService(db);
+      const boot = await service.bootstrapUser({ username: 'many-batch', password: 'pw' });
+      const totp = encodeSetTotpPayload({
+        alg: 'A256GCM',
+        nonce: new Uint8Array(12).fill(1),
+        ciphertext: new Uint8Array(8).fill(2),
+        tag: new Uint8Array(16).fill(3),
+      });
+      const records: { bytes: Uint8Array; sig: Uint8Array }[] = [];
+      let head = service.currentState(boot.userId).head;
+      for (let i = 0; i < 2000; i++) {
+        const type = i % 2 === 0 ? 'set-totp' : 'clear-totp';
+        const payload = type === 'set-totp' ? totp : encodeClearTotpPayload();
+        const record = buildKeyLogRecord(head, boot.rootEpoch, {
+          uid: boot.userId,
+          type,
+          payload,
+          signer: 'root',
+          credential_id: null,
+        });
+        const bytes = encodeKeyLogRecord(record);
+        const sig = signKeyLogRecordWithRoot(boot.rootKey, bytes);
+        records.push({ bytes, sig });
+        head = { seq: record.seq, hash: computeRecordHash(bytes, sig) };
+      }
+      const result = await service.applyMany(boot.userId, records);
+      expect(result.ok).toBe(true);
+      if (!result.ok) throw new Error(result.error);
+      expect(result.applied).toBe(2000);
+      expect(result.seq).toBe(2001);
+      expect(keyLogStore.list(boot.userId)).toHaveLength(2001);
+      expect(userStore.getById(boot.userId)?.keyLogHeadSeq).toBe(2001);
+    } finally {
+      close();
+    }
+  });
 });

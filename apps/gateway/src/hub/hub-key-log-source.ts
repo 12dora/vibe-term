@@ -15,10 +15,11 @@ export function createHubKeyLogSource(
     },
     async list(
       userId: string,
-      fromSeq?: bigint
+      fromSeq?: bigint,
+      limit?: number
     ): Promise<{ seq: bigint; bytes: Uint8Array; sig: Uint8Array }[]> {
       const from = fromSeq === undefined ? undefined : Number(fromSeq);
-      return keyLogStore.list(userId, from).map((r) => ({
+      return keyLogStore.list(userId, from, limit).map((r) => ({
         seq: BigInt(r.seq),
         bytes: r.bytes,
         sig: r.sig,

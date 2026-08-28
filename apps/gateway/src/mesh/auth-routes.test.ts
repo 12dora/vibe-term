@@ -845,7 +845,7 @@ describe('auth-routes', () => {
 
       // 浏览器把本机入口写成真实 nodeId（/api/auth/mode.nodeId），必须与 challenge 的 'self' 哨兵等价
       const realEntry = await challengeAndLogin(mesh.runtime, mesh.boot, {
-        entry: mesh.boot.nodeId,
+        entry: NODE_ID,
       });
       expect(realEntry.res.status).toBe(200);
 

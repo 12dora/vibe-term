@@ -26,6 +26,9 @@ import {
   type HubRuntimeConfig,
 } from './types';
 import {
+  KEY_LOG_PAGE_DEFAULT_LIMIT,
+  KEY_LOG_PAGE_MAX_BYTES,
+  KEY_LOG_PAGE_MAX_LIMIT,
   type NodeListMessage,
   type RtcSignalMessage,
   type UplinkCtlMessage,
@@ -92,6 +95,7 @@ export const HUB_KEY_LOG_REQ_STATE_MAX = 1024;
 export const HUB_KEY_LOG_REQ_IDLE_TTL_MS = 10 * 60 * 1000;
 export const HUB_KEY_LOG_REQ_OVERFLOW_MAX_USERS = 256;
 export const HUB_KEY_LOG_REQ_OVERFLOW_MAX_NODES = 8;
+export const HUB_KEY_LOG_REQ_RETRY_AFTER_MS = 6_000;
 
 class TokenBucket {
   private tokens: number;
@@ -187,7 +191,6 @@ class IdleLruMap<T> {
 type OverflowUser = {
   lastAt: number;
   nodes: Map<string, { bucket: TokenBucket; lastAt: number }>;
-  remainder: TokenBucket;
 };
 
 export class KeyLogReqLimiter {
@@ -199,6 +202,7 @@ export class KeyLogReqLimiter {
   private readonly overflowMaxUsers: number;
   private readonly overflowMaxNodes: number;
   private deniedCount = 0;
+  private lastRetryAfterMs = HUB_KEY_LOG_REQ_RETRY_AFTER_MS;
 
   constructor(opts?: {
     max?: number;
@@ -240,6 +244,10 @@ export class KeyLogReqLimiter {
     return this.deniedCount;
   }
 
+  get retryAfterMs(): number {
+    return this.lastRetryAfterMs;
+  }
+
   take(nodeId: string, userId: string, now: number): boolean {
     this.sweepOverflow(now);
     let bucket = this.buckets.touch(nodeId, now);
@@ -250,8 +258,17 @@ export class KeyLogReqLimiter {
         bucket = this.takeOverflow(nodeId, userId, now);
       }
     }
+    if (!bucket) {
+      this.deniedCount += 1;
+      this.lastRetryAfterMs = this.ttlMs;
+      return false;
+    }
     const ok = bucket.take(now);
-    if (!ok) this.deniedCount += 1;
+    if (!ok) {
+      this.deniedCount += 1;
+      this.lastRetryAfterMs =
+        this.ratePerMin > 0 ? Math.ceil(60_000 / this.ratePerMin) : this.ttlMs;
+    }
     return ok;
   }
 
@@ -269,7 +286,7 @@ export class KeyLogReqLimiter {
     this.deniedCount = 0;
   }
 
-  private takeOverflow(nodeId: string, userId: string, now: number): TokenBucket {
+  private takeOverflow(nodeId: string, userId: string, now: number): TokenBucket | undefined {
     let user = this.overflow.get(userId);
     if (!user) {
       while (this.overflow.size >= this.overflowMaxUsers) {
@@ -280,7 +297,6 @@ export class KeyLogReqLimiter {
       user = {
         lastAt: now,
         nodes: new Map(),
-        remainder: new TokenBucket(this.ratePerMin, this.burst),
       };
     }
     user.lastAt = now;
@@ -290,7 +306,7 @@ export class KeyLogReqLimiter {
     let node = user.nodes.get(nodeId);
     if (!node) {
       if (user.nodes.size >= this.overflowMaxNodes) {
-        return user.remainder;
+        return undefined;
       }
       node = { bucket: new TokenBucket(this.ratePerMin, this.burst), lastAt: now };
     }
@@ -702,19 +718,40 @@ export class UplinkServer {
         t: 'key.log.res',
         records: [],
         error: 'rate_limited',
+        retry_after_ms: this.keyLogReqLimiter.retryAfterMs,
         ...(msg.id ? { id: msg.id } : {}),
       });
       return;
     }
-    const records = await this.keyLogSource.list(live.userId, fromSeq);
-    this.warnKeyLogReq(live.nodeId, fromSeq, records.length, false);
+    const requested = msg.limit ?? KEY_LOG_PAGE_DEFAULT_LIMIT;
+    const limit = Math.min(KEY_LOG_PAGE_MAX_LIMIT, Math.max(1, requested));
+    const fetched = await this.keyLogSource.list(live.userId, fromSeq, limit + 1);
+    let hasMore = fetched.length > limit;
+    let page = hasMore ? fetched.slice(0, limit) : fetched;
+    while (page.length > 0) {
+      const encoded = encodeUplinkCtl({
+        t: 'key.log.res',
+        records: page.map((r) => ({
+          seq: seqToWire(r.seq),
+          bytes: bytesToB64url(r.bytes),
+          sig: bytesToB64url(r.sig),
+        })),
+        has_more: hasMore,
+        ...(msg.id ? { id: msg.id } : {}),
+      });
+      if (encoded.byteLength <= KEY_LOG_PAGE_MAX_BYTES) break;
+      page = page.slice(0, -1);
+      hasMore = true;
+    }
+    this.warnKeyLogReq(live.nodeId, fromSeq, page.length, false);
     this.send(live.link, {
       t: 'key.log.res',
-      records: records.map((r) => ({
+      records: page.map((r) => ({
         seq: seqToWire(r.seq),
         bytes: bytesToB64url(r.bytes),
         sig: bytesToB64url(r.sig),
       })),
+      has_more: hasMore,
       ...(msg.id ? { id: msg.id } : {}),
     });
   }

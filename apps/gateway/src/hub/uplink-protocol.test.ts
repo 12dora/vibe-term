@@ -69,13 +69,24 @@ describe('uplink-protocol', () => {
     }
 
     expect(roundtrip({ t: 'key.log.req', from_seq: 1 })).toEqual({ t: 'key.log.req', from_seq: 1 });
+    expect(roundtrip({ t: 'key.log.req', from_seq: 1, limit: 256 })).toEqual({
+      t: 'key.log.req',
+      from_seq: 1,
+      limit: 256,
+    });
     const recBytes = encodeBase64url(new Uint8Array([1, 2, 3]));
     const recSig = encodeBase64url(randomBytes(64));
     const res = roundtrip({
       t: 'key.log.res',
       records: [{ seq: 1, bytes: recBytes, sig: recSig }],
+      has_more: true,
+      retry_after_ms: 6000,
     });
     expect(res.t).toBe('key.log.res');
+    if (res.t === 'key.log.res') {
+      expect(res.has_more).toBe(true);
+      expect(res.retry_after_ms).toBe(6000);
+    }
 
     expect(roundtrip({ t: 'key.log.append', bytes: recBytes, sig: recSig }).t).toBe(
       'key.log.append'

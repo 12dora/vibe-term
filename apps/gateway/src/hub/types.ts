@@ -19,7 +19,8 @@ export interface HubKeyLogSource {
   head(userId: string): Promise<{ seq: bigint; hash: Uint8Array }>;
   list(
     userId: string,
-    fromSeq?: bigint
+    fromSeq?: bigint,
+    limit?: number
   ): Promise<{ seq: bigint; bytes: Uint8Array; sig: Uint8Array }[]>;
   append(
     userId: string,

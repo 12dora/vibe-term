@@ -88,12 +88,19 @@ describe('uplink-protocol', () => {
       encodeUplinkCtl({
         t: 'key.log.res',
         records: [{ seq: 8n, bytes: recBytes, sig: recSig }],
+        has_more: true,
       })
     );
     expect(res.t).toBe('key.log.res');
     if (res.t !== 'key.log.res') throw new Error('expected key.log.res');
     expect(res.records[0]?.seq).toBe(8n);
     expect(res.records[0]?.bytes).toEqual(recBytes);
+    expect(res.has_more).toBe(true);
+
+    const req = decodeUplinkCtl(
+      encodeUplinkCtl({ t: 'key.log.req', from_seq: 2n, id: 'p1', limit: 256 })
+    );
+    expect(req).toEqual({ t: 'key.log.req', from_seq: 2n, id: 'p1', limit: 256 });
 
     const append = decodeUplinkCtl(
       encodeUplinkCtl({ t: 'key.log.append', bytes: recBytes, sig: recSig, id: 'ack-1' })

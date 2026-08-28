@@ -365,4 +365,56 @@ describe('link mux', () => {
     ]);
     expect(state).toBe('closed');
   });
+
+  it('closes the transport once on send rejection and drops post-close chunks', async () => {
+    let closeCalls = 0;
+    let onData: ((bytes: Uint8Array) => void) | undefined;
+    const transport: ByteTransport = {
+      send() {
+        return Promise.reject(new Error('send-failed'));
+      },
+      onData(cb) {
+        onData = cb;
+      },
+      onClose() {},
+      close() {
+        closeCalls += 1;
+      },
+    };
+    const mux = new LinkMux(transport, { role: 'initiator' });
+    await expect(mux.sendFrame({ streamId: 1, op: FrameOp.RST })).rejects.toThrow('send-failed');
+    expect(closeCalls).toBe(1);
+    expect(onData).toBeDefined();
+    for (let i = 0; i < 100; i++) {
+      onData?.(encodeFrame({ streamId: 2, op: FrameOp.OPEN, payload: new Uint8Array([i]) }));
+    }
+    expect((mux as unknown as { pendingChunks: Uint8Array[] }).pendingChunks).toHaveLength(0);
+    mux.close('again');
+    expect(closeCalls).toBe(1);
+  });
+
+  it('closes the link when pending incoming streams exceed the hard cap', async () => {
+    const [t1, t2] = createBytePipe();
+    const mux = new LinkMux(t1, { role: 'initiator' });
+    for (let i = 0; i < 65; i++) {
+      t2.send(
+        encodeFrame({
+          streamId: (i + 1) * 2,
+          op: FrameOp.OPEN,
+          payload: new Uint8Array([i]),
+        })
+      );
+    }
+    const info = await mux.closed;
+    expect(info.reason.toLowerCase()).toMatch(/pending|cap|overflow|too many/);
+  });
+
+  it('closes the link when the ctl inbox exceeds the hard cap', async () => {
+    const [a, b] = createInMemoryLinkPair();
+    for (let i = 0; i < 65; i++) {
+      b.ctl.send(new Uint8Array([i]));
+    }
+    const info = await a.closed;
+    expect(info.reason.toLowerCase()).toMatch(/ctl|cap|overflow|too many/);
+  });
 });

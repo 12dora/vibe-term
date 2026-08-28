@@ -297,7 +297,7 @@ export class AuthRoutes {
         target: login.target,
         targetPk: this.deps.nodePk,
         uid: challenge.uid,
-        entry: challenge.entryNodeId,
+        entry: login.entry,
       });
       if (!loginOk.ok) {
         return fail(loginErrorCode(loginOk.error));

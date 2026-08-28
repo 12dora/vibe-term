@@ -114,7 +114,29 @@ describe('decodeMeshFrame', () => {
         reach: 'relay',
         inventory: { version: '1.0.0' },
         version: null,
-        direct_capable: false,
+        direct_capable: null,
+        name: null,
+      } satisfies NodeEventPayload,
+    });
+  });
+
+  test('legacy 四字段 NODE_EVENT 保留 absent optional 为 null', () => {
+    const body = wsBorsh.encodePayload(wsBorsh.schema.NodeEventLegacySchema, {
+      nodeId: 'legacy-node',
+      status: wsBorsh.NODE_EVENT_STATUS_ONLINE,
+      reach: 'lan',
+      inventory: null,
+    });
+    const frame = wsBorsh.encodeEnvelope(wsBorsh.KIND_NODE_EVENT, body, 1);
+    expect(decodeMeshFrame(frame)).toEqual({
+      kind: 'node-event',
+      payload: {
+        nodeId: 'legacy-node',
+        status: 'online',
+        reach: 'lan',
+        inventory: null,
+        version: null,
+        direct_capable: null,
         name: null,
       } satisfies NodeEventPayload,
     });

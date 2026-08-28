@@ -1056,6 +1056,7 @@ describe('UplinkServer', () => {
       expect(got).toBe(21);
       const last = responses[responses.length - 1];
       expect(last && last.t === 'key.log.res' ? last.error : undefined).toBe('rate_limited');
+      expect(last && last.t === 'key.log.res' ? last.retry_after_ms : undefined).toBeGreaterThan(0);
       server.stop();
     } finally {
       close();
@@ -1220,5 +1221,67 @@ describe('UplinkServer', () => {
 
     limiter.take('n3', 'user-a', t0 + 2_000);
     expect(limiter.overflowUsers).toBe(0);
+  });
+
+  test('9th overflow node is rate_limited without starving an existing burst, then gains a slot after TTL', () => {
+    const limiter = new KeyLogReqLimiter({
+      max: 8,
+      overflowMaxNodes: 8,
+      burst: 2,
+      ratePerMin: 0,
+      ttlMs: 1_000,
+    });
+    const t0 = 1_000;
+    for (let i = 0; i < 8; i++) {
+      expect(limiter.take(`other-${i}`, 'user-other', t0)).toBe(true);
+    }
+    for (let i = 0; i < 8; i++) {
+      expect(limiter.take(`a-${i}`, 'user-a', t0)).toBe(true);
+    }
+    expect(limiter.take('a-8', 'user-a', t0)).toBe(false);
+    expect(limiter.take('a-0', 'user-a', t0)).toBe(true);
+    expect(limiter.take('a-0', 'user-a', t0)).toBe(false);
+    expect(limiter.take('a-8', 'user-a', t0 + 2_000)).toBe(true);
+  });
+
+  test('key.log.req pages records and sets has_more', async () => {
+    const { db, close } = createMigratedAuthDb();
+    try {
+      const { userStore } = createHubTestStack(db);
+      const user = seedUser(userStore);
+      const recBytes = encodeBase64url(new Uint8Array([1, 2, 3]));
+      const recSig = encodeBase64url(randomBytes(64));
+      const rows = Array.from({ length: 300 }, (_, i) => ({
+        seq: BigInt(i + 1),
+        bytes: decodeBase64url(recBytes),
+        sig: decodeBase64url(recSig),
+      }));
+      const source: HubKeyLogSource = {
+        async head() {
+          return { seq: 300n, hash: new Uint8Array(32) };
+        },
+        async list(_userId, fromSeq, limit) {
+          const from = Number(fromSeq ?? 1n);
+          const start = Math.max(0, from - 1);
+          const cap = limit ?? rows.length;
+          return rows.slice(start, start + cap);
+        },
+        async append() {
+          return { ok: false, error: 'readonly' };
+        },
+      };
+      const { server } = makeServer(db, userStore, source);
+      const node = await authNode(server, userStore, user.id);
+      node.inbox.drain();
+      sendCtl(node.nodeLink, { t: 'key.log.req', from_seq: 1, id: 'page-1', limit: 256 });
+      const res = await takeUntil(node.inbox, 'key.log.res');
+      expect(res.t).toBe('key.log.res');
+      if (res.t !== 'key.log.res') throw new Error('expected res');
+      expect(res.records).toHaveLength(256);
+      expect(res.has_more).toBe(true);
+      server.stop();
+    } finally {
+      close();
+    }
   });
 });

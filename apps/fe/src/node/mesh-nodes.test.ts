@@ -2,8 +2,10 @@
 
 import { describe, expect, test } from 'bun:test';
 import type { MeshNode } from '@tmex/api-client/auth/index';
+import { wsBorsh } from '@tmex/shared';
 import { bytesToHex, encodeBase64url, sha256 } from '@tmex/shared/auth';
 import type { HubNodeRow } from './hub-api';
+import { decodeMeshFrame } from './mesh-events';
 import {
   findHubNodeId,
   mergeNodes,
@@ -109,6 +111,22 @@ describe('patchNodesWithEvent', () => {
     expect(next[0].direct_capable).toBe(true);
     expect(next[0].name).toBe('studio');
     expect(next[1]).toBe(nodes[1]);
+  });
+
+  test('legacy 四字段 NODE_EVENT 不覆盖已有 direct_capable:true', () => {
+    const body = wsBorsh.encodePayload(wsBorsh.schema.NodeEventLegacySchema, {
+      nodeId: 'a',
+      status: wsBorsh.NODE_EVENT_STATUS_ONLINE,
+      reach: 'lan',
+      inventory: null,
+    });
+    const frame = wsBorsh.encodeEnvelope(wsBorsh.KIND_NODE_EVENT, body, 1);
+    const event = decodeMeshFrame(frame);
+    expect(event?.kind).toBe('node-event');
+    if (event?.kind !== 'node-event') throw new Error('expected node-event');
+    const online = node({ id: 'a', name: 'alpha', direct_capable: true });
+    const next = patchNodesWithEvent([online], event.payload);
+    expect(next[0]?.direct_capable).toBe(true);
   });
 });
 

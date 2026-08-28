@@ -1680,6 +1680,125 @@ describe('UplinkClient', () => {
     expect(client.state).toBe('online');
   });
 
+  test('key.log catch-up applies each page atomically and loops has_more', async () => {
+    const { db, close } = createMigratedAuthDb();
+    fixtures.push({ close });
+    const userStore = new UserStore(db);
+    seedUser(userStore);
+    const batches: number[] = [];
+    let seq = 1n;
+    const hashAt = (n: bigint) => {
+      const h = new Uint8Array(32);
+      h[0] = Number(n);
+      return h;
+    };
+    const { hub, received, client } = await bootOnline({
+      userStore,
+      applier: {
+        async head() {
+          return { seq, hash: hashAt(seq) };
+        },
+        async applyMany(_userId, records) {
+          batches.push(records.length);
+          seq += BigInt(records.length);
+          return { applied: records.length };
+        },
+      },
+    });
+    fixtures.push({ close: () => {}, stop: () => client.stop() });
+    hub.ctl.send(
+      encodeUplinkCtl({
+        t: 'node.list',
+        version: 1,
+        key_log_head: { seq: 300n, hash: hashAt(300n) },
+        rtc: { stun: [], turn: null },
+        nodes: [],
+      })
+    );
+    await waitUntil(() => received.some((row) => row.includes('key.log.req')));
+    const first = JSON.parse(received.find((row) => row.includes('key.log.req')) ?? '{}') as {
+      id?: string;
+      limit?: number;
+    };
+    expect(first.limit).toBe(256);
+    const page = (from: number, count: number) =>
+      Array.from({ length: count }, (_, i) => ({
+        seq: BigInt(from + i),
+        bytes: new Uint8Array([from + i]),
+        sig: randomBytes(64),
+      }));
+    hub.ctl.send(
+      encodeUplinkCtl({
+        t: 'key.log.res',
+        records: page(2, 256),
+        has_more: true,
+        ...(first.id ? { id: first.id } : {}),
+      })
+    );
+    await waitUntil(() => batches.length === 1);
+    await waitUntil(() => received.filter((row) => row.includes('key.log.req')).length >= 2);
+    const secondRaw = received.filter((row) => row.includes('key.log.req'))[1];
+    const second = JSON.parse(secondRaw ?? '{}') as { id?: string };
+    hub.ctl.send(
+      encodeUplinkCtl({
+        t: 'key.log.res',
+        records: page(258, 44),
+        has_more: false,
+        ...(second.id ? { id: second.id } : {}),
+      })
+    );
+    await waitUntil(() => batches.length === 2);
+    expect(batches).toEqual([256, 44]);
+  });
+
+  test('key.log.res oversized page is rejected and not applied', async () => {
+    const { db, close } = createMigratedAuthDb();
+    fixtures.push({ close });
+    const userStore = new UserStore(db);
+    seedUser(userStore);
+    const applied: unknown[] = [];
+    const { hub, received, client } = await bootOnline({
+      userStore,
+      applier: {
+        async head() {
+          return { seq: applied.length > 0 ? 3n : 1n, hash: new Uint8Array(32).fill(1) };
+        },
+        async applyMany(_userId, records) {
+          applied.push(...records);
+          return { applied: records.length };
+        },
+      },
+    });
+    fixtures.push({ close: () => {}, stop: () => client.stop() });
+    hub.ctl.send(
+      encodeUplinkCtl({
+        t: 'node.list',
+        version: 1,
+        key_log_head: { seq: 3n, hash: new Uint8Array(32).fill(3) },
+        rtc: { stun: [], turn: null },
+        nodes: [],
+      })
+    );
+    await waitUntil(() => received.some((row) => row.includes('key.log.req')));
+    const req = JSON.parse(received.find((row) => row.includes('key.log.req')) ?? '{}') as {
+      id?: string;
+    };
+    const recBytes = encodeBase64url(randomBytes(8));
+    const recSig = encodeBase64url(randomBytes(64));
+    const oversized = {
+      t: 'key.log.res',
+      id: req.id,
+      records: Array.from({ length: 257 }, (_, i) => ({
+        seq: i + 2,
+        bytes: recBytes,
+        sig: recSig,
+      })),
+    };
+    hub.ctl.send(new TextEncoder().encode(JSON.stringify(oversized)));
+    await new Promise((resolve) => setTimeout(resolve, 40));
+    expect(applied).toHaveLength(0);
+  });
+
   test('key.log.res without id is dropped when the outstanding request has an id', async () => {
     const { db, close } = createMigratedAuthDb();
     fixtures.push({ close });

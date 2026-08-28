@@ -236,6 +236,7 @@ export class PeerManager {
   ) => WebSocketTransportInput | Promise<WebSocketTransportInput>;
   private readonly live = new Map<string, LivePeer>();
   private readonly parked = new Map<string, ParkedInbound>();
+  private readonly parkedSessions = new WeakSet<LinkSession>();
   private readonly retiring = new Map<string, Set<LivePeer>>();
   private readonly pending = new Map<string, Promise<LinkSession>>();
   private readonly rtc: RtcPeerManager | null;
@@ -432,6 +433,7 @@ export class PeerManager {
   }
 
   onRevoked(nodeId: string): void {
+    this.dropParked(nodeId, 'revoked');
     this.dropPeer(nodeId, 'revoked');
     this.forceCloseRetiring(nodeId, 'revoked');
     this.userStore.deletePeer(nodeId);
@@ -960,6 +962,14 @@ export class PeerManager {
       }
       return null;
     }
+    if (!this.isTrusted(peerNodeId)) {
+      try {
+        session.close('not-trusted');
+      } catch {
+        // already closed
+      }
+      return null;
+    }
     const prev = this.live.get(peerNodeId);
     if (prev && prev.session !== session) {
       const rank = comparePeerTransport(transport, prev.transport);
@@ -1224,7 +1234,16 @@ export class PeerManager {
     if (!this.keyLogApplier?.list) return;
     try {
       const fromSeq = parseSeq(msg.from_seq, 'from_seq');
-      const records = await this.keyLogApplier.list(this.uplink.userId, fromSeq);
+      const requested = typeof msg.limit === 'number' ? msg.limit : 256;
+      const limit = Math.min(256, Math.max(1, requested));
+      const fetched = await this.keyLogApplier.list(
+        this.uplink.userId,
+        fromSeq,
+        undefined,
+        limit + 1
+      );
+      const hasMore = fetched.length > limit;
+      const records = hasMore ? fetched.slice(0, limit) : fetched;
       this.sendPeerCtl(live, {
         t: 'key.log.res',
         records: records.map((row) => ({
@@ -1232,6 +1251,7 @@ export class PeerManager {
           bytes: encodeBase64url(row.bytes),
           sig: encodeBase64url(row.sig),
         })),
+        has_more: hasMore,
       });
     } catch {
       // ignore
@@ -1327,7 +1347,7 @@ export class PeerManager {
       this.live.delete(nodeId);
       this.finishRetire(live, reason);
     }
-    if (this.stopped) {
+    if (this.stopped || reason === 'revoked') {
       this.dropParked(nodeId, reason);
       return;
     }
@@ -1341,13 +1361,26 @@ export class PeerManager {
     initiatedBy: string,
     gen: number
   ): void {
-    this.dropParked(peerNodeId, 'replaced-park');
+    const existing = this.parked.get(peerNodeId);
+    const parkedAt = existing?.at ?? this.scheduler.now();
+    if (existing) {
+      this.parked.delete(peerNodeId);
+      existing.timer?.clear();
+      this.parkedSessions.delete(existing.session);
+      try {
+        existing.session.close('replaced-park');
+      } catch {
+        // already closed
+      }
+    }
+    this.armParkedDrain(session);
+    this.parkedSessions.add(session);
     const parked: ParkedInbound = {
       session,
       transport,
       initiatedBy,
       generation: gen,
-      at: this.scheduler.now(),
+      at: parkedAt,
       timer: null,
     };
     parked.timer = this.scheduler.interval(() => {
@@ -1360,10 +1393,25 @@ export class PeerManager {
       const cur = this.parked.get(peerNodeId);
       if (cur?.session === session) {
         cur.timer?.clear();
+        this.parkedSessions.delete(session);
         this.parked.delete(peerNodeId);
       }
     });
     this.parked.set(peerNodeId, parked);
+  }
+
+  private armParkedDrain(session: LinkSession): void {
+    session.onStream((stream) => {
+      if (!this.parkedSessions.has(session)) return;
+      try {
+        stream.reset('parked');
+      } catch {
+        // already closed
+      }
+    });
+    session.ctl.onMessage(() => {
+      // drain ctl while parked so the inbox cannot grow
+    });
   }
 
   private dropParked(nodeId: string, reason: string): void {
@@ -1371,6 +1419,7 @@ export class PeerManager {
     if (!parked) return;
     this.parked.delete(nodeId);
     parked.timer?.clear();
+    this.parkedSessions.delete(parked.session);
     try {
       parked.session.close(reason);
     } catch {
@@ -1381,8 +1430,13 @@ export class PeerManager {
   private activateParked(nodeId: string): void {
     const parked = this.parked.get(nodeId);
     if (!parked) return;
+    if (!this.isTrusted(nodeId)) {
+      this.dropParked(nodeId, 'not-trusted');
+      return;
+    }
     this.parked.delete(nodeId);
     parked.timer?.clear();
+    this.parkedSessions.delete(parked.session);
     this.track(parked.session, nodeId, parked.transport, parked.initiatedBy, parked.generation);
   }
 

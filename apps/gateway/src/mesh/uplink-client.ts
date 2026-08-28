@@ -26,6 +26,8 @@ import type {
   UplinkStatus,
 } from './types';
 import {
+  KEY_LOG_PAGE_DEFAULT_LIMIT,
+  KEY_LOG_PAGE_MAX_LIMIT,
   UPLINK_CTL_TYPES,
   type UplinkCtlMessage,
   type UplinkEnrollRedeemed,
@@ -512,7 +514,12 @@ export class UplinkClient {
         }
         this.pendingKeyLog = null;
         if (msg.error === 'rate_limited') {
-          pending.reject(new Error('rate_limited'));
+          const hint = msg.retry_after_ms != null ? ` retry_after_ms=${msg.retry_after_ms}` : '';
+          pending.reject(new Error(`rate_limited${hint}`));
+          return;
+        }
+        if (msg.records.length > KEY_LOG_PAGE_MAX_LIMIT) {
+          pending.reject(new Error('key-log-res-too-large'));
           return;
         }
         pending.resolve(msg.records);
@@ -1025,7 +1032,14 @@ export class UplinkClient {
         },
       };
       try {
-        this.link?.ctl.send(encodeUplinkCtl({ t: 'key.log.req', from_seq: fromSeq, id }));
+        this.link?.ctl.send(
+          encodeUplinkCtl({
+            t: 'key.log.req',
+            from_seq: fromSeq,
+            id,
+            limit: KEY_LOG_PAGE_DEFAULT_LIMIT,
+          })
+        );
       } catch (err) {
         clearTimeout(timer);
         this.pendingKeyLog = null;

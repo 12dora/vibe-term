@@ -62,13 +62,20 @@ export type NodeListMessage = {
   hub?: NodeListHubInfo;
 };
 
-export type KeyLogReqMessage = { t: 'key.log.req'; from_seq: number | string; id?: string };
+export type KeyLogReqMessage = {
+  t: 'key.log.req';
+  from_seq: number | string;
+  id?: string;
+  limit?: number;
+};
 export type KeyLogRecordWire = { seq: number | string; bytes: string; sig: string };
 export type KeyLogResMessage = {
   t: 'key.log.res';
   records: KeyLogRecordWire[];
   id?: string;
   error?: string;
+  has_more?: boolean;
+  retry_after_ms?: number;
 };
 export type KeyLogAppendMessage = { t: 'key.log.append'; bytes: string; sig: string; id?: string };
 export type KeyLogAckMessage = {
@@ -124,6 +131,9 @@ export const UPLINK_CTL_MAX_STRING_LEN = 4 * 1024;
 export const UPLINK_CTL_MAX_ENDPOINTS = 32;
 export const UPLINK_CTL_MAX_CERT_BYTES = 2048;
 export const UPLINK_CTL_MAX_U64 = 18446744073709551615n;
+export const KEY_LOG_PAGE_DEFAULT_LIMIT = 256;
+export const KEY_LOG_PAGE_MAX_LIMIT = 256;
+export const KEY_LOG_PAGE_MAX_BYTES = 1024 * 1024;
 const NODE_ID_HEX_RE = /^[0-9a-f]{32}$/i;
 
 export function seqToWire(seq: bigint | number): number | string {
@@ -175,17 +185,33 @@ export function encodeUplinkCtl(msg: UplinkCtlMessage): Uint8Array {
 export function decodeUplinkCtl(input: Uint8Array | string): UplinkCtlMessage {
   const byteLength =
     typeof input === 'string' ? textEncoder.encode(input).byteLength : input.byteLength;
-  if (byteLength > UPLINK_CTL_MAX_BYTES) {
+  if (byteLength > KEY_LOG_PAGE_MAX_BYTES) {
     throw new UplinkCtlError('ctl too large');
   }
   const text = typeof input === 'string' ? input : textDecoder.decode(input);
+  if (
+    byteLength > UPLINK_CTL_MAX_BYTES &&
+    !text.includes('"key.log.res"') &&
+    !text.includes('"t":"key.log.res"')
+  ) {
+    throw new UplinkCtlError('ctl too large');
+  }
   let parsed: unknown;
   try {
     parsed = JSON.parse(text);
   } catch {
-    throw new UplinkCtlError('invalid json');
+    throw new UplinkCtlError(byteLength > UPLINK_CTL_MAX_BYTES ? 'ctl too large' : 'invalid json');
   }
-  assertCtlBounds(parsed, 0);
+  const parsedT =
+    parsed && typeof parsed === 'object' && !Array.isArray(parsed)
+      ? (parsed as { t?: unknown }).t
+      : undefined;
+  if (parsedT !== 'key.log.res' && byteLength > UPLINK_CTL_MAX_BYTES) {
+    throw new UplinkCtlError('ctl too large');
+  }
+  if (parsedT !== 'key.log.res') {
+    assertCtlBounds(parsed, 0);
+  }
   if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
     throw new UplinkCtlError('invalid ctl');
   }
@@ -226,16 +252,35 @@ export function decodeUplinkCtl(input: Uint8Array | string): UplinkCtlMessage {
     case 'key.log.req': {
       const req: KeyLogReqMessage = { t: 'key.log.req', from_seq: requireSeq(obj, 'from_seq') };
       if (obj.id !== undefined && obj.id !== null) req.id = requireNonEmptyString(obj, 'id');
+      if (obj.limit !== undefined && obj.limit !== null) {
+        req.limit = requireInt(obj, 'limit');
+        if (req.limit < 1) {
+          throw new UplinkCtlError('invalid limit');
+        }
+      }
       return req;
     }
     case 'key.log.res': {
+      const records = requireKeyLogRecords(obj.records);
+      if (records.length > KEY_LOG_PAGE_MAX_LIMIT) {
+        throw new UplinkCtlError('key.log.res too many records');
+      }
       const res: KeyLogResMessage = {
         t: 'key.log.res',
-        records: requireKeyLogRecords(obj.records),
+        records,
       };
       if (obj.id !== undefined && obj.id !== null) res.id = requireNonEmptyString(obj, 'id');
       if (obj.error !== undefined && obj.error !== null) {
         res.error = requireNonEmptyString(obj, 'error');
+      }
+      if (obj.has_more !== undefined && obj.has_more !== null) {
+        res.has_more = requireBoolean(obj, 'has_more');
+      }
+      if (obj.retry_after_ms !== undefined && obj.retry_after_ms !== null) {
+        res.retry_after_ms = requireInt(obj, 'retry_after_ms');
+        if (res.retry_after_ms < 0) {
+          throw new UplinkCtlError('invalid retry_after_ms');
+        }
       }
       return res;
     }

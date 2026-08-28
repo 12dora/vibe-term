@@ -854,4 +854,117 @@ describe('PeerManager upgrade review fixes', () => {
     expect(accepted).toBe(1);
     expect(managerA.transportOf(peer.nodeId)).toBe('relay');
   });
+
+  test('revoking a node drops parked inbound instead of promoting it', async () => {
+    const { db, close } = createMigratedAuthDb();
+    fixtures.push({ close });
+    const store = new UserStore(db);
+    seedUser(store);
+    const self = seedNodeIdentity(store, 'user-1');
+    const peer = seedNodeIdentity(store, 'user-1');
+    const scheduler = new ImmediateScheduler();
+    const managerA = new PeerManager({
+      identity: self,
+      userStore: store,
+      uplink: failingUplink(self, store),
+      peerPort: 0,
+      startServer: false,
+      scheduler,
+    });
+    fixtures.push({ close, stop: () => managerA.stop() });
+    const [liveA, liveB] = createInMemoryLinkPair();
+    fixtures.push({ close: () => liveB.close('test') });
+    expect(managerA.adoptLink(peer.nodeId, liveA, 'relay', self.nodeId)).toBe(liveA);
+
+    const [parkA, parkB] = createInMemoryLinkPair();
+    const parkedClosed = parkB.closed;
+    expect(managerA.adoptLink(peer.nodeId, parkA, 'ws-secure', peer.nodeId)).toBe(liveA);
+    expect(managerA.transportOf(peer.nodeId)).toBe('relay');
+
+    store.markCertRevoked(peer.nodeId, 9);
+    managerA.onRevoked(peer.nodeId);
+    expect(managerA.getLive(peer.nodeId)).toBeNull();
+    expect(managerA.transportOf(peer.nodeId)).toBeNull();
+    expect((await parkedClosed).reason).toBe('revoked');
+  });
+
+  test('track refuses to promote a parked link after the cert is revoked', async () => {
+    const { db, close } = createMigratedAuthDb();
+    fixtures.push({ close });
+    const store = new UserStore(db);
+    seedUser(store);
+    const self = seedNodeIdentity(store, 'user-1');
+    const peer = seedNodeIdentity(store, 'user-1');
+    const scheduler = new ImmediateScheduler();
+    const managerA = new PeerManager({
+      identity: self,
+      userStore: store,
+      uplink: failingUplink(self, store),
+      peerPort: 0,
+      startServer: false,
+      scheduler,
+    });
+    fixtures.push({ close, stop: () => managerA.stop() });
+    const [liveA, liveB] = createInMemoryLinkPair();
+    fixtures.push({ close: () => liveB.close('test') });
+    expect(managerA.adoptLink(peer.nodeId, liveA, 'relay', self.nodeId)).toBe(liveA);
+
+    const [parkA, parkB] = createInMemoryLinkPair();
+    expect(managerA.adoptLink(peer.nodeId, parkA, 'ws-secure', peer.nodeId)).toBe(liveA);
+    store.markCertRevoked(peer.nodeId, 9);
+    liveA.close('drop-live');
+    await liveB.closed;
+    await waitUntil(() => managerA.getLive(peer.nodeId) == null, 2_000);
+    expect(managerA.transportOf(peer.nodeId)).toBeNull();
+    expect((await parkB.closed).reason).toMatch(/revoked|not-trusted|not admitted/);
+  });
+
+  test('parked inbound RSTs OPEN, drains ctl, and keeps the original fence deadline', async () => {
+    const { db, close } = createMigratedAuthDb();
+    fixtures.push({ close });
+    const store = new UserStore(db);
+    seedUser(store);
+    const self = seedNodeIdentity(store, 'user-1');
+    const peer = seedNodeIdentity(store, 'user-1');
+    const scheduler = new ImmediateScheduler();
+    const managerA = new PeerManager({
+      identity: self,
+      userStore: store,
+      uplink: failingUplink(self, store),
+      peerPort: 0,
+      startServer: false,
+      scheduler,
+    });
+    fixtures.push({ close, stop: () => managerA.stop() });
+    const [liveA, liveB] = createInMemoryLinkPair();
+    fixtures.push({ close: () => liveB.close('test') });
+    expect(managerA.adoptLink(peer.nodeId, liveA, 'relay', self.nodeId)).toBe(liveA);
+
+    const [parkA, parkB] = createInMemoryLinkPair();
+    expect(managerA.adoptLink(peer.nodeId, parkA, 'ws-secure', peer.nodeId)).toBe(liveA);
+
+    const rstReasons: string[] = [];
+    for (let i = 0; i < 32; i++) {
+      const stream = await parkB.openStream(HTTP_OPEN);
+      rstReasons.push((await stream.closed).reason);
+    }
+    expect(rstReasons.every((reason) => reason === 'rst')).toBe(true);
+
+    for (let i = 0; i < 80; i++) {
+      parkB.ctl.send(new TextEncoder().encode(JSON.stringify({ t: 'ping', n: i })));
+    }
+    const parkedStillOpen = await Promise.race([
+      parkA.closed.then(() => 'closed' as const),
+      new Promise<'open'>((resolve) => setTimeout(() => resolve('open'), 30)),
+    ]);
+    expect(parkedStillOpen).toBe('open');
+
+    scheduler.nowMs += PEER_RETIRE_MAX_MS / 2;
+    const [park2A, park2B] = createInMemoryLinkPair();
+    const replacementClosed = park2B.closed;
+    expect(managerA.adoptLink(peer.nodeId, park2A, 'ws-secure', peer.nodeId)).toBe(liveA);
+    scheduler.nowMs += PEER_RETIRE_MAX_MS / 2 + 1;
+    scheduler.tickIntervals();
+    expect((await replacementClosed).reason).toBe('park-timeout');
+  });
 });

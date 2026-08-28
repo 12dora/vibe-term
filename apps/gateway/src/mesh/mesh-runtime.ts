@@ -463,8 +463,8 @@ function createKeyLogApplier(_keyLogStore: KeyLogStore, keys: UserKeyService): K
       }
       return { applied: result.applied };
     },
-    async list(userId, fromSeq, signal) {
-      return keys.list(userId, fromSeq, signal);
+    async list(userId, fromSeq, signal, limit) {
+      return keys.list(userId, fromSeq, signal, limit);
     },
   };
 }

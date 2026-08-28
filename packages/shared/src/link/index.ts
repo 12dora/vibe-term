@@ -9,7 +9,13 @@ export {
   writeU32LE,
   concatBytes,
 } from './codec';
-export { LinkMux, type LinkMuxOptions } from './mux';
+export {
+  LinkMux,
+  MAX_CTL_INBOX,
+  MAX_MUX_STREAMS,
+  MAX_PENDING_INCOMING,
+  type LinkMuxOptions,
+} from './mux';
 export { createBytePipe, createInMemoryLinkPair } from './in-memory-link';
 export {
   WebSocketLink,

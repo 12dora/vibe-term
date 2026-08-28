@@ -30,7 +30,8 @@ export type KeyLogApplier = {
   list?(
     userId: string,
     fromSeq: bigint,
-    signal?: AbortSignal
+    signal?: AbortSignal,
+    limit?: number
   ): Promise<{ seq: bigint; bytes: Uint8Array; sig: Uint8Array }[]>;
 };
 

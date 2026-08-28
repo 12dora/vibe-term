@@ -69,13 +69,15 @@ export type UplinkNodeList = {
   hub?: UplinkHubInfo;
 };
 
-export type UplinkKeyLogReq = { t: 'key.log.req'; from_seq: bigint; id?: string };
+export type UplinkKeyLogReq = { t: 'key.log.req'; from_seq: bigint; id?: string; limit?: number };
 export type UplinkKeyLogRecord = { seq: bigint; bytes: Uint8Array; sig: Uint8Array };
 export type UplinkKeyLogRes = {
   t: 'key.log.res';
   records: UplinkKeyLogRecord[];
   id?: string;
   error?: string;
+  has_more?: boolean;
+  retry_after_ms?: number;
 };
 export type UplinkKeyLogAppend = {
   t: 'key.log.append';
@@ -132,6 +134,9 @@ export const UPLINK_CTL_MAX_DEPTH = 8;
 export const UPLINK_CTL_MAX_ARRAY_LEN = 1024;
 export const UPLINK_CTL_MAX_STRING_LEN = 4 * 1024;
 export const UPLINK_CTL_MAX_CERT_BYTES = 2048;
+export const KEY_LOG_PAGE_DEFAULT_LIMIT = 256;
+export const KEY_LOG_PAGE_MAX_LIMIT = 256;
+export const KEY_LOG_PAGE_MAX_BYTES = 1024 * 1024;
 
 function requireB64(value: unknown, field: string, expectedLen?: number): Uint8Array {
   const bytes = decodeBase64url(requireString(value, field));
@@ -195,13 +200,29 @@ function parseNodeInfo(value: unknown): UplinkNodeInfo {
 }
 
 export function decodeUplinkCtl(bytes: Uint8Array): UplinkCtlMessage {
-  if (bytes.byteLength > UPLINK_CTL_MAX_BYTES) {
+  if (bytes.byteLength > KEY_LOG_PAGE_MAX_BYTES) {
     throw new Error('ctl too large');
   }
+  if (bytes.byteLength > UPLINK_CTL_MAX_BYTES) {
+    let preview = '';
+    try {
+      preview = new TextDecoder().decode(bytes.subarray(0, 64));
+    } catch {
+      preview = '';
+    }
+    if (!preview.includes('key.log.res')) {
+      throw new Error('ctl too large');
+    }
+  }
   const parsed = decodeJsonBytes(bytes);
-  assertCtlBounds(parsed, 0);
   if (!isRecord(parsed) || typeof parsed.t !== 'string') {
     throw new Error('uplink ctl must be a JSON object with t');
+  }
+  if (parsed.t !== 'key.log.res') {
+    if (bytes.byteLength > UPLINK_CTL_MAX_BYTES) {
+      throw new Error('ctl too large');
+    }
+    assertCtlBounds(parsed, 0);
   }
   if (!TYPE_SET.has(parsed.t)) {
     throw new Error(`unknown uplink ctl t: ${parsed.t}`);
@@ -268,11 +289,21 @@ export function decodeUplinkCtl(bytes: Uint8Array): UplinkCtlMessage {
       };
       const reqId = optionalString(parsed.id, 'id');
       if (reqId) req.id = reqId;
+      if (parsed.limit !== undefined && parsed.limit !== null) {
+        const limit = requireNumber(parsed.limit, 'limit');
+        if (!Number.isInteger(limit) || limit < 1) {
+          throw new Error('ctl field limit must be a positive integer');
+        }
+        req.limit = limit;
+      }
       return req;
     }
     case 'key.log.res': {
       if (!Array.isArray(parsed.records)) {
         throw new Error('key.log.res records must be an array');
+      }
+      if (parsed.records.length > KEY_LOG_PAGE_MAX_LIMIT) {
+        throw new Error('key.log.res too many records');
       }
       const res: UplinkKeyLogRes = {
         t: 'key.log.res',
@@ -289,6 +320,16 @@ export function decodeUplinkCtl(bytes: Uint8Array): UplinkCtlMessage {
       if (resId) res.id = resId;
       const resError = optionalString(parsed.error, 'error');
       if (resError) res.error = resError;
+      if (parsed.has_more !== undefined && parsed.has_more !== null) {
+        res.has_more = requireBoolean(parsed.has_more, 'has_more');
+      }
+      if (parsed.retry_after_ms !== undefined && parsed.retry_after_ms !== null) {
+        const retryAfter = requireNumber(parsed.retry_after_ms, 'retry_after_ms');
+        if (!Number.isInteger(retryAfter) || retryAfter < 0) {
+          throw new Error('ctl field retry_after_ms must be a non-negative integer');
+        }
+        res.retry_after_ms = retryAfter;
+      }
       return res;
     }
     case 'key.log.append': {
@@ -384,6 +425,7 @@ export function encodeUplinkCtl(msg: UplinkCtlMessage): Uint8Array {
         t: 'key.log.req',
         from_seq: seqToJson(msg.from_seq),
         ...(msg.id ? { id: msg.id } : {}),
+        ...(msg.limit != null ? { limit: msg.limit } : {}),
       });
     case 'key.log.res':
       return encodeCtlMessage({
@@ -395,6 +437,8 @@ export function encodeUplinkCtl(msg: UplinkCtlMessage): Uint8Array {
         })),
         ...(msg.id ? { id: msg.id } : {}),
         ...(msg.error ? { error: msg.error } : {}),
+        ...(msg.has_more != null ? { has_more: msg.has_more } : {}),
+        ...(msg.retry_after_ms != null ? { retry_after_ms: msg.retry_after_ms } : {}),
       });
     case 'key.log.append':
       return encodeCtlMessage({

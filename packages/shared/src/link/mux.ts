@@ -19,6 +19,10 @@ import {
   type WriteOptions,
 } from './types';
 
+export const MAX_PENDING_INCOMING = 64;
+export const MAX_CTL_INBOX = 64;
+export const MAX_MUX_STREAMS = 256;
+
 export type LinkMuxOptions = {
   role: LinkRole;
   streamWindow?: number;
@@ -419,6 +423,7 @@ export class LinkMux implements LinkSession {
     };
 
     transport.onData((bytes) => {
+      if (this.closedFlag) return;
       this.pendingChunks.push(bytes);
       this.drainIncoming();
     });
@@ -481,13 +486,13 @@ export class LinkMux implements LinkSession {
         () => undefined,
         (err) => {
           const message = err instanceof Error ? err.message : 'send error';
-          this.finishClose(message);
+          this.close(message);
           throw err instanceof Error ? err : new LinkError('closed', message);
         }
       );
     } catch (err) {
       const message = err instanceof Error ? err.message : 'send error';
-      this.finishClose(message);
+      this.close(message);
       return Promise.reject(err instanceof Error ? err : new LinkError('closed', message));
     }
   }
@@ -550,6 +555,10 @@ export class LinkMux implements LinkSession {
   deliverCtl(bytes: Uint8Array): void {
     const copy = copyBytes(bytes);
     if (this.ctlListeners.length === 0) {
+      if (this.ctlInbox.length >= MAX_CTL_INBOX) {
+        this.protocolError(`ctl inbox ${this.ctlInbox.length + 1} exceeds ${MAX_CTL_INBOX}`);
+        return;
+      }
       this.ctlInbox.push(copy);
       return;
     }
@@ -659,6 +668,16 @@ export class LinkMux implements LinkSession {
       this.protocolError(`OPEN for existing stream ${frame.streamId}`);
       return;
     }
+    if (this.streams.size >= MAX_MUX_STREAMS) {
+      this.protocolError(`stream count ${this.streams.size} exceeds ${MAX_MUX_STREAMS}`);
+      return;
+    }
+    if (this.streamListeners.length === 0 && this.pendingIncoming.length >= MAX_PENDING_INCOMING) {
+      this.protocolError(
+        `pending incoming ${this.pendingIncoming.length + 1} exceeds ${MAX_PENDING_INCOMING}`
+      );
+      return;
+    }
     this.remoteMaxStreamId = frame.streamId;
     const stream = new MuxStream(this, frame.streamId, copyBytes(frame.payload));
     this.streams.set(frame.streamId, stream);
@@ -738,6 +757,7 @@ export class LinkMux implements LinkSession {
     this.pendingIncoming.length = 0;
     this.ctlInbox.length = 0;
     this.ctlOutbox.length = 0;
+    this.pendingChunks.length = 0;
     this.resolveClosed({ reason });
   }
 }

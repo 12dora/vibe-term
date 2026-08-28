@@ -20,7 +20,7 @@ export interface NodeEventPayload {
   /** node.status 上报的 inventory（JSON 字符串已解析）；不可解析时保留原串。 */
   inventory: unknown;
   version?: string | null;
-  direct_capable?: boolean;
+  direct_capable?: boolean | null;
   name?: string | null;
 }
 
@@ -103,7 +103,7 @@ export function decodeMeshFrame(data: Uint8Array): MeshFrame | null {
           reach: reachFromWire(payload.reach),
           inventory: parseInventory(payload.inventory),
           version: payload.version,
-          direct_capable: payload.directCapable ?? false,
+          direct_capable: payload.directCapable,
           name: payload.name,
         },
       };

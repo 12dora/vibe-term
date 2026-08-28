@@ -46,21 +46,20 @@ export class KeyLogStore {
     return { seq: BigInt(row.keyLogHeadSeq), hash: toBytes(row.keyLogHeadHash) };
   }
 
-  list(userId: string, fromSeq?: number): KeyLogEntry[] {
-    const rows =
+  list(userId: string, fromSeq?: number, limit?: number): KeyLogEntry[] {
+    const base =
       fromSeq === undefined
         ? this.db
             .select()
             .from(userKeyLog)
             .where(eq(userKeyLog.userId, userId))
             .orderBy(asc(userKeyLog.seq))
-            .all()
         : this.db
             .select()
             .from(userKeyLog)
             .where(and(eq(userKeyLog.userId, userId), gte(userKeyLog.seq, fromSeq)))
-            .orderBy(asc(userKeyLog.seq))
-            .all();
+            .orderBy(asc(userKeyLog.seq));
+    const rows = limit != null ? base.limit(limit).all() : base.all();
     return rows.map(toEntry);
   }
 
