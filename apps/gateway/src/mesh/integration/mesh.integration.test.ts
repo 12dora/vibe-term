@@ -37,6 +37,7 @@ import {
 import { createMigratedAuthDb } from '../../auth/test-db';
 import type { AuthDb } from '../../auth/types';
 import { signUserRecord } from '../../hub/hub-test-helpers';
+import { encodeRedeemPopMessage } from '../../hub/redeem-pop';
 import type { GatewayRuntime } from '../../runtime';
 import type { DeviceSessionRuntime } from '../../tmux-client/device-session-runtime';
 import { WebSocketServer } from '../../ws';
@@ -559,6 +560,16 @@ describe('mesh phase-2 integration', () => {
           cert_sig: encodeBase64url(cert.certSig),
           name: 'node-b',
           version: 'test-rejoin',
+          pop: encodeBase64url(
+            signEd25519(
+              b.identity.edPrivateKey,
+              encodeRedeemPopMessage({
+                enrollmentId: encodeBase64url(enrollment.enrollPk),
+                nodeId: b.identity.nodeId,
+                certBytes: cert.certificateBytes,
+              })
+            )
+          ),
         }),
       }),
       dummyServer
