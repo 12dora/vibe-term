@@ -1,5 +1,6 @@
 import { FeatureSet, fetchCapabilities, fetchSiteSettings } from '@tmex/api-client';
 import { DEFAULT_LOCALE, type SiteSettings, type ThemeMode } from '@tmex/shared';
+import { THEME_PRESET_META, type ThemeAppearance, type ThemePreset } from '@tmex/theme';
 import { buildSiteThemeUpdate } from '@tmex/ws-client';
 import i18next from 'i18next';
 import { create } from 'zustand';
@@ -16,6 +17,11 @@ export interface SiteState {
   loadCapabilities: () => Promise<void>;
   updateTheme: (theme: ThemeMode) => void;
   setThemeFromS2C: (theme: ThemeMode) => void;
+  /**
+   * 主题预设选择入口：预设自带亮/暗外观，选中即把站点外观同步过去（走 updateTheme 上行）；
+   * 传 null 回到无预设，外观取 fallbackAppearance，缺省保持当前。
+   */
+  selectThemePreset: (preset: ThemePreset | null, fallbackAppearance?: ThemeAppearance) => void;
   /**
    * S2C 设置变更信号的缓存失效入口。只有 'site' 对应本 store 缓存的 SiteSettings；
    * 'theme' 另有 SITE_THEME_UPDATE 专用帧，其余 namespace 的缓存在各自消费方（react-query）。
@@ -44,10 +50,20 @@ export function createSiteStore(
   core: Pick<RuntimeCore, 'client' | 'apiClient' | 'storagePrefix'>,
   getUIStore: () => UIStore
 ) {
+  // 外观一变（服务端下发或用户直接切亮/暗），当前预设若属于另一套外观就不再适用：
+  // 深色预设的 token 依赖 <html>.dark 才成立，留着会得到深底浅字的混搭。
   function syncThemeToUIStore(theme: ThemeMode): void {
     const uiStore = getUIStore();
-    if (uiStore.getState().theme !== theme) {
-      uiStore.setState({ theme });
+    const { theme: currentTheme, themePreset } = uiStore.getState();
+    const patch: { theme?: ThemeMode; themePreset?: ThemePreset | null } = {};
+    if (currentTheme !== theme) {
+      patch.theme = theme;
+    }
+    if (themePreset && THEME_PRESET_META[themePreset].appearance !== theme) {
+      patch.themePreset = null;
+    }
+    if (patch.theme !== undefined || patch.themePreset !== undefined) {
+      uiStore.setState(patch);
     }
     if (typeof document !== 'undefined') {
       document.documentElement.classList.toggle('dark', theme === 'dark');
@@ -169,6 +185,16 @@ export function createSiteStore(
           .catch(() => {
             // refreshSettings 内部已记录失败；失效信号丢一次不影响后续读取
           });
+      },
+
+      selectThemePreset: (preset, fallbackAppearance) => {
+        const uiStore = getUIStore();
+        // 先落预设再改外观：syncThemeToUIStore 的失配清理据此看到的是新预设，外观一致故不会被清掉
+        uiStore.getState().setThemePreset(preset);
+        const appearance = preset
+          ? THEME_PRESET_META[preset].appearance
+          : (fallbackAppearance ?? uiStore.getState().theme);
+        get().updateTheme(appearance);
       },
 
       setThemeFromS2C: (theme) => {

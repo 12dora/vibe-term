@@ -1,4 +1,4 @@
-import { DEFAULT_FONT_ID, type ThemePreset } from '@tmex/theme';
+import { DEFAULT_FONT_ID, type ThemePreset, isThemePreset } from '@tmex/theme';
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 import type { RuntimeCore } from './runtime';
@@ -17,6 +17,11 @@ function normalizeSidebarDeviceExpanded(value: unknown): Record<string, boolean>
     }
   }
   return deviceExpanded;
+}
+
+// 预设名单会随版本增删，localStorage 里可能残留已下线的 id（会命中不存在的 CSS 规则）。
+function normalizeThemePreset(value: unknown): ThemePreset | null {
+  return isThemePreset(value) ? value : null;
 }
 
 // 终端字体设置默认值（与 ghostty-terminal 内置默认保持一致）。
@@ -88,7 +93,7 @@ export function createUIStore(core: Pick<RuntimeCore, 'storagePrefix'>) {
         setKeyboardBehaviorMode: (mode) => set({ keyboardBehaviorMode: mode }),
         setEditorSendWithEnter: (enabled) => set({ editorSendWithEnter: enabled }),
         setTheme: (theme) => set({ theme }),
-        setThemePreset: (preset) => set({ themePreset: preset }),
+        setThemePreset: (preset) => set({ themePreset: normalizeThemePreset(preset) }),
         setTerminalFontSize: (size) => set({ terminalFontSize: size }),
         setTerminalLineHeight: (height) => set({ terminalLineHeight: height }),
         setTerminalFontId: (fontId) => set({ terminalFontId: fontId }),
@@ -139,6 +144,7 @@ export function createUIStore(core: Pick<RuntimeCore, 'storagePrefix'>) {
             sidebarTab: _legacyTab,
             sidebarSections: _legacySections,
             sidebarDeviceExpanded,
+            themePreset,
             ...rest
           } = (persisted ?? {}) as Partial<UIState> & {
             sidebarSections?: unknown;
@@ -147,6 +153,7 @@ export function createUIStore(core: Pick<RuntimeCore, 'storagePrefix'>) {
             ...current,
             ...rest,
             sidebarDeviceExpanded: normalizeSidebarDeviceExpanded(sidebarDeviceExpanded),
+            themePreset: normalizeThemePreset(themePreset),
           };
         },
       }

@@ -52,6 +52,360 @@
   --code-section: #e29f9f; /* bright magenta */
 }
 
+/* Theme presets */
+
+[data-theme-preset="dracula"] {
+  --code-bg: #282a36;
+  --code-fg: #f8f8f2;
+  --code-comment: #9aa3cf;
+  --code-keyword: #bd93f9;
+  --code-string: #50fa7b;
+  --code-number: #f1fa8c;
+  --code-literal: #f1fa8c;
+  --code-title: #ff79c6;
+  --code-function: #ff79c6;
+  --code-builtin: #8be9fd;
+  --code-type: #8be9fd;
+  --code-attr: #8be9fd;
+  --code-variable: #8be9fd;
+  --code-meta: #bd93f9;
+  --code-tag: #bd93f9;
+  --code-name: #bd93f9;
+  --code-addition: #50fa7b;
+  --code-deletion: #ff5555;
+  --code-regexp: #8be9fd;
+  --code-symbol: #f1fa8c;
+  --code-quote: #9aa3cf;
+  --code-section: #ff79c6;
+}
+
+[data-theme-preset="tokyo-night"] {
+  --code-bg: #1a1b26;
+  --code-fg: #c0caf5;
+  --code-comment: #8b93bd;
+  --code-keyword: #7aa2f7;
+  --code-string: #9ece6a;
+  --code-number: #e0af68;
+  --code-literal: #e0af68;
+  --code-title: #bb9af7;
+  --code-function: #bb9af7;
+  --code-builtin: #7dcfff;
+  --code-type: #7dcfff;
+  --code-attr: #7dcfff;
+  --code-variable: #7dcfff;
+  --code-meta: #7aa2f7;
+  --code-tag: #7aa2f7;
+  --code-name: #7aa2f7;
+  --code-addition: #9ece6a;
+  --code-deletion: #f7768e;
+  --code-regexp: #7dcfff;
+  --code-symbol: #e0af68;
+  --code-quote: #8b93bd;
+  --code-section: #bb9af7;
+}
+
+[data-theme-preset="tokyo-night-storm"] {
+  --code-bg: #24283b;
+  --code-fg: #c0caf5;
+  --code-comment: #9aa2c9;
+  --code-keyword: #7aa2f7;
+  --code-string: #9ece6a;
+  --code-number: #e0af68;
+  --code-literal: #e0af68;
+  --code-title: #bb9af7;
+  --code-function: #bb9af7;
+  --code-builtin: #7dcfff;
+  --code-type: #7dcfff;
+  --code-attr: #7dcfff;
+  --code-variable: #7dcfff;
+  --code-meta: #7aa2f7;
+  --code-tag: #7aa2f7;
+  --code-name: #7aa2f7;
+  --code-addition: #9ece6a;
+  --code-deletion: #f7768e;
+  --code-regexp: #7dcfff;
+  --code-symbol: #e0af68;
+  --code-quote: #9aa2c9;
+  --code-section: #bb9af7;
+}
+
+[data-theme-preset="tokyo-night-light"] {
+  --code-bg: #e1e2e7;
+  --code-fg: #3760bf;
+  --code-comment: #526196;
+  --code-keyword: #2769c4;
+  --code-string: #587539;
+  --code-number: #84663a;
+  --code-literal: #84663a;
+  --code-title: #864ad4;
+  --code-function: #864ad4;
+  --code-builtin: #007197;
+  --code-type: #007197;
+  --code-attr: #007197;
+  --code-variable: #007197;
+  --code-meta: #2769c4;
+  --code-tag: #2769c4;
+  --code-name: #2769c4;
+  --code-addition: #587539;
+  --code-deletion: #ce2355;
+  --code-regexp: #007197;
+  --code-symbol: #84663a;
+  --code-quote: #526196;
+  --code-section: #864ad4;
+}
+
+[data-theme-preset="catppuccin-mocha"] {
+  --code-bg: #1e1e2e;
+  --code-fg: #cdd6f4;
+  --code-comment: #a6adc8;
+  --code-keyword: #89b4fa;
+  --code-string: #a6e3a1;
+  --code-number: #f9e2af;
+  --code-literal: #f9e2af;
+  --code-title: #f5c2e7;
+  --code-function: #f5c2e7;
+  --code-builtin: #94e2d5;
+  --code-type: #94e2d5;
+  --code-attr: #94e2d5;
+  --code-variable: #94e2d5;
+  --code-meta: #89b4fa;
+  --code-tag: #89b4fa;
+  --code-name: #89b4fa;
+  --code-addition: #a6e3a1;
+  --code-deletion: #f38ba8;
+  --code-regexp: #94e2d5;
+  --code-symbol: #f9e2af;
+  --code-quote: #a6adc8;
+  --code-section: #f5c2e7;
+}
+
+[data-theme-preset="catppuccin-latte"] {
+  --code-bg: #eff1f5;
+  --code-fg: #4c4f69;
+  --code-comment: #5c5f77;
+  --code-keyword: #1e66f5;
+  --code-string: #368624;
+  --code-number: #a56915;
+  --code-literal: #a56915;
+  --code-title: #ad5796;
+  --code-function: #ad5796;
+  --code-builtin: #148087;
+  --code-type: #148087;
+  --code-attr: #148087;
+  --code-variable: #148087;
+  --code-meta: #1e66f5;
+  --code-tag: #1e66f5;
+  --code-name: #1e66f5;
+  --code-addition: #368624;
+  --code-deletion: #d20f39;
+  --code-regexp: #148087;
+  --code-symbol: #a56915;
+  --code-quote: #5c5f77;
+  --code-section: #ad5796;
+}
+
+[data-theme-preset="nord"] {
+  --code-bg: #2e3440;
+  --code-fg: #d8dee9;
+  --code-comment: #a9b4c6;
+  --code-keyword: #81a1c1;
+  --code-string: #a3be8c;
+  --code-number: #ebcb8b;
+  --code-literal: #ebcb8b;
+  --code-title: #b48ead;
+  --code-function: #b48ead;
+  --code-builtin: #88c0d0;
+  --code-type: #88c0d0;
+  --code-attr: #88c0d0;
+  --code-variable: #88c0d0;
+  --code-meta: #81a1c1;
+  --code-tag: #81a1c1;
+  --code-name: #81a1c1;
+  --code-addition: #a3be8c;
+  --code-deletion: #cb7d85;
+  --code-regexp: #88c0d0;
+  --code-symbol: #ebcb8b;
+  --code-quote: #a9b4c6;
+  --code-section: #b48ead;
+}
+
+[data-theme-preset="one-dark"] {
+  --code-bg: #282c34;
+  --code-fg: #abb2bf;
+  --code-comment: #8b93a1;
+  --code-keyword: #61afef;
+  --code-string: #98c379;
+  --code-number: #e5c07b;
+  --code-literal: #e5c07b;
+  --code-title: #c678dd;
+  --code-function: #c678dd;
+  --code-builtin: #56b6c2;
+  --code-type: #56b6c2;
+  --code-attr: #56b6c2;
+  --code-variable: #56b6c2;
+  --code-meta: #61afef;
+  --code-tag: #61afef;
+  --code-name: #61afef;
+  --code-addition: #98c379;
+  --code-deletion: #ff616e;
+  --code-regexp: #56b6c2;
+  --code-symbol: #e5c07b;
+  --code-quote: #8b93a1;
+  --code-section: #c678dd;
+}
+
+[data-theme-preset="solarized-dark"] {
+  --code-bg: #002b36;
+  --code-fg: #839496;
+  --code-comment: #839496;
+  --code-keyword: #839496;
+  --code-string: #859900;
+  --code-number: #b58900;
+  --code-literal: #b58900;
+  --code-title: #7b7fca;
+  --code-function: #7b7fca;
+  --code-builtin: #2aa198;
+  --code-type: #2aa198;
+  --code-attr: #2aa198;
+  --code-variable: #2aa198;
+  --code-meta: #839496;
+  --code-tag: #839496;
+  --code-name: #839496;
+  --code-addition: #859900;
+  --code-deletion: #d26437;
+  --code-regexp: #2aa198;
+  --code-symbol: #b58900;
+  --code-quote: #839496;
+  --code-section: #7b7fca;
+}
+
+[data-theme-preset="solarized-light"] {
+  --code-bg: #fdf6e3;
+  --code-fg: #657b83;
+  --code-comment: #5e727a;
+  --code-keyword: #227dbd;
+  --code-string: #586e75;
+  --code-number: #657b83;
+  --code-literal: #657b83;
+  --code-title: #d33682;
+  --code-function: #d33682;
+  --code-builtin: #238780;
+  --code-type: #238780;
+  --code-attr: #238780;
+  --code-variable: #238780;
+  --code-meta: #227dbd;
+  --code-tag: #227dbd;
+  --code-name: #227dbd;
+  --code-addition: #586e75;
+  --code-deletion: #dc322f;
+  --code-regexp: #238780;
+  --code-symbol: #657b83;
+  --code-quote: #5e727a;
+  --code-section: #d33682;
+}
+
+[data-theme-preset="gruvbox-dark"] {
+  --code-bg: #282828;
+  --code-fg: #ebdbb2;
+  --code-comment: #a89984;
+  --code-keyword: #83a598;
+  --code-string: #98971a;
+  --code-number: #d79921;
+  --code-literal: #d79921;
+  --code-title: #d3869b;
+  --code-function: #d3869b;
+  --code-builtin: #689d6a;
+  --code-type: #689d6a;
+  --code-attr: #689d6a;
+  --code-variable: #689d6a;
+  --code-meta: #83a598;
+  --code-tag: #83a598;
+  --code-name: #83a598;
+  --code-addition: #98971a;
+  --code-deletion: #fb4934;
+  --code-regexp: #689d6a;
+  --code-symbol: #d79921;
+  --code-quote: #a89984;
+  --code-section: #d3869b;
+}
+
+[data-theme-preset="gruvbox-light"] {
+  --code-bg: #fbf1c7;
+  --code-fg: #3c3836;
+  --code-comment: #665c54;
+  --code-keyword: #076678;
+  --code-string: #79740e;
+  --code-number: #9f6812;
+  --code-literal: #9f6812;
+  --code-title: #8f3f71;
+  --code-function: #8f3f71;
+  --code-builtin: #427b58;
+  --code-type: #427b58;
+  --code-attr: #427b58;
+  --code-variable: #427b58;
+  --code-meta: #076678;
+  --code-tag: #076678;
+  --code-name: #076678;
+  --code-addition: #79740e;
+  --code-deletion: #cc241d;
+  --code-regexp: #427b58;
+  --code-symbol: #9f6812;
+  --code-quote: #665c54;
+  --code-section: #8f3f71;
+}
+
+[data-theme-preset="github-dark"] {
+  --code-bg: #0d1117;
+  --code-fg: #e6edf3;
+  --code-comment: #8b949e;
+  --code-keyword: #58a6ff;
+  --code-string: #3fb950;
+  --code-number: #d29922;
+  --code-literal: #d29922;
+  --code-title: #bc8cff;
+  --code-function: #bc8cff;
+  --code-builtin: #39c5cf;
+  --code-type: #39c5cf;
+  --code-attr: #39c5cf;
+  --code-variable: #39c5cf;
+  --code-meta: #58a6ff;
+  --code-tag: #58a6ff;
+  --code-name: #58a6ff;
+  --code-addition: #3fb950;
+  --code-deletion: #ff7b72;
+  --code-regexp: #39c5cf;
+  --code-symbol: #d29922;
+  --code-quote: #8b949e;
+  --code-section: #bc8cff;
+}
+
+[data-theme-preset="github-light"] {
+  --code-bg: #ffffff;
+  --code-fg: #1f2328;
+  --code-comment: #656d76;
+  --code-keyword: #0969da;
+  --code-string: #116329;
+  --code-number: #4d2d00;
+  --code-literal: #4d2d00;
+  --code-title: #8250df;
+  --code-function: #8250df;
+  --code-builtin: #1b7c83;
+  --code-type: #1b7c83;
+  --code-attr: #1b7c83;
+  --code-variable: #1b7c83;
+  --code-meta: #0969da;
+  --code-tag: #0969da;
+  --code-name: #0969da;
+  --code-addition: #116329;
+  --code-deletion: #cf222e;
+  --code-regexp: #1b7c83;
+  --code-symbol: #4d2d00;
+  --code-quote: #656d76;
+  --code-section: #8250df;
+}
+
+/* Theme presets */
+
 .hljs {
   color: var(--code-fg);
   background: var(--code-bg);

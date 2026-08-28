@@ -1,6 +1,10 @@
 import { beforeEach, describe, expect, test } from 'bun:test';
+import { THEME_PRESETS, type ThemePreset } from '@tmex/theme';
 import { installWindowStorage } from './test-utils';
 import { createUIStore } from './ui';
+
+// 名单会随版本增删，测试固定取第一个而不是写死某个 id
+const VALID_PRESET: ThemePreset = THEME_PRESETS[0];
 
 installWindowStorage();
 
@@ -122,5 +126,53 @@ describe('sidebar collapse state', () => {
     expect(persisted.state?.sidebarCollapsed).toBe(true);
 
     expect(createUIStore({ storagePrefix: prefix }).getState().sidebarCollapsed).toBe(true);
+  });
+});
+
+describe('theme preset persistence', () => {
+  beforeEach(() => {
+    storage.clear();
+  });
+
+  test('defaults to no preset', () => {
+    expect(createStore().getState().themePreset).toBeNull();
+  });
+
+  test('persists a valid preset across store instances', () => {
+    const prefix = `ui-theme-preset-${Date.now()}-`;
+    const store = createUIStore({ storagePrefix: prefix });
+
+    store.getState().setThemePreset(VALID_PRESET);
+    expect(store.getState().themePreset).toBe(VALID_PRESET);
+
+    expect(createUIStore({ storagePrefix: prefix }).getState().themePreset).toBe(VALID_PRESET);
+  });
+
+  test('drops a persisted preset id that is no longer registered', () => {
+    const prefix = `ui-theme-preset-stale-${Date.now()}-`;
+    storage.setItem(
+      `${prefix}tmex-ui`,
+      JSON.stringify({ state: { themePreset: 'underground' }, version: 0 })
+    );
+
+    expect(createUIStore({ storagePrefix: prefix }).getState().themePreset).toBeNull();
+  });
+
+  test('drops a non-string persisted preset', () => {
+    const prefix = `ui-theme-preset-garbage-${Date.now()}-`;
+    storage.setItem(
+      `${prefix}tmex-ui`,
+      JSON.stringify({ state: { themePreset: { id: 'nope' } }, version: 0 })
+    );
+
+    expect(createUIStore({ storagePrefix: prefix }).getState().themePreset).toBeNull();
+  });
+
+  test('setThemePreset rejects unknown ids at runtime', () => {
+    const store = createStore();
+    store.getState().setThemePreset(VALID_PRESET);
+
+    store.getState().setThemePreset('underground' as unknown as ThemePreset);
+    expect(store.getState().themePreset).toBeNull();
   });
 });

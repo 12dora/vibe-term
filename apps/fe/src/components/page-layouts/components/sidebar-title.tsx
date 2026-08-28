@@ -1,9 +1,10 @@
-import { useSiteStore, useTmuxStore, useUIStore } from '@tmex/stores/react';
+import { useSiteStore, useTmuxStore } from '@tmex/stores/react';
 import { useSidebar } from '@tmex/ui/sidebar';
-import { Moon, Settings, Sun, X } from 'lucide-react';
+import { Settings, X } from 'lucide-react';
 import { useEffect } from 'react';
 import { useTranslation } from 'react-i18next';
 import { NavLink } from './nav-link';
+import { ThemeMenu } from './theme-menu';
 
 export function SidebarTitle() {
   const { t } = useTranslation();
@@ -18,16 +19,6 @@ export function SidebarTitle() {
   }, [fetchSettings]);
 
   const displayName = siteName ?? 'tmex';
-
-  // Theme toggle
-  const theme = useUIStore((state) => state.theme);
-  const updateTheme = useSiteStore((state) => state.updateTheme);
-  const isDark = theme === 'dark';
-  const toggleTheme = () => {
-    const nextTheme = isDark ? 'light' : 'dark';
-    updateTheme(nextTheme);
-    document.documentElement.classList.toggle('dark', nextTheme === 'dark');
-  };
 
   return (
     <div className="flex items-center gap-2 px-2">
@@ -50,15 +41,7 @@ export function SidebarTitle() {
         <span className="truncate text-sm font-semibold tracking-tight">{displayName}</span>
       </NavLink>
       <WsLatency />
-      <button
-        type="button"
-        onClick={toggleTheme}
-        className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-sidebar-accent hover:text-foreground"
-        aria-label={isDark ? t('settings.themeLight') : t('settings.themeDark')}
-        title={isDark ? t('settings.themeLight') : t('settings.themeDark')}
-      >
-        {isDark ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
-      </button>
+      <ThemeMenu />
       <NavLink
         to="/settings"
         className="inline-flex h-8 w-8 mr-[-8px] shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-sidebar-accent hover:text-foreground"

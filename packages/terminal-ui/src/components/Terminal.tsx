@@ -9,7 +9,7 @@ import { useTerminalClipboard } from './hooks/useTerminalClipboard';
 import { useTerminalFileLinks } from './hooks/useTerminalFileLinks';
 import { useTerminalInput } from './hooks/useTerminalInput';
 import { computeContainerSize } from './terminalMetrics';
-import { XTERM_THEME_DARK, XTERM_THEME_LIGHT } from './theme';
+import { resolveTerminalThemeProp } from './theme';
 import type { TerminalProps, TerminalRef } from './types';
 import { useMobileTouch } from './useMobileTouch';
 import { useTerminalResize } from './useTerminalResize';
@@ -37,14 +37,7 @@ export const Terminal = forwardRef<TerminalRef, TerminalProps>(
   ) => {
     const { t } = useTranslation();
 
-    const terminalTheme = useMemo(() => {
-      switch (theme) {
-        case 'light':
-          return XTERM_THEME_LIGHT;
-        default:
-          return XTERM_THEME_DARK;
-      }
-    }, [theme]);
+    const terminalTheme = useMemo(() => resolveTerminalThemeProp(theme), [theme]);
 
     const containerRef = useRef<HTMLDivElement>(null);
     const fitAddonRef = useRef<FitAddon | null>(null);

@@ -8,7 +8,8 @@
 import { devicesQueryKey as defaultDevicesQueryKey } from '@tmex/api-client';
 import { decodePaneIdFromUrlParam } from '@tmex/stores';
 import { useUIStore } from '@tmex/stores/react';
-import { type TerminalRef, XTERM_THEME_DARK, XTERM_THEME_LIGHT } from '@tmex/terminal-ui';
+import type { TerminalRef } from '@tmex/terminal-ui';
+import { resolveTerminalTheme } from '@tmex/theme';
 import { useCallback, useMemo, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
 import type { DeviceConnectionAdapter } from '../device-connection';
@@ -69,9 +70,15 @@ export function DeviceConsole({
   const isMobile = useMobileViewport();
   const inputMode = useUIStore((state) => state.inputMode);
   const uiTheme = useUIStore((state) => state.theme);
+  const themePreset = useUIStore((state) => state.themePreset);
   const terminalFontId = useUIStore((state) => state.terminalFontId);
   const terminalFontSize = useUIStore((state) => state.terminalFontSize);
-  const terminalTheme = uiTheme === 'light' ? XTERM_THEME_LIGHT : XTERM_THEME_DARK;
+  // 预设决定整套终端色板；无预设时回落到站点外观对应的 seoul256。
+  // 引用要稳定：Terminal 内部按引用判定是否重新 setTheme。
+  const terminalTheme = useMemo(
+    () => resolveTerminalTheme(uiTheme, themePreset),
+    [uiTheme, themePreset]
+  );
 
   const targets = useConsoleTargets({ deviceId, windowId, resolvedPaneId, devicesQueryKey });
   const { windows, selectedWindow, selectedPane, deviceConnected, isReconnecting } = targets;
@@ -148,8 +155,7 @@ export function DeviceConsole({
         isIntentionallyDisconnected={isIntentionallyDisconnected}
         isMobile={isMobile}
         inputMode={inputMode}
-        uiTheme={uiTheme}
-        terminalBackground={terminalTheme.background}
+        terminalTheme={terminalTheme}
         terminalContainerRef={terminalContainerRef}
         terminalRef={terminalRef}
         bindFocusedTerminalRef={bindFocusedTerminalRef}

@@ -13,17 +13,15 @@ const DARK_BG = '#262626';
 const LIGHT_BG = '#e1e1e1';
 
 async function setThemeViaUI(page: Page, theme: 'dark' | 'light'): Promise<void> {
-  // 前端 SettingsPage 的 theme toggle 走 useSiteStore.updateTheme → C2S WS →
+  // 侧边栏主题菜单的 Light/Dark 项走 useSiteStore.selectThemePreset → updateTheme → C2S WS →
   // gateway handleSiteThemeUpdate → S2C 广播 KIND_SITE_THEME_UPDATE + setWindowStyle + stdin。
   // HTTP API 路径（POST /api/settings/theme）只调 broadcastThemeChange（stdin + window-style），
-  // 不发 S2C WS 广播，前端不会收到通知。故主题 e2e 必须走 UI toggle。
+  // 不发 S2C WS 广播，前端不会收到通知。故主题 e2e 必须走 UI 菜单。
   const isDark = await page.evaluate(() => document.documentElement.classList.contains('dark'));
   const wantDark = theme === 'dark';
   if (isDark === wantDark) return;
-  await page.goto('/settings');
-  await expect(page.getByTestId('settings-page')).toBeVisible();
-  await page.getByTestId('settings-tab-general').click();
-  await page.getByTestId('settings-theme-toggle').click();
+  await page.getByTestId('theme-menu-trigger').click();
+  await page.getByTestId(`theme-option-${theme}`).click();
   await expect(page.locator('html')).toHaveClass(
     wantDark ? /\bdark\b/ : /^[^]*$(?<!\bdark\b)/
   );

@@ -21,10 +21,8 @@ async function setThemeViaUI(page: Page, theme: 'dark' | 'light'): Promise<void>
   const isDark = await page.evaluate(() => document.documentElement.classList.contains('dark'));
   const wantDark = theme === 'dark';
   if (isDark === wantDark) return;
-  await page.goto('/settings');
-  await expect(page.getByTestId('settings-page')).toBeVisible();
-  await page.getByTestId('settings-tab-general').click();
-  await page.getByTestId('settings-theme-toggle').click();
+  await page.getByTestId('theme-menu-trigger').click();
+  await page.getByTestId(`theme-option-${theme}`).click();
   await expect(page.locator('html')).toHaveClass(wantDark ? /\bdark\b/ : /^[^]*$(?<!\bdark\b)/);
 }
 

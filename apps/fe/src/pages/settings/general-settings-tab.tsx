@@ -1,10 +1,8 @@
 import { VersionTab } from '@tmex/panels/settings';
 import { I18N_MANIFEST, type LocaleCode } from '@tmex/shared';
-import { useSiteStore, useUIStore } from '@tmex/stores/react';
 import { Card, CardContent, CardHeader, CardTitle } from '@tmex/ui/card';
 import { Input } from '@tmex/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@tmex/ui/select';
-import { Switch } from '@tmex/ui/switch';
 import { useTranslation } from 'react-i18next';
 import { SettingsSaveButton } from './settings-save-button';
 import type { SiteSettingsForm } from './use-site-settings-form';
@@ -15,16 +13,7 @@ interface GeneralSettingsTabProps {
 
 export function GeneralSettingsTab({ form }: GeneralSettingsTabProps) {
   const { t } = useTranslation();
-  const theme = useUIStore((state) => state.theme);
-  const updateTheme = useSiteStore((state) => state.updateTheme);
-  const isDark = theme === 'dark';
   const { draft, updateDraft, showRefreshNotice } = form;
-
-  const handleThemeChange = (checked: boolean) => {
-    const nextTheme = checked ? 'dark' : 'light';
-    updateTheme(nextTheme);
-    document.documentElement.classList.toggle('dark', nextTheme === 'dark');
-  };
 
   return (
     <>
@@ -93,19 +82,6 @@ export function GeneralSettingsTab({ form }: GeneralSettingsTabProps) {
                 {t('settings.refreshToApply')}
               </p>
             )}
-          </div>
-
-          <div className="space-y-3">
-            <div className="flex min-h-10 items-center justify-between gap-4 rounded-lg border border-border bg-card px-4 py-2.5">
-              <div className="min-w-0 pr-2">
-                <div className="text-sm font-medium">{t('settings.theme')}</div>
-              </div>
-              <Switch
-                checked={isDark}
-                onCheckedChange={(checked) => handleThemeChange(Boolean(checked))}
-                data-testid="settings-theme-toggle"
-              />
-            </div>
           </div>
 
           <SettingsSaveButton onSave={form.save} isSaving={form.isSaving} />

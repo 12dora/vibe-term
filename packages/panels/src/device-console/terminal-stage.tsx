@@ -1,7 +1,7 @@
 // 终端显示区：按连接与 pane 选择状态在「主动断开 / 失效提示 / 分屏 / 单屏 / 占位」间切换，
 // 并叠加重连指示与快照解析中的遮罩。DOM 结构被 e2e 依赖，改动需同步 apps/fe/tests。
 
-import type { TerminalShortcutItem, TmuxPane, TmuxWindow } from '@tmex/shared';
+import type { TerminalShortcutItem, TerminalThemeColors, TmuxPane, TmuxWindow } from '@tmex/shared';
 import {
   SplitTerminalArea,
   Terminal as TerminalComponent,
@@ -114,8 +114,8 @@ export interface TerminalStageProps {
   isIntentionallyDisconnected: boolean;
   isMobile: boolean;
   inputMode: 'direct' | 'editor';
-  uiTheme: 'light' | 'dark';
-  terminalBackground: string;
+  /** 已解析的终端色板（站点外观 + 主题预设） */
+  terminalTheme: TerminalThemeColors;
   terminalContainerRef: RefObject<HTMLDivElement | null>;
   terminalRef: RefObject<TerminalRef | null>;
   bindFocusedTerminalRef: (ref: TerminalRef | null) => void;
@@ -134,8 +134,7 @@ function StageContent(props: TerminalStageProps) {
     isReconnecting,
     isIntentionallyDisconnected,
     inputMode,
-    uiTheme,
-    terminalBackground,
+    terminalTheme,
     terminalContainerRef,
     terminalRef,
     bindFocusedTerminalRef,
@@ -147,7 +146,7 @@ function StageContent(props: TerminalStageProps) {
   const shortcutsSlot = (
     <TerminalShortcutsSlot
       visible={inputMode === 'direct'}
-      background={terminalBackground}
+      background={terminalTheme.background}
       onActivate={onActivateShortcut}
       disabled={!canInteractWithPane}
     />
@@ -184,7 +183,7 @@ function StageContent(props: TerminalStageProps) {
             deviceId={deviceId}
             window={selectedWindow}
             focusedPaneId={resolvedPaneId}
-            theme={uiTheme}
+            theme={terminalTheme}
             inputMode={inputMode}
             deviceConnected={deviceConnected}
             focusedTerminalRef={bindFocusedTerminalRef}
@@ -210,7 +209,7 @@ function StageContent(props: TerminalStageProps) {
         ref={terminalRef}
         deviceId={deviceId}
         paneId={resolvedPaneId}
-        theme={uiTheme}
+        theme={terminalTheme}
         inputMode={inputMode}
         deviceConnected={deviceConnected}
         isSelectionInvalid={isSelectionInvalid}
@@ -242,7 +241,7 @@ export function TerminalStage(props: TerminalStageProps) {
     >
       <div
         className="h-full px-3 py-1 min-h-0 min-w-0 w-full relative flex rounded-xl"
-        style={{ backgroundColor: props.terminalBackground }}
+        style={{ backgroundColor: props.terminalTheme.background }}
       >
         <StageContent {...props} />
         {/* 重连指示：非遮挡、置顶居中，保持已有终端内容可见 */}

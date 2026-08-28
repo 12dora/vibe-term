@@ -1,4 +1,4 @@
-// 主题模块：终端字体清单与加载
+// 主题模块：终端字体清单与加载、主题预设注册表与元数据
 export {
   DEFAULT_FONT_ID,
   FONT_MANIFEST,
@@ -13,6 +13,12 @@ export {
   THEME_PRESETS,
   type ThemePreset,
 } from './presets';
+export {
+  resolveTerminalTheme,
+  THEME_PRESET_META,
+  type ThemeAppearance,
+  type ThemePresetMeta,
+} from './preset-meta';
 export {
   TERMINAL_SHORTCUT_TOKENS,
   type TerminalShortcutTokens,

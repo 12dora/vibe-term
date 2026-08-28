@@ -1,6 +1,6 @@
 import { expect, test } from '@playwright/test';
 
-test('settings: theme toggle, telegram bot crud, webhook crud, language save/reset', async ({
+test('settings: theme menu, telegram bot crud, webhook crud, language save/reset', async ({
   page,
 }) => {
   const botName = `e2e-bot-${Date.now()}`;
@@ -131,13 +131,13 @@ test('settings: theme toggle, telegram bot crud, webhook crud, language save/res
   await page.goto('/settings');
   await expect(page.getByTestId('settings-page')).toBeVisible();
 
-  // Site tab: Theme toggle should flip the root class.
-  await page.getByTestId('settings-tab-general').click();
+  // 侧边栏主题菜单：Light/Dark 项翻转根节点 .dark。
   const html = page.locator('html');
-  const themeToggle = page.getByTestId('settings-theme-toggle');
-  await themeToggle.click();
+  await page.getByTestId('theme-menu-trigger').click();
+  await page.getByTestId('theme-option-light').click();
   await expect(html).not.toHaveClass(/\bdark\b/);
-  await themeToggle.click();
+  await page.getByTestId('theme-menu-trigger').click();
+  await page.getByTestId('theme-option-dark').click();
   await expect(html).toHaveClass(/\bdark\b/);
 
   // Notifications tab now hosts Telegram bots + Webhooks.

@@ -77,6 +77,8 @@ function ThemePresetSync() {
 function StatusBarSync() {
   const { openMobile } = useSidebar();
   const theme = useUIStore((state) => state.theme);
+  // 预设主题会改写 --background/--sidebar，故 themePreset 变化也要重算状态栏颜色
+  const themePreset = useUIStore((state) => state.themePreset);
 
   useEffect(() => {
     const cssVar = openMobile ? '--sidebar' : '--background';
@@ -88,7 +90,7 @@ function StatusBarSync() {
     };
 
     requestAnimationFrame(updateMeta);
-  }, [openMobile, theme]);
+  }, [openMobile, theme, themePreset]);
 
   return null;
 }

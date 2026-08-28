@@ -1,3 +1,4 @@
+import type { TerminalThemeColors } from '@tmex/shared';
 import { useRuntime, useUIStore } from '@tmex/stores/react';
 import { loadTerminalFonts, resolveFontStack } from '@tmex/theme';
 import {
@@ -22,7 +23,7 @@ import {
   writeLiveOutput,
 } from '../terminal-snapshot';
 import { terminalStreamDiagnostic } from '../terminalBootDiagnostics';
-import type { XTERM_THEME_DARK } from '../theme';
+import { applyTerminalTheme } from '../theme';
 import type { TerminalProps } from '../types';
 import { activateRenderTarget, createTerminalRenderTarget } from './terminal-render-target';
 import {
@@ -43,7 +44,7 @@ export interface UseTerminalBootSurfaceOptions {
   inputMode: TerminalProps['inputMode'];
   sizingMode: 'report' | 'follow';
   autoFocus: boolean;
-  terminalTheme: typeof XTERM_THEME_DARK;
+  terminalTheme: TerminalThemeColors;
   prepareResources: TerminalProps['prepareResources'];
   runPostSelectResize: () => void;
 }
@@ -105,7 +106,7 @@ interface BootRefs {
   deviceId: RefObject<string>;
   paneId: RefObject<string>;
   inputMode: RefObject<TerminalProps['inputMode']>;
-  terminalTheme: RefObject<typeof XTERM_THEME_DARK>;
+  terminalTheme: RefObject<TerminalThemeColors>;
 }
 
 interface BootContext {
@@ -315,8 +316,9 @@ export function useTerminalBootSurface(
     setE2eTerminalProbe(instance);
   }, [instance, autoFocus]);
 
+  // 预设切换在运行期改的是色板对象引用：命中这里给活着的实例增量下发，不重建终端
   useEffect(() => {
-    instance?.setTheme?.(terminalTheme);
+    applyTerminalTheme(instance, terminalTheme);
   }, [instance, terminalTheme]);
 
   return {

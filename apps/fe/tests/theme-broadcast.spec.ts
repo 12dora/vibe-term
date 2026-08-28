@@ -7,7 +7,8 @@ import { KIND, decodeEnvelope, decodeSiteThemeUpdateS2C, isGatewayWsUrl } from '
 // T10 实现 WS 广播 KIND_SITE_THEME_UPDATE；T11 实现前端 useSiteStore.setThemeFromS2C；
 // 离线时 updateTheme 只写 localStorage + 本地 state，不发 C2S，重连后由 S2C 同步。
 // 注意：HTTP API 路径（POST /api/settings/theme）不发 S2C WS 广播，前端不会收到通知。
-// 故主题切换必须走 UI toggle（SettingsPage → useSiteStore.updateTheme → C2S WS → S2C 广播）。
+// 故主题切换必须走 UI（侧边栏主题菜单 → useSiteStore.selectThemePreset/updateTheme →
+// C2S WS → S2C 广播）。
 
 test.use({ viewport: { width: 1280, height: 800 } });
 
@@ -18,10 +19,8 @@ async function setThemeViaUI(page: Page, theme: 'dark' | 'light'): Promise<void>
   const isDark = await page.evaluate(() => document.documentElement.classList.contains('dark'));
   const wantDark = theme === 'dark';
   if (isDark === wantDark) return;
-  await page.goto('/settings');
-  await expect(page.getByTestId('settings-page')).toBeVisible();
-  await page.getByTestId('settings-tab-general').click();
-  await page.getByTestId('settings-theme-toggle').click();
+  await page.getByTestId('theme-menu-trigger').click();
+  await page.getByTestId(`theme-option-${theme}`).click();
   await expect(page.locator('html')).toHaveClass(
     wantDark ? /\bdark\b/ : /^[^]*$(?<!\bdark\b)/
   );

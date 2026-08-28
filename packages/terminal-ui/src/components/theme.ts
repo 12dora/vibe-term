@@ -15,9 +15,37 @@ export {
 } from '@tmex/shared';
 
 // 别名导出，保持兼容性
-import { TERMINAL_THEME_DARK, TERMINAL_THEME_LIGHT } from '@tmex/shared';
+import { TERMINAL_THEME_DARK, TERMINAL_THEME_LIGHT, type TerminalThemeColors } from '@tmex/shared';
+import type { TerminalTheme } from './types';
 export const XTERM_THEME_MIDNIGHT_AMETHYST = TERMINAL_THEME_DARK;
 export const XTERM_THEME_DAWN_AMETHYST = TERMINAL_THEME_LIGHT;
+
+/** 把 TerminalTheme 入参（legacy 字面量或整套色板）统一成色板 */
+export function resolveTerminalThemeProp(theme: TerminalTheme): TerminalThemeColors {
+  if (typeof theme !== 'string') {
+    return theme;
+  }
+  return theme === 'light' ? TERMINAL_THEME_LIGHT : TERMINAL_THEME_DARK;
+}
+
+interface ThemeableTerminal {
+  setTheme?: (theme: TerminalThemeColors) => void;
+}
+
+/**
+ * 把配色下发给已挂载的终端实例（换主题/预设时增量更新，不重建实例）。
+ * 返回是否真的下发——引擎未实现 setTheme 或实例尚未就绪时为 false。
+ */
+export function applyTerminalTheme(
+  terminal: ThemeableTerminal | null | undefined,
+  theme: TerminalTheme
+): boolean {
+  if (!terminal?.setTheme) {
+    return false;
+  }
+  terminal.setTheme(resolveTerminalThemeProp(theme));
+  return true;
+}
 
 // 内嵌字体逐字形兜底：等宽打底字体在前，符号字体其后，CJK 落到末尾 monospace 走系统。
 // 没有任何单一等宽字体能覆盖全部 TUI 符号，故拆成两层。family 名刻意不带空格，免去加引号。

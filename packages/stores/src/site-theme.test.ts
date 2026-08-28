@@ -1,7 +1,20 @@
 import { beforeEach, describe, expect, mock, test } from 'bun:test';
 import { FeatureSet } from '@tmex/api-client';
 import type { SiteSettings } from '@tmex/shared';
+import { THEME_PRESETS, THEME_PRESET_META, type ThemePreset } from '@tmex/theme';
 import { installWindowStorage } from './test-utils';
+
+// 预设名单会随版本增删；按 appearance 现取，避免写死 id
+function presetWithAppearance(appearance: 'light' | 'dark'): ThemePreset {
+  const found = THEME_PRESETS.find((id) => THEME_PRESET_META[id].appearance === appearance);
+  if (!found) {
+    throw new Error(`no ${appearance} theme preset registered`);
+  }
+  return found;
+}
+
+const DARK_PRESET = presetWithAppearance('dark');
+const LIGHT_PRESET = presetWithAppearance('light');
 
 installWindowStorage();
 
@@ -83,7 +96,7 @@ describe('useSiteStore theme', () => {
     isReadyMock.mockClear();
     isReadyMock.mockImplementation(() => true);
     useSiteStore.setState({ settings: null, loading: false });
-    useUIStore.setState({ theme: 'dark' });
+    useUIStore.setState({ theme: 'dark', themePreset: null });
   });
 
   test('fetchSettings 失败时回落到 DEFAULT_SETTINGS，theme 为 dark', async () => {
@@ -180,6 +193,98 @@ describe('useSiteStore theme', () => {
 
     expect(useUIStore.getState().theme).toBe('light');
     expect(readLocalStorageTheme()).toBe('light');
+  });
+});
+
+describe('useSiteStore theme preset', () => {
+  beforeEach(() => {
+    localStorage.clear();
+    sendMock.mockClear();
+    isReadyMock.mockClear();
+    isReadyMock.mockImplementation(() => true);
+    useSiteStore.setState({ settings: null, loading: false });
+    useUIStore.setState({ theme: 'dark', themePreset: null });
+  });
+
+  test('selectThemePreset 落预设并把站点外观同步成预设自带的外观', () => {
+    useSiteStore.setState({ settings: makeSiteSettings({ theme: 'dark' }) });
+
+    useSiteStore.getState().selectThemePreset(LIGHT_PRESET);
+
+    expect(useUIStore.getState().themePreset).toBe(LIGHT_PRESET);
+    expect(useUIStore.getState().theme).toBe('light');
+    expect(useSiteStore.getState().settings?.theme).toBe('light');
+    // 外观是站点级设置，预设切换同样要上行
+    expect(sendMock).toHaveBeenCalledTimes(1);
+  });
+
+  test('外观一致的预设切换不会把自己清掉', () => {
+    useUIStore.setState({ theme: 'dark', themePreset: null });
+
+    useSiteStore.getState().selectThemePreset(DARK_PRESET);
+
+    expect(useUIStore.getState().themePreset).toBe(DARK_PRESET);
+    expect(useUIStore.getState().theme).toBe('dark');
+  });
+
+  test('selectThemePreset(null, appearance) 清预设并落到指定外观', () => {
+    useUIStore.setState({ theme: 'dark', themePreset: DARK_PRESET });
+
+    useSiteStore.getState().selectThemePreset(null, 'light');
+
+    expect(useUIStore.getState().themePreset).toBeNull();
+    expect(useUIStore.getState().theme).toBe('light');
+  });
+
+  test('selectThemePreset(null) 不带 fallback 时保持当前外观', () => {
+    useUIStore.setState({ theme: 'dark', themePreset: DARK_PRESET });
+
+    useSiteStore.getState().selectThemePreset(null);
+
+    expect(useUIStore.getState().themePreset).toBeNull();
+    expect(useUIStore.getState().theme).toBe('dark');
+  });
+
+  test('setThemeFromS2C 外观与当前预设不符时清掉预设', () => {
+    useUIStore.setState({ theme: 'dark', themePreset: DARK_PRESET });
+
+    useSiteStore.getState().setThemeFromS2C('light');
+
+    expect(useUIStore.getState().theme).toBe('light');
+    expect(useUIStore.getState().themePreset).toBeNull();
+  });
+
+  test('setThemeFromS2C 外观与预设一致时保留预设', () => {
+    useUIStore.setState({ theme: 'light', themePreset: DARK_PRESET });
+
+    useSiteStore.getState().setThemeFromS2C('dark');
+
+    expect(useUIStore.getState().themePreset).toBe(DARK_PRESET);
+  });
+
+  test('直接 updateTheme 切到另一套外观时清掉预设', () => {
+    useSiteStore.setState({ settings: makeSiteSettings({ theme: 'dark' }) });
+    useUIStore.setState({ theme: 'dark', themePreset: DARK_PRESET });
+
+    useSiteStore.getState().updateTheme('light');
+
+    expect(useUIStore.getState().theme).toBe('light');
+    expect(useUIStore.getState().themePreset).toBeNull();
+  });
+
+  test('fetchSettings 拿到的外观与预设不符时清掉预设', async () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = siteSettingsResponse({ theme: 'light' });
+
+    try {
+      useUIStore.setState({ theme: 'dark', themePreset: DARK_PRESET });
+      await useSiteStore.getState().fetchSettings();
+
+      expect(useUIStore.getState().theme).toBe('light');
+      expect(useUIStore.getState().themePreset).toBeNull();
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
   });
 });
 

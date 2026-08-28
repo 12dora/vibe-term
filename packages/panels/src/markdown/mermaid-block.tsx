@@ -1,3 +1,5 @@
+import { useUIStore } from '@tmex/stores/react';
+import { THEME_PRESET_META } from '@tmex/theme';
 import { useEffect, useId, useRef, useState } from 'react';
 
 // 动态 import('mermaid') 渲染单个 mermaid 图。SVG 经 securityLevel:'strict' 净化后，
@@ -7,6 +9,11 @@ export function MermaidBlock({ code }: { code: string }) {
   const renderId = `mermaid-${reactId.replace(/[^a-zA-Z0-9-]/g, '')}`;
   const containerRef = useRef<HTMLDivElement>(null);
   const [error, setError] = useState<string>('');
+  // 从 store 读外观而不是探测 <html>.dark：切换主题/预设时组件才会重渲染并重绘 SVG。
+  // 预设自带亮/暗，生效时以预设为准。
+  const theme = useUIStore((state) => state.theme);
+  const themePreset = useUIStore((state) => state.themePreset);
+  const appearance = themePreset ? THEME_PRESET_META[themePreset].appearance : theme;
 
   useEffect(() => {
     let cancelled = false;
@@ -14,10 +21,9 @@ export function MermaidBlock({ code }: { code: string }) {
     async function render(): Promise<void> {
       try {
         const mermaid = (await import('mermaid')).default;
-        const isDark = document.documentElement.classList.contains('dark');
         mermaid.initialize({
           startOnLoad: false,
-          theme: isDark ? 'dark' : 'default',
+          theme: appearance === 'dark' ? 'dark' : 'default',
           securityLevel: 'strict',
         });
         const { svg } = await mermaid.render(renderId, code);
@@ -36,7 +42,7 @@ export function MermaidBlock({ code }: { code: string }) {
     return () => {
       cancelled = true;
     };
-  }, [code, renderId]);
+  }, [code, renderId, appearance]);
 
   return (
     <div className="my-2">

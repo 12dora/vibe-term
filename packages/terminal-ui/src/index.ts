@@ -40,6 +40,8 @@ export {
   TERMINAL_EMBEDDED_FONT_FAMILIES,
   ensureTerminalFontLoaded,
   getTmuxWindowStyle,
+  resolveTerminalThemeProp,
+  applyTerminalTheme,
 } from './components/theme';
 export { useMobileTouch } from './components/useMobileTouch';
 export { useTerminalResize } from './components/useTerminalResize';
