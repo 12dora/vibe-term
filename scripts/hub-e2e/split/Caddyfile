@@ -3,7 +3,7 @@
 	admin off
 }
 
-__HUB_HOST__ {
+__HUB_HOST__, __HUB_IP__ {
 	tls /certs/fullchain.pem /certs/privkey.pem
 	encode gzip
 	reverse_proxy hub:9883 {

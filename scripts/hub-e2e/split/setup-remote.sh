@@ -37,7 +37,7 @@ fi
 log() { printf '[split-remote] %s\n' "$*"; }
 
 render_caddyfile() {
-  sed -e "s/__HUB_HOST__/${TMEX_E2E_HUB_HOST}/g" -e "s/__HUB_PORT__/${TMEX_E2E_HUB_PORT}/g" \
+  sed -e "s/__HUB_HOST__/${TMEX_E2E_HUB_HOST}/g" -e "s/__HUB_IP__/${TMEX_E2E_HUB_IP}/g" -e "s/__HUB_PORT__/${TMEX_E2E_HUB_PORT}/g" \
     "${ROOT}/Caddyfile" > "${ROOT}/Caddyfile.runtime"
   export TMEX_E2E_CADDYFILE="${ROOT}/Caddyfile.runtime"
 }
