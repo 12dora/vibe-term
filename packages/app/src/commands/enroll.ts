@@ -25,6 +25,7 @@ import { type HubIo, NODE_REVOKED_REJOIN_ERROR } from './hub';
 export type AdmitCandidate = {
   certificateBytes: Uint8Array;
   certSig: Uint8Array;
+  alreadyAdmitted?: boolean;
 };
 
 export type EnrollIo = HubIo & {
@@ -189,7 +190,51 @@ export async function pollLocalEnrollmentRedeem(
   const token = ctx.userStore.getEnrollmentTokenByEnrollPublicKey(enrollPk);
   if (!token?.usedAt || !token.nodeId) return null;
   if (!ctx.userStore.getNode(token.nodeId)) return null;
+  const admitted = ctx.userStore.getCert(token.nodeId);
+  if (admitted && admitted.revokedLogSeq === null) {
+    return {
+      certificateBytes: admitted.certificateBytes,
+      certSig: admitted.certSig,
+      alreadyAdmitted: true,
+    };
+  }
   return parseEnrollmentAuthorizationJson(token.authorizationJson);
+}
+
+export async function pollHubEnrollment(options: {
+  baseUrl: string;
+  cookieHeader: string;
+  enrollmentId: string;
+  fetcher?: typeof fetch;
+}): Promise<AdmitCandidate | null> {
+  const fetcher = options.fetcher ?? fetch;
+  const response = await fetcher(
+    `${options.baseUrl.replace(/\/+$/, '')}/api/hub/enrollments/${encodeURIComponent(options.enrollmentId)}`,
+    { headers: { cookie: options.cookieHeader }, redirect: 'error' }
+  );
+  if (!response.ok) return null;
+  let body: {
+    status?: unknown;
+    certificate?: unknown;
+    cert_sig?: unknown;
+    already_admitted?: unknown;
+  };
+  try {
+    body = (await response.json()) as typeof body;
+  } catch {
+    return null;
+  }
+  if (body.status !== 'redeemed') return null;
+  if (typeof body.certificate !== 'string' || typeof body.cert_sig !== 'string') return null;
+  try {
+    return {
+      certificateBytes: decodeBase64url(body.certificate),
+      certSig: decodeBase64url(body.cert_sig),
+      alreadyAdmitted: body.already_admitted === true,
+    };
+  } catch {
+    return null;
+  }
 }
 
 export async function pollHubNodesForCertificate(options: {
@@ -205,7 +250,11 @@ export async function pollHubNodesForCertificate(options: {
       const certificateBytes = decodeBase64url(node.certificate);
       const cert = decodeCertificate(certificateBytes);
       if (!bytesEqual(cert.enroll_pk, options.enrollPk)) continue;
-      return { certificateBytes, certSig: decodeBase64url(node.cert_sig) };
+      return {
+        certificateBytes,
+        certSig: decodeBase64url(node.cert_sig),
+        alreadyAdmitted: (node as { already_admitted?: unknown }).already_admitted === true,
+      };
     } catch {
       // skip malformed hub node certificates
     }
@@ -260,7 +309,8 @@ export async function runEnroll(
     const token = encodeJoinToken(enrollment.enrollSk, user.rootPublicKey, user.keyLogHeadHash);
     const roles = parseTmexRoles(ctx.env.TMEX_ROLES ?? process.env.TMEX_ROLES);
 
-    let remoteSession: { cookieHeader: string; hubUrl: string } | null = null;
+    let remoteSession: { cookieHeader: string; hubUrl: string; enrollmentId?: string } | null =
+      null;
     if (roles.hub) {
       ctx.userStore.createEnrollmentToken({
         id: crypto.randomUUID(),
@@ -297,7 +347,7 @@ export async function runEnroll(
       if (totp) {
         totp.kTotp.fill(0);
       }
-      await postEnrollment({
+      const created = await postEnrollment({
         baseUrl: hubUrl,
         cookieHeader: session.cookieHeader,
         enrollPk: enrollment.enrollPk,
@@ -306,7 +356,11 @@ export async function runEnroll(
         exp: now + ttlMs,
         fetcher: io.fetcher,
       });
-      remoteSession = { cookieHeader: session.cookieHeader, hubUrl };
+      remoteSession = {
+        cookieHeader: session.cookieHeader,
+        hubUrl,
+        enrollmentId: created.id,
+      };
     }
 
     const joinUrl = hubJoinUrl(ctx, io);
@@ -326,12 +380,19 @@ export async function runEnroll(
         ? () => pollLocalEnrollmentRedeem(ctx, enrollment.enrollPk)
         : remote
           ? () =>
-              pollHubNodesForCertificate({
-                baseUrl: remote.hubUrl,
-                cookieHeader: remote.cookieHeader,
-                enrollPk: enrollment.enrollPk,
-                fetcher: io.fetcher,
-              })
+              remote.enrollmentId
+                ? pollHubEnrollment({
+                    baseUrl: remote.hubUrl,
+                    cookieHeader: remote.cookieHeader,
+                    enrollmentId: remote.enrollmentId,
+                    fetcher: io.fetcher,
+                  })
+                : pollHubNodesForCertificate({
+                    baseUrl: remote.hubUrl,
+                    cookieHeader: remote.cookieHeader,
+                    enrollPk: enrollment.enrollPk,
+                    fetcher: io.fetcher,
+                  })
           : null);
     const interval = io.pollIntervalMs ?? 1000;
     const controller = io.signal ? null : new AbortController();
@@ -352,7 +413,7 @@ export async function runEnroll(
           if (existing === 'revoked') {
             throw new Error(NODE_REVOKED_REJOIN_ERROR);
           }
-          if (existing === 'admitted') {
+          if (candidate.alreadyAdmitted || existing === 'admitted') {
             log(io, 'already admitted');
             admitted = true;
             break;

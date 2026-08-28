@@ -7,6 +7,7 @@ import {
   createNodeCertificate,
   decodeJoinToken,
   encodeBase64url,
+  nodeIdToHex,
   randomBytes,
   rootKeyFromSeed,
 } from '../../../shared/src/auth';
@@ -14,6 +15,7 @@ import { parseArgs } from '../lib/args';
 import { type LocalAuthContext, openLocalAuth } from '../lib/local-auth';
 import {
   fakeLocalRedeem,
+  pollHubEnrollment,
   pollHubNodesForCertificate,
   pollLocalEnrollmentRedeem,
   runEnroll,
@@ -352,6 +354,40 @@ describe('enroll', () => {
     expect(result?.certSig).toEqual(wanted.certSig);
   });
 
+  test('pollHubEnrollment surfaces already_admitted and the admitted cert', async () => {
+    const enrollSk = randomBytes(32);
+    const enrollPk = rootKeyFromSeed(enrollSk).publicKey;
+    const admitted = createNodeCertificate(enrollSk, {
+      uid: 'user-1',
+      edPk: randomBytes(32),
+      x25519Pk: randomBytes(32),
+      enrollPk,
+      now: Date.now(),
+      nodeId: randomBytes(16),
+    });
+    const result = await pollHubEnrollment({
+      baseUrl: 'https://hub.example',
+      cookieHeader: 'tmex_s_self=x',
+      enrollmentId: 'enroll-9',
+      fetcher: async (input) => {
+        expect(String(input)).toBe('https://hub.example/api/hub/enrollments/enroll-9');
+        return new Response(
+          JSON.stringify({
+            status: 'redeemed',
+            enroll_pk: encodeBase64url(enrollPk),
+            certificate: encodeBase64url(admitted.certificateBytes),
+            cert_sig: encodeBase64url(admitted.certSig),
+            node_id: 'aa'.repeat(16),
+            already_admitted: true,
+          })
+        );
+      },
+    });
+    expect(result?.alreadyAdmitted).toBe(true);
+    expect(result?.certificateBytes).toEqual(admitted.certificateBytes);
+    expect(result?.certSig).toEqual(admitted.certSig);
+  });
+
   test('skips a second admit and logs already admitted for an existing node_id', async () => {
     const auth = await openLocalAuth({
       memory: true,
@@ -384,6 +420,63 @@ describe('enroll', () => {
         certificateBytes: existing.certificateBytes,
         certSig: existing.certSig,
       }),
+    });
+    expect(result.admitted).toBe(true);
+    expect(logs).toContain('already admitted');
+    expect(logs).not.toContain('node admitted');
+    expect(auth.userStore.listCertsByUser(user.id)).toHaveLength(certsBefore);
+  });
+
+  test('skips admit-node when hub reports already_admitted even without a local cert', async () => {
+    const auth = await openLocalAuth({
+      memory: true,
+      migrationsFolder: MIGRATIONS,
+      env: {
+        TMEX_MASTER_KEY: process.env.TMEX_MASTER_KEY || '',
+        TMEX_ROLES: 'hub,node',
+        TMEX_HUB_PUBLIC_URL: 'https://hub.example',
+      },
+    });
+    handles.push(auth);
+    await runHubUserAdd(parsed, 'frank', {
+      auth,
+      password: 'enroll-pass-word',
+      log: () => undefined,
+    });
+    const identity = await ensureNodeIdentity(auth.identityStore);
+    const user = auth.userStore.getByUsername('frank');
+    if (!user) throw new Error('missing frank');
+    const certsBefore = auth.userStore.listCertsByUser(user.id).length;
+    let capturedToken = '';
+    const logs: string[] = [];
+    const result = await runEnroll(parsed, {
+      auth,
+      password: 'enroll-pass-word',
+      log: (message) => {
+        logs.push(message);
+        if (message.startsWith('join token: ')) {
+          capturedToken = message.slice('join token: '.length);
+        }
+      },
+      pollIntervalMs: 1,
+      pollRedeemed: async () => {
+        const decoded = decodeJoinToken(capturedToken);
+        const enrollPk = rootKeyFromSeed(decoded.enrollSk).publicKey;
+        const remoteCert = createNodeCertificate(decoded.enrollSk, {
+          uid: user.id,
+          edPk: identity.edPublicKey,
+          x25519Pk: identity.x25519PublicKey,
+          enrollPk,
+          now: Date.now(),
+          nodeId: randomBytes(16),
+        });
+        expect(auth.userStore.getCert(nodeIdToHex(remoteCert.nodeId))).toBeNull();
+        return {
+          certificateBytes: remoteCert.certificateBytes,
+          certSig: remoteCert.certSig,
+          alreadyAdmitted: true,
+        };
+      },
     });
     expect(result.admitted).toBe(true);
     expect(logs).toContain('already admitted');

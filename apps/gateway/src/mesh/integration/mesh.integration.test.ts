@@ -542,6 +542,7 @@ describe('mesh phase-2 integration', () => {
       dummyServer
     );
     expect(created?.status).toBe(201);
+    const createdBody = (await created?.json()) as { id: string };
 
     const originalCert = a.userStore.getCert(b.mesh.nodeId);
     expect(originalCert).not.toBeNull();
@@ -586,6 +587,23 @@ describe('mesh phase-2 integration', () => {
     expect(redeemedBody.node_certs.find((c) => c.node_id === b.mesh.nodeId)?.certificate).toBe(
       encodeBase64url(originalCert.certificateBytes)
     );
+    const enrollGet = await a.mesh.hub?.handleRequest(
+      (() => {
+        const req = new Request(`http://hub/api/hub/enrollments/${createdBody.id}`, {
+          headers: { cookie: b.cookie },
+        });
+        setMeshRequestContext(req, { via: MESH_VIA_SELF, clientIp: '127.0.0.1' });
+        return req;
+      })(),
+      dummyServer
+    );
+    expect(enrollGet?.status).toBe(200);
+    const enrollStatus = (await enrollGet?.json()) as {
+      already_admitted?: boolean;
+      certificate?: string;
+    };
+    expect(enrollStatus.already_admitted).toBe(true);
+    expect(enrollStatus.certificate).toBe(encodeBase64url(originalCert.certificateBytes));
     expect(a.userStore.getCert(b.mesh.nodeId)?.certificateBytes).toEqual(
       originalCert.certificateBytes
     );

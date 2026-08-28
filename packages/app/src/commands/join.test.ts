@@ -1,14 +1,17 @@
 import '../lib/test-master-key';
 import { afterEach, describe, expect, test } from 'bun:test';
 import { resolve } from 'node:path';
+import { ensureNodeIdentity } from '../../../../apps/gateway/src/auth/node-identity-service';
 import {
   JOIN_TOKEN_CHARS,
   createEnrollment,
+  createNodeCertificate,
   decodeBase64url,
   decodeCertificate,
   deriveSeed,
   encodeBase64url,
   encodeJoinToken,
+  generateX25519KeyPair,
   nodeIdToHex,
   randomBytes,
   rootKeyFromSeed,
@@ -334,6 +337,102 @@ describe('hub join against fake hub', () => {
     ).rejects.toThrow(/uid mismatch/);
     expect(node.userStore.getById(user.id)).toBeNull();
     expect(node.userStore.listCertsByUser(user.id)).toEqual([]);
+  });
+
+  test('refuses re-join when admitted cert X25519 does not match local identity', async () => {
+    const hub = await openAuth('hub,node');
+    const added = await runHubUserAdd(parseArgs([]), 'hubuser', {
+      auth: hub,
+      password: 'hub-pass-word',
+      log: () => undefined,
+    });
+    const user = hub.userStore.getById(added.userId);
+    if (!user) throw new Error('missing hub user');
+    const state = hub.userKeys.currentState(user.id);
+    const enrollment = await createEnrollment(
+      rootKeyFromSeed(await deriveSeed('hub-pass-word', state.kdfParams)),
+      { uid: user.id, rootEpoch: state.rootEpoch, now: Date.now() }
+    );
+    const token = encodeJoinToken(enrollment.enrollSk, state.rootPublicKey, state.head.hash);
+    const records = hub.keyLogStore.list(user.id);
+    const certs = hub.userStore.listCertsByUser(user.id);
+    const node = await openAuth('standalone');
+    const identity = await ensureNodeIdentity(node.identityStore);
+    const rotatedX = generateX25519KeyPair();
+    const mismatchCert = createNodeCertificate(enrollment.enrollSk, {
+      uid: user.id,
+      edPk: identity.edPublicKey,
+      x25519Pk: rotatedX.publicKey,
+      enrollPk: enrollment.enrollPk,
+      now: Date.now(),
+      nodeId: identity.nodeId,
+    });
+    const mismatchRow = {
+      node_id: identity.nodeIdHex,
+      user_id: user.id,
+      admit_record_seq: 1,
+      certificate: encodeBase64url(mismatchCert.certificateBytes),
+      cert_sig: encodeBase64url(mismatchCert.certSig),
+      authorization: encodeBase64url(enrollment.authorizationBytes),
+      authorization_sig: encodeBase64url(enrollment.authorizationSig),
+      revoked_log_seq: null,
+    };
+    const server = Bun.serve({
+      hostname: '127.0.0.1',
+      port: 0,
+      fetch(req) {
+        const url = new URL(req.url);
+        if (url.pathname === '/api/auth/mode') {
+          return Response.json({
+            mode: 'mesh',
+            nodeId: 'self',
+            uid: user.id,
+            username: user.username,
+          });
+        }
+        if (url.pathname === '/api/hub/enrollments/redeem' && req.method === 'POST') {
+          return Response.json({
+            user: {
+              id: user.id,
+              username: user.username,
+              root_public_key: encodeBase64url(user.rootPublicKey),
+              root_epoch: user.rootEpoch,
+              kdf_params: JSON.parse(user.kdfParamsJson),
+            },
+            user_key_log: records.map((row) => ({
+              seq: row.seq,
+              bytes: encodeBase64url(row.bytes),
+              sig: encodeBase64url(row.sig),
+            })),
+            node_certs: [
+              ...certs.map((cert) => ({
+                node_id: cert.nodeId,
+                user_id: cert.userId,
+                admit_record_seq: cert.admitRecordSeq,
+                certificate: encodeBase64url(cert.certificateBytes),
+                cert_sig: encodeBase64url(cert.certSig),
+                authorization: encodeBase64url(cert.authorizationBytes),
+                authorization_sig: encodeBase64url(cert.authorizationSig),
+                revoked_log_seq: cert.revokedLogSeq,
+              })),
+              mismatchRow,
+            ],
+          });
+        }
+        return new Response('nope', { status: 404 });
+      },
+    });
+    servers.push(server);
+    const hubUrl = `http://127.0.0.1:${server.port}`;
+    await expect(
+      runHubJoin(parseArgs(['hub', 'join', hubUrl, '--token', token, '--insecure-local']), hubUrl, {
+        auth: node,
+        skipRestart: true,
+        insecureLocal: true,
+        log: () => undefined,
+      })
+    ).rejects.toThrow(/join identity mismatch/);
+    expect(node.userStore.getById(user.id)).toBeNull();
   });
 
   test('runHubJoin refuses --insecure-local in production', async () => {

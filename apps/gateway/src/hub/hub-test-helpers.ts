@@ -69,6 +69,7 @@ export type SeededNode = {
   nodeId: string;
   nodeIdBytes: Uint8Array;
   ed: { secretKey: Uint8Array; publicKey: Uint8Array };
+  x25519: { secretKey: Uint8Array; publicKey: Uint8Array };
   enroll: { secretKey: Uint8Array; publicKey: Uint8Array };
   certBytes: Uint8Array;
   certSig: Uint8Array;
@@ -112,6 +113,7 @@ export function seedAdmittedNode(
     nodeId,
     nodeIdBytes: cert.nodeId,
     ed,
+    x25519: x,
     enroll,
     certBytes: cert.certificateBytes,
     certSig: cert.certSig,

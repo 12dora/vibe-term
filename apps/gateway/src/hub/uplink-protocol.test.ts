@@ -24,9 +24,10 @@ describe('uplink-protocol', () => {
     expect(roundtrip({ t: 'auth.challenge', nonce })).toEqual({ t: 'auth.challenge', nonce });
 
     const sig = encodeBase64url(randomBytes(64));
-    expect(roundtrip({ t: 'auth.response', node_id: 'abc', sig })).toEqual({
+    const nodeId = 'ab'.repeat(16);
+    expect(roundtrip({ t: 'auth.response', node_id: nodeId, sig })).toEqual({
       t: 'auth.response',
-      node_id: 'abc',
+      node_id: nodeId,
       sig,
     });
     expect(roundtrip({ t: 'auth.ok' })).toEqual({ t: 'auth.ok' });
@@ -167,6 +168,42 @@ describe('uplink-protocol', () => {
           node_id: 'short',
         })
       )
+    ).toThrow(UplinkCtlError);
+
+    expect(
+      roundtrip({
+        t: 'enroll.redeemed',
+        certificate: cert,
+        cert_sig: certSig,
+        enroll_pk: enrollPk,
+        node_id: 'ab'.repeat(16),
+        already_admitted: true,
+      })
+    ).toEqual({
+      t: 'enroll.redeemed',
+      certificate: cert,
+      cert_sig: certSig,
+      enroll_pk: enrollPk,
+      node_id: 'ab'.repeat(16),
+      already_admitted: true,
+    });
+  });
+
+  test('auth.response.node_id must be 32 lowercase hex', () => {
+    const sig = encodeBase64url(randomBytes(64));
+    expect(() =>
+      decodeUplinkCtl(JSON.stringify({ t: 'auth.response', node_id: 'abc', sig }))
+    ).toThrow(UplinkCtlError);
+    expect(() =>
+      decodeUplinkCtl(JSON.stringify({ t: 'auth.response', node_id: 'AB'.repeat(16), sig }))
+    ).toThrow(UplinkCtlError);
+    expect(() =>
+      decodeUplinkCtl(
+        JSON.stringify({ t: 'auth.response', node_id: `ab${'0'.repeat(30)}\ninjected`, sig })
+      )
+    ).toThrow(UplinkCtlError);
+    expect(() =>
+      decodeUplinkCtl(JSON.stringify({ t: 'auth.response', node_id: `${'g'.repeat(32)}`, sig }))
     ).toThrow(UplinkCtlError);
   });
 

@@ -104,6 +104,9 @@ export const HUB_KEY_LOG_REQ_RATE_PER_MIN = 10;
 export const HUB_KEY_LOG_REQ_BURST = 20;
 export const HUB_KEY_LOG_REQ_LOG_INTERVAL_MS = 10_000;
 export const HUB_UPLINK_AUTH_REJECT_LOG_INTERVAL_MS = 10_000;
+export const HUB_UPLINK_AUTH_REJECT_LOG_GLOBAL_MAX = 20;
+export const HUB_UPLINK_AUTH_REJECT_LOG_ADDR_MAX = 20;
+const AUTH_REJECT_ADDR_BUDGET_MAX = 256;
 export const HUB_KEY_LOG_REQ_STATE_MAX = 1024;
 export const HUB_KEY_LOG_REQ_IDLE_TTL_MS = 10 * 60 * 1000;
 export const HUB_KEY_LOG_REQ_OVERFLOW_MAX_USERS = 256;
@@ -199,6 +202,65 @@ class IdleLruMap<T> {
       if (now - row.lastAt >= this.ttlMs) this.items.delete(key);
     }
   }
+}
+
+class WindowedLogBudget {
+  private stamps: number[] = [];
+  private suppressed = 0;
+
+  constructor(
+    private readonly max: number,
+    private readonly windowMs: number
+  ) {}
+
+  prune(now: number): void {
+    const cutoff = now - this.windowMs;
+    const oldest = this.stamps[0];
+    if (oldest !== undefined && oldest <= cutoff) {
+      this.stamps = this.stamps.filter((stamp) => stamp > cutoff);
+    }
+  }
+
+  wouldAllow(now: number): boolean {
+    this.prune(now);
+    return this.stamps.length < this.max;
+  }
+
+  suppress(): void {
+    this.suppressed += 1;
+  }
+
+  take(now: number): number {
+    this.prune(now);
+    this.stamps.push(now);
+    const flushed = this.suppressed;
+    this.suppressed = 0;
+    return flushed;
+  }
+
+  clear(): void {
+    this.stamps.length = 0;
+    this.suppressed = 0;
+  }
+}
+
+function sanitizeLogField(value: string): string {
+  let out = '';
+  for (let i = 0; i < value.length; i++) {
+    const code = value.charCodeAt(i);
+    if (code === 10) {
+      out += '\\n';
+    } else if (code === 13) {
+      out += '\\r';
+    } else if (code === 9) {
+      out += '\\t';
+    } else if (code < 32 || code === 127) {
+      out += `\\x${code.toString(16).padStart(2, '0')}`;
+    } else {
+      out += value[i];
+    }
+  }
+  return out;
 }
 
 type OverflowUser = {
@@ -364,6 +426,12 @@ export class UplinkServer {
   private readonly keyLogReqLimiter: KeyLogReqLimiter;
   private readonly keyLogReqLogs: IdleLruMap<{ lastAt: number; suppressed: number }>;
   private readonly authRejectLogs: IdleLruMap<{ lastAt: number; suppressed: number }>;
+  private readonly authRejectGlobal = new WindowedLogBudget(
+    HUB_UPLINK_AUTH_REJECT_LOG_GLOBAL_MAX,
+    HUB_UPLINK_AUTH_REJECT_LOG_INTERVAL_MS
+  );
+  private readonly authRejectByAddr = new Map<string, WindowedLogBudget>();
+  private readonly linkRemoteAddress = new WeakMap<LinkSession, string>();
 
   constructor(opts: UplinkServerOptions) {
     this.db = opts.db;
@@ -397,9 +465,12 @@ export class UplinkServer {
     }
   }
 
-  accept(link: LinkSession): void {
+  accept(link: LinkSession, opts?: { remoteAddress?: string }): void {
     const nonce = randomBytes(32);
     this.accepted.add(link);
+    if (opts?.remoteAddress) {
+      this.linkRemoteAddress.set(link, opts.remoteAddress);
+    }
     this.pending.set(link, { nonce });
     this.armAuthTimer(link);
     this.send(link, { t: 'auth.challenge', nonce: encodeBase64url(nonce) });
@@ -524,6 +595,8 @@ export class UplinkServer {
     this.keyLogReqLimiter.clear();
     this.keyLogReqLogs.clear();
     this.authRejectLogs.clear();
+    this.authRejectGlobal.clear();
+    this.authRejectByAddr.clear();
     this.registry.closeAll('hub-stop');
   }
 
@@ -808,22 +881,62 @@ export class UplinkServer {
     reason: string,
     closeReason: string
   ): void {
-    this.logAuthRejected(nodeId, reason);
+    this.logAuthRejected(nodeId, reason, this.linkRemoteAddress.get(link));
     link.close(closeReason);
   }
 
-  private logAuthRejected(nodeId: string | undefined, reason: string): void {
+  private logAuthRejected(
+    nodeId: string | undefined,
+    reason: string,
+    remoteAddress?: string
+  ): void {
     const now = this.now();
-    const key = `${nodeId ?? '-'}|${reason}`;
+    const safeNode = sanitizeLogField(nodeId ?? '-');
+    const safeReason = sanitizeLogField(reason);
+    const key = `${safeNode}|${safeReason}`;
+    const budgets = [this.authRejectGlobal];
+    if (remoteAddress) {
+      budgets.push(this.authRejectAddrBudget(remoteAddress));
+    }
     const prev = this.authRejectLogs.get(key, now);
-    if (prev && now - prev.lastAt < HUB_UPLINK_AUTH_REJECT_LOG_INTERVAL_MS) {
-      prev.suppressed += 1;
+    const keyBlocked = Boolean(prev && now - prev.lastAt < HUB_UPLINK_AUTH_REJECT_LOG_INTERVAL_MS);
+    const budgetBlocked = budgets.some((budget) => !budget.wouldAllow(now));
+    if (keyBlocked || budgetBlocked) {
+      if (keyBlocked && prev) {
+        prev.suppressed += 1;
+      }
+      if (budgetBlocked) {
+        for (const budget of budgets) {
+          if (!budget.wouldAllow(now)) budget.suppress();
+        }
+      }
       return;
     }
-    const suppressed = prev?.suppressed ?? 0;
+    let suppressed = prev?.suppressed ?? 0;
+    for (const budget of budgets) {
+      suppressed += budget.take(now);
+    }
     const extra = suppressed > 0 ? ` suppressed=${suppressed}` : '';
-    console.warn(`[hub][uplink] auth rejected node=${nodeId ?? '-'} reason=${reason}${extra}`);
+    console.warn(`[hub][uplink] auth rejected node=${safeNode} reason=${safeReason}${extra}`);
     this.authRejectLogs.set(key, { lastAt: now, suppressed: 0 }, now);
+  }
+
+  private authRejectAddrBudget(remoteAddress: string): WindowedLogBudget {
+    const key = sanitizeLogField(remoteAddress);
+    let budget = this.authRejectByAddr.get(key);
+    if (!budget) {
+      while (this.authRejectByAddr.size >= AUTH_REJECT_ADDR_BUDGET_MAX) {
+        const oldest = this.authRejectByAddr.keys().next().value;
+        if (oldest === undefined) break;
+        this.authRejectByAddr.delete(oldest);
+      }
+      budget = new WindowedLogBudget(
+        HUB_UPLINK_AUTH_REJECT_LOG_ADDR_MAX,
+        HUB_UPLINK_AUTH_REJECT_LOG_INTERVAL_MS
+      );
+      this.authRejectByAddr.set(key, budget);
+    }
+    return budget;
   }
 
   private warnKeyLogReq(nodeId: string, fromSeq: bigint, records: number, limited: boolean): void {

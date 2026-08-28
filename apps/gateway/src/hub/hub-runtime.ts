@@ -210,7 +210,9 @@ export class HubRuntime {
     const adapter = new BunServerWsAdapter(ws);
     ws.data.adapter = adapter;
     const link = new WebSocketLink(adapter, { role: 'acceptor' });
-    this.uplink.accept(link);
+    const remoteAddressValue = (ws as unknown as { remoteAddress?: unknown }).remoteAddress;
+    const remoteAddress = typeof remoteAddressValue === 'string' ? remoteAddressValue : undefined;
+    this.uplink.accept(link, remoteAddress ? { remoteAddress } : undefined);
   }
 
   handleUplinkMessage(ws: HubServerWebSocket, message: string | ArrayBuffer | Uint8Array): void {
@@ -276,18 +278,28 @@ export class HubRuntime {
     const body: {
       status: 'pending' | 'redeemed';
       enroll_pk: string;
+      already_admitted: boolean;
       certificate?: string;
       cert_sig?: string;
       node_id?: string;
     } = {
       status: redeemed ? 'redeemed' : 'pending',
       enroll_pk: encodeBase64url(token.enrollPublicKey),
+      already_admitted: false,
     };
     if (redeemed) {
-      if (stored?.certificate_b64) body.certificate = stored.certificate_b64;
-      if (stored?.cert_sig_b64) body.cert_sig = stored.cert_sig_b64;
       const nodeId = stored?.node_id ?? token.nodeId;
       if (nodeId) body.node_id = nodeId;
+      const admitted = nodeId ? this.userStore.getCert(nodeId) : null;
+      const alreadyAdmitted = Boolean(admitted && admitted.revokedLogSeq === null);
+      body.already_admitted = alreadyAdmitted;
+      if (alreadyAdmitted && admitted) {
+        body.certificate = encodeBase64url(admitted.certificateBytes);
+        body.cert_sig = encodeBase64url(admitted.certSig);
+      } else {
+        if (stored?.certificate_b64) body.certificate = stored.certificate_b64;
+        if (stored?.cert_sig_b64) body.cert_sig = stored.cert_sig_b64;
+      }
     }
     return json(body);
   }
@@ -532,11 +544,15 @@ export class HubRuntime {
           if (existing.userId !== fresh.userId) {
             throw new RedeemAbort('node_exists', 409);
           }
-          const existingPk = readNodeEdPublicKey(store, hexId);
-          if (!existingPk || !bytesEqual(existingPk, certificate.ed_pk)) {
+          const existingKeys = readNodeIdentityKeys(store, hexId);
+          if (
+            !existingKeys ||
+            !bytesEqual(existingKeys.edPk, certificate.ed_pk) ||
+            !bytesEqual(existingKeys.x25519Pk, certificate.x25519_pk)
+          ) {
             throw new RedeemAbort('node_exists', 409);
           }
-          if (!verifyRedeemPop(body, certificate, existingPk, certBytes)) {
+          if (!verifyRedeemPop(body, certificate, existingKeys.edPk, certBytes)) {
             throw new RedeemAbort('node_exists', 409);
           }
           if (existingCert?.revokedLogSeq != null || existing.status === 'revoked') {
@@ -600,12 +616,14 @@ export class HubRuntime {
       );
     }
     if (!replayUserId && stored.entry_node_id) {
+      const admitted = alreadyAdmitted ? this.userStore.getCert(hexId) : null;
       this.uplink.sendTo(stored.entry_node_id, {
         t: 'enroll.redeemed',
-        certificate: encodeBase64url(certBytes),
-        cert_sig: encodeBase64url(certSig),
+        certificate: encodeBase64url(admitted?.certificateBytes ?? certBytes),
+        cert_sig: encodeBase64url(admitted?.certSig ?? certSig),
         enroll_pk: encodeBase64url(certificate.enroll_pk),
         node_id: hexId,
+        already_admitted: alreadyAdmitted,
         ...(stored.entry_sid ? { entry_sid: stored.entry_sid } : {}),
       });
     }
@@ -722,23 +740,29 @@ function verifyRedeemPop(
   return verifyEd25519(sig, message, existingPk);
 }
 
-function readNodeEdPublicKey(store: UserStore, nodeId: string): Uint8Array | null {
+function readNodeIdentityKeys(
+  store: UserStore,
+  nodeId: string
+): { edPk: Uint8Array; x25519Pk: Uint8Array } | null {
   const cert = store.getCert(nodeId);
-  const fromCert = cert ? decodeCertificateEdPk(cert.certificateBytes) : null;
+  const fromCert = cert ? decodeCertificateIdentityKeys(cert.certificateBytes) : null;
   if (fromCert) return fromCert;
   const token = store.getEnrollmentTokenByNodeId(nodeId);
   const stored = parseStoredEnrollment(token?.authorizationJson ?? '');
   if (!stored?.certificate_b64) return null;
   try {
-    return decodeCertificateEdPk(decodeBase64url(stored.certificate_b64));
+    return decodeCertificateIdentityKeys(decodeBase64url(stored.certificate_b64));
   } catch {
     return null;
   }
 }
 
-function decodeCertificateEdPk(bytes: Uint8Array): Uint8Array | null {
+function decodeCertificateIdentityKeys(
+  bytes: Uint8Array
+): { edPk: Uint8Array; x25519Pk: Uint8Array } | null {
   try {
-    return decodeCertificate(bytes).ed_pk;
+    const decoded = decodeCertificate(bytes);
+    return { edPk: decoded.ed_pk, x25519Pk: decoded.x25519_pk };
   } catch {
     return null;
   }

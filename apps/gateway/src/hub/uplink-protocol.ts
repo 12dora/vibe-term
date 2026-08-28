@@ -103,6 +103,7 @@ export type EnrollRedeemedMessage = {
   enroll_pk: string;
   node_id: string;
   entry_sid?: string;
+  already_admitted?: boolean;
 };
 
 export type UplinkCtlMessage =
@@ -134,7 +135,7 @@ export const UPLINK_CTL_MAX_U64 = 18446744073709551615n;
 export const KEY_LOG_PAGE_DEFAULT_LIMIT = 256;
 export const KEY_LOG_PAGE_MAX_LIMIT = 256;
 export const KEY_LOG_PAGE_MAX_BYTES = 1024 * 1024;
-const NODE_ID_HEX_RE = /^[0-9a-f]{32}$/i;
+const NODE_ID_HEX_RE = /^[0-9a-f]{32}$/;
 
 export function seqToWire(seq: bigint | number): number | string {
   const value = typeof seq === 'bigint' ? seq : BigInt(seq);
@@ -229,7 +230,7 @@ export function decodeUplinkCtl(
     case 'auth.response':
       return {
         t: 'auth.response',
-        node_id: requireNonEmptyString(obj, 'node_id'),
+        node_id: requireNodeIdHex(obj, 'node_id'),
         sig: bytesToB64url(b64urlToBytes(requireString(obj, 'sig'), 64)),
       };
     case 'auth.ok':
@@ -420,6 +421,9 @@ function decodeEnrollRedeemed(obj: Record<string, unknown>): EnrollRedeemedMessa
   };
   if (obj.entry_sid !== undefined && obj.entry_sid !== null) {
     msg.entry_sid = requireNonEmptyString(obj, 'entry_sid');
+  }
+  if (obj.already_admitted !== undefined && obj.already_admitted !== null) {
+    msg.already_admitted = requireBoolean(obj, 'already_admitted');
   }
   return msg;
 }

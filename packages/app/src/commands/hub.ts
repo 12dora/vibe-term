@@ -373,7 +373,12 @@ export async function runHubJoin(
       }
       throw error;
     }
-    const admittedCert = assertJoinCertReusable(redeemed, identity.nodeIdHex, identity.edPublicKey);
+    const admittedCert = assertJoinCertReusable(
+      redeemed,
+      identity.nodeIdHex,
+      identity.edPublicKey,
+      identity.x25519PublicKey
+    );
     const committed = await commitVerifiedJoin(ctx, {
       redeemed,
       expectedRootPublicKey: decoded.rootPublicKey,
@@ -409,7 +414,8 @@ export async function runHubJoin(
 function assertJoinCertReusable(
   redeemed: RedeemResponse,
   nodeIdHex: string,
-  edPk: Uint8Array
+  edPk: Uint8Array,
+  x25519Pk: Uint8Array
 ): { certificateBytes: Uint8Array; certSig: Uint8Array } | null {
   const row = redeemed.node_certs.find((cert) => cert.node_id === nodeIdHex);
   if (!row) return null;
@@ -418,8 +424,10 @@ function assertJoinCertReusable(
   }
   const certificateBytes = decodeBase64url(row.certificate);
   const decoded = decodeCertificate(certificateBytes);
-  if (!bytesEqual(decoded.ed_pk, edPk)) {
-    throw new Error('join identity mismatch');
+  if (!bytesEqual(decoded.ed_pk, edPk) || !bytesEqual(decoded.x25519_pk, x25519Pk)) {
+    throw new Error(
+      'join identity mismatch: Ed25519/X25519 public keys do not match this node identity'
+    );
   }
   return { certificateBytes, certSig: decodeBase64url(row.cert_sig) };
 }

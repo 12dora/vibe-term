@@ -349,6 +349,89 @@ describe('UplinkServer', () => {
     }
   });
 
+  test('non-hex auth.response.node_id is rejected at decode without logging the raw id', async () => {
+    const { db, close } = createMigratedAuthDb();
+    const orig = console.warn;
+    const warnings: string[] = [];
+    console.warn = (...args: unknown[]) => {
+      warnings.push(args.map(String).join(' '));
+    };
+    try {
+      const { userStore, keyLogSource } = createHubTestStack(db);
+      seedUser(userStore);
+      const { server } = makeServer(db, userStore, keyLogSource);
+      const [nodeLink, hubLink] = createInMemoryLinkPair();
+      const inbox = ctlInbox(nodeLink);
+      server.accept(hubLink);
+      expect((await inbox.take()).t).toBe('auth.challenge');
+      const injected = 'not-a-node\ninjected-line';
+      sendRawCtl(
+        nodeLink,
+        JSON.stringify({
+          t: 'auth.response',
+          node_id: injected,
+          sig: encodeBase64url(randomBytes(64)),
+        })
+      );
+      expect((await hubLink.closed).reason).toBe('protocol_error');
+      expect(warnings.some((row) => row.includes('injected-line'))).toBe(false);
+      expect(warnings.some((row) => row.includes('auth rejected'))).toBe(false);
+      server.stop();
+    } finally {
+      console.warn = orig;
+      close();
+    }
+  });
+
+  test('auth-reject log volume is bounded under rotating fake node ids', async () => {
+    const { db, close } = createMigratedAuthDb();
+    const orig = console.warn;
+    const warnings: string[] = [];
+    console.warn = (...args: unknown[]) => {
+      warnings.push(args.map(String).join(' '));
+    };
+    try {
+      const { userStore, keyLogSource } = createHubTestStack(db);
+      seedUser(userStore);
+      let now = 5_000;
+      const { server } = makeServer(db, userStore, keyLogSource, { now: () => now });
+      const attempt = async (nodeId: string, remoteAddress?: string) => {
+        const [nodeLink, hubLink] = createInMemoryLinkPair();
+        const inbox = ctlInbox(nodeLink);
+        server.accept(hubLink, remoteAddress ? { remoteAddress } : undefined);
+        const challenge = await inbox.take();
+        if (challenge.t !== 'auth.challenge') throw new Error('expected challenge');
+        sendCtl(nodeLink, {
+          t: 'auth.response',
+          node_id: nodeId,
+          sig: signAuth(generateEd25519KeyPair().secretKey, decodeBase64url(challenge.nonce)),
+        });
+        await hubLink.closed;
+      };
+      const fakeId = (n: number) => n.toString(16).padStart(32, '0');
+      for (let i = 0; i < 40; i++) {
+        await attempt(fakeId(i), '203.0.113.9');
+      }
+      const rejected = warnings.filter((row) => row.includes('[hub][uplink] auth rejected'));
+      expect(rejected.length).toBeLessThanOrEqual(20);
+      expect(rejected.length).toBeGreaterThan(0);
+      expect(rejected.some((row) => row.includes('\n'))).toBe(false);
+
+      now += HUB_UPLINK_AUTH_REJECT_LOG_INTERVAL_MS;
+      await attempt(fakeId(99), '203.0.113.9');
+      const after = warnings.filter((row) => row.includes('[hub][uplink] auth rejected'));
+      expect(after.length).toBe(rejected.length + 1);
+      expect(after[after.length - 1]).toMatch(/suppressed=\d+/);
+      expect(
+        Number(/suppressed=(\d+)/.exec(after[after.length - 1] ?? '')?.[1] ?? 0)
+      ).toBeGreaterThan(0);
+      server.stop();
+    } finally {
+      console.warn = orig;
+      close();
+    }
+  });
+
   test('同一 node id 重复连接会替换旧链路', async () => {
     const { db, close } = createMigratedAuthDb();
     try {
