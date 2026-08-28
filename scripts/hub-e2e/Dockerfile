@@ -18,6 +18,7 @@ RUN apt-get update \
         rsync \
         tmux \
         iptables \
+        iproute2 \
         unzip \
         xz-utils \
         coreutils \

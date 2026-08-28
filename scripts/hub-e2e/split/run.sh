@@ -72,6 +72,10 @@ rssh_docker() { rssh "${REMOTE_DOCKER} $*"; }
 DIRECT_DROP_MODE=""
 DIRECT_DC=0
 DIRECT_SKIPPED=0
+LAN_NETEM_ON=0
+LAN_NETEM_IFACE_A=""
+LAN_NETEM_IFACE_B=""
+LAN_NET="tmex-split-local_lan"
 
 usage() {
   cat <<'EOF'
@@ -263,6 +267,154 @@ undrop_direct_udp() {
   esac
 }
 
+lan_container_ip() {
+  local container="$1"
+  local ip
+  ip="$(docker inspect -f "{{range \$name, \$net := .NetworkSettings.Networks}}{{if eq \$name \"${LAN_NET}\"}}{{\$net.IPAddress}}{{end}}{{end}}" "${container}" 2>/dev/null || true)"
+  if [[ -z "${ip}" || "${ip}" == "<no value>" ]]; then
+    printf ''
+    return 0
+  fi
+  printf '%s' "${ip}"
+}
+
+lan_iface_for_ip() {
+  local container="$1"
+  local ip="$2"
+  local iface
+  iface="$(docker exec "${container}" ip -4 -o addr 2>/dev/null \
+    | awk -v want="${ip}" '{ split($4, a, "/"); if (a[1] == want) { print $2; exit } }' \
+    || true)"
+  iface="${iface%%@*}"
+  printf '%s' "${iface}"
+}
+
+lookup_lan_iface() {
+  local container="$1"
+  local cached="${2:-}"
+  local ip iface
+  ip="$(lan_container_ip "${container}")"
+  if [[ -n "${ip}" ]]; then
+    iface="$(lan_iface_for_ip "${container}" "${ip}")"
+    if [[ -n "${iface}" ]]; then
+      printf '%s %s' "${iface}" "${ip}"
+      return 0
+    fi
+  fi
+  if [[ -n "${cached}" ]]; then
+    printf '%s' "${cached}"
+    return 0
+  fi
+  return 1
+}
+
+wait_lan_iface() {
+  local container="$1"
+  local n=0
+  local got=""
+  while (( n < 15 )); do
+    got="$(lookup_lan_iface "${container}" "")" || true
+    if [[ -n "${got}" && -n "${got%% *}" ]]; then
+      printf '%s' "${got}"
+      return 0
+    fi
+    sleep 1
+    n=$((n + 1))
+  done
+  return 1
+}
+
+apply_lan_netem_on() {
+  local container="$1"
+  local resolved="" iface="" ip=""
+  local -a args
+  read -r -a args <<< "${TMEX_E2E_LAN_NETEM:-}"
+  if ((${#args[@]} == 0)); then
+    log "lan netem: empty TMEX_E2E_LAN_NETEM"
+    return 1
+  fi
+  if ! docker exec "${container}" bash -lc 'command -v tc >/dev/null && command -v ip >/dev/null'; then
+    log "lan netem: ${container} missing ip/tc (rebuild image with iproute2)"
+    return 1
+  fi
+  resolved="$(wait_lan_iface "${container}")" || true
+  iface="${resolved%% *}"
+  ip="${resolved#* }"
+  if [[ -z "${iface}" ]]; then
+    log "lan netem: ${container} no iface on ${LAN_NET}"
+    return 1
+  fi
+  docker exec "${container}" tc qdisc del dev "${iface}" root >/dev/null 2>&1 || true
+  if ! docker exec "${container}" tc qdisc add dev "${iface}" root netem "${args[@]}"; then
+    log "lan netem: tc qdisc add failed on ${container} dev=${iface}"
+    return 1
+  fi
+  case "${container}" in
+    tmex-split-node-a) LAN_NETEM_IFACE_A="${iface}" ;;
+    tmex-split-node-b) LAN_NETEM_IFACE_B="${iface}" ;;
+  esac
+  log "lan netem: ${container} dev=${iface} ip=${ip} netem ${TMEX_E2E_LAN_NETEM:-}"
+  log "lan netem qdisc ${container}: $(docker exec "${container}" tc qdisc show dev "${iface}" 2>/dev/null | tr '\n' ' ' | tr '|' '/' || true)"
+}
+
+apply_lan_netem() {
+  if [[ -z "${TMEX_E2E_LAN_NETEM:-}" ]]; then
+    return 0
+  fi
+  local rc=0
+  apply_lan_netem_on tmex-split-node-a || rc=1
+  apply_lan_netem_on tmex-split-node-b || rc=1
+  if [[ "${rc}" -eq 0 ]]; then
+    LAN_NETEM_ON=1
+  fi
+  return "${rc}"
+}
+
+clear_lan_netem_on() {
+  local container="$1"
+  local cached="${2:-}"
+  local resolved="" iface=""
+  resolved="$(lookup_lan_iface "${container}" "${cached}")" || true
+  iface="${resolved%% *}"
+  if [[ -z "${iface}" ]]; then
+    return 0
+  fi
+  docker exec "${container}" tc qdisc del dev "${iface}" root >/dev/null 2>&1 || true
+  log "lan netem: cleared ${container} dev=${iface}"
+}
+
+clear_lan_netem() {
+  if [[ -z "${TMEX_E2E_LAN_NETEM:-}" ]]; then
+    return 0
+  fi
+  clear_lan_netem_on tmex-split-node-a "${LAN_NETEM_IFACE_A:-}"
+  clear_lan_netem_on tmex-split-node-b "${LAN_NETEM_IFACE_B:-}"
+  LAN_NETEM_ON=0
+}
+
+show_lan_qdisc() {
+  local container="$1"
+  local cached="${2:-}"
+  local resolved="" iface="" q=""
+  resolved="$(lookup_lan_iface "${container}" "${cached}")" || true
+  iface="${resolved%% *}"
+  if [[ -z "${iface}" ]]; then
+    printf 'none'
+    return 0
+  fi
+  q="$(docker exec "${container}" tc qdisc show dev "${iface}" 2>/dev/null | tr '\n' ' ' | tr '|' '/' || true)"
+  q="${q%"${q##*[![:space:]]}"}"
+  printf '%s' "${q:-none}"
+}
+
+lan_netem_qdisc_evidence() {
+  printf 'qdisc node-a[%s]=%s; node-b[%s]=%s' \
+    "${LAN_NETEM_IFACE_A:-?}" \
+    "$(show_lan_qdisc tmex-split-node-a "${LAN_NETEM_IFACE_A:-}")" \
+    "${LAN_NETEM_IFACE_B:-?}" \
+    "$(show_lan_qdisc tmex-split-node-b "${LAN_NETEM_IFACE_B:-}")"
+}
+
 write_report() {
   local rows=""
   if ((${#REPORT_ROWS[@]} > 0)); then
@@ -278,6 +430,7 @@ write_report() {
 - hub host/ip: ${HUB_HOST} / ${HUB_IP}
 - tls: ${TLS_MODE}
 - remote: ${REMOTE_USER}@${HUB_IP}:${REMOTE_DIR}
+- lan netem: ${TMEX_E2E_LAN_NETEM:-off}
 
 | scenario | result | evidence |
 |---|---|---|
@@ -287,6 +440,7 @@ EOF
 
 cleanup_on_exit() {
   undrop_direct_udp 2>/dev/null || true
+  clear_lan_netem 2>/dev/null || true
   dump_logs
   write_report
 }
@@ -1207,6 +1361,10 @@ run_direct_scenarios() {
     'tmux -L tmex-node-a has-session -t e2e-a 2>/dev/null || tmux -L tmex-node-a new-session -d -s e2e-a "sh -lc echo READY; exec sh"' || true
   target_ensure_tmux "${target}"
   sleep 3
+  # docker restart drops tc qdisc; re-apply so L2–L8 actually see netem
+  if [[ "${kind}" == "lan" && -n "${TMEX_E2E_LAN_NETEM:-}" ]]; then
+    apply_lan_netem || log "WARNING: lan netem re-apply after restart failed"
+  fi
 
   set +e
   driver login.ts --base-url http://node-a:9883 --username "${USER_NAME}" --password "${PASSWORD}" \
@@ -1253,11 +1411,15 @@ run_direct_scenarios() {
   PATH_D="$(write_mesh_path "${mesh_json}" "${path_json}" "${target_id}")"
   set -e
   dump_rtc_logs "${target}"
+  local netem_ev=""
+  if [[ "${kind}" == "lan" && -n "${TMEX_E2E_LAN_NETEM:-}" ]]; then
+    netem_ev="; $(lan_netem_qdisc_evidence || true)"
+  fi
   if [[ "${transport_dc_rc}" -eq 0 ]]; then
     got_dc=1
-    pass "${d2}" "${PATH_D}"
+    pass "${d2}" "${PATH_D}${netem_ev}"
   else
-    fail "${d2}" "stayed relay/other path=${PATH_D}; $(rtc_evidence "${target}")"
+    fail "${d2}" "stayed relay/other path=${PATH_D}; $(rtc_evidence "${target}")${netem_ev}"
   fi
 
   set +e
@@ -1433,7 +1595,12 @@ run_direct_scenarios() {
 # These L1–L8 rows are REQUIRED (count toward FAILS). Hub D/H/I stay after, and still FAIL
 # with evidence when the WAN path cannot establish (VPS UDP filter / symmetric NAT / no TURN-TCP).
 log "LAN DataChannel scenarios (node-a ↔ node-b)"
+if [[ -n "${TMEX_E2E_LAN_NETEM:-}" ]]; then
+  log "lan netem requested: ${TMEX_E2E_LAN_NETEM}"
+  apply_lan_netem || log "WARNING: lan netem apply failed before L scenarios"
+fi
 run_direct_scenarios lan
+clear_lan_netem || true
 
 log "WAN DataChannel scenarios (node-a ↔ hub)"
 run_direct_scenarios hub
