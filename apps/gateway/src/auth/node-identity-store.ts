@@ -13,6 +13,7 @@ export interface NodeIdentityRecord {
   x25519PrivateKey: Uint8Array;
   certificateJson: string;
   certSig: Uint8Array;
+  userId: string | null;
 }
 
 export interface SaveNodeIdentityInput {
@@ -22,6 +23,7 @@ export interface SaveNodeIdentityInput {
   x25519PrivateKey: Uint8Array;
   certificateJson: string;
   certSig: Uint8Array;
+  userId?: string | null;
 }
 
 export class NodeIdentityStore {
@@ -47,6 +49,7 @@ export class NodeIdentityStore {
       x25519PrivateKey,
       certificateJson: row.certificateJson,
       certSig: toBytes(row.certSig),
+      userId: row.userId ?? null,
     };
   }
 
@@ -55,6 +58,7 @@ export class NodeIdentityStore {
       encryptKey(input.edPrivateKey),
       encryptKey(input.x25519PrivateKey),
     ]);
+    const userId = input.userId ?? null;
     this.db
       .insert(nodeIdentity)
       .values({
@@ -65,6 +69,7 @@ export class NodeIdentityStore {
         x25519PrivateKey,
         certificateJson: input.certificateJson,
         certSig: toBuffer(input.certSig),
+        userId,
       })
       .onConflictDoUpdate({
         target: nodeIdentity.id,
@@ -75,6 +80,7 @@ export class NodeIdentityStore {
           x25519PrivateKey,
           certificateJson: input.certificateJson,
           certSig: toBuffer(input.certSig),
+          userId,
         },
       })
       .run();

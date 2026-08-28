@@ -608,6 +608,7 @@ export const nodeIdentity = sqliteTable(
     x25519PrivateKey: text('x25519_private_key').notNull(),
     certificateJson: text('certificate_json').notNull(),
     certSig: blob('cert_sig', { mode: 'buffer' }).notNull(),
+    userId: text('user_id'),
   },
   (table) => [check('node_identity_singleton_check', sql`${table.id} = 1`)]
 );

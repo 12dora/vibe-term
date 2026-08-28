@@ -56,5 +56,6 @@ describe('mesh reset-root', () => {
     expect(certs.length).toBe(1);
     expect(auth.keyLogStore.list(added.userId).map((row) => row.seq)).toEqual([1, 2]);
     expect(beforeCerts[0]?.certificateBytes).not.toEqual(certs[0]?.certificateBytes);
+    expect((await auth.identityStore.load())?.userId).toBe(added.userId);
   });
 });

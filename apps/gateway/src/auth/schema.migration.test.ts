@@ -80,4 +80,30 @@ describe('hub auth schema migration', () => {
       close();
     }
   });
+
+  test('0020 adds nullable user_id on node_identity so pre-existing rows stay valid', () => {
+    const { sqlite, close } = createMigratedAuthDb();
+    try {
+      const columns = sqlite.query('PRAGMA table_info(node_identity)').all() as Array<{
+        name: string;
+        notnull: number;
+      }>;
+      const userId = columns.find((column) => column.name === 'user_id');
+      expect(userId).toBeTruthy();
+      expect(userId?.notnull).toBe(0);
+
+      sqlite
+        .query(
+          `INSERT INTO node_identity (id, node_id, hub_url, private_key, x25519_private_key, certificate_json, cert_sig)
+           VALUES (1, 'aa', NULL, 'enc', 'enc2', '{}', X'00')`
+        )
+        .run();
+      const row = sqlite.query('SELECT user_id FROM node_identity WHERE id = 1').get() as {
+        user_id: string | null;
+      };
+      expect(row.user_id).toBeNull();
+    } finally {
+      close();
+    }
+  });
 });

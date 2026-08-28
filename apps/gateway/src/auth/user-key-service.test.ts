@@ -566,6 +566,7 @@ describe('UserKeyService', () => {
             x25519PublicKey: Buffer.from(destIdentity.x25519PublicKey).toString('base64url'),
           }),
           certSig: new Uint8Array(0),
+          userId: boot.userId,
         },
       });
       expect(committed.ok).toBe(true);
@@ -575,6 +576,7 @@ describe('UserKeyService', () => {
       const loaded = await new NodeIdentityStore(dst.db).load();
       expect(loaded?.hubUrl).toBe('https://hub.example');
       expect(loaded?.nodeId).toBe(destIdentity.nodeIdHex);
+      expect(loaded?.userId).toBe(boot.userId);
     } finally {
       src.close();
       dst.close();
@@ -596,6 +598,7 @@ describe('UserKeyService', () => {
       expect(keyLogStore.list(boot.userId).map((row) => row.seq)).toEqual([1, 2]);
       expect(userStore.listCertsByUser(boot.userId).length).toBe(1);
       expect(userStore.getCert(identity.nodeIdHex)?.userId).toBe(boot.userId);
+      expect((await new NodeIdentityStore(db).load())?.userId).toBe(boot.userId);
     } finally {
       close();
     }
@@ -618,6 +621,7 @@ describe('UserKeyService', () => {
         identity,
       });
       expect(reset.userId).toBe(first.userId);
+      expect((await new NodeIdentityStore(db).load())?.userId).toBe(first.userId);
       expect(reset.rootEpoch).toBeGreaterThan(first.rootEpoch);
       expect(userStore.getById(first.userId)?.username).toBe('resetme');
       expect(keyLogStore.list(first.userId).map((row) => row.seq)).toEqual([1, 2]);

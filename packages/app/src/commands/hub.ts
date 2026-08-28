@@ -412,10 +412,15 @@ async function commitVerifiedJoin(
           x25519PublicKey: encodeBase64url(input.identity.x25519PublicKey),
         }),
       certSig: loaded?.certSig ?? new Uint8Array(0),
+      userId: genesisUid,
     },
   });
   if (!committed.ok) {
     throw new Error(`key log rejected: ${committed.error}`);
+  }
+  const persisted = loaded ?? (await ctx.identityStore.load());
+  if (persisted) {
+    await ctx.identityStore.save({ ...persisted, userId: genesisUid, hubUrl: input.hubUrl });
   }
 }
 

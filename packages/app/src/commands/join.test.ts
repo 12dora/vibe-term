@@ -153,6 +153,7 @@ describe('hub join against fake hub', () => {
     expect(joinedCerts[0]?.certificateBytes).toEqual(projected[0]?.certificateBytes);
     const identity = await node.identityStore.load();
     expect(identity?.hubUrl).toBe(hubUrl);
+    expect(identity?.userId).toBe(user.id);
 
     await runHubLeave(parseArgs(['hub', 'leave']), {
       auth: node,

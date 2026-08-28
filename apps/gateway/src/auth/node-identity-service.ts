@@ -42,6 +42,7 @@ export async function ensureNodeIdentity(
     x25519PrivateKey: x.secretKey,
     certificateJson: JSON.stringify({ x25519PublicKey: encodeBase64url(x.publicKey) }),
     certSig: new Uint8Array(0),
+    userId: null,
   });
   return {
     nodeId,

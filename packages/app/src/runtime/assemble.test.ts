@@ -1,4 +1,7 @@
+import '../lib/test-master-key';
 import { afterEach, describe, expect, test } from 'bun:test';
+import { NodeIdentityStore } from '../../../../apps/gateway/src/auth/node-identity-store';
+import { createMigratedAuthDb } from '../../../../apps/gateway/src/auth/test-db';
 import type { HubRuntime } from '../../../../apps/gateway/src/hub';
 import { MESH_GATEWAY_WS_KIND } from '../../../../apps/gateway/src/mesh/mesh-deps';
 import type { MeshRuntime } from '../../../../apps/gateway/src/mesh/mesh-runtime';
@@ -11,10 +14,28 @@ import {
   meshShutdownNeeded,
 } from './assemble';
 
+function fakeIdentityDb(): GatewayRuntime['db'] {
+  const chain = {
+    select() {
+      return chain;
+    },
+    from() {
+      return chain;
+    },
+    where() {
+      return chain;
+    },
+    get() {
+      return undefined;
+    },
+  };
+  return chain as GatewayRuntime['db'];
+}
+
 function fakeGateway(overrides?: Partial<GatewayRuntime>): GatewayRuntime {
   return {
     port: 0,
-    db: {} as GatewayRuntime['db'],
+    db: fakeIdentityDb(),
     wsServer: {} as GatewayRuntime['wsServer'],
     handleRequest: () => undefined,
     dispatchHttp: async () => new Response('not-found', { status: 404 }),
@@ -551,6 +572,37 @@ describe('assembleTmex role matrix', () => {
     });
     const res = await assembled.fetch(new Request('http://127.0.0.1/api/devices'), dummyServer);
     expect(res?.headers.get(X_TMEX_SESSION_RENEWED)).toBeTruthy();
+  });
+
+  test('passes persisted identity userId to createMeshRuntime', async () => {
+    const { db, close } = createMigratedAuthDb();
+    try {
+      const store = new NodeIdentityStore(db);
+      const ed = crypto.getRandomValues(new Uint8Array(32));
+      const x25519 = crypto.getRandomValues(new Uint8Array(32));
+      const certSig = crypto.getRandomValues(new Uint8Array(64));
+      await store.save({
+        nodeId: 'ab'.repeat(16),
+        hubUrl: 'https://hub.example',
+        edPrivateKey: ed,
+        x25519PrivateKey: x25519,
+        certificateJson: '{}',
+        certSig,
+        userId: 'uid-from-join',
+      });
+      let seen: string | undefined;
+      await assembleTmex({
+        roles: { hub: false, node: true },
+        createGatewayRuntime: async () => fakeGateway({ db }),
+        createMeshRuntime: async (opts) => {
+          seen = opts.userId;
+          return fakeMesh();
+        },
+      });
+      expect(seen).toBe('uid-from-join');
+    } finally {
+      close();
+    }
   });
 
   test('fake Bun.serve captures fetch and websocket from the assembly', async () => {

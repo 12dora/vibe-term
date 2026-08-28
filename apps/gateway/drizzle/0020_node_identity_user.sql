@@ -1,0 +1,1 @@
+ALTER TABLE `node_identity` ADD `user_id` text;

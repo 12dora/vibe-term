@@ -32,6 +32,7 @@ import {
   signKeyLogRecordWithRoot,
   verifyKeyLogRecord,
 } from '@tmex/shared/auth';
+import { eq } from 'drizzle-orm';
 import { encrypt } from '../crypto';
 import { nodeIdentity } from '../db/schema';
 import { toBuffer } from './binary';
@@ -654,6 +655,11 @@ export class UserKeyService {
         effects: admitStep.effects,
         now,
       });
+      (tx as AuthDb)
+        .update(nodeIdentity)
+        .set({ userId })
+        .where(eq(nodeIdentity.id, IDENTITY_ROW_ID))
+        .run();
     });
 
     const next = this.userStore.getById(userId);
@@ -855,6 +861,7 @@ type EncryptedIdentity = {
   x25519PrivateKey: string;
   certificateJson: string;
   certSig: Uint8Array;
+  userId: string | null;
 };
 
 async function encryptIdentity(input: SaveNodeIdentityInput): Promise<EncryptedIdentity> {
@@ -869,6 +876,7 @@ async function encryptIdentity(input: SaveNodeIdentityInput): Promise<EncryptedI
     x25519PrivateKey,
     certificateJson: input.certificateJson,
     certSig: input.certSig,
+    userId: input.userId ?? null,
   };
 }
 
@@ -882,6 +890,7 @@ function persistEncryptedIdentity(db: AuthDb, identity: EncryptedIdentity): void
       x25519PrivateKey: identity.x25519PrivateKey,
       certificateJson: identity.certificateJson,
       certSig: toBuffer(identity.certSig),
+      userId: identity.userId,
     })
     .onConflictDoUpdate({
       target: nodeIdentity.id,
@@ -892,6 +901,7 @@ function persistEncryptedIdentity(db: AuthDb, identity: EncryptedIdentity): void
         x25519PrivateKey: identity.x25519PrivateKey,
         certificateJson: identity.certificateJson,
         certSig: toBuffer(identity.certSig),
+        userId: identity.userId,
       },
     })
     .run();

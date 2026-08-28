@@ -61,6 +61,7 @@ describe('hub user commands', () => {
     expect(auth.userStore.listCertsByUser(user.id).length).toBe(1);
     const identity = await auth.identityStore.load();
     expect(identity?.nodeId).toBeTruthy();
+    expect(identity?.userId).toBe(result.userId);
   });
 
   test('hub user passwd rotate-root accepts new password and rejects old', async () => {

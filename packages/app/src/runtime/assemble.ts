@@ -1,4 +1,5 @@
 import { resolve } from 'node:path';
+import { NodeIdentityStore } from '../../../../apps/gateway/src/auth/node-identity-store';
 import {
   type TmexRoles,
   config as gatewayConfig,
@@ -123,6 +124,7 @@ export async function assembleTmex(opts: AssembleTmexOptions = {}): Promise<Asse
         if (!nativeDir) return null;
         return loadNodeDatachannel({ nativeDir });
       });
+    const identityUserId = (await new NodeIdentityStore(gateway.db).load())?.userId ?? undefined;
     mesh = await createMesh({
       db: gateway.db,
       gateway,
@@ -140,6 +142,7 @@ export async function assembleTmex(opts: AssembleTmexOptions = {}): Promise<Asse
       },
       hub: opts.hub,
       loadNative,
+      userId: identityUserId,
     });
   }
 
