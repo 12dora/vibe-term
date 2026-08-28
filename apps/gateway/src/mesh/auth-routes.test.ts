@@ -843,6 +843,12 @@ describe('auth-routes', () => {
       const entry = await challengeAndLogin(mesh.runtime, mesh.boot, { entry: 'other-entry' });
       expect((await entry.res.json()).code).toBe('ENTRY_MISMATCH');
 
+      // 浏览器把本机入口写成真实 nodeId（/api/auth/mode.nodeId），必须与 challenge 的 'self' 哨兵等价
+      const realEntry = await challengeAndLogin(mesh.runtime, mesh.boot, {
+        entry: mesh.boot.nodeId,
+      });
+      expect(realEntry.res.status).toBe(200);
+
       const pk = await challengeAndLogin(mesh.runtime, mesh.boot, {
         targetPk: new Uint8Array(32).fill(1),
       });

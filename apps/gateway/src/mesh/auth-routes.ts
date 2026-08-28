@@ -263,7 +263,11 @@ export class AuthRoutes {
       if (!challenge || challenge.kind !== 'login') {
         return fail('CHALLENGE_CONSUMED');
       }
-      if (login.entry !== challenge.entryNodeId) {
+      // 本机入口的 challenge 记录哨兵 'self'；浏览器按 /api/auth/mode.nodeId 填真实 id，CLI 填 'self'，两者都算本机
+      const entryIsSelf = challenge.entryNodeId === MESH_VIA_SELF;
+      const entryMatches =
+        login.entry === challenge.entryNodeId || (entryIsSelf && login.entry === this.deps.nodeId);
+      if (!entryMatches) {
         return fail('ENTRY_MISMATCH');
       }
       if (login.target !== this.deps.nodeId && login.target !== MESH_VIA_SELF) {
