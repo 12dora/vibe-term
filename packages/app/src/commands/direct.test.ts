@@ -3,6 +3,7 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { sha256Hex } from '../lib/artifacts-manifest';
+import { pathExists } from '../lib/fs-utils';
 import { createInstallLayout } from '../lib/install-layout';
 import {
   type InstalledNativeManifest,
@@ -96,8 +97,8 @@ describe('enableDirect / disableDirect', () => {
         expect(result.reason.toLowerCase()).toContain('integrity');
       }
       const layout = createInstallLayout(installDir);
-      expect(await Bun.file(nativeAddonPath(layout.nativeDir)).exists()).toBe(false);
-      expect(await Bun.file(nativeManifestPath(layout.nativeDir)).exists()).toBe(false);
+      expect(await pathExists(nativeAddonPath(layout.nativeDir))).toBe(false);
+      expect(await pathExists(nativeManifestPath(layout.nativeDir))).toBe(false);
     } finally {
       served.stop();
     }
@@ -140,7 +141,46 @@ describe('enableDirect / disableDirect', () => {
     await writeFile(nativeManifestPath(layout.nativeDir), '{}');
 
     await disableDirect({ installDir });
-    expect(await Bun.file(layout.nativeDir).exists()).toBe(false);
+    expect(await pathExists(layout.nativeDir)).toBe(false);
+  });
+
+  test('writes addon and verifies sha256 using node fs (fetchImpl, no Bun.serve)', async () => {
+    const installDir = await makeInstallDir();
+    const addon = Buffer.from('node-portable-addon-bytes');
+    const tarball = packNpmTarball({
+      'package/package.json': Buffer.from('{}'),
+      [`package/${NATIVE_ADDON_FILENAME}`]: addon,
+    });
+    const result = await enableDirect({
+      installDir,
+      pin: fakePin('https://example.test/addon.tgz', integrityOf(tarball)),
+      fetchImpl: async () => new Response(tarball),
+    });
+    expect(result.ok).toBe(true);
+    const layout = createInstallLayout(installDir);
+    const written = await readFile(nativeAddonPath(layout.nativeDir));
+    expect(Buffer.from(written).equals(addon)).toBe(true);
+    const manifest = JSON.parse(
+      await readFile(nativeManifestPath(layout.nativeDir), 'utf8')
+    ) as InstalledNativeManifest;
+    expect(manifest.sha256).toBe(sha256Hex(addon));
+    expect(manifest.sha256).toBe(sha256Hex(written));
+  });
+
+  test('skips with unsupported when the platform has no native pin', async () => {
+    const installDir = await makeInstallDir();
+    const result = await enableDirect({
+      installDir,
+      platform: 'win32',
+      arch: 'x64',
+    });
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.unsupported).toBe(true);
+      expect(result.reason.toLowerCase()).toContain('not supported');
+    }
+    const layout = createInstallLayout(installDir);
+    expect(await pathExists(nativeAddonPath(layout.nativeDir))).toBe(false);
   });
 });
 
@@ -235,7 +275,7 @@ describe('runDirect', () => {
       };
       await runDirect(enableArgs, { pin });
       const layout = createInstallLayout(installDir);
-      expect(await Bun.file(nativeAddonPath(layout.nativeDir)).exists()).toBe(true);
+      expect(await pathExists(nativeAddonPath(layout.nativeDir))).toBe(true);
 
       const disableArgs: ParsedArgs = {
         command: 'direct',
@@ -243,9 +283,44 @@ describe('runDirect', () => {
         flags: { 'install-dir': installDir },
       };
       await runDirect(disableArgs);
-      expect(await Bun.file(layout.nativeDir).exists()).toBe(false);
+      expect(await pathExists(layout.nativeDir)).toBe(false);
     } finally {
       served.stop();
+    }
+  });
+
+  test('enable exits non-zero when download fails (not platform-unsupported)', async () => {
+    const installDir = await makeInstallDir();
+    process.exitCode = 0;
+    try {
+      const enableArgs: ParsedArgs = {
+        command: 'direct',
+        positionals: ['enable'],
+        flags: { 'install-dir': installDir },
+      };
+      await runDirect(enableArgs, {
+        pin: fakePin('https://example.test/missing.tgz', 'sha512-unused'),
+        fetchImpl: async () => new Response('nope', { status: 503 }),
+      });
+      expect(process.exitCode).toBe(1);
+    } finally {
+      process.exitCode = 0;
+    }
+  });
+
+  test('enable skips with exit 0 when the platform is unsupported', async () => {
+    const installDir = await makeInstallDir();
+    process.exitCode = 0;
+    try {
+      const enableArgs: ParsedArgs = {
+        command: 'direct',
+        positionals: ['enable'],
+        flags: { 'install-dir': installDir },
+      };
+      await runDirect(enableArgs, { pin: null });
+      expect(process.exitCode ?? 0).toBe(0);
+    } finally {
+      process.exitCode = 0;
     }
   });
 });

@@ -60,6 +60,21 @@ describe('resolveNestedCommand', () => {
     expect(parsed.flags.name).toBe('n1');
   });
 
+  test('parses hub join/leave --no-restart as a boolean flag', () => {
+    const join = parseArgs([
+      'hub',
+      'join',
+      'https://hub.example',
+      '--token',
+      'abc',
+      '--no-restart',
+    ]);
+    expect(join.flags['no-restart']).toBe(true);
+    const leave = parseArgs(['hub', 'leave', '--no-restart', '--install-dir', '/tmp/tmex']);
+    expect(leave.flags['no-restart']).toBe(true);
+    expect(leave.flags['install-dir']).toBe('/tmp/tmex');
+  });
+
   test('resolves hub leave, mesh reset-root, enroll, direct', () => {
     expect(resolveNestedCommand(parseArgs(['hub', 'leave'])).name).toBe('hub.leave');
     expect(resolveNestedCommand(parseArgs(['mesh', 'reset-root'])).name).toBe('mesh.reset-root');
@@ -90,6 +105,7 @@ describe('cli help', () => {
     expect(help).toContain('tmex doctor');
     expect(help).toContain('tmex hub user add <username>');
     expect(help).toContain('tmex hub join');
+    expect(help).toContain('--no-restart');
     expect(help).toContain('tmex mesh reset-root');
     expect(help).toContain('tmex enroll');
     expect(help).toContain('TMEX_PASSWORD');

@@ -33,5 +33,6 @@ describe('i18n', () => {
     setLang('zh-CN');
     expect(t('cli.help')).toBe(cliHelpText('zh-CN'));
     expect(t('cli.help')).toContain('tmex hub join');
+    expect(t('cli.help')).toContain('--no-restart');
   });
 });

@@ -1,3 +1,4 @@
+import { readFile } from 'node:fs/promises';
 import { createRequire } from 'node:module';
 import { join } from 'node:path';
 import { sha256Hex } from './artifacts-manifest';
@@ -124,7 +125,7 @@ export async function loadNodeDatachannel(
     return null;
   }
 
-  const bytes = new Uint8Array(await Bun.file(addon).arrayBuffer());
+  const bytes = new Uint8Array(await readFile(addon));
   const digest = sha256Hex(bytes);
   if (digest !== manifest.sha256) {
     log(`native addon sha256 mismatch (expected ${manifest.sha256}, got ${digest})`);

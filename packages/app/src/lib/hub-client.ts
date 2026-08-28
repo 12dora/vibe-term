@@ -209,17 +209,72 @@ export async function loginWithRootKey(options: {
       `auth login failed: HTTP ${loginRes.status} ${String(loginBody.error ?? loginBody.code ?? '')}`
     );
   }
-  const sid = String(loginBody.sid ?? '');
+  const sid = sessionIdFromLoginResponse(loginRes, nodeId);
   if (!sid) {
     throw new Error('auth login did not return sid');
   }
-  const cookieHeader = `tmex_s_self=${sid}; tmex_s_${nodeId}=${sid}`;
+  const cookieHeader = cookieHeaderForSession(sid, nodeId);
   return {
     sid,
     expiresAt: typeof loginBody.expires_at === 'number' ? loginBody.expires_at : 0,
     cookieHeader,
     nodeId,
   };
+}
+
+const SESSION_COOKIE_PREFIX = 'tmex_s_';
+
+export function cookieHeaderForSession(sid: string, nodeId: string): string {
+  const selfCookie = `${SESSION_COOKIE_PREFIX}self=${sid}`;
+  if (!nodeId || nodeId === 'self') {
+    return selfCookie;
+  }
+  return `${selfCookie}; ${SESSION_COOKIE_PREFIX}${nodeId}=${sid}`;
+}
+
+export function sessionIdFromLoginResponse(response: Response, nodeId: string): string {
+  const fromHeader = sessionIdFromSetSessionHeader(response.headers.get('x-tmex-set-session'));
+  if (fromHeader) return fromHeader;
+
+  const cookies = collectSetCookies(response);
+  const selfCookie = cookies.get(`${SESSION_COOKIE_PREFIX}self`);
+  if (selfCookie) return selfCookie;
+  if (nodeId) {
+    const named = cookies.get(`${SESSION_COOKIE_PREFIX}${nodeId}`);
+    if (named) return named;
+  }
+  for (const [name, value] of cookies) {
+    if (name.startsWith(SESSION_COOKIE_PREFIX) && value) return value;
+  }
+  return '';
+}
+
+function sessionIdFromSetSessionHeader(value: string | null): string {
+  if (!value) return '';
+  const split = value.indexOf(';');
+  const sid = (split === -1 ? value : value.slice(0, split)).trim();
+  return sid;
+}
+
+function collectSetCookies(response: Response): Map<string, string> {
+  const lines: string[] = [];
+  const headers = response.headers as Headers & { getSetCookie?: () => string[] };
+  if (typeof headers.getSetCookie === 'function') {
+    lines.push(...headers.getSetCookie());
+  } else {
+    const single = response.headers.get('set-cookie');
+    if (single) lines.push(single);
+  }
+  const cookies = new Map<string, string>();
+  for (const line of lines) {
+    const firstPair = line.split(';')[0] ?? '';
+    const separator = firstPair.indexOf('=');
+    if (separator === -1) continue;
+    const name = firstPair.slice(0, separator).trim();
+    const value = firstPair.slice(separator + 1).trim();
+    if (name) cookies.set(name, value);
+  }
+  return cookies;
 }
 
 export async function postEnrollment(options: {

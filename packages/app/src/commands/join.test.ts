@@ -349,3 +349,116 @@ describe('hub join against fake hub', () => {
     ).rejects.toThrow(/NODE_ENV=production/);
   });
 });
+
+describe('hub join/leave service restart', () => {
+  test('hub leave --no-restart skips restart and prints a manual-restart hint', async () => {
+    const node = await openAuth('node');
+    node.installDir = '/tmp/tmex-leave-no-restart';
+    const logs: string[] = [];
+    let restarted = false;
+    await runHubLeave(parseArgs(['hub', 'leave', '--no-restart']), {
+      auth: node,
+      restart: async () => {
+        restarted = true;
+      },
+      log: (message) => logs.push(message),
+    });
+    expect(restarted).toBe(false);
+    expect(logs.some((line) => /restart tmex manually/i.test(line))).toBe(true);
+  });
+
+  test('hub leave does not throw when there is no service manager', async () => {
+    const node = await openAuth('node');
+    node.installDir = '/tmp/tmex-leave-none-manager';
+    const logs: string[] = [];
+    await runHubLeave(parseArgs(['hub', 'leave']), {
+      auth: node,
+      serviceManager: 'none',
+      log: (message) => logs.push(message),
+    });
+    expect(logs.some((line) => /restart tmex manually/i.test(line))).toBe(true);
+    expect(logs.some((line) => /left hub/i.test(line))).toBe(true);
+  });
+
+  test('hub join --no-restart skips restart after a successful join', async () => {
+    const hub = await openAuth('hub,node');
+    const added = await runHubUserAdd(parseArgs([]), 'hubuser', {
+      auth: hub,
+      password: 'hub-pass-word',
+      log: () => undefined,
+    });
+    const user = hub.userStore.getById(added.userId);
+    if (!user) throw new Error('missing hub user');
+    const state = hub.userKeys.currentState(user.id);
+    const enrollment = await createEnrollment(
+      rootKeyFromSeed(await deriveSeed('hub-pass-word', state.kdfParams)),
+      { uid: user.id, rootEpoch: state.rootEpoch, now: Date.now() }
+    );
+    const token = encodeJoinToken(enrollment.enrollSk, state.rootPublicKey, state.head.hash);
+    const records = hub.keyLogStore.list(user.id);
+    const certs = hub.userStore.listCertsByUser(user.id);
+    const server = Bun.serve({
+      hostname: '127.0.0.1',
+      port: 0,
+      fetch(req) {
+        const url = new URL(req.url);
+        if (url.pathname === '/api/auth/mode') {
+          return Response.json({
+            mode: 'mesh',
+            nodeId: 'self',
+            uid: user.id,
+            username: user.username,
+          });
+        }
+        if (url.pathname === '/api/hub/enrollments/redeem' && req.method === 'POST') {
+          return Response.json({
+            user: {
+              id: user.id,
+              username: user.username,
+              root_public_key: encodeBase64url(user.rootPublicKey),
+              root_epoch: user.rootEpoch,
+              kdf_params: JSON.parse(user.kdfParamsJson),
+            },
+            user_key_log: records.map((row) => ({
+              seq: row.seq,
+              bytes: encodeBase64url(row.bytes),
+              sig: encodeBase64url(row.sig),
+            })),
+            node_certs: certs.map((cert) => ({
+              node_id: cert.nodeId,
+              user_id: cert.userId,
+              admit_record_seq: cert.admitRecordSeq,
+              certificate: encodeBase64url(cert.certificateBytes),
+              cert_sig: encodeBase64url(cert.certSig),
+              authorization: encodeBase64url(cert.authorizationBytes),
+              authorization_sig: encodeBase64url(cert.authorizationSig),
+              revoked_log_seq: cert.revokedLogSeq,
+            })),
+          });
+        }
+        return new Response('nope', { status: 404 });
+      },
+    });
+    servers.push(server);
+    const hubUrl = `http://127.0.0.1:${server.port}`;
+    const node = await openAuth('standalone');
+    node.installDir = '/tmp/tmex-join-no-restart';
+    const logs: string[] = [];
+    let restarted = false;
+    await runHubJoin(
+      parseArgs(['hub', 'join', hubUrl, '--token', token, '--insecure-local', '--no-restart']),
+      hubUrl,
+      {
+        auth: node,
+        insecureLocal: true,
+        restart: async () => {
+          restarted = true;
+        },
+        log: (message) => logs.push(message),
+      }
+    );
+    expect(restarted).toBe(false);
+    expect(logs.some((line) => /restart tmex manually/i.test(line))).toBe(true);
+    expect(logs.some((line) => line.startsWith('joined hub'))).toBe(true);
+  });
+});

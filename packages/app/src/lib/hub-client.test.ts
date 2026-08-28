@@ -1,9 +1,11 @@
 import { describe, expect, test } from 'bun:test';
-import { encodeBase64url } from '../../../shared/src/auth';
+import { encodeBase64url, randomBytes, rootKeyFromSeed } from '../../../shared/src/auth';
 import {
   REDEEM_NETWORK_RETRY_LIMIT,
   assertHubJoinUrl,
   fetchAuthMode,
+  loginWithRootKey,
+  postEnrollment,
   redeemEnrollment,
 } from './hub-client';
 
@@ -129,5 +131,137 @@ describe('hub-client fetch policy', () => {
     expect(bodies[0]).toBe(bodies[1]);
     expect(bodies[0]).toContain(encodeBase64url(cert));
     expect(bodies[0]).toContain(encodeBase64url(sig));
+  });
+});
+
+function loginFetcher(options: {
+  loginHeaders?: HeadersInit;
+  loginBody?: unknown;
+  nodeId?: string;
+  onLogin?: (req: RequestInit | undefined) => void;
+}): typeof fetch {
+  const nonce = encodeBase64url(randomBytes(32));
+  const nodePk = encodeBase64url(randomBytes(32));
+  return async (_url, init) => {
+    const url = String(_url);
+    if (url.endsWith('/api/auth/mode')) {
+      return Response.json({
+        mode: 'mesh',
+        nodeId: options.nodeId ?? 'self',
+        uid: 'u1',
+        totpEnabled: false,
+      });
+    }
+    if (url.endsWith('/api/auth/challenge')) {
+      return Response.json({ challenge_id: 'c1', nonce, nodePk });
+    }
+    if (url.endsWith('/api/auth/login')) {
+      options.onLogin?.(init);
+      return new Response(
+        JSON.stringify(options.loginBody ?? { expires_at: Date.now() + 60_000 }),
+        {
+          status: 200,
+          headers: {
+            'content-type': 'application/json',
+            ...(options.loginHeaders ?? {}),
+          },
+        }
+      );
+    }
+    return new Response('nope', { status: 404 });
+  };
+}
+
+describe('loginWithRootKey session extraction', () => {
+  const rootKey = rootKeyFromSeed(randomBytes(32));
+
+  test('reads sid from x-tmex-set-session header (no sid in body)', async () => {
+    const session = await loginWithRootKey({
+      baseUrl: 'https://hub.example',
+      rootKey,
+      uid: 'u1',
+      fetcher: loginFetcher({
+        loginHeaders: { 'x-tmex-set-session': 'header-sid;60' },
+        loginBody: { expires_at: 1_700_000_000_000 },
+      }),
+    });
+    expect(session.sid).toBe('header-sid');
+    expect(session.expiresAt).toBe(1_700_000_000_000);
+    expect(session.cookieHeader).toContain('tmex_s_self=header-sid');
+  });
+
+  test('falls back to Set-Cookie tmex_s_self when header is absent', async () => {
+    const session = await loginWithRootKey({
+      baseUrl: 'https://hub.example',
+      rootKey,
+      uid: 'u1',
+      fetcher: loginFetcher({
+        loginHeaders: {
+          'set-cookie': 'tmex_s_self=cookie-sid; Path=/; HttpOnly; SameSite=Lax; Max-Age=60',
+        },
+      }),
+    });
+    expect(session.sid).toBe('cookie-sid');
+    expect(session.cookieHeader).toContain('tmex_s_self=cookie-sid');
+  });
+
+  test('falls back to Set-Cookie tmex_s_<nodeId>', async () => {
+    const session = await loginWithRootKey({
+      baseUrl: 'https://hub.example',
+      rootKey,
+      uid: 'u1',
+      fetcher: loginFetcher({
+        nodeId: 'n1',
+        loginHeaders: {
+          'set-cookie': 'tmex_s_n1=node-sid; Path=/; HttpOnly; SameSite=Lax; Max-Age=60',
+        },
+      }),
+    });
+    expect(session.sid).toBe('node-sid');
+    expect(session.cookieHeader).toContain('tmex_s_self=node-sid');
+    expect(session.cookieHeader).toContain('tmex_s_n1=node-sid');
+  });
+
+  test('does not read sid from the JSON body', async () => {
+    await expect(
+      loginWithRootKey({
+        baseUrl: 'https://hub.example',
+        rootKey,
+        uid: 'u1',
+        fetcher: loginFetcher({
+          loginBody: { sid: 'body-sid', expires_at: Date.now() + 60_000 },
+        }),
+      })
+    ).rejects.toThrow(/did not return sid/);
+  });
+
+  test('postEnrollment sends the session cookie the gateway accepts', async () => {
+    const cookies: string[] = [];
+    const fetcher: typeof fetch = async (input, init) => {
+      const url = String(input);
+      if (url.endsWith('/api/hub/enrollments')) {
+        cookies.push(String(init?.headers && new Headers(init.headers).get('cookie')));
+        return Response.json({ ok: true, id: 'e1' }, { status: 201 });
+      }
+      return loginFetcher({
+        loginHeaders: { 'x-tmex-set-session': 'sess-9;60' },
+      })(input, init);
+    };
+    const session = await loginWithRootKey({
+      baseUrl: 'https://hub.example',
+      rootKey,
+      uid: 'u1',
+      fetcher,
+    });
+    await postEnrollment({
+      baseUrl: 'https://hub.example',
+      cookieHeader: session.cookieHeader,
+      enrollPk: randomBytes(32),
+      authorization: randomBytes(32),
+      authorizationSig: randomBytes(64),
+      exp: Date.now() + 60_000,
+      fetcher,
+    });
+    expect(cookies[0]).toContain('tmex_s_self=sess-9');
   });
 });

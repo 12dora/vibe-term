@@ -52,15 +52,17 @@ describe('enableDirectAfterInit', () => {
     expect(called).toBe(false);
   });
 
-  test('swallows thrown errors from enableDirect', async () => {
+  test('swallows thrown errors from enableDirect and logs the real message', async () => {
+    const logs: string[] = [];
     await enableDirectAfterInit(
       { role: 'node', installDir: '/tmp/tmex-init-throw' },
       {
         enableDirect: async () => {
           throw new Error('network exploded');
         },
-        log: () => undefined,
+        log: (message) => logs.push(message),
       }
     );
+    expect(logs.join('\n')).toContain('network exploded');
   });
 });

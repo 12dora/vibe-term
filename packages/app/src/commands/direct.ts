@@ -1,4 +1,4 @@
-import { rm } from 'node:fs/promises';
+import { rm, writeFile } from 'node:fs/promises';
 import { defaultInstallDir } from '../constants';
 import { sha256Hex } from '../lib/artifacts-manifest';
 import { ensureDir, pathExists } from '../lib/fs-utils';
@@ -22,7 +22,7 @@ import type { ParsedArgs } from '../types';
 
 export interface EnableDirectOptions {
   installDir: string;
-  pin?: NativePin;
+  pin?: NativePin | null;
   platform?: NodeJS.Platform | string;
   arch?: string;
   libc?: 'gnu' | 'glibc' | 'musl' | null | 'detect';
@@ -32,7 +32,7 @@ export interface EnableDirectOptions {
 
 export type DirectEnableResult =
   | { ok: true; platformId: string; version: string; addonPath: string; skipped?: boolean }
-  | { ok: false; reason: string };
+  | { ok: false; reason: string; unsupported?: boolean };
 
 export interface DisableDirectOptions {
   installDir: string;
@@ -56,17 +56,18 @@ export async function enableDirect(options: EnableDirectOptions): Promise<Direct
   const log = (message: string) => logLine(options.log, message);
   const layout = createInstallLayout(options.installDir);
   const pin =
-    options.pin ??
-    detectCurrentNativePin({
-      platform: options.platform,
-      arch: options.arch,
-      libc: options.libc,
-    });
+    options.pin === undefined
+      ? detectCurrentNativePin({
+          platform: options.platform,
+          arch: options.arch,
+          libc: options.libc,
+        })
+      : options.pin;
 
   if (!pin) {
     const reason = `direct native addon is not supported on ${options.platform ?? process.platform}/${options.arch ?? process.arch}`;
     log(reason);
-    return { ok: false, reason };
+    return { ok: false, reason, unsupported: true };
   }
 
   try {
@@ -93,7 +94,7 @@ export async function enableDirect(options: EnableDirectOptions): Promise<Direct
 
     await ensureDir(layout.nativeDir);
     const dest = nativeAddonPath(layout.nativeDir);
-    await Bun.write(dest, addon);
+    await writeFile(dest, addon);
 
     const manifest: InstalledNativeManifest = {
       platform: pin.platformId,
@@ -140,14 +141,19 @@ export async function reenableDirectIfNeeded(
   }
 
   const pin =
-    options.pin ??
-    detectCurrentNativePin({
-      platform: options.platform,
-      arch: options.arch,
-      libc: options.libc,
-    });
+    options.pin === undefined
+      ? detectCurrentNativePin({
+          platform: options.platform,
+          arch: options.arch,
+          libc: options.libc,
+        })
+      : options.pin;
   if (!pin) {
-    return { ok: false, reason: 'direct native addon is not supported on this platform' };
+    return {
+      ok: false,
+      reason: 'direct native addon is not supported on this platform',
+      unsupported: true,
+    };
   }
   if (installed?.version === pin.version && hasAddon) {
     return {
@@ -162,7 +168,10 @@ export async function reenableDirectIfNeeded(
 }
 
 export interface RunDirectDeps {
-  pin?: NativePin;
+  pin?: NativePin | null;
+  fetchImpl?: typeof fetch;
+  platform?: NodeJS.Platform | string;
+  arch?: string;
 }
 
 export async function runDirect(parsed: ParsedArgs, deps: RunDirectDeps = {}): Promise<void> {
@@ -175,9 +184,17 @@ export async function runDirect(parsed: ParsedArgs, deps: RunDirectDeps = {}): P
     const result = await enableDirect({
       installDir,
       pin: deps.pin,
+      fetchImpl: deps.fetchImpl,
+      platform: deps.platform,
+      arch: deps.arch,
     });
     if (!result.ok) {
-      console.log(`[tmex] direct enable skipped: ${result.reason}`);
+      if (result.unsupported) {
+        console.log(`[tmex] direct enable skipped: ${result.reason}`);
+        return;
+      }
+      console.error(`[tmex] direct enable failed: ${result.reason}`);
+      process.exitCode = 1;
       return;
     }
     if (result.skipped) {

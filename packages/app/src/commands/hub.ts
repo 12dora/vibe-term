@@ -33,6 +33,7 @@ import { readJsonFile } from '../lib/json-file';
 import type { LocalAuthContext } from '../lib/local-auth';
 import { openInstallAuth } from '../lib/local-auth';
 import { assertRootKeyMatches, deriveRootKey, resolvePassword } from '../lib/password';
+import { type ServiceManagerKind, detectServiceManager } from '../lib/platform';
 import { DEFAULT_PEER_PORT, parseTmexRoles } from '../lib/roles';
 import { restartService, stopService } from '../lib/service';
 import { fingerprintPublicKey, totpOtpauthUri } from '../lib/totp-uri';
@@ -54,7 +55,11 @@ export type HubIo = {
   stop?: (serviceName: string, installDir: string) => Promise<void>;
   nodeEnv?: string;
   totpCode?: string;
+  serviceManager?: ServiceManagerKind;
 };
+
+export const HUB_MANUAL_RESTART_HINT =
+  'skipped service restart; restart tmex manually to apply the change';
 
 function log(io: HubIo | undefined, message: string): void {
   (io?.log ?? console.log)(message);
@@ -109,10 +114,23 @@ async function maybeRestart(
   io: HubIo | undefined,
   installDir: string
 ): Promise<void> {
-  const restart = io?.restart ?? (io?.skipRestart ? undefined : restartService);
-  if (!restart) return;
+  if (parsed.flags['no-restart'] === true) {
+    log(io, HUB_MANUAL_RESTART_HINT);
+    return;
+  }
+  if (io?.restart) {
+    const serviceName = await resolveServiceName(parsed, installDir);
+    await io.restart(serviceName, installDir);
+    return;
+  }
+  if (io?.skipRestart) return;
+  const manager = io?.serviceManager ?? (await detectServiceManager());
+  if (manager === 'none') {
+    log(io, HUB_MANUAL_RESTART_HINT);
+    return;
+  }
   const serviceName = await resolveServiceName(parsed, installDir);
-  await restart(serviceName, installDir);
+  await restartService(serviceName, installDir);
 }
 
 async function maybeStop(

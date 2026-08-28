@@ -11,8 +11,8 @@ Usage:
   tmex hub user passwd <username>
   tmex hub user totp <username>
   tmex hub user reset
-  tmex hub join <https-url> --token <t> [--name <n>] [--insecure-local]
-  tmex hub leave
+  tmex hub join <https-url> --token <t> [--name <n>] [--insecure-local] [--no-restart]
+  tmex hub leave [--no-restart]
   tmex mesh reset-root
   tmex enroll [--ttl 10m]
   tmex direct enable|disable
@@ -35,8 +35,8 @@ const HELP_ZH = `tmex CLI
   tmex hub user passwd <username>
   tmex hub user totp <username>
   tmex hub user reset
-  tmex hub join <https-url> --token <t> [--name <n>] [--insecure-local]
-  tmex hub leave
+  tmex hub join <https-url> --token <t> [--name <n>] [--insecure-local] [--no-restart]
+  tmex hub leave [--no-restart]
   tmex mesh reset-root
   tmex enroll [--ttl 10m]
   tmex direct enable|disable
