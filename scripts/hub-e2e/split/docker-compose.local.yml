@@ -29,6 +29,7 @@ services:
     environment:
       NODE_EXTRA_CA_CERTS: /etc/ssl/certs/ca-certificates.crt
       TMEX_INSTANCE: node-a
+      TMEX_E2E_STUN_SERVERS: ${TMEX_E2E_STUN_SERVERS:-stun:111.206.174.2:3478,stun:stun.miwifi.com:3478}
     volumes:
       - node-a-data:/var/lib/tmex
     networks:
@@ -41,6 +42,7 @@ services:
     environment:
       NODE_EXTRA_CA_CERTS: /etc/ssl/certs/ca-certificates.crt
       TMEX_INSTANCE: node-b
+      TMEX_E2E_STUN_SERVERS: ${TMEX_E2E_STUN_SERVERS:-stun:111.206.174.2:3478,stun:stun.miwifi.com:3478}
     volumes:
       - node-b-data:/var/lib/tmex
     networks:

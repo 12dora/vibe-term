@@ -14,6 +14,7 @@ x-tmex-hub: &tmex-hub
   stop_grace_period: 25s
   environment:
     TMEX_INSTANCE: hub
+    TMEX_E2E_STUN_SERVERS: ${TMEX_E2E_STUN_SERVERS:-stun:111.206.174.2:3478,stun:stun.miwifi.com:3478}
     NODE_EXTRA_CA_CERTS: /etc/ssl/certs/ca-certificates.crt
 
 services:
