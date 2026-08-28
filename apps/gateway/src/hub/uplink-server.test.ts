@@ -36,7 +36,12 @@ import {
 import { NodeRegistry } from './node-registry';
 import type { HubKeyLogSource } from './types';
 import type { UplinkCtlMessage } from './uplink-protocol';
-import { UplinkServer } from './uplink-server';
+import {
+  HUB_KEY_LOG_REQ_BURST,
+  HUB_KEY_LOG_REQ_STATE_MAX,
+  KeyLogReqLimiter,
+  UplinkServer,
+} from './uplink-server';
 
 function makeServer(
   db: ReturnType<typeof createMigratedAuthDb>['db'],
@@ -1176,5 +1181,19 @@ describe('UplinkServer', () => {
     } finally {
       close();
     }
+  });
+
+  test('key.log.req overflow bucket does not reset burst when cycling past capacity', () => {
+    const limiter = new KeyLogReqLimiter({ max: HUB_KEY_LOG_REQ_STATE_MAX });
+    const now = 1_000;
+    let allowed = 0;
+    for (let round = 0; round < HUB_KEY_LOG_REQ_BURST + 1; round++) {
+      for (let i = 0; i < HUB_KEY_LOG_REQ_STATE_MAX + 1; i++) {
+        const nodeId = i.toString(16).padStart(32, '0');
+        if (limiter.take(nodeId, 'user-1', now)) allowed += 1;
+      }
+    }
+    expect(allowed).toBe(HUB_KEY_LOG_REQ_STATE_MAX * HUB_KEY_LOG_REQ_BURST + HUB_KEY_LOG_REQ_BURST);
+    expect(limiter.size).toBe(HUB_KEY_LOG_REQ_STATE_MAX);
   });
 });

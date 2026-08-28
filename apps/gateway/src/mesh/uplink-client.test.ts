@@ -1435,6 +1435,77 @@ describe('UplinkClient', () => {
     expect(lists).toHaveLength(1);
   });
 
+  test('stale pushMissingToHub cannot append on the replacement connection', async () => {
+    const { db, close } = createMigratedAuthDb();
+    fixtures.push({ close });
+    const userStore = new UserStore(db);
+    seedUser(userStore);
+    const hungList = { release() {} };
+    let listCalls = 0;
+    const rec = { seq: 2n, bytes: randomBytes(8), sig: randomBytes(64) };
+    const [clientWs, hubWs] = fakeSocketPair();
+    const hub = new WebSocketLink(hubWs, { role: 'acceptor' });
+    hub.ctl.onMessage(() => {});
+    const client = new UplinkClient({
+      hubUrl: 'https://hub.example.com',
+      identity: { nodeId: 'ab'.repeat(16), edSecretKey: randomBytes(32) },
+      userId: 'user-1',
+      keyLogApplier: {
+        async head() {
+          return { seq: 2n, hash: new Uint8Array(32).fill(2) };
+        },
+        async applyMany() {
+          return { applied: 0 };
+        },
+        async list() {
+          listCalls += 1;
+          await new Promise<void>((resolve) => {
+            hungList.release = resolve;
+          });
+          return [rec];
+        },
+      },
+      userStore,
+      statusProvider: () => status(),
+    });
+    fixtures.push({ close, stop: () => client.stop() });
+    const firstLink = new WebSocketLink(clientWs, { role: 'initiator' });
+    const first = client.connectWithLink(firstLink);
+    hub.ctl.send(encodeUplinkCtl({ t: 'auth.challenge', nonce: encodeBase64url(randomBytes(32)) }));
+    hub.ctl.send(encodeUplinkCtl({ t: 'auth.ok' }));
+    await first;
+    hub.ctl.send(
+      encodeUplinkCtl({
+        t: 'node.list',
+        version: 1,
+        key_log_head: { seq: 0n, hash: new Uint8Array(32) },
+        rtc: { stun: [], turn: null },
+        nodes: [],
+      })
+    );
+    await waitUntil(() => listCalls === 1);
+
+    const [nextClientWs, nextHubWs] = fakeSocketPair();
+    const nextHub = new WebSocketLink(nextHubWs, { role: 'acceptor' });
+    const secondReceived: string[] = [];
+    nextHub.ctl.onMessage((bytes) => {
+      secondReceived.push(new TextDecoder().decode(bytes));
+    });
+    const nextLink = new WebSocketLink(nextClientWs, { role: 'initiator' });
+    const started = Date.now();
+    const second = client.connectWithLink(nextLink);
+    nextHub.ctl.send(
+      encodeUplinkCtl({ t: 'auth.challenge', nonce: encodeBase64url(randomBytes(32)) })
+    );
+    nextHub.ctl.send(encodeUplinkCtl({ t: 'auth.ok' }));
+    await second;
+    expect(Date.now() - started).toBeLessThan(2_000);
+    expect(client.state).toBe('online');
+    hungList.release();
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(secondReceived.some((row) => row.includes('key.log.append'))).toBe(false);
+  });
+
   test('replacing an online connection leaves online immediately and gates outbound and inbound OPEN', async () => {
     const { db, close } = createMigratedAuthDb();
     fixtures.push({ close });

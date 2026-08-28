@@ -812,7 +812,9 @@ describe('PeerManager', () => {
     fixtures.push({ close, stop: () => managerA.stop() });
     const [relayA, relayB] = createInMemoryLinkPair();
     fixtures.push({ close: () => relayB.close('test') });
+    echoQuiesceCaps(relayB);
     expect(managerA.adoptLink(peer.nodeId, relayA, 'relay', self.nodeId)).toBe(relayA);
+    await waitUntil(() => managerA.quiesceCapableOf(peer.nodeId));
     await waitUntil(() => {
       scheduler.nowMs += PEER_UPGRADE_BACKOFF_CAP_MS;
       void managerA.getLink(peer.nodeId);
@@ -928,6 +930,7 @@ describe('PeerManager', () => {
     expect(managerA.adoptLink(peer.nodeId, relayA, 'relay', self.nodeId)).toBe(relayA);
     expect(managerB.adoptLink(self.nodeId, relayB, 'relay', self.nodeId)).toBe(relayB);
     expect(managerA.transportOf(peer.nodeId)).toBe('relay');
+    await waitUntil(() => managerA.quiesceCapableOf(peer.nodeId));
 
     store.upsertPeer({
       nodeId: peer.nodeId,

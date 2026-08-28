@@ -499,7 +499,7 @@ export class LinkMux implements LinkSession {
       streamId: stream.id,
       op: FrameOp.WINDOW,
       payload: encodeWindowPayload(delta),
-    });
+    }).catch(() => undefined);
   }
 
   resetStream(stream: MuxStream, reason?: string): void {
@@ -510,7 +510,7 @@ export class LinkMux implements LinkSession {
       streamId: stream.id,
       op: FrameOp.RST,
       payload,
-    });
+    }).catch(() => undefined);
     stream.abort({ reason: 'rst', message: reason });
     this.streams.delete(stream.id);
   }
@@ -521,7 +521,7 @@ export class LinkMux implements LinkSession {
       streamId,
       op: FrameOp.RST,
       payload: encodeRstReason('unknown stream'),
-    });
+    }).catch(() => undefined);
   }
 
   forgetStream(id: number): void {

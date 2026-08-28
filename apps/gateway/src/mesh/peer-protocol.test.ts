@@ -23,6 +23,30 @@ describe('peer handshake', () => {
     return { store, a, b };
   }
 
+  test('handshake hello does not advertise unauthenticated caps', async () => {
+    const { store, a, b } = setup();
+    const [wsA, wsB] = fakeSocketPair();
+    const hellos: Array<Record<string, unknown>> = [];
+    const origSend = wsA.send.bind(wsA);
+    wsA.send = (bytes: Uint8Array) => {
+      try {
+        const msg = JSON.parse(new TextDecoder().decode(bytes)) as Record<string, unknown>;
+        if (msg.t === 'hello') hellos.push(msg);
+      } catch {
+        // encrypted frames after hello
+      }
+      return origSend(bytes);
+    };
+    await Promise.all([
+      handshakeWsDirect({ socket: wsA, role: 'initiator', identity: a, userStore: store }),
+      handshakeWsDirect({ socket: wsB, role: 'acceptor', identity: b, userStore: store }),
+    ]);
+    expect(hellos.length).toBeGreaterThan(0);
+    for (const hello of hellos) {
+      expect(hello).not.toHaveProperty('caps');
+    }
+  });
+
   test('ws-secure handshake encrypts the mux like relay', async () => {
     const { store, a, b } = setup();
     const [wsA, wsB] = fakeSocketPair();

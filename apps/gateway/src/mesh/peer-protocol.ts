@@ -36,7 +36,6 @@ export type PeerHelloWire = {
   nonce: string;
   eph_x25519_pk: string;
   dtls_fingerprint?: { algorithm: string; value: string } | null;
-  caps?: string[];
 };
 
 export type PeerSigWire = {
@@ -88,7 +87,6 @@ export type PeerHandshakeResult = {
   transport: PeerTransportKind;
   sendKey?: Uint8Array;
   recvKey?: Uint8Array;
-  quiesceCapable: boolean;
 };
 
 const HANDSHAKE_TIMEOUT_MS = 10_000;
@@ -104,10 +102,6 @@ export function decodePeerCtl(bytes: Uint8Array): Record<string, unknown> {
     throw new PeerHandshakeError('protocol', 'peer ctl must be JSON with t');
   }
   return parsed;
-}
-
-function helloHasQuiesceCap(msg: Record<string, unknown>): boolean {
-  return Array.isArray(msg.caps) && msg.caps.includes('quiesce');
 }
 
 function parseHello(msg: Record<string, unknown>): { hello: PeerHello; nodeIdHex: string } {
@@ -213,7 +207,6 @@ async function exchangeHelloAndSig(
   selfHello: PeerHello;
   transcriptBytes: Uint8Array;
   ephSk: Uint8Array;
-  quiesceCapable: boolean;
 }> {
   const selfId = hexToBytes(opts.identity.nodeId);
   if (selfId.byteLength !== 16) {
@@ -234,7 +227,6 @@ async function exchangeHelloAndSig(
       nonce: encodeBase64url(selfHello.nonce),
       eph_x25519_pk: encodeBase64url(selfHello.eph_x25519_pk as Uint8Array),
       dtls_fingerprint: null,
-      caps: ['quiesce'],
     })
   );
 
@@ -242,7 +234,6 @@ async function exchangeHelloAndSig(
   let peerNodeId = '';
   let gotSig: Uint8Array | null = null;
   let sentSig = false;
-  let quiesceCapable = false;
 
   const sendSigIfReady = async () => {
     if (sentSig || !peerHello) return;
@@ -261,7 +252,6 @@ async function exchangeHelloAndSig(
           const parsed = parseHello(msg);
           peerHello = parsed.hello;
           peerNodeId = parsed.nodeIdHex;
-          quiesceCapable = helloHasQuiesceCap(msg);
           await sendSigIfReady();
         } else if (msg.t === 'sig') {
           gotSig = decodeBase64url(requireString(msg.sig, 'sig'));
@@ -289,7 +279,6 @@ async function exchangeHelloAndSig(
     selfHello,
     transcriptBytes,
     ephSk: eph.secretKey,
-    quiesceCapable,
   };
 }
 
@@ -412,7 +401,6 @@ export async function handshakeWsDirect(opts: {
       transport: 'ws-secure',
       sendKey: keys.sendKey,
       recvKey: keys.recvKey,
-      quiesceCapable: result.quiesceCapable,
     };
   } catch (err) {
     gate.fail(err instanceof Error ? err.message : 'handshake-failed');
@@ -473,7 +461,6 @@ export async function handshakeRelay(opts: {
       transport: 'relay',
       sendKey: keys.sendKey,
       recvKey: keys.recvKey,
-      quiesceCapable: result.quiesceCapable,
     };
   } catch (err) {
     try {

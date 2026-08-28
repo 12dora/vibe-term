@@ -42,6 +42,7 @@ import {
   setMeshRequestContext,
 } from './mesh-deps';
 import { MeshHttpRuntime } from './mesh-http';
+import { NodeEventDedupe, type NodeEventProjection } from './node-event-dedupe';
 import { type PeerLinkFactory, PeerManager } from './peer-manager';
 import {
   type ControlSendStatus,
@@ -578,10 +579,9 @@ export async function createMeshRuntime(opts: CreateMeshRuntimeOptions): Promise
   const applier = createKeyLogApplier(keyLogStore, keyLogService);
   const userIdOf = () => resolveUserId(userStore, identity.nodeIdHex, opts.userId) ?? '';
   const nodeEvents = new Set<(event: NodeEventPayload) => void>();
-  const lastEmittedNodeStatus = new Map<string, NodeEventPayload['status']>();
+  const nodeEventDedupe = new NodeEventDedupe();
+  let hubGeneration = 0;
   const emitNodeEvent = (event: NodeEventPayload) => {
-    if (lastEmittedNodeStatus.get(event.nodeId) === event.status) return;
-    lastEmittedNodeStatus.set(event.nodeId, event.status);
     for (const cb of nodeEvents) {
       try {
         cb(event);
@@ -589,6 +589,18 @@ export async function createMeshRuntime(opts: CreateMeshRuntimeOptions): Promise
         // listener errors must not break broadcast
       }
     }
+  };
+  const emitListNodeEvent = (event: NodeEventProjection) => {
+    if (!nodeEventDedupe.shouldEmitList(event)) return;
+    emitNodeEvent(event);
+  };
+  const emitSyntheticOffline = (nodeId: string) => {
+    if (!nodeEventDedupe.shouldEmitSyntheticOffline(nodeId, hubGeneration)) return;
+    emitNodeEvent({ nodeId, status: 'offline' });
+  };
+  const emitRevoked = (nodeId: string) => {
+    nodeEventDedupe.onRevoke(nodeId);
+    emitNodeEvent({ nodeId, status: 'revoked' });
   };
   const signalListeners = new Set<(signal: RtcSignalMessage) => void>();
   let lastNodeList: UplinkNodeList | null = null;
@@ -771,11 +783,13 @@ export async function createMeshRuntime(opts: CreateMeshRuntimeOptions): Promise
     },
     onNodeList: (list) => {
       lastNodeList = list;
+      if (!hubPresenceLive) hubGeneration += 1;
       hubPresenceLive = true;
       lastRtc = {
         stun: list.rtc.stun,
         turn: list.rtc.turn ?? null,
       };
+      const reach = peerHolder.manager?.listReach() ?? new Map();
       for (const node of list.nodes) {
         if (node.id === HUB_META_PEER_ID) continue;
         const cert = userStore.getCert(node.id);
@@ -784,17 +798,21 @@ export async function createMeshRuntime(opts: CreateMeshRuntimeOptions): Promise
           userStore.deletePeer(node.id);
           if (cert?.revokedLogSeq != null) {
             peerHolder.manager?.onRevoked(node.id);
-            emitNodeEvent({ nodeId: node.id, status: 'revoked' });
+            emitRevoked(node.id);
           }
           continue;
         }
-        emitNodeEvent({
+        emitListNodeEvent({
           nodeId: node.id,
           status: node.online ? 'online' : 'offline',
+          reach: reach.get(node.id) ?? null,
           inventory:
             typeof node.inventory === 'string'
               ? node.inventory
               : JSON.stringify(node.inventory ?? null),
+          version: node.version,
+          direct_capable: node.direct_capable,
+          name: node.name,
         });
         if (node.id !== identity.nodeIdHex) {
           peerHolder.manager?.notifyPeerEndpointsChanged(node.id);
@@ -807,6 +825,7 @@ export async function createMeshRuntime(opts: CreateMeshRuntimeOptions): Promise
         if (!cert || !uid || cert.userId !== uid || cert.revokedLogSeq != null) {
           if (cert?.revokedLogSeq != null) {
             peerHolder.manager?.onRevoked(peer.nodeId);
+            emitRevoked(peer.nodeId);
           } else {
             userStore.deletePeer(peer.nodeId);
           }
@@ -913,7 +932,7 @@ export async function createMeshRuntime(opts: CreateMeshRuntimeOptions): Promise
         if (node.id === identity.nodeIdHex || !node.online) continue;
         const r = reach.get(node.id);
         if (r === 'lan' || r === 'relay') continue;
-        emitNodeEvent({ nodeId: node.id, status: 'offline' });
+        emitSyntheticOffline(node.id);
       }
     }
     if (!live) hubPresenceLive = false;
@@ -1224,6 +1243,7 @@ export async function createMeshRuntime(opts: CreateMeshRuntimeOptions): Promise
     async stop() {
       if (stopPromise) return stopPromise;
       stopPromise = (async () => {
+        nodeEventDedupe.clear();
         try {
           await peerManager.stop();
         } catch (err) {

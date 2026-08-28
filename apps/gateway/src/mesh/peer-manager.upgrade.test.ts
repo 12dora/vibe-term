@@ -644,7 +644,7 @@ describe('PeerManager upgrade review fixes', () => {
     expect(managerA.quiesceCapableOf(peer.nodeId)).toBe(false);
   });
 
-  test('getLink may upgrade a mixed-version peer only when the old link has no open streams', async () => {
+  test('getLink does not replace an existing mixed-version link until quiesce is ACKed', async () => {
     const { db, close } = createMigratedAuthDb();
     fixtures.push({ close });
     const store = new UserStore(db);
@@ -654,30 +654,6 @@ describe('PeerManager upgrade review fixes', () => {
     let dials = 0;
     const [nextA, nextB] = createInMemoryLinkPair();
     fixtures.push({ close: () => nextB.close('test') });
-    const managerBusy = new PeerManager({
-      identity: self,
-      userStore: store,
-      uplink: failingUplink(self, store),
-      peerPort: 0,
-      startServer: false,
-      sessionStore: dummySessionStore(),
-      dispatchHttp: () => new Promise(() => {}),
-      linkFactory: async () => {
-        dials += 1;
-        throw new Error('should-not-dial-busy');
-      },
-    });
-    fixtures.push({ close, stop: () => managerBusy.stop() });
-    const busyPair = createInMemoryLinkPair();
-    expect(managerBusy.adoptLink(peer.nodeId, busyPair[0], 'relay', self.nodeId)).toBe(busyPair[0]);
-    const held = await busyPair[0].openStream(HTTP_OPEN);
-    fixtures.push({ close: () => held.reset('test') });
-    await managerBusy.getLink(peer.nodeId);
-    await new Promise((resolve) => setTimeout(resolve, 40));
-    expect(dials).toBe(0);
-    expect(managerBusy.transportOf(peer.nodeId)).toBe('relay');
-
-    dials = 0;
     const managerIdle = new PeerManager({
       identity: self,
       userStore: store,
@@ -692,8 +668,41 @@ describe('PeerManager upgrade review fixes', () => {
     fixtures.push({ close, stop: () => managerIdle.stop() });
     const idlePair = createInMemoryLinkPair();
     expect(managerIdle.adoptLink(peer.nodeId, idlePair[0], 'relay', self.nodeId)).toBe(idlePair[0]);
-    void managerIdle.getLink(peer.nodeId);
-    await waitUntil(() => dials === 1 && managerIdle.transportOf(peer.nodeId) === 'ws-secure');
+    const kept = await managerIdle.getLink(peer.nodeId);
+    await new Promise((resolve) => setTimeout(resolve, 40));
+    expect(kept).toBe(idlePair[0]);
+    expect(dials).toBe(0);
+    expect(managerIdle.transportOf(peer.nodeId)).toBe('relay');
+    expect(managerIdle.quiesceCapableOf(peer.nodeId)).toBe(false);
+  });
+
+  test('getLink may still dial a new link when none exists without a quiesce ACK', async () => {
+    const { db, close } = createMigratedAuthDb();
+    fixtures.push({ close });
+    const store = new UserStore(db);
+    seedUser(store);
+    const self = seedNodeIdentity(store, 'user-1');
+    const peer = seedNodeIdentity(store, 'user-1');
+    let dials = 0;
+    const [nextA, nextB] = createInMemoryLinkPair();
+    fixtures.push({ close: () => nextB.close('test') });
+    const manager = new PeerManager({
+      identity: self,
+      userStore: store,
+      uplink: failingUplink(self, store),
+      peerPort: 0,
+      startServer: false,
+      linkFactory: async () => {
+        dials += 1;
+        return nextA;
+      },
+    });
+    fixtures.push({ close, stop: () => manager.stop() });
+    const link = await manager.getLink(peer.nodeId);
+    expect(dials).toBe(1);
+    expect(link).toBe(nextA);
+    expect(manager.transportOf(peer.nodeId)).toBe('ws-secure');
+    expect(manager.quiesceCapableOf(peer.nodeId)).toBe(false);
   });
 
   test('retiring link with an active 60s stream is not hard-closed at the 30s cap', async () => {

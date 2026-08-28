@@ -155,6 +155,18 @@ class IdleLruMap<T> {
     return value;
   }
 
+  trySet(key: string, value: T, now: number): T | undefined {
+    this.sweep(now);
+    if (this.items.has(key)) {
+      this.items.delete(key);
+      this.items.set(key, { value, lastAt: now });
+      return value;
+    }
+    if (this.items.size >= this.max) return undefined;
+    this.items.set(key, { value, lastAt: now });
+    return value;
+  }
+
   delete(key: string): void {
     this.items.delete(key);
   }
@@ -167,6 +179,52 @@ class IdleLruMap<T> {
     for (const [key, row] of this.items) {
       if (now - row.lastAt >= this.ttlMs) this.items.delete(key);
     }
+  }
+}
+
+export class KeyLogReqLimiter {
+  private readonly buckets: IdleLruMap<TokenBucket>;
+  private readonly overflow = new Map<string, TokenBucket>();
+  private readonly ratePerMin: number;
+  private readonly burst: number;
+
+  constructor(opts?: { max?: number; ttlMs?: number; ratePerMin?: number; burst?: number }) {
+    this.ratePerMin = opts?.ratePerMin ?? HUB_KEY_LOG_REQ_RATE_PER_MIN;
+    this.burst = opts?.burst ?? HUB_KEY_LOG_REQ_BURST;
+    this.buckets = new IdleLruMap(
+      opts?.max ?? HUB_KEY_LOG_REQ_STATE_MAX,
+      opts?.ttlMs ?? HUB_KEY_LOG_REQ_IDLE_TTL_MS
+    );
+  }
+
+  get size(): number {
+    return this.buckets.size;
+  }
+
+  take(nodeId: string, userId: string, now: number): boolean {
+    let bucket = this.buckets.touch(nodeId, now);
+    if (!bucket) {
+      const created = new TokenBucket(this.ratePerMin, this.burst);
+      bucket = this.buckets.trySet(nodeId, created, now);
+      if (!bucket) {
+        let overflow = this.overflow.get(userId);
+        if (!overflow) {
+          overflow = new TokenBucket(this.ratePerMin, this.burst);
+          this.overflow.set(userId, overflow);
+        }
+        bucket = overflow;
+      }
+    }
+    return bucket.take(now);
+  }
+
+  delete(nodeId: string): void {
+    this.buckets.delete(nodeId);
+  }
+
+  clear(): void {
+    this.buckets.clear();
+    this.overflow.clear();
   }
 }
 
@@ -189,7 +247,7 @@ export class UplinkServer {
   private readonly rtcSessions = new Map<string, RtcSessionRegistration>();
   private listVersion = 0;
   private stopped = false;
-  private readonly keyLogReqBuckets: IdleLruMap<TokenBucket>;
+  private readonly keyLogReqLimiter: KeyLogReqLimiter;
   private readonly keyLogReqLogs: IdleLruMap<{ lastAt: number; suppressed: number }>;
 
   constructor(opts: UplinkServerOptions) {
@@ -203,10 +261,10 @@ export class UplinkServer {
     this.heartbeatMissLimit = opts.heartbeatMissLimit ?? HUB_HEARTBEAT_MISS_LIMIT;
     this.authTimeoutMs = opts.authTimeoutMs ?? HUB_AUTH_TIMEOUT_MS;
     this.rtcMaxSessions = opts.rtcMaxSessions ?? HUB_RTC_MAX_SESSIONS;
-    this.keyLogReqBuckets = new IdleLruMap(
-      opts.keyLogReqStateMax ?? HUB_KEY_LOG_REQ_STATE_MAX,
-      opts.keyLogReqIdleTtlMs ?? HUB_KEY_LOG_REQ_IDLE_TTL_MS
-    );
+    this.keyLogReqLimiter = new KeyLogReqLimiter({
+      max: opts.keyLogReqStateMax ?? HUB_KEY_LOG_REQ_STATE_MAX,
+      ttlMs: opts.keyLogReqIdleTtlMs ?? HUB_KEY_LOG_REQ_IDLE_TTL_MS,
+    });
     this.keyLogReqLogs = new IdleLruMap(
       opts.keyLogReqStateMax ?? HUB_KEY_LOG_REQ_STATE_MAX,
       opts.keyLogReqIdleTtlMs ?? HUB_KEY_LOG_REQ_IDLE_TTL_MS
@@ -346,13 +404,13 @@ export class UplinkServer {
     this.accepted.clear();
     this.authTimers.clear();
     this.rtcSessions.clear();
-    this.keyLogReqBuckets.clear();
+    this.keyLogReqLimiter.clear();
     this.keyLogReqLogs.clear();
     this.registry.closeAll('hub-stop');
   }
 
   get keyLogReqBucketCount(): number {
-    return this.keyLogReqBuckets.size;
+    return this.keyLogReqLimiter.size;
   }
 
   private send(link: LinkSession, msg: UplinkCtlMessage): void {
@@ -552,16 +610,8 @@ export class UplinkServer {
     msg: Extract<UplinkCtlMessage, { t: 'key.log.req' }>
   ): Promise<void> {
     const now = this.now();
-    let bucket = this.keyLogReqBuckets.touch(live.nodeId, now);
-    if (!bucket) {
-      bucket = this.keyLogReqBuckets.set(
-        live.nodeId,
-        new TokenBucket(HUB_KEY_LOG_REQ_RATE_PER_MIN, HUB_KEY_LOG_REQ_BURST),
-        now
-      );
-    }
     const fromSeq = BigInt(msg.from_seq);
-    if (!bucket.take(now)) {
+    if (!this.keyLogReqLimiter.take(live.nodeId, live.userId, now)) {
       this.warnKeyLogReq(live.nodeId, fromSeq, 0, true);
       return;
     }
@@ -837,7 +887,7 @@ export class UplinkServer {
 
   private evictRevokedNode(nodeId: string): void {
     patchNode(this.db, nodeId, { status: 'revoked' });
-    this.keyLogReqBuckets.delete(nodeId);
+    this.keyLogReqLimiter.delete(nodeId);
     this.keyLogReqLogs.delete(nodeId);
     this.dropRtcForNode(nodeId);
     const entry = this.registry.get(nodeId);

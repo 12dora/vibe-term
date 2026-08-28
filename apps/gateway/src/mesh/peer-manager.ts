@@ -577,10 +577,8 @@ export class PeerManager {
     if (!live || !this.wantsUpgrade(live)) return;
     if (!live.quiesceCapable) {
       this.probeQuiesce(live);
-      if (!(opts.userPath && live.streams === 0)) {
-        this.ensureGate(nodeId).coalesced = true;
-        return;
-      }
+      this.ensureGate(nodeId).coalesced = true;
+      return;
     }
     if (this.pending.has(nodeId)) {
       this.ensureGate(nodeId).coalesced = true;
@@ -671,7 +669,7 @@ export class PeerManager {
     };
     const live = this.live.get(peerNodeId);
     if (live && live.transport !== 'dc') {
-      live.session.ctl.send(encodeJsonBytes(payload));
+      this.sendPeerCtl(live, payload);
       return;
     }
     this.ensureDcSession?.(peerNodeId, msg.rtcSession);
@@ -782,8 +780,7 @@ export class PeerManager {
         result.peerNodeId,
         'relay',
         this.identity.nodeId,
-        gen,
-        result.quiesceCapable
+        gen
       );
       if (!kept) {
         throw new NodeUnreachableError(nodeId, 'simultaneous-dial');
@@ -875,8 +872,7 @@ export class PeerManager {
       result.peerNodeId,
       'ws-secure',
       this.identity.nodeId,
-      gen,
-      result.quiesceCapable
+      gen
     );
     if (!kept) throw new Error('simultaneous-dial');
     this.rememberKeys(result.peerNodeId, result.sendKey, result.recvKey);
@@ -896,14 +892,7 @@ export class PeerManager {
         result.session.close('stopped');
         return;
       }
-      this.track(
-        result.session,
-        result.peerNodeId,
-        'ws-secure',
-        result.peerNodeId,
-        gen,
-        result.quiesceCapable
-      );
+      this.track(result.session, result.peerNodeId, 'ws-secure', result.peerNodeId, gen);
       this.rememberKeys(result.peerNodeId, result.sendKey, result.recvKey);
     } catch {
       try {
@@ -927,14 +916,7 @@ export class PeerManager {
         result.session.close('stopped');
         return;
       }
-      this.track(
-        result.session,
-        result.peerNodeId,
-        'relay',
-        from || result.peerNodeId,
-        gen,
-        result.quiesceCapable
-      );
+      this.track(result.session, result.peerNodeId, 'relay', from || result.peerNodeId, gen);
       this.rememberKeys(result.peerNodeId, result.sendKey, result.recvKey);
     } catch {
       try {
@@ -1126,7 +1108,7 @@ export class PeerManager {
     if (!msg || typeof msg.t !== 'string') return;
     switch (msg.t) {
       case 'ping':
-        live.session.ctl.send(encodeJsonBytes({ t: 'pong' }));
+        this.sendPeerCtl(live, { t: 'pong' });
         return;
       case 'pong':
         live.missedPongs = 0;
@@ -1142,11 +1124,7 @@ export class PeerManager {
       }
       case 'link.quiesce.probe':
         this.markQuiesceCapable(live);
-        try {
-          live.session.ctl.send(encodeJsonBytes({ t: 'link.quiesce.probe.ack' }));
-        } catch {
-          // link may already be closing
-        }
+        this.sendPeerCtl(live, { t: 'link.quiesce.probe.ack' });
         return;
       case 'link.quiesce.probe.ack':
         this.markQuiesceCapable(live);
@@ -1154,11 +1132,7 @@ export class PeerManager {
       case 'link.quiesce':
         live.gotPeerQuiesce = true;
         this.markQuiesceCapable(live);
-        try {
-          live.session.ctl.send(encodeJsonBytes({ t: 'link.quiesce.ack' }));
-        } catch {
-          // link may already be closing
-        }
+        this.sendPeerCtl(live, { t: 'link.quiesce.ack' });
         if (live.retiring) this.maybeFinishRetire(live);
         return;
       case 'link.quiesce.ack':
@@ -1221,9 +1195,7 @@ export class PeerManager {
       const remoteSeq = parseSeq(head.seq, 'key_log_head.seq');
       const local = await this.keyLogApplier.head(this.uplink.userId);
       if (remoteSeq > local.seq) {
-        live.session.ctl.send(
-          encodeJsonBytes({ t: 'key.log.req', from_seq: Number(local.seq + 1n) })
-        );
+        this.sendPeerCtl(live, { t: 'key.log.req', from_seq: Number(local.seq + 1n) });
       }
     } catch {
       // ignore
@@ -1235,16 +1207,14 @@ export class PeerManager {
     try {
       const fromSeq = parseSeq(msg.from_seq, 'from_seq');
       const records = await this.keyLogApplier.list(this.uplink.userId, fromSeq);
-      live.session.ctl.send(
-        encodeJsonBytes({
-          t: 'key.log.res',
-          records: records.map((row) => ({
-            seq: Number(row.seq),
-            bytes: encodeBase64url(row.bytes),
-            sig: encodeBase64url(row.sig),
-          })),
-        })
-      );
+      this.sendPeerCtl(live, {
+        t: 'key.log.res',
+        records: records.map((row) => ({
+          seq: Number(row.seq),
+          bytes: encodeBase64url(row.bytes),
+          sig: encodeBase64url(row.sig),
+        })),
+      });
     } catch {
       // ignore
     }
@@ -1278,16 +1248,20 @@ export class PeerManager {
       name: status.name,
     };
     if (this.keyLogApplier) {
-      void this.keyLogApplier.head(this.uplink.userId).then((head) => {
-        payload.key_log_head = {
-          seq: Number(head.seq),
-          hash: encodeBase64url(head.hash),
-        };
-        live.session.ctl.send(encodeJsonBytes(payload));
-      });
+      void this.keyLogApplier
+        .head(this.uplink.userId)
+        .then((head) => {
+          if (this.live.get(live.peerNodeId) !== live && !live.retiring) return;
+          payload.key_log_head = {
+            seq: Number(head.seq),
+            hash: encodeBase64url(head.hash),
+          };
+          this.sendPeerCtl(live, payload);
+        })
+        .catch(() => undefined);
       return;
     }
-    live.session.ctl.send(encodeJsonBytes(payload));
+    this.sendPeerCtl(live, payload);
   }
 
   private startPing(live: LivePeer): void {
@@ -1300,11 +1274,7 @@ export class PeerManager {
         return;
       }
       live.missedPongs += 1;
-      try {
-        live.session.ctl.send(encodeJsonBytes({ t: 'ping' }));
-      } catch {
-        this.dropPeer(live.peerNodeId, 'ping-failed');
-      }
+      this.sendPeerCtl(live, { t: 'ping' });
     }, PEER_PING_INTERVAL_MS);
   }
 
@@ -1362,11 +1332,7 @@ export class PeerManager {
       this.retiring.set(prev.peerNodeId, set);
     }
     set.add(prev);
-    try {
-      prev.session.ctl.send(encodeJsonBytes({ t: 'link.quiesce' }));
-    } catch {
-      // old link may already be closing
-    }
+    this.sendPeerCtl(prev, { t: 'link.quiesce' });
     prev.retireTimer?.clear();
     prev.retireTimer = this.scheduler.interval(() => {
       this.maybeFinishRetire(prev, reason);
@@ -1393,22 +1359,22 @@ export class PeerManager {
     }
   }
 
-  private sendLinkHello(live: LivePeer): void {
+  private sendPeerCtl(live: LivePeer, msg: Record<string, unknown>): void {
     try {
-      live.session.ctl.send(encodeJsonBytes({ t: 'link.hello', caps: ['quiesce'] }));
+      void Promise.resolve(live.session.ctl.send(encodeJsonBytes(msg))).catch(() => undefined);
     } catch {
       // link may already be closing
     }
   }
 
+  private sendLinkHello(live: LivePeer): void {
+    this.sendPeerCtl(live, { t: 'link.hello', caps: ['quiesce'] });
+  }
+
   private probeQuiesce(live: LivePeer): void {
     if (live.probeSent || live.quiesceCapable) return;
     live.probeSent = true;
-    try {
-      live.session.ctl.send(encodeJsonBytes({ t: 'link.quiesce.probe' }));
-    } catch {
-      // link may already be closing
-    }
+    this.sendPeerCtl(live, { t: 'link.quiesce.probe' });
   }
 
   private markQuiesceCapable(live: LivePeer): void {

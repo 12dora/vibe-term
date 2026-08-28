@@ -626,6 +626,95 @@ describe('createMeshRuntime', () => {
     expect(offlineAfter).toBe(1);
   });
 
+  test('node.list inventory changes emit NODE_EVENT while identical projections are de-duped', async () => {
+    const { db, close } = createMigratedAuthDb();
+    const userStore = new UserStore(db);
+    seedUser(userStore);
+    const peerId = 'cd'.repeat(16);
+    userStore.upsertCert({
+      nodeId: peerId,
+      userId: 'user-1',
+      admitRecordSeq: 1,
+      certificateBytes: encodeCertificate({
+        domain: DOMAIN_CERTIFICATE,
+        uid: 'user-1',
+        node_id: hexToBytes(peerId),
+        ed_pk: new Uint8Array(32).fill(4),
+        x25519_pk: new Uint8Array(32).fill(5),
+        enroll_pk: new Uint8Array(32).fill(6),
+        issued_at: 1n,
+      }),
+      certSig: randomBytes(64),
+      authorizationBytes: randomBytes(8),
+      authorizationSig: randomBytes(64),
+      revokedLogSeq: null,
+    });
+    const [clientWs, hubWs] = fakeSocketPair();
+    const hub = new WebSocketLink(hubWs, { role: 'acceptor' });
+    hub.ctl.onMessage(() => {});
+    const events: Array<{ nodeId: string; status: string; inventory?: string | null }> = [];
+    const mesh = await createMeshRuntime({
+      db,
+      gateway: fakeGateway(db),
+      config: {
+        roles: { hub: false, node: true },
+        hubUrl: 'http://127.0.0.1:9',
+        peerPort: 0,
+        stunServers: [],
+      },
+      wsFactory: () => clientWs,
+      startPeerServer: false,
+    });
+    fixtures.push({ close, stop: () => mesh.stop() });
+    mesh.onNodeEvent((event) => {
+      events.push({ nodeId: event.nodeId, status: event.status, inventory: event.inventory });
+    });
+    await mesh.start();
+    await waitUntil(() => mesh.uplink.link !== null);
+    hub.ctl.send(encodeUplinkCtl({ t: 'auth.challenge', nonce: encodeBase64url(randomBytes(32)) }));
+    hub.ctl.send(encodeUplinkCtl({ t: 'auth.ok' }));
+    await waitUntil(() => mesh.uplink.state === 'online');
+
+    const sendList = (version: string, inventory: unknown) => {
+      hub.ctl.send(
+        encodeUplinkCtl({
+          t: 'node.list',
+          version: Number(version[0]),
+          key_log_head: { seq: 0n, hash: new Uint8Array(32) },
+          rtc: { stun: [], turn: null },
+          nodes: [
+            {
+              id: peerId,
+              name: 'peer',
+              online: true,
+              endpoints: [],
+              inventory,
+              direct_capable: false,
+              version,
+            },
+          ],
+        })
+      );
+    };
+
+    sendList('1.0.0', { version: '1.0.0' });
+    await waitUntil(
+      () => events.filter((e) => e.nodeId === peerId && e.status === 'online').length >= 1
+    );
+    sendList('1.0.0', { version: '1.0.0' });
+    await new Promise((resolve) => setTimeout(resolve, 40));
+    const afterSame = events.filter((e) => e.nodeId === peerId && e.status === 'online');
+    expect(afterSame).toHaveLength(1);
+
+    sendList('2.0.0', { version: '2.0.0' });
+    await waitUntil(
+      () => events.filter((e) => e.nodeId === peerId && e.status === 'online').length >= 2
+    );
+    const online = events.filter((e) => e.nodeId === peerId && e.status === 'online');
+    expect(online).toHaveLength(2);
+    expect(online[1]?.inventory).toContain('2.0.0');
+  });
+
   test('re-advertises node.status endpoints when network interfaces change', async () => {
     const { db, close } = createMigratedAuthDb();
     seedUser(new UserStore(db));
