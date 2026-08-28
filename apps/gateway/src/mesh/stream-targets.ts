@@ -10,6 +10,8 @@ import { parseOpenPayload } from './peer-protocol';
 import type { DispatchHttp, HttpStreamOpenPayload, WsStreamOpenPayload } from './types';
 
 const AUTH_SKIP_PATHS = new Set(['/api/auth/challenge', '/api/auth/login']);
+const HTTP_FORWARD_ABORT_LOG_INTERVAL_MS = 1_000;
+let lastHttpForwardAbortLogAt = 0;
 
 const BLOCKED_REQUEST_HEADERS = new Set([
   'cookie',
@@ -59,6 +61,31 @@ export function stripSetCookieHeaders(headers: Record<string, string>): Record<s
     out[key] = value;
   }
   return out;
+}
+
+function parseContentLength(headers: Record<string, string>): number | null {
+  for (const [key, value] of Object.entries(headers)) {
+    if (key.toLowerCase() !== 'content-length') continue;
+    const n = Number(value.trim());
+    if (!Number.isInteger(n) || n < 0) return null;
+    return n;
+  }
+  return null;
+}
+
+function logHttpForwardAborted(fields: {
+  status: number;
+  sent: number;
+  expected: number | null;
+  reason: string;
+}): void {
+  const now = Date.now();
+  if (now - lastHttpForwardAbortLogAt < HTTP_FORWARD_ABORT_LOG_INTERVAL_MS) return;
+  lastHttpForwardAbortLogAt = now;
+  const expected = fields.expected === null ? '-' : String(fields.expected);
+  console.warn(
+    `[mesh][http] forward aborted status=${fields.status} sent=${fields.sent} expected=${expected} reason=${fields.reason}`
+  );
 }
 
 function headerRecord(headers: Headers): Record<string, string> {
@@ -347,29 +374,69 @@ export async function openHttpStream(
     } catch {
       // writer stopped
     }
+    const expectedLength = parseContentLength(head.headers);
+    let sent = 0;
+    let bodyFailed = false;
+    let abortedAfterHead = false;
+    let bodyController: ReadableStreamDefaultController<Uint8Array> | null = null;
+
+    const failBody = (err: unknown) => {
+      const error = err instanceof Error ? err : new Error(String(err ?? 'http body aborted'));
+      if (!bodyFailed) {
+        bodyFailed = true;
+        logHttpForwardAborted({
+          status: head.status,
+          sent,
+          expected: expectedLength,
+          reason: error.message,
+        });
+      }
+      if (!bodyController) return;
+      try {
+        bodyController.error(error);
+      } catch {
+        // already closed/errored
+      }
+    };
+
+    stream.onAbort(() => {
+      abortedAfterHead = true;
+      failBody(new Error('http stream aborted'));
+    });
+
     const responseBody = new ReadableStream<Uint8Array>({
       async start(controller) {
+        bodyController = controller;
+        if (abortedAfterHead || bodyFailed) {
+          failBody(new Error('http stream aborted'));
+          return;
+        }
         for (const chunk of head.rest) {
+          sent += chunk.byteLength;
           controller.enqueue(chunk);
         }
         const reader = stream.readable.getReader();
         try {
           while (true) {
+            if (bodyFailed) return;
             const { done, value } = await reader.read();
             if (done) break;
-            if (value) controller.enqueue(value.bytes);
+            if (value) {
+              sent += value.bytes.byteLength;
+              controller.enqueue(value.bytes);
+            }
+          }
+          if (abortedAfterHead) {
+            failBody(new Error('http stream aborted'));
+            return;
+          }
+          if (expectedLength !== null && sent < expectedLength) {
+            failBody(new Error(`http body truncated: sent=${sent} expected=${expectedLength}`));
+            return;
           }
           controller.close();
         } catch (err) {
-          if (head.status) {
-            try {
-              controller.close();
-            } catch {
-              controller.error(err);
-            }
-          } else {
-            controller.error(err);
-          }
+          failBody(err);
         }
       },
       cancel() {

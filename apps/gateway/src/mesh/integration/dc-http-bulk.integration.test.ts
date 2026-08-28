@@ -7,6 +7,7 @@ import { DC_MAX_MESSAGE_BYTES } from '../rtc/fragmenter';
 import type { RtcSignaling } from '../rtc/ice';
 import { RtcPeerManager } from '../rtc/rtc-peer-manager';
 import { createFakeNativeModule } from '../rtc/test-fakes';
+import { openHttpStream } from '../stream-targets';
 import { seedNodeIdentity, seedUser } from '../test-support';
 
 const EIGHT_MIB = 8 * 1024 * 1024;
@@ -226,6 +227,65 @@ describe('HTTP-style bulk over PeerManager DataChannel', () => {
     expect(received).toEqual(body);
     inn.end();
     la.pc.close();
+    lb.pc.close();
+  });
+
+  test('openHttpStream errors the HTTP body when the DC dies mid-body (not a silent short 200)', async () => {
+    const { left, right, a, b } = setup();
+    const [sigA, sigB] = loopbackSignaling();
+    const [la, lb] = await Promise.all([
+      left.connectToPeer(b.nodeId, sigA),
+      right.connectToPeer(a.nodeId, sigB),
+    ]);
+    const muxA = new LinkMux(la.link, { role: la.role });
+    const muxB = new LinkMux(lb.link, { role: lb.role });
+    const peerReady = Promise.withResolvers<import('@tmex/shared/link').LinkStream>();
+    muxB.onStream(async (stream) => {
+      const head = new TextEncoder().encode(
+        `{"status":200,"headers":{"content-type":"application/octet-stream","content-length":"${EIGHT_MIB}"}}`
+      );
+      await stream.write(head, { head: true });
+      await stream.write(fillPattern(new Uint8Array(64 * 1024)));
+      peerReady.resolve(stream);
+    });
+    const res = await openHttpStream(muxA, {
+      type: 'http',
+      method: 'GET',
+      path: '/api/files/raw',
+      origin: 'http://entry',
+      auth: null,
+    });
+    expect(res.status).toBe(200);
+    const body = res.body;
+    expect(body).toBeDefined();
+    if (!body) throw new Error('missing response body');
+    const reader = body.getReader();
+    const first = await reader.read();
+    expect(first.done).toBe(false);
+    expect((first.value?.byteLength ?? 0) > 0).toBe(true);
+
+    const peer = await peerReady.promise;
+    const rest = (async () => {
+      let received = first.value?.byteLength ?? 0;
+      while (true) {
+        const next = await reader.read();
+        if (next.done) return { received, done: true as const };
+        received += next.value?.byteLength ?? 0;
+      }
+    })();
+    la.link.close('channel-closed');
+    peer.reset('channel-closed');
+    let outcome: { received: number; done: true } | { error: unknown };
+    try {
+      outcome = await rest;
+    } catch (err) {
+      outcome = { error: err };
+    }
+    expect('error' in outcome).toBe(true);
+    if (!('error' in outcome)) {
+      expect(outcome.received).toBeLessThan(EIGHT_MIB);
+    }
+
     lb.pc.close();
   });
 

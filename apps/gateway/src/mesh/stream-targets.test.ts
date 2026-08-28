@@ -228,6 +228,80 @@ describe('http/ws stream targets', () => {
     ).rejects.toThrow();
   });
 
+  test('openHttpStream errors the response body when the stream RSTs after the head', async () => {
+    const [a, b] = createInMemoryLinkPair();
+    const peerReady = Promise.withResolvers<import('@tmex/shared/link').LinkStream>();
+    b.onStream(async (stream) => {
+      await stream.write(
+        new TextEncoder().encode(
+          '{"status":200,"headers":{"content-type":"application/octet-stream"}}'
+        ),
+        { head: true }
+      );
+      await stream.write(new Uint8Array(2048).fill(7));
+      peerReady.resolve(stream);
+    });
+    const res = await openHttpStream(a, {
+      type: 'http',
+      method: 'GET',
+      path: '/api/bulk',
+      origin: 'http://entry',
+      auth: null,
+    });
+    expect(res.status).toBe(200);
+    const peer = await peerReady.promise;
+    const body = res.arrayBuffer();
+    peer.reset('mid-body');
+    await expect(body).rejects.toBeDefined();
+  });
+
+  test('openHttpStream errors the response body when it ends short of content-length', async () => {
+    const [a, b] = createInMemoryLinkPair();
+    b.onStream(async (stream) => {
+      await stream.write(
+        new TextEncoder().encode(
+          '{"status":200,"headers":{"content-length":"1024","content-type":"application/octet-stream"}}'
+        ),
+        { head: true }
+      );
+      await stream.write(new Uint8Array(64).fill(1));
+      await stream.end();
+    });
+    const res = await openHttpStream(a, {
+      type: 'http',
+      method: 'GET',
+      path: '/api/bulk',
+      origin: 'http://entry',
+      auth: null,
+    });
+    expect(res.status).toBe(200);
+    await expect(res.arrayBuffer()).rejects.toBeDefined();
+  });
+
+  test('openHttpStream delivers a complete body when content-length matches', async () => {
+    const [a, b] = createInMemoryLinkPair();
+    const payload = new TextEncoder().encode('hello');
+    b.onStream(async (stream) => {
+      await stream.write(
+        new TextEncoder().encode(
+          `{"status":200,"headers":{"content-length":"${payload.byteLength}","content-type":"text/plain"}}`
+        ),
+        { head: true }
+      );
+      await stream.write(payload);
+      await stream.end();
+    });
+    const res = await openHttpStream(a, {
+      type: 'http',
+      method: 'GET',
+      path: '/api/echo',
+      origin: 'http://entry',
+      auth: null,
+    });
+    expect(res.status).toBe(200);
+    expect(await res.text()).toBe('hello');
+  });
+
   test('openHttpStream strips hop-by-hop and identity headers from OPEN', async () => {
     const [a, b] = createInMemoryLinkPair();
     let openHeaders: Record<string, string> = {};
