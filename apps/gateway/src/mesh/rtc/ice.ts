@@ -262,6 +262,17 @@ export function encodeRtcWakeSdp(opts: {
   return JSON.stringify(payload);
 }
 
+export function isCanonicalRtcWakeNonce(nonce: string): boolean {
+  if (typeof nonce !== 'string' || nonce.length === 0) return false;
+  try {
+    const bytes = decodeBase64url(nonce);
+    if (bytes.byteLength !== RTC_WAKE_NONCE_BYTES) return false;
+    return encodeBase64url(bytes) === nonce;
+  } catch {
+    return false;
+  }
+}
+
 export function parseRtcWakeSdp(sdp: string | null | undefined): RtcWakeFields | null {
   if (!sdp) return null;
   try {
@@ -270,6 +281,7 @@ export function parseRtcWakeSdp(sdp: string | null | undefined): RtcWakeFields |
     if (parsed.domain !== RTC_WAKE_DOMAIN) return null;
     if (typeof parsed.from !== 'string' || typeof parsed.to !== 'string') return null;
     if (typeof parsed.rtcSession !== 'string' || typeof parsed.nonce !== 'string') return null;
+    if (!isCanonicalRtcWakeNonce(parsed.nonce)) return null;
     if (typeof parsed.issued_at !== 'number' || !Number.isFinite(parsed.issued_at)) return null;
     if (typeof parsed.sig !== 'string') return null;
     return {
@@ -333,14 +345,52 @@ function maskIpv4Host(host: string): string {
   return `${parts[0]}.${parts[1]}.${parts[2]}.0`;
 }
 
+function stripHextetZeros(hextet: string): string {
+  const stripped = hextet.replace(/^0+(?=\w)/, '');
+  return stripped.length > 0 ? stripped : '0';
+}
+
+function expandIpv6Hextets(host: string): string[] | null {
+  const raw = host.toLowerCase().split('%')[0] ?? host.toLowerCase();
+  if (raw.includes('.')) return null;
+  const sides = raw.split('::');
+  if (sides.length > 2) return null;
+  const parseSide = (side: string | undefined): string[] | null => {
+    if (side === undefined || side.length === 0) return [];
+    const parts = side.split(':');
+    if (parts.some((part) => part.length === 0 || part.length > 4 || !/^[0-9a-f]+$/.test(part))) {
+      return null;
+    }
+    return parts;
+  };
+  if (sides.length === 1) {
+    const parts = parseSide(sides[0]);
+    return parts?.length === 8 ? parts : null;
+  }
+  const left = parseSide(sides[0]);
+  const right = parseSide(sides[1]);
+  if (!left || !right) return null;
+  const missing = 8 - left.length - right.length;
+  if (missing < 0) return null;
+  return [...left, ...Array(missing).fill('0'), ...right];
+}
+
+function formatIpv6Prefix48(hextets: string[]): string {
+  const p0 = stripHextetZeros(hextets[0] ?? '0');
+  const p1 = stripHextetZeros(hextets[1] ?? '0');
+  const p2 = stripHextetZeros(hextets[2] ?? '0');
+  if (p0 === '0' && p1 === '0' && p2 === '0') return '::';
+  if (p1 === '0' && p2 === '0') return `${p0}::`;
+  if (p2 === '0') return `${p0}:${p1}::`;
+  return `${p0}:${p1}:${p2}::`;
+}
+
 function maskIpv6Host(host: string): string {
   const mapped = IPV4_MAPPED_RE.exec(host);
   if (mapped?.[1]) return `::ffff:${maskIpv4Host(mapped[1])}`;
-  const parts = host.split(':').filter((part) => part.length > 0);
-  if (parts.length >= 3) return `${parts[0]}:${parts[1]}:${parts[2]}::`;
-  if (parts.length === 2) return `${parts[0]}:${parts[1]}::`;
-  if (parts.length === 1) return `${parts[0]}::`;
-  return host;
+  const hextets = expandIpv6Hextets(host);
+  if (!hextets) return host;
+  return formatIpv6Prefix48(hextets);
 }
 
 function splitIceHostPort(addr: string): { host: string; port: string | null; bracketed: boolean } {

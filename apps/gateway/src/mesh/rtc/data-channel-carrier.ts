@@ -23,6 +23,7 @@ export class DataChannelCarrier implements Carrier {
   private readonly drainCbs: Array<() => void> = [];
   private readonly messageCbs: Array<(bytes: Uint8Array) => void> = [];
   private readonly closeCbs: Array<() => void> = [];
+  private readonly pendingFrames: Uint8Array[] = [];
   private nextFrameId = 1;
   private closed = false;
   private remainder: OutboundFrame | null = null;
@@ -65,6 +66,11 @@ export class DataChannelCarrier implements Carrier {
         throw err;
       }
       if (!frame) return;
+      if (this.messageCbs.length === 0) {
+        if (this.pendingFrames.length >= 32) this.pendingFrames.shift();
+        this.pendingFrames.push(frame);
+        return;
+      }
       for (const cb of this.messageCbs) {
         try {
           cb(frame);
@@ -76,6 +82,10 @@ export class DataChannelCarrier implements Carrier {
     channel.onClosed(() => {
       this.failClosed();
     });
+    channel.onError(() => {
+      this.failClosed();
+    });
+    if (!channel.isOpen()) this.failClosed();
   }
 
   send(bytes: Uint8Array): CarrierSendResult {
@@ -109,10 +119,19 @@ export class DataChannelCarrier implements Carrier {
 
   onMessage(cb: (bytes: Uint8Array) => void): void {
     this.messageCbs.push(cb);
+    const queued = this.pendingFrames.splice(0);
+    for (const frame of queued) {
+      try {
+        cb(frame);
+      } catch {
+        // inbound listener
+      }
+    }
   }
 
   onClose(cb: () => void): void {
     this.closeCbs.push(cb);
+    if (this.closed) cb();
   }
 
   close(_code: number, _reason: string): void {

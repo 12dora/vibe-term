@@ -6,6 +6,7 @@ import { UserStore } from '../auth/user-store';
 import { defaultScheduler } from './ctl';
 import {
   PEER_RTC_WAKE_COOLDOWN_MS,
+  PEER_RTC_WAKE_NONCE_CACHE,
   PEER_UPGRADE_BACKOFF_CAP_MS,
   PEER_UPGRADE_COOLDOWN_MS,
   PeerManager,
@@ -1288,6 +1289,155 @@ describe('PeerManager', () => {
     expect(managerLarge.transportOf(small.nodeId)).toBeNull();
   });
 
+  test('receiver applies cooldown before signature verification so invalid wakes cannot bypass it', async () => {
+    const clock = { ms: Date.now() };
+    const { small, large, managerSmall, fake } = await setupDirectRtcPair(fixtures, {
+      now: () => clock.ms,
+    });
+    const session = peerRtcSession(small.nodeId, large.nodeId);
+    const inject = (sdp: string) => {
+      managerSmall.receiveRtcSignal(large.nodeId, {
+        rtcSession: session,
+        from: 'node',
+        to: small.nodeId,
+        sdp,
+      });
+    };
+    inject(
+      encodeRtcWakeSdp({
+        from: large.nodeId,
+        to: small.nodeId,
+        rtcSession: session,
+        issuedAt: clock.ms,
+        secretKey: generateEd25519KeyPair().secretKey,
+      })
+    );
+    expect(fake.connections).toHaveLength(0);
+    inject(
+      encodeRtcWakeSdp({
+        from: large.nodeId,
+        to: small.nodeId,
+        rtcSession: session,
+        issuedAt: clock.ms,
+        secretKey: large.edSecretKey,
+      })
+    );
+    await Bun.sleep(20);
+    expect(fake.connections).toHaveLength(0);
+    clock.ms += PEER_RTC_WAKE_COOLDOWN_MS + 1;
+    inject(
+      encodeRtcWakeSdp({
+        from: large.nodeId,
+        to: small.nodeId,
+        rtcSession: session,
+        issuedAt: clock.ms,
+        secretKey: large.edSecretKey,
+      })
+    );
+    await waitUntil(() => fake.connections.length > 0, 2_000);
+  });
+
+  test('incoming wake cooldown survives dropPeer so DC churn cannot immediately redial', async () => {
+    const clock = { ms: Date.now() };
+    const { small, large, managerSmall, managerLarge, fake } = await setupDirectRtcPair(fixtures, {
+      now: () => clock.ms,
+    });
+    await managerLarge.getLink(small.nodeId);
+    await waitUntil(() => managerLarge.transportOf(small.nodeId) === 'dc', 5_000);
+    await waitUntil(() => managerSmall.transportOf(large.nodeId) === 'dc', 5_000);
+    const afterDc = fake.connections.length;
+    managerLarge.getLive(small.nodeId)?.close('drop-dc');
+    managerSmall.getLive(large.nodeId)?.close('drop-dc');
+    await waitUntil(() => managerSmall.transportOf(large.nodeId) === null, 2_000);
+    managerSmall.receiveRtcSignal(large.nodeId, {
+      rtcSession: peerRtcSession(small.nodeId, large.nodeId),
+      from: 'node',
+      to: small.nodeId,
+      sdp: encodeRtcWakeSdp({
+        from: large.nodeId,
+        to: small.nodeId,
+        rtcSession: peerRtcSession(small.nodeId, large.nodeId),
+        issuedAt: clock.ms,
+        secretKey: large.edSecretKey,
+      }),
+    });
+    await Bun.sleep(30);
+    expect(fake.connections.length).toBe(afterDc);
+    clock.ms += PEER_RTC_WAKE_COOLDOWN_MS + 1;
+    managerSmall.receiveRtcSignal(large.nodeId, {
+      rtcSession: peerRtcSession(small.nodeId, large.nodeId),
+      from: 'node',
+      to: small.nodeId,
+      sdp: encodeRtcWakeSdp({
+        from: large.nodeId,
+        to: small.nodeId,
+        rtcSession: peerRtcSession(small.nodeId, large.nodeId),
+        issuedAt: clock.ms,
+        secretKey: large.edSecretKey,
+      }),
+    });
+    await waitUntil(() => fake.connections.length > afterDc, 2_000);
+  });
+
+  test('replay cache is per-peer and retains nonces for the full validity window', async () => {
+    const clock = { ms: Date.now() };
+    const { store, large, managerLarge } = await setupDirectRtcPair(fixtures, {
+      now: () => clock.ms,
+    });
+    expect(PEER_RTC_WAKE_NONCE_CACHE).toBe(256);
+    const peers: Array<{ nodeId: string; secretKey: Uint8Array; first: string }> = [];
+    const rounds = 22;
+    for (let i = 0; i < 12; i++) {
+      const peer = seedNodeIdentity(store, 'user-1');
+      peers.push({ nodeId: peer.nodeId, secretKey: peer.edSecretKey, first: '' });
+    }
+    for (let round = 0; round < rounds; round++) {
+      if (round > 0) clock.ms += PEER_RTC_WAKE_COOLDOWN_MS + 1;
+      const issuedAt = clock.ms + 60_000;
+      for (const peer of peers) {
+        const nonce = randomBytes(16);
+        const sdp = encodeRtcWakeSdp({
+          from: peer.nodeId,
+          to: large.nodeId,
+          rtcSession: peerRtcSession(peer.nodeId, large.nodeId),
+          issuedAt,
+          secretKey: peer.secretKey,
+          nonce,
+        });
+        if (round === 0) peer.first = sdp;
+        managerLarge.receiveRtcSignal(peer.nodeId, {
+          rtcSession: peerRtcSession(peer.nodeId, large.nodeId),
+          from: 'node',
+          to: large.nodeId,
+          sdp,
+        });
+      }
+    }
+    clock.ms += PEER_RTC_WAKE_COOLDOWN_MS + 1;
+    const first = peers[0];
+    if (!first) throw new Error('missing peer');
+    const capture = (sdp: string): string[] => {
+      const lines: string[] = [];
+      const orig = console.log;
+      console.log = (...args: unknown[]) => {
+        lines.push(args.map(String).join(' '));
+      };
+      try {
+        managerLarge.receiveRtcSignal(first.nodeId, {
+          rtcSession: peerRtcSession(first.nodeId, large.nodeId),
+          from: 'node',
+          to: large.nodeId,
+          sdp,
+        });
+      } finally {
+        console.log = orig;
+      }
+      return lines;
+    };
+    const replayed = capture(first.first);
+    expect(replayed.some((line) => line.includes('dropped=auth'))).toBe(true);
+  });
+
   test('receiver rate-limits wake handling before logging', async () => {
     const lines: string[] = [];
     const orig = console.log;
@@ -1324,6 +1474,7 @@ describe('PeerManager', () => {
 
   test('sender cooldown defers a needed wake instead of swallowing it', async () => {
     const inner = defaultScheduler();
+    let nowMs = inner.now();
     const queued: Array<{
       resolve: () => void;
       reject: (err: unknown) => void;
@@ -1331,7 +1482,7 @@ describe('PeerManager', () => {
       onAbort: () => void;
     }> = [];
     const scheduler: MeshScheduler & { flush: () => void } = {
-      now: inner.now,
+      now: () => nowMs,
       interval: inner.interval.bind(inner),
       sleep(ms, signal) {
         if (signal?.aborted) {
@@ -1348,6 +1499,7 @@ describe('PeerManager', () => {
         });
       },
       flush() {
+        nowMs += PEER_RTC_WAKE_COOLDOWN_MS + 1;
         const rows = queued.splice(0);
         for (const row of rows) {
           row.signal?.removeEventListener('abort', row.onAbort);
@@ -1357,6 +1509,7 @@ describe('PeerManager', () => {
     };
     const { small, large, managerSmall, managerLarge, wakes } = await setupDirectRtcPair(fixtures, {
       scheduler,
+      now: () => nowMs,
     });
     await managerLarge.getLink(small.nodeId);
     await waitUntil(() => managerLarge.transportOf(small.nodeId) === 'dc', 5_000);

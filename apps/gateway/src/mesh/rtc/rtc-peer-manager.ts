@@ -298,6 +298,9 @@ export class RtcPeerManager implements RtcFingerprintProvider {
         localFingerprint: localFp,
         timeoutMs: this.handshakeTimeoutMs,
       });
+      if (!channel.isOpen()) {
+        throw new PeerHandshakeError('protocol', 'datachannel closed during handshake handoff');
+      }
       const link = new DataChannelLink(channel);
       if (hs.peerNodeId !== peer) {
         unsubSignaling();

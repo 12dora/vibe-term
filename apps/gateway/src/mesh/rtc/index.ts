@@ -47,6 +47,7 @@ export {
   encodeCandidateSignal,
   encodeRtcWakeSdp,
   encodeSdpSignal,
+  isCanonicalRtcWakeNonce,
   isEmptyCandidate,
   isRtcWakeSdp,
   maskIceAddress,

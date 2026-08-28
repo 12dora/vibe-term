@@ -22,6 +22,7 @@ export class DataChannelLink implements ByteTransport {
   private readonly payloadSize: number;
   private readonly dataCbs: Array<(bytes: Uint8Array) => void> = [];
   private readonly closeCbs: Array<(reason?: string) => void> = [];
+  private readonly pendingFrames: Uint8Array[] = [];
   private readonly queue: QueueItem[] = [];
   private nextFrameId = 1;
   private closed = false;
@@ -68,11 +69,15 @@ export class DataChannelLink implements ByteTransport {
         throw err;
       }
       if (!frame) return;
-      for (const cb of this.dataCbs) cb(frame);
+      this.dispatchFrame(frame);
     });
     channel.onClosed(() => {
       this.finishClose('channel-closed');
     });
+    channel.onError((err) => {
+      this.finishClose(err || 'channel-error');
+    });
+    if (!channel.isOpen()) this.finishClose('channel-closed');
   }
 
   send(bytes: Uint8Array): Promise<void> {
@@ -89,10 +94,13 @@ export class DataChannelLink implements ByteTransport {
 
   onData(cb: (bytes: Uint8Array) => void): void {
     this.dataCbs.push(cb);
+    const queued = this.pendingFrames.splice(0);
+    for (const frame of queued) cb(frame);
   }
 
   onClose(cb: (reason?: string) => void): void {
     this.closeCbs.push(cb);
+    if (this.closed) cb(this.closeReason);
   }
 
   close(reason?: string): void {
@@ -125,6 +133,15 @@ export class DataChannelLink implements ByteTransport {
       this.queue.shift();
       item.resolve();
     }
+  }
+
+  private dispatchFrame(frame: Uint8Array): void {
+    if (this.dataCbs.length === 0) {
+      if (this.pendingFrames.length >= 32) this.pendingFrames.shift();
+      this.pendingFrames.push(frame);
+      return;
+    }
+    for (const cb of this.dataCbs) cb(frame);
   }
 
   private finishClose(reason: string): void {

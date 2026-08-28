@@ -15,6 +15,7 @@ import {
   encodeCandidateSignal,
   encodeRtcWakeSdp,
   encodeSdpSignal,
+  isCanonicalRtcWakeNonce,
   isEmptyCandidate,
   isRtcWakeSdp,
   maskIceAddress,
@@ -166,6 +167,42 @@ describe('ice helpers', () => {
     expect(RTC_WAKE_MAX_SKEW_MS).toBe(60_000);
   });
 
+  test('wake nonce must be canonical base64url of exactly 16 bytes', () => {
+    const pair = generateEd25519KeyPair();
+    const from = '11'.repeat(16);
+    const to = '22'.repeat(16);
+    const rtcSession = peerRtcSession(from, to);
+    const issued_at = 1_700_000_000_000;
+    const bytes = randomBytes(16);
+    const nonce = encodeBase64url(bytes);
+    expect(isCanonicalRtcWakeNonce(nonce)).toBe(true);
+    expect(isCanonicalRtcWakeNonce(`${nonce}==`)).toBe(false);
+    expect(isCanonicalRtcWakeNonce(encodeBase64url(randomBytes(15)))).toBe(false);
+    expect(isCanonicalRtcWakeNonce(encodeBase64url(randomBytes(17)))).toBe(false);
+    expect(isCanonicalRtcWakeNonce('')).toBe(false);
+    const padded = `${nonce}==`;
+    const sig = encodeBase64url(
+      signEd25519(
+        pair.secretKey,
+        rtcWakeCanonicalBytes({ from, to, rtcSession, nonce: padded, issued_at })
+      )
+    );
+    expect(
+      parseRtcWakeSdp(
+        JSON.stringify({
+          type: 'rtc.wake',
+          domain: RTC_WAKE_DOMAIN,
+          from,
+          to,
+          rtcSession,
+          nonce: padded,
+          issued_at,
+          sig,
+        })
+      )
+    ).toBeNull();
+  });
+
   test('parses ICE candidate type and masks addresses to /24 or last octet', () => {
     expect(parseIceCandidateType('candidate:1 1 UDP 1 10.0.1.55 9 typ host')).toBe('host');
     expect(
@@ -181,6 +218,10 @@ describe('ice helpers', () => {
     expect(maskIceAddress('::ffff:192.168.1.42')).toBe('::ffff:192.168.1.0');
     expect(maskIceAddress('[::ffff:192.168.1.42]:5000')).toBe('[::ffff:192.168.1.0]:5000');
     expect(maskIceAddress('[2001:db8:abcd:0012::1]:3478')).toBe('[2001:db8:abcd::]:3478');
+    expect(maskIceAddress('[2001:db8::dead:beef]:3478')).toBe('[2001:db8::]:3478');
+    expect(maskIceAddress('2001:db8::1')).toBe('2001:db8::');
+    expect(maskIceAddress('::1')).toBe('::');
+    expect(maskIceAddress('::')).toBe('::');
     expect(maskIceAddress('192.168.1.42:3478')).toBe('192.168.1.0:3478');
     expect(
       maskIceCandidate('candidate:2 1 UDP 1 203.0.113.44 3478 typ srflx raddr 10.0.1.55 rport 9')

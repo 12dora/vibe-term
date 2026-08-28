@@ -294,18 +294,19 @@ describe('rtc wake via authenticated uplink', () => {
         secretKey: answerer.identity.edPrivateKey,
       })
     );
-    const revoked = seedNodeIdentity(offerer.userStore, boot.userId);
-    offerer.userStore.markCertRevoked(revoked.nodeId, 99);
-    offerer.peers.receiveRtcSignal(revoked.nodeId, {
-      rtcSession: peerRtcSession(offerer.nodeId, revoked.nodeId),
+    const revoked = seedNodeIdentity(meshA.userStore, boot.userId);
+    meshA.userStore.markCertRevoked(revoked.nodeId, 99);
+    answerer.uplink.sendCtl({
+      t: 'rtc.signal',
+      rtcSession: peerRtcSession(answerer.nodeId, revoked.nodeId),
       from: 'node',
-      to: offerer.nodeId,
+      to: revoked.nodeId,
       sdp: encodeRtcWakeSdp({
-        from: revoked.nodeId,
-        to: offerer.nodeId,
-        rtcSession: peerRtcSession(offerer.nodeId, revoked.nodeId),
+        from: answerer.nodeId,
+        to: revoked.nodeId,
+        rtcSession: peerRtcSession(answerer.nodeId, revoked.nodeId),
         issuedAt: Date.now(),
-        secretKey: revoked.edSecretKey,
+        secretKey: answerer.identity.edPrivateKey,
       }),
     });
     await Bun.sleep(80);

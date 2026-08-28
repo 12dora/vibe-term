@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import { LinkMux } from '@tmex/shared/link';
+import { fanoutDataChannel } from './channel-fanout';
 import { DataChannelLink } from './data-channel-link';
 import { FRAGMENT_PAYLOAD_SIZE } from './fragmenter';
 import { pairDataChannels } from './test-fakes';
@@ -70,6 +71,29 @@ describe('DataChannelLink', () => {
     const pending = left.send(new Uint8Array([1, 2, 3]));
     left.close('bye');
     await expect(pending).rejects.toBeInstanceOf(Error);
+  });
+
+  test('frames that arrive before onData are delivered in order', async () => {
+    const [a, b] = pairDataChannels('peer');
+    const fanB = fanoutDataChannel(b);
+    const left = new DataChannelLink(a);
+    const payload = new Uint8Array([4, 5, 6]);
+    const sent = left.send(payload);
+    const right = new DataChannelLink(fanB);
+    const got = new Promise<Uint8Array>((resolve) => right.onData(resolve));
+    await sent;
+    expect(await got).toEqual(payload);
+  });
+
+  test('close before onClose still notifies the later listener', async () => {
+    const [a, b] = pairDataChannels('peer');
+    const fanB = fanoutDataChannel(b);
+    const left = new DataChannelLink(a);
+    left.close('bye');
+    const right = new DataChannelLink(fanB);
+    const closed = new Promise<string | undefined>((resolve) => right.onClose(resolve));
+    expect(await closed).toBe('channel-closed');
+    expect(fanB.isOpen()).toBe(false);
   });
 
   test('protocol violation on inbound closes the channel', () => {

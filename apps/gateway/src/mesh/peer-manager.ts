@@ -27,6 +27,7 @@ import {
   type RtcSignaling,
   type RtcWakeFields,
   encodeRtcWakeSdp,
+  isCanonicalRtcWakeNonce,
   isRtcWakeSdp,
   parseRtcWakeSdp,
   peerRtcSession,
@@ -286,7 +287,7 @@ export class PeerManager {
   private readonly upgradeGate = new Map<string, UpgradeGate>();
   private readonly wakeGate = new Map<string, WakeGate>();
   private readonly incomingWakeGate = new Map<string, IncomingWakeGate>();
-  private readonly rtcWakeNonces = new Map<string, true>();
+  private readonly rtcWakeNonces = new Map<string, Map<string, number>>();
   private readonly transportWaiters = new Map<string, TransportWaiter[]>();
   private upgradeInflight = 0;
   private readonly upgradeWaiters: Array<() => void> = [];
@@ -523,6 +524,7 @@ export class PeerManager {
     this.releaseRtcWakeAttempt(nodeId);
     this.wakeGate.delete(nodeId);
     this.incomingWakeGate.delete(nodeId);
+    this.rtcWakeNonces.delete(nodeId.toLowerCase());
     this.failTransportWaiters(nodeId);
   }
 
@@ -752,6 +754,7 @@ export class PeerManager {
       });
       return;
     }
+    gate.nextEligibleAt = now + PEER_RTC_WAKE_COOLDOWN_MS;
     const wake = parseRtcWakeSdp(msg.sdp);
     if (!wake || !this.acceptSignedRtcWake(fromNodeId, msg, wake)) {
       rtcLogRateLimited(`wake:auth:${fromNodeId}`, 'signal recv', {
@@ -769,7 +772,6 @@ export class PeerManager {
       });
       return;
     }
-    gate.nextEligibleAt = now + PEER_RTC_WAKE_COOLDOWN_MS;
     rtcLog('signal recv', { peer: fromNodeId, kind: 'wake' });
     if (this.live.get(fromNodeId)?.transport === 'dc') return;
     if (!this.shouldTryDc(fromNodeId)) return;
@@ -800,18 +802,30 @@ export class PeerManager {
     } catch {
       return false;
     }
+    if (!isCanonicalRtcWakeNonce(wake.nonce)) return false;
     if (!verifyRtcWakeSignature(wake, edPk)) return false;
-    return this.rememberRtcWakeNonce(wake.nonce);
+    return this.rememberRtcWakeNonce(fromNodeId, wake.nonce, wake.issued_at);
   }
 
-  private rememberRtcWakeNonce(nonce: string): boolean {
-    if (this.rtcWakeNonces.has(nonce)) return false;
-    if (this.rtcWakeNonces.size >= PEER_RTC_WAKE_NONCE_CACHE) {
-      const oldest = this.rtcWakeNonces.keys().next().value;
-      if (oldest !== undefined) this.rtcWakeNonces.delete(oldest);
+  private rememberRtcWakeNonce(fromNodeId: string, nonce: string, issuedAt: number): boolean {
+    const from = fromNodeId.toLowerCase();
+    let peer = this.rtcWakeNonces.get(from);
+    if (!peer) {
+      peer = new Map();
+      this.rtcWakeNonces.set(from, peer);
     }
-    this.rtcWakeNonces.set(nonce, true);
+    this.pruneRtcWakeNonces(peer);
+    if (peer.has(nonce)) return false;
+    if (peer.size >= PEER_RTC_WAKE_NONCE_CACHE) return false;
+    peer.set(nonce, issuedAt + RTC_WAKE_MAX_SKEW_MS);
     return true;
+  }
+
+  private pruneRtcWakeNonces(peer: Map<string, number>): void {
+    const now = this.scheduler.now();
+    for (const [nonce, exp] of peer) {
+      if (now > exp) peer.delete(nonce);
+    }
   }
 
   private ensureWakeGate(peerNodeId: string): WakeGate {
@@ -1643,7 +1657,12 @@ export class PeerManager {
       this.live.delete(nodeId);
       this.finishRetire(live, reason);
     }
-    this.incomingWakeGate.delete(nodeId);
+    const incoming = this.incomingWakeGate.get(nodeId) ?? { nextEligibleAt: 0 };
+    incoming.nextEligibleAt = Math.max(
+      incoming.nextEligibleAt,
+      this.scheduler.now() + PEER_RTC_WAKE_COOLDOWN_MS
+    );
+    this.incomingWakeGate.set(nodeId, incoming);
     this.notifyTransport(nodeId);
     if (this.stopped || reason === 'revoked') {
       this.dropParked(nodeId, reason);

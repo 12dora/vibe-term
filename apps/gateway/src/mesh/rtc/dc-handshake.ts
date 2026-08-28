@@ -109,7 +109,7 @@ function recvQueue(
     }
   };
 
-  channel.onMessage((msg) => {
+  const unsubMessage: unknown = channel.onMessage((msg) => {
     if (stopped) return;
     const bytes = toUint8Array(msg).slice();
     if (bytes.byteLength > limits.maxMessageBytes) {
@@ -127,9 +127,14 @@ function recvQueue(
     }
     pending.push(bytes);
   });
-  channel.onClosed(() => {
+  const unsubClosed: unknown = channel.onClosed(() => {
     abort('dc handshake channel closed');
   });
+
+  const detach = () => {
+    if (typeof unsubMessage === 'function') (unsubMessage as () => void)();
+    if (typeof unsubClosed === 'function') (unsubClosed as () => void)();
+  };
 
   return {
     recv: () => {
@@ -145,6 +150,7 @@ function recvQueue(
     },
     stop: () => {
       stopped = true;
+      detach();
     },
   };
 }

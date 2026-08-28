@@ -1,5 +1,15 @@
 import type { DataChannelLike } from './native';
 
+export const FANOUT_MAX_PENDING_MESSAGES = 32;
+
+function addListener<T>(list: T[], item: T): () => void {
+  list.push(item);
+  return () => {
+    const idx = list.indexOf(item);
+    if (idx >= 0) list.splice(idx, 1);
+  };
+}
+
 export function fanoutDataChannel(channel: DataChannelLike): DataChannelLike {
   const open: Array<() => void> = [];
   const closed: Array<() => void> = [];
@@ -7,32 +17,39 @@ export function fanoutDataChannel(channel: DataChannelLike): DataChannelLike {
   const message: Array<(msg: string | Buffer | ArrayBuffer) => void> = [];
   const low: Array<() => void> = [];
   const pendingMessages: Array<string | Buffer | ArrayBuffer> = [];
+  let closedFired = false;
+  let errorFired: string | null = null;
 
   channel.onOpen(() => {
-    for (const cb of open) cb();
+    if (closedFired) return;
+    for (const cb of [...open]) cb();
   });
   channel.onClosed(() => {
-    for (const cb of closed) cb();
+    if (closedFired) return;
+    closedFired = true;
+    for (const cb of [...closed]) cb();
   });
   channel.onError((err) => {
-    for (const cb of error) cb(err);
+    errorFired = err;
+    for (const cb of [...error]) cb(err);
   });
   channel.onMessage((msg) => {
     if (message.length === 0) {
+      if (pendingMessages.length >= FANOUT_MAX_PENDING_MESSAGES) pendingMessages.shift();
       pendingMessages.push(msg);
       return;
     }
-    for (const cb of message) cb(msg);
+    for (const cb of [...message]) cb(msg);
   });
   channel.onBufferedAmountLow(() => {
-    for (const cb of low) cb();
+    for (const cb of [...low]) cb();
   });
 
   return {
     close: () => channel.close(),
     sendMessage: (msg) => channel.sendMessage(msg),
     sendMessageBinary: (buffer) => channel.sendMessageBinary(buffer),
-    isOpen: () => channel.isOpen(),
+    isOpen: () => !closedFired && channel.isOpen(),
     bufferedAmount: () => channel.bufferedAmount(),
     maxMessageSize: () => channel.maxMessageSize(),
     setBufferedAmountLowThreshold: (bytes) => channel.setBufferedAmountLowThreshold(bytes),
@@ -40,21 +57,25 @@ export function fanoutDataChannel(channel: DataChannelLike): DataChannelLike {
       low.push(cb);
     },
     onOpen: (cb) => {
-      open.push(cb);
-      if (channel.isOpen()) cb();
+      const unsub = addListener(open, cb);
+      if (!closedFired && channel.isOpen()) cb();
+      return unsub;
     },
     onClosed: (cb) => {
-      closed.push(cb);
+      const unsub = addListener(closed, cb);
+      if (closedFired) cb();
+      return unsub;
     },
     onError: (cb) => {
-      error.push(cb);
+      const unsub = addListener(error, cb);
+      if (errorFired !== null) cb(errorFired);
+      return unsub;
     },
     onMessage: (cb) => {
-      message.push(cb);
-      while (pendingMessages.length > 0) {
-        const next = pendingMessages.shift();
-        if (next !== undefined) cb(next);
-      }
+      const unsub = addListener(message, cb);
+      const queued = pendingMessages.splice(0);
+      for (const next of queued) cb(next);
+      return unsub;
     },
     getLabel: channel.getLabel ? () => channel.getLabel?.() ?? '' : undefined,
   };
