@@ -450,6 +450,70 @@ describe('forwarder', () => {
     }
   });
 
+  test('legacy failover waits for DEVICE_CONNECTED and snapshot before replaying subscribe', async () => {
+    const dcLink = { id: 'dc' } as unknown as LinkSession;
+    const relayLink = { id: 'relay' } as unknown as LinkSession;
+    const peers = new FakePeers();
+    peers.links.set(OTHER, dcLink);
+    peers.transport.set(OTHER, 'dc');
+    const streams = new FakeStreams();
+    const logs: string[] = [];
+    const mesh = await bootMesh({
+      peers,
+      streams,
+      streamLog: (line) => logs.push(line),
+    });
+    try {
+      const { ws } = await openForwardWs(mesh.runtime, peers, streams, OTHER);
+      const hello = encodeHelloFrame();
+      const connect = encodeDeviceConnectFrame('dev-1', 2);
+      const subscribe = encodeSubscribeFrame('dev-1', ['%1']);
+      const select = encodeSelectFrame('dev-1', '%1', 4);
+      mesh.runtime.handleWebSocket.message(ws, hello);
+      mesh.runtime.handleWebSocket.message(ws, connect);
+      mesh.runtime.handleWebSocket.message(ws, subscribe);
+      mesh.runtime.handleWebSocket.message(ws, select);
+      streams.lastWs?.pushFromRemote(encodeHelloS2CFrame());
+      streams.lastWs?.pushFromRemote(encodeDeviceConnectedFrame('dev-1'));
+      streams.lastWs?.pushFromRemote(encodeStateSnapshotFrame());
+
+      peers.links.set(OTHER, relayLink);
+      peers.transport.set(OTHER, 'relay');
+      streams.lastWs?.close(1011, 'reset');
+      await waitUntil(() => streams.wsOpens.length === 2, 2_000);
+      const replayed = streams.wsOpens[1]?.ws;
+      expect(replayed).toBeDefined();
+      await waitUntil(() => (replayed?.sent.length ?? 0) >= 1, 2_000);
+      replayed?.pushFromRemote(encodeHelloS2CFrame());
+      await waitUntil(() => (replayed?.sent.length ?? 0) >= 2, 2_000);
+      expect(sentKinds(replayed?.sent ?? [])).toEqual([
+        wsBorsh.KIND_HELLO_C2S,
+        wsBorsh.KIND_DEVICE_CONNECT,
+      ]);
+      replayed?.pushFromRemote(encodeDeviceConnectedFrame('dev-1'));
+      await new Promise((resolve) => setTimeout(resolve, 40));
+      expect(sentKinds(replayed?.sent ?? []).includes(wsBorsh.KIND_TMUX_SUBSCRIBE_PANES)).toBe(
+        false
+      );
+      replayed?.pushFromRemote(encodeStateSnapshotFrame());
+      await waitUntil(
+        () => sentKinds(replayed?.sent ?? []).includes(wsBorsh.KIND_TMUX_SUBSCRIBE_PANES),
+        2_000
+      );
+      expect(sentKinds(replayed?.sent ?? [])).toEqual([
+        wsBorsh.KIND_HELLO_C2S,
+        wsBorsh.KIND_DEVICE_CONNECT,
+        wsBorsh.KIND_TMUX_SUBSCRIBE_PANES,
+        wsBorsh.KIND_TMUX_SELECT,
+      ]);
+      expect(
+        logs.some((line) => /from=dc to=relay resumed=1 mode=legacy panes=%1 cursor=-/.test(line))
+      ).toBe(true);
+    } finally {
+      mesh.close();
+    }
+  });
+
   test('canonical pane cursor is patched onto SetPaneSubscriptions during failover', async () => {
     const dcLink = { id: 'dc' } as unknown as LinkSession;
     const relayLink = { id: 'relay' } as unknown as LinkSession;
@@ -592,12 +656,72 @@ function encodeHelloFrame(): Uint8Array {
   return wsBorsh.encodeEnvelope(wsBorsh.KIND_HELLO_C2S, payload, 1);
 }
 
+function encodeHelloS2CFrame(): Uint8Array {
+  const payload = wsBorsh.encodePayload(wsBorsh.schema.HelloS2CSchema, {
+    serverImpl: 'tmex-gateway',
+    serverVersion: 'test',
+    selectedVersion: wsBorsh.CURRENT_VERSION,
+    maxFrameBytes: wsBorsh.DEFAULT_MAX_FRAME_BYTES,
+    heartbeatIntervalMs: 15_000,
+    capabilities: [],
+  });
+  return wsBorsh.encodeEnvelope(wsBorsh.KIND_HELLO_S2C, payload, 1);
+}
+
+function encodeDeviceConnectFrame(deviceId: string, seq: number): Uint8Array {
+  return wsBorsh.encodeEnvelope(
+    wsBorsh.KIND_DEVICE_CONNECT,
+    wsBorsh.encodePayload(wsBorsh.schema.DeviceConnectSchema, { deviceId }),
+    seq
+  );
+}
+
+function encodeDeviceConnectedFrame(deviceId: string): Uint8Array {
+  return wsBorsh.encodeEnvelope(
+    wsBorsh.KIND_DEVICE_CONNECTED,
+    wsBorsh.encodePayload(wsBorsh.schema.DeviceConnectedSchema, { deviceId }),
+    2
+  );
+}
+
+function encodeStateSnapshotFrame(): Uint8Array {
+  return wsBorsh.encodeEnvelope(wsBorsh.KIND_STATE_SNAPSHOT, new Uint8Array(), 3);
+}
+
 function encodeSubscribeFrame(deviceId: string, paneIds: string[]): Uint8Array {
   const payload = wsBorsh.encodePayload(wsBorsh.schema.TmuxSubscribePanesSchema, {
     deviceId,
     paneIds,
   });
   return wsBorsh.encodeEnvelope(wsBorsh.KIND_TMUX_SUBSCRIBE_PANES, payload, 2);
+}
+
+function encodeSelectFrame(deviceId: string, paneId: string, seq: number): Uint8Array {
+  return wsBorsh.encodeEnvelope(
+    wsBorsh.KIND_TMUX_SELECT,
+    wsBorsh.encodePayload(wsBorsh.schema.TmuxSelectSchema, {
+      deviceId,
+      windowId: null,
+      paneId,
+      selectToken: new Uint8Array(16),
+      wantHistory: true,
+      cols: 120,
+      rows: 32,
+    }),
+    seq
+  );
+}
+
+function sentKinds(frames: Uint8Array[]): number[] {
+  const kinds: number[] = [];
+  for (const frame of frames) {
+    try {
+      kinds.push(wsBorsh.decodeEnvelope(frame).kind);
+    } catch {
+      // ignore
+    }
+  }
+  return kinds;
 }
 
 function bytesEqual(a: Uint8Array, b: Uint8Array): boolean {

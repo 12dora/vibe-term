@@ -20,6 +20,7 @@ export const WS_SESSION_VERIFY_MS = 5 * 60 * 1000;
 export const AUTH_401_BODY_LIMIT = 64 * 1024;
 export const STREAM_FAILOVER_BACKOFF_MS = [0, 50, 100, 200, 400, 800, 1600] as const;
 export const STREAM_FAILOVER_MAX_ATTEMPTS = STREAM_FAILOVER_BACKOFF_MS.length;
+export const STREAM_FAILOVER_RESUME_WAIT_MS = 8_000;
 export const HTTP_FAILOVER_MAX_ATTEMPTS = 4;
 
 export const MESH_WS_KIND = 'mesh-event';

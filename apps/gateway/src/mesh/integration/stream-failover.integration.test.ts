@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from 'bun:test';
-import { wsBorsh } from '@tmex/shared';
+import { type StateSnapshotPayload, wsBorsh } from '@tmex/shared';
 import {
   buildLogin,
   createDelegation,
@@ -25,6 +25,7 @@ import {
 import { createMigratedAuthDb } from '../../auth/test-db';
 import type { AuthDb } from '../../auth/types';
 import type { GatewayRuntime } from '../../runtime';
+import type { DeviceSessionRuntime } from '../../tmux-client/device-session-runtime';
 import { WebSocketServer } from '../../ws';
 import {
   MESH_FORWARD_WS_KIND,
@@ -177,6 +178,52 @@ async function loginRemote(
   return sidFromResponse(res, target.nodeId);
 }
 
+const DEVICE_ID = 'local';
+const PANE_ID = '%1';
+
+function paneSnapshot(deviceId: string): StateSnapshotPayload {
+  return {
+    deviceId,
+    session: {
+      id: '$1',
+      name: 'tmex',
+      windows: [
+        {
+          id: '@1',
+          name: 'one',
+          index: 0,
+          active: true,
+          panes: [
+            {
+              id: PANE_ID,
+              windowId: '@1',
+              index: 0,
+              title: 'one-pane',
+              active: true,
+              width: 80,
+              height: 24,
+            },
+          ],
+        },
+      ],
+    },
+  };
+}
+
+function fakePaneRuntime(deviceId: string): DeviceSessionRuntime {
+  return {
+    connect: async () => {},
+    subscribe: () => () => {},
+    requestSnapshot() {},
+    disconnect() {},
+    getCurrentSnapshot: () => paneSnapshot(deviceId),
+    setWindowStyle: async () => {},
+    selectPane() {},
+    selectPaneWithSize() {},
+    sendInput() {},
+  } as unknown as DeviceSessionRuntime;
+}
+
 function encodeHello(): Uint8Array {
   const payload = wsBorsh.encodePayload(wsBorsh.schema.HelloC2SSchema, {
     clientImpl: 'stream-failover',
@@ -188,12 +235,48 @@ function encodeHello(): Uint8Array {
   return wsBorsh.encodeEnvelope(wsBorsh.KIND_HELLO_C2S, payload, 1);
 }
 
-function encodeSubscribe(deviceId: string, paneId: string): Uint8Array {
+function encodeDeviceConnect(deviceId: string, seq: number): Uint8Array {
+  return wsBorsh.encodeEnvelope(
+    wsBorsh.KIND_DEVICE_CONNECT,
+    wsBorsh.encodePayload(wsBorsh.schema.DeviceConnectSchema, { deviceId }),
+    seq
+  );
+}
+
+function encodeSubscribe(deviceId: string, paneId: string, seq = 2): Uint8Array {
   const payload = wsBorsh.encodePayload(wsBorsh.schema.TmuxSubscribePanesSchema, {
     deviceId,
     paneIds: [paneId],
   });
-  return wsBorsh.encodeEnvelope(wsBorsh.KIND_TMUX_SUBSCRIBE_PANES, payload, 2);
+  return wsBorsh.encodeEnvelope(wsBorsh.KIND_TMUX_SUBSCRIBE_PANES, payload, seq);
+}
+
+function encodeSelect(deviceId: string, paneId: string, seq: number): Uint8Array {
+  return wsBorsh.encodeEnvelope(
+    wsBorsh.KIND_TMUX_SELECT,
+    wsBorsh.encodePayload(wsBorsh.schema.TmuxSelectSchema, {
+      deviceId,
+      windowId: null,
+      paneId,
+      selectToken: new Uint8Array(16),
+      wantHistory: true,
+      cols: 120,
+      rows: 32,
+    }),
+    seq
+  );
+}
+
+function frameKind(bytes: Uint8Array): number | null {
+  try {
+    return wsBorsh.decodeEnvelope(bytes).kind;
+  } catch {
+    return null;
+  }
+}
+
+function hasKind(frames: Uint8Array[], kind: number): boolean {
+  return frames.some((frame) => frameKind(frame) === kind);
 }
 
 function parseSeq(bytes: Uint8Array): number[] {
@@ -457,6 +540,277 @@ describe('stream failover integration', () => {
         expect(unique[i]).toBe((unique[i - 1] ?? 0) + 1);
       }
       expect(logs.some((line) => /from=dc to=(relay|ws-secure|dc) resumed=/.test(line))).toBe(true);
+    } finally {
+      clearInterval(timer);
+      console.info = origInfo;
+    }
+  }, 45_000);
+
+  test('legacy HELLO/DEVICE_CONNECT/SUBSCRIBE/SELECT keeps 0x305 SEQ after dc death', async () => {
+    const fake = createFakeNativeModule();
+    const loadNative = async () => fake.module;
+    const { db, close } = createMigratedAuthDb();
+    const identity = await ensureNodeIdentity(new NodeIdentityStore(db));
+    const userStore = new UserStore(db);
+    const keyLogStore = new KeyLogStore(db);
+    const nodeSessionStore = new NodeSessionStore(db);
+    const keys = new UserKeyService({
+      db,
+      userStore,
+      keyLogStore,
+      nodeSessionStore,
+      verifyPasskeyAssertion: makeVerifyPasskeyAssertion(userStore),
+    });
+    const boot = await keys.bootstrapUserWithSelfAdmit({
+      username: 'alice',
+      password: PASSWORD,
+      identity,
+    });
+    const wsServerA = new WebSocketServer();
+    const meshA = await createMeshRuntime({
+      db,
+      gateway: fakeGateway(db, wsServerA),
+      userId: boot.userId,
+      config: {
+        roles: { hub: true, node: true },
+        hubUrl: null,
+        hubPublicUrl: 'http://hub.example',
+        peerPort: 39011,
+        stunServers: [],
+      },
+      startPeerServer: false,
+      pingIntervalMs: 60_000,
+      networkInterfaces: () => ({}),
+      loadNative,
+    });
+    fixtures.push({ close, stop: () => meshA.stop() });
+    await meshA.start();
+    await waitUntil(() => meshA.uplink.state === 'online', 5_000);
+
+    const { db: dbB, close: closeB } = createMigratedAuthDb();
+    const identityB = await ensureNodeIdentity(new NodeIdentityStore(dbB));
+    const now = Date.now();
+    const enrollment = await createEnrollment(boot.rootKey, {
+      uid: boot.userId,
+      rootEpoch: boot.rootEpoch,
+      now,
+      ttlMs: 60_000,
+    });
+    const sid = await loginSelf(meshA, boot);
+    const cookie = `${nodeSessionCookieName(MESH_VIA_SELF)}=${sid}`;
+    const created = await meshA.hub?.handleRequest(
+      (() => {
+        const req = new Request('http://hub/api/hub/enrollments', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json', cookie },
+          body: JSON.stringify({
+            enroll_pk: encodeBase64url(enrollment.enrollPk),
+            authorization: encodeBase64url(enrollment.authorizationBytes),
+            authorization_sig: encodeBase64url(enrollment.authorizationSig),
+            exp: now + 60_000,
+          }),
+        });
+        setMeshRequestContext(req, { via: MESH_VIA_SELF, clientIp: '127.0.0.1' });
+        return req;
+      })(),
+      { upgrade: () => false }
+    );
+    expect(created?.status).toBe(201);
+    const cert = createNodeCertificate(enrollment.enrollSk, {
+      uid: boot.userId,
+      edPk: identityB.edPublicKey,
+      x25519Pk: identityB.x25519PublicKey,
+      enrollPk: enrollment.enrollPk,
+      now,
+      nodeId: identityB.nodeId,
+    });
+    const redeemed = await meshA.hub?.handleRequest(
+      new Request('http://hub/api/hub/enrollments/redeem', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          certificate: encodeBase64url(cert.certificateBytes),
+          cert_sig: encodeBase64url(cert.certSig),
+          name: 'node-b',
+          version: 'test',
+        }),
+      }),
+      { upgrade: () => false }
+    );
+    expect(redeemed?.status).toBe(200);
+    const admitted = await keys.signAndApply(boot.userId, boot.rootKey, {
+      type: 'admit-node',
+      payload: encodeAdmitNodePayload({
+        authorization_bytes: enrollment.authorizationBytes,
+        authorization_sig: enrollment.authorizationSig,
+        certificate_bytes: cert.certificateBytes,
+        cert_sig: cert.certSig,
+      }),
+    });
+    expect(admitted.ok).toBe(true);
+    const rows = keyLogStore.list(boot.userId);
+    const head = keyLogStore.head(boot.userId);
+    const bUserStore = new UserStore(dbB);
+    const bKeyLog = new KeyLogStore(dbB);
+    const bSessions = new NodeSessionStore(dbB);
+    const bKeys = new UserKeyService({
+      db: dbB,
+      userStore: bUserStore,
+      keyLogStore: bKeyLog,
+      nodeSessionStore: bSessions,
+      verifyPasskeyAssertion: makeVerifyPasskeyAssertion(bUserStore),
+    });
+    const joined = await bKeys.verifyChainForJoin(
+      rows.map((row) => ({ bytes: row.bytes, sig: row.sig })),
+      boot.rootPublicKey,
+      head?.hash ?? new Uint8Array(32)
+    );
+    expect(joined.ok).toBe(true);
+
+    let acquireCount = 0;
+    const wsServerB = new WebSocketServer({
+      deps: {
+        acquireRuntime: async (deviceId) => {
+          acquireCount += 1;
+          if (acquireCount > 1) {
+            await new Promise((resolve) => setTimeout(resolve, 120));
+          }
+          return fakePaneRuntime(deviceId);
+        },
+        releaseRuntime: async () => {},
+        loadDeviceTreeOrder: (deviceId) => ({ deviceId, windows: [], panes: {} }),
+        saveWindowOrder: () => {},
+        savePaneOrder: () => {},
+      },
+    });
+    wsServerB.setOnSessionClosed(() => {
+      queueMicrotask(() => {
+        for (const [deviceId, entry] of [...wsServerB.connections]) {
+          if (entry.clients.size === 0 && (entry.canonicalClients?.size ?? 0) === 0) {
+            wsServerB.releaseConnectionEntry(deviceId, entry);
+            wsServerB.connections.delete(deviceId);
+          }
+        }
+      });
+    });
+    const meshB = await createMeshRuntime({
+      db: dbB,
+      gateway: fakeGateway(dbB, wsServerB),
+      userId: boot.userId,
+      config: {
+        roles: { hub: false, node: true },
+        hubUrl: 'http://hub.example',
+        peerPort: 39012,
+        stunServers: [],
+      },
+      uplinkHub: meshA.hub ?? undefined,
+      startPeerServer: false,
+      pingIntervalMs: 60_000,
+      networkInterfaces: () => ({}),
+      loadNative,
+    });
+    fixtures.push({ close: closeB, stop: () => meshB.stop() });
+    await meshB.start();
+    await waitUntil(() => meshB.uplink.state === 'online', 5_000);
+    await waitUntil(
+      () => meshA.lastNodeList?.nodes.some((n) => n.id === meshB.nodeId && n.online) === true,
+      5_000
+    );
+    await meshA.peers.getLink(meshB.nodeId);
+    await waitUntil(() => meshA.peers.transportOf(meshB.nodeId) === 'dc', 8_000);
+
+    const remoteSid = await loginRemote(meshA, meshB, boot, cookie);
+    const jar = `${cookie}; ${nodeSessionCookieName(meshB.nodeId)}=${remoteSid}`;
+    let upgradeData: { kind?: string; token?: string } | undefined;
+    const upgrade = await meshA.handleRequest(
+      new Request(`http://entry/n/${meshB.nodeId}/ws`, {
+        headers: { cookie: jar },
+      }),
+      {
+        upgrade(_req, opts) {
+          upgradeData = opts?.data as typeof upgradeData;
+          return true;
+        },
+      }
+    );
+    expect(upgrade).toBeUndefined();
+    expect(upgradeData?.kind).toBe(MESH_FORWARD_WS_KIND);
+
+    const entryFrames: Uint8Array[] = [];
+    let browserClosed = false;
+    const entryWs = {
+      data: upgradeData ?? { kind: MESH_FORWARD_WS_KIND },
+      send(frame: Uint8Array) {
+        entryFrames.push(frame.slice());
+        return frame.byteLength;
+      },
+      close() {
+        browserClosed = true;
+      },
+    } as MeshServerWebSocket;
+    meshA.websocket.open(entryWs);
+    meshA.websocket.message(entryWs, Buffer.from(encodeHello()));
+    await waitUntil(() => hasKind(entryFrames, wsBorsh.KIND_HELLO_S2C), 3_000);
+    meshA.websocket.message(entryWs, Buffer.from(encodeDeviceConnect(DEVICE_ID, 2)));
+    await waitUntil(() => hasKind(entryFrames, wsBorsh.KIND_DEVICE_CONNECTED), 3_000);
+    await waitUntil(() => hasKind(entryFrames, wsBorsh.KIND_STATE_SNAPSHOT), 3_000);
+    meshA.websocket.message(entryWs, Buffer.from(encodeSubscribe(DEVICE_ID, PANE_ID, 3)));
+    meshA.websocket.message(entryWs, Buffer.from(encodeSelect(DEVICE_ID, PANE_ID, 4)));
+
+    const logs: string[] = [];
+    const origInfo = console.info;
+    console.info = (...args: unknown[]) => {
+      logs.push(String(args[0]));
+      origInfo.apply(console, args);
+    };
+
+    let seq = 0;
+    const timer = setInterval(() => {
+      seq += 1;
+      wsServerB.broadcastTerminalOutput(
+        DEVICE_ID,
+        PANE_ID,
+        new TextEncoder().encode(`SEQ_${seq}\n`)
+      );
+    }, 20);
+
+    try {
+      await waitUntil(() => {
+        const nums = entryFrames.flatMap(parseSeq);
+        return nums.length >= 8;
+      }, 5_000);
+      const beforeKill = entryFrames.flatMap(parseSeq);
+      const framesAtKill = entryFrames.length;
+      expect(meshA.peers.transportOf(meshB.nodeId)).toBe('dc');
+      meshA.peers.getLive(meshB.nodeId)?.close('drop-dc');
+      meshB.peers.getLive(meshA.nodeId)?.close('drop-dc');
+
+      await waitUntil(() => logs.some((line) => line.includes('[mesh][stream] failover')), 25_000);
+      expect(
+        logs.some((line) =>
+          /from=dc to=(relay|ws-secure|dc) resumed=1 mode=legacy panes=%1 cursor=-/.test(line)
+        )
+      ).toBe(true);
+
+      await waitUntil(() => {
+        const after = entryFrames.slice(framesAtKill);
+        const nums = after.flatMap(parseSeq);
+        return (
+          after.some((frame) => frameKind(frame) === wsBorsh.KIND_TERM_OUTPUT) && nums.length >= 8
+        );
+      }, 10_000);
+      expect(browserClosed).toBe(false);
+      const after = entryFrames.slice(framesAtKill).flatMap(parseSeq);
+      const unique: number[] = [];
+      for (const n of after) {
+        if (unique.at(-1) === n) continue;
+        unique.push(n);
+      }
+      expect(unique.length).toBeGreaterThanOrEqual(8);
+      for (let i = 1; i < unique.length; i += 1) {
+        expect(unique[i]).toBe((unique[i - 1] ?? 0) + 1);
+      }
+      expect(unique[0]).toBeGreaterThan(beforeKill[beforeKill.length - 1] ?? 0);
     } finally {
       clearInterval(timer);
       console.info = origInfo;

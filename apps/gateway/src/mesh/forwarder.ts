@@ -18,6 +18,7 @@ import {
   type PeerTransportKind,
   STREAM_FAILOVER_BACKOFF_MS,
   STREAM_FAILOVER_MAX_ATTEMPTS,
+  STREAM_FAILOVER_RESUME_WAIT_MS,
   type StreamOpener,
   WS_CLOSE_LOGIN_REQUIRED,
   X_TMEX_SESSION_RENEWED,
@@ -82,6 +83,7 @@ type ForwardPump = {
   failoverAbort: AbortController | null;
   queue: Uint8Array[];
   helloWait: (() => void) | null;
+  resumeWait: (() => void) | null;
   streamAlive: boolean;
 };
 
@@ -175,6 +177,10 @@ export class Forwarder {
     if (!pump) return;
     pump.browserClosed = true;
     pump.failoverAbort?.abort();
+    pump.helloWait?.();
+    pump.helloWait = null;
+    pump.resumeWait?.();
+    pump.resumeWait = null;
     pump.stream?.close(code, reason);
   }
 
@@ -196,6 +202,7 @@ export class Forwarder {
       failoverAbort: null,
       queue: [],
       helloWait: null,
+      resumeWait: null,
       streamAlive: true,
     };
     this.pumps.set(ws, pump);
@@ -230,6 +237,10 @@ export class Forwarder {
 
   private handleRemoteBytes(pump: ForwardPump, bytes: Uint8Array): void {
     pump.replay.noteInbound(bytes);
+    if (pump.resumeWait && pump.replay.isResumeReady()) {
+      pump.resumeWait();
+      pump.resumeWait = null;
+    }
     let kind: number | null = null;
     try {
       kind = wsBorsh.decodeEnvelope(bytes).kind;
@@ -298,8 +309,9 @@ export class Forwarder {
         if (pump.browserClosed || signal.aborted) return;
         if (!pump.streamAlive || pump.stream !== stream) continue;
         const to = transport ?? 'none';
+        const desc = pump.replay.describeReplay();
         this.log(
-          `[mesh][stream] failover stream=${pump.id} from=${from} to=${to} resumed=${resumed}`
+          `[mesh][stream] failover stream=${pump.id} from=${from} to=${to} resumed=${resumed} mode=${desc.mode} panes=${desc.panes} cursor=${desc.cursor}`
         );
         this.flushQueue(pump);
         pump.failingOver = false;
@@ -321,7 +333,7 @@ export class Forwarder {
     stream: OpenedWsStream,
     signal: AbortSignal
   ): Promise<number> {
-    const frames = pump.replay.buildReplayFrames();
+    pump.replay.beginResume();
     const hello = pump.replay.hello;
     if (hello) {
       const waited = new Promise<void>((resolve) => {
@@ -331,7 +343,21 @@ export class Forwarder {
       await Promise.race([waited, this.sleep(2_000, signal).catch(() => undefined)]);
       pump.helloWait = null;
     }
-    for (const frame of frames) {
+    for (const frame of pump.replay.buildConnectFrames()) {
+      if (signal.aborted || pump.browserClosed) break;
+      stream.send(frame);
+    }
+    if (pump.replay.devices.size > 0 && !pump.replay.isResumeReady()) {
+      const waited = new Promise<void>((resolve) => {
+        pump.resumeWait = resolve;
+      });
+      await Promise.race([
+        waited,
+        this.sleep(STREAM_FAILOVER_RESUME_WAIT_MS, signal).catch(() => undefined),
+      ]);
+      pump.resumeWait = null;
+    }
+    for (const frame of pump.replay.buildPostConnectFrames()) {
       if (signal.aborted || pump.browserClosed) break;
       stream.send(frame);
     }
@@ -582,6 +608,8 @@ class StreamReplayState {
     { paneEpoch: Uint8Array; terminalSeq: bigint; pane: wsBorsh.CanonicalPaneTarget }
   >();
   private outboundSeq = 1;
+  private readonly resumeDevices = new Set<string>();
+  private resumeSnapshot = false;
 
   noteOutbound(bytes: Uint8Array): void {
     let env: ReturnType<typeof wsBorsh.decodeEnvelope>;
@@ -658,6 +686,15 @@ class StreamReplayState {
     } catch {
       return;
     }
+    if (env.kind === wsBorsh.KIND_DEVICE_CONNECTED) {
+      const deviceId = this.noteDeviceConnected(bytes);
+      if (deviceId) this.resumeDevices.add(deviceId);
+      return;
+    }
+    if (env.kind === wsBorsh.KIND_STATE_SNAPSHOT || env.kind === wsBorsh.KIND_CHUNK) {
+      if (this.resumeDevices.size > 0) this.resumeSnapshot = true;
+      return;
+    }
     if (env.kind !== wsBorsh.KIND_CANONICAL_EVENT) return;
     try {
       const event = wsBorsh.decodeCanonicalEventPayload(env.payload).event;
@@ -683,15 +720,62 @@ class StreamReplayState {
     }
   }
 
-  buildReplayFrames(): Uint8Array[] {
+  beginResume(): void {
+    this.resumeDevices.clear();
+    this.resumeSnapshot = false;
+  }
+
+  isResumeReady(): boolean {
+    for (const deviceId of this.devices.keys()) {
+      if (!this.resumeDevices.has(deviceId)) return false;
+    }
+    if (this.devices.size > 0 && this.paneSubs.size > 0 && !this.resumeSnapshot) return false;
+    return true;
+  }
+
+  buildConnectFrames(): Uint8Array[] {
+    return [...this.devices.values()];
+  }
+
+  buildPostConnectFrames(): Uint8Array[] {
     const frames: Uint8Array[] = [];
-    for (const frame of this.devices.values()) frames.push(frame);
     const canonical = this.buildCanonicalResume();
     if (canonical) frames.push(canonical);
     for (const frame of this.paneSubs.values()) frames.push(frame);
     for (const frame of this.lastSelect.values()) frames.push(frame);
     for (const frame of this.agents.values()) frames.push(frame);
     return frames;
+  }
+
+  describeReplay(): { mode: string; panes: string; cursor: string } {
+    if (this.canonicalSub) {
+      const rows = [...this.canonicalSub.activePanes, ...this.canonicalSub.hotPanes];
+      const panes = rows.map((row) => row.pane.paneId);
+      const cursorParts = rows.map((row) => {
+        const cursor = this.paneCursors.get(paneCursorKey(row.pane.deviceId, row.pane.paneId));
+        return cursor ? `${row.pane.paneId}:${cursor.terminalSeq}` : `${row.pane.paneId}:-`;
+      });
+      return {
+        mode: 'canonical',
+        panes: panes.join(',') || '-',
+        cursor: cursorParts.join(',') || '-',
+      };
+    }
+    const paneIds: string[] = [];
+    for (const frame of this.paneSubs.values()) {
+      try {
+        const env = wsBorsh.decodeEnvelope(frame);
+        const payload = wsBorsh.decodePayload(wsBorsh.schema.TmuxSubscribePanesSchema, env.payload);
+        paneIds.push(...payload.paneIds);
+      } catch {
+        // ignore
+      }
+    }
+    return {
+      mode: paneIds.length > 0 ? 'legacy' : 'none',
+      panes: paneIds.join(',') || '-',
+      cursor: '-',
+    };
   }
 
   resumedPaneCount(): number {
