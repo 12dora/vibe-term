@@ -25,13 +25,16 @@ RUN apt-get update \
 
 # Node 22 官方 tarball（不走 nodesource / Docker Hub 上的 node 镜像）
 RUN NODE_ARCH="$([ "${TARGETARCH}" = "arm64" ] && echo arm64 || echo x64)" \
-    && curl -fsSL "https://nodejs.org/dist/v${NODE_VERSION}/node-v${NODE_VERSION}-linux-${NODE_ARCH}.tar.xz" \
+    && curl -fsSL --retry 5 --retry-delay 5 "https://nodejs.org/dist/v${NODE_VERSION}/node-v${NODE_VERSION}-linux-${NODE_ARCH}.tar.xz" \
       | tar -xJ -C /usr/local --strip-components=1 \
     && node --version \
     && npm --version
 
 # 钉死 Bun 1.3.14（fetch / WebSocket 均认 NODE_EXTRA_CA_CERTS）
-RUN curl -fsSL https://bun.sh/install | bash -s "bun-v${BUN_VERSION}" \
+RUN for i in 1 2 3 4 5; do \
+      curl -fsSL --retry 3 https://bun.sh/install | bash -s "bun-v${BUN_VERSION}" && break; \
+      echo "bun install attempt $i failed, retrying" && sleep 5; \
+    done \
     && bun --version
 
 COPY build/tmex-cli.tgz /tmp/tmex-cli.tgz

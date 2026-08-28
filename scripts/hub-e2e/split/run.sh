@@ -9,7 +9,8 @@ HUB_E2E="$(cd "${ROOT}/.." && pwd)"
 REPO_ROOT="$(cd "${HUB_E2E}/../.." && pwd)"
 export TMEX_REPO_ROOT="${TMEX_REPO_ROOT:-${REPO_ROOT}}"
 LOCAL_COMPOSE=(docker compose -p tmex-split-local -f "${ROOT}/docker-compose.local.yml")
-RSSH="${RSSH:-/private/tmp/claude-501/-home-user-code-tmex-enhanced/741cc3a1-5392-48be-8081-06f3803bdeb4/scratchpad/rssh}"
+# RSSH：一个可执行文件，把参数当远端命令执行（例如封装 sshpass/ssh 的脚本）；凭据不入库。
+RSSH="${RSSH:?set RSSH to an ssh wrapper script, e.g. RSSH=/path/to/rssh (runs: rssh '<remote command>')}"
 HUB_PUBLIC_URL="${TMEX_HUB_PUBLIC_URL:-https://ai.example.com:18443}"
 HUB_HOST="ai.example.com"
 HUB_IP="4.2.2.1"
@@ -17,7 +18,7 @@ USER_NAME="${TMEX_E2E_USER:-alice}"
 PASSWORD="${TMEX_E2E_PASSWORD:-TmexE2e!alice-2026}"
 OUT="${ROOT}/out"
 IMAGE_NAME="tmex-e2e:split"
-TARBALL="${TMEX_TARBALL:-/private/tmp/claude-501/-home-user-code-tmex-enhanced/741cc3a1-5392-48be-8081-06f3803bdeb4/scratchpad/pkg-p6/tmex-cli-1.0.2.tgz}"
+TARBALL="${TMEX_TARBALL:?set TMEX_TARBALL to the tmex-cli tarball used to build the local image}"
 FAILS=0
 declare -a REPORT_ROWS=()
 
