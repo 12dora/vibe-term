@@ -620,7 +620,7 @@ else
   if [[ "${dc_rc}" -eq 0 ]]; then
     pass "8 direct_capable=true after native install"
   else
-    skip "8 native files present but direct_capable did not flip: ${direct_out}"
+    fail "8 native files present but direct_capable did not flip: ${direct_out}"
   fi
 fi
 

@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, test } from 'bun:test';
-import { encodeAdmitNodePayload, randomBytes } from '@tmex/shared/auth';
+import { encodeAdmitNodePayload, encodeBase64url, randomBytes } from '@tmex/shared/auth';
+import { WebSocketLink } from '@tmex/shared/link';
 import {
   KeyLogStore,
   NodeIdentityStore,
@@ -16,7 +17,8 @@ import type { WebSocketServer } from '../ws';
 import { GatewaySession } from '../ws/gateway-session';
 import { createFakeCarrier } from '../ws/test-helpers';
 import { SessionRegistry, createMeshRuntime } from './mesh-runtime';
-import { fakeSocketPair, seedUser, waitUntil } from './test-support';
+import { ImmediateScheduler, fakeSocketPair, seedUser, waitUntil } from './test-support';
+import { decodeUplinkCtl, encodeUplinkCtl } from './uplink-protocol';
 
 function fakeGateway(db: AuthDb): GatewayRuntime {
   return {
@@ -259,6 +261,76 @@ describe('createMeshRuntime', () => {
     });
     fixtures.push({ close, stop: () => mesh.stop() });
     expect(mesh.uplink.userId).toBe('user-1');
+  });
+
+  test('re-advertises node.status endpoints when network interfaces change', async () => {
+    const { db, close } = createMigratedAuthDb();
+    seedUser(new UserStore(db));
+    const [clientWs, hubWs] = fakeSocketPair();
+    const hub = new WebSocketLink(hubWs, { role: 'acceptor' });
+    const received: ReturnType<typeof decodeUplinkCtl>[] = [];
+    hub.ctl.onMessage((bytes) => {
+      received.push(decodeUplinkCtl(bytes));
+    });
+    const ifaces: NodeJS.Dict<import('node:os').NetworkInterfaceInfo[]> = {
+      eth0: [
+        {
+          address: '10.0.0.8',
+          netmask: '255.255.255.0',
+          family: 'IPv4',
+          mac: 'aa:bb:cc:dd:ee:ff',
+          internal: false,
+          cidr: '10.0.0.8/24',
+        },
+      ],
+    };
+    const scheduler = new ImmediateScheduler();
+    const mesh = await createMeshRuntime({
+      db,
+      gateway: fakeGateway(db),
+      config: {
+        roles: { hub: false, node: true },
+        hubUrl: 'http://127.0.0.1:9',
+        peerPort: 39001,
+        stunServers: [],
+      },
+      wsFactory: () => clientWs,
+      startPeerServer: false,
+      scheduler,
+      pingIntervalMs: 15_000,
+      networkInterfaces: () => ifaces,
+    });
+    fixtures.push({ close, stop: () => mesh.stop() });
+    await mesh.start();
+    await waitUntil(() => mesh.uplink.link !== null);
+    hub.ctl.send(encodeUplinkCtl({ t: 'auth.challenge', nonce: encodeBase64url(randomBytes(32)) }));
+    hub.ctl.send(encodeUplinkCtl({ t: 'auth.ok' }));
+    await waitUntil(() => mesh.uplink.state === 'online');
+    await waitUntil(() => received.some((msg) => msg.t === 'node.status'));
+    const first = received.find((msg) => msg.t === 'node.status');
+    expect(first?.t).toBe('node.status');
+    if (first?.t !== 'node.status') throw new Error('expected node.status');
+    expect(first.endpoints).toEqual(['ws://10.0.0.8:39001/peer']);
+
+    ifaces.lan0 = [
+      {
+        address: '172.28.0.4',
+        netmask: '255.255.0.0',
+        family: 'IPv4',
+        mac: '11:22:33:44:55:66',
+        internal: false,
+        cidr: '172.28.0.4/16',
+      },
+    ];
+    const before = received.filter((msg) => msg.t === 'node.status').length;
+    scheduler.tickIntervals();
+    await waitUntil(() => received.filter((msg) => msg.t === 'node.status').length > before, 2_000);
+    const latest = [...received].reverse().find((msg) => msg.t === 'node.status');
+    expect(latest?.t).toBe('node.status');
+    if (latest?.t !== 'node.status') throw new Error('expected node.status');
+    expect(latest.endpoints).toEqual(
+      expect.arrayContaining(['ws://10.0.0.8:39001/peer', 'ws://172.28.0.4:39001/peer'])
+    );
   });
 });
 

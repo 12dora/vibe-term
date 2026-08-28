@@ -32,6 +32,7 @@ import {
   jsonBody,
   jsonError,
 } from './session-middleware';
+import type { UplinkStatus } from './types';
 
 export type MeshHttpRuntimeOptions = {
   roles: MeshRoles;
@@ -50,6 +51,7 @@ export type MeshHttpRuntimeOptions = {
   hubPublicUrl?: string | null;
   trustProxy?: boolean;
   connectionLookup?: ConnectionLookup;
+  selfStatus?: () => UplinkStatus;
 };
 
 const STATIC_PREFIXES = ['/assets/', '/static/', '/favicon', '/manifest'];
@@ -106,6 +108,7 @@ export class MeshHttpRuntime {
       now: this.now,
       registerSocket: (ws, auth) => this.registerSocket(ws, auth),
       connectionLookup: opts.connectionLookup,
+      selfStatus: opts.selfStatus,
     });
     this.auth = new AuthRoutes({
       roles: opts.roles,

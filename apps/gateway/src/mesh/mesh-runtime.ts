@@ -21,7 +21,7 @@ import { createHubKeyLogSource } from '../hub/hub-key-log-source';
 import type { GatewayRuntime } from '../runtime';
 import { getDisplayVersion } from '../system/version';
 import type { GatewaySession } from '../ws/gateway-session';
-import { encodeJsonBytes } from './ctl';
+import { defaultScheduler, encodeJsonBytes } from './ctl';
 import {
   type CachedRtcConfig,
   type ConnectionLookupResult,
@@ -720,16 +720,20 @@ export async function createMeshRuntime(opts: CreateMeshRuntimeOptions): Promise
     }
   }
 
-  const statusProvider = () => ({
-    version: getDisplayVersion(),
-    tmux: true,
-    direct_capable: rtc.available,
-    inventory: {},
-    endpoints: enumeratePeerEndpoints(
-      peerHolder.manager?.listenPort ?? config.peerPort,
-      interfacesFn()
-    ),
-  });
+  const scheduler = opts.scheduler ?? defaultScheduler();
+  const statusProvider = () => {
+    const version = getDisplayVersion();
+    return {
+      version,
+      tmux: true,
+      direct_capable: rtc.available,
+      inventory: { version },
+      endpoints: enumeratePeerEndpoints(
+        peerHolder.manager?.listenPort ?? config.peerPort,
+        interfacesFn()
+      ),
+    };
+  };
 
   const httpHolder: { runtime: MeshHttpRuntime | null } = { runtime: null };
 
@@ -741,7 +745,7 @@ export async function createMeshRuntime(opts: CreateMeshRuntimeOptions): Promise
     userStore,
     statusProvider,
     wsFactory: opts.wsFactory,
-    scheduler: opts.scheduler,
+    scheduler,
     pingIntervalMs: opts.pingIntervalMs,
     onEnrollRedeemed: (msg) => {
       httpHolder.runtime?.mesh.forwardEnrollRedeemed({
@@ -777,6 +781,9 @@ export async function createMeshRuntime(opts: CreateMeshRuntimeOptions): Promise
               ? node.inventory
               : JSON.stringify(node.inventory ?? null),
         });
+        if (node.id !== identity.nodeIdHex) {
+          peerHolder.manager?.notifyPeerEndpointsChanged(node.id);
+        }
       }
       for (const peer of userStore.listPeers()) {
         if (peer.nodeId === identity.nodeIdHex || peer.nodeId === HUB_META_PEER_ID) continue;
@@ -862,7 +869,7 @@ export async function createMeshRuntime(opts: CreateMeshRuntimeOptions): Promise
     wsServer: gateway.wsServer,
     hostname: resolvePeerBindHost(opts.peerHostname, config.peerBindHost),
     startServer: opts.startPeerServer,
-    scheduler: opts.scheduler,
+    scheduler,
     rtc,
     linkFactory: opts.linkFactory,
     onGatewaySession: (session, auth) => sessions.register({ ...auth, session }).ok,
@@ -1096,6 +1103,7 @@ export async function createMeshRuntime(opts: CreateMeshRuntimeOptions): Promise
         getRtcConfig: () => lastRtc,
       },
     },
+    selfStatus: statusProvider,
     primaryUserId: userId || undefined,
     hubPublicUrl: hubEndpointUrl(config),
     trustProxy: gatewayConfig.trustProxy,

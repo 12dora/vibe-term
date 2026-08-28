@@ -2,7 +2,7 @@ import { afterEach, describe, expect, test } from 'bun:test';
 import { createInMemoryLinkPair } from '@tmex/shared/link';
 import { createMigratedAuthDb } from '../auth/test-db';
 import { UserStore } from '../auth/user-store';
-import { PeerManager, winningDialInitiator } from './peer-manager';
+import { PEER_UPGRADE_COOLDOWN_MS, PeerManager, winningDialInitiator } from './peer-manager';
 import { handshakeRelay } from './peer-protocol';
 import {
   ImmediateScheduler,
@@ -852,5 +852,109 @@ describe('PeerManager', () => {
       link.openStream(new TextEncoder().encode('{"type":"http","method":"GET","path":"/"}'))
     ).rejects.toThrow('too-many-streams');
     first.end();
+  });
+
+  test('upgrades a live relay to ws-secure when peer endpoints appear without getLink', async () => {
+    const { db, close } = createMigratedAuthDb();
+    fixtures.push({ close });
+    const store = new UserStore(db);
+    seedUser(store);
+    const self = seedNodeIdentity(store, 'user-1');
+    const peer = seedNodeIdentity(store, 'user-1');
+    const managerB = new PeerManager({
+      identity: peer,
+      userStore: store,
+      uplink: dummyUplink(peer, store),
+      peerPort: 0,
+      hostname: '127.0.0.1',
+      startServer: true,
+      idleMs: 60_000,
+    });
+    fixtures.push({ close, stop: () => managerB.stop() });
+    await managerB.start();
+    const port = managerB.listenPort;
+    expect(port).toBeGreaterThan(0);
+
+    store.upsertPeer({
+      nodeId: peer.nodeId,
+      name: 'peer',
+      endpointsJson: '[]',
+      inventoryJson: '{}',
+      directCapable: false,
+      lastSeenAt: Date.now(),
+      listVersion: 1,
+    });
+    const managerA = new PeerManager({
+      identity: self,
+      userStore: store,
+      uplink: dummyUplink(self, store),
+      peerPort: 0,
+      startServer: false,
+      idleMs: 60_000,
+    });
+    fixtures.push({ close, stop: () => managerA.stop() });
+    const [relayA, relayB] = createInMemoryLinkPair();
+    expect(managerA.adoptLink(peer.nodeId, relayA, 'relay', self.nodeId)).toBe(relayA);
+    expect(managerB.adoptLink(self.nodeId, relayB, 'relay', self.nodeId)).toBe(relayB);
+    expect(managerA.transportOf(peer.nodeId)).toBe('relay');
+
+    store.upsertPeer({
+      nodeId: peer.nodeId,
+      name: 'peer',
+      endpointsJson: JSON.stringify([`ws://127.0.0.1:${port}/peer`]),
+      inventoryJson: '{}',
+      directCapable: false,
+      lastSeenAt: Date.now(),
+      listVersion: 2,
+    });
+    managerA.notifyPeerEndpointsChanged(peer.nodeId);
+    await waitUntil(() => managerA.transportOf(peer.nodeId) === 'ws-secure', 5_000);
+    const upgraded = managerA.getLive(peer.nodeId);
+    expect(upgraded).not.toBe(relayA);
+    expect(managerA.listReach().get(peer.nodeId)).toBe('lan');
+  });
+
+  test('rate-limits background upgrade dials for unchanged endpoints', async () => {
+    const { db, close } = createMigratedAuthDb();
+    fixtures.push({ close });
+    const store = new UserStore(db);
+    seedUser(store);
+    const self = seedNodeIdentity(store, 'user-1');
+    const peer = seedNodeIdentity(store, 'user-1');
+    store.upsertPeer({
+      nodeId: peer.nodeId,
+      name: 'peer',
+      endpointsJson: JSON.stringify(['ws://127.0.0.1:39001/peer']),
+      inventoryJson: '{}',
+      directCapable: false,
+      lastSeenAt: Date.now(),
+      listVersion: 1,
+    });
+    const scheduler = new ImmediateScheduler();
+    let dials = 0;
+    const managerA = new PeerManager({
+      identity: self,
+      userStore: store,
+      uplink: dummyUplink(self, store),
+      peerPort: 0,
+      startServer: false,
+      scheduler,
+      linkFactory: async () => {
+        dials += 1;
+        throw new Error('dial-failed');
+      },
+    });
+    fixtures.push({ close, stop: () => managerA.stop() });
+    const [relayA] = createInMemoryLinkPair();
+    expect(managerA.adoptLink(peer.nodeId, relayA, 'relay', self.nodeId)).toBe(relayA);
+    managerA.notifyPeerEndpointsChanged(peer.nodeId);
+    await waitUntil(() => dials === 1, 2_000);
+    managerA.notifyPeerEndpointsChanged(peer.nodeId);
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    expect(dials).toBe(1);
+    scheduler.nowMs += PEER_UPGRADE_COOLDOWN_MS;
+    managerA.notifyPeerEndpointsChanged(peer.nodeId);
+    await waitUntil(() => dials === 2, 2_000);
+    expect(managerA.transportOf(peer.nodeId)).toBe('relay');
   });
 });

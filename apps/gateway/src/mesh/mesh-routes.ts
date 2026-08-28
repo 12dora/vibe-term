@@ -30,6 +30,7 @@ import {
   jsonError,
   requireSession,
 } from './session-middleware';
+import type { UplinkStatus } from './types';
 
 export type MeshNodeDto = {
   id: string;
@@ -57,6 +58,7 @@ export type MeshRoutesDeps = {
   now?: () => number;
   registerSocket?: (ws: MeshServerWebSocket, auth: { sid: string; uid: string }) => void;
   connectionLookup?: ConnectionLookup;
+  selfStatus?: () => UplinkStatus;
 };
 
 const STATUS_TO_U8: Record<string, number> = {
@@ -243,10 +245,16 @@ export class MeshRoutes {
           inventory = peer.inventoryJson;
         }
       }
-      const version =
-        inventory && typeof inventory === 'object' && inventory !== null && 'version' in inventory
-          ? String((inventory as { version: unknown }).version)
-          : null;
+      let version = versionFromInventory(inventory);
+      let directCapable = peer?.directCapable ?? false;
+      if (isSelf) {
+        const self = this.deps.selfStatus?.();
+        if (self) {
+          inventory = self.inventory ?? inventory;
+          version = self.version || versionFromInventory(inventory);
+          directCapable = self.direct_capable;
+        }
+      }
       nodes.push({
         id,
         name: peer?.name ?? (isSelf ? 'self' : id),
@@ -254,7 +262,7 @@ export class MeshRoutes {
         online,
         reach: r,
         version,
-        direct_capable: peer?.directCapable ?? false,
+        direct_capable: directCapable,
         inventory,
         loggedIn,
         isHub: hubNodeId != null && id === hubNodeId,
@@ -415,6 +423,15 @@ function toBytes(message: unknown): Uint8Array | null {
   if (message instanceof ArrayBuffer) return new Uint8Array(message);
   if (ArrayBuffer.isView(message)) {
     return new Uint8Array(message.buffer, message.byteOffset, message.byteLength);
+  }
+  return null;
+}
+
+function versionFromInventory(inventory: unknown): string | null {
+  if (inventory && typeof inventory === 'object' && inventory !== null && 'version' in inventory) {
+    const value = (inventory as { version: unknown }).version;
+    if (value == null) return null;
+    return String(value);
   }
   return null;
 }

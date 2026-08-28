@@ -114,6 +114,38 @@ describe('mesh-routes', () => {
     }
   });
 
+  test('GET /api/mesh/nodes reports live self.direct_capable, version, and inventory', async () => {
+    const mesh = await bootMesh({
+      selfStatus: () => ({
+        version: '9.9.9-test',
+        tmux: true,
+        direct_capable: true,
+        inventory: { version: '9.9.9-test', devices: 1 },
+        endpoints: ['ws://10.0.0.8:39001/peer'],
+      }),
+    });
+    try {
+      const { sid } = await challengeAndLogin(mesh.runtime, mesh.boot);
+      const list = await call(mesh.runtime, 'http://localhost/api/mesh/nodes', {
+        headers: { cookie: `tmex_s_self=${sid}` },
+      });
+      const body = (await list.json()) as {
+        nodes: Array<{
+          id: string;
+          version: string | null;
+          direct_capable: boolean;
+          inventory: unknown;
+        }>;
+      };
+      const self = body.nodes.find((n) => n.id === NODE_ID);
+      expect(self?.direct_capable).toBe(true);
+      expect(self?.version).toBe('9.9.9-test');
+      expect(self?.inventory).toEqual({ version: '9.9.9-test', devices: 1 });
+    } finally {
+      mesh.close();
+    }
+  });
+
   test('GET /api/mesh/nodes keeps hub-list online without inventing reach', async () => {
     const peers = new FakePeers();
     peers.hubOnline.add(PEER_ID);

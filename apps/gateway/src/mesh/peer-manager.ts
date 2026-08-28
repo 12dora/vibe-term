@@ -9,7 +9,7 @@ import {
 import type { NodeSessionStore } from '../auth/node-session-store';
 import type { UserStore } from '../auth/user-store';
 import type { WebSocketServer } from '../ws';
-import { defaultScheduler, encodeJsonBytes, isRecord, parseSeq } from './ctl';
+import { defaultScheduler, encodeJsonBytes, isRecord, jsonStable, parseSeq } from './ctl';
 import type { RtcSignalMessage } from './mesh-deps';
 import { handshakeRelay, handshakeWsDirect, parseOpenPayload } from './peer-protocol';
 import { PeerServer } from './peer-server';
@@ -33,6 +33,8 @@ export const PEER_CONNECT_TIMEOUT_MS = 3_000;
 export const PEER_PING_INTERVAL_MS = 15_000;
 export const PEER_MISSED_PONG_LIMIT = 3;
 export const PEER_MAX_CONCURRENT_STREAMS = 256;
+export const PEER_UPGRADE_COOLDOWN_MS = 10_000;
+export const PEER_UPGRADE_SCAN_MS = 15_000;
 export const RTC_PEER_INBOX_MAX_MESSAGES = 32;
 
 /** Connection initiated by the lexicographically smaller nodeId wins a simultaneous dial. */
@@ -211,6 +213,10 @@ export class PeerManager {
   private readonly rtcListeners = new Map<string, Set<(msg: RtcSignalMessage) => void>>();
   private readonly rtcInbox = new Map<string, RtcSignalMessage[]>();
   private readonly server: PeerServer | null;
+  private readonly lastUpgradeAt = new Map<string, number>();
+  private readonly lastSeenEndpoints = new Map<string, string>();
+  private lastAdvertisedStatusJson = '';
+  private upgradeScan: { clear: () => void } | null = null;
   private stopped = false;
   private generation = 0;
   private stopAbort = new AbortController();
@@ -267,6 +273,11 @@ export class PeerManager {
 
   async start(): Promise<void> {
     await this.server?.start();
+    this.upgradeScan?.clear();
+    this.upgradeScan = this.scheduler.interval(() => {
+      this.refreshAdvertisedStatus();
+      this.notifyPeerEndpointsChanged();
+    }, PEER_UPGRADE_SCAN_MS);
   }
 
   async stop(): Promise<void> {
@@ -274,6 +285,8 @@ export class PeerManager {
     this.stopped = true;
     this.generation += 1;
     this.stopAbort.abort();
+    this.upgradeScan?.clear();
+    this.upgradeScan = null;
     this.server?.stop();
     for (const peer of [...this.live.values()]) {
       this.dropPeer(peer.peerNodeId, 'stopped');
@@ -350,15 +363,7 @@ export class PeerManager {
     this.requireTrusted(nodeId);
     const existing = this.live.get(nodeId);
     if (existing) {
-      if (this.wantsUpgrade(existing) && !this.pending.has(nodeId)) {
-        const upgrade = this.dial(nodeId);
-        this.pending.set(nodeId, upgrade);
-        void upgrade
-          .catch(() => undefined)
-          .finally(() => {
-            if (this.pending.get(nodeId) === upgrade) this.pending.delete(nodeId);
-          });
-      }
+      this.maybeUpgrade(nodeId, { cooldown: false });
       return existing.session;
     }
     const inflight = this.pending.get(nodeId);
@@ -381,6 +386,29 @@ export class PeerManager {
     this.dropPeer(nodeId, 'revoked');
     this.forceCloseRetiring(nodeId, 'revoked');
     this.userStore.deletePeer(nodeId);
+    this.lastUpgradeAt.delete(nodeId);
+    this.lastSeenEndpoints.delete(nodeId);
+  }
+
+  notifyPeerEndpointsChanged(nodeId?: string): void {
+    if (nodeId) {
+      this.maybeUpgrade(nodeId, { cooldown: this.endpointsUnchanged(nodeId) });
+      return;
+    }
+    for (const id of this.live.keys()) {
+      this.maybeUpgrade(id, { cooldown: this.endpointsUnchanged(id) });
+    }
+  }
+
+  refreshAdvertisedStatus(): void {
+    const status = this.statusProvider?.();
+    if (!status) return;
+    const encoded = jsonStable(status);
+    if (encoded === this.lastAdvertisedStatusJson) return;
+    this.lastAdvertisedStatusJson = encoded;
+    for (const live of this.live.values()) {
+      this.sendPeerStatus(live);
+    }
   }
 
   listReach(): Map<string, PeerReach> {
@@ -435,6 +463,39 @@ export class PeerManager {
     if (live.transport === 'dc') return false;
     if (live.transport === 'ws-secure') return this.shouldTryDc(live.peerNodeId);
     return this.shouldTryDc(live.peerNodeId) || this.hasWsSecureCandidate(live.peerNodeId);
+  }
+
+  private endpointsUnchanged(nodeId: string): boolean {
+    const cached = this.userStore.listPeers().find((row) => row.nodeId === nodeId);
+    const json = cached?.endpointsJson ?? '';
+    const prev = this.lastSeenEndpoints.get(nodeId);
+    this.lastSeenEndpoints.set(nodeId, json);
+    return prev === json;
+  }
+
+  private maybeUpgrade(nodeId: string, opts: { cooldown: boolean }): void {
+    if (this.stopped) return;
+    if (!this.isTrusted(nodeId)) return;
+    const live = this.live.get(nodeId);
+    if (!live || !this.wantsUpgrade(live)) return;
+    if (this.pending.has(nodeId)) return;
+    const now = this.scheduler.now();
+    if (opts.cooldown) {
+      const last = this.lastUpgradeAt.get(nodeId) ?? 0;
+      if (now - last < PEER_UPGRADE_COOLDOWN_MS) return;
+    }
+    this.lastUpgradeAt.set(nodeId, now);
+    this.queueUpgrade(nodeId);
+  }
+
+  private queueUpgrade(nodeId: string): void {
+    const upgrade = this.dial(nodeId);
+    this.pending.set(nodeId, upgrade);
+    void upgrade
+      .catch(() => undefined)
+      .finally(() => {
+        if (this.pending.get(nodeId) === upgrade) this.pending.delete(nodeId);
+      });
   }
 
   private hasWsSecureCandidate(nodeId: string): boolean {
@@ -957,6 +1018,7 @@ export class PeerManager {
       lastSeenAt: this.scheduler.now(),
       listVersion: existing?.listVersion ?? 0,
     });
+    this.notifyPeerEndpointsChanged(peerNodeId);
     const head = isRecord(msg.key_log_head) ? msg.key_log_head : null;
     if (!head || !this.keyLogApplier) return;
     try {
@@ -1007,6 +1069,7 @@ export class PeerManager {
   private sendPeerStatus(live: LivePeer): void {
     const status = this.statusProvider?.();
     if (!status) return;
+    this.lastAdvertisedStatusJson = jsonStable(status);
     const payload: Record<string, unknown> = {
       t: 'node.status',
       version: status.version,

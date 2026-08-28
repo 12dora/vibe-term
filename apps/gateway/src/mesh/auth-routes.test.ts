@@ -158,6 +158,7 @@ export async function bootMesh(options?: {
   streams?: FakeStreams;
   rtc?: MeshRtcDeps;
   publisher?: AuthKeyLogPublisher;
+  selfStatus?: () => import('./types').UplinkStatus;
 }) {
   const { db, close } = createMigratedAuthDb();
   const userStore = new UserStore(db);
@@ -187,6 +188,7 @@ export async function bootMesh(options?: {
     rtc: options?.rtc,
     now: options?.now,
     primaryUserId: boot.userId,
+    selfStatus: options?.selfStatus,
   });
   return {
     close,

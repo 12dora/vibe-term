@@ -281,6 +281,14 @@ export class UplinkClient {
     );
   }
 
+  sendStatusIfChanged(): boolean {
+    if (this.state !== 'online' || !this.link) return false;
+    const encoded = jsonStable(this.statusProvider());
+    if (encoded === this.lastStatusJson) return false;
+    this.sendStatus();
+    return true;
+  }
+
   async openRelay(toNodeId: string): Promise<LinkStream> {
     const link = this.link;
     if (!link || this.state !== 'online') {
@@ -780,11 +788,7 @@ export class UplinkClient {
       } catch {
         this.tearDownLink('ping-failed');
       }
-      const status = this.statusProvider();
-      const encoded = jsonStable(status);
-      if (encoded !== this.lastStatusJson) {
-        this.sendStatus();
-      }
+      this.sendStatusIfChanged();
     }, this.pingIntervalMs);
   }
 
