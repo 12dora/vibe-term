@@ -1,6 +1,7 @@
 {
 	auto_https off
 	admin off
+	default_sni __HUB_HOST__
 }
 
 __HUB_HOST__, __HUB_IP__ {
