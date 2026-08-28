@@ -85,6 +85,7 @@ type ForwardPump = {
   helloWait: (() => void) | null;
   resumeWait: (() => void) | null;
   streamAlive: boolean;
+  inflight: OpenedWsStream | null;
 };
 
 const pendingMeta = new WeakMap<OpenedWsStream, ForwardMeta>();
@@ -181,6 +182,9 @@ export class Forwarder {
     pump.helloWait = null;
     pump.resumeWait?.();
     pump.resumeWait = null;
+    const inflight = pump.inflight;
+    pump.inflight = null;
+    inflight?.close(code, reason);
     pump.stream?.close(code, reason);
   }
 
@@ -204,6 +208,7 @@ export class Forwarder {
       helloWait: null,
       resumeWait: null,
       streamAlive: true,
+      inflight: null,
     };
     this.pumps.set(ws, pump);
     this.bindStream(pump, stream, meta?.link ?? null, meta?.transport ?? null);
@@ -296,6 +301,7 @@ export class Forwarder {
           lastError = err;
           continue;
         }
+        if (pump.browserClosed || signal.aborted) return;
         const transport = this.deps.peers.transportOf?.(pump.nodeId) ?? null;
         let stream: OpenedWsStream;
         try {
@@ -304,9 +310,18 @@ export class Forwarder {
           lastError = err;
           continue;
         }
+        pump.inflight = stream;
+        if (pump.browserClosed || signal.aborted) {
+          this.discardStream(pump, stream);
+          return;
+        }
         this.bindStream(pump, stream, link, transport);
+        pump.inflight = null;
         const resumed = await this.replaySubscription(pump, stream, signal);
-        if (pump.browserClosed || signal.aborted) return;
+        if (pump.browserClosed || signal.aborted) {
+          this.discardStream(pump, stream);
+          return;
+        }
         if (!pump.streamAlive || pump.stream !== stream) continue;
         const to = transport ?? 'none';
         const desc = pump.replay.describeReplay();
@@ -316,6 +331,7 @@ export class Forwarder {
         this.flushQueue(pump);
         pump.failingOver = false;
         pump.failoverAbort = null;
+        this.flushQueue(pump);
         return;
       }
       void lastError;
@@ -361,6 +377,9 @@ export class Forwarder {
       if (signal.aborted || pump.browserClosed) break;
       stream.send(frame);
     }
+    if (!signal.aborted && !pump.browserClosed) {
+      pump.replay.markCanonicalResumeSent();
+    }
     return pump.replay.resumedPaneCount();
   }
 
@@ -369,7 +388,21 @@ export class Forwarder {
     const stream = pump.stream;
     if (!stream) return;
     for (const bytes of queued) {
-      stream.send(bytes);
+      const out = pump.replay.rewriteQueuedFrame(bytes);
+      if (out) stream.send(out);
+    }
+  }
+
+  private discardStream(pump: ForwardPump, stream: OpenedWsStream): void {
+    if (pump.inflight === stream) pump.inflight = null;
+    if (pump.stream === stream) {
+      pump.stream = null;
+      pump.streamAlive = false;
+    }
+    try {
+      stream.close();
+    } catch {
+      // already closed
     }
   }
 
@@ -472,10 +505,16 @@ export class Forwarder {
       }
       return undefined;
     }
+    if (req.signal.aborted) {
+      return jsonError('NODE_UNREACHABLE', 503, { nodeId });
+    }
     let link: LinkSession;
     try {
       link = await this.deps.peers.getLink(nodeId);
     } catch {
+      return jsonError('NODE_UNREACHABLE', 503, { nodeId });
+    }
+    if (req.signal.aborted) {
       return jsonError('NODE_UNREACHABLE', 503, { nodeId });
     }
     const cid = new URL(req.url).searchParams.get('cid')?.trim() || '';
@@ -483,6 +522,10 @@ export class Forwarder {
     try {
       stream = await this.deps.streams.openWsStream(link, auth, cid || undefined);
     } catch {
+      return jsonError('NODE_UNREACHABLE', 503, { nodeId });
+    }
+    if (req.signal.aborted) {
+      stream.close();
       return jsonError('NODE_UNREACHABLE', 503, { nodeId });
     }
     const token = crypto.randomUUID();
@@ -610,6 +653,7 @@ class StreamReplayState {
   private outboundSeq = 1;
   private readonly resumeDevices = new Set<string>();
   private resumeSnapshot = false;
+  private resumeGeneration: bigint | null = null;
 
   noteOutbound(bytes: Uint8Array): void {
     let env: ReturnType<typeof wsBorsh.decodeEnvelope>;
@@ -723,6 +767,7 @@ class StreamReplayState {
   beginResume(): void {
     this.resumeDevices.clear();
     this.resumeSnapshot = false;
+    this.resumeGeneration = null;
   }
 
   isResumeReady(): boolean {
@@ -743,8 +788,53 @@ class StreamReplayState {
     if (canonical) frames.push(canonical);
     for (const frame of this.paneSubs.values()) frames.push(frame);
     for (const frame of this.lastSelect.values()) frames.push(frame);
+    for (const frame of this.buildLegacyHistoryRequests()) frames.push(frame);
     for (const frame of this.agents.values()) frames.push(frame);
     return frames;
+  }
+
+  markCanonicalResumeSent(): void {
+    if (!this.canonicalSub) return;
+    const sent = this.canonicalSub.generation + 1n;
+    this.canonicalSub = { ...this.canonicalSub, generation: sent };
+    this.resumeGeneration = sent;
+  }
+
+  rewriteQueuedFrame(bytes: Uint8Array): Uint8Array | null {
+    let env: ReturnType<typeof wsBorsh.decodeEnvelope>;
+    try {
+      env = wsBorsh.decodeEnvelope(bytes);
+    } catch {
+      return bytes;
+    }
+    if (env.kind !== wsBorsh.KIND_CANONICAL_COMMAND) return bytes;
+    try {
+      const command = wsBorsh.decodeCanonicalCommandPayload(env.payload).command;
+      if (!('SetPaneSubscriptions' in command)) return bytes;
+      const value = command.SetPaneSubscriptions;
+      const floor = this.resumeGeneration ?? 0n;
+      const generation = value.generation > floor ? value.generation : floor + 1n;
+      this.canonicalSub = {
+        generation,
+        activePanes: value.activePanes,
+        hotPanes: value.hotPanes,
+        seq: env.seq,
+      };
+      this.resumeGeneration = generation;
+      return wsBorsh.encodeEnvelope(
+        wsBorsh.KIND_CANONICAL_COMMAND,
+        wsBorsh.encodeCanonicalCommandPayload({
+          SetPaneSubscriptions: {
+            generation,
+            activePanes: value.activePanes,
+            hotPanes: value.hotPanes,
+          },
+        }),
+        env.seq
+      );
+    } catch {
+      return bytes;
+    }
   }
 
   describeReplay(): { mode: string; panes: string; cursor: string } {
@@ -800,6 +890,40 @@ class StreamReplayState {
       }
     }
     return count;
+  }
+
+  private buildLegacyHistoryRequests(): Uint8Array[] {
+    if (this.canonicalSub) return [];
+    const frames: Uint8Array[] = [];
+    const seen = new Set<string>();
+    for (const frame of this.paneSubs.values()) {
+      try {
+        const env = wsBorsh.decodeEnvelope(frame);
+        const payload = wsBorsh.decodePayload(wsBorsh.schema.TmuxSubscribePanesSchema, env.payload);
+        for (const paneId of payload.paneIds) {
+          const key = `${payload.deviceId}\0${paneId}`;
+          if (seen.has(key)) continue;
+          seen.add(key);
+          const requestToken = new Uint8Array(16);
+          crypto.getRandomValues(requestToken);
+          this.outboundSeq += 1;
+          frames.push(
+            wsBorsh.encodeEnvelope(
+              wsBorsh.KIND_TMUX_FETCH_PANE_HISTORY,
+              wsBorsh.encodePayload(wsBorsh.schema.TmuxFetchPaneHistorySchema, {
+                deviceId: payload.deviceId,
+                paneId,
+                requestToken,
+              }),
+              this.outboundSeq
+            )
+          );
+        }
+      } catch {
+        // ignore
+      }
+    }
+    return frames;
   }
 
   private buildCanonicalResume(): Uint8Array | null {

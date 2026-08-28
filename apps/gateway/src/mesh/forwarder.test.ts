@@ -505,7 +505,10 @@ describe('forwarder', () => {
         wsBorsh.KIND_DEVICE_CONNECT,
         wsBorsh.KIND_TMUX_SUBSCRIBE_PANES,
         wsBorsh.KIND_TMUX_SELECT,
+        wsBorsh.KIND_TMUX_FETCH_PANE_HISTORY,
       ]);
+      const fetched = decodeFetchPaneHistory(replayed?.sent ?? []);
+      expect(fetched).toEqual([{ deviceId: 'dev-1', paneId: '%1' }]);
       expect(
         logs.some((line) => /from=dc to=relay resumed=1 mode=legacy panes=%1 cursor=-/.test(line))
       ).toBe(true);
@@ -576,6 +579,87 @@ describe('forwarder', () => {
       const sub = decoded.command.SetPaneSubscriptions;
       expect(sub.generation).toBe(4n);
       expect(sub.activePanes[0]?.cursor?.terminalSeq).toBe(40n);
+    } finally {
+      mesh.close();
+    }
+  });
+
+  test('subscribe change sent mid-failover wins on the new link without generation conflict', async () => {
+    const dcLink = { id: 'dc' } as unknown as LinkSession;
+    const relayLink = { id: 'relay' } as unknown as LinkSession;
+    const peers = new FakePeers();
+    peers.links.set(OTHER, dcLink);
+    peers.transport.set(OTHER, 'dc');
+    const streams = new FakeStreams();
+    const origGetLink = peers.getLink.bind(peers);
+    let blockLink = false;
+    let releaseLink: (() => void) | undefined;
+    peers.getLink = async (nodeId: string) => {
+      if (blockLink) {
+        await new Promise<void>((resolve) => {
+          releaseLink = resolve;
+        });
+      }
+      return origGetLink(nodeId);
+    };
+    const mesh = await bootMesh({ peers, streams, sleep: async () => {} });
+    try {
+      const { ws } = await openForwardWs(mesh.runtime, peers, streams, OTHER);
+      const epoch = new Uint8Array(16).fill(7);
+      mesh.runtime.handleWebSocket.message(ws, encodeHelloFrame());
+      mesh.runtime.handleWebSocket.message(ws, encodeCanonicalSub(3n, '%1', 4, epoch));
+      blockLink = true;
+      peers.links.set(OTHER, relayLink);
+      peers.transport.set(OTHER, 'relay');
+      streams.lastWs?.close(1011, 'reset');
+      await waitUntil(() => releaseLink !== undefined, 2_000);
+      mesh.runtime.handleWebSocket.message(ws, encodeCanonicalSub(4n, '%2', 5, epoch));
+      releaseLink?.();
+      await waitUntil(() => streams.wsOpens.length === 2, 2_000);
+      const subs = decodeCanonicalSubs(streams.wsOpens[1]?.ws.sent ?? []);
+      expect(subs.length).toBeGreaterThan(0);
+      for (let i = 1; i < subs.length; i += 1) {
+        expect(subs[i]?.generation).toBeGreaterThan(subs[i - 1]?.generation ?? 0n);
+      }
+      expect(subs.at(-1)?.paneIds).toEqual(['%2']);
+    } finally {
+      mesh.close();
+    }
+  });
+
+  test('closing the browser during failover getLink/openWsStream closes the orphan upstream', async () => {
+    const dcLink = { id: 'dc' } as unknown as LinkSession;
+    const relayLink = { id: 'relay' } as unknown as LinkSession;
+    const peers = new FakePeers();
+    peers.links.set(OTHER, dcLink);
+    peers.transport.set(OTHER, 'dc');
+    const streams = new FakeStreams();
+    const origOpen = streams.openWsStream.bind(streams);
+    let blockOpen = false;
+    let releaseOpen: (() => void) | undefined;
+    streams.openWsStream = async (link, auth, cid) => {
+      if (blockOpen) {
+        await new Promise<void>((resolve) => {
+          releaseOpen = resolve;
+        });
+      }
+      return origOpen(link, auth, cid);
+    };
+    const mesh = await bootMesh({ peers, streams, sleep: async () => {} });
+    try {
+      const { ws } = await openForwardWs(mesh.runtime, peers, streams, OTHER);
+      mesh.runtime.handleWebSocket.message(ws, encodeHelloFrame());
+      expect(streams.wsOpens).toHaveLength(1);
+      blockOpen = true;
+      peers.links.set(OTHER, relayLink);
+      peers.transport.set(OTHER, 'relay');
+      streams.lastWs?.close(1011, 'reset');
+      await waitUntil(() => releaseOpen !== undefined, 2_000);
+      mesh.runtime.handleWebSocket.close(ws);
+      releaseOpen?.();
+      await waitUntil(() => (streams.wsOpens[1]?.ws.closedOnce ?? false) === true, 2_000);
+      expect(streams.wsOpens).toHaveLength(2);
+      expect(streams.wsOpens[1]?.ws.closedOnce).toBe(true);
     } finally {
       mesh.close();
     }
@@ -710,6 +794,63 @@ function encodeSelectFrame(deviceId: string, paneId: string, seq: number): Uint8
     }),
     seq
   );
+}
+
+function encodeCanonicalSub(
+  generation: bigint,
+  paneId: string,
+  seq: number,
+  epoch: Uint8Array
+): Uint8Array {
+  const pane = { deviceId: 'dev-1', serverEpoch: epoch, paneId };
+  return wsBorsh.encodeEnvelope(
+    wsBorsh.KIND_CANONICAL_COMMAND,
+    wsBorsh.encodeCanonicalCommandPayload({
+      SetPaneSubscriptions: {
+        generation,
+        activePanes: [{ pane, cursor: { paneEpoch: epoch, terminalSeq: 0n } }],
+        hotPanes: [],
+      },
+    }),
+    seq
+  );
+}
+
+function decodeCanonicalSubs(
+  frames: Uint8Array[]
+): Array<{ generation: bigint; paneIds: string[] }> {
+  const out: Array<{ generation: bigint; paneIds: string[] }> = [];
+  for (const frame of frames) {
+    try {
+      const env = wsBorsh.decodeEnvelope(frame);
+      if (env.kind !== wsBorsh.KIND_CANONICAL_COMMAND) continue;
+      const decoded = wsBorsh.decodeCanonicalCommandPayload(env.payload);
+      if (!('SetPaneSubscriptions' in decoded.command)) continue;
+      const sub = decoded.command.SetPaneSubscriptions;
+      out.push({
+        generation: sub.generation,
+        paneIds: [...sub.activePanes, ...sub.hotPanes].map((row) => row.pane.paneId),
+      });
+    } catch {
+      // ignore
+    }
+  }
+  return out;
+}
+
+function decodeFetchPaneHistory(frames: Uint8Array[]): Array<{ deviceId: string; paneId: string }> {
+  const out: Array<{ deviceId: string; paneId: string }> = [];
+  for (const frame of frames) {
+    try {
+      const env = wsBorsh.decodeEnvelope(frame);
+      if (env.kind !== wsBorsh.KIND_TMUX_FETCH_PANE_HISTORY) continue;
+      const payload = wsBorsh.decodePayload(wsBorsh.schema.TmuxFetchPaneHistorySchema, env.payload);
+      out.push({ deviceId: payload.deviceId, paneId: payload.paneId });
+    } catch {
+      // ignore
+    }
+  }
+  return out;
 }
 
 function sentKinds(frames: Uint8Array[]): number[] {

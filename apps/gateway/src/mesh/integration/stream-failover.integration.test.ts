@@ -210,7 +210,10 @@ function paneSnapshot(deviceId: string): StateSnapshotPayload {
   };
 }
 
-function fakePaneRuntime(deviceId: string): DeviceSessionRuntime {
+function fakePaneRuntime(
+  deviceId: string,
+  historyByPane?: Map<string, string>
+): DeviceSessionRuntime {
   return {
     connect: async () => {},
     subscribe: () => () => {},
@@ -221,6 +224,10 @@ function fakePaneRuntime(deviceId: string): DeviceSessionRuntime {
     selectPane() {},
     selectPaneWithSize() {},
     sendInput() {},
+    fetchPaneHistory: async (paneId: string) => {
+      const data = historyByPane?.get(paneId) ?? '';
+      return { data, alternateScreen: false, modes: 0 };
+    },
   } as unknown as DeviceSessionRuntime;
 }
 
@@ -282,9 +289,15 @@ function hasKind(frames: Uint8Array[], kind: number): boolean {
 function parseSeq(bytes: Uint8Array): number[] {
   try {
     const env = wsBorsh.decodeEnvelope(bytes);
-    if (env.kind !== wsBorsh.KIND_TERM_OUTPUT) return [];
-    const payload = wsBorsh.decodePayload(wsBorsh.schema.TermOutputSchema, env.payload);
-    const text = new TextDecoder().decode(payload.data);
+    let data: Uint8Array | null = null;
+    if (env.kind === wsBorsh.KIND_TERM_OUTPUT) {
+      data = wsBorsh.decodePayload(wsBorsh.schema.TermOutputSchema, env.payload).data;
+    } else if (env.kind === wsBorsh.KIND_TERM_HISTORY) {
+      data = wsBorsh.decodePayload(wsBorsh.schema.TermHistorySchema, env.payload).data;
+    } else {
+      return [];
+    }
+    const text = new TextDecoder().decode(data);
     return [...text.matchAll(/SEQ_(\d+)/g)].map((m) => Number(m[1]));
   } catch {
     return [];
@@ -668,6 +681,7 @@ describe('stream failover integration', () => {
     expect(joined.ok).toBe(true);
 
     let acquireCount = 0;
+    const historyByPane = new Map<string, string>();
     const wsServerB = new WebSocketServer({
       deps: {
         acquireRuntime: async (deviceId) => {
@@ -675,7 +689,7 @@ describe('stream failover integration', () => {
           if (acquireCount > 1) {
             await new Promise((resolve) => setTimeout(resolve, 120));
           }
-          return fakePaneRuntime(deviceId);
+          return fakePaneRuntime(deviceId, historyByPane);
         },
         releaseRuntime: async () => {},
         loadDeviceTreeOrder: (deviceId) => ({ deviceId, windows: [], panes: {} }),
@@ -767,11 +781,9 @@ describe('stream failover integration', () => {
     let seq = 0;
     const timer = setInterval(() => {
       seq += 1;
-      wsServerB.broadcastTerminalOutput(
-        DEVICE_ID,
-        PANE_ID,
-        new TextEncoder().encode(`SEQ_${seq}\n`)
-      );
+      const chunk = `SEQ_${seq}\n`;
+      historyByPane.set(PANE_ID, `${historyByPane.get(PANE_ID) ?? ''}${chunk}`);
+      wsServerB.broadcastTerminalOutput(DEVICE_ID, PANE_ID, new TextEncoder().encode(chunk));
     }, 20);
 
     try {
@@ -781,6 +793,7 @@ describe('stream failover integration', () => {
       }, 5_000);
       const beforeKill = entryFrames.flatMap(parseSeq);
       const framesAtKill = entryFrames.length;
+      const seqAtKill = seq;
       expect(meshA.peers.transportOf(meshB.nodeId)).toBe('dc');
       meshA.peers.getLive(meshB.nodeId)?.close('drop-dc');
       meshB.peers.getLive(meshA.nodeId)?.close('drop-dc');
@@ -791,26 +804,28 @@ describe('stream failover integration', () => {
           /from=dc to=(relay|ws-secure|dc) resumed=1 mode=legacy panes=%1 cursor=-/.test(line)
         )
       ).toBe(true);
+      const seqAtResume = seq;
+      expect(seqAtResume).toBeGreaterThan(seqAtKill);
 
       await waitUntil(() => {
         const after = entryFrames.slice(framesAtKill);
-        const nums = after.flatMap(parseSeq);
-        return (
-          after.some((frame) => frameKind(frame) === wsBorsh.KIND_TERM_OUTPUT) && nums.length >= 8
-        );
+        const history = after.some((frame) => frameKind(frame) === wsBorsh.KIND_TERM_HISTORY);
+        const live = after.some((frame) => frameKind(frame) === wsBorsh.KIND_TERM_OUTPUT);
+        return history && live;
       }, 10_000);
       expect(browserClosed).toBe(false);
-      const after = entryFrames.slice(framesAtKill).flatMap(parseSeq);
-      const unique: number[] = [];
-      for (const n of after) {
-        if (unique.at(-1) === n) continue;
-        unique.push(n);
+      const all = new Set(entryFrames.flatMap(parseSeq));
+      const max = Math.max(...all, 0);
+      expect(max).toBeGreaterThanOrEqual(seqAtKill);
+      for (let i = 1; i <= max; i += 1) {
+        expect(all.has(i)).toBe(true);
       }
-      expect(unique.length).toBeGreaterThanOrEqual(8);
-      for (let i = 1; i < unique.length; i += 1) {
-        expect(unique[i]).toBe((unique[i - 1] ?? 0) + 1);
-      }
-      expect(unique[0]).toBeGreaterThan(beforeKill[beforeKill.length - 1] ?? 0);
+      const after = entryFrames.slice(framesAtKill);
+      const historySeqs = after
+        .filter((frame) => frameKind(frame) === wsBorsh.KIND_TERM_HISTORY)
+        .flatMap(parseSeq);
+      expect(historySeqs.some((n) => n > seqAtKill && n <= seqAtResume)).toBe(true);
+      expect(beforeKill.length).toBeGreaterThanOrEqual(8);
     } finally {
       clearInterval(timer);
       console.info = origInfo;
