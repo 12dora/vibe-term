@@ -422,6 +422,92 @@ describe('link mux', () => {
     expect(info.reason.toLowerCase()).toMatch(/pending|cap|overflow|too many/);
   });
 
+  it('RSTs a stream that exceeds the receive window without closing the link', async () => {
+    const [t1, t2] = createBytePipe();
+    const captured: Uint8Array[] = [];
+    t2.onData((bytes) => captured.push(bytes.slice()));
+    const mux = new LinkMux(t1, { role: 'initiator', streamWindow: 8 });
+    const incoming: LinkStream[] = [];
+    mux.onStream((stream) => incoming.push(stream));
+    t2.send(encodeFrame({ streamId: 2, op: FrameOp.OPEN, payload: new Uint8Array([1]) }));
+    expect(incoming).toHaveLength(1);
+    const stream = incoming[0];
+    if (!stream) throw new Error('missing stream');
+    let aborted = false;
+    stream.onAbort(() => {
+      aborted = true;
+    });
+    t2.send(encodeFrame({ streamId: 2, op: FrameOp.DATA, payload: new Uint8Array(9) }));
+    expect(aborted).toBe(true);
+    expect((await stream.closed).reason).toBe('rst');
+    const state = await Promise.race([
+      mux.closed.then(() => 'closed' as const),
+      new Promise<'open'>((resolve) => setTimeout(() => resolve('open'), 30)),
+    ]);
+    expect(state).toBe('open');
+    const frames = new FrameDecoder().push(concatChunks(captured));
+    expect(frames.some((frame) => frame.op === FrameOp.RST && frame.streamId === 2)).toBe(true);
+    mux.close();
+  });
+
+  it('emits WINDOW without waiting for an in-flight DATA transport send to settle', async () => {
+    let releaseData!: () => void;
+    const dataGate = new Promise<void>((resolve) => {
+      releaseData = resolve;
+    });
+    let t1onData: ((bytes: Uint8Array) => void) | undefined;
+    let t2onData: ((bytes: Uint8Array) => void) | undefined;
+    let dataInFlight = false;
+    const receiverOps: number[] = [];
+    const t1: ByteTransport = {
+      send(bytes) {
+        t2onData?.(bytes.slice());
+      },
+      onData(cb) {
+        t1onData = cb;
+      },
+      onClose() {},
+      close() {},
+    };
+    const t2: ByteTransport = {
+      send(bytes) {
+        const op = bytes[4] ?? 0;
+        receiverOps.push(op);
+        if (op === FrameOp.DATA && bytes.byteLength > 20) {
+          dataInFlight = true;
+          return dataGate.then(() => {
+            dataInFlight = false;
+            t1onData?.(bytes.slice());
+          });
+        }
+        t1onData?.(bytes.slice());
+      },
+      onData(cb) {
+        t2onData = cb;
+      },
+      onClose() {},
+      close() {},
+    };
+    const sender = new LinkMux(t1, { role: 'initiator', streamWindow: 64 });
+    const receiver = new LinkMux(t2, { role: 'acceptor', streamWindow: 64 });
+    const incomingP = new Promise<LinkStream>((resolve) => receiver.onStream(resolve));
+    const out = await sender.openStream(new Uint8Array([1]));
+    const incoming = await incomingP;
+    const localWrite = incoming.write(new Uint8Array(24).fill(2));
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    expect(dataInFlight).toBe(true);
+
+    await out.write(new Uint8Array(8).fill(9));
+    const reader = incoming.readable.getReader();
+    await reader.read();
+    expect(receiverOps).toContain(FrameOp.WINDOW);
+    expect(dataInFlight).toBe(true);
+
+    releaseData();
+    await localWrite;
+    sender.close();
+  });
+
   it('defers CTL WINDOW until a promise-returning onMessage settles', async () => {
     const [t1, t2] = createBytePipe();
     let release!: () => void;

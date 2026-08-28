@@ -100,6 +100,29 @@ describe('ChannelLiveness', () => {
     }
   });
 
+  test('keeps the ping interval armed when sendPing throws', () => {
+    const clock = new FakeClock();
+    let pings = 0;
+    const liveness = new ChannelLiveness({
+      intervalMs: 10,
+      timeoutMs: 1_000,
+      now: clock.now,
+      setTimeoutFn: clock.setTimeout,
+      clearTimeoutFn: clock.clearTimeout,
+      sendPing: () => {
+        pings += 1;
+        if (pings === 1) throw new Error('send failed');
+      },
+      onTimeout: () => {},
+    });
+    liveness.start();
+    clock.advance(10);
+    expect(pings).toBe(1);
+    clock.advance(10);
+    expect(pings).toBe(2);
+    liveness.stop();
+  });
+
   test('stop prevents a later timeout', () => {
     const clock = new FakeClock();
     let timedOut = false;

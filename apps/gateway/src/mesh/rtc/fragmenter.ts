@@ -156,6 +156,8 @@ export class FrameReassembler {
     }
 
     if (frame.chunks[idx]) return null;
+    frame.deadline = this.now() + this.timeoutMs;
+    this.armTimer();
     const piece = chunk.subarray(FRAGMENT_HEADER_SIZE).slice();
     if (frame.bytes + piece.byteLength > this.maxFrameBytes) {
       this.protocolError(`reassembled frame exceeds ${this.maxFrameBytes} bytes`);

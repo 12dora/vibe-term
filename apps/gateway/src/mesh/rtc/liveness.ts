@@ -139,7 +139,11 @@ export class ChannelLiveness {
     this.intervalHandle = this.setTimeoutFn(() => {
       this.intervalHandle = null;
       if (!this.running) return;
-      if (this.now() - this.lastInboundAt >= this.intervalMs) this.sendPing();
+      try {
+        if (this.now() - this.lastInboundAt >= this.intervalMs) this.sendPing();
+      } catch {
+        // sendPing errors must not stop the interval
+      }
       this.armInterval();
     }, this.intervalMs);
   }

@@ -96,6 +96,19 @@ describe('FrameReassembler', () => {
     expect(reassembler.push(parts[1] as Uint8Array)).toBeNull();
   });
 
+  test('a slow trickle of fragments does not drop an in-progress frame', () => {
+    let now = 0;
+    const reassembler = new FrameReassembler({ now: () => now, timeoutMs: 50, maxInFlight: 8 });
+    const payload = new Uint8Array(FRAGMENT_PAYLOAD_SIZE * 2 + 4).fill(6);
+    const parts = fragmentFrame(5, payload);
+    expect(parts).toHaveLength(3);
+    expect(reassembler.push(parts[0] as Uint8Array)).toBeNull();
+    now = 40;
+    expect(reassembler.push(parts[1] as Uint8Array)).toBeNull();
+    now = 80;
+    expect(reassembler.push(parts[2] as Uint8Array)).toEqual(payload);
+  });
+
   test('evicts the oldest in-flight frame when the cap is hit', () => {
     const reassembler = new FrameReassembler({ maxInFlight: 2, timeoutMs: 60_000 });
     const a = fragmentFrame(1, new Uint8Array(FRAGMENT_PAYLOAD_SIZE + 1).fill(1));

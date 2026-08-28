@@ -1,10 +1,13 @@
 import { afterEach, describe, expect, test } from 'bun:test';
-import { FRAME_HEADER_SIZE, LinkMux, MAX_FRAME_PAYLOAD } from '@tmex/shared/link';
+import { FRAME_HEADER_SIZE, FrameOp, LinkMux, MAX_FRAME_PAYLOAD } from '@tmex/shared/link';
 import { createMigratedAuthDb } from '../../auth/test-db';
 import { UserStore } from '../../auth/user-store';
 import type { RtcSignalMessage } from '../mesh-deps';
-import { DC_MAX_MESSAGE_BYTES } from '../rtc/fragmenter';
+import { DataChannelLink } from '../rtc/data-channel-link';
+import { DC_MAX_MESSAGE_BYTES, FRAGMENT_HEADER_SIZE } from '../rtc/fragmenter';
 import type { RtcSignaling } from '../rtc/ice';
+import type { DataChannelLike } from '../rtc/native';
+import { copyBytes, toUint8Array } from '../rtc/native';
 import { RtcPeerManager } from '../rtc/rtc-peer-manager';
 import { createFakeNativeModule } from '../rtc/test-fakes';
 import { openHttpStream } from '../stream-targets';
@@ -13,6 +16,217 @@ import { seedNodeIdentity, seedUser } from '../test-support';
 const EIGHT_MIB = 8 * 1024 * 1024;
 const SIXTEEN_KIB = 16 * 1024;
 const TWO_MIB = 2 * 1024 * 1024;
+const SLOW_DC_TICK_MS = 50;
+const SLOW_DC_BYTES_PER_TICK = 64 * 1024;
+const SLOW_DC_DELAY_MS = 80;
+const SLOW_DC_SEND_CAP = 256 * 1024;
+const SLOW_CONSUMER_BYTES_PER_SEC = 500 * 1024;
+
+type SlowDcPair = {
+  a: RateLimitedDataChannel;
+  b: RateLimitedDataChannel;
+  close: () => void;
+};
+
+class RateLimitedDataChannel implements DataChannelLike {
+  label: string;
+  open = false;
+  closed = false;
+  peer: RateLimitedDataChannel | null = null;
+  private buffered = 0;
+  private readonly maxSize = 64 * 1024;
+  private lowThreshold = 0;
+  private readonly queue: Uint8Array[] = [];
+  private readonly inflight: Array<{ bytes: Uint8Array; at: number }> = [];
+  private openCb: (() => void) | null = null;
+  private closedCb: (() => void) | null = null;
+  private errorCb: ((err: string) => void) | null = null;
+  private lowCb: (() => void) | null = null;
+  private messageCb: ((msg: string | Buffer | ArrayBuffer) => void) | null = null;
+  private readonly pendingMessages: Array<string | Buffer | ArrayBuffer> = [];
+  private pumpTimer: ReturnType<typeof setInterval> | null = null;
+  private readonly tickMs: number;
+  private readonly bytesPerTick: number;
+  private readonly delayMs: number;
+  private readonly sendCap: number;
+  readonly wire: Uint8Array[] = [];
+
+  constructor(
+    label: string,
+    opts: { tickMs: number; bytesPerTick: number; delayMs: number; sendCap: number }
+  ) {
+    this.label = label;
+    this.tickMs = opts.tickMs;
+    this.bytesPerTick = opts.bytesPerTick;
+    this.delayMs = opts.delayMs;
+    this.sendCap = opts.sendCap;
+  }
+
+  getLabel(): string {
+    return this.label;
+  }
+
+  pair(peer: RateLimitedDataChannel): void {
+    this.peer = peer;
+    peer.peer = this;
+  }
+
+  markOpen(): void {
+    if (this.open || this.closed) return;
+    this.open = true;
+    this.ensurePump();
+    this.openCb?.();
+  }
+
+  close(): void {
+    if (this.closed) return;
+    this.closed = true;
+    this.open = false;
+    this.stopPump();
+    const peer = this.peer;
+    this.peer = null;
+    this.closedCb?.();
+    if (peer && !peer.closed) peer.close();
+  }
+
+  sendMessage(msg: string): boolean {
+    return this.enqueue(new TextEncoder().encode(msg));
+  }
+
+  sendMessageBinary(buffer: Buffer | Uint8Array): boolean {
+    return this.enqueue(toUint8Array(buffer));
+  }
+
+  isOpen(): boolean {
+    return this.open && !this.closed;
+  }
+
+  bufferedAmount(): number {
+    return this.buffered;
+  }
+
+  maxMessageSize(): number {
+    return this.maxSize;
+  }
+
+  setBufferedAmountLowThreshold(bytes: number): void {
+    this.lowThreshold = bytes;
+  }
+
+  onBufferedAmountLow(cb: () => void): void {
+    this.lowCb = cb;
+  }
+
+  onOpen(cb: () => void): void {
+    this.openCb = cb;
+    if (this.open) cb();
+  }
+
+  onClosed(cb: () => void): void {
+    this.closedCb = cb;
+  }
+
+  onError(cb: (err: string) => void): void {
+    this.errorCb = cb;
+  }
+
+  onMessage(cb: (msg: string | Buffer | ArrayBuffer) => void): void {
+    this.messageCb = cb;
+    while (this.pendingMessages.length > 0) {
+      const next = this.pendingMessages.shift();
+      if (next !== undefined) cb(next);
+    }
+  }
+
+  private enqueue(bytes: Uint8Array): boolean {
+    if (this.closed || !this.open) return false;
+    if (this.buffered >= this.sendCap) return false;
+    const copy = copyBytes(bytes);
+    this.queue.push(copy);
+    this.buffered += copy.byteLength;
+    this.ensurePump();
+    return true;
+  }
+
+  private ensurePump(): void {
+    if (this.pumpTimer || this.closed || !this.open) return;
+    this.pumpTimer = setInterval(() => this.tick(), this.tickMs);
+  }
+
+  private stopPump(): void {
+    if (this.pumpTimer) {
+      clearInterval(this.pumpTimer);
+      this.pumpTimer = null;
+    }
+  }
+
+  private tick(): void {
+    if (this.closed) {
+      this.stopPump();
+      return;
+    }
+    const now = Date.now();
+    let budget = this.bytesPerTick;
+    while (budget > 0 && this.queue.length > 0) {
+      const next = this.queue[0];
+      if (!next) break;
+      if (next.byteLength > budget && this.inflight.length > 0) break;
+      this.queue.shift();
+      const prev = this.buffered;
+      this.buffered = Math.max(0, this.buffered - next.byteLength);
+      if (prev > this.lowThreshold && this.buffered <= this.lowThreshold) {
+        this.lowCb?.();
+      }
+      this.wire.push(next);
+      this.inflight.push({ bytes: next, at: now + this.delayMs });
+      budget -= next.byteLength;
+    }
+    while (this.inflight.length > 0) {
+      const item = this.inflight[0];
+      if (!item || item.at > now) break;
+      this.inflight.shift();
+      const peer = this.peer;
+      if (!peer || peer.closed || !peer.open) continue;
+      const payload = Buffer.from(item.bytes);
+      if (!peer.messageCb) peer.pendingMessages.push(payload);
+      else peer.messageCb(payload);
+    }
+    if (this.queue.length === 0 && this.inflight.length === 0) this.stopPump();
+  }
+}
+
+function pairRateLimitedChannels(): SlowDcPair {
+  const opts = {
+    tickMs: SLOW_DC_TICK_MS,
+    bytesPerTick: SLOW_DC_BYTES_PER_TICK,
+    delayMs: SLOW_DC_DELAY_MS,
+    sendCap: SLOW_DC_SEND_CAP,
+  };
+  const a = new RateLimitedDataChannel('peer', opts);
+  const b = new RateLimitedDataChannel('peer', opts);
+  a.pair(b);
+  a.markOpen();
+  b.markOpen();
+  return {
+    a,
+    b,
+    close: () => {
+      a.close();
+      b.close();
+    },
+  };
+}
+
+async function sha256Hex(bytes: Uint8Array): Promise<string> {
+  const copy = bytes.slice();
+  const digest = await crypto.subtle.digest('SHA-256', copy);
+  return [...new Uint8Array(digest)].map((n) => n.toString(16).padStart(2, '0')).join('');
+}
+
+function muxOpFromDcChunk(chunk: Uint8Array): number | undefined {
+  if (chunk.byteLength < FRAGMENT_HEADER_SIZE + 5) return undefined;
+  return chunk[FRAGMENT_HEADER_SIZE + 4];
+}
 
 function loopbackSignaling(): [RtcSignaling, RtcSignaling] {
   const aCbs: Array<(msg: RtcSignalMessage) => void> = [];
@@ -341,4 +555,92 @@ describe('HTTP-style bulk over PeerManager DataChannel', () => {
     la.pc.close();
     lb.pc.close();
   });
+
+  test(
+    '8 MiB over a rate-limited DC with a slow consumer completes without abort',
+    async () => {
+      const pair = pairRateLimitedChannels();
+      fixtures.push({ close: pair.close });
+      const left = new DataChannelLink(pair.a, {
+        peer: 'hub',
+        intervalMs: 3_000,
+        timeoutMs: 10_000,
+      });
+      const right = new DataChannelLink(pair.b, {
+        peer: 'node-a',
+        intervalMs: 3_000,
+        timeoutMs: 10_000,
+      });
+      let leftClose: string | undefined;
+      let rightClose: string | undefined;
+      left.onClose((reason) => {
+        leftClose = reason;
+      });
+      right.onClose((reason) => {
+        rightClose = reason;
+      });
+      fixtures.push({ close: () => left.close() });
+      fixtures.push({ close: () => right.close() });
+
+      const muxA = new LinkMux(left, { role: 'initiator' });
+      const muxB = new LinkMux(right, { role: 'acceptor' });
+      const incomingP = new Promise<import('@tmex/shared/link').LinkStream>((resolve) =>
+        muxB.onStream(resolve)
+      );
+      const out = await muxA.openStream(new TextEncoder().encode('{"type":"http"}'));
+      const inn = await incomingP;
+      const reader = inn.readable.getReader();
+      const head = new TextEncoder().encode(
+        '{"status":200,"headers":{"content-type":"application/octet-stream"}}'
+      );
+      await out.write(head, { head: true });
+      expect((await reader.read()).value?.head).toBe(true);
+
+      const body = fillPattern(new Uint8Array(EIGHT_MIB));
+      const expectedHash = await sha256Hex(body);
+      let writeErr: unknown = null;
+      let aborted = false;
+      inn.onAbort(() => {
+        aborted = true;
+      });
+      const writeP = (async () => {
+        for (const chunk of bunLikeChunks(body)) {
+          await out.write(chunk);
+        }
+        await out.end();
+      })().catch((err) => {
+        writeErr = err;
+      });
+
+      const got: Uint8Array[] = [];
+      const readP = (async () => {
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          if (!value) continue;
+          got.push(value.bytes);
+          const delayMs = Math.ceil((value.bytes.byteLength / SLOW_CONSUMER_BYTES_PER_SEC) * 1000);
+          if (delayMs > 0) await new Promise((resolve) => setTimeout(resolve, delayMs));
+        }
+      })();
+
+      await Promise.all([writeP, readP]);
+      expect(writeErr).toBeNull();
+      expect(aborted).toBe(false);
+      await inn.end();
+      expect((await inn.closed).reason).toBe('end');
+      expect((await out.closed).reason).toBe('end');
+
+      const received = concatChunks(got);
+      expect(received.byteLength).toBe(EIGHT_MIB);
+      expect(await sha256Hex(received)).toBe(expectedHash);
+
+      expect(pair.b.wire.some((chunk) => muxOpFromDcChunk(chunk) === FrameOp.WINDOW)).toBe(true);
+      expect(pair.a.closed).toBe(false);
+      expect(pair.b.closed).toBe(false);
+      expect(leftClose).toBeUndefined();
+      expect(rightClose).toBeUndefined();
+    },
+    { timeout: 60_000 }
+  );
 });

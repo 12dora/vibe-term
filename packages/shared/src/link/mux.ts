@@ -197,7 +197,7 @@ class MuxStream implements LinkStream {
       return;
     }
     if (bytes.byteLength > this.recvAdvertised) {
-      this.mux.protocolError(`stream ${this.id} exceeded receive window`);
+      this.mux.resetStream(this, `stream ${this.id} exceeded receive window`);
       return;
     }
     this.recvAdvertised -= bytes.byteLength;
@@ -336,6 +336,7 @@ class MuxStream implements LinkStream {
     try {
       controller.enqueue(chunk);
     } catch {
+      this.recvBuf.unshift(chunk);
       return;
     }
     this.consumeFromReadable(chunk.bytes.byteLength);

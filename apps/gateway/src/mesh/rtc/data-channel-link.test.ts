@@ -1,10 +1,16 @@
 import { describe, expect, test } from 'bun:test';
-import { LinkMux } from '@tmex/shared/link';
+import { FrameOp, LinkMux, encodeFrame, encodeWindowPayload } from '@tmex/shared/link';
 import { fanoutDataChannel } from './channel-fanout';
+import { DC_HIGH_WATER_BYTES } from './data-channel-carrier';
 import { DataChannelLink } from './data-channel-link';
-import { FRAGMENT_PAYLOAD_SIZE } from './fragmenter';
+import { FRAGMENT_HEADER_SIZE, FRAGMENT_PAYLOAD_SIZE } from './fragmenter';
 import { parseLivenessChunk } from './liveness';
 import { FakeClock, pairDataChannels } from './test-fakes';
+
+function muxOpFromChunk(chunk: Uint8Array): number | undefined {
+  if (chunk.byteLength < FRAGMENT_HEADER_SIZE + 5) return undefined;
+  return chunk[FRAGMENT_HEADER_SIZE + 4];
+}
 
 function livenessOpts(clock: FakeClock, peer = 'peer-b') {
   return {
@@ -289,5 +295,97 @@ describe('DataChannelLink', () => {
       console.log = orig;
       left.close();
     }
+  });
+
+  test('WINDOW and liveness bypass a saturated data send path', async () => {
+    const clock = new FakeClock();
+    const [a, b] = pairDataChannels('peer');
+    const left = new DataChannelLink(a, livenessOpts(clock, 'right'));
+    const right = new DataChannelLink(b, livenessOpts(clock, 'left'));
+    a.buffered = DC_HIGH_WATER_BYTES + 1;
+
+    let dataResolved = false;
+    const dataSent = left.send(new Uint8Array(FRAGMENT_PAYLOAD_SIZE + 4).fill(1)).then(() => {
+      dataResolved = true;
+    });
+    await Promise.resolve();
+    expect(dataResolved).toBe(false);
+    expect(a.sent).toHaveLength(0);
+
+    const windowFrame = encodeFrame({
+      streamId: 1,
+      op: FrameOp.WINDOW,
+      payload: encodeWindowPayload(4096),
+    });
+    await left.send(windowFrame);
+    expect(a.sent.some((chunk) => muxOpFromChunk(chunk) === FrameOp.WINDOW)).toBe(true);
+
+    clock.advance(30);
+    expect(a.sent.some((chunk) => parseLivenessChunk(chunk) === 'ping')).toBe(true);
+    expect(dataResolved).toBe(false);
+
+    a.buffered = 0;
+    a.emitLow();
+    await dataSent;
+    expect(dataResolved).toBe(true);
+    left.close();
+    right.close();
+  });
+
+  test('a WINDOW frame is sent between fragments of a blocked DATA frame', async () => {
+    const [a, b] = pairDataChannels('peer');
+    const left = new DataChannelLink(a, { liveness: false });
+    const right = new DataChannelLink(b, { liveness: false });
+    a.succeedsBeforeBlock = 1;
+
+    const dataSent = left.send(new Uint8Array(FRAGMENT_PAYLOAD_SIZE + 4).fill(9));
+    await Promise.resolve();
+    expect(a.sent).toHaveLength(1);
+    expect(muxOpFromChunk(a.sent[0] as Uint8Array)).not.toBe(FrameOp.WINDOW);
+
+    const windowFrame = encodeFrame({
+      streamId: 1,
+      op: FrameOp.WINDOW,
+      payload: encodeWindowPayload(64),
+    });
+    const windowSent = left.send(windowFrame);
+    await Promise.resolve();
+    expect(a.sent).toHaveLength(1);
+
+    a.emitLow();
+    await windowSent;
+    expect(muxOpFromChunk(a.sent[1] as Uint8Array)).toBe(FrameOp.WINDOW);
+    await dataSent;
+    expect(a.sent).toHaveLength(3);
+    expect(muxOpFromChunk(a.sent[1] as Uint8Array)).toBe(FrameOp.WINDOW);
+    left.close();
+    right.close();
+  });
+
+  test('flush retries when send fails below the low-water threshold', async () => {
+    const clock = new FakeClock();
+    const [a, b] = pairDataChannels('peer');
+    const left = new DataChannelLink(a, {
+      liveness: false,
+      now: clock.now,
+      setTimeoutFn: clock.setTimeout,
+      clearTimeoutFn: clock.clearTimeout,
+    });
+    const right = new DataChannelLink(b, { liveness: false });
+    const got = new Promise<Uint8Array>((resolve) => right.onData(resolve));
+    a.succeedsBeforeBlock = 0;
+    a.buffered = 100;
+    const payload = new Uint8Array([1, 2, 3]);
+    const sent = left.send(payload);
+    await Promise.resolve();
+    expect(a.sent).toHaveLength(0);
+
+    a.blockSend = false;
+    a.succeedsBeforeBlock = Number.POSITIVE_INFINITY;
+    clock.advance(20);
+    await sent;
+    expect(await got).toEqual(payload);
+    left.close();
+    right.close();
   });
 });
