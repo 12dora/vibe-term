@@ -13,9 +13,48 @@ LOCAL_COMPOSE=(docker compose -p tmex-split-local -f "${ROOT}/docker-compose.loc
 # RSYNC_SSH：rsync -e 使用的 ssh 命令（同样由调用方提供，可含 sshpass 包装），例如 RSYNC_SSH=/path/to/ssh-wrap。
 RSYNC_SSH="${RSYNC_SSH:?set RSYNC_SSH to an ssh command for rsync -e (e.g. a wrapper script that adds -p/-o/sshpass)}"
 RSSH="${RSSH:?set RSSH to an ssh wrapper script, e.g. RSSH=/path/to/rssh (runs: rssh '<remote command>')}"
-HUB_PUBLIC_URL="${TMEX_HUB_PUBLIC_URL:-https://ai.example.com:18443}"
-HUB_HOST="ai.example.com"
-HUB_IP="4.2.2.1"
+HUB_HOST="${TMEX_E2E_HUB_HOST:-ai.example.com}"
+HUB_IP="${TMEX_E2E_HUB_IP:-4.2.2.1}"
+HUB_PORT="${TMEX_E2E_HUB_PORT:-18443}"
+HUB_PUBLIC_URL="${TMEX_HUB_PUBLIC_URL:-https://${HUB_HOST}:${HUB_PORT}}"
+REMOTE_USER="${TMEX_E2E_REMOTE_USER:-root}"
+REMOTE_DIR="${TMEX_E2E_REMOTE_DIR:-/root/tmex-e2e}"
+if [[ -n "${TMEX_E2E_REMOTE_SUDO+x}" ]]; then
+  REMOTE_SUDO="${TMEX_E2E_REMOTE_SUDO}"
+elif [[ "${REMOTE_USER}" != "root" ]]; then
+  REMOTE_SUDO="sudo"
+else
+  REMOTE_SUDO=""
+fi
+if [[ -n "${REMOTE_SUDO}" ]]; then
+  REMOTE_DOCKER="${REMOTE_SUDO} docker"
+else
+  REMOTE_DOCKER="docker"
+fi
+TLS_MODE="${TMEX_E2E_TLS_MODE:-letsencrypt}"
+if [[ "${TLS_MODE}" != "letsencrypt" && "${TLS_MODE}" != "private-ca" ]]; then
+  echo "TMEX_E2E_TLS_MODE must be letsencrypt or private-ca (got ${TLS_MODE})" >&2
+  exit 2
+fi
+REMOTE_TARBALL="${TMEX_E2E_REMOTE_TARBALL:-${REMOTE_DIR}/tmex-cli-1.0.2.tgz}"
+export TMEX_E2E_HUB_HOST="${HUB_HOST}"
+export TMEX_E2E_HUB_IP="${HUB_IP}"
+export TMEX_E2E_HUB_PORT="${HUB_PORT}"
+export TMEX_E2E_REMOTE_DIR="${REMOTE_DIR}"
+export TMEX_E2E_TLS_MODE="${TLS_MODE}"
+export TMEX_E2E_TURN_EXTERNAL_IP="${TMEX_E2E_TURN_EXTERNAL_IP:-${HUB_IP}}"
+if [[ "${TLS_MODE}" == "private-ca" ]]; then
+  NODE_CA_CERTS="${TMEX_E2E_NODE_CA_CERTS:-/ca/ca.crt}"
+  export TMEX_E2E_TLS_CERT="${TMEX_E2E_TLS_CERT:-${REMOTE_DIR}/repo/scripts/hub-e2e/ca/hub.crt}"
+  export TMEX_E2E_TLS_KEY="${TMEX_E2E_TLS_KEY:-${REMOTE_DIR}/repo/scripts/hub-e2e/ca/hub.key}"
+  export TMEX_E2E_CA_CRT="${TMEX_E2E_CA_CRT:-${REMOTE_DIR}/repo/scripts/hub-e2e/ca/ca.crt}"
+else
+  NODE_CA_CERTS="${TMEX_E2E_NODE_CA_CERTS:-/etc/ssl/certs/ca-certificates.crt}"
+  export TMEX_E2E_TLS_CERT="${TMEX_E2E_TLS_CERT:-${REMOTE_DIR}/certs/fullchain.pem}"
+  export TMEX_E2E_TLS_KEY="${TMEX_E2E_TLS_KEY:-${REMOTE_DIR}/certs/privkey.pem}"
+  export TMEX_E2E_CA_CRT="${TMEX_E2E_CA_CRT:-/etc/ssl/certs/ca-certificates.crt}"
+fi
+export TMEX_E2E_NODE_CA_CERTS="${NODE_CA_CERTS}"
 USER_NAME="${TMEX_E2E_USER:-alice}"
 PASSWORD="${TMEX_E2E_PASSWORD:-TmexE2e!alice-2026}"
 OUT="${ROOT}/out"
@@ -29,6 +68,7 @@ pass() { log "PASS $1"; REPORT_ROWS+=("| $1 | PASS | ${2:-} |"); }
 fail() { log "FAIL $1"; REPORT_ROWS+=("| $1 | FAIL | ${2:-$1} |"); FAILS=$((FAILS + 1)); }
 skip() { log "SKIP $1"; REPORT_ROWS+=("| $1 | SKIP | ${2:-$1} |"); }
 rssh() { "${RSSH}" "$@"; }
+rssh_docker() { rssh "${REMOTE_DOCKER} $*"; }
 DIRECT_DROP_MODE=""
 DIRECT_DC=0
 DIRECT_SKIPPED=0
@@ -49,7 +89,7 @@ fi
 if [[ "${1:-}" == "down" ]]; then
   "${LOCAL_COMPOSE[@]}" down -v --remove-orphans || true
   docker network rm tmex-split-local_lan 2>/dev/null || true
-  rssh "docker compose -p tmex-split -f /root/tmex-e2e/repo/scripts/hub-e2e/split/docker-compose.remote.yml down -v --remove-orphans" || true
+  rssh_docker "compose -p tmex-split -f ${REMOTE_DIR}/repo/scripts/hub-e2e/split/docker-compose.remote.yml down -v --remove-orphans" || true
   exit 0
 fi
 
@@ -57,7 +97,7 @@ mkdir -p "${OUT}"
 : > "${OUT}/run.log"
 exec > >(tee -a "${OUT}/run.log") 2>&1
 
-echo "需在远端放行入站 TCP 18443（必需，hub HTTPS）与 TCP 39001（可选，hub peer 口）——包括云安全组/面板防火墙/ufw"
+echo "需在远端放行入站 TCP ${HUB_PORT}（必需，hub HTTPS）与 TCP 39001（可选，hub peer 口）——包括云安全组/面板防火墙/ufw"
 
 wait_local_healthy() {
   local svc="$1"
@@ -88,13 +128,13 @@ wait_remote_hub() {
   local n=0
   local max=$(( ${TMEX_E2E_HEALTH_TIMEOUT:-600} / 2 ))
   while (( n < max )); do
-    if rssh "docker exec tmex-split-hub curl -fsS -m 2 http://127.0.0.1:9883/healthz" >/dev/null 2>&1; then
+    if rssh_docker "exec tmex-split-hub curl -fsS -m 2 http://127.0.0.1:9883/healthz" >/dev/null 2>&1; then
       return 0
     fi
     sleep 2
     n=$((n + 1))
   done
-  rssh "docker logs tmex-split-hub 2>&1 | tail -40" || true
+  rssh_docker "logs tmex-split-hub 2>&1 | tail -40" || true
   return 1
 }
 
@@ -115,7 +155,11 @@ split_bun() {
 }
 
 curl_hub() {
-  docker exec tmex-split-driver curl -fsS "$@"
+  if [[ "${TLS_MODE}" == "private-ca" ]]; then
+    docker exec tmex-split-driver curl -fsS --cacert /ca/ca.crt "$@"
+  else
+    docker exec tmex-split-driver curl -fsS "$@"
+  fi
 }
 
 dump_logs() {
@@ -123,26 +167,41 @@ dump_logs() {
   "${LOCAL_COMPOSE[@]}" logs --no-color node-a > "${OUT}/node-a.log" 2>&1 || true
   "${LOCAL_COMPOSE[@]}" logs --no-color node-b > "${OUT}/node-b.log" 2>&1 || true
   "${LOCAL_COMPOSE[@]}" logs --no-color driver > "${OUT}/driver.log" 2>&1 || true
-  rssh "docker logs --tail 400 tmex-split-hub" > "${OUT}/hub.log" 2>&1 || true
-  rssh "docker logs --tail 200 tmex-split-caddy" > "${OUT}/caddy.log" 2>&1 || true
+  rssh_docker "logs --tail 400 tmex-split-hub" > "${OUT}/hub.log" 2>&1 || true
+  rssh_docker "logs --tail 200 tmex-split-caddy" > "${OUT}/caddy.log" 2>&1 || true
 }
 
 dump_rtc_logs() {
+  local peer="${1:-hub}"
   docker logs tmex-split-node-a 2>&1 | grep -E '\[mesh\]\[rtc\]' | tail -120 > "${OUT}/direct-logs-node-a.txt" || true
   if [[ ! -s "${OUT}/direct-logs-node-a.txt" ]]; then
     docker logs tmex-split-node-a 2>&1 | grep -iE 'rtc|datachannel|ice failed|ws-secure' | tail -120 > "${OUT}/direct-logs-node-a.txt" || true
   fi
-  rssh "docker logs tmex-split-hub 2>&1 | grep -E '\\[mesh\\]\\[rtc\\]' | tail -120" > "${OUT}/direct-logs-hub.txt" || true
-  if [[ ! -s "${OUT}/direct-logs-hub.txt" ]]; then
-    rssh "docker logs tmex-split-hub 2>&1 | grep -iE 'rtc|datachannel|ice failed|ws-secure' | tail -120" > "${OUT}/direct-logs-hub.txt" || true
+  if [[ "${peer}" == "node-b" ]]; then
+    docker logs tmex-split-node-b 2>&1 | grep -E '\[mesh\]\[rtc\]' | tail -120 > "${OUT}/direct-logs-node-b.txt" || true
+    if [[ ! -s "${OUT}/direct-logs-node-b.txt" ]]; then
+      docker logs tmex-split-node-b 2>&1 | grep -iE 'rtc|datachannel|ice failed|ws-secure' | tail -120 > "${OUT}/direct-logs-node-b.txt" || true
+    fi
+  else
+    rssh_docker "logs tmex-split-hub 2>&1 | grep -E '\\[mesh\\]\\[rtc\\]' | tail -120" > "${OUT}/direct-logs-hub.txt" || true
+    if [[ ! -s "${OUT}/direct-logs-hub.txt" ]]; then
+      rssh_docker "logs tmex-split-hub 2>&1 | grep -iE 'rtc|datachannel|ice failed|ws-secure' | tail -120" > "${OUT}/direct-logs-hub.txt" || true
+    fi
   fi
 }
 
 rtc_evidence() {
-  local a h
+  local peer="${1:-hub}"
+  local a p
+  local peer_file="${OUT}/direct-logs-hub.txt"
+  local peer_label=hub
+  if [[ "${peer}" == "node-b" ]]; then
+    peer_file="${OUT}/direct-logs-node-b.txt"
+    peer_label=node-b
+  fi
   a="$(grep -iE 'ice failed|datachannel|fallback' "${OUT}/direct-logs-node-a.txt" 2>/dev/null | tail -1 | tr '|' '/' || true)"
-  h="$(grep -iE 'ice failed|datachannel|fallback' "${OUT}/direct-logs-hub.txt" 2>/dev/null | tail -1 | tr '|' '/' || true)"
-  printf 'node-a=%s; hub=%s' "${a:-none}" "${h:-none}"
+  p="$(grep -iE 'ice failed|datachannel|fallback' "${peer_file}" 2>/dev/null | tail -1 | tr '|' '/' || true)"
+  printf 'node-a=%s; %s=%s' "${a:-none}" "${peer_label}" "${p:-none}"
 }
 
 ensure_udp_drop_tool() {
@@ -216,6 +275,9 @@ write_report() {
 - image: ${IMAGE_NAME}
 - tarball: ${TARBALL}
 - hub: ${HUB_PUBLIC_URL}
+- hub host/ip: ${HUB_HOST} / ${HUB_IP}
+- tls: ${TLS_MODE}
+- remote: ${REMOTE_USER}@${HUB_IP}:${REMOTE_DIR}
 
 | scenario | result | evidence |
 |---|---|---|
@@ -246,7 +308,7 @@ wait_file_match() {
 }
 
 kill_enroll() {
-  rssh "docker exec tmex-split-hub bash -lc 'pkill -f \"cli-auth.js enroll\" || true; pkill -f \"enroll --ttl\" || true'" || true
+  rssh_docker "exec tmex-split-hub bash -lc 'pkill -f \"cli-auth.js enroll\" || true; pkill -f \"enroll --ttl\" || true'" || true
 }
 
 enroll_and_join() {
@@ -254,11 +316,11 @@ enroll_and_join() {
   local log_file="${OUT}/enroll-${node_name}.log"
   : > "${log_file}"
   kill_enroll
-  rssh "docker exec tmex-split-hub bash -lc 'rm -f /tmp/enroll.log'"
-  rssh "docker exec -d -e TMEX_PASSWORD='${PASSWORD}' tmex-split-hub bash -lc 'nohup stdbuf -oL bun /opt/tmex/runtime/cli-auth.js enroll --ttl 10m --install-dir /opt/tmex >/tmp/enroll.log 2>&1'"
+  rssh_docker "exec tmex-split-hub bash -lc 'rm -f /tmp/enroll.log'"
+  rssh_docker "exec -d -e TMEX_PASSWORD='${PASSWORD}' tmex-split-hub bash -lc 'nohup stdbuf -oL bun /opt/tmex/runtime/cli-auth.js enroll --ttl 10m --install-dir /opt/tmex >/tmp/enroll.log 2>&1'"
   local n=0
   while (( n < 45 )); do
-    rssh "docker exec tmex-split-hub cat /tmp/enroll.log" > "${log_file}" 2>/dev/null || true
+    rssh_docker "exec tmex-split-hub cat /tmp/enroll.log" > "${log_file}" 2>/dev/null || true
     if grep -E 'join token: [A-Za-z0-9_-]+' "${log_file}" >/dev/null 2>&1; then
       break
     fi
@@ -284,7 +346,7 @@ enroll_and_join() {
   set +e
   "${LOCAL_COMPOSE[@]}" run --rm --no-deps --entrypoint bash "${node_name}" -lc "
     set +e
-    export NODE_EXTRA_CA_CERTS=/etc/ssl/certs/ca-certificates.crt
+    export NODE_EXTRA_CA_CERTS=${NODE_CA_CERTS}
     rm -f /opt/tmex/app.env
     cp /var/lib/tmex/app.env /opt/tmex/app.env
     mkdir -p /opt/tmex/native /var/lib/tmex/native
@@ -308,7 +370,7 @@ enroll_and_join() {
 
   n=0
   while (( n < 60 )); do
-    rssh "docker exec tmex-split-hub cat /tmp/enroll.log" > "${log_file}" 2>/dev/null || true
+    rssh_docker "exec tmex-split-hub cat /tmp/enroll.log" > "${log_file}" 2>/dev/null || true
     if grep -E 'node admitted' "${log_file}" >/dev/null 2>&1; then
       break
     fi
@@ -372,17 +434,52 @@ preflight_udp() {
   return 1
 }
 
+ensure_private_ca() {
+  local ca_dir="${HUB_E2E}/ca"
+  if [[ ! -f "${ca_dir}/ca.crt" || ! -f "${ca_dir}/hub.crt" || ! -f "${ca_dir}/hub.key" ]]; then
+    echo "private-ca mode requires ${ca_dir}/{ca.crt,hub.crt,hub.key}; run scripts/hub-e2e/gen-ca.sh" >&2
+    exit 2
+  fi
+  if openssl x509 -in "${ca_dir}/hub.crt" -noout -text | grep -q "DNS:${HUB_HOST}"; then
+    return 0
+  fi
+  log "hub.crt SAN missing ${HUB_HOST}; reissuing leaf cert from existing CA"
+  openssl genrsa -out "${ca_dir}/hub.key" 2048
+  openssl req -new -key "${ca_dir}/hub.key" -subj "/CN=${HUB_HOST}" -out "${ca_dir}/hub.csr"
+  cat > "${ca_dir}/hub.ext" <<EOF
+subjectAltName=DNS:${HUB_HOST},DNS:hub.tmex.test,DNS:entry.tmex.test
+extendedKeyUsage=serverAuth
+keyUsage=digitalSignature,keyEncipherment
+basicConstraints=CA:FALSE
+EOF
+  openssl x509 -req -in "${ca_dir}/hub.csr" -CA "${ca_dir}/ca.crt" -CAkey "${ca_dir}/ca.key" \
+    -CAcreateserial -out "${ca_dir}/hub.crt" -days 825 -sha256 -extfile "${ca_dir}/hub.ext"
+  rm -f "${ca_dir}/hub.csr"
+  chmod 644 "${ca_dir}/ca.crt" "${ca_dir}/hub.crt"
+  chmod 600 "${ca_dir}/hub.key"
+}
+
 # ---------- setup ----------
-log "rsync harness to remote"
-rsync -az -e "${RSYNC_SSH}" \
-  --exclude out --exclude ca --exclude build \
-  "${HUB_E2E}/" "root@${HUB_IP}:/root/tmex-e2e/repo/scripts/hub-e2e/"
+if [[ "${TLS_MODE}" == "private-ca" ]]; then
+  ensure_private_ca
+fi
+
+log "rsync harness to remote (${REMOTE_USER}@${HUB_IP}:${REMOTE_DIR})"
+rssh "mkdir -p ${REMOTE_DIR}/repo/scripts/hub-e2e"
+RSYNC_EXCLUDES=(--exclude out --exclude build)
+if [[ "${TLS_MODE}" != "private-ca" ]]; then
+  RSYNC_EXCLUDES+=(--exclude ca)
+fi
+rsync -az -e "${RSYNC_SSH}" "${RSYNC_EXCLUDES[@]}" \
+  "${HUB_E2E}/" "${REMOTE_USER}@${HUB_IP}:${REMOTE_DIR}/repo/scripts/hub-e2e/"
 
 log "setup remote hub"
-rssh "TMEX_E2E_TURN_URL='${TMEX_E2E_TURN_URL:-}' TMEX_E2E_TURN_USERNAME='${TMEX_E2E_TURN_USERNAME:-tmex}' TMEX_E2E_TURN_CREDENTIAL='${TMEX_E2E_TURN_CREDENTIAL:-tmex-e2e}' TMEX_E2E_SKIP_BUILD=${TMEX_E2E_SKIP_BUILD:-1} TMEX_TARBALL=/root/tmex-e2e/tmex-cli-1.0.2.tgz bash /root/tmex-e2e/repo/scripts/hub-e2e/split/setup-remote.sh"
+rssh "TMEX_E2E_TURN_URL='${TMEX_E2E_TURN_URL:-}' TMEX_E2E_TURN_USERNAME='${TMEX_E2E_TURN_USERNAME:-tmex}' TMEX_E2E_TURN_CREDENTIAL='${TMEX_E2E_TURN_CREDENTIAL:-tmex-e2e}' TMEX_E2E_TURN_EXTERNAL_IP='${TMEX_E2E_TURN_EXTERNAL_IP}' TMEX_E2E_SKIP_BUILD=${TMEX_E2E_SKIP_BUILD:-1} TMEX_TARBALL='${REMOTE_TARBALL}' TMEX_E2E_HUB_HOST='${HUB_HOST}' TMEX_E2E_HUB_IP='${HUB_IP}' TMEX_E2E_HUB_PORT='${HUB_PORT}' TMEX_HUB_PUBLIC_URL='${HUB_PUBLIC_URL}' TMEX_E2E_REMOTE_DIR='${REMOTE_DIR}' TMEX_E2E_REMOTE_SUDO='${REMOTE_SUDO}' TMEX_E2E_TLS_MODE='${TLS_MODE}' TMEX_E2E_TLS_CERT='${TMEX_E2E_TLS_CERT}' TMEX_E2E_TLS_KEY='${TMEX_E2E_TLS_KEY}' TMEX_E2E_CA_CRT='${TMEX_E2E_CA_CRT}' TMEX_E2E_NODE_CA_CERTS='${NODE_CA_CERTS}' bash ${REMOTE_DIR}/repo/scripts/hub-e2e/split/setup-remote.sh"
 
 log "setup local nodes"
 TMEX_TARBALL="${TARBALL}" TMEX_E2E_SKIP_BUILD="${TMEX_E2E_SKIP_BUILD:-1}" \
+  TMEX_E2E_HUB_HOST="${HUB_HOST}" TMEX_E2E_HUB_IP="${HUB_IP}" \
+  TMEX_E2E_NODE_CA_CERTS="${NODE_CA_CERTS}" \
   bash "${ROOT}/setup-local.sh"
 
 sync_clocks || log "clock sync imperfect, login may hit DELEGATION_ISSUED_IN_FUTURE"
@@ -400,7 +497,7 @@ else
 fi
 
 set +e
-add_out="$(rssh "docker exec -e TMEX_PASSWORD='${PASSWORD}' tmex-split-hub bun /opt/tmex/runtime/cli-auth.js hub user add ${USER_NAME} --install-dir /opt/tmex" 2>&1)"
+add_out="$(rssh_docker "exec -e TMEX_PASSWORD='${PASSWORD}' tmex-split-hub bun /opt/tmex/runtime/cli-auth.js hub user add ${USER_NAME} --install-dir /opt/tmex" 2>&1)"
 add_rc=$?
 set -e
 printf '%s\n' "${add_out}" | tee "${OUT}/hub-user-add.log"
@@ -504,6 +601,7 @@ if [[ -z "${NODE_A_ID}" || -z "${NODE_B_ID}" || "${login_hub_rc}" -ne 0 ]]; then
   skip "C skipped (missing hub login or node ids)"
   skip "E skipped (missing hub login or node ids)"
   skip "D skipped (missing hub login or node ids)"
+  skip "L skipped (missing hub login or node ids)"
   skip "H skipped (missing hub login or node ids)"
   skip "I skipped (missing hub login or node ids)"
   skip "F skipped (missing hub login or node ids)"
@@ -676,7 +774,7 @@ else
   login_hub_via_a_rc=1
 fi
 
-rssh 'docker exec tmex-split-hub bash -lc "tmux -L tmex-hub kill-session -t e2e-hub 2>/dev/null || true; tmux -L tmex-hub new-session -d -s e2e-hub '\''sh -lc echo READY; exec sh'\''"'
+rssh_docker "exec tmex-split-hub bash -lc $(printf '%q' "tmux -L tmex-hub kill-session -t e2e-hub 2>/dev/null || true; tmux -L tmex-hub new-session -d -s e2e-hub 'sh -lc echo READY; exec sh'")"
 set +e
 dev_h_json="$(driver files.ts create-device --base-url http://node-a:9883 --cookie-file /out/cookies-entry.json \
   --node-id "${HUB_NODE_ID}" --name hub-local --session e2e-hub)"
@@ -785,7 +883,7 @@ else
 fi
 
 log "stopping remote hub"
-rssh "docker stop tmex-split-hub"
+rssh_docker "stop tmex-split-hub"
 sleep 2
 
 MARKER_CD="TMEX_SPLIT_C_HUBDOWN"
@@ -817,7 +915,7 @@ else
 fi
 
 log "starting remote hub"
-rssh "docker start tmex-split-hub"
+rssh_docker "start tmex-split-hub"
 wait_remote_hub
 ensure_local node-a
 ensure_local node-b
@@ -874,7 +972,7 @@ else
 fi
 
 log "restart remote hub"
-rssh "docker restart tmex-split-hub"
+rssh_docker "restart tmex-split-hub"
 wait_remote_hub
 ensure_local node-a
 ensure_local node-b
@@ -894,259 +992,467 @@ else
   fail "E3 remote hub restart, nodes reconnect, no ghost rows (ghost=${ghost})"
 fi
 
-write_direct_path() {
-  docker exec -e HUB="${HUB_NODE_ID}" tmex-split-driver bun -e '
-    const j = await Bun.file("/out/mesh-nodes-direct.json").json();
-    const n = (j.nodes ?? []).find((x) => x.isHub === true || x.id === process.env.HUB);
-    await Bun.write("/out/direct-path.json", JSON.stringify({
+target_exec() {
+  local target="$1"
+  shift
+  case "${target}" in
+    hub) rssh_docker "exec tmex-split-hub $*" ;;
+    node-b) docker exec tmex-split-node-b "$@" ;;
+    *) echo "unknown target ${target}" >&2; return 2 ;;
+  esac
+}
+
+target_bash() {
+  local target="$1"
+  local script="$2"
+  case "${target}" in
+    hub) rssh_docker "exec tmex-split-hub bash -lc $(printf '%q' "${script}")" ;;
+    node-b) docker exec tmex-split-node-b bash -lc "${script}" ;;
+    *) echo "unknown target ${target}" >&2; return 2 ;;
+  esac
+}
+
+target_restart() {
+  case "$1" in
+    hub)
+      rssh_docker "restart tmex-split-hub"
+      wait_remote_hub
+      ;;
+    node-b)
+      docker restart tmex-split-node-b
+      wait_local_healthy node-b
+      ;;
+    *) echo "unknown target $1" >&2; return 2 ;;
+  esac
+}
+
+target_ensure_tmux() {
+  case "$1" in
+    hub)
+      rssh_docker "exec tmex-split-hub bash -lc $(printf '%q' "tmux -L tmex-hub has-session -t e2e-hub 2>/dev/null || tmux -L tmex-hub new-session -d -s e2e-hub 'sh -lc echo READY; exec sh'")" || true
+      ;;
+    node-b)
+      docker exec tmex-split-node-b bash -lc \
+        'tmux -L tmex-node-b has-session -t e2e-b 2>/dev/null || tmux -L tmex-node-b new-session -d -s e2e-b "sh -lc echo READY; exec sh"' || true
+      ;;
+    *) echo "unknown target $1" >&2; return 2 ;;
+  esac
+}
+
+write_mesh_path() {
+  local mesh="$1"
+  local path_out="$2"
+  local tid="$3"
+  docker exec -e MESH="${mesh}" -e PATH_OUT="${path_out}" -e TARGET="${tid}" tmex-split-driver bun -e '
+    const j = await Bun.file(process.env.MESH).json();
+    const n = (j.nodes ?? []).find((x) => x.id === process.env.TARGET);
+    const body = {
       reach: n?.reach ?? null,
       transport: n?.transport ?? null,
       direct_capable: n?.direct_capable ?? null,
       row: n ?? null,
-    }));
+    };
+    await Bun.write(process.env.PATH_OUT, JSON.stringify(body));
     process.stdout.write(JSON.stringify({
-      reach: n?.reach ?? null,
-      transport: n?.transport ?? null,
-      direct_capable: n?.direct_capable ?? null,
+      reach: body.reach,
+      transport: body.transport,
+      direct_capable: body.direct_capable,
     }));
   ' 2>/dev/null || true
 }
 
-# ---------- D direct enable ----------
-set +e
-direct_a="$(docker exec tmex-split-node-a \
-  bun /opt/tmex-pkg/package/bin/tmex.js direct enable --install-dir /opt/tmex 2>&1)"
-direct_a_rc=$?
-direct_h="$(rssh "docker exec tmex-split-hub bun /opt/tmex-pkg/package/bin/tmex.js direct enable --install-dir /opt/tmex" 2>&1)"
-direct_h_rc=$?
-set -e
-printf '%s\n' "${direct_a}" | tee "${OUT}/direct-enable-node-a.log"
-printf '%s\n' "${direct_h}" | tee "${OUT}/direct-enable-hub.log"
-has_native_a="$(docker exec tmex-split-node-a bash -lc 'test -f /opt/tmex/native/node_datachannel.node && test -f /opt/tmex/native/manifest.json && echo yes || echo no')"
-has_native_h="$(rssh "docker exec tmex-split-hub bash -lc 'test -f /opt/tmex/native/node_datachannel.node && test -f /opt/tmex/native/manifest.json && echo yes || echo no'")"
-if [[ "${has_native_a}" != "yes" || "${has_native_h}" != "yes" ]]; then
-  DIRECT_SKIPPED=1
-  skip "D1 both rows direct_capable=true" "native missing a=${has_native_a} h=${has_native_h} a_rc=${direct_a_rc} h_rc=${direct_h_rc}"
-  skip "D2 transport=dc" "native missing"
-  skip "D3 marker round-trip while transport=dc" "native missing"
-  skip "H1 transport falls back to relay within 30s" "D skipped (no native)"
-  skip "H2 SEQ_1..400 contiguous on entry stream" "D skipped (no native)"
-  skip "H3 transport returns to dc within 90s" "D skipped (no native)"
-  skip "I1 8MiB sha256 over dc" "D skipped (no native)"
-  skip "I2 8MiB sha256 with UDP drop (REST fallback)" "D skipped (no native)"
-else
+refresh_pane() {
+  local tid="$1"
+  local did="$2"
+  local json="$3"
+  local tree=""
+  local i
+  for i in $(seq 1 20); do
+    set +e
+    tree="$(driver files.ts tmux-tree --base-url http://node-a:9883 --cookie-file /out/cookies-entry.json \
+      --node-id "${tid}" --device-id "${did}")"
+    set -e
+    if echo "${tree}" | grep -q '"id":'; then
+      break
+    fi
+    sleep 1
+  done
+  printf '%s\n' "${tree}" | tee "${OUT}/$(basename "${json}")" >/dev/null
+  jread "${json}" 'j.devices?.[0]?.session?.windows?.[0]?.panes?.[0]?.id'
+}
+
+# run_direct_scenarios <kind>
+# kind=lan → L1..L8 against node-b over docker lan (REQUIRED; host ICE / UDP)
+# kind=hub → D1-D3/H1-H3/I1-I2 against hub (WAN; FAIL with evidence if UDP blocked)
+run_direct_scenarios() {
+  local kind="$1"
+  local d1 d2 d3 h1 h2 h3 i1 i2
+  local target target_id device_id pane_id
+  local mesh_json path_json
+  local tree_json seq_json seq_err seq_ready seq_input
+  local bulk_sha_file bulk_dc_json bulk_relay_json root_json_file
+  local enable_log
+  local got_dc=0
+  local marker
+
+  case "${kind}" in
+    hub)
+      d1="D1 both rows direct_capable=true"
+      d2="D2 transport=dc"
+      d3="D3 marker round-trip while transport=dc"
+      h1="H1 transport falls back to relay within 30s"
+      h2="H2 SEQ_1..400 contiguous on entry stream"
+      h3="H3 transport returns to dc within 90s"
+      i1="I1 8MiB sha256 over dc"
+      i2="I2 8MiB sha256 with UDP drop (REST fallback)"
+      target=hub
+      target_id="${HUB_NODE_ID}"
+      device_id="${DEVICE_H_ID}"
+      pane_id="${PANE_H:-}"
+      mesh_json=/out/mesh-nodes-direct.json
+      path_json=/out/direct-path.json
+      tree_json=/out/tmux-tree-hub.json
+      seq_json=/out/seq-capture.json
+      seq_err=/out/seq-capture.err
+      seq_ready=/out/seq-ready.json
+      seq_input=/out/seq-producer.txt
+      bulk_sha_file="${OUT}/bulk-remote-sha256.txt"
+      bulk_dc_json=/out/files-bulk-dc.json
+      bulk_relay_json=/out/files-bulk-relay.json
+      root_json_file=/out/file-root-hub.json
+      enable_log="${OUT}/direct-enable-hub.log"
+      marker=TMEX_SPLIT_D
+      ;;
+    lan)
+      d1="L1 both rows direct_capable=true"
+      d2="L2 transport=dc"
+      d3="L3 marker round-trip while transport=dc"
+      h1="L4 transport falls back to relay within 30s"
+      h2="L5 SEQ_1..400 contiguous on entry stream"
+      h3="L6 transport returns to dc within 90s"
+      i1="L7 8MiB sha256 over dc"
+      i2="L8 8MiB sha256 with UDP drop (REST fallback)"
+      target=node-b
+      target_id="${NODE_B_ID}"
+      device_id="${DEVICE_B_ID}"
+      pane_id="${PANE_B:-}"
+      mesh_json=/out/mesh-nodes-direct-lan.json
+      path_json=/out/direct-path-lan.json
+      tree_json=/out/tmux-tree-b.json
+      seq_json=/out/seq-capture-lan.json
+      seq_err=/out/seq-capture-lan.err
+      seq_ready=/out/seq-ready-lan.json
+      seq_input=/out/seq-producer.txt
+      bulk_sha_file="${OUT}/bulk-remote-sha256-lan.txt"
+      bulk_dc_json=/out/files-bulk-dc-lan.json
+      bulk_relay_json=/out/files-bulk-relay-lan.json
+      root_json_file=/out/file-root-lan.json
+      enable_log="${OUT}/direct-enable-node-b.log"
+      marker=TMEX_SPLIT_D_LAN
+      ;;
+    *)
+      echo "run_direct_scenarios: unknown kind ${kind}" >&2
+      return 2
+      ;;
+  esac
+
+  log "direct scenarios kind=${kind} target=${target} id=${target_id}"
+
+  if [[ -z "${target_id}" || -z "${device_id}" ]]; then
+    skip "${d1}" "missing target_id/device_id"
+    skip "${d2}" "missing ids"
+    skip "${d3}" "missing ids"
+    skip "${h1}" "missing ids"
+    skip "${h2}" "missing ids"
+    skip "${h3}" "missing ids"
+    skip "${i1}" "missing ids"
+    skip "${i2}" "missing ids"
+    return 0
+  fi
+
+  set +e
+  local direct_a direct_a_rc direct_t direct_t_rc
+  direct_a="$(docker exec tmex-split-node-a \
+    bun /opt/tmex-pkg/package/bin/tmex.js direct enable --install-dir /opt/tmex 2>&1)"
+  direct_a_rc=$?
+  direct_t="$(target_exec "${target}" bun /opt/tmex-pkg/package/bin/tmex.js direct enable --install-dir /opt/tmex 2>&1)"
+  direct_t_rc=$?
+  set -e
+  printf '%s\n' "${direct_a}" | tee "${OUT}/direct-enable-node-a.log"
+  printf '%s\n' "${direct_t}" | tee "${enable_log}"
+  local has_native_a has_native_t
+  has_native_a="$(docker exec tmex-split-node-a bash -lc 'test -f /opt/tmex/native/node_datachannel.node && test -f /opt/tmex/native/manifest.json && echo yes || echo no')"
+  has_native_t="$(target_bash "${target}" 'test -f /opt/tmex/native/node_datachannel.node && test -f /opt/tmex/native/manifest.json && echo yes || echo no')"
+  if [[ "${has_native_a}" != "yes" || "${has_native_t}" != "yes" ]]; then
+    skip "${d1}" "native missing a=${has_native_a} t=${has_native_t} a_rc=${direct_a_rc} t_rc=${direct_t_rc}"
+    skip "${d2}" "native missing"
+    skip "${d3}" "native missing"
+    skip "${h1}" "direct skipped (no native)"
+    skip "${h2}" "direct skipped (no native)"
+    skip "${h3}" "direct skipped (no native)"
+    skip "${i1}" "direct skipped (no native)"
+    skip "${i2}" "direct skipped (no native)"
+    if [[ "${kind}" == "hub" ]]; then
+      DIRECT_SKIPPED=1
+    fi
+    return 0
+  fi
+
   docker restart tmex-split-node-a
-  rssh "docker restart tmex-split-hub"
+  target_restart "${target}"
   wait_local_healthy node-a
-  wait_remote_hub
-  rssh 'docker exec tmex-split-hub bash -lc "tmux -L tmex-hub has-session -t e2e-hub 2>/dev/null || tmux -L tmex-hub new-session -d -s e2e-hub '\''sh -lc echo READY; exec sh'\''"' || true
+  docker exec tmex-split-node-a bash -lc \
+    'tmux -L tmex-node-a has-session -t e2e-a 2>/dev/null || tmux -L tmex-node-a new-session -d -s e2e-a "sh -lc echo READY; exec sh"' || true
+  target_ensure_tmux "${target}"
   sleep 3
+
   set +e
   driver login.ts --base-url http://node-a:9883 --username "${USER_NAME}" --password "${PASSWORD}" \
     --out /out/cookies-entry.json
   driver nodes.ts wait-direct-capable --base-url http://node-a:9883 --cookie-file /out/cookies-entry.json \
     --name self --timeout 60000
-  dc_a_rc=$?
+  local dc_a_rc=$?
   driver login.ts --base-url http://node-a:9883 --username "${USER_NAME}" --password "${PASSWORD}" \
-    --target-node-id "${HUB_NODE_ID}" --out /out/cookies-entry.json
+    --target-node-id "${target_id}" --out /out/cookies-entry.json
   driver nodes.ts wait-direct-capable --base-url http://node-a:9883 --cookie-file /out/cookies-entry.json \
-    --name "${HUB_NODE_ID}" --timeout 60000
-  dc_h_rc=$?
+    --name "${target_id}" --timeout 60000
+  local dc_t_rc=$?
   driver nodes.ts mesh-list --base-url http://node-a:9883 --cookie-file /out/cookies-entry.json \
-    > "${OUT}/mesh-nodes-direct.json"
-  PATH_D="$(write_direct_path)"
+    > "${OUT}/$(basename "${mesh_json}")"
+  local PATH_D
+  PATH_D="$(write_mesh_path "${mesh_json}" "${path_json}" "${target_id}")"
   set -e
-  if [[ "${dc_a_rc}" -eq 0 && "${dc_h_rc}" -eq 0 ]]; then
-    pass "D1 both rows direct_capable=true" "${PATH_D}"
+  if [[ "${dc_a_rc}" -eq 0 && "${dc_t_rc}" -eq 0 ]]; then
+    pass "${d1}" "${PATH_D}"
   else
-    fail "D1 both rows direct_capable=true" "a=${dc_a_rc} h=${dc_h_rc} ${PATH_D}"
+    fail "${d1}" "a=${dc_a_rc} t=${dc_t_rc} ${PATH_D}"
+  fi
+
+  pane_id="$(refresh_pane "${target_id}" "${device_id}" "${tree_json}" || true)"
+  if [[ "${kind}" == "hub" ]]; then
+    PANE_H="${pane_id}"
+  else
+    PANE_B="${pane_id}"
   fi
 
   set +e
   driver nodes.ts wait-transport --base-url http://node-a:9883 --cookie-file /out/cookies-entry.json \
-    --name "${HUB_NODE_ID}" --transport dc --timeout 90000
-  transport_dc_rc=$?
+    --name "${target_id}" --transport dc --timeout 90000
+  local transport_dc_rc=$?
   driver nodes.ts mesh-list --base-url http://node-a:9883 --cookie-file /out/cookies-entry.json \
-    > "${OUT}/mesh-nodes-direct.json"
-  PATH_D="$(write_direct_path)"
+    > "${OUT}/$(basename "${mesh_json}")"
+  PATH_D="$(write_mesh_path "${mesh_json}" "${path_json}" "${target_id}")"
   set -e
-  dump_rtc_logs
+  dump_rtc_logs "${target}"
   if [[ "${transport_dc_rc}" -eq 0 ]]; then
-    DIRECT_DC=1
-    pass "D2 transport=dc" "${PATH_D}"
+    got_dc=1
+    pass "${d2}" "${PATH_D}"
   else
-    fail "D2 transport=dc" "stayed relay/other path=${PATH_D}; $(rtc_evidence)"
+    fail "${d2}" "stayed relay/other path=${PATH_D}; $(rtc_evidence "${target}")"
   fi
 
   set +e
   driver terminal.ts --base-url http://node-a:9883 --cookie-file /out/cookies-entry.json \
-    --node-id "${HUB_NODE_ID}" --device-id "${DEVICE_H_ID}" --pane-id "${PANE_H}" --marker TMEX_SPLIT_D --timeout 25000
-  term_d_rc=$?
+    --node-id "${target_id}" --device-id "${device_id}" --pane-id "${pane_id}" --marker "${marker}" --timeout 25000
+  local term_d_rc=$?
   driver nodes.ts mesh-list --base-url http://node-a:9883 --cookie-file /out/cookies-entry.json \
-    > "${OUT}/mesh-nodes-direct.json"
-  PATH_D="$(write_direct_path)"
+    > "${OUT}/$(basename "${mesh_json}")"
+  PATH_D="$(write_mesh_path "${mesh_json}" "${path_json}" "${target_id}")"
   set -e
-  if [[ "${term_d_rc}" -eq 0 && "${DIRECT_DC}" -eq 1 ]]; then
-    pass "D3 marker round-trip while transport=dc" "${PATH_D}"
+  if [[ "${term_d_rc}" -eq 0 && "${got_dc}" -eq 1 ]]; then
+    pass "${d3}" "${PATH_D}"
   elif [[ "${term_d_rc}" -eq 0 ]]; then
-    fail "D3 marker round-trip while transport=dc" "marker ok but transport not dc ${PATH_D}"
+    fail "${d3}" "marker ok but transport not dc ${PATH_D}"
   else
-    fail "D3 marker round-trip while transport=dc" "marker failed ${PATH_D}"
+    fail "${d3}" "marker failed ${PATH_D}"
   fi
-fi
 
-# ---------- H direct interruption, no data loss ----------
-if [[ "${DIRECT_SKIPPED}" -eq 1 ]]; then
-  :
-elif [[ "${DIRECT_DC}" -ne 1 ]]; then
-  skip "H1 transport falls back to relay within 30s" "requires D2 transport=dc"
-  skip "H2 SEQ_1..400 contiguous on entry stream" "requires D2 transport=dc"
-  skip "H3 transport returns to dc within 90s" "requires D2 transport=dc"
-  skip "I1 8MiB sha256 over dc" "requires D2 transport=dc"
-  skip "I2 8MiB sha256 with UDP drop (REST fallback)" "requires D2 transport=dc"
-else
+  if [[ "${got_dc}" -ne 1 ]]; then
+    skip "${h1}" "requires ${d2} transport=dc"
+    skip "${h2}" "requires ${d2} transport=dc"
+    skip "${h3}" "requires ${d2} transport=dc"
+    skip "${i1}" "requires ${d2} transport=dc"
+    skip "${i2}" "requires ${d2} transport=dc"
+    if [[ "${kind}" == "hub" ]]; then
+      DIRECT_DC=0
+    fi
+    return 0
+  fi
+
   ensure_udp_drop_tool
-  rssh 'docker exec tmex-split-hub bash -lc "tmux -L tmex-hub has-session -t e2e-hub 2>/dev/null || tmux -L tmex-hub new-session -d -s e2e-hub '\''sh -lc echo READY; exec sh'\''"' || true
-  set +e
-  tree_h="$(driver files.ts tmux-tree --base-url http://node-a:9883 --cookie-file /out/cookies-entry.json \
-    --node-id "${HUB_NODE_ID}" --device-id "${DEVICE_H_ID}")"
-  set -e
-  printf '%s\n' "${tree_h}" | tee "${OUT}/tmux-tree-hub.json" >/dev/null
-  PANE_H="$(jread /out/tmux-tree-hub.json 'j.devices?.[0]?.session?.windows?.[0]?.panes?.[0]?.id' || true)"
+  target_ensure_tmux "${target}"
+  pane_id="$(refresh_pane "${target_id}" "${device_id}" "${tree_json}" || true)"
+  if [[ "${kind}" == "hub" ]]; then
+    PANE_H="${pane_id}"
+  else
+    PANE_B="${pane_id}"
+  fi
   printf '%s\n' 'for i in $(seq 1 400); do echo SEQ_$i; sleep 0.02; done' > "${OUT}/seq-producer.txt"
-  rm -f "${OUT}/seq-ready.json"
+  rm -f "${OUT}/$(basename "${seq_ready}")"
   set +e
   driver terminal.ts --base-url http://node-a:9883 --cookie-file /out/cookies-entry.json \
-    --node-id "${HUB_NODE_ID}" --device-id "${DEVICE_H_ID}" --pane-id "${PANE_H}" \
+    --node-id "${target_id}" --device-id "${device_id}" --pane-id "${pane_id}" \
     --capture-seq --expect-count 400 --seq-prefix SEQ_ \
-    --input-file /out/seq-producer.txt --ready-file /out/seq-ready.json --timeout 90000 \
-    > "${OUT}/seq-capture.json" 2> "${OUT}/seq-capture.err" &
-  cap_pid=$!
+    --input-file "${seq_input}" --ready-file "${seq_ready}" --timeout 90000 \
+    > "${OUT}/$(basename "${seq_json}")" 2> "${OUT}/$(basename "${seq_err}")" &
+  local cap_pid=$!
   set -e
-  if wait_file_match "${OUT}/seq-ready.json" '"ok"' 20; then
+  local h1_rc=1
+  if wait_file_match "${OUT}/$(basename "${seq_ready}")" '"ok"' 20; then
     sleep 3
     set +e
     drop_direct_udp
-    drop_rc=$?
+    local drop_rc=$?
     driver nodes.ts wait-transport --base-url http://node-a:9883 --cookie-file /out/cookies-entry.json \
-      --name "${HUB_NODE_ID}" --transport relay --timeout 30000
+      --name "${target_id}" --transport relay --timeout 30000
     h1_rc=$?
     set -e
-    dump_rtc_logs
+    dump_rtc_logs "${target}"
     if [[ "${h1_rc}" -eq 0 ]]; then
-      pass "H1 transport falls back to relay within 30s" "mode=${DIRECT_DROP_MODE} drop_rc=${drop_rc}"
+      pass "${h1}" "mode=${DIRECT_DROP_MODE} drop_rc=${drop_rc}"
     else
-      fail "H1 transport falls back to relay within 30s" "mode=${DIRECT_DROP_MODE} drop_rc=${drop_rc}; $(rtc_evidence)"
+      fail "${h1}" "mode=${DIRECT_DROP_MODE} drop_rc=${drop_rc}; $(rtc_evidence "${target}")"
     fi
   else
     kill "${cap_pid}" 2>/dev/null || true
-    fail "H1 transport falls back to relay within 30s" "seq capture did not become ready"
+    fail "${h1}" "seq capture did not become ready"
     h1_rc=1
   fi
   set +e
   wait "${cap_pid}"
-  h2_rc=$?
+  local h2_rc=$?
   set -e
-  H2_BODY="$(tr '\n' ' ' < "${OUT}/seq-capture.json" 2>/dev/null | tr '|' '/' || true)"
+  local H2_BODY
+  H2_BODY="$(tr '\n' ' ' < "${OUT}/$(basename "${seq_json}")" 2>/dev/null | tr '|' '/' || true)"
   if [[ "${h2_rc}" -eq 0 ]]; then
-    pass "H2 SEQ_1..400 contiguous on entry stream" "${H2_BODY}"
+    pass "${h2}" "${H2_BODY}"
   else
-    fail "H2 SEQ_1..400 contiguous on entry stream" "${H2_BODY}"
+    fail "${h2}" "${H2_BODY}"
   fi
   set +e
   undrop_direct_udp
   driver nodes.ts wait-transport --base-url http://node-a:9883 --cookie-file /out/cookies-entry.json \
-    --name "${HUB_NODE_ID}" --transport dc --timeout 90000
-  h3_rc=$?
+    --name "${target_id}" --transport dc --timeout 90000
+  local h3_rc=$?
   driver nodes.ts mesh-list --base-url http://node-a:9883 --cookie-file /out/cookies-entry.json \
-    > "${OUT}/mesh-nodes-direct.json"
-  PATH_H3="$(write_direct_path)"
+    > "${OUT}/$(basename "${mesh_json}")"
+  local PATH_H3
+  PATH_H3="$(write_mesh_path "${mesh_json}" "${path_json}" "${target_id}")"
   set -e
-  dump_rtc_logs
+  dump_rtc_logs "${target}"
   if [[ "${h3_rc}" -eq 0 ]]; then
-    DIRECT_DC=1
-    pass "H3 transport returns to dc within 90s" "${PATH_H3}"
+    got_dc=1
+    pass "${h3}" "${PATH_H3}"
   else
-    DIRECT_DC=0
-    fail "H3 transport returns to dc within 90s" "${PATH_H3}; $(rtc_evidence)"
+    got_dc=0
+    fail "${h3}" "${PATH_H3}; $(rtc_evidence "${target}")"
+  fi
+  if [[ "${kind}" == "hub" ]]; then
+    DIRECT_DC="${got_dc}"
   fi
 
-  # ---------- I file bulk / REST fallback ----------
-  if [[ "${DIRECT_DC}" -ne 1 ]]; then
-    skip "I1 8MiB sha256 over dc" "requires transport=dc after H3"
-    skip "I2 8MiB sha256 with UDP drop (REST fallback)" "requires transport=dc after H3"
-  else
-    set +e
-    bulk_sum="$(rssh "docker exec tmex-split-hub bash -lc 'mkdir -p /e2e && dd if=/dev/urandom of=/e2e/bulk.bin bs=1048576 count=8 status=none && sha256sum /e2e/bulk.bin'")"
-    bulk_sum_rc=$?
-    set -e
-    printf '%s\n' "${bulk_sum}" | tee "${OUT}/bulk-remote-sha256.txt"
-    EXPECT_SHA="$(printf '%s\n' "${bulk_sum}" | awk '/bulk.bin/{print $1; exit}')"
-    set +e
-    hub_root_json="$(driver files.ts create-root --base-url http://node-a:9883 --cookie-file /out/cookies-entry.json \
-      --node-id "${HUB_NODE_ID}" --device-id "${DEVICE_H_ID}" --path /e2e)"
-    hub_root_rc=$?
-    set -e
-    printf '%s\n' "${hub_root_json}" | tee "${OUT}/file-root-hub.json"
-    HUB_ROOT_ID="$(jread /out/file-root-hub.json 'j.root?.id ?? ""' || true)"
-    if [[ -z "${HUB_ROOT_ID}" ]]; then
-      set +e
-      driver files.ts get --base-url http://node-a:9883 --cookie-file /out/cookies-entry.json \
-        --node-id "${HUB_NODE_ID}" --path /api/files/roots > "${OUT}/file-roots-hub.json"
-      set -e
-      HUB_ROOT_ID="$(jread /out/file-roots-hub.json '(j.json?.roots??[]).find(r=>r.path==="/e2e")?.id ?? ""' || true)"
-    fi
-    set +e
-    i1_json="$(driver files.ts sha256 --base-url http://node-a:9883 --cookie-file /out/cookies-entry.json \
-      --node-id "${HUB_NODE_ID}" --root-id "${HUB_ROOT_ID}" --path /e2e/bulk.bin)"
-    i1_rc=$?
-    set -e
-    printf '%s\n' "${i1_json}" | tee "${OUT}/files-bulk-dc.json"
-    I1_SHA="$(docker exec tmex-split-driver bun -e 'const j=await Bun.file("/out/files-bulk-dc.json").json(); process.stdout.write(String(j.sha256??""))' || true)"
-    I1_HDR="$(docker exec tmex-split-driver bun -e 'const j=await Bun.file("/out/files-bulk-dc.json").json(); process.stdout.write(JSON.stringify({bytes:j.bytes,headers:j.headers,bulkPath:j.bulkPath}))' || true)"
-    if [[ "${bulk_sum_rc}" -eq 0 && "${i1_rc}" -eq 0 && -n "${EXPECT_SHA}" && "${I1_SHA}" == "${EXPECT_SHA}" ]]; then
-      pass "I1 8MiB sha256 over dc" "sha256=${I1_SHA} ${I1_HDR}; bulk DataChannel is browser-only (BulkClient bulk:<id>), REST /api/files/raw rides the mesh link"
-    else
-      fail "I1 8MiB sha256 over dc" "expect=${EXPECT_SHA} got=${I1_SHA} root_rc=${hub_root_rc} ${I1_HDR}"
-    fi
-
-    set +e
-    drop_direct_udp
-    driver nodes.ts wait-transport --base-url http://node-a:9883 --cookie-file /out/cookies-entry.json \
-      --name "${HUB_NODE_ID}" --transport relay --timeout 30000
-    i2_relay_rc=$?
-    i2_json="$(driver files.ts sha256 --base-url http://node-a:9883 --cookie-file /out/cookies-entry.json \
-      --node-id "${HUB_NODE_ID}" --root-id "${HUB_ROOT_ID}" --path /e2e/bulk.bin)"
-    i2_rc=$?
-    undrop_direct_udp
-    set -e
-    printf '%s\n' "${i2_json}" | tee "${OUT}/files-bulk-relay.json"
-    I2_SHA="$(docker exec tmex-split-driver bun -e 'const j=await Bun.file("/out/files-bulk-relay.json").json(); process.stdout.write(String(j.sha256??""))' || true)"
-    I2_HDR="$(docker exec tmex-split-driver bun -e 'const j=await Bun.file("/out/files-bulk-relay.json").json(); process.stdout.write(JSON.stringify({bytes:j.bytes,headers:j.headers,bulkPath:j.bulkPath}))' || true)"
-    if [[ "${i2_rc}" -eq 0 && -n "${EXPECT_SHA}" && "${I2_SHA}" == "${EXPECT_SHA}" ]]; then
-      pass "I2 8MiB sha256 with UDP drop (REST fallback)" "relay_wait=${i2_relay_rc} sha256=${I2_SHA} ${I2_HDR}"
-    else
-      fail "I2 8MiB sha256 with UDP drop (REST fallback)" "relay_wait=${i2_relay_rc} expect=${EXPECT_SHA} got=${I2_SHA} ${I2_HDR}"
-    fi
+  if [[ "${got_dc}" -ne 1 ]]; then
+    skip "${i1}" "requires transport=dc after H3"
+    skip "${i2}" "requires transport=dc after H3"
+    return 0
   fi
-fi
+
+  set +e
+  local bulk_sum bulk_sum_rc
+  bulk_sum="$(target_bash "${target}" 'mkdir -p /e2e && dd if=/dev/urandom of=/e2e/bulk.bin bs=1048576 count=8 status=none && sha256sum /e2e/bulk.bin')"
+  bulk_sum_rc=$?
+  set -e
+  printf '%s\n' "${bulk_sum}" | tee "${bulk_sha_file}"
+  local EXPECT_SHA
+  EXPECT_SHA="$(printf '%s\n' "${bulk_sum}" | awk '/bulk.bin/{print $1; exit}')"
+  set +e
+  local hub_root_json hub_root_rc
+  hub_root_json="$(driver files.ts create-root --base-url http://node-a:9883 --cookie-file /out/cookies-entry.json \
+    --node-id "${target_id}" --device-id "${device_id}" --path /e2e)"
+  hub_root_rc=$?
+  set -e
+  printf '%s\n' "${hub_root_json}" | tee "${OUT}/$(basename "${root_json_file}")"
+  local TARGET_ROOT_ID
+  TARGET_ROOT_ID="$(jread "${root_json_file}" 'j.root?.id ?? ""' || true)"
+  if [[ -z "${TARGET_ROOT_ID}" ]]; then
+    set +e
+    driver files.ts get --base-url http://node-a:9883 --cookie-file /out/cookies-entry.json \
+      --node-id "${target_id}" --path /api/files/roots > "${OUT}/file-roots-${kind}.json"
+    set -e
+    TARGET_ROOT_ID="$(jread "/out/file-roots-${kind}.json" '(j.json?.roots??[]).find(r=>r.path==="/e2e")?.id ?? ""' || true)"
+  fi
+  set +e
+  local i1_json i1_rc
+  i1_json="$(driver files.ts sha256 --base-url http://node-a:9883 --cookie-file /out/cookies-entry.json \
+    --node-id "${target_id}" --root-id "${TARGET_ROOT_ID}" --path /e2e/bulk.bin)"
+  i1_rc=$?
+  set -e
+  printf '%s\n' "${i1_json}" | tee "${OUT}/$(basename "${bulk_dc_json}")"
+  local I1_SHA I1_HDR
+  I1_SHA="$(docker exec tmex-split-driver bun -e "const j=await Bun.file('${bulk_dc_json}').json(); process.stdout.write(String(j.sha256??''))" || true)"
+  I1_HDR="$(docker exec tmex-split-driver bun -e "const j=await Bun.file('${bulk_dc_json}').json(); process.stdout.write(JSON.stringify({bytes:j.bytes,headers:j.headers,bulkPath:j.bulkPath}))" || true)"
+  if [[ "${bulk_sum_rc}" -eq 0 && "${i1_rc}" -eq 0 && -n "${EXPECT_SHA}" && "${I1_SHA}" == "${EXPECT_SHA}" ]]; then
+    pass "${i1}" "sha256=${I1_SHA} ${I1_HDR}; bulk DataChannel is browser-only (BulkClient bulk:<id>), REST /api/files/raw rides the mesh link"
+  else
+    fail "${i1}" "expect=${EXPECT_SHA} got=${I1_SHA} root_rc=${hub_root_rc} ${I1_HDR}"
+  fi
+
+  set +e
+  drop_direct_udp
+  driver nodes.ts wait-transport --base-url http://node-a:9883 --cookie-file /out/cookies-entry.json \
+    --name "${target_id}" --transport relay --timeout 30000
+  local i2_relay_rc=$?
+  local i2_json i2_rc
+  i2_json="$(driver files.ts sha256 --base-url http://node-a:9883 --cookie-file /out/cookies-entry.json \
+    --node-id "${target_id}" --root-id "${TARGET_ROOT_ID}" --path /e2e/bulk.bin)"
+  i2_rc=$?
+  undrop_direct_udp
+  set -e
+  printf '%s\n' "${i2_json}" | tee "${OUT}/$(basename "${bulk_relay_json}")"
+  local I2_SHA I2_HDR
+  I2_SHA="$(docker exec tmex-split-driver bun -e "const j=await Bun.file('${bulk_relay_json}').json(); process.stdout.write(String(j.sha256??''))" || true)"
+  I2_HDR="$(docker exec tmex-split-driver bun -e "const j=await Bun.file('${bulk_relay_json}').json(); process.stdout.write(JSON.stringify({bytes:j.bytes,headers:j.headers,bulkPath:j.bulkPath}))" || true)"
+  if [[ "${i2_rc}" -eq 0 && -n "${EXPECT_SHA}" && "${I2_SHA}" == "${EXPECT_SHA}" ]]; then
+    pass "${i2}" "relay_wait=${i2_relay_rc} sha256=${I2_SHA} ${I2_HDR}"
+  else
+    fail "${i2}" "relay_wait=${i2_relay_rc} expect=${EXPECT_SHA} got=${I2_SHA} ${I2_HDR}"
+  fi
+}
+
+# LAN DC first: node-a ↔ node-b share docker lan from C onward; host ICE candidates
+# are UDP and the existing OUTPUT -p udp DROP on node-a cuts the DC while TCP/WSS uplink lives.
+# These L1–L8 rows are REQUIRED (count toward FAILS). Hub D/H/I stay after, and still FAIL
+# with evidence when the WAN path cannot establish (VPS UDP filter / symmetric NAT / no TURN-TCP).
+log "LAN DataChannel scenarios (node-a ↔ node-b)"
+run_direct_scenarios lan
+
+log "WAN DataChannel scenarios (node-a ↔ hub)"
+run_direct_scenarios hub
 
 # tmux session 不进 volume：D/E 重启后需补回来，否则 F 终端是空的。
 docker exec tmex-split-node-a bash -lc 'tmux -L tmex-node-a has-session -t e2e-a 2>/dev/null || tmux -L tmex-node-a new-session -d -s e2e-a "sh -lc echo READY; exec sh"' || true
-rssh 'docker exec tmex-split-hub bash -lc "tmux -L tmex-hub has-session -t e2e-hub 2>/dev/null || tmux -L tmex-hub new-session -d -s e2e-hub '\''sh -lc echo READY; exec sh'\''"' || true
+docker exec tmex-split-node-b bash -lc 'tmux -L tmex-node-b has-session -t e2e-b 2>/dev/null || tmux -L tmex-node-b new-session -d -s e2e-b "sh -lc echo READY; exec sh"' || true
+target_ensure_tmux hub
 
 # ---------- F Playwright from Mac ----------
 set +e
-bun "${ROOT}/browser.ts" \
-  --base-url "${HUB_PUBLIC_URL}" \
-  --username "${USER_NAME}" \
-  --password "${PASSWORD}" \
-  --out "${OUT}" \
-  --node-a-name node-a \
-  --node-b-name node-b \
-  --node-a-id "${NODE_A_ID}" \
-  --device-a-id "${DEVICE_A_ID}" \
+BROWSER_ARGS=(
+  --base-url "${HUB_PUBLIC_URL}"
+  --username "${USER_NAME}"
+  --password "${PASSWORD}"
+  --out "${OUT}"
+  --node-a-name node-a
+  --node-b-name node-b
+  --node-a-id "${NODE_A_ID}"
+  --device-a-id "${DEVICE_A_ID}"
   --marker TMEX_SPLIT_PW_MARKER
+  --map-host "${HUB_HOST}"
+  --map-ip "${HUB_IP}"
+)
+if [[ "${TLS_MODE}" == "private-ca" ]]; then
+  BROWSER_ARGS+=(--insecure-tls --ca-file "${HUB_E2E}/ca/ca.crt")
+fi
+bun "${ROOT}/browser.ts" "${BROWSER_ARGS[@]}"
 f_rc=$?
 set -e
 if [[ "${f_rc}" -eq 0 ]]; then

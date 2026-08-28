@@ -1,6 +1,7 @@
 #!/usr/bin/env bun
 /**
- * 场景 F：本机 Playwright → 公网 hub HTTPS（真实证书，MAP 域名到公网 IP）。
+ * 场景 F：本机 Playwright → 公网 hub HTTPS（MAP 域名到公网 IP）。
+ * Let's Encrypt：ignoreHTTPSErrors=false。private-ca：传 --insecure-tls（TLS 断言较弱）。
  */
 import { chromium, type Page } from '../../../node_modules/.bun/playwright-core@1.58.2/node_modules/playwright-core/index.mjs';
 
@@ -21,6 +22,8 @@ const nodeAId = arg('node-a-id');
 const marker = arg('marker', 'TMEX_SPLIT_PW_MARKER');
 const mapHost = arg('map-host', 'ai.example.com');
 const mapIp = arg('map-ip', '4.2.2.1');
+const caFile = arg('ca-file');
+const insecureTls = process.argv.includes('--insecure-tls');
 
 if (!password) {
   throw new Error('missing --password');
@@ -44,16 +47,17 @@ async function readTerminal(page: Page): Promise<string> {
   });
 }
 
+const ignoreHTTPSErrors = insecureTls;
 const browser = await chromium.launch({
   headless: true,
-  ignoreHTTPSErrors: false,
+  ignoreHTTPSErrors,
   args: [
     `--host-resolver-rules=MAP ${mapHost} ${mapIp},EXCLUDE localhost`,
     '--disable-features=DnsOverHttps,UseDnsHttpsSvcb,AsyncDns',
   ],
 });
-const page = await browser.newPage({ ignoreHTTPSErrors: false, viewport: { width: 1400, height: 900 } });
-const result: Record<string, unknown> = { ok: false };
+const page = await browser.newPage({ ignoreHTTPSErrors, viewport: { width: 1400, height: 900 } });
+const result: Record<string, unknown> = { ok: false, caFile: caFile || null, insecureTls };
 
 try {
   await page.goto(`${baseUrl}/login`, { waitUntil: 'domcontentloaded', timeout: 45_000 });

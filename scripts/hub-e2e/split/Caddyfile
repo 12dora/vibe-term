@@ -3,14 +3,14 @@
 	admin off
 }
 
-ai.example.com {
+__HUB_HOST__ {
 	tls /certs/fullchain.pem /certs/privkey.pem
 	encode gzip
 	reverse_proxy hub:9883 {
 		flush_interval -1
 		header_up X-Forwarded-Proto https
-		header_up X-Forwarded-Host ai.example.com:18443
-		header_up X-Forwarded-Port 18443
+		header_up X-Forwarded-Host __HUB_HOST__:__HUB_PORT__
+		header_up X-Forwarded-Port __HUB_PORT__
 		transport http {
 			read_timeout 0
 			write_timeout 0

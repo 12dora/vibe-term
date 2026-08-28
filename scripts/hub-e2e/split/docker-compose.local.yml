@@ -19,9 +19,9 @@ x-tmex-node: &tmex-node
   cap_add:
     - NET_ADMIN
   extra_hosts:
-    - "ai.example.com:4.2.2.1"
+    - "${TMEX_E2E_HUB_HOST:-ai.example.com}:${TMEX_E2E_HUB_IP:-4.2.2.1}"
   environment:
-    NODE_EXTRA_CA_CERTS: /etc/ssl/certs/ca-certificates.crt
+    NODE_EXTRA_CA_CERTS: ${TMEX_E2E_NODE_CA_CERTS:-/etc/ssl/certs/ca-certificates.crt}
 
 services:
   node-a:
@@ -29,7 +29,7 @@ services:
     container_name: tmex-split-node-a
     hostname: node-a
     environment:
-      NODE_EXTRA_CA_CERTS: /etc/ssl/certs/ca-certificates.crt
+      NODE_EXTRA_CA_CERTS: ${TMEX_E2E_NODE_CA_CERTS:-/etc/ssl/certs/ca-certificates.crt}
       TMEX_INSTANCE: node-a
       TMEX_E2E_STUN_SERVERS: ${TMEX_E2E_STUN_SERVERS:-stun:111.206.174.2:3478,stun:stun.miwifi.com:3478}
       TMEX_E2E_TURN_URL: ${TMEX_E2E_TURN_URL:-}
@@ -37,6 +37,7 @@ services:
       TMEX_E2E_TURN_CREDENTIAL: ${TMEX_E2E_TURN_CREDENTIAL:-tmex-e2e}
     volumes:
       - node-a-data:/var/lib/tmex
+      - ../ca/ca.crt:/ca/ca.crt:ro
     networks:
       - nat-a
 
@@ -45,7 +46,7 @@ services:
     container_name: tmex-split-node-b
     hostname: node-b
     environment:
-      NODE_EXTRA_CA_CERTS: /etc/ssl/certs/ca-certificates.crt
+      NODE_EXTRA_CA_CERTS: ${TMEX_E2E_NODE_CA_CERTS:-/etc/ssl/certs/ca-certificates.crt}
       TMEX_INSTANCE: node-b
       TMEX_E2E_STUN_SERVERS: ${TMEX_E2E_STUN_SERVERS:-stun:111.206.174.2:3478,stun:stun.miwifi.com:3478}
       TMEX_E2E_TURN_URL: ${TMEX_E2E_TURN_URL:-}
@@ -53,6 +54,7 @@ services:
       TMEX_E2E_TURN_CREDENTIAL: ${TMEX_E2E_TURN_CREDENTIAL:-tmex-e2e}
     volumes:
       - node-b-data:/var/lib/tmex
+      - ../ca/ca.crt:/ca/ca.crt:ro
     networks:
       - nat-b
 
@@ -64,12 +66,13 @@ services:
     working_dir: /workspace
     entrypoint: ["sleep", "infinity"]
     extra_hosts:
-      - "ai.example.com:4.2.2.1"
+      - "${TMEX_E2E_HUB_HOST:-ai.example.com}:${TMEX_E2E_HUB_IP:-4.2.2.1}"
     environment:
-      NODE_EXTRA_CA_CERTS: /etc/ssl/certs/ca-certificates.crt
+      NODE_EXTRA_CA_CERTS: ${TMEX_E2E_NODE_CA_CERTS:-/etc/ssl/certs/ca-certificates.crt}
     volumes:
       - ./out:/out
       - ${TMEX_REPO_ROOT:-../../..}:/workspace:ro
+      - ../ca/ca.crt:/ca/ca.crt:ro
     networks:
       - nat-a
     healthcheck:

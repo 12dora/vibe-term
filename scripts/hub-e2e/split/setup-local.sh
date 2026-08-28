@@ -6,6 +6,9 @@ ROOT="$(cd "$(dirname "$0")" && pwd)"
 HUB_E2E="$(cd "${ROOT}/.." && pwd)"
 REPO_ROOT="$(cd "${HUB_E2E}/../.." && pwd)"
 export TMEX_REPO_ROOT="${TMEX_REPO_ROOT:-${REPO_ROOT}}"
+export TMEX_E2E_HUB_HOST="${TMEX_E2E_HUB_HOST:-ai.example.com}"
+export TMEX_E2E_HUB_IP="${TMEX_E2E_HUB_IP:-4.2.2.1}"
+export TMEX_E2E_NODE_CA_CERTS="${TMEX_E2E_NODE_CA_CERTS:-/etc/ssl/certs/ca-certificates.crt}"
 COMPOSE=(docker compose -p tmex-split-local -f "${ROOT}/docker-compose.local.yml")
 IMAGE_NAME="tmex-e2e:split"
 # 本机原生架构（Apple Silicon → linux/arm64，不走 qemu；x86 → linux/amd64），可用 TMEX_E2E_PLATFORM 覆盖
