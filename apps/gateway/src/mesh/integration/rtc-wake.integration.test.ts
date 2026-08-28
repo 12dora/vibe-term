@@ -28,11 +28,126 @@ import { WebSocketServer } from '../../ws';
 import { MESH_VIA_SELF, setMeshRequestContext } from '../mesh-deps';
 import { type MeshRuntime, createMeshRuntime } from '../mesh-runtime';
 import { encodeRtcWakeSdp, peerRtcSession } from '../rtc/ice';
+import type { LoadNative } from '../rtc/native';
 import { createFakeNativeModule } from '../rtc/test-fakes';
-import { seedNodeIdentity, waitUntil } from '../test-support';
+import { waitUntil } from '../test-support';
 
 const PASSWORD = 'tmex-test';
 const dummyServer = { upgrade: () => false };
+
+type HubBoot = {
+  userId: string;
+  rootKey: Parameters<typeof createDelegation>[0];
+  rootEpoch: number;
+  rootPublicKey: Uint8Array;
+};
+
+async function joinEnrolledNode(opts: {
+  hub: MeshRuntime;
+  boot: HubBoot;
+  keys: UserKeyService;
+  keyLogStore: KeyLogStore;
+  loadNative: LoadNative;
+  name: string;
+  peerPort: number;
+}): Promise<{ mesh: MeshRuntime; close: () => void }> {
+  const { db, close } = createMigratedAuthDb();
+  const identity = await ensureNodeIdentity(new NodeIdentityStore(db));
+  const now = Date.now();
+  const enrollment = await createEnrollment(opts.boot.rootKey, {
+    uid: opts.boot.userId,
+    rootEpoch: opts.boot.rootEpoch,
+    now,
+    ttlMs: 60_000,
+  });
+  const sid = await loginSelf(opts.hub, opts.boot);
+  const cookie = `${nodeSessionCookieName(MESH_VIA_SELF)}=${sid}`;
+  const created = await opts.hub.hub?.handleRequest(
+    (() => {
+      const req = new Request('http://hub/api/hub/enrollments', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', cookie },
+        body: JSON.stringify({
+          enroll_pk: encodeBase64url(enrollment.enrollPk),
+          authorization: encodeBase64url(enrollment.authorizationBytes),
+          authorization_sig: encodeBase64url(enrollment.authorizationSig),
+          exp: now + 60_000,
+        }),
+      });
+      setMeshRequestContext(req, { via: MESH_VIA_SELF, clientIp: '127.0.0.1' });
+      return req;
+    })(),
+    dummyServer
+  );
+  if (created?.status !== 201) throw new Error(`enroll ${opts.name} failed`);
+  const cert = createNodeCertificate(enrollment.enrollSk, {
+    uid: opts.boot.userId,
+    edPk: identity.edPublicKey,
+    x25519Pk: identity.x25519PublicKey,
+    enrollPk: enrollment.enrollPk,
+    now,
+    nodeId: identity.nodeId,
+  });
+  const redeemed = await opts.hub.hub?.handleRequest(
+    new Request('http://hub/api/hub/enrollments/redeem', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        certificate: encodeBase64url(cert.certificateBytes),
+        cert_sig: encodeBase64url(cert.certSig),
+        name: opts.name,
+        version: 'test',
+      }),
+    }),
+    dummyServer
+  );
+  if (redeemed?.status !== 200) throw new Error(`redeem ${opts.name} failed`);
+  const admitted = await opts.keys.signAndApply(opts.boot.userId, opts.boot.rootKey, {
+    type: 'admit-node',
+    payload: encodeAdmitNodePayload({
+      authorization_bytes: enrollment.authorizationBytes,
+      authorization_sig: enrollment.authorizationSig,
+      certificate_bytes: cert.certificateBytes,
+      cert_sig: cert.certSig,
+    }),
+  });
+  if (!admitted.ok) throw new Error(`admit ${opts.name} failed`);
+  const rows = opts.keyLogStore.list(opts.boot.userId);
+  const head = opts.keyLogStore.head(opts.boot.userId);
+  const userStore = new UserStore(db);
+  const keyLog = new KeyLogStore(db);
+  const sessions = new NodeSessionStore(db);
+  const nodeKeys = new UserKeyService({
+    db,
+    userStore,
+    keyLogStore: keyLog,
+    nodeSessionStore: sessions,
+    verifyPasskeyAssertion: makeVerifyPasskeyAssertion(userStore),
+  });
+  const joined = await nodeKeys.verifyChainForJoin(
+    rows.map((row) => ({ bytes: row.bytes, sig: row.sig })),
+    opts.boot.rootPublicKey,
+    head?.hash ?? new Uint8Array(32)
+  );
+  if (!joined.ok) throw new Error(`join ${opts.name} failed`);
+  const mesh = await createMeshRuntime({
+    db,
+    gateway: fakeGateway(db),
+    userId: opts.boot.userId,
+    config: {
+      roles: { hub: false, node: true },
+      hubUrl: 'http://hub.example',
+      peerPort: opts.peerPort,
+      stunServers: ['stun:stun.example:3478'],
+    },
+    uplinkHub: opts.hub.hub ?? undefined,
+    startPeerServer: false,
+    pingIntervalMs: 60_000,
+    networkInterfaces: () => ({}),
+    loadNative: opts.loadNative,
+  });
+  return { mesh, close };
+}
 
 function fakeGateway(db: AuthDb): GatewayRuntime {
   const wsServer = new WebSocketServer();
@@ -156,107 +271,39 @@ describe('rtc wake via authenticated uplink', () => {
     await meshA.start();
     await waitUntil(() => meshA.uplink.state === 'online', 5_000);
 
-    const { db: dbB, close: closeB } = createMigratedAuthDb();
-    const identityB = await ensureNodeIdentity(new NodeIdentityStore(dbB));
-    const now = Date.now();
-    const enrollment = await createEnrollment(boot.rootKey, {
-      uid: boot.userId,
-      rootEpoch: boot.rootEpoch,
-      now,
-      ttlMs: 60_000,
-    });
-    const sid = await loginSelf(meshA, boot);
-    const cookie = `${nodeSessionCookieName(MESH_VIA_SELF)}=${sid}`;
-    const created = await meshA.hub?.handleRequest(
-      (() => {
-        const req = new Request('http://hub/api/hub/enrollments', {
-          method: 'POST',
-          headers: { 'content-type': 'application/json', cookie },
-          body: JSON.stringify({
-            enroll_pk: encodeBase64url(enrollment.enrollPk),
-            authorization: encodeBase64url(enrollment.authorizationBytes),
-            authorization_sig: encodeBase64url(enrollment.authorizationSig),
-            exp: now + 60_000,
-          }),
-        });
-        setMeshRequestContext(req, { via: MESH_VIA_SELF, clientIp: '127.0.0.1' });
-        return req;
-      })(),
-      dummyServer
-    );
-    expect(created?.status).toBe(201);
-    const cert = createNodeCertificate(enrollment.enrollSk, {
-      uid: boot.userId,
-      edPk: identityB.edPublicKey,
-      x25519Pk: identityB.x25519PublicKey,
-      enrollPk: enrollment.enrollPk,
-      now,
-      nodeId: identityB.nodeId,
-    });
-    const redeemed = await meshA.hub?.handleRequest(
-      new Request('http://hub/api/hub/enrollments/redeem', {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({
-          certificate: encodeBase64url(cert.certificateBytes),
-          cert_sig: encodeBase64url(cert.certSig),
-          name: 'node-b',
-          version: 'test',
-        }),
-      }),
-      dummyServer
-    );
-    expect(redeemed?.status).toBe(200);
-    const admitted = await keys.signAndApply(boot.userId, boot.rootKey, {
-      type: 'admit-node',
-      payload: encodeAdmitNodePayload({
-        authorization_bytes: enrollment.authorizationBytes,
-        authorization_sig: enrollment.authorizationSig,
-        certificate_bytes: cert.certificateBytes,
-        cert_sig: cert.certSig,
-      }),
-    });
-    expect(admitted.ok).toBe(true);
-    const rows = keyLogStore.list(boot.userId);
-    const head = keyLogStore.head(boot.userId);
-    const bUserStore = new UserStore(dbB);
-    const bKeyLog = new KeyLogStore(dbB);
-    const bSessions = new NodeSessionStore(dbB);
-    const bKeys = new UserKeyService({
-      db: dbB,
-      userStore: bUserStore,
-      keyLogStore: bKeyLog,
-      nodeSessionStore: bSessions,
-      verifyPasskeyAssertion: makeVerifyPasskeyAssertion(bUserStore),
-    });
-    const joined = await bKeys.verifyChainForJoin(
-      rows.map((row) => ({ bytes: row.bytes, sig: row.sig })),
-      boot.rootPublicKey,
-      head?.hash ?? new Uint8Array(32)
-    );
-    expect(joined.ok).toBe(true);
-
-    const meshB = await createMeshRuntime({
-      db: dbB,
-      gateway: fakeGateway(dbB),
-      userId: boot.userId,
-      config: {
-        roles: { hub: false, node: true },
-        hubUrl: 'http://hub.example',
-        peerPort: 39002,
-        stunServers: ['stun:stun.example:3478'],
-      },
-      uplinkHub: meshA.hub ?? undefined,
-      startPeerServer: false,
-      pingIntervalMs: 60_000,
-      networkInterfaces: () => ({}),
+    const joinedB = await joinEnrolledNode({
+      hub: meshA,
+      boot,
+      keys,
+      keyLogStore,
       loadNative,
+      name: 'node-b',
+      peerPort: 39002,
     });
-    fixtures.push({ close: closeB, stop: () => meshB.stop() });
+    fixtures.push({ close: joinedB.close, stop: () => joinedB.mesh.stop() });
+    const meshB = joinedB.mesh;
     await meshB.start();
     await waitUntil(() => meshB.uplink.state === 'online', 5_000);
     await waitUntil(
       () => meshA.lastNodeList?.nodes.some((n) => n.id === meshB.nodeId && n.online) === true,
+      5_000
+    );
+
+    const joinedC = await joinEnrolledNode({
+      hub: meshA,
+      boot,
+      keys,
+      keyLogStore,
+      loadNative,
+      name: 'node-c',
+      peerPort: 39003,
+    });
+    fixtures.push({ close: joinedC.close, stop: () => joinedC.mesh.stop() });
+    const meshC = joinedC.mesh;
+    await meshC.start();
+    await waitUntil(() => meshC.uplink.state === 'online', 5_000);
+    await waitUntil(
+      () => meshA.lastNodeList?.nodes.some((n) => n.id === meshC.nodeId && n.online) === true,
       5_000
     );
 
@@ -294,17 +341,18 @@ describe('rtc wake via authenticated uplink', () => {
         secretKey: answerer.identity.edPrivateKey,
       })
     );
-    const revoked = seedNodeIdentity(meshA.userStore, boot.userId);
-    meshA.userStore.markCertRevoked(revoked.nodeId, 99);
+    expect(meshC.uplink.state).toBe('online');
+    meshA.userStore.markCertRevoked(meshC.nodeId, 99);
+    expect(meshC.uplink.state).toBe('online');
     answerer.uplink.sendCtl({
       t: 'rtc.signal',
-      rtcSession: peerRtcSession(answerer.nodeId, revoked.nodeId),
+      rtcSession: peerRtcSession(answerer.nodeId, meshC.nodeId),
       from: 'node',
-      to: revoked.nodeId,
+      to: meshC.nodeId,
       sdp: encodeRtcWakeSdp({
         from: answerer.nodeId,
-        to: revoked.nodeId,
-        rtcSession: peerRtcSession(answerer.nodeId, revoked.nodeId),
+        to: meshC.nodeId,
+        rtcSession: peerRtcSession(answerer.nodeId, meshC.nodeId),
         issuedAt: Date.now(),
         secretKey: answerer.identity.edPrivateKey,
       }),

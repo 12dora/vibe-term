@@ -142,6 +142,44 @@ describe('RtcPeerManager', () => {
     inn.end();
   });
 
+  test('late hello after both links are up does not fragment-protocol the DC', async () => {
+    const { left, right, a, b } = setup();
+    const [sigA, sigB] = loopbackSignaling();
+    const [la, lb] = await Promise.all([
+      left.connectToPeer(b.nodeId, sigA),
+      right.connectToPeer(a.nodeId, sigB),
+    ]);
+    let linkClosedReason: string | undefined;
+    la.link.onClose((reason) => {
+      linkClosedReason = reason;
+    });
+    lb.link.channel.sendMessage(
+      JSON.stringify({
+        t: 'hello',
+        node_id: b.nodeId,
+        nonce: encodeBase64url(new Uint8Array(32)),
+        dtls_fingerprint: { algorithm: 'sha-256', value: '00' },
+      })
+    );
+    await Promise.resolve();
+    expect({ linkClosedReason, channelOpen: la.link.channel.isOpen() }).toEqual({
+      linkClosedReason: undefined,
+      channelOpen: true,
+    });
+    const muxA = new LinkMux(la.link, { role: la.role });
+    const muxB = new LinkMux(lb.link, { role: lb.role });
+    const incoming = new Promise<import('@tmex/shared/link').LinkStream>((resolve) =>
+      muxB.onStream(resolve)
+    );
+    const out = await muxA.openStream(new Uint8Array([1]));
+    const inn = await incoming;
+    const reader = inn.readable.getReader();
+    await out.write(new Uint8Array([2, 3]));
+    expect((await reader.read()).value?.bytes).toEqual(new Uint8Array([2, 3]));
+    out.end();
+    inn.end();
+  });
+
   test('datachannel diagnostics and DataChannelLink both observe open and close', async () => {
     const lines: string[] = [];
     const orig = console.log;

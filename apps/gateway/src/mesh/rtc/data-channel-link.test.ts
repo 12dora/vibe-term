@@ -108,6 +108,34 @@ describe('DataChannelLink', () => {
     expect(fanB.isOpen()).toBe(false);
   });
 
+  test('late handshake JSON does not close the link', async () => {
+    const [a, b] = pairDataChannels('peer');
+    const left = new DataChannelLink(a, { liveness: false });
+    const right = new DataChannelLink(b, { liveness: false });
+    let linkClosedReason: string | undefined;
+    right.onClose((reason) => {
+      linkClosedReason = reason;
+    });
+    a.sendMessage(
+      JSON.stringify({
+        t: 'hello',
+        node_id: '00'.repeat(16),
+        nonce: 'A'.repeat(43),
+        dtls_fingerprint: { algorithm: 'sha-256', value: '00' },
+      })
+    );
+    b.emitMessage('{"t":"done"}');
+    expect({ linkClosedReason, channelOpen: b.isOpen() }).toEqual({
+      linkClosedReason: undefined,
+      channelOpen: true,
+    });
+    const got = new Promise<Uint8Array>((resolve) => right.onData(resolve));
+    await left.send(new Uint8Array([4, 5]));
+    expect(await got).toEqual(new Uint8Array([4, 5]));
+    left.close();
+    right.close();
+  });
+
   test('protocol violation on inbound closes the channel', () => {
     const [a, b] = pairDataChannels('peer');
     const left = new DataChannelLink(a);

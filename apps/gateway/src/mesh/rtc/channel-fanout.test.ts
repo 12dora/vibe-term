@@ -140,6 +140,25 @@ describe('fanoutDataChannel', () => {
     }
   });
 
+  test('preserves text frames so handshake JSON stays distinguishable from binary', () => {
+    const inner = new FakeDataChannel('peer');
+    inner.markOpen();
+    const fan = fanoutDataChannel(inner);
+    const kinds: Array<{ type: string; handshake: boolean }> = [];
+    fan.onMessage((msg) => {
+      kinds.push({
+        type: typeof msg,
+        handshake: typeof msg === 'string' || (msg instanceof Buffer && msg[0] === 0x7b),
+      });
+    });
+    inner.emitMessage('{"t":"hello"}');
+    inner.emitMessage(Buffer.from([1, 2, 3, 4, 5, 6, 7, 8]));
+    expect(kinds).toEqual([
+      { type: 'string', handshake: true },
+      { type: 'object', handshake: false },
+    ]);
+  });
+
   test('reinjectMessages prepends leftovers ahead of frames that arrived after detach', () => {
     const [a, b] = pairDataChannels('peer');
     const fan = fanoutDataChannel(b);

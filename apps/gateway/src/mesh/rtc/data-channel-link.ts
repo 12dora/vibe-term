@@ -1,6 +1,7 @@
 import type { ByteTransport } from '@tmex/shared/link';
 import { FANOUT_MAX_PENDING_BYTES } from './channel-fanout';
 import { DC_HIGH_WATER_BYTES, DC_LOW_WATER_BYTES } from './data-channel-carrier';
+import { isDcHandshakeWire } from './dc-handshake';
 import {
   FragmentProtocolError,
   FrameReassembler,
@@ -73,6 +74,7 @@ export class DataChannelLink implements ByteTransport {
     });
     channel.onMessage((msg) => {
       if (this.closed) return;
+      if (isDcHandshakeWire(msg)) return;
       const bytes = copyBytes(toUint8Array(msg));
       this.liveness?.noteInbound();
       const livenessKind = parseLivenessChunk(bytes);
