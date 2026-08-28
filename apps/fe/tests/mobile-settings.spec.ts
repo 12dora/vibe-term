@@ -133,8 +133,8 @@ test('mobile: settings tabs + select + webhook crud are tappable', async ({ page
 
   // Tabs should be tappable on mobile.
   await page.getByTestId('settings-tab-notifications').click();
-  await expect(page.getByTestId('settings-enable-browser-bell-toast')).toBeVisible();
-  await page.getByTestId('settings-enable-browser-bell-toast').click();
+  await expect(page.getByTestId('settings-enable-browser-notification-toast')).toBeVisible();
+  await page.getByTestId('settings-enable-browser-notification-toast').click();
 
   // Select should open and be clickable without being covered.
   await page.getByTestId('settings-tab-general').click();

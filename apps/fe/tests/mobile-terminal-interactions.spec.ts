@@ -111,7 +111,7 @@ test('mobile: editor interactions keep focus and send ws messages', async ({ pag
     await expect(page.getByTestId('device-page')).toBeVisible();
     await expect(page.getByTestId('mobile-topbar')).toBeVisible();
 
-    await expect(page.getByTestId('editor-shortcut-ctrl-c')).toBeEnabled({ timeout: 20_000 });
+    await expect(page.getByTestId('terminal-shortcut-ctrl-c')).toBeEnabled({ timeout: 20_000 });
 
     await page.getByTestId('terminal-input-mode-toggle').click();
     const editorInput = page.getByTestId('editor-input');
@@ -119,7 +119,7 @@ test('mobile: editor interactions keep focus and send ws messages', async ({ pag
     await editorInput.fill('echo hello');
     await expect(editorInput).toBeFocused();
 
-    await page.getByTestId('editor-shortcut-ctrl-c').click();
+    await page.getByTestId('terminal-shortcut-ctrl-c').click();
     await expect(editorInput).toBeFocused();
     await expect.poll(() => {
       return sentInputs.some((msg) => msg.deviceId === deviceId && msg.data === '\u0003');
@@ -181,7 +181,7 @@ test('mobile: direct input falls back to compositionend data for ime symbols', a
 
     await page.goto(`/devices/${deviceId}`);
     await expect(page.getByTestId('device-page')).toBeVisible();
-    await expect(page.getByTestId('editor-shortcut-ctrl-c')).toBeEnabled({ timeout: 20_000 });
+    await expect(page.getByTestId('terminal-shortcut-ctrl-c')).toBeEnabled({ timeout: 20_000 });
 
     await expect
       .poll(() =>
@@ -259,7 +259,7 @@ test('mobile: cancelled ime composition should not send fallback text', async ({
 
     await page.goto(`/devices/${deviceId}`);
     await expect(page.getByTestId('device-page')).toBeVisible();
-    await expect(page.getByTestId('editor-shortcut-ctrl-c')).toBeEnabled({ timeout: 20_000 });
+    await expect(page.getByTestId('terminal-shortcut-ctrl-c')).toBeEnabled({ timeout: 20_000 });
 
     await expect
       .poll(() =>
@@ -324,7 +324,7 @@ test('mobile: terminal can scroll with touch gesture', async ({ page, request })
     await page.goto(`/devices/${deviceId}`);
     await expect(page.getByTestId('mobile-topbar')).toBeVisible({ timeout: 30_000 });
     await expect(page.getByTestId('device-page')).toBeVisible({ timeout: 30_000 });
-    await expect(page.getByTestId('editor-shortcut-ctrl-c')).toBeEnabled({ timeout: 20_000 });
+    await expect(page.getByTestId('terminal-shortcut-ctrl-c')).toBeEnabled({ timeout: 20_000 });
 
     tmux(
       `send-keys -t ${sessionName}.0 "for i in \\$(seq 1 320); do echo TMEX_SCROLL_\\$i; done" C-m`
