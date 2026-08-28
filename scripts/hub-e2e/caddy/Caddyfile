@@ -1,0 +1,28 @@
+{
+	auto_https off
+	admin off
+}
+
+hub.tmex.test {
+	tls /certs/hub.crt /certs/hub.key
+	encode gzip
+	reverse_proxy hub:9883 {
+		flush_interval -1
+		transport http {
+			read_timeout 0
+			write_timeout 0
+		}
+	}
+}
+
+entry.tmex.test {
+	tls /certs/hub.crt /certs/hub.key
+	encode gzip
+	reverse_proxy node-a:9883 {
+		flush_interval -1
+		transport http {
+			read_timeout 0
+			write_timeout 0
+		}
+	}
+}

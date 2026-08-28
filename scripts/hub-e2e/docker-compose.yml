@@ -1,0 +1,118 @@
+name: tmex-e2e
+
+networks:
+  edge:
+    name: tmex-e2e_edge
+  uplink-a:
+    name: tmex-e2e_uplink-a
+  # hub 不加入 uplink-b：node-b 只经 Caddy HTTPS 连 hub，避免与 hub 共网导致
+  # peer:39001 被当成 lan，场景 3 的 reach=relay 才有意义。
+  uplink-b:
+    name: tmex-e2e_uplink-b
+
+volumes:
+  hub-data:
+  node-a-data:
+  node-b-data:
+
+x-tmex-common: &tmex-common
+  image: tmex-e2e:latest
+  platform: linux/amd64
+  init: true
+  stop_grace_period: 25s
+  environment:
+    NODE_EXTRA_CA_CERTS: /ca/ca.crt
+  volumes:
+    - ./ca/ca.crt:/ca/ca.crt:ro
+
+services:
+  caddy:
+    image: caddy:2
+    platform: linux/amd64
+    container_name: tmex-e2e-caddy
+    ports:
+      - "127.0.0.1:18443:443"
+    volumes:
+      - ./caddy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - ./ca/hub.crt:/certs/hub.crt:ro
+      - ./ca/hub.key:/certs/hub.key:ro
+    networks:
+      edge:
+        aliases:
+          - hub.tmex.test
+          - entry.tmex.test
+      uplink-a:
+        aliases:
+          - hub.tmex.test
+          - entry.tmex.test
+      uplink-b:
+        aliases:
+          - hub.tmex.test
+    depends_on:
+      hub:
+        condition: service_healthy
+    restart: unless-stopped
+
+  hub:
+    <<: *tmex-common
+    container_name: tmex-e2e-hub
+    hostname: hub
+    environment:
+      NODE_EXTRA_CA_CERTS: /ca/ca.crt
+      TMEX_INSTANCE: hub
+    volumes:
+      - ./ca/ca.crt:/ca/ca.crt:ro
+      - hub-data:/var/lib/tmex
+    networks:
+      - edge
+      - uplink-a
+
+  node-a:
+    <<: *tmex-common
+    container_name: tmex-e2e-node-a
+    hostname: node-a
+    environment:
+      NODE_EXTRA_CA_CERTS: /ca/ca.crt
+      TMEX_INSTANCE: node-a
+    volumes:
+      - ./ca/ca.crt:/ca/ca.crt:ro
+      - node-a-data:/var/lib/tmex
+    networks:
+      - edge
+      - uplink-a
+
+  node-b:
+    <<: *tmex-common
+    container_name: tmex-e2e-node-b
+    hostname: node-b
+    environment:
+      NODE_EXTRA_CA_CERTS: /ca/ca.crt
+      TMEX_INSTANCE: node-b
+    volumes:
+      - ./ca/ca.crt:/ca/ca.crt:ro
+      - node-b-data:/var/lib/tmex
+    networks:
+      - uplink-b
+
+  driver:
+    image: tmex-e2e:latest
+    platform: linux/amd64
+    container_name: tmex-e2e-driver
+    hostname: driver
+    init: true
+    working_dir: /workspace
+    entrypoint: ["sleep", "infinity"]
+    environment:
+      NODE_EXTRA_CA_CERTS: /ca/ca.crt
+    volumes:
+      - ./ca/ca.crt:/ca/ca.crt:ro
+      - ./out:/out
+      - ${TMEX_REPO_ROOT:-../..}:/workspace:ro
+    networks:
+      - edge
+    depends_on:
+      caddy:
+        condition: service_started
+    healthcheck:
+      disable: true
+    restart: unless-stopped
