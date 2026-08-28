@@ -165,6 +165,22 @@ export class UserStore {
     return this.db.select().from(users).all().map(toUser);
   }
 
+  updateUsername(userId: string, username: string, now: number): void {
+    this.db.update(users).set({ username, updatedAt: now }).where(eq(users.id, userId)).run();
+  }
+
+  deleteById(userId: string): void {
+    this.db.delete(users).where(eq(users.id, userId)).run();
+  }
+
+  deleteNodesByUser(userId: string): void {
+    this.db.delete(nodes).where(eq(nodes.userId, userId)).run();
+  }
+
+  deleteEnrollmentTokensByUser(userId: string): void {
+    this.db.delete(enrollmentTokens).where(eq(enrollmentTokens.userId, userId)).run();
+  }
+
   create(input: CreateUserInput): UserRecord {
     this.db
       .insert(users)

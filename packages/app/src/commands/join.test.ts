@@ -463,3 +463,155 @@ describe('hub join/leave service restart', () => {
     expect(logs.some((line) => line.startsWith('joined hub'))).toBe(true);
   });
 });
+
+async function startJoinableHub(
+  username: string,
+  password: string
+): Promise<{
+  user: NonNullable<ReturnType<LocalAuthContext['userStore']['getById']>>;
+  token: string;
+  url: string;
+}> {
+  const hub = await openAuth('hub,node');
+  const added = await runHubUserAdd(parseArgs([]), username, {
+    auth: hub,
+    password,
+    log: () => undefined,
+  });
+  const user = hub.userStore.getById(added.userId);
+  if (!user) throw new Error('missing hub user');
+  const state = hub.userKeys.currentState(user.id);
+  const enrollment = await createEnrollment(
+    rootKeyFromSeed(await deriveSeed(password, state.kdfParams)),
+    { uid: user.id, rootEpoch: state.rootEpoch, now: Date.now() }
+  );
+  const token = encodeJoinToken(enrollment.enrollSk, state.rootPublicKey, state.head.hash);
+  const server = Bun.serve({
+    hostname: '127.0.0.1',
+    port: 0,
+    fetch(req) {
+      const url = new URL(req.url);
+      const live = hub.userStore.getById(user.id) ?? user;
+      const records = hub.keyLogStore.list(user.id);
+      const certs = hub.userStore.listCertsByUser(user.id);
+      if (url.pathname === '/api/auth/mode') {
+        return Response.json({
+          mode: 'mesh',
+          nodeId: 'self',
+          uid: user.id,
+          username: live.username,
+        });
+      }
+      if (url.pathname === '/api/hub/enrollments/redeem' && req.method === 'POST') {
+        return Response.json({
+          user: {
+            id: user.id,
+            username: live.username,
+            root_public_key: encodeBase64url(live.rootPublicKey),
+            root_epoch: live.rootEpoch,
+            kdf_params: JSON.parse(live.kdfParamsJson),
+          },
+          user_key_log: records.map((row) => ({
+            seq: row.seq,
+            bytes: encodeBase64url(row.bytes),
+            sig: encodeBase64url(row.sig),
+          })),
+          node_certs: certs.map((cert) => ({
+            node_id: cert.nodeId,
+            user_id: cert.userId,
+            admit_record_seq: cert.admitRecordSeq,
+            certificate: encodeBase64url(cert.certificateBytes),
+            cert_sig: encodeBase64url(cert.certSig),
+            authorization: encodeBase64url(cert.authorizationBytes),
+            authorization_sig: encodeBase64url(cert.authorizationSig),
+            revoked_log_seq: cert.revokedLogSeq,
+          })),
+        });
+      }
+      return new Response('nope', { status: 404 });
+    },
+  });
+  servers.push(server);
+  return { user, token, url: `http://127.0.0.1:${server.port}` };
+}
+
+describe('hub join rebuilt hub and re-join', () => {
+  test('replaces local user after hub rebuild even after hub leave', async () => {
+    const h1 = await startJoinableHub('alice', 'hub-pass-one');
+    const node = await openAuth('standalone');
+    await runHubJoin(
+      parseArgs(['hub', 'join', h1.url, '--token', h1.token, '--insecure-local']),
+      h1.url,
+      { auth: node, skipRestart: true, insecureLocal: true, log: () => undefined }
+    );
+    const nodeIdBefore = (await node.identityStore.load())?.nodeId;
+    expect(node.userStore.getByUsername('alice')?.id).toBe(h1.user.id);
+
+    await runHubLeave(parseArgs(['hub', 'leave']), {
+      auth: node,
+      skipRestart: true,
+      log: () => undefined,
+    });
+    expect(node.userStore.getByUsername('alice')?.id).toBe(h1.user.id);
+
+    const h2 = await startJoinableHub('alice', 'hub-pass-two');
+    expect(h2.user.id).not.toBe(h1.user.id);
+    const logs: string[] = [];
+    const joined = await runHubJoin(
+      parseArgs(['hub', 'join', h2.url, '--token', h2.token, '--insecure-local']),
+      h2.url,
+      { auth: node, skipRestart: true, insecureLocal: true, log: (message) => logs.push(message) }
+    );
+    expect(joined.userId).toBe(h2.user.id);
+    expect(node.userStore.getByUsername('alice')?.id).toBe(h2.user.id);
+    expect(node.userStore.getById(h1.user.id)).toBeNull();
+    expect(node.userStore.listUsers()).toHaveLength(1);
+    expect(node.keyLogStore.list(h1.user.id)).toHaveLength(0);
+    expect(node.keyLogStore.list(h2.user.id).length).toBeGreaterThan(0);
+    expect((await node.identityStore.load())?.nodeId).toBe(nodeIdBefore);
+    expect((await node.identityStore.load())?.userId).toBe(h2.user.id);
+    expect(logs.some((line) => /replaced local account/i.test(line))).toBe(true);
+  });
+
+  test('joins a rebuilt hub from role node without hub leave', async () => {
+    const h1 = await startJoinableHub('alice', 'hub-pass-one');
+    const node = await openAuth('node');
+    await runHubJoin(
+      parseArgs(['hub', 'join', h1.url, '--token', h1.token, '--insecure-local']),
+      h1.url,
+      { auth: node, skipRestart: true, insecureLocal: true, log: () => undefined }
+    );
+    const h2 = await startJoinableHub('alice', 'hub-pass-two');
+    const logs: string[] = [];
+    const joined = await runHubJoin(
+      parseArgs(['hub', 'join', h2.url, '--token', h2.token, '--insecure-local']),
+      h2.url,
+      { auth: node, skipRestart: true, insecureLocal: true, log: (message) => logs.push(message) }
+    );
+    expect(joined.userId).toBe(h2.user.id);
+    expect(node.userStore.getByUsername('alice')?.id).toBe(h2.user.id);
+    expect(node.userStore.getById(h1.user.id)).toBeNull();
+    expect(logs.some((line) => /replaced local account/i.test(line))).toBe(true);
+  });
+
+  test('same-uid re-join is idempotent', async () => {
+    const hub = await startJoinableHub('alice', 'hub-pass-word');
+    const node = await openAuth('standalone');
+    const first = await runHubJoin(
+      parseArgs(['hub', 'join', hub.url, '--token', hub.token, '--insecure-local']),
+      hub.url,
+      { auth: node, skipRestart: true, insecureLocal: true, log: () => undefined }
+    );
+    const logCount = node.keyLogStore.list(hub.user.id).length;
+    const certCount = node.userStore.listCertsByUser(hub.user.id).length;
+    const second = await runHubJoin(
+      parseArgs(['hub', 'join', hub.url, '--token', hub.token, '--insecure-local']),
+      hub.url,
+      { auth: node, skipRestart: true, insecureLocal: true, log: () => undefined }
+    );
+    expect(second.userId).toBe(first.userId);
+    expect(node.userStore.listUsers()).toHaveLength(1);
+    expect(node.keyLogStore.list(hub.user.id)).toHaveLength(logCount);
+    expect(node.userStore.listCertsByUser(hub.user.id)).toHaveLength(certCount);
+  });
+});

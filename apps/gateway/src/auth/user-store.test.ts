@@ -170,6 +170,54 @@ describe('UserStore', () => {
     }
   });
 
+  test('deleteById removes the user and cascaded children; deleteNodes/enrollment by user', () => {
+    const { db, close } = createMigratedAuthDb();
+    try {
+      const store = new UserStore(db);
+      seedUser(store);
+      store.insertKey({
+        id: 'key-1',
+        userId: 'user-1',
+        credentialId: CRED,
+        publicKey: COSE,
+        rpId: 'localhost',
+        origin: 'http://localhost',
+        counter: 0,
+        logSeq: 1,
+        now: 1,
+      });
+      store.upsertCert({
+        nodeId: 'node-a',
+        userId: 'user-1',
+        admitRecordSeq: 1,
+        certificateBytes: CERT,
+        certSig: CERT_SIG,
+        authorizationBytes: AUTH_BYTES,
+        authorizationSig: AUTH_SIG,
+      });
+      store.createNode({ id: 'node-a-reg', userId: 'user-1', name: 'hub', now: 1 });
+      store.createEnrollmentToken({
+        id: 'tok-del',
+        userId: 'user-1',
+        enrollPublicKey: ENROLL_PK,
+        authorizationJson: '{}',
+        authorizationSig: AUTH_SIG,
+        expiresAt: 100,
+      });
+      store.deleteNodesByUser('user-1');
+      expect(store.getNode('node-a-reg')).toBeNull();
+      store.deleteEnrollmentTokensByUser('user-1');
+      expect(store.getEnrollmentTokenById('tok-del')).toBeNull();
+      store.deleteById('user-1');
+      expect(store.getById('user-1')).toBeNull();
+      expect(store.getByUsername('alice')).toBeNull();
+      expect(store.listKeysByUser('user-1')).toHaveLength(0);
+      expect(store.getCert('node-a')).toBeNull();
+    } finally {
+      close();
+    }
+  });
+
   test('nodes create/get and enrollment tokens create/get/markUsed/sweepExpired', () => {
     const { db, close } = createMigratedAuthDb();
     try {

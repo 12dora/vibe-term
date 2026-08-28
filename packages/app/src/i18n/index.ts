@@ -134,6 +134,9 @@ const MESSAGES: Record<CliLang, Record<string, string>> = {
     'runtime.methodNotAllowed': 'Method Not Allowed',
     'runtime.forbidden': 'Forbidden',
     'runtime.notFound': 'Not Found',
+
+    'hub.join.replacedStale':
+      'Replaced local account "{{username}}" from a previous hub; key log, passkeys, TOTP, sessions, and old node certs were wiped.',
   },
   'zh-CN': {
     'cli.error.unknownCommand': '未知命令：{{command}}',
@@ -258,6 +261,9 @@ const MESSAGES: Record<CliLang, Record<string, string>> = {
     'runtime.methodNotAllowed': '方法不允许',
     'runtime.forbidden': '禁止访问',
     'runtime.notFound': '资源不存在',
+
+    'hub.join.replacedStale':
+      '已替换本机账号「{{username}}」的旧 hub 状态；密钥日志、通行密钥、TOTP、会话与旧节点证书已清除。',
   },
 };
 

@@ -84,7 +84,7 @@ export type SignAndApplyFields = {
 };
 
 export type VerifyChainForJoinResult =
-  | { ok: true; state: UserKeyState }
+  | { ok: true; state: UserKeyState; replacedStaleUsername?: string }
   | { ok: false; error: string };
 
 export type VerifyChainForJoinOptions = {
@@ -931,11 +931,6 @@ export class UserKeyService {
   }): VerifyChainForJoinResult {
     const { replay, username, now, identity } = args;
     const genesisUid = replay.genesisUid;
-    const existing = this.userStore.getById(genesisUid);
-    if (existing && this.keyLogStore.list(genesisUid).length > 0) {
-      return { ok: false, error: 'not_empty' };
-    }
-
     const first = replay.steps[0];
     if (!first) {
       return { ok: false, error: 'missing_genesis' };
@@ -947,62 +942,83 @@ export class UserKeyService {
       // keep default
     }
 
-    try {
-      this.db.transaction((tx) => {
-        const userStore = new (this.userStore.constructor as typeof UserStore)(tx as AuthDb);
-        const keyLogStore = new (this.keyLogStore.constructor as typeof KeyLogStore)(tx as AuthDb);
-        const nodeSessionStore = new (this.nodeSessionStore.constructor as typeof NodeSessionStore)(
-          tx as AuthDb
-        );
-        const again = userStore.getById(genesisUid);
-        if (again && keyLogStore.list(genesisUid).length > 0) {
-          throw new JoinNotEmpty();
-        }
-        if (!again) {
-          userStore.create({
-            id: genesisUid,
-            username,
-            rootPublicKey: new Uint8Array(32),
-            rootEpoch: first.record.root_epoch,
-            kdfParamsJson: kdfJson,
-            totpRecordSeq: null,
-            keyLogHeadSeq: 0,
-            keyLogHeadHash: ZERO_HASH,
-            now,
-          });
-        } else {
-          userStore.setKeyLogHead(genesisUid, { seq: 0, hash: ZERO_HASH, now });
-          userStore.setTotpRecordSeq(genesisUid, null, now);
-        }
-        for (const step of replay.steps) {
-          persistApplied({
-            userStore,
-            keyLogStore,
-            nodeSessionStore,
-            userId: genesisUid,
-            record: step.record,
-            bytes: step.input.bytes,
-            sig: step.input.sig,
-            hash: step.hash,
-            effects: step.effects,
-            now,
-            nextHead: step.next.head,
-            nextRootPublicKey: step.next.rootPublicKey,
-            nextRootEpoch: step.next.rootEpoch,
-            nextKdfParams: step.next.kdfParams,
-          });
-        }
-        if (identity) {
-          persistEncryptedIdentity(tx as AuthDb, identity);
-        }
-      });
-    } catch (err) {
-      if (err instanceof JoinNotEmpty) {
-        return { ok: false, error: 'not_empty' };
+    let replacedStaleUsername: string | undefined;
+    this.db.transaction((tx) => {
+      const userStore = new (this.userStore.constructor as typeof UserStore)(tx as AuthDb);
+      const keyLogStore = new (this.keyLogStore.constructor as typeof KeyLogStore)(tx as AuthDb);
+      const nodeSessionStore = new (this.nodeSessionStore.constructor as typeof NodeSessionStore)(
+        tx as AuthDb
+      );
+      const byId = userStore.getById(genesisUid);
+      const byName = userStore.getByUsername(username);
+      if (byName && byName.id !== genesisUid) {
+        wipeUserDerivedState(userStore, keyLogStore, nodeSessionStore, byName.id);
+        userStore.deleteById(byName.id);
+        userStore.deleteAllPeers();
+        replacedStaleUsername = username;
       }
-      throw err;
-    }
-    return { ok: true, state: this.currentState(genesisUid) };
+      if (byId) {
+        wipeUserDerivedState(userStore, keyLogStore, nodeSessionStore, genesisUid);
+        userStore.setKeyLogHead(genesisUid, { seq: 0, hash: ZERO_HASH, now });
+        userStore.setTotpRecordSeq(genesisUid, null, now);
+        userStore.updateRoot(genesisUid, {
+          rootPublicKey: new Uint8Array(32),
+          rootEpoch: first.record.root_epoch,
+          kdfParamsJson: kdfJson,
+          now,
+        });
+        if (byId.username !== username) {
+          userStore.updateUsername(genesisUid, username, now);
+        }
+        if (!replacedStaleUsername) {
+          userStore.deleteAllPeers();
+        }
+      } else {
+        userStore.create({
+          id: genesisUid,
+          username,
+          rootPublicKey: new Uint8Array(32),
+          rootEpoch: first.record.root_epoch,
+          kdfParamsJson: kdfJson,
+          totpRecordSeq: null,
+          keyLogHeadSeq: 0,
+          keyLogHeadHash: ZERO_HASH,
+          now,
+        });
+      }
+      for (const step of replay.steps) {
+        persistApplied({
+          userStore,
+          keyLogStore,
+          nodeSessionStore,
+          userId: genesisUid,
+          record: step.record,
+          bytes: step.input.bytes,
+          sig: step.input.sig,
+          hash: step.hash,
+          effects: step.effects,
+          now,
+          nextHead: step.next.head,
+          nextRootPublicKey: step.next.rootPublicKey,
+          nextRootEpoch: step.next.rootEpoch,
+          nextKdfParams: step.next.kdfParams,
+        });
+      }
+      if (identity) {
+        persistEncryptedIdentity(tx as AuthDb, identity);
+      } else {
+        (tx as AuthDb)
+          .update(nodeIdentity)
+          .set({ userId: genesisUid })
+          .where(eq(nodeIdentity.id, IDENTITY_ROW_ID))
+          .run();
+      }
+    });
+    return {
+      ok: true,
+      state: this.currentState(genesisUid),
+      ...(replacedStaleUsername ? { replacedStaleUsername } : {}),
+    };
   }
 }
 
@@ -1021,12 +1037,6 @@ class HeadCasMismatch extends Error {
 class UnknownUser extends Error {
   constructor() {
     super('unknown_user');
-  }
-}
-
-class JoinNotEmpty extends Error {
-  constructor() {
-    super('not_empty');
   }
 }
 
@@ -1092,6 +1102,20 @@ function bytesEqual(a: Uint8Array, b: Uint8Array): boolean {
     diff |= a[i] ^ b[i];
   }
   return diff === 0;
+}
+
+function wipeUserDerivedState(
+  userStore: UserStore,
+  keyLogStore: KeyLogStore,
+  nodeSessionStore: NodeSessionStore,
+  userId: string
+): void {
+  keyLogStore.deleteAll(userId);
+  userStore.deleteKeysByUser(userId);
+  nodeSessionStore.deleteAllForUser(userId);
+  userStore.deleteCertsByUser(userId);
+  userStore.deleteNodesByUser(userId);
+  userStore.deleteEnrollmentTokensByUser(userId);
 }
 
 function persistApplied(args: {

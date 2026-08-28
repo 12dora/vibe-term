@@ -278,12 +278,15 @@ describe('UserKeyService', () => {
       expect(bytesEqual(joined.state.rootPublicKey, srcState.rootPublicKey)).toBe(true);
       expect(b.keyLogStore.list(boot.userId)).toHaveLength(3);
 
-      const refuse = await b.service.verifyChainForJoin(
+      const again = await b.service.verifyChainForJoin(
         chain,
         srcState.rootPublicKey,
         srcState.head.hash
       );
-      expect(refuse).toEqual({ ok: false, error: 'not_empty' });
+      expect(again.ok).toBe(true);
+      expect(b.keyLogStore.list(boot.userId)).toHaveLength(3);
+      expect(b.userStore.listUsers()).toHaveLength(1);
+      expect(b.userStore.getById(boot.userId)?.username).toBe(boot.userId);
     } finally {
       src.close();
       dst.close();
@@ -576,6 +579,194 @@ describe('UserKeyService', () => {
       expect(b.userStore.listCertsByUser(boot.userId).length).toBe(1);
       const loaded = await new NodeIdentityStore(dst.db).load();
       expect(loaded?.hubUrl).toBe('https://hub.example');
+      expect(loaded?.nodeId).toBe(destIdentity.nodeIdHex);
+      expect(loaded?.userId).toBe(boot.userId);
+    } finally {
+      src.close();
+      dst.close();
+    }
+  });
+
+  test('commitJoin replaces same username with a different uid from a rebuilt hub', async () => {
+    const src = createMigratedAuthDb();
+    const dst = createMigratedAuthDb();
+    try {
+      const a = createService(src.db);
+      const b = createService(dst.db);
+      const destIdentity = await ensureNodeIdentity(new NodeIdentityStore(dst.db));
+      const stale = await b.service.bootstrapUserWithSelfAdmit({
+        username: 'alice',
+        password: 'old-hub-pass',
+        identity: destIdentity,
+      });
+      const totp = await b.service.signAndApply(stale.userId, stale.rootKey, {
+        type: 'set-totp',
+        payload: encodeSetTotpPayload({
+          alg: 'A256GCM',
+          nonce: new Uint8Array(12).fill(4),
+          ciphertext: new Uint8Array(8).fill(5),
+          tag: new Uint8Array(16).fill(6),
+        }),
+      });
+      expect(totp.ok).toBe(true);
+      b.userStore.insertKey({
+        id: 'stale-passkey',
+        userId: stale.userId,
+        credentialId: Uint8Array.from({ length: 20 }, (_, i) => i + 3),
+        publicKey: Uint8Array.from({ length: 32 }, () => 9),
+        rpId: 'localhost',
+        origin: 'http://localhost',
+        counter: 0,
+        logSeq: 9,
+        now: 1,
+      });
+      const session = b.nodeSessionStore.issue({
+        userId: stale.userId,
+        viaNodeId: destIdentity.nodeIdHex,
+        sessPublicKey: Uint8Array.from({ length: 32 }, (_, i) => i + 2),
+        delegationMethod: 'root',
+        now: Date.now(),
+      });
+      b.userStore.upsertPeer({
+        nodeId: 'old-peer',
+        name: 'studio',
+        endpointsJson: '[]',
+        inventoryJson: '{}',
+        directCapable: false,
+        lastSeenAt: 1,
+        listVersion: 1,
+      });
+      b.userStore.createNode({
+        id: 'old-hub-node',
+        userId: stale.userId,
+        name: 'old-hub',
+        now: 1,
+      });
+      b.userStore.createEnrollmentToken({
+        id: 'old-enroll',
+        userId: stale.userId,
+        enrollPublicKey: Uint8Array.from({ length: 32 }, () => 12),
+        authorizationJson: '{}',
+        authorizationSig: Uint8Array.from({ length: 64 }, () => 1),
+        expiresAt: Date.now() + 60_000,
+      });
+
+      const srcIdentity = await ensureNodeIdentity(new NodeIdentityStore(src.db));
+      const fresh = await a.service.bootstrapUserWithSelfAdmit({
+        username: 'alice',
+        password: 'new-hub-pass',
+        identity: srcIdentity,
+      });
+      expect(fresh.userId).not.toBe(stale.userId);
+      const chain = a.keyLogStore.list(fresh.userId).map((row) => ({
+        bytes: row.bytes,
+        sig: row.sig,
+      }));
+      const srcState = a.service.currentState(fresh.userId);
+      const committed = await b.service.commitJoin({
+        records: chain,
+        expectedRootPublicKey: srcState.rootPublicKey,
+        anchorHash: srcState.head.hash,
+        username: 'alice',
+        expectedUserId: fresh.userId,
+        identity: {
+          nodeId: destIdentity.nodeIdHex,
+          hubUrl: 'https://hub-new.example',
+          edPrivateKey: destIdentity.edPrivateKey,
+          x25519PrivateKey: destIdentity.x25519PrivateKey,
+          certificateJson: JSON.stringify({
+            x25519PublicKey: Buffer.from(destIdentity.x25519PublicKey).toString('base64url'),
+          }),
+          certSig: new Uint8Array(0),
+          userId: fresh.userId,
+        },
+      });
+      expect(committed.ok).toBe(true);
+      if (!committed.ok) throw new Error(committed.error);
+      expect(committed.replacedStaleUsername).toBe('alice');
+      expect(b.userStore.getByUsername('alice')?.id).toBe(fresh.userId);
+      expect(b.userStore.getById(stale.userId)).toBeNull();
+      expect(b.userStore.listUsers()).toHaveLength(1);
+      expect(b.keyLogStore.list(stale.userId)).toHaveLength(0);
+      expect(b.keyLogStore.list(fresh.userId)).toHaveLength(chain.length);
+      expect(b.userStore.listKeysByUser(stale.userId)).toHaveLength(0);
+      expect(b.userStore.listKeysByUser(fresh.userId)).toHaveLength(0);
+      expect(b.userStore.listCertsByUser(stale.userId)).toHaveLength(0);
+      expect(b.userStore.listCertsByUser(fresh.userId).length).toBe(1);
+      expect(b.userStore.listPeers()).toHaveLength(0);
+      expect(b.userStore.getNode('old-hub-node')).toBeNull();
+      expect(b.userStore.getEnrollmentTokenById('old-enroll')).toBeNull();
+      expect(
+        b.nodeSessionStore.verify(session.sid, {
+          viaNodeId: destIdentity.nodeIdHex,
+          now: Date.now(),
+        }).ok
+      ).toBe(false);
+      const loaded = await new NodeIdentityStore(dst.db).load();
+      expect(loaded?.nodeId).toBe(destIdentity.nodeIdHex);
+      expect(loaded?.userId).toBe(fresh.userId);
+      expect(loaded?.hubUrl).toBe('https://hub-new.example');
+    } finally {
+      src.close();
+      dst.close();
+    }
+  });
+
+  test('commitJoin same uid is idempotent and does not duplicate rows', async () => {
+    const src = createMigratedAuthDb();
+    const dst = createMigratedAuthDb();
+    try {
+      const a = createService(src.db);
+      const b = createService(dst.db);
+      const destIdentity = await ensureNodeIdentity(new NodeIdentityStore(dst.db));
+      const boot = await a.service.bootstrapUserWithSelfAdmit({
+        username: 'joiner',
+        password: 'pw',
+        identity: await ensureNodeIdentity(new NodeIdentityStore(src.db)),
+      });
+      const chain = a.keyLogStore.list(boot.userId).map((row) => ({
+        bytes: row.bytes,
+        sig: row.sig,
+      }));
+      const srcState = a.service.currentState(boot.userId);
+      const identity = {
+        nodeId: destIdentity.nodeIdHex,
+        hubUrl: 'https://hub.example',
+        edPrivateKey: destIdentity.edPrivateKey,
+        x25519PrivateKey: destIdentity.x25519PrivateKey,
+        certificateJson: JSON.stringify({
+          x25519PublicKey: Buffer.from(destIdentity.x25519PublicKey).toString('base64url'),
+        }),
+        certSig: new Uint8Array(0),
+        userId: boot.userId,
+      };
+      const first = await b.service.commitJoin({
+        records: chain,
+        expectedRootPublicKey: srcState.rootPublicKey,
+        anchorHash: srcState.head.hash,
+        username: 'joiner',
+        expectedUserId: boot.userId,
+        identity,
+      });
+      expect(first.ok).toBe(true);
+      if (!first.ok) throw new Error(first.error);
+      expect(first.replacedStaleUsername).toBeUndefined();
+      const second = await b.service.commitJoin({
+        records: chain,
+        expectedRootPublicKey: srcState.rootPublicKey,
+        anchorHash: srcState.head.hash,
+        username: 'joiner',
+        expectedUserId: boot.userId,
+        identity,
+      });
+      expect(second.ok).toBe(true);
+      if (!second.ok) throw new Error(second.error);
+      expect(second.replacedStaleUsername).toBeUndefined();
+      expect(b.userStore.listUsers()).toHaveLength(1);
+      expect(b.userStore.getByUsername('joiner')?.id).toBe(boot.userId);
+      expect(b.keyLogStore.list(boot.userId)).toHaveLength(chain.length);
+      expect(b.userStore.listCertsByUser(boot.userId).length).toBe(1);
+      const loaded = await new NodeIdentityStore(dst.db).load();
       expect(loaded?.nodeId).toBe(destIdentity.nodeIdHex);
       expect(loaded?.userId).toBe(boot.userId);
     } finally {

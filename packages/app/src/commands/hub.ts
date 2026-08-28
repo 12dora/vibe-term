@@ -20,6 +20,7 @@ import {
   rootKeyFromSeed,
   verifyKeyLogChain,
 } from '../../../shared/src/auth';
+import { t } from '../i18n';
 import { readEnvFile, writeEnvFile } from '../lib/env-file';
 import { pathExists } from '../lib/fs-utils';
 import {
@@ -334,7 +335,7 @@ export async function runHubJoin(
       name,
       fetcher: io.fetcher,
     });
-    await commitVerifiedJoin(ctx, {
+    const committed = await commitVerifiedJoin(ctx, {
       redeemed,
       expectedRootPublicKey: decoded.rootPublicKey,
       anchorHash: decoded.keyLogHeadHash,
@@ -342,6 +343,9 @@ export async function runHubJoin(
       hubUrl,
       identity,
     });
+    if (committed.replacedStaleUsername) {
+      log(io, t('hub.join.replacedStale', { username: committed.replacedStaleUsername }));
+    }
 
     const currentRoles = parseTmexRoles(ctx.env.TMEX_ROLES ?? process.env.TMEX_ROLES);
     const nextRole = currentRoles.hub ? 'hub,node' : 'node';
@@ -372,7 +376,7 @@ async function commitVerifiedJoin(
     hubUrl: string;
     identity: Awaited<ReturnType<typeof ensureNodeIdentity>>;
   }
-): Promise<void> {
+): Promise<{ replacedStaleUsername?: string }> {
   const records = input.redeemed.user_key_log.map((item) => ({
     bytes: decodeBase64url(item.bytes),
     sig: decodeBase64url(item.sig),
@@ -422,6 +426,9 @@ async function commitVerifiedJoin(
   if (persisted) {
     await ctx.identityStore.save({ ...persisted, userId: genesisUid, hubUrl: input.hubUrl });
   }
+  return committed.replacedStaleUsername
+    ? { replacedStaleUsername: committed.replacedStaleUsername }
+    : {};
 }
 
 function assertChainUids(records: Array<{ bytes: Uint8Array }>, genesisUid: string): void {

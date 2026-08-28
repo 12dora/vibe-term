@@ -121,7 +121,9 @@ npx tmex-cli hub join https://tmex.example.com --token <join 串> [--name 书房
 - 只接受 `https:`；HTTP 重定向一律拒绝（`redirect: 'error'`）；
 - `http://127.0.0.1` / `http://localhost` 仅非 production 且加 `--insecure-local`；
 - 以 join 串里的根公钥与 `key_log_head_hash` 为锚点校验全链，再原子写入 users / 日志 / 证书 / `node_identity`，然后写 `TMEX_HUB_URL`、`TMEX_ROLES=node`（已是 `hub,node` 则保留）并重启服务；
-- 成功后提示在内网防火墙放行 `TMEX_PEER_PORT`（仅内网直连需要）。
+- 本机若已有同名用户但 uid / 根钥不同（hub 重建或对端 `reset-root` 后再 join），校验通过后原子替换该用户的本地状态：删旧 `user_key_log`、`user_keys`、`node_sessions`、旧根签发的 `node_certs`、旧 hub 的 `peer_cache` / `nodes`，再写入新用户。本机 nodeId 密钥对保留。同一 uid 再次 join 为幂等 upsert，不会重复行；
+- 不必先 `hub leave`：从角色 `node` 直接 join 另一台 hub 即可，`leave` 只清角色与 `TMEX_HUB_URL`；
+- 成功后提示在内网防火墙放行 `TMEX_PEER_PORT`（仅内网直连需要）。替换了旧账号时会打印一条明确日志。
 
 加入后各入口侧边栏自动出现新 node，无需手动添加设备。退出 mesh：`npx tmex-cli hub leave`（清 `hub_url`，角色改回 `standalone`，重启）。
 
@@ -224,7 +226,7 @@ npx tmex-cli mesh reset-root
 
 `TMEX_ROLES=standalone` 会拒绝。输入新密码后保留用户名，在本机重建根钥并自签 `admit-node`。用于「密码在失陷入口上泄露、攻击者抢先 `rotate-root`」这类无法依赖旧根钥的场景。
 
-之后：**每台机器都要再执行一次**；其它机器需重新 `enroll` / `hub join`。hub 侧配合下面的 registry 清空。
+之后：**每台机器都要再执行一次**；其它机器需重新 `enroll` / `hub join`。hub 侧配合下面的 registry 清空。其它机器本地即使仍留着同名旧用户（uid / 根钥已变），`hub join` 也会原子替换该账号，不必先 `hub leave`。
 
 ### `hub user reset`（仅 hub 机）
 
