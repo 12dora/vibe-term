@@ -501,6 +501,81 @@ describe('mesh phase-2 integration', () => {
     expect(await devices.json()).toEqual({ devices: [{ id: 'dev-b', name: 'B box' }] });
   });
 
+  test('node joins twice (second enrollment) and stays reachable', async () => {
+    const a = await bootHubA();
+    const b = await enrollNodeB(a);
+    const remote = await loginRemote(a.mesh, b.mesh, a.boot, b.cookie);
+    expect(remote.status).toBe(200);
+    const bSid = sidFromResponse(remote, b.mesh.nodeId);
+    const jar = `${b.cookie}; ${nodeSessionCookieName(b.mesh.nodeId)}=${bSid}`;
+    const before = await callMesh(a.mesh, `http://entry/n/${b.mesh.nodeId}/api/devices`, {
+      cookie: jar,
+    });
+    expect(before.status).toBe(200);
+
+    const now = Date.now();
+    const enrollment = await createEnrollment(a.boot.rootKey, {
+      uid: a.boot.userId,
+      rootEpoch: a.boot.rootEpoch,
+      now,
+      ttlMs: 60_000,
+    });
+    const created = await a.mesh.hub?.handleRequest(
+      (() => {
+        const req = new Request('http://hub/api/hub/enrollments', {
+          method: 'POST',
+          headers: {
+            'content-type': 'application/json',
+            cookie: b.cookie,
+          },
+          body: JSON.stringify({
+            enroll_pk: encodeBase64url(enrollment.enrollPk),
+            authorization: encodeBase64url(enrollment.authorizationBytes),
+            authorization_sig: encodeBase64url(enrollment.authorizationSig),
+            exp: now + 60_000,
+          }),
+        });
+        setMeshRequestContext(req, { via: MESH_VIA_SELF, clientIp: '127.0.0.1' });
+        return req;
+      })(),
+      dummyServer
+    );
+    expect(created?.status).toBe(201);
+
+    const cert = createNodeCertificate(enrollment.enrollSk, {
+      uid: a.boot.userId,
+      edPk: b.identity.edPublicKey,
+      x25519Pk: b.identity.x25519PublicKey,
+      enrollPk: enrollment.enrollPk,
+      now,
+      nodeId: b.identity.nodeId,
+    });
+    const redeemed = await a.mesh.hub?.handleRequest(
+      new Request('http://hub/api/hub/enrollments/redeem', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          certificate: encodeBase64url(cert.certificateBytes),
+          cert_sig: encodeBase64url(cert.certSig),
+          name: 'node-b',
+          version: 'test-rejoin',
+        }),
+      }),
+      dummyServer
+    );
+    expect(redeemed?.status).toBe(200);
+
+    expect(a.userStore.listNodes().filter((n) => n.id === b.mesh.nodeId)).toHaveLength(1);
+    expect(a.mesh.hub?.registry.get(b.mesh.nodeId)?.authenticated).toBe(true);
+    await waitUntil(() => b.mesh.uplink.state === 'online', 5_000);
+
+    const after = await callMesh(a.mesh, `http://entry/n/${b.mesh.nodeId}/api/devices`, {
+      cookie: jar,
+    });
+    expect(after.status).toBe(200);
+    expect(await after.json()).toEqual({ devices: [{ id: 'dev-b', name: 'B box' }] });
+  });
+
   test('/n/B/ws HELLO then DEVICE_CONNECT reaches B WebSocketServer', async () => {
     const a = await bootHubA();
     const b = await enrollNodeB(a);

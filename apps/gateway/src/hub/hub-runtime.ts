@@ -16,7 +16,7 @@ import { json, readJsonObjectBody } from '../api/http';
 import { makeVerifyPasskeyAssertion } from '../auth/passkey';
 import type { AuthDb } from '../auth/types';
 import { UserStore } from '../auth/user-store';
-import { patchNode } from './node-persistence';
+import { detachEnrollmentTokensFromNode, patchNode } from './node-persistence';
 import { NodeRegistry } from './node-registry';
 import {
   HUB_AUTH_TIMEOUT_MS,
@@ -243,15 +243,13 @@ export class HubRuntime {
       .filter((n) => n.userId === auth.userId)
       .map((n) => {
         const cert = this.userStore.getCert(n.id);
-        const redeemed = cert
-          ? null
-          : parseStoredEnrollment(
-              this.userStore.getEnrollmentTokenByNodeId(n.id)?.authorizationJson ?? ''
-            );
-        const certificate = cert
-          ? encodeBase64url(cert.certificateBytes)
-          : redeemed?.certificate_b64;
-        const certSig = cert ? encodeBase64url(cert.certSig) : redeemed?.cert_sig_b64;
+        const redeemed = parseStoredEnrollment(
+          this.userStore.getEnrollmentTokenByNodeId(n.id)?.authorizationJson ?? ''
+        );
+        const certificate =
+          redeemed?.certificate_b64 ?? (cert ? encodeBase64url(cert.certificateBytes) : undefined);
+        const certSig =
+          redeemed?.cert_sig_b64 ?? (cert ? encodeBase64url(cert.certSig) : undefined);
         return {
           id: n.id,
           name: n.name,
@@ -494,10 +492,14 @@ export class HubRuntime {
     }
     const hexId = nodeIdToHex(certificate.node_id);
     const now = this.now();
+    const providedName =
+      typeof body.name === 'string' && body.name.trim() ? body.name.trim() : null;
     let replayUserId: string | null = null;
+    let replacedExisting = false;
     try {
       this.db.transaction((tx) => {
-        const store = new UserStore(tx as AuthDb);
+        const authDb = tx as AuthDb;
+        const store = new UserStore(authDb);
         const fresh = store.getEnrollmentTokenByEnrollPublicKey(certificate.enroll_pk);
         if (!fresh) {
           throw new RedeemAbort('unknown_enrollment', 400);
@@ -522,8 +524,16 @@ export class HubRuntime {
         if (fresh.expiresAt <= now) {
           throw new RedeemAbort('expired', 400);
         }
-        if (store.getNode(hexId)) {
-          throw new RedeemAbort('node_exists', 409);
+        const existing = store.getNode(hexId);
+        if (existing) {
+          if (existing.userId !== fresh.userId) {
+            throw new RedeemAbort('node_exists', 409);
+          }
+          const existingPk = readNodeEdPublicKey(store, hexId);
+          if (!existingPk || !bytesEqual(existingPk, certificate.ed_pk)) {
+            throw new RedeemAbort('node_exists', 409);
+          }
+          detachEnrollmentTokensFromNode(authDb, hexId);
         }
         const consumed = store.consumeEnrollmentToken(certificate.enroll_pk, {
           nodeId: hexId,
@@ -538,14 +548,23 @@ export class HubRuntime {
         if (!consumed) {
           throw new RedeemAbort('reused', 400);
         }
-        store.createNode({
-          id: hexId,
-          userId: fresh.userId,
-          name,
-          status: 'enrolled',
-          version: version || null,
-          now,
-        });
+        if (existing) {
+          patchNode(authDb, hexId, {
+            status: 'enrolled',
+            ...(providedName ? { name: providedName } : {}),
+            ...(version ? { version } : {}),
+          });
+          replacedExisting = true;
+        } else {
+          store.createNode({
+            id: hexId,
+            userId: fresh.userId,
+            name,
+            status: 'enrolled',
+            version: version || null,
+            now,
+          });
+        }
       });
     } catch (err) {
       if (err instanceof RedeemReplay) {
@@ -556,6 +575,16 @@ export class HubRuntime {
         throw err;
       }
     }
+    if (replacedExisting) {
+      this.registry.updateMeta(
+        hexId,
+        {
+          ...(providedName ? { name: providedName } : {}),
+          ...(version ? { version } : {}),
+        },
+        now
+      );
+    }
     if (!replayUserId && stored.entry_node_id) {
       this.uplink.sendTo(stored.entry_node_id, {
         t: 'enroll.redeemed',
@@ -565,6 +594,9 @@ export class HubRuntime {
         node_id: hexId,
         ...(stored.entry_sid ? { entry_sid: stored.entry_sid } : {}),
       });
+    }
+    if (replacedExisting) {
+      await this.uplink.broadcastNodeList(token.userId);
     }
     return this.redeemSuccessPayload(replayUserId ?? token.userId);
   }
@@ -642,6 +674,28 @@ function parseStoredEnrollment(raw: string): StoredEnrollmentPayload | null {
       cert_sig_b64: typeof obj.cert_sig_b64 === 'string' ? obj.cert_sig_b64 : undefined,
       node_id: typeof obj.node_id === 'string' ? obj.node_id : undefined,
     };
+  } catch {
+    return null;
+  }
+}
+
+function readNodeEdPublicKey(store: UserStore, nodeId: string): Uint8Array | null {
+  const cert = store.getCert(nodeId);
+  const fromCert = cert ? decodeCertificateEdPk(cert.certificateBytes) : null;
+  if (fromCert) return fromCert;
+  const token = store.getEnrollmentTokenByNodeId(nodeId);
+  const stored = parseStoredEnrollment(token?.authorizationJson ?? '');
+  if (!stored?.certificate_b64) return null;
+  try {
+    return decodeCertificateEdPk(decodeBase64url(stored.certificate_b64));
+  } catch {
+    return null;
+  }
+}
+
+function decodeCertificateEdPk(bytes: Uint8Array): Uint8Array | null {
+  try {
+    return decodeCertificate(bytes).ed_pk;
   } catch {
     return null;
   }

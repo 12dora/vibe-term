@@ -1,6 +1,6 @@
 import { eq } from 'drizzle-orm';
 import type { AuthDb, NodeStatus } from '../auth/types';
-import { nodes } from '../db/schema';
+import { enrollmentTokens, nodes } from '../db/schema';
 
 export type NodePatch = {
   name?: string;
@@ -34,4 +34,11 @@ export function patchNode(db: AuthDb, id: string, patch: NodePatch): void {
   if (patch.endpointsJson !== undefined) set.endpointsJson = patch.endpointsJson;
   if (Object.keys(set).length === 0) return;
   db.update(nodes).set(set).where(eq(nodes.id, id)).run();
+}
+
+export function detachEnrollmentTokensFromNode(db: AuthDb, nodeId: string): void {
+  db.update(enrollmentTokens)
+    .set({ nodeId: null })
+    .where(eq(enrollmentTokens.nodeId, nodeId))
+    .run();
 }

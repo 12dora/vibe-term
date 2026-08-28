@@ -122,6 +122,8 @@ npx tmex-cli hub join https://tmex.example.com --token <join 串> [--name 书房
 - `http://127.0.0.1` / `http://localhost` 仅非 production 且加 `--insecure-local`；
 - 以 join 串里的根公钥与 `key_log_head_hash` 为锚点校验全链，再原子写入 users / 日志 / 证书 / `node_identity`，然后写 `TMEX_HUB_URL`、`TMEX_ROLES=node`（已是 `hub,node` 则保留）并重启服务；
 - 本机若已有同名用户但 uid / 根钥不同（hub 重建或对端 `reset-root` 后再 join），校验通过后原子替换该用户的本地状态：删旧 `user_key_log`、`user_keys`、`node_sessions`、旧根签发的 `node_certs`、旧 hub 的 `peer_cache` / `nodes`，再写入新用户。本机 nodeId 密钥对保留。同一 uid 再次 join 为幂等 upsert，不会重复行；
+- 同一 nodeId + 同一节点公钥再次 `hub join`（新 enrollment token）在 hub 上是幂等的：覆盖该行的 enrollment / 证书快照与名称（若提供），保持在线状态，不返回 `node_exists`。`node_exists`（HTTP 409）只在该 nodeId 已被**另一把公钥**占用时出现。不必 `hub user reset` 清掉半途失败留下的 registry 行；
+- 已吊销节点用**同一身份**再 join：redeem 仍接受（覆盖 enrollment，`nodes.status` 标回 `enrolled`），但证书吊销投影不清。keylog 对同一 `node_id` 第二次 `admit-node` 返回 `node_id_reused`（吊销后亦然），因此不能靠再 admit 解吊销。换钥重装须先 `revoke-node` 再 enroll **新身份**（新 nodeId / 新密钥）；
 - 不必先 `hub leave`：从角色 `node` 直接 join 另一台 hub 即可，`leave` 只清角色与 `TMEX_HUB_URL`；
 - 成功后提示在内网防火墙放行 `TMEX_PEER_PORT`（仅内网直连需要）。替换了旧账号时会打印一条明确日志。
 
@@ -245,6 +247,7 @@ npx tmex-cli hub user reset
 | WS 关闭码 **4401** | 无 `node-session`、会话过期或 logout。`/ws`、`/n/:id/ws`、`/mesh/ws` 升级后以此码关闭；`/mesh/ws` 每 5 分钟复验失败同样 4401 | 本机入口：跳 `/login?next=`。其它 node：不跳全局登录，侧边栏「登录此节点」（内存里还有 `sk_sess` 则静默补登）。前端对 4401 **停止重连**，避免 open→close 循环 |
 | HTTP 401 `NODE_LOGIN_REQUIRED` | 目标 node 未登录或票的 `via` 不是当前 entry | 只在该 node 行登录，不要当整站掉登录 |
 | HTTP 503 `NODE_UNREACHABLE` | entry 到目标的 peer link 与 hub relay 都失败 | 查目标是否在线、防火墙是否放行 `TMEX_PEER_PORT`、hub uplink、`TMEX_HUB_URL`。hub 离线时确认 `peer_cache` 地址是否仍达 |
+| HTTP 409 `node_exists` | 该 nodeId 已登记，但公钥与本次 join 不一致（身份冲突） | 同一身份重 join（半途失败后再 enroll）不应再出现此错误。确认本机 `node_identity` 是否被换钥；换钥须先 `revoke-node` 再 enroll 新身份。不要用 `hub user reset` 清半途失败的 registry 行 |
 | HTTP 409 `KEY_LOG_FORK` | 同一 `seq/prev_hash` 出现两个不同后继，硬失败，hub 不选胜 | 不要强行重放。核对是否两条入口同时改密 / admit。无法收敛则走灾难恢复 |
 | HTTP 504 `HUB_TIMEOUT` | `keylog?hub=sync` 等 hub ACK 超时，且对不上已提交记录 | 本地不落库；Nodes 页保留 pending，点「重试」。hub 恢复后再试 |
 | 503 `DIRECT_UNAVAILABLE` | native 未装载、authorize 登记满（64）或 RTC 不可用 | `direct enable`；看 `TMEX_NATIVE_DIR` 与 `native/manifest.json`；装不了的平台接受 relay |
