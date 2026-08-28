@@ -4,6 +4,7 @@ import { createBytePipe, createInMemoryLinkPair } from './in-memory-link';
 import { LinkMux } from './mux';
 import { FrameOp } from './types';
 import {
+  type ByteTransport,
   INITIAL_STREAM_WINDOW,
   type LinkStream,
   MAX_FRAME_PAYLOAD,
@@ -345,5 +346,23 @@ describe('link mux', () => {
     expect(info.reason.toLowerCase()).toMatch(/increas|open/);
     expect(incoming).toHaveLength(1);
     expect(incoming[0]?.id).toBe(4);
+  });
+
+  it('closes the mux when transport.send rejects without firing onClose', async () => {
+    const transport: ByteTransport = {
+      send() {
+        return Promise.reject(new Error('send-failed'));
+      },
+      onData() {},
+      onClose() {},
+      close() {},
+    };
+    const mux = new LinkMux(transport, { role: 'initiator' });
+    await expect(mux.sendFrame({ streamId: 1, op: FrameOp.RST })).rejects.toThrow('send-failed');
+    const state = await Promise.race([
+      mux.closed.then(() => 'closed' as const),
+      new Promise<'still-open'>((resolve) => setTimeout(() => resolve('still-open'), 50)),
+    ]);
+    expect(state).toBe('closed');
   });
 });

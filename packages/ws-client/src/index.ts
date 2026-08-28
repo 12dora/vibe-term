@@ -122,6 +122,7 @@ export {
   type GatewayTransport,
   type GatewayTransportCapabilities,
   type GatewayTransportCommand,
+  type GatewayNodeEvent,
   type GatewayTransportEvent,
   type GatewayTransportSourceRoute,
   type SharedGatewayTransport,

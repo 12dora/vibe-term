@@ -64,7 +64,12 @@ export type NodeListMessage = {
 
 export type KeyLogReqMessage = { t: 'key.log.req'; from_seq: number | string; id?: string };
 export type KeyLogRecordWire = { seq: number | string; bytes: string; sig: string };
-export type KeyLogResMessage = { t: 'key.log.res'; records: KeyLogRecordWire[]; id?: string };
+export type KeyLogResMessage = {
+  t: 'key.log.res';
+  records: KeyLogRecordWire[];
+  id?: string;
+  error?: string;
+};
 export type KeyLogAppendMessage = { t: 'key.log.append'; bytes: string; sig: string; id?: string };
 export type KeyLogAckMessage = {
   t: 'key.log.ack';
@@ -229,6 +234,9 @@ export function decodeUplinkCtl(input: Uint8Array | string): UplinkCtlMessage {
         records: requireKeyLogRecords(obj.records),
       };
       if (obj.id !== undefined && obj.id !== null) res.id = requireNonEmptyString(obj, 'id');
+      if (obj.error !== undefined && obj.error !== null) {
+        res.error = requireNonEmptyString(obj, 'error');
+      }
       return res;
     }
     case 'key.log.append':

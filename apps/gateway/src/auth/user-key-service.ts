@@ -341,7 +341,21 @@ export class UserKeyService {
     };
   }
 
-  async applyMany(userId: string, records: ApplyKeyLogInput[]): Promise<ApplyManyResult> {
+  async applyMany(
+    userId: string,
+    records: ApplyKeyLogInput[],
+    signal?: AbortSignal
+  ): Promise<ApplyManyResult> {
+    const aborted = (): ApplyManyResult | null => {
+      if (!signal?.aborted) return null;
+      return { ok: false, applied: 0, error: 'aborted' };
+    };
+    const early = aborted();
+    if (early) return early;
+    await Promise.resolve();
+    const yielded = aborted();
+    if (yielded) return yielded;
+
     if (records.length === 0) {
       const user = this.userStore.getById(userId);
       if (!user) {
@@ -354,19 +368,146 @@ export class UserKeyService {
         hash: user.keyLogHeadHash,
       };
     }
-    let applied = 0;
-    let lastSeq = 0;
-    let lastHash: Uint8Array = ZERO_HASH;
-    for (const record of records) {
-      const result = await this.apply(userId, record);
-      if (!result.ok) {
-        return { ok: false, applied, error: result.error };
-      }
-      applied += 1;
-      lastSeq = result.seq;
-      lastHash = result.hash;
+
+    const user = this.userStore.getById(userId);
+    if (!user) {
+      return { ok: false, applied: 0, error: 'unknown_user' };
     }
-    return { ok: true, applied, seq: lastSeq, hash: lastHash };
+
+    type Prepared = {
+      input: ApplyKeyLogInput;
+      record: ReturnType<typeof decodeKeyLogRecord>;
+      hash: Uint8Array;
+      previous: UserKeyState;
+      next: UserKeyState;
+      effects: KeyLogEffect[];
+    };
+    const prepared: Prepared[] = [];
+    let state = this.currentState(userId);
+    const casHead = { seq: state.head.seq, hash: state.head.hash };
+
+    for (const input of records) {
+      const stop = aborted();
+      if (stop) return stop;
+      let record: ReturnType<typeof decodeKeyLogRecord>;
+      try {
+        record = decodeKeyLogRecord(input.bytes);
+      } catch {
+        return { ok: false, applied: 0, error: 'malformed_payload' };
+      }
+      const existing = this.keyLogStore.getAtSeq(userId, Number(record.seq));
+      const verified = await verifyKeyLogRecord(input.bytes, input.sig, {
+        head: state.head,
+        rootEpoch: state.rootEpoch,
+        rootPublicKey: state.rootPublicKey,
+        resolvePasskey: (id) => state.passkeys.get(id)?.public_key ?? null,
+        verifyPasskeyAssertion: this.verifyPasskeyAssertion,
+        existingAtSeq: existing ? { bytes: existing.bytes, sig: existing.sig } : undefined,
+        allowGenesis: false,
+      });
+      if (!verified.ok) {
+        return { ok: false, applied: 0, error: verified.error };
+      }
+      const applied = await applyKeyLogRecord(state, verified.record, verified.hash, {
+        verifyPasskeyAssertion: this.verifyPasskeyAssertion,
+      });
+      if (!applied.ok) {
+        return { ok: false, applied: 0, error: applied.error };
+      }
+      prepared.push({
+        input,
+        record: verified.record,
+        hash: verified.hash,
+        previous: state,
+        next: applied.state,
+        effects: applied.effects,
+      });
+      state = applied.state;
+    }
+
+    const beforeCommit = aborted();
+    if (beforeCommit) return beforeCommit;
+
+    try {
+      this.db.transaction((tx) => {
+        const userStore = new (this.userStore.constructor as typeof UserStore)(tx as AuthDb);
+        const keyLogStore = new (this.keyLogStore.constructor as typeof KeyLogStore)(tx as AuthDb);
+        const nodeSessionStore = new (this.nodeSessionStore.constructor as typeof NodeSessionStore)(
+          tx as AuthDb
+        );
+        const current = userStore.getById(userId);
+        if (!current) {
+          throw new UnknownUser();
+        }
+        if (
+          BigInt(current.keyLogHeadSeq) !== casHead.seq ||
+          !bytesEqual(current.keyLogHeadHash, casHead.hash)
+        ) {
+          throw new HeadCasMismatch();
+        }
+        const now = Date.now();
+        for (const step of prepared) {
+          persistApplied({
+            userStore,
+            keyLogStore,
+            nodeSessionStore,
+            userId,
+            previous: step.previous,
+            next: step.next,
+            record: step.record,
+            bytes: step.input.bytes,
+            sig: step.input.sig,
+            hash: step.hash,
+            effects: step.effects,
+            now,
+          });
+        }
+      });
+    } catch (err) {
+      if (err instanceof ForkCollision) {
+        return { ok: false, applied: 0, error: 'fork' };
+      }
+      if (err instanceof HeadCasMismatch) {
+        return { ok: false, applied: 0, error: 'head_cas' };
+      }
+      if (err instanceof UnknownUser) {
+        return { ok: false, applied: 0, error: 'unknown_user' };
+      }
+      throw err;
+    }
+
+    const last = prepared[prepared.length - 1];
+    if (!last) {
+      return { ok: true, applied: 0, seq: Number(casHead.seq), hash: casHead.hash };
+    }
+    return {
+      ok: true,
+      applied: prepared.length,
+      seq: Number(last.next.head.seq),
+      hash: last.next.head.hash,
+    };
+  }
+
+  async head(userId: string, signal?: AbortSignal): Promise<{ seq: bigint; hash: Uint8Array }> {
+    if (signal?.aborted) {
+      throw signal.reason instanceof Error ? signal.reason : new Error('aborted');
+    }
+    return this.keyLogStore.head(userId) ?? { seq: 0n, hash: ZERO_HASH };
+  }
+
+  async list(
+    userId: string,
+    fromSeq: bigint,
+    signal?: AbortSignal
+  ): Promise<{ seq: bigint; bytes: Uint8Array; sig: Uint8Array }[]> {
+    if (signal?.aborted) {
+      throw signal.reason instanceof Error ? signal.reason : new Error('aborted');
+    }
+    return this.keyLogStore.list(userId, Number(fromSeq)).map((row) => ({
+      seq: BigInt(row.seq),
+      bytes: row.bytes,
+      sig: row.sig,
+    }));
   }
 
   async bootstrapUser(input: { username: string; password: string }): Promise<BootstrapUserResult> {
@@ -845,6 +986,18 @@ export class UserKeyService {
 class ForkCollision extends Error {
   constructor() {
     super('fork');
+  }
+}
+
+class HeadCasMismatch extends Error {
+  constructor() {
+    super('head_cas');
+  }
+}
+
+class UnknownUser extends Error {
+  constructor() {
+    super('unknown_user');
   }
 }
 

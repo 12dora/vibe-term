@@ -90,6 +90,8 @@ export const HUB_KEY_LOG_REQ_BURST = 20;
 export const HUB_KEY_LOG_REQ_LOG_INTERVAL_MS = 10_000;
 export const HUB_KEY_LOG_REQ_STATE_MAX = 1024;
 export const HUB_KEY_LOG_REQ_IDLE_TTL_MS = 10 * 60 * 1000;
+export const HUB_KEY_LOG_REQ_OVERFLOW_MAX_USERS = 256;
+export const HUB_KEY_LOG_REQ_OVERFLOW_MAX_NODES = 8;
 
 class TokenBucket {
   private tokens: number;
@@ -182,49 +184,132 @@ class IdleLruMap<T> {
   }
 }
 
+type OverflowUser = {
+  lastAt: number;
+  nodes: Map<string, { bucket: TokenBucket; lastAt: number }>;
+  remainder: TokenBucket;
+};
+
 export class KeyLogReqLimiter {
   private readonly buckets: IdleLruMap<TokenBucket>;
-  private readonly overflow = new Map<string, TokenBucket>();
+  private readonly overflow = new Map<string, OverflowUser>();
   private readonly ratePerMin: number;
   private readonly burst: number;
+  private readonly ttlMs: number;
+  private readonly overflowMaxUsers: number;
+  private readonly overflowMaxNodes: number;
+  private deniedCount = 0;
 
-  constructor(opts?: { max?: number; ttlMs?: number; ratePerMin?: number; burst?: number }) {
+  constructor(opts?: {
+    max?: number;
+    ttlMs?: number;
+    ratePerMin?: number;
+    burst?: number;
+    overflowMaxUsers?: number;
+    overflowMaxNodes?: number;
+  }) {
     this.ratePerMin = opts?.ratePerMin ?? HUB_KEY_LOG_REQ_RATE_PER_MIN;
     this.burst = opts?.burst ?? HUB_KEY_LOG_REQ_BURST;
-    this.buckets = new IdleLruMap(
-      opts?.max ?? HUB_KEY_LOG_REQ_STATE_MAX,
-      opts?.ttlMs ?? HUB_KEY_LOG_REQ_IDLE_TTL_MS
-    );
+    this.ttlMs = opts?.ttlMs ?? HUB_KEY_LOG_REQ_IDLE_TTL_MS;
+    this.overflowMaxUsers = opts?.overflowMaxUsers ?? HUB_KEY_LOG_REQ_OVERFLOW_MAX_USERS;
+    this.overflowMaxNodes = opts?.overflowMaxNodes ?? HUB_KEY_LOG_REQ_OVERFLOW_MAX_NODES;
+    this.buckets = new IdleLruMap(opts?.max ?? HUB_KEY_LOG_REQ_STATE_MAX, this.ttlMs);
   }
 
-  get size(): number {
+  get primarySize(): number {
     return this.buckets.size;
   }
 
+  get size(): number {
+    let extra = 0;
+    for (const user of this.overflow.values()) extra += 1 + user.nodes.size;
+    return this.primarySize + extra;
+  }
+
+  get overflowUsers(): number {
+    return this.overflow.size;
+  }
+
+  get overflowNodes(): number {
+    let n = 0;
+    for (const user of this.overflow.values()) n += user.nodes.size;
+    return n;
+  }
+
+  get denied(): number {
+    return this.deniedCount;
+  }
+
   take(nodeId: string, userId: string, now: number): boolean {
+    this.sweepOverflow(now);
     let bucket = this.buckets.touch(nodeId, now);
     if (!bucket) {
       const created = new TokenBucket(this.ratePerMin, this.burst);
       bucket = this.buckets.trySet(nodeId, created, now);
       if (!bucket) {
-        let overflow = this.overflow.get(userId);
-        if (!overflow) {
-          overflow = new TokenBucket(this.ratePerMin, this.burst);
-          this.overflow.set(userId, overflow);
-        }
-        bucket = overflow;
+        bucket = this.takeOverflow(nodeId, userId, now);
       }
     }
-    return bucket.take(now);
+    const ok = bucket.take(now);
+    if (!ok) this.deniedCount += 1;
+    return ok;
   }
 
   delete(nodeId: string): void {
     this.buckets.delete(nodeId);
+    for (const [userId, user] of this.overflow) {
+      user.nodes.delete(nodeId);
+      if (user.nodes.size === 0) this.overflow.delete(userId);
+    }
   }
 
   clear(): void {
     this.buckets.clear();
     this.overflow.clear();
+    this.deniedCount = 0;
+  }
+
+  private takeOverflow(nodeId: string, userId: string, now: number): TokenBucket {
+    let user = this.overflow.get(userId);
+    if (!user) {
+      while (this.overflow.size >= this.overflowMaxUsers) {
+        const oldest = this.overflow.keys().next().value;
+        if (oldest === undefined) break;
+        this.overflow.delete(oldest);
+      }
+      user = {
+        lastAt: now,
+        nodes: new Map(),
+        remainder: new TokenBucket(this.ratePerMin, this.burst),
+      };
+    }
+    user.lastAt = now;
+    this.overflow.delete(userId);
+    this.overflow.set(userId, user);
+
+    let node = user.nodes.get(nodeId);
+    if (!node) {
+      if (user.nodes.size >= this.overflowMaxNodes) {
+        return user.remainder;
+      }
+      node = { bucket: new TokenBucket(this.ratePerMin, this.burst), lastAt: now };
+    }
+    node.lastAt = now;
+    user.nodes.delete(nodeId);
+    user.nodes.set(nodeId, node);
+    return node.bucket;
+  }
+
+  private sweepOverflow(now: number): void {
+    for (const [userId, user] of this.overflow) {
+      if (now - user.lastAt >= this.ttlMs) {
+        this.overflow.delete(userId);
+        continue;
+      }
+      for (const [nodeId, node] of user.nodes) {
+        if (now - node.lastAt >= this.ttlMs) user.nodes.delete(nodeId);
+      }
+    }
   }
 }
 
@@ -410,7 +495,7 @@ export class UplinkServer {
   }
 
   get keyLogReqBucketCount(): number {
-    return this.keyLogReqLimiter.size;
+    return this.keyLogReqLimiter.primarySize;
   }
 
   private send(link: LinkSession, msg: UplinkCtlMessage): void {
@@ -613,6 +698,12 @@ export class UplinkServer {
     const fromSeq = BigInt(msg.from_seq);
     if (!this.keyLogReqLimiter.take(live.nodeId, live.userId, now)) {
       this.warnKeyLogReq(live.nodeId, fromSeq, 0, true);
+      this.send(live.link, {
+        t: 'key.log.res',
+        records: [],
+        error: 'rate_limited',
+        ...(msg.id ? { id: msg.id } : {}),
+      });
       return;
     }
     const records = await this.keyLogSource.list(live.userId, fromSeq);

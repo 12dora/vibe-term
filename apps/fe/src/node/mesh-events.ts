@@ -19,6 +19,9 @@ export interface NodeEventPayload {
   reach: NodeReach;
   /** node.status 上报的 inventory（JSON 字符串已解析）；不可解析时保留原串。 */
   inventory: unknown;
+  version?: string | null;
+  direct_capable?: boolean;
+  name?: string | null;
 }
 
 export interface RtcSignalPayload {
@@ -89,7 +92,7 @@ export function decodeMeshFrame(data: Uint8Array): MeshFrame | null {
     const envelope = wsBorsh.decodeEnvelope(data);
     if (envelope.version !== wsBorsh.CURRENT_VERSION) return null;
     if (envelope.kind === wsBorsh.KIND_NODE_EVENT) {
-      const payload = wsBorsh.decodePayload(wsBorsh.schema.NodeEventSchema, envelope.payload);
+      const payload = wsBorsh.decodeNodeEvent(envelope.payload);
       const status = statusFromWire(payload.status);
       if (!status) return null;
       return {
@@ -99,6 +102,9 @@ export function decodeMeshFrame(data: Uint8Array): MeshFrame | null {
           status,
           reach: reachFromWire(payload.reach),
           inventory: parseInventory(payload.inventory),
+          version: payload.version,
+          direct_capable: payload.directCapable ?? false,
+          name: payload.name,
         },
       };
     }

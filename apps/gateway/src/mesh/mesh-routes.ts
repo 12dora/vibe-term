@@ -384,12 +384,18 @@ export class MeshRoutes {
     status: string;
     reach?: 'lan' | 'relay' | null;
     inventory?: string | null;
+    version?: string | null;
+    direct_capable?: boolean;
+    name?: string;
   }): void {
-    const payload = wsBorsh.encodePayload(wsBorsh.schema.NodeEventSchema, {
+    const payload = wsBorsh.encodeNodeEvent({
       nodeId: event.nodeId,
       status: STATUS_TO_U8[event.status] ?? wsBorsh.NODE_EVENT_STATUS_OFFLINE,
       reach: event.reach ?? null,
       inventory: event.inventory ?? null,
+      version: event.version ?? null,
+      directCapable: event.direct_capable ?? null,
+      name: event.name ?? null,
     });
     const frame = wsBorsh.encodeEnvelope(wsBorsh.KIND_NODE_EVENT, payload, ++this.seq);
     this.broadcast(frame);

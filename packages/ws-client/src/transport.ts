@@ -11,13 +11,17 @@ export type {
   GatewayTransport,
   GatewayTransportCapabilities,
   GatewayTransportCommand,
+  GatewayNodeEvent,
   GatewayTransportEvent,
   GatewayTransportEventHandler,
   GatewayTransportSourceRoute,
 } from './transport-types';
 
 export { encodeGatewayTransportCommand } from './transport-command-encoder';
-export { decodeGatewayTransportMessage } from './transport-message-decoder';
+export {
+  decodeGatewayTransportMessage,
+  decodeNodeEventMessage,
+} from './transport-message-decoder';
 export { LazyWebSocketGatewayTransport, WebSocketGatewayTransport } from './websocket-transport';
 export {
   createSharedGatewayTransport,

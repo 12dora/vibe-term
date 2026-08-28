@@ -134,6 +134,15 @@ type UpgradeGate = {
   scheduled: boolean;
 };
 
+type ParkedInbound = {
+  session: LinkSession;
+  transport: PeerTransportKind;
+  initiatedBy: string;
+  generation: number;
+  at: number;
+  timer: { clear: () => void } | null;
+};
+
 function isServerSocketAdapter(value: WebSocketTransportInput): value is ServerSocketAdapter {
   return (
     typeof (value as ServerSocketAdapter).onDrain === 'function' &&
@@ -226,6 +235,7 @@ export class PeerManager {
     url: string
   ) => WebSocketTransportInput | Promise<WebSocketTransportInput>;
   private readonly live = new Map<string, LivePeer>();
+  private readonly parked = new Map<string, ParkedInbound>();
   private readonly retiring = new Map<string, Set<LivePeer>>();
   private readonly pending = new Map<string, Promise<LinkSession>>();
   private readonly rtc: RtcPeerManager | null;
@@ -324,6 +334,9 @@ export class PeerManager {
     this.upgradeScan?.clear();
     this.upgradeScan = null;
     this.server?.stop();
+    for (const nodeId of [...this.parked.keys()]) {
+      this.dropParked(nodeId, 'stopped');
+    }
     for (const peer of [...this.live.values()]) {
       this.dropPeer(peer.peerNodeId, 'stopped');
     }
@@ -969,6 +982,11 @@ export class PeerManager {
           return prev.session;
         }
       }
+      if (!prev.quiesceCapable) {
+        this.parkInbound(peerNodeId, session, transport, initiatedBy, gen);
+        this.probeQuiesce(prev);
+        return prev.session;
+      }
       this.retirePeer(prev, 'replaced');
     }
     const live: LivePeer = {
@@ -1305,9 +1323,67 @@ export class PeerManager {
 
   private dropPeer(nodeId: string, reason: string): void {
     const live = this.live.get(nodeId);
-    if (!live) return;
-    this.live.delete(nodeId);
-    this.finishRetire(live, reason);
+    if (live) {
+      this.live.delete(nodeId);
+      this.finishRetire(live, reason);
+    }
+    if (this.stopped) {
+      this.dropParked(nodeId, reason);
+      return;
+    }
+    this.activateParked(nodeId);
+  }
+
+  private parkInbound(
+    peerNodeId: string,
+    session: LinkSession,
+    transport: PeerTransportKind,
+    initiatedBy: string,
+    gen: number
+  ): void {
+    this.dropParked(peerNodeId, 'replaced-park');
+    const parked: ParkedInbound = {
+      session,
+      transport,
+      initiatedBy,
+      generation: gen,
+      at: this.scheduler.now(),
+      timer: null,
+    };
+    parked.timer = this.scheduler.interval(() => {
+      if (this.parked.get(peerNodeId) !== parked) return;
+      if (this.scheduler.now() - parked.at >= PEER_RETIRE_MAX_MS) {
+        this.dropParked(peerNodeId, 'park-timeout');
+      }
+    }, 250);
+    void session.closed.then(() => {
+      const cur = this.parked.get(peerNodeId);
+      if (cur?.session === session) {
+        cur.timer?.clear();
+        this.parked.delete(peerNodeId);
+      }
+    });
+    this.parked.set(peerNodeId, parked);
+  }
+
+  private dropParked(nodeId: string, reason: string): void {
+    const parked = this.parked.get(nodeId);
+    if (!parked) return;
+    this.parked.delete(nodeId);
+    parked.timer?.clear();
+    try {
+      parked.session.close(reason);
+    } catch {
+      // already closed
+    }
+  }
+
+  private activateParked(nodeId: string): void {
+    const parked = this.parked.get(nodeId);
+    if (!parked) return;
+    this.parked.delete(nodeId);
+    parked.timer?.clear();
+    this.track(parked.session, nodeId, parked.transport, parked.initiatedBy, parked.generation);
   }
 
   private retirePeer(prev: LivePeer, reason: string): void {
@@ -1381,6 +1457,7 @@ export class PeerManager {
     const already = live.quiesceCapable;
     live.quiesceCapable = true;
     if (already || live.retiring) return;
+    this.activateParked(live.peerNodeId);
     if (this.upgradeGate.get(live.peerNodeId)?.coalesced) {
       this.maybeUpgrade(live.peerNodeId, { cooldown: true });
     }

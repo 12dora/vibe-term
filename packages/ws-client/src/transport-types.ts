@@ -110,6 +110,17 @@ export type GatewayTransportEvent =
   | { type: 'settings-update'; namespace: string }
   | { type: 'transport-error'; error: Error };
 
+export type GatewayNodeEvent = {
+  type: 'node-event';
+  nodeId: string;
+  status: 'online' | 'offline' | 'revoked';
+  reach: string | null;
+  inventory: string | null;
+  version: string | null;
+  directCapable: boolean | null;
+  name: string | null;
+};
+
 export type GatewayTransportEventHandler = (event: GatewayTransportEvent) => void;
 
 export type GatewayTransportCommand =

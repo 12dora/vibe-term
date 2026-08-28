@@ -21,14 +21,16 @@ export type UplinkStatus = {
 };
 
 export type KeyLogApplier = {
-  head(userId: string): Promise<{ seq: bigint; hash: Uint8Array }>;
+  head(userId: string, signal?: AbortSignal): Promise<{ seq: bigint; hash: Uint8Array }>;
   applyMany(
     userId: string,
-    records: { bytes: Uint8Array; sig: Uint8Array }[]
+    records: { bytes: Uint8Array; sig: Uint8Array }[],
+    signal?: AbortSignal
   ): Promise<{ applied: number; error?: string }>;
   list?(
     userId: string,
-    fromSeq: bigint
+    fromSeq: bigint,
+    signal?: AbortSignal
   ): Promise<{ seq: bigint; bytes: Uint8Array; sig: Uint8Array }[]>;
 };
 

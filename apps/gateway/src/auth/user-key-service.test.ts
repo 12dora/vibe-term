@@ -2,6 +2,7 @@ import { describe, expect, test } from 'bun:test';
 import {
   buildKeyLogRecord,
   bytesEqual,
+  computeRecordHash,
   encodeAdmitNodePayload,
   encodeClearTotpPayload,
   encodeKeyLogRecord,
@@ -633,6 +634,60 @@ describe('UserKeyService', () => {
           nextCert?.certificateBytes ?? new Uint8Array()
         )
       ).toBe(false);
+    } finally {
+      close();
+    }
+  });
+
+  test('applyMany abort mid-batch does not commit further records', async () => {
+    const { db, close } = createMigratedAuthDb();
+    try {
+      const { service, keyLogStore } = createService(db);
+      const boot = await service.bootstrapUser({ username: 'abort-batch', password: 'pw' });
+      const totp = encodeSetTotpPayload({
+        alg: 'A256GCM',
+        nonce: new Uint8Array(12).fill(1),
+        ciphertext: new Uint8Array(8).fill(2),
+        tag: new Uint8Array(16).fill(3),
+      });
+      const first = buildKeyLogRecord(service.currentState(boot.userId).head, boot.rootEpoch, {
+        uid: boot.userId,
+        type: 'set-totp',
+        payload: totp,
+        signer: 'root',
+        credential_id: null,
+      });
+      const firstBytes = encodeKeyLogRecord(first);
+      const firstSig = signKeyLogRecordWithRoot(boot.rootKey, firstBytes);
+      const second = buildKeyLogRecord(
+        { seq: first.seq, hash: computeRecordHash(firstBytes, firstSig) },
+        boot.rootEpoch,
+        {
+          uid: boot.userId,
+          type: 'clear-totp',
+          payload: encodeClearTotpPayload(),
+          signer: 'root',
+          credential_id: null,
+        }
+      );
+      const secondBytes = encodeKeyLogRecord(second);
+      const secondSig = signKeyLogRecordWithRoot(boot.rootKey, secondBytes);
+      const controller = new AbortController();
+      const resultP = service.applyMany(
+        boot.userId,
+        [
+          { bytes: firstBytes, sig: firstSig },
+          { bytes: secondBytes, sig: secondSig },
+        ],
+        controller.signal
+      );
+      controller.abort();
+      const result = await resultP;
+      expect(result.ok).toBe(false);
+      if (result.ok) throw new Error('expected abort');
+      expect(result.error).toBe('aborted');
+      expect(result.applied).toBe(0);
+      expect(keyLogStore.list(boot.userId).map((row) => row.seq)).toEqual([1]);
     } finally {
       close();
     }

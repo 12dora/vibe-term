@@ -451,24 +451,20 @@ function turnConfig(config: MeshRuntimeConfig): CachedRtcConfig['turn'] {
   return null;
 }
 
-function createKeyLogApplier(keyLogStore: KeyLogStore, keys: UserKeyService): KeyLogApplier {
+function createKeyLogApplier(_keyLogStore: KeyLogStore, keys: UserKeyService): KeyLogApplier {
   return {
-    async head(userId) {
-      return keyLogStore.head(userId) ?? { seq: 0n, hash: ZERO_HASH };
+    async head(userId, signal) {
+      return keys.head(userId, signal);
     },
-    async applyMany(userId, records) {
-      const result = await keys.applyMany(userId, records);
+    async applyMany(userId, records, signal) {
+      const result = await keys.applyMany(userId, records, signal);
       if (!result.ok) {
         return { applied: result.applied, error: result.error };
       }
       return { applied: result.applied };
     },
-    async list(userId, fromSeq) {
-      return keyLogStore.list(userId, Number(fromSeq)).map((row) => ({
-        seq: BigInt(row.seq),
-        bytes: row.bytes,
-        sig: row.sig,
-      }));
+    async list(userId, fromSeq, signal) {
+      return keys.list(userId, fromSeq, signal);
     },
   };
 }

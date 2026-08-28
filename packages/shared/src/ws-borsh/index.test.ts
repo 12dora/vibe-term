@@ -29,6 +29,7 @@ import {
   checkMagic,
   createSeqGenerator,
   decodeEnvelope,
+  decodeNodeEvent,
   decodePayload,
   encodeChunk,
   encodeEnvelope,
@@ -62,6 +63,7 @@ import {
   NODE_EVENT_STATUS_OFFLINE,
   NODE_EVENT_STATUS_ONLINE,
   NODE_EVENT_STATUS_REVOKED,
+  NodeEventLegacySchema,
   NodeEventSchema,
   PingPongSchema,
   RTC_SIGNAL_FROM_BROWSER,
@@ -702,6 +704,9 @@ describe('mesh / hub 协议消息', () => {
       status: NODE_EVENT_STATUS_ONLINE,
       reach: 'lan',
       inventory: '{"devices":[]}',
+      version: null,
+      directCapable: null,
+      name: null,
     };
     const decoded = decodePayload(NodeEventSchema, encodePayload(NodeEventSchema, data));
     expect(decoded).toEqual(data);
@@ -713,12 +718,63 @@ describe('mesh / hub 协议消息', () => {
         status: NODE_EVENT_STATUS_OFFLINE,
         reach: null,
         inventory: null,
+        version: null,
+        directCapable: null,
+        name: null,
       })
     );
     expect(offline.status).toBe(NODE_EVENT_STATUS_OFFLINE);
     expect(offline.reach).toBeNull();
     expect(offline.inventory).toBeNull();
     expect(NODE_EVENT_STATUS_REVOKED).toBe(2);
+  });
+
+  it('NODE_EVENT payload roundtrip includes version / directCapable / name', () => {
+    const data = {
+      nodeId: 'aabbccddeeff00112233445566778899',
+      status: NODE_EVENT_STATUS_ONLINE,
+      reach: 'lan',
+      inventory: '{"devices":[]}',
+      version: '1.2.3',
+      directCapable: true,
+      name: 'studio',
+    };
+    const decoded = decodePayload(NodeEventSchema, encodePayload(NodeEventSchema, data));
+    expect(decoded).toEqual(data);
+
+    const omitted = decodePayload(
+      NodeEventSchema,
+      encodePayload(NodeEventSchema, {
+        nodeId: 'n1',
+        status: NODE_EVENT_STATUS_OFFLINE,
+        reach: null,
+        inventory: null,
+        version: null,
+        directCapable: null,
+        name: null,
+      })
+    );
+    expect(omitted.version).toBeNull();
+    expect(omitted.directCapable).toBeNull();
+    expect(omitted.name).toBeNull();
+
+    const legacy = decodeNodeEvent(
+      encodePayload(NodeEventLegacySchema, {
+        nodeId: 'n2',
+        status: NODE_EVENT_STATUS_ONLINE,
+        reach: 'relay',
+        inventory: null,
+      })
+    );
+    expect(legacy).toEqual({
+      nodeId: 'n2',
+      status: NODE_EVENT_STATUS_ONLINE,
+      reach: 'relay',
+      inventory: null,
+      version: null,
+      directCapable: null,
+      name: null,
+    });
   });
 
   it('RTC_SIGNAL payload roundtrip', () => {

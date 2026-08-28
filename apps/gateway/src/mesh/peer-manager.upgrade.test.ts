@@ -10,6 +10,8 @@ import { createMigratedAuthDb } from '../auth/test-db';
 import { UserStore } from '../auth/user-store';
 import {
   PEER_RETIRE_MAX_MS,
+  PEER_RETIRE_MIN_MS,
+  PEER_RETIRE_QUIET_MS,
   PEER_UPGRADE_BACKOFF_CAP_MS,
   PEER_UPGRADE_COOLDOWN_MS,
   PeerManager,
@@ -217,7 +219,6 @@ describe('PeerManager upgrade review fixes', () => {
     const self = seedNodeIdentity(store, 'user-1');
     const peer = seedNodeIdentity(store, 'user-1');
     const delayed = createDelayedLinkPair();
-    delayed.holdLeftToRight(true);
     let accepted = 0;
     const managerA = new PeerManager({
       identity: self,
@@ -246,6 +247,11 @@ describe('PeerManager upgrade review fixes', () => {
     expect(managerB.adoptLink(self.nodeId, delayed.right, 'relay', self.nodeId)).toBe(
       delayed.right
     );
+    await waitUntil(
+      () => managerA.quiesceCapableOf(peer.nodeId) && managerB.quiesceCapableOf(self.nodeId),
+      2_000
+    );
+    delayed.holdLeftToRight(true);
 
     const inflight = await delayed.left.openStream(HTTP_OPEN);
     const inflightClosed = inflight.closed.then((info) => info);
@@ -796,5 +802,56 @@ describe('PeerManager upgrade review fixes', () => {
     scheduler.nowMs += PEER_UPGRADE_BACKOFF_CAP_MS;
     await managerA.getLink(peer.nodeId);
     await waitUntil(() => dials === 2, 2_000);
+  });
+
+  test('legacy peer inbound upgrade with an OPEN in flight does not replace the live link', async () => {
+    const { db, close } = createMigratedAuthDb();
+    fixtures.push({ close });
+    const store = new UserStore(db);
+    seedUser(store);
+    const self = seedNodeIdentity(store, 'user-1');
+    const peer = seedNodeIdentity(store, 'user-1');
+    const scheduler = new ImmediateScheduler();
+    const delayed = createDelayedLinkPair();
+    delayed.holdLeftToRight(true);
+    let accepted = 0;
+    delayed.right.onStream(() => {
+      accepted += 1;
+    });
+    const managerA = new PeerManager({
+      identity: self,
+      userStore: store,
+      uplink: failingUplink(self, store),
+      peerPort: 0,
+      startServer: false,
+      scheduler,
+      sessionStore: dummySessionStore(),
+      dispatchHttp: () => new Promise(() => {}),
+    });
+    fixtures.push({ close, stop: () => managerA.stop() });
+    expect(managerA.adoptLink(peer.nodeId, delayed.left, 'relay', self.nodeId)).toBe(delayed.left);
+    expect(managerA.quiesceCapableOf(peer.nodeId)).toBe(false);
+
+    const inflight = await delayed.left.openStream(HTTP_OPEN);
+    const inflightClosed = inflight.closed.then((info) => info);
+
+    const [wsA, wsB] = createInMemoryLinkPair();
+    fixtures.push({ close: () => wsB.close('test') });
+    const kept = managerA.adoptLink(peer.nodeId, wsA, 'ws-secure', peer.nodeId);
+    expect(kept).toBe(delayed.left);
+    expect(managerA.transportOf(peer.nodeId)).toBe('relay');
+    expect(managerA.quiesceCapableOf(peer.nodeId)).toBe(false);
+
+    scheduler.nowMs += PEER_RETIRE_MIN_MS + PEER_RETIRE_QUIET_MS + PEER_RETIRE_MAX_MS;
+    scheduler.tickIntervals();
+    delayed.flushLeftToRight();
+    await waitUntil(() => accepted === 1, 2_000);
+    const raced = await Promise.race([
+      inflightClosed,
+      new Promise<null>((resolve) => setTimeout(() => resolve(null), 50)),
+    ]);
+    expect(raced).toBeNull();
+    expect(accepted).toBe(1);
+    expect(managerA.transportOf(peer.nodeId)).toBe('relay');
   });
 });

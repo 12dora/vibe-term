@@ -2,7 +2,11 @@
 // 未登记的 kind 一律忽略（与旧 switch 的 default 行为一致）；解码异常向上抛，由订阅侧统一记录。
 
 import { wsBorsh } from '@tmex/shared';
-import type { GatewayRebaseReason, GatewayTransportEventHandler } from './transport-types';
+import type {
+  GatewayNodeEvent,
+  GatewayRebaseReason,
+  GatewayTransportEventHandler,
+} from './transport-types';
 
 function rebaseReasonFromSourceGap(reason: number): GatewayRebaseReason | undefined {
   if (reason === wsBorsh.SOURCE_GAP_REASON_METADATA_GAP) return 'metadata_gap';
@@ -165,6 +169,29 @@ const MESSAGE_DECODERS = new Map<number, MessageDecoder>([
   ],
   [wsBorsh.KIND_CANONICAL_EVENT, decodeCanonicalEvent],
 ]);
+
+export function decodeNodeEventMessage(payload: Uint8Array): GatewayNodeEvent | null {
+  const decoded = wsBorsh.decodeNodeEvent(payload);
+  const status =
+    decoded.status === wsBorsh.NODE_EVENT_STATUS_ONLINE
+      ? 'online'
+      : decoded.status === wsBorsh.NODE_EVENT_STATUS_OFFLINE
+        ? 'offline'
+        : decoded.status === wsBorsh.NODE_EVENT_STATUS_REVOKED
+          ? 'revoked'
+          : null;
+  if (!status) return null;
+  return {
+    type: 'node-event',
+    nodeId: decoded.nodeId,
+    status,
+    reach: decoded.reach,
+    inventory: decoded.inventory,
+    version: decoded.version,
+    directCapable: decoded.directCapable,
+    name: decoded.name,
+  };
+}
 
 /** 返回 false 表示该 kind 未登记解码器，调用方按“忽略”处理。 */
 export function decodeGatewayTransportMessage(

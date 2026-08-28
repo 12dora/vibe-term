@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import { wsBorsh } from '@tmex/shared';
-import { decodeGatewayTransportMessage } from './transport-message-decoder';
+import { decodeGatewayTransportMessage, decodeNodeEventMessage } from './transport-message-decoder';
 import type { GatewayTransportEvent } from './transport-types';
 
 function collect(
@@ -205,6 +205,28 @@ describe('decodeGatewayTransportMessage', () => {
     expect(() =>
       decodeGatewayTransportMessage(wsBorsh.KIND_DEVICE_CONNECTED, new Uint8Array([0xff]), () => {})
     ).toThrow();
+  });
+
+  test('KIND_NODE_EVENT 带上 version / directCapable / name', () => {
+    const payload = wsBorsh.encodePayload(wsBorsh.schema.NodeEventSchema, {
+      nodeId: 'aa'.repeat(16),
+      status: wsBorsh.NODE_EVENT_STATUS_ONLINE,
+      reach: 'relay',
+      inventory: '{"devices":[]}',
+      version: '9.9.9',
+      directCapable: true,
+      name: 'studio',
+    });
+    expect(decodeNodeEventMessage(payload)).toEqual({
+      type: 'node-event',
+      nodeId: 'aa'.repeat(16),
+      status: 'online',
+      reach: 'relay',
+      inventory: '{"devices":[]}',
+      version: '9.9.9',
+      directCapable: true,
+      name: 'studio',
+    });
   });
 
   test('KIND_CANONICAL_EVENT SourceGap resource_exhausted yields rebase-required', () => {

@@ -178,6 +178,7 @@ export class UplinkClient {
   private catchUpChain: Promise<void> = Promise.resolve();
   private catchUpAbort: AbortController | null = null;
   private readonly catchUpTasks = new Map<number, Set<Promise<void>>>();
+  private readonly applierTasks = new Map<number, Set<Promise<unknown>>>();
   private readonly catchUpCancels = new Set<() => void>();
   private pendingKeyLog: {
     id: string;
@@ -247,6 +248,7 @@ export class UplinkClient {
     }
     const effective = signal ?? this.stopAbort.signal;
     const previousGeneration = this.connectGeneration;
+    const previousApplier = [...(this.applierTasks.get(previousGeneration) ?? [])];
     const previousTasks = [...(this.catchUpTasks.get(previousGeneration) ?? [])];
     this.abortCatchUp();
     this.resetConnectionState();
@@ -255,6 +257,12 @@ export class UplinkClient {
     this.link = link;
     this.bindLink(link, generation);
     const authP = this.authenticate(link, effective);
+    if (previousApplier.length > 0) {
+      await Promise.race([
+        Promise.allSettled(previousApplier),
+        this.scheduler.sleep(this.keyLogTimeoutMs),
+      ]);
+    }
     if (previousTasks.length > 0) {
       await Promise.allSettled(previousTasks);
     }
@@ -503,6 +511,10 @@ export class UplinkClient {
           return;
         }
         this.pendingKeyLog = null;
+        if (msg.error === 'rate_limited') {
+          pending.reject(new Error('rate_limited'));
+          return;
+        }
         pending.resolve(msg.records);
         return;
       }
@@ -615,6 +627,19 @@ export class UplinkClient {
     return this.catchUpAliveCtx(ctx) && ctx.epoch === this.listEpoch;
   }
 
+  private trackApplier<T>(generation: number, work: Promise<T>): Promise<T> {
+    let set = this.applierTasks.get(generation);
+    if (!set) {
+      set = new Set();
+      this.applierTasks.set(generation, set);
+    }
+    set.add(work);
+    return work.finally(() => {
+      set.delete(work);
+      if (set.size === 0) this.applierTasks.delete(generation);
+    });
+  }
+
   private trackCatchUp(generation: number, work: Promise<void>): Promise<void> {
     let set = this.catchUpTasks.get(generation);
     if (!set) {
@@ -700,7 +725,10 @@ export class UplinkClient {
     let local: { seq: bigint; hash: Uint8Array } | null = null;
     while (this.catchUpCurrent(ctx)) {
       try {
-        local = await this.awaitCatchUp(ctx, this.keyLogApplier.head(ctx.userId));
+        local = await this.awaitCatchUp(
+          ctx,
+          this.trackApplier(ctx.generation, this.keyLogApplier.head(ctx.userId, ctx.signal))
+        );
         if (!this.catchUpCurrent(ctx)) return;
         break;
       } catch (err) {
@@ -788,9 +816,13 @@ export class UplinkClient {
       try {
         result = await this.awaitCatchUp(
           ctx,
-          this.keyLogApplier.applyMany(
-            ctx.userId,
-            sorted.map((row) => ({ bytes: row.bytes, sig: row.sig }))
+          this.trackApplier(
+            ctx.generation,
+            this.keyLogApplier.applyMany(
+              ctx.userId,
+              sorted.map((row) => ({ bytes: row.bytes, sig: row.sig })),
+              ctx.signal
+            )
           )
         );
       } catch (err) {
@@ -804,7 +836,10 @@ export class UplinkClient {
       }
       if (!this.catchUpAliveCtx(ctx)) return;
       try {
-        local = await this.awaitCatchUp(ctx, this.keyLogApplier.head(ctx.userId));
+        local = await this.awaitCatchUp(
+          ctx,
+          this.trackApplier(ctx.generation, this.keyLogApplier.head(ctx.userId, ctx.signal))
+        );
       } catch (err) {
         if (!this.catchUpAliveCtx(ctx)) return;
         if (ctx.epoch !== this.listEpoch) return;
@@ -937,7 +972,10 @@ export class UplinkClient {
     if (!this.catchUpCurrent(ctx)) return false;
     const listed = await this.awaitCatchUp(
       ctx,
-      this.keyLogApplier.list?.(ctx.userId, hubSeq + 1n) ?? Promise.resolve([])
+      this.trackApplier(
+        ctx.generation,
+        this.keyLogApplier.list?.(ctx.userId, hubSeq + 1n, ctx.signal) ?? Promise.resolve([])
+      )
     );
     if (!this.catchUpCurrent(ctx)) return false;
     if (!listed || listed.length === 0) return false;

@@ -477,7 +477,14 @@ export class LinkMux implements LinkSession {
       return Promise.reject(err instanceof Error ? err : new LinkError('protocol', message));
     }
     try {
-      return Promise.resolve(this.transport.send(encoded)).then(() => undefined);
+      return Promise.resolve(this.transport.send(encoded)).then(
+        () => undefined,
+        (err) => {
+          const message = err instanceof Error ? err.message : 'send error';
+          this.finishClose(message);
+          throw err instanceof Error ? err : new LinkError('closed', message);
+        }
+      );
     } catch (err) {
       const message = err instanceof Error ? err.message : 'send error';
       this.finishClose(message);

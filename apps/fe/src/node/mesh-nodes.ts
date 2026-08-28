@@ -48,7 +48,9 @@ export function patchNodesWithEvent(nodes: MeshNode[], event: NodeEventPayload):
       online,
       reach: online ? event.reach : null,
       inventory: event.inventory ?? node.inventory,
-      version: versionOf(event.inventory) ?? node.version,
+      version: event.version ?? versionOf(event.inventory) ?? node.version,
+      direct_capable: event.direct_capable ?? node.direct_capable,
+      name: event.name ?? node.name,
     } satisfies MeshNode;
   });
   return changed ? next : nodes;

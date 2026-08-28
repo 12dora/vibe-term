@@ -17,6 +17,7 @@ export const EnvelopeSchema = b.struct({
 export const OptionU32Schema = b.option(b.u32());
 export const OptionU16Schema = b.option(b.u16());
 export const OptionStringSchema = b.option(b.string());
+export const OptionBoolSchema = b.option(b.bool());
 
 // ========== 会话/协商 ==========
 
@@ -465,12 +466,69 @@ export const RTC_SIGNAL_FROM_NODE = 1;
 export const CARRIER_SWITCH_TO_DIRECT = 0;
 export const CARRIER_SWITCH_TO_PRIMARY = 1;
 
-export const NodeEventSchema = b.struct({
+export const NodeEventLegacySchema = b.struct({
   nodeId: b.string(),
   status: b.u8(),
   reach: OptionStringSchema,
   inventory: OptionStringSchema,
 });
+
+export const NodeEventSchema = b.struct({
+  nodeId: b.string(),
+  status: b.u8(),
+  reach: OptionStringSchema,
+  inventory: OptionStringSchema,
+  version: OptionStringSchema,
+  directCapable: OptionBoolSchema,
+  name: OptionStringSchema,
+});
+
+export type NodeEventWire = {
+  nodeId: string;
+  status: number;
+  reach: string | null;
+  inventory: string | null;
+  version: string | null;
+  directCapable: boolean | null;
+  name: string | null;
+};
+
+export function encodeNodeEvent(data: {
+  nodeId: string;
+  status: number;
+  reach?: string | null;
+  inventory?: string | null;
+  version?: string | null;
+  directCapable?: boolean | null;
+  name?: string | null;
+}): Uint8Array {
+  return NodeEventSchema.serialize({
+    nodeId: data.nodeId,
+    status: data.status,
+    reach: data.reach ?? null,
+    inventory: data.inventory ?? null,
+    version: data.version ?? null,
+    directCapable: data.directCapable ?? null,
+    name: data.name ?? null,
+  });
+}
+
+export function decodeNodeEvent(bytes: Uint8Array): NodeEventWire {
+  try {
+    return NodeEventSchema.deserialize(bytes);
+  } catch {
+    const legacy = NodeEventLegacySchema.deserialize(bytes);
+    return {
+      nodeId: legacy.nodeId,
+      status: legacy.status,
+      reach: legacy.reach,
+      inventory: legacy.inventory,
+      version: null,
+      directCapable: null,
+      name: null,
+    };
+  }
+}
 
 export const RtcSignalSchema = b.struct({
   rtcSession: b.string(),

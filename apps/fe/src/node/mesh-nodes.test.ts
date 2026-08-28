@@ -94,6 +94,22 @@ describe('patchNodesWithEvent', () => {
     });
     expect(next).toBe(nodes);
   });
+
+  test('NODE_EVENT 更新 version / direct_capable / name', () => {
+    const next = patchNodesWithEvent(nodes, {
+      nodeId: 'a',
+      status: 'online',
+      reach: 'lan',
+      inventory: null,
+      version: '2.3.4',
+      direct_capable: true,
+      name: 'studio',
+    });
+    expect(next[0].version).toBe('2.3.4');
+    expect(next[0].direct_capable).toBe(true);
+    expect(next[0].name).toBe('studio');
+    expect(next[1]).toBe(nodes[1]);
+  });
 });
 
 describe('sortNodes', () => {

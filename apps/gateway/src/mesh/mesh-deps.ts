@@ -56,6 +56,9 @@ export type NodeEventPayload = {
   status: NodeEventStatus;
   reach?: PeerReachKind;
   inventory?: string | null;
+  version?: string | null;
+  direct_capable?: boolean;
+  name?: string;
 };
 
 export type PeerLinkProvider = {

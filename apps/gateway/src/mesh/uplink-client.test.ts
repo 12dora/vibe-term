@@ -1371,11 +1371,17 @@ describe('UplinkClient', () => {
       identity: { nodeId: 'ab'.repeat(16), edSecretKey: randomBytes(32) },
       userId: 'user-1',
       keyLogApplier: {
-        async head() {
+        async head(_userId, signal) {
           headCalls += 1;
           if (headCalls === 1) {
             await new Promise<void>((resolve) => {
               hungHead.release = resolve;
+              const onAbort = () => resolve();
+              if (signal?.aborted) {
+                resolve();
+                return;
+              }
+              signal?.addEventListener('abort', onAbort, { once: true });
             });
           }
           return { seq: 0n, hash: hash0 };
@@ -1457,10 +1463,16 @@ describe('UplinkClient', () => {
         async applyMany() {
           return { applied: 0 };
         },
-        async list() {
+        async list(_userId, _fromSeq, signal) {
           listCalls += 1;
           await new Promise<void>((resolve) => {
             hungList.release = resolve;
+            const onAbort = () => resolve();
+            if (signal?.aborted) {
+              resolve();
+              return;
+            }
+            signal?.addEventListener('abort', onAbort, { once: true });
           });
           return [rec];
         },
@@ -1504,6 +1516,112 @@ describe('UplinkClient', () => {
     hungList.release();
     await new Promise((resolve) => setTimeout(resolve, 50));
     expect(secondReceived.some((row) => row.includes('key.log.append'))).toBe(false);
+  });
+
+  test('aborted applyMany stops mid-batch and reconnect waits for the in-flight commit', async () => {
+    const { db, close } = createMigratedAuthDb();
+    fixtures.push({ close });
+    const userStore = new UserStore(db);
+    seedUser(userStore);
+    const hash0 = new Uint8Array(32);
+    let committed = 0;
+    let inFlight = 0;
+    let maxInFlight = 0;
+    let releaseApply: () => void = () => {};
+    const applyGate = {
+      wait: new Promise<void>((resolve) => {
+        releaseApply = resolve;
+      }),
+    };
+    const applier: KeyLogApplier = {
+      async head() {
+        return { seq: BigInt(committed), hash: hash0 };
+      },
+      async applyMany(_userId, records, signal) {
+        inFlight += 1;
+        maxInFlight = Math.max(maxInFlight, inFlight);
+        for (const _record of records) {
+          if (signal?.aborted) {
+            inFlight -= 1;
+            return { applied: committed, error: 'aborted' };
+          }
+          committed += 1;
+          if (committed === 1) await applyGate.wait;
+          if (signal?.aborted) {
+            inFlight -= 1;
+            return { applied: committed, error: 'aborted' };
+          }
+        }
+        inFlight -= 1;
+        return { applied: committed };
+      },
+    };
+    const [clientWs, hubWs] = fakeSocketPair();
+    const hub = new WebSocketLink(hubWs, { role: 'acceptor' });
+    const received: string[] = [];
+    hub.ctl.onMessage((bytes) => {
+      received.push(new TextDecoder().decode(bytes));
+    });
+    const client = new UplinkClient({
+      hubUrl: 'https://hub.example.com',
+      identity: { nodeId: 'ab'.repeat(16), edSecretKey: randomBytes(32) },
+      userId: 'user-1',
+      keyLogApplier: applier,
+      userStore,
+      statusProvider: () => status(),
+      keyLogTimeoutMs: 2_000,
+    });
+    fixtures.push({ close, stop: () => client.stop() });
+    const firstLink = new WebSocketLink(clientWs, { role: 'initiator' });
+    const first = client.connectWithLink(firstLink);
+    hub.ctl.send(encodeUplinkCtl({ t: 'auth.challenge', nonce: encodeBase64url(randomBytes(32)) }));
+    hub.ctl.send(encodeUplinkCtl({ t: 'auth.ok' }));
+    await first;
+    hub.ctl.send(
+      encodeUplinkCtl({
+        t: 'node.list',
+        version: 1,
+        key_log_head: { seq: 3n, hash: new Uint8Array(32).fill(3) },
+        rtc: { stun: [], turn: null },
+        nodes: [],
+      })
+    );
+    await waitUntil(() => received.some((row) => row.includes('key.log.req')));
+    const firstReq = JSON.parse(received.find((row) => row.includes('key.log.req')) ?? '{}') as {
+      id?: string;
+    };
+    hub.ctl.send(
+      encodeUplinkCtl({
+        t: 'key.log.res',
+        records: [
+          { seq: 1n, bytes: randomBytes(8), sig: randomBytes(64) },
+          { seq: 2n, bytes: randomBytes(8), sig: randomBytes(64) },
+          { seq: 3n, bytes: randomBytes(8), sig: randomBytes(64) },
+        ],
+        ...(firstReq.id ? { id: firstReq.id } : {}),
+      })
+    );
+    await waitUntil(() => committed === 1);
+
+    const [nextClientWs, nextHubWs] = fakeSocketPair();
+    const nextHub = new WebSocketLink(nextHubWs, { role: 'acceptor' });
+    nextHub.ctl.onMessage(() => {});
+    const nextLink = new WebSocketLink(nextClientWs, { role: 'initiator' });
+    let reconnectSettled = false;
+    const second = client.connectWithLink(nextLink).finally(() => {
+      reconnectSettled = true;
+    });
+    nextHub.ctl.send(
+      encodeUplinkCtl({ t: 'auth.challenge', nonce: encodeBase64url(randomBytes(32)) })
+    );
+    nextHub.ctl.send(encodeUplinkCtl({ t: 'auth.ok' }));
+    await new Promise((resolve) => setTimeout(resolve, 40));
+    expect(reconnectSettled).toBe(false);
+    expect(committed).toBe(1);
+    releaseApply();
+    await second;
+    expect(committed).toBe(1);
+    expect(maxInFlight).toBe(1);
   });
 
   test('replacing an online connection leaves online immediately and gates outbound and inbound OPEN', async () => {

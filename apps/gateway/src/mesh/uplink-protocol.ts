@@ -71,7 +71,12 @@ export type UplinkNodeList = {
 
 export type UplinkKeyLogReq = { t: 'key.log.req'; from_seq: bigint; id?: string };
 export type UplinkKeyLogRecord = { seq: bigint; bytes: Uint8Array; sig: Uint8Array };
-export type UplinkKeyLogRes = { t: 'key.log.res'; records: UplinkKeyLogRecord[]; id?: string };
+export type UplinkKeyLogRes = {
+  t: 'key.log.res';
+  records: UplinkKeyLogRecord[];
+  id?: string;
+  error?: string;
+};
 export type UplinkKeyLogAppend = {
   t: 'key.log.append';
   bytes: Uint8Array;
@@ -282,6 +287,8 @@ export function decodeUplinkCtl(bytes: Uint8Array): UplinkCtlMessage {
       };
       const resId = optionalString(parsed.id, 'id');
       if (resId) res.id = resId;
+      const resError = optionalString(parsed.error, 'error');
+      if (resError) res.error = resError;
       return res;
     }
     case 'key.log.append': {
@@ -387,6 +394,7 @@ export function encodeUplinkCtl(msg: UplinkCtlMessage): Uint8Array {
           sig: encodeBase64url(row.sig),
         })),
         ...(msg.id ? { id: msg.id } : {}),
+        ...(msg.error ? { error: msg.error } : {}),
       });
     case 'key.log.append':
       return encodeCtlMessage({

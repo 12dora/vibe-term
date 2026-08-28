@@ -20,8 +20,11 @@ function nodeEventFrame(payload: {
   status: number;
   reach: string | null;
   inventory: string | null;
+  version?: string | null;
+  directCapable?: boolean | null;
+  name?: string | null;
 }): Uint8Array {
-  const body = wsBorsh.encodePayload(wsBorsh.schema.NodeEventSchema, payload);
+  const body = wsBorsh.encodeNodeEvent(payload);
   return wsBorsh.encodeEnvelope(wsBorsh.KIND_NODE_EVENT, body, 1);
 }
 
@@ -110,6 +113,9 @@ describe('decodeMeshFrame', () => {
         status: 'online',
         reach: 'relay',
         inventory: { version: '1.0.0' },
+        version: null,
+        direct_capable: false,
+        name: null,
       } satisfies NodeEventPayload,
     });
   });
@@ -183,7 +189,7 @@ describe('decodeMeshFrame', () => {
   });
 
   test('协议版本不符整帧作废', () => {
-    const body = wsBorsh.encodePayload(wsBorsh.schema.NodeEventSchema, {
+    const body = wsBorsh.encodeNodeEvent({
       nodeId: 'a',
       status: 0,
       reach: null,

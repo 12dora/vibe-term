@@ -1039,17 +1039,23 @@ describe('UplinkServer', () => {
         sendCtl(node.nodeLink, { t: 'key.log.req', from_seq: 1, id: `req-${i}` });
       }
       let got = 0;
+      const responses: UplinkCtlMessage[] = [];
       const deadline = Date.now() + 1_000;
       while (Date.now() < deadline && got < 21) {
         try {
           const msg = await node.inbox.take(40);
-          if (msg.t === 'key.log.res') got += 1;
+          if (msg.t === 'key.log.res') {
+            got += 1;
+            responses.push(msg);
+          }
         } catch {
           break;
         }
       }
       expect(listCalls).toBe(20);
-      expect(got).toBe(20);
+      expect(got).toBe(21);
+      const last = responses[responses.length - 1];
+      expect(last && last.t === 'key.log.res' ? last.error : undefined).toBe('rate_limited');
       server.stop();
     } finally {
       close();
@@ -1194,6 +1200,25 @@ describe('UplinkServer', () => {
       }
     }
     expect(allowed).toBe(HUB_KEY_LOG_REQ_STATE_MAX * HUB_KEY_LOG_REQ_BURST + HUB_KEY_LOG_REQ_BURST);
-    expect(limiter.size).toBe(HUB_KEY_LOG_REQ_STATE_MAX);
+    expect(limiter.size).toBeGreaterThan(HUB_KEY_LOG_REQ_STATE_MAX);
+  });
+
+  test('overflow limiter is TTL-bounded, node-fair, and counted in size', () => {
+    const limiter = new KeyLogReqLimiter({ max: 2, ttlMs: 1_000, burst: 2, ratePerMin: 0 });
+    const t0 = 1_000;
+    expect(limiter.take('n1', 'user-a', t0)).toBe(true);
+    expect(limiter.take('n2', 'user-a', t0)).toBe(true);
+    expect(limiter.take('n3', 'user-a', t0)).toBe(true);
+    expect(limiter.take('n4', 'user-b', t0)).toBe(true);
+    expect(limiter.size).toBeGreaterThan(2);
+    expect(limiter.overflowUsers).toBeGreaterThan(0);
+
+    expect(limiter.take('n3', 'user-a', t0)).toBe(true);
+    expect(limiter.take('n3', 'user-a', t0)).toBe(false);
+    expect(limiter.take('n4', 'user-b', t0)).toBe(true);
+    expect(limiter.denied).toBeGreaterThan(0);
+
+    limiter.take('n3', 'user-a', t0 + 2_000);
+    expect(limiter.overflowUsers).toBe(0);
   });
 });
