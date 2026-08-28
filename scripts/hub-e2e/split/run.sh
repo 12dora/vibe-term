@@ -83,7 +83,8 @@ wait_local_healthy() {
 
 wait_remote_hub() {
   local n=0
-  while (( n < 90 )); do
+  local max=$(( ${TMEX_E2E_HEALTH_TIMEOUT:-600} / 2 ))
+  while (( n < max )); do
     if rssh "docker exec tmex-split-hub curl -fsS -m 2 http://127.0.0.1:9883/healthz" >/dev/null 2>&1; then
       return 0
     fi

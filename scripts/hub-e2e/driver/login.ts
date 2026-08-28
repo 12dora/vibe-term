@@ -22,12 +22,14 @@ import {
   parseArgs,
   requireArg,
 } from './lib.ts';
+import { resolveTotpCode, totpLoginField } from './totp.ts';
 
 interface AuthMode {
   mode?: string;
   nodeId?: string;
   uid?: string | null;
   username?: string | null;
+  totpEnabled?: boolean;
   kdfParams?: {
     salt: string;
     memory_kib: number;
@@ -39,9 +41,31 @@ interface AuthMode {
   hubPublicUrl?: string | null;
 }
 
+function loginBody(
+  login: Parameters<typeof encodeLogin>[0],
+  sessSk: Uint8Array,
+  del: { bytes: Uint8Array; sig: Uint8Array },
+  seed: Uint8Array,
+  uid: string,
+  rootEpoch: number,
+  totpCodeValue: string | undefined
+): Record<string, unknown> {
+  const body: Record<string, unknown> = {
+    login: encodeBase64url(encodeLogin(login)),
+    sig: encodeBase64url(signLogin(sessSk, login)),
+    delegation: encodeBase64url(del.bytes),
+    delegation_sig: encodeBase64url(del.sig),
+  };
+  if (totpCodeValue) {
+    body.totp = totpLoginField(seed, uid, rootEpoch, totpCodeValue);
+  }
+  return body;
+}
+
 async function loginSelf(
   baseUrl: string,
-  password: string
+  password: string,
+  totpCodeValue?: string
 ): Promise<{ state: LoginState; mode: AuthMode }> {
   const modeRes = await apiFetch(baseUrl, '/api/auth/mode');
   if (!modeRes.res.ok) {
@@ -82,12 +106,9 @@ async function loginSelf(
   });
   const loginRes = await apiFetch(baseUrl, '/api/auth/login', {
     method: 'POST',
-    body: JSON.stringify({
-      login: encodeBase64url(encodeLogin(login)),
-      sig: encodeBase64url(signLogin(sess.secretKey, login)),
-      delegation: encodeBase64url(del.bytes),
-      delegation_sig: encodeBase64url(del.sig),
-    }),
+    body: JSON.stringify(
+      loginBody(login, sess.secretKey, del, seed, mode.uid, mode.rootEpoch ?? 0, totpCodeValue)
+    ),
   });
   if (!loginRes.res.ok) {
     throw new Error(`POST /api/auth/login ${loginRes.res.status}: ${loginRes.text}`);
@@ -114,7 +135,8 @@ async function loginRemote(
   targetNodeId: string,
   cookies: CookieMap,
   uid: string,
-  entryNodeId: string
+  entryNodeId: string,
+  totpCodeValue?: string
 ): Promise<CookieMap> {
   const seedMode = await apiFetch(baseUrl, '/api/auth/mode', { cookies });
   const mode = seedMode.json as AuthMode;
@@ -140,9 +162,7 @@ async function loginRemote(
     body: JSON.stringify({ uid }),
   });
   if (!ch.res.ok) {
-    throw new Error(
-      `POST /n/${targetNodeId}/api/auth/challenge ${ch.res.status}: ${ch.text}`
-    );
+    throw new Error(`POST /n/${targetNodeId}/api/auth/challenge ${ch.res.status}: ${ch.text}`);
   }
   const challenge = ch.json as { challenge_id: string; nonce: string; nodePk: string };
   const login = buildLogin({
@@ -156,15 +176,14 @@ async function loginRemote(
   const loginRes = await apiFetch(baseUrl, `/n/${targetNodeId}/api/auth/login`, {
     method: 'POST',
     cookies,
-    body: JSON.stringify({
-      login: encodeBase64url(encodeLogin(login)),
-      sig: encodeBase64url(signLogin(sess.secretKey, login)),
-      delegation: encodeBase64url(del.bytes),
-      delegation_sig: encodeBase64url(del.sig),
-    }),
+    body: JSON.stringify(
+      loginBody(login, sess.secretKey, del, seed, uid, mode.rootEpoch ?? 0, totpCodeValue)
+    ),
   });
   if (!loginRes.res.ok) {
-    throw new Error(`POST /n/${targetNodeId}/api/auth/login ${loginRes.res.status}: ${loginRes.text}`);
+    throw new Error(
+      `POST /n/${targetNodeId}/api/auth/login ${loginRes.res.status}: ${loginRes.text}`
+    );
   }
   const cookieName = `tmex_s_${targetNodeId}`;
   if (!loginRes.cookies[cookieName]) {
@@ -179,15 +198,28 @@ const password = requireArg(args, 'password');
 const username = typeof args.username === 'string' ? args.username : 'alice';
 const target = typeof args['target-node-id'] === 'string' ? args['target-node-id'] : '';
 const outPath = typeof args.out === 'string' ? args.out : '';
+const totpCodeValue = resolveTotpCode({
+  totp: args.totp,
+  totpSecret: args['totp-secret'],
+  envTotp: process.env.TMEX_TOTP,
+});
 
-const { state, mode } = await loginSelf(baseUrl, password);
+const { state, mode } = await loginSelf(baseUrl, password, totpCodeValue);
 if (mode.username && mode.username !== username) {
   throw new Error(`mode.username=${mode.username} !== ${username}`);
 }
 
 let cookies = state.cookies;
 if (target) {
-  cookies = await loginRemote(baseUrl, password, target, cookies, state.uid, state.nodeId);
+  cookies = await loginRemote(
+    baseUrl,
+    password,
+    target,
+    cookies,
+    state.uid,
+    state.nodeId,
+    totpCodeValue
+  );
 }
 
 const result: LoginState & { mode: AuthMode } = {

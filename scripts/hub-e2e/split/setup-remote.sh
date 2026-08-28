@@ -16,7 +16,8 @@ log() { printf '[split-remote] %s\n' "$*"; }
 wait_healthy() {
   local svc="$1"
   local n=0
-  while (( n < 90 )); do
+  local max=$(( ${TMEX_E2E_HEALTH_TIMEOUT:-600} / 2 ))
+  while (( n < max )); do
     local cid
     cid="$("${COMPOSE[@]}" ps -q "${svc}" 2>/dev/null || true)"
     if [[ -n "${cid}" ]] && docker exec "${cid}" curl -fsS -m 2 http://127.0.0.1:9883/healthz >/dev/null 2>&1; then

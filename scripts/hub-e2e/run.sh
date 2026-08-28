@@ -103,7 +103,11 @@ cli() {
   # 认证命令必须直接跑 Bun runtime/cli-auth.js。
   # node dist/cli-node.js 会再 spawn bun，但在本容器里子进程 stdout 被吞掉，
   # enroll 的 join token 因此写不进日志。
-  docker exec -e TMEX_PASSWORD="${PASSWORD}" -e NODE_EXTRA_CA_CERTS=/ca/ca.crt \
+  local -a env_flags=(-e "TMEX_PASSWORD=${PASSWORD}" -e NODE_EXTRA_CA_CERTS=/ca/ca.crt)
+  if [[ -n "${TMEX_PASSWORD_OLD:-}" ]]; then
+    env_flags+=(-e "TMEX_PASSWORD_OLD=${TMEX_PASSWORD_OLD}")
+  fi
+  docker exec "${env_flags[@]}" \
     "tmex-e2e-${svc}" \
     bun /opt/tmex/runtime/cli-auth.js "$@" --install-dir /opt/tmex
 }
@@ -112,11 +116,15 @@ cli() {
 driver() {
   local name="$1"
   local bundled="${ROOT}/driver-dist/${name%.ts}.js"
+  local -a env_flags=(-e NODE_EXTRA_CA_CERTS=/ca/ca.crt)
+  if [[ -n "${TMEX_TOTP:-}" ]]; then
+    env_flags+=(-e "TMEX_TOTP=${TMEX_TOTP}")
+  fi
   if [[ -f "${bundled}" ]]; then
-    docker exec -w /workspace -e NODE_EXTRA_CA_CERTS=/ca/ca.crt \
+    docker exec -w /workspace "${env_flags[@]}" \
       tmex-e2e-driver bun "/workspace/scripts/hub-e2e/driver-dist/${name%.ts}.js" "${@:2}"
   else
-    docker exec -w /workspace -e NODE_EXTRA_CA_CERTS=/ca/ca.crt \
+    docker exec -w /workspace "${env_flags[@]}" \
       tmex-e2e-driver bun /workspace/scripts/hub-e2e/driver/"${name}" "${@:2}"
   fi
 }
@@ -622,6 +630,93 @@ else
   else
     fail "8 native files present but direct_capable did not flip: ${direct_out}"
   fi
+fi
+
+# ---------- scenario 9 TOTP ----------
+set +e
+totp_out="$(cli hub hub user totp "${USER_NAME}" 2>&1)"
+totp_rc=$?
+set -e
+printf '%s\n' "${totp_out}" | tee "${OUT}/hub-user-totp.log"
+TOTP_URI="$(printf '%s\n' "${totp_out}" | grep -Eo 'otpauth://totp/[^[:space:]]+' | tail -n1 || true)"
+TOTP_SECRET=""
+if [[ -n "${TOTP_URI}" ]]; then
+  TOTP_SECRET="$(printf '%s\n' "${TOTP_URI}" | sed -n 's/.*[?&]secret=\([^&]*\).*/\1/p')"
+fi
+if [[ "${totp_rc}" -eq 0 && -n "${TOTP_SECRET}" ]]; then
+  pass "9a hub user totp ${USER_NAME}"
+else
+  fail "9a hub user totp ${USER_NAME} (rc=${totp_rc})"
+fi
+
+set +e
+missing_out="$(driver login.ts --base-url https://hub.tmex.test --username "${USER_NAME}" --password "${PASSWORD}" \
+  --out /out/cookies-hub-totp-missing.json 2>&1)"
+missing_rc=$?
+set -e
+printf '%s\n' "${missing_out}" | tee "${OUT}/login-totp-missing.log"
+if [[ "${missing_rc}" -ne 0 ]] && echo "${missing_out}" | grep -q 'TOTP_REQUIRED'; then
+  pass "9b login without totp fails TOTP_REQUIRED"
+else
+  fail "9b login without totp fails TOTP_REQUIRED (rc=${missing_rc})"
+fi
+
+set +e
+wrong_out="$(driver login.ts --base-url https://hub.tmex.test --username "${USER_NAME}" --password "${PASSWORD}" \
+  --totp 000000 --out /out/cookies-hub-totp-wrong.json 2>&1)"
+wrong_rc=$?
+set -e
+printf '%s\n' "${wrong_out}" | tee "${OUT}/login-totp-wrong.log"
+if [[ "${wrong_rc}" -ne 0 ]] && echo "${wrong_out}" | grep -q 'TOTP_INVALID'; then
+  pass "9c login with wrong totp fails TOTP_INVALID"
+else
+  fail "9c login with wrong totp fails TOTP_INVALID (rc=${wrong_rc})"
+fi
+
+set +e
+driver login.ts --base-url https://hub.tmex.test --username "${USER_NAME}" --password "${PASSWORD}" \
+  --totp-secret "${TOTP_SECRET}" --out /out/cookies-hub.json
+ok_totp_rc=$?
+mode_totp="$(curl_hub https://hub.tmex.test/api/auth/mode)"
+mode_totp_rc=$?
+set -e
+printf '%s\n' "${mode_totp}" | tee "${OUT}/auth-mode-totp.json"
+if [[ "${ok_totp_rc}" -eq 0 && "${mode_totp_rc}" -eq 0 ]] \
+  && echo "${mode_totp}" | grep -q '"totpEnabled":true'; then
+  pass "9d login with totp succeeds, totpEnabled=true"
+else
+  fail "9d login with totp succeeds, totpEnabled=true (rc=${ok_totp_rc} mode=${mode_totp})"
+fi
+
+NEW_PASSWORD="${PASSWORD}-rot"
+set +e
+passwd_out="$(
+  TMEX_PASSWORD_OLD="${PASSWORD}" PASSWORD="${NEW_PASSWORD}" \
+    cli hub hub user passwd "${USER_NAME}" 2>&1
+)"
+passwd_rc=$?
+set -e
+printf '%s\n' "${passwd_out}" | tee "${OUT}/hub-user-passwd.log"
+if [[ "${passwd_rc}" -eq 0 ]] && echo "${passwd_out}" | grep -q "password updated for ${USER_NAME}"; then
+  pass "9e hub user passwd ${USER_NAME}"
+  PASSWORD="${NEW_PASSWORD}"
+else
+  fail "9e hub user passwd ${USER_NAME} (rc=${passwd_rc})"
+fi
+
+set +e
+driver login.ts --base-url https://hub.tmex.test --username "${USER_NAME}" --password "${PASSWORD}" \
+  --out /out/cookies-hub.json
+clear_rc=$?
+mode_clear="$(curl_hub https://hub.tmex.test/api/auth/mode)"
+mode_clear_rc=$?
+set -e
+printf '%s\n' "${mode_clear}" | tee "${OUT}/auth-mode-after-passwd.json"
+if [[ "${clear_rc}" -eq 0 && "${mode_clear_rc}" -eq 0 ]] \
+  && echo "${mode_clear}" | grep -q '"totpEnabled":false'; then
+  pass "9f login after rotate-root without totp, totpEnabled=false"
+else
+  fail "9f login after rotate-root without totp (rc=${clear_rc} mode=${mode_clear})"
 fi
 
 write_report
