@@ -24,6 +24,45 @@ function normalizeThemePreset(value: unknown): ThemePreset | null {
   return isThemePreset(value) ? value : null;
 }
 
+interface PersistedThemeState {
+  theme?: 'light' | 'dark';
+  themePreset?: ThemePreset | null;
+}
+
+/** 从持久化 JSON 中取外观/预设；缺字段即「未写过」，不参与同步（区别于显式的 null 预设） */
+function readPersistedThemeState(raw: string | null): PersistedThemeState {
+  if (!raw) {
+    return {};
+  }
+  let state: Record<string, unknown>;
+  try {
+    const parsed = JSON.parse(raw) as { state?: unknown } | null;
+    if (!parsed?.state || typeof parsed.state !== 'object') {
+      return {};
+    }
+    state = parsed.state as Record<string, unknown>;
+  } catch {
+    return {};
+  }
+
+  const snapshot: PersistedThemeState = {};
+  if (state.theme === 'light' || state.theme === 'dark') {
+    snapshot.theme = state.theme;
+  }
+  if ('themePreset' in state) {
+    snapshot.themePreset = normalizeThemePreset(state.themePreset);
+  }
+  return snapshot;
+}
+
+function readStorageItem(key: string): string | null {
+  try {
+    return localStorage.getItem(key);
+  } catch {
+    return null;
+  }
+}
+
 // 终端字体设置默认值（与 ghostty-terminal 内置默认保持一致）。
 const DEFAULT_TERMINAL_FONT_SIZE = 13;
 const DEFAULT_TERMINAL_LINE_HEIGHT = 1.2;
@@ -57,6 +96,8 @@ export interface UIState {
   setEditorSendWithEnter: (enabled: boolean) => void;
   setTheme: (theme: 'light' | 'dark') => void;
   setThemePreset: (preset: ThemePreset | null) => void;
+  /** 从共享的 localStorage 快照补齐外观/预设（同源另一标签页改过时用） */
+  syncThemeFromStorage: () => void;
   addEditorHistory: (text: string) => void;
   setEditorDraft: (draftKey: string, text: string) => void;
   removeEditorDraft: (draftKey: string) => void;
@@ -66,9 +107,11 @@ export interface UIState {
 }
 
 export function createUIStore(core: Pick<RuntimeCore, 'storagePrefix'>) {
-  return create<UIState>()(
+  const storageKey = `${core.storagePrefix}tmex-ui`;
+
+  const store = create<UIState>()(
     persist(
-      (set) => ({
+      (set, get) => ({
         sidebarCollapsed: false,
         sidebarTab: 'panes',
         sidebarDeviceExpanded: {},
@@ -94,6 +137,21 @@ export function createUIStore(core: Pick<RuntimeCore, 'storagePrefix'>) {
         setEditorSendWithEnter: (enabled) => set({ editorSendWithEnter: enabled }),
         setTheme: (theme) => set({ theme }),
         setThemePreset: (preset) => set({ themePreset: normalizeThemePreset(preset) }),
+        syncThemeFromStorage: () => {
+          const snapshot = readPersistedThemeState(readStorageItem(storageKey));
+          const state = get();
+          const patch: { theme?: 'light' | 'dark'; themePreset?: ThemePreset | null } = {};
+          if (snapshot.theme && snapshot.theme !== state.theme) {
+            patch.theme = snapshot.theme;
+          }
+          if (snapshot.themePreset !== undefined && snapshot.themePreset !== state.themePreset) {
+            patch.themePreset = snapshot.themePreset;
+          }
+          // 无差异不 set：同值回写会与另一标签页的监听互相触发
+          if (patch.theme !== undefined || patch.themePreset !== undefined) {
+            set(patch);
+          }
+        },
         setTerminalFontSize: (size) => set({ terminalFontSize: size }),
         setTerminalLineHeight: (height) => set({ terminalLineHeight: height }),
         setTerminalFontId: (fontId) => set({ terminalFontId: fontId }),
@@ -122,7 +180,7 @@ export function createUIStore(core: Pick<RuntimeCore, 'storagePrefix'>) {
           }),
       }),
       {
-        name: `${core.storagePrefix}tmex-ui`,
+        name: storageKey,
         // sidebarTab 不持久化：每次加载都回到默认 'panes'。
         partialize: (state) => ({
           sidebarCollapsed: state.sidebarCollapsed,
@@ -159,6 +217,25 @@ export function createUIStore(core: Pick<RuntimeCore, 'storagePrefix'>) {
       }
     )
   );
+
+  subscribeThemeStorageSync(store, storageKey);
+  return store;
 }
 
 export type UIStore = ReturnType<typeof createUIStore>;
+
+/**
+ * 同源多标签页共用一份 localStorage：另一标签页改了外观/预设后本页内存 store 仍是旧值，
+ * 随后到达的 S2C 外观帧会据此误判失配，把对方刚写入的预设清成 null 并回写覆盖。
+ */
+function subscribeThemeStorageSync(store: { getState: () => UIState }, storageKey: string): void {
+  if (typeof window === 'undefined' || typeof window.addEventListener !== 'function') {
+    return;
+  }
+  window.addEventListener('storage', (event: StorageEvent) => {
+    if (event.key !== storageKey) {
+      return;
+    }
+    store.getState().syncThemeFromStorage();
+  });
+}

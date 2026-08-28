@@ -54,6 +54,9 @@ export function createSiteStore(
   // 深色预设的 token 依赖 <html>.dark 才成立，留着会得到深底浅字的混搭。
   function syncThemeToUIStore(theme: ThemeMode): void {
     const uiStore = getUIStore();
+    // 同源另一标签页可能刚改过外观/预设：先把共享 localStorage 的最新值同步进内存，
+    // 失配清理才不会拿陈旧内存值把对方的选择擦掉并回写。
+    uiStore.getState().syncThemeFromStorage();
     const { theme: currentTheme, themePreset } = uiStore.getState();
     const patch: { theme?: ThemeMode; themePreset?: ThemePreset | null } = {};
     if (currentTheme !== theme) {
@@ -81,6 +84,12 @@ export function createSiteStore(
 
   function isLatestSettingsRequest(generation: number): boolean {
     return generation === settingsGeneration;
+  }
+
+  // 本地主题变更（切外观 / 选预设）立刻成为最新事实：在途 settings 响应回来时已是旧数据，
+  // 直接作废，否则它会把刚选的外观写回去并连带清掉预设。
+  function invalidateSettingsRequests(): void {
+    settingsGeneration += 1;
   }
 
   function writeThemeToLocalStorage(theme: ThemeMode): void {
@@ -162,11 +171,13 @@ export function createSiteStore(
       },
 
       updateTheme: (theme) => {
+        invalidateSettingsRequests();
         const current = get().settings;
         const nextSettings: SiteSettings = current
           ? { ...current, theme }
           : { ...DEFAULT_SETTINGS, theme };
-        set({ settings: nextSettings });
+        // 在途请求已作废，不会再有人复位 loading，这里一并落回
+        set({ settings: nextSettings, loading: false });
         syncThemeToUIStore(theme);
         writeThemeToLocalStorage(theme);
 

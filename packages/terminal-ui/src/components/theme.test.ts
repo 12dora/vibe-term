@@ -1,6 +1,11 @@
 import { describe, expect, mock, test } from 'bun:test';
 import { TERMINAL_THEME_DARK, TERMINAL_THEME_LIGHT, type TerminalThemeColors } from '@tmex/shared';
-import { applyTerminalTheme, resolveTerminalThemeProp } from './theme';
+import {
+  applyTerminalTheme,
+  attachTerminalWithLatestTheme,
+  resolveTerminalThemeProp,
+} from './theme';
+import type { TerminalTheme } from './types';
 
 const PRESET_COLORS: TerminalThemeColors = {
   ...TERMINAL_THEME_DARK,
@@ -41,5 +46,42 @@ describe('applyTerminalTheme', () => {
     expect(applyTerminalTheme(null, 'dark')).toBe(false);
     expect(applyTerminalTheme(undefined, 'dark')).toBe(false);
     expect(applyTerminalTheme({}, 'dark')).toBe(false);
+  });
+});
+
+describe('attachTerminalWithLatestTheme', () => {
+  test('建控制器期间换主题：实例就绪时补发最新配色', async () => {
+    const setTheme = mock((_theme: TerminalThemeColors) => {});
+    const terminal = { setTheme };
+    const ref: { current: typeof terminal | null } = { current: null };
+    const latestTheme: { current: TerminalTheme } = { current: TERMINAL_THEME_DARK };
+
+    let ready: (value: typeof terminal) => void = () => {};
+    const pending = new Promise<typeof terminal>((resolve) => {
+      ready = resolve;
+    });
+    const boot = pending.then((value) => attachTerminalWithLatestTheme(ref, value, latestTheme));
+
+    // 控制器还没建好时用户选了预设：增量 effect 此刻拿不到实例，空跑
+    latestTheme.current = PRESET_COLORS;
+    expect(applyTerminalTheme(ref.current, latestTheme.current)).toBe(false);
+
+    ready(terminal);
+    await boot;
+
+    expect(ref.current).toBe(terminal);
+    expect(setTheme).toHaveBeenCalledTimes(1);
+    expect(setTheme.mock.calls[0]?.[0]).toBe(PRESET_COLORS);
+  });
+
+  test('期间未换主题时下发建控制器时的配色', () => {
+    const setTheme = mock((_theme: TerminalThemeColors) => {});
+    const terminal = { setTheme };
+    const ref: { current: typeof terminal | null } = { current: null };
+
+    attachTerminalWithLatestTheme(ref, terminal, { current: TERMINAL_THEME_LIGHT });
+
+    expect(ref.current).toBe(terminal);
+    expect(setTheme.mock.calls[0]?.[0]).toBe(TERMINAL_THEME_LIGHT);
   });
 });

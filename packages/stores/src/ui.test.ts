@@ -176,3 +176,102 @@ describe('theme preset persistence', () => {
     expect(store.getState().themePreset).toBeNull();
   });
 });
+
+describe('cross-tab theme sync', () => {
+  type StorageHandler = (event: { key: string | null; newValue: string | null }) => void;
+
+  interface Tab {
+    store: ReturnType<typeof createUIStore>;
+    /** 模拟浏览器把另一标签页的写入投递给本页 */
+    receiveStorageEvent(key: string): void;
+  }
+
+  // 测试环境的 window 是内存垫片，没有事件系统：临时接管 addEventListener 收集监听器
+  function openTab(prefix: string): Tab {
+    const win = globalThis.window as unknown as {
+      addEventListener?: (type: string, handler: unknown) => void;
+    };
+    const original = win.addEventListener;
+    const handlers: StorageHandler[] = [];
+    win.addEventListener = (type: string, handler: unknown) => {
+      if (type === 'storage') handlers.push(handler as StorageHandler);
+    };
+    const store = createUIStore({ storagePrefix: prefix });
+    win.addEventListener = original;
+
+    return {
+      store,
+      receiveStorageEvent(key) {
+        for (const handler of handlers) {
+          handler({ key, newValue: storage.getItem(key) });
+        }
+      },
+    };
+  }
+
+  beforeEach(() => {
+    storage.clear();
+  });
+
+  test('另一标签页改的外观与预设会同步进本页 store', () => {
+    const prefix = `ui-theme-cross-tab-${Date.now()}-`;
+    const key = `${prefix}tmex-ui`;
+    storage.setItem(
+      key,
+      JSON.stringify({ state: { theme: 'dark', themePreset: null }, version: 0 })
+    );
+
+    const tab = openTab(prefix);
+    expect(tab.store.getState().themePreset).toBeNull();
+
+    storage.setItem(
+      key,
+      JSON.stringify({ state: { theme: 'light', themePreset: VALID_PRESET }, version: 0 })
+    );
+    tab.receiveStorageEvent(key);
+
+    expect(tab.store.getState().theme).toBe('light');
+    expect(tab.store.getState().themePreset).toBe(VALID_PRESET);
+  });
+
+  test('其它 key 的 storage 事件不影响本页', () => {
+    const prefix = `ui-theme-other-key-${Date.now()}-`;
+    const key = `${prefix}tmex-ui`;
+    const tab = openTab(prefix);
+    tab.store.getState().setThemePreset(VALID_PRESET);
+
+    storage.setItem(key, JSON.stringify({ state: { themePreset: null }, version: 0 }));
+    tab.receiveStorageEvent('unrelated-key');
+
+    expect(tab.store.getState().themePreset).toBe(VALID_PRESET);
+  });
+
+  test('另一标签页写入的非法预设按无预设处理', () => {
+    const prefix = `ui-theme-cross-tab-invalid-${Date.now()}-`;
+    const key = `${prefix}tmex-ui`;
+    const tab = openTab(prefix);
+    tab.store.getState().setThemePreset(VALID_PRESET);
+
+    storage.setItem(
+      key,
+      JSON.stringify({ state: { theme: 'dark', themePreset: 'underground' }, version: 0 })
+    );
+    tab.receiveStorageEvent(key);
+
+    expect(tab.store.getState().themePreset).toBeNull();
+  });
+
+  test('syncThemeFromStorage 忽略持久化里缺失的字段', () => {
+    const prefix = `ui-theme-partial-${Date.now()}-`;
+    const key = `${prefix}tmex-ui`;
+    const store = createUIStore({ storagePrefix: prefix });
+    store.getState().setThemePreset(VALID_PRESET);
+
+    // site store 的离线 fallback 只写 theme，不应被读成「预设已清空」
+    storage.setItem(key, JSON.stringify({ state: { theme: 'light' }, version: 0 }));
+    store.getState().syncThemeFromStorage();
+
+    expect(store.getState().theme).toBe('light');
+    expect(store.getState().themePreset).toBe(VALID_PRESET);
+  });
+});

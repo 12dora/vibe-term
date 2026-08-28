@@ -272,6 +272,51 @@ describe('useSiteStore theme preset', () => {
     expect(useUIStore.getState().themePreset).toBeNull();
   });
 
+  test('在途 fetchSettings 的旧 theme 不覆盖期间选中的预设', async () => {
+    const originalFetch = globalThis.fetch;
+    let release: () => void = () => {};
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const respond = siteSettingsResponse({ theme: 'dark' });
+    globalThis.fetch = mock(async (url: string | URL | Request) => {
+      await gate;
+      return respond(url);
+    }) as unknown as typeof globalThis.fetch;
+
+    try {
+      useUIStore.setState({ theme: 'dark', themePreset: null });
+      const pending = useSiteStore.getState().fetchSettings();
+
+      useSiteStore.getState().selectThemePreset(LIGHT_PRESET);
+      release();
+      const settings = await pending;
+
+      expect(settings.theme).toBe('light');
+      expect(useSiteStore.getState().settings?.theme).toBe('light');
+      expect(useSiteStore.getState().loading).toBe(false);
+      expect(useUIStore.getState().theme).toBe('light');
+      expect(useUIStore.getState().themePreset).toBe(LIGHT_PRESET);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  test('S2C 失配清理前先同步另一标签页写入的预设', () => {
+    // 另一标签页选了浅色预设并写进共享 localStorage，本页内存 store 还停在旧的深色预设；
+    // 若按内存值判定，随后到达的 light S2C 会把对方刚选的预设清成 null 并回写。
+    useUIStore.setState({ theme: 'dark', themePreset: DARK_PRESET });
+    localStorage.setItem(
+      TMEX_UI_KEY,
+      JSON.stringify({ state: { theme: 'light', themePreset: LIGHT_PRESET }, version: 0 })
+    );
+
+    useSiteStore.getState().setThemeFromS2C('light');
+
+    expect(useUIStore.getState().theme).toBe('light');
+    expect(useUIStore.getState().themePreset).toBe(LIGHT_PRESET);
+  });
+
   test('fetchSettings 拿到的外观与预设不符时清掉预设', async () => {
     const originalFetch = globalThis.fetch;
     globalThis.fetch = siteSettingsResponse({ theme: 'light' });

@@ -47,6 +47,20 @@ export function applyTerminalTheme(
   return true;
 }
 
+/**
+ * 控制器就绪后接管实例：写入 ref 的同时按最新配色再下发一次。
+ * createTerminalController 是异步的，await 期间的主题变更会被增量 effect 丢掉
+ * （彼时 ref.current 仍为 null），不补这一次实例会一直停在建控制器时的旧配色。
+ */
+export function attachTerminalWithLatestTheme<T extends ThemeableTerminal>(
+  ref: { current: T | null },
+  terminal: T,
+  latestTheme: { current: TerminalTheme }
+): void {
+  ref.current = terminal;
+  applyTerminalTheme(terminal, latestTheme.current);
+}
+
 // 内嵌字体逐字形兜底：等宽打底字体在前，符号字体其后，CJK 落到末尾 monospace 走系统。
 // 没有任何单一等宽字体能覆盖全部 TUI 符号，故拆成两层。family 名刻意不带空格，免去加引号。
 export const TERMINAL_EMBEDDED_FONT_FAMILIES = ['GeistMonoTmex', 'NotoSansSymbols2Tmex'];

@@ -9,7 +9,7 @@ import {
   scheduleTerminalDiagnosticSamples,
   useTerminalDiagnosticsReporter,
 } from './terminal-diagnostics';
-import { applyTerminalTheme } from './theme';
+import { applyTerminalTheme, attachTerminalWithLatestTheme } from './theme';
 
 // 写死的预览内容：~10 行带 ANSI 颜色、含中文/符号/Nerd 图标的代码块，
 // 用于整体预览字号、字体、行高效果。\r\n 为终端换行。
@@ -124,7 +124,7 @@ export function TerminalPreview({ className }: { className?: string }) {
         return;
       }
       reportTerminalDiagnostic(terminalDiagnosticsReporter, diagnosticArgs('opened', term));
-      termRef.current = term;
+      attachTerminalWithLatestTheme(termRef, term, terminalThemeRef);
       const fit = new FitAddon();
       term.loadAddon(fit);
       fitRef.current = fit;

@@ -148,6 +148,41 @@ describe('THEME_PRESET_META', () => {
     }
   });
 
+  // 抄调色板时最容易把 bright 槽整段复制成 normal 槽（tokyo-night-light 曾如此），
+  // 结果 ANSI 90-97 与 30-37 无法区分。Catppuccin 上游官方配色本就 1-6 与 9-14 同色，单独放行。
+  const MIRRORED_BRIGHT_PRESETS = new Set<string>(['catppuccin-mocha', 'catppuccin-latte']);
+
+  test('bright 六色不整体复制 normal 槽', () => {
+    const slots = ['Red', 'Green', 'Yellow', 'Blue', 'Magenta', 'Cyan'] as const;
+    for (const id of THEME_PRESETS) {
+      if (MIRRORED_BRIGHT_PRESETS.has(id)) continue;
+      const terminal = THEME_PRESET_META[id].terminal as unknown as Record<string, string>;
+      const duplicated = slots.filter(
+        (slot) => terminal[`bright${slot}`] === terminal[slot.toLowerCase()]
+      );
+      expect([id, duplicated.length < slots.length]).toEqual([id, true]);
+    }
+  });
+
+  test('tokyo-night-light 的 bright 槽取自上游 tokyonight_day', () => {
+    const { terminal } = THEME_PRESET_META['tokyo-night-light'];
+    expect({
+      brightRed: terminal.brightRed,
+      brightGreen: terminal.brightGreen,
+      brightYellow: terminal.brightYellow,
+      brightBlue: terminal.brightBlue,
+      brightMagenta: terminal.brightMagenta,
+      brightCyan: terminal.brightCyan,
+    }).toEqual({
+      brightRed: '#ff4774',
+      brightGreen: '#5c8524',
+      brightYellow: '#a27629',
+      brightBlue: '#358aff',
+      brightMagenta: '#a463ff',
+      brightCyan: '#007ea8',
+    });
+  });
+
   test('terminal 为完整 16 色 + fg/bg/cursor/selection', () => {
     const keys = Object.keys(TERMINAL_THEME_DARK);
     for (const id of THEME_PRESETS) {
