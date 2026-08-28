@@ -1,6 +1,8 @@
 import type {
   GhosttyCellDimensions,
   GhosttyColorRgb,
+  GhosttyRenderCell,
+  GhosttyRenderCellStyle,
   GhosttyRenderRow,
   GhosttyRenderSnapshotMeta,
   GhosttySelectionRect,
@@ -46,6 +48,40 @@ type CursorCell = {
   blinking: boolean;
 };
 
+type DeviceRect = {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+};
+
+function colorKey(color: GhosttyColorRgb): number {
+  return (color.r << 16) | (color.g << 8) | color.b;
+}
+
+function fontVariantIndex(style: GhosttyRenderCellStyle): number {
+  return (style.italic ? 1 : 0) | (style.bold ? 2 : 0);
+}
+
+function sameSelectionRects(
+  left: readonly GhosttySelectionRect[],
+  right: readonly GhosttySelectionRect[]
+): boolean {
+  if (left.length !== right.length) {
+    return false;
+  }
+
+  for (let index = 0; index < left.length; index += 1) {
+    const a = left[index];
+    const b = right[index];
+    if (a.row !== b.row || a.x !== b.x || a.width !== b.width) {
+      return false;
+    }
+  }
+
+  return true;
+}
+
 function colorToCss(color: GhosttyColorRgb): string {
   return `rgb(${color.r} ${color.g} ${color.b})`;
 }
@@ -72,6 +108,47 @@ const SHADE_ALPHA = new Map<number, number>([
 
 function isBlockElement(codepoint: number): boolean {
   return codepoint >= 0x2580 && codepoint <= 0x259f;
+}
+
+function isSpacerCell(cell: GhosttyRenderCell): boolean {
+  return cell.widthKind === 'spacer-tail' || cell.widthKind === 'spacer-head';
+}
+
+function hasVisibleGlyph(cell: GhosttyRenderCell): boolean {
+  return !isSpacerCell(cell) && cell.text !== '' && !cell.style.invisible;
+}
+
+// inverse 时前后景互换；缺省色回落到快照的默认前/背景。返回的都是已有实例，不分配。
+function cellForegroundColor(
+  cell: GhosttyRenderCell,
+  colors: GhosttyRenderSnapshotMeta['colors']
+): GhosttyColorRgb {
+  if (cell.style.inverse) {
+    return cell.bgColor ?? colors.background;
+  }
+
+  return cell.fgColor ?? colors.foreground;
+}
+
+function cellBackgroundColor(
+  cell: GhosttyRenderCell,
+  colors: GhosttyRenderSnapshotMeta['colors']
+): GhosttyColorRgb {
+  if (cell.style.inverse) {
+    return cell.fgColor ?? colors.foreground;
+  }
+
+  return cell.bgColor ?? colors.background;
+}
+
+// 只有「单码位且落在块元素区」的 cell 才自绘，其余交给字体。
+function blockElementCodepoint(cell: GhosttyRenderCell): number {
+  if (cell.codepoints.length !== 1) {
+    return -1;
+  }
+
+  const codepoint = cell.codepoints[0];
+  return isBlockElement(codepoint) ? codepoint : -1;
 }
 
 function ensureContext(canvas: HTMLCanvasElement): CanvasRenderingContext2D {
@@ -115,10 +192,15 @@ export class CanvasRenderer {
   private cols = 0;
   private rows = 0;
   private lastCursor: CursorCell | null = null;
+  private lastCursorRect: DeviceRect | null = null;
+  private lastCursorColor = '';
   private frameCount = 0;
   private lastDrawnRows: number[] = [];
-  private readonly colorCache = new Map<string, string>();
-  private readonly fontCache = new Map<string, string>();
+  private readonly colorCache = new Map<number, string>();
+  // 四种字形变体（regular / italic / bold / bold-italic），随 deviceFontSize 在 resize 内失效。
+  private fontVariants: (string | null)[] = [null, null, null, null];
+  private drawnSelectionRects: GhosttySelectionRect[] = [];
+  private drawnSelectionColor = '';
   private cursorBlinkVisible = true;
   private cursorBlinkTimer: ReturnType<typeof setInterval> | null = null;
 
@@ -168,7 +250,8 @@ export class CanvasRenderer {
     const wiped = this.resize(frame.meta.cols, frame.meta.rows);
     this.drawSelection(
       frame.selectionRects ?? [],
-      frame.selectionColor ?? this.theme.selectionBackground
+      frame.selectionColor ?? this.theme.selectionBackground,
+      wiped
     );
 
     // canvas 位图被 resize 清空 / 外部强制全画 → 必须忽略 dirty='clean' 早退，
@@ -176,7 +259,7 @@ export class CanvasRenderer {
     const effectiveDirty = wiped || frame.forceFull === true ? 'full' : frame.meta.dirty;
 
     if (effectiveDirty === 'clean') {
-      this.drawCursor(frame.meta);
+      this.drawCursor(frame.meta, wiped);
       return;
     }
 
@@ -213,7 +296,7 @@ export class CanvasRenderer {
       this.lastDrawnRows.push(row.y);
     }
 
-    this.drawCursor(frame.meta);
+    this.drawCursor(frame.meta, wiped);
   }
 
   getDebugState(): CanvasRendererDebugState {
@@ -230,8 +313,10 @@ export class CanvasRenderer {
     this.selectionCanvas.remove();
     this.cursorCanvas.remove();
     this.colorCache.clear();
-    this.fontCache.clear();
+    this.fontVariants = [null, null, null, null];
     this.lastCursor = null;
+    this.lastCursorRect = null;
+    this.drawnSelectionRects = [];
     this.stopCursorBlink();
   }
 
@@ -279,6 +364,7 @@ export class CanvasRenderer {
     this.deviceCellWidth = deviceCellWidth;
     this.deviceCellHeight = deviceCellHeight;
     this.deviceFontSize = this.fontSize * dpr;
+    this.fontVariants = [null, null, null, null];
     // 量真实字体度量（含升/降部的字形盒），把字形盒整体在 cell 内垂直居中。
     // baseline 用 alphabetic：盒高 ≤ cell 时 [topGap, topGap+ascent+descent] ⊆ [0, cellH]，
     // 升降部都不溢出，且用本引擎自报度量，跨平台自洽。
@@ -365,7 +451,19 @@ export class CanvasRenderer {
     this.linkContext.clearRect(0, 0, this.linkCanvas.width, this.linkCanvas.height);
   }
 
-  private drawSelection(rects: GhosttySelectionRect[], color: string): void {
+  // 选区层与主画布的按行重绘互不相干：只在选区矩形集、选区色或画布尺寸变化时重画，
+  // 没有选区的常态帧（绝大多数）完全不碰这一层。
+  private drawSelection(rects: GhosttySelectionRect[], color: string, wiped: boolean): void {
+    if (
+      !wiped &&
+      color === this.drawnSelectionColor &&
+      sameSelectionRects(rects, this.drawnSelectionRects)
+    ) {
+      return;
+    }
+
+    this.drawnSelectionRects = rects.map((rect) => ({ ...rect }));
+    this.drawnSelectionColor = color;
     this.selectionContext.clearRect(0, 0, this.selectionCanvas.width, this.selectionCanvas.height);
 
     if (rects.length === 0) {
@@ -397,25 +495,29 @@ export class CanvasRenderer {
     this.mainContext.fillRect(0, y, width, this.deviceCellHeight);
 
     for (const cell of row.cells) {
-      if (cell.widthKind === 'spacer-tail' || cell.widthKind === 'spacer-head') {
+      if (isSpacerCell(cell)) {
         continue;
       }
 
-      const bg = cell.style.inverse
-        ? (cell.fgColor ?? colors.foreground)
-        : (cell.bgColor ?? colors.background);
+      const bg = cellBackgroundColor(cell, colors);
       if (
         bg.r !== colors.background.r ||
         bg.g !== colors.background.g ||
         bg.b !== colors.background.b
       ) {
-        const x = cell.x * this.deviceCellWidth;
-        const cellWidth =
-          cell.widthKind === 'wide' ? this.deviceCellWidth * 2 : this.deviceCellWidth;
         this.mainContext.fillStyle = this.toCss(bg);
-        this.mainContext.fillRect(x, y, cellWidth, this.deviceCellHeight);
+        this.mainContext.fillRect(
+          cell.x * this.deviceCellWidth,
+          y,
+          this.cellDeviceWidth(cell),
+          this.deviceCellHeight
+        );
       }
     }
+  }
+
+  private cellDeviceWidth(cell: GhosttyRenderCell): number {
+    return cell.widthKind === 'wide' ? this.deviceCellWidth * 2 : this.deviceCellWidth;
   }
 
   // 前景遍：逐 cell 画字形/块元素/装饰线。在所有行背景铺完后调用，故字形可越界相邻 cell
@@ -428,67 +530,72 @@ export class CanvasRenderer {
     const lineThickness = Math.max(1, Math.round(this.dpr));
 
     for (const cell of row.cells) {
-      if (cell.widthKind === 'spacer-tail' || cell.widthKind === 'spacer-head') {
-        continue;
-      }
-
-      if (!cell.text || cell.style.invisible) {
+      if (!hasVisibleGlyph(cell)) {
         continue;
       }
 
       const x = cell.x * this.deviceCellWidth;
-      const fg = cell.style.inverse
-        ? (cell.bgColor ?? colors.background)
-        : (cell.fgColor ?? colors.foreground);
-      const cellWidth = cell.widthKind === 'wide' ? this.deviceCellWidth * 2 : this.deviceCellWidth;
+      const cellWidth = this.cellDeviceWidth(cell);
 
-      this.mainContext.fillStyle = this.toCss(fg);
-      // 块元素（▀▄█▌▐░▒▓ 等）不能交给字体：字形最多覆盖 1em，而 cell 高为
-      // 1.2em，行列间会留缝（logo/色块图中的明显间隙），必须按 cell 精确自绘。
-      const blockCodepoint =
-        cell.codepoints.length === 1 && isBlockElement(cell.codepoints[0])
-          ? cell.codepoints[0]
-          : null;
-      if (blockCodepoint !== null) {
-        this.drawBlockElement(blockCodepoint, x, y, cellWidth, this.deviceCellHeight);
-      } else {
-        this.mainContext.font = this.resolveFont(cell.style);
-        this.mainContext.fillText(cell.text, x, y + this.textBaselineY);
-      }
+      this.mainContext.fillStyle = this.toCss(cellForegroundColor(cell, colors));
+      this.drawCellGlyph(cell, x, y, cellWidth);
+      this.drawCellDecorations(cell.style, x, y, cellWidth, lineThickness);
+    }
+  }
 
-      // 装饰线随真实字形盒走，而非 cell 边缘：下划线贴字底、上划线贴字顶、
-      // 删除线穿字形几何中线。
-      const glyphTop = y + this.textTopGap;
+  // fillStyle 由调用方设好。块元素（▀▄█▌▐░▒▓ 等）不能交给字体：字形最多覆盖 1em，
+  // 而 cell 高为 1.2em，行列间会留缝（logo/色块图中的明显间隙），必须按 cell 精确自绘。
+  private drawCellGlyph(cell: GhosttyRenderCell, x: number, y: number, cellWidth: number): void {
+    const blockCodepoint = blockElementCodepoint(cell);
+    if (blockCodepoint >= 0) {
+      this.drawBlockElement(blockCodepoint, x, y, cellWidth, this.deviceCellHeight);
+      return;
+    }
+
+    this.mainContext.font = this.resolveFont(cell.style);
+    this.mainContext.fillText(cell.text, x, y + this.textBaselineY);
+  }
+
+  // 装饰线随真实字形盒走，而非 cell 边缘：下划线贴字底、上划线贴字顶、
+  // 删除线穿字形几何中线。fillStyle 由调用方设好。
+  private drawCellDecorations(
+    style: GhosttyRenderCellStyle,
+    x: number,
+    y: number,
+    cellWidth: number,
+    lineThickness: number
+  ): void {
+    const lineWidth = Math.max(cellWidth - lineThickness, lineThickness);
+
+    if (style.underline > 0) {
       const glyphBottom = y + this.textTopGap + this.glyphBoxHeight;
-      if (cell.style.underline > 0) {
-        this.mainContext.fillRect(
-          x,
-          Math.min(
-            Math.round(glyphBottom - lineThickness),
-            y + this.deviceCellHeight - lineThickness
-          ),
-          Math.max(cellWidth - lineThickness, lineThickness),
-          lineThickness
-        );
-      }
+      this.mainContext.fillRect(
+        x,
+        Math.min(
+          Math.round(glyphBottom - lineThickness),
+          y + this.deviceCellHeight - lineThickness
+        ),
+        lineWidth,
+        lineThickness
+      );
+    }
 
-      if (cell.style.strikethrough) {
-        this.mainContext.fillRect(
-          x,
-          Math.round(y + this.textTopGap + this.glyphBoxHeight / 2),
-          Math.max(cellWidth - lineThickness, lineThickness),
-          lineThickness
-        );
-      }
+    if (style.strikethrough) {
+      this.mainContext.fillRect(
+        x,
+        Math.round(y + this.textTopGap + this.glyphBoxHeight / 2),
+        lineWidth,
+        lineThickness
+      );
+    }
 
-      if (cell.style.overline) {
-        this.mainContext.fillRect(
-          x,
-          Math.max(y, Math.round(glyphTop)),
-          Math.max(cellWidth - lineThickness, lineThickness),
-          lineThickness
-        );
-      }
+    if (style.overline) {
+      this.mainContext.fillRect(
+        x,
+        Math.max(y, Math.round(y + this.textTopGap)),
+        lineWidth,
+        lineThickness
+      );
     }
   }
 
@@ -556,54 +663,38 @@ export class CanvasRenderer {
     if (quadrants & 0b1000) fill(midX, midY, width, height);
   }
 
-  private drawCursor(meta: GhosttyRenderSnapshotMeta): void {
-    const colors = meta.colors;
-    const cursor = meta.cursor;
-    const previous = this.lastCursor;
-    this.cursorContext.clearRect(0, 0, this.cursorCanvas.width, this.cursorCanvas.height);
-
-    if (!cursor.visible || cursor.x === null || cursor.y === null) {
-      this.lastCursor = null;
-      this.stopCursorBlink();
+  // 光标层同样独立：只擦上一次画过的那一格（画布被 resize 清空时才整层擦），
+  // 且位置/形状/闪烁/颜色都未变时整帧跳过。
+  private clearCursorLayer(wiped: boolean): void {
+    if (wiped || !this.lastCursorRect) {
+      this.cursorContext.clearRect(0, 0, this.cursorCanvas.width, this.cursorCanvas.height);
       return;
     }
 
-    const x = cursor.x * this.deviceCellWidth;
-    const y = cursor.y * this.deviceCellHeight;
-    const width = cursor.wideTail ? this.deviceCellWidth * 2 : this.deviceCellWidth;
-    const height = this.deviceCellHeight;
-    const thickness = Math.max(1, Math.round(this.dpr));
-    const lineThickness = 2 * thickness;
+    const rect = this.lastCursorRect;
+    this.cursorContext.clearRect(rect.x, rect.y, rect.width, rect.height);
+  }
+
+  private drawCursor(meta: GhosttyRenderSnapshotMeta, wiped: boolean): void {
+    const cursor = meta.cursor;
+    if (!cursor.visible || cursor.x === null || cursor.y === null) {
+      this.hideCursor(wiped);
+      return;
+    }
+
     // 光标色仍取自 ghostty render state（colors.cursor 缺省时回落到 colors.foreground），
     // 不读 this.theme——主题切换由 WASM 侧 setTerminalTheme 反映到 render state。
-    const cursorColor = colors.cursor ?? colors.foreground;
-    const cssColor = this.toCss(cursorColor);
-
-    this.cursorContext.fillStyle = cssColor;
-    this.cursorContext.strokeStyle = cssColor;
-    this.cursorContext.globalAlpha = 0.7;
-    if (cursor.style === 'bar') {
-      this.cursorContext.fillRect(x, y, lineThickness, height);
-    } else if (cursor.style === 'underline') {
-      this.cursorContext.fillRect(
-        x,
-        y + height - lineThickness,
-        Math.max(width - thickness, thickness),
-        lineThickness
-      );
-    } else if (cursor.style === 'block-hollow') {
-      // 描边沿 cell 内缘走：奇数线宽偏移半物理像素，避免 1px 边框被抗锯齿糊成 2px。
-      this.cursorContext.lineWidth = thickness;
-      this.cursorContext.strokeRect(
-        x + thickness / 2,
-        y + thickness / 2,
-        Math.max(width - thickness, thickness),
-        Math.max(height - thickness, thickness)
-      );
-    } else {
-      this.cursorContext.fillRect(x, y, width, height);
+    const cssColor = this.toCss(meta.colors.cursor ?? meta.colors.foreground);
+    const width = cursor.wideTail ? this.deviceCellWidth * 2 : this.deviceCellWidth;
+    if (!wiped && this.cursorAlreadyDrawn(cursor, cssColor, width)) {
+      return;
     }
-    this.cursorContext.globalAlpha = 1;
+
+    this.clearCursorLayer(wiped);
+
+    const x = cursor.x * this.deviceCellWidth;
+    const y = cursor.y * this.deviceCellHeight;
+    this.paintCursorShape(cursor.style, x, y, width, cssColor);
 
     if (cursor.blinking) {
       this.startCursorBlink();
@@ -611,45 +702,121 @@ export class CanvasRenderer {
       this.stopCursorBlink();
     }
 
-    this.lastCursor = {
-      x: cursor.x,
-      y: cursor.y,
-      style: cursor.style,
-      blinking: cursor.blinking,
+    this.commitCursorState(cursor.x, cursor.y, cursor.style, cursor.blinking, width, cssColor);
+  }
+
+  private hideCursor(wiped: boolean): void {
+    if (this.lastCursor || wiped) {
+      this.clearCursorLayer(wiped);
+    }
+    this.lastCursor = null;
+    this.lastCursorRect = null;
+    this.stopCursorBlink();
+  }
+
+  // 位置 / 形状 / 闪烁 / 颜色 / 宽度全部与上次落笔一致时整帧跳过。
+  private cursorAlreadyDrawn(
+    cursor: GhosttyRenderSnapshotMeta['cursor'],
+    cssColor: string,
+    width: number
+  ): boolean {
+    const previous = this.lastCursor;
+    return (
+      previous !== null &&
+      previous.x === cursor.x &&
+      previous.y === cursor.y &&
+      previous.style === cursor.style &&
+      previous.blinking === cursor.blinking &&
+      this.lastCursorColor === cssColor &&
+      this.lastCursorRect !== null &&
+      this.lastCursorRect.width === width
+    );
+  }
+
+  private paintCursorShape(
+    style: GhosttyRenderSnapshotMeta['cursor']['style'],
+    x: number,
+    y: number,
+    width: number,
+    cssColor: string
+  ): void {
+    const height = this.deviceCellHeight;
+    const thickness = Math.max(1, Math.round(this.dpr));
+    const lineThickness = 2 * thickness;
+    const context = this.cursorContext;
+
+    context.fillStyle = cssColor;
+    context.strokeStyle = cssColor;
+    context.globalAlpha = 0.7;
+    if (style === 'bar') {
+      context.fillRect(x, y, lineThickness, height);
+    } else if (style === 'underline') {
+      context.fillRect(
+        x,
+        y + height - lineThickness,
+        Math.max(width - thickness, thickness),
+        lineThickness
+      );
+    } else if (style === 'block-hollow') {
+      // 描边沿 cell 内缘走：奇数线宽偏移半物理像素，避免 1px 边框被抗锯齿糊成 2px。
+      context.lineWidth = thickness;
+      context.strokeRect(
+        x + thickness / 2,
+        y + thickness / 2,
+        Math.max(width - thickness, thickness),
+        Math.max(height - thickness, thickness)
+      );
+    } else {
+      context.fillRect(x, y, width, height);
+    }
+    context.globalAlpha = 1;
+  }
+
+  // 记录本次落笔状态；光标离开的旧行要计入 lastDrawnRows，供调试/测试观察重绘范围。
+  private commitCursorState(
+    cursorX: number,
+    cursorY: number,
+    style: CursorCell['style'],
+    blinking: boolean,
+    width: number,
+    cssColor: string
+  ): void {
+    const previous = this.lastCursor;
+
+    this.lastCursor = { x: cursorX, y: cursorY, style, blinking };
+    this.lastCursorRect = {
+      x: cursorX * this.deviceCellWidth,
+      y: cursorY * this.deviceCellHeight,
+      width,
+      height: this.deviceCellHeight,
     };
+    this.lastCursorColor = cssColor;
 
     if (
       previous &&
-      (previous.x !== this.lastCursor.x ||
-        previous.y !== this.lastCursor.y ||
-        previous.style !== this.lastCursor.style ||
-        previous.blinking !== this.lastCursor.blinking)
+      (previous.x !== cursorX ||
+        previous.y !== cursorY ||
+        previous.style !== style ||
+        previous.blinking !== blinking)
     ) {
       this.lastDrawnRows.push(previous.y);
     }
   }
 
-  private resolveFont(style: GhosttyRenderRow['cells'][number]['style']): string {
-    const deviceFontSize = this.deviceFontSize;
-    const key = [
-      style.italic ? 'italic' : 'normal',
-      style.bold ? '700' : '400',
-      `${deviceFontSize}px`,
-      this.fontFamily,
-    ].join('|');
-
-    const cached = this.fontCache.get(key);
-    if (cached) {
+  private resolveFont(style: GhosttyRenderCellStyle): string {
+    const index = fontVariantIndex(style);
+    const cached = this.fontVariants[index];
+    if (cached !== null) {
       return cached;
     }
 
-    const font = `${style.italic ? 'italic ' : ''}${style.bold ? '700 ' : ''}${deviceFontSize}px ${this.fontFamily}`;
-    this.fontCache.set(key, font);
+    const font = `${style.italic ? 'italic ' : ''}${style.bold ? '700 ' : ''}${this.deviceFontSize}px ${this.fontFamily}`;
+    this.fontVariants[index] = font;
     return font;
   }
 
   private toCss(color: GhosttyColorRgb): string {
-    const key = `${color.r},${color.g},${color.b}`;
+    const key = colorKey(color);
     const cached = this.colorCache.get(key);
     if (cached) {
       return cached;

@@ -9,6 +9,13 @@ export {
 } from './files-tab';
 export { LlmProvidersTab } from './llm-providers-tab';
 export { SearchTab } from './search-tab';
+export {
+  SETTINGS_NAMESPACE_QUERY_KEYS,
+  SettingsEventsInit,
+  queryKeysForNamespace,
+  subscribeSettingsInvalidation,
+  type SettingsQueryKey,
+} from './settings-events-init';
 export { TelegramBotsTab } from './telegram-bots-tab';
 export { TerminalSettingsTab } from './terminal-tab';
 export { VersionTab } from './version-tab';

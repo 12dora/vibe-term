@@ -57,6 +57,34 @@ const GHOSTTY_FORMATTER_FORMAT_PLAIN = 0;
 const GHOSTTY_FORMATTER_FORMAT_HTML = 2;
 const WASM_USIZE_BYTES = 4;
 
+// GhosttyTerminalOptions.max_scrollback 的单位是**字节**（Screen.zig），由 PageList 按整页切分：
+// 实测单页 576 KiB，每行占 ≈ 12.4 * cols + 10 字节，因此每页能装 floor(pageBytes / bytesPerRow) 行。
+// 对外只暴露「行」语义，这里按创建时的 cols 换算并向上取整到整页——PageList 对预算做向下取整，
+// 不对齐就会白丢将近一页的回滚。RESERVED_ROWS 覆盖首页被活动屏占走的部分（实测 91~127 行）。
+const GHOSTTY_SCROLLBACK_PAGE_BYTES = 576 * 1024;
+const GHOSTTY_SCROLLBACK_BYTES_PER_CELL = 13;
+const GHOSTTY_SCROLLBACK_ROW_OVERHEAD_BYTES = 16;
+const GHOSTTY_SCROLLBACK_RESERVED_ROWS = 192;
+const GHOSTTY_MAX_SCROLLBACK_LINES = 10_000;
+
+// 复用的写入暂存区：小于该阈值的 writeVt 直接写进常驻缓冲，省掉每次 alloc/copy/free。
+// 超过阈值走一次性分配，避免历史回放这类 MB 级 payload 把常驻缓冲永久撑大。
+const WASM_WRITE_SCRATCH_MIN_BYTES = 4 * 1024;
+const WASM_WRITE_SCRATCH_MAX_BYTES = 256 * 1024;
+// UTF-16 code unit 编码成 UTF-8 的最坏膨胀比（代理对是 2 unit → 4 字节，仍不超过 3/unit）
+const UTF8_MAX_BYTES_PER_UTF16_UNIT = 3;
+
+// 请求 lines 行回滚时，ghostty 实际需要的字节预算（按创建时 cols 计算）
+function scrollbackLinesToBytes(scrollbackLines: number, cols: number): number {
+  const lines = Math.min(GHOSTTY_MAX_SCROLLBACK_LINES, Math.max(0, Math.floor(scrollbackLines)));
+  const bytesPerRow =
+    GHOSTTY_SCROLLBACK_BYTES_PER_CELL * Math.max(1, cols) + GHOSTTY_SCROLLBACK_ROW_OVERHEAD_BYTES;
+  const pages = Math.ceil(
+    ((lines + GHOSTTY_SCROLLBACK_RESERVED_ROWS) * bytesPerRow) / GHOSTTY_SCROLLBACK_PAGE_BYTES
+  );
+  return Math.max(1, pages) * GHOSTTY_SCROLLBACK_PAGE_BYTES;
+}
+
 type LayoutField = {
   offset: number;
   size: number;
@@ -203,9 +231,11 @@ function assertResult(result: number, action: string): void {
   throw new Error(`${action} failed with result ${result}`);
 }
 
+const HEX_RGB_PATTERN = /^[0-9a-fA-F]{6}$/;
+
 function parseHexRgb(hex: string): [number, number, number] {
   const normalized = hex.trim().replace(/^#/, '');
-  if (normalized.length !== 6) {
+  if (!HEX_RGB_PATTERN.test(normalized)) {
     throw new Error(`expected #RRGGBB color, received: ${hex}`);
   }
 
@@ -334,6 +364,14 @@ export class GhosttyBindings {
 
   private readonly decoder = new TextDecoder();
   private readonly encoder = new TextEncoder();
+  // view() 是渲染热路径上调用最频繁的方法（每 cell 十余次）。无参形态缓存整块 DataView，
+  // 仅在 memory.grow 换掉 ArrayBuffer（identity 变化）时重建。
+  private cachedViewBuffer: ArrayBuffer | null = null;
+  private cachedView: DataView | null = null;
+  private cachedBytesBuffer: ArrayBuffer | null = null;
+  private cachedBytes: Uint8Array | null = null;
+  private writeScratchPtr = 0;
+  private writeScratchBytes = 0;
 
   constructor(exports: GhosttyExports, layout: LayoutMap) {
     this.exports = exports;
@@ -348,8 +386,37 @@ export class GhosttyBindings {
     return new Uint8Array(this.buffer(), ptr, len);
   }
 
-  view(ptr = 0, len = this.buffer().byteLength - ptr): DataView {
-    return new DataView(this.buffer(), ptr, len);
+  // 整块线性内存的 Uint8Array 视图，缓存策略同 view()：memory.grow 换掉 ArrayBuffer 才重建
+  private memoryBytes(): Uint8Array {
+    const buffer = this.buffer();
+    const cached = this.cachedBytes;
+    if (cached && this.cachedBytesBuffer === buffer) {
+      return cached;
+    }
+
+    const created = new Uint8Array(buffer);
+    this.cachedBytesBuffer = buffer;
+    this.cachedBytes = created;
+    return created;
+  }
+
+  view(ptr?: number, len?: number): DataView {
+    const buffer = this.buffer();
+
+    if (ptr === undefined && len === undefined) {
+      const cached = this.cachedView;
+      if (cached && this.cachedViewBuffer === buffer) {
+        return cached;
+      }
+
+      const created = new DataView(buffer);
+      this.cachedViewBuffer = buffer;
+      this.cachedView = created;
+      return created;
+    }
+
+    const offset = ptr ?? 0;
+    return new DataView(buffer, offset, len ?? buffer.byteLength - offset);
   }
 
   typeSize(typeName: string): number {
@@ -491,11 +558,18 @@ export class GhosttyBindings {
     return this.decoder.decode(this.bytes(ptr, len));
   }
 
-  createTerminal(cols: number, rows: number, scrollback: number): number {
+  // scrollbackLines 是「行」；ghostty 收的是字节预算，且 resize 之后无法再调整，
+  // 因此换算按创建时的 cols 定档：之后 resize 变宽，实际能保留的行数按 cols 反比下降。
+  createTerminal(cols: number, rows: number, scrollbackLines: number): number {
     const options = this.allocStruct('GhosttyTerminalOptions');
     this.setField(options.view, 'GhosttyTerminalOptions', 'cols', cols);
     this.setField(options.view, 'GhosttyTerminalOptions', 'rows', rows);
-    this.setField(options.view, 'GhosttyTerminalOptions', 'max_scrollback', scrollback);
+    this.setField(
+      options.view,
+      'GhosttyTerminalOptions',
+      'max_scrollback',
+      scrollbackLinesToBytes(scrollbackLines, cols)
+    );
 
     const termPtrPtr = this.allocOpaque();
 
@@ -516,7 +590,35 @@ export class GhosttyBindings {
   }
 
   writeVt(terminal: number, data: string | Uint8Array): void {
-    const bytes = typeof data === 'string' ? this.encoder.encode(data) : data;
+    if (typeof data === 'string') {
+      if (data.length === 0) return;
+      const capacity = data.length * UTF8_MAX_BYTES_PER_UTF16_UNIT;
+      if (capacity > WASM_WRITE_SCRATCH_MAX_BYTES) {
+        this.writeVtOwned(terminal, this.encoder.encode(data));
+        return;
+      }
+      const ptr = this.ensureWriteScratch(capacity);
+      const { written } = this.encoder.encodeInto(
+        data,
+        this.memoryBytes().subarray(ptr, ptr + capacity)
+      );
+      if (written > 0) {
+        this.exports.ghostty_terminal_vt_write(terminal, ptr, written);
+      }
+      return;
+    }
+
+    if (data.length === 0) return;
+    if (data.length > WASM_WRITE_SCRATCH_MAX_BYTES) {
+      this.writeVtOwned(terminal, data);
+      return;
+    }
+    const ptr = this.ensureWriteScratch(data.length);
+    this.memoryBytes().set(data, ptr);
+    this.exports.ghostty_terminal_vt_write(terminal, ptr, data.length);
+  }
+
+  private writeVtOwned(terminal: number, bytes: Uint8Array): void {
     const allocation = this.writeBytes(bytes);
 
     try {
@@ -524,6 +626,28 @@ export class GhosttyBindings {
     } finally {
       allocation.free();
     }
+  }
+
+  // 常驻写入缓冲：按 2 的幂增长，旧块先归还再申请，容量上限 WASM_WRITE_SCRATCH_MAX_BYTES。
+  private ensureWriteScratch(size: number): number {
+    if (this.writeScratchPtr !== 0 && this.writeScratchBytes >= size) {
+      return this.writeScratchPtr;
+    }
+
+    const capacity = Math.max(
+      WASM_WRITE_SCRATCH_MIN_BYTES,
+      2 ** Math.ceil(Math.log2(Math.max(1, size)))
+    );
+    if (this.writeScratchPtr !== 0) {
+      const stale = this.writeScratchPtr;
+      const staleBytes = this.writeScratchBytes;
+      this.writeScratchPtr = 0;
+      this.writeScratchBytes = 0;
+      this.freeBytes(stale, staleBytes);
+    }
+    this.writeScratchPtr = this.allocBytes(capacity);
+    this.writeScratchBytes = capacity;
+    return this.writeScratchPtr;
   }
 
   resetTerminal(terminal: number): void {

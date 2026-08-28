@@ -1,4 +1,5 @@
 import { bytesEqual, cloneIdentity, copyBytes, safeCallback } from './bytes';
+import { assembleHistoryChunks, selectHistoryRange } from './history-range';
 import type { RetentionKernel } from './kernel';
 import type {
   PaneDataSegment,
@@ -18,7 +19,7 @@ export class PaneReplayStore {
 
   createPane(paneId: string, paneEpoch: Uint8Array, known: boolean): PaneState {
     if (paneEpoch.byteLength !== 16) throw new Error('pane epoch must be 16 bytes');
-    return {
+    const state: PaneState = {
       paneId,
       paneEpoch: copyBytes(paneEpoch),
       known,
@@ -29,10 +30,13 @@ export class PaneReplayStore {
       graceUntil: null,
       hotUntil: null,
       lastTouchedAt: this.kernel.now(),
+      createOrder: this.kernel.nextCreateOrder++,
       replay: [],
       replayBytes: 0,
       checkpoint: null,
     };
+    this.kernel.syncHotIndex(state);
+    return state;
   }
 
   ensurePane(paneId: string, paneEpoch: Uint8Array, known: boolean): PaneState {
@@ -52,8 +56,10 @@ export class PaneReplayStore {
   rotatePaneEpoch(state: PaneState, paneEpoch: Uint8Array): void {
     const previousEpoch = state.paneEpoch;
     const previousSeq = state.latestSeq;
-    if (state.replayBytes > 0 || state.checkpoint !== null) {
+    const retained = this.kernel.paneRetainedBytes(state);
+    if (retained > 0) {
       this.recordEviction('epoch_changed');
+      this.kernel.adjustRetainedBytes(-retained);
     }
     state.paneEpoch = copyBytes(paneEpoch);
     state.latestSeq = 0n;
@@ -65,6 +71,7 @@ export class PaneReplayStore {
     state.explicitHot = false;
     state.graceUntil = null;
     state.hotUntil = null;
+    this.kernel.syncHotIndex(state);
     for (const consumer of this.kernel.consumers.values()) {
       const request = consumer.active.get(state.paneId) ?? consumer.hot.get(state.paneId);
       if (!request) continue;
@@ -91,6 +98,7 @@ export class PaneReplayStore {
     if (retain) {
       state.replay.push({ seqStart, seqEnd, data: ownedData, receivedAt: now });
       state.replayBytes += ownedData.byteLength;
+      this.kernel.adjustRetainedBytes(ownedData.byteLength);
     } else {
       state.dirtyWhileCold = true;
     }
@@ -161,6 +169,7 @@ export class PaneReplayStore {
       return false;
     }
     const now = this.kernel.now();
+    const previousBytes = state.checkpoint?.data.byteLength ?? 0;
     state.checkpoint = {
       ...checkpoint,
       paneEpoch: copyBytes(checkpoint.paneEpoch),
@@ -174,6 +183,7 @@ export class PaneReplayStore {
         : null,
       capturedAt: checkpoint.capturedAt,
     };
+    this.kernel.adjustRetainedBytes(state.checkpoint.data.byteLength - previousBytes);
     state.lastTouchedAt = now;
     return true;
   }
@@ -189,67 +199,47 @@ export class PaneReplayStore {
     const beforeSeq = beforeCursor?.terminalSeq ?? state.latestSeq;
     const expectedEpoch = beforeCursor?.paneEpoch ?? state.paneEpoch;
     const identity = cloneIdentity(state);
-    if (!bytesEqual(expectedEpoch, state.paneEpoch)) {
-      return {
-        ...identity,
-        seqStart: state.latestSeq,
-        seqEnd: state.latestSeq,
-        data: new Uint8Array(),
-        nextCursor: null,
-        gap: this.createGap(state, 'epoch_changed', expectedEpoch, beforeSeq),
-      };
-    }
     const oldestSeq = state.replay[0]?.seqStart ?? state.latestSeq;
-    if (beforeSeq > state.latestSeq || beforeSeq < oldestSeq) {
-      return {
-        ...identity,
-        seqStart: state.latestSeq,
-        seqEnd: state.latestSeq,
-        data: new Uint8Array(),
-        nextCursor: null,
-        gap: this.createGap(
-          state,
-          beforeSeq > state.latestSeq ? 'pane_gap' : 'cache_evicted',
-          expectedEpoch,
-          beforeSeq
-        ),
-      };
+    const range = selectHistoryRange({
+      paneEpoch: state.paneEpoch,
+      expectedEpoch,
+      beforeSeq,
+      latestSeq: state.latestSeq,
+      oldestSeq,
+      limit,
+    });
+    if (range.kind === 'gap') {
+      return this.gapHistoryPage(state, identity, range.reason, expectedEpoch, beforeSeq);
     }
-
-    const reverseParts: Uint8Array[] = [];
-    let remaining = limit;
-    let seqStart = beforeSeq;
-    for (let index = state.replay.length - 1; index >= 0 && remaining > 0; index -= 1) {
-      const chunk = state.replay[index];
-      if (!chunk || chunk.seqStart >= beforeSeq) continue;
-      const upper = chunk.seqEnd > beforeSeq ? beforeSeq : chunk.seqEnd;
-      if (upper <= chunk.seqStart) continue;
-      const available = Number(upper - chunk.seqStart);
-      const take = Math.min(available, remaining);
-      const endOffset = Number(upper - chunk.seqStart);
-      reverseParts.push(chunk.data.slice(endOffset - take, endOffset));
-      remaining -= take;
-      seqStart = upper - BigInt(take);
-    }
-    reverseParts.reverse();
-    const totalBytes = reverseParts.reduce((total, part) => total + part.byteLength, 0);
-    const data = new Uint8Array(totalBytes);
-    let offset = 0;
-    for (const part of reverseParts) {
-      data.set(part, offset);
-      offset += part.byteLength;
-    }
+    const assembled = assembleHistoryChunks(state.replay, range.beforeSeq, range.limit);
     state.lastTouchedAt = this.kernel.now();
     return {
       ...identity,
-      seqStart,
-      seqEnd: beforeSeq,
-      data,
+      seqStart: assembled.seqStart,
+      seqEnd: range.beforeSeq,
+      data: assembled.data,
       nextCursor:
-        seqStart > oldestSeq
-          ? { paneEpoch: copyBytes(state.paneEpoch), terminalSeq: seqStart }
+        assembled.seqStart > oldestSeq
+          ? { paneEpoch: copyBytes(state.paneEpoch), terminalSeq: assembled.seqStart }
           : null,
       gap: null,
+    };
+  }
+
+  private gapHistoryPage(
+    state: PaneState,
+    identity: PaneIdentity,
+    reason: PaneReplayGapReason,
+    expectedPaneEpoch: Uint8Array,
+    expectedSeq: bigint
+  ): PaneHistoryPage {
+    return {
+      ...identity,
+      seqStart: state.latestSeq,
+      seqEnd: state.latestSeq,
+      data: new Uint8Array(),
+      nextCursor: null,
+      gap: this.createGap(state, reason, expectedPaneEpoch, expectedSeq),
     };
   }
 

@@ -1,4 +1,4 @@
-// 终端显示区：按 pane 选择状态在「失效提示 / 分屏 / 单屏 / 占位」四态间切换，
+// 终端显示区：按连接与 pane 选择状态在「主动断开 / 失效提示 / 分屏 / 单屏 / 占位」间切换，
 // 并叠加重连指示与快照解析中的遮罩。DOM 结构被 e2e 依赖，改动需同步 apps/fe/tests。
 
 import type { TerminalShortcutItem, TmuxPane, TmuxWindow } from '@tmex/shared';
@@ -29,8 +29,21 @@ function LoadingPlaceholder() {
       <div className="h-12 w-12 rounded-full bg-muted flex items-center justify-center mx-auto">
         <Loader2 className="h-6 w-6 text-muted-foreground animate-spin" />
       </div>
-      <h3 className="text-lg font-medium">{t('common.loading')}</h3>
+      <h3 className="text-lg font-medium">{t('terminal.connecting')}</h3>
     </>
+  );
+}
+
+function DisconnectedPlaceholder() {
+  const { t } = useTranslation();
+  return (
+    <div className="space-y-4" data-testid="device-disconnected-placeholder">
+      <div className="h-12 w-12 rounded-full bg-muted flex items-center justify-center mx-auto">
+        <span className="text-2xl text-muted-foreground">🔌</span>
+      </div>
+      <h3 className="text-lg font-medium">{t('device.disconnected')}</h3>
+      <p className="text-sm text-muted-foreground">{t('device.connectToStart')}</p>
+    </div>
   );
 }
 
@@ -97,6 +110,8 @@ export interface TerminalStageProps {
   selection: DevicePaneSelection;
   deviceConnected: boolean;
   isReconnecting: boolean;
+  /** 用户主动断开（宿主未提供 connection 时恒为 false） */
+  isIntentionallyDisconnected: boolean;
   isMobile: boolean;
   inputMode: 'direct' | 'editor';
   uiTheme: 'light' | 'dark';
@@ -117,6 +132,7 @@ function StageContent(props: TerminalStageProps) {
     selection,
     deviceConnected,
     isReconnecting,
+    isIntentionallyDisconnected,
     inputMode,
     uiTheme,
     terminalBackground,
@@ -136,6 +152,14 @@ function StageContent(props: TerminalStageProps) {
       disabled={!canInteractWithPane}
     />
   );
+
+  if (isIntentionallyDisconnected && !deviceConnected && !isReconnecting) {
+    return (
+      <CenteredNotice>
+        <DisconnectedPlaceholder />
+      </CenteredNotice>
+    );
+  }
 
   if (isSelectionInvalid) {
     return <InvalidSelectionNotice {...selection} />;

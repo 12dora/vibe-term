@@ -13,6 +13,9 @@
       "expand": "Expand",
       "collapse": "Collapse",
       "refresh": "Refresh",
+      "retry": "Retry",
+      "pageLoadFailed": "Failed to load this page.",
+      "pageLoadFailedHint": "Check your network connection, then retry.",
       "test": "Test",
       "send": "Send",
       "success": "Success",
@@ -93,6 +96,7 @@
       "connected": "Connected",
       "disconnect": "Disconnect",
       "disconnected": "Disconnected",
+      "connectToStart": "Connect to this device to get started.",
       "connecting": "Connecting...",
       "dragHandle": "Drag to reorder device",
       "reorderFailed": "Failed to reorder devices",
@@ -201,6 +205,8 @@
         "fontFamily": "Font",
         "preview": "Preview",
         "savedInBrowser": "These settings are saved in this browser only.",
+        "loading": "Loading terminal settings…",
+        "loadFailed": "Terminal settings failed to load.",
         "shortcuts": {
           "title": "Custom Shortcuts",
           "savedOnServer": "Saved on the server and shared across all your browsers — changes take effect after you click Save.",
@@ -320,6 +326,7 @@
         "updateFailed": "Failed to update directory",
         "deleteFailed": "Failed to remove directory",
         "toggleFailed": "Failed to update directory",
+        "loadFailed": "Failed to load directories",
         "deleteTitle": "Remove directory?",
         "deleteDesc": "Remove \"{{path}}\" from the whitelist? Files under it will no longer be accessible."
       },
@@ -676,7 +683,7 @@
       "closeWindow": "Close Window",
       "closePane": "Close Pane",
       "addDevice": "Add Device",
-      "section": {
+      "tab": {
         "panes": "Panes",
         "agent": "Agent",
         "files": "Files"
@@ -732,6 +739,7 @@
         "selectPaneHint": "Select a pane in the Panes tab to start a session",
         "noSessions": "No sessions yet",
         "showAll": "Show all sessions",
+        "menu": "Session actions",
         "rename": "Rename session",
         "renameTitle": "Rename session",
         "renamePlaceholder": "Session title",
@@ -827,6 +835,9 @@
         "viewState": "Status",
         "lastTriggered": "Last triggered: {{time}}",
         "neverTriggered": "Never triggered",
+        "everySeconds": "Every {{seconds}}s",
+        "unchangedFor": "Unchanged for {{minutes}} min",
+        "loadFailed": "Failed to load watch rules",
         "deleteTitle": "Delete this rule?",
         "deleteDesc": "\"{{name}}\" will be permanently deleted.",
         "deleteConfirm": "Delete"
@@ -905,7 +916,8 @@
         "samples": "Recent samples",
         "samplesEmpty": "No samples yet",
         "hit": "hit",
-        "none": "—"
+        "none": "—",
+        "loadFailed": "Failed to load rule status"
       },
       "toast": {
         "created": "Watch rule created",

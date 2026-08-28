@@ -18,25 +18,21 @@ interface MockLlmServer {
   baseUrl: string;
 }
 
-// Agent 分区默认收起；通过真实 trigger 展开，保持与其他一级分区的互斥规则一致。
+// 侧边栏三 Tab 互斥：进入 Agent Tab 需点对应 Tab 触发器（桌面端 sidebar 默认展开）。
 // 当前路由有 pane 时 agent-tab 会自动进入草稿态，输入区即可用。
 async function openAgentTab(page: Page): Promise<void> {
-  const agentToggle = page.getByTestId('sidebar-section-toggle-agent');
-  await expect(agentToggle).toBeVisible();
-  if ((await agentToggle.getAttribute('aria-expanded')) !== 'true') {
-    await agentToggle.click();
-  }
-  await expect(agentToggle).toHaveAttribute('aria-expanded', 'true');
+  const agentTrigger = page.getByTestId('sidebar-tab-agent');
+  await expect(agentTrigger).toBeVisible();
+  await agentTrigger.click();
+  await expect(agentTrigger).toHaveAttribute('aria-selected', 'true');
   await expect(page.getByTestId('agent-tab')).toBeVisible();
 }
 
-async function openPanesSection(page: Page): Promise<void> {
-  const panesToggle = page.getByTestId('sidebar-section-toggle-panes');
-  await expect(panesToggle).toBeVisible();
-  if ((await panesToggle.getAttribute('aria-expanded')) !== 'true') {
-    await panesToggle.click();
-  }
-  await expect(panesToggle).toHaveAttribute('aria-expanded', 'true');
+async function openPanesTab(page: Page): Promise<void> {
+  const panesTrigger = page.getByTestId('sidebar-tab-panes');
+  await expect(panesTrigger).toBeVisible();
+  await panesTrigger.click();
+  await expect(panesTrigger).toHaveAttribute('aria-selected', 'true');
 }
 
 function sseChunk(delta: Record<string, unknown>, finishReason: string | null = null): string {
@@ -320,13 +316,14 @@ test.describe
       await expect(page.getByTestId('agent-chat-send')).toBeVisible({ timeout: 15_000 });
       await expect(page.getByTestId('agent-chat-stop')).toHaveCount(0);
 
-      // 标题自动生成后，展开 Panes 验证 STATUS 事件驱动的会话树刷新链路。
-      await openPanesSection(page);
+      // 标题自动生成后，切到 Panes Tab 验证 STATUS 事件驱动的会话树刷新链路。
+      await openPanesTab(page);
       await expect(
         page.locator('[data-testid^="agent-session-item-"]', { hasText: MOCK_TITLE })
       ).toBeVisible({ timeout: 15_000 });
 
-      // 刷新后会话与历史恢复（activeSessionId 持久化；helper 会按需重新展开 Agent）
+      // 刷新后会话与历史恢复（activeSessionId 持久化；Tab 不持久化，刷新回默认 Panes，
+      // 由 helper 重新切回 Agent）
       await page.reload();
       await openAgentTab(page);
       await expect(page.getByTestId('agent-chat-thread')).toContainText(REPLY_TEXT, {
@@ -343,7 +340,7 @@ test.describe
 
       // 串行套件共享 pane，前序用例已留存会话；先记录已有会话 id，
       // 再显式新建并发消息落库，挑出新出现的 id 精准定位（标题统一是 MOCK_TITLE）
-      await openPanesSection(page);
+      await openPanesTab(page);
       const existingIds = new Set(
         await page
           .locator('[data-testid^="agent-session-item-"]')
@@ -352,7 +349,7 @@ test.describe
           )
       );
 
-      // Agent 分区有 pane 路由即自动进入草稿态（干净空会话），无需点新建按钮
+      // 进入 Agent Tab 且当前路由有 pane 即自动进入草稿态（干净空会话），无需点新建按钮
       // （草稿态下新建按钮被隐藏，因为草稿本身就是「新会话」状态）
       await openAgentTab(page);
       const textarea = page.getByTestId('agent-chat-input-textarea');
@@ -363,8 +360,8 @@ test.describe
         timeout: 20_000,
       });
 
-      // 标题自动生成后在 Panes 分区挑出新出现的会话节点
-      await openPanesSection(page);
+      // 标题自动生成后切到 Panes Tab，挑出新出现的会话节点
+      await openPanesTab(page);
       let sessionId = '';
       await expect
         .poll(
@@ -452,12 +449,14 @@ test.describe
       await pageB.goto(paneUrl);
       await expect(pageB.locator('.xterm').first()).toBeVisible({ timeout: 20_000 });
 
-      // B 从 Panes 分区显式选中同一 session（setActiveSession→subscribe+loadHistory，
-      // 比依赖 rehydration 时序更稳），随后通过 WS 订阅/历史回放同步内容
-      await openPanesSection(pageB);
+      // B 从 Panes Tab 显式选中同一 session（setActiveSession→subscribe+loadHistory，
+      // 比依赖 rehydration 时序更稳）；点击会话行会自动切到 Agent Tab，
+      // 随后通过 WS 订阅/历史回放同步内容
+      await openPanesTab(pageB);
       const sessionItemB = pageB.locator('[data-testid^="agent-session-item-"]').first();
       await expect(sessionItemB).toBeVisible({ timeout: 20_000 });
       await sessionItemB.click();
+      await expect(pageB.getByTestId('sidebar-tab-agent')).toHaveAttribute('aria-selected', 'true');
       await expect(pageB.getByTestId('agent-tab')).toBeVisible();
 
       await expect(pageB.getByTestId('agent-chat-thread')).toContainText('sync across tabs', {

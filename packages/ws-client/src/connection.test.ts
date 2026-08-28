@@ -15,7 +15,7 @@ function collectingSink(outputs: Uint8Array[]): PaneSink {
 }
 
 describe('createGatewayConnection', () => {
-  test('每个连接持有独立的 pane-sink 注册表', () => {
+  test('每个连接持有独立的 pane-sink 注册表', async () => {
     const a = createGatewayConnection({ wsUrl: 'ws://a.example/ws' });
     const b = createGatewayConnection({ wsUrl: 'ws://b.example/ws' });
 
@@ -23,9 +23,12 @@ describe('createGatewayConnection', () => {
     a.paneSinks.registerPaneSink('dev', 'pane', collectingSink(receivedA));
 
     b.paneSinks.dispatchPaneOutput('dev', 'pane', new Uint8Array([1]));
+    // 输出在微任务边界合并下发
+    await Promise.resolve();
     expect(receivedA.length).toBe(0);
 
     a.paneSinks.dispatchPaneOutput('dev', 'pane', new Uint8Array([2]));
+    await Promise.resolve();
     expect(receivedA.length).toBe(1);
 
     a.dispose();

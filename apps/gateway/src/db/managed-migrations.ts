@@ -23,7 +23,8 @@ const MIGRATIONS = [
   '0015_wise_mongu.sql',
   '0016_cheerful_scarecrow.sql',
   '0017_fixed_greymalkin.sql',
-  '0018_hub_auth.sql',
+  '0018_agent_query_indexes.sql',
+  '0019_hub_auth.sql',
 ] as const;
 
 export interface MaterializedMigrations {

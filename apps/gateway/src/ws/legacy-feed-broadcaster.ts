@@ -4,11 +4,16 @@ import { getSiteSettings } from '../db';
 import { t } from '../i18n';
 import type { TmuxEvent } from '../tmux-client/events';
 import { resolvePaneContext } from '../tmux/bell-context';
-import { sessionStateStore } from './borsh/session-state';
 import { switchBarrier } from './borsh/switch-barrier';
 import { classifySshError } from './error-classify';
 import type { GatewayActivityMetrics } from './gateway-activity-metrics';
 import type { GatewaySession } from './gateway-session';
+import {
+  deliverBell,
+  deliverGenericEvent,
+  deliverNotification,
+  isEmptyNotification,
+} from './legacy-event-delivery';
 import type { TerminalOutputBatcher } from './terminal-output-batcher';
 import type { TerminalOutputMetrics } from './terminal-output-metrics';
 import type { DeviceConnectionEntry } from './types';
@@ -36,24 +41,72 @@ export function clientWantsPaneOutput(
   );
 }
 
+function clientObservedPanes(client: GatewaySession, deviceId: string): Set<string> {
+  const panes = new Set<string>();
+  const selected = client.borshState.selectedPanes[deviceId];
+  if (selected) panes.add(selected);
+  const subscribed = client.borshState.subscribedPanes[deviceId];
+  if (!subscribed) return panes;
+  for (const paneId of subscribed) panes.add(paneId);
+  return panes;
+}
+
+function observerKey(deviceId: string, paneId: string): string {
+  return `${deviceId}\0${paneId}`;
+}
+
 export class LegacyFeedBroadcaster {
+  private readonly legacyObserverCounts = new Map<string, number>();
+  private readonly trackedObserverDevices = new Set<string>();
+  private readonly clientLegacyObservers = new WeakMap<GatewaySession, Map<string, Set<string>>>();
+
   constructor(private readonly host: LegacyFeedHost) {}
+
+  addLegacyPaneObserver(deviceId: string, paneId: string): void {
+    this.trackedObserverDevices.add(deviceId);
+    const key = observerKey(deviceId, paneId);
+    this.legacyObserverCounts.set(key, (this.legacyObserverCounts.get(key) ?? 0) + 1);
+  }
+
+  removeLegacyPaneObserver(deviceId: string, paneId: string): void {
+    this.trackedObserverDevices.add(deviceId);
+    const key = observerKey(deviceId, paneId);
+    const next = (this.legacyObserverCounts.get(key) ?? 0) - 1;
+    if (next <= 0) this.legacyObserverCounts.delete(key);
+    else this.legacyObserverCounts.set(key, next);
+  }
+
+  legacyPaneObserverCount(deviceId: string, paneId: string): number {
+    return this.legacyObserverCounts.get(observerKey(deviceId, paneId)) ?? 0;
+  }
+
+  syncLegacyPaneObservers(client: GatewaySession, deviceId: string): void {
+    const next = clientObservedPanes(client, deviceId);
+    const byDevice = this.clientLegacyObservers.get(client) ?? new Map<string, Set<string>>();
+    const previous = byDevice.get(deviceId) ?? new Set<string>();
+    this.applyObserverDiff(deviceId, previous, next);
+    byDevice.set(deviceId, next);
+    this.clientLegacyObservers.set(client, byDevice);
+  }
+
+  releaseLegacyPaneObservers(client: GatewaySession, deviceId?: string): void {
+    const byDevice = this.clientLegacyObservers.get(client);
+    if (!byDevice) return;
+    if (deviceId) {
+      this.releaseClientDeviceObservers(client, byDevice, deviceId);
+      return;
+    }
+    for (const id of [...byDevice.keys()]) {
+      this.releaseClientDeviceObservers(client, byDevice, id);
+    }
+  }
 
   async broadcastTmuxEvent(deviceId: string, event: TmuxEvent): Promise<void> {
     const entry = this.host.connections.get(deviceId);
     if (!entry) return;
 
     const extendedEvent = await this.extendTmuxEvent(deviceId, event);
-    const settings = getSiteSettings();
-
-    if (extendedEvent.type === 'notification') {
-      const data = (extendedEvent.data ?? {}) as Record<string, unknown>;
-      const title = typeof data.title === 'string' && data.title ? data.title : '';
-      const body = typeof data.body === 'string' ? data.body : '';
-      if (!title && !body) {
-        return;
-      }
-    }
+    if (isEmptyNotification(extendedEvent.type, extendedEvent.data)) return;
 
     const payloadBytes = wsBorsh.encodeTmuxEventPayload({
       deviceId,
@@ -61,53 +114,30 @@ export class LegacyFeedBroadcaster {
       data: extendedEvent.data,
     });
 
+    const settings = getSiteSettings();
+    let attempts: number;
     if (extendedEvent.type === 'bell') {
-      const data = (extendedEvent.data ?? {}) as Record<string, unknown>;
-      const paneId = typeof data.paneId === 'string' && data.paneId ? data.paneId : '-';
-
-      let deliveryAttempts = 0;
-      for (const client of entry.clients) {
-        if (
-          !sessionStateStore.shouldAllowBell(client, deviceId, paneId, settings.bellThrottleSeconds)
-        ) {
-          continue;
-        }
-        this.host.sendEnvelope(client, wsBorsh.KIND_TMUX_EVENT, payloadBytes);
-        deliveryAttempts += 1;
-      }
-      this.host.gatewayActivityMetrics.recordTmuxEvent(extendedEvent.type, deliveryAttempts);
-      return;
+      attempts = deliverBell(
+        entry.clients,
+        payloadBytes,
+        deviceId,
+        extendedEvent.data,
+        settings.bellThrottleSeconds,
+        this.host
+      );
+    } else if (extendedEvent.type === 'notification') {
+      attempts = deliverNotification(
+        entry.clients,
+        payloadBytes,
+        deviceId,
+        extendedEvent.data,
+        settings.notificationThrottleSeconds,
+        this.host
+      );
+    } else {
+      attempts = deliverGenericEvent(entry.clients, payloadBytes, this.host);
     }
-
-    if (extendedEvent.type === 'notification') {
-      const data = (extendedEvent.data ?? {}) as Record<string, unknown>;
-      const paneId = typeof data.paneId === 'string' && data.paneId ? data.paneId : '-';
-      const source = typeof data.source === 'string' && data.source ? data.source : 'osc9';
-
-      let deliveryAttempts = 0;
-      for (const client of entry.clients) {
-        if (
-          !sessionStateStore.shouldAllowNotification(
-            client,
-            deviceId,
-            paneId,
-            source,
-            settings.notificationThrottleSeconds
-          )
-        ) {
-          continue;
-        }
-        this.host.sendEnvelope(client, wsBorsh.KIND_TMUX_EVENT, payloadBytes);
-        deliveryAttempts += 1;
-      }
-      this.host.gatewayActivityMetrics.recordTmuxEvent(extendedEvent.type, deliveryAttempts);
-      return;
-    }
-
-    for (const client of entry.clients) {
-      this.host.sendEnvelope(client, wsBorsh.KIND_TMUX_EVENT, payloadBytes);
-    }
-    this.host.gatewayActivityMetrics.recordTmuxEvent(extendedEvent.type, entry.clients.size);
+    this.host.gatewayActivityMetrics.recordTmuxEvent(extendedEvent.type, attempts);
   }
 
   async extendTmuxEvent(deviceId: string, event: TmuxEvent): Promise<TmuxEvent> {
@@ -186,16 +216,7 @@ export class LegacyFeedBroadcaster {
 
   broadcastTerminalOutput(deviceId: string, paneId: string, data: Uint8Array): void {
     const entry = this.host.connections.get(deviceId);
-    let legacyObserved = false;
-    if (entry) {
-      for (const client of entry.clients) {
-        if (entry.canonicalClients?.has(client)) continue;
-        if (clientWantsPaneOutput(client, deviceId, paneId)) {
-          legacyObserved = true;
-          break;
-        }
-      }
-    }
+    const legacyObserved = this.isLegacyPaneObserved(deviceId, paneId, entry);
     const canonicalObserved = entry?.runtime?.isPaneTerminalRetained?.(paneId) ?? false;
     this.host.terminalOutputMetrics.recordSource(data.length, {
       legacy: legacyObserved,
@@ -206,9 +227,7 @@ export class LegacyFeedBroadcaster {
       this.host.terminalOutputEventsUntilMetricsCheck = 1024;
       this.host.reportTerminalOutputMetricsIfDue();
     }
-    if (!legacyObserved) {
-      return;
-    }
+    if (!legacyObserved) return;
     this.host.terminalOutputBatcher.push(deviceId, paneId, data);
   }
 
@@ -353,5 +372,49 @@ export class LegacyFeedBroadcaster {
     for (const client of entry.clients) {
       this.host.sendEnvelope(client, wsBorsh.KIND_DEVICE_EVENT, payloadBytes);
     }
+  }
+
+  private isLegacyPaneObserved(
+    deviceId: string,
+    paneId: string,
+    entry: DeviceConnectionEntry | undefined
+  ): boolean {
+    if (!entry) return false;
+    if (this.legacyPaneObserverCount(deviceId, paneId) > 0) return true;
+    if (this.trackedObserverDevices.has(deviceId)) return false;
+    return this.scanLegacyPaneObservers(entry, deviceId, paneId);
+  }
+
+  private scanLegacyPaneObservers(
+    entry: DeviceConnectionEntry,
+    deviceId: string,
+    paneId: string
+  ): boolean {
+    for (const client of entry.clients) {
+      if (entry.canonicalClients?.has(client)) continue;
+      if (clientWantsPaneOutput(client, deviceId, paneId)) return true;
+    }
+    return false;
+  }
+
+  private applyObserverDiff(deviceId: string, previous: Set<string>, next: Set<string>): void {
+    for (const paneId of previous) {
+      if (!next.has(paneId)) this.removeLegacyPaneObserver(deviceId, paneId);
+    }
+    for (const paneId of next) {
+      if (!previous.has(paneId)) this.addLegacyPaneObserver(deviceId, paneId);
+    }
+  }
+
+  private releaseClientDeviceObservers(
+    client: GatewaySession,
+    byDevice: Map<string, Set<string>>,
+    deviceId: string
+  ): void {
+    const panes = byDevice.get(deviceId);
+    if (!panes) return;
+    this.applyObserverDiff(deviceId, panes, new Set());
+    byDevice.delete(deviceId);
+    if (byDevice.size === 0) this.clientLegacyObservers.delete(client);
   }
 }

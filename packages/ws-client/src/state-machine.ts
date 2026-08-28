@@ -2,6 +2,8 @@
 // 管理 pane 切换、history/live 合并
 // 参考: docs/ws-protocol/2026021403-ws-state-machines.md
 
+import type { GatewayRebaseReason } from './transport-types';
+
 // ========== 状态定义 ==========
 
 export type SelectTransactionState =
@@ -20,6 +22,8 @@ export interface SelectTransaction {
   selectToken: Uint8Array;
   wantHistory: boolean;
   startedAt: number;
+  // 门控缓冲超限被丢弃过：此事务的 live 流已有缺口，画面只能靠 rebase 重建
+  outputGapped: boolean;
 }
 
 export type OutputGateState = 'FLOWING' | 'BUFFERING';
@@ -27,6 +31,8 @@ export type OutputGateState = 'FLOWING' | 'BUFFERING';
 export interface OutputGate {
   state: OutputGateState;
   buffer: Uint8Array[];
+  bufferedBytes: number;
+  overflowed: boolean;
 }
 
 interface DeferredHistory {
@@ -90,18 +96,46 @@ export type SelectEvent =
 
 // ========== 回调定义 ==========
 
-export interface SelectCallbacks {
-  onResetTerminal?: (deviceId: string, paneId: string) => void;
-  onApplyHistory?: (
+// history 提交是原子的：reset 与 applyHistory 必须同时可用，
+// 只给一半会让 deferred history 永远提交不出去（缓冲的 live 也就永远不回放）
+export interface HistoryCallbacks {
+  onResetTerminal: (deviceId: string, paneId: string) => void;
+  onApplyHistory: (
     deviceId: string,
     paneId: string,
     data: string,
     alternateScreen: boolean,
     modes: number
   ) => void;
+}
+
+interface BaseSelectCallbacks {
   onFlushBuffer?: (deviceId: string, paneId: string, buffer: Uint8Array[]) => void;
   onOutput?: (deviceId: string, paneId: string, data: Uint8Array) => void;
   onSelectFailed?: (deviceId: string, reason: SelectFailureReason) => void;
+  // 门控缓冲超限后经既有 rebase 通道请求重建（宿主转 paneSinks.dispatchPaneRebase）
+  onRebaseRequired?: (deviceId: string, paneId: string, reason: GatewayRebaseReason) => void;
+}
+
+type WithoutHistoryCallbacks = {
+  onResetTerminal?: undefined;
+  onApplyHistory?: undefined;
+};
+
+export type SelectCallbacks = BaseSelectCallbacks & (HistoryCallbacks | WithoutHistoryCallbacks);
+
+function resolveHistoryCallbacks(callbacks: SelectCallbacks): HistoryCallbacks | null {
+  // 显式标注切断解构后的相关性收窄：JS 侧调用方仍可能传半套，运行时必须自己判
+  const onResetTerminal: HistoryCallbacks['onResetTerminal'] | undefined =
+    callbacks.onResetTerminal;
+  const onApplyHistory: HistoryCallbacks['onApplyHistory'] | undefined = callbacks.onApplyHistory;
+  if (onResetTerminal && onApplyHistory) return { onResetTerminal, onApplyHistory };
+  if (onResetTerminal || onApplyHistory) {
+    throw new Error(
+      'SelectCallbacks: onResetTerminal 与 onApplyHistory 必须成对提供（history 提交是原子的）'
+    );
+  }
+  return null;
 }
 
 export type SelectFailureReason =
@@ -119,7 +153,11 @@ export interface SelectStateMachineOptions {
   ackTimeoutMs?: number;
   progressTimeoutMs?: number;
   scheduler?: SelectTimerScheduler;
+  maxBufferedBytes?: number;
 }
+
+const DEFAULT_MAX_BUFFERED_BYTES = 4 * 1024 * 1024;
+const MAX_BUFFERED_FRAMES = 1000;
 
 const defaultScheduler: SelectTimerScheduler = {
   schedule: (callback, delayMs) => setTimeout(callback, delayMs),
@@ -143,9 +181,12 @@ export class SelectStateMachine {
   private deferredHistories = new Map<string, DeferredHistory>();
   private deferredFlushes = new Map<string, { paneId: string; buffer: Uint8Array[] }>();
   private deferredOutputs = new Map<string, Array<{ paneId: string; data: Uint8Array }>>();
+  private pendingRebases = new Map<string, Map<string, GatewayRebaseReason>>();
   private callbacks: SelectCallbacks;
+  private historyCallbacks: HistoryCallbacks | null;
   private readonly ackTimeoutMs: number;
   private readonly progressTimeoutMs: number;
+  private readonly maxBufferedBytes: number;
   private readonly scheduler: SelectTimerScheduler;
   private timers = new Map<string, unknown>();
   private activeTimers = new Map<string, ActiveTimer>();
@@ -153,13 +194,16 @@ export class SelectStateMachine {
   private nextTimerToken = 1;
 
   constructor(callbacks: SelectCallbacks = {}, options: SelectStateMachineOptions = {}) {
+    this.historyCallbacks = resolveHistoryCallbacks(callbacks);
     this.callbacks = callbacks;
     this.ackTimeoutMs = options.ackTimeoutMs ?? 1500;
     this.progressTimeoutMs = options.progressTimeoutMs ?? 5000;
+    this.maxBufferedBytes = options.maxBufferedBytes ?? DEFAULT_MAX_BUFFERED_BYTES;
     this.scheduler = options.scheduler ?? defaultScheduler;
   }
 
   setCallbacks(callbacks: SelectCallbacks): void {
+    this.historyCallbacks = resolveHistoryCallbacks(callbacks);
     this.callbacks = callbacks;
     for (const deviceId of this.transactions.keys()) {
       this.replayDeferred(deviceId);
@@ -174,6 +218,9 @@ export class SelectStateMachine {
       this.replayDeferred(deviceId);
     }
     for (const deviceId of this.deferredOutputs.keys()) {
+      this.replayDeferred(deviceId);
+    }
+    for (const deviceId of this.pendingRebases.keys()) {
       this.replayDeferred(deviceId);
     }
   }
@@ -254,6 +301,7 @@ export class SelectStateMachine {
       selectToken: new Uint8Array(selectToken),
       wantHistory,
       startedAt: Date.now(),
+      outputGapped: false,
     };
 
     this.transactions.set(deviceId, transaction);
@@ -311,22 +359,26 @@ export class SelectStateMachine {
     // 更新状态
     transaction.state = 'HISTORY_APPLIED';
 
-    if (this.callbacks.onResetTerminal && this.callbacks.onApplyHistory) {
-      this.callbacks.onResetTerminal(deviceId, transaction.paneId);
-      this.callbacks.onApplyHistory(
-        deviceId,
-        transaction.paneId,
-        data,
-        event.alternateScreen,
-        event.modes
-      );
-    } else {
-      this.deferredHistories.set(deviceId, {
-        paneId: transaction.paneId,
-        data,
-        alternateScreen: event.alternateScreen,
-        modes: event.modes,
-      });
+    // 门控缓冲已溢出：画面改由 rebase 快照重建，此处提交 history 只会覆盖掉更新的快照
+    if (!transaction.outputGapped) {
+      const history = this.historyCallbacks;
+      if (history) {
+        history.onResetTerminal(deviceId, transaction.paneId);
+        history.onApplyHistory(
+          deviceId,
+          transaction.paneId,
+          data,
+          event.alternateScreen,
+          event.modes
+        );
+      } else {
+        this.deferredHistories.set(deviceId, {
+          paneId: transaction.paneId,
+          data,
+          alternateScreen: event.alternateScreen,
+          modes: event.modes,
+        });
+      }
     }
 
     this.armProgressDeadline(deviceId);
@@ -350,6 +402,7 @@ export class SelectStateMachine {
     }
 
     const commitWithoutHistory = transaction.state === 'ACKED';
+    const outputGapped = transaction.outputGapped;
 
     // 清除超时
     this.clearTimer(deviceId);
@@ -361,9 +414,16 @@ export class SelectStateMachine {
     const buffered = this.stopOutputBuffering(deviceId);
     const transactionPaneId = transaction.paneId;
 
+    // 缓冲已被溢出丢弃：不 reset、不回放残缺缓冲，画面由 rebase 快照重建
+    if (outputGapped) {
+      this.completeTransaction(deviceId);
+      this.replayDeferred(deviceId);
+      return;
+    }
+
     if (commitWithoutHistory) {
-      if (this.callbacks.onResetTerminal) {
-        this.callbacks.onResetTerminal(deviceId, transactionPaneId);
+      if (this.historyCallbacks) {
+        this.historyCallbacks.onResetTerminal(deviceId, transactionPaneId);
       } else {
         this.deferredResets.set(deviceId, transactionPaneId);
       }
@@ -398,7 +458,7 @@ export class SelectStateMachine {
       if (transaction?.state === 'ACKED' || transaction?.state === 'HISTORY_APPLIED') {
         this.armProgressDeadline(deviceId);
       }
-      this.bufferOutput(deviceId, data);
+      this.bufferOutput(deviceId, paneId, data);
       return;
     }
 
@@ -412,7 +472,7 @@ export class SelectStateMachine {
     }
 
     const pending = this.deferredOutputs.get(deviceId) ?? [];
-    pending.push({ paneId, data: new Uint8Array(data) });
+    pending.push({ paneId, data });
     this.deferredOutputs.set(deviceId, pending);
   }
 
@@ -473,6 +533,8 @@ export class SelectStateMachine {
     this.outputGates.set(deviceId, {
       state: 'BUFFERING',
       buffer: [],
+      bufferedBytes: 0,
+      overflowed: false,
     });
   }
 
@@ -480,21 +542,63 @@ export class SelectStateMachine {
     const gate = this.outputGates.get(deviceId);
     if (!gate) return [];
 
-    const buffered = [...gate.buffer];
     this.outputGates.delete(deviceId);
-    return buffered;
+    return gate.buffer;
   }
 
-  private bufferOutput(deviceId: string, data: Uint8Array): void {
+  private bufferOutput(deviceId: string, paneId: string, data: Uint8Array): void {
     const gate = this.outputGates.get(deviceId);
-    if (!gate) return;
+    if (!gate || gate.overflowed) return;
 
-    // 限制缓冲大小
-    if (gate.buffer.length >= 1000) {
-      gate.buffer.shift();
+    if (
+      gate.buffer.length >= MAX_BUFFERED_FRAMES ||
+      gate.bufferedBytes + data.byteLength > this.maxBufferedBytes
+    ) {
+      this.overflowOutputGate(deviceId, paneId, gate);
+      return;
     }
 
-    gate.buffer.push(new Uint8Array(data));
+    // 帧字节由单次 WS 消息的解码结果独占，解码器不复用底层 buffer，无需拷贝
+    gate.buffer.push(data);
+    gate.bufferedBytes += data.byteLength;
+  }
+
+  // 缓冲超限：丢弃已缓冲的字节（此后不再缓冲），标记事务并沿既有 rebase 通道请求重建画面。
+  // 缺口不能靠截断缓冲蒙混过去——少写一段字节等价于把终端状态机喂到未定义状态。
+  private overflowOutputGate(deviceId: string, paneId: string, gate: OutputGate): void {
+    gate.buffer = [];
+    gate.bufferedBytes = 0;
+    gate.overflowed = true;
+
+    const transaction = this.transactions.get(deviceId);
+    if (transaction) transaction.outputGapped = true;
+
+    console.warn(`[select-sm] output buffer overflow on ${deviceId}:${paneId}, requesting rebase`);
+    this.requestRebase(deviceId, paneId, 'resource_exhausted');
+  }
+
+  // 宿主可能尚未注册回调（setCallbacks 晚到）：先按 pane 记账，回调补齐后立即补发，
+  // 否则这次缺口永远拿不到重建请求
+  private requestRebase(deviceId: string, paneId: string, reason: GatewayRebaseReason): void {
+    const onRebaseRequired = this.callbacks.onRebaseRequired;
+    if (onRebaseRequired) {
+      onRebaseRequired(deviceId, paneId, reason);
+      return;
+    }
+    const pending = this.pendingRebases.get(deviceId) ?? new Map<string, GatewayRebaseReason>();
+    pending.set(paneId, reason);
+    this.pendingRebases.set(deviceId, pending);
+  }
+
+  private flushPendingRebases(deviceId: string): void {
+    const onRebaseRequired = this.callbacks.onRebaseRequired;
+    if (!onRebaseRequired) return;
+    const pending = this.pendingRebases.get(deviceId);
+    if (!pending) return;
+    this.pendingRebases.delete(deviceId);
+    for (const [paneId, reason] of pending) {
+      onRebaseRequired(deviceId, paneId, reason);
+    }
   }
 
   // ========== 工具方法 ==========
@@ -508,16 +612,19 @@ export class SelectStateMachine {
   }
 
   private replayDeferred(deviceId: string): void {
+    this.flushPendingRebases(deviceId);
+
+    const historyCallbacks = this.historyCallbacks;
     const resetPaneId = this.deferredResets.get(deviceId);
-    if (resetPaneId !== undefined && this.callbacks.onResetTerminal) {
+    if (resetPaneId !== undefined && historyCallbacks) {
       this.deferredResets.delete(deviceId);
-      this.callbacks.onResetTerminal(deviceId, resetPaneId);
+      historyCallbacks.onResetTerminal(deviceId, resetPaneId);
     }
 
     const history = this.deferredHistories.get(deviceId);
-    if (history !== undefined && this.callbacks.onResetTerminal && this.callbacks.onApplyHistory) {
-      this.callbacks.onResetTerminal(deviceId, history.paneId);
-      this.callbacks.onApplyHistory(
+    if (history !== undefined && historyCallbacks) {
+      historyCallbacks.onResetTerminal(deviceId, history.paneId);
+      historyCallbacks.onApplyHistory(
         deviceId,
         history.paneId,
         history.data,
@@ -624,6 +731,7 @@ export class SelectStateMachine {
     this.cancelTransaction(deviceId);
     this.outputGates.delete(deviceId);
     this.clearDeferred(deviceId);
+    this.pendingRebases.delete(deviceId);
     this.generations.delete(deviceId);
   }
 
@@ -637,6 +745,7 @@ export class SelectStateMachine {
     this.deferredHistories.clear();
     this.deferredFlushes.clear();
     this.deferredOutputs.clear();
+    this.pendingRebases.clear();
     for (const timer of this.timers.values()) {
       this.scheduler.cancel(timer);
     }

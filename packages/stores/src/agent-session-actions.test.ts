@@ -246,6 +246,96 @@ describe('materializeDraft', () => {
   });
 });
 
+function createActionsHarness(
+  transport: FetchLike,
+  initial: Partial<AgentState> = {}
+): { state: () => AgentState } {
+  let state: AgentState;
+  const set: AgentSetState = (partial) => {
+    const next = typeof partial === 'function' ? partial(state) : partial;
+    state = { ...state, ...next };
+  };
+  const get: AgentGetState = () => state;
+
+  const actions = createAgentSessionActions({
+    apiClient: new ApiClient('', transport),
+    notifications: noopNotificationSink,
+    set,
+    get,
+    history: { loadHistory: async () => {}, scheduleFetch: () => {}, clearSession: () => {} },
+    subscribe: () => {},
+    unsubscribe: () => {},
+    clearSessionRuntime: () => {},
+  });
+
+  state = {
+    ...createInitialAgentStateData(),
+    ...actions,
+    ensureInitialized: () => {},
+    ...initial,
+  };
+
+  return { state: () => state };
+}
+
+describe('session metadata updates', () => {
+  test('updating a session moves it to the top of sessionOrder', async () => {
+    const older = makeSession('a', '2026-01-01T00:00:00.000Z');
+    const newer = makeSession('b', '2026-01-02T00:00:00.000Z');
+    const transport: FetchLike = (url, init) => {
+      if (url === '/api/agent/sessions/a' && init?.method === 'PATCH') {
+        return Promise.resolve(
+          jsonResponse({
+            session: { ...older, writeMode: 'auto', updatedAt: '2026-01-03T00:00:00.000Z' },
+          })
+        );
+      }
+      throw new Error(`unexpected request ${init?.method ?? 'GET'} ${url}`);
+    };
+    const harness = createActionsHarness(transport, {
+      sessions: { a: older, b: newer },
+      sessionOrder: ['b', 'a'],
+    });
+
+    await harness.state().setWriteMode('a', 'auto');
+
+    expect(harness.state().sessions.a?.writeMode).toBe('auto');
+    expect(harness.state().sessionOrder).toEqual(['a', 'b']);
+  });
+});
+
+describe('loadSessions', () => {
+  test('concurrent calls share a single in-flight request', async () => {
+    let fetches = 0;
+    let release: () => void = () => {};
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const transport: FetchLike = async (url) => {
+      if (url !== '/api/agent/sessions') throw new Error(`unexpected request ${url}`);
+      fetches += 1;
+      await gate;
+      return jsonResponse({ sessions: [makeSession('a', '2026-01-01T00:00:00.000Z')] });
+    };
+    const harness = createActionsHarness(transport);
+
+    const first = harness.state().loadSessions();
+    const second = harness.state().loadSessions();
+    expect(second).toBe(first);
+
+    release();
+    await Promise.all([first, second]);
+
+    expect(fetches).toBe(1);
+    expect(harness.state().sessionsLoaded).toBe(true);
+    expect(harness.state().sessionOrder).toEqual(['a']);
+
+    // 结算后槽位释放，后续调用重新发请求
+    await harness.state().loadSessions();
+    expect(fetches).toBe(2);
+  });
+});
+
 describe('deleteSession', () => {
   test('sends DELETE, clears the session runtime and drops it from the list', async () => {
     const requests: string[] = [];

@@ -21,6 +21,7 @@ import {
 import type { CommandResult, ExternalControlHandle } from './external/types';
 import { ConnectionLifecycleEmitter } from './lifecycle-emitter';
 import type { PaneStreamNotification } from './pane-stream-parser';
+import { ensureStableServerEpoch } from './server-epoch';
 import { SnapshotRefreshCoordinator } from './snapshot-refresh-coordinator';
 
 export type { CommandResult, ExternalControlHandle } from './external/types';
@@ -36,6 +37,60 @@ export {
   PARKING_WINDOW_NAME,
 } from './external/constants';
 export { hasRenderableTerminalContent, isTmuxServerGoneMessage } from './external/helpers';
+
+export const BELL_DEDUP_PRUNE_EVERY_INSERTS = 32;
+
+export interface BellDedupBook {
+  entries: Map<string, number>;
+  insertsSincePrune: number;
+  lastPruneAt: number;
+}
+
+export function createBellDedupBook(): BellDedupBook {
+  return { entries: new Map(), insertsSincePrune: 0, lastPruneAt: 0 };
+}
+
+export function pruneBellDedupEntries(
+  entries: Map<string, number>,
+  now: number,
+  windowMs: number
+): void {
+  for (const [key, timestamp] of entries) {
+    if (now - timestamp >= windowMs) {
+      entries.delete(key);
+    }
+  }
+}
+
+export function noteBellDedup(
+  book: BellDedupBook,
+  key: string,
+  now: number,
+  windowMs: number = BELL_DEDUP_WINDOW_MS,
+  pruneEveryInserts: number = BELL_DEDUP_PRUNE_EVERY_INSERTS
+): boolean {
+  const previous = book.entries.get(key) ?? 0;
+  if (now - previous < windowMs) {
+    return false;
+  }
+
+  book.entries.set(key, now);
+  book.insertsSincePrune += 1;
+  if (book.insertsSincePrune >= pruneEveryInserts || now - book.lastPruneAt >= windowMs) {
+    pruneBellDedupEntries(book.entries, now, windowMs);
+    book.insertsSincePrune = 0;
+    book.lastPruneAt = now;
+  }
+  return true;
+}
+
+class ConnectAbandonedError extends Error {
+  readonly name = 'ConnectAbandonedError';
+
+  constructor() {
+    super('tmux connect abandoned');
+  }
+}
 
 type ExternalTmuxCollaboratorHost = SessionCommandHost &
   ControlModeHost &
@@ -62,7 +117,10 @@ export abstract class ExternalTmuxConnectionCore {
   protected activePaneId: string | null = null;
   protected snapshotSession: Pick<TmuxSession, 'id' | 'name'> | null = null;
   protected snapshotWindows = new Map<string, TmuxWindow>();
-  protected bellDedup = new Map<string, number>();
+  private readonly bellDedupBook = createBellDedupBook();
+  protected get bellDedup(): Map<string, number> {
+    return this.bellDedupBook.entries;
+  }
   protected controlSubscription: ControlModeSubscription | null = null;
   protected controlCommands = new ControlModeCommandQueue();
   protected controlStartedAt = 0;
@@ -71,6 +129,7 @@ export abstract class ExternalTmuxConnectionCore {
   protected heartbeatTimer: ReturnType<typeof setInterval> | null = null;
   protected heartbeatPending = false;
   protected heartbeatTimeoutTimer: ReturnType<typeof setTimeout> | null = null;
+  protected connectGeneration = 0;
 
   private readonly sessionCommands: SessionCommands;
   private readonly controlLifecycle: ControlModeLifecycle;
@@ -117,6 +176,9 @@ export abstract class ExternalTmuxConnectionCore {
       },
       set connected(value) {
         core.connected = value;
+      },
+      get connectGeneration() {
+        return core.connectGeneration;
       },
       get manualDisconnect() {
         return core.manualDisconnect;
@@ -237,6 +299,97 @@ export abstract class ExternalTmuxConnectionCore {
 
   isSessionClosedEmitted(): boolean {
     return this.lifecycle.sessionClosedEmitted;
+  }
+
+  protected beginConnectGeneration(): number {
+    this.manualDisconnect = false;
+    this.closeNotified = false;
+    this.lifecycle.reset();
+    this.connectGeneration += 1;
+    return this.connectGeneration;
+  }
+
+  protected invalidateConnectGeneration(): void {
+    this.connectGeneration += 1;
+  }
+
+  protected isConnectGenerationCurrent(generation: number): boolean {
+    return generation === this.connectGeneration && !this.manualDisconnect;
+  }
+
+  protected releaseAbortedConnectResources(): void {
+    this.connected = false;
+    this.stopControlClient();
+    void this.disposeTransport();
+  }
+
+  protected abandonStaleConnect(generation: number): boolean {
+    if (this.isConnectGenerationCurrent(generation)) {
+      return false;
+    }
+    if (this.manualDisconnect) {
+      this.releaseAbortedConnectResources();
+    }
+    return true;
+  }
+
+  protected async awaitConnectStep<T>(generation: number, step: () => Promise<T>): Promise<T> {
+    try {
+      const value = await step();
+      if (this.abandonStaleConnect(generation)) {
+        throw new ConnectAbandonedError();
+      }
+      return value;
+    } catch (error) {
+      if (error instanceof ConnectAbandonedError) {
+        throw error;
+      }
+      if (this.abandonStaleConnect(generation)) {
+        throw new ConnectAbandonedError();
+      }
+      throw error;
+    }
+  }
+
+  protected async runConnectAttempt(run: (generation: number) => Promise<void>): Promise<void> {
+    const generation = this.beginConnectGeneration();
+    try {
+      await run(generation);
+    } catch (error) {
+      if (error instanceof ConnectAbandonedError) {
+        return;
+      }
+      throw error;
+    }
+  }
+
+  protected async finalizeConnect(
+    generation: number,
+    created: boolean,
+    startControl: boolean
+  ): Promise<void> {
+    const serverEpoch = await this.awaitConnectStep(generation, () =>
+      ensureStableServerEpoch((argv) => this.runTmuxAllowFailure(argv))
+    );
+    this.callbacks.onSourceReady?.(serverEpoch);
+    await this.awaitConnectStep(generation, () => this.configureSessionOptions());
+    if (startControl) {
+      await this.awaitConnectStep(generation, () => this.startControlClient());
+    }
+    if (this.abandonStaleConnect(generation)) {
+      throw new ConnectAbandonedError();
+    }
+    this.connected = true;
+    updateDeviceRuntimeStatus(this.deviceId, {
+      lastSeenAt: new Date().toISOString(),
+      tmuxAvailable: true,
+      lastError: null,
+      lastErrorType: null,
+    });
+    if (created) {
+      this.lifecycle.notifySessionCreated();
+    }
+    await this.awaitConnectStep(generation, () => this.requestSnapshotInternal());
   }
 
   requestSnapshot(): void {
@@ -528,12 +681,9 @@ export abstract class ExternalTmuxConnectionCore {
 
   protected recordBell(paneId?: string, windowId?: string): void {
     const key = paneId || windowId || '-';
-    const previous = this.bellDedup.get(key) ?? 0;
-    const now = Date.now();
-    if (now - previous < BELL_DEDUP_WINDOW_MS) {
+    if (!noteBellDedup(this.bellDedupBook, key, Date.now())) {
       return;
     }
-    this.bellDedup.set(key, now);
     this.callbacks.onEvent({
       type: 'bell',
       data: {

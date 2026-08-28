@@ -2,8 +2,8 @@
 // 注意：local 设备的 gateway 进程即入口主机，可读 os/shell；ssh 设备只知接入参数，
 // 远端真实环境未知（pane 可能进一步 ssh 到别处），由 prompt 引导 agent 自行探测。
 
-import os from 'node:os';
 import type { Device } from '@tmex/shared';
+import { AGENT_ENV_RESOLVERS, type EnvCollectContext } from './environment-fields';
 
 export interface AgentEnvironmentInfo {
   deviceName: string | null;
@@ -24,27 +24,21 @@ export interface AgentEnvironmentInfo {
 }
 
 export function collectAgentEnvironment(device: Device | null): AgentEnvironmentInfo {
-  const isLocal = device?.type === 'local';
-  let timezone = 'UTC';
-  try {
-    timezone = Intl.DateTimeFormat().resolvedOptions().timeZone ?? 'UTC';
-  } catch {
-    timezone = 'UTC';
-  }
+  const ctx: EnvCollectContext = { device, isLocal: device?.type === 'local' };
   return {
-    deviceName: device?.name ?? null,
-    deviceType: device?.type ?? null,
-    host: device?.host ?? null,
-    username: device?.username ?? null,
-    port: device?.port ?? null,
-    tmuxSession: device?.session ?? null,
-    timezone,
-    nowIso: new Date().toISOString(),
-    gatewayOs: isLocal ? `${os.platform()} ${os.release()} (${os.arch()})` : null,
-    gatewayShell: isLocal ? (process.env.SHELL ?? null) : null,
-    term: isLocal ? (process.env.TERM ?? null) : null,
-    termProgram: isLocal ? (process.env.TERM_PROGRAM ?? null) : null,
-    locale: isLocal ? (process.env.LANG ?? process.env.LC_ALL ?? null) : null,
-    encoding: isLocal ? 'utf-8' : null,
+    deviceName: AGENT_ENV_RESOLVERS.deviceName(ctx),
+    deviceType: AGENT_ENV_RESOLVERS.deviceType(ctx),
+    host: AGENT_ENV_RESOLVERS.host(ctx),
+    username: AGENT_ENV_RESOLVERS.username(ctx),
+    port: AGENT_ENV_RESOLVERS.port(ctx),
+    tmuxSession: AGENT_ENV_RESOLVERS.tmuxSession(ctx),
+    timezone: AGENT_ENV_RESOLVERS.timezone(ctx),
+    nowIso: AGENT_ENV_RESOLVERS.nowIso(ctx),
+    gatewayOs: AGENT_ENV_RESOLVERS.gatewayOs(ctx),
+    gatewayShell: AGENT_ENV_RESOLVERS.gatewayShell(ctx),
+    term: AGENT_ENV_RESOLVERS.term(ctx),
+    termProgram: AGENT_ENV_RESOLVERS.termProgram(ctx),
+    locale: AGENT_ENV_RESOLVERS.locale(ctx),
+    encoding: AGENT_ENV_RESOLVERS.encoding(ctx),
   };
 }

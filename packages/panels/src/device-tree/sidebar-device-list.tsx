@@ -8,11 +8,13 @@ import type { Device } from '@tmex/shared';
 import { toBCP47 } from '@tmex/shared';
 import { hostAppPath } from '@tmex/stores';
 import { useRuntime, useSiteStore, useTmuxStore, useUIStore } from '@tmex/stores/react';
+import { Button } from '@tmex/ui/button';
 import { ScrollArea } from '@tmex/ui/scroll-area';
 import { SidebarGroup } from '@tmex/ui/sidebar';
 import { useCallback, useEffect, useMemo, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
 import { toast } from 'sonner';
+import type { DeviceConnectionAdapter } from '../device-connection';
 import type { SidebarAgentAdapter } from './agent-adapter';
 import { DeviceRow } from './device-row';
 import { useDeviceTreeDialogs } from './device-tree-dialogs';
@@ -40,6 +42,8 @@ export interface SideBarDeviceListProps {
   nodeBadge?: NodeBadgeInfo;
   /** 无设备时的空态文案；缺省沿用 `sidebar.noDevices` */
   emptyLabel?: string;
+  /** 宿主连接管理；未传时不渲染连接开关，展开仍走 ensureDeviceSubscribed */
+  connection?: DeviceConnectionAdapter;
 }
 
 export function SideBarDeviceList({
@@ -49,6 +53,7 @@ export function SideBarDeviceList({
   agent,
   nodeBadge,
   emptyLabel,
+  connection,
 }: SideBarDeviceListProps) {
   const { t } = useTranslation();
   const runtime = useRuntime();
@@ -63,18 +68,15 @@ export function SideBarDeviceList({
 
   const { selectedDeviceId, selectedWindowId, selectedPaneId } = useDeviceTreeSelection();
 
-  const snapshots = useTmuxStore((state) => state.snapshots);
-  const deviceConnected = useTmuxStore((state) => state.deviceConnected);
-  const deviceErrors = useTmuxStore((state) => state.deviceErrors);
-  const deviceReconnecting = useTmuxStore((state) => state.deviceReconnecting);
   const closeWindow = useTmuxStore((state) => state.closeWindow);
   const language = useSiteStore((state) => state.settings?.language ?? 'en_US');
 
-  const { data: devicesData } = useQuery({
+  const devicesQuery = useQuery({
     queryKey,
     queryFn: () => fetchDevices(runtime.apiClient),
     throwOnError: false,
   });
+  const devicesData = devicesQuery.data;
 
   const hydrateDeviceErrors = useTmuxStore((state) => state.hydrateDeviceErrors);
 
@@ -156,11 +158,15 @@ export function SideBarDeviceList({
   const handleDeviceExpandedChange = useCallback(
     (deviceId: string, expanded: boolean) => {
       setSidebarDeviceExpanded(expansionKey(deviceId), expanded);
-      if (expanded) {
+      // 收起只影响树的可见性，断开必须走 Power 按钮
+      if (!expanded) return;
+      if (connection) {
+        connection.connect(deviceId);
+      } else {
         ensureDeviceSubscribed(deviceId);
       }
     },
-    [ensureDeviceSubscribed, setSidebarDeviceExpanded, expansionKey]
+    [connection, ensureDeviceSubscribed, setSidebarDeviceExpanded, expansionKey]
   );
 
   useEffect(() => {
@@ -202,26 +208,28 @@ export function SideBarDeviceList({
   );
 
   const knownDeviceIds = useMemo(() => devices.map((device) => device.id), [devices]);
+  const sortedDeviceIds = useMemo(() => sortedDevices.map((d) => d.id), [sortedDevices]);
+
+  const reorderDevicesMutate = reorderDevicesMutation.mutate;
+  const handleReorderDevices = useCallback(
+    (nextIds: string[]) => reorderDevicesMutate(nextIds),
+    [reorderDevicesMutate]
+  );
 
   return (
     <SidebarGroup className="flex flex-col flex-1 min-h-0 pt-0">
       <ScrollArea className="flex-1 min-h-0">
         <div className="space-y-1.5 pb-2 pt-1 select-none [-webkit-user-select:none] [-webkit-touch-callout:none]">
           <SortableVerticalList
-            ids={sortedDevices.map((d) => d.id)}
-            onReorder={(nextIds) => reorderDevicesMutation.mutate(nextIds)}
+            ids={sortedDeviceIds}
+            disabled={reorderDevicesMutation.isPending}
+            onReorder={handleReorderDevices}
           >
             {sortedDevices.map((device) => (
               <DeviceRow
                 key={device.id}
                 device={device}
-                windows={snapshots[device.id]?.session?.windows ?? null}
                 isExpanded={sidebarDeviceExpanded[expansionKey(device.id)] !== false}
-                isOnline={
-                  deviceConnected[device.id] === true &&
-                  !deviceErrors[device.id] &&
-                  !deviceReconnecting[device.id]
-                }
                 isSelected={device.id === selectedDeviceId}
                 selectedWindowId={selectedWindowId}
                 selectedPaneId={selectedPaneId}
@@ -237,17 +245,40 @@ export function SideBarDeviceList({
                 agent={agentAdapter}
                 nav={nav}
                 nodeBadge={nodeBadge}
+                connection={connection}
               />
             ))}
           </SortableVerticalList>
-          {sortedDevices.length === 0 && (
-            <div className="text-center text-sm text-muted-foreground py-4">
-              {emptyLabel ?? t('sidebar.noDevices')}
-            </div>
-          )}
+          {sortedDevices.length === 0 &&
+            (devicesQuery.isError ? (
+              <div
+                data-testid="sidebar-devices-error"
+                className="flex flex-col items-center gap-2 py-4 text-center"
+              >
+                <span className="text-sm text-muted-foreground">{t('device.loadFailed')}</span>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  data-testid="sidebar-devices-retry"
+                  disabled={devicesQuery.isFetching}
+                  onClick={() => void devicesQuery.refetch()}
+                >
+                  {t('common.retry')}
+                </Button>
+              </div>
+            ) : (
+              <div className="text-center text-sm text-muted-foreground py-4">
+                {emptyLabel ?? t('sidebar.noDevices')}
+              </div>
+            ))}
 
           {agentAdapter && (
-            <agentAdapter.OrphanSessions nav={nav} knownDeviceIds={knownDeviceIds} />
+            <agentAdapter.OrphanSessions
+              nav={nav}
+              knownDeviceIds={knownDeviceIds}
+              devicesReady={devicesQuery.isSuccess}
+            />
           )}
         </div>
       </ScrollArea>

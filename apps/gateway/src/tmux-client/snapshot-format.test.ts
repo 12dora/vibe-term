@@ -13,6 +13,11 @@ import {
   parseWindowSnapshotRow,
   splitSnapshotFields,
 } from './snapshot-format';
+import {
+  FLEXIBLE_FIELD_LAYOUTS,
+  foldFlexibleFields,
+  tokenizeSnapshotFields,
+} from './snapshot-format-tokenize';
 
 describe('snapshot format helpers', () => {
   test('uses a locale-stable visible ASCII field separator', () => {
@@ -175,5 +180,161 @@ describe('parsePaneSnapshotRow', () => {
       '#{pane_current_command}',
       '#{pane_current_path}',
     ]);
+  });
+
+  test('rejects an empty string', () => {
+    expect(parsePaneSnapshotRow('')).toBeNull();
+  });
+
+  test('rejects a row with too few fields', () => {
+    expect(parsePaneSnapshotRow('%5|@2|1|1|104|62|0|0|1|t|c')).toBeNull();
+  });
+
+  test('trailing separator makes currentPath empty/undefined', () => {
+    const row = parsePaneSnapshotRow(`${base}|title|node|`);
+    expect(row).not.toBeNull();
+    expect(row?.title).toBe('title');
+    expect(row?.currentCommand).toBe('node');
+    expect(row?.currentPath).toBeUndefined();
+  });
+
+  test('backslash before a separator is split then rejoined into title', () => {
+    const row = parsePaneSnapshotRow(`${base}|hello\\|world|node|/tmp`);
+    expect(row?.title).toBe('hello\\|world');
+    expect(row?.currentCommand).toBe('node');
+    expect(row?.currentPath).toBe('/tmp');
+  });
+
+  test('extra trailing fields are absorbed into title', () => {
+    const row = parsePaneSnapshotRow(`${base}|title|extra|node|/tmp`);
+    expect(row?.title).toBe('title|extra');
+    expect(row?.currentCommand).toBe('node');
+    expect(row?.currentPath).toBe('/tmp');
+  });
+
+  test('whitespace-only free-text fields become undefined', () => {
+    const row = parsePaneSnapshotRow(`${base}|   |  | `);
+    expect(row?.title).toBeUndefined();
+    expect(row?.currentCommand).toBeUndefined();
+    expect(row?.currentPath).toBeUndefined();
+  });
+
+  test('title keeps surrounding whitespace when non-empty after trim', () => {
+    const row = parsePaneSnapshotRow(`${base}|  titled  | node | /tmp `);
+    expect(row?.title).toBe('  titled  ');
+    expect(row?.currentCommand).toBe('node');
+    expect(row?.currentPath).toBe('/tmp');
+  });
+
+  test('invalid optional geometry becomes undefined without dropping the row', () => {
+    const row = parsePaneSnapshotRow('%5|@2|1|1|104|62|x|y|1|t|c|/p');
+    expect(row).not.toBeNull();
+    expect(row?.left).toBeUndefined();
+    expect(row?.top).toBeUndefined();
+    expect(row?.width).toBe(104);
+  });
+});
+
+describe('splitSnapshotFields characterization', () => {
+  test('empty string is a single empty field', () => {
+    expect(splitSnapshotFields('', 2)).toEqual(['']);
+    expect(splitSnapshotFields('', 4)).toEqual(['']);
+  });
+
+  test('separator at end is an empty trailing field when count matches', () => {
+    expect(splitSnapshotFields('a|', 2)).toEqual(['a', '']);
+    expect(splitSnapshotFields('@1|0|name|', 4)).toEqual(['@1', '0', 'name', '']);
+  });
+
+  test('separator at end is folded into the flexible field when over count', () => {
+    expect(splitSnapshotFields('a|b|', 2)).toEqual(['a', 'b|']);
+    expect(splitSnapshotFields('@1|0|name|1|', 4)).toEqual(['@1', '0', 'name|1', '']);
+  });
+
+  test('backslash before separator does not prevent a split', () => {
+    expect(splitSnapshotFields('a\\|b', 2)).toEqual(['a\\', 'b']);
+    expect(splitSnapshotFields('a\\|b|c', 2)).toEqual(['a\\', 'b|c']);
+    expect(splitSnapshotFields('@1|0|name\\|with|pipe|1', 4)).toEqual([
+      '@1',
+      '0',
+      'name\\|with|pipe',
+      '1',
+    ]);
+  });
+
+  test('wrong field count below expected returns tokens as-is', () => {
+    expect(splitSnapshotFields('a|b', 4)).toEqual(['a', 'b']);
+    expect(splitSnapshotFields('@1|0|name', 4)).toEqual(['@1', '0', 'name']);
+  });
+
+  test('unknown field count with extra separators returns tokens as-is', () => {
+    expect(splitSnapshotFields('a|b|c|d', 3)).toEqual(['a', 'b', 'c', 'd']);
+    expect(splitSnapshotFields('a|b', 1)).toEqual(['a', 'b']);
+  });
+
+  test('fieldCount 8 joins extras into the fourth field', () => {
+    expect(splitSnapshotFields('0|1|2|3|4|5|6|7', 8)).toEqual([
+      '0',
+      '1',
+      '2',
+      '3',
+      '4',
+      '5',
+      '6',
+      '7',
+    ]);
+    expect(splitSnapshotFields('0|1|2|mid|dle|4|5|6|7', 8)).toEqual([
+      '0',
+      '1',
+      '2',
+      'mid|dle',
+      '4',
+      '5',
+      '6',
+      '7',
+    ]);
+  });
+
+  test('empty middle fields are preserved', () => {
+    expect(splitSnapshotFields('@1||name|1', 4)).toEqual(['@1', '', 'name', '1']);
+    expect(splitSnapshotFields('id|', 2)).toEqual(['id', '']);
+  });
+
+  test('session two-field split joins the rest into name', () => {
+    expect(splitSnapshotFields('$1|my|session', 2)).toEqual(['$1', 'my|session']);
+  });
+});
+
+describe('tokenizeSnapshotFields', () => {
+  test('empty string is a single empty field', () => {
+    expect(tokenizeSnapshotFields('', '|')).toEqual(['']);
+  });
+
+  test('separator at end yields an empty trailing field', () => {
+    expect(tokenizeSnapshotFields('a|b|', '|')).toEqual(['a', 'b', '']);
+  });
+
+  test('backslash before separator stays in the previous field', () => {
+    expect(tokenizeSnapshotFields('a\\|b', '|')).toEqual(['a\\', 'b']);
+  });
+
+  test('consecutive separators yield empty fields', () => {
+    expect(tokenizeSnapshotFields('a||b', '|')).toEqual(['a', '', 'b']);
+  });
+});
+
+describe('foldFlexibleFields', () => {
+  test('returns a copy when token count is within the layout', () => {
+    expect(foldFlexibleFields(['a', 'b'], FLEXIBLE_FIELD_LAYOUTS[2], '|')).toEqual(['a', 'b']);
+  });
+
+  test('joins extras into the flexible middle field', () => {
+    expect(foldFlexibleFields(['a', 'b', 'c', 'd'], FLEXIBLE_FIELD_LAYOUTS[2], '|')).toEqual([
+      'a',
+      'b|c|d',
+    ]);
+    expect(
+      foldFlexibleFields(['@1', '0', 'name', 'with', 'pipe', '1'], FLEXIBLE_FIELD_LAYOUTS[4], '|')
+    ).toEqual(['@1', '0', 'name|with|pipe', '1']);
   });
 });

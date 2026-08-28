@@ -6,10 +6,13 @@ import {
   PANE_ROUTE_PATH,
   PENDING_NAVIGATION_TTL_MS,
   buildPaneRoutePath,
+  createPendingNavigationSlot,
   deviceTreeRoutePatterns,
   parseDeviceTreeSelection,
+  pendingNavigationSurvivesPath,
   pickActivePane,
   resolvePendingNavigation,
+  safeDecodePaneParam,
 } from './device-tree-navigation';
 
 const identityHost = {} as HostServices;
@@ -41,6 +44,17 @@ describe('parseDeviceTreeSelection', () => {
     });
   });
 
+  test('survives a malformed percent escape in the pane segment', () => {
+    expect(parseDeviceTreeSelection('/devices/dev-1/windows/@3/panes/%zz', patterns)).toEqual({
+      selectedDeviceId: 'dev-1',
+      selectedWindowId: '@3',
+      selectedPaneId: '%zz',
+    });
+    expect(
+      parseDeviceTreeSelection('/devices/dev-1/windows/@3/panes/%E0%A4%A', patterns).selectedPaneId
+    ).toBe('%E0%A4%A');
+  });
+
   test('returns an empty selection outside the device tree', () => {
     expect(parseDeviceTreeSelection('/settings/llm', patterns)).toEqual({
       selectedDeviceId: undefined,
@@ -61,6 +75,23 @@ describe('parseDeviceTreeSelection', () => {
     expect(
       parseDeviceTreeSelection('/devices/dev-1', hostPatterns).selectedDeviceId
     ).toBeUndefined();
+  });
+});
+
+describe('safeDecodePaneParam', () => {
+  test('decodes a well-formed escape once', () => {
+    expect(safeDecodePaneParam('%254')).toBe('%4');
+  });
+
+  test('returns the raw value for malformed escapes instead of throwing', () => {
+    expect(safeDecodePaneParam('%zz')).toBe('%zz');
+    expect(safeDecodePaneParam('%')).toBe('%');
+    expect(safeDecodePaneParam('%E0%A4%A')).toBe('%E0%A4%A');
+  });
+
+  test('normalises missing and empty params to an empty selection', () => {
+    expect(safeDecodePaneParam(undefined)).toBeUndefined();
+    expect(safeDecodePaneParam('')).toBeUndefined();
   });
 });
 
@@ -167,5 +198,116 @@ describe('resolvePendingNavigation', () => {
         PENDING_NAVIGATION_TTL_MS
       ).status
     ).toBe('ready');
+  });
+});
+
+describe('pendingNavigationSurvivesPath', () => {
+  const pending = { deviceId: 'dev-1', windowId: '@2', at: 0 };
+
+  test('survives while the route still points at the target device', () => {
+    expect(pendingNavigationSurvivesPath(pending, '/devices/dev-1', patterns)).toBe(true);
+    expect(
+      pendingNavigationSurvivesPath(pending, '/devices/dev-1/windows/@9/panes/%251', patterns)
+    ).toBe(true);
+  });
+
+  test('dies once the user navigates away from the target device', () => {
+    expect(pendingNavigationSurvivesPath(pending, '/devices', patterns)).toBe(false);
+    expect(pendingNavigationSurvivesPath(pending, '/devices/dev-2', patterns)).toBe(false);
+    expect(pendingNavigationSurvivesPath(pending, '/settings/llm', patterns)).toBe(false);
+  });
+
+  test('is false without a pending navigation', () => {
+    expect(pendingNavigationSurvivesPath(null, '/devices/dev-1', patterns)).toBe(false);
+  });
+
+  test('honours the host route prefix', () => {
+    const hostPatterns = deviceTreeRoutePatterns(prefixedHost);
+    expect(pendingNavigationSurvivesPath(pending, '/app/devices/dev-1', hostPatterns)).toBe(true);
+    expect(pendingNavigationSurvivesPath(pending, '/devices/dev-1', hostPatterns)).toBe(false);
+  });
+});
+
+describe('createPendingNavigationSlot', () => {
+  function fakeTimers() {
+    const scheduled = new Map<number, { fn: () => void; ms: number }>();
+    let nextHandle = 1;
+    return {
+      scheduled,
+      timers: {
+        setTimer: (fn: () => void, ms: number) => {
+          const handle = nextHandle++;
+          scheduled.set(handle, { fn, ms });
+          return handle;
+        },
+        clearTimer: (handle: unknown) => {
+          scheduled.delete(handle as number);
+        },
+      },
+      fire: (handle: number) => {
+        const entry = scheduled.get(handle);
+        scheduled.delete(handle);
+        entry?.fn();
+      },
+    };
+  }
+
+  const pending = { deviceId: 'dev-1', windowId: '@2', at: 0 };
+
+  test('starts empty', () => {
+    expect(createPendingNavigationSlot().get()).toBeNull();
+  });
+
+  test('arms a ttl timer on write and expires without any snapshot change', () => {
+    const { timers, scheduled, fire } = fakeTimers();
+    const slot = createPendingNavigationSlot({ timers });
+
+    slot.set(pending);
+    expect(slot.get()).toEqual(pending);
+    expect([...scheduled.values()][0]?.ms).toBe(PENDING_NAVIGATION_TTL_MS);
+
+    fire(1);
+    expect(slot.get()).toBeNull();
+  });
+
+  test('honours a custom ttl', () => {
+    const { timers, scheduled } = fakeTimers();
+    createPendingNavigationSlot({ timers, ttlMs: 42 }).set(pending);
+    expect([...scheduled.values()][0]?.ms).toBe(42);
+  });
+
+  test('clear drops both the value and the timer', () => {
+    const { timers, scheduled } = fakeTimers();
+    const slot = createPendingNavigationSlot({ timers });
+
+    slot.set(pending);
+    slot.clear();
+    expect(slot.get()).toBeNull();
+    expect(scheduled.size).toBe(0);
+  });
+
+  test('re-writing replaces the previous timer so the ttl restarts', () => {
+    const { timers, scheduled, fire } = fakeTimers();
+    const slot = createPendingNavigationSlot({ timers });
+
+    slot.set(pending);
+    const next = { deviceId: 'dev-2', windowId: '@5', at: 1 };
+    slot.set(next);
+    expect(scheduled.size).toBe(1);
+
+    fire(1);
+    expect(slot.get()).toEqual(next);
+    fire(2);
+    expect(slot.get()).toBeNull();
+  });
+
+  test('dispose clears the timer so an unmounted tree never fires', () => {
+    const { timers, scheduled } = fakeTimers();
+    const slot = createPendingNavigationSlot({ timers });
+
+    slot.set(pending);
+    slot.dispose();
+    expect(scheduled.size).toBe(0);
+    expect(slot.get()).toBeNull();
   });
 });

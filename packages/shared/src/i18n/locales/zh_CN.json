@@ -13,6 +13,9 @@
       "expand": "展开",
       "collapse": "收起",
       "refresh": "刷新",
+      "retry": "重试",
+      "pageLoadFailed": "页面加载失败。",
+      "pageLoadFailedHint": "请检查网络连接后重试。",
       "test": "测试",
       "send": "发送",
       "success": "成功",
@@ -93,6 +96,7 @@
       "connected": "已连接",
       "disconnect": "断开",
       "disconnected": "已断开",
+      "connectToStart": "连接设备后即可开始使用。",
       "connecting": "连接中...",
       "dragHandle": "拖动以调整设备顺序",
       "reorderFailed": "设备排序失败",
@@ -201,6 +205,8 @@
         "fontFamily": "字体",
         "preview": "预览",
         "savedInBrowser": "这些设置仅保存在当前浏览器中。",
+        "loading": "正在加载终端设置……",
+        "loadFailed": "终端设置加载失败。",
         "shortcuts": {
           "title": "自定义快捷键",
           "savedOnServer": "保存在服务器、多端共享——修改后需点「保存」才生效。",
@@ -320,6 +326,7 @@
         "updateFailed": "更新目录失败",
         "deleteFailed": "移除目录失败",
         "toggleFailed": "更新目录失败",
+        "loadFailed": "加载目录列表失败",
         "deleteTitle": "移除目录？",
         "deleteDesc": "将「{{path}}」移出白名单？该目录下的文件将不再可访问。"
       },
@@ -676,7 +683,7 @@
       "closeWindow": "关闭窗口",
       "closePane": "关闭 pane",
       "addDevice": "添加设备",
-      "section": {
+      "tab": {
         "panes": "Panes",
         "agent": "Agent",
         "files": "Files"
@@ -732,6 +739,7 @@
         "selectPaneHint": "请在 Panes 标签中选择一个 pane 来开启会话",
         "noSessions": "暂无会话",
         "showAll": "显示全部会话",
+        "menu": "会话操作",
         "rename": "重命名会话",
         "renameTitle": "重命名会话",
         "renamePlaceholder": "会话标题",
@@ -827,6 +835,9 @@
         "viewState": "状态",
         "lastTriggered": "最近触发：{{time}}",
         "neverTriggered": "从未触发",
+        "everySeconds": "每 {{seconds}} 秒采样",
+        "unchangedFor": "{{minutes}} 分钟无变化",
+        "loadFailed": "加载监控规则失败",
         "deleteTitle": "删除该规则？",
         "deleteDesc": "“{{name}}”将被永久删除。",
         "deleteConfirm": "删除"
@@ -905,7 +916,8 @@
         "samples": "近期样本",
         "samplesEmpty": "暂无样本",
         "hit": "命中",
-        "none": "—"
+        "none": "—",
+        "loadFailed": "加载规则状态失败"
       },
       "toast": {
         "created": "监控规则已创建",

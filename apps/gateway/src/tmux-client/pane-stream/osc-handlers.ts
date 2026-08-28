@@ -20,6 +20,24 @@ export function emitTitle(titleBytes: number[], onTitle: (title: string) => void
   onTitle(title);
 }
 
+// OSC 52 的 Pc 是选区集合：c=clipboard、p=primary、q=secondary、s=select、0-7=cut buffer。
+// 浏览器里只有系统剪贴板一个去处，primary/secondary/cut buffer 没有对应物。编辑器（如
+// nvim 内置 OSC 52 provider：`*`→p、`+`→c）在 `clipboard=unnamed,unnamedplus` 下一次复制
+// 会连发 p 与 c 两条，全都当剪贴板写就是「一次复制、两次写入 + 两条提示」。
+// 空 Pc（tmux 自身复制、大量脚本的 `\e]52;;<b64>`）沿用旧行为按剪贴板处理。
+function targetsSystemClipboard(targets: string): boolean {
+  return targets.length === 0 || targets.includes('c') || targets.includes('s');
+}
+
+// 有些 TUI（如 Claude Code）一次选区复制会把同一段文本连发两条 OSC 52;c。
+const CLIPBOARD_WRITE_DEDUP_MS = 500;
+
+function isDuplicateClipboardWrite(state: ParserState, text: string, now: number): boolean {
+  const last = state.lastClipboardWrite;
+  state.lastClipboardWrite = { text, at: now };
+  return last !== null && last.text === text && now - last.at < CLIPBOARD_WRITE_DEDUP_MS;
+}
+
 export function emitOsc(state: ParserState, options: PaneStreamParserOptions): void {
   const payload = utf8Decoder.decode(new Uint8Array(state.oscPayloadBytes));
   switch (state.oscKind) {
@@ -111,6 +129,9 @@ export function emitOsc(state: ParserState, options: PaneStreamParserOptions): v
       if (separatorIndex < 0) {
         return;
       }
+      if (!targetsSystemClipboard(payload.slice(0, separatorIndex))) {
+        return;
+      }
       const base64Data = payload.slice(separatorIndex + 1);
       if (!base64Data || base64Data === '?') {
         return;
@@ -122,7 +143,7 @@ export function emitOsc(state: ParserState, options: PaneStreamParserOptions): v
           decoded[i] = binaryString.charCodeAt(i);
         }
         const text = new TextDecoder('utf-8', { fatal: false }).decode(decoded);
-        if (text) {
+        if (text && !isDuplicateClipboardWrite(state, text, (options.now ?? Date.now)())) {
           options.onClipboardWrite?.(text);
         }
       } catch {

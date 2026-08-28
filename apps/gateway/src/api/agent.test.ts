@@ -484,3 +484,35 @@ describe('stop / confirmations / decide', () => {
     expect((json.confirmation as { status: string }).status).toBe('approved');
   });
 });
+
+describe('session PATCH identity fields / invalid body', () => {
+  test('PATCH 空 paneId → 400', async () => {
+    const session = createTestSession();
+    expect(
+      (await call('PATCH', `/api/agent/sessions/${session.id}`, { paneId: '  ' })).status
+    ).toBe(400);
+  });
+
+  test('POST sessions：非对象 body → 400', async () => {
+    const { status } = await call('POST', '/api/agent/sessions', []);
+    expect(status).toBe(400);
+  });
+
+  test('PATCH sessions：非法 JSON → 400', async () => {
+    const session = createTestSession();
+    const req = new Request(`http://localhost/api/agent/sessions/${session.id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: '{',
+    });
+    const pathname = new URL(req.url).pathname;
+    const response = await dispatchRoutes(req, pathname, createAgentRoutes(stubSupervisor()), {
+      server: {} as never,
+      path: pathname,
+    });
+    if (!response) {
+      throw new Error('no route matched');
+    }
+    expect((await response).status).toBe(400);
+  });
+});

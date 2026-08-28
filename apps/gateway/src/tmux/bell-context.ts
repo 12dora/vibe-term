@@ -1,4 +1,10 @@
-import type { StateSnapshotPayload, TmuxBellEventData, TmuxNotificationEventData, TmuxPane, TmuxWindow } from '@tmex/shared';
+import type {
+  StateSnapshotPayload,
+  TmuxBellEventData,
+  TmuxNotificationEventData,
+  TmuxPane,
+  TmuxWindow,
+} from '@tmex/shared';
 
 interface ResolvePaneContextOptions {
   deviceId: string;
@@ -18,75 +24,119 @@ export type PaneLocationContext = Pick<
   | 'paneCurrentCommand'
 >;
 
-function pickPaneById(
-  windows: TmuxWindow[],
-  paneId: string
+export interface BuildPaneContextInput {
+  deviceId: string;
+  siteUrl: string;
+  window?: TmuxWindow;
+  pane?: TmuxPane;
+  fallbackWindowId?: string;
+  fallbackPaneId?: string;
+}
+
+function readOptionalId(value: unknown): string | undefined {
+  return typeof value === 'string' && value ? value : undefined;
+}
+
+function readRawIds(rawData: unknown): { windowId?: string; paneId?: string } {
+  if (!rawData || typeof rawData !== 'object') {
+    return {};
+  }
+  const raw = rawData as Record<string, unknown>;
+  return {
+    windowId: readOptionalId(raw.windowId),
+    paneId: readOptionalId(raw.paneId),
+  };
+}
+
+function firstDefined<T>(candidates: ReadonlyArray<T | undefined | null>): T | undefined {
+  for (const candidate of candidates) {
+    if (candidate) {
+      return candidate;
+    }
+  }
+}
+
+export function findPane(
+  windows: readonly TmuxWindow[],
+  paneId: string | undefined
 ): { window: TmuxWindow; pane: TmuxPane } | null {
+  if (!paneId) {
+    return null;
+  }
   for (const window of windows) {
     const pane = window.panes.find((item) => item.id === paneId);
     if (pane) {
       return { window, pane };
     }
   }
-
   return null;
 }
 
-export function resolvePaneContext(options: ResolvePaneContextOptions): PaneLocationContext {
-  const { deviceId, snapshot, rawData } = options;
-  const raw = (rawData as Record<string, unknown> | undefined) ?? {};
+export function resolveWindowTitle(
+  windows: readonly TmuxWindow[],
+  options: { matchedWindow?: TmuxWindow; windowId?: string }
+): TmuxWindow | undefined {
+  return firstDefined([
+    options.matchedWindow,
+    options.windowId ? windows.find((window) => window.id === options.windowId) : undefined,
+    windows.find((window) => window.active),
+    windows[0],
+  ]);
+}
 
-  const bellWindowId = typeof raw.windowId === 'string' && raw.windowId ? raw.windowId : undefined;
-  const bellPaneId = typeof raw.paneId === 'string' && raw.paneId ? raw.paneId : undefined;
+function resolvePane(
+  window: TmuxWindow | undefined,
+  options: { matchedPane?: TmuxPane; paneId?: string }
+): TmuxPane | undefined {
+  return firstDefined([
+    options.matchedPane,
+    options.paneId ? window?.panes.find((pane) => pane.id === options.paneId) : undefined,
+    window?.panes.find((pane) => pane.active),
+    window?.panes[0],
+  ]);
+}
 
-  if (!snapshot?.session) {
-    return {
-      windowId: bellWindowId,
-      paneId: bellPaneId,
-    };
-  }
+function stripTrailingSlash(siteUrl: string): string {
+  return siteUrl.endsWith('/') ? siteUrl.slice(0, -1) : siteUrl;
+}
 
-  let targetWindow: TmuxWindow | undefined;
-  let targetPane: TmuxPane | undefined;
-
-  if (bellPaneId) {
-    const matched = pickPaneById(snapshot.session.windows, bellPaneId);
-    if (matched) {
-      targetWindow = matched.window;
-      targetPane = matched.pane;
-    }
-  }
-
-  if (!targetWindow && bellWindowId) {
-    targetWindow = snapshot.session.windows.find((window) => window.id === bellWindowId);
-  }
-
-  if (!targetWindow) {
-    targetWindow =
-      snapshot.session.windows.find((window) => window.active) ?? snapshot.session.windows[0];
-  }
-
-  if (!targetPane && targetWindow) {
-    targetPane =
-      (bellPaneId ? targetWindow.panes.find((pane) => pane.id === bellPaneId) : undefined) ??
-      targetWindow.panes.find((pane) => pane.active) ??
-      targetWindow.panes[0];
-  }
-
-  const siteUrl = options.siteUrl.endsWith('/') ? options.siteUrl.slice(0, -1) : options.siteUrl;
+export function buildContext(input: BuildPaneContextInput): PaneLocationContext {
+  const { window, pane } = input;
+  const siteUrl = stripTrailingSlash(input.siteUrl);
   const paneUrl =
-    targetWindow && targetPane
-      ? `${siteUrl}/devices/${encodeURIComponent(deviceId)}/windows/${encodeURIComponent(targetWindow.id)}/panes/${encodeURIComponent(targetPane.id)}`
+    window && pane
+      ? `${siteUrl}/devices/${encodeURIComponent(input.deviceId)}/windows/${encodeURIComponent(window.id)}/panes/${encodeURIComponent(pane.id)}`
       : undefined;
 
   return {
-    windowId: targetWindow?.id ?? bellWindowId,
-    paneId: targetPane?.id ?? bellPaneId,
-    windowIndex: targetWindow?.index,
-    paneIndex: targetPane?.index,
+    windowId: window?.id ?? input.fallbackWindowId,
+    paneId: pane?.id ?? input.fallbackPaneId,
+    windowIndex: window?.index,
+    paneIndex: pane?.index,
     paneUrl,
-    // 标题/进程跟随实际解析到的 pane（与 paneIndex/paneUrl 同源），快照缺失则留空
-    paneTitle: targetPane?.title,
-    paneCurrentCommand: targetPane?.currentCommand,
+    paneTitle: pane?.title,
+    paneCurrentCommand: pane?.currentCommand,
   };
+}
+
+export function resolvePaneContext(options: ResolvePaneContextOptions): PaneLocationContext {
+  const { deviceId, snapshot } = options;
+  const { windowId, paneId } = readRawIds(options.rawData);
+
+  if (!snapshot?.session) {
+    return { windowId, paneId };
+  }
+
+  const windows = snapshot.session.windows;
+  const matched = findPane(windows, paneId);
+  const window = resolveWindowTitle(windows, { matchedWindow: matched?.window, windowId });
+  const pane = resolvePane(window, { matchedPane: matched?.pane, paneId });
+  return buildContext({
+    deviceId,
+    siteUrl: options.siteUrl,
+    window,
+    pane,
+    fallbackWindowId: windowId,
+    fallbackPaneId: paneId,
+  });
 }

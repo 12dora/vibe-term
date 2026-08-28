@@ -4,7 +4,7 @@
 
 Watch 是与 agent session 无关的独立功能：对某个 tmux pane 添加规则，gateway 周期采样屏幕纯文本（`capturePaneText`），按规则判定是否触发，触发走现有通知体系（Webhook/Telegram + WS 广播 → 浏览器 toast/Notification）。核心 use case：下载/上传卡住超过 N 分钟提醒。
 
-服务端代码在 `apps/gateway/src/watch/`（`evaluator.ts` 纯函数 + `service.ts` 编排），REST 在 `api/watch.ts`，前端在 `apps/fe/src/components/watch/`。规则表 `watch_rules`，运行态分离在 `watch_rule_state`（单行 UPDATE，重启后计时延续）；近期样本只放内存 ring buffer（每规则 120 条），不进库。
+服务端代码在 `apps/gateway/src/watch/`（`evaluator.ts` 纯函数 + `service.ts` 编排），REST 在 `api/watch.ts`，前端在 `packages/panels/src/watch/`。规则表 `watch_rules`，运行态分离在 `watch_rule_state`（单行 UPDATE，重启后计时延续）；近期样本只放内存 ring buffer（每规则 120 条），不进库。
 
 ## 三种 triggerType 语义
 

@@ -14,7 +14,7 @@
 - **草稿来源**：commit 范围 = 上一条 `chore(release)` 提交 .. HEAD，按 conventional commit 前缀分组（feat/fix/perf/refactor/docs，其余 Other），排除 `chore(release)` 自身。
 - **DRAFT 护栏**：草稿首行是 HTML 注释 `<!-- DRAFT… -->`。漏改写时它不会在前端 markdown 渲染中显示（不污染用户视图），但维护者在文件 / `npm pack` 里仍可见——发布前确认它已被删除即代表改写完成。
 - **展示**：gateway 从 `https://cdn.jsdelivr.net/npm/tmex-cli@<latest>/CHANGELOG.md` 拉取（`no-store`）；失败回退「版本号 + 发布时间」（npm registry `time`），覆盖历史无 changelog 的旧版本。
-- **版本注入**：版本号在 `bun run build` 期由 `bun build --define TMEX_MONOREPO_VERSION` 烧进 runtime bundle（`packages/app/scripts/build-runtime.ts`、docker 走 `apps/gateway/scripts/build.ts`），前端走 vite `define`。**故发版顺序必须「先 bump 再 build」**。
+- **版本注入**：版本号在 `bun run build` 期由 `bun build --define TMEX_MONOREPO_VERSION` 烧进 runtime bundle（`packages/app/scripts/build-runtime.ts`），前端走 vite `define`。**故发版顺序必须「先 bump 再 build」**。
 
 ## 改写规范（agent 步骤）
 

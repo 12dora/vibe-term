@@ -10,6 +10,9 @@ import {
   type WatchRuleEffective,
   type WatchRuleUpdates,
   buildEffectiveWatchRule,
+  mergeWatchRuleEffective,
+  parseWatchTriggerType,
+  validateRuleSemantics,
 } from './watch-rule-config';
 
 let providerId = '';
@@ -481,5 +484,128 @@ describe('buildEffectiveWatchRule — update（有 existing）', () => {
       expect(patched.updates.patternFlags).toBe('m');
       expect(patched.effective.patternFlags).toBe('m');
     }
+  });
+});
+
+describe('parseWatchTriggerType', () => {
+  test('create 缺 triggerType / 非法值 → watchTriggerTypeInvalid', () => {
+    expect(parseWatchTriggerType({}, null)).toEqual({
+      ok: false,
+      error: t('apiError.watchTriggerTypeInvalid'),
+    });
+    expect(parseWatchTriggerType({ triggerType: 'bogus' }, null)).toEqual({
+      ok: false,
+      error: t('apiError.watchTriggerTypeInvalid'),
+    });
+  });
+
+  test('patch 显式合法值覆盖 existing', () => {
+    expect(parseWatchTriggerType({ triggerType: 'llm' }, existingRule())).toEqual({
+      ok: true,
+      value: 'llm',
+    });
+  });
+
+  test('省略时用 existing', () => {
+    expect(parseWatchTriggerType({}, existingRule({ triggerType: 'unchanged' }))).toEqual({
+      ok: true,
+      value: 'unchanged',
+    });
+  });
+});
+
+describe('mergeWatchRuleEffective', () => {
+  test('create：llm interval 默认 60，match 默认 30', () => {
+    expect(mergeWatchRuleEffective(null, {}, 'llm').intervalSeconds).toBe(60);
+    expect(mergeWatchRuleEffective(null, {}, 'match').intervalSeconds).toBe(30);
+  });
+
+  test('fields 覆盖 existing；省略则保留 existing', () => {
+    const existing = existingRule({
+      pattern: 'OLD',
+      patternFlags: 'i',
+      unchangedMinutes: 8,
+      conditionPrompt: 'keep',
+      intervalSeconds: 12,
+    });
+    expect(mergeWatchRuleEffective(existing, { pattern: 'NEW' }, 'match')).toEqual({
+      triggerType: 'match',
+      pattern: 'NEW',
+      patternFlags: 'i',
+      unchangedMinutes: 8,
+      conditionPrompt: 'keep',
+      intervalSeconds: 12,
+    });
+  });
+
+  test('显式 null 覆盖 existing 字符串', () => {
+    const existing = existingRule({ pattern: 'OLD', conditionPrompt: 'p' });
+    expect(
+      mergeWatchRuleEffective(existing, { pattern: null, conditionPrompt: null }, 'llm')
+    ).toMatchObject({
+      pattern: null,
+      conditionPrompt: null,
+    });
+  });
+});
+
+describe('validateRuleSemantics', () => {
+  test('match 缺 pattern / 非法 pattern', () => {
+    expect(
+      validateRuleSemantics({
+        triggerType: 'match',
+        pattern: null,
+        patternFlags: '',
+        unchangedMinutes: null,
+        conditionPrompt: null,
+        intervalSeconds: 30,
+      })
+    ).toBe(t('apiError.watchPatternRequired'));
+
+    expect(
+      validateRuleSemantics({
+        triggerType: 'match',
+        pattern: '([',
+        patternFlags: '',
+        unchangedMinutes: null,
+        conditionPrompt: null,
+        intervalSeconds: 30,
+      })
+    ).toBe(t('apiError.watchPatternInvalid', { detail: patternInvalidDetail('([', '') }));
+  });
+
+  test('unchanged 要求 minutes；llm 要求 prompt；interval 下限', () => {
+    expect(
+      validateRuleSemantics({
+        triggerType: 'unchanged',
+        pattern: 'a',
+        patternFlags: '',
+        unchangedMinutes: null,
+        conditionPrompt: null,
+        intervalSeconds: 30,
+      })
+    ).toBe(t('apiError.watchUnchangedMinutesInvalid'));
+
+    expect(
+      validateRuleSemantics({
+        triggerType: 'llm',
+        pattern: null,
+        patternFlags: '',
+        unchangedMinutes: null,
+        conditionPrompt: '  ',
+        intervalSeconds: 60,
+      })
+    ).toBe(t('apiError.watchConditionPromptRequired'));
+
+    expect(
+      validateRuleSemantics({
+        triggerType: 'llm',
+        pattern: null,
+        patternFlags: '',
+        unchangedMinutes: null,
+        conditionPrompt: 'x',
+        intervalSeconds: 20,
+      })
+    ).toBe(t('apiError.watchIntervalInvalid', { min: 30 }));
   });
 });

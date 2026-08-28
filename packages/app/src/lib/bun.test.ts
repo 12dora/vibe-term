@@ -1,10 +1,17 @@
 import { describe, expect, test } from 'bun:test';
-import { checkBunVersion, sanitizeBunPath } from './bun';
+import {
+  checkBunVersion,
+  extractSanitizedLines,
+  sanitizeBunPath,
+  selectPreferredBunPath,
+  stripAnsiEscapes,
+} from './bun';
 
 const ESC = String.fromCharCode(27);
 const CR = String.fromCharCode(13);
 const LF = String.fromCharCode(10);
 const BEL = String.fromCharCode(7);
+const ST = `${ESC}\\`;
 
 describe('sanitizeBunPath', () => {
   test('passes through a clean path', () => {
@@ -44,6 +51,75 @@ describe('sanitizeBunPath', () => {
     expect(sanitizeBunPath(`${ESC}[0m${CR}${LF}`)).toBe('');
     expect(sanitizeBunPath('')).toBe('');
     expect(sanitizeBunPath(`   ${LF}  `)).toBe('');
+  });
+
+  test('picks the last absolute path when several exist', () => {
+    expect(sanitizeBunPath(`/opt/homebrew/bin/bun${LF}banner${LF}/Users/me/.bun/bin/bun`)).toBe(
+      '/Users/me/.bun/bin/bun'
+    );
+  });
+});
+
+describe('stripAnsiEscapes', () => {
+  test('leaves clean text unchanged', () => {
+    expect(stripAnsiEscapes('/opt/homebrew/bin/bun')).toBe('/opt/homebrew/bin/bun');
+  });
+
+  test('drops CSI sequences including SGR and EL', () => {
+    expect(stripAnsiEscapes(`${ESC}[2K${ESC}[1m/opt/homebrew/bin/bun${ESC}[0m`)).toBe(
+      '/opt/homebrew/bin/bun'
+    );
+  });
+
+  test('drops OSC sequences terminated by BEL or ST', () => {
+    expect(stripAnsiEscapes(`${ESC}]0;title${BEL}/usr/bin/bun`)).toBe('/usr/bin/bun');
+    expect(stripAnsiEscapes(`${ESC}]0;title${ST}/usr/bin/bun`)).toBe('/usr/bin/bun');
+  });
+
+  test('drops a bare ESC and keeps the following character', () => {
+    expect(stripAnsiEscapes(`${ESC}/usr/bin/bun`)).toBe('/usr/bin/bun');
+  });
+});
+
+describe('extractSanitizedLines', () => {
+  test('splits on CR or LF and drops empty lines', () => {
+    expect(extractSanitizedLines(`alpha${LF}${CR}beta${CR}${LF}gamma`)).toEqual([
+      'alpha',
+      'beta',
+      'gamma',
+    ]);
+  });
+
+  test('strips control characters then trims', () => {
+    expect(extractSanitizedLines(`  /opt/${String.fromCharCode(1)}bun  ${LF}`)).toEqual([
+      '/opt/bun',
+    ]);
+  });
+
+  test('returns no lines for blank input', () => {
+    expect(extractSanitizedLines(`  ${LF}${CR}`)).toEqual([]);
+  });
+});
+
+describe('selectPreferredBunPath', () => {
+  test('returns empty string when there are no candidates', () => {
+    expect(selectPreferredBunPath([])).toBe('');
+  });
+
+  test('returns the last absolute-path line over a later banner', () => {
+    expect(selectPreferredBunPath(['/opt/homebrew/bin/bun', 'Welcome to Zsh!'])).toBe(
+      '/opt/homebrew/bin/bun'
+    );
+  });
+
+  test('returns the last absolute-path line when several exist', () => {
+    expect(
+      selectPreferredBunPath(['/opt/homebrew/bin/bun', 'banner', '/Users/me/.bun/bin/bun'])
+    ).toBe('/Users/me/.bun/bin/bun');
+  });
+
+  test('falls back to the last line when none are absolute paths', () => {
+    expect(selectPreferredBunPath(['1.3.11', '1.3.12'])).toBe('1.3.12');
   });
 });
 

@@ -34,6 +34,7 @@ export interface TmuxCommandHost {
   ): void;
   getCachedDeviceTreeOrder(deviceId: string): DeviceTreeOrderRecord;
   storeDeviceTreeOrder(order: DeviceTreeOrderRecord): DeviceTreeOrderRecord;
+  syncLegacyPaneObservers(session: GatewaySession, deviceId: string): void;
 }
 
 export function canSelectWindow(
@@ -122,6 +123,7 @@ export function handleTmuxSelect(
   }
 
   session.borshState.selectedPanes[deviceId] = paneId;
+  host.syncLegacyPaneObservers(session, deviceId);
   host.refreshSnapshotPolling(deviceId);
   switchBarrier.sendSwitchAck(session, deviceId);
 
@@ -398,6 +400,7 @@ export function handleSubscribePanes(
   } else {
     delete session.borshState.subscribedPanes[deviceId];
   }
+  host.syncLegacyPaneObservers(session, deviceId);
   host.refreshSnapshotPolling(deviceId);
 }
 
@@ -507,6 +510,7 @@ export function handleFocusPane(
   if (!canSelectPane(entry, deviceId, windowId, paneId)) return;
 
   session.borshState.selectedPanes[deviceId] = paneId;
+  host.syncLegacyPaneObservers(session, deviceId);
   host.refreshSnapshotPolling(deviceId);
   entry.runtime.focusPane(windowId, paneId);
 }

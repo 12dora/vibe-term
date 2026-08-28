@@ -27,7 +27,6 @@ import {
 } from './external-tmux-core';
 import { buildEnsureGhosttyTerminfoScript } from './ghostty-terminfo';
 import { encodeBytesToHexChunks } from './input-encoder';
-import { ensureStableServerEpoch } from './server-epoch';
 import {
   isControlModeSupported,
   parseTmuxVersion,
@@ -185,41 +184,25 @@ export class LocalExternalTmuxConnection extends ExternalTmuxConnectionCore {
   }
 
   async connect(): Promise<void> {
-    this.manualDisconnect = false;
-    this.closeNotified = false;
-    this.lifecycle.reset();
-    this.device = this.deps.getDevice(this.deviceId);
-    if (!this.device) {
-      throw new Error(`Device not found: ${this.deviceId}`);
-    }
-    if (this.device.type !== 'local') {
-      throw new Error(`LocalExternalTmuxConnection only supports local device: ${this.deviceId}`);
-    }
+    await this.runConnectAttempt(async (generation) => {
+      this.device = this.deps.getDevice(this.deviceId);
+      if (!this.device) {
+        throw new Error(`Device not found: ${this.deviceId}`);
+      }
+      if (this.device.type !== 'local') {
+        throw new Error(`LocalExternalTmuxConnection only supports local device: ${this.deviceId}`);
+      }
 
-    this.sessionName = this.device.session?.trim() || 'tmex';
+      this.sessionName = this.device.session?.trim() || 'tmex';
 
-    await this.assertTmuxCompatibility();
-    const { created } = await this.ensureSession();
-    const serverEpoch = await ensureStableServerEpoch((argv) => this.runTmuxAllowFailure(argv));
-    this.callbacks.onSourceReady?.(serverEpoch);
-    await this.configureSessionOptions();
-    if (this.deps.enableSubscription) {
-      await this.startControlClient();
-    }
-    this.connected = true;
-    updateDeviceRuntimeStatus(this.deviceId, {
-      lastSeenAt: new Date().toISOString(),
-      tmuxAvailable: true,
-      lastError: null,
-      lastErrorType: null,
+      await this.awaitConnectStep(generation, () => this.assertTmuxCompatibility());
+      const { created } = await this.awaitConnectStep(generation, () => this.ensureSession());
+      await this.finalizeConnect(generation, created, this.deps.enableSubscription);
     });
-    if (created) {
-      this.lifecycle.notifySessionCreated();
-    }
-    await this.requestSnapshotInternal();
   }
 
   disconnect(): void {
+    this.invalidateConnectGeneration();
     if (!this.connected && this.manualDisconnect) {
       return;
     }
@@ -264,6 +247,9 @@ export class LocalExternalTmuxConnection extends ExternalTmuxConnectionCore {
   protected async attachControlTransport(
     onAttachReady: () => void
   ): Promise<ExternalControlHandle> {
+    if (this.manualDisconnect) {
+      throw new Error(this.controlAttachFailureMessage());
+    }
     return this.spawnControlClientProcess(onAttachReady);
   }
 

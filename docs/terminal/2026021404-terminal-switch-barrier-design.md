@@ -1,17 +1,25 @@
 # 终端切换屏障（selectToken）设计
 
-> 状态：设计稿（未实现 / 迁移中）。
+> 状态：**已实现**。本文是当前行为的规范说明，不是待办设计稿。
 >
 > 目标：解决 pane 切换时 history/live 乱序、丢失、重复，以及“切换后短时间输出写到错误 pane”的问题。
+>
+> 代码索引：
+>
+> - Gateway 屏障：`apps/gateway/src/ws/borsh/switch-barrier.ts`（`SwitchBarrier`，单例 `switchBarrier`），回归用例 `apps/gateway/src/ws/switch-barrier.issue45.test.ts`。
+> - FE 事务与门控：`packages/ws-client/src/state-machine.ts`（`SelectStateMachine`），history 分页门控 `packages/ws-client/src/pane-history-gate.ts`。
+> - e2e：`apps/fe/tests/ws-borsh-switch-barrier.spec.ts`。
+>
+> FE 侧的状态枚举与转移表见 `docs/ws-protocol/2026021403-ws-state-machines.md` 第 3、4 节；本文侧重 Gateway 时序、超时降级与验收用例。
 
 ## 背景与问题
 
-当前实现大致依赖：
+屏障引入前的实现依赖：
 
 - Gateway：`tmux/select` 后 `capture-pane` 推 `term/history`。
 - FE：先写 history，再把 live buffer 追加。
 
-但缺少明确的事务边界，导致：
+缺少明确的事务边界，导致：
 
 - live output 可能在 history 之前到达并被写入，随后 history 覆盖，造成乱序。
 - 用户快速切换 pane 时，旧 pane 的 history/live 可能写入新 pane。
@@ -100,7 +108,7 @@ FE                        Gateway                         tmux
 ### 2) Terminal gate（写入门控）
 
 - 收到 `SWITCH_ACK(token)`：
-  - reset xterm（清空屏幕与状态）
+  - reset 终端（清空屏幕与状态）
   - 进入 gate 状态：禁止写入 live output，改为本地 buffer。
 - 收到 `TERM_HISTORY(token)`：
   - 写入 history

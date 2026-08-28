@@ -2,7 +2,40 @@
 // 未登记的 kind 一律忽略（与旧 switch 的 default 行为一致）；解码异常向上抛，由订阅侧统一记录。
 
 import { wsBorsh } from '@tmex/shared';
-import type { GatewayTransportEventHandler } from './transport-types';
+import type { GatewayRebaseReason, GatewayTransportEventHandler } from './transport-types';
+
+function rebaseReasonFromSourceGap(reason: number): GatewayRebaseReason | undefined {
+  if (reason === wsBorsh.SOURCE_GAP_REASON_METADATA_GAP) return 'metadata_gap';
+  if (reason === wsBorsh.SOURCE_GAP_REASON_PANE_GAP) return 'pane_gap';
+  if (reason === wsBorsh.SOURCE_GAP_REASON_EPOCH_CHANGED) return 'epoch_changed';
+  if (reason === wsBorsh.SOURCE_GAP_REASON_CACHE_EVICTED) return 'cache_evicted';
+  if (reason === wsBorsh.SOURCE_GAP_REASON_RESOURCE_EXHAUSTED) return 'resource_exhausted';
+  return undefined;
+}
+
+function emitSourceGap(
+  gap: Extract<wsBorsh.CanonicalEvent, { SourceGap: unknown }>['SourceGap'],
+  emit: GatewayTransportEventHandler
+): void {
+  const reason = rebaseReasonFromSourceGap(gap.reason);
+  if (!reason) return;
+  if ('Pane' in gap.scope) {
+    emit({
+      type: 'rebase-required',
+      deviceId: gap.scope.Pane.pane.deviceId,
+      paneId: gap.scope.Pane.pane.paneId,
+      reason,
+    });
+    return;
+  }
+  emit({ type: 'rebase-required', reason });
+}
+
+function decodeCanonicalEvent(payload: Uint8Array, emit: GatewayTransportEventHandler): void {
+  const event = wsBorsh.decodeCanonicalEventPayload(payload).event;
+  if (!('SourceGap' in event)) return;
+  emitSourceGap(event.SourceGap, emit);
+}
 
 type MessageDecoder = (payload: Uint8Array, emit: GatewayTransportEventHandler) => void;
 
@@ -117,12 +150,20 @@ const MESSAGE_DECODERS = new Map<number, MessageDecoder>([
     },
   ],
   [
+    wsBorsh.KIND_SETTINGS_UPDATE,
+    (payload, emit) => {
+      const decoded = wsBorsh.decodePayload(wsBorsh.schema.SettingsUpdateS2CSchema, payload);
+      emit({ type: 'settings-update', namespace: decoded.namespace });
+    },
+  ],
+  [
     wsBorsh.KIND_ERROR,
     (payload, emit) => {
       const decoded = wsBorsh.decodePayload(wsBorsh.schema.ErrorSchema, payload);
       emit({ type: 'transport-error', error: new Error(decoded.message) });
     },
   ],
+  [wsBorsh.KIND_CANONICAL_EVENT, decodeCanonicalEvent],
 ]);
 
 /** 返回 false 表示该 kind 未登记解码器，调用方按“忽略”处理。 */

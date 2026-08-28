@@ -4,6 +4,7 @@ import type { Server } from 'bun';
 import { migrate } from 'drizzle-orm/bun-sqlite/migrator';
 import { deleteWeixinAccount, ensureSiteSettingsInitialized, getAllWeixinAccounts } from '../db';
 import { getDb as getOrmDb } from '../db/client';
+import { t } from '../i18n';
 import { weixinService } from '../weixin/service';
 import { handleApiRequest } from './index';
 
@@ -25,8 +26,8 @@ afterAll(async () => {
 function req(method: string, path: string, body?: unknown): Request {
   return new Request(`http://localhost${path}`, {
     method,
-    headers: body ? { 'Content-Type': 'application/json' } : undefined,
-    body: body ? JSON.stringify(body) : undefined,
+    headers: body !== undefined ? { 'Content-Type': 'application/json' } : undefined,
+    body: body !== undefined ? JSON.stringify(body) : undefined,
   });
 }
 
@@ -106,5 +107,72 @@ describe('weixin account api routing', () => {
       fakeServer
     );
     expect(res.status).toBe(404);
+  });
+
+  test('POST /api/settings/weixin/accounts rejects null body', async () => {
+    const res = await handleApiRequest(
+      req('POST', '/api/settings/weixin/accounts', null),
+      fakeServer
+    );
+    expect(res.status).toBe(400);
+    expect(await bodyOf<{ error: string }>(res)).toEqual({ error: t('apiError.invalidRequest') });
+  });
+
+  test('POST /api/settings/weixin/accounts rejects wrong-type fields', async () => {
+    const nameType = await handleApiRequest(
+      req('POST', '/api/settings/weixin/accounts', { name: 42 }),
+      fakeServer
+    );
+    expect(nameType.status).toBe(400);
+    expect(await bodyOf<{ error: string }>(nameType)).toEqual({
+      error: t('weixin.accountNameRequired'),
+    });
+
+    const enabledType = await handleApiRequest(
+      req('POST', '/api/settings/weixin/accounts', { name: 'wx-typed', enabled: 'yes' }),
+      fakeServer
+    );
+    expect(enabledType.status).toBe(400);
+    expect(await bodyOf<{ error: string }>(enabledType)).toEqual({
+      error: t('apiError.invalidRequest'),
+    });
+  });
+
+  test('PATCH /api/settings/weixin/accounts/:accountId rejects null body and wrong-type fields', async () => {
+    const created = await handleApiRequest(
+      req('POST', '/api/settings/weixin/accounts', { name: 'wx-patch-body' }),
+      fakeServer
+    );
+    expect(created.status).toBe(201);
+    const { accountId } = await bodyOf<{ accountId: string }>(created);
+
+    const nullBody = await handleApiRequest(
+      req('PATCH', `/api/settings/weixin/accounts/${accountId}`, null),
+      fakeServer
+    );
+    expect(nullBody.status).toBe(400);
+    expect(await bodyOf<{ error: string }>(nullBody)).toEqual({
+      error: t('apiError.invalidRequest'),
+    });
+
+    const nameType = await handleApiRequest(
+      req('PATCH', `/api/settings/weixin/accounts/${accountId}`, { name: 42 }),
+      fakeServer
+    );
+    expect(nameType.status).toBe(400);
+    expect(await bodyOf<{ error: string }>(nameType)).toEqual({
+      error: t('weixin.accountNameRequired'),
+    });
+
+    const flagType = await handleApiRequest(
+      req('PATCH', `/api/settings/weixin/accounts/${accountId}`, { allowAuthRequests: 1 }),
+      fakeServer
+    );
+    expect(flagType.status).toBe(400);
+    expect(await bodyOf<{ error: string }>(flagType)).toEqual({
+      error: t('apiError.invalidRequest'),
+    });
+
+    await handleApiRequest(req('DELETE', `/api/settings/weixin/accounts/${accountId}`), fakeServer);
   });
 });

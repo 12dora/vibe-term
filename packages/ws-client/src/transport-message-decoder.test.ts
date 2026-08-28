@@ -134,6 +134,20 @@ describe('decodeGatewayTransportMessage', () => {
     expect(dark.events).toEqual([{ type: 'site-theme-update', theme: 'dark' }]);
   });
 
+  test('settings-update 透出 namespace 原样', () => {
+    for (const namespace of ['site', 'llm', 'tree-order']) {
+      const { handled, events } = collect(
+        wsBorsh.KIND_SETTINGS_UPDATE,
+        wsBorsh.encodePayload(wsBorsh.schema.SettingsUpdateS2CSchema, {
+          namespace,
+          serverTimestamp: 1_700_000_000_000n,
+        })
+      );
+      expect(handled).toBe(true);
+      expect(events).toEqual([{ type: 'settings-update', namespace }]);
+    }
+  });
+
   test('metadata-patch 仅接受 absolute-json 格式', () => {
     const diff = { upserts: [], removals: [{ entityKind: 3, nativeId: '%1' }] };
     const diffBytes = wsBorsh.encodeLegacyStateSnapshotDiff(diff);
@@ -191,5 +205,17 @@ describe('decodeGatewayTransportMessage', () => {
     expect(() =>
       decodeGatewayTransportMessage(wsBorsh.KIND_DEVICE_CONNECTED, new Uint8Array([0xff]), () => {})
     ).toThrow();
+  });
+
+  test('KIND_CANONICAL_EVENT SourceGap resource_exhausted yields rebase-required', () => {
+    const payload = wsBorsh.encodeCanonicalEventPayload({
+      SourceGap: {
+        reason: wsBorsh.SOURCE_GAP_REASON_RESOURCE_EXHAUSTED,
+        scope: { Stream: {} },
+      },
+    });
+    const { handled, events } = collect(wsBorsh.KIND_CANONICAL_EVENT, payload);
+    expect(handled).toBe(true);
+    expect(events).toEqual([{ type: 'rebase-required', reason: 'resource_exhausted' }]);
   });
 });

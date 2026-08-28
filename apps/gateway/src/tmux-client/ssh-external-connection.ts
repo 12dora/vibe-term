@@ -19,7 +19,6 @@ import {
 } from './external-tmux-core';
 import { buildEnsureGhosttyTerminfoScript } from './ghostty-terminfo';
 import { encodeBytesToHexChunks } from './input-encoder';
-import { ensureStableServerEpoch } from './server-epoch';
 import { buildSshBootstrapScript, parseSshBootstrapOutput } from './ssh-bootstrap';
 import { resolveSshConnectConfig } from './ssh-connect-config';
 import { TmuxTargetMissingError, isTargetMissingMessage } from './target-missing';
@@ -74,41 +73,26 @@ export class SshExternalTmuxConnection extends ExternalTmuxConnectionCore {
   }
 
   async connect(): Promise<void> {
-    this.manualDisconnect = false;
-    this.closeNotified = false;
-    this.lifecycle.reset();
-    this.device = this.deps.getDevice(this.deviceId);
-    if (!this.device) {
-      throw new Error(`Device not found: ${this.deviceId}`);
-    }
-    if (this.device.type !== 'ssh') {
-      throw new Error(`SshExternalTmuxConnection only supports ssh device: ${this.deviceId}`);
-    }
+    await this.runConnectAttempt(async (generation) => {
+      this.device = this.deps.getDevice(this.deviceId);
+      if (!this.device) {
+        throw new Error(`Device not found: ${this.deviceId}`);
+      }
+      if (this.device.type !== 'ssh') {
+        throw new Error(`SshExternalTmuxConnection only supports ssh device: ${this.deviceId}`);
+      }
 
-    this.sessionName = this.device.session?.trim() || 'tmex';
+      this.sessionName = this.device.session?.trim() || 'tmex';
 
-    await this.connectSshClient();
-    await this.openCommandChannel();
-    const { created } = await this.ensureSession();
-    const serverEpoch = await ensureStableServerEpoch((argv) => this.runTmuxAllowFailure(argv));
-    this.callbacks.onSourceReady?.(serverEpoch);
-    await this.configureSessionOptions();
-    await this.startControlClient();
-
-    this.connected = true;
-    updateDeviceRuntimeStatus(this.deviceId, {
-      lastSeenAt: new Date().toISOString(),
-      tmuxAvailable: true,
-      lastError: null,
-      lastErrorType: null,
+      await this.awaitConnectStep(generation, () => this.connectSshClient());
+      await this.awaitConnectStep(generation, () => this.openCommandChannel());
+      const { created } = await this.awaitConnectStep(generation, () => this.ensureSession());
+      await this.finalizeConnect(generation, created, true);
     });
-    if (created) {
-      this.lifecycle.notifySessionCreated();
-    }
-    await this.requestSnapshotInternal();
   }
 
   disconnect(): void {
+    this.invalidateConnectGeneration();
     if (this.manualDisconnect) {
       return;
     }
@@ -164,6 +148,9 @@ export class SshExternalTmuxConnection extends ExternalTmuxConnectionCore {
   protected async attachControlTransport(
     onAttachReady: () => void
   ): Promise<ExternalControlHandle> {
+    if (this.manualDisconnect) {
+      throw new Error(this.controlAttachFailureMessage());
+    }
     return this.openControlChannel(onAttachReady);
   }
 

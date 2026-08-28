@@ -21,6 +21,7 @@ import {
   KIND_TMUX_REORDER_WINDOWS,
   KIND_WATCH_EVENT,
   MAGIC,
+  MAX_CHUNK_STREAMS,
   SITE_THEME_DARK,
   SITE_THEME_LIGHT,
   WATCH_EVENT_TRIGGERED,
@@ -251,7 +252,7 @@ describe('chunk', () => {
       };
       reassembler.addChunk(chunk);
       now = 101;
-      reassembler.cleanup(true);
+      reassembler.cleanup();
       expect(reassembler.getActiveStreamCount()).toBe(0);
     });
 
@@ -313,6 +314,36 @@ describe('chunk', () => {
       expect(reassembler.getActiveStreamCount()).toBe(0);
 
       expect(reassembler.addChunk(chunk(1))).toBeNull();
+      expect(reassembler.getActiveStreamCount()).toBe(1);
+    });
+
+    it('并发流达到上限后拒绝新流，且不驱逐已有流；过期后才腾出配额', () => {
+      let now = 0;
+      const reassembler = new ChunkReassembler({ timeoutMs: 100, now: () => now });
+      const chunk = (chunkStreamId: number) => ({
+        chunkStreamId,
+        originalKind: KIND_PING,
+        originalSeq: chunkStreamId,
+        totalChunks: 2,
+        chunkIndex: 0,
+        data: new Uint8Array([1]),
+      });
+
+      for (let streamId = 1; streamId <= MAX_CHUNK_STREAMS; streamId += 1) {
+        expect(reassembler.addChunk(chunk(streamId))).toBeNull();
+      }
+      expect(reassembler.getActiveStreamCount()).toBe(MAX_CHUNK_STREAMS);
+
+      expect(() => reassembler.addChunk(chunk(MAX_CHUNK_STREAMS + 1))).toThrow(WsBorshError);
+      expect(reassembler.getActiveStreamCount()).toBe(MAX_CHUNK_STREAMS);
+
+      // 已有流未被驱逐：补齐分片仍能重组
+      expect(reassembler.addChunk({ ...chunk(1), chunkIndex: 1 })?.seq).toBe(1);
+      expect(reassembler.getActiveStreamCount()).toBe(MAX_CHUNK_STREAMS - 1);
+      expect(reassembler.addChunk(chunk(MAX_CHUNK_STREAMS + 1))).toBeNull();
+
+      now = 101;
+      expect(reassembler.addChunk(chunk(MAX_CHUNK_STREAMS + 2))).toBeNull();
       expect(reassembler.getActiveStreamCount()).toBe(1);
     });
 

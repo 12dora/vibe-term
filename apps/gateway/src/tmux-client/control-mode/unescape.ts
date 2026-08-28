@@ -9,9 +9,16 @@ export function unescapeControlModeData(
   start: number,
   onInvalidEscape?: () => void
 ): Uint8Array {
+  const firstSlash = line.indexOf(BYTE_BACKSLASH, start);
+  if (firstSlash < 0) {
+    return line.subarray(start);
+  }
   const result = new Uint8Array(line.length - start);
-  let written = 0;
-  let index = start;
+  if (firstSlash > start) {
+    result.set(line.subarray(start, firstSlash));
+  }
+  let written = firstSlash - start;
+  let index = firstSlash;
   while (index < line.length) {
     const byte = line[index] as number;
     if (byte !== BYTE_BACKSLASH) {

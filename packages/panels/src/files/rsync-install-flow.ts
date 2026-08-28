@@ -86,7 +86,7 @@ export async function openAgentInNewWindowWithPrompt(
       return;
     }
 
-    // 3. 先起草（含预填 prompt）→ 再导航 → 展开 agent 分区 → 手机强开 sidebar
+    // 3. 先起草（含预填 prompt）→ 再导航 → 切 agent → 手机强开 sidebar
     runtime.stores.agent.getState().startDraft(deviceId, win.paneId, win.paneTitle, promptText);
     runtime.host.navigate(
       hostAppPath(
@@ -95,7 +95,7 @@ export async function openAgentInNewWindowWithPrompt(
       ),
       { replace: true }
     );
-    runtime.stores.ui.getState().expandSidebarSection('agent');
+    runtime.stores.ui.getState().setSidebarTab('agent');
     runtime.host.openMobileSidebar();
   } finally {
     agentOrchestrationInProgress = false;

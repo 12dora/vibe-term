@@ -1,15 +1,4 @@
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import {
-  deleteWatchRule,
-  fetchWatchRuleState,
-  fetchWatchRules,
-  updateWatchRule,
-  watchRuleStateQueryKey,
-  watchRulesQueryKey,
-} from '@tmex/api-client';
 import type { WatchRuleDto } from '@tmex/shared';
-import { formatDateTime } from '@tmex/shared';
-import { useRuntime, useSiteStore } from '@tmex/stores/react';
 import {
   AlertDialog,
   AlertDialogAction,
@@ -20,8 +9,6 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from '@tmex/ui/alert-dialog';
-import { Badge } from '@tmex/ui/badge';
-import { Button } from '@tmex/ui/button';
 import {
   Dialog,
   DialogContent,
@@ -29,12 +16,12 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@tmex/ui/dialog';
-import { Switch } from '@tmex/ui/switch';
-import { Activity, ArrowLeft, Bell, Loader2, Pencil, Plus, Trash2 } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { toast } from 'sonner';
+import { type WatchQueryStatus, useWatchRuleMutations, useWatchRules } from './use-watch-rules';
 import { WatchRuleForm } from './watch-rule-form';
+import { WatchRuleList } from './watch-rule-list';
+import { WatchRuleStateView } from './watch-rule-state-view';
 
 type DialogView =
   | { mode: 'list' }
@@ -48,10 +35,28 @@ interface WatchDialogProps {
   paneId: string;
 }
 
-export function WatchDialog({ open, onOpenChange, deviceId, paneId }: WatchDialogProps) {
-  const { t } = useTranslation();
-  const queryClient = useQueryClient();
-  const { apiClient } = useRuntime();
+function dialogTitleKey(view: DialogView): string {
+  if (view.mode === 'list') {
+    return 'watch.title';
+  }
+  if (view.mode === 'state') {
+    return 'watch.state.title';
+  }
+  return view.rule ? 'watch.form.editTitle' : 'watch.form.createTitle';
+}
+
+interface DialogUiState {
+  view: DialogView;
+  setView: (view: DialogView) => void;
+  deleteCandidate: WatchRuleDto | null;
+  setDeleteCandidate: (rule: WatchRuleDto | null) => void;
+  showNotifBanner: boolean;
+  dismissNotifBanner: () => void;
+  handleSaved: (created: boolean) => void;
+}
+
+/** 关闭对话框时把视图与临时选择复位，下次打开总是从列表开始 */
+function useDialogUiState(open: boolean, refreshRules: () => void): DialogUiState {
   const [view, setView] = useState<DialogView>({ mode: 'list' });
   const [deleteCandidate, setDeleteCandidate] = useState<WatchRuleDto | null>(null);
   const [showNotifBanner, setShowNotifBanner] = useState(false);
@@ -64,50 +69,28 @@ export function WatchDialog({ open, onOpenChange, deviceId, paneId }: WatchDialo
     }
   }, [open]);
 
-  const rulesQuery = useQuery({
-    queryKey: watchRulesQueryKey(deviceId, paneId),
-    queryFn: () => fetchWatchRules(deviceId, paneId, apiClient),
-    enabled: open,
-    throwOnError: false,
-  });
-
-  const invalidateRules = (): void => {
-    void queryClient.invalidateQueries({ queryKey: ['watch-rules'] });
+  return {
+    view,
+    setView,
+    deleteCandidate,
+    setDeleteCandidate,
+    showNotifBanner,
+    dismissNotifBanner: () => setShowNotifBanner(false),
+    handleSaved: (created) => {
+      refreshRules();
+      setView({ mode: 'list' });
+      if (created && typeof Notification !== 'undefined' && Notification.permission === 'default') {
+        setShowNotifBanner(true);
+      }
+    },
   };
+}
 
-  const toggleMutation = useMutation({
-    mutationFn: async ({ rule, enabled }: { rule: WatchRuleDto; enabled: boolean }) => {
-      await updateWatchRule(rule.id, { enabled }, apiClient);
-    },
-    onSuccess: invalidateRules,
-    onError: (error) => {
-      toast.error(error instanceof Error ? error.message : String(error));
-      invalidateRules();
-    },
-  });
-
-  const deleteMutation = useMutation({
-    mutationFn: async (rule: WatchRuleDto) => {
-      await deleteWatchRule(rule.id, apiClient);
-    },
-    onSuccess: () => {
-      toast.success(t('watch.toast.deleted'));
-      invalidateRules();
-    },
-    onError: (error) => {
-      toast.error(error instanceof Error ? error.message : String(error));
-    },
-  });
-
-  const handleSaved = (created: boolean): void => {
-    invalidateRules();
-    setView({ mode: 'list' });
-    if (created && typeof Notification !== 'undefined' && Notification.permission === 'default') {
-      setShowNotifBanner(true);
-    }
-  };
-
-  const rules = rulesQuery.data ?? [];
+export function WatchDialog({ open, onOpenChange, deviceId, paneId }: WatchDialogProps) {
+  const { t } = useTranslation();
+  const { rules, status, retry, refresh } = useWatchRules(deviceId, paneId, open);
+  const mutations = useWatchRuleMutations();
+  const ui = useDialogUiState(open, refresh);
 
   return (
     <>
@@ -117,313 +100,123 @@ export function WatchDialog({ open, onOpenChange, deviceId, paneId }: WatchDialo
           data-testid="watch-dialog"
         >
           <DialogHeader>
-            <DialogTitle>
-              {view.mode === 'list' && t('watch.title')}
-              {view.mode === 'form' &&
-                (view.rule ? t('watch.form.editTitle') : t('watch.form.createTitle'))}
-              {view.mode === 'state' && t('watch.state.title')}
-            </DialogTitle>
+            <DialogTitle>{t(dialogTitleKey(ui.view))}</DialogTitle>
             <DialogDescription>
-              {view.mode === 'list' ? t('watch.dialogDesc') : null}
+              {ui.view.mode === 'list' ? t('watch.dialogDesc') : null}
             </DialogDescription>
           </DialogHeader>
 
           <div className="min-h-0 overflow-y-auto pr-1">
-            {view.mode === 'list' && (
-              <div className="space-y-3">
-                {showNotifBanner && (
-                  <div
-                    className="flex items-start gap-2 rounded-lg border border-primary/30 bg-primary/10 p-3"
-                    data-testid="watch-notif-banner"
-                  >
-                    <Bell className="mt-0.5 h-4 w-4 shrink-0 text-primary" />
-                    <div className="min-w-0 flex-1">
-                      <p className="text-sm font-medium">{t('watch.notifPermission.title')}</p>
-                      <p className="text-xs text-muted-foreground">
-                        {t('watch.notifPermission.desc')}
-                      </p>
-                      <div className="mt-2 flex gap-2">
-                        <Button
-                          size="sm"
-                          data-testid="watch-notif-enable"
-                          onClick={() => {
-                            void Notification.requestPermission().finally(() =>
-                              setShowNotifBanner(false)
-                            );
-                          }}
-                        >
-                          {t('watch.notifPermission.enable')}
-                        </Button>
-                        <Button size="sm" variant="ghost" onClick={() => setShowNotifBanner(false)}>
-                          {t('watch.notifPermission.dismiss')}
-                        </Button>
-                      </div>
-                    </div>
-                  </div>
-                )}
-
-                {rulesQuery.isLoading && (
-                  <div className="flex justify-center py-6">
-                    <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
-                  </div>
-                )}
-
-                {!rulesQuery.isLoading && rules.length === 0 && (
-                  <p
-                    className="py-6 text-center text-sm text-muted-foreground"
-                    data-testid="watch-rules-empty"
-                  >
-                    {t('watch.rules.empty')}
-                  </p>
-                )}
-
-                {rules.map((rule) => (
-                  <WatchRuleRow
-                    key={rule.id}
-                    rule={rule}
-                    onToggle={(enabled) => toggleMutation.mutate({ rule, enabled })}
-                    onEdit={() => setView({ mode: 'form', rule })}
-                    onViewState={() => setView({ mode: 'state', rule })}
-                    onDelete={() => setDeleteCandidate(rule)}
-                  />
-                ))}
-
-                <Button
-                  variant="outline"
-                  className="w-full"
-                  data-testid="watch-rule-add"
-                  onClick={() => setView({ mode: 'form', rule: null })}
-                >
-                  <Plus className="h-4 w-4" />
-                  {t('watch.rules.addRule')}
-                </Button>
-              </div>
-            )}
-
-            {view.mode === 'form' && (
-              <WatchRuleForm
-                deviceId={deviceId}
-                paneId={paneId}
-                rule={view.rule}
-                onSaved={handleSaved}
-                onCancel={() => setView({ mode: 'list' })}
-              />
-            )}
-
-            {view.mode === 'state' && (
-              <WatchRuleStateView rule={view.rule} onBack={() => setView({ mode: 'list' })} />
-            )}
+            <WatchDialogBody
+              view={ui.view}
+              deviceId={deviceId}
+              paneId={paneId}
+              rules={rules}
+              status={status}
+              showNotifBanner={ui.showNotifBanner}
+              onDismissNotifBanner={ui.dismissNotifBanner}
+              onRetry={retry}
+              onToggle={mutations.toggle}
+              onDelete={ui.setDeleteCandidate}
+              onChangeView={ui.setView}
+              onSaved={ui.handleSaved}
+            />
           </div>
         </DialogContent>
       </Dialog>
 
-      <AlertDialog
-        open={deleteCandidate !== null}
-        onOpenChange={(nextOpen) => !nextOpen && setDeleteCandidate(null)}
-      >
-        <AlertDialogContent data-testid="watch-rule-delete-dialog">
-          <AlertDialogHeader>
-            <AlertDialogTitle>{t('watch.rules.deleteTitle')}</AlertDialogTitle>
-            <AlertDialogDescription>
-              {t('watch.rules.deleteDesc', { name: deleteCandidate?.name ?? '' })}
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel>{t('common.cancel')}</AlertDialogCancel>
-            <AlertDialogAction
-              variant="destructive"
-              data-testid="watch-rule-delete-confirm"
-              onClick={() => {
-                if (deleteCandidate) {
-                  deleteMutation.mutate(deleteCandidate);
-                }
-                setDeleteCandidate(null);
-              }}
-            >
-              {t('watch.rules.deleteConfirm')}
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
+      <DeleteRuleDialog
+        rule={ui.deleteCandidate}
+        onCancel={() => ui.setDeleteCandidate(null)}
+        onConfirm={(rule) => {
+          mutations.remove(rule);
+          ui.setDeleteCandidate(null);
+        }}
+      />
     </>
   );
 }
 
-interface WatchRuleRowProps {
-  rule: WatchRuleDto;
-  onToggle: (enabled: boolean) => void;
-  onEdit: () => void;
-  onViewState: () => void;
-  onDelete: () => void;
+interface WatchDialogBodyProps {
+  view: DialogView;
+  deviceId: string;
+  paneId: string;
+  rules: WatchRuleDto[];
+  status: WatchQueryStatus;
+  showNotifBanner: boolean;
+  onDismissNotifBanner: () => void;
+  onRetry: () => void;
+  onToggle: (rule: WatchRuleDto, enabled: boolean) => void;
+  onDelete: (rule: WatchRuleDto) => void;
+  onChangeView: (view: DialogView) => void;
+  onSaved: (created: boolean) => void;
 }
 
-function WatchRuleRow({ rule, onToggle, onEdit, onViewState, onDelete }: WatchRuleRowProps) {
-  const { t } = useTranslation();
-  const { apiClient } = useRuntime();
-  const language = useSiteStore((state) => state.settings?.language ?? 'en_US');
+function WatchDialogBody(props: WatchDialogBodyProps) {
+  const { view, onChangeView } = props;
+  const backToList = (): void => onChangeView({ mode: 'list' });
 
-  const stateQuery = useQuery({
-    queryKey: watchRuleStateQueryKey(rule.id),
-    queryFn: () => fetchWatchRuleState(rule.id, apiClient),
-    throwOnError: false,
-  });
+  if (view.mode === 'form') {
+    return (
+      <WatchRuleForm
+        deviceId={props.deviceId}
+        paneId={props.paneId}
+        rule={view.rule}
+        onSaved={props.onSaved}
+        onCancel={backToList}
+      />
+    );
+  }
 
-  const lastTriggeredAt = formatDateTime(stateQuery.data?.state?.lastTriggeredAt, language);
+  if (view.mode === 'state') {
+    return <WatchRuleStateView rule={view.rule} onBack={backToList} />;
+  }
 
   return (
-    <div
-      className="rounded-lg border border-border p-3"
-      data-testid={`watch-rule-item-${rule.id}`}
-      data-rule-name={rule.name}
-    >
-      <div className="flex items-center gap-2">
-        <span className="min-w-0 flex-1 truncate text-sm font-medium">{rule.name}</span>
-        <Badge variant="secondary">{t(`watch.type.${rule.triggerType}`)}</Badge>
-        <Switch
-          checked={rule.enabled}
-          onCheckedChange={(checked) => onToggle(Boolean(checked))}
-          data-testid={`watch-rule-toggle-${rule.id}`}
-        />
-      </div>
-      <div className="mt-2 flex items-center justify-between gap-2">
-        <span className="truncate text-xs text-muted-foreground">
-          {lastTriggeredAt
-            ? t('watch.rules.lastTriggered', { time: lastTriggeredAt })
-            : t('watch.rules.neverTriggered')}
-        </span>
-        <div className="flex shrink-0 gap-1">
-          <Button
-            variant="ghost"
-            size="icon-xs"
-            onClick={onViewState}
-            title={t('watch.rules.viewState')}
-            aria-label={t('watch.rules.viewState')}
-            data-testid={`watch-rule-state-${rule.id}`}
-          >
-            <Activity className="h-3.5 w-3.5" />
-          </Button>
-          <Button
-            variant="ghost"
-            size="icon-xs"
-            onClick={onEdit}
-            title={t('watch.rules.edit')}
-            aria-label={t('watch.rules.edit')}
-            data-testid={`watch-rule-edit-${rule.id}`}
-          >
-            <Pencil className="h-3.5 w-3.5" />
-          </Button>
-          <Button
-            variant="ghost"
-            size="icon-xs"
-            onClick={onDelete}
-            title={t('watch.rules.delete')}
-            aria-label={t('watch.rules.delete')}
-            data-testid={`watch-rule-delete-${rule.id}`}
-          >
-            <Trash2 className="h-3.5 w-3.5 text-destructive" />
-          </Button>
-        </div>
-      </div>
-    </div>
+    <WatchRuleList
+      rules={props.rules}
+      status={props.status}
+      showNotifBanner={props.showNotifBanner}
+      onDismissNotifBanner={props.onDismissNotifBanner}
+      onRetry={props.onRetry}
+      onToggle={props.onToggle}
+      onEdit={(rule) => onChangeView({ mode: 'form', rule })}
+      onViewState={(rule) => onChangeView({ mode: 'state', rule })}
+      onDelete={props.onDelete}
+      onAdd={() => onChangeView({ mode: 'form', rule: null })}
+    />
   );
 }
 
-interface WatchRuleStateViewProps {
-  rule: WatchRuleDto;
-  onBack: () => void;
+interface DeleteRuleDialogProps {
+  rule: WatchRuleDto | null;
+  onCancel: () => void;
+  onConfirm: (rule: WatchRuleDto) => void;
 }
 
-function WatchRuleStateView({ rule, onBack }: WatchRuleStateViewProps) {
+function DeleteRuleDialog({ rule, onCancel, onConfirm }: DeleteRuleDialogProps) {
   const { t } = useTranslation();
-  const { apiClient } = useRuntime();
-  const language = useSiteStore((state) => state.settings?.language ?? 'en_US');
-
-  const stateQuery = useQuery({
-    queryKey: watchRuleStateQueryKey(rule.id),
-    queryFn: () => fetchWatchRuleState(rule.id, apiClient),
-    refetchInterval: 5000,
-    throwOnError: false,
-  });
-
-  const state = stateQuery.data?.state ?? null;
-  const samples = stateQuery.data?.samples ?? [];
-  const none = t('watch.state.none');
-
-  const fields: Array<{ label: string; value: string }> = [
-    {
-      label: t('watch.state.lastSampledAt'),
-      value: formatDateTime(state?.lastSampledAt, language) || none,
-    },
-    { label: t('watch.state.lastValue'), value: state?.lastValue ?? none },
-    {
-      label: t('watch.state.lastValueChangedAt'),
-      value: formatDateTime(state?.lastValueChangedAt, language) || none,
-    },
-    {
-      label: t('watch.state.lastTriggeredAt'),
-      value: formatDateTime(state?.lastTriggeredAt, language) || none,
-    },
-    {
-      label: t('watch.state.consecutiveErrors'),
-      value: state ? String(state.consecutiveErrors) : none,
-    },
-    { label: t('watch.state.lastError'), value: state?.lastError ?? none },
-  ];
 
   return (
-    <div className="space-y-3" data-testid="watch-rule-state-view">
-      <div className="flex items-center gap-2">
-        <Button variant="ghost" size="icon-sm" onClick={onBack} aria-label={t('watch.state.back')}>
-          <ArrowLeft className="h-4 w-4" />
-        </Button>
-        <span className="min-w-0 flex-1 truncate text-sm font-medium">{rule.name}</span>
-        <Badge variant="secondary">{t(`watch.type.${rule.triggerType}`)}</Badge>
-      </div>
-
-      {stateQuery.isLoading ? (
-        <div className="flex justify-center py-6">
-          <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
-        </div>
-      ) : (
-        <>
-          <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1.5 text-sm">
-            {fields.map((field) => (
-              <div key={field.label} className="contents">
-                <dt className="text-muted-foreground">{field.label}</dt>
-                <dd className="min-w-0 break-all">{field.value}</dd>
-              </div>
-            ))}
-          </dl>
-
-          <div className="space-y-1.5">
-            <p className="text-sm font-medium">{t('watch.state.samples')}</p>
-            {samples.length === 0 ? (
-              <p className="text-xs text-muted-foreground">{t('watch.state.samplesEmpty')}</p>
-            ) : (
-              <ul className="max-h-48 space-y-0.5 overflow-y-auto text-xs">
-                {[...samples].reverse().map((sample) => (
-                  <li
-                    key={sample.at}
-                    className="flex items-center gap-2 rounded bg-muted/60 px-2 py-1"
-                  >
-                    <span className="shrink-0 font-mono text-muted-foreground">
-                      {formatDateTime(sample.at, language) || sample.at}
-                    </span>
-                    <span className="min-w-0 flex-1 truncate font-mono">
-                      {sample.value ?? none}
-                    </span>
-                    {sample.hit && (
-                      <Badge variant="default" className="h-4 px-1 text-[10px]">
-                        {t('watch.state.hit')}
-                      </Badge>
-                    )}
-                  </li>
-                ))}
-              </ul>
-            )}
-          </div>
-        </>
-      )}
-    </div>
+    <AlertDialog open={rule !== null} onOpenChange={(nextOpen) => !nextOpen && onCancel()}>
+      <AlertDialogContent data-testid="watch-rule-delete-dialog">
+        <AlertDialogHeader>
+          <AlertDialogTitle>{t('watch.rules.deleteTitle')}</AlertDialogTitle>
+          <AlertDialogDescription>
+            {t('watch.rules.deleteDesc', { name: rule?.name ?? '' })}
+          </AlertDialogDescription>
+        </AlertDialogHeader>
+        <AlertDialogFooter>
+          <AlertDialogCancel>{t('common.cancel')}</AlertDialogCancel>
+          <AlertDialogAction
+            variant="destructive"
+            data-testid="watch-rule-delete-confirm"
+            onClick={() => rule && onConfirm(rule)}
+          >
+            {t('watch.rules.deleteConfirm')}
+          </AlertDialogAction>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
   );
 }

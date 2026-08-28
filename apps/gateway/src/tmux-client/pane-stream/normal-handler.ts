@@ -1,4 +1,5 @@
 import type { ParserContext } from './parser-state';
+import { writeByte } from './parser-state';
 
 export function handleNormal(ctx: ParserContext, byte: number): void {
   if (byte === 0x1b) {
@@ -9,5 +10,5 @@ export function handleNormal(ctx: ParserContext, byte: number): void {
     ctx.options.onBell();
     return;
   }
-  ctx.output.push(byte);
+  writeByte(ctx.output, byte);
 }

@@ -63,13 +63,13 @@ channels = [WebhookChannel, TelegramChannel, WeixinChannel]
 
 - `weixin_accounts`：`id, name, enabled, allow_auth_requests, weixin_uin, bot_token_enc(加密), base_url, sync_buf(长轮询游标), …`。`bot_token_enc` 非空即「已登录」。
 - `weixin_account_users`：`id, account_id(FK cascade), user_id, display_name, status(pending|authorized), last_context_token(最佳努力缓存), last_inbound_at, needs_reactivation, …`。`(account_id, user_id)` 唯一，每账号上限 16 用户。
-- `site_settings` 新增 `enable_weixin_bell_push` / `enable_weixin_notification_push`，**默认 false**。
+- `site_settings` 当初新增了 `enable_weixin_bell_push` / `enable_weixin_notification_push` 两列，但 `0012_naive_lizard.sql`（通知开关重设计）已把它们连同 telegram 的同类列一起 DROP。**现在没有微信专属开关**：推送由全局 `enable_notification_push` / `enable_bell_push` 加 channel 级启停控制。
 
 凭证经 `crypto/encrypt` 加密落库，`decryptWithContext({scope:'weixin_account'})` 解密；**绝不在 API 响应或日志输出明文 token**。
 
 ## API
 
-均在 `apps/gateway/src/api/index.ts`，前缀 `/api/settings/weixin`：
+路由表定义在 `apps/gateway/src/api/weixin-routes.ts`（经 `apps/gateway/src/api/messaging-routes.ts` 汇出、由 `api/index.ts` 装配），前缀 `/api/settings/weixin`：
 
 | 方法 | 路径 | 说明 |
 |---|---|---|
@@ -85,7 +85,7 @@ channels = [WebhookChannel, TelegramChannel, WeixinChannel]
 
 ## 扫码登录流程（前端）
 
-`apps/fe/src/components/settings/weixin-account-login-modal.tsx`：调 `login/start` 渲染二维码 → 每 1.5s 轮询 `login/status` → `confirmed`/`loggedIn` 关闭弹窗 + 刷新列表 + toast；`expired`/`error` 给「刷新二维码」按钮。轮询带**代际计数 + AbortController**，关闭/切换/重启时中止在途请求并丢弃迟到 resolve，避免并行轮询链或对已关弹窗误弹 toast。
+`packages/panels/src/settings/weixin-account-login-modal.tsx`：调 `login/start` 渲染二维码 → 每 1.5s 轮询 `login/status` → `confirmed`/`loggedIn` 关闭弹窗 + 刷新列表 + toast；`expired`/`error` 给「刷新二维码」按钮。轮询带**代际计数 + AbortController**，关闭/切换/重启时中止在途请求并丢弃迟到 resolve，避免并行轮询链或对已关弹窗误弹 toast。
 
 ## 验收
 

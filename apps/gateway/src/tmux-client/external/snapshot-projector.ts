@@ -31,6 +31,7 @@ export interface SnapshotEmitHost {
 
 export interface SnapshotProjectorHost {
   connected: boolean;
+  connectGeneration: number;
   manualDisconnect: boolean;
   deviceId: string;
   sessionName: string;
@@ -194,20 +195,30 @@ export function discardInvalidSnapshot(
   return { session, windows, activeWindowId, activePaneId };
 }
 
-export function getExpectedPaneIds(windows: Map<string, TmuxWindow>): string[] {
-  return Array.from(windows.values())
-    .sort((left, right) => left.index - right.index)
-    .flatMap((window) => window.panes.map((pane) => pane.id));
+export function windowsInIndexOrder(
+  windows: Map<string, TmuxWindow> | readonly TmuxWindow[]
+): TmuxWindow[] {
+  const list = windows instanceof Map ? Array.from(windows.values()) : [...windows];
+  return list.sort((left, right) => left.index - right.index);
 }
 
-export function emitSnapshot(host: SnapshotEmitHost, baseRevision?: bigint): void {
+export function getExpectedPaneIds(
+  windows: Map<string, TmuxWindow> | readonly TmuxWindow[]
+): string[] {
+  const ordered = windows instanceof Map ? windowsInIndexOrder(windows) : windows;
+  return ordered.flatMap((window) => window.panes.map((pane) => pane.id));
+}
+
+export function emitSnapshot(
+  host: SnapshotEmitHost,
+  baseRevision?: bigint,
+  orderedWindows?: readonly TmuxWindow[]
+): void {
   const session = host.snapshotSession
     ? {
         id: host.snapshotSession.id,
         name: host.snapshotSession.name,
-        windows: Array.from(host.snapshotWindows.values()).sort(
-          (left, right) => left.index - right.index
-        ),
+        windows: orderedWindows ? [...orderedWindows] : windowsInIndexOrder(host.snapshotWindows),
       }
     : null;
 
@@ -223,14 +234,14 @@ export function emitSnapshot(host: SnapshotEmitHost, baseRevision?: bigint): voi
 export class SnapshotProjector {
   constructor(private readonly host: SnapshotProjectorHost) {}
 
-  async performSnapshot(): Promise<void> {
+  private hostStillAcceptsSnapshot(generation: number): boolean {
     const host = this.host;
-    if (!host.connected) {
-      return;
-    }
+    return host.connected && host.connectGeneration === generation;
+  }
 
-    const baseRevision = host.callbacks.beginMetadataReconcile?.();
-    const [sessionRes, windowsRes, panesRes] = await Promise.all([
+  private fetchSnapshotResults(): Promise<[CommandResult, CommandResult, CommandResult]> {
+    const host = this.host;
+    return Promise.all([
       host.runTmuxAllowFailure([
         'display-message',
         '-p',
@@ -254,6 +265,21 @@ export class SnapshotProjector {
         PANE_SNAPSHOT_FORMAT,
       ]),
     ]);
+  }
+
+  async performSnapshot(): Promise<void> {
+    const host = this.host;
+    if (!host.connected) {
+      return;
+    }
+    const generation = host.connectGeneration;
+
+    const baseRevision = host.callbacks.beginMetadataReconcile?.();
+    const [sessionRes, windowsRes, panesRes] = await this.fetchSnapshotResults();
+
+    if (!this.hostStillAcceptsSnapshot(generation)) {
+      return;
+    }
 
     if (host.shouldAbortSnapshot([sessionRes, windowsRes, panesRes])) {
       return;
@@ -270,12 +296,13 @@ export class SnapshotProjector {
       windowsRes.stdout.split(/\r?\n/),
       panesRes.stdout.split(/\r?\n/)
     );
-    const expectedPaneIds = new Set(getExpectedPaneIds(host.snapshotWindows));
+    const orderedWindows = windowsInIndexOrder(host.snapshotWindows);
+    const expectedPaneIds = new Set(getExpectedPaneIds(orderedWindows));
     host.controlSubscription?.prunePanes(expectedPaneIds);
     host.pruneThemeSubscriptions(expectedPaneIds);
     host.restoreThemeSubscriptionsOnce();
     host.onSnapshotSuccess();
-    emitSnapshot(host, baseRevision);
+    emitSnapshot(host, baseRevision, orderedWindows);
     host.lifecycle.emitSnapshotClosures(prevWindows);
   }
 

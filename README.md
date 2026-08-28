@@ -96,9 +96,9 @@ tmex listens for both BEL (`\a`) and common OSC notification sequences such as O
 
 Add one or more Telegram bots in Settings, then approve the chats that are allowed to receive alerts. tmex sends notifications for bell events, Agent confirmation requests, Watch triggers, and errors. Each bot can serve multiple chats, and you can revoke access at any time.
 
-**Q: Why are some notifications missed when an SSH host has many panes?**
+**Q: Does an SSH host with many panes exhaust `MaxSessions`?**
 
-tmex opens one remote reader channel per pane. OpenSSH defaults `MaxSessions` to 10, which can be exhausted by a large pane count. Increase `MaxSessions` in the target host’s `sshd_config` to at least `pane count + 3`, then restart sshd.
+No. tmex used to open one remote reader channel per pane; it now multiplexes every pane of a device over a **single shared tmux control-mode channel**, plus a long-lived command channel and short-lived channels for one-off commands and file transfers. Channel usage no longer grows with pane count, so OpenSSH's default `MaxSessions` of 10 is normally enough. Raise it only if you also run rsync transfers and your own SSH sessions against the same host at the same time.
 
 **Q: Why is OSC passthrough disabled by default?**
 

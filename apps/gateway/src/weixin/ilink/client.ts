@@ -1,29 +1,30 @@
 // WeixinClient：iLink bot 协议的高层客户端。
 // 负责登录（扫码）、长轮询收消息、context_token 缓存、发送文本。
 
-import { type FetchImpl, getBotQrcode, getQrcodeStatus, getUpdates, sendMessage } from './api';
+import { type FetchImpl, getBotQrcode, getQrcodeStatus, sendMessage } from './api';
 import {
   CLIENT_ID_PREFIX,
   type GetQrcodeStatusResp,
-  type GetUpdatesResp,
   ITEM_TYPE_TEXT,
   SESSION_EXPIRED_ERRCODE,
   type WeixinCredentials,
   type WeixinInboundMessage,
   type WeixinMessage,
 } from './types';
+import {
+  AbortError,
+  WeixinSessionExpiredError,
+  isAbort,
+  runUpdateLoop,
+  sleep,
+} from './update-loop';
+
+export { WeixinSessionExpiredError };
 
 export class WeixinNoContextTokenError extends Error {
   constructor(toUserId: string) {
     super(`No context_token for user ${toUserId}. Receive a message from them first.`);
     this.name = 'WeixinNoContextTokenError';
-  }
-}
-
-export class WeixinSessionExpiredError extends Error {
-  constructor() {
-    super('iLink bot session expired; re-login required.');
-    this.name = 'WeixinSessionExpiredError';
   }
 }
 
@@ -53,57 +54,12 @@ export interface WeixinLoginOptions {
 const DEFAULT_LOGIN_TIMEOUT_MS = 480_000;
 const DEFAULT_QRCODE_POLL_INTERVAL_MS = 1_000;
 const MAX_QRCODE_REFRESH = 3;
-const RETRY_DELAY_MS = 2_000;
-const BACKOFF_DELAY_MS = 30_000;
-// 长轮询 per-request 超时：首请求用默认值（> 典型 35s 服务端窗口），之后按服务端
-// longpolling_timeout_ms + margin 动态调整；超时按一次失败处理走 backoff 重连，
-// 避免 TCP 黑洞导致 await getUpdates 永久挂起、整个账号静默失联。
-const DEFAULT_LONGPOLL_TIMEOUT_MS = 60_000;
-const LONGPOLL_TIMEOUT_MARGIN_MS = 10_000;
 
 function generateClientId(): string {
   const bytes = new Uint8Array(16);
   crypto.getRandomValues(bytes);
   const hex = Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('');
   return `${CLIENT_ID_PREFIX}${hex}`;
-}
-
-class AbortError extends Error {
-  constructor() {
-    super('aborted');
-    this.name = 'AbortError';
-  }
-}
-
-// 可被 AbortSignal 中断的 sleep。
-function sleep(ms: number, signal?: AbortSignal): Promise<void> {
-  return new Promise((resolve, reject) => {
-    if (signal?.aborted) {
-      reject(new AbortError());
-      return;
-    }
-    const timer = setTimeout(() => {
-      signal?.removeEventListener('abort', onAbort);
-      resolve();
-    }, ms);
-    const onAbort = () => {
-      clearTimeout(timer);
-      reject(new AbortError());
-    };
-    signal?.addEventListener('abort', onAbort, { once: true });
-  });
-}
-
-function isAbort(err: unknown, signal?: AbortSignal): boolean {
-  if (signal?.aborted) return true;
-  if (err instanceof AbortError) return true;
-  if (err instanceof DOMException && err.name === 'AbortError') return true;
-  if (err instanceof Error && err.name === 'AbortError') return true;
-  return false;
-}
-
-function isSessionExpired(resp: GetUpdatesResp): boolean {
-  return resp.ret === SESSION_EXPIRED_ERRCODE || resp.errcode === SESSION_EXPIRED_ERRCODE;
 }
 
 export class WeixinClient {
@@ -248,74 +204,22 @@ export class WeixinClient {
     const signal = this.linkSignals(opts.signal, this.internalAbort.signal);
     this.running = true;
 
-    let getUpdatesBuf = (await opts.loadSyncBuf?.()) ?? '';
-    let failures = 0;
-    let longpollTimeoutMs = opts.longpollTimeoutMs ?? DEFAULT_LONGPOLL_TIMEOUT_MS;
-
     try {
-      while (!signal.aborted) {
-        let resp: GetUpdatesResp;
-        try {
-          // per-request 超时 = 服务端长轮询窗口 + margin（首请求用默认 60s）。
-          // 超时只 abort 本次请求、不 abort 收信循环的 stop signal，故落入 catch 走 backoff，
-          // 避免半开 / 黑洞连接让 await getUpdates 永久挂起。
-          const perRequestSignal = AbortSignal.any([
-            signal,
-            AbortSignal.timeout(longpollTimeoutMs),
-          ]);
-          resp = await getUpdates({
-            baseUrl: this.creds.baseUrl,
-            botToken: this.creds.botToken,
-            getUpdatesBuf,
-            fetchImpl: this.fetchImpl,
-            signal: perRequestSignal,
-          });
-        } catch (err) {
-          // 仅当被 stop()/外部 abort 才退出；per-request 超时不会 abort 这个 stop signal，
-          // 故落到 backoff 重连。
-          if (signal.aborted) break;
-          opts.onError?.(err);
-          failures += 1;
-          await this.backoffSleep(failures, signal);
-          continue;
-        }
-
-        if (isSessionExpired(resp)) {
-          opts.onSessionExpired?.();
-          throw new WeixinSessionExpiredError();
-        }
-
-        if (typeof resp.ret === 'number' && resp.ret !== 0) {
-          opts.onError?.(new Error(`getupdates ret=${resp.ret} errmsg=${resp.errmsg ?? ''}`));
-          failures += 1;
-          await this.backoffSleep(failures, signal);
-          continue;
-        }
-
-        failures = 0;
-        if (typeof resp.longpolling_timeout_ms === 'number' && resp.longpolling_timeout_ms > 0) {
-          longpollTimeoutMs = resp.longpolling_timeout_ms + LONGPOLL_TIMEOUT_MARGIN_MS;
-        }
-
-        const msgs = resp.msgs ?? [];
-        for (const msg of msgs) {
-          if (signal.aborted) break;
-          const inbound = this.toInbound(msg);
-          if (msg.from_user_id && msg.context_token) {
-            this.contextTokens.set(msg.from_user_id, msg.context_token);
-          }
-          try {
-            await opts.onMessage?.(inbound);
-          } catch (err) {
-            opts.onError?.(err);
-          }
-        }
-
-        if (resp.get_updates_buf != null && resp.get_updates_buf !== '') {
-          getUpdatesBuf = resp.get_updates_buf;
-          await opts.saveSyncBuf?.(getUpdatesBuf);
-        }
-      }
+      await runUpdateLoop({
+        credentials: this.creds,
+        signal,
+        fetchImpl: this.fetchImpl,
+        loadCursor: opts.loadSyncBuf,
+        saveCursor: opts.saveSyncBuf,
+        onMessage: opts.onMessage,
+        onContextToken: (userId, token) => {
+          this.contextTokens.set(userId, token);
+        },
+        toInbound: (msg) => this.toInbound(msg),
+        onSessionExpired: opts.onSessionExpired,
+        onError: opts.onError,
+        longpollTimeoutMs: opts.longpollTimeoutMs,
+      });
     } finally {
       this.running = false;
       this.internalAbort = null;
@@ -358,16 +262,6 @@ export class WeixinClient {
       text: WeixinClient.extractText(msg),
       raw: msg,
     };
-  }
-
-  private async backoffSleep(failures: number, signal: AbortSignal): Promise<void> {
-    // 指数退避封顶：2s,4s,8s,16s,30s(封顶)…失败计数仅在收到有效响应后复位。
-    const delay = Math.min(RETRY_DELAY_MS * 2 ** Math.max(0, failures - 1), BACKOFF_DELAY_MS);
-    try {
-      await sleep(delay, signal);
-    } catch {
-      // abort 期间被打断，交由 while 条件收尾
-    }
   }
 
   // 把外部 signal 与内部 stop() signal 合并成一个。

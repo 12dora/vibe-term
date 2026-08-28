@@ -28,6 +28,8 @@ export interface DeviceConnectionRegistryHost {
     payload: NonNullable<DeviceConnectionEntry['lastSnapshot']>
   ): Uint8Array;
   broadcastDeviceEvent(entry: DeviceConnectionEntry, payload: EventDevicePayload): void;
+  releaseLegacyPaneObservers(session: GatewaySession, deviceId?: string): void;
+  syncLegacyPaneObservers(session: GatewaySession, deviceId: string): void;
 }
 
 export class DeviceConnectionRegistry {
@@ -35,6 +37,7 @@ export class DeviceConnectionRegistry {
   pendingConnectionEntries = new Map<string, Promise<DeviceConnectionEntry | null>>();
   private closed = false;
   private generation = 0;
+  private readonly connectGenerations = new WeakMap<GatewaySession, Map<string, number>>();
 
   constructor(private readonly host: DeviceConnectionRegistryHost) {}
 
@@ -188,13 +191,38 @@ export class DeviceConnectionRegistry {
     }
   }
 
+  private bumpConnectGeneration(session: GatewaySession, deviceId: string): number {
+    let gens = this.connectGenerations.get(session);
+    if (!gens) {
+      gens = new Map();
+      this.connectGenerations.set(session, gens);
+    }
+    const next = (gens.get(deviceId) ?? 0) + 1;
+    gens.set(deviceId, next);
+    return next;
+  }
+
+  private connectGenerationOf(session: GatewaySession, deviceId: string): number {
+    return this.connectGenerations.get(session)?.get(deviceId) ?? 0;
+  }
+
+  abandonSocket(session: GatewaySession): void {
+    this.connectGenerations.delete(session);
+  }
+
   async handleDeviceConnect(session: GatewaySession, deviceId: string): Promise<void> {
+    const connectGen = this.bumpConnectGeneration(session, deviceId);
     const entry = await this.getOrCreate(deviceId, session);
+    if (this.connectGenerationOf(session, deviceId) !== connectGen) {
+      if (entry) this.scheduleConnectionEntryRelease(deviceId, entry);
+      return;
+    }
     if (!entry) return;
 
     entry.clients.add(session);
     this.clearIdleReleaseTimer(entry);
     session.borshState.selectedPanes[deviceId] ??= null;
+    this.host.syncLegacyPaneObservers(session, deviceId);
 
     const canonicalSession = this.host.canonicalSessions.get(session);
     if (canonicalSession) await canonicalSession.attachDevice(deviceId, entry.runtime);
@@ -215,7 +243,9 @@ export class DeviceConnectionRegistry {
   }
 
   handleDeviceDisconnect(session: GatewaySession, deviceId: string): void {
+    this.bumpConnectGeneration(session, deviceId);
     this.host.canonicalSessions.get(session)?.detachDevice(deviceId);
+    this.host.releaseLegacyPaneObservers?.(session, deviceId);
     const entry = this.connections.get(deviceId);
     if (entry) {
       entry.clients.delete(session);
@@ -338,6 +368,7 @@ export class DeviceConnectionRegistry {
       this.host.canonicalSessions.get(client)?.detachDevice(deviceId);
     }
     for (const client of entry.clients) {
+      this.host.releaseLegacyPaneObservers?.(client, deviceId);
       delete client.borshState.selectedPanes[deviceId];
     }
     entry.clients.clear();

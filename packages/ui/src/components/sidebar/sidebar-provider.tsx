@@ -3,14 +3,13 @@ import * as React from 'react';
 import { useIsMobile } from '../../hooks/use-mobile';
 import { cn } from '../../utils';
 import {
-  SIDEBAR_COOKIE_MAX_AGE,
-  SIDEBAR_COOKIE_NAME,
   SIDEBAR_KEYBOARD_SHORTCUT,
   SIDEBAR_WIDTH_DEFAULT_PX,
   SIDEBAR_WIDTH_ICON,
   SIDEBAR_WIDTH_STORAGE_KEY,
 } from './constants';
 import { SidebarContext, type SidebarContextProps } from './context';
+import { readSidebarStorage, removeSidebarStorage, writeSidebarStorage } from './storage';
 import {
   clampSidebarWidth,
   parseStoredSidebarWidth,
@@ -39,9 +38,7 @@ export function SidebarProvider({
   const preferredWidthRef = React.useRef<number>(SIDEBAR_WIDTH_DEFAULT_PX);
   const [width, _setWidth] = React.useState<number>(() => {
     if (typeof window === 'undefined') return SIDEBAR_WIDTH_DEFAULT_PX;
-    const preferred = parseStoredSidebarWidth(
-      window.localStorage.getItem(SIDEBAR_WIDTH_STORAGE_KEY)
-    );
+    const preferred = parseStoredSidebarWidth(readSidebarStorage(SIDEBAR_WIDTH_STORAGE_KEY));
     preferredWidthRef.current = preferred;
     return clampSidebarWidth(preferred, viewportWidth());
   });
@@ -51,13 +48,13 @@ export function SidebarProvider({
     const preferred = preferredSidebarWidth(value);
     preferredWidthRef.current = preferred;
     _setWidth(clampSidebarWidth(preferred, viewportWidth()));
-    window.localStorage.setItem(SIDEBAR_WIDTH_STORAGE_KEY, String(preferred));
+    writeSidebarStorage(SIDEBAR_WIDTH_STORAGE_KEY, String(preferred));
   }, []);
 
   const resetWidth = React.useCallback(() => {
     preferredWidthRef.current = SIDEBAR_WIDTH_DEFAULT_PX;
     _setWidth(clampSidebarWidth(SIDEBAR_WIDTH_DEFAULT_PX, viewportWidth()));
-    window.localStorage.removeItem(SIDEBAR_WIDTH_STORAGE_KEY);
+    removeSidebarStorage(SIDEBAR_WIDTH_STORAGE_KEY);
   }, []);
 
   React.useEffect(() => {
@@ -68,8 +65,7 @@ export function SidebarProvider({
     return () => window.removeEventListener('resize', onResize);
   }, []);
 
-  // This is the internal state of the sidebar.
-  // We use openProp and setOpenProp for control from outside the component.
+  // 桌面端展开状态：受控时以 openProp 为准（持久化交给调用方），否则退回内部 state。
   const [_open, _setOpen] = React.useState(defaultOpen);
   const open = openProp ?? _open;
   const setOpen = React.useCallback(
@@ -80,9 +76,6 @@ export function SidebarProvider({
       } else {
         _setOpen(openState);
       }
-
-      // This sets the cookie to keep the sidebar state.
-      document.cookie = `${SIDEBAR_COOKIE_NAME}=${openState}; path=/; max-age=${SIDEBAR_COOKIE_MAX_AGE}`;
     },
     [setOpenProp, open]
   );

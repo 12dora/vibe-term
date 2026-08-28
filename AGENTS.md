@@ -1,6 +1,6 @@
 # AGENTS.md
 
-- 本项目使用Bun.js作为js运行时，代码不兼容Node.js，如果你在调试过程中没有找到`bun`，请先尝试读取`.zshrc`中的PATH。
+- 本项目使用Bun.js作为js运行时：**应用运行时（`apps/gateway`、`apps/fe` 及全部测试）只跑在 Bun 上，不兼容 Node.js**。唯一例外是 `packages/app`（npm 包 `tmex-cli`）的安装/升级 CLI，它刻意保持 Node.js 兼容（`build:cli` 用 `bun build --target node`），以便用户在没有 bun 的机器上 `npx tmex-cli` 引导安装。如果你在调试过程中没有找到`bun`，请先尝试读取`.zshrc`中的PATH。
 -
 - 本项目的开发人员均使用简体中文（中国大陆）交流，请使用简体中文（中国大陆）回答。变量命名原则上应使用标准英语，涉及到中国大陆特有的业务场景时，可以适当使用拼音。
 - 代码中除非对应业务逻辑或算法过于复杂，否则请避免出现不必要的注释。

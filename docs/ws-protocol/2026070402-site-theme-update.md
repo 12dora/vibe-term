@@ -14,7 +14,7 @@ tmex 支持多端同时连接同一 gateway（桌面 + 手机 + 平板）。用�
 
 1. 客户端发 C2S（仅 theme 枚举值，不带 timestamp）
 2. 服务端校验 → `Date.now()` 分配 serverTimestamp → 写 SiteSettings DB → 更新内存 currentTheme → 触发 window-style 更新（T8）+ 主题通知注入（T9）→ 广播 S2C 给所有已连接 ws clients（含发送方）
-3. 客户端收 S2C → 调 `useUIStore.setTheme()` → **不回送 C2S**（避免循环）
+3. 客户端收 S2C → 调 `useSiteStore.setThemeFromS2C()` → **不回送 C2S**（避免循环）
 
 ### last-writer-wins
 
@@ -47,17 +47,16 @@ struct SiteThemeUpdateS2C {
 
 ## 前端监听
 
-`apps/fe/src/stores/tmux.ts` 的 `onMessage` switch 新增 `KIND_SITE_THEME_UPDATE` case：
+解码在 `packages/ws-client/src/transport-message-decoder.ts`，分发在 `packages/stores/src/tmux-event-router.ts`：
 
-- 解码 S2C payload
-- 调 `useUIStore.getState().setTheme(themeName)`
-- **不调 `buildSiteThemeUpdate` 回送 C2S**（避免循环）
+- 收到 `KIND_SITE_THEME_UPDATE` 后调 `useSiteStore.getState().setThemeFromS2C(theme)`（`packages/stores/src/site.ts`）。
+- `setThemeFromS2C` 是专门的入口：它写入主题但**不触发**回送 C2S 的副作用，从源头断开循环，而不是靠调用点自觉不回送。
 
-现有 `useUIStore.subscribe` 主题监听器（378-389 行）在 theme 变化时发 `KIND_TMUX_SET_WINDOW_STYLE` 给所有已连接设备，这是期望行为（同步 tmux window-style），不构成循环。
+主题变化时向所有已连接设备发 `KIND_TMUX_SET_WINDOW_STYLE` 的监听器保持不变，这是期望行为（同步 tmux window-style），不构成循环。
 
 ## gateway handler
 
-`apps/gateway/src/ws/index.ts` 的 `handleSiteThemeUpdate`：
+`apps/gateway/src/ws/theme-settings-broadcaster.ts` 的 `handleSiteThemeUpdate`（经 `apps/gateway/src/ws/index.ts` 委派）：
 
 1. 校验 `theme ∈ {0, 1}`，非法值返回 ERROR
 2. `Date.now()` 分配 serverTimestamp，保证严格递增
@@ -70,7 +69,7 @@ struct SiteThemeUpdateS2C {
 
 - [x] KIND_SITE_THEME_UPDATE 在 kind.ts / schema.ts / index.ts 定义
 - [x] gateway handler 完整：校验 → 写库 → 内存更新 → 触发 window-style（T8）+ 主题通知注入（T9）→ 广播
-- [x] 前端监听 S2C，更新 useUIStore，不回送 C2S
+- [x] 前端监听 S2C，经 `setThemeFromS2C` 更新 site store，不回送 C2S
 - [x] 单测：borsh round-trip、广播路由、并发 last-writer-wins
 - [ ] 实证：两浏览器窗口，A 切主题，B <1s 同步
 - [x] 现有 ws-borsh e2e 全过（回归）

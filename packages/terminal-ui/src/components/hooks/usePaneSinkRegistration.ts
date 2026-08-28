@@ -3,9 +3,12 @@ import type { PaneSink } from '@tmex/ws-client/pane-sink-registry';
 import type { CompatibleTerminalLike } from 'ghostty-terminal';
 import { type RefObject, useEffect, useMemo, useRef } from 'react';
 import type { TerminalSurface } from '../TerminalSurface';
-import { normalizeHistoryForTerminal, wrapAlternateScreenHistory } from '../normalization';
 import { historyRequestDeadlineMs, shouldRequestOlderHistory } from '../paneHistoryRequest';
-import { type TerminalRenderTarget, terminalModesFromHistory } from '../terminal-snapshot';
+import {
+  type TerminalGeometry,
+  type TerminalRenderTarget,
+  writeRestoredHistory,
+} from '../terminal-snapshot';
 
 export interface UsePaneSinkRegistrationOptions {
   deviceId: string;
@@ -14,6 +17,22 @@ export interface UsePaneSinkRegistrationOptions {
   surfaceRef: RefObject<TerminalSurface<TerminalRenderTarget> | null>;
   containerRef: RefObject<HTMLDivElement | null>;
   runPostSelectResize: () => void;
+}
+
+// legacy history 的几何权威是 tmux 快照里的 pane 尺寸（gateway 正是按这个尺寸
+// capture 的）；这里同步读取而不订阅，避免 pane 尺寸变化重建 sink。
+function remotePaneGeometry(
+  runtime: ReturnType<typeof useRuntime>,
+  deviceId: string,
+  paneId: string
+): TerminalGeometry | null {
+  const session = runtime.stores.tmux.getState().snapshots[deviceId]?.session;
+  for (const window of session?.windows ?? []) {
+    for (const pane of window.panes) {
+      if (pane.id === paneId) return { cols: pane.width, rows: pane.height };
+    }
+  }
+  return null;
 }
 
 /**
@@ -57,12 +76,11 @@ export function usePaneSinkRegistration({
       onApplyHistory: (data, alternateScreen, modes) => {
         const target = surfaceRef.current?.getVisibleTarget();
         if (!target) return;
-        target.terminal.restoreModeSnapshot?.(terminalModesFromHistory(modes, alternateScreen));
-        const payload = alternateScreen
-          ? wrapAlternateScreenHistory(data)
-          : normalizeHistoryForTerminal(data);
-        target.terminal.write(payload);
-        target.terminal.forceFullRepaint?.();
+        writeRestoredHistory(
+          target,
+          { data, alternateScreen, modes },
+          remotePaneGeometry(runtime, deviceId, paneId)
+        );
       },
       onOutput: (data, frame) => {
         surfaceRef.current?.write(frame ?? { deviceId, paneId, data });
@@ -76,7 +94,7 @@ export function usePaneSinkRegistration({
       },
       onRebase: (reason) => surfaceRef.current?.rebase(reason),
     };
-  }, [deviceId, instance, paneId, runPostSelectResize, surfaceRef]);
+  }, [deviceId, instance, paneId, runPostSelectResize, runtime, surfaceRef]);
 
   useEffect(() => {
     if (!paneSink || !deviceId || !paneId) {

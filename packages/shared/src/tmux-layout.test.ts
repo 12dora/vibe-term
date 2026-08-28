@@ -1,8 +1,10 @@
 import { describe, expect, test } from 'bun:test';
 import {
+  buildLayoutNode,
   collectLayoutLeaves,
   layoutLeafPaneId,
   parseWindowLayout,
+  tokenizeLayoutBody,
 } from './tmux-layout';
 
 // 以下样本均由真实 tmux 生成（tmux -L … display-message '#{window_layout}'）
@@ -52,7 +54,7 @@ describe('parseWindowLayout', () => {
 
   test('嵌套 {[]}：右侧再垂直分割', () => {
     const parsed = parseWindowLayout(
-      '5ee7,208x62,0,0{104x62,0,0,0,103x62,105,0[103x31,105,0,1,103x30,105,32,2]}',
+      '5ee7,208x62,0,0{104x62,0,0,0,103x62,105,0[103x31,105,0,1,103x30,105,32,2]}'
     );
     expect(parsed).not.toBeNull();
     const root = parsed?.root;
@@ -71,9 +73,7 @@ describe('parseWindowLayout', () => {
   });
 
   test('even-horizontal 三 pane', () => {
-    const parsed = parseWindowLayout(
-      '8419,208x62,0,0{68x62,0,0,0,68x62,69,0,1,70x62,138,0,2}',
-    );
+    const parsed = parseWindowLayout('8419,208x62,0,0{68x62,0,0,0,68x62,69,0,1,70x62,138,0,2}');
     expect(parsed).not.toBeNull();
     const root = parsed?.root;
     if (root?.type !== 'row') {
@@ -92,7 +92,7 @@ describe('parseWindowLayout', () => {
 
   test('collectLayoutLeaves 按视觉顺序返回', () => {
     const parsed = parseWindowLayout(
-      '5ee7,208x62,0,0{104x62,0,0,0,103x62,105,0[103x31,105,0,1,103x30,105,32,2]}',
+      '5ee7,208x62,0,0{104x62,0,0,0,103x62,105,0[103x31,105,0,1,103x30,105,32,2]}'
     );
     const leaves = parsed ? collectLayoutLeaves(parsed.root) : [];
     expect(leaves.map((l) => l.paneNumId)).toEqual([0, 1, 2]);
@@ -117,5 +117,148 @@ describe('parseWindowLayout', () => {
         expect(parseWindowLayout(input)).toBeNull();
       });
     }
+  });
+
+  test('嵌套 []{{}}：上下两行各再水平分割', () => {
+    const parsed = parseWindowLayout(
+      'abcd,80x24,0,0[80x12,0,0{40x12,0,0,0,39x12,41,0,1},80x11,0,13{40x11,0,13,2,39x11,41,13,3}]'
+    );
+    expect(parsed).not.toBeNull();
+    const root = parsed?.root;
+    if (root?.type !== 'column') {
+      throw new Error('expected column root');
+    }
+    expect(root.children).toHaveLength(2);
+    const top = root.children[0];
+    const bottom = root.children[1];
+    if (top?.type !== 'row' || bottom?.type !== 'row') {
+      throw new Error('expected row children');
+    }
+    expect(top.children.map((c) => (c.type === 'leaf' ? c.paneNumId : -1))).toEqual([0, 1]);
+    expect(bottom.children.map((c) => (c.type === 'leaf' ? c.paneNumId : -1))).toEqual([2, 3]);
+  });
+});
+
+describe('tokenizeLayoutBody', () => {
+  test('tokenizes a single pane body', () => {
+    expect(tokenizeLayoutBody('208x62,0,0,0')).toEqual([
+      { kind: 'number', value: 208 },
+      { kind: 'x' },
+      { kind: 'number', value: 62 },
+      { kind: 'comma' },
+      { kind: 'number', value: 0 },
+      { kind: 'comma' },
+      { kind: 'number', value: 0 },
+      { kind: 'comma' },
+      { kind: 'number', value: 0 },
+    ]);
+  });
+
+  test('tokenizes nested h/v delimiters', () => {
+    expect(tokenizeLayoutBody('1x1,0,0{1x1,0,0,0,1x1,0,0[1x1,0,0,1,1x1,0,0,2]}')).toEqual([
+      { kind: 'number', value: 1 },
+      { kind: 'x' },
+      { kind: 'number', value: 1 },
+      { kind: 'comma' },
+      { kind: 'number', value: 0 },
+      { kind: 'comma' },
+      { kind: 'number', value: 0 },
+      { kind: 'open-row' },
+      { kind: 'number', value: 1 },
+      { kind: 'x' },
+      { kind: 'number', value: 1 },
+      { kind: 'comma' },
+      { kind: 'number', value: 0 },
+      { kind: 'comma' },
+      { kind: 'number', value: 0 },
+      { kind: 'comma' },
+      { kind: 'number', value: 0 },
+      { kind: 'comma' },
+      { kind: 'number', value: 1 },
+      { kind: 'x' },
+      { kind: 'number', value: 1 },
+      { kind: 'comma' },
+      { kind: 'number', value: 0 },
+      { kind: 'comma' },
+      { kind: 'number', value: 0 },
+      { kind: 'open-column' },
+      { kind: 'number', value: 1 },
+      { kind: 'x' },
+      { kind: 'number', value: 1 },
+      { kind: 'comma' },
+      { kind: 'number', value: 0 },
+      { kind: 'comma' },
+      { kind: 'number', value: 0 },
+      { kind: 'comma' },
+      { kind: 'number', value: 1 },
+      { kind: 'comma' },
+      { kind: 'number', value: 1 },
+      { kind: 'x' },
+      { kind: 'number', value: 1 },
+      { kind: 'comma' },
+      { kind: 'number', value: 0 },
+      { kind: 'comma' },
+      { kind: 'number', value: 0 },
+      { kind: 'comma' },
+      { kind: 'number', value: 2 },
+      { kind: 'close-column' },
+      { kind: 'close-row' },
+    ]);
+  });
+
+  test('returns null for unexpected characters', () => {
+    expect(tokenizeLayoutBody('208x62,0,0,0garbage')).toBeNull();
+    expect(tokenizeLayoutBody('208 x62,0,0,0')).toBeNull();
+  });
+});
+
+describe('buildLayoutNode', () => {
+  test('builds a single pane from tokens', () => {
+    const tokens = tokenizeLayoutBody('208x62,0,0,0');
+    expect(tokens).not.toBeNull();
+    if (!tokens) {
+      return;
+    }
+    expect(buildLayoutNode(tokens, 0)).toEqual({
+      node: { type: 'leaf', paneNumId: 0, width: 208, height: 62, x: 0, y: 0 },
+      next: tokens.length,
+    });
+  });
+
+  test('builds nested h/v splits and reports leftover tokens', () => {
+    const tokens = tokenizeLayoutBody(
+      '80x24,0,0[80x12,0,0{40x12,0,0,0,39x12,41,0,1},80x11,0,13{40x11,0,13,2,39x11,41,13,3}]'
+    );
+    expect(tokens).not.toBeNull();
+    if (!tokens) {
+      return;
+    }
+    const built = buildLayoutNode(tokens, 0);
+    expect(built?.next).toBe(tokens.length);
+    expect(built?.node.type).toBe('column');
+    if (built?.node.type !== 'column') {
+      return;
+    }
+    expect(built.node.children).toHaveLength(2);
+    expect(built.node.children[0]?.type).toBe('row');
+    expect(built.node.children[1]?.type).toBe('row');
+  });
+
+  test('rejects a split with a single child', () => {
+    const tokens = tokenizeLayoutBody('208x62,0,0{104x62,0,0,0}');
+    expect(tokens).not.toBeNull();
+    if (!tokens) {
+      return;
+    }
+    expect(buildLayoutNode(tokens, 0)).toBeNull();
+  });
+
+  test('rejects a truncated leaf', () => {
+    const tokens = tokenizeLayoutBody('208x62,0,0');
+    expect(tokens).not.toBeNull();
+    if (!tokens) {
+      return;
+    }
+    expect(buildLayoutNode(tokens, 0)).toBeNull();
   });
 });

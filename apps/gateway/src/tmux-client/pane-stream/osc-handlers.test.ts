@@ -99,6 +99,17 @@ describe('emitOsc', () => {
     expect(emit('52', 'nosep').clipboard).toEqual([]);
   });
 
+  test('OSC 52 only honours system-clipboard targets', () => {
+    expect(emit('52', ';aGVsbG8=').clipboard).toEqual(['hello']);
+    expect(emit('52', 's;aGVsbG8=').clipboard).toEqual(['hello']);
+    expect(emit('52', 'pc;aGVsbG8=').clipboard).toEqual(['hello']);
+    // primary / secondary / cut buffer 在浏览器里没有对应物，必须忽略，
+    // 否则编辑器一次复制连发的 p + c 两条会写两次剪贴板、弹两条提示
+    expect(emit('52', 'p;aGVsbG8=').clipboard).toEqual([]);
+    expect(emit('52', 'q;aGVsbG8=').clipboard).toEqual([]);
+    expect(emit('52', '0;aGVsbG8=').clipboard).toEqual([]);
+  });
+
   test('OSC 133 prompt markers', () => {
     expect(emit('133', 'C').prompts).toEqual([{ kind: 'C', exitCode: null, params: [] }]);
     expect(emit('133', 'D;137;tmex=abc').prompts).toEqual([

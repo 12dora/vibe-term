@@ -34,7 +34,7 @@ wasm 资源改用 `new URL('./assets/ghostty-vt.wasm', import.meta.url)`（Vite 
 system-prompt 增段：agent 先探测环境（POSIX/网络 CLI/TUI），据此选 `run_command`（传 shell/mode/prompt）或交互式读写屏；说明 read_screen 是渲染态、send_input 模式感知、`entered_tui` 切交互。
 
 ## 验收
-- gateway `bun test` 495 / shared 49 全绿（含：OSC 133 parser、HeadlessTerminal 真 wasm、emulator/registry 防泄漏、run_command 全分支 fake-emulator、工具 fallback、prompt 快照）。
+- gateway 与 shared 的 `bun test` 全绿（含：OSC 133 parser、HeadlessTerminal 真 wasm、emulator/registry 防泄漏、run_command 全分支 fake-emulator、工具 fallback、prompt 快照）。
 - gateway `bun build --target bun` 通过；前端 `bun run build`（tsc + vite）通过且正确产出 `ghostty-vt-*.wasm` 资产。
 
 ## 已知follow-up

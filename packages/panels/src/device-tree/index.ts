@@ -6,3 +6,4 @@ export {
   type NodeBadgeAppearance,
   type NodeBadgeInfo,
 } from './node-badge';
+export type { DeviceConnectionAdapter, DeviceConnectionStatus } from '../device-connection';

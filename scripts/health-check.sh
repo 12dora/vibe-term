@@ -185,8 +185,6 @@ if [ "$TESTS_FAILED" -eq 0 ]; then
 else
     echo -e "${RED}部分检查失败，请查看日志。${NC}"
     echo ""
-    echo "查看日志:"
-    echo "  docker-compose logs -f gateway"
-    echo "  docker-compose logs -f fe"
+    echo "查看日志: ~/Library/Application Support/tmex/tmex.log（macOS）或 journalctl --user -u tmex（Linux）"
     exit 1
 fi

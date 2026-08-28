@@ -1,6 +1,6 @@
 import { QueryClientProvider } from '@tanstack/react-query';
 import { formatDisplayVersion } from '@tmex/shared';
-import { type CSSProperties, StrictMode, useEffect, useState } from 'react';
+import { type CSSProperties, StrictMode, useEffect } from 'react';
 import { createRoot } from 'react-dom/client';
 import { Outlet, RouterProvider, createBrowserRouter, useParams } from 'react-router';
 import { Toaster } from 'sonner';
@@ -10,13 +10,16 @@ import './index.css';
 // 浏览器 console 打印 monorepo 版本（非 production 带 _dev 后缀）
 console.info(`tmex ${formatDisplayVersion(__MONOREPO_VERSION__, __IS_PROD__)}`);
 
+import { PageLoadFallback } from '@/PageLoadFallback';
 import { FlowBridges } from '@/components/flow-bridges';
 import { AppSidebar } from '@/components/page-layouts/components/app-sidebar';
 import { useAppMonoFont } from '@/lib/fonts/useAppMonoFont';
 import { NodeRuntimeBoundary } from '@/node/node-runtime-boundary';
 import { appNodeRuntimes, nodeQueryClient } from '@/node/node-runtimes';
+import { type PageModuleLoader, usePageModule } from '@/use-page-module';
 import { installSessionInterceptor } from '@tmex/api-client/auth/index';
 import { ConnectionIndicator } from '@tmex/panels';
+import { SettingsEventsInit } from '@tmex/panels/settings';
 import { WatchEventsInit } from '@tmex/panels/watch';
 import { SELF_NODE_ID, useNodeRuntime } from '@tmex/stores';
 import { RuntimeProvider, useSiteStore, useUIStore } from '@tmex/stores/react';
@@ -67,9 +70,6 @@ function ThemePresetSync() {
   }, [themePreset]);
   return null;
 }
-
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-type PageModule = Record<string, any>;
 
 // iOS 26+ standalone: Safari 从 body 背景色推导状态栏颜色。
 // Android Chrome: 从 <meta name="theme-color"> 读取，支持运行时动态修改。
@@ -130,10 +130,14 @@ function RootLayout() {
   useEffect(() => {
     void loadCapabilities();
   }, [loadCapabilities]);
+  // 桌面端展开/折叠受控于持久化的 ui store，刷新后保留，且 setSidebarCollapsed 能真正开合侧栏
+  const sidebarCollapsed = useUIStore((state) => state.sidebarCollapsed);
+  const setSidebarCollapsed = useUIStore((state) => state.setSidebarCollapsed);
   return (
     <>
       <WatchEventsInit />
-      <SidebarProvider>
+      <SettingsEventsInit />
+      <SidebarProvider open={!sidebarCollapsed} onOpenChange={(open) => setSidebarCollapsed(!open)}>
         <StatusBarSync />
         <FlowBridges />
         <AppSidebar />
@@ -183,14 +187,11 @@ function MainInset() {
 }
 
 // Page wrapper: 处理 header、title、actions 和动态加载
-function PageWrapper({ moduleLoader }: { moduleLoader: () => Promise<PageModule> }) {
-  const [module, setModule] = useState<PageModule | null>(null);
+function PageWrapper({ moduleLoader }: { moduleLoader: PageModuleLoader }) {
+  const { state, retry } = usePageModule(moduleLoader);
   const params = useParams();
 
-  useEffect(() => {
-    moduleLoader().then(setModule);
-  }, [moduleLoader]);
-
+  const module = state.status === 'ready' ? state.module : null;
   const Page = module?.default;
   const PageTitle = module?.PageTitle;
   const PageActions = module?.PageActions;
@@ -219,7 +220,7 @@ function PageWrapper({ moduleLoader }: { moduleLoader: () => Promise<PageModule>
       {/* Page content */}
       <div className="flex min-h-0 flex-1 flex-col gap-4 !pt-0 p-2 md:p-4">
         <div className="bg-muted/50 min-h-0 flex-1 overflow-auto overscroll-auto rounded-xl [-webkit-overflow-scrolling:touch]">
-          {Page ? <Page /> : null}
+          {state.status === 'error' ? <PageLoadFallback onRetry={retry} /> : Page ? <Page /> : null}
         </div>
       </div>
     </>

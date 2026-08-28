@@ -3,3 +3,4 @@
 
 export { ConnectionIndicator } from './connection-indicator';
 export { DeviceStatusBadge } from './device-status-badge';
+export type { DeviceConnectionAdapter, DeviceConnectionStatus } from './device-connection';

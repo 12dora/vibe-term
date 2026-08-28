@@ -57,23 +57,73 @@ export function needsModelFor(draft: WatchRuleDraft): boolean {
   return draft.triggerType === 'llm' || draft.confirmWithLlm || draft.summarizeWithLlm;
 }
 
-export function createWatchRuleDraft(rule: WatchRuleDto | null): WatchRuleDraft {
+/** 新建草稿的全部默认值；编辑既有规则时同样用作各字段的空值回落 */
+export const WATCH_RULE_DRAFT_DEFAULTS: WatchRuleDraft = {
+  name: '',
+  triggerType: 'match',
+  pattern: '',
+  patternFlags: '',
+  extractGroup: 0,
+  unchangedMinutes: 10,
+  noMatchBehavior: 'reset',
+  conditionPrompt: '',
+  providerId: null,
+  modelId: '',
+  confirmWithLlm: false,
+  summarizeWithLlm: false,
+  intervalSeconds: 30,
+  fireMode: 'once',
+  cooldownSeconds: 600,
+};
+
+type MatchFields = Pick<
+  WatchRuleDraft,
+  'pattern' | 'patternFlags' | 'extractGroup' | 'unchangedMinutes' | 'noMatchBehavior'
+>;
+type LlmFields = Pick<
+  WatchRuleDraft,
+  'conditionPrompt' | 'providerId' | 'modelId' | 'confirmWithLlm' | 'summarizeWithLlm'
+>;
+type ScheduleFields = Pick<WatchRuleDraft, 'intervalSeconds' | 'fireMode' | 'cooldownSeconds'>;
+
+function matchFieldsOf(rule: WatchRuleDto): MatchFields {
   return {
-    name: rule?.name ?? '',
-    triggerType: rule?.triggerType ?? 'match',
-    pattern: rule?.pattern ?? '',
-    patternFlags: rule?.patternFlags ?? '',
-    extractGroup: rule?.extractGroup ?? 0,
-    unchangedMinutes: rule?.unchangedMinutes ?? 10,
-    noMatchBehavior: rule?.noMatchBehavior ?? 'reset',
-    conditionPrompt: rule?.conditionPrompt ?? '',
-    providerId: rule?.providerId ?? null,
-    modelId: rule?.modelId ?? '',
-    confirmWithLlm: rule?.confirmWithLlm ?? false,
-    summarizeWithLlm: rule?.summarizeWithLlm ?? false,
-    intervalSeconds: rule?.intervalSeconds ?? 30,
-    fireMode: rule?.fireMode ?? 'once',
-    cooldownSeconds: rule?.cooldownSeconds ?? 600,
+    pattern: rule.pattern ?? WATCH_RULE_DRAFT_DEFAULTS.pattern,
+    patternFlags: rule.patternFlags ?? WATCH_RULE_DRAFT_DEFAULTS.patternFlags,
+    extractGroup: rule.extractGroup ?? WATCH_RULE_DRAFT_DEFAULTS.extractGroup,
+    unchangedMinutes: rule.unchangedMinutes ?? WATCH_RULE_DRAFT_DEFAULTS.unchangedMinutes,
+    noMatchBehavior: rule.noMatchBehavior ?? WATCH_RULE_DRAFT_DEFAULTS.noMatchBehavior,
+  };
+}
+
+function llmFieldsOf(rule: WatchRuleDto): LlmFields {
+  return {
+    conditionPrompt: rule.conditionPrompt ?? WATCH_RULE_DRAFT_DEFAULTS.conditionPrompt,
+    providerId: rule.providerId ?? WATCH_RULE_DRAFT_DEFAULTS.providerId,
+    modelId: rule.modelId ?? WATCH_RULE_DRAFT_DEFAULTS.modelId,
+    confirmWithLlm: rule.confirmWithLlm ?? WATCH_RULE_DRAFT_DEFAULTS.confirmWithLlm,
+    summarizeWithLlm: rule.summarizeWithLlm ?? WATCH_RULE_DRAFT_DEFAULTS.summarizeWithLlm,
+  };
+}
+
+function scheduleFieldsOf(rule: WatchRuleDto): ScheduleFields {
+  return {
+    intervalSeconds: rule.intervalSeconds ?? WATCH_RULE_DRAFT_DEFAULTS.intervalSeconds,
+    fireMode: rule.fireMode ?? WATCH_RULE_DRAFT_DEFAULTS.fireMode,
+    cooldownSeconds: rule.cooldownSeconds ?? WATCH_RULE_DRAFT_DEFAULTS.cooldownSeconds,
+  };
+}
+
+export function createWatchRuleDraft(rule: WatchRuleDto | null): WatchRuleDraft {
+  if (!rule) {
+    return { ...WATCH_RULE_DRAFT_DEFAULTS };
+  }
+  return {
+    name: rule.name ?? WATCH_RULE_DRAFT_DEFAULTS.name,
+    triggerType: rule.triggerType ?? WATCH_RULE_DRAFT_DEFAULTS.triggerType,
+    ...matchFieldsOf(rule),
+    ...llmFieldsOf(rule),
+    ...scheduleFieldsOf(rule),
   };
 }
 

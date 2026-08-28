@@ -8,7 +8,9 @@ import {
 import { type RefObject, useCallback, useEffect, useRef, useState } from 'react';
 import { TerminalSurface } from '../TerminalSurface';
 import {
+  type TerminalDiagnosticReporter,
   type TerminalDiagnosticStage,
+  type TerminalStreamDiagnosticInput,
   reportTerminalDiagnostic,
   scheduleTerminalDiagnosticSamples,
   useTerminalDiagnosticsReporter,
@@ -22,14 +24,18 @@ import {
 import { terminalStreamDiagnostic } from '../terminalBootDiagnostics';
 import type { XTERM_THEME_DARK } from '../theme';
 import type { TerminalProps } from '../types';
+import { activateRenderTarget, createTerminalRenderTarget } from './terminal-render-target';
+import {
+  type TerminalBootState,
+  type TerminalSurfaceCreationContext,
+  TerminalSurfaceLifecycle,
+  type TerminalSurfaceLifecycleDeps,
+} from './terminal-surface-lifecycle';
 import { useLatestRef } from './useLatestRef';
 
 const TERMINAL_SCROLLBACK = 10000;
 
-export type TerminalBootState =
-  | { status: 'loading' }
-  | { status: 'ready' }
-  | { status: 'error'; message: string };
+export type { TerminalBootState } from './terminal-surface-lifecycle';
 
 export interface UseTerminalBootSurfaceOptions {
   deviceId: string;
@@ -90,43 +96,189 @@ function clearE2eTerminalProbe(terminal: CompatibleTerminalLike | null): void {
   g.__tmexE2eTerminalSelectionText = null;
 }
 
+interface BootRefs {
+  generationHost: RefObject<HTMLDivElement | null>;
+  surface: RefObject<TerminalSurface<TerminalRenderTarget> | null>;
+  authoritativeSize: RefObject<{ cols: number; rows: number } | null>;
+  sizingMode: RefObject<'report' | 'follow'>;
+  runPostSelectResize: RefObject<() => void>;
+  deviceId: RefObject<string>;
+  paneId: RefObject<string>;
+  inputMode: RefObject<TerminalProps['inputMode']>;
+  terminalTheme: RefObject<typeof XTERM_THEME_DARK>;
+}
+
+interface BootContext {
+  runtime: ReturnType<typeof useRuntime>;
+  reporter: TerminalDiagnosticReporter | null;
+  fontFamily: string;
+  fontSize: number;
+  lineHeight: number;
+  prepareResources: TerminalProps['prepareResources'];
+  fontId: string;
+  refs: BootRefs;
+  setInstance(terminal: CompatibleTerminalLike | null): void;
+  setBootState(state: TerminalBootState): void;
+}
+
+type StreamDiagnostic = () => TerminalStreamDiagnosticInput;
+
+type StageReporter = (
+  stage: TerminalDiagnosticStage,
+  terminal: CompatibleTerminalLike | null,
+  mount: HTMLElement | null
+) => void;
+
+function diagnosticStream(ctx: BootContext): StreamDiagnostic {
+  return () =>
+    terminalStreamDiagnostic(
+      ctx.runtime.transport.sourceRoute,
+      ctx.refs.surface.current?.getDiagnosticState()
+    );
+}
+
+function createStageReporter(ctx: BootContext, stream: StreamDiagnostic): StageReporter {
+  return (stage, terminal, mount) => {
+    reportTerminalDiagnostic(ctx.reporter, {
+      surface: 'terminal',
+      stage,
+      terminal,
+      mount,
+      fontFamily: ctx.fontFamily,
+      fontSize: ctx.fontSize,
+      stream,
+    });
+  };
+}
+
+function buildRenderTarget(
+  ctx: BootContext,
+  report: StageReporter,
+  isCancelled: () => boolean
+): Promise<TerminalRenderTarget> {
+  return createTerminalRenderTarget<HTMLDivElement, TerminalController>({
+    document,
+    isCancelled,
+    resolveHost: () => ctx.refs.generationHost.current,
+    reportStage: report,
+    onDisposed: clearE2eTerminalProbe,
+    createController: () =>
+      createTerminalController({
+        fontFamily: ctx.fontFamily,
+        fontSize: ctx.fontSize,
+        lineHeight: ctx.lineHeight,
+        scrollback: TERMINAL_SCROLLBACK,
+        theme: ctx.refs.terminalTheme.current,
+        disableStdin: ctx.refs.inputMode.current === 'editor',
+      }),
+  });
+}
+
+function buildSurface(
+  ctx: BootContext,
+  report: StageReporter,
+  context: TerminalSurfaceCreationContext<TerminalRenderTarget>
+): TerminalSurface<TerminalRenderTarget> {
+  return new TerminalSurface<TerminalRenderTarget>({
+    createTarget: () => buildRenderTarget(ctx, report, context.isCancelled),
+    writeSnapshot: writeCanonicalSnapshot,
+    writeLive: writeLiveOutput,
+    activate: activateRenderTarget,
+    onRecoveryRequired: context.onRecoveryRequired,
+    onSnapshotApplied: context.onSnapshotApplied,
+  });
+}
+
+// 快照必须按其自带的 rows/cols 解析才不会错行，但写完后终端就停在 capture 时的尺寸上；
+// follow 模式下 reportSize 直接 return，没有任何东西会把它改回来，于是排版一直乱到
+// 用户手动 resize。
+function convergeSnapshotSize(ctx: BootContext, target: TerminalRenderTarget): void {
+  if (ctx.refs.sizingMode.current !== 'follow') {
+    ctx.refs.runPostSelectResize.current();
+    return;
+  }
+  const authoritative = ctx.refs.authoritativeSize.current;
+  if (!authoritative) return;
+  if (target.terminal.cols === authoritative.cols && target.terminal.rows === authoritative.rows) {
+    return;
+  }
+  target.terminal.resize(authoritative.cols, authoritative.rows);
+  target.terminal.forceFullRepaint?.();
+}
+
+function requestPaneScreen(ctx: BootContext): void {
+  const deviceId = ctx.refs.deviceId.current;
+  const paneId = ctx.refs.paneId.current;
+  if (!deviceId || !paneId) return;
+  ctx.runtime.stores.tmux.getState().requestPaneScreen(deviceId, paneId);
+}
+
+function createLifecycleDeps(
+  ctx: BootContext
+): TerminalSurfaceLifecycleDeps<TerminalRenderTarget, TerminalSurface<TerminalRenderTarget>> {
+  const stream = diagnosticStream(ctx);
+  const report = createStageReporter(ctx, stream);
+  return {
+    loadResources: async () => {
+      await ctx.prepareResources?.();
+      await loadTerminalFonts(ctx.fontId, ctx.fontSize);
+    },
+    createSurface: (context) => buildSurface(ctx, report, context),
+    getSurface: () => ctx.refs.surface.current,
+    setSurface: (surface) => {
+      ctx.refs.surface.current = surface;
+    },
+    bindTarget: (target) => ctx.setInstance(target?.terminal ?? null),
+    setBootState: ctx.setBootState,
+    reportStage: (stage, target) => report(stage, target?.terminal ?? null, target?.mount ?? null),
+    startDiagnosticSamples: (target) =>
+      scheduleTerminalDiagnosticSamples(ctx.reporter, {
+        surface: 'terminal',
+        terminal: target.terminal,
+        mount: target.mount,
+        fontFamily: ctx.fontFamily,
+        fontSize: ctx.fontSize,
+        stream,
+      }),
+    supportsAtomicScreen: () => ctx.runtime.transport.capabilities.atomicScreen,
+    requestPaneScreen: () => requestPaneScreen(ctx),
+    onSnapshotCommitted: (target) => convergeSnapshotSize(ctx, target),
+  };
+}
+
+/** 异步回调只经 ref 读最新的 props；容器本身恒定，可以直接进 effect 依赖 */
+function useBootRefs(options: UseTerminalBootSurfaceOptions): BootRefs {
+  const created: BootRefs = {
+    generationHost: useRef<HTMLDivElement | null>(null),
+    surface: useRef<TerminalSurface<TerminalRenderTarget> | null>(null),
+    authoritativeSize: useRef<{ cols: number; rows: number } | null>(null),
+    sizingMode: useLatestRef(options.sizingMode),
+    runPostSelectResize: useLatestRef(options.runPostSelectResize),
+    deviceId: useLatestRef(options.deviceId),
+    paneId: useLatestRef(options.paneId),
+    inputMode: useLatestRef(options.inputMode),
+    terminalTheme: useLatestRef(options.terminalTheme),
+  };
+  return useRef(created).current;
+}
+
 /**
  * 终端资源面：字体/控制器的加载、TerminalSurface 各代的建立与释放，以及首屏诊断上报。
  * 唯一持有 TerminalSurface 的地方，其余 hook 只经 surfaceRef 读当前可见 target。
  */
-export function useTerminalBootSurface({
-  deviceId,
-  paneId,
-  inputMode,
-  sizingMode,
-  autoFocus,
-  terminalTheme,
-  prepareResources,
-  runPostSelectResize,
-}: UseTerminalBootSurfaceOptions): TerminalBootSurface {
+export function useTerminalBootSurface(
+  options: UseTerminalBootSurfaceOptions
+): TerminalBootSurface {
+  const { autoFocus, prepareResources, terminalTheme } = options;
   const [instance, setInstance] = useState<CompatibleTerminalLike | null>(null);
   const [bootState, setBootState] = useState<TerminalBootState>({ status: 'loading' });
   const [retryNonce, setRetryNonce] = useState(0);
   const runtime = useRuntime();
-  const terminalDiagnosticsReporter = useTerminalDiagnosticsReporter();
-  const terminalFontId = useUIStore((state) => state.terminalFontId);
-  const terminalFontSize = useUIStore((state) => state.terminalFontSize);
-  const terminalLineHeight = useUIStore((state) => state.terminalLineHeight);
-
-  const generationHostRef = useRef<HTMLDivElement | null>(null);
-  const mountRef = useRef<HTMLDivElement | null>(null);
-  const surfaceRef = useRef<TerminalSurface<TerminalRenderTarget> | null>(null);
-  // 快照必须按其自带的 rows/cols 解析才不会错行，但写完后终端就停在 capture 时的尺寸上；
-  // follow 模式下 reportSize 直接 return，没有任何东西会把它改回来，于是排版一直乱到
-  // 用户手动 resize。
-  const authoritativeSizeRef = useRef<{ cols: number; rows: number } | null>(null);
-
-  const currentDeviceIdRef = useLatestRef(deviceId);
-  const currentPaneIdRef = useLatestRef(paneId);
-  const currentInputModeRef = useLatestRef(inputMode);
-  const currentTerminalThemeRef = useLatestRef(terminalTheme);
-  const sizingModeRef = useLatestRef(sizingMode);
-  const runPostSelectResizeRef = useLatestRef(runPostSelectResize);
+  const reporter = useTerminalDiagnosticsReporter();
+  const fontId = useUIStore((state) => state.terminalFontId);
+  const fontSize = useUIStore((state) => state.terminalFontSize);
+  const lineHeight = useUIStore((state) => state.terminalLineHeight);
+  const refs = useBootRefs(options);
 
   const retry = useCallback(() => {
     setRetryNonce((value) => value + 1);
@@ -134,226 +286,26 @@ export function useTerminalBootSurface({
 
   // biome-ignore lint/correctness/useExhaustiveDependencies: retryNonce is an explicit failed-resource retry trigger
   useEffect(() => {
-    let cancelled = false;
-    let stopDiagnosticSamples = () => {};
-    let hasCommittedSnapshot = false;
-    const fontFamily = resolveFontStack(terminalFontId);
-    const streamDiagnostic = () =>
-      terminalStreamDiagnostic(
-        runtime.transport.sourceRoute,
-        surfaceRef.current?.getDiagnosticState()
-      );
-    const diagnosticArgs = (
-      stage: TerminalDiagnosticStage,
-      terminal: CompatibleTerminalLike | null,
-      mount: HTMLElement | null = mountRef.current
-    ) => ({
-      surface: 'terminal' as const,
-      stage,
-      terminal,
-      mount,
-      fontFamily,
-      fontSize: terminalFontSize,
-      stream: streamDiagnostic,
-    });
-
-    surfaceRef.current = null;
-    setInstance(null);
-    setBootState({ status: 'loading' });
-    reportTerminalDiagnostic(terminalDiagnosticsReporter, diagnosticArgs('mount', null));
-
-    void (async () => {
-      try {
-        await prepareResources?.();
-        await loadTerminalFonts(terminalFontId, terminalFontSize);
-      } catch (error) {
-        reportTerminalDiagnostic(
-          terminalDiagnosticsReporter,
-          diagnosticArgs('font_load_failed', null)
-        );
-        if (!cancelled) {
-          setBootState({
-            status: 'error',
-            message: error instanceof Error ? error.message : 'Terminal resources failed to load.',
-          });
-        }
-        return;
-      }
-      if (cancelled) return;
-      reportTerminalDiagnostic(terminalDiagnosticsReporter, diagnosticArgs('fonts_ready', null));
-
-      const createTarget = async (): Promise<TerminalRenderTarget> => {
-        let terminal: TerminalController;
-        try {
-          terminal = await createTerminalController({
-            fontFamily,
-            fontSize: terminalFontSize,
-            lineHeight: terminalLineHeight,
-            scrollback: TERMINAL_SCROLLBACK,
-            theme: currentTerminalThemeRef.current,
-            disableStdin: currentInputModeRef.current === 'editor',
-          });
-        } catch (error) {
-          reportTerminalDiagnostic(
-            terminalDiagnosticsReporter,
-            diagnosticArgs('controller_failed', null)
-          );
-          throw error;
-        }
-        if (cancelled) {
-          terminal.dispose();
-          throw new Error('terminal initialization cancelled');
-        }
-
-        const host = generationHostRef.current;
-        if (!host) {
-          terminal.dispose();
-          throw new Error('Terminal mount is unavailable.');
-        }
-        const mount = document.createElement('div');
-        mount.className = 'absolute inset-0';
-        mount.style.visibility = 'hidden';
-        mount.style.pointerEvents = 'none';
-        host.appendChild(mount);
-        reportTerminalDiagnostic(
-          terminalDiagnosticsReporter,
-          diagnosticArgs('controller_ready', terminal, mount)
-        );
-        try {
-          terminal.open(mount);
-        } catch (error) {
-          reportTerminalDiagnostic(
-            terminalDiagnosticsReporter,
-            diagnosticArgs('open_failed', terminal, mount)
-          );
-          terminal.dispose();
-          mount.remove();
-          throw error;
-        }
-        reportTerminalDiagnostic(
-          terminalDiagnosticsReporter,
-          diagnosticArgs('opened', terminal, mount)
-        );
-        return {
-          terminal,
-          mount,
-          liveOutputEndedWithCR: false,
-          dispose() {
-            clearE2eTerminalProbe(terminal);
-            terminal.dispose();
-            mount.remove();
-          },
-        };
-      };
-
-      const manager = new TerminalSurface<TerminalRenderTarget>({
-        createTarget,
-        writeSnapshot: writeCanonicalSnapshot,
-        writeLive: writeLiveOutput,
-        activate(target) {
-          target.mount.style.visibility = 'visible';
-          target.mount.style.pointerEvents = 'auto';
-          target.terminal.scrollToBottom();
-          target.terminal.forceFullRepaint?.();
-        },
-        onRecoveryRequired(reason) {
-          if (cancelled) return;
-          const visible = surfaceRef.current?.getVisibleTarget();
-          reportTerminalDiagnostic(
-            terminalDiagnosticsReporter,
-            diagnosticArgs('recovery_started', visible?.terminal ?? null, visible?.mount ?? null)
-          );
-          if (!hasCommittedSnapshot && runtime.transport.capabilities.atomicScreen) {
-            setBootState(
-              reason === 'resource_exhausted'
-                ? {
-                    status: 'error',
-                    message: 'Terminal rendering failed before the first screen was ready.',
-                  }
-                : { status: 'loading' }
-            );
-          }
-          const activeDeviceId = currentDeviceIdRef.current;
-          const activePaneId = currentPaneIdRef.current;
-          if (activeDeviceId && activePaneId) {
-            runtime.stores.tmux.getState().requestPaneScreen(activeDeviceId, activePaneId);
-          }
-        },
-        onSnapshotApplied(target, snapshot) {
-          if (cancelled) return;
-          mountRef.current = target.mount;
-          setInstance(target.terminal);
-          if (snapshot) hasCommittedSnapshot = true;
-          // 快照按自带尺寸解析完毕，收敛回 tmux 权威尺寸；此后由 live 流继续。
-          if (snapshot) {
-            const authoritative = authoritativeSizeRef.current;
-            if (sizingModeRef.current === 'follow') {
-              if (
-                authoritative &&
-                (target.terminal.cols !== authoritative.cols ||
-                  target.terminal.rows !== authoritative.rows)
-              ) {
-                target.terminal.resize(authoritative.cols, authoritative.rows);
-                target.terminal.forceFullRepaint?.();
-              }
-            } else {
-              runPostSelectResizeRef.current();
-            }
-          }
-          if (snapshot) {
-            reportTerminalDiagnostic(
-              terminalDiagnosticsReporter,
-              diagnosticArgs('generation_activated', target.terminal, target.mount)
-            );
-          }
-          setBootState(
-            runtime.transport.capabilities.atomicScreen && !snapshot
-              ? { status: 'loading' }
-              : { status: 'ready' }
-          );
-          stopDiagnosticSamples();
-          stopDiagnosticSamples = scheduleTerminalDiagnosticSamples(terminalDiagnosticsReporter, {
-            surface: 'terminal',
-            terminal: target.terminal,
-            mount: target.mount,
-            fontFamily,
-            fontSize: terminalFontSize,
-            stream: streamDiagnostic,
-          });
-        },
-      });
-      surfaceRef.current = manager;
-      try {
-        await manager.initialize();
-      } catch (error) {
-        if (!cancelled) {
-          setBootState({
-            status: 'error',
-            message: error instanceof Error ? error.message : 'Terminal failed to initialize.',
-          });
-        }
-        return;
-      }
-    })();
-
-    return () => {
-      cancelled = true;
-      stopDiagnosticSamples();
-      const manager = surfaceRef.current;
-      if (manager) manager.dispose();
-      if (surfaceRef.current === manager) surfaceRef.current = null;
-      mountRef.current = null;
-      setInstance(null);
-    };
-  }, [
-    prepareResources,
-    retryNonce,
-    runtime,
-    terminalDiagnosticsReporter,
-    terminalFontId,
-    terminalFontSize,
-    terminalLineHeight,
-  ]);
+    const lifecycle = new TerminalSurfaceLifecycle<
+      TerminalRenderTarget,
+      TerminalSurface<TerminalRenderTarget>
+    >(
+      createLifecycleDeps({
+        runtime,
+        reporter,
+        fontFamily: resolveFontStack(fontId),
+        fontSize,
+        lineHeight,
+        fontId,
+        prepareResources,
+        refs,
+        setInstance,
+        setBootState,
+      })
+    );
+    void lifecycle.boot();
+    return () => lifecycle.cancel();
+  }, [fontId, fontSize, lineHeight, prepareResources, refs, reporter, retryNonce, runtime]);
 
   // e2e 桥指向焦点实例（分屏多实例下 autoFocus 即焦点性；单 pane 恒 true）
   useEffect(() => {
@@ -371,8 +323,8 @@ export function useTerminalBootSurface({
     instance,
     bootState,
     retry,
-    generationHostRef,
-    surfaceRef,
-    authoritativeSizeRef,
+    generationHostRef: refs.generationHost,
+    surfaceRef: refs.surface,
+    authoritativeSizeRef: refs.authoritativeSize,
   };
 }

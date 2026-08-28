@@ -6,6 +6,21 @@
 //  - TUI/alternate：拒绝（entered_tui），交回交互式读写屏。
 
 import type { PromptMarker } from '../../tmux-client/pane-stream-parser';
+import {
+  compileOptionalRegex,
+  resolvePromptRegex,
+  resolveRunCommandArgs,
+} from './run-command-args';
+import { createByteOutputBuffer } from './run-command-buffer';
+import {
+  applyDisablePaging,
+  attachRunCommandTap,
+  buildRunCommandPayload,
+  resolveRunCommandRuntime,
+} from './run-command-spawn';
+import { cleanTerminalText, lastNonEmptyLine } from './run-command-text';
+
+export { cleanTerminalText } from './run-command-text';
 
 export type RunCommandMode = 'auto' | 'posix' | 'cli';
 export type RunCommandShell = 'bash' | 'zsh' | 'sh' | 'fish' | 'powershell';
@@ -58,8 +73,6 @@ export interface RunCommandDeps {
   now?: () => number;
 }
 
-const DEFAULT_TIMEOUT_MS = 15_000;
-const OUTPUT_MAX_BYTES = 256 * 1024;
 const POLL_MS = 50;
 const MORE_MARKERS = [/--More--/, /---\(more[^)]*\)---/i, /<--- More --->/i, /\bMore: <space>/i];
 const ERROR_PATTERNS = [
@@ -71,53 +84,14 @@ const ERROR_PATTERNS = [
   /unknown command/i,
 ];
 
-const decoder = new TextDecoder();
-
-function exitCodeExpr(shell: RunCommandShell | undefined): string | null {
-  switch (shell) {
-    case 'fish':
-      return '$status';
-    case 'powershell':
-      return null; // pwsh 转义不同，退回无退出码路径
-    default:
-      return '$?'; // bash/zsh/sh 及未知
-  }
-}
-
-// 去 ANSI/控制序列 + 处理 \r 覆盖 + 整理空白，得到干净文本。
-export function cleanTerminalText(raw: string): string {
-  let text = raw
-    // OSC: ESC ] ... (BEL | ESC \)
-    .replace(/\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)/g, '')
-    // CSI: ESC [ ... letter
-    .replace(/\x1b\[[0-9;?]*[ -/]*[@-~]/g, '')
-    // 其它两字节/字符集切换转义
-    .replace(/\x1b[()][AB0-9]/g, '')
-    .replace(/\x1b[=>NOcDEHM]/g, '')
-    // 退格
-    .replace(/.\x08/g, '');
-  // 处理 \r：行内回车覆盖，保留最后一段
-  text = text
-    .split('\n')
-    .map((line) => {
-      if (!line.includes('\r')) {
-        return line.replace(/\s+$/, '');
-      }
-      const segs = line.split('\r').filter((s) => s.length > 0);
-      return (segs[segs.length - 1] ?? '').replace(/\s+$/, '');
-    })
-    .join('\n');
-  return text;
-}
-
-function lastNonEmptyLine(text: string): string {
-  const lines = cleanTerminalText(text).split('\n');
-  for (let i = lines.length - 1; i >= 0; i -= 1) {
-    if (lines[i].trim().length > 0) {
-      return lines[i];
-    }
-  }
-  return '';
+function enteredTuiResult(): RunCommandResult {
+  return {
+    output: '',
+    exitCode: null,
+    status: 'entered_tui',
+    likelyError: false,
+    truncated: false,
+  };
 }
 
 // 从累积原始字节里剥掉第一行（命令回显），返回干净输出。
@@ -144,92 +118,50 @@ export async function executeRunCommand(
   params: RunCommandParams,
   deps: RunCommandDeps
 ): Promise<RunCommandResult> {
-  const sleepMs = deps.sleepMs ?? ((ms: number) => new Promise((r) => setTimeout(r, ms)));
-  const now = deps.now ?? (() => performance.now());
-  let nonceCounter = 0;
-  const makeNonce = deps.makeNonce ?? (() => `n${++nonceCounter}${(now() | 0).toString(36)}`);
-  const timeoutMs = params.timeoutMs ?? DEFAULT_TIMEOUT_MS;
-  const mode: RunCommandMode = params.mode ?? 'auto';
+  const runtime = resolveRunCommandRuntime(deps);
+  const args = resolveRunCommandArgs(params);
 
   if (deps.emulator.isAlternateScreen()) {
-    return {
-      output: '',
-      exitCode: null,
-      status: 'entered_tui',
-      likelyError: false,
-      truncated: false,
-    };
+    return enteredTuiResult();
   }
 
-  const chunks: number[] = [];
-  let wasTruncated = false;
-  let receivedMarker: PromptMarker | null = null;
+  const buffer = createByteOutputBuffer();
   let nonce = '';
-  const untap = deps.emulator.tap({
-    onBytes: (data) => {
-      for (const byte of data) {
-        if (chunks.length < OUTPUT_MAX_BYTES) {
-          chunks.push(byte);
-        } else {
-          wasTruncated = true;
-        }
-      }
-    },
-    onMarker: (marker) => {
-      if (marker.kind === 'D' && (!nonce || marker.params.includes(`tmex=${nonce}`))) {
-        receivedMarker = marker;
-      }
-    },
-  });
-
-  const accumulated = (): string => decoder.decode(new Uint8Array(chunks));
-  const finish = (result: RunCommandResult): RunCommandResult => {
-    untap();
-    return result;
-  };
+  const tap = attachRunCommandTap(deps.emulator, buffer, () => nonce);
 
   try {
-    const usePosix = mode === 'posix' || (mode === 'auto' && exitCodeExpr(params.shell) !== null);
-
-    if (mode === 'cli' && params.disablePagingCommand) {
-      deps.sendInput(`${params.disablePagingCommand}\r`);
-      await sleepMs(200);
-      chunks.length = 0;
-      wasTruncated = false;
-    }
-
-    const promptRegex = params.prompt
-      ? new RegExp(params.prompt)
-      : mode === 'cli'
-        ? buildPromptRegex(lastNonEmptyLine(deps.emulator.render()))
-        : null;
-
-    if (usePosix) {
-      nonce = makeNonce();
-      const expr = exitCodeExpr(params.shell) ?? '$?';
-      const marker = `printf '\\033]133;D;%s;tmex=${nonce}\\033\\\\' "${expr}"`;
-      deps.sendInput(`${params.command}; ${marker}\r`);
-    } else {
-      deps.sendInput(`${params.command}\r`);
-    }
-
-    return finish(
-      await waitForCommandCompletion({
-        emulator: deps.emulator,
-        sendInput: deps.sendInput,
-        sleepMs,
-        now,
-        deadline: now() + timeoutMs,
-        usePosix,
-        getReceivedMarker: () => receivedMarker,
-        expectRegex: params.expect ? new RegExp(params.expect) : null,
-        promptRegex,
-        accumulated,
-        getWasTruncated: () => wasTruncated,
+    await applyDisablePaging({
+      mode: args.mode,
+      disablePagingCommand: args.disablePagingCommand,
+      sendInput: deps.sendInput,
+      sleepMs: runtime.sleepMs,
+      resetBuffer: () => buffer.reset(),
+    });
+    const promptRegex = resolvePromptRegex(args, deps.emulator.render());
+    if (args.usePosix) nonce = runtime.makeNonce();
+    deps.sendInput(
+      buildRunCommandPayload({
+        command: args.command,
+        usePosix: args.usePosix,
+        shell: args.shell,
+        nonce,
       })
     );
+    return await waitForCommandCompletion({
+      emulator: deps.emulator,
+      sendInput: deps.sendInput,
+      sleepMs: runtime.sleepMs,
+      now: runtime.now,
+      deadline: runtime.now() + args.timeoutMs,
+      usePosix: args.usePosix,
+      getReceivedMarker: tap.getReceivedMarker,
+      expectRegex: compileOptionalRegex(args.expectPattern),
+      promptRegex,
+      accumulated: () => buffer.decode(),
+      getWasTruncated: () => buffer.wasTruncated(),
+    });
   } finally {
-    untap();
+    tap.untap();
   }
 }
 
@@ -372,13 +304,4 @@ async function waitForCommandCompletion(params: CommandWaitParams): Promise<RunC
     ...detectError(out.text),
     truncated: out.truncated,
   };
-}
-
-function buildPromptRegex(promptLine: string): RegExp | null {
-  const trimmed = promptLine.trim();
-  if (!trimmed) {
-    return null;
-  }
-  const escaped = trimmed.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  return new RegExp(`${escaped}\\s*$`);
 }

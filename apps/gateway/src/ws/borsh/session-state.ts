@@ -1,7 +1,23 @@
 // Gateway 会话/设备/选择 状态机存储
 // 参考: docs/ws-protocol/2026021403-ws-state-machines.md
 
+import { wsBorsh } from '@tmex/shared';
+import type { ServerWebSocket } from 'bun';
 import type { GatewaySession } from '../gateway-session';
+import { encodeCanonicalEvent, sendToClient } from './codec-borsh';
+
+type SessionStateClient = GatewaySession | ServerWebSocket<unknown>;
+
+export const DEFAULT_OUTPUT_GATE_MAX_FRAMES = 1000;
+export const DEFAULT_OUTPUT_GATE_MAX_BYTES = 8 * 1024 * 1024;
+export const DEFAULT_THROTTLE_PRUNE_INTERVAL_MS = 30_000;
+
+export interface SessionStateStoreOptions {
+  now?: () => number;
+  maxOutputBufferBytes?: number;
+  maxOutputBufferFrames?: number;
+  throttlePruneIntervalMs?: number;
+}
 
 // ========== WS 连接状态机 ==========
 
@@ -67,7 +83,10 @@ export type OutputGateState = 'FLOWING' | 'BUFFERING';
 export interface OutputGateContext {
   state: OutputGateState;
   buffer: Uint8Array[];
+  bufferBytes: number;
   maxBufferSize: number;
+  maxBufferBytes: number;
+  overflowed: boolean;
 }
 
 // ========== Bell 状态机 ==========
@@ -97,6 +116,7 @@ export interface SessionState {
 
   // Notification 频控 (按 deviceId+paneId+source)
   notificationThrottles: Map<string, BellThrottleContext>;
+  lastNotificationPruneAt: number;
 }
 
 export function createSessionState(): SessionState {
@@ -113,28 +133,42 @@ export function createSessionState(): SessionState {
     outputGates: new Map(),
     bellThrottles: new Map(),
     notificationThrottles: new Map(),
+    lastNotificationPruneAt: 0,
   };
 }
 
 export class SessionStateStore {
-  private states = new Map<GatewaySession, SessionState>();
+  private states = new Map<SessionStateClient, SessionState>();
+  private readonly now: () => number;
+  private readonly maxOutputBufferBytes: number;
+  private readonly maxOutputBufferFrames: number;
+  private readonly throttlePruneIntervalMs: number;
 
-  create(session: GatewaySession): SessionState {
-    this.states.set(session, session.state);
-    return session.state;
+  constructor(options: SessionStateStoreOptions = {}) {
+    this.now = options.now ?? Date.now;
+    this.maxOutputBufferBytes = options.maxOutputBufferBytes ?? DEFAULT_OUTPUT_GATE_MAX_BYTES;
+    this.maxOutputBufferFrames = options.maxOutputBufferFrames ?? DEFAULT_OUTPUT_GATE_MAX_FRAMES;
+    this.throttlePruneIntervalMs =
+      options.throttlePruneIntervalMs ?? DEFAULT_THROTTLE_PRUNE_INTERVAL_MS;
   }
 
-  get(session: GatewaySession): SessionState | undefined {
+  create(session: SessionStateClient): SessionState {
+    const state = (session as Partial<GatewaySession>).state ?? createSessionState();
+    this.states.set(session, state);
+    return state;
+  }
+
+  get(session: SessionStateClient): SessionState | undefined {
     return this.states.get(session);
   }
 
-  delete(session: GatewaySession): void {
+  delete(session: SessionStateClient): void {
     this.states.delete(session);
   }
 
   // ========== WS 连接状态操作 ==========
 
-  transitionWsState(session: GatewaySession, newState: WsConnectionState): boolean {
+  transitionWsState(session: SessionStateClient, newState: WsConnectionState): boolean {
     const state = this.states.get(session);
     if (!state) return false;
 
@@ -164,14 +198,14 @@ export class SessionStateStore {
     return true;
   }
 
-  updateLastActivity(session: GatewaySession): void {
+  updateLastActivity(session: SessionStateClient): void {
     const state = this.states.get(session);
     if (state) {
       state.wsConnection.lastActivityAt = Date.now();
     }
   }
 
-  incrementSeq(session: GatewaySession): number {
+  incrementSeq(session: SessionStateClient): number {
     const state = this.states.get(session);
     if (!state) return 0;
     state.wsConnection.seq += 1;
@@ -181,7 +215,7 @@ export class SessionStateStore {
   // ========== 设备连接状态操作 ==========
 
   getOrCreateDeviceConnection(
-    session: GatewaySession,
+    session: SessionStateClient,
     deviceId: string
   ): DeviceConnectionContext | undefined {
     const state = this.states.get(session);
@@ -202,7 +236,7 @@ export class SessionStateStore {
   }
 
   transitionDeviceState(
-    session: GatewaySession,
+    session: SessionStateClient,
     deviceId: string,
     newState: DeviceConnectionState
   ): boolean {
@@ -244,7 +278,7 @@ export class SessionStateStore {
   // ========== 选择事务状态操作 ==========
 
   getOrCreateSelectTransaction(
-    session: GatewaySession,
+    session: SessionStateClient,
     deviceId: string
   ): SelectTransactionContext | undefined {
     const state = this.states.get(session);
@@ -269,7 +303,7 @@ export class SessionStateStore {
   }
 
   startSelectTransaction(
-    session: GatewaySession,
+    session: SessionStateClient,
     deviceId: string,
     windowId: string,
     paneId: string,
@@ -295,7 +329,7 @@ export class SessionStateStore {
   }
 
   transitionSelectState(
-    session: GatewaySession,
+    session: SessionStateClient,
     deviceId: string,
     newState: SelectTransactionState
   ): boolean {
@@ -344,7 +378,10 @@ export class SessionStateStore {
 
   // ========== 输出门控操作 ==========
 
-  getOrCreateOutputGate(session: GatewaySession, deviceId: string): OutputGateContext | undefined {
+  getOrCreateOutputGate(
+    session: SessionStateClient,
+    deviceId: string
+  ): OutputGateContext | undefined {
     const state = this.states.get(session);
     if (!state) return undefined;
 
@@ -353,45 +390,89 @@ export class SessionStateStore {
       ctx = {
         state: 'FLOWING',
         buffer: [],
-        maxBufferSize: 1000, // 最大缓冲 1000 条
+        bufferBytes: 0,
+        maxBufferSize: this.maxOutputBufferFrames,
+        maxBufferBytes: this.maxOutputBufferBytes,
+        overflowed: false,
       };
       state.outputGates.set(deviceId, ctx);
     }
     return ctx;
   }
 
-  startOutputBuffering(session: GatewaySession, deviceId: string): void {
+  startOutputBuffering(session: SessionStateClient, deviceId: string): void {
     const ctx = this.getOrCreateOutputGate(session, deviceId);
     if (!ctx) return;
 
     ctx.state = 'BUFFERING';
-    ctx.buffer = []; // 清空旧缓冲
+    ctx.buffer = [];
+    ctx.bufferBytes = 0;
+    ctx.overflowed = false;
   }
 
-  stopOutputBuffering(session: GatewaySession, deviceId: string): Uint8Array[] {
+  stopOutputBuffering(session: SessionStateClient, deviceId: string): Uint8Array[] {
     const ctx = this.getOrCreateOutputGate(session, deviceId);
     if (!ctx) return [];
 
     ctx.state = 'FLOWING';
     const buffered = [...ctx.buffer];
     ctx.buffer = [];
+    ctx.bufferBytes = 0;
+    ctx.overflowed = false;
     return buffered;
   }
 
-  bufferOutput(session: GatewaySession, deviceId: string, data: Uint8Array): boolean {
+  bufferOutput(session: SessionStateClient, deviceId: string, data: Uint8Array): boolean {
     const ctx = this.getOrCreateOutputGate(session, deviceId);
-    if (!ctx || ctx.state !== 'BUFFERING') return false;
+    if (!ctx || ctx.state !== 'BUFFERING' || ctx.overflowed) return false;
 
-    if (ctx.buffer.length >= ctx.maxBufferSize) {
-      console.warn(`[session-state] Output buffer overflow for ${deviceId}`);
-      ctx.buffer.shift(); // 丢弃最旧的数据
+    const nextBytes = ctx.bufferBytes + data.byteLength;
+    if (ctx.buffer.length >= ctx.maxBufferSize || nextBytes > ctx.maxBufferBytes) {
+      this.overflowOutputGate(session, deviceId, ctx);
+      return false;
     }
 
     ctx.buffer.push(data);
+    ctx.bufferBytes = nextBytes;
     return true;
   }
 
-  isBuffering(session: GatewaySession, deviceId: string): boolean {
+  private overflowOutputGate(
+    session: SessionStateClient,
+    deviceId: string,
+    ctx: OutputGateContext
+  ): void {
+    ctx.buffer = [];
+    ctx.bufferBytes = 0;
+    ctx.overflowed = true;
+    console.warn(`[session-state] Output buffer overflow for ${deviceId}`);
+    this.emitResourceExhaustedGap(session);
+  }
+
+  private emitResourceExhaustedGap(session: SessionStateClient): void {
+    const owner = session as Partial<GatewaySession>;
+    const borshState = owner.borshState;
+    if (!borshState) return;
+    const carrier = owner.activeCarrier;
+    if (!carrier) return;
+    try {
+      const frame = encodeCanonicalEvent(
+        {
+          SourceGap: {
+            reason: wsBorsh.SOURCE_GAP_REASON_RESOURCE_EXHAUSTED,
+            scope: { Stream: {} },
+          },
+        },
+        borshState.seqGen(),
+        borshState.maxFrameBytes
+      );
+      sendToClient(carrier, frame, borshState.maxFrameBytes);
+    } catch (error) {
+      console.warn('[session-state] Failed to emit SourceGap after output overflow:', error);
+    }
+  }
+
+  isBuffering(session: SessionStateClient, deviceId: string): boolean {
     const ctx = this.getOrCreateOutputGate(session, deviceId);
     return ctx?.state === 'BUFFERING';
   }
@@ -399,7 +480,7 @@ export class SessionStateStore {
   // ========== Bell 频控操作 ==========
 
   shouldAllowBell(
-    session: GatewaySession,
+    session: SessionStateClient,
     deviceId: string,
     paneId: string,
     throttleSeconds: number
@@ -430,7 +511,7 @@ export class SessionStateStore {
   }
 
   shouldAllowNotification(
-    session: GatewaySession,
+    session: SessionStateClient,
     deviceId: string,
     paneId: string,
     source: string,
@@ -440,7 +521,8 @@ export class SessionStateStore {
     if (!state) return false;
 
     const key = `${deviceId}:${paneId}:${source}`;
-    const now = Date.now();
+    const now = this.now();
+    this.pruneNotificationThrottles(state, now, key);
 
     let ctx = state.notificationThrottles.get(key);
     if (!ctx) {
@@ -453,6 +535,7 @@ export class SessionStateStore {
 
     const throttleMs = throttleSeconds * 1000;
     if (now - ctx.lastBellAt < throttleMs) {
+      ctx.throttleSeconds = throttleSeconds;
       return false;
     }
 
@@ -461,9 +544,20 @@ export class SessionStateStore {
     return true;
   }
 
+  private pruneNotificationThrottles(state: SessionState, now: number, keepKey?: string): void {
+    if (now - state.lastNotificationPruneAt < this.throttlePruneIntervalMs) return;
+    state.lastNotificationPruneAt = now;
+    for (const [key, ctx] of state.notificationThrottles) {
+      if (key === keepKey) continue;
+      if (now - ctx.lastBellAt >= ctx.throttleSeconds * 1000) {
+        state.notificationThrottles.delete(key);
+      }
+    }
+  }
+
   // ========== 清理操作 ==========
 
-  cleanupDevice(session: GatewaySession, deviceId: string): void {
+  cleanupDevice(session: SessionStateClient, deviceId: string): void {
     const state = this.states.get(session);
     if (!state) return;
 
@@ -485,7 +579,7 @@ export class SessionStateStore {
     }
   }
 
-  cleanup(session: GatewaySession): void {
+  cleanup(session: SessionStateClient): void {
     this.states.delete(session);
   }
 }

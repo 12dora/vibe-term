@@ -225,7 +225,7 @@ export class WebSocketServer
     if (session.closed) {
       return;
     }
-    const data = new Uint8Array(message);
+    const data: Uint8Array = message;
 
     if (!wsBorsh.checkMagic(data)) {
       this.sendError(session, null, wsBorsh.ERROR_INVALID_FRAME, 'Missing magic bytes', false);
@@ -380,6 +380,11 @@ export class WebSocketServer
     }
   }
 
+  handleClose(ws: ServerWebSocket<GatewaySocketData> | GatewaySession): void {
+    const { session } = this.bindingOf(ws);
+    this.closeSession(session, 1006, 'client disconnected');
+  }
+
   closeSession(session: GatewaySession, code: number, reason: string): void {
     if (session.closed) {
       return;
@@ -407,12 +412,14 @@ export class WebSocketServer
       session.detachCarrier(session.direct);
     }
 
+    this.registry.abandonSocket(session);
     this.canonicalSessions.get(session)?.close();
     this.canonicalSessions.delete(session);
     this.connectedClients.delete(session);
     switchBarrier.cleanupClient(session);
     sessionStateStore.cleanup(session);
     agentWsHub.removeClient(session);
+    this.feed.releaseLegacyPaneObservers(session);
 
     for (const [deviceId, entry] of this.connections) {
       entry.canonicalClients?.delete(session);
@@ -677,6 +684,14 @@ export class WebSocketServer
 
   handleDeviceDisconnect(ws: GatewaySession, deviceId: string): void {
     this.registry.handleDeviceDisconnect(ws, deviceId);
+  }
+
+  syncLegacyPaneObservers(session: GatewaySession, deviceId: string): void {
+    this.feed.syncLegacyPaneObservers(session, deviceId);
+  }
+
+  releaseLegacyPaneObservers(session: GatewaySession, deviceId?: string): void {
+    this.feed.releaseLegacyPaneObservers(session, deviceId);
   }
 
   handleTmuxSelect(

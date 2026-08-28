@@ -1,0 +1,243 @@
+import { describe, expect, test } from 'bun:test';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+import type { StateSnapshotPayload, TmuxPane, TmuxWindow, WatchRuleDto } from '@tmex/shared';
+
+import { terminalSettingsFallbackView } from './deferred-terminal-settings-sheet';
+import {
+  type ToolbarButton,
+  type ToolbarButtonsInput,
+  buildToolbarButtons,
+} from './device-console-toolbar';
+import {
+  type DeviceConsoleActionsModel,
+  findPane,
+  findWindow,
+  hasEnabledWatchRule,
+  nextInputMode,
+  panePath,
+} from './use-device-console-actions';
+
+const t = (key: string) => key;
+
+function pane(id: string): TmuxPane {
+  return { id, windowId: '@1', index: 0, active: true, width: 80, height: 24 };
+}
+
+function tmuxWindow(panes: TmuxPane[]): TmuxWindow {
+  return { id: '@1', name: 'one', index: 0, active: true, panes };
+}
+
+function snapshot(windows: TmuxWindow[]): StateSnapshotPayload {
+  return { session: { windows } } as unknown as StateSnapshotPayload;
+}
+
+function rule(enabled: boolean): WatchRuleDto {
+  return { id: 'r1', enabled } as WatchRuleDto;
+}
+
+function model(overrides: Partial<DeviceConsoleActionsModel> = {}): DeviceConsoleActionsModel {
+  return {
+    deviceId: 'd1',
+    resolvedPaneId: '%1',
+    selectedWindow: tmuxWindow([pane('%1')]),
+    isMobileViewport: false,
+    inputMode: 'direct',
+    canInteract: true,
+    watchUi: true,
+    hasEnabledWatchRule: false,
+    onSwitchPane: () => {},
+    onSplitPane: () => {},
+    onToggleInputMode: () => {},
+    onJumpToLatest: () => {},
+    onConfirmRefresh: () => {},
+    ...overrides,
+  };
+}
+
+function toolbarInput(overrides: Partial<DeviceConsoleActionsModel> = {}): ToolbarButtonsInput {
+  return {
+    model: model(overrides),
+    t,
+    onOpenRefreshConfirm: () => {},
+    onOpenWatchDialog: () => {},
+    onOpenTerminalSettings: () => {},
+  };
+}
+
+const testIdsOf = (buttons: ToolbarButton[]) => buttons.map((button) => button.testId);
+const findButton = (buttons: ToolbarButton[], key: string) =>
+  buttons.find((button) => button.key === key);
+
+describe('selection helpers', () => {
+  test('finds the window named by the route', () => {
+    expect(findWindow(snapshot([tmuxWindow([pane('%1')])]), '@1')?.id).toBe('@1');
+    expect(findWindow(snapshot([tmuxWindow([pane('%1')])]), '@9')).toBeUndefined();
+    expect(findWindow(undefined, '@1')).toBeUndefined();
+    expect(findWindow(snapshot([tmuxWindow([pane('%1')])]), undefined)).toBeUndefined();
+  });
+
+  test('finds the pane inside the selected window', () => {
+    const target = tmuxWindow([pane('%1'), pane('%2')]);
+    expect(findPane(target, '%2')?.id).toBe('%2');
+    expect(findPane(target, '%9')).toBeUndefined();
+    expect(findPane(undefined, '%1')).toBeUndefined();
+    expect(findPane(target, undefined)).toBeUndefined();
+  });
+
+  test('reports an enabled watch rule only when one exists', () => {
+    expect(hasEnabledWatchRule(undefined)).toBe(false);
+    expect(hasEnabledWatchRule([])).toBe(false);
+    expect(hasEnabledWatchRule([rule(false)])).toBe(false);
+    expect(hasEnabledWatchRule([rule(false), rule(true)])).toBe(true);
+  });
+
+  test('encodes the pane id into the route path', () => {
+    expect(panePath('d1', '@1', '%1')).toBe('/devices/d1/windows/@1/panes/%251');
+  });
+
+  test('toggles the input mode', () => {
+    expect(nextInputMode('direct')).toBe('editor');
+    expect(nextInputMode('editor')).toBe('direct');
+  });
+});
+
+describe('buildToolbarButtons', () => {
+  test('keeps the desktop button order and test ids', () => {
+    expect(testIdsOf(buildToolbarButtons(toolbarInput()))).toEqual([
+      'split-right-button',
+      'split-down-button',
+      undefined,
+      'terminal-input-mode-toggle',
+      undefined,
+      'watch-open-button',
+      'keyboard-behavior-open-button',
+    ]);
+  });
+
+  test('drops the split buttons on mobile viewports', () => {
+    const buttons = buildToolbarButtons(toolbarInput({ isMobileViewport: true }));
+    expect(findButton(buttons, 'split-right')).toBeUndefined();
+    expect(findButton(buttons, 'split-down')).toBeUndefined();
+    expect(findButton(buttons, 'terminal-settings')?.testId).toBe('keyboard-behavior-open-button');
+  });
+
+  test('drops the watch button when the featureset disables watch UI', () => {
+    const buttons = buildToolbarButtons(toolbarInput({ watchUi: false }));
+    expect(findButton(buttons, 'watch')).toBeUndefined();
+  });
+
+  test('disables pane actions while the pane is not interactive, but keeps refresh usable', () => {
+    const buttons = buildToolbarButtons(toolbarInput({ canInteract: false }));
+    expect(findButton(buttons, 'split-right')?.disabled).toBe(true);
+    expect(findButton(buttons, 'input-mode')?.disabled).toBe(true);
+    expect(findButton(buttons, 'jump-to-latest')?.disabled).toBe(true);
+    expect(findButton(buttons, 'refresh')?.disabled).toBeUndefined();
+    expect(findButton(buttons, 'terminal-settings')?.disabled).toBeUndefined();
+  });
+
+  test('disables watch without a resolved pane', () => {
+    const buttons = buildToolbarButtons(toolbarInput({ resolvedPaneId: undefined }));
+    expect(findButton(buttons, 'watch')?.disabled).toBe(true);
+  });
+
+  test('shows the watch badge only while a rule is enabled', () => {
+    expect(findButton(buildToolbarButtons(toolbarInput()), 'watch')?.badge).toEqual({
+      testId: 'watch-active-indicator',
+      visible: false,
+    });
+    expect(
+      findButton(buildToolbarButtons(toolbarInput({ hasEnabledWatchRule: true })), 'watch')?.badge
+        ?.visible
+    ).toBe(true);
+  });
+
+  test('labels the input-mode button by the target mode', () => {
+    expect(findButton(buildToolbarButtons(toolbarInput()), 'input-mode')?.label).toBe(
+      'nav.switchToEditor'
+    );
+    expect(
+      findButton(buildToolbarButtons(toolbarInput({ inputMode: 'editor' })), 'input-mode')?.label
+    ).toBe('nav.switchToDirect');
+  });
+
+  test('routes each button to its handler', () => {
+    const calls: string[] = [];
+    const input: ToolbarButtonsInput = {
+      ...toolbarInput(),
+      model: model({
+        onSplitPane: (direction) => calls.push(`split:${direction}`),
+        onToggleInputMode: () => calls.push('input-mode'),
+        onJumpToLatest: () => calls.push('jump'),
+      }),
+      onOpenRefreshConfirm: () => calls.push('refresh'),
+      onOpenWatchDialog: () => calls.push('watch'),
+      onOpenTerminalSettings: () => calls.push('terminal-settings'),
+    };
+
+    for (const button of buildToolbarButtons(input)) button.onClick();
+
+    expect(calls).toEqual([
+      'split:right',
+      'split:down',
+      'refresh',
+      'input-mode',
+      'jump',
+      'watch',
+      'terminal-settings',
+    ]);
+  });
+});
+
+const localesDir = path.resolve(
+  path.dirname(fileURLToPath(import.meta.url)),
+  '../../../shared/src/i18n/locales'
+);
+
+async function translationOf(locale: string): Promise<Record<string, unknown>> {
+  const json = (await Bun.file(path.join(localesDir, `${locale}.json`)).json()) as {
+    translation: Record<string, unknown>;
+  };
+  return json.translation;
+}
+
+function lookup(translation: Record<string, unknown>, key: string): unknown {
+  return key.split('.').reduce<unknown>((node, part) => {
+    if (typeof node !== 'object' || node === null) return undefined;
+    return (node as Record<string, unknown>)[part];
+  }, translation);
+}
+
+describe('terminalSettingsFallbackView', () => {
+  test('renders the loading state through i18n keys', () => {
+    expect(terminalSettingsFallbackView(false)).toEqual({
+      role: 'status',
+      messageKey: 'settings.terminal.loading',
+      showRetry: false,
+    });
+  });
+
+  test('renders the failure state through i18n keys with a retry', () => {
+    expect(terminalSettingsFallbackView(true)).toEqual({
+      role: 'alert',
+      messageKey: 'settings.terminal.loadFailed',
+      showRetry: true,
+    });
+  });
+
+  test('every fallback key is translated in all locales', async () => {
+    const keys = [
+      'settings.terminal.loading',
+      'settings.terminal.loadFailed',
+      'common.retry',
+      'common.close',
+    ];
+    for (const locale of ['en_US', 'zh_CN', 'ja_JP']) {
+      const translation = await translationOf(locale);
+      for (const key of keys) {
+        expect(typeof lookup(translation, key)).toBe('string');
+      }
+    }
+  });
+});

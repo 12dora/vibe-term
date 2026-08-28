@@ -1,8 +1,21 @@
 import type { CompatibleTerminalLike } from 'ghostty-terminal';
 import type { FitAddon } from 'ghostty-terminal';
-import { useCallback, useEffect, useRef } from 'react';
-import { shouldSyncOnViewportRestore } from '../utils/resizeSyncGuards';
-import { computeContainerSize } from './terminalMetrics';
+import { type RefObject, useCallback, useEffect, useMemo, useRef } from 'react';
+import {
+  type TerminalResizeGate,
+  type TerminalResizeKind,
+  TerminalResizeReporter,
+} from './terminal-resize-reporter';
+import {
+  RafCoalescer,
+  TerminalResizeScheduler,
+  browserResizeSchedulerTimers,
+  readDocumentFontsReady,
+} from './terminal-resize-scheduler';
+import {
+  type ViewportRestorePendingState,
+  createViewportRestoreController,
+} from './terminal-viewport-restore';
 
 interface UseTerminalResizeOptions {
   deviceId: string;
@@ -28,6 +41,205 @@ interface UseTerminalResizeOptions {
   getContainerRect?: () => { width: number; height: number } | null;
 }
 
+type ResizeCallbacks = Pick<
+  UseTerminalResizeOptions,
+  'onResize' | 'onSync' | 'onResizeSettled' | 'getContainerRect'
+>;
+
+type ScheduleResize = (
+  kind?: TerminalResizeKind,
+  options?: { immediate?: boolean; force?: boolean }
+) => void;
+
+interface ResizeActions {
+  scheduleResize: ScheduleResize;
+  runPostSelectResize: () => void;
+  clearPostSelectResizeTimers: () => void;
+}
+
+function useConstant<T>(create: () => T): T {
+  const ref = useRef<T | null>(null);
+  if (ref.current === null) {
+    ref.current = create();
+  }
+  return ref.current;
+}
+
+/** 把随渲染变化的回调镜像进 ref，供调度器的异步回调读取最新值，避免依赖环 */
+function useResizeCallbacksRef(callbacks: ResizeCallbacks): RefObject<ResizeCallbacks> {
+  const { onResize, onSync, onResizeSettled, getContainerRect } = callbacks;
+  const ref = useRef<ResizeCallbacks>({ onResize, onSync, onResizeSettled, getContainerRect });
+
+  useEffect(() => {
+    ref.current = { onResize, onSync, onResizeSettled, getContainerRect };
+  }, [onResize, onSync, onResizeSettled, getContainerRect]);
+
+  return ref;
+}
+
+function useResizeReporter(
+  callbacksRef: RefObject<ResizeCallbacks>,
+  terminalRef: RefObject<CompatibleTerminalLike | null>,
+  fitAddonRef: RefObject<FitAddon | null>
+): TerminalResizeReporter {
+  return useConstant(
+    () =>
+      new TerminalResizeReporter({
+        getTerminal: () => terminalRef.current,
+        getProposer: () => fitAddonRef.current,
+        getContainerRect: () => callbacksRef.current.getContainerRect?.() ?? null,
+        getHandlers: () => callbacksRef.current,
+      })
+  );
+}
+
+function useResizeActions(
+  reporter: TerminalResizeReporter,
+  scheduler: TerminalResizeScheduler,
+  gate: TerminalResizeGate
+): ResizeActions {
+  const reportSize = useCallback(
+    (kind: TerminalResizeKind, force: boolean) => reporter.report({ kind, force, gate }),
+    [reporter, gate]
+  );
+
+  const scheduleResize = useCallback<ScheduleResize>(
+    (kind = 'resize', options = {}) => {
+      const { immediate = false, force = false } = options;
+      scheduler.schedule(() => reportSize(kind, force), { immediate });
+    },
+    [reportSize, scheduler]
+  );
+
+  const runPostSelectResize = useCallback(() => {
+    scheduler.runPostSelect(
+      () => scheduleResize('sync', { immediate: true, force: true }),
+      readDocumentFontsReady
+    );
+  }, [scheduleResize, scheduler]);
+
+  const clearPostSelectResizeTimers = useCallback(() => {
+    scheduler.clearPostSelectTimers();
+  }, [scheduler]);
+
+  return { scheduleResize, runPostSelectResize, clearPostSelectResizeTimers };
+}
+
+/** 浏览器窗口 resize：先过一帧 RAF 等布局稳定，再共享 scheduleResize 的防抖 */
+function useWindowResizeListener(scheduleResize: ScheduleResize): void {
+  useEffect(() => {
+    const coalescer = new RafCoalescer(browserResizeSchedulerTimers);
+    const handleWindowResize = () => {
+      coalescer.request(() => scheduleResize('resize'));
+    };
+
+    window.addEventListener('resize', handleWindowResize);
+    return () => {
+      window.removeEventListener('resize', handleWindowResize);
+      coalescer.cancel();
+    };
+  }, [scheduleResize]);
+}
+
+interface ViewportRestoreListenerOptions {
+  reporter: TerminalResizeReporter;
+  terminalRef: RefObject<CompatibleTerminalLike | null>;
+  pending: ViewportRestorePendingState;
+  requestSync: () => void;
+}
+
+function useViewportRestoreListeners({
+  reporter,
+  terminalRef,
+  pending,
+  requestSync,
+}: ViewportRestoreListenerOptions): void {
+  useEffect(() => {
+    const controller = createViewportRestoreController({
+      pending,
+      getCurrentSize: () => {
+        const term = terminalRef.current;
+        if (!term) {
+          return null;
+        }
+        return { cols: Math.max(2, term.cols), rows: Math.max(2, term.rows) };
+      },
+      measureContainerSize: () => reporter.measure(),
+      // ?.() 容错老版本 terminal 暂未提供 forceFullRepaint 的情形
+      forceFullRepaint: () => {
+        terminalRef.current?.forceFullRepaint?.();
+      },
+      requestSync,
+    });
+
+    const handleVisibilityChange = () => {
+      controller.handleVisibilityChange(document.visibilityState === 'visible');
+    };
+
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    window.addEventListener('blur', controller.handleWindowBlur);
+    window.addEventListener('focus', controller.handleWindowFocus);
+
+    return () => {
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+      window.removeEventListener('blur', controller.handleWindowBlur);
+      window.removeEventListener('focus', controller.handleWindowFocus);
+    };
+  }, [pending, reporter, requestSync, terminalRef]);
+}
+
+interface ResizeLifecycleOptions extends Omit<ViewportRestoreListenerOptions, 'requestSync'> {
+  scheduler: TerminalResizeScheduler;
+  scheduleResize: ScheduleResize;
+}
+
+function useResizeLifecycle({
+  scheduler,
+  scheduleResize,
+  reporter,
+  terminalRef,
+  pending,
+}: ResizeLifecycleOptions): void {
+  const requestSync = useCallback(() => {
+    scheduleResize('sync', { force: true });
+  }, [scheduleResize]);
+
+  useWindowResizeListener(scheduleResize);
+  useViewportRestoreListeners({ reporter, terminalRef, pending, requestSync });
+
+  useEffect(() => {
+    return () => {
+      scheduler.dispose();
+    };
+  }, [scheduler]);
+}
+
+function useTerminalHandles(
+  reporter: TerminalResizeReporter,
+  terminalRef: RefObject<CompatibleTerminalLike | null>,
+  fitAddonRef: RefObject<FitAddon | null>
+) {
+  const setFitAddon = useCallback(
+    (addon: FitAddon | null) => {
+      fitAddonRef.current = addon;
+    },
+    [fitAddonRef]
+  );
+
+  const setTerminal = useCallback(
+    (terminal: CompatibleTerminalLike | null) => {
+      terminalRef.current = terminal;
+    },
+    [terminalRef]
+  );
+
+  const clearPendingLocalSize = useCallback(() => {
+    reporter.pendingLocalSize.current = null;
+  }, [reporter]);
+
+  return { setFitAddon, setTerminal, clearPendingLocalSize };
+}
+
 export function useTerminalResize({
   deviceId,
   paneId,
@@ -39,311 +251,40 @@ export function useTerminalResize({
   onResizeSettled,
   getContainerRect,
 }: UseTerminalResizeOptions) {
-  const resizeRaf = useRef<number | null>(null);
-  const resizeTimer = useRef<number | null>(null);
-  const lastReportedSize = useRef<{ cols: number; rows: number } | null>(null);
-  const pendingLocalSize = useRef<{ cols: number; rows: number; at: number } | null>(null);
-  const suppressLocalResizeUntil = useRef(0);
-  const postSelectResizeTimers = useRef<number[]>([]);
   const fitAddonRef = useRef<FitAddon | null>(null);
   const terminalRef = useRef<CompatibleTerminalLike | null>(null);
-  const getContainerRectRef = useRef(getContainerRect);
-  const viewportRestorePendingRef = useRef(false);
+  const pending: ViewportRestorePendingState = useRef(false);
 
-  // Use refs to store callbacks to avoid dependency cycles
-  const onResizeRef = useRef(onResize);
-  const onSyncRef = useRef(onSync);
-  const onResizeSettledRef = useRef(onResizeSettled);
+  const callbacksRef = useResizeCallbacksRef({
+    onResize,
+    onSync,
+    onResizeSettled,
+    getContainerRect,
+  });
+  const reporter = useResizeReporter(callbacksRef, terminalRef, fitAddonRef);
+  const scheduler = useConstant(() => new TerminalResizeScheduler(browserResizeSchedulerTimers));
 
-  // Update refs when callbacks change
-  useEffect(() => {
-    onResizeRef.current = onResize;
-  }, [onResize]);
-
-  useEffect(() => {
-    onSyncRef.current = onSync;
-  }, [onSync]);
-
-  useEffect(() => {
-    onResizeSettledRef.current = onResizeSettled;
-  }, [onResizeSettled]);
-
-  useEffect(() => {
-    getContainerRectRef.current = getContainerRect;
-  }, [getContainerRect]);
-
-  const measureTerminalSize = useCallback((): { cols: number; rows: number } | null => {
-    const term = terminalRef.current;
-    const fitAddon = fitAddonRef.current;
-    if (!term || !fitAddon || !term.element) {
-      return null;
-    }
-
-    const rect = getContainerRectRef.current?.();
-    if (!rect) {
-      return null;
-    }
-
-    return computeContainerSize({
-      rect,
-      cell: term._core?._renderService?.dimensions?.css?.cell,
-      proposeDimensions: () => fitAddon.proposeDimensions(),
-    });
-  }, []);
-
-  const applyTerminalSize = useCallback((cols: number, rows: number): void => {
-    const term = terminalRef.current;
-    if (!term) {
-      return;
-    }
-    if (term.cols === cols && term.rows === rows) {
-      return;
-    }
-    term.resize(cols, rows);
-  }, []);
-
-  const reportSize = useCallback(
-    (kind: 'resize' | 'sync', force = false) => {
-      // follow 模式：pane 的 cols/rows 由 tmux layout 决定并经外部 resize() 显式设定，
-      // 容器像素测量（zoom 下有舍入误差）不可作为尺寸来源，也不上报
-      if (sizingMode === 'follow') {
-        return false;
-      }
-      // sync 操作即使在 isSelectionInvalid 时也应该执行，因为尺寸同步是基础功能
-      // isSelectionInvalid 主要影响用户输入，不应该阻止终端尺寸同步
-      if (!deviceId || !paneId || !deviceConnected) {
-        return false;
-      }
-      if (isSelectionInvalid && kind !== 'sync') {
-        return false;
-      }
-
-      if (!force && Date.now() < suppressLocalResizeUntil.current) {
-        return false;
-      }
-
-      const term = terminalRef.current;
-      if (!term) {
-        return false;
-      }
-
-      const measuredSize = measureTerminalSize();
-      if (!measuredSize) {
-        return false;
-      }
-      const { cols, rows } = measuredSize;
-      // Debug: console.log('[resize] success:', { kind, cols, rows, force });
-      const lastSize = lastReportedSize.current;
-
-      if (!force && lastSize && lastSize.cols === cols && lastSize.rows === rows) {
-        applyTerminalSize(cols, rows);
-        return true;
-      }
-
-      applyTerminalSize(cols, rows);
-
-      if (kind === 'sync') {
-        onSyncRef.current(cols, rows);
-      } else {
-        onResizeRef.current(cols, rows);
-      }
-
-      lastReportedSize.current = { cols, rows };
-      pendingLocalSize.current = { cols, rows, at: Date.now() };
-      onResizeSettledRef.current?.(cols, rows);
-      return true;
-    },
-    // Only depend on stable values, not the callbacks
-    [
-      applyTerminalSize,
-      deviceConnected,
-      deviceId,
-      isSelectionInvalid,
-      measureTerminalSize,
-      paneId,
-      sizingMode,
-    ]
+  const gate = useMemo<TerminalResizeGate>(
+    () => ({ deviceId, paneId, deviceConnected, isSelectionInvalid, sizingMode }),
+    [deviceId, paneId, deviceConnected, isSelectionInvalid, sizingMode]
   );
+  const actions = useResizeActions(reporter, scheduler, gate);
 
-  const scheduleResize = useCallback(
-    (
-      kind: 'resize' | 'sync' = 'resize',
-      options: { immediate?: boolean; force?: boolean } = {}
-    ) => {
-      const { immediate = false, force = false } = options;
+  useResizeLifecycle({
+    scheduler,
+    scheduleResize: actions.scheduleResize,
+    reporter,
+    terminalRef,
+    pending,
+  });
 
-      if (resizeTimer.current !== null) {
-        window.clearTimeout(resizeTimer.current);
-        resizeTimer.current = null;
-      }
-
-      if (resizeRaf.current !== null) {
-        cancelAnimationFrame(resizeRaf.current);
-        resizeRaf.current = null;
-      }
-
-      const run = () => {
-        resizeRaf.current = requestAnimationFrame(() => {
-          resizeRaf.current = null;
-          reportSize(kind, force);
-        });
-      };
-
-      if (immediate) {
-        run();
-        return;
-      }
-
-      resizeTimer.current = window.setTimeout(() => {
-        resizeTimer.current = null;
-        run();
-      }, 150);
-    },
-    [reportSize]
-  );
-
-  const clearPostSelectResizeTimers = useCallback(() => {
-    for (const id of postSelectResizeTimers.current) {
-      window.clearTimeout(id);
-    }
-    postSelectResizeTimers.current = [];
-  }, []);
-
-  const runPostSelectResize = useCallback(() => {
-    clearPostSelectResizeTimers();
-    scheduleResize('sync', { immediate: true, force: true });
-
-    const retryId = window.setTimeout(() => {
-      scheduleResize('sync', { immediate: true, force: true });
-    }, 60);
-    postSelectResizeTimers.current.push(retryId);
-
-    if (typeof document !== 'undefined' && 'fonts' in document && document.fonts?.ready) {
-      document.fonts.ready
-        .then(() => {
-          scheduleResize('sync', { immediate: true, force: true });
-        })
-        .catch(() => {
-          // ignore
-        });
-    }
-  }, [clearPostSelectResizeTimers, scheduleResize]);
-
-  // 浏览器窗口 resize 处理 - 共享 scheduleResize 的防抖
-  useEffect(() => {
-    let rafId: number | null = null;
-    const handleWindowResize = () => {
-      // 使用 RAF 确保在布局完成后执行，并与 ResizeObserver 协调
-      if (rafId !== null) {
-        cancelAnimationFrame(rafId);
-      }
-      rafId = requestAnimationFrame(() => {
-        rafId = null;
-        scheduleResize('resize');
-      });
-    };
-
-    window.addEventListener('resize', handleWindowResize);
-    return () => {
-      window.removeEventListener('resize', handleWindowResize);
-      if (rafId !== null) {
-        cancelAnimationFrame(rafId);
-      }
-    };
-  }, [scheduleResize]);
-
-  useEffect(() => {
-    const handleViewportRestore = () => {
-      const term = terminalRef.current;
-      const containerSize = measureTerminalSize();
-      if (!term || !containerSize) {
-        return;
-      }
-
-      const shouldSync = shouldSyncOnViewportRestore({
-        currentSize: { cols: Math.max(2, term.cols), rows: Math.max(2, term.rows) },
-        containerSize,
-      });
-      if (!shouldSync) {
-        // canvas 位图可能在容器尺寸变化 / DOM 重插入中被 resize 清空，但 ghostty 内核
-        // 仍报 dirty='clean'。强制 renderer 全画以避免空白（issue #45 bug 3）。
-        // ?.() 容错老版本 terminal 暂未提供 forceFullRepaint 的情形。
-        term.forceFullRepaint?.();
-        return;
-      }
-
-      scheduleResize('sync', { force: true });
-    };
-
-    const handleVisibilityChange = () => {
-      if (document.visibilityState !== 'visible') {
-        viewportRestorePendingRef.current = true;
-        return;
-      }
-      if (!viewportRestorePendingRef.current) {
-        return;
-      }
-      viewportRestorePendingRef.current = false;
-      handleViewportRestore();
-    };
-
-    const handleWindowBlur = () => {
-      viewportRestorePendingRef.current = true;
-    };
-
-    const handleWindowFocus = () => {
-      if (!viewportRestorePendingRef.current) {
-        return;
-      }
-      viewportRestorePendingRef.current = false;
-      handleViewportRestore();
-    };
-
-    document.addEventListener('visibilitychange', handleVisibilityChange);
-    window.addEventListener('blur', handleWindowBlur);
-    window.addEventListener('focus', handleWindowFocus);
-
-    return () => {
-      document.removeEventListener('visibilitychange', handleVisibilityChange);
-      window.removeEventListener('blur', handleWindowBlur);
-      window.removeEventListener('focus', handleWindowFocus);
-    };
-  }, [measureTerminalSize, scheduleResize]);
-
-  // 清理
-  useEffect(() => {
-    return () => {
-      clearPostSelectResizeTimers();
-      if (resizeTimer.current !== null) {
-        window.clearTimeout(resizeTimer.current);
-      }
-      if (resizeRaf.current !== null) {
-        cancelAnimationFrame(resizeRaf.current);
-      }
-    };
-  }, [clearPostSelectResizeTimers]);
-
-  const setFitAddon = useCallback((addon: FitAddon | null) => {
-    fitAddonRef.current = addon;
-  }, []);
-
-  const setTerminal = useCallback((terminal: CompatibleTerminalLike | null) => {
-    terminalRef.current = terminal;
-  }, []);
-
-  const clearPendingLocalSize = useCallback(() => {
-    pendingLocalSize.current = null;
-  }, []);
+  const handles = useTerminalHandles(reporter, terminalRef, fitAddonRef);
 
   return {
-    scheduleResize,
-    runPostSelectResize,
-    clearPostSelectResizeTimers,
-    setFitAddon,
-    setTerminal,
-    lastReportedSize,
-    pendingLocalSize,
-    clearPendingLocalSize,
-    suppressLocalResizeUntil,
+    ...actions,
+    ...handles,
+    lastReportedSize: reporter.lastReportedSize,
+    pendingLocalSize: reporter.pendingLocalSize,
+    suppressLocalResizeUntil: reporter.suppressLocalResizeUntil,
   };
 }

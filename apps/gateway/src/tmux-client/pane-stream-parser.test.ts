@@ -73,9 +73,7 @@ describe('pane stream parser - OSC 133 prompt markers', () => {
     const { parser, markers } = collectMarkers();
     // 外层 DCS：ESC P tmux ; <body> ESC \；body 内每个 ESC 都被加倍（1b 1b）。
     // 内层目标序列 = ESC ] 133;D;0 ESC \  →  body = 1b1b 5d 133;D;0 1b1b 5c
-    parser.push(
-      bytes(0x1b, 'Ptmux;', 0x1b, 0x1b, 0x5d, '133;D;0', 0x1b, 0x1b, 0x5c, 0x1b, 0x5c)
-    );
+    parser.push(bytes(0x1b, 'Ptmux;', 0x1b, 0x1b, 0x5d, '133;D;0', 0x1b, 0x1b, 0x5c, 0x1b, 0x5c));
     expect(markers).toEqual([{ kind: 'D', exitCode: 0, params: ['0'] }]);
   });
 
@@ -173,19 +171,7 @@ describe('pane stream parser', () => {
     });
 
     const output = parser.push(
-      bytes(
-        'A',
-        0x1b,
-        0x5d,
-        '9;hello from tmex',
-        0x07,
-        'B',
-        0x1b,
-        0x5d,
-        '9;4;1;42',
-        0x07,
-        'C'
-      )
+      bytes('A', 0x1b, 0x5d, '9;hello from tmex', 0x07, 'B', 0x1b, 0x5d, '9;4;1;42', 0x07, 'C')
     );
 
     expect(Array.from(output)).toEqual(Array.from(bytes('ABC')));
@@ -366,9 +352,7 @@ describe('pane stream parser', () => {
     parser.push(wrapped.slice(0, 12));
     parser.push(wrapped.slice(12));
 
-    expect(notifications).toEqual([
-      { source: 'osc777', title: 'Claude', body: 'done' },
-    ]);
+    expect(notifications).toEqual([{ source: 'osc777', title: 'Claude', body: 'done' }]);
   });
 
   test('aggregates kitty OSC 99 notification fragments by id (Claude Code kitty channel)', () => {
@@ -446,13 +430,15 @@ describe('pane stream parser', () => {
 describe('pane stream parser - OSC 52 clipboard', () => {
   function collectClipboard() {
     const writes: string[] = [];
+    const clock = { now: 0 };
     const parser = createPaneStreamParser({
       onTitle: () => {},
       onBell: () => {},
       onNotification: () => {},
       onClipboardWrite: (text) => writes.push(text),
+      now: () => clock.now,
     });
-    return { parser, writes };
+    return { parser, writes, clock };
   }
 
   const ST = bytes(0x1b, 0x5c);
@@ -505,6 +491,36 @@ describe('pane stream parser - OSC 52 clipboard', () => {
     expect(writes).toEqual(['hello']);
   });
 
+  // pane 内编辑器（nvim `clipboard=unnamed,unnamedplus`，内置 OSC 52 provider 把 `*` 映到 p、
+  // `+` 映到 c）双击选词或拖拽选择时，一次复制会连发 primary + clipboard 两条 OSC 52。
+  // 两条都当剪贴板写就是「写两次剪贴板、弹两条已复制提示」。
+  test('primary + clipboard pair from a single copy writes the clipboard once', () => {
+    const { parser, writes } = collectClipboard();
+    parser.push(bytes(0x1b, ']', '52;p;aGVsbG8=', 0x07, 0x1b, ']', '52;c;aGVsbG8=', 0x07));
+    expect(writes).toEqual(['hello']);
+  });
+
+  // Claude Code 的 TUI 一次拖选/双击会连发两条相同的 OSC 52;c（实测 pipe-pane），
+  // 各转发一次就是两条「已复制」提示。
+  test('identical clipboard writes within the dedup window are forwarded once', () => {
+    const { parser, writes, clock } = collectClipboard();
+    parser.push(bytes(0x1b, ']', '52;c;aGVsbG8=', 0x07, 0x1b, ']', '52;c;aGVsbG8=', 0x07));
+    expect(writes).toEqual(['hello']);
+    clock.now = 100;
+    parser.push(bytes(0x1b, ']', '52;c;d29ybGQ=', 0x07));
+    expect(writes).toEqual(['hello', 'world']);
+    clock.now = 1000;
+    parser.push(bytes(0x1b, ']', '52;c;d29ybGQ=', 0x07));
+    expect(writes).toEqual(['hello', 'world', 'world']);
+  });
+
+  test('primary-only writes are ignored', () => {
+    const { parser, writes } = collectClipboard();
+    const output = parser.push(bytes('X', 0x1b, ']', '52;p;aGVsbG8=', 0x07, 'Y'));
+    expect(Array.from(output)).toEqual([0x58, 0x59]);
+    expect(writes).toEqual([]);
+  });
+
   test('tmux passthrough wrapped OSC 52', () => {
     const { parser, writes } = collectClipboard();
     // DCS tmux; ESC ESC ] 52;c;aGVsbG8= BEL ESC \
@@ -546,11 +562,20 @@ describe('pane stream parser - OSC 52 clipboard', () => {
     const output = parser.push(
       bytes(
         'A',
-        0x1b, ']', '2;my-title', 0x07,
+        0x1b,
+        ']',
+        '2;my-title',
+        0x07,
         'B',
-        0x1b, ']', '52;c;aGVsbG8=', 0x07,
+        0x1b,
+        ']',
+        '52;c;aGVsbG8=',
+        0x07,
         'C',
-        0x1b, ']', '2;title2', 0x07,
+        0x1b,
+        ']',
+        '2;title2',
+        0x07,
         'D'
       )
     );
@@ -656,5 +681,63 @@ describe('pane stream parser - bounded realtime metadata', () => {
     const output = parser.push(bytes(0x1b, 'k', 'x'.repeat(9 * 1024), 0x07, 'ok'));
     expect(titles).toEqual([]);
     expect(new TextDecoder().decode(output)).toBe('ok');
+  });
+});
+
+describe('pane stream parser - chunk splits inside escapes', () => {
+  function collect() {
+    const titles: string[] = [];
+    const notifications: NotificationRecord[] = [];
+    const parser = createPaneStreamParser({
+      onTitle: (title) => titles.push(title),
+      onBell: () => {},
+      onNotification: (notification) => notifications.push(notification),
+    });
+    return { parser, titles, notifications };
+  }
+
+  test('split after ESC still starts OSC and strips it', () => {
+    const { parser, titles } = collect();
+    const out1 = parser.push(bytes('A', 0x1b));
+    const out2 = parser.push(bytes(']2;dev', 0x07, 'B'));
+    expect(Array.from(out1)).toEqual([0x41]);
+    expect(Array.from(out2)).toEqual([0x42]);
+    expect(titles).toEqual(['dev']);
+  });
+
+  test('split inside CSI params then final byte', () => {
+    const { parser } = collect();
+    const out1 = parser.push(bytes('X', 0x1b, '[1;3'));
+    const out2 = parser.push(bytes('1mY'));
+    expect(Array.from(out1)).toEqual([0x58]);
+    expect(Array.from(out2)).toEqual(Array.from(bytes(0x1b, '[1;31mY')));
+  });
+
+  test('split inside DCS tmux prefix', () => {
+    const { parser, notifications } = collect();
+    const wrapped = bytes(0x1b, 'Ptmux;', 0x1b, 0x1b, ']9;task', 0x07, 0x1b, 0x5c, 'Z');
+    const splitAt = 4;
+    const out1 = parser.push(wrapped.subarray(0, splitAt));
+    const out2 = parser.push(wrapped.subarray(splitAt));
+    expect(Array.from(out1)).toEqual([]);
+    expect(Array.from(out2)).toEqual([0x5a]);
+    expect(notifications).toEqual([{ source: 'osc9', body: 'task' }]);
+  });
+
+  test('split between doubled ESC inside passthrough body', () => {
+    const { parser, notifications } = collect();
+    const wrapped = bytes(0x1b, 'Ptmux;', 0x1b, 0x1b, ']9;ok', 0x07, 0x1b, 0x5c);
+    const splitAt = wrapped.indexOf(0x1b, 2) + 1;
+    parser.push(wrapped.subarray(0, splitAt));
+    parser.push(wrapped.subarray(splitAt));
+    expect(notifications).toEqual([{ source: 'osc9', body: 'ok' }]);
+  });
+
+  test('passthrough ending on incomplete CSI then following text', () => {
+    const { parser } = collect();
+    const inner = bytes(0x1b, '[?20');
+    const wrapped = bytes(0x1b, 'Ptmux;', 0x1b, 0x1b, '[?20', 0x1b, 0x5c, 'Z');
+    const output = parser.push(wrapped);
+    expect(Array.from(output)).toEqual(Array.from(bytes(inner, 'Z')));
   });
 });

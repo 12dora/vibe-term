@@ -128,6 +128,7 @@ export class DeviceSessionRuntime {
   private readonly screenCapture: CanonicalScreenCapture;
   private lastSnapshot: StateSnapshotPayload | null = null;
   private connectPromise: Promise<void> | null = null;
+  private connectGeneration = 0;
   private terminated = false;
   private closeEmitted = false;
   private manualDisconnect = false;
@@ -215,24 +216,8 @@ export class DeviceSessionRuntime {
       return this.connectPromise;
     }
 
-    this.connectPromise = this.connection.connect().catch((error) => {
-      if (!this.connectionDisconnected) {
-        this.manualDisconnect = true;
-        try {
-          this.disconnectConnection();
-        } catch (disconnectError) {
-          console.error(
-            `[tmux-client] failed to disconnect after connect error: ${this.deviceId}`,
-            disconnectError
-          );
-        }
-      }
-      this.terminated = true;
-      this.disposeRuntimeResources();
-      this.connectPromise = null;
-      throw error;
-    });
-
+    const generation = ++this.connectGeneration;
+    this.connectPromise = this.runConnect(generation);
     return this.connectPromise;
   }
 
@@ -241,6 +226,7 @@ export class DeviceSessionRuntime {
       return;
     }
 
+    this.connectGeneration += 1;
     this.terminated = true;
     this.manualDisconnect = true;
     this.connectPromise = null;
@@ -427,6 +413,38 @@ export class DeviceSessionRuntime {
 
   async getPaneInfo(paneId: string): Promise<PaneInfo> {
     return this.connection.getPaneInfo(paneId);
+  }
+
+  private wasConnectAbandoned(generation: number): boolean {
+    return this.connectGeneration !== generation || this.manualDisconnect;
+  }
+
+  private async runConnect(generation: number): Promise<void> {
+    try {
+      await this.connection.connect();
+      if (this.wasConnectAbandoned(generation)) {
+        return;
+      }
+    } catch (error) {
+      if (this.wasConnectAbandoned(generation)) {
+        return;
+      }
+      if (!this.connectionDisconnected) {
+        this.manualDisconnect = true;
+        try {
+          this.disconnectConnection();
+        } catch (disconnectError) {
+          console.error(
+            `[tmux-client] failed to disconnect after connect error: ${this.deviceId}`,
+            disconnectError
+          );
+        }
+      }
+      this.terminated = true;
+      this.disposeRuntimeResources();
+      this.connectPromise = null;
+      throw error;
+    }
   }
 
   private disconnectConnection(): void {

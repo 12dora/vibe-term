@@ -21,6 +21,7 @@ import type { TerminalLinkHit } from './terminal-pointer';
 import { TerminalRenderLoop, ThrottledTask } from './terminal-render-loop';
 import type {
   GhosttyCellDimensions,
+  GhosttyRenderCell,
   GhosttyRenderCursor,
   GhosttyRenderRow,
   GhosttySelectionRect,
@@ -57,6 +58,9 @@ export type RenderCoordinatorHost = {
 export class TerminalRenderCoordinator {
   private renderer: CanvasRenderer | null = null;
   private readonly lineCache = new Map<number, SelectionLineModel>();
+  // 行模型按 cells 数组的对象身份缓存：render-state 对内容未变的行会复用同一个 cells
+  // 数组，于是整帧只为真正变化的行重建模型；数组换新即自动 miss，不存在过期风险。
+  private readonly lineModelByCells = new WeakMap<GhosttyRenderCell[], SelectionLineModel>();
   private readonly linkMatchCache = new LinkMatchCache(LINK_MATCH_CACHE_LIMIT);
   private readonly linkOverlayTask = new ThrottledTask(LINK_OVERLAY_THROTTLE_MS, () => {
     this.updateLinkOverlay();
@@ -193,15 +197,17 @@ export class TerminalRenderCoordinator {
     const fallbackRows = Math.max(1, scrollbar.len || this.host.viewportRows());
 
     updateRenderState(this.renderState, this.terminalHandle);
-    const meta = readRenderSnapshotMeta(this.renderState);
+    // 先取行、再取 meta：render-state 会在完整迭代结束后按逐 cell 比对把内核恒报的
+    // dirty='full' 降级成 'partial'/'clean'，meta 必须在那之后读才拿得到降级结果。
     const rows = Array.from(iterateRows(this.renderState));
+    const meta = readRenderSnapshotMeta(this.renderState);
 
     this.lastCursor = meta.cursor;
     this.viewportOffset = scrollbar.offset;
     this.viewportRows = Math.max(2, meta.rows || fallbackRows);
     this.renderedRows = rows;
     for (const row of rows) {
-      this.lineCache.set(scrollbar.offset + row.y, buildLineModel(row.cells, row.wrap));
+      this.lineCache.set(scrollbar.offset + row.y, this.lineModelFor(row));
     }
 
     const selectionRects = this.host.selectionRects(this.viewportOffset, this.viewportRows);
@@ -237,6 +243,17 @@ export class TerminalRenderCoordinator {
     this.renderer = null;
     this.lineCache.clear();
     this.renderedRows = [];
+  }
+
+  private lineModelFor(row: GhosttyRenderRow): SelectionLineModel {
+    const cached = this.lineModelByCells.get(row.cells);
+    if (cached && cached.wrappedToNext === row.wrap) {
+      return cached;
+    }
+
+    const model = buildLineModel(row.cells, row.wrap);
+    this.lineModelByCells.set(row.cells, model);
+    return model;
   }
 
   private updateLinkOverlay(): void {

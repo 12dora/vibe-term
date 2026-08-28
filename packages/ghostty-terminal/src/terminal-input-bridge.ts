@@ -32,6 +32,7 @@ import type {
   GhosttyTerminalModeSnapshot,
   GhosttyViewportGesture,
 } from './types';
+import { consumeWheelDelta, createWheelAccumulator, roundAwayFromZero } from './wheel-delta';
 
 export type KeyEncodeAction = 'press' | 'repeat' | 'release';
 
@@ -86,8 +87,8 @@ export function pointerLikeEventToGhosttyMods(event: {
 export class TerminalInputBridge {
   readonly mouse: MouseInputState = createMouseInputState();
 
-  private wheelPixelDelta = 0;
-  private wheelPixelDeltaX = 0;
+  private readonly wheelAccumulatorY = createWheelAccumulator();
+  private readonly wheelAccumulatorX = createWheelAccumulator();
   private syncOutputModeSupported: boolean | null = null;
 
   constructor(
@@ -169,7 +170,8 @@ export class TerminalInputBridge {
   // 清空选择时连带复位：残留的按下按钮与半格滚轮余量会让下一次交互从错误状态起步。
   resetPointerAccumulation(): void {
     this.mouse.pressedButtons.clear();
-    this.wheelPixelDelta = 0;
+    this.wheelAccumulatorY.pixels = 0;
+    this.wheelAccumulatorX.pixels = 0;
   }
 
   encodeKeyboardEvent(event: KeyboardEvent, action: KeyEncodeAction): string | null {
@@ -357,31 +359,16 @@ export class TerminalInputBridge {
     const cellHeight = this.host.cellDimensions().height || DEFAULT_CELL_HEIGHT;
 
     if (gesture.source !== 'wheel') {
-      return gesture.deltaY > 0
-        ? Math.ceil(gesture.deltaY / cellHeight)
-        : Math.floor(gesture.deltaY / cellHeight);
+      return roundAwayFromZero(gesture.deltaY / cellHeight);
     }
 
-    if (gesture.deltaMode === 1) {
-      this.wheelPixelDelta = 0;
-      return gesture.deltaY > 0 ? Math.ceil(gesture.deltaY) : Math.floor(gesture.deltaY);
-    }
-
-    if (gesture.deltaMode === 2) {
-      this.wheelPixelDelta = 0;
-      const scaled = gesture.deltaY * Math.max(1, this.host.viewportRows());
-      return scaled > 0 ? Math.ceil(scaled) : Math.floor(scaled);
-    }
-
-    this.wheelPixelDelta += gesture.deltaY;
-    const lines =
-      this.wheelPixelDelta > 0
-        ? Math.floor(this.wheelPixelDelta / cellHeight)
-        : Math.ceil(this.wheelPixelDelta / cellHeight);
-    if (lines !== 0) {
-      this.wheelPixelDelta -= lines * cellHeight;
-    }
-    return lines;
+    return consumeWheelDelta({
+      delta: gesture.deltaY,
+      cellSize: cellHeight,
+      deltaMode: gesture.deltaMode,
+      viewportUnits: this.host.viewportRows(),
+      accumulator: this.wheelAccumulatorY,
+    });
   }
 
   private gestureToColumns(gesture: GhosttyViewportGesture): number {
@@ -392,28 +379,15 @@ export class TerminalInputBridge {
     const cellWidth = this.host.cellDimensions().width || DEFAULT_CELL_WIDTH;
 
     if (gesture.source !== 'wheel') {
-      return deltaX > 0 ? Math.ceil(deltaX / cellWidth) : Math.floor(deltaX / cellWidth);
+      return roundAwayFromZero(deltaX / cellWidth);
     }
 
-    if (gesture.deltaMode === 1) {
-      this.wheelPixelDeltaX = 0;
-      return deltaX > 0 ? Math.ceil(deltaX) : Math.floor(deltaX);
-    }
-
-    if (gesture.deltaMode === 2) {
-      this.wheelPixelDeltaX = 0;
-      const scaled = deltaX * Math.max(1, this.host.viewportCols());
-      return scaled > 0 ? Math.ceil(scaled) : Math.floor(scaled);
-    }
-
-    this.wheelPixelDeltaX += deltaX;
-    const columns =
-      this.wheelPixelDeltaX > 0
-        ? Math.floor(this.wheelPixelDeltaX / cellWidth)
-        : Math.ceil(this.wheelPixelDeltaX / cellWidth);
-    if (columns !== 0) {
-      this.wheelPixelDeltaX -= columns * cellWidth;
-    }
-    return columns;
+    return consumeWheelDelta({
+      delta: deltaX,
+      cellSize: cellWidth,
+      deltaMode: gesture.deltaMode,
+      viewportUnits: this.host.viewportCols(),
+      accumulator: this.wheelAccumulatorX,
+    });
   }
 }

@@ -27,7 +27,7 @@ export {
   type RuntimeFeatures,
 } from './runtime';
 
-export { createUIStore, type KeyboardBehaviorMode, type SidebarSection, type UIStore } from './ui';
+export { createUIStore, type KeyboardBehaviorMode, type SidebarTab, type UIStore } from './ui';
 export { createSiteStore, type SiteStore } from './site';
 export { createTmuxStore, type DeviceInitialErrorInput, type TmuxStore } from './tmux';
 export {

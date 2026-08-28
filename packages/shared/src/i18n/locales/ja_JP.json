@@ -13,6 +13,9 @@
       "expand": "展開",
       "collapse": "折りたたむ",
       "refresh": "更新",
+      "retry": "再試行",
+      "pageLoadFailed": "このページの読み込みに失敗しました。",
+      "pageLoadFailedHint": "ネットワーク接続を確認してから再試行してください。",
       "test": "テスト",
       "send": "送信",
       "success": "成功",
@@ -93,6 +96,7 @@
       "connected": "接続済み",
       "disconnect": "切断",
       "disconnected": "切断済み",
+      "connectToStart": "デバイスに接続して開始してください。",
       "connecting": "接続中...",
       "dragHandle": "ドラッグしてデバイスを並べ替え",
       "reorderFailed": "デバイスの並べ替えに失敗しました",
@@ -201,6 +205,8 @@
         "fontFamily": "フォント",
         "preview": "プレビュー",
         "savedInBrowser": "これらの設定はこのブラウザにのみ保存されます。",
+        "loading": "ターミナル設定を読み込み中…",
+        "loadFailed": "ターミナル設定の読み込みに失敗しました。",
         "shortcuts": {
           "title": "カスタムショートカット",
           "savedOnServer": "サーバーに保存され、すべてのブラウザで共有されます。変更は「保存」後に反映されます。",
@@ -320,6 +326,7 @@
         "updateFailed": "ディレクトリの更新に失敗しました",
         "deleteFailed": "ディレクトリの削除に失敗しました",
         "toggleFailed": "ディレクトリの更新に失敗しました",
+        "loadFailed": "ディレクトリの読み込みに失敗しました",
         "deleteTitle": "ディレクトリを削除しますか？",
         "deleteDesc": "「{{path}}」をホワイトリストから削除しますか？配下のファイルにアクセスできなくなります。"
       },
@@ -676,7 +683,7 @@
       "closeWindow": "ウィンドウを閉じる",
       "closePane": "ペインを閉じる",
       "addDevice": "デバイスを追加",
-      "section": {
+      "tab": {
         "panes": "Panes",
         "agent": "Agent",
         "files": "Files"
@@ -732,6 +739,7 @@
         "selectPaneHint": "Panes タブでペインを選択してセッションを開始してください",
         "noSessions": "セッションがありません",
         "showAll": "すべてのセッションを表示",
+        "menu": "セッション操作",
         "rename": "セッション名を変更",
         "renameTitle": "セッション名を変更",
         "renamePlaceholder": "セッション名",
@@ -827,6 +835,9 @@
         "viewState": "状態",
         "lastTriggered": "最終トリガー：{{time}}",
         "neverTriggered": "未トリガー",
+        "everySeconds": "{{seconds}} 秒ごとにサンプリング",
+        "unchangedFor": "{{minutes}} 分間変化なし",
+        "loadFailed": "監視ルールの読み込みに失敗しました",
         "deleteTitle": "このルールを削除しますか？",
         "deleteDesc": "「{{name}}」は完全に削除されます。",
         "deleteConfirm": "削除"
@@ -905,7 +916,8 @@
         "samples": "直近サンプル",
         "samplesEmpty": "サンプルなし",
         "hit": "ヒット",
-        "none": "—"
+        "none": "—",
+        "loadFailed": "ルール状態の読み込みに失敗しました"
       },
       "toast": {
         "created": "監視ルールを作成しました",

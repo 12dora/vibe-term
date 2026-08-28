@@ -154,6 +154,7 @@ function createHarness(options: HarnessOptions = {}) {
     getState: () => ({
       settings: undefined,
       setThemeFromS2C: (theme: string) => record('setThemeFromS2C', theme),
+      handleSettingsUpdate: (namespace: string) => record('handleSettingsUpdate', namespace),
     }),
   } as unknown as SiteStore;
 
@@ -406,6 +407,18 @@ describe('tmux transport event router', () => {
     harness.route({ type: 'site-theme-update', theme: 'light' });
 
     expect(harness.namesOf('setThemeFromS2C').map((call) => call.args[0])).toEqual(['light']);
+  });
+
+  test('settings-update is forwarded to the site store with its namespace', () => {
+    const harness = createHarness();
+
+    harness.route({ type: 'settings-update', namespace: 'site' });
+    harness.route({ type: 'settings-update', namespace: 'llm' });
+
+    expect(harness.namesOf('handleSettingsUpdate').map((call) => call.args[0])).toEqual([
+      'site',
+      'llm',
+    ]);
   });
 
   test('tmux pane-active event records the active pane', () => {

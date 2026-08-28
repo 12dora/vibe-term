@@ -6,6 +6,7 @@ import {
   SideBarDeviceList as DeviceTreeSideBarDeviceList,
   type NodeBadgeInfo,
 } from '@tmex/panels/device-tree';
+import { useRuntime } from '@tmex/stores/react';
 import { SidebarAgentSessionsProvider, useSidebarAgentAdapter } from './sidebar-agent-sessions';
 
 export interface SideBarDeviceListForRuntimeProps {
@@ -20,17 +21,22 @@ export function SideBarDeviceListForRuntime({
   expansionKeyFor,
   emptyLabel,
 }: SideBarDeviceListForRuntimeProps) {
-  const { ensureDeviceSubscribed } = useGlobalDevice();
+  const { ensureDeviceSubscribed, connection } = useGlobalDevice();
+  const agentUi = useRuntime().features.agentUi;
   const agentAdapter = useSidebarAgentAdapter();
-  return (
-    <SidebarAgentSessionsProvider>
-      <DeviceTreeSideBarDeviceList
-        ensureDeviceSubscribed={ensureDeviceSubscribed}
-        agent={agentAdapter}
-        nodeBadge={nodeBadge}
-        expansionKeyFor={expansionKeyFor}
-        emptyLabel={emptyLabel}
-      />
-    </SidebarAgentSessionsProvider>
+
+  const tree = (
+    <DeviceTreeSideBarDeviceList
+      ensureDeviceSubscribed={ensureDeviceSubscribed}
+      connection={connection}
+      agent={agentUi ? agentAdapter : undefined}
+      nodeBadge={nodeBadge}
+      expansionKeyFor={expansionKeyFor}
+      emptyLabel={emptyLabel}
+    />
   );
+
+  // agentUi 关断时设备树不渲染任何 agent 面，provider 一并跳过（省掉会话列表 bootstrap）
+  if (!agentUi) return tree;
+  return <SidebarAgentSessionsProvider>{tree}</SidebarAgentSessionsProvider>;
 }

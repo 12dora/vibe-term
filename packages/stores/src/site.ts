@@ -16,6 +16,11 @@ export interface SiteState {
   loadCapabilities: () => Promise<void>;
   updateTheme: (theme: ThemeMode) => void;
   setThemeFromS2C: (theme: ThemeMode) => void;
+  /**
+   * S2C 设置变更信号的缓存失效入口。只有 'site' 对应本 store 缓存的 SiteSettings；
+   * 'theme' 另有 SITE_THEME_UPDATE 专用帧，其余 namespace 的缓存在各自消费方（react-query）。
+   */
+  handleSettingsUpdate: (namespace: string) => void;
 }
 
 const DEFAULT_SETTINGS: SiteSettings = {
@@ -49,6 +54,19 @@ export function createSiteStore(
     }
   }
 
+  // S2C 失效信号可能连着来，多个 REST 重拉会并发在途；只允许最新一次提交，
+  // 否则慢的旧响应后到就会把新设置（含 theme/language）盖回旧值
+  let settingsGeneration = 0;
+
+  function beginSettingsRequest(): number {
+    settingsGeneration += 1;
+    return settingsGeneration;
+  }
+
+  function isLatestSettingsRequest(generation: number): boolean {
+    return generation === settingsGeneration;
+  }
+
   function writeThemeToLocalStorage(theme: ThemeMode): void {
     try {
       const key = `${core.storagePrefix}tmex-ui`;
@@ -61,82 +79,109 @@ export function createSiteStore(
     }
   }
 
-  return create<SiteState>((set, get) => ({
-    settings: null,
-    loading: false,
-    capabilities: FeatureSet.empty(),
+  return create<SiteState>((set, get) => {
+    function commitSettings(settings: SiteSettings): void {
+      set({ settings, loading: false });
+      void i18next.changeLanguage(settings.language);
+      syncThemeToUIStore(settings.theme);
+    }
 
-    fetchSettings: async () => {
-      const existing = get().settings;
-      if (existing) {
-        return existing;
-      }
+    return {
+      settings: null,
+      loading: false,
+      capabilities: FeatureSet.empty(),
 
-      set({ loading: true });
-      try {
-        const settings = await fetchSiteSettings(core.apiClient);
-        set({ settings, loading: false });
-        void i18next.changeLanguage(settings.language);
-        syncThemeToUIStore(settings.theme);
-        return settings;
-      } catch (err) {
-        console.error('[site] failed to fetch settings:', err);
-        set({ settings: DEFAULT_SETTINGS, loading: false });
-        void i18next.changeLanguage(DEFAULT_SETTINGS.language);
-        syncThemeToUIStore(DEFAULT_SETTINGS.theme);
-        return DEFAULT_SETTINGS;
-      }
-    },
+      fetchSettings: async () => {
+        const existing = get().settings;
+        if (existing) {
+          return existing;
+        }
 
-    refreshSettings: async () => {
-      set({ loading: true });
-      try {
-        const settings = await fetchSiteSettings(core.apiClient);
-        set({ settings, loading: false });
-        void i18next.changeLanguage(settings.language);
-        syncThemeToUIStore(settings.theme);
-        return settings;
-      } catch (err) {
-        console.error('[site] failed to refresh settings:', err);
-        set({ loading: false });
-        throw err;
-      }
-    },
+        const generation = beginSettingsRequest();
+        set({ loading: true });
+        try {
+          const settings = await fetchSiteSettings(core.apiClient);
+          if (!isLatestSettingsRequest(generation)) {
+            return get().settings ?? settings;
+          }
+          commitSettings(settings);
+          return settings;
+        } catch (err) {
+          console.error('[site] failed to fetch settings:', err);
+          if (!isLatestSettingsRequest(generation)) {
+            return get().settings ?? DEFAULT_SETTINGS;
+          }
+          commitSettings(DEFAULT_SETTINGS);
+          return DEFAULT_SETTINGS;
+        }
+      },
 
-    loadCapabilities: async () => {
-      try {
-        const res = await fetchCapabilities(core.apiClient);
-        set({ capabilities: new FeatureSet(res.capabilities) });
-      } catch (err) {
-        console.error('[site] failed to load capabilities:', err);
-      }
-    },
+      refreshSettings: async () => {
+        const generation = beginSettingsRequest();
+        set({ loading: true });
+        try {
+          const settings = await fetchSiteSettings(core.apiClient);
+          // 已有更新的重拉在途/已提交：这次响应是旧数据，只返回不落库
+          if (!isLatestSettingsRequest(generation)) {
+            return get().settings ?? settings;
+          }
+          commitSettings(settings);
+          return settings;
+        } catch (err) {
+          console.error('[site] failed to refresh settings:', err);
+          if (isLatestSettingsRequest(generation)) {
+            set({ loading: false });
+          }
+          throw err;
+        }
+      },
 
-    updateTheme: (theme) => {
-      const current = get().settings;
-      const nextSettings: SiteSettings = current
-        ? { ...current, theme }
-        : { ...DEFAULT_SETTINGS, theme };
-      set({ settings: nextSettings });
-      syncThemeToUIStore(theme);
-      writeThemeToLocalStorage(theme);
+      loadCapabilities: async () => {
+        try {
+          const res = await fetchCapabilities(core.apiClient);
+          set({ capabilities: new FeatureSet(res.capabilities) });
+        } catch (err) {
+          console.error('[site] failed to load capabilities:', err);
+        }
+      },
 
-      if (core.client.isReady()) {
-        const msg = buildSiteThemeUpdate(theme);
-        core.client.send(msg.kind, msg.payload);
-      }
-    },
+      updateTheme: (theme) => {
+        const current = get().settings;
+        const nextSettings: SiteSettings = current
+          ? { ...current, theme }
+          : { ...DEFAULT_SETTINGS, theme };
+        set({ settings: nextSettings });
+        syncThemeToUIStore(theme);
+        writeThemeToLocalStorage(theme);
 
-    setThemeFromS2C: (theme) => {
-      const current = get().settings;
-      const nextSettings: SiteSettings = current
-        ? { ...current, theme }
-        : { ...DEFAULT_SETTINGS, theme };
-      set({ settings: nextSettings });
-      syncThemeToUIStore(theme);
-      writeThemeToLocalStorage(theme);
-    },
-  }));
+        if (core.client.isReady()) {
+          const msg = buildSiteThemeUpdate(theme);
+          core.client.send(msg.kind, msg.payload);
+        }
+      },
+
+      handleSettingsUpdate: (namespace) => {
+        if (namespace !== 'site') {
+          return;
+        }
+        void get()
+          .refreshSettings()
+          .catch(() => {
+            // refreshSettings 内部已记录失败；失效信号丢一次不影响后续读取
+          });
+      },
+
+      setThemeFromS2C: (theme) => {
+        const current = get().settings;
+        const nextSettings: SiteSettings = current
+          ? { ...current, theme }
+          : { ...DEFAULT_SETTINGS, theme };
+        set({ settings: nextSettings });
+        syncThemeToUIStore(theme);
+        writeThemeToLocalStorage(theme);
+      },
+    };
+  });
 }
 
 export type SiteStore = ReturnType<typeof createSiteStore>;

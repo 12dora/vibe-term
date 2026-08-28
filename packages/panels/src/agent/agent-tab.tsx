@@ -12,7 +12,7 @@ export function AgentTab() {
   const model = useAgentTabModel();
 
   return (
-    <div data-testid="agent-tab" className="flex min-h-[360px] flex-1 flex-col">
+    <div data-testid="agent-tab" className="flex h-full min-h-0 flex-col">
       <AgentBindingStatus
         binding={model.binding}
         hasActiveSession={Boolean(model.activeSession)}

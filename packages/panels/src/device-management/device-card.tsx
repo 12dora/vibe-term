@@ -3,10 +3,11 @@
 import { useMutation } from '@tanstack/react-query';
 import { testDeviceConnection } from '@tmex/api-client';
 import type { Device } from '@tmex/shared';
+import { hostAppPath } from '@tmex/stores';
 import { useRuntime } from '@tmex/stores/react';
 import { Badge } from '@tmex/ui/badge';
-import { Button } from '@tmex/ui/button';
-import { Card, CardDescription, CardHeader, CardTitle } from '@tmex/ui/card';
+import { Button, buttonVariants } from '@tmex/ui/button';
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@tmex/ui/card';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -14,8 +15,10 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@tmex/ui/dropdown-menu';
+import { Separator } from '@tmex/ui/separator';
 import { Globe, Monitor, MoreHorizontal, Pencil, Trash2, Zap } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
+import { Link } from 'react-router';
 import { toast } from 'sonner';
 import { DeviceStatusBadge } from '../device-status-badge';
 
@@ -123,6 +126,19 @@ export function DeviceCard({ device, onEdit, onDelete }: DeviceCardProps) {
           <DeviceStatusBadge deviceId={device.id} />
         </div>
       </CardHeader>
+
+      <CardContent className="pt-0">
+        <Separator className="mb-2" />
+        <div className="flex items-center justify-end">
+          <Link
+            to={hostAppPath(runtime.host, `/devices/${device.id}`)}
+            data-testid={`device-card-connect-${device.id}`}
+            className={buttonVariants({ variant: 'outline', size: 'sm' })}
+          >
+            {t('device.connect')}
+          </Link>
+        </div>
+      </CardContent>
     </Card>
   );
 }

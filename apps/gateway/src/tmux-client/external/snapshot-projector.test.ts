@@ -240,6 +240,56 @@ describe('getExpectedPaneIds / emitSnapshot', () => {
     ]);
   });
 
+  test('snapshot output is identical for shuffled tmux window and pane rows', () => {
+    const windowLines = ['@3|2|0|layout-c|late', '@1|0|1|layout-a|main', '@2|1|0|layout-b|mid'];
+    const paneLines = [
+      '%5|@2|1|0|40|24|40|0|0|right|zsh|/tmp',
+      '%2|@1|1|0|40|24|40|0|1|side|vim|/src',
+      '%4|@2|0|1|40|24|0|0|0|left|bash|/tmp',
+      '%1|@1|0|1|40|24|0|0|1|bash|node|/home',
+      '%9|@3|0|0|80|24|0|0|0|only|sh|/opt',
+    ];
+
+    function project(shuffledWindows: string[], shuffledPanes: string[]) {
+      const parsed = parseSnapshotWindows(shuffledWindows, ctx);
+      parseSnapshotPanes(shuffledPanes, parsed.windows, ctx);
+      const snapshots: StateSnapshotPayload[] = [];
+      emitSnapshot({
+        deviceId: 'dev-1',
+        snapshotSession: { id: '$1', name: 'tmex' },
+        snapshotWindows: parsed.windows,
+        callbacks: {
+          onSnapshot: (payload) => snapshots.push(payload),
+        },
+      });
+      return {
+        paneIds: getExpectedPaneIds(parsed.windows),
+        snapshots,
+        activeWindowId: parsed.activeWindowId,
+      };
+    }
+
+    const canonical = project(windowLines, paneLines);
+    const shuffled = project(
+      [windowLines[1] ?? '', windowLines[2] ?? '', windowLines[0] ?? ''],
+      [
+        paneLines[4] ?? '',
+        paneLines[0] ?? '',
+        paneLines[3] ?? '',
+        paneLines[1] ?? '',
+        paneLines[2] ?? '',
+      ]
+    );
+
+    expect(canonical.paneIds).toEqual(['%1', '%2', '%4', '%5', '%9']);
+    expect(shuffled).toEqual(canonical);
+    expect(canonical.snapshots[0]?.session?.windows.map((window) => window.id)).toEqual([
+      '@1',
+      '@2',
+      '@3',
+    ]);
+  });
+
   test('emits a null session when snapshotSession is missing', () => {
     const snapshots: unknown[] = [];
     emitSnapshot({
@@ -292,6 +342,7 @@ describe('SnapshotProjector.performSnapshot', () => {
     shutdowns: boolean[];
     unavailable: string[];
     closures: number;
+    connectGeneration: number;
     setResponse: (argv: string, result: CommandResult) => void;
   };
 
@@ -311,6 +362,7 @@ describe('SnapshotProjector.performSnapshot', () => {
         responses.set(argv, result);
       },
       connected: true,
+      connectGeneration: 0,
       manualDisconnect: false,
       deviceId: 'dev-1',
       sessionName: 'tmex',
@@ -369,6 +421,67 @@ describe('SnapshotProjector.performSnapshot', () => {
     const host = createHost({ connected: false });
     await new SnapshotProjector(host).performSnapshot();
     expect(host.calls).toEqual([]);
+  });
+
+  function installSnapshotGates(host: FakeHost) {
+    const sessionGate = deferred<CommandResult>();
+    const windowsGate = deferred<CommandResult>();
+    const panesGate = deferred<CommandResult>();
+    const gates: Record<string, ReturnType<typeof deferred<CommandResult>>> = {
+      'display-message': sessionGate,
+      'list-windows': windowsGate,
+      'list-panes': panesGate,
+    };
+    host.runTmuxAllowFailure = async (argv) => {
+      const command = argv[0] ?? '';
+      const gate = gates[command];
+      if (!gate) {
+        throw new Error(`unexpected snapshot query: ${command}`);
+      }
+      host.calls.push(argv);
+      return gate.promise;
+    };
+    return {
+      resolveAll() {
+        sessionGate.resolve(ok('$1|tmex\n'));
+        windowsGate.resolve(ok('@1|0|1|ba9d,80x24,0,0,1|main\n'));
+        panesGate.resolve(ok('%1|@1|0|1|80|24|0|0|1|bash|node|/home/user\n'));
+      },
+    };
+  }
+
+  test('does not emit or mutate snapshot state when disconnected while commands are in flight', async () => {
+    const host = createHost();
+    const gates = installSnapshotGates(host);
+    const done = new SnapshotProjector(host).performSnapshot();
+    expect(host.calls).toHaveLength(3);
+
+    host.connected = false;
+    host.connectGeneration += 1;
+    gates.resolveAll();
+    await done;
+
+    expect(host.snapshots).toEqual([]);
+    expect(host.snapshotSession).toBeNull();
+    expect(host.snapshotWindows.size).toBe(0);
+    expect(host.success).toBe(0);
+    expect(host.closures).toBe(0);
+  });
+
+  test('does not emit when connect generation changes while snapshot commands are in flight', async () => {
+    const host = createHost();
+    const gates = installSnapshotGates(host);
+    const done = new SnapshotProjector(host).performSnapshot();
+    expect(host.calls).toHaveLength(3);
+
+    host.connectGeneration += 1;
+    gates.resolveAll();
+    await done;
+
+    expect(host.snapshots).toEqual([]);
+    expect(host.snapshotSession).toBeNull();
+    expect(host.snapshotWindows.size).toBe(0);
+    expect(host.success).toBe(0);
   });
 
   test('fetches session/windows/panes in parallel, projects, then restores theme', async () => {
@@ -472,6 +585,37 @@ describe('SnapshotProjector.performSnapshot', () => {
       },
       baseRevision: 3n,
     });
+  });
+
+  test('performSnapshot emits the same windows for shuffled tmux list output', async () => {
+    const host = createHost();
+    host.setResponse(
+      `display-message -p -t tmex #{session_id}${SNAPSHOT_FIELD_SEPARATOR}#{session_name}`,
+      ok('$1|tmex\n')
+    );
+    host.setResponse(
+      `list-windows -t tmex -F ${WINDOW_SNAPSHOT_FORMAT}`,
+      ok('@2|1|0|layout-b|mid\n@1|0|1|layout-a|main\n')
+    );
+    host.setResponse(
+      `list-panes -s -t tmex -F ${PANE_SNAPSHOT_FORMAT}`,
+      ok(
+        '%2|@1|1|0|40|24|40|0|1|side|vim|/src\n%1|@1|0|1|40|24|0|0|1|bash|node|/home\n%3|@2|0|0|80|24|0|0|0|only|sh|/opt\n'
+      )
+    );
+
+    await new SnapshotProjector(host).performSnapshot();
+
+    expect(host.pruned).toEqual([['%1', '%2', '%3']]);
+    expect(host.snapshots[0]?.payload.session?.windows.map((window) => window.id)).toEqual([
+      '@1',
+      '@2',
+    ]);
+    expect(
+      host.snapshots[0]?.payload.session?.windows.map((window) =>
+        window.panes.map((pane) => pane.id)
+      )
+    ).toEqual([['%1', '%2'], ['%3']]);
   });
 
   test('aborts before parsing when shouldAbortSnapshot returns true', async () => {

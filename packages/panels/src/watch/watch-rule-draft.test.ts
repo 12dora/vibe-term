@@ -104,6 +104,75 @@ describe('createWatchRuleDraft', () => {
   });
 });
 
+describe('createWatchRuleDraft 按触发类型', () => {
+  function ruleDto(overrides: Partial<WatchRuleDto>): WatchRuleDto {
+    return {
+      id: 'r1',
+      name: 'rule',
+      deviceId: 'dev',
+      paneId: 'pane',
+      enabled: true,
+      triggerType: 'match',
+      pattern: null,
+      patternFlags: '',
+      extractGroup: 0,
+      conditionPrompt: null,
+      providerId: null,
+      modelId: null,
+      confirmWithLlm: false,
+      summarizeWithLlm: false,
+      intervalSeconds: 30,
+      unchangedMinutes: null,
+      noMatchBehavior: 'reset',
+      fireMode: 'once',
+      cooldownSeconds: 600,
+      createdAt: '2026-01-01T00:00:00.000Z',
+      updatedAt: '2026-01-01T00:00:00.000Z',
+      ...overrides,
+    };
+  }
+
+  test.each([
+    [
+      'match',
+      ruleDto({ triggerType: 'match', pattern: 'DL (\\d+)%', patternFlags: 'i', extractGroup: 1 }),
+      { pattern: 'DL (\\d+)%', patternFlags: 'i', extractGroup: 1, unchangedMinutes: 10 },
+    ],
+    [
+      'unchanged',
+      ruleDto({ triggerType: 'unchanged', pattern: 'idle', unchangedMinutes: 3 }),
+      { pattern: 'idle', unchangedMinutes: 3, conditionPrompt: '' },
+    ],
+    [
+      'llm',
+      ruleDto({
+        triggerType: 'llm',
+        conditionPrompt: 'done?',
+        providerId: 'p1',
+        modelId: 'gpt-4o',
+        intervalSeconds: 90,
+      }),
+      { conditionPrompt: 'done?', providerId: 'p1', modelId: 'gpt-4o', intervalSeconds: 90 },
+    ],
+  ])('%s 型规则回填表单字段', (_label, rule, expected) => {
+    const draft = createWatchRuleDraft(rule);
+    expect(draft).toMatchObject(expected);
+    expect(draft.triggerType).toBe(rule.triggerType);
+  });
+
+  test.each(TRIGGER_TYPES)('%s 型规则的空字段一律回落到新建默认值', (triggerType) => {
+    const draft = createWatchRuleDraft(ruleDto({ triggerType }));
+    const blank = createWatchRuleDraft(null);
+    expect(draft).toEqual({ ...blank, name: 'rule', triggerType });
+  });
+
+  test('每次新建返回独立对象，互不影响', () => {
+    const first = createWatchRuleDraft(null);
+    first.name = 'mutated';
+    expect(createWatchRuleDraft(null).name).toBe('');
+  });
+});
+
 describe('trigger 元数据', () => {
   test('触发类型顺序固定', () => {
     expect(TRIGGER_TYPES).toEqual(['match', 'unchanged', 'llm']);

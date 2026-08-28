@@ -163,4 +163,37 @@ describe('tmux store reselect retry', () => {
     expect(harness.selectPaneCommands()).toHaveLength(0);
     expect(harness.commands.map((command) => command.type)).toEqual(['disconnect-device']);
   });
+
+  test('disconnectDevice 立即落地断开态，不等网关事件', () => {
+    const harness = createHarness();
+
+    harness.store.setState((prev) => ({
+      deviceConnected: { ...prev.deviceConnected, 'device-a': true },
+      deviceReconnecting: {
+        ...prev.deviceReconnecting,
+        'device-a': { message: 'reconnecting', at: Date.now() },
+      },
+    }));
+
+    harness.store.getState().disconnectDevice('device-a');
+
+    const state = harness.store.getState();
+    expect(state.connectedDevices.has('device-a')).toBe(false);
+    expect(state.deviceConnected['device-a']).toBe(false);
+    expect(state.deviceReconnecting['device-a']).toBeUndefined();
+  });
+
+  test('connect → disconnect → 立即 connect 会再次下发 connect-device', () => {
+    const harness = createHarness();
+
+    harness.store.getState().connectDevice('device-b');
+    harness.store.getState().disconnectDevice('device-b');
+    harness.store.getState().connectDevice('device-b');
+
+    expect(harness.commands.map((command) => command.type)).toEqual([
+      'connect-device',
+      'disconnect-device',
+      'connect-device',
+    ]);
+  });
 });

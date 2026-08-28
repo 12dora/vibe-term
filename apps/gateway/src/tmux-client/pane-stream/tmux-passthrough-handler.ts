@@ -1,43 +1,50 @@
 import type { ParserContext } from './parser-state';
-import { TMUX_PASSTHROUGH_PREFIX, appendDcsByte, resetDcsState } from './parser-state';
+import {
+  TMUX_PASSTHROUGH_PREFIX_BYTES,
+  appendDcsByte,
+  resetDcsState,
+  takeDcsBytes,
+  writeByte,
+  writeBytes,
+  writeRun,
+} from './parser-state';
+
+export function refillIncompleteCsi(ctx: ParserContext): void {
+  const { state } = ctx;
+  if (state.phase !== 'csi') {
+    return;
+  }
+  writeByte(ctx.output, 0x1b);
+  writeByte(ctx.output, 0x5b);
+  writeBytes(ctx.output, state.csiBytes);
+  state.csiBytes = [];
+  state.phase = 'normal';
+}
 
 export function flushTmuxPassthrough(ctx: ParserContext): void {
-  const { state } = ctx;
-  const content = state.dcsBytes;
-  resetDcsState(state);
-  state.phase = 'normal';
-  state.inTmuxPassthrough = true;
-  try {
-    for (const byte of content) {
-      ctx.processByte(byte);
-    }
-  } finally {
-    state.inTmuxPassthrough = false;
-  }
-  if (String(state.phase) === 'csi') {
-    // 解包内容以不完整 CSI 结尾：回填并复位，避免后续普通流被误并入
-    ctx.output.push(0x1b, 0x5b, ...state.csiBytes);
-    state.csiBytes = [];
-    state.phase = 'normal';
-  }
+  const content = takeDcsBytes(ctx.state);
+  resetDcsState(ctx.state);
+  ctx.state.phase = 'normal';
+  ctx.pendingPassthrough.push(content);
 }
 
 export function handleDcsDetect(ctx: ParserContext, byte: number): void {
-  const { state, output } = ctx;
-  const expected = TMUX_PASSTHROUGH_PREFIX.charCodeAt(state.dcsPrefix.length);
+  const { state } = ctx;
+  const expected = TMUX_PASSTHROUGH_PREFIX_BYTES[state.dcsPrefixLength];
   if (byte === expected) {
-    state.dcsPrefix += String.fromCharCode(byte);
-    if (state.dcsPrefix.length === TMUX_PASSTHROUGH_PREFIX.length) {
+    state.dcsPrefixLength += 1;
+    if (state.dcsPrefixLength === TMUX_PASSTHROUGH_PREFIX_BYTES.length) {
       state.dcsBytes = [];
       state.phase = 'dcs-tmux';
     }
     return;
   }
-  output.push(0x1b, 0x50);
-  for (const prefixChar of state.dcsPrefix) {
-    output.push(prefixChar.charCodeAt(0));
+  writeByte(ctx.output, 0x1b);
+  writeByte(ctx.output, 0x50);
+  if (state.dcsPrefixLength > 0) {
+    writeRun(ctx.output, TMUX_PASSTHROUGH_PREFIX_BYTES, 0, state.dcsPrefixLength);
   }
-  state.dcsPrefix = '';
+  state.dcsPrefixLength = 0;
   state.phase = 'normal';
   ctx.processByte(byte);
 }

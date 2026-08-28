@@ -33,6 +33,11 @@ export class CanonicalTransactionSender {
     return this.options.sendEvent(event);
   }
 
+  sendFitted(event: CanonicalEvent): CanonicalSendResult {
+    if (this.options.isClosed()) return false;
+    return this.options.sendEvent(event);
+  }
+
   sendError(requestId: Uint8Array | null, code: number, message: string, retryable: boolean): void {
     this.send({
       Error: {
@@ -56,7 +61,7 @@ export class CanonicalTransactionSender {
           : ({
               HistoryChunk: { requestId, offset, data: data.slice(offset, offset + maxDataBytes) },
             } satisfies CanonicalEvent);
-      if (!canonicalSendContinue(this.send(event))) return false;
+      if (!canonicalSendContinue(this.sendFitted(event))) return false;
     }
     return true;
   }

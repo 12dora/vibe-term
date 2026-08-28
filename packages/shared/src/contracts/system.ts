@@ -1,6 +1,6 @@
 // 系统信息与自更新契约
 
-/** 部署方式：launchd（macOS）/ systemd（Linux）/ none（非 CLI 安装，如 docker/手动/dev） */
+/** 部署方式：launchd（macOS）/ systemd（Linux）/ none（非 CLI 安装，如手动部署/dev） */
 export type GatewayDeployment = 'launchd' | 'systemd' | 'none';
 
 /** 升级状态机：仅这三态 */

@@ -254,15 +254,19 @@ export const agentMessages = sqliteTable(
 );
 
 // 运行中排队的用户消息（step 边界注入 / 手动 steer）；可编辑/撤回；落库保证多端同步 + 重启不丢
-export const agentQueuedMessages = sqliteTable('agent_queued_messages', {
-  id: text('id').primaryKey(),
-  sessionId: text('session_id')
-    .notNull()
-    .references(() => agentSessions.id, { onDelete: 'cascade' }),
-  seq: integer('seq').notNull(),
-  text: text('text').notNull(),
-  createdAt: text('created_at').notNull(),
-});
+export const agentQueuedMessages = sqliteTable(
+  'agent_queued_messages',
+  {
+    id: text('id').primaryKey(),
+    sessionId: text('session_id')
+      .notNull()
+      .references(() => agentSessions.id, { onDelete: 'cascade' }),
+    seq: integer('seq').notNull(),
+    text: text('text').notNull(),
+    createdAt: text('created_at').notNull(),
+  },
+  (table) => [index('agent_queued_messages_session_seq_idx').on(table.sessionId, table.seq)]
+);
 
 export const agentConfirmations = sqliteTable(
   'agent_confirmations',
@@ -283,6 +287,11 @@ export const agentConfirmations = sqliteTable(
     check(
       'agent_confirmations_status_check',
       sql`${table.status} in ('pending', 'approved', 'denied', 'cancelled')`
+    ),
+    index('agent_confirmations_session_status_created_at_idx').on(
+      table.sessionId,
+      table.status,
+      table.createdAt
     ),
   ]
 );

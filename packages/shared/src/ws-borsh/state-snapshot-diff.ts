@@ -1,30 +1,20 @@
 import type { b } from '@zorsh/zorsh';
-import type { StateSnapshotPayload, TmuxPane, TmuxSession, TmuxWindow } from '../index';
+import type { StateSnapshotPayload } from '../index';
 import {
   SOURCE_ENTITY_PANE,
   SOURCE_ENTITY_SESSION,
   SOURCE_ENTITY_WINDOW,
-  SOURCE_FIELD_ACTIVE,
-  SOURCE_FIELD_CURRENT_COMMAND,
-  SOURCE_FIELD_CURRENT_PATH,
-  SOURCE_FIELD_CUSTOM_NAME,
-  SOURCE_FIELD_HEIGHT,
-  SOURCE_FIELD_INDEX,
-  SOURCE_FIELD_LAYOUT,
-  SOURCE_FIELD_LEFT,
-  SOURCE_FIELD_NAME,
   SOURCE_FIELD_PANE_EPOCH,
-  SOURCE_FIELD_TITLE,
-  SOURCE_FIELD_TOP,
-  SOURCE_FIELD_WIDTH,
   type SourceMetadataPatchSchema,
 } from './canonical-state';
+import type { LegacyMetadataFieldValue } from './legacy-pane-fields';
+import { LegacySnapshotDraft } from './legacy-snapshot-draft';
 
 export const STATE_SNAPSHOT_DIFF_FORMAT_ABSOLUTE_JSON = 1;
 const MAX_DIFF_ENTITIES = 4_096;
 const MAX_DIFF_FIELDS = 64;
 
-export type LegacyMetadataFieldValue = string | number | boolean | null;
+export type { LegacyMetadataFieldValue } from './legacy-pane-fields';
 
 export interface LegacyMetadataEntityDiff {
   entityKind: number;
@@ -124,68 +114,22 @@ export function decodeLegacyStateSnapshotDiff(data: Uint8Array): LegacyStateSnap
   return decoded as LegacyStateSnapshotDiff;
 }
 
-function assignOptional<T extends object, K extends keyof T>(
-  target: T,
-  key: K,
-  value: T[K] | null
+function applyRemoval(
+  draft: LegacySnapshotDraft,
+  removal: LegacyStateSnapshotDiff['removals'][number]
 ): void {
-  if (value === null) delete target[key];
-  else target[key] = value;
+  if (removal.entityKind === SOURCE_ENTITY_SESSION) draft.removeSession(removal.nativeId);
+  else if (removal.entityKind === SOURCE_ENTITY_WINDOW) draft.removeWindow(removal.nativeId);
+  else if (removal.entityKind === SOURCE_ENTITY_PANE) draft.removePane(removal.nativeId);
 }
 
-function applySessionFields(
-  session: TmuxSession,
-  fields: LegacyMetadataEntityDiff['fields']
-): void {
-  for (const [field, value] of fields) {
-    if (field === SOURCE_FIELD_NAME && typeof value === 'string') session.name = value;
-  }
-}
-
-function applyWindowFields(window: TmuxWindow, fields: LegacyMetadataEntityDiff['fields']): void {
-  for (const [field, value] of fields) {
-    if (field === SOURCE_FIELD_NAME && typeof value === 'string') window.name = value;
-    else if (field === SOURCE_FIELD_INDEX && typeof value === 'number') window.index = value;
-    else if (field === SOURCE_FIELD_ACTIVE && typeof value === 'boolean') window.active = value;
-    else if (field === SOURCE_FIELD_LAYOUT && (typeof value === 'string' || value === null)) {
-      assignOptional(window, 'layout', value);
-    } else if (
-      field === SOURCE_FIELD_CUSTOM_NAME &&
-      (typeof value === 'string' || value === null)
-    ) {
-      assignOptional(window, 'customName', value);
-    }
-  }
-}
-
-function applyPaneFields(pane: TmuxPane, fields: LegacyMetadataEntityDiff['fields']): void {
-  for (const [field, value] of fields) {
-    if (field === SOURCE_FIELD_INDEX && typeof value === 'number') pane.index = value;
-    else if (field === SOURCE_FIELD_ACTIVE && typeof value === 'boolean') pane.active = value;
-    else if (field === SOURCE_FIELD_WIDTH && typeof value === 'number') pane.width = value;
-    else if (field === SOURCE_FIELD_HEIGHT && typeof value === 'number') pane.height = value;
-    else if (field === SOURCE_FIELD_LEFT && (typeof value === 'number' || value === null)) {
-      assignOptional(pane, 'left', value);
-    } else if (field === SOURCE_FIELD_TOP && (typeof value === 'number' || value === null)) {
-      assignOptional(pane, 'top', value);
-    } else if (field === SOURCE_FIELD_TITLE && (typeof value === 'string' || value === null)) {
-      assignOptional(pane, 'title', value);
-    } else if (
-      field === SOURCE_FIELD_CURRENT_PATH &&
-      (typeof value === 'string' || value === null)
-    ) {
-      assignOptional(pane, 'currentPath', value);
-    } else if (
-      field === SOURCE_FIELD_CURRENT_COMMAND &&
-      (typeof value === 'string' || value === null)
-    ) {
-      assignOptional(pane, 'currentCommand', value);
-    } else if (
-      field === SOURCE_FIELD_CUSTOM_NAME &&
-      (typeof value === 'string' || value === null)
-    ) {
-      assignOptional(pane, 'customName', value);
-    }
+function applyUpsert(draft: LegacySnapshotDraft, upsert: LegacyMetadataEntityDiff): void {
+  if (upsert.entityKind === SOURCE_ENTITY_SESSION) {
+    draft.upsertSession(upsert.nativeId, upsert.fields);
+  } else if (upsert.entityKind === SOURCE_ENTITY_WINDOW) {
+    draft.upsertWindow(upsert.nativeId, upsert.fields);
+  } else if (upsert.entityKind === SOURCE_ENTITY_PANE && upsert.parentId) {
+    draft.upsertPane(upsert.nativeId, upsert.parentId, upsert.fields);
   }
 }
 
@@ -193,74 +137,8 @@ export function applyLegacyStateSnapshotDiff(
   snapshot: StateSnapshotPayload,
   diff: LegacyStateSnapshotDiff
 ): StateSnapshotPayload {
-  let session = snapshot.session
-    ? {
-        ...snapshot.session,
-        windows: snapshot.session.windows.map((window) => ({
-          ...window,
-          panes: window.panes.map((pane) => ({ ...pane })),
-        })),
-      }
-    : null;
-
-  for (const removal of diff.removals) {
-    if (removal.entityKind === SOURCE_ENTITY_SESSION && session?.id === removal.nativeId) {
-      session = null;
-    } else if (removal.entityKind === SOURCE_ENTITY_WINDOW && session) {
-      session.windows = session.windows.filter((window) => window.id !== removal.nativeId);
-    } else if (removal.entityKind === SOURCE_ENTITY_PANE && session) {
-      session.windows = session.windows.map((window) => ({
-        ...window,
-        panes: window.panes.filter((pane) => pane.id !== removal.nativeId),
-      }));
-    }
-  }
-
-  for (const upsert of diff.upserts) {
-    if (upsert.entityKind === SOURCE_ENTITY_SESSION) {
-      if (!session || session.id !== upsert.nativeId) {
-        session = { id: upsert.nativeId, name: '', windows: [] };
-      }
-      applySessionFields(session, upsert.fields);
-      continue;
-    }
-    if (!session) continue;
-    if (upsert.entityKind === SOURCE_ENTITY_WINDOW) {
-      let window = session.windows.find((candidate) => candidate.id === upsert.nativeId);
-      if (!window) {
-        window = { id: upsert.nativeId, name: '', index: 0, active: false, panes: [] };
-        session.windows.push(window);
-      }
-      applyWindowFields(window, upsert.fields);
-      continue;
-    }
-    if (upsert.entityKind !== SOURCE_ENTITY_PANE || !upsert.parentId) continue;
-    const destination = session.windows.find((window) => window.id === upsert.parentId);
-    if (!destination) continue;
-    let pane: TmuxPane | undefined;
-    for (const window of session.windows) {
-      const index = window.panes.findIndex((candidate) => candidate.id === upsert.nativeId);
-      if (index < 0) continue;
-      pane = window.panes[index];
-      if (window !== destination) window.panes.splice(index, 1);
-      break;
-    }
-    if (!pane) {
-      pane = {
-        id: upsert.nativeId,
-        windowId: destination.id,
-        index: 0,
-        active: false,
-        width: 1,
-        height: 1,
-      };
-    }
-    pane.windowId = destination.id;
-    if (!destination.panes.some((candidate) => candidate.id === pane?.id)) {
-      destination.panes.push(pane);
-    }
-    applyPaneFields(pane, upsert.fields);
-  }
-
-  return { deviceId: snapshot.deviceId, session };
+  const draft = new LegacySnapshotDraft(snapshot.session);
+  for (const removal of diff.removals) applyRemoval(draft, removal);
+  for (const upsert of diff.upserts) applyUpsert(draft, upsert);
+  return { deviceId: snapshot.deviceId, session: draft.toSession() };
 }

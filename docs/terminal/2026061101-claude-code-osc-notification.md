@@ -28,7 +28,7 @@ Claude Code 各通知渠道发出的序列（在 tmux 内均经 passthrough 包�
 | `ghostty` | `OSC 777 ; notify ; <title> ; <body> BEL` | ✅ |
 | `kitty` | `OSC 99`（三段：title / body / focus，按 `i=<id>` 聚合） | ✅ |
 | `terminal_bell` | 裸 `BEL` | ✅（走 bell 通知） |
-| `auto`（默认） | 见下 | ⚠️ 不会发通知 |
+| `auto`（默认） | 探测结果通常为 `ghostty` → `OSC 777` | ✅（依赖 `TERM=xterm-ghostty` 注入，见下节；注入失败时回退为不发通知） |
 
 ## auto 渠道的自动识别（2026-06-11 起默认支持）
 

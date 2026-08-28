@@ -125,6 +125,7 @@ export class PaneRetention {
     for (const [paneId, state] of this.kernel.panes) {
       if (!state.known || seen.has(paneId)) continue;
       this.kernel.panes.delete(paneId);
+      this.kernel.forgetPane(state);
       for (const consumer of this.kernel.consumers.values()) {
         consumer.active.delete(paneId);
         consumer.hot.delete(paneId);
@@ -136,7 +137,6 @@ export class PaneRetention {
   ingest(paneId: string, paneEpoch: Uint8Array, data: Uint8Array): PaneDataSegment | null {
     if (this.kernel.disposed || data.byteLength === 0) return null;
     const now = this.kernel.now();
-    this.policy.sweep(now);
     let state = this.kernel.panes.get(paneId);
     if (!state) {
       state = this.replay.createPane(paneId, paneEpoch, false);
@@ -148,7 +148,7 @@ export class PaneRetention {
     const segment = this.replay.append(state, data, now);
     this.policy.trimPaneReplay(state, now);
     this.replay.fanout(state, segment);
-    this.policy.enforceBounds(now);
+    this.policy.afterIngest(state, now);
     return segment;
   }
 
@@ -211,6 +211,7 @@ export class PaneRetention {
     this.policy.dispose();
     this.kernel.consumers.clear();
     this.kernel.panes.clear();
+    this.kernel.resetAccounting();
   }
 
   applySubscriptions(

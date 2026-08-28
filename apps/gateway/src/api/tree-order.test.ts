@@ -16,7 +16,7 @@ import {
 } from '../settings/broadcaster';
 import { handleApiRequest } from './index';
 import { dispatchRoutes } from './route';
-import { treeOrderRoutes } from './tree-order';
+import { parseTreeOrderBody, treeOrderRoutes } from './tree-order';
 
 const DEVICE_ID = 'tree-order-test-device';
 
@@ -200,6 +200,49 @@ describe('PATCH window/pane 自定义名', () => {
       name: 'x',
     });
     expect(status).toBe(503);
+  });
+});
+
+describe('parseTreeOrderBody', () => {
+  test('必须提供 windows 或 panes 之一', () => {
+    expect(parseTreeOrderBody({})).toEqual({ ok: false });
+    expect(parseTreeOrderBody(null)).toEqual({ ok: false });
+    expect(parseTreeOrderBody([])).toEqual({ ok: false });
+  });
+
+  test('windows 必须是 string[]', () => {
+    expect(parseTreeOrderBody({ windows: [1, 2] })).toEqual({ ok: false });
+    expect(parseTreeOrderBody({ windows: 'x' })).toEqual({ ok: false });
+    expect(parseTreeOrderBody({ windows: ['@1', '@2'] })).toEqual({
+      ok: true,
+      patch: { windows: ['@1', '@2'] },
+    });
+    expect(parseTreeOrderBody({ windows: [] })).toEqual({
+      ok: true,
+      patch: { windows: [] },
+    });
+  });
+
+  test('panes 必须是 Record<string, string[]>', () => {
+    expect(parseTreeOrderBody({ panes: { '@1': 'x' } })).toEqual({ ok: false });
+    expect(parseTreeOrderBody({ panes: ['%1'] })).toEqual({ ok: false });
+    expect(parseTreeOrderBody({ panes: null })).toEqual({ ok: false });
+    expect(parseTreeOrderBody({ panes: { '@1': ['%2', '%1'] } })).toEqual({
+      ok: true,
+      patch: { panes: { '@1': ['%2', '%1'] } },
+    });
+  });
+
+  test('windows + panes 同时合法', () => {
+    expect(
+      parseTreeOrderBody({
+        windows: ['@3'],
+        panes: { '@3': ['%9'] },
+      })
+    ).toEqual({
+      ok: true,
+      patch: { windows: ['@3'], panes: { '@3': ['%9'] } },
+    });
   });
 });
 

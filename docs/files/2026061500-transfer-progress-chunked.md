@@ -4,7 +4,7 @@
 
 ## 背景
 
-上一迭代（见 `2026061409-context-menu-and-transfer.md`）补齐了上传/下载入口，但上传整文件进内存（不支持大文件）、上传/下载都无应用内进度与速度、不可取消。本迭代实现：分块上传、上传两阶段进度（含最终 rsync 段速度）、下载流式进度、取消、可配置的 2GB 单文件上限。
+Files Tab 的上传/下载入口（右键菜单、长按菜单、拖拽）由更早一版迭代补齐，但当时上传整文件进内存（不支持大文件）、上传/下载都无应用内进度与速度、不可取消。本迭代实现：分块上传、上传两阶段进度（含最终 rsync 段速度）、下载流式进度、取消、可配置的 2GB 单文件上限。
 
 ## 配置
 
@@ -30,17 +30,27 @@
 - 阶段一（浏览器→服务器）进度由前端按已发 chunk 本地计算；阶段二（服务器→设备 rsync）由 commit 流回传，**即"最终上传流"速度**。
 - 每个 chunk PUT ≤ chunkSize（8MB），远低于 Bun 默认 128MB body 上限，故 2GB 文件无需调高 `maxRequestBodySize`。
 - 会话懒式 GC：>30min 未完成的僵尸会话在下次 create 时清理。
-- 前端 `uploadFileChunked`（`files-panel/api.ts`）串起 init→chunk→commit，`signal` 取消时 `DELETE` 会话。
+- 前端 `uploadFileChunked`（`packages/api-client/src/upload-transfer.ts`）串起 init→chunk→commit，`signal` 取消时 `DELETE` 会话。
+
+## 路径安全（上传）
+
+上传写远端路径，是文件子系统里唯一的写入面，规则固定在 `apps/gateway/src/files/device-storage.ts`：
+
+- `sanitizeUploadName(raw)`：只取路径最后一段，拒绝空串、`.`、`..`，以及含 `/`、`\`、NUL 的名字，防目录穿越。
+- **目标文件不存在时不能对目标文件跑 `checkAndNormalize`**：local 分支的 `realpathSync` 会因路径不存在直接报 `not_found`。正确顺序是——校验**已存在的** `destDir` 落在 root 内，再 `statViaRsync` 确认它确实是目录（否则 `not_a_directory`），最后 `posixJoin(destDir, sanitizeUploadName(name))` 拼出远端路径。
+- 上传**不创建**远端父目录，`destDir` 必须已存在。
+- 所有 rsync 推送经 `enqueueDeviceJob`（`apps/gateway/src/files/queue.ts`）单设备串行，避免同设备并发 rsync 互相踩。
+- `rsyncUploadArgs` 与 `rsyncCopyArgs` 对称地调换源/目标，且上传**不加** `-L`（不跟随符号链接）。
 
 ## 下载（流式 + 进度 + 取消）
 
 - `GET /api/files/download?rootId=&path=`：`pullFileFromDevice` 用 rsync 拉到 gateway 临时文件（校验 `size ≤ transferMaxBytes`），再 `Bun.file(tmp).stream()` **从磁盘流式返回**（有界内存，支持大文件），流结束/取消后删临时文件。
-- 前端 `downloadFileWithProgress`：`fetch` 读响应流 → 进度/速度（阶段二 服务器→浏览器）→ `Blob` 触发 `<a download>` 保存；resolve 前为"准备中"（阶段一 设备→服务器 rsync）。`AbortSignal` 取消。
+- 前端 `downloadFileWithProgress`（`packages/api-client/src/download-transfer.ts`）：`fetch` 读响应流 → 进度/速度（阶段二 服务器→浏览器）→ `Blob` 触发 `<a download>` 保存；resolve 前为"准备中"（阶段一 设备→服务器 rsync）。`AbortSignal` 取消。
 - 拖到桌面（`DownloadURL`）改指向 `/api/files/download`（浏览器原生下载，支持大文件流式，无应用内进度）。`/api/files/raw` 仍用于文件查看器内联预览（小文件）。
 
-## 进度 Toast（`transfer-toast.tsx`）
+## 进度 Toast（`packages/panels/src/files/transfer-toast.tsx`）
 
-- 每个文件一个可更新的 sonner Toast：文件名 + 阶段标签 + 进度条（`ui/progress.tsx`）+ 速度 + 取消按钮。
+- 每个文件一个可更新的 sonner Toast：文件名 + 阶段标签 + 进度条（`packages/ui/src/components/progress.tsx`）+ 速度 + 取消按钮。
 - **工作态 `duration: Infinity` + `dismissible: false`**：不会自动消失、也不可手动关闭，唯一中止途径是取消按钮（触发 `AbortController`）。完成后短暂停留自动消失；失败/取消保留可手动关闭。
 
 ## 验收

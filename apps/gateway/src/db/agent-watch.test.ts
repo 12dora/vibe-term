@@ -1,6 +1,8 @@
+import { Database } from 'bun:sqlite';
 import { beforeAll, describe, expect, test } from 'bun:test';
 import { resolve } from 'node:path';
 import { eq } from 'drizzle-orm';
+import { drizzle } from 'drizzle-orm/bun-sqlite';
 import { migrate } from 'drizzle-orm/bun-sqlite/migrator';
 import {
   appendAgentMessage,
@@ -8,6 +10,7 @@ import {
   createAgentSession,
   decideAgentConfirmation,
   deleteAgentSession,
+  enqueueAgentMessage,
   ensureAgentSettingsInitialized,
   getAgentConfirmationById,
   getAgentSessionById,
@@ -15,10 +18,11 @@ import {
   getAgentSettings,
   listAgentMessages,
   listPendingAgentConfirmations,
+  listQueuedAgentMessages,
   updateAgentSession,
   updateAgentSettings,
 } from './agent';
-import { getDb as getOrmDb } from './client';
+import { getDb as getOrmDb, getSqliteClient } from './client';
 import { createDevice } from './index';
 import {
   createLlmProvider,
@@ -34,6 +38,7 @@ import {
   getAllWatchRules,
   getWatchRuleById,
   getWatchRuleState,
+  listWatchRulesWithState,
   updateWatchRule,
   upsertWatchRuleState,
 } from './watch';
@@ -210,6 +215,35 @@ describe('agent sessions and messages', () => {
       .all();
     expect(rows).toEqual([]);
   });
+
+  test('concurrent appends produce strictly increasing unique seqs', async () => {
+    const session = createAgentSession({ title: 'concurrent-seq', modelId: 'm' });
+    const count = 40;
+    const rows = await Promise.all(
+      Array.from({ length: count }, (_, i) =>
+        Promise.resolve().then(() => appendAgentMessage(session.id, 'user', `m${i}`))
+      )
+    );
+
+    const seqs = rows.map((row) => row.seq).sort((a, b) => a - b);
+    expect(seqs).toEqual(Array.from({ length: count }, (_, i) => i));
+    expect(new Set(rows.map((row) => row.id)).size).toBe(count);
+    expect(listAgentMessages(session.id).map((row) => row.seq)).toEqual(seqs);
+  });
+
+  test('concurrent enqueue produces strictly increasing unique seqs', async () => {
+    const session = createAgentSession({ title: 'concurrent-queue', modelId: 'm' });
+    const count = 40;
+    const rows = await Promise.all(
+      Array.from({ length: count }, (_, i) =>
+        Promise.resolve().then(() => enqueueAgentMessage(session.id, `q${i}`))
+      )
+    );
+
+    const seqs = rows.map((row) => row.seq).sort((a, b) => a - b);
+    expect(seqs).toEqual(Array.from({ length: count }, (_, i) => i));
+    expect(listQueuedAgentMessages(session.id).map((row) => row.seq)).toEqual(seqs);
+  });
 });
 
 describe('agent confirmations', () => {
@@ -255,6 +289,123 @@ describe('agent confirmations', () => {
     expect(current?.status).toBe('approved');
     expect(current?.reason).toBeNull();
     expect(current?.decidedAt).toBe(approved?.decidedAt ?? '');
+  });
+});
+
+const QUEUED_SESSION_SEQ_INDEX = 'agent_queued_messages_session_seq_idx';
+const CONFIRMATION_SESSION_STATUS_CREATED_INDEX =
+  'agent_confirmations_session_status_created_at_idx';
+const MIGRATIONS_FOLDER = resolve(import.meta.dir, '../../drizzle');
+
+interface QueryPlanRow {
+  detail: string;
+}
+
+interface SqliteMasterNameRow {
+  name: string;
+}
+
+function usesIndex(details: string[], indexName: string): boolean {
+  return details.some((detail) => detail.includes(`USING INDEX ${indexName}`));
+}
+
+function indexExistsOn(db: Database, name: string): boolean {
+  const row = db
+    .query(`SELECT name FROM sqlite_master WHERE type = 'index' AND name = ?`)
+    .get(name) as SqliteMasterNameRow | null;
+  return row?.name === name;
+}
+
+function explainOn(db: Database, sql: string, params: string[]): string[] {
+  const rows = db.query(`EXPLAIN QUERY PLAN ${sql}`).all(...params) as QueryPlanRow[];
+  return rows.map((row) => row.detail);
+}
+
+function migratedMemoryDb(): Database {
+  const db = new Database(':memory:');
+  db.run('PRAGMA foreign_keys = ON');
+  migrate(drizzle(db), { migrationsFolder: MIGRATIONS_FOLDER });
+  return db;
+}
+
+function insertPlanSession(db: Database): string {
+  const id = crypto.randomUUID();
+  const now = new Date().toISOString();
+  db.run(
+    `INSERT INTO agent_sessions (
+      id, title, model_id, write_mode, use_provider_web_search, provider_hosted_tools,
+      allow_control_chars, status, max_steps_per_turn, created_at, updated_at
+    ) VALUES (?, 'plan', 'm', 'confirm', 0, '[]', 0, 'idle', 25, ?, ?)`,
+    [id, now, now]
+  );
+  return id;
+}
+
+function assertIndexPlan(options: {
+  indexName: string;
+  createSql: string;
+  querySql: string;
+  seed: (db: Database, sessionId: string) => void;
+}): void {
+  const db = migratedMemoryDb();
+  try {
+    expect(indexExistsOn(db, options.indexName)).toBe(true);
+    const sessionId = insertPlanSession(db);
+    options.seed(db, sessionId);
+
+    db.run(`DROP INDEX IF EXISTS "${options.indexName}"`);
+    const before = explainOn(db, options.querySql, [sessionId]);
+    expect(usesIndex(before, options.indexName)).toBe(false);
+
+    db.run(options.createSql);
+    const after = explainOn(db, options.querySql, [sessionId]);
+    expect(usesIndex(after, options.indexName)).toBe(true);
+  } finally {
+    db.close();
+  }
+}
+
+describe('agent query indexes', () => {
+  test('migrated test db has queued and confirmation indexes', () => {
+    const sqlite = getSqliteClient();
+    expect(indexExistsOn(sqlite, QUEUED_SESSION_SEQ_INDEX)).toBe(true);
+    expect(indexExistsOn(sqlite, CONFIRMATION_SESSION_STATUS_CREATED_INDEX)).toBe(true);
+  });
+
+  test('list queued messages uses (session_id, seq) index', () => {
+    assertIndexPlan({
+      indexName: QUEUED_SESSION_SEQ_INDEX,
+      createSql: `CREATE INDEX ${QUEUED_SESSION_SEQ_INDEX} ON agent_queued_messages (session_id, seq)`,
+      querySql: 'SELECT * FROM agent_queued_messages WHERE session_id = ? ORDER BY seq ASC',
+      seed: (db, sessionId) => {
+        const now = new Date().toISOString();
+        db.run(
+          `INSERT INTO agent_queued_messages (id, session_id, seq, text, created_at) VALUES (?, ?, 0, 'first', ?)`,
+          [crypto.randomUUID(), sessionId, now]
+        );
+        db.run(
+          `INSERT INTO agent_queued_messages (id, session_id, seq, text, created_at) VALUES (?, ?, 1, 'second', ?)`,
+          [crypto.randomUUID(), sessionId, now]
+        );
+      },
+    });
+  });
+
+  test('list pending confirmations uses (session_id, status, created_at) index', () => {
+    assertIndexPlan({
+      indexName: CONFIRMATION_SESSION_STATUS_CREATED_INDEX,
+      createSql: `CREATE INDEX ${CONFIRMATION_SESSION_STATUS_CREATED_INDEX} ON agent_confirmations (session_id, status, created_at)`,
+      querySql:
+        "SELECT * FROM agent_confirmations WHERE session_id = ? AND status = 'pending' ORDER BY created_at ASC",
+      seed: (db, sessionId) => {
+        db.run(
+          `INSERT INTO agent_confirmations (
+            id, session_id, tool_name, tool_call_id, input_json, status, created_at
+          ) VALUES (?, ?, 'write_terminal', 'call_plan', '{}', 'pending', ?)`,
+          [crypto.randomUUID(), sessionId, new Date().toISOString()]
+        );
+      },
+    });
   });
 });
 
@@ -322,5 +473,33 @@ describe('watch rules and state', () => {
 
     deleteWatchRule(rule.id);
     expect(getWatchRuleState(rule.id)).toBeNull();
+  });
+
+  test('listWatchRulesWithState left-joins state in one query', () => {
+    const withState = createWatchRule({
+      name: 'join with state',
+      deviceId: testDeviceId,
+      paneId: '%4',
+      triggerType: 'match',
+      pattern: 'ok',
+    });
+    const withoutState = createWatchRule({
+      name: 'join without state',
+      deviceId: testDeviceId,
+      paneId: '%5',
+      triggerType: 'match',
+      pattern: 'ok',
+    });
+    upsertWatchRuleState(withState.id, { lastValue: 'joined' });
+
+    const rows = listWatchRulesWithState();
+    const joined = rows.find((row) => row.rule.id === withState.id);
+    const missing = rows.find((row) => row.rule.id === withoutState.id);
+
+    expect(joined?.state?.lastValue).toBe('joined');
+    expect(missing?.state).toBeNull();
+
+    deleteWatchRule(withState.id);
+    deleteWatchRule(withoutState.id);
   });
 });

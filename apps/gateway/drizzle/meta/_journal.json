@@ -131,8 +131,15 @@
     {
       "idx": 18,
       "version": "6",
+      "when": 1787808955472,
+      "tag": "0018_agent_query_indexes",
+      "breakpoints": true
+    },
+    {
+      "idx": 19,
+      "version": "6",
       "when": 1787844349224,
-      "tag": "0018_hub_auth",
+      "tag": "0019_hub_auth",
       "breakpoints": true
     }
   ]

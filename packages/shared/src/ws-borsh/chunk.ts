@@ -78,12 +78,9 @@ export class ChunkReassembler {
     let stream = this.streams.get(chunk.chunkStreamId);
 
     if (!stream) {
-      // 检查流数量限制
+      // 超出并发流上限时拒绝新流：已有流只由超时窗口淘汰，不做 LRU 驱逐
       if (this.streams.size >= MAX_CHUNK_STREAMS) {
-        this.cleanup(true);
-        if (this.streams.size >= MAX_CHUNK_STREAMS) {
-          throw new WsBorshError(ERROR_INVALID_FRAME, false, 'Too many concurrent chunk streams');
-        }
+        throw new WsBorshError(ERROR_INVALID_FRAME, false, 'Too many concurrent chunk streams');
       }
 
       stream = {
@@ -178,7 +175,7 @@ export class ChunkReassembler {
   /**
    * 清理过期的流
    */
-  cleanup(_force = false): void {
+  cleanup(): void {
     const cutoff = this.now() - this.timeoutMs;
 
     for (const [streamId, stream] of this.streams) {

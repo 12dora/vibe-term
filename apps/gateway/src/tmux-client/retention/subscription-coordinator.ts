@@ -1,21 +1,15 @@
-import {
-  bytesEqual,
-  cloneRequest,
-  copyBytes,
-  subscriptionFingerprint,
-  uniqueRequests,
-} from './bytes';
+import { copyBytes } from './bytes';
 import type { RetentionKernel } from './kernel';
 import type { RetentionPolicyScheduler } from './policy-scheduler';
 import type { PaneReplayStore } from './replay-store';
-import type {
-  ConsumerState,
-  PaneState,
-  PaneSubscriptionApplyResult,
-  PaneSubscriptionRejection,
-  PaneSubscriptionRejectionReason,
-  PaneSubscriptionRequest,
-} from './types';
+import {
+  type SubscriptionDecision,
+  type SubscriptionPlan,
+  applyResultFromPlan,
+  decideSubscription,
+  planSubscription,
+} from './subscription-plan';
+import type { ConsumerState, PaneSubscriptionApplyResult, PaneSubscriptionRequest } from './types';
 
 export class PaneSubscriptionGenerationConflictError extends Error {
   constructor(generation: bigint) {
@@ -39,109 +33,18 @@ export class PaneSubscriptionCoordinator {
   ): PaneSubscriptionApplyResult {
     if (this.kernel.disposed || consumer.closed)
       throw new Error('pane retention consumer is closed');
-    const activeRequests = uniqueRequests(requestedActive);
-    const activeIds = new Set(activeRequests.map((request) => request.paneId));
-    const hotRequests = uniqueRequests(requestedHot).filter(
-      (request) => !activeIds.has(request.paneId)
-    );
-    const fingerprint = subscriptionFingerprint(activeRequests, hotRequests);
-
-    if (consumer.generation !== null && generation < consumer.generation) {
+    const decision = decideSubscription(consumer, generation, requestedActive, requestedHot);
+    if (decision.kind === 'conflict') {
+      throw new PaneSubscriptionGenerationConflictError(generation);
+    }
+    if (decision.kind === 'reuse') {
       return this.currentApplyResult(consumer);
     }
-    if (consumer.generation === generation) {
-      if (consumer.fingerprint !== fingerprint) {
-        throw new PaneSubscriptionGenerationConflictError(generation);
-      }
-      return this.currentApplyResult(consumer);
-    }
-
     const now = this.kernel.now();
     this.policy.sweep(now);
-    const rejected: PaneSubscriptionRejection[] = [];
-    const otherActive = this.policy.unionPaneIds('active', consumer.id);
-    const otherHot = this.policy.unionPaneIds('hot', consumer.id);
-    const prospectiveActive = new Set(otherActive);
-    const prospectiveHot = new Set(otherHot);
-    const acceptedActive = new Map<string, PaneSubscriptionRequest>();
-    const acceptedHot = new Map<string, PaneSubscriptionRequest>();
-
-    for (const request of activeRequests) {
-      const state = this.kernel.panes.get(request.paneId);
-      const rejection = this.validateRequest(state, request);
-      if (rejection) {
-        rejected.push({
-          paneId: request.paneId,
-          paneEpoch: copyBytes(request.paneEpoch),
-          reason: rejection,
-        });
-        continue;
-      }
-      if (
-        !prospectiveActive.has(request.paneId) &&
-        prospectiveActive.size >= this.kernel.maxActivePanes
-      ) {
-        rejected.push({
-          paneId: request.paneId,
-          paneEpoch: copyBytes(request.paneEpoch),
-          reason: 'resource_exhausted',
-        });
-        continue;
-      }
-      acceptedActive.set(request.paneId, cloneRequest(request));
-      prospectiveActive.add(request.paneId);
-    }
-
-    for (const request of hotRequests) {
-      const state = this.kernel.panes.get(request.paneId);
-      const rejection = this.validateRequest(state, request);
-      if (rejection) {
-        rejected.push({
-          paneId: request.paneId,
-          paneEpoch: copyBytes(request.paneEpoch),
-          reason: rejection,
-        });
-        continue;
-      }
-      if (!prospectiveHot.has(request.paneId) && prospectiveHot.size >= this.kernel.maxHotPanes) {
-        rejected.push({
-          paneId: request.paneId,
-          paneEpoch: copyBytes(request.paneEpoch),
-          reason: 'resource_exhausted',
-        });
-        continue;
-      }
-      acceptedHot.set(request.paneId, cloneRequest(request));
-      prospectiveHot.add(request.paneId);
-    }
-
-    consumer.generation = generation;
-    consumer.fingerprint = fingerprint;
-    consumer.active = acceptedActive;
-    consumer.hot = acceptedHot;
-    for (const paneId of [...acceptedActive.keys(), ...acceptedHot.keys()]) {
-      const state = this.kernel.panes.get(paneId);
-      if (state) state.lastTouchedAt = now;
-    }
-    this.policy.refreshModes(now);
-
-    const replay = [];
-    for (const request of [...acceptedActive.values(), ...acceptedHot.values()]) {
-      replay.push(this.replay.buildReplayPlan(request));
-    }
-    return {
-      generation,
-      activePanes: Array.from(acceptedActive.values(), (request) => ({
-        paneId: request.paneId,
-        paneEpoch: copyBytes(request.paneEpoch),
-      })),
-      hotPanes: Array.from(acceptedHot.values(), (request) => ({
-        paneId: request.paneId,
-        paneEpoch: copyBytes(request.paneEpoch),
-      })),
-      rejected,
-      replay,
-    };
+    const plan = this.buildPlan(consumer, generation, decision);
+    this.commit(consumer, plan, now);
+    return applyResultFromPlan(plan);
   }
 
   closeConsumer(consumer: ConsumerState): void {
@@ -169,12 +72,43 @@ export class PaneSubscriptionCoordinator {
     };
   }
 
-  validateRequest(
-    state: PaneState | undefined,
-    request: PaneSubscriptionRequest
-  ): PaneSubscriptionRejectionReason | null {
-    if (!state?.known) return 'not_found';
-    if (!bytesEqual(state.paneEpoch, request.paneEpoch)) return 'epoch_changed';
-    return null;
+  private buildPlan(
+    consumer: ConsumerState,
+    generation: bigint,
+    decision: Extract<SubscriptionDecision, { kind: 'commit' }>
+  ): SubscriptionPlan {
+    return planSubscription({
+      generation,
+      requestedActive: decision.activeRequests,
+      requestedHot: decision.hotRequests,
+      panes: this.kernel.panes,
+      otherActive: this.policy.unionPaneIds('active', consumer.id),
+      otherHot: this.policy.unionPaneIds('hot', consumer.id),
+      maxActivePanes: this.kernel.maxActivePanes,
+      maxHotPanes: this.kernel.maxHotPanes,
+      buildReplay: (request) => this.replay.buildReplayPlan(request),
+    });
   }
+
+  private commit(consumer: ConsumerState, plan: SubscriptionPlan, now: number): void {
+    consumer.generation = plan.generation;
+    consumer.fingerprint = plan.fingerprint;
+    consumer.active = requestMap(plan.accepted.active);
+    consumer.hot = requestMap(plan.accepted.hot);
+    this.touchAccepted(plan, now);
+    this.policy.refreshModes(now);
+  }
+
+  private touchAccepted(plan: SubscriptionPlan, now: number): void {
+    for (const request of [...plan.accepted.active, ...plan.accepted.hot]) {
+      const state = this.kernel.panes.get(request.paneId);
+      if (state) state.lastTouchedAt = now;
+    }
+  }
+}
+
+function requestMap(
+  requests: readonly PaneSubscriptionRequest[]
+): Map<string, PaneSubscriptionRequest> {
+  return new Map(requests.map((request) => [request.paneId, request]));
 }

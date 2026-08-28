@@ -92,6 +92,9 @@ export function createTmuxStore(
           core.paneSinks.dispatchPaneOutput(deviceId, paneId, data);
         },
         onSelectFailed: selection.handleSelectFailed,
+        onRebaseRequired: (deviceId, paneId, reason) => {
+          core.paneSinks.dispatchPaneRebase(deviceId, paneId, reason);
+        },
       });
 
       const routeEvent = createTmuxEventRouter({
@@ -166,12 +169,18 @@ export function createTmuxStore(
       disconnectDevice(deviceId) {
         if (!deviceId) return;
 
+        // 主动断开立即落地断开态，不等网关 device-disconnected 事件
         set((prev) => {
           const nextConnected = new Set(prev.connectedDevices);
           nextConnected.delete(deviceId);
-          return { connectedDevices: nextConnected };
+          return {
+            connectedDevices: nextConnected,
+            deviceConnected: { ...prev.deviceConnected, [deviceId]: false },
+            deviceReconnecting: { ...prev.deviceReconnecting, [deviceId]: undefined },
+          };
         });
 
+        lastConnectSentAt.delete(deviceId);
         core.selectMachine().cleanup(deviceId);
         selection.cancelReselect(deviceId);
         paneSubscriptions.clearDevice(deviceId);
@@ -270,8 +279,9 @@ export function createTmuxStore(
           const session = snapshot?.session;
           if (!session) return {};
           const byId = new Map(session.windows.map((w) => [w.id, w] as const));
+          const requested = new Set(windowIds);
           const known = windowIds.map((id) => byId.get(id)).filter((w) => w !== undefined);
-          const rest = session.windows.filter((w) => !windowIds.includes(w.id));
+          const rest = session.windows.filter((w) => !requested.has(w.id));
           return {
             snapshots: {
               ...prev.snapshots,
@@ -347,11 +357,12 @@ export function createTmuxStore(
           const snapshot = prev.snapshots[deviceId];
           const session = snapshot?.session;
           if (!session) return {};
+          const requested = new Set(paneIds);
           const windows = session.windows.map((w) => {
             if (w.id !== windowId) return w;
             const byId = new Map(w.panes.map((p) => [p.id, p] as const));
             const known = paneIds.map((id) => byId.get(id)).filter((p) => p !== undefined);
-            const rest = w.panes.filter((p) => !paneIds.includes(p.id));
+            const rest = w.panes.filter((p) => !requested.has(p.id));
             return { ...w, panes: [...known, ...rest] };
           });
           return {

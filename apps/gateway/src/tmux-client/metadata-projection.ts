@@ -5,6 +5,13 @@ import { MetadataEventApplier } from './metadata/event-applier';
 import { MetadataHierarchyBuilder } from './metadata/hierarchy-builder';
 import { MetadataPatchBuffer } from './metadata/patch-buffer';
 import {
+  type PlannedFieldChange,
+  type PlannedParentChange,
+  type ReconcilePlan,
+  planReconcile,
+  reconcilePlanHasWork,
+} from './metadata/reconcile-plan';
+import {
   MAX_UNKNOWN_PANES,
   MAX_UNKNOWN_PANE_BYTES,
   type MetadataProjectionOptions,
@@ -12,6 +19,7 @@ import {
   type MetadataProjectionSnapshot,
   type MetadataValue,
   type PaneFieldHints,
+  type PendingUpsert,
   type ProjectedRecord,
   bytesEqual,
   cloneKey,
@@ -146,76 +154,18 @@ export class MetadataProjection {
   reconcile(snapshot: StateSnapshotPayload, baseRevision = this.revisionValue): void {
     if (this.disposed || !this.serverEpochValue) return;
     const desired = this.hierarchy.buildDesired(snapshot);
-
     if (!this.established) {
-      const revision = 1n;
-      this.records.clear();
-      for (const [id, record] of desired) {
-        this.records.set(id, createRecord(record, revision));
-      }
-      this.revisionValue = revision;
-      this.established = true;
+      this.establish(desired);
       return;
     }
-
-    const changes: Array<() => void> = [];
-    const nextRevision = this.revisionValue + 1n;
-
-    for (const [id, wanted] of desired) {
-      const current = this.records.get(id);
-      if (!current) {
-        if ((this.removedAt.get(id) ?? -1n) > baseRevision) continue;
-        changes.push(() => {
-          const created = createRecord(wanted, nextRevision);
-          this.records.set(id, created);
-          this.removedAt.delete(id);
-          this.patchBuffer.markFullUpsert(created);
-        });
-        continue;
-      }
-
-      const fieldChanges: Array<[number, MetadataValue | null]> = [];
-      let parentChanged = false;
-      if (current.parentRevision <= baseRevision && !keyEqual(current.parent, wanted.parent)) {
-        parentChanged = true;
-      }
-
-      const wantedFields = wanted.fields;
-      const allFieldIds = new Set([...current.fields.keys(), ...wantedFields.keys()]);
-      for (const fieldId of allFieldIds) {
-        if (fieldId === wsBorsh.SOURCE_FIELD_CUSTOM_NAME && !wantedFields.has(fieldId)) continue;
-        const previous = current.fields.get(fieldId);
-        if (previous && previous.revision > baseRevision) continue;
-        const wantedValue = wantedFields.get(fieldId);
-        if (!valueEqual(previous?.value, wantedValue)) {
-          fieldChanges.push([fieldId, wantedValue ?? null]);
-        }
-      }
-
-      if (!parentChanged && fieldChanges.length === 0) continue;
-      changes.push(() => {
-        current.entityRevision = nextRevision;
-        if (parentChanged) {
-          current.parent = wanted.parent ? cloneKey(wanted.parent) : null;
-          current.parentRevision = nextRevision;
-          this.patchBuffer.markUpsert(current);
-        }
-        for (const [fieldId, value] of fieldChanges) {
-          this.setRecordField(current, fieldId, value, nextRevision);
-        }
-      });
-    }
-
-    for (const [id, current] of this.records) {
-      if (desired.has(id) || current.entityRevision > baseRevision) continue;
-      changes.push(() => this.removeRecord(current, nextRevision));
-    }
-
-    if (changes.length === 0) return;
-    this.patchBuffer.beginDirtyRevision(this.revisionValue);
-    this.revisionValue = nextRevision;
-    for (const apply of changes) apply();
-    this.patchBuffer.finishMutation();
+    this.commitReconcilePlan(
+      planReconcile({
+        current: this.records,
+        desired,
+        removedAt: this.removedAt,
+        baseRevision,
+      })
+    );
   }
 
   applySourceEvent(event: TmuxSourceMetadataEvent): void {
@@ -265,6 +215,52 @@ export class MetadataProjection {
     this.records.clear();
     this.unknownPaneHints.clear();
     this.unknownPaneBytes = 0;
+  }
+
+  private establish(desired: Map<string, PendingUpsert>): void {
+    const revision = 1n;
+    this.records.clear();
+    for (const [id, record] of desired) {
+      this.records.set(id, createRecord(record, revision));
+    }
+    this.revisionValue = revision;
+    this.established = true;
+  }
+
+  private commitReconcilePlan(plan: ReconcilePlan): void {
+    if (!reconcilePlanHasWork(plan)) return;
+    const nextRevision = this.revisionValue + 1n;
+    this.patchBuffer.beginDirtyRevision(this.revisionValue);
+    this.revisionValue = nextRevision;
+    this.applyReconcilePlan(plan, nextRevision);
+    this.patchBuffer.finishMutation();
+  }
+
+  private applyReconcilePlan(plan: ReconcilePlan, revision: bigint): void {
+    for (const addition of plan.additions) {
+      const created = createRecord(addition.wanted, revision);
+      this.records.set(addition.id, created);
+      this.removedAt.delete(addition.id);
+      this.patchBuffer.markFullUpsert(created);
+    }
+    for (const change of plan.parentChanges) this.applyParentChange(change, revision);
+    for (const change of plan.fieldChanges) this.applyFieldChanges(change, revision);
+    for (const removal of plan.removals) this.removeRecord(removal.record, revision);
+  }
+
+  private applyParentChange(change: PlannedParentChange, revision: bigint): void {
+    const current = change.record;
+    current.entityRevision = revision;
+    current.parent = change.parent ? cloneKey(change.parent) : null;
+    current.parentRevision = revision;
+    this.patchBuffer.markUpsert(current);
+  }
+
+  private applyFieldChanges(change: PlannedFieldChange, revision: bigint): void {
+    change.record.entityRevision = revision;
+    for (const [fieldId, value] of change.fields) {
+      this.setRecordField(change.record, fieldId, value, revision);
+    }
   }
 
   private setRecordField(
