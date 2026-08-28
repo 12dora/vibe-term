@@ -7,7 +7,7 @@ ROOT="$(cd "$(dirname "$0")" && pwd)"
 HUB_E2E="$(cd "${ROOT}/.." && pwd)"
 REMOTE_SUDO="${TMEX_E2E_REMOTE_SUDO:-}"
 if [[ -n "${REMOTE_SUDO}" ]]; then
-  DOCKER=("${REMOTE_SUDO}" docker)
+  DOCKER=("${REMOTE_SUDO}" --preserve-env docker)
 else
   DOCKER=(docker)
 fi
