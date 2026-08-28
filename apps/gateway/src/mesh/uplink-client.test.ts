@@ -651,6 +651,81 @@ describe('UplinkClient', () => {
     expect(userStore.listPeers().find((row) => row.nodeId === admittedId)?.name).toBe('admitted');
   });
 
+  test('node.list persists hub display name under the hub nodeId when the hub cert is admitted', async () => {
+    const { db, close } = createMigratedAuthDb();
+    fixtures.push({ close });
+    const userStore = new UserStore(db);
+    seedUser(userStore);
+    const hubId = 'ff'.repeat(16);
+    admitPeer(userStore, hubId);
+    const [clientWs, hubWs] = fakeSocketPair();
+    const hub = new WebSocketLink(hubWs, { role: 'acceptor' });
+    hub.ctl.onMessage(() => {});
+    const lists: UplinkNodeList[] = [];
+    const client = new UplinkClient({
+      hubUrl: 'https://hub.example.com',
+      identity: { nodeId: 'ab'.repeat(16), edSecretKey: randomBytes(32) },
+      userId: 'user-1',
+      keyLogApplier: dummyApplier(),
+      userStore,
+      statusProvider: () => status(),
+      onNodeList: (list) => lists.push(list),
+      wsFactory: () => clientWs,
+    });
+    fixtures.push({ close, stop: () => client.stop() });
+    client.start();
+    await waitUntil(() => client.link !== null);
+    hub.ctl.send(encodeUplinkCtl({ t: 'auth.challenge', nonce: encodeBase64url(randomBytes(32)) }));
+    hub.ctl.send(encodeUplinkCtl({ t: 'auth.ok' }));
+    await waitUntil(() => client.state === 'online');
+    hub.ctl.send(
+      encodeUplinkCtl({
+        t: 'node.list',
+        version: 3,
+        key_log_head: { seq: 0n, hash: new Uint8Array(32) },
+        rtc: { stun: [], turn: null },
+        hub: { nodeId: hubId, publicUrl: 'https://hub.example.com', name: 'hub-site' },
+        nodes: [
+          {
+            id: hubId,
+            name: 'hub-site',
+            online: true,
+            endpoints: [],
+            inventory: {},
+            direct_capable: false,
+            version: '1.0.0',
+          },
+        ],
+      })
+    );
+    await waitUntil(() => lists.length === 1);
+    expect(userStore.listPeers().find((row) => row.nodeId === hubId)?.name).toBe('hub-site');
+    hub.ctl.send(
+      encodeUplinkCtl({
+        t: 'node.list',
+        version: 4,
+        key_log_head: { seq: 0n, hash: new Uint8Array(32) },
+        rtc: { stun: [], turn: null },
+        hub: { nodeId: hubId, publicUrl: 'https://hub.example.com', name: 'renamed-hub' },
+        nodes: [
+          {
+            id: hubId,
+            name: 'renamed-hub',
+            online: true,
+            endpoints: [],
+            inventory: {},
+            direct_capable: false,
+            version: '1.0.0',
+          },
+        ],
+      })
+    );
+    await waitUntil(
+      () => userStore.listPeers().find((row) => row.nodeId === hubId)?.name === 'renamed-hub'
+    );
+    expect(userStore.listPeers().find((row) => row.nodeId === hubId)?.name).toBe('renamed-hub');
+  });
+
   test('node.list catch-up persists a newly admitted peer after key.log apply', async () => {
     const { db, close } = createMigratedAuthDb();
     fixtures.push({ close });

@@ -1,3 +1,4 @@
+import os from 'node:os';
 import {
   bytesEqual,
   computeRecordHash,
@@ -704,7 +705,10 @@ export class UplinkServer {
         this.userStore.createNode({
           id: live.nodeId,
           userId: live.userId,
-          name: live.nodeId,
+          name:
+            this.config.nodeId && live.nodeId === this.config.nodeId
+              ? this.nodeDisplayName(live.nodeId)
+              : live.nodeId,
           status: 'enrolled',
           lastSeenAt: now,
           version: msg.version,
@@ -1111,6 +1115,7 @@ export class UplinkServer {
         };
       });
     const hubNodeId = this.config.nodeId ?? this.userStore.getHubMeta()?.nodeId;
+    const hubName = hubNodeId ? this.nodeDisplayName(hubNodeId) : null;
     if (hubNodeId) {
       this.userStore.upsertHubMeta({
         nodeId: hubNodeId,
@@ -1118,6 +1123,27 @@ export class UplinkServer {
         now: this.now(),
         listVersion: this.listVersion,
       });
+      const live = online.get(hubNodeId);
+      const existing = nodes.find((n) => n.id === hubNodeId);
+      const hubEntry = {
+        id: hubNodeId,
+        name: hubName ?? hubNodeId,
+        online: true,
+        endpoints: live?.meta.endpoints ?? existing?.endpoints ?? [],
+        inventory: live?.meta.inventory ?? existing?.inventory ?? {},
+        direct_capable: live?.meta.directCapable ?? existing?.direct_capable ?? false,
+        version: live?.meta.version ?? existing?.version ?? '',
+      };
+      if (existing) {
+        existing.name = hubEntry.name;
+        existing.online = true;
+        existing.endpoints = hubEntry.endpoints;
+        existing.inventory = hubEntry.inventory;
+        existing.direct_capable = hubEntry.direct_capable;
+        existing.version = hubEntry.version;
+      } else {
+        nodes.push(hubEntry);
+      }
     }
     const msg: NodeListMessage = {
       t: 'node.list',
@@ -1130,9 +1156,24 @@ export class UplinkServer {
       nodes,
     };
     if (hubNodeId) {
-      msg.hub = { nodeId: hubNodeId, publicUrl: this.config.publicUrl };
+      msg.hub = {
+        nodeId: hubNodeId,
+        publicUrl: this.config.publicUrl,
+        ...(hubName ? { name: hubName } : {}),
+      };
     }
     return msg;
+  }
+
+  private nodeDisplayName(nodeId: string): string {
+    const row = this.userStore.getNode(nodeId);
+    const registry = row?.name?.trim();
+    if (registry && registry !== nodeId) return registry;
+    const site = this.config.siteName?.trim();
+    if (site) return site;
+    const host = os.hostname().trim();
+    if (host) return host;
+    return nodeId;
   }
 }
 

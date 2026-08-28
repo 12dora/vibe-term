@@ -52,6 +52,8 @@ export type MeshHttpRuntimeOptions = {
   trustProxy?: boolean;
   connectionLookup?: ConnectionLookup;
   selfStatus?: () => UplinkStatus;
+  listedNames?: () => ReadonlyArray<{ id: string; name: string }>;
+  selfName?: () => string | null;
 };
 
 const STATIC_PREFIXES = ['/assets/', '/static/', '/favicon', '/manifest'];
@@ -109,6 +111,8 @@ export class MeshHttpRuntime {
       registerSocket: (ws, auth) => this.registerSocket(ws, auth),
       connectionLookup: opts.connectionLookup,
       selfStatus: opts.selfStatus,
+      listedNames: opts.listedNames,
+      selfName: opts.selfName,
     });
     this.auth = new AuthRoutes({
       roles: opts.roles,

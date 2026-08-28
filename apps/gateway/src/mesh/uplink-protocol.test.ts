@@ -63,12 +63,16 @@ describe('uplink-protocol', () => {
         key_log_head: { seq: 7n, hash },
         rtc: { stun: ['stun:example'], turn: null },
         nodes: [],
-        hub: { nodeId: 'aa'.repeat(16), publicUrl: 'https://hub.example' },
+        hub: { nodeId: 'aa'.repeat(16), publicUrl: 'https://hub.example', name: 'hub-site' },
       })
     );
     expect(listed.t).toBe('node.list');
     if (listed.t !== 'node.list') throw new Error('expected node.list');
-    expect(listed.hub).toEqual({ nodeId: 'aa'.repeat(16), publicUrl: 'https://hub.example' });
+    expect(listed.hub).toEqual({
+      nodeId: 'aa'.repeat(16),
+      publicUrl: 'https://hub.example',
+      name: 'hub-site',
+    });
 
     const hubWire = decodeUplinkCtl(
       new TextEncoder().encode(

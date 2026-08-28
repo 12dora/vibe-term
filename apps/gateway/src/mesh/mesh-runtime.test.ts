@@ -715,6 +715,164 @@ describe('createMeshRuntime', () => {
     expect(online[1]?.inventory).toContain('2.0.0');
   });
 
+  test('GET /api/auth/nodes shows listed names for peers, hub, and self after node.list', async () => {
+    const { db, close } = createMigratedAuthDb();
+    const userStore = new UserStore(db);
+    seedUser(userStore);
+    const peerId = 'cd'.repeat(16);
+    const hubId = 'ef'.repeat(16);
+    const certOf = (id: string, fill: number) =>
+      encodeCertificate({
+        domain: DOMAIN_CERTIFICATE,
+        uid: 'user-1',
+        node_id: hexToBytes(id),
+        ed_pk: new Uint8Array(32).fill(fill),
+        x25519_pk: new Uint8Array(32).fill(fill),
+        enroll_pk: new Uint8Array(32).fill(fill),
+        issued_at: 1n,
+      });
+    for (const [id, fill] of [
+      [peerId, 4],
+      [hubId, 7],
+    ] as const) {
+      userStore.upsertCert({
+        nodeId: id,
+        userId: 'user-1',
+        admitRecordSeq: 1,
+        certificateBytes: certOf(id, fill),
+        certSig: randomBytes(64),
+        authorizationBytes: randomBytes(8),
+        authorizationSig: randomBytes(64),
+        revokedLogSeq: null,
+      });
+    }
+    const [clientWs, hubWs] = fakeSocketPair();
+    const hub = new WebSocketLink(hubWs, { role: 'acceptor' });
+    hub.ctl.onMessage(() => {});
+    const events: Array<{ nodeId: string; name?: string }> = [];
+    const mesh = await createMeshRuntime({
+      db,
+      gateway: fakeGateway(db),
+      config: {
+        roles: { hub: false, node: true },
+        hubUrl: 'http://127.0.0.1:9',
+        peerPort: 0,
+        stunServers: [],
+      },
+      wsFactory: () => clientWs,
+      startPeerServer: false,
+    });
+    fixtures.push({ close, stop: () => mesh.stop() });
+    mesh.onNodeEvent((event) => {
+      events.push({ nodeId: event.nodeId, name: event.name });
+    });
+    await mesh.start();
+    await waitUntil(() => mesh.uplink.link !== null);
+    hub.ctl.send(encodeUplinkCtl({ t: 'auth.challenge', nonce: encodeBase64url(randomBytes(32)) }));
+    hub.ctl.send(encodeUplinkCtl({ t: 'auth.ok' }));
+    await waitUntil(() => mesh.uplink.state === 'online');
+    hub.ctl.send(
+      encodeUplinkCtl({
+        t: 'node.list',
+        version: 1,
+        key_log_head: { seq: 0n, hash: new Uint8Array(32) },
+        rtc: { stun: [], turn: null },
+        hub: { nodeId: hubId, publicUrl: 'https://hub.example', name: 'hub-site' },
+        nodes: [
+          {
+            id: mesh.nodeId,
+            name: 'home',
+            online: true,
+            endpoints: [],
+            inventory: {},
+            direct_capable: false,
+            version: '1.0.0',
+          },
+          {
+            id: peerId,
+            name: 'node-a',
+            online: true,
+            endpoints: [],
+            inventory: {},
+            direct_capable: false,
+            version: '1.0.0',
+          },
+          {
+            id: hubId,
+            name: 'hub-site',
+            online: true,
+            endpoints: [],
+            inventory: {},
+            direct_capable: false,
+            version: '1.0.0',
+          },
+        ],
+      })
+    );
+    await waitUntil(() => mesh.lastNodeList !== null);
+    const listed = await mesh.handleRequest(new Request('http://localhost/api/auth/nodes'), {
+      upgrade: () => false,
+    });
+    if (!(listed instanceof Response)) throw new Error('expected Response');
+    const body = (await listed.json()) as { nodes: Array<{ id: string; name: string }> };
+    expect(body.nodes.find((n) => n.id === peerId)?.name).toBe('node-a');
+    expect(body.nodes.find((n) => n.id === hubId)?.name).toBe('hub-site');
+    expect(body.nodes.find((n) => n.id === mesh.nodeId)?.name).toBe('home');
+    expect(mesh.userStore.listPeers().find((row) => row.nodeId === peerId)?.name).toBe('node-a');
+    expect(mesh.userStore.listPeers().find((row) => row.nodeId === hubId)?.name).toBe('hub-site');
+    expect(mesh.userStore.listPeers().find((row) => row.nodeId === mesh.nodeId)).toBeUndefined();
+    await waitUntil(() => events.some((e) => e.nodeId === peerId && e.name === 'node-a'));
+
+    hub.ctl.send(
+      encodeUplinkCtl({
+        t: 'node.list',
+        version: 2,
+        key_log_head: { seq: 0n, hash: new Uint8Array(32) },
+        rtc: { stun: [], turn: null },
+        hub: { nodeId: hubId, publicUrl: 'https://hub.example', name: 'hub-site' },
+        nodes: [
+          {
+            id: mesh.nodeId,
+            name: 'home',
+            online: true,
+            endpoints: [],
+            inventory: {},
+            direct_capable: false,
+            version: '1.0.0',
+          },
+          {
+            id: peerId,
+            name: 'renamed-a',
+            online: true,
+            endpoints: [],
+            inventory: {},
+            direct_capable: false,
+            version: '1.0.0',
+          },
+          {
+            id: hubId,
+            name: 'hub-site',
+            online: true,
+            endpoints: [],
+            inventory: {},
+            direct_capable: false,
+            version: '1.0.0',
+          },
+        ],
+      })
+    );
+    await waitUntil(
+      () => mesh.userStore.listPeers().find((row) => row.nodeId === peerId)?.name === 'renamed-a'
+    );
+    await waitUntil(() => events.some((e) => e.nodeId === peerId && e.name === 'renamed-a'));
+    const renamed = await mesh.handleRequest(new Request('http://localhost/api/auth/nodes'), {
+      upgrade: () => false,
+    });
+    if (!(renamed instanceof Response)) throw new Error('expected Response');
+    const renamedBody = (await renamed.json()) as { nodes: Array<{ id: string; name: string }> };
+    expect(renamedBody.nodes.find((n) => n.id === peerId)?.name).toBe('renamed-a');
+  });
+
   test('re-advertises node.status endpoints when network interfaces change', async () => {
     const { db, close } = createMigratedAuthDb();
     seedUser(new UserStore(db));

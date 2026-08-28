@@ -117,6 +117,101 @@ describe('mesh-routes', () => {
     }
   });
 
+  test('GET /api/mesh/nodes uses nodes registry names when peer_cache is empty', async () => {
+    const mesh = await bootMesh({ roles: { hub: true, node: true } });
+    try {
+      mesh.userStore.upsertCert({
+        nodeId: PEER_ID,
+        userId: mesh.boot.userId,
+        admitRecordSeq: 2,
+        certificateBytes: encodeCertificate({
+          domain: DOMAIN_CERTIFICATE,
+          uid: mesh.boot.userId,
+          node_id: hexToBytes(PEER_ID),
+          ed_pk: new Uint8Array(32).fill(4),
+          x25519_pk: new Uint8Array(32).fill(5),
+          enroll_pk: new Uint8Array(32).fill(6),
+          issued_at: 1n,
+        }),
+        certSig: new Uint8Array(64),
+        authorizationBytes: new Uint8Array(8),
+        authorizationSig: new Uint8Array(64),
+      });
+      mesh.userStore.createNode({
+        id: PEER_ID,
+        userId: mesh.boot.userId,
+        name: 'node-a',
+        now: 1,
+      });
+      mesh.userStore.createNode({
+        id: NODE_ID,
+        userId: mesh.boot.userId,
+        name: 'hub-home',
+        now: 1,
+      });
+      const { sid } = await challengeAndLogin(mesh.runtime, mesh.boot);
+      const list = await call(mesh.runtime, 'http://localhost/api/mesh/nodes', {
+        headers: { cookie: `tmex_s_self=${sid}` },
+      });
+      const body = (await list.json()) as {
+        nodes: Array<{ id: string; name: string }>;
+      };
+      expect(body.nodes.find((n) => n.id === PEER_ID)?.name).toBe('node-a');
+      expect(body.nodes.find((n) => n.id === NODE_ID)?.name).toBe('hub-home');
+    } finally {
+      mesh.close();
+    }
+  });
+
+  test('GET /api/mesh/nodes prefers listed names over raw ids in peer_cache', async () => {
+    const mesh = await bootMesh({
+      listedNames: () => [
+        { id: PEER_ID, name: 'studio' },
+        { id: NODE_ID, name: 'home' },
+      ],
+      selfName: () => 'home',
+    });
+    try {
+      mesh.userStore.upsertCert({
+        nodeId: PEER_ID,
+        userId: mesh.boot.userId,
+        admitRecordSeq: 2,
+        certificateBytes: encodeCertificate({
+          domain: DOMAIN_CERTIFICATE,
+          uid: mesh.boot.userId,
+          node_id: hexToBytes(PEER_ID),
+          ed_pk: new Uint8Array(32).fill(4),
+          x25519_pk: new Uint8Array(32).fill(5),
+          enroll_pk: new Uint8Array(32).fill(6),
+          issued_at: 1n,
+        }),
+        certSig: new Uint8Array(64),
+        authorizationBytes: new Uint8Array(8),
+        authorizationSig: new Uint8Array(64),
+      });
+      mesh.userStore.upsertPeer({
+        nodeId: PEER_ID,
+        name: PEER_ID,
+        endpointsJson: '[]',
+        inventoryJson: '{}',
+        directCapable: false,
+        lastSeenAt: 1,
+        listVersion: 1,
+      });
+      const { sid } = await challengeAndLogin(mesh.runtime, mesh.boot);
+      const list = await call(mesh.runtime, 'http://localhost/api/mesh/nodes', {
+        headers: { cookie: `tmex_s_self=${sid}` },
+      });
+      const body = (await list.json()) as {
+        nodes: Array<{ id: string; name: string }>;
+      };
+      expect(body.nodes.find((n) => n.id === PEER_ID)?.name).toBe('studio');
+      expect(body.nodes.find((n) => n.id === NODE_ID)?.name).toBe('home');
+    } finally {
+      mesh.close();
+    }
+  });
+
   test('GET /api/mesh/nodes reports live self.direct_capable, version, and inventory', async () => {
     const mesh = await bootMesh({
       selfStatus: () => ({

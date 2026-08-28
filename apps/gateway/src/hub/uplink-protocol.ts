@@ -51,7 +51,7 @@ export type NodeListEntry = {
   version: string | null;
 };
 
-export type NodeListHubInfo = { nodeId: string; publicUrl: string };
+export type NodeListHubInfo = { nodeId: string; publicUrl: string; name?: string };
 
 export type NodeListMessage = {
   t: 'node.list';
@@ -336,10 +336,14 @@ function decodeHubInfo(value: unknown): NodeListHubInfo {
     throw new UplinkCtlError('invalid hub');
   }
   const obj = value as Record<string, unknown>;
-  return {
+  const info: NodeListHubInfo = {
     nodeId: requireNonEmptyString(obj, 'nodeId'),
     publicUrl: requireNonEmptyString(obj, 'publicUrl'),
   };
+  if (obj.name !== undefined && obj.name !== null) {
+    info.name = requireNonEmptyString(obj, 'name');
+  }
+  return info;
 }
 
 function decodeKeyLogAppend(obj: Record<string, unknown>): KeyLogAppendMessage {

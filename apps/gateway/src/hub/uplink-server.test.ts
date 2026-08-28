@@ -148,6 +148,7 @@ describe('UplinkServer', () => {
           stun: ['stun:example:3478'],
           turn: null,
           nodeId: hubNodeId,
+          siteName: 'hub-site',
         },
         heartbeatIntervalMs: 60_000,
         authTimeoutMs: 60_000,
@@ -157,12 +158,57 @@ describe('UplinkServer', () => {
       const listed = await takeUntil(node.inbox, 'node.list');
       expect(listed.t).toBe('node.list');
       if (listed.t === 'node.list') {
-        expect(listed.hub).toEqual({ nodeId: hubNodeId, publicUrl: 'https://hub.example' });
+        expect(listed.hub).toEqual({
+          nodeId: hubNodeId,
+          publicUrl: 'https://hub.example',
+          name: 'hub-site',
+        });
+        expect(listed.nodes.find((n) => n.id === hubNodeId)?.name).toBe('hub-site');
       }
       expect(userStore.getHubMeta()).toEqual({
         nodeId: hubNodeId,
         publicUrl: 'https://hub.example',
       });
+      server.stop();
+    } finally {
+      close();
+    }
+  });
+
+  test('node.list advertises hub display name from siteName in hub_meta and nodes[]', async () => {
+    const { db, close } = createMigratedAuthDb();
+    try {
+      const { userStore, keyLogSource } = createHubTestStack(db);
+      const user = seedUser(userStore);
+      const hubNodeId = 'aa'.repeat(16);
+      const registry = new NodeRegistry();
+      const server = new UplinkServer({
+        db,
+        userStore,
+        keyLogSource,
+        registry,
+        config: {
+          publicUrl: 'https://hub.example',
+          stun: ['stun:example:3478'],
+          turn: null,
+          nodeId: hubNodeId,
+          siteName: 'hub-site',
+        },
+        heartbeatIntervalMs: 60_000,
+        authTimeoutMs: 60_000,
+      });
+      const node = await authNode(server, userStore, user.id, { name: 'node-a' });
+      await server.broadcastNodeList(user.id);
+      const listed = await takeUntil(node.inbox, 'node.list');
+      expect(listed.t).toBe('node.list');
+      if (listed.t !== 'node.list') throw new Error('expected list');
+      expect(listed.hub).toEqual({
+        nodeId: hubNodeId,
+        publicUrl: 'https://hub.example',
+        name: 'hub-site',
+      });
+      expect(listed.nodes.find((n) => n.id === hubNodeId)?.name).toBe('hub-site');
+      expect(listed.nodes.find((n) => n.id === node.nodeId)?.name).toBe('node-a');
       server.stop();
     } finally {
       close();

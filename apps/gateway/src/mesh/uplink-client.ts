@@ -612,6 +612,27 @@ export class UplinkClient {
         listVersion: list.version,
       });
     }
+    this.persistHubPeer(list, now);
+  }
+
+  private persistHubPeer(list: UplinkNodeList, now: number): void {
+    const hub = list.hub;
+    if (!hub || hub.nodeId === this.identity.nodeId) return;
+    const fromNodes = list.nodes.find((node) => node.id === hub.nodeId)?.name;
+    const name = usablePeerName(fromNodes, hub.nodeId) ?? usablePeerName(hub.name, hub.nodeId);
+    if (!name) return;
+    const cert = this.userStore.getCert(hub.nodeId);
+    if (!cert || cert.userId !== this.userId || cert.revokedLogSeq != null) return;
+    const existing = this.userStore.listPeers().find((row) => row.nodeId === hub.nodeId);
+    this.userStore.upsertPeer({
+      nodeId: hub.nodeId,
+      name,
+      endpointsJson: existing?.endpointsJson ?? '[]',
+      inventoryJson: existing?.inventoryJson ?? '{}',
+      directCapable: existing?.directCapable ?? false,
+      lastSeenAt: now,
+      listVersion: list.version,
+    });
   }
 
   private finishNodeList(epoch: number, generation: number): void {
@@ -1188,6 +1209,12 @@ function ctlTypeHint(bytes: Uint8Array): string {
     // ignore
   }
   return '';
+}
+
+function usablePeerName(name: string | null | undefined, nodeId: string): string | null {
+  const trimmed = name?.trim() ?? '';
+  if (!trimmed || trimmed === nodeId) return null;
+  return trimmed;
 }
 
 function jsonText(value: unknown): string {

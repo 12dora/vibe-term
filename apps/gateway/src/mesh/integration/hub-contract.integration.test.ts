@@ -198,10 +198,9 @@ describe('hub contract production wiring', () => {
     await mesh.start();
     await waitUntil(() => mesh.uplink.state === 'online', 5_000);
     await waitUntil(() => mesh.lastNodeList !== null, 5_000);
-    expect(mesh.lastNodeList?.hub).toEqual({
-      nodeId: mesh.nodeId,
-      publicUrl: 'http://hub.example',
-    });
+    expect(mesh.lastNodeList?.hub?.nodeId).toBe(mesh.nodeId);
+    expect(mesh.lastNodeList?.hub?.publicUrl).toBe('http://hub.example');
+    expect(mesh.lastNodeList?.hub?.name).toBeTruthy();
 
     const mode = await callMesh(mesh, 'http://hub/api/auth/mode');
     const modeBody = (await mode.json()) as {

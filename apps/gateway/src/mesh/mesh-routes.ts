@@ -60,6 +60,8 @@ export type MeshRoutesDeps = {
   registerSocket?: (ws: MeshServerWebSocket, auth: { sid: string; uid: string }) => void;
   connectionLookup?: ConnectionLookup;
   selfStatus?: () => UplinkStatus;
+  listedNames?: () => ReadonlyArray<{ id: string; name: string }>;
+  selfName?: () => string | null;
 };
 
 const STATUS_TO_U8: Record<string, number> = {
@@ -213,6 +215,13 @@ export class MeshRoutes {
     const certs = this.deps.userStore.listCerts().filter((c) => c.revokedLogSeq == null);
     const peers = this.deps.userStore.listPeers();
     const peerById = new Map(peers.map((p) => [p.nodeId, p]));
+    const listedById = new Map(
+      (this.deps.listedNames?.() ?? []).map((row) => [row.id, row.name] as const)
+    );
+    const registryById = new Map(
+      this.deps.userStore.listNodes().map((row) => [row.id, row.name] as const)
+    );
+    const selfName = this.deps.selfName?.() ?? null;
     const ids = new Set<string>([this.deps.nodeId]);
     for (const cert of certs) ids.add(cert.nodeId);
     const hubNodeId = this.deps.roles.hub
@@ -238,6 +247,8 @@ export class MeshRoutes {
       const loggedIn = isSelf
         ? cookies.has(nodeSessionCookieName(MESH_VIA_SELF))
         : cookies.has(nodeSessionCookieName(id));
+      const listedName = listedById.get(id);
+      const registryName = registryById.get(id);
       let inventory: unknown = null;
       if (peer?.inventoryJson) {
         try {
@@ -258,7 +269,14 @@ export class MeshRoutes {
       }
       nodes.push({
         id,
-        name: peer?.name ?? (isSelf ? 'self' : id),
+        name: pickMeshNodeName({
+          id,
+          isSelf,
+          listedName,
+          registryName,
+          peerName: peer?.name,
+          selfName: isSelf ? selfName : null,
+        }),
         publicKey: encodeBase64url(publicKey),
         online,
         reach: r,
@@ -433,6 +451,29 @@ function toBytes(message: unknown): Uint8Array | null {
     return new Uint8Array(message.buffer, message.byteOffset, message.byteLength);
   }
   return null;
+}
+
+function usableMeshName(name: string | null | undefined, nodeId: string): string | null {
+  const trimmed = name?.trim() ?? '';
+  if (!trimmed || trimmed === nodeId || trimmed === 'self') return null;
+  return trimmed;
+}
+
+function pickMeshNodeName(input: {
+  id: string;
+  isSelf: boolean;
+  listedName?: string | null;
+  registryName?: string | null;
+  peerName?: string | null;
+  selfName?: string | null;
+}): string {
+  return (
+    usableMeshName(input.listedName, input.id) ??
+    usableMeshName(input.registryName, input.id) ??
+    usableMeshName(input.peerName, input.id) ??
+    (input.isSelf ? usableMeshName(input.selfName, input.id) : null) ??
+    (input.isSelf ? input.selfName?.trim() || 'self' : input.id)
+  );
 }
 
 function versionFromInventory(inventory: unknown): string | null {

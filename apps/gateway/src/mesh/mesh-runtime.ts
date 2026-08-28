@@ -615,6 +615,7 @@ export async function createMeshRuntime(opts: CreateMeshRuntimeOptions): Promise
           stun: config.stunServers,
           turn: (turnConfig(config) as HubTurnConfig) ?? null,
           nodeId: identity.nodeIdHex,
+          siteName: gatewayConfig.siteNameDefault,
         },
         authenticate: (req) => {
           const result = authenticateRequest(req, {
@@ -786,6 +787,7 @@ export async function createMeshRuntime(opts: CreateMeshRuntimeOptions): Promise
         turn: list.rtc.turn ?? null,
       };
       const reach = peerHolder.manager?.listReach() ?? new Map();
+      const hubId = list.hub?.nodeId ?? null;
       for (const node of list.nodes) {
         if (node.id === HUB_META_PEER_ID) continue;
         const cert = userStore.getCert(node.id);
@@ -814,8 +816,31 @@ export async function createMeshRuntime(opts: CreateMeshRuntimeOptions): Promise
           peerHolder.manager?.notifyPeerEndpointsChanged(node.id);
         }
       }
+      if (
+        hubId &&
+        hubId !== identity.nodeIdHex &&
+        hubId !== HUB_META_PEER_ID &&
+        !list.nodes.some((node) => node.id === hubId)
+      ) {
+        const cert = userStore.getCert(hubId);
+        const uid = userIdOf();
+        if (cert && uid && cert.userId === uid && cert.revokedLogSeq == null) {
+          emitListNodeEvent({
+            nodeId: hubId,
+            status: 'online',
+            reach: reach.get(hubId) ?? null,
+            name: list.hub?.name,
+          });
+        }
+      }
       for (const peer of userStore.listPeers()) {
-        if (peer.nodeId === identity.nodeIdHex || peer.nodeId === HUB_META_PEER_ID) continue;
+        if (
+          peer.nodeId === identity.nodeIdHex ||
+          peer.nodeId === HUB_META_PEER_ID ||
+          peer.nodeId === hubId
+        ) {
+          continue;
+        }
         const cert = userStore.getCert(peer.nodeId);
         const uid = userIdOf();
         if (!cert || !uid || cert.userId !== uid || cert.revokedLogSeq != null) {
@@ -1150,6 +1175,28 @@ export async function createMeshRuntime(opts: CreateMeshRuntimeOptions): Promise
       },
     },
     selfStatus: statusProvider,
+    listedNames: () => {
+      const rows: Array<{ id: string; name: string }> = [];
+      if (!lastNodeList) return rows;
+      for (const node of lastNodeList.nodes) {
+        rows.push({ id: node.id, name: node.name });
+      }
+      if (lastNodeList.hub?.name) {
+        rows.push({ id: lastNodeList.hub.nodeId, name: lastNodeList.hub.name });
+      }
+      return rows;
+    },
+    selfName: () => {
+      const listed = lastNodeList?.nodes.find((node) => node.id === identity.nodeIdHex)?.name;
+      if (listed && listed !== identity.nodeIdHex && listed !== 'self') return listed;
+      const row = userStore.getNode(identity.nodeIdHex);
+      if (row?.name && row.name !== identity.nodeIdHex) return row.name;
+      if (config.roles.hub) {
+        const site = gatewayConfig.siteNameDefault?.trim();
+        if (site) return site;
+      }
+      return listed && listed !== 'self' ? listed : null;
+    },
     primaryUserId: userIdOf() || undefined,
     hubPublicUrl: hubEndpointUrl(config),
     trustProxy: gatewayConfig.trustProxy,

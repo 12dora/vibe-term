@@ -164,6 +164,8 @@ export async function bootMesh(options?: {
   rtc?: MeshRtcDeps;
   publisher?: AuthKeyLogPublisher;
   selfStatus?: () => import('./types').UplinkStatus;
+  listedNames?: () => ReadonlyArray<{ id: string; name: string }>;
+  selfName?: () => string | null;
 }) {
   const { db, close } = createMigratedAuthDb();
   const userStore = new UserStore(db);
@@ -194,6 +196,8 @@ export async function bootMesh(options?: {
     now: options?.now,
     primaryUserId: boot.userId,
     selfStatus: options?.selfStatus,
+    listedNames: options?.listedNames,
+    selfName: options?.selfName,
   });
   return {
     close,

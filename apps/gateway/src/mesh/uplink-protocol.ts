@@ -58,7 +58,7 @@ export type UplinkKeyLogHead = {
   hash: Uint8Array;
 };
 
-export type UplinkHubInfo = { nodeId: string; publicUrl: string };
+export type UplinkHubInfo = { nodeId: string; publicUrl: string; name?: string };
 
 export type UplinkNodeList = {
   t: 'node.list';
@@ -398,10 +398,13 @@ function parseHubInfo(value: unknown): UplinkHubInfo {
   if (!isRecord(value)) {
     throw new Error('node.list hub must be an object');
   }
-  return {
+  const info: UplinkHubInfo = {
     nodeId: requireNodeIdHex(value.nodeId, 'hub.nodeId'),
     publicUrl: requireString(value.publicUrl, 'hub.publicUrl'),
   };
+  const name = optionalString(value.name, 'hub.name');
+  if (name) info.name = name;
+  return info;
 }
 
 export function encodeUplinkCtl(msg: UplinkCtlMessage): Uint8Array {
