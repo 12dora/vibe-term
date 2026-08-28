@@ -1,6 +1,7 @@
 # tmex hub/node e2e 运行时。只从 ubuntu:24.04 构建；Caddy 另用 caddy:2。
-# 目标平台 linux/amd64（x86_64 服务器；本机 arm64 上走 qemu）。
+# 多架构：TARGETARCH=amd64|arm64（远端 x86 服务器 / 本机 Apple Silicon 原生，不走 qemu）。
 FROM ubuntu:24.04
+ARG TARGETARCH
 
 ENV DEBIAN_FRONTEND=noninteractive \
     BUN_INSTALL=/usr/local \
@@ -23,7 +24,8 @@ RUN apt-get update \
     && rm -rf /var/lib/apt/lists/*
 
 # Node 22 官方 tarball（不走 nodesource / Docker Hub 上的 node 镜像）
-RUN curl -fsSL "https://nodejs.org/dist/v${NODE_VERSION}/node-v${NODE_VERSION}-linux-x64.tar.xz" \
+RUN NODE_ARCH="$([ "${TARGETARCH}" = "arm64" ] && echo arm64 || echo x64)" \
+    && curl -fsSL "https://nodejs.org/dist/v${NODE_VERSION}/node-v${NODE_VERSION}-linux-${NODE_ARCH}.tar.xz" \
       | tar -xJ -C /usr/local --strip-components=1 \
     && node --version \
     && npm --version

@@ -14,7 +14,6 @@ volumes:
 
 x-tmex-node: &tmex-node
   image: tmex-e2e:split
-  platform: linux/amd64
   init: true
   stop_grace_period: 25s
   extra_hosts:
@@ -49,8 +48,7 @@ services:
 
   driver:
     image: tmex-e2e:split
-    platform: linux/amd64
-    container_name: tmex-split-driver
+      container_name: tmex-split-driver
     hostname: driver
     init: true
     working_dir: /workspace

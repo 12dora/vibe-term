@@ -8,7 +8,9 @@ REPO_ROOT="$(cd "${HUB_E2E}/../.." && pwd)"
 export TMEX_REPO_ROOT="${TMEX_REPO_ROOT:-${REPO_ROOT}}"
 COMPOSE=(docker compose -p tmex-split-local -f "${ROOT}/docker-compose.local.yml")
 IMAGE_NAME="tmex-e2e:split"
-PLATFORM="linux/amd64"
+# 本机原生架构（Apple Silicon → linux/arm64，不走 qemu；x86 → linux/amd64），可用 TMEX_E2E_PLATFORM 覆盖
+case "$(uname -m)" in arm64|aarch64) NATIVE_ARCH=arm64 ;; *) NATIVE_ARCH=amd64 ;; esac
+PLATFORM="${TMEX_E2E_PLATFORM:-linux/${NATIVE_ARCH}}"
 TARBALL="${TMEX_TARBALL:-/private/tmp/claude-501/-home-user-code-tmex-enhanced/741cc3a1-5392-48be-8081-06f3803bdeb4/scratchpad/pkg-p6/tmex-cli-1.0.2.tgz}"
 
 log() { printf '[split-local] %s\n' "$*"; }

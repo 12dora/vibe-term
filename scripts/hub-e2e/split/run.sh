@@ -44,7 +44,6 @@ if [[ "${1:-}" == "down" ]]; then
   "${LOCAL_COMPOSE[@]}" down -v --remove-orphans || true
   docker network rm tmex-split-local_lan 2>/dev/null || true
   rssh "docker compose -p tmex-split -f /root/tmex-e2e/repo/scripts/hub-e2e/split/docker-compose.remote.yml down -v --remove-orphans" || true
-  rssh "timedatectl set-ntp true" || true
   exit 0
 fi
 
@@ -246,18 +245,16 @@ jread() {
 }
 
 sync_clocks() {
-  # 远端 NTP 未 stepping，曾落后本机 ~70s，超过 DELEGATION_CLOCK_SKEW_MS=60s → DELEGATION_ISSUED_IN_FUTURE。
-  local mac
-  mac="$(date -u +'%Y-%m-%d %H:%M:%S')"
-  rssh "timedatectl set-ntp false >/dev/null 2>&1 || true; timedatectl set-time '${mac}'" >/dev/null
+  # 只检查不改时钟：hub 校验 delegation 的 issued_at 容差为 DELEGATION_CLOCK_SKEW_MS=60s，
+  # 远端 NTP 不同步会得到 DELEGATION_ISSUED_IN_FUTURE。时钟应由远端 NTP 修正（timedatectl set-ntp true）。
   local hub_now driver_now
   hub_now="$(rssh 'date -u +%s')"
   driver_now="$(docker exec tmex-split-driver date -u +%s)"
-  log "clocks unix hub=${hub_now} driver=${driver_now} (target ${mac} UTC)"
   local delta=$(( driver_now - hub_now ))
   if (( delta < 0 )); then delta=$(( -delta )); fi
-  if (( delta > 45 )); then
-    log "clock delta ${delta}s still high"
+  log "clock skew hub↔driver = ${delta}s"
+  if (( delta > 30 )); then
+    log "WARNING: clock skew ${delta}s > 30s；请在远端启用 NTP（timedatectl set-ntp true），否则登录会报 DELEGATION_ISSUED_IN_FUTURE"
     return 1
   fi
   return 0

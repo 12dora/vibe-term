@@ -189,7 +189,14 @@ function MainInset() {
 }
 
 // Page wrapper: 处理 header、title、actions 和动态加载
-function PageWrapper({ moduleLoader }: { moduleLoader: PageModuleLoader }) {
+// withSidebar=false：/login、/account/security、/nodes 挂在 NodeShell（SidebarProvider）之外，不能渲染 SidebarTrigger
+function PageWrapper({
+  moduleLoader,
+  withSidebar = true,
+}: {
+  moduleLoader: PageModuleLoader;
+  withSidebar?: boolean;
+}) {
   const { state, retry } = usePageModule(moduleLoader);
   const params = useParams();
 
@@ -205,11 +212,15 @@ function PageWrapper({ moduleLoader }: { moduleLoader: PageModuleLoader }) {
         data-testid="mobile-topbar"
       >
         <div className="flex min-w-0 flex-1 items-center gap-2 px-4">
-          <SidebarTrigger className="-ml-1 shrink-0" data-testid="mobile-sidebar-open" />
-          <Separator
-            orientation="vertical"
-            className="mr-2 shrink-0 data-[orientation=vertical]:h-4"
-          />
+          {withSidebar && (
+            <>
+              <SidebarTrigger className="-ml-1 shrink-0" data-testid="mobile-sidebar-open" />
+              <Separator
+                orientation="vertical"
+                className="mr-2 shrink-0 data-[orientation=vertical]:h-4"
+              />
+            </>
+          )}
           <span className="min-w-0 flex-1 truncate text-sm font-semibold">
             {PageTitle ? <PageTitle {...params} /> : ''}
           </span>
@@ -279,9 +290,12 @@ function pageRoutes() {
 
 // 路由配置 - Data 模式：/n/:nodeId/... 为显式 node，旧路由等价于 self（不做重定向）
 const router = createBrowserRouter([
-  { path: '/login', element: <PageWrapper moduleLoader={loginModule} /> },
-  { path: '/account/security', element: <PageWrapper moduleLoader={accountSecurityModule} /> },
-  { path: '/nodes', element: <PageWrapper moduleLoader={nodesModule} /> },
+  { path: '/login', element: <PageWrapper moduleLoader={loginModule} withSidebar={false} /> },
+  {
+    path: '/account/security',
+    element: <PageWrapper moduleLoader={accountSecurityModule} withSidebar={false} />,
+  },
+  { path: '/nodes', element: <PageWrapper moduleLoader={nodesModule} withSidebar={false} /> },
   {
     path: '/n/:nodeId',
     Component: NodeShell,
