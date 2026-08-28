@@ -250,6 +250,8 @@ npx tmex-cli hub user reset
 
 | 现象 | 含义 | 处理 |
 |---|---|---|
+| node 角色无 `[uplink]` 日志、或一直连不上 hub | `runLoop` 连 hub 失败会吞掉错误并退避；现每次尝试打 `[uplink] connect failed hub=<host:port> attempt=<n> reason=<code> next_retry_ms=<delay>`（同一 reason 最多 30 s 一条），成功为 `[uplink] online hub=… after_ms=…`，掉线为 `[uplink] offline reason=…`。不打 URL / token | 看 `reason`：`tls` 证书链不被系统信任；`dns` 解析失败；`refused` 端口未开或防火墙；`timeout` TLS/WS/auth 握手超过 `UPLINK_CONNECT_TIMEOUT_MS`（默认 20 s）；`http_4401` / `http_403` 升级被拒；`auth_rejected` 证书未 admit / 已吊销 / 签名失败；`protocol` 协议或异常关闭。进程内 `UplinkClient.lastConnectError` 保留最近一次原因与时间 |
+| `[uplink] connect failed reason=timeout` 反复出现 | 20 s 内未完成 WS 打开 + auth 握手（TLS 卡住、hub 无响应、无 `auth.challenge`） | 确认 `TMEX_HUB_URL` 可达、反代支持 WebSocket、证书有效。必要时把 `UPLINK_CONNECT_TIMEOUT_MS` 调大后重启 |
 | WS 关闭码 **4401** | 无 `node-session`、会话过期或 logout。`/ws`、`/n/:id/ws`、`/mesh/ws` 升级后以此码关闭；`/mesh/ws` 每 5 分钟复验失败同样 4401 | 本机入口：跳 `/login?next=`。其它 node：不跳全局登录，侧边栏「登录此节点」（内存里还有 `sk_sess` 则静默补登）。前端对 4401 **停止重连**，避免 open→close 循环 |
 | HTTP 401 `NODE_LOGIN_REQUIRED` | 目标 node 未登录或票的 `via` 不是当前 entry | 只在该 node 行登录，不要当整站掉登录 |
 | HTTP 503 `NODE_UNREACHABLE` | entry 到目标的 peer link 与 hub relay 都失败 | 查目标是否在线、防火墙是否放行 `TMEX_PEER_PORT`、hub uplink、`TMEX_HUB_URL`。hub 离线时确认 `peer_cache` 地址是否仍达 |

@@ -77,4 +77,19 @@ describe('LinkStreamCarrier', () => {
     expect(new TextDecoder().decode(second.value?.bytes)).toBe('two');
     expect(done.done).toBe(true);
   });
+
+  test('link abort fires onClose even with a queued send', async () => {
+    const [a, b] = createInMemoryLinkPair();
+    const incomingP = new Promise<import('@tmex/shared/link').LinkStream>((resolve) =>
+      b.onStream(resolve)
+    );
+    const out = await a.openStream(new Uint8Array([1]));
+    await incomingP;
+    const carrier = new LinkStreamCarrier(out);
+    const closed = new Promise<void>((resolve) => carrier.onClose(resolve));
+    expect(carrier.send(new Uint8Array(64))).toBe('sent');
+    a.close('link-down');
+    await closed;
+    expect(carrier.send(new Uint8Array([1]))).toBe('closed');
+  });
 });

@@ -1,7 +1,9 @@
+import { wsBorsh } from '@tmex/shared';
 import type { LinkSession } from '@tmex/shared/link';
 import { buildSetCookie, nodeSessionCookieName, parseCookies } from '../auth/cookies';
 import {
   AUTH_401_BODY_LIMIT,
+  HTTP_FAILOVER_MAX_ATTEMPTS,
   MESH_ALLOWED_MIME,
   MESH_FORWARD_CSP,
   MESH_FORWARD_WS_KIND,
@@ -13,6 +15,9 @@ import {
   type MeshUpgradeServer,
   type OpenedWsStream,
   type PeerLinkProvider,
+  type PeerTransportKind,
+  STREAM_FAILOVER_BACKOFF_MS,
+  STREAM_FAILOVER_MAX_ATTEMPTS,
   type StreamOpener,
   WS_CLOSE_LOGIN_REQUIRED,
   X_TMEX_SESSION_RENEWED,
@@ -22,7 +27,6 @@ import {
   setMeshRequestContext,
 } from './mesh-deps';
 import { isHttps, jsonError } from './session-middleware';
-import { NodeUnreachableError } from './types';
 
 const AUTH_SKIP = new Set(['/api/auth/challenge', '/api/auth/login']);
 
@@ -48,9 +52,41 @@ export type ForwarderDeps = {
   nodeId: string;
   peers: PeerLinkProvider;
   streams: StreamOpener;
+  sleep?: (ms: number, signal?: AbortSignal) => Promise<void>;
+  log?: (line: string) => void;
 };
 
 export type ForwardResult = MeshHandleResult;
+
+type ForwardMeta = {
+  nodeId: string;
+  auth: string;
+  cid?: string;
+  link: LinkSession;
+  transport: PeerTransportKind | null;
+};
+
+type ForwardPump = {
+  id: string;
+  ws: MeshServerWebSocket;
+  nodeId: string;
+  auth: string;
+  cid?: string;
+  stream: OpenedWsStream | null;
+  boundLink: LinkSession | null;
+  boundTransport: PeerTransportKind | null;
+  replay: StreamReplayState;
+  generation: number;
+  browserClosed: boolean;
+  failingOver: boolean;
+  failoverAbort: AbortController | null;
+  queue: Uint8Array[];
+  helloWait: (() => void) | null;
+  streamAlive: boolean;
+};
+
+const pendingMeta = new WeakMap<OpenedWsStream, ForwardMeta>();
+const IDEMPOTENT_HTTP = new Set(['GET', 'HEAD']);
 
 const selfRewrites = new WeakMap<Request, string>();
 
@@ -91,9 +127,14 @@ export function rewriteRequest(req: Request, rewrite: string): Request {
 }
 
 export class Forwarder {
-  private readonly pumps = new Map<MeshServerWebSocket, OpenedWsStream>();
+  private readonly pumps = new Map<MeshServerWebSocket, ForwardPump>();
+  private readonly sleep: (ms: number, signal?: AbortSignal) => Promise<void>;
+  private readonly log: (line: string) => void;
 
-  constructor(private readonly deps: ForwarderDeps) {}
+  constructor(private readonly deps: ForwarderDeps) {
+    this.sleep = deps.sleep ?? defaultSleep;
+    this.log = deps.log ?? ((line) => console.info(line));
+  }
 
   async handle(req: Request, server: MeshUpgradeServer): Promise<ForwardResult> {
     const url = new URL(req.url);
@@ -116,35 +157,205 @@ export class Forwarder {
   }
 
   handleForwardSocketMessage(ws: MeshServerWebSocket, message: unknown): void {
-    const stream = this.pumps.get(ws);
-    if (!stream) return;
+    const pump = this.pumps.get(ws);
+    if (!pump || pump.browserClosed) return;
     const bytes = toBytes(message);
-    if (bytes) stream.send(bytes);
+    if (!bytes) return;
+    pump.replay.noteOutbound(bytes);
+    if (pump.failingOver || !pump.stream) {
+      pump.queue.push(bytes.slice());
+      return;
+    }
+    pump.stream.send(bytes);
   }
 
   handleForwardSocketClose(ws: MeshServerWebSocket, code?: number, reason?: string): void {
-    const stream = this.pumps.get(ws);
+    const pump = this.pumps.get(ws);
     this.pumps.delete(ws);
-    stream?.close(code, reason);
+    if (!pump) return;
+    pump.browserClosed = true;
+    pump.failoverAbort?.abort();
+    pump.stream?.close(code, reason);
   }
 
   attachForwardPump(ws: MeshServerWebSocket, stream: OpenedWsStream): void {
-    this.pumps.set(ws, stream);
+    const meta = pendingMeta.get(stream);
+    const pump: ForwardPump = {
+      id: crypto.randomUUID().slice(0, 8),
+      ws,
+      nodeId: meta?.nodeId ?? ws.data.nodeId ?? '',
+      auth: meta?.auth ?? ws.data.auth ?? '',
+      cid: meta?.cid ?? ws.data.cid,
+      stream: null,
+      boundLink: meta?.link ?? null,
+      boundTransport: meta?.transport ?? null,
+      replay: new StreamReplayState(),
+      generation: 0,
+      browserClosed: false,
+      failingOver: false,
+      failoverAbort: null,
+      queue: [],
+      helloWait: null,
+      streamAlive: true,
+    };
+    this.pumps.set(ws, pump);
+    this.bindStream(pump, stream, meta?.link ?? null, meta?.transport ?? null);
+  }
+
+  private bindStream(
+    pump: ForwardPump,
+    stream: OpenedWsStream,
+    link: LinkSession | null,
+    transport: PeerTransportKind | null
+  ): void {
+    pump.generation += 1;
+    const generation = pump.generation;
+    pump.stream = stream;
+    pump.boundLink = link;
+    pump.boundTransport = transport;
+    pump.streamAlive = true;
     stream.onMessage((bytes) => {
-      try {
-        ws.send(bytes);
-      } catch {
-        stream.close();
-      }
+      if (generation !== pump.generation || pump.browserClosed) return;
+      this.handleRemoteBytes(pump, bytes);
     });
     stream.onClose((info) => {
-      this.pumps.delete(ws);
-      try {
-        ws.close(info.code, info.reason);
-      } catch {
-        // already closed
-      }
+      if (generation !== pump.generation || pump.browserClosed) return;
+      pump.streamAlive = false;
+      pump.helloWait?.();
+      pump.helloWait = null;
+      if (pump.failingOver) return;
+      void this.failover(pump, info);
     });
+  }
+
+  private handleRemoteBytes(pump: ForwardPump, bytes: Uint8Array): void {
+    pump.replay.noteInbound(bytes);
+    let kind: number | null = null;
+    try {
+      kind = wsBorsh.decodeEnvelope(bytes).kind;
+    } catch {
+      kind = null;
+    }
+    if (kind === wsBorsh.KIND_HELLO_S2C) {
+      pump.helloWait?.();
+      pump.helloWait = null;
+      if (pump.replay.helloForwarded) return;
+      pump.replay.helloForwarded = true;
+    }
+    if (kind === wsBorsh.KIND_DEVICE_CONNECTED) {
+      const deviceId = pump.replay.noteDeviceConnected(bytes);
+      if (deviceId && pump.replay.connectedForwarded.has(deviceId)) return;
+      if (deviceId) pump.replay.connectedForwarded.add(deviceId);
+    }
+    try {
+      pump.ws.send(bytes);
+    } catch {
+      pump.stream?.close();
+    }
+  }
+
+  private async failover(
+    pump: ForwardPump,
+    _info: { code?: number; reason?: string }
+  ): Promise<void> {
+    if (pump.browserClosed || pump.failingOver) return;
+    pump.failingOver = true;
+    pump.stream = null;
+    const from = pump.boundTransport ?? 'none';
+    const abort = new AbortController();
+    pump.failoverAbort = abort;
+    const signal = abort.signal;
+    let lastError: unknown;
+    try {
+      for (let attempt = 0; attempt < STREAM_FAILOVER_MAX_ATTEMPTS; attempt += 1) {
+        if (pump.browserClosed || signal.aborted) return;
+        const delay = STREAM_FAILOVER_BACKOFF_MS[attempt] ?? 1600;
+        if (delay > 0) {
+          try {
+            await this.sleep(delay, signal);
+          } catch {
+            return;
+          }
+        }
+        if (pump.browserClosed || signal.aborted) return;
+        let link: LinkSession;
+        try {
+          link = await this.deps.peers.getLink(pump.nodeId);
+        } catch (err) {
+          lastError = err;
+          continue;
+        }
+        const transport = this.deps.peers.transportOf?.(pump.nodeId) ?? null;
+        let stream: OpenedWsStream;
+        try {
+          stream = await this.deps.streams.openWsStream(link, pump.auth, pump.cid);
+        } catch (err) {
+          lastError = err;
+          continue;
+        }
+        this.bindStream(pump, stream, link, transport);
+        const resumed = await this.replaySubscription(pump, stream, signal);
+        if (pump.browserClosed || signal.aborted) return;
+        if (!pump.streamAlive || pump.stream !== stream) continue;
+        const to = transport ?? 'none';
+        this.log(
+          `[mesh][stream] failover stream=${pump.id} from=${from} to=${to} resumed=${resumed}`
+        );
+        this.flushQueue(pump);
+        pump.failingOver = false;
+        pump.failoverAbort = null;
+        return;
+      }
+      void lastError;
+      this.closeBrowser(pump, { code: 1011, reason: 'failover-exhausted' });
+    } finally {
+      if (pump.failingOver) {
+        pump.failingOver = false;
+        pump.failoverAbort = null;
+      }
+    }
+  }
+
+  private async replaySubscription(
+    pump: ForwardPump,
+    stream: OpenedWsStream,
+    signal: AbortSignal
+  ): Promise<number> {
+    const frames = pump.replay.buildReplayFrames();
+    const hello = pump.replay.hello;
+    if (hello) {
+      const waited = new Promise<void>((resolve) => {
+        pump.helloWait = resolve;
+      });
+      stream.send(hello);
+      await Promise.race([waited, this.sleep(2_000, signal).catch(() => undefined)]);
+      pump.helloWait = null;
+    }
+    for (const frame of frames) {
+      if (signal.aborted || pump.browserClosed) break;
+      stream.send(frame);
+    }
+    return pump.replay.resumedPaneCount();
+  }
+
+  private flushQueue(pump: ForwardPump): void {
+    const queued = pump.queue.splice(0);
+    const stream = pump.stream;
+    if (!stream) return;
+    for (const bytes of queued) {
+      stream.send(bytes);
+    }
+  }
+
+  private closeBrowser(pump: ForwardPump, info: { code?: number; reason?: string }): void {
+    if (pump.browserClosed) return;
+    pump.browserClosed = true;
+    this.pumps.delete(pump.ws);
+    try {
+      pump.ws.close(info.code, info.reason);
+    } catch {
+      // already closed
+    }
   }
 
   private isLocalNode(id: string): boolean {
@@ -165,12 +376,6 @@ export class Forwarder {
     rest: string,
     search: string
   ): Promise<Response> {
-    let link: LinkSession;
-    try {
-      link = await this.deps.peers.getLink(nodeId);
-    } catch {
-      return jsonError('NODE_UNREACHABLE', 503, { nodeId });
-    }
     const headers = filterRequestHeaders(req);
     const auth = AUTH_SKIP.has(stripQuery(rest))
       ? null
@@ -179,28 +384,51 @@ export class Forwarder {
     const abort = new AbortController();
     req.signal.addEventListener('abort', () => abort.abort(), { once: true });
     const body = req.body && req.method !== 'GET' && req.method !== 'HEAD' ? req.body : null;
-    let upstream: Response;
-    try {
-      upstream = await this.deps.streams.openHttpStream(
-        link,
-        {
-          method: req.method,
-          path: rest,
-          query: search,
-          headers,
-          origin,
-          auth,
-        },
-        body,
-        abort.signal
-      );
-    } catch (err) {
-      if (err instanceof NodeUnreachableError) {
+    const retryable = IDEMPOTENT_HTTP.has(req.method) && !body;
+    const attempts = retryable ? HTTP_FAILOVER_MAX_ATTEMPTS : 1;
+    let lastErr: unknown;
+    for (let attempt = 0; attempt < attempts; attempt += 1) {
+      if (abort.signal.aborted) {
         return jsonError('NODE_UNREACHABLE', 503, { nodeId });
       }
-      return jsonError('NODE_UNREACHABLE', 503, { nodeId });
+      if (attempt > 0) {
+        const delay = STREAM_FAILOVER_BACKOFF_MS[attempt] ?? 200;
+        try {
+          await this.sleep(delay, abort.signal);
+        } catch {
+          return jsonError('NODE_UNREACHABLE', 503, { nodeId });
+        }
+      }
+      let link: LinkSession;
+      try {
+        link = await this.deps.peers.getLink(nodeId);
+      } catch (err) {
+        lastErr = err;
+        if (!retryable) break;
+        continue;
+      }
+      try {
+        const upstream = await this.deps.streams.openHttpStream(
+          link,
+          {
+            method: req.method,
+            path: rest,
+            query: search,
+            headers,
+            origin,
+            auth,
+          },
+          body,
+          abort.signal
+        );
+        return this.adaptResponse(req, upstream, nodeId);
+      } catch (err) {
+        lastErr = err;
+        if (!retryable) break;
+      }
     }
-    return this.adaptResponse(req, upstream, nodeId);
+    void lastErr;
+    return jsonError('NODE_UNREACHABLE', 503, { nodeId });
   }
 
   private async handleRemoteWs(
@@ -233,8 +461,15 @@ export class Forwarder {
     }
     const token = crypto.randomUUID();
     pendingStreams.set(token, stream);
+    pendingMeta.set(stream, {
+      nodeId,
+      auth,
+      cid: cid || undefined,
+      link,
+      transport: this.deps.peers.transportOf?.(nodeId) ?? null,
+    });
     const ok = server.upgrade(req, {
-      data: { kind: MESH_FORWARD_WS_KIND, nodeId, auth, token },
+      data: { kind: MESH_FORWARD_WS_KIND, nodeId, auth, token, cid: cid || undefined },
     });
     if (!ok) {
       pendingStreams.delete(token);
@@ -328,6 +563,186 @@ export class Forwarder {
   }
 }
 
+class StreamReplayState {
+  hello: Uint8Array | null = null;
+  helloForwarded = false;
+  readonly devices = new Map<string, Uint8Array>();
+  readonly connectedForwarded = new Set<string>();
+  readonly paneSubs = new Map<string, Uint8Array>();
+  readonly lastSelect = new Map<string, Uint8Array>();
+  readonly agents = new Map<string, Uint8Array>();
+  canonicalSub: {
+    generation: bigint;
+    activePanes: wsBorsh.CanonicalPaneSubscription[];
+    hotPanes: wsBorsh.CanonicalPaneSubscription[];
+    seq: number;
+  } | null = null;
+  readonly paneCursors = new Map<
+    string,
+    { paneEpoch: Uint8Array; terminalSeq: bigint; pane: wsBorsh.CanonicalPaneTarget }
+  >();
+  private outboundSeq = 1;
+
+  noteOutbound(bytes: Uint8Array): void {
+    let env: ReturnType<typeof wsBorsh.decodeEnvelope>;
+    try {
+      env = wsBorsh.decodeEnvelope(bytes);
+    } catch {
+      return;
+    }
+    this.outboundSeq = env.seq;
+    try {
+      switch (env.kind) {
+        case wsBorsh.KIND_HELLO_C2S:
+          this.hello = bytes.slice();
+          return;
+        case wsBorsh.KIND_DEVICE_CONNECT: {
+          const payload = wsBorsh.decodePayload(wsBorsh.schema.DeviceConnectSchema, env.payload);
+          this.devices.set(payload.deviceId, bytes.slice());
+          return;
+        }
+        case wsBorsh.KIND_DEVICE_DISCONNECT: {
+          const payload = wsBorsh.decodePayload(wsBorsh.schema.DeviceDisconnectSchema, env.payload);
+          this.devices.delete(payload.deviceId);
+          this.paneSubs.delete(payload.deviceId);
+          this.lastSelect.delete(payload.deviceId);
+          this.connectedForwarded.delete(payload.deviceId);
+          return;
+        }
+        case wsBorsh.KIND_TMUX_SUBSCRIBE_PANES: {
+          const payload = wsBorsh.decodePayload(
+            wsBorsh.schema.TmuxSubscribePanesSchema,
+            env.payload
+          );
+          if (payload.paneIds.length === 0) this.paneSubs.delete(payload.deviceId);
+          else this.paneSubs.set(payload.deviceId, bytes.slice());
+          return;
+        }
+        case wsBorsh.KIND_TMUX_SELECT: {
+          const payload = wsBorsh.decodePayload(wsBorsh.schema.TmuxSelectSchema, env.payload);
+          this.lastSelect.set(payload.deviceId, bytes.slice());
+          return;
+        }
+        case wsBorsh.KIND_AGENT_SUBSCRIBE: {
+          const payload = wsBorsh.decodePayload(wsBorsh.schema.AgentSubscribeSchema, env.payload);
+          this.agents.set(payload.sessionId, bytes.slice());
+          return;
+        }
+        case wsBorsh.KIND_AGENT_UNSUBSCRIBE: {
+          const payload = wsBorsh.decodePayload(wsBorsh.schema.AgentUnsubscribeSchema, env.payload);
+          this.agents.delete(payload.sessionId);
+          return;
+        }
+        case wsBorsh.KIND_CANONICAL_COMMAND: {
+          const command = wsBorsh.decodeCanonicalCommandPayload(env.payload).command;
+          if ('SetPaneSubscriptions' in command) {
+            const value = command.SetPaneSubscriptions;
+            this.canonicalSub = {
+              generation: value.generation,
+              activePanes: value.activePanes,
+              hotPanes: value.hotPanes,
+              seq: env.seq,
+            };
+          }
+        }
+      }
+    } catch {
+      // ignore undecodable tracking frames
+    }
+  }
+
+  noteInbound(bytes: Uint8Array): void {
+    let env: ReturnType<typeof wsBorsh.decodeEnvelope>;
+    try {
+      env = wsBorsh.decodeEnvelope(bytes);
+    } catch {
+      return;
+    }
+    if (env.kind !== wsBorsh.KIND_CANONICAL_EVENT) return;
+    try {
+      const event = wsBorsh.decodeCanonicalEventPayload(env.payload).event;
+      if (!('PaneData' in event)) return;
+      const paneData = event.PaneData;
+      this.paneCursors.set(paneCursorKey(paneData.pane.deviceId, paneData.pane.paneId), {
+        pane: paneData.pane,
+        paneEpoch: paneData.paneEpoch,
+        terminalSeq: paneData.seqEnd,
+      });
+    } catch {
+      // ignore
+    }
+  }
+
+  noteDeviceConnected(bytes: Uint8Array): string | null {
+    try {
+      const env = wsBorsh.decodeEnvelope(bytes);
+      const payload = wsBorsh.decodePayload(wsBorsh.schema.DeviceConnectedSchema, env.payload);
+      return payload.deviceId;
+    } catch {
+      return null;
+    }
+  }
+
+  buildReplayFrames(): Uint8Array[] {
+    const frames: Uint8Array[] = [];
+    for (const frame of this.devices.values()) frames.push(frame);
+    const canonical = this.buildCanonicalResume();
+    if (canonical) frames.push(canonical);
+    for (const frame of this.paneSubs.values()) frames.push(frame);
+    for (const frame of this.lastSelect.values()) frames.push(frame);
+    for (const frame of this.agents.values()) frames.push(frame);
+    return frames;
+  }
+
+  resumedPaneCount(): number {
+    if (this.canonicalSub) {
+      const keys = new Set<string>();
+      for (const row of this.canonicalSub.activePanes) {
+        keys.add(paneCursorKey(row.pane.deviceId, row.pane.paneId));
+      }
+      for (const row of this.canonicalSub.hotPanes) {
+        keys.add(paneCursorKey(row.pane.deviceId, row.pane.paneId));
+      }
+      return keys.size;
+    }
+    let count = 0;
+    for (const frame of this.paneSubs.values()) {
+      try {
+        const env = wsBorsh.decodeEnvelope(frame);
+        const payload = wsBorsh.decodePayload(wsBorsh.schema.TmuxSubscribePanesSchema, env.payload);
+        count += payload.paneIds.length;
+      } catch {
+        count += 1;
+      }
+    }
+    return count;
+  }
+
+  private buildCanonicalResume(): Uint8Array | null {
+    if (!this.canonicalSub) return null;
+    const patch = (row: wsBorsh.CanonicalPaneSubscription): wsBorsh.CanonicalPaneSubscription => {
+      const cursor = this.paneCursors.get(paneCursorKey(row.pane.deviceId, row.pane.paneId));
+      if (!cursor) return row;
+      return {
+        pane: row.pane,
+        cursor: { paneEpoch: cursor.paneEpoch, terminalSeq: cursor.terminalSeq },
+      };
+    };
+    const payload = wsBorsh.encodeCanonicalCommandPayload({
+      SetPaneSubscriptions: {
+        generation: this.canonicalSub.generation + 1n,
+        activePanes: this.canonicalSub.activePanes.map(patch),
+        hotPanes: this.canonicalSub.hotPanes.map(patch),
+      },
+    });
+    return wsBorsh.encodeEnvelope(
+      wsBorsh.KIND_CANONICAL_COMMAND,
+      payload,
+      this.canonicalSub.seq || this.outboundSeq
+    );
+  }
+}
+
 const pendingStreams = new Map<string, OpenedWsStream>();
 
 export function takePendingForwardStream(token: string | undefined): OpenedWsStream | undefined {
@@ -409,6 +824,23 @@ async function readBodyLimited(response: Response, limit: number): Promise<strin
     offset += chunk.byteLength;
   }
   return new TextDecoder().decode(out);
+}
+
+function paneCursorKey(deviceId: string, paneId: string): string {
+  return `${deviceId}\0${paneId}`;
+}
+
+async function defaultSleep(ms: number, signal?: AbortSignal): Promise<void> {
+  if (ms <= 0) return;
+  if (signal?.aborted) throw new DOMException('The operation was aborted.', 'AbortError');
+  await new Promise<void>((resolve, reject) => {
+    const timer = setTimeout(resolve, ms);
+    const onAbort = () => {
+      clearTimeout(timer);
+      reject(new DOMException('The operation was aborted.', 'AbortError'));
+    };
+    signal?.addEventListener('abort', onAbort, { once: true });
+  });
 }
 
 function toBytes(message: unknown): Uint8Array | null {

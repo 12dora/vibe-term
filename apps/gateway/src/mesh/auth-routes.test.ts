@@ -53,8 +53,13 @@ export class FakePeers implements PeerLinkProvider {
   readonly listeners = new Set<
     (e: { nodeId: string; status: 'online' | 'offline' | 'revoked' }) => void
   >();
+  failGetLink = 0;
 
   async getLink(nodeId: string): Promise<LinkSession> {
+    if (this.failGetLink > 0) {
+      this.failGetLink -= 1;
+      throw new NodeUnreachableError(nodeId);
+    }
     const link = this.links.get(nodeId);
     if (!link) throw new NodeUnreachableError(nodeId);
     return link;
@@ -91,8 +96,10 @@ export class FakeWs implements OpenedWsStream {
   readonly sent: Uint8Array[] = [];
   private msg: Array<(b: Uint8Array) => void> = [];
   private closed: Array<(info: { code?: number; reason?: string }) => void> = [];
+  closedOnce = false;
 
   send(bytes: Uint8Array): void {
+    if (this.closedOnce) return;
     this.sent.push(bytes);
   }
   onMessage(cb: (bytes: Uint8Array) => void): void {
@@ -102,9 +109,12 @@ export class FakeWs implements OpenedWsStream {
     this.closed.push(cb);
   }
   close(code?: number, reason?: string): void {
+    if (this.closedOnce) return;
+    this.closedOnce = true;
     for (const cb of this.closed) cb({ code, reason });
   }
   pushFromRemote(bytes: Uint8Array): void {
+    if (this.closedOnce) return;
     for (const cb of this.msg) cb(bytes);
   }
 }
@@ -118,9 +128,12 @@ export class FakeStreams implements StreamOpener {
     method: string;
   } | null = null;
   nextResponse: Response = new Response('ok');
+  httpOpenError: Error | null = null;
   lastWs: FakeWs | null = null;
   wsAuth: string | null = null;
   wsCid: string | undefined;
+  readonly wsOpens: Array<{ link: LinkSession; auth: string; cid?: string; ws: FakeWs }> = [];
+  wsOpenError: Error | null = null;
 
   async openHttpStream(
     _link: LinkSession,
@@ -135,6 +148,11 @@ export class FakeStreams implements StreamOpener {
     _body: ReadableStream<Uint8Array> | null,
     _signal: AbortSignal
   ): Promise<Response> {
+    if (this.httpOpenError) {
+      const err = this.httpOpenError;
+      this.httpOpenError = null;
+      throw err;
+    }
     this.lastOpen = {
       path: open.path,
       headers: open.headers,
@@ -144,10 +162,16 @@ export class FakeStreams implements StreamOpener {
     return this.nextResponse;
   }
 
-  async openWsStream(_link: LinkSession, auth: string, cid?: string): Promise<OpenedWsStream> {
+  async openWsStream(link: LinkSession, auth: string, cid?: string): Promise<OpenedWsStream> {
+    if (this.wsOpenError) {
+      const err = this.wsOpenError;
+      this.wsOpenError = null;
+      throw err;
+    }
     this.wsAuth = auth;
     this.wsCid = cid;
     this.lastWs = new FakeWs();
+    this.wsOpens.push({ link, auth, cid, ws: this.lastWs });
     return this.lastWs;
   }
 }
@@ -166,6 +190,8 @@ export async function bootMesh(options?: {
   selfStatus?: () => import('./types').UplinkStatus;
   listedNames?: () => ReadonlyArray<{ id: string; name: string }>;
   selfName?: () => string | null;
+  sleep?: (ms: number, signal?: AbortSignal) => Promise<void>;
+  streamLog?: (line: string) => void;
 }) {
   const { db, close } = createMigratedAuthDb();
   const userStore = new UserStore(db);
@@ -198,6 +224,8 @@ export async function bootMesh(options?: {
     selfStatus: options?.selfStatus,
     listedNames: options?.listedNames,
     selfName: options?.selfName,
+    sleep: options?.sleep,
+    streamLog: options?.streamLog,
   });
   return {
     close,

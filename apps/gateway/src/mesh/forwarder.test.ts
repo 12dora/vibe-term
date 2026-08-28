@@ -1,4 +1,5 @@
 import { describe, expect, test } from 'bun:test';
+import { wsBorsh } from '@tmex/shared';
 import type { LinkSession } from '@tmex/shared/link';
 import {
   FakePeers,
@@ -20,6 +21,7 @@ import {
   isMeshRewritten,
 } from './mesh-deps';
 import { WS_CLOSE_LOGIN_REQUIRED } from './mesh-deps';
+import { waitUntil } from './test-support';
 
 const OTHER = 'bb'.repeat(16);
 const dummyLink = {} as LinkSession;
@@ -375,4 +377,269 @@ describe('forwarder', () => {
       mesh.close();
     }
   });
+
+  test('upstream WS abort fails over to another link, replays subscribe, keeps browser open', async () => {
+    const dcLink = { id: 'dc' } as unknown as LinkSession;
+    const relayLink = { id: 'relay' } as unknown as LinkSession;
+    const peers = new FakePeers();
+    peers.links.set(OTHER, dcLink);
+    peers.transport.set(OTHER, 'dc');
+    const streams = new FakeStreams();
+    const logs: string[] = [];
+    const mesh = await bootMesh({
+      peers,
+      streams,
+      sleep: async () => {},
+      streamLog: (line) => logs.push(line),
+    });
+    try {
+      let data: { kind?: string; token?: string; auth?: string } | undefined;
+      const server = {
+        upgrade(_req: Request, opts?: { data?: unknown }) {
+          data = opts?.data as typeof data;
+          return true;
+        },
+      };
+      const upgrade = await mesh.runtime.handleRequest(
+        new Request(`http://localhost/n/${OTHER}/ws?cid=tab-a`, {
+          headers: { cookie: `tmex_s_${OTHER}=remote-sid` },
+        }),
+        server
+      );
+      expect(upgrade).toBeUndefined();
+      let browserClosed: { code?: number; reason?: string } | undefined;
+      const sent: Uint8Array[] = [];
+      const ws = {
+        data: data ?? { kind: MESH_FORWARD_WS_KIND },
+        send(frame: Uint8Array) {
+          sent.push(frame);
+          return frame.byteLength;
+        },
+        close(code?: number, reason?: string) {
+          browserClosed = { code, reason };
+        },
+      } as MeshServerWebSocket;
+      mesh.runtime.handleWebSocket.open(ws);
+      const hello = encodeHelloFrame();
+      const subscribe = encodeSubscribeFrame('dev-1', ['%1', '%2']);
+      mesh.runtime.handleWebSocket.message(ws, hello);
+      mesh.runtime.handleWebSocket.message(ws, subscribe);
+      expect(streams.wsOpens).toHaveLength(1);
+      expect(streams.wsOpens[0]?.link).toBe(dcLink);
+      expect(streams.lastWs?.sent[0]).toEqual(hello);
+      expect(streams.lastWs?.sent[1]).toEqual(subscribe);
+
+      peers.links.set(OTHER, relayLink);
+      peers.transport.set(OTHER, 'relay');
+      streams.lastWs?.close(1011, 'reset');
+      await waitUntil(() => streams.wsOpens.length === 2, 2_000);
+      expect(browserClosed).toBeUndefined();
+      expect(streams.wsOpens[1]?.link).toBe(relayLink);
+      expect(streams.wsOpens[1]?.cid).toBe('tab-a');
+      expect(streams.wsOpens[1]?.auth).toBe('remote-sid');
+      const replayed = streams.wsOpens[1]?.ws.sent ?? [];
+      expect(replayed[0]).toEqual(hello);
+      expect(replayed.some((frame) => bytesEqual(frame, subscribe))).toBe(true);
+      expect(logs.some((line) => line.includes('[mesh][stream] failover'))).toBe(true);
+      expect(logs.some((line) => /from=dc to=relay resumed=2/.test(line))).toBe(true);
+
+      streams.wsOpens[1]?.ws.pushFromRemote(new Uint8Array([9, 9]));
+      expect(sent.at(-1)).toEqual(new Uint8Array([9, 9]));
+    } finally {
+      mesh.close();
+    }
+  });
+
+  test('canonical pane cursor is patched onto SetPaneSubscriptions during failover', async () => {
+    const dcLink = { id: 'dc' } as unknown as LinkSession;
+    const relayLink = { id: 'relay' } as unknown as LinkSession;
+    const peers = new FakePeers();
+    peers.links.set(OTHER, dcLink);
+    peers.transport.set(OTHER, 'dc');
+    const streams = new FakeStreams();
+    const mesh = await bootMesh({ peers, streams, sleep: async () => {} });
+    try {
+      const { ws } = await openForwardWs(mesh.runtime, peers, streams, OTHER);
+      const hello = encodeHelloFrame();
+      const epoch = new Uint8Array(16).fill(7);
+      const pane = { deviceId: 'dev-1', serverEpoch: epoch, paneId: '%1' };
+      const subscribe = wsBorsh.encodeEnvelope(
+        wsBorsh.KIND_CANONICAL_COMMAND,
+        wsBorsh.encodeCanonicalCommandPayload({
+          SetPaneSubscriptions: {
+            generation: 3n,
+            activePanes: [{ pane, cursor: { paneEpoch: epoch, terminalSeq: 10n } }],
+            hotPanes: [],
+          },
+        }),
+        4
+      );
+      mesh.runtime.handleWebSocket.message(ws, hello);
+      mesh.runtime.handleWebSocket.message(ws, subscribe);
+      streams.lastWs?.pushFromRemote(
+        wsBorsh.encodeEnvelope(
+          wsBorsh.KIND_CANONICAL_EVENT,
+          wsBorsh.encodeCanonicalEventPayload({
+            PaneData: {
+              pane,
+              paneEpoch: epoch,
+              seqStart: 39n,
+              seqEnd: 40n,
+              data: new Uint8Array([1]),
+            },
+          }),
+          8
+        )
+      );
+      peers.links.set(OTHER, relayLink);
+      peers.transport.set(OTHER, 'relay');
+      streams.lastWs?.close(1011, 'reset');
+      await waitUntil(() => streams.wsOpens.length === 2, 2_000);
+      const replayed = streams.wsOpens[1]?.ws.sent ?? [];
+      const commandFrame = replayed.find((frame) => {
+        try {
+          return wsBorsh.decodeEnvelope(frame).kind === wsBorsh.KIND_CANONICAL_COMMAND;
+        } catch {
+          return false;
+        }
+      });
+      expect(commandFrame).toBeDefined();
+      const decoded = wsBorsh.decodeCanonicalCommandPayload(
+        wsBorsh.decodeEnvelope(commandFrame as Uint8Array).payload
+      );
+      expect('SetPaneSubscriptions' in decoded.command).toBe(true);
+      if (!('SetPaneSubscriptions' in decoded.command)) throw new Error('expected subscribe');
+      const sub = decoded.command.SetPaneSubscriptions;
+      expect(sub.generation).toBe(4n);
+      expect(sub.activePanes[0]?.cursor?.terminalSeq).toBe(40n);
+    } finally {
+      mesh.close();
+    }
+  });
+
+  test('failover retries until a link appears, then resumes; budget exhaustion closes the browser WS', async () => {
+    const dcLink = { id: 'dc' } as unknown as LinkSession;
+    const relayLink = { id: 'relay' } as unknown as LinkSession;
+    const peers = new FakePeers();
+    peers.links.set(OTHER, dcLink);
+    peers.transport.set(OTHER, 'dc');
+    const streams = new FakeStreams();
+    const mesh = await bootMesh({ peers, streams, sleep: async () => {} });
+    try {
+      const { ws, closed } = await openForwardWs(mesh.runtime, peers, streams, OTHER);
+      mesh.runtime.handleWebSocket.message(ws, encodeHelloFrame());
+      peers.failGetLink = 2;
+      peers.links.set(OTHER, relayLink);
+      peers.transport.set(OTHER, 'relay');
+      streams.lastWs?.close(1011, 'reset');
+      await waitUntil(() => streams.wsOpens.length === 2, 2_000);
+      expect(closed()).toBeUndefined();
+      expect(streams.wsOpens[1]?.link).toBe(relayLink);
+    } finally {
+      mesh.close();
+    }
+
+    const peersDead = new FakePeers();
+    peersDead.links.set(OTHER, dcLink);
+    peersDead.transport.set(OTHER, 'dc');
+    const streamsDead = new FakeStreams();
+    const meshDead = await bootMesh({
+      peers: peersDead,
+      streams: streamsDead,
+      sleep: async () => {},
+    });
+    try {
+      const { ws, closed } = await openForwardWs(meshDead.runtime, peersDead, streamsDead, OTHER);
+      peersDead.links.delete(OTHER);
+      streamsDead.lastWs?.close(1011, 'reset');
+      await waitUntil(() => closed() !== undefined, 2_000);
+      expect(closed()?.reason).toBe('failover-exhausted');
+    } finally {
+      meshDead.close();
+    }
+  });
+
+  test('GET http forward retries getLink after a transient failure', async () => {
+    const peers = new FakePeers();
+    peers.links.set(OTHER, dummyLink);
+    peers.failGetLink = 1;
+    const streams = new FakeStreams();
+    streams.nextResponse = new Response('ok', { headers: { 'content-type': 'text/plain' } });
+    const mesh = await bootMesh({ peers, streams, sleep: async () => {} });
+    try {
+      const res = asResponse(
+        await mesh.runtime.handleRequest(
+          new Request(`http://localhost/n/${OTHER}/api/devices`),
+          dummyServer
+        )
+      );
+      expect(res.status).toBe(200);
+      expect(await res.text()).toBe('ok');
+    } finally {
+      mesh.close();
+    }
+  });
 });
+
+function encodeHelloFrame(): Uint8Array {
+  const payload = wsBorsh.encodePayload(wsBorsh.schema.HelloC2SSchema, {
+    clientImpl: 'failover-test',
+    clientVersion: 'test',
+    maxFrameBytes: wsBorsh.DEFAULT_MAX_FRAME_BYTES,
+    supportsCompression: false,
+    supportsDiffSnapshot: false,
+  });
+  return wsBorsh.encodeEnvelope(wsBorsh.KIND_HELLO_C2S, payload, 1);
+}
+
+function encodeSubscribeFrame(deviceId: string, paneIds: string[]): Uint8Array {
+  const payload = wsBorsh.encodePayload(wsBorsh.schema.TmuxSubscribePanesSchema, {
+    deviceId,
+    paneIds,
+  });
+  return wsBorsh.encodeEnvelope(wsBorsh.KIND_TMUX_SUBSCRIBE_PANES, payload, 2);
+}
+
+function bytesEqual(a: Uint8Array, b: Uint8Array): boolean {
+  if (a.byteLength !== b.byteLength) return false;
+  for (let i = 0; i < a.byteLength; i += 1) {
+    if (a[i] !== b[i]) return false;
+  }
+  return true;
+}
+
+async function openForwardWs(
+  runtime: Awaited<ReturnType<typeof bootMesh>>['runtime'],
+  _peers: FakePeers,
+  _streams: FakeStreams,
+  nodeId: string
+): Promise<{
+  ws: MeshServerWebSocket;
+  closed: () => { code?: number; reason?: string } | undefined;
+}> {
+  let data: { kind?: string } | undefined;
+  const server = {
+    upgrade(_req: Request, opts?: { data?: unknown }) {
+      data = opts?.data as typeof data;
+      return true;
+    },
+  };
+  await runtime.handleRequest(
+    new Request(`http://localhost/n/${nodeId}/ws`, {
+      headers: { cookie: `tmex_s_${nodeId}=remote-sid` },
+    }),
+    server
+  );
+  let browserClosed: { code?: number; reason?: string } | undefined;
+  const ws = {
+    data: data ?? { kind: MESH_FORWARD_WS_KIND },
+    send() {
+      return 0;
+    },
+    close(code?: number, reason?: string) {
+      browserClosed = { code, reason };
+    },
+  } as MeshServerWebSocket;
+  runtime.handleWebSocket.open(ws);
+  return { ws, closed: () => browserClosed };
+}

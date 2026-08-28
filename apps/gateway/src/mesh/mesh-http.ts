@@ -54,6 +54,8 @@ export type MeshHttpRuntimeOptions = {
   selfStatus?: () => UplinkStatus;
   listedNames?: () => ReadonlyArray<{ id: string; name: string }>;
   selfName?: () => string | null;
+  sleep?: (ms: number, signal?: AbortSignal) => Promise<void>;
+  streamLog?: (line: string) => void;
 };
 
 const STATIC_PREFIXES = ['/assets/', '/static/', '/favicon', '/manifest'];
@@ -96,6 +98,8 @@ export class MeshHttpRuntime {
       nodeId: opts.nodeId,
       peers: opts.peers,
       streams: opts.streams,
+      sleep: opts.sleep,
+      log: opts.streamLog,
     });
     this.mesh = new MeshRoutes({
       roles: opts.roles,

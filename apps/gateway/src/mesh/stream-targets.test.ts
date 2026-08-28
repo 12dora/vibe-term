@@ -212,6 +212,22 @@ describe('http/ws stream targets', () => {
     expect(unknown.status).toBe(404);
   });
 
+  test('openHttpStream rejects when the link dies before the response head', async () => {
+    const [a, b] = createInMemoryLinkPair();
+    b.onStream((stream) => {
+      stream.reset('link-down');
+    });
+    await expect(
+      openHttpStream(a, {
+        type: 'http',
+        method: 'GET',
+        path: '/api/devices',
+        origin: 'http://entry',
+        auth: null,
+      })
+    ).rejects.toThrow();
+  });
+
   test('openHttpStream strips hop-by-hop and identity headers from OPEN', async () => {
     const [a, b] = createInMemoryLinkPair();
     let openHeaders: Record<string, string> = {};
