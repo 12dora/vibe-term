@@ -38,12 +38,12 @@ function forgetTransferUid(transferId: string): void {
   transferUids.delete(transferId);
 }
 
-function cleanupUpload(id: string): void {
+export function cleanupUpload(id: string): void {
   removeUploadSession(id);
   forgetTransferUid(id);
 }
 
-function cleanupDownload(id: string): void {
+export function cleanupDownload(id: string): void {
   removeDownloadSession(id);
   forgetTransferUid(id);
 }

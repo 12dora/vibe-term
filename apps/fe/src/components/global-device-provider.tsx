@@ -1,38 +1,31 @@
 import { useQuery } from '@tanstack/react-query';
 import { type DevicesResponse, fetchDevices } from '@tmex/api-client';
 import type { DeviceConnectionAdapter } from '@tmex/panels';
-import { type HostServices, hostAppPath } from '@tmex/stores';
+import { type AppRuntime, type HostServices, hostAppPath } from '@tmex/stores';
 import { useRuntime, useTmuxStore } from '@tmex/stores/react';
 import {
-  type Dispatch,
-  type SetStateAction,
   createContext,
   useCallback,
   useContext,
   useEffect,
   useMemo,
-  useState,
+  useSyncExternalStore,
 } from 'react';
 import { matchPath, useLocation } from 'react-router';
-import {
-  connectedDevicesKey,
-  disconnectedDevicesKey,
-  pruneUnknownDeviceIds,
-  readPersistedIds,
-  withDeviceId,
-  withoutDeviceId,
-  writePersistedIds,
-} from './device-connection-persistence';
 import {
   type DeviceRuntimeSlices,
   createDeviceConnectionSnapshot,
   deriveDeviceConnectionStatus,
   isDeviceConnected,
-  selectRestorableDeviceIds,
-  selectStaleSubscribedDeviceIds,
   shouldEnsureDeviceSubscription,
   shouldEnsureRouteDeviceSubscription,
 } from './device-connection-status';
+import {
+  type DeviceIntentSnapshot,
+  type DeviceIntentStore,
+  deviceIntentStore,
+  reconcileDeviceSubscriptions,
+} from './device-intent-store';
 
 export type { DeviceIdStorage } from './device-connection-persistence';
 export {
@@ -76,64 +69,19 @@ export function useGlobalDevice(): GlobalDeviceContextValue {
   return ctx;
 }
 
-type DeviceIdSetState = [Set<string>, Dispatch<SetStateAction<Set<string>>>];
-
-function usePersistedDeviceIds(storageKey: string): DeviceIdSetState {
-  const [ids, setIds] = useState<Set<string>>(() => readPersistedIds(storageKey));
-  useEffect(() => {
-    writePersistedIds(storageKey, ids);
-  }, [storageKey, ids]);
-  return [ids, setIds];
-}
-
-interface DeviceIntentState {
-  persistedConnectedDeviceIds: Set<string>;
-  explicitlyDisconnectedDeviceIds: Set<string>;
-  markConnectIntent: (deviceId: string) => void;
-  markDisconnectIntent: (deviceId: string) => void;
-  pruneToKnownDevices: (knownDeviceIds: ReadonlySet<string>) => void;
-}
-
 // 连接意图按 runtime 的 storagePrefix 隔离：self 前缀为空（沿用旧键），其余 node 各自成键，
 // 免得多 node 的同名设备 id 在同一个 localStorage 键里互相覆盖。
-function useDeviceIntentState(storagePrefix: string): DeviceIntentState {
-  const [persistedConnectedDeviceIds, setPersistedConnectedDeviceIds] = usePersistedDeviceIds(
-    connectedDevicesKey(storagePrefix)
-  );
-  const [explicitlyDisconnectedDeviceIds, setExplicitlyDisconnectedDeviceIds] =
-    usePersistedDeviceIds(disconnectedDevicesKey(storagePrefix));
-
-  const markConnectIntent = useCallback(
-    (deviceId: string) => {
-      setExplicitlyDisconnectedDeviceIds((prev) => withoutDeviceId(prev, deviceId) ?? prev);
-      setPersistedConnectedDeviceIds((prev) => withDeviceId(prev, deviceId) ?? prev);
-    },
-    [setExplicitlyDisconnectedDeviceIds, setPersistedConnectedDeviceIds]
-  );
-
-  const markDisconnectIntent = useCallback(
-    (deviceId: string) => {
-      setExplicitlyDisconnectedDeviceIds((prev) => withDeviceId(prev, deviceId) ?? prev);
-      setPersistedConnectedDeviceIds((prev) => withoutDeviceId(prev, deviceId) ?? prev);
-    },
-    [setExplicitlyDisconnectedDeviceIds, setPersistedConnectedDeviceIds]
-  );
-
-  const pruneToKnownDevices = useCallback(
-    (knownDeviceIds: ReadonlySet<string>) => {
-      setPersistedConnectedDeviceIds((prev) => pruneUnknownDeviceIds(prev, knownDeviceIds));
-      setExplicitlyDisconnectedDeviceIds((prev) => pruneUnknownDeviceIds(prev, knownDeviceIds));
-    },
-    [setPersistedConnectedDeviceIds, setExplicitlyDisconnectedDeviceIds]
-  );
-
-  return {
-    persistedConnectedDeviceIds,
-    explicitlyDisconnectedDeviceIds,
-    markConnectIntent,
-    markDisconnectIntent,
-    pruneToKnownDevices,
-  };
+//
+// 状态本体在 React 之外（见 `device-intent-store.ts`），这里只做订阅：
+//  - storagePrefix 变了（同一挂载下路由从 `/n/A` 切到 `/n/B`）就换订阅源，绝不搬运旧集合；
+//  - 同一个 node 的多份 provider 拿到同一个实例，任一处的意图变更对其余实例立即可见。
+function useDeviceIntent(storagePrefix: string): {
+  store: DeviceIntentStore;
+  snapshot: DeviceIntentSnapshot;
+} {
+  const store = deviceIntentStore(storagePrefix);
+  const snapshot = useSyncExternalStore(store.subscribe, store.getSnapshot, store.getSnapshot);
+  return { store, snapshot };
 }
 
 function useDeviceStatusSlices(): DeviceRuntimeSlices {
@@ -162,7 +110,7 @@ function useDeviceStoreActions(): DeviceStoreActions {
 interface ReconcileParams {
   devicesData: DevicesResponse | undefined;
   connectedDevices: ReadonlySet<string>;
-  intent: DeviceIntentState;
+  intentStore: DeviceIntentStore;
   connectTmuxDevice: (deviceId: string) => void;
   disconnectTmuxDevice: (deviceId: string) => void;
 }
@@ -171,79 +119,65 @@ interface ReconcileParams {
 function useReconcileWithDeviceList({
   devicesData,
   connectedDevices,
-  intent,
+  intentStore,
   connectTmuxDevice,
   disconnectTmuxDevice,
 }: ReconcileParams): void {
-  const { persistedConnectedDeviceIds, explicitlyDisconnectedDeviceIds, pruneToKnownDevices } =
-    intent;
-
   useEffect(() => {
     if (!devicesData) return;
     const knownDeviceIds = new Set(devicesData.devices.map((device) => device.id));
-    pruneToKnownDevices(knownDeviceIds);
-
-    for (const deviceId of selectStaleSubscribedDeviceIds(connectedDevices, knownDeviceIds)) {
-      disconnectTmuxDevice(deviceId);
-    }
-    const restorable = selectRestorableDeviceIds(
-      persistedConnectedDeviceIds,
-      knownDeviceIds,
-      explicitlyDisconnectedDeviceIds,
-      connectedDevices
-    );
-    for (const deviceId of restorable) {
-      connectTmuxDevice(deviceId);
-    }
-  }, [
-    devicesData,
-    connectedDevices,
-    persistedConnectedDeviceIds,
-    explicitlyDisconnectedDeviceIds,
-    pruneToKnownDevices,
-    connectTmuxDevice,
-    disconnectTmuxDevice,
-  ]);
+    reconcileDeviceSubscriptions(intentStore, knownDeviceIds, connectedDevices, {
+      connectDevice: connectTmuxDevice,
+      disconnectDevice: disconnectTmuxDevice,
+    });
+  }, [devicesData, connectedDevices, intentStore, connectTmuxDevice, disconnectTmuxDevice]);
 }
 
+/**
+ * 当前路由指向的设备自动订阅。意图从 store 现读（而不是渲染期快照）：同一个 node 的另一份
+ * provider 刚刚写下的显式断开，在本 effect 里必须已经可见，否则会立刻把它连回来。
+ */
 function useRouteDeviceSubscription(
   host: HostServices,
   devicesData: DevicesResponse | undefined,
-  ensureDeviceSubscribed: (deviceId: string) => void
+  connectedDevices: ReadonlySet<string>,
+  intentStore: DeviceIntentStore,
+  connectTmuxDevice: (deviceId: string) => void
 ): void {
   const location = useLocation();
   useEffect(() => {
     const currentDeviceId = routeDeviceId(location.pathname, (path) => hostAppPath(host, path));
-    if (shouldEnsureRouteDeviceSubscription(currentDeviceId, devicesData)) {
-      ensureDeviceSubscribed(currentDeviceId);
+    if (!shouldEnsureRouteDeviceSubscription(currentDeviceId, devicesData)) return;
+    const { disconnected } = intentStore.getSnapshot();
+    if (shouldEnsureDeviceSubscription(currentDeviceId, disconnected, connectedDevices)) {
+      connectTmuxDevice(currentDeviceId);
     }
-  }, [location.pathname, devicesData, ensureDeviceSubscribed, host]);
+  }, [location.pathname, devicesData, connectedDevices, intentStore, connectTmuxDevice, host]);
 }
 
 function useIntentActions(
-  intent: DeviceIntentState,
+  intentStore: DeviceIntentStore,
   actions: DeviceStoreActions
 ): Pick<DeviceConnectionAdapter, 'connect' | 'disconnect'> {
-  const { markConnectIntent, markDisconnectIntent } = intent;
   const { connectTmuxDevice, disconnectTmuxDevice, clearDeviceError } = actions;
 
   const connect = useCallback(
     (deviceId: string) => {
       if (!deviceId) return;
-      markConnectIntent(deviceId);
+      intentStore.markConnectIntent(deviceId);
       clearDeviceError(deviceId);
       connectTmuxDevice(deviceId);
     },
-    [markConnectIntent, clearDeviceError, connectTmuxDevice]
+    [intentStore, clearDeviceError, connectTmuxDevice]
   );
 
   const disconnect = useCallback(
     (deviceId: string) => {
       if (!deviceId) return;
-      markDisconnectIntent(deviceId);
+      intentStore.markDisconnectIntent(deviceId);
       disconnectTmuxDevice(deviceId);
     },
-    [markDisconnectIntent, disconnectTmuxDevice]
+    [intentStore, disconnectTmuxDevice]
   );
 
   return { connect, disconnect };
@@ -282,6 +216,26 @@ function useDeviceConnectionAdapter(
   ]);
 }
 
+/**
+ * 对外暴露的自动订阅入口（设备树展开等处调用）。意图与已订阅集合都从 store 现读：
+ * 调用点可能发生在别处刚改完意图之后的同一个 tick 里。
+ */
+function useEnsureDeviceSubscribed(
+  runtime: AppRuntime,
+  intentStore: DeviceIntentStore
+): (deviceId: string) => void {
+  return useCallback(
+    (deviceId: string) => {
+      const tmux = runtime.stores.tmux.getState();
+      const { disconnected } = intentStore.getSnapshot();
+      if (shouldEnsureDeviceSubscription(deviceId, disconnected, tmux.connectedDevices)) {
+        tmux.connectDevice(deviceId);
+      }
+    },
+    [runtime, intentStore]
+  );
+}
+
 interface GlobalDeviceProviderProps {
   children: React.ReactNode;
 }
@@ -290,8 +244,7 @@ export function GlobalDeviceProvider({ children }: GlobalDeviceProviderProps) {
   const runtime = useRuntime();
   const actions = useDeviceStoreActions();
   const slices = useDeviceStatusSlices();
-  const intent = useDeviceIntentState(runtime.storagePrefix);
-  const { explicitlyDisconnectedDeviceIds } = intent;
+  const { store: intentStore, snapshot: intent } = useDeviceIntent(runtime.storagePrefix);
   const { connectedDevices } = slices;
   const { connectTmuxDevice, disconnectTmuxDevice } = actions;
 
@@ -301,32 +254,25 @@ export function GlobalDeviceProvider({ children }: GlobalDeviceProviderProps) {
     throwOnError: false,
   });
 
-  const ensureDeviceSubscribed = useCallback(
-    (deviceId: string) => {
-      if (
-        shouldEnsureDeviceSubscription(deviceId, explicitlyDisconnectedDeviceIds, connectedDevices)
-      ) {
-        connectTmuxDevice(deviceId);
-      }
-    },
-    [explicitlyDisconnectedDeviceIds, connectedDevices, connectTmuxDevice]
-  );
+  const ensureDeviceSubscribed = useEnsureDeviceSubscribed(runtime, intentStore);
 
-  useRouteDeviceSubscription(runtime.host, devicesData, ensureDeviceSubscribed);
+  useRouteDeviceSubscription(
+    runtime.host,
+    devicesData,
+    connectedDevices,
+    intentStore,
+    connectTmuxDevice
+  );
   useReconcileWithDeviceList({
     devicesData,
     connectedDevices,
-    intent,
+    intentStore,
     connectTmuxDevice,
     disconnectTmuxDevice,
   });
 
-  const intentActions = useIntentActions(intent, actions);
-  const connection = useDeviceConnectionAdapter(
-    explicitlyDisconnectedDeviceIds,
-    slices,
-    intentActions
-  );
+  const intentActions = useIntentActions(intentStore, actions);
+  const connection = useDeviceConnectionAdapter(intent.disconnected, slices, intentActions);
 
   const value = useMemo(
     () => ({ ensureDeviceSubscribed, connection }),

@@ -314,3 +314,191 @@ describe('HTTP transfer uid binding', () => {
     expect(getTransferOwner(done?.downloadId ?? '')?.uid).toBe('user-download-1');
   });
 });
+
+describe('transfer uid cleanup', () => {
+  const spies: Array<ReturnType<typeof spyOn>> = [];
+  const transferIds: string[] = [];
+
+  afterEach(() => {
+    for (const id of transferIds) abortTransfer(id);
+    transferIds.length = 0;
+    for (const spy of spies) spy.mockRestore();
+    spies.length = 0;
+  });
+
+  function pinTransferId(): string {
+    const id = crypto.randomUUID();
+    spies.push(spyOn(crypto, 'randomUUID').mockImplementation(() => id));
+    return id;
+  }
+
+  function mockStatDir() {
+    spies.push(
+      spyOn(deviceStorage, 'statFile').mockResolvedValue({
+        ok: true,
+        data: {
+          path: '/tmp',
+          name: 'tmp',
+          type: 'dir',
+          category: 'directory',
+          size: 0,
+          modifiedAt: null,
+          mime: null,
+          isSymlink: false,
+        },
+      })
+    );
+  }
+
+  async function initOwnedUpload(uid: string, size: number): Promise<string> {
+    mockStatDir();
+    const response = await dispatchWithUid('POST', '/api/files/upload/init', uid, {
+      rootId: 'root-1',
+      path: '/tmp',
+      name: 'a.bin',
+      size,
+    });
+    const res = response as Response;
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { uploadId: string };
+    transferIds.push(body.uploadId);
+    return body.uploadId;
+  }
+
+  async function prepareOwnedDownload(uid: string, payload: string): Promise<string> {
+    const dir = mkdtempSync(join(tmpdir(), 'tmex-dl-'));
+    const tmpPath = join(dir, 'f');
+    writeFileSync(tmpPath, Buffer.from(payload));
+    spies.push(
+      spyOn(deviceStorage, 'pullFileFromDevice').mockResolvedValue({
+        ok: true,
+        data: {
+          tmpPath,
+          size: payload.length,
+          name: 'a.bin',
+          mime: 'application/octet-stream',
+          cleanup: () => rmSync(dir, { recursive: true, force: true }),
+        },
+      })
+    );
+    const response = await dispatchWithUid('POST', '/api/files/download/prepare', uid, {
+      rootId: 'root-1',
+      path: '/tmp/a.bin',
+    });
+    const res = response as Response;
+    expect(res.status).toBe(200);
+    const lines = (await res.text())
+      .trim()
+      .split('\n')
+      .map((line) => JSON.parse(line) as { type: string; downloadId?: string });
+    const done = lines.find((line) => line.type === 'done');
+    expect(done?.downloadId).toBeString();
+    transferIds.push(done?.downloadId ?? '');
+    return done?.downloadId ?? '';
+  }
+
+  function expectReusedUploadHasNoUid(transferId: string) {
+    const naked = createUploadSession({ rootId: 'r', destDir: '/d', name: 'b.bin', size: 1 });
+    transferIds.push(naked.id);
+    expect(naked.id).toBe(transferId);
+    expect(getTransferOwner(transferId)?.uid).toBe('');
+  }
+
+  function expectReusedDownloadHasNoUid(transferId: string) {
+    const dir = mkdtempSync(join(tmpdir(), 'tmex-dl-'));
+    const tmpPath = join(dir, 'f');
+    writeFileSync(tmpPath, Buffer.from('x'));
+    const naked = createDownloadSession({
+      tmpPath,
+      size: 1,
+      name: 'b.bin',
+      mime: 'application/octet-stream',
+      cleanup: () => rmSync(dir, { recursive: true, force: true }),
+    });
+    transferIds.push(naked.id);
+    expect(naked.id).toBe(transferId);
+    expect(getTransferOwner(transferId)?.uid).toBe('');
+  }
+
+  test('upload commit forgets uid so a reused transfer id has empty owner', async () => {
+    const transferId = pinTransferId();
+    const bytes = new Uint8Array([1, 2, 3, 4]);
+    expect(await initOwnedUpload('user-commit-1', bytes.byteLength)).toBe(transferId);
+    expect(getTransferOwner(transferId)?.uid).toBe('user-commit-1');
+
+    const put = await dispatchRaw('PUT', `/api/files/upload/${transferId}?offset=0`, bytes);
+    expect((put as Response).status).toBe(200);
+
+    spies.push(
+      spyOn(deviceStorage, 'pushFileToDevice').mockResolvedValue({
+        ok: true,
+        data: { uploaded: 'a.bin' },
+      })
+    );
+    const commit = await dispatch('POST', `/api/files/upload/${transferId}/commit`);
+    const commitRes = commit as Response;
+    expect(commitRes.status).toBe(200);
+    const lines = (await commitRes.text())
+      .trim()
+      .split('\n')
+      .map((line) => JSON.parse(line) as { type: string });
+    expect(lines.some((line) => line.type === 'done')).toBe(true);
+
+    expect(getUploadSession(transferId)).toBeUndefined();
+    expect(getTransferOwner(transferId)).toBeNull();
+    expectReusedUploadHasNoUid(transferId);
+  });
+
+  test('download content stream end forgets uid so a reused transfer id has empty owner', async () => {
+    const transferId = pinTransferId();
+    expect(await prepareOwnedDownload('user-dl-content-1', 'hello')).toBe(transferId);
+    expect(getTransferOwner(transferId)?.uid).toBe('user-dl-content-1');
+
+    const response = await dispatch('GET', `/api/files/download/${transferId}/content`);
+    const res = response as Response;
+    expect(res.status).toBe(200);
+    expect(await res.text()).toBe('hello');
+
+    expect(getDownloadSession(transferId)).toBeUndefined();
+    expect(getTransferOwner(transferId)).toBeNull();
+    expectReusedDownloadHasNoUid(transferId);
+  });
+
+  test('abort via DELETE forgets uid so a reused transfer id has empty owner', async () => {
+    const uploadId = pinTransferId();
+    expect(await initOwnedUpload('user-abort-up-1', 4)).toBe(uploadId);
+    expect(getTransferOwner(uploadId)?.uid).toBe('user-abort-up-1');
+
+    const cancelUp = await dispatch('DELETE', `/api/files/upload/${uploadId}`);
+    expect((cancelUp as Response).status).toBe(200);
+    expect(await (cancelUp as Response).json()).toEqual({ success: true });
+    expect(getUploadSession(uploadId)).toBeUndefined();
+    expect(getTransferOwner(uploadId)).toBeNull();
+    expectReusedUploadHasNoUid(uploadId);
+
+    for (const spy of spies) spy.mockRestore();
+    spies.length = 0;
+
+    const downloadId = pinTransferId();
+    expect(await prepareOwnedDownload('user-abort-dl-1', 'bye')).toBe(downloadId);
+    expect(getTransferOwner(downloadId)?.uid).toBe('user-abort-dl-1');
+
+    const cancelDl = await dispatch('DELETE', `/api/files/download/${downloadId}`);
+    expect((cancelDl as Response).status).toBe(200);
+    expect(await (cancelDl as Response).json()).toEqual({ success: true });
+    expect(getDownloadSession(downloadId)).toBeUndefined();
+    expect(getTransferOwner(downloadId)).toBeNull();
+    expectReusedDownloadHasNoUid(downloadId);
+  });
+
+  test('abortTransfer forgets uid so a reused transfer id has empty owner', async () => {
+    const transferId = pinTransferId();
+    expect(await initOwnedUpload('user-abort-hook-1', 2)).toBe(transferId);
+    expect(getTransferOwner(transferId)?.uid).toBe('user-abort-hook-1');
+
+    abortTransfer(transferId);
+    expect(getUploadSession(transferId)).toBeUndefined();
+    expect(getTransferOwner(transferId)).toBeNull();
+    expectReusedUploadHasNoUid(transferId);
+  });
+});

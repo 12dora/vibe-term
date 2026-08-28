@@ -11,8 +11,6 @@ import {
   createUploadSession,
   getDownloadSession,
   getUploadSession,
-  removeDownloadSession,
-  removeUploadSession,
 } from '../files/transfer-session';
 import { t } from '../i18n';
 import { requestDispatchContext } from '../mesh/types';
@@ -23,7 +21,7 @@ import {
   parseNonNegativeSafeInt,
   streamTempFile,
 } from './file-http';
-import { rememberTransferUid } from './files';
+import { cleanupDownload, cleanupUpload, rememberTransferUid } from './files';
 import { json, readJsonObjectBody } from './http';
 import { type ApiRoute, route } from './route';
 
@@ -88,17 +86,17 @@ function handleUploadCommit(id: string): Response {
         .catch((e) => emit({ type: 'error', code: 'unknown', detail: String(e) }))
         .finally(() => {
           close();
-          removeUploadSession(id);
+          cleanupUpload(id);
         });
     },
     cancel() {
-      removeUploadSession(id);
+      cleanupUpload(id);
     },
   });
 }
 
 function handleUploadCancel(id: string): Response {
-  removeUploadSession(id);
+  cleanupUpload(id);
   return json({ success: true });
 }
 
@@ -143,7 +141,7 @@ function handleDownloadPrepare(req: Request): Response {
 function handleDownloadContent(id: string): Response {
   const session = getDownloadSession(id);
   if (!session) return codeError('not_found');
-  const body = streamTempFile(session.tmpPath, () => removeDownloadSession(id));
+  const body = streamTempFile(session.tmpPath, () => cleanupDownload(id));
   if (!body) return codeError('unknown');
   return new Response(body, {
     status: 200,
@@ -152,7 +150,7 @@ function handleDownloadContent(id: string): Response {
 }
 
 function handleDownloadCancel(id: string): Response {
-  removeDownloadSession(id);
+  cleanupDownload(id);
   return json({ success: true });
 }
 
