@@ -44,12 +44,18 @@ export const UPLINK_PING_INTERVAL_MS = 15_000;
 export const UPLINK_MISSED_PONG_LIMIT = 3;
 export const UPLINK_BACKOFF_MIN_MS = 1_000;
 export const UPLINK_BACKOFF_MAX_MS = 60_000;
-export const UPLINK_CONNECT_TIMEOUT_MS = 10_000;
+export const UPLINK_CONNECT_TIMEOUT_MS = 20_000;
 export const UPLINK_AUTH_TIMEOUT_MS = 10_000;
 export const UPLINK_STABLE_UPTIME_MS = 30_000;
 export const UPLINK_KEY_LOG_ACK_TIMEOUT_MS = 10_000;
 export const UPLINK_KEY_LOG_RETRY_LIMIT = 3;
 export const UPLINK_CTL_WARN_INTERVAL_MS = 5_000;
+export const UPLINK_CONNECT_LOG_INTERVAL_MS = 30_000;
+
+export type UplinkLastConnectError = {
+  reason: string;
+  at: number;
+};
 
 export type UplinkWsFactory = (
   url: string
@@ -126,9 +132,8 @@ function waitSocketOpen(
     }
     signal.addEventListener('abort', onAbort);
     socket.addEventListener('open', () => finish(), { once: true });
-    socket.addEventListener('close', (ev) => finish(new Error(ev.reason || 'ws-closed')), {
-      once: true,
-    });
+    socket.addEventListener('close', (ev) => finish(socketCloseError(ev)), { once: true });
+    socket.addEventListener('error', (ev) => finish(socketErrorEvent(ev)), { once: true });
   });
 }
 
@@ -196,8 +201,12 @@ export class UplinkClient {
   private readonly pendingAcks = new Map<string, (ack: UplinkKeyLogAck) => void>();
   private keyLogForked = false;
   private onlineAt = 0;
+  private connectingAt = 0;
+  private lastTearDownReason = '';
+  private readonly lastDiagAt = new Map<string, number>();
   private customConnect: ((signal: AbortSignal) => Promise<void>) | null = null;
   lastKeyLogHead: { seq: bigint; hash: Uint8Array } | null = null;
+  lastConnectError: UplinkLastConnectError | null = null;
 
   constructor(opts: UplinkClientOptions) {
     this.hubUrl = opts.hubUrl;
@@ -215,7 +224,9 @@ export class UplinkClient {
     this.wsFactory = opts.wsFactory ?? defaultWsFactory;
     this.scheduler = opts.scheduler ?? defaultScheduler();
     this.pingIntervalMs = opts.pingIntervalMs ?? UPLINK_PING_INTERVAL_MS;
-    this.connectTimeoutMs = opts.connectTimeoutMs ?? UPLINK_CONNECT_TIMEOUT_MS;
+    this.connectTimeoutMs =
+      opts.connectTimeoutMs ??
+      envPositiveMs('UPLINK_CONNECT_TIMEOUT_MS', UPLINK_CONNECT_TIMEOUT_MS);
     this.authTimeoutMs = opts.authTimeoutMs ?? UPLINK_AUTH_TIMEOUT_MS;
     this.keyLogTimeoutMs = opts.keyLogTimeoutMs ?? UPLINK_KEY_LOG_ACK_TIMEOUT_MS;
     this.keyLogRetryLimit = opts.keyLogRetryLimit ?? UPLINK_KEY_LOG_RETRY_LIMIT;
@@ -248,6 +259,7 @@ export class UplinkClient {
     if (!this.stopAbort) {
       this.stopAbort = new AbortController();
     }
+    if (this.state === 'offline') this.setState('connecting');
     const effective = signal ?? this.stopAbort.signal;
     const previousGeneration = this.connectGeneration;
     const previousApplier = [...(this.applierTasks.get(previousGeneration) ?? [])];
@@ -339,7 +351,19 @@ export class UplinkClient {
 
   private setState(state: UplinkState): void {
     if (this.state === state) return;
+    const prev = this.state;
+    if (state === 'connecting') this.connectingAt = this.scheduler.now();
     this.state = state;
+    if (state === 'online') {
+      this.lastTearDownReason = '';
+      this.logDiag(
+        'online',
+        `[uplink] online hub=${this.hubHost} after_ms=${this.scheduler.now() - this.connectingAt}`
+      );
+    } else if (prev === 'online') {
+      const reason = sanitizeUplinkReason(this.lastTearDownReason || 'disconnected');
+      this.logDiag(`offline:${reason}`, `[uplink] offline reason=${reason}`);
+    }
     for (const cb of this.stateListeners) {
       try {
         cb(state);
@@ -352,6 +376,7 @@ export class UplinkClient {
   private async runLoop(signal: AbortSignal): Promise<void> {
     let attempt = 0;
     while (!signal.aborted) {
+      this.connectingAt = this.scheduler.now();
       this.setState('connecting');
       try {
         if (this.customConnect) {
@@ -363,7 +388,8 @@ export class UplinkClient {
         await this.waitUntilClosed(signal);
         if (signal.aborted) return;
         const uptime = this.scheduler.now() - this.onlineAt;
-        this.tearDownLink('disconnected');
+        const offlineReason = this.lastTearDownReason || 'disconnected';
+        this.tearDownLink(offlineReason);
         this.setState('offline');
         if (uptime >= UPLINK_STABLE_UPTIME_MS) attempt = 0;
         const delay = backoffDelayMs(attempt, UPLINK_BACKOFF_MIN_MS, UPLINK_BACKOFF_MAX_MS);
@@ -373,11 +399,14 @@ export class UplinkClient {
         } catch {
           return;
         }
-      } catch {
+      } catch (err) {
         this.tearDownLink('connect-failed');
         this.setState('offline');
         if (signal.aborted) return;
+        const reason = classifyUplinkConnectError(err);
         const delay = backoffDelayMs(attempt, UPLINK_BACKOFF_MIN_MS, UPLINK_BACKOFF_MAX_MS);
+        this.lastConnectError = { reason, at: this.scheduler.now() };
+        if (reason !== 'aborted') this.logConnectFailed(attempt + 1, reason, delay);
         attempt += 1;
         try {
           await this.scheduler.sleep(delay, signal);
@@ -389,11 +418,50 @@ export class UplinkClient {
   }
 
   private async connectOnce(signal: AbortSignal): Promise<void> {
-    const url = uplinkWsUrl(this.hubUrl);
-    const ws = await this.wsFactory(url);
-    await waitSocketOpen(ws, signal, this.connectTimeoutMs);
-    const link = new WebSocketLink(ws, { role: 'initiator' });
-    await this.connectWithLink(link, signal);
+    const timeout = new AbortController();
+    const timer = setTimeout(
+      () => timeout.abort(new Error('connect-timeout')),
+      this.connectTimeoutMs
+    );
+    const onParentAbort = () => {
+      if (!timeout.signal.aborted) timeout.abort(signal.reason);
+    };
+    if (signal.aborted) onParentAbort();
+    else signal.addEventListener('abort', onParentAbort, { once: true });
+    try {
+      const url = uplinkWsUrl(this.hubUrl);
+      const ws = await this.wsFactory(url);
+      if (timeout.signal.aborted) {
+        closeTransport(ws);
+        throw new Error('connect-timeout');
+      }
+      await waitSocketOpen(ws, timeout.signal, this.connectTimeoutMs);
+      const link = new WebSocketLink(ws, { role: 'initiator' });
+      await this.connectWithLink(link, timeout.signal);
+    } catch (err) {
+      if (timeout.signal.aborted && !signal.aborted) {
+        throw new Error('connect-timeout');
+      }
+      throw err;
+    } finally {
+      clearTimeout(timer);
+      signal.removeEventListener('abort', onParentAbort);
+    }
+  }
+
+  private logConnectFailed(attempt: number, reason: string, nextRetryMs: number): void {
+    this.logDiag(
+      `connect:${reason}`,
+      `[uplink] connect failed hub=${this.hubHost} attempt=${attempt} reason=${reason} next_retry_ms=${nextRetryMs}`
+    );
+  }
+
+  private logDiag(key: string, line: string): void {
+    const now = this.scheduler.now();
+    const prev = this.lastDiagAt.get(key) ?? Number.NEGATIVE_INFINITY;
+    if (now - prev < UPLINK_CONNECT_LOG_INTERVAL_MS) return;
+    this.lastDiagAt.set(key, now);
+    console.warn(line);
   }
 
   private bindLink(link: LinkSession, generation: number): void {
@@ -449,7 +517,8 @@ export class UplinkClient {
           resolve();
         }
       };
-      const onAbort = () => finish(new Error('aborted'));
+      const onAbort = () =>
+        finish(signal.reason instanceof Error ? signal.reason : new Error('aborted'));
       if (signal.aborted) {
         clearTimeout(timer);
         this.authPhase = 'idle';
@@ -1128,6 +1197,7 @@ export class UplinkClient {
   }
 
   private tearDownLink(reason: string): void {
+    this.lastTearDownReason = reason;
     this.resetConnectionState(reason);
     const link = this.link;
     this.link = null;
@@ -1184,6 +1254,133 @@ export function stripCtlControlChars(text: string): string {
     if (code >= 32 && code !== 127) out += ch;
   }
   return out;
+}
+
+export function classifyUplinkConnectError(err: unknown): string {
+  const closeCode = readCloseCode(err);
+  if (closeCode != null) {
+    if (closeCode === 1015) return 'tls';
+    if (closeCode >= 4400 && closeCode <= 4499) return `http_${closeCode}`;
+    if (closeCode >= 400 && closeCode <= 599) return `http_${closeCode}`;
+  }
+
+  const nodeCode = readNodeErrorCode(err);
+  const message = stripCtlControlChars(err instanceof Error ? err.message : String(err));
+  const blob = `${nodeCode} ${message}`.toLowerCase();
+
+  if (
+    /\b(enotfound|eai_again|getaddrinfo|dns)\b/.test(blob) ||
+    blob.includes('name not resolved') ||
+    blob.includes('nodename nor servname')
+  ) {
+    return 'dns';
+  }
+  if (
+    /\b(econnrefused|econnreset)\b/.test(blob) ||
+    blob.includes('connection refused') ||
+    blob.includes('connect refused')
+  ) {
+    return 'refused';
+  }
+  if (
+    blob.includes('connect-timeout') ||
+    blob.includes('auth-timeout') ||
+    /\b(etimedout|timeout|timed out)\b/.test(blob)
+  ) {
+    return 'timeout';
+  }
+  if (
+    /\b(tls|ssl|cert_|err_tls|err_cert)\b/.test(blob) ||
+    blob.includes('certificate') ||
+    blob.includes('self signed') ||
+    blob.includes('self-signed') ||
+    blob.includes('unable to verify') ||
+    blob.includes('hostname mismatch') ||
+    blob.includes('altname')
+  ) {
+    return 'tls';
+  }
+  const http =
+    blob.match(/\bhttp[_\s-]+([1-5]\d{2})\b/) ?? blob.match(/\b(4401|4403|401|403|404|502|503)\b/);
+  if (http?.[1]) return `http_${http[1]}`;
+  if (
+    /\b(unauthorized|unauthenticated|unknown-cert|revoked|bad-cert|bad-sig|bad-nonce|auth_rejected)\b/.test(
+      blob
+    ) ||
+    blob.includes('auth reject') ||
+    blob.includes('auth failed')
+  ) {
+    return 'auth_rejected';
+  }
+  if (
+    blob.includes('protocol') ||
+    blob.includes('ws-closed') ||
+    blob.includes('link-closed') ||
+    blob.includes('invalid frame') ||
+    blob.includes('bad upgrade')
+  ) {
+    return 'protocol';
+  }
+  if (blob.includes('aborted')) return 'aborted';
+  return 'unknown';
+}
+
+function readCloseCode(err: unknown): number | null {
+  if (!err || typeof err !== 'object') return null;
+  const closeCode = (err as { closeCode?: unknown }).closeCode;
+  if (typeof closeCode === 'number' && Number.isFinite(closeCode)) return closeCode;
+  const message = err instanceof Error ? err.message : '';
+  const match = message.match(/\bws-closed (\d+)/);
+  if (!match?.[1]) return null;
+  const parsed = Number.parseInt(match[1], 10);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function readNodeErrorCode(err: unknown): string {
+  if (!err || typeof err !== 'object') return '';
+  const code = (err as { code?: unknown }).code;
+  return typeof code === 'string' ? code : '';
+}
+
+function sanitizeUplinkReason(value: string): string {
+  const trimmed = stripCtlControlChars(value).slice(0, 64);
+  if (trimmed && /^[a-zA-Z0-9_.:-]+$/.test(trimmed)) return trimmed;
+  return classifyUplinkConnectError(new Error(trimmed));
+}
+
+function socketCloseError(ev: Event | { code?: number; reason?: string }): Error {
+  const rec = ev as { code?: number; reason?: string };
+  const code = typeof rec.code === 'number' ? rec.code : 0;
+  const reason = typeof rec.reason === 'string' ? stripCtlControlChars(rec.reason) : '';
+  const err = new Error(reason ? `ws-closed ${code} ${reason}` : `ws-closed ${code}`);
+  (err as Error & { closeCode: number }).closeCode = code;
+  return err;
+}
+
+function socketErrorEvent(ev: Event | { error?: unknown; message?: string }): Error {
+  const rec = ev as { error?: unknown; message?: string };
+  if (rec.error instanceof Error) return rec.error;
+  if (typeof rec.message === 'string' && rec.message) {
+    return new Error(stripCtlControlChars(rec.message));
+  }
+  return new Error('ws-error');
+}
+
+function closeTransport(ws: WebSocketTransportInput): void {
+  try {
+    if (isServerSocketAdapter(ws)) ws.close(1000, 'connect-timeout');
+    else (ws as WebSocket).close(1000, 'connect-timeout');
+  } catch {
+    // ignore
+  }
+}
+
+function envPositiveMs(name: string, fallback: number): number {
+  const raw = process.env[name]?.trim();
+  if (!raw) return fallback;
+  const n = Number.parseInt(raw, 10);
+  if (!Number.isFinite(n) || n <= 0) return fallback;
+  return n;
 }
 
 export function mapUplinkCtlError(kind: 'decode' | 'handler', err: unknown): string {

@@ -13,7 +13,12 @@ import { createMigratedAuthDb } from '../auth/test-db';
 import { UserStore } from '../auth/user-store';
 import { ImmediateScheduler, fakeSocketPair, seedUser, waitUntil } from './test-support';
 import type { KeyLogApplier, KeyLogForkEvent, UplinkStatus } from './types';
-import { UplinkClient } from './uplink-client';
+import {
+  UPLINK_CONNECT_LOG_INTERVAL_MS,
+  UPLINK_CONNECT_TIMEOUT_MS,
+  UplinkClient,
+  classifyUplinkConnectError,
+} from './uplink-client';
 import { type UplinkNodeList, decodeUplinkCtl, encodeUplinkCtl } from './uplink-protocol';
 
 function status(over: Partial<UplinkStatus> = {}): UplinkStatus {
@@ -298,6 +303,204 @@ describe('UplinkClient', () => {
     hub.ctl.send(encodeUplinkCtl({ t: 'auth.challenge', nonce: encodeBase64url(randomBytes(16)) }));
     await new Promise((resolve) => setTimeout(resolve, 40));
     expect(received.some((row) => row.includes('auth.response'))).toBe(false);
+  });
+
+  test('connect failure logs a classified reason and retry delay once per 30s', async () => {
+    const { db, close } = createMigratedAuthDb();
+    fixtures.push({ close });
+    const userStore = new UserStore(db);
+    seedUser(userStore);
+    const scheduler = new YieldingScheduler();
+    const { lines, restore } = captureConsoleWarn();
+    const err = Object.assign(new Error('connect ECONNREFUSED 127.0.0.1:9883'), {
+      code: 'ECONNREFUSED',
+    });
+    const client = new UplinkClient({
+      hubUrl: 'https://hub.example.com:8443',
+      identity: { nodeId: 'ab'.repeat(16), edSecretKey: randomBytes(32) },
+      userId: 'user-1',
+      keyLogApplier: dummyApplier(),
+      userStore,
+      statusProvider: () => status(),
+      scheduler,
+      wsFactory: () => {
+        throw err;
+      },
+    });
+    fixtures.push({
+      close,
+      stop: async () => {
+        restore();
+        await client.stop();
+      },
+    });
+    client.start();
+    await waitUntil(() => scheduler.sleeps >= 3);
+    const failed = lines.filter((row) => row.includes('[uplink] connect failed'));
+    expect(failed.length).toBe(1);
+    expect(failed[0]).toMatch(
+      /\[uplink] connect failed hub=hub\.example\.com:8443 attempt=1 reason=refused next_retry_ms=\d+/
+    );
+    expect(failed[0]?.includes('ECONNREFUSED')).toBe(false);
+    expect(client.lastConnectError?.reason).toBe('refused');
+    expect(client.lastConnectError?.at).toBe(scheduler.nowMs);
+
+    scheduler.nowMs += UPLINK_CONNECT_LOG_INTERVAL_MS;
+    await waitUntil(
+      () => lines.filter((row) => row.includes('[uplink] connect failed')).length >= 2
+    );
+    expect(lines.filter((row) => row.includes('[uplink] connect failed')).length).toBe(2);
+  });
+
+  test('connect failure logs never include tokens or full URLs', async () => {
+    const { db, close } = createMigratedAuthDb();
+    fixtures.push({ close });
+    const userStore = new UserStore(db);
+    seedUser(userStore);
+    const scheduler = new YieldingScheduler();
+    const { lines, restore } = captureConsoleWarn();
+    const client = new UplinkClient({
+      hubUrl: 'https://hub.example.com',
+      identity: { nodeId: 'ab'.repeat(16), edSecretKey: randomBytes(32) },
+      userId: 'user-1',
+      keyLogApplier: dummyApplier(),
+      userStore,
+      statusProvider: () => status(),
+      scheduler,
+      wsFactory: () => {
+        throw new Error('upgrade failed https://hub.example.com/hub/uplink?token=supersecret');
+      },
+    });
+    fixtures.push({
+      close,
+      stop: async () => {
+        restore();
+        await client.stop();
+      },
+    });
+    client.start();
+    await waitUntil(() => lines.some((row) => row.includes('[uplink] connect failed')));
+    const joined = lines.join('\n');
+    expect(joined.includes('supersecret')).toBe(false);
+    expect(joined.includes('token=')).toBe(false);
+    expect(joined.includes('/hub/uplink')).toBe(false);
+    expect(client.lastConnectError?.reason).toBe('unknown');
+  });
+
+  test('WS close 4401 is logged as http_4401', async () => {
+    const { db, close } = createMigratedAuthDb();
+    fixtures.push({ close });
+    const userStore = new UserStore(db);
+    seedUser(userStore);
+    const scheduler = new YieldingScheduler();
+    const { lines, restore } = captureConsoleWarn();
+    const client = new UplinkClient({
+      hubUrl: 'https://hub.example.com',
+      identity: { nodeId: 'ab'.repeat(16), edSecretKey: randomBytes(32) },
+      userId: 'user-1',
+      keyLogApplier: dummyApplier(),
+      userStore,
+      statusProvider: () => status(),
+      scheduler,
+      wsFactory: () =>
+        ({
+          readyState: 0,
+          addEventListener(type: string, cb: (ev: { code?: number; reason?: string }) => void) {
+            if (type === 'close') {
+              queueMicrotask(() => cb({ code: 4401, reason: 'login required' }));
+            }
+          },
+          close() {},
+        }) as unknown as WebSocket,
+    });
+    fixtures.push({
+      close,
+      stop: async () => {
+        restore();
+        await client.stop();
+      },
+    });
+    client.start();
+    await waitUntil(() => client.lastConnectError != null);
+    expect(client.lastConnectError?.reason).toBe('http_4401');
+    expect(lines.some((row) => /reason=http_4401/.test(row))).toBe(true);
+  });
+
+  test('hung auth handshake hits connect timeout and retries', async () => {
+    const { db, close } = createMigratedAuthDb();
+    fixtures.push({ close });
+    const userStore = new UserStore(db);
+    seedUser(userStore);
+    const scheduler = new YieldingScheduler();
+    const { lines, restore } = captureConsoleWarn();
+    let calls = 0;
+    const client = new UplinkClient({
+      hubUrl: 'https://hub.example.com',
+      identity: { nodeId: 'ab'.repeat(16), edSecretKey: randomBytes(32) },
+      userId: 'user-1',
+      keyLogApplier: dummyApplier(),
+      userStore,
+      statusProvider: () => status(),
+      scheduler,
+      connectTimeoutMs: 40,
+      authTimeoutMs: 5_000,
+      wsFactory: () => {
+        calls += 1;
+        return fakeSocketPair()[0];
+      },
+    });
+    fixtures.push({
+      close,
+      stop: async () => {
+        restore();
+        await client.stop();
+      },
+    });
+    client.start();
+    await waitUntil(() => calls >= 2 && client.lastConnectError != null, 1_500);
+    expect(client.lastConnectError?.reason).toBe('timeout');
+    expect(
+      lines.some((row) => /connect failed .* reason=timeout next_retry_ms=\d+/.test(row))
+    ).toBe(true);
+    expect(scheduler.sleeps).toBeGreaterThanOrEqual(1);
+  });
+
+  test('logs online and offline state transitions', async () => {
+    const { db, close } = createMigratedAuthDb();
+    fixtures.push({ close });
+    const userStore = new UserStore(db);
+    seedUser(userStore);
+    const { lines, restore } = captureConsoleWarn();
+    const [clientWs, hubWs] = fakeSocketPair();
+    const hub = new WebSocketLink(hubWs, { role: 'acceptor' });
+    hub.ctl.onMessage(() => {});
+    const client = new UplinkClient({
+      hubUrl: 'https://hub.example.com',
+      identity: { nodeId: 'ab'.repeat(16), edSecretKey: randomBytes(32) },
+      userId: 'user-1',
+      keyLogApplier: dummyApplier(),
+      userStore,
+      statusProvider: () => status(),
+      wsFactory: () => clientWs,
+    });
+    fixtures.push({
+      close,
+      stop: async () => {
+        restore();
+        await client.stop();
+      },
+    });
+    client.start();
+    await waitUntil(() => client.link !== null);
+    hub.ctl.send(encodeUplinkCtl({ t: 'auth.challenge', nonce: encodeBase64url(randomBytes(32)) }));
+    hub.ctl.send(encodeUplinkCtl({ t: 'auth.ok' }));
+    await waitUntil(() => client.state === 'online');
+    expect(
+      lines.some((row) => /\[uplink] online hub=hub\.example\.com after_ms=\d+/.test(row))
+    ).toBe(true);
+    clientWs.close(1000, 'hub-gone');
+    await waitUntil(() => client.state !== 'online');
+    expect(lines.some((row) => /\[uplink] offline reason=/.test(row))).toBe(true);
   });
 
   test('connect timeout and auth timeout close the socket and back off', async () => {
@@ -2146,3 +2349,63 @@ function dummyApplier() {
     },
   };
 }
+
+function captureConsoleWarn(): { lines: string[]; restore: () => void } {
+  const lines: string[] = [];
+  const orig = console.warn;
+  console.warn = (...args: unknown[]) => {
+    lines.push(args.map(String).join(' '));
+  };
+  return {
+    lines,
+    restore() {
+      console.warn = orig;
+    },
+  };
+}
+
+class YieldingScheduler extends ImmediateScheduler {
+  override async sleep(_ms: number, signal?: AbortSignal): Promise<void> {
+    if (signal?.aborted) throw signal.reason ?? new Error('aborted');
+    this.sleeps += 1;
+    await new Promise<void>((resolve) => setTimeout(resolve, 0));
+    if (signal?.aborted) throw signal.reason ?? new Error('aborted');
+  }
+}
+
+describe('classifyUplinkConnectError', () => {
+  test('maps common causes to stable reason codes', () => {
+    expect(UPLINK_CONNECT_TIMEOUT_MS).toBe(20_000);
+    expect(UPLINK_CONNECT_LOG_INTERVAL_MS).toBe(30_000);
+    expect(
+      classifyUplinkConnectError(
+        Object.assign(new Error('getaddrinfo ENOTFOUND x'), { code: 'ENOTFOUND' })
+      )
+    ).toBe('dns');
+    expect(
+      classifyUplinkConnectError(
+        Object.assign(new Error('connect ECONNREFUSED'), { code: 'ECONNREFUSED' })
+      )
+    ).toBe('refused');
+    expect(classifyUplinkConnectError(new Error('connect-timeout'))).toBe('timeout');
+    expect(classifyUplinkConnectError(new Error('auth-timeout'))).toBe('timeout');
+    expect(classifyUplinkConnectError(new Error('unable to verify the first certificate'))).toBe(
+      'tls'
+    );
+    expect(
+      classifyUplinkConnectError(
+        Object.assign(new Error('certificate has expired'), { code: 'CERT_HAS_EXPIRED' })
+      )
+    ).toBe('tls');
+    expect(classifyUplinkConnectError(new Error('ws-closed 4401 login required'))).toBe(
+      'http_4401'
+    );
+    expect(classifyUplinkConnectError(new Error('HTTP 403 upgrade rejected'))).toBe('http_403');
+    expect(classifyUplinkConnectError(new Error('unauthorized'))).toBe('auth_rejected');
+    expect(classifyUplinkConnectError(new Error('unknown-cert'))).toBe('auth_rejected');
+    expect(classifyUplinkConnectError(new Error('protocol_error'))).toBe('protocol');
+    expect(
+      classifyUplinkConnectError(new Error('https://hub.example.com/hub/uplink?token=supersecret'))
+    ).toBe('unknown');
+  });
+});
