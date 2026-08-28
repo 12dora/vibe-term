@@ -65,6 +65,9 @@ export type HubIo = {
 export const HUB_MANUAL_RESTART_HINT =
   'skipped service restart; restart tmex manually to apply the change';
 
+export const NODE_REVOKED_REJOIN_ERROR =
+  'this node identity was revoked; use a fresh identity (mesh reset / re-init)';
+
 function injectRedeemPop(fetcher: HubFetch | undefined, pop: string): HubFetch {
   const inner = fetcher ?? fetch;
   return (async (input, init) => {
@@ -355,20 +358,30 @@ export async function runHubJoin(
       )
     );
 
-    const redeemed = await redeemEnrollment({
-      baseUrl: hubUrl,
-      certificate: cert.certificateBytes,
-      certSig: cert.certSig,
-      name,
-      fetcher: injectRedeemPop(io.fetcher, pop),
-    });
+    let redeemed: RedeemResponse;
+    try {
+      redeemed = await redeemEnrollment({
+        baseUrl: hubUrl,
+        certificate: cert.certificateBytes,
+        certSig: cert.certSig,
+        name,
+        fetcher: injectRedeemPop(io.fetcher, pop),
+      });
+    } catch (error) {
+      if (error instanceof Error && /\bnode_revoked\b/.test(error.message)) {
+        throw new Error(NODE_REVOKED_REJOIN_ERROR);
+      }
+      throw error;
+    }
+    const admittedCert = assertJoinCertReusable(redeemed, identity.nodeIdHex, identity.edPublicKey);
     const committed = await commitVerifiedJoin(ctx, {
       redeemed,
       expectedRootPublicKey: decoded.rootPublicKey,
       anchorHash: decoded.keyLogHeadHash,
-      certificateBytes: cert.certificateBytes,
+      certificateBytes: admittedCert?.certificateBytes ?? cert.certificateBytes,
       hubUrl,
       identity,
+      admittedCert,
     });
     if (committed.replacedStaleUsername) {
       log(io, t('hub.join.replacedStale', { username: committed.replacedStaleUsername }));
@@ -393,6 +406,24 @@ export async function runHubJoin(
   });
 }
 
+function assertJoinCertReusable(
+  redeemed: RedeemResponse,
+  nodeIdHex: string,
+  edPk: Uint8Array
+): { certificateBytes: Uint8Array; certSig: Uint8Array } | null {
+  const row = redeemed.node_certs.find((cert) => cert.node_id === nodeIdHex);
+  if (!row) return null;
+  if (row.revoked_log_seq != null) {
+    throw new Error(NODE_REVOKED_REJOIN_ERROR);
+  }
+  const certificateBytes = decodeBase64url(row.certificate);
+  const decoded = decodeCertificate(certificateBytes);
+  if (!bytesEqual(decoded.ed_pk, edPk)) {
+    throw new Error('join identity mismatch');
+  }
+  return { certificateBytes, certSig: decodeBase64url(row.cert_sig) };
+}
+
 async function commitVerifiedJoin(
   ctx: LocalAuthContext,
   input: {
@@ -402,6 +433,7 @@ async function commitVerifiedJoin(
     certificateBytes: Uint8Array;
     hubUrl: string;
     identity: Awaited<ReturnType<typeof ensureNodeIdentity>>;
+    admittedCert: { certificateBytes: Uint8Array; certSig: Uint8Array } | null;
   }
 ): Promise<{ replacedStaleUsername?: string }> {
   const records = input.redeemed.user_key_log.map((item) => ({
@@ -426,6 +458,7 @@ async function commitVerifiedJoin(
   assertResponseCertsMatchProjections(input.redeemed, preview.state, genesisUid);
 
   const loaded = await ctx.identityStore.load();
+  const admitted = input.admittedCert;
   const committed = await ctx.userKeys.commitJoin({
     records,
     expectedRootPublicKey: input.expectedRootPublicKey,
@@ -437,12 +470,16 @@ async function commitVerifiedJoin(
       hubUrl: input.hubUrl,
       edPrivateKey: input.identity.edPrivateKey,
       x25519PrivateKey: input.identity.x25519PrivateKey,
-      certificateJson:
-        loaded?.certificateJson ??
-        JSON.stringify({
-          x25519PublicKey: encodeBase64url(input.identity.x25519PublicKey),
-        }),
-      certSig: loaded?.certSig ?? new Uint8Array(0),
+      certificateJson: admitted
+        ? JSON.stringify({
+            x25519PublicKey: encodeBase64url(input.identity.x25519PublicKey),
+            certificate: encodeBase64url(admitted.certificateBytes),
+          })
+        : (loaded?.certificateJson ??
+          JSON.stringify({
+            x25519PublicKey: encodeBase64url(input.identity.x25519PublicKey),
+          })),
+      certSig: admitted?.certSig ?? loaded?.certSig ?? new Uint8Array(0),
       userId: genesisUid,
     },
   });

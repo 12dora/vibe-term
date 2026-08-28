@@ -351,4 +351,89 @@ describe('enroll', () => {
     expect(result?.certificateBytes).toEqual(wanted.certificateBytes);
     expect(result?.certSig).toEqual(wanted.certSig);
   });
+
+  test('skips a second admit and logs already admitted for an existing node_id', async () => {
+    const auth = await openLocalAuth({
+      memory: true,
+      migrationsFolder: MIGRATIONS,
+      env: {
+        TMEX_MASTER_KEY: process.env.TMEX_MASTER_KEY || '',
+        TMEX_ROLES: 'hub,node',
+        TMEX_HUB_PUBLIC_URL: 'https://hub.example',
+      },
+    });
+    handles.push(auth);
+    await runHubUserAdd(parsed, 'frank', {
+      auth,
+      password: 'enroll-pass-word',
+      log: () => undefined,
+    });
+    const identity = await ensureNodeIdentity(auth.identityStore);
+    const user = auth.userStore.getByUsername('frank');
+    if (!user) throw new Error('missing frank');
+    const existing = auth.userStore.getCert(identity.nodeIdHex);
+    if (!existing) throw new Error('missing self cert');
+    const certsBefore = auth.userStore.listCertsByUser(user.id).length;
+    const logs: string[] = [];
+    const result = await runEnroll(parsed, {
+      auth,
+      password: 'enroll-pass-word',
+      log: (message) => logs.push(message),
+      pollIntervalMs: 1,
+      pollRedeemed: async () => ({
+        certificateBytes: existing.certificateBytes,
+        certSig: existing.certSig,
+      }),
+    });
+    expect(result.admitted).toBe(true);
+    expect(logs).toContain('already admitted');
+    expect(logs).not.toContain('node admitted');
+    expect(auth.userStore.listCertsByUser(user.id)).toHaveLength(certsBefore);
+  });
+
+  test('surfaces a key-log rejection instead of printing node admitted', async () => {
+    const auth = await openLocalAuth({
+      memory: true,
+      migrationsFolder: MIGRATIONS,
+      env: {
+        TMEX_MASTER_KEY: process.env.TMEX_MASTER_KEY || '',
+        TMEX_ROLES: 'hub,node',
+        TMEX_HUB_PUBLIC_URL: 'https://hub.example',
+      },
+    });
+    handles.push(auth);
+    await runHubUserAdd(parsed, 'frank', {
+      auth,
+      password: 'enroll-pass-word',
+      log: () => undefined,
+    });
+    const identity = await ensureNodeIdentity(auth.identityStore);
+    const logs: string[] = [];
+    await expect(
+      runEnroll(parsed, {
+        auth,
+        password: 'enroll-pass-word',
+        log: (message) => logs.push(message),
+        pollIntervalMs: 1,
+        pollRedeemed: async () => {
+          const user = auth.userStore.getByUsername('frank');
+          if (!user) throw new Error('missing frank');
+          const realCert = createNodeCertificate(randomBytes(32), {
+            uid: user.id,
+            edPk: identity.edPublicKey,
+            x25519Pk: identity.x25519PublicKey,
+            enrollPk: randomBytes(32),
+            now: Date.now(),
+            nodeId: randomBytes(16),
+          });
+          return {
+            certificateBytes: realCert.certificateBytes,
+            certSig: new Uint8Array(64),
+          };
+        },
+      })
+    ).rejects.toThrow(/admit-node failed: /);
+    expect(logs).not.toContain('node admitted');
+    expect(logs).not.toContain('already admitted');
+  });
 });

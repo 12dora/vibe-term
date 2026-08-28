@@ -20,7 +20,7 @@ import { promptPassword } from '../lib/prompt';
 import { parseTmexRoles } from '../lib/roles';
 import { asString } from '../lib/validate';
 import type { ParsedArgs } from '../types';
-import type { HubIo } from './hub';
+import { type HubIo, NODE_REVOKED_REJOIN_ERROR } from './hub';
 
 export type AdmitCandidate = {
   certificateBytes: Uint8Array;
@@ -38,6 +38,22 @@ export type EnrollIo = HubIo & {
 
 function log(io: EnrollIo | undefined, message: string): void {
   (io?.log ?? console.log)(message);
+}
+
+function existingAdmission(
+  ctx: LocalAuthContext,
+  candidate: AdmitCandidate
+): 'admitted' | 'revoked' | null {
+  let nodeId: string;
+  try {
+    nodeId = nodeIdToHex(decodeCertificate(candidate.certificateBytes).node_id);
+  } catch {
+    return null;
+  }
+  const cert = ctx.userStore.getCert(nodeId);
+  if (!cert) return null;
+  if (cert.revokedLogSeq != null) return 'revoked';
+  return 'admitted';
 }
 
 function sleep(ms: number, signal?: AbortSignal): Promise<void> {
@@ -332,6 +348,15 @@ export async function runEnroll(
       while (!signal?.aborted) {
         const candidate = poll ? await poll() : null;
         if (candidate) {
+          const existing = existingAdmission(ctx, candidate);
+          if (existing === 'revoked') {
+            throw new Error(NODE_REVOKED_REJOIN_ERROR);
+          }
+          if (existing === 'admitted') {
+            log(io, 'already admitted');
+            admitted = true;
+            break;
+          }
           const payload: AdmitNodePayload = {
             authorization_bytes: enrollment.authorizationBytes,
             authorization_sig: enrollment.authorizationSig,

@@ -497,6 +497,7 @@ export class HubRuntime {
       typeof body.name === 'string' && body.name.trim() ? body.name.trim() : null;
     let replayUserId: string | null = null;
     let replacedExisting = false;
+    let alreadyAdmitted = false;
     try {
       this.db.transaction((tx) => {
         const authDb = tx as AuthDb;
@@ -526,6 +527,7 @@ export class HubRuntime {
           throw new RedeemAbort('expired', 400);
         }
         const existing = store.getNode(hexId);
+        const existingCert = store.getCert(hexId);
         if (existing) {
           if (existing.userId !== fresh.userId) {
             throw new RedeemAbort('node_exists', 409);
@@ -537,7 +539,15 @@ export class HubRuntime {
           if (!verifyRedeemPop(body, certificate, existingPk, certBytes)) {
             throw new RedeemAbort('node_exists', 409);
           }
+          if (existingCert?.revokedLogSeq != null || existing.status === 'revoked') {
+            throw new RedeemAbort('node_revoked', 409);
+          }
           detachEnrollmentTokensFromNode(authDb, hexId);
+        } else if (existingCert?.revokedLogSeq != null) {
+          throw new RedeemAbort('node_revoked', 409);
+        }
+        if (existingCert && existingCert.revokedLogSeq === null) {
+          alreadyAdmitted = true;
         }
         const consumed = store.consumeEnrollmentToken(certificate.enroll_pk, {
           nodeId: hexId,
@@ -602,10 +612,17 @@ export class HubRuntime {
     if (replacedExisting) {
       await this.uplink.broadcastNodeList(token.userId);
     }
-    return this.redeemSuccessPayload(replayUserId ?? token.userId);
+    if (replayUserId) {
+      const replayedCert = this.userStore.getCert(hexId);
+      alreadyAdmitted = Boolean(replayedCert && replayedCert.revokedLogSeq === null);
+    }
+    if (alreadyAdmitted) {
+      console.info(`[hub] already admitted node=${hexId}`);
+    }
+    return this.redeemSuccessPayload(replayUserId ?? token.userId, alreadyAdmitted);
   }
 
-  private async redeemSuccessPayload(userId: string): Promise<Response> {
+  private async redeemSuccessPayload(userId: string, alreadyAdmitted: boolean): Promise<Response> {
     const user = this.userStore.getById(userId);
     if (!user) {
       return json({ error: 'user_not_found' }, 500);
@@ -635,6 +652,7 @@ export class HubRuntime {
         authorization_sig: encodeBase64url(c.authorizationSig),
         revoked_log_seq: c.revokedLogSeq,
       })),
+      already_admitted: alreadyAdmitted,
     });
   }
 }

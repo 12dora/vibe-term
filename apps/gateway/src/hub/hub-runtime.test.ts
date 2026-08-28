@@ -659,6 +659,9 @@ describe('HubRuntime HTTP', () => {
         dummyServer
       );
       expect(redeemed?.status).toBe(200);
+      expect((await redeemed?.json()) as { already_admitted?: boolean }).toEqual(
+        expect.objectContaining({ already_admitted: true })
+      );
       expect((await inbox.take()).t).toBe('enroll.redeemed');
       expect(hub.registry.get(entry.nodeId)?.authenticated).toBe(true);
       expect(hub.registry.get(entry.nodeId)?.meta.name).toBe('entry-renamed');
@@ -680,7 +683,7 @@ describe('HubRuntime HTTP', () => {
     }
   });
 
-  test('已吊销节点同身份 re-redeem 接受并标回 enrolled，等待新的 admit-node', async () => {
+  test('已吊销节点同身份 re-redeem 拒绝 node_revoked', async () => {
     const { db, close } = createMigratedAuthDb();
     try {
       const now = 5_000_000;
@@ -737,11 +740,116 @@ describe('HubRuntime HTTP', () => {
         }),
         dummyServer
       );
-      expect(redeemed?.status).toBe(200);
-      expect(userStore.getNode(revoked.nodeId)?.status).toBe('enrolled');
-      expect(userStore.getNode(revoked.nodeId)?.name).toBe('home-again');
+      expect(redeemed?.status).toBe(409);
+      expect(await redeemed?.json()).toEqual({ error: 'node_revoked' });
+      expect(userStore.getNode(revoked.nodeId)?.status).toBe('revoked');
+      expect(userStore.getNode(revoked.nodeId)?.name).toBe('lost');
       expect(userStore.getCert(revoked.nodeId)?.revokedLogSeq).toBe(9);
-      expect(userStore.listNodes().filter((n) => n.id === revoked.nodeId)).toHaveLength(1);
+
+      hub.stop();
+    } finally {
+      close();
+    }
+  });
+
+  test('已 admit 的同身份再 redeem 标记 already_admitted 且不替换证书', async () => {
+    const { db, close } = createMigratedAuthDb();
+    try {
+      const now = 5_500_000;
+      const { hub, user, userStore, service, inbox } = await startAuthedHub(db, () => now);
+      const ed = generateEd25519KeyPair();
+      const x = generateX25519KeyPair();
+      const firstEnroll = await createEnrollment(user.root, {
+        uid: user.id,
+        rootEpoch: 0,
+        now,
+        ttlMs: 10_000,
+      });
+      await hub.handleRequest(
+        new Request('http://hub/api/hub/enrollments', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: enrollmentJson(firstEnroll, now),
+        }),
+        dummyServer
+      );
+      const firstCert = createNodeCertificate(firstEnroll.enrollSk, {
+        uid: user.id,
+        edPk: ed.publicKey,
+        x25519Pk: x.publicKey,
+        enrollPk: firstEnroll.enrollPk,
+        now,
+      });
+      const hexId = nodeIdToHex(firstCert.nodeId);
+      const firstRedeem = await hub.handleRequest(
+        new Request('http://hub/api/hub/enrollments/redeem', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: redeemJson(firstCert, 'home'),
+        }),
+        dummyServer
+      );
+      expect(firstRedeem?.status).toBe(200);
+      expect((await firstRedeem?.json()) as { already_admitted?: boolean }).toEqual(
+        expect.objectContaining({ already_admitted: false })
+      );
+      expect((await inbox.take()).t).toBe('enroll.redeemed');
+      const admitted = await service.signAndApply(user.id, user.root, {
+        type: 'admit-node',
+        payload: encodeAdmitNodePayload({
+          authorization_bytes: firstEnroll.authorizationBytes,
+          authorization_sig: firstEnroll.authorizationSig,
+          certificate_bytes: firstCert.certificateBytes,
+          cert_sig: firstCert.certSig,
+        }),
+      });
+      expect(admitted.ok).toBe(true);
+      const admittedBytes = userStore.getCert(hexId)?.certificateBytes;
+      expect(admittedBytes).toEqual(firstCert.certificateBytes);
+
+      const secondEnroll = await createEnrollment(user.root, {
+        uid: user.id,
+        rootEpoch: 0,
+        now,
+        ttlMs: 10_000,
+      });
+      await hub.handleRequest(
+        new Request('http://hub/api/hub/enrollments', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: enrollmentJson(secondEnroll, now),
+        }),
+        dummyServer
+      );
+      const secondCert = createNodeCertificate(secondEnroll.enrollSk, {
+        uid: user.id,
+        edPk: ed.publicKey,
+        x25519Pk: x.publicKey,
+        enrollPk: secondEnroll.enrollPk,
+        now,
+        nodeId: firstCert.nodeId,
+      });
+      const secondRedeem = await hub.handleRequest(
+        new Request('http://hub/api/hub/enrollments/redeem', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: redeemJson(secondCert, 'home-2', '1.1.0', redeemPop(ed.secretKey, secondCert)),
+        }),
+        dummyServer
+      );
+      expect(secondRedeem?.status).toBe(200);
+      const secondBody = (await secondRedeem?.json()) as {
+        already_admitted?: boolean;
+        node_certs: Array<{ node_id: string; certificate: string }>;
+      };
+      expect(secondBody.already_admitted).toBe(true);
+      expect(secondBody.node_certs.find((c) => c.node_id === hexId)?.certificate).toBe(
+        encodeBase64url(firstCert.certificateBytes)
+      );
+      expect((await inbox.take()).t).toBe('enroll.redeemed');
+      expect(userStore.getCert(hexId)?.certificateBytes).toEqual(firstCert.certificateBytes);
+      expect(userStore.listCertsByUser(user.id).filter((c) => c.nodeId === hexId)).toHaveLength(1);
+      expect(userStore.getNode(hexId)?.name).toBe('home-2');
 
       hub.stop();
     } finally {

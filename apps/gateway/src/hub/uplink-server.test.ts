@@ -42,6 +42,7 @@ import {
   HUB_CTL_QUEUE_MAX,
   HUB_KEY_LOG_REQ_BURST,
   HUB_KEY_LOG_REQ_STATE_MAX,
+  HUB_UPLINK_AUTH_REJECT_LOG_INTERVAL_MS,
   KeyLogReqLimiter,
   UplinkServer,
 } from './uplink-server';
@@ -276,6 +277,74 @@ describe('UplinkServer', () => {
       expect(closed.reason).toBe('revoked');
       server.stop();
     } finally {
+      close();
+    }
+  });
+
+  test('logs uplink auth rejections with a stable reason, rate-limited', async () => {
+    const { db, close } = createMigratedAuthDb();
+    const orig = console.warn;
+    const warnings: string[] = [];
+    console.warn = (...args: unknown[]) => {
+      warnings.push(args.map(String).join(' '));
+    };
+    try {
+      const { userStore, keyLogSource } = createHubTestStack(db);
+      const user = seedUser(userStore);
+      let now = 1_000;
+      const { server } = makeServer(db, userStore, keyLogSource, { now: () => now });
+      const unknownId = 'ab'.repeat(16);
+      const attempt = async (nodeId: string) => {
+        const [nodeLink, hubLink] = createInMemoryLinkPair();
+        const inbox = ctlInbox(nodeLink);
+        server.accept(hubLink);
+        const challenge = await inbox.take();
+        if (challenge.t !== 'auth.challenge') throw new Error('expected challenge');
+        sendCtl(nodeLink, {
+          t: 'auth.response',
+          node_id: nodeId,
+          sig: signAuth(generateEd25519KeyPair().secretKey, decodeBase64url(challenge.nonce)),
+        });
+        await hubLink.closed;
+      };
+      await attempt(unknownId);
+      await attempt(unknownId);
+      const first = warnings.filter((row) => row.includes('[hub][uplink] auth rejected'));
+      expect(first).toHaveLength(1);
+      expect(first[0]).toContain(`node=${unknownId}`);
+      expect(first[0]).toContain('reason=cert_not_admitted');
+
+      const seeded = seedAdmittedNode(userStore, user.id);
+      const [badLink, badHub] = createInMemoryLinkPair();
+      const badInbox = ctlInbox(badLink);
+      server.accept(badHub);
+      const challenge = await badInbox.take();
+      if (challenge.t !== 'auth.challenge') throw new Error('expected challenge');
+      sendCtl(badLink, {
+        t: 'auth.response',
+        node_id: seeded.nodeId,
+        sig: signAuth(generateEd25519KeyPair().secretKey, decodeBase64url(challenge.nonce)),
+      });
+      expect((await badHub.closed).reason).toBe('unauthorized');
+      expect(
+        warnings.some(
+          (row) =>
+            row.includes('[hub][uplink] auth rejected') &&
+            row.includes(`node=${seeded.nodeId}`) &&
+            row.includes('reason=bad_sig')
+        )
+      ).toBe(true);
+
+      now += HUB_UPLINK_AUTH_REJECT_LOG_INTERVAL_MS;
+      await attempt(unknownId);
+      const later = warnings.filter(
+        (row) => row.includes('auth rejected') && row.includes(`node=${unknownId}`)
+      );
+      expect(later).toHaveLength(2);
+      expect(later[1]).toContain('suppressed=1');
+      server.stop();
+    } finally {
+      console.warn = orig;
       close();
     }
   });

@@ -103,6 +103,7 @@ const textEncoder = new TextEncoder();
 export const HUB_KEY_LOG_REQ_RATE_PER_MIN = 10;
 export const HUB_KEY_LOG_REQ_BURST = 20;
 export const HUB_KEY_LOG_REQ_LOG_INTERVAL_MS = 10_000;
+export const HUB_UPLINK_AUTH_REJECT_LOG_INTERVAL_MS = 10_000;
 export const HUB_KEY_LOG_REQ_STATE_MAX = 1024;
 export const HUB_KEY_LOG_REQ_IDLE_TTL_MS = 10 * 60 * 1000;
 export const HUB_KEY_LOG_REQ_OVERFLOW_MAX_USERS = 256;
@@ -362,6 +363,7 @@ export class UplinkServer {
   private stopped = false;
   private readonly keyLogReqLimiter: KeyLogReqLimiter;
   private readonly keyLogReqLogs: IdleLruMap<{ lastAt: number; suppressed: number }>;
+  private readonly authRejectLogs: IdleLruMap<{ lastAt: number; suppressed: number }>;
 
   constructor(opts: UplinkServerOptions) {
     this.db = opts.db;
@@ -379,6 +381,10 @@ export class UplinkServer {
       ttlMs: opts.keyLogReqIdleTtlMs ?? HUB_KEY_LOG_REQ_IDLE_TTL_MS,
     });
     this.keyLogReqLogs = new IdleLruMap(
+      opts.keyLogReqStateMax ?? HUB_KEY_LOG_REQ_STATE_MAX,
+      opts.keyLogReqIdleTtlMs ?? HUB_KEY_LOG_REQ_IDLE_TTL_MS
+    );
+    this.authRejectLogs = new IdleLruMap(
       opts.keyLogReqStateMax ?? HUB_KEY_LOG_REQ_STATE_MAX,
       opts.keyLogReqIdleTtlMs ?? HUB_KEY_LOG_REQ_IDLE_TTL_MS
     );
@@ -517,6 +523,7 @@ export class UplinkServer {
     this.rtcSessions.clear();
     this.keyLogReqLimiter.clear();
     this.keyLogReqLogs.clear();
+    this.authRejectLogs.clear();
     this.registry.closeAll('hub-stop');
   }
 
@@ -578,7 +585,7 @@ export class UplinkServer {
     const live = this.live.get(link);
     if (!live) {
       if (msg.t !== 'auth.response') {
-        link.close('unauthenticated');
+        this.rejectAuth(link, undefined, 'unauthenticated', 'unauthenticated');
         return;
       }
       await this.handleAuthResponse(link, msg.node_id, msg.sig);
@@ -625,35 +632,35 @@ export class UplinkServer {
     this.pending.delete(link);
     this.clearAuthTimer(link);
     if (!pending) {
-      link.close('auth-timeout');
+      this.rejectAuth(link, nodeId, 'timeout', 'auth-timeout');
       return;
     }
     const cert = this.userStore.getCert(nodeId);
     if (!cert) {
-      link.close('unknown-cert');
+      this.rejectAuth(link, nodeId, 'cert_not_admitted', 'unknown-cert');
       return;
     }
     if (cert.revokedLogSeq !== null) {
-      link.close('revoked');
+      this.rejectAuth(link, nodeId, 'revoked', 'revoked');
       return;
     }
     const nodeRow = this.userStore.getNode(nodeId);
     if (nodeRow?.status === 'revoked') {
-      link.close('revoked');
+      this.rejectAuth(link, nodeId, 'revoked', 'revoked');
       return;
     }
     let edPk: Uint8Array;
     try {
       edPk = decodeCertificate(cert.certificateBytes).ed_pk;
     } catch {
-      link.close('bad-cert');
+      this.rejectAuth(link, nodeId, 'bad_cert', 'bad-cert');
       return;
     }
     let sig: Uint8Array;
     try {
       sig = b64urlToBytes(sigB64, 64);
     } catch {
-      link.close('bad-sig');
+      this.rejectAuth(link, nodeId, 'bad_sig', 'bad-sig');
       return;
     }
     if (
@@ -663,7 +670,7 @@ export class UplinkServer {
         edPk
       )
     ) {
-      link.close('unauthorized');
+      this.rejectAuth(link, nodeId, 'bad_sig', 'unauthorized');
       return;
     }
     const userId = cert.userId;
@@ -793,6 +800,30 @@ export class UplinkServer {
       has_more: hasMore,
       ...(msg.id ? { id: msg.id } : {}),
     });
+  }
+
+  private rejectAuth(
+    link: LinkSession,
+    nodeId: string | undefined,
+    reason: string,
+    closeReason: string
+  ): void {
+    this.logAuthRejected(nodeId, reason);
+    link.close(closeReason);
+  }
+
+  private logAuthRejected(nodeId: string | undefined, reason: string): void {
+    const now = this.now();
+    const key = `${nodeId ?? '-'}|${reason}`;
+    const prev = this.authRejectLogs.get(key, now);
+    if (prev && now - prev.lastAt < HUB_UPLINK_AUTH_REJECT_LOG_INTERVAL_MS) {
+      prev.suppressed += 1;
+      return;
+    }
+    const suppressed = prev?.suppressed ?? 0;
+    const extra = suppressed > 0 ? ` suppressed=${suppressed}` : '';
+    console.warn(`[hub][uplink] auth rejected node=${nodeId ?? '-'} reason=${reason}${extra}`);
+    this.authRejectLogs.set(key, { lastAt: now, suppressed: 0 }, now);
   }
 
   private warnKeyLogReq(nodeId: string, fromSeq: bigint, records: number, limited: boolean): void {
@@ -1010,7 +1041,7 @@ export class UplinkServer {
       this.authTimers.delete(link);
       if (!this.live.has(link) && this.accepted.has(link)) {
         this.pending.delete(link);
-        link.close('auth-timeout');
+        this.rejectAuth(link, undefined, 'timeout', 'auth-timeout');
       }
     }, this.authTimeoutMs);
     this.authTimers.set(link, timer);

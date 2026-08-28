@@ -4,16 +4,19 @@ import { resolve } from 'node:path';
 import {
   JOIN_TOKEN_CHARS,
   createEnrollment,
+  decodeBase64url,
+  decodeCertificate,
   deriveSeed,
   encodeBase64url,
   encodeJoinToken,
+  nodeIdToHex,
   randomBytes,
   rootKeyFromSeed,
 } from '../../../shared/src/auth';
 import { parseArgs } from '../lib/args';
 import { assertHubJoinUrl } from '../lib/hub-client';
 import { type LocalAuthContext, openLocalAuth } from '../lib/local-auth';
-import { runHubJoin, runHubLeave, runHubUserAdd } from './hub';
+import { NODE_REVOKED_REJOIN_ERROR, runHubJoin, runHubLeave, runHubUserAdd } from './hub';
 
 const MIGRATIONS = resolve(import.meta.dir, '../../../../apps/gateway/drizzle');
 const handles: LocalAuthContext[] = [];
@@ -613,5 +616,148 @@ describe('hub join rebuilt hub and re-join', () => {
     expect(node.userStore.listUsers()).toHaveLength(1);
     expect(node.keyLogStore.list(hub.user.id)).toHaveLength(logCount);
     expect(node.userStore.listCertsByUser(hub.user.id)).toHaveLength(certCount);
+  });
+
+  test('refuses join when redeem reports node_revoked', async () => {
+    const hub = await openAuth('hub,node');
+    const added = await runHubUserAdd(parseArgs([]), 'alice', {
+      auth: hub,
+      password: 'hub-pass-word',
+      log: () => undefined,
+    });
+    const user = hub.userStore.getById(added.userId);
+    if (!user) throw new Error('missing hub user');
+    const state = hub.userKeys.currentState(user.id);
+    const enrollment = await createEnrollment(
+      rootKeyFromSeed(await deriveSeed('hub-pass-word', state.kdfParams)),
+      { uid: user.id, rootEpoch: state.rootEpoch, now: Date.now() }
+    );
+    const token = encodeJoinToken(enrollment.enrollSk, state.rootPublicKey, state.head.hash);
+    const server = Bun.serve({
+      hostname: '127.0.0.1',
+      port: 0,
+      fetch(req) {
+        const url = new URL(req.url);
+        if (url.pathname === '/api/auth/mode') {
+          return Response.json({
+            mode: 'mesh',
+            nodeId: 'self',
+            uid: user.id,
+            username: user.username,
+          });
+        }
+        if (url.pathname === '/api/hub/enrollments/redeem' && req.method === 'POST') {
+          return Response.json({ error: 'node_revoked' }, { status: 409 });
+        }
+        return new Response('nope', { status: 404 });
+      },
+    });
+    servers.push(server);
+    const node = await openAuth('standalone');
+    await expect(
+      runHubJoin(
+        parseArgs([
+          'hub',
+          'join',
+          `http://127.0.0.1:${server.port}`,
+          '--token',
+          token,
+          '--insecure-local',
+        ]),
+        `http://127.0.0.1:${server.port}`,
+        { auth: node, skipRestart: true, insecureLocal: true, log: () => undefined }
+      )
+    ).rejects.toThrow(NODE_REVOKED_REJOIN_ERROR);
+  });
+
+  test('refuses join when the hub returns a revoked cert for this node', async () => {
+    const hub = await openAuth('hub,node');
+    const added = await runHubUserAdd(parseArgs([]), 'alice', {
+      auth: hub,
+      password: 'hub-pass-word',
+      log: () => undefined,
+    });
+    const user = hub.userStore.getById(added.userId);
+    if (!user) throw new Error('missing hub user');
+    const state = hub.userKeys.currentState(user.id);
+    const enrollment = await createEnrollment(
+      rootKeyFromSeed(await deriveSeed('hub-pass-word', state.kdfParams)),
+      { uid: user.id, rootEpoch: state.rootEpoch, now: Date.now() }
+    );
+    const token = encodeJoinToken(enrollment.enrollSk, state.rootPublicKey, state.head.hash);
+    const records = hub.keyLogStore.list(user.id);
+    const certs = hub.userStore.listCertsByUser(user.id);
+    const server = Bun.serve({
+      hostname: '127.0.0.1',
+      port: 0,
+      async fetch(req) {
+        const url = new URL(req.url);
+        if (url.pathname === '/api/auth/mode') {
+          return Response.json({
+            mode: 'mesh',
+            nodeId: 'self',
+            uid: user.id,
+            username: user.username,
+          });
+        }
+        if (url.pathname === '/api/hub/enrollments/redeem' && req.method === 'POST') {
+          const body = (await req.json()) as { certificate: string; cert_sig: string };
+          const decoded = decodeCertificate(decodeBase64url(body.certificate));
+          return Response.json({
+            user: {
+              id: user.id,
+              username: user.username,
+              root_public_key: encodeBase64url(user.rootPublicKey),
+              root_epoch: user.rootEpoch,
+              kdf_params: JSON.parse(user.kdfParamsJson),
+            },
+            user_key_log: records.map((row) => ({
+              seq: row.seq,
+              bytes: encodeBase64url(row.bytes),
+              sig: encodeBase64url(row.sig),
+            })),
+            node_certs: [
+              ...certs.map((cert) => ({
+                node_id: cert.nodeId,
+                user_id: cert.userId,
+                admit_record_seq: cert.admitRecordSeq,
+                certificate: encodeBase64url(cert.certificateBytes),
+                cert_sig: encodeBase64url(cert.certSig),
+                authorization: encodeBase64url(cert.authorizationBytes),
+                authorization_sig: encodeBase64url(cert.authorizationSig),
+                revoked_log_seq: cert.revokedLogSeq,
+              })),
+              {
+                node_id: nodeIdToHex(decoded.node_id),
+                user_id: user.id,
+                admit_record_seq: 2,
+                certificate: body.certificate,
+                cert_sig: body.cert_sig,
+                authorization: encodeBase64url(certs[0]?.authorizationBytes ?? randomBytes(32)),
+                authorization_sig: encodeBase64url(certs[0]?.authorizationSig ?? randomBytes(64)),
+                revoked_log_seq: 9,
+              },
+            ],
+          });
+        }
+        return new Response('nope', { status: 404 });
+      },
+    });
+    servers.push(server);
+    const node = await openAuth('standalone');
+    await expect(
+      runHubJoin(
+        parseArgs([
+          'hub',
+          'join',
+          `http://127.0.0.1:${server.port}`,
+          '--token',
+          token,
+          '--insecure-local',
+        ]),
+        `http://127.0.0.1:${server.port}`,
+        { auth: node, skipRestart: true, insecureLocal: true, log: () => undefined }
+      )
+    ).rejects.toThrow(NODE_REVOKED_REJOIN_ERROR);
   });
 });
