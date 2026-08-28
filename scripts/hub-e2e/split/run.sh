@@ -1086,7 +1086,7 @@ refresh_pane() {
 # kind=hub → D1-D3/H1-H3/I1-I2 against hub (WAN; FAIL with evidence if UDP blocked)
 run_direct_scenarios() {
   local kind="$1"
-  local d1 d2 d3 h1 h2 h3 i1 i2
+  local d1 d2 d3 h1 h2 h3 i1 i2 fallback_transport=relay
   local target target_id device_id pane_id
   local mesh_json path_json
   local tree_json seq_json seq_err seq_ready seq_input
@@ -1101,6 +1101,7 @@ run_direct_scenarios() {
       d2="D2 transport=dc"
       d3="D3 marker round-trip while transport=dc"
       h1="H1 transport falls back to relay within 30s"
+      fallback_transport=relay
       h2="H2 SEQ_1..400 contiguous on entry stream"
       h3="H3 transport returns to dc within 90s"
       i1="I1 8MiB sha256 over dc"
@@ -1127,7 +1128,8 @@ run_direct_scenarios() {
       d1="L1 both rows direct_capable=true"
       d2="L2 transport=dc"
       d3="L3 marker round-trip while transport=dc"
-      h1="L4 transport falls back to relay within 30s"
+      h1="L4 transport falls back to ws-secure within 30s"
+      fallback_transport=ws-secure
       h2="L5 SEQ_1..400 contiguous on entry stream"
       h3="L6 transport returns to dc within 90s"
       i1="L7 8MiB sha256 over dc"
@@ -1311,7 +1313,7 @@ run_direct_scenarios() {
     drop_direct_udp
     local drop_rc=$?
     driver nodes.ts wait-transport --base-url http://node-a:9883 --cookie-file /out/cookies-entry.json \
-      --name "${target_id}" --transport relay --timeout 30000
+      --name "${target_id}" --transport "${fallback_transport}" --timeout 30000
     h1_rc=$?
     set -e
     dump_rtc_logs "${target}"
@@ -1407,7 +1409,7 @@ run_direct_scenarios() {
   set +e
   drop_direct_udp
   driver nodes.ts wait-transport --base-url http://node-a:9883 --cookie-file /out/cookies-entry.json \
-    --name "${target_id}" --transport relay --timeout 30000
+    --name "${target_id}" --transport "${fallback_transport}" --timeout 30000
   local i2_relay_rc=$?
   local i2_json i2_rc
   i2_json="$(driver files.ts sha256 --base-url http://node-a:9883 --cookie-file /out/cookies-entry.json \
