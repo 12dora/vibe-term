@@ -5,8 +5,10 @@
 
 import { spawnSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { builtinModules } from 'node:module';
 import { tmpdir } from 'node:os';
-import { join, resolve } from 'node:path';
+import { basename, dirname, join, resolve } from 'node:path';
+import type { BunPlugin } from 'bun';
 
 const pkgRoot = resolve(import.meta.dir, '..');
 const pkg = JSON.parse(readFileSync(resolve(pkgRoot, 'package.json'), 'utf8')) as {
@@ -14,7 +16,77 @@ const pkg = JSON.parse(readFileSync(resolve(pkgRoot, 'package.json'), 'utf8')) a
 };
 const version = pkg.version ?? '0.0.0';
 
-console.log(`[build:runtime] injecting TMEX_MONOREPO_VERSION="${version}"`);
+// ssh2 对 cpu-features 是 try/catch 的可选 native；--external 会在无 node_modules 的
+// 安装布局里触发 Bun auto-install，首启可能卡数分钟。打成抛错的虚拟模块即可。
+export const cpuFeaturesStubPlugin: BunPlugin = {
+  name: 'stub-cpu-features',
+  setup(build) {
+    build.onResolve({ filter: /^cpu-features$/ }, () => ({
+      path: 'cpu-features',
+      namespace: 'tmex-optional-stub',
+    }));
+    build.onLoad({ filter: /.*/, namespace: 'tmex-optional-stub' }, () => ({
+      contents: "throw new Error('cpu-features unavailable');\n",
+      loader: 'js',
+    }));
+  },
+};
+
+const BARE_REQUIRE_RE = /(?:^|[^.\w$])(?:__)?require\(\s*["']([^"']+)["']\s*\)/g;
+
+const NODE_BUILTINS = new Set(
+  builtinModules.flatMap((name) =>
+    name.startsWith('node:') ? [name, name.slice('node:'.length)] : [name, `node:${name}`]
+  )
+);
+
+export function collectBareRequires(bundleText: string): string[] {
+  const found = new Set<string>();
+  for (const match of bundleText.matchAll(BARE_REQUIRE_RE)) {
+    const specifier = match[1];
+    if (specifier) {
+      found.add(specifier);
+    }
+  }
+  return [...found].sort();
+}
+
+export function unresolvedPackageRequires(bundleText: string): string[] {
+  return collectBareRequires(bundleText).filter((specifier) => {
+    if (specifier.startsWith('node:') || specifier.startsWith('bun:')) {
+      return false;
+    }
+    return !NODE_BUILTINS.has(specifier);
+  });
+}
+
+export async function buildRuntimeEntry(options: {
+  entrypoint: string;
+  outfile: string;
+  version: string;
+}): Promise<void> {
+  const result = await Bun.build({
+    entrypoints: [options.entrypoint],
+    outdir: dirname(options.outfile),
+    naming: basename(options.outfile),
+    target: 'bun',
+    format: 'esm',
+    plugins: [cpuFeaturesStubPlugin],
+    define: {
+      TMEX_MONOREPO_VERSION: JSON.stringify(options.version),
+    },
+    throw: false,
+  });
+  if (!result.success) {
+    for (const log of result.logs) {
+      console.error(log);
+    }
+    throw new Error(`bun build failed for ${options.entrypoint}`);
+  }
+  for (const log of result.logs) {
+    console.log(String(log));
+  }
+}
 
 function runBunBuild(args: string[]): void {
   const build = spawnSync('bun', args, { cwd: pkgRoot, stdio: 'inherit' });
@@ -22,36 +94,6 @@ function runBunBuild(args: string[]): void {
     process.exit(build.status ?? 1);
   }
 }
-
-runBunBuild([
-  'build',
-  'src/runtime/server.ts',
-  '--outdir',
-  './dist/runtime',
-  '--target',
-  'bun',
-  '--format',
-  'esm',
-  '--external',
-  'cpu-features',
-  '--define',
-  `TMEX_MONOREPO_VERSION="${version}"`,
-]);
-
-runBunBuild([
-  'build',
-  'src/cli-auth-entry.ts',
-  '--outfile',
-  './dist/runtime/cli-auth.js',
-  '--target',
-  'bun',
-  '--format',
-  'esm',
-  '--external',
-  'cpu-features',
-  '--define',
-  `TMEX_MONOREPO_VERSION="${version}"`,
-]);
 
 function verifyVendoredNativeBundle(): void {
   const workDir = mkdtempSync(join(tmpdir(), 'tmex-native-bundle-'));
@@ -142,23 +184,58 @@ export { argon2id, ed25519, x25519, hkdf, sha256 };
   }
 }
 
-verifyVendoredNativeBundle();
-verifyCryptoBundles();
-
-const serverJs = join(pkgRoot, 'dist/runtime/server.js');
-const cliAuthJs = join(pkgRoot, 'dist/runtime/cli-auth.js');
-try {
-  mkdirSync(join(pkgRoot, 'dist/runtime'), { recursive: true });
-  console.log(`[build:runtime] server.js ${statSync(serverJs).size} bytes`);
-  console.log(`[build:runtime] cli-auth.js ${statSync(cliAuthJs).size} bytes`);
-} catch {
-  console.warn('[build:runtime] runtime bundle size unavailable');
+function assertNoUnresolvedPackageRequires(filePath: string): void {
+  const text = readFileSync(filePath, 'utf8');
+  const unresolved = unresolvedPackageRequires(text);
+  if (unresolved.length > 0) {
+    console.error(
+      `[build:runtime] unresolved package requires in ${filePath}: ${unresolved.join(', ')}`
+    );
+    process.exit(1);
+  }
 }
 
-const copy = spawnSync('bash', ['./scripts/copy-runtime-assets.sh'], {
-  cwd: pkgRoot,
-  stdio: 'inherit',
-});
-if (copy.status !== 0) {
-  process.exit(copy.status ?? 1);
+async function main(): Promise<void> {
+  console.log(`[build:runtime] injecting TMEX_MONOREPO_VERSION="${version}"`);
+
+  mkdirSync(join(pkgRoot, 'dist/runtime'), { recursive: true });
+
+  const serverJs = join(pkgRoot, 'dist/runtime/server.js');
+  const cliAuthJs = join(pkgRoot, 'dist/runtime/cli-auth.js');
+
+  await buildRuntimeEntry({
+    entrypoint: join(pkgRoot, 'src/runtime/server.ts'),
+    outfile: serverJs,
+    version,
+  });
+  await buildRuntimeEntry({
+    entrypoint: join(pkgRoot, 'src/cli-auth-entry.ts'),
+    outfile: cliAuthJs,
+    version,
+  });
+
+  verifyVendoredNativeBundle();
+  verifyCryptoBundles();
+
+  assertNoUnresolvedPackageRequires(serverJs);
+  assertNoUnresolvedPackageRequires(cliAuthJs);
+
+  try {
+    console.log(`[build:runtime] server.js ${statSync(serverJs).size} bytes`);
+    console.log(`[build:runtime] cli-auth.js ${statSync(cliAuthJs).size} bytes`);
+  } catch {
+    console.warn('[build:runtime] runtime bundle size unavailable');
+  }
+
+  const copy = spawnSync('bash', ['./scripts/copy-runtime-assets.sh'], {
+    cwd: pkgRoot,
+    stdio: 'inherit',
+  });
+  if (copy.status !== 0) {
+    process.exit(copy.status ?? 1);
+  }
+}
+
+if (import.meta.main) {
+  await main();
 }
