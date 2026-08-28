@@ -1,0 +1,73 @@
+#!/usr/bin/env bash
+# 本机构建 tmex-e2e:split 并拉起 NAT 后的 node-a / node-b / driver。
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "$0")" && pwd)"
+HUB_E2E="$(cd "${ROOT}/.." && pwd)"
+REPO_ROOT="$(cd "${HUB_E2E}/../.." && pwd)"
+export TMEX_REPO_ROOT="${TMEX_REPO_ROOT:-${REPO_ROOT}}"
+COMPOSE=(docker compose -p tmex-split-local -f "${ROOT}/docker-compose.local.yml")
+IMAGE_NAME="tmex-e2e:split"
+PLATFORM="linux/amd64"
+TARBALL="${TMEX_TARBALL:-/private/tmp/claude-501/-home-user-code-tmex-enhanced/741cc3a1-5392-48be-8081-06f3803bdeb4/scratchpad/pkg-p6/tmex-cli-1.0.2.tgz}"
+
+log() { printf '[split-local] %s\n' "$*"; }
+
+wait_healthy() {
+  local svc="$1"
+  local n=0
+  local restarted=0
+  while (( n < 90 )); do
+    local cid
+    cid="$("${COMPOSE[@]}" ps -q "${svc}" 2>/dev/null || true)"
+    if [[ -n "${cid}" ]]; then
+      if docker exec "${cid}" curl -fsS -m 2 http://127.0.0.1:9883/healthz >/dev/null 2>&1; then
+        return 0
+      fi
+      if (( n == 25 && restarted == 0 )); then
+        log "restarting hung ${svc} (qemu/amd64 下 mesh 启动偶发卡住)"
+        docker restart "${cid}" >/dev/null || true
+        restarted=1
+      fi
+    fi
+    sleep 2
+    n=$((n + 1))
+  done
+  log "service ${svc} not healthy"
+  docker logs "$("${COMPOSE[@]}" ps -q "${svc}" 2>/dev/null || true)" 2>&1 | tail -40 || true
+  return 1
+}
+
+if [[ "${1:-}" == "down" ]]; then
+  "${COMPOSE[@]}" down -v --remove-orphans || true
+  docker network rm tmex-split-local_lan 2>/dev/null || true
+  exit 0
+fi
+
+mkdir -p "${ROOT}/out"
+
+if [[ "${TMEX_E2E_SKIP_BUILD:-}" == "1" ]] && docker image inspect "${IMAGE_NAME}" >/dev/null 2>&1; then
+  log "skipping build (TMEX_E2E_SKIP_BUILD=1, ${IMAGE_NAME} exists)"
+else
+  if [[ ! -f "${TARBALL}" ]]; then
+    echo "tarball not found: ${TARBALL}" >&2
+    exit 2
+  fi
+  mkdir -p "${HUB_E2E}/build"
+  cp "${TARBALL}" "${HUB_E2E}/build/tmex-cli.tgz"
+  log "building ${IMAGE_NAME} (--platform ${PLATFORM})"
+  docker build --platform "${PLATFORM}" -t "${IMAGE_NAME}" -f "${HUB_E2E}/Dockerfile" "${HUB_E2E}"
+fi
+
+log "compose down (tmex-split-local only)"
+"${COMPOSE[@]}" down -v --remove-orphans || true
+docker network rm tmex-split-local_lan 2>/dev/null || true
+
+log "compose up node-a / node-b / driver (serialized)"
+"${COMPOSE[@]}" up -d node-a
+wait_healthy node-a
+"${COMPOSE[@]}" up -d node-b
+wait_healthy node-b
+"${COMPOSE[@]}" up -d driver
+sleep 1
+log "local nodes ready"

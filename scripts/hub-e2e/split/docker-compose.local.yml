@@ -1,0 +1,69 @@
+name: tmex-split-local
+
+networks:
+  nat-a:
+    name: tmex-split-local_nat-a
+  nat-b:
+    name: tmex-split-local_nat-b
+  lan:
+    name: tmex-split-local_lan
+
+volumes:
+  node-a-data:
+  node-b-data:
+
+x-tmex-node: &tmex-node
+  image: tmex-e2e:split
+  platform: linux/amd64
+  init: true
+  stop_grace_period: 25s
+  extra_hosts:
+    - "ai.example.com:4.2.2.1"
+  environment:
+    NODE_EXTRA_CA_CERTS: /etc/ssl/certs/ca-certificates.crt
+
+services:
+  node-a:
+    <<: *tmex-node
+    container_name: tmex-split-node-a
+    hostname: node-a
+    environment:
+      NODE_EXTRA_CA_CERTS: /etc/ssl/certs/ca-certificates.crt
+      TMEX_INSTANCE: node-a
+    volumes:
+      - node-a-data:/var/lib/tmex
+    networks:
+      - nat-a
+
+  node-b:
+    <<: *tmex-node
+    container_name: tmex-split-node-b
+    hostname: node-b
+    environment:
+      NODE_EXTRA_CA_CERTS: /etc/ssl/certs/ca-certificates.crt
+      TMEX_INSTANCE: node-b
+    volumes:
+      - node-b-data:/var/lib/tmex
+    networks:
+      - nat-b
+
+  driver:
+    image: tmex-e2e:split
+    platform: linux/amd64
+    container_name: tmex-split-driver
+    hostname: driver
+    init: true
+    working_dir: /workspace
+    entrypoint: ["sleep", "infinity"]
+    extra_hosts:
+      - "ai.example.com:4.2.2.1"
+    environment:
+      NODE_EXTRA_CA_CERTS: /etc/ssl/certs/ca-certificates.crt
+    volumes:
+      - ./out:/out
+      - ${TMEX_REPO_ROOT:-../../..}:/workspace:ro
+    networks:
+      - nat-a
+    healthcheck:
+      disable: true
+    restart: unless-stopped

@@ -1,0 +1,48 @@
+name: tmex-split
+
+networks:
+  edge:
+    name: tmex-split_edge
+
+volumes:
+  hub-data:
+
+x-tmex-hub: &tmex-hub
+  image: tmex-e2e:split
+  platform: linux/amd64
+  init: true
+  stop_grace_period: 25s
+  environment:
+    TMEX_INSTANCE: hub
+    NODE_EXTRA_CA_CERTS: /etc/ssl/certs/ca-certificates.crt
+
+services:
+  caddy:
+    image: caddy:2
+    platform: linux/amd64
+    container_name: tmex-split-caddy
+    ports:
+      - "0.0.0.0:18443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - /root/tmex-e2e/certs/fullchain.pem:/certs/fullchain.pem:ro
+      - /root/tmex-e2e/certs/privkey.pem:/certs/privkey.pem:ro
+    networks:
+      edge:
+        aliases:
+          - ai.example.com
+    depends_on:
+      hub:
+        condition: service_healthy
+    restart: unless-stopped
+
+  hub:
+    <<: *tmex-hub
+    container_name: tmex-split-hub
+    hostname: hub
+    ports:
+      - "39001:39001"
+    volumes:
+      - hub-data:/var/lib/tmex
+    networks:
+      - edge
