@@ -31,7 +31,10 @@ describe('mesh-routes', () => {
     const peers = new FakePeers();
     peers.reach.set(PEER_ID, 'lan');
     peers.transport.set(PEER_ID, 'dc');
-    const mesh = await bootMesh({ peers });
+    const mesh = await bootMesh({
+      peers,
+      listedNames: () => [{ id: PEER_ID, name: 'studio' }],
+    });
     try {
       mesh.userStore.upsertCert({
         nodeId: PEER_ID,
@@ -158,6 +161,92 @@ describe('mesh-routes', () => {
       };
       expect(body.nodes.find((n) => n.id === PEER_ID)?.name).toBe('node-a');
       expect(body.nodes.find((n) => n.id === NODE_ID)?.name).toBe('hub-home');
+    } finally {
+      mesh.close();
+    }
+  });
+
+  test('GET /api/mesh/nodes ignores a peer-advertised name in peer_cache', async () => {
+    const mesh = await bootMesh({
+      listedNames: () => [{ id: PEER_ID, name: 'studio' }],
+    });
+    try {
+      mesh.userStore.upsertCert({
+        nodeId: PEER_ID,
+        userId: mesh.boot.userId,
+        admitRecordSeq: 2,
+        certificateBytes: encodeCertificate({
+          domain: DOMAIN_CERTIFICATE,
+          uid: mesh.boot.userId,
+          node_id: hexToBytes(PEER_ID),
+          ed_pk: new Uint8Array(32).fill(4),
+          x25519_pk: new Uint8Array(32).fill(5),
+          enroll_pk: new Uint8Array(32).fill(6),
+          issued_at: 1n,
+        }),
+        certSig: new Uint8Array(64),
+        authorizationBytes: new Uint8Array(8),
+        authorizationSig: new Uint8Array(64),
+      });
+      mesh.userStore.upsertPeer({
+        nodeId: PEER_ID,
+        name: 'production-db',
+        endpointsJson: '[]',
+        inventoryJson: '{}',
+        directCapable: false,
+        lastSeenAt: 1,
+        listVersion: 1,
+      });
+      const { sid } = await challengeAndLogin(mesh.runtime, mesh.boot);
+      const list = await call(mesh.runtime, 'http://localhost/api/mesh/nodes', {
+        headers: { cookie: `tmex_s_self=${sid}` },
+      });
+      const body = (await list.json()) as {
+        nodes: Array<{ id: string; name: string }>;
+      };
+      expect(body.nodes.find((n) => n.id === PEER_ID)?.name).toBe('studio');
+    } finally {
+      mesh.close();
+    }
+  });
+
+  test('GET /api/mesh/nodes falls back to id when only peer_cache has a name', async () => {
+    const mesh = await bootMesh();
+    try {
+      mesh.userStore.upsertCert({
+        nodeId: PEER_ID,
+        userId: mesh.boot.userId,
+        admitRecordSeq: 2,
+        certificateBytes: encodeCertificate({
+          domain: DOMAIN_CERTIFICATE,
+          uid: mesh.boot.userId,
+          node_id: hexToBytes(PEER_ID),
+          ed_pk: new Uint8Array(32).fill(4),
+          x25519_pk: new Uint8Array(32).fill(5),
+          enroll_pk: new Uint8Array(32).fill(6),
+          issued_at: 1n,
+        }),
+        certSig: new Uint8Array(64),
+        authorizationBytes: new Uint8Array(8),
+        authorizationSig: new Uint8Array(64),
+      });
+      mesh.userStore.upsertPeer({
+        nodeId: PEER_ID,
+        name: 'production-db',
+        endpointsJson: '[]',
+        inventoryJson: '{}',
+        directCapable: false,
+        lastSeenAt: 1,
+        listVersion: 1,
+      });
+      const { sid } = await challengeAndLogin(mesh.runtime, mesh.boot);
+      const list = await call(mesh.runtime, 'http://localhost/api/mesh/nodes', {
+        headers: { cookie: `tmex_s_self=${sid}` },
+      });
+      const body = (await list.json()) as {
+        nodes: Array<{ id: string; name: string }>;
+      };
+      expect(body.nodes.find((n) => n.id === PEER_ID)?.name).toBe(PEER_ID);
     } finally {
       mesh.close();
     }

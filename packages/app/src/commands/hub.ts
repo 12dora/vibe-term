@@ -1,6 +1,7 @@
 import { ensureNodeIdentity } from '../../../../apps/gateway/src/auth/node-identity-service';
 import { kdfParamsFromJson } from '../../../../apps/gateway/src/auth/user-key-service';
 import { enrollmentTokens, nodes } from '../../../../apps/gateway/src/db/schema';
+import { encodeRedeemPopMessage } from '../../../../apps/gateway/src/hub/redeem-pop';
 import {
   bytesEqual,
   createNodeCertificate,
@@ -18,12 +19,14 @@ import {
   generateKdfParams,
   randomBytes,
   rootKeyFromSeed,
+  signEd25519,
   verifyKeyLogChain,
 } from '../../../shared/src/auth';
 import { t } from '../i18n';
 import { readEnvFile, writeEnvFile } from '../lib/env-file';
 import { pathExists } from '../lib/fs-utils';
 import {
+  type HubFetch,
   type RedeemResponse,
   assertHubJoinUrl,
   fetchAuthMode,
@@ -61,6 +64,20 @@ export type HubIo = {
 
 export const HUB_MANUAL_RESTART_HINT =
   'skipped service restart; restart tmex manually to apply the change';
+
+function injectRedeemPop(fetcher: HubFetch | undefined, pop: string): HubFetch {
+  const inner = fetcher ?? fetch;
+  return (async (input, init) => {
+    const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
+    let next = init;
+    if (url.includes('/api/hub/enrollments/redeem') && typeof init?.body === 'string') {
+      const parsed = JSON.parse(init.body) as Record<string, unknown>;
+      parsed.pop = pop;
+      next = { ...init, body: JSON.stringify(parsed) };
+    }
+    return inner(input, next);
+  }) as HubFetch;
+}
 
 function log(io: HubIo | undefined, message: string): void {
   (io?.log ?? console.log)(message);
@@ -327,13 +344,23 @@ export async function runHubJoin(
       now: nowMs(io),
       nodeId: identity.nodeId,
     });
+    const pop = encodeBase64url(
+      signEd25519(
+        identity.edPrivateKey,
+        encodeRedeemPopMessage({
+          enrollmentId: encodeBase64url(enrollPkResolved),
+          nodeId: identity.nodeId,
+          certBytes: cert.certificateBytes,
+        })
+      )
+    );
 
     const redeemed = await redeemEnrollment({
       baseUrl: hubUrl,
       certificate: cert.certificateBytes,
       certSig: cert.certSig,
       name,
-      fetcher: io.fetcher,
+      fetcher: injectRedeemPop(io.fetcher, pop),
     });
     const committed = await commitVerifiedJoin(ctx, {
       redeemed,

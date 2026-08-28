@@ -274,7 +274,6 @@ export class MeshRoutes {
           isSelf,
           listedName,
           registryName,
-          peerName: peer?.name,
           selfName: isSelf ? selfName : null,
         }),
         publicKey: encodeBase64url(publicKey),
@@ -464,13 +463,11 @@ function pickMeshNodeName(input: {
   isSelf: boolean;
   listedName?: string | null;
   registryName?: string | null;
-  peerName?: string | null;
   selfName?: string | null;
 }): string {
   return (
     usableMeshName(input.listedName, input.id) ??
     usableMeshName(input.registryName, input.id) ??
-    usableMeshName(input.peerName, input.id) ??
     (input.isSelf ? usableMeshName(input.selfName, input.id) : null) ??
     (input.isSelf ? input.selfName?.trim() || 'self' : input.id)
   );

@@ -938,14 +938,16 @@ export class PeerManager {
         this.maybeUpgrade(nodeId, { cooldown: true });
         const pending = this.pending.get(nodeId);
         if (pending) {
-          void pending.finally(() => {
-            if (this.live.get(nodeId)?.transport === 'dc') {
-              this.lostDirect.delete(nodeId);
-              this.cancelDcUpgradeRetry(nodeId);
-              return;
-            }
-            this.armDcUpgradeRetry(nodeId);
-          });
+          void pending
+            .finally(() => {
+              if (this.live.get(nodeId)?.transport === 'dc') {
+                this.lostDirect.delete(nodeId);
+                this.cancelDcUpgradeRetry(nodeId);
+                return;
+              }
+              this.armDcUpgradeRetry(nodeId);
+            })
+            .catch(() => undefined);
         } else {
           this.armDcUpgradeRetry(nodeId);
         }
@@ -1645,11 +1647,10 @@ export class PeerManager {
   private async applyPeerStatus(live: LivePeer, msg: Record<string, unknown>): Promise<void> {
     if (!this.isTrusted(live.peerNodeId)) return;
     const peerNodeId = live.peerNodeId;
-    const name = typeof msg.name === 'string' ? msg.name : peerNodeId;
     const existing = this.userStore.listPeers().find((row) => row.nodeId === peerNodeId);
     this.userStore.upsertPeer({
       nodeId: peerNodeId,
-      name,
+      name: existing?.name ?? peerNodeId,
       endpointsJson: jsonText(
         sanitizeEndpoints(msg.endpoints ?? existing?.endpointsJson ?? [], this.server?.port)
       ),

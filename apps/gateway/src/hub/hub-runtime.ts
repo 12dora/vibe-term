@@ -18,6 +18,7 @@ import type { AuthDb } from '../auth/types';
 import { UserStore } from '../auth/user-store';
 import { detachEnrollmentTokensFromNode, patchNode } from './node-persistence';
 import { NodeRegistry } from './node-registry';
+import { encodeRedeemPopMessage } from './redeem-pop';
 import {
   HUB_AUTH_TIMEOUT_MS,
   HUB_HEARTBEAT_INTERVAL_MS,
@@ -533,6 +534,9 @@ export class HubRuntime {
           if (!existingPk || !bytesEqual(existingPk, certificate.ed_pk)) {
             throw new RedeemAbort('node_exists', 409);
           }
+          if (!verifyRedeemPop(body, certificate, existingPk, certBytes)) {
+            throw new RedeemAbort('node_exists', 409);
+          }
           detachEnrollmentTokensFromNode(authDb, hexId);
         }
         const consumed = store.consumeEnrollmentToken(certificate.enroll_pk, {
@@ -677,6 +681,27 @@ function parseStoredEnrollment(raw: string): StoredEnrollmentPayload | null {
   } catch {
     return null;
   }
+}
+
+function verifyRedeemPop(
+  body: Record<string, unknown>,
+  certificate: ReturnType<typeof decodeCertificate>,
+  existingPk: Uint8Array,
+  certBytes: Uint8Array
+): boolean {
+  if (typeof body.pop !== 'string') return false;
+  let sig: Uint8Array;
+  try {
+    sig = b64urlToBytes(body.pop, 64);
+  } catch {
+    return false;
+  }
+  const message = encodeRedeemPopMessage({
+    enrollmentId: encodeBase64url(certificate.enroll_pk),
+    nodeId: certificate.node_id,
+    certBytes,
+  });
+  return verifyEd25519(sig, message, existingPk);
 }
 
 function readNodeEdPublicKey(store: UserStore, nodeId: string): Uint8Array | null {

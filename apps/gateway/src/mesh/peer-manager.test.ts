@@ -3,7 +3,7 @@ import { generateEd25519KeyPair, randomBytes } from '@tmex/shared/auth';
 import { createInMemoryLinkPair } from '@tmex/shared/link';
 import { createMigratedAuthDb } from '../auth/test-db';
 import { UserStore } from '../auth/user-store';
-import { defaultScheduler } from './ctl';
+import { defaultScheduler, encodeJsonBytes } from './ctl';
 import {
   PEER_DC_UPGRADE_RETRY_DELAYS_MS,
   PEER_DC_UPGRADE_RETRY_TAIL_MS,
@@ -17,6 +17,7 @@ import {
   winningDialInitiator,
 } from './peer-manager';
 import { handshakeRelay } from './peer-protocol';
+import type { RtcPeerManager } from './rtc';
 import { encodeRtcWakeSdp, peerRtcSession } from './rtc/ice';
 import type { RtcLivenessOptions } from './rtc/rtc-peer-manager';
 import { FakeClock } from './rtc/test-fakes';
@@ -1753,5 +1754,118 @@ describe('PeerManager', () => {
     } finally {
       console.log = orig;
     }
+  });
+
+  test('peer node.status does not overwrite the peer_cache display name', async () => {
+    const { db, close } = createMigratedAuthDb();
+    fixtures.push({ close });
+    const store = new UserStore(db);
+    seedUser(store);
+    const self = seedNodeIdentity(store, 'user-1');
+    const peer = seedNodeIdentity(store, 'user-1');
+    store.upsertPeer({
+      nodeId: peer.nodeId,
+      name: 'studio',
+      endpointsJson: '[]',
+      inventoryJson: '{}',
+      directCapable: false,
+      lastSeenAt: Date.now(),
+      listVersion: 1,
+    });
+    const manager = new PeerManager({
+      identity: self,
+      userStore: store,
+      uplink: dummyUplink(self, store),
+      peerPort: 0,
+      startServer: false,
+    });
+    fixtures.push({ close, stop: () => manager.stop() });
+    const [local, remote] = createInMemoryLinkPair();
+    echoQuiesceCaps(remote);
+    expect(manager.adoptLink(peer.nodeId, local, 'ws-secure', self.nodeId)).toBe(local);
+    await waitUntil(() => manager.quiesceCapableOf(peer.nodeId));
+    remote.ctl.send(
+      encodeJsonBytes({
+        t: 'node.status',
+        name: 'production-db',
+        endpoints: [],
+        inventory: { version: '9.9.9' },
+        direct_capable: true,
+      })
+    );
+    await waitUntil(
+      () => store.listPeers().find((row) => row.nodeId === peer.nodeId)?.directCapable === true
+    );
+    const cached = store.listPeers().find((row) => row.nodeId === peer.nodeId);
+    expect(cached?.name).toBe('studio');
+    expect(cached?.inventoryJson).toContain('9.9.9');
+  });
+
+  test('failed DC upgrade retry does not produce an unhandled rejection', async () => {
+    const { db, close } = createMigratedAuthDb();
+    fixtures.push({ close });
+    const store = new UserStore(db);
+    seedUser(store);
+    const self = seedNodeIdentity(store, 'user-1');
+    const peer = seedNodeIdentity(store, 'user-1');
+    store.upsertPeer({
+      nodeId: peer.nodeId,
+      name: 'peer',
+      endpointsJson: '[]',
+      inventoryJson: '{}',
+      directCapable: true,
+      lastSeenAt: Date.now(),
+      listVersion: 1,
+    });
+    let rejectIce: (err: Error) => void = () => {};
+    const iceAttempt = new Promise<never>((_, reject) => {
+      rejectIce = reject;
+    });
+    const rtc = {
+      available: true,
+      connectToPeer: () => iceAttempt,
+    } as unknown as RtcPeerManager;
+    const scheduler = new ImmediateScheduler();
+    const manager = new PeerManager({
+      identity: self,
+      userStore: store,
+      uplink: dummyUplink(self, store),
+      peerPort: 0,
+      startServer: false,
+      rtc,
+      scheduler,
+    });
+    fixtures.push({ close, stop: () => manager.stop() });
+
+    const [dcLocal, dcRemote] = createInMemoryLinkPair();
+    echoQuiesceCaps(dcRemote);
+    expect(manager.adoptLink(peer.nodeId, dcLocal, 'dc', self.nodeId)).toBe(dcLocal);
+    dcLocal.close('drop-dc');
+    await waitUntil(() => manager.transportOf(peer.nodeId) === null);
+
+    const [relayLocal, relayRemote] = createInMemoryLinkPair();
+    echoQuiesceCaps(relayRemote);
+    expect(manager.adoptLink(peer.nodeId, relayLocal, 'relay', self.nodeId)).toBe(relayLocal);
+    await waitUntil(() => manager.quiesceCapableOf(peer.nodeId));
+    await waitUntil(() => scheduler.sleeps > 0);
+
+    const unhandled: unknown[] = [];
+    const onUnhandled = (reason: unknown) => {
+      unhandled.push(reason);
+    };
+    const events = process as unknown as {
+      on(event: string, listener: (reason: unknown) => void): void;
+      off(event: string, listener: (reason: unknown) => void): void;
+    };
+    events.on('unhandledRejection', onUnhandled);
+    try {
+      relayLocal.close('drop-relay');
+      await waitUntil(() => manager.transportOf(peer.nodeId) === null);
+      rejectIce(new Error('ice-failed'));
+      await Bun.sleep(30);
+    } finally {
+      events.off('unhandledRejection', onUnhandled);
+    }
+    expect(unhandled).toEqual([]);
   });
 });

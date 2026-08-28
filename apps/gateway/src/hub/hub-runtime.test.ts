@@ -16,6 +16,7 @@ import {
   randomBytes,
   rootKeyFromSeed,
   sha256,
+  signEd25519,
 } from '@tmex/shared/auth';
 import { createInMemoryLinkPair } from '@tmex/shared/link';
 import { encodePasskeyAssertionSig, verifyRegistration } from '../auth/passkey';
@@ -30,6 +31,7 @@ import {
   signAuth,
   signUserRecord,
 } from './hub-test-helpers';
+import { encodeRedeemPopMessage } from './redeem-pop';
 import { HUB_UPLINK_PATH, HUB_UPLINK_WS_KIND } from './types';
 
 const dummyServer = { upgrade: () => true };
@@ -49,16 +51,31 @@ function enrollmentJson(
   });
 }
 
+function redeemPop(edSk: Uint8Array, cert: ReturnType<typeof createNodeCertificate>): string {
+  return encodeBase64url(
+    signEd25519(
+      edSk,
+      encodeRedeemPopMessage({
+        enrollmentId: encodeBase64url(cert.certificate.enroll_pk),
+        nodeId: cert.nodeId,
+        certBytes: cert.certificateBytes,
+      })
+    )
+  );
+}
+
 function redeemJson(
   cert: ReturnType<typeof createNodeCertificate>,
   name: string,
-  version?: string
+  version?: string,
+  pop?: string
 ): string {
   return JSON.stringify({
     certificate: encodeBase64url(cert.certificateBytes),
     cert_sig: encodeBase64url(cert.certSig),
     name,
     ...(version !== undefined ? { version } : {}),
+    ...(pop !== undefined ? { pop } : {}),
   });
 }
 
@@ -504,7 +521,7 @@ describe('HubRuntime HTTP', () => {
         new Request('http://hub/api/hub/enrollments/redeem', {
           method: 'POST',
           headers: { 'content-type': 'application/json' },
-          body: redeemJson(secondCert, 'home-2', '1.1.0'),
+          body: redeemJson(secondCert, 'home-2', '1.1.0', redeemPop(ed.secretKey, secondCert)),
         }),
         dummyServer
       );
@@ -637,7 +654,7 @@ describe('HubRuntime HTTP', () => {
         new Request('http://hub/api/hub/enrollments/redeem', {
           method: 'POST',
           headers: { 'content-type': 'application/json' },
-          body: redeemJson(cert, 'entry-renamed', '3.0.0'),
+          body: redeemJson(cert, 'entry-renamed', '3.0.0', redeemPop(entry.ed.secretKey, cert)),
         }),
         dummyServer
       );
@@ -716,7 +733,7 @@ describe('HubRuntime HTTP', () => {
         new Request('http://hub/api/hub/enrollments/redeem', {
           method: 'POST',
           headers: { 'content-type': 'application/json' },
-          body: redeemJson(cert, 'home-again'),
+          body: redeemJson(cert, 'home-again', undefined, redeemPop(revoked.ed.secretKey, cert)),
         }),
         dummyServer
       );
@@ -725,6 +742,187 @@ describe('HubRuntime HTTP', () => {
       expect(userStore.getNode(revoked.nodeId)?.name).toBe('home-again');
       expect(userStore.getCert(revoked.nodeId)?.revokedLogSeq).toBe(9);
       expect(userStore.listNodes().filter((n) => n.id === revoked.nodeId)).toHaveLength(1);
+
+      hub.stop();
+    } finally {
+      close();
+    }
+  });
+
+  test('绑定已有 nodeId 需要节点私钥 PoP：有效证明成功，缺/错证明返回 409 node_exists', async () => {
+    const { db, close } = createMigratedAuthDb();
+    try {
+      const now = 6_000_000;
+      const { hub, user, userStore, inbox } = await startAuthedHub(db, () => now);
+      const ed = generateEd25519KeyPair();
+      const x = generateX25519KeyPair();
+
+      const firstEnroll = await createEnrollment(user.root, {
+        uid: user.id,
+        rootEpoch: 0,
+        now,
+        ttlMs: 10_000,
+      });
+      expect(
+        (
+          await hub.handleRequest(
+            new Request('http://hub/api/hub/enrollments', {
+              method: 'POST',
+              headers: { 'content-type': 'application/json' },
+              body: enrollmentJson(firstEnroll, now),
+            }),
+            dummyServer
+          )
+        )?.status
+      ).toBe(201);
+      const firstCert = createNodeCertificate(firstEnroll.enrollSk, {
+        uid: user.id,
+        edPk: ed.publicKey,
+        x25519Pk: x.publicKey,
+        enrollPk: firstEnroll.enrollPk,
+        now,
+      });
+      const firstRedeem = await hub.handleRequest(
+        new Request('http://hub/api/hub/enrollments/redeem', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: redeemJson(firstCert, 'home'),
+        }),
+        dummyServer
+      );
+      expect(firstRedeem?.status).toBe(200);
+      expect((await inbox.take()).t).toBe('enroll.redeemed');
+      const hexId = nodeIdToHex(firstCert.nodeId);
+
+      const makeFollowup = async (pop?: string) => {
+        const enroll = await createEnrollment(user.root, {
+          uid: user.id,
+          rootEpoch: 0,
+          now,
+          ttlMs: 10_000,
+        });
+        expect(
+          (
+            await hub.handleRequest(
+              new Request('http://hub/api/hub/enrollments', {
+                method: 'POST',
+                headers: { 'content-type': 'application/json' },
+                body: enrollmentJson(enroll, now),
+              }),
+              dummyServer
+            )
+          )?.status
+        ).toBe(201);
+        const cert = createNodeCertificate(enroll.enrollSk, {
+          uid: user.id,
+          edPk: ed.publicKey,
+          x25519Pk: x.publicKey,
+          enrollPk: enroll.enrollPk,
+          now,
+          nodeId: firstCert.nodeId,
+        });
+        return hub.handleRequest(
+          new Request('http://hub/api/hub/enrollments/redeem', {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: redeemJson(cert, 'home-2', '1.1.0', pop),
+          }),
+          dummyServer
+        );
+      };
+
+      const missing = await makeFollowup();
+      expect(missing?.status).toBe(409);
+      expect(await missing?.json()).toEqual({ error: 'node_exists' });
+      expect(userStore.getNode(hexId)?.name).toBe('home');
+
+      const badPop = await makeFollowup(encodeBase64url(new Uint8Array(64).fill(7)));
+      expect(badPop?.status).toBe(409);
+      expect(await badPop?.json()).toEqual({ error: 'node_exists' });
+      expect(userStore.getNode(hexId)?.name).toBe('home');
+
+      const otherEd = generateEd25519KeyPair();
+      const otherEnroll = await createEnrollment(user.root, {
+        uid: user.id,
+        rootEpoch: 0,
+        now,
+        ttlMs: 10_000,
+      });
+      expect(
+        (
+          await hub.handleRequest(
+            new Request('http://hub/api/hub/enrollments', {
+              method: 'POST',
+              headers: { 'content-type': 'application/json' },
+              body: enrollmentJson(otherEnroll, now),
+            }),
+            dummyServer
+          )
+        )?.status
+      ).toBe(201);
+      const otherCert = createNodeCertificate(otherEnroll.enrollSk, {
+        uid: user.id,
+        edPk: ed.publicKey,
+        x25519Pk: x.publicKey,
+        enrollPk: otherEnroll.enrollPk,
+        now,
+        nodeId: firstCert.nodeId,
+      });
+      const wrongKey = await hub.handleRequest(
+        new Request('http://hub/api/hub/enrollments/redeem', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: redeemJson(
+            otherCert,
+            'intruder',
+            undefined,
+            redeemPop(otherEd.secretKey, otherCert)
+          ),
+        }),
+        dummyServer
+      );
+      expect(wrongKey?.status).toBe(409);
+      expect(await wrongKey?.json()).toEqual({ error: 'node_exists' });
+      expect(userStore.getNode(hexId)?.name).toBe('home');
+
+      const okEnroll = await createEnrollment(user.root, {
+        uid: user.id,
+        rootEpoch: 0,
+        now,
+        ttlMs: 10_000,
+      });
+      expect(
+        (
+          await hub.handleRequest(
+            new Request('http://hub/api/hub/enrollments', {
+              method: 'POST',
+              headers: { 'content-type': 'application/json' },
+              body: enrollmentJson(okEnroll, now),
+            }),
+            dummyServer
+          )
+        )?.status
+      ).toBe(201);
+      const okCert = createNodeCertificate(okEnroll.enrollSk, {
+        uid: user.id,
+        edPk: ed.publicKey,
+        x25519Pk: x.publicKey,
+        enrollPk: okEnroll.enrollPk,
+        now,
+        nodeId: firstCert.nodeId,
+      });
+      const ok = await hub.handleRequest(
+        new Request('http://hub/api/hub/enrollments/redeem', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: redeemJson(okCert, 'home-2', '1.1.0', redeemPop(ed.secretKey, okCert)),
+        }),
+        dummyServer
+      );
+      expect(ok?.status).toBe(200);
+      expect((await inbox.take()).t).toBe('enroll.redeemed');
+      expect(userStore.getNode(hexId)?.name).toBe('home-2');
+      expect(userStore.getNode(hexId)?.version).toBe('1.1.0');
 
       hub.stop();
     } finally {
