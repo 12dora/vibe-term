@@ -194,8 +194,10 @@ class MuxStream implements LinkStream {
     }
     this.recvAdvertised -= bytes.byteLength;
     if (this.isCtl) {
-      this.mux.deliverCtl(bytes);
-      this.mux.sendWindowCredit(this, bytes.byteLength);
+      const pending = this.mux.deliverCtl(bytes);
+      const credit = () => this.mux.sendWindowCredit(this, bytes.byteLength);
+      if (pending) void pending.then(credit, credit);
+      else credit();
       return;
     }
     this.recvBuf.push({ bytes, head });
@@ -381,7 +383,7 @@ export class LinkMux implements LinkSession {
   private readonly streams = new Map<number, MuxStream>();
   private readonly streamListeners: Array<(stream: LinkStream) => void> = [];
   private readonly pendingIncoming: LinkStream[] = [];
-  private readonly ctlListeners: Array<(bytes: Uint8Array) => void> = [];
+  private readonly ctlListeners: Array<(bytes: Uint8Array) => unknown> = [];
   private readonly ctlInbox: Uint8Array[] = [];
   private readonly ctlOutbox: Uint8Array[] = [];
   private nextStreamId: number;
@@ -552,7 +554,7 @@ export class LinkMux implements LinkSession {
     this.close(message);
   }
 
-  deliverCtl(bytes: Uint8Array): void {
+  deliverCtl(bytes: Uint8Array): Promise<void> | void {
     const copy = copyBytes(bytes);
     if (this.ctlListeners.length === 0) {
       if (this.ctlInbox.length >= MAX_CTL_INBOX) {
@@ -562,13 +564,26 @@ export class LinkMux implements LinkSession {
       this.ctlInbox.push(copy);
       return;
     }
+    const pending: Promise<void>[] = [];
     for (const cb of this.ctlListeners) {
       try {
-        cb(copy);
+        const result = cb(copy) as unknown;
+        if (
+          result &&
+          typeof result === 'object' &&
+          typeof (result as Promise<void>).then === 'function'
+        ) {
+          pending.push(result as Promise<void>);
+        }
       } catch {
         // listener errors must not break the mux
       }
     }
+    if (pending.length === 0) return;
+    return Promise.all(pending).then(
+      () => undefined,
+      () => undefined
+    );
   }
 
   private allocStreamId(): number {

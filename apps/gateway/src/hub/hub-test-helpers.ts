@@ -161,7 +161,7 @@ export function ctlInbox(link: LinkSession): CtlInbox {
   const queue: UplinkCtlMessage[] = [];
   const waiters: Array<(msg: UplinkCtlMessage) => void> = [];
   link.ctl.onMessage((bytes) => {
-    const msg = decodeUplinkCtl(bytes);
+    const msg = decodeUplinkCtl(bytes, { allowKeyLogRes: true });
     const waiter = waiters.shift();
     if (waiter) waiter(msg);
     else queue.push(msg);
@@ -192,6 +192,17 @@ export function sendCtl(link: LinkSession, msg: UplinkCtlMessage): void {
 
 export function sendRawCtl(link: LinkSession, jsonText: string): void {
   link.ctl.send(new TextEncoder().encode(jsonText));
+}
+
+export function paddedCtlJson(fields: Record<string, unknown>, size: number): string {
+  const empty = JSON.stringify({ ...fields, pad: '' });
+  const prefix = empty.slice(0, -2);
+  const suffix = '"}';
+  const padLen = size - prefix.length - suffix.length;
+  if (padLen < 0) {
+    throw new Error(`paddedCtlJson target ${size} is smaller than ${empty.length}`);
+  }
+  return `${prefix}${'x'.repeat(padLen)}${suffix}`;
 }
 
 export function autoPong(link: LinkSession): void {

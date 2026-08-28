@@ -182,32 +182,32 @@ export function encodeUplinkCtl(msg: UplinkCtlMessage): Uint8Array {
   return textEncoder.encode(JSON.stringify(msg));
 }
 
-export function decodeUplinkCtl(input: Uint8Array | string): UplinkCtlMessage {
+export type DecodeUplinkCtlOptions = {
+  allowKeyLogRes?: boolean;
+};
+
+export function decodeUplinkCtl(
+  input: Uint8Array | string,
+  opts?: DecodeUplinkCtlOptions
+): UplinkCtlMessage {
   const byteLength =
     typeof input === 'string' ? textEncoder.encode(input).byteLength : input.byteLength;
-  if (byteLength > KEY_LOG_PAGE_MAX_BYTES) {
+  if (byteLength > UPLINK_CTL_MAX_BYTES) {
     throw new UplinkCtlError('ctl too large');
   }
   const text = typeof input === 'string' ? input : textDecoder.decode(input);
-  if (
-    byteLength > UPLINK_CTL_MAX_BYTES &&
-    !text.includes('"key.log.res"') &&
-    !text.includes('"t":"key.log.res"')
-  ) {
-    throw new UplinkCtlError('ctl too large');
-  }
   let parsed: unknown;
   try {
     parsed = JSON.parse(text);
   } catch {
-    throw new UplinkCtlError(byteLength > UPLINK_CTL_MAX_BYTES ? 'ctl too large' : 'invalid json');
+    throw new UplinkCtlError('invalid json');
   }
   const parsedT =
     parsed && typeof parsed === 'object' && !Array.isArray(parsed)
       ? (parsed as { t?: unknown }).t
       : undefined;
-  if (parsedT !== 'key.log.res' && byteLength > UPLINK_CTL_MAX_BYTES) {
-    throw new UplinkCtlError('ctl too large');
+  if (parsedT === 'key.log.res' && !opts?.allowKeyLogRes) {
+    throw new UplinkCtlError('unexpected key.log.res');
   }
   if (parsedT !== 'key.log.res') {
     assertCtlBounds(parsed, 0);

@@ -199,26 +199,31 @@ function parseNodeInfo(value: unknown): UplinkNodeInfo {
   };
 }
 
-export function decodeUplinkCtl(bytes: Uint8Array): UplinkCtlMessage {
+export type DecodeUplinkCtlOptions = {
+  pendingKeyLogId?: string;
+};
+
+export function decodeUplinkCtl(
+  bytes: Uint8Array,
+  opts?: DecodeUplinkCtlOptions
+): UplinkCtlMessage {
   if (bytes.byteLength > KEY_LOG_PAGE_MAX_BYTES) {
     throw new Error('ctl too large');
   }
-  if (bytes.byteLength > UPLINK_CTL_MAX_BYTES) {
-    let preview = '';
-    try {
-      preview = new TextDecoder().decode(bytes.subarray(0, 64));
-    } catch {
-      preview = '';
-    }
-    if (!preview.includes('key.log.res')) {
-      throw new Error('ctl too large');
-    }
+  const allowLarge = Boolean(opts?.pendingKeyLogId);
+  if (bytes.byteLength > UPLINK_CTL_MAX_BYTES && !allowLarge) {
+    throw new Error('ctl too large');
   }
   const parsed = decodeJsonBytes(bytes);
   if (!isRecord(parsed) || typeof parsed.t !== 'string') {
     throw new Error('uplink ctl must be a JSON object with t');
   }
-  if (parsed.t !== 'key.log.res') {
+  if (parsed.t === 'key.log.res' && bytes.byteLength > UPLINK_CTL_MAX_BYTES) {
+    const resId = optionalString(parsed.id, 'id');
+    if (!resId || resId !== opts?.pendingKeyLogId) {
+      throw new Error('ctl too large');
+    }
+  } else if (parsed.t !== 'key.log.res') {
     if (bytes.byteLength > UPLINK_CTL_MAX_BYTES) {
       throw new Error('ctl too large');
     }

@@ -1,6 +1,9 @@
 import { describe, expect, test } from 'bun:test';
 import { encodeBase64url, randomBytes } from '@tmex/shared/auth';
+import { paddedCtlJson } from './hub-test-helpers';
 import {
+  KEY_LOG_PAGE_MAX_BYTES,
+  UPLINK_CTL_MAX_BYTES,
   UplinkCtlError,
   decodeUplinkCtl,
   encodeUplinkCtl,
@@ -9,7 +12,10 @@ import {
 } from './uplink-protocol';
 
 function roundtrip(msg: Parameters<typeof encodeUplinkCtl>[0]) {
-  return decodeUplinkCtl(encodeUplinkCtl(msg));
+  return decodeUplinkCtl(
+    encodeUplinkCtl(msg),
+    msg.t === 'key.log.res' ? { allowKeyLogRes: true } : undefined
+  );
 }
 
 describe('uplink-protocol', () => {
@@ -227,5 +233,18 @@ describe('uplink-protocol', () => {
         })
       )
     ).toThrow(UplinkCtlError);
+  });
+
+  test('hub inbound 拒绝 key.log.res 与 1 MiB 帧', () => {
+    const smallRes = JSON.stringify({ t: 'key.log.res', records: [] });
+    expect(() => decodeUplinkCtl(smallRes)).toThrow(UplinkCtlError);
+    expect(() =>
+      decodeUplinkCtl(paddedCtlJson({ t: 'key.log.res', records: [] }, KEY_LOG_PAGE_MAX_BYTES))
+    ).toThrow(UplinkCtlError);
+    expect(() => decodeUplinkCtl(paddedCtlJson({ t: 'ping' }, UPLINK_CTL_MAX_BYTES + 1))).toThrow(
+      UplinkCtlError
+    );
+    const allowed = decodeUplinkCtl(smallRes, { allowKeyLogRes: true });
+    expect(allowed.t).toBe('key.log.res');
   });
 });

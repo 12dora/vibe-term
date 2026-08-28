@@ -26,6 +26,7 @@ import {
   autoPong,
   createHubTestStack,
   ctlInbox,
+  paddedCtlJson,
   seedAdmittedNode,
   seedUser,
   sendCtl,
@@ -36,6 +37,7 @@ import {
 import { NodeRegistry } from './node-registry';
 import type { HubKeyLogSource } from './types';
 import type { UplinkCtlMessage } from './uplink-protocol';
+import { KEY_LOG_PAGE_MAX_BYTES } from './uplink-protocol';
 import {
   HUB_KEY_LOG_REQ_BURST,
   HUB_KEY_LOG_REQ_STATE_MAX,
@@ -933,6 +935,84 @@ describe('UplinkServer', () => {
       expect(b.inbox.drain().some((m) => m.t === 'rtc.signal' && m.sdp === 'browser-flood')).toBe(
         false
       );
+      server.stop();
+    } finally {
+      close();
+    }
+  });
+
+  test('pre-auth 1 MiB key.log.res 关闭链路', async () => {
+    const { db, close } = createMigratedAuthDb();
+    try {
+      const { userStore, keyLogSource } = createHubTestStack(db);
+      seedUser(userStore);
+      const { server } = makeServer(db, userStore, keyLogSource);
+      const [nodeLink, hubLink] = createInMemoryLinkPair();
+      const inbox = ctlInbox(nodeLink);
+      server.accept(hubLink);
+      expect((await inbox.take()).t).toBe('auth.challenge');
+      const closed = hubLink.closed;
+      sendRawCtl(
+        nodeLink,
+        paddedCtlJson({ t: 'key.log.res', records: [] }, KEY_LOG_PAGE_MAX_BYTES)
+      );
+      expect((await closed).reason).toBe('protocol_error');
+      server.stop();
+    } finally {
+      close();
+    }
+  });
+
+  test('pre-auth 非 auth.response 关闭链路', async () => {
+    const { db, close } = createMigratedAuthDb();
+    try {
+      const { userStore, keyLogSource } = createHubTestStack(db);
+      seedUser(userStore);
+      const { server } = makeServer(db, userStore, keyLogSource);
+      const [nodeLink, hubLink] = createInMemoryLinkPair();
+      const inbox = ctlInbox(nodeLink);
+      server.accept(hubLink);
+      expect((await inbox.take()).t).toBe('auth.challenge');
+      const closed = hubLink.closed;
+      sendCtl(nodeLink, { t: 'ping' });
+      expect((await closed).reason).toBe('unauthenticated');
+      server.stop();
+    } finally {
+      close();
+    }
+  });
+
+  test('ctl 处理队列溢出关闭链路', async () => {
+    const { db, close } = createMigratedAuthDb();
+    try {
+      const { userStore } = createHubTestStack(db);
+      const user = seedUser(userStore);
+      let release!: () => void;
+      const gate = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      const source: HubKeyLogSource = {
+        async head() {
+          return { seq: 0n, hash: new Uint8Array(32) };
+        },
+        async list() {
+          await gate;
+          return [];
+        },
+        async append() {
+          return { ok: false, error: 'readonly' };
+        },
+      };
+      const { server } = makeServer(db, userStore, source);
+      const node = await authNode(server, userStore, user.id);
+      const closed = node.hubLink.closed;
+      sendCtl(node.nodeLink, { t: 'key.log.req', from_seq: 1 });
+      await new Promise((r) => setTimeout(r, 20));
+      for (let i = 0; i < 32; i++) {
+        sendCtl(node.nodeLink, { t: 'ping' });
+      }
+      expect((await closed).reason).toBe('ctl-overflow');
+      release();
       server.stop();
     } finally {
       close();

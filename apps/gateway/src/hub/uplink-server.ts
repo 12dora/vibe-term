@@ -31,6 +31,7 @@ import {
   KEY_LOG_PAGE_MAX_LIMIT,
   type NodeListMessage,
   type RtcSignalMessage,
+  UPLINK_CTL_MAX_BYTES,
   type UplinkCtlMessage,
   b64urlToBytes,
   bytesToB64url,
@@ -74,6 +75,13 @@ export type UplinkServerOptions = {
 type PendingAuth = {
   nonce: Uint8Array;
 };
+
+type CtlQueueState = {
+  depth: number;
+  tail: Promise<void>;
+};
+
+export const HUB_CTL_QUEUE_MAX = 8;
 
 type LiveConnection = {
   nodeId: string;
@@ -344,7 +352,7 @@ export class UplinkServer {
   private readonly live = new Map<LinkSession, LiveConnection>();
   private readonly accepted = new Set<LinkSession>();
   private readonly authTimers = new Map<LinkSession, ReturnType<typeof setTimeout>>();
-  private readonly ctlQueues = new WeakMap<LinkSession, Promise<void>>();
+  private readonly ctlQueues = new WeakMap<LinkSession, CtlQueueState>();
   private readonly rtcSessions = new Map<string, RtcSessionRegistration>();
   private listVersion = 0;
   private stopped = false;
@@ -385,9 +393,7 @@ export class UplinkServer {
     this.pending.set(link, { nonce });
     this.armAuthTimer(link);
     this.send(link, { t: 'auth.challenge', nonce: encodeBase64url(nonce) });
-    link.ctl.onMessage((bytes) => {
-      this.enqueueCtl(link, bytes);
-    });
+    link.ctl.onMessage((bytes) => this.enqueueCtl(link, bytes));
     link.onStream((stream) => {
       void this.onIncomingStream(link, stream);
     });
@@ -522,17 +528,36 @@ export class UplinkServer {
     }
   }
 
-  private enqueueCtl(link: LinkSession, bytes: Uint8Array): void {
-    const prev = this.ctlQueues.get(link) ?? Promise.resolve();
-    const next = prev
-      .catch(() => undefined)
-      .then(() => this.onCtl(link, bytes))
+  private enqueueCtl(link: LinkSession, bytes: Uint8Array): Promise<void> {
+    if (this.stopped || !this.accepted.has(link)) return Promise.resolve();
+    if (bytes.byteLength > UPLINK_CTL_MAX_BYTES) {
+      link.close('protocol_error');
+      return Promise.resolve();
+    }
+    let q = this.ctlQueues.get(link);
+    if (!q) {
+      q = { depth: 0, tail: Promise.resolve() };
+      this.ctlQueues.set(link, q);
+    }
+    if (q.depth >= HUB_CTL_QUEUE_MAX) {
+      link.close('ctl-overflow');
+      return Promise.resolve();
+    }
+    q.depth += 1;
+    const run = q.tail.catch(() => undefined).then(() => this.onCtl(link, bytes));
+    q.tail = run
       .catch(() => {
         if (this.accepted.has(link)) {
           link.close('ctl-error');
         }
+      })
+      .finally(() => {
+        q.depth = Math.max(0, q.depth - 1);
       });
-    this.ctlQueues.set(link, next);
+    return run.then(
+      () => undefined,
+      () => undefined
+    );
   }
 
   private async onCtl(link: LinkSession, bytes: Uint8Array): Promise<void> {
@@ -546,9 +571,11 @@ export class UplinkServer {
     }
     const live = this.live.get(link);
     if (!live) {
-      if (msg.t === 'auth.response') {
-        await this.handleAuthResponse(link, msg.node_id, msg.sig);
+      if (msg.t !== 'auth.response') {
+        link.close('unauthenticated');
+        return;
       }
+      await this.handleAuthResponse(link, msg.node_id, msg.sig);
       return;
     }
     if (!this.assertLiveCert(live)) return;
@@ -574,6 +601,9 @@ export class UplinkServer {
         return;
       case 'rtc.signal':
         this.handleRtcSignal(live, msg);
+        return;
+      case 'key.log.res':
+        link.close('protocol_error');
         return;
       default:
         return;

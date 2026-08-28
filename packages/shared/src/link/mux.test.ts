@@ -409,6 +409,31 @@ describe('link mux', () => {
     expect(info.reason.toLowerCase()).toMatch(/pending|cap|overflow|too many/);
   });
 
+  it('defers CTL WINDOW until a promise-returning onMessage settles', async () => {
+    const [t1, t2] = createBytePipe();
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const sender = new LinkMux(t1, { role: 'initiator', streamWindow: 8 });
+    const receiver = new LinkMux(t2, { role: 'acceptor', streamWindow: 8 });
+    const received: number[] = [];
+    receiver.ctl.onMessage((bytes) => {
+      received.push(bytes[0] ?? -1);
+      return gate;
+    });
+    sender.ctl.send(new Uint8Array(8).fill(1));
+    await new Promise((r) => setTimeout(r, 10));
+    expect(received).toEqual([1]);
+    sender.ctl.send(new Uint8Array(8).fill(2));
+    await new Promise((r) => setTimeout(r, 20));
+    expect(received).toEqual([1]);
+    release();
+    await new Promise((r) => setTimeout(r, 20));
+    expect(received).toEqual([1, 2]);
+    sender.close();
+  });
+
   it('closes the link when the ctl inbox exceeds the hard cap', async () => {
     const [a, b] = createInMemoryLinkPair();
     for (let i = 0; i < 65; i++) {

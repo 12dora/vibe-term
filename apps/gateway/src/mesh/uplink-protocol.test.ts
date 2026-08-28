@@ -1,11 +1,24 @@
 import { describe, expect, test } from 'bun:test';
 import { encodeBase64url, randomBytes } from '@tmex/shared/auth';
 import {
+  KEY_LOG_PAGE_MAX_BYTES,
+  UPLINK_CTL_MAX_BYTES,
   UPLINK_CTL_MAX_CERT_BYTES,
   decodeUplinkCtl,
   encodeUplinkCtl,
   uplinkWsUrl,
 } from './uplink-protocol';
+
+function paddedCtlJson(fields: Record<string, unknown>, size: number): string {
+  const empty = JSON.stringify({ ...fields, pad: '' });
+  const prefix = empty.slice(0, -2);
+  const suffix = '"}';
+  const padLen = size - prefix.length - suffix.length;
+  if (padLen < 0) {
+    throw new Error(`paddedCtlJson target ${size} is smaller than ${empty.length}`);
+  }
+  return `${prefix}${'x'.repeat(padLen)}${suffix}`;
+}
 
 describe('uplink-protocol', () => {
   test('round-trips auth, ping, status, and node.list with b64url binaries', () => {
@@ -202,6 +215,29 @@ describe('uplink-protocol', () => {
     expect(() => decodeUplinkCtl(new TextEncoder().encode(JSON.stringify({ t: 'nope' })))).toThrow(
       /unknown uplink ctl/
     );
+  });
+
+  test('1 MiB key.log.res 仅在存在匹配 pending id 时接受', () => {
+    const id = 'pending-1';
+    const huge = new TextEncoder().encode(
+      paddedCtlJson({ t: 'key.log.res', records: [], id }, KEY_LOG_PAGE_MAX_BYTES)
+    );
+    expect(huge.byteLength).toBe(KEY_LOG_PAGE_MAX_BYTES);
+    expect(() => decodeUplinkCtl(huge)).toThrow(/too large/);
+    expect(() => decodeUplinkCtl(huge, { pendingKeyLogId: 'other' })).toThrow(/too large/);
+    const accepted = decodeUplinkCtl(huge, { pendingKeyLogId: id });
+    expect(accepted.t).toBe('key.log.res');
+    if (accepted.t !== 'key.log.res') throw new Error('expected key.log.res');
+    expect(accepted.id).toBe(id);
+    expect(accepted.records).toEqual([]);
+
+    const hugePing = new TextEncoder().encode(paddedCtlJson({ t: 'ping' }, KEY_LOG_PAGE_MAX_BYTES));
+    expect(() => decodeUplinkCtl(hugePing, { pendingKeyLogId: id })).toThrow(/too large/);
+    expect(() =>
+      decodeUplinkCtl(
+        new TextEncoder().encode(paddedCtlJson({ t: 'ping' }, UPLINK_CTL_MAX_BYTES + 1))
+      )
+    ).toThrow(/too large/);
   });
 
   test('maps http(s) hub url onto /hub/uplink', () => {

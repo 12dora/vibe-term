@@ -401,7 +401,7 @@ export class UplinkClient {
       if (generation !== this.connectGeneration) return;
       let type = '';
       try {
-        const msg = decodeUplinkCtl(bytes);
+        const msg = decodeUplinkCtl(bytes, { pendingKeyLogId: this.pendingKeyLog?.id });
         type = msg.t;
         try {
           this.handleCtl(msg, generation);
