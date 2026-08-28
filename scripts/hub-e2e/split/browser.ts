@@ -131,7 +131,10 @@ try {
   await shot(page, 'f-05-passkey-registered.png');
   result.passkeyRegistered = true;
 
-  await page.request.post(`${baseUrl}/api/auth/logout`).catch(() => undefined);
+  // Bun 下 playwright 的 request 上下文解析 Set-Cookie 时会拿到相对 URL 并抛 ERR_INVALID_URL，改在页面内 fetch
+  await page
+    .evaluate(() => fetch('/api/auth/logout', { method: 'POST', credentials: 'include' }).then(() => undefined))
+    .catch(() => undefined);
   await page.context().clearCookies();
   await page.evaluate(() => {
     localStorage.clear();

@@ -867,6 +867,8 @@ else
 fi
 
 # ---------- G revoke node-b ----------
+# F 里浏览器做过 logout，hub 侧会话可能已被撤销；吊销前重新登录拿新 cookie
+driver login.ts --base-url "${HUB_PUBLIC_URL}" --username "${USER_NAME}" --password "${PASSWORD}" --out /out/cookies-hub.json >/dev/null 2>&1 || true
 set +e
 split_bun /workspace/scripts/hub-e2e/split/revoke.ts \
   --base-url "${HUB_PUBLIC_URL}" \
