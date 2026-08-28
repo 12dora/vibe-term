@@ -1,7 +1,7 @@
 #!/usr/bin/env bun
 import * as wsBorsh from '../../../packages/shared/src/ws-borsh/index.ts';
 import { joinUrl, loadLoginState, parseArgs, requireArg, sleep } from './lib.ts';
-import { analyzeSeqCapture } from './seq.ts';
+import { analyzeSeqSources } from './seq.ts';
 
 function generateSelectToken(): Uint8Array {
   return crypto.getRandomValues(new Uint8Array(16));
@@ -92,7 +92,8 @@ const ws = new WebSocket(wsUrl, {
 ws.binaryType = 'arraybuffer';
 
 let seq = 1;
-const output: string[] = [];
+const historyChunks: string[] = [];
+const outputChunks: string[] = [];
 let opened = false;
 let helloOk = false;
 let connected = false;
@@ -110,6 +111,10 @@ function decodeText(data: Uint8Array): string {
   } catch {
     return '';
   }
+}
+
+function capturedText(): string {
+  return `${historyChunks.join('')}${outputChunks.join('')}`;
 }
 
 const openedAt = Date.now();
@@ -165,12 +170,12 @@ ws.onmessage = (ev) => {
   }
   if (envelope.kind === wsBorsh.KIND_TERM_OUTPUT || envelope.kind === wsBorsh.KIND_TERM_HISTORY) {
     try {
-      const schema =
-        envelope.kind === wsBorsh.KIND_TERM_OUTPUT
-          ? wsBorsh.schema.TermOutputSchema
-          : wsBorsh.schema.TermHistorySchema;
+      const isHistory = envelope.kind === wsBorsh.KIND_TERM_HISTORY;
+      const schema = isHistory ? wsBorsh.schema.TermHistorySchema : wsBorsh.schema.TermOutputSchema;
       const payload = wsBorsh.decodePayload(schema, envelope.payload) as { data: Uint8Array };
-      output.push(decodeText(payload.data));
+      const text = decodeText(payload.data);
+      if (isHistory) historyChunks.push(text);
+      else outputChunks.push(text);
     } catch (err) {
       process.stderr.write(`term decode failed: ${String(err)}\n`);
     }
@@ -242,17 +247,30 @@ if (captureSeq) {
     sendPaste(command);
   }
   const deadline = Date.now() + timeoutMs;
-  let result = analyzeSeqCapture(output.join(''), expectCount, seqPrefix);
+  let result = analyzeSeqSources(
+    historyChunks.join(''),
+    outputChunks.join(''),
+    expectCount,
+    seqPrefix
+  );
   while (Date.now() < deadline && !result.complete) {
     await sleep(100);
-    result = analyzeSeqCapture(output.join(''), expectCount, seqPrefix);
+    result = analyzeSeqSources(
+      historyChunks.join(''),
+      outputChunks.join(''),
+      expectCount,
+      seqPrefix
+    );
   }
   ws.close();
+  const joined = capturedText();
   const body = {
     ok: result.complete,
     expectCount,
     seqPrefix,
     foundCount: result.found.length,
+    fromHistory: result.fromHistory,
+    fromOutput: result.fromOutput,
     first: result.found[0] ?? null,
     last: result.found[result.found.length - 1] ?? null,
     missing: result.missing.slice(0, 40),
@@ -268,7 +286,7 @@ if (captureSeq) {
   process.stdout.write(`${JSON.stringify(body)}\n`);
   if (!result.complete) {
     process.stderr.write(
-      `seq capture incomplete missing=${result.missing.length} output=${JSON.stringify(output.join('').slice(-2000))}\n`
+      `seq capture incomplete missing=${result.missing.length} output=${JSON.stringify(joined.slice(-2000))}\n`
     );
     process.exit(1);
   }
@@ -282,7 +300,7 @@ sendPaste(`echo ${marker}`);
 
 const deadline = Date.now() + timeoutMs;
 while (Date.now() < deadline) {
-  const joined = output.join('');
+  const joined = capturedText();
   if (joined.includes(marker)) {
     ws.close();
     process.stdout.write(
@@ -302,6 +320,6 @@ while (Date.now() < deadline) {
 
 ws.close();
 process.stderr.write(
-  `marker not observed: ${marker}\noutput=${JSON.stringify(output.join('').slice(-2000))}\n`
+  `marker not observed: ${marker}\noutput=${JSON.stringify(capturedText().slice(-2000))}\n`
 );
 process.exit(1);

@@ -22,13 +22,18 @@ export type SeqGapResult = {
   complete: boolean;
 };
 
-export function analyzeSeqCapture(
-  text: string,
-  expectCount: number,
-  prefix = 'SEQ_',
-  start = 1
-): SeqGapResult {
-  const found = extractSeqNumbers(text, prefix);
+export type SeqSourceResult = SeqGapResult & {
+  fromHistory: number;
+  fromOutput: number;
+};
+
+export function mergeSeqNumbers(history: number[], output: number[]): number[] {
+  const found = new Set<number>(history);
+  for (const n of output) found.add(n);
+  return [...found].sort((a, b) => a - b);
+}
+
+function analyzeFound(found: number[], expectCount: number, start = 1): SeqGapResult {
   const foundSet = new Set(found);
   const missing: number[] = [];
   for (let n = start; n < start + expectCount; n += 1) {
@@ -44,6 +49,31 @@ export function analyzeSeqCapture(
     extra,
     contiguous: complete,
     complete,
+  };
+}
+
+export function analyzeSeqCapture(
+  text: string,
+  expectCount: number,
+  prefix = 'SEQ_',
+  start = 1
+): SeqGapResult {
+  return analyzeFound(extractSeqNumbers(text, prefix), expectCount, start);
+}
+
+export function analyzeSeqSources(
+  historyText: string,
+  outputText: string,
+  expectCount: number,
+  prefix = 'SEQ_',
+  start = 1
+): SeqSourceResult {
+  const historyFound = extractSeqNumbers(historyText, prefix);
+  const outputFound = extractSeqNumbers(outputText, prefix);
+  return {
+    ...analyzeFound(mergeSeqNumbers(historyFound, outputFound), expectCount, start),
+    fromHistory: historyFound.length,
+    fromOutput: outputFound.length,
   };
 }
 
