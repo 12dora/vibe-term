@@ -1,5 +1,14 @@
 import { describe, expect, test } from 'bun:test';
-import { mkdtemp, rm } from 'node:fs/promises';
+import {
+  lstat,
+  mkdir,
+  mkdtemp,
+  readFile,
+  realpath,
+  rm,
+  symlink,
+  writeFile,
+} from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
@@ -44,6 +53,30 @@ describe('env-file', () => {
       await writeEnvFile(path, { A: '2', B: '3' });
       const env = await readEnvFile(path);
       expect(env).toEqual({ A: '2', B: '3' });
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  test('writeEnvFile updates a symlinked env file without replacing the symlink', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'tmex-env-symlink-'));
+    try {
+      const volumeDir = join(dir, 'volume');
+      const overlayDir = join(dir, 'overlay');
+      await mkdir(volumeDir);
+      await mkdir(overlayDir);
+      const realPath = join(volumeDir, 'app.env');
+      const linkPath = join(overlayDir, 'app.env');
+      await writeFile(realPath, 'A=1\n', { encoding: 'utf8', mode: 0o600 });
+      await symlink(realPath, linkPath);
+
+      await writeEnvFile(linkPath, { A: '2', HUB: 'joined' });
+
+      expect((await lstat(linkPath)).isSymbolicLink()).toBe(true);
+      expect(await realpath(linkPath)).toBe(await realpath(realPath));
+      expect(await readEnvFile(linkPath)).toEqual({ A: '2', HUB: 'joined' });
+      expect(await readEnvFile(realPath)).toEqual({ A: '2', HUB: 'joined' });
+      expect(await readFile(realPath, 'utf8')).toBe('A=2\nHUB=joined\n');
     } finally {
       await rm(dir, { recursive: true, force: true });
     }

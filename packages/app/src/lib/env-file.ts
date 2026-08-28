@@ -1,4 +1,5 @@
-import { readFile, rename, writeFile } from 'node:fs/promises';
+import { readFile, realpath, rename, writeFile } from 'node:fs/promises';
+import { basename, dirname, join } from 'node:path';
 
 export function parseEnvContent(content: string): Record<string, string> {
   const result: Record<string, string> = {};
@@ -31,13 +32,28 @@ export async function readEnvFile(filePath: string): Promise<Record<string, stri
   return parseEnvContent(content);
 }
 
+async function resolveEnvWritePath(filePath: string): Promise<string> {
+  try {
+    return await realpath(filePath);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+      return filePath;
+    }
+    throw error;
+  }
+}
+
 export async function writeEnvFile(
   filePath: string,
   values: Record<string, string>
 ): Promise<void> {
-  const tempPath = `${filePath}.${process.pid}.${Date.now()}.tmp`;
+  const targetPath = await resolveEnvWritePath(filePath);
+  const tempPath = join(
+    dirname(targetPath),
+    `${basename(targetPath)}.${process.pid}.${Date.now()}.tmp`
+  );
   await writeFile(tempPath, stringifyEnv(values), { encoding: 'utf8', mode: 0o600 });
-  await rename(tempPath, filePath);
+  await rename(tempPath, targetPath);
 }
 
 export function mergeMissingKeys(
