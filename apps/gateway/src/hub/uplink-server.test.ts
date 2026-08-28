@@ -1008,4 +1008,78 @@ describe('UplinkServer', () => {
       close();
     }
   });
+
+  test('rate-limits key.log.req per node with a token bucket', async () => {
+    const { db, close } = createMigratedAuthDb();
+    try {
+      const { userStore, keyLogSource } = createHubTestStack(db);
+      const user = seedUser(userStore);
+      let listCalls = 0;
+      const counted: HubKeyLogSource = {
+        head: (userId) => keyLogSource.head(userId),
+        list: async (userId, fromSeq) => {
+          listCalls += 1;
+          return keyLogSource.list(userId, fromSeq);
+        },
+        append: (userId, record) => keyLogSource.append(userId, record),
+      };
+      const { server } = makeServer(db, userStore, counted);
+      const node = await authNode(server, userStore, user.id);
+      node.inbox.drain();
+      for (let i = 0; i < 21; i++) {
+        sendCtl(node.nodeLink, { t: 'key.log.req', from_seq: 1, id: `req-${i}` });
+      }
+      let got = 0;
+      const deadline = Date.now() + 1_000;
+      while (Date.now() < deadline && got < 21) {
+        try {
+          const msg = await node.inbox.take(40);
+          if (msg.t === 'key.log.res') got += 1;
+        } catch {
+          break;
+        }
+      }
+      expect(listCalls).toBe(20);
+      expect(got).toBe(20);
+      server.stop();
+    } finally {
+      close();
+    }
+  });
+
+  test('aggregates key.log.req warn logs with a suppressed count', async () => {
+    const { db, close } = createMigratedAuthDb();
+    try {
+      const { userStore, keyLogSource } = createHubTestStack(db);
+      const user = seedUser(userStore);
+      let now = 1_000;
+      const warnings: string[] = [];
+      const orig = console.warn;
+      console.warn = (...args: unknown[]) => {
+        warnings.push(args.map(String).join(' '));
+      };
+      const { server } = makeServer(db, userStore, keyLogSource, { now: () => now });
+      const node = await authNode(server, userStore, user.id);
+      node.inbox.drain();
+      sendCtl(node.nodeLink, { t: 'key.log.req', from_seq: 1, id: 'a' });
+      sendCtl(node.nodeLink, { t: 'key.log.req', from_seq: 1, id: 'b' });
+      sendCtl(node.nodeLink, { t: 'key.log.req', from_seq: 1, id: 'c' });
+      await node.inbox.take();
+      await node.inbox.take();
+      await node.inbox.take();
+      const first = warnings.filter((row) => row.includes('key.log.req'));
+      expect(first).toHaveLength(1);
+      expect(first[0]).not.toContain('suppressed=');
+      now += 10_000;
+      sendCtl(node.nodeLink, { t: 'key.log.req', from_seq: 1, id: 'd' });
+      await node.inbox.take();
+      const later = warnings.filter((row) => row.includes('key.log.req'));
+      expect(later).toHaveLength(2);
+      expect(later[1]).toContain('suppressed=2');
+      console.warn = orig;
+      server.stop();
+    } finally {
+      close();
+    }
+  });
 });

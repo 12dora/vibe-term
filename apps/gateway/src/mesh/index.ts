@@ -96,6 +96,7 @@ export {
   CONNECTION_ID_BYTES,
   createMeshRuntime,
   enumeratePeerEndpoints,
+  resolveUserId,
   generateConnectionId,
   isAdvertisablePeerAddress,
   SessionRegistry,

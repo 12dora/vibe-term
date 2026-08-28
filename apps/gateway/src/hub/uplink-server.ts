@@ -83,6 +83,35 @@ type LiveConnection = {
 const textDecoder = new TextDecoder();
 const textEncoder = new TextEncoder();
 
+export const HUB_KEY_LOG_REQ_RATE_PER_MIN = 10;
+export const HUB_KEY_LOG_REQ_BURST = 20;
+export const HUB_KEY_LOG_REQ_LOG_INTERVAL_MS = 10_000;
+
+class TokenBucket {
+  private tokens: number;
+  private lastMs = 0;
+
+  constructor(
+    private readonly ratePerMin: number,
+    private readonly burst: number
+  ) {
+    this.tokens = burst;
+  }
+
+  take(now: number): boolean {
+    if (this.lastMs === 0) {
+      this.lastMs = now;
+    } else {
+      const elapsed = Math.max(0, now - this.lastMs);
+      this.tokens = Math.min(this.burst, this.tokens + (elapsed * this.ratePerMin) / 60_000);
+      this.lastMs = now;
+    }
+    if (this.tokens < 1) return false;
+    this.tokens -= 1;
+    return true;
+  }
+}
+
 export class UplinkServer {
   private readonly db: AuthDb;
   private readonly userStore: UserStore;
@@ -102,6 +131,8 @@ export class UplinkServer {
   private readonly rtcSessions = new Map<string, RtcSessionRegistration>();
   private listVersion = 0;
   private stopped = false;
+  private readonly keyLogReqBuckets = new Map<string, TokenBucket>();
+  private readonly keyLogReqLogs = new Map<string, { lastAt: number; suppressed: number }>();
 
   constructor(opts: UplinkServerOptions) {
     this.db = opts.db;
@@ -448,11 +479,18 @@ export class UplinkServer {
     live: LiveConnection,
     msg: Extract<UplinkCtlMessage, { t: 'key.log.req' }>
   ): Promise<void> {
+    let bucket = this.keyLogReqBuckets.get(live.nodeId);
+    if (!bucket) {
+      bucket = new TokenBucket(HUB_KEY_LOG_REQ_RATE_PER_MIN, HUB_KEY_LOG_REQ_BURST);
+      this.keyLogReqBuckets.set(live.nodeId, bucket);
+    }
     const fromSeq = BigInt(msg.from_seq);
+    if (!bucket.take(this.now())) {
+      this.warnKeyLogReq(live.nodeId, fromSeq, 0, true);
+      return;
+    }
     const records = await this.keyLogSource.list(live.userId, fromSeq);
-    console.warn(
-      `[hub] key.log.req node=${live.nodeId} from_seq=${fromSeq.toString()} records=${records.length}`
-    );
+    this.warnKeyLogReq(live.nodeId, fromSeq, records.length, false);
     this.send(live.link, {
       t: 'key.log.res',
       records: records.map((r) => ({
@@ -462,6 +500,23 @@ export class UplinkServer {
       })),
       ...(msg.id ? { id: msg.id } : {}),
     });
+  }
+
+  private warnKeyLogReq(nodeId: string, fromSeq: bigint, records: number, limited: boolean): void {
+    const now = this.now();
+    const prev = this.keyLogReqLogs.get(nodeId);
+    if (prev && now - prev.lastAt < HUB_KEY_LOG_REQ_LOG_INTERVAL_MS) {
+      prev.suppressed += 1;
+      return;
+    }
+    const suppressed = prev?.suppressed ?? 0;
+    const extra = [suppressed > 0 ? `suppressed=${suppressed}` : '', limited ? 'limited=1' : '']
+      .filter(Boolean)
+      .join(' ');
+    console.warn(
+      `[hub] key.log.req node=${nodeId} from_seq=${fromSeq.toString()} records=${records}${extra ? ` ${extra}` : ''}`
+    );
+    this.keyLogReqLogs.set(nodeId, { lastAt: now, suppressed: 0 });
   }
 
   private async handleKeyLogAppend(

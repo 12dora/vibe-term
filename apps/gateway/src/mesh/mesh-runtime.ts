@@ -530,16 +530,24 @@ async function openAdaptedWsStream(
   };
 }
 
-function resolveUserId(userStore: UserStore, nodeIdHex: string, explicit?: string): string {
+export function resolveUserId(
+  userStore: UserStore,
+  nodeIdHex: string,
+  explicit?: string
+): string | null {
   if (explicit) return explicit;
   const self = userStore.getCert(nodeIdHex);
   if (self?.userId) return self.userId;
-  for (const cert of userStore.listCerts()) {
-    if (cert.userId) return cert.userId;
+  const ids = new Set<string>();
+  for (const user of userStore.listUsers()) {
+    if (user.id) ids.add(user.id);
   }
-  const listed = userStore.listUsers();
-  if (listed.length === 1 && listed[0]) return listed[0].id;
-  return '';
+  for (const cert of userStore.listCerts()) {
+    if (cert.userId) ids.add(cert.userId);
+  }
+  if (ids.size !== 1) return null;
+  const only = ids.values().next().value;
+  return typeof only === 'string' && only.length > 0 ? only : null;
 }
 
 function hubEndpointUrl(config: MeshRuntimeConfig): string {
@@ -567,7 +575,7 @@ export async function createMeshRuntime(opts: CreateMeshRuntimeOptions): Promise
     verifyPasskeyAssertion: makeVerifyPasskeyAssertion(userStore),
   });
   const applier = createKeyLogApplier(keyLogStore, keyLogService);
-  const userId = resolveUserId(userStore, identity.nodeIdHex, opts.userId);
+  const userId = resolveUserId(userStore, identity.nodeIdHex, opts.userId) ?? '';
   const nodeEvents = new Set<(event: NodeEventPayload) => void>();
   const emitNodeEvent = (event: NodeEventPayload) => {
     for (const cb of nodeEvents) {
@@ -889,12 +897,27 @@ export async function createMeshRuntime(opts: CreateMeshRuntimeOptions): Promise
   });
   peerHolder.manager = peerManager;
 
+  let hubPresenceLive = false;
+  uplink.onStateChange((state) => {
+    const live = state === 'online';
+    if (hubPresenceLive && !live && lastNodeList) {
+      const reach = peerManager.listReach();
+      for (const node of lastNodeList.nodes) {
+        if (node.id === identity.nodeIdHex || !node.online) continue;
+        const r = reach.get(node.id);
+        if (r === 'lan' || r === 'relay') continue;
+        emitNodeEvent({ nodeId: node.id, status: 'offline' });
+      }
+    }
+    hubPresenceLive = live;
+  });
+
   const peers: PeerLinkProvider = {
     getLink: (nodeId) => peerManager.getLink(nodeId),
     listReach: () => peerManager.listReach(),
     listHubOnline: () => {
       const ids = new Set<string>();
-      if (!lastNodeList) return ids;
+      if (uplink.state !== 'online' || !lastNodeList) return ids;
       for (const node of lastNodeList.nodes) {
         if (node.online) ids.add(node.id);
       }
@@ -1160,6 +1183,19 @@ export async function createMeshRuntime(opts: CreateMeshRuntimeOptions): Promise
     async start() {
       await rtc.ready();
       await peerManager.start();
+      if (!userId) {
+        const empty = userStore.listUsers().length === 0 && userStore.listCerts().length === 0;
+        if (config.roles.hub && empty) {
+          console.warn(
+            '[mesh] starting hub uplink without resolved userId; key-log catch-up skipped until a unique user exists'
+          );
+        } else {
+          console.error(
+            '[mesh] refusing to start uplink: userId unresolved (empty or ambiguous across users/certs)'
+          );
+          return;
+        }
+      }
       if (uplinkHub) {
         const target = uplinkHub;
         uplink.start(async (signal) => {
