@@ -54,6 +54,10 @@ log "compose down (tmex-split only)"
 
 log "compose up hub"
 "${COMPOSE[@]}" up -d hub
+if [[ -n "${TMEX_E2E_TURN_URL:-}" ]]; then
+  log "compose up turn (coturn, host network :3478 + 49160-49200/udp)"
+  "${COMPOSE[@]}" up -d turn || log "turn failed to start (image coturn/coturn:latest missing?) — continuing without TURN"
+fi
 wait_healthy hub
 
 log "patch hub app.env public URL → ${HUB_PUBLIC_URL}"

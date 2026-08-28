@@ -15,6 +15,9 @@ x-tmex-hub: &tmex-hub
   environment:
     TMEX_INSTANCE: hub
     TMEX_E2E_STUN_SERVERS: ${TMEX_E2E_STUN_SERVERS:-stun:111.206.174.2:3478,stun:stun.miwifi.com:3478}
+    TMEX_E2E_TURN_URL: ${TMEX_E2E_TURN_URL:-}
+    TMEX_E2E_TURN_USERNAME: ${TMEX_E2E_TURN_USERNAME:-tmex}
+    TMEX_E2E_TURN_CREDENTIAL: ${TMEX_E2E_TURN_CREDENTIAL:-tmex-e2e}
     NODE_EXTRA_CA_CERTS: /etc/ssl/certs/ca-certificates.crt
 
 services:
@@ -47,3 +50,14 @@ services:
       - hub-data:/var/lib/tmex
     networks:
       - edge
+
+  turn:
+    image: coturn/coturn:latest
+    container_name: tmex-split-turn
+    network_mode: host
+    restart: unless-stopped
+    command: >
+      --listening-port=3478 --min-port=49160 --max-port=49200
+      --external-ip=${TMEX_E2E_TURN_EXTERNAL_IP:-4.2.2.1}
+      --realm=tmex --user=${TMEX_E2E_TURN_USERNAME:-tmex}:${TMEX_E2E_TURN_CREDENTIAL:-tmex-e2e}
+      --lt-cred-mech --fingerprint --no-tls --no-dtls --no-cli --log-file=stdout

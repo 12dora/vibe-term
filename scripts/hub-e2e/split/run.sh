@@ -352,7 +352,7 @@ rsync -az -e "${RSYNC_SSH}" \
   "${HUB_E2E}/" "root@${HUB_IP}:/root/tmex-e2e/repo/scripts/hub-e2e/"
 
 log "setup remote hub"
-rssh "TMEX_E2E_SKIP_BUILD=${TMEX_E2E_SKIP_BUILD:-1} TMEX_TARBALL=/root/tmex-e2e/tmex-cli-1.0.2.tgz bash /root/tmex-e2e/repo/scripts/hub-e2e/split/setup-remote.sh"
+rssh "TMEX_E2E_TURN_URL='${TMEX_E2E_TURN_URL:-}' TMEX_E2E_TURN_USERNAME='${TMEX_E2E_TURN_USERNAME:-tmex}' TMEX_E2E_TURN_CREDENTIAL='${TMEX_E2E_TURN_CREDENTIAL:-tmex-e2e}' TMEX_E2E_SKIP_BUILD=${TMEX_E2E_SKIP_BUILD:-1} TMEX_TARBALL=/root/tmex-e2e/tmex-cli-1.0.2.tgz bash /root/tmex-e2e/repo/scripts/hub-e2e/split/setup-remote.sh"
 
 log "setup local nodes"
 TMEX_TARBALL="${TARBALL}" TMEX_E2E_SKIP_BUILD="${TMEX_E2E_SKIP_BUILD:-1}" \
