@@ -8,7 +8,8 @@ ENV_FILE="${DATA_DIR}/app.env"
 LAYOUT_ENV="${INSTALL_DIR}/app.env"
 INSTANCE="${TMEX_INSTANCE:-hub}"
 
-mkdir -p "${DATA_DIR}/native" "${INSTALL_DIR}/native"
+mkdir -p "${DATA_DIR}/native"
+[[ -L "${INSTALL_DIR}/native" ]] || rm -rf "${INSTALL_DIR}/native"
 
 # app.env 必须落在 named volume 上，join 写回的 TMEX_HUB_URL / TMEX_ROLES 才能跨 stop/start 存活。
 # 安装布局要求路径为 /opt/tmex/app.env，这里用 symlink 接到 volume。

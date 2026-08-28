@@ -600,7 +600,7 @@ fi
 # ---------- scenario 8 direct enable (may SKIP) ----------
 set +e
 direct_out="$(docker exec -e NODE_EXTRA_CA_CERTS=/ca/ca.crt tmex-e2e-node-a \
-  bun /opt/tmex-pkg/package/dist/cli-node.js direct enable --install-dir /opt/tmex 2>&1)"
+  bun /opt/tmex-pkg/package/bin/tmex.js direct enable --install-dir /opt/tmex 2>&1)"
 direct_rc=$?
 set -e
 printf '%s\n' "${direct_out}" | tee "${OUT}/direct-enable.log"

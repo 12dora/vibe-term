@@ -40,7 +40,7 @@ RUN mkdir -p /opt/tmex-pkg /opt/tmex/runtime /opt/tmex/resources /opt/tmex/nativ
     && cp -a /opt/tmex-pkg/package/resources/gateway-drizzle /opt/tmex/resources/gateway-drizzle \
     && test -f /opt/tmex/runtime/server.js \
     && test -f /opt/tmex/runtime/cli-auth.js \
-    && test -f /opt/tmex-pkg/package/dist/cli-node.js \
+    && test -f /opt/tmex-pkg/package/bin/tmex.js \
     && rm -f /tmp/tmex-cli.tgz
 
 COPY entrypoint.sh /usr/local/bin/tmex-entrypoint.sh
