@@ -726,16 +726,11 @@ export class LinkMux implements LinkSession {
       this.protocolError(err instanceof Error ? err.message : 'invalid WINDOW');
       return;
     }
-    if (delta <= 0 || delta > stream.outstanding) {
-      this.protocolError(
-        `invalid WINDOW delta ${delta} on stream ${stream.id} (outstanding ${stream.outstanding})`
-      );
-      return;
-    }
-    if (stream.sendWindow + delta > this.streamWindow) {
-      this.protocolError(`WINDOW would exceed initial window on stream ${stream.id}`);
-      return;
-    }
+    if (delta <= 0) return;
+    if (delta > stream.outstanding) delta = stream.outstanding;
+    const room = this.streamWindow - stream.sendWindow;
+    if (delta > room) delta = room;
+    if (delta <= 0) return;
     stream.outstanding -= delta;
     this.unacked -= delta;
     stream.creditSendWindow(delta);

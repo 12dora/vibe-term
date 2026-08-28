@@ -82,6 +82,8 @@ export class DataChannelLink implements ByteTransport {
   private flushAgain = false;
   private flushRetryHandle: unknown = null;
   private lowThresholdDropped = false;
+  private receiving = false;
+  private flushAfterReceive = false;
 
   constructor(channel: DataChannelLike, opts?: DataChannelLinkOptions) {
     this.channel = channel;
@@ -111,32 +113,41 @@ export class DataChannelLink implements ByteTransport {
     });
     channel.onMessage((msg) => {
       if (this.closed) return;
-      if (isDcHandshakeWire(msg)) return;
-      const bytes = copyBytes(toUint8Array(msg));
-      this.liveness?.noteInbound();
-      const livenessKind = parseLivenessChunk(bytes);
-      if (livenessKind === 'ping') {
-        this.sendLiveness('pong');
-        return;
-      }
-      if (livenessKind === 'pong') return;
-      let frame: Uint8Array | null;
+      this.receiving = true;
       try {
-        frame = this.reassembler.push(bytes);
-      } catch (err) {
-        if (err instanceof FragmentProtocolError) {
-          this.finishClose('fragment-protocol');
-          try {
-            this.channel.close();
-          } catch {
-            // already closed
-          }
+        if (isDcHandshakeWire(msg)) return;
+        const bytes = copyBytes(toUint8Array(msg));
+        this.liveness?.noteInbound();
+        const livenessKind = parseLivenessChunk(bytes);
+        if (livenessKind === 'ping') {
+          this.sendLiveness('pong');
           return;
         }
-        throw err;
+        if (livenessKind === 'pong') return;
+        let frame: Uint8Array | null;
+        try {
+          frame = this.reassembler.push(bytes);
+        } catch (err) {
+          if (err instanceof FragmentProtocolError) {
+            this.finishClose('fragment-protocol');
+            try {
+              this.channel.close();
+            } catch {
+              // already closed
+            }
+            return;
+          }
+          throw err;
+        }
+        if (!frame) return;
+        this.dispatchFrame(frame);
+      } finally {
+        this.receiving = false;
+        if (this.flushAfterReceive) {
+          this.flushAfterReceive = false;
+          this.armFlushRetry(0);
+        }
       }
-      if (!frame) return;
-      this.dispatchFrame(frame);
     });
     channel.onClosed(() => {
       this.finishClose('channel-closed');
@@ -199,6 +210,10 @@ export class DataChannelLink implements ByteTransport {
 
   private flush(): void {
     if (!this.opened || this.closed) return;
+    if (this.receiving) {
+      this.flushAfterReceive = true;
+      return;
+    }
     if (this.flushActive) {
       this.flushAgain = true;
       return;
@@ -299,12 +314,16 @@ export class DataChannelLink implements ByteTransport {
     }
   }
 
-  private armFlushRetry(): void {
-    if (this.closed || this.flushRetryHandle != null) return;
+  private armFlushRetry(delayMs = DC_FLUSH_RETRY_MS): void {
+    if (this.closed) return;
+    if (this.flushRetryHandle != null) {
+      if (delayMs > 0) return;
+      this.clearFlushRetry();
+    }
     this.flushRetryHandle = this.setTimeoutFn(() => {
       this.flushRetryHandle = null;
       this.flush();
-    }, DC_FLUSH_RETRY_MS);
+    }, delayMs);
   }
 
   private clearFlushRetry(): void {
@@ -350,6 +369,7 @@ export class DataChannelLink implements ByteTransport {
     this.closeReason = reason;
     this.pendingPing = false;
     this.pendingPong = false;
+    this.flushAfterReceive = false;
     this.clearFlushRetry();
     this.liveness?.stop();
     this.liveness = null;

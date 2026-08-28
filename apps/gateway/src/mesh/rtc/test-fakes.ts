@@ -13,6 +13,8 @@ export class FakeDataChannel implements DataChannelLike {
   failNextSend = false;
   /** Swallow the payload after a successful send (black-hole / one-way cut). */
   dropSend = false;
+  dropSendsFromReceiveCallback = false;
+  inboundDepth = 0;
   /** After this many successful sends, further sends return false until `emitLow()`. */
   succeedsBeforeBlock = Number.POSITIVE_INFINITY;
   blockSend = false;
@@ -56,10 +58,16 @@ export class FakeDataChannel implements DataChannelLike {
   }
 
   sendMessage(msg: string): boolean {
+    if (this.dropSendsFromReceiveCallback && this.inboundDepth > 0) {
+      return true;
+    }
     return this.dispatch(new TextEncoder().encode(msg));
   }
 
   sendMessageBinary(buffer: Buffer | Uint8Array): boolean {
+    if (this.dropSendsFromReceiveCallback && this.inboundDepth > 0) {
+      return true;
+    }
     return this.dispatch(toUint8Array(buffer));
   }
 
@@ -100,7 +108,7 @@ export class FakeDataChannel implements DataChannelLike {
     this.messageCb = cb;
     while (this.pendingMessages.length > 0) {
       const next = this.pendingMessages.shift();
-      if (next !== undefined) cb(next);
+      if (next !== undefined) this.deliverInbound(cb, next);
     }
   }
 
@@ -111,7 +119,11 @@ export class FakeDataChannel implements DataChannelLike {
   }
 
   emitMessage(msg: string | Buffer | ArrayBuffer): void {
-    this.messageCb?.(msg);
+    if (!this.messageCb) {
+      this.pendingMessages.push(msg);
+      return;
+    }
+    this.deliverInbound(this.messageCb, msg);
   }
 
   emitError(err: string): void {
@@ -137,9 +149,21 @@ export class FakeDataChannel implements DataChannelLike {
     if (peer?.open && !peer.closed) {
       const payload = Buffer.from(copy);
       if (!peer.messageCb) peer.pendingMessages.push(payload);
-      else peer.messageCb(payload);
+      else peer.deliverInbound(peer.messageCb, payload);
     }
     return true;
+  }
+
+  deliverInbound(
+    cb: (msg: string | Buffer | ArrayBuffer) => void,
+    msg: string | Buffer | ArrayBuffer
+  ): void {
+    this.inboundDepth += 1;
+    try {
+      cb(msg);
+    } finally {
+      this.inboundDepth -= 1;
+    }
   }
 }
 

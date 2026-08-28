@@ -49,6 +49,7 @@ class RateLimitedDataChannel implements DataChannelLike {
   private readonly bytesPerTick: number;
   private readonly delayMs: number;
   private readonly sendCap: number;
+  inboundDepth = 0;
   readonly wire: Uint8Array[] = [];
 
   constructor(
@@ -90,10 +91,16 @@ class RateLimitedDataChannel implements DataChannelLike {
   }
 
   sendMessage(msg: string): boolean {
+    if (this.inboundDepth > 0) {
+      return true;
+    }
     return this.enqueue(new TextEncoder().encode(msg));
   }
 
   sendMessageBinary(buffer: Buffer | Uint8Array): boolean {
+    if (this.inboundDepth > 0) {
+      return true;
+    }
     return this.enqueue(toUint8Array(buffer));
   }
 
@@ -134,7 +141,19 @@ class RateLimitedDataChannel implements DataChannelLike {
     this.messageCb = cb;
     while (this.pendingMessages.length > 0) {
       const next = this.pendingMessages.shift();
-      if (next !== undefined) cb(next);
+      if (next !== undefined) this.deliverInbound(cb, next);
+    }
+  }
+
+  private deliverInbound(
+    cb: (msg: string | Buffer | ArrayBuffer) => void,
+    msg: string | Buffer | ArrayBuffer
+  ): void {
+    this.inboundDepth += 1;
+    try {
+      cb(msg);
+    } finally {
+      this.inboundDepth -= 1;
     }
   }
 
@@ -189,7 +208,7 @@ class RateLimitedDataChannel implements DataChannelLike {
       if (!peer || peer.closed || !peer.open) continue;
       const payload = Buffer.from(item.bytes);
       if (!peer.messageCb) peer.pendingMessages.push(payload);
-      else peer.messageCb(payload);
+      else peer.deliverInbound(peer.messageCb, payload);
     }
     if (this.queue.length === 0 && this.inflight.length === 0) this.stopPump();
   }

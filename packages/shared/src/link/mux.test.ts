@@ -207,7 +207,7 @@ describe('link mux', () => {
     a.close();
   });
 
-  it('closes the link on WINDOW that is not 0 < delta <= outstanding', async () => {
+  it('ignores a WINDOW larger than outstanding instead of closing the link', async () => {
     const [t1, t2] = createBytePipe();
     const mux = new LinkMux(t1, {
       role: 'initiator',
@@ -217,11 +217,15 @@ describe('link mux', () => {
     t2.send(
       encodeFrame({ streamId: 0, op: FrameOp.WINDOW, payload: encodeWindowPayload(0xffffffff) })
     );
-    const info = await mux.closed;
-    expect(info.reason.toLowerCase()).toContain('window');
+    const state = await Promise.race([
+      mux.closed.then(() => 'closed' as const),
+      new Promise<'open'>((resolve) => setTimeout(() => resolve('open'), 30)),
+    ]);
+    expect(state).toBe('open');
+    mux.close();
   });
 
-  it('accepts WINDOW only up to outstanding and decrements global unacked by the same delta', async () => {
+  it('clamps WINDOW to outstanding so a late credit still unblocks the writer', async () => {
     const [t1, t2] = createBytePipe();
     const a = new LinkMux(t1, {
       role: 'initiator',
@@ -251,9 +255,14 @@ describe('link mux', () => {
         payload: encodeWindowPayload(200),
       })
     );
-    const info = await a.closed;
-    expect(info.reason.toLowerCase()).toContain('window');
-    await expect(extra).rejects.toBeInstanceOf(Error);
+    await extra;
+    expect(extraResolved).toBe(true);
+    const state = await Promise.race([
+      a.closed.then(() => 'closed' as const),
+      new Promise<'open'>((resolve) => setTimeout(() => resolve('open'), 30)),
+    ]);
+    expect(state).toBe('open');
+    a.close();
   });
 
   it('releases remaining outstanding on RST so later streams can send', async () => {

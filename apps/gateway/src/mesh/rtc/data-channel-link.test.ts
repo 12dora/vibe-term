@@ -388,4 +388,36 @@ describe('DataChannelLink', () => {
     left.close();
     right.close();
   });
+
+  test('WINDOW still reopens the send window when native send from onMessage is a no-op', async () => {
+    const [a, b] = pairDataChannels('peer');
+    a.dropSendsFromReceiveCallback = true;
+    b.dropSendsFromReceiveCallback = true;
+    const left = new DataChannelLink(a, { liveness: false });
+    const right = new DataChannelLink(b, { liveness: false });
+    const muxA = new LinkMux(left, { role: 'initiator', streamWindow: 1024 });
+    const muxB = new LinkMux(right, { role: 'acceptor', streamWindow: 1024 });
+    const incoming = new Promise<import('@tmex/shared/link').LinkStream>((resolve) =>
+      muxB.onStream(resolve)
+    );
+    const out = await muxA.openStream(new Uint8Array([1]));
+    const inn = await incoming;
+    const reader = inn.readable.getReader();
+    const firstRead = reader.read();
+    await out.write(new Uint8Array(1024).fill(1));
+    expect((await firstRead).value?.bytes.byteLength).toBe(1024);
+
+    const extraRead = reader.read();
+    const extra = out.write(new Uint8Array([2]));
+    const outcome = await Promise.race([
+      extra.then(() => 'wrote' as const),
+      new Promise<'timeout'>((resolve) => setTimeout(() => resolve('timeout'), 400)),
+    ]);
+    expect(outcome).toBe('wrote');
+    expect((await extraRead).value?.bytes).toEqual(new Uint8Array([2]));
+    out.end();
+    inn.end();
+    left.close();
+    right.close();
+  });
 });
