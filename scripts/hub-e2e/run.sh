@@ -108,9 +108,17 @@ cli() {
     bun /opt/tmex/runtime/cli-auth.js "$@" --install-dir /opt/tmex
 }
 
+# driver-dist/<name>.js 存在时优先使用（本机 `bun build --target bun` 预打包，远程无需 node_modules）。
 driver() {
-  docker exec -w /workspace -e NODE_EXTRA_CA_CERTS=/ca/ca.crt \
-    tmex-e2e-driver bun /workspace/scripts/hub-e2e/driver/"$1" "${@:2}"
+  local name="$1"
+  local bundled="${ROOT}/driver-dist/${name%.ts}.js"
+  if [[ -f "${bundled}" ]]; then
+    docker exec -w /workspace -e NODE_EXTRA_CA_CERTS=/ca/ca.crt \
+      tmex-e2e-driver bun "/workspace/scripts/hub-e2e/driver-dist/${name%.ts}.js" "${@:2}"
+  else
+    docker exec -w /workspace -e NODE_EXTRA_CA_CERTS=/ca/ca.crt \
+      tmex-e2e-driver bun /workspace/scripts/hub-e2e/driver/"${name}" "${@:2}"
+  fi
 }
 
 curl_hub() {
