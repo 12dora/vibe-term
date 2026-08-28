@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, test } from 'bun:test';
-import { chmod, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { existsSync } from 'node:fs';
+import { chmod, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Writable } from 'node:stream';
@@ -89,5 +90,85 @@ setTimeout(() => process.exit(99), 8000);
     expect(result.stderr).toBe('warn-line\n');
     expect(stdout.text()).toBe('JOIN_TOKEN abc\nnode admitted\n');
     expect(stderr.text()).toBe('warn-line\n');
+  });
+
+  test('forwards SIGINT to a trapping child, drains the hint line, and exits 130', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'tmex-auth-spawn-int-'));
+    tempDirs.push(dir);
+    const readyPath = join(dir, 'ready');
+    const childPath = join(dir, 'fake-child.mjs');
+    await writeFile(
+      childPath,
+      `import { writeFileSync } from 'node:fs';
+process.on('SIGINT', () => {
+  process.stdout.write('caught-sigint\\n', () => process.exit(130));
+});
+writeFileSync(process.argv[2], 'ready');
+setInterval(() => {}, 1000);
+setTimeout(() => process.exit(99), 8000);
+`
+    );
+    await chmod(childPath, 0o755);
+
+    const stdout = captureStream();
+    const stderr = captureStream();
+    const plan: AuthSpawnPlan = {
+      bunBin: process.execPath,
+      cliAuthPath: childPath,
+      argv: [readyPath],
+      env: { ...process.env },
+    };
+
+    const resultPromise = spawnAuthCli(plan, {
+      stdin: 'ignore',
+      stdout: stdout.stream,
+      stderr: stderr.stream,
+    });
+
+    await waitUntil(() => existsSync(readyPath));
+    process.emit('SIGINT');
+    const result = await resultPromise;
+
+    expect(result.code).toBe(130);
+    expect(result.stdout).toBe('caught-sigint\n');
+    expect(stdout.text()).toBe('caught-sigint\n');
+  });
+
+  test('maps a SIGTERM-killed child to exit code 143', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'tmex-auth-spawn-term-'));
+    tempDirs.push(dir);
+    const readyPath = join(dir, 'ready');
+    const childPath = join(dir, 'fake-child.mjs');
+    await writeFile(
+      childPath,
+      `import { writeFileSync } from 'node:fs';
+writeFileSync(process.argv[2], String(process.pid));
+setInterval(() => {}, 1000);
+setTimeout(() => process.exit(99), 8000);
+`
+    );
+    await chmod(childPath, 0o755);
+
+    const stdout = captureStream();
+    const stderr = captureStream();
+    const plan: AuthSpawnPlan = {
+      bunBin: process.execPath,
+      cliAuthPath: childPath,
+      argv: [readyPath],
+      env: { ...process.env },
+    };
+
+    const resultPromise = spawnAuthCli(plan, {
+      stdin: 'ignore',
+      stdout: stdout.stream,
+      stderr: stderr.stream,
+    });
+
+    await waitUntil(() => existsSync(readyPath));
+    const childPid = Number((await readFile(readyPath, 'utf8')).trim());
+    process.kill(childPid, 'SIGTERM');
+    const result = await resultPromise;
+
+    expect(result.code).toBe(143);
   });
 });

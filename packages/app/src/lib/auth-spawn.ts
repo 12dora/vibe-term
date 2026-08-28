@@ -1,5 +1,6 @@
 import { type ChildProcess, spawn } from 'node:child_process';
 import { existsSync } from 'node:fs';
+import { constants as osConstants } from 'node:os';
 import { dirname, join } from 'node:path';
 import type { Readable } from 'node:stream';
 import { fileURLToPath } from 'node:url';
@@ -101,11 +102,61 @@ export async function resolveAuthSpawnPlan(
   };
 }
 
+const FORWARDED_SIGNALS = ['SIGINT', 'SIGTERM'] as const;
+
+function exitCodeFromClose(code: number | null, signal: NodeJS.Signals | null): number {
+  if (code !== null) return code;
+  if (signal) {
+    const number = osConstants.signals[signal];
+    if (typeof number === 'number') return 128 + number;
+  }
+  return 1;
+}
+
 function waitChildClose(child: ChildProcess): Promise<number> {
   return new Promise((resolve, reject) => {
     child.once('error', reject);
-    child.once('close', (code) => resolve(code ?? 1));
+    child.once('close', (code, signal) => resolve(exitCodeFromClose(code, signal)));
   });
+}
+
+function isEpipe(error: unknown): boolean {
+  return (error as NodeJS.ErrnoException).code === 'EPIPE';
+}
+
+function ignoreEpipe(error: NodeJS.ErrnoException): void {
+  if (isEpipe(error)) return;
+}
+
+function attachEpipeGuard(stream: NodeJS.WritableStream | null): () => void {
+  if (!stream || typeof stream.on !== 'function') return () => {};
+  stream.on('error', ignoreEpipe);
+  return () => {
+    stream.off('error', ignoreEpipe);
+  };
+}
+
+function installSignalForwarding(child: ChildProcess): () => void {
+  const forwarded = new Set<(typeof FORWARDED_SIGNALS)[number]>();
+  const handlers = FORWARDED_SIGNALS.map((signal) => {
+    const handler = () => {
+      if (forwarded.has(signal)) return;
+      forwarded.add(signal);
+      try {
+        child.kill(signal);
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== 'ESRCH') throw error;
+      }
+    };
+    process.on(signal, handler);
+    return [signal, handler] as const;
+  });
+
+  return () => {
+    for (const [signal, handler] of handlers) {
+      process.off(signal, handler);
+    }
+  };
 }
 
 function collectAndForward(
@@ -118,22 +169,44 @@ function collectAndForward(
       return;
     }
     const chunks: Buffer[] = [];
+    let destAlive = dest != null;
+
+    const onDrain = () => source.resume();
+    const onDestError = (error: NodeJS.ErrnoException) => {
+      if (!isEpipe(error)) return;
+      destAlive = false;
+      dest?.off('drain', onDrain);
+      source.resume();
+    };
+    dest?.on('error', onDestError);
+
     const onData = (chunk: Buffer | string) => {
       const buf = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
       chunks.push(buf);
-      if (!dest) return;
-      if (!dest.write(buf)) {
-        source.pause();
-        dest.once('drain', () => source.resume());
+      if (!dest || !destAlive) return;
+      try {
+        if (!dest.write(buf)) {
+          source.pause();
+          dest.once('drain', onDrain);
+        }
+      } catch (error) {
+        if (!isEpipe(error)) throw error;
+        destAlive = false;
+        dest.off('drain', onDrain);
+        source.resume();
       }
     };
     source.on('data', onData);
     source.once('error', (error) => {
       source.off('data', onData);
+      dest?.off('error', onDestError);
+      dest?.off('drain', onDrain);
       reject(error);
     });
     source.once('end', () => {
       source.off('data', onData);
+      dest?.off('error', onDestError);
+      dest?.off('drain', onDrain);
       resolve(Buffer.concat(chunks));
     });
   });
@@ -158,15 +231,23 @@ export async function spawnAuthCli(
     stdio: [stdin, 'pipe', 'pipe'],
   });
 
-  const [code, stdout, stderr] = await Promise.all([
-    waitChildClose(child),
-    collectAndForward(child.stdout, stdoutDest),
-    collectAndForward(child.stderr, stderrDest),
-  ]);
+  const restoreSignals = installSignalForwarding(child);
+  const detachEpipe = [attachEpipeGuard(stdoutDest), attachEpipeGuard(stderrDest)];
 
-  return {
-    code,
-    stdout: stdout.toString('utf8'),
-    stderr: stderr.toString('utf8'),
-  };
+  try {
+    const [code, stdout, stderr] = await Promise.all([
+      waitChildClose(child),
+      collectAndForward(child.stdout, stdoutDest),
+      collectAndForward(child.stderr, stderrDest),
+    ]);
+
+    return {
+      code,
+      stdout: stdout.toString('utf8'),
+      stderr: stderr.toString('utf8'),
+    };
+  } finally {
+    restoreSignals();
+    for (const detach of detachEpipe) detach();
+  }
 }

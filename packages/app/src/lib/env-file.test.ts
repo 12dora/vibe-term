@@ -82,6 +82,69 @@ describe('env-file', () => {
     }
   });
 
+  test('writeEnvFile creates the target of an absolute dangling symlink', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'tmex-env-dangle-abs-'));
+    try {
+      const volumeDir = join(dir, 'volume');
+      const overlayDir = join(dir, 'overlay');
+      await mkdir(volumeDir);
+      await mkdir(overlayDir);
+      const realPath = join(volumeDir, 'app.env');
+      const linkPath = join(overlayDir, 'app.env');
+      await symlink(realPath, linkPath);
+
+      await writeEnvFile(linkPath, { A: '1', HUB: 'init' });
+
+      expect((await lstat(linkPath)).isSymbolicLink()).toBe(true);
+      expect(await realpath(linkPath)).toBe(await realpath(realPath));
+      expect(await readEnvFile(linkPath)).toEqual({ A: '1', HUB: 'init' });
+      expect(await readEnvFile(realPath)).toEqual({ A: '1', HUB: 'init' });
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  test('writeEnvFile creates the target of a relative dangling symlink', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'tmex-env-dangle-rel-'));
+    try {
+      const volumeDir = join(dir, 'volume');
+      const overlayDir = join(dir, 'overlay');
+      await mkdir(volumeDir);
+      await mkdir(overlayDir);
+      const realPath = join(volumeDir, 'app.env');
+      const linkPath = join(overlayDir, 'app.env');
+      await symlink('../volume/app.env', linkPath);
+
+      await writeEnvFile(linkPath, { A: '2' });
+
+      expect((await lstat(linkPath)).isSymbolicLink()).toBe(true);
+      expect(await realpath(linkPath)).toBe(await realpath(realPath));
+      expect(await readEnvFile(linkPath)).toEqual({ A: '2' });
+      expect(await readEnvFile(realPath)).toEqual({ A: '2' });
+      expect(await readFile(realPath, 'utf8')).toBe('A=2\n');
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  test('writeEnvFile throws when a symlink chain cannot be resolved', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'tmex-env-dangle-cycle-'));
+    try {
+      const leftPath = join(dir, 'left.env');
+      const rightPath = join(dir, 'right.env');
+      await symlink(rightPath, leftPath);
+      await symlink(leftPath, rightPath);
+
+      await expect(writeEnvFile(leftPath, { A: '1' })).rejects.toThrow(
+        /cannot resolve env file symlink/i
+      );
+      expect((await lstat(leftPath)).isSymbolicLink()).toBe(true);
+      expect((await lstat(rightPath)).isSymbolicLink()).toBe(true);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
   test('upgrade merge writes only missing app.env keys', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'tmex-env-'));
     try {

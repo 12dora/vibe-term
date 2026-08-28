@@ -1,5 +1,5 @@
-import { readFile, realpath, rename, writeFile } from 'node:fs/promises';
-import { basename, dirname, join } from 'node:path';
+import { lstat, readFile, readlink, realpath, rename, writeFile } from 'node:fs/promises';
+import { basename, dirname, join, resolve } from 'node:path';
 
 export function parseEnvContent(content: string): Record<string, string> {
   const result: Record<string, string> = {};
@@ -32,14 +32,54 @@ export async function readEnvFile(filePath: string): Promise<Record<string, stri
   return parseEnvContent(content);
 }
 
+const MAX_SYMLINK_HOPS = 32;
+
+function symlinkResolveError(filePath: string): Error {
+  return new Error(`cannot resolve env file symlink: ${filePath}`);
+}
+
 async function resolveEnvWritePath(filePath: string): Promise<string> {
   try {
     return await realpath(filePath);
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
-      return filePath;
+    const code = (error as NodeJS.ErrnoException).code;
+    if (code === 'ELOOP') {
+      throw symlinkResolveError(filePath);
     }
-    throw error;
+    if (code !== 'ENOENT') {
+      throw error;
+    }
+  }
+
+  let current = resolve(filePath);
+  const seen = new Set<string>();
+  for (;;) {
+    if (seen.has(current) || seen.size >= MAX_SYMLINK_HOPS) {
+      throw symlinkResolveError(filePath);
+    }
+    seen.add(current);
+
+    let stat: Awaited<ReturnType<typeof lstat>>;
+    try {
+      stat = await lstat(current);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+        return seen.size === 1 ? filePath : current;
+      }
+      throw error;
+    }
+
+    if (!stat.isSymbolicLink()) {
+      return current;
+    }
+
+    let target: string;
+    try {
+      target = await readlink(current);
+    } catch {
+      throw symlinkResolveError(filePath);
+    }
+    current = resolve(dirname(current), target);
   }
 }
 
