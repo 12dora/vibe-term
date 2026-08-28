@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import { DC_HIGH_WATER_BYTES, DataChannelCarrier } from './data-channel-carrier';
 import { FRAGMENT_HEADER_SIZE, FRAGMENT_PAYLOAD_SIZE } from './fragmenter';
+import { encodeLivenessChunk, parseLivenessChunk } from './liveness';
 import { pairDataChannels } from './test-fakes';
 
 describe('DataChannelCarrier', () => {
@@ -106,5 +107,17 @@ describe('DataChannelCarrier', () => {
     a.sendMessageBinary(Buffer.from(bad));
     expect(closed).toBe(1);
     expect(b.closed).toBe(true);
+  });
+
+  test('replies to liveness ping without delivering it as a session frame', () => {
+    const [a, b] = pairDataChannels();
+    const right = new DataChannelCarrier(b);
+    const got: Uint8Array[] = [];
+    right.onMessage((bytes) => {
+      got.push(bytes);
+    });
+    a.sendMessageBinary(Buffer.from(encodeLivenessChunk('ping')));
+    expect(got).toEqual([]);
+    expect(b.sent.some((chunk) => parseLivenessChunk(chunk) === 'pong')).toBe(true);
   });
 });

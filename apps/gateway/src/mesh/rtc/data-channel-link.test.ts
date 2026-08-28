@@ -3,7 +3,19 @@ import { LinkMux } from '@tmex/shared/link';
 import { fanoutDataChannel } from './channel-fanout';
 import { DataChannelLink } from './data-channel-link';
 import { FRAGMENT_PAYLOAD_SIZE } from './fragmenter';
-import { pairDataChannels } from './test-fakes';
+import { parseLivenessChunk } from './liveness';
+import { FakeClock, pairDataChannels } from './test-fakes';
+
+function livenessOpts(clock: FakeClock, peer = 'peer-b') {
+  return {
+    peer,
+    intervalMs: 30,
+    timeoutMs: 100,
+    now: clock.now,
+    setTimeoutFn: clock.setTimeout,
+    clearTimeoutFn: clock.clearTimeout,
+  };
+}
 
 describe('DataChannelLink', () => {
   test('is a ByteTransport that round-trips fragmented payloads', async () => {
@@ -111,5 +123,72 @@ describe('DataChannelLink', () => {
     a.sendMessageBinary(Buffer.from(bad));
     expect(closed).toBe(1);
     expect(b.closed).toBe(true);
+  });
+
+  test('idle ping/pong is not delivered as application data', () => {
+    const clock = new FakeClock();
+    const [a, b] = pairDataChannels('peer');
+    const left = new DataChannelLink(a, livenessOpts(clock, 'right'));
+    const right = new DataChannelLink(b, livenessOpts(clock, 'left'));
+    const app: Uint8Array[] = [];
+    right.onData((bytes) => {
+      app.push(bytes);
+    });
+    clock.advance(30);
+    expect(app).toEqual([]);
+    expect(a.sent.some((chunk) => parseLivenessChunk(chunk) === 'ping')).toBe(true);
+    expect(b.sent.some((chunk) => parseLivenessChunk(chunk) === 'pong')).toBe(true);
+    left.close();
+    right.close();
+  });
+
+  test('inbound application data resets the idle ping timer', async () => {
+    const clock = new FakeClock();
+    const [a, b] = pairDataChannels('peer');
+    const left = new DataChannelLink(a, livenessOpts(clock));
+    const right = new DataChannelLink(b, livenessOpts(clock));
+    const got = new Promise<Uint8Array>((resolve) => left.onData(resolve));
+    clock.advance(20);
+    await right.send(new Uint8Array([9, 9]));
+    expect(await got).toEqual(new Uint8Array([9, 9]));
+    clock.advance(20);
+    expect(a.sent.some((chunk) => parseLivenessChunk(chunk) === 'ping')).toBe(false);
+    left.close();
+    right.close();
+  });
+
+  test('silence closes the link after the liveness timeout', () => {
+    const clock = new FakeClock();
+    const [a, b] = pairDataChannels('peer');
+    a.dropSend = true;
+    const left = new DataChannelLink(a, livenessOpts(clock, 'silenced'));
+    const right = new DataChannelLink(b, livenessOpts(clock, 'peer-a'));
+    let reason: string | undefined;
+    const lines: string[] = [];
+    const orig = console.log;
+    console.log = (...args: unknown[]) => {
+      lines.push(args.map(String).join(' '));
+    };
+    try {
+      right.onClose((why) => {
+        reason = why;
+      });
+      clock.advance(100);
+      expect(reason).toBe('liveness-timeout');
+      expect(b.closed).toBe(true);
+      expect(a.closed).toBe(true);
+      expect(
+        lines.some(
+          (line) =>
+            line.includes('[mesh][rtc] liveness timeout') &&
+            line.includes('peer=peer-a') &&
+            line.includes('idle_ms=')
+        )
+      ).toBe(true);
+    } finally {
+      console.log = orig;
+      left.close();
+      right.close();
+    }
   });
 });

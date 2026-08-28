@@ -25,7 +25,7 @@ import {
 } from './carrier-switch';
 import { fanoutDataChannel } from './channel-fanout';
 import { DataChannelCarrier } from './data-channel-carrier';
-import { DataChannelLink } from './data-channel-link';
+import { DataChannelLink, type DataChannelLinkOptions } from './data-channel-link';
 import { handshakeDataChannel } from './dc-handshake';
 import {
   type RtcSignaling,
@@ -64,6 +64,8 @@ export const CONNECT_TIMEOUT_MS = 15_000;
 
 export type IceConfigProvider = () => IceServerConfig;
 
+export type RtcLivenessOptions = Omit<DataChannelLinkOptions, 'reassembler' | 'peer' | 'liveness'>;
+
 export type RtcPeerManagerOptions = {
   loadNative: LoadNative;
   iceConfigProvider: IceConfigProvider;
@@ -77,6 +79,7 @@ export type RtcPeerManagerOptions = {
   authorizeTtlMs?: number;
   authorizeMax?: number;
   sweepIntervalMs?: number;
+  liveness?: RtcLivenessOptions | false;
 };
 
 export type CreatedPeerConnection = {
@@ -181,6 +184,7 @@ export class RtcPeerManager implements RtcFingerprintProvider {
   private readonly authorizeTtlMs: number;
   private readonly authorizeMax: number;
   private readonly switcher: CarrierSwitchController | null;
+  private readonly liveness: RtcLivenessOptions | false;
   private readonly loadPromise: Promise<NodeDatachannelModule | null>;
   private native: NodeDatachannelModule | null = null;
   private readonly browser = new Map<string, BrowserRecord>();
@@ -198,6 +202,7 @@ export class RtcPeerManager implements RtcFingerprintProvider {
     this.handshakeTimeoutMs = opts.handshakeTimeoutMs ?? CONNECT_TIMEOUT_MS;
     this.authorizeTtlMs = opts.authorizeTtlMs ?? RTC_AUTHORIZE_TTL_MS;
     this.authorizeMax = opts.authorizeMax ?? RTC_AUTHORIZE_MAX;
+    this.liveness = opts.liveness === undefined ? {} : opts.liveness;
     const sweepIntervalMs = opts.sweepIntervalMs ?? RTC_AUTHORIZE_SWEEP_INTERVAL_MS;
     if (sweepIntervalMs > 0) {
       this.sweepTimer = setInterval(() => this.sweepBrowser(), sweepIntervalMs);
@@ -301,7 +306,10 @@ export class RtcPeerManager implements RtcFingerprintProvider {
       if (!channel.isOpen()) {
         throw new PeerHandshakeError('protocol', 'datachannel closed during handshake handoff');
       }
-      const link = new DataChannelLink(channel);
+      const link = new DataChannelLink(channel, {
+        peer: peerNodeId,
+        ...(this.liveness === false ? { liveness: false as const } : this.liveness),
+      });
       if (hs.peerNodeId !== peer) {
         unsubSignaling();
         unsubDiag();

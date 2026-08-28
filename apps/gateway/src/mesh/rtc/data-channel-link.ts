@@ -6,8 +6,22 @@ import {
   fragmentFrame,
   fragmentPayloadSize,
 } from './fragmenter';
+import {
+  ChannelLiveness,
+  type RtcLivenessClock,
+  encodeLivenessChunk,
+  parseLivenessChunk,
+} from './liveness';
 import type { DataChannelLike } from './native';
 import { copyBytes, sendBinary, toUint8Array } from './native';
+
+export type DataChannelLinkOptions = RtcLivenessClock & {
+  reassembler?: FrameReassembler;
+  peer?: string;
+  intervalMs?: number;
+  timeoutMs?: number;
+  liveness?: boolean;
+};
 
 type QueueItem = {
   parts: Uint8Array[];
@@ -28,8 +42,9 @@ export class DataChannelLink implements ByteTransport {
   private closed = false;
   private opened: boolean;
   private closeReason = 'closed';
+  private liveness: ChannelLiveness | null = null;
 
-  constructor(channel: DataChannelLike, opts?: { reassembler?: FrameReassembler }) {
+  constructor(channel: DataChannelLike, opts?: DataChannelLinkOptions) {
     this.channel = channel;
     try {
       this.payloadSize = fragmentPayloadSize(channel.maxMessageSize());
@@ -53,9 +68,17 @@ export class DataChannelLink implements ByteTransport {
     });
     channel.onMessage((msg) => {
       if (this.closed) return;
+      const bytes = copyBytes(toUint8Array(msg));
+      this.liveness?.noteInbound();
+      const livenessKind = parseLivenessChunk(bytes);
+      if (livenessKind === 'ping') {
+        this.sendLiveness('pong');
+        return;
+      }
+      if (livenessKind === 'pong') return;
       let frame: Uint8Array | null;
       try {
-        frame = this.reassembler.push(copyBytes(toUint8Array(msg)));
+        frame = this.reassembler.push(bytes);
       } catch (err) {
         if (err instanceof FragmentProtocolError) {
           this.finishClose('fragment-protocol');
@@ -78,13 +101,28 @@ export class DataChannelLink implements ByteTransport {
       this.finishClose(err || 'channel-error');
     });
     if (!channel.isOpen()) this.finishClose('channel-closed');
+    if (opts?.liveness === false || this.closed) {
+      this.liveness = null;
+    } else {
+      this.liveness = new ChannelLiveness({
+        peer: opts?.peer,
+        intervalMs: opts?.intervalMs,
+        timeoutMs: opts?.timeoutMs,
+        now: opts?.now,
+        setTimeoutFn: opts?.setTimeoutFn,
+        clearTimeoutFn: opts?.clearTimeoutFn,
+        sendPing: () => this.sendLiveness('ping'),
+        onTimeout: () => this.close('liveness-timeout'),
+      });
+      this.liveness.start();
+    }
   }
 
   send(bytes: Uint8Array): Promise<void> {
     if (this.closed) {
       return Promise.reject(new Error(this.closeReason));
     }
-    const frameId = this.nextFrameId++ >>> 0;
+    const frameId = this.allocFrameId();
     const parts = fragmentFrame(frameId, copyBytes(bytes), this.payloadSize);
     return new Promise((resolve, reject) => {
       this.queue.push({ parts, index: 0, resolve, reject });
@@ -144,10 +182,25 @@ export class DataChannelLink implements ByteTransport {
     for (const cb of this.dataCbs) cb(frame);
   }
 
+  private sendLiveness(kind: 'ping' | 'pong'): void {
+    if (this.closed || !this.opened || !this.channel.isOpen()) return;
+    if (this.channel.bufferedAmount() > DC_HIGH_WATER_BYTES) return;
+    sendBinary(this.channel, encodeLivenessChunk(kind));
+  }
+
+  private allocFrameId(): number {
+    const frameId = this.nextFrameId;
+    this.nextFrameId = (this.nextFrameId + 1) >>> 0;
+    if (this.nextFrameId === 0) this.nextFrameId = 1;
+    return frameId;
+  }
+
   private finishClose(reason: string): void {
     if (this.closed) return;
     this.closed = true;
     this.closeReason = reason;
+    this.liveness?.stop();
+    this.liveness = null;
     this.reassembler.dispose();
     const pending = this.queue.splice(0);
     const err = new Error(reason);

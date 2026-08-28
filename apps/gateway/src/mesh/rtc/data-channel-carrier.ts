@@ -5,6 +5,7 @@ import {
   fragmentFrame,
   fragmentPayloadSize,
 } from './fragmenter';
+import { encodeLivenessChunk, parseLivenessChunk } from './liveness';
 import type { DataChannelLike } from './native';
 import { copyBytes, sendBinary, toUint8Array } from './native';
 
@@ -55,9 +56,16 @@ export class DataChannelCarrier implements Carrier {
     });
     channel.onMessage((msg) => {
       if (this.closed) return;
+      const bytes = copyBytes(toUint8Array(msg));
+      const livenessKind = parseLivenessChunk(bytes);
+      if (livenessKind === 'ping') {
+        this.sendLiveness('pong');
+        return;
+      }
+      if (livenessKind === 'pong') return;
       let frame: Uint8Array | null;
       try {
-        frame = this.reassembler.push(copyBytes(toUint8Array(msg)));
+        frame = this.reassembler.push(bytes);
       } catch (err) {
         if (err instanceof FragmentProtocolError) {
           this.failClosed();
@@ -93,7 +101,7 @@ export class DataChannelCarrier implements Carrier {
     if (this.remainder || this.channel.bufferedAmount() > DC_HIGH_WATER_BYTES) {
       return 'backpressure';
     }
-    const frameId = this.nextFrameId++ >>> 0;
+    const frameId = this.allocFrameId();
     this.remainder = {
       parts: fragmentFrame(frameId, bytes, this.payloadSize),
       index: 0,
@@ -145,6 +153,19 @@ export class DataChannelCarrier implements Carrier {
 
   terminate(): void {
     this.close(1006, 'terminated');
+  }
+
+  private sendLiveness(kind: 'ping' | 'pong'): void {
+    if (this.closed || !this.channel.isOpen()) return;
+    if (this.channel.bufferedAmount() > DC_HIGH_WATER_BYTES) return;
+    sendBinary(this.channel, encodeLivenessChunk(kind));
+  }
+
+  private allocFrameId(): number {
+    const frameId = this.nextFrameId;
+    this.nextFrameId = (this.nextFrameId + 1) >>> 0;
+    if (this.nextFrameId === 0) this.nextFrameId = 1;
+    return frameId;
   }
 
   private flushRemainder(): void {

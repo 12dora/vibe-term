@@ -12,7 +12,21 @@ export {
   DC_LOW_WATER_BYTES,
   DataChannelCarrier,
 } from './data-channel-carrier';
-export { DataChannelLink } from './data-channel-link';
+export { DataChannelLink, type DataChannelLinkOptions } from './data-channel-link';
+export {
+  ChannelLiveness,
+  DEFAULT_RTC_LIVENESS_INTERVAL_MS,
+  DEFAULT_RTC_LIVENESS_TIMEOUT_MS,
+  LIVENESS_FRAME_ID,
+  RTC_LIVENESS_INTERVAL_MS,
+  RTC_LIVENESS_TIMEOUT_MS,
+  type ChannelLivenessOptions,
+  type RtcLivenessClock,
+  encodeLivenessChunk,
+  isLivenessFrameId,
+  parseLivenessChunk,
+  readRtcLivenessConfig,
+} from './liveness';
 export {
   DC_HANDSHAKE_MAX_MESSAGE_BYTES,
   DC_HANDSHAKE_MAX_QUEUE,
@@ -88,6 +102,7 @@ export {
   type CreatedPeerConnection,
   type DcPeerConnectResult,
   type IceConfigProvider,
+  type RtcLivenessOptions,
   type RtcPeerManagerOptions,
 } from './rtc-peer-manager';
 export {
