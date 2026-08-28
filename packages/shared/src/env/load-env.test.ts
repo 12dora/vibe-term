@@ -1,7 +1,13 @@
 // 三套环境加载器单元测试
 
 import { describe, expect, it } from 'bun:test';
-import { type LoadEnvOptions, loadEnv, parseEnvFile, resolveEnvName } from './load-env';
+import {
+  type LoadEnvOptions,
+  loadEnv,
+  parseEnvFile,
+  readNodeEnv,
+  resolveEnvName,
+} from './load-env';
 
 const REPO_ROOT = '/repo';
 const INSTALL_DIR = '/Users/x/Library/Application Support/tmex';
@@ -46,6 +52,16 @@ describe('resolveEnvName', () => {
     expect(resolveEnvName('development')).toBe('development');
     expect(resolveEnvName(undefined)).toBe('development');
     expect(resolveEnvName('staging')).toBe('development');
+  });
+});
+
+describe('readNodeEnv', () => {
+  it('reads NODE_ENV from the provided env object rather than a compile-time constant', () => {
+    expect(readNodeEnv({ NODE_ENV: 'production' })).toBe('production');
+    expect(readNodeEnv({ NODE_ENV: 'test' })).toBe('test');
+    expect(readNodeEnv({ NODE_ENV: 'development' })).toBe('development');
+    expect(readNodeEnv({})).toBe('development');
+    expect(readNodeEnv({ NODE_ENV: 'staging' })).toBe('development');
   });
 });
 

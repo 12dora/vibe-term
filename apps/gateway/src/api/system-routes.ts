@@ -1,3 +1,4 @@
+import { readNodeEnv } from '../../../../packages/shared/src/env/load-env';
 import { config } from '../config';
 import { runtimeController } from '../control/runtime';
 import { getSiteSettings } from '../db';
@@ -79,7 +80,7 @@ export const healthRoutes: ApiRoute[] = [
           status: 'ok',
           restarting: runtimeController.isRestarting(),
           // 供 e2e globalSetup 断言「连到的是 test 实例而非生产」，避免误改生产数据。
-          env: process.env.NODE_ENV ?? 'development',
+          env: readNodeEnv(),
           tmux,
           owner: createGatewayOwnerProof(
             config.gatewayOwnerToken,

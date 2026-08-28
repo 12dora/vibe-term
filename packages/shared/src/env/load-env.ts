@@ -53,6 +53,11 @@ export function resolveEnvName(raw: string | undefined): EnvName {
   return 'development';
 }
 
+// bun build 会把 process.env.NODE_ENV 内联成构建期字符串；必须经 env 对象动态读取。
+export function readNodeEnv(env: MutableEnv = process.env as MutableEnv): EnvName {
+  return resolveEnvName(env.NODE_ENV);
+}
+
 function moduleDir(): string {
   // Bun 提供 import.meta.dir；Node / 通用回退到 import.meta.url。
   const bunDir = (import.meta as { dir?: string }).dir;
