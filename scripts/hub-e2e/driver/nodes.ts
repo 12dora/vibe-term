@@ -47,6 +47,12 @@ const args = parseArgs(process.argv.slice(2));
 const cmd = String(args._ ?? '').trim();
 const baseUrl = requireArg(args, 'base-url');
 const cookies = await cookiesFromArgs(args);
+const selfNodeId = await (async () => {
+  const { json } = await apiFetch(baseUrl, '/api/auth/mode', { cookies });
+  const nodeId = (json as { nodeId?: unknown } | null)?.nodeId;
+  return typeof nodeId === 'string' ? nodeId : '';
+})();
+const resolveName = (name: string): string => (name === 'self' && selfNodeId ? selfNodeId : name);
 const timeoutMs = Number(args.timeout ?? 60_000);
 
 if (cmd === 'hub-list') {
@@ -73,7 +79,7 @@ if (cmd === 'wait-hub-online') {
       const nodes = await hubNodes(baseUrl, cookies);
       last = JSON.stringify(nodes);
       const missing = names.filter((name) => {
-        const row = findByName(nodes, name);
+        const row = findByName(nodes, resolveName(name));
         return !row || row.online !== true;
       });
       if (missing.length === 0) {
@@ -97,7 +103,7 @@ if (cmd === 'wait-present') {
     try {
       const nodes = await meshNodes(baseUrl, cookies);
       last = JSON.stringify(nodes);
-      const row = findByName(nodes, name);
+      const row = findByName(nodes, resolveName(name));
       if (row) {
         process.stdout.write(`${JSON.stringify({ ok: true, node: row }, null, 2)}\n`);
         process.exit(0);
@@ -120,7 +126,7 @@ if (cmd === 'wait-reach') {
     try {
       const nodes = await meshNodes(baseUrl, cookies);
       last = JSON.stringify(nodes);
-      const row = findByName(nodes, name);
+      const row = findByName(nodes, resolveName(name));
       if (row && row.online === true && row.reach === reach) {
         process.stdout.write(`${JSON.stringify({ ok: true, node: row }, null, 2)}\n`);
         process.exit(0);
@@ -142,7 +148,7 @@ if (cmd === 'wait-direct-capable') {
     try {
       const nodes = await meshNodes(baseUrl, cookies);
       last = JSON.stringify(nodes);
-      const row = findByName(nodes, name);
+      const row = findByName(nodes, resolveName(name));
       if (row?.direct_capable === true) {
         process.stdout.write(`${JSON.stringify({ ok: true, node: row }, null, 2)}\n`);
         process.exit(0);
@@ -169,7 +175,7 @@ if (cmd === 'wait-transport') {
     try {
       const nodes = await meshNodes(baseUrl, cookies);
       last = JSON.stringify(nodes);
-      const row = findByName(nodes, name);
+      const row = findByName(nodes, resolveName(name));
       if (matchesTransport(row, transport)) {
         process.stdout.write(`${JSON.stringify({ ok: true, node: row }, null, 2)}\n`);
         process.exit(0);
