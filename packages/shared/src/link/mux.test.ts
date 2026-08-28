@@ -122,6 +122,19 @@ describe('link mux', () => {
     expect((await incoming.closed).reason).toBe('end');
   });
 
+  it('errors the readable on link close instead of a clean EOF', async () => {
+    const [a, b] = createInMemoryLinkPair();
+    const incomingP = new Promise<LinkStream>((resolve) => b.onStream(resolve));
+    const out = await a.openStream(new Uint8Array([1]));
+    const incoming = await incomingP;
+    await out.write(new Uint8Array([1, 2, 3]));
+    const reader = incoming.readable.getReader();
+    expect((await reader.read()).value?.bytes).toEqual(new Uint8Array([1, 2, 3]));
+    a.close('gone');
+    await expect(reader.read()).rejects.toBeDefined();
+    expect((await incoming.closed).reason).toBe('link-closed');
+  });
+
   it('propagates RST to onAbort and rejects pending writes', async () => {
     const [a, b] = createInMemoryLinkPair();
     const incomingP = new Promise<LinkStream>((resolve) => b.onStream(resolve));

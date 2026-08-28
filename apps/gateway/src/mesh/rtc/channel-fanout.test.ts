@@ -1,5 +1,9 @@
 import { describe, expect, test } from 'bun:test';
-import { FANOUT_MAX_PENDING_MESSAGES, fanoutDataChannel } from './channel-fanout';
+import {
+  FANOUT_MAX_PENDING_BYTES,
+  FANOUT_MAX_PENDING_MESSAGES,
+  fanoutDataChannel,
+} from './channel-fanout';
 import { FakeDataChannel, pairDataChannels } from './test-fakes';
 
 function textOf(msg: string | Buffer | ArrayBuffer): string {
@@ -83,6 +87,25 @@ describe('fanoutDataChannel', () => {
     expect(err).toBe('boom');
   });
 
+  test('buffers a 2 MiB burst of 64 KiB frames while detached instead of closing at 32 messages', () => {
+    const [a, b] = pairDataChannels('peer');
+    a.maxSize = 64 * 1024;
+    b.maxSize = 64 * 1024;
+    const fan = fanoutDataChannel(b, { peer: 'node-b' });
+    const frame = Buffer.alloc(64 * 1024, 7);
+    for (let i = 0; i < FANOUT_MAX_PENDING_MESSAGES + 1; i++) {
+      expect(a.sendMessageBinary(frame)).toBe(true);
+    }
+    expect(fan.isOpen()).toBe(true);
+    expect(b.closed).toBe(false);
+    const later: number[] = [];
+    fan.onMessage((msg) => {
+      later.push(typeof msg === 'string' ? msg.length : msg.byteLength);
+    });
+    expect(later).toHaveLength(FANOUT_MAX_PENDING_MESSAGES + 1);
+    expect(later.every((n) => n === 64 * 1024)).toBe(true);
+  });
+
   test('closes the channel on buffer overflow instead of dropping frames', () => {
     const [a, b] = pairDataChannels('peer');
     const fan = fanoutDataChannel(b, { peer: 'node-b' });
@@ -92,8 +115,10 @@ describe('fanoutDataChannel', () => {
       lines.push(args.map(String).join(' '));
     };
     try {
-      for (let i = 0; i < FANOUT_MAX_PENDING_MESSAGES + 1; i++) {
-        expect(a.sendMessage(String(i))).toBe(true);
+      const chunk = Buffer.alloc(1024 * 1024, 1);
+      const n = Math.floor(FANOUT_MAX_PENDING_BYTES / chunk.byteLength) + 1;
+      for (let i = 0; i < n; i++) {
+        expect(a.sendMessageBinary(chunk)).toBe(true);
       }
       expect(fan.isOpen()).toBe(false);
       expect(b.closed).toBe(true);

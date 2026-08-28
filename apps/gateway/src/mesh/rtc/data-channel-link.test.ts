@@ -192,6 +192,46 @@ describe('DataChannelLink', () => {
     }
   });
 
+  test('round-trips a 1 MiB mux DATA frame over 64 KiB fragments', async () => {
+    const [a, b] = pairDataChannels('peer');
+    a.maxSize = 64 * 1024;
+    b.maxSize = 64 * 1024;
+    const left = new DataChannelLink(a, { liveness: false });
+    const right = new DataChannelLink(b, { liveness: false });
+    const muxLeft = new LinkMux(left, { role: 'initiator' });
+    const muxRight = new LinkMux(right, { role: 'acceptor' });
+    const incoming = new Promise<import('@tmex/shared/link').LinkStream>((resolve) =>
+      muxRight.onStream(resolve)
+    );
+    const out = await muxLeft.openStream(new Uint8Array([1]));
+    const inn = await incoming;
+    const reader = inn.readable.getReader();
+    const payload = new Uint8Array(1024 * 1024).fill(5);
+    await out.write(payload);
+    expect((await reader.read()).value?.bytes).toEqual(payload);
+    out.end();
+    inn.end();
+  });
+
+  test('buffers more than 32 small frames while onData is detached', async () => {
+    const [a, b] = pairDataChannels('peer');
+    const left = new DataChannelLink(a, { liveness: false });
+    const right = new DataChannelLink(b, { liveness: false, peer: 'peer-b' });
+    const sends: Array<Promise<void>> = [];
+    for (let i = 0; i < 40; i++) {
+      sends.push(left.send(new Uint8Array([i])));
+    }
+    await Promise.all(sends);
+    expect(b.closed).toBe(false);
+    const got: number[] = [];
+    right.onData((bytes) => {
+      got.push(bytes[0] ?? -1);
+    });
+    expect(got).toHaveLength(40);
+    left.close();
+    right.close();
+  });
+
   test('closes the channel on pending-frame overflow instead of dropping', async () => {
     const [a, b] = pairDataChannels('peer');
     const left = new DataChannelLink(a);
@@ -203,8 +243,9 @@ describe('DataChannelLink', () => {
     };
     try {
       const sends: Array<Promise<void>> = [];
+      const chunk = new Uint8Array(1024 * 1024).fill(1);
       for (let i = 0; i < 33; i++) {
-        sends.push(left.send(new Uint8Array([i])).catch(() => undefined));
+        sends.push(left.send(chunk).catch(() => undefined));
       }
       await Promise.all(sends);
       expect(b.closed).toBe(true);

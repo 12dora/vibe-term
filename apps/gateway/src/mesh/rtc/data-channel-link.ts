@@ -1,5 +1,5 @@
 import type { ByteTransport } from '@tmex/shared/link';
-import { FANOUT_MAX_PENDING_MESSAGES } from './channel-fanout';
+import { FANOUT_MAX_PENDING_BYTES } from './channel-fanout';
 import { DC_HIGH_WATER_BYTES, DC_LOW_WATER_BYTES } from './data-channel-carrier';
 import {
   FragmentProtocolError,
@@ -39,6 +39,7 @@ export class DataChannelLink implements ByteTransport {
   private readonly dataCbs: Array<(bytes: Uint8Array) => void> = [];
   private readonly closeCbs: Array<(reason?: string) => void> = [];
   private readonly pendingFrames: Uint8Array[] = [];
+  private pendingBytes = 0;
   private readonly queue: QueueItem[] = [];
   private nextFrameId = 1;
   private closed = false;
@@ -137,6 +138,7 @@ export class DataChannelLink implements ByteTransport {
   onData(cb: (bytes: Uint8Array) => void): void {
     this.dataCbs.push(cb);
     const queued = this.pendingFrames.splice(0);
+    this.pendingBytes = 0;
     for (const frame of queued) cb(frame);
   }
 
@@ -179,7 +181,7 @@ export class DataChannelLink implements ByteTransport {
 
   private dispatchFrame(frame: Uint8Array): void {
     if (this.dataCbs.length === 0) {
-      if (this.pendingFrames.length >= FANOUT_MAX_PENDING_MESSAGES) {
+      if (this.pendingBytes + frame.byteLength > FANOUT_MAX_PENDING_BYTES) {
         rtcLog('buffer overflow', {
           peer: this.peer ?? 'unknown',
           dropped: this.pendingFrames.length + 1,
@@ -188,6 +190,7 @@ export class DataChannelLink implements ByteTransport {
         return;
       }
       this.pendingFrames.push(frame);
+      this.pendingBytes += frame.byteLength;
       return;
     }
     for (const cb of this.dataCbs) cb(frame);

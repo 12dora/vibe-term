@@ -1,7 +1,14 @@
+import { MAX_LINK_UNACKED } from '@tmex/shared/link';
 import type { DataChannelLike } from './native';
 import { rtcLog } from './rtc-log';
 
+export const FANOUT_MAX_PENDING_BYTES = MAX_LINK_UNACKED;
 export const FANOUT_MAX_PENDING_MESSAGES = 32;
+
+function messageByteLength(msg: string | Buffer | ArrayBuffer): number {
+  if (typeof msg === 'string') return Buffer.byteLength(msg);
+  return msg.byteLength;
+}
 
 export type FanoutOptions = {
   peer?: string;
@@ -31,6 +38,7 @@ export function fanoutDataChannel(
   const message: Array<(msg: string | Buffer | ArrayBuffer) => void> = [];
   const low: Array<() => void> = [];
   const pendingMessages: Array<string | Buffer | ArrayBuffer> = [];
+  let pendingBytes = 0;
   let closedFired = false;
   let errorFired: string | null = null;
 
@@ -38,6 +46,7 @@ export function fanoutDataChannel(
     if (closedFired) return;
     closedFired = true;
     pendingMessages.length = 0;
+    pendingBytes = 0;
     rtcLog('buffer overflow', { peer, dropped });
     try {
       channel.close();
@@ -49,11 +58,13 @@ export function fanoutDataChannel(
 
   const enqueue = (msg: string | Buffer | ArrayBuffer) => {
     if (closedFired) return;
-    if (pendingMessages.length >= FANOUT_MAX_PENDING_MESSAGES) {
+    const size = messageByteLength(msg);
+    if (pendingBytes + size > FANOUT_MAX_PENDING_BYTES) {
       overflow(pendingMessages.length + 1);
       return;
     }
     pendingMessages.push(msg);
+    pendingBytes += size;
   };
 
   channel.onOpen(() => {
@@ -110,9 +121,12 @@ export function fanoutDataChannel(
     onMessage: (cb) => {
       const unsub = addListener(message, cb);
       const queued = pendingMessages.splice(0);
+      pendingBytes = 0;
       for (let i = 0; i < queued.length; i++) {
         if (!message.includes(cb)) {
-          pendingMessages.push(...queued.slice(i));
+          const rest = queued.slice(i);
+          pendingMessages.push(...rest);
+          for (const held of rest) pendingBytes += messageByteLength(held);
           break;
         }
         const next = queued[i];
@@ -123,18 +137,23 @@ export function fanoutDataChannel(
     getLabel: channel.getLabel ? () => channel.getLabel?.() ?? '' : undefined,
     shiftPendingMessage() {
       if (closedFired) return undefined;
-      return pendingMessages.shift();
+      const next = pendingMessages.shift();
+      if (next !== undefined) pendingBytes = Math.max(0, pendingBytes - messageByteLength(next));
+      return next;
     },
     reinjectMessages(msgs) {
       if (closedFired || msgs.length === 0) return;
       if (message.length === 0) {
         const combined = [...msgs, ...pendingMessages];
-        if (combined.length > FANOUT_MAX_PENDING_MESSAGES) {
+        let total = 0;
+        for (const item of combined) total += messageByteLength(item);
+        if (total > FANOUT_MAX_PENDING_BYTES) {
           overflow(combined.length);
           return;
         }
         pendingMessages.length = 0;
         pendingMessages.push(...combined);
+        pendingBytes = total;
         return;
       }
       for (const msg of msgs) {

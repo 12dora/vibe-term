@@ -142,6 +142,17 @@ describe('FrameReassembler', () => {
     expect(() => reassembler.push(oversized[0] as Uint8Array)).toThrow(FragmentProtocolError);
   });
 
+  test('reassembles a max mux DATA frame (1 MiB payload plus 10-byte header)', () => {
+    const payload = new Uint8Array(1024 * 1024 + 10).fill(9);
+    const parts = fragmentFrame(1, payload);
+    const reassembler = new FrameReassembler();
+    let out: Uint8Array | null = null;
+    for (const part of parts) {
+      out = reassembler.push(part);
+    }
+    expect(out).toEqual(payload);
+  });
+
   test('rejects a frame whose cumulative payload exceeds 1 MiB', () => {
     const reassembler = new FrameReassembler();
     const maxTotal = Math.ceil(MAX_REASSEMBLED_FRAME_BYTES / FRAGMENT_PAYLOAD_SIZE);

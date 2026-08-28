@@ -131,10 +131,11 @@ describe('DataChannelCarrier', () => {
       lines.push(args.map(String).join(' '));
     };
     try {
+      const chunk = new Uint8Array(1024 * 1024).fill(1);
       for (let i = 0; i < 32; i++) {
-        expect(left.send(new Uint8Array([i]))).toBe('sent');
+        expect(left.send(chunk)).toBe('sent');
       }
-      left.send(new Uint8Array([32]));
+      left.send(chunk);
       expect(b.closed).toBe(true);
       expect(
         lines.some(

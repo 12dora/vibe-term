@@ -1,5 +1,5 @@
 import type { Carrier, CarrierSendResult } from '../../ws/carrier';
-import { FANOUT_MAX_PENDING_MESSAGES } from './channel-fanout';
+import { FANOUT_MAX_PENDING_BYTES } from './channel-fanout';
 import {
   FragmentProtocolError,
   FrameReassembler,
@@ -27,6 +27,7 @@ export class DataChannelCarrier implements Carrier {
   private readonly messageCbs: Array<(bytes: Uint8Array) => void> = [];
   private readonly closeCbs: Array<() => void> = [];
   private readonly pendingFrames: Uint8Array[] = [];
+  private pendingBytes = 0;
   private nextFrameId = 1;
   private closed = false;
   private remainder: OutboundFrame | null = null;
@@ -79,7 +80,7 @@ export class DataChannelCarrier implements Carrier {
       }
       if (!frame) return;
       if (this.messageCbs.length === 0) {
-        if (this.pendingFrames.length >= FANOUT_MAX_PENDING_MESSAGES) {
+        if (this.pendingBytes + frame.byteLength > FANOUT_MAX_PENDING_BYTES) {
           rtcLog('buffer overflow', {
             peer: this.peer ?? 'unknown',
             dropped: this.pendingFrames.length + 1,
@@ -88,6 +89,7 @@ export class DataChannelCarrier implements Carrier {
           return;
         }
         this.pendingFrames.push(frame);
+        this.pendingBytes += frame.byteLength;
         return;
       }
       for (const cb of this.messageCbs) {
@@ -139,6 +141,7 @@ export class DataChannelCarrier implements Carrier {
   onMessage(cb: (bytes: Uint8Array) => void): void {
     this.messageCbs.push(cb);
     const queued = this.pendingFrames.splice(0);
+    this.pendingBytes = 0;
     for (const frame of queued) {
       try {
         cb(frame);

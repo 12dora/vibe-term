@@ -77,6 +77,7 @@ class MuxStream implements LinkStream {
   private recvBuf: StreamChunk[] = [];
   private pullWaiter: (() => void) | null = null;
   private outController: ReadableStreamDefaultController<StreamChunk> | null = null;
+  private abortError: LinkError | null = null;
   private readonly isCtl: boolean;
 
   constructor(mux: LinkMux, id: number, openPayload: Uint8Array) {
@@ -95,12 +96,19 @@ class MuxStream implements LinkStream {
           this.outController = controller;
         },
         pull: () => {
-          if (this.recvBuf.length > 0 || this.recvClosed || this.dead) {
+          if (this.dead) {
+            return Promise.reject(this.abortError ?? this.deadError());
+          }
+          if (this.recvBuf.length > 0 || this.recvClosed) {
             this.flushReadable();
             return;
           }
-          return new Promise<void>((resolve) => {
+          return new Promise<void>((resolve, reject) => {
             this.pullWaiter = () => {
+              if (this.dead) {
+                reject(this.abortError ?? this.deadError());
+                return;
+              }
               this.flushReadable();
               resolve();
             };
@@ -221,17 +229,11 @@ class MuxStream implements LinkStream {
     this.sendClosed = true;
     this.recvClosed = true;
     const err = new LinkError(info.reason, info.message ?? info.reason);
+    this.abortError = err;
     for (const waiter of this.waiters) waiter.reject(err);
     this.waiters = [];
     this.recvBuf = [];
     this.wakePull();
-    if (this.outController) {
-      try {
-        this.outController.close();
-      } catch {
-        // already closed
-      }
-    }
     if (info.reason !== 'end') {
       this.fireAbort();
     }
@@ -317,11 +319,6 @@ class MuxStream implements LinkStream {
     const controller = this.outController;
     if (!controller) return;
     if (this.dead) {
-      try {
-        controller.close();
-      } catch {
-        // already closed
-      }
       return;
     }
     if (this.recvBuf.length === 0) {
