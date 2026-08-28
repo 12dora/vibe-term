@@ -9,7 +9,14 @@ import {
 import type { NodeSessionStore } from '../auth/node-session-store';
 import type { UserStore } from '../auth/user-store';
 import type { WebSocketServer } from '../ws';
-import { defaultScheduler, encodeJsonBytes, isRecord, jsonStable, parseSeq } from './ctl';
+import {
+  backoffDelayMs,
+  defaultScheduler,
+  encodeJsonBytes,
+  isRecord,
+  jsonStable,
+  parseSeq,
+} from './ctl';
 import type { RtcSignalMessage } from './mesh-deps';
 import { handshakeRelay, handshakeWsDirect, parseOpenPayload } from './peer-protocol';
 import { PeerServer } from './peer-server';
@@ -35,6 +42,13 @@ export const PEER_MISSED_PONG_LIMIT = 3;
 export const PEER_MAX_CONCURRENT_STREAMS = 256;
 export const PEER_UPGRADE_COOLDOWN_MS = 10_000;
 export const PEER_UPGRADE_SCAN_MS = 15_000;
+export const PEER_UPGRADE_BACKOFF_CAP_MS = 5 * 60 * 1000;
+export const PEER_UPGRADE_MAX_INFLIGHT = 4;
+export const PEER_MAX_ENDPOINTS = 16;
+export const PEER_MAX_ENDPOINT_LENGTH = 256;
+export const PEER_RETIRE_MIN_MS = 5_000;
+export const PEER_RETIRE_QUIET_MS = 2_000;
+export const PEER_RETIRE_MAX_MS = 30_000;
 export const RTC_PEER_INBOX_MAX_MESSAGES = 32;
 
 /** Connection initiated by the lexicographically smaller nodeId wins a simultaneous dial. */
@@ -98,9 +112,23 @@ type LivePeer = {
   pingTimer: { clear: () => void } | null;
   missedPongs: number;
   retiring: boolean;
+  retiredAt: number;
+  zeroStreamsSince: number;
+  gotQuiesceAck: boolean;
+  gotPeerQuiesce: boolean;
+  retireTimer: { clear: () => void } | null;
+  finishRetired: boolean;
+  lastAdvertisedStatusJson: string;
   unsubRtc: (() => void) | null;
   sendKey?: Uint8Array;
   recvKey?: Uint8Array;
+};
+
+type UpgradeGate = {
+  nextEligibleAt: number;
+  failures: number;
+  coalesced: boolean;
+  scheduled: boolean;
 };
 
 function isServerSocketAdapter(value: WebSocketTransportInput): value is ServerSocketAdapter {
@@ -213,9 +241,9 @@ export class PeerManager {
   private readonly rtcListeners = new Map<string, Set<(msg: RtcSignalMessage) => void>>();
   private readonly rtcInbox = new Map<string, RtcSignalMessage[]>();
   private readonly server: PeerServer | null;
-  private readonly lastUpgradeAt = new Map<string, number>();
-  private readonly lastSeenEndpoints = new Map<string, string>();
-  private lastAdvertisedStatusJson = '';
+  private readonly upgradeGate = new Map<string, UpgradeGate>();
+  private upgradeInflight = 0;
+  private readonly upgradeWaiters: Array<() => void> = [];
   private upgradeScan: { clear: () => void } | null = null;
   private stopped = false;
   private generation = 0;
@@ -386,26 +414,21 @@ export class PeerManager {
     this.dropPeer(nodeId, 'revoked');
     this.forceCloseRetiring(nodeId, 'revoked');
     this.userStore.deletePeer(nodeId);
-    this.lastUpgradeAt.delete(nodeId);
-    this.lastSeenEndpoints.delete(nodeId);
+    this.upgradeGate.delete(nodeId);
   }
 
   notifyPeerEndpointsChanged(nodeId?: string): void {
     if (nodeId) {
-      this.maybeUpgrade(nodeId, { cooldown: this.endpointsUnchanged(nodeId) });
+      this.maybeUpgrade(nodeId, { cooldown: true });
       return;
     }
     for (const id of this.live.keys()) {
-      this.maybeUpgrade(id, { cooldown: this.endpointsUnchanged(id) });
+      this.maybeUpgrade(id, { cooldown: true });
     }
   }
 
   refreshAdvertisedStatus(): void {
-    const status = this.statusProvider?.();
-    if (!status) return;
-    const encoded = jsonStable(status);
-    if (encoded === this.lastAdvertisedStatusJson) return;
-    this.lastAdvertisedStatusJson = encoded;
+    if (!this.statusProvider) return;
     for (const live of this.live.values()) {
       this.sendPeerStatus(live);
     }
@@ -465,12 +488,78 @@ export class PeerManager {
     return this.shouldTryDc(live.peerNodeId) || this.hasWsSecureCandidate(live.peerNodeId);
   }
 
-  private endpointsUnchanged(nodeId: string): boolean {
-    const cached = this.userStore.listPeers().find((row) => row.nodeId === nodeId);
-    const json = cached?.endpointsJson ?? '';
-    const prev = this.lastSeenEndpoints.get(nodeId);
-    this.lastSeenEndpoints.set(nodeId, json);
-    return prev === json;
+  private ensureGate(nodeId: string): UpgradeGate {
+    let gate = this.upgradeGate.get(nodeId);
+    if (!gate) {
+      gate = { nextEligibleAt: 0, failures: 0, coalesced: false, scheduled: false };
+      this.upgradeGate.set(nodeId, gate);
+    }
+    return gate;
+  }
+
+  private noteUpgradeResult(nodeId: string, ok: boolean): void {
+    const gate = this.ensureGate(nodeId);
+    const now = this.scheduler.now();
+    if (ok) {
+      gate.failures = 0;
+      gate.nextEligibleAt = now + PEER_UPGRADE_COOLDOWN_MS;
+      return;
+    }
+    gate.failures += 1;
+    gate.nextEligibleAt =
+      now +
+      backoffDelayMs(gate.failures - 1, PEER_UPGRADE_COOLDOWN_MS, PEER_UPGRADE_BACKOFF_CAP_MS);
+  }
+
+  private scheduleCoalescedUpgrade(nodeId: string): void {
+    const gate = this.ensureGate(nodeId);
+    if (gate.scheduled || this.stopped) return;
+    gate.scheduled = true;
+    const wait = Math.max(0, gate.nextEligibleAt - this.scheduler.now());
+    void this.scheduler.sleep(wait, this.stopAbort.signal).then(
+      () => {
+        gate.scheduled = false;
+        if (this.stopped) return;
+        if (this.scheduler.now() < gate.nextEligibleAt) return;
+        if (!this.upgradeGate.get(nodeId)?.coalesced) return;
+        this.maybeUpgrade(nodeId, { cooldown: true });
+      },
+      () => {
+        gate.scheduled = false;
+      }
+    );
+  }
+
+  private acquireUpgradeSlot(): Promise<void> {
+    if (this.stopped) return Promise.reject(new Error('stopped'));
+    if (this.upgradeInflight < PEER_UPGRADE_MAX_INFLIGHT) {
+      this.upgradeInflight += 1;
+      return Promise.resolve();
+    }
+    return new Promise((resolve, reject) => {
+      const waiter = () => {
+        this.stopAbort.signal.removeEventListener('abort', onAbort);
+        if (this.stopped) {
+          reject(new Error('stopped'));
+          return;
+        }
+        this.upgradeInflight += 1;
+        resolve();
+      };
+      const onAbort = () => {
+        const idx = this.upgradeWaiters.indexOf(waiter);
+        if (idx >= 0) this.upgradeWaiters.splice(idx, 1);
+        reject(this.stopAbort.signal.reason ?? new Error('stopped'));
+      };
+      this.upgradeWaiters.push(waiter);
+      this.stopAbort.signal.addEventListener('abort', onAbort, { once: true });
+    });
+  }
+
+  private releaseUpgradeSlot(): void {
+    this.upgradeInflight = Math.max(0, this.upgradeInflight - 1);
+    const next = this.upgradeWaiters.shift();
+    next?.();
   }
 
   private maybeUpgrade(nodeId: string, opts: { cooldown: boolean }): void {
@@ -478,24 +567,46 @@ export class PeerManager {
     if (!this.isTrusted(nodeId)) return;
     const live = this.live.get(nodeId);
     if (!live || !this.wantsUpgrade(live)) return;
-    if (this.pending.has(nodeId)) return;
-    const now = this.scheduler.now();
-    if (opts.cooldown) {
-      const last = this.lastUpgradeAt.get(nodeId) ?? 0;
-      if (now - last < PEER_UPGRADE_COOLDOWN_MS) return;
+    if (this.pending.has(nodeId)) {
+      this.ensureGate(nodeId).coalesced = true;
+      return;
     }
-    this.lastUpgradeAt.set(nodeId, now);
+    const gate = this.ensureGate(nodeId);
+    if (opts.cooldown && this.scheduler.now() < gate.nextEligibleAt) {
+      gate.coalesced = true;
+      this.scheduleCoalescedUpgrade(nodeId);
+      return;
+    }
+    gate.coalesced = false;
     this.queueUpgrade(nodeId);
   }
 
   private queueUpgrade(nodeId: string): void {
-    const upgrade = this.dial(nodeId);
+    const before = this.live.get(nodeId)?.session ?? null;
+    const upgrade = this.runUpgradeDial(nodeId, before);
     this.pending.set(nodeId, upgrade);
     void upgrade
       .catch(() => undefined)
       .finally(() => {
         if (this.pending.get(nodeId) === upgrade) this.pending.delete(nodeId);
+        if (this.upgradeGate.get(nodeId)?.coalesced && !this.stopped) {
+          this.scheduleCoalescedUpgrade(nodeId);
+        }
       });
+  }
+
+  private async runUpgradeDial(nodeId: string, before: LinkSession | null): Promise<LinkSession> {
+    await this.acquireUpgradeSlot();
+    try {
+      const session = await this.dial(nodeId);
+      this.noteUpgradeResult(nodeId, session !== before);
+      return session;
+    } catch (err) {
+      this.noteUpgradeResult(nodeId, false);
+      throw err;
+    } finally {
+      this.releaseUpgradeSlot();
+    }
   }
 
   private hasWsSecureCandidate(nodeId: string): boolean {
@@ -858,6 +969,13 @@ export class PeerManager {
       pingTimer: null,
       missedPongs: 0,
       retiring: false,
+      retiredAt: 0,
+      zeroStreamsSince: 0,
+      gotQuiesceAck: false,
+      gotPeerQuiesce: false,
+      retireTimer: null,
+      finishRetired: false,
+      lastAdvertisedStatusJson: '',
       unsubRtc: null,
     };
     this.live.set(peerNodeId, live);
@@ -872,7 +990,7 @@ export class PeerManager {
     const { session, peerNodeId } = live;
     const origOpen = session.openStream.bind(session);
     session.openStream = async (openPayload: Uint8Array) => {
-      if (this.live.get(peerNodeId) !== live) {
+      if (live.retiring || this.live.get(peerNodeId) !== live) {
         throw new Error('peer link replaced');
       }
       if (live.streams >= this.maxConcurrentStreams) {
@@ -883,7 +1001,10 @@ export class PeerManager {
       return stream;
     };
     session.onStream((stream) => {
-      if (this.live.get(peerNodeId) !== live) {
+      const retiringSet = this.retiring.get(peerNodeId);
+      const isCurrent = this.live.get(peerNodeId) === live;
+      const isRetiring = live.retiring && retiringSet?.has(live) === true;
+      if (!isCurrent && !isRetiring) {
         stream.reset('stale-link');
         return;
       }
@@ -918,13 +1039,15 @@ export class PeerManager {
   private onLocalStream(live: LivePeer, stream: LinkStream): void {
     live.streams += 1;
     live.lastStreamAt = this.scheduler.now();
+    live.zeroStreamsSince = 0;
     this.clearIdle(live);
     void stream.closed.then(() => {
       live.streams = Math.max(0, live.streams - 1);
       live.lastStreamAt = this.scheduler.now();
+      if (live.streams === 0) live.zeroStreamsSince = this.scheduler.now();
       if (live.streams > 0) return;
       if (live.retiring) {
-        this.finishRetire(live);
+        this.maybeFinishRetire(live);
         return;
       }
       if (this.live.get(live.peerNodeId) === live) this.armIdle(live);
@@ -972,6 +1095,19 @@ export class PeerManager {
       case 'pong':
         live.missedPongs = 0;
         return;
+      case 'link.quiesce':
+        live.gotPeerQuiesce = true;
+        try {
+          live.session.ctl.send(encodeJsonBytes({ t: 'link.quiesce.ack' }));
+        } catch {
+          // link may already be closing
+        }
+        if (live.retiring) this.maybeFinishRetire(live);
+        return;
+      case 'link.quiesce.ack':
+        live.gotQuiesceAck = true;
+        if (live.retiring) this.maybeFinishRetire(live);
+        return;
       case 'node.status':
         void this.applyPeerStatus(live, msg);
         return;
@@ -1009,7 +1145,9 @@ export class PeerManager {
     this.userStore.upsertPeer({
       nodeId: peerNodeId,
       name,
-      endpointsJson: jsonText(msg.endpoints ?? existing?.endpointsJson ?? []),
+      endpointsJson: jsonText(
+        sanitizeEndpoints(msg.endpoints ?? existing?.endpointsJson ?? [], this.server?.port)
+      ),
       inventoryJson: jsonText(msg.inventory ?? existing?.inventoryJson ?? {}),
       directCapable:
         typeof msg.direct_capable === 'boolean'
@@ -1069,7 +1207,9 @@ export class PeerManager {
   private sendPeerStatus(live: LivePeer): void {
     const status = this.statusProvider?.();
     if (!status) return;
-    this.lastAdvertisedStatusJson = jsonStable(status);
+    const encoded = jsonStable(status);
+    if (encoded === live.lastAdvertisedStatusJson) return;
+    live.lastAdvertisedStatusJson = encoded;
     const payload: Record<string, unknown> = {
       t: 'node.status',
       version: status.version,
@@ -1149,26 +1289,70 @@ export class PeerManager {
     this.clearIdle(prev);
     prev.pingTimer?.clear();
     prev.pingTimer = null;
-    if (prev.streams > 0) {
-      prev.retiring = true;
-      let set = this.retiring.get(prev.peerNodeId);
-      if (!set) {
-        set = new Set();
-        this.retiring.set(prev.peerNodeId, set);
-      }
-      set.add(prev);
+    if (prev.finishRetired) {
+      this.finishRetire(prev, reason);
       return;
     }
-    this.finishRetire(prev, reason);
+    prev.retiring = true;
+    prev.retiredAt = this.scheduler.now();
+    prev.zeroStreamsSince = prev.streams === 0 ? prev.retiredAt : 0;
+    prev.gotQuiesceAck = false;
+    prev.gotPeerQuiesce = false;
+    let set = this.retiring.get(prev.peerNodeId);
+    if (!set) {
+      set = new Set();
+      this.retiring.set(prev.peerNodeId, set);
+    }
+    set.add(prev);
+    try {
+      prev.session.ctl.send(encodeJsonBytes({ t: 'link.quiesce' }));
+    } catch {
+      // old link may already be closing
+    }
+    prev.retireTimer?.clear();
+    prev.retireTimer = this.scheduler.interval(() => {
+      this.maybeFinishRetire(prev, reason);
+    }, 250);
+    this.maybeFinishRetire(prev, reason);
+  }
+
+  private maybeFinishRetire(live: LivePeer, reason = 'replaced'): void {
+    if (!live.retiring || live.finishRetired) return;
+    const now = this.scheduler.now();
+    const elapsed = now - live.retiredAt;
+    if (elapsed >= PEER_RETIRE_MAX_MS) {
+      this.finishRetire(live, reason);
+      return;
+    }
+    if (live.streams > 0) return;
+    if (live.gotQuiesceAck && live.gotPeerQuiesce) {
+      this.finishRetire(live, reason);
+      return;
+    }
+    const quietFor = live.zeroStreamsSince > 0 ? now - live.zeroStreamsSince : 0;
+    if (elapsed >= PEER_RETIRE_MIN_MS && quietFor >= PEER_RETIRE_QUIET_MS) {
+      this.finishRetire(live, reason);
+    }
   }
 
   private finishRetire(live: LivePeer, reason = 'replaced'): void {
+    if (live.finishRetired) {
+      try {
+        live.session.close(reason);
+      } catch {
+        // already closed
+      }
+      return;
+    }
+    live.finishRetired = true;
+    live.retiring = false;
+    live.retireTimer?.clear();
+    live.retireTimer = null;
     if (live.unsubRtc) {
       live.unsubRtc();
       live.unsubRtc = null;
     }
     this.rtcInbox.delete(live.peerNodeId);
-    live.retiring = false;
     const set = this.retiring.get(live.peerNodeId);
     if (set) {
       set.delete(live);
@@ -1207,6 +1391,15 @@ function jsonText(value: unknown): string {
   return JSON.stringify(value ?? null);
 }
 
+function sanitizeEndpoints(value: unknown, fallbackPort?: number): string[] {
+  if (typeof value === 'string') return parseEndpoints(value, fallbackPort);
+  try {
+    return parseEndpoints(JSON.stringify(value ?? []), fallbackPort);
+  } catch {
+    return [];
+  }
+}
+
 function parseEndpoints(endpointsJson: string, fallbackPort?: number): string[] {
   let parsed: unknown;
   try {
@@ -1216,6 +1409,8 @@ function parseEndpoints(endpointsJson: string, fallbackPort?: number): string[] 
   }
   const urls: string[] = [];
   const push = (raw: string) => {
+    if (urls.length >= PEER_MAX_ENDPOINTS) return;
+    if (raw.length > PEER_MAX_ENDPOINT_LENGTH) return;
     if (raw.startsWith('ws://') || raw.startsWith('wss://')) {
       urls.push(raw);
       return;
@@ -1223,7 +1418,9 @@ function parseEndpoints(endpointsJson: string, fallbackPort?: number): string[] 
     if (raw.includes('://')) return;
     const host = raw.includes('/') ? raw : raw;
     const withPath = host.includes('/peer') ? host : `${host}/peer`;
-    urls.push(withPath.startsWith('ws') ? withPath : `ws://${withPath}`);
+    const url = withPath.startsWith('ws') ? withPath : `ws://${withPath}`;
+    if (url.length > PEER_MAX_ENDPOINT_LENGTH) return;
+    urls.push(url);
   };
   if (Array.isArray(parsed)) {
     for (const item of parsed) {
