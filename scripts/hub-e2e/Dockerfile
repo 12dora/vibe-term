@@ -17,6 +17,7 @@ RUN apt-get update \
         openssl \
         rsync \
         tmux \
+        iptables \
         unzip \
         xz-utils \
         coreutils \

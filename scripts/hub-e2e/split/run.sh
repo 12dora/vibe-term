@@ -25,10 +25,13 @@ FAILS=0
 declare -a REPORT_ROWS=()
 
 log() { printf '[split-e2e] %s\n' "$*"; }
-pass() { log "PASS $*"; REPORT_ROWS+=("| $* | PASS | |"); }
-fail() { log "FAIL $*"; REPORT_ROWS+=("| $* | FAIL | $* |"); FAILS=$((FAILS + 1)); }
-skip() { log "SKIP $*"; REPORT_ROWS+=("| $* | SKIP | $* |"); }
+pass() { log "PASS $1"; REPORT_ROWS+=("| $1 | PASS | ${2:-} |"); }
+fail() { log "FAIL $1"; REPORT_ROWS+=("| $1 | FAIL | ${2:-$1} |"); FAILS=$((FAILS + 1)); }
+skip() { log "SKIP $1"; REPORT_ROWS+=("| $1 | SKIP | ${2:-$1} |"); }
 rssh() { "${RSSH}" "$@"; }
+DIRECT_DROP_MODE=""
+DIRECT_DC=0
+DIRECT_SKIPPED=0
 
 usage() {
   cat <<'EOF'
@@ -124,6 +127,83 @@ dump_logs() {
   rssh "docker logs --tail 200 tmex-split-caddy" > "${OUT}/caddy.log" 2>&1 || true
 }
 
+dump_rtc_logs() {
+  docker logs tmex-split-node-a 2>&1 | grep -E '\[mesh\]\[rtc\]' | tail -120 > "${OUT}/direct-logs-node-a.txt" || true
+  if [[ ! -s "${OUT}/direct-logs-node-a.txt" ]]; then
+    docker logs tmex-split-node-a 2>&1 | grep -iE 'rtc|datachannel|ice failed|ws-secure' | tail -120 > "${OUT}/direct-logs-node-a.txt" || true
+  fi
+  rssh "docker logs tmex-split-hub 2>&1 | grep -E '\\[mesh\\]\\[rtc\\]' | tail -120" > "${OUT}/direct-logs-hub.txt" || true
+  if [[ ! -s "${OUT}/direct-logs-hub.txt" ]]; then
+    rssh "docker logs tmex-split-hub 2>&1 | grep -iE 'rtc|datachannel|ice failed|ws-secure' | tail -120" > "${OUT}/direct-logs-hub.txt" || true
+  fi
+}
+
+rtc_evidence() {
+  local a h
+  a="$(grep -iE 'ice failed|datachannel|fallback' "${OUT}/direct-logs-node-a.txt" 2>/dev/null | tail -1 | tr '|' '/' || true)"
+  h="$(grep -iE 'ice failed|datachannel|fallback' "${OUT}/direct-logs-hub.txt" 2>/dev/null | tail -1 | tr '|' '/' || true)"
+  printf 'node-a=%s; hub=%s' "${a:-none}" "${h:-none}"
+}
+
+ensure_udp_drop_tool() {
+  if docker exec tmex-split-node-a bash -lc 'command -v iptables >/dev/null'; then
+    DIRECT_DROP_MODE=iptables
+    log "udp drop mode=iptables"
+    return
+  fi
+  if docker exec tmex-split-node-a bash -lc 'command -v nft >/dev/null'; then
+    DIRECT_DROP_MODE=nft
+    log "udp drop mode=nft"
+    return
+  fi
+  log "iptables/nft absent in image; attempting apt-get install iptables"
+  docker exec tmex-split-node-a bash -lc \
+    'apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq iptables' \
+    >/dev/null 2>&1 || true
+  if docker exec tmex-split-node-a bash -lc 'command -v iptables >/dev/null'; then
+    DIRECT_DROP_MODE=iptables
+    log "udp drop mode=iptables (installed at runtime)"
+    return
+  fi
+  DIRECT_DROP_MODE=network
+  log "udp drop mode=network (docker network disconnect/connect nat-a; also bounces hub uplink)"
+}
+
+drop_direct_udp() {
+  case "${DIRECT_DROP_MODE}" in
+    iptables)
+      docker exec tmex-split-node-a iptables -I OUTPUT -p udp -j DROP
+      ;;
+    nft)
+      docker exec tmex-split-node-a bash -lc \
+        'nft add table ip tmex_e2e 2>/dev/null || true; nft "add chain ip tmex_e2e output { type filter hook output priority 0 ; }"; nft add rule ip tmex_e2e output udp drop'
+      ;;
+    network)
+      docker network disconnect tmex-split-local_nat-a tmex-split-node-a || true
+      sleep 1
+      docker network connect tmex-split-local_nat-a tmex-split-node-a || true
+      ;;
+    *)
+      log "udp drop skipped (no mode)"
+      return 1
+      ;;
+  esac
+}
+
+undrop_direct_udp() {
+  case "${DIRECT_DROP_MODE}" in
+    iptables)
+      docker exec tmex-split-node-a iptables -D OUTPUT -p udp -j DROP || true
+      ;;
+    nft)
+      docker exec tmex-split-node-a nft delete table ip tmex_e2e || true
+      ;;
+    network)
+      docker network connect tmex-split-local_nat-a tmex-split-node-a 2>/dev/null || true
+      ;;
+  esac
+}
+
 write_report() {
   local rows=""
   if ((${#REPORT_ROWS[@]} > 0)); then
@@ -144,6 +224,7 @@ EOF
 }
 
 cleanup_on_exit() {
+  undrop_direct_udp 2>/dev/null || true
   dump_logs
   write_report
 }
@@ -395,6 +476,8 @@ if [[ -z "${NODE_A_ID}" || -z "${NODE_B_ID}" || "${login_hub_rc}" -ne 0 ]]; then
   skip "C skipped (missing hub login or node ids)"
   skip "E skipped (missing hub login or node ids)"
   skip "D skipped (missing hub login or node ids)"
+  skip "H skipped (missing hub login or node ids)"
+  skip "I skipped (missing hub login or node ids)"
   skip "F skipped (missing hub login or node ids)"
   skip "G skipped (missing hub login or node ids)"
   write_report
@@ -783,6 +866,24 @@ else
   fail "E3 remote hub restart, nodes reconnect, no ghost rows (ghost=${ghost})"
 fi
 
+write_direct_path() {
+  docker exec -e HUB="${HUB_NODE_ID}" tmex-split-driver bun -e '
+    const j = await Bun.file("/out/mesh-nodes-direct.json").json();
+    const n = (j.nodes ?? []).find((x) => x.isHub === true || x.id === process.env.HUB);
+    await Bun.write("/out/direct-path.json", JSON.stringify({
+      reach: n?.reach ?? null,
+      transport: n?.transport ?? null,
+      direct_capable: n?.direct_capable ?? null,
+      row: n ?? null,
+    }));
+    process.stdout.write(JSON.stringify({
+      reach: n?.reach ?? null,
+      transport: n?.transport ?? null,
+      direct_capable: n?.direct_capable ?? null,
+    }));
+  ' 2>/dev/null || true
+}
+
 # ---------- D direct enable ----------
 set +e
 direct_a="$(docker exec tmex-split-node-a \
@@ -796,7 +897,15 @@ printf '%s\n' "${direct_h}" | tee "${OUT}/direct-enable-hub.log"
 has_native_a="$(docker exec tmex-split-node-a bash -lc 'test -f /opt/tmex/native/node_datachannel.node && test -f /opt/tmex/native/manifest.json && echo yes || echo no')"
 has_native_h="$(rssh "docker exec tmex-split-hub bash -lc 'test -f /opt/tmex/native/node_datachannel.node && test -f /opt/tmex/native/manifest.json && echo yes || echo no'")"
 if [[ "${has_native_a}" != "yes" || "${has_native_h}" != "yes" ]]; then
-  skip "D direct enable native missing a=${has_native_a} h=${has_native_h} a_rc=${direct_a_rc} h_rc=${direct_h_rc}"
+  DIRECT_SKIPPED=1
+  skip "D1 both rows direct_capable=true" "native missing a=${has_native_a} h=${has_native_h} a_rc=${direct_a_rc} h_rc=${direct_h_rc}"
+  skip "D2 transport=dc" "native missing"
+  skip "D3 marker round-trip while transport=dc" "native missing"
+  skip "H1 transport falls back to relay within 30s" "D skipped (no native)"
+  skip "H2 SEQ_1..400 contiguous on entry stream" "D skipped (no native)"
+  skip "H3 transport returns to dc within 90s" "D skipped (no native)"
+  skip "I1 8MiB sha256 over dc" "D skipped (no native)"
+  skip "I2 8MiB sha256 with UDP drop (REST fallback)" "D skipped (no native)"
 else
   docker restart tmex-split-node-a
   rssh "docker restart tmex-split-hub"
@@ -817,29 +926,180 @@ else
   dc_h_rc=$?
   driver nodes.ts mesh-list --base-url http://node-a:9883 --cookie-file /out/cookies-entry.json \
     > "${OUT}/mesh-nodes-direct.json"
+  PATH_D="$(write_direct_path)"
+  set -e
+  if [[ "${dc_a_rc}" -eq 0 && "${dc_h_rc}" -eq 0 ]]; then
+    pass "D1 both rows direct_capable=true" "${PATH_D}"
+  else
+    fail "D1 both rows direct_capable=true" "a=${dc_a_rc} h=${dc_h_rc} ${PATH_D}"
+  fi
+
+  set +e
+  driver nodes.ts wait-transport --base-url http://node-a:9883 --cookie-file /out/cookies-entry.json \
+    --name "${HUB_NODE_ID}" --transport dc --timeout 90000
+  transport_dc_rc=$?
+  driver nodes.ts mesh-list --base-url http://node-a:9883 --cookie-file /out/cookies-entry.json \
+    > "${OUT}/mesh-nodes-direct.json"
+  PATH_D="$(write_direct_path)"
+  set -e
+  dump_rtc_logs
+  if [[ "${transport_dc_rc}" -eq 0 ]]; then
+    DIRECT_DC=1
+    pass "D2 transport=dc" "${PATH_D}"
+  else
+    fail "D2 transport=dc" "stayed relay/other path=${PATH_D}; $(rtc_evidence)"
+  fi
+
+  set +e
   driver terminal.ts --base-url http://node-a:9883 --cookie-file /out/cookies-entry.json \
     --node-id "${HUB_NODE_ID}" --device-id "${DEVICE_H_ID}" --pane-id "${PANE_H}" --marker TMEX_SPLIT_D --timeout 25000
   term_d_rc=$?
+  driver nodes.ts mesh-list --base-url http://node-a:9883 --cookie-file /out/cookies-entry.json \
+    > "${OUT}/mesh-nodes-direct.json"
+  PATH_D="$(write_direct_path)"
   set -e
-  docker logs tmex-split-node-a 2>&1 | grep -iE 'rtc|datachannel|ws-secure|direct|peer' | tail -80 \
-    > "${OUT}/direct-logs-node-a.txt" || true
-  rssh "docker logs tmex-split-hub 2>&1 | grep -iE 'rtc|datachannel|ws-secure|direct|peer' | tail -80" \
-    > "${OUT}/direct-logs-hub.txt" || true
-  REACH_D="$(docker exec tmex-split-driver bun -e '
-    const j = await Bun.file("/out/mesh-nodes-direct.json").json();
-    const n = (j.nodes ?? []).find((x) => x.isHub === true || x.id === process.env.HUB);
-    process.stdout.write(JSON.stringify({ reach: n?.reach ?? null, direct_capable: n?.direct_capable, row: n ?? null }));
-  ' || true)"
-  printf '%s\n' "${REACH_D}" | tee "${OUT}/direct-path.json"
-  if [[ "${dc_a_rc}" -eq 0 && "${dc_h_rc}" -eq 0 ]]; then
-    pass "D1 both rows direct_capable=true (path=${REACH_D})"
+  if [[ "${term_d_rc}" -eq 0 && "${DIRECT_DC}" -eq 1 ]]; then
+    pass "D3 marker round-trip while transport=dc" "${PATH_D}"
+  elif [[ "${term_d_rc}" -eq 0 ]]; then
+    fail "D3 marker round-trip while transport=dc" "marker ok but transport not dc ${PATH_D}"
   else
-    fail "D1 both rows direct_capable=true a=${dc_a_rc} h=${dc_h_rc} path=${REACH_D}"
+    fail "D3 marker round-trip while transport=dc" "marker failed ${PATH_D}"
   fi
-  if [[ "${term_d_rc}" -eq 0 ]]; then
-    pass "D2 stream node-a → hub after direct enable (see direct-path.json; reach=lan 含 ws-secure 与 dc，不能单凭 reach 证明 DataChannel)"
+fi
+
+# ---------- H direct interruption, no data loss ----------
+if [[ "${DIRECT_SKIPPED}" -eq 1 ]]; then
+  :
+elif [[ "${DIRECT_DC}" -ne 1 ]]; then
+  skip "H1 transport falls back to relay within 30s" "requires D2 transport=dc"
+  skip "H2 SEQ_1..400 contiguous on entry stream" "requires D2 transport=dc"
+  skip "H3 transport returns to dc within 90s" "requires D2 transport=dc"
+  skip "I1 8MiB sha256 over dc" "requires D2 transport=dc"
+  skip "I2 8MiB sha256 with UDP drop (REST fallback)" "requires D2 transport=dc"
+else
+  ensure_udp_drop_tool
+  rssh 'docker exec tmex-split-hub bash -lc "tmux -L tmex-hub has-session -t e2e-hub 2>/dev/null || tmux -L tmex-hub new-session -d -s e2e-hub '\''sh -lc echo READY; exec sh'\''"' || true
+  set +e
+  tree_h="$(driver files.ts tmux-tree --base-url http://node-a:9883 --cookie-file /out/cookies-entry.json \
+    --node-id "${HUB_NODE_ID}" --device-id "${DEVICE_H_ID}")"
+  set -e
+  printf '%s\n' "${tree_h}" | tee "${OUT}/tmux-tree-hub.json" >/dev/null
+  PANE_H="$(jread /out/tmux-tree-hub.json 'j.devices?.[0]?.session?.windows?.[0]?.panes?.[0]?.id' || true)"
+  printf '%s\n' 'for i in $(seq 1 400); do echo SEQ_$i; sleep 0.02; done' > "${OUT}/seq-producer.txt"
+  rm -f "${OUT}/seq-ready.json"
+  set +e
+  driver terminal.ts --base-url http://node-a:9883 --cookie-file /out/cookies-entry.json \
+    --node-id "${HUB_NODE_ID}" --device-id "${DEVICE_H_ID}" --pane-id "${PANE_H}" \
+    --capture-seq --expect-count 400 --seq-prefix SEQ_ \
+    --input-file /out/seq-producer.txt --ready-file /out/seq-ready.json --timeout 90000 \
+    > "${OUT}/seq-capture.json" 2> "${OUT}/seq-capture.err" &
+  cap_pid=$!
+  set -e
+  if wait_file_match "${OUT}/seq-ready.json" '"ok"' 20; then
+    sleep 3
+    set +e
+    drop_direct_udp
+    drop_rc=$?
+    driver nodes.ts wait-transport --base-url http://node-a:9883 --cookie-file /out/cookies-entry.json \
+      --name "${HUB_NODE_ID}" --transport relay --timeout 30000
+    h1_rc=$?
+    set -e
+    dump_rtc_logs
+    if [[ "${h1_rc}" -eq 0 ]]; then
+      pass "H1 transport falls back to relay within 30s" "mode=${DIRECT_DROP_MODE} drop_rc=${drop_rc}"
+    else
+      fail "H1 transport falls back to relay within 30s" "mode=${DIRECT_DROP_MODE} drop_rc=${drop_rc}; $(rtc_evidence)"
+    fi
   else
-    fail "D2 stream node-a → hub after direct enable"
+    kill "${cap_pid}" 2>/dev/null || true
+    fail "H1 transport falls back to relay within 30s" "seq capture did not become ready"
+    h1_rc=1
+  fi
+  set +e
+  wait "${cap_pid}"
+  h2_rc=$?
+  set -e
+  H2_BODY="$(tr '\n' ' ' < "${OUT}/seq-capture.json" 2>/dev/null | tr '|' '/' || true)"
+  if [[ "${h2_rc}" -eq 0 ]]; then
+    pass "H2 SEQ_1..400 contiguous on entry stream" "${H2_BODY}"
+  else
+    fail "H2 SEQ_1..400 contiguous on entry stream" "${H2_BODY}"
+  fi
+  set +e
+  undrop_direct_udp
+  driver nodes.ts wait-transport --base-url http://node-a:9883 --cookie-file /out/cookies-entry.json \
+    --name "${HUB_NODE_ID}" --transport dc --timeout 90000
+  h3_rc=$?
+  driver nodes.ts mesh-list --base-url http://node-a:9883 --cookie-file /out/cookies-entry.json \
+    > "${OUT}/mesh-nodes-direct.json"
+  PATH_H3="$(write_direct_path)"
+  set -e
+  dump_rtc_logs
+  if [[ "${h3_rc}" -eq 0 ]]; then
+    DIRECT_DC=1
+    pass "H3 transport returns to dc within 90s" "${PATH_H3}"
+  else
+    DIRECT_DC=0
+    fail "H3 transport returns to dc within 90s" "${PATH_H3}; $(rtc_evidence)"
+  fi
+
+  # ---------- I file bulk / REST fallback ----------
+  if [[ "${DIRECT_DC}" -ne 1 ]]; then
+    skip "I1 8MiB sha256 over dc" "requires transport=dc after H3"
+    skip "I2 8MiB sha256 with UDP drop (REST fallback)" "requires transport=dc after H3"
+  else
+    set +e
+    bulk_sum="$(rssh "docker exec tmex-split-hub bash -lc 'mkdir -p /e2e && dd if=/dev/urandom of=/e2e/bulk.bin bs=1048576 count=8 status=none && sha256sum /e2e/bulk.bin'")"
+    bulk_sum_rc=$?
+    set -e
+    printf '%s\n' "${bulk_sum}" | tee "${OUT}/bulk-remote-sha256.txt"
+    EXPECT_SHA="$(printf '%s\n' "${bulk_sum}" | awk '/bulk.bin/{print $1; exit}')"
+    set +e
+    hub_root_json="$(driver files.ts create-root --base-url http://node-a:9883 --cookie-file /out/cookies-entry.json \
+      --node-id "${HUB_NODE_ID}" --device-id "${DEVICE_H_ID}" --path /e2e)"
+    hub_root_rc=$?
+    set -e
+    printf '%s\n' "${hub_root_json}" | tee "${OUT}/file-root-hub.json"
+    HUB_ROOT_ID="$(jread /out/file-root-hub.json 'j.root?.id ?? ""' || true)"
+    if [[ -z "${HUB_ROOT_ID}" ]]; then
+      set +e
+      driver files.ts get --base-url http://node-a:9883 --cookie-file /out/cookies-entry.json \
+        --node-id "${HUB_NODE_ID}" --path /api/files/roots > "${OUT}/file-roots-hub.json"
+      set -e
+      HUB_ROOT_ID="$(jread /out/file-roots-hub.json '(j.json?.roots??[]).find(r=>r.path==="/e2e")?.id ?? ""' || true)"
+    fi
+    set +e
+    i1_json="$(driver files.ts sha256 --base-url http://node-a:9883 --cookie-file /out/cookies-entry.json \
+      --node-id "${HUB_NODE_ID}" --root-id "${HUB_ROOT_ID}" --path /e2e/bulk.bin)"
+    i1_rc=$?
+    set -e
+    printf '%s\n' "${i1_json}" | tee "${OUT}/files-bulk-dc.json"
+    I1_SHA="$(docker exec tmex-split-driver bun -e 'const j=await Bun.file("/out/files-bulk-dc.json").json(); process.stdout.write(String(j.sha256??""))' || true)"
+    I1_HDR="$(docker exec tmex-split-driver bun -e 'const j=await Bun.file("/out/files-bulk-dc.json").json(); process.stdout.write(JSON.stringify({bytes:j.bytes,headers:j.headers,bulkPath:j.bulkPath}))' || true)"
+    if [[ "${bulk_sum_rc}" -eq 0 && "${i1_rc}" -eq 0 && -n "${EXPECT_SHA}" && "${I1_SHA}" == "${EXPECT_SHA}" ]]; then
+      pass "I1 8MiB sha256 over dc" "sha256=${I1_SHA} ${I1_HDR}; bulk DataChannel is browser-only (BulkClient bulk:<id>), REST /api/files/raw rides the mesh link"
+    else
+      fail "I1 8MiB sha256 over dc" "expect=${EXPECT_SHA} got=${I1_SHA} root_rc=${hub_root_rc} ${I1_HDR}"
+    fi
+
+    set +e
+    drop_direct_udp
+    driver nodes.ts wait-transport --base-url http://node-a:9883 --cookie-file /out/cookies-entry.json \
+      --name "${HUB_NODE_ID}" --transport relay --timeout 30000
+    i2_relay_rc=$?
+    i2_json="$(driver files.ts sha256 --base-url http://node-a:9883 --cookie-file /out/cookies-entry.json \
+      --node-id "${HUB_NODE_ID}" --root-id "${HUB_ROOT_ID}" --path /e2e/bulk.bin)"
+    i2_rc=$?
+    undrop_direct_udp
+    set -e
+    printf '%s\n' "${i2_json}" | tee "${OUT}/files-bulk-relay.json"
+    I2_SHA="$(docker exec tmex-split-driver bun -e 'const j=await Bun.file("/out/files-bulk-relay.json").json(); process.stdout.write(String(j.sha256??""))' || true)"
+    I2_HDR="$(docker exec tmex-split-driver bun -e 'const j=await Bun.file("/out/files-bulk-relay.json").json(); process.stdout.write(JSON.stringify({bytes:j.bytes,headers:j.headers,bulkPath:j.bulkPath}))' || true)"
+    if [[ "${i2_rc}" -eq 0 && -n "${EXPECT_SHA}" && "${I2_SHA}" == "${EXPECT_SHA}" ]]; then
+      pass "I2 8MiB sha256 with UDP drop (REST fallback)" "relay_wait=${i2_relay_rc} sha256=${I2_SHA} ${I2_HDR}"
+    else
+      fail "I2 8MiB sha256 with UDP drop (REST fallback)" "relay_wait=${i2_relay_rc} expect=${EXPECT_SHA} got=${I2_SHA} ${I2_HDR}"
+    fi
   fi
 fi
 

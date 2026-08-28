@@ -1,6 +1,7 @@
 #!/usr/bin/env bun
 import * as wsBorsh from '../../../packages/shared/src/ws-borsh/index.ts';
 import { joinUrl, loadLoginState, parseArgs, requireArg, sleep } from './lib.ts';
+import { analyzeSeqCapture } from './seq.ts';
 
 function generateSelectToken(): Uint8Array {
   return crypto.getRandomValues(new Uint8Array(16));
@@ -58,8 +59,26 @@ const cookies = (await loadLoginState(requireArg(args, 'cookie-file'))).cookieHe
 const nodeId = requireArg(args, 'node-id');
 const deviceId = requireArg(args, 'device-id');
 const paneId = requireArg(args, 'pane-id');
-const marker = requireArg(args, 'marker');
-const timeoutMs = Number(args.timeout ?? 20_000);
+const captureSeq = args['capture-seq'] === true || args['capture-seq'] === 'true';
+const marker = typeof args.marker === 'string' ? args.marker : '';
+if (!captureSeq && !marker) {
+  throw new Error('missing --marker (or pass --capture-seq)');
+}
+const expectCount = Number(args['expect-count'] ?? 0);
+const seqPrefix = typeof args['seq-prefix'] === 'string' ? args['seq-prefix'] : 'SEQ_';
+const timeoutMs = Number(args.timeout ?? (captureSeq ? 90_000 : 20_000));
+const readyFile = typeof args['ready-file'] === 'string' ? args['ready-file'] : '';
+if (captureSeq && (!Number.isInteger(expectCount) || expectCount <= 0)) {
+  throw new Error('missing --expect-count (positive integer)');
+}
+
+async function resolveInputCommand(): Promise<string> {
+  if (typeof args['input-file'] === 'string') {
+    return (await Bun.file(args['input-file']).text()).replace(/\s+$/, '');
+  }
+  if (typeof args.input === 'string') return args.input;
+  return '';
+}
 
 const cid = crypto.randomUUID();
 const wsUrl = joinUrl(baseUrl, `/n/${nodeId}/ws?cid=${cid}`).replace(/^http/, 'ws');
@@ -199,17 +218,67 @@ const select = buildTmuxSelect({
 send(select.kind, select.payload);
 await sleep(800);
 
+if (readyFile) {
+  await Bun.write(
+    readyFile,
+    `${JSON.stringify({ ok: true, phase: 'subscribed', pane: activePane, connected })}\n`
+  );
+}
+
+function sendPaste(text: string): void {
+  const payload = wsBorsh.encodePayload(wsBorsh.schema.TermPasteSchema, {
+    deviceId,
+    paneId: activePane,
+    encoding: 2,
+    data: new TextEncoder().encode(text.endsWith('\n') ? text : `${text}\n`),
+    isComposing: false,
+  });
+  send(wsBorsh.KIND_TERM_PASTE, payload);
+}
+
+if (captureSeq) {
+  const command = await resolveInputCommand();
+  if (command) {
+    sendPaste(command);
+  }
+  const deadline = Date.now() + timeoutMs;
+  let result = analyzeSeqCapture(output.join(''), expectCount, seqPrefix);
+  while (Date.now() < deadline && !result.complete) {
+    await sleep(100);
+    result = analyzeSeqCapture(output.join(''), expectCount, seqPrefix);
+  }
+  ws.close();
+  const body = {
+    ok: result.complete,
+    expectCount,
+    seqPrefix,
+    foundCount: result.found.length,
+    first: result.found[0] ?? null,
+    last: result.found[result.found.length - 1] ?? null,
+    missing: result.missing.slice(0, 40),
+    missingCount: result.missing.length,
+    extra: result.extra.slice(0, 20),
+    contiguous: result.contiguous,
+    complete: result.complete,
+    opened,
+    helloOk,
+    connected,
+    elapsedMs: Date.now() - openedAt,
+  };
+  process.stdout.write(`${JSON.stringify(body)}\n`);
+  if (!result.complete) {
+    process.stderr.write(
+      `seq capture incomplete missing=${result.missing.length} output=${JSON.stringify(output.join('').slice(-2000))}\n`
+    );
+    process.exit(1);
+  }
+  process.exit(0);
+}
+
 const input = buildTermInput(deviceId, activePane, `echo ${marker}\r`);
 send(input.kind, input.payload);
 await sleep(200);
-const paste = wsBorsh.encodePayload(wsBorsh.schema.TermPasteSchema, {
-  deviceId,
-  paneId: activePane,
-  encoding: 2,
-  data: new TextEncoder().encode(`echo ${marker}\n`),
-  isComposing: false,
-});
-send(wsBorsh.KIND_TERM_PASTE, paste);
+sendPaste(`echo ${marker}`);
 
 const deadline = Date.now() + timeoutMs;
 while (Date.now() < deadline) {

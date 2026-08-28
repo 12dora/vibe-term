@@ -16,6 +16,8 @@ x-tmex-node: &tmex-node
   image: tmex-e2e:split
   init: true
   stop_grace_period: 25s
+  cap_add:
+    - NET_ADMIN
   extra_hosts:
     - "ai.example.com:4.2.2.1"
   environment:

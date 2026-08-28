@@ -1,11 +1,6 @@
 #!/usr/bin/env bun
-import {
-  apiFetch,
-  loadLoginState,
-  parseArgs,
-  requireArg,
-  sleep,
-} from './lib.ts';
+import { apiFetch, loadLoginState, parseArgs, requireArg, sleep } from './lib.ts';
+import { type MeshTransport, findByName, isMeshTransport, matchesTransport } from './mesh-row.ts';
 
 interface HubNode {
   id: string;
@@ -22,6 +17,7 @@ interface MeshNode {
   publicKey: string;
   online: boolean;
   reach: 'lan' | 'relay' | null;
+  transport: MeshTransport | null;
   version: string | null;
   direct_capable: boolean;
   loggedIn: boolean;
@@ -47,13 +43,6 @@ async function meshNodes(baseUrl: string, cookies: Record<string, string>): Prom
   return ((json as { nodes?: MeshNode[] }).nodes ?? []) as MeshNode[];
 }
 
-function findByName<T extends { name: string; id?: string }>(
-  nodes: T[],
-  name: string
-): T | undefined {
-  return nodes.find((n) => n.name === name || n.id === name);
-}
-
 const args = parseArgs(process.argv.slice(2));
 const cmd = String(args._ ?? '').trim();
 const baseUrl = requireArg(args, 'base-url');
@@ -66,12 +55,17 @@ if (cmd === 'hub-list') {
 }
 
 if (cmd === 'mesh-list') {
-  process.stdout.write(`${JSON.stringify({ nodes: await meshNodes(baseUrl, cookies) }, null, 2)}\n`);
+  process.stdout.write(
+    `${JSON.stringify({ nodes: await meshNodes(baseUrl, cookies) }, null, 2)}\n`
+  );
   process.exit(0);
 }
 
 if (cmd === 'wait-hub-online') {
-  const names = requireArg(args, 'names').split(',').map((s) => s.trim()).filter(Boolean);
+  const names = requireArg(args, 'names')
+    .split(',')
+    .map((s) => s.trim())
+    .filter(Boolean);
   const deadline = Date.now() + timeoutMs;
   let last = '';
   while (Date.now() < deadline) {
@@ -162,7 +156,34 @@ if (cmd === 'wait-direct-capable') {
   process.exit(1);
 }
 
+if (cmd === 'wait-transport') {
+  const name = requireArg(args, 'name');
+  const transport = requireArg(args, 'transport');
+  if (!isMeshTransport(transport)) {
+    process.stderr.write(`wait-transport invalid --transport ${transport} (ws-secure|relay|dc)\n`);
+    process.exit(2);
+  }
+  const deadline = Date.now() + timeoutMs;
+  let last = '';
+  while (Date.now() < deadline) {
+    try {
+      const nodes = await meshNodes(baseUrl, cookies);
+      last = JSON.stringify(nodes);
+      const row = findByName(nodes, name);
+      if (matchesTransport(row, transport)) {
+        process.stdout.write(`${JSON.stringify({ ok: true, node: row }, null, 2)}\n`);
+        process.exit(0);
+      }
+    } catch (err) {
+      last = err instanceof Error ? err.message : String(err);
+    }
+    await sleep(2000);
+  }
+  process.stderr.write(`wait-transport timeout name=${name} transport=${transport} last=${last}\n`);
+  process.exit(1);
+}
+
 process.stderr.write(
-  'usage: nodes.ts <hub-list|mesh-list|wait-hub-online|wait-reach|wait-direct-capable> --base-url --cookie-file ...\n'
+  'usage: nodes.ts <hub-list|mesh-list|wait-hub-online|wait-present|wait-reach|wait-direct-capable|wait-transport> --base-url --cookie-file ...\n'
 );
 process.exit(2);
