@@ -261,6 +261,49 @@ const defaultPaneSinks: PaneSinkRouting = {
   cleanupDevicePaneState,
 };
 
+function resolvePaneSinks(conn: GatewayConnection | undefined): PaneSinkRouting {
+  if (!conn) {
+    return defaultPaneSinks;
+  }
+  const sinks = conn.paneSinks;
+  return {
+    registerPaneSink: (d, p, sink) => sinks.registerPaneSink(d, p, sink),
+    dispatchPaneReset: (d, p, o) => sinks.dispatchPaneReset(d, p, o),
+    dispatchPaneApplyHistory: (d, p, data, alt, m) =>
+      sinks.dispatchPaneApplyHistory(d, p, data, alt, m),
+    dispatchPaneOutput: (d, p, data) => sinks.dispatchPaneOutput(d, p, data),
+    dispatchPaneTerminalData: (frame) => sinks.dispatchPaneTerminalData(frame),
+    dispatchPaneScreenSnapshot: (snapshot) => sinks.dispatchPaneScreenSnapshot(snapshot),
+    dispatchPaneHistoryPage: (page) => sinks.dispatchPaneHistoryPage(page),
+    dispatchPaneRebase: (d, p, reason) => sinks.dispatchPaneRebase(d, p, reason),
+    dispatchPaneHistory: (d, p, tok, data, alt, m) =>
+      sinks.dispatchPaneHistory(d, p, tok, data, alt, m),
+    beginPaneHistoryGate: (d, p, tok) => sinks.beginPaneHistoryGate(d, p, tok),
+    cleanupDevicePaneState: (d) => sinks.cleanupDevicePaneState(d),
+  };
+}
+
+function resolveSelectMachine(
+  conn: GatewayConnection | undefined
+): (callbacks?: SelectCallbacks) => SelectStateMachine {
+  if (!conn) {
+    return (callbacks) => getSelectStateMachine(callbacks);
+  }
+  return (callbacks) => {
+    if (callbacks) conn.selectMachine.setCallbacks(callbacks);
+    return conn.selectMachine;
+  };
+}
+
+function resolveFeatures(features: AppRuntimeOptions['features']): RuntimeFeatures {
+  return {
+    agentUi: features?.agentUi ?? true,
+    watchUi: features?.watchUi ?? true,
+    filesUi: features?.filesUi ?? true,
+    hostManagedNotifications: features?.hostManagedNotifications ?? false,
+  };
+}
+
 export function resolveRuntimeCore(options: AppRuntimeOptions = {}): RuntimeCore {
   const conn = options.connection;
   const transport =
@@ -273,42 +316,15 @@ export function resolveRuntimeCore(options: AppRuntimeOptions = {}): RuntimeCore
       return conn?.client ?? getBorshClient();
     },
     transport,
-    selectMachine: conn
-      ? (callbacks) => {
-          if (callbacks) conn.selectMachine.setCallbacks(callbacks);
-          return conn.selectMachine;
-        }
-      : (callbacks) => getSelectStateMachine(callbacks),
-    paneSinks: conn
-      ? {
-          registerPaneSink: (d, p, sink) => conn.paneSinks.registerPaneSink(d, p, sink),
-          dispatchPaneReset: (d, p, o) => conn.paneSinks.dispatchPaneReset(d, p, o),
-          dispatchPaneApplyHistory: (d, p, data, alt, m) =>
-            conn.paneSinks.dispatchPaneApplyHistory(d, p, data, alt, m),
-          dispatchPaneOutput: (d, p, data) => conn.paneSinks.dispatchPaneOutput(d, p, data),
-          dispatchPaneTerminalData: (frame) => conn.paneSinks.dispatchPaneTerminalData(frame),
-          dispatchPaneScreenSnapshot: (snapshot) =>
-            conn.paneSinks.dispatchPaneScreenSnapshot(snapshot),
-          dispatchPaneHistoryPage: (page) => conn.paneSinks.dispatchPaneHistoryPage(page),
-          dispatchPaneRebase: (d, p, reason) => conn.paneSinks.dispatchPaneRebase(d, p, reason),
-          dispatchPaneHistory: (d, p, tok, data, alt, m) =>
-            conn.paneSinks.dispatchPaneHistory(d, p, tok, data, alt, m),
-          beginPaneHistoryGate: (d, p, tok) => conn.paneSinks.beginPaneHistoryGate(d, p, tok),
-          cleanupDevicePaneState: (d) => conn.paneSinks.cleanupDevicePaneState(d),
-        }
-      : defaultPaneSinks,
+    selectMachine: resolveSelectMachine(conn),
+    paneSinks: resolvePaneSinks(conn),
     apiClient: options.apiClient ?? defaultApiClient,
     notifications: options.notifications ?? proxyDefaultNotificationSink,
     bell: options.bell ?? defaultBell,
     t: options.t ?? ((key, params) => String(i18next.t(key, params as never))),
     host: options.host ?? defaultHost,
     storagePrefix: options.storagePrefix ?? '',
-    features: {
-      agentUi: options.features?.agentUi ?? true,
-      watchUi: options.features?.watchUi ?? true,
-      filesUi: options.features?.filesUi ?? true,
-      hostManagedNotifications: options.features?.hostManagedNotifications ?? false,
-    },
+    features: resolveFeatures(options.features),
     terminalFileLinks: options.terminalFileLinks,
   };
 }

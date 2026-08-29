@@ -1,7 +1,7 @@
 // 设备事件与 tmux 事件（bell / notification / pane-active）的状态与副作用处理。
 
 import { formatTerminalNotificationToast, useBellStore } from '@tmex/notifications';
-import type { EventDevicePayload, EventTmuxPayload } from '@tmex/shared';
+import type { EventDevicePayload, EventTmuxPayload, TmuxEventType } from '@tmex/shared';
 import type { RuntimeCore } from './runtime';
 import type { SiteStore } from './site';
 import type { TmuxGetState, TmuxSetState } from './tmux-state';
@@ -69,57 +69,79 @@ export function handleDeviceEvent(ctx: TmuxDomainEventContext, payload: EventDev
   }
 }
 
+type TmuxEventHandler = (ctx: TmuxDomainEventContext, payload: EventTmuxPayload) => void;
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function toRecord(value: unknown): Record<string, unknown> {
+  return isRecord(value) ? value : {};
+}
+
+function readString(data: Record<string, unknown>, key: string): string | undefined {
+  const value = data[key];
+  return typeof value === 'string' ? value : undefined;
+}
+
+function handleBellEvent(ctx: TmuxDomainEventContext, payload: EventTmuxPayload): void {
+  console.log('[tmex] bell', payload.data);
+  const data = toRecord(payload.data);
+  const paneId = readString(data, 'paneId') ?? readString(data, 'windowId');
+  if (paneId) {
+    useBellStore.getState().triggerBell(paneId);
+  }
+  if (ctx.getSite().getState().settings?.enableBellSound !== false) {
+    ctx.core.bell.play();
+  }
+}
+
+function handleNotificationEvent(ctx: TmuxDomainEventContext, payload: EventTmuxPayload): void {
+  console.log('[tmex] notification', payload.data);
+  if (ctx.core.features.hostManagedNotifications) {
+    return;
+  }
+  if (ctx.getSite().getState().settings?.enableBrowserNotificationToast === false) {
+    return;
+  }
+
+  const data = toRecord(payload.data);
+  const { title, description } = formatTerminalNotificationToast(data, ctx.core.t);
+  const paneUrl = readString(data, 'paneUrl');
+  ctx.core.notifications.info(title, {
+    description,
+    action: paneUrl
+      ? {
+          label: 'Open',
+          onClick: () => {
+            ctx.core.host.navigate(paneUrl);
+          },
+        }
+      : undefined,
+  });
+}
+
+function handlePaneActiveEvent(ctx: TmuxDomainEventContext, payload: EventTmuxPayload): void {
+  const data = toRecord(payload.data);
+  const windowId = readString(data, 'windowId');
+  const paneId = readString(data, 'paneId');
+  if (!windowId || !paneId) {
+    return;
+  }
+  ctx.setState((prev) => ({
+    activePaneFromEvent: {
+      ...prev.activePaneFromEvent,
+      [payload.deviceId]: { windowId, paneId },
+    },
+  }));
+}
+
+const TMUX_EVENT_HANDLERS: Partial<Record<TmuxEventType, TmuxEventHandler>> = {
+  bell: handleBellEvent,
+  notification: handleNotificationEvent,
+  'pane-active': handlePaneActiveEvent,
+};
+
 export function handleTmuxEvent(ctx: TmuxDomainEventContext, payload: EventTmuxPayload): void {
-  if (payload.type === 'bell') {
-    console.log('[tmex] bell', payload.data);
-    const data = (payload.data ?? {}) as Record<string, unknown>;
-    const paneId =
-      (typeof data.paneId === 'string' ? data.paneId : undefined) ??
-      (typeof data.windowId === 'string' ? data.windowId : undefined);
-    if (paneId) {
-      useBellStore.getState().triggerBell(paneId);
-    }
-    const settings = ctx.getSite().getState().settings;
-    if (settings?.enableBellSound !== false) {
-      ctx.core.bell.play();
-    }
-  }
-
-  if (payload.type === 'notification') {
-    console.log('[tmex] notification', payload.data);
-    if (ctx.core.features.hostManagedNotifications) {
-      return;
-    }
-    const settings = ctx.getSite().getState().settings;
-    if (settings?.enableBrowserNotificationToast === false) {
-      return;
-    }
-
-    const data = (payload.data ?? {}) as Record<string, unknown>;
-    const { title, description } = formatTerminalNotificationToast(data, ctx.core.t);
-    const paneUrl = typeof data.paneUrl === 'string' ? data.paneUrl : undefined;
-    ctx.core.notifications.info(title, {
-      description,
-      action: paneUrl
-        ? {
-            label: 'Open',
-            onClick: () => {
-              ctx.core.host.navigate(paneUrl);
-            },
-          }
-        : undefined,
-    });
-  }
-
-  if (payload.type === 'pane-active') {
-    const data = payload.data as { windowId: string; paneId: string } | undefined;
-    if (data?.windowId && data?.paneId) {
-      ctx.setState((prev) => ({
-        activePaneFromEvent: {
-          ...prev.activePaneFromEvent,
-          [payload.deviceId]: { windowId: data.windowId, paneId: data.paneId },
-        },
-      }));
-    }
-  }
+  TMUX_EVENT_HANDLERS[payload.type]?.(ctx, payload);
 }

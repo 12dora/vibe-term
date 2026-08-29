@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 
-import type { AgentMessageDto } from '@tmex/shared';
-import { buildThreadBlocks, unwrapToolOutput } from './agent-thread';
+import type { AgentMessageDto, AgentMessageRole } from '@tmex/shared';
+import { type UiThreadBlock, buildThreadBlocks, unwrapToolOutput } from './agent-thread';
 
 describe('unwrapToolOutput', () => {
   test('unwraps text/json as success', () => {
@@ -118,5 +118,207 @@ describe('buildThreadBlocks denied tool result pairing', () => {
     expect(block.call.resolved).toBe(true);
     expect(block.call.denied).toBe(false);
     expect(block.call.isError).toBe(true);
+  });
+});
+
+describe('buildThreadBlocks persisted message tolerance', () => {
+  function message(role: AgentMessageRole, content: unknown, seq = 0): AgentMessageDto {
+    return {
+      id: `m${seq}`,
+      sessionId: 's1',
+      seq,
+      role,
+      content,
+      createdAt: '2026-01-01T00:00:00.000Z',
+    } as AgentMessageDto;
+  }
+
+  interface ShapeCase {
+    name: string;
+    content: unknown;
+    role?: AgentMessageRole;
+    expected: Array<{ kind: UiThreadBlock['kind']; key: string; text?: string; toolName?: string }>;
+  }
+
+  const userCases: ShapeCase[] = [
+    {
+      name: 'string content',
+      content: { role: 'user', content: 'hi' },
+      expected: [{ kind: 'user', key: 'm0', text: 'hi' }],
+    },
+    {
+      name: 'part array joins text parts',
+      content: { role: 'user', content: [{ text: 'a' }, { text: 'b' }] },
+      expected: [{ kind: 'user', key: 'm0', text: 'a\nb' }],
+    },
+    {
+      name: 'part array skips non-record and non-string text',
+      content: { role: 'user', content: ['raw', { text: 7 }, null, { text: 'ok' }] },
+      expected: [{ kind: 'user', key: 'm0', text: 'ok' }],
+    },
+    { name: 'empty string content', content: { role: 'user', content: '' }, expected: [] },
+    { name: 'numeric content', content: { role: 'user', content: 42 }, expected: [] },
+    { name: 'null content', content: { role: 'user', content: null }, expected: [] },
+    { name: 'missing content field', content: { role: 'user' }, expected: [] },
+    { name: 'message content is a string', content: 'not a model message', expected: [] },
+    { name: 'message content is null', content: null, expected: [] },
+    { name: 'message content is an array', content: [{ text: 'x' }], expected: [] },
+  ];
+
+  const assistantCases: ShapeCase[] = [
+    {
+      name: 'string content',
+      content: { role: 'assistant', content: 'answer' },
+      expected: [{ kind: 'assistant-text', key: 'm0', text: 'answer' }],
+    },
+    { name: 'empty string content', content: { role: 'assistant', content: '' }, expected: [] },
+    { name: 'non-array object content', content: { role: 'assistant', content: {} }, expected: [] },
+    {
+      name: 'text / reasoning parts keyed by index',
+      content: {
+        role: 'assistant',
+        content: [
+          { type: 'reasoning', text: 'think' },
+          { type: 'text', text: 'say' },
+        ],
+      },
+      expected: [
+        { kind: 'reasoning', key: 'm0p0', text: 'think' },
+        { kind: 'assistant-text', key: 'm0p1', text: 'say' },
+      ],
+    },
+    {
+      name: 'drops empty / non-string text parts and unknown part types',
+      content: {
+        role: 'assistant',
+        content: [
+          { type: 'text', text: '' },
+          { type: 'text', text: 9 },
+          { type: 'reasoning', text: '' },
+          { type: 'file', text: 'nope' },
+          null,
+          'raw',
+        ],
+      },
+      expected: [],
+    },
+    {
+      name: 'tool-call without toolName falls back to unknown',
+      content: {
+        role: 'assistant',
+        content: [{ type: 'tool-call', toolCallId: 'tc-9' }],
+      },
+      expected: [{ kind: 'tool-call', key: 'm0p0', toolName: 'unknown' }],
+    },
+    {
+      name: 'tool-call without string toolCallId is dropped',
+      content: {
+        role: 'assistant',
+        content: [{ type: 'tool-call', toolCallId: 12, toolName: 'x' }],
+      },
+      expected: [],
+    },
+  ];
+
+  const otherRoleCases: ShapeCase[] = [
+    {
+      name: 'system role is ignored',
+      role: 'system',
+      content: { role: 'system', content: 'sys prompt' },
+      expected: [],
+    },
+    {
+      name: 'tool role with non-array content is ignored',
+      role: 'tool',
+      content: { role: 'tool', content: 'oops' },
+      expected: [],
+    },
+    {
+      name: 'tool role with unmatched results is ignored',
+      role: 'tool',
+      content: {
+        role: 'tool',
+        content: [
+          { type: 'tool-result', toolCallId: 'missing', output: { type: 'text', value: 'v' } },
+          { type: 'tool-approval-response', toolCallId: 'tc-1' },
+          null,
+        ],
+      },
+      expected: [],
+    },
+  ];
+
+  for (const [group, cases, role] of [
+    ['user', userCases, 'user'],
+    ['assistant', assistantCases, 'assistant'],
+    ['other', otherRoleCases, 'user'],
+  ] as const) {
+    for (const shape of cases) {
+      test(`${group}: ${shape.name}`, () => {
+        const blocks = buildThreadBlocks([message(shape.role ?? role, shape.content)], undefined);
+        expect(blocks.map((block) => block.kind)).toEqual(shape.expected.map((it) => it.kind));
+        blocks.forEach((block, index) => {
+          const want = shape.expected[index];
+          expect(block.key).toBe(want.key);
+          if (want.text !== undefined && block.kind !== 'tool-call') {
+            expect(block.text).toBe(want.text);
+          }
+          if (want.toolName !== undefined && block.kind === 'tool-call') {
+            expect(block.call.toolName).toBe(want.toolName);
+          }
+        });
+      });
+    }
+  }
+
+  test('tool-result with non-string toolCallId cannot resolve a real call', () => {
+    const blocks = buildThreadBlocks(
+      [
+        message('assistant', {
+          role: 'assistant',
+          content: [{ type: 'tool-call', toolCallId: 'tc-1', toolName: 'run' }],
+        }),
+        message(
+          'tool',
+          {
+            role: 'tool',
+            content: [{ type: 'tool-result', toolCallId: 5, output: { type: 'text', value: 'v' } }],
+          },
+          1
+        ),
+      ],
+      undefined
+    );
+    const block = blocks[0];
+    if (block.kind !== 'tool-call') {
+      throw new Error('expected tool-call block');
+    }
+    expect(block.call.resolved).toBe(false);
+    expect(block.call.output).toBeUndefined();
+  });
+
+  test('tool-result pairs across messages and keeps raw output shapes', () => {
+    const blocks = buildThreadBlocks(
+      [
+        message('assistant', {
+          role: 'assistant',
+          content: [{ type: 'tool-call', toolCallId: 'tc-1', toolName: 'run', input: { a: 1 } }],
+        }),
+        message(
+          'tool',
+          { role: 'tool', content: [{ type: 'tool-result', toolCallId: 'tc-1', output: 'raw' }] },
+          1
+        ),
+      ],
+      undefined
+    );
+    const block = blocks[0];
+    if (block.kind !== 'tool-call') {
+      throw new Error('expected tool-call block');
+    }
+    expect(block.call.input).toEqual({ a: 1 });
+    expect(block.call.output).toBe('raw');
+    expect(block.call.resolved).toBe(true);
+    expect(block.call.isError).toBe(false);
   });
 });

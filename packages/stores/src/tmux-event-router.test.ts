@@ -422,6 +422,38 @@ describe('tmux transport event router', () => {
     });
   });
 
+  test('bell event falls back to windowId when paneId is missing', async () => {
+    const { useBellStore } = await import('@tmex/notifications');
+    const harness = createHarness();
+
+    harness.route({
+      type: 'tmux-event',
+      event: { deviceId: 'device-a', type: 'bell', data: { windowId: '@7' } },
+    });
+
+    expect(useBellStore.getState().ringingPanes['@7']).toBe(true);
+    expect(harness.namesOf('bell')).toHaveLength(1);
+  });
+
+  test('pane-active event with incomplete ids leaves the active pane untouched', () => {
+    const harness = createHarness();
+
+    harness.route({
+      type: 'tmux-event',
+      event: { deviceId: 'device-a', type: 'pane-active', data: { windowId: '@2' } },
+    });
+    harness.route({
+      type: 'tmux-event',
+      event: { deviceId: 'device-a', type: 'pane-active', data: { windowId: '', paneId: '%9' } },
+    });
+    harness.route({
+      type: 'tmux-event',
+      event: { deviceId: 'device-a', type: 'pane-active', data: 'not-a-record' },
+    });
+
+    expect(harness.getState().activePaneFromEvent['device-a']).toBeUndefined();
+  });
+
   test('terminal-progress and unknown event types are handled without throwing', () => {
     const harness = createHarness();
 

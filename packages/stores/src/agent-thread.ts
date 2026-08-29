@@ -2,7 +2,7 @@
 // 持久化格式见 gateway run.ts：assistant content 为 string 或 parts(text/reasoning/tool-call)，
 // tool content 为 parts(tool-result/tool-approval-response)，tool-result 按 toolCallId 配对。
 
-import type { AgentMessageDto } from '@tmex/shared';
+import type { AgentMessageDto, AgentMessageRole } from '@tmex/shared';
 
 export interface UiToolCall {
   toolCallId: string;
@@ -99,87 +99,109 @@ function extractText(content: unknown): string {
   return '';
 }
 
-function parsePersistedMessages(messages: AgentMessageDto[]): {
+interface PersistedThread {
   blocks: UiThreadBlock[];
   toolBlocksById: Map<string, UiToolCall>;
-} {
-  const blocks: UiThreadBlock[] = [];
-  const toolBlocksById = new Map<string, UiToolCall>();
+}
 
+type PersistedRoleAppender = (thread: PersistedThread, content: unknown, seq: number) => void;
+
+function appendUserBlock(thread: PersistedThread, content: unknown, seq: number): void {
+  const text = extractText(content);
+  if (text) {
+    thread.blocks.push({ kind: 'user', key: `m${seq}`, text });
+  }
+}
+
+function assistantPartToBlock(part: unknown, key: string): UiThreadBlock | null {
+  if (!isRecord(part)) {
+    return null;
+  }
+  if (part.type === 'text' && typeof part.text === 'string' && part.text) {
+    return { kind: 'assistant-text', key, text: part.text, streaming: false };
+  }
+  if (part.type === 'reasoning' && typeof part.text === 'string' && part.text) {
+    return { kind: 'reasoning', key, text: part.text, streaming: false };
+  }
+  if (part.type === 'tool-call' && typeof part.toolCallId === 'string') {
+    return {
+      kind: 'tool-call',
+      key,
+      call: {
+        toolCallId: part.toolCallId,
+        toolName: typeof part.toolName === 'string' ? part.toolName : 'unknown',
+        input: part.input,
+        isError: false,
+        denied: false,
+        resolved: false,
+      },
+    };
+  }
+  return null;
+}
+
+function appendAssistantBlocks(thread: PersistedThread, content: unknown, seq: number): void {
+  if (typeof content === 'string') {
+    if (content) {
+      thread.blocks.push({
+        kind: 'assistant-text',
+        key: `m${seq}`,
+        text: content,
+        streaming: false,
+      });
+    }
+    return;
+  }
+  if (!Array.isArray(content)) {
+    return;
+  }
+  content.forEach((part, index) => {
+    const block = assistantPartToBlock(part, `m${seq}p${index}`);
+    if (!block) {
+      return;
+    }
+    if (block.kind === 'tool-call') {
+      thread.toolBlocksById.set(block.call.toolCallId, block.call);
+    }
+    thread.blocks.push(block);
+  });
+}
+
+function applyToolResults(thread: PersistedThread, content: unknown): void {
+  if (!Array.isArray(content)) {
+    return;
+  }
+  for (const part of content) {
+    if (!isRecord(part) || part.type !== 'tool-result') {
+      continue;
+    }
+    const toolCallId = typeof part.toolCallId === 'string' ? part.toolCallId : '';
+    const existing = thread.toolBlocksById.get(toolCallId);
+    if (!existing) {
+      continue;
+    }
+    const { value, isError, denied } = unwrapToolOutput(part.output);
+    existing.output = value;
+    existing.isError = isError;
+    existing.denied = denied;
+    existing.resolved = true;
+  }
+}
+
+const PERSISTED_ROLE_APPENDERS: Partial<Record<AgentMessageRole, PersistedRoleAppender>> = {
+  user: appendUserBlock,
+  assistant: appendAssistantBlocks,
+  tool: applyToolResults,
+};
+
+function parsePersistedMessages(messages: AgentMessageDto[]): PersistedThread {
+  const thread: PersistedThread = { blocks: [], toolBlocksById: new Map() };
   for (const message of messages) {
     const model = isRecord(message.content) ? message.content : null;
     if (!model) continue;
-    const content = model.content;
-
-    switch (message.role) {
-      case 'user': {
-        const text = extractText(content);
-        if (text) {
-          blocks.push({ kind: 'user', key: `m${message.seq}`, text });
-        }
-        break;
-      }
-      case 'assistant': {
-        if (typeof content === 'string') {
-          if (content) {
-            blocks.push({
-              kind: 'assistant-text',
-              key: `m${message.seq}`,
-              text: content,
-              streaming: false,
-            });
-          }
-          break;
-        }
-        if (!Array.isArray(content)) break;
-        content.forEach((part, index) => {
-          if (!isRecord(part)) return;
-          const key = `m${message.seq}p${index}`;
-          if (part.type === 'text' && typeof part.text === 'string' && part.text) {
-            blocks.push({ kind: 'assistant-text', key, text: part.text, streaming: false });
-            return;
-          }
-          if (part.type === 'reasoning' && typeof part.text === 'string' && part.text) {
-            blocks.push({ kind: 'reasoning', key, text: part.text, streaming: false });
-            return;
-          }
-          if (part.type === 'tool-call' && typeof part.toolCallId === 'string') {
-            const call: UiToolCall = {
-              toolCallId: part.toolCallId,
-              toolName: typeof part.toolName === 'string' ? part.toolName : 'unknown',
-              input: part.input,
-              isError: false,
-              denied: false,
-              resolved: false,
-            };
-            toolBlocksById.set(call.toolCallId, call);
-            blocks.push({ kind: 'tool-call', key, call });
-          }
-        });
-        break;
-      }
-      case 'tool': {
-        if (!Array.isArray(content)) break;
-        for (const part of content) {
-          if (!isRecord(part) || part.type !== 'tool-result') continue;
-          const toolCallId = typeof part.toolCallId === 'string' ? part.toolCallId : '';
-          const existing = toolBlocksById.get(toolCallId);
-          const { value, isError, denied } = unwrapToolOutput(part.output);
-          if (existing) {
-            existing.output = value;
-            existing.isError = isError;
-            existing.denied = denied;
-            existing.resolved = true;
-          }
-        }
-        break;
-      }
-      default:
-        break;
-    }
+    PERSISTED_ROLE_APPENDERS[message.role]?.(thread, model.content, message.seq);
   }
-
-  return { blocks, toolBlocksById };
+  return thread;
 }
 
 /**
