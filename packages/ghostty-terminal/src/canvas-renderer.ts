@@ -1,6 +1,15 @@
+import { blockElementCodepoint, drawBlockElement } from './block-elements';
+import { drawCellDecorations } from './cell-decorations';
+import {
+  type CursorCell,
+  cursorShapeGeometry,
+  drawCursorShape,
+  invalidatedCursorRow,
+} from './cursor-painter';
 import type {
   GhosttyCellDimensions,
   GhosttyColorRgb,
+  GhosttyRenderCell,
   GhosttyRenderRow,
   GhosttyRenderSnapshotMeta,
   GhosttySelectionRect,
@@ -39,39 +48,38 @@ type LinkUnderlineSegment = {
   endCol: number;
 };
 
-type CursorCell = {
-  x: number;
-  y: number;
-  style: GhosttyRenderSnapshotMeta['cursor']['style'];
-  blinking: boolean;
-};
-
 function colorToCss(color: GhosttyColorRgb): string {
   return `rgb(${color.r} ${color.g} ${color.b})`;
 }
 
-// U+2596–U+259F quadrant 块的象限组合：UL=1、UR=2、LL=4、LR=8
-const QUADRANT_FLAGS = new Map<number, number>([
-  [0x2596, 0b0100],
-  [0x2597, 0b1000],
-  [0x2598, 0b0001],
-  [0x2599, 0b1101],
-  [0x259a, 0b1001],
-  [0x259b, 0b0111],
-  [0x259c, 0b1011],
-  [0x259d, 0b0010],
-  [0x259e, 0b0110],
-  [0x259f, 0b1110],
-]);
+function isSpacerCell(cell: GhosttyRenderCell): boolean {
+  return cell.widthKind === 'spacer-tail' || cell.widthKind === 'spacer-head';
+}
 
-const SHADE_ALPHA = new Map<number, number>([
-  [0x2591, 0.25],
-  [0x2592, 0.5],
-  [0x2593, 0.75],
-]);
+function shouldPaintForeground(cell: GhosttyRenderCell): boolean {
+  return !isSpacerCell(cell) && cell.text.length > 0 && !cell.style.invisible;
+}
 
-function isBlockElement(codepoint: number): boolean {
-  return codepoint >= 0x2580 && codepoint <= 0x259f;
+function cellSpanWidth(cell: GhosttyRenderCell, deviceCellWidth: number): number {
+  return cell.widthKind === 'wide' ? deviceCellWidth * 2 : deviceCellWidth;
+}
+
+function resolveCellBackground(
+  cell: GhosttyRenderCell,
+  colors: GhosttyRenderSnapshotMeta['colors']
+): GhosttyColorRgb {
+  return cell.style.inverse
+    ? (cell.fgColor ?? colors.foreground)
+    : (cell.bgColor ?? colors.background);
+}
+
+function resolveCellForeground(
+  cell: GhosttyRenderCell,
+  colors: GhosttyRenderSnapshotMeta['colors']
+): GhosttyColorRgb {
+  return cell.style.inverse
+    ? (cell.bgColor ?? colors.background)
+    : (cell.fgColor ?? colors.foreground);
 }
 
 function ensureContext(canvas: HTMLCanvasElement): CanvasRenderingContext2D {
@@ -397,23 +405,23 @@ export class CanvasRenderer {
     this.mainContext.fillRect(0, y, width, this.deviceCellHeight);
 
     for (const cell of row.cells) {
-      if (cell.widthKind === 'spacer-tail' || cell.widthKind === 'spacer-head') {
+      if (isSpacerCell(cell)) {
         continue;
       }
 
-      const bg = cell.style.inverse
-        ? (cell.fgColor ?? colors.foreground)
-        : (cell.bgColor ?? colors.background);
+      const bg = resolveCellBackground(cell, colors);
       if (
         bg.r !== colors.background.r ||
         bg.g !== colors.background.g ||
         bg.b !== colors.background.b
       ) {
-        const x = cell.x * this.deviceCellWidth;
-        const cellWidth =
-          cell.widthKind === 'wide' ? this.deviceCellWidth * 2 : this.deviceCellWidth;
         this.mainContext.fillStyle = this.toCss(bg);
-        this.mainContext.fillRect(x, y, cellWidth, this.deviceCellHeight);
+        this.mainContext.fillRect(
+          cell.x * this.deviceCellWidth,
+          y,
+          cellSpanWidth(cell, this.deviceCellWidth),
+          this.deviceCellHeight
+        );
       }
     }
   }
@@ -428,132 +436,37 @@ export class CanvasRenderer {
     const lineThickness = Math.max(1, Math.round(this.dpr));
 
     for (const cell of row.cells) {
-      if (cell.widthKind === 'spacer-tail' || cell.widthKind === 'spacer-head') {
-        continue;
-      }
-
-      if (!cell.text || cell.style.invisible) {
+      if (!shouldPaintForeground(cell)) {
         continue;
       }
 
       const x = cell.x * this.deviceCellWidth;
-      const fg = cell.style.inverse
-        ? (cell.bgColor ?? colors.background)
-        : (cell.fgColor ?? colors.foreground);
-      const cellWidth = cell.widthKind === 'wide' ? this.deviceCellWidth * 2 : this.deviceCellWidth;
+      const cellWidth = cellSpanWidth(cell, this.deviceCellWidth);
 
-      this.mainContext.fillStyle = this.toCss(fg);
-      // 块元素（▀▄█▌▐░▒▓ 等）不能交给字体：字形最多覆盖 1em，而 cell 高为
-      // 1.2em，行列间会留缝（logo/色块图中的明显间隙），必须按 cell 精确自绘。
-      const blockCodepoint =
-        cell.codepoints.length === 1 && isBlockElement(cell.codepoints[0])
-          ? cell.codepoints[0]
-          : null;
+      this.mainContext.fillStyle = this.toCss(resolveCellForeground(cell, colors));
+      const blockCodepoint = blockElementCodepoint(cell.codepoints);
       if (blockCodepoint !== null) {
-        this.drawBlockElement(blockCodepoint, x, y, cellWidth, this.deviceCellHeight);
+        drawBlockElement(this.mainContext, blockCodepoint, {
+          x,
+          y,
+          width: cellWidth,
+          height: this.deviceCellHeight,
+        });
       } else {
         this.mainContext.font = this.resolveFont(cell.style);
         this.mainContext.fillText(cell.text, x, y + this.textBaselineY);
       }
 
-      // 装饰线随真实字形盒走，而非 cell 边缘：下划线贴字底、上划线贴字顶、
-      // 删除线穿字形几何中线。
-      const glyphTop = y + this.textTopGap;
-      const glyphBottom = y + this.textTopGap + this.glyphBoxHeight;
-      if (cell.style.underline > 0) {
-        this.mainContext.fillRect(
-          x,
-          Math.min(
-            Math.round(glyphBottom - lineThickness),
-            y + this.deviceCellHeight - lineThickness
-          ),
-          Math.max(cellWidth - lineThickness, lineThickness),
-          lineThickness
-        );
-      }
-
-      if (cell.style.strikethrough) {
-        this.mainContext.fillRect(
-          x,
-          Math.round(y + this.textTopGap + this.glyphBoxHeight / 2),
-          Math.max(cellWidth - lineThickness, lineThickness),
-          lineThickness
-        );
-      }
-
-      if (cell.style.overline) {
-        this.mainContext.fillRect(
-          x,
-          Math.max(y, Math.round(glyphTop)),
-          Math.max(cellWidth - lineThickness, lineThickness),
-          lineThickness
-        );
-      }
+      drawCellDecorations(this.mainContext, cell.style, {
+        x,
+        y,
+        cellWidth,
+        cellHeight: this.deviceCellHeight,
+        lineThickness,
+        textTopGap: this.textTopGap,
+        glyphBoxHeight: this.glyphBoxHeight,
+      });
     }
-  }
-
-  // fillStyle 由调用方设好。分割点统一 round 到整数物理像素，相邻块元素的
-  // 拼接处既不留缝也不重叠。
-  private drawBlockElement(
-    codepoint: number,
-    x: number,
-    y: number,
-    width: number,
-    height: number
-  ): void {
-    const context = this.mainContext;
-    const sx = (n: number) => Math.round((width * n) / 8);
-    const sy = (n: number) => Math.round((height * n) / 8);
-    const fill = (x0: number, y0: number, x1: number, y1: number) => {
-      context.fillRect(x + x0, y + y0, x1 - x0, y1 - y0);
-    };
-
-    if (codepoint === 0x2580) {
-      // ▀ 上半块
-      fill(0, 0, width, sy(4));
-      return;
-    }
-    if (codepoint >= 0x2581 && codepoint <= 0x2588) {
-      // ▁..█ 自下而上 n/8
-      fill(0, sy(8 - (codepoint - 0x2580)), width, height);
-      return;
-    }
-    if (codepoint >= 0x2589 && codepoint <= 0x258f) {
-      // ▉..▏ 自左起 n/8
-      fill(0, 0, sx(0x2590 - codepoint), height);
-      return;
-    }
-    if (codepoint === 0x2590) {
-      // ▐ 右半块
-      fill(sx(4), 0, width, height);
-      return;
-    }
-    const shadeAlpha = SHADE_ALPHA.get(codepoint);
-    if (shadeAlpha !== undefined) {
-      // ░▒▓ 按前景色 alpha 混合
-      const previousAlpha = context.globalAlpha;
-      context.globalAlpha = previousAlpha * shadeAlpha;
-      fill(0, 0, width, height);
-      context.globalAlpha = previousAlpha;
-      return;
-    }
-    if (codepoint === 0x2594) {
-      // ▔ 上 1/8
-      fill(0, 0, width, sy(1));
-      return;
-    }
-    if (codepoint === 0x2595) {
-      // ▕ 右 1/8
-      fill(sx(7), 0, width, height);
-      return;
-    }
-    const quadrants = QUADRANT_FLAGS.get(codepoint) ?? 0;
-    const midX = sx(4);
-    const midY = sy(4);
-    if (quadrants & 0b0001) fill(0, 0, midX, midY);
-    if (quadrants & 0b0010) fill(midX, 0, width, midY);
-    if (quadrants & 0b0100) fill(0, midY, midX, height);
-    if (quadrants & 0b1000) fill(midX, midY, width, height);
   }
 
   private drawCursor(meta: GhosttyRenderSnapshotMeta): void {
@@ -568,42 +481,21 @@ export class CanvasRenderer {
       return;
     }
 
-    const x = cursor.x * this.deviceCellWidth;
-    const y = cursor.y * this.deviceCellHeight;
-    const width = cursor.wideTail ? this.deviceCellWidth * 2 : this.deviceCellWidth;
-    const height = this.deviceCellHeight;
-    const thickness = Math.max(1, Math.round(this.dpr));
-    const lineThickness = 2 * thickness;
     // 光标色仍取自 ghostty render state（colors.cursor 缺省时回落到 colors.foreground），
     // 不读 this.theme——主题切换由 WASM 侧 setTerminalTheme 反映到 render state。
-    const cursorColor = colors.cursor ?? colors.foreground;
-    const cssColor = this.toCss(cursorColor);
-
-    this.cursorContext.fillStyle = cssColor;
-    this.cursorContext.strokeStyle = cssColor;
-    this.cursorContext.globalAlpha = 0.7;
-    if (cursor.style === 'bar') {
-      this.cursorContext.fillRect(x, y, lineThickness, height);
-    } else if (cursor.style === 'underline') {
-      this.cursorContext.fillRect(
-        x,
-        y + height - lineThickness,
-        Math.max(width - thickness, thickness),
-        lineThickness
-      );
-    } else if (cursor.style === 'block-hollow') {
-      // 描边沿 cell 内缘走：奇数线宽偏移半物理像素，避免 1px 边框被抗锯齿糊成 2px。
-      this.cursorContext.lineWidth = thickness;
-      this.cursorContext.strokeRect(
-        x + thickness / 2,
-        y + thickness / 2,
-        Math.max(width - thickness, thickness),
-        Math.max(height - thickness, thickness)
-      );
-    } else {
-      this.cursorContext.fillRect(x, y, width, height);
-    }
-    this.cursorContext.globalAlpha = 1;
+    drawCursorShape(
+      this.cursorContext,
+      cursor.style,
+      cursorShapeGeometry({
+        column: cursor.x,
+        row: cursor.y,
+        wideTail: cursor.wideTail,
+        deviceCellWidth: this.deviceCellWidth,
+        deviceCellHeight: this.deviceCellHeight,
+        dpr: this.dpr,
+      }),
+      this.toCss(colors.cursor ?? colors.foreground)
+    );
 
     if (cursor.blinking) {
       this.startCursorBlink();
@@ -618,14 +510,9 @@ export class CanvasRenderer {
       blinking: cursor.blinking,
     };
 
-    if (
-      previous &&
-      (previous.x !== this.lastCursor.x ||
-        previous.y !== this.lastCursor.y ||
-        previous.style !== this.lastCursor.style ||
-        previous.blinking !== this.lastCursor.blinking)
-    ) {
-      this.lastDrawnRows.push(previous.y);
+    const invalidatedRow = invalidatedCursorRow(previous, this.lastCursor);
+    if (invalidatedRow !== null) {
+      this.lastDrawnRows.push(invalidatedRow);
     }
   }
 
