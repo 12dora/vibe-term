@@ -72,7 +72,7 @@ export function LeaveDialog({
 
   return (
     <AlertDialog
-      open
+      open={phase !== 'confirming'}
       onOpenChange={(next) => {
         if (!next && !busy && !done && !stranded) onCancel();
       }}
@@ -167,11 +167,13 @@ function LeaveProgress({ leave }: { leave: LeaveMesh }) {
   }
 
   const label =
-    phase === 'leaving'
-      ? t('nodes.membership.leaving')
-      : phase === 'restarting'
-        ? t('nodes.membership.restarting', { seconds: Math.round(elapsedMs / 1000) })
-        : t('nodes.membership.restarted');
+    phase === 'confirming'
+      ? t('nodes.membership.confirming')
+      : phase === 'leaving'
+        ? t('nodes.membership.leaving')
+        : phase === 'restarting'
+          ? t('nodes.membership.restarting', { seconds: Math.round(elapsedMs / 1000) })
+          : t('nodes.membership.restarted');
 
   return (
     // 每个阶段换一次 key：进度文案切换时重放一次淡入，比原地换字更好读。

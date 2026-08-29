@@ -110,7 +110,7 @@ describe('runLeaveWorkflow 成功路径', () => {
       'waitForRestart',
       'navigate',
     ]);
-    expect(h.phases).toEqual(['leaving', 'restarting', 'restarted']);
+    expect(h.phases).toEqual(['confirming', 'leaving', 'restarting', 'restarted']);
     expect(h.leaveBodies).toEqual([{ expectedRole: 'node' }]);
     expect(h.intent).toBe('join-hub');
     // 硬跳转会换掉整个 JS 环境，标记必须一直保持到那时。

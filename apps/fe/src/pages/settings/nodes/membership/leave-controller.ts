@@ -15,7 +15,14 @@ import type { SetupIntent } from './intent';
 import type { MeshRole } from './role-transition';
 import type { SelfRevokeOutcome } from './self-revoke';
 
-export type LeavePhase = 'idle' | 'leaving' | 'restarting' | 'restarted' | 'timeout' | 'error';
+export type LeavePhase =
+  | 'idle'
+  | 'confirming'
+  | 'leaving'
+  | 'restarting'
+  | 'restarted'
+  | 'timeout'
+  | 'error';
 
 /** 等重启的三种结局；与 `restart/wait-for-restart.ts` 的 `RestartOutcome` 同构。 */
 export type LeaveRestartOutcome = 'restarted' | 'timeout' | 'aborted';
@@ -106,12 +113,13 @@ export async function runLeaveWorkflow(
   deps: LeaveWorkflowDeps,
   request: LeaveRequest
 ): Promise<LeaveOutcome> {
-  deps.setPhase('leaving');
-
   if (deps.revoke) {
+    // 凭据弹层与确认对话框同为 z-50 且前者不走 portal，会被对话框盖住：确认身份期间先把对话框收起
+    deps.setPhase('confirming');
     const outcome = await deps.revoke();
     if (outcome.kind !== 'revoked') deps.onRevokeOutcome(outcome);
   }
+  deps.setPhase('leaving');
 
   const previousStartedAt = await deps.readStartedAt();
   deps.onBaseline?.(previousStartedAt);

@@ -1208,6 +1208,7 @@
           "title": "更换 Hub？",
           "description": "本机会先退出当前 Hub，重启后用新的加入码加入另一个 Hub。加入码需要重新输入。"
         },
+        "confirming": "正在确认身份……",
         "leaving": "正在退出……",
         "restarting": "正在重启……（{{seconds}} 秒）",
         "restarted": "已重启，正在返回设置页……",

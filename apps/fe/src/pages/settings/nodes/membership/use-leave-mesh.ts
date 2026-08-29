@@ -260,7 +260,7 @@ export function useLeaveMesh(options: UseLeaveMeshOptions): LeaveMesh {
 
   return {
     phase,
-    busy: phase === 'leaving' || phase === 'restarting',
+    busy: phase === 'confirming' || phase === 'leaving' || phase === 'restarting',
     error,
     warning,
     elapsedMs,

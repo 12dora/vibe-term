@@ -1208,6 +1208,7 @@
           "title": "Change hub?",
           "description": "This machine leaves the current hub first, then joins another one after the restart. The new join code has to be entered again."
         },
+        "confirming": "Confirming your identity…",
         "leaving": "Leaving…",
         "restarting": "Restarting… ({{seconds}}s)",
         "restarted": "Restarted. Returning to settings…",

@@ -1139,6 +1139,7 @@ export type TranslationKey =
   | 'nodes.membership.changeHubConfirm'
   | 'nodes.membership.changeHubConfirm.title'
   | 'nodes.membership.changeHubConfirm.description'
+  | 'nodes.membership.confirming'
   | 'nodes.membership.leaving'
   | 'nodes.membership.restarting'
   | 'nodes.membership.restarted'

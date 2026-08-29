@@ -1214,6 +1214,7 @@ export const I18N_RESOURCES = {
           "title": "Change hub?",
           "description": "This machine leaves the current hub first, then joins another one after the restart. The new join code has to be entered again."
         },
+        "confirming": "Confirming your identity…",
         "leaving": "Leaving…",
         "restarting": "Restarting… ({{seconds}}s)",
         "restarted": "Restarted. Returning to settings…",
@@ -2793,6 +2794,7 @@ export const I18N_RESOURCES = {
           "title": "更换 Hub？",
           "description": "本机会先退出当前 Hub，重启后用新的加入码加入另一个 Hub。加入码需要重新输入。"
         },
+        "confirming": "正在确认身份……",
         "leaving": "正在退出……",
         "restarting": "正在重启……（{{seconds}} 秒）",
         "restarted": "已重启，正在返回设置页……",
@@ -4372,6 +4374,7 @@ export const I18N_RESOURCES = {
           "title": "ハブを変更しますか？",
           "description": "現在のハブから退出し、再起動後に別のハブへ参加します。参加コードは再入力が必要です。"
         },
+        "confirming": "本人確認中…",
         "leaving": "退出しています…",
         "restarting": "再起動しています…（{{seconds}} 秒）",
         "restarted": "再起動しました。設定に戻ります…",
