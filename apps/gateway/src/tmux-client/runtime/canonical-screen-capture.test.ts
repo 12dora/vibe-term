@@ -1,7 +1,10 @@
 import { describe, expect, test } from 'bun:test';
 
+import { PANE_MODE_ALT_SCREEN, PANE_MODE_FLAGS_PRESENT, encodePaneModes } from '@tmex/shared';
+
 import type { PaneInfo } from '../capture-history';
 import type { AtomicPaneCapture } from '../control-mode-capture';
+import type { PaneHistoryCursor } from '../pane-history-reader';
 import type { PaneIdentity, PaneScreenCheckpoint, PaneTerminalCursor } from '../pane-retention';
 import {
   CanonicalScreenCapture,
@@ -9,6 +12,11 @@ import {
   concatBytes,
   truncateUtf8Tail,
 } from './canonical-screen-capture';
+import {
+  buildCanonicalCheckpoint,
+  captureFrame,
+  estimateHistoryLines,
+} from './canonical-screen-checkpoint';
 
 const EPOCH = new Uint8Array(16).fill(1);
 
@@ -136,6 +144,262 @@ describe('CanonicalScreenCapture', () => {
     const capture = new CanonicalScreenCapture(host);
     await expect(capture.capture('%1', 1024)).resolves.toBeNull();
     expect(host.stored).toEqual([]);
+  });
+});
+
+describe('estimateHistoryLines', () => {
+  test('caps extra history lines by byte budget and projected size', () => {
+    expect(estimateHistoryLines({ width: 8, height: 4 }, 4096)).toBeGreaterThan(0);
+    expect(estimateHistoryLines({ width: 80, height: 24 }, 64)).toBe(0);
+    expect(estimateHistoryLines(undefined, 4096)).toBe(
+      estimateHistoryLines({ width: 80, height: 24 }, 4096)
+    );
+  });
+});
+
+describe('captureFrame', () => {
+  test('barrier path records the cursor at the barrier callback', async () => {
+    const cursor: PaneTerminalCursor = { paneEpoch: EPOCH, terminalSeq: 7n };
+    const frame: AtomicPaneCapture = {
+      text: 'visible',
+      historyText: 'scroll',
+      cols: 40,
+      rows: 12,
+      cursorX: 3,
+      cursorY: 4,
+      alternateScreen: false,
+      historySize: 8,
+      modes: null,
+    };
+    let barrierCalls = 0;
+    const host = createHost({
+      getLatestCursor: () => cursor,
+      capturePaneFrameAtBarrier: async (_paneId, historyLines, onBarrier) => {
+        expect(historyLines).toBe(3);
+        onBarrier();
+        barrierCalls += 1;
+        return frame;
+      },
+    });
+    const captured = await captureFrame(host, '%1', 3);
+    expect(captured.frame).toBe(frame);
+    expect(captured.baseCursor).toEqual(cursor);
+    expect(barrierCalls).toBe(1);
+  });
+
+  test('fallback path zeros history on alt screen and leaves historyText null', async () => {
+    const host = createHost({
+      getPaneInfo: async () => paneInfo({ alternateScreen: true, cols: 10, rows: 5 }),
+      capturePaneText: async (_paneId, opts) => {
+        expect(opts?.historyLines).toBe(0);
+        return 'alt';
+      },
+      getPaneHistoryCaptureInfo: async () => ({ historySize: 9, cols: 10 }),
+    });
+    const captured = await captureFrame(host, '%1', 12);
+    expect(captured.frame).toEqual({
+      text: 'alt',
+      historyText: null,
+      cols: 10,
+      rows: 5,
+      cursorX: 0,
+      cursorY: 0,
+      alternateScreen: true,
+      historySize: 9,
+      modes: null,
+    });
+    expect(captured.baseCursor?.terminalSeq).toBe(10n);
+  });
+});
+
+describe('buildCanonicalCheckpoint', () => {
+  const encoder = new TextEncoder();
+
+  function checkpointInput(
+    overrides: Partial<Parameters<typeof buildCanonicalCheckpoint>[0]> = {}
+  ) {
+    const frame: AtomicPaneCapture = {
+      text: 'hello',
+      historyText: null,
+      cols: 80,
+      rows: 24,
+      cursorX: 0,
+      cursorY: 0,
+      alternateScreen: false,
+      historySize: 0,
+      modes: null,
+      ...overrides.frame,
+    };
+    return {
+      paneId: '%1',
+      paneEpoch: EPOCH,
+      baseSeq: 10n,
+      maxBytes: 1024,
+      historyLines: 4,
+      capturedAt: 1234,
+      createHistoryCursor: () => null,
+      ...overrides,
+      frame,
+    };
+  }
+
+  test('prefixes a primary-screen clear and places the cursor', () => {
+    const checkpoint = buildCanonicalCheckpoint(checkpointInput());
+    const text = new TextDecoder().decode(checkpoint.data);
+    expect(text.startsWith('\x1b[2J\x1b[H')).toBe(true);
+    expect(text.endsWith('\x1b[1;1H')).toBe(true);
+    expect(text.includes('hello')).toBe(true);
+    expect(checkpoint.baseSeq).toBe(10n);
+    expect(checkpoint.modes).toBe(0);
+  });
+
+  test('omits the cursor sequence when tmux reports a null cursor', () => {
+    const checkpoint = buildCanonicalCheckpoint(
+      checkpointInput({
+        frame: {
+          text: 'hello',
+          historyText: null,
+          cols: 80,
+          rows: 24,
+          cursorX: null,
+          cursorY: null,
+          alternateScreen: false,
+          historySize: 0,
+          modes: null,
+        },
+      })
+    );
+    const text = new TextDecoder().decode(checkpoint.data);
+    expect(text).toBe('\x1b[2J\x1b[Hhello');
+  });
+
+  test('drops history as a whole when the byte budget cannot fit it', () => {
+    const historyText = 'H'.repeat(200);
+    const checkpoint = buildCanonicalCheckpoint(
+      checkpointInput({
+        maxBytes: 80,
+        frame: {
+          text: 'visible',
+          historyText,
+          cols: 80,
+          rows: 24,
+          cursorX: 0,
+          cursorY: 0,
+          alternateScreen: false,
+          historySize: 10,
+          modes: null,
+        },
+      })
+    );
+    const text = new TextDecoder().decode(checkpoint.data);
+    expect(text.includes(historyText)).toBe(false);
+    expect(text.includes('visible')).toBe(true);
+  });
+
+  test('includes history when it fits and advances the history cursor by captured lines', () => {
+    const cursors: Array<[string, Uint8Array, number]> = [];
+    const historyCursor: PaneHistoryCursor = {
+      paneEpoch: EPOCH,
+      historyEpoch: new Uint8Array(16).fill(9),
+      beforeLine: 6,
+    };
+    const checkpoint = buildCanonicalCheckpoint(
+      checkpointInput({
+        historyLines: 4,
+        createHistoryCursor: (paneId, paneEpoch, beforeLine) => {
+          cursors.push([paneId, paneEpoch, beforeLine]);
+          return historyCursor;
+        },
+        frame: {
+          text: 'visible',
+          historyText: 'scroll',
+          cols: 80,
+          rows: 24,
+          cursorX: 1,
+          cursorY: 2,
+          alternateScreen: false,
+          historySize: 10,
+          modes: null,
+        },
+      })
+    );
+    const text = new TextDecoder().decode(checkpoint.data);
+    expect(text.includes('scroll\nvisible')).toBe(true);
+    expect(cursors).toEqual([['%1', EPOCH, 6]]);
+    expect(checkpoint.historyCursor).toBe(historyCursor);
+    expect(text.includes('\x1b[3;2H')).toBe(true);
+  });
+
+  test('never splices primary-grid history into an alt-screen snapshot', () => {
+    const checkpoint = buildCanonicalCheckpoint(
+      checkpointInput({
+        createHistoryCursor: () => {
+          throw new Error('alt screen must not create a history cursor');
+        },
+        frame: {
+          text: 'tui',
+          historyText: 'old-shell',
+          cols: 80,
+          rows: 24,
+          cursorX: 0,
+          cursorY: 0,
+          alternateScreen: true,
+          historySize: 10,
+          modes: {
+            mouseStandard: true,
+            mouseButton: false,
+            mouseAll: false,
+            mouseSgr: true,
+            mouseUtf8: false,
+          },
+        },
+      })
+    );
+    const text = new TextDecoder().decode(checkpoint.data);
+    expect(text.startsWith('\x1b[?1049h\x1b[2J\x1b[H')).toBe(true);
+    expect(text.includes('old-shell')).toBe(false);
+    expect(text.includes('tui')).toBe(true);
+    expect(checkpoint.historyCursor).toBeNull();
+    expect(checkpoint.modes).toBe(
+      PANE_MODE_ALT_SCREEN |
+        encodePaneModes({
+          mouseStandard: true,
+          mouseButton: false,
+          mouseAll: false,
+          mouseSgr: true,
+          mouseUtf8: false,
+        }) |
+        PANE_MODE_FLAGS_PRESENT
+    );
+  });
+
+  test('treats fallback text as already containing history and truncates on a UTF-8 boundary', () => {
+    const cursors: number[] = [];
+    const checkpoint = buildCanonicalCheckpoint(
+      checkpointInput({
+        maxBytes: 8,
+        historyLines: 3,
+        createHistoryCursor: (_paneId, _epoch, beforeLine) => {
+          cursors.push(beforeLine);
+          return null;
+        },
+        frame: {
+          text: 'éx',
+          historyText: null,
+          cols: 80,
+          rows: 24,
+          cursorX: null,
+          cursorY: null,
+          alternateScreen: false,
+          historySize: 5,
+          modes: null,
+        },
+      })
+    );
+    expect(cursors).toEqual([5]);
+    const prefix = encoder.encode('\x1b[2J\x1b[H');
+    expect(checkpoint.data.byteLength).toBeLessThanOrEqual(8);
+    expect(checkpoint.data.slice(0, prefix.byteLength)).toEqual(prefix);
   });
 });
 

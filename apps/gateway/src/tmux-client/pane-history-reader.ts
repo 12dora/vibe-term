@@ -1,10 +1,13 @@
-import { bytesEqual, bytesHex, concatBytes, copyBytes, truncateUtf8Tail } from '../bytes';
+import { bytesEqual, bytesHex, concatBytes, copyBytes } from '../bytes';
+import {
+  type HistoryRowSelection,
+  computeHistoryCaptureWindow,
+  selectHistoryRows,
+} from './pane-history-pagination';
 
 export const DEFAULT_HISTORY_SESSION_TTL_MS = 60_000;
 export const DEFAULT_MAX_HISTORY_SESSIONS = 32;
 export const DEFAULT_MAX_HISTORY_PAGE_BYTES = 256 * 1024;
-const MAX_CAPTURE_LINES = 512;
-const CAPTURE_OUTPUT_OVERHEAD_BYTES = 64 * 1024;
 
 export interface PaneHistoryCursor {
   paneEpoch: Uint8Array;
@@ -132,22 +135,18 @@ export class PaneHistoryReader {
     this.sweep(now);
     const byteLimit = Math.max(1, Math.min(Math.floor(requestedByteLimit), this.maxPageBytes));
     const info = await this.source.getPaneHistoryCaptureInfo(paneId);
-    let session = cursor ? this.resolveCursor(paneId, paneEpoch, cursor) : null;
+    const session = this.bootstrapHistorySession(paneId, paneEpoch, cursor, info.historySize);
     if (!session) {
-      const initial = this.createCursor(paneId, paneEpoch, info.historySize);
-      if (!initial) {
-        return {
-          paneId,
-          paneEpoch: copyBytes(paneEpoch),
-          historyEpoch: new Uint8Array(16),
-          lineStart: 0,
-          lineEnd: 0,
-          truncated: false,
-          data: new Uint8Array(),
-          nextCursor: null,
-        };
-      }
-      session = this.resolveCursor(paneId, paneEpoch, initial);
+      return {
+        paneId,
+        paneEpoch: copyBytes(paneEpoch),
+        historyEpoch: new Uint8Array(16),
+        lineStart: 0,
+        lineEnd: 0,
+        truncated: false,
+        data: new Uint8Array(),
+        nextCursor: null,
+      };
     }
 
     const beforeLine = session.beforeLine;
@@ -157,35 +156,29 @@ export class PaneHistoryReader {
     }
     if (beforeLine === 0) return this.emptyPage(session);
 
-    const estimatedBytesPerLine = Math.max(16, Math.max(1, info.cols) * 4);
-    const lineCount = Math.max(
-      1,
-      Math.min(MAX_CAPTURE_LINES, Math.floor(byteLimit / estimatedBytesPerLine))
-    );
-    const requestedStart = Math.max(0, beforeLine - lineCount);
-    const includesAnchor = session.anchorHash !== null && beforeLine < info.historySize;
-    const captureEnd = includesAnchor ? beforeLine : beforeLine - 1;
-    const startCoordinate = requestedStart - info.historySize;
-    const endCoordinate = captureEnd - info.historySize;
-    const captureLimit = Math.min(
-      this.maxPageBytes * 2 + CAPTURE_OUTPUT_OVERHEAD_BYTES,
-      byteLimit * 2 + CAPTURE_OUTPUT_OVERHEAD_BYTES
-    );
+    const window = computeHistoryCaptureWindow({
+      beforeLine,
+      historySize: info.historySize,
+      cols: info.cols,
+      byteLimit,
+      maxPageBytes: this.maxPageBytes,
+      hasAnchor: session.anchorHash !== null,
+    });
     const captured = await this.source.capturePaneHistoryRange(
       paneId,
-      startCoordinate,
-      endCoordinate,
-      captureLimit
+      window.startCoordinate,
+      window.endCoordinate,
+      window.captureLimit
     );
     const rows = splitCapturedRows(captured);
-    const expectedRows = captureEnd - requestedStart + 1;
+    const expectedRows = window.captureEnd - window.requestedStart + 1;
     if (rows.length !== expectedRows) {
       throw new PaneHistoryCursorError(
         'cache_evicted',
         `tmux history range changed while reading: expected ${expectedRows} rows, got ${rows.length}`
       );
     }
-    if (includesAnchor) {
+    if (window.includesAnchor) {
       const boundary = rows.pop();
       if (boundary === undefined || (await hashRow(boundary)) !== session.anchorHash) {
         this.sessions.delete(bytesHex(session.historyEpoch));
@@ -193,54 +186,15 @@ export class PaneHistoryReader {
       }
     }
 
-    const encoder = new TextEncoder();
-    const selected: Uint8Array[] = [];
-    let selectedBytes = 0;
-    let selectedRows = 0;
-    let truncated = false;
-    for (let index = rows.length - 1; index >= 0; index -= 1) {
-      const row = rows[index];
-      if (row === undefined) continue;
-      const encoded = encoder.encode(`${row}\n`);
-      if (selectedBytes + encoded.byteLength <= byteLimit) {
-        selected.unshift(encoded);
-        selectedBytes += encoded.byteLength;
-        selectedRows += 1;
-        continue;
-      }
-      if (selectedRows === 0) {
-        const tail = truncateUtf8Tail(encoded, byteLimit);
-        selected.unshift(tail);
-        selectedBytes = tail.byteLength;
-        selectedRows = 1;
-        truncated = true;
-      }
-      break;
-    }
-    if (selectedRows === 0) {
-      throw new PaneHistoryCursorError('resource_exhausted', 'history page made no progress');
-    }
-
-    const lineStart = beforeLine - selectedRows;
-    const firstSelectedRow = rows[rows.length - selectedRows];
-    if (firstSelectedRow === undefined) {
-      throw new PaneHistoryCursorError('cache_evicted', 'history page boundary disappeared');
-    }
-    session.beforeLine = lineStart;
-    session.anchorHash = await hashRow(firstSelectedRow);
-    session.expiresAt = now + this.sessionTtlMs;
-    session.lastUsedAt = now;
-
-    return {
+    return this.commitHistoryPage(
       paneId,
-      paneEpoch: copyBytes(paneEpoch),
-      historyEpoch: copyBytes(session.historyEpoch),
-      lineStart,
-      lineEnd: beforeLine,
-      truncated,
-      data: concatBytes(...selected),
-      nextCursor: lineStart > 0 ? this.toCursor(session) : null,
-    };
+      paneEpoch,
+      session,
+      rows,
+      selectHistoryRows(rows, byteLimit),
+      beforeLine,
+      now
+    );
   }
 
   invalidatePane(paneId: string, paneEpoch?: Uint8Array): void {
@@ -253,6 +207,51 @@ export class PaneHistoryReader {
 
   dispose(): void {
     this.sessions.clear();
+  }
+
+  private bootstrapHistorySession(
+    paneId: string,
+    paneEpoch: Uint8Array,
+    cursor: PaneHistoryCursor | null,
+    historySize: number
+  ): HistorySession | null {
+    if (cursor) return this.resolveCursor(paneId, paneEpoch, cursor);
+    const initial = this.createCursor(paneId, paneEpoch, historySize);
+    if (!initial) return null;
+    return this.resolveCursor(paneId, paneEpoch, initial);
+  }
+
+  private async commitHistoryPage(
+    paneId: string,
+    paneEpoch: Uint8Array,
+    session: HistorySession,
+    rows: string[],
+    packed: HistoryRowSelection,
+    beforeLine: number,
+    now: number
+  ): Promise<PaneHistoryPage> {
+    if (packed.selectedRows === 0) {
+      throw new PaneHistoryCursorError('resource_exhausted', 'history page made no progress');
+    }
+    const lineStart = beforeLine - packed.selectedRows;
+    const firstSelectedRow = rows[rows.length - packed.selectedRows];
+    if (firstSelectedRow === undefined) {
+      throw new PaneHistoryCursorError('cache_evicted', 'history page boundary disappeared');
+    }
+    session.beforeLine = lineStart;
+    session.anchorHash = await hashRow(firstSelectedRow);
+    session.expiresAt = now + this.sessionTtlMs;
+    session.lastUsedAt = now;
+    return {
+      paneId,
+      paneEpoch: copyBytes(paneEpoch),
+      historyEpoch: copyBytes(session.historyEpoch),
+      lineStart,
+      lineEnd: beforeLine,
+      truncated: packed.truncated,
+      data: concatBytes(...packed.selected),
+      nextCursor: lineStart > 0 ? this.toCursor(session) : null,
+    };
   }
 
   private resolveCursor(

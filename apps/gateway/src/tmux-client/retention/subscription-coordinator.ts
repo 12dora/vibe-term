@@ -1,18 +1,12 @@
-import {
-  bytesEqual,
-  cloneRequest,
-  copyBytes,
-  subscriptionFingerprint,
-  uniqueRequests,
-} from './bytes';
+import { bytesEqual, copyBytes, subscriptionFingerprint, uniqueRequests } from './bytes';
 import type { RetentionKernel } from './kernel';
 import type { RetentionPolicyScheduler } from './policy-scheduler';
 import type { PaneReplayStore } from './replay-store';
+import { acceptSubscriptionRequests } from './subscription-admission';
 import type {
   ConsumerState,
   PaneState,
   PaneSubscriptionApplyResult,
-  PaneSubscriptionRejection,
   PaneSubscriptionRejectionReason,
   PaneSubscriptionRequest,
 } from './types';
@@ -58,89 +52,44 @@ export class PaneSubscriptionCoordinator {
 
     const now = this.kernel.now();
     this.policy.sweep(now);
-    const rejected: PaneSubscriptionRejection[] = [];
-    const otherActive = this.policy.unionPaneIds('active', consumer.id);
-    const otherHot = this.policy.unionPaneIds('hot', consumer.id);
-    const prospectiveActive = new Set(otherActive);
-    const prospectiveHot = new Set(otherHot);
-    const acceptedActive = new Map<string, PaneSubscriptionRequest>();
-    const acceptedHot = new Map<string, PaneSubscriptionRequest>();
-
-    for (const request of activeRequests) {
-      const state = this.kernel.panes.get(request.paneId);
-      const rejection = this.validateRequest(state, request);
-      if (rejection) {
-        rejected.push({
-          paneId: request.paneId,
-          paneEpoch: copyBytes(request.paneEpoch),
-          reason: rejection,
-        });
-        continue;
-      }
-      if (
-        !prospectiveActive.has(request.paneId) &&
-        prospectiveActive.size >= this.kernel.maxActivePanes
-      ) {
-        rejected.push({
-          paneId: request.paneId,
-          paneEpoch: copyBytes(request.paneEpoch),
-          reason: 'resource_exhausted',
-        });
-        continue;
-      }
-      acceptedActive.set(request.paneId, cloneRequest(request));
-      prospectiveActive.add(request.paneId);
-    }
-
-    for (const request of hotRequests) {
-      const state = this.kernel.panes.get(request.paneId);
-      const rejection = this.validateRequest(state, request);
-      if (rejection) {
-        rejected.push({
-          paneId: request.paneId,
-          paneEpoch: copyBytes(request.paneEpoch),
-          reason: rejection,
-        });
-        continue;
-      }
-      if (!prospectiveHot.has(request.paneId) && prospectiveHot.size >= this.kernel.maxHotPanes) {
-        rejected.push({
-          paneId: request.paneId,
-          paneEpoch: copyBytes(request.paneEpoch),
-          reason: 'resource_exhausted',
-        });
-        continue;
-      }
-      acceptedHot.set(request.paneId, cloneRequest(request));
-      prospectiveHot.add(request.paneId);
-    }
+    const activeResult = acceptSubscriptionRequests({
+      mode: 'active',
+      requests: activeRequests,
+      occupied: this.policy.unionPaneIds('active', consumer.id),
+      limit: this.kernel.maxActivePanes,
+      lookupPane: (paneId) => this.kernel.panes.get(paneId),
+      validate: (state, request) => this.validateRequest(state, request),
+    });
+    const hotResult = acceptSubscriptionRequests({
+      mode: 'hot',
+      requests: hotRequests,
+      occupied: this.policy.unionPaneIds('hot', consumer.id),
+      limit: this.kernel.maxHotPanes,
+      lookupPane: (paneId) => this.kernel.panes.get(paneId),
+      validate: (state, request) => this.validateRequest(state, request),
+    });
 
     consumer.generation = generation;
     consumer.fingerprint = fingerprint;
-    consumer.active = acceptedActive;
-    consumer.hot = acceptedHot;
-    for (const paneId of [...acceptedActive.keys(), ...acceptedHot.keys()]) {
-      const state = this.kernel.panes.get(paneId);
-      if (state) state.lastTouchedAt = now;
-    }
+    consumer.active = activeResult.accepted;
+    consumer.hot = hotResult.accepted;
+    this.touchAcceptedPanes([...activeResult.accepted.keys(), ...hotResult.accepted.keys()], now);
     this.policy.refreshModes(now);
 
-    const replay = [];
-    for (const request of [...acceptedActive.values(), ...acceptedHot.values()]) {
-      replay.push(this.replay.buildReplayPlan(request));
-    }
     return {
       generation,
-      activePanes: Array.from(acceptedActive.values(), (request) => ({
+      activePanes: Array.from(activeResult.accepted.values(), (request) => ({
         paneId: request.paneId,
         paneEpoch: copyBytes(request.paneEpoch),
       })),
-      hotPanes: Array.from(acceptedHot.values(), (request) => ({
+      hotPanes: Array.from(hotResult.accepted.values(), (request) => ({
         paneId: request.paneId,
         paneEpoch: copyBytes(request.paneEpoch),
       })),
-      rejected,
-      replay,
+      rejected: [...activeResult.rejected, ...hotResult.rejected],
+      replay: [...activeResult.accepted.values(), ...hotResult.accepted.values()].map((request) =>
+        this.replay.buildReplayPlan(request)
+      ),
     };
   }
 
@@ -176,5 +125,12 @@ export class PaneSubscriptionCoordinator {
     if (!state?.known) return 'not_found';
     if (!bytesEqual(state.paneEpoch, request.paneEpoch)) return 'epoch_changed';
     return null;
+  }
+
+  private touchAcceptedPanes(paneIds: Iterable<string>, now: number): void {
+    for (const paneId of paneIds) {
+      const state = this.kernel.panes.get(paneId);
+      if (state) state.lastTouchedAt = now;
+    }
   }
 }

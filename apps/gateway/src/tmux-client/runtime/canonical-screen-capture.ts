@@ -1,26 +1,19 @@
-import { PANE_MODE_ALT_SCREEN, PANE_MODE_FLAGS_PRESENT, encodePaneModes } from '@tmex/shared';
+import { bytesEqual } from '../../bytes';
+import type { PaneHistoryCursor } from '../pane-history-reader';
+import type { PaneIdentity, PaneScreenCheckpoint } from '../pane-retention';
+import {
+  type CanonicalFrameCaptureHost,
+  buildCanonicalCheckpoint,
+  captureFrame,
+  estimateHistoryLines,
+} from './canonical-screen-checkpoint';
 
-import { bytesEqual, concatBytes, truncateUtf8Tail } from '../../bytes';
-import type { PaneInfo } from '../capture-history';
-import type { AtomicPaneCapture } from '../control-mode-capture';
-import type { PaneHistoryCaptureInfo, PaneHistoryCursor } from '../pane-history-reader';
-import type { PaneIdentity, PaneScreenCheckpoint, PaneTerminalCursor } from '../pane-retention';
+export { concatBytes, truncateUtf8Tail } from '../../bytes';
 
-export { concatBytes, truncateUtf8Tail };
-
-export interface CanonicalScreenCaptureHost {
+export interface CanonicalScreenCaptureHost extends CanonicalFrameCaptureHost {
   getPaneIdentity(paneId: string): PaneIdentity | null;
   maxCheckpointBytesPerPane(): number;
   findProjectedPane(paneId: string): { width?: number; height?: number } | undefined;
-  getLatestCursor(paneId: string): PaneTerminalCursor | null;
-  capturePaneFrameAtBarrier?(
-    paneId: string,
-    historyLines: number,
-    onBarrier: () => void
-  ): Promise<AtomicPaneCapture>;
-  getPaneInfo(paneId: string): Promise<PaneInfo>;
-  capturePaneText(paneId: string, opts?: { historyLines?: number }): Promise<string>;
-  getPaneHistoryCaptureInfo(paneId: string): Promise<PaneHistoryCaptureInfo>;
   createHistoryCursor(
     paneId: string,
     paneEpoch: Uint8Array,
@@ -53,65 +46,8 @@ export class CanonicalScreenCapture {
     if (!identity) return null;
     const maxBytes = Math.min(byteLimit, this.host.maxCheckpointBytesPerPane());
     if (maxBytes < 64) return null;
-    const projectedPane = this.host.findProjectedPane(paneId);
-    const estimatedCols = Math.max(1, projectedPane?.width ?? 80);
-    const estimatedRows = Math.max(1, projectedPane?.height ?? 24);
-    const estimatedBytesPerLine = Math.max(16, estimatedCols * 4);
-    const boundedTotalLines = Math.max(
-      estimatedRows,
-      Math.min(estimatedRows + 256, Math.floor(maxBytes / estimatedBytesPerLine))
-    );
-    const historyLines = Math.max(0, boundedTotalLines - estimatedRows);
-    let baseCursor: PaneTerminalCursor | null = null;
-    let frame: AtomicPaneCapture;
-    if (this.host.capturePaneFrameAtBarrier) {
-      frame = await this.host.capturePaneFrameAtBarrier(paneId, historyLines, () => {
-        baseCursor = this.host.getLatestCursor(paneId);
-      });
-    } else {
-      const info = await this.host.getPaneInfo(paneId);
-      const text = await this.host.capturePaneText(paneId, {
-        historyLines: info.alternateScreen ? 0 : historyLines,
-      });
-      baseCursor = this.host.getLatestCursor(paneId);
-      frame = {
-        text,
-        historyText: null,
-        cols: info.cols,
-        rows: info.rows,
-        cursorX: info.cursorX,
-        cursorY: info.cursorY,
-        alternateScreen: info.alternateScreen,
-        historySize: (await this.host.getPaneHistoryCaptureInfo(paneId)).historySize,
-        modes: null,
-      };
-    }
-    const prefix = frame.alternateScreen ? '\x1b[?1049h\x1b[2J\x1b[H' : '\x1b[2J\x1b[H';
-    const cursor =
-      frame.cursorX === null || frame.cursorY === null
-        ? ''
-        : `\x1b[${frame.cursorY + 1};${frame.cursorX + 1}H`;
-    const encoder = new TextEncoder();
-    const prefixBytes = encoder.encode(prefix);
-    const cursorBytes = encoder.encode(cursor);
-    const textBudget = Math.max(0, maxBytes - prefixBytes.byteLength - cursorBytes.byteLength);
-    const visibleBytes = encoder.encode(frame.text);
-    // alt 屏的 scrollback 属于 primary grid（TUI 启动前的旧 shell 输出），绝不拼进快照；
-    // 预算不足时整段丢弃历史而不是从头部截断——截断会切断 SGR 序列且让行数失配。
-    const includeHistory =
-      !frame.alternateScreen && frame.historySize > 0 && frame.historyText !== null;
-    const historyBytes = includeHistory
-      ? encoder.encode(`${frame.historyText}\n`)
-      : new Uint8Array(0);
-    const historyIncluded =
-      includeHistory && historyBytes.byteLength + visibleBytes.byteLength <= textBudget;
-    const rawTextBytes = historyIncluded ? concatBytes(historyBytes, visibleBytes) : visibleBytes;
-    // 降级路径（无 control 通道）的 text 本身就是 -S 合并采集，历史行内嵌其中
-    const fallbackEmbeddedHistory = frame.historyText === null && !frame.alternateScreen;
-    const embeddedHistoryLines = historyIncluded || fallbackEmbeddedHistory ? historyLines : 0;
-    const textWasTruncated = rawTextBytes.byteLength > textBudget;
-    const textBytes = truncateUtf8Tail(rawTextBytes, textBudget);
-    const data = concatBytes(prefixBytes, textBytes, cursorBytes);
+    const historyLines = estimateHistoryLines(this.host.findProjectedPane(paneId), maxBytes);
+    const { frame, baseCursor } = await captureFrame(this.host, paneId, historyLines);
     const currentIdentity = this.host.getPaneIdentity(paneId);
     if (
       !baseCursor ||
@@ -121,27 +57,17 @@ export class CanonicalScreenCapture {
     ) {
       return null;
     }
-    const checkpoint: PaneScreenCheckpoint = {
+    const checkpoint = buildCanonicalCheckpoint({
       paneId,
       paneEpoch: currentIdentity.paneEpoch,
+      frame,
       baseSeq: baseCursor.terminalSeq,
-      rows: Math.max(1, Math.min(frame.rows, 0xffff)),
-      cols: Math.max(1, Math.min(frame.cols, 0xffff)),
-      modes:
-        (frame.alternateScreen ? PANE_MODE_ALT_SCREEN : 0) |
-        (frame.modes ? encodePaneModes(frame.modes) | PANE_MODE_FLAGS_PRESENT : 0),
-      data,
-      historyCursor: frame.alternateScreen
-        ? null
-        : this.host.createHistoryCursor(
-            paneId,
-            currentIdentity.paneEpoch,
-            textWasTruncated
-              ? frame.historySize
-              : Math.max(0, frame.historySize - embeddedHistoryLines)
-          ),
+      maxBytes,
+      historyLines,
       capturedAt: (this.host.now ?? Date.now)(),
-    };
+      createHistoryCursor: (id, epoch, beforeLine) =>
+        this.host.createHistoryCursor(id, epoch, beforeLine),
+    });
     this.host.storeScreenCheckpoint(checkpoint);
     return checkpoint;
   }
