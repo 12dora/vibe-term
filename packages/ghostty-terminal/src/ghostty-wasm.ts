@@ -1,4 +1,5 @@
 import type { GhosttyCellDimensions, GhosttyTheme } from './types';
+import { encodeOwnedUtf8Output } from './wasm-output-marshalling';
 
 // 跨打包器解析 wasm 资源：`new URL(rel, import.meta.url)` 是 Vite 推荐写法，Bun（运行/打包）
 // 也支持，避免 `?url` 后缀只有 Vite 能解析、bun build 报无法 resolve 的问题。
@@ -21,7 +22,6 @@ function ghosttyWasmCandidates(): string[] {
 }
 
 const GHOSTTY_SUCCESS = 0;
-const GHOSTTY_OUT_OF_SPACE = -3;
 
 const GHOSTTY_TERMINAL_OPT_COLOR_FOREGROUND = 11;
 const GHOSTTY_TERMINAL_OPT_COLOR_BACKGROUND = 12;
@@ -1316,96 +1316,36 @@ export class GhosttyBindings {
   }
 
   private encodeKeyHandle(encoder: number, eventHandle: number): string | null {
-    const requiredPtr = this.allocUsize();
-
-    try {
-      const sizeResult = this.exports.ghostty_key_encoder_encode(encoder, eventHandle, 0, 0, requiredPtr);
-      if (sizeResult !== GHOSTTY_OUT_OF_SPACE && sizeResult !== GHOSTTY_SUCCESS) {
-        assertResult(sizeResult, 'ghostty_key_encoder_encode(size)');
-      }
-
-      const required = Math.max(0, this.readUsize(requiredPtr));
-      if (required === 0) {
-        return null;
-      }
-
-      const bufferPtr = this.allocBytes(required);
-      const writtenPtr = this.allocUsize();
-
-      try {
-        assertResult(
-          this.exports.ghostty_key_encoder_encode(
-            encoder,
-            eventHandle,
-            bufferPtr,
-            required,
-            writtenPtr
-          ),
-          'ghostty_key_encoder_encode'
-        );
-
-        const written = this.readUsize(writtenPtr);
-        if (written === 0) {
-          return null;
-        }
-
-        return this.readOwnedUtf8(bufferPtr, written);
-      } finally {
-        this.freeBytes(bufferPtr, required);
-        this.freeUsize(writtenPtr);
-      }
-    } finally {
-      this.freeUsize(requiredPtr);
-    }
+    return encodeOwnedUtf8Output(this, {
+      label: 'ghostty_key_encoder_encode',
+      assertResult,
+      encode: (outPtr, capacity, writtenPtr) =>
+        this.exports.ghostty_key_encoder_encode(encoder, eventHandle, outPtr, capacity, writtenPtr),
+    });
   }
 
   encodePaste(terminal: number, data: string): string {
     const input = this.writeString(data);
-    const requiredPtr = this.allocUsize();
 
     try {
       const bracketed = this.isTerminalModeEnabled(terminal, GHOSTTY_MODE_BRACKETED_PASTE);
-      const sizeResult = this.exports.ghostty_paste_encode(
-        input.ptr,
-        input.len,
-        bracketed ? 1 : 0,
-        0,
-        0,
-        requiredPtr
+      return (
+        encodeOwnedUtf8Output(this, {
+          label: 'ghostty_paste_encode',
+          assertResult,
+          encode: (outPtr, capacity, writtenPtr) =>
+            this.exports.ghostty_paste_encode(
+              input.ptr,
+              input.len,
+              bracketed ? 1 : 0,
+              outPtr,
+              capacity,
+              writtenPtr
+            ),
+        }) ?? ''
       );
-      if (sizeResult !== GHOSTTY_OUT_OF_SPACE && sizeResult !== GHOSTTY_SUCCESS) {
-        assertResult(sizeResult, 'ghostty_paste_encode(size)');
-      }
-
-      const required = Math.max(0, this.readUsize(requiredPtr));
-      if (required === 0) {
-        return '';
-      }
-
-      const outputPtr = this.allocBytes(required);
-      const writtenPtr = this.allocUsize();
-
-      try {
-        assertResult(
-          this.exports.ghostty_paste_encode(
-            input.ptr,
-            input.len,
-            bracketed ? 1 : 0,
-            outputPtr,
-            required,
-            writtenPtr
-          ),
-          'ghostty_paste_encode'
-        );
-
-        return this.readOwnedUtf8(outputPtr, this.readUsize(writtenPtr));
-      } finally {
-        this.freeBytes(outputPtr, required);
-        this.freeUsize(writtenPtr);
-      }
     } finally {
       input.free();
-      this.freeUsize(requiredPtr);
     }
   }
 }

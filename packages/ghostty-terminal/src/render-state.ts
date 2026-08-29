@@ -1,19 +1,24 @@
 import type { GhosttyBindings } from './ghostty-wasm';
+import { decodeRenderCell } from './render-state-cell';
+import {
+  type GhosttyRenderStateResources,
+  type RenderStateRead,
+  readBool,
+  readColorAt,
+  readEnumI32,
+  readU16,
+  readU64,
+} from './render-state-reads';
 import type {
-  GhosttyCellWidthKind,
   GhosttyColorRgb,
   GhosttyCursorVisualStyle,
   GhosttyRenderCell,
-  GhosttyRenderCellStyle,
   GhosttyRenderColors,
   GhosttyRenderCursor,
   GhosttyRenderDirtyState,
   GhosttyRenderRow,
   GhosttyRenderSnapshotMeta,
 } from './types';
-
-const GHOSTTY_SUCCESS = 0;
-const GHOSTTY_INVALID_VALUE = -2;
 
 const GHOSTTY_RENDER_STATE_DATA_COLS = 1;
 const GHOSTTY_RENDER_STATE_DATA_ROWS = 2;
@@ -30,28 +35,8 @@ const GHOSTTY_RENDER_STATE_DATA_CURSOR_VIEWPORT_WIDE_TAIL = 17;
 const GHOSTTY_RENDER_STATE_ROW_DATA_DIRTY = 1;
 const GHOSTTY_RENDER_STATE_ROW_DATA_RAW = 2;
 
-const GHOSTTY_RENDER_STATE_ROW_CELLS_DATA_RAW = 1;
-const GHOSTTY_RENDER_STATE_ROW_CELLS_DATA_STYLE = 2;
-const GHOSTTY_RENDER_STATE_ROW_CELLS_DATA_GRAPHEMES_LEN = 3;
-const GHOSTTY_RENDER_STATE_ROW_CELLS_DATA_GRAPHEMES_BUF = 4;
-const GHOSTTY_RENDER_STATE_ROW_CELLS_DATA_BG_COLOR = 5;
-const GHOSTTY_RENDER_STATE_ROW_CELLS_DATA_FG_COLOR = 6;
-
 const GHOSTTY_ROW_DATA_WRAP = 1;
 const GHOSTTY_ROW_DATA_WRAP_CONTINUATION = 2;
-
-const GHOSTTY_CELL_DATA_WIDE = 3;
-const GHOSTTY_CELL_DATA_HAS_TEXT = 4;
-
-type GhosttyRenderStateResources = {
-  bindings: GhosttyBindings;
-  renderStateHandle: number;
-  rowIteratorHandle: number;
-  rowCellsHandle: number;
-  snapshotVersion: number;
-  disposed: boolean;
-  cachedMeta: GhosttyRenderSnapshotMeta | null;
-};
 
 function ensureActive(resources: GhosttyRenderStateResources): void {
   if (resources.disposed || resources.renderStateHandle === 0) {
@@ -83,217 +68,6 @@ function resultToCursorStyle(value: number): GhosttyCursorVisualStyle {
   }
 }
 
-function resultToCellWidthKind(value: number): GhosttyCellWidthKind {
-  switch (value) {
-    case 1:
-      return 'wide';
-    case 2:
-      return 'spacer-tail';
-    case 3:
-      return 'spacer-head';
-    default:
-      return 'narrow';
-  }
-}
-
-function readColorAt(bindings: GhosttyBindings, ptr: number): GhosttyColorRgb {
-  return {
-    r: bindings.view().getUint8(ptr),
-    g: bindings.view().getUint8(ptr + 1),
-    b: bindings.view().getUint8(ptr + 2),
-  };
-}
-
-function readOptionalColor(
-  resources: GhosttyRenderStateResources,
-  read: (ptr: number) => number
-): GhosttyColorRgb | null {
-  const color = resources.bindings.allocStruct('GhosttyColorRgb');
-
-  try {
-    const result = read(color.ptr);
-    if (result === GHOSTTY_INVALID_VALUE) {
-      return null;
-    }
-
-    if (result !== GHOSTTY_SUCCESS) {
-      throw new Error(`ghostty optional color read failed with result ${result}`);
-    }
-
-    return readColorAt(resources.bindings, color.ptr);
-  } finally {
-    color.free();
-  }
-}
-
-function readBool(
-  resources: GhosttyRenderStateResources,
-  read: (ptr: number) => number | void
-): boolean {
-  const ptr = resources.bindings.allocU8();
-
-  try {
-    const result = read(ptr);
-    if (typeof result === 'number' && result !== GHOSTTY_SUCCESS) {
-      throw new Error(`ghostty bool read failed with result ${result}`);
-    }
-
-    return resources.bindings.readU8(ptr) !== 0;
-  } finally {
-    resources.bindings.freeU8(ptr);
-  }
-}
-
-function readU16(
-  resources: GhosttyRenderStateResources,
-  read: (ptr: number) => number | void
-): number {
-  const ptr = resources.bindings.allocBytes(2);
-
-  try {
-    const result = read(ptr);
-    if (typeof result === 'number' && result !== GHOSTTY_SUCCESS) {
-      throw new Error(`ghostty u16 read failed with result ${result}`);
-    }
-
-    return resources.bindings.view().getUint16(ptr, true);
-  } finally {
-    resources.bindings.freeBytes(ptr, 2);
-  }
-}
-
-function readU32(
-  resources: GhosttyRenderStateResources,
-  read: (ptr: number) => number | void
-): number {
-  const ptr = resources.bindings.allocBytes(4);
-
-  try {
-    const result = read(ptr);
-    if (typeof result === 'number' && result !== GHOSTTY_SUCCESS) {
-      throw new Error(`ghostty u32 read failed with result ${result}`);
-    }
-
-    return resources.bindings.view().getUint32(ptr, true);
-  } finally {
-    resources.bindings.freeBytes(ptr, 4);
-  }
-}
-
-function readEnumI32(
-  resources: GhosttyRenderStateResources,
-  read: (ptr: number) => number | void
-): number {
-  const ptr = resources.bindings.allocBytes(4);
-
-  try {
-    const result = read(ptr);
-    if (typeof result === 'number' && result !== GHOSTTY_SUCCESS) {
-      throw new Error(`ghostty enum read failed with result ${result}`);
-    }
-
-    return resources.bindings.view().getInt32(ptr, true);
-  } finally {
-    resources.bindings.freeBytes(ptr, 4);
-  }
-}
-
-function readU64(
-  resources: GhosttyRenderStateResources,
-  read: (ptr: number) => number | void
-): bigint {
-  const ptr = resources.bindings.allocBytes(8);
-
-  try {
-    const result = read(ptr);
-    if (typeof result === 'number' && result !== GHOSTTY_SUCCESS) {
-      throw new Error(`ghostty u64 read failed with result ${result}`);
-    }
-
-    return resources.bindings.readU64(ptr);
-  } finally {
-    resources.bindings.freeBytes(ptr, 8);
-  }
-}
-
-function readStyle(resources: GhosttyRenderStateResources): GhosttyRenderCellStyle {
-  const style = resources.bindings.allocStruct('GhosttyStyle');
-
-  try {
-    resources.bindings.setField(
-      style.view,
-      'GhosttyStyle',
-      'size',
-      resources.bindings.typeSize('GhosttyStyle')
-    );
-    resources.bindings.getRenderStateRowCellValue(
-      resources.rowCellsHandle,
-      GHOSTTY_RENDER_STATE_ROW_CELLS_DATA_STYLE,
-      style.ptr
-    );
-
-    const field = (name: string) => resources.bindings.field('GhosttyStyle', name).offset;
-    return {
-      bold: style.view.getUint8(field('bold')) !== 0,
-      italic: style.view.getUint8(field('italic')) !== 0,
-      faint: style.view.getUint8(field('faint')) !== 0,
-      blink: style.view.getUint8(field('blink')) !== 0,
-      inverse: style.view.getUint8(field('inverse')) !== 0,
-      invisible: style.view.getUint8(field('invisible')) !== 0,
-      strikethrough: style.view.getUint8(field('strikethrough')) !== 0,
-      overline: style.view.getUint8(field('overline')) !== 0,
-      underline: style.view.getInt32(field('underline'), true),
-    };
-  } finally {
-    style.free();
-  }
-}
-
-function readCodepoints(resources: GhosttyRenderStateResources): number[] {
-  const graphemeLen = readU32(resources, (ptr) =>
-    resources.bindings.getRenderStateRowCellValueResult(
-      resources.rowCellsHandle,
-      GHOSTTY_RENDER_STATE_ROW_CELLS_DATA_GRAPHEMES_LEN,
-      ptr
-    )
-  );
-
-  if (graphemeLen === 0) {
-    return [];
-  }
-
-  const bufPtr = resources.bindings.allocBytes(graphemeLen * 4);
-
-  try {
-    resources.bindings.getRenderStateRowCellValue(
-      resources.rowCellsHandle,
-      GHOSTTY_RENDER_STATE_ROW_CELLS_DATA_GRAPHEMES_BUF,
-      bufPtr
-    );
-
-    const codepoints: number[] = [];
-    for (let index = 0; index < graphemeLen; index += 1) {
-      codepoints.push(resources.bindings.view().getUint32(bufPtr + index * 4, true));
-    }
-
-    return codepoints;
-  } finally {
-    resources.bindings.freeBytes(bufPtr, graphemeLen * 4);
-  }
-}
-
-function codepointsToText(codepoints: number[]): string {
-  if (codepoints.length === 0) {
-    return '';
-  }
-
-  try {
-    return String.fromCodePoint(...codepoints);
-  } catch {
-    return '';
-  }
-}
-
 function buildRowText(cells: GhosttyRenderCell[]): string {
   let text = '';
 
@@ -315,12 +89,7 @@ function buildRowText(cells: GhosttyRenderCell[]): string {
   return text;
 }
 
-type RenderStatePointerRead = (ptr: number) => number;
-
-function stateValueReader(
-  resources: GhosttyRenderStateResources,
-  data: number
-): RenderStatePointerRead {
+function stateValueReader(resources: GhosttyRenderStateResources, data: number): RenderStateRead {
   return (ptr: number) =>
     resources.bindings.getRenderStateValueResult(resources.renderStateHandle, data, ptr);
 }
@@ -435,74 +204,35 @@ function readMeta(resources: GhosttyRenderStateResources): GhosttyRenderSnapshot
   };
 }
 
+function rowValueReader(resources: GhosttyRenderStateResources, data: number): RenderStateRead {
+  return (ptr: number) =>
+    resources.bindings.getRenderStateRowValueResult(resources.rowIteratorHandle, data, ptr);
+}
+
+function rawRowValueReader(
+  resources: GhosttyRenderStateResources,
+  rawRow: bigint,
+  data: number
+): RenderStateRead {
+  return (ptr: number) => resources.bindings.getRawRowValueResult(rawRow, data, ptr);
+}
+
 function readRow(resources: GhosttyRenderStateResources, rowIndex: number): GhosttyRenderRow {
-  const rawRow = readU64(resources, (ptr) =>
-    resources.bindings.getRenderStateRowValueResult(
-      resources.rowIteratorHandle,
-      GHOSTTY_RENDER_STATE_ROW_DATA_RAW,
-      ptr
-    )
-  );
+  const rawRow = readU64(resources, rowValueReader(resources, GHOSTTY_RENDER_STATE_ROW_DATA_RAW));
   resources.bindings.bindRenderStateRowCells(resources.rowIteratorHandle, resources.rowCellsHandle);
 
   const cells: GhosttyRenderCell[] = [];
-  let x = 0;
   while (resources.bindings.nextRenderStateRowCell(resources.rowCellsHandle)) {
-    const rawCell = readU64(resources, (ptr) =>
-      resources.bindings.getRenderStateRowCellValueResult(
-        resources.rowCellsHandle,
-        GHOSTTY_RENDER_STATE_ROW_CELLS_DATA_RAW,
-        ptr
-      )
-    );
-    const codepoints = readCodepoints(resources);
-    const widthKind = resultToCellWidthKind(
-      readEnumI32(resources, (ptr) =>
-        resources.bindings.getRawCellValueResult(rawCell, GHOSTTY_CELL_DATA_WIDE, ptr)
-      )
-    );
-    const cell: GhosttyRenderCell = {
-      x,
-      text: codepointsToText(codepoints),
-      codepoints,
-      widthKind,
-      hasText: readBool(resources, (ptr) =>
-        resources.bindings.getRawCellValueResult(rawCell, GHOSTTY_CELL_DATA_HAS_TEXT, ptr)
-      ),
-      style: readStyle(resources),
-      fgColor: readOptionalColor(resources, (ptr) =>
-        resources.bindings.getRenderStateRowCellValueResult(
-          resources.rowCellsHandle,
-          GHOSTTY_RENDER_STATE_ROW_CELLS_DATA_FG_COLOR,
-          ptr
-        )
-      ),
-      bgColor: readOptionalColor(resources, (ptr) =>
-        resources.bindings.getRenderStateRowCellValueResult(
-          resources.rowCellsHandle,
-          GHOSTTY_RENDER_STATE_ROW_CELLS_DATA_BG_COLOR,
-          ptr
-        )
-      ),
-    };
-    cells.push(cell);
-    x += 1;
+    cells.push(decodeRenderCell(resources, cells.length));
   }
 
   return {
     y: rowIndex,
-    dirty: readBool(resources, (ptr) =>
-      resources.bindings.getRenderStateRowValueResult(
-        resources.rowIteratorHandle,
-        GHOSTTY_RENDER_STATE_ROW_DATA_DIRTY,
-        ptr
-      )
-    ),
-    wrap: readBool(resources, (ptr) =>
-      resources.bindings.getRawRowValueResult(rawRow, GHOSTTY_ROW_DATA_WRAP, ptr)
-    ),
-    wrapContinuation: readBool(resources, (ptr) =>
-      resources.bindings.getRawRowValueResult(rawRow, GHOSTTY_ROW_DATA_WRAP_CONTINUATION, ptr)
+    dirty: readBool(resources, rowValueReader(resources, GHOSTTY_RENDER_STATE_ROW_DATA_DIRTY)),
+    wrap: readBool(resources, rawRowValueReader(resources, rawRow, GHOSTTY_ROW_DATA_WRAP)),
+    wrapContinuation: readBool(
+      resources,
+      rawRowValueReader(resources, rawRow, GHOSTTY_ROW_DATA_WRAP_CONTINUATION)
     ),
     text: buildRowText(cells),
     cells,
