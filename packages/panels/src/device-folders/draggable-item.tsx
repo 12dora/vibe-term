@@ -55,13 +55,13 @@ function ShellBody({
       data-testid={`device-folder-item-${itemKey}`}
       data-dragging={isDragging ? 'true' : undefined}
       className={cn(
-        'group/folder-item relative min-w-0',
+        'group/folder-item relative min-w-0 pl-5',
         isDragging && 'opacity-40 motion-reduce:opacity-40',
         className
       )}
       style={{ ...dragStyle, ...style }}
     >
-      <div className="absolute -left-2 top-1 z-10 flex flex-col gap-1">
+      <div className="absolute left-0 top-1 z-10 flex flex-col gap-1">
         <button
           type="button"
           ref={setHandleRef}
