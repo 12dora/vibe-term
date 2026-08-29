@@ -224,4 +224,78 @@ describe('executeRunCommand', () => {
     expect(result.truncated).toBe(true);
     expect(new TextEncoder().encode(overflow).length).toBeGreaterThan(256 * 1024);
   });
+
+  test('auto + bash 注入 POSIX 标记；auto + powershell 不注入', async () => {
+    const posix = createFakeEmu();
+    const posixSent: string[] = [];
+    const posixPromise = executeRunCommand(
+      { command: 'ls', mode: 'auto', shell: 'bash' },
+      {
+        emulator: posix.emu,
+        sendInput: (data) => {
+          posixSent.push(data);
+          const nonce = nonceOf(data);
+          setTimeout(() => {
+            posix.emit('ls; printf ...\r\nok\r\n');
+            posix.marker({ kind: 'D', exitCode: 0, params: ['0', `tmex=${nonce}`] });
+          }, 5);
+        },
+      }
+    );
+    expect((await posixPromise).exitCode).toBe(0);
+    expect(posixSent[0]).toContain('133;D');
+
+    const pwsh = createFakeEmu();
+    const pwshSent: string[] = [];
+    const pwshResult = await executeRunCommand(
+      { command: 'Get-Date', mode: 'auto', shell: 'powershell', prompt: 'PS>', timeoutMs: 2000 },
+      {
+        emulator: pwsh.emu,
+        sendInput: (data) => {
+          pwshSent.push(data);
+          setTimeout(() => {
+            pwsh.emit('Get-Date\r\nMonday\r\nPS>');
+          }, 5);
+        },
+      }
+    );
+    expect(pwshSent[0]).toBe('Get-Date\r');
+    expect(pwshSent[0]).not.toContain('133;D');
+    expect(pwshResult.status).toBe('completed');
+  });
+
+  test('CLI：disablePagingCommand 先发送再清空缓冲', async () => {
+    const fake = createFakeEmu({ alt: false, screen: 'R1#' });
+    const sent: string[] = [];
+    const result = await executeRunCommand(
+      {
+        command: 'show run',
+        mode: 'cli',
+        prompt: 'R1#',
+        disablePagingCommand: 'terminal length 0',
+        timeoutMs: 2000,
+      },
+      {
+        emulator: fake.emu,
+        sleepMs: async () => {
+          await new Promise((resolve) => setTimeout(resolve, 1));
+        },
+        sendInput: (data) => {
+          sent.push(data);
+          if (data === 'terminal length 0\r') {
+            fake.emit('this paging echo must be discarded\r\n');
+            return;
+          }
+          setTimeout(() => {
+            fake.emit('show run\r\nconfig\r\nR1#');
+            fake.setScreen('R1#');
+          }, 5);
+        },
+      }
+    );
+    expect(sent[0]).toBe('terminal length 0\r');
+    expect(sent[1]).toBe('show run\r');
+    expect(result.output).toContain('config');
+    expect(result.output).not.toContain('paging echo');
+  });
 });

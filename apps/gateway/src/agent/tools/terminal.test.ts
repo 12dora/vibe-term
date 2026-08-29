@@ -433,6 +433,45 @@ describe('terminal tools - emulator 数据源', () => {
     expect(calls.capture).toEqual([]);
     expect(harness.successes).toBe(1);
   });
+
+  test('read_screen 在 emulator 可用但 historyLines>0 时走 capture', async () => {
+    const emulator = {
+      isDisposed: false,
+      isAlternateScreen: () => true,
+      render: () => 'vim screen',
+      size: () => ({ cols: 120, rows: 40 }),
+    };
+    const { runtime, calls } = createStubRuntime({ screen: 'history-capture' });
+    const harness: ToolHarness = {
+      failures: 0,
+      successes: 0,
+      tools: createTerminalTools({
+        paneId: '%1',
+        deviceId: 'dev1',
+        getRuntime: () => runtime,
+        getEmulator: () => emulator as never,
+        needsApprovalForWrite: false,
+        onFailure: () => {
+          harness.failures += 1;
+        },
+        onSuccess: () => {
+          harness.successes += 1;
+        },
+        sleepMs: async () => {},
+      }),
+    };
+
+    const result = (await getTool(harness, 'read_screen').execute(
+      { historyLines: 20 },
+      execOptions
+    )) as { screen: string; alternateScreen: boolean };
+
+    expect(result.screen).toContain('history-capture');
+    expect(result.screen).not.toContain('vim screen');
+    expect(result.alternateScreen).toBe(false);
+    expect(calls.capture).toEqual(['%1']);
+    expect(harness.successes).toBe(1);
+  });
 });
 
 describe('terminal tools - get_pane_info', () => {

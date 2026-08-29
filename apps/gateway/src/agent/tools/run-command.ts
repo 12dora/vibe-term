@@ -140,25 +140,78 @@ function detectError(text: string): { likelyError: boolean; errorLine?: string }
   return { likelyError: false };
 }
 
+const TUI_BLOCKED_RESULT: RunCommandResult = {
+  output: '',
+  exitCode: null,
+  status: 'entered_tui',
+  likelyError: false,
+  truncated: false,
+};
+
+function resolveRunCommandClock(deps: RunCommandDeps): {
+  sleepMs: (ms: number) => Promise<void>;
+  now: () => number;
+  makeNonce: () => string;
+} {
+  const now = deps.now ?? (() => performance.now());
+  let nonceCounter = 0;
+  return {
+    sleepMs: deps.sleepMs ?? ((ms: number) => new Promise((r) => setTimeout(r, ms))),
+    now,
+    makeNonce: deps.makeNonce ?? (() => `n${++nonceCounter}${(now() | 0).toString(36)}`),
+  };
+}
+
+function appendBoundedBytes(chunks: number[], data: Uint8Array, maxBytes: number): boolean {
+  let truncated = false;
+  for (const byte of data) {
+    if (chunks.length < maxBytes) {
+      chunks.push(byte);
+    } else {
+      truncated = true;
+    }
+  }
+  return truncated;
+}
+
+function isMatchingDoneMarker(marker: PromptMarker, nonce: string): boolean {
+  return marker.kind === 'D' && (!nonce || marker.params.includes(`tmex=${nonce}`));
+}
+
+function shouldUsePosix(mode: RunCommandMode, shell: RunCommandShell | undefined): boolean {
+  return mode === 'posix' || (mode === 'auto' && exitCodeExpr(shell) !== null);
+}
+
+function resolvePromptRegex(
+  mode: RunCommandMode,
+  prompt: string | undefined,
+  currentScreen: () => string
+): RegExp | null {
+  if (prompt) return new RegExp(prompt);
+  if (mode === 'cli') return buildPromptRegex(lastNonEmptyLine(currentScreen()));
+  return null;
+}
+
+function wrapPosixCommand(
+  command: string,
+  shell: RunCommandShell | undefined,
+  nonce: string
+): string {
+  const expr = exitCodeExpr(shell) ?? '$?';
+  const marker = `printf '\\033]133;D;%s;tmex=${nonce}\\033\\\\' "${expr}"`;
+  return `${command}; ${marker}\r`;
+}
+
 export async function executeRunCommand(
   params: RunCommandParams,
   deps: RunCommandDeps
 ): Promise<RunCommandResult> {
-  const sleepMs = deps.sleepMs ?? ((ms: number) => new Promise((r) => setTimeout(r, ms)));
-  const now = deps.now ?? (() => performance.now());
-  let nonceCounter = 0;
-  const makeNonce = deps.makeNonce ?? (() => `n${++nonceCounter}${(now() | 0).toString(36)}`);
+  const { sleepMs, now, makeNonce } = resolveRunCommandClock(deps);
   const timeoutMs = params.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   const mode: RunCommandMode = params.mode ?? 'auto';
 
   if (deps.emulator.isAlternateScreen()) {
-    return {
-      output: '',
-      exitCode: null,
-      status: 'entered_tui',
-      likelyError: false,
-      truncated: false,
-    };
+    return TUI_BLOCKED_RESULT;
   }
 
   const chunks: number[] = [];
@@ -167,16 +220,12 @@ export async function executeRunCommand(
   let nonce = '';
   const untap = deps.emulator.tap({
     onBytes: (data) => {
-      for (const byte of data) {
-        if (chunks.length < OUTPUT_MAX_BYTES) {
-          chunks.push(byte);
-        } else {
-          wasTruncated = true;
-        }
+      if (appendBoundedBytes(chunks, data, OUTPUT_MAX_BYTES)) {
+        wasTruncated = true;
       }
     },
     onMarker: (marker) => {
-      if (marker.kind === 'D' && (!nonce || marker.params.includes(`tmex=${nonce}`))) {
+      if (isMatchingDoneMarker(marker, nonce)) {
         receivedMarker = marker;
       }
     },
@@ -189,7 +238,7 @@ export async function executeRunCommand(
   };
 
   try {
-    const usePosix = mode === 'posix' || (mode === 'auto' && exitCodeExpr(params.shell) !== null);
+    const usePosix = shouldUsePosix(mode, params.shell);
 
     if (mode === 'cli' && params.disablePagingCommand) {
       deps.sendInput(`${params.disablePagingCommand}\r`);
@@ -198,17 +247,11 @@ export async function executeRunCommand(
       wasTruncated = false;
     }
 
-    const promptRegex = params.prompt
-      ? new RegExp(params.prompt)
-      : mode === 'cli'
-        ? buildPromptRegex(lastNonEmptyLine(deps.emulator.render()))
-        : null;
+    const promptRegex = resolvePromptRegex(mode, params.prompt, () => deps.emulator.render());
 
     if (usePosix) {
       nonce = makeNonce();
-      const expr = exitCodeExpr(params.shell) ?? '$?';
-      const marker = `printf '\\033]133;D;%s;tmex=${nonce}\\033\\\\' "${expr}"`;
-      deps.sendInput(`${params.command}; ${marker}\r`);
+      deps.sendInput(wrapPosixCommand(params.command, params.shell, nonce));
     } else {
       deps.sendInput(`${params.command}\r`);
     }

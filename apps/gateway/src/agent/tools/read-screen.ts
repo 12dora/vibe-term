@@ -1,5 +1,7 @@
 import { type Tool, tool } from 'ai';
 import { z } from 'zod';
+import type { PaneInfo } from '../../tmux-client/capture-history';
+import type { PaneEmulator } from '../../tmux-client/pane-emulator';
 import {
   type TerminalToolContext,
   checkRuntimeAlive,
@@ -8,6 +10,35 @@ import {
   toToolErrorMessage,
 } from './terminal-context';
 import { wrapUntrusted } from './untrusted';
+
+interface ReadScreenSource {
+  screen: string;
+  fallbackCols: number | null;
+  fallbackRows: number | null;
+  alternateScreen: boolean;
+}
+
+function shouldUseLiveRender(
+  emulator: PaneEmulator | null,
+  historyLines: number | undefined
+): emulator is PaneEmulator {
+  return emulator !== null && (historyLines ?? 0) === 0;
+}
+
+function formatReadScreenResult(
+  info: Pick<PaneInfo, 'cols' | 'rows' | 'cursorX' | 'cursorY'> | null,
+  source: ReadScreenSource
+) {
+  return {
+    screen: wrapUntrusted(source.screen, 'terminal'),
+    cols: info?.cols ?? source.fallbackCols,
+    rows: info?.rows ?? source.fallbackRows,
+    cursorX: info?.cursorX ?? null,
+    cursorY: info?.cursorY ?? null,
+    alternateScreen: source.alternateScreen,
+    capturedAt: new Date().toISOString(),
+  };
+}
 
 export function createReadScreenTool(ctx: TerminalToolContext): Tool {
   return tool({
@@ -36,31 +67,26 @@ export function createReadScreenTool(ctx: TerminalToolContext): Tool {
       }
       try {
         const info = await runtime.getPaneInfo(ctx.paneId).catch(() => null);
-        if (emulator && (historyLines ?? 0) === 0) {
+        if (shouldUseLiveRender(emulator, historyLines)) {
+          const size = emulator.size();
           ctx.onSuccess();
-          return {
-            screen: wrapUntrusted(emulator.render(), 'terminal'),
-            cols: info?.cols ?? emulator.size().cols,
-            rows: info?.rows ?? emulator.size().rows,
-            cursorX: info?.cursorX ?? null,
-            cursorY: info?.cursorY ?? null,
+          return formatReadScreenResult(info, {
+            screen: emulator.render(),
+            fallbackCols: size.cols,
+            fallbackRows: size.rows,
             alternateScreen: emulator.isAlternateScreen(),
-            capturedAt: new Date().toISOString(),
-          };
+          });
         }
         const screen = await runtime.capturePaneText(ctx.paneId, {
           historyLines: historyLines ?? 0,
         });
         ctx.onSuccess();
-        return {
-          screen: wrapUntrusted(screen, 'terminal'),
-          cols: info?.cols ?? null,
-          rows: info?.rows ?? null,
-          cursorX: info?.cursorX ?? null,
-          cursorY: info?.cursorY ?? null,
+        return formatReadScreenResult(info, {
+          screen,
+          fallbackCols: null,
+          fallbackRows: null,
           alternateScreen: info?.alternateScreen ?? false,
-          capturedAt: new Date().toISOString(),
-        };
+        });
       } catch (error) {
         return failTool(ctx, `Failed to read pane screen: ${toToolErrorMessage(error)}`);
       }

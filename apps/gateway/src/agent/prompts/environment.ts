@@ -23,14 +23,34 @@ export interface AgentEnvironmentInfo {
   encoding: string | null;
 }
 
-export function collectAgentEnvironment(device: Device | null): AgentEnvironmentInfo {
-  const isLocal = device?.type === 'local';
-  let timezone = 'UTC';
+type DeviceIdentity = Pick<
+  AgentEnvironmentInfo,
+  'deviceName' | 'deviceType' | 'host' | 'username' | 'port' | 'tmuxSession'
+>;
+
+type LocalHostFacts = Pick<
+  AgentEnvironmentInfo,
+  'gatewayOs' | 'gatewayShell' | 'term' | 'termProgram' | 'locale' | 'encoding'
+>;
+
+const ABSENT_LOCAL_FACTS: LocalHostFacts = {
+  gatewayOs: null,
+  gatewayShell: null,
+  term: null,
+  termProgram: null,
+  locale: null,
+  encoding: null,
+};
+
+function readHostTimezone(): string {
   try {
-    timezone = Intl.DateTimeFormat().resolvedOptions().timeZone ?? 'UTC';
+    return Intl.DateTimeFormat().resolvedOptions().timeZone ?? 'UTC';
   } catch {
-    timezone = 'UTC';
+    return 'UTC';
   }
+}
+
+function collectDeviceIdentity(device: Device | null): DeviceIdentity {
   return {
     deviceName: device?.name ?? null,
     deviceType: device?.type ?? null,
@@ -38,13 +58,28 @@ export function collectAgentEnvironment(device: Device | null): AgentEnvironment
     username: device?.username ?? null,
     port: device?.port ?? null,
     tmuxSession: device?.session ?? null,
-    timezone,
+  };
+}
+
+function collectLocalHostFacts(isLocal: boolean): LocalHostFacts {
+  if (!isLocal) {
+    return ABSENT_LOCAL_FACTS;
+  }
+  return {
+    gatewayOs: `${os.platform()} ${os.release()} (${os.arch()})`,
+    gatewayShell: process.env.SHELL ?? null,
+    term: process.env.TERM ?? null,
+    termProgram: process.env.TERM_PROGRAM ?? null,
+    locale: process.env.LANG ?? process.env.LC_ALL ?? null,
+    encoding: 'utf-8',
+  };
+}
+
+export function collectAgentEnvironment(device: Device | null): AgentEnvironmentInfo {
+  return {
+    ...collectDeviceIdentity(device),
+    timezone: readHostTimezone(),
     nowIso: new Date().toISOString(),
-    gatewayOs: isLocal ? `${os.platform()} ${os.release()} (${os.arch()})` : null,
-    gatewayShell: isLocal ? (process.env.SHELL ?? null) : null,
-    term: isLocal ? (process.env.TERM ?? null) : null,
-    termProgram: isLocal ? (process.env.TERM_PROGRAM ?? null) : null,
-    locale: isLocal ? (process.env.LANG ?? process.env.LC_ALL ?? null) : null,
-    encoding: isLocal ? 'utf-8' : null,
+    ...collectLocalHostFacts(device?.type === 'local'),
   };
 }

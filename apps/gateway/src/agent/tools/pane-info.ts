@@ -10,7 +10,7 @@ import {
   toToolErrorMessage,
 } from './terminal-context';
 
-interface SnapshotPaneContext {
+export interface SnapshotPaneContext {
   title: string | null;
   currentPath: string | null;
   windowName: string | null;
@@ -49,18 +49,22 @@ export function findPaneInSnapshot(
   return { found: false, snapshotExists: true };
 }
 
-function overlaySnapshotFields(
+function coalesceNullable<T>(live: T | null | undefined, fallback: T | null | undefined): T | null {
+  return live ?? fallback ?? null;
+}
+
+export function overlaySnapshotFields(
   info: PaneInfo,
   snapshot: SnapshotPaneContext | null
 ): SnapshotPaneContext {
   return {
-    title: info.title ?? snapshot?.title ?? null,
-    currentPath: info.currentPath ?? snapshot?.currentPath ?? null,
-    windowName: info.windowName ?? snapshot?.windowName ?? null,
-    windowId: info.windowId ?? snapshot?.windowId ?? null,
-    sessionId: info.sessionId ?? snapshot?.sessionId ?? null,
-    sessionName: info.sessionName ?? snapshot?.sessionName ?? null,
-    splitPaneCount: info.splitPaneCount ?? snapshot?.splitPaneCount ?? null,
+    title: coalesceNullable(info.title, snapshot?.title),
+    currentPath: coalesceNullable(info.currentPath, snapshot?.currentPath),
+    windowName: coalesceNullable(info.windowName, snapshot?.windowName),
+    windowId: coalesceNullable(info.windowId, snapshot?.windowId),
+    sessionId: coalesceNullable(info.sessionId, snapshot?.sessionId),
+    sessionName: coalesceNullable(info.sessionName, snapshot?.sessionName),
+    splitPaneCount: coalesceNullable(info.splitPaneCount, snapshot?.splitPaneCount),
   };
 }
 
