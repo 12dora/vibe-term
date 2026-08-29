@@ -26,6 +26,10 @@ export type WatchRuleExisting = Pick<
   | 'intervalSeconds'
 >;
 
+interface RuleFieldCtx {
+  existing: WatchRuleExisting | null;
+}
+
 export interface WatchRuleUpdates {
   triggerType?: WatchTriggerType;
   enabled?: boolean;
@@ -90,7 +94,12 @@ function parseNullablePositiveInt(raw: unknown, error: string): FieldParseResult
   return parseIntegerField(raw, error, (n) => n > 0);
 }
 
-const RULE_FIELD_SPECS: ConfigFieldSpec<unknown>[] = [
+const RULE_FIELD_SPECS: ConfigFieldSpec<unknown, RuleFieldCtx>[] = [
+  {
+    name: 'triggerType',
+    parse: (raw) => parseEnumField(raw, TRIGGER_TYPES, t('apiError.watchTriggerTypeInvalid')),
+    onAbsent: (ctx) => (ctx.existing ? 'omit' : 'parse'),
+  },
   { name: 'enabled', parse: (raw) => parseBooleanField(raw, invalidRequest()) },
   { name: 'pattern', parse: parseNullablePattern },
   {
@@ -131,9 +140,33 @@ const RULE_FIELD_SPECS: ConfigFieldSpec<unknown>[] = [
 ];
 
 function parseRuleFields(
-  body: Record<string, unknown>
+  body: Record<string, unknown>,
+  existing: WatchRuleExisting | null
 ): { ok: true; fields: WatchRuleUpdates } | { ok: false; error: string } {
-  return applyConfigFields<WatchRuleUpdates>(body, RULE_FIELD_SPECS, undefined);
+  return applyConfigFields<WatchRuleUpdates, RuleFieldCtx>(body, RULE_FIELD_SPECS, { existing });
+}
+
+function coalesce<T>(patched: T | undefined, current: T | undefined, fallback: T): T {
+  return patched !== undefined ? patched : (current ?? fallback);
+}
+
+function resolveEffective(
+  updates: WatchRuleUpdates,
+  existing: WatchRuleExisting | null,
+  triggerType: WatchTriggerType
+): WatchRuleEffective {
+  return {
+    triggerType,
+    pattern: coalesce(updates.pattern, existing?.pattern, null),
+    patternFlags: coalesce(updates.patternFlags, existing?.patternFlags, ''),
+    unchangedMinutes: coalesce(updates.unchangedMinutes, existing?.unchangedMinutes, null),
+    conditionPrompt: coalesce(updates.conditionPrompt, existing?.conditionPrompt, null),
+    intervalSeconds: coalesce(
+      updates.intervalSeconds,
+      existing?.intervalSeconds,
+      triggerType === 'llm' ? 60 : 30
+    ),
+  };
 }
 
 function validateRuleSemantics(input: WatchRuleEffective): string | null {
@@ -169,51 +202,18 @@ export function buildEffectiveWatchRule(
   existing: WatchRuleExisting | null,
   patch: Record<string, unknown>
 ): BuildEffectiveWatchRuleResult {
-  if (patch.triggerType !== undefined) {
-    if (!TRIGGER_TYPES.includes(patch.triggerType as WatchTriggerType)) {
-      return { ok: false, error: t('apiError.watchTriggerTypeInvalid') };
-    }
-  } else if (!existing) {
-    return { ok: false, error: t('apiError.watchTriggerTypeInvalid') };
-  }
-
-  const parsed = parseRuleFields(patch);
+  const parsed = parseRuleFields(patch, existing);
   if (!parsed.ok) {
     return parsed;
   }
 
-  const updates: WatchRuleUpdates = { ...parsed.fields };
-  if (patch.triggerType !== undefined) {
-    updates.triggerType = patch.triggerType as WatchTriggerType;
-  }
-
+  const updates = parsed.fields;
   const triggerType = updates.triggerType ?? existing?.triggerType;
   if (!triggerType) {
     return { ok: false, error: t('apiError.watchTriggerTypeInvalid') };
   }
 
-  const effective: WatchRuleEffective = {
-    triggerType,
-    pattern:
-      parsed.fields.pattern !== undefined ? parsed.fields.pattern : (existing?.pattern ?? null),
-    patternFlags:
-      parsed.fields.patternFlags !== undefined
-        ? parsed.fields.patternFlags
-        : (existing?.patternFlags ?? ''),
-    unchangedMinutes:
-      parsed.fields.unchangedMinutes !== undefined
-        ? parsed.fields.unchangedMinutes
-        : (existing?.unchangedMinutes ?? null),
-    conditionPrompt:
-      parsed.fields.conditionPrompt !== undefined
-        ? parsed.fields.conditionPrompt
-        : (existing?.conditionPrompt ?? null),
-    intervalSeconds:
-      parsed.fields.intervalSeconds !== undefined
-        ? parsed.fields.intervalSeconds
-        : (existing?.intervalSeconds ?? (triggerType === 'llm' ? 60 : 30)),
-  };
-
+  const effective = resolveEffective(updates, existing, triggerType);
   const semanticError = validateRuleSemantics(effective);
   if (semanticError) {
     return { ok: false, error: semanticError };

@@ -76,6 +76,13 @@ describe('buildEffectiveWatchRule — create（existing=null）', () => {
     });
   });
 
+  test('缺 triggerType 时其它字段非法仍报 watchTriggerTypeInvalid', () => {
+    expect(buildEffectiveWatchRule(null, { enabled: 'yes' })).toEqual({
+      ok: false,
+      error: t('apiError.watchTriggerTypeInvalid'),
+    });
+  });
+
   const createCases: Array<
     {
       name: string;
@@ -321,6 +328,13 @@ describe('buildEffectiveWatchRule — create（existing=null）', () => {
 });
 
 describe('buildEffectiveWatchRule — update（有 existing）', () => {
+  test('非法 triggerType', () => {
+    expect(buildEffectiveWatchRule(existingRule(), { triggerType: 'bogus' })).toEqual({
+      ok: false,
+      error: t('apiError.watchTriggerTypeInvalid'),
+    });
+  });
+
   test('空 patch：updates 为空，effective 来自 existing', () => {
     const existing = existingRule();
     expect(buildEffectiveWatchRule(existing, {})).toEqual({

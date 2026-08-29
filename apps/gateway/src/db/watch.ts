@@ -13,6 +13,52 @@ export type WatchRuleStateRecord = typeof watchRuleState.$inferSelect;
 
 export type { WatchFireMode, WatchNoMatchBehavior, WatchTriggerType } from './schema';
 
+type WatchRuleInsertOptionals = Pick<
+  typeof watchRules.$inferInsert,
+  | 'enabled'
+  | 'pattern'
+  | 'patternFlags'
+  | 'extractGroup'
+  | 'conditionPrompt'
+  | 'providerId'
+  | 'modelId'
+  | 'confirmWithLlm'
+  | 'summarizeWithLlm'
+  | 'intervalSeconds'
+  | 'unchangedMinutes'
+  | 'noMatchBehavior'
+  | 'fireMode'
+  | 'cooldownSeconds'
+>;
+
+const WATCH_RULE_OPTIONAL_DEFAULTS: WatchRuleInsertOptionals = {
+  enabled: true,
+  pattern: null,
+  patternFlags: '',
+  extractGroup: 0,
+  conditionPrompt: null,
+  providerId: null,
+  modelId: null,
+  confirmWithLlm: false,
+  summarizeWithLlm: false,
+  intervalSeconds: 30,
+  unchangedMinutes: null,
+  noMatchBehavior: 'reset',
+  fireMode: 'once',
+  cooldownSeconds: 600,
+};
+
+function applyDefaults<D extends object>(defaults: D, input: { [K in keyof D]?: D[K] | null }): D {
+  const out = { ...defaults };
+  for (const key of Object.keys(defaults) as (keyof D)[]) {
+    const value = input[key];
+    if (value != null) {
+      out[key] = value;
+    }
+  }
+  return out;
+}
+
 export interface CreateWatchRuleInput {
   name: string;
   deviceId: string;
@@ -42,21 +88,8 @@ export function createWatchRule(input: CreateWatchRuleInput): WatchRuleRecord {
     name: input.name,
     deviceId: input.deviceId,
     paneId: input.paneId,
-    enabled: input.enabled ?? true,
     triggerType: input.triggerType,
-    pattern: input.pattern ?? null,
-    patternFlags: input.patternFlags ?? '',
-    extractGroup: input.extractGroup ?? 0,
-    conditionPrompt: input.conditionPrompt ?? null,
-    providerId: input.providerId ?? null,
-    modelId: input.modelId ?? null,
-    confirmWithLlm: input.confirmWithLlm ?? false,
-    summarizeWithLlm: input.summarizeWithLlm ?? false,
-    intervalSeconds: input.intervalSeconds ?? 30,
-    unchangedMinutes: input.unchangedMinutes ?? null,
-    noMatchBehavior: input.noMatchBehavior ?? 'reset',
-    fireMode: input.fireMode ?? 'once',
-    cooldownSeconds: input.cooldownSeconds ?? 600,
+    ...applyDefaults(WATCH_RULE_OPTIONAL_DEFAULTS, input),
     createdAt: now,
     updatedAt: now,
   };

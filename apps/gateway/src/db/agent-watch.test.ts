@@ -292,6 +292,34 @@ describe('watch rules and state', () => {
     expect(getWatchRuleById(rule.id)).toBeNull();
   });
 
+  test('optional columns: false/0 kept; null and omitted use defaults', () => {
+    const rule = createWatchRule({
+      name: 'overlay watch',
+      deviceId: testDeviceId,
+      paneId: '%overlay',
+      triggerType: 'match',
+      enabled: false,
+      pattern: null,
+      extractGroup: 0,
+      confirmWithLlm: false,
+      intervalSeconds: undefined,
+      unchangedMinutes: null,
+      fireMode: 'repeat',
+    });
+
+    expect(rule.enabled).toBe(false);
+    expect(rule.pattern).toBeNull();
+    expect(rule.extractGroup).toBe(0);
+    expect(rule.confirmWithLlm).toBe(false);
+    expect(rule.intervalSeconds).toBe(30);
+    expect(rule.unchangedMinutes).toBeNull();
+    expect(rule.fireMode).toBe('repeat');
+    expect(rule.patternFlags).toBe('');
+    expect(rule.cooldownSeconds).toBe(600);
+
+    deleteWatchRule(rule.id);
+  });
+
   test('state upsert creates then updates, cascades on rule delete', () => {
     const rule = createWatchRule({
       name: 'state watch',

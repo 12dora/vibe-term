@@ -41,6 +41,23 @@ describe('updateSiteSettings 持久化', () => {
     expect(after.sshReconnectDelaySeconds).toBe(before.sshReconnectDelaySeconds + 7);
   });
 
+  test('boolean false 落库；省略字段保持原值', () => {
+    const before = dbRow();
+    updateSiteSettings({ enableBellPush: false });
+    const after = dbRow();
+    expect(after.enableBellPush).toBe(false);
+    expect(after.siteName).toBe(before.siteName);
+    expect(after.enableBellSound).toBe(before.enableBellSound);
+    updateSiteSettings({ enableBellPush: before.enableBellPush });
+  });
+
+  test('language 空字符串不覆盖现有 locale', () => {
+    updateSiteSettings({ language: 'zh_CN' });
+    updateSiteSettings({ language: '' as 'zh_CN' });
+    expect(dbRow().language).toBe('zh_CN');
+    updateSiteSettings({ language: 'en_US' });
+  });
+
   test('updatedAt 随写入推进', async () => {
     const before = dbRow().updatedAt;
     // updatedAt 是 ISO 字符串，毫秒精度；隔 5ms 保证可比。

@@ -65,51 +65,30 @@ export function getSiteSettings(): SiteSettings {
   return refreshSiteSettingsCache();
 }
 
+function omitNullish<T extends object>(obj: T): Partial<T> {
+  const out: Partial<T> = {};
+  for (const key of Object.keys(obj) as (keyof T)[]) {
+    const value = obj[key];
+    if (value != null) {
+      out[key] = value;
+    }
+  }
+  return out;
+}
+
 export function updateSiteSettings(
   updates: Partial<Omit<SiteSettings, 'updatedAt'>>
 ): SiteSettings {
   const current = getSiteSettings();
   const next: SiteSettings = {
-    siteName: updates.siteName ?? current.siteName,
-    siteUrl: updates.siteUrl ?? current.siteUrl,
-    bellThrottleSeconds: updates.bellThrottleSeconds ?? current.bellThrottleSeconds,
-    notificationThrottleSeconds:
-      updates.notificationThrottleSeconds ?? current.notificationThrottleSeconds,
-    enableBrowserNotificationToast:
-      updates.enableBrowserNotificationToast ?? current.enableBrowserNotificationToast,
-    enableNotificationPush: updates.enableNotificationPush ?? current.enableNotificationPush,
-    enableBellPush: updates.enableBellPush ?? current.enableBellPush,
-    enableBellSound: updates.enableBellSound ?? current.enableBellSound,
-    sshReconnectMaxRetries: updates.sshReconnectMaxRetries ?? current.sshReconnectMaxRetries,
-    sshReconnectDelaySeconds: updates.sshReconnectDelaySeconds ?? current.sshReconnectDelaySeconds,
+    ...current,
+    ...omitNullish(updates),
     language: updates.language ? normalizeLocale(updates.language) : current.language,
-    theme: updates.theme ?? current.theme,
-    disabledNotificationChannels:
-      updates.disabledNotificationChannels ?? current.disabledNotificationChannels,
     updatedAt: new Date().toISOString(),
   };
 
   const orm = getOrmDb();
-  orm
-    .update(siteSettings)
-    .set({
-      siteName: next.siteName,
-      siteUrl: next.siteUrl,
-      bellThrottleSeconds: next.bellThrottleSeconds,
-      notificationThrottleSeconds: next.notificationThrottleSeconds,
-      enableBrowserNotificationToast: next.enableBrowserNotificationToast,
-      enableNotificationPush: next.enableNotificationPush,
-      enableBellPush: next.enableBellPush,
-      enableBellSound: next.enableBellSound,
-      sshReconnectMaxRetries: next.sshReconnectMaxRetries,
-      sshReconnectDelaySeconds: next.sshReconnectDelaySeconds,
-      language: next.language,
-      theme: next.theme,
-      disabledNotificationChannels: next.disabledNotificationChannels,
-      updatedAt: next.updatedAt,
-    })
-    .where(eq(siteSettings.id, 1))
-    .run();
+  orm.update(siteSettings).set(next).where(eq(siteSettings.id, 1)).run();
 
   siteSettingsCache = { value: next, expiresAt: Date.now() + SITE_SETTINGS_TTL_MS };
 
