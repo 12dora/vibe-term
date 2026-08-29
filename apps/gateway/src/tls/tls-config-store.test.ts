@@ -39,6 +39,7 @@ describe('TlsConfigStore', () => {
         'acme_last_attempt_at',
         'acme_next_renew_at',
         'updated_at',
+        'acme_account_directory',
       ]);
     } finally {
       close();
@@ -57,6 +58,7 @@ describe('TlsConfigStore', () => {
       expect(row.caCertPem).toBeNull();
       expect(row.certPem).toBeNull();
       expect(row.acmeStatus).toBe('idle');
+      expect(row.acmeAccountDirectory).toBeNull();
       expect(row.hasCloudflareToken).toBe(false);
       expect(row.hasCaKey).toBe(false);
       expect(row.hasLeafKey).toBe(false);
@@ -179,6 +181,23 @@ describe('TlsConfigStore', () => {
       expect(updated.acmeStatus).toBe('pending');
       expect(updated.hasCloudflareToken).toBe(true);
       expect(updated.hasAccountKey).toBe(false);
+
+      const withDirectory = await store.upsert({
+        acmeAccountUrl: 'https://acme-staging-v02.api.letsencrypt.org/acme/acct/1',
+        acmeAccountDirectory: 'https://acme-staging-v02.api.letsencrypt.org/directory',
+      });
+      expect(withDirectory.acmeAccountUrl).toBe(
+        'https://acme-staging-v02.api.letsencrypt.org/acme/acct/1'
+      );
+      expect(withDirectory.acmeAccountDirectory).toBe(
+        'https://acme-staging-v02.api.letsencrypt.org/directory'
+      );
+      const clearedUrl = await store.upsert({ acmeAccountUrl: null });
+      expect(clearedUrl.acmeAccountUrl).toBeNull();
+      expect(clearedUrl.acmeAccountDirectory).toBe(
+        'https://acme-staging-v02.api.letsencrypt.org/directory'
+      );
+      expect(clearedUrl.hasAccountKey).toBe(false);
       const material = await store.getPrivateMaterial();
       expect(material.acmeCfToken).toBe('keep-me');
       expect(material.acmeAccountKey).toBeNull();

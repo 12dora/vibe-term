@@ -648,6 +648,7 @@ export const tlsConfig = sqliteTable(
     acmeCfTokenEnc: text('acme_cf_token_enc'),
     acmeAccountKeyEnc: text('acme_account_key_enc'),
     acmeAccountUrl: text('acme_account_url'),
+    acmeAccountDirectory: text('acme_account_directory'),
     acmeStatus: text('acme_status').notNull().default('idle'),
     acmeLastError: text('acme_last_error'),
     acmeLastAttemptAt: integer('acme_last_attempt_at'),

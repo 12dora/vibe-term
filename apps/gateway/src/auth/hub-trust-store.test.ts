@@ -54,4 +54,22 @@ describe('HubTrustStore', () => {
       close();
     }
   });
+
+  test('put/get/delete canonicalize host, default port, and trailing slash', () => {
+    const { db, close } = createMigratedAuthDb();
+    try {
+      const store = new HubTrustStore(db);
+      store.put({
+        hubUrl: 'HTTPS://Hub.Example:443/',
+        caPem: '-----BEGIN CERTIFICATE-----\nMIIB\n-----END CERTIFICATE-----',
+        fingerprint: 'ab'.repeat(32),
+      });
+      expect(store.get('https://hub.example')?.hubUrl).toBe('https://hub.example');
+      expect(store.get('https://HUB.EXAMPLE:443/')?.fingerprint).toBe('ab'.repeat(32));
+      store.delete('HTTPS://hub.example:443');
+      expect(store.get('https://hub.example/')).toBeNull();
+    } finally {
+      close();
+    }
+  });
 });

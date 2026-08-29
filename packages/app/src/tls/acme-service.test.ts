@@ -10,7 +10,9 @@ import {
   RENEWAL_BACKOFF_MIN_MS,
   RENEWAL_CHECK_INTERVAL_MS,
   RenewalScheduler,
+  acmeDirectoryUrl,
   issue,
+  waitForTxt,
 } from './acme-service';
 import { createCa, issueLeaf } from './cert-authority';
 import { CloudflareDnsClient } from './cloudflare-dns';
@@ -23,6 +25,7 @@ function fakeClient(opts: {
   keyAuth: string;
   onCreate?: (challengeType: string) => void;
   fail?: boolean;
+  skipRemove?: boolean;
 }): AcmeClientLike {
   return {
     getAccountUrl: () => 'https://acme.example/acct/1',
@@ -34,14 +37,32 @@ function fakeClient(opts: {
       expect(autoOpts.challengePriority).toEqual([opts.challenge.type]);
       await autoOpts.challengeCreateFn(AUTHZ, opts.challenge, opts.keyAuth);
       opts.onCreate?.(opts.challenge.type);
-      await autoOpts.challengeRemoveFn(AUTHZ, opts.challenge, opts.keyAuth);
+      if (!opts.skipRemove) {
+        try {
+          await autoOpts.challengeRemoveFn(AUTHZ, opts.challenge, opts.keyAuth);
+        } catch {
+          // swallowed like acme-client
+        }
+      }
       return opts.certPem;
     },
   };
 }
 
+function instantDnsWait() {
+  return {
+    resolveTxt: (async () => [['dns-key-auth']]) as (
+      hostname: string,
+      nameservers?: string[]
+    ) => Promise<string[][]>,
+    sleep: async () => {},
+    dnsIntervalMs: 1,
+    dnsTimeoutMs: 50,
+  };
+}
+
 describe('issue', () => {
-  test('http-01 writes challenge, persists cert/key, and sets nextRenewAt', async () => {
+  test('http-01 writes challenge, returns cert/key, and does not commit the store', async () => {
     const { db, close } = createMigratedAuthDb();
     try {
       const store = new TlsConfigStore(db);
@@ -68,7 +89,7 @@ describe('issue', () => {
           seenPending = true;
         },
       });
-      await issue({
+      const result = await issue({
         store,
         challenge: responder,
         dns: new CloudflareDnsClient(async () => new Response('no', { status: 500 })),
@@ -78,21 +99,22 @@ describe('issue', () => {
       expect(
         responder.handle(new Request('http://127.0.0.1/.well-known/acme-challenge/tok-1'))?.status
       ).toBe(404);
+      expect(result.certPem).toContain('BEGIN CERTIFICATE');
+      expect(result.keyPem).toContain('BEGIN');
+      expect(result.nextRenewAt).toBe(result.notAfter - ACME_RENEW_LEAD_MS);
+      expect(result.directoryUrl).toBe(acmeDirectoryUrl(true));
+      expect(result.accountUrl).toBe('https://acme.example/acct/1');
+      expect(result.cleanupWarning).toBeNull();
       const row = await store.get();
-      expect(row.acmeStatus).toBe('ok');
-      expect(row.certPem).toContain('BEGIN CERTIFICATE');
-      expect(row.acmeNextRenewAt).toBe((row.certNotAfter ?? 0) - ACME_RENEW_LEAD_MS);
-      expect(row.hasLeafKey).toBe(true);
-      expect(row.hasAccountKey).toBe(true);
-      const material = await store.getPrivateMaterial();
-      expect(material.keyPem).toContain('BEGIN');
-      expect(material.acmeAccountKey).toContain('BEGIN');
+      expect(row.acmeStatus).toBe('idle');
+      expect(row.certPem).toBeNull();
+      expect(row.hasLeafKey).toBe(false);
     } finally {
       close();
     }
   });
 
-  test('dns-01 creates and deletes Cloudflare TXT records', async () => {
+  test('dns-01 waits for TXT visibility then deletes records in an outer finally', async () => {
     const { db, close } = createMigratedAuthDb();
     try {
       const store = new TlsConfigStore(db);
@@ -106,11 +128,18 @@ describe('issue', () => {
         acmeCfToken: 'cf-secret',
       });
       const calls: string[] = [];
+      const seenNameservers: Array<string[] | undefined> = [];
       const dns = new CloudflareDnsClient(async (url, init) => {
         const method = init?.method ?? 'GET';
         calls.push(`${method} ${url}`);
         if (String(url).includes('/zones?name=example.com')) {
           return Response.json({ success: true, result: [{ id: 'zone-1', name: 'example.com' }] });
+        }
+        if (method === 'GET' && String(url).endsWith('/zones/zone-1')) {
+          return Response.json({
+            success: true,
+            result: { name_servers: ['ns1.example.com', '203.0.113.1'] },
+          });
         }
         if (method === 'POST') {
           const body = JSON.parse(String(init?.body));
@@ -124,7 +153,7 @@ describe('issue', () => {
         }
         return Response.json({ success: false }, { status: 400 });
       });
-      await issue({
+      const result = await issue({
         store,
         challenge: new AcmeHttp01Challenge(),
         dns,
@@ -134,16 +163,147 @@ describe('issue', () => {
             challenge: { type: 'dns-01', token: 'dns-tok' },
             keyAuth: 'dns-key-auth',
           }),
+        resolveTxt: async (_hostname, nameservers) => {
+          seenNameservers.push(nameservers);
+          return [['dns-key-auth']];
+        },
+        sleep: async () => {},
+        dnsIntervalMs: 1,
+        dnsTimeoutMs: 50,
       });
       expect(calls.some((item) => item.startsWith('POST '))).toBe(true);
       expect(calls.some((item) => item.startsWith('DELETE '))).toBe(true);
-      expect((await store.get()).acmeStatus).toBe('ok');
+      expect(calls.some((item) => item.includes('GET ') && item.endsWith('/zones/zone-1'))).toBe(
+        true
+      );
+      expect(seenNameservers[0]).toEqual(['ns1.example.com', '203.0.113.1']);
+      expect(result.cleanupWarning).toBeNull();
+      expect((await store.get()).acmeStatus).toBe('idle');
     } finally {
       close();
     }
   });
 
-  test('records acme_status=error on failure', async () => {
+  test('persists a cleanup warning when TXT deletion fails after successful issuance', async () => {
+    const { db, close } = createMigratedAuthDb();
+    try {
+      const store = new TlsConfigStore(db);
+      const ca = await createCa({ name: 'acme dns fail' });
+      const leaf = await issueLeaf({ ca, sans: ['example.com'], days: 90 });
+      await store.upsert({
+        mode: 'acme',
+        acmeDomain: 'example.com',
+        acmeEmail: 'ops@example.com',
+        acmeChallenge: 'dns-01',
+        acmeCfToken: 'cf-secret',
+      });
+      const dns = new CloudflareDnsClient(async (url, init) => {
+        const method = init?.method ?? 'GET';
+        if (String(url).includes('/zones?name=example.com')) {
+          return Response.json({ success: true, result: [{ id: 'zone-1', name: 'example.com' }] });
+        }
+        if (method === 'GET' && String(url).endsWith('/zones/zone-1')) {
+          return Response.json({ success: true, result: { name_servers: ['203.0.113.1'] } });
+        }
+        if (method === 'POST') {
+          return Response.json({ success: true, result: { id: 'rec-1' } });
+        }
+        if (method === 'DELETE') {
+          return Response.json({ success: false, errors: [{ message: 'busy' }] }, { status: 500 });
+        }
+        return Response.json({ success: false }, { status: 400 });
+      });
+      const result = await issue({
+        store,
+        challenge: new AcmeHttp01Challenge(),
+        dns,
+        clientFactory: () =>
+          fakeClient({
+            certPem: leaf.certPem,
+            challenge: { type: 'dns-01', token: 'dns-tok' },
+            keyAuth: 'dns-key-auth',
+            skipRemove: true,
+          }),
+        ...instantDnsWait(),
+      });
+      expect(result.certPem).toContain('BEGIN CERTIFICATE');
+      expect(result.cleanupWarning).toContain('dns-01 cleanup failed');
+      expect(result.cleanupWarning).toContain('rec-1');
+    } finally {
+      close();
+    }
+  });
+
+  test('does not reuse an account URL from a different ACME directory', async () => {
+    const { db, close } = createMigratedAuthDb();
+    try {
+      const store = new TlsConfigStore(db);
+      const ca = await createCa({ name: 'dir switch' });
+      const leaf = await issueLeaf({ ca, sans: ['example.com'], days: 90 });
+      const seen: Array<{ directoryUrl: string; accountUrl?: string }> = [];
+      const factory: (opts: {
+        directoryUrl: string;
+        accountKey: string;
+        accountUrl?: string;
+      }) => AcmeClientLike = (opts) => {
+        seen.push({ directoryUrl: opts.directoryUrl, accountUrl: opts.accountUrl });
+        return fakeClient({
+          certPem: leaf.certPem,
+          challenge: { type: 'http-01', token: 't' },
+          keyAuth: 't.k',
+        });
+      };
+
+      await store.upsert({
+        mode: 'acme',
+        acmeDomain: 'example.com',
+        acmeEmail: 'ops@example.com',
+        acmeChallenge: 'http-01',
+        acmeStaging: true,
+        acmeAccountKey: 'ACCOUNT_KEY',
+        acmeAccountUrl: 'https://staging.example/acct/1',
+        acmeAccountDirectory: acmeDirectoryUrl(true),
+      });
+      const staging = await issue({
+        store,
+        challenge: new AcmeHttp01Challenge(),
+        dns: new CloudflareDnsClient(async () => new Response('no', { status: 500 })),
+        clientFactory: factory,
+        config: { staging: true },
+      });
+      expect(seen.at(-1)?.accountUrl).toBe('https://staging.example/acct/1');
+      expect(staging.directoryUrl).toBe(acmeDirectoryUrl(true));
+
+      const production = await issue({
+        store,
+        challenge: new AcmeHttp01Challenge(),
+        dns: new CloudflareDnsClient(async () => new Response('no', { status: 500 })),
+        clientFactory: factory,
+        config: { staging: false },
+      });
+      expect(seen.at(-1)?.accountUrl).toBeUndefined();
+      expect(production.directoryUrl).toBe(acmeDirectoryUrl(false));
+
+      await store.upsert({
+        acmeStaging: false,
+        acmeAccountUrl: production.accountUrl,
+        acmeAccountDirectory: production.directoryUrl,
+      });
+      const backToStaging = await issue({
+        store,
+        challenge: new AcmeHttp01Challenge(),
+        dns: new CloudflareDnsClient(async () => new Response('no', { status: 500 })),
+        clientFactory: factory,
+        config: { staging: true },
+      });
+      expect(seen.at(-1)?.accountUrl).toBeUndefined();
+      expect(backToStaging.directoryUrl).toBe(acmeDirectoryUrl(true));
+    } finally {
+      close();
+    }
+  });
+
+  test('throws on issuance failure without writing cert material', async () => {
     const { db, close } = createMigratedAuthDb();
     try {
       const store = new TlsConfigStore(db);
@@ -168,11 +328,55 @@ describe('issue', () => {
         })
       ).rejects.toThrow('acme boom');
       const row = await store.get();
-      expect(row.acmeStatus).toBe('error');
-      expect(row.acmeLastError).toBe('acme boom');
+      expect(row.acmeStatus).toBe('idle');
+      expect(row.certPem).toBeNull();
+      expect(row.acmeLastError).toBeNull();
     } finally {
       close();
     }
+  });
+});
+
+describe('waitForTxt', () => {
+  test('polls until the exact TXT value is visible', async () => {
+    let calls = 0;
+    let now = 0;
+    await waitForTxt({
+      hostname: '_acme-challenge.example.com',
+      value: 'abc',
+      nameservers: ['203.0.113.1'],
+      intervalMs: 2000,
+      timeoutMs: 10_000,
+      now: () => now,
+      sleep: async (ms) => {
+        now += ms;
+      },
+      resolveTxt: async (hostname, nameservers) => {
+        expect(hostname).toBe('_acme-challenge.example.com');
+        expect(nameservers).toEqual(['203.0.113.1']);
+        calls += 1;
+        if (calls < 3) return [];
+        return [['abc']];
+      },
+    });
+    expect(calls).toBe(3);
+  });
+
+  test('times out when the value never appears', async () => {
+    let now = 0;
+    await expect(
+      waitForTxt({
+        hostname: '_acme-challenge.example.com',
+        value: 'abc',
+        intervalMs: 2000,
+        timeoutMs: 4000,
+        now: () => now,
+        sleep: async (ms) => {
+          now += ms;
+        },
+        resolveTxt: async () => [],
+      })
+    ).rejects.toThrow(/did not propagate/);
   });
 });
 

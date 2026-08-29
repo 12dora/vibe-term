@@ -40,7 +40,7 @@ async function main(): Promise<void> {
     assembled.tls.stop();
     await assembled.httpsListener.stop();
     await assembled.stop();
-    server.stop(true);
+    await server.stop(true);
   };
 
   const shutdownHooks = {

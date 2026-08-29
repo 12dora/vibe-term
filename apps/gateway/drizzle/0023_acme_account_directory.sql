@@ -1,0 +1,1 @@
+ALTER TABLE `tls_config` ADD `acme_account_directory` text;

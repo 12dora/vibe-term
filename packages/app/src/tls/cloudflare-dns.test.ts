@@ -22,6 +22,12 @@ describe('CloudflareDnsClient', () => {
       if (method === 'DELETE' && url.endsWith('/zones/zone-1/dns_records/rec-9')) {
         return json({ success: true, result: { id: 'rec-9' } });
       }
+      if (method === 'GET' && url.endsWith('/zones/zone-1')) {
+        return json({
+          success: true,
+          result: { id: 'zone-1', name_servers: ['ns1.example.com', 'ns2.example.com'] },
+        });
+      }
       return json({ success: false, errors: [{ message: 'unexpected' }] }, 400);
     };
 
@@ -31,6 +37,7 @@ describe('CloudflareDnsClient', () => {
     const recordId = await dns.createTxt('tok', zoneId, '_acme-challenge.www.example.com', 'abc');
     expect(recordId).toBe('rec-9');
     await dns.deleteRecord('tok', zoneId, recordId);
+    expect(await dns.getNameServers('tok', zoneId)).toEqual(['ns1.example.com', 'ns2.example.com']);
 
     expect(calls[0]?.url).toBe('https://api.cloudflare.com/client/v4/zones?name=www.example.com');
     expect(calls[1]?.url).toBe('https://api.cloudflare.com/client/v4/zones?name=example.com');

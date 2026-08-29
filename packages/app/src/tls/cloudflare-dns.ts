@@ -48,6 +48,17 @@ export class CloudflareDnsClient {
     );
   }
 
+  async getNameServers(token: string, zoneId: string): Promise<string[]> {
+    const payload = await this.request<{ result?: { name_servers?: string[] } }>(
+      token,
+      'GET',
+      `/zones/${encodeURIComponent(zoneId)}`
+    );
+    return (payload.result?.name_servers ?? []).filter(
+      (item): item is string => typeof item === 'string' && item.length > 0
+    );
+  }
+
   private async request<T>(
     token: string,
     method: string,

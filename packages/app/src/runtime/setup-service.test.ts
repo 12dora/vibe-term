@@ -1,10 +1,22 @@
 import '../lib/test-master-key';
 import { afterEach, describe, expect, test } from 'bun:test';
-import { mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
+import {
+  lstat,
+  mkdir,
+  mkdtemp,
+  readFile,
+  readdir,
+  realpath,
+  rm,
+  symlink,
+  writeFile,
+} from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { enableDirect } from '../commands/direct';
 import type { DirectEnableResult } from '../commands/direct';
+import { readEnvFile, writeEnvFile } from '../lib/env-file';
+import { withEnvLock } from '../lib/env-mutation';
 import { pathExists } from '../lib/fs-utils';
 import type { LocalAuthContext } from '../lib/local-auth';
 import { openLocalAuth } from '../lib/local-auth';
@@ -465,6 +477,141 @@ describe('joinHub', () => {
       name.endsWith('.tmp')
     );
     expect(leftovers).toEqual([]);
+  });
+
+  test('join promotion through an absolute symlink updates the target and keeps the link', async () => {
+    const dir = await tempDir();
+    const volumeDir = join(dir, 'volume');
+    const overlayDir = join(dir, 'overlay');
+    await mkdir(volumeDir);
+    await mkdir(overlayDir);
+    const realPath = join(volumeDir, 'app.env');
+    const linkPath = join(overlayDir, 'app.env');
+    await writeFile(realPath, 'GATEWAY_PORT=21111\nOTHER=keep\n', 'utf8');
+    await symlink(realPath, linkPath);
+    const deps = await baseDeps({
+      envPath: linkPath,
+      installDir: dir,
+      performHubJoin: async () => ({
+        userId: 'uid-1',
+        username: 'bob',
+        hubUrl: 'https://hub.example.com',
+      }),
+    });
+    await joinHub(
+      {
+        hubUrl: 'https://hub.example.com',
+        token: 'token-value',
+        name: 'studio',
+        directEnable: false,
+      },
+      deps
+    );
+    expect((await lstat(linkPath)).isSymbolicLink()).toBe(true);
+    expect(await realpath(linkPath)).toBe(await realpath(realPath));
+    expect(await readEnvFile(realPath)).toMatchObject({
+      TMEX_ROLES: 'node',
+      TMEX_HUB_URL: 'https://hub.example.com',
+      OTHER: 'keep',
+    });
+  });
+
+  test('join promotion through a relative symlink updates the target and keeps the link', async () => {
+    const dir = await tempDir();
+    const volumeDir = join(dir, 'volume');
+    const overlayDir = join(dir, 'overlay');
+    await mkdir(volumeDir);
+    await mkdir(overlayDir);
+    const realPath = join(volumeDir, 'app.env');
+    const linkPath = join(overlayDir, 'app.env');
+    await writeFile(realPath, 'GATEWAY_PORT=21111\nOTHER=keep\n', 'utf8');
+    await symlink('../volume/app.env', linkPath);
+    const deps = await baseDeps({
+      envPath: linkPath,
+      installDir: dir,
+      performHubJoin: async () => ({
+        userId: 'uid-1',
+        username: 'bob',
+        hubUrl: 'https://hub.example.com',
+      }),
+    });
+    await joinHub(
+      {
+        hubUrl: 'https://hub.example.com',
+        token: 'token-value',
+        name: 'studio',
+        directEnable: false,
+      },
+      deps
+    );
+    expect((await lstat(linkPath)).isSymbolicLink()).toBe(true);
+    expect(await readEnvFile(realPath)).toMatchObject({
+      TMEX_ROLES: 'node',
+      TMEX_HUB_URL: 'https://hub.example.com',
+    });
+  });
+
+  test('join promotion through a dangling symlink writes the missing target', async () => {
+    const dir = await tempDir();
+    const volumeDir = join(dir, 'volume');
+    const overlayDir = join(dir, 'overlay');
+    await mkdir(volumeDir);
+    await mkdir(overlayDir);
+    const realPath = join(volumeDir, 'app.env');
+    const linkPath = join(overlayDir, 'app.env');
+    await symlink(realPath, linkPath);
+    const deps = await baseDeps({
+      envPath: linkPath,
+      installDir: dir,
+      performHubJoin: async () => ({
+        userId: 'uid-1',
+        username: 'bob',
+        hubUrl: 'https://hub.example.com',
+      }),
+    });
+    await joinHub(
+      {
+        hubUrl: 'https://hub.example.com',
+        token: 'token-value',
+        name: 'studio',
+        directEnable: false,
+      },
+      deps
+    );
+    expect((await lstat(linkPath)).isSymbolicLink()).toBe(true);
+    expect(await readEnvFile(realPath)).toMatchObject({
+      TMEX_ROLES: 'node',
+      TMEX_HUB_URL: 'https://hub.example.com',
+    });
+  });
+
+  test('re-reads env before promote so a concurrent TRUST_PROXY write is kept', async () => {
+    const deps = await baseDeps();
+    deps.performHubJoin = async () => {
+      await withEnvLock(async () => {
+        const current = await readEnvFile(deps.envPath);
+        await writeEnvFile(deps.envPath, { ...current, TMEX_TRUST_PROXY: 'true' });
+      });
+      return {
+        userId: 'uid-1',
+        username: 'bob',
+        hubUrl: 'https://hub.example.com',
+      };
+    };
+    await joinHub(
+      {
+        hubUrl: 'https://hub.example.com',
+        token: 'token-value',
+        name: 'studio',
+        directEnable: false,
+      },
+      deps
+    );
+    const env = await readEnvFile(deps.envPath);
+    expect(env.TMEX_ROLES).toBe('node');
+    expect(env.TMEX_HUB_URL).toBe('https://hub.example.com');
+    expect(env.TMEX_TRUST_PROXY).toBe('true');
+    expect(env.OTHER).toBe('keep');
   });
 
   test('maps JoinError codes onto SetupError', async () => {

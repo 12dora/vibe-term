@@ -16,6 +16,7 @@ import {
   mergeMissingKeys,
   parseEnvContent,
   readEnvFile,
+  resolveEnvWriteTarget,
   stringifyEnv,
   writeEnvFile,
 } from './env-file';
@@ -122,6 +123,57 @@ describe('env-file', () => {
       expect(await readEnvFile(linkPath)).toEqual({ A: '2' });
       expect(await readEnvFile(realPath)).toEqual({ A: '2' });
       expect(await readFile(realPath, 'utf8')).toBe('A=2\n');
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  test('resolveEnvWriteTarget follows existing absolute and relative symlinks', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'tmex-env-target-'));
+    try {
+      const volumeDir = join(dir, 'volume');
+      const overlayDir = join(dir, 'overlay');
+      await mkdir(volumeDir);
+      await mkdir(overlayDir);
+      const realPath = join(volumeDir, 'app.env');
+      await writeFile(realPath, 'A=1\n', { encoding: 'utf8', mode: 0o600 });
+      const absLink = join(overlayDir, 'abs.env');
+      const relLink = join(overlayDir, 'rel.env');
+      await symlink(realPath, absLink);
+      await symlink('../volume/app.env', relLink);
+
+      expect(await resolveEnvWriteTarget(absLink)).toBe(await realpath(realPath));
+      expect(await resolveEnvWriteTarget(relLink)).toBe(await realpath(realPath));
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  test('resolveEnvWriteTarget falls back to the missing target of a dangling symlink', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'tmex-env-target-dangle-'));
+    try {
+      const volumeDir = join(dir, 'volume');
+      const overlayDir = join(dir, 'overlay');
+      await mkdir(volumeDir);
+      await mkdir(overlayDir);
+      const realPath = join(volumeDir, 'app.env');
+      const absLink = join(overlayDir, 'abs.env');
+      const relLink = join(overlayDir, 'rel.env');
+      await symlink(realPath, absLink);
+      await symlink('../volume/app.env', relLink);
+
+      expect(await resolveEnvWriteTarget(absLink)).toBe(realPath);
+      expect(await resolveEnvWriteTarget(relLink)).toBe(realPath);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  test('resolveEnvWriteTarget returns the original path when the file is missing', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'tmex-env-target-missing-'));
+    try {
+      const path = join(dir, 'app.env');
+      expect(await resolveEnvWriteTarget(path)).toBe(path);
     } finally {
       await rm(dir, { recursive: true, force: true });
     }

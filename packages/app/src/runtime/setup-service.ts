@@ -4,6 +4,7 @@ import { basename, dirname, join, resolve } from 'node:path';
 import { PROCESS_STARTED_AT } from '../../../../apps/gateway/src/api/system-routes';
 import { ensureNodeIdentity } from '../../../../apps/gateway/src/auth/node-identity-service';
 import { resolveInstallDir as resolveGatewayInstallDir } from '../../../../apps/gateway/src/system/install-info';
+import { canonicalHubUrl } from '../../../../packages/shared/src/auth';
 import { type EnvName, resolveEnvName } from '../../../../packages/shared/src/env/load-env';
 import {
   type DirectEnableResult,
@@ -21,8 +22,10 @@ import {
 import {
   readEnvFile as defaultReadEnvFile,
   writeEnvFile as defaultWriteEnvFile,
+  resolveEnvWriteTarget,
   stringifyEnv,
 } from '../lib/env-file';
+import { withEnvLock } from '../lib/env-mutation';
 import { createInstallLayout } from '../lib/install-layout';
 import type { LocalAuthContext } from '../lib/local-auth';
 import { readInstalledNativeManifest } from '../lib/native-datachannel';
@@ -364,21 +367,23 @@ async function patchOwnedEnvKeys(
   deps: SetupServiceDeps,
   patch: Record<string, string>
 ): Promise<void> {
-  const read = deps.readEnvFile ?? defaultReadEnvFile;
-  const write = deps.writeEnvFile ?? defaultWriteEnvFile;
-  let existing: Record<string, string> = {};
-  try {
-    existing = await read(deps.envPath);
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
+  await withEnvLock(async () => {
+    const read = deps.readEnvFile ?? defaultReadEnvFile;
+    const write = deps.writeEnvFile ?? defaultWriteEnvFile;
+    let existing: Record<string, string> = {};
+    try {
+      existing = await read(deps.envPath);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
+        throw wrapEnvWriteError(error);
+      }
+    }
+    try {
+      await write(deps.envPath, { ...existing, ...patch });
+    } catch (error) {
       throw wrapEnvWriteError(error);
     }
-  }
-  try {
-    await write(deps.envPath, { ...existing, ...patch });
-  } catch (error) {
-    throw wrapEnvWriteError(error);
-  }
+  });
 }
 
 export function resolveRepoRoot(): string {
@@ -521,9 +526,13 @@ async function writeStagedEnv(
   await write(path, content);
 }
 
-async function promoteStagedEnv(deps: SetupServiceDeps, stagedPath: string): Promise<void> {
+async function promoteStagedEnv(
+  deps: SetupServiceDeps,
+  stagedPath: string,
+  destPath: string
+): Promise<void> {
   const renameFn = deps.renameEnvFile ?? fsRename;
-  await renameFn(stagedPath, deps.envPath);
+  await renameFn(stagedPath, destPath);
 }
 
 async function removeStagedEnv(deps: SetupServiceDeps, stagedPath: string | null): Promise<void> {
@@ -591,19 +600,33 @@ export async function joinHub(input: JoinHubInput, deps: SetupServiceDeps): Prom
   if (typeof input.name !== 'string' || input.name.trim().length === 0) {
     throw new SetupError('join_failed', 'node name is required', 400);
   }
-  const hubUrl = assertSetupUrl(input.hubUrl, deps.nodeEnv).toString().replace(/\/+$/, '');
+  let hubUrl: string;
+  try {
+    hubUrl = canonicalHubUrl(assertSetupUrl(input.hubUrl, deps.nodeEnv).toString());
+  } catch (error) {
+    if (error instanceof SetupError) throw error;
+    throw new SetupError('invalid_url', errorCause(error), 400);
+  }
   return await withSetupTransition(deps, async () => {
-    const existing = await readExistingEnv(deps);
-    const stagedPath = newStagedEnvPath(deps.envPath);
-    const writeJoinEnv = async (url: string) => {
+    let envTarget: string;
+    try {
+      envTarget = await resolveEnvWriteTarget(deps.envPath);
+    } catch (error) {
+      throw wrapJoinEnvWriteError(error);
+    }
+    const stagedPath = newStagedEnvPath(envTarget);
+    const writeJoinEnv = async (url: string, base: Record<string, string>) => {
       await writeStagedEnv(
         deps,
         stagedPath,
-        stringifyEnv({ ...existing, TMEX_ROLES: 'node', TMEX_HUB_URL: url })
+        stringifyEnv({ ...base, TMEX_ROLES: 'node', TMEX_HUB_URL: url })
       );
     };
     try {
-      await writeJoinEnv(hubUrl);
+      await withEnvLock(async () => {
+        const existing = await readExistingEnv(deps);
+        await writeJoinEnv(hubUrl, existing);
+      });
     } catch (error) {
       await removeStagedEnv(deps, stagedPath);
       throw wrapJoinEnvWriteError(error);
@@ -632,10 +655,11 @@ export async function joinHub(input: JoinHubInput, deps: SetupServiceDeps): Prom
     }
 
     try {
-      if (joined.hubUrl !== hubUrl) {
-        await writeJoinEnv(joined.hubUrl);
-      }
-      await promoteStagedEnv(deps, stagedPath);
+      await withEnvLock(async () => {
+        const latest = await readExistingEnv(deps);
+        await writeJoinEnv(joined.hubUrl, latest);
+        await promoteStagedEnv(deps, stagedPath, envTarget);
+      });
     } catch (error) {
       await removeStagedEnv(deps, stagedPath);
       throw wrapJoinEnvWriteError(error, joined.hubUrl);

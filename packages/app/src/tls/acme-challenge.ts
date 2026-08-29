@@ -1,4 +1,18 @@
 const PREFIX = '/.well-known/acme-challenge/';
+const TOKEN_RE = /^[A-Za-z0-9_-]{1,256}$/;
+
+function decodeChallengeToken(raw: string): string | null {
+  let decoded: string;
+  try {
+    decoded = decodeURIComponent(raw);
+  } catch {
+    return null;
+  }
+  if (!TOKEN_RE.test(decoded)) {
+    return null;
+  }
+  return decoded;
+}
 
 export class AcmeHttp01Challenge {
   private readonly tokens = new Map<string, string>();
@@ -19,8 +33,8 @@ export class AcmeHttp01Challenge {
     if (req.method !== 'GET' && req.method !== 'HEAD') {
       return new Response('Method Not Allowed', { status: 405 });
     }
-    const token = decodeURIComponent(url.pathname.slice(PREFIX.length));
-    if (!token || token.includes('/')) {
+    const token = decodeChallengeToken(url.pathname.slice(PREFIX.length));
+    if (!token) {
       return new Response('Not Found', { status: 404 });
     }
     const keyAuth = this.tokens.get(token);

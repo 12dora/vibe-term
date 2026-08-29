@@ -112,6 +112,7 @@ join 串有两个版本：
 
 - **v1**：`base64url(enroll_sk ‖ root_public_key ‖ key_log_head_hash)`，恰好 128 字符。
 - **v2**（hub 为 self-signed HTTPS 时）：`<v1>.<64 位小写 hex>`，hex 是该 hub CA 的 SPKI SHA-256。加入端用它 pin 住 `GET /api/tls/ca.crt` 拉到的 PEM，写入本机 `hub_trust`（按 hub URL 一行）；之后对该 URL 的 hub-client HTTP 与 uplink WebSocket 都带 `tls.ca`。无 fingerprint 的旧串仍可 join，行为与 v1 相同。
+- **CA 轮换**：本地 CA 剩余有效期不足 30 天时 `TlsService` 会生成新 CA 并重签叶子证书，SPKI 指纹随之改变；已加入的 node 里 `hub_trust` 仍是旧 CA，uplink 会握手失败，需在 hub 上重新生成 join 串并让各 node 重新 `hub join`（或通过设置页向导加入）。CA 有效期 10 年，正常部署内不会触发。
 
 **`enroll_sk` 不经过 hub。** CA pin 只约束那一台 hub 的 URL，换 hub 要重新 enroll / join。
 

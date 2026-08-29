@@ -68,4 +68,36 @@ describe('HttpsListener', () => {
     expect(listener.state().running).toBe(false);
     expect(listener.state().error).toBeNull();
   });
+
+  test('same-port reapply awaits stop and does not report EADDRINUSE', async () => {
+    const ca = await createCa({ name: 'tmex reapply CA' });
+    const leaf = await issueLeaf({
+      ca,
+      sans: ['localhost', '127.0.0.1'],
+      days: 398,
+    });
+    const chain = `${leaf.certPem.trim()}\n${ca.certPem.trim()}\n`;
+    const port = ephemeralPort();
+    const listener = new HttpsListener({
+      fetch: () => new Response('reapply'),
+      websocket,
+    });
+    listeners.push(listener);
+
+    const cfg = {
+      port,
+      host: '127.0.0.1' as const,
+      certPem: chain,
+      keyPem: leaf.keyPem,
+    };
+    await listener.apply(cfg);
+    expect(listener.state()).toEqual({ running: true, port, error: null });
+
+    await listener.apply(cfg);
+    expect(listener.state()).toEqual({ running: true, port, error: null });
+
+    const res = await fetch(`https://127.0.0.1:${port}/`, { tls: { ca: ca.certPem } });
+    expect(res.status).toBe(200);
+    expect(await res.text()).toBe('reapply');
+  });
 });

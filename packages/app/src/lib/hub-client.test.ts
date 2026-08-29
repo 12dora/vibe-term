@@ -24,6 +24,20 @@ describe('assertHubJoinUrl', () => {
     );
     expect(assertHubJoinUrl('https://hub.example', true, 'production').protocol).toBe('https:');
   });
+
+  test('returns a canonical URL (lowercase host, no default port, no trailing slash origin)', () => {
+    const url = assertHubJoinUrl('HTTPS://Hub.Example:443/');
+    expect(url.protocol).toBe('https:');
+    expect(url.hostname).toBe('hub.example');
+    expect(url.port).toBe('');
+    expect(url.toString().replace(/\/+$/, '')).toBe('https://hub.example');
+  });
+
+  test('rejects credentials, query, and fragment', () => {
+    expect(() => assertHubJoinUrl('https://user:pass@hub.example')).toThrow(/credentials/);
+    expect(() => assertHubJoinUrl('https://hub.example?x=1')).toThrow(/query|fragment/);
+    expect(() => assertHubJoinUrl('https://hub.example#frag')).toThrow(/query|fragment/);
+  });
 });
 
 describe('createHubFetcher', () => {
@@ -46,6 +60,23 @@ describe('createHubFetcher', () => {
     );
     await fetcher('https://hub.example/api/auth/mode');
     expect(seen).toEqual([{ ca: ['-----BEGIN CERTIFICATE-----\nCA\n-----END CERTIFICATE-----'] }]);
+  });
+
+  test('looks up trust by canonical hub URL', async () => {
+    const keys: string[] = [];
+    const inner: typeof fetch = async () => new Response('{}');
+    const fetcher = createHubFetcher(
+      {
+        get(hubUrl) {
+          keys.push(hubUrl);
+          return { caPem: '-----BEGIN CERTIFICATE-----\nCA\n-----END CERTIFICATE-----' };
+        },
+      },
+      'HTTPS://Hub.Example:443/',
+      inner
+    );
+    await fetcher('https://hub.example/api/auth/mode');
+    expect(keys).toEqual(['https://hub.example']);
   });
 });
 

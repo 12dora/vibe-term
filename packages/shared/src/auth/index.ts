@@ -219,3 +219,5 @@ export {
   uplinkAuthMessage,
 } from './uplink-auth';
 export type { UplinkAuth } from './uplink-auth';
+
+export { canonicalHubUrl } from './hub-url';

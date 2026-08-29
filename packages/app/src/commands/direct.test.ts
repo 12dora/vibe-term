@@ -20,6 +20,7 @@ import type { ParsedArgs } from '../types';
 import {
   disableDirect,
   enableDirect,
+  promoteNativeDirectory,
   reenableDirectIfNeeded,
   runDirect,
   shouldEnableDirectForRoles,
@@ -52,6 +53,11 @@ function fakePin(tarballUrl: string, integrity: string): NativePin {
 async function leftoverStaging(installDir: string): Promise<string[]> {
   const names = await readdir(installDir);
   return names.filter((name) => name.startsWith('native.tmp-'));
+}
+
+async function leftoverBackup(installDir: string): Promise<string[]> {
+  const names = await readdir(installDir);
+  return names.filter((name) => name.startsWith('native.bak-'));
 }
 
 async function serveTarball(bytes: Uint8Array): Promise<{ url: string; stop: () => void }> {
@@ -136,6 +142,7 @@ describe('enableDirect / disableDirect', () => {
       expect(manifest.sha256).toBe(sha256Hex(addon));
       expect(manifest.napiVersion).toBe(8);
       expect(await leftoverStaging(installDir)).toEqual([]);
+      expect(await leftoverBackup(installDir)).toEqual([]);
     } finally {
       served.stop();
     }
@@ -286,6 +293,21 @@ describe('enableDirect / disableDirect', () => {
     expect(result.ok).toBe(true);
     expect(Buffer.from(await readFile(nativeAddonPath(layout.nativeDir))).equals(addon)).toBe(true);
     expect(await leftoverStaging(installDir)).toEqual([]);
+    expect(await leftoverBackup(installDir)).toEqual([]);
+  });
+
+  test('promotion failure keeps the old addon', async () => {
+    const installDir = await makeInstallDir();
+    const layout = createInstallLayout(installDir);
+    await mkdir(layout.nativeDir, { recursive: true });
+    await writeFile(nativeAddonPath(layout.nativeDir), 'old-addon');
+    const missingStaging = join(installDir, 'native.tmp-missing');
+    const backupDir = join(installDir, `native.bak-${process.pid}`);
+    await expect(
+      promoteNativeDirectory(missingStaging, layout.nativeDir, backupDir)
+    ).rejects.toThrow();
+    expect(await readFile(nativeAddonPath(layout.nativeDir), 'utf8')).toBe('old-addon');
+    expect(await leftoverBackup(installDir)).toEqual([]);
   });
 });
 

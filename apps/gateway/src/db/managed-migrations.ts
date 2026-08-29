@@ -28,6 +28,7 @@ const MIGRATIONS = [
   '0020_node_identity_user.sql',
   '0021_tls_config.sql',
   '0022_hub_trust.sql',
+  '0023_acme_account_directory.sql',
 ] as const;
 
 export interface MaterializedMigrations {

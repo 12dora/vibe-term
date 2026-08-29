@@ -63,7 +63,7 @@ export class HttpsListener {
     this.server = null;
     if (!server) return;
     try {
-      server.stop(true);
+      await server.stop(true);
     } catch (error) {
       this.opts.log?.(
         `https listener stop failed: ${error instanceof Error ? error.message : String(error)}`

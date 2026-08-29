@@ -5,6 +5,7 @@ import { enrollmentTokens, nodes } from '../../../../apps/gateway/src/db/schema'
 import { encodeRedeemPopMessage } from '../../../../apps/gateway/src/hub/redeem-pop';
 import {
   bytesEqual,
+  canonicalHubUrl,
   createNodeCertificate,
   decodeAdmitNodePayload,
   decodeAuthorization,
@@ -25,6 +26,7 @@ import {
 } from '../../../shared/src/auth';
 import { t } from '../i18n';
 import { readEnvFile, writeEnvFile } from '../lib/env-file';
+import { withEnvLock } from '../lib/env-mutation';
 import { pathExists } from '../lib/fs-utils';
 import {
   type HubFetch,
@@ -39,12 +41,12 @@ import { readJsonFile } from '../lib/json-file';
 import type { LocalAuthContext } from '../lib/local-auth';
 import { openInstallAuth } from '../lib/local-auth';
 import { assertRootKeyMatches, deriveRootKey, resolvePassword } from '../lib/password';
+import { parseAndValidateCaPem, readBoundedResponseText } from '../lib/pem';
 import { type ServiceManagerKind, detectServiceManager } from '../lib/platform';
 import { DEFAULT_PEER_PORT, parseTmexRoles } from '../lib/roles';
 import { restartService, stopService } from '../lib/service';
 import { fingerprintPublicKey, totpOtpauthUri } from '../lib/totp-uri';
 import { asString } from '../lib/validate';
-import { spkiFingerprint } from '../tls/cert-authority';
 import type { ParsedArgs } from '../types';
 import type { InstallMeta } from '../types';
 
@@ -137,6 +139,60 @@ function pinHubCa(inner: HubFetch, pem: string): HubFetch {
   return ((input, init) => inner(input, { ...init, tls: { ca: [pem] } })) as HubFetch;
 }
 
+function errorCode(error: unknown): string {
+  if (!error || typeof error !== 'object') return '';
+  const code = (error as { code?: unknown }).code;
+  return typeof code === 'string' ? code : '';
+}
+
+function errorHaystack(error: unknown): string {
+  const parts = [errorCode(error)];
+  let current: unknown = error;
+  for (let depth = 0; depth < 4 && current; depth++) {
+    if (current instanceof Error) {
+      parts.push(current.name, current.message);
+      current = current.cause;
+    } else {
+      parts.push(String(current));
+      break;
+    }
+  }
+  return parts.join(' ').toLowerCase();
+}
+
+function isTlsVerifyError(error: unknown): boolean {
+  const haystack = errorHaystack(error);
+  return /unable_to_verify|unable to verify|self[- ]signed|depth_zero|err_tls|err_cert|certificate|hostname|altname|cert_has_expired|unable_to_get_issuer|tls handshake|ssl/.test(
+    haystack
+  );
+}
+
+function authModeJoinError(error: unknown, pinned: boolean): JoinError {
+  const cause = joinErrorMessage(error, 'unable to resolve hub uid from GET /api/auth/mode');
+  if (isTlsVerifyError(error)) {
+    if (pinned) {
+      return new JoinError(
+        'hub_unreachable',
+        `unable to resolve hub uid from GET /api/auth/mode: TLS verification failed (${cause}). Check the pinned CA and hub hostname.`
+      );
+    }
+    return new JoinError(
+      'hub_unreachable',
+      `unable to resolve hub uid from GET /api/auth/mode: TLS verification failed (${cause}). This hub may be using a self-signed certificate; generate a v2 join token from the hub.`
+    );
+  }
+  if (isNetworkFetchError(error)) {
+    return new JoinError(
+      'hub_unreachable',
+      `unable to resolve hub uid from GET /api/auth/mode: network error (${cause})`
+    );
+  }
+  return new JoinError(
+    'hub_unreachable',
+    `unable to resolve hub uid from GET /api/auth/mode: ${cause}`
+  );
+}
+
 async function fetchPinnedHubCa(
   hubUrl: string,
   fingerprint: string,
@@ -157,17 +213,26 @@ async function fetchPinnedHubCa(
   if (!response.ok) {
     throw new JoinError('join_failed', 'ca_unavailable');
   }
-  const pem = await response.text();
-  let actual: string;
+  let raw: string;
   try {
-    actual = await spkiFingerprint(pem);
+    raw = await readBoundedResponseText(response);
   } catch (error) {
-    throw new JoinError('join_failed', joinErrorMessage(error, 'ca_fingerprint_mismatch'));
+    const message = joinErrorMessage(error, 'ca_unavailable');
+    throw new JoinError(
+      'join_failed',
+      message === 'ca_response_too_large' ? 'ca_response_too_large' : 'ca_invalid'
+    );
   }
-  if (actual !== fingerprint) {
+  let parsed: Awaited<ReturnType<typeof parseAndValidateCaPem>>;
+  try {
+    parsed = await parseAndValidateCaPem(raw);
+  } catch {
+    throw new JoinError('join_failed', 'ca_invalid');
+  }
+  if (parsed.fingerprint !== fingerprint) {
     throw new JoinError('join_failed', 'ca_fingerprint_mismatch');
   }
-  return pem;
+  return parsed.canonicalPem;
 }
 
 function log(io: HubIo | undefined, message: string): void {
@@ -201,10 +266,12 @@ async function persistHubUrl(ctx: LocalAuthContext, hubUrl: string | null): Prom
 }
 
 async function writeRolesAndHubUrl(envPath: string, roles: string, hubUrl: string): Promise<void> {
-  const env = await readEnvFile(envPath);
-  env.TMEX_ROLES = roles;
-  env.TMEX_HUB_URL = hubUrl;
-  await writeEnvFile(envPath, env);
+  await withEnvLock(async () => {
+    const env = await readEnvFile(envPath);
+    env.TMEX_ROLES = roles;
+    env.TMEX_HUB_URL = hubUrl;
+    await writeEnvFile(envPath, env);
+  });
 }
 
 async function resolveServiceName(parsed: ParsedArgs, installDir: string): Promise<string> {
@@ -404,13 +471,13 @@ export async function performHubJoin(
 
   let hubUrl: string;
   try {
-    hubUrl = assertHubJoinUrl(
-      input.hubUrl,
-      input.insecureLocal === true,
-      input.nodeEnv ?? process.env.NODE_ENV
-    )
-      .toString()
-      .replace(/\/+$/, '');
+    hubUrl = canonicalHubUrl(
+      assertHubJoinUrl(
+        input.hubUrl,
+        input.insecureLocal === true,
+        input.nodeEnv ?? process.env.NODE_ENV
+      ).toString()
+    );
   } catch (error) {
     throw new JoinError('invalid_url', joinErrorMessage(error, 'invalid hub url'));
   }
@@ -427,8 +494,8 @@ export async function performHubJoin(
   try {
     const mode = await fetchAuthMode(hubUrl, hubFetcher);
     uid = mode.uid;
-  } catch {
-    uid = null;
+  } catch (error) {
+    throw authModeJoinError(error, Boolean(decoded.caFingerprint));
   }
   if (!uid) {
     throw new JoinError('hub_unreachable', 'unable to resolve hub uid from GET /api/auth/mode');

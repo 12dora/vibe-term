@@ -1,6 +1,7 @@
 import {
   type RootKey,
   buildLogin,
+  canonicalHubUrl,
   createDelegation,
   decodeBase64url,
   encodeBase64url,
@@ -64,7 +65,13 @@ export function createHubFetcher(
   hubUrl: string,
   inner: HubFetch = fetch
 ): HubFetch {
-  const trusted = hubTrustStore.get(hubUrl);
+  let key = hubUrl;
+  try {
+    key = canonicalHubUrl(hubUrl);
+  } catch {
+    return inner;
+  }
+  const trusted = hubTrustStore.get(key);
   if (!trusted?.caPem) return inner;
   const ca = [trusted.caPem];
   return ((input, init) => inner(input, { ...init, tls: { ca } })) as HubFetch;
@@ -100,14 +107,14 @@ export function assertHubJoinUrl(
     throw new Error(`invalid hub url: ${raw}`);
   }
   if (url.protocol === 'https:') {
-    return url;
+    return new URL(canonicalHubUrl(url.toString()));
   }
   const localHost = url.hostname === '127.0.0.1' || url.hostname === 'localhost';
   if (url.protocol === 'http:' && insecureLocal && localHost) {
     if (nodeEnv === 'production') {
       throw new Error('--insecure-local is not allowed when NODE_ENV=production');
     }
-    return url;
+    return new URL(canonicalHubUrl(url.toString()));
   }
   throw new Error(
     'hub join requires https: (use --insecure-local only for http://127.0.0.1 or http://localhost)'

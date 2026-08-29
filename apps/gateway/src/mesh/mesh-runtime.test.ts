@@ -17,6 +17,7 @@ import {
   ensureNodeIdentity,
   selfSignedNodeCertificate,
 } from '../auth';
+import { HubTrustStore } from '../auth/hub-trust-store';
 import { createMigratedAuthDb } from '../auth/test-db';
 import type { AuthDb } from '../auth/types';
 import type { GatewayRuntime } from '../runtime';
@@ -88,6 +89,71 @@ describe('createMeshRuntime', () => {
     expect(mesh.peers.listenPort).toBeGreaterThan(0);
     expect(mesh.hub).toBeNull();
     expect(mesh.uplink.state === 'connecting' || mesh.uplink.state === 'online').toBe(true);
+  });
+
+  test('logs once when TMEX hub URL has no pinned CA', async () => {
+    const { db, close } = createMigratedAuthDb();
+    seedUser(new UserStore(db));
+    const [clientWs] = fakeSocketPair();
+    const warnings: string[] = [];
+    const originalWarn = console.warn;
+    console.warn = (...args: unknown[]) => {
+      warnings.push(args.map(String).join(' '));
+    };
+    try {
+      const mesh = await createMeshRuntime({
+        db,
+        gateway: fakeGateway(db),
+        config: {
+          roles: { hub: false, node: true },
+          hubUrl: 'HTTPS://Hub.Example:443/',
+          peerPort: 0,
+          stunServers: [],
+        },
+        wsFactory: () => clientWs,
+        peerHostname: '127.0.0.1',
+      });
+      fixtures.push({ close, stop: () => mesh.stop() });
+      expect(warnings.filter((line) => line.includes('[uplink] no pinned CA for hub='))).toEqual([
+        '[uplink] no pinned CA for hub=https://hub.example; using system trust',
+      ]);
+    } finally {
+      console.warn = originalWarn;
+    }
+  });
+
+  test('does not warn when a pinned CA exists for the canonical hub URL', async () => {
+    const { db, close } = createMigratedAuthDb();
+    seedUser(new UserStore(db));
+    new HubTrustStore(db).put({
+      hubUrl: 'https://hub.example',
+      caPem: '-----BEGIN CERTIFICATE-----\nMIIB\n-----END CERTIFICATE-----',
+      fingerprint: 'ab'.repeat(32),
+    });
+    const [clientWs] = fakeSocketPair();
+    const warnings: string[] = [];
+    const originalWarn = console.warn;
+    console.warn = (...args: unknown[]) => {
+      warnings.push(args.map(String).join(' '));
+    };
+    try {
+      const mesh = await createMeshRuntime({
+        db,
+        gateway: fakeGateway(db),
+        config: {
+          roles: { hub: false, node: true },
+          hubUrl: 'HTTPS://Hub.Example:443/',
+          peerPort: 0,
+          stunServers: [],
+        },
+        wsFactory: () => clientWs,
+        peerHostname: '127.0.0.1',
+      });
+      fixtures.push({ close, stop: () => mesh.stop() });
+      expect(warnings.some((line) => line.includes('[uplink] no pinned CA'))).toBe(false);
+    } finally {
+      console.warn = originalWarn;
+    }
   });
 
   test('MeshRuntimeConfig.peerBindHost is threaded to PeerServer when peerHostname is omitted', async () => {

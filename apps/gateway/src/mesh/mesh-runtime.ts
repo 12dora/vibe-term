@@ -1,5 +1,5 @@
 import os from 'node:os';
-import { encodeBase64url } from '@tmex/shared/auth';
+import { canonicalHubUrl, encodeBase64url } from '@tmex/shared/auth';
 import { type LinkSession, createInMemoryLinkPair } from '@tmex/shared/link';
 import { filesBulkHooks } from '../api/files';
 import {
@@ -764,6 +764,15 @@ export async function createMeshRuntime(opts: CreateMeshRuntimeOptions): Promise
   let hubPresenceLive = false;
 
   const hubTrust = config.hubUrl ? new HubTrustStore(db).get(config.hubUrl) : null;
+  if (config.hubUrl && !hubTrust?.caPem) {
+    let label = config.hubUrl;
+    try {
+      label = canonicalHubUrl(config.hubUrl);
+    } catch {
+      // keep the stored value when it cannot be canonicalized
+    }
+    console.warn(`[uplink] no pinned CA for hub=${label}; using system trust`);
+  }
   const uplink = new UplinkClient({
     hubUrl: hubEndpointUrl(config),
     identity: { nodeId: identity.nodeIdHex, edSecretKey: identity.edPrivateKey },

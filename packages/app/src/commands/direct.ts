@@ -139,6 +139,39 @@ async function removeDir(path: string): Promise<void> {
   await rm(path, { recursive: true, force: true });
 }
 
+export async function promoteNativeDirectory(
+  stagingDir: string,
+  nativeDir: string,
+  backupDir: string
+): Promise<void> {
+  let backedUp = false;
+  try {
+    if (await pathExists(backupDir)) {
+      await removeDir(backupDir);
+    }
+    if (await pathExists(nativeDir)) {
+      await rename(nativeDir, backupDir);
+      backedUp = true;
+    }
+    await rename(stagingDir, nativeDir);
+  } catch (error) {
+    if (backedUp) {
+      try {
+        if (await pathExists(nativeDir)) {
+          await removeDir(nativeDir);
+        }
+        await rename(backupDir, nativeDir);
+      } catch {
+        // prefer the original promotion error
+      }
+    }
+    throw error;
+  }
+  if (backedUp) {
+    await removeDir(backupDir).catch(() => undefined);
+  }
+}
+
 export async function enableDirect(options: EnableDirectOptions): Promise<DirectEnableResult> {
   const log = (message: string) => logLine(options.log, message);
   const layout = createInstallLayout(options.installDir);
@@ -206,10 +239,8 @@ export async function enableDirect(options: EnableDirectOptions): Promise<Direct
     await writeJsonFile(nativeManifestPath(stagingDir), manifest);
 
     throwIfAborted(signal);
-    if (await pathExists(layout.nativeDir)) {
-      await removeDir(layout.nativeDir);
-    }
-    await rename(stagingDir, layout.nativeDir);
+    const backupDir = join(options.installDir, `native.bak-${process.pid}`);
+    await promoteNativeDirectory(stagingDir, layout.nativeDir, backupDir);
     stagingDir = null;
 
     const dest = nativeAddonPath(layout.nativeDir);

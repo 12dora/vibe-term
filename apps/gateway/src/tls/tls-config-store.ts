@@ -53,6 +53,7 @@ function emptyPublic(now = 0): TlsConfigPublic {
     acmeChallenge: null,
     acmeStaging: false,
     acmeAccountUrl: null,
+    acmeAccountDirectory: null,
     acmeStatus: 'idle',
     acmeLastError: null,
     acmeLastAttemptAt: null,
@@ -105,6 +106,7 @@ export class TlsConfigStore {
       acmeChallenge: isAcmeChallenge(row.acmeChallenge) ? row.acmeChallenge : null,
       acmeStaging: Boolean(row.acmeStaging),
       acmeAccountUrl: row.acmeAccountUrl ?? null,
+      acmeAccountDirectory: row.acmeAccountDirectory ?? null,
       acmeStatus: isAcmeStatus(row.acmeStatus) ? row.acmeStatus : 'idle',
       acmeLastError: row.acmeLastError ?? null,
       acmeLastAttemptAt: row.acmeLastAttemptAt ?? null,
@@ -170,6 +172,10 @@ export class TlsConfigStore {
       acmeAccountKeyEnc,
       acmeAccountUrl:
         'acmeAccountUrl' in partial ? (partial.acmeAccountUrl ?? null) : current.acmeAccountUrl,
+      acmeAccountDirectory:
+        'acmeAccountDirectory' in partial
+          ? (partial.acmeAccountDirectory ?? null)
+          : current.acmeAccountDirectory,
       acmeStatus: partial.acmeStatus ?? current.acmeStatus,
       acmeLastError:
         'acmeLastError' in partial ? (partial.acmeLastError ?? null) : current.acmeLastError,
@@ -204,6 +210,7 @@ export class TlsConfigStore {
           acmeCfTokenEnc: values.acmeCfTokenEnc,
           acmeAccountKeyEnc: values.acmeAccountKeyEnc,
           acmeAccountUrl: values.acmeAccountUrl,
+          acmeAccountDirectory: values.acmeAccountDirectory,
           acmeStatus: values.acmeStatus,
           acmeLastError: values.acmeLastError,
           acmeLastAttemptAt: values.acmeLastAttemptAt,

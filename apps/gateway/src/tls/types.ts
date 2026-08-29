@@ -24,6 +24,7 @@ export type TlsConfigPublic = {
   acmeChallenge: AcmeChallengeType | null;
   acmeStaging: boolean;
   acmeAccountUrl: string | null;
+  acmeAccountDirectory: string | null;
   acmeStatus: AcmeStatus;
   acmeLastError: string | null;
   acmeLastAttemptAt: number | null;
@@ -60,6 +61,7 @@ export type TlsConfigPatch = {
   acmeCfToken?: string | null;
   acmeAccountKey?: string | null;
   acmeAccountUrl?: string | null;
+  acmeAccountDirectory?: string | null;
   acmeStatus?: AcmeStatus;
   acmeLastError?: string | null;
   acmeLastAttemptAt?: number | null;

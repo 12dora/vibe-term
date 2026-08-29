@@ -1,6 +1,12 @@
 import { describe, expect, test } from 'bun:test';
 import { X509Certificate } from 'node:crypto';
-import { createCa, issueLeaf, parseCertificate, spkiFingerprint } from './cert-authority';
+import {
+  CERT_NOT_BEFORE_SKEW_MS,
+  createCa,
+  issueLeaf,
+  parseCertificate,
+  spkiFingerprint,
+} from './cert-authority';
 
 describe('cert-authority', () => {
   test('issues an EC P-256 CA and leaf that node:crypto can verify', async () => {
@@ -36,5 +42,29 @@ describe('cert-authority', () => {
     const fingerprint = await spkiFingerprint(ca.certPem);
     expect(fingerprint).toMatch(/^[0-9a-f]{64}$/);
     expect(fingerprint).not.toBe(await spkiFingerprint(leaf.certPem));
+  });
+
+  test('backdates notBefore by 5 minutes for CA and leaf', async () => {
+    const now = Date.now();
+    const ca = await createCa({ name: 'skew CA', now });
+    const leaf = await issueLeaf({ ca, sans: ['localhost'], days: 398, now });
+    const parsedCa = parseCertificate(ca.certPem);
+    const parsedLeaf = parseCertificate(leaf.certPem);
+    expect(now - parsedCa.notBefore).toBeGreaterThanOrEqual(CERT_NOT_BEFORE_SKEW_MS - 2000);
+    expect(now - parsedCa.notBefore).toBeLessThan(CERT_NOT_BEFORE_SKEW_MS + 2000);
+    expect(now - parsedLeaf.notBefore).toBeGreaterThanOrEqual(CERT_NOT_BEFORE_SKEW_MS - 2000);
+    expect(now - parsedLeaf.notBefore).toBeLessThan(CERT_NOT_BEFORE_SKEW_MS + 2000);
+  });
+
+  test('caps leaf notAfter to the CA notAfter', async () => {
+    const now = Date.now();
+    const ca = await createCa({ name: 'short CA', days: 10, now });
+    const leaf = await issueLeaf({ ca, sans: ['localhost'], days: 398, now });
+    const parsedCa = parseCertificate(ca.certPem);
+    const parsedLeaf = parseCertificate(leaf.certPem);
+    expect(parsedLeaf.notAfter).toBeLessThanOrEqual(parsedCa.notAfter);
+    const tenDaysMs = 10 * 24 * 60 * 60 * 1000;
+    expect(parsedLeaf.notAfter - now).toBeLessThanOrEqual(tenDaysMs);
+    expect(parsedLeaf.notAfter - now).toBeGreaterThan(tenDaysMs - 24 * 60 * 60 * 1000);
   });
 });

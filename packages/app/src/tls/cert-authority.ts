@@ -7,6 +7,8 @@ const EC_ALG: EcKeyGenParams = { name: 'ECDSA', namedCurve: 'P-256' };
 const SIGN_ALG: EcdsaParams = { name: 'ECDSA', hash: 'SHA-256' };
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
 const CA_DAYS = 3650;
+export const CERT_NOT_BEFORE_SKEW_MS = 5 * 60 * 1000;
+export const CA_MIN_REMAINING_MS = 30 * MS_PER_DAY;
 
 export type CaMaterial = {
   certPem: string;
@@ -26,14 +28,19 @@ export type ParsedCertificate = {
   notAfter: number;
 };
 
-export async function createCa(input: { name: string }): Promise<CaMaterial> {
+export async function createCa(input: {
+  name: string;
+  days?: number;
+  now?: number;
+}): Promise<CaMaterial> {
   const keys = await crypto.subtle.generateKey(EC_ALG, true, ['sign', 'verify']);
-  const now = Date.now();
+  const now = input.now ?? Date.now();
+  const days = input.days ?? CA_DAYS;
   const cert = await x509.X509CertificateGenerator.createSelfSigned({
     serialNumber: randomSerial(),
     name: `CN=${escapeCn(input.name)}`,
-    notBefore: new Date(now),
-    notAfter: new Date(now + CA_DAYS * MS_PER_DAY),
+    notBefore: new Date(now - CERT_NOT_BEFORE_SKEW_MS),
+    notAfter: new Date(now + days * MS_PER_DAY),
     signingAlgorithm: SIGN_ALG,
     keys,
     extensions: [
@@ -55,6 +62,7 @@ export async function issueLeaf(input: {
   ca: CaMaterial;
   sans: string[];
   days: number;
+  now?: number;
 }): Promise<LeafMaterial> {
   if (input.sans.length < 1) {
     throw new Error('leaf certificate requires at least one SAN');
@@ -62,14 +70,19 @@ export async function issueLeaf(input: {
   const keys = await crypto.subtle.generateKey(EC_ALG, true, ['sign', 'verify']);
   const caCert = new x509.X509Certificate(firstPemCertificate(input.ca.certPem));
   const caKey = await importPrivateKeyPem(input.ca.keyPem);
-  const now = Date.now();
+  const now = input.now ?? Date.now();
+  const notBefore = now - CERT_NOT_BEFORE_SKEW_MS;
+  const notAfter = Math.min(now + input.days * MS_PER_DAY, caCert.notAfter.getTime());
+  if (notAfter <= notBefore) {
+    throw new Error('CA is expired; cannot issue a leaf certificate');
+  }
   const cn = escapeCn(input.sans[0] ?? 'localhost');
   const cert = await x509.X509CertificateGenerator.create({
     serialNumber: randomSerial(),
     subject: `CN=${cn}`,
     issuer: caCert.subject,
-    notBefore: new Date(now),
-    notAfter: new Date(now + input.days * MS_PER_DAY),
+    notBefore: new Date(notBefore),
+    notAfter: new Date(notAfter),
     signingAlgorithm: SIGN_ALG,
     publicKey: keys.publicKey,
     signingKey: caKey,

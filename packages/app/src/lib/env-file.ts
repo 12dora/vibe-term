@@ -38,7 +38,7 @@ function symlinkResolveError(filePath: string): Error {
   return new Error(`cannot resolve env file symlink: ${filePath}`);
 }
 
-async function resolveEnvWritePath(filePath: string): Promise<string> {
+export async function resolveEnvWriteTarget(filePath: string): Promise<string> {
   try {
     return await realpath(filePath);
   } catch (error) {
@@ -87,7 +87,7 @@ export async function writeEnvFile(
   filePath: string,
   values: Record<string, string>
 ): Promise<void> {
-  const targetPath = await resolveEnvWritePath(filePath);
+  const targetPath = await resolveEnvWriteTarget(filePath);
   const tempPath = join(
     dirname(targetPath),
     `${basename(targetPath)}.${process.pid}.${Date.now()}.tmp`

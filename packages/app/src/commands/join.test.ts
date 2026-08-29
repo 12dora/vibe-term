@@ -23,7 +23,8 @@ import { parseArgs } from '../lib/args';
 import { readEnvFile } from '../lib/env-file';
 import { assertHubJoinUrl } from '../lib/hub-client';
 import { type LocalAuthContext, openLocalAuth } from '../lib/local-auth';
-import { createCa, spkiFingerprint } from '../tls/cert-authority';
+import { MAX_CA_RESPONSE_BYTES } from '../lib/pem';
+import { createCa, issueLeaf, spkiFingerprint } from '../tls/cert-authority';
 import {
   NODE_REVOKED_REJOIN_ERROR,
   performHubJoin,
@@ -1100,6 +1101,195 @@ describe('performHubJoin CA pin', () => {
     );
     const trusted = new HubTrustStore(node.db).get('http://127.0.0.1:9');
     expect(trusted?.fingerprint).toBe(fingerprint);
-    expect(trusted?.caPem).toBe(ca.certPem);
+    expect(trusted?.caPem).toContain('BEGIN CERTIFICATE');
+    expect(await spkiFingerprint(trusted?.caPem ?? '')).toBe(fingerprint);
+  });
+
+  test('rejects real CA concatenated with an attacker CA', async () => {
+    const ca = await createCa({ name: 'real' });
+    const attacker = await createCa({ name: 'attacker' });
+    const fingerprint = await spkiFingerprint(ca.certPem);
+    const token = encodeJoinToken(randomBytes(32), randomBytes(32), randomBytes(32), fingerprint);
+    const fetcher: typeof fetch = async (input) => {
+      const url = new URL(String(input));
+      if (url.pathname === '/api/tls/ca.crt') {
+        return new Response(`${ca.certPem}\n${attacker.certPem}`, { status: 200 });
+      }
+      throw new Error(`unexpected ${url.pathname}`);
+    };
+    const node = await openAuth('standalone');
+    await expect(
+      performHubJoin(
+        {
+          hubUrl: 'http://127.0.0.1:9',
+          token,
+          name: 'studio',
+          insecureLocal: true,
+          nodeEnv: 'test',
+        },
+        { auth: node, fetcher }
+      )
+    ).rejects.toMatchObject({ code: 'join_failed', message: 'ca_invalid' });
+    expect(new HubTrustStore(node.db).get('http://127.0.0.1:9')).toBeNull();
+  });
+
+  test('rejects trailing garbage after the CA PEM', async () => {
+    const ca = await createCa({ name: 'tmex-test' });
+    const fingerprint = await spkiFingerprint(ca.certPem);
+    const token = encodeJoinToken(randomBytes(32), randomBytes(32), randomBytes(32), fingerprint);
+    const fetcher: typeof fetch = async (input) => {
+      const url = new URL(String(input));
+      if (url.pathname === '/api/tls/ca.crt') {
+        return new Response(`${ca.certPem}\n# junk\n`, { status: 200 });
+      }
+      throw new Error(`unexpected ${url.pathname}`);
+    };
+    const node = await openAuth('standalone');
+    await expect(
+      performHubJoin(
+        {
+          hubUrl: 'http://127.0.0.1:9',
+          token,
+          name: 'studio',
+          insecureLocal: true,
+          nodeEnv: 'test',
+        },
+        { auth: node, fetcher }
+      )
+    ).rejects.toMatchObject({ code: 'join_failed', message: 'ca_invalid' });
+  });
+
+  test('rejects an oversized CA response', async () => {
+    const ca = await createCa({ name: 'tmex-test' });
+    const fingerprint = await spkiFingerprint(ca.certPem);
+    const token = encodeJoinToken(randomBytes(32), randomBytes(32), randomBytes(32), fingerprint);
+    const fetcher: typeof fetch = async (input) => {
+      const url = new URL(String(input));
+      if (url.pathname === '/api/tls/ca.crt') {
+        return new Response('x'.repeat(MAX_CA_RESPONSE_BYTES + 1), { status: 200 });
+      }
+      throw new Error(`unexpected ${url.pathname}`);
+    };
+    const node = await openAuth('standalone');
+    await expect(
+      performHubJoin(
+        {
+          hubUrl: 'http://127.0.0.1:9',
+          token,
+          name: 'studio',
+          insecureLocal: true,
+          nodeEnv: 'test',
+        },
+        { auth: node, fetcher }
+      )
+    ).rejects.toMatchObject({ code: 'join_failed', message: 'ca_response_too_large' });
+  });
+
+  test('rejects a non-CA leaf certificate', async () => {
+    const ca = await createCa({ name: 'tmex-test' });
+    const leaf = await issueLeaf({ ca, sans: ['127.0.0.1'], days: 1 });
+    const fingerprint = await spkiFingerprint(leaf.certPem);
+    const token = encodeJoinToken(randomBytes(32), randomBytes(32), randomBytes(32), fingerprint);
+    const fetcher: typeof fetch = async (input) => {
+      const url = new URL(String(input));
+      if (url.pathname === '/api/tls/ca.crt') {
+        return new Response(leaf.certPem, { status: 200 });
+      }
+      throw new Error(`unexpected ${url.pathname}`);
+    };
+    const node = await openAuth('standalone');
+    await expect(
+      performHubJoin(
+        {
+          hubUrl: 'http://127.0.0.1:9',
+          token,
+          name: 'studio',
+          insecureLocal: true,
+          nodeEnv: 'test',
+        },
+        { auth: node, fetcher }
+      )
+    ).rejects.toMatchObject({ code: 'join_failed', message: 'ca_invalid' });
+  });
+});
+
+describe('performHubJoin auth mode errors', () => {
+  test('preserves network failure cause', async () => {
+    const token = encodeJoinToken(randomBytes(32), randomBytes(32), randomBytes(32));
+    const fetcher: typeof fetch = async () => {
+      throw Object.assign(new Error('ECONNREFUSED'), { code: 'ECONNREFUSED' });
+    };
+    const node = await openAuth('standalone');
+    await expect(
+      performHubJoin(
+        {
+          hubUrl: 'http://127.0.0.1:9',
+          token,
+          name: 'studio',
+          insecureLocal: true,
+          nodeEnv: 'test',
+        },
+        { auth: node, fetcher }
+      )
+    ).rejects.toMatchObject({
+      code: 'hub_unreachable',
+      message: expect.stringMatching(/network error.*ECONNREFUSED/i),
+    });
+  });
+
+  test('pinned TLS failure advises checking the CA and hostname', async () => {
+    const ca = await createCa({ name: 'tmex-test' });
+    const fingerprint = await spkiFingerprint(ca.certPem);
+    const token = encodeJoinToken(randomBytes(32), randomBytes(32), randomBytes(32), fingerprint);
+    const fetcher: typeof fetch = async (input) => {
+      const url = new URL(String(input));
+      if (url.pathname === '/api/tls/ca.crt') {
+        return new Response(ca.certPem, { status: 200 });
+      }
+      throw Object.assign(new Error('unable to verify the first certificate'), {
+        code: 'UNABLE_TO_VERIFY_LEAF_SIGNATURE',
+      });
+    };
+    const node = await openAuth('standalone');
+    await expect(
+      performHubJoin(
+        {
+          hubUrl: 'http://127.0.0.1:9',
+          token,
+          name: 'studio',
+          insecureLocal: true,
+          nodeEnv: 'test',
+        },
+        { auth: node, fetcher }
+      )
+    ).rejects.toMatchObject({
+      code: 'hub_unreachable',
+      message: expect.stringMatching(/TLS verification failed.*pinned CA and hub hostname/i),
+    });
+  });
+
+  test('v1 TLS failure against a self-signed hub advises generating a v2 token', async () => {
+    const token = encodeJoinToken(randomBytes(32), randomBytes(32), randomBytes(32));
+    const fetcher: typeof fetch = async () => {
+      throw Object.assign(new Error('self signed certificate'), {
+        code: 'DEPTH_ZERO_SELF_SIGNED_CERT',
+      });
+    };
+    const node = await openAuth('standalone');
+    await expect(
+      performHubJoin(
+        {
+          hubUrl: 'http://127.0.0.1:9',
+          token,
+          name: 'studio',
+          insecureLocal: true,
+          nodeEnv: 'test',
+        },
+        { auth: node, fetcher }
+      )
+    ).rejects.toMatchObject({
+      code: 'hub_unreachable',
+      message: expect.stringMatching(/self-signed certificate.*v2 join token/i),
+    });
   });
 });
