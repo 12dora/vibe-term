@@ -268,7 +268,6 @@
         "description": "Add, edit, and connect to your local and SSH devices.",
         "openButton": "Open Device Management"
       },
-      "refreshToApply": "Refresh to apply language change",
       "saveSettings": "Save Settings",
       "settingsSaved": "Settings saved",
       "saveFailed": "Failed to save settings",
@@ -715,7 +714,7 @@
       "closePane": "Close Pane",
       "addDevice": "Add Device",
       "tab": {
-        "panes": "Panes",
+        "panes": "Terminals",
         "agent": "Agent",
         "files": "Files"
       },
@@ -768,7 +767,7 @@
         "none": "No session selected",
         "new": "New agent session",
         "switch": "Switch session",
-        "selectPaneHint": "Select a pane in the Panes tab to start a session",
+        "selectPaneHint": "Select a pane in the Terminals tab to start a session",
         "noSessions": "No sessions yet",
         "showAll": "Show all sessions",
         "menu": "Session actions",
@@ -1118,6 +1117,7 @@
         "NO_PASSKEY_FOR_ORIGIN": "No passkey works on this address. Your passkeys were created on a different one.",
         "wrongPassword": "Wrong password."
       },
+      "totpDigit": "Code digit {{index}} of {{total}}",
       "security": {
         "title": "Account security",
         "changePassword": "Change password",

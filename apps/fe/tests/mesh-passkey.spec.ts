@@ -20,7 +20,8 @@ test('mesh: register a passkey on the entry node and log in with it', async ({ p
   await addVirtualAuthenticator(page);
   await loginWithPassword(page, state);
 
-  await page.goto(meshUrl(state, '/account/security'), { waitUntil: 'domcontentloaded' });
+  // 账号安全已从整页改成右侧滑出面板：URL 协议是任意路由 + `?panel=security`。
+  await page.goto(meshUrl(state, '/?panel=security'), { waitUntil: 'domcontentloaded' });
   await expect(page.getByTestId('security-passkey-add')).toBeVisible({ timeout: 30_000 });
   await page.getByTestId('security-passkey-name').fill('mesh-e2e');
   await page.getByTestId('security-passkey-add').click();

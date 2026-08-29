@@ -274,7 +274,6 @@ export const I18N_RESOURCES = {
         "description": "Add, edit, and connect to your local and SSH devices.",
         "openButton": "Open Device Management"
       },
-      "refreshToApply": "Refresh to apply language change",
       "saveSettings": "Save Settings",
       "settingsSaved": "Settings saved",
       "saveFailed": "Failed to save settings",
@@ -721,7 +720,7 @@ export const I18N_RESOURCES = {
       "closePane": "Close Pane",
       "addDevice": "Add Device",
       "tab": {
-        "panes": "Panes",
+        "panes": "Terminals",
         "agent": "Agent",
         "files": "Files"
       },
@@ -774,7 +773,7 @@ export const I18N_RESOURCES = {
         "none": "No session selected",
         "new": "New agent session",
         "switch": "Switch session",
-        "selectPaneHint": "Select a pane in the Panes tab to start a session",
+        "selectPaneHint": "Select a pane in the Terminals tab to start a session",
         "noSessions": "No sessions yet",
         "showAll": "Show all sessions",
         "menu": "Session actions",
@@ -1124,6 +1123,7 @@ export const I18N_RESOURCES = {
         "NO_PASSKEY_FOR_ORIGIN": "No passkey works on this address. Your passkeys were created on a different one.",
         "wrongPassword": "Wrong password."
       },
+      "totpDigit": "Code digit {{index}} of {{total}}",
       "security": {
         "title": "Account security",
         "changePassword": "Change password",
@@ -1906,7 +1906,6 @@ export const I18N_RESOURCES = {
         "description": "添加、编辑并连接你的本地与 SSH 设备。",
         "openButton": "打开设备管理"
       },
-      "refreshToApply": "刷新后生效",
       "saveSettings": "保存设置",
       "settingsSaved": "站点设置已保存",
       "saveFailed": "保存设置失败",
@@ -2406,7 +2405,7 @@ export const I18N_RESOURCES = {
         "none": "未选择会话",
         "new": "新建 Agent 会话",
         "switch": "切换会话",
-        "selectPaneHint": "请在 Panes 标签中选择一个 pane 来开启会话",
+        "selectPaneHint": "请在「终端」标签中选择一个 Pane 来开启会话",
         "noSessions": "暂无会话",
         "showAll": "显示全部会话",
         "menu": "会话操作",
@@ -2419,12 +2418,12 @@ export const I18N_RESOURCES = {
         "deleteTitle": "删除此会话？",
         "deleteDesc": "“{{title}}”及其全部消息将被永久删除。",
         "deleteConfirm": "删除",
-        "createDisabledNoPane": "请先打开一个终端 pane 再创建会话",
+        "createDisabledNoPane": "请先打开一个终端 Pane 再创建会话",
         "privacyNotice": "会话将把终端屏幕内容发送给配置的 LLM 服务。"
       },
       "binding": {
         "invalid": "已失效",
-        "mismatchTitle": "此会话绑定的 pane 与当前终端不一致",
+        "mismatchTitle": "此会话绑定的 Pane 与当前终端不一致",
         "goTo": "跳转过去",
         "rebind": "重绑到当前"
       },
@@ -2756,6 +2755,7 @@ export const I18N_RESOURCES = {
         "NO_PASSKEY_FOR_ORIGIN": "当前地址没有可用的通行密钥，已注册的通行密钥属于其他地址。",
         "wrongPassword": "密码不正确。"
       },
+      "totpDigit": "验证码第 {{index}} 位，共 {{total}} 位",
       "security": {
         "title": "账号安全",
         "changePassword": "修改密码",
@@ -3537,7 +3537,6 @@ export const I18N_RESOURCES = {
         "description": "ローカルおよび SSH デバイスの追加・編集・接続を行います。",
         "openButton": "デバイス管理を開く"
       },
-      "refreshToApply": "言語変更を適用するには更新してください",
       "saveSettings": "設定を保存",
       "settingsSaved": "設定を保存しました",
       "saveFailed": "設定の保存に失敗しました",
@@ -4037,7 +4036,7 @@ export const I18N_RESOURCES = {
         "none": "セッション未選択",
         "new": "新規エージェントセッション",
         "switch": "セッションを切り替え",
-        "selectPaneHint": "Panes タブでペインを選択してセッションを開始してください",
+        "selectPaneHint": "「端末」タブでペインを選択してセッションを開始してください",
         "noSessions": "セッションがありません",
         "showAll": "すべてのセッションを表示",
         "menu": "セッション操作",
@@ -4050,14 +4049,14 @@ export const I18N_RESOURCES = {
         "deleteTitle": "このセッションを削除しますか？",
         "deleteDesc": "「{{title}}」とそのメッセージはすべて完全に削除されます。",
         "deleteConfirm": "削除",
-        "createDisabledNoPane": "ターミナル pane を開いてからセッションを作成してください",
+        "createDisabledNoPane": "ターミナルのペインを開いてからセッションを作成してください",
         "privacyNotice": "セッションはターミナル画面の内容を設定済みの LLM サービスへ送信します。"
       },
       "binding": {
         "invalid": "無効",
-        "mismatchTitle": "このセッションは別の pane にバインドされています",
+        "mismatchTitle": "このセッションは別のペインにバインドされています",
         "goTo": "移動",
-        "rebind": "現在の pane に再バインド"
+        "rebind": "現在のペインに再バインド"
       },
       "writeMode": {
         "confirm": "書き込み確認",
@@ -4387,6 +4386,7 @@ export const I18N_RESOURCES = {
         "NO_PASSKEY_FOR_ORIGIN": "このアドレスで使えるパスキーがありません。登録済みのパスキーは別のアドレスのものです。",
         "wrongPassword": "パスワードが正しくありません。"
       },
+      "totpDigit": "認証コード {{total}} 桁中 {{index}} 桁目",
       "security": {
         "title": "アカウントセキュリティ",
         "changePassword": "パスワードを変更",

@@ -1,8 +1,7 @@
-// 账号安全页 `/account/security`：改密、TOTP、passkey。
+// 账号安全面板（右侧滑出，`?panel=security`）：改密、TOTP、passkey。
 //
-// 为什么独立成页而不是塞进「系统设置」的 tab：设计 §4 把「账号安全」放在 Nodes 页（F4-3 负责）
-// 的一个区块里，而 SettingsPage 的 tab 列表属于 F4-2 的改造范围。做成独立页后两边都只需要
-// 一个链接即可复用，且 standalone 下整页返回 null，不会在设置里留一个空 tab。
+// 原先是 `/account/security` 整页。做成面板后不再打断当前页面，也不必再为它单独留一条
+// 无侧栏路由；`standalone`（`mode==='none'`）下整块返回 null，入口本身也不会出现。
 
 import {
   type TotpSetupDraft,
@@ -30,26 +29,30 @@ import type {
 import { defaultAuthApi } from '@tmex/api-client/auth/index';
 import { Button } from '@tmex/ui/button';
 import { Input } from '@tmex/ui/input';
+import { OtpInput } from '@tmex/ui/otp-input';
 import { AlertTriangle, Fingerprint, KeyRound, Loader2, Trash2 } from 'lucide-react';
 import { QRCodeSVG } from 'qrcode.react';
 import { useCallback, useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 
-export interface AccountSecurityPageProps {
+export interface AccountSecurityPanelProps {
   mode?: AuthModeResponse;
   api?: AuthApi;
 }
 
-export default function AccountSecurityPage({
+export default function AccountSecurityPanel({
   mode: modeOverride,
   api = defaultAuthApi,
-}: AccountSecurityPageProps) {
+}: AccountSecurityPanelProps) {
   const fetched = useAuthMode(api, { enabled: !modeOverride });
   const mode = modeOverride ?? fetched.mode;
 
   if (!modeOverride && fetched.loading) {
     return (
-      <div className="flex h-full items-center justify-center p-8 text-muted-foreground">
+      <div
+        className="flex flex-1 items-center justify-center p-8 text-muted-foreground"
+        data-testid="security-panel-pending"
+      >
         <Loader2 className="size-4 animate-spin motion-reduce:animate-none" />
       </div>
     );
@@ -130,17 +133,13 @@ function AccountSecurity({ mode: rawMode, api, reloadMode }: AccountSecurityProp
   });
 
   if (!rawMode.uid || !rawMode.kdfParams) {
-    return (
-      <div className="mx-auto w-full max-w-3xl p-5 text-sm text-muted-foreground">
-        {t('auth.errors.UNKNOWN_USER')}
-      </div>
-    );
+    return <div className="text-sm text-muted-foreground">{t('auth.errors.UNKNOWN_USER')}</div>;
   }
   const mode: ResolvedMode = { ...rawMode, uid: rawMode.uid, kdfParams: rawMode.kdfParams };
   const uid = mode.uid;
 
   return (
-    <div className="mx-auto flex w-full max-w-3xl flex-col gap-4 p-3 sm:p-5">
+    <div className="flex w-full flex-col gap-4" data-testid="account-security-panel">
       <PasswordSection mode={mode} api={api} uid={uid} onDone={reloadMode} />
       <TotpSection
         mode={mode}
@@ -337,7 +336,7 @@ function TotpSection({
       setError(t('auth.security.passwordRequired'));
       return;
     }
-    if (!/^\d{6,8}$/.test(code.trim())) {
+    if (!/^\d{6}$/.test(code)) {
       setError(t('auth.security.totpCodeRequired'));
       return;
     }
@@ -446,13 +445,11 @@ function TotpSection({
             data-testid="security-totp-password"
             onChange={(event) => setPassword(event.target.value)}
           />
-          <Input
-            inputMode="numeric"
-            autoComplete="one-time-code"
-            placeholder="000000"
+          <OtpInput
             value={code}
+            onChange={setCode}
+            digitLabel={(index, length) => t('auth.totpDigit', { index: index + 1, total: length })}
             data-testid="security-totp-code"
-            onChange={(event) => setCode(event.target.value.replace(/\D/g, '').slice(0, 8))}
           />
           <div className="flex gap-2">
             <Button
@@ -638,14 +635,3 @@ function PasskeySection({
     </Section>
   );
 }
-
-export const PageTitle = () => {
-  const { t } = useTranslation();
-  return <>{t('auth.security.title')}</>;
-};
-
-/** 供 F4-2 的路由表挂载：`{ path: 'account/security', element: <AccountSecurityPage /> }`。 */
-export const accountSecurityRoute = {
-  path: 'account/security',
-  moduleLoader: () => import('./AccountSecurityPage'),
-} as const;

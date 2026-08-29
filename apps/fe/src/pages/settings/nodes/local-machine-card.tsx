@@ -6,6 +6,7 @@
 // 四个动作都只动磁盘与 env，运行中的 RTC 管理器无法热加载，后端恒返回 `restartRequired: true`
 // ——这里必须给出「立即重启」并等服务回来，否则用户会以为操作没生效。
 
+import { useSidePanel } from '@/components/side-panels/use-side-panel';
 import { type ApiClient, defaultApiClient } from '@tmex/api-client';
 import type { AuthModeResponse } from '@tmex/api-client/auth/index';
 import { LocalApiError, defaultLocalApi } from '@tmex/api-client/local/local-api';
@@ -214,6 +215,8 @@ export function LocalMachineCard({
 }: LocalMachineCardProps) {
   const { t } = useTranslation();
   const meshEnabled = mode?.mode === 'mesh';
+  // 账号安全改成右侧滑出面板，链接只换查询串，留在当前页面。
+  const { hrefFor: panelHref } = useSidePanel();
   const [restartRequired, setRestartRequired] = useState(false);
   const [directError, setDirectError] = useState<string | null>(null);
   const [leaveRequest, setLeaveRequest] = useState<LeaveDialogRequest | null>(null);
@@ -389,7 +392,7 @@ export function LocalMachineCard({
         {meshEnabled && (
           <div className="flex flex-wrap items-center gap-3 pt-1 text-xs">
             <Link
-              to="/account/security"
+              to={panelHref('security')}
               className="text-muted-foreground underline underline-offset-2 hover:text-foreground"
               data-testid="local-machine-account-security"
             >

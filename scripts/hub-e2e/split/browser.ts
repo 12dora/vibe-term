@@ -3,7 +3,10 @@
  * 场景 F：本机 Playwright → 公网 hub HTTPS（MAP 域名到公网 IP）。
  * Let's Encrypt：ignoreHTTPSErrors=false。private-ca：传 --insecure-tls（TLS 断言较弱）。
  */
-import { chromium, type Page } from '../../../node_modules/.bun/playwright-core@1.58.2/node_modules/playwright-core/index.mjs';
+import {
+  type Page,
+  chromium,
+} from '../../../node_modules/.bun/playwright-core@1.58.2/node_modules/playwright-core/index.mjs';
 
 function arg(name: string, fallback = ''): string {
   const i = process.argv.indexOf(`--${name}`);
@@ -35,7 +38,18 @@ async function shot(page: Page, name: string): Promise<void> {
 
 async function readTerminal(page: Page): Promise<string> {
   return page.evaluate(() => {
-    const term = (window as unknown as { __tmexE2eXterm?: { buffer: { active: { length: number; getLine: (y: number) => { translateToString: (t: boolean) => string } | null } } } }).__tmexE2eXterm;
+    const term = (
+      window as unknown as {
+        __tmexE2eXterm?: {
+          buffer: {
+            active: {
+              length: number;
+              getLine: (y: number) => { translateToString: (t: boolean) => string } | null;
+            };
+          };
+        };
+      }
+    ).__tmexE2eXterm;
     if (!term) return '';
     const buf = term.buffer.active;
     const lines: string[] = [];
@@ -124,7 +138,8 @@ try {
     },
   });
 
-  await page.goto(`${baseUrl}/account/security`, { waitUntil: 'domcontentloaded', timeout: 45_000 });
+  // 账号安全已从整页改成右侧滑出面板（`?panel=security`）。
+  await page.goto(`${baseUrl}/?panel=security`, { waitUntil: 'domcontentloaded', timeout: 45_000 });
   await page.getByTestId('security-passkey-add').waitFor({ timeout: 20_000 });
   await page.getByTestId('security-passkey-name').fill('split-e2e');
   await page.getByTestId('security-passkey-add').click();
@@ -137,7 +152,9 @@ try {
 
   // Bun 下 playwright 的 request 上下文解析 Set-Cookie 时会拿到相对 URL 并抛 ERR_INVALID_URL，改在页面内 fetch
   await page
-    .evaluate(() => fetch('/api/auth/logout', { method: 'POST', credentials: 'include' }).then(() => undefined))
+    .evaluate(() =>
+      fetch('/api/auth/logout', { method: 'POST', credentials: 'include' }).then(() => undefined)
+    )
     .catch(() => undefined);
   await page.context().clearCookies();
   await page.evaluate(() => {

@@ -147,7 +147,8 @@ describe('NodesTab mesh', () => {
     expect(html).toContain('data-testid="https-section"');
     expect(html).not.toContain('data-testid="https-hub-url-hint"');
     expect(html).not.toContain('data-testid="hub-setup-wizard"');
-    expect(html).toContain('href="/account/security"');
+    expect(html).toContain('panel=security');
+    expect(html).not.toContain('href="/account/security"');
     // `/nodes` 整页已移除，本机区块不再给它入口
     expect(html).not.toContain('href="/nodes"');
     expect(html).not.toContain('nodes.machine.openNodesPage');

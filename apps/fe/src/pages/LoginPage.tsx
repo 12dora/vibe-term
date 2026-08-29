@@ -25,6 +25,7 @@ import type { AuthApi, AuthModeResponse } from '@tmex/api-client/auth/index';
 import { defaultAuthApi, requireRootEpoch } from '@tmex/api-client/auth/index';
 import { Button } from '@tmex/ui/button';
 import { Input } from '@tmex/ui/input';
+import { OtpInput } from '@tmex/ui/otp-input';
 import { AlertTriangle, Fingerprint, Loader2 } from 'lucide-react';
 import { type FormEvent, useCallback, useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
@@ -128,7 +129,7 @@ function LoginForm({ mode, api }: LoginFormProps) {
         setError(t('auth.login.credentialsRequired'));
         return;
       }
-      if (mode.totpEnabled && !totp) {
+      if (mode.totpEnabled && totp.length !== 6) {
         setError(t('auth.login.totpRequired'));
         return;
       }
@@ -223,17 +224,18 @@ function LoginForm({ mode, api }: LoginFormProps) {
 
         {mode.totpEnabled ? (
           <div className="flex flex-col gap-1 text-sm">
-            <label className="text-muted-foreground" htmlFor="login-totp">
+            {/* 六个单字符格子没有单一的可关联控件，标题走 aria-labelledby 而不是 <label for>。 */}
+            <span className="text-muted-foreground" id="login-totp-label">
               {t('auth.login.totp')}
-            </label>
-            <Input
-              id="login-totp"
-              inputMode="numeric"
-              autoComplete="one-time-code"
+            </span>
+            <OtpInput
               value={totp}
-              placeholder="000000"
+              onChange={setTotp}
+              aria-labelledby="login-totp-label"
+              digitLabel={(index, length) =>
+                t('auth.totpDigit', { index: index + 1, total: length })
+              }
               data-testid="login-totp"
-              onChange={(event) => setTotp(event.target.value.replace(/\D/g, '').slice(0, 8))}
             />
           </div>
         ) : null}

@@ -45,9 +45,15 @@ describe('LoginPage', () => {
     expect(html).toContain('value="alice"');
   });
 
-  test('未开 TOTP 时不渲染验证码输入框，开了才渲染', () => {
+  test('未开 TOTP 时不渲染验证码输入框，开了才渲染六个格子', () => {
     expect(render(BASE)).not.toContain('data-testid="login-totp"');
-    expect(render({ ...BASE, totpEnabled: true })).toContain('data-testid="login-totp"');
+    const html = render({ ...BASE, totpEnabled: true });
+    expect(html).toContain('data-testid="login-totp"');
+    for (let i = 0; i < 6; i += 1) {
+      expect(html).toContain(`data-testid="login-totp-${i}"`);
+    }
+    expect(html).not.toContain('data-testid="login-totp-6"');
+    expect(html).toContain('autoComplete="one-time-code"');
   });
 
   test('passkey 按钮仅在本 origin 有 passkey 且环境可用时出现', () => {
@@ -57,9 +63,10 @@ describe('LoginPage', () => {
     );
   });
 
-  test('不再提供 passkey 注册入口（注册只在账号安全里）', () => {
+  test('不再提供 passkey 注册入口（注册只在账号安全面板里）', () => {
     const html = render({ ...BASE, passkeyAvailable: true, passkeysForThisOrigin: true });
     expect(html).not.toContain('/account/security');
+    expect(html).not.toContain('panel=security');
     expect(html).not.toContain('data-testid="login-register-passkey"');
   });
 

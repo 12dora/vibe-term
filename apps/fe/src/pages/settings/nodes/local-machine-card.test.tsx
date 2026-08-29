@@ -395,9 +395,11 @@ describe('LocalMachineCard 角色与 Hub 归属', () => {
     expect(html).toContain('nodes.machine.roleStandalone');
   });
 
-  test('mesh 下只留账号安全入口，`/nodes` 整页已经移除', () => {
+  test('mesh 下只留账号安全入口，指向右侧面板而不是已删除的整页', () => {
     const html = render(meshStatus('node'), MESH_MODE);
     expect(html).toContain('data-testid="local-machine-account-security"');
+    expect(html).toContain('href="/?panel=security"');
+    expect(html).not.toContain('href="/account/security"');
     expect(html).not.toContain('href="/nodes"');
     expect(html).not.toContain('nodes.machine.openNodesPage');
   });

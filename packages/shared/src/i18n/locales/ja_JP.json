@@ -268,7 +268,6 @@
         "description": "ローカルおよび SSH デバイスの追加・編集・接続を行います。",
         "openButton": "デバイス管理を開く"
       },
-      "refreshToApply": "言語変更を適用するには更新してください",
       "saveSettings": "設定を保存",
       "settingsSaved": "設定を保存しました",
       "saveFailed": "設定の保存に失敗しました",
@@ -768,7 +767,7 @@
         "none": "セッション未選択",
         "new": "新規エージェントセッション",
         "switch": "セッションを切り替え",
-        "selectPaneHint": "Panes タブでペインを選択してセッションを開始してください",
+        "selectPaneHint": "「端末」タブでペインを選択してセッションを開始してください",
         "noSessions": "セッションがありません",
         "showAll": "すべてのセッションを表示",
         "menu": "セッション操作",
@@ -781,14 +780,14 @@
         "deleteTitle": "このセッションを削除しますか？",
         "deleteDesc": "「{{title}}」とそのメッセージはすべて完全に削除されます。",
         "deleteConfirm": "削除",
-        "createDisabledNoPane": "ターミナル pane を開いてからセッションを作成してください",
+        "createDisabledNoPane": "ターミナルのペインを開いてからセッションを作成してください",
         "privacyNotice": "セッションはターミナル画面の内容を設定済みの LLM サービスへ送信します。"
       },
       "binding": {
         "invalid": "無効",
-        "mismatchTitle": "このセッションは別の pane にバインドされています",
+        "mismatchTitle": "このセッションは別のペインにバインドされています",
         "goTo": "移動",
-        "rebind": "現在の pane に再バインド"
+        "rebind": "現在のペインに再バインド"
       },
       "writeMode": {
         "confirm": "書き込み確認",
@@ -1118,6 +1117,7 @@
         "NO_PASSKEY_FOR_ORIGIN": "このアドレスで使えるパスキーがありません。登録済みのパスキーは別のアドレスのものです。",
         "wrongPassword": "パスワードが正しくありません。"
       },
+      "totpDigit": "認証コード {{total}} 桁中 {{index}} 桁目",
       "security": {
         "title": "アカウントセキュリティ",
         "changePassword": "パスワードを変更",

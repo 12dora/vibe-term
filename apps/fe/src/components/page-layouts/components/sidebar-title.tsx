@@ -1,4 +1,5 @@
 import { Brand } from '@/components/brand';
+import { useSidePanel } from '@/components/side-panels/use-side-panel';
 import { useSharedAuthMode } from '@/node/mesh-nodes';
 import { useSiteStore, useTmuxStore } from '@tmex/stores/react';
 import { useSidebar } from '@tmex/ui/sidebar';
@@ -16,6 +17,8 @@ export function SidebarTitle() {
   const { t } = useTranslation();
   const { isMobile, setOpenMobile } = useSidebar();
   const { meshEnabled } = useSharedAuthMode();
+  // 「多节点互联」改成右侧滑出面板：不离开当前页面，链接形态保留（可右键新开、可分享）。
+  const { hrefFor } = useSidePanel();
 
   // Fetch settings on mount if not loaded
   const fetchSettings = useSiteStore((state) => state.fetchSettings);
@@ -44,7 +47,7 @@ export function SidebarTitle() {
         <ThemeMenu />
         {meshEnabled && (
           <NavLink
-            to="/settings?tab=nodes"
+            to={hrefFor('nodes')}
             className={ACTION_BUTTON_CLASS}
             data-testid="sidebar-nodes"
             aria-label={t('sidebar.nodes')}

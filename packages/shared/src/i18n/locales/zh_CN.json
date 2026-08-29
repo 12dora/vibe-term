@@ -268,7 +268,6 @@
         "description": "添加、编辑并连接你的本地与 SSH 设备。",
         "openButton": "打开设备管理"
       },
-      "refreshToApply": "刷新后生效",
       "saveSettings": "保存设置",
       "settingsSaved": "站点设置已保存",
       "saveFailed": "保存设置失败",
@@ -768,7 +767,7 @@
         "none": "未选择会话",
         "new": "新建 Agent 会话",
         "switch": "切换会话",
-        "selectPaneHint": "请在 Panes 标签中选择一个 pane 来开启会话",
+        "selectPaneHint": "请在「终端」标签中选择一个 Pane 来开启会话",
         "noSessions": "暂无会话",
         "showAll": "显示全部会话",
         "menu": "会话操作",
@@ -781,12 +780,12 @@
         "deleteTitle": "删除此会话？",
         "deleteDesc": "“{{title}}”及其全部消息将被永久删除。",
         "deleteConfirm": "删除",
-        "createDisabledNoPane": "请先打开一个终端 pane 再创建会话",
+        "createDisabledNoPane": "请先打开一个终端 Pane 再创建会话",
         "privacyNotice": "会话将把终端屏幕内容发送给配置的 LLM 服务。"
       },
       "binding": {
         "invalid": "已失效",
-        "mismatchTitle": "此会话绑定的 pane 与当前终端不一致",
+        "mismatchTitle": "此会话绑定的 Pane 与当前终端不一致",
         "goTo": "跳转过去",
         "rebind": "重绑到当前"
       },
@@ -1118,6 +1117,7 @@
         "NO_PASSKEY_FOR_ORIGIN": "当前地址没有可用的通行密钥，已注册的通行密钥属于其他地址。",
         "wrongPassword": "密码不正确。"
       },
+      "totpDigit": "验证码第 {{index}} 位，共 {{total}} 位",
       "security": {
         "title": "账号安全",
         "changePassword": "修改密码",
