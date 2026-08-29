@@ -1,3 +1,5 @@
+import { type DeferredSelectCallbacks, DeferredSelectEffects } from './deferred-select-effects';
+
 // FE 选择事务状态机
 // 管理 pane 切换、history/live 合并
 // 参考: docs/ws-protocol/2026021403-ws-state-machines.md
@@ -27,13 +29,6 @@ export type OutputGateState = 'FLOWING' | 'BUFFERING';
 export interface OutputGate {
   state: OutputGateState;
   buffer: Uint8Array[];
-}
-
-interface DeferredHistory {
-  paneId: string;
-  data: string;
-  alternateScreen: boolean;
-  modes: number;
 }
 
 // ========== 事件定义 ==========
@@ -90,17 +85,7 @@ export type SelectEvent =
 
 // ========== 回调定义 ==========
 
-export interface SelectCallbacks {
-  onResetTerminal?: (deviceId: string, paneId: string) => void;
-  onApplyHistory?: (
-    deviceId: string,
-    paneId: string,
-    data: string,
-    alternateScreen: boolean,
-    modes: number
-  ) => void;
-  onFlushBuffer?: (deviceId: string, paneId: string, buffer: Uint8Array[]) => void;
-  onOutput?: (deviceId: string, paneId: string, data: Uint8Array) => void;
+export interface SelectCallbacks extends DeferredSelectCallbacks {
   onSelectFailed?: (deviceId: string, reason: SelectFailureReason) => void;
 }
 
@@ -139,10 +124,7 @@ interface ActiveTimer {
 export class SelectStateMachine {
   private transactions = new Map<string, SelectTransaction>();
   private outputGates = new Map<string, OutputGate>();
-  private deferredResets = new Map<string, string>();
-  private deferredHistories = new Map<string, DeferredHistory>();
-  private deferredFlushes = new Map<string, { paneId: string; buffer: Uint8Array[] }>();
-  private deferredOutputs = new Map<string, Array<{ paneId: string; data: Uint8Array }>>();
+  private deferred = new DeferredSelectEffects();
   private callbacks: SelectCallbacks;
   private readonly ackTimeoutMs: number;
   private readonly progressTimeoutMs: number;
@@ -161,19 +143,7 @@ export class SelectStateMachine {
 
   setCallbacks(callbacks: SelectCallbacks): void {
     this.callbacks = callbacks;
-    for (const deviceId of this.transactions.keys()) {
-      this.replayDeferred(deviceId);
-    }
-    for (const deviceId of this.deferredResets.keys()) {
-      this.replayDeferred(deviceId);
-    }
-    for (const deviceId of this.deferredHistories.keys()) {
-      this.replayDeferred(deviceId);
-    }
-    for (const deviceId of this.deferredFlushes.keys()) {
-      this.replayDeferred(deviceId);
-    }
-    for (const deviceId of this.deferredOutputs.keys()) {
+    for (const deviceId of this.deferred.deviceIds()) {
       this.replayDeferred(deviceId);
     }
   }
@@ -243,7 +213,7 @@ export class SelectStateMachine {
 
     // 取消之前的事务
     this.cancelTransaction(deviceId);
-    this.clearDeferred(deviceId);
+    this.deferred.clear(deviceId);
 
     // 创建新事务
     const transaction: SelectTransaction = {
@@ -311,23 +281,16 @@ export class SelectStateMachine {
     // 更新状态
     transaction.state = 'HISTORY_APPLIED';
 
-    if (this.callbacks.onResetTerminal && this.callbacks.onApplyHistory) {
-      this.callbacks.onResetTerminal(deviceId, transaction.paneId);
-      this.callbacks.onApplyHistory(
-        deviceId,
-        transaction.paneId,
-        data,
-        event.alternateScreen,
-        event.modes
-      );
-    } else {
-      this.deferredHistories.set(deviceId, {
+    this.deferred.historyOrDefer(
+      deviceId,
+      {
         paneId: transaction.paneId,
         data,
         alternateScreen: event.alternateScreen,
         modes: event.modes,
-      });
-    }
+      },
+      this.callbacks
+    );
 
     this.armProgressDeadline(deviceId);
   }
@@ -362,24 +325,11 @@ export class SelectStateMachine {
     const transactionPaneId = transaction.paneId;
 
     if (commitWithoutHistory) {
-      if (this.callbacks.onResetTerminal) {
-        this.callbacks.onResetTerminal(deviceId, transactionPaneId);
-      } else {
-        this.deferredResets.set(deviceId, transactionPaneId);
-      }
+      this.deferred.resetOrDefer(deviceId, transactionPaneId, this.callbacks.onResetTerminal);
     }
 
-    // 完成事务
     this.completeTransaction(deviceId);
-
-    const replacementDeferred =
-      this.deferredResets.has(deviceId) || this.deferredHistories.has(deviceId);
-    if (this.callbacks.onFlushBuffer && !replacementDeferred) {
-      this.callbacks.onFlushBuffer(deviceId, transactionPaneId, buffered);
-    } else if (buffered.length > 0) {
-      this.deferredFlushes.set(deviceId, { paneId: transactionPaneId, buffer: buffered });
-    }
-
+    this.deferred.flushOrDefer(deviceId, transactionPaneId, buffered, this.callbacks.onFlushBuffer);
     this.replayDeferred(deviceId);
   }
 
@@ -406,14 +356,7 @@ export class SelectStateMachine {
   }
 
   private emitOutput(deviceId: string, paneId: string, data: Uint8Array): void {
-    if (this.callbacks.onOutput) {
-      this.callbacks.onOutput(deviceId, paneId, data);
-      return;
-    }
-
-    const pending = this.deferredOutputs.get(deviceId) ?? [];
-    pending.push({ paneId, data: new Uint8Array(data) });
-    this.deferredOutputs.set(deviceId, pending);
+    this.deferred.outputOrDefer(deviceId, paneId, data, this.callbacks.onOutput);
   }
 
   private handleSelectFailed(event: SelectFailedEvent): void {
@@ -449,7 +392,7 @@ export class SelectStateMachine {
     // 清理
     this.transactions.delete(deviceId);
     this.clearTimer(deviceId);
-    this.clearDeferred(deviceId);
+    this.deferred.clear(deviceId);
 
     this.callbacks.onSelectFailed?.(deviceId, reason);
   }
@@ -464,7 +407,7 @@ export class SelectStateMachine {
     // 清理
     this.transactions.delete(deviceId);
     this.clearTimer(deviceId);
-    this.clearDeferred(deviceId);
+    this.deferred.clear(deviceId);
   }
 
   // ========== 输出门控 ==========
@@ -508,49 +451,7 @@ export class SelectStateMachine {
   }
 
   private replayDeferred(deviceId: string): void {
-    const resetPaneId = this.deferredResets.get(deviceId);
-    if (resetPaneId !== undefined && this.callbacks.onResetTerminal) {
-      this.deferredResets.delete(deviceId);
-      this.callbacks.onResetTerminal(deviceId, resetPaneId);
-    }
-
-    const history = this.deferredHistories.get(deviceId);
-    if (history !== undefined && this.callbacks.onResetTerminal && this.callbacks.onApplyHistory) {
-      this.callbacks.onResetTerminal(deviceId, history.paneId);
-      this.callbacks.onApplyHistory(
-        deviceId,
-        history.paneId,
-        history.data,
-        history.alternateScreen,
-        history.modes
-      );
-      this.deferredHistories.delete(deviceId);
-    }
-
-    if (this.deferredResets.has(deviceId) || this.deferredHistories.has(deviceId)) {
-      return;
-    }
-
-    const flush = this.deferredFlushes.get(deviceId);
-    if (flush && this.callbacks.onFlushBuffer) {
-      this.callbacks.onFlushBuffer(deviceId, flush.paneId, flush.buffer);
-      this.deferredFlushes.delete(deviceId);
-    }
-
-    const outputs = this.deferredOutputs.get(deviceId);
-    if (outputs && this.callbacks.onOutput) {
-      for (const output of outputs) {
-        this.callbacks.onOutput(deviceId, output.paneId, output.data);
-      }
-      this.deferredOutputs.delete(deviceId);
-    }
-  }
-
-  private clearDeferred(deviceId: string): void {
-    this.deferredResets.delete(deviceId);
-    this.deferredHistories.delete(deviceId);
-    this.deferredFlushes.delete(deviceId);
-    this.deferredOutputs.delete(deviceId);
+    this.deferred.replay(deviceId, this.callbacks);
   }
 
   private nextGeneration(deviceId: string): number {
@@ -623,7 +524,7 @@ export class SelectStateMachine {
   cleanup(deviceId: string): void {
     this.cancelTransaction(deviceId);
     this.outputGates.delete(deviceId);
-    this.clearDeferred(deviceId);
+    this.deferred.clear(deviceId);
     this.generations.delete(deviceId);
   }
 
@@ -633,10 +534,7 @@ export class SelectStateMachine {
     }
     this.transactions.clear();
     this.outputGates.clear();
-    this.deferredResets.clear();
-    this.deferredHistories.clear();
-    this.deferredFlushes.clear();
-    this.deferredOutputs.clear();
+    this.deferred.clear();
     for (const timer of this.timers.values()) {
       this.scheduler.cancel(timer);
     }

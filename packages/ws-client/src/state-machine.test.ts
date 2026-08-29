@@ -1,4 +1,5 @@
 import { describe, expect, test } from 'bun:test';
+import { DeferredSelectEffects } from './deferred-select-effects';
 import { SelectStateMachine } from './state-machine';
 
 class ManualScheduler {
@@ -323,5 +324,41 @@ describe('SelectStateMachine', () => {
     scheduler.firePending();
     expect(failures).toEqual(['progress_timeout']);
     expect(sm.getState('device-renew')).toBe('STABLE');
+  });
+
+  test('replays reset, history, flush, and output in that order for one device', () => {
+    const effects = new DeferredSelectEffects();
+    const events: string[] = [];
+
+    effects.deferReset('device-1', '%reset');
+    effects.deferHistory('device-1', {
+      paneId: '%history',
+      data: 'hist',
+      alternateScreen: true,
+      modes: 7,
+    });
+    effects.deferFlush('device-1', '%flush', [new Uint8Array([1])]);
+    effects.deferOutput('device-1', '%out', new Uint8Array([2]));
+
+    effects.replay('device-1', {
+      onResetTerminal: (_deviceId, paneId) => events.push(`reset:${paneId}`),
+      onApplyHistory: (_deviceId, paneId, data, alternateScreen, modes) => {
+        events.push(`history:${paneId}:${data}:${alternateScreen}:${modes}`);
+      },
+      onFlushBuffer: (_deviceId, paneId, buffer) => {
+        events.push(`flush:${paneId}:${buffer.length}`);
+      },
+      onOutput: (_deviceId, paneId, data) => {
+        events.push(`output:${paneId}:${data[0]}`);
+      },
+    });
+
+    expect(events).toEqual([
+      'reset:%reset',
+      'reset:%history',
+      'history:%history:hist:true:7',
+      'flush:%flush:1',
+      'output:%out:2',
+    ]);
   });
 });
