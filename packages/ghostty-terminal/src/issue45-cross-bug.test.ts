@@ -6,12 +6,15 @@ import {
   type FakeElement,
   TEST_THEME,
   createFakeBindings,
+  disposeTrackedTerminals,
   findCanvasByLayer,
   findHelperTextarea,
   installFakeDom,
   mockGhosttyWasm,
   restoreRealTerminalModules,
+  trackTerminal,
 } from './test-support/fake-dom';
+import type { GhosttyTerminalInitOptions } from './types';
 
 // 跨 bug 干扰测试（issue #45 Task 12 场景 1）：bug 3（forceFullRepaint）× bug 4-C
 // （syncTextareaPositionToCursor 改读 lastCursor 不消费 dirty）协同。
@@ -125,7 +128,13 @@ async function loadControllerModule(
     },
   }));
 
-  return import(`./terminal.ts?issue45-crossbug-${version}`);
+  const controllerModule = await import(`./terminal.ts?issue45-crossbug-${version}`);
+
+  return {
+    ...controllerModule,
+    createTerminalController: async (options: GhosttyTerminalInitOptions) =>
+      trackTerminal(await controllerModule.createTerminalController(options)),
+  };
 }
 
 function findMainCanvas(root: FakeElement | null): FakeCanvasElement | null {
@@ -144,6 +153,7 @@ describe('issue45 cross-bug: bug 3 (forceFullRepaint) x bug 4-C (syncTextarea re
   let importVersion = 0;
 
   afterEach(() => {
+    disposeTrackedTerminals();
     dom?.restore();
     dom = null;
     mock.restore();

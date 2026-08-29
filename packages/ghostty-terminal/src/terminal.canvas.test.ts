@@ -7,14 +7,17 @@ import {
   type FakeWindowTarget,
   TEST_THEME,
   createFakeBindings,
+  disposeTrackedTerminals,
   findCanvasByLayer,
   findElementByClass,
   findElementsByTag,
   installFakeDom,
   mockGhosttyWasm,
   restoreRealTerminalModules,
+  trackTerminal,
 } from './test-support/fake-dom';
 import { lineModelFromText } from './test-support/selection-line-model';
+import type { GhosttyTerminalInitOptions } from './types';
 
 // 鼠标 / 滚轮事件是本文件独有的扩展：其它 issue45 测试只派发 composition 事件。
 class FakeMouseEvent {
@@ -191,7 +194,13 @@ async function loadControllerModule(bindings: FakeBindings, version: number) {
     };
   });
 
-  return import(`./terminal.ts?controller=${version}`);
+  const controllerModule = await import(`./terminal.ts?controller=${version}`);
+
+  return {
+    ...controllerModule,
+    createTerminalController: async (options: GhosttyTerminalInitOptions) =>
+      trackTerminal(await controllerModule.createTerminalController(options)),
+  };
 }
 
 afterAll(restoreRealTerminalModules);
@@ -201,6 +210,7 @@ describe('GhosttyTerminalController canvas baseline', () => {
   let importVersion = 0;
 
   afterEach(() => {
+    disposeTrackedTerminals();
     dom?.restore();
     dom = null;
     mock.restore();
@@ -2073,12 +2083,18 @@ describe('GhosttyTerminalController clipboard and selection API', () => {
   let importVersion = 1000;
 
   afterEach(() => {
+    disposeTrackedTerminals();
     dom?.restore();
     dom = null;
     mock.restore();
   });
 
   async function setupTerminal(bindings: FakeBindings) {
+    const activeDom = dom;
+    if (!activeDom) {
+      throw new Error('setupTerminal requires installCanvasDom() first');
+    }
+
     importVersion += 1;
     const { createTerminalController } = await loadControllerModule(bindings, importVersion);
     const terminal = await createTerminalController({
@@ -2087,12 +2103,12 @@ describe('GhosttyTerminalController clipboard and selection API', () => {
       fontSize: 13,
       scrollback: 1000,
     });
-    const container = dom!.document.createElement('div');
+    const container = activeDom.document.createElement('div');
     container.setBoundingClientRect({ width: 960, height: 480 });
-    dom!.document.body.appendChild(container);
+    activeDom.document.body.appendChild(container);
     terminal.open(container as unknown as HTMLElement);
 
-    const textarea = findElementsByTag(dom!.document.body, 'div').find(
+    const textarea = findElementsByTag(activeDom.document.body, 'div').find(
       (el) => el.className === 'xterm-helper-textarea'
     );
     expect(textarea).toBeDefined();

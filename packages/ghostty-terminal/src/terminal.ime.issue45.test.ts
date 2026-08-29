@@ -4,11 +4,14 @@ import {
   type FakeDom,
   TEST_THEME,
   createFakeBindings,
+  disposeTrackedTerminals,
   findHelperTextarea,
   installFakeDom,
   mockGhosttyWasm,
   restoreRealTerminalModules,
+  trackTerminal,
 } from './test-support/fake-dom';
+import type { GhosttyTerminalInitOptions } from './types';
 
 // issue-45 bug 4-C 红测：syncTextareaPositionToCursor 路径不应消费 dirty。
 // 当前 terminal.ts:1409 会调 updateRenderState → rAF 漏画；Task 9 改读 lastCursor 后转绿。
@@ -69,7 +72,13 @@ async function loadControllerModule(
     },
   }));
 
-  return import(`./terminal.ts?issue45-ime-${version}`);
+  const controllerModule = await import(`./terminal.ts?issue45-ime-${version}`);
+
+  return {
+    ...controllerModule,
+    createTerminalController: async (options: GhosttyTerminalInitOptions) =>
+      trackTerminal(await controllerModule.createTerminalController(options)),
+  };
 }
 
 afterAll(restoreRealTerminalModules);
@@ -79,6 +88,7 @@ describe('issue45 bug 4-C: syncTextareaPositionToCursor should not consume dirty
   let importVersion = 0;
 
   afterEach(() => {
+    disposeTrackedTerminals();
     dom?.restore();
     dom = null;
     mock.restore();

@@ -569,9 +569,31 @@ export function mockGhosttyWasm(bindings: FakeBindings): void {
   }));
 }
 
+type TrackedTerminal = { dispose: () => void };
+
+const trackedTerminals = new Set<TrackedTerminal>();
+
+// controller 会持有 selection 自动滚动 interval、rAF、DOM 监听等常驻资源。测试若不 dispose，
+// 这些回调会活过 mock 还原，之后拿假资源去跑真 render-state 抛错，被 bun 记到当时正在跑的
+// 任意测试文件头上并直接掐掉该文件（计数仍显示 0 fail）。
+export function trackTerminal<T extends TrackedTerminal>(terminal: T): T {
+  trackedTerminals.add(terminal);
+  return terminal;
+}
+
+export function disposeTrackedTerminals(): void {
+  for (const terminal of trackedTerminals) {
+    terminal.dispose();
+  }
+
+  trackedTerminals.clear();
+}
+
 // bun 的 mock.module 是全局持久的（mock.restore 不还原），文件跑完必须显式还原，
 // 否则污染同一进程中后续测试文件（如 headless.test.ts 拿到 fake bindings）。
+// 还原前必须先 dispose 掉残留 controller，否则它们的定时回调会打到真模块上。
 export function restoreRealTerminalModules(): void {
+  disposeTrackedTerminals();
   mock.module('../ghostty-wasm', () => ({ ...realGhosttyWasmSnapshot }));
   mock.module('../render-state', () => ({ ...realRenderStateSnapshot }));
 }
