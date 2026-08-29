@@ -99,6 +99,8 @@
       "disconnected": "Disconnected",
       "connectToStart": "Connect to this device to get started.",
       "connecting": "Connecting...",
+      "disconnecting": "Disconnecting...",
+      "connectTimeout": "Connection timed out, please retry",
       "dragHandle": "Drag to reorder device",
       "reorderFailed": "Failed to reorder devices",
       "deleteConfirm": "Delete this device?",
@@ -127,8 +129,8 @@
       "kind": {
         "local": "Local Device",
         "ssh": "SSH Device",
-        "nodeLocal": "Local device on node {{node}}",
-        "nodeSsh": "SSH device on node {{node}}"
+        "nodeLocal": "Remote local device",
+        "nodeSsh": "Remote SSH device"
       },
       "remoteInfo": {
         "title": "Owning node",
@@ -643,11 +645,10 @@
       "updateCheckFailed": "Failed to query the npm registry.",
       "terminalShortcutsTooMany": "Too many shortcuts",
       "terminalShortcutInvalid": "Invalid shortcut configuration",
-      "folderNotFound": "Folder not found",
-      "folderNameRequired": "Folder name is required",
-      "folderNameTooLong": "Folder name is too long",
-      "folderCycle": "Cannot move a folder into itself or its subfolders",
-      "folderLayoutInvalid": "Invalid folder layout"
+      "folderNotFound": "Group not found",
+      "folderNameRequired": "Group name is required",
+      "folderNameTooLong": "Group name is too long",
+      "folderLayoutInvalid": "Invalid group layout"
     },
     "notification": {
       "clickToJump": "Click to jump to corresponding pane",
@@ -722,7 +723,8 @@
       "node": {
         "offline": "offline",
         "noKnownDevices": "No known devices",
-        "noDevices": "No devices on this node"
+        "noDevices": "No devices on this node",
+        "dragHandle": "Drag to reorder node"
       }
     },
     "agent": {
@@ -1590,37 +1592,40 @@
         },
         "version": "Version {{version}}",
         "signInToManage": "Sign in to manage devices on this node.",
-        "lastKnownDevices": "Last known devices",
         "noKnownDevices": "No devices were known when this node was last online.",
-        "addDevice": "Add a device on {{name}}"
+        "addDevice": "Add a device on {{name}}",
+        "offlineSnapshot": "Node is offline; showing the last known devices.",
+        "deviceOffline": "Node offline"
       },
       "folders": {
-        "newFolder": "New folder",
-        "newSubfolder": "New subfolder",
+        "newFolder": "New group",
         "rename": "Rename",
-        "delete": "Delete folder",
-        "deleteConfirmTitle": "Delete folder?",
-        "deleteConfirmDescription": "“{{name}}” will be deleted; its contents move up one level.",
-        "namePlaceholder": "Folder name",
-        "nameRequired": "Folder name is required",
-        "nameTooLong": "Folder name must be at most {{max}} characters",
-        "itemCount_one": "{{count}} item",
-        "itemCount_other": "{{count}} items",
-        "empty": "Drop here to put into this folder",
+        "delete": "Delete group",
+        "deleteConfirmTitle": "Delete group?",
+        "deleteConfirmDescription": "“{{name}}” will be deleted; its nodes move back to the top level.",
+        "namePlaceholder": "Group name",
+        "nameRequired": "Group name is required",
+        "nameTooLong": "Group name must be at most {{max}} characters",
+        "itemCount_one": "{{count}} node",
+        "itemCount_other": "{{count}} nodes",
+        "empty": "Drop a node here to put it into this group",
         "dropHere": "Move into “{{name}}”",
         "dropToRoot": "Move to top level",
-        "moveToRoot": "Move out of folder",
+        "moveToRoot": "Move out of group",
         "dragHandle": "Drag to move",
         "expand": "Expand",
         "collapse": "Collapse",
-        "cycle": "Cannot move a folder into itself or its subfolders",
         "moveFailed": "Move failed",
-        "createFailed": "Failed to create folder",
+        "createFailed": "Failed to create group",
         "renameFailed": "Rename failed",
-        "deleteFailed": "Failed to delete folder",
-        "loadFailed": "Failed to load folders",
-        "missingDevice": "Device not found or its node is unavailable",
-        "folderMenu": "Folder actions"
+        "deleteFailed": "Failed to delete group",
+        "loadFailed": "Failed to load groups",
+        "folderMenu": "Group actions",
+        "resetLayout": "Reset layout",
+        "resetConfirmTitle": "Reset layout?",
+        "resetConfirmDescription": "All groups will be deleted and every node returns to the top level in default order.",
+        "resetFailed": "Failed to reset layout",
+        "resetDone": "Layout reset"
       }
     }
   }

@@ -120,9 +120,73 @@ export function deviceIntentStore(storagePrefix: string): DeviceIntentStore {
   return store;
 }
 
+export type PendingConnectionKind = 'connect' | 'disconnect';
+
+export interface PendingConnectionRequest {
+  kind: PendingConnectionKind;
+  /** 发起时刻（ms），用来保证 pending 态至少展示一小段时间，按钮不闪 */
+  at: number;
+}
+
+export type PendingConnectionSnapshot = ReadonlyMap<string, PendingConnectionRequest>;
+
+const EMPTY_PENDING: PendingConnectionSnapshot = new Map();
+
+/**
+ * 用户刚点下的连接 / 断开请求（同一个 node 的多份 provider 共用）。
+ * 与意图分开存：意图是持久化的「用户想要什么」，这里是转瞬即逝的「请求还没落定」，
+ * 重复点同一方向不换快照（保留最早的发起时刻），落定后由 provider 摘掉。
+ */
+export class PendingConnectionRequests {
+  private readonly listeners = new Set<() => void>();
+  private snapshot: PendingConnectionSnapshot = EMPTY_PENDING;
+
+  subscribe = (listener: () => void): (() => void) => {
+    this.listeners.add(listener);
+    return () => {
+      this.listeners.delete(listener);
+    };
+  };
+
+  getSnapshot = (): PendingConnectionSnapshot => this.snapshot;
+
+  begin = (deviceId: string, kind: PendingConnectionKind, at = Date.now()): void => {
+    if (!deviceId) return;
+    if (this.snapshot.get(deviceId)?.kind === kind) return;
+    const next = new Map(this.snapshot);
+    next.set(deviceId, { kind, at });
+    this.commit(next);
+  };
+
+  settle = (deviceId: string): void => {
+    if (!this.snapshot.has(deviceId)) return;
+    const next = new Map(this.snapshot);
+    next.delete(deviceId);
+    this.commit(next.size === 0 ? EMPTY_PENDING : next);
+  };
+
+  private commit(next: PendingConnectionSnapshot): void {
+    this.snapshot = next;
+    for (const listener of [...this.listeners]) listener();
+  }
+}
+
+const pendingRequests = new Map<string, PendingConnectionRequests>();
+
+/** 取该 storagePrefix 的在飞请求表（懒建）；同 prefix 恒返回同一实例。 */
+export function pendingConnectionRequests(storagePrefix: string): PendingConnectionRequests {
+  let store = pendingRequests.get(storagePrefix);
+  if (!store) {
+    store = new PendingConnectionRequests();
+    pendingRequests.set(storagePrefix, store);
+  }
+  return store;
+}
+
 /** 测试用：丢弃实例表，让下一次取用重新从存储读取。 */
 export function resetDeviceIntentStores(): void {
   stores.clear();
+  pendingRequests.clear();
 }
 
 export interface DeviceSubscriptionActions {

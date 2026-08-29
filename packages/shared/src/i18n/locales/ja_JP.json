@@ -99,6 +99,8 @@
       "disconnected": "切断済み",
       "connectToStart": "デバイスに接続して開始してください。",
       "connecting": "接続中...",
+      "disconnecting": "切断中...",
+      "connectTimeout": "接続がタイムアウトしました。もう一度お試しください",
       "dragHandle": "ドラッグしてデバイスを並べ替え",
       "reorderFailed": "デバイスの並べ替えに失敗しました",
       "deleteConfirm": "このデバイスを削除しますか？",
@@ -127,8 +129,8 @@
       "kind": {
         "local": "ローカルデバイス",
         "ssh": "SSH デバイス",
-        "nodeLocal": "ノード {{node}} 上のローカルデバイス",
-        "nodeSsh": "ノード {{node}} 上の SSH デバイス"
+        "nodeLocal": "リモートローカルデバイス",
+        "nodeSsh": "リモート SSH デバイス"
       },
       "remoteInfo": {
         "title": "所属ノード",
@@ -643,11 +645,10 @@
       "updateCheckFailed": "npm registry の照会に失敗しました。",
       "terminalShortcutsTooMany": "ショートカットが多すぎます",
       "terminalShortcutInvalid": "ショートカット設定が不正です",
-      "folderNotFound": "フォルダーが見つかりません",
-      "folderNameRequired": "フォルダー名を入力してください",
-      "folderNameTooLong": "フォルダー名が長すぎます",
-      "folderCycle": "フォルダーを自分自身やそのサブフォルダーには移動できません",
-      "folderLayoutInvalid": "フォルダー配置が無効です"
+      "folderNotFound": "グループが見つかりません",
+      "folderNameRequired": "グループ名を入力してください",
+      "folderNameTooLong": "グループ名が長すぎます",
+      "folderLayoutInvalid": "グループ配置が無効です"
     },
     "notification": {
       "clickToJump": "対応するペインにジャンプ",
@@ -722,7 +723,8 @@
       "node": {
         "offline": "オフライン",
         "noKnownDevices": "既知のデバイスなし",
-        "noDevices": "このノードにデバイスはありません"
+        "noDevices": "このノードにデバイスはありません",
+        "dragHandle": "ドラッグしてノードを並べ替え"
       }
     },
     "agent": {
@@ -1590,36 +1592,39 @@
         },
         "version": "バージョン {{version}}",
         "signInToManage": "このノードのデバイスを管理するにはサインインしてください。",
-        "lastKnownDevices": "最後に確認されたデバイス",
         "noKnownDevices": "このノードが最後にオンラインだったとき、既知のデバイスはありませんでした。",
-        "addDevice": "{{name}} にデバイスを追加"
+        "addDevice": "{{name}} にデバイスを追加",
+        "offlineSnapshot": "ノードはオフラインです。最後に確認されたデバイスを表示しています。",
+        "deviceOffline": "ノードがオフライン"
       },
       "folders": {
-        "newFolder": "新しいフォルダー",
-        "newSubfolder": "新しいサブフォルダー",
+        "newFolder": "新しいグループ",
         "rename": "名前を変更",
-        "delete": "フォルダーを削除",
-        "deleteConfirmTitle": "フォルダーを削除しますか？",
-        "deleteConfirmDescription": "「{{name}}」を削除します。中身は一つ上の階層に移動します。",
-        "namePlaceholder": "フォルダー名",
-        "nameRequired": "フォルダー名を入力してください",
-        "nameTooLong": "フォルダー名は {{max}} 文字以内にしてください",
-        "itemCount": "{{count}} 件",
-        "empty": "ここにドロップしてフォルダーに入れる",
+        "delete": "グループを削除",
+        "deleteConfirmTitle": "グループを削除しますか？",
+        "deleteConfirmDescription": "「{{name}}」を削除します。中のノードは最上位に戻ります。",
+        "namePlaceholder": "グループ名",
+        "nameRequired": "グループ名を入力してください",
+        "nameTooLong": "グループ名は {{max}} 文字以内にしてください",
+        "itemCount": "{{count}} 台のノード",
+        "empty": "ここにノードをドロップしてグループに入れる",
         "dropHere": "「{{name}}」に入れる",
         "dropToRoot": "最上位に移動",
-        "moveToRoot": "フォルダーから出す",
+        "moveToRoot": "グループから出す",
         "dragHandle": "ドラッグして移動",
         "expand": "展開",
         "collapse": "折りたたむ",
-        "cycle": "自分自身やそのサブフォルダーには移動できません",
         "moveFailed": "移動に失敗しました",
-        "createFailed": "フォルダーの作成に失敗しました",
+        "createFailed": "グループの作成に失敗しました",
         "renameFailed": "名前の変更に失敗しました",
-        "deleteFailed": "フォルダーの削除に失敗しました",
-        "loadFailed": "フォルダーの読み込みに失敗しました",
-        "missingDevice": "デバイスが存在しないか、ノードが利用できません",
-        "folderMenu": "フォルダー操作"
+        "deleteFailed": "グループの削除に失敗しました",
+        "loadFailed": "グループの読み込みに失敗しました",
+        "folderMenu": "グループ操作",
+        "resetLayout": "既定のレイアウトに戻す",
+        "resetConfirmTitle": "既定のレイアウトに戻しますか？",
+        "resetConfirmDescription": "すべてのグループを削除し、すべてのノードを既定の順序で最上位に戻します。",
+        "resetFailed": "レイアウトのリセットに失敗しました",
+        "resetDone": "レイアウトを既定に戻しました"
       }
     }
   }

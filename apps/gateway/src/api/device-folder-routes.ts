@@ -3,10 +3,8 @@ import {
   type DeviceFolderNameError,
   type DeviceFolderPlacement,
   type UpdateDeviceFolderLayoutRequest,
-  deviceFolderItemKey,
-  isFolderForestValid,
+  isDeviceFolderLayoutValid,
   validateDeviceFolderName,
-  wouldCreateFolderCycle,
 } from '@tmex/shared';
 import {
   createDeviceFolder,
@@ -14,6 +12,7 @@ import {
   getDeviceFolderById,
   getDeviceFolderLayout,
   replaceDeviceFolderLayout,
+  resetDeviceFolderLayout,
   updateDeviceFolder,
 } from '../db';
 import { t } from '../i18n';
@@ -26,10 +25,9 @@ function folderNameError(error: DeviceFolderNameError): Response {
   return json({ error: t('apiError.folderNameTooLong') }, 400);
 }
 
-function parseParentId(raw: unknown): { ok: true; value: string | null } | { ok: false } {
-  if (raw === null) return { ok: true, value: null };
-  if (typeof raw === 'string') return { ok: true, value: raw };
-  return { ok: false };
+/** 分组只有一层：请求里带了非 null 的 parentId 就是在试图嵌套 */
+function requestsNesting(body: Record<string, unknown>): boolean {
+  return body.parentId !== undefined && body.parentId !== null;
 }
 
 function handleGetLayout(): Response {
@@ -41,24 +39,11 @@ async function handleCreate(req: Request): Promise<Response> {
   if (!body || typeof body.name !== 'string') {
     return json({ error: t('apiError.invalidRequest') }, 400);
   }
+  if (requestsNesting(body)) return json({ error: t('apiError.folderLayoutInvalid') }, 400);
   const validated = validateDeviceFolderName(body.name);
   if (!validated.ok) return folderNameError(validated.error);
 
-  let parentId: string | null = null;
-  if (body.parentId !== undefined) {
-    const parsed = parseParentId(body.parentId);
-    if (!parsed.ok) return json({ error: t('apiError.invalidRequest') }, 400);
-    parentId = parsed.value;
-    if (parentId !== null && !getDeviceFolderById(parentId)) {
-      return json({ error: t('apiError.folderNotFound') }, 404);
-    }
-  }
-
-  const folder = createDeviceFolder({
-    id: crypto.randomUUID(),
-    name: validated.name,
-    parentId,
-  });
+  const folder = createDeviceFolder({ id: crypto.randomUUID(), name: validated.name });
   broadcastSettingsUpdate('device-folders');
   return json({ folder }, 201);
 }
@@ -69,24 +54,14 @@ async function handleUpdate(req: Request, id: string): Promise<Response> {
 
   const body = await readJsonObjectBody(req);
   if (!body) return json({ error: t('apiError.invalidRequest') }, 400);
+  if (requestsNesting(body)) return json({ error: t('apiError.folderLayoutInvalid') }, 400);
 
-  const patch: { name?: string; parentId?: string | null; sortOrder?: number } = {};
+  const patch: { name?: string; sortOrder?: number } = {};
   if (body.name !== undefined) {
     if (typeof body.name !== 'string') return json({ error: t('apiError.invalidRequest') }, 400);
     const validated = validateDeviceFolderName(body.name);
     if (!validated.ok) return folderNameError(validated.error);
     patch.name = validated.name;
-  }
-  if (body.parentId !== undefined) {
-    const parsed = parseParentId(body.parentId);
-    if (!parsed.ok) return json({ error: t('apiError.invalidRequest') }, 400);
-    if (parsed.value !== null && !getDeviceFolderById(parsed.value)) {
-      return json({ error: t('apiError.folderNotFound') }, 404);
-    }
-    if (wouldCreateFolderCycle(getDeviceFolderLayout().folders, id, parsed.value)) {
-      return json({ error: t('apiError.folderCycle') }, 400);
-    }
-    patch.parentId = parsed.value;
   }
   if (body.sortOrder !== undefined) {
     if (typeof body.sortOrder !== 'number' || !Number.isInteger(body.sortOrder)) {
@@ -107,48 +82,31 @@ function handleDelete(id: string): Response {
   return json({ success: true });
 }
 
-function parseLayoutFolder(
-  raw: unknown
-): Pick<
-  UpdateDeviceFolderLayoutRequest['folders'][number],
-  'id' | 'parentId' | 'sortOrder'
-> | null {
+type LayoutFolder = UpdateDeviceFolderLayoutRequest['folders'][number];
+
+/** 结构不对返回 null；带非 null parentId（嵌套）返回 'nested' */
+function parseLayoutFolder(raw: unknown): LayoutFolder | 'nested' | null {
   if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) return null;
   const item = raw as Record<string, unknown>;
   if (typeof item.id !== 'string' || !item.id) return null;
-  if (item.parentId !== null && typeof item.parentId !== 'string') return null;
   if (typeof item.sortOrder !== 'number' || !Number.isInteger(item.sortOrder)) return null;
-  return { id: item.id, parentId: item.parentId, sortOrder: item.sortOrder };
+  if (requestsNesting(item)) return 'nested';
+  return { id: item.id, sortOrder: item.sortOrder };
 }
 
-function parsePlacement(raw: unknown, folderIds: Set<string>): DeviceFolderPlacement | null {
+/**
+ * placement 只认节点：旧客户端可能仍带 `kind` / `deviceId`，`kind` 只允许 'node'、
+ * `deviceId` 只允许空；带设备的 placement 一律视为布局非法。
+ */
+function parsePlacement(raw: unknown): DeviceFolderPlacement | null {
   if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) return null;
   const item = raw as Record<string, unknown>;
-  if (item.kind !== 'node' && item.kind !== 'device') return null;
+  if (item.kind !== undefined && item.kind !== 'node') return null;
+  if (item.deviceId !== undefined && item.deviceId !== null) return null;
   if (typeof item.nodeId !== 'string' || !item.nodeId) return null;
   if (typeof item.sortOrder !== 'number' || !Number.isInteger(item.sortOrder)) return null;
   if (item.folderId !== null && typeof item.folderId !== 'string') return null;
-  if (item.folderId !== null && !folderIds.has(item.folderId)) return null;
-  const folderId = item.folderId;
-
-  if (item.kind === 'node') {
-    if (item.deviceId !== null && item.deviceId !== undefined) return null;
-    return {
-      kind: 'node',
-      nodeId: item.nodeId,
-      deviceId: null,
-      folderId,
-      sortOrder: item.sortOrder,
-    };
-  }
-  if (typeof item.deviceId !== 'string' || !item.deviceId) return null;
-  return {
-    kind: 'device',
-    nodeId: item.nodeId,
-    deviceId: item.deviceId,
-    folderId,
-    sortOrder: item.sortOrder,
-  };
+  return { nodeId: item.nodeId, folderId: item.folderId, sortOrder: item.sortOrder };
 }
 
 function sameIdSet(left: readonly string[], right: readonly string[]): boolean {
@@ -168,35 +126,41 @@ async function handleReplaceLayout(req: Request): Promise<Response> {
     return json({ error: t('apiError.invalidRequest') }, 400);
   }
 
-  const folders: UpdateDeviceFolderLayoutRequest['folders'] = [];
+  const folders: LayoutFolder[] = [];
   for (const item of body.folders) {
     const parsed = parseLayoutFolder(item);
-    if (!parsed) return json({ error: t('apiError.invalidRequest') }, 400);
+    if (parsed === null) return json({ error: t('apiError.invalidRequest') }, 400);
+    if (parsed === 'nested') return json({ error: t('apiError.folderLayoutInvalid') }, 400);
     folders.push(parsed);
   }
 
   const currentIds = getDeviceFolderLayout().folders.map((folder) => folder.id);
-  const requestIds = folders.map((folder) => folder.id);
-  if (!sameIdSet(currentIds, requestIds)) {
+  if (
+    !sameIdSet(
+      currentIds,
+      folders.map((folder) => folder.id)
+    )
+  ) {
     return json({ error: t('apiError.folderLayoutInvalid') }, 400);
   }
-  if (!isFolderForestValid(folders)) {
-    return json({ error: t('apiError.folderCycle') }, 400);
-  }
 
-  const folderIds = new Set(requestIds);
   const placements: DeviceFolderPlacement[] = [];
-  const seenKeys = new Set<string>();
   for (const item of body.placements) {
-    const parsed = parsePlacement(item, folderIds);
+    const parsed = parsePlacement(item);
     if (!parsed) return json({ error: t('apiError.folderLayoutInvalid') }, 400);
-    const key = deviceFolderItemKey(parsed);
-    if (seenKeys.has(key)) return json({ error: t('apiError.folderLayoutInvalid') }, 400);
-    seenKeys.add(key);
     placements.push(parsed);
+  }
+  if (!isDeviceFolderLayoutValid({ folders, placements })) {
+    return json({ error: t('apiError.folderLayoutInvalid') }, 400);
   }
 
   const layout: DeviceFolderLayout = replaceDeviceFolderLayout({ folders, placements });
+  broadcastSettingsUpdate('device-folders');
+  return json(layout);
+}
+
+function handleReset(): Response {
+  const layout = resetDeviceFolderLayout();
   broadcastSettingsUpdate('device-folders');
   return json(layout);
 }
@@ -209,6 +173,7 @@ export const deviceFolderRoutes: ApiRoute[] = [
     path: '/api/device-folders/layout',
     handler: (req) => handleReplaceLayout(req),
   }),
+  route({ method: 'POST', path: '/api/device-folders/reset', handler: () => handleReset() }),
   route({
     method: 'PATCH',
     path: '/api/device-folders/:id',

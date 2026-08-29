@@ -1,4 +1,4 @@
-// 一个文件夹：可拖拽的头部（把手 / 折叠箭头 / 名称 / 计数 / 操作菜单）+ 可折叠的内容区。
+// 一个分组：虚线边框的放置区，头部（把手 / 折叠箭头 / 名称 / 计数 / 操作菜单）+ 可折叠的内容区。
 //
 // 内容区用 `grid-template-rows: 0fr → 1fr` 做高度过渡（不需要测量真实高度），折叠期间靠
 // visibility 一起过渡：展开时立刻可见、折叠时等动画走完再隐藏，收起后的内容不会留在 Tab 序里。
@@ -17,10 +17,8 @@ import {
 } from '@tmex/ui/dropdown-menu';
 import {
   ChevronRight,
-  CornerLeftUp,
   Folder,
   FolderOpen,
-  FolderPlus,
   GripVertical,
   MoreHorizontal,
   Pencil,
@@ -31,27 +29,20 @@ import { useTranslation } from 'react-i18next';
 import { FolderNameEditor } from './folder-name-editor';
 import { dropZoneId, folderContainerId, folderElementId } from './folder-tree-model';
 
-/** 再深的层级也不继续缩进，否则窄屏上内容会被挤没 */
-export const MAX_INDENT_DEPTH = 6;
-
 const COLLAPSE_UNMOUNT_FALLBACK_MS = 400;
 
 export interface FolderSectionProps {
   folder: DeviceFolder;
-  depth: number;
   itemCount: number;
   expanded: boolean;
   renaming: boolean;
   dragDisabled: boolean;
-  /** 当前拖拽命中的容器就是这个文件夹 */
+  /** 当前拖拽命中的容器就是这个分组 */
   dropTarget: boolean;
   onToggle: (expanded: boolean) => void;
   onStartRename: () => void;
   onSubmitRename: (name: string) => void;
   onCancelRename: () => void;
-  onNewSubfolder: () => void;
-  /** 非根文件夹才有：移到上一层 */
-  onMoveToParent?: () => void;
   onDelete: () => void;
   children: ReactNode;
 }
@@ -61,7 +52,6 @@ const HANDLE_CLASS =
 
 export function FolderSection({
   folder,
-  depth,
   itemCount,
   expanded,
   renaming,
@@ -71,13 +61,11 @@ export function FolderSection({
   onStartRename,
   onSubmitRename,
   onCancelRename,
-  onNewSubfolder,
-  onMoveToParent,
   onDelete,
   children,
 }: FolderSectionProps) {
   const { t } = useTranslation();
-  // 折叠后内容区整体卸载（让其中的 droppable / 远端 runtime 一起释放），
+  // 折叠后内容区整体卸载（让其中的 droppable 一起释放），
   // 但要等收起过渡跑完再卸，reduced-motion 下没有 transitionend，用定时器兜底。
   const [contentMounted, setContentMounted] = useState(expanded);
   useEffect(() => {
@@ -103,19 +91,19 @@ export function FolderSection({
     <section
       ref={setNodeRef}
       data-testid={`device-folder-${folder.id}`}
-      data-depth={Math.min(depth, MAX_INDENT_DEPTH)}
       data-expanded={expanded ? 'true' : 'false'}
       data-dragging={isDragging ? 'true' : undefined}
-      className={cn('group/folder min-w-0', isDragging && 'opacity-40')}
+      data-drop-target={dropTarget ? 'true' : undefined}
+      className={cn(
+        'group/folder min-w-0 rounded-xl border-2 border-dashed border-border/80 bg-muted/10 transition-[border-color,background-color,box-shadow] duration-(--tmex-motion-fast) ease-out motion-reduce:transition-none',
+        dropTarget && 'border-solid border-ring/70 bg-accent/40 ring-2 ring-ring/30',
+        isDragging && 'opacity-40'
+      )}
       style={{ transform: CSS.Translate.toString(transform), transition }}
     >
       <div
         ref={droppable.setNodeRef}
-        data-drop-target={dropTarget ? 'true' : undefined}
-        className={cn(
-          'flex min-w-0 items-center gap-1 rounded-lg px-1 py-1 transition-[background-color,box-shadow] duration-(--tmex-motion-fast) ease-out motion-reduce:transition-none',
-          dropTarget && 'bg-accent/60 ring-2 ring-ring/50'
-        )}
+        className="flex min-w-0 items-center gap-1 rounded-t-xl px-1.5 py-1.5"
       >
         <button
           type="button"
@@ -190,28 +178,12 @@ export function FolderSection({
               <DropdownMenuContent align="end" className="min-w-40">
                 <DropdownMenuGroup>
                   <DropdownMenuItem
-                    data-testid={`device-folder-new-sub-${folder.id}`}
-                    onClick={onNewSubfolder}
-                  >
-                    <FolderPlus className="size-4" />
-                    {t('devices.folders.newSubfolder')}
-                  </DropdownMenuItem>
-                  <DropdownMenuItem
                     data-testid={`device-folder-rename-${folder.id}`}
                     onClick={onStartRename}
                   >
                     <Pencil className="size-4" />
                     {t('devices.folders.rename')}
                   </DropdownMenuItem>
-                  {onMoveToParent && (
-                    <DropdownMenuItem
-                      data-testid={`device-folder-move-up-${folder.id}`}
-                      onClick={onMoveToParent}
-                    >
-                      <CornerLeftUp className="size-4" />
-                      {t('devices.folders.moveToRoot')}
-                    </DropdownMenuItem>
-                  )}
                   <DropdownMenuItem
                     variant="destructive"
                     data-testid={`device-folder-delete-${folder.id}`}
@@ -238,11 +210,12 @@ export function FolderSection({
           aria-hidden={!expanded}
           className={cn(
             'overflow-hidden transition-[visibility] duration-(--tmex-motion-standard) motion-reduce:transition-none',
-            !expanded && 'invisible',
-            depth < MAX_INDENT_DEPTH && 'ml-3 border-l border-border/50 pl-3'
+            !expanded && 'invisible'
           )}
         >
-          <div className="flex min-w-0 flex-col gap-2 py-2">{contentMounted && children}</div>
+          <div className="flex min-w-0 flex-col gap-3 px-2 pb-2 pt-0.5">
+            {contentMounted && children}
+          </div>
         </div>
       </div>
     </section>
@@ -257,15 +230,17 @@ export interface FolderDropAreaProps {
   activeLabel?: string;
   active: boolean;
   testId: string;
+  className?: string;
 }
 
-/** 空文件夹 / 根层的落点提示：拖拽中变实线高亮 */
+/** 空分组 / 根层的落点提示：虚线框，拖拽命中时变实线高亮 */
 export function FolderDropArea({
   zoneId,
   label,
   activeLabel,
   active,
   testId,
+  className,
 }: FolderDropAreaProps) {
   const { setNodeRef } = useDroppable({ id: zoneId });
   return (
@@ -274,8 +249,9 @@ export function FolderDropArea({
       data-testid={testId}
       data-drop-target={active ? 'true' : undefined}
       className={cn(
-        'rounded-lg border border-dashed border-border/60 px-3 py-3 text-center text-xs text-muted-foreground transition-[background-color,border-color,box-shadow] duration-(--tmex-motion-fast) ease-out motion-reduce:transition-none',
-        active && 'border-solid border-ring/60 bg-accent/50 text-foreground ring-2 ring-ring/40'
+        'rounded-lg border-2 border-dashed border-border/70 px-3 py-4 text-center text-xs text-muted-foreground transition-[background-color,border-color,box-shadow] duration-(--tmex-motion-fast) ease-out motion-reduce:transition-none',
+        active && 'border-solid border-ring/60 bg-accent/50 text-foreground ring-2 ring-ring/40',
+        className
       )}
     >
       {active ? (activeLabel ?? label) : label}

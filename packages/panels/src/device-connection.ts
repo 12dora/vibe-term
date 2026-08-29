@@ -1,6 +1,7 @@
 export type DeviceConnectionStatus =
   | 'connected'
   | 'connecting'
+  | 'disconnecting'
   | 'disconnected'
   | 'reconnecting'
   | 'error';

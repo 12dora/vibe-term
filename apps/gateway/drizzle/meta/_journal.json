@@ -176,6 +176,13 @@
       "when": 1787994714692,
       "tag": "0024_narrow_tomas",
       "breakpoints": true
+    },
+    {
+      "idx": 25,
+      "version": "6",
+      "when": 1788019200000,
+      "tag": "0025_flat_device_groups",
+      "breakpoints": true
     }
   ]
 }

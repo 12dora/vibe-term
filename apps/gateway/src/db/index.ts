@@ -29,6 +29,7 @@ export {
   getDeviceFolderLayout,
   removeDeviceFolderPlacementsForDevice,
   replaceDeviceFolderLayout,
+  resetDeviceFolderLayout,
   updateDeviceFolder,
 } from './device-folders';
 

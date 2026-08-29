@@ -11,19 +11,24 @@ import {
   useMemo,
   useSyncExternalStore,
 } from 'react';
+import { useTranslation } from 'react-i18next';
 import { matchPath, useLocation } from 'react-router';
 import {
   type DeviceRuntimeSlices,
   createDeviceConnectionSnapshot,
   deriveDeviceConnectionStatus,
   isDeviceConnected,
+  runPendingSettlement,
   shouldEnsureDeviceSubscription,
   shouldEnsureRouteDeviceSubscription,
 } from './device-connection-status';
 import {
   type DeviceIntentSnapshot,
   type DeviceIntentStore,
+  type PendingConnectionRequests,
+  type PendingConnectionSnapshot,
   deviceIntentStore,
+  pendingConnectionRequests,
   reconcileDeviceSubscriptions,
 } from './device-intent-store';
 
@@ -84,13 +89,56 @@ function useDeviceIntent(storagePrefix: string): {
   return { store, snapshot };
 }
 
+// 在飞的连接 / 断开请求：与意图同样按 storagePrefix 共享，同一个 node 的多份 provider 看到同一份。
+function usePendingRequests(storagePrefix: string): {
+  store: PendingConnectionRequests;
+  snapshot: PendingConnectionSnapshot;
+} {
+  const store = pendingConnectionRequests(storagePrefix);
+  const snapshot = useSyncExternalStore(store.subscribe, store.getSnapshot, store.getSnapshot);
+  return { store, snapshot };
+}
+
+/**
+ * 在飞请求的落定：真实推导态到达目标（连上 / 出错 / 断开）且 pending 已展示够最短时长才摘掉，
+ * 按钮文案因此只会「连接 → 连接中 → 断开」各停一档，不再抖动。
+ * 到最长时长仍没落定的 connect 请求：记一个可重试的 timeout 错误（设备仍在订阅集合里，
+ * 网关之后真连上会由 device-connected 事件清掉），按钮回到「连接」。
+ */
+function usePendingSettlement(
+  pendingStore: PendingConnectionRequests,
+  pending: PendingConnectionSnapshot,
+  intentionallyDisconnected: ReadonlySet<string>,
+  slices: DeviceRuntimeSlices
+): void {
+  const { t } = useTranslation();
+  const hydrateDeviceErrors = useTmuxStore((state) => state.hydrateDeviceErrors);
+  useEffect(() => {
+    if (pending.size === 0) return;
+    const snapshot = createDeviceConnectionSnapshot(intentionallyDisconnected, slices);
+    return runPendingSettlement(pending, snapshot, Date.now(), {
+      settle: pendingStore.settle,
+      timeoutConnect: (deviceId) =>
+        hydrateDeviceErrors([
+          { deviceId, lastError: t('device.connectTimeout'), lastErrorType: 'timeout' },
+        ]),
+      schedule: (callback, delay) => {
+        const timer = setTimeout(callback, delay);
+        return () => clearTimeout(timer);
+      },
+    });
+  }, [pendingStore, pending, intentionallyDisconnected, slices, hydrateDeviceErrors, t]);
+}
+
 function useDeviceStatusSlices(): DeviceRuntimeSlices {
-  return {
-    connectedDevices: useTmuxStore((state) => state.connectedDevices),
-    deviceConnected: useTmuxStore((state) => state.deviceConnected),
-    deviceErrors: useTmuxStore((state) => state.deviceErrors),
-    deviceReconnecting: useTmuxStore((state) => state.deviceReconnecting),
-  };
+  const connectedDevices = useTmuxStore((state) => state.connectedDevices);
+  const deviceConnected = useTmuxStore((state) => state.deviceConnected);
+  const deviceErrors = useTmuxStore((state) => state.deviceErrors);
+  const deviceReconnecting = useTmuxStore((state) => state.deviceReconnecting);
+  return useMemo(
+    () => ({ connectedDevices, deviceConnected, deviceErrors, deviceReconnecting }),
+    [connectedDevices, deviceConnected, deviceErrors, deviceReconnecting]
+  );
 }
 
 interface DeviceStoreActions {
@@ -157,6 +205,7 @@ function useRouteDeviceSubscription(
 
 function useIntentActions(
   intentStore: DeviceIntentStore,
+  pendingStore: PendingConnectionRequests,
   actions: DeviceStoreActions
 ): Pick<DeviceConnectionAdapter, 'connect' | 'disconnect'> {
   const { connectTmuxDevice, disconnectTmuxDevice, clearDeviceError } = actions;
@@ -164,20 +213,22 @@ function useIntentActions(
   const connect = useCallback(
     (deviceId: string) => {
       if (!deviceId) return;
+      pendingStore.begin(deviceId, 'connect');
       intentStore.markConnectIntent(deviceId);
       clearDeviceError(deviceId);
       connectTmuxDevice(deviceId);
     },
-    [intentStore, clearDeviceError, connectTmuxDevice]
+    [intentStore, pendingStore, clearDeviceError, connectTmuxDevice]
   );
 
   const disconnect = useCallback(
     (deviceId: string) => {
       if (!deviceId) return;
+      pendingStore.begin(deviceId, 'disconnect');
       intentStore.markDisconnectIntent(deviceId);
       disconnectTmuxDevice(deviceId);
     },
-    [intentStore, disconnectTmuxDevice]
+    [intentStore, pendingStore, disconnectTmuxDevice]
   );
 
   return { connect, disconnect };
@@ -186,34 +237,21 @@ function useIntentActions(
 function useDeviceConnectionAdapter(
   intentionallyDisconnected: ReadonlySet<string>,
   slices: DeviceRuntimeSlices,
+  pending: PendingConnectionSnapshot,
   intentActions: Pick<DeviceConnectionAdapter, 'connect' | 'disconnect'>
 ): DeviceConnectionAdapter {
-  const { connectedDevices, deviceConnected, deviceErrors, deviceReconnecting } = slices;
   const { connect, disconnect } = intentActions;
 
   return useMemo<DeviceConnectionAdapter>(() => {
-    const snapshot = createDeviceConnectionSnapshot(intentionallyDisconnected, {
-      connectedDevices,
-      deviceConnected,
-      deviceErrors,
-      deviceReconnecting,
-    });
+    const snapshot = createDeviceConnectionSnapshot(intentionallyDisconnected, slices, pending);
     return {
-      isConnected: (deviceId) => isDeviceConnected(deviceConnected, deviceId),
+      isConnected: (deviceId) => isDeviceConnected(slices.deviceConnected, deviceId),
       status: (deviceId) => deriveDeviceConnectionStatus(deviceId, snapshot),
       isIntentionallyDisconnected: (deviceId) => intentionallyDisconnected.has(deviceId),
       connect,
       disconnect,
     };
-  }, [
-    intentionallyDisconnected,
-    connectedDevices,
-    deviceConnected,
-    deviceErrors,
-    deviceReconnecting,
-    connect,
-    disconnect,
-  ]);
+  }, [intentionallyDisconnected, slices, pending, connect, disconnect]);
 }
 
 /**
@@ -245,6 +283,7 @@ export function GlobalDeviceProvider({ children }: GlobalDeviceProviderProps) {
   const actions = useDeviceStoreActions();
   const slices = useDeviceStatusSlices();
   const { store: intentStore, snapshot: intent } = useDeviceIntent(runtime.storagePrefix);
+  const { store: pendingStore, snapshot: pending } = usePendingRequests(runtime.storagePrefix);
   const { connectedDevices } = slices;
   const { connectTmuxDevice, disconnectTmuxDevice } = actions;
 
@@ -271,8 +310,14 @@ export function GlobalDeviceProvider({ children }: GlobalDeviceProviderProps) {
     disconnectTmuxDevice,
   });
 
-  const intentActions = useIntentActions(intentStore, actions);
-  const connection = useDeviceConnectionAdapter(intent.disconnected, slices, intentActions);
+  usePendingSettlement(pendingStore, pending, intent.disconnected, slices);
+  const intentActions = useIntentActions(intentStore, pendingStore, actions);
+  const connection = useDeviceConnectionAdapter(
+    intent.disconnected,
+    slices,
+    pending,
+    intentActions
+  );
 
   const value = useMemo(
     () => ({ ensureDeviceSubscribed, connection }),

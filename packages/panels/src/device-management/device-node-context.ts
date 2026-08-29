@@ -1,5 +1,5 @@
 // 设备的「所属节点」渲染上下文。`Device.type` 只有 local | ssh，「是否属于远端 mesh 节点」
-// 是宿主按运行时注入的展示信息，不落在数据里。
+// 是宿主按运行时注入的展示信息，不落在数据里。节点名已经在分组头上，种类文案不再重复它。
 
 import type { DeviceType } from '@tmex/shared';
 import type { TFunction } from 'i18next';
@@ -29,15 +29,15 @@ export function isRemoteDeviceKind(kind: DeviceDisplayKind): boolean {
   return kind === 'nodeLocal' || kind === 'nodeSsh';
 }
 
-export function deviceKindLabel(t: TFunction, kind: DeviceDisplayKind, nodeName: string): string {
+export function deviceKindLabel(t: TFunction, kind: DeviceDisplayKind): string {
   switch (kind) {
     case 'local':
       return t('device.kind.local');
     case 'ssh':
       return t('device.kind.ssh');
     case 'nodeLocal':
-      return t('device.kind.nodeLocal', { node: nodeName });
+      return t('device.kind.nodeLocal');
     default:
-      return t('device.kind.nodeSsh', { node: nodeName });
+      return t('device.kind.nodeSsh');
   }
 }

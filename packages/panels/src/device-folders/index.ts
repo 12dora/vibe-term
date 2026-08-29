@@ -1,30 +1,31 @@
 export {
   DeviceFolderTree,
-  type DeviceFolderItemContext,
+  type DeviceFolderNodeContext,
   type DeviceFolderTreeHandle,
   type DeviceFolderTreeProps,
 } from './device-folder-tree';
-export { DeviceFolderItemShell, type DeviceFolderItemShellProps } from './draggable-item';
+export { DeviceFolderNodeShell, type DeviceFolderNodeShellProps } from './draggable-item';
 export { FolderNameEditor, type FolderNameEditorProps } from './folder-name-editor';
-export { FolderDropArea, FolderSection, MAX_INDENT_DEPTH } from './folder-section';
+export { FolderDropArea, FolderSection } from './folder-section';
 export {
   ROOT_CONTAINER_ID,
   applyDrop,
   bodyDropZoneId,
-  containerChildIds,
+  collisionCandidateIds,
   containerFolderId,
+  dropTargetContainerId,
   dropZoneId,
   folderContainerId,
   folderElementId,
-  implicitRootItems,
+  implicitRootNodeIds,
   listContainers,
-  materializeRootItems,
+  materializeRootNodes,
+  nodeElementId,
   parseDropZoneId,
   parseFolderElementId,
-  placedDeviceIds,
+  parseNodeElementId,
   resolveDrop,
-  resolveDropTarget,
+  rootFolderElementIds,
   type DeviceFolderContainer,
   type DeviceFolderDrop,
-  type DeviceFolderDropTarget,
 } from './folder-tree-model';

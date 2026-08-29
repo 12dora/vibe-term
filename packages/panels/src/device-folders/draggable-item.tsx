@@ -1,96 +1,37 @@
-// 条目（节点分组 / 单台设备卡片）的拖拽外壳。
+// 节点条目的拖拽外壳：在容器（根层 / 分组）的有序列表里参与排序。
 //
-// 两种形态：
-//  - `sortable`：条目在某个容器的有序列表里（根层显式条目、文件夹内条目），参与同容器排序；
-//  - `draggable`：条目还在节点分组的卡片网格里（没有 placement），只能被拖出去落到别处，
-//    容器内顺序由设备自身的 sortOrder 决定，不进 SortableContext。
+// 把手不再由外壳自己贴在条目左侧，而是作为 `dragControls` 交给宿主放进节点头部——
+// 「节点头（名称 / 在线态 / 把手）」才是被拖动的单元，卡片网格只是节点的内容。
 
-import { useDraggable } from '@dnd-kit/core';
 import { useSortable } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
 import { cn } from '@tmex/ui';
 import { CornerLeftUp, GripVertical } from 'lucide-react';
-import type { CSSProperties, ReactNode } from 'react';
+import type { ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
+import { nodeElementId } from './folder-tree-model';
 
-export interface DeviceFolderItemShellProps {
-  /** `deviceFolderItemKey(ref)` */
-  itemKey: string;
-  mode?: 'sortable' | 'draggable';
+const CONTROL_CLASS =
+  'inline-flex size-6 shrink-0 items-center justify-center rounded-md border border-border/60 bg-background/90 text-muted-foreground shadow-sm transition-colors duration-(--tmex-motion-fast) ease-out hover:bg-accent hover:text-foreground motion-reduce:transition-none';
+
+export interface DeviceFolderNodeShellProps {
+  nodeId: string;
   disabled?: boolean;
-  /** 提供时在把手旁显示「移出文件夹」按钮 */
+  /** 提供时在把手旁显示「移出分组」按钮 */
   onMoveToRoot?: () => void;
   className?: string;
-  style?: CSSProperties;
-  children: ReactNode;
+  /** 拿到把手（与移出按钮）后渲染节点本体 */
+  children: (dragControls: ReactNode) => ReactNode;
 }
 
-interface ShellBodyProps extends Omit<DeviceFolderItemShellProps, 'mode'> {
-  setNodeRef: (node: HTMLElement | null) => void;
-  setHandleRef: (node: HTMLElement | null) => void;
-  handleProps: Record<string, unknown>;
-  isDragging: boolean;
-  dragStyle: CSSProperties;
-}
-
-const HANDLE_CLASS =
-  'inline-flex size-6 items-center justify-center rounded-md border border-border/60 bg-background/90 text-muted-foreground opacity-0 shadow-sm transition-opacity duration-(--tmex-motion-fast) ease-out group-hover/folder-item:opacity-100 focus-visible:opacity-100 motion-reduce:transition-none [@media(pointer:coarse)]:opacity-100';
-
-function ShellBody({
-  itemKey,
+export function DeviceFolderNodeShell({
+  nodeId,
+  disabled,
   onMoveToRoot,
   className,
-  style,
   children,
-  setNodeRef,
-  setHandleRef,
-  handleProps,
-  isDragging,
-  dragStyle,
-}: ShellBodyProps) {
+}: DeviceFolderNodeShellProps) {
   const { t } = useTranslation();
-  return (
-    <div
-      ref={setNodeRef}
-      data-testid={`device-folder-item-${itemKey}`}
-      data-dragging={isDragging ? 'true' : undefined}
-      className={cn(
-        'group/folder-item relative min-w-0 pl-5',
-        isDragging && 'opacity-40 motion-reduce:opacity-40',
-        className
-      )}
-      style={{ ...dragStyle, ...style }}
-    >
-      <div className="absolute left-0 top-1 z-10 flex flex-col gap-1">
-        <button
-          type="button"
-          ref={setHandleRef}
-          aria-label={t('devices.folders.dragHandle')}
-          title={t('devices.folders.dragHandle')}
-          className={cn(HANDLE_CLASS, 'cursor-grab touch-none active:cursor-grabbing')}
-          {...handleProps}
-        >
-          <GripVertical className="size-3.5" />
-        </button>
-        {onMoveToRoot && (
-          <button
-            type="button"
-            aria-label={t('devices.folders.moveToRoot')}
-            title={t('devices.folders.moveToRoot')}
-            className={HANDLE_CLASS}
-            onClick={onMoveToRoot}
-          >
-            <CornerLeftUp className="size-3.5" />
-          </button>
-        )}
-      </div>
-      {children}
-    </div>
-  );
-}
-
-function SortableItemShell(props: DeviceFolderItemShellProps) {
-  const { itemKey, disabled } = props;
   const {
     attributes,
     listeners,
@@ -99,37 +40,49 @@ function SortableItemShell(props: DeviceFolderItemShellProps) {
     transform,
     transition,
     isDragging,
-  } = useSortable({ id: itemKey, disabled });
+  } = useSortable({ id: nodeElementId(nodeId), disabled });
 
-  return (
-    <ShellBody
-      {...props}
-      setNodeRef={setNodeRef}
-      setHandleRef={setActivatorNodeRef}
-      handleProps={{ ...attributes, ...listeners }}
-      isDragging={isDragging}
-      dragStyle={{ transform: CSS.Translate.toString(transform), transition }}
-    />
+  const dragControls = (
+    <span className="flex shrink-0 items-center gap-1">
+      <button
+        type="button"
+        ref={setActivatorNodeRef}
+        data-testid={`device-folder-handle-${nodeId}`}
+        aria-label={t('devices.folders.dragHandle')}
+        title={t('devices.folders.dragHandle')}
+        className={cn(CONTROL_CLASS, 'cursor-grab touch-none active:cursor-grabbing')}
+        {...attributes}
+        {...listeners}
+      >
+        <GripVertical className="size-3.5" />
+      </button>
+      {onMoveToRoot && (
+        <button
+          type="button"
+          data-testid={`device-folder-move-out-${nodeId}`}
+          aria-label={t('devices.folders.moveToRoot')}
+          title={t('devices.folders.moveToRoot')}
+          className={CONTROL_CLASS}
+          onClick={onMoveToRoot}
+        >
+          <CornerLeftUp className="size-3.5" />
+        </button>
+      )}
+    </span>
   );
-}
 
-function DraggableItemShell(props: DeviceFolderItemShellProps) {
-  const { itemKey, disabled } = props;
-  const { attributes, listeners, setNodeRef, setActivatorNodeRef, transform, isDragging } =
-    useDraggable({ id: itemKey, disabled });
-
+  // 宿主决定不渲染这个节点（mesh 列表里已经没有它）时连外壳一起省掉，不留空行
+  const content = children(dragControls);
+  if (content === null || content === undefined || content === false) return null;
   return (
-    <ShellBody
-      {...props}
-      setNodeRef={setNodeRef}
-      setHandleRef={setActivatorNodeRef}
-      handleProps={{ ...attributes, ...listeners }}
-      isDragging={isDragging}
-      dragStyle={{ transform: CSS.Translate.toString(transform) }}
-    />
+    <div
+      ref={setNodeRef}
+      data-testid={`device-folder-item-node:${nodeId}`}
+      data-dragging={isDragging ? 'true' : undefined}
+      className={cn('min-w-0', isDragging && 'opacity-40 motion-reduce:opacity-40', className)}
+      style={{ transform: CSS.Translate.toString(transform), transition }}
+    >
+      {content}
+    </div>
   );
-}
-
-export function DeviceFolderItemShell({ mode = 'sortable', ...props }: DeviceFolderItemShellProps) {
-  return mode === 'sortable' ? <SortableItemShell {...props} /> : <DraggableItemShell {...props} />;
 }

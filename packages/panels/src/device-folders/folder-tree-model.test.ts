@@ -1,61 +1,57 @@
 import { describe, expect, test } from 'bun:test';
-import type { DeviceFolder, DeviceFolderItemRef, DeviceFolderLayout } from '@tmex/shared';
-import { deviceFolderItemKey } from '@tmex/shared';
+import type { DeviceFolder, DeviceFolderLayout } from '@tmex/shared';
 import {
   ROOT_CONTAINER_ID,
   applyDrop,
   bodyDropZoneId,
-  containerChildIds,
+  collisionCandidateIds,
   containerFolderId,
+  dropTargetContainerId,
   dropZoneId,
   folderContainerId,
   folderElementId,
-  implicitRootItems,
+  implicitRootNodeIds,
   listContainers,
-  materializeRootItems,
+  materializeRootNodes,
+  nodeElementId,
   parseDropZoneId,
   parseFolderElementId,
-  placedDeviceIds,
+  parseNodeElementId,
   resolveDrop,
+  rootFolderElementIds,
 } from './folder-tree-model';
 
-function folder(id: string, parentId: string | null, sortOrder: number): DeviceFolder {
+function folder(id: string, sortOrder: number): DeviceFolder {
   return {
     id,
     name: id,
-    parentId,
     sortOrder,
     createdAt: '2026-08-29T00:00:00.000Z',
     updatedAt: '2026-08-29T00:00:00.000Z',
   };
 }
 
-function nodeItem(nodeId: string): DeviceFolderItemRef {
-  return { kind: 'node', nodeId, deviceId: null };
+function placement(nodeId: string, folderId: string | null, sortOrder: number) {
+  return { nodeId, folderId, sortOrder };
 }
 
-function deviceItem(nodeId: string, deviceId: string): DeviceFolderItemRef {
-  return { kind: 'device', nodeId, deviceId };
-}
-
-function placement(item: DeviceFolderItemRef, folderId: string | null, sortOrder: number) {
-  return { ...item, folderId, sortOrder };
-}
-
-/** a（含子 a1）与 b 两个根文件夹；a 里放着 self 的 d1，根层显式放着 node n1 */
+/** a 与 b 两个分组；a 里放着 n1，根层显式放着 n2 */
 function sampleLayout(): DeviceFolderLayout {
   return {
-    folders: [folder('a', null, 0), folder('b', null, 1), folder('a1', 'a', 0)],
-    placements: [placement(deviceItem('self', 'd1'), 'a', 0), placement(nodeItem('n1'), null, 0)],
+    folders: [folder('a', 0), folder('b', 1)],
+    placements: [placement('n1', 'a', 0), placement('n2', null, 0)],
   };
 }
 
 describe('id 编解码', () => {
-  test('文件夹元素 / 容器 / 放置区 id 可逆', () => {
+  test('分组 / 节点 / 容器 / 放置区 id 可逆', () => {
     expect(folderElementId('a')).toBe('folder:a');
     expect(parseFolderElementId('folder:a')).toBe('a');
     expect(parseFolderElementId('node:self')).toBeNull();
     expect(parseFolderElementId('folder:')).toBeNull();
+    expect(nodeElementId('self')).toBe('node:self');
+    expect(parseNodeElementId('node:self')).toBe('self');
+    expect(parseNodeElementId('folder:a')).toBeNull();
 
     expect(folderContainerId(null)).toBe(ROOT_CONTAINER_ID);
     expect(folderContainerId('a')).toBe('folder:a');
@@ -67,116 +63,76 @@ describe('id 编解码', () => {
     expect(parseDropZoneId('drop:folder:a')).toBe('folder:a');
     expect(parseDropZoneId('drop:root')).toBe('root');
     expect(parseDropZoneId('folder:a')).toBeNull();
-    // 空文件夹内容区是同一容器的第二个放置区，id 不同但解析到同一个容器
     expect(bodyDropZoneId(folderContainerId('a'))).toBe('dropin:folder:a');
     expect(parseDropZoneId(bodyDropZoneId(folderContainerId('a')))).toBe('folder:a');
   });
 });
 
 describe('listContainers', () => {
-  test('每个容器按 sortOrder 排序，文件夹在前、条目在后', () => {
-    const containers = listContainers(sampleLayout(), [nodeItem('self'), nodeItem('n2')]);
-
-    const root = containers.get(ROOT_CONTAINER_ID);
-    expect(root).toBeDefined();
-    expect(containerChildIds(root as NonNullable<typeof root>)).toEqual([
-      'folder:a',
-      'folder:b',
-      'node:n1',
-      'node:self',
-      'node:n2',
-    ]);
-
-    const a = containers.get('folder:a');
-    expect(containerChildIds(a as NonNullable<typeof a>)).toEqual(['folder:a1', 'device:self:d1']);
-    expect(containers.get('folder:a1')?.itemKeys).toEqual([]);
+  test('每个容器按 sortOrder 排序，根层显式在前、隐式在后', () => {
+    const containers = listContainers(sampleLayout(), ['self', 'n3']);
+    expect(containers.get(ROOT_CONTAINER_ID)?.nodeIds).toEqual(['node:n2', 'node:self', 'node:n3']);
+    expect(containers.get('folder:a')?.nodeIds).toEqual(['node:n1']);
+    expect(containers.get('folder:b')?.nodeIds).toEqual([]);
+    expect(rootFolderElementIds(sampleLayout())).toEqual(['folder:a', 'folder:b']);
   });
 
-  test('隐式根条目排在显式 placement 之后，已放置的不再是隐式', () => {
-    const layout = sampleLayout();
-    expect(implicitRootItems(layout, [nodeItem('n1'), nodeItem('self')])).toEqual([
-      nodeItem('self'),
-    ]);
+  test('已放置的节点不再是隐式', () => {
+    expect(implicitRootNodeIds(sampleLayout(), ['n1', 'self'])).toEqual(['self']);
   });
 
-  test('指向不存在文件夹的孤儿元素被忽略', () => {
-    const layout: DeviceFolderLayout = {
-      folders: [folder('a', 'ghost', 0)],
-      placements: [placement(nodeItem('n1'), 'ghost', 0)],
-    };
-    const containers = listContainers(layout);
-    expect(containers.get(ROOT_CONTAINER_ID)?.folderIds).toEqual([]);
-    expect(containers.get(ROOT_CONTAINER_ID)?.itemKeys).toEqual([]);
-    // 文件夹自身仍是一个容器（可以往里放东西）
-    expect(containers.has('folder:a')).toBe(true);
+  test('指向不存在分组的孤儿 placement 被忽略', () => {
+    const containers = listContainers({
+      folders: [],
+      placements: [placement('n1', 'ghost', 0)],
+    });
+    expect(containers.get(ROOT_CONTAINER_ID)?.nodeIds).toEqual([]);
   });
 });
 
-describe('resolveDrop', () => {
-  const implicit = [nodeItem('self')];
+describe('resolveDrop：节点', () => {
+  const implicit = ['self'];
 
-  test('空文件夹内容区与文件夹头是同一个落点', () => {
-    expect(
-      resolveDrop('node:self', bodyDropZoneId(folderContainerId('a1')), sampleLayout(), implicit)
-    ).toEqual({ kind: 'item', item: nodeItem('self'), targetFolderId: 'a1', index: null });
-  });
-
-  test('落在放置区上：追加到该容器末尾', () => {
-    expect(resolveDrop('node:self', dropZoneId('folder:b'), sampleLayout(), implicit)).toEqual({
-      kind: 'item',
-      item: nodeItem('self'),
+  test('空分组内容区与分组头是同一个落点', () => {
+    expect(resolveDrop('node:self', bodyDropZoneId('folder:b'), sampleLayout(), implicit)).toEqual({
+      kind: 'node',
+      nodeId: 'self',
       targetFolderId: 'b',
       index: null,
     });
-    expect(resolveDrop('folder:b', dropZoneId('folder:a'), sampleLayout(), implicit)).toEqual({
-      kind: 'folder',
-      folderId: 'b',
-      targetFolderId: 'a',
+    expect(resolveDrop('node:self', 'folder:b', sampleLayout(), implicit)).toEqual({
+      kind: 'node',
+      nodeId: 'self',
+      targetFolderId: 'b',
       index: null,
     });
   });
 
-  test('落在兄弟条目上：插到该条目所在容器的这个位置', () => {
-    expect(resolveDrop('node:self', 'device:self:d1', sampleLayout(), implicit)).toEqual({
-      kind: 'item',
-      item: nodeItem('self'),
+  test('落在放置区上：追加到该容器末尾；根层落点条 = 移到最外层', () => {
+    expect(resolveDrop('node:self', dropZoneId('folder:a'), sampleLayout(), implicit)).toEqual({
+      kind: 'node',
+      nodeId: 'self',
+      targetFolderId: 'a',
+      index: null,
+    });
+    expect(resolveDrop('node:n1', dropZoneId(ROOT_CONTAINER_ID), sampleLayout(), implicit)).toEqual(
+      { kind: 'node', nodeId: 'n1', targetFolderId: null, index: null }
+    );
+  });
+
+  test('落在兄弟节点上：插到该节点所在容器的这个位置', () => {
+    expect(resolveDrop('node:self', 'node:n1', sampleLayout(), implicit)).toEqual({
+      kind: 'node',
+      nodeId: 'self',
       targetFolderId: 'a',
       index: 0,
     });
-  });
-
-  test('条目落在文件夹行上 = 放进这个文件夹', () => {
-    expect(resolveDrop('node:self', 'folder:a1', sampleLayout(), implicit)).toEqual({
-      kind: 'item',
-      item: nodeItem('self'),
-      targetFolderId: 'a1',
-      index: null,
+    expect(resolveDrop('node:n1', 'node:self', sampleLayout(), implicit)).toEqual({
+      kind: 'node',
+      nodeId: 'n1',
+      targetFolderId: null,
+      index: 1,
     });
-  });
-
-  test('文件夹落在文件夹上：插到目标所在容器的这个位置', () => {
-    expect(resolveDrop('folder:b', 'folder:a1', sampleLayout(), implicit)).toEqual({
-      kind: 'folder',
-      folderId: 'b',
-      targetFolderId: 'a',
-      index: 0,
-    });
-  });
-
-  test('文件夹落在条目上：追加到该容器的文件夹末尾', () => {
-    expect(resolveDrop('folder:b', 'device:self:d1', sampleLayout(), implicit)).toEqual({
-      kind: 'folder',
-      folderId: 'b',
-      targetFolderId: 'a',
-      index: null,
-    });
-  });
-
-  test('拖到自己 / 自己的后代内一律拒绝', () => {
-    expect(resolveDrop('folder:a', 'folder:a', sampleLayout(), implicit)).toBeNull();
-    expect(resolveDrop('folder:a', dropZoneId('folder:a'), sampleLayout(), implicit)).toBeNull();
-    expect(resolveDrop('folder:a', dropZoneId('folder:a1'), sampleLayout(), implicit)).toBeNull();
-    expect(resolveDrop('folder:a', 'folder:a1', sampleLayout(), implicit)).toBeNull();
   });
 
   test('不认识的 id 一律返回 null', () => {
@@ -184,60 +140,139 @@ describe('resolveDrop', () => {
     expect(resolveDrop('node:self', 'bogus', sampleLayout(), implicit)).toBeNull();
     expect(resolveDrop('node:self', 'drop:nope', sampleLayout(), implicit)).toBeNull();
     expect(resolveDrop('node:self', 'drop:folder:ghost', sampleLayout(), implicit)).toBeNull();
+    expect(resolveDrop('node:self', 'node:self', sampleLayout(), implicit)).toBeNull();
+  });
+});
+
+describe('resolveDrop：分组', () => {
+  test('分组只能在根层重排：落在别的分组头上插到它的位置', () => {
+    expect(resolveDrop('folder:b', 'folder:a', sampleLayout())).toEqual({
+      kind: 'folder',
+      folderId: 'b',
+      index: 0,
+    });
+    expect(resolveDrop('folder:a', dropZoneId(ROOT_CONTAINER_ID), sampleLayout())).toEqual({
+      kind: 'folder',
+      folderId: 'a',
+      index: null,
+    });
+  });
+
+  test('分组落在别的分组头放置区上 = 插到那个分组的位置（与落在分组元素上同义）', () => {
+    expect(resolveDrop('folder:b', dropZoneId('folder:a'), sampleLayout())).toEqual({
+      kind: 'folder',
+      folderId: 'b',
+      index: 0,
+    });
+    expect(resolveDrop('folder:a', dropZoneId('folder:b'), sampleLayout())).toEqual({
+      kind: 'folder',
+      folderId: 'a',
+      index: 1,
+    });
+  });
+
+  test('分组落在节点 / 分组内容区 / 自己头上一律无效（不能嵌套）', () => {
+    expect(resolveDrop('folder:b', 'node:n1', sampleLayout())).toBeNull();
+    expect(resolveDrop('folder:b', 'node:n2', sampleLayout())).toBeNull();
+    expect(resolveDrop('folder:b', bodyDropZoneId('folder:a'), sampleLayout())).toBeNull();
+    expect(resolveDrop('folder:a', dropZoneId('folder:a'), sampleLayout())).toBeNull();
+    expect(resolveDrop('folder:a', 'folder:a', sampleLayout())).toBeNull();
+    expect(resolveDrop('folder:ghost', 'folder:a', sampleLayout())).toBeNull();
+  });
+
+  test('碰撞候选按拖动对象过滤（键盘排序也只会停在这些 id 上）', () => {
+    const ids = [
+      'folder:a',
+      'folder:b',
+      'node:n1',
+      'node:n2',
+      'node:self',
+      dropZoneId('folder:a'),
+      dropZoneId('folder:b'),
+      bodyDropZoneId('folder:b'),
+      dropZoneId(ROOT_CONTAINER_ID),
+    ];
+    expect(collisionCandidateIds('folder:b', ids)).toEqual([
+      'folder:a',
+      dropZoneId('folder:a'),
+      dropZoneId('folder:b'),
+      dropZoneId(ROOT_CONTAINER_ID),
+    ]);
+    expect(collisionCandidateIds('node:n1', ids)).toEqual([
+      'node:n2',
+      'node:self',
+      dropZoneId('folder:a'),
+      dropZoneId('folder:b'),
+      bodyDropZoneId('folder:b'),
+      dropZoneId(ROOT_CONTAINER_ID),
+    ]);
+    // 候选里的每个 id 对分组拖动都能解析成合法落点或被 resolveDrop 明确拒绝，不会落到节点上
+    for (const id of collisionCandidateIds('folder:b', ids)) {
+      const drop = resolveDrop('folder:b', id, sampleLayout());
+      expect(drop === null || drop.kind === 'folder').toBe(true);
+    }
+    expect(collisionCandidateIds('bogus', ids)).toEqual([]);
+  });
+
+  test('dropTargetContainerId：分组重排高亮根层，节点高亮目标容器', () => {
+    expect(dropTargetContainerId(null)).toBeNull();
+    expect(dropTargetContainerId({ kind: 'folder', folderId: 'a', index: 0 })).toBe(
+      ROOT_CONTAINER_ID
+    );
+    expect(
+      dropTargetContainerId({ kind: 'node', nodeId: 'n1', targetFolderId: 'b', index: null })
+    ).toBe('folder:b');
   });
 });
 
 describe('applyDrop', () => {
-  test('条目移入文件夹后从根层消失', () => {
+  test('节点移入分组后从根层消失', () => {
     const layout = sampleLayout();
-    const drop = resolveDrop('node:n1', dropZoneId('folder:b'), layout, []);
+    const drop = resolveDrop('node:n2', dropZoneId('folder:b'), layout, []);
     const next = applyDrop(layout, drop as NonNullable<typeof drop>, []);
-    expect(next).not.toBeNull();
     const containers = listContainers(next as DeviceFolderLayout, []);
-    expect(containers.get(ROOT_CONTAINER_ID)?.itemKeys).toEqual([]);
-    expect(containers.get('folder:b')?.itemKeys).toEqual(['node:n1']);
+    expect(containers.get(ROOT_CONTAINER_ID)?.nodeIds).toEqual([]);
+    expect(containers.get('folder:b')?.nodeIds).toEqual(['node:n2']);
   });
 
-  test('根层排序会把隐式条目显式化，顺序按拖拽结果落定', () => {
+  test('根层排序会把隐式节点显式化，顺序按拖拽结果落定', () => {
     const layout: DeviceFolderLayout = { folders: [], placements: [] };
-    const implicit = [nodeItem('self'), nodeItem('n1'), nodeItem('n2')];
+    const implicit = ['self', 'n1', 'n2'];
     const drop = resolveDrop('node:n2', 'node:self', layout, implicit);
     const next = applyDrop(layout, drop as NonNullable<typeof drop>, implicit);
-    expect(listContainers(next as DeviceFolderLayout, []).get(ROOT_CONTAINER_ID)?.itemKeys).toEqual(
-      ['node:n2', 'node:self', 'node:n1']
-    );
+    expect(listContainers(next as DeviceFolderLayout, []).get(ROOT_CONTAINER_ID)?.nodeIds).toEqual([
+      'node:n2',
+      'node:self',
+      'node:n1',
+    ]);
   });
 
   test('同容器内向下移动落在目标之后', () => {
     const layout: DeviceFolderLayout = {
       folders: [],
-      placements: [
-        placement(nodeItem('a'), null, 0),
-        placement(nodeItem('b'), null, 1),
-        placement(nodeItem('c'), null, 2),
-      ],
+      placements: [placement('a', null, 0), placement('b', null, 1), placement('c', null, 2)],
     };
     const drop = resolveDrop('node:a', 'node:c', layout, []);
     const next = applyDrop(layout, drop as NonNullable<typeof drop>, []);
-    expect(listContainers(next as DeviceFolderLayout, []).get(ROOT_CONTAINER_ID)?.itemKeys).toEqual(
-      ['node:b', 'node:c', 'node:a']
-    );
+    expect(listContainers(next as DeviceFolderLayout, []).get(ROOT_CONTAINER_ID)?.nodeIds).toEqual([
+      'node:b',
+      'node:c',
+      'node:a',
+    ]);
   });
 
-  test('文件夹移动到根层末尾', () => {
+  test('分组重排', () => {
     const layout = sampleLayout();
-    const drop = resolveDrop('folder:a1', dropZoneId(ROOT_CONTAINER_ID), layout, []);
+    const drop = resolveDrop('folder:b', 'folder:a', layout, []);
     const next = applyDrop(layout, drop as NonNullable<typeof drop>, []);
-    expect(
-      listContainers(next as DeviceFolderLayout, []).get(ROOT_CONTAINER_ID)?.folderIds
-    ).toEqual(['folder:a', 'folder:b', 'folder:a1']);
+    expect(rootFolderElementIds(next as DeviceFolderLayout)).toEqual(['folder:b', 'folder:a']);
   });
 
-  test('目标文件夹不存在时返回 null，不产生半截布局', () => {
+  test('目标分组不存在时返回 null，不产生半截布局', () => {
     expect(
       applyDrop(sampleLayout(), {
-        kind: 'item',
-        item: nodeItem('n1'),
+        kind: 'node',
+        nodeId: 'n2',
         targetFolderId: 'ghost',
         index: null,
       })
@@ -245,33 +280,18 @@ describe('applyDrop', () => {
   });
 });
 
-describe('materializeRootItems / placedDeviceIds', () => {
-  test('隐式条目落成显式 placement 时接在现有根层之后', () => {
-    const layout = sampleLayout();
-    const next = materializeRootItems(layout, [nodeItem('self'), nodeItem('n1')]);
-    const rootKeys = next.placements
+describe('materializeRootNodes', () => {
+  test('隐式节点落成显式 placement 时接在现有根层之后', () => {
+    const next = materializeRootNodes(sampleLayout(), ['self', 'n2']);
+    const rootIds = next.placements
       .filter((item) => item.folderId === null)
       .sort((a, b) => a.sortOrder - b.sortOrder)
-      .map(deviceFolderItemKey);
-    expect(rootKeys).toEqual(['node:n1', 'node:self']);
+      .map((item) => item.nodeId);
+    expect(rootIds).toEqual(['n2', 'self']);
   });
 
-  test('没有隐式条目时原样返回', () => {
+  test('没有隐式节点时原样返回', () => {
     const layout = sampleLayout();
-    expect(materializeRootItems(layout, [])).toBe(layout);
-  });
-
-  test('只统计该 node 上被单独放置的设备', () => {
-    const layout: DeviceFolderLayout = {
-      folders: [folder('a', null, 0)],
-      placements: [
-        placement(deviceItem('self', 'd1'), 'a', 0),
-        placement(deviceItem('n1', 'd2'), 'a', 1),
-        placement(nodeItem('n2'), 'a', 2),
-      ],
-    };
-    expect([...placedDeviceIds(layout, 'self')]).toEqual(['d1']);
-    expect([...placedDeviceIds(layout, 'n1')]).toEqual(['d2']);
-    expect([...placedDeviceIds(layout, 'n2')]).toEqual([]);
+    expect(materializeRootNodes(layout, [])).toBe(layout);
   });
 });

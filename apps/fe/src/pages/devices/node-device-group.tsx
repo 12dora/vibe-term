@@ -1,7 +1,11 @@
-// 设备管理页里的「一个 node」分组。三种形态与侧边栏聚合视图一致：
-//   - 离线：灰显最近一次已知 inventory 里的设备名，不建连接、不发请求；
-//   - 在线但未登录：只渲染「登录此节点」按钮，不建连接（避免每次渲染都撞 4401）；
-//   - 在线且已登录：懒挂该 node 的运行时，在里面渲染完整的设备管理面板。
+// 设备管理页里的「一个 node」分组：分组头（把手 / 名称 / 在线态 / Hub / 版本）+ 该节点的设备卡片网格。
+//
+// 三种形态：
+//   - 在线且已登录：挂该 node 的运行时，在里面渲染完整的设备管理面板；
+//   - 离线：**运行时保持挂载**（ready→offline 翻转不卸载子树，卡片不会消失），面板进 offline
+//     模式：不再拉列表，卡片来自 query 缓存 / 本地快照 / 节点 inventory，带「节点离线」标记；
+//     连接开关显示「连接」，点了就是一次手动连接尝试（节点仍不通时会走到 error / reconnecting）；
+//   - 在线但未登录：只渲染「登录此节点」按钮，不建运行时（避免每次渲染都撞 4401）。
 //
 // 「添加设备」全页只有顶栏一个 +：ready 的分组把自己的 `openAddDevice` 登记到
 // `add-device-targets` 注册表，顶栏据此直接开或先让用户选节点；面板自身仍不监听全局事件
@@ -9,21 +13,20 @@
 
 import { NodeLoginButton } from '@/auth';
 import { useGlobalDevice } from '@/components/global-device-provider';
-import { inventoryDevices } from '@/components/page-layouts/components/sidebar-node-section';
 import { NodeRuntimeScope } from '@/node/node-runtime-scope';
 import { SELF_NODE_ID } from '@tmex/api-client';
 import type { MeshNode } from '@tmex/api-client/auth/index';
 import {
   DeviceManagementPanel,
   type DeviceManagementPanelHandle,
-  type DeviceManagementPanelProps,
   type DeviceNodeContext,
 } from '@tmex/panels/device-management';
 import { NodeBadge } from '@tmex/panels/device-tree';
-import { Monitor } from 'lucide-react';
-import { type Ref, useCallback, useEffect, useRef } from 'react';
+import type { Device } from '@tmex/shared';
+import { type ReactNode, type Ref, useCallback, useEffect, useMemo, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
 import { registerAddDeviceTarget } from './add-device-targets';
+import { offlineDevices, writeDeviceSnapshot } from './device-snapshot-store';
 
 export interface NodeDeviceGroupEntry {
   /** mesh 列表里的真实 node id。 */
@@ -100,13 +103,20 @@ function StatusChip({ node }: { node: NodeDeviceGroupEntry }) {
   );
 }
 
-function GroupHeader({ node }: { node: NodeDeviceGroupEntry }) {
+function GroupHeader({
+  node,
+  dragControls,
+}: {
+  node: NodeDeviceGroupEntry;
+  dragControls: ReactNode;
+}) {
   const { t } = useTranslation();
   return (
     <div
       className="flex min-w-0 flex-wrap items-center gap-1.5"
       data-testid={`devices-node-header-${node.runtimeNodeId}`}
     >
+      {dragControls}
       <NodeBadge
         info={{
           nodeId: node.runtimeNodeId,
@@ -137,39 +147,6 @@ function GroupHeader({ node }: { node: NodeDeviceGroupEntry }) {
   );
 }
 
-function OfflineBody({ node }: { node: NodeDeviceGroupEntry }) {
-  const { t } = useTranslation();
-  const devices = inventoryDevices(node.inventory);
-  return (
-    <div
-      data-testid={`devices-node-offline-${node.runtimeNodeId}`}
-      className="rounded-lg border border-border/60 bg-muted/30 px-3 py-2"
-    >
-      {devices.length === 0 ? (
-        <p className="text-xs text-muted-foreground/60">{t('devices.nodes.noKnownDevices')}</p>
-      ) : (
-        <>
-          <p className="pb-1.5 text-[11px] text-muted-foreground/60">
-            {t('devices.nodes.lastKnownDevices')}
-          </p>
-          <ul className="space-y-1">
-            {devices.map((device) => (
-              <li
-                key={device.id}
-                data-testid={`devices-node-offline-device-${device.id}`}
-                className="flex items-center gap-2 text-xs text-muted-foreground/60"
-              >
-                <Monitor className="h-3.5 w-3.5 shrink-0" />
-                <span className="truncate">{device.name}</span>
-              </li>
-            ))}
-          </ul>
-        </>
-      )}
-    </div>
-  );
-}
-
 function SignedOutBody({ node }: { node: NodeDeviceGroupEntry }) {
   const { t } = useTranslation();
   return (
@@ -194,47 +171,46 @@ export function nodeDeviceContext(node: NodeDeviceGroupEntry): DeviceNodeContext
 function NodeDevicePanel({
   node,
   panelRef,
-  excludeDeviceIds,
-  renderCard,
+  offline,
 }: {
   node: NodeDeviceGroupEntry;
   panelRef: Ref<DeviceManagementPanelHandle>;
-  excludeDeviceIds?: ReadonlySet<string>;
-  renderCard?: DeviceManagementPanelProps['renderCard'];
+  offline: boolean;
 }) {
   const { connection } = useGlobalDevice();
+  const runtimeNodeId = node.runtimeNodeId;
+  const onDevicesLoaded = useCallback(
+    (devices: Device[]) => writeDeviceSnapshot(runtimeNodeId, devices),
+    [runtimeNodeId]
+  );
+  // 只在离线时才去读快照 / inventory；在线时面板用的是真实列表
+  const fallbackDevices = useMemo(
+    () => (offline ? offlineDevices(runtimeNodeId, node.inventory) : undefined),
+    [offline, runtimeNodeId, node.inventory]
+  );
   return (
     <DeviceManagementPanel
       ref={panelRef}
       nodeContext={nodeDeviceContext(node)}
       connection={connection}
-      excludeDeviceIds={excludeDeviceIds}
-      renderCard={renderCard}
-      // 设备都被单独放进文件夹了：再显示「还没有设备」的空态只会误导
-      hideEmptyState={(excludeDeviceIds?.size ?? 0) > 0}
+      offline={offline}
+      fallbackDevices={fallbackDevices}
+      onDevicesLoaded={onDevicesLoaded}
       // entry 自身保留全局事件：外壳右上角的「添加设备」作用于 self。
       listenOpenAddDeviceEvent={node.isSelf}
-      className="max-w-none gap-2 p-0 pb-0 sm:gap-2 sm:p-0"
     />
   );
 }
 
 export interface NodeDeviceGroupProps {
   node: NodeDeviceGroupEntry;
-  /** 已被单独放进文件夹的设备，不再出现在本分组的卡片网格里 */
-  excludeDeviceIds?: ReadonlySet<string>;
-  /** 给每张卡片套一层（文件夹树用它挂拖拽把手） */
-  renderCard?: DeviceManagementPanelProps['renderCard'];
   /** standalone 只有一个节点，根层直接显示卡片网格，不要分组头 */
   showHeader?: boolean;
+  /** 分组列表给的拖拽把手（与「移出分组」按钮），放在分组头最左 */
+  dragControls?: ReactNode;
 }
 
-export function NodeDeviceGroup({
-  node,
-  excludeDeviceIds,
-  renderCard,
-  showHeader = true,
-}: NodeDeviceGroupProps) {
+export function NodeDeviceGroup({ node, showHeader = true, dragControls }: NodeDeviceGroupProps) {
   const panelRef = useRef<DeviceManagementPanelHandle>(null);
   const state = nodeDeviceGroupState(node);
   const openAddDevice = useCallback(() => panelRef.current?.openAddDevice(), []);
@@ -254,20 +230,22 @@ export function NodeDeviceGroup({
     <section
       data-testid={`devices-node-group-${node.runtimeNodeId}`}
       data-state={state}
-      className="flex flex-col gap-1.5"
+      className="flex min-w-0 flex-col gap-1.5"
     >
-      {showHeader && <GroupHeader node={node} />}
-      {state === 'offline' && <OfflineBody node={node} />}
-      {state === 'signedOut' && <SignedOutBody node={node} />}
-      {state === 'ready' && (
-        <div data-testid={`devices-node-panel-${node.runtimeNodeId}`}>
+      {/* standalone 根层不要分组头；但进了分组的节点必须有头（把手与「移出分组」都在头上） */}
+      {(showHeader || dragControls != null) && (
+        <GroupHeader node={node} dragControls={dragControls ?? null} />
+      )}
+      {state === 'signedOut' ? (
+        <SignedOutBody node={node} />
+      ) : (
+        // ready 与 offline 共用同一棵运行时子树：节点掉线只是把面板切到离线模式，不重挂
+        <div
+          data-testid={`devices-node-panel-${node.runtimeNodeId}`}
+          data-offline={state === 'offline' ? 'true' : undefined}
+        >
           <NodeRuntimeScope nodeId={node.runtimeNodeId}>
-            <NodeDevicePanel
-              node={node}
-              panelRef={panelRef}
-              excludeDeviceIds={excludeDeviceIds}
-              renderCard={renderCard}
-            />
+            <NodeDevicePanel node={node} panelRef={panelRef} offline={state === 'offline'} />
           </NodeRuntimeScope>
         </div>
       )}

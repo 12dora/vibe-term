@@ -23,7 +23,9 @@ const { RuntimeProvider } = await import('@tmex/stores/react');
 const { renderToStaticMarkup } = await import('react-dom/server');
 const { MemoryRouter } = await import('react-router');
 const { GlobalDeviceProvider, useGlobalDevice } = await import('./global-device-provider');
-const { deviceIntentStore, resetDeviceIntentStores } = await import('./device-intent-store');
+const { deviceIntentStore, pendingConnectionRequests, resetDeviceIntentStores } = await import(
+  './device-intent-store'
+);
 
 type TransportEventHandler = Parameters<GatewayTransport['onEvent']>[0];
 
@@ -151,7 +153,10 @@ describe('缺陷 2：同一 node 的两份 provider 共享连接意图', () => {
     expect(intent.disconnected.has('dev-1')).toBe(true);
     expect(intent.connected.has('dev-1')).toBe(false);
     expect(second.route[0].connection.isIntentionallyDisconnected('dev-1')).toBe(true);
-    expect(second.route[0].connection.status('dev-1')).toBe('disconnected');
+    // 刚点下的断开先稳定停在「断开中」，落定并展示够最短时长后才回到「已断开」（由 effect 摘掉）
+    expect(second.route[0].connection.status('dev-1')).toBe('disconnecting');
+    pendingConnectionRequests(PREFIX_A).settle('dev-1');
+    expect(renderProviders(runtime).route[0].connection.status('dev-1')).toBe('disconnected');
 
     runtime.dispose();
   });

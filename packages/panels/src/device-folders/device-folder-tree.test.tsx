@@ -2,37 +2,28 @@
 // 交互态（重命名 / 新建行）由外部 props 驱动的 FolderSection / FolderNameEditor 直接覆盖。
 
 import { describe, expect, test } from 'bun:test';
-import type { DeviceFolder, DeviceFolderItemRef, DeviceFolderLayout } from '@tmex/shared';
+import type { DeviceFolder, DeviceFolderLayout } from '@tmex/shared';
 import { renderToStaticMarkup } from 'react-dom/server';
 
 import { DeviceFolderTree } from './device-folder-tree';
 import { FolderNameEditor } from './folder-name-editor';
 import { FolderSection } from './folder-section';
 
-function folder(id: string, parentId: string | null, sortOrder: number): DeviceFolder {
+function folder(id: string, sortOrder: number): DeviceFolder {
   return {
     id,
     name: `folder-${id}`,
-    parentId,
     sortOrder,
     createdAt: '2026-08-29T00:00:00.000Z',
     updatedAt: '2026-08-29T00:00:00.000Z',
   };
 }
 
-function nodeItem(nodeId: string): DeviceFolderItemRef {
-  return { kind: 'node', nodeId, deviceId: null };
-}
-
-function deviceItem(nodeId: string, deviceId: string): DeviceFolderItemRef {
-  return { kind: 'device', nodeId, deviceId };
-}
-
 const LAYOUT: DeviceFolderLayout = {
-  folders: [folder('a', null, 0), folder('b', null, 1), folder('a1', 'a', 0)],
+  folders: [folder('a', 0), folder('b', 1)],
   placements: [
-    { ...deviceItem('self', 'd1'), folderId: 'a', sortOrder: 0 },
-    { ...nodeItem('n1'), folderId: null, sortOrder: 0 },
+    { nodeId: 'n1', folderId: 'a', sortOrder: 0 },
+    { nodeId: 'n2', folderId: null, sortOrder: 0 },
   ],
 };
 
@@ -42,89 +33,105 @@ function renderTree(
   return renderToStaticMarkup(
     <DeviceFolderTree
       layout={LAYOUT}
-      implicitRootItems={[nodeItem('self')]}
+      implicitRootNodeIds={['self']}
       expanded={{}}
-      itemLabel={(item) => `label:${item.nodeId}`}
-      renderItem={(item) => <span data-testid={`rendered-${item.kind}-${item.nodeId}`} />}
+      nodeLabel={(nodeId) => `label:${nodeId}`}
+      renderNode={(nodeId, ctx) => (
+        <span data-testid={`rendered-${nodeId}`} data-in-folder={ctx.folderId ?? 'root'}>
+          {ctx.dragControls}
+        </span>
+      )}
       onExpandedChange={() => undefined}
       onDrop={() => undefined}
       onCreateFolder={() => undefined}
       onRenameFolder={() => undefined}
       onDeleteFolder={() => undefined}
-      onMoveItemToRoot={() => undefined}
+      onMoveNodeToRoot={() => undefined}
       {...overrides}
     />
   );
 }
 
 describe('DeviceFolderTree', () => {
-  test('渲染文件夹层级、计数与条目外壳', () => {
+  test('渲染分组、计数与节点外壳', () => {
     const html = renderTree();
 
     expect(html).toContain('data-testid="device-folder-tree"');
     expect(html).toContain('data-testid="device-folder-a"');
     expect(html).toContain('data-testid="device-folder-b"');
-    expect(html).toContain('data-testid="device-folder-a1"');
     expect(html).toContain('data-testid="device-folder-toggle-a"');
     expect(html).toContain('data-testid="device-folder-name-a"');
     expect(html).toContain('data-testid="device-folder-menu-a"');
-    // 条目外壳按 deviceFolderItemKey 命名
     expect(html).toContain('data-testid="device-folder-item-node:n1"');
+    expect(html).toContain('data-testid="device-folder-item-node:n2"');
     expect(html).toContain('data-testid="device-folder-item-node:self"');
-    expect(html).toContain('data-testid="device-folder-item-device:self:d1"');
-    expect(html).toContain('data-testid="rendered-device-self"');
+    expect(html).toContain('data-in-folder="a"');
   });
 
-  test('缩进层级写在 data-depth 上，根文件夹为 0、子文件夹为 1', () => {
+  test('分组是虚线边框的放置区', () => {
     const html = renderTree();
-    const depthOf = (id: string) => {
-      const marker = `data-testid="device-folder-${id}"`;
-      const index = html.indexOf(marker);
-      const tag = html.slice(html.lastIndexOf('<', index), html.indexOf('>', index));
-      return tag.match(/data-depth="(\d+)"/)?.[1] ?? null;
-    };
-    expect(depthOf('a')).toBe('0');
-    expect(depthOf('a1')).toBe('1');
+    const index = html.indexOf('data-testid="device-folder-a"');
+    const tag = html.slice(html.lastIndexOf('<', index), html.indexOf('>', index));
+    expect(tag).toContain('border-dashed');
   });
 
-  test('隐式根条目排在显式 placement 之后', () => {
+  test('把手与「移出分组」按钮交给宿主放进节点头部', () => {
     const html = renderTree();
-    expect(html.indexOf('data-testid="device-folder-item-node:n1"')).toBeLessThan(
+    const n1 = html.slice(
+      html.indexOf('data-testid="rendered-n1"'),
+      html.indexOf('data-testid="rendered-n2"')
+    );
+    expect(n1).toContain('data-testid="device-folder-handle-n1"');
+    expect(n1).toContain('data-testid="device-folder-move-out-n1"');
+    const n2 = html.slice(html.indexOf('data-testid="rendered-n2"'));
+    expect(n2).toContain('data-testid="device-folder-handle-n2"');
+    expect(n2).not.toContain('data-testid="device-folder-move-out-n2"');
+  });
+
+  test('隐式根节点排在显式 placement 之后', () => {
+    const html = renderTree();
+    expect(html.indexOf('data-testid="device-folder-item-node:n2"')).toBeLessThan(
       html.indexOf('data-testid="device-folder-item-node:self"')
     );
   });
 
-  test('空文件夹渲染放置提示，非空的不渲染', () => {
+  test('空分组渲染虚线放置提示，非空的不渲染', () => {
     const html = renderTree();
-    expect(html).toContain('data-testid="device-folder-drop-a1"');
     expect(html).toContain('data-testid="device-folder-drop-b"');
     expect(html).not.toContain('data-testid="device-folder-drop-a"');
   });
 
-  test('itemDraggable 返回 false 的条目不套拖拽把手', () => {
-    const html = renderTree({
-      itemDraggable: (item) => !(item.kind === 'node' && item.nodeId === 'self'),
-    });
+  test('没有拖拽时不渲染「移到最外层」落点条', () => {
+    expect(renderTree()).not.toContain('data-testid="device-folder-drop-root"');
+  });
+
+  test('分组菜单里没有「新建子分组」', () => {
+    const html = renderTree();
+    expect(html).not.toContain('device-folder-new-sub-');
+    expect(html).not.toContain('devices.folders.newSubfolder');
+  });
+
+  test('nodeDraggable 返回 false 的节点不套拖拽把手', () => {
+    const html = renderTree({ nodeDraggable: (nodeId) => nodeId !== 'self' });
     const index = html.indexOf('data-testid="device-folder-item-node:self"');
-    const nextItem = html.indexOf('data-testid="device-folder-item-', index + 1);
-    const slice = html.slice(index, nextItem === -1 ? undefined : nextItem);
-    expect(slice).toContain('data-testid="rendered-node-self"');
+    const slice = html.slice(index);
+    expect(slice).toContain('data-testid="rendered-self"');
     expect(slice).not.toContain('devices.folders.dragHandle');
   });
 
-  test('初始就收起的文件夹不挂载内容（其中的落点与远端 runtime 随之释放），并标记 aria-hidden', () => {
+  test('初始就收起的分组不挂载内容，并标记 aria-hidden', () => {
     const html = renderTree({ expanded: { a: false } });
     const index = html.indexOf('data-testid="device-folder-a"');
     const tag = html.slice(html.lastIndexOf('<', index), html.indexOf('>', index));
     expect(tag).toContain('data-expanded="false"');
     expect(html).toContain('aria-hidden="true"');
-    expect(html).not.toContain('data-testid="device-folder-item-device:self:d1"');
+    expect(html).not.toContain('data-testid="device-folder-item-node:n1"');
   });
 
-  test('没有文件夹也没有条目时只渲染空树容器', () => {
+  test('没有分组也没有节点时只渲染空树容器', () => {
     const html = renderTree({
       layout: { folders: [], placements: [] },
-      implicitRootItems: [],
+      implicitRootNodeIds: [],
     });
     expect(html).toContain('data-testid="device-folder-tree"');
     expect(html).not.toContain('data-testid="device-folder-item-');
@@ -135,8 +142,7 @@ describe('FolderSection', () => {
   function renderSection(overrides: Partial<React.ComponentProps<typeof FolderSection>> = {}) {
     return renderToStaticMarkup(
       <FolderSection
-        folder={folder('a', null, 0)}
-        depth={0}
+        folder={folder('a', 0)}
         itemCount={3}
         expanded={true}
         renaming={false}
@@ -146,7 +152,6 @@ describe('FolderSection', () => {
         onStartRename={() => undefined}
         onSubmitRename={() => undefined}
         onCancelRename={() => undefined}
-        onNewSubfolder={() => undefined}
         onDelete={() => undefined}
         {...overrides}
       >
@@ -171,16 +176,9 @@ describe('FolderSection', () => {
     expect(html).not.toContain('data-testid="device-folder-menu-a"');
   });
 
-  test('拖拽命中时文件夹头标出 data-drop-target', () => {
+  test('拖拽命中时整个分组标出 data-drop-target', () => {
     expect(renderSection()).not.toContain('data-drop-target="true"');
     expect(renderSection({ dropTarget: true })).toContain('data-drop-target="true"');
-  });
-
-  test('缩进封顶：超过 MAX_INDENT_DEPTH 的层级不再加竖线与内边距', () => {
-    expect(renderSection({ depth: 3 })).toContain('border-l');
-    const capped = renderSection({ depth: 9 });
-    expect(capped).toContain('data-depth="6"');
-    expect(capped).not.toContain('border-l');
   });
 });
 

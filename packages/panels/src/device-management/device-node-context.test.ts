@@ -35,13 +35,13 @@ describe('isRemoteDeviceKind', () => {
 });
 
 describe('deviceKindLabel', () => {
-  test('本机两种不带节点名', () => {
-    expect(deviceKindLabel(i18n.t, 'local', '书房节点')).toBe('本地设备');
-    expect(deviceKindLabel(i18n.t, 'ssh', '书房节点')).toBe('SSH 设备');
+  test('本机两种', () => {
+    expect(deviceKindLabel(i18n.t, 'local')).toBe('本地设备');
+    expect(deviceKindLabel(i18n.t, 'ssh')).toBe('SSH 设备');
   });
 
-  test('远端两种插入节点名', () => {
-    expect(deviceKindLabel(i18n.t, 'nodeLocal', '书房节点')).toBe('节点 书房节点 上的本机设备');
-    expect(deviceKindLabel(i18n.t, 'nodeSsh', '书房节点')).toBe('节点 书房节点 上的 SSH 设备');
+  test('远端两种说「远程…」，节点名已在分组头上，不再重复', () => {
+    expect(deviceKindLabel(i18n.t, 'nodeLocal')).toBe('远程本地设备');
+    expect(deviceKindLabel(i18n.t, 'nodeSsh')).toBe('远程 SSH 设备');
   });
 });

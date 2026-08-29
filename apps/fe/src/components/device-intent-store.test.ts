@@ -11,6 +11,7 @@ installWindowStorage();
 const {
   DeviceIntentStore,
   deviceIntentStore,
+  pendingConnectionRequests,
   reconcileDeviceSubscriptions,
   resetDeviceIntentStores,
 } = await import('./device-intent-store');
@@ -229,5 +230,34 @@ describe('reconcileDeviceSubscriptions', () => {
     });
 
     expect(log).toEqual([]);
+  });
+});
+
+describe('在飞请求表', () => {
+  test('同 prefix 同实例；重复发起同方向不换快照，换方向替换，落定后摘掉', () => {
+    const store = pendingConnectionRequests(PREFIX_A);
+    expect(pendingConnectionRequests(PREFIX_A)).toBe(store);
+    expect(pendingConnectionRequests(PREFIX_B)).not.toBe(store);
+
+    let notified = 0;
+    store.subscribe(() => {
+      notified += 1;
+    });
+    store.begin('dev-1', 'connect', 100);
+    const snapshot = store.getSnapshot();
+    expect(snapshot.get('dev-1')).toEqual({ kind: 'connect', at: 100 });
+
+    store.begin('dev-1', 'connect', 200);
+    expect(store.getSnapshot()).toBe(snapshot);
+    store.begin('', 'connect');
+    expect(store.getSnapshot()).toBe(snapshot);
+
+    store.begin('dev-1', 'disconnect', 300);
+    expect(store.getSnapshot().get('dev-1')).toEqual({ kind: 'disconnect', at: 300 });
+
+    store.settle('dev-1');
+    expect(store.getSnapshot().size).toBe(0);
+    store.settle('dev-1');
+    expect(notified).toBe(3);
   });
 });

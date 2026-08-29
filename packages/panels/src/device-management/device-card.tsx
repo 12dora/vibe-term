@@ -1,6 +1,9 @@
-// 设备卡片：紧凑两行布局。第一行图标/名称/SSH 目标 + 连接开关、打开与更多菜单；
-// 第二行「设备种类」pill（本地 / SSH / 节点 X 上的…，种类只在这里出现一次）、会话、
+// 设备卡片：紧凑两行布局。第一行（可选的拖拽把手）图标/名称/SSH 目标 + 连接开关、打开与更多菜单；
+// 第二行「设备种类」pill（本地 / SSH / 远程…，种类只在这里出现一次）、会话、
 // 状态徽标与「显示在侧栏」开关（浏览器本地偏好，按 `${runtimeNodeId}:${deviceId}` 记）。
+//
+// `offline`：所属节点离线，卡片来自最近一次快照——灰显、标「节点离线」、编辑/删除/测试等
+// 要打远端 API 的动作禁用；连接开关仍可点（手动发起一次连接尝试）。
 
 import { useMutation } from '@tanstack/react-query';
 import { testDeviceConnection } from '@tmex/api-client';
@@ -27,9 +30,10 @@ import {
   Network,
   Pencil,
   Trash2,
+  WifiOff,
   Zap,
 } from 'lucide-react';
-import type { CSSProperties } from 'react';
+import type { CSSProperties, ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Link } from 'react-router';
 import { toast } from 'sonner';
@@ -51,6 +55,10 @@ export interface DeviceCardProps {
   nodeContext: DeviceNodeContext;
   /** 有它才显示真实的连接/断开开关；缺省时只留「打开」 */
   connection?: DeviceConnectionAdapter;
+  /** 所属节点离线：灰显 + 禁用需要远端 API 的操作 */
+  offline?: boolean;
+  /** 节点内排序的把手（宿主注入），渲染在第一行最左 */
+  dragHandle?: ReactNode;
   /** 卡片根节点内联样式；列表用它挂 `--tmex-stagger-index` 做逐项入场 */
   style?: CSSProperties;
   className?: string;
@@ -85,7 +93,8 @@ function DeviceCardMenu({
   device,
   onEdit,
   onDelete,
-}: Pick<DeviceCardProps, 'device' | 'onEdit' | 'onDelete'>) {
+  offline,
+}: Pick<DeviceCardProps, 'device' | 'onEdit' | 'onDelete'> & { offline: boolean }) {
   const { t } = useTranslation();
   const runtime = useRuntime();
 
@@ -116,7 +125,11 @@ function DeviceCardMenu({
         <MoreHorizontal className="h-4 w-4" />
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end">
-        <DropdownMenuItem data-testid={`device-card-edit-${device.id}`} onClick={onEdit}>
+        <DropdownMenuItem
+          data-testid={`device-card-edit-${device.id}`}
+          onClick={onEdit}
+          disabled={offline}
+        >
           <Pencil className="h-4 w-4" />
           {t('common.edit')}
         </DropdownMenuItem>
@@ -124,7 +137,7 @@ function DeviceCardMenu({
           <DropdownMenuItem
             data-testid={`device-card-test-${device.id}`}
             onClick={() => testConnection.mutate()}
-            disabled={testConnection.isPending}
+            disabled={offline || testConnection.isPending}
           >
             <Zap className="h-4 w-4" />
             {t('common.test')}
@@ -135,6 +148,7 @@ function DeviceCardMenu({
           data-testid={`device-card-delete-${device.id}`}
           variant="destructive"
           onClick={onDelete}
+          disabled={offline}
         >
           <Trash2 className="h-4 w-4" />
           {t('common.delete')}
@@ -150,6 +164,8 @@ export function DeviceCard({
   onDelete,
   nodeContext,
   connection,
+  offline = false,
+  dragHandle,
   style,
   className,
 }: DeviceCardProps) {
@@ -163,7 +179,7 @@ export function DeviceCard({
   const setSidebarVisible = useUIStore((state) => state.setSidebarDeviceVisibility);
 
   const kind = deviceDisplayKind(device.type, nodeContext);
-  const kindLabel = deviceKindLabel(t, kind, nodeContext.name);
+  const kindLabel = deviceKindLabel(t, kind);
   const target = sshTarget(device);
 
   return (
@@ -173,13 +189,16 @@ export function DeviceCard({
       data-device-id={device.id}
       data-device-name={device.name}
       data-device-kind={kind}
+      data-offline={offline ? 'true' : undefined}
       style={style}
       className={cn(
-        'gap-2 overflow-hidden border-border/50 py-2.5 transition-[box-shadow,border-color] duration-(--tmex-motion-standard) ease-out hover:shadow-md hover:ring-foreground/20 motion-reduce:transition-none',
+        'gap-2 overflow-hidden border-border/50 py-2.5 transition-[box-shadow,border-color,opacity] duration-(--tmex-motion-standard) ease-out hover:shadow-md hover:ring-foreground/20 motion-reduce:transition-none',
+        offline && 'border-dashed bg-muted/20 opacity-75 hover:shadow-none',
         className
       )}
     >
       <CardContent className="flex items-center gap-2">
+        {dragHandle}
         <DeviceCardIcon device={device} remote={isRemoteDeviceKind(kind)} />
         <div className="min-w-0 flex-1">
           <div className="truncate text-sm font-medium leading-tight" title={device.name}>
@@ -191,7 +210,9 @@ export function DeviceCard({
             </div>
           )}
         </div>
-        {connection && <DeviceCardConnectToggle deviceId={device.id} connection={connection} />}
+        {connection && (
+          <DeviceCardConnectToggle deviceId={device.id} connection={connection} offline={offline} />
+        )}
         <Link
           to={hostAppPath(runtime.host, `/devices/${device.id}`)}
           data-testid={`device-card-open-${device.id}`}
@@ -206,7 +227,7 @@ export function DeviceCard({
           <ArrowUpRight className="h-4 w-4" />
           {connection ? null : t('device.open')}
         </Link>
-        <DeviceCardMenu device={device} onEdit={onEdit} onDelete={onDelete} />
+        <DeviceCardMenu device={device} onEdit={onEdit} onDelete={onDelete} offline={offline} />
       </CardContent>
 
       <CardContent className="flex flex-wrap items-center gap-x-2 gap-y-1">
@@ -222,7 +243,18 @@ export function DeviceCard({
             {device.session}
           </Badge>
         )}
-        <DeviceStatusBadge deviceId={device.id} />
+        {offline ? (
+          <Badge
+            variant="outline"
+            data-testid={`device-card-offline-${device.id}`}
+            className="h-5 gap-1 px-1.5 text-[10px] font-normal text-muted-foreground"
+          >
+            <WifiOff className="h-3 w-3" />
+            {t('devices.nodes.deviceOffline')}
+          </Badge>
+        ) : (
+          <DeviceStatusBadge deviceId={device.id} />
+        )}
         <div
           className="ml-auto flex shrink-0 items-center gap-1.5 text-[11px] text-muted-foreground"
           title={t('device.sidebar.hint')}

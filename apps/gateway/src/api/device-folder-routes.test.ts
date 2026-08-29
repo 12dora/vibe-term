@@ -46,16 +46,26 @@ async function getLayout(): Promise<DeviceFolderLayout> {
   return json as unknown as DeviceFolderLayout;
 }
 
+async function createFolder(name: string): Promise<string> {
+  const { status, json } = await call('POST', '/api/device-folders', { name });
+  expect(status).toBe(201);
+  return (json.folder as { id: string }).id;
+}
+
+function folderOrder(layout: DeviceFolderLayout) {
+  return layout.folders.map((folder) => ({ id: folder.id, sortOrder: folder.sortOrder }));
+}
+
 describe('POST /api/device-folders', () => {
-  test('创建成功返回 201', async () => {
+  test('创建成功返回 201，且没有 parentId', async () => {
     const received: SettingsNamespace[] = [];
     registerSettingsBroadcaster((namespace) => received.push(namespace));
     const { status, json } = await call('POST', '/api/device-folders', { name: '  运维 组 ' });
     expect(status).toBe(201);
-    const folder = json.folder as { name: string; parentId: string | null; id: string };
+    const folder = json.folder as Record<string, unknown>;
     expect(folder.name).toBe('运维 组');
-    expect(folder.parentId).toBeNull();
-    expect(folder.id.length).toBeGreaterThan(0);
+    expect('parentId' in folder).toBe(false);
+    expect(String(folder.id).length).toBeGreaterThan(0);
     expect(received).toEqual(['device-folders']);
   });
 
@@ -72,162 +82,170 @@ describe('POST /api/device-folders', () => {
     expect(status).toBe(400);
     expect(json).toEqual({ error: t('apiError.folderNameTooLong') });
   });
+
+  test('试图嵌套（parentId 非空）返回 folderLayoutInvalid', async () => {
+    const parentId = await createFolder('nest-parent');
+    const { status, json } = await call('POST', '/api/device-folders', {
+      name: 'nest-child',
+      parentId,
+    });
+    expect(status).toBe(400);
+    expect(json).toEqual({ error: t('apiError.folderLayoutInvalid') });
+  });
 });
 
 describe('PATCH /api/device-folders/:id', () => {
   test('改名成功', async () => {
-    const created = await call('POST', '/api/device-folders', { name: 'old-name' });
-    const id = (created.json.folder as { id: string }).id;
+    const id = await createFolder('old-name');
     const { status, json } = await call('PATCH', `/api/device-folders/${id}`, { name: 'new-name' });
     expect(status).toBe(200);
     expect((json.folder as { name: string }).name).toBe('new-name');
   });
 
-  test('把文件夹挂到自己的子文件夹下成环 400', async () => {
-    const parent = await call('POST', '/api/device-folders', { name: 'cycle-parent' });
-    const parentId = (parent.json.folder as { id: string }).id;
-    const child = await call('POST', '/api/device-folders', {
-      name: 'cycle-child',
-      parentId,
-    });
-    const childId = (child.json.folder as { id: string }).id;
-    const { status, json } = await call('PATCH', `/api/device-folders/${parentId}`, {
-      parentId: childId,
-    });
+  test('试图改 parentId 返回 folderLayoutInvalid', async () => {
+    const a = await createFolder('patch-a');
+    const b = await createFolder('patch-b');
+    const { status, json } = await call('PATCH', `/api/device-folders/${a}`, { parentId: b });
     expect(status).toBe(400);
-    expect(json).toEqual({ error: t('apiError.folderCycle') });
+    expect(json).toEqual({ error: t('apiError.folderLayoutInvalid') });
+  });
+
+  test('不存在返回 404', async () => {
+    const { status } = await call('PATCH', '/api/device-folders/nope', { name: 'x' });
+    expect(status).toBe(404);
   });
 });
 
 describe('DELETE /api/device-folders/:id', () => {
-  test('删除后子文件夹与 placement 上提到父级', async () => {
-    const root = await call('POST', '/api/device-folders', { name: 'del-root' });
-    const rootId = (root.json.folder as { id: string }).id;
-    const mid = await call('POST', '/api/device-folders', { name: 'del-mid', parentId: rootId });
-    const midId = (mid.json.folder as { id: string }).id;
-    const nested = await call('POST', '/api/device-folders', {
-      name: 'del-nested',
-      parentId: midId,
-    });
-    const nestedId = (nested.json.folder as { id: string }).id;
-
+  test('删除后其中的节点回到根层', async () => {
+    const id = await createFolder('del-group');
     const layout = await getLayout();
     await call('PUT', '/api/device-folders/layout', {
-      folders: layout.folders.map((folder) => ({
-        id: folder.id,
-        parentId: folder.parentId,
-        sortOrder: folder.sortOrder,
-      })),
-      placements: [
-        ...layout.placements,
-        {
-          kind: 'device',
-          nodeId: 'self',
-          deviceId: 'del-dev',
-          folderId: midId,
-          sortOrder: 0,
-        },
-      ],
+      folders: folderOrder(layout),
+      placements: [...layout.placements, { nodeId: 'del-node', folderId: id, sortOrder: 0 }],
     });
 
-    const { status, json } = await call('DELETE', `/api/device-folders/${midId}`);
+    const { status, json } = await call('DELETE', `/api/device-folders/${id}`);
     expect(status).toBe(200);
     expect(json).toEqual({ success: true });
 
     const after = await getLayout();
-    expect(after.folders.some((folder) => folder.id === midId)).toBe(false);
-    expect(after.folders.find((folder) => folder.id === nestedId)?.parentId).toBe(rootId);
-    expect(
-      after.placements.find((item) => item.kind === 'device' && item.deviceId === 'del-dev')
-        ?.folderId
-    ).toBe(rootId);
+    expect(after.folders.some((folder) => folder.id === id)).toBe(false);
+    expect(after.placements.find((item) => item.nodeId === 'del-node')?.folderId).toBeNull();
   });
 });
 
 describe('PUT /api/device-folders/layout', () => {
-  test('成功替换层级', async () => {
-    const a = await call('POST', '/api/device-folders', { name: 'layout-a' });
-    const b = await call('POST', '/api/device-folders', { name: 'layout-b' });
-    const aId = (a.json.folder as { id: string }).id;
-    const bId = (b.json.folder as { id: string }).id;
+  test('成功替换顺序与 placement', async () => {
+    const aId = await createFolder('layout-a');
+    const bId = await createFolder('layout-b');
     const layout = await getLayout();
     const { status, json } = await call('PUT', '/api/device-folders/layout', {
       folders: layout.folders.map((folder) =>
         folder.id === bId
-          ? { id: bId, parentId: aId, sortOrder: 0 }
-          : { id: folder.id, parentId: folder.parentId, sortOrder: folder.sortOrder }
+          ? { id: bId, sortOrder: -1 }
+          : { id: folder.id, sortOrder: folder.sortOrder }
       ),
-      placements: layout.placements,
+      placements: [{ nodeId: 'layout-node', folderId: aId, sortOrder: 0 }],
     });
     expect(status).toBe(200);
     const next = json as unknown as DeviceFolderLayout;
-    expect(next.folders.find((folder) => folder.id === bId)?.parentId).toBe(aId);
+    expect(next.folders[0]?.id).toBe(bId);
+    expect(next.placements).toEqual([{ nodeId: 'layout-node', folderId: aId, sortOrder: 0 }]);
   });
 
   test('id 集合不一致 400', async () => {
-    await call('POST', '/api/device-folders', { name: 'layout-mismatch' });
+    await createFolder('layout-mismatch');
     const layout = await getLayout();
     const { status, json } = await call('PUT', '/api/device-folders/layout', {
-      folders: layout.folders.slice(1).map((folder) => ({
-        id: folder.id,
-        parentId: folder.parentId,
-        sortOrder: folder.sortOrder,
-      })),
+      folders: folderOrder(layout).slice(1),
       placements: [],
     });
     expect(status).toBe(400);
     expect(json).toEqual({ error: t('apiError.folderLayoutInvalid') });
   });
 
-  test('成环 400', async () => {
-    const a = await call('POST', '/api/device-folders', { name: 'cycle-a' });
-    const b = await call('POST', '/api/device-folders', { name: 'cycle-b' });
-    const aId = (a.json.folder as { id: string }).id;
-    const bId = (b.json.folder as { id: string }).id;
+  test('嵌套分组 400', async () => {
+    const aId = await createFolder('nest-a');
+    const bId = await createFolder('nest-b');
     const layout = await getLayout();
     const { status, json } = await call('PUT', '/api/device-folders/layout', {
-      folders: layout.folders.map((folder) => {
-        if (folder.id === aId) return { id: aId, parentId: bId, sortOrder: 0 };
-        if (folder.id === bId) return { id: bId, parentId: aId, sortOrder: 0 };
-        return { id: folder.id, parentId: folder.parentId, sortOrder: folder.sortOrder };
-      }),
+      folders: folderOrder(layout).map((folder) =>
+        folder.id === aId ? { ...folder, parentId: bId } : folder
+      ),
       placements: layout.placements,
     });
     expect(status).toBe(400);
-    expect(json).toEqual({ error: t('apiError.folderCycle') });
+    expect(json).toEqual({ error: t('apiError.folderLayoutInvalid') });
   });
 
-  test('非法 placement 400', async () => {
+  test('设备 placement / 非法 placement 400', async () => {
     const layout = await getLayout();
-    const folders = layout.folders.map((folder) => ({
-      id: folder.id,
-      parentId: folder.parentId,
-      sortOrder: folder.sortOrder,
-    }));
-    const badKind = await call('PUT', '/api/device-folders/layout', {
-      folders,
-      placements: [{ kind: 'folder', nodeId: 'n1', deviceId: null, folderId: null, sortOrder: 0 }],
-    });
-    expect(badKind.status).toBe(400);
-    expect(badKind.json).toEqual({ error: t('apiError.folderLayoutInvalid') });
-
-    const missingDeviceId = await call('PUT', '/api/device-folders/layout', {
+    const folders = folderOrder(layout);
+    const devicePlacement = await call('PUT', '/api/device-folders/layout', {
       folders,
       placements: [
-        { kind: 'device', nodeId: 'self', deviceId: null, folderId: null, sortOrder: 0 },
+        { kind: 'device', nodeId: 'self', deviceId: 'd1', folderId: null, sortOrder: 0 },
       ],
     });
-    expect(missingDeviceId.status).toBe(400);
+    expect(devicePlacement.status).toBe(400);
+    expect(devicePlacement.json).toEqual({ error: t('apiError.folderLayoutInvalid') });
+
+    const badKind = await call('PUT', '/api/device-folders/layout', {
+      folders,
+      placements: [{ kind: 'folder', nodeId: 'n1', folderId: null, sortOrder: 0 }],
+    });
+    expect(badKind.status).toBe(400);
+
+    const unknownFolder = await call('PUT', '/api/device-folders/layout', {
+      folders,
+      placements: [{ nodeId: 'n1', folderId: 'ghost', sortOrder: 0 }],
+    });
+    expect(unknownFolder.status).toBe(400);
+    expect(unknownFolder.json).toEqual({ error: t('apiError.folderLayoutInvalid') });
 
     const dup = await call('PUT', '/api/device-folders/layout', {
       folders,
       placements: [
-        { kind: 'node', nodeId: 'n-dup', deviceId: null, folderId: null, sortOrder: 0 },
-        { kind: 'node', nodeId: 'n-dup', deviceId: null, folderId: null, sortOrder: 1 },
+        { nodeId: 'n-dup', folderId: null, sortOrder: 0 },
+        { nodeId: 'n-dup', folderId: null, sortOrder: 1 },
       ],
     });
     expect(dup.status).toBe(400);
     expect(dup.json).toEqual({ error: t('apiError.folderLayoutInvalid') });
+  });
+
+  test('旧客户端形态（kind:node + deviceId:null）仍被接受', async () => {
+    const layout = await getLayout();
+    const { status, json } = await call('PUT', '/api/device-folders/layout', {
+      folders: folderOrder(layout),
+      placements: [
+        { kind: 'node', nodeId: 'legacy-node', deviceId: null, folderId: null, sortOrder: 0 },
+      ],
+    });
+    expect(status).toBe(200);
+    expect((json as unknown as DeviceFolderLayout).placements).toEqual([
+      { nodeId: 'legacy-node', folderId: null, sortOrder: 0 },
+    ]);
+  });
+});
+
+describe('POST /api/device-folders/reset', () => {
+  test('清空全部分组与 placement，并广播 device-folders', async () => {
+    const id = await createFolder('reset-group');
+    const layout = await getLayout();
+    await call('PUT', '/api/device-folders/layout', {
+      folders: folderOrder(layout),
+      placements: [{ nodeId: 'reset-node', folderId: id, sortOrder: 0 }],
+    });
+    const received: SettingsNamespace[] = [];
+    registerSettingsBroadcaster((namespace) => received.push(namespace));
+
+    const { status, json } = await call('POST', '/api/device-folders/reset');
+    expect(status).toBe(200);
+    expect(json).toEqual({ folders: [], placements: [] });
+    expect(received).toEqual(['device-folders']);
+    expect(await getLayout()).toEqual({ folders: [], placements: [] });
   });
 });
 
@@ -252,23 +270,21 @@ describe('handleApiRequest 路由可达', () => {
     expect(Array.isArray(body.placements)).toBe(true);
   });
 
-  test('PUT /api/device-folders/layout 不被 :id 吃掉', async () => {
+  test('PUT /api/device-folders/layout 与 POST /reset 不被 :id 吃掉', async () => {
     const layout = await getLayout();
-    const res = await handleApiRequest(
+    const put = await handleApiRequest(
       new Request('http://localhost/api/device-folders/layout', {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          folders: layout.folders.map((folder) => ({
-            id: folder.id,
-            parentId: folder.parentId,
-            sortOrder: folder.sortOrder,
-          })),
-          placements: layout.placements,
-        }),
+        body: JSON.stringify({ folders: folderOrder(layout), placements: layout.placements }),
       }),
       {} as Server<unknown>
     );
-    expect(res.status).toBe(200);
+    expect(put.status).toBe(200);
+    const reset = await handleApiRequest(
+      new Request('http://localhost/api/device-folders/reset', { method: 'POST' }),
+      {} as Server<unknown>
+    );
+    expect(reset.status).toBe(200);
   });
 });

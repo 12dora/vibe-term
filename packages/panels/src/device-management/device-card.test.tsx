@@ -68,6 +68,7 @@ function renderCard(options: {
   device?: Device;
   nodeContext?: DeviceNodeContext;
   connection?: DeviceConnectionAdapter;
+  offline?: boolean;
 }): string {
   const nodeContext = options.nodeContext ?? SELF_CONTEXT;
   // 每次一个独立的 persist key：共享的内存 localStorage 不会把用例之间的偏好串起来。
@@ -84,6 +85,7 @@ function renderCard(options: {
               device={options.device ?? LOCAL_DEVICE}
               nodeContext={nodeContext}
               connection={options.connection}
+              offline={options.offline}
               onEdit={() => undefined}
               onDelete={() => undefined}
             />
@@ -133,16 +135,17 @@ describe('DeviceCard 的设备种类展示', () => {
     expect(html).toContain('data-device-kind="ssh"');
   });
 
-  test('远端节点上的本机设备说「节点 X 上的本机设备」，并带远端角标', () => {
+  test('远端节点上的本机设备说「远程本地设备」，并带远端角标', () => {
     const html = renderCard({ nodeContext: REMOTE_CONTEXT });
-    expect(html).toContain('节点 书房节点 上的本机设备');
+    expect(html).toContain('远程本地设备');
+    expect(html).not.toContain('书房节点');
     expect(html).toContain('data-device-kind="nodeLocal"');
     expect(html).toContain('data-testid="device-card-remote-dev-1"');
   });
 
-  test('远端节点上的 SSH 设备说「节点 X 上的 SSH 设备」', () => {
+  test('远端节点上的 SSH 设备说「远程 SSH 设备」', () => {
     const html = renderCard({ device: SSH_DEVICE, nodeContext: REMOTE_CONTEXT });
-    expect(html).toContain('节点 书房节点 上的 SSH 设备');
+    expect(html).toContain('远程 SSH 设备');
     expect(html).toContain('data-device-kind="nodeSsh"');
   });
 
@@ -201,9 +204,41 @@ describe('DeviceCard 的连接开关', () => {
     expect(tag).toContain('data-action="pending"');
   });
 
+  test('断开中：禁用并显示「断开中...」，不闪回「连接」', () => {
+    const html = renderCard({ connection: stubConnection('disconnecting') });
+    const tag = tagOf(html, 'device-card-connect-dev-1');
+    expect(tag).toContain('data-state="disconnecting"');
+    expect(tag).toContain('data-action="pending"');
+    expect(tag).toContain('disabled');
+    expect(html).toContain('断开中...');
+  });
+
   test('有 connection 时「打开」仍在，只是变成图标按钮', () => {
     const html = renderCard({ connection: stubConnection('connected') });
     expect(tagOf(html, 'device-card-open-dev-1')).toContain('href="/devices/dev-1"');
+  });
+});
+
+describe('DeviceCard 的离线态', () => {
+  test('节点离线：标「节点离线」、灰显，残留的 connecting 也按可点的「连接」展示', () => {
+    const html = renderCard({
+      nodeContext: REMOTE_CONTEXT,
+      connection: stubConnection('connecting'),
+      offline: true,
+    });
+    expect(tagOf(html, 'device-card')).toContain('data-offline="true"');
+    expect(html).toContain('data-testid="device-card-offline-dev-1"');
+    expect(html).toContain('节点离线');
+    const toggle = tagOf(html, 'device-card-connect-dev-1');
+    expect(toggle).toContain('data-state="disconnected"');
+    expect(toggle).toContain('data-action="connect"');
+    expect(toggle).not.toContain('disabled=""');
+  });
+
+  test('在线时不带离线标记', () => {
+    const html = renderCard({ connection: stubConnection('connected') });
+    expect(html).not.toContain('data-testid="device-card-offline-dev-1"');
+    expect(tagOf(html, 'device-card')).not.toContain('data-offline');
   });
 });
 

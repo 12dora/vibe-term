@@ -14,22 +14,22 @@ installWindowStorage();
 mock.module('@tmex/panels/device-management', () => ({
   DeviceManagementPanel: ({
     listenOpenAddDeviceEvent,
-    excludeDeviceIds,
+    offline,
+    fallbackDevices,
   }: {
     listenOpenAddDeviceEvent?: boolean;
-    excludeDeviceIds?: ReadonlySet<string>;
+    offline?: boolean;
+    fallbackDevices?: readonly { id: string; name: string }[];
   }) => (
     <span
       data-testid="device-panel"
       data-listen={String(listenOpenAddDeviceEvent ?? true)}
-      data-excluded={[...(excludeDeviceIds ?? [])].join(',')}
+      data-offline={String(offline ?? false)}
+      data-fallback={(fallbackDevices ?? []).map((device) => device.name).join(',')}
     />
   ),
   DeviceManagementActions: ({ onAddDevice }: { onAddDevice?: () => void }) => (
     <span data-testid="device-actions" data-callback={String(Boolean(onAddDevice))} />
-  ),
-  DeviceCardHost: ({ device }: { device: { id: string } }) => (
-    <span data-testid={`device-card-host-${device.id}`} />
   ),
 }));
 
@@ -41,11 +41,13 @@ mock.module('./devices/use-device-folders', () => ({
     isLoading: false,
     isError: false,
     pending: false,
+    layoutBusy: false,
     submitLayout: () => undefined,
-    moveItemToRoot: () => undefined,
+    moveNodeToRoot: () => undefined,
     createFolder: () => undefined,
     renameFolder: () => undefined,
     deleteFolder: () => undefined,
+    resetLayout: () => undefined,
     refetch: () => undefined,
   }),
 }));
@@ -58,6 +60,9 @@ const DevicesPageModule = await import('./DevicesPage');
 const DevicesPage = DevicesPageModule.default;
 const { PageActions } = DevicesPageModule;
 const { nodeDeviceGroupState, toNodeDeviceGroups } = await import('./devices/node-device-group');
+const { registerDevicesPageCommands, resetDevicesPageCommandsForTest } = await import(
+  './devices/page-commands'
+);
 const {
   getAddDeviceTargets,
   registerAddDeviceTarget,
@@ -127,6 +132,8 @@ function renderMeshWith(nodes: MeshNode[]): string {
 beforeEach(() => {
   resetMeshNodesStateForTest();
   resetAddDeviceTargetsForTest();
+  resetDevicesPageCommandsForTest();
+  localStorage.clear();
 });
 
 function target(overrides: { runtimeNodeId: string; name: string; isSelf?: boolean }) {
@@ -189,11 +196,22 @@ describe('nodeDeviceGroupState', () => {
 });
 
 describe('DevicesPage', () => {
-  test('mode 未加载时只渲染 loading，不建任何运行时', () => {
+  test('mode 未加载时只渲染 loading，不建任何运行时；loading 与就绪态共用同一个页面容器', () => {
     const html = render();
     expect(html).not.toContain('data-testid="device-panel"');
     expect(html).not.toContain('data-testid="devices-folders-view"');
     expect(html).toContain('animate-spin');
+    expect(html).toContain('data-testid="devices-page-container"');
+
+    setMeshNodesStateForTest({ mode: { ...MODE, mode: 'none' }, modeLoaded: true });
+    const ready = render();
+    const containerOf = (markup: string) => {
+      const index = markup.indexOf('data-testid="devices-page-container"');
+      return markup.slice(markup.lastIndexOf('<', index), markup.indexOf('>', index));
+    };
+    expect(containerOf(ready)).toBe(containerOf(html));
+    expect(containerOf(ready)).toContain('max-w-6xl');
+    expect(containerOf(ready)).toContain('xl:max-w-7xl');
   });
 
   test('standalone（mode:none）根层直接是本机的卡片网格：有面板但没有分组头', () => {
@@ -250,11 +268,10 @@ describe('DevicesPage', () => {
     expect(html).toContain('data-testid="devices-node-panel-self"');
     expect(html).toContain('data-listen="true"');
 
-    // 离线：灰显最近一次已知 inventory，不挂面板、不给登录按钮
-    expect(html).toContain(`data-testid="devices-node-offline-${OFFLINE_ID}"`);
-    expect(html).toContain('data-testid="devices-node-offline-device-d1"');
-    expect(html).toContain('书房');
-    expect(html).not.toContain(`data-testid="devices-node-panel-${OFFLINE_ID}"`);
+    // 离线：运行时与卡片面板仍在（offline 模式），卡片来自 inventory 兜底；不给登录按钮
+    const offlinePanel = html.slice(html.indexOf(`data-testid="devices-node-panel-${OFFLINE_ID}"`));
+    expect(offlinePanel).toContain('data-offline="true"');
+    expect(offlinePanel).toContain('data-fallback="书房"');
     expect(html).not.toContain(`data-testid="node-login-${OFFLINE_ID}"`);
 
     // 在线未登录：只给登录按钮，不挂面板
@@ -285,9 +302,9 @@ describe('DevicesPage', () => {
     expect(html).toContain(`data-testid="node-badge-${OFFLINE_ID}"`);
     expect(html).toContain('data-online="false"');
     expect(html).toContain('data-state="offline"');
-    // inventory 为空时给空态
-    expect(html).toContain(`data-testid="devices-node-offline-${OFFLINE_ID}"`);
-    expect(html).not.toContain('data-testid="devices-node-offline-device-');
+    // inventory 为空且没有快照：面板拿到空的兜底列表，由面板渲染离线空态
+    const offlinePanel = html.slice(html.indexOf(`data-testid="devices-node-panel-${OFFLINE_ID}"`));
+    expect(offlinePanel).toContain('data-fallback=""');
   });
 });
 
@@ -338,6 +355,50 @@ describe('PageActions（全页唯一的 +）', () => {
     expect(html).toContain('data-testid="device-actions"');
     expect(html).toContain('data-callback="false"');
     expect(html).not.toContain('data-testid="devices-add"');
+    // 页面主体没挂载：分组相关的两个按钮都不显示
+    expect(html).not.toContain('data-testid="devices-new-folder"');
+    expect(html).not.toContain('data-testid="devices-reset-layout"');
+  });
+
+  test('页面主体登记命令后，顶栏出现「恢复默认布局」与「新建分组」', () => {
+    registerDevicesPageCommands({
+      newFolder: () => undefined,
+      resetLayout: () => undefined,
+      layoutBusy: false,
+    });
+    const html = renderToStaticMarkup(
+      <MemoryRouter>
+        <PageActions />
+      </MemoryRouter>
+    );
+    expect(html).toContain('data-testid="devices-reset-layout"');
+    expect(html).toContain('data-testid="devices-new-folder"');
+    expect(html.indexOf('data-testid="devices-reset-layout"')).toBeLessThan(
+      html.indexOf('data-testid="devices-new-folder"')
+    );
+    const resetTag = html.slice(
+      html.lastIndexOf('<', html.indexOf('data-testid="devices-reset-layout"')),
+      html.indexOf('>', html.indexOf('data-testid="devices-reset-layout"'))
+    );
+    expect(resetTag).not.toContain('disabled=""');
+  });
+
+  test('布局变更在飞时「恢复默认布局」禁用', () => {
+    registerDevicesPageCommands({
+      newFolder: () => undefined,
+      resetLayout: () => undefined,
+      layoutBusy: true,
+    });
+    const html = renderToStaticMarkup(
+      <MemoryRouter>
+        <PageActions />
+      </MemoryRouter>
+    );
+    const resetTag = html.slice(
+      html.lastIndexOf('<', html.indexOf('data-testid="devices-reset-layout"')),
+      html.indexOf('>', html.indexOf('data-testid="devices-reset-layout"'))
+    );
+    expect(resetTag).toContain('disabled=""');
   });
 
   test('只有一个 ready node 时是直接打开该节点对话框的单按钮', () => {

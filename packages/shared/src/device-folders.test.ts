@@ -1,38 +1,29 @@
 import { describe, expect, test } from 'bun:test';
 import type { DeviceFolder, DeviceFolderLayout } from './contracts/device-folders';
 import {
-  buildDeviceFolderTree,
-  deviceFolderItemKey,
-  findItemFolderId,
-  isFolderForestValid,
+  countFolderItems,
+  deviceFolderPlacementKey,
+  findNodeFolderId,
+  isDeviceFolderLayoutValid,
+  isFolderListValid,
   moveFolderInLayout,
-  moveItemInLayout,
-  parseDeviceFolderItemKey,
-  removeItemFromLayout,
+  moveNodeInLayout,
+  normalizeFolderLayoutOrder,
+  removeNodeFromLayout,
   reparentOnFolderDelete,
   validateDeviceFolderName,
-  wouldCreateFolderCycle,
 } from './device-folders';
 
-function folder(id: string, parentId: string | null, sortOrder = 0): DeviceFolder {
-  return { id, name: id, parentId, sortOrder, createdAt: 't', updatedAt: 't' };
+function folder(id: string, sortOrder = 0): DeviceFolder {
+  return { id, name: id, sortOrder, createdAt: 't', updatedAt: 't' };
 }
 
-// ops ─┬─ web ─── deep
-//      └─ db
 const LAYOUT: DeviceFolderLayout = {
-  folders: [
-    folder('ops', null, 0),
-    folder('web', 'ops', 0),
-    folder('db', 'ops', 1),
-    folder('deep', 'web', 0),
-    folder('misc', null, 1),
-  ],
+  folders: [folder('ops', 0), folder('misc', 1)],
   placements: [
-    { kind: 'node', nodeId: 'a', deviceId: null, folderId: 'ops', sortOrder: 0 },
-    { kind: 'device', nodeId: 'self', deviceId: 'd1', folderId: 'web', sortOrder: 0 },
-    { kind: 'device', nodeId: 'self', deviceId: 'd2', folderId: 'web', sortOrder: 1 },
-    { kind: 'device', nodeId: 'b', deviceId: 'd3', folderId: null, sortOrder: 0 },
+    { nodeId: 'a', folderId: 'ops', sortOrder: 0 },
+    { nodeId: 'b', folderId: 'ops', sortOrder: 1 },
+    { nodeId: 'c', folderId: null, sortOrder: 0 },
   ],
 };
 
@@ -45,105 +36,122 @@ describe('validateDeviceFolderName', () => {
   });
 });
 
-describe('item keys', () => {
-  test('round-trips node and device refs', () => {
-    const node = { kind: 'node' as const, nodeId: 'n1', deviceId: null };
-    const device = { kind: 'device' as const, nodeId: 'self', deviceId: 'd-1' };
-    expect(deviceFolderItemKey(node)).toBe('node:n1');
-    expect(deviceFolderItemKey(device)).toBe('device:self:d-1');
-    expect(parseDeviceFolderItemKey('node:n1')).toEqual(node);
-    expect(parseDeviceFolderItemKey('device:self:d-1')).toEqual(device);
-    expect(parseDeviceFolderItemKey('device:self')).toBeNull();
-    expect(parseDeviceFolderItemKey('folder:x')).toBeNull();
+describe('placement keys', () => {
+  test('keeps the legacy node:<id> primary key', () => {
+    expect(deviceFolderPlacementKey('n1')).toBe('node:n1');
   });
 });
 
-describe('cycle detection', () => {
-  test('moving into own descendant or self is a cycle', () => {
-    expect(wouldCreateFolderCycle(LAYOUT.folders, 'ops', 'deep')).toBe(true);
-    expect(wouldCreateFolderCycle(LAYOUT.folders, 'ops', 'ops')).toBe(true);
-    expect(wouldCreateFolderCycle(LAYOUT.folders, 'ops', 'misc')).toBe(false);
-    expect(wouldCreateFolderCycle(LAYOUT.folders, 'deep', null)).toBe(false);
+describe('layout validation', () => {
+  test('isFolderListValid rejects duplicate ids', () => {
+    expect(isFolderListValid(LAYOUT.folders)).toBe(true);
+    expect(isFolderListValid([folder('a'), folder('a')])).toBe(false);
   });
 
-  test('isFolderForestValid rejects cycles, dangling parents and duplicate ids', () => {
-    expect(isFolderForestValid(LAYOUT.folders)).toBe(true);
-    expect(isFolderForestValid([folder('a', 'b'), folder('b', 'a')])).toBe(false);
-    expect(isFolderForestValid([folder('a', 'ghost')])).toBe(false);
-    expect(isFolderForestValid([folder('a', null), folder('a', null)])).toBe(false);
+  test('isDeviceFolderLayoutValid rejects unknown folders, duplicate nodes and empty node ids', () => {
+    expect(isDeviceFolderLayoutValid(LAYOUT)).toBe(true);
+    expect(
+      isDeviceFolderLayoutValid({
+        folders: [],
+        placements: [{ nodeId: 'a', folderId: 'ghost', sortOrder: 0 }],
+      })
+    ).toBe(false);
+    expect(
+      isDeviceFolderLayoutValid({
+        folders: [],
+        placements: [
+          { nodeId: 'a', folderId: null, sortOrder: 0 },
+          { nodeId: 'a', folderId: null, sortOrder: 1 },
+        ],
+      })
+    ).toBe(false);
+    expect(
+      isDeviceFolderLayoutValid({
+        folders: [],
+        placements: [{ nodeId: '', folderId: null, sortOrder: 0 }],
+      })
+    ).toBe(false);
+    expect(
+      isDeviceFolderLayoutValid({
+        folders: [],
+        placements: [{ nodeId: 'a', folderId: null, sortOrder: 1.5 }],
+      })
+    ).toBe(false);
+  });
+});
+
+describe('normalizeFolderLayoutOrder', () => {
+  test('renumbers folders globally and placements per container', () => {
+    const next = normalizeFolderLayoutOrder({
+      folders: [folder('x', 7), folder('y', 3)],
+      placements: [
+        { nodeId: 'a', folderId: 'x', sortOrder: 9 },
+        { nodeId: 'b', folderId: 'x', sortOrder: 4 },
+        { nodeId: 'c', folderId: null, sortOrder: 5 },
+      ],
+    });
+    expect(next.folders.map((item) => [item.id, item.sortOrder])).toEqual([
+      ['y', 0],
+      ['x', 1],
+    ]);
+    expect(next.placements).toEqual([
+      { nodeId: 'b', folderId: 'x', sortOrder: 0 },
+      { nodeId: 'a', folderId: 'x', sortOrder: 1 },
+      { nodeId: 'c', folderId: null, sortOrder: 0 },
+    ]);
   });
 });
 
 describe('moveFolderInLayout', () => {
-  test('reparents and renumbers siblings', () => {
-    const next = moveFolderInLayout(LAYOUT, 'db', null, 0);
-    expect(next).not.toBeNull();
-    const roots = next?.folders
-      .filter((f) => f.parentId === null)
-      .sort((a, b) => a.sortOrder - b.sortOrder);
-    expect(roots?.map((f) => f.id)).toEqual(['db', 'ops', 'misc']);
-    expect(next?.folders.filter((f) => f.parentId === 'ops').map((f) => f.id)).toEqual(['web']);
+  test('reorders and renumbers', () => {
+    const next = moveFolderInLayout(LAYOUT, 'misc', 0);
+    expect(next?.folders.map((item) => item.id)).toEqual(['misc', 'ops']);
+    expect(next?.folders.map((item) => item.sortOrder)).toEqual([0, 1]);
   });
 
-  test('returns null on cycle or unknown target', () => {
-    expect(moveFolderInLayout(LAYOUT, 'ops', 'deep', null)).toBeNull();
-    expect(moveFolderInLayout(LAYOUT, 'ops', 'nope', null)).toBeNull();
-    expect(moveFolderInLayout(LAYOUT, 'nope', null, null)).toBeNull();
+  test('unknown folder returns null', () => {
+    expect(moveFolderInLayout(LAYOUT, 'nope', null)).toBeNull();
   });
 });
 
-describe('moveItemInLayout', () => {
-  test('moves an existing placement between folders at an index', () => {
-    const next = moveItemInLayout(
-      LAYOUT,
-      { kind: 'device', nodeId: 'self', deviceId: 'd2' },
-      'web',
-      0
-    );
-    const web = next?.placements
-      .filter((p) => p.folderId === 'web')
-      .sort((a, b) => a.sortOrder - b.sortOrder);
-    expect(web?.map((p) => p.deviceId)).toEqual(['d2', 'd1']);
+describe('moveNodeInLayout', () => {
+  test('moves an existing placement between containers at an index', () => {
+    const next = moveNodeInLayout(LAYOUT, 'b', 'ops', 0);
+    const ops = next?.placements
+      .filter((placement) => placement.folderId === 'ops')
+      .sort((x, y) => x.sortOrder - y.sortOrder);
+    expect(ops?.map((placement) => placement.nodeId)).toEqual(['b', 'a']);
   });
 
-  test('adds a placement for an implicitly-rooted item and removes it again', () => {
-    const ref = { kind: 'device' as const, nodeId: 'self', deviceId: 'new' };
-    const next = moveItemInLayout(LAYOUT, ref, 'db', null);
-    expect(findItemFolderId(next as DeviceFolderLayout, ref)).toBe('db');
-    const removed = removeItemFromLayout(next as DeviceFolderLayout, ref);
+  test('adds a placement for an implicitly-rooted node and removes it again', () => {
+    const next = moveNodeInLayout(LAYOUT, 'new', 'misc', null);
+    expect(findNodeFolderId(next as DeviceFolderLayout, 'new')).toBe('misc');
+    const removed = removeNodeFromLayout(next as DeviceFolderLayout, 'new');
     expect(removed.placements).toHaveLength(LAYOUT.placements.length);
   });
 
-  test('rejects unknown target folder', () => {
-    expect(
-      moveItemInLayout(LAYOUT, { kind: 'node', nodeId: 'a', deviceId: null }, 'nope', null)
-    ).toBeNull();
+  test('moves into root explicit order', () => {
+    const next = moveNodeInLayout(LAYOUT, 'a', null, 0);
+    const root = next?.placements
+      .filter((placement) => placement.folderId === null)
+      .sort((x, y) => x.sortOrder - y.sortOrder);
+    expect(root?.map((placement) => placement.nodeId)).toEqual(['a', 'c']);
+  });
+
+  test('rejects unknown target folder and empty node id', () => {
+    expect(moveNodeInLayout(LAYOUT, 'a', 'nope', null)).toBeNull();
+    expect(moveNodeInLayout(LAYOUT, '', null, null)).toBeNull();
   });
 });
 
 describe('reparentOnFolderDelete', () => {
-  test('children folders and items go to the parent, appended after existing content', () => {
-    const next = reparentOnFolderDelete(LAYOUT, 'web');
-    expect(next.folders.map((f) => f.id)).not.toContain('web');
-    const opsChildren = next.folders
-      .filter((f) => f.parentId === 'ops')
-      .sort((a, b) => a.sortOrder - b.sortOrder);
-    expect(opsChildren.map((f) => f.id)).toEqual(['db', 'deep']);
-    const opsItems = next.placements
-      .filter((p) => p.folderId === 'ops')
-      .sort((a, b) => a.sortOrder - b.sortOrder);
-    expect(opsItems.map((p) => p.deviceId ?? p.nodeId)).toEqual(['a', 'd1', 'd2']);
-  });
-
-  test('deleting a root folder lifts content to root', () => {
+  test('nodes in the deleted folder go to the root after existing root nodes', () => {
     const next = reparentOnFolderDelete(LAYOUT, 'ops');
-    expect(
-      next.folders
-        .filter((f) => f.parentId === null)
-        .map((f) => f.id)
-        .sort()
-    ).toEqual(['db', 'misc', 'web']);
-    expect(next.placements.find((p) => p.nodeId === 'a')?.folderId).toBeNull();
+    expect(next.folders.map((item) => item.id)).toEqual(['misc']);
+    const root = next.placements
+      .filter((placement) => placement.folderId === null)
+      .sort((x, y) => x.sortOrder - y.sortOrder);
+    expect(root.map((placement) => placement.nodeId)).toEqual(['c', 'a', 'b']);
   });
 
   test('unknown folder is a no-op', () => {
@@ -151,22 +159,10 @@ describe('reparentOnFolderDelete', () => {
   });
 });
 
-describe('buildDeviceFolderTree', () => {
-  test('nests folders, sorts by sortOrder and counts descendants', () => {
-    const tree = buildDeviceFolderTree(LAYOUT);
-    expect(tree.roots.map((n) => n.folder.id)).toEqual(['ops', 'misc']);
-    const ops = tree.byId.get('ops');
-    expect(ops?.children.map((n) => n.folder.id)).toEqual(['web', 'db']);
-    expect(ops?.itemCount).toBe(3);
-    expect(tree.byId.get('web')?.itemCount).toBe(2);
-    expect(tree.rootItems.map((p) => p.deviceId)).toEqual(['d3']);
-  });
-
-  test('placements pointing at missing folders fall back to root', () => {
-    const tree = buildDeviceFolderTree({
-      folders: [],
-      placements: [{ kind: 'node', nodeId: 'x', deviceId: null, folderId: 'gone', sortOrder: 0 }],
-    });
-    expect(tree.rootItems).toHaveLength(1);
+describe('countFolderItems', () => {
+  test('counts nodes per folder, zero for empty folders', () => {
+    const counts = countFolderItems(LAYOUT);
+    expect(counts.get('ops')).toBe(2);
+    expect(counts.get('misc')).toBe(0);
   });
 });

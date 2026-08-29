@@ -33,9 +33,18 @@ export interface DeviceDialogProps {
   nodeContext: DeviceNodeContext;
   onClose: () => void;
   queryKey: readonly unknown[];
+  /** 所属节点离线：宿主会关掉对话框，这里再在提交时兜一次 */
+  offline?: boolean;
 }
 
-export function DeviceDialog({ mode, device, nodeContext, onClose, queryKey }: DeviceDialogProps) {
+export function DeviceDialog({
+  mode,
+  device,
+  nodeContext,
+  onClose,
+  queryKey,
+  offline,
+}: DeviceDialogProps) {
   const { t } = useTranslation();
   const [values, setValues] = useState<DeviceFormValues>(createDefaultFormValues(device));
   const { attempted, isSubmitting, handleSubmit } = useDeviceDialogSubmit({
@@ -44,6 +53,7 @@ export function DeviceDialog({ mode, device, nodeContext, onClose, queryKey }: D
     values,
     queryKey,
     onClose,
+    offline,
   });
 
   const isEditMode = mode === 'edit';
@@ -74,7 +84,7 @@ export function DeviceDialog({ mode, device, nodeContext, onClose, queryKey }: D
                 data-testid="device-dialog-node-chip"
                 className="rounded border border-border/60 px-1.5 py-px text-[10px] font-normal leading-none text-muted-foreground"
               >
-                {deviceKindLabel(t, kind, nodeContext.name)}
+                {nodeContext.name || deviceKindLabel(t, kind)}
               </span>
             )}
           </DialogTitle>

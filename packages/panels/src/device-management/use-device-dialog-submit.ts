@@ -55,6 +55,8 @@ export interface DeviceDialogSubmitParams {
   values: DeviceFormValues;
   queryKey: readonly unknown[];
   onClose: () => void;
+  /** 所属节点离线：提交时再确认一次，直接拒绝 */
+  offline?: boolean;
 }
 
 export interface DeviceDialogSubmitModel {
@@ -69,6 +71,7 @@ export function useDeviceDialogSubmit({
   values,
   queryKey,
   onClose,
+  offline = false,
 }: DeviceDialogSubmitParams): DeviceDialogSubmitModel {
   const { t } = useTranslation();
   const runtime = useRuntime();
@@ -95,6 +98,10 @@ export function useDeviceDialogSubmit({
   const handleSubmit = async (event: FormEvent) => {
     event.preventDefault();
     setAttempted(true);
+    if (offline) {
+      toast.error(t('devices.nodes.deviceOffline'));
+      return;
+    }
 
     const validationError = validateDeviceForm(values);
     if (validationError) {

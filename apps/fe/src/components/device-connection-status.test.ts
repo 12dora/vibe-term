@@ -2,9 +2,15 @@ import { describe, expect, test } from 'bun:test';
 import type { DeviceConnectionStatus } from '@tmex/panels';
 import {
   type DeviceConnectionSnapshot,
+  MAX_PENDING_STATUS_MS,
+  MIN_PENDING_STATUS_MS,
   createDeviceConnectionSnapshot,
   deriveDeviceConnectionStatus,
+  deriveSettledConnectionStatus,
   isDeviceConnected,
+  isPendingRequestSettled,
+  pendingSettlementPlan,
+  runPendingSettlement,
   selectRestorableDeviceIds,
   selectStaleSubscribedDeviceIds,
   shouldEnsureDeviceSubscription,
@@ -81,6 +87,149 @@ describe('deriveDeviceConnectionStatus 优先级矩阵', () => {
       deviceConnected: { [DEVICE]: false },
     };
     expect(deriveDeviceConnectionStatus(DEVICE, snapshot)).toBe('connecting');
+  });
+});
+
+describe('在飞请求（防按钮闪烁）', () => {
+  test('pending connect 稳定展示 connecting，哪怕真实态已经 connected', () => {
+    const pending = new Map([[DEVICE, { kind: 'connect' as const, at: 0 }]]);
+    const snapshot = { ...snapshotOf({ subscribed: true, connected: true }), pending };
+    expect(deriveDeviceConnectionStatus(DEVICE, snapshot)).toBe('connecting');
+    expect(deriveSettledConnectionStatus(DEVICE, snapshot)).toBe('connected');
+  });
+
+  test('pending disconnect 展示 disconnecting，而不是立刻跳回 disconnected', () => {
+    const pending = new Map([[DEVICE, { kind: 'disconnect' as const, at: 0 }]]);
+    const snapshot = { ...snapshotOf({ intentionallyDisconnected: true }), pending };
+    expect(deriveDeviceConnectionStatus(DEVICE, snapshot)).toBe('disconnecting');
+    expect(deriveSettledConnectionStatus(DEVICE, snapshot)).toBe('disconnected');
+  });
+
+  test('其它设备的 pending 不影响本设备', () => {
+    const pending = new Map([['other', { kind: 'connect' as const, at: 0 }]]);
+    expect(deriveDeviceConnectionStatus(DEVICE, { ...snapshotOf({}), pending })).toBe(
+      'disconnected'
+    );
+  });
+
+  test('落定判定：connect 到 connected / error / reconnecting 为止，disconnect 到 disconnected 为止', () => {
+    const connect = { kind: 'connect' as const, at: 0 };
+    const disconnect = { kind: 'disconnect' as const, at: 0 };
+    expect(isPendingRequestSettled(connect, 'connected')).toBe(true);
+    expect(isPendingRequestSettled(connect, 'error')).toBe(true);
+    expect(isPendingRequestSettled(connect, 'reconnecting')).toBe(true);
+    expect(isPendingRequestSettled(connect, 'connecting')).toBe(false);
+    expect(isPendingRequestSettled(connect, 'disconnected')).toBe(false);
+    expect(isPendingRequestSettled(disconnect, 'disconnected')).toBe(true);
+    expect(isPendingRequestSettled(disconnect, 'connected')).toBe(false);
+  });
+
+  test('摘掉时机：落定且展示够最短时长立刻摘；不够就补足；没落定到最长时长按超时处理', () => {
+    const request = { kind: 'connect' as const, at: 1000 };
+    expect(pendingSettlementPlan(request, 'connected', 1000 + MIN_PENDING_STATUS_MS)).toEqual({
+      delay: 0,
+      action: 'settle',
+    });
+    expect(pendingSettlementPlan(request, 'connected', 1100)).toEqual({
+      delay: MIN_PENDING_STATUS_MS - 100,
+      action: 'settle',
+    });
+    expect(pendingSettlementPlan(request, 'connecting', 1100)).toEqual({
+      delay: MAX_PENDING_STATUS_MS - 100,
+      action: 'timeout',
+    });
+    expect(pendingSettlementPlan(request, 'connecting', 1000 + MAX_PENDING_STATUS_MS + 5)).toEqual({
+      delay: 0,
+      action: 'timeout',
+    });
+  });
+
+  function fakeScheduler() {
+    const timers: Array<{ callback: () => void; delay: number; cancelled: boolean }> = [];
+    return {
+      timers,
+      schedule: (callback: () => void, delay: number) => {
+        const entry = { callback, delay, cancelled: false };
+        timers.push(entry);
+        return () => {
+          entry.cancelled = true;
+        };
+      },
+      fire: () => {
+        for (const timer of timers) if (!timer.cancelled) timer.callback();
+      },
+    };
+  }
+
+  test('8s 没回音：定时器到点后记 timeout 错误并摘掉 pending，按钮回到可点的「连接」', () => {
+    const scheduler = fakeScheduler();
+    const settled: string[] = [];
+    const timedOut: string[] = [];
+    const pending = new Map([[DEVICE, { kind: 'connect' as const, at: 0 }]]);
+    const cancel = runPendingSettlement(pending, snapshotOf({ subscribed: true }), 100, {
+      settle: (id) => settled.push(id),
+      timeoutConnect: (id) => timedOut.push(id),
+      schedule: scheduler.schedule,
+    });
+    expect(scheduler.timers.map((timer) => timer.delay)).toEqual([MAX_PENDING_STATUS_MS - 100]);
+    expect(settled).toEqual([]);
+
+    scheduler.fire();
+    expect(timedOut).toEqual([DEVICE]);
+    expect(settled).toEqual([DEVICE]);
+
+    // 错误落进 store 之后：pending 已摘、真实态是 error → 按钮 action=connect
+    const afterTimeout = snapshotOf({ subscribed: true, error: true });
+    expect(deriveDeviceConnectionStatus(DEVICE, afterTimeout)).toBe('error');
+    cancel();
+  });
+
+  test('超时前 effect 重跑（cleanup）会取消旧定时器；已落定的立刻摘且不记超时', () => {
+    const scheduler = fakeScheduler();
+    const settled: string[] = [];
+    const timedOut: string[] = [];
+    const cancel = runPendingSettlement(
+      new Map([[DEVICE, { kind: 'connect' as const, at: 0 }]]),
+      snapshotOf({ subscribed: true }),
+      0,
+      {
+        settle: (id) => settled.push(id),
+        timeoutConnect: (id) => timedOut.push(id),
+        schedule: scheduler.schedule,
+      }
+    );
+    cancel();
+    scheduler.fire();
+    expect(settled).toEqual([]);
+    expect(timedOut).toEqual([]);
+
+    runPendingSettlement(
+      new Map([[DEVICE, { kind: 'connect' as const, at: 0 }]]),
+      snapshotOf({ subscribed: true, connected: true }),
+      MIN_PENDING_STATUS_MS,
+      {
+        settle: (id) => settled.push(id),
+        timeoutConnect: (id) => timedOut.push(id),
+        schedule: scheduler.schedule,
+      }
+    );
+    expect(settled).toEqual([DEVICE]);
+    expect(timedOut).toEqual([]);
+
+    // disconnect 请求超时只摘掉，不记 connect 超时错误
+    const disconnectScheduler = fakeScheduler();
+    runPendingSettlement(
+      new Map([[DEVICE, { kind: 'disconnect' as const, at: 0 }]]),
+      snapshotOf({ subscribed: true, connected: true }),
+      MAX_PENDING_STATUS_MS,
+      {
+        settle: (id) => settled.push(id),
+        timeoutConnect: (id) => timedOut.push(id),
+        schedule: disconnectScheduler.schedule,
+      }
+    );
+    expect(settled).toEqual([DEVICE, DEVICE]);
+    expect(timedOut).toEqual([]);
   });
 });
 

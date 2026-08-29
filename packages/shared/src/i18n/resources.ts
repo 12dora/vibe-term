@@ -105,6 +105,8 @@ export const I18N_RESOURCES = {
       "disconnected": "Disconnected",
       "connectToStart": "Connect to this device to get started.",
       "connecting": "Connecting...",
+      "disconnecting": "Disconnecting...",
+      "connectTimeout": "Connection timed out, please retry",
       "dragHandle": "Drag to reorder device",
       "reorderFailed": "Failed to reorder devices",
       "deleteConfirm": "Delete this device?",
@@ -133,8 +135,8 @@ export const I18N_RESOURCES = {
       "kind": {
         "local": "Local Device",
         "ssh": "SSH Device",
-        "nodeLocal": "Local device on node {{node}}",
-        "nodeSsh": "SSH device on node {{node}}"
+        "nodeLocal": "Remote local device",
+        "nodeSsh": "Remote SSH device"
       },
       "remoteInfo": {
         "title": "Owning node",
@@ -649,11 +651,10 @@ export const I18N_RESOURCES = {
       "updateCheckFailed": "Failed to query the npm registry.",
       "terminalShortcutsTooMany": "Too many shortcuts",
       "terminalShortcutInvalid": "Invalid shortcut configuration",
-      "folderNotFound": "Folder not found",
-      "folderNameRequired": "Folder name is required",
-      "folderNameTooLong": "Folder name is too long",
-      "folderCycle": "Cannot move a folder into itself or its subfolders",
-      "folderLayoutInvalid": "Invalid folder layout"
+      "folderNotFound": "Group not found",
+      "folderNameRequired": "Group name is required",
+      "folderNameTooLong": "Group name is too long",
+      "folderLayoutInvalid": "Invalid group layout"
     },
     "notification": {
       "clickToJump": "Click to jump to corresponding pane",
@@ -728,7 +729,8 @@ export const I18N_RESOURCES = {
       "node": {
         "offline": "offline",
         "noKnownDevices": "No known devices",
-        "noDevices": "No devices on this node"
+        "noDevices": "No devices on this node",
+        "dragHandle": "Drag to reorder node"
       }
     },
     "agent": {
@@ -1596,37 +1598,40 @@ export const I18N_RESOURCES = {
         },
         "version": "Version {{version}}",
         "signInToManage": "Sign in to manage devices on this node.",
-        "lastKnownDevices": "Last known devices",
         "noKnownDevices": "No devices were known when this node was last online.",
-        "addDevice": "Add a device on {{name}}"
+        "addDevice": "Add a device on {{name}}",
+        "offlineSnapshot": "Node is offline; showing the last known devices.",
+        "deviceOffline": "Node offline"
       },
       "folders": {
-        "newFolder": "New folder",
-        "newSubfolder": "New subfolder",
+        "newFolder": "New group",
         "rename": "Rename",
-        "delete": "Delete folder",
-        "deleteConfirmTitle": "Delete folder?",
-        "deleteConfirmDescription": "“{{name}}” will be deleted; its contents move up one level.",
-        "namePlaceholder": "Folder name",
-        "nameRequired": "Folder name is required",
-        "nameTooLong": "Folder name must be at most {{max}} characters",
-        "itemCount_one": "{{count}} item",
-        "itemCount_other": "{{count}} items",
-        "empty": "Drop here to put into this folder",
+        "delete": "Delete group",
+        "deleteConfirmTitle": "Delete group?",
+        "deleteConfirmDescription": "“{{name}}” will be deleted; its nodes move back to the top level.",
+        "namePlaceholder": "Group name",
+        "nameRequired": "Group name is required",
+        "nameTooLong": "Group name must be at most {{max}} characters",
+        "itemCount_one": "{{count}} node",
+        "itemCount_other": "{{count}} nodes",
+        "empty": "Drop a node here to put it into this group",
         "dropHere": "Move into “{{name}}”",
         "dropToRoot": "Move to top level",
-        "moveToRoot": "Move out of folder",
+        "moveToRoot": "Move out of group",
         "dragHandle": "Drag to move",
         "expand": "Expand",
         "collapse": "Collapse",
-        "cycle": "Cannot move a folder into itself or its subfolders",
         "moveFailed": "Move failed",
-        "createFailed": "Failed to create folder",
+        "createFailed": "Failed to create group",
         "renameFailed": "Rename failed",
-        "deleteFailed": "Failed to delete folder",
-        "loadFailed": "Failed to load folders",
-        "missingDevice": "Device not found or its node is unavailable",
-        "folderMenu": "Folder actions"
+        "deleteFailed": "Failed to delete group",
+        "loadFailed": "Failed to load groups",
+        "folderMenu": "Group actions",
+        "resetLayout": "Reset layout",
+        "resetConfirmTitle": "Reset layout?",
+        "resetConfirmDescription": "All groups will be deleted and every node returns to the top level in default order.",
+        "resetFailed": "Failed to reset layout",
+        "resetDone": "Layout reset"
       }
     }
   }
@@ -1732,6 +1737,8 @@ export const I18N_RESOURCES = {
       "disconnected": "已断开",
       "connectToStart": "连接设备后即可开始使用。",
       "connecting": "连接中...",
+      "disconnecting": "断开中...",
+      "connectTimeout": "连接超时，请重试",
       "dragHandle": "拖动以调整设备顺序",
       "reorderFailed": "设备排序失败",
       "deleteConfirm": "删除此设备？",
@@ -1760,8 +1767,8 @@ export const I18N_RESOURCES = {
       "kind": {
         "local": "本地设备",
         "ssh": "SSH 设备",
-        "nodeLocal": "节点 {{node}} 上的本机设备",
-        "nodeSsh": "节点 {{node}} 上的 SSH 设备"
+        "nodeLocal": "远程本地设备",
+        "nodeSsh": "远程 SSH 设备"
       },
       "remoteInfo": {
         "title": "所属节点",
@@ -2276,11 +2283,10 @@ export const I18N_RESOURCES = {
       "updateCheckFailed": "查询 npm registry 失败。",
       "terminalShortcutsTooMany": "快捷键数量过多",
       "terminalShortcutInvalid": "快捷键配置不合法",
-      "folderNotFound": "文件夹不存在",
-      "folderNameRequired": "文件夹名称不能为空",
-      "folderNameTooLong": "文件夹名称过长",
-      "folderCycle": "不能把文件夹移动到自己或其子文件夹内",
-      "folderLayoutInvalid": "文件夹布局无效"
+      "folderNotFound": "分组不存在",
+      "folderNameRequired": "分组名称不能为空",
+      "folderNameTooLong": "分组名称过长",
+      "folderLayoutInvalid": "分组布局无效"
     },
     "notification": {
       "clickToJump": "点击跳转到对应 Pane",
@@ -2355,7 +2361,8 @@ export const I18N_RESOURCES = {
       "node": {
         "offline": "离线",
         "noKnownDevices": "无已知设备",
-        "noDevices": "该节点暂无设备"
+        "noDevices": "该节点暂无设备",
+        "dragHandle": "拖动以调整节点顺序"
       }
     },
     "agent": {
@@ -3223,36 +3230,39 @@ export const I18N_RESOURCES = {
         },
         "version": "版本 {{version}}",
         "signInToManage": "登录该节点后才能管理它的设备。",
-        "lastKnownDevices": "最近一次已知的设备",
         "noKnownDevices": "该节点最近一次在线时没有已知设备。",
-        "addDevice": "在 {{name}} 上添加设备"
+        "addDevice": "在 {{name}} 上添加设备",
+        "offlineSnapshot": "节点离线，显示的是最近一次已知的设备。",
+        "deviceOffline": "节点离线"
       },
       "folders": {
-        "newFolder": "新建文件夹",
-        "newSubfolder": "新建子文件夹",
+        "newFolder": "新建分组",
         "rename": "重命名",
-        "delete": "删除文件夹",
-        "deleteConfirmTitle": "删除文件夹？",
-        "deleteConfirmDescription": "「{{name}}」将被删除，其中的内容会移到上一级。",
-        "namePlaceholder": "文件夹名称",
-        "nameRequired": "文件夹名称不能为空",
-        "nameTooLong": "文件夹名称最多 {{max}} 个字符",
-        "itemCount": "{{count}} 项",
-        "empty": "拖到这里放入此文件夹",
+        "delete": "删除分组",
+        "deleteConfirmTitle": "删除分组？",
+        "deleteConfirmDescription": "「{{name}}」将被删除，其中的节点会回到最外层。",
+        "namePlaceholder": "分组名称",
+        "nameRequired": "分组名称不能为空",
+        "nameTooLong": "分组名称最多 {{max}} 个字符",
+        "itemCount": "{{count}} 个节点",
+        "empty": "把节点拖到这里放入此分组",
         "dropHere": "放入「{{name}}」",
         "dropToRoot": "移到最外层",
-        "moveToRoot": "移出文件夹",
+        "moveToRoot": "移出分组",
         "dragHandle": "拖动以移动",
         "expand": "展开",
         "collapse": "收起",
-        "cycle": "不能移动到自己或其子文件夹内",
         "moveFailed": "移动失败",
-        "createFailed": "创建文件夹失败",
+        "createFailed": "创建分组失败",
         "renameFailed": "重命名失败",
-        "deleteFailed": "删除文件夹失败",
-        "loadFailed": "文件夹加载失败",
-        "missingDevice": "设备不存在或所在节点不可用",
-        "folderMenu": "文件夹操作"
+        "deleteFailed": "删除分组失败",
+        "loadFailed": "分组加载失败",
+        "folderMenu": "分组操作",
+        "resetLayout": "恢复默认布局",
+        "resetConfirmTitle": "恢复默认布局？",
+        "resetConfirmDescription": "所有分组将被删除，全部节点回到最外层并按默认顺序排列。",
+        "resetFailed": "恢复默认布局失败",
+        "resetDone": "已恢复默认布局"
       }
     }
   }
@@ -3358,6 +3368,8 @@ export const I18N_RESOURCES = {
       "disconnected": "切断済み",
       "connectToStart": "デバイスに接続して開始してください。",
       "connecting": "接続中...",
+      "disconnecting": "切断中...",
+      "connectTimeout": "接続がタイムアウトしました。もう一度お試しください",
       "dragHandle": "ドラッグしてデバイスを並べ替え",
       "reorderFailed": "デバイスの並べ替えに失敗しました",
       "deleteConfirm": "このデバイスを削除しますか？",
@@ -3386,8 +3398,8 @@ export const I18N_RESOURCES = {
       "kind": {
         "local": "ローカルデバイス",
         "ssh": "SSH デバイス",
-        "nodeLocal": "ノード {{node}} 上のローカルデバイス",
-        "nodeSsh": "ノード {{node}} 上の SSH デバイス"
+        "nodeLocal": "リモートローカルデバイス",
+        "nodeSsh": "リモート SSH デバイス"
       },
       "remoteInfo": {
         "title": "所属ノード",
@@ -3902,11 +3914,10 @@ export const I18N_RESOURCES = {
       "updateCheckFailed": "npm registry の照会に失敗しました。",
       "terminalShortcutsTooMany": "ショートカットが多すぎます",
       "terminalShortcutInvalid": "ショートカット設定が不正です",
-      "folderNotFound": "フォルダーが見つかりません",
-      "folderNameRequired": "フォルダー名を入力してください",
-      "folderNameTooLong": "フォルダー名が長すぎます",
-      "folderCycle": "フォルダーを自分自身やそのサブフォルダーには移動できません",
-      "folderLayoutInvalid": "フォルダー配置が無効です"
+      "folderNotFound": "グループが見つかりません",
+      "folderNameRequired": "グループ名を入力してください",
+      "folderNameTooLong": "グループ名が長すぎます",
+      "folderLayoutInvalid": "グループ配置が無効です"
     },
     "notification": {
       "clickToJump": "対応するペインにジャンプ",
@@ -3981,7 +3992,8 @@ export const I18N_RESOURCES = {
       "node": {
         "offline": "オフライン",
         "noKnownDevices": "既知のデバイスなし",
-        "noDevices": "このノードにデバイスはありません"
+        "noDevices": "このノードにデバイスはありません",
+        "dragHandle": "ドラッグしてノードを並べ替え"
       }
     },
     "agent": {
@@ -4849,36 +4861,39 @@ export const I18N_RESOURCES = {
         },
         "version": "バージョン {{version}}",
         "signInToManage": "このノードのデバイスを管理するにはサインインしてください。",
-        "lastKnownDevices": "最後に確認されたデバイス",
         "noKnownDevices": "このノードが最後にオンラインだったとき、既知のデバイスはありませんでした。",
-        "addDevice": "{{name}} にデバイスを追加"
+        "addDevice": "{{name}} にデバイスを追加",
+        "offlineSnapshot": "ノードはオフラインです。最後に確認されたデバイスを表示しています。",
+        "deviceOffline": "ノードがオフライン"
       },
       "folders": {
-        "newFolder": "新しいフォルダー",
-        "newSubfolder": "新しいサブフォルダー",
+        "newFolder": "新しいグループ",
         "rename": "名前を変更",
-        "delete": "フォルダーを削除",
-        "deleteConfirmTitle": "フォルダーを削除しますか？",
-        "deleteConfirmDescription": "「{{name}}」を削除します。中身は一つ上の階層に移動します。",
-        "namePlaceholder": "フォルダー名",
-        "nameRequired": "フォルダー名を入力してください",
-        "nameTooLong": "フォルダー名は {{max}} 文字以内にしてください",
-        "itemCount": "{{count}} 件",
-        "empty": "ここにドロップしてフォルダーに入れる",
+        "delete": "グループを削除",
+        "deleteConfirmTitle": "グループを削除しますか？",
+        "deleteConfirmDescription": "「{{name}}」を削除します。中のノードは最上位に戻ります。",
+        "namePlaceholder": "グループ名",
+        "nameRequired": "グループ名を入力してください",
+        "nameTooLong": "グループ名は {{max}} 文字以内にしてください",
+        "itemCount": "{{count}} 台のノード",
+        "empty": "ここにノードをドロップしてグループに入れる",
         "dropHere": "「{{name}}」に入れる",
         "dropToRoot": "最上位に移動",
-        "moveToRoot": "フォルダーから出す",
+        "moveToRoot": "グループから出す",
         "dragHandle": "ドラッグして移動",
         "expand": "展開",
         "collapse": "折りたたむ",
-        "cycle": "自分自身やそのサブフォルダーには移動できません",
         "moveFailed": "移動に失敗しました",
-        "createFailed": "フォルダーの作成に失敗しました",
+        "createFailed": "グループの作成に失敗しました",
         "renameFailed": "名前の変更に失敗しました",
-        "deleteFailed": "フォルダーの削除に失敗しました",
-        "loadFailed": "フォルダーの読み込みに失敗しました",
-        "missingDevice": "デバイスが存在しないか、ノードが利用できません",
-        "folderMenu": "フォルダー操作"
+        "deleteFailed": "グループの削除に失敗しました",
+        "loadFailed": "グループの読み込みに失敗しました",
+        "folderMenu": "グループ操作",
+        "resetLayout": "既定のレイアウトに戻す",
+        "resetConfirmTitle": "既定のレイアウトに戻しますか？",
+        "resetConfirmDescription": "すべてのグループを削除し、すべてのノードを既定の順序で最上位に戻します。",
+        "resetFailed": "レイアウトのリセットに失敗しました",
+        "resetDone": "レイアウトを既定に戻しました"
       }
     }
   }
