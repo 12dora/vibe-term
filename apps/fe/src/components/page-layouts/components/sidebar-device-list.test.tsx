@@ -13,9 +13,19 @@ installWindowStorage();
 // 同时 `src/pages/FilePage.test.tsx` 用 `mock.module` 全局替换了 `@tanstack/react-query`
 // （假 QueryClient），真实渲染 panels 列表会被那份泄漏的 mock 打断。
 mock.module('./sidebar-device-list-runtime', () => ({
-  SideBarDeviceListForRuntime: ({ nodeBadge }: { nodeBadge?: { nodeId: string } }) => (
-    <span data-testid="runtime-device-list" data-node={nodeBadge?.nodeId ?? ''} />
-  ),
+  SideBarDeviceListForRuntime: ({
+    section,
+  }: {
+    section?: { testId: string; header: React.ReactNode };
+  }) =>
+    section ? (
+      <div data-testid={section.testId}>
+        {section.header}
+        <span data-testid="runtime-device-list" />
+      </div>
+    ) : (
+      <span data-testid="runtime-device-list" />
+    ),
 }));
 
 const { renderToStaticMarkup } = await import('react-dom/server');
@@ -128,16 +138,22 @@ describe('SidebarNodeSection', () => {
     };
   }
 
-  test('离线 node：远端设备默认不显示，只留分节头与提示', () => {
+  test('离线 node：已知设备默认全不显示时整节都不渲染（连分节头一起）', () => {
     const html = render(<SidebarNodeSection node={offlineNode()} />);
 
-    expect(html).toContain(`data-testid="sidebar-node-offline-${OFFLINE_NODE}"`);
-    expect(html).toContain(`data-testid="sidebar-node-hidden-${OFFLINE_NODE}"`);
+    expect(html).not.toContain(`data-testid="sidebar-node-offline-${OFFLINE_NODE}"`);
+    expect(html).not.toContain(`data-testid="node-badge-${OFFLINE_NODE}"`);
     expect(html).not.toContain('data-testid="sidebar-node-offline-device-d1"');
+    expect(html).not.toContain('data-testid="device-item-');
+  });
+
+  test('离线 node：一台已知设备都没有时保留分节头与提示', () => {
+    const html = render(<SidebarNodeSection node={{ ...offlineNode(), inventory: null }} />);
+
+    expect(html).toContain(`data-testid="sidebar-node-offline-${OFFLINE_NODE}"`);
     // 徽标灰显
     expect(html).toContain(`data-testid="node-badge-${OFFLINE_NODE}"`);
     expect(html).toContain('data-online="false"');
-    // 未渲染任何设备树
     expect(html).not.toContain('data-testid="device-item-');
   });
 
@@ -149,7 +165,6 @@ describe('SidebarNodeSection', () => {
     expect(html).toContain('data-testid="sidebar-node-offline-device-d1"');
     expect(html).toContain(`href="/n/${OFFLINE_NODE}/devices/d1"`);
     expect(html).toContain('书房');
-    expect(html).not.toContain(`data-testid="sidebar-node-hidden-${OFFLINE_NODE}"`);
     expect(html).not.toContain('data-testid="device-item-');
   });
 
@@ -161,13 +176,12 @@ describe('SidebarNodeSection', () => {
     );
 
     expect(html).toContain('data-testid="sidebar-node-offline-device-d1"');
-    expect(html).not.toContain(`data-testid="sidebar-node-hidden-${OFFLINE_NODE}"`);
   });
 
   test('离线 node：别的 node 上选中的同名设备不算数', () => {
     const html = render(<SidebarNodeSection node={offlineNode()} />, {}, '/devices/d1');
     expect(html).not.toContain('data-testid="sidebar-node-offline-device-d1"');
-    expect(html).toContain(`data-testid="sidebar-node-hidden-${OFFLINE_NODE}"`);
+    expect(html).not.toContain(`data-testid="sidebar-node-offline-${OFFLINE_NODE}"`);
   });
 
   test('在线但未登录：默认折叠成一个登录入口，不自动登录、不渲染设备树', () => {
@@ -209,9 +223,8 @@ describe('SidebarNodeSection', () => {
     expect(html).toContain('data-testid="sidebar-node-0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c"');
     expect(html).toContain('data-testid="node-badge-0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c"');
     expect(html).toContain('data-online="true"');
-    // 设备树挂在该 node 的运行时下，且拿到了 node 徽标
+    // 设备树与分节头一起挂在该 node 的运行时下
     expect(html).toContain('data-testid="runtime-device-list"');
-    expect(html).toContain('data-node="0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c"');
   });
 });
 
@@ -242,7 +255,6 @@ describe('SideBarDeviceList', () => {
   test('standalone / mode 未知时渲染今天的单 node 设备树：没有 node 分节也没有徽标', () => {
     const html = render(<SideBarDeviceList />);
     expect(html).toContain('data-testid="runtime-device-list"');
-    expect(html).toContain('data-node=""');
     expect(html).not.toContain('data-testid="sidebar-node-list"');
     expect(html).not.toContain('data-testid="node-badge-');
     expect(html).not.toContain('data-testid="sidebar-node-header-');

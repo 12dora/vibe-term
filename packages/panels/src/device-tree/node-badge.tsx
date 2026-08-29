@@ -1,5 +1,4 @@
-// 设备行上的 node 徽标（多 node 聚合侧边栏用）。单 node / standalone 宿主不传 `nodeBadge`，
-// 渲染结果与改造前逐字节一致。
+// node 徽标（多 node 聚合侧边栏的分节头用）。单 node / standalone 宿主没有分节头，也就不渲染它。
 
 import { cn } from '@tmex/ui';
 import { Server } from 'lucide-react';

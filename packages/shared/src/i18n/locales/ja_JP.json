@@ -680,7 +680,6 @@
     },
     "sidebar": {
       "noWindows": "ウィンドウがありません",
-      "noVisibleDevices": "表示するデバイスが選択されていません。「デバイス管理」で有効にしてください",
       "noDevices": "デバイスがありません",
       "addDeviceLink": "デバイスを追加",
       "openSettingsLink": "設定を開く",
@@ -695,9 +694,9 @@
       "closePane": "ペインを閉じる",
       "addDevice": "デバイスを追加",
       "tab": {
-        "panes": "Panes",
-        "agent": "Agent",
-        "files": "Files"
+        "panes": "端末",
+        "agent": "エージェント",
+        "files": "ファイル"
       },
       "orphanedSessions": "孤立セッション",
       "node": {

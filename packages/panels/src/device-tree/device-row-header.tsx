@@ -6,21 +6,18 @@ import { DeviceStatusBadge } from '../device-status-badge';
 import { DeviceConnectionControl } from './device-connection-control';
 import type { SortableRow } from './device-tree-dnd';
 import type { DeviceRowProps } from './device-tree-row-props';
-import { NodeBadge } from './node-badge';
 
 export interface DeviceRowHeaderProps extends DeviceRowProps {
   sortable: SortableRow;
   status: DeviceConnectionStatus;
 }
 
-/** 设备行标题条：拖拽手柄 + 名称 + 状态徽标 + 连接开关 + 展开箭头 */
+/** 设备行标题条：拖拽手柄 + 名称 + 状态徽标 + 连接状态点 + 展开箭头 */
 export function DeviceRowHeader({
   device,
   isExpanded,
   isSelected,
   onExpandedChange,
-  connection,
-  nodeBadge,
   sortable,
   status,
 }: DeviceRowHeaderProps) {
@@ -47,18 +44,8 @@ export function DeviceRowHeader({
         <DeviceIcon className="h-4 w-4 text-muted-foreground shrink-0" />
         <span className="flex-1 truncate text-xs font-medium">{device.name}</span>
 
-        {nodeBadge && <NodeBadge info={nodeBadge} />}
         <DeviceStatusBadge deviceId={deviceId} className="shrink-0" />
-        <DeviceConnectionControl
-          deviceId={deviceId}
-          status={status}
-          connection={connection}
-          onConnect={() => onExpandedChange(deviceId, true)}
-          onDisconnect={() => {
-            connection?.disconnect(deviceId);
-            onExpandedChange(deviceId, false);
-          }}
-        />
+        <DeviceConnectionControl deviceId={deviceId} status={status} />
         <button
           type="button"
           data-testid={`device-expand-${deviceId}`}

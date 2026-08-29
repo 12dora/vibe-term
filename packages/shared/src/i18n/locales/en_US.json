@@ -680,7 +680,6 @@
     },
     "sidebar": {
       "noWindows": "No windows",
-      "noVisibleDevices": "No devices shown — enable them in Manage devices",
       "noDevices": "No devices",
       "addDeviceLink": "Add Device",
       "openSettingsLink": "Open Settings",

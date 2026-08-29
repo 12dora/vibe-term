@@ -4,26 +4,33 @@
 import { useGlobalDevice } from '@/components/global-device-provider';
 import {
   SideBarDeviceList as DeviceTreeSideBarDeviceList,
-  type NodeBadgeInfo,
+  shouldHideSidebarNodeSection,
+  useSidebarDeviceStats,
 } from '@tmex/panels/device-tree';
 import { useRuntime } from '@tmex/stores/react';
+import type { ReactNode } from 'react';
 import { SidebarAgentSessionsProvider, useSidebarAgentAdapter } from './sidebar-agent-sessions';
 
+/** 聚合视图的分节外壳：分节头与设备树同生共死，没有可显示的设备时整节都不渲染。 */
+export interface SidebarNodeSectionShell {
+  testId: string;
+  header: ReactNode;
+  /** 该 node 一台设备都没有时是否仍渲染（本机保留空态引导，远端直接隐藏） */
+  keepWhenNoDevices?: boolean;
+}
+
 export interface SideBarDeviceListForRuntimeProps {
-  nodeBadge?: NodeBadgeInfo;
   /** 多 node 下把 UI store 的展开态按 node 隔离；self 传 undefined 保持旧 key。 */
   expansionKeyFor?: (deviceId: string) => string;
   emptyLabel?: string;
-  /** 该 node 有设备但全部未勾选显示时的提示文案 */
-  hiddenEmptyLabel?: string;
+  /** 传了就渲染成聚合视图的一节；不传就是单 node 宿主的裸设备树。 */
+  section?: SidebarNodeSectionShell;
 }
 
-export function SideBarDeviceListForRuntime({
-  nodeBadge,
+function DeviceTree({
   expansionKeyFor,
   emptyLabel,
-  hiddenEmptyLabel,
-}: SideBarDeviceListForRuntimeProps) {
+}: Omit<SideBarDeviceListForRuntimeProps, 'section'>) {
   const { ensureDeviceSubscribed, connection } = useGlobalDevice();
   const agentUi = useRuntime().features.agentUi;
   const agentAdapter = useSidebarAgentAdapter();
@@ -33,14 +40,40 @@ export function SideBarDeviceListForRuntime({
       ensureDeviceSubscribed={ensureDeviceSubscribed}
       connection={connection}
       agent={agentUi ? agentAdapter : undefined}
-      nodeBadge={nodeBadge}
       expansionKeyFor={expansionKeyFor}
       emptyLabel={emptyLabel}
-      hiddenEmptyLabel={hiddenEmptyLabel}
     />
   );
 
   // agentUi 关断时设备树不渲染任何 agent 面，provider 一并跳过（省掉会话列表 bootstrap）
   if (!agentUi) return tree;
   return <SidebarAgentSessionsProvider>{tree}</SidebarAgentSessionsProvider>;
+}
+
+/**
+ * 分节形态。可见性判断必须留在**挂了该 node 运行时**的组件里：设备列表是运行时作用域内的
+ * react-query（分节头在作用域外读不到），而且隐藏时本组件只是 return null、查询照样活着，
+ * 用户在「管理设备」里勾上一台，这一节会自己回来。
+ */
+function NodeSection({
+  section,
+  ...rest
+}: SideBarDeviceListForRuntimeProps & { section: SidebarNodeSectionShell }) {
+  const stats = useSidebarDeviceStats();
+  if (shouldHideSidebarNodeSection(stats, section.keepWhenNoDevices ?? false)) return null;
+
+  return (
+    <div data-testid={section.testId} className="space-y-1">
+      {section.header}
+      <DeviceTree {...rest} />
+    </div>
+  );
+}
+
+export function SideBarDeviceListForRuntime({
+  section,
+  ...rest
+}: SideBarDeviceListForRuntimeProps) {
+  if (!section) return <DeviceTree {...rest} />;
+  return <NodeSection section={section} {...rest} />;
 }

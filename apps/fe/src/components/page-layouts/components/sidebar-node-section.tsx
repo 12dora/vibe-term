@@ -11,7 +11,11 @@ import { loginErrorKey } from '@/auth/login-errors';
 import { useNodeLoginGate } from '@/auth/use-node-login';
 import { NodeRuntimeScope } from '@/node/node-runtime-scope';
 import { SELF_NODE_ID, nodeAppPath, parseNodeIdFromPath } from '@tmex/api-client';
-import { NodeBadge, type NodeBadgeInfo } from '@tmex/panels/device-tree';
+import {
+  NodeBadge,
+  type NodeBadgeInfo,
+  shouldHideSidebarNodeSection,
+} from '@tmex/panels/device-tree';
 import { isSidebarDeviceVisible } from '@tmex/stores';
 import { useUIStore } from '@tmex/stores/react';
 import { ChevronRight, Loader2, Monitor } from 'lucide-react';
@@ -153,19 +157,17 @@ export function SidebarNodeSection({ node }: { node: SidebarNodeEntry }) {
         device.id === selectedDeviceId ||
         isSidebarDeviceVisible(visibility, node.runtimeNodeId, device.id)
     );
+    // 已知设备全被取消显示时整节隐藏（与在线分节同一条规则）；一台已知设备都没有的
+    // 离线 node 仍留个分节头，否则用户完全看不出它存在过。
+    if (shouldHideSidebarNodeSection({ total: knownDevices.length, visible: devices.length }, true))
+      return null;
+
     return (
       <div data-testid={`sidebar-node-offline-${node.runtimeNodeId}`} className="space-y-1">
         <SectionHeader node={node} hint={t('sidebar.node.offline')} />
         {knownDevices.length === 0 ? (
           <div className="tmex-fade px-2 py-1 text-[11px] text-muted-foreground/60">
             {t('sidebar.node.noKnownDevices')}
-          </div>
-        ) : devices.length === 0 ? (
-          <div
-            data-testid={`sidebar-node-hidden-${node.runtimeNodeId}`}
-            className="tmex-fade px-2 py-1 text-[11px] text-muted-foreground/60"
-          >
-            {t('sidebar.noVisibleDevices')}
           </div>
         ) : (
           devices.map((device) => (
@@ -188,21 +190,23 @@ export function SidebarNodeSection({ node }: { node: SidebarNodeEntry }) {
     return <SidebarNodeSignIn node={node} />;
   }
 
+  // 分节头交给设备树一起渲染：可见设备数只有挂上该 node 运行时才读得到，
+  // 一台都不显示时整节（含分节头）都不该出现。
   return (
-    <div data-testid={`sidebar-node-${node.runtimeNodeId}`} className="space-y-1">
-      <SectionHeader node={node} />
-      <NodeRuntimeScope nodeId={node.runtimeNodeId}>
-        <SideBarDeviceListForRuntime
-          nodeBadge={badgeOf(node)}
-          expansionKeyFor={
-            node.runtimeNodeId === SELF_NODE_ID
-              ? undefined
-              : (deviceId) => `${node.runtimeNodeId}:${deviceId}`
-          }
-          emptyLabel={t('sidebar.node.noDevices')}
-          hiddenEmptyLabel={t('sidebar.noVisibleDevices')}
-        />
-      </NodeRuntimeScope>
-    </div>
+    <NodeRuntimeScope nodeId={node.runtimeNodeId}>
+      <SideBarDeviceListForRuntime
+        section={{
+          testId: `sidebar-node-${node.runtimeNodeId}`,
+          header: <SectionHeader node={node} />,
+          keepWhenNoDevices: node.isSelf,
+        }}
+        expansionKeyFor={
+          node.runtimeNodeId === SELF_NODE_ID
+            ? undefined
+            : (deviceId) => `${node.runtimeNodeId}:${deviceId}`
+        }
+        emptyLabel={t('sidebar.node.noDevices')}
+      />
+    </NodeRuntimeScope>
   );
 }

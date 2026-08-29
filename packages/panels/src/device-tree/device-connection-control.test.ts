@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import type { DeviceConnectionStatus } from '../device-connection';
-import { deviceConnectionAction, deviceStatusDotClass } from './device-connection-control';
+import { deviceStatusDotClass } from './device-connection-control';
 
 const allStatuses: DeviceConnectionStatus[] = [
   'connected',
@@ -28,20 +28,6 @@ describe('deviceStatusDotClass', () => {
   test('every status maps to a class', () => {
     for (const status of allStatuses) {
       expect(deviceStatusDotClass(status)).toMatch(/^bg-/);
-    }
-  });
-});
-
-describe('deviceConnectionAction', () => {
-  test('offers disconnect while connected or coming up', () => {
-    for (const status of ['connected', 'connecting', 'reconnecting'] as const) {
-      expect(deviceConnectionAction(status)).toBe('disconnect');
-    }
-  });
-
-  test('offers connect when disconnected or errored', () => {
-    for (const status of ['disconnected', 'error'] as const) {
-      expect(deviceConnectionAction(status)).toBe('connect');
     }
   });
 });

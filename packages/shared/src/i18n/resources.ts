@@ -686,7 +686,6 @@ export const I18N_RESOURCES = {
     },
     "sidebar": {
       "noWindows": "No windows",
-      "noVisibleDevices": "No devices shown — enable them in Manage devices",
       "noDevices": "No devices",
       "addDeviceLink": "Add Device",
       "openSettingsLink": "Open Settings",
@@ -2266,7 +2265,6 @@ export const I18N_RESOURCES = {
     },
     "sidebar": {
       "noWindows": "暂无窗口",
-      "noVisibleDevices": "未选择显示的设备，可在“管理设备”中开启",
       "noDevices": "暂无设备",
       "addDeviceLink": "添加设备",
       "openSettingsLink": "打开设置",
@@ -2281,9 +2279,9 @@ export const I18N_RESOURCES = {
       "closePane": "关闭 pane",
       "addDevice": "添加设备",
       "tab": {
-        "panes": "Panes",
-        "agent": "Agent",
-        "files": "Files"
+        "panes": "终端",
+        "agent": "智能体",
+        "files": "文件"
       },
       "orphanedSessions": "孤立会话",
       "node": {
@@ -3846,7 +3844,6 @@ export const I18N_RESOURCES = {
     },
     "sidebar": {
       "noWindows": "ウィンドウがありません",
-      "noVisibleDevices": "表示するデバイスが選択されていません。「デバイス管理」で有効にしてください",
       "noDevices": "デバイスがありません",
       "addDeviceLink": "デバイスを追加",
       "openSettingsLink": "設定を開く",
@@ -3861,9 +3858,9 @@ export const I18N_RESOURCES = {
       "closePane": "ペインを閉じる",
       "addDevice": "デバイスを追加",
       "tab": {
-        "panes": "Panes",
-        "agent": "Agent",
-        "files": "Files"
+        "panes": "端末",
+        "agent": "エージェント",
+        "files": "ファイル"
       },
       "orphanedSessions": "孤立セッション",
       "node": {

@@ -3,7 +3,6 @@
 import type { Device, TmuxPane, TmuxWindow } from '@tmex/shared';
 import type { DeviceConnectionAdapter } from '../device-connection';
 import type { DeviceTreeNavigation, SidebarAgentAdapter } from './agent-adapter';
-import type { NodeBadgeInfo } from './node-badge';
 
 export interface DeviceRowProps {
   device: Device;
@@ -22,10 +21,8 @@ export interface DeviceRowProps {
   onWatchPane: (deviceId: string, paneId: string) => void;
   agent?: SidebarAgentAdapter;
   nav: DeviceTreeNavigation;
-  /** 宿主连接管理；未传时不渲染连接开关，行为与内嵌宿主一致 */
+  /** 宿主连接管理；未传时连接态退回 tmux store 的在线判定 */
   connection?: DeviceConnectionAdapter;
-  /** 多 node 聚合侧边栏的 node 徽标；单 node 宿主不传。 */
-  nodeBadge?: NodeBadgeInfo;
 }
 
 export interface PaneRowProps {

@@ -680,7 +680,6 @@
     },
     "sidebar": {
       "noWindows": "暂无窗口",
-      "noVisibleDevices": "未选择显示的设备，可在“管理设备”中开启",
       "noDevices": "暂无设备",
       "addDeviceLink": "添加设备",
       "openSettingsLink": "打开设置",
@@ -695,9 +694,9 @@
       "closePane": "关闭 pane",
       "addDevice": "添加设备",
       "tab": {
-        "panes": "Panes",
-        "agent": "Agent",
-        "files": "Files"
+        "panes": "终端",
+        "agent": "智能体",
+        "files": "文件"
       },
       "orphanedSessions": "孤立会话",
       "node": {

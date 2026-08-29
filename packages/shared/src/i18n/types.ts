@@ -664,7 +664,6 @@ export type TranslationKey =
   | 'notification.watch.paneGone'
   | 'sidebar'
   | 'sidebar.noWindows'
-  | 'sidebar.noVisibleDevices'
   | 'sidebar.noDevices'
   | 'sidebar.addDeviceLink'
   | 'sidebar.openSettingsLink'

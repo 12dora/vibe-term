@@ -21,7 +21,6 @@ import { useDeviceTreeDialogs } from './device-tree-dialogs';
 import { SortableVerticalList } from './device-tree-dnd';
 import { useDeviceTreeNavigationApi, useDeviceTreeSelection } from './device-tree-navigation';
 import { mergeReorderedVisibleIds, selectSidebarVisibleDevices } from './device-tree-selectors';
-import type { NodeBadgeInfo } from './node-badge';
 
 type DeviceListItem = Device & {
   lastError?: string | null;
@@ -39,12 +38,8 @@ export interface SideBarDeviceListProps {
   devicesQueryKey?: readonly unknown[];
   /** agent 会话装饰；未传时不渲染任何 agent 面 */
   agent?: SidebarAgentAdapter;
-  /** 多 node 聚合侧边栏的 node 徽标；单 node / standalone 宿主不传，渲染结果保持原样 */
-  nodeBadge?: NodeBadgeInfo;
   /** 无设备时的空态文案；缺省沿用 `sidebar.noDevices` */
   emptyLabel?: string;
-  /** 有设备但全部被侧边栏可见性过滤掉时的提示；缺省退回 emptyLabel */
-  hiddenEmptyLabel?: string;
   /** 宿主连接管理；未传时不渲染连接开关，展开仍走 ensureDeviceSubscribed */
   connection?: DeviceConnectionAdapter;
 }
@@ -54,9 +49,7 @@ export function SideBarDeviceList({
   expansionKeyFor,
   devicesQueryKey,
   agent,
-  nodeBadge,
   emptyLabel,
-  hiddenEmptyLabel,
   connection,
 }: SideBarDeviceListProps) {
   const { t } = useTranslation();
@@ -177,7 +170,7 @@ export function SideBarDeviceList({
   const handleDeviceExpandedChange = useCallback(
     (deviceId: string, expanded: boolean) => {
       setSidebarDeviceExpanded(expansionKey(deviceId), expanded);
-      // 收起只影响树的可见性，断开必须走 Power 按钮
+      // 收起只影响树的可见性，不断开连接
       if (!expanded) return;
       if (connection) {
         connection.connect(deviceId);
@@ -278,7 +271,6 @@ export function SideBarDeviceList({
                 onWatchPane={requestWatchPane}
                 agent={agentAdapter}
                 nav={nav}
-                nodeBadge={nodeBadge}
                 connection={connection}
               />
             ))}
@@ -301,14 +293,8 @@ export function SideBarDeviceList({
                   {t('common.retry')}
                 </Button>
               </div>
-            ) : devices.length > 0 ? (
-              <div
-                data-testid="sidebar-devices-all-hidden"
-                className="text-center text-sm text-muted-foreground py-4"
-              >
-                {hiddenEmptyLabel ?? emptyLabel ?? t('sidebar.noDevices')}
-              </div>
-            ) : (
+            ) : // 有设备但全部未勾选显示：什么都不渲染，占位框只会白占一块地方
+            devices.length > 0 ? null : (
               <div className="text-center text-sm text-muted-foreground py-4">
                 {emptyLabel ?? t('sidebar.noDevices')}
               </div>

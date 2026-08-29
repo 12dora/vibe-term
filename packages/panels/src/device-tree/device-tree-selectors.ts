@@ -69,6 +69,27 @@ export function selectSidebarVisibleDevices<T extends { id: string }>(
   );
 }
 
+export interface SidebarDeviceStats {
+  /** 该 node 下的设备总数（含未勾选显示的） */
+  total: number;
+  /** 侧边栏实际会渲染的设备数 */
+  visible: number;
+}
+
+/**
+ * 聚合侧边栏里某个 node 的分节是否整体隐藏（连分节头一起）。
+ *
+ * 一台可显示的设备都没有时隐藏：全部未勾选显示的 node 只剩一个空标题，纯属噪声。
+ * `keepWhenNoDevices` 是例外——本机分节即使一台设备都没有也要留着空态引导用户去添加。
+ */
+export function shouldHideSidebarNodeSection(
+  stats: SidebarDeviceStats,
+  keepWhenNoDevices: boolean
+): boolean {
+  if (stats.visible > 0) return false;
+  return stats.total > 0 || !keepWhenNoDevices;
+}
+
 /**
  * 把「只含可见设备」的拖拽结果合并回完整设备顺序。
  *

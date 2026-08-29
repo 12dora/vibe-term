@@ -7,6 +7,7 @@ import {
   selectDeviceOnline,
   selectDeviceWindows,
   selectSidebarVisibleDevices,
+  shouldHideSidebarNodeSection,
 } from './device-tree-selectors';
 
 const makeWindow = (id: string): TmuxWindow => ({
@@ -138,6 +139,23 @@ describe('selectSidebarVisibleDevices', () => {
 
   test('选中的设备不属于本 runtime 时不影响过滤结果', () => {
     expect(selectSidebarVisibleDevices(devices, {}, NODE_A, 'other')).toEqual([]);
+  });
+});
+
+describe('shouldHideSidebarNodeSection', () => {
+  test('有可显示的设备就渲染', () => {
+    expect(shouldHideSidebarNodeSection({ total: 3, visible: 1 }, false)).toBe(false);
+    expect(shouldHideSidebarNodeSection({ total: 1, visible: 1 }, true)).toBe(false);
+  });
+
+  test('有设备但一台都没勾选显示时整节隐藏（本机也一样）', () => {
+    expect(shouldHideSidebarNodeSection({ total: 3, visible: 0 }, false)).toBe(true);
+    expect(shouldHideSidebarNodeSection({ total: 3, visible: 0 }, true)).toBe(true);
+  });
+
+  test('一台设备都没有：远端 node 隐藏，本机保留空态引导', () => {
+    expect(shouldHideSidebarNodeSection({ total: 0, visible: 0 }, false)).toBe(true);
+    expect(shouldHideSidebarNodeSection({ total: 0, visible: 0 }, true)).toBe(false);
   });
 });
 
