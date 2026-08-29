@@ -113,15 +113,29 @@ export class DeferredSelectEffects {
     return this.resets.has(deviceId) || this.histories.has(deviceId);
   }
 
-  deviceIds(): string[] {
-    return [
-      ...new Set([
-        ...this.resets.keys(),
-        ...this.histories.keys(),
-        ...this.flushes.keys(),
-        ...this.outputs.keys(),
-      ]),
-    ];
+  deviceIds(preferredFirst: Iterable<string> = []): string[] {
+    const ordered: string[] = [];
+    const seen = new Set<string>();
+    for (const deviceId of preferredFirst) {
+      if (seen.has(deviceId)) {
+        continue;
+      }
+      seen.add(deviceId);
+      ordered.push(deviceId);
+    }
+    for (const deviceId of [
+      ...this.resets.keys(),
+      ...this.histories.keys(),
+      ...this.flushes.keys(),
+      ...this.outputs.keys(),
+    ]) {
+      if (seen.has(deviceId)) {
+        continue;
+      }
+      seen.add(deviceId);
+      ordered.push(deviceId);
+    }
+    return ordered;
   }
 
   clear(deviceId?: string): void {

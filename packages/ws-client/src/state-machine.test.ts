@@ -361,4 +361,53 @@ describe('SelectStateMachine', () => {
       'output:%out:2',
     ]);
   });
+
+  test('setCallbacks replays devices in SELECT_START order, not deferred-history arrival order', () => {
+    const sm = new SelectStateMachine();
+    const tokenA = new Uint8Array(16).fill(10);
+    const tokenB = new Uint8Array(16).fill(11);
+    const events: string[] = [];
+
+    sm.dispatch({
+      type: 'SELECT_START',
+      deviceId: 'A',
+      windowId: '@1',
+      paneId: '%A',
+      selectToken: tokenA,
+      wantHistory: true,
+    });
+    sm.dispatch({
+      type: 'SELECT_START',
+      deviceId: 'B',
+      windowId: '@2',
+      paneId: '%B',
+      selectToken: tokenB,
+      wantHistory: true,
+    });
+    sm.dispatch({ type: 'SWITCH_ACK', deviceId: 'A', selectToken: tokenA });
+    sm.dispatch({ type: 'SWITCH_ACK', deviceId: 'B', selectToken: tokenB });
+    sm.dispatch({
+      type: 'HISTORY',
+      deviceId: 'B',
+      selectToken: tokenB,
+      data: 'hist-B',
+      alternateScreen: false,
+      modes: 0,
+    });
+    sm.dispatch({
+      type: 'HISTORY',
+      deviceId: 'A',
+      selectToken: tokenA,
+      data: 'hist-A',
+      alternateScreen: false,
+      modes: 0,
+    });
+
+    sm.setCallbacks({
+      onResetTerminal: (deviceId) => events.push(`reset:${deviceId}`),
+      onApplyHistory: (deviceId) => events.push(`history:${deviceId}`),
+    });
+
+    expect(events).toEqual(['reset:A', 'history:A', 'reset:B', 'history:B']);
+  });
 });

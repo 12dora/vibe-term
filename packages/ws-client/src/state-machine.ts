@@ -143,7 +143,7 @@ export class SelectStateMachine {
 
   setCallbacks(callbacks: SelectCallbacks): void {
     this.callbacks = callbacks;
-    for (const deviceId of this.deferred.deviceIds()) {
+    for (const deviceId of this.deferred.deviceIds(this.transactions.keys())) {
       this.replayDeferred(deviceId);
     }
   }
