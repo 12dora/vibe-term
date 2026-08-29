@@ -22,6 +22,16 @@ export {
   updateDeviceRuntimeStatus,
 } from './devices';
 
+export {
+  createDeviceFolder,
+  deleteDeviceFolder,
+  getDeviceFolderById,
+  getDeviceFolderLayout,
+  removeDeviceFolderPlacementsForDevice,
+  replaceDeviceFolderLayout,
+  updateDeviceFolder,
+} from './device-folders';
+
 export { getGatewayKv, setGatewayKv } from './kv';
 
 export {

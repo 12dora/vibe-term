@@ -29,6 +29,7 @@ const MIGRATIONS = [
   '0021_tls_config.sql',
   '0022_hub_trust.sql',
   '0023_acme_account_directory.sql',
+  '0024_narrow_tomas.sql',
 ] as const;
 
 export interface MaterializedMigrations {

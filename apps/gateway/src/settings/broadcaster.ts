@@ -11,7 +11,8 @@ export type SettingsNamespace =
   | 'telegram'
   | 'weixin'
   | 'devices'
-  | 'tree-order';
+  | 'tree-order'
+  | 'device-folders';
 
 type SettingsBroadcaster = (namespace: SettingsNamespace) => void;
 

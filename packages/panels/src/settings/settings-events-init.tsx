@@ -3,7 +3,11 @@
 // site 由 stores/site 自行 refresh，本表额外覆盖 fe 的 ['site-settings'] 查询。
 
 import { type QueryClient, useQueryClient } from '@tanstack/react-query';
-import { devicesQueryKey, terminalShortcutsQueryKey } from '@tmex/api-client';
+import {
+  deviceFoldersQueryKey,
+  devicesQueryKey,
+  terminalShortcutsQueryKey,
+} from '@tmex/api-client';
 import { useRuntime } from '@tmex/stores/react';
 import type { GatewayTransport } from '@tmex/ws-client';
 import { useEffect } from 'react';
@@ -28,6 +32,7 @@ export const SETTINGS_NAMESPACE_QUERY_KEYS: ReadonlyMap<string, readonly Setting
     ['telegram', [['telegram-bots'], ['telegram-bot-chats']]],
     ['weixin', [['weixin-accounts']]],
     ['devices', [devicesQueryKey]],
+    ['device-folders', [deviceFoldersQueryKey]],
     ['tree-order', NO_KEYS],
   ]);
 

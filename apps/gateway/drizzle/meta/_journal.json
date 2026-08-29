@@ -169,6 +169,13 @@
       "when": 1787972260191,
       "tag": "0023_acme_account_directory",
       "breakpoints": true
+    },
+    {
+      "idx": 24,
+      "version": "6",
+      "when": 1787994714692,
+      "tag": "0024_narrow_tomas",
+      "breakpoints": true
     }
   ]
 }

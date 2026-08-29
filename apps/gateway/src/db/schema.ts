@@ -368,6 +368,38 @@ export const deviceTreeOrder = sqliteTable('device_tree_order', {
   updatedAt: text('updated_at').notNull(),
 });
 
+// 设备管理页文件夹层级：parent_id 自引用不加 FK（删除时手动上提子项）。
+export const deviceFolders = sqliteTable(
+  'device_folders',
+  {
+    id: text('id').primaryKey(),
+    name: text('name').notNull(),
+    parentId: text('parent_id'),
+    sortOrder: integer('sort_order').notNull().default(0),
+    createdAt: text('created_at').notNull(),
+    updatedAt: text('updated_at').notNull(),
+  },
+  (table) => [index('device_folders_parent_id_idx').on(table.parentId)]
+);
+
+export const deviceFolderPlacements = sqliteTable(
+  'device_folder_placements',
+  {
+    itemKey: text('item_key').primaryKey(),
+    kind: text('kind').notNull(),
+    nodeId: text('node_id').notNull(),
+    deviceId: text('device_id'),
+    folderId: text('folder_id').references(() => deviceFolders.id, { onDelete: 'cascade' }),
+    sortOrder: integer('sort_order').notNull().default(0),
+    createdAt: text('created_at').notNull(),
+    updatedAt: text('updated_at').notNull(),
+  },
+  (table) => [
+    check('device_folder_placements_kind_check', sql`${table.kind} in ('node', 'device')`),
+    index('device_folder_placements_folder_id_idx').on(table.folderId),
+  ]
+);
+
 // Files Tab 可访问目录白名单（树根）。每个根绑定到一个设备（local 走本地 rsync，ssh 走 rsync over ssh），
 // 有独立启用开关。(deviceId, path) 唯一。
 export const fileRoots = sqliteTable(

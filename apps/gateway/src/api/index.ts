@@ -1,6 +1,7 @@
 import type { Server } from 'bun';
 import { t } from '../i18n';
 import { agentRoutes } from './agent';
+import { deviceFolderRoutes } from './device-folder-routes';
 import { deviceRoutes } from './device-routes';
 import { filesRoutes } from './files';
 import { json } from './http';
@@ -26,6 +27,7 @@ export type { SystemApiHandler };
 const apiRoutes: ApiRoute[] = [
   ...capabilitiesRoutes,
   ...deviceRoutes,
+  ...deviceFolderRoutes,
   ...tmuxTreeRoutes,
   ...settingsRoutes,
   ...telegramRoutes,
