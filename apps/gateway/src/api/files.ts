@@ -17,7 +17,6 @@ import {
 import {
   listDirectory,
   pullFileFromDevice,
-  pushFileToDevice,
   readRawFile,
   readTextFile,
   sanitizeUploadName,
@@ -25,7 +24,6 @@ import {
 } from '../files/device-storage';
 import {
   appendUploadChunk,
-  createDownloadSession,
   createUploadSession,
   getDownloadSession,
   getUploadSession,
@@ -36,6 +34,7 @@ import { t } from '../i18n';
 import { broadcastSettingsUpdate } from '../settings/broadcaster';
 import { json } from './http';
 import { type ApiRoute, route } from './route';
+import { streamDownloadPrepare, streamUploadCommit } from './transfer-progress-stream';
 
 // 分块上传的 chunk 大小（前端按此切片，每个 PUT body ≤ 此值，远低于 Bun 默认 128MB body 上限）
 const UPLOAD_CHUNK_SIZE = 8 * 1024 * 1024;
@@ -256,44 +255,7 @@ function handleUploadCommit(id: string): Response {
   if (!session) return codeError('not_found');
   if (session.received !== session.size) return codeError('invalid', 'incomplete upload');
   session.committing = true;
-
-  const encoder = new TextEncoder();
-  const stream = new ReadableStream<Uint8Array>({
-    start(controller) {
-      const emit = (obj: unknown) => {
-        try {
-          controller.enqueue(encoder.encode(`${JSON.stringify(obj)}\n`));
-        } catch {
-          // 控制器已关闭（客户端断开）
-        }
-      };
-      pushFileToDevice(session.rootId, session.destDir, session.tmpPath, session.name, {
-        signal: session.abort.signal,
-        onProgress: (p) => emit({ type: 'progress', ...p }),
-      })
-        .then((res) => {
-          if (res.ok) emit({ type: 'done', uploaded: res.data.uploaded });
-          else emit({ type: 'error', code: res.code, detail: res.detail });
-        })
-        .catch((e) => emit({ type: 'error', code: 'unknown', detail: String(e) }))
-        .finally(() => {
-          try {
-            controller.close();
-          } catch {
-            // 已关闭
-          }
-          removeUploadSession(id);
-        });
-    },
-    cancel() {
-      // 客户端中断 commit 流 → 中止 rsync + 清理
-      removeUploadSession(id);
-    },
-  });
-  return new Response(stream, {
-    status: 200,
-    headers: { 'Content-Type': 'application/x-ndjson; charset=utf-8', 'Cache-Control': 'no-store' },
-  });
+  return streamUploadCommit(session);
 }
 
 function handleUploadCancel(id: string): Response {
@@ -353,67 +315,7 @@ function streamTempFile(
 // 下载第一步：rsync 把设备文件拉到本机临时文件，流式 NDJSON 回传进度（设备→tmex 段）。
 // 期间持续有数据流动，避免 Bun.serve 空闲超时（大文件 rsync > 10s 时会 socket hang up）。
 function handleDownloadPrepare(req: Request): Response {
-  let abort: AbortController | null = null;
-  const encoder = new TextEncoder();
-  const stream = new ReadableStream<Uint8Array>({
-    async start(controller) {
-      const emit = (obj: unknown) => {
-        try {
-          controller.enqueue(encoder.encode(`${JSON.stringify(obj)}\n`));
-        } catch {
-          // 已关闭
-        }
-      };
-      const close = () => {
-        try {
-          controller.close();
-        } catch {
-          // 已关闭
-        }
-      };
-      let body: { rootId?: unknown; path?: unknown };
-      try {
-        body = (await req.json()) as typeof body;
-      } catch {
-        emit({ type: 'error', code: 'invalid' });
-        close();
-        return;
-      }
-      const rootId = typeof body.rootId === 'string' ? body.rootId : '';
-      const path = typeof body.path === 'string' ? body.path : '';
-      if (!rootId || !path) {
-        emit({ type: 'error', code: 'invalid' });
-        close();
-        return;
-      }
-      abort = new AbortController();
-      const result = await pullFileFromDevice(rootId, path, {
-        signal: abort.signal,
-        onProgress: (p) => emit({ type: 'progress', ...p }),
-      });
-      if (result.ok) {
-        const s = createDownloadSession({
-          tmpPath: result.data.tmpPath,
-          size: result.data.size,
-          name: result.data.name,
-          mime: result.data.mime,
-          cleanup: result.data.cleanup,
-        });
-        emit({ type: 'done', downloadId: s.id, size: s.size, name: s.name });
-      } else {
-        emit({ type: 'error', code: result.code, detail: result.detail });
-      }
-      close();
-    },
-    cancel() {
-      // 客户端中断 prepare 流 → 中止 rsync（pullFileFromDevice 内部会清理临时文件）
-      abort?.abort();
-    },
-  });
-  return new Response(stream, {
-    status: 200,
-    headers: { 'Content-Type': 'application/x-ndjson; charset=utf-8', 'Cache-Control': 'no-store' },
-  });
+  return streamDownloadPrepare(req);
 }
 
 // 下载第二步：把就绪的临时文件流给浏览器（tmex→用户 段），结束后清理会话。
