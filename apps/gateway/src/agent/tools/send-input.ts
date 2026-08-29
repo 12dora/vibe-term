@@ -1,6 +1,10 @@
 import { type Tool, tool } from 'ai';
 import { z } from 'zod';
-import { cleanTerminalText } from './run-command';
+import {
+  buildSendInputPayload,
+  formatEmulatorResult,
+  formatFallbackResult,
+} from './send-input-payload';
 import {
   type TerminalToolContext,
   checkRuntimeAlive,
@@ -8,25 +12,11 @@ import {
   liveEmulator,
   toToolErrorMessage,
 } from './terminal-context';
-import {
-  COMBO_KEY_ENUM,
-  KEY_SEQUENCES,
-  SEND_INPUT_KEYS,
-  SEND_INPUT_MODIFIERS,
-  type SendInputKey,
-  encodeCombo,
-} from './terminal-encoding';
-import { wrapUntrusted } from './untrusted';
+import { COMBO_KEY_ENUM, SEND_INPUT_KEYS, SEND_INPUT_MODIFIERS } from './terminal-encoding';
 
 const SEND_INPUT_SETTLE_MS = 300;
-const SEND_INPUT_TAIL_LINES = 15;
 const SEND_INPUT_TEXT_MAX_CHARS = 16384;
 const RAW_CONTROL_CHARS_MAX = 4096;
-
-function tailLines(text: string, count: number): string {
-  const lines = text.replace(/\s+$/, '').split('\n');
-  return lines.slice(-count).join('\n');
-}
 
 export function createSendInputTool(ctx: TerminalToolContext): Tool {
   return tool({
@@ -83,19 +73,14 @@ export function createSendInputTool(ctx: TerminalToolContext): Tool {
         return failTool(ctx, 'Terminal connection is not available.');
       }
       const emulator = liveEmulator(ctx);
-      const warnings: string[] = [];
-      if (rawControlChars && !ctx.allowControlChars) {
-        warnings.push(
-          'rawControlChars was ignored because the session does not allow control characters; use combos (e.g. ctrl+c) instead.'
-        );
-      }
+      const { data, warnings } = buildSendInputPayload({
+        text,
+        combos,
+        rawControlChars,
+        keys,
+        allowControlChars: ctx.allowControlChars,
+      });
       try {
-        const data =
-          (text ?? '') +
-          (combos ?? []).map((c) => encodeCombo({ modifiers: c.modifiers, key: c.key })).join('') +
-          (keys ?? []).map((k) => KEY_SEQUENCES[k as SendInputKey] ?? '').join('') +
-          (ctx.allowControlChars ? (rawControlChars ?? '') : '');
-
         if (emulator) {
           const buf: number[] = [];
           const untap = emulator.tap({
@@ -113,29 +98,16 @@ export function createSendInputTool(ctx: TerminalToolContext): Tool {
           }
           ctx.onSuccess();
           const info = await runtime.getPaneInfo(ctx.paneId).catch(() => null);
-          if (emulator.isAlternateScreen()) {
-            return {
-              screen: wrapUntrusted(emulator.render(), 'terminal'),
-              mode: 'screen' as const,
-              cols: info?.cols ?? emulator.size().cols,
-              rows: info?.rows ?? emulator.size().rows,
-              cursorX: info?.cursorX ?? null,
-              cursorY: info?.cursorY ?? null,
-              ...(warnings.length > 0 ? { warnings } : {}),
-              capturedAt: new Date().toISOString(),
-            };
-          }
-          const delta = cleanTerminalText(new TextDecoder().decode(new Uint8Array(buf)));
-          return {
-            delta: wrapUntrusted(delta, 'terminal'),
-            mode: 'delta' as const,
-            cols: info?.cols ?? emulator.size().cols,
-            rows: info?.rows ?? emulator.size().rows,
-            cursorX: info?.cursorX ?? null,
-            cursorY: info?.cursorY ?? null,
-            ...(warnings.length > 0 ? { warnings } : {}),
+          const alternateScreen = emulator.isAlternateScreen();
+          return formatEmulatorResult({
+            alternateScreen,
+            screen: alternateScreen ? emulator.render() : '',
+            deltaBytes: new Uint8Array(buf),
+            info,
+            emulatorSize: emulator.size(),
+            warnings,
             capturedAt: new Date().toISOString(),
-          };
+          });
         }
 
         runtime.sendInput(ctx.paneId, data);
@@ -145,13 +117,12 @@ export function createSendInputTool(ctx: TerminalToolContext): Tool {
           runtime.getPaneInfo(ctx.paneId).catch(() => null),
         ]);
         ctx.onSuccess();
-        return {
-          screenTail: wrapUntrusted(tailLines(screen, SEND_INPUT_TAIL_LINES), 'terminal'),
-          cols: info?.cols ?? null,
-          rows: info?.rows ?? null,
-          ...(warnings.length > 0 ? { warnings } : {}),
+        return formatFallbackResult({
+          screen,
+          info,
+          warnings,
           capturedAt: new Date().toISOString(),
-        };
+        });
       } catch (error) {
         return failTool(ctx, `Failed to send input to pane: ${toToolErrorMessage(error)}`);
       }

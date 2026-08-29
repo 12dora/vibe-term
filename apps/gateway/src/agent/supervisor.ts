@@ -29,6 +29,11 @@ import {
 } from '../db/agent';
 import { t } from '../i18n';
 import { telegramService } from '../telegram/service';
+import {
+  type ApprovalConfirmationLike,
+  buildApprovalResponsePlan,
+  inspectApprovalMessages,
+} from './approval-response-reconciler';
 import { registerDeviceCloseListener } from './device-close-bus';
 import type { AgentStopReason } from './run';
 import { AgentRun, type AgentRunDeps } from './run';
@@ -570,96 +575,26 @@ export class AgentSupervisor {
    * 返回 true 表示消息流完整、可发起续跑；存在 pending 或找不到 approval-request 时返回 false。
    */
   private appendApprovalResponsesIfReady(sessionId: string): boolean {
-    const messages = listAgentMessages(sessionId);
-
-    let lastAssistantIndex = -1;
-    for (let i = messages.length - 1; i >= 0; i--) {
-      if (messages[i].role === 'assistant') {
-        lastAssistantIndex = i;
-        break;
-      }
-    }
-    if (lastAssistantIndex < 0) {
+    const inspected = inspectApprovalMessages(listAgentMessages(sessionId));
+    if (!inspected) {
       return false;
     }
 
-    const assistantContent = (messages[lastAssistantIndex].content as { content?: unknown })
-      ?.content;
-    if (!Array.isArray(assistantContent)) {
-      return false;
-    }
-
-    const requests = assistantContent.filter(
-      (part): part is { type: string; approvalId: string; toolCallId: string } =>
-        (part as { type?: unknown })?.type === 'tool-approval-request' &&
-        typeof (part as { approvalId?: unknown })?.approvalId === 'string'
+    const confirmations = new Map<string, ApprovalConfirmationLike | null>(
+      inspected.requests.map((request) => [
+        request.approvalId,
+        getAgentConfirmationById(request.approvalId),
+      ])
     );
-    if (requests.length === 0) {
+    const plan = buildApprovalResponsePlan(inspected, confirmations);
+    if (plan.kind === 'not-ready') {
       return false;
     }
-
-    const respondedApprovalIds = new Set<string>();
-    const resolvedToolCallIds = new Set<string>();
-    for (let i = lastAssistantIndex + 1; i < messages.length; i++) {
-      const message = messages[i];
-      if (message.role !== 'tool') {
-        continue;
-      }
-      const content = (message.content as { content?: unknown })?.content;
-      if (!Array.isArray(content)) {
-        continue;
-      }
-      for (const part of content) {
-        const typed = part as { type?: unknown; approvalId?: unknown; toolCallId?: unknown };
-        if (typed?.type === 'tool-approval-response' && typeof typed.approvalId === 'string') {
-          respondedApprovalIds.add(typed.approvalId);
-        }
-        if (typed?.type === 'tool-result' && typeof typed.toolCallId === 'string') {
-          resolvedToolCallIds.add(typed.toolCallId);
-        }
-      }
-    }
-
-    const missing = requests.filter((request) => {
-      if (respondedApprovalIds.has(request.approvalId)) {
-        return false;
-      }
-      const confirmation = getAgentConfirmationById(request.approvalId);
-      const toolCallId = confirmation?.toolCallId ?? request.toolCallId;
-      return !resolvedToolCallIds.has(toolCallId);
-    });
-    if (missing.length === 0) {
+    if (plan.kind === 'already-ready') {
       return true;
     }
 
-    const parts: Array<Record<string, unknown>> = [];
-    for (const request of missing) {
-      const confirmation = getAgentConfirmationById(request.approvalId);
-      if (!confirmation || confirmation.status === 'pending') {
-        return false;
-      }
-      if (confirmation.status === 'cancelled') {
-        parts.push({
-          type: 'tool-result',
-          toolCallId: confirmation.toolCallId,
-          toolName: confirmation.toolName,
-          output: {
-            type: 'execution-denied',
-            reason: confirmation.reason ?? 'cancelled',
-          },
-        });
-        continue;
-      }
-      const approved = confirmation.status === 'approved';
-      parts.push({
-        type: 'tool-approval-response',
-        approvalId: request.approvalId,
-        approved,
-        ...(!approved && confirmation.reason ? { reason: confirmation.reason } : {}),
-      });
-    }
-
-    const record = appendAgentMessage(sessionId, 'tool', { role: 'tool', content: parts });
+    const record = appendAgentMessage(sessionId, 'tool', { role: 'tool', content: plan.parts });
     this.broadcastPersisted(sessionId, record);
     return true;
   }

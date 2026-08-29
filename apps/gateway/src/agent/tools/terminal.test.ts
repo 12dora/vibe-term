@@ -60,7 +60,11 @@ interface ToolHarness {
   tools: ReturnType<typeof createTerminalTools>;
 }
 
-function createHarness(runtime: TerminalRuntimeLike | null, needsApproval = false): ToolHarness {
+function createHarness(
+  runtime: TerminalRuntimeLike | null,
+  needsApproval = false,
+  extras: { allowControlChars?: boolean } = {}
+): ToolHarness {
   const harness: ToolHarness = {
     failures: 0,
     successes: 0,
@@ -71,6 +75,7 @@ function createHarness(runtime: TerminalRuntimeLike | null, needsApproval = fals
     deviceId: 'dev1',
     getRuntime: () => runtime,
     needsApprovalForWrite: needsApproval,
+    allowControlChars: extras.allowControlChars,
     onFailure: () => {
       harness.failures += 1;
     },
@@ -179,6 +184,34 @@ describe('terminal tools - send_input', () => {
     )) as { error: string };
     expect(result.error).toContain('not available');
     expect(harness.failures).toBe(1);
+  });
+
+  test('未允许控制字符时忽略 rawControlChars 并带 warning', async () => {
+    const { runtime, calls } = createStubRuntime();
+    const harness = createHarness(runtime);
+    const result = (await getTool(harness, 'send_input').execute(
+      { text: 'ls', rawControlChars: '\x03', keys: ['enter'] },
+      execOptions
+    )) as { screenTail: string; warnings?: string[] };
+
+    expect(calls.sendInput).toEqual([{ paneId: '%1', data: 'ls\r' }]);
+    expect(result.warnings?.[0]).toContain('rawControlChars was ignored');
+    expect(result.screenTail).toContain('UNTRUSTED TERMINAL SCREEN');
+  });
+
+  test('允许控制字符时 rawControlChars 按 text/combo/legacy-key 之后拼接', async () => {
+    const { runtime, calls } = createStubRuntime();
+    const harness = createHarness(runtime, false, { allowControlChars: true });
+    await getTool(harness, 'send_input').execute(
+      {
+        text: 'ls',
+        combos: [{ key: 'tab' }],
+        keys: ['enter'],
+        rawControlChars: '\x03',
+      },
+      execOptions
+    );
+    expect(calls.sendInput).toEqual([{ paneId: '%1', data: 'ls\t\r\x03' }]);
   });
 });
 
@@ -314,6 +347,52 @@ describe('terminal tools - emulator 数据源', () => {
     expect(result.rows).toBe(24);
     expect(harness.successes).toBe(1);
     expect(harness.failures).toBe(0);
+  });
+
+  test('send_input 在 alternate screen 下返回完整渲染态而非 delta', async () => {
+    const emulator = {
+      isDisposed: false,
+      isAlternateScreen: () => true,
+      render: () => 'vim screen',
+      size: () => ({ cols: 120, rows: 40 }),
+      tap() {
+        return () => {};
+      },
+    };
+    const { runtime, calls } = createStubRuntime({ screen: 'capture-should-not-run' });
+    const harness: ToolHarness = {
+      failures: 0,
+      successes: 0,
+      tools: createTerminalTools({
+        paneId: '%1',
+        deviceId: 'dev1',
+        getRuntime: () => runtime,
+        getEmulator: () => emulator as never,
+        needsApprovalForWrite: false,
+        onFailure: () => {
+          harness.failures += 1;
+        },
+        onSuccess: () => {
+          harness.successes += 1;
+        },
+        sleepMs: async () => {},
+      }),
+    };
+
+    const result = (await getTool(harness, 'send_input').execute(
+      { text: ':q', keys: ['enter'] },
+      execOptions
+    )) as { screen: string; mode: string; delta?: string; cols: number; rows: number };
+
+    expect(calls.sendInput).toEqual([{ paneId: '%1', data: ':q\r' }]);
+    expect(calls.capture).toEqual([]);
+    expect(result.mode).toBe('screen');
+    expect(result.delta).toBeUndefined();
+    expect(result.screen).toContain('vim screen');
+    expect(result.screen).toContain('UNTRUSTED TERMINAL SCREEN');
+    expect(result.cols).toBe(80);
+    expect(result.rows).toBe(24);
+    expect(harness.successes).toBe(1);
   });
 
   test('read_screen 在 emulator 可用且 historyLines=0 时走渲染态', async () => {
