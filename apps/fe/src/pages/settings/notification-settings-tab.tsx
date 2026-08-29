@@ -18,7 +18,7 @@ export function NotificationSettingsTab({ form }: NotificationSettingsTabProps) 
     <>
       <Card className="border-0 ring-0">
         <CardContent className="space-y-6 pt-6">
-          <div className="space-y-3">
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
             <div className="flex min-h-10 items-center justify-between gap-4 rounded-lg border border-border bg-card px-4 py-2.5">
               <div className="min-w-0 pr-2">
                 <div className="text-sm font-medium">{t('settings.enableNotificationPush')}</div>
@@ -70,7 +70,7 @@ export function NotificationSettingsTab({ form }: NotificationSettingsTabProps) 
             </div>
           </div>
 
-          <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-4">
             <div className="space-y-2">
               <label className="block text-sm font-medium" htmlFor="bell-throttle-input">
                 {t('settings.bellThrottle')}

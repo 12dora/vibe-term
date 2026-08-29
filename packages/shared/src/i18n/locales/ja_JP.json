@@ -216,7 +216,7 @@
       "tabGroup": {
         "general": "一般",
         "devicesAndFiles": "デバイスとファイル",
-        "nodes": "ノード",
+        "nodes": "マルチノード連携",
         "notifications": "通知",
         "ai": "AI",
         "terminal": "ターミナル"
@@ -706,7 +706,7 @@
       "openSettings": "設定を開く",
       "manageDevices": "デバイス管理",
       "settings": "設定",
-      "nodes": "ノード",
+      "nodes": "マルチノード連携",
       "currentWindow": "現在のウィンドウ",
       "currentPane": "現在のペイン",
       "newWindow": "ウィンドウを作成",

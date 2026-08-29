@@ -216,7 +216,7 @@
       "tabGroup": {
         "general": "通用",
         "devicesAndFiles": "设备与文件",
-        "nodes": "节点",
+        "nodes": "多节点互联",
         "notifications": "通知",
         "ai": "AI",
         "terminal": "终端"
@@ -706,7 +706,7 @@
       "openSettings": "打开设置",
       "manageDevices": "管理设备",
       "settings": "设置",
-      "nodes": "节点",
+      "nodes": "多节点互联",
       "currentWindow": "当前窗口",
       "currentPane": "当前 pane",
       "newWindow": "新建窗口",

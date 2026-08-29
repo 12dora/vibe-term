@@ -222,7 +222,7 @@ export const I18N_RESOURCES = {
       "tabGroup": {
         "general": "General",
         "devicesAndFiles": "Devices & Files",
-        "nodes": "Nodes",
+        "nodes": "Multi-node Mesh",
         "notifications": "Notifications",
         "ai": "AI",
         "terminal": "Terminal"
@@ -712,7 +712,7 @@ export const I18N_RESOURCES = {
       "openSettings": "Open Settings",
       "manageDevices": "Manage Devices",
       "settings": "Settings",
-      "nodes": "Nodes",
+      "nodes": "Multi-node Mesh",
       "currentWindow": "Current Window",
       "currentPane": "Current Pane",
       "newWindow": "Create Window",
@@ -1849,7 +1849,7 @@ export const I18N_RESOURCES = {
       "tabGroup": {
         "general": "通用",
         "devicesAndFiles": "设备与文件",
-        "nodes": "节点",
+        "nodes": "多节点互联",
         "notifications": "通知",
         "ai": "AI",
         "terminal": "终端"
@@ -2339,7 +2339,7 @@ export const I18N_RESOURCES = {
       "openSettings": "打开设置",
       "manageDevices": "管理设备",
       "settings": "设置",
-      "nodes": "节点",
+      "nodes": "多节点互联",
       "currentWindow": "当前窗口",
       "currentPane": "当前 pane",
       "newWindow": "新建窗口",
@@ -3475,7 +3475,7 @@ export const I18N_RESOURCES = {
       "tabGroup": {
         "general": "一般",
         "devicesAndFiles": "デバイスとファイル",
-        "nodes": "ノード",
+        "nodes": "マルチノード連携",
         "notifications": "通知",
         "ai": "AI",
         "terminal": "ターミナル"
@@ -3965,7 +3965,7 @@ export const I18N_RESOURCES = {
       "openSettings": "設定を開く",
       "manageDevices": "デバイス管理",
       "settings": "設定",
-      "nodes": "ノード",
+      "nodes": "マルチノード連携",
       "currentWindow": "現在のウィンドウ",
       "currentPane": "現在のペイン",
       "newWindow": "ウィンドウを作成",

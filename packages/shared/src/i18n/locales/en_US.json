@@ -216,7 +216,7 @@
       "tabGroup": {
         "general": "General",
         "devicesAndFiles": "Devices & Files",
-        "nodes": "Nodes",
+        "nodes": "Multi-node Mesh",
         "notifications": "Notifications",
         "ai": "AI",
         "terminal": "Terminal"
@@ -706,7 +706,7 @@
       "openSettings": "Open Settings",
       "manageDevices": "Manage Devices",
       "settings": "Settings",
-      "nodes": "Nodes",
+      "nodes": "Multi-node Mesh",
       "currentWindow": "Current Window",
       "currentPane": "Current Pane",
       "newWindow": "Create Window",
