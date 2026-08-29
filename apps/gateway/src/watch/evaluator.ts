@@ -2,6 +2,7 @@
 // 不做任何 IO：输入屏幕文本 + 规则 + 持久化状态 + 当前时间，输出命中判定与状态增量。
 
 import type { WatchRuleRecord, WatchRuleStateRecord } from '../db/watch';
+import { evaluateMatchTrigger, evaluateUnchangedTrigger } from './evaluator-triggers';
 
 export interface WatchEvalInput {
   screen: string;
@@ -51,107 +52,42 @@ export function findLastMatch(screen: string, regex: RegExp): RegExpExecArray | 
   return last;
 }
 
-/** once：unchanged 用 triggeredSinceChange 防重（match 型触发后由 service 置 enabled=false）；repeat：cooldown */
-function passesTriggerGate(rule: WatchRuleRecord, state: WatchRuleStateRecord | null, now: Date): boolean {
-  if (rule.fireMode === 'once') {
-    if (rule.triggerType === 'unchanged') {
-      return !state?.triggeredSinceChange;
-    }
-    return true;
+function tryCompilePattern(pattern: string, flags: string | null): RegExp | WatchEvalOutput {
+  try {
+    return compileWatchPattern(pattern, flags ?? '');
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
+    return { hit: false, stateUpdates: {}, error: `invalid pattern: ${detail}` };
   }
+}
 
-  const lastTriggeredAtMs = state?.lastTriggeredAt ? Date.parse(state.lastTriggeredAt) : Number.NaN;
-  if (!Number.isNaN(lastTriggeredAtMs)) {
-    const cooldownMs = Math.max(0, rule.cooldownSeconds) * 1000;
-    if (now.getTime() - lastTriggeredAtMs < cooldownMs) {
-      return false;
-    }
-  }
-  return true;
+function isCompileError(value: RegExp | WatchEvalOutput): value is WatchEvalOutput {
+  return !(value instanceof RegExp);
 }
 
 export function evaluateWatchRule(input: WatchEvalInput): WatchEvalOutput {
   const { screen, rule, state, now } = input;
 
   if (rule.triggerType === 'llm') {
-    return { hit: false, stateUpdates: {}, error: 'llm rules are not handled by the regex evaluator' };
+    return {
+      hit: false,
+      stateUpdates: {},
+      error: 'llm rules are not handled by the regex evaluator',
+    };
   }
 
   if (!rule.pattern) {
     return { hit: false, stateUpdates: {}, error: 'pattern is empty' };
   }
 
-  let regex: RegExp;
-  try {
-    regex = compileWatchPattern(rule.pattern, rule.patternFlags ?? '');
-  } catch (error) {
-    const detail = error instanceof Error ? error.message : String(error);
-    return { hit: false, stateUpdates: {}, error: `invalid pattern: ${detail}` };
+  const compiled = tryCompilePattern(rule.pattern, rule.patternFlags);
+  if (isCompileError(compiled)) {
+    return compiled;
   }
 
-  const match = findLastMatch(screen, regex);
-
+  const match = findLastMatch(screen, compiled);
   if (rule.triggerType === 'match') {
-    if (!match) {
-      return { hit: false, stateUpdates: {} };
-    }
-    return {
-      hit: passesTriggerGate(rule, state, now),
-      matchedText: match[0],
-      stateUpdates: {},
-    };
+    return evaluateMatchTrigger(rule, state, now, match);
   }
-
-  // unchanged 型
-  const extractGroup = Math.max(0, rule.extractGroup ?? 0);
-  const value = match?.[extractGroup];
-
-  if (!match || value === undefined) {
-    // 无命中（或捕获组未参与匹配）：reset = 任务结束停止计时；ignore = 保持不动
-    if (
-      rule.noMatchBehavior === 'reset' &&
-      (state?.lastValue != null || state?.lastValueChangedAt != null || state?.triggeredSinceChange)
-    ) {
-      return {
-        hit: false,
-        stateUpdates: { lastValue: null, lastValueChangedAt: null, triggeredSinceChange: false },
-      };
-    }
-    return { hit: false, stateUpdates: {} };
-  }
-
-  const lastValue = state?.lastValue ?? null;
-  const lastChangedAtMs = state?.lastValueChangedAt ? Date.parse(state.lastValueChangedAt) : Number.NaN;
-
-  if (lastValue === null || value !== lastValue || Number.isNaN(lastChangedAtMs)) {
-    // 值出现/变化：重置计时与 once 防重标记
-    return {
-      hit: false,
-      value,
-      matchedText: match[0],
-      stateUpdates: {
-        lastValue: value,
-        lastValueChangedAt: now.toISOString(),
-        triggeredSinceChange: false,
-      },
-    };
-  }
-
-  const unchangedMinutes = rule.unchangedMinutes ?? 0;
-  const elapsedMs = now.getTime() - lastChangedAtMs;
-  if (unchangedMinutes <= 0 || elapsedMs < unchangedMinutes * 60_000) {
-    return { hit: false, value, matchedText: match[0], stateUpdates: {} };
-  }
-
-  if (!passesTriggerGate(rule, state, now)) {
-    return { hit: false, value, matchedText: match[0], stateUpdates: {} };
-  }
-
-  return {
-    hit: true,
-    value,
-    matchedText: match[0],
-    stuckMinutes: Math.floor(elapsedMs / 60_000),
-    stateUpdates: {},
-  };
+  return evaluateUnchangedTrigger(rule, state, now, match);
 }

@@ -207,6 +207,67 @@ describe('WebSocketServer malformed Borsh payload', () => {
     return wsBorsh.decodePayload(wsBorsh.schema.ErrorSchema, envelope.payload);
   }
 
+  test('handleMessage ignores string frames', () => {
+    const server = new WebSocketServer();
+    const ws = createBorshClient();
+    server.handleMessage(ws, 'not-binary');
+    expect(ws.sent).toHaveLength(0);
+  });
+
+  test('handleMessage reports missing magic bytes', () => {
+    const server = new WebSocketServer();
+    const ws = createBorshClient();
+    server.handleMessage(ws, Buffer.from([0x00, 0x01, 0x02]));
+    expect(ws.sent).toHaveLength(1);
+    const error = decodeError(ws.sent[0]);
+    expect(error.code).toBe(wsBorsh.ERROR_INVALID_FRAME);
+    expect(error.message).toBe('Missing magic bytes');
+    expect(error.refSeq).toBe(null);
+    expect(error.retryable).toBe(false);
+  });
+
+  test('handleMessage reports invalid envelope after magic', () => {
+    const server = new WebSocketServer();
+    const ws = createBorshClient();
+    server.handleMessage(ws, Buffer.from([0x54, 0x58, 0x00]));
+    expect(ws.sent).toHaveLength(1);
+    const error = decodeError(ws.sent[0]);
+    expect(error.code).toBe(wsBorsh.ERROR_INVALID_FRAME);
+    expect(error.message).toBe('Envelope too small');
+    expect(error.retryable).toBe(false);
+  });
+
+  test('handleMessage reports malformed chunk as invalid chunk', () => {
+    const server = new WebSocketServer();
+    const ws = createBorshClient();
+    const frame = wsBorsh.encodeEnvelope(wsBorsh.KIND_CHUNK, new Uint8Array([0xff]), 3);
+    server.handleMessage(ws, Buffer.from(frame));
+    expect(ws.sent).toHaveLength(1);
+    const error = decodeError(ws.sent[0]);
+    expect(error.code).toBe(wsBorsh.ERROR_INVALID_FRAME);
+    expect(error.message).toBe('Invalid chunk');
+    expect(error.refSeq).toBe(null);
+    expect(error.retryable).toBe(false);
+  });
+
+  test('handleMessage ignores incomplete chunk reassembly', () => {
+    const server = new WebSocketServer();
+    const ws = createBorshClient();
+    const frame = wsBorsh.encodeChunk(
+      {
+        chunkStreamId: 1,
+        originalKind: wsBorsh.KIND_PING,
+        originalSeq: 100,
+        totalChunks: 2,
+        chunkIndex: 0,
+        data: new Uint8Array([1, 2, 3, 4]),
+      },
+      8
+    );
+    server.handleMessage(ws, Buffer.from(frame));
+    expect(ws.sent).toHaveLength(0);
+  });
+
   test('handleMessage converts invalid payload to protocol error without unhandled rejection', async () => {
     const server = new WebSocketServer() as any;
     const ws = createBorshClient();

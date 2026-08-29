@@ -11,6 +11,7 @@ import { classifySshError } from './error-classify';
 import type { GatewayActivityMetrics } from './gateway-activity-metrics';
 import type { TerminalOutputBatcher } from './terminal-output-batcher';
 import type { TerminalOutputMetrics } from './terminal-output-metrics';
+import { broadcastThrottledEvent } from './throttled-event-broadcast';
 import { type ClientState, type DeviceConnectionEntry, asSwitchBarrierSocket } from './types';
 
 export interface LegacyFeedHost {
@@ -36,6 +37,23 @@ export function clientWantsPaneOutput(
   );
 }
 
+function eventDataRecord(data: unknown): Record<string, unknown> {
+  return (data ?? {}) as Record<string, unknown>;
+}
+
+function stringOrEmpty(value: unknown): string {
+  return typeof value === 'string' ? value : '';
+}
+
+function nonEmptyStringOr(value: unknown, fallback: string): string {
+  return typeof value === 'string' && value ? value : fallback;
+}
+
+function isEmptyNotification(event: TmuxEvent): boolean {
+  const data = eventDataRecord(event.data);
+  return !nonEmptyStringOr(data.title, '') && !stringOrEmpty(data.body);
+}
+
 export class LegacyFeedBroadcaster {
   constructor(private readonly host: LegacyFeedHost) {}
 
@@ -46,13 +64,8 @@ export class LegacyFeedBroadcaster {
     const extendedEvent = await this.extendTmuxEvent(deviceId, event);
     const settings = getSiteSettings();
 
-    if (extendedEvent.type === 'notification') {
-      const data = (extendedEvent.data ?? {}) as Record<string, unknown>;
-      const title = typeof data.title === 'string' && data.title ? data.title : '';
-      const body = typeof data.body === 'string' ? data.body : '';
-      if (!title && !body) {
-        return;
-      }
+    if (extendedEvent.type === 'notification' && isEmptyNotification(extendedEvent)) {
+      return;
     }
 
     const payloadBytes = wsBorsh.encodeTmuxEventPayload({
@@ -60,54 +73,51 @@ export class LegacyFeedBroadcaster {
       type: extendedEvent.type,
       data: extendedEvent.data,
     });
+    const sendEvent = (client: ServerWebSocket<ClientState>, payload: Uint8Array) => {
+      this.host.sendEnvelope(client, wsBorsh.KIND_TMUX_EVENT, payload);
+    };
+    const recordDelivery = (attempts: number) => {
+      this.host.gatewayActivityMetrics.recordTmuxEvent(extendedEvent.type, attempts);
+    };
 
     if (extendedEvent.type === 'bell') {
-      const data = (extendedEvent.data ?? {}) as Record<string, unknown>;
-      const paneId = typeof data.paneId === 'string' && data.paneId ? data.paneId : '-';
-
-      let deliveryAttempts = 0;
-      for (const client of entry.clients) {
-        if (
-          !sessionStateStore.shouldAllowBell(client, deviceId, paneId, settings.bellThrottleSeconds)
-        ) {
-          continue;
-        }
-        this.host.sendEnvelope(client, wsBorsh.KIND_TMUX_EVENT, payloadBytes);
-        deliveryAttempts += 1;
-      }
-      this.host.gatewayActivityMetrics.recordTmuxEvent(extendedEvent.type, deliveryAttempts);
+      const paneId = nonEmptyStringOr(eventDataRecord(extendedEvent.data).paneId, '-');
+      broadcastThrottledEvent(
+        entry.clients,
+        payloadBytes,
+        (client) =>
+          sessionStateStore.shouldAllowBell(client, deviceId, paneId, settings.bellThrottleSeconds),
+        sendEvent,
+        recordDelivery
+      );
       return;
     }
 
     if (extendedEvent.type === 'notification') {
-      const data = (extendedEvent.data ?? {}) as Record<string, unknown>;
-      const paneId = typeof data.paneId === 'string' && data.paneId ? data.paneId : '-';
-      const source = typeof data.source === 'string' && data.source ? data.source : 'osc9';
-
-      let deliveryAttempts = 0;
-      for (const client of entry.clients) {
-        if (
-          !sessionStateStore.shouldAllowNotification(
+      const data = eventDataRecord(extendedEvent.data);
+      const paneId = nonEmptyStringOr(data.paneId, '-');
+      const source = nonEmptyStringOr(data.source, 'osc9');
+      broadcastThrottledEvent(
+        entry.clients,
+        payloadBytes,
+        (client) =>
+          sessionStateStore.shouldAllowNotification(
             client,
             deviceId,
             paneId,
             source,
             settings.notificationThrottleSeconds
-          )
-        ) {
-          continue;
-        }
-        this.host.sendEnvelope(client, wsBorsh.KIND_TMUX_EVENT, payloadBytes);
-        deliveryAttempts += 1;
-      }
-      this.host.gatewayActivityMetrics.recordTmuxEvent(extendedEvent.type, deliveryAttempts);
+          ),
+        sendEvent,
+        recordDelivery
+      );
       return;
     }
 
     for (const client of entry.clients) {
-      this.host.sendEnvelope(client, wsBorsh.KIND_TMUX_EVENT, payloadBytes);
+      sendEvent(client, payloadBytes);
     }
-    this.host.gatewayActivityMetrics.recordTmuxEvent(extendedEvent.type, entry.clients.size);
+    recordDelivery(entry.clients.size);
   }
 
   async extendTmuxEvent(deviceId: string, event: TmuxEvent): Promise<TmuxEvent> {

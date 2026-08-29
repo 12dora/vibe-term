@@ -37,6 +37,7 @@ import {
 } from './device-connection-registry';
 import { GatewayActivityMetrics } from './gateway-activity-metrics';
 import { type GatewayMetricsHost, logTerminalOutputMetricsIfDue } from './gateway-metrics-log';
+import { decodeInboundFrame } from './inbound-frame-decoder';
 import { LegacyFeedBroadcaster, type LegacyFeedHost } from './legacy-feed-broadcaster';
 import { type SnapshotOverlayHost, SnapshotOverlayStore } from './snapshot-overlays';
 import { TerminalOutputBatcher } from './terminal-output-batcher';
@@ -158,53 +159,18 @@ export class WebSocketServer
       return;
     }
 
-    const data = new Uint8Array(message);
-
-    if (!wsBorsh.checkMagic(data)) {
-      this.sendError(ws, null, wsBorsh.ERROR_INVALID_FRAME, 'Missing magic bytes', false);
+    const decoded = decodeInboundFrame(
+      new Uint8Array(message),
+      ws.data.borshState.chunkReassembler
+    );
+    if (decoded.status === 'ignore') {
       return;
     }
-
-    let envelope: wsBorsh.Envelope;
-    try {
-      envelope = wsBorsh.decodeEnvelope(data);
-    } catch (err) {
-      const e = err instanceof wsBorsh.WsBorshError ? err : null;
-      this.sendError(
-        ws,
-        null,
-        e?.code ?? wsBorsh.ERROR_INVALID_FRAME,
-        e?.message ?? 'Invalid envelope',
-        e?.retryable ?? false
-      );
+    if (decoded.status === 'error') {
+      this.sendError(ws, null, decoded.code, decoded.message, decoded.retryable);
       return;
     }
-
-    const clientState = ws.data.borshState;
-
-    if (envelope.kind === wsBorsh.KIND_CHUNK) {
-      try {
-        const chunk = wsBorsh.decodeChunk(envelope.payload);
-        const reassembled = clientState.chunkReassembler.addChunk(chunk);
-        if (!reassembled) {
-          return;
-        }
-        void this.handleBorshMessage(ws, reassembled.kind, reassembled.seq, reassembled.payload);
-        return;
-      } catch (err) {
-        const e = err instanceof wsBorsh.WsBorshError ? err : null;
-        this.sendError(
-          ws,
-          null,
-          e?.code ?? wsBorsh.ERROR_INVALID_FRAME,
-          e?.message ?? 'Invalid chunk',
-          e?.retryable ?? false
-        );
-        return;
-      }
-    }
-
-    void this.handleBorshMessage(ws, envelope.kind, envelope.seq, envelope.payload);
+    void this.handleBorshMessage(ws, decoded.kind, decoded.seq, decoded.payload);
   }
 
   handleDrain(ws: ServerWebSocket<ClientState>): void {
