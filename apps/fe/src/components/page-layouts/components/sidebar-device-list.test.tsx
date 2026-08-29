@@ -147,12 +147,19 @@ describe('SidebarNodeSection', () => {
     expect(html).not.toContain('data-testid="device-item-');
   });
 
-  test('离线 node：一台已知设备都没有时保留分节头与提示', () => {
+  test('离线远端 node：一台已知设备都没有时整节不渲染', () => {
     const html = render(<SidebarNodeSection node={{ ...offlineNode(), inventory: null }} />);
 
+    expect(html).not.toContain(`data-testid="sidebar-node-offline-${OFFLINE_NODE}"`);
+    expect(html).not.toContain(`data-testid="node-badge-${OFFLINE_NODE}"`);
+  });
+
+  test('离线 self：一台已知设备都没有时保留分节头与提示', () => {
+    const html = render(
+      <SidebarNodeSection node={{ ...offlineNode(), isSelf: true, inventory: null }} />
+    );
+
     expect(html).toContain(`data-testid="sidebar-node-offline-${OFFLINE_NODE}"`);
-    // 徽标灰显
-    expect(html).toContain(`data-testid="node-badge-${OFFLINE_NODE}"`);
     expect(html).toContain('data-online="false"');
     expect(html).not.toContain('data-testid="device-item-');
   });

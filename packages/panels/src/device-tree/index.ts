@@ -4,7 +4,10 @@ export {
   shouldHideSidebarNodeSection,
   type SidebarDeviceStats,
 } from './device-tree-selectors';
-export { useSidebarDeviceStats } from './use-sidebar-device-stats';
+export {
+  type SidebarDeviceStatsResult,
+  useSidebarDeviceStats,
+} from './use-sidebar-device-stats';
 export {
   NodeBadge,
   nodeBadgeAppearance,

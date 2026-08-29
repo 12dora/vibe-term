@@ -157,10 +157,15 @@ export function SidebarNodeSection({ node }: { node: SidebarNodeEntry }) {
         device.id === selectedDeviceId ||
         isSidebarDeviceVisible(visibility, node.runtimeNodeId, device.id)
     );
-    // 已知设备全被取消显示时整节隐藏（与在线分节同一条规则）；一台已知设备都没有的
-    // 离线 node 仍留个分节头，否则用户完全看不出它存在过。
-    if (shouldHideSidebarNodeSection({ total: knownDevices.length, visible: devices.length }, true))
+    // 已知设备全被取消显示时整节隐藏（与在线分节同一条规则）；零已知设备只给 self 留空态。
+    if (
+      shouldHideSidebarNodeSection(
+        { total: knownDevices.length, visible: devices.length },
+        node.isSelf
+      )
+    ) {
       return null;
+    }
 
     return (
       <div data-testid={`sidebar-node-offline-${node.runtimeNodeId}`} className="space-y-1">

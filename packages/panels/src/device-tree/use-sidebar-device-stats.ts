@@ -8,7 +8,14 @@ import { useMemo } from 'react';
 import { useDeviceTreeSelection } from './device-tree-navigation';
 import { type SidebarDeviceStats, selectSidebarVisibleDevices } from './device-tree-selectors';
 
-export function useSidebarDeviceStats(devicesQueryKey?: readonly unknown[]): SidebarDeviceStats {
+export interface SidebarDeviceStatsResult extends SidebarDeviceStats {
+  /** 设备列表请求失败：此时不能按「零设备」隐藏分节，要把加载失败/重试 UI 留给设备树。 */
+  failed: boolean;
+}
+
+export function useSidebarDeviceStats(
+  devicesQueryKey?: readonly unknown[]
+): SidebarDeviceStatsResult {
   const runtime = useRuntime();
   const sidebarDeviceVisibility = useUIStore((state) => state.sidebarDeviceVisibility);
   const { selectedDeviceId } = useDeviceTreeSelection();
@@ -19,6 +26,7 @@ export function useSidebarDeviceStats(devicesQueryKey?: readonly unknown[]): Sid
     throwOnError: false,
   });
   const devices = devicesQuery.data?.devices;
+  const failed = devicesQuery.isError;
 
   const { nodeId } = runtime;
   return useMemo(() => {
@@ -27,6 +35,7 @@ export function useSidebarDeviceStats(devicesQueryKey?: readonly unknown[]): Sid
       total: list.length,
       visible: selectSidebarVisibleDevices(list, sidebarDeviceVisibility, nodeId, selectedDeviceId)
         .length,
+      failed,
     };
-  }, [devices, sidebarDeviceVisibility, nodeId, selectedDeviceId]);
+  }, [devices, failed, sidebarDeviceVisibility, nodeId, selectedDeviceId]);
 }

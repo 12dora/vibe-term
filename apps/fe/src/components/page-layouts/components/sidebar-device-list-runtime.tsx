@@ -60,7 +60,9 @@ function NodeSection({
   ...rest
 }: SideBarDeviceListForRuntimeProps & { section: SidebarNodeSectionShell }) {
   const stats = useSidebarDeviceStats();
-  if (shouldHideSidebarNodeSection(stats, section.keepWhenNoDevices ?? false)) return null;
+  if (!stats.failed && shouldHideSidebarNodeSection(stats, section.keepWhenNoDevices ?? false)) {
+    return null;
+  }
 
   return (
     <div data-testid={section.testId} className="space-y-1">
