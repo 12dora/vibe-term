@@ -118,7 +118,6 @@ export function DeviceFoldersView({ groups, showNodeHeaders }: DeviceFoldersView
         onCreateFolder={folders.createFolder}
         onRenameFolder={folders.renameFolder}
         onDeleteFolder={folders.deleteFolder}
-        onMoveNodeToRoot={folders.moveNodeToRoot}
         disabled={pending}
       />
       {/* 布局提交在飞时禁用拖拽，避免先发后到的旧顺序覆盖新顺序（与设备排序同一条规则） */}

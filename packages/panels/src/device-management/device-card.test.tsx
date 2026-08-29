@@ -102,6 +102,13 @@ function occurrences(html: string, text: string): number {
   return html.split(text).length - 1;
 }
 
+/** 含某段属性的那个标签（tooltip 触发器没有 testid，只能按 data-slot 找） */
+function tagWith(html: string, marker: string): string | null {
+  const index = html.indexOf(marker);
+  if (index === -1) return null;
+  return html.slice(html.lastIndexOf('<', index), html.indexOf('>', index) + 1);
+}
+
 function tagOf(html: string, testId: string): string | null {
   const marker = `data-testid="${testId}"`;
   const index = html.indexOf(marker);
@@ -151,6 +158,28 @@ describe('DeviceCard 的设备种类展示', () => {
 
   test('本机上下文不渲染远端角标', () => {
     expect(renderCard({})).not.toContain('data-testid="device-card-remote-dev-1"');
+  });
+});
+
+describe('DeviceCard 第一行的宽度分配', () => {
+  test('设备名与 SSH 目标截断后挂 tooltip，全文仍在 title 上', () => {
+    const html = renderCard({ device: SSH_DEVICE });
+    const name = tagWith(html, 'data-slot="tooltip-trigger"');
+    expect(name).toContain('truncate');
+    expect(html).toContain('title="书房"');
+    expect(html).toContain('title="root@10.0.0.2:2222"');
+    // 触发器渲染成 div 而不是默认的 button：卡片里已经有真按钮，名称不该再进 Tab 序
+    expect(name?.startsWith('<div')).toBe(true);
+  });
+
+  test('连接开关贴内容宽度，右侧不再留固定空白', () => {
+    const tag = tagOf(
+      renderCard({ connection: stubConnection('connected') }),
+      'device-card-connect-dev-1'
+    );
+    expect(tag).not.toContain('min-w-[5.5rem]');
+    expect(tag).not.toContain('justify-start');
+    expect(tag).toContain('justify-center');
   });
 });
 

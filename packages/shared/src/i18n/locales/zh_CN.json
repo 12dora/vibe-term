@@ -1609,8 +1609,6 @@
         "itemCount": "{{count}} 个节点",
         "empty": "把节点拖到这里放入此分组",
         "dropHere": "放入「{{name}}」",
-        "dropToRoot": "移到最外层",
-        "moveToRoot": "移出分组",
         "dragHandle": "拖动以移动",
         "expand": "展开",
         "collapse": "收起",

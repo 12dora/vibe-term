@@ -82,12 +82,20 @@ export function subscribeOpenAddDevice(
   return () => window.removeEventListener(OPEN_ADD_DEVICE_EVENT, onOpen);
 }
 
-/** 卡片顺序与侧边栏 Panes Tab 一致：先 sortOrder，再按设备名 locale 感知排序 */
-export function sortDevices<T extends Pick<Device, 'name' | 'sortOrder'>>(
+/**
+ * 卡片顺序与侧边栏 Panes Tab 一致：先 sortOrder，再按设备名 locale 感知排序。
+ * 顺带按 id 去重：同一个 id 出现两次会渲染出两张一模一样的卡片（React key 也会撞），
+ * 列表可能来自缓存 + 快照 + 节点 inventory 几处，这里统一兜住。
+ */
+export function sortDevices<T extends Pick<Device, 'id' | 'name' | 'sortOrder'>>(
   devices: readonly T[],
   language: LocaleCode
 ): T[] {
-  return [...devices].sort(
+  const byId = new Map<string, T>();
+  for (const device of devices) {
+    if (!byId.has(device.id)) byId.set(device.id, device);
+  }
+  return [...byId.values()].sort(
     (a, b) =>
       a.sortOrder - b.sortOrder ||
       a.name.localeCompare(b.name, toBCP47(language), { numeric: true, sensitivity: 'base' })
@@ -161,13 +169,26 @@ function SortableDeviceCard({
     </button>
   );
 
+  // 拖起来的卡片要有「被拎起」的观感：抬高层级 + 放大一点 + 更重的投影。
+  // 缩放只能拼进内联 transform——tailwind 的 scale-* 会被这里的内联 transform 盖掉。
+  const translate = CSS.Translate.toString(transform);
   return (
     <div
       ref={setNodeRef}
       data-testid={`device-card-slot-${device.id}`}
       data-dragging={isDragging ? 'true' : undefined}
-      className={cn('min-w-0', isDragging && 'z-10 opacity-60')}
-      style={{ ...style, transform: CSS.Translate.toString(transform), transition }}
+      className={cn(
+        'min-w-0 rounded-xl',
+        isDragging && 'z-10 shadow-2xl ring-2 ring-ring/30 motion-reduce:shadow-lg'
+      )}
+      style={{
+        ...style,
+        transform:
+          isDragging && !disabled
+            ? `${translate ?? ''} scale(1.03)`.trim()
+            : (translate ?? undefined),
+        transition,
+      }}
     >
       {children(dragHandle)}
     </div>
@@ -361,7 +382,8 @@ export function DeviceManagementPanel({
           <div
             data-testid="devices-grid"
             className={cn(
-              'grid gap-3 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4',
+              // 自适应列数：每列至少 18rem，设备名与 SSH 目标才有地方放（窄屏退回单列）
+              'grid grid-cols-[repeat(auto-fill,minmax(min(18rem,100%),1fr))] gap-3',
               !entered && 'tmex-stagger'
             )}
             onAnimationEnd={handleAnimationEnd}

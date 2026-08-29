@@ -5,6 +5,7 @@ import {
   applyDrop,
   bodyDropZoneId,
   collisionCandidateIds,
+  collisionGroupIds,
   containerFolderId,
   dropTargetContainerId,
   dropZoneId,
@@ -13,10 +14,12 @@ import {
   implicitRootNodeIds,
   listContainers,
   materializeRootNodes,
+  nodeDropIntent,
   nodeElementId,
   parseDropZoneId,
   parseFolderElementId,
   parseNodeElementId,
+  rebaseNodeDrop,
   resolveDrop,
   rootFolderElementIds,
 } from './folder-tree-model';
@@ -199,6 +202,8 @@ describe('resolveDrop：分组', () => {
       dropZoneId(ROOT_CONTAINER_ID),
     ]);
     expect(collisionCandidateIds('node:n1', ids)).toEqual([
+      'folder:a',
+      'folder:b',
       'node:n2',
       'node:self',
       dropZoneId('folder:a'),
@@ -206,6 +211,21 @@ describe('resolveDrop：分组', () => {
       bodyDropZoneId('folder:b'),
       dropZoneId(ROOT_CONTAINER_ID),
     ]);
+    // 拖节点时分组本体排在兄弟节点之后：指针停在分组内的空隙上是「放进这个分组」，
+    // 不会掉到最后一档的根落点区上
+    expect(collisionGroupIds('node:n1', ids)).toEqual({
+      zones: [dropZoneId('folder:a'), dropZoneId('folder:b'), bodyDropZoneId('folder:b')],
+      items: ['node:n2', 'node:self'],
+      containers: ['folder:a', 'folder:b'],
+      root: [dropZoneId(ROOT_CONTAINER_ID)],
+    });
+    // 拖分组时分组本体不接落点（分组不能进分组），空分组内容区也不是候选
+    expect(collisionGroupIds('folder:b', ids)).toEqual({
+      zones: [dropZoneId('folder:a'), dropZoneId('folder:b')],
+      items: ['folder:a'],
+      containers: [],
+      root: [dropZoneId(ROOT_CONTAINER_ID)],
+    });
     // 候选里的每个 id 对分组拖动都能解析成合法落点或被 resolveDrop 明确拒绝，不会落到节点上
     for (const id of collisionCandidateIds('folder:b', ids)) {
       const drop = resolveDrop('folder:b', id, sampleLayout());
@@ -293,5 +313,137 @@ describe('materializeRootNodes', () => {
   test('没有隐式节点时原样返回', () => {
     const layout = sampleLayout();
     expect(materializeRootNodes(layout, [])).toBe(layout);
+  });
+});
+
+describe('listContainers 去重', () => {
+  test('同一个节点重复出现（重复 placement / 与隐式列表撞车）时只渲染一次', () => {
+    const containers = listContainers(
+      {
+        folders: [folder('a', 0)],
+        placements: [placement('n1', 'a', 0), placement('n1', null, 0), placement('n2', null, 1)],
+      },
+      ['n2', 'n3']
+    );
+    expect(containers.get('folder:a')?.nodeIds).toEqual(['node:n1']);
+    expect(containers.get(ROOT_CONTAINER_ID)?.nodeIds).toEqual(['node:n2', 'node:n3']);
+  });
+});
+
+describe('resolveDrop：原地落点判无效', () => {
+  test('节点落在自己所在容器的「整体落点」上不产生移动', () => {
+    // n1 已经在分组 a 里：落在 a 的分组头 / 分组本体上都是原地
+    expect(resolveDrop('node:n1', dropZoneId('folder:a'), sampleLayout(), ['self'])).toBeNull();
+    expect(resolveDrop('node:n1', 'folder:a', sampleLayout(), ['self'])).toBeNull();
+    // 根层的节点落在根落点区上同理（显式与隐式都算根层）
+    expect(
+      resolveDrop('node:n2', dropZoneId(ROOT_CONTAINER_ID), sampleLayout(), ['self'])
+    ).toBeNull();
+    expect(
+      resolveDrop('node:self', dropZoneId(ROOT_CONTAINER_ID), sampleLayout(), ['self'])
+    ).toBeNull();
+  });
+
+  test('分组本体是拖节点的合法落点：放进该分组末尾', () => {
+    expect(resolveDrop('node:n2', 'folder:a', sampleLayout(), ['self'])).toEqual({
+      kind: 'node',
+      nodeId: 'n2',
+      targetFolderId: 'a',
+      index: null,
+    });
+  });
+});
+
+describe('nodeDropIntent / rebaseNodeDrop', () => {
+  test('nodeDropIntent 给出节点当前容器与含自身的下标', () => {
+    expect(nodeDropIntent(sampleLayout(), ['self'], 'n1')).toEqual({
+      kind: 'node',
+      nodeId: 'n1',
+      targetFolderId: 'a',
+      index: 0,
+    });
+    expect(nodeDropIntent(sampleLayout(), ['self'], 'self')).toEqual({
+      kind: 'node',
+      nodeId: 'self',
+      targetFolderId: null,
+      index: 1,
+    });
+    expect(nodeDropIntent(sampleLayout(), [], 'ghost')).toBeNull();
+  });
+
+  test('rebaseNodeDrop 换算出的落点应用到原布局，结果与直接应用一致', () => {
+    const layout = sampleLayout();
+    const implicit = ['self'];
+    const drop = resolveDrop('node:self', 'node:n1', layout, implicit);
+    const direct = applyDrop(layout, drop as NonNullable<typeof drop>, implicit);
+    const rebased = rebaseNodeDrop(layout, implicit, drop as NonNullable<typeof drop>);
+    expect(rebased).toEqual({ kind: 'node', nodeId: 'self', targetFolderId: 'a', index: 0 });
+    const applied = applyDrop(layout, rebased as NonNullable<typeof rebased>, implicit);
+    expect(listContainers(applied as DeviceFolderLayout, []).get('folder:a')?.nodeIds).toEqual(
+      listContainers(direct as DeviceFolderLayout, []).get('folder:a')?.nodeIds
+    );
+  });
+
+  test('两段式落点（先预览搬进分组，再在分组里插到某个兄弟前）复现预览的排列', () => {
+    const layout: DeviceFolderLayout = {
+      folders: [folder('a', 0)],
+      placements: [
+        placement('n1', 'a', 0),
+        placement('n2', 'a', 1),
+        placement('n3', 'a', 2),
+        placement('x', null, 0),
+      ],
+    };
+    // 第一步：x 被预览搬到分组 a 的末尾
+    const first = rebaseNodeDrop(layout, [], {
+      kind: 'node',
+      nodeId: 'x',
+      targetFolderId: 'a',
+      index: null,
+    });
+    const preview = applyDrop(layout, first as NonNullable<typeof first>, []) as DeviceFolderLayout;
+    expect(listContainers(preview, []).get('folder:a')?.nodeIds).toEqual([
+      'node:n1',
+      'node:n2',
+      'node:n3',
+      'node:x',
+    ]);
+    // 第二步：在预览布局上落到 n2 的位置，换算回真实布局后结果一致
+    const settled = resolveDrop('node:x', 'node:n2', preview, []);
+    const final = rebaseNodeDrop(preview, [], settled as NonNullable<typeof settled>);
+    const committed = applyDrop(
+      layout,
+      final as NonNullable<typeof final>,
+      []
+    ) as DeviceFolderLayout;
+    expect(listContainers(committed, []).get('folder:a')?.nodeIds).toEqual([
+      'node:n1',
+      'node:x',
+      'node:n2',
+      'node:n3',
+    ]);
+    expect(listContainers(committed, []).get(ROOT_CONTAINER_ID)?.nodeIds).toEqual([]);
+  });
+
+  test('隐式根节点的落点换算会先显式化，下标覆盖整个根层', () => {
+    const layout: DeviceFolderLayout = { folders: [folder('a', 0)], placements: [] };
+    const implicit = ['n1', 'n2', 'n3'];
+    const intent = rebaseNodeDrop(layout, implicit, {
+      kind: 'node',
+      nodeId: 'n3',
+      targetFolderId: null,
+      index: 0,
+    });
+    expect(intent).toEqual({ kind: 'node', nodeId: 'n3', targetFolderId: null, index: 0 });
+    const committed = applyDrop(
+      layout,
+      intent as NonNullable<typeof intent>,
+      implicit
+    ) as DeviceFolderLayout;
+    expect(listContainers(committed, []).get(ROOT_CONTAINER_ID)?.nodeIds).toEqual([
+      'node:n3',
+      'node:n1',
+      'node:n2',
+    ]);
   });
 });

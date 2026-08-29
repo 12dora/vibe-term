@@ -181,4 +181,38 @@ describe('device-snapshot-store', () => {
     const inventory = { devices: [{ id: 'inv', name: 'inventory' }] };
     expect(offlineDevices('never-seen', inventory).map((device) => device.id)).toEqual(['inv']);
   });
+
+  test('读快照按 id 去重：库里存进过重复条目也只出一张卡片', () => {
+    const storage = memoryStorage({
+      [deviceSnapshotKey(NODE_ID)]: JSON.stringify([
+        toSnapshotDevice(DEVICE),
+        { ...toSnapshotDevice(DEVICE), name: '书房（重复）' },
+        { ...toSnapshotDevice(DEVICE), id: 'd2', name: '客厅' },
+      ]),
+    });
+    const devices = readDeviceSnapshot(NODE_ID, storage) ?? [];
+    expect(devices.map((device) => device.id)).toEqual(['d1', 'd2']);
+    expect(devices[0]?.name).toBe('书房');
+  });
+
+  test('inventory 兜底按 id 去重，且不认没有 id 的条目', () => {
+    const devices = inventoryFallbackDevices({
+      devices: [
+        { id: 'a', name: 'A' },
+        { id: 'a', name: 'A 重复' },
+        { name: '没有 id' },
+        { id: 'b' },
+      ],
+    });
+    expect(devices.map((device) => device.id)).toEqual(['a', 'b']);
+    expect(devices[0]?.name).toBe('A');
+  });
+
+  test('快照与 inventory 不合并：有快照就完全以快照为准', () => {
+    const storage = memoryStorage();
+    writeDeviceSnapshot(NODE_ID, [DEVICE], storage);
+    // 默认存储（localStorage）里没有这条，走 inventory；两者不会同时出现
+    const inventory = { devices: [{ id: 'd1', name: '同一台设备' }] };
+    expect(offlineDevices(NODE_ID, inventory).map((device) => device.id)).toEqual(['d1']);
+  });
 });

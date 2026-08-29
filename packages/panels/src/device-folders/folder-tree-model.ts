@@ -116,12 +116,20 @@ export function listContainers(
   ensure(null);
   const knownFolderIds = new Set(layout.folders.map((folder) => folder.id));
   for (const folder of layout.folders) ensure(folder.id);
+  // 同一个节点只能出现一次：布局里重复的 placement（手改库 / 与 implicit 撞车）会让同一个
+  // 节点被渲染两遍（卡片整段重复），这里以先出现的那条为准直接丢弃后面的。
+  const seen = new Set<string>();
+  const push = (folderId: string | null, nodeId: string): void => {
+    if (seen.has(nodeId)) return;
+    seen.add(nodeId);
+    ensure(folderId).nodeIds.push(nodeElementId(nodeId));
+  };
   for (const placement of [...layout.placements].sort(byOrder)) {
     if (placement.folderId !== null && !knownFolderIds.has(placement.folderId)) continue;
-    ensure(placement.folderId).nodeIds.push(nodeElementId(placement.nodeId));
+    push(placement.folderId, placement.nodeId);
   }
-  const root = ensure(null);
-  for (const nodeId of implicit) root.nodeIds.push(nodeElementId(nodeId));
+  ensure(null);
+  for (const nodeId of implicit) push(null, nodeId);
   return containers;
 }
 
@@ -139,6 +147,8 @@ function locateNode(
 export type DeviceFolderDrop =
   | { kind: 'folder'; folderId: string; index: number | null }
   | { kind: 'node'; nodeId: string; targetFolderId: string | null; index: number | null };
+
+export type DeviceFolderNodeDrop = Extract<DeviceFolderDrop, { kind: 'node' }>;
 
 /**
  * 只解析落点：
@@ -197,32 +207,92 @@ export function resolveDrop(
   if (!containers.has(targetContainerId)) return null;
   const targetFolderId = containerFolderId(targetContainerId);
   if (targetFolderId === undefined) return null;
+  // 落在「整个容器」上（分组头 / 分组本体 / 根层空白）= 追加到末尾；节点已经在这个容器里时
+  // 这就是一次原地移动，直接判无效，免得把它从当前位置弹到末尾。
+  if (index === null) {
+    const current = locateNode(containers, activeId);
+    if (current?.containerId === targetContainerId) return null;
+  }
   return { kind: 'node', nodeId: activeNodeId, targetFolderId, index };
 }
 
 /**
- * 按拖动对象过滤碰撞候选：拖分组时只看根层的分组元素、分组头放置区与根层落点条（不会落进
- * 节点列表或分组内容区）；拖节点时只看节点元素与放置区（不会与分组元素本体撞车）。
- * 键盘排序同样经此过滤，不会停在无效落点上。
+ * 节点在某份布局里的当前落点（容器 + 容器内下标，下标含它自己）。
+ * 拖拽过程中的预览布局与最终提交都靠它把「摆好的样子」翻译回一次 `DeviceFolderDrop`：
+ * `applyDrop` 会先把节点从别处摘掉再插到 index，含自身的下标正好复现预览的排列。
  */
-export function collisionCandidateIds(activeId: string, ids: readonly string[]): string[] {
+export function nodeDropIntent(
+  layout: DeviceFolderLayout,
+  implicit: readonly string[],
+  nodeId: string
+): DeviceFolderNodeDrop | null {
+  const elementId = nodeElementId(nodeId);
+  for (const container of listContainers(layout, implicit).values()) {
+    const index = container.nodeIds.indexOf(elementId);
+    if (index < 0) continue;
+    const targetFolderId = containerFolderId(container.containerId);
+    if (targetFolderId === undefined) return null;
+    return { kind: 'node', nodeId, targetFolderId, index };
+  }
+  return null;
+}
+
+/** 碰撞候选按「命中优先级」分成四档，`device-folder-tree` 依次尝试，先命中先返回 */
+export interface DeviceFolderCollisionGroups {
+  /** 放置区：分组头、空分组内容区。最先判，避免被它内部的兄弟元素抢走 */
+  zones: string[];
+  /** 参与排序的兄弟元素：拖节点时是节点，拖分组时是分组 */
+  items: string[];
+  /** 整体接收落点的容器（拖节点时是分组本体）：命中 = 放进该分组末尾 */
+  containers: string[];
+  /** 整棵树的根落点区：所有分组区域之外的空白，命中 = 移到最外层 */
+  root: string[];
+}
+
+const EMPTY_GROUPS: DeviceFolderCollisionGroups = {
+  zones: [],
+  items: [],
+  containers: [],
+  root: [],
+};
+
+/**
+ * 按拖动对象把碰撞候选分档：
+ *  - 拖分组：只看根层的分组元素、分组头放置区与根落点区（分组不能进分组，也不会落进节点列表）；
+ *  - 拖节点：节点元素 + 放置区 + 分组本体 + 根落点区（分组本体排在节点之后，
+ *    所以指针停在分组内的空隙上时是「放进这个分组」而不是「移到最外层」）。
+ */
+export function collisionGroupIds(
+  activeId: string,
+  ids: readonly string[]
+): DeviceFolderCollisionGroups {
+  const rootZone = dropZoneId(ROOT_CONTAINER_ID);
+  const rest = ids.filter((id) => id !== activeId);
+  const root = rest.filter((id) => id === rootZone);
   if (parseFolderElementId(activeId) !== null) {
-    return ids.filter((id) => {
-      if (id === activeId) return false;
-      if (parseFolderElementId(id) !== null) return true;
-      const zone = parseDropZoneId(id);
-      return (
-        zone !== null &&
-        (zone === ROOT_CONTAINER_ID || (id.startsWith(DROP_PREFIX) && zone !== ROOT_CONTAINER_ID))
-      );
-    });
+    return {
+      zones: rest.filter((id) => id.startsWith(DROP_PREFIX) && id !== rootZone),
+      items: rest.filter((id) => parseFolderElementId(id) !== null),
+      containers: [],
+      root,
+    };
   }
   if (parseNodeElementId(activeId) !== null) {
-    return ids.filter(
-      (id) => id !== activeId && (parseNodeElementId(id) !== null || parseDropZoneId(id) !== null)
-    );
+    return {
+      zones: rest.filter((id) => id !== rootZone && parseDropZoneId(id) !== null),
+      items: rest.filter((id) => parseNodeElementId(id) !== null),
+      containers: rest.filter((id) => parseFolderElementId(id) !== null),
+      root,
+    };
   }
-  return [];
+  return EMPTY_GROUPS;
+}
+
+/** 全部合法碰撞候选（保持传入顺序）；键盘排序也只会停在这些 id 上 */
+export function collisionCandidateIds(activeId: string, ids: readonly string[]): string[] {
+  const groups = collisionGroupIds(activeId, ids);
+  const allowed = new Set([...groups.zones, ...groups.items, ...groups.containers, ...groups.root]);
+  return ids.filter((id) => allowed.has(id));
 }
 
 /** 落点对应的容器 id（拖拽中高亮用）；无效落点返回 null */
@@ -264,4 +334,20 @@ export function applyDrop(
   }
   const base = drop.targetFolderId === null ? materializeRootNodes(layout, implicit) : layout;
   return moveNodeInLayout(base, drop.nodeId, drop.targetFolderId, drop.index);
+}
+
+/**
+ * 把一次「相对某份中间布局」的落点换算成等价的「节点最终容器 + 下标」。
+ * 拖拽预览把节点先挪到目标容器，之后所有落点都是相对预览布局算的，直接提交会与真实布局差一位；
+ * 换算成含自身下标的落点后，对真实布局再 `applyDrop` 一次即可复现预览里摆好的样子。
+ */
+export function rebaseNodeDrop(
+  base: DeviceFolderLayout,
+  baseImplicit: readonly string[],
+  drop: DeviceFolderDrop
+): DeviceFolderNodeDrop | null {
+  if (drop.kind !== 'node') return null;
+  const next = applyDrop(base, drop, baseImplicit);
+  if (!next) return null;
+  return nodeDropIntent(next, implicitRootNodeIds(next, baseImplicit), drop.nodeId);
 }

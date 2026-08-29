@@ -1490,8 +1490,6 @@ export type TranslationKey =
   | 'devices.folders.itemCount_other'
   | 'devices.folders.empty'
   | 'devices.folders.dropHere'
-  | 'devices.folders.dropToRoot'
-  | 'devices.folders.moveToRoot'
   | 'devices.folders.dragHandle'
   | 'devices.folders.expand'
   | 'devices.folders.collapse'

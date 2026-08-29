@@ -1610,8 +1610,6 @@
         "itemCount_other": "{{count}} nodes",
         "empty": "Drop a node here to put it into this group",
         "dropHere": "Move into “{{name}}”",
-        "dropToRoot": "Move to top level",
-        "moveToRoot": "Move out of group",
         "dragHandle": "Drag to move",
         "expand": "Expand",
         "collapse": "Collapse",

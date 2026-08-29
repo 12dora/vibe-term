@@ -135,6 +135,15 @@ export function writeDeviceSnapshot(
   writeIndex(storage, index);
 }
 
+/** 同一个 id 只留第一条：重复 id 会在卡片网格里渲染出两张一样的卡片 */
+function dedupeById(devices: readonly Device[]): Device[] {
+  const byId = new Map<string, Device>();
+  for (const device of devices) {
+    if (!byId.has(device.id)) byId.set(device.id, device);
+  }
+  return [...byId.values()];
+}
+
 function isDevice(value: unknown): value is Device {
   if (!value || typeof value !== 'object') return false;
   const row = value as Record<string, unknown>;
@@ -156,7 +165,7 @@ export function readDeviceSnapshot(
     if (!raw) return null;
     const parsed: unknown = JSON.parse(raw);
     if (!Array.isArray(parsed)) return null;
-    return parsed.filter(isDevice);
+    return dedupeById(parsed.filter(isDevice));
   } catch {
     return null;
   }
@@ -200,10 +209,12 @@ export function inventoryFallbackDevices(inventory: unknown): Device[] {
   const devices = (inventory as { devices?: unknown }).devices;
   if (!Array.isArray(devices)) return [];
   const out: Device[] = [];
+  const seen = new Set<string>();
   devices.forEach((item, index) => {
     if (!item || typeof item !== 'object') return;
     const row = item as { id?: unknown; name?: unknown; type?: unknown };
-    if (typeof row.id !== 'string' || !row.id) return;
+    if (typeof row.id !== 'string' || !row.id || seen.has(row.id)) return;
+    seen.add(row.id);
     out.push({
       id: row.id,
       name: typeof row.name === 'string' && row.name ? row.name : row.id,
@@ -217,7 +228,10 @@ export function inventoryFallbackDevices(inventory: unknown): Device[] {
   return out;
 }
 
-/** 离线时的卡片数据来源：本地快照优先，其次节点 inventory */
+/**
+ * 离线时的卡片数据来源：本地快照优先，其次节点 inventory。
+ * 两者**不合并**——同一台设备在快照与 inventory 里各有一份，合并会渲染出两张一样的卡片。
+ */
 export function offlineDevices(runtimeNodeId: string, inventory: unknown): Device[] {
   return readDeviceSnapshot(runtimeNodeId) ?? inventoryFallbackDevices(inventory);
 }

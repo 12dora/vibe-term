@@ -1609,8 +1609,6 @@
         "itemCount": "{{count}} 台のノード",
         "empty": "ここにノードをドロップしてグループに入れる",
         "dropHere": "「{{name}}」に入れる",
-        "dropToRoot": "最上位に移動",
-        "moveToRoot": "グループから出す",
         "dragHandle": "ドラッグして移動",
         "expand": "展開",
         "collapse": "折りたたむ",

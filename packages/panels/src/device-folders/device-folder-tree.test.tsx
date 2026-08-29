@@ -46,7 +46,6 @@ function renderTree(
       onCreateFolder={() => undefined}
       onRenameFolder={() => undefined}
       onDeleteFolder={() => undefined}
-      onMoveNodeToRoot={() => undefined}
       {...overrides}
     />
   );
@@ -75,17 +74,17 @@ describe('DeviceFolderTree', () => {
     expect(tag).toContain('border-dashed');
   });
 
-  test('把手与「移出分组」按钮交给宿主放进节点头部', () => {
+  test('把手交给宿主放进节点头部；「移出分组」按钮已删除（改为拖到空白处）', () => {
     const html = renderTree();
     const n1 = html.slice(
       html.indexOf('data-testid="rendered-n1"'),
       html.indexOf('data-testid="rendered-n2"')
     );
     expect(n1).toContain('data-testid="device-folder-handle-n1"');
-    expect(n1).toContain('data-testid="device-folder-move-out-n1"');
     const n2 = html.slice(html.indexOf('data-testid="rendered-n2"'));
     expect(n2).toContain('data-testid="device-folder-handle-n2"');
-    expect(n2).not.toContain('data-testid="device-folder-move-out-n2"');
+    expect(html).not.toContain('device-folder-move-out-');
+    expect(html).not.toContain('devices.folders.moveToRoot');
   });
 
   test('隐式根节点排在显式 placement 之后', () => {
@@ -101,8 +100,11 @@ describe('DeviceFolderTree', () => {
     expect(html).not.toContain('data-testid="device-folder-drop-a"');
   });
 
-  test('没有拖拽时不渲染「移到最外层」落点条', () => {
-    expect(renderTree()).not.toContain('data-testid="device-folder-drop-root"');
+  test('不再有「移到最外层」落点条：整棵树自己就是根落点区', () => {
+    const html = renderTree();
+    expect(html).not.toContain('data-testid="device-folder-drop-root"');
+    expect(html).not.toContain('devices.folders.dropToRoot');
+    expect(html).toContain('data-testid="device-folder-tree"');
   });
 
   test('分组菜单里没有「新建子分组」', () => {

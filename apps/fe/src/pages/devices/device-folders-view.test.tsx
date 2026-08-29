@@ -169,8 +169,8 @@ describe('DeviceFoldersView', () => {
     expect(header).toBeGreaterThan(-1);
     expect(handle).toBeGreaterThan(header);
     expect(handle).toBeLessThan(panel);
-    // 分组内的节点额外给一个「移出分组」的入口
-    expect(remote).toContain(`data-testid="device-folder-move-out-${REMOTE_ID}"`);
+    // 「移出分组」按钮已删除：改成把节点拖到所有分组虚线框之外的空白处
+    expect(html).not.toContain('device-folder-move-out-');
   });
 
   test('离线节点保留运行时与卡片面板（offline 模式），兜底设备来自 inventory', () => {
@@ -225,7 +225,7 @@ describe('DeviceFoldersView', () => {
 
     expect(html).toContain('data-testid="device-folder-item-node:self"');
     expect(html).toContain('data-testid="device-folder-handle-self"');
-    expect(html).toContain('data-testid="device-folder-move-out-self"');
+    expect(html).not.toContain('device-folder-move-out-');
   });
 
   test('页面级容器不在这里：主体只是 w-full，不再套 max-width / padding', () => {

@@ -78,8 +78,8 @@ export function DeviceCardConnectToggle({
       type="button"
       variant="outline"
       size="sm"
-      // 固定最小宽度：文案在「连接 / 连接中 / 断开」之间切换时按钮不再跳宽
-      className="min-w-[5.5rem] shrink-0 justify-start"
+      // 宽度贴内容：固定最小宽度会在按钮右侧留下一大块空白，把名称挤没
+      className="shrink-0 justify-center"
       data-testid={`device-card-connect-${deviceId}`}
       data-state={status}
       data-action={action}

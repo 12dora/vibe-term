@@ -22,6 +22,7 @@ import {
   DropdownMenuTrigger,
 } from '@tmex/ui/dropdown-menu';
 import { Switch } from '@tmex/ui/switch';
+import { Tooltip, TooltipContent, TooltipTrigger } from '@tmex/ui/tooltip';
 import {
   ArrowUpRight,
   Globe,
@@ -68,6 +69,28 @@ export interface DeviceCardProps {
 function sshTarget(device: Device): string | null {
   if (device.type !== 'ssh') return null;
   return `${device.username ?? '-'}@${device.host ?? '-'}:${device.port ?? 22}`;
+}
+
+/**
+ * 卡片第一行的文本：放得下就正常显示，放不下截断，悬停用 tooltip 补全文。
+ * 触发器渲染成 `div`（不是默认的 `button`）：卡片里已经有一堆真按钮，
+ * 名称不该再进 Tab 序。`title` 一并保留，触屏与无障碍工具仍拿得到全文。
+ */
+function TruncatedLine({
+  text,
+  className,
+}: {
+  text: string;
+  className?: string;
+}) {
+  return (
+    <Tooltip>
+      <TooltipTrigger className={cn('block truncate', className)} title={text} render={<div />}>
+        {text}
+      </TooltipTrigger>
+      <TooltipContent>{text}</TooltipContent>
+    </Tooltip>
+  );
 }
 
 function DeviceCardIcon({ device, remote }: { device: Device; remote: boolean }) {
@@ -197,17 +220,13 @@ export function DeviceCard({
         className
       )}
     >
-      <CardContent className="flex items-center gap-2">
+      <CardContent className="flex items-center gap-1.5">
         {dragHandle}
         <DeviceCardIcon device={device} remote={isRemoteDeviceKind(kind)} />
         <div className="min-w-0 flex-1">
-          <div className="truncate text-sm font-medium leading-tight" title={device.name}>
-            {device.name}
-          </div>
+          <TruncatedLine text={device.name} className="text-sm font-medium leading-tight" />
           {target && (
-            <div className="truncate text-xs leading-tight text-muted-foreground" title={target}>
-              {target}
-            </div>
+            <TruncatedLine text={target} className="text-xs leading-tight text-muted-foreground" />
           )}
         </div>
         {connection && (
