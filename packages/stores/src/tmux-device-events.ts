@@ -136,12 +136,12 @@ function handlePaneActiveEvent(ctx: TmuxDomainEventContext, payload: EventTmuxPa
   }));
 }
 
-const TMUX_EVENT_HANDLERS: Partial<Record<TmuxEventType, TmuxEventHandler>> = {
-  bell: handleBellEvent,
-  notification: handleNotificationEvent,
-  'pane-active': handlePaneActiveEvent,
-};
+const TMUX_EVENT_HANDLERS = new Map<TmuxEventType, TmuxEventHandler>([
+  ['bell', handleBellEvent],
+  ['notification', handleNotificationEvent],
+  ['pane-active', handlePaneActiveEvent],
+]);
 
 export function handleTmuxEvent(ctx: TmuxDomainEventContext, payload: EventTmuxPayload): void {
-  TMUX_EVENT_HANDLERS[payload.type]?.(ctx, payload);
+  TMUX_EVENT_HANDLERS.get(payload.type)?.(ctx, payload);
 }

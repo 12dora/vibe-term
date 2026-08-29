@@ -288,7 +288,12 @@ export class WeixinClient {
 
     try {
       while (!signal.aborted) {
-        const poll = await this.pollUpdates(creds, getUpdatesBuf, longpollTimeoutMs, signal);
+        const poll = await this.pollUpdates(
+          this.creds ?? creds,
+          getUpdatesBuf,
+          longpollTimeoutMs,
+          signal
+        );
         if (poll.status === 'aborted') {
           break;
         }

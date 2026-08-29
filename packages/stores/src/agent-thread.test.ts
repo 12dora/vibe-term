@@ -222,6 +222,18 @@ describe('buildThreadBlocks persisted message tolerance', () => {
 
   const otherRoleCases: ShapeCase[] = [
     {
+      name: 'prototype-shaped role is ignored',
+      role: '__proto__' as AgentMessageRole,
+      content: { role: '__proto__', content: 'poison' },
+      expected: [],
+    },
+    {
+      name: 'constructor role is ignored',
+      role: 'constructor' as AgentMessageRole,
+      content: { role: 'constructor', content: 'poison' },
+      expected: [],
+    },
+    {
       name: 'system role is ignored',
       role: 'system',
       content: { role: 'system', content: 'sys prompt' },

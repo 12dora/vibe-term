@@ -188,18 +188,18 @@ function applyToolResults(thread: PersistedThread, content: unknown): void {
   }
 }
 
-const PERSISTED_ROLE_APPENDERS: Partial<Record<AgentMessageRole, PersistedRoleAppender>> = {
-  user: appendUserBlock,
-  assistant: appendAssistantBlocks,
-  tool: applyToolResults,
-};
+const PERSISTED_ROLE_APPENDERS = new Map<AgentMessageRole, PersistedRoleAppender>([
+  ['user', appendUserBlock],
+  ['assistant', appendAssistantBlocks],
+  ['tool', applyToolResults],
+]);
 
 function parsePersistedMessages(messages: AgentMessageDto[]): PersistedThread {
   const thread: PersistedThread = { blocks: [], toolBlocksById: new Map() };
   for (const message of messages) {
     const model = isRecord(message.content) ? message.content : null;
     if (!model) continue;
-    PERSISTED_ROLE_APPENDERS[message.role]?.(thread, model.content, message.seq);
+    PERSISTED_ROLE_APPENDERS.get(message.role)?.(thread, model.content, message.seq);
   }
   return thread;
 }
