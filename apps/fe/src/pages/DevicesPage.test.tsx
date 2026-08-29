@@ -3,6 +3,7 @@
 
 import { beforeEach, describe, expect, mock, test } from 'bun:test';
 import type { AuthModeResponse, MeshNode } from '@tmex/api-client/auth/index';
+import type { AppRuntime } from '@tmex/stores';
 import { installWindowStorage } from '@tmex/stores/test-utils';
 
 installWindowStorage();
@@ -11,16 +12,47 @@ installWindowStorage();
 // 真实面板要 QueryClient + runtime，而 `src/pages/FilePage.test.tsx` 用 mock.module 全局
 // 替换过 `@tanstack/react-query`，真实渲染会被那份泄漏的 mock 打断。
 mock.module('@tmex/panels/device-management', () => ({
-  DeviceManagementPanel: ({ listenOpenAddDeviceEvent }: { listenOpenAddDeviceEvent?: boolean }) => (
-    <span data-testid="device-panel" data-listen={String(listenOpenAddDeviceEvent ?? true)} />
+  DeviceManagementPanel: ({
+    listenOpenAddDeviceEvent,
+    excludeDeviceIds,
+  }: {
+    listenOpenAddDeviceEvent?: boolean;
+    excludeDeviceIds?: ReadonlySet<string>;
+  }) => (
+    <span
+      data-testid="device-panel"
+      data-listen={String(listenOpenAddDeviceEvent ?? true)}
+      data-excluded={[...(excludeDeviceIds ?? [])].join(',')}
+    />
   ),
   DeviceManagementActions: ({ onAddDevice }: { onAddDevice?: () => void }) => (
     <span data-testid="device-actions" data-callback={String(Boolean(onAddDevice))} />
   ),
+  DeviceCardHost: ({ device }: { device: { id: string } }) => (
+    <span data-testid={`device-card-host-${device.id}`} />
+  ),
+}));
+
+// 文件夹布局的数据层要 self runtime + QueryClient；本文件只关心「树把条目映射成什么」，
+// 布局固定成空（根层全是隐式节点条目），数据层本身由 devices/*.test.tsx 覆盖。
+mock.module('./devices/use-device-folders', () => ({
+  useDeviceFolders: () => ({
+    layout: { folders: [], placements: [] },
+    isLoading: false,
+    isError: false,
+    pending: false,
+    submitLayout: () => undefined,
+    moveItemToRoot: () => undefined,
+    createFolder: () => undefined,
+    renameFolder: () => undefined,
+    deleteFolder: () => undefined,
+    refetch: () => undefined,
+  }),
 }));
 
 const { renderToStaticMarkup } = await import('react-dom/server');
 const { MemoryRouter } = await import('react-router');
+const { RuntimeProvider } = await import('@tmex/stores/react');
 const { resetMeshNodesStateForTest, setMeshNodesStateForTest } = await import('@/node/mesh-nodes');
 const DevicesPageModule = await import('./DevicesPage');
 const DevicesPage = DevicesPageModule.default;
@@ -63,11 +95,27 @@ function meshNode(overrides: Partial<MeshNode> & { id: string }): MeshNode {
   };
 }
 
+/**
+ * 生产里 DevicesPage 永远在 NodeRuntimeBoundary 的 RuntimeProvider 内（页面顶层要读
+ * 共享的 UI store）。这里补一个只带 ui 面的最小 runtime：静态渲染下真 zustand 只给
+ * 建店时的初始 state，测试无法准备数据。
+ */
+function runtimeStub(): AppRuntime {
+  const state = {
+    deviceFolderExpanded: {} as Record<string, boolean>,
+    setDeviceFolderExpanded: () => undefined,
+  };
+  const ui = <T,>(selector: (value: typeof state) => T): T => selector(state);
+  return { nodeId: 'self', stores: { ui } } as unknown as AppRuntime;
+}
+
 function render(): string {
   return renderToStaticMarkup(
-    <MemoryRouter>
-      <DevicesPage />
-    </MemoryRouter>
+    <RuntimeProvider runtime={runtimeStub()}>
+      <MemoryRouter>
+        <DevicesPage />
+      </MemoryRouter>
+    </RuntimeProvider>
   );
 }
 
@@ -144,23 +192,26 @@ describe('DevicesPage', () => {
   test('mode 未加载时只渲染 loading，不建任何运行时', () => {
     const html = render();
     expect(html).not.toContain('data-testid="device-panel"');
-    expect(html).not.toContain('data-testid="devices-node-groups"');
+    expect(html).not.toContain('data-testid="devices-folders-view"');
     expect(html).toContain('animate-spin');
   });
 
-  test('standalone（mode:none）保持今天的单面板：没有分组也没有节点徽标', () => {
+  test('standalone（mode:none）根层直接是本机的卡片网格：有面板但没有分组头', () => {
     setMeshNodesStateForTest({ mode: { ...MODE, mode: 'none' }, modeLoaded: true });
     const html = render();
+    expect(html).toContain('data-testid="devices-folders-view"');
     expect(html).toContain('data-testid="device-panel"');
     expect(html).toContain('data-listen="true"');
-    expect(html).not.toContain('data-testid="devices-node-groups"');
+    expect(html).not.toContain('data-testid="devices-node-header-self"');
     expect(html).not.toContain('data-testid="node-badge-');
+    // 根层的 self 条目不套拖拽把手（standalone 只有它一个，拖不到别处去）
+    expect(html).not.toContain('devices.folders.dragHandle');
   });
 
-  test('mesh 但节点列表还没回来时退回单面板，避免首屏闪空', () => {
+  test('mesh 但节点列表还没回来时退回本机卡片网格，避免首屏闪空', () => {
     const html = renderMeshWith([]);
     expect(html).toContain('data-testid="device-panel"');
-    expect(html).not.toContain('data-testid="devices-node-groups"');
+    expect(html).not.toContain('data-testid="devices-node-header-self"');
   });
 
   test('mesh：self 在前，三种节点形态各自渲染', () => {
@@ -186,7 +237,7 @@ describe('DevicesPage', () => {
       }),
     ]);
 
-    expect(html).toContain('data-testid="devices-node-groups"');
+    expect(html).toContain('data-testid="devices-folders-view"');
     // self 在最前，且带 Hub 标与版本号
     expect(html.indexOf('devices-node-group-self')).toBeGreaterThan(-1);
     expect(html.indexOf('devices-node-group-self')).toBeLessThan(

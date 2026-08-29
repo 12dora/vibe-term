@@ -133,6 +133,50 @@ describe('sidebar tab state', () => {
     });
   });
 
+  test('persists device folder disclosure across store instances', () => {
+    const prefix = `ui-device-folder-${Date.now()}-`;
+    const store = createUIStore({ storagePrefix: prefix });
+
+    // 缺省（无键）即展开：只有显式收起才会写进表里
+    expect(store.getState().deviceFolderExpanded).toEqual({});
+
+    store.getState().setDeviceFolderExpanded('folder-a', false);
+    store.getState().setDeviceFolderExpanded('folder-b', true);
+    expect(store.getState().deviceFolderExpanded).toEqual({
+      'folder-a': false,
+      'folder-b': true,
+    });
+
+    const persisted = JSON.parse(storage.getItem(`${prefix}tmex-ui`) ?? '{}') as {
+      state?: { deviceFolderExpanded?: Record<string, boolean> };
+    };
+    expect(persisted.state?.deviceFolderExpanded).toEqual({
+      'folder-a': false,
+      'folder-b': true,
+    });
+
+    const rehydrated = createUIStore({ storagePrefix: prefix });
+    expect(rehydrated.getState().deviceFolderExpanded).toEqual({
+      'folder-a': false,
+      'folder-b': true,
+    });
+  });
+
+  test('normalizes invalid persisted device folder disclosure', () => {
+    const prefix = `ui-device-folder-invalid-${Date.now()}-`;
+    storage.setItem(
+      `${prefix}tmex-ui`,
+      JSON.stringify({
+        state: { deviceFolderExpanded: { 'folder-a': 'nope', 'folder-b': false } },
+        version: 0,
+      })
+    );
+
+    expect(createUIStore({ storagePrefix: prefix }).getState().deviceFolderExpanded).toEqual({
+      'folder-b': false,
+    });
+  });
+
   test('normalizes invalid persisted device disclosure', () => {
     const prefix = `ui-sidebar-invalid-device-${Date.now()}-`;
     storage.setItem(

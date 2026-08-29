@@ -80,6 +80,8 @@ export interface UIState {
   sidebarDeviceExpanded: Record<string, boolean>;
   /** 设备是否出现在侧边栏；key 为 `${runtimeNodeId}:${deviceId}`（见 sidebar-device-visibility.ts） */
   sidebarDeviceVisibility: Record<string, boolean>;
+  /** 设备管理页文件夹的展开态；key 为文件夹 id，缺键视为展开 */
+  deviceFolderExpanded: Record<string, boolean>;
   inputMode: 'direct' | 'editor';
   editorSendWithEnter: boolean;
   theme: 'light' | 'dark';
@@ -96,6 +98,7 @@ export interface UIState {
   setSidebarDeviceExpanded: (deviceId: string, expanded: boolean) => void;
   /** key 由 `sidebarDeviceVisibilityKey(runtimeNodeId, deviceId)` 生成 */
   setSidebarDeviceVisibility: (key: string, visible: boolean) => void;
+  setDeviceFolderExpanded: (folderId: string, expanded: boolean) => void;
   setInputMode: (mode: 'direct' | 'editor') => void;
   setKeyboardBehaviorMode: (mode: KeyboardBehaviorMode) => void;
   setEditorSendWithEnter: (enabled: boolean) => void;
@@ -121,6 +124,7 @@ export function createUIStore(core: Pick<RuntimeCore, 'storagePrefix'>) {
         sidebarTab: 'panes',
         sidebarDeviceExpanded: {},
         sidebarDeviceVisibility: {},
+        deviceFolderExpanded: {},
         inputMode: 'direct',
         editorSendWithEnter: true,
         theme: 'dark',
@@ -141,6 +145,10 @@ export function createUIStore(core: Pick<RuntimeCore, 'storagePrefix'>) {
         setSidebarDeviceVisibility: (key, visible) =>
           set((state) => ({
             sidebarDeviceVisibility: { ...state.sidebarDeviceVisibility, [key]: visible },
+          })),
+        setDeviceFolderExpanded: (folderId, expanded) =>
+          set((state) => ({
+            deviceFolderExpanded: { ...state.deviceFolderExpanded, [folderId]: expanded },
           })),
         setInputMode: (mode) => set({ inputMode: mode }),
         setKeyboardBehaviorMode: (mode) => set({ keyboardBehaviorMode: mode }),
@@ -196,6 +204,7 @@ export function createUIStore(core: Pick<RuntimeCore, 'storagePrefix'>) {
           sidebarCollapsed: state.sidebarCollapsed,
           sidebarDeviceExpanded: state.sidebarDeviceExpanded,
           sidebarDeviceVisibility: state.sidebarDeviceVisibility,
+          deviceFolderExpanded: state.deviceFolderExpanded,
           inputMode: state.inputMode,
           editorSendWithEnter: state.editorSendWithEnter,
           theme: state.theme,
@@ -214,6 +223,7 @@ export function createUIStore(core: Pick<RuntimeCore, 'storagePrefix'>) {
             sidebarSections: _legacySections,
             sidebarDeviceExpanded,
             sidebarDeviceVisibility,
+            deviceFolderExpanded,
             themePreset,
             ...rest
           } = (persisted ?? {}) as Partial<UIState> & {
@@ -224,6 +234,7 @@ export function createUIStore(core: Pick<RuntimeCore, 'storagePrefix'>) {
             ...rest,
             sidebarDeviceExpanded: normalizeBooleanMap(sidebarDeviceExpanded),
             sidebarDeviceVisibility: normalizeBooleanMap(sidebarDeviceVisibility),
+            deviceFolderExpanded: normalizeBooleanMap(deviceFolderExpanded),
             themePreset: normalizeThemePreset(themePreset),
           };
         },

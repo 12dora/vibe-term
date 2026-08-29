@@ -8,6 +8,7 @@
 // （多面板同时挂载会一起弹框），只有 entry 自身保留监听兜住其它派发方。
 
 import { NodeLoginButton } from '@/auth';
+import { useGlobalDevice } from '@/components/global-device-provider';
 import { inventoryDevices } from '@/components/page-layouts/components/sidebar-node-section';
 import { NodeRuntimeScope } from '@/node/node-runtime-scope';
 import { SELF_NODE_ID } from '@tmex/api-client';
@@ -15,10 +16,12 @@ import type { MeshNode } from '@tmex/api-client/auth/index';
 import {
   DeviceManagementPanel,
   type DeviceManagementPanelHandle,
+  type DeviceManagementPanelProps,
+  type DeviceNodeContext,
 } from '@tmex/panels/device-management';
 import { NodeBadge } from '@tmex/panels/device-tree';
 import { Monitor } from 'lucide-react';
-import { useCallback, useEffect, useRef } from 'react';
+import { type Ref, useCallback, useEffect, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
 import { registerAddDeviceTarget } from './add-device-targets';
 
@@ -180,7 +183,58 @@ function SignedOutBody({ node }: { node: NodeDeviceGroupEntry }) {
   );
 }
 
-export function NodeDeviceGroup({ node }: { node: NodeDeviceGroupEntry }) {
+export function nodeDeviceContext(node: NodeDeviceGroupEntry): DeviceNodeContext {
+  return { runtimeNodeId: node.runtimeNodeId, name: node.name, isSelf: node.isSelf };
+}
+
+/**
+ * 连接适配器只能在该 node 的 `NodeRuntimeScope` 内部取（scope 里挂着它自己的
+ * GlobalDeviceProvider），所以桥接组件必须放在 scope 里面。
+ */
+function NodeDevicePanel({
+  node,
+  panelRef,
+  excludeDeviceIds,
+  renderCard,
+}: {
+  node: NodeDeviceGroupEntry;
+  panelRef: Ref<DeviceManagementPanelHandle>;
+  excludeDeviceIds?: ReadonlySet<string>;
+  renderCard?: DeviceManagementPanelProps['renderCard'];
+}) {
+  const { connection } = useGlobalDevice();
+  return (
+    <DeviceManagementPanel
+      ref={panelRef}
+      nodeContext={nodeDeviceContext(node)}
+      connection={connection}
+      excludeDeviceIds={excludeDeviceIds}
+      renderCard={renderCard}
+      // 设备都被单独放进文件夹了：再显示「还没有设备」的空态只会误导
+      hideEmptyState={(excludeDeviceIds?.size ?? 0) > 0}
+      // entry 自身保留全局事件：外壳右上角的「添加设备」作用于 self。
+      listenOpenAddDeviceEvent={node.isSelf}
+      className="max-w-none gap-2 p-0 pb-0 sm:gap-2 sm:p-0"
+    />
+  );
+}
+
+export interface NodeDeviceGroupProps {
+  node: NodeDeviceGroupEntry;
+  /** 已被单独放进文件夹的设备，不再出现在本分组的卡片网格里 */
+  excludeDeviceIds?: ReadonlySet<string>;
+  /** 给每张卡片套一层（文件夹树用它挂拖拽把手） */
+  renderCard?: DeviceManagementPanelProps['renderCard'];
+  /** standalone 只有一个节点，根层直接显示卡片网格，不要分组头 */
+  showHeader?: boolean;
+}
+
+export function NodeDeviceGroup({
+  node,
+  excludeDeviceIds,
+  renderCard,
+  showHeader = true,
+}: NodeDeviceGroupProps) {
   const panelRef = useRef<DeviceManagementPanelHandle>(null);
   const state = nodeDeviceGroupState(node);
   const openAddDevice = useCallback(() => panelRef.current?.openAddDevice(), []);
@@ -202,17 +256,17 @@ export function NodeDeviceGroup({ node }: { node: NodeDeviceGroupEntry }) {
       data-state={state}
       className="flex flex-col gap-1.5"
     >
-      <GroupHeader node={node} />
+      {showHeader && <GroupHeader node={node} />}
       {state === 'offline' && <OfflineBody node={node} />}
       {state === 'signedOut' && <SignedOutBody node={node} />}
       {state === 'ready' && (
         <div data-testid={`devices-node-panel-${node.runtimeNodeId}`}>
           <NodeRuntimeScope nodeId={node.runtimeNodeId}>
-            <DeviceManagementPanel
-              ref={panelRef}
-              // entry 自身保留全局事件：外壳右上角的「添加设备」作用于 self。
-              listenOpenAddDeviceEvent={node.isSelf}
-              className="max-w-none gap-2 p-0 pb-0 sm:gap-2 sm:p-0"
+            <NodeDevicePanel
+              node={node}
+              panelRef={panelRef}
+              excludeDeviceIds={excludeDeviceIds}
+              renderCard={renderCard}
             />
           </NodeRuntimeScope>
         </div>
