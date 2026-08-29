@@ -3,11 +3,13 @@
 // （它就是为了脱离 DOM 可测才被拆成可订阅控制器的）。
 
 import { describe, expect, test } from 'bun:test';
+import type { AuthModeResponse } from '@tmex/api-client/auth/index';
 import { LocalApiError } from '@tmex/api-client/local/local-api';
 import type {
   LocalDirectAction,
   LocalDirectResponse,
   LocalDirectStatus,
+  LocalRole,
   LocalStatusResponse,
 } from '@tmex/api-client/local/types';
 import { renderToStaticMarkup } from 'react-dom/server';
@@ -19,6 +21,17 @@ import {
   LocalMachineCard,
   describeDirectError,
 } from './local-machine-card';
+
+const MESH_MODE: AuthModeResponse = {
+  mode: 'mesh',
+  nodeId: '0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e',
+  uid: 'user-1',
+  username: 'alice',
+  kdfParams: { salt: 'AAAAAAAAAAAAAAAAAAAAAA', memory_kib: 65536, iterations: 3, parallelism: 1 },
+  passkeysForThisOrigin: false,
+  passkeyAvailable: false,
+  rootEpoch: 0,
+};
 
 function status(direct: Partial<LocalDirectStatus> = {}): LocalStatusResponse {
   return {
@@ -35,7 +48,7 @@ function status(direct: Partial<LocalDirectStatus> = {}): LocalStatusResponse {
       platform: 'darwin-arm64',
       ...direct,
     },
-    tls: { mode: 'none' },
+    tls: { mode: 'none', listenerRunning: false, tlsPort: null },
   };
 }
 
@@ -43,11 +56,11 @@ const idleApi: DirectApi = {
   setDirect: () => Promise.reject(new Error('unexpected call')),
 };
 
-function render(local: LocalStatusResponse | null): string {
+function render(local: LocalStatusResponse | null, mode: AuthModeResponse | null = null): string {
   return renderToStaticMarkup(
     <MemoryRouter>
       <LocalMachineCard
-        mode={null}
+        mode={mode}
         status={local}
         loading={false}
         loginRequired={false}
@@ -56,6 +69,16 @@ function render(local: LocalStatusResponse | null): string {
       />
     </MemoryRouter>
   );
+}
+
+/** mesh 角色下的完整状态（hub 地址齐全）。 */
+function meshStatus(role: LocalRole): LocalStatusResponse {
+  return {
+    ...status({ installed: true, capable: true }),
+    role,
+    hubUrl: role === 'node' ? 'https://hub.example' : null,
+    hubPublicUrl: role === 'hub,node' ? 'https://hub.example' : null,
+  };
 }
 
 function tagOf(html: string, testId: string): string {
@@ -335,6 +358,53 @@ describe('describeDirectError', () => {
   test('未知错误退化到通用文案 + 原始信息', () => {
     expect(describeDirectError(t, new Error('boom'))).toBe(
       'nodes.machine.directErrorDetail({"base":"nodes.machine.directFailed","detail":"boom"})'
+    );
+  });
+});
+
+describe('LocalMachineCard 角色与 Hub 归属', () => {
+  test('角色渲染成下拉而不是只读徽章，值就是当前角色', () => {
+    const html = render(meshStatus('node'), MESH_MODE);
+    const tag = tagOf(html, 'local-machine-role');
+    expect(tag).toContain('data-slot="select-trigger"');
+    expect(html).toContain('nodes.machine.roleNode');
+    // 隐藏的原生 input 带着当前值，提交/回填都以它为准
+    expect(html).toContain('value="node"');
+  });
+
+  test('纯 node：hub 地址行给出「更换 Hub」', () => {
+    const html = render(meshStatus('node'), MESH_MODE);
+    expect(html).toContain('data-testid="local-machine-hub-url"');
+    expect(html).toContain('data-testid="local-machine-change-hub"');
+    expect(html).toContain('nodes.membership.changeHub');
+    expect(buttonDisabled(html, 'local-machine-change-hub')).toBe(false);
+  });
+
+  test('hub 兼节点：公开地址只读，没有换 hub 入口', () => {
+    const html = render(meshStatus('hub,node'), MESH_MODE);
+    expect(html).toContain('data-testid="local-machine-hub-public-url"');
+    expect(html).not.toContain('data-testid="local-machine-change-hub"');
+    // 角色下拉照样可用
+    expect(html).toContain('data-testid="local-machine-role"');
+  });
+
+  test('standalone：没有 hub 地址行，也没有换 hub 入口', () => {
+    const html = render(status(), null);
+    expect(html).not.toContain('data-testid="local-machine-hub-url"');
+    expect(html).not.toContain('data-testid="local-machine-change-hub"');
+    expect(html).toContain('nodes.machine.roleStandalone');
+  });
+
+  test('mesh 下只留账号安全入口，`/nodes` 整页已经移除', () => {
+    const html = render(meshStatus('node'), MESH_MODE);
+    expect(html).toContain('data-testid="local-machine-account-security"');
+    expect(html).not.toContain('href="/nodes"');
+    expect(html).not.toContain('nodes.machine.openNodesPage');
+  });
+
+  test('没有确认请求时不渲染退出对话框', () => {
+    expect(render(meshStatus('node'), MESH_MODE)).not.toContain(
+      'data-testid="membership-leave-dialog"'
     );
   });
 });

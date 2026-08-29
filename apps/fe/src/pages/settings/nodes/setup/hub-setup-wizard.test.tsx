@@ -26,7 +26,7 @@ function status(overrides: Partial<LocalStatusResponse> = {}): LocalStatusRespon
       version: null,
       platform: 'darwin-arm64',
     },
-    tls: { mode: 'none' },
+    tls: { mode: 'none', listenerRunning: false, tlsPort: null },
     ...overrides,
   };
 }

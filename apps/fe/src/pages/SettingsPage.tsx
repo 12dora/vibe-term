@@ -8,8 +8,9 @@ import {
   Settings as SettingsIcon,
   Sparkles,
 } from 'lucide-react';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
+import { useSearchParams } from 'react-router';
 import { toast } from 'sonner';
 
 import { parseApiError } from '@tmex/api-client';
@@ -37,10 +38,45 @@ import { useSiteSettingsForm } from './settings/use-site-settings-form';
 
 type SettingsTab = 'general' | 'devicesAndFiles' | 'nodes' | 'notifications' | 'ai' | 'terminal';
 
+const SETTINGS_TABS: SettingsTab[] = [
+  'general',
+  'devicesAndFiles',
+  'nodes',
+  'notifications',
+  'ai',
+  'terminal',
+];
+
+function isSettingsTab(value: string | null): value is SettingsTab {
+  return value !== null && (SETTINGS_TABS as string[]).includes(value);
+}
+
 export default function SettingsPage() {
   const { t } = useTranslation();
-  const [activeTab, setActiveTab] = useState<SettingsTab>('general');
+  // `?tab=` 是对外的深链（侧栏「节点」入口与老 /nodes 书签都落到这里）：初值从 URL 取，
+  // 切换标签时用 replace 写回，避免每点一次都往历史里塞一条。
+  const [searchParams, setSearchParams] = useSearchParams();
+  const tabParam = searchParams.get('tab');
+  const [activeTab, setActiveTab] = useState<SettingsTab>(
+    isSettingsTab(tabParam) ? tabParam : 'general'
+  );
   const form = useSiteSettingsForm();
+
+  // 已经停在设置页时再点侧栏「节点」入口只会换 query，组件不会重挂载——这里跟一次。
+  useEffect(() => {
+    if (isSettingsTab(tabParam)) setActiveTab(tabParam);
+  }, [tabParam]);
+
+  const selectTab = (value: SettingsTab) => {
+    setActiveTab(value);
+    setSearchParams(
+      (params) => {
+        params.set('tab', value);
+        return params;
+      },
+      { replace: true }
+    );
+  };
 
   const tabItems: {
     value: SettingsTab;
@@ -91,7 +127,7 @@ export default function SettingsPage() {
       className="mx-auto flex w-full max-w-6xl flex-col gap-4 p-3 pb-[calc(2rem+env(safe-area-inset-bottom))] sm:gap-6 sm:p-5"
       data-testid="settings-page"
     >
-      <Tabs value={activeTab} onValueChange={(value) => setActiveTab(value as SettingsTab)}>
+      <Tabs value={activeTab} onValueChange={(value) => selectTab(value as SettingsTab)}>
         <TabsList className="w-full gap-1 !justify-start overflow-x-auto rounded-xl border border-border/60 p-1.5 group-data-horizontal/tabs:h-12 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
           {tabItems.map((item) => {
             const Icon = item.icon;

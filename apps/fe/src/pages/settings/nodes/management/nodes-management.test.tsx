@@ -1,4 +1,5 @@
-// Nodes 页的静态渲染：standalone 不渲染、表格列与合并结果、hub 离线时管理动作禁用。
+// 节点管理主体的静态渲染：单张卡片、表格列与合并结果、hub 离线时管理动作禁用。
+// 无 DOM 测试环境，用 react-dom/server 静态渲染（与 nodes-tab 测试同一套做法）。
 
 import { beforeEach, describe, expect, test } from 'bun:test';
 import type { AuthModeResponse, MeshNode } from '@tmex/api-client/auth/index';
@@ -11,9 +12,9 @@ const { renderToStaticMarkup } = await import('react-dom/server');
 const { MemoryRouter } = await import('react-router');
 const { resetMeshNodesStateForTest, setMeshNodesStateForTest } = await import('@/node/mesh-nodes');
 const { setPendingStorage, clearPendingEnrollments } = await import('@/node/enrollment');
-const NodesPage = (await import('./NodesPage')).default;
-const { canAutoSignAdmit } = await import('./nodes/use-admit-action');
-const { resolveHubPublicUrl } = await import('./nodes/enrollment-section');
+const { NodesManagement } = await import('./nodes-management');
+const { canAutoSignAdmit } = await import('./use-admit-action');
+const { resolveHubPublicUrl } = await import('./enrollment-section');
 const { rootKeyFromSeed } = await import('@tmex/shared/auth');
 
 const MODE: AuthModeResponse = {
@@ -44,7 +45,7 @@ function meshNode(overrides: Partial<MeshNode> & { id: string }): MeshNode {
 function render(mode: AuthModeResponse): string {
   return renderToStaticMarkup(
     <MemoryRouter>
-      <NodesPage mode={mode} />
+      <NodesManagement mode={mode} />
     </MemoryRouter>
   );
 }
@@ -59,11 +60,7 @@ beforeEach(() => {
   clearPendingEnrollments();
 });
 
-describe('NodesPage', () => {
-  test('standalone（mode:none）整页不渲染', () => {
-    expect(render({ ...MODE, mode: 'none' })).toBe('');
-  });
-
+describe('NodesManagement', () => {
   test('mesh 模式渲染节点表：self 在前、指纹 16 位、到达路径与登录按钮', () => {
     setMeshNodesStateForTest({
       entryNodeId: '0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e',
@@ -89,8 +86,21 @@ describe('NodesPage', () => {
     expect(html).toContain('data-testid="node-login-0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c"');
     // 指纹为 sha256(pk) 前 16 hex
     expect(html).toMatch(/<code class="font-mono[^"]*">[0-9a-f]{16}<\/code>/);
-    // 账号安全入口
-    expect(html).toContain('href="/account/security"');
+  });
+
+  test('整块只有一张卡片：刷新与「添加」在卡头，加入码表单默认收起', () => {
+    setMeshNodesStateForTest({
+      entryNodeId: '0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e',
+      nodes: [meshNode({ id: '0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e', name: 'entry', loggedIn: true })],
+    });
+    const html = render(MODE);
+    expect(html.split('data-slot="card"').length - 1).toBe(1);
+    expect(html).toContain('data-testid="nodes-management"');
+    expect(html).toContain('data-testid="nodes-refresh"');
+    expect(html).toContain('data-testid="nodes-add"');
+    expect(html).not.toContain('data-testid="nodes-enroll-form"');
+    // 页级标题与账号安全入口都已随独立 /nodes 页一起去掉
+    expect(html).not.toContain('data-testid="nodes-account-security"');
   });
 
   test('hub 不可达时给出提示且管理动作禁用', () => {
@@ -112,6 +122,7 @@ describe('NodesPage', () => {
   test('缺 uid / kdfParams 时不渲染任何管理动作', () => {
     const html = render({ ...MODE, uid: null, kdfParams: null });
     expect(html).not.toContain('data-testid="nodes-table"');
+    expect(html).not.toContain('data-testid="nodes-add"');
   });
 });
 

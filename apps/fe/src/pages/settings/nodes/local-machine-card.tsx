@@ -29,11 +29,16 @@ import {
 import { Badge } from '@tmex/ui/badge';
 import { Button } from '@tmex/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@tmex/ui/card';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@tmex/ui/select';
 import { Switch } from '@tmex/ui/switch';
-import { Check, Copy, Download, Loader2, RotateCcw, Trash2 } from 'lucide-react';
+import { Check, Copy, Download, Loader2, Repeat, RotateCcw, Trash2 } from 'lucide-react';
 import { useCallback, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Link } from 'react-router';
+import type { SetupIntent } from './membership/intent';
+import { LeaveDialog, type LeaveDialogRequest } from './membership/leave-dialog';
+import { classifyRoleChange } from './membership/role-transition';
+import { useLeaveMesh } from './membership/use-leave-mesh';
 import { useRestartGateway } from './restart/use-restart-now';
 
 /** 只取 `LocalApi` 的直连那一面，测试注入假实现时不必凑出整个客户端。 */
@@ -50,6 +55,8 @@ export interface LocalMachineCardProps {
   client?: ApiClient;
   /** 直连状态变更 / 重启完成后重新拉 `local-status`。 */
   onRefresh: () => void;
+  /** standalone 下切角色不调任何接口，只让上层把对应的向导路径展开。 */
+  onSelectSetupPath?: (path: SetupIntent) => void;
 }
 
 const ROLE_LABEL_KEY: Record<LocalRole, string> = {
@@ -57,6 +64,9 @@ const ROLE_LABEL_KEY: Record<LocalRole, string> = {
   node: 'nodes.machine.roleNode',
   'hub,node': 'nodes.machine.roleHub',
 };
+
+/** 后端只认这三个角色串（`packages/app/src/lib/roles.ts`）。 */
+export const SELECTABLE_ROLES: LocalRole[] = ['standalone', 'node', 'hub,node'];
 
 /** 这些错误码的 `message` 才是诊断信息（下载失败的原因、加载失败的 dlopen 报错）。 */
 const DIRECT_ERROR_KEY: Record<string, string> = {
@@ -199,11 +209,14 @@ export function LocalMachineCard({
   api = defaultLocalApi,
   client = defaultApiClient,
   onRefresh,
+  onSelectSetupPath,
 }: LocalMachineCardProps) {
   const { t } = useTranslation();
   const meshEnabled = mode?.mode === 'mesh';
   const [restartRequired, setRestartRequired] = useState(false);
   const [directError, setDirectError] = useState<string | null>(null);
+  const [leaveRequest, setLeaveRequest] = useState<LeaveDialogRequest | null>(null);
+  const leave = useLeaveMesh({ mode, client });
 
   // 动作的返回体就是权威结果，先盖在拉到的状态上：重新拉 `local-status` 是异步的，
   // 不盖的话开关会在这段时间里停在旧值。下一份状态到达（引用变了）即撤销。
@@ -239,6 +252,25 @@ export function LocalMachineCard({
 
   const busy = mutations.busy || restart.waiting;
 
+  // 角色切换：standalone → mesh 只展开向导；mesh 侧的两种目标都要先退出当前 mesh。
+  const changeRole = useCallback(
+    (next: LocalRole) => {
+      if (!status || leave.busy) return;
+      const transition = classifyRoleChange(status.role, next);
+      if (transition.kind === 'none') return;
+      if (transition.kind === 'setup') {
+        onSelectSetupPath?.(transition.path);
+        return;
+      }
+      setLeaveRequest(
+        transition.kind === 'leave'
+          ? { kind: 'leave', from: transition.from, target: next, intent: null }
+          : { kind: 'switch', from: transition.from, target: next, intent: transition.path }
+      );
+    },
+    [leave.busy, onSelectSetupPath, status]
+  );
+
   return (
     <Card data-testid="local-machine-card">
       <CardHeader>
@@ -254,14 +286,53 @@ export function LocalMachineCard({
         ) : status && direct ? (
           <>
             <Row label={t('nodes.machine.role')}>
-              <Badge variant="secondary" data-testid="local-machine-role">
-                {t(ROLE_LABEL_KEY[status.role])}
-              </Badge>
+              <Select
+                value={status.role}
+                onValueChange={(next) => {
+                  if (next) changeRole(next as LocalRole);
+                }}
+              >
+                <SelectTrigger
+                  size="sm"
+                  className="w-48"
+                  disabled={leave.busy}
+                  data-testid="local-machine-role"
+                >
+                  <SelectValue>{t(ROLE_LABEL_KEY[status.role])}</SelectValue>
+                </SelectTrigger>
+                <SelectContent>
+                  {SELECTABLE_ROLES.map((role) => (
+                    <SelectItem key={role} value={role} data-testid={`local-machine-role-${role}`}>
+                      {t(ROLE_LABEL_KEY[role])}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
             </Row>
 
             {status.hubUrl && (
               <Row label={t('nodes.machine.hubUrl')}>
                 <CopyableValue value={status.hubUrl} testId="local-machine-hub-url" />
+                {status.role === 'node' && (
+                  <Button
+                    type="button"
+                    size="xs"
+                    variant="outline"
+                    disabled={leave.busy}
+                    onClick={() =>
+                      setLeaveRequest({
+                        kind: 'change-hub',
+                        from: 'node',
+                        target: 'node',
+                        intent: 'join-hub',
+                      })
+                    }
+                    data-testid="local-machine-change-hub"
+                  >
+                    <Repeat />
+                    {t('nodes.membership.changeHub')}
+                  </Button>
+                )}
               </Row>
             )}
             {status.hubPublicUrl && (
@@ -317,13 +388,6 @@ export function LocalMachineCard({
         {meshEnabled && (
           <div className="flex flex-wrap items-center gap-3 pt-1 text-xs">
             <Link
-              to="/nodes"
-              className="text-muted-foreground underline underline-offset-2 hover:text-foreground"
-              data-testid="local-machine-nodes-link"
-            >
-              {t('nodes.machine.openNodesPage')}
-            </Link>
-            <Link
               to="/account/security"
               className="text-muted-foreground underline underline-offset-2 hover:text-foreground"
               data-testid="local-machine-account-security"
@@ -339,6 +403,19 @@ export function LocalMachineCard({
         onConfirm={mutations.confirmRemove}
         onCancel={mutations.cancelRemove}
       />
+
+      <LeaveDialog
+        request={leaveRequest}
+        leave={leave}
+        onConfirm={() => {
+          if (leaveRequest) leave.run({ from: leaveRequest.from, intent: leaveRequest.intent });
+        }}
+        onCancel={() => {
+          setLeaveRequest(null);
+          leave.reset();
+        }}
+      />
+      {leave.dialog}
     </Card>
   );
 }

@@ -119,7 +119,15 @@ export const I18N_RESOURCES = {
       "subtitle": "{{username}}@{{host}}:{{port}}",
       "modify": "Modify Device",
       "delete": "Delete",
-      "directFallbackToast": "Direct connection dropped; recent input may not have been delivered"
+      "directFallbackToast": "Direct connection dropped; recent input may not have been delivered",
+      "sidebar": {
+        "show": "Show in sidebar",
+        "hint": "Browser-local preference: whether this device appears in the sidebar device list on this browser."
+      },
+      "addTo": {
+        "label": "Add device to",
+        "self": "This machine"
+      }
     },
     "terminal": {
       "keyboardBehavior": {
@@ -678,6 +686,7 @@ export const I18N_RESOURCES = {
     },
     "sidebar": {
       "noWindows": "No windows",
+      "noVisibleDevices": "No devices shown — enable them in Manage devices",
       "noDevices": "No devices",
       "addDeviceLink": "Add Device",
       "openSettingsLink": "Open Settings",
@@ -1141,8 +1150,9 @@ export const I18N_RESOURCES = {
       }
     },
     "nodes": {
-      "title": "Nodes",
-      "subtitle": "Every machine in this account. Changes here need your password or a passkey.",
+      "management": {
+        "title": "Node management"
+      },
       "empty": "No nodes yet",
       "self": "This node",
       "hub": "Hub",
@@ -1184,13 +1194,46 @@ export const I18N_RESOURCES = {
         "restarting": "Restarting…",
         "restartTimeout": "tmex did not come back. Start it manually, then reload this page.",
         "accountSecurity": "Account security",
-        "openNodesPage": "Manage nodes",
         "loginRequired": "Sign in to see this machine's status."
+      },
+      "membership": {
+        "changeHub": "Change hub",
+        "confirm": "Leave and restart",
+        "cancel": "Cancel",
+        "consequences": "All mesh state on this machine (account, node identity, cached peers) is removed. The old hub keeps an offline record you can revoke there. tmex restarts and the current session ends.",
+        "leaveConfirm": {
+          "title": "Leave the hub?",
+          "description": "This machine goes back to running standalone."
+        },
+        "switchConfirm": {
+          "title": "Switch role?",
+          "description": "This machine leaves the current hub first, then continues as “{{role}}” after the restart."
+        },
+        "changeHubConfirm": {
+          "title": "Change hub?",
+          "description": "This machine leaves the current hub first, then joins another one after the restart. The new join code has to be entered again."
+        },
+        "leaving": "Leaving…",
+        "restarting": "Restarting… ({{seconds}}s)",
+        "restarted": "Restarted. Returning to settings…",
+        "restartTimeout": "tmex did not come back. Start it manually, then reload this page.",
+        "revokeFailed": "Could not revoke this machine on the old hub ({{error}}). Leaving anyway — revoke it from the old hub's node list later.",
+        "revokeSkipped": "Skipped revoking this machine on the old hub. Leaving anyway — revoke it from the old hub's node list later.",
+        "leaveFailed": "Could not leave the hub.",
+        "errorDetail": "{{base}} ({{detail}})",
+        "errors": {
+          "notMember": "This machine is not part of a hub.",
+          "roleMismatch": "The role changed. Reload this page and try again.",
+          "setupInProgress": "Another setup change is in progress. Try again in a moment.",
+          "envWriteFailed": "Could not write the configuration.",
+          "unauthorized": "Sign in first."
+        }
       },
       "https": {
         "title": "HTTPS",
         "description": "How this machine serves HTTPS. Sign-in and passkeys only work over a secure address.",
         "hubUrlHint": "A hub's public address must use https. Either issue a certificate here, or run a reverse proxy in front and choose “External reverse proxy”.",
+        "nodeRoleHint": "HTTPS only matters while this machine acts as a hub. Nodes are reached through the hub, so there is nothing to configure here.",
         "currentMode": "Current mode",
         "modeActive": "in use",
         "save": "Save",
@@ -1368,17 +1411,14 @@ export const I18N_RESOURCES = {
         "none": "Unreachable"
       },
       "actions": {
-        "addNode": "Add node",
+        "add": "Add",
         "rename": "Rename",
         "revoke": "Remove",
         "refresh": "Refresh",
         "copy": "Copy",
-        "copied": "Copied",
-        "accountSecurity": "Account security"
+        "copied": "Copied"
       },
       "enrollment": {
-        "title": "Add a node",
-        "description": "Create a join code, then run the command it gives you on the new machine. The code is shown once and expires in 10 minutes.",
         "nameLabel": "Node name (optional)",
         "create": "Create join code",
         "joinHint": "Run this on the new machine within 10 minutes.",
@@ -1655,7 +1695,15 @@ export const I18N_RESOURCES = {
       "subtitle": "{{username}}@{{host}}:{{port}}",
       "modify": "修改设备",
       "delete": "删除",
-      "directFallbackToast": "直连已断开，最近输入可能未送达"
+      "directFallbackToast": "直连已断开，最近输入可能未送达",
+      "sidebar": {
+        "show": "显示在侧栏",
+        "hint": "仅本浏览器生效的偏好：该设备是否出现在侧栏设备列表里。"
+      },
+      "addTo": {
+        "label": "添加设备到",
+        "self": "本机"
+      }
     },
     "terminal": {
       "keyboardBehavior": {
@@ -2214,6 +2262,7 @@ export const I18N_RESOURCES = {
     },
     "sidebar": {
       "noWindows": "暂无窗口",
+      "noVisibleDevices": "未选择显示的设备，可在“管理设备”中开启",
       "noDevices": "暂无设备",
       "addDeviceLink": "添加设备",
       "openSettingsLink": "打开设置",
@@ -2677,8 +2726,9 @@ export const I18N_RESOURCES = {
       }
     },
     "nodes": {
-      "title": "节点",
-      "subtitle": "本账号下的所有机器。这里的每次改动都需要密码或通行密钥。",
+      "management": {
+        "title": "节点管理"
+      },
       "empty": "暂无节点",
       "self": "当前节点",
       "hub": "Hub",
@@ -2720,13 +2770,46 @@ export const I18N_RESOURCES = {
         "restarting": "正在重启……",
         "restartTimeout": "tmex 未能恢复。请手动启动后刷新本页。",
         "accountSecurity": "账号安全",
-        "openNodesPage": "管理节点",
         "loginRequired": "登录后查看本机状态。"
+      },
+      "membership": {
+        "changeHub": "更换 Hub",
+        "confirm": "退出并重启",
+        "cancel": "取消",
+        "consequences": "本机的 mesh 状态（账号、节点身份、缓存的对端）会全部删除；旧 Hub 上会留下一条离线记录，可在旧 Hub 侧吊销；tmex 会重启，当前会话随之失效。",
+        "leaveConfirm": {
+          "title": "退出 Hub？",
+          "description": "本机将变回独立运行。"
+        },
+        "switchConfirm": {
+          "title": "切换角色？",
+          "description": "本机会先退出当前 Hub，重启后再按「{{role}}」继续设置。"
+        },
+        "changeHubConfirm": {
+          "title": "更换 Hub？",
+          "description": "本机会先退出当前 Hub，重启后用新的加入码加入另一个 Hub。加入码需要重新输入。"
+        },
+        "leaving": "正在退出……",
+        "restarting": "正在重启……（{{seconds}} 秒）",
+        "restarted": "已重启，正在返回设置页……",
+        "restartTimeout": "tmex 未能恢复。请手动启动后刷新本页。",
+        "revokeFailed": "未能在旧 Hub 上吊销本机（{{error}}），退出继续。请稍后在旧 Hub 的节点列表里手动吊销。",
+        "revokeSkipped": "已跳过在旧 Hub 上吊销本机，退出继续。请稍后在旧 Hub 的节点列表里手动吊销。",
+        "leaveFailed": "退出 Hub 失败。",
+        "errorDetail": "{{base}}（{{detail}}）",
+        "errors": {
+          "notMember": "本机不在任何 Hub 中。",
+          "roleMismatch": "角色已变化，请刷新本页后重试。",
+          "setupInProgress": "另一项设置正在进行，请稍后重试。",
+          "envWriteFailed": "写入配置失败。",
+          "unauthorized": "请先登录。"
+        }
       },
       "https": {
         "title": "HTTPS",
         "description": "本机如何提供 HTTPS。登录与通行密钥只在安全地址下可用。",
         "hubUrlHint": "Hub 的公开地址必须是 https：可以在这里签发证书，也可以在前面加反向代理并选择「外部反向代理」。",
+        "nodeRoleHint": "HTTPS 仅在本机作为 Hub 时需要；节点通过 Hub 访问，无需单独配置。",
         "currentMode": "当前模式",
         "modeActive": "生效中",
         "save": "保存",
@@ -2904,17 +2987,14 @@ export const I18N_RESOURCES = {
         "none": "不可达"
       },
       "actions": {
-        "addNode": "添加节点",
+        "add": "添加",
         "rename": "重命名",
         "revoke": "移除",
         "refresh": "刷新",
         "copy": "复制",
-        "copied": "已复制",
-        "accountSecurity": "账号安全"
+        "copied": "已复制"
       },
       "enrollment": {
-        "title": "添加节点",
-        "description": "生成加入码，然后在新机器上运行给出的命令。加入码只显示一次，10 分钟内有效。",
         "nameLabel": "节点名称（可选）",
         "create": "生成加入码",
         "joinHint": "请在 10 分钟内在新机器上运行下面的命令。",
@@ -3191,7 +3271,15 @@ export const I18N_RESOURCES = {
       "subtitle": "{{username}}@{{host}}:{{port}}",
       "modify": "デバイスを変更",
       "delete": "削除",
-      "directFallbackToast": "直接接続が切断されました。直近の入力が届いていない可能性があります"
+      "directFallbackToast": "直接接続が切断されました。直近の入力が届いていない可能性があります",
+      "sidebar": {
+        "show": "サイドバーに表示",
+        "hint": "このブラウザーのみの設定です。サイドバーのデバイス一覧にこのデバイスを表示するかどうかを切り替えます。"
+      },
+      "addTo": {
+        "label": "デバイスの追加先",
+        "self": "このマシン"
+      }
     },
     "terminal": {
       "keyboardBehavior": {
@@ -3750,6 +3838,7 @@ export const I18N_RESOURCES = {
     },
     "sidebar": {
       "noWindows": "ウィンドウがありません",
+      "noVisibleDevices": "表示するデバイスが選択されていません。「デバイス管理」で有効にしてください",
       "noDevices": "デバイスがありません",
       "addDeviceLink": "デバイスを追加",
       "openSettingsLink": "設定を開く",
@@ -4213,8 +4302,9 @@ export const I18N_RESOURCES = {
       }
     },
     "nodes": {
-      "title": "ノード",
-      "subtitle": "このアカウントのすべてのマシン。変更のたびにパスワードまたはパスキーが必要です。",
+      "management": {
+        "title": "ノード管理"
+      },
       "empty": "ノードがありません",
       "self": "現在のノード",
       "hub": "ハブ",
@@ -4256,13 +4346,46 @@ export const I18N_RESOURCES = {
         "restarting": "再起動しています…",
         "restartTimeout": "tmex が復帰しませんでした。手動で起動してからページを再読み込みしてください。",
         "accountSecurity": "アカウントセキュリティ",
-        "openNodesPage": "ノードを管理",
         "loginRequired": "サインインするとこのマシンの状態を表示します。"
+      },
+      "membership": {
+        "changeHub": "ハブを変更",
+        "confirm": "退出して再起動",
+        "cancel": "キャンセル",
+        "consequences": "このマシンのメッシュ状態（アカウント、ノード ID、キャッシュ済みピア）はすべて削除されます。以前のハブにはオフラインの記録が残るので、そちらで失効させてください。tmex は再起動し、現在のセッションは終了します。",
+        "leaveConfirm": {
+          "title": "ハブから退出しますか？",
+          "description": "このマシンはスタンドアロン動作に戻ります。"
+        },
+        "switchConfirm": {
+          "title": "ロールを切り替えますか？",
+          "description": "現在のハブから退出し、再起動後に「{{role}}」として設定を続けます。"
+        },
+        "changeHubConfirm": {
+          "title": "ハブを変更しますか？",
+          "description": "現在のハブから退出し、再起動後に別のハブへ参加します。参加コードは再入力が必要です。"
+        },
+        "leaving": "退出しています…",
+        "restarting": "再起動しています…（{{seconds}} 秒）",
+        "restarted": "再起動しました。設定に戻ります…",
+        "restartTimeout": "tmex が復帰しませんでした。手動で起動してからページを再読み込みしてください。",
+        "revokeFailed": "以前のハブでこのマシンを失効できませんでした（{{error}}）。退出は続行します。後で以前のハブのノード一覧から失効させてください。",
+        "revokeSkipped": "以前のハブでのこのマシンの失効をスキップしました。退出は続行します。後で以前のハブのノード一覧から失効させてください。",
+        "leaveFailed": "ハブから退出できませんでした。",
+        "errorDetail": "{{base}}（{{detail}}）",
+        "errors": {
+          "notMember": "このマシンはどのハブにも参加していません。",
+          "roleMismatch": "ロールが変更されました。ページを再読み込みしてやり直してください。",
+          "setupInProgress": "別の設定変更が進行中です。しばらくしてからやり直してください。",
+          "envWriteFailed": "設定を書き込めませんでした。",
+          "unauthorized": "先にサインインしてください。"
+        }
       },
       "https": {
         "title": "HTTPS",
         "description": "このマシンで HTTPS をどう提供するか。サインインとパスキーは安全なアドレスでのみ動作します。",
         "hubUrlHint": "ハブの公開アドレスは https である必要があります。ここで証明書を発行するか、前段にリバースプロキシを置いて「外部リバースプロキシ」を選んでください。",
+        "nodeRoleHint": "HTTPS はこのマシンがハブとして動作する場合にのみ必要です。ノードへはハブ経由でアクセスするため、ここでの設定は不要です。",
         "currentMode": "現在のモード",
         "modeActive": "適用中",
         "save": "保存",
@@ -4440,17 +4563,14 @@ export const I18N_RESOURCES = {
         "none": "到達不可"
       },
       "actions": {
-        "addNode": "ノードを追加",
+        "add": "追加",
         "rename": "名前を変更",
         "revoke": "削除",
         "refresh": "更新",
         "copy": "コピー",
-        "copied": "コピーしました",
-        "accountSecurity": "アカウントセキュリティ"
+        "copied": "コピーしました"
       },
       "enrollment": {
-        "title": "ノードを追加",
-        "description": "参加コードを作成し、表示されるコマンドを新しいマシンで実行します。コードは一度だけ表示され、10 分で失効します。",
         "nameLabel": "ノード名（任意）",
         "create": "参加コードを作成",
         "joinHint": "10 分以内に、新しいマシンで次のコマンドを実行してください。",

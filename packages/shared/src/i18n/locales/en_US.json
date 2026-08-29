@@ -113,7 +113,15 @@
       "subtitle": "{{username}}@{{host}}:{{port}}",
       "modify": "Modify Device",
       "delete": "Delete",
-      "directFallbackToast": "Direct connection dropped; recent input may not have been delivered"
+      "directFallbackToast": "Direct connection dropped; recent input may not have been delivered",
+      "sidebar": {
+        "show": "Show in sidebar",
+        "hint": "Browser-local preference: whether this device appears in the sidebar device list on this browser."
+      },
+      "addTo": {
+        "label": "Add device to",
+        "self": "This machine"
+      }
     },
     "terminal": {
       "keyboardBehavior": {
@@ -672,6 +680,7 @@
     },
     "sidebar": {
       "noWindows": "No windows",
+      "noVisibleDevices": "No devices shown — enable them in Manage devices",
       "noDevices": "No devices",
       "addDeviceLink": "Add Device",
       "openSettingsLink": "Open Settings",
@@ -1135,8 +1144,9 @@
       }
     },
     "nodes": {
-      "title": "Nodes",
-      "subtitle": "Every machine in this account. Changes here need your password or a passkey.",
+      "management": {
+        "title": "Node management"
+      },
       "empty": "No nodes yet",
       "self": "This node",
       "hub": "Hub",
@@ -1178,13 +1188,46 @@
         "restarting": "Restarting…",
         "restartTimeout": "tmex did not come back. Start it manually, then reload this page.",
         "accountSecurity": "Account security",
-        "openNodesPage": "Manage nodes",
         "loginRequired": "Sign in to see this machine's status."
+      },
+      "membership": {
+        "changeHub": "Change hub",
+        "confirm": "Leave and restart",
+        "cancel": "Cancel",
+        "consequences": "All mesh state on this machine (account, node identity, cached peers) is removed. The old hub keeps an offline record you can revoke there. tmex restarts and the current session ends.",
+        "leaveConfirm": {
+          "title": "Leave the hub?",
+          "description": "This machine goes back to running standalone."
+        },
+        "switchConfirm": {
+          "title": "Switch role?",
+          "description": "This machine leaves the current hub first, then continues as “{{role}}” after the restart."
+        },
+        "changeHubConfirm": {
+          "title": "Change hub?",
+          "description": "This machine leaves the current hub first, then joins another one after the restart. The new join code has to be entered again."
+        },
+        "leaving": "Leaving…",
+        "restarting": "Restarting… ({{seconds}}s)",
+        "restarted": "Restarted. Returning to settings…",
+        "restartTimeout": "tmex did not come back. Start it manually, then reload this page.",
+        "revokeFailed": "Could not revoke this machine on the old hub ({{error}}). Leaving anyway — revoke it from the old hub's node list later.",
+        "revokeSkipped": "Skipped revoking this machine on the old hub. Leaving anyway — revoke it from the old hub's node list later.",
+        "leaveFailed": "Could not leave the hub.",
+        "errorDetail": "{{base}} ({{detail}})",
+        "errors": {
+          "notMember": "This machine is not part of a hub.",
+          "roleMismatch": "The role changed. Reload this page and try again.",
+          "setupInProgress": "Another setup change is in progress. Try again in a moment.",
+          "envWriteFailed": "Could not write the configuration.",
+          "unauthorized": "Sign in first."
+        }
       },
       "https": {
         "title": "HTTPS",
         "description": "How this machine serves HTTPS. Sign-in and passkeys only work over a secure address.",
         "hubUrlHint": "A hub's public address must use https. Either issue a certificate here, or run a reverse proxy in front and choose “External reverse proxy”.",
+        "nodeRoleHint": "HTTPS only matters while this machine acts as a hub. Nodes are reached through the hub, so there is nothing to configure here.",
         "currentMode": "Current mode",
         "modeActive": "in use",
         "save": "Save",
@@ -1362,17 +1405,14 @@
         "none": "Unreachable"
       },
       "actions": {
-        "addNode": "Add node",
+        "add": "Add",
         "rename": "Rename",
         "revoke": "Remove",
         "refresh": "Refresh",
         "copy": "Copy",
-        "copied": "Copied",
-        "accountSecurity": "Account security"
+        "copied": "Copied"
       },
       "enrollment": {
-        "title": "Add a node",
-        "description": "Create a join code, then run the command it gives you on the new machine. The code is shown once and expires in 10 minutes.",
         "nameLabel": "Node name (optional)",
         "create": "Create join code",
         "joinHint": "Run this on the new machine within 10 minutes.",

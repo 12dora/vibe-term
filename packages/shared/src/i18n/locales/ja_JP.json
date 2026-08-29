@@ -113,7 +113,15 @@
       "subtitle": "{{username}}@{{host}}:{{port}}",
       "modify": "デバイスを変更",
       "delete": "削除",
-      "directFallbackToast": "直接接続が切断されました。直近の入力が届いていない可能性があります"
+      "directFallbackToast": "直接接続が切断されました。直近の入力が届いていない可能性があります",
+      "sidebar": {
+        "show": "サイドバーに表示",
+        "hint": "このブラウザーのみの設定です。サイドバーのデバイス一覧にこのデバイスを表示するかどうかを切り替えます。"
+      },
+      "addTo": {
+        "label": "デバイスの追加先",
+        "self": "このマシン"
+      }
     },
     "terminal": {
       "keyboardBehavior": {
@@ -672,6 +680,7 @@
     },
     "sidebar": {
       "noWindows": "ウィンドウがありません",
+      "noVisibleDevices": "表示するデバイスが選択されていません。「デバイス管理」で有効にしてください",
       "noDevices": "デバイスがありません",
       "addDeviceLink": "デバイスを追加",
       "openSettingsLink": "設定を開く",
@@ -1135,8 +1144,9 @@
       }
     },
     "nodes": {
-      "title": "ノード",
-      "subtitle": "このアカウントのすべてのマシン。変更のたびにパスワードまたはパスキーが必要です。",
+      "management": {
+        "title": "ノード管理"
+      },
       "empty": "ノードがありません",
       "self": "現在のノード",
       "hub": "ハブ",
@@ -1178,13 +1188,46 @@
         "restarting": "再起動しています…",
         "restartTimeout": "tmex が復帰しませんでした。手動で起動してからページを再読み込みしてください。",
         "accountSecurity": "アカウントセキュリティ",
-        "openNodesPage": "ノードを管理",
         "loginRequired": "サインインするとこのマシンの状態を表示します。"
+      },
+      "membership": {
+        "changeHub": "ハブを変更",
+        "confirm": "退出して再起動",
+        "cancel": "キャンセル",
+        "consequences": "このマシンのメッシュ状態（アカウント、ノード ID、キャッシュ済みピア）はすべて削除されます。以前のハブにはオフラインの記録が残るので、そちらで失効させてください。tmex は再起動し、現在のセッションは終了します。",
+        "leaveConfirm": {
+          "title": "ハブから退出しますか？",
+          "description": "このマシンはスタンドアロン動作に戻ります。"
+        },
+        "switchConfirm": {
+          "title": "ロールを切り替えますか？",
+          "description": "現在のハブから退出し、再起動後に「{{role}}」として設定を続けます。"
+        },
+        "changeHubConfirm": {
+          "title": "ハブを変更しますか？",
+          "description": "現在のハブから退出し、再起動後に別のハブへ参加します。参加コードは再入力が必要です。"
+        },
+        "leaving": "退出しています…",
+        "restarting": "再起動しています…（{{seconds}} 秒）",
+        "restarted": "再起動しました。設定に戻ります…",
+        "restartTimeout": "tmex が復帰しませんでした。手動で起動してからページを再読み込みしてください。",
+        "revokeFailed": "以前のハブでこのマシンを失効できませんでした（{{error}}）。退出は続行します。後で以前のハブのノード一覧から失効させてください。",
+        "revokeSkipped": "以前のハブでのこのマシンの失効をスキップしました。退出は続行します。後で以前のハブのノード一覧から失効させてください。",
+        "leaveFailed": "ハブから退出できませんでした。",
+        "errorDetail": "{{base}}（{{detail}}）",
+        "errors": {
+          "notMember": "このマシンはどのハブにも参加していません。",
+          "roleMismatch": "ロールが変更されました。ページを再読み込みしてやり直してください。",
+          "setupInProgress": "別の設定変更が進行中です。しばらくしてからやり直してください。",
+          "envWriteFailed": "設定を書き込めませんでした。",
+          "unauthorized": "先にサインインしてください。"
+        }
       },
       "https": {
         "title": "HTTPS",
         "description": "このマシンで HTTPS をどう提供するか。サインインとパスキーは安全なアドレスでのみ動作します。",
         "hubUrlHint": "ハブの公開アドレスは https である必要があります。ここで証明書を発行するか、前段にリバースプロキシを置いて「外部リバースプロキシ」を選んでください。",
+        "nodeRoleHint": "HTTPS はこのマシンがハブとして動作する場合にのみ必要です。ノードへはハブ経由でアクセスするため、ここでの設定は不要です。",
         "currentMode": "現在のモード",
         "modeActive": "適用中",
         "save": "保存",
@@ -1362,17 +1405,14 @@
         "none": "到達不可"
       },
       "actions": {
-        "addNode": "ノードを追加",
+        "add": "追加",
         "rename": "名前を変更",
         "revoke": "削除",
         "refresh": "更新",
         "copy": "コピー",
-        "copied": "コピーしました",
-        "accountSecurity": "アカウントセキュリティ"
+        "copied": "コピーしました"
       },
       "enrollment": {
-        "title": "ノードを追加",
-        "description": "参加コードを作成し、表示されるコマンドを新しいマシンで実行します。コードは一度だけ表示され、10 分で失効します。",
         "nameLabel": "ノード名（任意）",
         "create": "参加コードを作成",
         "joinHint": "10 分以内に、新しいマシンで次のコマンドを実行してください。",

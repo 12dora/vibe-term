@@ -1,7 +1,7 @@
 // 站点品牌（logo + 名称）的唯一渲染点：侧栏顶部、无侧栏页面的顶栏、登录卡片都用它，
 // 换名/换图只改这里与 `@tmex/shared` 的品牌常量。
 //
-// **必须能在 RuntimeProvider 之外渲染**——`/login`、`/account/security`、`/nodes` 挂在 node
+// **必须能在 RuntimeProvider 之外渲染**——`/login`、`/account/security` 挂在 node
 // 运行时边界之外，`useRuntime()` 在那里会直接抛错，所以走 `useOptionalRuntime()`：
 // 拿不到运行时就退回产品名。
 

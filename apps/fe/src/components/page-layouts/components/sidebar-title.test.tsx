@@ -1,4 +1,4 @@
-// 侧边栏标题行：mesh 时多一个「节点」入口，standalone / 未加载时没有。
+// 侧边栏标题行：mesh 时多一个「节点」入口（指向设置页「节点」标签），standalone / 未加载时没有。
 // 无 DOM 测试环境，用 react-dom/server 静态渲染（与 sidebar-device-list 测试同一套做法）。
 
 import { describe, expect, test } from 'bun:test';
@@ -57,17 +57,17 @@ describe('SidebarTitle', () => {
     expect(html).toContain('href="/"');
   });
 
-  test('mesh 模式渲染节点入口，指向 /nodes', () => {
+  test('mesh 模式渲染节点入口，指向设置页「节点」标签', () => {
     const html = render(MESH_MODE);
     expect(html).toContain('data-testid="sidebar-nodes"');
-    expect(html).toContain('href="/nodes"');
+    expect(html).toContain('href="/settings?tab=nodes"');
     expect(html).toContain('data-testid="sidebar-settings"');
   });
 
   test('standalone（mode:none）不渲染节点入口，设置入口仍在', () => {
     const html = render({ ...MESH_MODE, mode: 'none' });
     expect(html).not.toContain('data-testid="sidebar-nodes"');
-    expect(html).not.toContain('href="/nodes"');
+    expect(html).not.toContain('href="/settings?tab=nodes"');
     expect(html).toContain('data-testid="sidebar-settings"');
   });
 

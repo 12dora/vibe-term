@@ -27,9 +27,23 @@ export function currentHostname(): string | null {
  * SPA 内部导航保不住一致性。
  */
 export function navigateToLogin(): void {
+  assignLocation('/login');
+}
+
+/**
+ * 退出 mesh 后回到设置页的「节点」标签。
+ *
+ * 同样是硬跳转：角色从 mesh 变回 standalone 后 `/api/auth/mode`、mesh store、WebSocket
+ * 全都要重新建立；顺带让新进程重新下发一份干净的鉴权状态。
+ */
+export function navigateToSettingsNodes(): void {
+  assignLocation('/settings?tab=nodes');
+}
+
+function assignLocation(url: string): void {
   if (typeof window === 'undefined') return;
   const location = window.location as Location | undefined;
   if (location && typeof location.assign === 'function') {
-    location.assign('/login');
+    location.assign(url);
   }
 }

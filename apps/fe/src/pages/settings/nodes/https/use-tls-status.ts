@@ -26,11 +26,17 @@ function isUnauthorized(error: unknown): boolean {
   return error instanceof TlsApiError && error.status === 401;
 }
 
-export function useTlsStatus(api: TlsApi = defaultTlsApi): TlsStatusState {
+export function useTlsStatus(
+  api: TlsApi = defaultTlsApi,
+  options: { enabled?: boolean } = {}
+): TlsStatusState {
+  // 纯 node 角色下整块 HTTPS 都是灰的，连状态都不该去问（mesh 下这一发还要带上会话）。
+  const enabled = options.enabled ?? true;
   const queryClient = useQueryClient();
   const query = useQuery({
     queryKey: TLS_STATUS_QUERY_KEY,
     queryFn: () => api.status(),
+    enabled,
     // 401 不重试：重试只会多刷几次登录拦截器。
     retry: (failureCount, error) => !isUnauthorized(error) && failureCount < 2,
     refetchInterval: (q) =>
@@ -51,7 +57,8 @@ export function useTlsStatus(api: TlsApi = defaultTlsApi): TlsStatusState {
   const loginRequired = isUnauthorized(query.error);
   return {
     status: query.data ?? null,
-    loading: query.isPending,
+    // 关掉查询时 react-query 也报 pending，但这时不该转圈。
+    loading: enabled && query.isPending,
     loginRequired,
     error:
       !query.error || loginRequired

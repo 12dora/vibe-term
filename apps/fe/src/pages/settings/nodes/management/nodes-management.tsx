@@ -3,8 +3,8 @@
 // 列表 = `GET /api/mesh/nodes`（成员集权威）合并 `GET /n/<hub>/api/hub/nodes`（心跳 / 状态）。
 // 动作：新增节点（enrollment）、重命名、吊销。hub 不可达时全部管理动作禁用。
 //
-// 同一份主体被 `/nodes` 整页与设置页「节点」标签复用：`compact` 只影响外层容器与页头，
-// 数据管线与动作完全一致。
+// 整体是设置页「节点」标签里的一张卡片：卡头放刷新与「添加」，卡体依次是 hub 离线提示、
+// 加入码表单、待确认列表与节点表——不再有第二层外框。
 
 import { decodeRootPublicKey, useCredentialPrompt, usePasskeys } from '@/auth/credential-prompt';
 import {
@@ -18,10 +18,10 @@ import { mergeNodes, setEntryNodeId, useHubNode, useMeshNodes } from '@/node/mes
 import type { AuthApi, AuthKdfParamsJson, AuthModeResponse } from '@tmex/api-client/auth/index';
 import { defaultAuthApi } from '@tmex/api-client/auth/index';
 import { Button } from '@tmex/ui/button';
-import { RefreshCw, ShieldAlert } from 'lucide-react';
+import { Card, CardAction, CardContent, CardHeader, CardTitle } from '@tmex/ui/card';
+import { Plus, RefreshCw, ShieldAlert } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useState, useSyncExternalStore } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Link } from 'react-router';
 import { EnrollmentSection } from './enrollment-section';
 import { NodesTable } from './nodes-table';
 import { PLACEHOLDER_KDF, type ResolvedMode } from './types';
@@ -30,20 +30,11 @@ import { useAdmitAction } from './use-admit-action';
 export interface NodesManagementProps {
   mode: AuthModeResponse;
   api?: AuthApi;
-  /** 默认显示「账号安全」入口；设置页里由本机区块自己给这个入口，这里关掉。 */
-  showAccountSecurityLink?: boolean;
-  /** 嵌在别的页面里：去掉页级标题与外层留白。 */
-  compact?: boolean;
 }
 
-export function NodesManagement({
-  mode: rawMode,
-  api = defaultAuthApi,
-  showAccountSecurityLink = true,
-  compact = false,
-}: NodesManagementProps) {
+export function NodesManagement({ mode: rawMode, api = defaultAuthApi }: NodesManagementProps) {
   const { t } = useTranslation();
-  const { nodes, refresh: refreshNodes } = useMeshNodes();
+  const { nodes, loading: nodesLoading, refresh: refreshNodes } = useMeshNodes();
   const entryNodeId = rawMode.nodeId || null;
 
   useEffect(() => {
@@ -82,6 +73,7 @@ export function NodesManagement({
   }, [hub, refreshNodes]);
 
   const [expiredIds, setExpiredIds] = useState<string[]>([]);
+  const [enrollOpen, setEnrollOpen] = useState(false);
   const admit = useAdmitAction({ api, mode, hubApi: hub.hubApi, prompt, onDone: refreshAll });
 
   useEnrollmentWatch({
@@ -106,96 +98,84 @@ export function NodesManagement({
 
   if (!mode) {
     return (
-      <div
-        className={
-          compact
-            ? 'text-sm text-muted-foreground'
-            : 'mx-auto w-full max-w-5xl p-5 text-sm text-muted-foreground'
-        }
-      >
-        {t('auth.errors.UNKNOWN_USER')}
-      </div>
+      <Card data-testid="nodes-management">
+        <CardHeader>
+          <CardTitle>{t('nodes.management.title')}</CardTitle>
+        </CardHeader>
+        <CardContent className="text-sm text-muted-foreground">
+          {t('auth.errors.UNKNOWN_USER')}
+        </CardContent>
+      </Card>
     );
   }
 
   return (
-    <div
-      className={
-        compact
-          ? 'flex w-full flex-col gap-4'
-          : 'mx-auto flex w-full max-w-5xl flex-col gap-4 p-3 sm:p-5'
-      }
-    >
-      <header
-        className={
-          compact
-            ? 'flex flex-wrap items-center justify-end gap-2'
-            : 'flex flex-wrap items-center justify-between gap-2'
-        }
-      >
-        {!compact && (
-          <div className="flex flex-col gap-0.5">
-            <h1 className="text-sm font-semibold">{t('nodes.title')}</h1>
-            <p className="text-xs text-muted-foreground">{t('nodes.subtitle')}</p>
-          </div>
-        )}
-        <div className="flex items-center gap-2">
+    <Card data-testid="nodes-management">
+      <CardHeader>
+        <CardTitle>{t('nodes.management.title')}</CardTitle>
+        <CardAction className="flex items-center gap-1.5 self-center">
           <Button
             type="button"
-            variant="outline"
-            size="sm"
+            variant="ghost"
+            size="icon-sm"
             onClick={refreshAll}
+            aria-label={t('nodes.actions.refresh')}
+            title={t('nodes.actions.refresh')}
             data-testid="nodes-refresh"
           >
-            <RefreshCw />
-            {t('nodes.actions.refresh')}
+            <RefreshCw className={nodesLoading || hub.loading ? 'animate-spin' : undefined} />
           </Button>
-          {showAccountSecurityLink && (
-            <Link
-              to="/account/security"
-              className="text-xs text-muted-foreground underline underline-offset-2 hover:text-foreground"
-              data-testid="nodes-account-security"
-            >
-              {t('nodes.actions.accountSecurity')}
-            </Link>
-          )}
-        </div>
-      </header>
+          <Button
+            type="button"
+            size="sm"
+            disabled={!hub.online}
+            title={hub.online ? undefined : t('nodes.hubOffline')}
+            onClick={() => setEnrollOpen((value) => !value)}
+            data-testid="nodes-add"
+          >
+            <Plus />
+            {t('nodes.actions.add')}
+          </Button>
+        </CardAction>
+      </CardHeader>
 
-      {!hub.online && (
-        <p
-          className="flex items-center gap-1.5 rounded-lg bg-destructive/10 p-2 text-xs text-destructive"
-          data-testid="nodes-hub-offline"
-        >
-          <ShieldAlert className="size-3.5 shrink-0" />
-          {t('nodes.hubOffline')}
-        </p>
-      )}
+      <CardContent className="flex flex-col gap-3">
+        {!hub.online && (
+          <p
+            className="flex items-center gap-1.5 rounded-lg bg-destructive/10 p-2 text-xs text-destructive"
+            data-testid="nodes-hub-offline"
+          >
+            <ShieldAlert className="size-3.5 shrink-0" />
+            {t('nodes.hubOffline')}
+          </p>
+        )}
 
-      <EnrollmentSection
-        api={api}
-        mode={mode}
-        hubApi={hub.hubApi}
-        hubOnline={hub.online}
-        prompt={prompt}
-        pendings={pendings}
-        onConfirm={(pending) => void admit.confirmManually(pending)}
-        busyPendingId={admit.busyPendingId}
-        hubUnconfirmedIds={admit.hubUnconfirmedIds}
-        clearedIds={[...expiredIds, ...admit.admittedIds]}
-      />
+        <EnrollmentSection
+          api={api}
+          mode={mode}
+          hubApi={hub.hubApi}
+          hubOnline={hub.online}
+          open={enrollOpen}
+          prompt={prompt}
+          pendings={pendings}
+          onConfirm={(pending) => void admit.confirmManually(pending)}
+          busyPendingId={admit.busyPendingId}
+          hubUnconfirmedIds={admit.hubUnconfirmedIds}
+          clearedIds={[...expiredIds, ...admit.admittedIds]}
+        />
 
-      <NodesTable
-        rows={rows}
-        hubApi={hub.hubApi}
-        hubOnline={hub.online}
-        mode={mode}
-        api={api}
-        prompt={prompt}
-        onChanged={refreshAll}
-      />
+        <NodesTable
+          rows={rows}
+          hubApi={hub.hubApi}
+          hubOnline={hub.online}
+          mode={mode}
+          api={api}
+          prompt={prompt}
+          onChanged={refreshAll}
+        />
 
-      {prompt.dialog}
-    </div>
+        {prompt.dialog}
+      </CardContent>
+    </Card>
   );
 }

@@ -1,5 +1,6 @@
 // 节点表：成员集 + 心跳合并后的一行一 node，重命名 / 吊销动作。
 // hub 不可达时全部管理动作禁用。
+// 表格本体铺在「节点管理」卡片里，只留一层浅边框做横向滚动容器。
 
 import { NodeLoginButton } from '@/auth/NodeLoginButton';
 import type { CredentialPromptHandle } from '@/auth/credential-prompt';
@@ -37,7 +38,7 @@ export function NodesTable({
 }) {
   const { t } = useTranslation();
   return (
-    <section className="overflow-x-auto rounded-xl border border-border bg-background">
+    <section className="overflow-x-auto rounded-lg border border-border/60">
       <table className="w-full min-w-[52rem] text-xs" data-testid="nodes-table">
         <thead className="text-muted-foreground">
           <tr className="border-b border-border">

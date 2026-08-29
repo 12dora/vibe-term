@@ -2,7 +2,7 @@ import { QueryClientProvider } from '@tanstack/react-query';
 import { PRODUCT_NAME, formatDisplayVersion } from '@tmex/shared';
 import { type CSSProperties, StrictMode, useEffect } from 'react';
 import { createRoot } from 'react-dom/client';
-import { Outlet, RouterProvider, createBrowserRouter } from 'react-router';
+import { Navigate, Outlet, RouterProvider, createBrowserRouter } from 'react-router';
 import { Toaster } from 'sonner';
 import { i18nReady } from './i18n';
 import './index.css';
@@ -193,7 +193,6 @@ const deviceModule = () => import('./pages/DevicePage');
 const fileModule = () => import('./pages/FilePage');
 const loginModule = () => import('./pages/LoginPage');
 const accountSecurityModule = () => import('./pages/AccountSecurityPage');
-const nodesModule = () => import('./pages/NodesPage');
 
 // node 边界外壳：先建/取该 node 的运行时，再渲染外壳与页面
 function NodeShell() {
@@ -241,7 +240,8 @@ const router = createBrowserRouter([
     path: '/account/security',
     element: <PageWrapper moduleLoader={accountSecurityModule} withSidebar={false} />,
   },
-  { path: '/nodes', element: <PageWrapper moduleLoader={nodesModule} withSidebar={false} /> },
+  // 独立的 /nodes 页已并入设置页「节点」标签；老书签重定向过去，不要变成 404。
+  { path: '/nodes', element: <Navigate to="/settings?tab=nodes" replace /> },
   {
     path: '/n/:nodeId',
     Component: NodeShell,

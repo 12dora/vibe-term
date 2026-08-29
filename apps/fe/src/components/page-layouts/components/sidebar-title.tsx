@@ -44,7 +44,7 @@ export function SidebarTitle() {
         <ThemeMenu />
         {meshEnabled && (
           <NavLink
-            to="/nodes"
+            to="/settings?tab=nodes"
             className={ACTION_BUTTON_CLASS}
             data-testid="sidebar-nodes"
             aria-label={t('sidebar.nodes')}

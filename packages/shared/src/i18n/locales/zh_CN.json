@@ -113,7 +113,15 @@
       "subtitle": "{{username}}@{{host}}:{{port}}",
       "modify": "修改设备",
       "delete": "删除",
-      "directFallbackToast": "直连已断开，最近输入可能未送达"
+      "directFallbackToast": "直连已断开，最近输入可能未送达",
+      "sidebar": {
+        "show": "显示在侧栏",
+        "hint": "仅本浏览器生效的偏好：该设备是否出现在侧栏设备列表里。"
+      },
+      "addTo": {
+        "label": "添加设备到",
+        "self": "本机"
+      }
     },
     "terminal": {
       "keyboardBehavior": {
@@ -672,6 +680,7 @@
     },
     "sidebar": {
       "noWindows": "暂无窗口",
+      "noVisibleDevices": "未选择显示的设备，可在“管理设备”中开启",
       "noDevices": "暂无设备",
       "addDeviceLink": "添加设备",
       "openSettingsLink": "打开设置",
@@ -1135,8 +1144,9 @@
       }
     },
     "nodes": {
-      "title": "节点",
-      "subtitle": "本账号下的所有机器。这里的每次改动都需要密码或通行密钥。",
+      "management": {
+        "title": "节点管理"
+      },
       "empty": "暂无节点",
       "self": "当前节点",
       "hub": "Hub",
@@ -1178,13 +1188,46 @@
         "restarting": "正在重启……",
         "restartTimeout": "tmex 未能恢复。请手动启动后刷新本页。",
         "accountSecurity": "账号安全",
-        "openNodesPage": "管理节点",
         "loginRequired": "登录后查看本机状态。"
+      },
+      "membership": {
+        "changeHub": "更换 Hub",
+        "confirm": "退出并重启",
+        "cancel": "取消",
+        "consequences": "本机的 mesh 状态（账号、节点身份、缓存的对端）会全部删除；旧 Hub 上会留下一条离线记录，可在旧 Hub 侧吊销；tmex 会重启，当前会话随之失效。",
+        "leaveConfirm": {
+          "title": "退出 Hub？",
+          "description": "本机将变回独立运行。"
+        },
+        "switchConfirm": {
+          "title": "切换角色？",
+          "description": "本机会先退出当前 Hub，重启后再按「{{role}}」继续设置。"
+        },
+        "changeHubConfirm": {
+          "title": "更换 Hub？",
+          "description": "本机会先退出当前 Hub，重启后用新的加入码加入另一个 Hub。加入码需要重新输入。"
+        },
+        "leaving": "正在退出……",
+        "restarting": "正在重启……（{{seconds}} 秒）",
+        "restarted": "已重启，正在返回设置页……",
+        "restartTimeout": "tmex 未能恢复。请手动启动后刷新本页。",
+        "revokeFailed": "未能在旧 Hub 上吊销本机（{{error}}），退出继续。请稍后在旧 Hub 的节点列表里手动吊销。",
+        "revokeSkipped": "已跳过在旧 Hub 上吊销本机，退出继续。请稍后在旧 Hub 的节点列表里手动吊销。",
+        "leaveFailed": "退出 Hub 失败。",
+        "errorDetail": "{{base}}（{{detail}}）",
+        "errors": {
+          "notMember": "本机不在任何 Hub 中。",
+          "roleMismatch": "角色已变化，请刷新本页后重试。",
+          "setupInProgress": "另一项设置正在进行，请稍后重试。",
+          "envWriteFailed": "写入配置失败。",
+          "unauthorized": "请先登录。"
+        }
       },
       "https": {
         "title": "HTTPS",
         "description": "本机如何提供 HTTPS。登录与通行密钥只在安全地址下可用。",
         "hubUrlHint": "Hub 的公开地址必须是 https：可以在这里签发证书，也可以在前面加反向代理并选择「外部反向代理」。",
+        "nodeRoleHint": "HTTPS 仅在本机作为 Hub 时需要；节点通过 Hub 访问，无需单独配置。",
         "currentMode": "当前模式",
         "modeActive": "生效中",
         "save": "保存",
@@ -1362,17 +1405,14 @@
         "none": "不可达"
       },
       "actions": {
-        "addNode": "添加节点",
+        "add": "添加",
         "rename": "重命名",
         "revoke": "移除",
         "refresh": "刷新",
         "copy": "复制",
-        "copied": "已复制",
-        "accountSecurity": "账号安全"
+        "copied": "已复制"
       },
       "enrollment": {
-        "title": "添加节点",
-        "description": "生成加入码，然后在新机器上运行给出的命令。加入码只显示一次，10 分钟内有效。",
         "nameLabel": "节点名称（可选）",
         "create": "生成加入码",
         "joinHint": "请在 10 分钟内在新机器上运行下面的命令。",

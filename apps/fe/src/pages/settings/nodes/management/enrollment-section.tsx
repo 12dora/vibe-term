@@ -1,4 +1,5 @@
-// 新增节点 / 待确认区块。
+// 新增节点 / 待确认区块：直接铺在「节点管理」卡片里，自己不再画边框与标题，
+// 展开与否由卡头的「添加」按钮（父组件的 `open`）决定。
 //
 // `enroll_sk` 只存在于浏览器与 join 串里，**不经过 hub**；join 串只显示这一次，
 // admit / 过期后立刻从 DOM 里消失。
@@ -18,7 +19,7 @@ import type { AuthApi } from '@tmex/api-client/auth/index';
 import { requireRootEpoch } from '@tmex/api-client/auth/index';
 import { Button } from '@tmex/ui/button';
 import { Input } from '@tmex/ui/input';
-import { Check, Copy, Loader2, Plus, ShieldCheck } from 'lucide-react';
+import { Check, Copy, Loader2, ShieldCheck } from 'lucide-react';
 import { useCallback, useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import type { ResolvedMode } from './types';
@@ -28,6 +29,7 @@ export function EnrollmentSection({
   mode,
   hubApi,
   hubOnline,
+  open,
   prompt,
   pendings,
   onConfirm,
@@ -39,6 +41,8 @@ export function EnrollmentSection({
   mode: ResolvedMode;
   hubApi: HubApi | null;
   hubOnline: boolean;
+  /** 卡头「添加」按钮控制的展开态。 */
+  open: boolean;
   prompt: CredentialPromptHandle;
   pendings: PendingEnrollment[];
   onConfirm: (pending: PendingEnrollment) => void;
@@ -48,7 +52,6 @@ export function EnrollmentSection({
   clearedIds: string[];
 }) {
   const { t } = useTranslation();
-  const [open, setOpen] = useState(false);
   const [name, setName] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -105,25 +108,12 @@ export function EnrollmentSection({
   }, [api, hubApi, mode, name, prompt, t]);
 
   return (
-    <section className="flex flex-col gap-3 rounded-xl border border-border bg-background p-4">
-      <div className="flex items-center justify-between gap-2">
-        <h2 className="text-sm font-semibold">{t('nodes.enrollment.title')}</h2>
-        <Button
-          type="button"
-          size="sm"
-          disabled={!hubOnline}
-          title={hubOnline ? undefined : t('nodes.hubOffline')}
-          onClick={() => setOpen((value) => !value)}
-          data-testid="nodes-add"
-        >
-          <Plus />
-          {t('nodes.actions.addNode')}
-        </Button>
-      </div>
-      <p className="text-xs text-muted-foreground">{t('nodes.enrollment.description')}</p>
-
+    <>
       {open && (
-        <div className="flex flex-col gap-2" data-testid="nodes-enroll-form">
+        <div
+          className="flex flex-col gap-2 rounded-lg border border-border/60 p-3"
+          data-testid="nodes-enroll-form"
+        >
           <Input
             placeholder={t('nodes.enrollment.nameLabel')}
             value={name}
@@ -207,7 +197,7 @@ export function EnrollmentSection({
           })}
         </ul>
       )}
-    </section>
+    </>
   );
 }
 

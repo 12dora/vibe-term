@@ -80,7 +80,7 @@ function status(overrides: Partial<LocalStatusResponse> = {}): LocalStatusRespon
       version: null,
       platform: 'darwin-arm64',
     },
-    tls: { mode: 'none' },
+    tls: { mode: 'none', listenerRunning: false, tlsPort: null },
     ...overrides,
   };
 }
@@ -148,7 +148,9 @@ describe('NodesTab mesh', () => {
     expect(html).not.toContain('data-testid="https-hub-url-hint"');
     expect(html).not.toContain('data-testid="hub-setup-wizard"');
     expect(html).toContain('href="/account/security"');
-    expect(html).toContain('href="/nodes"');
+    // `/nodes` 整页已移除，本机区块不再给它入口
+    expect(html).not.toContain('href="/nodes"');
+    expect(html).not.toContain('nodes.machine.openNodesPage');
     // compact：页级标题与管理主体自带的账号安全入口都不出现
     expect(html).not.toContain('data-testid="nodes-account-security"');
   });
@@ -158,5 +160,39 @@ describe('NodesTab mesh', () => {
     const html = render(MESH_MODE);
     expect(html).toContain('data-testid="local-machine-login-required"');
     expect(html).not.toContain('data-testid="local-machine-direct-switch"');
+  });
+});
+
+describe('NodesTab HTTPS 分档', () => {
+  test('hub 兼节点：HTTPS 正常可用', () => {
+    localStatus = status({ role: 'hub,node', hubPublicUrl: 'https://hub.example' });
+    const html = render(MESH_MODE);
+    expect(html).toContain('data-testid="https-section"');
+    expect(html).toContain('data-testid="https-mode-chooser"');
+    expect(html).not.toContain('data-testid="https-node-role-hint"');
+  });
+
+  test('纯 node：卡片头还在，内容置灰并只留一句说明', () => {
+    localStatus = status({ role: 'node', hubUrl: 'https://hub.example' });
+    const html = render(MESH_MODE);
+    expect(html).toContain('data-testid="https-section"');
+    expect(html).toContain('nodes.https.title');
+    expect(html).toContain('data-testid="https-node-role-hint"');
+    expect(html).toContain('aria-disabled="true"');
+    expect(html).toContain('pointer-events-none opacity-60');
+    // 置灰时不渲染任何可操作的 TLS 表单
+    expect(html).not.toContain('data-testid="https-mode-chooser"');
+    expect(html).not.toContain('data-testid="https-status-header"');
+  });
+});
+
+describe('NodesTab 角色切换向导', () => {
+  test('standalone 默认不预选路径，两条路径都摆着', () => {
+    localStatus = status();
+    const html = render({ ...MESH_MODE, mode: 'none' });
+    expect(html).toContain('data-testid="hub-setup-wizard"');
+    expect(html).toContain('data-selected="false"');
+    expect(html).not.toContain('data-testid="setup-join-hub-form"');
+    expect(html).not.toContain('data-testid="setup-become-hub-form"');
   });
 });
