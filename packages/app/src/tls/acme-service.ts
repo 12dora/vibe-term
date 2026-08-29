@@ -134,24 +134,78 @@ async function resolveNameserverIps(nameservers: string[]): Promise<string[]> {
   return ips;
 }
 
+export const DOH_ENDPOINT = 'https://cloudflare-dns.com/dns-query';
+const RESOLVE_ATTEMPT_TIMEOUT_MS = 8_000;
+
+function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error(`${label} timed out after ${ms}ms`)), ms);
+    promise.then(
+      (value) => {
+        clearTimeout(timer);
+        resolve(value);
+      },
+      (error) => {
+        clearTimeout(timer);
+        reject(error);
+      }
+    );
+  });
+}
+
+/** UDP 53 在代理/受限网络下常不可达，先走 DNS-over-HTTPS（可过 HTTP 代理），再退到权威 NS 与系统解析器。 */
+export async function resolveTxtOverHttps(
+  hostname: string,
+  fetchImpl: typeof fetch = fetch,
+  endpoint = DOH_ENDPOINT
+): Promise<string[][]> {
+  const url = new URL(endpoint);
+  url.searchParams.set('name', hostname);
+  url.searchParams.set('type', 'TXT');
+  const response = await fetchImpl(url, {
+    headers: { accept: 'application/dns-json' },
+    signal: AbortSignal.timeout(RESOLVE_ATTEMPT_TIMEOUT_MS),
+  });
+  if (!response.ok) {
+    throw new Error(`doh ${response.status}`);
+  }
+  const body = (await response.json()) as { Answer?: Array<{ type: number; data: string }> };
+  return (body.Answer ?? [])
+    .filter((answer) => answer.type === 16)
+    .map((answer) => [answer.data.replace(/^"|"$/g, '').replace(/"\s*"/g, '')]);
+}
+
 export async function defaultResolveTxt(
   hostname: string,
   nameservers?: string[]
 ): Promise<string[][]> {
+  try {
+    return await resolveTxtOverHttps(hostname);
+  } catch {
+    // fall through to UDP resolvers
+  }
   if (nameservers && nameservers.length > 0) {
     try {
-      const ips = await resolveNameserverIps(nameservers);
+      const ips = await withTimeout(
+        resolveNameserverIps(nameservers),
+        RESOLVE_ATTEMPT_TIMEOUT_MS,
+        'nameserver lookup'
+      );
       if (ips.length > 0) {
-        const resolver = new Resolver();
+        const resolver = new Resolver({ timeout: 3_000, tries: 1 });
         resolver.setServers(ips);
-        return await resolver.resolveTxt(hostname);
+        return await withTimeout(
+          resolver.resolveTxt(hostname),
+          RESOLVE_ATTEMPT_TIMEOUT_MS,
+          'authoritative TXT lookup'
+        );
       }
     } catch {
       // fall through to the system resolver
     }
   }
-  const system = new Resolver();
-  return system.resolveTxt(hostname);
+  const system = new Resolver({ timeout: 3_000, tries: 1 });
+  return withTimeout(system.resolveTxt(hostname), RESOLVE_ATTEMPT_TIMEOUT_MS, 'system TXT lookup');
 }
 
 export async function waitForTxt(opts: {
@@ -263,6 +317,7 @@ export async function issue(input: AcmeIssueInput): Promise<AcmeIssuedMaterial> 
       email,
       termsOfServiceAgreed: true,
       challengePriority: [challengeType],
+      skipChallengeVerification: true,
       challengeCreateFn: async (authz, challenge, keyAuthorization) => {
         throwIfAborted(input.signal);
         if (challenge.type === 'http-01') {

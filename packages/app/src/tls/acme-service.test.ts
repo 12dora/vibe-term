@@ -411,3 +411,27 @@ describe('RenewalScheduler', () => {
     expect(RENEWAL_BACKOFF_MAX_MS).toBe(24 * 60 * 60 * 1000);
   });
 });
+
+describe('resolveTxtOverHttps', () => {
+  test('parses dns-json TXT answers and strips quotes', async () => {
+    const { resolveTxtOverHttps } = await import('./acme-service');
+    const fetchImpl = (async (input: string | URL | Request) => {
+      const url = new URL(String(input));
+      expect(url.searchParams.get('name')).toBe('_acme-challenge.example.com');
+      expect(url.searchParams.get('type')).toBe('TXT');
+      return Response.json({
+        Answer: [
+          { type: 16, data: '"abc"' },
+          { type: 5, data: 'cname.example.com.' },
+        ],
+      });
+    }) as typeof fetch;
+    expect(await resolveTxtOverHttps('_acme-challenge.example.com', fetchImpl)).toEqual([['abc']]);
+  });
+
+  test('rejects on non-2xx', async () => {
+    const { resolveTxtOverHttps } = await import('./acme-service');
+    const fetchImpl = (async () => new Response('x', { status: 502 })) as typeof fetch;
+    await expect(resolveTxtOverHttps('h', fetchImpl)).rejects.toThrow('doh 502');
+  });
+});
