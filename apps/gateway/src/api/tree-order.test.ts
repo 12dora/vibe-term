@@ -147,6 +147,30 @@ describe('PUT /api/devices/:id/tree-order', () => {
     expect(
       (await call('PUT', `/api/devices/${DEVICE_ID}/tree-order`, { panes: { '@1': 'x' } })).status
     ).toBe(400);
+    expect(
+      (await call('PUT', `/api/devices/${DEVICE_ID}/tree-order`, { windows: { '@1': [] } })).status
+    ).toBe(400);
+    expect(
+      (await call('PUT', `/api/devices/${DEVICE_ID}/tree-order`, { panes: ['%1'] })).status
+    ).toBe(400);
+    expect(
+      (await call('PUT', `/api/devices/${DEVICE_ID}/tree-order`, { extra: true })).status
+    ).toBe(400);
+  });
+
+  test('仅 panes 时写入 pane 排序且不碰 windows', async () => {
+    const { bridge, calls } = createFakeBridge();
+    registerTreeOverlayBridge(bridge);
+    setWindowOrder(DEVICE_ID, ['@keep']);
+
+    const { status, json } = await call('PUT', `/api/devices/${DEVICE_ID}/tree-order`, {
+      panes: { '@keep': ['%2', '%1'] },
+    });
+    expect(status).toBe(200);
+    expect(calls).not.toContain(`reorderWindows:${DEVICE_ID}`);
+    expect(calls).toContain(`reorderPanes:${DEVICE_ID}:@keep`);
+    expect(json.windows).toEqual(['@keep']);
+    expect((json.panes as Record<string, string[]>)['@keep']).toEqual(['%2', '%1']);
   });
 
   test('桥未注册返回 503', async () => {

@@ -34,40 +34,55 @@ export function normalizeTerminalShortcutsInput(
   }
 
   const seenIds = new Set<string>();
-  const items: TerminalShortcutItem[] = body.items.map((raw): TerminalShortcutItem => {
-    if (typeof raw !== 'object' || raw === null) {
-      throw new Error(t('apiError.terminalShortcutInvalid'));
-    }
-    const item = raw as Partial<TerminalShortcutItem>;
-    const id = typeof item.id === 'string' ? item.id.trim() : '';
-    if (!id || seenIds.has(id)) {
-      throw new Error(t('apiError.terminalShortcutInvalid'));
-    }
-    seenIds.add(id);
-
-    const label = typeof item.label === 'string' ? item.label : '';
-    if (label.length > MAX_TERMINAL_SHORTCUT_LABEL_LEN) {
-      throw new Error(t('apiError.terminalShortcutInvalid'));
-    }
-
-    if (item.type === 'send') {
-      const payload = typeof item.payload === 'string' ? item.payload : '';
-      if (!payload || payload.length > MAX_TERMINAL_SHORTCUT_PAYLOAD_LEN) {
-        throw new Error(t('apiError.terminalShortcutInvalid'));
-      }
-      return { id, type: 'send', label, payload };
-    }
-
-    if (item.type === 'action') {
-      const action = item.action;
-      if (!action || !TERMINAL_SHORTCUT_ACTIONS.includes(action)) {
-        throw new Error(t('apiError.terminalShortcutInvalid'));
-      }
-      return { id, type: 'action', label, action };
-    }
-
-    throw new Error(t('apiError.terminalShortcutInvalid'));
-  });
+  const items = body.items.map((raw) => normalizeShortcutItem(raw, seenIds));
 
   return { items, useIcons: body.useIcons };
+}
+
+function invalidShortcut(): never {
+  throw new Error(t('apiError.terminalShortcutInvalid'));
+}
+
+function normalizeSendShortcut(id: string, label: string, payload: unknown): TerminalShortcutItem {
+  const text = typeof payload === 'string' ? payload : '';
+  if (!text || text.length > MAX_TERMINAL_SHORTCUT_PAYLOAD_LEN) {
+    invalidShortcut();
+  }
+  return { id, type: 'send', label, payload: text };
+}
+
+function normalizeActionShortcut(
+  id: string,
+  label: string,
+  action: TerminalShortcutItem['action']
+): TerminalShortcutItem {
+  if (!action || !TERMINAL_SHORTCUT_ACTIONS.includes(action)) {
+    invalidShortcut();
+  }
+  return { id, type: 'action', label, action };
+}
+
+function normalizeShortcutItem(raw: unknown, seenIds: Set<string>): TerminalShortcutItem {
+  if (typeof raw !== 'object' || raw === null) {
+    invalidShortcut();
+  }
+  const item = raw as Partial<TerminalShortcutItem>;
+  const id = typeof item.id === 'string' ? item.id.trim() : '';
+  if (!id || seenIds.has(id)) {
+    invalidShortcut();
+  }
+  seenIds.add(id);
+
+  const label = typeof item.label === 'string' ? item.label : '';
+  if (label.length > MAX_TERMINAL_SHORTCUT_LABEL_LEN) {
+    invalidShortcut();
+  }
+
+  if (item.type === 'send') {
+    return normalizeSendShortcut(id, label, item.payload);
+  }
+  if (item.type === 'action') {
+    return normalizeActionShortcut(id, label, item.action);
+  }
+  invalidShortcut();
 }

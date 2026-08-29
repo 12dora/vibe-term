@@ -119,4 +119,30 @@ describe('normalizeTerminalShortcutsInput', () => {
       })
     ).toThrow();
   });
+
+  test('非对象 item 抛错', () => {
+    expect(() =>
+      normalizeTerminalShortcutsInput(asBody({ items: [null], useIcons: false }))
+    ).toThrow();
+    expect(() =>
+      normalizeTerminalShortcutsInput(asBody({ items: ['x'], useIcons: false }))
+    ).toThrow();
+  });
+
+  test('send payload 超长抛错', () => {
+    expect(() =>
+      normalizeTerminalShortcutsInput({
+        items: [{ id: 'a', type: 'send', label: 'a', payload: 'x'.repeat(257) }],
+        useIcons: false,
+      })
+    ).toThrow();
+  });
+
+  test('action 缺枚举抛错', () => {
+    expect(() =>
+      normalizeTerminalShortcutsInput(
+        asBody({ items: [{ id: 'a', type: 'action', label: '' }], useIcons: false })
+      )
+    ).toThrow();
+  });
 });

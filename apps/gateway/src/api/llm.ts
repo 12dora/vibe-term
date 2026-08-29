@@ -1,10 +1,10 @@
 import type {
   AgentLlmSettingsDto,
+  AgentSearchProvider,
   CreateLlmProviderRequest,
   LlmProviderDto,
   LlmProviderProtocol,
   SearchProviderInfoDto,
-  UpdateAgentLlmSettingsRequest,
 } from '@tmex/shared';
 import { getSearchProvider, getSearchProviders } from '../agent/tools/web';
 import { encrypt } from '../crypto';
@@ -38,7 +38,7 @@ import { type ApiRoute, route } from './route';
 const PROTOCOLS: readonly LlmProviderProtocol[] = ['openai-chat', 'openai-responses'];
 
 // 白名单由 registry 驱动：'none'（固定语义）+ 已注册 provider id
-function isValidSearchProvider(value: unknown): value is string {
+function isValidSearchProvider(value: unknown): value is AgentSearchProvider {
   if (typeof value !== 'string') {
     return false;
   }
@@ -278,56 +278,80 @@ async function handleGetSettings(): Promise<Response> {
   });
 }
 
+type SettingsUpdateDraft = {
+  searchProvider?: AgentSearchProvider;
+  defaultProviderId?: string | null;
+  defaultModelId?: string | null;
+  tavilyApiKey?: string;
+  braveApiKey?: string;
+};
+
+function parseNullableString(raw: unknown): FieldParseResult<string | null> {
+  if (raw !== null && typeof raw !== 'string') {
+    return { ok: false, error: t('apiError.invalidRequest') };
+  }
+  return { ok: true, value: raw };
+}
+
+function parseSettingsApiKey(raw: unknown): FieldParseResult<string> {
+  if (typeof raw !== 'string') return { ok: false, error: t('apiError.invalidRequest') };
+  return { ok: true, value: raw.trim() };
+}
+
+const SETTINGS_UPDATE_FIELDS: ConfigFieldSpec<unknown>[] = [
+  {
+    name: 'searchProvider',
+    parse: (raw) =>
+      isValidSearchProvider(raw)
+        ? { ok: true, value: raw }
+        : { ok: false, error: t('apiError.llmSearchProviderInvalid') },
+  },
+  {
+    name: 'defaultProviderId',
+    parse: (raw) => {
+      const parsed = parseNullableString(raw);
+      if (!parsed.ok) return parsed;
+      if (parsed.value !== null && !getLlmProviderById(parsed.value)) {
+        return { ok: false, error: t('apiError.llmDefaultProviderNotFound') };
+      }
+      return parsed;
+    },
+  },
+  { name: 'defaultModelId', parse: parseNullableString },
+  { name: 'tavilyApiKey', parse: parseSettingsApiKey },
+  { name: 'braveApiKey', parse: parseSettingsApiKey },
+];
+
+function parseUpdateSettingsFields(
+  raw: Record<string, unknown>
+): { ok: true; draft: SettingsUpdateDraft } | { ok: false; error: string } {
+  const parsed = applyConfigFields<SettingsUpdateDraft>(raw, SETTINGS_UPDATE_FIELDS, undefined);
+  if (!parsed.ok) return parsed;
+  return { ok: true, draft: parsed.fields };
+}
+
+async function encryptOptionalSecret(
+  value: string | undefined
+): Promise<string | null | undefined> {
+  if (value === undefined) return undefined;
+  return value ? await encrypt(value) : null;
+}
+
 async function handleUpdateSettings(req: Request): Promise<Response> {
   const raw = await readJsonObjectBody(req);
   if (!raw) {
     return json({ error: t('apiError.invalidRequest') }, 400);
   }
-  const body = raw as UpdateAgentLlmSettingsRequest;
-  const updates: Parameters<typeof updateAgentSettings>[0] = {};
 
-  if (body.searchProvider !== undefined) {
-    if (!isValidSearchProvider(body.searchProvider)) {
-      return json({ error: t('apiError.llmSearchProviderInvalid') }, 400);
-    }
-    updates.searchProvider = body.searchProvider;
-  }
+  const parsed = parseUpdateSettingsFields(raw);
+  if (!parsed.ok) return json({ error: parsed.error }, 400);
 
-  if (body.defaultProviderId !== undefined) {
-    if (body.defaultProviderId !== null && typeof body.defaultProviderId !== 'string') {
-      return json({ error: t('apiError.invalidRequest') }, 400);
-    }
-    if (body.defaultProviderId !== null && !getLlmProviderById(body.defaultProviderId)) {
-      return json({ error: t('apiError.llmDefaultProviderNotFound') }, 400);
-    }
-    updates.defaultProviderId = body.defaultProviderId;
-  }
-
-  if (body.defaultModelId !== undefined) {
-    if (body.defaultModelId !== null && typeof body.defaultModelId !== 'string') {
-      return json({ error: t('apiError.invalidRequest') }, 400);
-    }
-    updates.defaultModelId = body.defaultModelId;
-  }
-
-  // key 缺省表示不修改，空串表示清除
-  if (body.tavilyApiKey !== undefined) {
-    if (typeof body.tavilyApiKey !== 'string') {
-      return json({ error: t('apiError.invalidRequest') }, 400);
-    }
-    const value = body.tavilyApiKey.trim();
-    updates.tavilyApiKeyEnc = value ? await encrypt(value) : null;
-  }
-
-  if (body.braveApiKey !== undefined) {
-    if (typeof body.braveApiKey !== 'string') {
-      return json({ error: t('apiError.invalidRequest') }, 400);
-    }
-    const value = body.braveApiKey.trim();
-    updates.braveApiKeyEnc = value ? await encrypt(value) : null;
-  }
-
-  const settings = updateAgentSettings(updates);
+  const { tavilyApiKey, braveApiKey, ...rest } = parsed.draft;
+  const settings = updateAgentSettings({
+    ...rest,
+    tavilyApiKeyEnc: await encryptOptionalSecret(tavilyApiKey),
+    braveApiKeyEnc: await encryptOptionalSecret(braveApiKey),
+  });
   broadcastSettingsUpdate('llm');
   return json({ settings: toSettingsDto(settings) });
 }

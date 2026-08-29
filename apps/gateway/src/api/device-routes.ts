@@ -1,4 +1,4 @@
-import type { CreateDeviceRequest, Device, UpdateDeviceRequest } from '@tmex/shared';
+import type { CreateDeviceRequest, Device } from '@tmex/shared';
 import { v4 as uuidv4 } from 'uuid';
 import { encrypt } from '../crypto';
 import {
@@ -14,25 +14,91 @@ import { t } from '../i18n';
 import { connectionAlertNotifier } from '../push/connection-alerts';
 import { pushSupervisor } from '../push/supervisor';
 import { broadcastSettingsUpdate } from '../settings/broadcaster';
+import { type ConfigFieldSpec, applyConfigFields } from './config-field';
 import { json } from './http';
 import { type ApiRoute, route } from './route';
 import { handleDeviceTestConnection } from './test-connection';
 import { treeOrderRoutes } from './tree-order';
 
-function shouldReconnectPushSupervisor(existing: Device, updates: Partial<Device>): boolean {
-  if (updates.type !== undefined && updates.type !== existing.type) return true;
-  if (updates.host !== undefined && updates.host !== existing.host) return true;
-  if (updates.port !== undefined && updates.port !== existing.port) return true;
-  if (updates.username !== undefined && updates.username !== existing.username) return true;
-  if (updates.sshConfigRef !== undefined && updates.sshConfigRef !== existing.sshConfigRef)
-    return true;
-  if (updates.session !== undefined && updates.session !== existing.session) return true;
-  if (updates.authMode !== undefined && updates.authMode !== existing.authMode) return true;
-  if (updates.passwordEnc !== undefined) return true;
-  if (updates.privateKeyEnc !== undefined) return true;
-  if (updates.privateKeyPassphraseEnc !== undefined) return true;
+const RECONNECT_IF_CHANGED = [
+  'type',
+  'host',
+  'port',
+  'username',
+  'sshConfigRef',
+  'session',
+  'authMode',
+] as const satisfies readonly (keyof Device)[];
 
-  return false;
+const RECONNECT_IF_PRESENT = [
+  'passwordEnc',
+  'privateKeyEnc',
+  'privateKeyPassphraseEnc',
+] as const satisfies readonly (keyof Device)[];
+
+function shouldReconnectPushSupervisor(existing: Device, updates: Partial<Device>): boolean {
+  return (
+    RECONNECT_IF_CHANGED.some(
+      (key) => updates[key] !== undefined && updates[key] !== existing[key]
+    ) || RECONNECT_IF_PRESENT.some((key) => updates[key] !== undefined)
+  );
+}
+
+type DeviceUpdateDraft = Partial<Device> & {
+  password?: string;
+  privateKey?: string;
+  privateKeyPassphrase?: string;
+};
+
+function takePresent<T>(raw: unknown): { ok: true; value: T } {
+  return { ok: true, value: raw as T };
+}
+
+const DEVICE_UPDATE_FIELDS: ConfigFieldSpec<unknown>[] = [
+  { name: 'name', parse: takePresent },
+  { name: 'host', parse: takePresent },
+  { name: 'port', parse: takePresent },
+  { name: 'username', parse: takePresent },
+  { name: 'sshConfigRef', parse: takePresent },
+  { name: 'session', parse: takePresent },
+  {
+    name: 'defaultWorkingDir',
+    parse: (raw) => ({ ok: true, value: (raw as string).trim() || undefined }),
+  },
+  { name: 'authMode', parse: takePresent },
+  { name: 'password', parse: takePresent },
+  { name: 'privateKey', parse: takePresent },
+  { name: 'privateKeyPassphrase', parse: takePresent },
+];
+
+async function buildDeviceUpdates(body: Record<string, unknown>): Promise<Partial<Device>> {
+  const parsed = applyConfigFields<DeviceUpdateDraft>(body, DEVICE_UPDATE_FIELDS, undefined);
+  const draft = parsed.ok ? parsed.fields : {};
+  const { password, privateKey, privateKeyPassphrase, ...rest } = draft;
+  const updates: Partial<Device> = { ...rest };
+  if (password !== undefined) updates.passwordEnc = await encrypt(password);
+  if (privateKey !== undefined) updates.privateKeyEnc = await encrypt(privateKey);
+  if (privateKeyPassphrase !== undefined) {
+    updates.privateKeyPassphraseEnc = await encrypt(privateKeyPassphrase);
+  }
+  return updates;
+}
+
+async function applyDevicePushSideEffects(
+  id: string,
+  existing: Device,
+  updates: Partial<Device>
+): Promise<void> {
+  if (shouldReconnectPushSupervisor(existing, updates)) {
+    await pushSupervisor.reconnect(id);
+    return;
+  }
+  if (
+    updates.defaultWorkingDir !== undefined &&
+    updates.defaultWorkingDir !== existing.defaultWorkingDir
+  ) {
+    pushSupervisor.updateDefaultWorkingDir(id, updates.defaultWorkingDir);
+  }
 }
 
 function enrichDeviceWithRuntime(device: Device): Device & {
@@ -111,35 +177,12 @@ async function handleUpdateDevice(req: Request, id: string): Promise<Response> {
     return json({ error: t('apiError.deviceNotFound') }, 404);
   }
 
-  const body = (await req.json()) as UpdateDeviceRequest;
-  const updates: Partial<Device> = {};
-
-  if (body.name !== undefined) updates.name = body.name;
-  if (body.host !== undefined) updates.host = body.host;
-  if (body.port !== undefined) updates.port = body.port;
-  if (body.username !== undefined) updates.username = body.username;
-  if (body.sshConfigRef !== undefined) updates.sshConfigRef = body.sshConfigRef;
-  if (body.session !== undefined) updates.session = body.session;
-  if (body.defaultWorkingDir !== undefined)
-    updates.defaultWorkingDir = body.defaultWorkingDir.trim() || undefined;
-  if (body.authMode !== undefined) updates.authMode = body.authMode;
-  if (body.password !== undefined) updates.passwordEnc = await encrypt(body.password);
-  if (body.privateKey !== undefined) updates.privateKeyEnc = await encrypt(body.privateKey);
-  if (body.privateKeyPassphrase !== undefined) {
-    updates.privateKeyPassphraseEnc = await encrypt(body.privateKeyPassphrase);
-  }
+  const body = (await req.json()) as Record<string, unknown>;
+  const updates = await buildDeviceUpdates(body);
 
   updateDevice(id, updates);
   broadcastSettingsUpdate('devices');
-
-  if (shouldReconnectPushSupervisor(existing, updates)) {
-    await pushSupervisor.reconnect(id);
-  } else if (
-    updates.defaultWorkingDir !== undefined &&
-    updates.defaultWorkingDir !== existing.defaultWorkingDir
-  ) {
-    pushSupervisor.updateDefaultWorkingDir(id, updates.defaultWorkingDir);
-  }
+  await applyDevicePushSideEffects(id, existing, updates);
 
   const device = getDeviceById(id);
   return json({ device });

@@ -2,6 +2,7 @@ import { getDeviceById, getDeviceTreeOrder } from '../db';
 import { t } from '../i18n';
 import { getTreeOverlayBridge } from '../settings/broadcaster';
 import { isTmuxPaneId } from '../tmux-client/snapshot-format';
+import { type ConfigFieldSpec, applyConfigFields, parseStringArrayField } from './config-field';
 import { json } from './http';
 import { type ApiRoute, route } from './route';
 
@@ -10,6 +11,49 @@ import { type ApiRoute, route } from './route';
 
 function isStringArray(value: unknown): value is string[] {
   return Array.isArray(value) && value.every((item) => typeof item === 'string');
+}
+
+function isPaneOrderMap(value: unknown): value is Record<string, string[]> {
+  return (
+    typeof value === 'object' &&
+    value !== null &&
+    !Array.isArray(value) &&
+    Object.values(value).every(isStringArray)
+  );
+}
+
+type TreeOrderPatch = {
+  windows?: string[];
+  panes?: Record<string, string[]>;
+};
+
+const TREE_ORDER_FIELDS: ConfigFieldSpec<unknown>[] = [
+  {
+    name: 'windows',
+    parse: (raw) => parseStringArrayField(raw, t('apiError.invalidRequest')),
+  },
+  {
+    name: 'panes',
+    parse: (raw) =>
+      isPaneOrderMap(raw)
+        ? { ok: true, value: raw }
+        : { ok: false, error: t('apiError.invalidRequest') },
+  },
+];
+
+function parseTreeOrderPatch(
+  body: unknown
+): { ok: true; fields: TreeOrderPatch } | { ok: false; error: string } {
+  const parsed = applyConfigFields<TreeOrderPatch>(
+    body as Record<string, unknown>,
+    TREE_ORDER_FIELDS,
+    undefined
+  );
+  if (!parsed.ok) return parsed;
+  if (parsed.fields.windows === undefined && parsed.fields.panes === undefined) {
+    return { ok: false, error: t('apiError.invalidRequest') };
+  }
+  return { ok: true, fields: parsed.fields };
 }
 
 async function handleGetTreeOrder(deviceId: string): Promise<Response> {
@@ -33,41 +77,26 @@ async function handlePutTreeOrder(req: Request, deviceId: string): Promise<Respo
     return json({ error: t('apiError.deviceNotFound') }, 404);
   }
 
-  let body: { windows?: unknown; panes?: unknown };
+  let body: unknown;
   try {
-    body = (await req.json()) as { windows?: unknown; panes?: unknown };
+    body = await req.json();
   } catch {
     return json({ error: t('apiError.invalidRequest') }, 400);
   }
 
-  const hasWindows = body.windows !== undefined;
-  const hasPanes = body.panes !== undefined;
-  if (!hasWindows && !hasPanes) {
-    return json({ error: t('apiError.invalidRequest') }, 400);
-  }
-  if (hasWindows && !isStringArray(body.windows)) {
-    return json({ error: t('apiError.invalidRequest') }, 400);
-  }
-  if (
-    hasPanes &&
-    (typeof body.panes !== 'object' ||
-      body.panes === null ||
-      Array.isArray(body.panes) ||
-      !Object.values(body.panes).every(isStringArray))
-  ) {
-    return json({ error: t('apiError.invalidRequest') }, 400);
-  }
+  const parsed = parseTreeOrderPatch(body);
+  if (!parsed.ok) return json({ error: parsed.error }, 400);
 
   const bridge = getTreeOverlayBridge();
   if (!bridge) {
     return json({ error: 'settings service not ready' }, 503);
   }
 
-  if (hasWindows) {
-    bridge.reorderWindows(deviceId, body.windows as string[]);
+  if (parsed.fields.windows !== undefined) {
+    bridge.reorderWindows(deviceId, parsed.fields.windows);
   }
-  if (hasPanes) {
-    for (const [windowId, paneIds] of Object.entries(body.panes as Record<string, string[]>)) {
+  if (parsed.fields.panes !== undefined) {
+    for (const [windowId, paneIds] of Object.entries(parsed.fields.panes)) {
       bridge.reorderPanes(deviceId, windowId, paneIds);
     }
   }

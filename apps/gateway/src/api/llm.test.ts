@@ -364,6 +364,41 @@ describe('llm settings api', () => {
   test('patch settings rejects invalid search provider', async () => {
     const response = await callApi('PATCH', '/api/llm/settings', { searchProvider: 'google' });
     expect(response.status).toBe(400);
+    expect(((await response.json()) as { error: string }).error).toBeString();
+  });
+
+  test('patch settings rejects non-string default ids and search keys', async () => {
+    const cases: Array<Record<string, unknown>> = [
+      { defaultProviderId: 1 },
+      { defaultModelId: 1 },
+      { tavilyApiKey: 1 },
+      { braveApiKey: 1 },
+    ];
+    for (const body of cases) {
+      const response = await callApi('PATCH', '/api/llm/settings', body);
+      expect(response.status).toBe(400);
+      expect(((await response.json()) as { error: string }).error).toBeString();
+    }
+  });
+
+  test('patch settings: brave keys follow omit=keep, empty=clear', async () => {
+    const setResponse = await callApi('PATCH', '/api/llm/settings', {
+      braveApiKey: 'brave-secret',
+    });
+    expect(setResponse.status).toBe(200);
+    expect(
+      ((await setResponse.json()) as { settings: AgentLlmSettingsDto }).settings.hasBraveApiKey
+    ).toBe(true);
+
+    const keepResponse = await callApi('PATCH', '/api/llm/settings', { searchProvider: 'none' });
+    expect(
+      ((await keepResponse.json()) as { settings: AgentLlmSettingsDto }).settings.hasBraveApiKey
+    ).toBe(true);
+
+    const clearResponse = await callApi('PATCH', '/api/llm/settings', { braveApiKey: '  ' });
+    expect(
+      ((await clearResponse.json()) as { settings: AgentLlmSettingsDto }).settings.hasBraveApiKey
+    ).toBe(false);
   });
 
   test('get settings lists registered search providers', async () => {
