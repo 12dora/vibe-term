@@ -1,4 +1,5 @@
-// SSH 认证字段：认证方式选择 + 四种模式各自的输入项（agent 无额外输入）。
+// SSH 认证字段：认证方式选择 + 各模式自己的输入项（agent / auto 无额外输入；auto 由 gateway 依次
+// 尝试 agent、已保存私钥、密码，是历史 SSH 记录的缺省值）。
 
 import type { CreateDeviceRequest } from '@tmex/shared';
 import { Input } from '@tmex/ui/input';
@@ -19,6 +20,7 @@ function AuthModeSelect({ mode, values, onChange }: Omit<DeviceFieldsProps, 'att
     password: t('device.authPassword'),
     key: t('device.authKey'),
     agent: t('device.authAgent'),
+    auto: t('device.authAuto'),
     configRef: t('device.authConfigRef'),
   };
 
@@ -41,6 +43,7 @@ function AuthModeSelect({ mode, values, onChange }: Omit<DeviceFieldsProps, 'att
           <SelectItem value="password">{t('device.authPassword')}</SelectItem>
           <SelectItem value="key">{t('device.authKey')}</SelectItem>
           <SelectItem value="agent">{t('device.authAgent')}</SelectItem>
+          <SelectItem value="auto">{t('device.authAuto')}</SelectItem>
           <SelectItem value="configRef">{t('device.authConfigRef')}</SelectItem>
         </SelectContent>
       </Select>

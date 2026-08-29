@@ -84,6 +84,7 @@
       "authPassword": "パスワード",
       "authKey": "秘密鍵",
       "authAgent": "SSH Agent",
+      "authAuto": "自動（Agent → 保存済み秘密鍵 → パスワード）",
       "authConfigRef": "SSH Config",
       "sshConfigRefPlaceholder": "Host エイリアス（例: my-server）",
       "sshConfigRefHint": "ssh config の Host エイリアスを入力します。`ssh -G` で解決されます。config ファイルのパスではありません。",

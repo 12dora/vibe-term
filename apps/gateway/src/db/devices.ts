@@ -2,6 +2,7 @@ import { hostname } from 'node:os';
 import type { Device, DeviceRuntimeStatus } from '@tmex/shared';
 import { asc, count, desc, eq, max } from 'drizzle-orm';
 import { getDb as getOrmDb } from './client';
+import { removeDeviceFolderPlacementsForDevice } from './device-folders';
 import { getGatewayKv, setGatewayKv } from './kv';
 import { toDevice } from './mappers';
 import { deviceRuntimeStatus, deviceTreeOrder, devices, siteSettings } from './schema';
@@ -165,9 +166,13 @@ export function updateDevice(id: string, updates: Partial<Device>): void {
   orm.update(devices).set(setValues).where(eq(devices.id, id)).run();
 }
 
+/** 删设备与清掉它在文件夹里的 placement 同一事务，避免留下孤儿 placement */
 export function deleteDevice(id: string): void {
   const orm = getOrmDb();
-  orm.delete(devices).where(eq(devices.id, id)).run();
+  orm.transaction((tx) => {
+    tx.delete(devices).where(eq(devices.id, id)).run();
+    removeDeviceFolderPlacementsForDevice(id, tx);
+  });
 }
 
 export function getDeviceTreeOrder(deviceId: string): DeviceTreeOrderRecord {

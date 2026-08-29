@@ -7,7 +7,6 @@ import {
   getAllDevices,
   getDeviceById,
   getDeviceRuntimeStatus,
-  removeDeviceFolderPlacementsForDevice,
   reorderDevices,
   updateDevice,
 } from '../db';
@@ -155,8 +154,8 @@ async function handleDeleteDevice(id: string): Promise<Response> {
   }
 
   deleteDevice(id);
-  removeDeviceFolderPlacementsForDevice(id);
   broadcastSettingsUpdate('devices');
+  broadcastSettingsUpdate('device-folders');
   pushSupervisor.remove(id);
   connectionAlertNotifier.clear(id);
   return json({ success: true });

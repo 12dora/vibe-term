@@ -217,10 +217,11 @@ export function replaceDeviceFolderLayout(
   return getDeviceFolderLayout();
 }
 
-export function removeDeviceFolderPlacementsForDevice(deviceId: string): void {
-  const orm = getOrmDb();
-  orm
-    .delete(deviceFolderPlacements)
+export function removeDeviceFolderPlacementsForDevice(
+  deviceId: string,
+  db: Pick<ReturnType<typeof getOrmDb>, 'delete'> = getOrmDb()
+): void {
+  db.delete(deviceFolderPlacements)
     .where(
       and(
         eq(deviceFolderPlacements.nodeId, DEVICE_FOLDER_SELF_NODE_ID),

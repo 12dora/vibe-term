@@ -17,10 +17,10 @@ export type DeviceFormValues = {
   privateKeyPassphrase: string;
 };
 
-// 下拉里没有 `auto` 这一项：gateway 的 ssh-auth 把 auto 与 agent 同等对待，
-// 归一到 agent 才能保证编辑历史 SSH 设备时下拉总有匹配项（否则显示空白）。
+// SSH 的 auto（依次尝试 agent / 已保存私钥 / 密码）与 agent 语义不同，必须原样保留；
+// 只有历史记录缺失 authMode 时才退到 agent，保证下拉总有匹配项。
 export function normalizeSshAuthMode(authMode: AuthMode | undefined | null): AuthMode {
-  return authMode && authMode !== 'auto' ? authMode : 'agent';
+  return authMode ?? 'agent';
 }
 
 function normalizeText(value: string): string | undefined {

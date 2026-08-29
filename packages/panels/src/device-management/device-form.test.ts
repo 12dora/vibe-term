@@ -53,8 +53,8 @@ function sshValues(overrides: Partial<DeviceFormValues> = {}): DeviceFormValues 
 }
 
 describe('normalizeSshAuthMode', () => {
-  test('auto / 缺失都归一为 agent', () => {
-    expect(normalizeSshAuthMode('auto')).toBe('agent');
+  test('auto 原样保留，缺失归一为 agent', () => {
+    expect(normalizeSshAuthMode('auto')).toBe('auto');
     expect(normalizeSshAuthMode(undefined)).toBe('agent');
     expect(normalizeSshAuthMode(null)).toBe('agent');
   });
@@ -74,8 +74,10 @@ describe('createDefaultFormValues', () => {
     expect(values.session).toBe('tmex');
   });
 
-  test('编辑 SSH 设备时 authMode=auto 归一为 agent，保证下拉有匹配项', () => {
-    expect(createDefaultFormValues(sshDevice({ authMode: 'auto' })).authMode).toBe('agent');
+  test('编辑 SSH 设备时 authMode=auto 原样保留（下拉有对应选项），保存仍提交 auto', () => {
+    const values = createDefaultFormValues(sshDevice({ authMode: 'auto' }));
+    expect(values.authMode).toBe('auto');
+    expect(buildUpdatePayload(values).authMode).toBe('auto');
   });
 
   test('编辑 SSH 设备保留显式的认证方式', () => {

@@ -84,6 +84,7 @@
       "authPassword": "密码",
       "authKey": "私钥",
       "authAgent": "SSH Agent",
+      "authAuto": "自动（Agent → 已保存私钥 → 密码）",
       "authConfigRef": "SSH Config",
       "sshConfigRefPlaceholder": "Host 别名，如 my-server",
       "sshConfigRefHint": "填 ssh config 里的 Host 别名，经 `ssh -G` 解析；不是 config 文件路径。",

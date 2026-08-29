@@ -84,6 +84,7 @@
       "authPassword": "Password",
       "authKey": "Private Key",
       "authAgent": "SSH Agent",
+      "authAuto": "Auto (agent, then saved key, then password)",
       "authConfigRef": "SSH Config",
       "sshConfigRefPlaceholder": "Host alias, e.g. my-server",
       "sshConfigRefHint": "A Host alias from your ssh config, resolved via `ssh -G`. Not the path to the config file.",
