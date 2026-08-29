@@ -50,6 +50,67 @@ describe('WebSocketServer client diagnostics', () => {
     expect(ws.data.borshState.clientImpl).toBe(clientImpl.slice(0, 64));
     server.handleClose(ws);
   });
+
+  test('rejects non-HELLO frames before negotiation', async () => {
+    const server = new WebSocketServer();
+    const ws = createBorshTestWs();
+    const payload = wsBorsh.encodePayload(wsBorsh.schema.PingPongSchema, {
+      nonce: 1,
+      timeMs: 1n,
+    });
+
+    await server.handleBorshMessage(ws, wsBorsh.KIND_PING, 4, payload);
+
+    expect(ws.data.borshState.negotiated).toBe(false);
+    expect(ws.sent).toHaveLength(1);
+    const envelope = wsBorsh.decodeEnvelope(ws.sent[0]);
+    expect(envelope.kind).toBe(wsBorsh.KIND_ERROR);
+    const error = wsBorsh.decodePayload(wsBorsh.schema.ErrorSchema, envelope.payload);
+    expect(error.code).toBe(wsBorsh.ERROR_INVALID_FRAME);
+    expect(error.message).toBe('HELLO required');
+    expect(error.refSeq).toBe(4);
+    expect(error.retryable).toBe(false);
+  });
+
+  test('PING after HELLO replies with PONG', async () => {
+    const server = new WebSocketServer();
+    const ws = createBorshTestWs();
+    const hello = wsBorsh.encodePayload(wsBorsh.schema.HelloC2SSchema, {
+      clientImpl: 'tmex-fe',
+      clientVersion: 'test',
+      maxFrameBytes: wsBorsh.DEFAULT_MAX_FRAME_BYTES,
+      supportsCompression: false,
+      supportsDiffSnapshot: false,
+    });
+    server.handleOpen(ws);
+    await server.handleBorshMessage(ws, wsBorsh.KIND_HELLO_C2S, 1, hello);
+    ws.sent.length = 0;
+
+    const ping = wsBorsh.encodePayload(wsBorsh.schema.PingPongSchema, {
+      nonce: 99,
+      timeMs: 50n,
+    });
+    await server.handleBorshMessage(ws, wsBorsh.KIND_PING, 2, ping);
+
+    expect(ws.sent).toHaveLength(1);
+    const envelope = wsBorsh.decodeEnvelope(ws.sent[0]);
+    expect(envelope.kind).toBe(wsBorsh.KIND_PONG);
+    const pong = wsBorsh.decodePayload(wsBorsh.schema.PingPongSchema, envelope.payload);
+    expect(pong.nonce).toBe(99);
+    expect(pong.timeMs).toBe(50n);
+    server.handleClose(ws);
+  });
+});
+
+describe('WebSocketServer canonical session bookkeeping', () => {
+  test('getOrCreateCanonicalSession reuses the per-client session', () => {
+    const server = new WebSocketServer();
+    const ws = createBorshTestWs();
+    const first = server.getOrCreateCanonicalSession(ws);
+    const second = server.getOrCreateCanonicalSession(ws);
+    expect(second).toBe(first);
+    server.handleClose(ws);
+  });
 });
 
 describe('WebSocketServer connection entry dedup', () => {
