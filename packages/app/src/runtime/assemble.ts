@@ -32,6 +32,7 @@ import type { GatewayRuntime } from '../../../../apps/gateway/src/runtime';
 import { resolveInstallDir as resolveGatewayInstallDir } from '../../../../apps/gateway/src/system/install-info';
 import { TlsConfigStore } from '../../../../apps/gateway/src/tls/tls-config-store';
 import type { GatewaySession } from '../../../../apps/gateway/src/ws/gateway-session';
+import { readNodeEnv } from '../../../../packages/shared/src/env/load-env';
 import { disableDirect, enableDirect } from '../commands/direct';
 import { performHubJoin } from '../commands/hub';
 import { createAuthContextFromDb } from '../lib/local-auth';
@@ -49,7 +50,6 @@ import { serveFrontend as defaultServeFrontend } from './serve-frontend';
 import { handleSetupRequest } from './setup-routes';
 import { SETUP_RESTART_DELAY_MS, resolveSetupEnvPath } from './setup-service';
 import { createTlsRoutes } from './tls-routes';
-import { readNodeEnv } from '../../../../packages/shared/src/env/load-env';
 
 export const SHUTDOWN_TIMEOUT_MS = 20_000;
 
@@ -166,6 +166,7 @@ export async function assembleTmex(opts: AssembleTmexOptions = {}): Promise<Asse
     const loadNative: LoadNative =
       opts.loadNative ??
       (async () => {
+        if (process.env.TMEX_DIRECT_ENABLED === 'false') return null;
         if (!nativeDir) return null;
         return loadNodeDatachannel({ nativeDir });
       });
@@ -191,7 +192,10 @@ export async function assembleTmex(opts: AssembleTmexOptions = {}): Promise<Asse
       tlsInfo: async () => {
         const service = tlsSlot.service;
         if (!service) return { caFingerprint: null, caPem: null };
-        return { caFingerprint: (await service.status()).caFingerprint, caPem: await service.caPem() };
+        return {
+          caFingerprint: (await service.status()).caFingerprint,
+          caPem: await service.caPem(),
+        };
       },
     });
   }
@@ -220,7 +224,6 @@ export async function assembleTmex(opts: AssembleTmexOptions = {}): Promise<Asse
       process.exit(0);
     }, SETUP_RESTART_DELAY_MS);
   };
-
 
   const routeDeps: LocalRouteDeps = {
     roles,

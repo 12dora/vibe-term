@@ -4,7 +4,7 @@
 // （baseUrl 为空），不加 `/n/<id>` 前缀。
 
 import { type ApiClient, defaultApiClient } from '../client';
-import type { LocalDirectResponse, LocalStatusResponse } from './types';
+import type { LocalDirectAction, LocalDirectResponse, LocalStatusResponse } from './types';
 
 /** 契约错误体 `{ error: { code, message } }` 解出来的类型化错误。 */
 export class LocalApiError extends Error {
@@ -48,12 +48,12 @@ export class LocalApi {
     return (await res.json()) as LocalStatusResponse;
   }
 
-  /** `POST /api/local/direct`：下载 / 删除原生直连插件。 */
-  async setDirect(enable: boolean): Promise<LocalDirectResponse> {
+  /** `POST /api/local/direct`：安装 / 移除 / 启用 / 停用原生直连插件。 */
+  async setDirect(action: LocalDirectAction): Promise<LocalDirectResponse> {
     const res = await this.client.fetch('/api/local/direct', {
       method: 'POST',
       headers: JSON_HEADERS,
-      body: JSON.stringify({ enable }),
+      body: JSON.stringify({ action }),
     });
     if (!res.ok) throw await readError(res, 'direct_failed');
     return (await res.json()) as LocalDirectResponse;

@@ -67,11 +67,12 @@ export async function handleLocalRequest(
     return jsonErr('method_not_allowed', 'POST required', 405);
   }
   const body = await readJsonBody(req);
-  if (!body || typeof body.enable !== 'boolean') {
-    return jsonErr('invalid_body', 'body must include boolean enable', 400);
+  const action = body?.action;
+  if (action !== 'install' && action !== 'remove' && action !== 'enable' && action !== 'disable') {
+    return jsonErr('invalid_action', 'action must be install, remove, enable, or disable', 400);
   }
   try {
-    const result: DirectSetResult = await setLocalDirect(body.enable, deps);
+    const result: DirectSetResult = await setLocalDirect(action, deps);
     return jsonOk(result);
   } catch (error) {
     return mapError(error);

@@ -26,6 +26,7 @@ function failAuth(): AuthenticateResult {
 }
 
 function deps(overrides: Partial<LocalRouteDeps> = {}): LocalRouteDeps {
+  const env: Record<string, string> = {};
   const base: SetupServiceDeps = {
     roles: { hub: false, node: false },
     nodeEnv: 'test',
@@ -38,6 +39,11 @@ function deps(overrides: Partial<LocalRouteDeps> = {}): LocalRouteDeps {
     platform: 'darwin-arm64',
     hubUrl: null,
     hubPublicUrl: null,
+    readEnvFile: async () => ({ ...env }),
+    writeEnvFile: async (_path, values) => {
+      for (const key of Object.keys(env)) delete env[key];
+      Object.assign(env, values);
+    },
   };
   return {
     ...base,
@@ -66,6 +72,7 @@ describe('GET /api/local/status', () => {
       direct: {
         supported: true,
         installed: false,
+        enabled: true,
         capable: false,
         version: null,
         platform: 'darwin-arm64',
@@ -129,6 +136,30 @@ describe('GET /api/local/status', () => {
     expect((body as { role: string }).role).toBe('hub,node');
   });
 
+  test('enabled is false when env says false even if addon is installed', async () => {
+    const { status, body } = await jsonOf(
+      await handleLocalRequest(
+        new Request('http://127.0.0.1/api/local/status'),
+        deps({
+          readNativeManifest: async () => ({ version: '1' }),
+          rtcCapable: true,
+          readEnvFile: async () => ({ TMEX_DIRECT_ENABLED: 'false' }),
+        })
+      )
+    );
+    expect(status).toBe(200);
+    expect(
+      (body as { direct: { enabled: boolean; installed: boolean; capable: boolean } }).direct
+    ).toEqual({
+      supported: true,
+      installed: true,
+      enabled: false,
+      capable: true,
+      version: '1',
+      platform: 'darwin-arm64',
+    });
+  });
+
   test('unrelated paths return null', async () => {
     expect(
       await handleLocalRequest(new Request('http://127.0.0.1/api/devices'), deps())
@@ -137,13 +168,13 @@ describe('GET /api/local/status', () => {
 });
 
 describe('POST /api/local/direct', () => {
-  test('enable success returns restartRequired', async () => {
+  test('install success returns enabled and restartRequired', async () => {
     const { status, body } = await jsonOf(
       await handleLocalRequest(
         new Request('http://127.0.0.1/api/local/direct', {
           method: 'POST',
           headers: { 'content-type': 'application/json' },
-          body: JSON.stringify({ enable: true }),
+          body: JSON.stringify({ action: 'install' }),
         }),
         deps({
           enableDirect: async () => ({
@@ -159,9 +190,141 @@ describe('POST /api/local/direct', () => {
     expect(body).toEqual({
       ok: true,
       installed: true,
+      enabled: true,
       capable: false,
       restartRequired: true,
     });
+  });
+
+  test('remove deletes native and returns enabled false', async () => {
+    let removed = 0;
+    const { status, body } = await jsonOf(
+      await handleLocalRequest(
+        new Request('http://127.0.0.1/api/local/direct', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ action: 'remove' }),
+        }),
+        deps({
+          disableDirect: async () => {
+            removed += 1;
+          },
+        })
+      )
+    );
+    expect(status).toBe(200);
+    expect(removed).toBe(1);
+    expect(body).toEqual({
+      ok: true,
+      installed: false,
+      enabled: false,
+      capable: false,
+      restartRequired: true,
+    });
+  });
+
+  test('enable without install is 409 direct_not_installed', async () => {
+    const { status, body } = await jsonOf(
+      await handleLocalRequest(
+        new Request('http://127.0.0.1/api/local/direct', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ action: 'enable' }),
+        }),
+        deps({ readNativeManifest: async () => null })
+      )
+    );
+    expect(status).toBe(409);
+    expect((body as { error: { code: string } }).error.code).toBe('direct_not_installed');
+  });
+
+  test('enable when installed writes env without downloading', async () => {
+    let downloaded = 0;
+    const { status, body } = await jsonOf(
+      await handleLocalRequest(
+        new Request('http://127.0.0.1/api/local/direct', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ action: 'enable' }),
+        }),
+        deps({
+          readNativeManifest: async () => ({ version: '1' }),
+          enableDirect: async () => {
+            downloaded += 1;
+            return { ok: true, platformId: 'darwin-arm64', version: '1', addonPath: 'x' };
+          },
+        })
+      )
+    );
+    expect(status).toBe(200);
+    expect(downloaded).toBe(0);
+    expect(body).toEqual({
+      ok: true,
+      installed: true,
+      enabled: true,
+      capable: false,
+      restartRequired: true,
+    });
+  });
+
+  test('disable writes enabled false without removing native', async () => {
+    let removed = 0;
+    const { status, body } = await jsonOf(
+      await handleLocalRequest(
+        new Request('http://127.0.0.1/api/local/direct', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ action: 'disable' }),
+        }),
+        deps({
+          readNativeManifest: async () => ({ version: '1' }),
+          disableDirect: async () => {
+            removed += 1;
+          },
+        })
+      )
+    );
+    expect(status).toBe(200);
+    expect(removed).toBe(0);
+    expect(body).toEqual({
+      ok: true,
+      installed: true,
+      enabled: false,
+      capable: false,
+      restartRequired: true,
+    });
+  });
+
+  test('legacy { enable } body is 400 invalid_action', async () => {
+    const { status, body } = await jsonOf(
+      await handleLocalRequest(
+        new Request('http://127.0.0.1/api/local/direct', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ enable: true }),
+        }),
+        deps()
+      )
+    );
+    expect(status).toBe(400);
+    expect((body as { error: { code: string } }).error.code).toBe('invalid_action');
+  });
+
+  test('missing or unknown action is 400 invalid_action', async () => {
+    for (const payload of [null, {}, { action: 'toggle' }, { action: 1 }]) {
+      const { status, body } = await jsonOf(
+        await handleLocalRequest(
+          new Request('http://127.0.0.1/api/local/direct', {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: payload === null ? 'null' : JSON.stringify(payload),
+          }),
+          deps()
+        )
+      );
+      expect(status).toBe(400);
+      expect((body as { error: { code: string } }).error.code).toBe('invalid_action');
+    }
   });
 
   test('unsupported is 409', async () => {
@@ -170,7 +333,7 @@ describe('POST /api/local/direct', () => {
         new Request('http://127.0.0.1/api/local/direct', {
           method: 'POST',
           headers: { 'content-type': 'application/json' },
-          body: JSON.stringify({ enable: true }),
+          body: JSON.stringify({ action: 'install' }),
         }),
         deps({ isDirectSupported: () => false, platform: 'linux-riscv64' })
       )
@@ -190,7 +353,7 @@ describe('POST /api/local/direct', () => {
         new Request('http://127.0.0.1/api/local/direct', {
           method: 'POST',
           headers: { 'content-type': 'application/json' },
-          body: JSON.stringify({ enable: true }),
+          body: JSON.stringify({ action: 'install' }),
         }),
         deps({
           enableDirect: async () => ({ ok: false, kind: 'download', reason: 'HTTP 503' }),
@@ -210,7 +373,7 @@ describe('POST /api/local/direct', () => {
         new Request('http://127.0.0.1/api/local/direct', {
           method: 'POST',
           headers: { 'content-type': 'application/json' },
-          body: JSON.stringify({ enable: true }),
+          body: JSON.stringify({ action: 'install' }),
         }),
         deps({
           enableDirect: async () => ({
@@ -234,7 +397,7 @@ describe('POST /api/local/direct', () => {
         new Request('http://127.0.0.1/api/local/direct', {
           method: 'POST',
           headers: { 'content-type': 'application/json' },
-          body: JSON.stringify({ enable: false }),
+          body: JSON.stringify({ action: 'remove' }),
         }),
         deps({
           roles: { hub: false, node: true },

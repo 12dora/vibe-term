@@ -51,6 +51,7 @@ export function buildAppEnvValues(input: AppEnvInput): Record<string, string> {
     TMEX_MASTER_KEY: input.masterKey,
     TMEX_BASE_URL: formatHttpEndpoint(input.host, input.port),
     TMEX_SITE_NAME: 'tmex',
+    TMEX_DIRECT_ENABLED: 'true',
     ...hubEnvDefaults(input),
   };
 }

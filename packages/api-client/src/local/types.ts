@@ -5,6 +5,7 @@ export type LocalRole = 'standalone' | 'node' | 'hub,node';
 export interface LocalDirectStatus {
   supported: boolean;
   installed: boolean;
+  enabled: boolean;
   capable: boolean;
   version: string | null;
   platform: string;
@@ -23,9 +24,12 @@ export interface LocalStatusResponse {
   tls: LocalTlsStatus;
 }
 
+export type LocalDirectAction = 'install' | 'remove' | 'enable' | 'disable';
+
 export interface LocalDirectResponse {
   ok: true;
   installed: boolean;
+  enabled: boolean;
   capable: boolean;
   restartRequired: boolean;
 }

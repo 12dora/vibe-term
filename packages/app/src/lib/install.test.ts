@@ -42,6 +42,7 @@ describe('buildAppEnvValues', () => {
     expect(values.TMEX_PEER_PORT).toBe('39001');
     expect(values.TMEX_HUB_PUBLIC_URL).toBe('https://hub.example');
     expect(values.TMEX_STUN_SERVERS).toBe('stun:stun.l.google.com:19302');
+    expect(values.TMEX_DIRECT_ENABLED).toBe('true');
   });
 });
 

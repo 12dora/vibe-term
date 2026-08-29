@@ -156,6 +156,7 @@ describe('becomeHub', () => {
     expect(result.direct).toBe('enabled');
     expect(result.directError).toBeNull();
     expect(enabled).toBe(1);
+    expect((await readEnvFile(deps.envPath)).TMEX_DIRECT_ENABLED).toBe('true');
   });
 
   test('direct enable failure is non-fatal', async () => {
@@ -442,6 +443,33 @@ describe('joinHub', () => {
     expect(restarts).toEqual([1]);
   });
 
+  test('directEnable true installs addon and writes TMEX_DIRECT_ENABLED', async () => {
+    const deps = await baseDeps({
+      performHubJoin: async () => ({
+        userId: 'uid-1',
+        username: 'bob',
+        hubUrl: 'https://hub.example.com',
+      }),
+      enableDirect: async () => ({
+        ok: true as const,
+        platformId: 'darwin-arm64',
+        version: '1',
+        addonPath: '',
+      }),
+    });
+    const result = await joinHub(
+      {
+        hubUrl: 'https://hub.example.com',
+        token: 'token-value',
+        name: 'studio',
+        directEnable: true,
+      },
+      deps
+    );
+    expect(result.direct).toBe('enabled');
+    expect((await readEnvFile(deps.envPath)).TMEX_DIRECT_ENABLED).toBe('true');
+  });
+
   test('join env rename failure after commit returns 500 recovery and does not restart', async () => {
     const restarts: number[] = [];
     const deps = await baseDeps({
@@ -718,6 +746,7 @@ describe('direct status and setLocalDirect', () => {
       direct: {
         supported: true,
         installed: true,
+        enabled: true,
         capable: true,
         version: '0.33.1',
         platform: 'darwin-arm64',
@@ -734,10 +763,23 @@ describe('direct status and setLocalDirect', () => {
     const status = await getLocalStatus(deps);
     expect(status.role).toBe('standalone');
     expect(status.direct.installed).toBe(true);
+    expect(status.direct.enabled).toBe(true);
     expect(status.direct.capable).toBe(false);
   });
 
-  test('setLocalDirect enable success includes restartRequired', async () => {
+  test('getLocalStatus enabled is false when TMEX_DIRECT_ENABLED is false', async () => {
+    const deps = await baseDeps({
+      readNativeManifest: async () => ({ version: '0.33.1' }),
+      rtcCapable: true,
+    });
+    await writeFile(deps.envPath, 'TMEX_DIRECT_ENABLED=false\n', 'utf8');
+    const status = await getLocalStatus(deps);
+    expect(status.direct.enabled).toBe(false);
+    expect(status.direct.installed).toBe(true);
+    expect(status.direct.capable).toBe(true);
+  });
+
+  test('setLocalDirect install success includes enabled and restartRequired', async () => {
     const deps = await baseDeps({
       enableDirect: async () =>
         ({
@@ -749,12 +791,14 @@ describe('direct status and setLocalDirect', () => {
       readNativeManifest: async () => ({ version: '1' }),
       rtcCapable: false,
     });
-    expect(await setLocalDirect(true, deps)).toEqual({
+    expect(await setLocalDirect('install', deps)).toEqual({
       ok: true,
       installed: true,
+      enabled: true,
       capable: false,
       restartRequired: true,
     });
+    expect((await readEnvFile(deps.envPath)).TMEX_DIRECT_ENABLED).toBe('true');
   });
 
   test('setLocalDirect unsupported is 409', async () => {
@@ -762,7 +806,7 @@ describe('direct status and setLocalDirect', () => {
       isDirectSupported: () => false,
       platform: 'linux-riscv64',
     });
-    await expect(setLocalDirect(true, deps)).rejects.toMatchObject({
+    await expect(setLocalDirect('install', deps)).rejects.toMatchObject({
       code: 'direct_unsupported',
       httpStatus: 409,
     });
@@ -772,7 +816,7 @@ describe('direct status and setLocalDirect', () => {
     const deps = await baseDeps({
       enableDirect: async () => ({ ok: false, kind: 'download', reason: 'HTTP 503' }),
     });
-    await expect(setLocalDirect(true, deps)).rejects.toMatchObject({
+    await expect(setLocalDirect('install', deps)).rejects.toMatchObject({
       code: 'direct_download_failed',
       httpStatus: 502,
     });
@@ -795,7 +839,7 @@ describe('direct status and setLocalDirect', () => {
             ...(item.kind === 'unsupported' ? { unsupported: true } : {}),
           }) satisfies DirectEnableResult,
       });
-      await expect(setLocalDirect(true, deps)).rejects.toMatchObject({
+      await expect(setLocalDirect('install', deps)).rejects.toMatchObject({
         code: item.code,
         httpStatus: item.status,
       });
@@ -835,7 +879,7 @@ describe('direct status and setLocalDirect', () => {
       isDirectSupported: () => true,
       directTimeoutMs: 40,
     });
-    await expect(setLocalDirect(true, deps)).rejects.toMatchObject({
+    await expect(setLocalDirect('install', deps)).rejects.toMatchObject({
       code: 'direct_download_failed',
       httpStatus: 502,
     });
@@ -843,7 +887,7 @@ describe('direct status and setLocalDirect', () => {
     expect(await pathExists(join(deps.installDir, 'native'))).toBe(false);
   });
 
-  test('setLocalDirect disable maps to installed false and restartRequired', async () => {
+  test('setLocalDirect remove maps to installed false, enabled false, and restartRequired', async () => {
     let disabled = 0;
     const deps = await baseDeps({
       disableDirect: async () => {
@@ -852,12 +896,72 @@ describe('direct status and setLocalDirect', () => {
       readNativeManifest: async () => null,
       rtcCapable: true,
     });
-    expect(await setLocalDirect(false, deps)).toEqual({
+    expect(await setLocalDirect('remove', deps)).toEqual({
       ok: true,
       installed: false,
+      enabled: false,
       capable: true,
       restartRequired: true,
     });
     expect(disabled).toBe(1);
+    expect((await readEnvFile(deps.envPath)).TMEX_DIRECT_ENABLED).toBe('false');
+  });
+
+  test('setLocalDirect enable requires install and writes TMEX_DIRECT_ENABLED=true', async () => {
+    let downloaded = 0;
+    const deps = await baseDeps({
+      enableDirect: async () => {
+        downloaded += 1;
+        return { ok: true, platformId: 'darwin-arm64', version: '1', addonPath: 'x' };
+      },
+      readNativeManifest: async () => ({ version: '1' }),
+      rtcCapable: true,
+    });
+    expect(await setLocalDirect('enable', deps)).toEqual({
+      ok: true,
+      installed: true,
+      enabled: true,
+      capable: true,
+      restartRequired: true,
+    });
+    expect(downloaded).toBe(0);
+    expect((await readEnvFile(deps.envPath)).TMEX_DIRECT_ENABLED).toBe('true');
+  });
+
+  test('setLocalDirect enable without install is 409 direct_not_installed', async () => {
+    let downloaded = 0;
+    const deps = await baseDeps({
+      enableDirect: async () => {
+        downloaded += 1;
+        return { ok: true, platformId: 'darwin-arm64', version: '1', addonPath: 'x' };
+      },
+      readNativeManifest: async () => null,
+    });
+    await expect(setLocalDirect('enable', deps)).rejects.toMatchObject({
+      code: 'direct_not_installed',
+      httpStatus: 409,
+    });
+    expect(downloaded).toBe(0);
+    expect((await readEnvFile(deps.envPath)).TMEX_DIRECT_ENABLED).toBeUndefined();
+  });
+
+  test('setLocalDirect disable writes env false without removing native', async () => {
+    let removed = 0;
+    const deps = await baseDeps({
+      disableDirect: async () => {
+        removed += 1;
+      },
+      readNativeManifest: async () => ({ version: '1' }),
+      rtcCapable: true,
+    });
+    expect(await setLocalDirect('disable', deps)).toEqual({
+      ok: true,
+      installed: true,
+      enabled: false,
+      capable: true,
+      restartRequired: true,
+    });
+    expect(removed).toBe(0);
+    expect((await readEnvFile(deps.envPath)).TMEX_DIRECT_ENABLED).toBe('false');
   });
 });

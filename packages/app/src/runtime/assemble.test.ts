@@ -5,6 +5,7 @@ import { createMigratedAuthDb } from '../../../../apps/gateway/src/auth/test-db'
 import type { HubRuntime } from '../../../../apps/gateway/src/hub';
 import { MESH_GATEWAY_WS_KIND } from '../../../../apps/gateway/src/mesh/mesh-deps';
 import type { MeshRuntime } from '../../../../apps/gateway/src/mesh/mesh-runtime';
+import type { LoadNative } from '../../../../apps/gateway/src/mesh/rtc';
 import type { GatewayRuntime } from '../../../../apps/gateway/src/runtime';
 import { TlsConfigStore } from '../../../../apps/gateway/src/tls/tls-config-store';
 import { createCa, issueLeaf, parseCertificate } from '../tls/cert-authority';
@@ -105,6 +106,41 @@ describe('assembleTmex role matrix', () => {
       process.env.TMEX_ROLES = undefined;
     } else {
       process.env.TMEX_ROLES = originalRoles;
+    }
+  });
+
+  test('TMEX_DIRECT_ENABLED=false skips native load even when nativeDir is set', async () => {
+    const original = process.env.TMEX_DIRECT_ENABLED;
+    process.env.TMEX_DIRECT_ENABLED = 'false';
+    try {
+      let loadNative: LoadNative | undefined;
+      await assembleTmex({
+        roles: { hub: false, node: true },
+        nativeDir: '/tmp/tmex-native-should-not-load',
+        createGatewayRuntime: async () => fakeGateway(),
+        createMeshRuntime: async (opts) => {
+          loadNative = opts.loadNative;
+          return fakeMesh();
+        },
+      });
+      expect(loadNative).toBeTypeOf('function');
+      const warnings: string[] = [];
+      const originalWarn = console.warn;
+      console.warn = (...args: unknown[]) => {
+        warnings.push(args.map(String).join(' '));
+      };
+      try {
+        expect(await loadNative?.()).toBeNull();
+      } finally {
+        console.warn = originalWarn;
+      }
+      expect(warnings.some((line) => line.includes('native-datachannel'))).toBe(false);
+    } finally {
+      if (original === undefined) {
+        process.env.TMEX_DIRECT_ENABLED = undefined;
+      } else {
+        process.env.TMEX_DIRECT_ENABLED = original;
+      }
     }
   });
 

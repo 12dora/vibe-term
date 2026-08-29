@@ -23,6 +23,7 @@ const STATUS: LocalStatusResponse = {
   direct: {
     supported: true,
     installed: true,
+    enabled: true,
     capable: true,
     version: '1.2.3',
     platform: 'darwin-arm64',
@@ -61,31 +62,50 @@ describe('LocalApi.status', () => {
 });
 
 describe('LocalApi.setDirect', () => {
-  test('POST /api/local/direct 带 JSON body', async () => {
+  test('POST /api/local/direct 带 action JSON body', async () => {
     const { api, calls } = recorder([
       new Response(
-        JSON.stringify({ ok: true, installed: true, capable: true, restartRequired: true }),
+        JSON.stringify({
+          ok: true,
+          installed: true,
+          enabled: true,
+          capable: true,
+          restartRequired: true,
+        }),
         { status: 200 }
       ),
     ]);
-    const out = await api.setDirect(true);
+    const out = await api.setDirect('install');
     expect(calls[0].url).toBe('/api/local/direct');
     expect(calls[0].init?.method).toBe('POST');
-    expect(JSON.parse(String(calls[0].init?.body))).toEqual({ enable: true });
-    expect(out).toEqual({ ok: true, installed: true, capable: true, restartRequired: true });
+    expect(JSON.parse(String(calls[0].init?.body))).toEqual({ action: 'install' });
+    expect(out).toEqual({
+      ok: true,
+      installed: true,
+      enabled: true,
+      capable: true,
+      restartRequired: true,
+    });
   });
 
-  test('disable 时透传 restartRequired', async () => {
+  test('disable 时透传 enabled 与 restartRequired', async () => {
     const { api, calls } = recorder([
       new Response(
-        JSON.stringify({ ok: true, installed: false, capable: true, restartRequired: true }),
+        JSON.stringify({
+          ok: true,
+          installed: true,
+          enabled: false,
+          capable: true,
+          restartRequired: true,
+        }),
         {
           status: 200,
         }
       ),
     ]);
-    const out = await api.setDirect(false);
-    expect(JSON.parse(String(calls[0].init?.body))).toEqual({ enable: false });
+    const out = await api.setDirect('disable');
+    expect(JSON.parse(String(calls[0].init?.body))).toEqual({ action: 'disable' });
+    expect(out.enabled).toBe(false);
     expect(out.restartRequired).toBe(true);
   });
 
@@ -93,7 +113,7 @@ describe('LocalApi.setDirect', () => {
     const { api } = recorder([
       errorBody('direct_unsupported', 'no pinned manifest for linux-riscv64', 409),
     ]);
-    const err = (await api.setDirect(true).catch((e) => e)) as LocalApiError;
+    const err = (await api.setDirect('install').catch((e) => e)) as LocalApiError;
     expect(err.code).toBe('direct_unsupported');
     expect(err.message).toBe('no pinned manifest for linux-riscv64');
     expect(err.status).toBe(409);
@@ -103,7 +123,7 @@ describe('LocalApi.setDirect', () => {
     const { api } = recorder([
       new Response(JSON.stringify({ error: 'direct_failed' }), { status: 500 }),
     ]);
-    const err = (await api.setDirect(true).catch((e) => e)) as LocalApiError;
+    const err = (await api.setDirect('enable').catch((e) => e)) as LocalApiError;
     expect(err.code).toBe('direct_failed');
     expect(err.status).toBe(500);
   });

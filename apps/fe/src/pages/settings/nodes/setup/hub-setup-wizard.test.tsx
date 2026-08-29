@@ -21,6 +21,7 @@ function status(overrides: Partial<LocalStatusResponse> = {}): LocalStatusRespon
     direct: {
       supported: true,
       installed: false,
+      enabled: true,
       capable: false,
       version: null,
       platform: 'darwin-arm64',
@@ -118,6 +119,7 @@ describe('BecomeHubForm', () => {
           direct: {
             supported: false,
             installed: false,
+            enabled: true,
             capable: false,
             version: null,
             platform: 'freebsd-x64',

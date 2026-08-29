@@ -5,7 +5,11 @@ import { PROCESS_STARTED_AT } from '../../../../apps/gateway/src/api/system-rout
 import { ensureNodeIdentity } from '../../../../apps/gateway/src/auth/node-identity-service';
 import { resolveInstallDir as resolveGatewayInstallDir } from '../../../../apps/gateway/src/system/install-info';
 import { canonicalHubUrl } from '../../../../packages/shared/src/auth';
-import { type EnvName, readNodeEnv, resolveEnvName } from '../../../../packages/shared/src/env/load-env';
+import {
+  type EnvName,
+  readNodeEnv,
+  resolveEnvName,
+} from '../../../../packages/shared/src/env/load-env';
 import {
   type DirectEnableResult,
   type DisableDirectOptions,
@@ -54,6 +58,7 @@ export class SetupError extends Error {
 export type DirectStatus = {
   supported: boolean;
   installed: boolean;
+  enabled: boolean;
   capable: boolean;
   version: string | null;
   platform: string;
@@ -68,9 +73,12 @@ export type LocalStatus = {
   tls: { mode: 'none' };
 };
 
+export type DirectAction = 'install' | 'remove' | 'enable' | 'disable';
+
 export type DirectSetResult = {
   ok: true;
   installed: boolean;
+  enabled: boolean;
   capable: boolean;
   restartRequired: true;
 };
@@ -399,6 +407,54 @@ export function resolveSetupEnvPath(nodeEnv: string = readNodeEnv()): string {
   return join(resolveRepoRoot(), `${name}.env.local`);
 }
 
+const DIRECT_ENABLED_KEY = 'TMEX_DIRECT_ENABLED';
+
+function isDirectEnabledValue(value: string | undefined): boolean {
+  return value !== 'false';
+}
+
+async function readDirectEnabledFlag(deps: SetupServiceDeps): Promise<boolean> {
+  const read = deps.readEnvFile ?? defaultReadEnvFile;
+  try {
+    const env = await read(deps.envPath);
+    return isDirectEnabledValue(env[DIRECT_ENABLED_KEY]);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return true;
+    throw error;
+  }
+}
+
+async function installDirectAddon(deps: SetupServiceDeps): Promise<void> {
+  const supported = (deps.isDirectSupported ?? (() => detectCurrentNativePin() != null))();
+  if (!supported) {
+    throw new SetupError(
+      'direct_unsupported',
+      `no pinned manifest for ${platformString(deps)}`,
+      409
+    );
+  }
+  let result: DirectEnableResult;
+  try {
+    result = await runEnableDirect(deps);
+  } catch (error) {
+    if (error instanceof SetupError) throw error;
+    throw new SetupError('direct_download_failed', errorCause(error), 502);
+  }
+  if (!result.ok) {
+    throw mapDirectEnableFailure(result);
+  }
+}
+
+async function removeDirectAddon(deps: SetupServiceDeps): Promise<void> {
+  const disableFn = deps.disableDirect ?? defaultDisableDirect;
+  try {
+    await disableFn({ installDir: deps.installDir });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    throw new SetupError('direct_failed', message, 500);
+  }
+}
+
 export async function getLocalStatus(deps: SetupServiceDeps): Promise<LocalStatus> {
   const manifest = await readManifest(deps);
   const supported = (deps.isDirectSupported ?? (() => detectCurrentNativePin() != null))();
@@ -410,6 +466,7 @@ export async function getLocalStatus(deps: SetupServiceDeps): Promise<LocalStatu
     direct: {
       supported,
       installed: manifest != null,
+      enabled: await readDirectEnabledFlag(deps),
       capable: deps.rtcCapable === true,
       version: manifest?.version ?? null,
       platform: platformString(deps),
@@ -419,41 +476,36 @@ export async function getLocalStatus(deps: SetupServiceDeps): Promise<LocalStatu
 }
 
 export async function setLocalDirect(
-  enable: boolean,
+  action: DirectAction,
   deps: SetupServiceDeps
 ): Promise<DirectSetResult> {
-  const supported = (deps.isDirectSupported ?? (() => detectCurrentNativePin() != null))();
-  if (enable && !supported) {
-    throw new SetupError(
-      'direct_unsupported',
-      `no pinned manifest for ${platformString(deps)}`,
-      409
-    );
-  }
-  if (enable) {
-    let result: DirectEnableResult;
-    try {
-      result = await runEnableDirect(deps);
-    } catch (error) {
-      if (error instanceof SetupError) throw error;
-      throw new SetupError('direct_download_failed', errorCause(error), 502);
+  switch (action) {
+    case 'install':
+      await installDirectAddon(deps);
+      await patchOwnedEnvKeys(deps, { [DIRECT_ENABLED_KEY]: 'true' });
+      break;
+    case 'remove':
+      await removeDirectAddon(deps);
+      await patchOwnedEnvKeys(deps, { [DIRECT_ENABLED_KEY]: 'false' });
+      break;
+    case 'enable': {
+      const manifest = await readManifest(deps);
+      if (manifest == null) {
+        throw new SetupError('direct_not_installed', 'direct add-on is not installed', 409);
+      }
+      await patchOwnedEnvKeys(deps, { [DIRECT_ENABLED_KEY]: 'true' });
+      break;
     }
-    if (!result.ok) {
-      throw mapDirectEnableFailure(result);
-    }
-  } else {
-    const disableFn = deps.disableDirect ?? defaultDisableDirect;
-    try {
-      await disableFn({ installDir: deps.installDir });
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      throw new SetupError('direct_failed', message, 500);
-    }
+    case 'disable':
+      await patchOwnedEnvKeys(deps, { [DIRECT_ENABLED_KEY]: 'false' });
+      break;
   }
   const manifest = await readManifest(deps);
+  const enabled = action === 'install' || action === 'enable';
   return {
     ok: true,
-    installed: enable ? true : manifest != null,
+    installed: action === 'install' || action === 'enable' ? true : manifest != null,
+    enabled,
     capable: deps.rtcCapable === true,
     restartRequired: true,
   };
@@ -581,6 +633,7 @@ export async function becomeHub(
     await patchOwnedEnvKeys(deps, {
       TMEX_ROLES: 'hub,node',
       TMEX_HUB_PUBLIC_URL: hubPublicUrl,
+      ...(direct.direct === 'enabled' ? { [DIRECT_ENABLED_KEY]: 'true' } : {}),
     });
     return {
       ok: true as const,
@@ -666,6 +719,9 @@ export async function joinHub(input: JoinHubInput, deps: SetupServiceDeps): Prom
     }
 
     const direct = await maybeEnableDirect(input.directEnable, deps);
+    if (direct.direct === 'enabled') {
+      await patchOwnedEnvKeys(deps, { [DIRECT_ENABLED_KEY]: 'true' });
+    }
     return {
       ok: true as const,
       hubUrl: joined.hubUrl,
