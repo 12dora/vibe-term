@@ -133,6 +133,26 @@ export function buildUpdatePayload(values: DeviceFormValues): UpdateDeviceReques
   return payload;
 }
 
+// 切换设备类型时同步认证方式：local 只有 auto；ssh 不接受 auto，回落到 agent。
+export function applyDeviceType(
+  values: DeviceFormValues,
+  nextType: DeviceFormValues['type']
+): DeviceFormValues {
+  if (nextType === 'local') {
+    return { ...values, type: 'local', authMode: 'auto' };
+  }
+  return {
+    ...values,
+    type: 'ssh',
+    authMode: values.authMode === 'auto' ? 'agent' : values.authMode,
+  };
+}
+
+// 端口输入框清空时留 NaN，交由 isValidSshPort 判非法。
+export function parseSshPortInput(raw: string): number {
+  return raw === '' ? Number.NaN : Number.parseInt(raw, 10);
+}
+
 // 合法 SSH 端口：1–65535 的整数（清空输入会变成 NaN，视为非法）
 export function isValidSshPort(port: number): boolean {
   return Number.isInteger(port) && port >= 1 && port <= 65535;
