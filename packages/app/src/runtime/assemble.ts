@@ -49,6 +49,7 @@ import { serveFrontend as defaultServeFrontend } from './serve-frontend';
 import { handleSetupRequest } from './setup-routes';
 import { SETUP_RESTART_DELAY_MS, resolveSetupEnvPath } from './setup-service';
 import { createTlsRoutes } from './tls-routes';
+import { readNodeEnv } from '../../../../packages/shared/src/env/load-env';
 
 export const SHUTDOWN_TIMEOUT_MS = 20_000;
 
@@ -223,7 +224,7 @@ export async function assembleTmex(opts: AssembleTmexOptions = {}): Promise<Asse
 
   const routeDeps: LocalRouteDeps = {
     roles,
-    nodeEnv: process.env.NODE_ENV ?? 'development',
+    nodeEnv: readNodeEnv(),
     auth,
     precheckCaPem: async () => (await tlsSlot.service?.caPem()) ?? null,
     envPath: auth.envPath,

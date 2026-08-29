@@ -5,7 +5,7 @@ import { PROCESS_STARTED_AT } from '../../../../apps/gateway/src/api/system-rout
 import { ensureNodeIdentity } from '../../../../apps/gateway/src/auth/node-identity-service';
 import { resolveInstallDir as resolveGatewayInstallDir } from '../../../../apps/gateway/src/system/install-info';
 import { canonicalHubUrl } from '../../../../packages/shared/src/auth';
-import { type EnvName, resolveEnvName } from '../../../../packages/shared/src/env/load-env';
+import { type EnvName, readNodeEnv, resolveEnvName } from '../../../../packages/shared/src/env/load-env';
 import {
   type DirectEnableResult,
   type DisableDirectOptions,
@@ -391,7 +391,7 @@ export function resolveRepoRoot(): string {
   return resolve(import.meta.dir, '../../../..');
 }
 
-export function resolveSetupEnvPath(nodeEnv = process.env.NODE_ENV ?? 'development'): string {
+export function resolveSetupEnvPath(nodeEnv: string = readNodeEnv()): string {
   if (nodeEnv === 'production') {
     return join(resolveGatewayInstallDir(), 'app.env');
   }
