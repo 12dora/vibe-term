@@ -1,123 +1,46 @@
-import { encodePaneModes } from '@tmex/shared';
-import type { TmuxWindow } from '@tmex/shared';
-
-import { config } from '../../config';
-import {
-  PANE_HISTORY_CAPTURE_INFO_FORMAT,
-  PANE_META_FORMAT,
-  PANE_SCREEN_INFO_FORMAT,
-  type PaneInfo,
-  appendCursorRestore,
-  parsePaneHistoryCaptureInfo,
-  parsePaneMeta,
-  parsePaneScreenInfo,
-} from '../capture-history';
-import type { TmuxConnectionOptions } from '../connection-types';
-import {
-  type AtomicPaneCapture,
-  type ControlModeCommandQueue,
-  capturePaneFrameAtControlBarrier,
-} from '../control-mode-capture';
+import type { PaneInfo } from '../capture-history';
+import type { AtomicPaneCapture } from '../control-mode-capture';
 import { SNAPSHOT_FIELD_SEPARATOR, isTmuxPaneId, isTmuxWindowId } from '../snapshot-format';
-import { TmuxTargetMissingError, isTargetMissingMessage } from '../target-missing';
-import { resolveTmuxWindowStyle } from '../window-style';
-import { PARKING_WINDOW_NAME } from './constants';
-import { hasRenderableTerminalContent, isTmuxServerGoneMessage } from './helpers';
+import {
+  buildBreakPaneArgv,
+  buildCreateWindowArgv,
+  buildMovePaneArgv,
+  buildResizePaneByIdArgv,
+  buildSplitPaneArgv,
+} from './session-command-argv';
+import type { SessionCommandHost } from './session-command-host';
+import {
+  recoverFromTargetMissingError as recoverFromTargetMissingErrorOnHost,
+  runTmux as runTmuxOnHost,
+} from './session-command-runner';
+import {
+  configureSessionOptions as configureSessionOptionsOnHost,
+  configureWindowStyleDefault as configureWindowStyleDefaultOnHost,
+  createParkingWindow as createParkingWindowOnHost,
+  ensureSession as ensureSessionOnHost,
+  removeParkingWindow as removeParkingWindowOnHost,
+  setWindowStyle as setWindowStyleOnHost,
+} from './session-lifecycle-commands';
+import {
+  capturePaneFrameAtBarrier as capturePaneFrameAtBarrierOnHost,
+  capturePaneHistory as capturePaneHistoryOnHost,
+  capturePaneHistoryRange as capturePaneHistoryRangeOnHost,
+  capturePaneText as capturePaneTextOnHost,
+  fetchPaneHistory as fetchPaneHistoryOnHost,
+  getPaneHistoryCaptureInfo as getPaneHistoryCaptureInfoOnHost,
+  getPaneInfo as getPaneInfoOnHost,
+  requestPaneHistory as requestPaneHistoryOnHost,
+} from './session-pane-query';
 import type { CommandResult } from './types';
 
-export interface SessionCommandHost {
-  deviceId: string;
-  sessionName: string;
-  connected: boolean;
-  manualDisconnect: boolean;
-  logPrefix: string;
-  activeWindowId: string | null;
-  activePaneId: string | null;
-  snapshotWindows: Map<string, TmuxWindow>;
-  callbacks: TmuxConnectionOptions;
-  controlCommands: ControlModeCommandQueue;
-  resolveDefaultWorkingDir(): string;
-  shouldInstallGhosttyTerminfo(): Promise<boolean>;
-  configureWindowStyle(styleValue?: string): Promise<void>;
-  getParkingCommand(): string;
-  runTmuxAllowFailure(argv: string[], timeoutMs?: number): Promise<CommandResult>;
-  requestSnapshotInternal(): Promise<void>;
-  requestSnapshot(): void;
-  reportTmuxCommandFailure(message: string): void;
-  onTmuxServerGone(message: string): void;
-  notifySessionClosed(message: string): void;
-  shutdownInternal(notifyClose: boolean): Promise<void>;
-  getControlWriter(): ((data: string) => void) | null;
-  getControlCommandTimeoutMs(): number;
-  runHistoryQuery(argv: string[]): Promise<CommandResult>;
-  runHistoryCapture(argv: string[], maxOutputBytes: number): Promise<string>;
-}
-
-export function buildCreateWindowArgv(sessionName: string, cwd: string, name?: string): string[] {
-  const argv = ['new-window', '-t', sessionName, '-c', cwd];
-  if (name) {
-    argv.push('-n', name);
-  }
-  return argv;
-}
-
-export function buildMovePaneArgv(
-  srcPaneId: string,
-  dstPaneId: string,
-  position: 'left' | 'right' | 'top' | 'bottom'
-): string[] {
-  const argv = ['move-pane'];
-  argv.push(position === 'left' || position === 'right' ? '-h' : '-v');
-  if (position === 'left' || position === 'top') {
-    argv.push('-b');
-  }
-  argv.push('-s', srcPaneId, '-t', dstPaneId);
-  return argv;
-}
-
-export function buildSplitPaneArgv(paneId: string, direction: 'h' | 'v', cwd: string): string[] {
-  return [
-    'split-window',
-    direction === 'h' ? '-h' : '-v',
-    '-t',
-    paneId,
-    '-c',
-    cwd,
-    '-P',
-    '-F',
-    `#{window_id}${SNAPSHOT_FIELD_SEPARATOR}#{pane_id}`,
-  ];
-}
-
-export function buildBreakPaneArgv(paneId: string, sessionName: string): string[] {
-  return [
-    'break-pane',
-    '-s',
-    paneId,
-    '-t',
-    `${sessionName}:`,
-    '-P',
-    '-F',
-    `#{window_id}${SNAPSHOT_FIELD_SEPARATOR}#{pane_id}`,
-  ];
-}
-
-export function buildResizePaneByIdArgv(
-  paneId: string,
-  size: { cols?: number; rows?: number }
-): string[] | null {
-  const argv = ['resize-pane', '-t', paneId];
-  if (size.cols !== undefined) {
-    argv.push('-x', String(Math.max(2, Math.floor(size.cols))));
-  }
-  if (size.rows !== undefined) {
-    argv.push('-y', String(Math.max(2, Math.floor(size.rows))));
-  }
-  if (argv.length === 3) {
-    return null;
-  }
-  return argv;
-}
+export type { SessionCommandHost } from './session-command-host';
+export {
+  buildBreakPaneArgv,
+  buildCreateWindowArgv,
+  buildMovePaneArgv,
+  buildResizePaneByIdArgv,
+  buildSplitPaneArgv,
+} from './session-command-argv';
 
 export class SessionCommands {
   private stackedLayoutTransition: Promise<void> = Promise.resolve();
@@ -216,10 +139,7 @@ export class SessionCommands {
   }
 
   async requestPaneHistory(paneId: string): Promise<void> {
-    if (!this.host.connected) {
-      return;
-    }
-    await this.capturePaneHistory(paneId);
+    await requestPaneHistoryOnHost(this.host, paneId);
   }
 
   renameWindow(windowId: string, name: string): void {
@@ -227,55 +147,19 @@ export class SessionCommands {
   }
 
   async setWindowStyle(style: string): Promise<void> {
-    if (!this.host.connected) {
-      return;
-    }
-    if (!resolveTmuxWindowStyle(config.tmuxWindowStyle)) {
-      return;
-    }
-
-    await this.host.configureWindowStyle(style).catch((error) => {
-      this.host.callbacks.onError(error);
-    });
+    await setWindowStyleOnHost(this.host, style);
   }
 
   async capturePaneText(paneId: string, opts?: { historyLines?: number }): Promise<string> {
-    if (!this.host.connected) {
-      throw new Error(`tmux connection not available: ${this.host.deviceId}`);
-    }
-
-    const argv = ['capture-pane', '-t', paneId, '-p', '-J'];
-    const historyLines = Math.floor(opts?.historyLines ?? 0);
-    if (Number.isFinite(historyLines) && historyLines > 0) {
-      argv.push('-S', `-${historyLines}`);
-    }
-    return (await this.runTmux(argv, 'silent', 30_000)).stdout;
+    return capturePaneTextOnHost(this.host, paneId, opts);
   }
 
   async getPaneInfo(paneId: string): Promise<PaneInfo> {
-    if (!this.host.connected) {
-      throw new Error(`tmux connection not available: ${this.host.deviceId}`);
-    }
-    const { stdout } = await this.runTmux(
-      ['display-message', '-p', '-t', paneId, PANE_META_FORMAT],
-      'silent',
-      30_000
-    );
-    return parsePaneMeta(stdout);
+    return getPaneInfoOnHost(this.host, paneId);
   }
 
   async getPaneHistoryCaptureInfo(paneId: string) {
-    if (!this.host.connected) {
-      throw new Error(`tmux connection not available: ${this.host.deviceId}`);
-    }
-    const { stdout } = await this.host.runHistoryQuery([
-      'display-message',
-      '-p',
-      '-t',
-      paneId,
-      PANE_HISTORY_CAPTURE_INFO_FORMAT,
-    ]);
-    return parsePaneHistoryCaptureInfo(stdout);
+    return getPaneHistoryCaptureInfoOnHost(this.host, paneId);
   }
 
   async capturePaneHistoryRange(
@@ -284,27 +168,7 @@ export class SessionCommands {
     endLine: number,
     maxOutputBytes: number
   ): Promise<string> {
-    if (!this.host.connected) {
-      throw new Error(`tmux connection not available: ${this.host.deviceId}`);
-    }
-    if (!isTmuxPaneId(paneId) || !Number.isInteger(startLine) || !Number.isInteger(endLine)) {
-      throw new Error('invalid tmux history range');
-    }
-    return this.host.runHistoryCapture(
-      [
-        'capture-pane',
-        '-t',
-        paneId,
-        '-p',
-        '-e',
-        '-N',
-        '-S',
-        String(startLine),
-        '-E',
-        String(endLine),
-      ],
-      maxOutputBytes
-    );
+    return capturePaneHistoryRangeOnHost(this.host, paneId, startLine, endLine, maxOutputBytes);
   }
 
   capturePaneFrameAtBarrier(
@@ -312,159 +176,33 @@ export class SessionCommands {
     historyLines: number,
     onBarrier: () => void
   ): Promise<AtomicPaneCapture> {
-    const write = this.host.getControlWriter();
-    if (!this.host.connected || !write) {
-      return Promise.reject(
-        new Error(`tmux control connection not available: ${this.host.deviceId}`)
-      );
-    }
-    return capturePaneFrameAtControlBarrier(
-      this.host.controlCommands,
-      (command) => write(command),
-      paneId,
-      historyLines,
-      onBarrier,
-      this.host.getControlCommandTimeoutMs()
-    );
+    return capturePaneFrameAtBarrierOnHost(this.host, paneId, historyLines, onBarrier);
   }
 
   async fetchPaneHistory(
     paneId: string
   ): Promise<{ data: string; alternateScreen: boolean; modes: number } | null> {
-    const screenInfo = parsePaneScreenInfo(
-      (await this.runTmux(['display-message', '-p', '-t', paneId, PANE_SCREEN_INFO_FORMAT], true))
-        .stdout
-    );
-    const normal = (
-      await this.runTmux(
-        ['capture-pane', '-t', paneId, '-S', '-', '-E', '-', '-e', '-J', '-N', '-p'],
-        true,
-        30_000
-      )
-    ).stdout;
-    const alternate = (
-      await this.runTmux(
-        ['capture-pane', '-t', paneId, '-a', '-S', '-', '-E', '-', '-e', '-J', '-N', '-p', '-q'],
-        true,
-        30_000
-      )
-    ).stdout;
-
-    const history = screenInfo.alternateScreen
-      ? hasRenderableTerminalContent(normal)
-        ? normal
-        : alternate
-      : normal || alternate;
-
-    if (!history) {
-      return null;
-    }
-    return {
-      data: appendCursorRestore(history, screenInfo),
-      alternateScreen: screenInfo.alternateScreen,
-      modes: encodePaneModes(screenInfo.modes),
-    };
+    return fetchPaneHistoryOnHost(this.host, paneId);
   }
 
   async ensureSession(): Promise<{ created: boolean }> {
-    const exists = await this.host.runTmuxAllowFailure([
-      'has-session',
-      '-t',
-      this.host.sessionName,
-    ]);
-    if (exists.exitCode === 0) {
-      return { created: false };
-    }
-
-    await this.runTmux([
-      'new-session',
-      '-d',
-      '-c',
-      this.host.resolveDefaultWorkingDir(),
-      '-s',
-      this.host.sessionName,
-    ]);
-    return { created: true };
+    return ensureSessionOnHost(this.host);
   }
 
   async configureSessionOptions(): Promise<void> {
-    await this.configureSessionFlags();
-    await this.configureTermEnvironment();
-    await this.host.runTmuxAllowFailure([
-      'set-option',
-      '-t',
-      this.host.sessionName,
-      'default-path',
-      this.host.resolveDefaultWorkingDir(),
-    ]);
-    await this.host.configureWindowStyle();
+    await configureSessionOptionsOnHost(this.host);
   }
 
-  async configureWindowStyleDefault(styleValue: string = config.tmuxWindowStyle): Promise<void> {
-    const windowStyle = resolveTmuxWindowStyle(styleValue);
-    if (!windowStyle) {
-      return;
-    }
-    await this.host.runTmuxAllowFailure([
-      'set-hook',
-      '-t',
-      this.host.sessionName,
-      'after-new-window',
-      `set-option -w window-style '${windowStyle}'`,
-    ]);
-    const windows = await this.host.runTmuxAllowFailure([
-      'list-windows',
-      '-t',
-      this.host.sessionName,
-      '-F',
-      '#{window_id}',
-    ]);
-    if (windows.exitCode !== 0) {
-      return;
-    }
-    for (const line of windows.stdout.split('\n')) {
-      const windowId = line.trim();
-      if (!windowId) {
-        continue;
-      }
-      await this.host.runTmuxAllowFailure([
-        'set-option',
-        '-w',
-        '-t',
-        windowId,
-        'window-style',
-        windowStyle,
-      ]);
-    }
+  async configureWindowStyleDefault(styleValue?: string): Promise<void> {
+    await configureWindowStyleDefaultOnHost(this.host, styleValue);
   }
 
   async createParkingWindow(): Promise<string | null> {
-    const result = await this.host.runTmuxAllowFailure([
-      'new-window',
-      '-t',
-      this.host.sessionName,
-      '-n',
-      PARKING_WINDOW_NAME,
-      '-P',
-      '-F',
-      '#{window_id}',
-      this.host.getParkingCommand(),
-    ]);
-    if (result.exitCode !== 0) {
-      console.warn(
-        `${this.host.logPrefix} failed to create parking window on ${this.host.deviceId}, attaching without focus shield`
-      );
-      return null;
-    }
-    return result.stdout.trim() || null;
+    return createParkingWindowOnHost(this.host);
   }
 
   async removeParkingWindow(windowId: string | null): Promise<void> {
-    if (!windowId) {
-      return;
-    }
-    await this.host.runTmuxAllowFailure(['last-window', '-t', this.host.sessionName]);
-    await this.host.runTmuxAllowFailure(['kill-window', '-t', windowId]);
+    await removeParkingWindowOnHost(this.host, windowId);
   }
 
   async runAndRefresh(argv: string[], allowTargetMissing = false): Promise<void> {
@@ -584,7 +322,7 @@ export class SessionCommands {
       type: 'pane-active',
       data: { windowId, paneId },
     });
-    await this.capturePaneHistory(paneId);
+    await capturePaneHistoryOnHost(this.host, paneId);
     await this.host.requestSnapshotInternal();
   }
 
@@ -595,15 +333,7 @@ export class SessionCommands {
   }
 
   async capturePaneHistory(paneId: string): Promise<void> {
-    const captured = await this.fetchPaneHistory(paneId);
-    if (captured) {
-      this.host.callbacks.onTerminalHistory(
-        paneId,
-        captured.data,
-        captured.alternateScreen,
-        captured.modes
-      );
-    }
+    await capturePaneHistoryOnHost(this.host, paneId);
   }
 
   async runTmux(
@@ -611,46 +341,11 @@ export class SessionCommands {
     allowTargetMissing: boolean | 'silent' = false,
     timeoutMs = 10_000
   ): Promise<CommandResult> {
-    const result = await this.host.runTmuxAllowFailure(argv, timeoutMs);
-    if (result.exitCode === 0) {
-      return result;
-    }
-
-    const message = (
-      result.stderr.trim() ||
-      result.stdout.trim() ||
-      `tmux command failed: ${argv.join(' ')}`
-    ).trim();
-    if (allowTargetMissing && isTargetMissingMessage(message)) {
-      if (allowTargetMissing === 'silent') {
-        throw new TmuxTargetMissingError(message);
-      }
-      this.recoverFromTargetMissingError(message);
-      return result;
-    }
-
-    console.warn(
-      `${this.host.logPrefix} tmux command failed deviceId=${this.host.deviceId} sessionName=${this.host.sessionName} argv=${argv.join(' ')} exitCode=${result.exitCode}: ${message}`
-    );
-    this.host.reportTmuxCommandFailure(message);
-    if (this.host.connected && !this.host.manualDisconnect && isTmuxServerGoneMessage(message)) {
-      console.warn(`${this.host.logPrefix} tmux server gone on ${this.host.deviceId}: ${message}`);
-      this.host.onTmuxServerGone(message);
-      this.host.notifySessionClosed(message);
-      void this.host.shutdownInternal(true);
-    }
-    throw new Error(message);
+    return runTmuxOnHost(this.host, argv, allowTargetMissing, timeoutMs);
   }
 
   recoverFromTargetMissingError(message: string): void {
-    const normalized = message.toLowerCase();
-    if (normalized.includes('window')) {
-      this.host.activeWindowId = null;
-    }
-    if (normalized.includes('pane')) {
-      this.host.activePaneId = null;
-    }
-    this.host.requestSnapshot();
+    recoverFromTargetMissingErrorOnHost(this.host, message);
   }
 
   findPaneWindowId(paneId: string): string | null {
@@ -681,61 +376,5 @@ export class SessionCommands {
         data: { windowId, paneId: newPaneId },
       });
     }
-  }
-
-  private async configureSessionFlags(): Promise<void> {
-    const session = this.host.sessionName;
-    await this.host.runTmuxAllowFailure([
-      'set-option',
-      '-t',
-      session,
-      '-s',
-      'allow-passthrough',
-      config.tmuxAllowPassthrough ? 'on' : 'off',
-    ]);
-    await this.host.runTmuxAllowFailure(['set-option', '-t', session, '-g', 'extended-keys', 'on']);
-    await this.host.runTmuxAllowFailure([
-      'set-option',
-      '-t',
-      session,
-      '-s',
-      'extended-keys-format',
-      'csi-u',
-    ]);
-    // control client 自带 attached+focused 标志，focus-events on 会把 ESC[I 投递给
-    // ?1004h 的 pane（如 Claude Code），使其永久判定「用户在场」、通知静默，必须关闭。
-    await this.host.runTmuxAllowFailure(['set-option', '-t', session, '-g', 'focus-events', 'off']);
-    await this.host.runTmuxAllowFailure(['set-option', '-t', session, 'destroy-unattached', 'off']);
-  }
-
-  private async configureTermEnvironment(): Promise<void> {
-    const session = this.host.sessionName;
-    const termProgram = config.tmuxTermProgram.trim();
-    if (termProgram && termProgram.toLowerCase() !== 'off') {
-      await this.host.runTmuxAllowFailure([
-        'set-environment',
-        '-t',
-        session,
-        'TERM_PROGRAM',
-        termProgram,
-      ]);
-      if (termProgram === 'ghostty' && (await this.host.shouldInstallGhosttyTerminfo())) {
-        await this.host.runTmuxAllowFailure([
-          'set-option',
-          '-t',
-          session,
-          'default-terminal',
-          'xterm-ghostty',
-        ]);
-      }
-    }
-
-    await this.host.runTmuxAllowFailure([
-      'set-environment',
-      '-t',
-      session,
-      'COLORTERM',
-      'truecolor',
-    ]);
   }
 }
