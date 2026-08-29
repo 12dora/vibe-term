@@ -38,7 +38,7 @@ export function DeviceStatusBadge({ deviceId, className }: DeviceStatusBadgeProp
           className
         )}
       >
-        <RefreshCcw className="h-3 w-3 animate-spin" />
+        <RefreshCcw className="h-3 w-3 animate-spin motion-reduce:animate-none" />
         <span className="truncate max-w-[120px]">{reconnecting.message}</span>
       </Badge>
     );

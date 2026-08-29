@@ -215,7 +215,7 @@ export function SplitTerminalArea({
               onPointerDown={(event) => handleGutterPointerDown(index, gutter, event)}
             >
               <div
-                className={`absolute bg-foreground/[0.08] transition-colors ${
+                className={`absolute bg-foreground/[0.08] transition-colors duration-(--tmex-motion-fast) ease-out motion-reduce:transition-none ${
                   isVertical
                     ? 'inset-y-0 left-1/2 w-px -translate-x-1/2'
                     : 'inset-x-0 top-1/2 h-px -translate-y-1/2'

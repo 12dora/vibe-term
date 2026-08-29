@@ -1,4 +1,5 @@
 import { useRuntime, useTmuxStore } from '@tmex/stores/react';
+import { motionDurations, useReducedMotion } from '@tmex/ui/motion';
 import type { ConnectionState } from '@tmex/ws-client';
 import { Loader2, RefreshCcw } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
@@ -23,11 +24,18 @@ export function ConnectionIndicator() {
   const [phase, setPhase] = useState<Phase>('hidden');
   const phaseRef = useRef(phase);
   phaseRef.current = phase;
+  // reduced motion 下不走 entering/exiting 两个过渡态：没有 transition 就不会有 transitionend，
+  // 退场必须直接落到 hidden，否则节点会停在 opacity:0 永不卸载。
+  const reducedMotion = useReducedMotion();
 
   const shouldShow = shouldShowIndicator(connectionState);
 
   useEffect(() => {
     if (shouldShow && (phaseRef.current === 'hidden' || phaseRef.current === 'exiting')) {
+      if (reducedMotion) {
+        setPhase('visible');
+        return;
+      }
       setPhase('entering');
       requestAnimationFrame(() => {
         requestAnimationFrame(() => {
@@ -35,9 +43,9 @@ export function ConnectionIndicator() {
         });
       });
     } else if (!shouldShow && phaseRef.current === 'visible') {
-      setPhase('exiting');
+      setPhase(reducedMotion ? 'hidden' : 'exiting');
     }
-  }, [shouldShow]);
+  }, [shouldShow, reducedMotion]);
 
   const handleTransitionEnd = () => {
     if (phaseRef.current === 'exiting') {
@@ -50,12 +58,13 @@ export function ConnectionIndicator() {
   const isClosed = connectionState === 'CLOSED';
   const isFirstConnect = !hasConnectedOnce && !isClosed;
 
+  const easing = phase === 'exiting' ? 'var(--tmex-ease-in)' : 'var(--tmex-ease-out)';
+  const duration = `${motionDurations.layout}ms`;
   const transitionStyle: React.CSSProperties = {
     bottom: 'calc(1rem + env(safe-area-inset-bottom, 0px))',
-    transition:
-      phase === 'exiting'
-        ? 'transform 300ms ease-in, opacity 300ms ease-in'
-        : 'transform 300ms ease-out, opacity 300ms ease-out',
+    transition: reducedMotion
+      ? 'none'
+      : `transform ${duration} ${easing}, opacity ${duration} ${easing}`,
     transform:
       phase === 'visible'
         ? 'translateY(0)'
@@ -86,7 +95,7 @@ export function ConnectionIndicator() {
         style={transitionStyle}
         onTransitionEnd={handleTransitionEnd}
       >
-        <Loader2 className="size-4 animate-spin" />
+        <Loader2 className="size-4 animate-spin motion-reduce:animate-none" />
       </div>
     );
   }
@@ -97,7 +106,7 @@ export function ConnectionIndicator() {
       style={transitionStyle}
       onTransitionEnd={handleTransitionEnd}
     >
-      <Loader2 className="size-4 animate-spin" />
+      <Loader2 className="size-4 animate-spin motion-reduce:animate-none" />
       <span>{t('websocket.reconnecting')}</span>
     </div>
   );

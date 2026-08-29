@@ -28,7 +28,7 @@ export interface DeviceActionsMenuProps {
 }
 
 const TRIGGER_BASE_CLASS =
-  'absolute top-1/2 -translate-y-1/2 flex items-center justify-center rounded text-muted-foreground hover:bg-background hover:text-foreground transition-opacity data-popup-open:opacity-100';
+  'absolute top-1/2 -translate-y-1/2 flex items-center justify-center rounded text-muted-foreground hover:bg-background hover:text-foreground transition-opacity duration-(--tmex-motion-standard) ease-out motion-reduce:transition-none data-popup-open:opacity-100';
 
 const CONTENT_CLASS = 'w-auto min-w-36 [@media(any-pointer:coarse)]:min-w-48';
 

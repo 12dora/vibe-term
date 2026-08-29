@@ -25,13 +25,17 @@ import {
 } from '@tmex/ui/alert-dialog';
 import { Button } from '@tmex/ui/button';
 import { Card, CardContent } from '@tmex/ui/card';
+import { staggerItemStyle } from '@tmex/ui/motion';
 import { Monitor, Plus, Trash2 } from 'lucide-react';
-import { type Ref, useEffect, useImperativeHandle, useMemo, useState } from 'react';
+import { type Ref, useEffect, useImperativeHandle, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { toast } from 'sonner';
 import { DeviceCard } from './device-card';
 import { DeviceDialog } from './device-dialog';
 import { OPEN_ADD_DEVICE_EVENT } from './events';
+
+/** 首屏逐项入场的延迟档位上限（35ms/档），超出的卡片与最后一档同时进场 */
+const STAGGER_MAX_INDEX = 11;
 
 export interface DeviceManagementPanelHandle {
   openAddDevice(): void;
@@ -120,6 +124,14 @@ export function DeviceManagementPanel({
     );
   }, [data?.devices, language]);
 
+  // 逐项入场只做首屏那一批：之后 refetch/新增设备不再整列表重放（新卡片按 index 0 单独淡入）。
+  // 延迟档位封顶 STAGGER_MAX_INDEX，避免长列表拖尾。
+  const initialBatchRef = useRef<ReadonlySet<string> | null>(null);
+  if (initialBatchRef.current === null && data) {
+    initialBatchRef.current = new Set(devices.map((device) => device.id));
+  }
+  const initialBatch = initialBatchRef.current;
+
   return (
     <div
       className={cn(
@@ -129,19 +141,19 @@ export function DeviceManagementPanel({
       data-testid="devices-page"
     >
       {isLoading ? (
-        <Card size="sm">
+        <Card size="sm" className="tmex-reveal">
           <CardContent className="py-10 text-center text-sm text-muted-foreground">
             {t('common.loading')}
           </CardContent>
         </Card>
       ) : isError ? (
-        <Card size="sm">
+        <Card size="sm" className="tmex-reveal">
           <CardContent className="py-10 text-center text-sm text-destructive">
             {t('device.loadFailed')}
           </CardContent>
         </Card>
       ) : devices.length === 0 ? (
-        <Card size="sm">
+        <Card size="sm" className="tmex-reveal">
           <CardContent className="space-y-3 py-8 text-center">
             <div className="mx-auto flex h-10 w-10 items-center justify-center rounded-xl border border-border bg-muted">
               <Monitor className="h-5 w-5 text-muted-foreground" />
@@ -162,11 +174,16 @@ export function DeviceManagementPanel({
           </CardContent>
         </Card>
       ) : (
-        <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
-          {devices.map((device) => (
+        <div className="tmex-stagger grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+          {devices.map((device, index) => (
             <DeviceCard
               key={device.id}
               device={device}
+              style={
+                initialBatch?.has(device.id)
+                  ? staggerItemStyle(Math.min(index, STAGGER_MAX_INDEX))
+                  : undefined
+              }
               onEdit={() => setEditingDevice(device)}
               onDelete={() => setDeleteCandidate(device)}
             />

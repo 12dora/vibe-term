@@ -26,7 +26,7 @@ export function PaneSwitcherMenu({ window, currentPaneId, onSelectPane }: PaneSw
         data-testid="pane-switcher-button"
         aria-label={t('window.switchPane')}
         title={t('window.switchPane')}
-        className="relative inline-flex size-7 items-center justify-center rounded-[min(var(--radius-md),12px)] text-sm hover:bg-muted hover:text-foreground data-popup-open:bg-muted"
+        className="relative inline-flex size-7 items-center justify-center rounded-[min(var(--radius-md),12px)] text-sm transition-colors duration-(--tmex-motion-fast) ease-out hover:bg-muted hover:text-foreground motion-reduce:transition-none data-popup-open:bg-muted"
       >
         <Columns2 className="h-4 w-4" />
         <span className="absolute -right-0.5 -top-0.5 flex h-3.5 min-w-3.5 items-center justify-center rounded-full bg-primary px-0.5 text-[9px] font-medium leading-none text-primary-foreground">

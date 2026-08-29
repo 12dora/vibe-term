@@ -100,7 +100,7 @@ function PaneCloseButton({
       }}
       data-testid={`pane-close-${pane.id}`}
       className={cn(
-        'absolute top-1/2 -translate-y-1/2 flex items-center justify-center rounded text-muted-foreground hover:bg-background hover:text-foreground transition-opacity',
+        'absolute top-1/2 -translate-y-1/2 flex items-center justify-center rounded text-muted-foreground hover:bg-background hover:text-foreground transition-opacity duration-(--tmex-motion-standard) ease-out motion-reduce:transition-none',
         isMobile
           ? 'h-11 w-11 right-0 rounded-lg bg-background/40 opacity-100'
           : 'h-5 w-5 right-1.5 [@media(any-pointer:coarse)]:h-10 [@media(any-pointer:coarse)]:w-10 [@media(any-pointer:coarse)]:right-0.5 [@media(any-pointer:coarse)]:rounded-lg',

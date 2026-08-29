@@ -18,6 +18,7 @@ import {
 } from '@tmex/ui/dropdown-menu';
 import { Switch } from '@tmex/ui/switch';
 import { Globe, Monitor, MoreHorizontal, Pencil, Trash2, Zap } from 'lucide-react';
+import type { CSSProperties } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Link } from 'react-router';
 import { toast } from 'sonner';
@@ -29,9 +30,11 @@ export interface DeviceCardProps {
   onDelete: () => void;
   /** 该设备所属 node 的运行时 id；缺省取当前运行时（`self` 即 entry 自身）。 */
   runtimeNodeId?: string;
+  /** 卡片根节点内联样式；列表用它挂 `--tmex-stagger-index` 做逐项入场 */
+  style?: CSSProperties;
 }
 
-export function DeviceCard({ device, onEdit, onDelete, runtimeNodeId }: DeviceCardProps) {
+export function DeviceCard({ device, onEdit, onDelete, runtimeNodeId, style }: DeviceCardProps) {
   const { t } = useTranslation();
   const runtime = useRuntime();
   const nodeId = runtimeNodeId ?? runtime.nodeId;
@@ -64,7 +67,8 @@ export function DeviceCard({ device, onEdit, onDelete, runtimeNodeId }: DeviceCa
       data-testid="device-card"
       data-device-id={device.id}
       data-device-name={device.name}
-      className="gap-2 overflow-hidden border-border/50 py-2.5"
+      style={style}
+      className="gap-2 overflow-hidden border-border/50 py-2.5 transition-[box-shadow,border-color] duration-(--tmex-motion-standard) ease-out hover:shadow-md hover:ring-foreground/20 motion-reduce:transition-none"
     >
       <CardContent className="flex items-center gap-2">
         <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md border border-border bg-muted text-muted-foreground">

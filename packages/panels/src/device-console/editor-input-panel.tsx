@@ -11,7 +11,11 @@ import { ShortcutsBar } from './terminal-shortcuts-slot';
 import type { EditorInput } from './use-editor-input';
 
 function SendIcon({ isSending }: { isSending: boolean }) {
-  return isSending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />;
+  return isSending ? (
+    <Loader2 className="h-4 w-4 animate-spin motion-reduce:animate-none" />
+  ) : (
+    <Send className="h-4 w-4" />
+  );
 }
 
 export interface EditorInputPanelProps {
@@ -34,7 +38,10 @@ export function EditorInputPanel({
   const sendDisabled = !canInteractWithPane || isSending;
 
   return (
-    <div data-virtual-keyboard-avoid className="editor-mode-input bg-card/85 backdrop-blur-sm">
+    <div
+      data-virtual-keyboard-avoid
+      className="tmex-fade editor-mode-input bg-card/85 backdrop-blur-sm"
+    >
       {/* 移动端 editor 模式：快捷键栏在编辑器上方 */}
       {isMobile && (
         <ShortcutsBar
@@ -50,7 +57,7 @@ export function EditorInputPanel({
       <textarea
         ref={editorTextareaRef}
         data-testid="editor-input"
-        className="min-h-[88px] max-h-[28vh] w-full resize-y rounded-lg border border-border bg-background px-3 py-2 text-sm text-foreground shadow-xs outline-none transition-colors focus:border-ring"
+        className="min-h-[88px] max-h-[28vh] w-full resize-y rounded-lg border border-border bg-background px-3 py-2 text-sm text-foreground shadow-xs outline-none transition-colors duration-(--tmex-motion-fast) ease-out focus:border-ring motion-reduce:transition-none"
         value={editorText}
         onChange={(e) => editor.handleEditorChange(e.target.value)}
         placeholder={t('terminal.inputPlaceholder')}

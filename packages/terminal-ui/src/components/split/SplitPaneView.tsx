@@ -35,7 +35,7 @@ function PaneAgentBadge({ deviceId, paneId }: { deviceId: string; paneId: string
         title={t('agent.paneBadge.generating')}
         aria-label={t('agent.paneBadge.generating')}
       >
-        🤖<span className="ml-0.5 text-[10px] animate-pulse">✨</span>
+        🤖<span className="ml-0.5 text-[10px] motion-safe:animate-pulse">✨</span>
       </span>
     );
   }
@@ -121,7 +121,7 @@ export function SplitPaneView({
         <div
           data-testid="split-pane-titlebar"
           data-active={isFocused || undefined}
-          className={`flex h-6 cursor-grab touch-none select-none items-center gap-1.5 rounded-md px-2.5 transition-colors active:cursor-grabbing ${
+          className={`group/pane-titlebar flex h-6 cursor-grab touch-none select-none items-center gap-1.5 rounded-md px-2.5 transition-colors duration-(--tmex-motion-standard) ease-out active:cursor-grabbing motion-reduce:transition-none ${
             isFocused ? 'bg-foreground/10' : 'bg-foreground/[0.04]'
           }`}
           onPointerDown={(event) => onTitleBarPointerDown(paneId, event)}
@@ -129,7 +129,7 @@ export function SplitPaneView({
           <PaneBellIcon paneId={paneId} />
           <PaneAgentBadge deviceId={deviceId} paneId={paneId} />
           <span
-            className={`shrink-0 truncate font-mono text-[10.5px] leading-none ${
+            className={`shrink-0 truncate font-mono text-[10.5px] leading-none transition-colors duration-(--tmex-motion-standard) ease-out motion-reduce:transition-none ${
               isFocused ? 'text-foreground/90' : 'text-foreground/50'
             }`}
           >
@@ -137,7 +137,7 @@ export function SplitPaneView({
           </span>
           {meta && (
             <span
-              className={`min-w-0 flex-1 truncate font-mono text-[10px] leading-none ${
+              className={`min-w-0 flex-1 truncate font-mono text-[10px] leading-none transition-colors duration-(--tmex-motion-standard) ease-out motion-reduce:transition-none ${
                 isFocused ? 'text-muted-foreground' : 'text-muted-foreground/60'
               }`}
             >
@@ -149,7 +149,7 @@ export function SplitPaneView({
             data-testid={`split-pane-close-${paneId}`}
             aria-label={t('window.closePane')}
             title={t('window.closePane')}
-            className="ml-auto flex h-4 w-4 shrink-0 items-center justify-center rounded text-muted-foreground/50 hover:bg-foreground/10 hover:text-foreground"
+            className="ml-auto flex h-4 w-4 shrink-0 items-center justify-center rounded text-muted-foreground/50 opacity-70 transition-[opacity,color,background-color] duration-(--tmex-motion-fast) ease-out hover:bg-foreground/10 hover:text-foreground hover:opacity-100 group-hover/pane-titlebar:opacity-100 motion-reduce:transition-none"
             onPointerDown={(event) => event.stopPropagation()}
             onClick={(event) => {
               event.stopPropagation();

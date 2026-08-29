@@ -13,7 +13,10 @@ export interface DeviceWindowListProps extends DeviceRowProps {
 
 const stopPropagation = (event: { stopPropagation: () => void }) => event.stopPropagation();
 
-/** 展开态的设备子树：加载中 / 空窗口 / 窗口列表 + 新建窗口按钮 */
+/**
+ * 展开态的设备子树：加载中 / 空窗口 / 窗口列表 + 新建窗口按钮。
+ * 根节点的 `tmex-reveal` 只在展开挂载时播一次；tmux 快照推送只是重渲染，不会重放。
+ */
 export function DeviceWindowList(props: DeviceWindowListProps) {
   const { device, windows, onCreateWindow } = props;
   const { t } = useTranslation();
@@ -27,7 +30,7 @@ export function DeviceWindowList(props: DeviceWindowListProps) {
   return (
     <div
       data-testid={`device-tree-${deviceId}`}
-      className="space-y-1.5 py-1.5 pr-1.5 pl-10 [@media(any-pointer:coarse)]:space-y-2"
+      className="tmex-reveal space-y-1.5 py-1.5 pr-1.5 pl-10 [@media(any-pointer:coarse)]:space-y-2"
     >
       {!windows && <DeviceTreeHint text={t('common.loading')} />}
       {windows?.length === 0 && <DeviceTreeHint text={t('window.noWindows')} />}
@@ -39,7 +42,7 @@ export function DeviceWindowList(props: DeviceWindowListProps) {
         onPointerDown={stopPropagation}
         onMouseDown={stopPropagation}
         onClick={handleCreateWindow}
-        className="w-full flex items-center gap-2 px-2 py-1.5 rounded-md text-left transition-colors text-muted-foreground hover:text-foreground hover:bg-accent/30 border border-dashed border-border/50 hover:border-border"
+        className="w-full flex items-center gap-2 px-2 py-1.5 rounded-md text-left transition-colors duration-(--tmex-motion-fast) ease-out motion-reduce:transition-none text-muted-foreground hover:text-foreground hover:bg-accent/30 border border-dashed border-border/50 hover:border-border"
       >
         <Plus className="h-3.5 w-3.5 shrink-0" />
         <span className="text-xs">{t('window.new')}</span>

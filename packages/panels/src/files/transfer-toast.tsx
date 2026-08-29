@@ -22,7 +22,7 @@ function PathBadge({ path }: { path: TransferToastPath }) {
     <span
       data-testid="transfer-path-badge"
       title={i18next.t(direct ? 'files.transfer.pathDirectHint' : 'files.transfer.pathRelayHint')}
-      className="shrink-0 rounded border px-1 text-[10px] leading-4 text-muted-foreground"
+      className="shrink-0 rounded border px-1 text-[10px] leading-4 text-muted-foreground transition-colors duration-(--tmex-motion-fast) ease-out motion-reduce:transition-none"
     >
       {i18next.t(direct ? 'files.transfer.pathDirect' : 'files.transfer.pathRelay')}
     </span>

@@ -62,7 +62,10 @@ export function DeviceConnectionControl({
         data-online={status === 'connected'}
         aria-label={statusLabel}
         title={statusLabel}
-        className={cn('h-2 w-2 shrink-0 rounded-full', deviceStatusDotClass(status))}
+        className={cn(
+          'h-2 w-2 shrink-0 rounded-full transition-colors duration-(--tmex-motion-standard) ease-out motion-reduce:transition-none',
+          deviceStatusDotClass(status)
+        )}
       />
       {connection && (
         <button
@@ -80,11 +83,11 @@ export function DeviceConnectionControl({
               onConnect();
             }
           }}
-          className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground [@media(any-pointer:coarse)]:h-9 [@media(any-pointer:coarse)]:w-9"
+          className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors duration-(--tmex-motion-fast) ease-out hover:bg-accent hover:text-foreground motion-reduce:transition-none [@media(any-pointer:coarse)]:h-9 [@media(any-pointer:coarse)]:w-9"
         >
           <Power
             className={cn(
-              'h-3.5 w-3.5',
+              'h-3.5 w-3.5 transition-colors duration-(--tmex-motion-standard) ease-out motion-reduce:transition-none',
               action === 'disconnect' ? 'text-emerald-500' : 'text-muted-foreground'
             )}
           />

@@ -16,7 +16,7 @@ import type { DevicePaneSelection } from './use-device-pane-selection';
 
 function CenteredNotice({ children }: { children: ReactNode }) {
   return (
-    <div className="absolute inset-0 flex flex-col items-center justify-center p-8 text-center">
+    <div className="tmex-fade absolute inset-0 flex flex-col items-center justify-center p-8 text-center">
       <div className="max-w-sm space-y-4">{children}</div>
     </div>
   );
@@ -27,7 +27,7 @@ function LoadingPlaceholder() {
   return (
     <>
       <div className="h-12 w-12 rounded-full bg-muted flex items-center justify-center mx-auto">
-        <Loader2 className="h-6 w-6 text-muted-foreground animate-spin" />
+        <Loader2 className="h-6 w-6 text-muted-foreground animate-spin motion-reduce:animate-none" />
       </div>
       <h3 className="text-lg font-medium">{t('terminal.connecting')}</h3>
     </>
@@ -87,11 +87,11 @@ function ResolvingOverlay() {
   const { t } = useTranslation();
   return (
     <div
-      className="absolute inset-0 flex items-center justify-center bg-background/85 backdrop-blur-sm"
+      className="tmex-fade absolute inset-0 flex items-center justify-center bg-background/85 backdrop-blur-sm"
       data-testid="terminal-status-overlay"
     >
       <div className="flex flex-col items-center gap-2 rounded-lg border border-border bg-card/90 px-4 py-3 shadow-sm">
-        <div className="h-7 w-7 rounded-full border-2 border-primary border-t-transparent animate-spin" />
+        <div className="h-7 w-7 rounded-full border-2 border-primary border-t-transparent animate-spin motion-reduce:animate-none" />
         <span className="text-xs text-muted-foreground" data-testid="terminal-status-text">
           {t('terminal.connecting')}
         </span>
@@ -247,7 +247,7 @@ export function TerminalStage(props: TerminalStageProps) {
         {/* 重连指示：非遮挡、置顶居中，保持已有终端内容可见 */}
         {isReconnecting && (
           <div
-            className="pointer-events-none absolute inset-x-0 top-2 z-10 flex justify-center"
+            className="tmex-fade pointer-events-none absolute inset-x-0 top-2 z-10 flex justify-center"
             data-testid="terminal-reconnecting-indicator"
           >
             <DeviceStatusBadge deviceId={deviceId} className="shadow-sm" />
