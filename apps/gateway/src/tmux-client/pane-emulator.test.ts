@@ -1,11 +1,13 @@
-import { describe, expect, test } from 'bun:test';
+import { afterEach, describe, expect, spyOn, test } from 'bun:test';
+import { HeadlessTerminal } from 'ghostty-terminal/headless';
 import type { PaneInfo } from './capture-history';
 import {
   type EmulatorStreamListener,
   type EmulatorStreamSource,
+  PaneEmulator,
   PaneEmulatorRegistry,
 } from './pane-emulator';
-import { PaneRetention } from './pane-retention';
+import { PaneRetention, PaneRetentionConsumerLease } from './pane-retention';
 import type { PromptMarker } from './pane-stream-parser';
 
 const enc = new TextEncoder();
@@ -207,5 +209,229 @@ describe('PaneEmulator + registry', () => {
     expect(e2.isDisposed).toBe(true);
     expect(reg.size).toBe(0);
     expect(fake.stats().activeListeners).toBe(0);
+  });
+});
+
+const PANE_INFO: PaneInfo = {
+  cols: 80,
+  rows: 24,
+  cursorX: 0,
+  cursorY: 0,
+  alternateScreen: false,
+  currentCommand: 'bash',
+};
+
+function baseSource(overrides: Partial<EmulatorStreamSource> = {}): EmulatorStreamSource {
+  return {
+    subscribe() {
+      return () => {};
+    },
+    async capturePaneText() {
+      return '';
+    },
+    async getPaneInfo() {
+      return PANE_INFO;
+    },
+    ...overrides,
+  };
+}
+
+describe('PaneEmulator.create', () => {
+  const spies: Array<{ mockRestore: () => void }> = [];
+
+  afterEach(() => {
+    while (spies.length > 0) spies.pop()?.mockRestore();
+  });
+
+  test.each([
+    [
+      'rejected getPaneInfo',
+      async () => {
+        throw new Error('gone');
+      },
+    ],
+    ['cols/rows at 0', async () => ({ ...PANE_INFO, cols: 0, rows: 0 })],
+    ['negative cols/rows', async () => ({ ...PANE_INFO, cols: -2, rows: -1 })],
+  ] as const)('falls back to 80x24 when pane info is %s', async (_label, getPaneInfo) => {
+    const emulator = await PaneEmulator.create('%1', baseSource({ getPaneInfo }));
+    expect(emulator.size()).toEqual({ cols: 80, rows: 24 });
+    emulator.dispose();
+  });
+
+  test('empty seed does not inject a blank line; non-empty seed normalizes newlines', async () => {
+    const empty = await PaneEmulator.create('%1', baseSource());
+    expect(empty.render().trim()).toBe('');
+    empty.dispose();
+
+    const seeded = await PaneEmulator.create(
+      '%1',
+      baseSource({
+        async capturePaneText() {
+          return 'a\nb';
+        },
+      })
+    );
+    expect(seeded.render()).toContain('a');
+    expect(seeded.render()).toContain('b');
+    seeded.dispose();
+  });
+
+  test.each([
+    'getPaneIdentity',
+    'attachPaneConsumer',
+    'captureCanonicalScreen',
+    'readPaneReplay',
+  ] as const)('uses legacy capture when retention API %s is missing', async (missing) => {
+    const paneEpoch = new Uint8Array(16).fill(3);
+    const retention = new PaneRetention({ scheduleTimers: false });
+    retention.reconcilePanes([{ paneId: '%1', paneEpoch }]);
+    const source = baseSource({
+      async capturePaneText() {
+        return 'legacy-seed';
+      },
+      getPaneIdentity: () => ({ paneId: '%1', paneEpoch }),
+      attachPaneConsumer: (callbacks) => retention.attachConsumer(callbacks),
+      captureCanonicalScreen: async () => {
+        throw new Error('retention capture must not run');
+      },
+      readPaneReplay: () => {
+        throw new Error('retention replay must not run');
+      },
+    });
+    delete source[missing];
+    const emulator = await PaneEmulator.create('%1', source);
+    expect(emulator.render()).toContain('legacy-seed');
+    emulator.dispose();
+    retention.dispose();
+  });
+
+  test('throws and frees the terminal when the pane identity is missing', async () => {
+    const free = spyOn(HeadlessTerminal.prototype, 'free');
+    spies.push(free);
+    const close = spyOn(PaneRetentionConsumerLease.prototype, 'close');
+    spies.push(close);
+    const paneEpoch = new Uint8Array(16).fill(3);
+    const retention = new PaneRetention({ scheduleTimers: false });
+    await expect(
+      PaneEmulator.create(
+        '%1',
+        baseSource({
+          getPaneIdentity: () => null,
+          attachPaneConsumer: (callbacks) => retention.attachConsumer(callbacks),
+          async captureCanonicalScreen() {
+            return null;
+          },
+          readPaneReplay: () => null,
+        })
+      )
+    ).rejects.toThrow('pane not found: %1');
+    expect(free).toHaveBeenCalled();
+    expect(close).not.toHaveBeenCalled();
+    retention.dispose();
+  });
+
+  test.each([
+    [
+      'null checkpoint',
+      async () => null,
+      null as ReturnType<PaneRetention['readReplay']>,
+      'pane screen unavailable: %1',
+    ],
+    [
+      'null replay',
+      async () => ({
+        paneId: '%1',
+        paneEpoch: new Uint8Array(16).fill(3),
+        baseSeq: 0n,
+        rows: 24,
+        cols: 80,
+        modes: 0,
+        data: enc.encode('seed\r\n'),
+        historyCursor: null,
+        capturedAt: 0,
+      }),
+      null,
+      'pane replay unavailable after screen capture: %1',
+    ],
+    [
+      'replay gap',
+      async () => ({
+        paneId: '%1',
+        paneEpoch: new Uint8Array(16).fill(3),
+        baseSeq: 0n,
+        rows: 24,
+        cols: 80,
+        modes: 0,
+        data: enc.encode('seed\r\n'),
+        historyCursor: null,
+        capturedAt: 0,
+      }),
+      {
+        paneId: '%1',
+        paneEpoch: new Uint8Array(16).fill(3),
+        segments: [],
+        gap: {
+          paneId: '%1',
+          paneEpoch: new Uint8Array(16).fill(3),
+          reason: 'pane_gap' as const,
+          expectedPaneEpoch: new Uint8Array(16).fill(3),
+          expectedSeq: 0n,
+          availableSeq: 0n,
+        },
+        needsScreen: true,
+      },
+      'pane replay unavailable after screen capture: %1',
+    ],
+  ])(
+    'throws, closes the lease, and frees the terminal on %s',
+    async (_label, captureCanonicalScreen, replay, message) => {
+      const free = spyOn(HeadlessTerminal.prototype, 'free');
+      spies.push(free);
+      const close = spyOn(PaneRetentionConsumerLease.prototype, 'close');
+      spies.push(close);
+      const paneEpoch = new Uint8Array(16).fill(3);
+      const retention = new PaneRetention({ scheduleTimers: false });
+      retention.reconcilePanes([{ paneId: '%1', paneEpoch }]);
+      await expect(
+        PaneEmulator.create(
+          '%1',
+          baseSource({
+            getPaneIdentity: () => ({ paneId: '%1', paneEpoch }),
+            attachPaneConsumer: (callbacks) => retention.attachConsumer(callbacks),
+            captureCanonicalScreen,
+            readPaneReplay: () => replay,
+          })
+        )
+      ).rejects.toThrow(message);
+      expect(close).toHaveBeenCalled();
+      expect(free).toHaveBeenCalled();
+      retention.dispose();
+    }
+  );
+
+  test('rethrows capture errors after closing the lease and freeing the terminal', async () => {
+    const free = spyOn(HeadlessTerminal.prototype, 'free');
+    spies.push(free);
+    const close = spyOn(PaneRetentionConsumerLease.prototype, 'close');
+    spies.push(close);
+    const paneEpoch = new Uint8Array(16).fill(3);
+    const retention = new PaneRetention({ scheduleTimers: false });
+    retention.reconcilePanes([{ paneId: '%1', paneEpoch }]);
+    await expect(
+      PaneEmulator.create(
+        '%1',
+        baseSource({
+          getPaneIdentity: () => ({ paneId: '%1', paneEpoch }),
+          attachPaneConsumer: (callbacks) => retention.attachConsumer(callbacks),
+          async captureCanonicalScreen() {
+            throw new Error('capture failed');
+          },
+          readPaneReplay: () => null,
+        })
+      )
+    ).rejects.toThrow('capture failed');
+    expect(close).toHaveBeenCalled();
+    expect(free).toHaveBeenCalled();
+    retention.dispose();
   });
 });

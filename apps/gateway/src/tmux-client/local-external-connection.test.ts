@@ -7,6 +7,8 @@ import type { TmuxEvent } from './events';
 import {
   type ControlClientProcess,
   LocalExternalTmuxConnection,
+  TMUX_SPAWN_UNAVAILABLE_EXIT,
+  classifyControlSessionProbe,
   shouldIgnoreReaderAbortError,
 } from './local-external-connection';
 import { TmuxTargetMissingError } from './target-missing';
@@ -205,6 +207,37 @@ async function waitFor<T>(fn: () => T | null | undefined, timeoutMs = 3000): Pro
 
 beforeAll(() => {
   runMigrations();
+});
+
+describe('classifyControlSessionProbe', () => {
+  test('treats the spawn-unavailable sentinel before a generic non-zero exit', () => {
+    expect(
+      classifyControlSessionProbe({
+        exitCode: TMUX_SPAWN_UNAVAILABLE_EXIT,
+        stdout: 'session gone',
+        stderr: 'posix_spawn failed',
+      })
+    ).toEqual({ kind: 'spawn-unavailable', stderr: 'posix_spawn failed' });
+  });
+
+  test('prefers stderr, then stdout, then a default when the session is gone', () => {
+    expect(
+      classifyControlSessionProbe({ exitCode: 1, stdout: 'stdout-msg', stderr: 'stderr-msg' })
+    ).toEqual({ kind: 'session-gone', message: 'stderr-msg' });
+    expect(
+      classifyControlSessionProbe({ exitCode: 1, stdout: 'stdout-msg', stderr: '  ' })
+    ).toEqual({ kind: 'session-gone', message: 'stdout-msg' });
+    expect(classifyControlSessionProbe({ exitCode: 1, stdout: '', stderr: '' })).toEqual({
+      kind: 'session-gone',
+      message: 'tmux session gone',
+    });
+  });
+
+  test('reports an alive session on exit 0', () => {
+    expect(classifyControlSessionProbe({ exitCode: 0, stdout: '', stderr: '' })).toEqual({
+      kind: 'alive',
+    });
+  });
 });
 
 describe('LocalExternalTmuxConnection', () => {
@@ -681,6 +714,56 @@ describe('LocalExternalTmuxConnection', () => {
 
     await waitFor(() => (closed ? true : null));
     expect(fakes).toHaveLength(1);
+  }, 10_000);
+
+  test('control client reconnect degrades on spawn pressure then retries', async () => {
+    const fakes: FakeControlProcess[] = [];
+    let failHasSession = false;
+    let closed = false;
+
+    const connection = new LocalExternalTmuxConnection(
+      {
+        deviceId: 'device-local',
+        onEvent: () => {},
+        onTerminalOutput: () => {},
+        onTerminalHistory: () => {},
+        onSnapshot: () => {},
+        onError: () => {},
+        onClose: () => {
+          closed = true;
+        },
+      },
+      {
+        enableSubscription: true,
+        ensureGhosttyTerminfo: async () => false,
+        getDevice: () => createDevice('tmex-spawn-retry'),
+        run: createRunStub('tmex-spawn-retry', {
+          overrides: (command) => {
+            if (failHasSession && command === 'has-session -t tmex-spawn-retry') {
+              failHasSession = false;
+              return { exitCode: TMUX_SPAWN_UNAVAILABLE_EXIT, stdout: '', stderr: 'EAGAIN' };
+            }
+            return null;
+          },
+        }),
+        spawnControlClient: () => {
+          const fake = createFakeControlProcess();
+          fake.pushStdout('%begin 1 1 0\n%end 1 1 0\n%session-changed $1 tmex-spawn-retry\n');
+          fakes.push(fake);
+          return fake.proc;
+        },
+      }
+    );
+
+    await connection.connect();
+    expect(fakes).toHaveLength(1);
+    failHasSession = true;
+    fakes[0]?.exit(1);
+
+    await waitFor(() => (fakes.length === 2 ? fakes : null), 8_000);
+    expect(closed).toBe(false);
+
+    connection.disconnect();
   }, 10_000);
 
   test('sendInput encodes payload as tmux send-keys -H chunks', async () => {

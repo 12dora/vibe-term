@@ -67,6 +67,7 @@ describe('snapshot format helpers', () => {
     expect(SNAPSHOT_FIELD_LAYOUTS[4]).toEqual({ prefixCount: 2, suffixCount: 1 });
     expect(SNAPSHOT_FIELD_LAYOUTS[8]).toEqual({ prefixCount: 3, suffixCount: 4 });
     expect(SNAPSHOT_FIELD_LAYOUTS[9]).toEqual({ prefixCount: 3, suffixCount: 5 });
+    expect(SNAPSHOT_FIELD_LAYOUTS[12]).toEqual({ prefixCount: 9, suffixCount: 2 });
   });
 
   test('splitFlexibleSnapshotFields joins the flexible span and right-anchors suffix fields', () => {
@@ -205,6 +206,38 @@ describe('parsePaneSnapshotRow', () => {
     expect(parsePaneSnapshotRow('%5|@2|x|1|104|62|0|0|1|t|c|/p')).toBeNull();
     expect(parsePaneSnapshotRow('%5|@2|1|3|104|62|0|0|1|t|c|/p')).toBeNull();
     expect(parsePaneSnapshotRow('%5|@2|1|1|104|62|0|0')).toBeNull();
+    expect(parsePaneSnapshotRow('%5|@2|1|1|104|62|0|0|2|t|c|/p')).toBeNull();
+  });
+
+  test('preserves title whitespace but trims command and path', () => {
+    const row = parsePaneSnapshotRow(`${base}|  titled  |  node  |  /tmp  `);
+    expect(row?.title).toBe('  titled  ');
+    expect(row?.currentCommand).toBe('node');
+    expect(row?.currentPath).toBe('/tmp');
+  });
+
+  test('unparseable left/top offsets become undefined instead of dropping the row', () => {
+    const row = parsePaneSnapshotRow('%6|@2|2|0|103|30|x|y|1|t|zsh|/tmp');
+    expect(row).not.toBeNull();
+    expect(row?.left).toBeUndefined();
+    expect(row?.top).toBeUndefined();
+  });
+
+  test('splitSnapshotFields joins a pane title that contains separators', () => {
+    expect(splitSnapshotFields(`${base}|title|with|pipe|node|/tmp`, 12)).toEqual([
+      '%5',
+      '@2',
+      '1',
+      '1',
+      '104',
+      '62',
+      '0',
+      '0',
+      '1',
+      'title|with|pipe',
+      'node',
+      '/tmp',
+    ]);
   });
 
   test('PANE_SNAPSHOT_FORMAT field order matches the parser', () => {
