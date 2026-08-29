@@ -129,6 +129,27 @@ describe('toSidebarEntries', () => {
     expect(entries.map((e) => e.id)).toEqual(['b', 'a']);
     expect(entries[1].runtimeNodeId).toBe('self');
   });
+
+  test('缺省顺序现算：API 把 self 放最后也排到最前，离线的排在在线的后面', () => {
+    // `/api/mesh/nodes` 的返回是原样落进 store 的，侧栏不能指望它已经排好序
+    const nodes = [
+      meshNode({ id: 'c', name: 'c' }),
+      meshNode({ id: 'b', name: 'b', online: false }),
+      meshNode({ id: 'a', name: 'a' }),
+    ];
+    expect(toSidebarEntries(nodes, 'a').map((e) => e.id)).toEqual(['a', 'c', 'b']);
+  });
+
+  test('self 被拖到中间 / 末尾后顺序稳住，不会被缺省顺序拉回最前', () => {
+    const nodes = [meshNode({ id: 'a' }), meshNode({ id: 'b' }), meshNode({ id: 'c' })];
+    expect(toSidebarEntries(nodes, 'a', ['b', 'a', 'c']).map((e) => e.id)).toEqual(['b', 'a', 'c']);
+    expect(toSidebarEntries(nodes, 'a', ['b', 'c', 'a']).map((e) => e.id)).toEqual(['b', 'c', 'a']);
+  });
+
+  test('self 排在末尾时新加入的 node 追加在它后面，self 位置不变', () => {
+    const nodes = [meshNode({ id: 'a' }), meshNode({ id: 'b' }), meshNode({ id: 'd' })];
+    expect(toSidebarEntries(nodes, 'a', ['b', 'a']).map((e) => e.id)).toEqual(['b', 'a', 'd']);
+  });
 });
 
 describe('applySidebarNodeOrder', () => {

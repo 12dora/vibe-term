@@ -13,8 +13,10 @@ console.info(`${PRODUCT_NAME} ${formatDisplayVersion(__MONOREPO_VERSION__, __IS_
 import { isAuthTransitionActive } from '@/auth/auth-transition';
 import { FlowBridges } from '@/components/flow-bridges';
 import { AppSidebar } from '@/components/page-layouts/components/app-sidebar';
+import { SidePanelHost } from '@/components/side-panels/side-panel-host';
 import { useAppMonoFont } from '@/lib/fonts/useAppMonoFont';
-import { NodeRuntimeBoundary } from '@/node/node-runtime-boundary';
+import { NodeRouteGate, NodeRuntimeBoundary, useRouteNodeId } from '@/node/node-runtime-boundary';
+import { NodeRuntimeScope } from '@/node/node-runtime-scope';
 import { appNodeRuntimes, nodeQueryClient } from '@/node/node-runtimes';
 import { PageWrapper } from '@/page-wrapper';
 import { installSessionInterceptor } from '@tmex/api-client/auth/index';
@@ -122,29 +124,56 @@ function ThemedToaster() {
   );
 }
 
-// Root layout: 当前 node 边界内的外壳（sidebar + 内容区）
+// Root layout: 跨 node 常驻的外壳（sidebar + 内容区）。
+// 外壳挂在 entry（self）运行时下**永不重挂**：切 node 只换页面区的运行时（见 MainInset），
+// 侧边栏保持挂载，只有高亮跟着路由变。
 function RootLayout() {
   // 把选中等宽字体派生到 --font-mono（全应用统一）并按需懒加载 woff2
   useAppMonoFont();
+  // 桌面端展开/折叠受控于持久化的 ui store，刷新后保留，且 setSidebarCollapsed 能真正开合侧栏
+  // （UI 偏好是宿主级的，所有 node 共用一份，读 entry 运行时的即可）
+  const sidebarCollapsed = useUIStore((state) => state.sidebarCollapsed);
+  const setSidebarCollapsed = useUIStore((state) => state.setSidebarCollapsed);
+  return (
+    <>
+      <SidebarProvider open={!sidebarCollapsed} onOpenChange={(open) => setSidebarCollapsed(!open)}>
+        <StatusBarSync />
+        <FlowBridges />
+        <NodeRuntimeScope nodeId={SELF_NODE_ID}>
+          <AppSidebar />
+        </NodeRuntimeScope>
+        <MainInset />
+        <SidePanelHost />
+      </SidebarProvider>
+      <RouteConnectionIndicator />
+    </>
+  );
+}
+
+// 连接指示器跟着**路由 node** 走，但必须留在 SidebarInset 外面：键盘避让会给 SidebarInset
+// 加 transform，那会让 fixed 定位的指示器改以它为包含块，跑到屏幕里侧去。
+// 只注入 runtime，不带 QueryClient / GlobalDeviceProvider——指示器只读 tmux 连接状态。
+function RouteConnectionIndicator() {
+  const runtime = useNodeRuntime(useRouteNodeId(), appNodeRuntimes);
+  return (
+    <RuntimeProvider runtime={runtime}>
+      <ConnectionIndicator />
+    </RuntimeProvider>
+  );
+}
+
+// 路由 node 就绪后才做的接线：事件订阅会开该 node 的 WS，能力集是该 node 的请求，
+// 都必须等懒登录门闸放行（`NodeRouteGate` 内部），否则进未登录的 node 会整片 401。
+function NodeSessionInit() {
   // 启动即拉取服务端能力集（/api/capabilities），落 site store 供按 featureset 渲染
   const loadCapabilities = useSiteStore((state) => state.loadCapabilities);
   useEffect(() => {
     void loadCapabilities();
   }, [loadCapabilities]);
-  // 桌面端展开/折叠受控于持久化的 ui store，刷新后保留，且 setSidebarCollapsed 能真正开合侧栏
-  const sidebarCollapsed = useUIStore((state) => state.sidebarCollapsed);
-  const setSidebarCollapsed = useUIStore((state) => state.setSidebarCollapsed);
   return (
     <>
       <WatchEventsInit />
       <SettingsEventsInit />
-      <SidebarProvider open={!sidebarCollapsed} onOpenChange={(open) => setSidebarCollapsed(!open)}>
-        <StatusBarSync />
-        <FlowBridges />
-        <AppSidebar />
-        <MainInset />
-      </SidebarProvider>
-      <ConnectionIndicator />
     </>
   );
 }
@@ -176,7 +205,13 @@ function MainInset() {
 
   return (
     <SidebarInset className="h-dvh overflow-hidden md:h-[calc(100dvh-1rem)]" style={style}>
-      <Outlet />
+      {/* 页面区才按路由 node 换运行时：换 runtime 实例会重挂整棵子树，外壳必须留在外面 */}
+      <NodeRuntimeBoundary>
+        <NodeRouteGate>
+          <NodeSessionInit />
+          <Outlet />
+        </NodeRouteGate>
+      </NodeRuntimeBoundary>
       <div
         style={{
           height: active ? 0 : 'var(--tmex-safe-area-bottom)',
@@ -193,18 +228,10 @@ const devicesModule = () => import('./pages/DevicesPage');
 const deviceModule = () => import('./pages/DevicePage');
 const fileModule = () => import('./pages/FilePage');
 const loginModule = () => import('./pages/LoginPage');
-const accountSecurityModule = () => import('./pages/AccountSecurityPage');
-
-// node 边界外壳：先建/取该 node 的运行时，再渲染外壳与页面
-function NodeShell() {
-  return (
-    <NodeRuntimeBoundary>
-      <RootLayout />
-    </NodeRuntimeBoundary>
-  );
-}
 
 // 页面路由在 `self`（旧路由）与 `/n/:nodeId` 两处各挂一份；路由对象不可共享，逐次新建。
+// 两份都是**同一棵** RootLayout 路由的子级：外壳的元素身份必须跨 node 保持不变，
+// 分成两棵顶层路由的话 React Router 会在切换分支时把外壳整个卸载重建（侧边栏闪烁）。
 function pageRoutes() {
   return [
     {
@@ -239,21 +266,14 @@ function pageRoutes() {
 // 路由配置 - Data 模式：/n/:nodeId/... 为显式 node，旧路由等价于 self（不做重定向）
 const router = createBrowserRouter([
   { path: '/login', element: <PageWrapper moduleLoader={loginModule} withSidebar={false} /> },
-  {
-    path: '/account/security',
-    element: <PageWrapper moduleLoader={accountSecurityModule} withSidebar={false} />,
-  },
-  // 独立的 /nodes 页已并入设置页「节点」标签；老书签重定向过去，不要变成 404。
+  // 独立的 /nodes、/account/security 两页已并入设置页与右侧滑出面板；老书签重定向过去，
+  // 不要变成 404。
   { path: '/nodes', element: <Navigate to="/settings?tab=nodes" replace /> },
-  {
-    path: '/n/:nodeId',
-    Component: NodeShell,
-    children: pageRoutes(),
-  },
+  { path: '/account/security', element: <Navigate to="/settings?panel=security" replace /> },
   {
     path: '/',
-    Component: NodeShell,
-    children: pageRoutes(),
+    Component: RootLayout,
+    children: [...pageRoutes(), { path: 'n/:nodeId', children: pageRoutes() }],
   },
 ]);
 

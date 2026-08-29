@@ -1,4 +1,4 @@
-// PageWrapper 顶栏：无侧栏页面（/login、/account/security）左上角必须有品牌，
+// PageWrapper 顶栏：无侧栏页面（/login）左上角必须有品牌，
 // 有侧栏时左上角是侧栏开关而不是品牌。无 DOM 测试环境，用 react-dom/server 静态渲染。
 
 import { describe, expect, test } from 'bun:test';

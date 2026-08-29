@@ -1,10 +1,12 @@
 import {
+  type CollisionDetection,
   DndContext,
   type DragEndEvent,
   KeyboardSensor,
   MouseSensor,
   TouchSensor,
   closestCenter,
+  pointerWithin,
   useSensor,
   useSensors,
 } from '@dnd-kit/core';
@@ -41,11 +43,27 @@ export function reorderIdsByDragEnd(ids: readonly string[], event: DragEndEvent)
   return arrayMove([...ids], oldIndex, newIndex);
 }
 
+/**
+ * 指针优先的碰撞检测。
+ *
+ * `closestCenter` 比的是**被拖元素整块矩形**的中心到各落点中心的距离，行高相差悬殊时会直接
+ * 拖不动：侧栏里展开着设备树的节点分节能有几百像素高，它下面的离线分节只有一行，要让高分节
+ * 的中心越过矮分节的中心，指针得往下拖出大半个列表——用户看到的就是「本机节点拖不到中间/
+ * 底部」。改成先看指针落在哪个落点矩形里，落在两块之间的空隙（或用键盘排序，没有指针坐标）
+ * 时再退回中心距离，兜住 `over` 不会变成 null。
+ */
+export const pointerFirstCollisionDetection: CollisionDetection = (args) => {
+  const collisions = pointerWithin(args);
+  return collisions.length > 0 ? collisions : closestCenter(args);
+};
+
 export interface SortableVerticalListProps {
   ids: string[];
   onReorder: (nextIds: string[]) => void;
   /** 上一次重排还在飞时置真：并发的重排请求会让先发后到的旧顺序覆盖新顺序 */
   disabled?: boolean;
+  /** 覆盖碰撞检测；缺省为指针优先（见 `pointerFirstCollisionDetection`） */
+  collisionDetection?: CollisionDetection;
   children: ReactNode;
 }
 
@@ -54,13 +72,14 @@ export function SortableVerticalList({
   ids,
   onReorder,
   disabled = false,
+  collisionDetection = pointerFirstCollisionDetection,
   children,
 }: SortableVerticalListProps) {
   const sensors = useDeviceTreeSensors();
   return (
     <DndContext
       sensors={sensors}
-      collisionDetection={closestCenter}
+      collisionDetection={collisionDetection}
       onDragEnd={(event) => {
         if (disabled) return;
         const nextIds = reorderIdsByDragEnd(ids, event);

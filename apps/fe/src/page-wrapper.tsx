@@ -1,5 +1,5 @@
 // 路由页外框：顶栏（品牌 / 侧栏开关 + 页标题 + 页动作）与页面模块的按需加载。
-// withSidebar=false：/login、/account/security 挂在 NodeShell（SidebarProvider）之外，
+// withSidebar=false：/login 挂在 RootLayout（SidebarProvider）之外，
 // 不能渲染 SidebarTrigger，改在顶栏左侧展示品牌。
 
 import { PageLoadFallback } from '@/PageLoadFallback';

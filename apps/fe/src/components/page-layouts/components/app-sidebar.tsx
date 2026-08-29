@@ -2,6 +2,8 @@ import { Bot, FolderClosed, Monitor, PanelsTopLeft } from 'lucide-react';
 import { type ComponentProps, Suspense, lazy } from 'react';
 import { useTranslation } from 'react-i18next';
 
+import { useRouteNodeId } from '@/node/node-runtime-boundary';
+import { NodeRuntimeScope } from '@/node/node-runtime-scope';
 import { useUIStore } from '@tmex/stores/react';
 import { Reveal } from '@tmex/ui/motion';
 import { Sidebar, SidebarContent, SidebarFooter, SidebarHeader } from '@tmex/ui/sidebar';
@@ -27,6 +29,9 @@ export function AppSidebar({ ...props }: ComponentProps<typeof Sidebar>) {
   const { t } = useTranslation();
   const sidebarTab = useUIStore((state) => state.sidebarTab);
   const setSidebarTab = useUIStore((state) => state.setSidebarTab);
+  // 外壳常驻在 self 运行时下；智能体 / 文件两个标签服务的是当前路由所在的 node，
+  // 单独套一层该 node 的运行时（切 node 时这两块重挂是预期的，设备树不受影响）
+  const routeNodeId = useRouteNodeId();
 
   return (
     <Sidebar variant="inset" {...props}>
@@ -71,15 +76,12 @@ export function AppSidebar({ ...props }: ComponentProps<typeof Sidebar>) {
             否则设备树与文件树会失去可滚动高度。 */}
         <Reveal key={sidebarTab} className="flex min-h-0 flex-1 flex-col">
           {sidebarTab === 'panes' && <SideBarDeviceList />}
-          {sidebarTab === 'agent' && (
-            <Suspense fallback={null}>
-              <AgentTab />
-            </Suspense>
-          )}
-          {sidebarTab === 'files' && (
-            <Suspense fallback={null}>
-              <FilesTab />
-            </Suspense>
+          {sidebarTab !== 'panes' && (
+            <NodeRuntimeScope nodeId={routeNodeId}>
+              <Suspense fallback={null}>
+                {sidebarTab === 'agent' ? <AgentTab /> : <FilesTab />}
+              </Suspense>
+            </NodeRuntimeScope>
           )}
         </Reveal>
       </SidebarContent>

@@ -8,9 +8,9 @@ import { installWindowStorage } from '@tmex/stores/test-utils';
 installWindowStorage();
 
 const { renderToStaticMarkup } = await import('react-dom/server');
-const { MemoryRouter, Route, Routes } = await import('react-router');
+const { MemoryRouter, Outlet, Route, Routes } = await import('react-router');
 const { useRuntime } = await import('@tmex/stores/react');
-const { NodeRuntimeBoundary } = await import('./node-runtime-boundary');
+const { NodeRouteGate, NodeRuntimeBoundary } = await import('./node-runtime-boundary');
 const { appNodeRuntimes, nodeQueryClient } = await import('./node-runtimes');
 const { resetMeshNodesStateForTest, setMeshNodesStateForTest } = await import('./mesh-nodes');
 
@@ -34,26 +34,30 @@ function withoutMesh(): void {
   setMeshNodesStateForTest({ mode: null, modeLoaded: true, entryNodeId: null, nodes: [] });
 }
 
+/**
+ * 生产里的形状：外壳（这里用 Shell 代替）挂在 `/` 这一层，`/n/:nodeId` 是它的**子级**路由，
+ * 所以 `useRouteNodeId()` 必须从 pathname 解析——父级路由的 `useParams()` 读不到子级的
+ * `:nodeId`。门闸只包页面区，运行时边界在它外面。
+ */
+function Shell() {
+  return (
+    <NodeRuntimeBoundary>
+      <NodeRouteGate>
+        <RuntimeProbe />
+        <Outlet />
+      </NodeRouteGate>
+    </NodeRuntimeBoundary>
+  );
+}
+
 function renderAt(path: string): string {
   return renderToStaticMarkup(
     <MemoryRouter initialEntries={[path]}>
       <Routes>
-        <Route
-          path="/n/:nodeId/*"
-          element={
-            <NodeRuntimeBoundary>
-              <RuntimeProbe />
-            </NodeRuntimeBoundary>
-          }
-        />
-        <Route
-          path="*"
-          element={
-            <NodeRuntimeBoundary>
-              <RuntimeProbe />
-            </NodeRuntimeBoundary>
-          }
-        />
+        <Route path="/" element={<Shell />}>
+          <Route path="n/:nodeId/*" element={<span data-testid="page" />} />
+          <Route path="*" element={<span data-testid="page" />} />
+        </Route>
       </Routes>
     </MemoryRouter>
   );
@@ -92,6 +96,13 @@ describe('NodeRuntimeBoundary', () => {
     expect(markup).toContain('data-base-url=""');
     expect(markup).toContain('data-storage-prefix=""');
     expect(markup).toContain('data-app-path="/devices/d1"');
+  });
+
+  test('外壳挂在父级路由上：nodeId 由 pathname 解析，父级 useParams 读不到子级的 :nodeId', () => {
+    const markup = renderAt('/n/0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a/settings');
+    expect(markup).toContain('data-node-id="0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a"');
+    // 页面区（子级路由）确实渲染在边界内部
+    expect(markup).toContain('data-testid="page"');
   });
 
   test('/n/self/... 与旧路由是同一个运行时', () => {

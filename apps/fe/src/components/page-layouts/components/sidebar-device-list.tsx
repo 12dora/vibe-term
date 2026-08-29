@@ -1,7 +1,7 @@
 // 侧边栏设备区：standalone / 单 node 下就是今天的单运行时设备树（零新增请求）；
 // mesh 下拍平所有 node 的设备（self 在最前），每行带 node 徽标。
 
-import { useMeshNodes, useSharedAuthMode } from '@/node/mesh-nodes';
+import { sortNodes, useMeshNodes, useSharedAuthMode } from '@/node/mesh-nodes';
 import { SELF_NODE_ID } from '@tmex/api-client';
 import type { MeshNode } from '@tmex/api-client/auth/index';
 import { SortableVerticalList, useSortableRow } from '@tmex/panels/device-tree';
@@ -26,7 +26,10 @@ export function sidebarNodeIdFromSortableId(sortableId: string): string {
 
 /**
  * 手工顺序（本机 UI 偏好，见 UI store `sidebarNodeOrder`）优先：
- * 保存过且仍存在的 node 按保存顺序在前，其余按 API 顺序追加在后。
+ * 保存过且仍存在的 node 按保存顺序在前，其余按缺省顺序追加在后。
+ *
+ * 保存过的 id 里**包含 self**，所以本机分节同样能被拖到中间或末尾——缺省顺序把它排在最前，
+ * 但只要它出现在 `order` 里就以 `order` 为准。
  */
 export function applySidebarNodeOrder(
   entries: SidebarNodeEntry[],
@@ -49,13 +52,18 @@ export function applySidebarNodeOrder(
   return ordered;
 }
 
-/** mesh 节点列表 → 侧边栏分节。self 已由 `sortNodes` 排在最前，这里做字段映射并应用手工顺序。 */
+/**
+ * mesh 节点列表 → 侧边栏分节：先用与设置页同一套 `sortNodes` 定缺省顺序（self 最前、在线优先、
+ * 名称升序），再做字段映射并应用手工顺序。
+ *
+ * 缺省顺序必须在这里现算：`/api/mesh/nodes` 的返回是原样落进 store 的，没排过序。
+ */
 export function toSidebarEntries(
   nodes: MeshNode[],
   entryNodeId: string | null,
   order: readonly string[] = []
 ): SidebarNodeEntry[] {
-  const entries = nodes.map((node) => {
+  const entries = sortNodes(nodes, entryNodeId).map((node) => {
     const isSelf = entryNodeId != null && node.id === entryNodeId;
     return {
       id: node.id,
@@ -108,7 +116,13 @@ function MeshDeviceList({ entryNodeId }: { entryNodeId: string | null }) {
   }
 
   return (
-    <div className="flex flex-col gap-1" data-testid="sidebar-node-list">
+    // 聚合视图里滚动条归这一层：每个分节内部的 ScrollArea 落在块级容器里、拿不到受限高度，
+    // 自己不会滚。这里不给 flex-1 + overflow 的话，靠后的分节会被 SidebarContent 直接裁掉——
+    // 既看不到也拖不过去（拖拽的自动滚动同样要靠这个可滚动祖先）。
+    <div
+      className="flex min-h-0 flex-1 flex-col gap-1 overflow-y-auto"
+      data-testid="sidebar-node-list"
+    >
       <SortableVerticalList ids={sortableIds} onReorder={handleReorder}>
         {entries.map((entry) => (
           <SortableNodeSection

@@ -63,7 +63,13 @@ function versionOf(inventory: unknown): string | null {
   return typeof value === 'string' ? value : null;
 }
 
-/** entry 自身排第一，其余按名称排序（在线优先）。 */
+/**
+ * entry 自身排第一，其余按名称排序（在线优先）。
+ *
+ * store 里的 `nodes` 保持 `/api/mesh/nodes` 的原始顺序（NODE_EVENT 投影也只就地改字段），
+ * 展示顺序一律由消费方现算：设置页经 `mergeNodes`，侧边栏经 `toSidebarEntries`，
+ * 两处都走这个函数，缺省顺序才不会两边不一致。
+ */
 export function sortNodes(nodes: MeshNode[], entryNodeId: string | null): MeshNode[] {
   return [...nodes].sort((a, b) => {
     const aSelf = entryNodeId != null && a.id === entryNodeId;
