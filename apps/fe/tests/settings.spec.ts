@@ -169,12 +169,14 @@ test('settings: theme menu, telegram bot crud, webhook crud, language save/reset
   await webhookItem.getByTestId('webhook-delete').click();
   await expect(webhookItem).toHaveCount(0);
 
-  // Site tab: Change language and verify refresh notice, then reset language to keep later tests stable.
+  // Site tab: Change language (applies live), then reset language to keep later tests stable.
   await page.getByTestId('settings-tab-general').click();
   await page.getByTestId('settings-language-select').click();
   await page.locator('[data-slot="select-content"]').getByText('简体中文').click();
+  // 选中即生效（无需保存 / 刷新）：标签文案与 <html lang> 立即切换
+  await expect(page.getByTestId('settings-tab-general')).toHaveText('通用');
+  await expect(page.locator('html')).toHaveAttribute('lang', 'zh-CN');
   await page.getByTestId('settings-save').click();
-  await expect(page.getByTestId('settings-refresh-notice')).toBeVisible();
 
   await page.getByTestId('settings-language-select').click();
   await page.locator('[data-slot="select-content"]').getByText('English').click();

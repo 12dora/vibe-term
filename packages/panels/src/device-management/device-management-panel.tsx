@@ -383,7 +383,7 @@ export function DeviceManagementPanel({
             data-testid="devices-grid"
             className={cn(
               // 自适应列数：每列至少 18rem，设备名与 SSH 目标才有地方放（窄屏退回单列）
-              'grid grid-cols-[repeat(auto-fill,minmax(min(18rem,100%),1fr))] gap-3',
+              'grid grid-cols-[repeat(auto-fill,minmax(min(24rem,100%),1fr))] gap-3',
               !entered && 'tmex-stagger'
             )}
             onAnimationEnd={handleAnimationEnd}

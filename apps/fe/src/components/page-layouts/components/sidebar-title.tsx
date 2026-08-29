@@ -1,5 +1,5 @@
 import { Brand } from '@/components/brand';
-import { useSidePanel } from '@/components/side-panels/use-side-panel';
+import { SIDE_PANEL_LINK_STATE, useSidePanel } from '@/components/side-panels/use-side-panel';
 import { useSharedAuthMode } from '@/node/mesh-nodes';
 import { useSiteStore, useTmuxStore } from '@tmex/stores/react';
 import { useSidebar } from '@tmex/ui/sidebar';
@@ -48,6 +48,7 @@ export function SidebarTitle() {
         {meshEnabled && (
           <NavLink
             to={hrefFor('nodes')}
+            state={SIDE_PANEL_LINK_STATE}
             className={ACTION_BUTTON_CLASS}
             data-testid="sidebar-nodes"
             aria-label={t('sidebar.nodes')}

@@ -117,14 +117,18 @@ export function createLanguagePreviewController(options: {
 }): LanguagePreviewController {
   // 设置加载完之前是 null：此时草稿还是默认值而非用户的选择，既不预览也不回退
   let savedLanguage: LocaleCode | null = null;
+  // 最近一次请求切换到的语言：语言包是异步加载的，切换在途时 i18n.language 还是旧值，
+  // 若只看它，在途预览之后紧跟的回退会被当成「没变」而漏发
+  let requestedLanguage: string | null = null;
 
   function switchTo(targetLanguage: LocaleCode | null | undefined): void {
     const next = resolveLanguageSwitch({
       controlsBrowserPrefs: options.controlsBrowserPrefs(),
-      currentLanguage: options.currentLanguage(),
+      currentLanguage: requestedLanguage ?? options.currentLanguage(),
       targetLanguage,
     });
     if (next) {
+      requestedLanguage = next;
       options.changeLanguage(next);
     }
   }

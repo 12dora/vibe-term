@@ -252,3 +252,22 @@ describe('createLanguagePreviewController', () => {
     expect(changed).toEqual([]);
   });
 });
+
+describe('createLanguagePreviewController：语言包在途', () => {
+  test('预览的语言包还没加载完（i18n.language 未变）就离开：仍要发出回退', () => {
+    const changed: string[] = [];
+    // changeLanguage 异步：currentLanguage 始终停在旧值，模拟 chunk 尚未落地
+    const controller = createLanguagePreviewController({
+      controlsBrowserPrefs: () => true,
+      currentLanguage: () => 'en_US',
+      changeLanguage: (language) => {
+        changed.push(language);
+      },
+    });
+    controller.hydrate('en_US');
+    controller.preview('zh_CN');
+    controller.release();
+
+    expect(changed).toEqual(['zh_CN', 'en_US']);
+  });
+});
