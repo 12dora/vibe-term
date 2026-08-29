@@ -294,7 +294,6 @@ function PrecheckResult({ state }: { state: PrecheckState }) {
     <SetupNotice tone="error" testId="setup-precheck-unreachable">
       <p>{t('nodes.setup.precheck.unreachable', { error: error ?? '' })}</p>
       <p>{t('nodes.setup.precheck.httpsHint')}</p>
-      <p>{t('nodes.setup.precheck.docsHint')}</p>
     </SetupNotice>
   );
 }
