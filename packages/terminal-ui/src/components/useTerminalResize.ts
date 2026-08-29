@@ -1,7 +1,8 @@
 import type { CompatibleTerminalLike } from 'ghostty-terminal';
 import type { FitAddon } from 'ghostty-terminal';
-import { useCallback, useEffect, useRef } from 'react';
+import { useCallback, useEffect, useMemo, useRef } from 'react';
 import { shouldSyncOnViewportRestore } from '../utils/resizeSyncGuards';
+import { decideResizeReport } from './resize-report-policy';
 import { computeContainerSize } from './terminalMetrics';
 
 interface UseTerminalResizeOptions {
@@ -102,67 +103,38 @@ export function useTerminalResize({
     term.resize(cols, rows);
   }, []);
 
+  const gate = useMemo(
+    () => ({ sizingMode, deviceId, paneId, deviceConnected, isSelectionInvalid }),
+    [deviceConnected, deviceId, isSelectionInvalid, paneId, sizingMode]
+  );
+
   const reportSize = useCallback(
     (kind: 'resize' | 'sync', force = false) => {
-      // follow 模式：pane 的 cols/rows 由 tmux layout 决定并经外部 resize() 显式设定，
-      // 容器像素测量（zoom 下有舍入误差）不可作为尺寸来源，也不上报
-      if (sizingMode === 'follow') {
-        return false;
-      }
-      // sync 操作即使在 isSelectionInvalid 时也应该执行，因为尺寸同步是基础功能
-      // isSelectionInvalid 主要影响用户输入，不应该阻止终端尺寸同步
-      if (!deviceId || !paneId || !deviceConnected) {
-        return false;
-      }
-      if (isSelectionInvalid && kind !== 'sync') {
-        return false;
-      }
-
-      if (!force && Date.now() < suppressLocalResizeUntil.current) {
-        return false;
-      }
-
-      const term = terminalRef.current;
-      if (!term) {
-        return false;
-      }
-
-      const measuredSize = measureTerminalSize();
-      if (!measuredSize) {
-        return false;
-      }
-      const { cols, rows } = measuredSize;
-      // Debug: console.log('[resize] success:', { kind, cols, rows, force });
-      const lastSize = lastReportedSize.current;
-
-      if (!force && lastSize && lastSize.cols === cols && lastSize.rows === rows) {
-        applyTerminalSize(cols, rows);
-        return true;
-      }
-
+      const decision = decideResizeReport({
+        kind,
+        force,
+        gate,
+        now: Date.now(),
+        suppressUntil: suppressLocalResizeUntil.current,
+        hasTerminal: Boolean(terminalRef.current),
+        lastReportedSize: lastReportedSize.current,
+        measure: measureTerminalSize,
+      });
+      if (decision.action === 'skip') return false;
+      const { cols, rows } = decision.size;
       applyTerminalSize(cols, rows);
-
-      if (kind === 'sync') {
+      if (decision.action === 'localOnly') return true;
+      if (decision.callback === 'sync') {
         onSyncRef.current(cols, rows);
       } else {
         onResizeRef.current(cols, rows);
       }
-
       lastReportedSize.current = { cols, rows };
       pendingLocalSize.current = { cols, rows, at: Date.now() };
       onResizeSettledRef.current?.(cols, rows);
       return true;
     },
-    // Only depend on stable values, not the callbacks
-    [
-      applyTerminalSize,
-      deviceConnected,
-      deviceId,
-      isSelectionInvalid,
-      measureTerminalSize,
-      paneId,
-      sizingMode,
-    ]
+    [applyTerminalSize, gate, measureTerminalSize]
   );
 
   const scheduleResize = useCallback(

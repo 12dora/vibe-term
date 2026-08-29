@@ -5,6 +5,12 @@ import type {
   GatewayRebaseReason,
   GatewayTerminalData,
 } from '@tmex/ws-client';
+import {
+  type TerminalHistoryCache,
+  commitHistoryPage,
+  copyHistoryCursor,
+  validateHistoryPage,
+} from './terminal-history-page';
 
 const MAX_SURFACE_HISTORY_BYTES = 8 * 1024 * 1024;
 const MAX_SURFACE_HISTORY_PAGES = 64;
@@ -42,20 +48,6 @@ export interface TerminalSurfaceOptions<Target extends TerminalSurfaceTarget> {
   maxHistoryPages?: number;
 }
 
-function bytesEqual(left: Uint8Array, right: Uint8Array): boolean {
-  return left.byteLength === right.byteLength && left.every((byte, index) => byte === right[index]);
-}
-
-function copyHistoryCursor(cursor: GatewayHistoryCursor | null): GatewayHistoryCursor | null {
-  return cursor
-    ? {
-        paneEpoch: Uint8Array.from(cursor.paneEpoch),
-        historyEpoch: Uint8Array.from(cursor.historyEpoch),
-        beforeLine: cursor.beforeLine,
-      }
-    : null;
-}
-
 function copySnapshot(snapshot: GatewayPaneScreenSnapshot): GatewayPaneScreenSnapshot {
   return {
     ...snapshot,
@@ -66,15 +58,10 @@ function copySnapshot(snapshot: GatewayPaneScreenSnapshot): GatewayPaneScreenSna
   };
 }
 
-function copyHistoryPage(page: GatewayPaneHistoryPage): GatewayPaneHistoryPage {
-  return {
-    ...page,
-    requestId: page.requestId ? Uint8Array.from(page.requestId) : undefined,
-    paneEpoch: Uint8Array.from(page.paneEpoch),
-    historyEpoch: Uint8Array.from(page.historyEpoch),
-    data: Uint8Array.from(page.data),
-    nextCursor: copyHistoryCursor(page.nextCursor),
-  };
+interface LiveHistoryContext<Target extends TerminalSurfaceTarget> {
+  target: Target;
+  snapshot: GatewayPaneScreenSnapshot;
+  cursor: GatewayHistoryCursor;
 }
 
 /**
@@ -88,20 +75,21 @@ function copyHistoryPage(page: GatewayPaneHistoryPage): GatewayPaneHistoryPage {
  * 换掉原先的离屏双缓冲与客户端 replay ring。
  */
 export class TerminalSurface<Target extends TerminalSurfaceTarget> {
-  private readonly maxHistoryBytes: number;
-  private readonly maxHistoryPages: number;
+  private readonly cache: TerminalHistoryCache;
   private target: Target | null = null;
   private latestSnapshot: GatewayPaneScreenSnapshot | null = null;
-  private historyPages: GatewayPaneHistoryPage[] = [];
-  private historyBytes = 0;
   private nextHistoryCursor: GatewayHistoryCursor | null = null;
   private recoveryRequested = false;
   private recoveryReason: GatewayRebaseReason | null = null;
   private disposed = false;
 
   constructor(private readonly options: TerminalSurfaceOptions<Target>) {
-    this.maxHistoryBytes = options.maxHistoryBytes ?? MAX_SURFACE_HISTORY_BYTES;
-    this.maxHistoryPages = options.maxHistoryPages ?? MAX_SURFACE_HISTORY_PAGES;
+    this.cache = {
+      pages: [],
+      bytes: 0,
+      maxPages: options.maxHistoryPages ?? MAX_SURFACE_HISTORY_PAGES,
+      maxBytes: options.maxHistoryBytes ?? MAX_SURFACE_HISTORY_BYTES,
+    };
   }
 
   async initialize(): Promise<Target> {
@@ -141,10 +129,10 @@ export class TerminalSurface<Target extends TerminalSurfaceTarget> {
             ? 'live'
             : 'initializing',
       recoveryReason: this.recoveryReason,
-      historyBytes: this.historyBytes,
-      historyBytesLimit: this.maxHistoryBytes,
-      historyPages: this.historyPages.length,
-      historyPagesLimit: this.maxHistoryPages,
+      historyBytes: this.cache.bytes,
+      historyBytesLimit: this.cache.maxBytes,
+      historyPages: this.cache.pages.length,
+      historyPagesLimit: this.cache.maxPages,
     };
   }
 
@@ -157,8 +145,8 @@ export class TerminalSurface<Target extends TerminalSurfaceTarget> {
     if (this.disposed || !this.target) return;
     const owned = copySnapshot(snapshot);
     this.latestSnapshot = owned;
-    this.historyPages = [];
-    this.historyBytes = 0;
+    this.cache.pages = [];
+    this.cache.bytes = 0;
     this.nextHistoryCursor = copyHistoryCursor(owned.historyCursor);
     this.recoveryRequested = false;
     this.recoveryReason = null;
@@ -167,47 +155,29 @@ export class TerminalSurface<Target extends TerminalSurfaceTarget> {
   }
 
   applyHistoryPage(page: GatewayPaneHistoryPage): boolean {
-    if (this.disposed || !this.target || !this.latestSnapshot || !this.nextHistoryCursor) {
+    const live = this.liveHistoryContext();
+    if (!live) return false;
+    const decision = validateHistoryPage(page, live.snapshot, live.cursor, this.cache);
+    if (decision.status === 'invalid') {
+      this.requestRecovery(decision.recoveryReason);
       return false;
     }
-    const expected = this.nextHistoryCursor;
-    if (
-      page.deviceId !== this.latestSnapshot.deviceId ||
-      page.paneId !== this.latestSnapshot.paneId ||
-      !bytesEqual(page.paneEpoch, this.latestSnapshot.paneEpoch) ||
-      !bytesEqual(page.paneEpoch, expected.paneEpoch) ||
-      !bytesEqual(page.historyEpoch, expected.historyEpoch) ||
-      page.lineEnd !== expected.beforeLine ||
-      page.lineStart > page.lineEnd
-    ) {
-      this.requestRecovery('cache_evicted');
-      return false;
-    }
-    if (
-      page.nextCursor &&
-      (!bytesEqual(page.nextCursor.paneEpoch, page.paneEpoch) ||
-        !bytesEqual(page.nextCursor.historyEpoch, page.historyEpoch) ||
-        page.nextCursor.beforeLine !== page.lineStart)
-    ) {
-      this.requestRecovery('cache_evicted');
-      return false;
-    }
-    if (
-      this.historyPages.length >= this.maxHistoryPages ||
-      this.historyBytes + page.data.byteLength > this.maxHistoryBytes
-    ) {
+    if (decision.status === 'limit') {
       this.nextHistoryCursor = null;
       return false;
     }
-
-    const owned = copyHistoryPage(page);
-    this.historyPages.push(owned);
-    this.historyPages.sort((left, right) => left.lineStart - right.lineStart);
-    this.historyBytes += owned.data.byteLength;
-    this.nextHistoryCursor = copyHistoryCursor(owned.nextCursor);
-    this.options.writeSnapshot(this.target, this.latestSnapshot, this.historyPages);
-    this.options.onSnapshotApplied?.(this.target, this.latestSnapshot);
+    this.nextHistoryCursor = commitHistoryPage(this.cache, page);
+    this.options.writeSnapshot(live.target, live.snapshot, this.cache.pages);
+    this.options.onSnapshotApplied?.(live.target, live.snapshot);
     return true;
+  }
+
+  private liveHistoryContext(): LiveHistoryContext<Target> | null {
+    const target = this.target;
+    const snapshot = this.latestSnapshot;
+    const cursor = this.nextHistoryCursor;
+    if (this.disposed || !target || !snapshot || !cursor) return null;
+    return { target, snapshot, cursor };
   }
 
   rebase(reason: GatewayRebaseReason): void {
@@ -221,8 +191,8 @@ export class TerminalSurface<Target extends TerminalSurfaceTarget> {
     this.target?.dispose();
     this.target = null;
     this.latestSnapshot = null;
-    this.historyPages = [];
-    this.historyBytes = 0;
+    this.cache.pages = [];
+    this.cache.bytes = 0;
   }
 
   private requestRecovery(reason: GatewayRebaseReason): void {
