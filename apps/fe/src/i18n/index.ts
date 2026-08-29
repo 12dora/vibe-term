@@ -52,4 +52,11 @@ export const i18nReady = i18n
     },
   });
 
+// <html lang> 跟随当前语言（index.html 静态写死 en；只影响无障碍与浏览器翻译提示）
+i18n.on('languageChanged', (lng: string) => {
+  if (typeof document !== 'undefined') {
+    document.documentElement.lang = lng.replace('_', '-');
+  }
+});
+
 export default i18n;

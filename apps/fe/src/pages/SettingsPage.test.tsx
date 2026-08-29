@@ -14,7 +14,6 @@ mock.module('./settings/use-site-settings-form', () => ({
   useSiteSettingsForm: () => ({
     draft: {},
     updateDraft: () => undefined,
-    showRefreshNotice: false,
     save: () => undefined,
     isSaving: false,
   }),

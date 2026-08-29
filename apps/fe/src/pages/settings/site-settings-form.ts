@@ -75,3 +75,74 @@ export function buildSiteSettingsPayload(draft: SiteSettingsDraft): UpdateSiteSe
     sshReconnectDelaySeconds: draft.sshReconnectDelaySeconds,
   };
 }
+
+/**
+ * 决定是否要把浏览器级的 i18next 语言切到 `targetLanguage`，返回要切的语言或 `null`。
+ *
+ * i18next 是整页共享的单例：只有自身 runtime（`controlsBrowserPrefs`）的设置页才允许改它，
+ * 远端 node（`/n/<id>/...`）的语言设置只属于那台 node，改了会掀翻整页 UI 语言。
+ */
+export function resolveLanguageSwitch(params: {
+  controlsBrowserPrefs: boolean;
+  currentLanguage: string;
+  targetLanguage: LocaleCode | null | undefined;
+}): LocaleCode | null {
+  const { controlsBrowserPrefs, currentLanguage, targetLanguage } = params;
+  if (!controlsBrowserPrefs || !targetLanguage || targetLanguage === currentLanguage) {
+    return null;
+  }
+  return targetLanguage;
+}
+
+export interface LanguagePreviewController {
+  /** 站点设置加载/重拉完成：该语言成为「已保存语言」（回退目标），界面语言同步过去 */
+  hydrate: (savedLanguage: LocaleCode) => void;
+  /** 用户在下拉里改了语言：立即预览（传 undefined 表示这次改的不是语言字段） */
+  preview: (language: LocaleCode | null | undefined) => void;
+  /** 保存成功：草稿语言成为已保存语言，之后离开设置页不再回退 */
+  commit: (savedLanguage: LocaleCode) => void;
+  /** 离开设置页：未保存的语言预览退回已保存的语言 */
+  release: () => void;
+}
+
+/**
+ * 语言实时预览控制器：下拉里选中即切整页 UI 语言，未保存就离开设置页则退回已保存的语言。
+ *
+ * 「已保存语言」不放 React state——回退发生在卸载清理里，那时读到的 state 是闭包里的旧值。
+ */
+export function createLanguagePreviewController(options: {
+  controlsBrowserPrefs: () => boolean;
+  currentLanguage: () => string;
+  changeLanguage: (language: LocaleCode) => void;
+}): LanguagePreviewController {
+  // 设置加载完之前是 null：此时草稿还是默认值而非用户的选择，既不预览也不回退
+  let savedLanguage: LocaleCode | null = null;
+
+  function switchTo(targetLanguage: LocaleCode | null | undefined): void {
+    const next = resolveLanguageSwitch({
+      controlsBrowserPrefs: options.controlsBrowserPrefs(),
+      currentLanguage: options.currentLanguage(),
+      targetLanguage,
+    });
+    if (next) {
+      options.changeLanguage(next);
+    }
+  }
+
+  return {
+    hydrate(language) {
+      savedLanguage = language;
+      // 重拉设置会覆盖草稿（含未保存的语言选择），界面语言得跟着回到已保存值，两者不能脱节
+      switchTo(language);
+    },
+    preview(language) {
+      switchTo(language);
+    },
+    commit(language) {
+      savedLanguage = language;
+    },
+    release() {
+      switchTo(savedLanguage);
+    },
+  };
+}

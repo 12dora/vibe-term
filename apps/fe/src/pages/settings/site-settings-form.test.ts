@@ -1,8 +1,11 @@
 import { describe, expect, test } from 'bun:test';
 import type { SiteSettings } from '@tmex/shared';
+import type { LocaleCode } from '@tmex/shared';
 import {
   buildSiteSettingsPayload,
   createDefaultSiteSettingsDraft,
+  createLanguagePreviewController,
+  resolveLanguageSwitch,
   siteSettingsToDraft,
 } from './site-settings-form';
 
@@ -110,5 +113,142 @@ describe('buildSiteSettingsPayload', () => {
       sshReconnectMaxRetries: 8,
       sshReconnectDelaySeconds: 45,
     });
+  });
+});
+
+// 语言实时预览 / 离开设置页回退，都靠这个判定决定要不要动整页共享的 i18next 单例。
+describe('resolveLanguageSwitch', () => {
+  test('自身 runtime 选了别的语言：返回该语言，供 changeLanguage 立即生效', () => {
+    expect(
+      resolveLanguageSwitch({
+        controlsBrowserPrefs: true,
+        currentLanguage: 'en_US',
+        targetLanguage: 'zh_CN',
+      })
+    ).toBe('zh_CN');
+  });
+
+  test('目标语言就是当前语言：不重复切换', () => {
+    expect(
+      resolveLanguageSwitch({
+        controlsBrowserPrefs: true,
+        currentLanguage: 'zh_CN',
+        targetLanguage: 'zh_CN',
+      })
+    ).toBeNull();
+  });
+
+  test('远端 node 的设置页（controlsBrowserPrefs=false）不改整页语言', () => {
+    expect(
+      resolveLanguageSwitch({
+        controlsBrowserPrefs: false,
+        currentLanguage: 'en_US',
+        targetLanguage: 'zh_CN',
+      })
+    ).toBeNull();
+  });
+
+  test('目标语言缺失（设置尚未加载 / 本次改的不是语言字段）：不动语言', () => {
+    for (const targetLanguage of [undefined, null]) {
+      expect(
+        resolveLanguageSwitch({
+          controlsBrowserPrefs: true,
+          currentLanguage: 'en_US',
+          targetLanguage,
+        })
+      ).toBeNull();
+    }
+  });
+
+  test('回退场景：预览过 zh_CN 未保存就离开，退回已保存的 ja_JP', () => {
+    expect(
+      resolveLanguageSwitch({
+        controlsBrowserPrefs: true,
+        currentLanguage: 'zh_CN',
+        targetLanguage: 'ja_JP',
+      })
+    ).toBe('ja_JP');
+  });
+});
+
+// 控制器替 i18next 单例做决策，这里用一个记录调用的假 i18n 驱动完整时序：
+// 加载设置 → 下拉选语言（实时预览）→ 保存 / 直接离开。
+function makeController(controlsBrowserPrefs = true) {
+  let currentLanguage = 'en_US';
+  const changed: LocaleCode[] = [];
+  const controller = createLanguagePreviewController({
+    controlsBrowserPrefs: () => controlsBrowserPrefs,
+    currentLanguage: () => currentLanguage,
+    changeLanguage: (language) => {
+      changed.push(language);
+      currentLanguage = language;
+    },
+  });
+  return { controller, changed, language: () => currentLanguage };
+}
+
+describe('createLanguagePreviewController', () => {
+  test('选中语言立即生效，不必保存也不必刷新', () => {
+    const { controller, changed, language } = makeController();
+    controller.hydrate('en_US');
+    controller.preview('zh_CN');
+
+    expect(changed).toEqual(['zh_CN']);
+    expect(language()).toBe('zh_CN');
+  });
+
+  test('改的不是语言字段时不动界面语言', () => {
+    const { controller, changed } = makeController();
+    controller.hydrate('en_US');
+    controller.preview(undefined);
+
+    expect(changed).toEqual([]);
+  });
+
+  test('预览后未保存就离开设置页：退回已保存的语言', () => {
+    const { controller, changed, language } = makeController();
+    controller.hydrate('en_US');
+    controller.preview('zh_CN');
+    controller.release();
+
+    expect(changed).toEqual(['zh_CN', 'en_US']);
+    expect(language()).toBe('en_US');
+  });
+
+  test('保存成功后离开设置页：新语言保留，不回退', () => {
+    const { controller, changed, language } = makeController();
+    controller.hydrate('en_US');
+    controller.preview('zh_CN');
+    controller.commit('zh_CN');
+    controller.release();
+
+    expect(changed).toEqual(['zh_CN']);
+    expect(language()).toBe('zh_CN');
+  });
+
+  test('设置尚未加载就离开（草稿仍是默认值）：不动界面语言', () => {
+    const { controller, changed } = makeController();
+    controller.release();
+
+    expect(changed).toEqual([]);
+  });
+
+  test('重拉设置把草稿盖回已保存值时，界面语言同步回退，不与草稿脱节', () => {
+    const { controller, changed, language } = makeController();
+    controller.hydrate('en_US');
+    controller.preview('ja_JP');
+    controller.hydrate('en_US');
+
+    expect(changed).toEqual(['ja_JP', 'en_US']);
+    expect(language()).toBe('en_US');
+  });
+
+  test('远端 node 的设置页（controlsBrowserPrefs=false）全程不改整页语言', () => {
+    const { controller, changed } = makeController(false);
+    controller.hydrate('zh_CN');
+    controller.preview('ja_JP');
+    controller.release();
+
+    expect(changed).toEqual([]);
   });
 });

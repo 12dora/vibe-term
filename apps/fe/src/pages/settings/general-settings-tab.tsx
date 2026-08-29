@@ -13,7 +13,7 @@ interface GeneralSettingsTabProps {
 
 export function GeneralSettingsTab({ form }: GeneralSettingsTabProps) {
   const { t } = useTranslation();
-  const { draft, updateDraft, showRefreshNotice } = form;
+  const { draft, updateDraft } = form;
 
   return (
     <>
@@ -77,11 +77,6 @@ export function GeneralSettingsTab({ form }: GeneralSettingsTabProps) {
                 ))}
               </SelectContent>
             </Select>
-            {showRefreshNotice && (
-              <p className="mt-1 text-xs text-primary" data-testid="settings-refresh-notice">
-                {t('settings.refreshToApply')}
-              </p>
-            )}
           </div>
 
           <SettingsSaveButton onSave={form.save} isSaving={form.isSaving} />
