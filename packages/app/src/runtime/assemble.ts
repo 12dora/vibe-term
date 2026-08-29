@@ -243,6 +243,18 @@ export async function assembleTmex(opts: AssembleTmexOptions = {}): Promise<Asse
     platform: `${process.platform}-${process.arch}`,
     performHubJoin,
     scheduleRestart,
+    quiesceMesh: async () => {
+      try {
+        await mesh?.stop();
+      } catch {
+        // best-effort
+      }
+      try {
+        hub?.stop();
+      } catch {
+        // best-effort
+      }
+    },
     startedAt: PROCESS_STARTED_AT,
     authenticate: (req) => {
       try {

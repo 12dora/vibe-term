@@ -1,0 +1,218 @@
+import '../lib/test-master-key';
+import { afterEach, describe, expect, test } from 'bun:test';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join, resolve } from 'node:path';
+import { HubTrustStore } from '../../../../apps/gateway/src/auth/hub-trust-store';
+import { ensureNodeIdentity } from '../../../../apps/gateway/src/auth/node-identity-service';
+import {
+  enrollmentTokens,
+  hubTrust,
+  nodeCerts,
+  nodeIdentity,
+  nodeSessions,
+  nodes,
+  peerCache,
+  userKeyLog,
+  userKeys,
+  users,
+} from '../../../../apps/gateway/src/db/schema';
+import { readEnvFile } from '../lib/env-file';
+import type { LocalAuthContext } from '../lib/local-auth';
+import { openLocalAuth } from '../lib/local-auth';
+import { leaveMesh } from './membership-reset';
+import {
+  SetupError,
+  type SetupServiceDeps,
+  createSetupTransitionLock,
+  resetProcessSetupLockForTests,
+} from './setup-service';
+
+const MIGRATIONS = resolve(import.meta.dir, '../../../../apps/gateway/drizzle');
+const authHandles: LocalAuthContext[] = [];
+const tempDirs: string[] = [];
+
+afterEach(async () => {
+  resetProcessSetupLockForTests();
+  for (const ctx of authHandles.splice(0)) ctx.close();
+  await Promise.all(tempDirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true })));
+});
+
+async function openAuth(roles = 'node'): Promise<LocalAuthContext> {
+  const ctx = await openLocalAuth({
+    memory: true,
+    migrationsFolder: MIGRATIONS,
+    env: {
+      TMEX_MASTER_KEY: process.env.TMEX_MASTER_KEY || '',
+      TMEX_ROLES: roles,
+    },
+  });
+  authHandles.push(ctx);
+  return ctx;
+}
+
+async function tempDir(): Promise<string> {
+  const dir = await mkdtemp(join(tmpdir(), 'tmex-leave-'));
+  tempDirs.push(dir);
+  return dir;
+}
+
+async function seedMembership(auth: LocalAuthContext): Promise<void> {
+  const identity = await ensureNodeIdentity(auth.identityStore);
+  await auth.userKeys.bootstrapUserWithSelfAdmit({
+    username: 'alice',
+    password: 'tmex-test-pass',
+    identity,
+    now: 1_700_000_000_000,
+  });
+  const user = auth.userStore.getByUsername('alice');
+  if (!user) throw new Error('expected alice');
+  auth.userStore.upsertPeer({
+    nodeId: 'peer-1',
+    name: 'studio',
+    endpointsJson: '[]',
+    inventoryJson: '{}',
+    directCapable: false,
+    lastSeenAt: 10,
+    listVersion: 1,
+  });
+  new HubTrustStore(auth.db).put({
+    hubUrl: 'https://hub.example',
+    caPem: '-----BEGIN CERTIFICATE-----\nMIIB\n-----END CERTIFICATE-----',
+    fingerprint: 'ab'.repeat(32),
+  });
+  auth.userStore.createEnrollmentToken({
+    id: 'tok-leave',
+    userId: user.id,
+    enrollPublicKey: Uint8Array.from({ length: 32 }, () => 9),
+    authorizationJson: '{}',
+    authorizationSig: Uint8Array.from({ length: 64 }, () => 3),
+    expiresAt: 9_999_999_999,
+  });
+}
+
+async function baseDeps(overrides: Partial<SetupServiceDeps> = {}): Promise<SetupServiceDeps> {
+  const dir = await tempDir();
+  const envPath = join(dir, 'app.env');
+  await writeFile(
+    envPath,
+    'TMEX_ROLES=node\nTMEX_HUB_URL=https://hub.example\nTMEX_HUB_PUBLIC_URL=https://stale.example\nOTHER=keep\n',
+    'utf8'
+  );
+  const auth = overrides.auth ?? (await openAuth());
+  await seedMembership(auth);
+  return {
+    roles: { hub: false, node: true },
+    nodeEnv: 'test',
+    auth,
+    envPath,
+    installDir: dir,
+    scheduleRestart: () => undefined,
+    setupLock: createSetupTransitionLock(),
+    ...overrides,
+  };
+}
+
+describe('leaveMesh', () => {
+  test('clears membership tables, writes standalone env, and schedules restart', async () => {
+    const restarts: number[] = [];
+    const deps = await baseDeps({
+      scheduleRestart: () => {
+        restarts.push(1);
+      },
+    });
+    const result = await leaveMesh({ expectedRole: 'node' }, deps);
+    expect(result).toEqual({ ok: true, fromRole: 'node', restarting: true });
+    expect(restarts).toEqual([1]);
+    expect(deps.auth.userStore.listUsers()).toHaveLength(0);
+    expect(deps.auth.userStore.listNodes()).toHaveLength(0);
+    expect(deps.auth.userStore.listPeers()).toHaveLength(0);
+    expect(deps.auth.userStore.listCerts()).toHaveLength(0);
+    expect(deps.auth.db.select().from(userKeyLog).all()).toHaveLength(0);
+    expect(deps.auth.db.select().from(userKeys).all()).toHaveLength(0);
+    expect(deps.auth.db.select().from(nodeSessions).all()).toHaveLength(0);
+    expect(deps.auth.db.select().from(nodeCerts).all()).toHaveLength(0);
+    expect(deps.auth.db.select().from(nodes).all()).toHaveLength(0);
+    expect(deps.auth.db.select().from(enrollmentTokens).all()).toHaveLength(0);
+    expect(deps.auth.db.select().from(peerCache).all()).toHaveLength(0);
+    expect(deps.auth.db.select().from(hubTrust).all()).toHaveLength(0);
+    expect(deps.auth.db.select().from(nodeIdentity).all()).toHaveLength(0);
+    expect(deps.auth.db.select().from(users).all()).toHaveLength(0);
+    expect(await deps.auth.identityStore.load()).toBeNull();
+    const env = await readEnvFile(deps.envPath);
+    expect(env.TMEX_ROLES).toBe('standalone');
+    expect(env.TMEX_HUB_URL).toBe('');
+    expect(env.TMEX_HUB_PUBLIC_URL).toBe('');
+    expect(env.OTHER).toBe('keep');
+    const envText = await readFile(deps.envPath, 'utf8');
+    expect(envText).toContain('TMEX_HUB_URL=\n');
+    expect(envText).toContain('TMEX_HUB_PUBLIC_URL=\n');
+  });
+
+  test('hub,node expectedRole matches and returns fromRole', async () => {
+    const deps = await baseDeps({ roles: { hub: true, node: true } });
+    const result = await leaveMesh({ expectedRole: 'hub,node' }, deps);
+    expect(result.fromRole).toBe('hub,node');
+  });
+
+  test('standalone is 400 not_member', async () => {
+    const deps = await baseDeps({ roles: { hub: false, node: false } });
+    const err = await leaveMesh({ expectedRole: 'node' }, deps).catch((error) => error);
+    expect(err).toBeInstanceOf(SetupError);
+    expect((err as SetupError).code).toBe('not_member');
+    expect((err as SetupError).httpStatus).toBe(400);
+    expect(deps.auth.userStore.getByUsername('alice')).toBeTruthy();
+  });
+
+  test('wrong expectedRole is 409 role_mismatch and does not wipe', async () => {
+    const deps = await baseDeps({ roles: { hub: false, node: true } });
+    const err = await leaveMesh({ expectedRole: 'hub,node' }, deps).catch((error) => error);
+    expect(err).toBeInstanceOf(SetupError);
+    expect((err as SetupError).code).toBe('role_mismatch');
+    expect((err as SetupError).httpStatus).toBe(409);
+    expect(deps.auth.userStore.getByUsername('alice')).toBeTruthy();
+    expect((await readEnvFile(deps.envPath)).TMEX_ROLES).toBe('node');
+  });
+
+  test('setup_in_progress when another transition holds the lock', async () => {
+    const lock = createSetupTransitionLock();
+    lock.begin();
+    const deps = await baseDeps({ setupLock: lock });
+    const err = await leaveMesh({ expectedRole: 'node' }, deps).catch((error) => error);
+    expect(err).toBeInstanceOf(SetupError);
+    expect((err as SetupError).code).toBe('setup_in_progress');
+    expect((err as SetupError).httpStatus).toBe(409);
+    lock.finish(false);
+  });
+
+  test('env_write_failed does not restart', async () => {
+    const restarts: number[] = [];
+    const deps = await baseDeps({
+      scheduleRestart: () => {
+        restarts.push(1);
+      },
+      writeEnvFile: async () => {
+        throw new Error('EACCES');
+      },
+    });
+    const err = await leaveMesh({ expectedRole: 'node' }, deps).catch((error) => error);
+    expect(err).toBeInstanceOf(SetupError);
+    expect((err as SetupError).code).toBe('env_write_failed');
+    expect((err as SetupError).httpStatus).toBe(500);
+    expect(restarts).toEqual([]);
+  });
+
+  test('quiesceMesh is best-effort and does not fail leave', async () => {
+    let called = 0;
+    const deps = await baseDeps({
+      quiesceMesh: () => {
+        called += 1;
+        throw new Error('uplink already gone');
+      },
+    });
+    const result = await leaveMesh({ expectedRole: 'node' }, deps);
+    expect(result.ok).toBe(true);
+    expect(called).toBe(1);
+    expect(deps.auth.userStore.listUsers()).toHaveLength(0);
+  });
+});

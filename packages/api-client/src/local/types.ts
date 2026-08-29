@@ -13,6 +13,8 @@ export interface LocalDirectStatus {
 
 export interface LocalTlsStatus {
   mode: TlsMode;
+  listenerRunning: boolean;
+  tlsPort: number | null;
 }
 
 export interface LocalStatusResponse {
@@ -32,6 +34,16 @@ export interface LocalDirectResponse {
   enabled: boolean;
   capable: boolean;
   restartRequired: boolean;
+}
+
+export interface LocalLeaveRequest {
+  expectedRole: 'node' | 'hub,node';
+}
+
+export interface LocalLeaveResponse {
+  ok: true;
+  fromRole: 'node' | 'hub,node';
+  restarting: true;
 }
 
 export interface SetupPrecheckResponse {

@@ -178,7 +178,8 @@ describe('hub join against fake hub', () => {
       skipRestart: true,
       log: () => undefined,
     });
-    expect((await node.identityStore.load())?.hubUrl).toBeNull();
+    expect(await node.identityStore.load()).toBeNull();
+    expect(node.userStore.getById(user.id)).toBeNull();
 
     const badRoot = encodeJoinToken(enrollment.enrollSk, randomBytes(32), state.head.hash);
     const node2 = await openAuth('standalone');
@@ -581,7 +582,11 @@ describe('hub join/leave service restart', () => {
     const dir = await mkdtemp(join(tmpdir(), 'tmex-join-env-'));
     try {
       const envPath = join(dir, 'app.env');
-      await writeFile(envPath, 'TMEX_ROLES=standalone\nOTHER=keep\n', 'utf8');
+      await writeFile(
+        envPath,
+        'TMEX_ROLES=standalone\nOTHER=keep\nTMEX_HUB_PUBLIC_URL=https://stale.example\n',
+        'utf8'
+      );
       const hub = await startJoinableHub('alice', 'hub-pass-word');
       const node = await openAuth('standalone');
       node.envPath = envPath;
@@ -605,6 +610,7 @@ describe('hub join/leave service restart', () => {
       const env = await readEnvFile(envPath);
       expect(env.TMEX_ROLES).toBe('node');
       expect(env.TMEX_HUB_URL).toBe(hub.url);
+      expect(env.TMEX_HUB_PUBLIC_URL).toBe('');
       expect(env.OTHER).toBe('keep');
     } finally {
       await rm(dir, { recursive: true, force: true });
@@ -684,7 +690,7 @@ async function startJoinableHub(
 }
 
 describe('hub join rebuilt hub and re-join', () => {
-  test('replaces local user after hub rebuild even after hub leave', async () => {
+  test('hub leave clears local membership so a rebuilt hub join starts fresh', async () => {
     const h1 = await startJoinableHub('alice', 'hub-pass-one');
     const node = await openAuth('standalone');
     await runHubJoin(
@@ -692,7 +698,6 @@ describe('hub join rebuilt hub and re-join', () => {
       h1.url,
       { auth: node, skipRestart: true, insecureLocal: true, log: () => undefined }
     );
-    const nodeIdBefore = (await node.identityStore.load())?.nodeId;
     expect(node.userStore.getByUsername('alice')?.id).toBe(h1.user.id);
 
     await runHubLeave(parseArgs(['hub', 'leave']), {
@@ -700,15 +705,16 @@ describe('hub join rebuilt hub and re-join', () => {
       skipRestart: true,
       log: () => undefined,
     });
-    expect(node.userStore.getByUsername('alice')?.id).toBe(h1.user.id);
+    expect(node.userStore.getByUsername('alice')).toBeNull();
+    expect(node.userStore.listUsers()).toHaveLength(0);
+    expect(await node.identityStore.load()).toBeNull();
 
     const h2 = await startJoinableHub('alice', 'hub-pass-two');
     expect(h2.user.id).not.toBe(h1.user.id);
-    const logs: string[] = [];
     const joined = await runHubJoin(
       parseArgs(['hub', 'join', h2.url, '--token', h2.token, '--insecure-local']),
       h2.url,
-      { auth: node, skipRestart: true, insecureLocal: true, log: (message) => logs.push(message) }
+      { auth: node, skipRestart: true, insecureLocal: true, log: () => undefined }
     );
     expect(joined.userId).toBe(h2.user.id);
     expect(node.userStore.getByUsername('alice')?.id).toBe(h2.user.id);
@@ -716,9 +722,7 @@ describe('hub join rebuilt hub and re-join', () => {
     expect(node.userStore.listUsers()).toHaveLength(1);
     expect(node.keyLogStore.list(h1.user.id)).toHaveLength(0);
     expect(node.keyLogStore.list(h2.user.id).length).toBeGreaterThan(0);
-    expect((await node.identityStore.load())?.nodeId).toBe(nodeIdBefore);
     expect((await node.identityStore.load())?.userId).toBe(h2.user.id);
-    expect(logs.some((line) => /replaced local account/i.test(line))).toBe(true);
   });
 
   test('joins a rebuilt hub from role node without hub leave', async () => {

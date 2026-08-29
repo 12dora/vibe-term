@@ -2,6 +2,7 @@ import type { AuthenticateResult } from '../../../../apps/gateway/src/mesh/sessi
 import type { TlsMode } from '../../../../apps/gateway/src/tls/types';
 import { isStandaloneRoles } from '../lib/roles';
 import { jsonErr, jsonOk, readJsonBody } from './http';
+import { type MeshRoleName, leaveMesh } from './membership-reset';
 import {
   type DirectSetResult,
   type LocalStatus,
@@ -21,12 +22,40 @@ export type LocalRouteDeps = SetupServiceDeps & {
   tlsStatus: () => Promise<LocalTlsStatus>;
 };
 
-function mapError(error: unknown): Response {
+function mapError(error: unknown, fallback = 'direct_failed'): Response {
   if (error instanceof SetupError) {
     return jsonErr(error.code, error.message, error.httpStatus);
   }
   const message = error instanceof Error ? error.message : String(error);
-  return jsonErr('direct_failed', message, 500);
+  return jsonErr(fallback, message, 500);
+}
+
+function isMeshRoleName(value: unknown): value is MeshRoleName {
+  return value === 'node' || value === 'hub,node';
+}
+
+async function handleLeave(req: Request, deps: LocalRouteDeps): Promise<Response> {
+  if (isStandaloneRoles(deps.roles)) {
+    return jsonErr('not_member', 'not a mesh member', 400);
+  }
+  const auth = deps.authenticate(req);
+  if (!auth.ok) {
+    return jsonErr('unauthorized', 'login required', 401);
+  }
+  if (req.method !== 'POST') {
+    return jsonErr('method_not_allowed', 'POST required', 405);
+  }
+  const body = await readJsonBody(req);
+  const expectedRole = body?.expectedRole;
+  if (!isMeshRoleName(expectedRole)) {
+    return jsonErr('role_mismatch', 'expectedRole must match current role', 409);
+  }
+  try {
+    const result = await leaveMesh({ expectedRole }, deps);
+    return jsonOk(result);
+  } catch (error) {
+    return mapError(error, 'leave_failed');
+  }
 }
 
 export async function handleLocalRequest(
@@ -34,6 +63,9 @@ export async function handleLocalRequest(
   deps: LocalRouteDeps
 ): Promise<Response | null> {
   const path = new URL(req.url).pathname;
+  if (path === '/api/local/leave') {
+    return handleLeave(req, deps);
+  }
   if (path !== '/api/local/status' && path !== '/api/local/direct') return null;
 
   if (!isStandaloneRoles(deps.roles)) {

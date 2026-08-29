@@ -419,6 +419,11 @@ describe('joinHub', () => {
         hubUrl: 'https://hub.example.com',
       }),
     });
+    await writeFile(
+      deps.envPath,
+      'GATEWAY_PORT=21111\nOTHER=keep\nTMEX_HUB_PUBLIC_URL=https://stale.example\n',
+      'utf8'
+    );
     const result = await joinHub(
       {
         hubUrl: 'https://hub.example.com',
@@ -439,6 +444,8 @@ describe('joinHub', () => {
     const envText = await readFile(deps.envPath, 'utf8');
     expect(envText).toContain('TMEX_ROLES=node');
     expect(envText).toContain('TMEX_HUB_URL=https://hub.example.com');
+    expect(envText).toContain('TMEX_HUB_PUBLIC_URL=');
+    expect((await readEnvFile(deps.envPath)).TMEX_HUB_PUBLIC_URL).toBe('');
     expect(envText).toContain('OTHER=keep');
     expect(restarts).toEqual([1]);
   });

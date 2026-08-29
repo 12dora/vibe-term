@@ -43,7 +43,7 @@ import { openInstallAuth } from '../lib/local-auth';
 import { assertRootKeyMatches, deriveRootKey, resolvePassword } from '../lib/password';
 import { parseAndValidateCaPem, readBoundedResponseText } from '../lib/pem';
 import { type ServiceManagerKind, detectServiceManager } from '../lib/platform';
-import { DEFAULT_PEER_PORT, parseTmexRoles } from '../lib/roles';
+import { DEFAULT_PEER_PORT, type TmexRoles, parseTmexRoles, roleNameFromFlags } from '../lib/roles';
 import { restartService, stopService } from '../lib/service';
 import { fingerprintPublicKey, totpOtpauthUri } from '../lib/totp-uri';
 import { asString } from '../lib/validate';
@@ -259,17 +259,14 @@ async function withAuth<T>(
   }
 }
 
-async function persistHubUrl(ctx: LocalAuthContext, hubUrl: string | null): Promise<void> {
-  const loaded = await ctx.identityStore.load();
-  if (!loaded) return;
-  await ctx.identityStore.save({ ...loaded, hubUrl });
-}
-
 async function writeRolesAndHubUrl(envPath: string, roles: string, hubUrl: string): Promise<void> {
   await withEnvLock(async () => {
     const env = await readEnvFile(envPath);
     env.TMEX_ROLES = roles;
     env.TMEX_HUB_URL = hubUrl;
+    if (roles === 'node') {
+      env.TMEX_HUB_PUBLIC_URL = '';
+    }
     await writeEnvFile(envPath, env);
   });
 }
@@ -624,6 +621,9 @@ export async function runHubJoin(
     } else {
       process.env.TMEX_ROLES = nextRole;
       process.env.TMEX_HUB_URL = joined.hubUrl;
+      if (nextRole === 'node') {
+        process.env.TMEX_HUB_PUBLIC_URL = '';
+      }
     }
     if (ctx.installDir) {
       await maybeRestart(parsed, io, ctx.installDir);
@@ -793,18 +793,38 @@ function assertResponseCertsMatchProjections(
 
 export async function runHubLeave(parsed: ParsedArgs, io: HubIo = {}): Promise<void> {
   await withAuth(parsed, io, async (ctx) => {
-    await persistHubUrl(ctx, null);
-    if (ctx.envPath) {
-      await writeRolesAndHubUrl(ctx.envPath, 'standalone', '');
-    } else {
-      process.env.TMEX_ROLES = 'standalone';
-      process.env.TMEX_HUB_URL = '';
-    }
+    const { leaveMesh } = await import('../runtime/membership-reset');
+    const { createSetupTransitionLock } = await import('../runtime/setup-service');
+    const roles = await rolesForLeave(ctx);
+    const fromRole = roleNameFromFlags(roles);
+    await leaveMesh(
+      { expectedRole: fromRole === 'standalone' ? 'node' : fromRole },
+      {
+        roles,
+        nodeEnv: io.nodeEnv ?? process.env.NODE_ENV ?? 'test',
+        auth: ctx,
+        envPath: ctx.envPath,
+        installDir: ctx.installDir,
+        setupLock: createSetupTransitionLock(),
+      }
+    );
     if (ctx.installDir) {
       await maybeRestart(parsed, io, ctx.installDir);
     }
     log(io, 'left hub; role set to standalone');
   });
+}
+
+async function rolesForLeave(ctx: LocalAuthContext): Promise<TmexRoles> {
+  if (ctx.envPath) {
+    try {
+      const env = await readEnvFile(ctx.envPath);
+      if (env.TMEX_ROLES) return parseTmexRoles(env.TMEX_ROLES);
+    } catch {
+      // fall through to process/ctx env
+    }
+  }
+  return parseTmexRoles(process.env.TMEX_ROLES ?? ctx.env.TMEX_ROLES);
 }
 
 export { nodes, enrollmentTokens };

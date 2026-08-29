@@ -64,6 +64,7 @@ export {
   type UserKeyServiceDeps,
   type VerifyChainForJoinResult,
 } from './user-key-service';
+export { MeshMembershipStore } from './mesh-membership-store';
 export {
   UserStore,
   type CreateEnrollmentTokenInput,

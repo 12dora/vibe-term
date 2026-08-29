@@ -8,12 +8,17 @@ import type { LocalAuthContext } from '../lib/local-auth';
 import { openLocalAuth } from '../lib/local-auth';
 import { handleLocalRequest } from './local-routes';
 import type { LocalRouteDeps } from './local-routes';
-import type { SetupServiceDeps } from './setup-service';
+import {
+  type SetupServiceDeps,
+  createSetupTransitionLock,
+  resetProcessSetupLockForTests,
+} from './setup-service';
 
 const MIGRATIONS = resolve(import.meta.dir, '../../../../apps/gateway/drizzle');
 const authHandles: LocalAuthContext[] = [];
 
 afterEach(() => {
+  resetProcessSetupLockForTests();
   for (const ctx of authHandles.splice(0)) ctx.close();
 });
 
@@ -473,5 +478,92 @@ describe('GET /api/local/status mesh gating with NodeSessionStore', () => {
     );
     expect(allowed.status).toBe(200);
     expect((allowed.body as { role: string }).role).toBe('hub,node');
+  });
+});
+
+describe('POST /api/local/leave', () => {
+  function leaveRequest(body: unknown): Request {
+    return new Request('http://127.0.0.1/api/local/leave', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+  }
+
+  test('standalone is 400 not_member without auth', async () => {
+    const { status, body } = await jsonOf(
+      await handleLocalRequest(
+        leaveRequest({ expectedRole: 'node' }),
+        deps({ authenticate: failAuth })
+      )
+    );
+    expect(status).toBe(400);
+    expect((body as { error: { code: string } }).error.code).toBe('not_member');
+  });
+
+  test('mesh without a self session is 401 unauthorized', async () => {
+    const { status, body } = await jsonOf(
+      await handleLocalRequest(
+        leaveRequest({ expectedRole: 'node' }),
+        deps({
+          roles: { hub: false, node: true },
+          authenticate: failAuth,
+        })
+      )
+    );
+    expect(status).toBe(401);
+    expect(body).toEqual({ error: { code: 'unauthorized', message: 'login required' } });
+  });
+
+  test('mesh happy path clears membership and returns restarting', async () => {
+    const ctx = await openLocalAuth({
+      memory: true,
+      migrationsFolder: MIGRATIONS,
+      env: {
+        TMEX_MASTER_KEY: process.env.TMEX_MASTER_KEY || '',
+        TMEX_ROLES: 'node',
+      },
+    });
+    authHandles.push(ctx);
+    const identity = await ensureNodeIdentity(ctx.identityStore);
+    await ctx.userKeys.bootstrapUserWithSelfAdmit({
+      username: 'alice',
+      password: 'tmex-test-pass',
+      identity,
+      now: Date.now(),
+    });
+    const env: Record<string, string> = {
+      TMEX_ROLES: 'node',
+      TMEX_HUB_URL: 'https://hub.example',
+      TMEX_HUB_PUBLIC_URL: 'https://stale.example',
+    };
+    const restarts: number[] = [];
+    const { status, body } = await jsonOf(
+      await handleLocalRequest(
+        leaveRequest({ expectedRole: 'node' }),
+        deps({
+          roles: { hub: false, node: true },
+          auth: ctx,
+          authenticate: okAuth,
+          scheduleRestart: () => {
+            restarts.push(1);
+          },
+          setupLock: createSetupTransitionLock(),
+          readEnvFile: async () => ({ ...env }),
+          writeEnvFile: async (_path, values) => {
+            for (const key of Object.keys(env)) delete env[key];
+            Object.assign(env, values);
+          },
+        })
+      )
+    );
+    expect(status).toBe(200);
+    expect(body).toEqual({ ok: true, fromRole: 'node', restarting: true });
+    expect(restarts).toEqual([1]);
+    expect(ctx.userStore.listUsers()).toHaveLength(0);
+    expect(await ctx.identityStore.load()).toBeNull();
+    expect(env.TMEX_ROLES).toBe('standalone');
+    expect(env.TMEX_HUB_URL).toBe('');
+    expect(env.TMEX_HUB_PUBLIC_URL).toBe('');
   });
 });

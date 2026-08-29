@@ -4,7 +4,13 @@
 // （baseUrl 为空），不加 `/n/<id>` 前缀。
 
 import { type ApiClient, defaultApiClient } from '../client';
-import type { LocalDirectAction, LocalDirectResponse, LocalStatusResponse } from './types';
+import type {
+  LocalDirectAction,
+  LocalDirectResponse,
+  LocalLeaveRequest,
+  LocalLeaveResponse,
+  LocalStatusResponse,
+} from './types';
 
 /** 契约错误体 `{ error: { code, message } }` 解出来的类型化错误。 */
 export class LocalApiError extends Error {
@@ -57,6 +63,17 @@ export class LocalApi {
     });
     if (!res.ok) throw await readError(res, 'direct_failed');
     return (await res.json()) as LocalDirectResponse;
+  }
+
+  /** `POST /api/local/leave`：退出 mesh，清空本机 membership 并重启为 standalone。 */
+  async leave(body: LocalLeaveRequest): Promise<LocalLeaveResponse> {
+    const res = await this.client.fetch('/api/local/leave', {
+      method: 'POST',
+      headers: JSON_HEADERS,
+      body: JSON.stringify(body),
+    });
+    if (!res.ok) throw await readError(res, 'leave_failed');
+    return (await res.json()) as LocalLeaveResponse;
   }
 }
 

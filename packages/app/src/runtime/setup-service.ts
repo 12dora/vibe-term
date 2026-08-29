@@ -152,6 +152,7 @@ export type SetupServiceDeps = {
   now?: () => number;
   startedAt?: number;
   scheduleRestart?: () => void;
+  quiesceMesh?: () => Promise<void> | void;
   directTimeoutMs?: number;
   setupLock?: SetupTransitionLock;
 };
@@ -321,7 +322,10 @@ function lockOf(deps: SetupServiceDeps): SetupTransitionLock {
   return deps.setupLock ?? processSetupLock;
 }
 
-async function withSetupTransition<T>(deps: SetupServiceDeps, fn: () => Promise<T>): Promise<T> {
+export async function withSetupTransition<T>(
+  deps: SetupServiceDeps,
+  fn: () => Promise<T>
+): Promise<T> {
   const lock = lockOf(deps);
   lock.begin();
   let committed = false;
@@ -371,7 +375,7 @@ async function maybeEnableDirect(
   }
 }
 
-async function patchOwnedEnvKeys(
+export async function patchOwnedEnvKeys(
   deps: SetupServiceDeps,
   patch: Record<string, string>
 ): Promise<void> {
@@ -672,7 +676,12 @@ export async function joinHub(input: JoinHubInput, deps: SetupServiceDeps): Prom
       await writeStagedEnv(
         deps,
         stagedPath,
-        stringifyEnv({ ...base, TMEX_ROLES: 'node', TMEX_HUB_URL: url })
+        stringifyEnv({
+          ...base,
+          TMEX_ROLES: 'node',
+          TMEX_HUB_URL: url,
+          TMEX_HUB_PUBLIC_URL: '',
+        })
       );
     };
     try {

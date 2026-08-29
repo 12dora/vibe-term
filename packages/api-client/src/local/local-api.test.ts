@@ -28,7 +28,7 @@ const STATUS: LocalStatusResponse = {
     version: '1.2.3',
     platform: 'darwin-arm64',
   },
-  tls: { mode: 'none' },
+  tls: { mode: 'none', listenerRunning: false, tlsPort: null },
 };
 
 function errorBody(code: string, message: string, status: number): Response {
@@ -126,5 +126,28 @@ describe('LocalApi.setDirect', () => {
     const err = (await api.setDirect('enable').catch((e) => e)) as LocalApiError;
     expect(err.code).toBe('direct_failed');
     expect(err.status).toBe(500);
+  });
+});
+
+describe('LocalApi.leave', () => {
+  test('POST /api/local/leave 带 expectedRole JSON body', async () => {
+    const { api, calls } = recorder([
+      new Response(JSON.stringify({ ok: true, fromRole: 'node', restarting: true }), {
+        status: 200,
+      }),
+    ]);
+    const out = await api.leave({ expectedRole: 'node' });
+    expect(calls[0].url).toBe('/api/local/leave');
+    expect(calls[0].init?.method).toBe('POST');
+    expect(JSON.parse(String(calls[0].init?.body))).toEqual({ expectedRole: 'node' });
+    expect(out).toEqual({ ok: true, fromRole: 'node', restarting: true });
+  });
+
+  test('401 unauthorized 带出契约 code', async () => {
+    const { api } = recorder([errorBody('unauthorized', 'login required', 401)]);
+    const err = (await api.leave({ expectedRole: 'hub,node' }).catch((e) => e)) as LocalApiError;
+    expect(err).toBeInstanceOf(LocalApiError);
+    expect(err.code).toBe('unauthorized');
+    expect(err.status).toBe(401);
   });
 });
