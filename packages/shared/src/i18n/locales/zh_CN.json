@@ -121,6 +121,20 @@
       "addTo": {
         "label": "添加设备到",
         "self": "本机"
+      },
+      "open": "打开",
+      "kind": {
+        "local": "本地设备",
+        "ssh": "SSH 设备",
+        "nodeLocal": "节点 {{node}} 上的本机设备",
+        "nodeSsh": "节点 {{node}} 上的 SSH 设备"
+      },
+      "remoteInfo": {
+        "title": "所属节点",
+        "node": "节点",
+        "nodeId": "节点 ID",
+        "deviceId": "设备 ID",
+        "hint": "该设备由远端节点管理，连接参数在该节点上配置。"
       }
     },
     "terminal": {
@@ -627,7 +641,12 @@
       "upgradeVersionRequired": "缺少目标版本号。",
       "updateCheckFailed": "查询 npm registry 失败。",
       "terminalShortcutsTooMany": "快捷键数量过多",
-      "terminalShortcutInvalid": "快捷键配置不合法"
+      "terminalShortcutInvalid": "快捷键配置不合法",
+      "folderNotFound": "文件夹不存在",
+      "folderNameRequired": "文件夹名称不能为空",
+      "folderNameTooLong": "文件夹名称过长",
+      "folderCycle": "不能把文件夹移动到自己或其子文件夹内",
+      "folderLayoutInvalid": "文件夹布局无效"
     },
     "notification": {
       "clickToJump": "点击跳转到对应 Pane",
@@ -1573,6 +1592,33 @@
         "lastKnownDevices": "最近一次已知的设备",
         "noKnownDevices": "该节点最近一次在线时没有已知设备。",
         "addDevice": "在 {{name}} 上添加设备"
+      },
+      "folders": {
+        "newFolder": "新建文件夹",
+        "newSubfolder": "新建子文件夹",
+        "rename": "重命名",
+        "delete": "删除文件夹",
+        "deleteConfirmTitle": "删除文件夹？",
+        "deleteConfirmDescription": "「{{name}}」将被删除，其中的内容会移到上一级。",
+        "namePlaceholder": "文件夹名称",
+        "nameRequired": "文件夹名称不能为空",
+        "nameTooLong": "文件夹名称最多 {{max}} 个字符",
+        "itemCount": "{{count}} 项",
+        "empty": "拖到这里放入此文件夹",
+        "dropHere": "放入「{{name}}」",
+        "dropToRoot": "移到最外层",
+        "moveToRoot": "移出文件夹",
+        "dragHandle": "拖动以移动",
+        "expand": "展开",
+        "collapse": "收起",
+        "cycle": "不能移动到自己或其子文件夹内",
+        "moveFailed": "移动失败",
+        "createFailed": "创建文件夹失败",
+        "renameFailed": "重命名失败",
+        "deleteFailed": "删除文件夹失败",
+        "loadFailed": "文件夹加载失败",
+        "missingDevice": "设备不存在或所在节点不可用",
+        "folderMenu": "文件夹操作"
       }
     }
   }

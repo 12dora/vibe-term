@@ -121,6 +121,20 @@
       "addTo": {
         "label": "Add device to",
         "self": "This machine"
+      },
+      "open": "Open",
+      "kind": {
+        "local": "Local Device",
+        "ssh": "SSH Device",
+        "nodeLocal": "Local device on node {{node}}",
+        "nodeSsh": "SSH device on node {{node}}"
+      },
+      "remoteInfo": {
+        "title": "Owning node",
+        "node": "Node",
+        "nodeId": "Node ID",
+        "deviceId": "Device ID",
+        "hint": "This device is managed by a remote node; its connection settings live there."
       }
     },
     "terminal": {
@@ -627,7 +641,12 @@
       "upgradeVersionRequired": "Target version is required.",
       "updateCheckFailed": "Failed to query the npm registry.",
       "terminalShortcutsTooMany": "Too many shortcuts",
-      "terminalShortcutInvalid": "Invalid shortcut configuration"
+      "terminalShortcutInvalid": "Invalid shortcut configuration",
+      "folderNotFound": "Folder not found",
+      "folderNameRequired": "Folder name is required",
+      "folderNameTooLong": "Folder name is too long",
+      "folderCycle": "Cannot move a folder into itself or its subfolders",
+      "folderLayoutInvalid": "Invalid folder layout"
     },
     "notification": {
       "clickToJump": "Click to jump to corresponding pane",
@@ -1573,6 +1592,34 @@
         "lastKnownDevices": "Last known devices",
         "noKnownDevices": "No devices were known when this node was last online.",
         "addDevice": "Add a device on {{name}}"
+      },
+      "folders": {
+        "newFolder": "New folder",
+        "newSubfolder": "New subfolder",
+        "rename": "Rename",
+        "delete": "Delete folder",
+        "deleteConfirmTitle": "Delete folder?",
+        "deleteConfirmDescription": "“{{name}}” will be deleted; its contents move up one level.",
+        "namePlaceholder": "Folder name",
+        "nameRequired": "Folder name is required",
+        "nameTooLong": "Folder name must be at most {{max}} characters",
+        "itemCount_one": "{{count}} item",
+        "itemCount_other": "{{count}} items",
+        "empty": "Drop here to put into this folder",
+        "dropHere": "Move into “{{name}}”",
+        "dropToRoot": "Move to top level",
+        "moveToRoot": "Move out of folder",
+        "dragHandle": "Drag to move",
+        "expand": "Expand",
+        "collapse": "Collapse",
+        "cycle": "Cannot move a folder into itself or its subfolders",
+        "moveFailed": "Move failed",
+        "createFailed": "Failed to create folder",
+        "renameFailed": "Rename failed",
+        "deleteFailed": "Failed to delete folder",
+        "loadFailed": "Failed to load folders",
+        "missingDevice": "Device not found or its node is unavailable",
+        "folderMenu": "Folder actions"
       }
     }
   }

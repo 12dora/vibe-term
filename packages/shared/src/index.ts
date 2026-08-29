@@ -60,6 +60,8 @@ export * from './contracts/llm';
 export * from './contracts/agent';
 export * from './contracts/watch';
 export * from './contracts/files';
+export * from './contracts/device-folders';
+export * from './device-folders';
 
 // ==================== 运行时模块再导出 ====================
 

@@ -121,6 +121,20 @@
       "addTo": {
         "label": "デバイスの追加先",
         "self": "このマシン"
+      },
+      "open": "開く",
+      "kind": {
+        "local": "ローカルデバイス",
+        "ssh": "SSH デバイス",
+        "nodeLocal": "ノード {{node}} 上のローカルデバイス",
+        "nodeSsh": "ノード {{node}} 上の SSH デバイス"
+      },
+      "remoteInfo": {
+        "title": "所属ノード",
+        "node": "ノード",
+        "nodeId": "ノード ID",
+        "deviceId": "デバイス ID",
+        "hint": "このデバイスはリモートノードが管理しており、接続設定はそのノード側にあります。"
       }
     },
     "terminal": {
@@ -627,7 +641,12 @@
       "upgradeVersionRequired": "対象バージョンが必要です。",
       "updateCheckFailed": "npm registry の照会に失敗しました。",
       "terminalShortcutsTooMany": "ショートカットが多すぎます",
-      "terminalShortcutInvalid": "ショートカット設定が不正です"
+      "terminalShortcutInvalid": "ショートカット設定が不正です",
+      "folderNotFound": "フォルダーが見つかりません",
+      "folderNameRequired": "フォルダー名を入力してください",
+      "folderNameTooLong": "フォルダー名が長すぎます",
+      "folderCycle": "フォルダーを自分自身やそのサブフォルダーには移動できません",
+      "folderLayoutInvalid": "フォルダー配置が無効です"
     },
     "notification": {
       "clickToJump": "対応するペインにジャンプ",
@@ -1573,6 +1592,33 @@
         "lastKnownDevices": "最後に確認されたデバイス",
         "noKnownDevices": "このノードが最後にオンラインだったとき、既知のデバイスはありませんでした。",
         "addDevice": "{{name}} にデバイスを追加"
+      },
+      "folders": {
+        "newFolder": "新しいフォルダー",
+        "newSubfolder": "新しいサブフォルダー",
+        "rename": "名前を変更",
+        "delete": "フォルダーを削除",
+        "deleteConfirmTitle": "フォルダーを削除しますか？",
+        "deleteConfirmDescription": "「{{name}}」を削除します。中身は一つ上の階層に移動します。",
+        "namePlaceholder": "フォルダー名",
+        "nameRequired": "フォルダー名を入力してください",
+        "nameTooLong": "フォルダー名は {{max}} 文字以内にしてください",
+        "itemCount": "{{count}} 件",
+        "empty": "ここにドロップしてフォルダーに入れる",
+        "dropHere": "「{{name}}」に入れる",
+        "dropToRoot": "最上位に移動",
+        "moveToRoot": "フォルダーから出す",
+        "dragHandle": "ドラッグして移動",
+        "expand": "展開",
+        "collapse": "折りたたむ",
+        "cycle": "自分自身やそのサブフォルダーには移動できません",
+        "moveFailed": "移動に失敗しました",
+        "createFailed": "フォルダーの作成に失敗しました",
+        "renameFailed": "名前の変更に失敗しました",
+        "deleteFailed": "フォルダーの削除に失敗しました",
+        "loadFailed": "フォルダーの読み込みに失敗しました",
+        "missingDevice": "デバイスが存在しないか、ノードが利用できません",
+        "folderMenu": "フォルダー操作"
       }
     }
   }

@@ -127,6 +127,20 @@ export const I18N_RESOURCES = {
       "addTo": {
         "label": "Add device to",
         "self": "This machine"
+      },
+      "open": "Open",
+      "kind": {
+        "local": "Local Device",
+        "ssh": "SSH Device",
+        "nodeLocal": "Local device on node {{node}}",
+        "nodeSsh": "SSH device on node {{node}}"
+      },
+      "remoteInfo": {
+        "title": "Owning node",
+        "node": "Node",
+        "nodeId": "Node ID",
+        "deviceId": "Device ID",
+        "hint": "This device is managed by a remote node; its connection settings live there."
       }
     },
     "terminal": {
@@ -633,7 +647,12 @@ export const I18N_RESOURCES = {
       "upgradeVersionRequired": "Target version is required.",
       "updateCheckFailed": "Failed to query the npm registry.",
       "terminalShortcutsTooMany": "Too many shortcuts",
-      "terminalShortcutInvalid": "Invalid shortcut configuration"
+      "terminalShortcutInvalid": "Invalid shortcut configuration",
+      "folderNotFound": "Folder not found",
+      "folderNameRequired": "Folder name is required",
+      "folderNameTooLong": "Folder name is too long",
+      "folderCycle": "Cannot move a folder into itself or its subfolders",
+      "folderLayoutInvalid": "Invalid folder layout"
     },
     "notification": {
       "clickToJump": "Click to jump to corresponding pane",
@@ -1579,6 +1598,34 @@ export const I18N_RESOURCES = {
         "lastKnownDevices": "Last known devices",
         "noKnownDevices": "No devices were known when this node was last online.",
         "addDevice": "Add a device on {{name}}"
+      },
+      "folders": {
+        "newFolder": "New folder",
+        "newSubfolder": "New subfolder",
+        "rename": "Rename",
+        "delete": "Delete folder",
+        "deleteConfirmTitle": "Delete folder?",
+        "deleteConfirmDescription": "“{{name}}” will be deleted; its contents move up one level.",
+        "namePlaceholder": "Folder name",
+        "nameRequired": "Folder name is required",
+        "nameTooLong": "Folder name must be at most {{max}} characters",
+        "itemCount_one": "{{count}} item",
+        "itemCount_other": "{{count}} items",
+        "empty": "Drop here to put into this folder",
+        "dropHere": "Move into “{{name}}”",
+        "dropToRoot": "Move to top level",
+        "moveToRoot": "Move out of folder",
+        "dragHandle": "Drag to move",
+        "expand": "Expand",
+        "collapse": "Collapse",
+        "cycle": "Cannot move a folder into itself or its subfolders",
+        "moveFailed": "Move failed",
+        "createFailed": "Failed to create folder",
+        "renameFailed": "Rename failed",
+        "deleteFailed": "Failed to delete folder",
+        "loadFailed": "Failed to load folders",
+        "missingDevice": "Device not found or its node is unavailable",
+        "folderMenu": "Folder actions"
       }
     }
   }
@@ -1706,6 +1753,20 @@ export const I18N_RESOURCES = {
       "addTo": {
         "label": "添加设备到",
         "self": "本机"
+      },
+      "open": "打开",
+      "kind": {
+        "local": "本地设备",
+        "ssh": "SSH 设备",
+        "nodeLocal": "节点 {{node}} 上的本机设备",
+        "nodeSsh": "节点 {{node}} 上的 SSH 设备"
+      },
+      "remoteInfo": {
+        "title": "所属节点",
+        "node": "节点",
+        "nodeId": "节点 ID",
+        "deviceId": "设备 ID",
+        "hint": "该设备由远端节点管理，连接参数在该节点上配置。"
       }
     },
     "terminal": {
@@ -2212,7 +2273,12 @@ export const I18N_RESOURCES = {
       "upgradeVersionRequired": "缺少目标版本号。",
       "updateCheckFailed": "查询 npm registry 失败。",
       "terminalShortcutsTooMany": "快捷键数量过多",
-      "terminalShortcutInvalid": "快捷键配置不合法"
+      "terminalShortcutInvalid": "快捷键配置不合法",
+      "folderNotFound": "文件夹不存在",
+      "folderNameRequired": "文件夹名称不能为空",
+      "folderNameTooLong": "文件夹名称过长",
+      "folderCycle": "不能把文件夹移动到自己或其子文件夹内",
+      "folderLayoutInvalid": "文件夹布局无效"
     },
     "notification": {
       "clickToJump": "点击跳转到对应 Pane",
@@ -3158,6 +3224,33 @@ export const I18N_RESOURCES = {
         "lastKnownDevices": "最近一次已知的设备",
         "noKnownDevices": "该节点最近一次在线时没有已知设备。",
         "addDevice": "在 {{name}} 上添加设备"
+      },
+      "folders": {
+        "newFolder": "新建文件夹",
+        "newSubfolder": "新建子文件夹",
+        "rename": "重命名",
+        "delete": "删除文件夹",
+        "deleteConfirmTitle": "删除文件夹？",
+        "deleteConfirmDescription": "「{{name}}」将被删除，其中的内容会移到上一级。",
+        "namePlaceholder": "文件夹名称",
+        "nameRequired": "文件夹名称不能为空",
+        "nameTooLong": "文件夹名称最多 {{max}} 个字符",
+        "itemCount": "{{count}} 项",
+        "empty": "拖到这里放入此文件夹",
+        "dropHere": "放入「{{name}}」",
+        "dropToRoot": "移到最外层",
+        "moveToRoot": "移出文件夹",
+        "dragHandle": "拖动以移动",
+        "expand": "展开",
+        "collapse": "收起",
+        "cycle": "不能移动到自己或其子文件夹内",
+        "moveFailed": "移动失败",
+        "createFailed": "创建文件夹失败",
+        "renameFailed": "重命名失败",
+        "deleteFailed": "删除文件夹失败",
+        "loadFailed": "文件夹加载失败",
+        "missingDevice": "设备不存在或所在节点不可用",
+        "folderMenu": "文件夹操作"
       }
     }
   }
@@ -3285,6 +3378,20 @@ export const I18N_RESOURCES = {
       "addTo": {
         "label": "デバイスの追加先",
         "self": "このマシン"
+      },
+      "open": "開く",
+      "kind": {
+        "local": "ローカルデバイス",
+        "ssh": "SSH デバイス",
+        "nodeLocal": "ノード {{node}} 上のローカルデバイス",
+        "nodeSsh": "ノード {{node}} 上の SSH デバイス"
+      },
+      "remoteInfo": {
+        "title": "所属ノード",
+        "node": "ノード",
+        "nodeId": "ノード ID",
+        "deviceId": "デバイス ID",
+        "hint": "このデバイスはリモートノードが管理しており、接続設定はそのノード側にあります。"
       }
     },
     "terminal": {
@@ -3791,7 +3898,12 @@ export const I18N_RESOURCES = {
       "upgradeVersionRequired": "対象バージョンが必要です。",
       "updateCheckFailed": "npm registry の照会に失敗しました。",
       "terminalShortcutsTooMany": "ショートカットが多すぎます",
-      "terminalShortcutInvalid": "ショートカット設定が不正です"
+      "terminalShortcutInvalid": "ショートカット設定が不正です",
+      "folderNotFound": "フォルダーが見つかりません",
+      "folderNameRequired": "フォルダー名を入力してください",
+      "folderNameTooLong": "フォルダー名が長すぎます",
+      "folderCycle": "フォルダーを自分自身やそのサブフォルダーには移動できません",
+      "folderLayoutInvalid": "フォルダー配置が無効です"
     },
     "notification": {
       "clickToJump": "対応するペインにジャンプ",
@@ -4737,6 +4849,33 @@ export const I18N_RESOURCES = {
         "lastKnownDevices": "最後に確認されたデバイス",
         "noKnownDevices": "このノードが最後にオンラインだったとき、既知のデバイスはありませんでした。",
         "addDevice": "{{name}} にデバイスを追加"
+      },
+      "folders": {
+        "newFolder": "新しいフォルダー",
+        "newSubfolder": "新しいサブフォルダー",
+        "rename": "名前を変更",
+        "delete": "フォルダーを削除",
+        "deleteConfirmTitle": "フォルダーを削除しますか？",
+        "deleteConfirmDescription": "「{{name}}」を削除します。中身は一つ上の階層に移動します。",
+        "namePlaceholder": "フォルダー名",
+        "nameRequired": "フォルダー名を入力してください",
+        "nameTooLong": "フォルダー名は {{max}} 文字以内にしてください",
+        "itemCount": "{{count}} 件",
+        "empty": "ここにドロップしてフォルダーに入れる",
+        "dropHere": "「{{name}}」に入れる",
+        "dropToRoot": "最上位に移動",
+        "moveToRoot": "フォルダーから出す",
+        "dragHandle": "ドラッグして移動",
+        "expand": "展開",
+        "collapse": "折りたたむ",
+        "cycle": "自分自身やそのサブフォルダーには移動できません",
+        "moveFailed": "移動に失敗しました",
+        "createFailed": "フォルダーの作成に失敗しました",
+        "renameFailed": "名前の変更に失敗しました",
+        "deleteFailed": "フォルダーの削除に失敗しました",
+        "loadFailed": "フォルダーの読み込みに失敗しました",
+        "missingDevice": "デバイスが存在しないか、ノードが利用できません",
+        "folderMenu": "フォルダー操作"
       }
     }
   }
