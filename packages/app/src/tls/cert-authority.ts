@@ -1,3 +1,4 @@
+import 'reflect-metadata';
 import { isIP } from 'node:net';
 import * as x509 from '@peculiar/x509';
 

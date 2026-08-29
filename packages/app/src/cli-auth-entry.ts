@@ -1,3 +1,4 @@
+import 'reflect-metadata';
 import { type CliLang, normalizeLang, setLang, t } from './i18n';
 import { parseArgs, resolveNestedCommand } from './lib/args';
 import { loadInstallEnv } from './lib/local-auth';

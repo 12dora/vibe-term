@@ -115,6 +115,7 @@
       "dependencies": {
         "@peculiar/x509": "1.14.3",
         "acme-client": "^5.4.0",
+        "reflect-metadata": "^0.2.2",
       },
       "devDependencies": {
         "@types/bun": "latest",
