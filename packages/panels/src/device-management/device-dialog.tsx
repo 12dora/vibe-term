@@ -1,4 +1,5 @@
-// 设备增改对话框：组合基础/连接/认证字段与提交逻辑，成功后按注入的 queryKey 失效缓存。
+// 设备增改对话框：按设备种类（local / ssh / 远端节点上的 local / ssh）组合区块，
+// 成功后按注入的 queryKey 失效缓存。类型创建后不可改（编辑态下拉禁用，update payload 也不含 type）。
 
 import type { Device } from '@tmex/shared';
 import { Button } from '@tmex/ui/button';
@@ -15,17 +16,26 @@ import { useTranslation } from 'react-i18next';
 import { DeviceAuthFields } from './device-auth-fields';
 import { DeviceBasicFields } from './device-basic-fields';
 import { type DeviceFormValues, createDefaultFormValues } from './device-form';
+import {
+  type DeviceNodeContext,
+  deviceDisplayKind,
+  deviceKindLabel,
+  isRemoteDeviceKind,
+} from './device-node-context';
+import { DeviceRemoteInfoFields } from './device-remote-info-fields';
 import { DeviceSshConnectionFields } from './device-ssh-connection-fields';
 import { type DeviceDialogMode, useDeviceDialogSubmit } from './use-device-dialog-submit';
 
 export interface DeviceDialogProps {
   mode: DeviceDialogMode;
   device?: Device;
+  /** 目标节点上下文：决定种类展示、远端只读信息块与新建时的描述文案 */
+  nodeContext: DeviceNodeContext;
   onClose: () => void;
   queryKey: readonly unknown[];
 }
 
-export function DeviceDialog({ mode, device, onClose, queryKey }: DeviceDialogProps) {
+export function DeviceDialog({ mode, device, nodeContext, onClose, queryKey }: DeviceDialogProps) {
   const { t } = useTranslation();
   const [values, setValues] = useState<DeviceFormValues>(createDefaultFormValues(device));
   const { attempted, isSubmitting, handleSubmit } = useDeviceDialogSubmit({
@@ -41,18 +51,41 @@ export function DeviceDialog({ mode, device, onClose, queryKey }: DeviceDialogPr
     setValues((current) => ({ ...current, ...patch }));
   const fieldsProps = { mode, values, attempted, onChange };
 
+  const kind = deviceDisplayKind(values.type, nodeContext);
+  const isRemote = isRemoteDeviceKind(kind);
+  const description = isEditMode
+    ? t('device.editDeviceDescription')
+    : isRemote
+      ? t('devices.nodes.addDevice', { name: nodeContext.name })
+      : t('device.addDeviceDescription');
+
   return (
     <Dialog open={true} onOpenChange={(open) => !open && onClose()}>
-      <DialogContent data-testid="device-dialog" className="w-full max-w-2xl">
+      <DialogContent
+        data-testid="device-dialog"
+        data-device-kind={kind}
+        className="w-full max-w-2xl"
+      >
         <DialogHeader>
-          <DialogTitle>{isEditMode ? t('device.editDevice') : t('device.addDevice')}</DialogTitle>
-          <DialogDescription>
-            {isEditMode ? t('device.editDeviceDescription') : t('device.addDeviceDescription')}
-          </DialogDescription>
+          <DialogTitle className="flex flex-wrap items-center gap-2">
+            {isEditMode ? t('device.editDevice') : t('device.addDevice')}
+            {isRemote && (
+              <span
+                data-testid="device-dialog-node-chip"
+                className="rounded border border-border/60 px-1.5 py-px text-[10px] font-normal leading-none text-muted-foreground"
+              >
+                {deviceKindLabel(t, kind, nodeContext.name)}
+              </span>
+            )}
+          </DialogTitle>
+          <DialogDescription>{description}</DialogDescription>
         </DialogHeader>
 
         <form onSubmit={handleSubmit} className="space-y-4">
           <div className="-mr-2 max-h-[min(70dvh,720px)] space-y-5 overflow-y-auto pr-2">
+            {isEditMode && isRemote && device && (
+              <DeviceRemoteInfoFields device={device} nodeContext={nodeContext} />
+            )}
             <DeviceBasicFields {...fieldsProps} />
             {values.type === 'ssh' && (
               <>

@@ -49,8 +49,8 @@ test('devices: create/edit/delete local device (ui)', async ({ page }) => {
   const deviceId = await createdCard.getAttribute('data-device-id');
   expect(deviceId).toBeTruthy();
 
-  // 卡片上的连接入口指向设备页
-  const connectLink = createdCard.locator(`[data-testid="device-card-connect-${deviceId}"]`);
+  // 卡片上的「打开」入口指向设备页
+  const connectLink = createdCard.locator(`[data-testid="device-card-open-${deviceId}"]`);
   await expect(connectLink).toBeVisible();
   await expect(connectLink).toHaveAttribute('href', `/devices/${deviceId}`);
 
@@ -88,7 +88,7 @@ test('devices: card connect entry navigates to the device page', async ({ page, 
     await page.goto('/devices');
     await expect(page.getByTestId('devices-page')).toBeVisible();
 
-    const connectLink = page.getByTestId(`device-card-connect-${deviceId}`);
+    const connectLink = page.getByTestId(`device-card-open-${deviceId}`);
     await expect(connectLink).toBeVisible();
     await expect(connectLink).toHaveAttribute('href', `/devices/${deviceId}`);
 

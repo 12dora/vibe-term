@@ -1,6 +1,6 @@
 // 设备表单纯逻辑：默认值、payload 构造与校验（local/ssh 四种 authMode）。
 
-import type { CreateDeviceRequest, Device, UpdateDeviceRequest } from '@tmex/shared';
+import type { AuthMode, CreateDeviceRequest, Device, UpdateDeviceRequest } from '@tmex/shared';
 
 export type DeviceFormValues = {
   name: string;
@@ -16,6 +16,12 @@ export type DeviceFormValues = {
   privateKey: string;
   privateKeyPassphrase: string;
 };
+
+// 下拉里没有 `auto` 这一项：gateway 的 ssh-auth 把 auto 与 agent 同等对待，
+// 归一到 agent 才能保证编辑历史 SSH 设备时下拉总有匹配项（否则显示空白）。
+export function normalizeSshAuthMode(authMode: AuthMode | undefined | null): AuthMode {
+  return authMode && authMode !== 'auto' ? authMode : 'agent';
+}
 
 function normalizeText(value: string): string | undefined {
   const trimmed = value.trim();
@@ -51,7 +57,7 @@ export function createDefaultFormValues(device?: Device): DeviceFormValues {
     sshConfigRef: device.sshConfigRef ?? '',
     session: device.session ?? 'tmex',
     defaultWorkingDir: device.defaultWorkingDir ?? '',
-    authMode: device.type === 'local' ? 'auto' : device.authMode,
+    authMode: device.type === 'local' ? 'auto' : normalizeSshAuthMode(device.authMode),
     password: '',
     privateKey: '',
     privateKeyPassphrase: '',

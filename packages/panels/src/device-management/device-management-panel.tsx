@@ -1,37 +1,32 @@
-// 设备管理面板：设备卡片网格 + 增改对话框 + 删除确认 + 空态/加载/错误态。
-// 数据自取（fetchDevices + 注入 queryKey），REST 一律经 runtime.apiClient；
-// 「添加设备」既可经全局事件（缺省监听，多面板宿主可关）也可经 ref 命令式打开。
+// 设备管理面板：设备卡片网格 + 新建对话框 + 空态/加载/错误态（每张卡片的编辑与删除
+// 由 DeviceCardHost 自己管）。数据自取（fetchDevices + 注入 queryKey），REST 一律经
+// runtime.apiClient；「添加设备」既可经全局事件（缺省监听，多面板宿主可关）也可经 ref 命令式打开。
 
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import {
-  devicesQueryKey as defaultDevicesQueryKey,
-  deleteDevice as deleteDeviceApi,
-  fetchDevices,
-} from '@tmex/api-client';
+import { useQuery } from '@tanstack/react-query';
+import { devicesQueryKey as defaultDevicesQueryKey, fetchDevices } from '@tmex/api-client';
 import type { Device } from '@tmex/shared';
 import { toBCP47 } from '@tmex/shared';
 import { useRuntime, useSiteStore, useTmuxStore } from '@tmex/stores/react';
 import { cn } from '@tmex/ui';
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogMedia,
-  AlertDialogTitle,
-} from '@tmex/ui/alert-dialog';
 import { Button } from '@tmex/ui/button';
 import { Card, CardContent } from '@tmex/ui/card';
 import { staggerItemStyle } from '@tmex/ui/motion';
-import { Monitor, Plus, Trash2 } from 'lucide-react';
-import { type Ref, useEffect, useImperativeHandle, useMemo, useRef, useState } from 'react';
+import { Monitor, Plus } from 'lucide-react';
+import {
+  Fragment,
+  type ReactNode,
+  type Ref,
+  useEffect,
+  useImperativeHandle,
+  useMemo,
+  useRef,
+  useState,
+} from 'react';
 import { useTranslation } from 'react-i18next';
-import { toast } from 'sonner';
-import { DeviceCard } from './device-card';
+import type { DeviceConnectionAdapter } from '../device-connection';
+import { DeviceCardHost } from './device-card-host';
 import { DeviceDialog } from './device-dialog';
+import type { DeviceNodeContext } from './device-node-context';
 import { OPEN_ADD_DEVICE_EVENT } from './events';
 
 /** 首屏逐项入场的延迟档位上限（35ms/档），超出的卡片与最后一档同时进场 */
@@ -59,6 +54,16 @@ export interface DeviceManagementPanelProps {
   devicesQueryKey?: readonly unknown[];
   /** 是否监听全局 OPEN_ADD_DEVICE_EVENT 打开新建对话框；多面板宿主可关掉改用 ref 控制 */
   listenOpenAddDeviceEvent?: boolean;
+  /** 该面板所展示的 node；缺省视为 entry 自身 */
+  nodeContext?: DeviceNodeContext;
+  /** 有它卡片才显示真实连接/断开开关；没有时退化为只有「打开」 */
+  connection?: DeviceConnectionAdapter;
+  /** 这些设备不在本面板网格里渲染（已被宿主放进文件夹之类的容器） */
+  excludeDeviceIds?: ReadonlySet<string>;
+  /** 宿主在卡片外再包一层（拖拽把手等） */
+  renderCard?: (card: ReactNode, device: Device, index: number) => ReactNode;
+  /** 列表为空/全被排除时不渲染空态卡片，只留对话框 */
+  hideEmptyState?: boolean;
   className?: string;
   ref?: Ref<DeviceManagementPanelHandle>;
 }
@@ -66,16 +71,23 @@ export interface DeviceManagementPanelProps {
 export function DeviceManagementPanel({
   devicesQueryKey = defaultDevicesQueryKey,
   listenOpenAddDeviceEvent = true,
+  nodeContext,
+  connection,
+  excludeDeviceIds,
+  renderCard,
+  hideEmptyState = false,
   className,
   ref,
 }: DeviceManagementPanelProps) {
   const { t } = useTranslation();
   const runtime = useRuntime();
   const [showAddModal, setShowAddModal] = useState(false);
-  const [editingDevice, setEditingDevice] = useState<Device | null>(null);
-  const [deleteCandidate, setDeleteCandidate] = useState<Device | null>(null);
-  const queryClient = useQueryClient();
   const language = useSiteStore((state) => state.settings?.language ?? 'en_US');
+
+  const resolvedNodeContext = useMemo<DeviceNodeContext>(
+    () => nodeContext ?? { runtimeNodeId: runtime.nodeId, name: '', isSelf: true },
+    [nodeContext, runtime.nodeId]
+  );
 
   useImperativeHandle(ref, () => ({ openAddDevice: () => setShowAddModal(true) }), []);
 
@@ -103,17 +115,6 @@ export function DeviceManagementPanel({
     );
   }, [data, hydrateDeviceErrors]);
 
-  const deleteDevice = useMutation({
-    mutationFn: (id: string) => deleteDeviceApi(id, t('device.deleteFailed'), runtime.apiClient),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: devicesQueryKey });
-      toast.success(t('common.success'));
-    },
-    onError: (err) => {
-      toast.error(err instanceof Error ? err.message : t('common.error'));
-    },
-  });
-
   // 卡片顺序与侧边栏 Panes Tab 一致：先 sortOrder，再按设备名 locale 感知排序
   const devices = useMemo(() => {
     const list = data?.devices ?? [];
@@ -124,6 +125,12 @@ export function DeviceManagementPanel({
     );
   }, [data?.devices, language]);
 
+  const visibleDevices = useMemo(
+    () =>
+      excludeDeviceIds ? devices.filter((device) => !excludeDeviceIds.has(device.id)) : devices,
+    [devices, excludeDeviceIds]
+  );
+
   // 逐项入场只做首屏那一批：之后 refetch/新增设备不再整列表重放（新卡片按 index 0 单独淡入）。
   // 延迟档位封顶 STAGGER_MAX_INDEX，避免长列表拖尾。
   const initialBatchRef = useRef<ReadonlySet<string> | null>(null);
@@ -131,6 +138,29 @@ export function DeviceManagementPanel({
     initialBatchRef.current = new Set(devices.map((device) => device.id));
   }
   const initialBatch = initialBatchRef.current;
+
+  const emptyState = hideEmptyState ? null : (
+    <Card size="sm" className="tmex-reveal">
+      <CardContent className="space-y-3 py-8 text-center">
+        <div className="mx-auto flex h-10 w-10 items-center justify-center rounded-xl border border-border bg-muted">
+          <Monitor className="h-5 w-5 text-muted-foreground" />
+        </div>
+        <div className="space-y-0.5">
+          <h2 className="text-sm font-medium">{t('device.noDevices')}</h2>
+          <p className="text-xs text-muted-foreground">{t('device.addDevice')}</p>
+        </div>
+        <Button
+          variant="default"
+          size="sm"
+          data-testid="devices-add-empty"
+          onClick={() => setShowAddModal(true)}
+        >
+          <Plus className="h-4 w-4" />
+          {t('device.addDevice')}
+        </Button>
+      </CardContent>
+    </Card>
+  );
 
   return (
     <div
@@ -152,91 +182,41 @@ export function DeviceManagementPanel({
             {t('device.loadFailed')}
           </CardContent>
         </Card>
-      ) : devices.length === 0 ? (
-        <Card size="sm" className="tmex-reveal">
-          <CardContent className="space-y-3 py-8 text-center">
-            <div className="mx-auto flex h-10 w-10 items-center justify-center rounded-xl border border-border bg-muted">
-              <Monitor className="h-5 w-5 text-muted-foreground" />
-            </div>
-            <div className="space-y-0.5">
-              <h2 className="text-sm font-medium">{t('device.noDevices')}</h2>
-              <p className="text-xs text-muted-foreground">{t('device.addDevice')}</p>
-            </div>
-            <Button
-              variant="default"
-              size="sm"
-              data-testid="devices-add-empty"
-              onClick={() => setShowAddModal(true)}
-            >
-              <Plus className="h-4 w-4" />
-              {t('device.addDevice')}
-            </Button>
-          </CardContent>
-        </Card>
+      ) : visibleDevices.length === 0 ? (
+        emptyState
       ) : (
         <div className="tmex-stagger grid gap-3 md:grid-cols-2 xl:grid-cols-3">
-          {devices.map((device, index) => (
-            <DeviceCard
-              key={device.id}
-              device={device}
-              style={
-                initialBatch?.has(device.id)
-                  ? staggerItemStyle(Math.min(index, STAGGER_MAX_INDEX))
-                  : undefined
-              }
-              onEdit={() => setEditingDevice(device)}
-              onDelete={() => setDeleteCandidate(device)}
-            />
-          ))}
+          {visibleDevices.map((device, index) => {
+            const card = (
+              <DeviceCardHost
+                device={device}
+                queryKey={devicesQueryKey}
+                nodeContext={resolvedNodeContext}
+                connection={connection}
+                style={
+                  initialBatch?.has(device.id)
+                    ? staggerItemStyle(Math.min(index, STAGGER_MAX_INDEX))
+                    : undefined
+                }
+              />
+            );
+            return (
+              <Fragment key={device.id}>
+                {renderCard ? renderCard(card, device, index) : card}
+              </Fragment>
+            );
+          })}
         </div>
       )}
 
       {showAddModal && (
         <DeviceDialog
           mode="create"
+          nodeContext={resolvedNodeContext}
           queryKey={devicesQueryKey}
           onClose={() => setShowAddModal(false)}
         />
       )}
-      {editingDevice && (
-        <DeviceDialog
-          mode="edit"
-          device={editingDevice}
-          queryKey={devicesQueryKey}
-          onClose={() => setEditingDevice(null)}
-        />
-      )}
-
-      <AlertDialog
-        open={deleteCandidate !== null}
-        onOpenChange={(open) => !open && setDeleteCandidate(null)}
-      >
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogMedia className="bg-destructive/10">
-              <Trash2 className="h-5 w-5 text-destructive" />
-            </AlertDialogMedia>
-            <AlertDialogTitle>{t('device.deleteConfirm')}</AlertDialogTitle>
-            <AlertDialogDescription>
-              {t('device.deleteDescription', { name: deleteCandidate?.name ?? '' })}
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel>{t('common.cancel')}</AlertDialogCancel>
-            <AlertDialogAction
-              variant="destructive"
-              disabled={!deleteCandidate || deleteDevice.isPending}
-              onClick={() => {
-                if (!deleteCandidate) return;
-                deleteDevice.mutate(deleteCandidate.id);
-                setDeleteCandidate(null);
-              }}
-            >
-              {t('common.delete')}
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
     </div>
   );
 }
