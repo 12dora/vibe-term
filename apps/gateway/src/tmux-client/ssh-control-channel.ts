@@ -16,7 +16,7 @@ export interface ControlChannelHandle extends ExternalControlHandle {
 
 export interface SshControlReconnectContext {
   deviceId: string;
-  sessionName: string;
+  getSessionName: () => string;
   isLifecycleActive: () => boolean;
   getControlStartedAt: () => number;
   getControlRestartCount: () => number;
@@ -100,7 +100,7 @@ export async function reconnectSshControlClient(ctx: SshControlReconnectContext)
     return;
   }
 
-  const probe = await ctx.runTmuxAllowFailure(['has-session', '-t', ctx.sessionName]);
+  const probe = await ctx.runTmuxAllowFailure(['has-session', '-t', ctx.getSessionName()]);
   if (probe.exitCode !== 0) {
     const message = probe.stderr.trim() || probe.stdout.trim() || 'tmux session gone';
     console.warn(`[ssh] tmux session gone on ${ctx.deviceId}: ${message}`);

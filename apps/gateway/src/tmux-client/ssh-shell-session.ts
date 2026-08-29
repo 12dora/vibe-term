@@ -281,8 +281,8 @@ export function executeIsolatedShellCommand(
 export async function configureSshWindowStyle(options: {
   styleValue: string;
   deviceId: string;
-  sessionName: string;
-  tmuxBin: string;
+  getSessionName: () => string;
+  getTmuxBin: () => string;
   isDev: boolean;
   runTmuxAllowFailure: (argv: string[]) => Promise<CommandResult>;
   runShellAllowFailure: (command: string) => Promise<CommandResult>;
@@ -295,14 +295,14 @@ export async function configureSshWindowStyle(options: {
   await options.runTmuxAllowFailure([
     'set-hook',
     '-t',
-    options.sessionName,
+    options.getSessionName(),
     'after-new-window',
     `set-option -w window-style '${windowStyle}'`,
   ]);
   const windows = await options.runTmuxAllowFailure([
     'list-windows',
     '-t',
-    options.sessionName,
+    options.getSessionName(),
     '-F',
     '#{window_id}',
   ]);
@@ -326,7 +326,7 @@ export async function configureSshWindowStyle(options: {
     const setOptions = windowIds
       .map(
         (id) =>
-          `${quoteShellArg(options.tmuxBin)} set-option -w -t ${quoteShellArg(id)} window-style ${quoteShellArg(windowStyle)}`
+          `${quoteShellArg(options.getTmuxBin())} set-option -w -t ${quoteShellArg(id)} window-style ${quoteShellArg(windowStyle)}`
       )
       .join(' && ');
     await options.runShellAllowFailure(setOptions);

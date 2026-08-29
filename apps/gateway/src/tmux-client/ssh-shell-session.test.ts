@@ -254,8 +254,8 @@ describe('configureSshWindowStyle', () => {
     await configureSshWindowStyle({
       styleValue: 'off',
       deviceId: 'd1',
-      sessionName: 'tmex',
-      tmuxBin: 'tmux',
+      getSessionName: () => 'tmex',
+      getTmuxBin: () => 'tmux',
       isDev: false,
       runTmuxAllowFailure: async (argv) => {
         calls.push(argv);
@@ -272,8 +272,8 @@ describe('configureSshWindowStyle', () => {
     await configureSshWindowStyle({
       styleValue: 'fg=#d0d0d0,bg=#262626',
       deviceId: 'd1',
-      sessionName: 'tmex',
-      tmuxBin: '/usr/bin/tmux',
+      getSessionName: () => 'tmex',
+      getTmuxBin: () => '/usr/bin/tmux',
       isDev: false,
       runTmuxAllowFailure: async (argv) => {
         argvCalls.push(argv);
@@ -296,8 +296,8 @@ describe('configureSshWindowStyle', () => {
     await configureSshWindowStyle({
       styleValue: 'fg=#d0d0d0,bg=#262626',
       deviceId: 'd1',
-      sessionName: 'tmex',
-      tmuxBin: '/usr/bin/tmux',
+      getSessionName: () => 'tmex',
+      getTmuxBin: () => '/usr/bin/tmux',
       isDev: false,
       runTmuxAllowFailure: async (argv) => {
         if (argv[0] === 'list-windows') {

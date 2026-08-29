@@ -215,8 +215,8 @@ export class SshExternalTmuxConnection extends ExternalTmuxConnectionCore {
     await configureSshWindowStyle({
       styleValue,
       deviceId: this.deviceId,
-      sessionName: this.sessionName,
-      tmuxBin: this.tmuxBin,
+      getSessionName: () => this.sessionName,
+      getTmuxBin: () => this.tmuxBin,
       isDev: config.isDev,
       runTmuxAllowFailure: (argv) => this.runTmuxAllowFailure(argv),
       runShellAllowFailure: (command) => this.runShellAllowFailure(command),
@@ -360,7 +360,7 @@ export class SshExternalTmuxConnection extends ExternalTmuxConnectionCore {
   private async reconnectControlClient(): Promise<void> {
     return reconnectSshControlClient({
       deviceId: this.deviceId,
-      sessionName: this.sessionName,
+      getSessionName: () => this.sessionName,
       isLifecycleActive: () => this.connected && !this.manualDisconnect,
       getControlStartedAt: () => this.controlStartedAt,
       getControlRestartCount: () => this.controlRestartCount,

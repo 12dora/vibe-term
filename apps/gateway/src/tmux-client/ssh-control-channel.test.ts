@@ -147,7 +147,7 @@ function createReconnectCtx(
   };
   return {
     deviceId: 'device-ssh',
-    sessionName: 'tmex',
+    getSessionName: () => 'tmex',
     isLifecycleActive: () => true,
     getControlStartedAt: () => startedAt,
     getControlRestartCount: () => state.restartCount,

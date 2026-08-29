@@ -1,13 +1,17 @@
 import { describe, expect, test } from 'bun:test';
 import { wsBorsh } from '@tmex/shared';
-import { sendClientChunked, sendClientEnvelope, sendClientError } from './client-send';
+import { encodeClientError, sendClientChunked } from './client-send';
 import { createBorshTestWs } from './test-helpers';
 import { gatewayWebSocketSendGuard } from './websocket-send-guard';
 
 describe('client send helpers', () => {
-  test('sendClientError encodes KIND_ERROR with refSeq and retryable', () => {
+  test('encodeClientError encodes KIND_ERROR with refSeq and retryable', () => {
     const ws = createBorshTestWs();
-    sendClientError(ws, 11, wsBorsh.ERROR_INVALID_FRAME, 'HELLO required', false);
+    sendClientChunked(
+      ws,
+      wsBorsh.KIND_ERROR,
+      encodeClientError(11, wsBorsh.ERROR_INVALID_FRAME, 'HELLO required', false)
+    );
 
     expect(ws.sent).toHaveLength(1);
     const envelope = wsBorsh.decodeEnvelope(ws.sent[0]);
@@ -19,9 +23,13 @@ describe('client send helpers', () => {
     expect(error.retryable).toBe(false);
   });
 
-  test('sendClientError allows null refSeq', () => {
+  test('encodeClientError allows null refSeq', () => {
     const ws = createBorshTestWs();
-    sendClientError(ws, null, wsBorsh.ERROR_INTERNAL_ERROR, 'boom', true);
+    sendClientChunked(
+      ws,
+      wsBorsh.KIND_ERROR,
+      encodeClientError(null, wsBorsh.ERROR_INTERNAL_ERROR, 'boom', true)
+    );
 
     const error = wsBorsh.decodePayload(
       wsBorsh.schema.ErrorSchema,
@@ -44,7 +52,7 @@ describe('client send helpers', () => {
     gatewayWebSocketSendGuard.forget(ws);
   });
 
-  test('sendClientEnvelope chunks payloads that exceed maxFrameBytes', () => {
+  test('sendClientChunked chunks payloads that exceed maxFrameBytes', () => {
     const sent: Uint8Array[] = [];
     const ws = createBorshTestWs({
       send(frame) {
@@ -53,7 +61,7 @@ describe('client send helpers', () => {
       },
     });
     ws.data.borshState.maxFrameBytes = 128;
-    sendClientEnvelope(ws, wsBorsh.KIND_NOTIFY_EVENT, new Uint8Array(512));
+    sendClientChunked(ws, wsBorsh.KIND_NOTIFY_EVENT, new Uint8Array(512));
 
     expect(sent.length).toBeGreaterThan(1);
     for (const frame of sent) {

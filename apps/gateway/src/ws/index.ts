@@ -17,7 +17,7 @@ import {
   handleUpgrade,
   openClient,
 } from './client-lifecycle';
-import { sendClientChunked, sendClientEnvelope, sendClientError } from './client-send';
+import { encodeClientError, sendClientChunked } from './client-send';
 import { WebSocketCommandFacade } from './command-facade';
 import {
   DeviceConnectionRegistry,
@@ -185,7 +185,7 @@ export class WebSocketServer
   }
 
   sendEnvelope(ws: ServerWebSocket<ClientState>, kind: number, payload: Uint8Array): void {
-    sendClientEnvelope(ws, kind, payload);
+    this.sendChunked(ws, kind, payload);
   }
 
   sendChunked(ws: ServerWebSocket<ClientState>, kind: number, payload: Uint8Array): boolean {
@@ -199,7 +199,7 @@ export class WebSocketServer
     message: string,
     retryable: boolean
   ): void {
-    sendClientError(ws, refSeq, code, message, retryable);
+    this.sendEnvelope(ws, wsBorsh.KIND_ERROR, encodeClientError(refSeq, code, message, retryable));
   }
 
   releaseConnectionEntry(deviceId: string, entry: DeviceConnectionEntry): void {
