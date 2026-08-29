@@ -177,9 +177,12 @@ describe('device-snapshot-store', () => {
     expect(listDeviceSnapshotNodeIds(storage)).toEqual(['b']);
   });
 
-  test('offlineDevices：本地快照优先，其次 inventory', () => {
+  test('offlineDevices：没有快照时退回 inventory', () => {
+    const storage = memoryStorage();
     const inventory = { devices: [{ id: 'inv', name: 'inventory' }] };
-    expect(offlineDevices('never-seen', inventory).map((device) => device.id)).toEqual(['inv']);
+    expect(offlineDevices('never-seen', inventory, storage).map((device) => device.id)).toEqual([
+      'inv',
+    ]);
   });
 
   test('读快照按 id 去重：库里存进过重复条目也只出一张卡片', () => {
@@ -211,8 +214,8 @@ describe('device-snapshot-store', () => {
   test('快照与 inventory 不合并：有快照就完全以快照为准', () => {
     const storage = memoryStorage();
     writeDeviceSnapshot(NODE_ID, [DEVICE], storage);
-    // 默认存储（localStorage）里没有这条，走 inventory；两者不会同时出现
-    const inventory = { devices: [{ id: 'd1', name: '同一台设备' }] };
-    expect(offlineDevices(NODE_ID, inventory).map((device) => device.id)).toEqual(['d1']);
+    // inventory 里是另一台设备：合并的话会出现两条，只认快照才只剩 d1
+    const inventory = { devices: [{ id: 'only-in-inventory', name: '只在 inventory 里' }] };
+    expect(offlineDevices(NODE_ID, inventory, storage).map((device) => device.id)).toEqual(['d1']);
   });
 });

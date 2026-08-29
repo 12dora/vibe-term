@@ -232,6 +232,10 @@ export function inventoryFallbackDevices(inventory: unknown): Device[] {
  * 离线时的卡片数据来源：本地快照优先，其次节点 inventory。
  * 两者**不合并**——同一台设备在快照与 inventory 里各有一份，合并会渲染出两张一样的卡片。
  */
-export function offlineDevices(runtimeNodeId: string, inventory: unknown): Device[] {
-  return readDeviceSnapshot(runtimeNodeId) ?? inventoryFallbackDevices(inventory);
+export function offlineDevices(
+  runtimeNodeId: string,
+  inventory: unknown,
+  storage: DeviceSnapshotStorage | null = defaultStorage()
+): Device[] {
+  return readDeviceSnapshot(runtimeNodeId, storage) ?? inventoryFallbackDevices(inventory);
 }

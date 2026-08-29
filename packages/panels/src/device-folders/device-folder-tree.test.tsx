@@ -8,6 +8,12 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import { DeviceFolderTree } from './device-folder-tree';
 import { FolderNameEditor } from './folder-name-editor';
 import { FolderSection } from './folder-section';
+import {
+  ROOT_CONTAINER_ID,
+  bodyDropZoneId,
+  dropZoneId,
+  folderContainerId,
+} from './folder-tree-model';
 
 function folder(id: string, sortOrder: number): DeviceFolder {
   return {
@@ -51,6 +57,13 @@ function renderTree(
   );
 }
 
+/** 含 `marker` 的那个元素的整段开标签 */
+function tagOf(html: string, marker: string): string {
+  const index = html.indexOf(marker);
+  expect(index).toBeGreaterThanOrEqual(0);
+  return html.slice(html.lastIndexOf('<', index), html.indexOf('>', index));
+}
+
 describe('DeviceFolderTree', () => {
   test('渲染分组、计数与节点外壳', () => {
     const html = renderTree();
@@ -68,10 +81,7 @@ describe('DeviceFolderTree', () => {
   });
 
   test('分组是虚线边框的放置区', () => {
-    const html = renderTree();
-    const index = html.indexOf('data-testid="device-folder-a"');
-    const tag = html.slice(html.lastIndexOf('<', index), html.indexOf('>', index));
-    expect(tag).toContain('border-dashed');
+    expect(tagOf(renderTree(), 'data-testid="device-folder-a"')).toContain('border-dashed');
   });
 
   test('把手交给宿主放进节点头部；「移出分组」按钮已删除（改为拖到空白处）', () => {
@@ -104,7 +114,25 @@ describe('DeviceFolderTree', () => {
     const html = renderTree();
     expect(html).not.toContain('data-testid="device-folder-drop-root"');
     expect(html).not.toContain('devices.folders.dropToRoot');
-    expect(html).toContain('data-testid="device-folder-tree"');
+    // `data-drop-zone` 与 `useDroppable` 由 `useDropZone` 一并给出：
+    // 树容器上没这个属性就说明根落点区压根没注册，节点也就再没有办法拖回最外层。
+    expect(tagOf(html, 'data-testid="device-folder-tree"')).toContain(
+      `data-drop-zone="${dropZoneId(ROOT_CONTAINER_ID)}"`
+    );
+  });
+
+  test('分组头与空分组内容区各自注册了落点', () => {
+    const html = renderTree();
+    // 分组头（`drop:`）：整段头部都能接住节点
+    expect(html).toContain(`data-drop-zone="${dropZoneId(folderContainerId('a'))}"`);
+    // 空分组的内容区（`dropin:`）：分组 b 是空的
+    expect(tagOf(html, 'data-testid="device-folder-drop-b"')).toContain(
+      `data-drop-zone="${bodyDropZoneId(folderContainerId('b'))}"`
+    );
+  });
+
+  test('没在拖拽时不渲染占位条', () => {
+    expect(renderTree()).not.toContain('data-testid="device-folder-drop-placeholder"');
   });
 
   test('分组菜单里没有「新建子分组」', () => {
@@ -123,9 +151,7 @@ describe('DeviceFolderTree', () => {
 
   test('初始就收起的分组不挂载内容，并标记 aria-hidden', () => {
     const html = renderTree({ expanded: { a: false } });
-    const index = html.indexOf('data-testid="device-folder-a"');
-    const tag = html.slice(html.lastIndexOf('<', index), html.indexOf('>', index));
-    expect(tag).toContain('data-expanded="false"');
+    expect(tagOf(html, 'data-testid="device-folder-a"')).toContain('data-expanded="false"');
     expect(html).toContain('aria-hidden="true"');
     expect(html).not.toContain('data-testid="device-folder-item-node:n1"');
   });

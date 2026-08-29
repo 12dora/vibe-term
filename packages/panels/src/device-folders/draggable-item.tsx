@@ -9,8 +9,9 @@ import { useSortable } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
 import { cn } from '@tmex/ui';
 import { GripVertical } from 'lucide-react';
-import type { ReactNode } from 'react';
+import { type ReactNode, useMemo } from 'react';
 import { useTranslation } from 'react-i18next';
+import type { SortableItemData } from './collision';
 import { nodeElementId } from './folder-tree-model';
 
 const CONTROL_CLASS =
@@ -18,6 +19,8 @@ const CONTROL_CLASS =
 
 export interface DeviceFolderNodeShellProps {
   nodeId: string;
+  /** 所在容器（根 / 分组）的 id：碰撞判定按容器筛兄弟，靠它认领 */
+  containerId: string;
   disabled?: boolean;
   className?: string;
   /** 拿到把手后渲染节点本体 */
@@ -26,11 +29,13 @@ export interface DeviceFolderNodeShellProps {
 
 export function DeviceFolderNodeShell({
   nodeId,
+  containerId,
   disabled,
   className,
   children,
 }: DeviceFolderNodeShellProps) {
   const { t } = useTranslation();
+  const data = useMemo<SortableItemData>(() => ({ containerId }), [containerId]);
   const {
     attributes,
     listeners,
@@ -39,7 +44,7 @@ export function DeviceFolderNodeShell({
     transform,
     transition,
     isDragging,
-  } = useSortable({ id: nodeElementId(nodeId), disabled });
+  } = useSortable({ id: nodeElementId(nodeId), data, disabled });
 
   const dragControls = (
     <button

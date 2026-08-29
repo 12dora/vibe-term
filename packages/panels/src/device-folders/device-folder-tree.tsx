@@ -1,34 +1,18 @@
 // 设备分组列表的通用 UI：只认 `DeviceFolderLayout`、节点 id 与宿主给的 `renderNode`，
 // 不知道设备这个业务概念，宿主（apps/fe）负责把节点渲染成分组头 + 卡片网格。
 //
-// 落点判定全部在 `folder-tree-model.ts`（纯函数，有单测），本文件只做交互与呈现：
-// 命中高亮、折叠分组的悬停自动展开、跟手的卡片式拖拽预览、就地重命名 / 新建 / 删除确认，
-// 以及拖拽过程中的「腾位置」预览（跨容器移动时目标容器的兄弟当场让开，松手才提交）。
+// 落点判定全部在 `folder-tree-model.ts` / `collision.ts`（纯函数，有单测），本文件只做交互与
+// 呈现：命中高亮、折叠分组的悬停自动展开、跟手的卡片式拖拽预览、就地重命名 / 新建 / 删除确认，
+// 以及拖拽过程中的「腾位置」预览——跨容器时被拖的节点**留在原容器**（变暗），目标容器里插一条
+// 等高的占位条把兄弟顶开，松手才真的提交。
 //
 // 移到最外层没有按钮也没有落点条：整棵树本身就是一个落点区，把节点拖到所有分组虚线框
 // 之外的空白处松手即回到根层；指针离开整棵树（`over` 为空）则视为取消。
 
-import {
-  DndContext,
-  DragOverlay,
-  MeasuringStrategy,
-  closestCenter,
-  pointerWithin,
-  useDroppable,
-} from '@dnd-kit/core';
-import type {
-  CollisionDetection,
-  DragEndEvent,
-  DragOverEvent,
-  DragStartEvent,
-} from '@dnd-kit/core';
+import { DndContext, DragOverlay, MeasuringStrategy, useDndContext } from '@dnd-kit/core';
+import type { DragEndEvent, DragOverEvent, DragStartEvent } from '@dnd-kit/core';
 import { SortableContext, verticalListSortingStrategy } from '@dnd-kit/sortable';
-import {
-  type DeviceFolder,
-  type DeviceFolderLayout,
-  countFolderItems,
-  findNodeFolderId,
-} from '@tmex/shared';
+import { type DeviceFolder, type DeviceFolderLayout, countFolderItems } from '@tmex/shared';
 import { cn } from '@tmex/ui';
 import {
   AlertDialog,
@@ -56,33 +40,37 @@ import {
 } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useDeviceTreeSensors } from '../device-tree/device-tree-dnd';
+import { deviceFolderCollisionDetection } from './collision';
 import { DeviceFolderNodeShell } from './draggable-item';
+import { useDropZone } from './drop-zone';
 import { FolderNameEditor } from './folder-name-editor';
 import { FolderDropArea, FolderSection } from './folder-section';
 import {
   type DeviceFolderContainer,
   type DeviceFolderDrop,
+  type DeviceFolderPlaceholder,
+  PLACEHOLDER_ITEM_ID,
   ROOT_CONTAINER_ID,
-  applyDrop,
   bodyDropZoneId,
-  collisionGroupIds,
   containerFolderId,
+  containerItemIds,
   dropTargetContainerId,
   dropZoneId,
   folderContainerId,
   listContainers,
-  nodeDropIntent,
   parseFolderElementId,
   parseNodeElementId,
-  rebaseNodeDrop,
+  previewPlaceholder,
   resolveDrop,
   rootFolderElementIds,
-  implicitRootNodeIds as unplacedNodeIds,
 } from './folder-tree-model';
 import { snapCenterToCursor } from './snap-to-cursor';
 
 /** 拖过折叠分组多久自动展开 */
 const AUTO_EXPAND_MS = 600;
+
+/** 量不到被拖节点高度时占位条的兜底高度 */
+const PLACEHOLDER_MIN_HEIGHT = 48;
 
 export interface DeviceFolderNodeContext {
   /** 节点所在分组；null = 根层 */
@@ -126,10 +114,11 @@ interface TreeContextValue {
   containers: Map<string, DeviceFolderContainer>;
   foldersById: Map<string, DeviceFolder>;
   itemCounts: Map<string, number>;
-  /** 拖拽预览生效后的布局（没在拖就是真实布局） */
   layout: DeviceFolderLayout;
   expandedOf: (folderId: string) => boolean;
   dropContainerId: string | null;
+  /** 跨容器拖拽时占位条插在哪；同容器重排为 null */
+  placeholder: DeviceFolderPlaceholder | null;
   dragDisabled: boolean;
   creatingFolder: boolean;
   renamingFolderId: string | null;
@@ -153,36 +142,15 @@ function useTree(): TreeContextValue {
   return value;
 }
 
-/**
- * 按 `collisionGroupIds` 的四档依次判定，先命中先返回：
- *   放置区（分组头 / 空分组内容区）→ 兄弟元素 → 分组本体 → 整棵树的根落点区。
- * 分开跑而不是交给一次 `pointerWithin`：这些矩形互相嵌套，混在一起排序会让
- * 「拖到分组头上」时不时落成「插到该分组的第一个节点前面」，也会让分组内的空隙落成根层。
- */
-const collisionDetection: CollisionDetection = (args) => {
-  const ids = args.droppableContainers.map((container) => String(container.id));
-  const groups = collisionGroupIds(String(args.active.id), ids);
-  const pick = (allowed: readonly string[]) => {
-    const set = new Set(allowed);
-    return args.droppableContainers.filter((container) => set.has(String(container.id)));
-  };
-  // 键盘拖拽没有指针坐标（`pointerWithin` 恒为空）：退回最近中心，且只在「放置区 + 兄弟元素」
-  // 里选。分组本体与根落点区的矩形太大，参与最近中心会把每一步都吸成「整个分组 / 最外层」。
-  // 键盘要把节点挪出分组，落到任意一个根层兄弟上即可。
-  if (!args.pointerCoordinates) {
-    return closestCenter({
-      ...args,
-      droppableContainers: pick([...groups.zones, ...groups.items]),
-    });
-  }
-  for (const tier of [groups.zones, groups.items, groups.containers, groups.root]) {
-    const hits = pointerWithin({ ...args, droppableContainers: pick(tier) });
-    if (hits.length > 0) return hits;
-  }
-  return [];
-};
-
-function NodeItem({ nodeId, folderId }: { nodeId: string; folderId: string | null }) {
+function NodeItem({
+  nodeId,
+  containerId,
+  folderId,
+}: {
+  nodeId: string;
+  containerId: string;
+  folderId: string | null;
+}) {
   const { props, dragDisabled, layout } = useTree();
   const implicit = !layout.placements.some((placement) => placement.nodeId === nodeId);
   if (props.nodeDraggable && !props.nodeDraggable(nodeId, { folderId })) {
@@ -196,11 +164,29 @@ function NodeItem({ nodeId, folderId }: { nodeId: string; folderId: string | nul
     return <div data-testid={`device-folder-item-node:${nodeId}`}>{content}</div>;
   }
   return (
-    <DeviceFolderNodeShell nodeId={nodeId} disabled={dragDisabled}>
+    <DeviceFolderNodeShell nodeId={nodeId} containerId={containerId} disabled={dragDisabled}>
       {(dragControls) =>
         props.renderNode(nodeId, { folderId, implicit, dragDisabled, dragControls })
       }
     </DeviceFolderNodeShell>
+  );
+}
+
+/**
+ * 跨容器拖拽时插进目标容器的占位条：只占一格高度，把后面的兄弟顶下去。
+ * 它不是 droppable，不参与落点判定；被拖的节点自始至终留在原容器里（只是变暗），
+ * 免得它的 React 子树（宿主的 runtime scope / QueryClientProvider / 面板）在拖拽途中重挂。
+ */
+function DropPlaceholder() {
+  const { activeNodeRect } = useDndContext();
+  const height = Math.max(activeNodeRect?.height ?? 0, PLACEHOLDER_MIN_HEIGHT);
+  return (
+    <div
+      aria-hidden="true"
+      data-testid="device-folder-drop-placeholder"
+      className="rounded-xl border-2 border-dashed border-ring/50 bg-accent/30"
+      style={{ height }}
+    />
   );
 }
 
@@ -226,6 +212,8 @@ function NodeList({ containerId }: { containerId: string }) {
     );
   }
 
+  const items = containerItemIds(containerId, container.nodeIds, tree.placeholder);
+
   return (
     <SortableContext
       items={container.nodeIds}
@@ -233,10 +221,18 @@ function NodeList({ containerId }: { containerId: string }) {
       disabled={tree.dragDisabled}
     >
       <div className="flex min-w-0 flex-col gap-3">
-        {container.nodeIds.map((elementId) => {
+        {items.map((elementId) => {
+          if (elementId === PLACEHOLDER_ITEM_ID) return <DropPlaceholder key={elementId} />;
           const nodeId = parseNodeElementId(elementId);
           if (!nodeId) return null;
-          return <NodeItem key={elementId} nodeId={nodeId} folderId={folderId} />;
+          return (
+            <NodeItem
+              key={elementId}
+              nodeId={nodeId}
+              containerId={containerId}
+              folderId={folderId}
+            />
+          );
         })}
       </div>
     </SortableContext>
@@ -316,10 +312,11 @@ function TreeRoot({
   className?: string;
   children: ReactNode;
 }) {
-  const { setNodeRef } = useDroppable({ id: dropZoneId(ROOT_CONTAINER_ID) });
+  const zone = useDropZone(dropZoneId(ROOT_CONTAINER_ID));
   return (
     <div
-      ref={setNodeRef}
+      ref={zone.ref}
+      {...zone.props}
       data-testid="device-folder-tree"
       data-drop-target={active ? 'true' : undefined}
       className={cn(
@@ -352,46 +349,41 @@ export function DeviceFolderTree(props: DeviceFolderTreeProps) {
 
   const [activeId, setActiveId] = useState<string | null>(null);
   const [overId, setOverId] = useState<string | null>(null);
-  // 拖拽中的「腾位置」预览：跨容器移动当场生效（目标容器的兄弟让开），松手才提交，取消即丢弃
-  const [previewDrop, setPreviewDrop] = useState<DeviceFolderDrop | null>(null);
   const [creatingFolder, setCreatingFolder] = useState(false);
   const [renamingFolderId, setRenamingFolderId] = useState<string | null>(null);
   const [deleteCandidate, setDeleteCandidate] = useState<DeviceFolder | null>(null);
 
-  const previewLayout = useMemo(() => {
-    if (!previewDrop) return layout;
-    return applyDrop(layout, previewDrop, implicitRootNodeIds) ?? layout;
-  }, [layout, previewDrop, implicitRootNodeIds]);
-  // 预览布局可能把隐式根节点落成了显式 placement，隐式列表必须跟着收窄，否则会重复渲染
-  const previewImplicit = useMemo(
-    () => unplacedNodeIds(previewLayout, implicitRootNodeIds),
-    [previewLayout, implicitRootNodeIds]
-  );
-
   const containers = useMemo(
-    () => listContainers(previewLayout, previewImplicit),
-    [previewLayout, previewImplicit]
+    () => listContainers(layout, implicitRootNodeIds),
+    [layout, implicitRootNodeIds]
   );
-  const folderElementIds = useMemo(() => rootFolderElementIds(previewLayout), [previewLayout]);
+  const folderElementIds = useMemo(() => rootFolderElementIds(layout), [layout]);
   const foldersById = useMemo(
-    () => new Map(previewLayout.folders.map((folder) => [folder.id, folder])),
-    [previewLayout.folders]
+    () => new Map(layout.folders.map((folder) => [folder.id, folder])),
+    [layout.folders]
   );
-  const itemCounts = useMemo(() => countFolderItems(previewLayout), [previewLayout]);
+  const itemCounts = useMemo(() => countFolderItems(layout), [layout]);
 
   const expandedOf = useCallback((folderId: string) => expanded[folderId] !== false, [expanded]);
 
   useImperativeHandle(ref, () => ({ startNewFolder: () => setCreatingFolder(true) }), []);
 
   const activeDrop = useMemo(
-    () =>
-      activeId && overId ? resolveDrop(activeId, overId, previewLayout, previewImplicit) : null,
-    [activeId, overId, previewLayout, previewImplicit]
+    () => (activeId && overId ? resolveDrop(activeId, overId, layout, implicitRootNodeIds) : null),
+    [activeId, overId, layout, implicitRootNodeIds]
   );
   const dropContainerId = dropTargetContainerId(activeDrop);
   // 指针停在所有分组之外的空白：整棵树高亮，示意松手会移到最外层
   const rootDropActive =
     activeId !== null && overId === dropZoneId(ROOT_CONTAINER_ID) && activeDrop !== null;
+  // 目标分组还收着的时候不插占位条：内容区没挂载，插了也看不见（等自动展开之后再说）
+  const placeholder = useMemo(() => {
+    const next = previewPlaceholder(layout, implicitRootNodeIds, activeDrop);
+    if (!next) return null;
+    const folderId = containerFolderId(next.containerId);
+    if (folderId && expanded[folderId] === false) return null;
+    return next;
+  }, [layout, implicitRootNodeIds, activeDrop, expanded]);
 
   // 拖过折叠的分组停留一会儿就自动展开，方便往里放
   const autoExpandRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -406,59 +398,18 @@ export function DeviceFolderTree(props: DeviceFolderTreeProps) {
     };
   }, [activeId, dropContainerId, expanded, onExpandedChange]);
 
-  const activeNodeId = activeId === null ? null : parseNodeElementId(activeId);
-  const activeContainerId =
-    activeNodeId === null ? null : folderContainerId(findNodeFolderId(previewLayout, activeNodeId));
-
-  const handleDragOver = useCallback(
-    (event: DragOverEvent) => {
-      const nextOverId = event.over ? String(event.over.id) : null;
-      setOverId(nextOverId);
-      if (disabled || nextOverId === null) return;
-      const dragId = String(event.active.id);
-      if (parseNodeElementId(dragId) === null) return;
-      const drop = resolveDrop(dragId, nextOverId, previewLayout, previewImplicit);
-      if (!drop || drop.kind !== 'node') return;
-      // 同容器内的重排交给 sortable 自己的 transform；反复改预览会和 dnd-kit 的测量互相触发抖动
-      if (folderContainerId(drop.targetFolderId) === activeContainerId) return;
-      // 目标分组是收起的：搬进去会连同内容区一起卸载，拖拽会当场断掉。等自动展开之后再说
-      if (drop.targetFolderId !== null && expanded[drop.targetFolderId] === false) return;
-      const intent = rebaseNodeDrop(previewLayout, previewImplicit, drop);
-      if (intent) setPreviewDrop(intent);
-    },
-    [disabled, previewLayout, previewImplicit, activeContainerId, expanded]
-  );
-
   const handleDragEnd = useCallback(
     (event: DragEndEvent) => {
       const dragId = String(event.active.id);
       const dropId = event.over ? String(event.over.id) : null;
       setActiveId(null);
       setOverId(null);
-      setPreviewDrop(null);
       // 指针离开整棵树（含拖出窗口）：取消，不动布局
       if (disabled || dropId === null) return;
-      const nodeId = parseNodeElementId(dragId);
-      if (nodeId === null) {
-        const drop = resolveDrop(dragId, dropId, layout, implicitRootNodeIds);
-        if (drop) onDrop(drop);
-        return;
-      }
-      // 提交的是「预览里摆好的样子」：先把落点应用到预览布局，再把节点最终的容器 + 下标
-      // 翻译回一次针对真实布局的移动，避免预览与提交差一位。
-      const settled = resolveDrop(dragId, dropId, previewLayout, previewImplicit);
-      const drop = settled
-        ? rebaseNodeDrop(previewLayout, previewImplicit, settled)
-        : nodeDropIntent(previewLayout, previewImplicit, nodeId);
-      if (!drop) return;
-      // 拖回原处：不必白发一次整表替换
-      const before = nodeDropIntent(layout, implicitRootNodeIds, nodeId);
-      if (before && before.targetFolderId === drop.targetFolderId && before.index === drop.index) {
-        return;
-      }
-      onDrop(drop);
+      const drop = resolveDrop(dragId, dropId, layout, implicitRootNodeIds);
+      if (drop) onDrop(drop);
     },
-    [disabled, layout, implicitRootNodeIds, previewLayout, previewImplicit, onDrop]
+    [disabled, layout, implicitRootNodeIds, onDrop]
   );
 
   const actions = useMemo<TreeContextValue['actions']>(
@@ -490,9 +441,10 @@ export function DeviceFolderTree(props: DeviceFolderTreeProps) {
       containers,
       foldersById,
       itemCounts,
-      layout: previewLayout,
+      layout,
       expandedOf,
       dropContainerId,
+      placeholder,
       dragDisabled: disabled,
       creatingFolder,
       renamingFolderId,
@@ -503,9 +455,10 @@ export function DeviceFolderTree(props: DeviceFolderTreeProps) {
       containers,
       foldersById,
       itemCounts,
-      previewLayout,
+      layout,
       expandedOf,
       dropContainerId,
+      placeholder,
       disabled,
       creatingFolder,
       renamingFolderId,
@@ -518,18 +471,14 @@ export function DeviceFolderTree(props: DeviceFolderTreeProps) {
     <TreeContext.Provider value={contextValue}>
       <DndContext
         sensors={sensors}
-        collisionDetection={collisionDetection}
-        // 拖拽过程中容器高度会变（折叠的分组自动展开、预览把节点搬进搬出），必须持续重新测量
+        collisionDetection={deviceFolderCollisionDetection}
+        // 拖拽过程中容器高度会变（折叠的分组自动展开、占位条插进插出），必须持续重新测量
         measuring={{ droppable: { strategy: MeasuringStrategy.Always } }}
-        onDragStart={(event: DragStartEvent) => {
-          setActiveId(String(event.active.id));
-          setPreviewDrop(null);
-        }}
-        onDragOver={handleDragOver}
+        onDragStart={(event: DragStartEvent) => setActiveId(String(event.active.id))}
+        onDragOver={(event: DragOverEvent) => setOverId(event.over ? String(event.over.id) : null)}
         onDragCancel={() => {
           setActiveId(null);
           setOverId(null);
-          setPreviewDrop(null);
         }}
         onDragEnd={handleDragEnd}
       >

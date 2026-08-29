@@ -3,7 +3,6 @@
 // 内容区用 `grid-template-rows: 0fr → 1fr` 做高度过渡（不需要测量真实高度），折叠期间靠
 // visibility 一起过渡：展开时立刻可见、折叠时等动画走完再隐藏，收起后的内容不会留在 Tab 序里。
 
-import { useDroppable } from '@dnd-kit/core';
 import { useSortable } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
 import type { DeviceFolder } from '@tmex/shared';
@@ -24,10 +23,17 @@ import {
   Pencil,
   Trash2,
 } from 'lucide-react';
-import { type ReactNode, useEffect, useState } from 'react';
+import { type ReactNode, useEffect, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
+import type { SortableItemData } from './collision';
+import { useDropZone } from './drop-zone';
 import { FolderNameEditor } from './folder-name-editor';
-import { dropZoneId, folderContainerId, folderElementId } from './folder-tree-model';
+import {
+  ROOT_CONTAINER_ID,
+  dropZoneId,
+  folderContainerId,
+  folderElementId,
+} from './folder-tree-model';
 
 const COLLAPSE_UNMOUNT_FALLBACK_MS = 400;
 
@@ -76,6 +82,8 @@ export function FolderSection({
     const timer = window.setTimeout(() => setContentMounted(false), COLLAPSE_UNMOUNT_FALLBACK_MS);
     return () => window.clearTimeout(timer);
   }, [expanded]);
+  // 分组只在根层彼此排序：碰撞判定把它当作根容器的兄弟条目
+  const data = useMemo<SortableItemData>(() => ({ containerId: ROOT_CONTAINER_ID }), []);
   const {
     attributes,
     listeners,
@@ -84,8 +92,8 @@ export function FolderSection({
     transform,
     transition,
     isDragging,
-  } = useSortable({ id: folderElementId(folder.id), disabled: dragDisabled });
-  const droppable = useDroppable({ id: dropZoneId(folderContainerId(folder.id)) });
+  } = useSortable({ id: folderElementId(folder.id), data, disabled: dragDisabled });
+  const headerZone = useDropZone(dropZoneId(folderContainerId(folder.id)));
 
   return (
     <section
@@ -102,7 +110,8 @@ export function FolderSection({
       style={{ transform: CSS.Translate.toString(transform), transition }}
     >
       <div
-        ref={droppable.setNodeRef}
+        ref={headerZone.ref}
+        {...headerZone.props}
         className="flex min-w-0 items-center gap-1 rounded-t-xl px-1.5 py-1.5"
       >
         <button
@@ -242,10 +251,11 @@ export function FolderDropArea({
   testId,
   className,
 }: FolderDropAreaProps) {
-  const { setNodeRef } = useDroppable({ id: zoneId });
+  const zone = useDropZone(zoneId);
   return (
     <div
-      ref={setNodeRef}
+      ref={zone.ref}
+      {...zone.props}
       data-testid={testId}
       data-drop-target={active ? 'true' : undefined}
       className={cn(

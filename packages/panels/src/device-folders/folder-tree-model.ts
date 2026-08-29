@@ -148,8 +148,6 @@ export type DeviceFolderDrop =
   | { kind: 'folder'; folderId: string; index: number | null }
   | { kind: 'node'; nodeId: string; targetFolderId: string | null; index: number | null };
 
-export type DeviceFolderNodeDrop = Extract<DeviceFolderDrop, { kind: 'node' }>;
-
 /**
  * 只解析落点：
  *  - 分组只能在根层重排：落在别的分组头上 = 插到它的位置；落在根层落点条上 = 排到末尾；
@@ -216,36 +214,59 @@ export function resolveDrop(
   return { kind: 'node', nodeId: activeNodeId, targetFolderId, index };
 }
 
-/**
- * 节点在某份布局里的当前落点（容器 + 容器内下标，下标含它自己）。
- * 拖拽过程中的预览布局与最终提交都靠它把「摆好的样子」翻译回一次 `DeviceFolderDrop`：
- * `applyDrop` 会先把节点从别处摘掉再插到 index，含自身的下标正好复现预览的排列。
- */
-export function nodeDropIntent(
-  layout: DeviceFolderLayout,
-  implicit: readonly string[],
-  nodeId: string
-): DeviceFolderNodeDrop | null {
-  const elementId = nodeElementId(nodeId);
-  for (const container of listContainers(layout, implicit).values()) {
-    const index = container.nodeIds.indexOf(elementId);
-    if (index < 0) continue;
-    const targetFolderId = containerFolderId(container.containerId);
-    if (targetFolderId === undefined) return null;
-    return { kind: 'node', nodeId, targetFolderId, index };
-  }
-  return null;
+/** 拖拽预览里占位条的位置：目标容器 + 插入下标（null = 末尾） */
+export interface DeviceFolderPlaceholder {
+  containerId: string;
+  index: number | null;
 }
 
-/** 碰撞候选按「命中优先级」分成四档，`device-folder-tree` 依次尝试，先命中先返回 */
+/**
+ * 跨容器拖拽时占位条该插在哪里。
+ * 被拖的节点**始终留在原容器**（只是变暗），目标容器里插一条等高的占位条把兄弟顶开——
+ * 真把节点搬进目标容器会让它的 React 子树在拖拽途中卸载重挂（key 是按父节点算的）。
+ * 同容器重排返回 null：那种情况交给 sortable 自己的 transform，不需要占位条。
+ */
+export function previewPlaceholder(
+  layout: DeviceFolderLayout,
+  implicit: readonly string[],
+  drop: DeviceFolderDrop | null
+): DeviceFolderPlaceholder | null {
+  if (!drop || drop.kind !== 'node') return null;
+  const containerId = folderContainerId(drop.targetFolderId);
+  const containers = listContainers(layout, implicit);
+  if (!containers.has(containerId)) return null;
+  const from = locateNode(containers, nodeElementId(drop.nodeId));
+  if (from?.containerId === containerId) return null;
+  return { containerId, index: drop.index };
+}
+
+/** `containerItemIds` 里代表占位条的标记（不是任何节点的元素 id） */
+export const PLACEHOLDER_ITEM_ID = '__placeholder__';
+
+/**
+ * 一个容器最终渲染出来的条目序列：容器自己的节点**原样保留**（被拖走的那个也还在，只是变暗），
+ * 占位条按落点插进去。被拖节点始终挂在原来的父节点下，React key 不变，子树不会重挂。
+ */
+export function containerItemIds(
+  containerId: string,
+  nodeIds: readonly string[],
+  placeholder: DeviceFolderPlaceholder | null
+): string[] {
+  const items = [...nodeIds];
+  if (!placeholder || placeholder.containerId !== containerId) return items;
+  items.splice(Math.min(placeholder.index ?? items.length, items.length), 0, PLACEHOLDER_ITEM_ID);
+  return items;
+}
+
+/** 碰撞候选按用途分档，判定顺序见 `collision.ts` */
 export interface DeviceFolderCollisionGroups {
   /** 放置区：分组头、空分组内容区。最先判，避免被它内部的兄弟元素抢走 */
   zones: string[];
-  /** 参与排序的兄弟元素：拖节点时是节点，拖分组时是分组 */
+  /** 参与排序的兄弟元素：拖节点时是节点，拖分组时是分组。按 `containerId` 分属各容器 */
   items: string[];
-  /** 整体接收落点的容器（拖节点时是分组本体）：命中 = 放进该分组末尾 */
+  /** 整体接收落点的容器（拖节点时是分组本体）：用来判断指针在哪个容器里 */
   containers: string[];
-  /** 整棵树的根落点区：所有分组区域之外的空白，命中 = 移到最外层 */
+  /** 整棵树的根落点区：所有分组区域之外的空白都算根容器 */
   root: string[];
 }
 
@@ -259,8 +280,7 @@ const EMPTY_GROUPS: DeviceFolderCollisionGroups = {
 /**
  * 按拖动对象把碰撞候选分档：
  *  - 拖分组：只看根层的分组元素、分组头放置区与根落点区（分组不能进分组，也不会落进节点列表）；
- *  - 拖节点：节点元素 + 放置区 + 分组本体 + 根落点区（分组本体排在节点之后，
- *    所以指针停在分组内的空隙上时是「放进这个分组」而不是「移到最外层」）。
+ *  - 拖节点：节点元素 + 放置区 + 分组本体 + 根落点区。
  */
 export function collisionGroupIds(
   activeId: string,
@@ -334,20 +354,4 @@ export function applyDrop(
   }
   const base = drop.targetFolderId === null ? materializeRootNodes(layout, implicit) : layout;
   return moveNodeInLayout(base, drop.nodeId, drop.targetFolderId, drop.index);
-}
-
-/**
- * 把一次「相对某份中间布局」的落点换算成等价的「节点最终容器 + 下标」。
- * 拖拽预览把节点先挪到目标容器，之后所有落点都是相对预览布局算的，直接提交会与真实布局差一位；
- * 换算成含自身下标的落点后，对真实布局再 `applyDrop` 一次即可复现预览里摆好的样子。
- */
-export function rebaseNodeDrop(
-  base: DeviceFolderLayout,
-  baseImplicit: readonly string[],
-  drop: DeviceFolderDrop
-): DeviceFolderNodeDrop | null {
-  if (drop.kind !== 'node') return null;
-  const next = applyDrop(base, drop, baseImplicit);
-  if (!next) return null;
-  return nodeDropIntent(next, implicitRootNodeIds(next, baseImplicit), drop.nodeId);
 }

@@ -9,11 +9,13 @@ export { FolderNameEditor, type FolderNameEditorProps } from './folder-name-edit
 export { FolderDropArea, FolderSection } from './folder-section';
 export { snapCenterToCursor, snapToCursorTransform } from './snap-to-cursor';
 export {
+  PLACEHOLDER_ITEM_ID,
   ROOT_CONTAINER_ID,
   applyDrop,
   bodyDropZoneId,
   collisionCandidateIds,
   collisionGroupIds,
+  containerItemIds,
   containerFolderId,
   dropTargetContainerId,
   dropZoneId,
@@ -22,16 +24,15 @@ export {
   implicitRootNodeIds,
   listContainers,
   materializeRootNodes,
-  nodeDropIntent,
   nodeElementId,
   parseDropZoneId,
   parseFolderElementId,
   parseNodeElementId,
-  rebaseNodeDrop,
+  previewPlaceholder,
   resolveDrop,
   rootFolderElementIds,
   type DeviceFolderCollisionGroups,
   type DeviceFolderContainer,
   type DeviceFolderDrop,
-  type DeviceFolderNodeDrop,
+  type DeviceFolderPlaceholder,
 } from './folder-tree-model';

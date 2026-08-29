@@ -1,12 +1,14 @@
 import { describe, expect, test } from 'bun:test';
 import type { DeviceFolder, DeviceFolderLayout } from '@tmex/shared';
 import {
+  PLACEHOLDER_ITEM_ID,
   ROOT_CONTAINER_ID,
   applyDrop,
   bodyDropZoneId,
   collisionCandidateIds,
   collisionGroupIds,
   containerFolderId,
+  containerItemIds,
   dropTargetContainerId,
   dropZoneId,
   folderContainerId,
@@ -14,12 +16,11 @@ import {
   implicitRootNodeIds,
   listContainers,
   materializeRootNodes,
-  nodeDropIntent,
   nodeElementId,
   parseDropZoneId,
   parseFolderElementId,
   parseNodeElementId,
-  rebaseNodeDrop,
+  previewPlaceholder,
   resolveDrop,
   rootFolderElementIds,
 } from './folder-tree-model';
@@ -211,8 +212,7 @@ describe('resolveDrop：分组', () => {
       bodyDropZoneId('folder:b'),
       dropZoneId(ROOT_CONTAINER_ID),
     ]);
-    // 拖节点时分组本体排在兄弟节点之后：指针停在分组内的空隙上是「放进这个分组」，
-    // 不会掉到最后一档的根落点区上
+    // 拖节点时分组本体单独一档：碰撞判定先靠它定下指针在哪个容器里，再在该容器的兄弟里选
     expect(collisionGroupIds('node:n1', ids)).toEqual({
       zones: [dropZoneId('folder:a'), dropZoneId('folder:b'), bodyDropZoneId('folder:b')],
       items: ['node:n2', 'node:self'],
@@ -354,96 +354,81 @@ describe('resolveDrop：原地落点判无效', () => {
   });
 });
 
-describe('nodeDropIntent / rebaseNodeDrop', () => {
-  test('nodeDropIntent 给出节点当前容器与含自身的下标', () => {
-    expect(nodeDropIntent(sampleLayout(), ['self'], 'n1')).toEqual({
-      kind: 'node',
-      nodeId: 'n1',
-      targetFolderId: 'a',
+describe('previewPlaceholder', () => {
+  const implicit = ['self'];
+
+  test('跨容器落点：占位条插在目标容器的落点下标上', () => {
+    const drop = resolveDrop('node:self', 'node:n1', sampleLayout(), implicit);
+    expect(previewPlaceholder(sampleLayout(), implicit, drop)).toEqual({
+      containerId: 'folder:a',
       index: 0,
     });
-    expect(nodeDropIntent(sampleLayout(), ['self'], 'self')).toEqual({
-      kind: 'node',
-      nodeId: 'self',
-      targetFolderId: null,
-      index: 1,
-    });
-    expect(nodeDropIntent(sampleLayout(), [], 'ghost')).toBeNull();
   });
 
-  test('rebaseNodeDrop 换算出的落点应用到原布局，结果与直接应用一致', () => {
-    const layout = sampleLayout();
-    const implicit = ['self'];
-    const drop = resolveDrop('node:self', 'node:n1', layout, implicit);
-    const direct = applyDrop(layout, drop as NonNullable<typeof drop>, implicit);
-    const rebased = rebaseNodeDrop(layout, implicit, drop as NonNullable<typeof drop>);
-    expect(rebased).toEqual({ kind: 'node', nodeId: 'self', targetFolderId: 'a', index: 0 });
-    const applied = applyDrop(layout, rebased as NonNullable<typeof rebased>, implicit);
-    expect(listContainers(applied as DeviceFolderLayout, []).get('folder:a')?.nodeIds).toEqual(
-      listContainers(direct as DeviceFolderLayout, []).get('folder:a')?.nodeIds
-    );
-  });
-
-  test('两段式落点（先预览搬进分组，再在分组里插到某个兄弟前）复现预览的排列', () => {
-    const layout: DeviceFolderLayout = {
-      folders: [folder('a', 0)],
-      placements: [
-        placement('n1', 'a', 0),
-        placement('n2', 'a', 1),
-        placement('n3', 'a', 2),
-        placement('x', null, 0),
-      ],
-    };
-    // 第一步：x 被预览搬到分组 a 的末尾
-    const first = rebaseNodeDrop(layout, [], {
-      kind: 'node',
-      nodeId: 'x',
-      targetFolderId: 'a',
+  test('落在整个容器上（分组头 / 空分组）：占位条排在末尾', () => {
+    const drop = resolveDrop('node:self', dropZoneId('folder:a'), sampleLayout(), implicit);
+    expect(previewPlaceholder(sampleLayout(), implicit, drop)).toEqual({
+      containerId: 'folder:a',
       index: null,
     });
-    const preview = applyDrop(layout, first as NonNullable<typeof first>, []) as DeviceFolderLayout;
-    expect(listContainers(preview, []).get('folder:a')?.nodeIds).toEqual([
-      'node:n1',
-      'node:n2',
-      'node:n3',
-      'node:x',
-    ]);
-    // 第二步：在预览布局上落到 n2 的位置，换算回真实布局后结果一致
-    const settled = resolveDrop('node:x', 'node:n2', preview, []);
-    const final = rebaseNodeDrop(preview, [], settled as NonNullable<typeof settled>);
-    const committed = applyDrop(
-      layout,
-      final as NonNullable<typeof final>,
-      []
-    ) as DeviceFolderLayout;
-    expect(listContainers(committed, []).get('folder:a')?.nodeIds).toEqual([
-      'node:n1',
-      'node:x',
-      'node:n2',
-      'node:n3',
-    ]);
-    expect(listContainers(committed, []).get(ROOT_CONTAINER_ID)?.nodeIds).toEqual([]);
   });
 
-  test('隐式根节点的落点换算会先显式化，下标覆盖整个根层', () => {
-    const layout: DeviceFolderLayout = { folders: [folder('a', 0)], placements: [] };
-    const implicit = ['n1', 'n2', 'n3'];
-    const intent = rebaseNodeDrop(layout, implicit, {
-      kind: 'node',
-      nodeId: 'n3',
-      targetFolderId: null,
-      index: 0,
-    });
-    expect(intent).toEqual({ kind: 'node', nodeId: 'n3', targetFolderId: null, index: 0 });
-    const committed = applyDrop(
-      layout,
-      intent as NonNullable<typeof intent>,
-      implicit
-    ) as DeviceFolderLayout;
-    expect(listContainers(committed, []).get(ROOT_CONTAINER_ID)?.nodeIds).toEqual([
-      'node:n3',
-      'node:n1',
-      'node:n2',
-    ]);
+  test('同容器重排不插占位条（交给 sortable 自己的 transform）', () => {
+    const layout: DeviceFolderLayout = {
+      folders: [],
+      placements: [placement('a', null, 0), placement('b', null, 1)],
+    };
+    const drop = resolveDrop('node:a', 'node:b', layout, []);
+    expect(drop).toEqual({ kind: 'node', nodeId: 'a', targetFolderId: null, index: 1 });
+    expect(previewPlaceholder(layout, [], drop)).toBeNull();
+  });
+
+  test('分组重排 / 无效落点不插占位条', () => {
+    expect(
+      previewPlaceholder(sampleLayout(), implicit, { kind: 'folder', folderId: 'b', index: 0 })
+    ).toBeNull();
+    expect(previewPlaceholder(sampleLayout(), implicit, null)).toBeNull();
+    expect(
+      previewPlaceholder(sampleLayout(), implicit, {
+        kind: 'node',
+        nodeId: 'self',
+        targetFolderId: 'ghost',
+        index: null,
+      })
+    ).toBeNull();
+  });
+});
+
+describe('containerItemIds', () => {
+  /** 分组 a 里 n1 / n2，根层 r1 */
+  const layout: DeviceFolderLayout = {
+    folders: [folder('a', 0)],
+    placements: [placement('n1', 'a', 0), placement('n2', 'a', 1), placement('r1', null, 0)],
+  };
+
+  test('跨容器拖拽：占位条插进目标容器，被拖的节点仍留在原容器', () => {
+    const drop = resolveDrop('node:r1', 'node:n2', layout, []);
+    const preview = previewPlaceholder(layout, [], drop);
+    expect(preview).toEqual({ containerId: 'folder:a', index: 1 });
+    const containers = listContainers(layout, []);
+    // 目标容器：占位条把 n2 顶下去
+    expect(
+      containerItemIds('folder:a', containers.get('folder:a')?.nodeIds ?? [], preview)
+    ).toEqual(['node:n1', PLACEHOLDER_ITEM_ID, 'node:n2']);
+    // 原容器：一个字都没动，被拖的节点还挂在原来的父节点下（key 不变 = 子树不会重挂）
+    expect(
+      containerItemIds(ROOT_CONTAINER_ID, containers.get(ROOT_CONTAINER_ID)?.nodeIds ?? [], preview)
+    ).toEqual(['node:r1']);
+  });
+
+  test('index 为 null（追加）时占位条排在末尾；没有预览时原样返回', () => {
+    const nodeIds = ['node:n1', 'node:n2'];
+    expect(containerItemIds('folder:a', nodeIds, { containerId: 'folder:a', index: null })).toEqual(
+      ['node:n1', 'node:n2', PLACEHOLDER_ITEM_ID]
+    );
+    expect(containerItemIds('folder:a', nodeIds, null)).toEqual(nodeIds);
+    expect(
+      containerItemIds('folder:a', nodeIds, { containerId: ROOT_CONTAINER_ID, index: 0 })
+    ).toEqual(nodeIds);
   });
 });

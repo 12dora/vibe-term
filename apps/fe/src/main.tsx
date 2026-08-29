@@ -141,6 +141,7 @@ function RootLayout() {
         <FlowBridges />
         <NodeRuntimeScope nodeId={SELF_NODE_ID}>
           <AppSidebar />
+          <SelfSettingsEventsInit />
         </NodeRuntimeScope>
         <MainInset />
         <SidePanelHost />
@@ -160,6 +161,14 @@ function RouteConnectionIndicator() {
       <ConnectionIndicator />
     </RuntimeProvider>
   );
+}
+
+// 浏览远端 node 时，页面区的设置事件订阅跟着路由 node 走，但设备分组布局等 self 数据
+// （固定打 self 的 QueryClient）仍要吃到本机网关的失效事件，否则会拿陈旧布局覆盖新布局。
+// 路由就是 self 时页面区已经订阅了，这里不再重复。
+function SelfSettingsEventsInit() {
+  const routeNodeId = useRouteNodeId();
+  return routeNodeId === SELF_NODE_ID ? null : <SettingsEventsInit />;
 }
 
 // 路由 node 就绪后才做的接线：事件订阅会开该 node 的 WS，能力集是该 node 的请求，
