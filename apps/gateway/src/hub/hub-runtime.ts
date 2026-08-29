@@ -160,8 +160,8 @@ export class HubRuntime {
     return this.uplink.registerRtcSession(input);
   }
 
-  stop(): void {
-    this.uplink.stop();
+  async stop(): Promise<void> {
+    await this.uplink.stop();
   }
 
   async handleRequest(req: Request, server: HubUpgradeServer): Promise<Response | undefined> {

@@ -38,13 +38,12 @@ import {
 } from '../lib/hub-client';
 import { createInstallLayout } from '../lib/install-layout';
 import { readJsonFile } from '../lib/json-file';
-import type { LocalAuthContext } from '../lib/local-auth';
-import { openInstallAuth } from '../lib/local-auth';
+import { type LocalAuthContext, loadInstallEnv, openInstallAuth } from '../lib/local-auth';
 import { assertRootKeyMatches, deriveRootKey, resolvePassword } from '../lib/password';
 import { parseAndValidateCaPem, readBoundedResponseText } from '../lib/pem';
 import { type ServiceManagerKind, detectServiceManager } from '../lib/platform';
 import { DEFAULT_PEER_PORT, type TmexRoles, parseTmexRoles, roleNameFromFlags } from '../lib/roles';
-import { restartService, stopService } from '../lib/service';
+import { restartService, startService, stopService } from '../lib/service';
 import { fingerprintPublicKey, totpOtpauthUri } from '../lib/totp-uri';
 import { asString } from '../lib/validate';
 import type { ParsedArgs } from '../types';
@@ -62,6 +61,7 @@ export type HubIo = {
   insecureLocal?: boolean;
   skipRestart?: boolean;
   stop?: (serviceName: string, installDir: string) => Promise<void>;
+  start?: (serviceName: string, installDir: string) => Promise<void>;
   nodeEnv?: string;
   totpCode?: string;
   serviceManager?: ServiceManagerKind;
@@ -312,6 +312,37 @@ async function maybeStop(
   installDir: string
 ): Promise<void> {
   const stop = io?.stop ?? (io?.skipRestart ? undefined : stopService);
+  if (!stop) return;
+  const serviceName = await resolveServiceName(parsed, installDir);
+  await stop(serviceName, installDir);
+}
+
+async function maybeStart(
+  parsed: ParsedArgs,
+  io: HubIo | undefined,
+  installDir: string
+): Promise<void> {
+  const start = io?.start ?? (io?.skipRestart || io?.auth ? undefined : startService);
+  if (!start) return;
+  const serviceName = await resolveServiceName(parsed, installDir);
+  await start(serviceName, installDir);
+}
+
+async function resolveLeaveServicePlan(
+  io: HubIo | undefined,
+  installDir: string
+): Promise<{ manage: boolean }> {
+  if (!installDir || io?.skipRestart) return { manage: false };
+  const manager = io?.serviceManager ?? (await detectServiceManager());
+  return { manage: manager !== 'none' };
+}
+
+async function stopForLeave(
+  parsed: ParsedArgs,
+  io: HubIo | undefined,
+  installDir: string
+): Promise<void> {
+  const stop = io?.stop ?? (io?.skipRestart || io?.auth ? undefined : stopService);
   if (!stop) return;
   const serviceName = await resolveServiceName(parsed, installDir);
   await stop(serviceName, installDir);
@@ -792,27 +823,50 @@ function assertResponseCertsMatchProjections(
 }
 
 export async function runHubLeave(parsed: ParsedArgs, io: HubIo = {}): Promise<void> {
-  await withAuth(parsed, io, async (ctx) => {
-    const { leaveMesh } = await import('../runtime/membership-reset');
-    const { createSetupTransitionLock } = await import('../runtime/setup-service');
-    const roles = await rolesForLeave(ctx);
-    const fromRole = roleNameFromFlags(roles);
-    await leaveMesh(
-      { expectedRole: fromRole === 'standalone' ? 'node' : fromRole },
-      {
-        roles,
-        nodeEnv: io.nodeEnv ?? process.env.NODE_ENV ?? 'test',
-        auth: ctx,
-        envPath: ctx.envPath,
-        installDir: ctx.installDir,
-        setupLock: createSetupTransitionLock(),
-      }
-    );
-    if (ctx.installDir) {
-      await maybeRestart(parsed, io, ctx.installDir);
+  let installDir = io.auth?.installDir ?? '';
+  if (!installDir && !io.auth) {
+    installDir = (await loadInstallEnv(parsed)).installDir;
+  }
+  const { manage } = await resolveLeaveServicePlan(io, installDir);
+  let stopped = false;
+  if (manage) {
+    await stopForLeave(parsed, io, installDir);
+    stopped = true;
+  }
+  try {
+    await withAuth(parsed, io, async (ctx) => {
+      const { leaveMesh } = await import('../runtime/membership-reset');
+      const { createSetupTransitionLock } = await import('../runtime/setup-service');
+      const roles = await rolesForLeave(ctx);
+      const fromRole = roleNameFromFlags(roles);
+      await leaveMesh(
+        { expectedRole: fromRole === 'standalone' ? 'node' : fromRole },
+        {
+          roles,
+          nodeEnv: io.nodeEnv ?? process.env.NODE_ENV ?? 'test',
+          auth: ctx,
+          envPath: ctx.envPath,
+          installDir: ctx.installDir,
+          setupLock: createSetupTransitionLock(),
+        }
+      );
+    });
+  } catch (error) {
+    if (stopped) {
+      await maybeStart(parsed, io, installDir);
     }
-    log(io, 'left hub; role set to standalone');
-  });
+    throw error;
+  }
+  if (stopped) {
+    if (parsed.flags['no-restart'] === true) {
+      log(io, HUB_MANUAL_RESTART_HINT);
+    } else {
+      await maybeStart(parsed, io, installDir);
+    }
+  } else if (!io.skipRestart) {
+    log(io, HUB_MANUAL_RESTART_HINT);
+  }
+  log(io, 'left hub; role set to standalone');
 }
 
 async function rolesForLeave(ctx: LocalAuthContext): Promise<TmexRoles> {

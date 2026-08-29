@@ -255,7 +255,7 @@ function wrapEnvWriteError(error: unknown): SetupError {
   );
 }
 
-function wrapJoinEnvWriteError(error: unknown, joinedHubUrl?: string): SetupError {
+export function wrapJoinEnvWriteError(error: unknown, joinedHubUrl?: string): SetupError {
   if (joinedHubUrl) {
     return new SetupError(
       'env_write_failed',
@@ -557,7 +557,7 @@ export async function precheckHubUrl(url: string, deps: SetupServiceDeps): Promi
   }
 }
 
-async function readExistingEnv(deps: SetupServiceDeps): Promise<Record<string, string>> {
+export async function readExistingEnv(deps: SetupServiceDeps): Promise<Record<string, string>> {
   const read = deps.readEnvFile ?? defaultReadEnvFile;
   try {
     return await read(deps.envPath);
@@ -573,7 +573,7 @@ async function defaultWriteStagedEnvFile(path: string, content: string): Promise
   await fsWriteFile(path, content, { encoding: 'utf8', mode: 0o600 });
 }
 
-async function writeStagedEnv(
+export async function writeStagedEnv(
   deps: SetupServiceDeps,
   path: string,
   content: string
@@ -582,7 +582,7 @@ async function writeStagedEnv(
   await write(path, content);
 }
 
-async function promoteStagedEnv(
+export async function promoteStagedEnv(
   deps: SetupServiceDeps,
   stagedPath: string,
   destPath: string
@@ -591,13 +591,16 @@ async function promoteStagedEnv(
   await renameFn(stagedPath, destPath);
 }
 
-async function removeStagedEnv(deps: SetupServiceDeps, stagedPath: string | null): Promise<void> {
+export async function removeStagedEnv(
+  deps: SetupServiceDeps,
+  stagedPath: string | null
+): Promise<void> {
   if (!stagedPath) return;
   const remove = deps.removeStagedEnvFile ?? ((path: string) => fsRm(path, { force: true }));
   await remove(stagedPath).catch(() => undefined);
 }
 
-function newStagedEnvPath(envPath: string): string {
+export function newStagedEnvPath(envPath: string): string {
   return join(
     dirname(envPath),
     `${basename(envPath)}.${process.pid}.${randomBytes(6).toString('hex')}.tmp`

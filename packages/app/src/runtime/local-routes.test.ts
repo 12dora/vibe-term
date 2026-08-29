@@ -4,6 +4,7 @@ import { resolve } from 'node:path';
 import { ensureNodeIdentity } from '../../../../apps/gateway/src/auth/node-identity-service';
 import type { AuthenticateResult } from '../../../../apps/gateway/src/mesh/session-middleware';
 import { authenticateRequest } from '../../../../apps/gateway/src/mesh/session-middleware';
+import { parseEnvContent } from '../lib/env-file';
 import type { LocalAuthContext } from '../lib/local-auth';
 import { openLocalAuth } from '../lib/local-auth';
 import { handleLocalRequest } from './local-routes';
@@ -537,6 +538,7 @@ describe('POST /api/local/leave', () => {
       TMEX_HUB_URL: 'https://hub.example',
       TMEX_HUB_PUBLIC_URL: 'https://stale.example',
     };
+    let staged = '';
     const restarts: number[] = [];
     const { status, body } = await jsonOf(
       await handleLocalRequest(
@@ -550,9 +552,13 @@ describe('POST /api/local/leave', () => {
           },
           setupLock: createSetupTransitionLock(),
           readEnvFile: async () => ({ ...env }),
-          writeEnvFile: async (_path, values) => {
+          writeStagedEnvFile: async (_path, content) => {
+            staged = content;
+          },
+          renameEnvFile: async () => {
+            const parsed = parseEnvContent(staged);
             for (const key of Object.keys(env)) delete env[key];
-            Object.assign(env, values);
+            Object.assign(env, parsed);
           },
         })
       )

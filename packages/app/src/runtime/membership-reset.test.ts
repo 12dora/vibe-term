@@ -1,9 +1,10 @@
 import '../lib/test-master-key';
 import { afterEach, describe, expect, test } from 'bun:test';
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join, resolve } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 import { HubTrustStore } from '../../../../apps/gateway/src/auth/hub-trust-store';
+import { MeshMembershipStore } from '../../../../apps/gateway/src/auth/mesh-membership-store';
 import { ensureNodeIdentity } from '../../../../apps/gateway/src/auth/node-identity-service';
 import {
   enrollmentTokens,
@@ -185,7 +186,7 @@ describe('leaveMesh', () => {
     lock.finish(false);
   });
 
-  test('env_write_failed does not restart', async () => {
+  test('env_write_failed does not restart and leaves membership intact', async () => {
     const restarts: number[] = [];
     const deps = await baseDeps({
       scheduleRestart: () => {
@@ -194,12 +195,41 @@ describe('leaveMesh', () => {
       writeEnvFile: async () => {
         throw new Error('EACCES');
       },
+      writeStagedEnvFile: async () => {
+        throw new Error('EACCES');
+      },
     });
     const err = await leaveMesh({ expectedRole: 'node' }, deps).catch((error) => error);
     expect(err).toBeInstanceOf(SetupError);
     expect((err as SetupError).code).toBe('env_write_failed');
     expect((err as SetupError).httpStatus).toBe(500);
     expect(restarts).toEqual([]);
+    expect(deps.auth.userStore.getByUsername('alice')).toBeTruthy();
+    expect(deps.auth.userStore.listUsers()).toHaveLength(1);
+    expect(deps.auth.db.select().from(users).all()).toHaveLength(1);
+    expect((await readEnvFile(deps.envPath)).TMEX_ROLES).toBe('node');
+  });
+
+  test('database failure leaves env untouched and removes the staged file', async () => {
+    const orig = MeshMembershipStore.prototype.clearAll;
+    MeshMembershipStore.prototype.clearAll = () => {
+      throw new Error('SQLITE_BUSY');
+    };
+    try {
+      const deps = await baseDeps();
+      const err = await leaveMesh({ expectedRole: 'node' }, deps).catch((error) => error);
+      expect(err).toBeInstanceOf(Error);
+      expect((err as Error).message).toBe('SQLITE_BUSY');
+      expect(deps.auth.userStore.getByUsername('alice')).toBeTruthy();
+      expect((await readEnvFile(deps.envPath)).TMEX_ROLES).toBe('node');
+      expect((await readEnvFile(deps.envPath)).TMEX_HUB_URL).toBe('https://hub.example');
+      const leftovers = (await readdir(dirname(deps.envPath))).filter((name) =>
+        name.endsWith('.tmp')
+      );
+      expect(leftovers).toEqual([]);
+    } finally {
+      MeshMembershipStore.prototype.clearAll = orig;
+    }
   });
 
   test('quiesceMesh is best-effort and does not fail leave', async () => {

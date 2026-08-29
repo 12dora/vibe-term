@@ -250,7 +250,7 @@ export async function assembleTmex(opts: AssembleTmexOptions = {}): Promise<Asse
         // best-effort
       }
       try {
-        hub?.stop();
+        await hub?.stop();
       } catch {
         // best-effort
       }
@@ -495,7 +495,7 @@ export async function assembleTmex(opts: AssembleTmexOptions = {}): Promise<Asse
           console.error('[tmex] mesh stop failed', err);
         }
         try {
-          hub?.stop();
+          await hub?.stop();
         } catch (err) {
           console.error('[tmex] hub stop failed', err);
         }

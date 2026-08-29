@@ -467,31 +467,72 @@ describe('hub join against fake hub', () => {
 });
 
 describe('hub join/leave service restart', () => {
-  test('hub leave --no-restart skips restart and prints a manual-restart hint', async () => {
+  test('hub leave --no-restart stops a managed service, leaves it stopped, and prints a hint', async () => {
     const node = await openAuth('node');
     node.installDir = '/tmp/tmex-leave-no-restart';
     const logs: string[] = [];
-    let restarted = false;
+    const events: string[] = [];
     await runHubLeave(parseArgs(['hub', 'leave', '--no-restart']), {
       auth: node,
+      serviceManager: 'launchd',
+      stop: async () => {
+        events.push('stop');
+      },
+      start: async () => {
+        events.push('start');
+      },
       restart: async () => {
-        restarted = true;
+        events.push('restart');
       },
       log: (message) => logs.push(message),
     });
-    expect(restarted).toBe(false);
+    expect(events).toEqual(['stop']);
     expect(logs.some((line) => /restart tmex manually/i.test(line))).toBe(true);
+    expect(logs.some((line) => /left hub/i.test(line))).toBe(true);
+  });
+
+  test('hub leave stops a managed service before reset and starts it afterwards', async () => {
+    const node = await openAuth('node');
+    node.installDir = '/tmp/tmex-leave-managed';
+    const events: string[] = [];
+    await runHubLeave(parseArgs(['hub', 'leave']), {
+      auth: node,
+      serviceManager: 'launchd',
+      stop: async () => {
+        events.push('stop');
+        expect(node.userStore.listUsers().length).toBeGreaterThanOrEqual(0);
+      },
+      start: async () => {
+        events.push('start');
+      },
+      restart: async () => {
+        events.push('restart');
+      },
+      log: () => undefined,
+    });
+    expect(events).toEqual(['stop', 'start']);
   });
 
   test('hub leave does not throw when there is no service manager', async () => {
     const node = await openAuth('node');
     node.installDir = '/tmp/tmex-leave-none-manager';
     const logs: string[] = [];
+    const events: string[] = [];
     await runHubLeave(parseArgs(['hub', 'leave']), {
       auth: node,
       serviceManager: 'none',
+      stop: async () => {
+        events.push('stop');
+      },
+      start: async () => {
+        events.push('start');
+      },
+      restart: async () => {
+        events.push('restart');
+      },
       log: (message) => logs.push(message),
     });
+    expect(events).toEqual([]);
     expect(logs.some((line) => /restart tmex manually/i.test(line))).toBe(true);
     expect(logs.some((line) => /left hub/i.test(line))).toBe(true);
   });

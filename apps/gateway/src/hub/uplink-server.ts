@@ -86,6 +86,7 @@ type CtlQueueState = {
 // 按消息数与累计字节双重上限：合法突发（并发 rtc.signal + key.log.req）远超 8 条，但都是小帧
 export const HUB_CTL_QUEUE_MAX = 256;
 export const HUB_CTL_QUEUE_MAX_BYTES = 4 * 1024 * 1024;
+export const HUB_STOP_DRAIN_TIMEOUT_MS = 5_000;
 
 type LiveConnection = {
   nodeId: string;
@@ -423,6 +424,7 @@ export class UplinkServer {
   private readonly rtcSessions = new Map<string, RtcSessionRegistration>();
   private listVersion = 0;
   private stopped = false;
+  private readonly inflightCtl = new Set<Promise<void>>();
   private readonly keyLogReqLimiter: KeyLogReqLimiter;
   private readonly keyLogReqLogs: IdleLruMap<{ lastAt: number; suppressed: number }>;
   private readonly authRejectLogs: IdleLruMap<{ lastAt: number; suppressed: number }>;
@@ -466,6 +468,10 @@ export class UplinkServer {
   }
 
   accept(link: LinkSession, opts?: { remoteAddress?: string }): void {
+    if (this.stopped) {
+      link.close('hub-stop');
+      return;
+    }
     const nonce = randomBytes(32);
     this.accepted.add(link);
     if (opts?.remoteAddress) {
@@ -578,7 +584,7 @@ export class UplinkServer {
     await this.broadcastNodeList(userId);
   }
 
-  stop(): void {
+  async stop(): Promise<void> {
     this.stopped = true;
     const links = [...this.accepted];
     for (const live of this.live.values()) {
@@ -598,6 +604,35 @@ export class UplinkServer {
     this.authRejectGlobal.clear();
     this.authRejectByAddr.clear();
     this.registry.closeAll('hub-stop');
+    await this.drainInflight();
+  }
+
+  private trackCtl(work: Promise<void>): void {
+    this.inflightCtl.add(work);
+    void work.finally(() => {
+      this.inflightCtl.delete(work);
+    });
+  }
+
+  private async drainInflight(): Promise<void> {
+    const pending = [...this.inflightCtl];
+    if (pending.length === 0) return;
+    let timedOut = false;
+    await new Promise<void>((resolve) => {
+      const timer = setTimeout(() => {
+        timedOut = true;
+        resolve();
+      }, HUB_STOP_DRAIN_TIMEOUT_MS);
+      void Promise.allSettled(pending).then(() => {
+        if (!timedOut) {
+          clearTimeout(timer);
+          resolve();
+        }
+      });
+    });
+    if (timedOut) {
+      console.warn('[hub] uplink stop drain timed out; continuing');
+    }
   }
 
   get keyLogReqBucketCount(): number {
@@ -630,6 +665,11 @@ export class UplinkServer {
     q.depth += 1;
     q.bytes += bytes.byteLength;
     const run = q.tail.catch(() => undefined).then(() => this.onCtl(link, bytes));
+    const settled = run.then(
+      () => undefined,
+      () => undefined
+    );
+    this.trackCtl(settled);
     q.tail = run
       .catch(() => {
         if (this.accepted.has(link)) {
@@ -640,10 +680,7 @@ export class UplinkServer {
         q.depth = Math.max(0, q.depth - 1);
         q.bytes = Math.max(0, q.bytes - bytes.byteLength);
       });
-    return run.then(
-      () => undefined,
-      () => undefined
-    );
+    return settled;
   }
 
   private async onCtl(link: LinkSession, bytes: Uint8Array): Promise<void> {

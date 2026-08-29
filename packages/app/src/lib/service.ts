@@ -226,6 +226,46 @@ export async function stopService(serviceName: string, installDir?: string): Pro
   }
 }
 
+export async function startService(serviceName: string, installDir?: string): Promise<void> {
+  const manager = await detectServiceManager();
+  if (manager === 'systemd-user') {
+    const start = await runCommand('systemctl', ['--user', 'start', serviceName]);
+    if (start.code !== 0) {
+      throw new Error(
+        t('service.systemd.restartFailed', {
+          detail: start.stderr || start.stdout,
+        })
+      );
+    }
+    return;
+  }
+
+  if (manager === 'launchd') {
+    const uid = String(process.getuid?.() ?? 0);
+    const launchAgentsPath = launchdLaunchAgentsPlistPath(serviceName);
+    const localPath = installDir ? launchdLocalPlistPath(serviceName, installDir) : null;
+    const targetPath = (await pathExists(launchAgentsPath))
+      ? launchAgentsPath
+      : localPath && (await pathExists(localPath))
+        ? localPath
+        : null;
+    if (!targetPath) {
+      throw new Error(t('service.launchd.bootstrapFailed', { detail: 'plist not found' }));
+    }
+    const bootstrap = await runCommand('launchctl', ['bootstrap', `gui/${uid}`, targetPath]);
+    if (bootstrap.code !== 0) {
+      throw new Error(
+        t('service.launchd.bootstrapFailed', {
+          detail: bootstrap.stderr || bootstrap.stdout,
+        })
+      );
+    }
+    return;
+  }
+
+  throw new Error(t('service.install.unsupportedPlatform', { platform: process.platform }));
+}
+
 async function uninstallSystemdService(serviceName: string): Promise<void> {
   await runCommand('systemctl', ['--user', 'disable', '--now', serviceName]).catch(() => null);
   const unitPath = systemdUnitPath(serviceName);

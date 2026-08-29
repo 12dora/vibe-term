@@ -1563,4 +1563,54 @@ describe('UplinkServer', () => {
       close();
     }
   });
+
+  test('stop() waits for an in-flight key.log.append before resolving', async () => {
+    const { db, close } = createMigratedAuthDb();
+    try {
+      const { userStore } = createHubTestStack(db);
+      const user = seedUser(userStore);
+      let release!: () => void;
+      const gate = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      let appendFinished = false;
+      const started = Promise.withResolvers<void>();
+      const source: HubKeyLogSource = {
+        async head() {
+          return { seq: 0n, hash: new Uint8Array(32) };
+        },
+        async list() {
+          return [];
+        },
+        async append() {
+          started.resolve();
+          await gate;
+          appendFinished = true;
+          return { ok: false, error: 'readonly' };
+        },
+      };
+      const { server } = makeServer(db, userStore, source);
+      const node = await authNode(server, userStore, user.id);
+      sendCtl(node.nodeLink, {
+        t: 'key.log.append',
+        bytes: encodeBase64url(new Uint8Array([1, 2, 3])),
+        sig: encodeBase64url(randomBytes(64)),
+        id: 'drain-1',
+      });
+      await started.promise;
+      let stopResolved = false;
+      const stopping = Promise.resolve(server.stop()).then(() => {
+        stopResolved = true;
+      });
+      await new Promise((r) => setTimeout(r, 40));
+      expect(appendFinished).toBe(false);
+      expect(stopResolved).toBe(false);
+      release();
+      await stopping;
+      expect(appendFinished).toBe(true);
+      expect(stopResolved).toBe(true);
+    } finally {
+      close();
+    }
+  });
 });
