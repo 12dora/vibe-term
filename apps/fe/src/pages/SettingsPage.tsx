@@ -1,5 +1,13 @@
 import { useMutation } from '@tanstack/react-query';
-import { Bell, Monitor, RotateCcw, Server, Settings as SettingsIcon, Sparkles } from 'lucide-react';
+import {
+  Bell,
+  Monitor,
+  Network,
+  RotateCcw,
+  Server,
+  Settings as SettingsIcon,
+  Sparkles,
+} from 'lucide-react';
 import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { toast } from 'sonner';
@@ -23,10 +31,11 @@ import { Tabs, TabsList, TabsTrigger, pillTabTriggerClassName } from '@tmex/ui/t
 import { AISettingsTab } from './settings/ai-settings-tab';
 import { DevicesAndFilesTab } from './settings/devices-and-files-tab';
 import { GeneralSettingsTab } from './settings/general-settings-tab';
+import { NodesTab } from './settings/nodes/nodes-tab';
 import { NotificationSettingsTab } from './settings/notification-settings-tab';
 import { useSiteSettingsForm } from './settings/use-site-settings-form';
 
-type SettingsTab = 'general' | 'devicesAndFiles' | 'notifications' | 'ai' | 'terminal';
+type SettingsTab = 'general' | 'devicesAndFiles' | 'nodes' | 'notifications' | 'ai' | 'terminal';
 
 export default function SettingsPage() {
   const { t } = useTranslation();
@@ -56,6 +65,12 @@ export default function SettingsPage() {
       label: t('settings.tabGroup.devicesAndFiles'),
       icon: Server,
       testId: 'settings-tab-devicesAndFiles',
+    },
+    {
+      value: 'nodes',
+      label: t('settings.tabGroup.nodes'),
+      icon: Network,
+      testId: 'settings-tab-nodes',
     },
     {
       value: 'notifications',
@@ -98,6 +113,8 @@ export default function SettingsPage() {
       {activeTab === 'general' && <GeneralSettingsTab form={form} />}
 
       {activeTab === 'devicesAndFiles' && <DevicesAndFilesTab />}
+
+      {activeTab === 'nodes' && <NodesTab />}
 
       {activeTab === 'notifications' && <NotificationSettingsTab form={form} />}
 

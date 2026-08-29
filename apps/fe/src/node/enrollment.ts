@@ -603,7 +603,8 @@ export async function createEnrollmentOnHub(
     const joinToken = encodeJoinTokenZeroing(
       enrollment.enrollSk,
       input.rootPublicKey,
-      input.keyLogHeadHash
+      input.keyLogHeadHash,
+      created.ca_fingerprint
     );
     const pending: PendingEnrollment = {
       hubEnrollmentId: created.id,
@@ -634,6 +635,7 @@ export function encodeJoinTokenZeroing(
   enrollSk: Uint8Array,
   rootPublicKey: Uint8Array,
   keyLogHeadHash: Uint8Array,
+  caFingerprint?: string | null,
   /** 仅测试注入：拿到同一块缓冲才能断言它确实被清零。 */
   scratch?: Uint8Array
 ): string {
@@ -652,7 +654,14 @@ export function encodeJoinTokenZeroing(
     if (token.length !== JOIN_TOKEN_CHARS) {
       throw new Error(`join token must be ${JOIN_TOKEN_CHARS} chars`);
     }
-    return token;
+    if (!caFingerprint) {
+      return token;
+    }
+    const fingerprint = caFingerprint.toLowerCase();
+    if (!/^[0-9a-f]{64}$/.test(fingerprint)) {
+      throw new Error('CA fingerprint must be 64 hex characters');
+    }
+    return `${token}.${fingerprint}`;
   } finally {
     raw.fill(0);
   }

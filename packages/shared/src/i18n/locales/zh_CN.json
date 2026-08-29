@@ -193,6 +193,7 @@
       "tabGroup": {
         "general": "通用",
         "devicesAndFiles": "设备与文件",
+        "nodes": "节点",
         "notifications": "通知",
         "ai": "AI",
         "terminal": "终端"
@@ -677,6 +678,7 @@
       "openSettings": "打开设置",
       "manageDevices": "管理设备",
       "settings": "设置",
+      "nodes": "节点",
       "currentWindow": "当前窗口",
       "currentPane": "当前 pane",
       "newWindow": "新建窗口",
@@ -1141,6 +1143,190 @@
       "hub": "hub",
       "loggedIn": "已登录",
       "hubOffline": "hub 不可达，管理动作已禁用。",
+      "machine": {
+        "title": "本机",
+        "role": "角色",
+        "roleStandalone": "独立实例",
+        "roleNode": "节点",
+        "roleHub": "Hub + 节点",
+        "hubUrl": "Hub 地址",
+        "hubPublicUrl": "Hub 对外地址",
+        "direct": "直连插件",
+        "directSupported": "本平台支持",
+        "directUnsupported": "本平台不支持",
+        "directInstalled": "已安装",
+        "directNotInstalled": "未安装",
+        "directCapable": "已加载",
+        "directEnable": "打开以下载插件",
+        "directDisable": "关闭以删除插件",
+        "directRestartRequired": "重启 tmex 后生效。",
+        "directFailed": "直连插件操作失败",
+        "restartNow": "立即重启",
+        "restarting": "正在重启，等待服务恢复……",
+        "restartTimeout": "服务未在预期时间内恢复，请手动启动后刷新本页。",
+        "accountSecurity": "账号安全",
+        "openNodesPage": "打开节点页",
+        "loginRequired": "登录后查看本机状态。"
+      },
+      "https": {
+        "title": "HTTPS",
+        "description": "本机如何终止 TLS。会话与 passkey 都要求安全来源，因此实际打开的每个地址都应该是 https。",
+        "hubUrlHint": "hub 的公开地址必须是 https：要么在下面配一张证书由本机终止 TLS，要么在前面放反向代理并选「外部反向代理」。",
+        "currentMode": "当前模式",
+        "modeActive": "生效中",
+        "save": "保存",
+        "saved": "HTTPS 配置已保存",
+        "renewStarted": "已开始续签",
+        "loginRequired": "登录后才能查看 HTTPS 配置。",
+        "loadFailed": "无法读取 HTTPS 配置。",
+        "restartRequired": "重启 tmex 后代理信任设置才会生效。",
+        "restartNow": "立即重启",
+        "restarting": "正在重启，等待服务回来…",
+        "restartTimeout": "服务没有按时回来。请手动启动后刷新本页。",
+        "confirmStop": {
+          "title": "要停掉内建 HTTPS 监听吗？",
+          "description": "内建 HTTPS 监听正在 {{port}} 端口上运行，当前页面可能就是由它提供的。保存「{{mode}}」会立刻把它停掉。",
+          "requirement": "只有在另一个可达的入口已经存在时才继续——明文 HTTP 端口，或者本机前面的反代。否则在你能回到这台机器上操作之前，就把自己关在门外了。",
+          "confirm": "停掉监听",
+          "cancel": "保持运行"
+        },
+        "port": "HTTPS 端口",
+        "portHint": "默认 9443。低于 1024 的端口需要 root，Linux 用户级服务根本无法绑定。这里不做任何自动探测，请自行确认端口空闲。",
+        "bindHost": "绑定地址",
+        "bindHostHint": "0.0.0.0 监听所有网卡；127.0.0.1 只在本机可用。",
+        "mode": {
+          "none": {
+            "title": "关闭",
+            "description": "本机不做 TLS，只提供明文 HTTP。",
+            "detail": "停掉 https 监听。已生成的证书与私钥仍保留在磁盘上，切回来是瞬时的。"
+          },
+          "external": {
+            "title": "外部反向代理",
+            "description": "由 tmex 前面的 Cloudflare Tunnel / nginx / caddy 终止 TLS。"
+          },
+          "selfsigned": {
+            "title": "自签（私有 CA）",
+            "description": "tmex 自建 CA，并为你列出的名字签发证书。每台设备都要安装这个 CA。"
+          },
+          "acme": {
+            "title": "Let's Encrypt",
+            "description": "公共信任的证书，自动续期，需要一个公网域名。"
+          }
+        },
+        "listener": {
+          "running": "已监听端口 {{port}}",
+          "stopped": "未监听",
+          "failed": "监听失败：{{error}}"
+        },
+        "certificate": {
+          "subject": "主体",
+          "sans": "名称",
+          "issuer": "签发者",
+          "validUntil": "有效期至",
+          "daysLeft": "剩余 {{days}} 天",
+          "expired": "已过期",
+          "none": "尚未签发证书。"
+        },
+        "external": {
+          "intro": "tmex 继续提供明文 HTTP，由前面的代理做 TLS。把代理指向本机的明文端口，并让它转发原始 host、协议与客户端地址。",
+          "trustProxy": "信任代理请求头",
+          "trustProxyHint": "只有当 tmex 除了经过代理之外不可达时才打开。",
+          "trustProxyDetail": "打开后 tmex 会采信 X-Forwarded-Proto / X-Forwarded-For：会话 cookie 会带上 Secure 标记，passkey 的来源也改用转发过来的 host 而不是本地地址。如果任何人都能直连明文端口，这些头就能被伪造。该设置写入 env 文件，需要重启才生效。"
+        },
+        "selfsigned": {
+          "intro": "适合没有公网域名的局域网或隧道场景。CA 只创建一次且不出本机，叶证书有效期 398 天。",
+          "sans": "证书上的名称",
+          "sansHint": "浏览器里实际会敲的主机名或 IP，最多 20 个。没有列进来的地址仍然会报证书错误。",
+          "sansPlaceholder": "hub.lan 或 192.168.1.10",
+          "sansAdd": "添加",
+          "sansRemove": "移除 {{name}}",
+          "sansEmpty": "还没有任何名称。",
+          "trustWarning": "在安装 CA 之前浏览器一律拒绝这张证书。每台要访问该地址的设备都得装。",
+          "fingerprint": "CA 指纹",
+          "downloadCa": "下载 CA 证书",
+          "renew": "重新签发证书",
+          "guide": {
+            "title": "在各设备上安装 CA",
+            "intro": "先下载 tmex-ca.crt，再按各平台的步骤操作。安装完可对照上面的指纹确认装的是同一张。",
+            "macos": {
+              "title": "macOS",
+              "steps": "双击 tmex-ca.crt 打开「钥匙串访问」，放进「系统」钥匙串，再打开该条目把「使用此证书时」改成「始终信任」。"
+            },
+            "ios": {
+              "title": "iOS / iPadOS",
+              "steps": "用隔空投送或邮件把文件发到设备并安装描述文件，然后在「设置 → 通用 → 关于本机 → 证书信任设置」里启用它。"
+            },
+            "windows": {
+              "title": "Windows",
+              "steps": "运行 certmgr.msc，进入「受信任的根证书颁发机构 → 证书 → 所有任务 → 导入」，选择 tmex-ca.crt。Firefox 有自己的证书库，需要另外导入一次。"
+            },
+            "android": {
+              "title": "Android",
+              "steps": "设置 → 安全 → 加密与凭据 → 安装证书 → CA 证书。浏览器信任用户 CA，其它应用只有主动声明才信任。"
+            },
+            "linux": {
+              "title": "Linux",
+              "steps": "把文件复制到 /usr/local/share/ca-certificates/tmex-ca.crt 后执行 sudo update-ca-certificates（Debian/Ubuntu），或复制到 /etc/pki/ca-trust/source/anchors/ 后执行 sudo update-ca-trust（Fedora/RHEL）。"
+            }
+          }
+        },
+        "acme": {
+          "intro": "Let's Encrypt 为单个域名签发公共信任的证书。该域名必须解析到本机，到期前 30 天会自动续期。",
+          "domain": "域名",
+          "domainHint": "单个主机名，不支持通配符，且必须已经指向本机。",
+          "email": "联系邮箱",
+          "emailHint": "Let's Encrypt 用它发送到期提醒。",
+          "challenge": "验证方式",
+          "challengeHttp": "HTTP-01",
+          "challengeHttpHint": "Let's Encrypt 会经公网 80 端口访问 http://<域名>/.well-known/acme-challenge/…。",
+          "challengeDns": "DNS-01（Cloudflare）",
+          "challengeDnsHint": "通过 Cloudflare API 临时写一条 TXT 记录。NAT 后面、没有 80 端口也能用。",
+          "cloudflareToken": "Cloudflare API token",
+          "cloudflareTokenHint": "需要在该域名所在 zone 上具备 Zone:DNS:Edit 权限的 API token，加密存储。",
+          "cloudflareTokenStored": "已存有 token —— 留空表示沿用。",
+          "staging": "使用 staging 环境",
+          "stagingHint": "staging 证书浏览器不信任，但限频宽松得多，适合先跑通流程：生产环境每账号、每主机名每小时只允许 5 次失败验证。",
+          "statusLabel": "签发状态",
+          "status": {
+            "idle": "未开始",
+            "pending": "进行中",
+            "ok": "已签发",
+            "error": "失败"
+          },
+          "pendingHint": "签发在后台进行，本面板每 3 秒刷新一次。",
+          "lastAttempt": "上次尝试",
+          "nextRenew": "下次续期",
+          "renewNow": "立即续期",
+          "hints": {
+            "http01": "HTTP-01 要求公网 IP 的 80 端口能打到本机的明文 HTTP 端口。在 NAT 后面时，请在路由器上把外部 80 端口映射到该端口。",
+            "http01Linux": "Linux 用户级 systemd 服务自己绑不了 80 端口，只能在路由器上做映射，或者改用 DNS-01。",
+            "dns01": "DNS-01 要求一个在该域名所在 zone 上具备 Zone:DNS:Edit 权限的 Cloudflare API token，且该域名的 DNS 必须托管在 Cloudflare。"
+          }
+        },
+        "errors": {
+          "invalid_sans": "其中一个名称不是合法的主机名或 IP 地址。",
+          "invalid_domain": "不是合法的域名（不支持通配符）。",
+          "invalid_email": "不是合法的邮箱地址。",
+          "cloudflare_token_required": "DNS-01 需要 Cloudflare API token。",
+          "invalid_port": "端口必须在 1 到 65535 之间。",
+          "port_in_use": "端口已被占用 —— 配置已保存，但监听没能启动。",
+          "tls_failed": "HTTPS 变更失败。",
+          "not_applicable": "当前模式没有可续签的东西。",
+          "no_ca": "本机还没有私有 CA —— 请先保存一次自签模式。",
+          "unauthorized": "请先登录。",
+          "unknown": "失败：{{message}}"
+        },
+        "validation": {
+          "sansRequired": "至少填一个名称。",
+          "sansInvalid": "名称必须是主机名或 IP 地址。",
+          "sansTooMany": "最多 20 个名称。",
+          "portInvalid": "请填 1 到 65535 之间的端口。",
+          "hostRequired": "请填绑定地址。",
+          "domainInvalid": "请填域名，且不能带通配符。",
+          "emailInvalid": "请填合法的邮箱地址。",
+          "tokenRequired": "请填 Cloudflare API token。"
+        }
+      },
       "columns": {
         "name": "名称",
         "status": "状态",
@@ -1214,6 +1400,108 @@
         "remoteCandidate": "对端候选",
         "selectedPair": "候选对",
         "unknown": "未知"
+      },
+      "setup": {
+        "title": "启用 hub",
+        "intro": "本机当前是 standalone（尚未加入任何 mesh）。请从下面两条路径中选一。",
+        "introDetail": "把本机变成 hub：在本机创建首个用户，其他机器再加入进来，需要一个外部可达的 HTTPS 地址。加入已有 hub：本机变成别人已经建好的 mesh 里的一个节点。两条路径都会写配置并重启一次网关。",
+        "path": {
+          "becomeHub": {
+            "title": "把本机变成 hub",
+            "description": "在本机创建首个用户，并受理其他机器的加入请求。需要对外的 HTTPS 地址。"
+          },
+          "joinHub": {
+            "title": "加入已有 hub",
+            "description": "把本机变成一个节点。需要 hub 签发的 join 串，默认 10 分钟内有效。"
+          }
+        },
+        "becomeHub": {
+          "title": "把本机变成 hub",
+          "description": "创建首个用户、签发本机的节点证书，然后以 hub,node 角色重启网关。"
+        },
+        "joinHub": {
+          "title": "加入已有 hub",
+          "description": "等价于在本机执行 `tmex-cli hub join`。加入成功后网关以 node 角色重启。"
+        },
+        "fields": {
+          "hubPublicUrl": "hub 对外地址",
+          "hubPublicUrlHint": "浏览器与 `hub join` 使用的 HTTPS 地址，如 https://tmex.example.com。所有要加入的机器都必须能访问它。",
+          "username": "用户名",
+          "usernameHint": "1-64 个字符，只能用字母、数字、点、下划线、连字符。",
+          "password": "密码",
+          "passwordHint": "至少 8 位。根钥由该密码推导，服务端无法找回。",
+          "confirmPassword": "确认密码",
+          "hubUrl": "hub 地址",
+          "hubUrlHint": "hub 的 HTTPS 地址，如 https://tmex.example.com。HTTP 重定向一律拒绝。",
+          "token": "join 串",
+          "tokenHint": "由 hub 上的 `tmex-cli enroll` 或任意已登录入口的 Nodes 页签发，默认 10 分钟内有效。粘贴时的空白与换行会自动去掉。自签 hub 会在后面用点号附上 CA 指纹，请整串粘贴。",
+          "tokenPlaceholder": "128 位的 join 串，自签 hub 会附 .CA 指纹",
+          "name": "节点名称",
+          "nameHint": "会显示在侧边栏与 Nodes 页。",
+          "directEnable": "启用直连",
+          "directEnableHint": "下载当前平台的原生插件，让节点之间直接通信而不走 hub 中转。失败不阻断安装。",
+          "directUnsupportedHint": "{{platform}} 没有发布原生插件，流量将经由 hub 中转。",
+          "insecureLocal": "允许本机的 http:// hub",
+          "insecureLocalHint": "仅开发与测试环境：允许把 http://127.0.0.1 或 http://localhost 当作 hub 地址。production 下不可用。"
+        },
+        "precheck": {
+          "button": "检查可达性",
+          "reachableSelf": "可达，且响应的就是本机。该地址可以直接用作 hub 对外地址。",
+          "reachableOther": "可达（HTTP {{status}}），但响应的是另一个 tmex 实例。继续前请先核对地址。",
+          "unreachable": "不可达：{{error}}",
+          "httpsHint": "tmex 目前不自己终结 HTTPS，对外地址需要由本机前面的反代或 Cloudflare Tunnel 提供。内置 HTTPS 会在后续版本提供。",
+          "docsHint": "参见 docs/hub/2026082800-hub-node-operations.md 的「Cloudflare Tunnel 与反代」与「首次搭 hub」两节。"
+        },
+        "submit": {
+          "becomeHub": "创建用户并作为 hub 重启",
+          "joinHub": "加入并重启",
+          "pending": "处理中…"
+        },
+        "result": {
+          "title": "安装完成",
+          "becomeHubDescription": "首个用户与本机节点证书已创建，网关正在重启。",
+          "joinDescription": "本机已加入 hub，网关正在重启。",
+          "fingerprint": "根钥指纹",
+          "hubPublicUrl": "hub 对外地址",
+          "hubUrl": "hub 地址",
+          "username": "用户名",
+          "directLabel": "直连",
+          "direct": {
+            "enabled": "已启用",
+            "skipped": "已跳过",
+            "failed": "失败（{{error}}）——流量暂时经由 hub 中转，可稍后在本页重试"
+          }
+        },
+        "restart": {
+          "waiting": "等待网关重启完成… {{seconds}} 秒",
+          "restarted": "网关已恢复，正在跳转到登录页。",
+          "timeout": "60 秒内服务未恢复。请手动拉起服务后刷新本页："
+        },
+        "toast": {
+          "hubCreated": "hub 已创建，网关正在重启",
+          "joined": "已加入 hub，网关正在重启"
+        },
+        "errors": {
+          "not_standalone": "本机已经在 mesh 里，不再提供安装向导。",
+          "invalid_url": "请填写合法的 https:// 地址。",
+          "insecure_local_required": "http:// 只能用于本机的 hub——请先打开「允许本机的 http:// hub」。",
+          "invalid_username": "1-64 个字符，只能用字母、数字、点、下划线、连字符。",
+          "weak_password": "密码至少 8 位。",
+          "password_mismatch": "两次输入的密码不一致。",
+          "invalid_name": "请填写 1-64 个字符的名称。",
+          "user_exists": "本机已存在同名用户。",
+          "invalid_token": "join 串不合法：必须是 128 位，后面可以再跟一个点号与 64 位的 CA 指纹。请完整粘贴 hub 签发的字符串。",
+          "node_revoked": "该节点身份已被吊销。需先重新初始化本机拿到新身份，再重新加入。",
+          "node_exists": "hub 上已有其他公钥占用该节点身份。",
+          "hub_unreachable": "无法访问 hub。请检查地址以及 hub 是否在运行。",
+          "join_failed": "hub 拒绝了本次加入请求。",
+          "env_write_failed": "配置文件写入失败，本次没有重启。已在本机创建的数据仍然保留——请先修复文件权限再重试。",
+          "direct_unsupported": "当前平台不支持直连。",
+          "direct_download_failed": "直连插件下载失败。",
+          "direct_failed": "启用直连失败。",
+          "withDetail": "{{base}}（{{detail}}）",
+          "unknown": "未知错误：{{message}}"
+        }
       }
     }
   }

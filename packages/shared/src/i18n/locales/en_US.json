@@ -193,6 +193,7 @@
       "tabGroup": {
         "general": "General",
         "devicesAndFiles": "Devices & Files",
+        "nodes": "Nodes",
         "notifications": "Notifications",
         "ai": "AI",
         "terminal": "Terminal"
@@ -677,6 +678,7 @@
       "openSettings": "Open Settings",
       "manageDevices": "Manage Devices",
       "settings": "Settings",
+      "nodes": "Nodes",
       "currentWindow": "Current Window",
       "currentPane": "Current Pane",
       "newWindow": "Create Window",
@@ -1141,6 +1143,190 @@
       "hub": "hub",
       "loggedIn": "Signed in",
       "hubOffline": "Hub unreachable — management actions are disabled.",
+      "machine": {
+        "title": "This machine",
+        "role": "Role",
+        "roleStandalone": "Standalone",
+        "roleNode": "Node",
+        "roleHub": "Hub + Node",
+        "hubUrl": "Hub address",
+        "hubPublicUrl": "Hub public address",
+        "direct": "Direct link add-on",
+        "directSupported": "Supported on this platform",
+        "directUnsupported": "Not supported on this platform",
+        "directInstalled": "Installed",
+        "directNotInstalled": "Not installed",
+        "directCapable": "Loaded",
+        "directEnable": "Turn on to download the add-on",
+        "directDisable": "Turn off to remove the add-on",
+        "directRestartRequired": "Restart tmex to apply the change.",
+        "directFailed": "Failed to change the direct link add-on",
+        "restartNow": "Restart now",
+        "restarting": "Restarting, waiting for the service to come back…",
+        "restartTimeout": "The service did not come back in time. Start it manually, then reload this page.",
+        "accountSecurity": "Account security",
+        "openNodesPage": "Open the nodes page",
+        "loginRequired": "Sign in to see this machine's status."
+      },
+      "https": {
+        "title": "HTTPS",
+        "description": "How this machine terminates TLS. Sessions and passkeys need a secure origin, so every address you actually open should be https.",
+        "hubUrlHint": "A hub's public URL has to be https. Either terminate TLS here with a certificate below, or put a reverse proxy in front and pick \"External reverse proxy\".",
+        "currentMode": "Current mode",
+        "modeActive": "in effect",
+        "save": "Save",
+        "saved": "HTTPS settings saved",
+        "renewStarted": "Renewal started",
+        "loginRequired": "Sign in to see the HTTPS configuration.",
+        "loadFailed": "Could not load the HTTPS configuration.",
+        "restartRequired": "Restart tmex to apply the proxy trust change.",
+        "restartNow": "Restart now",
+        "restarting": "Restarting, waiting for the service to come back…",
+        "restartTimeout": "The service did not come back in time. Start it manually, then reload this page.",
+        "confirmStop": {
+          "title": "Stop the built-in HTTPS listener?",
+          "description": "The built-in HTTPS listener on port {{port}} is running right now, and this page may be served through it. Saving \"{{mode}}\" stops it immediately.",
+          "requirement": "Only continue if another reachable endpoint already exists — the plain HTTP port, or a reverse proxy in front of this machine. Otherwise you lock yourself out until you fix it from the machine itself.",
+          "confirm": "Stop the listener",
+          "cancel": "Keep it running"
+        },
+        "port": "HTTPS port",
+        "portHint": "9443 by default. Ports below 1024 need root, and a user-level Linux service cannot bind them at all. Nothing is detected automatically — make sure the port is free.",
+        "bindHost": "Bind address",
+        "bindHostHint": "0.0.0.0 listens on every interface; 127.0.0.1 keeps the listener on this machine only.",
+        "mode": {
+          "none": {
+            "title": "Off",
+            "description": "No TLS on this machine — plain HTTP only.",
+            "detail": "The https listener is stopped. Certificates and keys already stored stay on disk, so switching back is instant."
+          },
+          "external": {
+            "title": "External reverse proxy",
+            "description": "TLS is terminated in front of tmex by Cloudflare Tunnel, nginx or caddy."
+          },
+          "selfsigned": {
+            "title": "Self-signed (private CA)",
+            "description": "tmex creates its own CA and issues a certificate for the names you list. Every device has to install that CA."
+          },
+          "acme": {
+            "title": "Let's Encrypt",
+            "description": "A publicly trusted certificate, renewed automatically. Needs a public domain name."
+          }
+        },
+        "listener": {
+          "running": "Listening on port {{port}}",
+          "stopped": "Not listening",
+          "failed": "Listener failed: {{error}}"
+        },
+        "certificate": {
+          "subject": "Subject",
+          "sans": "Names",
+          "issuer": "Issuer",
+          "validUntil": "Valid until",
+          "daysLeft": "{{days}} days left",
+          "expired": "Expired",
+          "none": "No certificate issued yet."
+        },
+        "external": {
+          "intro": "tmex keeps serving plain HTTP and the proxy in front of it does TLS. Point the proxy at this machine's plain port and let it forward the original host, protocol and client address.",
+          "trustProxy": "Trust proxy headers",
+          "trustProxyHint": "Turn this on only when tmex cannot be reached except through your proxy.",
+          "trustProxyDetail": "When on, tmex believes X-Forwarded-Proto / X-Forwarded-For: session cookies get the Secure flag and the passkey origin comes from the forwarded host instead of the local one. If anyone can reach the plain port directly, they can forge those headers. The setting is written to the env file, so a restart is required."
+        },
+        "selfsigned": {
+          "intro": "Good for a LAN or a tunnel with no public domain. The CA is created once and never leaves this machine; the leaf certificate is valid for 398 days.",
+          "sans": "Names on the certificate",
+          "sansHint": "Hostnames or IP addresses you will actually type in the browser — up to 20. Any address not listed here keeps showing a certificate error.",
+          "sansPlaceholder": "hub.lan or 192.168.1.10",
+          "sansAdd": "Add",
+          "sansRemove": "Remove {{name}}",
+          "sansEmpty": "No names yet.",
+          "trustWarning": "Browsers reject this certificate until the CA is installed. Install it on every device that opens this address.",
+          "fingerprint": "CA fingerprint",
+          "downloadCa": "Download CA certificate",
+          "renew": "Renew certificate",
+          "guide": {
+            "title": "Install the CA on your devices",
+            "intro": "Download tmex-ca.crt first, then follow the steps for each platform. Compare the fingerprint above to make sure you installed the right one.",
+            "macos": {
+              "title": "macOS",
+              "steps": "Double-click tmex-ca.crt to open Keychain Access, put it in the System keychain, then open the entry and set \"When using this certificate\" to \"Always Trust\"."
+            },
+            "ios": {
+              "title": "iOS / iPadOS",
+              "steps": "AirDrop or mail the file to the device and install the profile, then enable it under Settings → General → About → Certificate Trust Settings."
+            },
+            "windows": {
+              "title": "Windows",
+              "steps": "Run certmgr.msc, go to Trusted Root Certification Authorities → Certificates → All Tasks → Import and pick tmex-ca.crt. Firefox keeps its own store, so import it there as well."
+            },
+            "android": {
+              "title": "Android",
+              "steps": "Settings → Security → Encryption & credentials → Install a certificate → CA certificate. The browser trusts user CAs; other apps only do so if they opt in."
+            },
+            "linux": {
+              "title": "Linux",
+              "steps": "Copy the file to /usr/local/share/ca-certificates/tmex-ca.crt and run sudo update-ca-certificates (Debian/Ubuntu), or to /etc/pki/ca-trust/source/anchors/ and run sudo update-ca-trust (Fedora/RHEL)."
+            }
+          }
+        },
+        "acme": {
+          "intro": "Let's Encrypt issues a publicly trusted certificate for one domain. The domain has to resolve to this machine, and renewal runs automatically 30 days before expiry.",
+          "domain": "Domain",
+          "domainHint": "A single hostname, no wildcards. It must already point at this machine.",
+          "email": "Contact email",
+          "emailHint": "Let's Encrypt uses it for expiry warnings.",
+          "challenge": "Validation method",
+          "challengeHttp": "HTTP-01",
+          "challengeHttpHint": "Let's Encrypt fetches http://<domain>/.well-known/acme-challenge/… on public port 80.",
+          "challengeDns": "DNS-01 (Cloudflare)",
+          "challengeDnsHint": "A temporary TXT record is created through the Cloudflare API. Works behind NAT and without port 80.",
+          "cloudflareToken": "Cloudflare API token",
+          "cloudflareTokenHint": "An API token with Zone:DNS:Edit on the zone that holds this domain. Stored encrypted.",
+          "cloudflareTokenStored": "A token is already stored — leave this empty to keep it.",
+          "staging": "Use the staging environment",
+          "stagingHint": "Staging certificates are not trusted by browsers, but the rate limits are much looser. Use it while testing: production allows only 5 failed validations per account, hostname and hour.",
+          "statusLabel": "Issuance",
+          "status": {
+            "idle": "Not started",
+            "pending": "In progress",
+            "ok": "Issued",
+            "error": "Failed"
+          },
+          "pendingHint": "Issuance runs in the background; this panel refreshes every 3 seconds.",
+          "lastAttempt": "Last attempt",
+          "nextRenew": "Next renewal",
+          "renewNow": "Renew now",
+          "hints": {
+            "http01": "HTTP-01 needs port 80 of your public IP to reach this machine's plain HTTP port. Behind NAT, map external port 80 to that port on your router.",
+            "http01Linux": "A user-level systemd service cannot bind port 80 itself, so the mapping has to happen on the router — or switch to DNS-01.",
+            "dns01": "DNS-01 needs a Cloudflare API token with Zone:DNS:Edit on the zone that holds this domain, and the domain's DNS has to be managed by Cloudflare."
+          }
+        },
+        "errors": {
+          "invalid_sans": "One of the names is not a valid hostname or IP address.",
+          "invalid_domain": "That is not a valid domain name (wildcards are not supported).",
+          "invalid_email": "That is not a valid email address.",
+          "cloudflare_token_required": "DNS-01 needs a Cloudflare API token.",
+          "invalid_port": "The port has to be between 1 and 65535.",
+          "port_in_use": "The port is already in use — the setting was saved but the listener could not start.",
+          "tls_failed": "The HTTPS change failed.",
+          "not_applicable": "There is nothing to renew in this mode.",
+          "no_ca": "This machine has no private CA yet — save the self-signed mode first.",
+          "unauthorized": "Sign in first.",
+          "unknown": "Failed: {{message}}"
+        },
+        "validation": {
+          "sansRequired": "Add at least one name.",
+          "sansInvalid": "Names have to be hostnames or IP addresses.",
+          "sansTooMany": "At most 20 names.",
+          "portInvalid": "Enter a port between 1 and 65535.",
+          "hostRequired": "Enter a bind address.",
+          "domainInvalid": "Enter a domain name, without wildcards.",
+          "emailInvalid": "Enter a valid email address.",
+          "tokenRequired": "Enter a Cloudflare API token."
+        }
+      },
       "columns": {
         "name": "Name",
         "status": "Status",
@@ -1214,6 +1400,108 @@
         "remoteCandidate": "Remote candidate",
         "selectedPair": "Selected pair",
         "unknown": "unknown"
+      },
+      "setup": {
+        "title": "Enable hub",
+        "intro": "This machine is standalone — it is not part of a mesh yet. Pick one of the two paths below.",
+        "introDetail": "Making this machine the hub creates the first user here and lets other machines join it; it needs an address that is reachable over HTTPS. Joining an existing hub turns this machine into a node of a mesh someone else already runs. Either way the gateway writes its configuration and restarts once.",
+        "path": {
+          "becomeHub": {
+            "title": "Make this machine the hub",
+            "description": "Creates the first user here and accepts join requests from other machines. Needs a public HTTPS address."
+          },
+          "joinHub": {
+            "title": "Join an existing hub",
+            "description": "Turns this machine into a node. You need a join string issued by the hub; it is valid for 10 minutes."
+          }
+        },
+        "becomeHub": {
+          "title": "Make this machine the hub",
+          "description": "Creates the first user, issues this machine's own node certificate, then restarts the gateway with the role hub,node."
+        },
+        "joinHub": {
+          "title": "Join an existing hub",
+          "description": "Same as running `tmex-cli hub join` on this machine. After the join succeeds the gateway restarts as a node."
+        },
+        "fields": {
+          "hubPublicUrl": "Hub public address",
+          "hubPublicUrlHint": "The HTTPS address browsers and `hub join` will use, for example https://tmex.example.com. Every machine that joins must be able to reach it.",
+          "username": "Username",
+          "usernameHint": "1-64 characters: letters, digits, dot, underscore or hyphen.",
+          "password": "Password",
+          "passwordHint": "At least 8 characters. Your root key is derived from this password, so it cannot be recovered from the server.",
+          "confirmPassword": "Confirm password",
+          "hubUrl": "Hub address",
+          "hubUrlHint": "The hub's HTTPS address, for example https://tmex.example.com. HTTP redirects are rejected.",
+          "token": "Join string",
+          "tokenHint": "Issued by `tmex-cli enroll` on the hub, or from the Nodes page of any signed-in entry. Valid for 10 minutes. Whitespace and line breaks are stripped. A self-signed hub appends a dot and its CA fingerprint — paste the whole thing.",
+          "tokenPlaceholder": "128-character join string, optionally followed by .<CA fingerprint>",
+          "name": "Node name",
+          "nameHint": "Shown in the sidebar and on the Nodes page.",
+          "directEnable": "Enable direct connections",
+          "directEnableHint": "Downloads the native add-on for this platform so nodes can talk to each other directly instead of relaying through the hub. A failure here does not block setup.",
+          "directUnsupportedHint": "No native add-on is published for {{platform}}; traffic will relay through the hub.",
+          "insecureLocal": "Allow an http:// hub on this machine",
+          "insecureLocalHint": "Development and test only: permits http://127.0.0.1 or http://localhost as the hub address. Not available in production."
+        },
+        "precheck": {
+          "button": "Check reachability",
+          "reachableSelf": "Reachable, and it answers as this machine. The address is ready to use as the hub's public address.",
+          "reachableOther": "Reachable (HTTP {{status}}), but it answers as a different tmex instance. Check the address before continuing.",
+          "unreachable": "Not reachable: {{error}}",
+          "httpsHint": "tmex does not terminate HTTPS itself yet, so the public address has to be served by a reverse proxy or a Cloudflare Tunnel in front of this machine. Built-in HTTPS comes in a later release.",
+          "docsHint": "See docs/hub/2026082800-hub-node-operations.md, sections 「Cloudflare Tunnel 与反代」 and 「首次搭 hub」."
+        },
+        "submit": {
+          "becomeHub": "Create user and restart as hub",
+          "joinHub": "Join and restart",
+          "pending": "Working..."
+        },
+        "result": {
+          "title": "Setup finished",
+          "becomeHubDescription": "The first user and this machine's node certificate were created. The gateway is restarting.",
+          "joinDescription": "This machine joined the hub. The gateway is restarting.",
+          "fingerprint": "Root key fingerprint",
+          "hubPublicUrl": "Hub public address",
+          "hubUrl": "Hub address",
+          "username": "Username",
+          "directLabel": "Direct connections",
+          "direct": {
+            "enabled": "enabled",
+            "skipped": "skipped",
+            "failed": "failed ({{error}}) - traffic relays through the hub; you can retry later from this tab"
+          }
+        },
+        "restart": {
+          "waiting": "Waiting for the gateway to come back... {{seconds}}s",
+          "restarted": "The gateway is back. Taking you to the sign-in page.",
+          "timeout": "The service did not come back within 60 seconds. Start it manually, then reload this page:"
+        },
+        "toast": {
+          "hubCreated": "Hub created; the gateway is restarting",
+          "joined": "Joined the hub; the gateway is restarting"
+        },
+        "errors": {
+          "not_standalone": "This machine is already part of a mesh, so the setup wizard is not available.",
+          "invalid_url": "Enter a valid https:// address.",
+          "insecure_local_required": "http:// is only allowed for a hub on this machine - turn on “Allow an http:// hub on this machine”.",
+          "invalid_username": "1-64 characters: letters, digits, dot, underscore or hyphen.",
+          "weak_password": "Use at least 8 characters.",
+          "password_mismatch": "The two passwords do not match.",
+          "invalid_name": "Enter a name of 1-64 characters.",
+          "user_exists": "A user with this name already exists on this machine.",
+          "invalid_token": "That join string is not valid. It must be exactly 128 characters, optionally followed by a dot and the 64-character CA fingerprint. Paste the whole string issued by the hub.",
+          "node_revoked": "This node identity was revoked. Re-initialize this machine to get a fresh identity before joining again.",
+          "node_exists": "The hub already has a different node registered under this identity.",
+          "hub_unreachable": "Could not reach the hub. Check the address and make sure the hub is running.",
+          "join_failed": "The hub rejected the join request.",
+          "env_write_failed": "Could not write the configuration file, so nothing was restarted. Anything already created on this machine is still there - fix the file permissions and try again.",
+          "direct_unsupported": "Direct connections are not available on this platform.",
+          "direct_download_failed": "Could not download the direct-connection add-on.",
+          "direct_failed": "Enabling direct connections failed.",
+          "withDetail": "{{base}} ({{detail}})",
+          "unknown": "Unexpected error: {{message}}"
+        }
       }
     }
   }

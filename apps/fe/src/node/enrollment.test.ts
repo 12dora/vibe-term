@@ -370,7 +370,7 @@ describe('pending 存储', () => {
 describe('createEnrollmentOnHub', () => {
   const headHash = new Uint8Array(32).fill(7);
 
-  function fakeHub(created: Record<string, string>[]) {
+  function fakeHub(created: Record<string, string>[], extras?: { ca_fingerprint?: string }) {
     return {
       createEnrollment: (body: Record<string, string>) => {
         created.push(body);
@@ -379,6 +379,7 @@ describe('createEnrollmentOnHub', () => {
           id: 'e-1',
           expires_at: NOW + 60_000,
           public_url: 'https://hub.example',
+          ca_fingerprint: extras?.ca_fingerprint,
         });
       },
     } as unknown as HubApi;
@@ -418,6 +419,21 @@ describe('createEnrollmentOnHub', () => {
     expect(authorization.signer).toBe('root');
     expect(authorization.credential_id).toBeNull();
     expect(decodeBase64url(outcome.pending.authorizationSig)).toHaveLength(64);
+  });
+
+  test('hub 返回 ca_fingerprint 时 join 串带 v2 段', async () => {
+    const fingerprint = 'cd'.repeat(32);
+    const outcome = await createEnrollmentOnHub({
+      hubApi: fakeHub([], { ca_fingerprint: fingerprint }),
+      uid: UID,
+      rootEpoch: ROOT_EPOCH,
+      signer: { kind: 'root', rootKey },
+      rootPublicKey: rootKey.publicKey,
+      keyLogHeadHash: headHash,
+      now: NOW,
+    });
+    expect(decodeJoinToken(outcome.joinToken).caFingerprint).toBe(fingerprint);
+    expect(outcome.joinToken.endsWith(`.${fingerprint}`)).toBe(true);
   });
 
   test('passkey 签授权：signer=passkey、credential_id 落在授权里，sig 是 Borsh 断言', async () => {
@@ -883,11 +899,23 @@ describe('encodeJoinTokenZeroing', () => {
     const rootPk = new Uint8Array(32).fill(8);
     const head = new Uint8Array(32).fill(9);
     const scratch = new Uint8Array(96).fill(1);
-    const token = encodeJoinTokenZeroing(enrollSk, rootPk, head, scratch);
+    const token = encodeJoinTokenZeroing(enrollSk, rootPk, head, undefined, scratch);
 
     expect(token).toBe(encodeJoinToken(enrollSk, rootPk, head));
     expect(decodeJoinToken(token).enrollSk).toEqual(enrollSk);
     // 私钥的字节副本不能留在堆里
+    expect(scratch.every((byte) => byte === 0)).toBe(true);
+  });
+
+  test('可选 CA fingerprint 段与共享编码器一致，缓冲仍清零', () => {
+    const enrollSk = new Uint8Array(32).fill(7);
+    const rootPk = new Uint8Array(32).fill(8);
+    const head = new Uint8Array(32).fill(9);
+    const fingerprint = 'ab'.repeat(32);
+    const scratch = new Uint8Array(96).fill(1);
+    const token = encodeJoinTokenZeroing(enrollSk, rootPk, head, fingerprint, scratch);
+    expect(token).toBe(encodeJoinToken(enrollSk, rootPk, head, fingerprint));
+    expect(decodeJoinToken(token).caFingerprint).toBe(fingerprint);
     expect(scratch.every((byte) => byte === 0)).toBe(true);
   });
 

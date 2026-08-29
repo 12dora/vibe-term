@@ -29,6 +29,10 @@ export interface HubEnrollmentCreated {
   expires_at: number;
   /** hub 的对外可达地址；join 命令**只能**用它。 */
   public_url?: string;
+  /** self-signed CA 的 SPKI sha256 hex；拼进 join 串 v2 段。 */
+  ca_fingerprint?: string | null;
+  /** self-signed CA PEM；浏览器不消费，给 CLI / 对端 pin 用。 */
+  ca_cert_pem?: string | null;
 }
 
 export type { HubEnrollmentStatus };

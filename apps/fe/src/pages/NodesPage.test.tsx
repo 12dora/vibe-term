@@ -11,9 +11,9 @@ const { renderToStaticMarkup } = await import('react-dom/server');
 const { MemoryRouter } = await import('react-router');
 const { resetMeshNodesStateForTest, setMeshNodesStateForTest } = await import('@/node/mesh-nodes');
 const { setPendingStorage, clearPendingEnrollments } = await import('@/node/enrollment');
-const NodesPageModule = await import('./NodesPage');
-const NodesPage = NodesPageModule.default;
-const { canAutoSignAdmit, resolveHubPublicUrl } = NodesPageModule;
+const NodesPage = (await import('./NodesPage')).default;
+const { canAutoSignAdmit } = await import('./nodes/use-admit-action');
+const { resolveHubPublicUrl } = await import('./nodes/enrollment-section');
 const { rootKeyFromSeed } = await import('@tmex/shared/auth');
 
 const MODE: AuthModeResponse = {

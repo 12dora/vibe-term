@@ -37,6 +37,8 @@ export interface AuthModeResponse {
   hubNodeId?: string | null;
   /** hub 的对外可达地址；join 命令只能用它，绝不能退化成入口 origin。 */
   hubPublicUrl?: string | null;
+  /** self-signed CA 的 SPKI sha256 hex；无 CA 时为 null。 */
+  caFingerprint?: string | null;
 }
 
 /**

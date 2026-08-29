@@ -1,15 +1,21 @@
+import { useSharedAuthMode } from '@/node/mesh-nodes';
 import { useSiteStore, useTmuxStore } from '@tmex/stores/react';
 import { useSidebar } from '@tmex/ui/sidebar';
-import { Settings, X } from 'lucide-react';
+import { Network, Settings, X } from 'lucide-react';
 import { useEffect } from 'react';
 import { useTranslation } from 'react-i18next';
 import { NavLink } from './nav-link';
 import { ThemeMenu } from './theme-menu';
 
+/** 顶部动作按钮统一尺寸：mesh 下最多四个（延迟、主题、节点、设置），必须挤进一行。 */
+const ACTION_BUTTON_CLASS =
+  'inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-sidebar-accent hover:text-foreground';
+
 export function SidebarTitle() {
   const { t } = useTranslation();
   const { isMobile, setOpenMobile } = useSidebar();
   const siteName = useSiteStore((state) => state.settings?.siteName);
+  const { meshEnabled } = useSharedAuthMode();
 
   // Fetch settings on mount if not loaded
   const fetchSettings = useSiteStore((state) => state.fetchSettings);
@@ -21,13 +27,13 @@ export function SidebarTitle() {
   const displayName = siteName ?? 'tmex';
 
   return (
-    <div className="flex items-center gap-2 px-2">
+    <div className="flex items-center gap-1 px-2">
       {isMobile && (
         <button
           type="button"
           data-testid="mobile-sidebar-close"
           onClick={() => setOpenMobile(false)}
-          className="inline-flex h-8 w-8 ml-[-8px] shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-sidebar-accent hover:text-foreground"
+          className={`${ACTION_BUTTON_CLASS} ml-[-8px]`}
           aria-label={t('nav.closeSidebar')}
           title={t('nav.closeSidebar')}
         >
@@ -40,16 +46,30 @@ export function SidebarTitle() {
         </div>
         <span className="truncate text-sm font-semibold tracking-tight">{displayName}</span>
       </NavLink>
-      <WsLatency />
-      <ThemeMenu />
-      <NavLink
-        to="/settings"
-        className="inline-flex h-8 w-8 mr-[-8px] shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-sidebar-accent hover:text-foreground"
-        aria-label={t('sidebar.settings')}
-        title={t('sidebar.settings')}
-      >
-        <Settings className="h-4 w-4" />
-      </NavLink>
+      <div className="flex shrink-0 items-center gap-0.5 mr-[-8px]">
+        <WsLatency />
+        <ThemeMenu />
+        {meshEnabled && (
+          <NavLink
+            to="/nodes"
+            className={ACTION_BUTTON_CLASS}
+            data-testid="sidebar-nodes"
+            aria-label={t('sidebar.nodes')}
+            title={t('sidebar.nodes')}
+          >
+            <Network className="h-4 w-4" />
+          </NavLink>
+        )}
+        <NavLink
+          to="/settings"
+          className={ACTION_BUTTON_CLASS}
+          data-testid="sidebar-settings"
+          aria-label={t('sidebar.settings')}
+          title={t('sidebar.settings')}
+        >
+          <Settings className="h-4 w-4" />
+        </NavLink>
+      </div>
     </div>
   );
 }
@@ -61,7 +81,7 @@ function WsLatency() {
   const isHigh = latency >= 200;
   return (
     <span
-      className={`inline-flex h-8 shrink-0 items-center text-xs tabular-nums ${isHigh ? 'text-orange-400' : 'text-muted-foreground'}`}
+      className={`inline-flex h-8 shrink-0 items-center px-0.5 text-xs tabular-nums ${isHigh ? 'text-orange-400' : 'text-muted-foreground'}`}
     >
       {latency}ms
     </span>
