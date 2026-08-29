@@ -354,7 +354,11 @@ export class TerminalInputBridge {
     return consumed;
   }
 
+  // 零位移的轴直接短路：不查 cellDimensions / viewportRows 等宿主尺寸
   private gestureToLines(gesture: GhosttyViewportGesture): number {
+    if (gesture.deltaY === 0) {
+      return 0;
+    }
     return this.verticalGesture.consume({
       source: gesture.source,
       delta: gesture.deltaY,
@@ -365,9 +369,13 @@ export class TerminalInputBridge {
   }
 
   private gestureToColumns(gesture: GhosttyViewportGesture): number {
+    const deltaX = gesture.deltaX ?? 0;
+    if (deltaX === 0) {
+      return 0;
+    }
     return this.horizontalGesture.consume({
       source: gesture.source,
-      delta: gesture.deltaX ?? 0,
+      delta: deltaX,
       deltaMode: gesture.deltaMode,
       cellSize: this.host.cellDimensions().width || DEFAULT_CELL_WIDTH,
       pageSize: this.host.viewportCols(),

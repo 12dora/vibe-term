@@ -16,7 +16,7 @@ function input(overrides: Partial<MouseDownInput> = {}): MouseDownInput {
     shiftBypass: false,
     button: GHOSTTY_MOUSE_BUTTON_LEFT,
     platformModifier: false,
-    hasLink: false,
+    hasLink: () => false,
     ...overrides,
   };
 }
@@ -51,12 +51,48 @@ describe('shift reporting bypass', () => {
 describe('mousedown classification', () => {
   test('reporting wins over link activation', () => {
     expect(
-      classifyMouseDown(input({ reporting: true, platformModifier: true, hasLink: true }))
+      classifyMouseDown(input({ reporting: true, platformModifier: true, hasLink: () => true }))
     ).toEqual({
       kind: 'report',
       button: GHOSTTY_MOUSE_BUTTON_LEFT,
       recordBypass: false,
     });
+  });
+
+  test('reporting without shift never runs the link hit-test', () => {
+    let probes = 0;
+    const hasLink = (): boolean => {
+      probes += 1;
+      return true;
+    };
+
+    expect(classifyMouseDown(input({ reporting: true, platformModifier: true, hasLink }))).toEqual({
+      kind: 'report',
+      button: GHOSTTY_MOUSE_BUTTON_LEFT,
+      recordBypass: false,
+    });
+    expect(
+      classifyMouseDown(input({ reporting: true, button: null, platformModifier: true, hasLink }))
+    ).toEqual({ kind: 'ignore', recordBypass: false });
+    expect(probes).toBe(0);
+  });
+
+  test('the link hit-test is skipped without the platform modifier', () => {
+    let probes = 0;
+    const hasLink = (): boolean => {
+      probes += 1;
+      return true;
+    };
+
+    expect(classifyMouseDown(input({ hasLink }))).toEqual({
+      kind: 'beginSelection',
+      recordBypass: false,
+    });
+    expect(classifyMouseDown(input({ button: null, platformModifier: true, hasLink }))).toEqual({
+      kind: 'ignore',
+      recordBypass: false,
+    });
+    expect(probes).toBe(0);
   });
 
   test('reporting forwards non-left buttons', () => {
@@ -82,21 +118,21 @@ describe('mousedown classification', () => {
   test('shift bypass still allows link activation with the platform modifier', () => {
     expect(
       classifyMouseDown(
-        input({ reporting: true, shiftBypass: true, platformModifier: true, hasLink: true })
+        input({ reporting: true, shiftBypass: true, platformModifier: true, hasLink: () => true })
       )
     ).toEqual({ kind: 'activateLink', recordBypass: true });
   });
 
   test('link activation needs both the platform modifier and a hit', () => {
-    expect(classifyMouseDown(input({ platformModifier: true, hasLink: true }))).toEqual({
+    expect(classifyMouseDown(input({ platformModifier: true, hasLink: () => true }))).toEqual({
       kind: 'activateLink',
       recordBypass: false,
     });
-    expect(classifyMouseDown(input({ platformModifier: true, hasLink: false }))).toEqual({
+    expect(classifyMouseDown(input({ platformModifier: true, hasLink: () => false }))).toEqual({
       kind: 'beginSelection',
       recordBypass: false,
     });
-    expect(classifyMouseDown(input({ platformModifier: false, hasLink: true }))).toEqual({
+    expect(classifyMouseDown(input({ platformModifier: false, hasLink: () => true }))).toEqual({
       kind: 'beginSelection',
       recordBypass: false,
     });
@@ -105,7 +141,7 @@ describe('mousedown classification', () => {
   test('local mode ignores non-left buttons even over a link', () => {
     expect(
       classifyMouseDown(
-        input({ button: GHOSTTY_MOUSE_BUTTON_MIDDLE, platformModifier: true, hasLink: true })
+        input({ button: GHOSTTY_MOUSE_BUTTON_MIDDLE, platformModifier: true, hasLink: () => true })
       )
     ).toEqual({ kind: 'ignore', recordBypass: false });
     expect(classifyMouseDown(input({ button: null }))).toEqual({

@@ -7,7 +7,8 @@ export type MouseDownInput = {
   shiftBypass: boolean;
   button: number | null;
   platformModifier: boolean;
-  hasLink: boolean;
+  // 惰性：鼠标上报优先于链接激活，命中测试有副作用（LinkMatchCache），只能在真正需要的分支求值
+  hasLink: () => boolean;
 };
 
 export type MouseDownDecision = (
@@ -67,7 +68,7 @@ export function classifyMouseDown(input: MouseDownInput): MouseDownDecision {
   if (input.button !== GHOSTTY_MOUSE_BUTTON_LEFT) {
     return { kind: 'ignore', recordBypass };
   }
-  if (input.platformModifier && input.hasLink) {
+  if (input.platformModifier && input.hasLink()) {
     return { kind: 'activateLink', recordBypass };
   }
 

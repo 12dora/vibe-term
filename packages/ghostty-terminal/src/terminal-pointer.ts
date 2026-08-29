@@ -1,6 +1,5 @@
 import { hasPlatformModifier } from './selection-clipboard';
 import {
-  GHOSTTY_MOUSE_BUTTON_LEFT,
   type MouseDownDecision,
   classifyMouseDown,
   isShiftReportingBypass,
@@ -95,27 +94,38 @@ export function bindMouseEvents(
     }
   };
 
+  // 命中测试只在 classifyMouseDown 真的走到链接分支时才发生（上报分支绝不触发），
+  // 结果缓存下来供 applyMouseDown 复用，避免重复扫描。
+  const createLinkProbe = (
+    event: MouseEvent
+  ): { hasLink: () => boolean; hit: () => TerminalLinkHit | null } => {
+    let hit: TerminalLinkHit | null = null;
+    return {
+      hasLink: (): boolean => {
+        hit = context.linkAtClient(event.clientX, event.clientY);
+        return hit !== null;
+      },
+      hit: (): TerminalLinkHit | null => hit,
+    };
+  };
+
   const resolveMouseDown = (
     event: MouseEvent
   ): { decision: MouseDownDecision; linkHit: TerminalLinkHit | null } => {
     const reporting = context.getInputRoutingState().mouseReporting;
     const button = mouseButtonFromEvent(event);
     const platformModifier = hasPlatformModifier(event);
-    const linkHit =
-      platformModifier && button === GHOSTTY_MOUSE_BUTTON_LEFT
-        ? context.linkAtClient(event.clientX, event.clientY)
-        : null;
+    const probe = createLinkProbe(event);
 
-    return {
-      decision: classifyMouseDown({
-        reporting,
-        shiftBypass: isShiftReportingBypass(reporting, event.shiftKey, button),
-        button,
-        platformModifier,
-        hasLink: linkHit !== null,
-      }),
-      linkHit,
-    };
+    const decision = classifyMouseDown({
+      reporting,
+      shiftBypass: isShiftReportingBypass(reporting, event.shiftKey, button),
+      button,
+      platformModifier,
+      hasLink: probe.hasLink,
+    });
+
+    return { decision, linkHit: probe.hit() };
   };
 
   const applyMouseDown = (
