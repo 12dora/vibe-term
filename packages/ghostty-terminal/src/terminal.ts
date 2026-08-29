@@ -7,6 +7,7 @@ import {
   disposeRenderStateResources,
 } from './render-state';
 import type { SelectionMode } from './selection-model';
+import { SynchronizedOutputFallback } from './synchronized-output-fallback';
 import { TerminalBuffer } from './terminal-buffer';
 import { DEFAULT_COLS, DEFAULT_ROWS, GHOSTTY_MODE_ANY_MOUSE } from './terminal-constants';
 import { TerminalDomSurface } from './terminal-dom';
@@ -23,11 +24,11 @@ import {
   TerminalInputBridge,
   pointerLikeEventToGhosttyMods,
 } from './terminal-input-bridge';
+import { TerminalListenerHub } from './terminal-listeners';
 import {
   GHOSTTY_MOUSE_BUTTON_LEFT,
   type PointerEventContext,
   SYNTHETIC_MOUSE_SUPPRESS_MS,
-  type TerminalLinkHit,
   bindMouseEvents,
 } from './terminal-pointer';
 import { type RenderSnapshot, TerminalRenderCoordinator } from './terminal-render-coordinator';
@@ -46,9 +47,6 @@ import type {
 } from './types';
 
 const TERMINAL_ENGINE = 'ghostty-official';
-// 同步输出（DECSET 2026）激活期间挂起渲染的兜底时限：应用悬挂或关闭帧迟迟不到时，
-// 最迟此间隔后仍强制渲染一次，与主流终端对 2026 的安全阀行为一致。
-const SYNCHRONIZED_OUTPUT_FALLBACK_MS = 150;
 
 export class FitAddon {
   private terminal: GhosttyTerminalController | null = null;
@@ -97,15 +95,13 @@ export class GhosttyTerminalController implements CompatibleTerminalLike {
   private readonly renderCoordinator: TerminalRenderCoordinator;
   private readonly selection: TerminalSelection;
   private readonly inputState = createTerminalInputState();
-  private readonly dataListeners = new Set<(data: string) => void>();
-  private readonly selectionListeners = new Set<(text: string | null) => void>();
-  private readonly linkListeners = new Set<(url: string) => void>();
-  private readonly fileLinkListeners = new Set<(path: string) => void>();
+  private readonly listeners = new TerminalListenerHub();
+  private readonly syncOutputFallback = new SynchronizedOutputFallback(() => {
+    this.renderCoordinator.schedule();
+  });
   private readonly addons = new Set<{ dispose: () => void }>();
   private readonly domEventDisposers: Array<() => void> = [];
   private fileLinkContext: FileLinkContext | null = null;
-  private lastNotifiedSelectionText: string | null = null;
-  private syncOutputFallbackTimer: ReturnType<typeof setTimeout> | null = null;
   private disposed = false;
   private disableStdin: boolean;
   private customKeyEventHandler: (event: KeyboardEvent) => boolean = () => true;
@@ -127,7 +123,7 @@ export class GhosttyTerminalController implements CompatibleTerminalLike {
       cellDimensions: () => this.dom.cell,
       screenBounds: () => this.dom.screenBounds(),
       isInputDisabled: () => this.disableStdin,
-      emitData: (data) => this.emitData(data),
+      emitData: (data) => this.listeners.emitData(data),
       viewportCols: () => this.cols,
       viewportRows: () => this.rows,
       scrollLines: (amount) => this.scrollLines(amount),
@@ -237,19 +233,19 @@ export class GhosttyTerminalController implements CompatibleTerminalLike {
   }
 
   onData(callback: (data: string) => void): TerminalDisposable {
-    return this.subscribe(this.dataListeners, callback);
+    return this.listeners.onData(callback);
   }
 
   onSelectionChange(callback: (text: string | null) => void): TerminalDisposable {
-    return this.subscribe(this.selectionListeners, callback);
+    return this.listeners.onSelectionChange(callback);
   }
 
   onLinkActivated(callback: (url: string) => void): TerminalDisposable {
-    return this.subscribe(this.linkListeners, callback);
+    return this.listeners.onLinkActivated(callback);
   }
 
   onFileLinkActivated(callback: (path: string) => void): TerminalDisposable {
-    return this.subscribe(this.fileLinkListeners, callback);
+    return this.listeners.onFileLinkActivated(callback);
   }
 
   attachCustomKeyEventHandler(callback: (event: KeyboardEvent) => boolean): void {
@@ -324,15 +320,10 @@ export class GhosttyTerminalController implements CompatibleTerminalLike {
     // write 到达，rAF 到点就画会把中间态刷上屏（no-flicker TUI 表现为逐行扫描）。
     // ESU 到达的那次 write 会走正常渲染调度；只留低频兜底防应用悬挂。
     if (this.input.isSynchronizedOutputActive()) {
-      if (this.syncOutputFallbackTimer === null) {
-        this.syncOutputFallbackTimer = setTimeout(() => {
-          this.syncOutputFallbackTimer = null;
-          this.renderCoordinator.schedule();
-        }, SYNCHRONIZED_OUTPUT_FALLBACK_MS);
-      }
+      this.syncOutputFallback.arm();
       return;
     }
-    this.cancelSynchronizedOutputFallback();
+    this.syncOutputFallback.cancel();
     this.renderCoordinator.schedule();
   }
 
@@ -484,7 +475,7 @@ export class GhosttyTerminalController implements CompatibleTerminalLike {
       return;
     }
 
-    this.emitData(encoded);
+    this.listeners.emitData(encoded);
   }
 
   focus(): void {
@@ -571,11 +562,11 @@ export class GhosttyTerminalController implements CompatibleTerminalLike {
 
     this.renderCoordinator.cancelPending();
     this.selection.stopAutoScroll();
-    this.updateSelectionTextProbe(null);
+    this.listeners.updateSelectionTextProbe(null);
     this.clearDomEventListeners();
     this.dom.cancelScrollbarFade();
     this.renderCoordinator.cancelLinkOverlay();
-    this.cancelSynchronizedOutputFallback();
+    this.syncOutputFallback.cancel();
 
     for (const addon of this.addons) {
       addon.dispose();
@@ -593,15 +584,6 @@ export class GhosttyTerminalController implements CompatibleTerminalLike {
     this.bindings.freeTerminal(this.handles.terminal);
   }
 
-  private subscribe<T>(listeners: Set<T>, callback: T): TerminalDisposable {
-    listeners.add(callback);
-    return {
-      dispose: () => {
-        listeners.delete(callback);
-      },
-    };
-  }
-
   private applyRenderSnapshot(snapshot: RenderSnapshot): void {
     const { scrollbar } = snapshot;
     this.cols = snapshot.cols;
@@ -612,17 +594,8 @@ export class GhosttyTerminalController implements CompatibleTerminalLike {
       scrollbar.total,
       snapshot.visibleLines
     );
-    this.updateSelectionTextProbe(snapshot.selectionText);
+    this.listeners.updateSelectionTextProbe(snapshot.selectionText);
     this.dom.updateScrollbar(scrollbar);
-  }
-
-  private cancelSynchronizedOutputFallback(): void {
-    if (this.syncOutputFallbackTimer === null) {
-      return;
-    }
-
-    clearTimeout(this.syncOutputFallbackTimer);
-    this.syncOutputFallbackTimer = null;
   }
 
   private bindDomEvents(): void {
@@ -654,7 +627,7 @@ export class GhosttyTerminalController implements CompatibleTerminalLike {
       emitMouseInput: (request) => this.input.emitMouseInput(request),
       clearSelection: () => this.clearSelectionState(),
       linkAtClient: (clientX, clientY) => this.renderCoordinator.linkAt(clientX, clientY),
-      activateLink: (hit) => this.activateLink(hit),
+      activateLink: (hit) => this.listeners.activateLink(hit),
       setLinkCursor: (active) => this.dom.setLinkCursor(active),
       beginPointerSelection: (event) => this.beginPointerSelection(event),
       updatePointerSelection: (event) => this.updatePointerSelection(event),
@@ -670,7 +643,7 @@ export class GhosttyTerminalController implements CompatibleTerminalLike {
       getSelectionText: () => this.selection.getText(),
       clearSelection: () => this.clearSelectionState(),
       clearTextarea: () => this.dom.clearTextarea(),
-      emitData: (data) => this.emitData(data),
+      emitData: (data) => this.listeners.emitData(data),
       encodeKeyboardEvent: (event, action) => this.input.encodeKeyboardEvent(event, action),
       encodeSyntheticKey: (code) => this.input.encodeSyntheticKey(code),
       runCustomKeyEventHandler: (event) => this.customKeyEventHandler(event),
@@ -690,17 +663,11 @@ export class GhosttyTerminalController implements CompatibleTerminalLike {
     this.dom.positionTextareaAtCursor(cursor.x ?? 0, cursor.y ?? 0);
   }
 
-  private emitData(data: string): void {
-    for (const listener of this.dataListeners) {
-      listener(data);
-    }
-  }
-
   private clearSelectionState(repaint = true): void {
     this.selection.reset();
     this.input.resetPointerAccumulation();
     this.inputState.copyShortcutSuppressed = false;
-    this.updateSelectionTextProbe(null);
+    this.listeners.updateSelectionTextProbe(null);
 
     if (repaint) {
       this.renderCoordinator.renderNow();
@@ -724,27 +691,6 @@ export class GhosttyTerminalController implements CompatibleTerminalLike {
 
     if (outcome === 'keep') {
       this.renderCoordinator.renderNow();
-    }
-  }
-
-  private activateLink(hit: TerminalLinkHit): void {
-    const listeners = hit.kind === 'url' ? this.linkListeners : this.fileLinkListeners;
-    const target = hit.kind === 'url' ? hit.url : hit.path;
-    for (const listener of listeners) {
-      listener(target);
-    }
-  }
-
-  private updateSelectionTextProbe(value: string | null): void {
-    (
-      globalThis as { __tmexE2eTerminalSelectionText?: string | null }
-    ).__tmexE2eTerminalSelectionText = value;
-
-    if (value !== this.lastNotifiedSelectionText) {
-      this.lastNotifiedSelectionText = value;
-      for (const listener of this.selectionListeners) {
-        listener(value);
-      }
     }
   }
 
