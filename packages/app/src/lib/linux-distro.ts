@@ -20,7 +20,10 @@ export function parseOsRelease(content: string): LinuxDistroInfo | null {
     if (eqIndex < 0) continue;
     const key = trimmed.slice(0, eqIndex);
     let value = trimmed.slice(eqIndex + 1);
-    if ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'"))) {
+    if (
+      (value.startsWith('"') && value.endsWith('"')) ||
+      (value.startsWith("'") && value.endsWith("'"))
+    ) {
       value = value.slice(1, -1);
     }
     fields[key] = value;
@@ -49,6 +52,17 @@ export async function detectLinuxDistro(): Promise<LinuxDistroInfo | null> {
   }
 }
 
+const LINUX_PACKAGE_MANAGER_PROBES: ReadonlyArray<{
+  manager: Exclude<PackageManagerFamily, 'brew' | 'unknown'>;
+  matches: (id: string) => boolean;
+}> = [
+  { manager: 'apt', matches: (id) => id === 'debian' || id === 'ubuntu' },
+  { manager: 'dnf', matches: (id) => id === 'fedora' || id === 'rhel' || id === 'centos' },
+  { manager: 'pacman', matches: (id) => id === 'arch' || id === 'manjaro' },
+  { manager: 'apk', matches: (id) => id === 'alpine' },
+  { manager: 'zypper', matches: (id) => id.startsWith('opensuse') || id === 'suse' },
+];
+
 export function detectPackageManager(
   distro: LinuxDistroInfo | null,
   platform: NodeJS.Platform = process.platform
@@ -57,15 +71,11 @@ export function detectPackageManager(
   if (platform !== 'linux') return 'unknown';
   if (!distro) return 'unknown';
 
-  const allIds = [distro.id, ...distro.idLike];
-
-  for (const id of allIds) {
+  for (const id of [distro.id, ...distro.idLike]) {
     const lower = id.toLowerCase();
-    if (lower === 'debian' || lower === 'ubuntu') return 'apt';
-    if (lower === 'fedora' || lower === 'rhel' || lower === 'centos') return 'dnf';
-    if (lower === 'arch' || lower === 'manjaro') return 'pacman';
-    if (lower === 'alpine') return 'apk';
-    if (lower.startsWith('opensuse') || lower === 'suse') return 'zypper';
+    for (const probe of LINUX_PACKAGE_MANAGER_PROBES) {
+      if (probe.matches(lower)) return probe.manager;
+    }
   }
 
   return 'unknown';

@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { detectPackageManager, parseOsRelease, type LinuxDistroInfo } from './linux-distro';
+import { type LinuxDistroInfo, detectPackageManager, parseOsRelease } from './linux-distro';
 
 describe('parseOsRelease', () => {
   test('parses Ubuntu os-release', () => {
@@ -189,5 +189,33 @@ describe('detectPackageManager', () => {
 
   test('returns unknown for non-linux/darwin platform', () => {
     expect(detectPackageManager(null, 'win32')).toBe('unknown');
+  });
+
+  test('returns dnf for rhel and centos as primary id', () => {
+    expect(detectPackageManager({ id: 'rhel', idLike: [] }, 'linux')).toBe('dnf');
+    expect(detectPackageManager({ id: 'centos', idLike: [] }, 'linux')).toBe('dnf');
+  });
+
+  test('returns zypper for exact suse and opensuse prefix', () => {
+    expect(detectPackageManager({ id: 'suse', idLike: [] }, 'linux')).toBe('zypper');
+    expect(detectPackageManager({ id: 'opensuse-leap', idLike: [] }, 'linux')).toBe('zypper');
+  });
+
+  test('primary id wins over idLike when they map to different managers', () => {
+    expect(detectPackageManager({ id: 'fedora', idLike: ['debian'] }, 'linux')).toBe('dnf');
+    expect(detectPackageManager({ id: 'debian', idLike: ['fedora'] }, 'linux')).toBe('apt');
+  });
+
+  test('idLike is probed in listed order after primary id', () => {
+    expect(detectPackageManager({ id: 'gentoo', idLike: ['ubuntu', 'fedora'] }, 'linux')).toBe(
+      'apt'
+    );
+    expect(detectPackageManager({ id: 'gentoo', idLike: ['fedora', 'ubuntu'] }, 'linux')).toBe(
+      'dnf'
+    );
+    expect(detectPackageManager({ id: 'gentoo', idLike: ['alpine', 'arch'] }, 'linux')).toBe('apk');
+    expect(detectPackageManager({ id: 'gentoo', idLike: ['arch', 'alpine'] }, 'linux')).toBe(
+      'pacman'
+    );
   });
 });
