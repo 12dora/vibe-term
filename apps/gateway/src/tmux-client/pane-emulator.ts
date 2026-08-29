@@ -43,6 +43,26 @@ export interface PaneEmulatorTap {
 
 const DEFAULT_SCROLLBACK = 5000;
 
+function positiveSize(value: number | undefined, fallback: number): number {
+  return value && value > 0 ? value : fallback;
+}
+
+type RetentionStreamSource = EmulatorStreamSource & {
+  getPaneIdentity: NonNullable<EmulatorStreamSource['getPaneIdentity']>;
+  attachPaneConsumer: NonNullable<EmulatorStreamSource['attachPaneConsumer']>;
+  captureCanonicalScreen: NonNullable<EmulatorStreamSource['captureCanonicalScreen']>;
+  readPaneReplay: NonNullable<EmulatorStreamSource['readPaneReplay']>;
+};
+
+function isRetentionSource(source: EmulatorStreamSource): source is RetentionStreamSource {
+  return Boolean(
+    source.getPaneIdentity &&
+      source.attachPaneConsumer &&
+      source.captureCanonicalScreen &&
+      source.readPaneReplay
+  );
+}
+
 export class PaneEmulator {
   private readonly byteSubs = new Set<(data: Uint8Array) => void>();
   private readonly markerSubs = new Set<(marker: PromptMarker) => void>();
@@ -63,78 +83,79 @@ export class PaneEmulator {
     opts?: { scrollback?: number }
   ): Promise<PaneEmulator> {
     const info = await source.getPaneInfo(paneId).catch(() => null);
-    const cols = info?.cols && info.cols > 0 ? info.cols : 80;
-    const rows = info?.rows && info.rows > 0 ? info.rows : 24;
     const terminal = await HeadlessTerminal.create({
-      cols,
-      rows,
+      cols: positiveSize(info?.cols, 80),
+      rows: positiveSize(info?.rows, 24),
       scrollback: opts?.scrollback ?? DEFAULT_SCROLLBACK,
     });
     const emulator = new PaneEmulator(paneId, terminal);
-
-    const getPaneIdentity = source.getPaneIdentity;
-    const attachPaneConsumer = source.attachPaneConsumer;
-    const captureCanonicalScreen = source.captureCanonicalScreen;
-    const readPaneReplay = source.readPaneReplay;
-    if (getPaneIdentity && attachPaneConsumer && captureCanonicalScreen && readPaneReplay) {
-      const identity = getPaneIdentity.call(source, paneId);
-      if (!identity) {
-        terminal.free();
-        throw new Error(`pane not found: ${paneId}`);
-      }
-      const lease = attachPaneConsumer.call(source, {
-        onData: (segment) => emulator.feed(segment.data),
-      });
-      emulator.paneLease = lease;
-      let checkpoint: PaneScreenCheckpoint | null;
-      try {
-        lease.applySubscriptions(1n, [{ paneId, paneEpoch: identity.paneEpoch, cursor: null }], []);
-        checkpoint = await captureCanonicalScreen.call(source, paneId, 512 * 1024);
-      } catch (error) {
-        lease.close();
-        emulator.paneLease = null;
-        terminal.free();
-        throw error;
-      }
-      if (!checkpoint) {
-        lease.close();
-        emulator.paneLease = null;
-        terminal.free();
-        throw new Error(`pane screen unavailable: ${paneId}`);
-      }
-      terminal.write(checkpoint.data);
-      const replay = readPaneReplay.call(source, paneId, {
-        paneEpoch: checkpoint.paneEpoch,
-        terminalSeq: checkpoint.baseSeq,
-      });
-      if (!replay || replay.gap) {
-        lease.close();
-        emulator.paneLease = null;
-        terminal.free();
-        throw new Error(`pane replay unavailable after screen capture: ${paneId}`);
-      }
-      for (const segment of replay.segments) terminal.write(segment.data);
-      emulator.unsubscribe = source.subscribe({
-        onPromptMarker: (pid, marker) => {
-          if (pid === paneId) emulator.emitMarker(marker);
-        },
-      });
-      return emulator;
+    if (isRetentionSource(source)) {
+      await emulator.attachRetentionStream(source);
+    } else {
+      await emulator.attachLegacyStream(source);
     }
+    return emulator;
+  }
 
-    const seed = await source.capturePaneText(paneId, { historyLines: 0 }).catch(() => '');
-    if (seed) terminal.write(`${seed.replace(/\r?\n/g, '\r\n')}\r\n`);
-    emulator.unsubscribe = source.subscribe({
+  private failCreate(error: unknown): never {
+    this.paneLease?.close();
+    this.paneLease = null;
+    this.terminal.free();
+    throw error;
+  }
+
+  private async attachRetentionStream(source: RetentionStreamSource): Promise<void> {
+    const identity = source.getPaneIdentity(this.paneId);
+    if (!identity) {
+      this.failCreate(new Error(`pane not found: ${this.paneId}`));
+    }
+    const lease = source.attachPaneConsumer({
+      onData: (segment) => this.feed(segment.data),
+    });
+    this.paneLease = lease;
+    let checkpoint: PaneScreenCheckpoint | null;
+    try {
+      lease.applySubscriptions(
+        1n,
+        [{ paneId: this.paneId, paneEpoch: identity.paneEpoch, cursor: null }],
+        []
+      );
+      checkpoint = await source.captureCanonicalScreen(this.paneId, 512 * 1024);
+    } catch (error) {
+      this.failCreate(error);
+    }
+    if (!checkpoint) {
+      this.failCreate(new Error(`pane screen unavailable: ${this.paneId}`));
+    }
+    this.terminal.write(checkpoint.data);
+    const replay = source.readPaneReplay(this.paneId, {
+      paneEpoch: checkpoint.paneEpoch,
+      terminalSeq: checkpoint.baseSeq,
+    });
+    if (!replay || replay.gap) {
+      this.failCreate(new Error(`pane replay unavailable after screen capture: ${this.paneId}`));
+    }
+    for (const segment of replay.segments) this.terminal.write(segment.data);
+    this.unsubscribe = source.subscribe({
+      onPromptMarker: (pid, marker) => {
+        if (pid === this.paneId) this.emitMarker(marker);
+      },
+    });
+  }
+
+  private async attachLegacyStream(source: EmulatorStreamSource): Promise<void> {
+    const seed = await source.capturePaneText(this.paneId, { historyLines: 0 }).catch(() => '');
+    if (seed) this.terminal.write(`${seed.replace(/\r?\n/g, '\r\n')}\r\n`);
+    this.unsubscribe = source.subscribe({
       onTerminalOutput: (pid, data) => {
-        if (pid === paneId) emulator.feed(data);
+        if (pid === this.paneId) this.feed(data);
       },
       onPromptMarker: (pid, marker) => {
-        if (pid === paneId) {
-          emulator.emitMarker(marker);
+        if (pid === this.paneId) {
+          this.emitMarker(marker);
         }
       },
     });
-    return emulator;
   }
 
   private feed(data: Uint8Array): void {

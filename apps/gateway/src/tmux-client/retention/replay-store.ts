@@ -11,7 +11,61 @@ import type {
   PaneState,
   PaneSubscriptionRequest,
   PaneTerminalCursor,
+  ReplayChunk,
 } from './types';
+
+type ReplayCursorDecision =
+  | { kind: 'ok'; oldestSeq: bigint }
+  | { kind: 'gap'; reason: PaneReplayGapReason };
+
+function classifyReplayCursor(
+  state: Pick<PaneState, 'paneEpoch' | 'latestSeq' | 'replay'>,
+  expectedEpoch: Uint8Array,
+  seq: bigint
+): ReplayCursorDecision {
+  if (!bytesEqual(expectedEpoch, state.paneEpoch)) {
+    return { kind: 'gap', reason: 'epoch_changed' };
+  }
+  const oldestSeq = state.replay[0]?.seqStart ?? state.latestSeq;
+  if (seq > state.latestSeq) return { kind: 'gap', reason: 'pane_gap' };
+  if (seq < oldestSeq) return { kind: 'gap', reason: 'cache_evicted' };
+  return { kind: 'ok', oldestSeq };
+}
+
+function concatBytes(parts: readonly Uint8Array[]): Uint8Array {
+  const totalBytes = parts.reduce((total, part) => total + part.byteLength, 0);
+  const data = new Uint8Array(totalBytes);
+  let offset = 0;
+  for (const part of parts) {
+    data.set(part, offset);
+    offset += part.byteLength;
+  }
+  return data;
+}
+
+function collectHistoryBefore(
+  chunks: readonly ReplayChunk[],
+  beforeSeq: bigint,
+  limit: number
+): { seqStart: bigint; data: Uint8Array } {
+  const reverseParts: Uint8Array[] = [];
+  let remaining = limit;
+  let seqStart = beforeSeq;
+  for (let index = chunks.length - 1; index >= 0 && remaining > 0; index -= 1) {
+    const chunk = chunks[index];
+    if (!chunk || chunk.seqStart >= beforeSeq) continue;
+    const upper = chunk.seqEnd > beforeSeq ? beforeSeq : chunk.seqEnd;
+    if (upper <= chunk.seqStart) continue;
+    const available = Number(upper - chunk.seqStart);
+    const take = Math.min(available, remaining);
+    const endOffset = Number(upper - chunk.seqStart);
+    reverseParts.push(chunk.data.slice(endOffset - take, endOffset));
+    remaining -= take;
+    seqStart = upper - BigInt(take);
+  }
+  reverseParts.reverse();
+  return { seqStart, data: concatBytes(reverseParts) };
+}
 
 export class PaneReplayStore {
   constructor(private readonly kernel: RetentionKernel) {}
@@ -188,65 +242,22 @@ export class PaneReplayStore {
     const limit = Math.max(0, Math.min(byteLimit, this.kernel.maxReplayBytesPerPane));
     const beforeSeq = beforeCursor?.terminalSeq ?? state.latestSeq;
     const expectedEpoch = beforeCursor?.paneEpoch ?? state.paneEpoch;
-    const identity = cloneIdentity(state);
-    if (!bytesEqual(expectedEpoch, state.paneEpoch)) {
-      return {
-        ...identity,
-        seqStart: state.latestSeq,
-        seqEnd: state.latestSeq,
-        data: new Uint8Array(),
-        nextCursor: null,
-        gap: this.createGap(state, 'epoch_changed', expectedEpoch, beforeSeq),
-      };
+    const decision = classifyReplayCursor(state, expectedEpoch, beforeSeq);
+    if (decision.kind === 'gap') {
+      return this.emptyHistoryPage(
+        state,
+        this.createGap(state, decision.reason, expectedEpoch, beforeSeq)
+      );
     }
-    const oldestSeq = state.replay[0]?.seqStart ?? state.latestSeq;
-    if (beforeSeq > state.latestSeq || beforeSeq < oldestSeq) {
-      return {
-        ...identity,
-        seqStart: state.latestSeq,
-        seqEnd: state.latestSeq,
-        data: new Uint8Array(),
-        nextCursor: null,
-        gap: this.createGap(
-          state,
-          beforeSeq > state.latestSeq ? 'pane_gap' : 'cache_evicted',
-          expectedEpoch,
-          beforeSeq
-        ),
-      };
-    }
-
-    const reverseParts: Uint8Array[] = [];
-    let remaining = limit;
-    let seqStart = beforeSeq;
-    for (let index = state.replay.length - 1; index >= 0 && remaining > 0; index -= 1) {
-      const chunk = state.replay[index];
-      if (!chunk || chunk.seqStart >= beforeSeq) continue;
-      const upper = chunk.seqEnd > beforeSeq ? beforeSeq : chunk.seqEnd;
-      if (upper <= chunk.seqStart) continue;
-      const available = Number(upper - chunk.seqStart);
-      const take = Math.min(available, remaining);
-      const endOffset = Number(upper - chunk.seqStart);
-      reverseParts.push(chunk.data.slice(endOffset - take, endOffset));
-      remaining -= take;
-      seqStart = upper - BigInt(take);
-    }
-    reverseParts.reverse();
-    const totalBytes = reverseParts.reduce((total, part) => total + part.byteLength, 0);
-    const data = new Uint8Array(totalBytes);
-    let offset = 0;
-    for (const part of reverseParts) {
-      data.set(part, offset);
-      offset += part.byteLength;
-    }
+    const { seqStart, data } = collectHistoryBefore(state.replay, beforeSeq, limit);
     state.lastTouchedAt = this.kernel.now();
     return {
-      ...identity,
+      ...cloneIdentity(state),
       seqStart,
       seqEnd: beforeSeq,
       data,
       nextCursor:
-        seqStart > oldestSeq
+        seqStart > decision.oldestSeq
           ? { paneEpoch: copyBytes(state.paneEpoch), terminalSeq: seqStart }
           : null,
       gap: null,
@@ -265,29 +276,14 @@ export class PaneReplayStore {
       return { ...identity, segments: [], gap: null, needsScreen: true };
     }
     const cursor = request.cursor;
-    if (!bytesEqual(cursor.paneEpoch, state.paneEpoch)) {
+    const decision = classifyReplayCursor(state, cursor.paneEpoch, cursor.terminalSeq);
+    if (decision.kind === 'gap') {
       this.kernel.replayMisses += 1;
       this.kernel.rebases += 1;
       return {
         ...identity,
         segments: [],
-        gap: this.createGap(state, 'epoch_changed', cursor.paneEpoch, cursor.terminalSeq),
-        needsScreen: true,
-      };
-    }
-    const oldestSeq = state.replay[0]?.seqStart ?? state.latestSeq;
-    if (cursor.terminalSeq > state.latestSeq || cursor.terminalSeq < oldestSeq) {
-      this.kernel.replayMisses += 1;
-      this.kernel.rebases += 1;
-      return {
-        ...identity,
-        segments: [],
-        gap: this.createGap(
-          state,
-          cursor.terminalSeq > state.latestSeq ? 'pane_gap' : 'cache_evicted',
-          cursor.paneEpoch,
-          cursor.terminalSeq
-        ),
+        gap: this.createGap(state, decision.reason, cursor.paneEpoch, cursor.terminalSeq),
         needsScreen: true,
       };
     }
@@ -326,6 +322,17 @@ export class PaneReplayStore {
 
   cloneKnownIdentity(state: PaneState): PaneIdentity {
     return cloneIdentity(state);
+  }
+
+  private emptyHistoryPage(state: PaneState, gap: PaneReplayGap): PaneHistoryPage {
+    return {
+      ...cloneIdentity(state),
+      seqStart: state.latestSeq,
+      seqEnd: state.latestSeq,
+      data: new Uint8Array(),
+      nextCursor: null,
+      gap,
+    };
   }
 
   private recordEviction(reason: 'epoch_changed'): void {

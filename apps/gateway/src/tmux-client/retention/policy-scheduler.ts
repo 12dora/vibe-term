@@ -1,6 +1,19 @@
 import type { RetentionKernel } from './kernel';
 import type { PaneRetentionEvictionReason, PaneRetentionStats, PaneState } from './types';
 
+function retentionEvictionRank(state: PaneState): number {
+  if (state.mode === 'active') return 2;
+  if (state.explicitHot) return 1;
+  return 0;
+}
+
+function compareRetentionEvictionOrder(left: PaneState, right: PaneState): number {
+  return (
+    retentionEvictionRank(left) - retentionEvictionRank(right) ||
+    left.lastTouchedAt - right.lastTouchedAt
+  );
+}
+
 export class RetentionPolicyScheduler {
   constructor(private readonly kernel: RetentionKernel) {}
 
@@ -110,11 +123,22 @@ export class RetentionPolicyScheduler {
   }
 
   enforceBounds(now: number): void {
-    const explicitHotCount = Array.from(this.kernel.panes.values()).filter(
+    this.capImplicitHotPanes();
+    let retainedBytes = this.retainedBytes();
+    if (retainedBytes <= this.kernel.maxRetentionBytes) return;
+    const candidates = Array.from(this.kernel.panes.values()).sort(compareRetentionEvictionOrder);
+    retainedBytes = this.evictImplicitHotForRetention(candidates, retainedBytes);
+    retainedBytes = this.evictCheckpointsForRetention(candidates, retainedBytes);
+    this.evictOldestReplayChunks(candidates, retainedBytes, now);
+  }
+
+  private capImplicitHotPanes(): void {
+    const panes = Array.from(this.kernel.panes.values());
+    const explicitHotCount = panes.filter(
       (state) => state.mode === 'hot' && state.explicitHot
     ).length;
     let availableImplicitHot = Math.max(0, this.kernel.maxHotPanes - explicitHotCount);
-    const implicitHot = Array.from(this.kernel.panes.values())
+    const implicitHot = panes
       .filter((state) => state.mode === 'hot' && !state.explicitHot)
       .sort((left, right) => right.lastTouchedAt - left.lastTouchedAt);
     for (const state of implicitHot) {
@@ -124,31 +148,49 @@ export class RetentionPolicyScheduler {
         this.makeCold(state, 'hot_limit');
       }
     }
+  }
 
-    let retainedBytes = this.retainedBytes();
-    if (retainedBytes <= this.kernel.maxRetentionBytes) return;
-    const candidates = Array.from(this.kernel.panes.values()).sort((left, right) => {
-      const leftRank = left.mode === 'active' ? 2 : left.explicitHot ? 1 : 0;
-      const rightRank = right.mode === 'active' ? 2 : right.explicitHot ? 1 : 0;
-      return leftRank - rightRank || left.lastTouchedAt - right.lastTouchedAt;
-    });
-
+  private evictImplicitHotForRetention(
+    candidates: readonly PaneState[],
+    retainedBytes: number
+  ): number {
+    const limit = this.kernel.maxRetentionBytes;
+    let remaining = retainedBytes;
     for (const state of candidates) {
-      if (retainedBytes <= this.kernel.maxRetentionBytes) break;
+      if (remaining <= limit) break;
       if (state.mode === 'hot' && !state.explicitHot) {
-        retainedBytes -= state.replayBytes + (state.checkpoint?.data.byteLength ?? 0);
+        remaining -= state.replayBytes + (state.checkpoint?.data.byteLength ?? 0);
         this.makeCold(state, 'retention_limit_replay');
       }
     }
+    return remaining;
+  }
+
+  private evictCheckpointsForRetention(
+    candidates: readonly PaneState[],
+    retainedBytes: number
+  ): number {
+    const limit = this.kernel.maxRetentionBytes;
+    let remaining = retainedBytes;
     for (const state of candidates) {
-      if (retainedBytes <= this.kernel.maxRetentionBytes) break;
+      if (remaining <= limit) break;
       if (state.checkpoint) {
-        retainedBytes -= state.checkpoint.data.byteLength;
+        remaining -= state.checkpoint.data.byteLength;
         state.checkpoint = null;
         this.recordEviction('retention_limit_checkpoint');
       }
     }
-    while (retainedBytes > this.kernel.maxRetentionBytes) {
+    return remaining;
+  }
+
+  private evictOldestReplayChunks(
+    candidates: readonly PaneState[],
+    retainedBytes: number,
+    now: number
+  ): void {
+    const limit = this.kernel.maxRetentionBytes;
+    let remaining = retainedBytes;
+    while (remaining > limit) {
       const state = candidates
         .filter((candidate) => candidate.replay.length > 0)
         .sort((left, right) => {
@@ -159,7 +201,7 @@ export class RetentionPolicyScheduler {
       const chunk = state?.replay.shift();
       if (!state || !chunk) break;
       state.replayBytes -= chunk.data.byteLength;
-      retainedBytes -= chunk.data.byteLength;
+      remaining -= chunk.data.byteLength;
       this.recordEviction('retention_limit_replay');
     }
   }
