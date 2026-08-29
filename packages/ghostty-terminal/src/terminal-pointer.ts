@@ -1,9 +1,22 @@
 import { hasPlatformModifier } from './selection-clipboard';
+import {
+  GHOSTTY_MOUSE_BUTTON_LEFT,
+  type MouseDownDecision,
+  classifyMouseDown,
+  isShiftReportingBypass,
+  mouseButtonFromButtons,
+  mouseButtonFromEvent,
+} from './terminal-pointer-policy';
 import type { GhosttyViewportGesture } from './types';
 
-export const GHOSTTY_MOUSE_BUTTON_LEFT = 1;
-export const GHOSTTY_MOUSE_BUTTON_MIDDLE = 3;
-export const GHOSTTY_MOUSE_BUTTON_RIGHT = 2;
+export {
+  GHOSTTY_MOUSE_BUTTON_LEFT,
+  GHOSTTY_MOUSE_BUTTON_MIDDLE,
+  GHOSTTY_MOUSE_BUTTON_RIGHT,
+  mouseButtonFromButtons,
+  mouseButtonFromEvent,
+} from './terminal-pointer-policy';
+
 export const GHOSTTY_MOUSE_BUTTON_FOUR = 4;
 export const GHOSTTY_MOUSE_BUTTON_FIVE = 5;
 export const GHOSTTY_MOUSE_BUTTON_SIX = 6;
@@ -69,33 +82,6 @@ export function createMouseInputState(): MouseInputState {
   };
 }
 
-export function mouseButtonFromEvent(event: MouseEvent): number | null {
-  switch (event.button) {
-    case 0:
-      return GHOSTTY_MOUSE_BUTTON_LEFT;
-    case 1:
-      return GHOSTTY_MOUSE_BUTTON_MIDDLE;
-    case 2:
-      return GHOSTTY_MOUSE_BUTTON_RIGHT;
-    default:
-      return null;
-  }
-}
-
-export function mouseButtonFromButtons(buttons: number): number | null {
-  if (buttons & 1) {
-    return GHOSTTY_MOUSE_BUTTON_LEFT;
-  }
-  if (buttons & 4) {
-    return GHOSTTY_MOUSE_BUTTON_MIDDLE;
-  }
-  if (buttons & 2) {
-    return GHOSTTY_MOUSE_BUTTON_RIGHT;
-  }
-
-  return null;
-}
-
 export function bindMouseEvents(
   root: HTMLElement,
   selectSurface: HTMLElement,
@@ -109,35 +95,41 @@ export function bindMouseEvents(
     }
   };
 
-  const mousedownListener = (event: MouseEvent): void => {
-    if (!(event instanceof MouseEvent)) {
-      return;
-    }
-    // 触摸手势刚被 useMobileTouch 消费过：忽略浏览器随后合成的鼠标事件，
-    // 防止 tap 双触发与"合成 mousedown 清掉长按选择"（不查 isTrusted，保证测试可驱动）
-    if (Date.now() < mouse.suppressSyntheticUntil) {
-      return;
-    }
-    context.showScrollbarTransient();
-
-    if (!context.isInputDisabled()) {
-      context.focusTerminal();
-    }
-
-    // xterm 约定：Shift+左键绕过鼠标上报、走本地文本选择（上报 TUI 下唯一的复制入口）
+  const resolveMouseDown = (
+    event: MouseEvent
+  ): { decision: MouseDownDecision; linkHit: TerminalLinkHit | null } => {
     const reporting = context.getInputRoutingState().mouseReporting;
-    const bypassReporting = reporting && event.shiftKey && event.button === 0;
-    if (reporting && !bypassReporting) {
-      const button = mouseButtonFromEvent(event);
-      if (button === null) {
-        return;
-      }
+    const button = mouseButtonFromEvent(event);
+    const platformModifier = hasPlatformModifier(event);
+    const linkHit =
+      platformModifier && button === GHOSTTY_MOUSE_BUTTON_LEFT
+        ? context.linkAtClient(event.clientX, event.clientY)
+        : null;
+
+    return {
+      decision: classifyMouseDown({
+        reporting,
+        shiftBypass: isShiftReportingBypass(reporting, event.shiftKey, button),
+        button,
+        platformModifier,
+        hasLink: linkHit !== null,
+      }),
+      linkHit,
+    };
+  };
+
+  const applyMouseDown = (
+    event: MouseEvent,
+    decision: MouseDownDecision,
+    linkHit: TerminalLinkHit | null
+  ): void => {
+    if (decision.kind === 'report') {
       context.clearSelection();
-      mouse.pressedButtons.add(button);
+      mouse.pressedButtons.add(decision.button);
       mouse.dragActive = true;
       context.emitMouseInput({
         action: 'press',
-        button,
+        button: decision.button,
         clientX: event.clientX,
         clientY: event.clientY,
         mods: context.pointerMods(event),
@@ -146,28 +138,39 @@ export function bindMouseEvents(
       event.preventDefault();
       return;
     }
-    if (bypassReporting) {
-      mouse.reportBypassed = true;
+
+    if (decision.kind === 'activateLink' && linkHit) {
+      context.activateLink(linkHit);
+      event.preventDefault();
+      return;
     }
 
-    // 带平台主修饰键(Mac Cmd / 其它 Ctrl)点击链接 → 打开，不进入文本选择。
-    // 置于 mouseReporting 分支之后，鼠标上报应用(vim/htop)优先，不误触发。
-    if (event.button === 0 && hasPlatformModifier(event)) {
-      const hit = context.linkAtClient(event.clientX, event.clientY);
-      if (hit) {
-        context.activateLink(hit);
-        event.preventDefault();
-        return;
-      }
-    }
-
-    if (event.button !== 0) {
+    if (decision.kind !== 'beginSelection') {
       return;
     }
 
     mouse.dragActive = true;
     context.beginPointerSelection(event);
     event.preventDefault();
+  };
+
+  const mousedownListener = (event: MouseEvent): void => {
+    // 触摸手势刚被 useMobileTouch 消费过：忽略浏览器随后合成的鼠标事件，
+    // 防止 tap 双触发与"合成 mousedown 清掉长按选择"（不查 isTrusted，保证测试可驱动）
+    if (!(event instanceof MouseEvent) || Date.now() < mouse.suppressSyntheticUntil) {
+      return;
+    }
+    context.showScrollbarTransient();
+
+    if (!context.isInputDisabled()) {
+      context.focusTerminal();
+    }
+
+    const { decision, linkHit } = resolveMouseDown(event);
+    if (decision.recordBypass) {
+      mouse.reportBypassed = true;
+    }
+    applyMouseDown(event, decision, linkHit);
   };
 
   const mousemoveListener = (event: MouseEvent): void => {

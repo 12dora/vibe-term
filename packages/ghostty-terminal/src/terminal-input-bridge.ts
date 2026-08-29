@@ -1,3 +1,4 @@
+import { GestureDeltaAccumulator } from './gesture-delta-accumulator';
 import { getGhosttyKeyCode, getUnshiftedCodepoint } from './ghostty-keycodes';
 import { type GhosttyBindings, keyboardEventToGhosttyMods } from './ghostty-wasm';
 import {
@@ -86,8 +87,8 @@ export function pointerLikeEventToGhosttyMods(event: {
 export class TerminalInputBridge {
   readonly mouse: MouseInputState = createMouseInputState();
 
-  private wheelPixelDelta = 0;
-  private wheelPixelDeltaX = 0;
+  private readonly verticalGesture = new GestureDeltaAccumulator();
+  private readonly horizontalGesture = new GestureDeltaAccumulator();
   private syncOutputModeSupported: boolean | null = null;
 
   constructor(
@@ -169,7 +170,7 @@ export class TerminalInputBridge {
   // 清空选择时连带复位：残留的按下按钮与半格滚轮余量会让下一次交互从错误状态起步。
   resetPointerAccumulation(): void {
     this.mouse.pressedButtons.clear();
-    this.wheelPixelDelta = 0;
+    this.verticalGesture.reset();
   }
 
   encodeKeyboardEvent(event: KeyboardEvent, action: KeyEncodeAction): string | null {
@@ -303,7 +304,7 @@ export class TerminalInputBridge {
 
   private reportGestureAsMouse(gesture: GhosttyViewportGesture): boolean {
     const mods = pointerLikeEventToGhosttyMods(gesture);
-    const lines = gesture.deltaY === 0 ? 0 : this.gestureToLines(gesture);
+    const lines = this.gestureToLines(gesture);
     const columns = this.gestureToColumns(gesture);
     const wheelSteps: ReadonlyArray<readonly [number, number]> = [
       [lines, lines < 0 ? GHOSTTY_MOUSE_BUTTON_FOUR : GHOSTTY_MOUSE_BUTTON_FIVE],
@@ -354,66 +355,22 @@ export class TerminalInputBridge {
   }
 
   private gestureToLines(gesture: GhosttyViewportGesture): number {
-    const cellHeight = this.host.cellDimensions().height || DEFAULT_CELL_HEIGHT;
-
-    if (gesture.source !== 'wheel') {
-      return gesture.deltaY > 0
-        ? Math.ceil(gesture.deltaY / cellHeight)
-        : Math.floor(gesture.deltaY / cellHeight);
-    }
-
-    if (gesture.deltaMode === 1) {
-      this.wheelPixelDelta = 0;
-      return gesture.deltaY > 0 ? Math.ceil(gesture.deltaY) : Math.floor(gesture.deltaY);
-    }
-
-    if (gesture.deltaMode === 2) {
-      this.wheelPixelDelta = 0;
-      const scaled = gesture.deltaY * Math.max(1, this.host.viewportRows());
-      return scaled > 0 ? Math.ceil(scaled) : Math.floor(scaled);
-    }
-
-    this.wheelPixelDelta += gesture.deltaY;
-    const lines =
-      this.wheelPixelDelta > 0
-        ? Math.floor(this.wheelPixelDelta / cellHeight)
-        : Math.ceil(this.wheelPixelDelta / cellHeight);
-    if (lines !== 0) {
-      this.wheelPixelDelta -= lines * cellHeight;
-    }
-    return lines;
+    return this.verticalGesture.consume({
+      source: gesture.source,
+      delta: gesture.deltaY,
+      deltaMode: gesture.deltaMode,
+      cellSize: this.host.cellDimensions().height || DEFAULT_CELL_HEIGHT,
+      pageSize: this.host.viewportRows(),
+    });
   }
 
   private gestureToColumns(gesture: GhosttyViewportGesture): number {
-    const deltaX = gesture.deltaX ?? 0;
-    if (deltaX === 0) {
-      return 0;
-    }
-    const cellWidth = this.host.cellDimensions().width || DEFAULT_CELL_WIDTH;
-
-    if (gesture.source !== 'wheel') {
-      return deltaX > 0 ? Math.ceil(deltaX / cellWidth) : Math.floor(deltaX / cellWidth);
-    }
-
-    if (gesture.deltaMode === 1) {
-      this.wheelPixelDeltaX = 0;
-      return deltaX > 0 ? Math.ceil(deltaX) : Math.floor(deltaX);
-    }
-
-    if (gesture.deltaMode === 2) {
-      this.wheelPixelDeltaX = 0;
-      const scaled = deltaX * Math.max(1, this.host.viewportCols());
-      return scaled > 0 ? Math.ceil(scaled) : Math.floor(scaled);
-    }
-
-    this.wheelPixelDeltaX += deltaX;
-    const columns =
-      this.wheelPixelDeltaX > 0
-        ? Math.floor(this.wheelPixelDeltaX / cellWidth)
-        : Math.ceil(this.wheelPixelDeltaX / cellWidth);
-    if (columns !== 0) {
-      this.wheelPixelDeltaX -= columns * cellWidth;
-    }
-    return columns;
+    return this.horizontalGesture.consume({
+      source: gesture.source,
+      delta: gesture.deltaX ?? 0,
+      deltaMode: gesture.deltaMode,
+      cellSize: this.host.cellDimensions().width || DEFAULT_CELL_WIDTH,
+      pageSize: this.host.viewportCols(),
+    });
   }
 }
