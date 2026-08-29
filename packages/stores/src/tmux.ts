@@ -7,6 +7,7 @@ import { createPaneSubscriptionManager } from './pane-subscriptions';
 import type { RuntimeCore } from './runtime';
 import type { SiteStore } from './site';
 import { createTmuxEventRouter } from './tmux-event-router';
+import { reorderByIds } from './tmux-reorder';
 import { createTmuxSelectionActions, normalizeTerminalSize } from './tmux-selection-actions';
 import type { DeviceError, TmuxState } from './tmux-state';
 import type { UIStore } from './ui';
@@ -269,13 +270,11 @@ export function createTmuxStore(
           const snapshot = prev.snapshots[deviceId];
           const session = snapshot?.session;
           if (!session) return {};
-          const byId = new Map(session.windows.map((w) => [w.id, w] as const));
-          const known = windowIds.map((id) => byId.get(id)).filter((w) => w !== undefined);
-          const rest = session.windows.filter((w) => !windowIds.includes(w.id));
+          const windows = reorderByIds(session.windows, windowIds);
           return {
             snapshots: {
               ...prev.snapshots,
-              [deviceId]: { ...snapshot, session: { ...session, windows: [...known, ...rest] } },
+              [deviceId]: { ...snapshot, session: { ...session, windows } },
             },
           };
         });
@@ -349,10 +348,7 @@ export function createTmuxStore(
           if (!session) return {};
           const windows = session.windows.map((w) => {
             if (w.id !== windowId) return w;
-            const byId = new Map(w.panes.map((p) => [p.id, p] as const));
-            const known = paneIds.map((id) => byId.get(id)).filter((p) => p !== undefined);
-            const rest = w.panes.filter((p) => !paneIds.includes(p.id));
-            return { ...w, panes: [...known, ...rest] };
+            return { ...w, panes: reorderByIds(w.panes, paneIds) };
           });
           return {
             snapshots: {
