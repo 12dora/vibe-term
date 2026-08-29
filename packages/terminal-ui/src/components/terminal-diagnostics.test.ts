@@ -182,4 +182,63 @@ describe('terminal render diagnostics', () => {
     expect(diagnostic.nonTransparentPixels).toBe(0);
     expect(diagnostic.distinctColorCount).toBe(0);
   });
+
+  test('terminal 与 mount 缺失时所有指标归零', () => {
+    const diagnostic = collectTerminalRenderDiagnostic({
+      surface: 'terminal',
+      stage: 'mount' as TerminalDiagnosticStage,
+      terminal: null,
+      mount: null,
+      fontFamily: 'monospace',
+      fontSize: 13,
+    });
+
+    expect(diagnostic.controllerReady).toBe(false);
+    expect(diagnostic.renderer).toBe('none');
+    expect(diagnostic.cols).toBe(0);
+    expect(diagnostic.rows).toBe(0);
+    expect(diagnostic.bufferLines).toBe(0);
+    expect(diagnostic.sampledBufferLines).toBe(0);
+    expect(diagnostic.nonBlankBufferLines).toBe(0);
+    expect(diagnostic.mountWidth).toBe(0);
+    expect(diagnostic.mountHeight).toBe(0);
+    expect(diagnostic.canvasCount).toBe(0);
+    expect(diagnostic.canvasCssWidth).toBe(0);
+    expect(diagnostic.canvasCssHeight).toBe(0);
+    expect(diagnostic.canvasBitmapWidth).toBe(0);
+    expect(diagnostic.canvasBitmapHeight).toBe(0);
+    expect(diagnostic.pixelsReadable).toBe(false);
+    expect(diagnostic.stream).toBeNull();
+  });
+
+  test('mount 无 canvas 且尺寸为零时不产出负值或 NaN', () => {
+    const documentLike = {
+      fonts: { status: 'loading', check: () => false },
+      createElement: () => ({ width: 0, height: 0, getContext: () => null }),
+      querySelector: () => null,
+    };
+    const mount = {
+      ownerDocument: documentLike,
+      getBoundingClientRect: () => rect(0, 0),
+      querySelectorAll: () => [],
+    };
+    const diagnostic = collectTerminalRenderDiagnostic({
+      surface: 'terminal',
+      stage: 'mount' as TerminalDiagnosticStage,
+      terminal: null,
+      mount: mount as unknown as HTMLElement,
+      fontFamily: 'monospace',
+      fontSize: 13,
+      document: documentLike as unknown as Document,
+    });
+
+    expect(diagnostic.fontStatus).toBe('loading');
+    expect(diagnostic.selectedFontLoaded).toBe(false);
+    expect(diagnostic.mountWidth).toBe(0);
+    expect(diagnostic.mountHeight).toBe(0);
+    expect(diagnostic.canvasCount).toBe(0);
+    expect(diagnostic.canvasCssWidth).toBe(0);
+    expect(diagnostic.canvasBitmapWidth).toBe(0);
+    expect(diagnostic.pixelsReadable).toBe(false);
+  });
 });

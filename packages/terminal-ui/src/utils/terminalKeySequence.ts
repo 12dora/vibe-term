@@ -187,13 +187,27 @@ export function keyEventToTerminalSequence(e: KeyChord): CapturedShortcut | null
   return null;
 }
 
+// 单字符转义字面量；未列出的 \X 保留 X 本身
+const SIMPLE_ESCAPES: Record<string, string> = {
+  r: '\r',
+  n: '\n',
+  t: '\t',
+  e: '\x1b',
+  '0': '\x00',
+  a: '\x07',
+  b: '\x08',
+  f: '\x0c',
+  v: '\x0b',
+  '\\': '\\',
+};
+
 /**
  * 解析手填的转义串：\xHH \uHHHH \r \n \t \e \0 \a \b \f \v \\ 等，
  * 其余 \X 保留 X 本身。
  */
 export function parseEscapeSequence(input: string): string {
   return input.replace(/\\(x[0-9a-fA-F]{2}|u[0-9a-fA-F]{4}|.)/g, (_match, g: string) => {
-    // 仅完整的 \xHH / \uHHHH 才解析为字符；非法转义（如 \xGG、行尾 \x）落到 switch 当字面，
+    // 仅完整的 \xHH / \uHHHH 才解析为字符；非法转义（如 \xGG、行尾 \x）落到字面量表，
     // 避免被兜底 `.` 吃成单字符后误入 hex 分支、parseInt('') = NaN 注入 NUL。
     if (g[0] === 'x' && g.length === 3) {
       return String.fromCharCode(Number.parseInt(g.slice(1), 16));
@@ -201,30 +215,7 @@ export function parseEscapeSequence(input: string): string {
     if (g[0] === 'u' && g.length === 5) {
       return String.fromCharCode(Number.parseInt(g.slice(1), 16));
     }
-    switch (g) {
-      case 'r':
-        return '\r';
-      case 'n':
-        return '\n';
-      case 't':
-        return '\t';
-      case 'e':
-        return '\x1b';
-      case '0':
-        return '\x00';
-      case 'a':
-        return '\x07';
-      case 'b':
-        return '\x08';
-      case 'f':
-        return '\x0c';
-      case 'v':
-        return '\x0b';
-      case '\\':
-        return '\\';
-      default:
-        return g;
-    }
+    return SIMPLE_ESCAPES[g] ?? g;
   });
 }
 

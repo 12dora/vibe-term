@@ -101,8 +101,9 @@ const PIXEL_SAMPLE_WIDTH = 32;
 const PIXEL_SAMPLE_HEIGHT = 16;
 const TerminalDiagnosticsContext = createContext<TerminalDiagnosticReporter | null>(null);
 
-function boundedMetric(value: number, max = 1_000_000): number {
-  if (!Number.isFinite(value) || value <= 0) return 0;
+// 缺失（undefined）与非法值一律归零，调用点无需再写 `?? 0`
+function boundedMetric(value: number | undefined, max = 1_000_000): number {
+  if (value === undefined || !Number.isFinite(value) || value <= 0) return 0;
   return Math.min(Math.round(value), max);
 }
 
@@ -259,16 +260,16 @@ export function collectTerminalRenderDiagnostic(
     controllerReady: args.terminal !== null,
     renderer: rendererOf(args.terminal),
     ...fontSummary(doc, args.fontFamily, args.fontSize),
-    cols: boundedMetric(args.terminal?.cols ?? 0, 4096),
-    rows: boundedMetric(args.terminal?.rows ?? 0, 4096),
+    cols: boundedMetric(args.terminal?.cols, 4096),
+    rows: boundedMetric(args.terminal?.rows, 4096),
     ...bufferSummary(args.terminal),
-    mountWidth: boundedMetric(mountRect?.width ?? 0, 32_768),
-    mountHeight: boundedMetric(mountRect?.height ?? 0, 32_768),
+    mountWidth: boundedMetric(mountRect?.width, 32_768),
+    mountHeight: boundedMetric(mountRect?.height, 32_768),
     canvasCount: boundedMetric(canvases.length, 16),
-    canvasCssWidth: boundedMetric(canvasRect?.width ?? 0, 32_768),
-    canvasCssHeight: boundedMetric(canvasRect?.height ?? 0, 32_768),
-    canvasBitmapWidth: boundedMetric(mainCanvas?.width ?? 0, 65_536),
-    canvasBitmapHeight: boundedMetric(mainCanvas?.height ?? 0, 65_536),
+    canvasCssWidth: boundedMetric(canvasRect?.width, 32_768),
+    canvasCssHeight: boundedMetric(canvasRect?.height, 32_768),
+    canvasBitmapWidth: boundedMetric(mainCanvas?.width, 65_536),
+    canvasBitmapHeight: boundedMetric(mainCanvas?.height, 65_536),
     ...pixelSummary(doc, mainCanvas),
     overlayPresent: Boolean(doc?.querySelector('[data-testid="terminal-status-overlay"]')),
     stream: sanitizeTerminalStreamDiagnostic(streamInput),

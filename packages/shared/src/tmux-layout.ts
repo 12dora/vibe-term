@@ -75,21 +75,71 @@ function consume(state: ParseState, char: string): boolean {
   return true;
 }
 
-function parseNode(state: ParseState): TmuxLayoutNode | null {
-  const width = parseNumber(state);
-  if (width === null || !consume(state, 'x')) {
+interface NodeGeometry {
+  width: number;
+  height: number;
+  x: number;
+  y: number;
+}
+
+const SPLIT_DELIMITERS = new Map<string, { closer: string; type: 'row' | 'column' }>([
+  ['{', { closer: '}', type: 'row' }],
+  ['[', { closer: ']', type: 'column' }],
+]);
+
+function parseNumberThen(state: ParseState, separator: string | null): number | null {
+  const value = parseNumber(state);
+  if (value === null) {
     return null;
   }
-  const height = parseNumber(state);
-  if (height === null || !consume(state, ',')) {
+  if (separator !== null && !consume(state, separator)) {
     return null;
   }
-  const x = parseNumber(state);
-  if (x === null || !consume(state, ',')) {
+  return value;
+}
+
+function parseGeometry(state: ParseState): NodeGeometry | null {
+  const width = parseNumberThen(state, 'x');
+  if (width === null) {
     return null;
   }
-  const y = parseNumber(state);
+  const height = parseNumberThen(state, ',');
+  if (height === null) {
+    return null;
+  }
+  const x = parseNumberThen(state, ',');
+  if (x === null) {
+    return null;
+  }
+  const y = parseNumberThen(state, null);
   if (y === null) {
+    return null;
+  }
+  return { width, height, x, y };
+}
+
+// 已消费开括号，读到匹配的闭括号为止；split 至少两个子节点
+function parseSplitChildren(state: ParseState, closer: string): TmuxLayoutNode[] | null {
+  const children: TmuxLayoutNode[] = [];
+  for (;;) {
+    const child = parseNode(state);
+    if (!child) {
+      return null;
+    }
+    children.push(child);
+    if (consume(state, ',')) {
+      continue;
+    }
+    if (!consume(state, closer)) {
+      return null;
+    }
+    return children.length >= 2 ? children : null;
+  }
+}
+
+function parseNode(state: ParseState): TmuxLayoutNode | null {
+  const geometry = parseGeometry(state);
+  if (!geometry) {
     return null;
   }
 
@@ -97,44 +147,16 @@ function parseNode(state: ParseState): TmuxLayoutNode | null {
   if (next === ',') {
     state.pos += 1;
     const paneNumId = parseNumber(state);
-    if (paneNumId === null) {
-      return null;
-    }
-    return { type: 'leaf', paneNumId, width, height, x, y };
+    return paneNumId === null ? null : { type: 'leaf', paneNumId, ...geometry };
   }
 
-  if (next === '{' || next === '[') {
-    const closer = next === '{' ? '}' : ']';
-    state.pos += 1;
-    const children: TmuxLayoutNode[] = [];
-    for (;;) {
-      const child = parseNode(state);
-      if (!child) {
-        return null;
-      }
-      children.push(child);
-      if (consume(state, ',')) {
-        continue;
-      }
-      if (consume(state, closer)) {
-        break;
-      }
-      return null;
-    }
-    if (children.length < 2) {
-      return null;
-    }
-    return {
-      type: next === '{' ? 'row' : 'column',
-      width,
-      height,
-      x,
-      y,
-      children,
-    };
+  const split = SPLIT_DELIMITERS.get(next);
+  if (!split) {
+    return null;
   }
-
-  return null;
+  state.pos += 1;
+  const children = parseSplitChildren(state, split.closer);
+  return children ? { type: split.type, ...geometry, children } : null;
 }
 
 export function collectLayoutLeaves(root: TmuxLayoutNode): TmuxLayoutLeaf[] {

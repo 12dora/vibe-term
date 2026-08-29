@@ -184,6 +184,29 @@ describe('parseEscapeSequence', () => {
   test('\\\\ → 单反斜杠', () => {
     expect(parseEscapeSequence('\\\\')).toBe('\\');
   });
+  test('单字符转义表逐项', () => {
+    const cases: [string, string][] = [
+      ['\\r', '\r'],
+      ['\\n', '\n'],
+      ['\\t', '\t'],
+      ['\\e', '\x1b'],
+      ['\\0', '\x00'],
+      ['\\a', '\x07'],
+      ['\\b', '\x08'],
+      ['\\f', '\x0c'],
+      ['\\v', '\x0b'],
+      ['\\\\', '\\'],
+    ];
+    for (const [input, expected] of cases) {
+      expect(parseEscapeSequence(input)).toBe(expected);
+    }
+  });
+  test('未知转义保留字符本身', () => {
+    expect(parseEscapeSequence('\\q\\Z\\9\\-')).toBe('qZ9-');
+  });
+  test('混合串按序展开', () => {
+    expect(parseEscapeSequence('a\\x1b[1;5Db\\tc\\\\d')).toBe('a\x1b[1;5Db\tc\\d');
+  });
 });
 
 describe('escapeForDisplay 与 parseEscapeSequence 往返', () => {
