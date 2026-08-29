@@ -48,6 +48,29 @@ interface PushSupervisorDeps {
   fallbackReconnectDelayMs: number;
 }
 
+interface ParsedOscNotification {
+  source: TmuxNotificationEventData['source'];
+  title: string | undefined;
+  body: string;
+}
+
+function oscNotificationSource(value: unknown): TmuxNotificationEventData['source'] {
+  if (value === 'osc9' || value === 'osc777' || value === 'osc1337') {
+    return value;
+  }
+  return 'osc9';
+}
+
+function parseOscNotification(rawData: unknown): ParsedOscNotification | null {
+  const raw = (rawData as Record<string, unknown> | undefined) ?? {};
+  const title = typeof raw.title === 'string' && raw.title ? raw.title : undefined;
+  const body = typeof raw.body === 'string' ? raw.body : '';
+  if (!title && !body) {
+    return null;
+  }
+  return { source: oscNotificationSource(raw.source), title, body };
+}
+
 const defaultDeps: PushSupervisorDeps = {
   listDevices: () => getAllDevices(),
   getDevice: (deviceId) => getDeviceById(deviceId),
@@ -345,14 +368,26 @@ export class PushSupervisor {
     }, delayMs);
   }
 
+  private liveEntry(
+    deviceId: string,
+    generation: number,
+    runtime: DeviceSessionRuntime
+  ): PushConnectionEntry | null {
+    const entry = this.entries.get(deviceId);
+    if (!entry || entry.generation !== generation || entry.runtime !== runtime) {
+      return null;
+    }
+    return entry;
+  }
+
   private async handleClose(
     deviceId: string,
     generation: number,
     runtime: DeviceSessionRuntime,
     device: Device
   ): Promise<void> {
-    const entry = this.entries.get(deviceId);
-    if (!entry || entry.generation !== generation || entry.runtime !== runtime) {
+    const entry = this.liveEntry(deviceId, generation, runtime);
+    if (!entry) {
       return;
     }
 
@@ -378,8 +413,8 @@ export class PushSupervisor {
     runtime: DeviceSessionRuntime,
     payload: StateSnapshotPayload
   ): void {
-    const entry = this.entries.get(deviceId);
-    if (!entry || entry.generation !== generation || entry.runtime !== runtime) {
+    const entry = this.liveEntry(deviceId, generation, runtime);
+    if (!entry) {
       return;
     }
 
@@ -392,8 +427,8 @@ export class PushSupervisor {
     runtime: DeviceSessionRuntime,
     event: TmuxEvent
   ): Promise<void> {
-    const entry = this.entries.get(deviceId);
-    if (!entry || entry.generation !== generation || entry.runtime !== runtime) {
+    const entry = this.liveEntry(deviceId, generation, runtime);
+    if (!entry) {
       return;
     }
 
@@ -419,28 +454,22 @@ export class PushSupervisor {
       return;
     }
 
-    if (event.type === 'notification') {
-      const raw = (event.data as Record<string, unknown> | undefined) ?? {};
-      const title = typeof raw.title === 'string' && raw.title ? raw.title : undefined;
-      const body = typeof raw.body === 'string' ? raw.body : '';
-      if (!title && !body) {
-        return;
-      }
-      const source =
-        raw.source === 'osc9' || raw.source === 'osc777' || raw.source === 'osc1337'
-          ? raw.source
-          : 'osc9';
-      await this.deps.notifyNotification({
-        device,
-        settings,
-        notification: {
-          ...paneContext,
-          source,
-          title,
-          body,
-        },
-      });
+    if (event.type !== 'notification') {
+      return;
     }
+
+    const parsed = parseOscNotification(event.data);
+    if (!parsed) {
+      return;
+    }
+    await this.deps.notifyNotification({
+      device,
+      settings,
+      notification: {
+        ...paneContext,
+        ...parsed,
+      },
+    });
   }
 }
 

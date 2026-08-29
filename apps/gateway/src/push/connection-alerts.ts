@@ -54,6 +54,41 @@ export type TelegramSender = (text: string) => Promise<void>;
 
 const NOTIFY_THROTTLE_MS = 5 * 60 * 1000;
 
+function classifyBridgeEvent(
+  source: ConnectionAlertSource,
+  errorType: string,
+  sessionClosedEmitted: boolean
+): EventType | null {
+  if (!BRIDGE_EVENT_SOURCES.has(source)) {
+    return null;
+  }
+  if (errorType === 'tmux_unavailable') {
+    return 'device_tmux_missing';
+  }
+  if (!DISCONNECT_ERROR_TYPES.has(errorType)) {
+    return null;
+  }
+  // session gone 路径已另发 session_closed，跳过 device_disconnect 避免同一物理事件双发。
+  if (sessionClosedEmitted) {
+    return null;
+  }
+  return 'device_disconnect';
+}
+
+function sweepExpiredThrottleKeys(
+  map: Map<string, number>,
+  deviceId: string,
+  keepKey: string,
+  now: number
+): void {
+  const prefix = `${deviceId}:`;
+  for (const [otherKey, ts] of map) {
+    if (otherKey !== keepKey && otherKey.startsWith(prefix) && now - ts >= NOTIFY_THROTTLE_MS) {
+      map.delete(otherKey);
+    }
+  }
+}
+
 function toErrorObject(err: unknown): Error {
   if (err instanceof Error) {
     return err;
@@ -190,20 +225,8 @@ export class ConnectionAlertNotifier {
     friendlyMessage: string,
     sessionClosedEmitted: boolean
   ): void {
-    if (!this.eventEmitter || !BRIDGE_EVENT_SOURCES.has(source)) {
-      return;
-    }
-    let eventType: EventType | null = null;
-    if (errorType === 'tmux_unavailable') {
-      eventType = 'device_tmux_missing';
-    } else if (DISCONNECT_ERROR_TYPES.has(errorType)) {
-      eventType = 'device_disconnect';
-    }
-    if (!eventType) {
-      return;
-    }
-    // session gone 路径已另发 session_closed，跳过 device_disconnect 避免同一物理事件双发。
-    if (eventType === 'device_disconnect' && sessionClosedEmitted) {
+    const eventType = classifyBridgeEvent(source, errorType, sessionClosedEmitted);
+    if (!this.eventEmitter || !eventType) {
       return;
     }
     const key = `${device.id}:${eventType}`;
@@ -222,7 +245,6 @@ export class ConnectionAlertNotifier {
       this.eventEmitter(eventType, {
         site: { name: settings.siteName, url: settings.siteUrl },
         device: { id: device.id, name: device.name, type: device.type, host: device.host },
-        // 与连接类的 session 名解析口径一致（未配置时缺省 'tmex'），便于消费端跨事件关联
         tmux: { sessionName: device.session?.trim() || 'tmex' },
         payload: { message: friendlyMessage },
       });
@@ -230,17 +252,9 @@ export class ConnectionAlertNotifier {
       console.error('[conn-alert] event emit failed:', emitErr);
       return;
     }
-    // 成功发射才消耗节流窗口（settings 读取或发射失败不白耗 5 分钟）；顺带惰性清理同设备过期键
+    // 成功发射才消耗节流窗口（settings 读取或发射失败不白耗 5 分钟）
     this.bridgeThrottleMap.set(key, now);
-    for (const [otherKey, ts] of this.bridgeThrottleMap) {
-      if (
-        otherKey !== key &&
-        otherKey.startsWith(`${device.id}:`) &&
-        now - ts >= NOTIFY_THROTTLE_MS
-      ) {
-        this.bridgeThrottleMap.delete(otherKey);
-      }
-    }
+    sweepExpiredThrottleKeys(this.bridgeThrottleMap, device.id, key, now);
   }
 
   private shouldSendTelegram(deviceId: string, errorType: string): boolean {
@@ -251,15 +265,7 @@ export class ConnectionAlertNotifier {
       return false;
     }
     this.throttleMap.set(key, now);
-    for (const [otherKey, ts] of this.throttleMap) {
-      if (
-        otherKey !== key &&
-        otherKey.startsWith(`${deviceId}:`) &&
-        now - ts >= NOTIFY_THROTTLE_MS
-      ) {
-        this.throttleMap.delete(otherKey);
-      }
-    }
+    sweepExpiredThrottleKeys(this.throttleMap, deviceId, key, now);
     return true;
   }
 

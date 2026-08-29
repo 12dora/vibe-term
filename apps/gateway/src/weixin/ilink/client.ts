@@ -106,6 +106,44 @@ function isSessionExpired(resp: GetUpdatesResp): boolean {
   return resp.ret === SESSION_EXPIRED_ERRCODE || resp.errcode === SESSION_EXPIRED_ERRCODE;
 }
 
+type PollOutcome =
+  | { status: 'aborted' }
+  | { status: 'expired' }
+  | { status: 'retry'; error: unknown }
+  | { status: 'ok'; resp: GetUpdatesResp };
+
+function decideGetUpdatesResp(resp: GetUpdatesResp): Exclude<PollOutcome, { status: 'aborted' }> {
+  if (isSessionExpired(resp)) {
+    return { status: 'expired' };
+  }
+  if (typeof resp.ret === 'number' && resp.ret !== 0) {
+    return {
+      status: 'retry',
+      error: new Error(`getupdates ret=${resp.ret} errmsg=${resp.errmsg ?? ''}`),
+    };
+  }
+  return { status: 'ok', resp };
+}
+
+function nextLongpollTimeoutMs(current: number, resp: GetUpdatesResp): number {
+  if (typeof resp.longpolling_timeout_ms === 'number' && resp.longpolling_timeout_ms > 0) {
+    return resp.longpolling_timeout_ms + LONGPOLL_TIMEOUT_MARGIN_MS;
+  }
+  return current;
+}
+
+async function persistUpdatesBuf(
+  current: string,
+  resp: GetUpdatesResp,
+  saveSyncBuf: WeixinStartOptions['saveSyncBuf']
+): Promise<string> {
+  if (resp.get_updates_buf == null || resp.get_updates_buf === '') {
+    return current;
+  }
+  await saveSyncBuf?.(resp.get_updates_buf);
+  return resp.get_updates_buf;
+}
+
 export class WeixinClient {
   private creds: WeixinCredentials | null = null;
   private readonly fetchImpl?: FetchImpl;
@@ -231,19 +269,15 @@ export class WeixinClient {
   }
 
   async start(opts: WeixinStartOptions = {}): Promise<void> {
-    if (!this.creds) {
+    const creds = this.creds;
+    if (!creds) {
       throw new Error('WeixinClient.start called without credentials; login first.');
     }
     if (this.running) {
       throw new Error('WeixinClient already running.');
     }
 
-    if (opts.initialContextTokens) {
-      for (const [userId, token] of Object.entries(opts.initialContextTokens)) {
-        this.contextTokens.set(userId, token);
-      }
-    }
-
+    this.seedContextTokens(opts.initialContextTokens);
     this.internalAbort = new AbortController();
     const signal = this.linkSignals(opts.signal, this.internalAbort.signal);
     this.running = true;
@@ -254,71 +288,88 @@ export class WeixinClient {
 
     try {
       while (!signal.aborted) {
-        let resp: GetUpdatesResp;
-        try {
-          // per-request 超时 = 服务端长轮询窗口 + margin（首请求用默认 60s）。
-          // 超时只 abort 本次请求、不 abort 收信循环的 stop signal，故落入 catch 走 backoff，
-          // 避免半开 / 黑洞连接让 await getUpdates 永久挂起。
-          const perRequestSignal = AbortSignal.any([
-            signal,
-            AbortSignal.timeout(longpollTimeoutMs),
-          ]);
-          resp = await getUpdates({
-            baseUrl: this.creds.baseUrl,
-            botToken: this.creds.botToken,
-            getUpdatesBuf,
-            fetchImpl: this.fetchImpl,
-            signal: perRequestSignal,
-          });
-        } catch (err) {
-          // 仅当被 stop()/外部 abort 才退出；per-request 超时不会 abort 这个 stop signal，
-          // 故落到 backoff 重连。
-          if (signal.aborted) break;
-          opts.onError?.(err);
-          failures += 1;
-          await this.backoffSleep(failures, signal);
-          continue;
+        const poll = await this.pollUpdates(creds, getUpdatesBuf, longpollTimeoutMs, signal);
+        if (poll.status === 'aborted') {
+          break;
         }
-
-        if (isSessionExpired(resp)) {
+        if (poll.status === 'expired') {
           opts.onSessionExpired?.();
           throw new WeixinSessionExpiredError();
         }
-
-        if (typeof resp.ret === 'number' && resp.ret !== 0) {
-          opts.onError?.(new Error(`getupdates ret=${resp.ret} errmsg=${resp.errmsg ?? ''}`));
+        if (poll.status === 'retry') {
+          opts.onError?.(poll.error);
           failures += 1;
           await this.backoffSleep(failures, signal);
           continue;
         }
-
         failures = 0;
-        if (typeof resp.longpolling_timeout_ms === 'number' && resp.longpolling_timeout_ms > 0) {
-          longpollTimeoutMs = resp.longpolling_timeout_ms + LONGPOLL_TIMEOUT_MARGIN_MS;
-        }
-
-        const msgs = resp.msgs ?? [];
-        for (const msg of msgs) {
-          if (signal.aborted) break;
-          const inbound = this.toInbound(msg);
-          if (msg.from_user_id && msg.context_token) {
-            this.contextTokens.set(msg.from_user_id, msg.context_token);
-          }
-          try {
-            await opts.onMessage?.(inbound);
-          } catch (err) {
-            opts.onError?.(err);
-          }
-        }
-
-        if (resp.get_updates_buf != null && resp.get_updates_buf !== '') {
-          getUpdatesBuf = resp.get_updates_buf;
-          await opts.saveSyncBuf?.(getUpdatesBuf);
-        }
+        longpollTimeoutMs = nextLongpollTimeoutMs(longpollTimeoutMs, poll.resp);
+        await this.deliverInboundMessages(poll.resp.msgs ?? [], opts, signal);
+        getUpdatesBuf = await persistUpdatesBuf(getUpdatesBuf, poll.resp, opts.saveSyncBuf);
       }
     } finally {
       this.running = false;
       this.internalAbort = null;
+    }
+  }
+
+  private seedContextTokens(tokens: Record<string, string> | undefined): void {
+    if (!tokens) {
+      return;
+    }
+    for (const [userId, token] of Object.entries(tokens)) {
+      this.contextTokens.set(userId, token);
+    }
+  }
+
+  private async pollUpdates(
+    creds: WeixinCredentials,
+    getUpdatesBuf: string,
+    longpollTimeoutMs: number,
+    signal: AbortSignal
+  ): Promise<PollOutcome> {
+    let resp: GetUpdatesResp;
+    try {
+      // per-request 超时 = 服务端长轮询窗口 + margin（首请求用默认 60s）。
+      // 超时只 abort 本次请求、不 abort 收信循环的 stop signal，故落入 catch 走 backoff，
+      // 避免半开 / 黑洞连接让 await getUpdates 永久挂起。
+      const perRequestSignal = AbortSignal.any([signal, AbortSignal.timeout(longpollTimeoutMs)]);
+      resp = await getUpdates({
+        baseUrl: creds.baseUrl,
+        botToken: creds.botToken,
+        getUpdatesBuf,
+        fetchImpl: this.fetchImpl,
+        signal: perRequestSignal,
+      });
+    } catch (err) {
+      // 仅当被 stop()/外部 abort 才退出；per-request 超时不会 abort 这个 stop signal，
+      // 故落到 backoff 重连。
+      if (signal.aborted) {
+        return { status: 'aborted' };
+      }
+      return { status: 'retry', error: err };
+    }
+    return decideGetUpdatesResp(resp);
+  }
+
+  private async deliverInboundMessages(
+    msgs: WeixinMessage[],
+    opts: WeixinStartOptions,
+    signal: AbortSignal
+  ): Promise<void> {
+    for (const msg of msgs) {
+      if (signal.aborted) {
+        break;
+      }
+      const inbound = this.toInbound(msg);
+      if (msg.from_user_id && msg.context_token) {
+        this.contextTokens.set(msg.from_user_id, msg.context_token);
+      }
+      try {
+        await opts.onMessage?.(inbound);
+      } catch (err) {
+        opts.onError?.(err);
+      }
     }
   }
 

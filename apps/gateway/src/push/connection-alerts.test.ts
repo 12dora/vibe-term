@@ -32,6 +32,7 @@ function makeSettings(): SiteSettings {
     sshReconnectDelaySeconds: 1,
     language: 'zh_CN',
     theme: 'dark',
+    disabledNotificationChannels: [],
     updatedAt: '2026-04-18T00:00:00Z',
   };
 }
@@ -344,6 +345,26 @@ describe('ConnectionAlertNotifier event bridge', () => {
     settingsBroken = false;
     await notifier.notify({ device, error: new Error('ssh_connection_closed'), source: 'close' });
     expect(events.map((e) => e.eventType)).toEqual(['device_disconnect']);
+  });
+
+  test('event emit failure does not consume the bridge throttle window', async () => {
+    const { notifier } = makeBridgedNotifier();
+    const device = makeDevice('d1');
+    const eventTypes: string[] = [];
+    let shouldThrow = true;
+    notifier.setEventEmitter((eventType) => {
+      if (shouldThrow) {
+        throw new Error('emit boom');
+      }
+      eventTypes.push(eventType);
+    });
+
+    await notifier.notify({ device, error: new Error('ssh_connection_closed'), source: 'close' });
+    expect(eventTypes).toHaveLength(0);
+
+    shouldThrow = false;
+    await notifier.notify({ device, error: new Error('ssh_connection_closed'), source: 'close' });
+    expect(eventTypes).toEqual(['device_disconnect']);
   });
 
   test('successful emit lazily sweeps expired bridge throttle keys for the same device only', async () => {

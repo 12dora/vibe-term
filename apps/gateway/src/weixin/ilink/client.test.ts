@@ -249,6 +249,114 @@ describe('WeixinClient long-poll loop', () => {
     expect(calls).toBeGreaterThanOrEqual(2);
     expect(client.isRunning()).toBe(false);
   }, 10_000);
+
+  test('start without credentials throws', async () => {
+    const client = new WeixinClient({ fetchImpl: noopFetch });
+    await expect(client.start()).rejects.toThrow(
+      'WeixinClient.start called without credentials; login first.'
+    );
+  });
+
+  test('start while already running throws', async () => {
+    let release!: (value: string | undefined) => void;
+    const gate = new Promise<string | undefined>((resolve) => {
+      release = resolve;
+    });
+    const client = makeClient(noopFetch);
+    const controller = new AbortController();
+    const run = client.start({
+      signal: controller.signal,
+      loadSyncBuf: () => gate,
+    });
+
+    await Promise.resolve();
+    expect(client.isRunning()).toBe(true);
+    await expect(client.start()).rejects.toThrow('WeixinClient already running.');
+
+    controller.abort();
+    release(undefined);
+    await run;
+    expect(client.isRunning()).toBe(false);
+  });
+
+  test('non-zero getupdates ret fires onError then retries', async () => {
+    const cap: CapturedRequest[] = [];
+    const fetchImpl = scriptedFetch(
+      [
+        { ret: 7, errmsg: 'busy' },
+        { ret: 0, msgs: [], get_updates_buf: 'c' },
+      ],
+      cap
+    );
+    const client = makeClient(fetchImpl);
+    const controller = new AbortController();
+    const errors: unknown[] = [];
+
+    await client.start({
+      signal: controller.signal,
+      onError: (e) => errors.push(e),
+      saveSyncBuf: () => controller.abort(),
+    });
+
+    expect((errors[0] as Error).message).toBe('getupdates ret=7 errmsg=busy');
+    expect(cap.filter((c) => c.url.endsWith('/getupdates')).length).toBeGreaterThanOrEqual(2);
+  }, 10_000);
+
+  test('onMessage error fires onError without aborting the loop', async () => {
+    const cap: CapturedRequest[] = [];
+    const fetchImpl = scriptedFetch(
+      [
+        {
+          ret: 0,
+          msgs: [textMsg('alice@im.wechat', 'ctx-alice', 'hi')],
+          get_updates_buf: 'cursor-2',
+        },
+      ],
+      cap
+    );
+    const client = makeClient(fetchImpl);
+    const controller = new AbortController();
+    const errors: unknown[] = [];
+
+    await client.start({
+      signal: controller.signal,
+      onError: (e) => errors.push(e),
+      onMessage: () => {
+        throw new Error('handler boom');
+      },
+      saveSyncBuf: () => controller.abort(),
+    });
+
+    expect((errors[0] as Error).message).toBe('handler boom');
+    expect(client.getContextToken('alice@im.wechat')).toBe('ctx-alice');
+    expect(client.isRunning()).toBe(false);
+  });
+
+  test('empty get_updates_buf is not persisted', async () => {
+    let firstDone!: () => void;
+    const seen = new Promise<void>((resolve) => {
+      firstDone = resolve;
+    });
+    const fetchImpl = (async (_input: RequestInfo | URL, _init?: RequestInit) => {
+      firstDone();
+      return new Response(JSON.stringify({ ret: 0, msgs: [], get_updates_buf: '' }));
+    }) as typeof fetch;
+
+    const client = makeClient(fetchImpl);
+    const controller = new AbortController();
+    const saved: string[] = [];
+    const run = client.start({
+      signal: controller.signal,
+      saveSyncBuf: (buf) => {
+        saved.push(buf);
+      },
+    });
+
+    await seen;
+    controller.abort();
+    await run;
+    expect(saved).toEqual([]);
+  });
 });
 
 describe('WeixinClient.sendText', () => {

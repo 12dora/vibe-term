@@ -1,4 +1,10 @@
-import type { StateSnapshotPayload, TmuxBellEventData, TmuxNotificationEventData, TmuxPane, TmuxWindow } from '@tmex/shared';
+import type {
+  StateSnapshotPayload,
+  TmuxBellEventData,
+  TmuxNotificationEventData,
+  TmuxPane,
+  TmuxWindow,
+} from '@tmex/shared';
 
 interface ResolvePaneContextOptions {
   deviceId: string;
@@ -18,6 +24,10 @@ export type PaneLocationContext = Pick<
   | 'paneCurrentCommand'
 >;
 
+function nonEmptyString(value: unknown): string | undefined {
+  return typeof value === 'string' && value ? value : undefined;
+}
+
 function pickPaneById(
   windows: TmuxWindow[],
   paneId: string
@@ -32,12 +42,53 @@ function pickPaneById(
   return null;
 }
 
+function pickByIdOrActiveOrFirst<T extends { id: string; active: boolean }>(
+  items: T[],
+  id: string | undefined
+): T | undefined {
+  return (
+    (id ? items.find((item) => item.id === id) : undefined) ??
+    items.find((item) => item.active) ??
+    items[0]
+  );
+}
+
+function locateWindowAndPane(
+  windows: TmuxWindow[],
+  paneId: string | undefined,
+  windowId: string | undefined
+): { window: TmuxWindow | undefined; pane: TmuxPane | undefined } {
+  const matched = paneId ? pickPaneById(windows, paneId) : null;
+  if (matched) {
+    return matched;
+  }
+
+  const window = pickByIdOrActiveOrFirst(windows, windowId);
+  if (!window) {
+    return { window: undefined, pane: undefined };
+  }
+
+  return { window, pane: pickByIdOrActiveOrFirst(window.panes, paneId) };
+}
+
+function buildPaneUrl(
+  siteUrl: string,
+  deviceId: string,
+  window: TmuxWindow | undefined,
+  pane: TmuxPane | undefined
+): string | undefined {
+  if (!window || !pane) {
+    return undefined;
+  }
+  const base = siteUrl.endsWith('/') ? siteUrl.slice(0, -1) : siteUrl;
+  return `${base}/devices/${encodeURIComponent(deviceId)}/windows/${encodeURIComponent(window.id)}/panes/${encodeURIComponent(pane.id)}`;
+}
+
 export function resolvePaneContext(options: ResolvePaneContextOptions): PaneLocationContext {
   const { deviceId, snapshot, rawData } = options;
   const raw = (rawData as Record<string, unknown> | undefined) ?? {};
-
-  const bellWindowId = typeof raw.windowId === 'string' && raw.windowId ? raw.windowId : undefined;
-  const bellPaneId = typeof raw.paneId === 'string' && raw.paneId ? raw.paneId : undefined;
+  const bellWindowId = nonEmptyString(raw.windowId);
+  const bellPaneId = nonEmptyString(raw.paneId);
 
   if (!snapshot?.session) {
     return {
@@ -46,47 +97,15 @@ export function resolvePaneContext(options: ResolvePaneContextOptions): PaneLoca
     };
   }
 
-  let targetWindow: TmuxWindow | undefined;
-  let targetPane: TmuxPane | undefined;
-
-  if (bellPaneId) {
-    const matched = pickPaneById(snapshot.session.windows, bellPaneId);
-    if (matched) {
-      targetWindow = matched.window;
-      targetPane = matched.pane;
-    }
-  }
-
-  if (!targetWindow && bellWindowId) {
-    targetWindow = snapshot.session.windows.find((window) => window.id === bellWindowId);
-  }
-
-  if (!targetWindow) {
-    targetWindow =
-      snapshot.session.windows.find((window) => window.active) ?? snapshot.session.windows[0];
-  }
-
-  if (!targetPane && targetWindow) {
-    targetPane =
-      (bellPaneId ? targetWindow.panes.find((pane) => pane.id === bellPaneId) : undefined) ??
-      targetWindow.panes.find((pane) => pane.active) ??
-      targetWindow.panes[0];
-  }
-
-  const siteUrl = options.siteUrl.endsWith('/') ? options.siteUrl.slice(0, -1) : options.siteUrl;
-  const paneUrl =
-    targetWindow && targetPane
-      ? `${siteUrl}/devices/${encodeURIComponent(deviceId)}/windows/${encodeURIComponent(targetWindow.id)}/panes/${encodeURIComponent(targetPane.id)}`
-      : undefined;
+  const located = locateWindowAndPane(snapshot.session.windows, bellPaneId, bellWindowId);
 
   return {
-    windowId: targetWindow?.id ?? bellWindowId,
-    paneId: targetPane?.id ?? bellPaneId,
-    windowIndex: targetWindow?.index,
-    paneIndex: targetPane?.index,
-    paneUrl,
-    // 标题/进程跟随实际解析到的 pane（与 paneIndex/paneUrl 同源），快照缺失则留空
-    paneTitle: targetPane?.title,
-    paneCurrentCommand: targetPane?.currentCommand,
+    windowId: located.window?.id ?? bellWindowId,
+    paneId: located.pane?.id ?? bellPaneId,
+    windowIndex: located.window?.index,
+    paneIndex: located.pane?.index,
+    paneUrl: buildPaneUrl(options.siteUrl, deviceId, located.window, located.pane),
+    paneTitle: located.pane?.title,
+    paneCurrentCommand: located.pane?.currentCommand,
   };
 }

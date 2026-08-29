@@ -116,4 +116,79 @@ describe('resolvePaneContext', () => {
       paneId: '%12',
     });
   });
+
+  test('unmatched paneId with windowId uses that window active pane', () => {
+    const bell = resolvePaneContext({
+      deviceId: 'device-1',
+      siteUrl: 'https://tmex.example.com',
+      snapshot: createSnapshot(),
+      rawData: {
+        windowId: '@1',
+        paneId: '%missing',
+      },
+    });
+
+    expect(bell).toEqual({
+      windowId: '@1',
+      paneId: '%12',
+      windowIndex: 0,
+      paneIndex: 1,
+      paneUrl: 'https://tmex.example.com/devices/device-1/windows/%401/panes/%2512',
+      paneTitle: 'second',
+      paneCurrentCommand: 'vim',
+    });
+  });
+
+  test('unmatched paneId without windowId uses the active window pane', () => {
+    const bell = resolvePaneContext({
+      deviceId: 'device-1',
+      siteUrl: 'https://tmex.example.com',
+      snapshot: createSnapshot(),
+      rawData: {
+        paneId: '%missing',
+      },
+    });
+
+    expect(bell.paneId).toBe('%21');
+    expect(bell.windowId).toBe('@2');
+  });
+
+  test('falls back to the first window when none is active', () => {
+    const snapshot = createSnapshot();
+    for (const window of snapshot.session?.windows ?? []) {
+      window.active = false;
+    }
+
+    const bell = resolvePaneContext({
+      deviceId: 'device-1',
+      siteUrl: 'https://tmex.example.com',
+      snapshot,
+      rawData: {},
+    });
+
+    expect(bell.windowId).toBe('@1');
+    expect(bell.paneId).toBe('%12');
+  });
+
+  test('empty session windows keep raw ids and omit pane url', () => {
+    const bell = resolvePaneContext({
+      deviceId: 'device-1',
+      siteUrl: 'https://tmex.example.com',
+      snapshot: {
+        deviceId: 'device-1',
+        session: { id: '$1', name: 'tmex', windows: [] },
+      },
+      rawData: { windowId: '@9', paneId: '%99' },
+    });
+
+    expect(bell).toEqual({
+      windowId: '@9',
+      paneId: '%99',
+      windowIndex: undefined,
+      paneIndex: undefined,
+      paneUrl: undefined,
+      paneTitle: undefined,
+      paneCurrentCommand: undefined,
+    });
+  });
 });

@@ -1,6 +1,9 @@
 import { describe, expect, test } from 'bun:test';
 import type { Device, SiteSettings, StateSnapshotPayload } from '@tmex/shared';
-import type { DeviceSessionRuntimeListener } from '../tmux-client/device-session-runtime';
+import type {
+  DeviceSessionRuntime,
+  DeviceSessionRuntimeListener,
+} from '../tmux-client/device-session-runtime';
 import { PushSupervisor } from './supervisor';
 
 const now = '2026-02-11T00:00:00.000Z';
@@ -32,8 +35,27 @@ function createSettings(): SiteSettings {
     sshReconnectDelaySeconds: 1,
     language: 'zh_CN',
     theme: 'dark',
+    disabledNotificationChannels: [],
     updatedAt: now,
   };
+}
+
+function stubRuntime(
+  box: { listener: DeviceSessionRuntimeListener | null },
+  extra?: { sessionClosedEmitted?: boolean }
+): DeviceSessionRuntime {
+  return {
+    sessionClosedEmitted: extra?.sessionClosedEmitted,
+    subscribe(next: DeviceSessionRuntimeListener) {
+      box.listener = next;
+      return () => {
+        box.listener = null;
+      };
+    },
+    async connect() {},
+    requestSnapshot() {},
+    disconnect() {},
+  } as DeviceSessionRuntime;
 }
 
 describe('PushSupervisor', () => {
@@ -107,25 +129,14 @@ describe('PushSupervisor', () => {
   test('bell event should notify with resolved pane context', async () => {
     const device = createDevice('d1');
     const notifications: Array<{ paneId?: string; windowId?: string; paneUrl?: string }> = [];
-    let listener: DeviceSessionRuntimeListener | null = null;
+    const box: { listener: DeviceSessionRuntimeListener | null } = { listener: null };
 
     const supervisor = new PushSupervisor({
       deps: {
         listDevices: () => [device],
         getDevice: () => device,
         getSettings: () => createSettings(),
-        acquireRuntime: async () =>
-          ({
-            subscribe(next: DeviceSessionRuntimeListener) {
-              listener = next;
-              return () => {
-                listener = null;
-              };
-            },
-            async connect() {},
-            requestSnapshot() {},
-            disconnect() {},
-          }) as any,
+        acquireRuntime: async () => stubRuntime(box),
         releaseRuntime: async () => {},
         async notifyBell(context) {
           notifications.push({
@@ -165,8 +176,8 @@ describe('PushSupervisor', () => {
       },
     };
 
-    listener?.onSnapshot?.(snapshot);
-    listener?.onEvent?.({ type: 'bell', data: { paneId: '%1' } });
+    box.listener?.onSnapshot?.(snapshot);
+    box.listener?.onEvent?.({ type: 'bell', data: { paneId: '%1' } });
 
     expect(notifications).toEqual([
       {
@@ -189,25 +200,14 @@ describe('PushSupervisor', () => {
       title?: string;
       body: string;
     }> = [];
-    let listener: DeviceSessionRuntimeListener | null = null;
+    const box: { listener: DeviceSessionRuntimeListener | null } = { listener: null };
 
     const supervisor = new PushSupervisor({
       deps: {
         listDevices: () => [device],
         getDevice: () => device,
         getSettings: () => createSettings(),
-        acquireRuntime: async () =>
-          ({
-            subscribe(next: DeviceSessionRuntimeListener) {
-              listener = next;
-              return () => {
-                listener = null;
-              };
-            },
-            async connect() {},
-            requestSnapshot() {},
-            disconnect() {},
-          }) as any,
+        acquireRuntime: async () => stubRuntime(box),
         releaseRuntime: async () => {},
         async notifyNotification(context) {
           notifications.push({
@@ -250,8 +250,8 @@ describe('PushSupervisor', () => {
       },
     };
 
-    listener?.onSnapshot?.(snapshot);
-    listener?.onEvent?.({
+    box.listener?.onSnapshot?.(snapshot);
+    box.listener?.onEvent?.({
       type: 'notification',
       data: {
         paneId: '%1',
@@ -275,6 +275,90 @@ describe('PushSupervisor', () => {
     await supervisor.stopAll();
   });
 
+  test('empty notification payload is dropped', async () => {
+    const device = createDevice('d-empty');
+    const notifications: string[] = [];
+    const box: { listener: DeviceSessionRuntimeListener | null } = { listener: null };
+
+    const supervisor = new PushSupervisor({
+      deps: {
+        listDevices: () => [device],
+        getDevice: () => device,
+        getSettings: () => createSettings(),
+        acquireRuntime: async () => stubRuntime(box),
+        releaseRuntime: async () => {},
+        async notifyNotification() {
+          notifications.push('hit');
+        },
+      },
+    });
+
+    await supervisor.start();
+    box.listener?.onEvent?.({ type: 'notification', data: { title: '', body: '' } });
+    expect(notifications).toEqual([]);
+    await supervisor.stopAll();
+  });
+
+  test.each([
+    ['osc9', 'osc9'],
+    ['osc777', 'osc777'],
+    ['osc1337', 'osc1337'],
+    ['osc99', 'osc9'],
+    ['unknown', 'osc9'],
+  ])('notification source %s is forwarded as %s', async (rawSource, expected) => {
+    const device = createDevice(`src-${rawSource}`);
+    const sources: string[] = [];
+    const box: { listener: DeviceSessionRuntimeListener | null } = { listener: null };
+
+    const supervisor = new PushSupervisor({
+      deps: {
+        listDevices: () => [device],
+        getDevice: () => device,
+        getSettings: () => createSettings(),
+        acquireRuntime: async () => stubRuntime(box),
+        releaseRuntime: async () => {},
+        async notifyNotification(context) {
+          sources.push(context.notification.source);
+        },
+      },
+    });
+
+    await supervisor.start();
+    box.listener?.onEvent?.({
+      type: 'notification',
+      data: { source: rawSource, body: 'hello' },
+    });
+    expect(sources).toEqual([expected]);
+    await supervisor.stopAll();
+  });
+
+  test('non bell/notification tmux events are ignored', async () => {
+    const device = createDevice('d-ignore');
+    const hits: string[] = [];
+    const box: { listener: DeviceSessionRuntimeListener | null } = { listener: null };
+
+    const supervisor = new PushSupervisor({
+      deps: {
+        listDevices: () => [device],
+        getDevice: () => device,
+        getSettings: () => createSettings(),
+        acquireRuntime: async () => stubRuntime(box),
+        releaseRuntime: async () => {},
+        async notifyBell() {
+          hits.push('bell');
+        },
+        async notifyNotification() {
+          hits.push('notification');
+        },
+      },
+    });
+
+    await supervisor.start();
+    box.listener?.onEvent?.({ type: 'window-add', data: {} });
+    expect(hits).toEqual([]);
+    await supervisor.stopAll();
+  });
+
   // 断开告警桥的双发抑制信号来自连接实例的显式标志：supervisor 必须把
   // runtime.sessionClosedEmitted 透传给桥，不依赖任何持久化状态位。
   test.each([
@@ -284,7 +368,7 @@ describe('PushSupervisor', () => {
     'close with sessionClosedEmitted=%p bridges %p',
     async (sessionClosedEmitted, expectedEvents) => {
       const device = createDevice(`close-${String(sessionClosedEmitted)}`);
-      let listener: DeviceSessionRuntimeListener | null = null;
+      const box: { listener: DeviceSessionRuntimeListener | null } = { listener: null };
       const events: string[] = [];
       const { connectionAlertNotifier } = await import('./connection-alerts');
       connectionAlertNotifier.setEventEmitter((eventType) => {
@@ -300,26 +384,14 @@ describe('PushSupervisor', () => {
           listDevices: () => [device],
           getDevice: () => device,
           getSettings: () => createSettings(),
-          acquireRuntime: async () =>
-            ({
-              sessionClosedEmitted,
-              subscribe(next: DeviceSessionRuntimeListener) {
-                listener = next;
-                return () => {
-                  listener = null;
-                };
-              },
-              async connect() {},
-              requestSnapshot() {},
-              disconnect() {},
-            }) as any,
+          acquireRuntime: async () => stubRuntime(box, { sessionClosedEmitted }),
           releaseRuntime: async () => {},
         },
       });
 
       try {
         await supervisor.start();
-        listener?.onClose?.();
+        box.listener?.onClose?.();
         await new Promise((resolve) => setTimeout(resolve, 0));
         expect(events).toEqual(expectedEvents);
       } finally {
