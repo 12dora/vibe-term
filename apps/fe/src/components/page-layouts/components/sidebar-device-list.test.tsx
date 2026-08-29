@@ -3,6 +3,7 @@
 
 import { describe, expect, mock, test } from 'bun:test';
 import type { MeshNode } from '@tmex/api-client/auth/index';
+import type { AppRuntime } from '@tmex/stores';
 import { installWindowStorage } from '@tmex/stores/test-utils';
 
 installWindowStorage();
@@ -19,8 +20,22 @@ mock.module('./sidebar-device-list-runtime', () => ({
 
 const { renderToStaticMarkup } = await import('react-dom/server');
 const { MemoryRouter } = await import('react-router');
+const { sidebarDeviceVisibilityKey } = await import('@tmex/stores');
+const { RuntimeProvider } = await import('@tmex/stores/react');
 const { SideBarDeviceList, toSidebarEntries } = await import('./sidebar-device-list');
 const { SidebarNodeSection, inventoryDevices } = await import('./sidebar-node-section');
+
+/**
+ * 分节自身要读宿主级共享的 UI store（设备可见性）；生产里 AppSidebar 永远在
+ * NodeRuntimeBoundary 的 RuntimeProvider 内，这里补一个只带 ui 面的最小 runtime。
+ * 不用真 zustand store：静态渲染走 useSyncExternalStore 的 server 快照（zustand 给的是
+ * **建店时**的初始 state），建店后再改就读不到，测试无法准备数据。
+ */
+function runtimeStub(sidebarDeviceVisibility: Record<string, boolean>): AppRuntime {
+  const state = { sidebarDeviceVisibility };
+  const ui = <T,>(selector: (value: typeof state) => T): T => selector(state);
+  return { nodeId: 'self', stores: { ui } } as unknown as AppRuntime;
+}
 
 function meshNode(overrides: Partial<MeshNode> & { id: string }): MeshNode {
   return {
@@ -36,8 +51,12 @@ function meshNode(overrides: Partial<MeshNode> & { id: string }): MeshNode {
   };
 }
 
-function render(ui: React.ReactNode): string {
-  return renderToStaticMarkup(<MemoryRouter>{ui}</MemoryRouter>);
+function render(ui: React.ReactNode, visibility: Record<string, boolean> = {}): string {
+  return renderToStaticMarkup(
+    <RuntimeProvider runtime={runtimeStub(visibility)}>
+      <MemoryRouter>{ui}</MemoryRouter>
+    </RuntimeProvider>
+  );
 }
 
 describe('toSidebarEntries', () => {
@@ -89,28 +108,42 @@ describe('inventoryDevices', () => {
 });
 
 describe('SidebarNodeSection', () => {
-  test('离线 node：灰显最近一次已知 inventory，链接带 /n/<id> 前缀，不建连接', () => {
-    const html = render(
-      <SidebarNodeSection
-        node={{
-          id: '0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c',
-          runtimeNodeId: '0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c',
-          name: 'studio',
-          online: false,
-          loggedIn: true,
-          isSelf: false,
-          inventory: { devices: [{ id: 'd1', name: '书房' }] },
-        }}
-      />
-    );
-    expect(html).toContain('data-testid="sidebar-node-offline-0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c"');
-    expect(html).toContain('data-testid="sidebar-node-offline-device-d1"');
-    expect(html).toContain('href="/n/0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c/devices/d1"');
-    expect(html).toContain('书房');
+  const OFFLINE_NODE = '0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c';
+
+  function offlineNode() {
+    return {
+      id: OFFLINE_NODE,
+      runtimeNodeId: OFFLINE_NODE,
+      name: 'studio',
+      online: false,
+      loggedIn: true,
+      isSelf: false,
+      inventory: { devices: [{ id: 'd1', name: '书房' }] },
+    };
+  }
+
+  test('离线 node：远端设备默认不显示，只留分节头与提示', () => {
+    const html = render(<SidebarNodeSection node={offlineNode()} />);
+
+    expect(html).toContain(`data-testid="sidebar-node-offline-${OFFLINE_NODE}"`);
+    expect(html).toContain(`data-testid="sidebar-node-hidden-${OFFLINE_NODE}"`);
+    expect(html).not.toContain('data-testid="sidebar-node-offline-device-d1"');
     // 徽标灰显
-    expect(html).toContain('data-testid="node-badge-0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c"');
+    expect(html).toContain(`data-testid="node-badge-${OFFLINE_NODE}"`);
     expect(html).toContain('data-online="false"');
     // 未渲染任何设备树
+    expect(html).not.toContain('data-testid="device-item-');
+  });
+
+  test('离线 node：勾选显示后灰显已知设备，链接带 /n/<id> 前缀，不建连接', () => {
+    const html = render(<SidebarNodeSection node={offlineNode()} />, {
+      [sidebarDeviceVisibilityKey(OFFLINE_NODE, 'd1')]: true,
+    });
+
+    expect(html).toContain('data-testid="sidebar-node-offline-device-d1"');
+    expect(html).toContain(`href="/n/${OFFLINE_NODE}/devices/d1"`);
+    expect(html).toContain('书房');
+    expect(html).not.toContain(`data-testid="sidebar-node-hidden-${OFFLINE_NODE}"`);
     expect(html).not.toContain('data-testid="device-item-');
   });
 

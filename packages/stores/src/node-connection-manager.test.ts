@@ -87,6 +87,14 @@ describe('nodeStoragePrefix', () => {
   });
 });
 
+describe('全局 i18n 语言控制', () => {
+  test('只有 self 的 runtime 允许把站点语言写进全局 i18next', () => {
+    const manager = createManager(clock);
+    expect(manager.get('self').runtime.controlsBrowserPrefs).toBe(true);
+    expect(manager.get(NODE_A).runtime.controlsBrowserPrefs).toBe(false);
+  });
+});
+
 describe('NodeConnectionManager.get', () => {
   test('同一 nodeId 复用同一份运行时', () => {
     const manager = createManager(clock);

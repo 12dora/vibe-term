@@ -135,6 +135,12 @@ export interface AppRuntimeOptions {
   storagePrefix?: string;
   /** 宿主共享的 UI 偏好 store（多 runtime 并存时传同一实例）；缺省按 storagePrefix 新建 */
   uiStore?: UIStore;
+  /**
+   * 本 runtime 的站点设置是否驱动**全局** i18n 语言；缺省 true。
+   * i18next 是浏览器级单例，多 node 宿主里只有 self / 宿主 runtime 允许为 true——
+   * 远端 node 的站点语言（常常还是 en_US）不得把整页 UI 掀翻。
+   */
+  controlsBrowserPrefs?: boolean;
   /** UI 能力开关；缺省全开（单实例宿主零变化） */
   features?: {
     agentUi?: boolean;
@@ -171,6 +177,8 @@ export interface RuntimeCore {
   t: TranslateFn;
   host: HostServices;
   storagePrefix: string;
+  /** 本 runtime 的站点语言/外观是否写回浏览器级全局状态（i18next、<html>.dark、主题预设）；仅 self runtime 为 true */
+  controlsBrowserPrefs: boolean;
   features: RuntimeFeatures;
   terminalFileLinks?: TerminalFileLinksProvider;
 }
@@ -334,6 +342,7 @@ export function resolveRuntimeCore(options: AppRuntimeOptions = {}): RuntimeCore
     t: options.t ?? defaultTranslate,
     host: options.host ?? defaultHost,
     storagePrefix: options.storagePrefix ?? '',
+    controlsBrowserPrefs: options.controlsBrowserPrefs ?? true,
     features: resolveFeatures(options.features),
     terminalFileLinks: options.terminalFileLinks,
   };

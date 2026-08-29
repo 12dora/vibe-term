@@ -14,14 +14,24 @@ mock.module('@tmex/panels/device-management', () => ({
   DeviceManagementPanel: ({ listenOpenAddDeviceEvent }: { listenOpenAddDeviceEvent?: boolean }) => (
     <span data-testid="device-panel" data-listen={String(listenOpenAddDeviceEvent ?? true)} />
   ),
-  DeviceManagementActions: () => <span data-testid="device-actions" />,
+  DeviceManagementActions: ({ onAddDevice }: { onAddDevice?: () => void }) => (
+    <span data-testid="device-actions" data-callback={String(Boolean(onAddDevice))} />
+  ),
 }));
 
 const { renderToStaticMarkup } = await import('react-dom/server');
 const { MemoryRouter } = await import('react-router');
 const { resetMeshNodesStateForTest, setMeshNodesStateForTest } = await import('@/node/mesh-nodes');
-const DevicesPage = (await import('./DevicesPage')).default;
+const DevicesPageModule = await import('./DevicesPage');
+const DevicesPage = DevicesPageModule.default;
+const { PageActions } = DevicesPageModule;
 const { nodeDeviceGroupState, toNodeDeviceGroups } = await import('./devices/node-device-group');
+const {
+  getAddDeviceTargets,
+  registerAddDeviceTarget,
+  resetAddDeviceTargetsForTest,
+  sortAddDeviceTargets,
+} = await import('./devices/add-device-targets');
 
 const ENTRY_ID = '0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e';
 const OFFLINE_ID = '0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c';
@@ -68,7 +78,17 @@ function renderMeshWith(nodes: MeshNode[]): string {
 
 beforeEach(() => {
   resetMeshNodesStateForTest();
+  resetAddDeviceTargetsForTest();
 });
+
+function target(overrides: { runtimeNodeId: string; name: string; isSelf?: boolean }) {
+  return {
+    runtimeNodeId: overrides.runtimeNodeId,
+    name: overrides.name,
+    isSelf: overrides.isSelf ?? false,
+    open: () => undefined,
+  };
+}
 
 describe('toNodeDeviceGroups', () => {
   test('entry 自身排最前并恒为已登录，其余按名称排序', () => {
@@ -178,7 +198,6 @@ describe('DevicesPage', () => {
     // self：在线已登录 → 挂面板，并保留全局事件（外壳右上角的 + 作用于 self）
     expect(html).toContain('data-testid="devices-node-panel-self"');
     expect(html).toContain('data-listen="true"');
-    expect(html).toContain('data-testid="devices-node-add-self"');
 
     // 离线：灰显最近一次已知 inventory，不挂面板、不给登录按钮
     expect(html).toContain(`data-testid="devices-node-offline-${OFFLINE_ID}"`);
@@ -191,7 +210,6 @@ describe('DevicesPage', () => {
     expect(html).toContain(`data-testid="devices-node-login-${SIGNED_OUT_ID}"`);
     expect(html).toContain(`data-testid="node-login-${SIGNED_OUT_ID}"`);
     expect(html).not.toContain(`data-testid="devices-node-panel-${SIGNED_OUT_ID}"`);
-    expect(html).not.toContain(`data-testid="devices-node-add-${SIGNED_OUT_ID}"`);
   });
 
   test('远端 node 已登录：挂自己的运行时，且关掉全局添加设备事件', () => {
@@ -201,7 +219,8 @@ describe('DevicesPage', () => {
     ]);
     expect(html).toContain(`data-testid="devices-node-panel-${REMOTE_ID}"`);
     expect(html).toContain('data-listen="false"');
-    expect(html).toContain(`data-testid="devices-node-add-${REMOTE_ID}"`);
+    // 每组不再有自己的 +：全页只留顶栏那一个
+    expect(html).not.toContain('data-testid="devices-node-add-');
     // 状态徽标：两个 node 都是 ready
     expect(html).toContain(`data-testid="devices-node-status-${REMOTE_ID}"`);
     expect(html).toContain('data-state="ready"');
@@ -218,5 +237,78 @@ describe('DevicesPage', () => {
     // inventory 为空时给空态
     expect(html).toContain(`data-testid="devices-node-offline-${OFFLINE_ID}"`);
     expect(html).not.toContain('data-testid="devices-node-offline-device-');
+  });
+});
+
+describe('add-device 目标注册表', () => {
+  test('self 排最前，其余按名称排序', () => {
+    const sorted = sortAddDeviceTargets([
+      target({ runtimeNodeId: REMOTE_ID, name: 'studio' }),
+      target({ runtimeNodeId: OFFLINE_ID, name: 'attic' }),
+      target({ runtimeNodeId: 'self', name: 'zulu', isSelf: true }),
+    ]);
+    expect(sorted.map((entry) => entry.runtimeNodeId)).toEqual(['self', OFFLINE_ID, REMOTE_ID]);
+  });
+
+  test('登记与注销：注销函数只摘掉自己那一条', () => {
+    const first = target({ runtimeNodeId: 'self', name: 'entry', isSelf: true });
+    const second = target({ runtimeNodeId: REMOTE_ID, name: 'studio' });
+    const unregisterFirst = registerAddDeviceTarget(first);
+    registerAddDeviceTarget(second);
+    expect(getAddDeviceTargets().map((entry) => entry.runtimeNodeId)).toEqual(['self', REMOTE_ID]);
+
+    unregisterFirst();
+    expect(getAddDeviceTargets().map((entry) => entry.runtimeNodeId)).toEqual([REMOTE_ID]);
+    // 重复注销不再改动注册表
+    unregisterFirst();
+    expect(getAddDeviceTargets()).toHaveLength(1);
+  });
+
+  test('同一 node 重复登记只保留最后一次（面板重挂不重复出现）', () => {
+    registerAddDeviceTarget(target({ runtimeNodeId: REMOTE_ID, name: 'old' }));
+    registerAddDeviceTarget(target({ runtimeNodeId: REMOTE_ID, name: 'new' }));
+    expect(getAddDeviceTargets()).toHaveLength(1);
+    expect(getAddDeviceTargets()[0].name).toBe('new');
+  });
+
+  test('快照引用稳定：没有变动时 useSyncExternalStore 不会被判定为新值', () => {
+    registerAddDeviceTarget(target({ runtimeNodeId: REMOTE_ID, name: 'studio' }));
+    expect(getAddDeviceTargets()).toBe(getAddDeviceTargets());
+  });
+});
+
+describe('PageActions（全页唯一的 +）', () => {
+  test('没有登记目标时退回全局事件按钮（standalone 旧行为）', () => {
+    const html = renderToStaticMarkup(
+      <MemoryRouter>
+        <PageActions />
+      </MemoryRouter>
+    );
+    expect(html).toContain('data-testid="device-actions"');
+    expect(html).toContain('data-callback="false"');
+    expect(html).not.toContain('data-testid="devices-add"');
+  });
+
+  test('只有一个 ready node 时是直接打开该节点对话框的单按钮', () => {
+    registerAddDeviceTarget(target({ runtimeNodeId: 'self', name: 'entry', isSelf: true }));
+    const html = renderToStaticMarkup(
+      <MemoryRouter>
+        <PageActions />
+      </MemoryRouter>
+    );
+    expect(html).toContain('data-testid="device-actions"');
+    expect(html).toContain('data-callback="true"');
+  });
+
+  test('多个 ready node 时换成下拉菜单，触发器仍是 devices-add', () => {
+    registerAddDeviceTarget(target({ runtimeNodeId: 'self', name: 'entry', isSelf: true }));
+    registerAddDeviceTarget(target({ runtimeNodeId: REMOTE_ID, name: 'studio' }));
+    const html = renderToStaticMarkup(
+      <MemoryRouter>
+        <PageActions />
+      </MemoryRouter>
+    );
+    expect(html).toContain('data-testid="devices-add"');
+    expect(html).not.toContain('data-testid="device-actions"');
   });
 });

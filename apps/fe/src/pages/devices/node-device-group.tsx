@@ -3,8 +3,9 @@
 //   - 在线但未登录：只渲染「登录此节点」按钮，不建连接（避免每次渲染都撞 4401）；
 //   - 在线且已登录：懒挂该 node 的运行时，在里面渲染完整的设备管理面板。
 //
-// 面板的「添加设备」不能再走全局事件（多面板同时挂载会一起弹框），这里改成每组一个按钮
-// 经 ref 命令式打开；只有 entry 自身保留全局事件监听，好让外壳右上角的 + 作用于 self。
+// 「添加设备」全页只有顶栏一个 +：ready 的分组把自己的 `openAddDevice` 登记到
+// `add-device-targets` 注册表，顶栏据此直接开或先让用户选节点；面板自身仍不监听全局事件
+// （多面板同时挂载会一起弹框），只有 entry 自身保留监听兜住其它派发方。
 
 import { NodeLoginButton } from '@/auth';
 import { inventoryDevices } from '@/components/page-layouts/components/sidebar-node-section';
@@ -16,10 +17,10 @@ import {
   type DeviceManagementPanelHandle,
 } from '@tmex/panels/device-management';
 import { NodeBadge } from '@tmex/panels/device-tree';
-import { Button } from '@tmex/ui/button';
-import { Monitor, Plus } from 'lucide-react';
-import { type ReactNode, useRef } from 'react';
+import { Monitor } from 'lucide-react';
+import { useCallback, useEffect, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
+import { registerAddDeviceTarget } from './add-device-targets';
 
 export interface NodeDeviceGroupEntry {
   /** mesh 列表里的真实 node id。 */
@@ -69,6 +70,8 @@ export function toNodeDeviceGroups(
   });
 }
 
+const CHIP_CLASS = 'rounded border border-border/60 px-1.5 py-px text-[10px] leading-none';
+
 function StatusChip({ node }: { node: NodeDeviceGroupEntry }) {
   const { t } = useTranslation();
   const state = nodeDeviceGroupState(node);
@@ -84,8 +87,8 @@ function StatusChip({ node }: { node: NodeDeviceGroupEntry }) {
       data-state={state}
       className={
         state === 'ready'
-          ? 'rounded border border-border/60 px-1.5 py-px text-[10px] leading-none text-emerald-600 dark:text-emerald-400'
-          : 'rounded border border-border/60 px-1.5 py-px text-[10px] leading-none text-muted-foreground'
+          ? `${CHIP_CLASS} text-emerald-600 dark:text-emerald-400`
+          : `${CHIP_CLASS} text-muted-foreground`
       }
     >
       {label}
@@ -93,11 +96,11 @@ function StatusChip({ node }: { node: NodeDeviceGroupEntry }) {
   );
 }
 
-function GroupHeader({ node, action }: { node: NodeDeviceGroupEntry; action?: ReactNode }) {
+function GroupHeader({ node }: { node: NodeDeviceGroupEntry }) {
   const { t } = useTranslation();
   return (
     <div
-      className="flex items-center gap-2"
+      className="flex min-w-0 flex-wrap items-center gap-1.5"
       data-testid={`devices-node-header-${node.runtimeNodeId}`}
     >
       <NodeBadge
@@ -112,7 +115,7 @@ function GroupHeader({ node, action }: { node: NodeDeviceGroupEntry; action?: Re
       {node.isHub && (
         <span
           data-testid={`devices-node-hub-${node.runtimeNodeId}`}
-          className="rounded border border-border/60 px-1.5 py-px text-[10px] leading-none text-muted-foreground"
+          className={`${CHIP_CLASS} text-muted-foreground`}
         >
           {t('devices.nodes.status.hub')}
         </span>
@@ -126,7 +129,6 @@ function GroupHeader({ node, action }: { node: NodeDeviceGroupEntry; action?: Re
           {node.version}
         </span>
       )}
-      <div className="ml-auto">{action}</div>
     </div>
   );
 }
@@ -137,13 +139,13 @@ function OfflineBody({ node }: { node: NodeDeviceGroupEntry }) {
   return (
     <div
       data-testid={`devices-node-offline-${node.runtimeNodeId}`}
-      className="rounded-lg border border-border/60 bg-muted/30 p-3"
+      className="rounded-lg border border-border/60 bg-muted/30 px-3 py-2"
     >
       {devices.length === 0 ? (
         <p className="text-xs text-muted-foreground/60">{t('devices.nodes.noKnownDevices')}</p>
       ) : (
         <>
-          <p className="pb-2 text-[11px] text-muted-foreground/60">
+          <p className="pb-1.5 text-[11px] text-muted-foreground/60">
             {t('devices.nodes.lastKnownDevices')}
           </p>
           <ul className="space-y-1">
@@ -169,7 +171,7 @@ function SignedOutBody({ node }: { node: NodeDeviceGroupEntry }) {
   return (
     <div
       data-testid={`devices-node-login-${node.runtimeNodeId}`}
-      className="flex flex-wrap items-center gap-3 rounded-lg border border-border/60 bg-muted/30 p-3"
+      className="flex flex-wrap items-center gap-2 rounded-lg border border-border/60 bg-muted/30 px-3 py-2"
     >
       <p className="text-xs text-muted-foreground">{t('devices.nodes.signInToManage')}</p>
       <NodeLoginButton nodeId={node.runtimeNodeId} nodeName={node.name} />
@@ -178,31 +180,28 @@ function SignedOutBody({ node }: { node: NodeDeviceGroupEntry }) {
 }
 
 export function NodeDeviceGroup({ node }: { node: NodeDeviceGroupEntry }) {
-  const { t } = useTranslation();
   const panelRef = useRef<DeviceManagementPanelHandle>(null);
   const state = nodeDeviceGroupState(node);
+  const openAddDevice = useCallback(() => panelRef.current?.openAddDevice(), []);
 
-  const addButton =
-    state === 'ready' ? (
-      <Button
-        variant="ghost"
-        size="icon-sm"
-        data-testid={`devices-node-add-${node.runtimeNodeId}`}
-        onClick={() => panelRef.current?.openAddDevice()}
-        aria-label={t('devices.nodes.addDevice', { name: node.name })}
-        title={t('devices.nodes.addDevice', { name: node.name })}
-      >
-        <Plus className="h-4 w-4" />
-      </Button>
-    ) : undefined;
+  // ready 的分组才登记：离线 / 未登录的 node 没有可用面板，顶栏也不该把它列成目标。
+  useEffect(() => {
+    if (state !== 'ready') return;
+    return registerAddDeviceTarget({
+      runtimeNodeId: node.runtimeNodeId,
+      name: node.name,
+      isSelf: node.isSelf,
+      open: openAddDevice,
+    });
+  }, [state, node.runtimeNodeId, node.name, node.isSelf, openAddDevice]);
 
   return (
     <section
       data-testid={`devices-node-group-${node.runtimeNodeId}`}
       data-state={state}
-      className="flex flex-col gap-2"
+      className="flex flex-col gap-1.5"
     >
-      <GroupHeader node={node} action={addButton} />
+      <GroupHeader node={node} />
       {state === 'offline' && <OfflineBody node={node} />}
       {state === 'signedOut' && <SignedOutBody node={node} />}
       {state === 'ready' && (
@@ -212,7 +211,7 @@ export function NodeDeviceGroup({ node }: { node: NodeDeviceGroupEntry }) {
               ref={panelRef}
               // entry 自身保留全局事件：外壳右上角的「添加设备」作用于 self。
               listenOpenAddDeviceEvent={node.isSelf}
-              className="max-w-none p-0 pb-0 sm:p-0"
+              className="max-w-none gap-2 p-0 pb-0 sm:gap-2 sm:p-0"
             />
           </NodeRuntimeScope>
         </div>

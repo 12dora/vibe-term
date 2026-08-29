@@ -20,6 +20,7 @@ import { DeviceRow } from './device-row';
 import { useDeviceTreeDialogs } from './device-tree-dialogs';
 import { SortableVerticalList } from './device-tree-dnd';
 import { useDeviceTreeNavigationApi, useDeviceTreeSelection } from './device-tree-navigation';
+import { selectSidebarVisibleDevices } from './device-tree-selectors';
 import type { NodeBadgeInfo } from './node-badge';
 
 type DeviceListItem = Device & {
@@ -42,6 +43,8 @@ export interface SideBarDeviceListProps {
   nodeBadge?: NodeBadgeInfo;
   /** 无设备时的空态文案；缺省沿用 `sidebar.noDevices` */
   emptyLabel?: string;
+  /** 有设备但全部被侧边栏可见性过滤掉时的提示；缺省退回 emptyLabel */
+  hiddenEmptyLabel?: string;
   /** 宿主连接管理；未传时不渲染连接开关，展开仍走 ensureDeviceSubscribed */
   connection?: DeviceConnectionAdapter;
 }
@@ -53,6 +56,7 @@ export function SideBarDeviceList({
   agent,
   nodeBadge,
   emptyLabel,
+  hiddenEmptyLabel,
   connection,
 }: SideBarDeviceListProps) {
   const { t } = useTranslation();
@@ -65,6 +69,7 @@ export function SideBarDeviceList({
 
   const sidebarDeviceExpanded = useUIStore((state) => state.sidebarDeviceExpanded);
   const setSidebarDeviceExpanded = useUIStore((state) => state.setSidebarDeviceExpanded);
+  const sidebarDeviceVisibility = useUIStore((state) => state.sidebarDeviceVisibility);
 
   const { selectedDeviceId, selectedWindowId, selectedPaneId } = useDeviceTreeSelection();
 
@@ -153,6 +158,20 @@ export function SideBarDeviceList({
   // 若每次渲染都新建数组，下面两个 effect 会跟着空跑（对每台设备调 ensureDeviceSubscribed），
   // sortedDevices / knownDeviceIds 两个 useMemo 也永远命中不了缓存。
   const devices = useMemo(() => devicesData?.devices ?? [], [devicesData]);
+
+  // 侧边栏只展示「已选择显示」的设备（远端 node 默认全隐藏，本机默认全显示）；
+  // 规则与「选中的那台无条件保留」见 selectSidebarVisibleDevices。
+  const visibleDevices = useMemo(
+    () =>
+      selectSidebarVisibleDevices(
+        devices,
+        sidebarDeviceVisibility,
+        runtime.nodeId,
+        selectedDeviceId
+      ),
+    [devices, selectedDeviceId, sidebarDeviceVisibility, runtime.nodeId]
+  );
+
   const autoExpandedDeviceIdsRef = useRef(new Set<string>());
 
   const handleDeviceExpandedChange = useCallback(
@@ -190,21 +209,21 @@ export function SideBarDeviceList({
   ]);
 
   useEffect(() => {
-    for (const device of devices) {
+    for (const device of visibleDevices) {
       if (sidebarDeviceExpanded[expansionKey(device.id)] !== false) {
         ensureDeviceSubscribed(device.id);
       }
     }
-  }, [devices, ensureDeviceSubscribed, sidebarDeviceExpanded, expansionKey]);
+  }, [visibleDevices, ensureDeviceSubscribed, sidebarDeviceExpanded, expansionKey]);
 
   const sortedDevices = useMemo(
     () =>
-      [...devices].sort(
+      [...visibleDevices].sort(
         (a, b) =>
           a.sortOrder - b.sortOrder ||
           a.name.localeCompare(b.name, toBCP47(language), { numeric: true, sensitivity: 'base' })
       ),
-    [devices, language]
+    [visibleDevices, language]
   );
 
   const knownDeviceIds = useMemo(() => devices.map((device) => device.id), [devices]);
@@ -266,6 +285,13 @@ export function SideBarDeviceList({
                 >
                   {t('common.retry')}
                 </Button>
+              </div>
+            ) : devices.length > 0 ? (
+              <div
+                data-testid="sidebar-devices-all-hidden"
+                className="text-center text-sm text-muted-foreground py-4"
+              >
+                {hiddenEmptyLabel ?? emptyLabel ?? t('sidebar.noDevices')}
               </div>
             ) : (
               <div className="text-center text-sm text-muted-foreground py-4">

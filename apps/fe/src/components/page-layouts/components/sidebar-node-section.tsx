@@ -12,6 +12,8 @@ import { useNodeLoginGate } from '@/auth/use-node-login';
 import { NodeRuntimeScope } from '@/node/node-runtime-scope';
 import { SELF_NODE_ID, nodeAppPath } from '@tmex/api-client';
 import { NodeBadge, type NodeBadgeInfo } from '@tmex/panels/device-tree';
+import { isSidebarDeviceVisible } from '@tmex/stores';
+import { useUIStore } from '@tmex/stores/react';
 import { ChevronRight, Loader2, Monitor } from 'lucide-react';
 import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
@@ -118,15 +120,27 @@ function SidebarNodeSignIn({ node }: { node: SidebarNodeEntry }) {
 
 export function SidebarNodeSection({ node }: { node: SidebarNodeEntry }) {
   const { t } = useTranslation();
+  // UI store 是宿主级共享实例（所有 node 同一份），离线分节没有自己的 runtime 也读得到。
+  const visibility = useUIStore((state) => state.sidebarDeviceVisibility);
 
   if (!node.online) {
-    const devices = inventoryDevices(node.inventory);
+    const knownDevices = inventoryDevices(node.inventory);
+    const devices = knownDevices.filter((device) =>
+      isSidebarDeviceVisible(visibility, node.runtimeNodeId, device.id)
+    );
     return (
       <div data-testid={`sidebar-node-offline-${node.runtimeNodeId}`} className="space-y-1">
         <SectionHeader node={node} hint={t('sidebar.node.offline')} />
-        {devices.length === 0 ? (
+        {knownDevices.length === 0 ? (
           <div className="px-2 py-1 text-[11px] text-muted-foreground/60">
             {t('sidebar.node.noKnownDevices')}
+          </div>
+        ) : devices.length === 0 ? (
+          <div
+            data-testid={`sidebar-node-hidden-${node.runtimeNodeId}`}
+            className="px-2 py-1 text-[11px] text-muted-foreground/60"
+          >
+            {t('sidebar.noVisibleDevices')}
           </div>
         ) : (
           devices.map((device) => (
@@ -161,6 +175,7 @@ export function SidebarNodeSection({ node }: { node: SidebarNodeEntry }) {
               : (deviceId) => `${node.runtimeNodeId}:${deviceId}`
           }
           emptyLabel={t('sidebar.node.noDevices')}
+          hiddenEmptyLabel={t('sidebar.noVisibleDevices')}
         />
       </NodeRuntimeScope>
     </div>

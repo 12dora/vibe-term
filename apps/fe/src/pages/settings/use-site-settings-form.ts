@@ -24,7 +24,7 @@ export interface SiteSettingsForm {
 export function useSiteSettingsForm(): SiteSettingsForm {
   const { t } = useTranslation();
   const queryClient = useQueryClient();
-  const { apiClient } = useRuntime();
+  const { apiClient, controlsBrowserPrefs } = useRuntime();
   const refreshSettings = useSiteStore((state) => state.refreshSettings);
 
   const [draft, setDraft] = useState<SiteSettingsDraft>(() =>
@@ -72,7 +72,7 @@ export function useSiteSettingsForm(): SiteSettingsForm {
         refreshSettings(),
       ]);
       toast.success(t('settings.settingsSaved'));
-      if (loadedSettings?.language !== draft.language) {
+      if (controlsBrowserPrefs && loadedSettings?.language !== draft.language) {
         void i18n.changeLanguage(draft.language);
         setShowRefreshNotice(true);
       }

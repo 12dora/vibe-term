@@ -90,6 +90,49 @@ describe('sidebar tab state', () => {
     expect(rehydrated.getState().sidebarDeviceExpanded).toEqual({ 'device-a': true });
   });
 
+  test('persists sidebar device visibility across store instances', () => {
+    const prefix = `ui-sidebar-visibility-${Date.now()}-`;
+    const store = createUIStore({ storagePrefix: prefix });
+
+    expect(store.getState().sidebarDeviceVisibility).toEqual({});
+
+    store.getState().setSidebarDeviceVisibility('node-a:device-1', true);
+    store.getState().setSidebarDeviceVisibility('self:device-2', false);
+    expect(store.getState().sidebarDeviceVisibility).toEqual({
+      'node-a:device-1': true,
+      'self:device-2': false,
+    });
+
+    const persisted = JSON.parse(storage.getItem(`${prefix}tmex-ui`) ?? '{}') as {
+      state?: { sidebarDeviceVisibility?: Record<string, boolean> };
+    };
+    expect(persisted.state?.sidebarDeviceVisibility).toEqual({
+      'node-a:device-1': true,
+      'self:device-2': false,
+    });
+
+    const rehydrated = createUIStore({ storagePrefix: prefix });
+    expect(rehydrated.getState().sidebarDeviceVisibility).toEqual({
+      'node-a:device-1': true,
+      'self:device-2': false,
+    });
+  });
+
+  test('normalizes invalid persisted device visibility', () => {
+    const prefix = `ui-sidebar-invalid-visibility-${Date.now()}-`;
+    storage.setItem(
+      `${prefix}tmex-ui`,
+      JSON.stringify({
+        state: { sidebarDeviceVisibility: { 'node-a:device-1': 'yes', 'node-a:device-2': true } },
+        version: 0,
+      })
+    );
+
+    expect(createUIStore({ storagePrefix: prefix }).getState().sidebarDeviceVisibility).toEqual({
+      'node-a:device-2': true,
+    });
+  });
+
   test('normalizes invalid persisted device disclosure', () => {
     const prefix = `ui-sidebar-invalid-device-${Date.now()}-`;
     storage.setItem(

@@ -28,6 +28,10 @@ export {
 } from './runtime';
 
 export { createUIStore, type KeyboardBehaviorMode, type SidebarTab, type UIStore } from './ui';
+export {
+  isSidebarDeviceVisible,
+  sidebarDeviceVisibilityKey,
+} from './sidebar-device-visibility';
 export { createSiteStore, type SiteStore } from './site';
 export { createTmuxStore, type DeviceInitialErrorInput, type TmuxStore } from './tmux';
 export {

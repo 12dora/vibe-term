@@ -5,6 +5,7 @@ import {
   type DeviceSnapshotSlice,
   selectDeviceOnline,
   selectDeviceWindows,
+  selectSidebarVisibleDevices,
 } from './device-tree-selectors';
 
 const makeWindow = (id: string): TmuxWindow => ({
@@ -103,5 +104,38 @@ describe('selectDeviceOnline', () => {
   test('does not resolve prototype keys', () => {
     expect(selectDeviceOnline(connectivity(), '__proto__')).toBe(false);
     expect(selectDeviceOnline(connectivity(), 'constructor')).toBe(false);
+  });
+});
+
+describe('selectSidebarVisibleDevices', () => {
+  const NODE_A = '0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a';
+  const devices = [{ id: 'd1' }, { id: 'd2' }];
+
+  test('本机 runtime 缺省全部显示', () => {
+    expect(selectSidebarVisibleDevices(devices, {}, 'self')).toEqual(devices);
+  });
+
+  test('本机 runtime 显式关掉的那台被滤掉', () => {
+    expect(selectSidebarVisibleDevices(devices, { 'self:d1': false }, 'self')).toEqual([
+      { id: 'd2' },
+    ]);
+  });
+
+  test('远端 node 缺省一台都不显示，勾选后才出现', () => {
+    expect(selectSidebarVisibleDevices(devices, {}, NODE_A)).toEqual([]);
+    expect(selectSidebarVisibleDevices(devices, { [`${NODE_A}:d2`]: true }, NODE_A)).toEqual([
+      { id: 'd2' },
+    ]);
+  });
+
+  test('当前选中的设备无条件保留（否则点进隐藏的远端设备后没有树可点）', () => {
+    expect(selectSidebarVisibleDevices(devices, {}, NODE_A, 'd1')).toEqual([{ id: 'd1' }]);
+    expect(selectSidebarVisibleDevices(devices, { 'self:d1': false }, 'self', 'd1')).toEqual(
+      devices
+    );
+  });
+
+  test('选中的设备不属于本 runtime 时不影响过滤结果', () => {
+    expect(selectSidebarVisibleDevices(devices, {}, NODE_A, 'other')).toEqual([]);
   });
 });

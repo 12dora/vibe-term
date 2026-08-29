@@ -47,12 +47,16 @@ const DEFAULT_SETTINGS: SiteSettings = {
 };
 
 export function createSiteStore(
-  core: Pick<RuntimeCore, 'client' | 'apiClient' | 'storagePrefix'>,
+  core: Pick<RuntimeCore, 'client' | 'apiClient' | 'storagePrefix' | 'controlsBrowserPrefs'>,
   getUIStore: () => UIStore
 ) {
   // 外观一变（服务端下发或用户直接切亮/暗），当前预设若属于另一套外观就不再适用：
   // 深色预设的 token 依赖 <html>.dark 才成立，留着会得到深底浅字的混搭。
   function syncThemeToUIStore(theme: ThemeMode): void {
+    // 与语言同理：远端 node 的外观设置不得改写整页的亮/暗与预设。
+    if (!core.controlsBrowserPrefs) {
+      return;
+    }
     const uiStore = getUIStore();
     // 同源另一标签页可能刚改过外观/预设：先把共享 localStorage 的最新值同步进内存，
     // 失配清理才不会拿陈旧内存值把对方的选择擦掉并回写。
@@ -105,9 +109,14 @@ export function createSiteStore(
   }
 
   return create<SiteState>((set, get) => {
+    // fetchSettings / refreshSettings / handleSettingsUpdate 全部经此提交，语言开关只需守这一处。
     function commitSettings(settings: SiteSettings): void {
       set({ settings, loading: false });
-      void i18next.changeLanguage(settings.language);
+      // i18next 是浏览器级单例：远端 node 的 runtime 拉到自己的站点设置后不得改全局语言，
+      // 否则进入 /n/<id>/... 子树就会把整页 UI 切成那台 node 的语言。
+      if (core.controlsBrowserPrefs) {
+        void i18next.changeLanguage(settings.language);
+      }
       syncThemeToUIStore(settings.theme);
     }
 

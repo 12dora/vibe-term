@@ -1,13 +1,14 @@
-// 设备卡片：图标/副标题、类型与 session 徽标、状态徽标，菜单含编辑/测试连接（仅 SSH）/删除。
+// 设备卡片：紧凑两行布局。第一行图标/名称/副标题 + 连接与更多菜单，第二行类型与状态徽标
+// + 「显示在侧栏」开关（浏览器本地偏好，按 `${runtimeNodeId}:${deviceId}` 记）。
 
 import { useMutation } from '@tanstack/react-query';
 import { testDeviceConnection } from '@tmex/api-client';
 import type { Device } from '@tmex/shared';
-import { hostAppPath } from '@tmex/stores';
-import { useRuntime } from '@tmex/stores/react';
+import { hostAppPath, isSidebarDeviceVisible, sidebarDeviceVisibilityKey } from '@tmex/stores';
+import { useRuntime, useUIStore } from '@tmex/stores/react';
 import { Badge } from '@tmex/ui/badge';
 import { Button, buttonVariants } from '@tmex/ui/button';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@tmex/ui/card';
+import { Card, CardContent } from '@tmex/ui/card';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -15,7 +16,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@tmex/ui/dropdown-menu';
-import { Separator } from '@tmex/ui/separator';
+import { Switch } from '@tmex/ui/switch';
 import { Globe, Monitor, MoreHorizontal, Pencil, Trash2, Zap } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { Link } from 'react-router';
@@ -26,11 +27,19 @@ export interface DeviceCardProps {
   device: Device;
   onEdit: () => void;
   onDelete: () => void;
+  /** 该设备所属 node 的运行时 id；缺省取当前运行时（`self` 即 entry 自身）。 */
+  runtimeNodeId?: string;
 }
 
-export function DeviceCard({ device, onEdit, onDelete }: DeviceCardProps) {
+export function DeviceCard({ device, onEdit, onDelete, runtimeNodeId }: DeviceCardProps) {
   const { t } = useTranslation();
   const runtime = useRuntime();
+  const nodeId = runtimeNodeId ?? runtime.nodeId;
+
+  const sidebarVisible = useUIStore((state) =>
+    isSidebarDeviceVisible(state.sidebarDeviceVisibility, nodeId, device.id)
+  );
+  const setSidebarVisible = useUIStore((state) => state.setSidebarDeviceVisibility);
 
   const icon =
     device.type === 'local' ? <Monitor className="h-4 w-4" /> : <Globe className="h-4 w-4" />;
@@ -51,92 +60,98 @@ export function DeviceCard({ device, onEdit, onDelete }: DeviceCardProps) {
 
   return (
     <Card
+      size="sm"
       data-testid="device-card"
       data-device-id={device.id}
       data-device-name={device.name}
-      className="overflow-hidden border-border/50"
+      className="gap-2 overflow-hidden border-border/50 py-2.5"
     >
-      <CardHeader className="space-y-2 pb-2">
-        <div className="flex items-start justify-between gap-2">
-          <div className="flex min-w-0 items-center gap-2.5">
-            <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md border border-border bg-muted text-muted-foreground">
-              {icon}
-            </div>
-            <div className="min-w-0 space-y-0.5">
-              <CardTitle className="line-clamp-1 text-sm" title={device.name}>
-                {device.name}
-              </CardTitle>
-              <CardDescription className="line-clamp-1 text-xs">{subtitle}</CardDescription>
-            </div>
+      <CardContent className="flex items-center gap-2">
+        <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md border border-border bg-muted text-muted-foreground">
+          {icon}
+        </div>
+        <div className="min-w-0 flex-1">
+          <div className="truncate text-sm font-medium leading-tight" title={device.name}>
+            {device.name}
           </div>
-
-          <div className="flex shrink-0 items-center gap-1">
-            <DropdownMenu>
-              <DropdownMenuTrigger
-                render={
-                  <Button
-                    variant="ghost"
-                    size="icon-sm"
-                    data-testid={`device-card-actions-${device.id}`}
-                    aria-label={t('common.edit')}
-                    title={t('common.edit')}
-                  />
-                }
-              >
-                <MoreHorizontal className="h-4 w-4" />
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="end">
-                <DropdownMenuItem data-testid={`device-card-edit-${device.id}`} onClick={onEdit}>
-                  <Pencil className="h-4 w-4" />
-                  {t('common.edit')}
-                </DropdownMenuItem>
-                {device.type === 'ssh' && (
-                  <DropdownMenuItem
-                    data-testid={`device-card-test-${device.id}`}
-                    onClick={() => testConnection.mutate()}
-                    disabled={testConnection.isPending}
-                  >
-                    <Zap className="h-4 w-4" />
-                    {t('common.test')}
-                  </DropdownMenuItem>
-                )}
-                <DropdownMenuSeparator />
-                <DropdownMenuItem
-                  data-testid={`device-card-delete-${device.id}`}
-                  variant="destructive"
-                  onClick={onDelete}
-                >
-                  <Trash2 className="h-4 w-4" />
-                  {t('common.delete')}
-                </DropdownMenuItem>
-              </DropdownMenuContent>
-            </DropdownMenu>
+          <div className="truncate text-xs leading-tight text-muted-foreground" title={subtitle}>
+            {subtitle}
           </div>
         </div>
-
-        <div className="flex flex-wrap items-center gap-1.5">
-          <Badge variant="outline" className="text-[11px] font-normal">
-            {device.type === 'local' ? t('device.typeLocal') : t('device.typeSSHBadge')}
-          </Badge>
-          {device.session && (
-            <Badge variant="outline" className="text-[11px] font-normal">
-              {device.session}
-            </Badge>
-          )}
-          <DeviceStatusBadge deviceId={device.id} />
-        </div>
-      </CardHeader>
-
-      <CardContent className="pt-0">
-        <Separator className="mb-2" />
-        <div className="flex items-center justify-end">
-          <Link
-            to={hostAppPath(runtime.host, `/devices/${device.id}`)}
-            data-testid={`device-card-connect-${device.id}`}
-            className={buttonVariants({ variant: 'outline', size: 'sm' })}
+        <Link
+          to={hostAppPath(runtime.host, `/devices/${device.id}`)}
+          data-testid={`device-card-connect-${device.id}`}
+          className={buttonVariants({ variant: 'outline', size: 'sm', className: 'shrink-0' })}
+        >
+          {t('device.connect')}
+        </Link>
+        <DropdownMenu>
+          <DropdownMenuTrigger
+            render={
+              <Button
+                variant="ghost"
+                size="icon-sm"
+                className="shrink-0"
+                data-testid={`device-card-actions-${device.id}`}
+                aria-label={t('common.edit')}
+                title={t('common.edit')}
+              />
+            }
           >
-            {t('device.connect')}
-          </Link>
+            <MoreHorizontal className="h-4 w-4" />
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end">
+            <DropdownMenuItem data-testid={`device-card-edit-${device.id}`} onClick={onEdit}>
+              <Pencil className="h-4 w-4" />
+              {t('common.edit')}
+            </DropdownMenuItem>
+            {device.type === 'ssh' && (
+              <DropdownMenuItem
+                data-testid={`device-card-test-${device.id}`}
+                onClick={() => testConnection.mutate()}
+                disabled={testConnection.isPending}
+              >
+                <Zap className="h-4 w-4" />
+                {t('common.test')}
+              </DropdownMenuItem>
+            )}
+            <DropdownMenuSeparator />
+            <DropdownMenuItem
+              data-testid={`device-card-delete-${device.id}`}
+              variant="destructive"
+              onClick={onDelete}
+            >
+              <Trash2 className="h-4 w-4" />
+              {t('common.delete')}
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
+      </CardContent>
+
+      <CardContent className="flex flex-wrap items-center gap-x-2 gap-y-1">
+        <Badge variant="outline" className="px-1.5 py-0 text-[10px] font-normal">
+          {device.type === 'local' ? t('device.typeLocal') : t('device.typeSSHBadge')}
+        </Badge>
+        {device.session && (
+          <Badge variant="outline" className="px-1.5 py-0 text-[10px] font-normal">
+            {device.session}
+          </Badge>
+        )}
+        <DeviceStatusBadge deviceId={device.id} />
+        <div
+          className="ml-auto flex shrink-0 items-center gap-1.5 text-[11px] text-muted-foreground"
+          title={t('device.sidebar.hint')}
+        >
+          <span>{t('device.sidebar.show')}</span>
+          <Switch
+            size="sm"
+            checked={sidebarVisible}
+            data-testid={`device-card-sidebar-${device.id}`}
+            aria-label={t('device.sidebar.show')}
+            onCheckedChange={(checked) =>
+              setSidebarVisible(sidebarDeviceVisibilityKey(nodeId, device.id), Boolean(checked))
+            }
+          />
         </div>
       </CardContent>
     </Card>

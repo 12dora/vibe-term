@@ -164,6 +164,8 @@ export class NodeConnectionManager {
       apiClient,
       storagePrefix: nodeStoragePrefix(nodeId),
       uiStore: this.uiStore(),
+      // 全局 i18n 语言只由 entry 自身的站点设置驱动；远端 node 的站点语言留在它自己的 store 里。
+      controlsBrowserPrefs: nodeId === SELF_NODE_ID,
       host: createBrowserHostServices({
         nodeId,
         appPath: (path) => nodeAppPath(nodeId, path),

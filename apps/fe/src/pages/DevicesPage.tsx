@@ -6,6 +6,8 @@ import { DeviceManagementActions, DeviceManagementPanel } from '@tmex/panels/dev
 import { Loader2 } from 'lucide-react';
 import { useMemo } from 'react';
 import { useTranslation } from 'react-i18next';
+import { AddDeviceMenu } from './devices/add-device-menu';
+import { useAddDeviceTargets } from './devices/add-device-targets';
 import { NodeDeviceGroup, toNodeDeviceGroups } from './devices/node-device-group';
 
 function MeshDevices({ entryNodeId }: { entryNodeId: string | null }) {
@@ -20,7 +22,7 @@ function MeshDevices({ entryNodeId }: { entryNodeId: string | null }) {
   return (
     <div
       data-testid="devices-node-groups"
-      className="mx-auto flex w-full max-w-6xl flex-col gap-6 p-3 pb-[calc(1rem+env(safe-area-inset-bottom))] sm:p-5"
+      className="mx-auto flex w-full max-w-6xl flex-col gap-3 p-3 pb-[calc(1rem+env(safe-area-inset-bottom))] sm:gap-4 sm:p-5"
     >
       {groups.map((group) => (
         <NodeDeviceGroup key={group.runtimeNodeId} node={group} />
@@ -52,6 +54,14 @@ export function PageTitle() {
 }
 
 // Page actions component
+//
+// 全页唯一的「+」：多个 ready 节点先选目标，单个直接开该节点的对话框；
+// 一个都没登记（standalone / 单面板）时退回派发全局事件，与旧行为一致。
 export function PageActions() {
-  return <DeviceManagementActions />;
+  const targets = useAddDeviceTargets();
+
+  if (targets.length > 1) {
+    return <AddDeviceMenu targets={targets} />;
+  }
+  return <DeviceManagementActions onAddDevice={targets[0]?.open} />;
 }

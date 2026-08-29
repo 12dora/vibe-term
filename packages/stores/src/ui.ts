@@ -5,18 +5,19 @@ import type { RuntimeCore } from './runtime';
 
 export type SidebarTab = 'panes' | 'agent' | 'files';
 
-function normalizeSidebarDeviceExpanded(value: unknown): Record<string, boolean> {
+/** 持久化的 `key -> boolean` 偏好表可能被手工改坏，只保留合法的布尔项 */
+function normalizeBooleanMap(value: unknown): Record<string, boolean> {
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
     return {};
   }
 
-  const deviceExpanded: Record<string, boolean> = {};
-  for (const [deviceId, expanded] of Object.entries(value)) {
-    if (typeof expanded === 'boolean') {
-      deviceExpanded[deviceId] = expanded;
+  const normalized: Record<string, boolean> = {};
+  for (const [key, flag] of Object.entries(value)) {
+    if (typeof flag === 'boolean') {
+      normalized[key] = flag;
     }
   }
-  return deviceExpanded;
+  return normalized;
 }
 
 // 预设名单会随版本增删，localStorage 里可能残留已下线的 id（会命中不存在的 CSS 规则）。
@@ -77,6 +78,8 @@ export interface UIState {
   sidebarCollapsed: boolean;
   sidebarTab: SidebarTab;
   sidebarDeviceExpanded: Record<string, boolean>;
+  /** 设备是否出现在侧边栏；key 为 `${runtimeNodeId}:${deviceId}`（见 sidebar-device-visibility.ts） */
+  sidebarDeviceVisibility: Record<string, boolean>;
   inputMode: 'direct' | 'editor';
   editorSendWithEnter: boolean;
   theme: 'light' | 'dark';
@@ -91,6 +94,8 @@ export interface UIState {
   setSidebarCollapsed: (collapsed: boolean) => void;
   setSidebarTab: (tab: SidebarTab) => void;
   setSidebarDeviceExpanded: (deviceId: string, expanded: boolean) => void;
+  /** key 由 `sidebarDeviceVisibilityKey(runtimeNodeId, deviceId)` 生成 */
+  setSidebarDeviceVisibility: (key: string, visible: boolean) => void;
   setInputMode: (mode: 'direct' | 'editor') => void;
   setKeyboardBehaviorMode: (mode: KeyboardBehaviorMode) => void;
   setEditorSendWithEnter: (enabled: boolean) => void;
@@ -115,6 +120,7 @@ export function createUIStore(core: Pick<RuntimeCore, 'storagePrefix'>) {
         sidebarCollapsed: false,
         sidebarTab: 'panes',
         sidebarDeviceExpanded: {},
+        sidebarDeviceVisibility: {},
         inputMode: 'direct',
         editorSendWithEnter: true,
         theme: 'dark',
@@ -131,6 +137,10 @@ export function createUIStore(core: Pick<RuntimeCore, 'storagePrefix'>) {
         setSidebarDeviceExpanded: (deviceId, expanded) =>
           set((state) => ({
             sidebarDeviceExpanded: { ...state.sidebarDeviceExpanded, [deviceId]: expanded },
+          })),
+        setSidebarDeviceVisibility: (key, visible) =>
+          set((state) => ({
+            sidebarDeviceVisibility: { ...state.sidebarDeviceVisibility, [key]: visible },
           })),
         setInputMode: (mode) => set({ inputMode: mode }),
         setKeyboardBehaviorMode: (mode) => set({ keyboardBehaviorMode: mode }),
@@ -185,6 +195,7 @@ export function createUIStore(core: Pick<RuntimeCore, 'storagePrefix'>) {
         partialize: (state) => ({
           sidebarCollapsed: state.sidebarCollapsed,
           sidebarDeviceExpanded: state.sidebarDeviceExpanded,
+          sidebarDeviceVisibility: state.sidebarDeviceVisibility,
           inputMode: state.inputMode,
           editorSendWithEnter: state.editorSendWithEnter,
           theme: state.theme,
@@ -202,6 +213,7 @@ export function createUIStore(core: Pick<RuntimeCore, 'storagePrefix'>) {
             sidebarTab: _legacyTab,
             sidebarSections: _legacySections,
             sidebarDeviceExpanded,
+            sidebarDeviceVisibility,
             themePreset,
             ...rest
           } = (persisted ?? {}) as Partial<UIState> & {
@@ -210,7 +222,8 @@ export function createUIStore(core: Pick<RuntimeCore, 'storagePrefix'>) {
           return {
             ...current,
             ...rest,
-            sidebarDeviceExpanded: normalizeSidebarDeviceExpanded(sidebarDeviceExpanded),
+            sidebarDeviceExpanded: normalizeBooleanMap(sidebarDeviceExpanded),
+            sidebarDeviceVisibility: normalizeBooleanMap(sidebarDeviceVisibility),
             themePreset: normalizeThemePreset(themePreset),
           };
         },

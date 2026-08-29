@@ -14,12 +14,15 @@ export interface SideBarDeviceListForRuntimeProps {
   /** 多 node 下把 UI store 的展开态按 node 隔离；self 传 undefined 保持旧 key。 */
   expansionKeyFor?: (deviceId: string) => string;
   emptyLabel?: string;
+  /** 该 node 有设备但全部未勾选显示时的提示文案 */
+  hiddenEmptyLabel?: string;
 }
 
 export function SideBarDeviceListForRuntime({
   nodeBadge,
   expansionKeyFor,
   emptyLabel,
+  hiddenEmptyLabel,
 }: SideBarDeviceListForRuntimeProps) {
   const { ensureDeviceSubscribed, connection } = useGlobalDevice();
   const agentUi = useRuntime().features.agentUi;
@@ -33,6 +36,7 @@ export function SideBarDeviceListForRuntime({
       nodeBadge={nodeBadge}
       expansionKeyFor={expansionKeyFor}
       emptyLabel={emptyLabel}
+      hiddenEmptyLabel={hiddenEmptyLabel}
     />
   );
 

@@ -123,35 +123,36 @@ export function DeviceManagementPanel({
   return (
     <div
       className={cn(
-        'mx-auto flex w-full max-w-6xl flex-col gap-3 p-3 pb-[calc(1rem+env(safe-area-inset-bottom))] sm:gap-4 sm:p-5',
+        'mx-auto flex w-full max-w-6xl flex-col gap-3 p-3 pb-[calc(1rem+env(safe-area-inset-bottom))] sm:p-5',
         className
       )}
       data-testid="devices-page"
     >
       {isLoading ? (
-        <Card>
-          <CardContent className="py-16 text-center text-sm text-muted-foreground">
+        <Card size="sm">
+          <CardContent className="py-10 text-center text-sm text-muted-foreground">
             {t('common.loading')}
           </CardContent>
         </Card>
       ) : isError ? (
-        <Card>
-          <CardContent className="py-16 text-center text-sm text-destructive">
+        <Card size="sm">
+          <CardContent className="py-10 text-center text-sm text-destructive">
             {t('device.loadFailed')}
           </CardContent>
         </Card>
       ) : devices.length === 0 ? (
-        <Card>
-          <CardContent className="space-y-4 py-14 text-center">
-            <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-xl border border-border bg-muted">
-              <Monitor className="h-6 w-6 text-muted-foreground" />
+        <Card size="sm">
+          <CardContent className="space-y-3 py-8 text-center">
+            <div className="mx-auto flex h-10 w-10 items-center justify-center rounded-xl border border-border bg-muted">
+              <Monitor className="h-5 w-5 text-muted-foreground" />
             </div>
-            <div className="space-y-1">
-              <h2 className="text-lg font-medium">{t('device.noDevices')}</h2>
-              <p className="text-sm text-muted-foreground">{t('device.addDevice')}</p>
+            <div className="space-y-0.5">
+              <h2 className="text-sm font-medium">{t('device.noDevices')}</h2>
+              <p className="text-xs text-muted-foreground">{t('device.addDevice')}</p>
             </div>
             <Button
               variant="default"
+              size="sm"
               data-testid="devices-add-empty"
               onClick={() => setShowAddModal(true)}
             >
@@ -161,7 +162,7 @@ export function DeviceManagementPanel({
           </CardContent>
         </Card>
       ) : (
-        <div className="grid gap-3 lg:grid-cols-2">
+        <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
           {devices.map((device) => (
             <DeviceCard
               key={device.id}
