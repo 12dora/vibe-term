@@ -32,6 +32,7 @@ import type { UserKeyService } from '../auth/user-key-service';
 import { kdfParamsFromJson } from '../auth/user-key-service';
 import type { UserKeyRecord, UserRecord, UserStore } from '../auth/user-store';
 import {
+  type HubTlsInfoProvider,
   type KeyLogHubAck,
   type KeyLogPublisher,
   LOGIN_CHALLENGE_TTL_MS,
@@ -78,12 +79,14 @@ export type AuthRoutesDeps = {
   listPublicNodes?: () => PublicAuthNode[];
   onLogout?: (userId: string) => void;
   onKeyLogEffects?: (userId: string, effects: KeyLogEffect[]) => void;
+  tlsInfo?: HubTlsInfoProvider;
 };
 
 export class AuthRoutes {
   private readonly failures = new Map<string, number[]>();
   private readonly sessionDeps: SessionMiddlewareDeps;
   private readonly verifyPasskey: VerifyDelegationPasskey;
+  private tlsInfoProvider: HubTlsInfoProvider | undefined;
 
   constructor(private readonly deps: AuthRoutesDeps) {
     this.sessionDeps = {
@@ -93,12 +96,17 @@ export class AuthRoutes {
     };
     this.verifyPasskey =
       deps.verifyDelegationPasskey ?? makeVerifyDelegationPasskey(deps.userStore);
+    this.tlsInfoProvider = deps.tlsInfo;
+  }
+
+  setTlsInfo(provider: HubTlsInfoProvider | undefined): void {
+    this.tlsInfoProvider = provider;
   }
 
   async handle(req: Request): Promise<Response | null> {
     const path = new URL(req.url).pathname;
     if (path === '/api/auth/mode' && req.method === 'GET') {
-      return this.handleMode(req);
+      return await this.handleMode(req);
     }
     if (path === '/api/auth/nodes' && req.method === 'GET') {
       return this.handlePublicNodes();
@@ -144,8 +152,9 @@ export class AuthRoutes {
     return null;
   }
 
-  private handleMode(req: Request): Response {
+  private async handleMode(req: Request): Promise<Response> {
     const origin = requestOrigin(req);
+    const tls = (await this.tlsInfoProvider?.()) ?? { caFingerprint: null, caPem: null };
     if (isStandaloneRoles(this.deps.roles)) {
       return jsonBody({
         mode: 'none',
@@ -160,6 +169,7 @@ export class AuthRoutes {
         rootPublicKey: null,
         hubNodeId: null,
         hubPublicUrl: null,
+        caFingerprint: tls.caFingerprint,
       });
     }
     const user = findPrimaryUser(this.deps.userStore, this.deps.primaryUserId);
@@ -180,6 +190,7 @@ export class AuthRoutes {
       rootPublicKey: user ? encodeBase64url(user.rootPublicKey) : null,
       hubNodeId: hub.nodeId,
       hubPublicUrl: hub.publicUrl,
+      caFingerprint: tls.caFingerprint,
     });
   }
 

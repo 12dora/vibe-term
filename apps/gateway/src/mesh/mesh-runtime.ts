@@ -13,11 +13,13 @@ import {
   ensureNodeIdentity,
   makeVerifyPasskeyAssertion,
 } from '../auth';
+import { HubTrustStore } from '../auth/hub-trust-store';
 import type { AuthDb } from '../auth/types';
 import { HUB_META_PEER_ID } from '../auth/user-store';
 import { type TmexRoles, config as gatewayConfig } from '../config';
 import { HubRuntime, type HubTurnConfig } from '../hub';
 import { createHubKeyLogSource } from '../hub/hub-key-log-source';
+import type { HubTlsInfoProvider } from '../hub/hub-runtime';
 import type { GatewayRuntime } from '../runtime';
 import { getDisplayVersion } from '../system/version';
 import type { GatewaySession } from '../ws/gateway-session';
@@ -89,6 +91,7 @@ export type CreateMeshRuntimeOptions = {
   networkInterfaces?: () => NodeJS.Dict<os.NetworkInterfaceInfo[]>;
   linkFactory?: PeerLinkFactory;
   rtcHandshakeTimeoutMs?: number;
+  tlsInfo?: HubTlsInfoProvider;
 };
 
 export const CONNECTION_ID_BYTES = 32;
@@ -630,6 +633,7 @@ export async function createMeshRuntime(opts: CreateMeshRuntimeOptions): Promise
             sid: result.sid,
           };
         },
+        tlsInfo: opts.tlsInfo,
       }))
     : (opts.hub ?? null);
 
@@ -759,6 +763,7 @@ export async function createMeshRuntime(opts: CreateMeshRuntimeOptions): Promise
   const httpHolder: { runtime: MeshHttpRuntime | null } = { runtime: null };
   let hubPresenceLive = false;
 
+  const hubTrust = config.hubUrl ? new HubTrustStore(db).get(config.hubUrl) : null;
   const uplink = new UplinkClient({
     hubUrl: hubEndpointUrl(config),
     identity: { nodeId: identity.nodeIdHex, edSecretKey: identity.edPrivateKey },
@@ -767,6 +772,7 @@ export async function createMeshRuntime(opts: CreateMeshRuntimeOptions): Promise
     userStore,
     statusProvider,
     wsFactory: opts.wsFactory,
+    tlsCa: hubTrust?.caPem ? [hubTrust.caPem] : null,
     scheduler,
     pingIntervalMs: opts.pingIntervalMs,
     onEnrollRedeemed: (msg) => {
@@ -1203,6 +1209,7 @@ export async function createMeshRuntime(opts: CreateMeshRuntimeOptions): Promise
     connectionLookup: (input) =>
       sessions.lookup(input.sid, input.via, input.connectionId, input.cid),
   });
+  http.auth.setTlsInfo(opts.tlsInfo);
   httpHolder.runtime = http;
 
   const uplinkHub = hub ?? opts.uplinkHub ?? null;

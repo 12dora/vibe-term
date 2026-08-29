@@ -18,6 +18,7 @@ import {
   UPLINK_CONNECT_TIMEOUT_MS,
   UplinkClient,
   classifyUplinkConnectError,
+  uplinkWebSocketTls,
 } from './uplink-client';
 import { type UplinkNodeList, decodeUplinkCtl, encodeUplinkCtl } from './uplink-protocol';
 
@@ -31,6 +32,16 @@ function status(over: Partial<UplinkStatus> = {}): UplinkStatus {
     ...over,
   };
 }
+
+describe('uplinkWebSocketTls', () => {
+  test('emits tls.ca only when a CA PEM is present', () => {
+    expect(uplinkWebSocketTls(null)).toBeUndefined();
+    expect(uplinkWebSocketTls([])).toBeUndefined();
+    expect(uplinkWebSocketTls(['-----BEGIN CERTIFICATE-----'])).toEqual({
+      tls: { ca: ['-----BEGIN CERTIFICATE-----'] },
+    });
+  });
+});
 
 describe('UplinkClient', () => {
   const fixtures: Array<{ close: () => void; stop?: () => Promise<void> }> = [];

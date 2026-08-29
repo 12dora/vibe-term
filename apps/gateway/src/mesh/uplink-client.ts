@@ -80,6 +80,7 @@ export type UplinkClientOptions = {
   onEnrollRedeemed?: (msg: UplinkEnrollRedeemed) => void;
   onKeyLogFork?: (event: KeyLogForkEvent) => void;
   wsFactory?: UplinkWsFactory;
+  tlsCa?: string[] | null;
   scheduler?: MeshScheduler;
   pingIntervalMs?: number;
   connectTimeoutMs?: number;
@@ -88,8 +89,17 @@ export type UplinkClientOptions = {
   keyLogRetryLimit?: number;
 };
 
-function defaultWsFactory(url: string): WebSocketTransportInput {
-  return new WebSocket(url);
+export function uplinkWebSocketTls(
+  tlsCa: string[] | null | undefined
+): { tls: { ca: string[] } } | undefined {
+  return tlsCa && tlsCa.length > 0 ? { tls: { ca: tlsCa } } : undefined;
+}
+
+function defaultWsFactory(tlsCa?: string[] | null): UplinkWsFactory {
+  return (url) => {
+    const tls = uplinkWebSocketTls(tlsCa);
+    return tls ? new WebSocket(url, tls as never) : new WebSocket(url);
+  };
 }
 
 function waitSocketOpen(
@@ -221,7 +231,7 @@ export class UplinkClient {
     this.onRtcSignalCb = opts.onRtcSignal;
     this.onEnrollRedeemedCb = opts.onEnrollRedeemed;
     this.onKeyLogForkCb = opts.onKeyLogFork;
-    this.wsFactory = opts.wsFactory ?? defaultWsFactory;
+    this.wsFactory = opts.wsFactory ?? defaultWsFactory(opts.tlsCa);
     this.scheduler = opts.scheduler ?? defaultScheduler();
     this.pingIntervalMs = opts.pingIntervalMs ?? UPLINK_PING_INTERVAL_MS;
     this.connectTimeoutMs =

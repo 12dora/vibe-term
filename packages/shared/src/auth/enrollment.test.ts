@@ -63,6 +63,39 @@ describe('enrollment', () => {
     expect(bytesEqual(decoded.enrollSk, enrollSk)).toBe(true);
     expect(bytesEqual(decoded.rootPublicKey, rootPk)).toBe(true);
     expect(bytesEqual(decoded.keyLogHeadHash, head)).toBe(true);
+    expect(decoded.caFingerprint).toBeUndefined();
+  });
+
+  it('join token v2 appends a 64-char lowercase CA fingerprint', () => {
+    const enrollSk = new Uint8Array(32).fill(1);
+    const rootPk = new Uint8Array(32).fill(2);
+    const head = new Uint8Array(32).fill(3);
+    const fingerprint = `${'ab'.repeat(32)}`;
+    const token = encodeJoinToken(enrollSk, rootPk, head, fingerprint.toUpperCase());
+    expect(token).toBe(
+      `AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQECAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMD.${fingerprint}`
+    );
+    const decoded = decodeJoinToken(token);
+    expect(bytesEqual(decoded.enrollSk, enrollSk)).toBe(true);
+    expect(decoded.caFingerprint).toBe(fingerprint);
+  });
+
+  it('decodeJoinToken accepts v1 and v2 and rejects anything else', () => {
+    const enrollSk = new Uint8Array(32).fill(1);
+    const rootPk = new Uint8Array(32).fill(2);
+    const head = new Uint8Array(32).fill(3);
+    const v1 = encodeJoinToken(enrollSk, rootPk, head);
+    expect(decodeJoinToken(v1).caFingerprint).toBeUndefined();
+
+    const fingerprint = 'cd'.repeat(32);
+    const v2 = `${v1}.${fingerprint}`;
+    expect(decodeJoinToken(v2).caFingerprint).toBe(fingerprint);
+
+    expect(() => decodeJoinToken(`${v1}.${fingerprint.toUpperCase()}`)).toThrow(/64 lowercase hex/);
+    expect(() => decodeJoinToken(`${v1}.not-a-fingerprint`)).toThrow(/64 lowercase hex/);
+    expect(() => decodeJoinToken(`${v1}.${fingerprint}.extra`)).toThrow(/CA fingerprint/);
+    expect(() => decodeJoinToken(`${v1}.`)).toThrow(/64 lowercase hex/);
+    expect(() => encodeJoinToken(enrollSk, rootPk, head, 'short')).toThrow(/64 hex/);
   });
 
   it('createNodeCertificate is verifiable with enroll_pk', async () => {

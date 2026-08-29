@@ -108,7 +108,12 @@ npx tmex-cli enroll [--ttl 10m]
 
 **UI：** 任意已登录入口打开 `/nodes` → 新增节点（密码或本 origin 的 passkey）→ 复制 join 命令。`enroll_sk` 只在内存，刷新后不再展示 join 串；pending 元数据在标签页 `sessionStorage`（不含私钥）。
 
-join 串 = `base64url(enroll_sk ‖ root_public_key ‖ key_log_head_hash)`，共 128 字符。**`enroll_sk` 不经过 hub。**
+join 串有两个版本：
+
+- **v1**：`base64url(enroll_sk ‖ root_public_key ‖ key_log_head_hash)`，恰好 128 字符。
+- **v2**（hub 为 self-signed HTTPS 时）：`<v1>.<64 位小写 hex>`，hex 是该 hub CA 的 SPKI SHA-256。加入端用它 pin 住 `GET /api/tls/ca.crt` 拉到的 PEM，写入本机 `hub_trust`（按 hub URL 一行）；之后对该 URL 的 hub-client HTTP 与 uplink WebSocket 都带 `tls.ca`。无 fingerprint 的旧串仍可 join，行为与 v1 相同。
+
+**`enroll_sk` 不经过 hub。** CA pin 只约束那一台 hub 的 URL，换 hub 要重新 enroll / join。
 
 ### 4. 各机加入
 
@@ -122,7 +127,7 @@ npx tmex-cli hub join https://tmex.example.com --token <join 串> [--name 书房
 
 - 只接受 `https:`；HTTP 重定向一律拒绝（`redirect: 'error'`）；
 - `http://127.0.0.1` / `http://localhost` 仅非 production 且加 `--insecure-local`；
-- 以 join 串里的根公钥与 `key_log_head_hash` 为锚点校验全链，再原子写入 users / 日志 / 证书 / `node_identity`，然后写 `TMEX_HUB_URL`、`TMEX_ROLES=node`（已是 `hub,node` 则保留）并重启服务；
+- 以 join 串里的根公钥与 `key_log_head_hash` 为锚点校验全链，再原子写入 users / 日志 / 证书 / `node_identity`（v2 串还会把 CA PEM 写入 `hub_trust`），然后写 `TMEX_HUB_URL`、`TMEX_ROLES=node`（已是 `hub,node` 则保留）并重启服务；指纹对不上则 `join_failed: ca_fingerprint_mismatch`，不落库；
 - 本机若已有同名用户但 uid / 根钥不同（hub 重建或对端 `reset-root` 后再 join），校验通过后原子替换该用户的本地状态：删旧 `user_key_log`、`user_keys`、`node_sessions`、旧根签发的 `node_certs`、旧 hub 的 `peer_cache` / `nodes`，再写入新用户。本机 nodeId 密钥对保留。同一 uid 再次 join 为幂等 upsert，不会重复行；
 - 同一 nodeId + 同一节点公钥再次 `hub join`（新 enrollment token，同一 hub epoch）是幂等的：redeem 消耗新 token，但**不签发新的节点证书**，响应里的 `node_certs` 仍是已 admit 的那张（`already_admitted: true`）。enroll 侧发现该 `node_id` 已在 keylog 中则跳过第二次 `admit-node`，打印 `already admitted`（不是 `node admitted`）。uplink 继续用原证书。`node_exists`（HTTP 409）只在该 nodeId 已被**另一把公钥**占用时出现。不必 `hub user reset` 清掉半途失败留下的 registry 行；
 - 已吊销节点用**同一身份**再 join：redeem 返回 HTTP 409 `node_revoked`，`hub join` 失败并提示 `this node identity was revoked; use a fresh identity (mesh reset / re-init)`。不能靠再 admit 解吊销。换钥重装须先 `revoke-node` 再 enroll **新身份**（新 nodeId / 新密钥，或 `mesh reset` / 重新 `init`）；

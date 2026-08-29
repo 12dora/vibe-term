@@ -1,6 +1,9 @@
 import '../lib/test-master-key';
 import { afterEach, describe, expect, test } from 'bun:test';
-import { resolve } from 'node:path';
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join, resolve } from 'node:path';
+import { HubTrustStore } from '../../../../apps/gateway/src/auth/hub-trust-store';
 import { ensureNodeIdentity } from '../../../../apps/gateway/src/auth/node-identity-service';
 import {
   JOIN_TOKEN_CHARS,
@@ -17,9 +20,17 @@ import {
   rootKeyFromSeed,
 } from '../../../shared/src/auth';
 import { parseArgs } from '../lib/args';
+import { readEnvFile } from '../lib/env-file';
 import { assertHubJoinUrl } from '../lib/hub-client';
 import { type LocalAuthContext, openLocalAuth } from '../lib/local-auth';
-import { NODE_REVOKED_REJOIN_ERROR, runHubJoin, runHubLeave, runHubUserAdd } from './hub';
+import { createCa, spkiFingerprint } from '../tls/cert-authority';
+import {
+  NODE_REVOKED_REJOIN_ERROR,
+  performHubJoin,
+  runHubJoin,
+  runHubLeave,
+  runHubUserAdd,
+} from './hub';
 
 const MIGRATIONS = resolve(import.meta.dir, '../../../../apps/gateway/drizzle');
 const handles: LocalAuthContext[] = [];
@@ -564,6 +575,40 @@ describe('hub join/leave service restart', () => {
     expect(logs.some((line) => /restart tmex manually/i.test(line))).toBe(true);
     expect(logs.some((line) => line.startsWith('joined hub'))).toBe(true);
   });
+
+  test('hub join writes TMEX_ROLES/TMEX_HUB_URL and calls restart', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'tmex-join-env-'));
+    try {
+      const envPath = join(dir, 'app.env');
+      await writeFile(envPath, 'TMEX_ROLES=standalone\nOTHER=keep\n', 'utf8');
+      const hub = await startJoinableHub('alice', 'hub-pass-word');
+      const node = await openAuth('standalone');
+      node.envPath = envPath;
+      node.env = { TMEX_ROLES: 'standalone', OTHER: 'keep' };
+      node.installDir = dir;
+      let restarted = 0;
+      const joined = await runHubJoin(
+        parseArgs(['hub', 'join', hub.url, '--token', hub.token, '--insecure-local']),
+        hub.url,
+        {
+          auth: node,
+          insecureLocal: true,
+          restart: async () => {
+            restarted += 1;
+          },
+          log: () => undefined,
+        }
+      );
+      expect(joined.hubUrl).toBe(hub.url);
+      expect(restarted).toBe(1);
+      const env = await readEnvFile(envPath);
+      expect(env.TMEX_ROLES).toBe('node');
+      expect(env.TMEX_HUB_URL).toBe(hub.url);
+      expect(env.OTHER).toBe('keep');
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
 });
 
 async function startJoinableHub(
@@ -858,5 +903,203 @@ describe('hub join rebuilt hub and re-join', () => {
         { auth: node, skipRestart: true, insecureLocal: true, log: () => undefined }
       )
     ).rejects.toThrow(NODE_REVOKED_REJOIN_ERROR);
+  });
+});
+
+describe('performHubJoin CA pin', () => {
+  test('v1 token does not fetch ca.crt', async () => {
+    const hub = await openAuth('hub,node');
+    const added = await runHubUserAdd(parseArgs([]), 'hubuser', {
+      auth: hub,
+      password: 'hub-pass-word',
+      log: () => undefined,
+    });
+    const user = hub.userStore.getById(added.userId);
+    if (!user) throw new Error('missing hub user');
+    const state = hub.userKeys.currentState(user.id);
+    const enrollment = await createEnrollment(
+      rootKeyFromSeed(await deriveSeed('hub-pass-word', state.kdfParams)),
+      { uid: user.id, rootEpoch: state.rootEpoch, now: Date.now() }
+    );
+    const token = encodeJoinToken(enrollment.enrollSk, state.rootPublicKey, state.head.hash);
+    const records = hub.keyLogStore.list(user.id);
+    const certs = hub.userStore.listCertsByUser(user.id);
+    const paths: string[] = [];
+    const fetcher: typeof fetch = async (input) => {
+      const url = new URL(String(input));
+      paths.push(url.pathname);
+      if (url.pathname === '/api/auth/mode') {
+        return Response.json({
+          mode: 'mesh',
+          nodeId: 'self',
+          uid: user.id,
+          username: user.username,
+        });
+      }
+      if (url.pathname === '/api/hub/enrollments/redeem') {
+        return Response.json({
+          user: {
+            id: user.id,
+            username: user.username,
+            root_public_key: encodeBase64url(user.rootPublicKey),
+            root_epoch: user.rootEpoch,
+            kdf_params: JSON.parse(user.kdfParamsJson),
+          },
+          user_key_log: records.map((row) => ({
+            seq: row.seq,
+            bytes: encodeBase64url(row.bytes),
+            sig: encodeBase64url(row.sig),
+          })),
+          node_certs: certs.map((cert) => ({
+            node_id: cert.nodeId,
+            user_id: cert.userId,
+            admit_record_seq: cert.admitRecordSeq,
+            certificate: encodeBase64url(cert.certificateBytes),
+            cert_sig: encodeBase64url(cert.certSig),
+            authorization: encodeBase64url(cert.authorizationBytes),
+            authorization_sig: encodeBase64url(cert.authorizationSig),
+            revoked_log_seq: cert.revokedLogSeq,
+          })),
+        });
+      }
+      return new Response('nope', { status: 404 });
+    };
+    const node = await openAuth('standalone');
+    await performHubJoin(
+      {
+        hubUrl: 'http://127.0.0.1:9',
+        token,
+        name: 'studio',
+        insecureLocal: true,
+        nodeEnv: 'test',
+      },
+      { auth: node, fetcher }
+    );
+    expect(paths).not.toContain('/api/tls/ca.crt');
+    expect(new HubTrustStore(node.db).get('http://127.0.0.1:9')).toBeNull();
+  });
+
+  test('v2 token mismatch rejects before redeem', async () => {
+    const ca = await createCa({ name: 'tmex-test' });
+    const token = encodeJoinToken(
+      randomBytes(32),
+      randomBytes(32),
+      randomBytes(32),
+      'ff'.repeat(32)
+    );
+    const fetcher: typeof fetch = async (input, init) => {
+      const url = new URL(String(input));
+      if (url.pathname === '/api/tls/ca.crt') {
+        expect((init as { tls?: { rejectUnauthorized?: boolean } } | undefined)?.tls).toEqual({
+          rejectUnauthorized: false,
+        });
+        return new Response(ca.certPem, {
+          status: 200,
+          headers: { 'content-type': 'application/x-x509-ca-cert' },
+        });
+      }
+      throw new Error(`unexpected ${url.pathname}`);
+    };
+    const node = await openAuth('standalone');
+    await expect(
+      performHubJoin(
+        {
+          hubUrl: 'http://127.0.0.1:9',
+          token,
+          name: 'studio',
+          insecureLocal: true,
+          nodeEnv: 'test',
+        },
+        { auth: node, fetcher }
+      )
+    ).rejects.toMatchObject({ code: 'join_failed', message: 'ca_fingerprint_mismatch' });
+    expect(new HubTrustStore(node.db).get('http://127.0.0.1:9')).toBeNull();
+  });
+
+  test('v2 token match pins CA and persists hub_trust', async () => {
+    const ca = await createCa({ name: 'tmex-test' });
+    const fingerprint = await spkiFingerprint(ca.certPem);
+    const hub = await openAuth('hub,node');
+    const added = await runHubUserAdd(parseArgs([]), 'hubuser', {
+      auth: hub,
+      password: 'hub-pass-word',
+      log: () => undefined,
+    });
+    const user = hub.userStore.getById(added.userId);
+    if (!user) throw new Error('missing hub user');
+    const state = hub.userKeys.currentState(user.id);
+    const enrollment = await createEnrollment(
+      rootKeyFromSeed(await deriveSeed('hub-pass-word', state.kdfParams)),
+      { uid: user.id, rootEpoch: state.rootEpoch, now: Date.now() }
+    );
+    const token = encodeJoinToken(
+      enrollment.enrollSk,
+      state.rootPublicKey,
+      state.head.hash,
+      fingerprint
+    );
+    const records = hub.keyLogStore.list(user.id);
+    const certs = hub.userStore.listCertsByUser(user.id);
+    const tlsOpts: unknown[] = [];
+    const fetcher: typeof fetch = async (input, init) => {
+      const url = new URL(String(input));
+      tlsOpts.push((init as { tls?: unknown } | undefined)?.tls);
+      if (url.pathname === '/api/tls/ca.crt') {
+        return new Response(ca.certPem, { status: 200 });
+      }
+      if (url.pathname === '/api/auth/mode') {
+        return Response.json({
+          mode: 'mesh',
+          nodeId: 'self',
+          uid: user.id,
+          username: user.username,
+        });
+      }
+      if (url.pathname === '/api/hub/enrollments/redeem') {
+        return Response.json({
+          user: {
+            id: user.id,
+            username: user.username,
+            root_public_key: encodeBase64url(user.rootPublicKey),
+            root_epoch: user.rootEpoch,
+            kdf_params: JSON.parse(user.kdfParamsJson),
+          },
+          user_key_log: records.map((row) => ({
+            seq: row.seq,
+            bytes: encodeBase64url(row.bytes),
+            sig: encodeBase64url(row.sig),
+          })),
+          node_certs: certs.map((cert) => ({
+            node_id: cert.nodeId,
+            user_id: cert.userId,
+            admit_record_seq: cert.admitRecordSeq,
+            certificate: encodeBase64url(cert.certificateBytes),
+            cert_sig: encodeBase64url(cert.certSig),
+            authorization: encodeBase64url(cert.authorizationBytes),
+            authorization_sig: encodeBase64url(cert.authorizationSig),
+            revoked_log_seq: cert.revokedLogSeq,
+          })),
+        });
+      }
+      return new Response('nope', { status: 404 });
+    };
+    const node = await openAuth('standalone');
+    await performHubJoin(
+      {
+        hubUrl: 'http://127.0.0.1:9',
+        token,
+        name: 'studio',
+        insecureLocal: true,
+        nodeEnv: 'test',
+      },
+      { auth: node, fetcher }
+    );
+    expect(tlsOpts[0]).toEqual({ rejectUnauthorized: false });
+    expect(tlsOpts.slice(1).every((tls) => (tls as { ca?: string[] }).ca?.[0] === ca.certPem)).toBe(
+      true
+    );
+    const trusted = new HubTrustStore(node.db).get('http://127.0.0.1:9');
+    expect(trusted?.fingerprint).toBe(fingerprint);
+    expect(trusted?.caPem).toBe(ca.certPem);
   });
 });

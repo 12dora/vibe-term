@@ -44,6 +44,13 @@ export type HubServerWebSocket = {
   close(code?: number, reason?: string): void;
 };
 
+export type HubTlsInfo = {
+  caFingerprint: string | null;
+  caPem: string | null;
+};
+
+export type HubTlsInfoProvider = () => HubTlsInfo | Promise<HubTlsInfo>;
+
 export type HubRuntimeOptions = {
   db: AuthDb;
   userStore: UserStore;
@@ -54,6 +61,7 @@ export type HubRuntimeOptions = {
   heartbeatIntervalMs?: number;
   heartbeatMissLimit?: number;
   authTimeoutMs?: number;
+  tlsInfo?: HubTlsInfoProvider;
 };
 
 type StoredEnrollmentPayload = {
@@ -118,6 +126,7 @@ export class HubRuntime {
   private readonly authenticate: HubAuthenticate;
   private readonly now: () => number;
   private readonly config: HubRuntimeConfig;
+  private readonly tlsInfo: HubTlsInfoProvider | undefined;
   readonly registry: NodeRegistry;
   readonly uplink: UplinkServer;
 
@@ -128,6 +137,7 @@ export class HubRuntime {
     this.authenticate = opts.authenticate;
     this.now = opts.now ?? Date.now;
     this.config = opts.config;
+    this.tlsInfo = opts.tlsInfo;
     this.registry = new NodeRegistry();
     this.uplink = new UplinkServer({
       db: opts.db,
@@ -450,12 +460,15 @@ export class HubRuntime {
       authorizationSig,
       expiresAt,
     });
+    const tls = (await this.tlsInfo?.()) ?? { caFingerprint: null, caPem: null };
     return json(
       {
         ok: true,
         id: token.id,
         expires_at: expiresAt,
         public_url: this.config.publicUrl,
+        ca_fingerprint: tls.caFingerprint,
+        ca_cert_pem: tls.caPem,
       },
       201
     );

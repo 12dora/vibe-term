@@ -25,6 +25,9 @@ const MIGRATIONS = [
   '0017_fixed_greymalkin.sql',
   '0018_agent_query_indexes.sql',
   '0019_hub_auth.sql',
+  '0020_node_identity_user.sql',
+  '0021_tls_config.sql',
+  '0022_hub_trust.sql',
 ] as const;
 
 export interface MaterializedMigrations {

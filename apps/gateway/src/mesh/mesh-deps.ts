@@ -51,6 +51,13 @@ export const MESH_ALLOWED_MIME = new Set([
 
 export type MeshRoles = TmexRoles;
 
+export type HubTlsInfo = {
+  caFingerprint: string | null;
+  caPem: string | null;
+};
+
+export type HubTlsInfoProvider = () => HubTlsInfo | Promise<HubTlsInfo>;
+
 export type PeerReachKind = 'lan' | 'relay' | null;
 
 export type PeerTransportKind = 'ws-secure' | 'relay' | 'dc';

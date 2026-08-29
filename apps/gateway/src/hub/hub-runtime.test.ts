@@ -21,7 +21,7 @@ import {
 import { createInMemoryLinkPair } from '@tmex/shared/link';
 import { encodePasskeyAssertionSig, verifyRegistration } from '../auth/passkey';
 import { createMigratedAuthDb } from '../auth/test-db';
-import { HubRuntime } from './hub-runtime';
+import { HubRuntime, type HubTlsInfoProvider } from './hub-runtime';
 import {
   createHubTestStack,
   ctlInbox,
@@ -81,7 +81,8 @@ function redeemJson(
 
 async function startAuthedHub(
   db: ReturnType<typeof createMigratedAuthDb>['db'],
-  now: () => number
+  now: () => number,
+  extra?: { tlsInfo?: HubTlsInfoProvider }
 ) {
   const { userStore, keyLogSource, service } = createHubTestStack(db);
   const user = seedUser(userStore, { now: now() });
@@ -98,6 +99,7 @@ async function startAuthedHub(
     }),
     now,
     heartbeatIntervalMs: 60_000,
+    tlsInfo: extra?.tlsInfo,
   });
   const [entryLink, hubLink] = createInMemoryLinkPair();
   const inbox = ctlInbox(entryLink);
@@ -138,6 +140,42 @@ describe('HubRuntime HTTP', () => {
         dummyServer
       );
       expect(enroll?.status).toBe(401);
+      hub.stop();
+    } finally {
+      close();
+    }
+  });
+
+  test('enrollment-created includes ca_fingerprint and ca_cert_pem from tlsInfo', async () => {
+    const { db, close } = createMigratedAuthDb();
+    try {
+      const now = 2_000_000;
+      const fingerprint = 'ab'.repeat(32);
+      const pem = '-----BEGIN CERTIFICATE-----\nCA\n-----END CERTIFICATE-----';
+      const { hub, user } = await startAuthedHub(db, () => now, {
+        tlsInfo: () => ({ caFingerprint: fingerprint, caPem: pem }),
+      });
+      const enrollment = await createEnrollment(user.root, {
+        uid: user.id,
+        rootEpoch: 0,
+        now,
+        ttlMs: 10_000,
+      });
+      const created = await hub.handleRequest(
+        new Request('http://hub/api/hub/enrollments', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: enrollmentJson(enrollment, now),
+        }),
+        dummyServer
+      );
+      expect(created?.status).toBe(201);
+      const body = (await created?.json()) as {
+        ca_fingerprint: string | null;
+        ca_cert_pem: string | null;
+      };
+      expect(body.ca_fingerprint).toBe(fingerprint);
+      expect(body.ca_cert_pem).toBe(pem);
       hub.stop();
     } finally {
       close();
@@ -237,8 +275,12 @@ describe('HubRuntime HTTP', () => {
         id: string;
         public_url: string;
         expires_at: number;
+        ca_fingerprint: string | null;
+        ca_cert_pem: string | null;
       };
       expect(createdBody.public_url).toBe('https://hub.example');
+      expect(createdBody.ca_fingerprint).toBeNull();
+      expect(createdBody.ca_cert_pem).toBeNull();
       expect(createdBody.id.length).toBeGreaterThan(4);
       const pending = await hub.handleRequest(
         new Request(`http://hub/api/hub/enrollments/${createdBody.id}`),

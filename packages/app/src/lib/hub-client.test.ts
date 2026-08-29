@@ -3,6 +3,7 @@ import { encodeBase64url, randomBytes, rootKeyFromSeed } from '../../../shared/s
 import {
   REDEEM_NETWORK_RETRY_LIMIT,
   assertHubJoinUrl,
+  createHubFetcher,
   fetchAuthMode,
   loginWithRootKey,
   postEnrollment,
@@ -22,6 +23,29 @@ describe('assertHubJoinUrl', () => {
       /NODE_ENV=production/
     );
     expect(assertHubJoinUrl('https://hub.example', true, 'production').protocol).toBe('https:');
+  });
+});
+
+describe('createHubFetcher', () => {
+  test('returns inner fetch when no pinned CA exists', () => {
+    const inner: typeof fetch = async () => new Response('{}');
+    const fetcher = createHubFetcher({ get: () => null }, 'https://hub.example', inner);
+    expect(fetcher).toBe(inner);
+  });
+
+  test('pins tls.ca for subsequent hub fetches', async () => {
+    const seen: unknown[] = [];
+    const inner: typeof fetch = async (_input, init) => {
+      seen.push((init as { tls?: unknown } | undefined)?.tls);
+      return new Response('{}');
+    };
+    const fetcher = createHubFetcher(
+      { get: () => ({ caPem: '-----BEGIN CERTIFICATE-----\nCA\n-----END CERTIFICATE-----' }) },
+      'https://hub.example',
+      inner
+    );
+    await fetcher('https://hub.example/api/auth/mode');
+    expect(seen).toEqual([{ ca: ['-----BEGIN CERTIFICATE-----\nCA\n-----END CERTIFICATE-----'] }]);
   });
 });
 

@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from 'bun:test';
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { sha256Hex } from '../lib/artifacts-manifest';
@@ -49,6 +49,11 @@ function fakePin(tarballUrl: string, integrity: string): NativePin {
   };
 }
 
+async function leftoverStaging(installDir: string): Promise<string[]> {
+  const names = await readdir(installDir);
+  return names.filter((name) => name.startsWith('native.tmp-'));
+}
+
 async function serveTarball(bytes: Uint8Array): Promise<{ url: string; stop: () => void }> {
   const server = Bun.serve({
     hostname: '127.0.0.1',
@@ -94,11 +99,13 @@ describe('enableDirect / disableDirect', () => {
       });
       expect(result.ok).toBe(false);
       if (!result.ok) {
+        expect(result.kind).toBe('integrity');
         expect(result.reason.toLowerCase()).toContain('integrity');
       }
       const layout = createInstallLayout(installDir);
       expect(await pathExists(nativeAddonPath(layout.nativeDir))).toBe(false);
       expect(await pathExists(nativeManifestPath(layout.nativeDir))).toBe(false);
+      expect(await leftoverStaging(installDir)).toEqual([]);
     } finally {
       served.stop();
     }
@@ -128,6 +135,7 @@ describe('enableDirect / disableDirect', () => {
       expect(manifest.version).toBe('0.33.1');
       expect(manifest.sha256).toBe(sha256Hex(addon));
       expect(manifest.napiVersion).toBe(8);
+      expect(await leftoverStaging(installDir)).toEqual([]);
     } finally {
       served.stop();
     }
@@ -176,11 +184,108 @@ describe('enableDirect / disableDirect', () => {
     });
     expect(result.ok).toBe(false);
     if (!result.ok) {
+      expect(result.kind).toBe('unsupported');
       expect(result.unsupported).toBe(true);
       expect(result.reason.toLowerCase()).toContain('not supported');
     }
     const layout = createInstallLayout(installDir);
     expect(await pathExists(nativeAddonPath(layout.nativeDir))).toBe(false);
+  });
+
+  test('HTTP download failure is kind download and leaves no native/', async () => {
+    const installDir = await makeInstallDir();
+    const result = await enableDirect({
+      installDir,
+      pin: fakePin('https://example.test/missing.tgz', 'sha512-unused'),
+      fetchImpl: async () => new Response('nope', { status: 503 }),
+    });
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.kind).toBe('download');
+      expect(result.reason).toContain('HTTP 503');
+    }
+    expect(await pathExists(createInstallLayout(installDir).nativeDir)).toBe(false);
+    expect(await leftoverStaging(installDir)).toEqual([]);
+  });
+
+  test('abort cancels fetch/body and leaves no native/ or staging dir', async () => {
+    const installDir = await makeInstallDir();
+    const controller = new AbortController();
+    let fetchSawAborted = false;
+    const fetchImpl: typeof fetch = async (_url, init) => {
+      const signal = init?.signal;
+      await new Promise<void>((_resolve, reject) => {
+        const fail = () => {
+          fetchSawAborted = signal?.aborted === true;
+          const error = new Error('This operation was aborted');
+          error.name = 'AbortError';
+          reject(error);
+        };
+        if (signal?.aborted) {
+          fail();
+          return;
+        }
+        signal?.addEventListener('abort', fail, { once: true });
+      });
+      throw new Error('unreachable');
+    };
+    const pending = enableDirect({
+      installDir,
+      pin: fakePin('https://example.test/addon.tgz', 'sha512-unused'),
+      fetchImpl,
+      signal: controller.signal,
+    });
+    await Bun.sleep(20);
+    controller.abort();
+    const result = await pending;
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.kind).toBe('download');
+    }
+    expect(fetchSawAborted).toBe(true);
+    expect(await pathExists(createInstallLayout(installDir).nativeDir)).toBe(false);
+    expect(await leftoverStaging(installDir)).toEqual([]);
+  });
+
+  test('missing addon in tarball is kind install and does not leave staging', async () => {
+    const installDir = await makeInstallDir();
+    const tarball = packNpmTarball({
+      'package/package.json': Buffer.from('{}'),
+    });
+    const result = await enableDirect({
+      installDir,
+      pin: fakePin('https://example.test/addon.tgz', integrityOf(tarball)),
+      fetchImpl: async () => new Response(tarball),
+    });
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.kind).toBe('install');
+      expect(result.reason).toContain('not found');
+    }
+    expect(await pathExists(createInstallLayout(installDir).nativeDir)).toBe(false);
+    expect(await leftoverStaging(installDir)).toEqual([]);
+  });
+
+  test('replaces an existing native/ via staging rename', async () => {
+    const installDir = await makeInstallDir();
+    const layout = createInstallLayout(installDir);
+    await mkdir(layout.nativeDir, { recursive: true });
+    await writeFile(nativeAddonPath(layout.nativeDir), 'old-addon');
+    await writeFile(nativeManifestPath(layout.nativeDir), '{"version":"old"}');
+
+    const addon = Buffer.from('replacement-addon-bytes');
+    const tarball = packNpmTarball({
+      'package/package.json': Buffer.from('{}'),
+      [`package/${NATIVE_ADDON_FILENAME}`]: addon,
+    });
+    const result = await enableDirect({
+      installDir,
+      pin: fakePin('https://example.test/addon.tgz', integrityOf(tarball)),
+      fetchImpl: async () => new Response(tarball),
+    });
+    expect(result.ok).toBe(true);
+    expect(Buffer.from(await readFile(nativeAddonPath(layout.nativeDir))).equals(addon)).toBe(true);
+    expect(await leftoverStaging(installDir)).toEqual([]);
   });
 });
 

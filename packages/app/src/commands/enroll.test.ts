@@ -2,6 +2,7 @@ import '../lib/test-master-key';
 import { afterEach, describe, expect, test } from 'bun:test';
 import { resolve } from 'node:path';
 import { ensureNodeIdentity } from '../../../../apps/gateway/src/auth/node-identity-service';
+import { TlsConfigStore } from '../../../../apps/gateway/src/tls/tls-config-store';
 import {
   JOIN_TOKEN_CHARS,
   createNodeCertificate,
@@ -13,6 +14,7 @@ import {
 } from '../../../shared/src/auth';
 import { parseArgs } from '../lib/args';
 import { type LocalAuthContext, openLocalAuth } from '../lib/local-auth';
+import { createCa, spkiFingerprint } from '../tls/cert-authority';
 import {
   fakeLocalRedeem,
   pollHubEnrollment,
@@ -86,6 +88,38 @@ describe('enroll', () => {
     const user = auth.userStore.getByUsername('frank');
     if (!user) throw new Error('missing frank');
     expect(auth.userStore.listCertsByUser(user.id).length).toBe(2);
+  });
+
+  test('hub enroll with selfsigned TLS appends CA fingerprint to the join token', async () => {
+    const auth = await openLocalAuth({
+      memory: true,
+      migrationsFolder: MIGRATIONS,
+      env: {
+        TMEX_MASTER_KEY: process.env.TMEX_MASTER_KEY || '',
+        TMEX_ROLES: 'hub,node',
+        TMEX_HUB_PUBLIC_URL: 'https://hub.example',
+      },
+    });
+    handles.push(auth);
+    await runHubUserAdd(parsed, 'frank', {
+      auth,
+      password: 'enroll-pass-word',
+      log: () => undefined,
+    });
+    const ca = await createCa({ name: 'tmex-test' });
+    const fingerprint = await spkiFingerprint(ca.certPem);
+    await new TlsConfigStore(auth.db).upsert({
+      mode: 'selfsigned',
+      caCertPem: ca.certPem,
+    });
+    const result = await runEnroll(parsed, {
+      auth,
+      password: 'enroll-pass-word',
+      wait: false,
+      log: () => undefined,
+    });
+    expect(decodeJoinToken(result.token).caFingerprint).toBe(fingerprint);
+    expect(result.token.endsWith(`.${fingerprint}`)).toBe(true);
   });
 
   test('SIGINT abort ends the wait loop and prints the Nodes page hint', async () => {
@@ -199,6 +233,7 @@ describe('enroll', () => {
             nodeId: 'self',
             uid: auth.userStore.getByUsername('ivy')?.id,
             totpEnabled: true,
+            caFingerprint: 'ab'.repeat(32),
           });
         }
         if (url.pathname === '/api/auth/challenge') {
@@ -240,6 +275,7 @@ describe('enroll', () => {
     expect(typeof totp?.k_totp).toBe('string');
     expect(totp?.k_totp?.length).toBeGreaterThan(10);
     expect(enrollmentCookie).toContain('tmex_s_self=sid-1');
+    expect(decodeJoinToken(result.token).caFingerprint).toBe('ab'.repeat(32));
   });
 
   test('non-hub enroll reads x-tmex-set-session when Set-Cookie is absent', async () => {

@@ -1,5 +1,6 @@
 import { existsSync } from 'node:fs';
 import { resolve } from 'node:path';
+import type { AuthDb } from '../../../../apps/gateway/src/auth/types';
 import { defaultInstallDir } from '../constants';
 import type { ParsedArgs } from '../types';
 import { readEnvFile } from './env-file';
@@ -15,7 +16,7 @@ export type LocalAuthContext = {
   envPath: string;
   databaseUrl: string;
   migrationsFolder: string;
-  db: import('../../../../apps/gateway/src/auth/types').AuthDb;
+  db: AuthDb;
   sqlite: { close: () => void };
   close: () => void;
   userStore: import('../../../../apps/gateway/src/auth/user-store').UserStore;
@@ -66,11 +67,19 @@ export async function loadInstallEnv(parsed?: ParsedArgs): Promise<{
   return { installDir, envPath: layout.envPath, env };
 }
 
-async function attachStores(
-  db: LocalAuthContext['db'],
-  sqlite: { close: () => void },
-  options: OpenLocalAuthOptions,
-  extra: { installDir?: string; envPath?: string } = {}
+export type CreateAuthContextFromDbOptions = {
+  env?: LocalAuthEnv;
+  installDir?: string;
+  envPath?: string;
+  databaseUrl?: string;
+  migrationsFolder?: string;
+  sqlite?: { close: () => void };
+  close?: () => void;
+};
+
+export async function createAuthContextFromDb(
+  db: AuthDb,
+  options: CreateAuthContextFromDbOptions = {}
 ): Promise<LocalAuthContext> {
   const { UserStore } = await import('../../../../apps/gateway/src/auth/user-store');
   const { KeyLogStore } = await import('../../../../apps/gateway/src/auth/key-log-store');
@@ -79,22 +88,18 @@ async function attachStores(
     '../../../../apps/gateway/src/auth/node-identity-store'
   );
   const { UserKeyService } = await import('../../../../apps/gateway/src/auth/user-key-service');
-
   const userStore = new UserStore(db);
   const keyLogStore = new KeyLogStore(db);
   const nodeSessionStore = new NodeSessionStore(db);
   const identityStore = new NodeIdentityStore(db);
   const userKeys = new UserKeyService({ db, userStore, keyLogStore, nodeSessionStore });
-  const close = (): void => {
-    sqlite.close();
-  };
-
+  const sqlite = options.sqlite ?? { close() {} };
+  const close = options.close ?? (() => sqlite.close());
   return {
     env: options.env ?? {},
-    installDir: extra.installDir ?? '',
-    envPath: extra.envPath ?? '',
-    databaseUrl:
-      options.databaseUrl ?? (options.memory ? ':memory:' : (process.env.DATABASE_URL ?? '')),
+    installDir: options.installDir ?? '',
+    envPath: options.envPath ?? '',
+    databaseUrl: options.databaseUrl ?? '',
     migrationsFolder: options.migrationsFolder ?? resolveCliMigrationsFolder(),
     db,
     sqlite,
@@ -115,11 +120,12 @@ export async function openLocalAuth(options: OpenLocalAuthOptions = {}): Promise
   if (options.memory || options.databaseUrl === ':memory:') {
     const { createMigratedAuthDb } = await import('../../../../apps/gateway/src/auth/test-db');
     const { sqlite, db, close } = createMigratedAuthDb();
-    const ctx = await attachStores(db, sqlite, options);
-    const originalClose = ctx.close;
-    ctx.close = close;
-    void originalClose;
-    return ctx;
+    return await createAuthContextFromDb(db, {
+      ...options,
+      sqlite,
+      close,
+      databaseUrl: options.databaseUrl ?? ':memory:',
+    });
   }
 
   const databaseUrl = options.databaseUrl ?? process.env.DATABASE_URL;
@@ -136,7 +142,12 @@ export async function openLocalAuth(options: OpenLocalAuthOptions = {}): Promise
   runMigrations(options.migrationsFolder ?? resolveCliMigrationsFolder());
   const db = getDb();
   const sqlite = getSqliteClient();
-  return await attachStores(db, sqlite, { ...options, databaseUrl }, {});
+  return await createAuthContextFromDb(db, {
+    ...options,
+    sqlite,
+    databaseUrl,
+    migrationsFolder: options.migrationsFolder ?? resolveCliMigrationsFolder(),
+  });
 }
 
 export async function openInstallAuth(parsed?: ParsedArgs): Promise<LocalAuthContext> {

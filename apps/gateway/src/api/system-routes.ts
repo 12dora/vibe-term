@@ -65,6 +65,9 @@ export const systemPrefixRoutes: ApiRoute[] = [
   }),
 ];
 
+/** Process start time (`Date.now()` at module load). Exposed on `/healthz`. */
+export const PROCESS_STARTED_AT = Date.now();
+
 export const healthRoutes: ApiRoute[] = [
   route({
     method: ['GET', 'HEAD'],
@@ -78,6 +81,7 @@ export const healthRoutes: ApiRoute[] = [
       getTmuxHealth().then((tmux) => {
         return json({
           status: 'ok',
+          startedAt: PROCESS_STARTED_AT,
           restarting: runtimeController.isRestarting(),
           // 供 e2e globalSetup 断言「连到的是 test 实例而非生产」，避免误改生产数据。
           env: readNodeEnv(),

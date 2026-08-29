@@ -1,4 +1,5 @@
 import { resolve } from 'node:path';
+import { PROCESS_STARTED_AT } from '../../../../apps/gateway/src/api/system-routes';
 import { NodeIdentityStore } from '../../../../apps/gateway/src/auth/node-identity-store';
 import {
   type TmexRoles,
@@ -23,12 +24,31 @@ import {
   createMeshRuntime,
 } from '../../../../apps/gateway/src/mesh/mesh-runtime';
 import type { LoadNative } from '../../../../apps/gateway/src/mesh/rtc';
-import { applyLocalRenewal } from '../../../../apps/gateway/src/mesh/session-middleware';
+import {
+  applyLocalRenewal,
+  authenticateRequest,
+} from '../../../../apps/gateway/src/mesh/session-middleware';
 import type { GatewayRuntime } from '../../../../apps/gateway/src/runtime';
+import { resolveInstallDir as resolveGatewayInstallDir } from '../../../../apps/gateway/src/system/install-info';
+import { TlsConfigStore } from '../../../../apps/gateway/src/tls/tls-config-store';
 import type { GatewaySession } from '../../../../apps/gateway/src/ws/gateway-session';
+import { disableDirect, enableDirect } from '../commands/direct';
+import { performHubJoin } from '../commands/hub';
+import { createAuthContextFromDb } from '../lib/local-auth';
 import { loadNodeDatachannel } from '../lib/native-datachannel';
+import { detectCurrentNativePin } from '../lib/native-manifest';
+import { isStandaloneRoles } from '../lib/roles';
+import { AcmeHttp01Challenge } from '../tls/acme-challenge';
+import { HttpsListener } from '../tls/https-listener';
+import { TlsService } from '../tls/tls-service';
 import { createTmexGatewayRuntime } from './gateway';
+import { jsonErr } from './http';
+import { handleLocalRequest } from './local-routes';
+import type { LocalRouteDeps } from './local-routes';
 import { serveFrontend as defaultServeFrontend } from './serve-frontend';
+import { handleSetupRequest } from './setup-routes';
+import { SETUP_RESTART_DELAY_MS, resolveSetupEnvPath } from './setup-service';
+import { createTlsRoutes } from './tls-routes';
 
 export const SHUTDOWN_TIMEOUT_MS = 20_000;
 
@@ -52,6 +72,8 @@ export type AssembledTmex = {
   gateway: GatewayRuntime;
   mesh: MeshRuntime | null;
   hub: HubRuntime | null;
+  tls: TlsService;
+  httpsListener: HttpsListener;
   fetch: (
     req: Request,
     bunServer: Bun.Server<unknown>
@@ -59,6 +81,8 @@ export type AssembledTmex = {
   websocket: GatewayRuntime['websocket'];
   start: () => Promise<void>;
   stop: () => Promise<void>;
+  setProcessShutdown: (run: () => Promise<void>) => void;
+  isRestartRequested: () => boolean;
 };
 
 function defaultStaticRoot(): string {
@@ -106,6 +130,25 @@ function seedLocalContext(req: Request, bunServer: Bun.Server<unknown>): void {
   });
 }
 
+async function attachStartedAt(resp: Response): Promise<Response> {
+  const text = await resp.text();
+  try {
+    const body = JSON.parse(text) as unknown;
+    if (!body || typeof body !== 'object' || Array.isArray(body)) {
+      return new Response(text, { status: resp.status, headers: resp.headers });
+    }
+    const next = body as Record<string, unknown>;
+    if (typeof next.startedAt !== 'number') {
+      next.startedAt = PROCESS_STARTED_AT;
+    }
+    const headers = new Headers(resp.headers);
+    headers.set('content-type', 'application/json');
+    return new Response(JSON.stringify(next), { status: resp.status, headers });
+  } catch {
+    return new Response(text, { status: resp.status, headers: resp.headers });
+  }
+}
+
 export async function assembleTmex(opts: AssembleTmexOptions = {}): Promise<AssembledTmex> {
   const roles = opts.roles ?? parseTmexRoles(process.env.TMEX_ROLES);
   const staticRoot = opts.staticRoot ?? defaultStaticRoot();
@@ -114,6 +157,7 @@ export async function assembleTmex(opts: AssembleTmexOptions = {}): Promise<Asse
   const serveFrontend = opts.serveFrontend ?? defaultServeFrontend;
 
   const gateway = await createGateway();
+  const tlsSlot: { service?: TlsService } = {};
 
   let mesh: MeshRuntime | null = null;
   if (roles.node) {
@@ -143,10 +187,84 @@ export async function assembleTmex(opts: AssembleTmexOptions = {}): Promise<Asse
       hub: opts.hub,
       loadNative,
       userId: identityUserId,
+      tlsInfo: async () => {
+        const service = tlsSlot.service;
+        if (!service) return { caFingerprint: null, caPem: null };
+        return { caFingerprint: (await service.status()).caFingerprint, caPem: await service.caPem() };
+      },
     });
   }
 
   const hub = mesh?.hub ?? opts.hub ?? null;
+
+  const auth = await createAuthContextFromDb(gateway.db, {
+    installDir: resolveGatewayInstallDir(),
+    envPath: resolveSetupEnvPath(),
+    env: {
+      TMEX_ROLES: process.env.TMEX_ROLES ?? '',
+      TMEX_HUB_URL: process.env.TMEX_HUB_URL ?? '',
+      TMEX_HUB_PUBLIC_URL: process.env.TMEX_HUB_PUBLIC_URL ?? '',
+    },
+  });
+
+  let processShutdown: (() => Promise<void>) | null = null;
+  let restartRequested = false;
+  const scheduleRestart = (): void => {
+    restartRequested = true;
+    setTimeout(() => {
+      if (processShutdown) {
+        void processShutdown();
+        return;
+      }
+      process.exit(0);
+    }, SETUP_RESTART_DELAY_MS);
+  };
+
+
+  const routeDeps: LocalRouteDeps = {
+    roles,
+    nodeEnv: process.env.NODE_ENV ?? 'development',
+    auth,
+    precheckCaPem: async () => (await tlsSlot.service?.caPem()) ?? null,
+    envPath: auth.envPath,
+    installDir: auth.installDir,
+    hubUrl: gatewayConfig.hubUrl,
+    hubPublicUrl: gatewayConfig.hubPublicUrl,
+    enableDirect,
+    disableDirect,
+    isDirectSupported: () => detectCurrentNativePin() != null,
+    get rtcCapable() {
+      return Boolean(mesh?.rtc?.available);
+    },
+    platform: `${process.platform}-${process.arch}`,
+    performHubJoin,
+    scheduleRestart,
+    startedAt: PROCESS_STARTED_AT,
+    authenticate: (req) => {
+      try {
+        return authenticateRequest(req, {
+          roles,
+          nodeSessionStore: auth.nodeSessionStore,
+        });
+      } catch {
+        return { ok: false };
+      }
+    },
+    tlsStatus: async () => {
+      const service = tlsSlot.service;
+      if (!service) {
+        throw new Error('tls service is not initialized');
+      }
+      const status = await service.status();
+      return {
+        mode: status.mode,
+        listenerRunning: status.listener.running,
+        tlsPort: status.tlsPort,
+      };
+    },
+  };
+
+  let tlsHandler: (req: Request) => Promise<Response | null> = async () => null;
 
   const dispatch = async (
     req: Request,
@@ -154,6 +272,14 @@ export async function assembleTmex(opts: AssembleTmexOptions = {}): Promise<Asse
     rewritten: boolean
   ): Promise<Response | undefined> => {
     seedLocalContext(req, bunServer);
+
+    const tlsResp = await tlsHandler(req);
+    if (tlsResp) return tlsResp;
+
+    const localResp = await handleLocalRequest(req, routeDeps);
+    if (localResp) return localResp;
+    const setupResp = await handleSetupRequest(req, routeDeps);
+    if (setupResp) return setupResp;
 
     if (hub) {
       const hubResp = await hub.handleRequest(req, bunServer);
@@ -175,7 +301,10 @@ export async function assembleTmex(opts: AssembleTmexOptions = {}): Promise<Asse
         return dispatch(meshResp.rewritten, bunServer, true);
       }
       if (meshResp instanceof Response) {
-        return applyLocalRenewal(req, meshResp);
+        const path = new URL(req.url).pathname;
+        const next =
+          path === '/healthz' && req.method === 'GET' ? await attachStartedAt(meshResp) : meshResp;
+        return applyLocalRenewal(req, next);
       }
       if (meshResp === undefined) return undefined;
     } else {
@@ -300,6 +429,33 @@ export async function assembleTmex(opts: AssembleTmexOptions = {}): Promise<Asse
     },
   };
 
+  const challenge = new AcmeHttp01Challenge();
+  const store = new TlsConfigStore(gateway.db);
+  const httpsListener = new HttpsListener({
+    fetch,
+    websocket,
+    log: (message) => console.log(`[tmex] ${message}`),
+  });
+  const tlsService = new TlsService({
+    store,
+    listener: httpsListener,
+    challenge,
+    envPath: resolveSetupEnvPath(),
+    trustProxy: gatewayConfig.trustProxy,
+  });
+  tlsSlot.service = tlsService;
+  tlsHandler = createTlsRoutes({
+    service: tlsService,
+    authorize: async (req) => {
+      if (isStandaloneRoles(roles)) return null;
+      const result = routeDeps.authenticate(req);
+      if (!result.ok) {
+        return jsonErr('UNAUTHORIZED', 'login required', 401);
+      }
+      return null;
+    },
+  });
+
   let stopPromise: Promise<void> | null = null;
 
   return {
@@ -307,6 +463,8 @@ export async function assembleTmex(opts: AssembleTmexOptions = {}): Promise<Asse
     gateway,
     mesh,
     hub,
+    tls: tlsService,
+    httpsListener,
     fetch,
     websocket,
     async start() {
@@ -332,6 +490,12 @@ export async function assembleTmex(opts: AssembleTmexOptions = {}): Promise<Asse
         }
       })();
       return stopPromise;
+    },
+    setProcessShutdown(run) {
+      processShutdown = run;
+    },
+    isRestartRequested() {
+      return restartRequested;
     },
   };
 }

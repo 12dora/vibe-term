@@ -34,16 +34,23 @@ async function main(): Promise<void> {
   });
 
   await assembled.start();
+  await assembled.tls.startup();
 
+  const stopAll = async () => {
+    assembled.tls.stop();
+    await assembled.httpsListener.stop();
+    await assembled.stop();
+    server.stop(true);
+  };
+
+  const shutdownHooks = {
+    exit: (code: number) => process.exit(assembled.isRestartRequested() ? 0 : code),
+  };
   const runShutdown = meshShutdownNeeded(assembled.roles)
-    ? installShutdownHandlers(async () => {
-        await assembled.stop();
-        server.stop(true);
-      })
-    : createProcessShutdown(async () => {
-        await assembled.stop();
-        server.stop(true);
-      });
+    ? installShutdownHandlers(stopAll, shutdownHooks)
+    : createProcessShutdown(stopAll, shutdownHooks);
+
+  assembled.setProcessShutdown(runShutdown);
 
   assembled.gateway.onRestartRequested(async () => {
     console.log(`[tmex] ${t('runtime.restartRequested')}`);

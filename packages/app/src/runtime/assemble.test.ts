@@ -6,6 +6,8 @@ import type { HubRuntime } from '../../../../apps/gateway/src/hub';
 import { MESH_GATEWAY_WS_KIND } from '../../../../apps/gateway/src/mesh/mesh-deps';
 import type { MeshRuntime } from '../../../../apps/gateway/src/mesh/mesh-runtime';
 import type { GatewayRuntime } from '../../../../apps/gateway/src/runtime';
+import { TlsConfigStore } from '../../../../apps/gateway/src/tls/tls-config-store';
+import { createCa, issueLeaf, parseCertificate } from '../tls/cert-authority';
 import {
   SHUTDOWN_TIMEOUT_MS,
   assembleTmex,
@@ -627,6 +629,201 @@ describe('assembleTmex role matrix', () => {
     expect(captured?.fetch).toBe(assembled.fetch);
     expect(captured?.websocket).toBe(assembled.websocket);
     server.stop();
+  });
+
+  test('standalone /api/local/status is served before gateway dispatch', async () => {
+    process.env.TMEX_ROLES = 'standalone';
+    const assembled = await assembleTmex({
+      roles: { hub: false, node: false },
+      createGatewayRuntime: async () => fakeGateway(),
+      createMeshRuntime: async () => {
+        throw new Error('no mesh');
+      },
+    });
+    const res = await assembled.fetch(
+      new Request('http://127.0.0.1/api/local/status'),
+      dummyServer
+    );
+    expect(res?.status).toBe(200);
+    const body = (await res?.json()) as { role: string; tls: { mode: string } };
+    expect(body.role).toBe('standalone');
+    expect(body.tls).toEqual({ mode: 'none', listenerRunning: false, tlsPort: 9443 });
+  });
+
+  test('standalone GET /api/tls is served through assembled.fetch and returns mode none', async () => {
+    process.env.TMEX_ROLES = 'standalone';
+    const assembled = await assembleTmex({
+      roles: { hub: false, node: false },
+      createGatewayRuntime: async () =>
+        fakeGateway({
+          handleRequest(req) {
+            const path = new URL(req.url).pathname;
+            if (path.startsWith('/api/')) {
+              return new Response(JSON.stringify({ error: 'not found' }), { status: 404 });
+            }
+            return undefined;
+          },
+        }),
+      createMeshRuntime: async () => {
+        throw new Error('no mesh');
+      },
+    });
+    const res = await assembled.fetch(new Request('http://127.0.0.1/api/tls'), dummyServer);
+    expect(res?.status).toBe(200);
+    const body = (await res?.json()) as { mode: string };
+    expect(body.mode).toBe('none');
+  });
+
+  test('mesh GET /api/tls without a session is 401 UNAUTHORIZED', async () => {
+    const assembled = await assembleTmex({
+      roles: { hub: false, node: true },
+      createGatewayRuntime: async () => fakeGateway(),
+      createMeshRuntime: async () => fakeMesh(),
+    });
+    const res = await assembled.fetch(new Request('http://127.0.0.1/api/tls'), dummyServer);
+    expect(res?.status).toBe(401);
+    expect(await res?.json()).toEqual({
+      error: { code: 'UNAUTHORIZED', message: 'login required' },
+    });
+  });
+
+  test('unknown ACME challenge token is 404, not SPA fallback', async () => {
+    const assembled = await assembleTmex({
+      roles: { hub: false, node: false },
+      createGatewayRuntime: async () => fakeGateway(),
+      createMeshRuntime: async () => {
+        throw new Error('no mesh');
+      },
+      serveFrontend: async () =>
+        new Response('<html>index.html</html>', { headers: { 'content-type': 'text/html' } }),
+    });
+    const res = await assembled.fetch(
+      new Request('http://127.0.0.1/.well-known/acme-challenge/unknown-token'),
+      dummyServer
+    );
+    expect(res?.status).toBe(404);
+    expect(await res?.text()).not.toContain('index.html');
+  });
+
+  test('startup with stored selfsigned config starts https listener; shutdown stops it', async () => {
+    const { db, close } = createMigratedAuthDb();
+    const port = 20000 + Math.floor(Math.random() * 10000);
+    const ca = await createCa({ name: 'tmex assemble CA' });
+    const leaf = await issueLeaf({
+      ca,
+      sans: ['localhost', '127.0.0.1'],
+      days: 398,
+    });
+    const parsed = parseCertificate(leaf.certPem);
+    await new TlsConfigStore(db).upsert({
+      mode: 'selfsigned',
+      tlsPort: port,
+      bindHost: '127.0.0.1',
+      sans: ['localhost', '127.0.0.1'],
+      caCertPem: ca.certPem,
+      caKeyPem: ca.keyPem,
+      certPem: `${leaf.certPem.trim()}\n${ca.certPem.trim()}\n`,
+      keyPem: leaf.keyPem,
+      certNotBefore: parsed.notBefore,
+      certNotAfter: parsed.notAfter,
+    });
+    const assembled = await assembleTmex({
+      roles: { hub: false, node: false },
+      createGatewayRuntime: async () =>
+        fakeGateway({
+          db,
+          handleRequest(req) {
+            if (new URL(req.url).pathname === '/healthz') {
+              return new Response(JSON.stringify({ status: 'ok' }), {
+                headers: { 'content-type': 'application/json' },
+              });
+            }
+            return undefined;
+          },
+        }),
+      createMeshRuntime: async () => {
+        throw new Error('no mesh');
+      },
+    });
+    try {
+      await assembled.start();
+      await assembled.tls.startup();
+      expect(assembled.httpsListener.state().running).toBe(true);
+      expect(assembled.httpsListener.state().port).toBe(port);
+
+      const res = await fetch(`https://127.0.0.1:${port}/healthz`, { tls: { ca: ca.certPem } });
+      expect(res.status).toBe(200);
+      expect(await res.json()).toEqual({ status: 'ok' });
+
+      assembled.tls.stop();
+      await assembled.httpsListener.stop();
+      await assembled.stop();
+      expect(assembled.httpsListener.state().running).toBe(false);
+
+      let refused = false;
+      try {
+        await fetch(`https://127.0.0.1:${port}/healthz`, { tls: { ca: ca.certPem } });
+      } catch {
+        refused = true;
+      }
+      expect(refused).toBe(true);
+    } finally {
+      assembled.tls?.stop();
+      await assembled.httpsListener?.stop();
+      await assembled.stop();
+      close();
+    }
+  });
+
+  test('mesh /api/setup/hub is 404 not_standalone before localUiGuard', async () => {
+    let guarded = 0;
+    const mesh = fakeMesh({
+      localUiGuard() {
+        guarded += 1;
+        return new Response('guarded', { status: 401 });
+      },
+    });
+    const assembled = await assembleTmex({
+      roles: { hub: true, node: true },
+      createGatewayRuntime: async () => fakeGateway(),
+      createMeshRuntime: async () => mesh,
+    });
+    const res = await assembled.fetch(
+      new Request('http://127.0.0.1/api/setup/hub', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          hubPublicUrl: 'https://hub.example',
+          username: 'alice',
+          password: 'tmex-test-pass',
+          directEnable: false,
+        }),
+      }),
+      dummyServer
+    );
+    expect(res?.status).toBe(404);
+    expect(await res?.json()).toEqual({
+      error: { code: 'not_standalone', message: 'setup is only available in standalone mode' },
+    });
+    expect(guarded).toBe(0);
+  });
+
+  test('mesh unauthenticated /healthz includes startedAt', async () => {
+    const mesh = fakeMesh({
+      async handleRequest() {
+        return Response.json({ status: 'ok' });
+      },
+    });
+    const assembled = await assembleTmex({
+      roles: { hub: false, node: true },
+      createGatewayRuntime: async () => fakeGateway(),
+      createMeshRuntime: async () => mesh,
+    });
+    const res = await assembled.fetch(new Request('http://127.0.0.1/healthz'), dummyServer);
+    expect(res?.status).toBe(200);
+    const body = (await res?.json()) as { status: string; startedAt: number };
+    expect(body.status).toBe('ok');
+    expect(typeof body.startedAt).toBe('number');
   });
 });
 

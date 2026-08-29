@@ -627,6 +627,57 @@ export const peerCache = sqliteTable(
   (table) => [uniqueIndex('peer_cache_node_id_unique').on(table.nodeId)]
 );
 
+export const tlsConfig = sqliteTable(
+  'tls_config',
+  {
+    id: integer('id').primaryKey(),
+    mode: text('mode').notNull().default('none'),
+    tlsPort: integer('tls_port').notNull().default(9443),
+    bindHost: text('bind_host').notNull().default('0.0.0.0'),
+    sans: text('sans', { mode: 'json' }).$type<string[]>().notNull().default([]),
+    caCertPem: text('ca_cert_pem'),
+    caKeyEnc: text('ca_key_enc'),
+    certPem: text('cert_pem'),
+    keyEnc: text('key_enc'),
+    certNotBefore: integer('cert_not_before'),
+    certNotAfter: integer('cert_not_after'),
+    acmeEmail: text('acme_email'),
+    acmeDomain: text('acme_domain'),
+    acmeChallenge: text('acme_challenge'),
+    acmeStaging: integer('acme_staging', { mode: 'boolean' }).notNull().default(false),
+    acmeCfTokenEnc: text('acme_cf_token_enc'),
+    acmeAccountKeyEnc: text('acme_account_key_enc'),
+    acmeAccountUrl: text('acme_account_url'),
+    acmeStatus: text('acme_status').notNull().default('idle'),
+    acmeLastError: text('acme_last_error'),
+    acmeLastAttemptAt: integer('acme_last_attempt_at'),
+    acmeNextRenewAt: integer('acme_next_renew_at'),
+    updatedAt: integer('updated_at').notNull(),
+  },
+  (table) => [
+    check('tls_config_singleton_check', sql`${table.id} = 1`),
+    check(
+      'tls_config_mode_check',
+      sql`${table.mode} in ('none', 'external', 'selfsigned', 'acme')`
+    ),
+    check(
+      'tls_config_acme_challenge_check',
+      sql`${table.acmeChallenge} is null or ${table.acmeChallenge} in ('http-01', 'dns-01')`
+    ),
+    check(
+      'tls_config_acme_status_check',
+      sql`${table.acmeStatus} in ('idle', 'pending', 'ok', 'error')`
+    ),
+  ]
+);
+
+export const hubTrust = sqliteTable('hub_trust', {
+  hubUrl: text('hub_url').primaryKey(),
+  caPem: text('ca_pem').notNull(),
+  fingerprint: text('fingerprint').notNull(),
+  createdAt: integer('created_at').notNull(),
+});
+
 export type UserRow = typeof users.$inferSelect;
 export type UserKeyRow = typeof userKeys.$inferSelect;
 export type UserKeyLogRow = typeof userKeyLog.$inferSelect;
@@ -636,3 +687,5 @@ export type NodeRow = typeof nodes.$inferSelect;
 export type EnrollmentTokenRow = typeof enrollmentTokens.$inferSelect;
 export type NodeIdentityRow = typeof nodeIdentity.$inferSelect;
 export type PeerCacheRow = typeof peerCache.$inferSelect;
+export type TlsConfigRow = typeof tlsConfig.$inferSelect;
+export type HubTrustRow = typeof hubTrust.$inferSelect;

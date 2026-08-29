@@ -148,6 +148,20 @@
       "when": 1787902009976,
       "tag": "0020_node_identity_user",
       "breakpoints": true
+    },
+    {
+      "idx": 21,
+      "version": "6",
+      "when": 1787968037596,
+      "tag": "0021_tls_config",
+      "breakpoints": true
+    },
+    {
+      "idx": 22,
+      "version": "6",
+      "when": 1787969804063,
+      "tag": "0022_hub_trust",
+      "breakpoints": true
     }
   ]
 }

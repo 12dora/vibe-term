@@ -497,9 +497,26 @@ describe('auth-routes', () => {
       const body = (await res.json()) as { hubNodeId: string; hubPublicUrl: string };
       expect(body.hubNodeId).toBe(NODE_ID);
       expect(body.hubPublicUrl).toBe('https://hub.local');
+      expect((body as { caFingerprint?: string | null }).caFingerprint).toBeNull();
       runtime.stop();
     } finally {
       hub.close();
+    }
+  });
+
+  test('GET /api/auth/mode exposes caFingerprint from tlsInfo', async () => {
+    const mesh = await bootMesh();
+    try {
+      const fingerprint = 'ef'.repeat(32);
+      mesh.runtime.auth.setTlsInfo(() => ({
+        caFingerprint: fingerprint,
+        caPem: '-----BEGIN CERTIFICATE-----\nCA\n-----END CERTIFICATE-----',
+      }));
+      const res = await call(mesh.runtime, 'http://localhost/api/auth/mode');
+      const body = (await res.json()) as { caFingerprint: string | null };
+      expect(body.caFingerprint).toBe(fingerprint);
+    } finally {
+      mesh.close();
     }
   });
 

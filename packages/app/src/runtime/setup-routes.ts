@@ -1,0 +1,74 @@
+import { isStandaloneRoles } from '../lib/roles';
+import { jsonErr, jsonOk, readJsonBody } from './http';
+import {
+  SetupError,
+  type SetupServiceDeps,
+  becomeHub,
+  joinHub,
+  precheckHubUrl,
+} from './setup-service';
+
+function mapError(error: unknown): Response {
+  if (error instanceof SetupError) {
+    return jsonErr(error.code, error.message, error.httpStatus);
+  }
+  const message = error instanceof Error ? error.message : String(error);
+  return jsonErr('internal_error', message, 500);
+}
+
+function readString(body: Record<string, unknown>, key: string): string {
+  const value = body[key];
+  return typeof value === 'string' ? value : '';
+}
+
+export async function handleSetupRequest(
+  req: Request,
+  deps: SetupServiceDeps
+): Promise<Response | null> {
+  const path = new URL(req.url).pathname;
+  if (path !== '/api/setup/precheck' && path !== '/api/setup/hub' && path !== '/api/setup/join') {
+    return null;
+  }
+  if (!isStandaloneRoles(deps.roles)) {
+    return jsonErr('not_standalone', 'setup is only available in standalone mode', 404);
+  }
+  if (req.method !== 'POST') {
+    return jsonErr('method_not_allowed', 'POST required', 405);
+  }
+  const body = await readJsonBody(req);
+  if (!body) {
+    return jsonErr('invalid_body', 'JSON object body required', 400);
+  }
+
+  try {
+    if (path === '/api/setup/precheck') {
+      const result = await precheckHubUrl(readString(body, 'url'), deps);
+      return jsonOk(result);
+    }
+    if (path === '/api/setup/hub') {
+      const result = await becomeHub(
+        {
+          hubPublicUrl: readString(body, 'hubPublicUrl'),
+          username: readString(body, 'username'),
+          password: readString(body, 'password'),
+          directEnable: body.directEnable === true,
+        },
+        deps
+      );
+      return jsonOk(result);
+    }
+    const result = await joinHub(
+      {
+        hubUrl: readString(body, 'hubUrl'),
+        token: readString(body, 'token'),
+        name: readString(body, 'name'),
+        directEnable: body.directEnable === true,
+        insecureLocal: body.insecureLocal === true,
+      },
+      deps
+    );
+    return jsonOk(result);
+  } catch (error) {
+    return mapError(error);
+  }
+}

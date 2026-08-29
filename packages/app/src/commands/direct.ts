@@ -1,4 +1,6 @@
-import { rm, writeFile } from 'node:fs/promises';
+import { randomBytes } from 'node:crypto';
+import { rename, rm, writeFile } from 'node:fs/promises';
+import { join } from 'node:path';
 import { defaultInstallDir } from '../constants';
 import { sha256Hex } from '../lib/artifacts-manifest';
 import { ensureDir, pathExists } from '../lib/fs-utils';
@@ -28,11 +30,14 @@ export interface EnableDirectOptions {
   libc?: 'gnu' | 'glibc' | 'musl' | null | 'detect';
   fetchImpl?: typeof fetch;
   log?: (message: string) => void;
+  signal?: AbortSignal;
 }
+
+export type DirectEnableFailureKind = 'unsupported' | 'download' | 'integrity' | 'install';
 
 export type DirectEnableResult =
   | { ok: true; platformId: string; version: string; addonPath: string; skipped?: boolean }
-  | { ok: false; reason: string; unsupported?: boolean };
+  | { ok: false; kind?: DirectEnableFailureKind; reason: string; unsupported?: boolean };
 
 export interface DisableDirectOptions {
   installDir: string;
@@ -52,9 +57,92 @@ function logLine(log: ((message: string) => void) | undefined, message: string):
   (log ?? ((line: string) => console.log(`[tmex] ${line}`)))(message);
 }
 
+function fail(
+  kind: DirectEnableFailureKind,
+  reason: string
+): Extract<DirectEnableResult, { ok: false }> {
+  return kind === 'unsupported'
+    ? { ok: false, kind, reason, unsupported: true }
+    : { ok: false, kind, reason };
+}
+
+function abortError(signal?: AbortSignal): Error {
+  if (signal?.reason instanceof Error) return signal.reason;
+  const error = new Error('This operation was aborted');
+  error.name = 'AbortError';
+  return error;
+}
+
+function isAbortError(error: unknown): boolean {
+  if (!error || typeof error !== 'object') return false;
+  const name = (error as { name?: string }).name;
+  return name === 'AbortError' || name === 'TimeoutError' || name === 'DOMException';
+}
+
+function throwIfAborted(signal?: AbortSignal): void {
+  if (signal?.aborted) throw abortError(signal);
+}
+
+async function withAbort<T>(promise: Promise<T>, signal?: AbortSignal): Promise<T> {
+  if (!signal) return promise;
+  throwIfAborted(signal);
+  return await new Promise<T>((resolve, reject) => {
+    const onAbort = () => reject(abortError(signal));
+    signal.addEventListener('abort', onAbort, { once: true });
+    promise.then(
+      (value) => {
+        signal.removeEventListener('abort', onAbort);
+        if (signal.aborted) reject(abortError(signal));
+        else resolve(value);
+      },
+      (error) => {
+        signal.removeEventListener('abort', onAbort);
+        reject(error);
+      }
+    );
+  });
+}
+
+async function readResponseBytes(response: Response, signal?: AbortSignal): Promise<Uint8Array> {
+  throwIfAborted(signal);
+  if (!response.body) {
+    return new Uint8Array(await withAbort(response.arrayBuffer(), signal));
+  }
+  const reader = response.body.getReader();
+  const chunks: Uint8Array[] = [];
+  const onAbort = () => {
+    void reader.cancel().catch(() => undefined);
+  };
+  signal?.addEventListener('abort', onAbort, { once: true });
+  try {
+    for (;;) {
+      throwIfAborted(signal);
+      const { done, value } = await withAbort(reader.read(), signal);
+      if (done) break;
+      if (value) chunks.push(value);
+    }
+  } finally {
+    signal?.removeEventListener('abort', onAbort);
+  }
+  let total = 0;
+  for (const chunk of chunks) total += chunk.byteLength;
+  const out = new Uint8Array(total);
+  let offset = 0;
+  for (const chunk of chunks) {
+    out.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return out;
+}
+
+async function removeDir(path: string): Promise<void> {
+  await rm(path, { recursive: true, force: true });
+}
+
 export async function enableDirect(options: EnableDirectOptions): Promise<DirectEnableResult> {
   const log = (message: string) => logLine(options.log, message);
   const layout = createInstallLayout(options.installDir);
+  const signal = options.signal;
   const pin =
     options.pin === undefined
       ? detectCurrentNativePin({
@@ -67,43 +155,64 @@ export async function enableDirect(options: EnableDirectOptions): Promise<Direct
   if (!pin) {
     const reason = `direct native addon is not supported on ${options.platform ?? process.platform}/${options.arch ?? process.arch}`;
     log(reason);
-    return { ok: false, reason, unsupported: true };
+    return fail('unsupported', reason);
   }
 
+  let stagingDir: string | null = null;
+  let phase: Exclude<DirectEnableFailureKind, 'unsupported'> = 'download';
   try {
+    throwIfAborted(signal);
     const fetchImpl = options.fetchImpl ?? fetch;
-    const response = await fetchImpl(pin.tarballUrl);
+    const response = await withAbort(
+      Promise.resolve(fetchImpl(pin.tarballUrl, { signal })),
+      signal
+    );
     if (!response.ok) {
       const reason = `failed to download ${pin.tarballUrl}: HTTP ${response.status}`;
       log(reason);
-      return { ok: false, reason };
+      return fail('download', reason);
     }
-    const tarball = new Uint8Array(await response.arrayBuffer());
+    const tarball = await readResponseBytes(response, signal);
+
+    phase = 'integrity';
+    throwIfAborted(signal);
     if (!verifyNpmIntegrity(tarball, pin.integrity)) {
       const reason = `integrity mismatch for ${pin.npmPackage}@${pin.version}`;
       log(reason);
-      return { ok: false, reason };
+      return fail('integrity', reason);
     }
 
+    phase = 'install';
     const addon = extractTarGzipFile(tarball, pin.addonPath);
     if (!addon) {
       const reason = `addon ${pin.addonPath} not found in tarball`;
       log(reason);
-      return { ok: false, reason };
+      return fail('install', reason);
     }
 
-    await ensureDir(layout.nativeDir);
-    const dest = nativeAddonPath(layout.nativeDir);
-    await writeFile(dest, addon);
-
+    throwIfAborted(signal);
+    stagingDir = join(
+      options.installDir,
+      `native.tmp-${process.pid}-${randomBytes(6).toString('hex')}`
+    );
+    await ensureDir(stagingDir);
+    await writeFile(nativeAddonPath(stagingDir), addon);
     const manifest: InstalledNativeManifest = {
       platform: pin.platformId,
       version: pin.version,
       sha256: sha256Hex(addon),
       napiVersion: pin.napiVersion,
     };
-    await writeJsonFile(nativeManifestPath(layout.nativeDir), manifest);
+    await writeJsonFile(nativeManifestPath(stagingDir), manifest);
 
+    throwIfAborted(signal);
+    if (await pathExists(layout.nativeDir)) {
+      await removeDir(layout.nativeDir);
+    }
+    await rename(stagingDir, layout.nativeDir);
+    stagingDir = null;
+
+    const dest = nativeAddonPath(layout.nativeDir);
     log(`direct enabled: ${pin.platformId} ${pin.version} -> ${dest}`);
     return {
       ok: true,
@@ -112,9 +221,16 @@ export async function enableDirect(options: EnableDirectOptions): Promise<Direct
       addonPath: dest,
     };
   } catch (error) {
+    if (stagingDir) {
+      await removeDir(stagingDir).catch(() => undefined);
+    }
     const reason = error instanceof Error ? error.message : String(error);
     log(`direct enable failed: ${reason}`);
-    return { ok: false, reason };
+    const kind =
+      isAbortError(error) || phase === 'download' || error instanceof TypeError
+        ? 'download'
+        : phase;
+    return fail(kind, reason);
   }
 }
 
@@ -189,7 +305,7 @@ export async function runDirect(parsed: ParsedArgs, deps: RunDirectDeps = {}): P
       arch: deps.arch,
     });
     if (!result.ok) {
-      if (result.unsupported) {
+      if (result.unsupported || result.kind === 'unsupported') {
         console.log(`[tmex] direct enable skipped: ${result.reason}`);
         return;
       }

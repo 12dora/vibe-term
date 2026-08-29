@@ -1,3 +1,4 @@
+import { HubTrustStore } from '../../../../apps/gateway/src/auth/hub-trust-store';
 import { ensureNodeIdentity } from '../../../../apps/gateway/src/auth/node-identity-service';
 import { kdfParamsFromJson } from '../../../../apps/gateway/src/auth/user-key-service';
 import { enrollmentTokens, nodes } from '../../../../apps/gateway/src/db/schema';
@@ -30,6 +31,7 @@ import {
   type RedeemResponse,
   assertHubJoinUrl,
   fetchAuthMode,
+  isNetworkFetchError,
   redeemEnrollment,
 } from '../lib/hub-client';
 import { createInstallLayout } from '../lib/install-layout';
@@ -42,6 +44,7 @@ import { DEFAULT_PEER_PORT, parseTmexRoles } from '../lib/roles';
 import { restartService, stopService } from '../lib/service';
 import { fingerprintPublicKey, totpOtpauthUri } from '../lib/totp-uri';
 import { asString } from '../lib/validate';
+import { spkiFingerprint } from '../tls/cert-authority';
 import type { ParsedArgs } from '../types';
 import type { InstallMeta } from '../types';
 
@@ -68,6 +71,54 @@ export const HUB_MANUAL_RESTART_HINT =
 export const NODE_REVOKED_REJOIN_ERROR =
   'this node identity was revoked; use a fresh identity (mesh reset / re-init)';
 
+export type JoinErrorCode =
+  | 'invalid_token'
+  | 'invalid_url'
+  | 'node_revoked'
+  | 'node_exists'
+  | 'hub_unreachable'
+  | 'join_failed';
+
+export class JoinError extends Error {
+  readonly code: JoinErrorCode;
+
+  constructor(code: JoinErrorCode, message: string) {
+    super(message);
+    this.name = 'JoinError';
+    this.code = code;
+  }
+}
+
+export type PerformHubJoinInput = {
+  hubUrl: string;
+  token: string;
+  name: string;
+  insecureLocal?: boolean;
+  nodeEnv?: string;
+};
+
+export type PerformHubJoinDeps = {
+  auth: LocalAuthContext;
+  now?: () => number;
+  fetcher?: typeof fetch;
+};
+
+function joinErrorMessage(error: unknown, fallback: string): string {
+  return error instanceof Error ? error.message : fallback;
+}
+
+function toJoinError(error: unknown, fallback: JoinErrorCode): JoinError {
+  if (error instanceof JoinError) return error;
+  const message = joinErrorMessage(error, fallback);
+  if (message === NODE_REVOKED_REJOIN_ERROR || /\bnode_revoked\b/.test(message)) {
+    return new JoinError('node_revoked', NODE_REVOKED_REJOIN_ERROR);
+  }
+  if (/\bnode_exists\b/.test(message)) {
+    return new JoinError('node_exists', message);
+  }
+  return new JoinError(fallback, message);
+}
+
 function injectRedeemPop(fetcher: HubFetch | undefined, pop: string): HubFetch {
   const inner = fetcher ?? fetch;
   return (async (input, init) => {
@@ -80,6 +131,43 @@ function injectRedeemPop(fetcher: HubFetch | undefined, pop: string): HubFetch {
     }
     return inner(input, next);
   }) as HubFetch;
+}
+
+function pinHubCa(inner: HubFetch, pem: string): HubFetch {
+  return ((input, init) => inner(input, { ...init, tls: { ca: [pem] } })) as HubFetch;
+}
+
+async function fetchPinnedHubCa(
+  hubUrl: string,
+  fingerprint: string,
+  fetcher: HubFetch
+): Promise<string> {
+  let response: Response;
+  try {
+    response = await fetcher(`${hubUrl}/api/tls/ca.crt`, {
+      redirect: 'error',
+      tls: { rejectUnauthorized: false },
+    } as RequestInit);
+  } catch (error) {
+    throw new JoinError(
+      isNetworkFetchError(error) ? 'hub_unreachable' : 'join_failed',
+      joinErrorMessage(error, 'ca_unavailable')
+    );
+  }
+  if (!response.ok) {
+    throw new JoinError('join_failed', 'ca_unavailable');
+  }
+  const pem = await response.text();
+  let actual: string;
+  try {
+    actual = await spkiFingerprint(pem);
+  } catch (error) {
+    throw new JoinError('join_failed', joinErrorMessage(error, 'ca_fingerprint_mismatch'));
+  }
+  if (actual !== fingerprint) {
+    throw new JoinError('join_failed', 'ca_fingerprint_mismatch');
+  }
+  return pem;
 }
 
 function log(io: HubIo | undefined, message: string): void {
@@ -303,6 +391,128 @@ export async function runHubUserReset(
   });
 }
 
+export async function performHubJoin(
+  input: PerformHubJoinInput,
+  deps: PerformHubJoinDeps
+): Promise<{ userId: string; username: string; hubUrl: string; replacedStaleUsername?: string }> {
+  let decoded: ReturnType<typeof decodeJoinToken>;
+  try {
+    decoded = decodeJoinToken(input.token);
+  } catch (error) {
+    throw new JoinError('invalid_token', joinErrorMessage(error, 'invalid join token'));
+  }
+
+  let hubUrl: string;
+  try {
+    hubUrl = assertHubJoinUrl(
+      input.hubUrl,
+      input.insecureLocal === true,
+      input.nodeEnv ?? process.env.NODE_ENV
+    )
+      .toString()
+      .replace(/\/+$/, '');
+  } catch (error) {
+    throw new JoinError('invalid_url', joinErrorMessage(error, 'invalid hub url'));
+  }
+
+  const identity = await ensureNodeIdentity(deps.auth.identityStore);
+  const baseFetcher: HubFetch = deps.fetcher ?? fetch;
+  let pinnedPem: string | null = null;
+  let hubFetcher = baseFetcher;
+  if (decoded.caFingerprint) {
+    pinnedPem = await fetchPinnedHubCa(hubUrl, decoded.caFingerprint, baseFetcher);
+    hubFetcher = pinHubCa(baseFetcher, pinnedPem);
+  }
+  let uid: string | null = null;
+  try {
+    const mode = await fetchAuthMode(hubUrl, hubFetcher);
+    uid = mode.uid;
+  } catch {
+    uid = null;
+  }
+  if (!uid) {
+    throw new JoinError('hub_unreachable', 'unable to resolve hub uid from GET /api/auth/mode');
+  }
+  const enrollPkResolved = rootKeyFromSeed(decoded.enrollSk).publicKey;
+  const now = deps.now?.() ?? Date.now();
+
+  const cert = createNodeCertificate(decoded.enrollSk, {
+    uid,
+    edPk: identity.edPublicKey,
+    x25519Pk: identity.x25519PublicKey,
+    enrollPk: enrollPkResolved,
+    now,
+    nodeId: identity.nodeId,
+  });
+  const pop = encodeBase64url(
+    signEd25519(
+      identity.edPrivateKey,
+      encodeRedeemPopMessage({
+        enrollmentId: encodeBase64url(enrollPkResolved),
+        nodeId: identity.nodeId,
+        certBytes: cert.certificateBytes,
+      })
+    )
+  );
+
+  let redeemed: RedeemResponse;
+  try {
+    redeemed = await redeemEnrollment({
+      baseUrl: hubUrl,
+      certificate: cert.certificateBytes,
+      certSig: cert.certSig,
+      name: input.name,
+      fetcher: injectRedeemPop(hubFetcher, pop),
+    });
+  } catch (error) {
+    throw toJoinError(error, isNetworkFetchError(error) ? 'hub_unreachable' : 'join_failed');
+  }
+
+  let admittedCert: { certificateBytes: Uint8Array; certSig: Uint8Array } | null;
+  try {
+    admittedCert = assertJoinCertReusable(
+      redeemed,
+      identity.nodeIdHex,
+      identity.edPublicKey,
+      identity.x25519PublicKey
+    );
+  } catch (error) {
+    throw toJoinError(error, 'join_failed');
+  }
+
+  let committed: { replacedStaleUsername?: string };
+  try {
+    committed = await commitVerifiedJoin(deps.auth, {
+      redeemed,
+      expectedRootPublicKey: decoded.rootPublicKey,
+      anchorHash: decoded.keyLogHeadHash,
+      certificateBytes: admittedCert?.certificateBytes ?? cert.certificateBytes,
+      hubUrl,
+      identity,
+      admittedCert,
+    });
+  } catch (error) {
+    throw toJoinError(error, 'join_failed');
+  }
+
+  if (pinnedPem && decoded.caFingerprint) {
+    new HubTrustStore(deps.auth.db).put({
+      hubUrl,
+      caPem: pinnedPem,
+      fingerprint: decoded.caFingerprint,
+    });
+  }
+
+  return {
+    userId: redeemed.user.id,
+    username: redeemed.user.username || redeemed.user.id,
+    hubUrl,
+    ...(committed.replacedStaleUsername
+      ? { replacedStaleUsername: committed.replacedStaleUsername }
+      : {}),
+  };
+}
+
 export async function runHubJoin(
   parsed: ParsedArgs,
   urlRaw: string,
@@ -319,95 +529,43 @@ export async function runHubJoin(
     throw new Error('hub join requires --token');
   }
   const insecureLocal = parsed.flags['insecure-local'] === true || io.insecureLocal === true;
-  const hubUrl = assertHubJoinUrl(urlRaw, insecureLocal, io.nodeEnv ?? process.env.NODE_ENV)
-    .toString()
-    .replace(/\/+$/, '');
-  const decoded = decodeJoinToken(token);
   const name = asString(parsed.flags.name) || 'node';
 
   return await withAuth(parsed, io, async (ctx) => {
-    const identity = await ensureNodeIdentity(ctx.identityStore);
-    let uid: string | null = null;
-    try {
-      const mode = await fetchAuthMode(hubUrl, io.fetcher);
-      uid = mode.uid;
-    } catch {
-      uid = null;
-    }
-    if (!uid) {
-      throw new Error('unable to resolve hub uid from GET /api/auth/mode');
-    }
-    const enrollPkResolved = rootKeyFromSeed(decoded.enrollSk).publicKey;
-
-    const cert = createNodeCertificate(decoded.enrollSk, {
-      uid,
-      edPk: identity.edPublicKey,
-      x25519Pk: identity.x25519PublicKey,
-      enrollPk: enrollPkResolved,
-      now: nowMs(io),
-      nodeId: identity.nodeId,
-    });
-    const pop = encodeBase64url(
-      signEd25519(
-        identity.edPrivateKey,
-        encodeRedeemPopMessage({
-          enrollmentId: encodeBase64url(enrollPkResolved),
-          nodeId: identity.nodeId,
-          certBytes: cert.certificateBytes,
-        })
-      )
-    );
-
-    let redeemed: RedeemResponse;
-    try {
-      redeemed = await redeemEnrollment({
-        baseUrl: hubUrl,
-        certificate: cert.certificateBytes,
-        certSig: cert.certSig,
+    const joined = await performHubJoin(
+      {
+        hubUrl: urlRaw,
+        token,
         name,
-        fetcher: injectRedeemPop(io.fetcher, pop),
-      });
-    } catch (error) {
-      if (error instanceof Error && /\bnode_revoked\b/.test(error.message)) {
-        throw new Error(NODE_REVOKED_REJOIN_ERROR);
+        insecureLocal,
+        nodeEnv: io.nodeEnv ?? process.env.NODE_ENV,
+      },
+      {
+        auth: ctx,
+        now: io.now,
+        fetcher: io.fetcher,
       }
-      throw error;
-    }
-    const admittedCert = assertJoinCertReusable(
-      redeemed,
-      identity.nodeIdHex,
-      identity.edPublicKey,
-      identity.x25519PublicKey
     );
-    const committed = await commitVerifiedJoin(ctx, {
-      redeemed,
-      expectedRootPublicKey: decoded.rootPublicKey,
-      anchorHash: decoded.keyLogHeadHash,
-      certificateBytes: admittedCert?.certificateBytes ?? cert.certificateBytes,
-      hubUrl,
-      identity,
-      admittedCert,
-    });
-    if (committed.replacedStaleUsername) {
-      log(io, t('hub.join.replacedStale', { username: committed.replacedStaleUsername }));
+    if (joined.replacedStaleUsername) {
+      log(io, t('hub.join.replacedStale', { username: joined.replacedStaleUsername }));
     }
 
     const currentRoles = parseTmexRoles(ctx.env.TMEX_ROLES ?? process.env.TMEX_ROLES);
     const nextRole = currentRoles.hub ? 'hub,node' : 'node';
     if (ctx.envPath) {
-      await writeRolesAndHubUrl(ctx.envPath, nextRole, hubUrl);
+      await writeRolesAndHubUrl(ctx.envPath, nextRole, joined.hubUrl);
     } else {
       process.env.TMEX_ROLES = nextRole;
-      process.env.TMEX_HUB_URL = hubUrl;
+      process.env.TMEX_HUB_URL = joined.hubUrl;
     }
     if (ctx.installDir) {
       await maybeRestart(parsed, io, ctx.installDir);
     }
-    log(io, `joined hub ${hubUrl}`);
+    log(io, `joined hub ${joined.hubUrl}`);
     const peerPort =
       ctx.env.TMEX_PEER_PORT || process.env.TMEX_PEER_PORT || String(DEFAULT_PEER_PORT);
     log(io, `allow inbound TMEX_PEER_PORT (${peerPort}) on the LAN firewall for direct links`);
-    return { userId: redeemed.user.id, hubUrl };
+    return { userId: joined.userId, hubUrl: joined.hubUrl };
   });
 }
 

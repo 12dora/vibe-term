@@ -22,6 +22,7 @@ export type HubAuthMode = {
     iterations: number;
     parallelism: number;
   } | null;
+  caFingerprint: string | null;
 };
 
 export type HubLoginResult = {
@@ -53,6 +54,21 @@ export type RedeemResponse = {
 };
 
 export type HubFetch = typeof fetch;
+
+export type HubTrustLookup = {
+  get(hubUrl: string): { caPem: string } | null;
+};
+
+export function createHubFetcher(
+  hubTrustStore: HubTrustLookup,
+  hubUrl: string,
+  inner: HubFetch = fetch
+): HubFetch {
+  const trusted = hubTrustStore.get(hubUrl);
+  if (!trusted?.caPem) return inner;
+  const ca = [trusted.caPem];
+  return ((input, init) => inner(input, { ...init, tls: { ca } })) as HubFetch;
+}
 
 export type HubNodeListItem = {
   id: string;
@@ -136,6 +152,7 @@ export async function fetchAuthMode(
       body.kdfParams && typeof body.kdfParams === 'object'
         ? (body.kdfParams as HubAuthMode['kdfParams'])
         : null,
+    caFingerprint: typeof body.caFingerprint === 'string' ? body.caFingerprint : null,
   };
 }
 

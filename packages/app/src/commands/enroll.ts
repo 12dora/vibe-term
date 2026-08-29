@@ -1,4 +1,6 @@
+import { HubTrustStore } from '../../../../apps/gateway/src/auth/hub-trust-store';
 import { kdfParamsFromJson } from '../../../../apps/gateway/src/auth/user-key-service';
+import { TlsConfigStore } from '../../../../apps/gateway/src/tls/tls-config-store';
 import {
   type AdmitNodePayload,
   ENROLLMENT_TTL_MS,
@@ -13,12 +15,19 @@ import {
   nodeIdToHex,
 } from '../../../shared/src/auth';
 import { parseDurationMs } from '../lib/duration';
-import { fetchAuthMode, listHubNodes, loginWithRootKey, postEnrollment } from '../lib/hub-client';
+import {
+  createHubFetcher,
+  fetchAuthMode,
+  listHubNodes,
+  loginWithRootKey,
+  postEnrollment,
+} from '../lib/hub-client';
 import { type LocalAuthContext, openInstallAuth } from '../lib/local-auth';
 import { assertRootKeyMatches, deriveRootKey, resolvePassword } from '../lib/password';
 import { promptPassword } from '../lib/prompt';
 import { parseTmexRoles } from '../lib/roles';
 import { asString } from '../lib/validate';
+import { spkiFingerprint } from '../tls/cert-authority';
 import type { ParsedArgs } from '../types';
 import { type HubIo, NODE_REVOKED_REJOIN_ERROR } from './hub';
 
@@ -306,11 +315,12 @@ export async function runEnroll(
       now,
       ttlMs,
     });
-    const token = encodeJoinToken(enrollment.enrollSk, user.rootPublicKey, user.keyLogHeadHash);
     const roles = parseTmexRoles(ctx.env.TMEX_ROLES ?? process.env.TMEX_ROLES);
 
+    let caFingerprint: string | undefined;
     let remoteSession: { cookieHeader: string; hubUrl: string; enrollmentId?: string } | null =
       null;
+    let hubFetcher = io.fetcher;
     if (roles.hub) {
       ctx.userStore.createEnrollmentToken({
         id: crypto.randomUUID(),
@@ -323,12 +333,20 @@ export async function runEnroll(
         authorizationSig: enrollment.authorizationSig,
         expiresAt: now + ttlMs,
       });
+      const tls = await new TlsConfigStore(ctx.db).get();
+      if (tls.mode === 'selfsigned' && tls.caCertPem) {
+        caFingerprint = await spkiFingerprint(tls.caCertPem);
+      }
     } else {
       const hubUrl = ctx.env.TMEX_HUB_URL || process.env.TMEX_HUB_URL;
       if (!hubUrl) {
         throw new Error('TMEX_HUB_URL is required to enroll from a non-hub node');
       }
-      const mode = await fetchAuthMode(hubUrl, io.fetcher);
+      hubFetcher = io.fetcher ?? createHubFetcher(new HubTrustStore(ctx.db), hubUrl);
+      const mode = await fetchAuthMode(hubUrl, hubFetcher);
+      if (typeof mode.caFingerprint === 'string' && /^[0-9a-f]{64}$/.test(mode.caFingerprint)) {
+        caFingerprint = mode.caFingerprint;
+      }
       let totp: { code: string; kTotp: Uint8Array } | undefined;
       if (mode.totpEnabled) {
         const code = await resolveTotpCode(io);
@@ -341,7 +359,7 @@ export async function runEnroll(
         baseUrl: hubUrl,
         rootKey,
         uid: user.id,
-        fetcher: io.fetcher,
+        fetcher: hubFetcher,
         totp,
       });
       if (totp) {
@@ -354,7 +372,7 @@ export async function runEnroll(
         authorization: enrollment.authorizationBytes,
         authorizationSig: enrollment.authorizationSig,
         exp: now + ttlMs,
-        fetcher: io.fetcher,
+        fetcher: hubFetcher,
       });
       remoteSession = {
         cookieHeader: session.cookieHeader,
@@ -362,6 +380,13 @@ export async function runEnroll(
         enrollmentId: created.id,
       };
     }
+
+    const token = encodeJoinToken(
+      enrollment.enrollSk,
+      user.rootPublicKey,
+      user.keyLogHeadHash,
+      caFingerprint
+    );
 
     const joinUrl = hubJoinUrl(ctx, io);
     const joinCommand = `npx tmex-cli hub join ${joinUrl} --token ${token}`;
@@ -385,13 +410,13 @@ export async function runEnroll(
                     baseUrl: remote.hubUrl,
                     cookieHeader: remote.cookieHeader,
                     enrollmentId: remote.enrollmentId,
-                    fetcher: io.fetcher,
+                    fetcher: hubFetcher,
                   })
                 : pollHubNodesForCertificate({
                     baseUrl: remote.hubUrl,
                     cookieHeader: remote.cookieHeader,
                     enrollPk: enrollment.enrollPk,
-                    fetcher: io.fetcher,
+                    fetcher: hubFetcher,
                   })
           : null);
     const interval = io.pollIntervalMs ?? 1000;
