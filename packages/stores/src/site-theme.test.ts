@@ -38,6 +38,7 @@ mock.module('@tmex/ws-client', () => {
 });
 
 const { useSiteStore, useUIStore } = await import('./default-runtime');
+const { createAppRuntime } = await import('./app-runtime');
 
 const TMEX_UI_KEY = 'tmex-ui';
 
@@ -431,6 +432,101 @@ describe('useSiteStore capabilities', () => {
       useSiteStore.setState({ capabilities: FeatureSet.empty() });
       await useSiteStore.getState().loadCapabilities();
       expect(useSiteStore.getState().capabilities.list()).toEqual([]);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+});
+
+// 远端 node（`/n/<id>/...`）的 runtime：controlsBrowserPrefs=false。它的站点外观只属于那台
+// node，绝不能改写浏览器级的共享 UI store / 离线 fallback / <html>.dark。
+describe('createSiteStore controlsBrowserPrefs=false 的主题写入', () => {
+  const REMOTE_PREFIX = 'site-theme-remote-';
+  let remoteIndex = 0;
+
+  function makeRemoteRuntime() {
+    remoteIndex += 1;
+    return createAppRuntime({
+      storagePrefix: `${REMOTE_PREFIX}${remoteIndex}-`,
+      uiStore: useUIStore,
+      controlsBrowserPrefs: false,
+    });
+  }
+
+  function remoteStorageKeys(): string[] {
+    return Array.from({ length: localStorage.length }, (_, i) => localStorage.key(i))
+      .filter((key): key is string => key !== null)
+      .filter((key) => key.startsWith(REMOTE_PREFIX));
+  }
+
+  beforeEach(() => {
+    localStorage.clear();
+    sendMock.mockClear();
+    isReadyMock.mockClear();
+    isReadyMock.mockImplementation(() => true);
+    useUIStore.setState({ theme: 'dark', themePreset: DARK_PRESET });
+  });
+
+  test('selectThemePreset 只落本 store 的 settings 并上行，不碰共享 UI store 与 localStorage', () => {
+    const runtime = makeRemoteRuntime();
+    runtime.stores.site.setState({ settings: makeSiteSettings({ theme: 'dark' }) });
+    const uiBefore = localStorage.getItem(TMEX_UI_KEY);
+
+    runtime.stores.site.getState().selectThemePreset(LIGHT_PRESET);
+
+    expect(useUIStore.getState().themePreset).toBe(DARK_PRESET);
+    expect(useUIStore.getState().theme).toBe('dark');
+    expect(localStorage.getItem(TMEX_UI_KEY)).toBe(uiBefore);
+    expect(remoteStorageKeys()).toEqual([]);
+    // 那台 node 自己的站点外观照常更新并上行
+    expect(runtime.stores.site.getState().settings?.theme).toBe('light');
+    expect(sendMock).toHaveBeenCalledTimes(1);
+  });
+
+  test('updateTheme 同样不改共享 UI store 与 localStorage', () => {
+    const runtime = makeRemoteRuntime();
+    runtime.stores.site.setState({ settings: makeSiteSettings({ theme: 'dark' }) });
+    const uiBefore = localStorage.getItem(TMEX_UI_KEY);
+
+    runtime.stores.site.getState().updateTheme('light');
+
+    expect(useUIStore.getState().theme).toBe('dark');
+    expect(useUIStore.getState().themePreset).toBe(DARK_PRESET);
+    expect(localStorage.getItem(TMEX_UI_KEY)).toBe(uiBefore);
+    expect(remoteStorageKeys()).toEqual([]);
+    expect(runtime.stores.site.getState().settings?.theme).toBe('light');
+    expect(sendMock).toHaveBeenCalledTimes(1);
+  });
+
+  test('setThemeFromS2C 只更新自己的 settings，不回送也不碰浏览器级状态', () => {
+    const runtime = makeRemoteRuntime();
+    runtime.stores.site.setState({ settings: makeSiteSettings({ theme: 'dark' }) });
+    const uiBefore = localStorage.getItem(TMEX_UI_KEY);
+
+    runtime.stores.site.getState().setThemeFromS2C('light');
+
+    expect(useUIStore.getState().theme).toBe('dark');
+    expect(useUIStore.getState().themePreset).toBe(DARK_PRESET);
+    expect(localStorage.getItem(TMEX_UI_KEY)).toBe(uiBefore);
+    expect(remoteStorageKeys()).toEqual([]);
+    expect(runtime.stores.site.getState().settings?.theme).toBe('light');
+    expect(sendMock).not.toHaveBeenCalled();
+  });
+
+  test('fetchSettings 拉到的外观不写共享 UI store', async () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = siteSettingsResponse({ theme: 'light' });
+    try {
+      const runtime = makeRemoteRuntime();
+      const uiBefore = localStorage.getItem(TMEX_UI_KEY);
+
+      const settings = await runtime.stores.site.getState().fetchSettings();
+
+      expect(settings.theme).toBe('light');
+      expect(runtime.stores.site.getState().settings?.theme).toBe('light');
+      expect(useUIStore.getState().theme).toBe('dark');
+      expect(useUIStore.getState().themePreset).toBe(DARK_PRESET);
+      expect(localStorage.getItem(TMEX_UI_KEY)).toBe(uiBefore);
     } finally {
       globalThis.fetch = originalFetch;
     }

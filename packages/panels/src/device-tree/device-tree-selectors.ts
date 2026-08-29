@@ -68,3 +68,45 @@ export function selectSidebarVisibleDevices<T extends { id: string }>(
       device.id === selectedDeviceId || isSidebarDeviceVisible(visibility, runtimeNodeId, device.id)
   );
 }
+
+/**
+ * 把「只含可见设备」的拖拽结果合并回完整设备顺序。
+ *
+ * 侧边栏可能隐藏了一部分设备（远端 node 默认不显示），但重排接口按提交序列整体重写
+ * `sortOrder = index`：只提交可见 id 会让隐藏设备留着旧序号与新序号撞车，重新开启显示时
+ * 位置随机。做法是保持隐藏设备在完整顺序里的原槽位不动，把重排后的可见 id 依次填回可见槽位。
+ *
+ * @param allSortedIds 完整设备列表按当前顺序排好的 id
+ * @param visibleIdsBefore 拖拽前的可见 id（顺序与 allSortedIds 中的可见槽位一致）
+ * @param visibleIdsAfter 拖拽后的可见 id 顺序
+ */
+export function mergeReorderedVisibleIds(
+  allSortedIds: readonly string[],
+  visibleIdsBefore: readonly string[],
+  visibleIdsAfter: readonly string[]
+): string[] {
+  const visible = new Set(visibleIdsBefore);
+  const reordered = visibleIdsAfter.filter((id) => visible.has(id));
+  const merged: string[] = [];
+  let cursor = 0;
+  for (const id of allSortedIds) {
+    if (!visible.has(id)) {
+      merged.push(id);
+      continue;
+    }
+    const next = reordered[cursor];
+    cursor += 1;
+    if (next !== undefined) {
+      merged.push(next);
+    }
+  }
+  // 设备列表刚变动时 allSortedIds 可能还没收录某个可见 id；补在末尾，别把设备漏出提交序列
+  const placed = new Set(merged);
+  for (const id of reordered) {
+    if (!placed.has(id)) {
+      merged.push(id);
+      placed.add(id);
+    }
+  }
+  return merged;
+}

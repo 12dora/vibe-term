@@ -20,7 +20,7 @@ import { DeviceRow } from './device-row';
 import { useDeviceTreeDialogs } from './device-tree-dialogs';
 import { SortableVerticalList } from './device-tree-dnd';
 import { useDeviceTreeNavigationApi, useDeviceTreeSelection } from './device-tree-navigation';
-import { selectSidebarVisibleDevices } from './device-tree-selectors';
+import { mergeReorderedVisibleIds, selectSidebarVisibleDevices } from './device-tree-selectors';
 import type { NodeBadgeInfo } from './node-badge';
 
 type DeviceListItem = Device & {
@@ -216,23 +216,38 @@ export function SideBarDeviceList({
     }
   }, [visibleDevices, ensureDeviceSubscribed, sidebarDeviceExpanded, expansionKey]);
 
-  const sortedDevices = useMemo(
+  // 隐藏设备也要参与排序：重排提交的是完整顺序，隐藏设备必须留在自己的槽位上
+  const allSortedDevices = useMemo(
     () =>
-      [...visibleDevices].sort(
+      [...devices].sort(
         (a, b) =>
           a.sortOrder - b.sortOrder ||
           a.name.localeCompare(b.name, toBCP47(language), { numeric: true, sensitivity: 'base' })
       ),
-    [visibleDevices, language]
+    [devices, language]
+  );
+
+  const visibleDeviceIdSet = useMemo(
+    () => new Set(visibleDevices.map((device) => device.id)),
+    [visibleDevices]
+  );
+
+  const sortedDevices = useMemo(
+    () => allSortedDevices.filter((device) => visibleDeviceIdSet.has(device.id)),
+    [allSortedDevices, visibleDeviceIdSet]
   );
 
   const knownDeviceIds = useMemo(() => devices.map((device) => device.id), [devices]);
+  const allSortedDeviceIds = useMemo(() => allSortedDevices.map((d) => d.id), [allSortedDevices]);
   const sortedDeviceIds = useMemo(() => sortedDevices.map((d) => d.id), [sortedDevices]);
 
   const reorderDevicesMutate = reorderDevicesMutation.mutate;
+  // 拖拽只在可见设备之间发生，但网关按提交序列整体重写 sortOrder：
+  // 必须把结果合并回完整顺序再提交，否则隐藏设备的旧 sortOrder 会与新序号撞车。
   const handleReorderDevices = useCallback(
-    (nextIds: string[]) => reorderDevicesMutate(nextIds),
-    [reorderDevicesMutate]
+    (nextIds: string[]) =>
+      reorderDevicesMutate(mergeReorderedVisibleIds(allSortedDeviceIds, sortedDeviceIds, nextIds)),
+    [reorderDevicesMutate, allSortedDeviceIds, sortedDeviceIds]
   );
 
   return (

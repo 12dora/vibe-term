@@ -97,6 +97,11 @@ export function createSiteStore(
   }
 
   function writeThemeToLocalStorage(theme: ThemeMode): void {
+    // 与 syncThemeToUIStore 同理：离线 fallback 是浏览器级的（决定首屏亮/暗），
+    // 远端 node 的外观不得写进去。
+    if (!core.controlsBrowserPrefs) {
+      return;
+    }
     try {
       const key = `${core.storagePrefix}tmex-ui`;
       const raw = localStorage.getItem(key);
@@ -209,8 +214,13 @@ export function createSiteStore(
 
       selectThemePreset: (preset, fallbackAppearance) => {
         const uiStore = getUIStore();
-        // 先落预设再改外观：syncThemeToUIStore 的失配清理据此看到的是新预设，外观一致故不会被清掉
-        uiStore.getState().setThemePreset(preset);
+        // 预设写的是共享 UI store（整页 CSS token + <html>.dark），属于浏览器级偏好：
+        // 远端 node 的 runtime 只把预设自带的外观走 updateTheme 落进自己的 settings 并上行给那台
+        // node，绝不改共享 UI store——否则在 /n/<id>/... 选预设会掀翻整页外观。
+        if (core.controlsBrowserPrefs) {
+          // 先落预设再改外观：syncThemeToUIStore 的失配清理据此看到的是新预设，外观一致故不会被清掉
+          uiStore.getState().setThemePreset(preset);
+        }
         const appearance = preset
           ? THEME_PRESET_META[preset].appearance
           : (fallbackAppearance ?? uiStore.getState().theme);

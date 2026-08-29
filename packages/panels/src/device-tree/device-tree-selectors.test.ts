@@ -3,6 +3,7 @@ import type { StateSnapshotPayload, TmuxWindow } from '@tmex/shared';
 import {
   type DeviceConnectivitySlice,
   type DeviceSnapshotSlice,
+  mergeReorderedVisibleIds,
   selectDeviceOnline,
   selectDeviceWindows,
   selectSidebarVisibleDevices,
@@ -137,5 +138,77 @@ describe('selectSidebarVisibleDevices', () => {
 
   test('选中的设备不属于本 runtime 时不影响过滤结果', () => {
     expect(selectSidebarVisibleDevices(devices, {}, NODE_A, 'other')).toEqual([]);
+  });
+});
+
+describe('mergeReorderedVisibleIds', () => {
+  test('没有隐藏设备时结果就是拖拽后的顺序', () => {
+    const all = ['a', 'b', 'c'];
+
+    expect(mergeReorderedVisibleIds(all, all, ['b', 'a', 'c'])).toEqual(['b', 'a', 'c']);
+  });
+
+  test('隐藏设备夹在中间时留在原槽位', () => {
+    const all = ['a', 'hidden', 'b', 'c'];
+    const visibleBefore = ['a', 'b', 'c'];
+
+    expect(mergeReorderedVisibleIds(all, visibleBefore, ['c', 'a', 'b'])).toEqual([
+      'c',
+      'hidden',
+      'a',
+      'b',
+    ]);
+  });
+
+  test('隐藏设备在首尾时同样留在原槽位', () => {
+    const all = ['h1', 'a', 'b', 'h2'];
+    const visibleBefore = ['a', 'b'];
+
+    expect(mergeReorderedVisibleIds(all, visibleBefore, ['b', 'a'])).toEqual([
+      'h1',
+      'b',
+      'a',
+      'h2',
+    ]);
+  });
+
+  test('把首个可见设备拖到最后', () => {
+    const all = ['a', 'h1', 'b', 'h2', 'c'];
+    const visibleBefore = ['a', 'b', 'c'];
+
+    expect(mergeReorderedVisibleIds(all, visibleBefore, ['b', 'c', 'a'])).toEqual([
+      'b',
+      'h1',
+      'c',
+      'h2',
+      'a',
+    ]);
+  });
+
+  test('把最后一个可见设备拖到最前', () => {
+    const all = ['a', 'h1', 'b', 'h2', 'c'];
+    const visibleBefore = ['a', 'b', 'c'];
+
+    expect(mergeReorderedVisibleIds(all, visibleBefore, ['c', 'a', 'b'])).toEqual([
+      'c',
+      'h1',
+      'a',
+      'h2',
+      'b',
+    ]);
+  });
+
+  test('结果始终是完整设备集合的一个排列（不丢不重）', () => {
+    const all = ['h1', 'a', 'h2', 'b', 'c', 'h3'];
+    const merged = mergeReorderedVisibleIds(all, ['a', 'b', 'c'], ['c', 'b', 'a']);
+
+    expect([...merged].sort()).toEqual([...all].sort());
+    expect(new Set(merged).size).toBe(all.length);
+  });
+
+  test('可见 id 尚未出现在完整顺序里时补到末尾，不被丢掉', () => {
+    const merged = mergeReorderedVisibleIds(['h1', 'a'], ['a', 'fresh'], ['fresh', 'a']);
+
+    expect(merged).toEqual(['h1', 'fresh', 'a']);
   });
 });
