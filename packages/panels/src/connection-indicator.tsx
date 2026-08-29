@@ -31,11 +31,12 @@ export function ConnectionIndicator() {
   const shouldShow = shouldShowIndicator(connectionState);
 
   useEffect(() => {
+    if (reducedMotion) {
+      // 偏好可能在过渡中途切换：此时不会再有 transitionend，直接落到终态
+      setPhase(shouldShow ? 'visible' : 'hidden');
+      return;
+    }
     if (shouldShow && (phaseRef.current === 'hidden' || phaseRef.current === 'exiting')) {
-      if (reducedMotion) {
-        setPhase('visible');
-        return;
-      }
       setPhase('entering');
       requestAnimationFrame(() => {
         requestAnimationFrame(() => {
@@ -43,7 +44,7 @@ export function ConnectionIndicator() {
         });
       });
     } else if (!shouldShow && phaseRef.current === 'visible') {
-      setPhase(reducedMotion ? 'hidden' : 'exiting');
+      setPhase('exiting');
     }
   }, [shouldShow, reducedMotion]);
 
