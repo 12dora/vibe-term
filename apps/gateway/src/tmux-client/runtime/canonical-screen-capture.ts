@@ -64,7 +64,7 @@ export class CanonicalScreenCapture {
       baseSeq: baseCursor.terminalSeq,
       maxBytes,
       historyLines,
-      capturedAt: (this.host.now ?? Date.now)(),
+      now: () => (this.host.now ?? Date.now)(),
       createHistoryCursor: (id, epoch, beforeLine) =>
         this.host.createHistoryCursor(id, epoch, beforeLine),
     });

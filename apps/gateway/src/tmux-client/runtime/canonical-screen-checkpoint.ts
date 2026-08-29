@@ -30,7 +30,7 @@ export interface CanonicalCheckpointInput {
   baseSeq: bigint;
   maxBytes: number;
   historyLines: number;
-  capturedAt: number;
+  now: () => number;
   createHistoryCursor: (
     paneId: string,
     paneEpoch: Uint8Array,
@@ -86,7 +86,7 @@ export async function captureFrame(
 }
 
 export function buildCanonicalCheckpoint(input: CanonicalCheckpointInput): PaneScreenCheckpoint {
-  const { paneId, paneEpoch, frame, baseSeq, maxBytes, historyLines, capturedAt } = input;
+  const { paneId, paneEpoch, frame, baseSeq, maxBytes, historyLines } = input;
   const prefix = frame.alternateScreen ? '\x1b[?1049h\x1b[2J\x1b[H' : '\x1b[2J\x1b[H';
   const cursor =
     frame.cursorX === null || frame.cursorY === null
@@ -131,6 +131,6 @@ export function buildCanonicalCheckpoint(input: CanonicalCheckpointInput): PaneS
             ? frame.historySize
             : Math.max(0, frame.historySize - embeddedHistoryLines)
         ),
-    capturedAt,
+    capturedAt: input.now(),
   };
 }

@@ -236,7 +236,7 @@ describe('buildCanonicalCheckpoint', () => {
       baseSeq: 10n,
       maxBytes: 1024,
       historyLines: 4,
-      capturedAt: 1234,
+      now: () => 1234,
       createHistoryCursor: () => null,
       ...overrides,
       frame,
