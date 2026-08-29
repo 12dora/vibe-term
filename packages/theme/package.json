@@ -9,6 +9,7 @@
     "./fonts": "./src/fonts/index.ts",
     "./fonts/manifest": "./src/fonts/manifest.generated.ts",
     "./fonts/types": "./src/fonts/types.ts",
+    "./motion.css": "./src/motion.css",
     "./themes.css": "./src/themes.css",
     "./tokens.css": "./src/tokens.css",
     "./tokens.generated.css": "./src/tokens.generated.css",

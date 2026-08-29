@@ -12,6 +12,7 @@
 @import "../../../packages/theme/src/tokens.generated.css";
 /* preset 在 token 之后引入：同特异性下源顺序保证 data-theme-preset 覆盖默认值 */
 @import "../../../packages/theme/src/themes.css";
+@import "../../../packages/theme/src/motion.css";
 
 /* 终端内嵌等宽符号字体：Geist Mono Nerd Font Mono 自带 Powerline/制表/Nerd 图标，
    补齐部分系统缺失的字形；CJK 仍交由字体栈后段的 monospace 走系统字体

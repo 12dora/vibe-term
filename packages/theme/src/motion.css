@@ -1,0 +1,76 @@
+/* 共享动效基础：时长/缓动 token、少量入场动画、全局 reduced-motion 兜底。
+   纯 CSS，不引入任何运行时动画库；Tailwind 侧用 duration-(--tmex-motion-*) 消费。 */
+:root {
+  --tmex-motion-fast: 100ms;
+  --tmex-motion-standard: 150ms;
+  --tmex-motion-layout: 200ms;
+  --tmex-motion-slow: 300ms;
+
+  --tmex-ease-out: cubic-bezier(0.22, 1, 0.36, 1);
+  --tmex-ease-in: cubic-bezier(0.55, 0, 1, 0.45);
+  --tmex-ease-in-out: cubic-bezier(0.65, 0, 0.35, 1);
+
+  /* .tmex-stagger 子项每级递增的延迟；列表过长时视觉上会明显拖尾，由调用方控制条目数量 */
+  --tmex-stagger-step: 35ms;
+  --tmex-stagger-index: 0;
+}
+
+@keyframes tmex-fade-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes tmex-fade-up {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@keyframes tmex-scale-in {
+  from {
+    opacity: 0;
+    transform: scale(0.97);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+.tmex-reveal {
+  animation: tmex-fade-up var(--tmex-motion-standard) var(--tmex-ease-out) both;
+}
+
+.tmex-fade {
+  animation: tmex-fade-in var(--tmex-motion-standard) var(--tmex-ease-out) both;
+}
+
+.tmex-scale-in {
+  animation: tmex-scale-in var(--tmex-motion-standard) var(--tmex-ease-out) both;
+}
+
+/* 列表逐项入场：子项通过 --tmex-stagger-index 决定延迟档位 */
+.tmex-stagger > * {
+  animation: tmex-fade-up var(--tmex-motion-standard) var(--tmex-ease-out) both;
+  animation-delay: calc(var(--tmex-stagger-index, 0) * var(--tmex-stagger-step));
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  ::before,
+  ::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
