@@ -5,6 +5,7 @@
 // 而侧边栏/设备页可能挂在任意 node 的 QueryClient 下——放进某个 node 的缓存会在切 node 时
 // 重复拉取，也拿不到跨边界的实时事件。用一个模块级 store + useSyncExternalStore 更直接。
 
+import { isAuthTransitionActive } from '@/auth/auth-transition';
 import { SELF_NODE_ID } from '@tmex/api-client';
 import type { AuthApi, AuthModeResponse, MeshNode } from '@tmex/api-client/auth/index';
 import { defaultAuthApi } from '@tmex/api-client/auth/index';
@@ -252,6 +253,9 @@ export function applyMeshNodeEvent(event: NodeEventPayload): void {
 let inFlight: Promise<void> | null = null;
 
 export async function refreshMeshNodes(api: AuthApi = defaultAuthApi): Promise<void> {
+  // 退出 mesh 期间本机会话已被清空，再拉 `/api/mesh/nodes` 只会稳定拿 401：
+  // 白发一轮请求不说，还会把拦截器反复喊起来。
+  if (isAuthTransitionActive()) return;
   if (inFlight) return inFlight;
   setState({ loading: true });
   inFlight = (async () => {

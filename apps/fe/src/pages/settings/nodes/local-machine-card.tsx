@@ -35,6 +35,7 @@ import { Check, Copy, Download, Loader2, Repeat, RotateCcw, Trash2 } from 'lucid
 import { useCallback, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Link } from 'react-router';
+import { CopyLabel, useCopyToClipboard } from './copy-feedback';
 import type { SetupIntent } from './membership/intent';
 import { LeaveDialog, type LeaveDialogRequest } from './membership/leave-dialog';
 import { classifyRoleChange } from './membership/role-transition';
@@ -579,14 +580,7 @@ function Row({ label, children }: { label: string; children: React.ReactNode }) 
 }
 
 function CopyableValue({ value, testId }: { value: string; testId: string }) {
-  const { t } = useTranslation();
-  const [copied, setCopied] = useState(false);
-  const copy = useCallback(() => {
-    void navigator.clipboard?.writeText(value).then(() => {
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
-    });
-  }, [value]);
+  const { copied, copy } = useCopyToClipboard(value);
   return (
     <span className="flex min-w-0 items-center gap-1">
       <code
@@ -597,9 +591,7 @@ function CopyableValue({ value, testId }: { value: string; testId: string }) {
       </code>
       <Button type="button" size="xs" variant="ghost" onClick={copy} data-testid={`${testId}-copy`}>
         {copied ? <Check className="tmex-scale-in" /> : <Copy className="tmex-scale-in" />}
-        <span aria-live="polite">
-          {copied ? t('nodes.actions.copied') : t('nodes.actions.copy')}
-        </span>
+        <CopyLabel copied={copied} />
       </Button>
     </span>
   );

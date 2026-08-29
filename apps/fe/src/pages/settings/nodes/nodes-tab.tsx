@@ -74,10 +74,21 @@ export function NodesTab() {
         </>
       ) : (
         <>
-          {/* 纯 node 不需要自己的 HTTPS：外部访问走 hub。 */}
-          <Reveal delayMs={60}>
-            <HttpsSection disabled={local.status?.role === 'node'} />
-          </Reveal>
+          {/* 纯 node 不需要自己的 HTTPS：外部访问走 hub。
+              角色没读到之前**不能**先把区块摆出来——`status` 为 null 时 `role === 'node'` 也是 false，
+              纯 node 会在这段时间里拿到一份可操作的 HTTPS 表单（TLS 查询还可能先于角色返回）。 */}
+          {local.status ? (
+            <Reveal delayMs={60}>
+              <HttpsSection disabled={local.status.role === 'node'} />
+            </Reveal>
+          ) : local.loginRequired ? null : (
+            <div
+              className="flex h-9 items-center px-1 text-muted-foreground"
+              data-testid="https-section-pending"
+            >
+              <Loader2 className="size-4 animate-spin motion-reduce:animate-none" />
+            </div>
+          )}
           {mode && (
             <Reveal delayMs={120}>
               <NodesManagement mode={mode} />

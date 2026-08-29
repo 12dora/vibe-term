@@ -265,14 +265,16 @@ export function CredentialPromptDialog({
           onChange={(event) => setPassword(event.target.value)}
         />
 
-        {/* 常驻 live region：空时 empty:hidden 收掉，不占 flex gap。 */}
-        <div aria-live="polite" className="empty:hidden">
-          {error ? (
-            <p className="tmex-fade text-xs text-destructive" data-testid="credential-prompt-error">
-              {t(error, { defaultValue: error })}
-            </p>
-          ) : null}
-        </div>
+        {/* 播报节点常驻：`empty:hidden` 会把它从可访问性树里摘掉，播报会时灵时不灵。
+            sr-only 是 absolute 定位，空着也不占 flex gap；可见的报错块另外条件渲染。 */}
+        <output className="sr-only" aria-live="polite">
+          {error ? t(error, { defaultValue: error }) : ''}
+        </output>
+        {error ? (
+          <p className="tmex-fade text-xs text-destructive" data-testid="credential-prompt-error">
+            {t(error, { defaultValue: error })}
+          </p>
+        ) : null}
 
         <div className="flex flex-wrap items-center gap-2">
           <Button

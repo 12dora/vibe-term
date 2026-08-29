@@ -172,6 +172,23 @@ describe('NodesTab HTTPS 分档', () => {
     expect(html).not.toContain('data-testid="https-node-role-hint"');
   });
 
+  test('角色还没读到时不摆出 HTTPS 区块，只占一个小位子', () => {
+    localStatus = null;
+    const html = render(MESH_MODE);
+    expect(html).toContain('data-testid="https-section-pending"');
+    expect(html).not.toContain('data-testid="https-section"');
+    // 关键是别在这段时间里露出可操作的 TLS 表单
+    expect(html).not.toContain('data-testid="https-mode-chooser"');
+  });
+
+  test('未登录时连占位都不给（本机区块已经在提示登录）', () => {
+    localStatus = null;
+    loginRequired = true;
+    const html = render(MESH_MODE);
+    expect(html).not.toContain('data-testid="https-section-pending"');
+    expect(html).not.toContain('data-testid="https-section"');
+  });
+
   test('纯 node：卡片头还在，内容置灰并只留一句说明', () => {
     localStatus = status({ role: 'node', hubUrl: 'https://hub.example' });
     const html = render(MESH_MODE);

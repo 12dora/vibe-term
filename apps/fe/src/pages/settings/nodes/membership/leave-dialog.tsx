@@ -44,6 +44,13 @@ const TITLE_KEY: Record<LeaveDialogKind, string> = {
   'change-hub': 'nodes.membership.changeHubConfirm.title',
 };
 
+// 后果按角色分：纯 node 关心「旧 hub 上那条记录怎么办」，hub 兼节点关心「下级节点会掉线」。
+// 混着讲的话，对 hub 来说是纯粹的谎话（本机就是 hub，没有别的 hub 留记录）。
+const CONSEQUENCES_KEY: Record<MeshRole, string> = {
+  node: 'nodes.membership.consequencesNode',
+  'hub,node': 'nodes.membership.consequencesHub',
+};
+
 export function LeaveDialog({
   request,
   leave,
@@ -59,12 +66,15 @@ export function LeaveDialog({
   if (!request) return null;
   const { phase, busy, error, warning } = leave;
   const done = phase === 'restarted';
+  // `leave` 已经成功、只是没等到网关回来：破坏性动作**不能**再放出来重放一遍，
+  // 只给「刷新」与「再查一次」两个恢复出口。
+  const stranded = phase === 'timeout';
 
   return (
     <AlertDialog
       open
       onOpenChange={(next) => {
-        if (!next && !busy && !done) onCancel();
+        if (!next && !busy && !done && !stranded) onCancel();
       }}
     >
       <AlertDialogContent data-testid="membership-leave-dialog">
@@ -78,7 +88,7 @@ export function LeaveDialog({
                   })
                 : t(`nodes.membership.${camel(request.kind)}Confirm.description`)}
             </span>
-            <span className="mt-2 block">{t('nodes.membership.consequences')}</span>
+            <span className="mt-2 block">{t(CONSEQUENCES_KEY[request.from])}</span>
           </AlertDialogDescription>
         </AlertDialogHeader>
 
@@ -101,20 +111,38 @@ export function LeaveDialog({
         <LeaveProgress leave={leave} />
 
         <AlertDialogFooter>
-          {!busy && !done && (
-            <AlertDialogCancel onClick={onCancel} data-testid="membership-leave-cancel">
-              {t('nodes.membership.cancel')}
-            </AlertDialogCancel>
+          {stranded ? (
+            <>
+              {/* `AlertDialogAction` 只是个按钮（不会关闭对话框），「再查一次」正好留在原地继续等。 */}
+              <AlertDialogAction
+                variant="outline"
+                onClick={leave.recheck}
+                data-testid="membership-leave-recheck"
+              >
+                {t('nodes.membership.checkAgain')}
+              </AlertDialogAction>
+              <AlertDialogAction onClick={leave.reload} data-testid="membership-leave-reload">
+                {t('nodes.membership.reload')}
+              </AlertDialogAction>
+            </>
+          ) : (
+            <>
+              {!busy && !done && (
+                <AlertDialogCancel onClick={onCancel} data-testid="membership-leave-cancel">
+                  {t('nodes.membership.cancel')}
+                </AlertDialogCancel>
+              )}
+              <AlertDialogAction
+                variant="destructive"
+                disabled={busy || done}
+                onClick={onConfirm}
+                data-testid="membership-leave-confirm"
+              >
+                {busy && <Loader2 className="animate-spin motion-reduce:animate-none" />}
+                {t('nodes.membership.confirm')}
+              </AlertDialogAction>
+            </>
           )}
-          <AlertDialogAction
-            variant="destructive"
-            disabled={busy || done}
-            onClick={onConfirm}
-            data-testid="membership-leave-confirm"
-          >
-            {busy && <Loader2 className="animate-spin motion-reduce:animate-none" />}
-            {t('nodes.membership.confirm')}
-          </AlertDialogAction>
         </AlertDialogFooter>
       </AlertDialogContent>
     </AlertDialog>

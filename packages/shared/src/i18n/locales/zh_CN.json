@@ -1194,7 +1194,8 @@
         "changeHub": "更换 Hub",
         "confirm": "退出并重启",
         "cancel": "取消",
-        "consequences": "本机的 mesh 状态（账号、节点身份、缓存的对端）会全部删除；旧 Hub 上会留下一条离线记录，可在旧 Hub 侧吊销；tmex 会重启，当前会话随之失效。",
+        "consequencesNode": "本机的 mesh 状态（账号、节点身份、缓存的对端）会全部删除。退出前会自动在 Hub 上吊销本机；若自动吊销没成功，Hub 上会留下一条离线记录，需要你到 Hub 侧手动吊销。tmex 会重启，当前会话随之失效。",
+        "consequencesHub": "本机就是 Hub。退出后本机的 mesh 状态（账号、节点身份、缓存的对端）会全部删除，所有下级节点都会失去 Hub，必须重新加入其它 Hub 才能恢复。tmex 会重启，当前会话随之失效。",
         "leaveConfirm": {
           "title": "退出 Hub？",
           "description": "本机将变回独立运行。"
@@ -1211,6 +1212,8 @@
         "restarting": "正在重启……（{{seconds}} 秒）",
         "restarted": "已重启，正在返回设置页……",
         "restartTimeout": "tmex 未能恢复。请手动启动后刷新本页。",
+        "reload": "刷新页面",
+        "checkAgain": "再查一次",
         "revokeFailed": "未能在旧 Hub 上吊销本机（{{error}}），退出继续。请稍后在旧 Hub 的节点列表里手动吊销。",
         "revokeSkipped": "已跳过在旧 Hub 上吊销本机，退出继续。请稍后在旧 Hub 的节点列表里手动吊销。",
         "leaveFailed": "退出 Hub 失败。",

@@ -1194,7 +1194,8 @@
         "changeHub": "Change hub",
         "confirm": "Leave and restart",
         "cancel": "Cancel",
-        "consequences": "All mesh state on this machine (account, node identity, cached peers) is removed. The old hub keeps an offline record you can revoke there. tmex restarts and the current session ends.",
+        "consequencesNode": "All mesh state on this machine (account, node identity, cached peers) is removed. This machine is revoked on the hub automatically before leaving; if that fails, the hub keeps an offline record you have to revoke there. tmex restarts and the current session ends.",
+        "consequencesHub": "This machine is the hub. Leaving removes all of its mesh state (account, node identity, cached peers), and every node that depends on it loses its hub — each one has to join another hub to come back. tmex restarts and the current session ends.",
         "leaveConfirm": {
           "title": "Leave the hub?",
           "description": "This machine goes back to running standalone."
@@ -1211,6 +1212,8 @@
         "restarting": "Restarting… ({{seconds}}s)",
         "restarted": "Restarted. Returning to settings…",
         "restartTimeout": "tmex did not come back. Start it manually, then reload this page.",
+        "reload": "Reload page",
+        "checkAgain": "Check again",
         "revokeFailed": "Could not revoke this machine on the old hub ({{error}}). Leaving anyway — revoke it from the old hub's node list later.",
         "revokeSkipped": "Skipped revoking this machine on the old hub. Leaving anyway — revoke it from the old hub's node list later.",
         "leaveFailed": "Could not leave the hub.",

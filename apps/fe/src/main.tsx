@@ -10,6 +10,7 @@ import './index.css';
 // 浏览器 console 打印 monorepo 版本（非 production 带 _dev 后缀）
 console.info(`${PRODUCT_NAME} ${formatDisplayVersion(__MONOREPO_VERSION__, __IS_PROD__)}`);
 
+import { isAuthTransitionActive } from '@/auth/auth-transition';
 import { FlowBridges } from '@/components/flow-bridges';
 import { AppSidebar } from '@/components/page-layouts/components/app-sidebar';
 import { useAppMonoFont } from '@/lib/fonts/useAppMonoFont';
@@ -256,7 +257,14 @@ const router = createBrowserRouter([
   },
 ]);
 
-installSessionInterceptor({ navigate: (to) => void router.navigate(to) });
+// 退出 mesh 期间本机会话会被主动清空，随之而来的自身 401 是预期内的：
+// 这时跳 /login 会把还在等网关重启的编排一起卸载掉，直接压住即可。
+installSessionInterceptor({
+  navigate: (to) => {
+    if (isAuthTransitionActive()) return;
+    void router.navigate(to);
+  },
+});
 
 // 宿主根：entry（self）运行时常驻，供路由之外的外壳组件（Toaster 等）消费。
 function AppRoot() {

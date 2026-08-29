@@ -22,6 +22,7 @@ import { Input } from '@tmex/ui/input';
 import { Check, Copy, Loader2, ShieldCheck } from 'lucide-react';
 import { useCallback, useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
+import { CopyLabel, useCopyToClipboard } from '../copy-feedback';
 import type { ResolvedMode } from './types';
 
 export function EnrollmentSection({
@@ -223,14 +224,7 @@ export function CopyableCode({
   value: string;
   testId: string;
 }) {
-  const { t } = useTranslation();
-  const [copied, setCopied] = useState(false);
-  const copy = useCallback(() => {
-    void navigator.clipboard?.writeText(value).then(() => {
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
-    });
-  }, [value]);
+  const { copied, copy } = useCopyToClipboard(value);
   return (
     <div className="flex flex-col gap-1">
       <span className="text-[11px] text-muted-foreground">{label}</span>
@@ -249,9 +243,7 @@ export function CopyableCode({
           data-testid={`${testId}-copy`}
         >
           {copied ? <Check className="tmex-scale-in" /> : <Copy className="tmex-scale-in" />}
-          <span aria-live="polite">
-            {copied ? t('nodes.actions.copied') : t('nodes.actions.copy')}
-          </span>
+          <CopyLabel copied={copied} />
         </Button>
       </div>
     </div>

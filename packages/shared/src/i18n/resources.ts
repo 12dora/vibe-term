@@ -1200,7 +1200,8 @@ export const I18N_RESOURCES = {
         "changeHub": "Change hub",
         "confirm": "Leave and restart",
         "cancel": "Cancel",
-        "consequences": "All mesh state on this machine (account, node identity, cached peers) is removed. The old hub keeps an offline record you can revoke there. tmex restarts and the current session ends.",
+        "consequencesNode": "All mesh state on this machine (account, node identity, cached peers) is removed. This machine is revoked on the hub automatically before leaving; if that fails, the hub keeps an offline record you have to revoke there. tmex restarts and the current session ends.",
+        "consequencesHub": "This machine is the hub. Leaving removes all of its mesh state (account, node identity, cached peers), and every node that depends on it loses its hub — each one has to join another hub to come back. tmex restarts and the current session ends.",
         "leaveConfirm": {
           "title": "Leave the hub?",
           "description": "This machine goes back to running standalone."
@@ -1217,6 +1218,8 @@ export const I18N_RESOURCES = {
         "restarting": "Restarting… ({{seconds}}s)",
         "restarted": "Restarted. Returning to settings…",
         "restartTimeout": "tmex did not come back. Start it manually, then reload this page.",
+        "reload": "Reload page",
+        "checkAgain": "Check again",
         "revokeFailed": "Could not revoke this machine on the old hub ({{error}}). Leaving anyway — revoke it from the old hub's node list later.",
         "revokeSkipped": "Skipped revoking this machine on the old hub. Leaving anyway — revoke it from the old hub's node list later.",
         "leaveFailed": "Could not leave the hub.",
@@ -2776,7 +2779,8 @@ export const I18N_RESOURCES = {
         "changeHub": "更换 Hub",
         "confirm": "退出并重启",
         "cancel": "取消",
-        "consequences": "本机的 mesh 状态（账号、节点身份、缓存的对端）会全部删除；旧 Hub 上会留下一条离线记录，可在旧 Hub 侧吊销；tmex 会重启，当前会话随之失效。",
+        "consequencesNode": "本机的 mesh 状态（账号、节点身份、缓存的对端）会全部删除。退出前会自动在 Hub 上吊销本机；若自动吊销没成功，Hub 上会留下一条离线记录，需要你到 Hub 侧手动吊销。tmex 会重启，当前会话随之失效。",
+        "consequencesHub": "本机就是 Hub。退出后本机的 mesh 状态（账号、节点身份、缓存的对端）会全部删除，所有下级节点都会失去 Hub，必须重新加入其它 Hub 才能恢复。tmex 会重启，当前会话随之失效。",
         "leaveConfirm": {
           "title": "退出 Hub？",
           "description": "本机将变回独立运行。"
@@ -2793,6 +2797,8 @@ export const I18N_RESOURCES = {
         "restarting": "正在重启……（{{seconds}} 秒）",
         "restarted": "已重启，正在返回设置页……",
         "restartTimeout": "tmex 未能恢复。请手动启动后刷新本页。",
+        "reload": "刷新页面",
+        "checkAgain": "再查一次",
         "revokeFailed": "未能在旧 Hub 上吊销本机（{{error}}），退出继续。请稍后在旧 Hub 的节点列表里手动吊销。",
         "revokeSkipped": "已跳过在旧 Hub 上吊销本机，退出继续。请稍后在旧 Hub 的节点列表里手动吊销。",
         "leaveFailed": "退出 Hub 失败。",
@@ -4352,7 +4358,8 @@ export const I18N_RESOURCES = {
         "changeHub": "ハブを変更",
         "confirm": "退出して再起動",
         "cancel": "キャンセル",
-        "consequences": "このマシンのメッシュ状態（アカウント、ノード ID、キャッシュ済みピア）はすべて削除されます。以前のハブにはオフラインの記録が残るので、そちらで失効させてください。tmex は再起動し、現在のセッションは終了します。",
+        "consequencesNode": "このマシンのメッシュ状態（アカウント、ノード ID、キャッシュ済みピア）はすべて削除されます。退出前にハブ側でこのマシンを自動的に失効させます。自動失効に失敗した場合はハブにオフラインの記録が残るため、ハブ側で手動失効が必要です。tmex は再起動し、現在のセッションは終了します。",
+        "consequencesHub": "このマシンがハブです。退出するとメッシュ状態（アカウント、ノード ID、キャッシュ済みピア）はすべて削除され、配下のノードはハブを失います。復旧には別のハブへ参加し直す必要があります。tmex は再起動し、現在のセッションは終了します。",
         "leaveConfirm": {
           "title": "ハブから退出しますか？",
           "description": "このマシンはスタンドアロン動作に戻ります。"
@@ -4369,6 +4376,8 @@ export const I18N_RESOURCES = {
         "restarting": "再起動しています…（{{seconds}} 秒）",
         "restarted": "再起動しました。設定に戻ります…",
         "restartTimeout": "tmex が復帰しませんでした。手動で起動してからページを再読み込みしてください。",
+        "reload": "ページを再読み込み",
+        "checkAgain": "もう一度確認",
         "revokeFailed": "以前のハブでこのマシンを失効できませんでした（{{error}}）。退出は続行します。後で以前のハブのノード一覧から失効させてください。",
         "revokeSkipped": "以前のハブでのこのマシンの失効をスキップしました。退出は続行します。後で以前のハブのノード一覧から失効させてください。",
         "leaveFailed": "ハブから退出できませんでした。",

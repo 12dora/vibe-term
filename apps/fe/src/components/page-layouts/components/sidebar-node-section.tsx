@@ -10,14 +10,14 @@ import { NodeLoginButton } from '@/auth/NodeLoginButton';
 import { loginErrorKey } from '@/auth/login-errors';
 import { useNodeLoginGate } from '@/auth/use-node-login';
 import { NodeRuntimeScope } from '@/node/node-runtime-scope';
-import { SELF_NODE_ID, nodeAppPath } from '@tmex/api-client';
+import { SELF_NODE_ID, nodeAppPath, parseNodeIdFromPath } from '@tmex/api-client';
 import { NodeBadge, type NodeBadgeInfo } from '@tmex/panels/device-tree';
 import { isSidebarDeviceVisible } from '@tmex/stores';
 import { useUIStore } from '@tmex/stores/react';
 import { ChevronRight, Loader2, Monitor } from 'lucide-react';
 import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Link } from 'react-router';
+import { Link, matchPath, useLocation } from 'react-router';
 import { SideBarDeviceListForRuntime } from './sidebar-device-list-runtime';
 
 export interface SidebarNodeEntry {
@@ -45,6 +45,28 @@ export function inventoryDevices(inventory: unknown): { id: string; name: string
     out.push({ id: row.id, name: typeof row.name === 'string' ? row.name : row.id });
   }
   return out;
+}
+
+/**
+ * 当前路由选中的那台设备（限定在给定 node 下）。
+ *
+ * 在线分节的可见性过滤（`selectSidebarVisibleDevices`）对选中的设备无条件放行；离线分节
+ * 读不到 runtime、也没有那个 selector，只能自己从地址栏解析——否则一台默认隐藏的远端设备
+ * 在被选中期间只要它的 node 掉线，就会从侧边栏里凭空消失。
+ */
+export function selectedDeviceIdForNode(pathname: string, runtimeNodeId: string): string | null {
+  if (parseNodeIdFromPath(pathname) !== runtimeNodeId) return null;
+  const match = matchPath(
+    { path: nodeAppPath(runtimeNodeId, '/devices/:deviceId'), end: false },
+    pathname
+  );
+  const raw = match?.params.deviceId;
+  if (!raw) return null;
+  try {
+    return decodeURIComponent(raw);
+  } catch {
+    return raw;
+  }
 }
 
 function badgeOf(node: SidebarNodeEntry): NodeBadgeInfo {
@@ -122,11 +144,14 @@ export function SidebarNodeSection({ node }: { node: SidebarNodeEntry }) {
   const { t } = useTranslation();
   // UI store 是宿主级共享实例（所有 node 同一份），离线分节没有自己的 runtime 也读得到。
   const visibility = useUIStore((state) => state.sidebarDeviceVisibility);
+  const selectedDeviceId = selectedDeviceIdForNode(useLocation().pathname, node.runtimeNodeId);
 
   if (!node.online) {
     const knownDevices = inventoryDevices(node.inventory);
-    const devices = knownDevices.filter((device) =>
-      isSidebarDeviceVisible(visibility, node.runtimeNodeId, device.id)
+    const devices = knownDevices.filter(
+      (device) =>
+        device.id === selectedDeviceId ||
+        isSidebarDeviceVisible(visibility, node.runtimeNodeId, device.id)
     );
     return (
       <div data-testid={`sidebar-node-offline-${node.runtimeNodeId}`} className="space-y-1">

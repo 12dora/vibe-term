@@ -23,7 +23,9 @@ const { MemoryRouter } = await import('react-router');
 const { sidebarDeviceVisibilityKey } = await import('@tmex/stores');
 const { RuntimeProvider } = await import('@tmex/stores/react');
 const { SideBarDeviceList, toSidebarEntries } = await import('./sidebar-device-list');
-const { SidebarNodeSection, inventoryDevices } = await import('./sidebar-node-section');
+const { SidebarNodeSection, inventoryDevices, selectedDeviceIdForNode } = await import(
+  './sidebar-node-section'
+);
 
 /**
  * 分节自身要读宿主级共享的 UI store（设备可见性）；生产里 AppSidebar 永远在
@@ -51,10 +53,14 @@ function meshNode(overrides: Partial<MeshNode> & { id: string }): MeshNode {
   };
 }
 
-function render(ui: React.ReactNode, visibility: Record<string, boolean> = {}): string {
+function render(
+  ui: React.ReactNode,
+  visibility: Record<string, boolean> = {},
+  entry = '/'
+): string {
   return renderToStaticMarkup(
     <RuntimeProvider runtime={runtimeStub(visibility)}>
-      <MemoryRouter>{ui}</MemoryRouter>
+      <MemoryRouter initialEntries={[entry]}>{ui}</MemoryRouter>
     </RuntimeProvider>
   );
 }
@@ -147,6 +153,23 @@ describe('SidebarNodeSection', () => {
     expect(html).not.toContain('data-testid="device-item-');
   });
 
+  test('离线 node：当前选中的那台设备无条件保留（与在线选择器同一条例外）', () => {
+    const html = render(
+      <SidebarNodeSection node={offlineNode()} />,
+      {},
+      `/n/${OFFLINE_NODE}/devices/d1`
+    );
+
+    expect(html).toContain('data-testid="sidebar-node-offline-device-d1"');
+    expect(html).not.toContain(`data-testid="sidebar-node-hidden-${OFFLINE_NODE}"`);
+  });
+
+  test('离线 node：别的 node 上选中的同名设备不算数', () => {
+    const html = render(<SidebarNodeSection node={offlineNode()} />, {}, '/devices/d1');
+    expect(html).not.toContain('data-testid="sidebar-node-offline-device-d1"');
+    expect(html).toContain(`data-testid="sidebar-node-hidden-${OFFLINE_NODE}"`);
+  });
+
   test('在线但未登录：默认折叠成一个登录入口，不自动登录、不渲染设备树', () => {
     const html = render(
       <SidebarNodeSection
@@ -189,6 +212,29 @@ describe('SidebarNodeSection', () => {
     // 设备树挂在该 node 的运行时下，且拿到了 node 徽标
     expect(html).toContain('data-testid="runtime-device-list"');
     expect(html).toContain('data-node="0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c"');
+  });
+});
+
+describe('selectedDeviceIdForNode', () => {
+  const NODE = '0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c';
+
+  test('只认前缀匹配的那个 node', () => {
+    expect(selectedDeviceIdForNode(`/n/${NODE}/devices/d1`, NODE)).toBe('d1');
+    expect(selectedDeviceIdForNode(`/n/${NODE}/devices/d1`, 'self')).toBeNull();
+    expect(selectedDeviceIdForNode('/devices/d1', 'self')).toBe('d1');
+    expect(selectedDeviceIdForNode('/devices/d1', NODE)).toBeNull();
+  });
+
+  test('窗口 / pane 深链同样算选中了那台设备，别的路由不算', () => {
+    expect(selectedDeviceIdForNode('/devices/d1/windows/w1/panes/p1', 'self')).toBe('d1');
+    expect(selectedDeviceIdForNode('/settings?tab=nodes', 'self')).toBeNull();
+    expect(selectedDeviceIdForNode('/devices', 'self')).toBeNull();
+  });
+
+  test('设备 id 在链接里是 URL 编码的，解回原值再比', () => {
+    expect(selectedDeviceIdForNode('/devices/a%2Fb', 'self')).toBe('a/b');
+    // 坏掉的 % 序列不能让整棵侧边栏崩掉
+    expect(selectedDeviceIdForNode('/devices/%zz', 'self')).toBe('%zz');
   });
 });
 

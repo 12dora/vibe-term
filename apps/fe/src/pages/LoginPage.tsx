@@ -238,19 +238,22 @@ function LoginForm({ mode, api }: LoginFormProps) {
           </div>
         ) : null}
 
-        {/* 常驻的 live region：空的时候 empty:hidden 收掉，不占 flex gap，
-            也不会因为整块重新挂载而漏掉播报。 */}
-        <div aria-live="polite" className="empty:hidden">
-          {error ? (
-            <p
-              className="tmex-fade flex items-start gap-1.5 text-sm text-destructive"
-              data-testid="login-error"
-            >
-              <AlertTriangle className="mt-0.5 size-3.5 shrink-0" />
-              <span>{error}</span>
-            </p>
-          ) : null}
-        </div>
+        {/* 播报节点必须**一直挂着**：`empty:hidden` 会把它从可访问性树里摘掉，
+            读屏拿不到「内容变了」这件事，播报就时灵时不灵。所以这里拆成两半——
+            常驻的 sr-only live region 负责播报（absolute 定位，不占 flex gap），
+            可见的报错块照旧条件渲染。 */}
+        <output className="sr-only" aria-live="polite">
+          {error ?? ''}
+        </output>
+        {error ? (
+          <p
+            className="tmex-fade flex items-start gap-1.5 text-sm text-destructive"
+            data-testid="login-error"
+          >
+            <AlertTriangle className="mt-0.5 size-3.5 shrink-0" />
+            <span>{error}</span>
+          </p>
+        ) : null}
 
         <Button type="submit" disabled={busy} data-testid="login-submit">
           {busy ? <Loader2 className="animate-spin motion-reduce:animate-none" /> : null}

@@ -1,9 +1,10 @@
-// 跨重启记号：写入、读一次即清、脏值与无 storage 的退化。
+// 跨重启记号：写入、读一次即清、过期、脏值与无 storage 的退化。
 
 import { describe, expect, test } from 'bun:test';
 import {
   type IntentStorage,
   SETUP_INTENT_KEY,
+  SETUP_INTENT_TTL_MS,
   clearSetupIntent,
   takeSetupIntent,
   writeSetupIntent,
@@ -41,9 +42,12 @@ const throwingStorage: IntentStorage = {
 describe('setup intent 记号', () => {
   test('写入后读到，并且读一次就清掉', () => {
     const storage = memoryStorage();
-    writeSetupIntent('join-hub', storage);
-    expect(storage.map.get(SETUP_INTENT_KEY)).toBe('join-hub');
-    expect(takeSetupIntent(storage)).toBe('join-hub');
+    writeSetupIntent('join-hub', storage, 1000);
+    expect(JSON.parse(storage.map.get(SETUP_INTENT_KEY) as string)).toEqual({
+      path: 'join-hub',
+      at: 1000,
+    });
+    expect(takeSetupIntent(storage, 1000)).toBe('join-hub');
     expect(storage.map.has(SETUP_INTENT_KEY)).toBe(false);
     expect(takeSetupIntent(storage)).toBeNull();
   });
@@ -54,10 +58,35 @@ describe('setup intent 记号', () => {
     expect(takeSetupIntent(storage)).toBe('become-hub');
   });
 
+  test('保质期内读得到，过期就当没有（照样清掉）', () => {
+    const fresh = memoryStorage();
+    writeSetupIntent('join-hub', fresh, 0);
+    expect(takeSetupIntent(fresh, SETUP_INTENT_TTL_MS)).toBe('join-hub');
+
+    const stale = memoryStorage();
+    writeSetupIntent('join-hub', stale, 0);
+    expect(takeSetupIntent(stale, SETUP_INTENT_TTL_MS + 1)).toBeNull();
+    expect(stale.map.has(SETUP_INTENT_KEY)).toBe(false);
+  });
+
+  test('写入时刻在未来（时钟回拨）同样不可信', () => {
+    const storage = memoryStorage();
+    writeSetupIntent('become-hub', storage, 10_000);
+    expect(takeSetupIntent(storage, 9_000)).toBeNull();
+  });
+
   test('不认识的值当没有，并且照样清掉', () => {
     const storage = memoryStorage({ [SETUP_INTENT_KEY]: 'take-over-the-world' });
     expect(takeSetupIntent(storage)).toBeNull();
     expect(storage.map.has(SETUP_INTENT_KEY)).toBe(false);
+  });
+
+  test('老格式的裸字符串与缺字段的记录都当没有', () => {
+    expect(takeSetupIntent(memoryStorage({ [SETUP_INTENT_KEY]: 'join-hub' }))).toBeNull();
+    expect(
+      takeSetupIntent(memoryStorage({ [SETUP_INTENT_KEY]: '{"path":"join-hub"}' }))
+    ).toBeNull();
+    expect(takeSetupIntent(memoryStorage({ [SETUP_INTENT_KEY]: '{"at":1}' }))).toBeNull();
   });
 
   test('clearSetupIntent 只清自己的键', () => {

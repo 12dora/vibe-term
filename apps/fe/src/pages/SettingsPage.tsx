@@ -8,7 +8,7 @@ import {
   Settings as SettingsIcon,
   Sparkles,
 } from 'lucide-react';
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useSearchParams } from 'react-router';
 import { toast } from 'sonner';
@@ -37,7 +37,13 @@ import { NodesTab } from './settings/nodes/nodes-tab';
 import { NotificationSettingsTab } from './settings/notification-settings-tab';
 import { useSiteSettingsForm } from './settings/use-site-settings-form';
 
-type SettingsTab = 'general' | 'devicesAndFiles' | 'nodes' | 'notifications' | 'ai' | 'terminal';
+export type SettingsTab =
+  | 'general'
+  | 'devicesAndFiles'
+  | 'nodes'
+  | 'notifications'
+  | 'ai'
+  | 'terminal';
 
 const SETTINGS_TABS: SettingsTab[] = [
   'general',
@@ -52,24 +58,22 @@ function isSettingsTab(value: string | null): value is SettingsTab {
   return value !== null && (SETTINGS_TABS as string[]).includes(value);
 }
 
+/** `?tab=` 的唯一解释处：缺失或不认识一律回「通用」。 */
+export function settingsTabFromParam(value: string | null): SettingsTab {
+  return isSettingsTab(value) ? value : 'general';
+}
+
 export default function SettingsPage() {
   const { t } = useTranslation();
-  // `?tab=` 是对外的深链（侧栏「节点」入口与老 /nodes 书签都落到这里）：初值从 URL 取，
+  // `?tab=` 是对外的深链（侧栏「节点」入口与老 /nodes 书签都落到这里）。
+  // URL 就是唯一事实来源：另存一份 state 的话，挂载后导航到 `/settings` 或 `?tab=bogus`
+  // （query 变了但组件不重挂）就会停在上一个标签，与「非法值回退到通用」的约定不符。
   // 切换标签时用 replace 写回，避免每点一次都往历史里塞一条。
   const [searchParams, setSearchParams] = useSearchParams();
-  const tabParam = searchParams.get('tab');
-  const [activeTab, setActiveTab] = useState<SettingsTab>(
-    isSettingsTab(tabParam) ? tabParam : 'general'
-  );
+  const activeTab = settingsTabFromParam(searchParams.get('tab'));
   const form = useSiteSettingsForm();
 
-  // 已经停在设置页时再点侧栏「节点」入口只会换 query，组件不会重挂载——这里跟一次。
-  useEffect(() => {
-    if (isSettingsTab(tabParam)) setActiveTab(tabParam);
-  }, [tabParam]);
-
   const selectTab = (value: SettingsTab) => {
-    setActiveTab(value);
     setSearchParams(
       (params) => {
         params.set('tab', value);

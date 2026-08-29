@@ -28,7 +28,7 @@ mock.module('./settings/notification-settings-tab', () => ({
 
 const { renderToStaticMarkup } = await import('react-dom/server');
 const { MemoryRouter } = await import('react-router');
-const { default: SettingsPage } = await import('./SettingsPage');
+const { default: SettingsPage, settingsTabFromParam } = await import('./SettingsPage');
 
 const TAB_IDS = ['general', 'terminal', 'devicesAndFiles', 'nodes', 'notifications', 'ai'];
 
@@ -70,5 +70,22 @@ describe('SettingsPage 标签栏', () => {
   test('`?tab=` 不是合法标签时退回「通用」', () => {
     const html = render('/settings?tab=bogus');
     expect(html).toContain('data-testid="general-settings-tab"');
+  });
+});
+
+// 选中的标签直接由 URL 推导（不另存 state），所以挂载后 query 一变就跟着变——
+// 静态渲染点不了按钮，这里直接测那个唯一的解释函数。
+describe('settingsTabFromParam', () => {
+  test('合法值原样返回', () => {
+    for (const tab of TAB_IDS) {
+      expect(settingsTabFromParam(tab)).toBe(tab as ReturnType<typeof settingsTabFromParam>);
+    }
+  });
+
+  test('缺失或不认识的值一律回「通用」', () => {
+    expect(settingsTabFromParam(null)).toBe('general');
+    expect(settingsTabFromParam('')).toBe('general');
+    expect(settingsTabFromParam('bogus')).toBe('general');
+    expect(settingsTabFromParam('NODES')).toBe('general');
   });
 });

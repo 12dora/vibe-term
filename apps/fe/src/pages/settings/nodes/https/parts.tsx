@@ -3,8 +3,9 @@
 import { Button } from '@tmex/ui/button';
 import { Input } from '@tmex/ui/input';
 import { CircleCheck, CircleX, Copy, Info, TriangleAlert } from 'lucide-react';
-import { type ReactNode, useCallback, useState } from 'react';
+import type { ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
+import { CopyLabel, useCopyToClipboard } from '../copy-feedback';
 
 export type NoticeTone = 'info' | 'success' | 'warning' | 'error';
 
@@ -148,14 +149,7 @@ export function ListenerFields({
 }
 
 export function CopyableCode({ value, testId }: { value: string; testId: string }) {
-  const { t } = useTranslation();
-  const [copied, setCopied] = useState(false);
-  const copy = useCallback(() => {
-    void navigator.clipboard?.writeText(value).then(() => {
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
-    });
-  }, [value]);
+  const { copied, copy } = useCopyToClipboard(value);
   return (
     <span className="flex min-w-0 items-center gap-1">
       <code
@@ -166,9 +160,7 @@ export function CopyableCode({ value, testId }: { value: string; testId: string 
       </code>
       <Button type="button" size="xs" variant="ghost" onClick={copy} data-testid={`${testId}-copy`}>
         {copied ? <CircleCheck className="tmex-scale-in" /> : <Copy className="tmex-scale-in" />}
-        <span aria-live="polite">
-          {copied ? t('nodes.actions.copied') : t('nodes.actions.copy')}
-        </span>
+        <CopyLabel copied={copied} />
       </Button>
     </span>
   );

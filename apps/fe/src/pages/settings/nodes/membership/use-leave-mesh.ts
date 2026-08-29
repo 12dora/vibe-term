@@ -1,27 +1,35 @@
-// 退出 mesh 的编排：自吊销（尽力而为）→ `POST /api/local/leave` → 等重启 → 整页跳回设置页。
+// 退出 mesh 的 React 接线：把 `runLeaveWorkflow` 需要的依赖（凭据签名、api、重启等待、
+// 记号、硬跳转）一一喂进去，自己只保留阶段/文案状态与进入守卫。
 //
-// 顺序上先读 `/healthz.startedAt` 再调 leave：响应回来时网关可能已经在 300 ms 后退出，
-// 那时再读到的就是新进程的 startedAt，重启判定会永远等不到「变化」（与向导 `submit.ts` 同理）。
-//
-// 退出会把本机的 mesh 状态（账号、node 身份、缓存的 peer）全部删掉并重启，
-// 鉴权模式随之从 mesh 变回 standalone——所以最后必须整页跳转，不能走 react-router。
+// 编排本身（顺序、记号时机、鉴权切换标记、超时终态）在 `leave-controller.ts` 里，那里没有
+// React、可以直接测。
 
+import { beginAuthTransition, endAuthTransition } from '@/auth/auth-transition';
 import { decodeRootPublicKey, useCredentialPrompt, usePasskeys } from '@/auth/credential-prompt';
 import { type ApiClient, defaultApiClient } from '@tmex/api-client';
 import type { AuthApi, AuthKdfParamsJson, AuthModeResponse } from '@tmex/api-client/auth/index';
 import { defaultAuthApi } from '@tmex/api-client/auth/index';
 import { LocalApiError } from '@tmex/api-client/local/local-api';
-import { readHealthStartedAt } from '@tmex/api-client/local/setup-api';
 import type { ReactElement } from 'react';
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { toast } from 'sonner';
-import { useRestartNow } from '../restart/use-restart-now';
-import { navigateToSettingsNodes } from '../setup/browser-location';
-import { type IntentStorage, type SetupIntent, clearSetupIntent, writeSetupIntent } from './intent';
+import { readStartedAt, waitForRestart } from '../restart/wait-for-restart';
+import { navigateToSettingsNodes, reloadPage } from '../setup/browser-location';
+import { type IntentStorage, clearSetupIntent, writeSetupIntent } from './intent';
 import { type LeaveApi, defaultLeaveApi } from './leave-api';
-import type { MeshRole } from './role-transition';
+import {
+  type InFlightGuard,
+  type LeavePhase,
+  type LeaveRequest,
+  type LeaveRestartOutcome,
+  awaitRestartAndNavigate,
+  createInFlightGuard,
+  runLeaveWorkflow,
+} from './leave-controller';
 import { selfRevokeNode } from './self-revoke';
+
+export type { LeavePhase, LeaveRequest };
 
 /** 没有 uid / kdf 参数时不会走到签名分支；hook 不能条件调用，给个不会被用到的占位。 */
 const PLACEHOLDER_KDF: AuthKdfParamsJson = {
@@ -52,15 +60,6 @@ export function describeLeaveError(t: Translate, error: unknown): string {
   return t('nodes.membership.errorDetail', { base, detail });
 }
 
-export type LeavePhase = 'idle' | 'leaving' | 'restarting' | 'restarted' | 'timeout' | 'error';
-
-export interface LeaveRequest {
-  /** 当前角色，作为 `expectedRole` 发给后端做一致性校验。 */
-  from: MeshRole;
-  /** 重启回 standalone 后要展开的向导路径；纯粹退出时为 null。 */
-  intent: SetupIntent | null;
-}
-
 export interface UseLeaveMeshOptions {
   mode: AuthModeResponse | null;
   client?: ApiClient;
@@ -80,6 +79,10 @@ export interface LeaveMesh {
   elapsedMs: number;
   run: (request: LeaveRequest) => void;
   reset: () => void;
+  /** 重启等待超时后再查一次；**不会**重发 `leave`。 */
+  recheck: () => void;
+  /** 重启等待超时后整页刷新，让用户自己看当前状态。 */
+  reload: () => void;
   /** 自吊销要签名，凭据对话框挂在调用方页面里。 */
   dialog: ReactElement | null;
 }
@@ -97,6 +100,23 @@ export function useLeaveMesh(options: UseLeaveMeshOptions): LeaveMesh {
   const [phase, setPhase] = useState<LeavePhase>('idle');
   const [error, setError] = useState<string | null>(null);
   const [warning, setWarning] = useState<string | null>(null);
+  const [elapsedMs, setElapsedMs] = useState(0);
+
+  // 语义见 `createInFlightGuard`：抢不到就整个丢弃这次调用，连 state 都不许动
+  // ——第二次点击若先把在途的 AbortController 换掉，第一条流程的重启等待会被就地掐死。
+  const guardRef = useRef<InFlightGuard | null>(null);
+  guardRef.current ??= createInFlightGuard();
+  const guard = guardRef.current;
+  const abortRef = useRef<AbortController | null>(null);
+  const baselineRef = useRef<number | null>(null);
+
+  useEffect(
+    () => () => {
+      abortRef.current?.abort();
+      abortRef.current = null;
+    },
+    []
+  );
 
   const uid = mode?.uid ?? null;
   const kdfParams = mode?.kdfParams ?? null;
@@ -114,80 +134,140 @@ export function useLeaveMesh(options: UseLeaveMeshOptions): LeaveMesh {
     passkeyAvailable: mode?.passkeyAvailable ?? false,
   });
 
-  const restart = useRestartNow({ client, onRestarted: navigate });
-  const restartState = restart.state;
-  useEffect(() => {
-    if (restartState === 'waiting') setPhase('restarting');
-    else if (restartState === 'restarted') setPhase('restarted');
-    else if (restartState === 'timeout') setPhase('timeout');
-  }, [restartState]);
-
-  const { start } = restart;
   const { withSigner } = prompt;
+
+  /** 每次等待换一个 AbortController：卸载与 reset 都要能立刻断掉在途的 `/healthz`。 */
+  const newWait = useCallback(() => {
+    abortRef.current?.abort();
+    const controller = new AbortController();
+    abortRef.current = controller;
+    setElapsedMs(0);
+    return controller;
+  }, []);
+
+  const wait = useCallback(
+    (controller: AbortController, previousStartedAt: number | null): Promise<LeaveRestartOutcome> =>
+      waitForRestart({
+        previousStartedAt,
+        fetchImpl: (path, init) => client.fetch(path, init),
+        signal: controller.signal,
+        onElapsed: (ms) => {
+          if (!controller.signal.aborted) setElapsedMs(ms);
+        },
+      }),
+    [client]
+  );
 
   const run = useCallback(
     (request: LeaveRequest) => {
-      void (async () => {
-        setError(null);
-        setWarning(null);
-        setPhase('leaving');
-        if (request.intent) writeSetupIntent(request.intent, storage);
-        else clearSetupIntent(storage);
+      if (!guard.tryEnter()) return;
+      setError(null);
+      setWarning(null);
+      setElapsedMs(0);
 
-        const previousStartedAt = await readHealthStartedAt(client);
+      const controller = newWait();
+      const fetchImpl = (path: string, init?: RequestInit) => client.fetch(path, init);
 
-        // hub 兼节点的机器就是自己的 hub，没有「向别人报备」这一说：只有纯 node 需要自吊销。
-        if (request.from === 'node' && canRevoke && uid && rootEpoch !== null && nodeId) {
-          const outcome = await selfRevokeNode({
-            api: authApi,
-            uid,
-            rootEpoch,
-            nodeIdHex: nodeId,
-            withSigner,
-          });
-          if (outcome.kind === 'failed') {
-            const message = t('nodes.membership.revokeFailed', { error: outcome.reason });
-            setWarning(message);
+      void runLeaveWorkflow(
+        {
+          // hub 兼节点的机器就是自己的 hub，没有「向别人报备」这一说：只有纯 node 需要自吊销。
+          revoke:
+            request.from === 'node' && canRevoke && uid && rootEpoch !== null && nodeId
+              ? () =>
+                  selfRevokeNode({
+                    api: authApi,
+                    uid,
+                    rootEpoch,
+                    nodeIdHex: nodeId,
+                    withSigner,
+                  })
+              : null,
+          readStartedAt: () => readStartedAt(fetchImpl, undefined, controller.signal),
+          leave: (body) => leaveApi.leave(body),
+          waitForRestart: (previousStartedAt) => wait(controller, previousStartedAt),
+          navigate,
+          writeIntent: (intent) => writeSetupIntent(intent, storage),
+          clearIntent: () => clearSetupIntent(storage),
+          beginAuthTransition,
+          endAuthTransition,
+          setPhase: (next) => {
+            if (!controller.signal.aborted) setPhase(next);
+          },
+          onRevokeOutcome: (outcome) => {
+            const message =
+              outcome.kind === 'failed'
+                ? t('nodes.membership.revokeFailed', { error: outcome.reason })
+                : t('nodes.membership.revokeSkipped');
+            if (!controller.signal.aborted) setWarning(message);
             toast.warning(message);
-          } else if (outcome.kind === 'cancelled') {
-            const message = t('nodes.membership.revokeSkipped');
-            setWarning(message);
-            toast.warning(message);
-          }
-        }
-
-        try {
-          await leaveApi.leave({ expectedRole: request.from });
-        } catch (err) {
-          const message = describeLeaveError(t, err);
-          setError(message);
-          setPhase('error');
-          toast.error(message);
-          return;
-        }
-        setPhase('restarting');
-        start(previousStartedAt);
-      })();
+          },
+          onLeaveError: (err) => {
+            const message = describeLeaveError(t, err);
+            if (!controller.signal.aborted) setError(message);
+            toast.error(message);
+          },
+          onBaseline: (startedAt) => {
+            baselineRef.current = startedAt;
+          },
+          release: guard.release,
+        },
+        request
+      );
     },
-    [authApi, canRevoke, client, leaveApi, nodeId, rootEpoch, start, storage, t, uid, withSigner]
+    [
+      authApi,
+      canRevoke,
+      client,
+      guard,
+      leaveApi,
+      navigate,
+      newWait,
+      nodeId,
+      rootEpoch,
+      storage,
+      t,
+      uid,
+      wait,
+      withSigner,
+    ]
   );
 
-  const { cancel } = restart;
+  // 超时后的恢复动作：只重跑等待，绝不重发 `leave`——退出已经提交成功了。
+  const recheck = useCallback(() => {
+    const controller = newWait();
+    void awaitRestartAndNavigate(
+      {
+        waitForRestart: (previousStartedAt) => wait(controller, previousStartedAt),
+        navigate,
+        setPhase: (next) => {
+          if (!controller.signal.aborted) setPhase(next);
+        },
+      },
+      baselineRef.current
+    );
+  }, [navigate, newWait, wait]);
+
   const reset = useCallback(() => {
-    cancel();
+    abortRef.current?.abort();
+    abortRef.current = null;
+    guard.release();
+    baselineRef.current = null;
     setPhase('idle');
     setError(null);
     setWarning(null);
-  }, [cancel]);
+    setElapsedMs(0);
+  }, [guard]);
 
   return {
     phase,
     busy: phase === 'leaving' || phase === 'restarting',
     error,
     warning,
-    elapsedMs: restart.elapsedMs,
+    elapsedMs,
     run,
     reset,
+    recheck,
+    reload: reloadPage,
     dialog: prompt.dialog,
   };
 }

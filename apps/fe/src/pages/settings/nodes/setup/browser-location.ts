@@ -40,6 +40,16 @@ export function navigateToSettingsNodes(): void {
   assignLocation('/settings?tab=nodes');
 }
 
+/**
+ * 整页刷新。退出已经提交、但等不到网关回来时的兜底：让用户直接看当前的真实状态，
+ * 而不是对着一个已经没有意义的对话框继续等。
+ */
+export function reloadPage(): void {
+  if (typeof window === 'undefined') return;
+  const location = window.location as Location | undefined;
+  if (location && typeof location.reload === 'function') location.reload();
+}
+
 function assignLocation(url: string): void {
   if (typeof window === 'undefined') return;
   const location = window.location as Location | undefined;
