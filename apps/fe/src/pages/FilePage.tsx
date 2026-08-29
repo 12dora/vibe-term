@@ -60,7 +60,7 @@ const TEXT_CATEGORIES: ReadonlySet<FileCategory> = new Set<FileCategory>([
 
 function CenteredMessage({ icon, text }: { icon?: ReactNode; text: string }) {
   return (
-    <div className="flex h-full flex-col items-center justify-center gap-3 px-6 text-center text-muted-foreground">
+    <div className="tmex-fade flex h-full flex-col items-center justify-center gap-3 px-6 text-center text-muted-foreground">
       {icon}
       <span className="text-sm">{text}</span>
     </div>
@@ -191,7 +191,7 @@ function TextView({
   if (query.isLoading) {
     return (
       <CenteredMessage
-        icon={<Loader2 className="size-6 animate-spin" />}
+        icon={<Loader2 className="size-6 animate-spin motion-reduce:animate-none" />}
         text={t('common.loading')}
       />
     );
@@ -251,7 +251,7 @@ export default function FilePage() {
   if (statQuery.isLoading) {
     return (
       <CenteredMessage
-        icon={<Loader2 className="size-6 animate-spin" />}
+        icon={<Loader2 className="size-6 animate-spin motion-reduce:animate-none" />}
         text={t('common.loading')}
       />
     );

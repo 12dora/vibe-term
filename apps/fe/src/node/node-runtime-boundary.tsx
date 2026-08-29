@@ -61,7 +61,7 @@ function NodeGateScreen({ nodeId, gate }: { nodeId: string; gate: NodeLoginGate 
         className="flex h-full items-center justify-center p-8 text-muted-foreground"
         data-testid={`node-gate-pending-${nodeId}`}
       >
-        <Loader2 className="size-4 animate-spin" />
+        <Loader2 className="size-4 animate-spin motion-reduce:animate-none" />
       </div>
     );
   }

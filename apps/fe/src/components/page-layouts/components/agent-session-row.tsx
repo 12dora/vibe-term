@@ -22,7 +22,7 @@ export function StatusDot({ status }: { status: AgentSessionDto['status'] }) {
       className={cn(
         'size-2 shrink-0 rounded-full',
         status === 'running'
-          ? 'bg-emerald-500 animate-pulse'
+          ? 'bg-emerald-500 motion-safe:animate-pulse'
           : status === 'error'
             ? 'bg-destructive'
             : status === 'waiting_confirmation'
@@ -55,7 +55,7 @@ function SessionActionsMenu({
             aria-label={t('agent.session.menu')}
             onClick={(e) => e.stopPropagation()}
             className={cn(
-              'size-5 shrink-0 text-muted-foreground transition-opacity data-popup-open:opacity-100',
+              'size-5 shrink-0 text-muted-foreground transition-opacity duration-(--tmex-motion-standard) ease-out motion-reduce:transition-none data-popup-open:opacity-100',
               isMobile
                 ? 'opacity-100'
                 : 'opacity-0 group-hover:opacity-100 [@media(any-pointer:coarse)]:opacity-100',
@@ -116,7 +116,7 @@ export function PaneSessionRow({
         data-testid={`agent-session-item-${session.id}`}
         onClick={() => onSelect(session)}
         className={cn(
-          'w-full flex items-center gap-1.5 px-2 py-1 pr-7 rounded-md text-left transition-colors [@media(any-pointer:coarse)]:min-h-11 [@media(any-pointer:coarse)]:py-2 [@media(any-pointer:coarse)]:pr-12',
+          'w-full flex items-center gap-1.5 px-2 py-1 pr-7 rounded-md text-left transition-colors duration-(--tmex-motion-fast) ease-out motion-reduce:transition-none [@media(any-pointer:coarse)]:min-h-11 [@media(any-pointer:coarse)]:py-2 [@media(any-pointer:coarse)]:pr-12',
           isMobile && 'min-h-11 py-2 pr-12',
           isActive ? 'bg-primary/10 text-primary' : 'hover:bg-accent/30 text-muted-foreground'
         )}
@@ -155,7 +155,7 @@ export function OrphanSessionRow({
         data-testid={`agent-orphan-session-${session.id}`}
         onClick={() => onSelect(session)}
         className={cn(
-          'w-full flex flex-col gap-0.5 px-2 py-1.5 pr-7 rounded-lg text-left transition-colors',
+          'w-full flex flex-col gap-0.5 px-2 py-1.5 pr-7 rounded-lg text-left transition-colors duration-(--tmex-motion-fast) ease-out motion-reduce:transition-none',
           isActive ? 'bg-primary/10 text-primary' : 'hover:bg-accent/30'
         )}
       >

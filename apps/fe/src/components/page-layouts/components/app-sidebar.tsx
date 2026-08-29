@@ -3,6 +3,7 @@ import { type ComponentProps, Suspense, lazy } from 'react';
 import { useTranslation } from 'react-i18next';
 
 import { useUIStore } from '@tmex/stores/react';
+import { Reveal } from '@tmex/ui/motion';
 import { Sidebar, SidebarContent, SidebarFooter, SidebarHeader } from '@tmex/ui/sidebar';
 import { Tabs, TabsList, TabsTrigger, pillTabTriggerClassName } from '@tmex/ui/tabs';
 import { NavMain } from './nav-main';
@@ -66,17 +67,21 @@ export function AppSidebar({ ...props }: ComponentProps<typeof Sidebar>) {
         </Tabs>
       </SidebarHeader>
       <SidebarContent className="flex min-h-0 flex-col overflow-hidden">
-        {sidebarTab === 'panes' && <SideBarDeviceList />}
-        {sidebarTab === 'agent' && (
-          <Suspense fallback={null}>
-            <AgentTab />
-          </Suspense>
-        )}
-        {sidebarTab === 'files' && (
-          <Suspense fallback={null}>
-            <FilesTab />
-          </Suspense>
-        )}
+        {/* 换 tab 时只让新内容淡入；壳的 flex 链（min-h-0 / flex-1）必须原样透下去，
+            否则设备树与文件树会失去可滚动高度。 */}
+        <Reveal key={sidebarTab} className="flex min-h-0 flex-1 flex-col">
+          {sidebarTab === 'panes' && <SideBarDeviceList />}
+          {sidebarTab === 'agent' && (
+            <Suspense fallback={null}>
+              <AgentTab />
+            </Suspense>
+          )}
+          {sidebarTab === 'files' && (
+            <Suspense fallback={null}>
+              <FilesTab />
+            </Suspense>
+          )}
+        </Reveal>
       </SidebarContent>
       <SidebarFooter>
         <NavMain items={navMainItems} />

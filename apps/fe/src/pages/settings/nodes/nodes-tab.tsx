@@ -4,6 +4,7 @@
 // 与站点设置表单完全无关：角色 / 直连 / TLS 都是运行态与安装态，不走 `/api/settings/site`。
 
 import { useSharedAuthMode } from '@/node/mesh-nodes';
+import { Reveal } from '@tmex/ui/motion';
 import { Loader2 } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import { HttpsSection } from './https/https-section';
@@ -36,27 +37,32 @@ export function NodesTab() {
   if (!loaded) {
     return (
       <div className="flex items-center justify-center p-8 text-muted-foreground">
-        <Loader2 className="size-4 animate-spin" />
+        <Loader2 className="size-4 animate-spin motion-reduce:animate-none" />
       </div>
     );
   }
 
   return (
     <div className="flex w-full flex-col gap-4" data-testid="settings-nodes-tab">
-      <LocalMachineCard
-        mode={mode}
-        status={local.status}
-        loading={local.loading}
-        loginRequired={local.loginRequired}
-        onRefresh={local.refresh}
-        onSelectSetupPath={setWizardPath}
-      />
+      {/* 三块区域按阅读顺序错开入场；延迟档位手写在这里，列表短到不需要 <Stagger>。 */}
+      <Reveal>
+        <LocalMachineCard
+          mode={mode}
+          status={local.status}
+          loading={local.loading}
+          loginRequired={local.loginRequired}
+          onRefresh={local.refresh}
+          onSelectSetupPath={setWizardPath}
+        />
+      </Reveal>
 
       {/* HTTPS 是安装态，与角色无关：standalone 摆在向导前面（做 hub 需要一个 https 公开地址），
           mesh 下摆在本机区块后面。 */}
       {standalone ? (
         <>
-          <HttpsSection showHubUrlHint />
+          <Reveal delayMs={60}>
+            <HttpsSection showHubUrlHint />
+          </Reveal>
           {/* `initialPath` 只在首次挂载时生效，改路径必须换 key 重新挂一次。 */}
           <div ref={wizardRef}>
             <HubSetupWizard
@@ -69,8 +75,14 @@ export function NodesTab() {
       ) : (
         <>
           {/* 纯 node 不需要自己的 HTTPS：外部访问走 hub。 */}
-          <HttpsSection disabled={local.status?.role === 'node'} />
-          {mode && <NodesManagement mode={mode} />}
+          <Reveal delayMs={60}>
+            <HttpsSection disabled={local.status?.role === 'node'} />
+          </Reveal>
+          {mode && (
+            <Reveal delayMs={120}>
+              <NodesManagement mode={mode} />
+            </Reveal>
+          )}
         </>
       )}
     </div>

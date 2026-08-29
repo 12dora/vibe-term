@@ -54,7 +54,11 @@ export function NavMain({
               {item.items?.length ? (
                 <>
                   <CollapsibleTrigger
-                    render={<SidebarMenuAction className="data-[state=open]:rotate-90" />}
+                    render={
+                      // Base UI 的 CollapsibleTrigger 挂的是 data-panel-open；旧的
+                      // data-[state=open] 选择器留着不碍事，两者都命中同一条旋转。
+                      <SidebarMenuAction className="transition-[opacity,transform] data-[state=open]:rotate-90 data-panel-open:rotate-90" />
+                    }
                   >
                     <ChevronRight />
                     <span className="sr-only">Toggle</span>

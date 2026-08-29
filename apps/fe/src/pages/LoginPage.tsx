@@ -43,7 +43,7 @@ export default function LoginPage({ mode: modeOverride, api = defaultAuthApi }: 
   if (!modeOverride && fetched.loading) {
     return (
       <div className="flex h-full items-center justify-center p-8 text-muted-foreground">
-        <Loader2 className="size-4 animate-spin" />
+        <Loader2 className="size-4 animate-spin motion-reduce:animate-none" />
       </div>
     );
   }
@@ -189,7 +189,7 @@ function LoginForm({ mode, api }: LoginFormProps) {
   return (
     <div className="flex min-h-full items-center justify-center p-4" data-testid="login-page">
       <form
-        className="flex w-full max-w-sm flex-col gap-4 rounded-xl border border-border bg-background p-6"
+        className="tmex-reveal flex w-full max-w-sm flex-col gap-4 rounded-xl border border-border bg-background p-6"
         onSubmit={(event) => void onSubmit(event)}
       >
         <Brand className="justify-center" />
@@ -238,18 +238,22 @@ function LoginForm({ mode, api }: LoginFormProps) {
           </div>
         ) : null}
 
-        {error ? (
-          <p
-            className="flex items-start gap-1.5 text-sm text-destructive"
-            data-testid="login-error"
-          >
-            <AlertTriangle className="mt-0.5 size-3.5 shrink-0" />
-            <span>{error}</span>
-          </p>
-        ) : null}
+        {/* 常驻的 live region：空的时候 empty:hidden 收掉，不占 flex gap，
+            也不会因为整块重新挂载而漏掉播报。 */}
+        <div aria-live="polite" className="empty:hidden">
+          {error ? (
+            <p
+              className="tmex-fade flex items-start gap-1.5 text-sm text-destructive"
+              data-testid="login-error"
+            >
+              <AlertTriangle className="mt-0.5 size-3.5 shrink-0" />
+              <span>{error}</span>
+            </p>
+          ) : null}
+        </div>
 
         <Button type="submit" disabled={busy} data-testid="login-submit">
-          {busy ? <Loader2 className="animate-spin" /> : null}
+          {busy ? <Loader2 className="animate-spin motion-reduce:animate-none" /> : null}
           {phase === 'deriving'
             ? t('auth.login.deriving')
             : phase === 'signingIn'

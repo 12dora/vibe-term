@@ -122,7 +122,7 @@ export function BecomeHubForm({
 
   if (result) {
     return (
-      <Card className="border-0 ring-0" data-testid="setup-become-hub-result">
+      <Card className="border-0 ring-0 tmex-reveal" data-testid="setup-become-hub-result">
         <CardHeader>
           <CardTitle>{t('nodes.setup.result.title')}</CardTitle>
           <CardDescription>{t('nodes.setup.result.becomeHubDescription')}</CardDescription>

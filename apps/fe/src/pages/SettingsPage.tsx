@@ -28,6 +28,7 @@ import {
   AlertDialogTitle,
 } from '@tmex/ui/alert-dialog';
 import { Button } from '@tmex/ui/button';
+import { Reveal } from '@tmex/ui/motion';
 import { Tabs, TabsList, TabsTrigger, pillTabTriggerClassName } from '@tmex/ui/tabs';
 import { AISettingsTab } from './settings/ai-settings-tab';
 import { DevicesAndFilesTab } from './settings/devices-and-files-tab';
@@ -146,17 +147,22 @@ export default function SettingsPage() {
         </TabsList>
       </Tabs>
 
-      {activeTab === 'general' && <GeneralSettingsTab form={form} />}
+      {/* 只让新挂载的面板入场，标签条本身不动（key 换了才重挂，动画才会重放）。
+          多数标签页返回的是 Fragment，卡片之间的间距原本由外层 gap 提供——包一层就必须
+          把同样的 gap 补回来，否则卡片会贴在一起。 */}
+      <Reveal key={activeTab} className="flex min-w-0 flex-col gap-4 sm:gap-6">
+        {activeTab === 'general' && <GeneralSettingsTab form={form} />}
 
-      {activeTab === 'devicesAndFiles' && <DevicesAndFilesTab />}
+        {activeTab === 'devicesAndFiles' && <DevicesAndFilesTab />}
 
-      {activeTab === 'nodes' && <NodesTab />}
+        {activeTab === 'nodes' && <NodesTab />}
 
-      {activeTab === 'notifications' && <NotificationSettingsTab form={form} />}
+        {activeTab === 'notifications' && <NotificationSettingsTab form={form} />}
 
-      {activeTab === 'ai' && <AISettingsTab />}
+        {activeTab === 'ai' && <AISettingsTab />}
 
-      {activeTab === 'terminal' && <TerminalSettingsTab />}
+        {activeTab === 'terminal' && <TerminalSettingsTab />}
+      </Reveal>
     </div>
   );
 }

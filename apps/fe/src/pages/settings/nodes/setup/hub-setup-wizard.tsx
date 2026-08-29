@@ -6,6 +6,7 @@
 import { type ApiClient, defaultApiClient } from '@tmex/api-client';
 import type { LocalStatusResponse } from '@tmex/api-client/local/types';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@tmex/ui/card';
+import { Reveal } from '@tmex/ui/motion';
 import { Server, Share2 } from 'lucide-react';
 import { type ReactNode, useState } from 'react';
 import { useTranslation } from 'react-i18next';
@@ -80,21 +81,25 @@ export function HubSetupWizard({
         </CardContent>
       </Card>
 
-      {path === 'become-hub' && (
-        <BecomeHubForm
-          localStatus={localStatus}
-          client={client}
-          origin={origin}
-          {...(onRestarted ? { onRestarted } : {})}
-        />
-      )}
-      {path === 'join-hub' && (
-        <JoinHubForm
-          localStatus={localStatus}
-          client={client}
-          hostname={hostname}
-          {...(onRestarted ? { onRestarted } : {})}
-        />
+      {/* 选完路径下方才长出表单：按 path 换 key，两条路径互切时也重放一次入场。 */}
+      {path && (
+        <Reveal key={path}>
+          {path === 'become-hub' ? (
+            <BecomeHubForm
+              localStatus={localStatus}
+              client={client}
+              origin={origin}
+              {...(onRestarted ? { onRestarted } : {})}
+            />
+          ) : (
+            <JoinHubForm
+              localStatus={localStatus}
+              client={client}
+              hostname={hostname}
+              {...(onRestarted ? { onRestarted } : {})}
+            />
+          )}
+        </Reveal>
       )}
     </div>
   );
@@ -119,7 +124,7 @@ function PathCard({
     <label
       data-testid={testId}
       data-selected={selected ? 'true' : 'false'}
-      className={`flex cursor-pointer flex-col gap-1.5 rounded-xl p-3 text-left ring-1 transition-colors ${
+      className={`flex cursor-pointer flex-col gap-1.5 rounded-xl p-3 text-left ring-1 transition-colors duration-(--tmex-motion-fast) ease-out motion-reduce:transition-none ${
         selected ? 'bg-primary/5 ring-primary' : 'bg-card ring-foreground/10 hover:bg-muted/50'
       }`}
     >

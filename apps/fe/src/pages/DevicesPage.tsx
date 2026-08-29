@@ -3,6 +3,7 @@
 
 import { useMeshNodes, useSharedAuthMode } from '@/node/mesh-nodes';
 import { DeviceManagementActions, DeviceManagementPanel } from '@tmex/panels/device-management';
+import { Stagger } from '@tmex/ui/motion';
 import { Loader2 } from 'lucide-react';
 import { useMemo } from 'react';
 import { useTranslation } from 'react-i18next';
@@ -20,14 +21,15 @@ function MeshDevices({ entryNodeId }: { entryNodeId: string | null }) {
   }
 
   return (
-    <div
+    // 分组元素在后续 mesh 更新里原地复用，入场动画只在各自首次挂载时跑一次。
+    <Stagger
       data-testid="devices-node-groups"
       className="mx-auto flex w-full max-w-6xl flex-col gap-3 p-3 pb-[calc(1rem+env(safe-area-inset-bottom))] sm:gap-4 sm:p-5"
     >
       {groups.map((group) => (
         <NodeDeviceGroup key={group.runtimeNodeId} node={group} />
       ))}
-    </div>
+    </Stagger>
   );
 }
 
@@ -37,7 +39,7 @@ export default function DevicesPage() {
   if (!loaded) {
     return (
       <div className="flex h-full items-center justify-center p-8 text-muted-foreground">
-        <Loader2 className="size-4 animate-spin" />
+        <Loader2 className="size-4 animate-spin motion-reduce:animate-none" />
       </div>
     );
   }

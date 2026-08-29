@@ -84,7 +84,7 @@ export function LeaveDialog({
 
         {warning && (
           <p
-            className="rounded-lg bg-amber-500/10 p-2 text-xs text-amber-600 dark:text-amber-400"
+            className="tmex-fade rounded-lg bg-amber-500/10 p-2 text-xs text-amber-600 dark:text-amber-400"
             data-testid="membership-leave-warning"
           >
             {warning}
@@ -92,7 +92,7 @@ export function LeaveDialog({
         )}
         {error && (
           <p
-            className="rounded-lg bg-destructive/10 p-2 text-xs text-destructive"
+            className="tmex-fade rounded-lg bg-destructive/10 p-2 text-xs text-destructive"
             data-testid="membership-leave-error"
           >
             {error}
@@ -112,7 +112,7 @@ export function LeaveDialog({
             onClick={onConfirm}
             data-testid="membership-leave-confirm"
           >
-            {busy && <Loader2 className="animate-spin" />}
+            {busy && <Loader2 className="animate-spin motion-reduce:animate-none" />}
             {t('nodes.membership.confirm')}
           </AlertDialogAction>
         </AlertDialogFooter>
@@ -129,7 +129,7 @@ function LeaveProgress({ leave }: { leave: LeaveMesh }) {
   if (phase === 'timeout') {
     return (
       <div
-        className="space-y-1 rounded-lg bg-amber-500/10 p-2 text-xs text-amber-600 dark:text-amber-400"
+        className="tmex-fade space-y-1 rounded-lg bg-amber-500/10 p-2 text-xs text-amber-600 dark:text-amber-400"
         data-testid="membership-leave-restart-timeout"
       >
         <p>{t('nodes.membership.restartTimeout')}</p>
@@ -146,11 +146,15 @@ function LeaveProgress({ leave }: { leave: LeaveMesh }) {
         : t('nodes.membership.restarted');
 
   return (
+    // 每个阶段换一次 key：进度文案切换时重放一次淡入，比原地换字更好读。
     <p
-      className="flex items-center gap-1.5 rounded-lg bg-muted/60 p-2 text-xs text-muted-foreground"
+      key={phase}
+      className="tmex-fade flex items-center gap-1.5 rounded-lg bg-muted/60 p-2 text-xs text-muted-foreground"
       data-testid={`membership-leave-${phase}`}
     >
-      {phase !== 'restarted' && <Loader2 className="size-3.5 shrink-0 animate-spin" />}
+      {phase !== 'restarted' && (
+        <Loader2 className="size-3.5 shrink-0 animate-spin motion-reduce:animate-none" />
+      )}
       {label}
     </p>
   );

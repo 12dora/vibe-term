@@ -214,13 +214,15 @@ function pageRoutes() {
       path: 'devices',
       element: <PageWrapper moduleLoader={devicesModule} />,
     },
+    // 终端页不做内容入场动画：入场 transform 会成为 xterm 里 fixed 后代的 containing
+    // block，且会扰动终端首帧的几何测量。
     {
       path: 'devices/:deviceId',
-      element: <PageWrapper moduleLoader={deviceModule} />,
+      element: <PageWrapper moduleLoader={deviceModule} animateContent={false} />,
     },
     {
       path: 'devices/:deviceId/windows/:windowId/panes/:paneId',
-      element: <PageWrapper moduleLoader={deviceModule} />,
+      element: <PageWrapper moduleLoader={deviceModule} animateContent={false} />,
     },
     {
       path: 'settings',

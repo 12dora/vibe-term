@@ -123,7 +123,11 @@ export function NodesManagement({ mode: rawMode, api = defaultAuthApi }: NodesMa
             title={t('nodes.actions.refresh')}
             data-testid="nodes-refresh"
           >
-            <RefreshCw className={nodesLoading || hub.loading ? 'animate-spin' : undefined} />
+            <RefreshCw
+              className={
+                nodesLoading || hub.loading ? 'animate-spin motion-reduce:animate-none' : undefined
+              }
+            />
           </Button>
           <Button
             type="button"

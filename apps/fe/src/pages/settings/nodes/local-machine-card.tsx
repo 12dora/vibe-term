@@ -282,7 +282,7 @@ export function LocalMachineCard({
             {t('nodes.machine.loginRequired')}
           </p>
         ) : loading ? (
-          <Loader2 className="size-4 animate-spin text-muted-foreground" />
+          <Loader2 className="size-4 animate-spin text-muted-foreground motion-reduce:animate-none" />
         ) : status && direct ? (
           <>
             <Row label={t('nodes.machine.role')}>
@@ -596,8 +596,10 @@ function CopyableValue({ value, testId }: { value: string; testId: string }) {
         {value}
       </code>
       <Button type="button" size="xs" variant="ghost" onClick={copy} data-testid={`${testId}-copy`}>
-        {copied ? <Check /> : <Copy />}
-        {copied ? t('nodes.actions.copied') : t('nodes.actions.copy')}
+        {copied ? <Check className="tmex-scale-in" /> : <Copy className="tmex-scale-in" />}
+        <span aria-live="polite">
+          {copied ? t('nodes.actions.copied') : t('nodes.actions.copy')}
+        </span>
       </Button>
     </span>
   );

@@ -85,7 +85,7 @@ function SidebarNodeSignIn({ node }: { node: SidebarNodeEntry }) {
         {!expanded ? (
           <button
             type="button"
-            className="flex w-full items-center gap-2 rounded-md px-2 py-1 text-xs text-muted-foreground hover:bg-sidebar-accent hover:text-foreground"
+            className="flex w-full items-center gap-2 rounded-md px-2 py-1 text-xs text-muted-foreground transition-colors duration-(--tmex-motion-fast) ease-out hover:bg-sidebar-accent hover:text-foreground motion-reduce:transition-none"
             data-testid={`sidebar-node-expand-${node.runtimeNodeId}`}
             onClick={() => setExpanded(true)}
           >
@@ -94,14 +94,14 @@ function SidebarNodeSignIn({ node }: { node: SidebarNodeEntry }) {
           </button>
         ) : gate.status === 'pending' ? (
           <div
-            className="flex items-center gap-2 px-2 py-1 text-xs text-muted-foreground"
+            className="tmex-fade flex items-center gap-2 px-2 py-1 text-xs text-muted-foreground"
             data-testid={`sidebar-node-pending-${node.runtimeNodeId}`}
           >
-            <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin" />
+            <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin motion-reduce:animate-none" />
             <span className="truncate">{t('auth.node.loggingIn')}</span>
           </div>
         ) : (
-          <div className="flex flex-col gap-1">
+          <div className="tmex-fade flex flex-col gap-1">
             {gate.code ? (
               <span
                 className="px-1 text-[10px] text-destructive"
@@ -132,13 +132,13 @@ export function SidebarNodeSection({ node }: { node: SidebarNodeEntry }) {
       <div data-testid={`sidebar-node-offline-${node.runtimeNodeId}`} className="space-y-1">
         <SectionHeader node={node} hint={t('sidebar.node.offline')} />
         {knownDevices.length === 0 ? (
-          <div className="px-2 py-1 text-[11px] text-muted-foreground/60">
+          <div className="tmex-fade px-2 py-1 text-[11px] text-muted-foreground/60">
             {t('sidebar.node.noKnownDevices')}
           </div>
         ) : devices.length === 0 ? (
           <div
             data-testid={`sidebar-node-hidden-${node.runtimeNodeId}`}
-            className="px-2 py-1 text-[11px] text-muted-foreground/60"
+            className="tmex-fade px-2 py-1 text-[11px] text-muted-foreground/60"
           >
             {t('sidebar.noVisibleDevices')}
           </div>

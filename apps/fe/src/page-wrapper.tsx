@@ -5,6 +5,7 @@
 import { PageLoadFallback } from '@/PageLoadFallback';
 import { Brand } from '@/components/brand';
 import { type PageModuleLoader, usePageModule } from '@/use-page-module';
+import { cn } from '@tmex/ui';
 import { Separator } from '@tmex/ui/separator';
 import { SidebarTrigger } from '@tmex/ui/sidebar';
 import { useParams } from 'react-router';
@@ -12,9 +13,15 @@ import { useParams } from 'react-router';
 export function PageWrapper({
   moduleLoader,
   withSidebar = true,
+  animateContent = true,
 }: {
   moduleLoader: PageModuleLoader;
   withSidebar?: boolean;
+  /**
+   * 页面模块就位时给内容区一次淡入上移。终端页必须关掉：入场期间的 transform
+   * 会成为 fixed 后代的 containing block，并可能扰动 xterm 的几何测量。
+   */
+  animateContent?: boolean;
 }) {
   const { state, retry } = usePageModule(moduleLoader);
   const params = useParams();
@@ -51,7 +58,14 @@ export function PageWrapper({
 
       {/* Page content */}
       <div className="flex min-h-0 flex-1 flex-col gap-4 !pt-0 p-2 md:p-4">
-        <div className="bg-muted/50 min-h-0 flex-1 overflow-auto overscroll-auto rounded-xl [-webkit-overflow-scrolling:touch]">
+        <div
+          // key 让 loading→ready 时容器重挂一次，动画才落在真正有内容的那一帧上。
+          key={animateContent ? state.status : undefined}
+          className={cn(
+            'bg-muted/50 min-h-0 flex-1 overflow-auto overscroll-auto rounded-xl [-webkit-overflow-scrolling:touch]',
+            animateContent && 'tmex-reveal'
+          )}
+        >
           {state.status === 'error' ? <PageLoadFallback onRetry={retry} /> : Page ? <Page /> : null}
         </div>
       </div>

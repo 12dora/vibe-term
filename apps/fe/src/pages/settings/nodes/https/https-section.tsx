@@ -95,7 +95,9 @@ export function HttpsSection({
       );
     }
     if (tls.loading) {
-      return <Loader2 className="size-4 animate-spin text-muted-foreground" />;
+      return (
+        <Loader2 className="size-4 animate-spin text-muted-foreground motion-reduce:animate-none" />
+      );
     }
     if (!tls.status) {
       return (

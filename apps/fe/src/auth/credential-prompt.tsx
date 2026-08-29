@@ -244,10 +244,10 @@ export function CredentialPromptDialog({
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
+      className="tmex-fade fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
       data-testid="credential-prompt"
     >
-      <div className="flex w-full max-w-sm flex-col gap-3 rounded-xl border border-border bg-background p-4 shadow-lg">
+      <div className="tmex-scale-in flex w-full max-w-sm flex-col gap-3 rounded-xl border border-border bg-background p-4 shadow-lg">
         <div className="flex flex-col gap-0.5">
           <h2 className="text-sm font-semibold">{t('auth.credential.title')}</h2>
           <p className="text-xs text-muted-foreground" data-testid="credential-prompt-purpose">
@@ -265,11 +265,14 @@ export function CredentialPromptDialog({
           onChange={(event) => setPassword(event.target.value)}
         />
 
-        {error ? (
-          <p className="text-xs text-destructive" data-testid="credential-prompt-error">
-            {t(error, { defaultValue: error })}
-          </p>
-        ) : null}
+        {/* 常驻 live region：空时 empty:hidden 收掉，不占 flex gap。 */}
+        <div aria-live="polite" className="empty:hidden">
+          {error ? (
+            <p className="tmex-fade text-xs text-destructive" data-testid="credential-prompt-error">
+              {t(error, { defaultValue: error })}
+            </p>
+          ) : null}
+        </div>
 
         <div className="flex flex-wrap items-center gap-2">
           <Button
@@ -279,7 +282,7 @@ export function CredentialPromptDialog({
             onClick={() => onSubmit({ kind: 'password', password })}
             data-testid="credential-prompt-submit"
           >
-            {busy ? <Loader2 className="animate-spin" /> : <KeyRound />}
+            {busy ? <Loader2 className="animate-spin motion-reduce:animate-none" /> : <KeyRound />}
             {t('auth.credential.usePassword')}
           </Button>
           {canUsePasskey && selected ? (

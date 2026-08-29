@@ -50,7 +50,7 @@ export default function AccountSecurityPage({
   if (!modeOverride && fetched.loading) {
     return (
       <div className="flex h-full items-center justify-center p-8 text-muted-foreground">
-        <Loader2 className="size-4 animate-spin" />
+        <Loader2 className="size-4 animate-spin motion-reduce:animate-none" />
       </div>
     );
   }

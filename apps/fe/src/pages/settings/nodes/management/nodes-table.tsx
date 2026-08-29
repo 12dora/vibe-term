@@ -68,7 +68,7 @@ export function NodesTable({
           ))}
           {rows.length === 0 && (
             <tr>
-              <td colSpan={9} className="px-3 py-6 text-center text-muted-foreground">
+              <td colSpan={9} className="tmex-fade px-3 py-6 text-center text-muted-foreground">
                 {t('nodes.empty')}
               </td>
             </tr>

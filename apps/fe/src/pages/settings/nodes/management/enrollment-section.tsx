@@ -248,8 +248,10 @@ export function CopyableCode({
           onClick={copy}
           data-testid={`${testId}-copy`}
         >
-          {copied ? <Check /> : <Copy />}
-          {copied ? t('nodes.actions.copied') : t('nodes.actions.copy')}
+          {copied ? <Check className="tmex-scale-in" /> : <Copy className="tmex-scale-in" />}
+          <span aria-live="polite">
+            {copied ? t('nodes.actions.copied') : t('nodes.actions.copy')}
+          </span>
         </Button>
       </div>
     </div>

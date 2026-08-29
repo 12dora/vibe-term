@@ -165,8 +165,10 @@ export function CopyableCode({ value, testId }: { value: string; testId: string 
         {value}
       </code>
       <Button type="button" size="xs" variant="ghost" onClick={copy} data-testid={`${testId}-copy`}>
-        {copied ? <CircleCheck /> : <Copy />}
-        {copied ? t('nodes.actions.copied') : t('nodes.actions.copy')}
+        {copied ? <CircleCheck className="tmex-scale-in" /> : <Copy className="tmex-scale-in" />}
+        <span aria-live="polite">
+          {copied ? t('nodes.actions.copied') : t('nodes.actions.copy')}
+        </span>
       </Button>
     </span>
   );
