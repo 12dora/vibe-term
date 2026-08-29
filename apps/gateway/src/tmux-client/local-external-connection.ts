@@ -73,7 +73,25 @@ export function shouldIgnoreReaderAbortError(error: unknown): boolean {
 }
 
 const TRANSIENT_SPAWN_ERROR_CODES = new Set(['EAGAIN', 'EMFILE', 'ENFILE', 'ENOMEM']);
-const TMUX_SPAWN_UNAVAILABLE_EXIT = -2;
+export const TMUX_SPAWN_UNAVAILABLE_EXIT = -2;
+
+export type ControlSessionProbeDecision =
+  | { kind: 'spawn-unavailable'; stderr: string }
+  | { kind: 'session-gone'; message: string }
+  | { kind: 'alive' };
+
+export function classifyControlSessionProbe(probe: CommandResult): ControlSessionProbeDecision {
+  if (probe.exitCode === TMUX_SPAWN_UNAVAILABLE_EXIT) {
+    return { kind: 'spawn-unavailable', stderr: probe.stderr };
+  }
+  if (probe.exitCode !== 0) {
+    return {
+      kind: 'session-gone',
+      message: probe.stderr.trim() || probe.stdout.trim() || 'tmux session gone',
+    };
+  }
+  return { kind: 'alive' };
+}
 
 function isTransientSpawnError(error: unknown): boolean {
   if (!error || typeof error !== 'object') {
@@ -512,6 +530,10 @@ export class LocalExternalTmuxConnection extends ExternalTmuxConnectionCore {
     void this.reconnectControlClient(exitCode);
   }
 
+  private isControlLifecycleActive(): boolean {
+    return this.connected && !this.manualDisconnect;
+  }
+
   private async reconnectControlClient(exitCode: number): Promise<void> {
     if (Date.now() - this.controlStartedAt > CONTROL_STABLE_RESET_MS) {
       this.controlRestartCount = 0;
@@ -534,34 +556,35 @@ export class LocalExternalTmuxConnection extends ExternalTmuxConnectionCore {
     await new Promise((resolve) =>
       setTimeout(resolve, CONTROL_RESTART_DELAY_MS * this.controlRestartCount)
     );
-    if (!this.connected || this.manualDisconnect) {
+    if (!this.isControlLifecycleActive()) {
       return;
     }
 
-    const probe = await this.runTmuxAllowFailure(['has-session', '-t', this.sessionName]);
-    if (probe.exitCode === TMUX_SPAWN_UNAVAILABLE_EXIT) {
-      this.handleSpawnUnavailable(probe.stderr);
+    const decision = classifyControlSessionProbe(
+      await this.runTmuxAllowFailure(['has-session', '-t', this.sessionName])
+    );
+    if (decision.kind === 'spawn-unavailable') {
+      this.handleSpawnUnavailable(decision.stderr);
       this.controlRestartCount = Math.max(0, this.controlRestartCount - 1);
-      if (this.connected && !this.manualDisconnect) {
+      if (this.isControlLifecycleActive()) {
         setTimeout(() => {
           void this.reconnectControlClient(exitCode);
         }, CONTROL_RESTART_DELAY_MS * 4);
       }
       return;
     }
-    if (probe.exitCode !== 0) {
-      const message = probe.stderr.trim() || probe.stdout.trim() || 'tmux session gone';
-      console.warn(`[local] tmux session gone on ${this.deviceId}: ${message}`);
+    if (decision.kind === 'session-gone') {
+      console.warn(`[local] tmux session gone on ${this.deviceId}: ${decision.message}`);
       updateDeviceRuntimeStatus(this.deviceId, {
         lastSeenAt: new Date().toISOString(),
         tmuxAvailable: false,
-        lastError: message,
+        lastError: decision.message,
       });
-      this.lifecycle.notifySessionClosed(message);
+      this.lifecycle.notifySessionClosed(decision.message);
       void this.shutdownInternal(true);
       return;
     }
-    if (!this.connected || this.manualDisconnect) {
+    if (!this.isControlLifecycleActive()) {
       return;
     }
 

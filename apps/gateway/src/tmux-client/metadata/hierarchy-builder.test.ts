@@ -108,4 +108,109 @@ describe('MetadataHierarchyBuilder', () => {
       'server epoch is not ready'
     );
   });
+
+  test('omits optional layout and pane fields when they are absent', () => {
+    const builder = new MetadataHierarchyBuilder({
+      deviceId: 'device-a',
+      deviceName: 'Developer Mac',
+      getServerEpoch: () => SERVER_EPOCH,
+      getWindowCustomName: () => undefined,
+      getPaneCustomName: () => undefined,
+      ensurePaneEpoch: () => new Uint8Array(16).fill(3),
+      takeUnknownPaneHints: () => undefined,
+    });
+    const desired = builder.buildDesired({
+      deviceId: 'device-a',
+      session: {
+        id: '$1',
+        name: 'work',
+        windows: [
+          {
+            id: '@1',
+            name: 'main',
+            index: 0,
+            active: false,
+            panes: [
+              {
+                id: '%1',
+                windowId: '@1',
+                index: 0,
+                active: false,
+                width: 80,
+                height: 24,
+              },
+            ],
+          },
+        ],
+      },
+    });
+    const window = desired.get(keyId({ entityKind: wsBorsh.SOURCE_ENTITY_WINDOW, nativeId: '@1' }));
+    expect(window?.fields.has(wsBorsh.SOURCE_FIELD_LAYOUT)).toBe(false);
+    expect(window?.fields.has(wsBorsh.SOURCE_FIELD_CUSTOM_NAME)).toBe(false);
+    const pane = desired.get(keyId({ entityKind: wsBorsh.SOURCE_ENTITY_PANE, nativeId: '%1' }));
+    expect(pane?.fields.has(wsBorsh.SOURCE_FIELD_LEFT)).toBe(false);
+    expect(pane?.fields.has(wsBorsh.SOURCE_FIELD_TOP)).toBe(false);
+    expect(pane?.fields.has(wsBorsh.SOURCE_FIELD_TITLE)).toBe(false);
+    expect(pane?.fields.has(wsBorsh.SOURCE_FIELD_CURRENT_PATH)).toBe(false);
+    expect(pane?.fields.has(wsBorsh.SOURCE_FIELD_CURRENT_COMMAND)).toBe(false);
+  });
+
+  test('uses snapshot custom names when the host has none, and skips empty host names', () => {
+    const builder = new MetadataHierarchyBuilder({
+      deviceId: 'device-a',
+      deviceName: 'Developer Mac',
+      getServerEpoch: () => SERVER_EPOCH,
+      getWindowCustomName: () => '',
+      getPaneCustomName: () => undefined,
+      ensurePaneEpoch: () => new Uint8Array(16).fill(3),
+      takeUnknownPaneHints: () => undefined,
+    });
+    const payload = snapshot();
+    const paneSnapshot = payload.session?.windows[0]?.panes[0];
+    if (!paneSnapshot) throw new Error('expected pane in fixture');
+    paneSnapshot.customName = 'pane-from-snapshot';
+    const desired = builder.buildDesired(payload);
+    const window = desired.get(keyId({ entityKind: wsBorsh.SOURCE_ENTITY_WINDOW, nativeId: '@1' }));
+    expect(window?.fields.has(wsBorsh.SOURCE_FIELD_CUSTOM_NAME)).toBe(false);
+    const pane = desired.get(keyId({ entityKind: wsBorsh.SOURCE_ENTITY_PANE, nativeId: '%1' }));
+    expect(pane?.fields.get(wsBorsh.SOURCE_FIELD_CUSTOM_NAME)).toEqual({
+      String: 'pane-from-snapshot',
+    });
+  });
+
+  test('unknown pane hints overwrite title, path, and command', () => {
+    const builder = new MetadataHierarchyBuilder({
+      deviceId: 'device-a',
+      deviceName: 'Developer Mac',
+      getServerEpoch: () => SERVER_EPOCH,
+      getWindowCustomName: () => undefined,
+      getPaneCustomName: () => undefined,
+      ensurePaneEpoch: () => new Uint8Array(16).fill(3),
+      takeUnknownPaneHints: () => ({
+        title: 'hint-title',
+        currentPath: '/hint',
+        currentCommand: 'hint-cmd',
+      }),
+    });
+    const desired = builder.buildDesired(snapshot());
+    const pane = desired.get(keyId({ entityKind: wsBorsh.SOURCE_ENTITY_PANE, nativeId: '%1' }));
+    expect(pane?.fields.get(wsBorsh.SOURCE_FIELD_TITLE)).toEqual({ String: 'hint-title' });
+    expect(pane?.fields.get(wsBorsh.SOURCE_FIELD_CURRENT_PATH)).toEqual({ String: '/hint' });
+    expect(pane?.fields.get(wsBorsh.SOURCE_FIELD_CURRENT_COMMAND)).toEqual({ String: 'hint-cmd' });
+  });
+
+  test('throws when a pane epoch cannot be established', () => {
+    const builder = new MetadataHierarchyBuilder({
+      deviceId: 'device-a',
+      deviceName: 'Developer Mac',
+      getServerEpoch: () => SERVER_EPOCH,
+      getWindowCustomName: () => undefined,
+      getPaneCustomName: () => undefined,
+      ensurePaneEpoch: () => null,
+      takeUnknownPaneHints: () => undefined,
+    });
+    expect(() => builder.buildDesired(snapshot())).toThrow(
+      'server epoch must be established before pane projection'
+    );
+  });
 });

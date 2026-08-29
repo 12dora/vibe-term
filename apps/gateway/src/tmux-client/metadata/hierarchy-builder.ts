@@ -1,6 +1,7 @@
 import { type StateSnapshotPayload, wsBorsh } from '@tmex/shared';
 
 import {
+  type MetadataValue,
   type PaneFieldHints,
   type PendingUpsert,
   SERVER_NATIVE_ID,
@@ -21,6 +22,26 @@ export interface MetadataHierarchyHost {
   getPaneCustomName(paneId: string): string | undefined;
   ensurePaneEpoch(paneId: string): Uint8Array | null;
   takeUnknownPaneHints(paneId: string): PaneFieldHints | undefined;
+}
+
+function applyDefinedFields<T>(
+  fields: Map<number, MetadataValue>,
+  entries: ReadonlyArray<readonly [number, T | undefined, (value: T) => MetadataValue]>
+): void {
+  for (const [field, value, encode] of entries) {
+    if (value === undefined) continue;
+    fields.set(field, encode(value));
+  }
+}
+
+function applyNonEmptyStringFields(
+  fields: Map<number, MetadataValue>,
+  entries: ReadonlyArray<readonly [number, string | undefined]>
+): void {
+  for (const [field, value] of entries) {
+    if (!value) continue;
+    fields.set(field, stringValue(value));
+  }
 }
 
 export class MetadataHierarchyBuilder {
@@ -47,13 +68,15 @@ export class MetadataHierarchyBuilder {
       windowRecord.fields.set(wsBorsh.SOURCE_FIELD_NAME, stringValue(window.name));
       windowRecord.fields.set(wsBorsh.SOURCE_FIELD_INDEX, u32Value(window.index));
       windowRecord.fields.set(wsBorsh.SOURCE_FIELD_ACTIVE, boolValue(window.active));
-      if (window.layout !== undefined) {
-        windowRecord.fields.set(wsBorsh.SOURCE_FIELD_LAYOUT, stringValue(window.layout));
-      }
-      const windowCustomName = this.host.getWindowCustomName(window.id) ?? window.customName;
-      if (windowCustomName) {
-        windowRecord.fields.set(wsBorsh.SOURCE_FIELD_CUSTOM_NAME, stringValue(windowCustomName));
-      }
+      applyDefinedFields(windowRecord.fields, [
+        [wsBorsh.SOURCE_FIELD_LAYOUT, window.layout, stringValue],
+      ]);
+      applyNonEmptyStringFields(windowRecord.fields, [
+        [
+          wsBorsh.SOURCE_FIELD_CUSTOM_NAME,
+          this.host.getWindowCustomName(window.id) ?? window.customName,
+        ],
+      ]);
       desired.set(keyId(windowRecord.key), windowRecord);
 
       for (const pane of window.panes) {
@@ -62,41 +85,30 @@ export class MetadataHierarchyBuilder {
         paneRecord.fields.set(wsBorsh.SOURCE_FIELD_ACTIVE, boolValue(pane.active));
         paneRecord.fields.set(wsBorsh.SOURCE_FIELD_WIDTH, u16Value(pane.width));
         paneRecord.fields.set(wsBorsh.SOURCE_FIELD_HEIGHT, u16Value(pane.height));
-        if (pane.left !== undefined)
-          paneRecord.fields.set(wsBorsh.SOURCE_FIELD_LEFT, u16Value(pane.left));
-        if (pane.top !== undefined)
-          paneRecord.fields.set(wsBorsh.SOURCE_FIELD_TOP, u16Value(pane.top));
-        if (pane.title !== undefined)
-          paneRecord.fields.set(wsBorsh.SOURCE_FIELD_TITLE, stringValue(pane.title));
-        if (pane.currentPath !== undefined) {
-          paneRecord.fields.set(wsBorsh.SOURCE_FIELD_CURRENT_PATH, stringValue(pane.currentPath));
-        }
-        if (pane.currentCommand !== undefined) {
-          paneRecord.fields.set(
-            wsBorsh.SOURCE_FIELD_CURRENT_COMMAND,
-            stringValue(pane.currentCommand)
-          );
-        }
+        applyDefinedFields(paneRecord.fields, [
+          [wsBorsh.SOURCE_FIELD_LEFT, pane.left, u16Value],
+          [wsBorsh.SOURCE_FIELD_TOP, pane.top, u16Value],
+        ]);
+        applyDefinedFields(paneRecord.fields, [
+          [wsBorsh.SOURCE_FIELD_TITLE, pane.title, stringValue],
+          [wsBorsh.SOURCE_FIELD_CURRENT_PATH, pane.currentPath, stringValue],
+          [wsBorsh.SOURCE_FIELD_CURRENT_COMMAND, pane.currentCommand, stringValue],
+        ]);
         const paneEpoch = this.host.ensurePaneEpoch(pane.id);
         if (!paneEpoch) throw new Error('server epoch must be established before pane projection');
         paneRecord.fields.set(wsBorsh.SOURCE_FIELD_PANE_EPOCH, { Bytes16: copyBytes(paneEpoch) });
-        const paneCustomName = this.host.getPaneCustomName(pane.id) ?? pane.customName;
-        if (paneCustomName) {
-          paneRecord.fields.set(wsBorsh.SOURCE_FIELD_CUSTOM_NAME, stringValue(paneCustomName));
-        }
+        applyNonEmptyStringFields(paneRecord.fields, [
+          [
+            wsBorsh.SOURCE_FIELD_CUSTOM_NAME,
+            this.host.getPaneCustomName(pane.id) ?? pane.customName,
+          ],
+        ]);
         const hints = this.host.takeUnknownPaneHints(pane.id);
-        if (hints?.title !== undefined) {
-          paneRecord.fields.set(wsBorsh.SOURCE_FIELD_TITLE, stringValue(hints.title));
-        }
-        if (hints?.currentPath !== undefined) {
-          paneRecord.fields.set(wsBorsh.SOURCE_FIELD_CURRENT_PATH, stringValue(hints.currentPath));
-        }
-        if (hints?.currentCommand !== undefined) {
-          paneRecord.fields.set(
-            wsBorsh.SOURCE_FIELD_CURRENT_COMMAND,
-            stringValue(hints.currentCommand)
-          );
-        }
+        applyDefinedFields(paneRecord.fields, [
+          [wsBorsh.SOURCE_FIELD_TITLE, hints?.title, stringValue],
+          [wsBorsh.SOURCE_FIELD_CURRENT_PATH, hints?.currentPath, stringValue],
+          [wsBorsh.SOURCE_FIELD_CURRENT_COMMAND, hints?.currentCommand, stringValue],
+        ]);
         desired.set(keyId(paneRecord.key), paneRecord);
       }
     }

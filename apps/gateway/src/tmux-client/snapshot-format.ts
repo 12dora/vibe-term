@@ -84,6 +84,18 @@ function isSnapshotFlag(value: string | undefined): value is '0' | '1' {
   return value === '0' || value === '1';
 }
 
+function parseSnapshotFlag(value: string | undefined): boolean | null {
+  if (!isSnapshotFlag(value)) return null;
+  return value === '1';
+}
+
+function optionalSnapshotText(value: string | undefined, trimValue: boolean): string | undefined {
+  if (value === undefined) return undefined;
+  const trimmed = value.trim();
+  if (!trimmed) return undefined;
+  return trimValue ? trimmed : value;
+}
+
 const WINDOW_LAYOUT_PATTERN = /^[0-9a-fA-F]{4},[0-9x,{}[\]]+$/;
 
 export function parseWindowSnapshotRow(line: string): WindowSnapshotRow | null {
@@ -103,31 +115,25 @@ export function parseWindowSnapshotRow(line: string): WindowSnapshotRow | null {
 }
 
 export function parsePaneSnapshotRow(line: string): PaneSnapshotRow | null {
-  const parts = line.split(SNAPSHOT_FIELD_SEPARATOR);
+  const parts = splitSnapshotFields(line, 12);
   if (parts.length < 12) {
     return null;
   }
-  const [id, windowId, indexRaw, activeRaw, widthRaw, heightRaw, leftRaw, topRaw, windowActiveRaw] =
-    parts;
-  // 后 3 个是自由文本：title 最可能含分隔符，吃掉中间的多余分段；command/path 右锚定
-  const rest = parts.slice(9);
-  const title = rest.slice(0, rest.length - 2).join(SNAPSHOT_FIELD_SEPARATOR);
-  const currentCommand = rest.at(-2) ?? '';
-  const currentPath = rest.at(-1) ?? '';
-
-  const index = parseSnapshotInteger(indexRaw);
-  const width = parseSnapshotInteger(widthRaw);
-  const height = parseSnapshotInteger(heightRaw);
-  const left = parseSnapshotInteger(leftRaw);
-  const top = parseSnapshotInteger(topRaw);
+  const id = parts[0];
+  const windowId = parts[1];
+  const index = parseSnapshotInteger(parts[2]);
+  const active = parseSnapshotFlag(parts[3]);
+  const width = parseSnapshotInteger(parts[4]);
+  const height = parseSnapshotInteger(parts[5]);
+  const windowActive = parseSnapshotFlag(parts[8]);
   if (
     !isTmuxPaneId(id) ||
     !isTmuxWindowId(windowId) ||
     index === null ||
+    active === null ||
     width === null ||
     height === null ||
-    !isSnapshotFlag(activeRaw) ||
-    !isSnapshotFlag(windowActiveRaw)
+    windowActive === null
   ) {
     return null;
   }
@@ -135,15 +141,15 @@ export function parsePaneSnapshotRow(line: string): PaneSnapshotRow | null {
     id,
     windowId,
     index,
-    active: activeRaw === '1',
+    active,
     width,
     height,
-    left: left ?? undefined,
-    top: top ?? undefined,
-    windowActive: windowActiveRaw === '1',
-    title: title.trim() ? title : undefined,
-    currentCommand: currentCommand.trim() ? currentCommand.trim() : undefined,
-    currentPath: currentPath.trim() ? currentPath.trim() : undefined,
+    left: parseSnapshotInteger(parts[6]) ?? undefined,
+    top: parseSnapshotInteger(parts[7]) ?? undefined,
+    windowActive,
+    title: optionalSnapshotText(parts[9], false),
+    currentCommand: optionalSnapshotText(parts[10], true),
+    currentPath: optionalSnapshotText(parts[11], true),
   };
 }
 
@@ -157,6 +163,7 @@ export const SNAPSHOT_FIELD_LAYOUTS: Readonly<Record<number, SnapshotFieldLayout
   4: { prefixCount: 2, suffixCount: 1 },
   8: { prefixCount: 3, suffixCount: 4 },
   9: { prefixCount: 3, suffixCount: 5 },
+  12: { prefixCount: 9, suffixCount: 2 },
 };
 
 export function splitFlexibleSnapshotFields(
