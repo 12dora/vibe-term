@@ -147,51 +147,40 @@ export function parsePaneSnapshotRow(line: string): PaneSnapshotRow | null {
   };
 }
 
+export interface SnapshotFieldLayout {
+  prefixCount: number;
+  suffixCount: number;
+}
+
+export const SNAPSHOT_FIELD_LAYOUTS: Readonly<Record<number, SnapshotFieldLayout>> = {
+  2: { prefixCount: 1, suffixCount: 0 },
+  4: { prefixCount: 2, suffixCount: 1 },
+  8: { prefixCount: 3, suffixCount: 4 },
+  9: { prefixCount: 3, suffixCount: 5 },
+};
+
+export function splitFlexibleSnapshotFields(
+  parts: string[],
+  layout: SnapshotFieldLayout
+): string[] {
+  const prefix = Array.from({ length: layout.prefixCount }, (_, index) => parts[index] ?? '');
+  const middleEnd = layout.suffixCount === 0 ? parts.length : parts.length - layout.suffixCount;
+  const middle = parts.slice(layout.prefixCount, middleEnd).join(SNAPSHOT_FIELD_SEPARATOR);
+  const suffix = Array.from(
+    { length: layout.suffixCount },
+    (_, index) => parts.at(index - layout.suffixCount) ?? ''
+  );
+  return [...prefix, middle, ...suffix];
+}
+
 export function splitSnapshotFields(line: string, fieldCount: number): string[] {
   const parts = line.split(SNAPSHOT_FIELD_SEPARATOR);
   if (parts.length <= fieldCount) {
     return parts;
   }
-
-  if (fieldCount === 2) {
-    return [parts[0] ?? '', parts.slice(1).join(SNAPSHOT_FIELD_SEPARATOR)];
+  const layout = SNAPSHOT_FIELD_LAYOUTS[fieldCount];
+  if (!layout) {
+    return parts;
   }
-
-  if (fieldCount === 4) {
-    return [
-      parts[0] ?? '',
-      parts[1] ?? '',
-      parts.slice(2, -1).join(SNAPSHOT_FIELD_SEPARATOR),
-      parts.at(-1) ?? '',
-    ];
-  }
-
-  if (fieldCount === 8) {
-    return [
-      parts[0] ?? '',
-      parts[1] ?? '',
-      parts[2] ?? '',
-      parts.slice(3, -4).join(SNAPSHOT_FIELD_SEPARATOR),
-      parts.at(-4) ?? '',
-      parts.at(-3) ?? '',
-      parts.at(-2) ?? '',
-      parts.at(-1) ?? '',
-    ];
-  }
-
-  if (fieldCount === 9) {
-    return [
-      parts[0] ?? '',
-      parts[1] ?? '',
-      parts[2] ?? '',
-      parts.slice(3, -5).join(SNAPSHOT_FIELD_SEPARATOR),
-      parts.at(-5) ?? '',
-      parts.at(-4) ?? '',
-      parts.at(-3) ?? '',
-      parts.at(-2) ?? '',
-      parts.at(-1) ?? '',
-    ];
-  }
-
-  return parts;
+  return splitFlexibleSnapshotFields(parts, layout);
 }

@@ -5,6 +5,10 @@ import { MetadataEventApplier } from './metadata/event-applier';
 import { MetadataHierarchyBuilder } from './metadata/hierarchy-builder';
 import { MetadataPatchBuffer } from './metadata/patch-buffer';
 import {
+  type MetadataReconcileAction,
+  buildMetadataReconcilePlan,
+} from './metadata/reconcile-plan';
+import {
   MAX_UNKNOWN_PANES,
   MAX_UNKNOWN_PANE_BYTES,
   type MetadataProjectionOptions,
@@ -158,64 +162,43 @@ export class MetadataProjection {
       return;
     }
 
-    const changes: Array<() => void> = [];
     const nextRevision = this.revisionValue + 1n;
-
-    for (const [id, wanted] of desired) {
-      const current = this.records.get(id);
-      if (!current) {
-        if ((this.removedAt.get(id) ?? -1n) > baseRevision) continue;
-        changes.push(() => {
-          const created = createRecord(wanted, nextRevision);
-          this.records.set(id, created);
-          this.removedAt.delete(id);
-          this.patchBuffer.markFullUpsert(created);
-        });
-        continue;
-      }
-
-      const fieldChanges: Array<[number, MetadataValue | null]> = [];
-      let parentChanged = false;
-      if (current.parentRevision <= baseRevision && !keyEqual(current.parent, wanted.parent)) {
-        parentChanged = true;
-      }
-
-      const wantedFields = wanted.fields;
-      const allFieldIds = new Set([...current.fields.keys(), ...wantedFields.keys()]);
-      for (const fieldId of allFieldIds) {
-        if (fieldId === wsBorsh.SOURCE_FIELD_CUSTOM_NAME && !wantedFields.has(fieldId)) continue;
-        const previous = current.fields.get(fieldId);
-        if (previous && previous.revision > baseRevision) continue;
-        const wantedValue = wantedFields.get(fieldId);
-        if (!valueEqual(previous?.value, wantedValue)) {
-          fieldChanges.push([fieldId, wantedValue ?? null]);
-        }
-      }
-
-      if (!parentChanged && fieldChanges.length === 0) continue;
-      changes.push(() => {
-        current.entityRevision = nextRevision;
-        if (parentChanged) {
-          current.parent = wanted.parent ? cloneKey(wanted.parent) : null;
-          current.parentRevision = nextRevision;
-          this.patchBuffer.markUpsert(current);
-        }
-        for (const [fieldId, value] of fieldChanges) {
-          this.setRecordField(current, fieldId, value, nextRevision);
-        }
-      });
-    }
-
-    for (const [id, current] of this.records) {
-      if (desired.has(id) || current.entityRevision > baseRevision) continue;
-      changes.push(() => this.removeRecord(current, nextRevision));
-    }
-
-    if (changes.length === 0) return;
+    const plan = buildMetadataReconcilePlan(
+      this.records,
+      this.removedAt,
+      desired,
+      baseRevision,
+      nextRevision
+    );
+    if (plan.actions.length === 0) return;
     this.patchBuffer.beginDirtyRevision(this.revisionValue);
     this.revisionValue = nextRevision;
-    for (const apply of changes) apply();
+    for (const action of plan.actions) this.applyReconcileAction(action, nextRevision);
     this.patchBuffer.finishMutation();
+  }
+
+  private applyReconcileAction(action: MetadataReconcileAction, nextRevision: bigint): void {
+    if (action.kind === 'create') {
+      const created = createRecord(action.wanted, nextRevision);
+      this.records.set(action.id, created);
+      this.removedAt.delete(action.id);
+      this.patchBuffer.markFullUpsert(created);
+      return;
+    }
+    if (action.kind === 'remove') {
+      this.removeRecord(action.record, nextRevision);
+      return;
+    }
+    const current = action.record;
+    current.entityRevision = nextRevision;
+    if (action.parentChanged) {
+      current.parent = action.wanted.parent ? cloneKey(action.wanted.parent) : null;
+      current.parentRevision = nextRevision;
+      this.patchBuffer.markUpsert(current);
+    }
+    for (const [fieldId, value] of action.fieldChanges) {
+      this.setRecordField(current, fieldId, value, nextRevision);
+    }
   }
 
   applySourceEvent(event: TmuxSourceMetadataEvent): void {

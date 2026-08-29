@@ -2,6 +2,7 @@ import { describe, expect, test } from 'bun:test';
 
 import {
   PANE_SNAPSHOT_FORMAT,
+  SNAPSHOT_FIELD_LAYOUTS,
   SNAPSHOT_FIELD_SEPARATOR,
   WINDOW_SNAPSHOT_FORMAT,
   formatSnapshotRowForLog,
@@ -11,6 +12,7 @@ import {
   parsePaneSnapshotRow,
   parseSnapshotInteger,
   parseWindowSnapshotRow,
+  splitFlexibleSnapshotFields,
   splitSnapshotFields,
 } from './snapshot-format';
 
@@ -38,6 +40,51 @@ describe('snapshot format helpers', () => {
       '1',
       'node',
     ]);
+  });
+
+  test('keeps separators inside field-count 2 names and field-count 8 titles', () => {
+    expect(splitSnapshotFields('$1|work|session|name', 2)).toEqual(['$1', 'work|session|name']);
+    expect(splitSnapshotFields('%1|@1|0|title|with|pipe|80|24|1|node', 8)).toEqual([
+      '%1',
+      '@1',
+      '0',
+      'title|with|pipe',
+      '80',
+      '24',
+      '1',
+      'node',
+    ]);
+  });
+
+  test('returns split parts when they already fit or the field count has no layout', () => {
+    expect(splitSnapshotFields('@1|0|zsh|1', 4)).toEqual(['@1', '0', 'zsh', '1']);
+    expect(splitSnapshotFields('a|b|c', 3)).toEqual(['a', 'b', 'c']);
+    expect(splitSnapshotFields('a|b|c|d|e', 3)).toEqual(['a', 'b', 'c', 'd', 'e']);
+  });
+
+  test('SNAPSHOT_FIELD_LAYOUTS anchors one flexible field between prefix and suffix', () => {
+    expect(SNAPSHOT_FIELD_LAYOUTS[2]).toEqual({ prefixCount: 1, suffixCount: 0 });
+    expect(SNAPSHOT_FIELD_LAYOUTS[4]).toEqual({ prefixCount: 2, suffixCount: 1 });
+    expect(SNAPSHOT_FIELD_LAYOUTS[8]).toEqual({ prefixCount: 3, suffixCount: 4 });
+    expect(SNAPSHOT_FIELD_LAYOUTS[9]).toEqual({ prefixCount: 3, suffixCount: 5 });
+  });
+
+  test('splitFlexibleSnapshotFields joins the flexible span and right-anchors suffix fields', () => {
+    const layout4 = SNAPSHOT_FIELD_LAYOUTS[4];
+    const layout9 = SNAPSHOT_FIELD_LAYOUTS[9];
+    if (!layout4 || !layout9) throw new Error('missing snapshot field layouts');
+    expect(splitFlexibleSnapshotFields(['@1', '0', 'name', 'with', 'pipe', '1'], layout4)).toEqual([
+      '@1',
+      '0',
+      'name|with|pipe',
+      '1',
+    ]);
+    expect(
+      splitFlexibleSnapshotFields(
+        ['%1', '@1', '0', 'title', 'with', 'pipe', '1', '80', '24', '1', '/tmp'],
+        layout9
+      )
+    ).toEqual(['%1', '@1', '0', 'title|with|pipe', '1', '80', '24', '1', '/tmp']);
   });
 
   test('validates tmux id shapes', () => {
