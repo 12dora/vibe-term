@@ -244,9 +244,9 @@ export function SideBarDeviceList({
   );
 
   return (
-    <SidebarGroup className="flex flex-col flex-1 min-h-0 pt-0">
+    <SidebarGroup className="flex flex-col flex-1 min-h-0 py-0">
       <ScrollArea className="flex-1 min-h-0">
-        <div className="space-y-1.5 pb-2 pt-1 select-none [-webkit-user-select:none] [-webkit-touch-callout:none]">
+        <div className="space-y-1.5 pb-1 pt-0.5 select-none [-webkit-user-select:none] [-webkit-touch-callout:none]">
           <SortableVerticalList
             ids={sortedDeviceIds}
             disabled={reorderDevicesMutation.isPending}

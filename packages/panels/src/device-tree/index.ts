@@ -13,5 +13,13 @@ export {
   nodeBadgeAppearance,
   type NodeBadgeAppearance,
   type NodeBadgeInfo,
+  type NodeBadgeVariant,
 } from './node-badge';
+export {
+  SortableVerticalList,
+  reorderIdsByDragEnd,
+  useDeviceTreeSensors,
+  useSortableRow,
+  type SortableRow,
+} from './device-tree-dnd';
 export type { DeviceConnectionAdapter, DeviceConnectionStatus } from '../device-connection';

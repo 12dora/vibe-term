@@ -20,6 +20,24 @@ function normalizeBooleanMap(value: unknown): Record<string, boolean> {
   return normalized;
 }
 
+/** 持久化的 id 顺序表可能被手工改坏，只保留非空字符串并去重 */
+function normalizeIdList(value: unknown): string[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  const normalized: string[] = [];
+  const seen = new Set<string>();
+  for (const item of value) {
+    if (typeof item !== 'string') continue;
+    const id = item.trim();
+    if (!id || seen.has(id)) continue;
+    seen.add(id);
+    normalized.push(id);
+  }
+  return normalized;
+}
+
 // 预设名单会随版本增删，localStorage 里可能残留已下线的 id（会命中不存在的 CSS 规则）。
 function normalizeThemePreset(value: unknown): ThemePreset | null {
   return isThemePreset(value) ? value : null;
@@ -82,6 +100,8 @@ export interface UIState {
   sidebarDeviceVisibility: Record<string, boolean>;
   /** 设备管理页文件夹的展开态；key 为文件夹 id，缺键视为展开 */
   deviceFolderExpanded: Record<string, boolean>;
+  /** 侧边栏 node 分节的手工顺序（mesh node id）；未列出的 node 按 API 顺序排在后面 */
+  sidebarNodeOrder: string[];
   inputMode: 'direct' | 'editor';
   editorSendWithEnter: boolean;
   theme: 'light' | 'dark';
@@ -99,6 +119,7 @@ export interface UIState {
   /** key 由 `sidebarDeviceVisibilityKey(runtimeNodeId, deviceId)` 生成 */
   setSidebarDeviceVisibility: (key: string, visible: boolean) => void;
   setDeviceFolderExpanded: (folderId: string, expanded: boolean) => void;
+  setSidebarNodeOrder: (nodeIds: string[]) => void;
   setInputMode: (mode: 'direct' | 'editor') => void;
   setKeyboardBehaviorMode: (mode: KeyboardBehaviorMode) => void;
   setEditorSendWithEnter: (enabled: boolean) => void;
@@ -125,6 +146,7 @@ export function createUIStore(core: Pick<RuntimeCore, 'storagePrefix'>) {
         sidebarDeviceExpanded: {},
         sidebarDeviceVisibility: {},
         deviceFolderExpanded: {},
+        sidebarNodeOrder: [],
         inputMode: 'direct',
         editorSendWithEnter: true,
         theme: 'dark',
@@ -150,6 +172,7 @@ export function createUIStore(core: Pick<RuntimeCore, 'storagePrefix'>) {
           set((state) => ({
             deviceFolderExpanded: { ...state.deviceFolderExpanded, [folderId]: expanded },
           })),
+        setSidebarNodeOrder: (nodeIds) => set({ sidebarNodeOrder: normalizeIdList(nodeIds) }),
         setInputMode: (mode) => set({ inputMode: mode }),
         setKeyboardBehaviorMode: (mode) => set({ keyboardBehaviorMode: mode }),
         setEditorSendWithEnter: (enabled) => set({ editorSendWithEnter: enabled }),
@@ -205,6 +228,7 @@ export function createUIStore(core: Pick<RuntimeCore, 'storagePrefix'>) {
           sidebarDeviceExpanded: state.sidebarDeviceExpanded,
           sidebarDeviceVisibility: state.sidebarDeviceVisibility,
           deviceFolderExpanded: state.deviceFolderExpanded,
+          sidebarNodeOrder: state.sidebarNodeOrder,
           inputMode: state.inputMode,
           editorSendWithEnter: state.editorSendWithEnter,
           theme: state.theme,
@@ -224,6 +248,7 @@ export function createUIStore(core: Pick<RuntimeCore, 'storagePrefix'>) {
             sidebarDeviceExpanded,
             sidebarDeviceVisibility,
             deviceFolderExpanded,
+            sidebarNodeOrder,
             themePreset,
             ...rest
           } = (persisted ?? {}) as Partial<UIState> & {
@@ -235,6 +260,7 @@ export function createUIStore(core: Pick<RuntimeCore, 'storagePrefix'>) {
             sidebarDeviceExpanded: normalizeBooleanMap(sidebarDeviceExpanded),
             sidebarDeviceVisibility: normalizeBooleanMap(sidebarDeviceVisibility),
             deviceFolderExpanded: normalizeBooleanMap(deviceFolderExpanded),
+            sidebarNodeOrder: normalizeIdList(sidebarNodeOrder),
             themePreset: normalizeThemePreset(themePreset),
           };
         },

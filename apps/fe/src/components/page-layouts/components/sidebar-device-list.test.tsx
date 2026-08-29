@@ -32,10 +32,17 @@ const { renderToStaticMarkup } = await import('react-dom/server');
 const { MemoryRouter } = await import('react-router');
 const { sidebarDeviceVisibilityKey } = await import('@tmex/stores');
 const { RuntimeProvider } = await import('@tmex/stores/react');
-const { SideBarDeviceList, toSidebarEntries } = await import('./sidebar-device-list');
+const {
+  SideBarDeviceList,
+  applySidebarNodeOrder,
+  sidebarNodeIdFromSortableId,
+  sidebarNodeSortableId,
+  toSidebarEntries,
+} = await import('./sidebar-device-list');
 const { SidebarNodeSection, inventoryDevices, selectedDeviceIdForNode } = await import(
   './sidebar-node-section'
 );
+const { SortableVerticalList, useSortableRow } = await import('@tmex/panels/device-tree');
 
 /**
  * 分节自身要读宿主级共享的 UI store（设备可见性）；生产里 AppSidebar 永远在
@@ -105,6 +112,63 @@ describe('toSidebarEntries', () => {
     const entries = toSidebarEntries([meshNode({ id: 'a' })], null);
     expect(entries[0].isSelf).toBe(false);
     expect(entries[0].runtimeNodeId).toBe('a');
+  });
+
+  test('手工顺序优先于 API 顺序，新 node 追加在末尾', () => {
+    const nodes = [meshNode({ id: 'a' }), meshNode({ id: 'b' }), meshNode({ id: 'c' })];
+    expect(toSidebarEntries(nodes, null, ['c', 'gone', 'a']).map((e) => e.id)).toEqual([
+      'c',
+      'a',
+      'b',
+    ]);
+  });
+
+  test('手工顺序用的是 mesh node id，self 也能被拖到别的位置', () => {
+    const nodes = [meshNode({ id: 'a' }), meshNode({ id: 'b' })];
+    const entries = toSidebarEntries(nodes, 'a', ['b', 'a']);
+    expect(entries.map((e) => e.id)).toEqual(['b', 'a']);
+    expect(entries[1].runtimeNodeId).toBe('self');
+  });
+});
+
+describe('applySidebarNodeOrder', () => {
+  const entries = [{ id: 'a' }, { id: 'b' }, { id: 'c' }] as unknown as Parameters<
+    typeof applySidebarNodeOrder
+  >[0];
+
+  test('空顺序原样返回 API 顺序', () => {
+    expect(applySidebarNodeOrder(entries, []).map((e) => e.id)).toEqual(['a', 'b', 'c']);
+  });
+
+  test('保存过的 id 按保存顺序在前，新 node 按 API 顺序追加在后', () => {
+    expect(applySidebarNodeOrder(entries, ['c', 'a']).map((e) => e.id)).toEqual(['c', 'a', 'b']);
+  });
+
+  test('已不存在的 id 直接跳过，重复 id 只算一次', () => {
+    expect(applySidebarNodeOrder(entries, ['gone', 'b', 'b', 'gone2']).map((e) => e.id)).toEqual([
+      'b',
+      'a',
+      'c',
+    ]);
+  });
+
+  test('顺序覆盖全部 node 时完全按保存顺序', () => {
+    expect(applySidebarNodeOrder(entries, ['c', 'b', 'a']).map((e) => e.id)).toEqual([
+      'c',
+      'b',
+      'a',
+    ]);
+  });
+});
+
+describe('sidebar node sortable ids', () => {
+  test('加前缀与还原互为逆运算，与设备/窗口/pane 的 id 空间隔开', () => {
+    expect(sidebarNodeSortableId('node-1')).toBe('sidebar-node:node-1');
+    expect(sidebarNodeIdFromSortableId(sidebarNodeSortableId('node-1'))).toBe('node-1');
+  });
+
+  test('没有前缀的 id 原样返回', () => {
+    expect(sidebarNodeIdFromSortableId('node-1')).toBe('node-1');
   });
 });
 
@@ -232,6 +296,41 @@ describe('SidebarNodeSection', () => {
     expect(html).toContain('data-online="true"');
     // 设备树与分节头一起挂在该 node 的运行时下
     expect(html).toContain('data-testid="runtime-device-list"');
+  });
+});
+
+describe('分节拖拽接线', () => {
+  const NODE = '0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d';
+  const DRAG_LABEL = '拖动以调整节点顺序';
+
+  // 生产里 `MeshDeviceList` 就是这么接的：分节 id 加 `sidebar-node:` 前缀，
+  // 与分节内部设备/窗口/pane 三层排序的 id 空间隔开。
+  function SortableProbe({ node }: { node: Parameters<typeof SidebarNodeSection>[0]['node'] }) {
+    const sortable = useSortableRow(sidebarNodeSortableId(node.id));
+    return <SidebarNodeSection node={node} drag={{ sortable, dragHandleLabel: DRAG_LABEL }} />;
+  }
+
+  test('分节头兼作拖拽手柄：可拖拽属性挂在 header 上，节点名不再是带框徽标', () => {
+    const node = {
+      id: NODE,
+      runtimeNodeId: NODE,
+      name: 'studio',
+      online: false,
+      loggedIn: true,
+      isSelf: true,
+      inventory: null,
+    };
+    const html = render(
+      <SortableVerticalList ids={[sidebarNodeSortableId(NODE)]} onReorder={() => {}}>
+        <SortableProbe node={node} />
+      </SortableVerticalList>
+    );
+
+    expect(html).toContain(`data-testid="sidebar-node-header-${NODE}"`);
+    expect(html).toContain(`aria-label="${DRAG_LABEL}"`);
+    expect(html).toContain('cursor-grab');
+    expect(html).toContain('data-variant="plain"');
+    expect(html).not.toContain('border-border/60');
   });
 });
 

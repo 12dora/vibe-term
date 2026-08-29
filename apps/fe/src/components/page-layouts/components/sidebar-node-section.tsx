@@ -14,15 +14,23 @@ import { SELF_NODE_ID, nodeAppPath, parseNodeIdFromPath } from '@tmex/api-client
 import {
   NodeBadge,
   type NodeBadgeInfo,
+  type SortableRow,
   shouldHideSidebarNodeSection,
 } from '@tmex/panels/device-tree';
 import { isSidebarDeviceVisible } from '@tmex/stores';
 import { useUIStore } from '@tmex/stores/react';
+import { cn } from '@tmex/ui';
 import { ChevronRight, Loader2, Monitor } from 'lucide-react';
 import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Link, matchPath, useLocation } from 'react-router';
 import { SideBarDeviceListForRuntime } from './sidebar-device-list-runtime';
+
+/** 分节整体的拖拽接线；未传即不可拖（standalone / 单元测试直接渲染分节时）。 */
+export interface SidebarNodeSortable {
+  sortable: SortableRow;
+  dragHandleLabel: string;
+}
 
 export interface SidebarNodeEntry {
   /** mesh 列表里的真实 node id。 */
@@ -82,14 +90,34 @@ function badgeOf(node: SidebarNodeEntry): NodeBadgeInfo {
   };
 }
 
-function SectionHeader({ node, hint }: { node: SidebarNodeEntry; hint?: string }) {
+/**
+ * 分节头兼作整节的拖拽手柄：鼠标要移动 8px 才激活（`useDeviceTreeSensors`），
+ * 触摸要长按 250ms，所以头里的按钮照常点得动；`touch-pan-y` 让竖向滑动仍归页面滚动。
+ */
+function SectionHeader({
+  node,
+  hint,
+  drag,
+}: {
+  node: SidebarNodeEntry;
+  hint?: string;
+  drag?: SidebarNodeSortable;
+}) {
   return (
     <div
-      className="flex items-center gap-2 px-1 pt-1"
+      ref={drag?.sortable.setDragHandleRef}
+      {...drag?.sortable.dragHandleProps}
+      aria-label={drag?.dragHandleLabel}
+      className={cn(
+        'flex items-center gap-2 px-1 py-0.5',
+        drag && 'cursor-grab touch-pan-y select-none'
+      )}
       data-testid={`sidebar-node-header-${node.runtimeNodeId}`}
     >
-      <NodeBadge info={badgeOf(node)} />
-      {hint && <span className="truncate text-[10px] text-muted-foreground">{hint}</span>}
+      <NodeBadge info={badgeOf(node)} variant="plain" className="min-w-0 flex-1" />
+      {hint && (
+        <span className="shrink-0 truncate text-[10px] text-muted-foreground/70">{hint}</span>
+      )}
     </div>
   );
 }
@@ -99,15 +127,20 @@ function SectionHeader({ node, hint }: { node: SidebarNodeEntry; hint?: string }
  * （`useNodeLoginGate` 用内存里的会话钥），登录期间显示转圈，失败退回「登录此节点」按钮
  * ——会话钥已经没了的话那个按钮会带 `?node=` 去登录页。
  */
-function SidebarNodeSignIn({ node }: { node: SidebarNodeEntry }) {
+function SidebarNodeSignIn({ node, drag }: { node: SidebarNodeEntry; drag?: SidebarNodeSortable }) {
   const { t } = useTranslation();
   const [expanded, setExpanded] = useState(false);
   const gate = useNodeLoginGate(node.runtimeNodeId, { enabled: expanded });
 
   return (
-    <div data-testid={`sidebar-node-login-${node.runtimeNodeId}`} className="space-y-1">
-      <SectionHeader node={node} />
-      <div className="px-1 pb-1">
+    <div
+      ref={drag?.sortable.setNodeRef}
+      style={drag?.sortable.style}
+      data-testid={`sidebar-node-login-${node.runtimeNodeId}`}
+      className={cn('space-y-0.5', drag?.sortable.isDragging && 'opacity-60')}
+    >
+      <SectionHeader node={node} drag={drag} />
+      <div className="px-1 pb-0.5">
         {!expanded ? (
           <button
             type="button"
@@ -144,7 +177,10 @@ function SidebarNodeSignIn({ node }: { node: SidebarNodeEntry }) {
   );
 }
 
-export function SidebarNodeSection({ node }: { node: SidebarNodeEntry }) {
+export function SidebarNodeSection({
+  node,
+  drag,
+}: { node: SidebarNodeEntry; drag?: SidebarNodeSortable }) {
   const { t } = useTranslation();
   // UI store 是宿主级共享实例（所有 node 同一份），离线分节没有自己的 runtime 也读得到。
   const visibility = useUIStore((state) => state.sidebarDeviceVisibility);
@@ -168,8 +204,13 @@ export function SidebarNodeSection({ node }: { node: SidebarNodeEntry }) {
     }
 
     return (
-      <div data-testid={`sidebar-node-offline-${node.runtimeNodeId}`} className="space-y-1">
-        <SectionHeader node={node} hint={t('sidebar.node.offline')} />
+      <div
+        ref={drag?.sortable.setNodeRef}
+        style={drag?.sortable.style}
+        data-testid={`sidebar-node-offline-${node.runtimeNodeId}`}
+        className={cn('space-y-0.5', drag?.sortable.isDragging && 'opacity-60')}
+      >
+        <SectionHeader node={node} hint={t('sidebar.node.offline')} drag={drag} />
         {knownDevices.length === 0 ? (
           <div className="tmex-fade px-2 py-1 text-[11px] text-muted-foreground/60">
             {t('sidebar.node.noKnownDevices')}
@@ -192,7 +233,7 @@ export function SidebarNodeSection({ node }: { node: SidebarNodeEntry }) {
   }
 
   if (!node.loggedIn) {
-    return <SidebarNodeSignIn node={node} />;
+    return <SidebarNodeSignIn node={node} drag={drag} />;
   }
 
   // 分节头交给设备树一起渲染：可见设备数只有挂上该 node 运行时才读得到，
@@ -202,8 +243,11 @@ export function SidebarNodeSection({ node }: { node: SidebarNodeEntry }) {
       <SideBarDeviceListForRuntime
         section={{
           testId: `sidebar-node-${node.runtimeNodeId}`,
-          header: <SectionHeader node={node} />,
+          header: <SectionHeader node={node} drag={drag} />,
           keepWhenNoDevices: node.isSelf,
+          containerRef: drag?.sortable.setNodeRef,
+          containerStyle: drag?.sortable.style,
+          containerClassName: drag?.sortable.isDragging ? 'opacity-60' : undefined,
         }}
         expansionKeyFor={
           node.runtimeNodeId === SELF_NODE_ID

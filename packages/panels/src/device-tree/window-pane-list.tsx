@@ -26,7 +26,7 @@ export function WindowRowFooter(props: WindowRowFooterProps) {
   const singlePane = panes[0];
   if (!singlePane || !agent) return null;
   return (
-    <div className="ml-[36px] pl-2 border-l border-border/50">
+    <div className="ml-4.5 pl-2 border-l border-border/50">
       <agent.PaneSessions nav={nav} deviceId={deviceId} paneId={singlePane.id} />
     </div>
   );
@@ -52,7 +52,7 @@ function WindowPaneList({
   nav,
 }: WindowPaneListProps) {
   return (
-    <div className="ml-4 pl-2 border-l border-border/50 space-y-1 [@media(any-pointer:coarse)]:space-y-1.5">
+    <div className="ml-4.5 pl-2 border-l border-border/50 space-y-1 [@media(any-pointer:coarse)]:space-y-1.5">
       <SortableVerticalList ids={paneIds} onReorder={onReorder}>
         {tmuxWindow.panes.map((pane) => (
           <PaneRow

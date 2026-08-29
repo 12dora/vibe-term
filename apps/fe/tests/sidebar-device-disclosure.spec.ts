@@ -98,7 +98,7 @@ test('sidebar: device disclosure persists and tabs stay mutually exclusive', asy
     const treePaddingLeft = await deviceTree.evaluate((node) =>
       Number.parseFloat(getComputedStyle(node).paddingLeft)
     );
-    expect(treePaddingLeft).toBeGreaterThanOrEqual(40);
+    expect(treePaddingLeft).toBeGreaterThanOrEqual(20);
 
     await deviceToggle.click();
     await expect(page.getByTestId(`window-item-${windowId}`)).toHaveCount(0);

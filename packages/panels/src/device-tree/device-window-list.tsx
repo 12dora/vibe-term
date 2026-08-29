@@ -30,7 +30,7 @@ export function DeviceWindowList(props: DeviceWindowListProps) {
   return (
     <div
       data-testid={`device-tree-${deviceId}`}
-      className="tmex-reveal space-y-1.5 py-1.5 pr-1.5 pl-10 [@media(any-pointer:coarse)]:space-y-2"
+      className="tmex-reveal space-y-1.5 py-1.5 pr-1.5 pl-6 [@media(any-pointer:coarse)]:space-y-2"
     >
       {!windows && <DeviceTreeHint text={t('common.loading')} />}
       {windows?.length === 0 && <DeviceTreeHint text={t('window.noWindows')} />}

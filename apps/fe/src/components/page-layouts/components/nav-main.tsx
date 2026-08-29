@@ -14,8 +14,23 @@ import { useTranslation } from 'react-i18next';
 import { useLocation } from 'react-router';
 import { NavLink } from './nav-link';
 
-function isPathActive(pathname: string, url: string): boolean {
-  return pathname === url || pathname.startsWith(`${url}/`);
+/**
+ * 去掉 `/n/:nodeId` 前缀、query/hash 与结尾斜杠，把 NavLink 生成的宿主感知路径
+ * 与地址栏的 pathname 归一到同一形状再比。
+ */
+export function normalizeNavPath(value: string): string {
+  const [path = ''] = value.split(/[?#]/);
+  const withoutNodePrefix = path.replace(/^\/n\/[^/]+(?=\/|$)/, '');
+  const trimmed = withoutNodePrefix.replace(/\/+$/, '');
+  return trimmed || '/';
+}
+
+/**
+ * 只认「就是这一页」：`/devices/:deviceId/...` 是终端页，不该把「管理设备」点亮；
+ * 现有导航项都不是 section 根，没有前缀匹配的需求。
+ */
+export function isPathActive(pathname: string, url: string): boolean {
+  return normalizeNavPath(pathname) === normalizeNavPath(url);
 }
 
 export function NavMain({

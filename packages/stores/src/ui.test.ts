@@ -192,6 +192,68 @@ describe('sidebar tab state', () => {
   });
 });
 
+describe('sidebar node order', () => {
+  beforeEach(() => {
+    storage.clear();
+  });
+
+  test('defaults to an empty order', () => {
+    expect(createStore().getState().sidebarNodeOrder).toEqual([]);
+  });
+
+  test('persists the manual node order across store instances', () => {
+    const prefix = `ui-sidebar-node-order-${Date.now()}-`;
+    const store = createUIStore({ storagePrefix: prefix });
+
+    store.getState().setSidebarNodeOrder(['node-b', 'node-a']);
+    expect(store.getState().sidebarNodeOrder).toEqual(['node-b', 'node-a']);
+
+    const persisted = JSON.parse(storage.getItem(`${prefix}tmex-ui`) ?? '{}') as {
+      state?: { sidebarNodeOrder?: string[] };
+    };
+    expect(persisted.state?.sidebarNodeOrder).toEqual(['node-b', 'node-a']);
+
+    expect(createUIStore({ storagePrefix: prefix }).getState().sidebarNodeOrder).toEqual([
+      'node-b',
+      'node-a',
+    ]);
+  });
+
+  test('drops non-string, blank and duplicated ids on write', () => {
+    const store = createStore();
+    store
+      .getState()
+      .setSidebarNodeOrder(['node-a', '  ', 'node-a', 'node-b'] as unknown as string[]);
+    expect(store.getState().sidebarNodeOrder).toEqual(['node-a', 'node-b']);
+  });
+
+  test('normalizes invalid persisted node order', () => {
+    const prefix = `ui-sidebar-node-order-invalid-${Date.now()}-`;
+    storage.setItem(
+      `${prefix}tmex-ui`,
+      JSON.stringify({
+        state: { sidebarNodeOrder: ['node-a', 7, null, 'node-a', 'node-b'] },
+        version: 0,
+      })
+    );
+
+    expect(createUIStore({ storagePrefix: prefix }).getState().sidebarNodeOrder).toEqual([
+      'node-a',
+      'node-b',
+    ]);
+  });
+
+  test('falls back to an empty order when the persisted value is not an array', () => {
+    const prefix = `ui-sidebar-node-order-shape-${Date.now()}-`;
+    storage.setItem(
+      `${prefix}tmex-ui`,
+      JSON.stringify({ state: { sidebarNodeOrder: { 0: 'node-a' } }, version: 0 })
+    );
+
+    expect(createUIStore({ storagePrefix: prefix }).getState().sidebarNodeOrder).toEqual([]);
+  });
+});
+
 describe('sidebar collapse state', () => {
   beforeEach(() => {
     storage.clear();

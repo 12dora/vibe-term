@@ -8,7 +8,8 @@ import {
   useSidebarDeviceStats,
 } from '@tmex/panels/device-tree';
 import { useRuntime } from '@tmex/stores/react';
-import type { ReactNode } from 'react';
+import { cn } from '@tmex/ui';
+import type { CSSProperties, ReactNode } from 'react';
 import { SidebarAgentSessionsProvider, useSidebarAgentAdapter } from './sidebar-agent-sessions';
 
 /** 聚合视图的分节外壳：分节头与设备树同生共死，没有可显示的设备时整节都不渲染。 */
@@ -17,6 +18,13 @@ export interface SidebarNodeSectionShell {
   header: ReactNode;
   /** 该 node 一台设备都没有时是否仍渲染（本机保留空态引导，远端直接隐藏） */
   keepWhenNoDevices?: boolean;
+  /**
+   * 分节根元素的拖拽接线。分节可能整节隐藏（return null），所以 sortable 的
+   * ref/transform 只能挂在这个真正的根元素上，不能由调用方在外面套一层空壳。
+   */
+  containerRef?: (element: HTMLElement | null) => void;
+  containerStyle?: CSSProperties;
+  containerClassName?: string;
 }
 
 export interface SideBarDeviceListForRuntimeProps {
@@ -65,7 +73,12 @@ function NodeSection({
   }
 
   return (
-    <div data-testid={section.testId} className="space-y-1">
+    <div
+      ref={section.containerRef}
+      style={section.containerStyle}
+      data-testid={section.testId}
+      className={cn('space-y-0.5', section.containerClassName)}
+    >
       {section.header}
       <DeviceTree {...rest} />
     </div>
