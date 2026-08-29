@@ -114,7 +114,7 @@ describe('SidebarNodeSection', () => {
     expect(html).not.toContain('data-testid="device-item-');
   });
 
-  test('在线但未登录：只渲染登录按钮，不渲染设备树', () => {
+  test('在线但未登录：默认折叠成一个登录入口，不自动登录、不渲染设备树', () => {
     const html = render(
       <SidebarNodeSection
         node={{
@@ -129,7 +129,10 @@ describe('SidebarNodeSection', () => {
       />
     );
     expect(html).toContain('data-testid="sidebar-node-login-0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c"');
-    expect(html).toContain('data-testid="node-login-0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c"');
+    // 折叠态：只有「展开并登录」这一个入口，既没有设备树也没有登录中的转圈
+    expect(html).toContain('data-testid="sidebar-node-expand-0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c"');
+    expect(html).not.toContain('data-testid="sidebar-node-pending-');
+    expect(html).not.toContain('data-testid="runtime-device-list"');
     expect(html).not.toContain('data-testid="device-item-');
   });
 

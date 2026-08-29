@@ -2,6 +2,7 @@
 // 路由参数由宿主显式传入；paneId 为路由段原值（React Router 已 decode 一次），包内做归一。
 
 import { useBellStore } from '@tmex/notifications';
+import { PRODUCT_NAME } from '@tmex/shared';
 import { buildTerminalLabel, decodePaneIdFromUrlParam } from '@tmex/stores';
 import { useSiteStore, useTmuxStore } from '@tmex/stores/react';
 import { useMemo } from 'react';
@@ -19,7 +20,7 @@ export function DeviceConsolePageTitle({
 }: DeviceConsolePageTitleProps) {
   const resolvedPaneId = paneId ? decodePaneIdFromUrlParam(paneId) : undefined;
   const snapshots = useTmuxStore((state) => state.snapshots);
-  const siteName = useSiteStore((state) => state.settings?.siteName ?? 'tmex');
+  const siteName = useSiteStore((state) => state.settings?.siteName ?? PRODUCT_NAME);
 
   const snapshot = deviceId ? snapshots[deviceId] : undefined;
   const selectedWindow = useMemo(() => {

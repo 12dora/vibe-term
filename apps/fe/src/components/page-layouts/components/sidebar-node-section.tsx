@@ -2,14 +2,18 @@
 //
 // 三种形态（设计 §4「侧边栏聚合视图」）：
 //   - 在线且已登录：懒挂该 node 的运行时，渲染真实设备树，每行带 node 徽标；
-//   - 在线但未登录：只渲染「登录此节点」按钮，**不**建立连接（避免每次渲染都撞 4401）；
+//   - 在线但未登录：折叠，只给一个「登录」入口，**不**自动登录也**不**建立连接；
+//     用户点开才用内存里的会话钥静默登录，登不上再退回「登录此节点」按钮；
 //   - 离线：灰显最近一次已知 inventory 里的设备名，不建连接、不发请求。
 
-import { NodeLoginButton } from '@/auth';
+import { NodeLoginButton } from '@/auth/NodeLoginButton';
+import { loginErrorKey } from '@/auth/login-errors';
+import { useNodeLoginGate } from '@/auth/use-node-login';
 import { NodeRuntimeScope } from '@/node/node-runtime-scope';
 import { SELF_NODE_ID, nodeAppPath } from '@tmex/api-client';
 import { NodeBadge, type NodeBadgeInfo } from '@tmex/panels/device-tree';
-import { Monitor } from 'lucide-react';
+import { ChevronRight, Loader2, Monitor } from 'lucide-react';
+import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Link } from 'react-router';
 import { SideBarDeviceListForRuntime } from './sidebar-device-list-runtime';
@@ -62,6 +66,56 @@ function SectionHeader({ node, hint }: { node: SidebarNodeEntry; hint?: string }
   );
 }
 
+/**
+ * 在线但还没有该 node 会话：默认折叠，一个请求都不发。用户点开才触发静默登录
+ * （`useNodeLoginGate` 用内存里的会话钥），登录期间显示转圈，失败退回「登录此节点」按钮
+ * ——会话钥已经没了的话那个按钮会带 `?node=` 去登录页。
+ */
+function SidebarNodeSignIn({ node }: { node: SidebarNodeEntry }) {
+  const { t } = useTranslation();
+  const [expanded, setExpanded] = useState(false);
+  const gate = useNodeLoginGate(node.runtimeNodeId, { enabled: expanded });
+
+  return (
+    <div data-testid={`sidebar-node-login-${node.runtimeNodeId}`} className="space-y-1">
+      <SectionHeader node={node} />
+      <div className="px-1 pb-1">
+        {!expanded ? (
+          <button
+            type="button"
+            className="flex w-full items-center gap-2 rounded-md px-2 py-1 text-xs text-muted-foreground hover:bg-sidebar-accent hover:text-foreground"
+            data-testid={`sidebar-node-expand-${node.runtimeNodeId}`}
+            onClick={() => setExpanded(true)}
+          >
+            <ChevronRight className="h-3.5 w-3.5 shrink-0" />
+            <span className="truncate">{t('auth.node.loginToThisNode')}</span>
+          </button>
+        ) : gate.status === 'pending' ? (
+          <div
+            className="flex items-center gap-2 px-2 py-1 text-xs text-muted-foreground"
+            data-testid={`sidebar-node-pending-${node.runtimeNodeId}`}
+          >
+            <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin" />
+            <span className="truncate">{t('auth.node.loggingIn')}</span>
+          </div>
+        ) : (
+          <div className="flex flex-col gap-1">
+            {gate.code ? (
+              <span
+                className="px-1 text-[10px] text-destructive"
+                data-testid={`sidebar-node-error-${node.runtimeNodeId}`}
+              >
+                {t(loginErrorKey(gate.code, 'password'))}
+              </span>
+            ) : null}
+            <NodeLoginButton nodeId={node.runtimeNodeId} nodeName={node.name} className="w-full" />
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 export function SidebarNodeSection({ node }: { node: SidebarNodeEntry }) {
   const { t } = useTranslation();
 
@@ -92,14 +146,7 @@ export function SidebarNodeSection({ node }: { node: SidebarNodeEntry }) {
   }
 
   if (!node.loggedIn) {
-    return (
-      <div data-testid={`sidebar-node-login-${node.runtimeNodeId}`} className="space-y-1">
-        <SectionHeader node={node} />
-        <div className="px-1 pb-1">
-          <NodeLoginButton nodeId={node.runtimeNodeId} nodeName={node.name} className="w-full" />
-        </div>
-      </div>
-    );
+    return <SidebarNodeSignIn node={node} />;
   }
 
   return (

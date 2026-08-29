@@ -1,24 +1,34 @@
 // mesh 登录页（设计 §2「登录页体验」 / §4「身份与入口」）。
 // standalone（`/api/auth/mode` 返回 `mode:'none'`）下整页不渲染。
+//
+// 页面上只有：品牌、用户名、密码、验证码（开了 TOTP 才有）、登录、用通行密钥登录，外加一行错误。
+// 内部状态（会登录哪些节点、逐台的 fan-out 进度、会话钥怎么用）不出现在界面上；passkey 的
+// **注册**入口只在「账号安全」里，这里只有**用 passkey 登录**。
 
+import {
+  isCredentialFailure,
+  loginErrorKey,
+  loginErrorKeyFromException,
+} from '@/auth/login-errors';
 import {
   clearSessionKey,
   clearTotpCode,
+  ensureNodeLogin,
   establishSessionFromPasskey,
   establishSessionFromPassword,
-  loginToAllReachable,
-  loginToNode,
+  loginSelf,
   setTotpCode,
 } from '@/auth/session-key-store';
-import { useAuthMode, useLoginProgress } from '@/auth/use-session-key';
-import type { AuthApi, AuthModeResponse, PublicNode } from '@tmex/api-client/auth/index';
+import { useAuthMode } from '@/auth/use-session-key';
+import { Brand } from '@/components/brand';
+import type { AuthApi, AuthModeResponse } from '@tmex/api-client/auth/index';
 import { defaultAuthApi, requireRootEpoch } from '@tmex/api-client/auth/index';
 import { Button } from '@tmex/ui/button';
 import { Input } from '@tmex/ui/input';
-import { AlertTriangle, CheckCircle2, Fingerprint, Loader2, ShieldCheck } from 'lucide-react';
-import { type FormEvent, useCallback, useEffect, useMemo, useState } from 'react';
+import { AlertTriangle, Fingerprint, Loader2 } from 'lucide-react';
+import { type FormEvent, useCallback, useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Link, useNavigate, useSearchParams } from 'react-router';
+import { useNavigate, useSearchParams } from 'react-router';
 
 export interface LoginPageProps {
   /** 注入 mode（测试 / 已在外层拉过时用），给了就不再请求 `/api/auth/mode`。 */
@@ -51,45 +61,25 @@ interface LoginFormProps {
   api: AuthApi;
 }
 
+type Phase = 'idle' | 'deriving' | 'signingIn' | 'done';
+
 function LoginForm({ mode, api }: LoginFormProps) {
   const { t } = useTranslation();
   const navigate = useNavigate();
   const [params] = useSearchParams();
-  const progress = useLoginProgress();
 
   const nextPath = params.get('next') || '/';
+  /** `?node=` 是「去登录这一台」的显式入口（多半来自「登录此节点」按钮），必须等它完成。 */
   const targetNode = params.get('node');
 
   const [username, setUsername] = useState(mode.username ?? '');
   const [password, setPassword] = useState('');
   const [totp, setTotp] = useState('');
   const [busy, setBusy] = useState(false);
-  const [phase, setPhase] = useState<'idle' | 'deriving' | 'fanout' | 'done'>('idle');
+  const [phase, setPhase] = useState<Phase>('idle');
   const [error, setError] = useState<string | null>(null);
 
   const canUsePasskey = mode.passkeyAvailable && mode.passkeysForThisOrigin;
-
-  // 登录前只能读公开的 `/api/auth/nodes`（无公钥）：用来告诉用户这次会登录哪些节点。
-  const [publicNodes, setPublicNodes] = useState<PublicNode[] | null>(null);
-  useEffect(() => {
-    let cancelled = false;
-    api
-      .listPublicNodes()
-      .then((rows) => {
-        if (!cancelled) setPublicNodes(rows);
-      })
-      .catch(() => {
-        if (!cancelled) setPublicNodes(null);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [api]);
-
-  const entryName = useMemo(
-    () => publicNodes?.find((row) => row.id === mode.nodeId)?.name ?? mode.nodeId,
-    [publicNodes, mode.nodeId]
-  );
 
   // `login.uid` / `delegation.uid` / k_totp 的 HKDF info 用的都是 **user id**，
   // 输入框里的是用户名——只有在与 mode 返回的用户名一致时才能安全地换成 uid。
@@ -104,36 +94,30 @@ function LoginForm({ mode, api }: LoginFormProps) {
     }
   }, [phase, navigate, nextPath]);
 
-  const runFanOut = useCallback(async () => {
-    setPhase('fanout');
-    if (targetNode) {
-      const result = await loginToNode(targetNode, { api });
-      clearTotpCode();
-      if (!result.ok) {
-        setError(t(`auth.errors.${result.code}`, { defaultValue: result.code }));
-        clearSessionKey();
-        setPhase('idle');
+  /**
+   * 会话钥已经建好之后的最后一步。
+   *
+   * 没有 `?node=` 时**只登录本机**：成功即跳转，其余节点等用户真的要用它时由
+   * `ensureNodeLogin()` 静默登录（`/n/:id` 路由或侧边栏展开）。
+   */
+  const finishLogin = useCallback(
+    async (method: 'password' | 'passkey') => {
+      setPhase('signingIn');
+      const result = targetNode
+        ? await ensureNodeLogin(targetNode, { api })
+        : await loginSelf({ api });
+      if (targetNode) clearTotpCode();
+      if (result.ok) {
+        setPhase('done');
         return;
       }
-      setPhase('done');
-      return;
-    }
-    const outcome = await loginToAllReachable({ api, entryName });
-    if (!outcome.anyOk) {
-      // 一台都没成：刚建的会话钥已经没用了，留着只会让后续请求继续 401。
-      clearSessionKey();
-      setError(t('auth.login.allNodesFailed'));
+      // 凭证本身不可用才丢钥；网络错误 / 验证码错留着钥，用户重试即可。
+      if (isCredentialFailure(result.code)) clearSessionKey();
+      setError(t(loginErrorKey(result.code, method)));
       setPhase('idle');
-      return;
-    }
-    if (outcome.listFailed) {
-      // 「没有其它目标」与「列表加载失败」必须区分：后者不能当成登录完成跳走。
-      setError(t('auth.login.nodeListFailed'));
-      setPhase('idle');
-      return;
-    }
-    setPhase('done');
-  }, [api, entryName, t, targetNode]);
+    },
+    [api, t, targetNode]
+  );
 
   const onSubmit = useCallback(
     async (event: FormEvent) => {
@@ -170,22 +154,15 @@ function LoginForm({ mode, api }: LoginFormProps) {
         setPassword('');
         setTotp('');
         if (mode.totpEnabled && totp) setTotpCode(totp);
-        await runFanOut();
+        await finishLogin('password');
       } catch (err) {
-        const code = (err as { code?: string })?.code;
-        setError(
-          code
-            ? t(`auth.errors.${code}`, { defaultValue: code })
-            : err instanceof Error
-              ? err.message
-              : String(err)
-        );
+        setError(t(loginErrorKeyFromException(err, 'password')));
         setPhase('idle');
       } finally {
         setBusy(false);
       }
     },
-    [busy, mode, password, resolveUid, runFanOut, t, totp, username]
+    [busy, finishLogin, mode, password, resolveUid, t, totp, username]
   );
 
   const onPasskey = useCallback(async () => {
@@ -200,17 +177,14 @@ function LoginForm({ mode, api }: LoginFormProps) {
         entryNodeId: mode.nodeId,
         api,
       });
-      await runFanOut();
+      await finishLogin('passkey');
     } catch (err) {
-      const code = (err as { code?: string })?.code;
-      setError(
-        code ? t(`auth.errors.${code}`, { defaultValue: code }) : ((err as Error)?.message ?? '')
-      );
+      setError(t(loginErrorKeyFromException(err, 'passkey')));
       setPhase('idle');
     } finally {
       setBusy(false);
     }
-  }, [api, busy, mode.nodeId, resolveUid, runFanOut, t]);
+  }, [api, busy, finishLogin, mode.nodeId, resolveUid, t]);
 
   return (
     <div className="flex min-h-full items-center justify-center p-4" data-testid="login-page">
@@ -218,13 +192,7 @@ function LoginForm({ mode, api }: LoginFormProps) {
         className="flex w-full max-w-sm flex-col gap-4 rounded-xl border border-border bg-background p-6"
         onSubmit={(event) => void onSubmit(event)}
       >
-        <div className="flex flex-col gap-1">
-          <h1 className="flex items-center gap-2 text-lg font-semibold">
-            <ShieldCheck className="size-4" />
-            {t('auth.login.title')}
-          </h1>
-          <p className="text-sm text-muted-foreground">{t('auth.login.subtitle')}</p>
-        </div>
+        <Brand className="justify-center" />
 
         <div className="flex flex-col gap-1 text-sm">
           <label className="text-muted-foreground" htmlFor="login-username">
@@ -284,7 +252,7 @@ function LoginForm({ mode, api }: LoginFormProps) {
           {busy ? <Loader2 className="animate-spin" /> : null}
           {phase === 'deriving'
             ? t('auth.login.deriving')
-            : phase === 'fanout'
+            : phase === 'signingIn'
               ? t('auth.login.signingIn')
               : t('auth.login.submit')}
         </Button>
@@ -300,52 +268,6 @@ function LoginForm({ mode, api }: LoginFormProps) {
             <Fingerprint />
             {t('auth.login.usePasskey')}
           </Button>
-        ) : null}
-
-        <Link
-          to="/account/security"
-          className="text-center text-xs text-muted-foreground underline-offset-4 hover:underline"
-          data-testid="login-register-passkey"
-        >
-          {t('auth.login.registerPasskeyHere')}
-        </Link>
-
-        {progress.length === 0 && publicNodes && publicNodes.length > 0 ? (
-          // 登录前只有公开列表可用（无公钥）：告诉用户这次会登录哪些节点。
-          <ul
-            className="flex flex-col gap-1 border-t border-border pt-3 text-xs text-muted-foreground"
-            data-testid="login-targets"
-          >
-            <li className="font-medium">{t('auth.login.willSignIn')}</li>
-            {publicNodes.map((row) => (
-              <li key={row.id} className="flex items-center justify-between gap-2">
-                <span className="truncate">{row.name || row.id}</span>
-                <span>{row.online ? t('nodes.status.online') : t('nodes.status.offline')}</span>
-              </li>
-            ))}
-          </ul>
-        ) : null}
-
-        {progress.length > 0 ? (
-          <ul
-            className="flex flex-col gap-1 border-t border-border pt-3"
-            data-testid="login-progress"
-          >
-            {progress.map((row) => (
-              <li key={row.nodeId} className="flex items-center justify-between gap-2 text-xs">
-                <span className="truncate">{row.nodeName || row.nodeId}</span>
-                {row.status === 'pending' ? (
-                  <Loader2 className="size-3 animate-spin text-muted-foreground" />
-                ) : row.status === 'ok' ? (
-                  <CheckCircle2 className="size-3 text-emerald-500" />
-                ) : (
-                  <span className="truncate text-destructive">
-                    {t(`auth.errors.${row.code}`, { defaultValue: row.code ?? '' })}
-                  </span>
-                )}
-              </li>
-            ))}
-          </ul>
         ) : null}
       </form>
     </div>

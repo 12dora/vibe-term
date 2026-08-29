@@ -1,3 +1,4 @@
+import { Brand } from '@/components/brand';
 import { useSharedAuthMode } from '@/node/mesh-nodes';
 import { useSiteStore, useTmuxStore } from '@tmex/stores/react';
 import { useSidebar } from '@tmex/ui/sidebar';
@@ -14,7 +15,6 @@ const ACTION_BUTTON_CLASS =
 export function SidebarTitle() {
   const { t } = useTranslation();
   const { isMobile, setOpenMobile } = useSidebar();
-  const siteName = useSiteStore((state) => state.settings?.siteName);
   const { meshEnabled } = useSharedAuthMode();
 
   // Fetch settings on mount if not loaded
@@ -23,8 +23,6 @@ export function SidebarTitle() {
   useEffect(() => {
     fetchSettings();
   }, [fetchSettings]);
-
-  const displayName = siteName ?? 'tmex';
 
   return (
     <div className="flex items-center gap-1 px-2">
@@ -40,12 +38,7 @@ export function SidebarTitle() {
           <X className="h-4 w-4" />
         </button>
       )}
-      <NavLink to="/" className="flex flex-1 items-center gap-3 overflow-hidden">
-        <div className="h-8 w-8 shrink-0 overflow-hidden rounded-lg border-2 border-black">
-          <img src="/logo.png" alt={displayName} className="h-full w-full object-cover" />
-        </div>
-        <span className="truncate text-sm font-semibold tracking-tight">{displayName}</span>
-      </NavLink>
+      <Brand linkTo="/" linkComponent={NavLink} className="flex-1" />
       <div className="flex shrink-0 items-center gap-0.5 mr-[-8px]">
         <WsLatency />
         <ThemeMenu />

@@ -1,22 +1,21 @@
 import { QueryClientProvider } from '@tanstack/react-query';
-import { formatDisplayVersion } from '@tmex/shared';
+import { PRODUCT_NAME, formatDisplayVersion } from '@tmex/shared';
 import { type CSSProperties, StrictMode, useEffect } from 'react';
 import { createRoot } from 'react-dom/client';
-import { Outlet, RouterProvider, createBrowserRouter, useParams } from 'react-router';
+import { Outlet, RouterProvider, createBrowserRouter } from 'react-router';
 import { Toaster } from 'sonner';
 import { i18nReady } from './i18n';
 import './index.css';
 
 // 浏览器 console 打印 monorepo 版本（非 production 带 _dev 后缀）
-console.info(`tmex ${formatDisplayVersion(__MONOREPO_VERSION__, __IS_PROD__)}`);
+console.info(`${PRODUCT_NAME} ${formatDisplayVersion(__MONOREPO_VERSION__, __IS_PROD__)}`);
 
-import { PageLoadFallback } from '@/PageLoadFallback';
 import { FlowBridges } from '@/components/flow-bridges';
 import { AppSidebar } from '@/components/page-layouts/components/app-sidebar';
 import { useAppMonoFont } from '@/lib/fonts/useAppMonoFont';
 import { NodeRuntimeBoundary } from '@/node/node-runtime-boundary';
 import { appNodeRuntimes, nodeQueryClient } from '@/node/node-runtimes';
-import { type PageModuleLoader, usePageModule } from '@/use-page-module';
+import { PageWrapper } from '@/page-wrapper';
 import { installSessionInterceptor } from '@tmex/api-client/auth/index';
 import { ConnectionIndicator } from '@tmex/panels';
 import { SettingsEventsInit } from '@tmex/panels/settings';
@@ -25,8 +24,7 @@ import { SELF_NODE_ID, useNodeRuntime } from '@tmex/stores';
 import { RuntimeProvider, useSiteStore, useUIStore } from '@tmex/stores/react';
 import { useKeyboardAvoidance } from '@tmex/terminal-ui';
 import { applyThemePreset, isThemePreset } from '@tmex/theme';
-import { Separator } from '@tmex/ui/separator';
-import { SidebarInset, SidebarProvider, SidebarTrigger, useSidebar } from '@tmex/ui/sidebar';
+import { SidebarInset, SidebarProvider, useSidebar } from '@tmex/ui/sidebar';
 
 function applyInitialTheme(): void {
   try {
@@ -185,58 +183,6 @@ function MainInset() {
         }}
       />
     </SidebarInset>
-  );
-}
-
-// Page wrapper: 处理 header、title、actions 和动态加载
-// withSidebar=false：/login、/account/security、/nodes 挂在 NodeShell（SidebarProvider）之外，不能渲染 SidebarTrigger
-function PageWrapper({
-  moduleLoader,
-  withSidebar = true,
-}: {
-  moduleLoader: PageModuleLoader;
-  withSidebar?: boolean;
-}) {
-  const { state, retry } = usePageModule(moduleLoader);
-  const params = useParams();
-
-  const module = state.status === 'ready' ? state.module : null;
-  const Page = module?.default;
-  const PageTitle = module?.PageTitle;
-  const PageActions = module?.PageActions;
-
-  return (
-    <>
-      <header
-        className="sticky top-0 z-10 flex h-12 md:h-16 shrink-0 items-center justify-between gap-2 bg-background/95 backdrop-blur-sm"
-        data-testid="mobile-topbar"
-      >
-        <div className="flex min-w-0 flex-1 items-center gap-2 px-4">
-          {withSidebar && (
-            <>
-              <SidebarTrigger className="-ml-1 shrink-0" data-testid="mobile-sidebar-open" />
-              <Separator
-                orientation="vertical"
-                className="mr-2 shrink-0 data-[orientation=vertical]:h-4"
-              />
-            </>
-          )}
-          <span className="min-w-0 flex-1 truncate text-sm font-semibold">
-            {PageTitle ? <PageTitle {...params} /> : ''}
-          </span>
-        </div>
-        <div className="flex shrink-0 items-center gap-1 px-4">
-          {PageActions && <PageActions {...params} />}
-        </div>
-      </header>
-
-      {/* Page content */}
-      <div className="flex min-h-0 flex-1 flex-col gap-4 !pt-0 p-2 md:p-4">
-        <div className="bg-muted/50 min-h-0 flex-1 overflow-auto overscroll-auto rounded-xl [-webkit-overflow-scrolling:touch]">
-          {state.status === 'error' ? <PageLoadFallback onRetry={retry} /> : Page ? <Page /> : null}
-        </div>
-      </div>
-    </>
   );
 }
 

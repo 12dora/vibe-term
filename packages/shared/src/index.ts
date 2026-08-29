@@ -27,6 +27,10 @@ export {
 
 export { formatDisplayVersion } from './version';
 
+// ==================== 品牌 ====================
+
+export { BRAND_LOGO_SRC, PRODUCT_NAME } from './brand';
+
 // ==================== 通用工具 ====================
 
 export {

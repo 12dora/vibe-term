@@ -1033,7 +1033,6 @@
     "auth": {
       "login": {
         "title": "Sign in",
-        "subtitle": "One sign-in covers every node you can reach.",
         "username": "Username",
         "password": "Password",
         "totp": "Authenticator code",
@@ -1041,17 +1040,16 @@
         "deriving": "Preparing…",
         "signingIn": "Signing in…",
         "usePasskey": "Use a passkey",
-        "registerPasskeyHere": "Set up a passkey on this node",
         "credentialsRequired": "Enter your username and password.",
         "totpRequired": "Enter your authenticator code.",
-        "allNodesFailed": "Sign-in failed on every node.",
-        "nodeListFailed": "Could not load the node list. Try again.",
-        "willSignIn": "Signing in to:"
+        "nodeListFailed": "Could not load the node list. Try again."
       },
       "node": {
         "loginToThisNode": "Sign in",
         "loggingIn": "Signing in…",
-        "retryLogin": "Try again"
+        "retryLogin": "Try again",
+        "signInRequired": "Sign in to this node to continue.",
+        "backToLocal": "Back to this machine"
       },
       "errors": {
         "NO_SESSION_KEY": "Your session ended. Sign in again.",
@@ -1087,7 +1085,8 @@
         "TOTP_CODE_REQUIRED": "Enter the 6-digit code.",
         "ROOT_KEY_MISMATCH": "Wrong password.",
         "PASSKEY_ABORTED": "Passkey sign-in was cancelled.",
-        "NO_PASSKEY_FOR_ORIGIN": "No passkey works on this address. Your passkeys were created on a different one."
+        "NO_PASSKEY_FOR_ORIGIN": "No passkey works on this address. Your passkeys were created on a different one.",
+        "wrongPassword": "Wrong password."
       },
       "security": {
         "title": "Account security",
@@ -1516,6 +1515,21 @@
           "withDetail": "{{base}} ({{detail}})",
           "unknown": "Something went wrong: {{message}}"
         }
+      }
+    },
+    "devices": {
+      "nodes": {
+        "status": {
+          "online": "Online",
+          "offline": "Offline",
+          "signedOut": "Not signed in",
+          "hub": "Hub"
+        },
+        "version": "Version {{version}}",
+        "signInToManage": "Sign in to manage devices on this node.",
+        "lastKnownDevices": "Last known devices",
+        "noKnownDevices": "No devices were known when this node was last online.",
+        "addDevice": "Add a device on {{name}}"
       }
     }
   }

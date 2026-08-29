@@ -1,6 +1,11 @@
 import { afterEach, describe, expect, test } from 'bun:test';
+import {
+  getMeshNodesState,
+  resetMeshNodesStateForTest,
+  setMeshNodesStateForTest,
+} from '@/node/mesh-nodes';
 import { ApiClient } from '@tmex/api-client';
-import { AuthApi } from '@tmex/api-client/auth/index';
+import { AuthApi, type MeshNode } from '@tmex/api-client/auth/index';
 import {
   decodeBase64url,
   decodeDelegation,
@@ -12,12 +17,14 @@ import {
 } from '@tmex/shared/auth';
 import {
   clearSessionKey,
+  ensureNodeLogin,
   establishSessionFromPasskey,
   establishSessionFromSeed,
   getSessionKey,
   hasSessionKey,
-  loginToAllReachable,
+  loginSelf,
   loginToNode,
+  resetNodeLoginsForTest,
   selectPasskeyCredential,
 } from './session-key-store';
 
@@ -26,8 +33,6 @@ const UID = 'alice';
 const ENTRY = '0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e';
 const NODE_A = '0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a';
 const NODE_B = '0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b';
-const NODE_OFF = '0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f';
-const NODE_DONE = '0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d';
 const NODE_UNKNOWN = '0909090909090909090909090909090c';
 
 function fill(length: number, value: number): Uint8Array {
@@ -126,6 +131,20 @@ function mockApi(options: {
   return { api: new AuthApi(client), captured };
 }
 
+function meshRow(id: string, publicKey: Uint8Array): MeshNode {
+  return {
+    id,
+    name: id,
+    publicKey: encodeBase64url(publicKey),
+    online: true,
+    reach: 'lan',
+    version: null,
+    direct_capable: false,
+    inventory: null,
+    loggedIn: false,
+  };
+}
+
 function establishRoot(opts: { hasTotp?: boolean; totpCode?: string } = {}) {
   return establishSessionFromSeed(new Uint8Array(ROOT_SEED), {
     uid: UID,
@@ -138,6 +157,8 @@ function establishRoot(opts: { hasTotp?: boolean; totpCode?: string } = {}) {
 
 afterEach(() => {
   clearSessionKey();
+  resetNodeLoginsForTest();
+  resetMeshNodesStateForTest();
 });
 
 describe('establishSessionFromSeed', () => {
@@ -243,64 +264,107 @@ describe('TOTP 只在 method=root 且用户开了 TOTP 时下发', () => {
   });
 });
 
-describe('loginToAllReachable', () => {
-  test('先登录 self，再用新会话拉 /api/mesh/nodes 并对其余在线 node 并行登录', async () => {
+describe('loginSelf', () => {
+  test('只登录 self，随后拉一次 mesh 列表核对本机公钥——不再对其余 node fan-out', async () => {
     establishRoot();
     const { api, captured } = mockApi({
       nodes: [
         { id: NODE_A, publicKey: NODE_A_PK },
         { id: NODE_B, publicKey: NODE_B_PK },
-        { id: NODE_OFF, publicKey: NODE_A_PK, online: false },
-        { id: NODE_DONE, publicKey: NODE_A_PK, loggedIn: true },
       ],
-      loginStatus: (nodeId) => (nodeId === NODE_B ? 401 : 200),
     });
 
-    const outcome = await loginToAllReachable({ api });
-    expect(outcome.anyOk).toBe(true);
-    expect(outcome.listFailed).toBe(false);
-    // self 一定排在最前面：它是拿到 `/api/mesh/nodes` 的前提。
-    expect(outcome.rows[0]).toMatchObject({ nodeId: 'self', status: 'ok' });
-    expect(captured.challengeCalls[0]).toBe('self');
-    expect(outcome.rows.map((row) => row.nodeId).sort()).toEqual([NODE_A, NODE_B, 'self'].sort());
-    expect(outcome.rows.find((row) => row.nodeId === NODE_A)?.status).toBe('ok');
-    expect(outcome.rows.find((row) => row.nodeId === NODE_B)).toMatchObject({
-      status: 'error',
-      code: 'BAD_SIGNATURE',
-    });
+    expect(await loginSelf({ api })).toEqual({ ok: true });
+    expect(captured.loginCalls.map((row) => row.nodeId)).toEqual(['self']);
+    expect(captured.challengeCalls).toEqual(['self']);
+    expect(captured.meshListCalls).toBe(1);
   });
 
-  test('self 登录失败时不拉 mesh 列表，anyOk=false', async () => {
+  test('self 登录失败时原样返回后端的码，且不拉 mesh 列表', async () => {
     establishRoot();
     const { api, captured } = mockApi({ loginStatus: () => 401 });
-    const outcome = await loginToAllReachable({ api });
-    expect(outcome.anyOk).toBe(false);
-    expect(outcome.listFailed).toBe(false);
+    expect(await loginSelf({ api })).toEqual({ ok: false, code: 'BAD_SIGNATURE' });
     expect(captured.meshListCalls).toBe(0);
   });
 
-  test('mesh 列表拉取失败与「没有其它目标」区分：listFailed=true', async () => {
+  test('mesh 列表拉不到 → NODE_LIST_FAILED（不能当成登录完成）', async () => {
     establishRoot();
     const { api } = mockApi({ meshListStatus: 500 });
-    const outcome = await loginToAllReachable({ api });
-    expect(outcome.anyOk).toBe(true);
-    expect(outcome.listFailed).toBe(true);
+    expect(await loginSelf({ api })).toEqual({ ok: false, code: 'NODE_LIST_FAILED' });
   });
 
   test('entry 公钥被掉包时清掉会话钥并报 NODE_PK_MISMATCH', async () => {
     establishRoot();
     const { api } = mockApi({ entryPkInList: fill(32, 0x77) });
-    const outcome = await loginToAllReachable({ api });
-    expect(outcome.anyOk).toBe(false);
-    expect(outcome.rows[0]).toMatchObject({ nodeId: 'self', code: 'NODE_PK_MISMATCH' });
+    expect(await loginSelf({ api })).toEqual({ ok: false, code: 'NODE_PK_MISMATCH' });
     expect(getSessionKey()).toBeNull();
   });
 
-  test('fan-out 结束后一次性 TOTP 码被清掉', async () => {
+  test('一次性 TOTP 码用完即清：后续按需登录只能回登录页重新输码', async () => {
     establishRoot({ hasTotp: true, totpCode: '654321' });
     const { api } = mockApi({});
-    await loginToAllReachable({ api });
+    expect(await loginSelf({ api })).toEqual({ ok: true });
     expect(await loginToNode(NODE_A, { api })).toEqual({ ok: false, code: 'TOTP_REQUIRED' });
+  });
+
+  test('成功后把 mesh store 里 entry 那一行标成已登录', async () => {
+    establishRoot();
+    setMeshNodesStateForTest({
+      entryNodeId: ENTRY,
+      nodes: [meshRow(ENTRY, ENTRY_PK), meshRow(NODE_A, NODE_A_PK)],
+    });
+    const { api } = mockApi({});
+    await loginSelf({ api });
+    expect(getMeshNodesState().nodes.find((node) => node.id === ENTRY)?.loggedIn).toBe(true);
+    expect(getMeshNodesState().nodes.find((node) => node.id === NODE_A)?.loggedIn).toBe(false);
+  });
+});
+
+describe('ensureNodeLogin', () => {
+  test('并发调用共享同一次登录请求（单飞）', async () => {
+    establishRoot();
+    const { api, captured } = mockApi({ nodes: [{ id: NODE_A, publicKey: NODE_A_PK }] });
+    const [first, second] = await Promise.all([
+      ensureNodeLogin(NODE_A, { api, node: meshRow(NODE_A, NODE_A_PK) }),
+      ensureNodeLogin(NODE_A, { api, node: meshRow(NODE_A, NODE_A_PK) }),
+    ]);
+    expect(first).toEqual({ ok: true });
+    expect(second).toEqual({ ok: true });
+    expect(captured.loginCalls).toHaveLength(1);
+  });
+
+  test('成功后把该 node 在 mesh store 里标成已登录', async () => {
+    establishRoot();
+    setMeshNodesStateForTest({
+      entryNodeId: ENTRY,
+      nodes: [meshRow(ENTRY, ENTRY_PK), meshRow(NODE_A, NODE_A_PK)],
+    });
+    const { api } = mockApi({ nodes: [{ id: NODE_A, publicKey: NODE_A_PK }] });
+    expect(await ensureNodeLogin(NODE_A, { api, node: meshRow(NODE_A, NODE_A_PK) })).toEqual({
+      ok: true,
+    });
+    expect(getMeshNodesState().nodes.find((node) => node.id === NODE_A)?.loggedIn).toBe(true);
+  });
+
+  test('失败不标已登录，并把码交给调用方', async () => {
+    establishRoot();
+    setMeshNodesStateForTest({ entryNodeId: ENTRY, nodes: [meshRow(NODE_A, NODE_A_PK)] });
+    const { api } = mockApi({
+      nodes: [{ id: NODE_A, publicKey: NODE_A_PK }],
+      loginStatus: () => 401,
+    });
+    expect(await ensureNodeLogin(NODE_A, { api, node: meshRow(NODE_A, NODE_A_PK) })).toEqual({
+      ok: false,
+      code: 'BAD_SIGNATURE',
+    });
+    expect(getMeshNodesState().nodes.find((node) => node.id === NODE_A)?.loggedIn).toBe(false);
+  });
+
+  test('会话钥不在内存里时立刻返回 NO_SESSION_KEY，一个请求都不发', async () => {
+    clearSessionKey();
+    const { api, captured } = mockApi({});
+    expect(await ensureNodeLogin(NODE_A, { api })).toEqual({ ok: false, code: 'NO_SESSION_KEY' });
+    expect(captured.challengeCalls).toHaveLength(0);
   });
 });
 

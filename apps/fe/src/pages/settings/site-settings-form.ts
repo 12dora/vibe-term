@@ -1,4 +1,9 @@
-import type { LocaleCode, SiteSettings, UpdateSiteSettingsRequest } from '@tmex/shared';
+import {
+  type LocaleCode,
+  PRODUCT_NAME,
+  type SiteSettings,
+  type UpdateSiteSettingsRequest,
+} from '@tmex/shared';
 
 export interface SiteSettingsDraft {
   siteName: string;
@@ -14,7 +19,7 @@ export interface SiteSettingsDraft {
   sshReconnectDelaySeconds: number;
 }
 
-const DEFAULT_SITE_NAME = 'tmex';
+const DEFAULT_SITE_NAME = PRODUCT_NAME;
 const DEFAULT_LANGUAGE: LocaleCode = 'en_US';
 const DEFAULT_BELL_THROTTLE_SECONDS = 6;
 const DEFAULT_NOTIFICATION_THROTTLE_SECONDS = 3;

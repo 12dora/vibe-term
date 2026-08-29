@@ -1,22 +1,13 @@
-// 会话钥 / 登录进度 / auth mode 的 React 绑定。
+// 会话钥 / auth mode 的 React 绑定。
 
 import type { AuthApi, AuthModeResponse } from '@tmex/api-client/auth/index';
 import { defaultAuthApi } from '@tmex/api-client/auth/index';
 import { useCallback, useEffect, useState, useSyncExternalStore } from 'react';
-import type { NodeLoginProgress, SessionKeyInfo } from './session-key-store';
-import {
-  getLoginProgress,
-  getSessionKeySnapshot,
-  subscribeLoginProgress,
-  subscribeSessionKey,
-} from './session-key-store';
+import type { SessionKeyInfo } from './session-key-store';
+import { getSessionKeySnapshot, subscribeSessionKey } from './session-key-store';
 
 export function useSessionKey(): SessionKeyInfo | null {
   return useSyncExternalStore(subscribeSessionKey, getSessionKeySnapshot, getSessionKeySnapshot);
-}
-
-export function useLoginProgress(): NodeLoginProgress[] {
-  return useSyncExternalStore(subscribeLoginProgress, getLoginProgress, getLoginProgress);
 }
 
 export interface AuthModeState {

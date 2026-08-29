@@ -1039,7 +1039,6 @@ export const I18N_RESOURCES = {
     "auth": {
       "login": {
         "title": "Sign in",
-        "subtitle": "One sign-in covers every node you can reach.",
         "username": "Username",
         "password": "Password",
         "totp": "Authenticator code",
@@ -1047,17 +1046,16 @@ export const I18N_RESOURCES = {
         "deriving": "Preparing…",
         "signingIn": "Signing in…",
         "usePasskey": "Use a passkey",
-        "registerPasskeyHere": "Set up a passkey on this node",
         "credentialsRequired": "Enter your username and password.",
         "totpRequired": "Enter your authenticator code.",
-        "allNodesFailed": "Sign-in failed on every node.",
-        "nodeListFailed": "Could not load the node list. Try again.",
-        "willSignIn": "Signing in to:"
+        "nodeListFailed": "Could not load the node list. Try again."
       },
       "node": {
         "loginToThisNode": "Sign in",
         "loggingIn": "Signing in…",
-        "retryLogin": "Try again"
+        "retryLogin": "Try again",
+        "signInRequired": "Sign in to this node to continue.",
+        "backToLocal": "Back to this machine"
       },
       "errors": {
         "NO_SESSION_KEY": "Your session ended. Sign in again.",
@@ -1093,7 +1091,8 @@ export const I18N_RESOURCES = {
         "TOTP_CODE_REQUIRED": "Enter the 6-digit code.",
         "ROOT_KEY_MISMATCH": "Wrong password.",
         "PASSKEY_ABORTED": "Passkey sign-in was cancelled.",
-        "NO_PASSKEY_FOR_ORIGIN": "No passkey works on this address. Your passkeys were created on a different one."
+        "NO_PASSKEY_FOR_ORIGIN": "No passkey works on this address. Your passkeys were created on a different one.",
+        "wrongPassword": "Wrong password."
       },
       "security": {
         "title": "Account security",
@@ -1522,6 +1521,21 @@ export const I18N_RESOURCES = {
           "withDetail": "{{base}} ({{detail}})",
           "unknown": "Something went wrong: {{message}}"
         }
+      }
+    },
+    "devices": {
+      "nodes": {
+        "status": {
+          "online": "Online",
+          "offline": "Offline",
+          "signedOut": "Not signed in",
+          "hub": "Hub"
+        },
+        "version": "Version {{version}}",
+        "signInToManage": "Sign in to manage devices on this node.",
+        "lastKnownDevices": "Last known devices",
+        "noKnownDevices": "No devices were known when this node was last online.",
+        "addDevice": "Add a device on {{name}}"
       }
     }
   }
@@ -2561,7 +2575,6 @@ export const I18N_RESOURCES = {
     "auth": {
       "login": {
         "title": "登录",
-        "subtitle": "一次登录即可访问所有可达节点。",
         "username": "用户名",
         "password": "密码",
         "totp": "验证码（TOTP）",
@@ -2569,17 +2582,16 @@ export const I18N_RESOURCES = {
         "deriving": "准备中…",
         "signingIn": "正在登录…",
         "usePasskey": "使用通行密钥",
-        "registerPasskeyHere": "在本节点设置通行密钥",
         "credentialsRequired": "请输入用户名和密码。",
         "totpRequired": "请输入验证码。",
-        "allNodesFailed": "所有节点均登录失败。",
-        "nodeListFailed": "节点列表加载失败，请重试。",
-        "willSignIn": "将登录以下节点："
+        "nodeListFailed": "节点列表加载失败，请重试。"
       },
       "node": {
         "loginToThisNode": "登录该节点",
         "loggingIn": "登录中…",
-        "retryLogin": "重试登录"
+        "retryLogin": "重试登录",
+        "signInRequired": "需要登录该节点才能继续。",
+        "backToLocal": "返回本机"
       },
       "errors": {
         "NO_SESSION_KEY": "会话已结束，请重新登录。",
@@ -2615,7 +2627,8 @@ export const I18N_RESOURCES = {
         "TOTP_CODE_REQUIRED": "请输入 6 位验证码。",
         "ROOT_KEY_MISMATCH": "密码不正确。",
         "PASSKEY_ABORTED": "通行密钥授权已取消。",
-        "NO_PASSKEY_FOR_ORIGIN": "当前地址没有可用的通行密钥，已注册的通行密钥属于其他地址。"
+        "NO_PASSKEY_FOR_ORIGIN": "当前地址没有可用的通行密钥，已注册的通行密钥属于其他地址。",
+        "wrongPassword": "密码不正确。"
       },
       "security": {
         "title": "账号安全",
@@ -3044,6 +3057,21 @@ export const I18N_RESOURCES = {
           "withDetail": "{{base}}（{{detail}}）",
           "unknown": "出错了：{{message}}"
         }
+      }
+    },
+    "devices": {
+      "nodes": {
+        "status": {
+          "online": "在线",
+          "offline": "离线",
+          "signedOut": "未登录",
+          "hub": "Hub"
+        },
+        "version": "版本 {{version}}",
+        "signInToManage": "登录该节点后才能管理它的设备。",
+        "lastKnownDevices": "最近一次已知的设备",
+        "noKnownDevices": "该节点最近一次在线时没有已知设备。",
+        "addDevice": "在 {{name}} 上添加设备"
       }
     }
   }
@@ -4083,7 +4111,6 @@ export const I18N_RESOURCES = {
     "auth": {
       "login": {
         "title": "サインイン",
-        "subtitle": "一度のサインインで、到達できるすべてのノードにアクセスできます。",
         "username": "ユーザー名",
         "password": "パスワード",
         "totp": "認証アプリのコード",
@@ -4091,17 +4118,16 @@ export const I18N_RESOURCES = {
         "deriving": "準備しています…",
         "signingIn": "サインインしています…",
         "usePasskey": "パスキーを使う",
-        "registerPasskeyHere": "このノードでパスキーを設定",
         "credentialsRequired": "ユーザー名とパスワードを入力してください。",
         "totpRequired": "認証アプリのコードを入力してください。",
-        "allNodesFailed": "すべてのノードでサインインに失敗しました。",
-        "nodeListFailed": "ノード一覧を読み込めませんでした。もう一度お試しください。",
-        "willSignIn": "サインイン先："
+        "nodeListFailed": "ノード一覧を読み込めませんでした。もう一度お試しください。"
       },
       "node": {
         "loginToThisNode": "このノードにサインイン",
         "loggingIn": "サインインしています…",
-        "retryLogin": "再試行"
+        "retryLogin": "再試行",
+        "signInRequired": "続行するには、このノードにサインインしてください。",
+        "backToLocal": "このマシンに戻る"
       },
       "errors": {
         "NO_SESSION_KEY": "セッションが終了しました。もう一度サインインしてください。",
@@ -4137,7 +4163,8 @@ export const I18N_RESOURCES = {
         "TOTP_CODE_REQUIRED": "6 桁のコードを入力してください。",
         "ROOT_KEY_MISMATCH": "パスワードが正しくありません。",
         "PASSKEY_ABORTED": "パスキーの操作がキャンセルされました。",
-        "NO_PASSKEY_FOR_ORIGIN": "このアドレスで使えるパスキーがありません。登録済みのパスキーは別のアドレスのものです。"
+        "NO_PASSKEY_FOR_ORIGIN": "このアドレスで使えるパスキーがありません。登録済みのパスキーは別のアドレスのものです。",
+        "wrongPassword": "パスワードが正しくありません。"
       },
       "security": {
         "title": "アカウントセキュリティ",
@@ -4566,6 +4593,21 @@ export const I18N_RESOURCES = {
           "withDetail": "{{base}}（{{detail}}）",
           "unknown": "エラーが発生しました：{{message}}"
         }
+      }
+    },
+    "devices": {
+      "nodes": {
+        "status": {
+          "online": "オンライン",
+          "offline": "オフライン",
+          "signedOut": "未サインイン",
+          "hub": "ハブ"
+        },
+        "version": "バージョン {{version}}",
+        "signInToManage": "このノードのデバイスを管理するにはサインインしてください。",
+        "lastKnownDevices": "最後に確認されたデバイス",
+        "noKnownDevices": "このノードが最後にオンラインだったとき、既知のデバイスはありませんでした。",
+        "addDevice": "{{name}} にデバイスを追加"
       }
     }
   }

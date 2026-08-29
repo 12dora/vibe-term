@@ -9,16 +9,19 @@ export interface DeviceManagementActionsProps {
   onAddDevice?: () => void;
 }
 
+/** 有显式回调就走回调；否则派发全局事件（单面板宿主的既有行为）。 */
+export function requestAddDevice(onAddDevice?: () => void): void {
+  if (onAddDevice) {
+    onAddDevice();
+    return;
+  }
+  window.dispatchEvent(new CustomEvent(OPEN_ADD_DEVICE_EVENT));
+}
+
 export function DeviceManagementActions({ onAddDevice }: DeviceManagementActionsProps) {
   const { t } = useTranslation();
 
-  const handleAdd = () => {
-    if (onAddDevice) {
-      onAddDevice();
-      return;
-    }
-    window.dispatchEvent(new CustomEvent(OPEN_ADD_DEVICE_EVENT));
-  };
+  const handleAdd = () => requestAddDevice(onAddDevice);
 
   return (
     <Button

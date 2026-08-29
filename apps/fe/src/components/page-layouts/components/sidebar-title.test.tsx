@@ -20,6 +20,7 @@ const { RuntimeProvider } = await import('@tmex/stores/react');
 const { SidebarProvider } = await import('@tmex/ui/sidebar');
 const { resetMeshNodesStateForTest, setMeshNodesStateForTest } = await import('@/node/mesh-nodes');
 const { appNodeRuntimes } = await import('../../../node/node-runtimes');
+const { BRAND_LOGO_SRC, PRODUCT_NAME } = await import('../../brand');
 const { SidebarTitle } = await import('./sidebar-title');
 
 const MESH_MODE: AuthModeResponse = {
@@ -48,6 +49,14 @@ function render(mode: AuthModeResponse | null): string {
 }
 
 describe('SidebarTitle', () => {
+  test('渲染品牌块（logo + 站点名），链接回首页', () => {
+    const html = render(MESH_MODE);
+    expect(html).toContain('data-testid="brand"');
+    expect(html).toContain(`src="${BRAND_LOGO_SRC}"`);
+    expect(html).toContain(`>${PRODUCT_NAME}<`);
+    expect(html).toContain('href="/"');
+  });
+
   test('mesh 模式渲染节点入口，指向 /nodes', () => {
     const html = render(MESH_MODE);
     expect(html).toContain('data-testid="sidebar-nodes"');

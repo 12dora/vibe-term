@@ -2,6 +2,8 @@
 // 不再硬读默认 runtime——由当前活跃的 node 边界注册自己的 site 设置读取器，
 // 未注册时退回内置缺省值，多 runtime 下不会串到 entry 的站点信息。
 
+import { PRODUCT_NAME } from '@tmex/shared';
+
 export interface SiteFallbackSnapshot {
   siteName?: string | null;
   siteUrl?: string | null;
@@ -21,7 +23,7 @@ export function setSiteFallbackReader(fn: SiteFallbackReader | null): () => void
 }
 
 export function getSiteNameFallback(): string {
-  return reader?.()?.siteName || 'tmex';
+  return reader?.()?.siteName || PRODUCT_NAME;
 }
 
 export function getSiteUrlFallback(): string {

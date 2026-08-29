@@ -1,7 +1,7 @@
 // 控制台的副作用集合：输入模式切换/跳转事件的回到底部、设备错误提示、浏览器标题。
 
 import { useBellStore } from '@tmex/notifications';
-import type { TmuxPane, TmuxWindow } from '@tmex/shared';
+import { PRODUCT_NAME, type TmuxPane, type TmuxWindow } from '@tmex/shared';
 import { buildBrowserTitle, buildTerminalLabel } from '@tmex/stores';
 import { useSiteStore } from '@tmex/stores/react';
 import type { TerminalRef } from '@tmex/terminal-ui';
@@ -70,7 +70,7 @@ export function useDeviceConsoleEffects({
   terminalRef,
   formatBrowserTitle,
 }: UseDeviceConsoleEffectsOptions) {
-  const siteName = useSiteStore((state) => state.settings?.siteName ?? 'tmex');
+  const siteName = useSiteStore((state) => state.settings?.siteName ?? PRODUCT_NAME);
   const terminalLabel = useTerminalLabel({ deviceId, deviceName, selectedWindow, selectedPane });
 
   useEffect(() => {

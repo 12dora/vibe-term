@@ -37,6 +37,19 @@ export interface DeviceManagementPanelHandle {
   openAddDevice(): void;
 }
 
+/**
+ * 全局「添加设备」事件的订阅；`enabled` 为 false 时**不注册任何监听**，
+ * 供聚合宿主（每个 node 一个面板）避免一次事件同时弹开所有面板的对话框。
+ */
+export function subscribeOpenAddDevice(
+  enabled: boolean,
+  onOpen: () => void
+): (() => void) | undefined {
+  if (!enabled) return undefined;
+  window.addEventListener(OPEN_ADD_DEVICE_EVENT, onOpen);
+  return () => window.removeEventListener(OPEN_ADD_DEVICE_EVENT, onOpen);
+}
+
 export interface DeviceManagementPanelProps {
   /** 设备列表查询 key；多实例宿主按 gateway 区分，缺省与既有共享缓存一致 */
   devicesQueryKey?: readonly unknown[];
@@ -62,12 +75,10 @@ export function DeviceManagementPanel({
 
   useImperativeHandle(ref, () => ({ openAddDevice: () => setShowAddModal(true) }), []);
 
-  useEffect(() => {
-    if (!listenOpenAddDeviceEvent) return;
-    const handleOpenAddDevice = () => setShowAddModal(true);
-    window.addEventListener(OPEN_ADD_DEVICE_EVENT, handleOpenAddDevice);
-    return () => window.removeEventListener(OPEN_ADD_DEVICE_EVENT, handleOpenAddDevice);
-  }, [listenOpenAddDeviceEvent]);
+  useEffect(
+    () => subscribeOpenAddDevice(listenOpenAddDeviceEvent, () => setShowAddModal(true)),
+    [listenOpenAddDeviceEvent]
+  );
 
   const { data, isLoading, isError } = useQuery({
     queryKey: devicesQueryKey,

@@ -1,5 +1,5 @@
 import { FeatureSet, fetchCapabilities, fetchSiteSettings } from '@tmex/api-client';
-import { DEFAULT_LOCALE, type SiteSettings, type ThemeMode } from '@tmex/shared';
+import { DEFAULT_LOCALE, PRODUCT_NAME, type SiteSettings, type ThemeMode } from '@tmex/shared';
 import { THEME_PRESET_META, type ThemeAppearance, type ThemePreset } from '@tmex/theme';
 import { buildSiteThemeUpdate } from '@tmex/ws-client';
 import i18next from 'i18next';
@@ -30,7 +30,7 @@ export interface SiteState {
 }
 
 const DEFAULT_SETTINGS: SiteSettings = {
-  siteName: 'tmex',
+  siteName: PRODUCT_NAME,
   siteUrl: typeof window !== 'undefined' ? window.location.origin : 'http://localhost:9663',
   bellThrottleSeconds: 6,
   notificationThrottleSeconds: 3,

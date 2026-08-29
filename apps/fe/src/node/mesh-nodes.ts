@@ -267,6 +267,22 @@ export async function refreshMeshNodes(api: AuthApi = defaultAuthApi): Promise<v
   return inFlight;
 }
 
+/**
+ * 某台 node 登录成功后就地把它标成已登录，不必等下一次 `/api/mesh/nodes` 轮询。
+ * `self` 按 entry 自身的 nodeId 解析；列表里没有这一行时什么都不做。
+ */
+export function markLoggedIn(nodeId: string): void {
+  const target = nodeId === SELF_NODE_ID ? state.entryNodeId : nodeId;
+  if (!target) return;
+  let changed = false;
+  const next = state.nodes.map((node) => {
+    if (node.id !== target || node.loggedIn) return node;
+    changed = true;
+    return { ...node, loggedIn: true };
+  });
+  if (changed) setState({ nodes: next });
+}
+
 export function setEntryNodeId(nodeId: string | null): void {
   if (state.entryNodeId === nodeId) return;
   setState({ entryNodeId: nodeId });

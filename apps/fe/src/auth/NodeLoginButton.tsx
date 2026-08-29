@@ -6,7 +6,7 @@ import { Loader2, LogIn } from 'lucide-react';
 import { useCallback, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useLocation, useNavigate } from 'react-router';
-import { type LoginFailureCode, hasSessionKey, loginToNode } from './session-key-store';
+import { type LoginFailureCode, ensureNodeLogin, hasSessionKey } from './session-key-store';
 
 export interface NodeLoginButtonProps {
   nodeId: string;
@@ -41,7 +41,7 @@ export function NodeLoginButton({
       return;
     }
     setState({ status: 'pending' });
-    const result = await loginToNode(nodeId);
+    const result = await ensureNodeLogin(nodeId);
     if (result.ok) {
       setState({ status: 'ok' });
       onLoggedIn?.(nodeId);

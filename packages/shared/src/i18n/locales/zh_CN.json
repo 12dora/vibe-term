@@ -1033,7 +1033,6 @@
     "auth": {
       "login": {
         "title": "登录",
-        "subtitle": "一次登录即可访问所有可达节点。",
         "username": "用户名",
         "password": "密码",
         "totp": "验证码（TOTP）",
@@ -1041,17 +1040,16 @@
         "deriving": "准备中…",
         "signingIn": "正在登录…",
         "usePasskey": "使用通行密钥",
-        "registerPasskeyHere": "在本节点设置通行密钥",
         "credentialsRequired": "请输入用户名和密码。",
         "totpRequired": "请输入验证码。",
-        "allNodesFailed": "所有节点均登录失败。",
-        "nodeListFailed": "节点列表加载失败，请重试。",
-        "willSignIn": "将登录以下节点："
+        "nodeListFailed": "节点列表加载失败，请重试。"
       },
       "node": {
         "loginToThisNode": "登录该节点",
         "loggingIn": "登录中…",
-        "retryLogin": "重试登录"
+        "retryLogin": "重试登录",
+        "signInRequired": "需要登录该节点才能继续。",
+        "backToLocal": "返回本机"
       },
       "errors": {
         "NO_SESSION_KEY": "会话已结束，请重新登录。",
@@ -1087,7 +1085,8 @@
         "TOTP_CODE_REQUIRED": "请输入 6 位验证码。",
         "ROOT_KEY_MISMATCH": "密码不正确。",
         "PASSKEY_ABORTED": "通行密钥授权已取消。",
-        "NO_PASSKEY_FOR_ORIGIN": "当前地址没有可用的通行密钥，已注册的通行密钥属于其他地址。"
+        "NO_PASSKEY_FOR_ORIGIN": "当前地址没有可用的通行密钥，已注册的通行密钥属于其他地址。",
+        "wrongPassword": "密码不正确。"
       },
       "security": {
         "title": "账号安全",
@@ -1516,6 +1515,21 @@
           "withDetail": "{{base}}（{{detail}}）",
           "unknown": "出错了：{{message}}"
         }
+      }
+    },
+    "devices": {
+      "nodes": {
+        "status": {
+          "online": "在线",
+          "offline": "离线",
+          "signedOut": "未登录",
+          "hub": "Hub"
+        },
+        "version": "版本 {{version}}",
+        "signInToManage": "登录该节点后才能管理它的设备。",
+        "lastKnownDevices": "最近一次已知的设备",
+        "noKnownDevices": "该节点最近一次在线时没有已知设备。",
+        "addDevice": "在 {{name}} 上添加设备"
       }
     }
   }

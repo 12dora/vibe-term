@@ -1033,7 +1033,6 @@
     "auth": {
       "login": {
         "title": "サインイン",
-        "subtitle": "一度のサインインで、到達できるすべてのノードにアクセスできます。",
         "username": "ユーザー名",
         "password": "パスワード",
         "totp": "認証アプリのコード",
@@ -1041,17 +1040,16 @@
         "deriving": "準備しています…",
         "signingIn": "サインインしています…",
         "usePasskey": "パスキーを使う",
-        "registerPasskeyHere": "このノードでパスキーを設定",
         "credentialsRequired": "ユーザー名とパスワードを入力してください。",
         "totpRequired": "認証アプリのコードを入力してください。",
-        "allNodesFailed": "すべてのノードでサインインに失敗しました。",
-        "nodeListFailed": "ノード一覧を読み込めませんでした。もう一度お試しください。",
-        "willSignIn": "サインイン先："
+        "nodeListFailed": "ノード一覧を読み込めませんでした。もう一度お試しください。"
       },
       "node": {
         "loginToThisNode": "このノードにサインイン",
         "loggingIn": "サインインしています…",
-        "retryLogin": "再試行"
+        "retryLogin": "再試行",
+        "signInRequired": "続行するには、このノードにサインインしてください。",
+        "backToLocal": "このマシンに戻る"
       },
       "errors": {
         "NO_SESSION_KEY": "セッションが終了しました。もう一度サインインしてください。",
@@ -1087,7 +1085,8 @@
         "TOTP_CODE_REQUIRED": "6 桁のコードを入力してください。",
         "ROOT_KEY_MISMATCH": "パスワードが正しくありません。",
         "PASSKEY_ABORTED": "パスキーの操作がキャンセルされました。",
-        "NO_PASSKEY_FOR_ORIGIN": "このアドレスで使えるパスキーがありません。登録済みのパスキーは別のアドレスのものです。"
+        "NO_PASSKEY_FOR_ORIGIN": "このアドレスで使えるパスキーがありません。登録済みのパスキーは別のアドレスのものです。",
+        "wrongPassword": "パスワードが正しくありません。"
       },
       "security": {
         "title": "アカウントセキュリティ",
@@ -1516,6 +1515,21 @@
           "withDetail": "{{base}}（{{detail}}）",
           "unknown": "エラーが発生しました：{{message}}"
         }
+      }
+    },
+    "devices": {
+      "nodes": {
+        "status": {
+          "online": "オンライン",
+          "offline": "オフライン",
+          "signedOut": "未サインイン",
+          "hub": "ハブ"
+        },
+        "version": "バージョン {{version}}",
+        "signInToManage": "このノードのデバイスを管理するにはサインインしてください。",
+        "lastKnownDevices": "最後に確認されたデバイス",
+        "noKnownDevices": "このノードが最後にオンラインだったとき、既知のデバイスはありませんでした。",
+        "addDevice": "{{name}} にデバイスを追加"
       }
     }
   }

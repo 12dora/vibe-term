@@ -6,6 +6,7 @@
 //   * sk_sess 只能签 login，不得签任何 user_key_log 记录。
 //   * TOTP 只在 delegation.method === 'root' 且用户开了 TOTP 时随登录下发。
 
+import { markLoggedIn } from '@/node/mesh-nodes';
 import { SELF_NODE_ID } from '@tmex/api-client';
 import type {
   AuthApi,
@@ -64,48 +65,28 @@ export type LoginFailureCode =
   | 'NODE_PK_MISMATCH'
   | 'TOTP_REQUIRED'
   | 'NETWORK_ERROR'
+  /** entry 已登录，但随后的 `/api/mesh/nodes` 拉不到——会话没法核对，不能当成登录完成。 */
+  | 'NODE_LIST_FAILED'
   | (string & {});
 
 export type LoginNodeResult = { ok: true } | { ok: false; code: LoginFailureCode };
-
-export type NodeLoginStatus = 'idle' | 'pending' | 'ok' | 'error';
-
-export interface NodeLoginProgress {
-  nodeId: string;
-  nodeName: string;
-  status: NodeLoginStatus;
-  code?: LoginFailureCode;
-}
 
 // ---------------------------------------------------------------------------
 // 状态
 // ---------------------------------------------------------------------------
 
 let current: SessionKeySecrets | null = null;
-let progress: NodeLoginProgress[] = [];
 
 const stateListeners = new Set<() => void>();
-const progressListeners = new Set<() => void>();
 
 function notifyState(): void {
   for (const listener of [...stateListeners]) listener();
-}
-
-function notifyProgress(): void {
-  for (const listener of [...progressListeners]) listener();
 }
 
 export function subscribeSessionKey(listener: () => void): () => void {
   stateListeners.add(listener);
   return () => {
     stateListeners.delete(listener);
-  };
-}
-
-export function subscribeLoginProgress(listener: () => void): () => void {
-  progressListeners.add(listener);
-  return () => {
-    progressListeners.delete(listener);
   };
 }
 
@@ -127,10 +108,6 @@ export function getSessionKey(): SessionKeyInfo | null {
 
 export function hasSessionKey(): boolean {
   return getSessionKey() !== null;
-}
-
-export function getLoginProgress(): NodeLoginProgress[] {
-  return progress;
 }
 
 function wipe(bytes: Uint8Array | null | undefined): void {
@@ -504,57 +481,29 @@ export async function loginToNode(
   }
 }
 
-function setProgress(next: NodeLoginProgress[]): void {
-  progress = next;
-  notifyProgress();
-}
+// ---------------------------------------------------------------------------
+// entry 自身登录 + 按需的单 node 登录
+// ---------------------------------------------------------------------------
 
-function patchProgress(nodeId: string, patch: Partial<NodeLoginProgress>): void {
-  setProgress(progress.map((row) => (row.nodeId === nodeId ? { ...row, ...patch } : row)));
-}
-
-export interface FanOutOptions {
+export interface LoginSelfOptions {
   api?: AuthApi;
-  /** 已登录的 node 是否跳过，默认跳过。 */
-  skipLoggedIn?: boolean;
-  /** entry 自身在列表里的显示名（`/api/auth/nodes` 或 mode 提供）。 */
-  entryName?: string;
-}
-
-export interface FanOutResult {
-  rows: NodeLoginProgress[];
-  /** 至少有一台 node 登录成功（entry 自身也算）。只有为真才允许跳到 `next`。 */
-  anyOk: boolean;
-  /**
-   * `/api/mesh/nodes` 拉取失败。**与「没有其它目标」是两回事**：
-   * 列表失败时后续受保护请求还会 401，不能当成登录完成（见 F4-1 评审 Minor）。
-   */
-  listFailed: boolean;
 }
 
 /**
- * 设计 §2「登录页体验」的 fan-out：
+ * 只登录 entry 自身（`self`），登录成功即可进入本机 UI。
  *
- *   1. 先登录 entry 自身（`self`）——`/api/mesh/nodes` 需要会话，没有 `tmex_s_self` 就拿不到公钥；
- *   2. 用新会话拉 `/api/mesh/nodes`，顺带核对自己的公钥与第 1 步 challenge 里的 `nodePk`；
- *   3. 对其余在线 node 并行登录。
- *
- * 完成后清掉一次性 TOTP 码。
+ * 仍然要拉一次 `/api/mesh/nodes`：mesh 列表里的 `publicKey` 来自 hub 签发的证书，而第 1 步
+ * challenge 里的 `nodePk` 来自这台机器当场持有的钥，两者必须一致——entry 出示的不是被签发过
+ * 的那把钥时（掉包 / 配置错乱）立刻丢弃会话钥，不让用户带着一个不可信的会话继续。
+ * 这一次请求也是唯一挡在跳转前面的等待，**不做任何 fan-out**：其余 node 由
+ * `ensureNodeLogin()` 在真正用到时再登录。
  */
-export async function loginToAllReachable(opts: FanOutOptions = {}): Promise<FanOutResult> {
+export async function loginSelf(opts: LoginSelfOptions = {}): Promise<LoginNodeResult> {
   const api = opts.api ?? defaultAuthApi;
-  const skipLoggedIn = opts.skipLoggedIn ?? true;
-  const entryName = opts.entryName ?? SELF_NODE_ID;
-
-  setProgress([{ nodeId: SELF_NODE_ID, nodeName: entryName, status: 'pending' }]);
   const selfResult = await loginToNode(SELF_NODE_ID, { api, selfBootstrap: true });
-  patchProgress(
-    SELF_NODE_ID,
-    selfResult.ok ? { status: 'ok' } : { status: 'error', code: selfResult.code }
-  );
   if (!selfResult.ok) {
     clearTotpCode();
-    return { rows: progress, anyOk: false, listFailed: false };
+    return selfResult;
   }
 
   let nodes: MeshNode[];
@@ -562,47 +511,72 @@ export async function loginToAllReachable(opts: FanOutOptions = {}): Promise<Fan
     nodes = await api.listNodes();
   } catch {
     clearTotpCode();
-    return { rows: progress, anyOk: true, listFailed: true };
+    return { ok: false, code: 'NODE_LIST_FAILED' };
   }
 
   const entryNodeId = current?.info.entryNodeId ?? null;
   const selfRow = entryNodeId ? nodes.find((node) => node.id === entryNodeId) : undefined;
-  if (selfRow && selfChallengePk) {
-    // 登录后回头核对：hub 掉包 entry 公钥的话，这里能发现（会话已建立，但列表是权威成员集）。
-    if (!bytesEqual(selfChallengePk, decodeBase64url(selfRow.publicKey))) {
-      patchProgress(SELF_NODE_ID, { status: 'error', code: 'NODE_PK_MISMATCH' });
-      clearSessionKey();
-      clearTotpCode();
-      return { rows: progress, anyOk: false, listFailed: false };
-    }
+  if (
+    selfRow &&
+    selfChallengePk &&
+    !bytesEqual(selfChallengePk, decodeBase64url(selfRow.publicKey))
+  ) {
+    selfChallengePk = null;
+    clearSessionKey();
+    clearTotpCode();
+    return { ok: false, code: 'NODE_PK_MISMATCH' };
   }
   selfChallengePk = null;
 
-  const targets = nodes.filter(
-    (node) => node.id !== entryNodeId && node.online && !(skipLoggedIn && node.loggedIn)
-  );
-  setProgress([
-    ...progress,
-    ...targets.map((node) => ({
-      nodeId: node.id,
-      nodeName: node.name,
-      status: 'pending' as const,
-    })),
-  ]);
-
-  await Promise.all(
-    targets.map(async (node) => {
-      const result = await loginToNode(node.id, { api, node });
-      patchProgress(node.id, result.ok ? { status: 'ok' } : { status: 'error', code: result.code });
-    })
-  );
-
+  // 一次性 TOTP 码用完即弃：它只在 ±30s 内有效，留着也救不了后面的懒登录，
+  // 而 k_totp（服务端 TOTP 密文的解密钥）保留在内存里，用户下次输入新码时直接可用。
   clearTotpCode();
-  return {
-    rows: progress,
-    anyOk: progress.some((row) => row.status === 'ok'),
-    listFailed: false,
-  };
+  markLoggedIn(SELF_NODE_ID);
+  return { ok: true };
+}
+
+export interface EnsureNodeLoginOptions {
+  api?: AuthApi;
+  /** 已知的 node 行，省掉 `loginToNode` 内部再拉一次 `/api/mesh/nodes`。 */
+  node?: MeshNode;
+}
+
+/** 每个 node 同时只允许一次登录请求在途，重复调用共享同一个 Promise。 */
+const nodeLoginsInFlight = new Map<string, Promise<LoginNodeResult>>();
+
+/**
+ * 按需登录某台 node：内存里的会话钥还在就静默完成，成功后就地把 mesh 列表里那一行标成已登录。
+ *
+ * 幂等靠两点：同一 nodeId 的并发调用共享在途 Promise；成功后 mesh store 的 `loggedIn` 立刻
+ * 变 true，调用方（侧边栏 / 路由边界）据此不再触发。会话钥不在内存时直接返回
+ * `NO_SESSION_KEY`，由调用方退回「登录此节点」按钮 → `/login?node=`。
+ *
+ * 开了 TOTP 的密码会话：node 端每次登录都要校验一次 TOTP，而浏览器只持有 k_totp、生成不了
+ * 新码，所以这里会返回 `TOTP_REQUIRED`，同样退回登录页让用户当场输码。
+ */
+export function ensureNodeLogin(
+  nodeId: string,
+  opts: EnsureNodeLoginOptions = {}
+): Promise<LoginNodeResult> {
+  const existing = nodeLoginsInFlight.get(nodeId);
+  if (existing) return existing;
+  if (!hasSessionKey()) return Promise.resolve({ ok: false, code: 'NO_SESSION_KEY' });
+
+  const task = loginToNode(nodeId, { api: opts.api, node: opts.node })
+    .then((result) => {
+      if (result.ok) markLoggedIn(nodeId);
+      return result;
+    })
+    .finally(() => {
+      nodeLoginsInFlight.delete(nodeId);
+    });
+  nodeLoginsInFlight.set(nodeId, task);
+  return task;
+}
+
+/** 仅测试使用：丢弃在途的单 node 登录，避免用例之间互相串。 */
+export function resetNodeLoginsForTest(): void {
+  nodeLoginsInFlight.clear();
 }
 
 /** 全部登出：对每台 node fan-out `POST /n/:T/api/auth/logout`，随后丢弃会话钥。 */
@@ -618,5 +592,4 @@ export async function logoutEverywhere(opts: { api?: AuthApi } = {}): Promise<vo
     nodes.filter((node) => node.loggedIn).map((node) => api.logout(node.id).catch(() => undefined))
   );
   clearSessionKey();
-  setProgress([]);
 }
