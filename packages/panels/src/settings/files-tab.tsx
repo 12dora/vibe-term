@@ -1,20 +1,13 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import type {
-  CreateFileRootRequest,
-  Device,
-  DeviceType,
-  FileRootDto,
-  UpdateFileRootRequest,
-} from '@tmex/shared';
-import { Globe, Loader2, Monitor, Pencil, Plus, Save, Trash2 } from 'lucide-react';
-import { useEffect, useState } from 'react';
+import type { FileRootDto, UpdateFileRootRequest } from '@tmex/shared';
+import { Pencil, Plus, Trash2 } from 'lucide-react';
+import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { toast } from 'sonner';
 
 import {
   type ApiClient,
   FileApiError,
-  createFileRoot,
   deleteFileRoot,
   fetchDevices,
   fetchFileRoots,
@@ -34,42 +27,14 @@ import {
 } from '@tmex/ui/alert-dialog';
 import { Button } from '@tmex/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@tmex/ui/card';
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from '@tmex/ui/dialog';
-import { Input } from '@tmex/ui/input';
-import {
-  Select,
-  SelectContent,
-  SelectGroup,
-  SelectItem,
-  SelectLabel,
-  SelectTrigger,
-  SelectValue,
-} from '@tmex/ui/select';
 import { Switch } from '@tmex/ui/switch';
 
+import { DeviceIcon, FileRootFormModal } from './file-root-form-modal';
+import { type FileRootDeviceGroup, collectFileRootClients } from './file-root-form-model';
+
+export type { FileRootDeviceGroup, FileRootDeviceOption } from './file-root-form-model';
+
 const SETTINGS_FILE_ROOTS_QUERY_KEY = ['files', 'settings', 'roots'] as const;
-
-/** 增改弹窗设备选择器里的一个可选设备。 */
-export interface FileRootDeviceOption {
-  id: string;
-  name: string;
-  type?: DeviceType;
-}
-
-/** 注入的设备分组：组标签 + 组内设备 + 该组 file roots 的落盘 client。 */
-export interface FileRootDeviceGroup {
-  label: string;
-  devices: FileRootDeviceOption[];
-  /** 缺省用当前 runtime 的 apiClient */
-  apiClient?: ApiClient;
-}
 
 export interface FilesSettingsTabProps {
   /**
@@ -91,13 +56,6 @@ interface FileRootEntry {
   client: ApiClient;
 }
 
-function DeviceIcon({ type, className }: { type: 'local' | 'ssh' | null; className?: string }) {
-  if (type === 'ssh') {
-    return <Globe className={className} />;
-  }
-  return <Monitor className={className} />;
-}
-
 // 外壳门：runtime.features.filesUi 关断时不渲染文件根设置卡，也不发起 files 查询（内层 hooks 不执行）。
 export function FilesSettingsTab(props: FilesSettingsTabProps = {}) {
   const { features } = useRuntime();
@@ -115,17 +73,7 @@ function FilesSettingsTabInner({ deviceGroups, onRootsMutated }: FilesSettingsTa
   const rootsQuery = useQuery({
     queryKey: SETTINGS_FILE_ROOTS_QUERY_KEY,
     queryFn: async (): Promise<FileRootEntry[]> => {
-      if (!deviceGroups) {
-        const res = await fetchFileRoots(apiClient);
-        return res.roots.map((root) => ({ root, client: apiClient }));
-      }
-      const clients: ApiClient[] = [];
-      for (const group of deviceGroups) {
-        const client = group.apiClient ?? apiClient;
-        if (!clients.includes(client)) {
-          clients.push(client);
-        }
-      }
+      const clients = collectFileRootClients(apiClient, deviceGroups);
       const results = await Promise.all(clients.map((client) => fetchFileRoots(client)));
       return results.flatMap((res, index) =>
         res.roots.map((root) => ({ root, client: clients[index] }))
@@ -316,240 +264,5 @@ function FileRootRow({ root, client, onEdit, onRootsMutated }: FileRootRowProps)
         </AlertDialogContent>
       </AlertDialog>
     </div>
-  );
-}
-
-const FIELD_CLASS = 'h-9 w-full';
-
-interface FileRootFormModalProps {
-  open: boolean;
-  onOpenChange: (open: boolean) => void;
-  /** 缺省表示新增模式 */
-  root?: FileRootDto;
-  /** 编辑模式下该 root 的来源 client；缺省用 runtime 的 apiClient */
-  editClient?: ApiClient;
-  devices: Device[];
-  deviceGroups?: FileRootDeviceGroup[];
-  onRootsMutated?: () => void;
-}
-
-function FileRootFormModal({
-  open,
-  onOpenChange,
-  root,
-  editClient,
-  devices,
-  deviceGroups,
-  onRootsMutated,
-}: FileRootFormModalProps) {
-  const { t } = useTranslation();
-  const queryClient = useQueryClient();
-  const { apiClient } = useRuntime();
-  const isEdit = Boolean(root);
-
-  const allDeviceOptions: FileRootDeviceOption[] = deviceGroups
-    ? deviceGroups.flatMap((group) => group.devices)
-    : devices;
-
-  const resolveCreateClient = (targetDeviceId: string): ApiClient => {
-    if (!deviceGroups) {
-      return apiClient;
-    }
-    const group = deviceGroups.find((g) => g.devices.some((d) => d.id === targetDeviceId));
-    return group?.apiClient ?? apiClient;
-  };
-
-  const [deviceId, setDeviceId] = useState('');
-  const [path, setPath] = useState('');
-  const [enabled, setEnabled] = useState(true);
-
-  useEffect(() => {
-    if (!open) {
-      return;
-    }
-    setDeviceId(root?.deviceId ?? '');
-    setPath(root?.path ?? '');
-    setEnabled(root?.enabled ?? true);
-  }, [open, root]);
-
-  const createMutation = useMutation({
-    mutationFn: () => {
-      const payload: CreateFileRootRequest = { deviceId, path: path.trim(), enabled };
-      return createFileRoot(payload, resolveCreateClient(deviceId));
-    },
-    onSuccess: async () => {
-      await queryClient.invalidateQueries({ queryKey: ['files'] });
-      onRootsMutated?.();
-      toast.success(t('common.success'));
-      onOpenChange(false);
-    },
-    onError: (err) => {
-      const message = err instanceof FileApiError ? err.message : t('settings.files.addFailed');
-      toast.error(message);
-    },
-  });
-
-  const updateMutation = useMutation({
-    mutationFn: () => {
-      if (!root) {
-        throw new Error(t('settings.files.updateFailed'));
-      }
-      const payload: UpdateFileRootRequest = { path: path.trim(), enabled };
-      return updateFileRoot(root.id, payload, editClient ?? apiClient);
-    },
-    onSuccess: async () => {
-      await queryClient.invalidateQueries({ queryKey: ['files'] });
-      onRootsMutated?.();
-      toast.success(t('common.success'));
-      onOpenChange(false);
-    },
-    onError: (err) => {
-      const message = err instanceof FileApiError ? err.message : t('settings.files.updateFailed');
-      toast.error(message);
-    },
-  });
-
-  const isPending = createMutation.isPending || updateMutation.isPending;
-  const trimmedPath = path.trim();
-  const pathValid = trimmedPath.startsWith('/');
-  const canSubmit = pathValid && (isEdit || deviceId.length > 0);
-
-  const handleSubmit = () => {
-    if (!canSubmit || isPending) {
-      return;
-    }
-    if (isEdit) {
-      updateMutation.mutate();
-    } else {
-      createMutation.mutate();
-    }
-  };
-
-  const selectedDevice = allDeviceOptions.find((device) => device.id === deviceId);
-
-  const renderDeviceItem = (device: FileRootDeviceOption) => (
-    <SelectItem key={device.id} value={device.id}>
-      <DeviceIcon type={device.type ?? null} className="h-4 w-4 shrink-0" />
-      {device.name}
-    </SelectItem>
-  );
-
-  return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent
-        className="sm:max-w-lg"
-        data-testid={isEdit ? `settings-files-edit-modal-${root?.id}` : 'settings-files-add-modal'}
-      >
-        <DialogHeader>
-          <DialogTitle>
-            {isEdit ? t('settings.files.modalEditTitle') : t('settings.files.modalAddTitle')}
-          </DialogTitle>
-          <DialogDescription>{t('settings.files.description')}</DialogDescription>
-        </DialogHeader>
-
-        <div className="space-y-4">
-          <div className="space-y-1.5">
-            <label className="block text-sm font-medium" htmlFor="files-form-device">
-              {t('settings.files.device')}
-            </label>
-            {isEdit ? (
-              <div className="flex h-9 items-center gap-1.5 rounded-lg border border-input bg-muted/30 px-2.5 text-sm">
-                <DeviceIcon type={root?.deviceType ?? null} className="h-4 w-4 shrink-0" />
-                <span className="truncate">{root?.deviceName ?? t('settings.files.missing')}</span>
-              </div>
-            ) : (
-              <Select
-                value={deviceId}
-                onValueChange={(value) => {
-                  if (!value) return;
-                  setDeviceId(value);
-                }}
-              >
-                <SelectTrigger
-                  id="files-form-device"
-                  data-testid="settings-files-device-select"
-                  className={FIELD_CLASS}
-                  disabled={allDeviceOptions.length === 0}
-                >
-                  <SelectValue>
-                    {selectedDevice ? (
-                      <span className="flex items-center gap-1.5">
-                        <DeviceIcon
-                          type={selectedDevice.type ?? null}
-                          className="h-4 w-4 shrink-0"
-                        />
-                        {selectedDevice.name}
-                      </span>
-                    ) : (
-                      <span className="text-muted-foreground">
-                        {t('settings.files.devicePlaceholder')}
-                      </span>
-                    )}
-                  </SelectValue>
-                </SelectTrigger>
-                <SelectContent>
-                  {deviceGroups
-                    ? deviceGroups.map((group, index) => (
-                        <SelectGroup key={`${group.label}-${index}`}>
-                          {group.label ? <SelectLabel>{group.label}</SelectLabel> : null}
-                          {group.devices.map(renderDeviceItem)}
-                        </SelectGroup>
-                      ))
-                    : devices.map(renderDeviceItem)}
-                </SelectContent>
-              </Select>
-            )}
-            {!isEdit && allDeviceOptions.length === 0 && (
-              <p className="text-xs text-destructive">{t('settings.files.noDevices')}</p>
-            )}
-          </div>
-
-          <div className="space-y-1.5">
-            <label className="block text-sm font-medium" htmlFor="files-form-path">
-              {t('settings.files.path')}
-            </label>
-            <Input
-              id="files-form-path"
-              data-testid="settings-files-path-input"
-              value={path}
-              onChange={(event) => setPath(event.target.value)}
-              placeholder={t('settings.files.pathPlaceholder')}
-              className={`${FIELD_CLASS} font-mono`}
-            />
-            <p className="text-xs text-muted-foreground">{t('settings.files.pathHint')}</p>
-          </div>
-
-          <div className="flex items-center gap-2">
-            <Switch
-              checked={enabled}
-              onCheckedChange={(checked) => setEnabled(Boolean(checked))}
-              data-testid="settings-files-enabled-switch"
-            />
-            <label className="text-sm font-medium" htmlFor="settings-files-enabled-switch">
-              {t('settings.files.enabled')}
-            </label>
-          </div>
-        </div>
-
-        <DialogFooter>
-          <Button variant="outline" onClick={() => onOpenChange(false)} disabled={isPending}>
-            {t('common.cancel')}
-          </Button>
-          <Button
-            variant="secondary"
-            data-testid="settings-files-form-submit"
-            onClick={handleSubmit}
-            disabled={!canSubmit || isPending}
-          >
-            {isPending ? (
-              <Loader2 className="h-4 w-4 animate-spin" />
-            ) : (
-              <Save className="h-4 w-4" />
-            )}
-            {t('common.save')}
-          </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
   );
 }
