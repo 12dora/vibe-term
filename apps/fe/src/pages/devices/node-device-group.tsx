@@ -244,7 +244,7 @@ export function NodeDeviceGroup({ node, showHeader = true, dragControls }: NodeD
           data-testid={`devices-node-panel-${node.runtimeNodeId}`}
           data-offline={state === 'offline' ? 'true' : undefined}
         >
-          <NodeRuntimeScope nodeId={node.runtimeNodeId}>
+          <NodeRuntimeScope nodeId={node.runtimeNodeId} offline={state === 'offline'}>
             <NodeDevicePanel node={node} panelRef={panelRef} offline={state === 'offline'} />
           </NodeRuntimeScope>
         </div>

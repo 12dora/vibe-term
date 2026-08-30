@@ -1,9 +1,10 @@
 import { describe, expect, test } from 'bun:test';
-import { nodeAppPath } from '@tmex/api-client';
+import { ApiClient, nodeAppPath } from '@tmex/api-client';
 import {
   type DeviceConnectionSnapshot,
   type DeviceIdStorage,
   deriveDeviceConnectionStatus,
+  devicesQueryOptions,
   pruneUnknownDeviceIds,
   readPersistedIds,
   routeDeviceId,
@@ -14,6 +15,27 @@ import {
 
 const selfAppPath = (path: string) => nodeAppPath('self', path);
 const nodeAAppPath = (path: string) => nodeAppPath('0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a', path);
+
+describe('devicesQueryOptions', () => {
+  const apiClient = new ApiClient('http://devices-query.test');
+
+  test('在线 node 照常查询设备列表', () => {
+    const options = devicesQueryOptions(apiClient, false);
+    expect(options.queryKey).toEqual(['devices']);
+    expect(options.enabled).toBe(true);
+  });
+
+  test('离线 node 不发 /api/devices（每个 node 各有 QueryClient，否则 N 个离线 node 就是 N 条注定失败的请求）', () => {
+    expect(devicesQueryOptions(apiClient, true).enabled).toBe(false);
+  });
+
+  test('离线→在线翻回来即重新启用，query key 不变（缓存与订阅照常复用）', () => {
+    const offline = devicesQueryOptions(apiClient, true);
+    const online = devicesQueryOptions(apiClient, false);
+    expect(offline.queryKey).toEqual(online.queryKey);
+    expect([offline.enabled, online.enabled]).toEqual([false, true]);
+  });
+});
 
 describe('routeDeviceId', () => {
   test('self runtime 匹配旧路由', () => {

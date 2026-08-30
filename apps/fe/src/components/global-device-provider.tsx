@@ -1,5 +1,5 @@
 import { useQuery } from '@tanstack/react-query';
-import { type DevicesResponse, fetchDevices } from '@tmex/api-client';
+import { type ApiClient, type DevicesResponse, fetchDevices } from '@tmex/api-client';
 import type { DeviceConnectionAdapter } from '@tmex/panels';
 import { type AppRuntime, type HostServices, hostAppPath } from '@tmex/stores';
 import { useRuntime, useTmuxStore } from '@tmex/stores/react';
@@ -294,11 +294,28 @@ function useEnsureDeviceSubscribed(
   );
 }
 
-interface GlobalDeviceProviderProps {
-  children: React.ReactNode;
+/**
+ * 设备列表查询的参数。离线 node 不发这一条：设备页刻意保留掉线 node 的运行时子树
+ * （卡片不消失），而每个 node 各有自己的 QueryClient，N 个离线 node 就是 N 条注定失败的
+ * `/api/devices`（外加各自一次重试）。重新上线时 `enabled` 翻回 true，react-query 按
+ * staleTime 自动补拉，缓存里的旧列表在离线期间照常给面板兜底。
+ */
+export function devicesQueryOptions(apiClient: ApiClient, offline: boolean) {
+  return {
+    queryKey: ['devices'] as const,
+    queryFn: () => fetchDevices(apiClient),
+    enabled: !offline,
+    throwOnError: false as const,
+  };
 }
 
-export function GlobalDeviceProvider({ children }: GlobalDeviceProviderProps) {
+interface GlobalDeviceProviderProps {
+  children: React.ReactNode;
+  /** 该 node 已离线：不发本 runtime 的设备列表请求（默认 false）。 */
+  offline?: boolean;
+}
+
+export function GlobalDeviceProvider({ children, offline = false }: GlobalDeviceProviderProps) {
   const runtime = useRuntime();
   const actions = useDeviceStoreActions();
   const slices = useDeviceStatusSlices();
@@ -307,11 +324,7 @@ export function GlobalDeviceProvider({ children }: GlobalDeviceProviderProps) {
   const { connectedDevices } = slices;
   const { connectTmuxDevice, disconnectTmuxDevice } = actions;
 
-  const { data: devicesData } = useQuery({
-    queryKey: ['devices'],
-    queryFn: () => fetchDevices(runtime.apiClient),
-    throwOnError: false,
-  });
+  const { data: devicesData } = useQuery(devicesQueryOptions(runtime.apiClient, offline));
 
   const ensureDeviceSubscribed = useEnsureDeviceSubscribed(runtime, intentStore);
 

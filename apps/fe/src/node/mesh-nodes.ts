@@ -16,8 +16,9 @@ import type {
 } from '@tmex/api-client/auth/index';
 import { defaultAuthApi } from '@tmex/api-client/auth/index';
 import { bytesToHex, decodeBase64url, sha256 } from '@tmex/shared/auth';
-import { useCallback, useEffect, useMemo, useState, useSyncExternalStore } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import { HubApi, type HubNodeRow } from './hub-api';
+import { HubLoadCoordinator, type HubRequest } from './hub-load-coordinator';
 import { type MeshEventSource, type NodeEventPayload, sharedMeshEvents } from './mesh-events';
 
 // ---------------------------------------------------------------------------
@@ -396,9 +397,47 @@ export interface UseHubNodeOptions {
   pollIntervalMs?: number;
 }
 
+interface HubStateSetters {
+  setHubNodes: (rows: HubNodeRow[] | null) => void;
+  setLoading: (value: boolean) => void;
+  setError: (message: string | null) => void;
+}
+
+/** 协调器只建一次（`useState` 的 setter 恒等），挂载/卸载切它的写状态开关。 */
+function useHubLoadCoordinator(setters: HubStateSetters): HubLoadCoordinator {
+  const { setHubNodes, setLoading, setError } = setters;
+  const ref = useRef<HubLoadCoordinator | null>(null);
+  if (ref.current === null) {
+    ref.current = new HubLoadCoordinator({
+      loading: setLoading,
+      reset: () => {
+        setHubNodes(null);
+        setLoading(false);
+      },
+      rows: (rows) => {
+        setHubNodes(rows);
+        setError(null);
+      },
+      failed: (message) => {
+        setHubNodes(null);
+        setError(message);
+      },
+    });
+  }
+  const coordinator = ref.current;
+  useEffect(() => {
+    coordinator.activate();
+    return () => coordinator.dispose();
+  }, [coordinator]);
+  return coordinator;
+}
+
 /**
  * 定位 hub 机的 node（`isHub` / `mode.hubNodeId`）并拉取 `GET /n/<hub>/api/hub/nodes`。
  * 定位不到就直接判定 hub 不可达，**不再**逐个探测其它 node。
+ *
+ * 初次加载 / 轮询 / 手动刷新三条来源共用 `HubLoadCoordinator`：并发调用合并成一次请求，
+ * 慢的旧响应按代号丢弃，卸载后不再写状态。
  */
 export function useHubNode(nodes: MeshNode[], options: UseHubNodeOptions = {}): HubNodeState {
   const enabled = options.enabled ?? true;
@@ -413,48 +452,25 @@ export function useHubNode(nodes: MeshNode[], options: UseHubNodeOptions = {}): 
   );
   const probe = options.probe;
 
-  const loadHub = useCallback(
-    async (isCancelled: () => boolean) => {
-      if (!enabled || !resolved) {
-        setHubNodes(null);
-        return;
-      }
-      setLoading(true);
-      try {
-        const rows = probe ? await probe(resolved) : await new HubApi(resolved).listNodes();
-        if (isCancelled()) return;
-        setHubNodes(rows);
-        setError(null);
-      } catch (err) {
-        if (isCancelled()) return;
-        setHubNodes(null);
-        setError(err instanceof Error ? err.message : String(err));
-      } finally {
-        if (!isCancelled()) setLoading(false);
-      }
-    },
-    [enabled, probe, resolved]
-  );
+  // 请求闭包同时充当单飞的身份：目标（enabled / hub id / probe）一变就是新的一次加载。
+  const request = useMemo<HubRequest | null>(() => {
+    if (!enabled || !resolved) return null;
+    return () => (probe ? probe(resolved) : new HubApi(resolved).listNodes());
+  }, [enabled, probe, resolved]);
+
+  const coordinator = useHubLoadCoordinator({ setHubNodes, setLoading, setError });
 
   useEffect(() => {
-    let cancelled = false;
-    void loadHub(() => cancelled);
-    return () => {
-      cancelled = true;
-    };
-  }, [loadHub]);
+    void coordinator.load(request);
+  }, [coordinator, request]);
 
   useEffect(() => {
-    if (!enabled || pollIntervalMs <= 0) return;
-    let cancelled = false;
-    const timer = setInterval(() => void loadHub(() => cancelled), pollIntervalMs);
-    return () => {
-      cancelled = true;
-      clearInterval(timer);
-    };
-  }, [enabled, pollIntervalMs, loadHub]);
+    if (!request || pollIntervalMs <= 0) return;
+    const timer = setInterval(() => void coordinator.load(request), pollIntervalMs);
+    return () => clearInterval(timer);
+  }, [coordinator, request, pollIntervalMs]);
 
-  const refresh = useCallback(() => void loadHub(() => false), [loadHub]);
+  const refresh = useCallback(() => void coordinator.load(request), [coordinator, request]);
   const hubApi = useMemo(() => (resolved ? new HubApi(resolved) : null), [resolved]);
 
   return {
