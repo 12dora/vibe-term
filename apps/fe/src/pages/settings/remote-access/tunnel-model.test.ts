@@ -6,12 +6,14 @@ import type { TunnelStatusResponse } from '@tmex/shared';
 import {
   TUNNEL_ACTIVE_POLL_MS,
   TUNNEL_IDLE_POLL_MS,
+  accessEffective,
   accessPill,
   describeTunnelError,
   effectiveMode,
   isAuthRequiredError,
   isExposingAction,
   isExposureAckError,
+  isTunnelRunning,
   isValidHostname,
   isValidTunnelName,
   jobStepKey,
@@ -24,6 +26,7 @@ import {
   withExposureAck,
   wizardStepState,
   wizardSteps,
+  wouldDropLastProtection,
 } from './tunnel-model';
 
 function status(overrides: Partial<TunnelStatusResponse> = {}): TunnelStatusResponse {
@@ -59,6 +62,8 @@ function status(overrides: Partial<TunnelStatusResponse> = {}): TunnelStatusResp
       hostname: null,
       rules: [],
       enforceJwt: true,
+      effective: false,
+      bypassAppId: null,
       lastError: null,
     },
     external: {
@@ -216,15 +221,89 @@ describe('wizardStepState', () => {
   });
 });
 
+/** 已建好并跑起来的命名隧道，Access 应用绑在同一主机名上。 */
+function withAccess(
+  accessOverrides: Partial<TunnelStatusResponse['access']> = {},
+  overrides: Partial<TunnelStatusResponse> = {}
+): TunnelStatusResponse {
+  const base = status(overrides);
+  return {
+    ...base,
+    config: { ...base.config, mode: 'named', hostname: 'tmex.example.com' },
+    process: { ...base.process, state: 'running' },
+    access: {
+      ...base.access,
+      configured: true,
+      enforceJwt: true,
+      hostname: 'tmex.example.com',
+      effective: true,
+      ...accessOverrides,
+    },
+  };
+}
+
+describe('accessEffective', () => {
+  test('以后端的 effective 为准', () => {
+    expect(accessEffective(withAccess())).toBe(true);
+    expect(accessEffective(withAccess({ effective: false }))).toBe(false);
+  });
+
+  test('旧后端没有 effective 时按同一条谓词兜底', () => {
+    const legacy = (s: TunnelStatusResponse): TunnelStatusResponse => {
+      const { effective: _effective, ...access } = s.access;
+      return { ...s, access: access as TunnelStatusResponse['access'] };
+    };
+    expect(accessEffective(legacy(withAccess()))).toBe(true);
+    expect(accessEffective(legacy(withAccess({ enforceJwt: false })))).toBe(false);
+    expect(accessEffective(legacy(withAccess({ hostname: 'old.example.com' })))).toBe(false);
+    // 两边都没有主机名不算匹配：没有隧道就谈不上保护。
+    expect(
+      accessEffective(
+        legacy(withAccess({ hostname: null }, { config: { ...status().config, mode: 'off' } }))
+      )
+    ).toBe(false);
+  });
+});
+
 describe('accessPill', () => {
-  test('未配置 / 已配置未强制 / 已保护', () => {
+  test('未配置 / 已配置未强制 / 主机名不匹配 / 已保护', () => {
     expect(accessPill(status())).toBe('notConfigured');
+    expect(accessPill(withAccess({ enforceJwt: false, effective: false }))).toBe('notEnforced');
+    expect(accessPill(withAccess({ hostname: 'old.example.com', effective: false }))).toBe(
+      'hostnameMismatch'
+    );
+    expect(accessPill(withAccess())).toBe('protected');
+  });
+});
+
+describe('wouldDropLastProtection', () => {
+  test('隧道在跑、没有登录、Access 是唯一保护时才需要确认', () => {
+    expect(wouldDropLastProtection(withAccess({}, { loginEnforced: false }))).toBe(true);
+    // 启用了登录：拿掉 Access 还有登录兜底。
+    expect(wouldDropLastProtection(withAccess({}, { loginEnforced: true }))).toBe(false);
+    // Access 本来就没生效，拿掉它不改变暴露面。
     expect(
-      accessPill(status({ access: { ...status().access, configured: true, enforceJwt: false } }))
-    ).toBe('notEnforced');
+      wouldDropLastProtection(withAccess({ effective: false }, { loginEnforced: false }))
+    ).toBe(false);
+  });
+
+  test('隧道没跑起来就不算暴露', () => {
+    const stopped = withAccess({}, { loginEnforced: false });
     expect(
-      accessPill(status({ access: { ...status().access, configured: true, enforceJwt: true } }))
-    ).toBe('protected');
+      wouldDropLastProtection({ ...stopped, process: { ...stopped.process, state: 'stopped' } })
+    ).toBe(false);
+  });
+
+  test('接管来的隧道按探测到的运行态判定', () => {
+    const adopted = withAccess({}, { loginEnforced: false });
+    const external = {
+      ...adopted,
+      config: { ...adopted.config, externallyManaged: true },
+      process: { ...adopted.process, state: 'stopped' as const },
+      external: { ...adopted.external, detected: true, running: true },
+    };
+    expect(isTunnelRunning(external)).toBe(true);
+    expect(wouldDropLastProtection(external)).toBe(true);
   });
 });
 
@@ -238,6 +317,26 @@ describe('暴露确认', () => {
     expect(isExposingAction({ action: 'set_auto_start', autoStart: false })).toBe(false);
     expect(isExposingAction({ action: 'stop' })).toBe(false);
     expect(isExposingAction({ action: 'install' })).toBe(false);
+  });
+
+  test('拿掉最后一道保护的动作同样算开放性动作', () => {
+    expect(isExposingAction({ action: 'remove_access' })).toBe(true);
+    expect(isExposingAction({ action: 'set_access_enforce', enforceJwt: false })).toBe(true);
+    // 打开校验是收敛动作。
+    expect(isExposingAction({ action: 'set_access_enforce', enforceJwt: true })).toBe(false);
+    expect(withExposureAck({ action: 'remove_access' }, true)).toEqual({
+      action: 'remove_access',
+      acknowledgeExposure: true,
+    });
+    expect(withExposureAck({ action: 'set_access_enforce', enforceJwt: false }, true)).toEqual({
+      action: 'set_access_enforce',
+      enforceJwt: false,
+      acknowledgeExposure: true,
+    });
+    expect(withExposureAck({ action: 'set_access_enforce', enforceJwt: true }, true)).toEqual({
+      action: 'set_access_enforce',
+      enforceJwt: true,
+    });
   });
 
   test('没勾确认时请求不带 acknowledgeExposure', () => {

@@ -41,6 +41,7 @@ const PILL_VARIANT = {
 const ACCESS_PILL_VARIANT = {
   notConfigured: 'outline',
   notEnforced: 'secondary',
+  hostnameMismatch: 'secondary',
   protected: 'default',
 } as const;
 

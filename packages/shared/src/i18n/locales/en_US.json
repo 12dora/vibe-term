@@ -464,16 +464,18 @@
         "accessState": {
           "notConfigured": "Access not configured",
           "notEnforced": "Access configured, not enforced",
-          "protected": "Access protected"
+          "protected": "Access protected",
+          "hostnameMismatch": "Access configured (hostname mismatch)"
         },
         "externallyManaged": "Managed by system service",
         "externallyManagedNotice": "This tunnel is run by a system service; tmex does not start or stop it. Release it first to let tmex manage the tunnel.",
         "exposure": {
-          "warning": "Sign-in is disabled on this machine and Cloudflare Access is not configured: once the tunnel is up, anyone can reach tmex. Continue only on a trusted network or if you explicitly accept the risk; enabling sign-in (mesh) or configuring Access is recommended.",
-          "warningShort": "Sign-in is disabled and Cloudflare Access is not configured: once the tunnel is up, anyone can reach tmex.",
+          "warning": "No access protection is in effect: the tunnel URL is a public entry point, so anyone can reach tmex. Enable sign-in (mesh), or configure and enforce Cloudflare Access for this hostname.",
+          "warningShort": "No access protection is in effect: the tunnel URL is public, so anyone can reach tmex.",
           "acknowledge": "I understand the risk and want to expose tmex publicly",
           "ackRequired": "This exposes tmex to the public internet. Tick the box to confirm.",
-          "enableLogin": "Enable sign-in (mesh)"
+          "enableLogin": "Enable sign-in (mesh)",
+          "dropWarning": "This removes the last access protection. The tunnel keeps running, and anyone will be able to reach tmex."
         },
         "access": {
           "tag": {
@@ -526,7 +528,8 @@
             "enforce": "Verify Access tokens at the gateway",
             "enforceHint": "Validate Cf-Access-Jwt-Assertion on tunnel requests and reject the ones that fail.",
             "enforceOff": "Token verification is off. Cloudflare still blocks unauthorized visitors at the edge, but requests that bypass Access will not be rejected by this machine.",
-            "remove": "Remove Access application"
+            "remove": "Remove Access application",
+            "hostnameMismatch": "This application covers a different hostname than the current tunnel, so token verification has no effect."
           },
           "confirmRemove": {
             "title": "Remove the Access application?",

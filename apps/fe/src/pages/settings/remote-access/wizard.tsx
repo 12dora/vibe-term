@@ -193,7 +193,14 @@ function StepContent({
     case 'hostname':
       return <HostnameStep status={status} actions={actions} draft={draft} isHub={isHub} />;
     case 'access':
-      return <AccessStep status={status} actions={actions} />;
+      return (
+        <AccessStep
+          status={status}
+          actions={actions}
+          draftHostname={draft.hostname}
+          exposure={exposure}
+        />
+      );
     case 'create':
       return (
         <CreateStep

@@ -470,16 +470,18 @@ export const I18N_RESOURCES = {
         "accessState": {
           "notConfigured": "Access not configured",
           "notEnforced": "Access configured, not enforced",
-          "protected": "Access protected"
+          "protected": "Access protected",
+          "hostnameMismatch": "Access configured (hostname mismatch)"
         },
         "externallyManaged": "Managed by system service",
         "externallyManagedNotice": "This tunnel is run by a system service; tmex does not start or stop it. Release it first to let tmex manage the tunnel.",
         "exposure": {
-          "warning": "Sign-in is disabled on this machine and Cloudflare Access is not configured: once the tunnel is up, anyone can reach tmex. Continue only on a trusted network or if you explicitly accept the risk; enabling sign-in (mesh) or configuring Access is recommended.",
-          "warningShort": "Sign-in is disabled and Cloudflare Access is not configured: once the tunnel is up, anyone can reach tmex.",
+          "warning": "No access protection is in effect: the tunnel URL is a public entry point, so anyone can reach tmex. Enable sign-in (mesh), or configure and enforce Cloudflare Access for this hostname.",
+          "warningShort": "No access protection is in effect: the tunnel URL is public, so anyone can reach tmex.",
           "acknowledge": "I understand the risk and want to expose tmex publicly",
           "ackRequired": "This exposes tmex to the public internet. Tick the box to confirm.",
-          "enableLogin": "Enable sign-in (mesh)"
+          "enableLogin": "Enable sign-in (mesh)",
+          "dropWarning": "This removes the last access protection. The tunnel keeps running, and anyone will be able to reach tmex."
         },
         "access": {
           "tag": {
@@ -532,7 +534,8 @@ export const I18N_RESOURCES = {
             "enforce": "Verify Access tokens at the gateway",
             "enforceHint": "Validate Cf-Access-Jwt-Assertion on tunnel requests and reject the ones that fail.",
             "enforceOff": "Token verification is off. Cloudflare still blocks unauthorized visitors at the edge, but requests that bypass Access will not be rejected by this machine.",
-            "remove": "Remove Access application"
+            "remove": "Remove Access application",
+            "hostnameMismatch": "This application covers a different hostname than the current tunnel, so token verification has no effect."
           },
           "confirmRemove": {
             "title": "Remove the Access application?",
@@ -2419,16 +2422,18 @@ export const I18N_RESOURCES = {
         "accessState": {
           "notConfigured": "Access 未配置",
           "notEnforced": "Access 已配置但未强制",
-          "protected": "Access 已保护"
+          "protected": "Access 已保护",
+          "hostnameMismatch": "Access 已配置（主机名不匹配）"
         },
         "externallyManaged": "由系统服务托管",
         "externallyManagedNotice": "该隧道由系统服务运行，tmex 不会启动或停止它。要交回 tmex 管理，请先取消接管。",
         "exposure": {
-          "warning": "本机未启用登录，也未配置 Cloudflare Access：隧道开启后任何人都可以访问 tmex。仅在纯局域网或你明确接受风险时继续；建议启用登录（多节点互联）或配置 Access。",
-          "warningShort": "本机未启用登录，也未配置 Cloudflare Access：隧道开启后任何人都可以访问 tmex。",
+          "warning": "当前没有生效的访问保护：隧道地址是公网入口，任何人都可以访问 tmex。建议启用登录（多节点互联），或为该主机名配置并强制 Cloudflare Access。",
+          "warningShort": "当前没有生效的访问保护：隧道地址是公网入口，任何人都可以访问 tmex。",
           "acknowledge": "我了解风险，仍要开放公网访问",
           "ackRequired": "该操作会把 tmex 开放到公网，请先勾选确认。",
-          "enableLogin": "启用登录（多节点互联）"
+          "enableLogin": "启用登录（多节点互联）",
+          "dropWarning": "这会移除最后一道访问保护：隧道仍在运行，之后任何人都可以访问 tmex。"
         },
         "access": {
           "tag": {
@@ -2481,7 +2486,8 @@ export const I18N_RESOURCES = {
             "enforce": "网关校验 Access 令牌",
             "enforceHint": "对来自隧道的请求校验 Cf-Access-Jwt-Assertion，未通过直接拒绝。",
             "enforceOff": "已关闭令牌校验。Cloudflare 仍会在边缘拦截未授权访问，但绕过 Access 直连隧道的请求不会被本机拦下。",
-            "remove": "移除 Access 应用"
+            "remove": "移除 Access 应用",
+            "hostnameMismatch": "该应用覆盖的主机名与当前隧道不一致，令牌校验不会生效。"
           },
           "confirmRemove": {
             "title": "移除 Access 应用？",
@@ -4367,16 +4373,18 @@ export const I18N_RESOURCES = {
         "accessState": {
           "notConfigured": "Access 未設定",
           "notEnforced": "Access 設定済み・未強制",
-          "protected": "Access で保護"
+          "protected": "Access で保護",
+          "hostnameMismatch": "Access 設定済み（ホスト名不一致）"
         },
         "externallyManaged": "システムサービス管理",
         "externallyManagedNotice": "このトンネルはシステムサービスが実行しており、tmex は起動・停止を行いません。tmex で管理するには先に引き継ぎを解除してください。",
         "exposure": {
-          "warning": "この端末はサインインが無効で、Cloudflare Access も未設定です。トンネルを開くと誰でも tmex にアクセスできます。信頼できるネットワークか、リスクを明確に受け入れる場合のみ続行してください。サインイン（マルチノード）の有効化または Access の設定を推奨します。",
-          "warningShort": "サインインが無効で Cloudflare Access も未設定です。トンネルを開くと誰でも tmex にアクセスできます。",
+          "warning": "有効なアクセス保護がありません。トンネルの URL は誰でも到達できる公開エントリです。サインイン（マルチノード）を有効にするか、このホスト名に対して Cloudflare Access を設定して強制してください。",
+          "warningShort": "有効なアクセス保護がありません。トンネルの URL は公開されており、誰でも tmex にアクセスできます。",
           "acknowledge": "リスクを理解した上でインターネットに公開する",
           "ackRequired": "この操作は tmex をインターネットに公開します。チェックを入れて確認してください。",
-          "enableLogin": "サインインを有効にする（マルチノード）"
+          "enableLogin": "サインインを有効にする（マルチノード）",
+          "dropWarning": "最後のアクセス保護が解除されます。トンネルは動作したままとなり、誰でも tmex にアクセスできるようになります。"
         },
         "access": {
           "tag": {
@@ -4429,7 +4437,8 @@ export const I18N_RESOURCES = {
             "enforce": "ゲートウェイで Access トークンを検証",
             "enforceHint": "トンネル経由のリクエストで Cf-Access-Jwt-Assertion を検証し、通らないものを拒否します。",
             "enforceOff": "トークン検証は無効です。Cloudflare のエッジでは引き続き未認可のアクセスを遮断しますが、Access を迂回したリクエストはこの端末では拒否されません。",
-            "remove": "Access アプリケーションを削除"
+            "remove": "Access アプリケーションを削除",
+            "hostnameMismatch": "このアプリケーションが対象とするホスト名は現在のトンネルと異なるため、トークン検証は有効になりません。"
           },
           "confirmRemove": {
             "title": "Access アプリケーションを削除しますか？",

@@ -6,7 +6,7 @@ import type { TmuxWindow } from '@tmex/shared';
 import { type HostServices, encodePaneIdForUrl, hostAppPath } from '@tmex/stores';
 import { useRuntime, useTmuxStore } from '@tmex/stores/react';
 import type { PaneSelection, TerminalRef, TerminalSizeSnapshot } from '@tmex/terminal-ui';
-import { type RefObject, useCallback } from 'react';
+import { type RefObject, useCallback, useRef } from 'react';
 import { useNavigate } from 'react-router';
 import { resolveCloseFallback } from './close-pane-fallback';
 import {
@@ -70,8 +70,18 @@ export function usePaneSelectionDispatch({
 
   const { isMobileRef, isSplitViewRef, recentSelectRequestsRef, userInitiatedSelectionRef } = refs;
 
+  // URL 点名的 pane：每次渲染同步成入参，并在导航时立刻更新。
+  // 同一次点击里可能已经先发生过一次 navigate（焦点跟随），此时入参还停在上一帧的值，
+  // 关闭回落若照着旧值判断就会得出「关的不是路由 pane」，URL 最后落在已删除的 pane 上。
+  const routePaneRef = useRef<{ windowId?: string; paneId?: string }>({
+    windowId,
+    paneId: resolvedPaneId,
+  });
+  routePaneRef.current = { windowId, paneId: resolvedPaneId };
+
   const navigateToPane = useCallback(
     (targetDeviceId: string, targetWindowId: string, targetPaneId: string) => {
+      routePaneRef.current = { windowId: targetWindowId, paneId: targetPaneId };
       navigate(paneRoutePath(runtime.host, targetDeviceId, targetWindowId, targetPaneId), {
         replace: true,
       });
@@ -160,10 +170,11 @@ export function usePaneSelectionDispatch({
   const handleClosePane = useCallback(
     (targetWindowId: string, targetPaneId: string) => {
       if (!deviceId) return;
+      const route = routePaneRef.current;
       const fallback = resolveCloseFallback({
         windows,
-        routeWindowId: windowId,
-        routePaneId: resolvedPaneId,
+        routeWindowId: route.windowId,
+        routePaneId: route.paneId,
         closingWindowId: targetWindowId,
         closingPaneId: targetPaneId,
       });
@@ -179,16 +190,7 @@ export function usePaneSelectionDispatch({
       }
       closePane(deviceId, targetPaneId);
     },
-    [
-      closePane,
-      deviceId,
-      navigateToDeviceList,
-      navigateToPane,
-      resolvedPaneId,
-      userInitiatedSelectionRef,
-      windowId,
-      windows,
-    ]
+    [closePane, deviceId, navigateToDeviceList, navigateToPane, userInitiatedSelectionRef, windows]
   );
 
   return {

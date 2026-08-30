@@ -95,6 +95,8 @@ function tunnel(overrides: Partial<TunnelStatusResponse> = {}): TunnelStatusResp
       hostname: null,
       rules: [],
       enforceJwt: true,
+      effective: false,
+      bypassAppId: null,
       lastError: null,
     },
     external: {
@@ -157,6 +159,13 @@ function isDisabled(html: string, testId: string): boolean {
   const tag = new RegExp(`<[a-z]+[^>]*data-testid="${testId}"[^>]*>`).exec(html);
   if (!tag) throw new Error(`missing element: ${testId}`);
   return / disabled=""/.test(tag[0]);
+}
+
+/** 开关渲染成 span，禁用态落在 `aria-disabled` 上，不是标签的 `disabled` 属性。 */
+function isSwitchDisabled(html: string, testId: string): boolean {
+  const tag = new RegExp(`<[a-z]+[^>]*data-testid="${testId}"[^>]*>`).exec(html);
+  if (!tag) throw new Error(`missing element: ${testId}`);
+  return tag[0].includes('aria-disabled="true"');
 }
 
 /** 开关的选中态只看 `aria-checked`：class 里的 `data-checked:` 变体前缀不算数。 */
@@ -318,15 +327,35 @@ describe('状态徽标与操作按钮', () => {
 });
 
 describe('Access 徽标', () => {
-  test('未配置 / 已配置但未强制 / 已保护三态', () => {
+  test('未配置 / 已配置但未强制 / 主机名不匹配 / 已保护四态', () => {
     expect(render()).toContain('settings.remoteAccess.accessState.notConfigured');
 
-    status = tunnel({
+    status = configured('named', 'running', {
       access: { ...tunnel().access, configured: true, enforceJwt: false },
     });
     expect(render()).toContain('settings.remoteAccess.accessState.notEnforced');
 
-    status = tunnel({ access: { ...tunnel().access, configured: true, enforceJwt: true } });
+    // 应用还绑在被移除的旧隧道上：不能报「已保护」。
+    status = configured('named', 'running', {
+      access: {
+        ...tunnel().access,
+        configured: true,
+        enforceJwt: true,
+        hostname: 'old.example.com',
+        effective: false,
+      },
+    });
+    expect(render()).toContain('settings.remoteAccess.accessState.hostnameMismatch');
+
+    status = configured('named', 'running', {
+      access: {
+        ...tunnel().access,
+        configured: true,
+        enforceJwt: true,
+        hostname: 'tmex.example.com',
+        effective: true,
+      },
+    });
     expect(render()).toContain('settings.remoteAccess.accessState.protected');
   });
 });
@@ -850,6 +879,24 @@ describe('Cloudflare Access 区块', () => {
     expect(html).not.toContain('data-testid="remote-access-access-sync-hint"');
   });
 
+  test('隧道还没建但向导已确认主机名时可以先配 Access（同步仍不可用）', () => {
+    status = tunnel({
+      auth: { loggedIn: true, loginUrl: null },
+      access: {
+        ...tunnel().access,
+        hasCredentials: true,
+        rules: [{ kind: 'email', value: 'you@example.com' }],
+      },
+    });
+    const html = renderWizard('named', {
+      draft: namedDraft({ hostname: 'draft.example.com', confirmed: true }),
+    });
+    expect(html).not.toContain('data-testid="remote-access-access-no-hostname"');
+    expect(isDisabled(html, 'remote-access-access-apply')).toBe(false);
+    // 同步只认 config.hostname 与探测到的系统隧道主机名。
+    expect(isDisabled(html, 'remote-access-access-sync')).toBe(true);
+  });
+
   test('access job 在跑时展示创建应用与配置策略的进度', () => {
     status = loggedIn({
       access: { ...tunnel().access, hasCredentials: true },
@@ -905,6 +952,86 @@ describe('Cloudflare Access 区块', () => {
     expect(isChecked(html, 'remote-access-access-enforce')).toBe(false);
     expect(html).toContain('data-testid="remote-access-access-enforce-off"');
     expect(html).toContain('settings.remoteAccess.access.app.enforceOff');
+  });
+
+  test('应用绑的主机名与当前隧道不一致时就地说明校验不会生效', () => {
+    status = loggedIn({
+      access: {
+        ...tunnel().access,
+        hasCredentials: true,
+        configured: true,
+        enforceJwt: true,
+        hostname: 'old.example.com',
+        effective: false,
+        rules: [{ kind: 'email', value: 'you@example.com' }],
+      },
+    });
+    const html = render();
+    expect(html).toContain('data-testid="remote-access-access-hostname-mismatch"');
+    expect(html).toContain('settings.remoteAccess.access.app.hostnameMismatch');
+
+    // 隧道还没建时不该报「不匹配」：向导允许先按草稿主机名把 Access 配好。
+    status = tunnel({
+      auth: { loggedIn: true, loginUrl: null },
+      access: {
+        ...tunnel().access,
+        hasCredentials: true,
+        configured: true,
+        enforceJwt: true,
+        hostname: 'draft.example.com',
+        effective: false,
+        rules: [{ kind: 'email', value: 'you@example.com' }],
+      },
+    });
+    expect(renderWizard('named')).not.toContain(
+      'data-testid="remote-access-access-hostname-mismatch"'
+    );
+  });
+
+  test('拿掉最后一道保护前必须先勾确认：警示在场且强制开关锁住', () => {
+    const lastProtection = {
+      ...tunnel().access,
+      hasCredentials: true,
+      configured: true,
+      enforceJwt: true,
+      hostname: 'tmex.example.com',
+      effective: true,
+      rules: [{ kind: 'email' as const, value: 'you@example.com' }],
+    };
+    status = loggedIn({ access: lastProtection, loginEnforced: false, exposureProtected: true });
+    const html = renderWizard('named');
+    expect(html).toContain('data-testid="remote-access-access-drop-exposure"');
+    expect(html).toContain('settings.remoteAccess.exposure.dropWarning');
+    expect(html).toContain('data-testid="remote-access-access-drop-exposure-ack"');
+    expect(isSwitchDisabled(html, 'remote-access-access-enforce')).toBe(true);
+
+    const acknowledged = renderWizard('named', { exposure: { acknowledged: true } });
+    expect(isSwitchDisabled(acknowledged, 'remote-access-access-enforce')).toBe(false);
+  });
+
+  test('还有登录兜底 / 隧道没跑起来时不拦截关闭校验', () => {
+    const access = {
+      ...tunnel().access,
+      hasCredentials: true,
+      configured: true,
+      enforceJwt: true,
+      hostname: 'tmex.example.com',
+      effective: true,
+      rules: [{ kind: 'email' as const, value: 'you@example.com' }],
+    };
+    status = loggedIn({ access, loginEnforced: true });
+    const withLogin = renderWizard('named');
+    expect(withLogin).not.toContain('data-testid="remote-access-access-drop-exposure"');
+    expect(isSwitchDisabled(withLogin, 'remote-access-access-enforce')).toBe(false);
+
+    status = configured('named', 'stopped', {
+      auth: { loggedIn: true, loginUrl: null },
+      access,
+      loginEnforced: false,
+    });
+    const stopped = renderWizard('named');
+    expect(stopped).not.toContain('data-testid="remote-access-access-drop-exposure"');
+    expect(isSwitchDisabled(stopped, 'remote-access-access-enforce')).toBe(false);
   });
 
   test('Access 最近一次错误就地展示', () => {

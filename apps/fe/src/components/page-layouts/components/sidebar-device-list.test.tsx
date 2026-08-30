@@ -43,8 +43,13 @@ const {
   SidebarNodeSection,
   hasSidebarVisibleDeviceForNode,
   inventoryDevices,
+  offlineSidebarDevices,
   selectedDeviceIdForNode,
+  sidebarVisibleDeviceIdsForNode,
 } = await import('./sidebar-node-section');
+const { clearDeviceSnapshot, writeDeviceSnapshot } = await import(
+  '@/pages/devices/device-snapshot-store'
+);
 const { SortableVerticalList, useSortableRow } = await import('@tmex/panels/device-tree');
 
 /**
@@ -229,6 +234,54 @@ describe('hasSidebarVisibleDeviceForNode', () => {
   });
 });
 
+describe('offlineSidebarDevices', () => {
+  const NODE = 'n1';
+  const known = [
+    { id: 'd1', name: '书房' },
+    { id: 'd2', name: '客厅' },
+  ];
+
+  test('已知设备按可见性过滤，名字取自已知列表', () => {
+    expect(
+      offlineSidebarDevices({ [sidebarDeviceVisibilityKey(NODE, 'd2')]: true }, NODE, known, null)
+    ).toEqual([{ id: 'd2', name: '客厅' }]);
+  });
+
+  test('已知列表里没有的设备只要开着显示就留一行，名字退回 device id', () => {
+    expect(
+      offlineSidebarDevices({ [sidebarDeviceVisibilityKey(NODE, 'd9')]: true }, NODE, [], null)
+    ).toEqual([{ id: 'd9', name: 'd9' }]);
+  });
+
+  test('选中的那台无条件保留，且不重复出现', () => {
+    expect(
+      offlineSidebarDevices({ [sidebarDeviceVisibilityKey(NODE, 'd1')]: true }, NODE, known, 'd1')
+    ).toEqual([{ id: 'd1', name: '书房' }]);
+    expect(offlineSidebarDevices({}, NODE, [], 'd7')).toEqual([{ id: 'd7', name: 'd7' }]);
+  });
+
+  test('别的 node 打开的设备不算数', () => {
+    expect(
+      offlineSidebarDevices({ [sidebarDeviceVisibilityKey('n2', 'd9')]: true }, NODE, [], null)
+    ).toEqual([]);
+  });
+});
+
+describe('sidebarVisibleDeviceIdsForNode', () => {
+  test('只取该 node 前缀下显式打开的设备 id', () => {
+    expect(
+      sidebarVisibleDeviceIdsForNode(
+        {
+          'n1:d1': true,
+          'n1:d2': false,
+          'n1b:d3': true,
+        },
+        'n1'
+      )
+    ).toEqual(['d1']);
+  });
+});
+
 describe('SidebarNodeSection', () => {
   const OFFLINE_NODE = '0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c';
 
@@ -289,6 +342,45 @@ describe('SidebarNodeSection', () => {
     expect(html).toContain(`data-testid="sidebar-node-offline-${OFFLINE_NODE}"`);
     const section = html.slice(html.indexOf(`data-testid="sidebar-node-offline-${OFFLINE_NODE}"`));
     expect(section.slice(0, section.indexOf('>'))).toContain('opacity-100');
+  });
+
+  test('已开启显示的设备：node 掉线后分节仍在，拿不到名字就用 device id', () => {
+    // mesh 的 inventory 只带版本号，没有设备列表——只按它过滤会让整节凭空消失。
+    const html = render(
+      <SidebarNodeSection node={{ ...offlineNode(), inventory: { version: 3 } }} />,
+      {
+        [sidebarDeviceVisibilityKey(OFFLINE_NODE, 'd9')]: true,
+      }
+    );
+
+    expect(html).toContain(`data-testid="sidebar-node-offline-${OFFLINE_NODE}"`);
+    expect(html).toContain('data-testid="sidebar-node-offline-device-d9"');
+    expect(html).toContain(`href="/n/${OFFLINE_NODE}/devices/d9"`);
+    expect(html).toContain('>d9<');
+  });
+
+  test('有本地设备快照时离线行用快照里的名字', () => {
+    writeDeviceSnapshot(OFFLINE_NODE, [
+      {
+        id: 'd9',
+        name: '工作站',
+        type: 'local',
+        authMode: 'auto',
+        sortOrder: 0,
+        createdAt: '',
+        updatedAt: '',
+      },
+    ]);
+    try {
+      const html = render(
+        <SidebarNodeSection node={{ ...offlineNode(), inventory: { version: 3 } }} />,
+        { [sidebarDeviceVisibilityKey(OFFLINE_NODE, 'd9')]: true }
+      );
+      expect(html).toContain('data-testid="sidebar-node-offline-device-d9"');
+      expect(html).toContain('工作站');
+    } finally {
+      clearDeviceSnapshot(OFFLINE_NODE);
+    }
   });
 
   test('离线 node：当前选中的那台设备无条件保留（与在线选择器同一条例外）', () => {

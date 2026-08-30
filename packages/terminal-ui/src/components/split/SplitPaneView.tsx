@@ -9,6 +9,7 @@ import { Terminal } from '../Terminal';
 import type { DropPosition, SplitPaneRect } from '../splitLayoutGeometry';
 import type { TerminalRef, TerminalTheme } from '../types';
 import { PANE_HEADER_PX, cellsToPercent } from './constants';
+import { isPaneCloseTarget } from './paneCloseTarget';
 import { paneDisplayName, paneMetaText } from './paneLabels';
 
 const DROP_PREVIEW_CLASS: Record<DropPosition, string> = {
@@ -111,8 +112,10 @@ export function SplitPaneView({
         width: cellsToPercent(pane.rect.width, rootCols),
         height: cellsToPercent(pane.rect.height, rootRows),
       }}
-      onPointerDownCapture={() => {
-        if (!isFocused) {
+      onPointerDownCapture={(event) => {
+        // 关闭控件要放过：它的 stopPropagation 在冒泡阶段，拦不住这个捕获处理器，
+        // 先切焦点会把路由挪到马上要被关掉的那个 pane 上。
+        if (!isFocused && !isPaneCloseTarget(event.target)) {
           onUserSelectPane(windowId, paneId);
         }
       }}
@@ -149,6 +152,8 @@ export function SplitPaneView({
           <button
             type="button"
             data-testid={`split-pane-close-${paneId}`}
+            // 与 paneCloseTarget.ts 的 PANE_CLOSE_ATTR 对应：pane 根元素据此放过这次点击。
+            data-pane-close=""
             aria-label={t('window.closePane')}
             title={t('window.closePane')}
             className="ml-auto flex h-4 w-4 shrink-0 items-center justify-center rounded text-muted-foreground/50 opacity-70 transition-[opacity,color,background-color] duration-(--tmex-motion-fast) ease-out hover:bg-foreground/10 hover:text-foreground hover:opacity-100 group-hover/pane-titlebar:opacity-100 motion-reduce:transition-none"

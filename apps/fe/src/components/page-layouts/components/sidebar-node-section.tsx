@@ -4,7 +4,8 @@
 //   - 在线且已登录：懒挂该 node 的运行时，渲染真实设备树，每行带 node 徽标；
 //   - 在线但未登录：折叠，只给一个「登录」入口，**不**自动登录也**不**建立连接；
 //     用户点开才用内存里的会话钥静默登录，登不上再退回「登录此节点」按钮；
-//   - 离线：灰显最近一次已知 inventory 里的设备名，不建连接、不发请求。
+//   - 离线：灰显最近一次已知的设备（本地快照优先，其次 node inventory；名字取不到就用
+//     device id），不建连接、不发请求。
 //
 // 三种形态都受同一条门槛约束：远端 node 至少要有一台设备被打开侧边栏显示，整节才出现
 // （self 分节不受此限）。登录别的 node 一律走「管理设备」，侧边栏不做未开启 node 的登录入口。
@@ -13,6 +14,7 @@ import { NodeLoginButton } from '@/auth/NodeLoginButton';
 import { loginErrorKey } from '@/auth/login-errors';
 import { useNodeLoginGate } from '@/auth/use-node-login';
 import { NodeRuntimeScope } from '@/node/node-runtime-scope';
+import { offlineDevices } from '@/pages/devices/device-snapshot-store';
 import { SELF_NODE_ID, nodeAppPath, parseNodeIdFromPath } from '@tmex/api-client';
 import {
   NodeBadge,
@@ -24,7 +26,7 @@ import { isSidebarDeviceVisible } from '@tmex/stores';
 import { useUIStore } from '@tmex/stores/react';
 import { cn } from '@tmex/ui';
 import { ChevronRight, Loader2, Monitor } from 'lucide-react';
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Link, matchPath, useLocation } from 'react-router';
 import { SideBarDeviceListForRuntime } from './sidebar-device-list-runtime';
@@ -86,20 +88,61 @@ export function selectedDeviceIdForNode(pathname: string, runtimeNodeId: string)
 }
 
 /**
- * 该 node 下是否至少有一台设备被打开了侧边栏显示。
+ * 该 node 下被显式打开了侧边栏显示的设备 id。
  *
- * 未登录的 node 读不到它的设备列表（mesh 的 inventory 只带版本号），只能反过来看开关本身：
- * 远端设备缺省隐藏，用户在「管理设备」里打开时才显式写入 `true`，按复合键前缀数一遍即可。
+ * 未登录 / 离线的 node 读不到它的设备列表（mesh 的 inventory 只带版本号），只能反过来看开关
+ * 本身：远端设备缺省隐藏，用户在「管理设备」里打开时才显式写入 `true`，按复合键前缀取一遍即可。
+ * 前缀里带分隔符 `:`，`node-a` 与 `node-ab` 这类互为前缀的 id 不会互相带出。
  */
+export function sidebarVisibleDeviceIdsForNode(
+  visibility: Record<string, boolean>,
+  runtimeNodeId: string
+): string[] {
+  const prefix = `${runtimeNodeId}:`;
+  const ids: string[] = [];
+  for (const [key, visible] of Object.entries(visibility)) {
+    if (visible && key.startsWith(prefix)) ids.push(key.slice(prefix.length));
+  }
+  return ids;
+}
+
 export function hasSidebarVisibleDeviceForNode(
   visibility: Record<string, boolean>,
   runtimeNodeId: string
 ): boolean {
-  const prefix = `${runtimeNodeId}:`;
-  for (const [key, visible] of Object.entries(visibility)) {
-    if (visible && key.startsWith(prefix)) return true;
+  return sidebarVisibleDeviceIdsForNode(visibility, runtimeNodeId).length > 0;
+}
+
+/**
+ * 离线分节要显示的设备行。
+ *
+ * 已知设备（本地快照优先，其次 node inventory）按可见性过滤；此外**显式打开过显示、但已知
+ * 列表里没有**的设备也要留一行（拿不到名字就用 device id）——mesh 的 inventory 不带设备列表，
+ * 只按已知列表过滤会让刚在「管理设备」里打开的远端设备随节点掉线一起从侧边栏消失。
+ */
+export function offlineSidebarDevices(
+  visibility: Record<string, boolean>,
+  runtimeNodeId: string,
+  knownDevices: { id: string; name: string }[],
+  selectedDeviceId: string | null
+): { id: string; name: string }[] {
+  const names = new Map(knownDevices.map((device) => [device.id, device.name]));
+  const ids = knownDevices
+    .filter(
+      (device) =>
+        device.id === selectedDeviceId ||
+        isSidebarDeviceVisible(visibility, runtimeNodeId, device.id)
+    )
+    .map((device) => device.id);
+  const seen = new Set(ids);
+  for (const id of sidebarVisibleDeviceIdsForNode(visibility, runtimeNodeId)) {
+    if (!seen.has(id)) {
+      seen.add(id);
+      ids.push(id);
+    }
   }
-  return false;
+  if (selectedDeviceId !== null && !seen.has(selectedDeviceId)) ids.push(selectedDeviceId);
+  return ids.map((id) => ({ id, name: names.get(id) ?? id }));
 }
 
 function badgeOf(node: SidebarNodeEntry): NodeBadgeInfo {
@@ -209,8 +252,8 @@ function SidebarNodeSignIn({ node, drag }: { node: SidebarNodeEntry; drag?: Side
 }
 
 /**
- * 离线分节：灰显最近一次已知 inventory 里的设备。已知设备被取消显示（或切到别的 node
- * 让「选中的那台无条件保留」失效）时整节隐藏——过 `useSectionPresence` 淡出后再卸载，
+ * 离线分节：灰显最近一次已知的设备（本地快照优先，其次 node inventory），名字取不到就用
+ * device id。一台可见设备都不剩时整节隐藏——过 `useSectionPresence` 淡出后再卸载，
  * 退场期间沿用锁住的设备列表，不会先掉内容再消失。
  */
 function SidebarNodeOffline({
@@ -222,13 +265,20 @@ function SidebarNodeOffline({
   const visibility = useUIStore((state) => state.sidebarDeviceVisibility);
   const selectedDeviceId = selectedDeviceIdForNode(useLocation().pathname, node.runtimeNodeId);
 
-  const knownDevices = inventoryDevices(node.inventory);
-  const devices = knownDevices.filter(
-    (device) =>
-      device.id === selectedDeviceId ||
-      isSidebarDeviceVisible(visibility, node.runtimeNodeId, device.id)
+  // 快照读 localStorage 并解析 JSON，按 node 与 inventory 记一次即可（离线期间不会变）。
+  const knownDevices = useMemo(() => {
+    const snapshot = offlineDevices(node.runtimeNodeId, node.inventory);
+    return snapshot.length > 0
+      ? snapshot.map((device) => ({ id: device.id, name: device.name }))
+      : inventoryDevices(node.inventory);
+  }, [node.runtimeNodeId, node.inventory]);
+  const devices = offlineSidebarDevices(
+    visibility,
+    node.runtimeNodeId,
+    knownDevices,
+    selectedDeviceId
   );
-  // 已知设备全被取消显示时整节隐藏（与在线分节同一条规则）；零已知设备只给 self 留空态。
+  // 一台可见设备都没有时整节隐藏（与在线分节同一条规则）；self 例外，留空态。
   const hidden = shouldHideSidebarNodeSection(
     { total: knownDevices.length, visible: devices.length },
     node.isSelf
@@ -244,7 +294,7 @@ function SidebarNodeOffline({
       className={cn('space-y-0.5', presence.className, drag?.sortable.isDragging && 'opacity-60')}
     >
       <SectionHeader node={node} hint={t('sidebar.node.offline')} drag={drag} />
-      {knownDevices.length === 0 ? (
+      {presence.value.length === 0 ? (
         <div className="px-2 py-1 text-[11px] text-muted-foreground/60">
           {t('sidebar.node.noKnownDevices')}
         </div>

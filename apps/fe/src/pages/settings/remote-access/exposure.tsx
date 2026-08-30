@@ -16,6 +16,16 @@ export interface ExposureState {
   ackRequired: boolean;
 }
 
+const WARNING_KEY = {
+  full: 'settings.remoteAccess.exposure.warning',
+  compact: 'settings.remoteAccess.exposure.warningShort',
+  drop: 'settings.remoteAccess.exposure.dropWarning',
+} as const;
+
+/**
+ * `drop` 用于「关掉令牌校验 / 删掉 Access 应用」——此刻保护还在（`unprotected` 为假），
+ * 但动作本身会把它拿掉，所以这一档无条件渲染。
+ */
 export function ExposureWarning({
   exposure,
   id,
@@ -26,20 +36,14 @@ export function ExposureWarning({
   /** 勾选框的 id，同一页面里多处渲染必须各不相同。 */
   id: string;
   testId: string;
-  variant?: 'full' | 'compact';
+  variant?: 'full' | 'compact' | 'drop';
 }) {
   const { t } = useTranslation();
-  if (!exposure.unprotected && !exposure.ackRequired) return null;
+  if (variant !== 'drop' && !exposure.unprotected && !exposure.ackRequired) return null;
 
   return (
     <SetupNotice tone="error" testId={testId}>
-      <p>
-        {t(
-          variant === 'full'
-            ? 'settings.remoteAccess.exposure.warning'
-            : 'settings.remoteAccess.exposure.warningShort'
-        )}
-      </p>
+      <p>{t(WARNING_KEY[variant])}</p>
       {exposure.ackRequired && !exposure.acknowledged && (
         <p data-testid={`${testId}-required`}>{t('settings.remoteAccess.exposure.ackRequired')}</p>
       )}

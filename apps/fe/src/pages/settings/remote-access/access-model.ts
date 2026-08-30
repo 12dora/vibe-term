@@ -1,6 +1,10 @@
 // Cloudflare Access 区块的纯推导：规则草稿的校验与归一、可用性判断、步骤标签。
 
-import type { TunnelAccessPolicyRule, TunnelStatusResponse } from '@tmex/shared';
+import type {
+  TunnelAccessPolicyRule,
+  TunnelActionRequest,
+  TunnelStatusResponse,
+} from '@tmex/shared';
 
 export type AccessRuleKind = TunnelAccessPolicyRule['kind'];
 
@@ -46,30 +50,49 @@ export function ruleDraftsFrom(rules: TunnelAccessPolicyRule[]): AccessRuleDraft
 }
 
 /**
- * Access 应用绑在主机名上：`configure_access` / `sync_access` 都不带主机名参数，
- * 服务端用的是已保存的那个，所以没有主机名之前这两个动作都无从谈起。
+ * `configure_access` 的目标主机名：已建隧道用服务端保存的那个，还没建时用向导里刚确认的草稿
+ * （契约允许显式传 `hostname`，先于建隧道把 Access 配好）。
+ * `access.hostname` 只代表已有应用**当前覆盖**的地址，不参与目标推导——隧道被移除后它仍会留着。
  */
-export function accessTargetHostname(status: TunnelStatusResponse): string | null {
-  return status.access.hostname ?? status.config.hostname;
+export function accessConfigureHostname(
+  status: TunnelStatusResponse,
+  draftHostname: string
+): string | null {
+  const draft = draftHostname.trim();
+  return status.config.hostname ?? (draft.length > 0 ? draft : null);
 }
 
-export function canApplyAccess(status: TunnelStatusResponse, drafts: AccessRuleDraft[]): boolean {
+/** `sync_access` 的目标：与后端一致，`config.hostname ?? external.hostnames[0]`。 */
+export function accessSyncHostname(status: TunnelStatusResponse): string | null {
+  return status.config.hostname ?? status.external.hostnames[0] ?? null;
+}
+
+export function canApplyAccess(
+  status: TunnelStatusResponse,
+  drafts: AccessRuleDraft[],
+  draftHostname: string
+): boolean {
   return (
     status.access.hasCredentials &&
-    accessTargetHostname(status) !== null &&
+    accessConfigureHostname(status, draftHostname) !== null &&
     accessRulesValid(drafts)
   );
 }
 
-/**
- * 同步比应用宽松一档：后端在没有隧道主机名时会退回探测到的系统隧道主机名，
- * 所以只要有一个可匹配的主机名就允许同步。
- */
 export function canSyncAccess(status: TunnelStatusResponse): boolean {
-  return (
-    status.access.hasCredentials &&
-    (accessTargetHostname(status) !== null || status.external.hostnames.length > 0)
-  );
+  return status.access.hasCredentials && accessSyncHostname(status) !== null;
+}
+
+/** 隧道还没建时显式带上向导确认的主机名；已建则不带，由服务端用 `config.hostname`。 */
+export function configureAccessRequest(
+  status: TunnelStatusResponse,
+  rules: TunnelAccessPolicyRule[],
+  draftHostname: string
+): TunnelActionRequest {
+  const hostname = accessConfigureHostname(status, draftHostname);
+  return status.config.mode === 'off' && hostname
+    ? { action: 'configure_access', rules, hostname }
+    : { action: 'configure_access', rules };
 }
 
 /** 凭证已保存但本地还没有应用：先让用户从 Cloudflare 同步，避免重复建应用。 */

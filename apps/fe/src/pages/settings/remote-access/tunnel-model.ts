@@ -25,12 +25,45 @@ export function tunnelPill(status: TunnelStatusResponse): TunnelPill {
   return 'stopped';
 }
 
-/** Access 徽标：未配置 / 已配置但网关不校验令牌 / 已配置且强制校验。 */
-export type AccessPill = 'notConfigured' | 'notEnforced' | 'protected';
+/**
+ * Access 校验是否真的生效。后端 `access.effective` 是唯一真相；旧后端没有这个字段时
+ * 用同一条谓词兜底：应用已建、网关强制校验，且应用覆盖的主机名就是当前隧道的主机名
+ * （两边都为空不算匹配——没有隧道就谈不上保护）。
+ */
+export function accessEffective(status: TunnelStatusResponse): boolean {
+  const access: { effective?: boolean } = status.access;
+  return (
+    access.effective ??
+    Boolean(
+      status.access.configured &&
+        status.access.enforceJwt &&
+        status.access.hostname &&
+        status.access.hostname === status.config.hostname
+    )
+  );
+}
+
+/** Access 徽标：未配置 / 已配置但网关不校验令牌 / 已配置但绑的是别的主机名 / 校验已生效。 */
+export type AccessPill = 'notConfigured' | 'notEnforced' | 'hostnameMismatch' | 'protected';
 
 export function accessPill(status: TunnelStatusResponse): AccessPill {
   if (!status.access.configured) return 'notConfigured';
-  return status.access.enforceJwt ? 'protected' : 'notEnforced';
+  if (!status.access.enforceJwt) return 'notEnforced';
+  return accessEffective(status) ? 'protected' : 'hostnameMismatch';
+}
+
+/** 隧道正在对外提供服务：接管来的隧道以探测结果为准。 */
+export function isTunnelRunning(status: TunnelStatusResponse): boolean {
+  const pill = tunnelPill(status);
+  return pill === 'running' || pill === 'starting';
+}
+
+/**
+ * 关闭强制校验 / 移除 Access 应用会拿掉最后一道保护：隧道正在跑、本机没有登录，
+ * 而当前唯一的保护就是生效中的 Access。此时动作必须带上用户的显式确认。
+ */
+export function wouldDropLastProtection(status: TunnelStatusResponse): boolean {
+  return !status.loginEnforced && isTunnelRunning(status) && accessEffective(status);
 }
 
 export type WizardStepId =
@@ -236,10 +269,19 @@ export function isAuthRequiredError(
 
 type ExposingAction = Extract<TunnelActionRequest, { acknowledgeExposure?: boolean }>;
 
-/** 会把 tmex 开放到公网的动作：未受保护时必须带上用户的显式确认。 */
+/**
+ * 会把 tmex 开放到公网的动作：未受保护时必须带上用户的显式确认。
+ * 开隧道是一类；拿掉最后一道保护（关掉令牌校验、删掉 Access 应用）是同一件事的另一半。
+ */
 export function isExposingAction(req: TunnelActionRequest): req is ExposingAction {
   if (req.action === 'set_auto_start') return req.autoStart;
-  return req.action === 'create' || req.action === 'quick_start' || req.action === 'start';
+  if (req.action === 'set_access_enforce') return !req.enforceJwt;
+  return (
+    req.action === 'create' ||
+    req.action === 'quick_start' ||
+    req.action === 'start' ||
+    req.action === 'remove_access'
+  );
 }
 
 /** 只有用户勾了「我了解风险」才带上 `acknowledgeExposure`，否则由后端 409 挡下。 */

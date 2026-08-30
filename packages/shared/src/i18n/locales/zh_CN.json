@@ -464,16 +464,18 @@
         "accessState": {
           "notConfigured": "Access 未配置",
           "notEnforced": "Access 已配置但未强制",
-          "protected": "Access 已保护"
+          "protected": "Access 已保护",
+          "hostnameMismatch": "Access 已配置（主机名不匹配）"
         },
         "externallyManaged": "由系统服务托管",
         "externallyManagedNotice": "该隧道由系统服务运行，tmex 不会启动或停止它。要交回 tmex 管理，请先取消接管。",
         "exposure": {
-          "warning": "本机未启用登录，也未配置 Cloudflare Access：隧道开启后任何人都可以访问 tmex。仅在纯局域网或你明确接受风险时继续；建议启用登录（多节点互联）或配置 Access。",
-          "warningShort": "本机未启用登录，也未配置 Cloudflare Access：隧道开启后任何人都可以访问 tmex。",
+          "warning": "当前没有生效的访问保护：隧道地址是公网入口，任何人都可以访问 tmex。建议启用登录（多节点互联），或为该主机名配置并强制 Cloudflare Access。",
+          "warningShort": "当前没有生效的访问保护：隧道地址是公网入口，任何人都可以访问 tmex。",
           "acknowledge": "我了解风险，仍要开放公网访问",
           "ackRequired": "该操作会把 tmex 开放到公网，请先勾选确认。",
-          "enableLogin": "启用登录（多节点互联）"
+          "enableLogin": "启用登录（多节点互联）",
+          "dropWarning": "这会移除最后一道访问保护：隧道仍在运行，之后任何人都可以访问 tmex。"
         },
         "access": {
           "tag": {
@@ -526,7 +528,8 @@
             "enforce": "网关校验 Access 令牌",
             "enforceHint": "对来自隧道的请求校验 Cf-Access-Jwt-Assertion，未通过直接拒绝。",
             "enforceOff": "已关闭令牌校验。Cloudflare 仍会在边缘拦截未授权访问，但绕过 Access 直连隧道的请求不会被本机拦下。",
-            "remove": "移除 Access 应用"
+            "remove": "移除 Access 应用",
+            "hostnameMismatch": "该应用覆盖的主机名与当前隧道不一致，令牌校验不会生效。"
           },
           "confirmRemove": {
             "title": "移除 Access 应用？",

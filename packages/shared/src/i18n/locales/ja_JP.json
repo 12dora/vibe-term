@@ -464,16 +464,18 @@
         "accessState": {
           "notConfigured": "Access 未設定",
           "notEnforced": "Access 設定済み・未強制",
-          "protected": "Access で保護"
+          "protected": "Access で保護",
+          "hostnameMismatch": "Access 設定済み（ホスト名不一致）"
         },
         "externallyManaged": "システムサービス管理",
         "externallyManagedNotice": "このトンネルはシステムサービスが実行しており、tmex は起動・停止を行いません。tmex で管理するには先に引き継ぎを解除してください。",
         "exposure": {
-          "warning": "この端末はサインインが無効で、Cloudflare Access も未設定です。トンネルを開くと誰でも tmex にアクセスできます。信頼できるネットワークか、リスクを明確に受け入れる場合のみ続行してください。サインイン（マルチノード）の有効化または Access の設定を推奨します。",
-          "warningShort": "サインインが無効で Cloudflare Access も未設定です。トンネルを開くと誰でも tmex にアクセスできます。",
+          "warning": "有効なアクセス保護がありません。トンネルの URL は誰でも到達できる公開エントリです。サインイン（マルチノード）を有効にするか、このホスト名に対して Cloudflare Access を設定して強制してください。",
+          "warningShort": "有効なアクセス保護がありません。トンネルの URL は公開されており、誰でも tmex にアクセスできます。",
           "acknowledge": "リスクを理解した上でインターネットに公開する",
           "ackRequired": "この操作は tmex をインターネットに公開します。チェックを入れて確認してください。",
-          "enableLogin": "サインインを有効にする（マルチノード）"
+          "enableLogin": "サインインを有効にする（マルチノード）",
+          "dropWarning": "最後のアクセス保護が解除されます。トンネルは動作したままとなり、誰でも tmex にアクセスできるようになります。"
         },
         "access": {
           "tag": {
@@ -526,7 +528,8 @@
             "enforce": "ゲートウェイで Access トークンを検証",
             "enforceHint": "トンネル経由のリクエストで Cf-Access-Jwt-Assertion を検証し、通らないものを拒否します。",
             "enforceOff": "トークン検証は無効です。Cloudflare のエッジでは引き続き未認可のアクセスを遮断しますが、Access を迂回したリクエストはこの端末では拒否されません。",
-            "remove": "Access アプリケーションを削除"
+            "remove": "Access アプリケーションを削除",
+            "hostnameMismatch": "このアプリケーションが対象とするホスト名は現在のトンネルと異なるため、トークン検証は有効になりません。"
           },
           "confirmRemove": {
             "title": "Access アプリケーションを削除しますか？",

@@ -23,23 +23,32 @@ import { FormField, SetupNotice, SwitchRow } from '../nodes/setup/form-parts';
 import {
   type AccessRuleDraft,
   type AccessRuleKind,
-  accessTargetHostname,
+  accessConfigureHostname,
+  accessSyncHostname,
   canApplyAccess,
   canSyncAccess,
+  configureAccessRequest,
   ruleDraftError,
   ruleDraftsFrom,
   shouldOfferAccessSync,
   toAccessRules,
 } from './access-model';
+import { type ExposureState, ExposureWarning } from './exposure';
 import { DetailRow, JobProgress } from './step-shell';
 import type { TunnelActions } from './tunnel-actions';
+import { accessEffective, wouldDropLastProtection } from './tunnel-model';
 
 export function AccessStep({
   status,
   actions,
+  draftHostname,
+  exposure,
 }: {
   status: TunnelStatusResponse;
   actions: TunnelActions;
+  /** 向导里已确认的主机名草稿：隧道还没建时，Access 就按它配。 */
+  draftHostname: string;
+  exposure: ExposureState;
 }) {
   const { t } = useTranslation();
   const access = status.access;
@@ -64,10 +73,13 @@ export function AccessStep({
           key={access.rules.map((rule) => `${rule.kind}:${rule.value}`).join(',')}
           status={status}
           actions={actions}
+          draftHostname={draftHostname}
         />
       )}
 
-      {access.configured && <AccessAppStatus status={status} actions={actions} />}
+      {access.configured && (
+        <AccessAppStatus status={status} actions={actions} exposure={exposure} />
+      )}
     </div>
   );
 }
@@ -183,9 +195,11 @@ function SavedCredentials({
 function RulesEditor({
   status,
   actions,
+  draftHostname,
 }: {
   status: TunnelStatusResponse;
   actions: TunnelActions;
+  draftHostname: string;
 }) {
   const { t } = useTranslation();
   const [drafts, setDrafts] = useState<AccessRuleDraft[]>(() =>
@@ -196,8 +210,9 @@ function RulesEditor({
   const nextKey = useRef(1);
   const job = status.job;
   const running = job?.kind === 'access' && job.state === 'running';
-  const hostname = accessTargetHostname(status);
-  const applicable = canApplyAccess(status, drafts);
+  const hostname = accessConfigureHostname(status, draftHostname);
+  const syncHostname = accessSyncHostname(status);
+  const applicable = canApplyAccess(status, drafts, draftHostname);
 
   const patch = (key: string, next: Partial<AccessRuleDraft>) =>
     setDrafts((current) =>
@@ -251,7 +266,7 @@ function RulesEditor({
 
       {shouldOfferAccessSync(status) && (
         <SetupNotice tone="info" testId="remote-access-access-sync-hint">
-          {t('settings.remoteAccess.access.sync.hint', { hostname })}
+          {t('settings.remoteAccess.access.sync.hint', { hostname: syncHostname })}
         </SetupNotice>
       )}
 
@@ -273,7 +288,9 @@ function RulesEditor({
           type="button"
           size="sm"
           disabled={actions.busy || !applicable}
-          onClick={() => actions.run({ action: 'configure_access', rules: toAccessRules(drafts) })}
+          onClick={() =>
+            actions.run(configureAccessRequest(status, toAccessRules(drafts), draftHostname))
+          }
           data-testid="remote-access-access-apply"
         >
           {actions.pending === 'configure_access' ? (
@@ -370,13 +387,18 @@ function RuleRow({
 function AccessAppStatus({
   status,
   actions,
+  exposure,
 }: {
   status: TunnelStatusResponse;
   actions: TunnelActions;
+  exposure: ExposureState;
 }) {
   const { t } = useTranslation();
   const access = status.access;
   const [confirmRemove, setConfirmRemove] = useState(false);
+  // 关校验 / 删应用会拿掉最后一道保护时，先要用户明确确认（与开隧道同一条契约）。
+  const dropsProtection = wouldDropLastProtection(status);
+  const blocked = dropsProtection && !exposure.acknowledged;
 
   return (
     <div className="space-y-3" data-testid="remote-access-access-app">
@@ -415,12 +437,28 @@ function AccessAppStatus({
         </DetailRow>
       </div>
 
+      {/* 隧道还没建时不报不匹配：向导允许先按已确认的主机名把 Access 配好。 */}
+      {access.enforceJwt && status.config.hostname !== null && !accessEffective(status) && (
+        <SetupNotice tone="warning" testId="remote-access-access-hostname-mismatch">
+          {t('settings.remoteAccess.access.app.hostnameMismatch')}
+        </SetupNotice>
+      )}
+
+      {dropsProtection && (
+        <ExposureWarning
+          exposure={exposure}
+          id="remote-access-access-drop-ack"
+          testId="remote-access-access-drop-exposure"
+          variant="drop"
+        />
+      )}
+
       <SwitchRow
         id="remote-access-access-enforce"
         label={t('settings.remoteAccess.access.app.enforce')}
         hint={t('settings.remoteAccess.access.app.enforceHint')}
         checked={access.enforceJwt}
-        disabled={actions.busy}
+        disabled={actions.busy || blocked}
         onCheckedChange={(checked) =>
           actions.run({ action: 'set_access_enforce', enforceJwt: checked })
         }
@@ -459,12 +497,21 @@ function AccessAppStatus({
                 {t('settings.remoteAccess.access.confirmRemove.description')}
               </AlertDialogDescription>
             </AlertDialogHeader>
+            {dropsProtection && (
+              <ExposureWarning
+                exposure={exposure}
+                id="remote-access-access-remove-ack"
+                testId="remote-access-access-remove-exposure"
+                variant="drop"
+              />
+            )}
             <AlertDialogFooter>
               <AlertDialogCancel onClick={() => setConfirmRemove(false)}>
                 {t('settings.remoteAccess.access.confirmRemove.cancel')}
               </AlertDialogCancel>
               <AlertDialogAction
                 variant="destructive"
+                disabled={blocked}
                 onClick={() => {
                   setConfirmRemove(false);
                   actions.run({ action: 'remove_access' });

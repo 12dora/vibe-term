@@ -50,6 +50,8 @@ function status(overrides: Partial<TunnelStatusResponse> = {}): TunnelStatusResp
       hostname: null,
       rules: [],
       enforceJwt: true,
+      effective: false,
+      bypassAppId: null,
       lastError: null,
     },
     external: {
