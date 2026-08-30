@@ -69,29 +69,7 @@ export class RuntimeEventBridge {
         this.host.metadata.applySourceEvent(event);
       },
       beginMetadataReconcile: () => this.host.metadata.revision,
-      onSnapshot: (payload, baseRevision) => {
-        const previousSnapshot = this.host.getLastSnapshot();
-        const changed = !stateSnapshotsEqual(previousSnapshot, payload);
-        this.host.setLastSnapshot(payload);
-        this.host.metadata.reconcile(payload, baseRevision);
-        const panes: PaneIdentity[] = [];
-        for (const window of payload.session?.windows ?? []) {
-          for (const pane of window.panes) {
-            const paneEpoch = this.host.metadata.getPaneEpoch(pane.id);
-            if (paneEpoch) panes.push({ paneId: pane.id, paneEpoch });
-          }
-        }
-        this.host.paneRetention.reconcilePanes(panes);
-        const currentPaneIds = new Set(panes.map((pane) => pane.paneId));
-        const historyReader = this.host.getHistoryReader();
-        for (const pane of panes) historyReader.invalidatePane(pane.paneId, pane.paneEpoch);
-        for (const window of previousSnapshot?.session?.windows ?? []) {
-          for (const pane of window.panes) {
-            if (!currentPaneIds.has(pane.id)) historyReader.invalidatePane(pane.id);
-          }
-        }
-        if (changed) this.host.broadcast((listener) => listener.onSnapshot?.(payload));
-      },
+      onSnapshot: (payload, baseRevision) => this.handleSnapshot(payload, baseRevision),
       onError: (error) => {
         this.host.broadcast((listener) => listener.onError?.(error));
       },
@@ -99,6 +77,43 @@ export class RuntimeEventBridge {
         this.host.handleUnexpectedClose();
       },
     };
+  }
+
+  // 拆 dirty 维度：字段/revision 管 metadata rebuild；pane 集合（及未建立投影）管 retention/history。
+  private handleSnapshot(payload: StateSnapshotPayload, baseRevision?: bigint): void {
+    const previousSnapshot = this.host.getLastSnapshot();
+    const changed = !stateSnapshotsEqual(previousSnapshot, payload);
+    const paneSetChanged = !paneSetsEqual(previousSnapshot, payload);
+    const revision = this.host.metadata.revision;
+    const skipMetadata =
+      revision !== 0n && !changed && (baseRevision === undefined || baseRevision === revision);
+    const skipRetention = revision !== 0n && !paneSetChanged;
+    this.host.setLastSnapshot(payload);
+    if (!skipMetadata) this.host.metadata.reconcile(payload, baseRevision);
+    if (!skipRetention) this.syncPaneRetention(payload, previousSnapshot);
+    if (changed) this.host.broadcast((listener) => listener.onSnapshot?.(payload));
+  }
+
+  private syncPaneRetention(
+    payload: StateSnapshotPayload,
+    previousSnapshot: StateSnapshotPayload | null
+  ): void {
+    const panes: PaneIdentity[] = [];
+    for (const window of payload.session?.windows ?? []) {
+      for (const pane of window.panes) {
+        const paneEpoch = this.host.metadata.getPaneEpoch(pane.id);
+        if (paneEpoch) panes.push({ paneId: pane.id, paneEpoch });
+      }
+    }
+    this.host.paneRetention.reconcilePanes(panes);
+    const currentPaneIds = new Set(panes.map((pane) => pane.paneId));
+    const historyReader = this.host.getHistoryReader();
+    for (const pane of panes) historyReader.invalidatePane(pane.paneId, pane.paneEpoch);
+    for (const window of previousSnapshot?.session?.windows ?? []) {
+      for (const pane of window.panes) {
+        if (!currentPaneIds.has(pane.id)) historyReader.invalidatePane(pane.id);
+      }
+    }
   }
 }
 
@@ -150,4 +165,23 @@ export function stateSnapshotsEqual(
       recordsEqualByKeys(previousPane, nextPane, PANE_COMPARE_KEYS)
     );
   });
+}
+
+function paneSetsEqual(left: StateSnapshotPayload | null, right: StateSnapshotPayload): boolean {
+  if (!left) return false;
+  const previousIds = collectPaneIds(left);
+  const nextIds = collectPaneIds(right);
+  if (previousIds.size !== nextIds.size) return false;
+  for (const paneId of previousIds) {
+    if (!nextIds.has(paneId)) return false;
+  }
+  return true;
+}
+
+function collectPaneIds(payload: StateSnapshotPayload): Set<string> {
+  const ids = new Set<string>();
+  for (const window of payload.session?.windows ?? []) {
+    for (const pane of window.panes) ids.add(pane.id);
+  }
+  return ids;
 }

@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import type { StateSnapshotPayload } from '@tmex/shared';
+import { type StateSnapshotPayload, wsBorsh } from '@tmex/shared';
 
 import type { DeviceSessionRuntimeListener } from '../device-session-runtime';
 import { MetadataProjection } from '../metadata-projection';
@@ -151,3 +151,217 @@ describe('RuntimeEventBridge', () => {
     ).toBe(true);
   });
 });
+
+describe('RuntimeEventBridge snapshot dirty split', () => {
+  test('identical consecutive snapshots skip retention/history and keep metadata revision', () => {
+    const harness = createSnapshotHarness();
+    harness.emit(snapshot(), 0n);
+    expect(harness.reconcileCalls).toBe(1);
+    expect(harness.retentionCalls).toBe(1);
+    expect(harness.historyInvalidationCount).toBe(1);
+    expect(harness.metadata.revision).toBe(1n);
+    expect(harness.broadcastCount).toBe(1);
+
+    harness.emit(snapshot(), harness.metadata.revision);
+    expect(harness.reconcileCalls).toBe(1);
+    expect(harness.retentionCalls).toBe(1);
+    expect(harness.historyInvalidationCount).toBe(1);
+    expect(harness.metadata.revision).toBe(1n);
+    expect(harness.broadcastCount).toBe(1);
+    expect(projectedPaneTitle(harness.metadata, '%1')).toBe('shell');
+  });
+
+  test('pane-set change still runs metadata, retention and history invalidation', () => {
+    const harness = createSnapshotHarness();
+    harness.emit(snapshot(), 0n);
+    const afterEstablish = {
+      reconcile: harness.reconcileCalls,
+      retention: harness.retentionCalls,
+      history: harness.historyInvalidationCount,
+      revision: harness.metadata.revision,
+    };
+
+    harness.emit(twoPaneSnapshot(), harness.metadata.revision);
+    expect(harness.reconcileCalls).toBe(afterEstablish.reconcile + 1);
+    expect(harness.retentionCalls).toBe(afterEstablish.retention + 1);
+    expect(harness.historyInvalidationCount).toBeGreaterThan(afterEstablish.history);
+    expect(harness.metadata.revision).toBe(afterEstablish.revision + 1n);
+    expect(harness.broadcastCount).toBe(2);
+    expect(harness.metadata.hasPane('%2')).toBe(true);
+    expect(harness.paneRetention.getLatestCursor('%2')).not.toBeNull();
+  });
+
+  test('removing a pane still reconciles retention and invalidates its history', () => {
+    const harness = createSnapshotHarness();
+    harness.emit(twoPaneSnapshot(), 0n);
+    const historyBefore = harness.historyInvalidationCount;
+
+    harness.emit(snapshot(), harness.metadata.revision);
+    expect(harness.retentionCalls).toBe(2);
+    expect(harness.historyInvalidationCount).toBeGreaterThan(historyBefore);
+    expect(harness.metadata.hasPane('%2')).toBe(false);
+    expect(harness.paneRetention.getLatestCursor('%2')).toBeNull();
+  });
+
+  test('metadata-only field change still reconciles but skips retention/history', () => {
+    const harness = createSnapshotHarness();
+    harness.emit(snapshot('shell'), 0n);
+    const afterEstablish = {
+      reconcile: harness.reconcileCalls,
+      retention: harness.retentionCalls,
+      history: harness.historyInvalidationCount,
+    };
+
+    harness.emit(snapshot('renamed'), harness.metadata.revision);
+    expect(harness.reconcileCalls).toBe(afterEstablish.reconcile + 1);
+    expect(harness.retentionCalls).toBe(afterEstablish.retention);
+    expect(harness.historyInvalidationCount).toBe(afterEstablish.history);
+    expect(harness.metadata.revision).toBe(2n);
+    expect(projectedPaneTitle(harness.metadata, '%1')).toBe('renamed');
+    expect(harness.broadcastCount).toBe(2);
+  });
+
+  test('stale snapshot during a source event does not revert newer metadata', () => {
+    const harness = createSnapshotHarness();
+    harness.emit(snapshot('old'), 0n);
+    const queryBase = harness.metadata.revision;
+    harness.options.onSourceMetadata?.({ type: 'pane-title', paneId: '%1', title: 'live' });
+    expect(harness.metadata.revision).toBe(2n);
+
+    harness.emit(snapshot('old'), queryBase);
+    expect(harness.metadata.revision).toBe(2n);
+    expect(projectedPaneTitle(harness.metadata, '%1')).toBe('live');
+    expect(harness.retentionCalls).toBe(1);
+    expect(harness.historyInvalidationCount).toBe(1);
+  });
+
+  test('server epoch reset re-establishes metadata and retention even if tmux snapshot matches', () => {
+    const harness = createSnapshotHarness();
+    harness.emit(snapshot(), 0n);
+    const previousEpoch = harness.metadata.getPaneEpoch('%1');
+    expect(previousEpoch).not.toBeNull();
+
+    harness.options.onSourceReady?.(new Uint8Array(16).fill(7));
+    expect(harness.metadata.revision).toBe(0n);
+
+    harness.emit(snapshot(), 0n);
+    expect(harness.reconcileCalls).toBe(2);
+    expect(harness.retentionCalls).toBe(2);
+    expect(harness.metadata.revision).toBe(1n);
+    expect(harness.metadata.getPaneEpoch('%1')).not.toEqual(previousEpoch);
+  });
+});
+
+function twoPaneSnapshot(): StateSnapshotPayload {
+  const base = snapshot();
+  const window = base.session?.windows[0];
+  if (!window || !base.session) throw new Error('expected session window');
+  return {
+    ...base,
+    session: {
+      ...base.session,
+      windows: [
+        {
+          ...window,
+          panes: [
+            ...window.panes,
+            {
+              id: '%2',
+              windowId: '@1',
+              index: 1,
+              title: 'other',
+              active: false,
+              width: 80,
+              height: 24,
+              left: 0,
+              top: 0,
+            },
+          ],
+        },
+      ],
+    },
+  };
+}
+
+function projectedPaneTitle(metadata: MetadataProjection, paneId: string): string | null {
+  const record = metadata
+    .currentSnapshot()
+    .records.find(
+      (candidate) =>
+        candidate.key.entityKind === wsBorsh.SOURCE_ENTITY_PANE && candidate.key.nativeId === paneId
+    );
+  const value = record?.fields.find(
+    (candidate) => candidate.field === wsBorsh.SOURCE_FIELD_TITLE
+  )?.value;
+  return value && 'String' in value ? value.String : null;
+}
+
+function createSnapshotHarness() {
+  const metadata = new MetadataProjection('device-a', { deviceName: 'Mac' });
+  const paneRetention = new PaneRetention();
+  const historyReader = new PaneHistoryReader({
+    getPaneHistoryCaptureInfo: async () => ({ historySize: 0, cols: 80 }),
+    capturePaneHistoryRange: async () => '',
+  });
+  let lastSnapshot: StateSnapshotPayload | null = null;
+  let reconcileCalls = 0;
+  let retentionCalls = 0;
+  let historyInvalidationCount = 0;
+  let broadcastCount = 0;
+
+  const originalReconcile = metadata.reconcile.bind(metadata);
+  metadata.reconcile = (payload, baseRevision) => {
+    reconcileCalls += 1;
+    originalReconcile(payload, baseRevision);
+  };
+  const originalReconcilePanes = paneRetention.reconcilePanes.bind(paneRetention);
+  paneRetention.reconcilePanes = (panes) => {
+    retentionCalls += 1;
+    originalReconcilePanes(panes);
+  };
+  const originalInvalidate = historyReader.invalidatePane.bind(historyReader);
+  historyReader.invalidatePane = (paneId, paneEpoch) => {
+    historyInvalidationCount += 1;
+    originalInvalidate(paneId, paneEpoch);
+  };
+
+  const bridge = new RuntimeEventBridge({
+    metadata,
+    paneRetention,
+    getHistoryReader: () => historyReader,
+    getLastSnapshot: () => lastSnapshot,
+    setLastSnapshot: (payload) => {
+      lastSnapshot = payload;
+    },
+    broadcast: (action) => {
+      action({
+        onSnapshot: () => {
+          broadcastCount += 1;
+        },
+      });
+    },
+    handleUnexpectedClose: () => undefined,
+  });
+  const options = bridge.connectionOptions({ deviceId: 'device-a' });
+  options.onSourceReady?.(SERVER_EPOCH);
+  return {
+    metadata,
+    paneRetention,
+    options,
+    emit(payload: StateSnapshotPayload, baseRevision?: bigint) {
+      options.onSnapshot(payload, baseRevision);
+    },
+    get reconcileCalls() {
+      return reconcileCalls;
+    },
+    get retentionCalls() {
+      return retentionCalls;
+    },
+    get historyInvalidationCount() {
+      return historyInvalidationCount;
+    },
+    get broadcastCount() {
+      return broadcastCount;
+    },
+  };
+}
