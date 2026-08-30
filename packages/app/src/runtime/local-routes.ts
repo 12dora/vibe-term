@@ -1,15 +1,15 @@
 import type { AuthenticateResult } from '../../../../apps/gateway/src/mesh/session-middleware';
 import type { TlsMode } from '../../../../apps/gateway/src/tls/types';
 import { isStandaloneRoles } from '../lib/roles';
-import { jsonErr, jsonOk, readJsonBody } from './http';
+import { jsonErr, jsonOk, mapError, readJsonBody } from './http';
 import { type MeshRoleName, leaveMesh } from './membership-reset';
 import {
   type DirectSetResult,
   type LocalStatus,
-  SetupError,
   type SetupServiceDeps,
+  getLocalStatus,
+  setLocalDirect,
 } from './setup-service';
-import { getLocalStatus, setLocalDirect } from './setup-service';
 
 export type LocalTlsStatus = {
   mode: TlsMode;
@@ -21,14 +21,6 @@ export type LocalRouteDeps = SetupServiceDeps & {
   authenticate: (req: Request) => AuthenticateResult;
   tlsStatus: () => Promise<LocalTlsStatus>;
 };
-
-function mapError(error: unknown, fallback = 'direct_failed'): Response {
-  if (error instanceof SetupError) {
-    return jsonErr(error.code, error.message, error.httpStatus);
-  }
-  const message = error instanceof Error ? error.message : String(error);
-  return jsonErr(fallback, message, 500);
-}
 
 function isMeshRoleName(value: unknown): value is MeshRoleName {
   return value === 'node' || value === 'hub,node';
@@ -91,7 +83,7 @@ export async function handleLocalRequest(
         },
       });
     } catch (error) {
-      return mapError(error);
+      return mapError(error, 'direct_failed');
     }
   }
 
@@ -107,6 +99,6 @@ export async function handleLocalRequest(
     const result: DirectSetResult = await setLocalDirect(action, deps);
     return jsonOk(result);
   } catch (error) {
-    return mapError(error);
+    return mapError(error, 'direct_failed');
   }
 }

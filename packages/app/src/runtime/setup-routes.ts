@@ -1,20 +1,6 @@
 import { isStandaloneRoles } from '../lib/roles';
-import { jsonErr, jsonOk, readJsonBody } from './http';
-import {
-  SetupError,
-  type SetupServiceDeps,
-  becomeHub,
-  joinHub,
-  precheckHubUrl,
-} from './setup-service';
-
-function mapError(error: unknown): Response {
-  if (error instanceof SetupError) {
-    return jsonErr(error.code, error.message, error.httpStatus);
-  }
-  const message = error instanceof Error ? error.message : String(error);
-  return jsonErr('internal_error', message, 500);
-}
+import { jsonErr, jsonOk, mapError, readJsonBody } from './http';
+import { type SetupServiceDeps, becomeHub, joinHub, precheckHubUrl } from './setup-service';
 
 function readString(body: Record<string, unknown>, key: string): string {
   const value = body[key];

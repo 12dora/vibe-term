@@ -707,6 +707,84 @@ describe('forwarder', () => {
     }
   });
 
+  test('queued frames during failover are flushed exactly once after resume', async () => {
+    const dcLink = { id: 'dc' } as unknown as LinkSession;
+    const relayLink = { id: 'relay' } as unknown as LinkSession;
+    const peers = new FakePeers();
+    peers.links.set(OTHER, dcLink);
+    peers.transport.set(OTHER, 'dc');
+    const streams = new FakeStreams();
+    const origGetLink = peers.getLink.bind(peers);
+    let blockLink = false;
+    let releaseLink: (() => void) | undefined;
+    peers.getLink = async (nodeId: string) => {
+      if (blockLink) {
+        await new Promise<void>((resolve) => {
+          releaseLink = resolve;
+        });
+      }
+      return origGetLink(nodeId);
+    };
+    const mesh = await bootMesh({ peers, streams, sleep: async () => {} });
+    try {
+      const { ws } = await openForwardWs(mesh.runtime, peers, streams, OTHER);
+      mesh.runtime.handleWebSocket.message(ws, encodeHelloFrame());
+      blockLink = true;
+      peers.links.set(OTHER, relayLink);
+      peers.transport.set(OTHER, 'relay');
+      streams.lastWs?.close(1011, 'reset');
+      await waitUntil(() => releaseLink !== undefined, 2_000);
+      const queued = new Uint8Array([0xff, 0xfe, 0xfd, 0xfc, 0x01]);
+      mesh.runtime.handleWebSocket.message(ws, queued);
+      releaseLink?.();
+      await waitUntil(() => streams.wsOpens.length === 2, 2_000);
+      const matches = (streams.wsOpens[1]?.ws.sent ?? []).filter((frame) =>
+        bytesEqual(frame, queued)
+      );
+      expect(matches).toHaveLength(1);
+    } finally {
+      mesh.close();
+    }
+  });
+
+  test('HTTP forward removes the request abort listener after success and error', async () => {
+    const peers = new FakePeers();
+    peers.links.set(OTHER, dummyLink);
+    const streams = new FakeStreams();
+    streams.nextResponse = new Response('ok', { headers: { 'content-type': 'text/plain' } });
+    const mesh = await bootMesh({ peers, streams });
+    try {
+      const success = trackAbort(new AbortController());
+      const ok = asResponse(
+        await mesh.runtime.handleRequest(
+          new Request(`http://localhost/n/${OTHER}/api/devices`, { signal: success.signal }),
+          dummyServer
+        )
+      );
+      expect(ok.status).toBe(200);
+      expect(success.added).toBe(1);
+      expect(success.removed).toBe(1);
+
+      streams.httpOpenError = new Error('upstream down');
+      const failure = trackAbort(new AbortController());
+      const err = asResponse(
+        await mesh.runtime.handleRequest(
+          new Request(`http://localhost/n/${OTHER}/api/mutate`, {
+            method: 'POST',
+            body: 'x',
+            signal: failure.signal,
+          }),
+          dummyServer
+        )
+      );
+      expect(err.status).toBe(503);
+      expect(failure.added).toBe(1);
+      expect(failure.removed).toBe(1);
+    } finally {
+      mesh.close();
+    }
+  });
+
   test('GET http forward retries getLink after a transient failure', async () => {
     const peers = new FakePeers();
     peers.links.set(OTHER, dummyLink);
@@ -871,6 +949,34 @@ function bytesEqual(a: Uint8Array, b: Uint8Array): boolean {
     if (a[i] !== b[i]) return false;
   }
   return true;
+}
+
+function trackAbort(controller: AbortController): {
+  signal: AbortSignal;
+  added: number;
+  removed: number;
+} {
+  const signal = controller.signal;
+  const add = signal.addEventListener.bind(signal);
+  const remove = signal.removeEventListener.bind(signal);
+  const tracked = { signal, added: 0, removed: 0 };
+  signal.addEventListener = ((
+    type: string,
+    listener: EventListenerOrEventListenerObject,
+    opts?: boolean | AddEventListenerOptions
+  ) => {
+    if (type === 'abort') tracked.added += 1;
+    return add(type, listener, opts);
+  }) as typeof signal.addEventListener;
+  signal.removeEventListener = ((
+    type: string,
+    listener: EventListenerOrEventListenerObject,
+    opts?: boolean | EventListenerOptions
+  ) => {
+    if (type === 'abort') tracked.removed += 1;
+    return remove(type, listener, opts);
+  }) as typeof signal.removeEventListener;
+  return tracked;
 }
 
 async function openForwardWs(

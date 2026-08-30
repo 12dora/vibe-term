@@ -2,7 +2,6 @@ import { HubTrustStore } from '../../../../apps/gateway/src/auth/hub-trust-store
 import { kdfParamsFromJson } from '../../../../apps/gateway/src/auth/user-key-service';
 import { TlsConfigStore } from '../../../../apps/gateway/src/tls/tls-config-store';
 import {
-  type AdmitNodePayload,
   ENROLLMENT_TTL_MS,
   bytesEqual,
   createEnrollment,
@@ -72,15 +71,15 @@ function sleep(ms: number, signal?: AbortSignal): Promise<void> {
       reject(new Error('aborted'));
       return;
     }
-    const timer = setTimeout(resolve, ms);
-    signal?.addEventListener(
-      'abort',
-      () => {
-        clearTimeout(timer);
-        reject(new Error('aborted'));
-      },
-      { once: true }
-    );
+    const onAbort = (): void => {
+      clearTimeout(timer);
+      reject(new Error('aborted'));
+    };
+    const timer = setTimeout(() => {
+      signal?.removeEventListener('abort', onAbort);
+      resolve();
+    }, ms);
+    signal?.addEventListener('abort', onAbort, { once: true });
   });
 }
 
@@ -272,13 +271,168 @@ export async function pollHubNodesForCertificate(options: {
 }
 
 async function resolveTotpCode(io?: EnrollIo): Promise<string> {
-  if (io?.totpCode) {
-    if (!io.totpCode) {
-      throw new Error('TOTP code cannot be empty');
-    }
+  if (io?.totpCode !== undefined) {
+    if (!io.totpCode) throw new Error('TOTP code cannot be empty');
     return io.totpCode;
   }
   return await promptPassword('TOTP code', { envKey: 'TMEX_TOTP', confirm: false });
+}
+
+async function enrollOnLocalHub(
+  ctx: LocalAuthContext,
+  userId: string,
+  enrollment: Awaited<ReturnType<typeof createEnrollment>>,
+  now: number,
+  ttlMs: number
+): Promise<string | undefined> {
+  ctx.userStore.createEnrollmentToken({
+    id: crypto.randomUUID(),
+    userId,
+    enrollPublicKey: enrollment.enrollPk,
+    authorizationJson: JSON.stringify({
+      authorization_b64: encodeBase64url(enrollment.authorizationBytes),
+      entry_node_id: 'self',
+    }),
+    authorizationSig: enrollment.authorizationSig,
+    expiresAt: now + ttlMs,
+  });
+  const tls = await new TlsConfigStore(ctx.db).get();
+  if (tls.mode === 'selfsigned' && tls.caCertPem) {
+    return await spkiFingerprint(tls.caCertPem);
+  }
+  return undefined;
+}
+
+async function enrollOnRemoteHub(
+  ctx: LocalAuthContext,
+  io: EnrollIo,
+  user: { id: string; rootEpoch: number },
+  rootKey: Awaited<ReturnType<typeof deriveRootKey>>,
+  enrollment: Awaited<ReturnType<typeof createEnrollment>>,
+  now: number,
+  ttlMs: number
+) {
+  const hubUrl = ctx.env.TMEX_HUB_URL || process.env.TMEX_HUB_URL;
+  if (!hubUrl) {
+    throw new Error('TMEX_HUB_URL is required to enroll from a non-hub node');
+  }
+  const fetcher = io.fetcher ?? createHubFetcher(new HubTrustStore(ctx.db), hubUrl);
+  const mode = await fetchAuthMode(hubUrl, fetcher);
+  const caFingerprint =
+    typeof mode.caFingerprint === 'string' && /^[0-9a-f]{64}$/.test(mode.caFingerprint)
+      ? mode.caFingerprint
+      : undefined;
+  let totp: { code: string; kTotp: Uint8Array } | undefined;
+  if (mode.totpEnabled) {
+    totp = {
+      code: await resolveTotpCode(io),
+      kTotp: deriveTotpKey(rootKey.seed, user.id, user.rootEpoch),
+    };
+  }
+  const session = await loginWithRootKey({
+    baseUrl: hubUrl,
+    rootKey,
+    uid: user.id,
+    fetcher,
+    totp,
+  });
+  totp?.kTotp.fill(0);
+  const created = await postEnrollment({
+    baseUrl: hubUrl,
+    cookieHeader: session.cookieHeader,
+    enrollPk: enrollment.enrollPk,
+    authorization: enrollment.authorizationBytes,
+    authorizationSig: enrollment.authorizationSig,
+    exp: now + ttlMs,
+    fetcher,
+  });
+  return {
+    cookieHeader: session.cookieHeader,
+    hubUrl,
+    enrollmentId: created.id,
+    fetcher,
+    caFingerprint,
+  };
+}
+
+function makeRedeemPoll(
+  ctx: LocalAuthContext,
+  io: EnrollIo,
+  isHub: boolean,
+  enrollPk: Uint8Array,
+  remote: Awaited<ReturnType<typeof enrollOnRemoteHub>> | null
+): (() => Promise<AdmitCandidate | null>) | null {
+  if (io.pollRedeemed) return io.pollRedeemed;
+  if (isHub) return () => pollLocalEnrollmentRedeem(ctx, enrollPk);
+  if (!remote) return null;
+  if (remote.enrollmentId) {
+    return () =>
+      pollHubEnrollment({
+        baseUrl: remote.hubUrl,
+        cookieHeader: remote.cookieHeader,
+        enrollmentId: remote.enrollmentId,
+        fetcher: remote.fetcher,
+      });
+  }
+  return () =>
+    pollHubNodesForCertificate({
+      baseUrl: remote.hubUrl,
+      cookieHeader: remote.cookieHeader,
+      enrollPk,
+      fetcher: remote.fetcher,
+    });
+}
+
+async function pollAndAdmit(
+  ctx: LocalAuthContext,
+  io: EnrollIo,
+  userId: string,
+  rootKey: Awaited<ReturnType<typeof deriveRootKey>>,
+  enrollment: Awaited<ReturnType<typeof createEnrollment>>,
+  poll: (() => Promise<AdmitCandidate | null>) | null
+): Promise<boolean> {
+  const interval = io.pollIntervalMs ?? 1000;
+  const controller = io.signal ? null : new AbortController();
+  const signal = io.signal ?? controller?.signal;
+  const onSigint = (): void => {
+    log(io, 'confirm in the Nodes page');
+    controller?.abort();
+  };
+  if (controller && typeof process.on === 'function') process.on('SIGINT', onSigint);
+  try {
+    while (!signal?.aborted) {
+      const candidate = poll ? await poll() : null;
+      if (candidate) {
+        const existing = existingAdmission(ctx, candidate);
+        if (existing === 'revoked') throw new Error(NODE_REVOKED_REJOIN_ERROR);
+        if (candidate.alreadyAdmitted || existing === 'admitted') {
+          log(io, 'already admitted');
+          return true;
+        }
+        const applied = await ctx.userKeys.signAndApply(userId, rootKey, {
+          type: 'admit-node',
+          payload: encodeAdmitNodePayload({
+            authorization_bytes: enrollment.authorizationBytes,
+            authorization_sig: enrollment.authorizationSig,
+            certificate_bytes: candidate.certificateBytes,
+            cert_sig: candidate.certSig,
+          }),
+        });
+        if (!applied.ok) throw new Error(`admit-node failed: ${applied.error}`);
+        log(io, 'node admitted');
+        return true;
+      }
+      try {
+        await sleep(interval, signal);
+      } catch {
+        log(io, 'confirm in the Nodes page');
+        return false;
+      }
+    }
+  } finally {
+    if (controller && typeof process.off === 'function') process.off('SIGINT', onSigint);
+  }
+  return false;
 }
 
 export async function runEnroll(
@@ -316,70 +470,12 @@ export async function runEnroll(
       ttlMs,
     });
     const roles = parseTmexRoles(ctx.env.TMEX_ROLES ?? process.env.TMEX_ROLES);
-
-    let caFingerprint: string | undefined;
-    let remoteSession: { cookieHeader: string; hubUrl: string; enrollmentId?: string } | null =
-      null;
-    let hubFetcher = io.fetcher;
-    if (roles.hub) {
-      ctx.userStore.createEnrollmentToken({
-        id: crypto.randomUUID(),
-        userId: user.id,
-        enrollPublicKey: enrollment.enrollPk,
-        authorizationJson: JSON.stringify({
-          authorization_b64: encodeBase64url(enrollment.authorizationBytes),
-          entry_node_id: 'self',
-        }),
-        authorizationSig: enrollment.authorizationSig,
-        expiresAt: now + ttlMs,
-      });
-      const tls = await new TlsConfigStore(ctx.db).get();
-      if (tls.mode === 'selfsigned' && tls.caCertPem) {
-        caFingerprint = await spkiFingerprint(tls.caCertPem);
-      }
-    } else {
-      const hubUrl = ctx.env.TMEX_HUB_URL || process.env.TMEX_HUB_URL;
-      if (!hubUrl) {
-        throw new Error('TMEX_HUB_URL is required to enroll from a non-hub node');
-      }
-      hubFetcher = io.fetcher ?? createHubFetcher(new HubTrustStore(ctx.db), hubUrl);
-      const mode = await fetchAuthMode(hubUrl, hubFetcher);
-      if (typeof mode.caFingerprint === 'string' && /^[0-9a-f]{64}$/.test(mode.caFingerprint)) {
-        caFingerprint = mode.caFingerprint;
-      }
-      let totp: { code: string; kTotp: Uint8Array } | undefined;
-      if (mode.totpEnabled) {
-        const code = await resolveTotpCode(io);
-        totp = {
-          code,
-          kTotp: deriveTotpKey(rootKey.seed, user.id, user.rootEpoch),
-        };
-      }
-      const session = await loginWithRootKey({
-        baseUrl: hubUrl,
-        rootKey,
-        uid: user.id,
-        fetcher: hubFetcher,
-        totp,
-      });
-      if (totp) {
-        totp.kTotp.fill(0);
-      }
-      const created = await postEnrollment({
-        baseUrl: hubUrl,
-        cookieHeader: session.cookieHeader,
-        enrollPk: enrollment.enrollPk,
-        authorization: enrollment.authorizationBytes,
-        authorizationSig: enrollment.authorizationSig,
-        exp: now + ttlMs,
-        fetcher: hubFetcher,
-      });
-      remoteSession = {
-        cookieHeader: session.cookieHeader,
-        hubUrl,
-        enrollmentId: created.id,
-      };
-    }
+    const remote = roles.hub
+      ? null
+      : await enrollOnRemoteHub(ctx, io, user, rootKey, enrollment, now, ttlMs);
+    const caFingerprint = roles.hub
+      ? await enrollOnLocalHub(ctx, user.id, enrollment, now, ttlMs)
+      : remote?.caFingerprint;
 
     const token = encodeJoinToken(
       enrollment.enrollSk,
@@ -387,92 +483,20 @@ export async function runEnroll(
       user.keyLogHeadHash,
       caFingerprint
     );
-
-    const joinUrl = hubJoinUrl(ctx, io);
-    const joinCommand = `npx tmex-cli hub join ${joinUrl} --token ${token}`;
+    const joinCommand = `npx tmex-cli hub join ${hubJoinUrl(ctx, io)} --token ${token}`;
     log(io, `join token: ${token}`);
     log(io, joinCommand);
-
-    const shouldWait = io.wait !== false;
-    if (!shouldWait) {
+    if (io.wait === false) {
       return { token, joinCommand, admitted: false };
     }
-
-    const remote = remoteSession;
-    const poll =
-      io.pollRedeemed ??
-      (roles.hub
-        ? () => pollLocalEnrollmentRedeem(ctx, enrollment.enrollPk)
-        : remote
-          ? () =>
-              remote.enrollmentId
-                ? pollHubEnrollment({
-                    baseUrl: remote.hubUrl,
-                    cookieHeader: remote.cookieHeader,
-                    enrollmentId: remote.enrollmentId,
-                    fetcher: hubFetcher,
-                  })
-                : pollHubNodesForCertificate({
-                    baseUrl: remote.hubUrl,
-                    cookieHeader: remote.cookieHeader,
-                    enrollPk: enrollment.enrollPk,
-                    fetcher: hubFetcher,
-                  })
-          : null);
-    const interval = io.pollIntervalMs ?? 1000;
-    const controller = io.signal ? null : new AbortController();
-    const signal = io.signal ?? controller?.signal;
-    let admitted = false;
-    const onSigint = (): void => {
-      log(io, 'confirm in the Nodes page');
-      controller?.abort();
-    };
-    if (controller && typeof process.on === 'function') {
-      process.on('SIGINT', onSigint);
-    }
-    try {
-      while (!signal?.aborted) {
-        const candidate = poll ? await poll() : null;
-        if (candidate) {
-          const existing = existingAdmission(ctx, candidate);
-          if (existing === 'revoked') {
-            throw new Error(NODE_REVOKED_REJOIN_ERROR);
-          }
-          if (candidate.alreadyAdmitted || existing === 'admitted') {
-            log(io, 'already admitted');
-            admitted = true;
-            break;
-          }
-          const payload: AdmitNodePayload = {
-            authorization_bytes: enrollment.authorizationBytes,
-            authorization_sig: enrollment.authorizationSig,
-            certificate_bytes: candidate.certificateBytes,
-            cert_sig: candidate.certSig,
-          };
-          const applied = await ctx.userKeys.signAndApply(user.id, rootKey, {
-            type: 'admit-node',
-            payload: encodeAdmitNodePayload(payload),
-          });
-          if (!applied.ok) {
-            throw new Error(`admit-node failed: ${applied.error}`);
-          }
-          admitted = true;
-          log(io, 'node admitted');
-          break;
-        }
-        try {
-          await sleep(interval, signal);
-        } catch {
-          log(io, 'confirm in the Nodes page');
-          break;
-        }
-      }
-    } finally {
-      if (controller && typeof process.off === 'function') {
-        process.off('SIGINT', onSigint);
-      }
-    }
-
+    const admitted = await pollAndAdmit(
+      ctx,
+      io,
+      user.id,
+      rootKey,
+      enrollment,
+      makeRedeemPoll(ctx, io, roles.hub, enrollment.enrollPk, remote)
+    );
     return { token, joinCommand, admitted };
   });
 }

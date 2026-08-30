@@ -65,11 +65,9 @@ export async function enableDirectAfterInit(
   try {
     const result = await enable({ installDir: config.installDir });
     if (result.ok) {
-      if (result.skipped) {
-        log(`direct already enabled (${result.platformId} ${result.version})`);
-      } else {
-        log(`direct enabled (${result.platformId} ${result.version})`);
-      }
+      log(
+        `direct ${result.skipped ? 'already enabled' : 'enabled'} (${result.platformId} ${result.version})`
+      );
     } else {
       log(`direct enable skipped: ${result.reason}`);
     }
@@ -105,121 +103,69 @@ async function directoryHasContent(path: string): Promise<boolean> {
 }
 
 async function buildInitConfig(parsed: ParsedArgs): Promise<InitConfig> {
-  const nonInteractive = parsed.flags['no-interactive'] === true;
-  const force = asBoolean(parsed.flags.force) ?? false;
-  const installDeps = asBoolean(parsed.flags['install-deps']) ?? false;
-  const skipDepCheck = asBoolean(parsed.flags['skip-dep-check']) ?? false;
+  const flags = parsed.flags;
+  const ni = flags['no-interactive'] === true;
+  const ask = async (
+    key: string,
+    prompt: string,
+    fallback: string,
+    required = true
+  ): Promise<string> => {
+    if (ni) {
+      if (required) return assertNonEmpty(mustGetStringFlag(flags, key), key);
+      return asString(flags[key]) || fallback;
+    }
+    const value = await promptText(
+      { nonInteractive: false },
+      prompt,
+      asString(flags[key]) || fallback
+    );
+    return required ? assertNonEmpty(value, key) : value;
+  };
 
-  if (nonInteractive) {
-    const installDir = resolveInstallDir(
-      assertNonEmpty(mustGetStringFlag(parsed.flags, 'install-dir'), 'install-dir')
-    );
-    const host = assertNonEmpty(mustGetStringFlag(parsed.flags, 'host'), 'host');
-    const port = parsePort(assertNonEmpty(mustGetStringFlag(parsed.flags, 'port'), 'port'));
-    const databasePath = resolve(
-      assertNonEmpty(mustGetStringFlag(parsed.flags, 'db-path'), 'db-path')
-    );
-    const autostart = mustGetBooleanFlag(parsed.flags, 'autostart');
-    const serviceName = assertNonEmpty(
-      asString(parsed.flags['service-name']) || DEFAULT_SERVICE_NAME,
-      'service-name'
-    );
-
-    const role = parseTmexRoleName(asString(parsed.flags.role) || 'standalone');
-    const hubUrl = asString(parsed.flags['hub-url']) || '';
-    const peerPort = parsePort(asString(parsed.flags['peer-port']) || String(DEFAULT_PEER_PORT));
-    const hubPublicUrl = asString(parsed.flags['hub-public-url']) || '';
-    if (role === 'hub,node' && !hubPublicUrl) {
+  const installDir = resolveInstallDir(
+    await ask('install-dir', t('init.prompt.installDir'), defaultInstallDir(process.platform))
+  );
+  const host = await ask('host', t('init.prompt.host'), defaultHost());
+  const port = parsePort(await ask('port', t('init.prompt.port'), String(defaultPort())));
+  const databasePath = resolve(
+    await ask('db-path', t('init.prompt.dbPath'), defaultDatabasePath(installDir))
+  );
+  const autostart = ni
+    ? mustGetBooleanFlag(flags, 'autostart')
+    : (asBoolean(flags.autostart) ??
+      (await promptConfirm({ nonInteractive: false }, t('init.prompt.autostart'), true)));
+  const serviceName = assertNonEmpty(
+    ni
+      ? asString(flags['service-name']) || DEFAULT_SERVICE_NAME
+      : await promptText(
+          { nonInteractive: false },
+          t('init.prompt.serviceName'),
+          asString(flags['service-name']) || DEFAULT_SERVICE_NAME
+        ),
+    'service-name'
+  );
+  const role = parseTmexRoleName(
+    (await ask('role', 'Role (standalone|node|hub,node)', 'standalone', false)) || 'standalone'
+  );
+  const hubUrl = await ask('hub-url', 'Hub URL (TMEX_HUB_URL, empty allowed)', '', false);
+  const peerPort = parsePort(
+    (await ask('peer-port', 'Peer port (TMEX_PEER_PORT)', String(DEFAULT_PEER_PORT), false)) ||
+      String(DEFAULT_PEER_PORT)
+  );
+  let hubPublicUrl = asString(flags['hub-public-url']) || '';
+  if (role === 'hub,node') {
+    if (ni && !hubPublicUrl) {
       throw new Error('init --role hub,node requires --hub-public-url in non-interactive mode');
     }
-
-    return {
-      installDir,
-      host,
-      port,
-      databasePath,
-      autostart,
-      serviceName,
-      force,
-      nonInteractive,
-      installDeps,
-      skipDepCheck,
-      role,
-      hubUrl,
-      peerPort,
-      hubPublicUrl,
-      stunServers: asString(parsed.flags['stun-servers']) || DEFAULT_STUN_SERVERS,
-    };
+    if (!ni) {
+      hubPublicUrl = await promptText(
+        { nonInteractive: false },
+        'Hub public URL (TMEX_HUB_PUBLIC_URL)',
+        hubPublicUrl
+      );
+    }
   }
-
-  const fallbackInstallDir = defaultInstallDir(process.platform);
-  const installDirPrompt = await promptText(
-    { nonInteractive: false },
-    t('init.prompt.installDir'),
-    asString(parsed.flags['install-dir']) || fallbackInstallDir
-  );
-  const installDir = resolveInstallDir(assertNonEmpty(installDirPrompt, 'install-dir'));
-
-  const hostPrompt = await promptText(
-    { nonInteractive: false },
-    t('init.prompt.host'),
-    asString(parsed.flags.host) || defaultHost()
-  );
-  const host = assertNonEmpty(hostPrompt, 'host');
-
-  const portPrompt = await promptText(
-    { nonInteractive: false },
-    t('init.prompt.port'),
-    asString(parsed.flags.port) || String(defaultPort())
-  );
-  const port = parsePort(assertNonEmpty(portPrompt, 'port'));
-
-  const databasePathPrompt = await promptText(
-    { nonInteractive: false },
-    t('init.prompt.dbPath'),
-    asString(parsed.flags['db-path']) || defaultDatabasePath(installDir)
-  );
-  const databasePath = resolve(assertNonEmpty(databasePathPrompt, 'db-path'));
-
-  const autostart =
-    asBoolean(parsed.flags.autostart) ??
-    (await promptConfirm({ nonInteractive: false }, t('init.prompt.autostart'), true));
-
-  const serviceNamePrompt = await promptText(
-    { nonInteractive: false },
-    t('init.prompt.serviceName'),
-    asString(parsed.flags['service-name']) || DEFAULT_SERVICE_NAME
-  );
-  const serviceName = assertNonEmpty(serviceNamePrompt, 'service-name');
-
-  const role = parseTmexRoleName(
-    (await promptText(
-      { nonInteractive: false },
-      'Role (standalone|node|hub,node)',
-      asString(parsed.flags.role) || 'standalone'
-    )) || 'standalone'
-  );
-  const hubUrl = await promptText(
-    { nonInteractive: false },
-    'Hub URL (TMEX_HUB_URL, empty allowed)',
-    asString(parsed.flags['hub-url']) || ''
-  );
-  const peerPort = parsePort(
-    (await promptText(
-      { nonInteractive: false },
-      'Peer port (TMEX_PEER_PORT)',
-      asString(parsed.flags['peer-port']) || String(DEFAULT_PEER_PORT)
-    )) || String(DEFAULT_PEER_PORT)
-  );
-  let hubPublicUrl = asString(parsed.flags['hub-public-url']) || '';
-  if (role === 'hub,node') {
-    hubPublicUrl = await promptText(
-      { nonInteractive: false },
-      'Hub public URL (TMEX_HUB_PUBLIC_URL)',
-      hubPublicUrl
-    );
-  }
-
   return {
     installDir,
     host,
@@ -227,15 +173,15 @@ async function buildInitConfig(parsed: ParsedArgs): Promise<InitConfig> {
     databasePath,
     autostart,
     serviceName,
-    force,
-    nonInteractive,
-    installDeps,
-    skipDepCheck,
+    force: asBoolean(flags.force) ?? false,
+    nonInteractive: ni,
+    installDeps: asBoolean(flags['install-deps']) ?? false,
+    skipDepCheck: asBoolean(flags['skip-dep-check']) ?? false,
     role,
     hubUrl,
     peerPort,
     hubPublicUrl,
-    stunServers: asString(parsed.flags['stun-servers']) || DEFAULT_STUN_SERVERS,
+    stunServers: asString(flags['stun-servers']) || DEFAULT_STUN_SERVERS,
   };
 }
 

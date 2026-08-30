@@ -169,28 +169,20 @@ function isTlsVerifyError(error: unknown): boolean {
 
 function authModeJoinError(error: unknown, pinned: boolean): JoinError {
   const cause = joinErrorMessage(error, 'unable to resolve hub uid from GET /api/auth/mode');
+  const prefix = 'unable to resolve hub uid from GET /api/auth/mode';
   if (isTlsVerifyError(error)) {
-    if (pinned) {
-      return new JoinError(
-        'hub_unreachable',
-        `unable to resolve hub uid from GET /api/auth/mode: TLS verification failed (${cause}). Check the pinned CA and hub hostname.`
-      );
-    }
+    const hint = pinned
+      ? 'Check the pinned CA and hub hostname.'
+      : 'This hub may be using a self-signed certificate; generate a v2 join token from the hub.';
     return new JoinError(
       'hub_unreachable',
-      `unable to resolve hub uid from GET /api/auth/mode: TLS verification failed (${cause}). This hub may be using a self-signed certificate; generate a v2 join token from the hub.`
+      `${prefix}: TLS verification failed (${cause}). ${hint}`
     );
   }
   if (isNetworkFetchError(error)) {
-    return new JoinError(
-      'hub_unreachable',
-      `unable to resolve hub uid from GET /api/auth/mode: network error (${cause})`
-    );
+    return new JoinError('hub_unreachable', `${prefix}: network error (${cause})`);
   }
-  return new JoinError(
-    'hub_unreachable',
-    `unable to resolve hub uid from GET /api/auth/mode: ${cause}`
-  );
+  return new JoinError('hub_unreachable', `${prefix}: ${cause}`);
 }
 
 async function fetchPinnedHubCa(
@@ -309,12 +301,12 @@ async function maybeRestart(
 async function maybeStop(
   parsed: ParsedArgs,
   io: HubIo | undefined,
-  installDir: string
+  installDir: string,
+  skipIfAuth = false
 ): Promise<void> {
-  const stop = io?.stop ?? (io?.skipRestart ? undefined : stopService);
+  const stop = io?.stop ?? (io?.skipRestart || (skipIfAuth && io?.auth) ? undefined : stopService);
   if (!stop) return;
-  const serviceName = await resolveServiceName(parsed, installDir);
-  await stop(serviceName, installDir);
+  await stop(await resolveServiceName(parsed, installDir), installDir);
 }
 
 async function maybeStart(
@@ -324,8 +316,7 @@ async function maybeStart(
 ): Promise<void> {
   const start = io?.start ?? (io?.skipRestart || io?.auth ? undefined : startService);
   if (!start) return;
-  const serviceName = await resolveServiceName(parsed, installDir);
-  await start(serviceName, installDir);
+  await start(await resolveServiceName(parsed, installDir), installDir);
 }
 
 async function resolveLeaveServicePlan(
@@ -335,17 +326,6 @@ async function resolveLeaveServicePlan(
   if (!installDir || io?.skipRestart) return { manage: false };
   const manager = io?.serviceManager ?? (await detectServiceManager());
   return { manage: manager !== 'none' };
-}
-
-async function stopForLeave(
-  parsed: ParsedArgs,
-  io: HubIo | undefined,
-  installDir: string
-): Promise<void> {
-  const stop = io?.stop ?? (io?.skipRestart || io?.auth ? undefined : stopService);
-  if (!stop) return;
-  const serviceName = await resolveServiceName(parsed, installDir);
-  await stop(serviceName, installDir);
 }
 
 export async function runHubUserAdd(
@@ -486,17 +466,13 @@ export async function runHubUserReset(
   });
 }
 
-export async function performHubJoin(
-  input: PerformHubJoinInput,
-  deps: PerformHubJoinDeps
-): Promise<{ userId: string; username: string; hubUrl: string; replacedStaleUsername?: string }> {
+async function prepareHubJoin(input: PerformHubJoinInput, deps: PerformHubJoinDeps) {
   let decoded: ReturnType<typeof decodeJoinToken>;
   try {
     decoded = decodeJoinToken(input.token);
   } catch (error) {
     throw new JoinError('invalid_token', joinErrorMessage(error, 'invalid join token'));
   }
-
   let hubUrl: string;
   try {
     hubUrl = canonicalHubUrl(
@@ -509,7 +485,6 @@ export async function performHubJoin(
   } catch (error) {
     throw new JoinError('invalid_url', joinErrorMessage(error, 'invalid hub url'));
   }
-
   const identity = await ensureNodeIdentity(deps.auth.identityStore);
   const baseFetcher: HubFetch = deps.fetcher ?? fetch;
   let pinnedPem: string | null = null;
@@ -520,23 +495,31 @@ export async function performHubJoin(
   }
   let uid: string | null = null;
   try {
-    const mode = await fetchAuthMode(hubUrl, hubFetcher);
-    uid = mode.uid;
+    uid = (await fetchAuthMode(hubUrl, hubFetcher)).uid;
   } catch (error) {
     throw authModeJoinError(error, Boolean(decoded.caFingerprint));
   }
   if (!uid) {
     throw new JoinError('hub_unreachable', 'unable to resolve hub uid from GET /api/auth/mode');
   }
-  const enrollPkResolved = rootKeyFromSeed(decoded.enrollSk).publicKey;
-  const now = deps.now?.() ?? Date.now();
+  return { decoded, hubUrl, identity, hubFetcher, pinnedPem, uid };
+}
 
+export async function performHubJoin(
+  input: PerformHubJoinInput,
+  deps: PerformHubJoinDeps
+): Promise<{ userId: string; username: string; hubUrl: string; replacedStaleUsername?: string }> {
+  const { decoded, hubUrl, identity, hubFetcher, pinnedPem, uid } = await prepareHubJoin(
+    input,
+    deps
+  );
+  const enrollPkResolved = rootKeyFromSeed(decoded.enrollSk).publicKey;
   const cert = createNodeCertificate(decoded.enrollSk, {
     uid,
     edPk: identity.edPublicKey,
     x25519Pk: identity.x25519PublicKey,
     enrollPk: enrollPkResolved,
-    now,
+    now: deps.now?.() ?? Date.now(),
     nodeId: identity.nodeId,
   });
   const pop = encodeBase64url(
@@ -549,7 +532,6 @@ export async function performHubJoin(
       })
     )
   );
-
   let redeemed: RedeemResponse;
   try {
     redeemed = await redeemEnrollment({
@@ -562,7 +544,6 @@ export async function performHubJoin(
   } catch (error) {
     throw toJoinError(error, isNetworkFetchError(error) ? 'hub_unreachable' : 'join_failed');
   }
-
   let admittedCert: { certificateBytes: Uint8Array; certSig: Uint8Array } | null;
   try {
     admittedCert = assertJoinCertReusable(
@@ -574,7 +555,6 @@ export async function performHubJoin(
   } catch (error) {
     throw toJoinError(error, 'join_failed');
   }
-
   let committed: { replacedStaleUsername?: string };
   try {
     committed = await commitVerifiedJoin(deps.auth, {
@@ -589,7 +569,6 @@ export async function performHubJoin(
   } catch (error) {
     throw toJoinError(error, 'join_failed');
   }
-
   if (pinnedPem && decoded.caFingerprint) {
     new HubTrustStore(deps.auth.db).put({
       hubUrl,
@@ -597,7 +576,6 @@ export async function performHubJoin(
       fingerprint: decoded.caFingerprint,
     });
   }
-
   return {
     userId: redeemed.user.id,
     username: redeemed.user.username || redeemed.user.id,
@@ -830,7 +808,7 @@ export async function runHubLeave(parsed: ParsedArgs, io: HubIo = {}): Promise<v
   const { manage } = await resolveLeaveServicePlan(io, installDir);
   let stopped = false;
   if (manage) {
-    await stopForLeave(parsed, io, installDir);
+    await maybeStop(parsed, io, installDir, true);
     stopped = true;
   }
   try {

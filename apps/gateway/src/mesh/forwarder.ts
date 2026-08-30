@@ -281,7 +281,6 @@ export class Forwarder {
     const abort = new AbortController();
     pump.failoverAbort = abort;
     const signal = abort.signal;
-    let lastError: unknown;
     try {
       for (let attempt = 0; attempt < STREAM_FAILOVER_MAX_ATTEMPTS; attempt += 1) {
         if (pump.browserClosed || signal.aborted) return;
@@ -297,8 +296,7 @@ export class Forwarder {
         let link: LinkSession;
         try {
           link = await this.deps.peers.getLink(pump.nodeId);
-        } catch (err) {
-          lastError = err;
+        } catch {
           continue;
         }
         if (pump.browserClosed || signal.aborted) return;
@@ -306,8 +304,7 @@ export class Forwarder {
         let stream: OpenedWsStream;
         try {
           stream = await this.deps.streams.openWsStream(link, pump.auth, pump.cid);
-        } catch (err) {
-          lastError = err;
+        } catch {
           continue;
         }
         pump.inflight = stream;
@@ -328,13 +325,11 @@ export class Forwarder {
         this.log(
           `[mesh][stream] failover stream=${pump.id} from=${from} to=${to} resumed=${resumed} mode=${desc.mode} panes=${desc.panes} cursor=${desc.cursor}`
         );
-        this.flushQueue(pump);
         pump.failingOver = false;
         pump.failoverAbort = null;
         this.flushQueue(pump);
         return;
       }
-      void lastError;
       this.closeBrowser(pump, { code: 1011, reason: 'failover-exhausted' });
     } finally {
       if (pump.failingOver) {
@@ -441,53 +436,47 @@ export class Forwarder {
       : (parseCookies(req.headers.get('cookie')).get(nodeSessionCookieName(nodeId)) ?? null);
     const origin = req.headers.get('origin') ?? new URL(req.url).origin;
     const abort = new AbortController();
-    req.signal.addEventListener('abort', () => abort.abort(), { once: true });
+    const onAbort = (): void => abort.abort();
+    req.signal.addEventListener('abort', onAbort, { once: true });
     const body = req.body && req.method !== 'GET' && req.method !== 'HEAD' ? req.body : null;
     const retryable = IDEMPOTENT_HTTP.has(req.method) && !body;
     const attempts = retryable ? HTTP_FAILOVER_MAX_ATTEMPTS : 1;
-    let lastErr: unknown;
-    for (let attempt = 0; attempt < attempts; attempt += 1) {
-      if (abort.signal.aborted) {
-        return jsonError('NODE_UNREACHABLE', 503, { nodeId });
-      }
-      if (attempt > 0) {
-        const delay = STREAM_FAILOVER_BACKOFF_MS[attempt] ?? 200;
+    try {
+      for (let attempt = 0; attempt < attempts; attempt += 1) {
+        if (abort.signal.aborted) break;
+        if (attempt > 0) {
+          try {
+            await this.sleep(STREAM_FAILOVER_BACKOFF_MS[attempt] ?? 200, abort.signal);
+          } catch {
+            break;
+          }
+        }
+        let link: LinkSession;
         try {
-          await this.sleep(delay, abort.signal);
+          link = await this.deps.peers.getLink(nodeId);
         } catch {
-          return jsonError('NODE_UNREACHABLE', 503, { nodeId });
+          if (!retryable) break;
+          continue;
+        }
+        try {
+          return this.adaptResponse(
+            req,
+            await this.deps.streams.openHttpStream(
+              link,
+              { method: req.method, path: rest, query: search, headers, origin, auth },
+              body,
+              abort.signal
+            ),
+            nodeId
+          );
+        } catch {
+          if (!retryable) break;
         }
       }
-      let link: LinkSession;
-      try {
-        link = await this.deps.peers.getLink(nodeId);
-      } catch (err) {
-        lastErr = err;
-        if (!retryable) break;
-        continue;
-      }
-      try {
-        const upstream = await this.deps.streams.openHttpStream(
-          link,
-          {
-            method: req.method,
-            path: rest,
-            query: search,
-            headers,
-            origin,
-            auth,
-          },
-          body,
-          abort.signal
-        );
-        return this.adaptResponse(req, upstream, nodeId);
-      } catch (err) {
-        lastErr = err;
-        if (!retryable) break;
-      }
+      return jsonError('NODE_UNREACHABLE', 503, { nodeId });
+    } finally {
+      req.signal.removeEventListener('abort', onAbort);
     }
-    void lastErr;
-    return jsonError('NODE_UNREACHABLE', 503, { nodeId });
   }
 
   private async handleRemoteWs(
@@ -554,9 +543,7 @@ export class Forwarder {
     let contentDisposition: string | null = null;
     upstream.headers.forEach((value, key) => {
       const lower = key.toLowerCase();
-      if (lower === X_TMEX_SET_SESSION) {
-        return;
-      }
+      if (lower === X_TMEX_SET_SESSION) return;
       if (lower === 'content-type') {
         contentType = value;
         return;
@@ -565,9 +552,7 @@ export class Forwarder {
         contentDisposition = value;
         return;
       }
-      if (RESPONSE_ALLOW.has(lower) || lower.startsWith('x-tmex-')) {
-        headers.set(key, value);
-      }
+      if (RESPONSE_ALLOW.has(lower) || lower.startsWith('x-tmex-')) headers.set(key, value);
     });
     const mime = baseMime(contentType);
     if (mime && MESH_ALLOWED_MIME.has(mime)) {
@@ -583,15 +568,7 @@ export class Forwarder {
     const setSession = upstream.headers.get(X_TMEX_SET_SESSION);
     if (setSession) {
       const parsed = parseSetSessionHeader(setSession);
-      if (parsed) {
-        headers.append(
-          'set-cookie',
-          buildSetCookie(nodeSessionCookieName(nodeId), parsed.sid, {
-            maxAgeSec: parsed.maxAgeSec,
-            secure: isHttps(req),
-          })
-        );
-      }
+      if (parsed) appendNodeCookie(req, headers, nodeId, parsed.sid, parsed.maxAgeSec);
     }
     const renewed = upstream.headers.get(X_TMEX_SESSION_RENEWED);
     if (renewed) {
@@ -599,21 +576,18 @@ export class Forwarder {
       const sid = parseCookies(req.headers.get('cookie')).get(nodeSessionCookieName(nodeId));
       const expiresAt = Number(renewed);
       if (sid && Number.isFinite(expiresAt)) {
-        const maxAgeSec = Math.max(0, Math.floor((expiresAt - Date.now()) / 1000));
-        headers.append(
-          'set-cookie',
-          buildSetCookie(nodeSessionCookieName(nodeId), sid, {
-            maxAgeSec,
-            secure: isHttps(req),
-          })
+        appendNodeCookie(
+          req,
+          headers,
+          nodeId,
+          sid,
+          Math.max(0, Math.floor((expiresAt - Date.now()) / 1000))
         );
       }
     }
-
     if (upstream.status !== 401) {
       return new Response(upstream.body, { status: upstream.status, headers });
     }
-
     const raw = await readBodyLimited(upstream, AUTH_401_BODY_LIMIT);
     let body: Record<string, unknown> = { code: 'NODE_LOGIN_REQUIRED', nodeId };
     try {
@@ -624,9 +598,7 @@ export class Forwarder {
     } catch {
       if (raw) body.message = raw;
     }
-    for (const name of DROP_ON_401_REWRITE) {
-      headers.delete(name);
-    }
+    for (const name of DROP_ON_401_REWRITE) headers.delete(name);
     headers.set('content-type', 'application/json');
     return new Response(JSON.stringify(body), { status: 401, headers });
   }
@@ -960,6 +932,19 @@ export function takePendingForwardStream(token: string | undefined): OpenedWsStr
   return stream;
 }
 
+function appendNodeCookie(
+  req: Request,
+  headers: Headers,
+  nodeId: string,
+  sid: string,
+  maxAgeSec: number
+): void {
+  headers.append(
+    'set-cookie',
+    buildSetCookie(nodeSessionCookieName(nodeId), sid, { maxAgeSec, secure: isHttps(req) })
+  );
+}
+
 function filterRequestHeaders(req: Request): Record<string, string> {
   const out: Record<string, string> = {};
   req.headers.forEach((value, key) => {
@@ -1042,11 +1027,14 @@ async function defaultSleep(ms: number, signal?: AbortSignal): Promise<void> {
   if (ms <= 0) return;
   if (signal?.aborted) throw new DOMException('The operation was aborted.', 'AbortError');
   await new Promise<void>((resolve, reject) => {
-    const timer = setTimeout(resolve, ms);
-    const onAbort = () => {
+    const onAbort = (): void => {
       clearTimeout(timer);
       reject(new DOMException('The operation was aborted.', 'AbortError'));
     };
+    const timer = setTimeout(() => {
+      signal?.removeEventListener('abort', onAbort);
+      resolve();
+    }, ms);
     signal?.addEventListener('abort', onAbort, { once: true });
   });
 }

@@ -278,6 +278,95 @@ describe('enroll', () => {
     expect(decodeJoinToken(result.token).caFingerprint).toBe('ab'.repeat(32));
   });
 
+  test('explicitly empty totpCode is rejected instead of prompting', async () => {
+    const auth = await openLocalAuth({
+      memory: true,
+      migrationsFolder: MIGRATIONS,
+      env: {
+        TMEX_MASTER_KEY: process.env.TMEX_MASTER_KEY || '',
+        TMEX_ROLES: 'node',
+        TMEX_HUB_URL: 'http://127.0.0.1:9',
+      },
+    });
+    handles.push(auth);
+    await runHubUserAdd(parsed, 'ivy', {
+      auth,
+      password: 'enroll-pass-word',
+      log: () => undefined,
+    });
+    await expect(
+      runEnroll(parsed, {
+        auth,
+        password: 'enroll-pass-word',
+        totpCode: '',
+        wait: false,
+        log: () => undefined,
+        fetcher: async () =>
+          Response.json({
+            mode: 'mesh',
+            nodeId: 'self',
+            uid: auth.userStore.getByUsername('ivy')?.id,
+            totpEnabled: true,
+          }),
+      })
+    ).rejects.toThrow('TOTP code cannot be empty');
+  });
+
+  test('poll sleep removes abort listeners when the timer completes', async () => {
+    const auth = await openLocalAuth({
+      memory: true,
+      migrationsFolder: MIGRATIONS,
+      env: {
+        TMEX_MASTER_KEY: process.env.TMEX_MASTER_KEY || '',
+        TMEX_ROLES: 'hub,node',
+        TMEX_HUB_PUBLIC_URL: 'https://hub.example',
+      },
+    });
+    handles.push(auth);
+    await runHubUserAdd(parsed, 'gina', {
+      auth,
+      password: 'enroll-pass-word',
+      log: () => undefined,
+    });
+    const controller = new AbortController();
+    const signal = controller.signal;
+    const add = signal.addEventListener.bind(signal);
+    const remove = signal.removeEventListener.bind(signal);
+    let added = 0;
+    let removed = 0;
+    signal.addEventListener = ((
+      type: string,
+      listener: EventListenerOrEventListenerObject,
+      opts?: boolean | AddEventListenerOptions
+    ) => {
+      if (type === 'abort') added += 1;
+      return add(type, listener, opts);
+    }) as typeof signal.addEventListener;
+    signal.removeEventListener = ((
+      type: string,
+      listener: EventListenerOrEventListenerObject,
+      opts?: boolean | EventListenerOptions
+    ) => {
+      if (type === 'abort') removed += 1;
+      return remove(type, listener, opts);
+    }) as typeof signal.removeEventListener;
+    let polls = 0;
+    await runEnroll(parsed, {
+      auth,
+      password: 'enroll-pass-word',
+      log: () => undefined,
+      pollIntervalMs: 15,
+      signal,
+      pollRedeemed: async () => {
+        polls += 1;
+        if (polls >= 3) controller.abort();
+        return null;
+      },
+    });
+    expect(added).toBeGreaterThanOrEqual(2);
+    expect(removed).toBe(added);
+  });
+
   test('non-hub enroll reads x-tmex-set-session when Set-Cookie is absent', async () => {
     const auth = await openLocalAuth({
       memory: true,
