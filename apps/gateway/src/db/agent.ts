@@ -221,23 +221,44 @@ export function appendAgentMessage(
   role: AgentMessageRole,
   content: unknown
 ): AgentMessageRecord {
-  const orm = getOrmDb();
-  const created = orm
-    .insert(agentMessages)
-    .values({
-      id: crypto.randomUUID(),
-      sessionId,
-      seq: nextSessionSeqSql(agentMessages, sessionId),
-      role,
-      content,
-      createdAt: new Date().toISOString(),
-    })
-    .returning()
-    .get();
+  const [created] = appendAgentMessages(sessionId, [{ role, content }]);
   if (!created) {
     throw new Error('failed to append agent message');
   }
   return created;
+}
+
+export function appendAgentMessages(
+  sessionId: string,
+  messages: ReadonlyArray<{ role: AgentMessageRole; content: unknown }>
+): AgentMessageRecord[] {
+  if (messages.length === 0) {
+    return [];
+  }
+
+  const orm = getOrmDb();
+  return orm.transaction((tx) => {
+    const maxRow = tx
+      .select({ maxSeq: max(agentMessages.seq) })
+      .from(agentMessages)
+      .where(eq(agentMessages.sessionId, sessionId))
+      .get();
+    let nextSeq = (maxRow?.maxSeq ?? -1) + 1;
+    const createdAt = new Date().toISOString();
+    const rows = messages.map((message) => ({
+      id: crypto.randomUUID(),
+      sessionId,
+      seq: nextSeq++,
+      role: message.role,
+      content: message.content,
+      createdAt,
+    }));
+    const created = tx.insert(agentMessages).values(rows).returning().all();
+    if (created.length !== rows.length) {
+      throw new Error('failed to append agent messages');
+    }
+    return created;
+  });
 }
 
 export function listAgentMessages(

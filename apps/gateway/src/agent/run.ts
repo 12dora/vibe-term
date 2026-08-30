@@ -8,7 +8,7 @@ import { getDeviceById } from '../db';
 import {
   type AgentMessageRole,
   type AgentSessionRecord,
-  appendAgentMessage,
+  appendAgentMessages,
   getAgentSessionById,
   getFirstAgentUserMessage,
   getMaxAgentMessageSeq,
@@ -213,17 +213,13 @@ export class AgentRun {
     const approvals: PendingApproval[] = [];
     let streamError: unknown = null;
     let aborted = false;
-    const persister = new StepMessagePersister((message: { role: string }) => {
-      const record = appendAgentMessage(
-        this.sessionId,
-        message.role as AgentMessageRole,
-        message as unknown as ModelMessage
+    const persister = new StepMessagePersister((messages) => {
+      this.persistAndBroadcast(
+        messages.map((message) => ({
+          role: message.role as AgentMessageRole,
+          content: message as unknown as ModelMessage,
+        }))
       );
-      this.broadcast(wsBorsh.AGENT_EVENT_MESSAGE_PERSISTED, {
-        messageId: record.id,
-        seq: record.seq,
-        role: record.role,
-      });
     });
     await consumeAgentStream(
       this.openRunStream(request, persister, runtime).fullStream,
@@ -338,8 +334,16 @@ export class AgentRun {
   }
 
   private persistDrainedQueue(): void {
-    for (const text of this.deps.drainQueuedMessages(this.sessionId)) {
-      const record = appendAgentMessage(this.sessionId, 'user', { role: 'user', content: text });
+    const texts = this.deps.drainQueuedMessages(this.sessionId);
+    this.persistAndBroadcast(
+      texts.map((text) => ({ role: 'user' as const, content: { role: 'user', content: text } }))
+    );
+  }
+
+  private persistAndBroadcast(
+    messages: ReadonlyArray<{ role: AgentMessageRole; content: unknown }>
+  ): void {
+    for (const record of appendAgentMessages(this.sessionId, messages)) {
       this.broadcast(wsBorsh.AGENT_EVENT_MESSAGE_PERSISTED, {
         messageId: record.id,
         seq: record.seq,

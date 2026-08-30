@@ -51,6 +51,9 @@ async function dbSyncProvider(sessionId: string): Promise<AgentSyncEventPayload 
   };
 }
 
+export const AGENT_WS_MAX_SESSION_ID_LENGTH = 128;
+export const AGENT_WS_MAX_SUBSCRIPTIONS_PER_CLIENT = 64;
+
 interface AgentWsHubOptions {
   syncProvider?: AgentSyncProvider;
 }
@@ -83,19 +86,25 @@ export class AgentWsHub {
   }
 
   async subscribe(session: GatewaySession, sessionId: string): Promise<void> {
-    let subscribers = this.subscriptions.get(sessionId);
-    if (!subscribers) {
-      subscribers = new Set();
-      this.subscriptions.set(sessionId, subscribers);
+    if (!isValidAgentSessionId(sessionId)) return;
+    if (
+      !this.hasSubscription(session, sessionId) &&
+      this.countClientSubscriptions(session) >= AGENT_WS_MAX_SUBSCRIPTIONS_PER_CLIENT
+    ) {
+      return;
     }
-    subscribers.add(session);
 
+    const subscribers = this.addSubscription(session, sessionId);
     try {
       const sync = await this.syncProvider(sessionId);
-      if (!sync) return;
+      if (!sync) {
+        this.unsubscribe(session, sessionId);
+        return;
+      }
       if (!subscribers.has(session)) return;
       this.sendAgentEvent(session, sessionId, wsBorsh.AGENT_EVENT_SYNC, sync, 0);
     } catch (err) {
+      this.unsubscribe(session, sessionId);
       console.error(`[agent-ws-hub] sync for session ${sessionId} failed:`, err);
     }
   }
@@ -147,6 +156,28 @@ export class AgentWsHub {
     }
   }
 
+  private hasSubscription(session: GatewaySession, sessionId: string): boolean {
+    return this.subscriptions.get(sessionId)?.has(session) === true;
+  }
+
+  private addSubscription(session: GatewaySession, sessionId: string): Set<GatewaySession> {
+    let subscribers = this.subscriptions.get(sessionId);
+    if (!subscribers) {
+      subscribers = new Set();
+      this.subscriptions.set(sessionId, subscribers);
+    }
+    subscribers.add(session);
+    return subscribers;
+  }
+
+  private countClientSubscriptions(session: GatewaySession): number {
+    let count = 0;
+    for (const subscribers of this.subscriptions.values()) {
+      if (subscribers.has(session)) count++;
+    }
+    return count;
+  }
+
   private sendAgentEvent<K extends keyof AgentEventPayloadMap>(
     session: GatewaySession,
     sessionId: string,
@@ -177,6 +208,10 @@ export class AgentWsHub {
       console.error('[agent-ws-hub] failed to send payload:', err);
     }
   }
+}
+
+function isValidAgentSessionId(sessionId: string): boolean {
+  return sessionId.length > 0 && sessionId.length <= AGENT_WS_MAX_SESSION_ID_LENGTH;
 }
 
 function encodeJsonBytes(payload: unknown): Uint8Array {

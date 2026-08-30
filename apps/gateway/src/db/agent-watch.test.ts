@@ -6,6 +6,7 @@ import { drizzle } from 'drizzle-orm/bun-sqlite';
 import { migrate } from 'drizzle-orm/bun-sqlite/migrator';
 import {
   appendAgentMessage,
+  appendAgentMessages,
   createAgentConfirmation,
   createAgentSession,
   decideAgentConfirmation,
@@ -243,6 +244,67 @@ describe('agent sessions and messages', () => {
     const seqs = rows.map((row) => row.seq).sort((a, b) => a - b);
     expect(seqs).toEqual(Array.from({ length: count }, (_, i) => i));
     expect(listQueuedAgentMessages(session.id).map((row) => row.seq)).toEqual(seqs);
+  });
+});
+
+describe('appendAgentMessages', () => {
+  test('empty batch is a no-op', () => {
+    const session = createAgentSession({ title: 'batch-empty', modelId: 'm' });
+    expect(appendAgentMessages(session.id, [])).toEqual([]);
+    expect(listAgentMessages(session.id)).toEqual([]);
+  });
+
+  test('assigns consecutive seqs and preserves input order', () => {
+    const session = createAgentSession({ title: 'batch-seq', modelId: 'm' });
+    const rows = appendAgentMessages(session.id, [
+      { role: 'assistant', content: { role: 'assistant', content: 'a' } },
+      { role: 'tool', content: { role: 'tool', content: 't' } },
+      { role: 'assistant', content: { role: 'assistant', content: 'b' } },
+    ]);
+
+    expect(rows.map((row) => row.seq)).toEqual([0, 1, 2]);
+    expect(rows.map((row) => row.role)).toEqual(['assistant', 'tool', 'assistant']);
+    expect(listAgentMessages(session.id).map((row) => row.seq)).toEqual([0, 1, 2]);
+    expect(listAgentMessages(session.id).map((row) => row.content)).toEqual([
+      { role: 'assistant', content: 'a' },
+      { role: 'tool', content: 't' },
+      { role: 'assistant', content: 'b' },
+    ]);
+  });
+
+  test('interleaves with single appends on the same session', () => {
+    const session = createAgentSession({ title: 'batch-interleave', modelId: 'm' });
+    const first = appendAgentMessage(session.id, 'user', { role: 'user', content: 'q' });
+    const batch = appendAgentMessages(session.id, [
+      { role: 'assistant', content: { role: 'assistant', content: 'a1' } },
+      { role: 'tool', content: { role: 'tool', content: 't1' } },
+    ]);
+    const last = appendAgentMessage(session.id, 'assistant', {
+      role: 'assistant',
+      content: 'done',
+    });
+
+    expect(first.seq).toBe(0);
+    expect(batch.map((row) => row.seq)).toEqual([1, 2]);
+    expect(last.seq).toBe(3);
+    expect(listAgentMessages(session.id).map((row) => row.seq)).toEqual([0, 1, 2, 3]);
+  });
+
+  test('seq allocation is independent across sessions', () => {
+    const sessionA = createAgentSession({ title: 'batch-a', modelId: 'm' });
+    const sessionB = createAgentSession({ title: 'batch-b', modelId: 'm' });
+    appendAgentMessage(sessionB.id, 'user', { role: 'user', content: 'b0' });
+    const batchA = appendAgentMessages(sessionA.id, [
+      { role: 'user', content: { role: 'user', content: 'a0' } },
+      { role: 'assistant', content: { role: 'assistant', content: 'a1' } },
+    ]);
+    const nextB = appendAgentMessage(sessionB.id, 'assistant', {
+      role: 'assistant',
+      content: 'b1',
+    });
+
+    expect(batchA.map((row) => row.seq)).toEqual([0, 1]);
+    expect(nextB.seq).toBe(1);
   });
 });
 

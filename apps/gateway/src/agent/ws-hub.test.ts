@@ -6,7 +6,11 @@ import { migrate } from 'drizzle-orm/bun-sqlite/migrator';
 import { appendAgentMessage, createAgentConfirmation, createAgentSession } from '../db/agent';
 import { getDb as getOrmDb } from '../db/client';
 import { createGatewaySession } from '../ws/test-helpers';
-import { AgentWsHub } from './ws-hub';
+import {
+  AGENT_WS_MAX_SESSION_ID_LENGTH,
+  AGENT_WS_MAX_SUBSCRIPTIONS_PER_CLIENT,
+  AgentWsHub,
+} from './ws-hub';
 
 function createMockWs(options?: Parameters<typeof createGatewaySession>[0]) {
   return createGatewaySession(options);
@@ -52,6 +56,15 @@ beforeAll(() => {
   migrate(getOrmDb(), { migrationsFolder: resolve(import.meta.dir, '../../drizzle') });
 });
 
+async function subscribeReady(
+  hub: AgentWsHub,
+  ws: ReturnType<typeof createMockWs>,
+  sessionId: string
+) {
+  await hub.subscribe(ws, sessionId);
+  ws.sent.length = 0;
+}
+
 describe('AgentWsHub', () => {
   test('subscribe 后立即回发 sync 事件（seq=0）', async () => {
     const hub = new AgentWsHub({
@@ -69,23 +82,26 @@ describe('AgentWsHub', () => {
     expect(event.json.inProgressText).toBe('partial');
   });
 
-  test('syncProvider 返回 null 时不回发 sync', async () => {
+  test('syncProvider 返回 null 时不回发 sync，且不留下订阅', async () => {
     const hub = new AgentWsHub({ syncProvider: async () => null });
     const ws = createMockWs();
 
     await hub.subscribe(ws, 'missing-session');
     expect(ws.sent.length).toBe(0);
+
+    hub.broadcastAgentEvent('missing-session', wsBorsh.AGENT_EVENT_STATUS, { status: 'idle' }, 1);
+    expect(ws.sent.length).toBe(0);
   });
 
   test('broadcastAgentEvent 只发给对应 session 的订阅者', async () => {
-    const hub = new AgentWsHub({ syncProvider: async () => null });
+    const hub = new AgentWsHub({ syncProvider: async () => stubSync });
     const subscriber = createMockWs();
     const otherSubscriber = createMockWs();
     const nonSubscriber = createMockWs();
 
     hub.registerClient(nonSubscriber);
-    await hub.subscribe(subscriber, 'session-a');
-    await hub.subscribe(otherSubscriber, 'session-b');
+    await subscribeReady(hub, subscriber, 'session-a');
+    await subscribeReady(hub, otherSubscriber, 'session-b');
 
     hub.broadcastAgentEvent(
       'session-a',
@@ -109,10 +125,10 @@ describe('AgentWsHub', () => {
   });
 
   test('unsubscribe 后不再收到广播', async () => {
-    const hub = new AgentWsHub({ syncProvider: async () => null });
+    const hub = new AgentWsHub({ syncProvider: async () => stubSync });
     const ws = createMockWs();
 
-    await hub.subscribe(ws, 'session-a');
+    await subscribeReady(hub, ws, 'session-a');
     hub.unsubscribe(ws, 'session-a');
 
     hub.broadcastAgentEvent('session-a', wsBorsh.AGENT_EVENT_STATUS, { status: 'running' }, 1);
@@ -120,12 +136,12 @@ describe('AgentWsHub', () => {
   });
 
   test('removeClient 清理全部订阅与客户端集合', async () => {
-    const hub = new AgentWsHub({ syncProvider: async () => null });
+    const hub = new AgentWsHub({ syncProvider: async () => stubSync });
     const ws = createMockWs();
 
     hub.registerClient(ws);
-    await hub.subscribe(ws, 'session-a');
-    await hub.subscribe(ws, 'session-b');
+    await subscribeReady(hub, ws, 'session-a');
+    await subscribeReady(hub, ws, 'session-b');
 
     hub.removeClient(ws);
 
@@ -215,11 +231,11 @@ describe('AgentWsHub', () => {
   });
 
   test('payload 超过 maxFrameBytes 时走分片路径且可重组', async () => {
-    const hub = new AgentWsHub({ syncProvider: async () => null });
+    const hub = new AgentWsHub({ syncProvider: async () => stubSync });
     const ws = createMockWs();
     ws.borshState.maxFrameBytes = 256;
 
-    await hub.subscribe(ws, 'session-big');
+    await subscribeReady(hub, ws, 'session-big');
 
     const bigDelta = 'x'.repeat(2048);
     hub.broadcastAgentEvent(
@@ -253,7 +269,7 @@ describe('AgentWsHub', () => {
   });
 
   test('单个订阅者 send 抛错不影响其他订阅者收到广播', async () => {
-    const hub = new AgentWsHub({ syncProvider: async () => null });
+    const hub = new AgentWsHub({ syncProvider: async () => stubSync });
     const broken = createMockWs({
       send() {
         throw new Error('connection closed');
@@ -261,8 +277,8 @@ describe('AgentWsHub', () => {
     });
     const healthy = createMockWs();
 
-    await hub.subscribe(broken, 'session-a');
-    await hub.subscribe(healthy, 'session-a');
+    await subscribeReady(hub, broken, 'session-a');
+    await subscribeReady(hub, healthy, 'session-a');
 
     hub.broadcastAgentEvent('session-a', wsBorsh.AGENT_EVENT_STATUS, { status: 'running' }, 1);
 
@@ -280,10 +296,72 @@ describe('AgentWsHub', () => {
     expect(decodeWatchEvent(requireFrame(healthy.sent, 1)).json).toEqual({ summary: 'matched' });
   });
 
-  test('默认 syncProvider 对不存在的 session 不回发', async () => {
+  test('默认 syncProvider 对不存在的 session 不回发，且不留下订阅', async () => {
     const hub = new AgentWsHub();
     const ws = createMockWs();
-    await hub.subscribe(ws, crypto.randomUUID());
+    const missingId = crypto.randomUUID();
+    await hub.subscribe(ws, missingId);
+    expect(ws.sent.length).toBe(0);
+
+    hub.broadcastAgentEvent(missingId, wsBorsh.AGENT_EVENT_STATUS, { status: 'idle' }, 1);
+    expect(ws.sent.length).toBe(0);
+  });
+
+  test('syncProvider 抛错时不留下订阅', async () => {
+    const hub = new AgentWsHub({
+      syncProvider: async () => {
+        throw new Error('sync boom');
+      },
+    });
+    const ws = createMockWs();
+    await hub.subscribe(ws, 'session-a');
+    expect(ws.sent.length).toBe(0);
+
+    hub.broadcastAgentEvent('session-a', wsBorsh.AGENT_EVENT_STATUS, { status: 'running' }, 1);
+    expect(ws.sent.length).toBe(0);
+  });
+
+  test('超出单客户端订阅上限的新 session 被拒绝', async () => {
+    const hub = new AgentWsHub({ syncProvider: async () => stubSync });
+    const ws = createMockWs();
+    for (let i = 0; i < AGENT_WS_MAX_SUBSCRIPTIONS_PER_CLIENT; i++) {
+      await subscribeReady(hub, ws, `session-${i}`);
+    }
+
+    await hub.subscribe(ws, 'session-overflow');
+    expect(ws.sent.length).toBe(0);
+    hub.broadcastAgentEvent(
+      'session-overflow',
+      wsBorsh.AGENT_EVENT_STATUS,
+      { status: 'running' },
+      1
+    );
+    expect(ws.sent.length).toBe(0);
+
+    hub.broadcastAgentEvent('session-0', wsBorsh.AGENT_EVENT_STATUS, { status: 'running' }, 1);
+    expect(ws.sent.length).toBe(1);
+  });
+
+  test('已订阅的 session 在达到上限后仍可重新 sync', async () => {
+    const hub = new AgentWsHub({ syncProvider: async () => stubSync });
+    const ws = createMockWs();
+    for (let i = 0; i < AGENT_WS_MAX_SUBSCRIPTIONS_PER_CLIENT; i++) {
+      await subscribeReady(hub, ws, `session-${i}`);
+    }
+
+    await hub.subscribe(ws, 'session-0');
+    expect(ws.sent.length).toBe(1);
+    expect(decodeAgentEvent(requireFrame(ws.sent)).eventType).toBe(wsBorsh.AGENT_EVENT_SYNC);
+  });
+
+  test('过长 sessionId 被拒绝且不留下订阅', async () => {
+    const hub = new AgentWsHub({ syncProvider: async () => stubSync });
+    const ws = createMockWs();
+    const absurdId = 'x'.repeat(AGENT_WS_MAX_SESSION_ID_LENGTH + 1);
+
+    await hub.subscribe(ws, absurdId);
+    expect(ws.sent.length).toBe(0);
+    hub.broadcastAgentEvent(absurdId, wsBorsh.AGENT_EVENT_STATUS, { status: 'idle' }, 1);
     expect(ws.sent.length).toBe(0);
   });
 });
