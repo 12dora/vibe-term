@@ -43,12 +43,8 @@
           "name": "device_runtime_status_device_id_devices_id_fk",
           "tableFrom": "device_runtime_status",
           "tableTo": "devices",
-          "columnsFrom": [
-            "device_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
+          "columnsFrom": ["device_id"],
+          "columnsTo": ["id"],
           "onDelete": "cascade",
           "onUpdate": "no action"
         }
@@ -334,10 +330,7 @@
       "indexes": {
         "telegram_bot_chats_bot_chat_unique": {
           "name": "telegram_bot_chats_bot_chat_unique",
-          "columns": [
-            "bot_id",
-            "chat_id"
-          ],
+          "columns": ["bot_id", "chat_id"],
           "isUnique": true
         }
       },
@@ -346,12 +339,8 @@
           "name": "telegram_bot_chats_bot_id_telegram_bots_id_fk",
           "tableFrom": "telegram_bot_chats",
           "tableTo": "telegram_bots",
-          "columnsFrom": [
-            "bot_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
+          "columnsFrom": ["bot_id"],
+          "columnsTo": ["id"],
           "onDelete": "cascade",
           "onUpdate": "no action"
         }

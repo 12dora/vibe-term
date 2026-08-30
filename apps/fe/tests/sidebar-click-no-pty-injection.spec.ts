@@ -1,4 +1,4 @@
-import { expect, test, type Page } from '@playwright/test';
+import { type Page, expect, test } from '@playwright/test';
 import { createTwoPaneSession, ensureCleanSession, tmux } from './helpers/tmux';
 import { KIND, decodeEnvelope, decodeTermInput, isGatewayWsUrl } from './helpers/ws-borsh';
 
@@ -89,7 +89,9 @@ test('desktop: sidebar new-window click does not inject SGR mouse sequences into
     await expect.poll(() => createWindowSent, { timeout: 5_000 }).toBeGreaterThan(0);
     await page.waitForTimeout(300);
 
-    expect(sgrInjections, `unexpected SGR injections: ${JSON.stringify(sgrInjections)}`).toEqual([]);
+    expect(sgrInjections, `unexpected SGR injections: ${JSON.stringify(sgrInjections)}`).toEqual(
+      []
+    );
   } finally {
     await request.delete(`/api/devices/${deviceId}`);
     ensureCleanSession(sessionName);

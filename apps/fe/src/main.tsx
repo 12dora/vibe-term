@@ -82,6 +82,7 @@ function StatusBarSync() {
   // 预设主题会改写 --background/--sidebar，故 themePreset 变化也要重算状态栏颜色
   const themePreset = useUIStore((state) => state.themePreset);
 
+  // biome-ignore lint/correctness/useExhaustiveDependencies: theme/themePreset 改写 CSS 变量，虽未在 effect 内引用，但其变化必须触发状态栏颜色重算
   useEffect(() => {
     const cssVar = openMobile ? '--sidebar' : '--background';
     document.body.style.backgroundColor = `var(${cssVar})`;

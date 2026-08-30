@@ -9,13 +9,7 @@
   "publishConfig": {
     "access": "public"
   },
-  "files": [
-    "bin",
-    "dist",
-    "resources",
-    "README.md",
-    "CHANGELOG.md"
-  ],
+  "files": ["bin", "dist", "resources", "README.md", "CHANGELOG.md"],
   "scripts": {
     "clean": "rm -rf dist resources/fe-dist resources/gateway-drizzle",
     "bundle:resources": "bash ./scripts/bundle-resources.sh",

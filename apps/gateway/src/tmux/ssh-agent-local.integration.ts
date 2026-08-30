@@ -86,4 +86,3 @@ describe('SSH agent localhost integration', () => {
     expect(true).toBe(true);
   });
 });
-

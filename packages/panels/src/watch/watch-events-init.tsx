@@ -1,7 +1,6 @@
 // WATCH_EVENT 全局通知接线（按 client 防重：WeakSet 保证同一连接只注册一次，多 runtime 各自注册）。
 // 挂在 RootLayout，只负责 toast / 浏览器 Notification / react-query 失效，不持有渲染状态。
 
-import i18next from 'i18next';
 import type { QueryClient } from '@tanstack/react-query';
 import { useQueryClient } from '@tanstack/react-query';
 import { fetchWatchRule } from '@tmex/api-client';
@@ -17,6 +16,7 @@ import type { AppRuntime } from '@tmex/stores';
 import { encodePaneIdForUrl, hostAppPath } from '@tmex/stores';
 import { useRuntime, useTmuxStore } from '@tmex/stores/react';
 import type { BorshWebSocketClient } from '@tmex/ws-client';
+import i18next from 'i18next';
 import { useEffect } from 'react';
 
 const initializedClients = new WeakSet<BorshWebSocketClient>();

@@ -31,7 +31,9 @@ export async function handleDeviceTestConnection(
 ): Promise<Response> {
   const deps: HandleDeviceTestConnectionDeps = {
     getDevice: inputDeps.getDevice ?? ((currentDeviceId) => getDeviceById(currentDeviceId)),
-    acquireRuntime: inputDeps.acquireRuntime ?? ((currentDeviceId) => tmuxRuntimeRegistry.acquire(currentDeviceId)),
+    acquireRuntime:
+      inputDeps.acquireRuntime ??
+      ((currentDeviceId) => tmuxRuntimeRegistry.acquire(currentDeviceId)),
     releaseRuntime:
       inputDeps.releaseRuntime ??
       (async (currentDeviceId, runtime) => {

@@ -21,7 +21,11 @@ const env = requireLiveEnv(
 
 const protocol = process.env.TEST_LLM_PROTOCOL?.trim() || 'openai-chat';
 
-async function api(method: string, path: string, body?: unknown): Promise<{ status: number; json: any }> {
+async function api(
+  method: string,
+  path: string,
+  body?: unknown
+): Promise<{ status: number; json: any }> {
   const req = new Request(`http://localhost${path}`, {
     method,
     headers: body ? { 'Content-Type': 'application/json' } : undefined,
@@ -67,10 +71,7 @@ describe('LLM HTTP API live integration', () => {
   });
 
   test('POST /providers/:id/refresh-models 重新拉取', async () => {
-    const { status, json } = await api(
-      'POST',
-      `/api/llm/providers/${providerId}/refresh-models`
-    );
+    const { status, json } = await api('POST', `/api/llm/providers/${providerId}/refresh-models`);
     expect(status).toBe(200);
     expect(json.models.length).toBeGreaterThan(0);
     expect(json.models).toContain(env.TEST_LLM_MODEL);

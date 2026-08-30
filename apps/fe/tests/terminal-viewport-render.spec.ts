@@ -1,4 +1,4 @@
-import { expect, test, type Page } from '@playwright/test';
+import { type Page, expect, test } from '@playwright/test';
 import { createTwoPaneSession, ensureCleanSession, tmux } from './helpers/tmux';
 
 async function waitForCanvasTerminal(page: Page): Promise<void> {
@@ -119,9 +119,7 @@ test('desktop: direct input should become visible in the current viewport', asyn
     await page.keyboard.type(`echo ${marker}`);
     await page.keyboard.press('Enter');
 
-    await expect
-      .poll(() => readVisibleTerminalText(page), { timeout: 20_000 })
-      .toContain(marker);
+    await expect.poll(() => readVisibleTerminalText(page), { timeout: 20_000 }).toContain(marker);
   } finally {
     await request.delete(`/api/devices/${deviceId}`);
     ensureCleanSession(sessionName);

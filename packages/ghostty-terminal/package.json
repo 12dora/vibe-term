@@ -5,9 +5,7 @@
   "publishConfig": {
     "access": "public"
   },
-  "files": [
-    "src"
-  ],
+  "files": ["src"],
   "exports": {
     ".": "./src/index.ts",
     "./headless": "./src/headless.ts"

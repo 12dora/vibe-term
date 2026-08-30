@@ -10,7 +10,17 @@ import ts from 'typescript';
 
 const ROOT = join(import.meta.dir, '..', '..');
 const LIMITS = { cc: 15, fnLines: 120, fileLines: 900 };
-const SKIP_DIRS = new Set(['node_modules', 'dist', 'fe-dist', '.git', 'resources', 'prompt-archives', 'docs', 'bench', 'scripts']);
+const SKIP_DIRS = new Set([
+  'node_modules',
+  'dist',
+  'fe-dist',
+  '.git',
+  'resources',
+  'prompt-archives',
+  'docs',
+  'bench',
+  'scripts',
+]);
 const SKIP_FILE = /\.test\.|\.spec\.|\.integration\.|\.bench\.|\.d\.ts$/;
 const SKIP_PATH = /\/i18n\/(resources|types)\.ts$|\/vendor\/|\/tests\//;
 
@@ -22,7 +32,8 @@ function walk(dir: string, out: string[]): void {
     if (SKIP_DIRS.has(entry)) continue;
     const path = join(dir, entry);
     if (statSync(path).isDirectory()) walk(path, out);
-    else if (/\.(ts|tsx)$/.test(entry) && !SKIP_FILE.test(entry) && !SKIP_PATH.test(path)) out.push(path);
+    else if (/\.(ts|tsx)$/.test(entry) && !SKIP_FILE.test(entry) && !SKIP_PATH.test(path))
+      out.push(path);
   }
 }
 
@@ -61,12 +72,16 @@ function cyclomatic(fn: ts.Node): number {
 
 function isFunctionLike(n: ts.Node): boolean {
   return (
-    ts.isFunctionDeclaration(n) || ts.isFunctionExpression(n) || ts.isArrowFunction(n) || ts.isMethodDeclaration(n)
+    ts.isFunctionDeclaration(n) ||
+    ts.isFunctionExpression(n) ||
+    ts.isArrowFunction(n) ||
+    ts.isMethodDeclaration(n)
   );
 }
 
 function functionName(n: ts.Node): string | null {
-  if (ts.isFunctionDeclaration(n) || ts.isMethodDeclaration(n)) return n.name?.getText() ?? '<anon>';
+  if (ts.isFunctionDeclaration(n) || ts.isMethodDeclaration(n))
+    return n.name?.getText() ?? '<anon>';
   if ((ts.isFunctionExpression(n) || ts.isArrowFunction(n)) && n.parent) {
     if (ts.isVariableDeclaration(n.parent)) return n.parent.name.getText();
     if (ts.isPropertyAssignment(n.parent)) return n.parent.name.getText();
@@ -124,7 +139,8 @@ for (const file of files) {
     const ccLimit = entry?.cc ?? LIMITS.cc;
     const lineLimit = entry?.lines ?? LIMITS.fnLines;
     if (fn.cc > ccLimit) violations.push(`${rel}:${fn.line} ${fn.name}: CC ${fn.cc} > ${ccLimit}`);
-    if (fn.lines > lineLimit) violations.push(`${rel}:${fn.line} ${fn.name}: ${fn.lines} lines > ${lineLimit}`);
+    if (fn.lines > lineLimit)
+      violations.push(`${rel}:${fn.line} ${fn.name}: ${fn.lines} lines > ${lineLimit}`);
   }
 }
 const stale = Object.keys(allow).filter((k) => !usedAllow.has(k));
@@ -145,37 +161,48 @@ if (process.argv.includes('--tighten')) {
     if (entry.fileLines !== undefined) {
       const cur = fileLineCounts.get(key) ?? 0;
       if (cur > LIMITS.fileLines) updated.fileLines = Math.min(entry.fileLines, cur);
-      else delete updated.fileLines;
+      else updated.fileLines = undefined;
     }
     if (entry.cc !== undefined) {
       const cur = maxCc.get(key) ?? 0;
       if (cur > LIMITS.cc) updated.cc = Math.min(entry.cc, cur);
-      else delete updated.cc;
+      else updated.cc = undefined;
     }
     if (entry.lines !== undefined) {
       const cur = maxLines.get(key) ?? 0;
       if (cur > LIMITS.fnLines) updated.lines = Math.min(entry.lines, cur);
-      else delete updated.lines;
+      else updated.lines = undefined;
     }
-    if (updated.cc !== undefined || updated.lines !== undefined || updated.fileLines !== undefined) {
+    if (
+      updated.cc !== undefined ||
+      updated.lines !== undefined ||
+      updated.fileLines !== undefined
+    ) {
       next[key] = updated;
     }
   }
   writeFileSync(allowPath, `${JSON.stringify(next, null, 2)}\n`);
-  console.log(`allowlist tightened: ${Object.keys(allow).length} -> ${Object.keys(next).length} entries`);
+  console.log(
+    `allowlist tightened: ${Object.keys(allow).length} -> ${Object.keys(next).length} entries`
+  );
   process.exit(0);
 }
 
 if (process.argv.includes('--report')) {
   const byCc = [...all].sort((a, b) => b.cc - a.cc).slice(0, 30);
-  console.log(`files ${files.length}, functions ${all.length}, CC>${LIMITS.cc}: ${all.filter((f) => f.cc > LIMITS.cc).length}, >${LIMITS.fnLines} lines: ${all.filter((f) => f.lines > LIMITS.fnLines).length}`);
+  console.log(
+    `files ${files.length}, functions ${all.length}, CC>${LIMITS.cc}: ${all.filter((f) => f.cc > LIMITS.cc).length}, >${LIMITS.fnLines} lines: ${all.filter((f) => f.lines > LIMITS.fnLines).length}`
+  );
   for (const f of byCc) console.log(`${f.cc}\t${f.lines}L\t${f.file}:${f.line}\t${f.name}`);
   process.exit(0);
 }
 for (const v of violations) console.error(`complexity: ${v}`);
-for (const k of stale) console.error(`complexity: allowlist entry no longer matches anything: ${k}`);
+for (const k of stale)
+  console.error(`complexity: allowlist entry no longer matches anything: ${k}`);
 if (violations.length > 0 || stale.length > 0) {
-  console.error(`complexity gate failed: ${violations.length} violation(s), ${stale.length} stale allowlist entr(y/ies)`);
+  console.error(
+    `complexity gate failed: ${violations.length} violation(s), ${stale.length} stale allowlist entr(y/ies)`
+  );
   process.exit(1);
 }
 console.log(`complexity gate ok (${files.length} files, ${all.length} functions)`);

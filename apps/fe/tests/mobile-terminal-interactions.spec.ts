@@ -1,6 +1,6 @@
 import { expect, test } from '@playwright/test';
-import { KIND, decodeEnvelope, decodeTermInput, isGatewayWsUrl } from './helpers/ws-borsh';
 import { createTwoPaneSession, ensureCleanSession, tmux } from './helpers/tmux';
+import { KIND, decodeEnvelope, decodeTermInput, isGatewayWsUrl } from './helpers/ws-borsh';
 
 test.use({ viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: true });
 
@@ -49,7 +49,10 @@ async function swipe(
       let currentTouch = startTouch;
       for (let i = 1; i <= steps; i += 1) {
         const ratio = i / steps;
-        const touch = createTouch(from.x + (to.x - from.x) * ratio, from.y + (to.y - from.y) * ratio);
+        const touch = createTouch(
+          from.x + (to.x - from.x) * ratio,
+          from.y + (to.y - from.y) * ratio
+        );
         currentTouch = touch;
         target.dispatchEvent(
           new TouchEvent('touchmove', {
@@ -121,16 +124,20 @@ test('mobile: editor interactions keep focus and send ws messages', async ({ pag
 
     await page.getByTestId('terminal-shortcut-ctrl-c').click();
     await expect(editorInput).toBeFocused();
-    await expect.poll(() => {
-      return sentInputs.some((msg) => msg.deviceId === deviceId && msg.data === '\u0003');
-    }).toBeTruthy();
+    await expect
+      .poll(() => {
+        return sentInputs.some((msg) => msg.deviceId === deviceId && msg.data === '\u0003');
+      })
+      .toBeTruthy();
 
     await page.getByTestId('editor-send').click();
     await expect(editorInput).toBeFocused();
     await expect(editorInput).toHaveValue('');
-    await expect.poll(() => {
-      return sentInputs.some((msg) => msg.deviceId === deviceId && msg.data === 'echo hello\r');
-    }).toBeTruthy();
+    await expect
+      .poll(() => {
+        return sentInputs.some((msg) => msg.deviceId === deviceId && msg.data === 'echo hello\r');
+      })
+      .toBeTruthy();
   } finally {
     await request.delete(`/api/devices/${deviceId}`);
     ensureCleanSession(sessionName);
@@ -207,8 +214,7 @@ test('mobile: direct input falls back to compositionend data for ime symbols', a
     await expect
       .poll(() =>
         sentInputs.some(
-          (msg) =>
-            msg.deviceId === deviceId && msg.isComposing === false && msg.data.includes('；')
+          (msg) => msg.deviceId === deviceId && msg.isComposing === false && msg.data.includes('；')
         )
       )
       .toBeTruthy();
@@ -218,7 +224,10 @@ test('mobile: direct input falls back to compositionend data for ime symbols', a
   }
 });
 
-test('mobile: cancelled ime composition should not send fallback text', async ({ page, request }) => {
+test('mobile: cancelled ime composition should not send fallback text', async ({
+  page,
+  request,
+}) => {
   const sessionName = `tmex-e2e-mobile-ime-cancel-${Date.now()}`;
   createTwoPaneSession(sessionName);
 
@@ -441,7 +450,11 @@ test('mobile: long press should select word and selection toolbar copies it', as
             if (!term) return '';
             const buffer = term.buffer.active;
             const lines: string[] = [];
-            for (let y = buffer.viewportY; y < Math.min(buffer.length, buffer.viewportY + term.rows); y += 1) {
+            for (
+              let y = buffer.viewportY;
+              y < Math.min(buffer.length, buffer.viewportY + term.rows);
+              y += 1
+            ) {
               const line = buffer.getLine(y);
               lines.push(line ? line.translateToString(false) : '');
             }
@@ -460,7 +473,11 @@ test('mobile: long press should select word and selection toolbar copies it', as
       const rect = canvas.getBoundingClientRect();
       const cell = term._core?._renderService?.dimensions?.css?.cell;
       const buffer = term.buffer.active;
-      for (let y = buffer.viewportY; y < Math.min(buffer.length, buffer.viewportY + term.rows); y += 1) {
+      for (
+        let y = buffer.viewportY;
+        y < Math.min(buffer.length, buffer.viewportY + term.rows);
+        y += 1
+      ) {
         const line = buffer.getLine(y);
         const text = line ? line.translateToString(false) : '';
         const col = text.indexOf('longpress_target');
@@ -529,10 +546,9 @@ test('mobile: long press should select word and selection toolbar copies it', as
     }, point);
 
     await expect
-      .poll(
-        () => page.evaluate(() => (window as any).__tmexE2eTerminalSelectionText ?? null),
-        { timeout: 10_000 }
-      )
+      .poll(() => page.evaluate(() => (window as any).__tmexE2eTerminalSelectionText ?? null), {
+        timeout: 10_000,
+      })
       .toBe('longpress_target');
     await expect(page.getByTestId('terminal-selection-toolbar')).toBeVisible();
 
@@ -541,10 +557,9 @@ test('mobile: long press should select word and selection toolbar copies it', as
       .poll(() => page.evaluate(async () => navigator.clipboard.readText()), { timeout: 10_000 })
       .toContain('longpress_target');
     await expect
-      .poll(
-        () => page.evaluate(() => (window as any).__tmexE2eTerminalSelectionText ?? null),
-        { timeout: 10_000 }
-      )
+      .poll(() => page.evaluate(() => (window as any).__tmexE2eTerminalSelectionText ?? null), {
+        timeout: 10_000,
+      })
       .toBeNull();
   } finally {
     await request.delete(`/api/devices/${deviceId}`);

@@ -36,9 +36,9 @@ test('desktop: paste shortcut should deliver clipboard text to the terminal', as
     await focusTerminal(page);
     await page.keyboard.press(PASTE_SHORTCUT);
 
-    await expect.poll(() => readVisibleTerminalText(page), { timeout: 15_000 }).toContain(
-      'echo paste_marker_123'
-    );
+    await expect
+      .poll(() => readVisibleTerminalText(page), { timeout: 15_000 })
+      .toContain('echo paste_marker_123');
   } finally {
     await request.delete(`/api/devices/${deviceId}`);
     ensureCleanSession(sessionName);
@@ -68,9 +68,9 @@ test('desktop: Ctrl+C should interrupt the foreground process', async ({ page, r
     await page.keyboard.type('echo intr_done_456');
     await page.keyboard.press('Enter');
 
-    await expect.poll(() => readVisibleTerminalText(page), { timeout: 15_000 }).toContain(
-      'intr_done_456'
-    );
+    await expect
+      .poll(() => readVisibleTerminalText(page), { timeout: 15_000 })
+      .toContain('intr_done_456');
   } finally {
     await request.delete(`/api/devices/${deviceId}`);
     ensureCleanSession(sessionName);

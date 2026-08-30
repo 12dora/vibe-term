@@ -1,6 +1,14 @@
 import { expect, test } from '@playwright/test';
-import { KIND, decodeEnvelope, decodeLiveResume, decodeSwitchAck, decodeTermHistory, decodeTmuxSelect, isGatewayWsUrl } from './helpers/ws-borsh';
 import { createTwoWindowSession, ensureCleanSession } from './helpers/tmux';
+import {
+  KIND,
+  decodeEnvelope,
+  decodeLiveResume,
+  decodeSwitchAck,
+  decodeTermHistory,
+  decodeTmuxSelect,
+  isGatewayWsUrl,
+} from './helpers/ws-borsh';
 
 // 桌面分屏时代，同窗切 pane 走轻量 FOCUS_PANE（无 barrier）；
 // 完整 select（barrier/history）语义由跨 window 切换保留，故用两个 window 场景。
@@ -21,7 +29,12 @@ test('ws-borsh: TMUX_SELECT carries cols/rows and barrier order is ACK->HISTORY-
   const deviceId = created.device.id;
 
   const observed: {
-    select: Array<{ tokenHex: string; paneId: string | null; cols: number | null; rows: number | null }>;
+    select: Array<{
+      tokenHex: string;
+      paneId: string | null;
+      cols: number | null;
+      rows: number | null;
+    }>;
     barrier: Map<string, number[]>;
   } = {
     select: [],
@@ -40,7 +53,12 @@ test('ws-borsh: TMUX_SELECT carries cols/rows and barrier order is ACK->HISTORY-
       if (envelope.kind !== KIND.TMUX_SELECT) return;
       const select = decodeTmuxSelect(envelope.payload);
       const tokenHex = select.selectToken.toString('hex');
-      observed.select.push({ tokenHex, paneId: select.paneId, cols: select.cols, rows: select.rows });
+      observed.select.push({
+        tokenHex,
+        paneId: select.paneId,
+        cols: select.cols,
+        rows: select.rows,
+      });
 
       if (targetPaneId && select.paneId === targetPaneId) {
         targetTokenHex = tokenHex;
@@ -100,12 +118,12 @@ test('ws-borsh: TMUX_SELECT carries cols/rows and barrier order is ACK->HISTORY-
     expect((capturedSelect?.cols ?? 0) > 1).toBeTruthy();
     expect((capturedSelect?.rows ?? 0) > 1).toBeTruthy();
 
-    await expect.poll(() => observed.barrier.get(targetTokenHex!) ?? [], { timeout: 20_000 }).toContain(
-      KIND.SWITCH_ACK
-    );
-    await expect.poll(() => observed.barrier.get(targetTokenHex!) ?? [], { timeout: 20_000 }).toContain(
-      KIND.LIVE_RESUME
-    );
+    await expect
+      .poll(() => observed.barrier.get(targetTokenHex!) ?? [], { timeout: 20_000 })
+      .toContain(KIND.SWITCH_ACK);
+    await expect
+      .poll(() => observed.barrier.get(targetTokenHex!) ?? [], { timeout: 20_000 })
+      .toContain(KIND.LIVE_RESUME);
 
     const seq = observed.barrier.get(targetTokenHex!) ?? [];
     const ackIndex = seq.indexOf(KIND.SWITCH_ACK);
@@ -186,29 +204,33 @@ test('ws-borsh: rapid select cancels previous transaction (no LIVE_RESUME for ol
     await page.getByTestId(`window-item-${firstWindow}`).click();
 
     await expect
-      .poll(() => {
-        const next = selectTokenByPane.get(secondPane) ?? '';
-        if (!next) return '';
-        if (initialTokenSecond && next === initialTokenSecond) return '';
-        return next;
-      }, { timeout: 20_000 })
+      .poll(
+        () => {
+          const next = selectTokenByPane.get(secondPane) ?? '';
+          if (!next) return '';
+          if (initialTokenSecond && next === initialTokenSecond) return '';
+          return next;
+        },
+        { timeout: 20_000 }
+      )
       .not.toBe('');
 
     await expect
-      .poll(() => {
-        const next = selectTokenByPane.get(firstPane) ?? '';
-        if (!next) return '';
-        if (initialTokenFirst && next === initialTokenFirst) return '';
-        return next;
-      }, { timeout: 20_000 })
+      .poll(
+        () => {
+          const next = selectTokenByPane.get(firstPane) ?? '';
+          if (!next) return '';
+          if (initialTokenFirst && next === initialTokenFirst) return '';
+          return next;
+        },
+        { timeout: 20_000 }
+      )
       .not.toBe('');
 
     tokenA = selectTokenByPane.get(secondPane) ?? null;
     tokenB = selectTokenByPane.get(firstPane) ?? null;
 
-    await expect
-      .poll(() => liveResumes.includes(tokenB!), { timeout: 20_000 })
-      .toBeTruthy();
+    await expect.poll(() => liveResumes.includes(tokenB!), { timeout: 20_000 }).toBeTruthy();
 
     await new Promise((resolve) => setTimeout(resolve, 1000));
     expect(liveResumes.includes(tokenA!)).toBeFalsy();

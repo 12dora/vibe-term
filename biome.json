@@ -15,6 +15,7 @@
       "**/test-results/**",
       "**/playwright-report/**",
       "**/manifest.generated.ts",
+      "prompt-archives/**",
       "packages/shared/src/i18n/resources.ts",
       "packages/shared/src/i18n/types.ts",
       "packages/app/src/vendor/**"
@@ -43,5 +44,30 @@
       "quoteStyle": "single",
       "trailingCommas": "es5"
     }
-  }
+  },
+  "overrides": [
+    {
+      "include": ["apps/fe/src/index.css"],
+      "linter": {
+        "rules": {
+          "correctness": {
+            "noInvalidPositionAtImportRule": "off"
+          }
+        }
+      }
+    },
+    {
+      "include": ["**/*.test.ts", "**/*.test.tsx", "**/*.spec.ts", "**/tests/**"],
+      "linter": {
+        "rules": {
+          "style": {
+            "noNonNullAssertion": "off"
+          },
+          "performance": {
+            "noDelete": "off"
+          }
+        }
+      }
+    }
+  ]
 }

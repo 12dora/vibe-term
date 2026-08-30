@@ -158,7 +158,9 @@ export async function writeGhosttyWasmMetadata(repoRoot = REPO_ROOT): Promise<Gh
   return metadata;
 }
 
-export async function verifyPackagedGhosttyWasm(repoRoot = REPO_ROOT): Promise<GhosttyWasmMetadata> {
+export async function verifyPackagedGhosttyWasm(
+  repoRoot = REPO_ROOT
+): Promise<GhosttyWasmMetadata> {
   const [lockedGhosttyCommit, metadata] = await Promise.all([
     readLockedGhosttyCommit(repoRoot),
     readGhosttyWasmMetadata(),

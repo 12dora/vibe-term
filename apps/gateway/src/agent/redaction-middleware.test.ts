@@ -6,9 +6,7 @@ const mw = createRedactionMiddleware();
 async function transform(prompt: unknown[]) {
   const result = await mw.transformParams?.({
     type: 'generate',
-    // biome-ignore lint/suspicious/noExplicitAny: 测试构造最小 params
     params: { prompt } as any,
-    // biome-ignore lint/suspicious/noExplicitAny: 测试不需要真实 model
     model: {} as any,
   });
   return (result as { prompt: unknown[] }).prompt;
@@ -29,7 +27,9 @@ describe('redaction middleware', () => {
         ],
       },
     ];
-    const out = (await transform(prompt)) as Array<{ content: Array<{ output: { value: string } }> }>;
+    const out = (await transform(prompt)) as Array<{
+      content: Array<{ output: { value: string } }>;
+    }>;
     expect(out[0].content[0].output.value).toBe('router# Authorization: Bearer [REDACTED:token]');
   });
 

@@ -212,5 +212,5 @@ export function getGhosttyKeyCode(code: string): number {
 
 export function getUnshiftedCodepoint(code: string): number | null {
   const value = UNSHIFTED_CODEPOINTS[code];
-  return value ? value.codePointAt(0) ?? null : null;
+  return value ? (value.codePointAt(0) ?? null) : null;
 }

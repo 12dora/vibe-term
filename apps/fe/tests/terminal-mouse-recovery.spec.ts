@@ -1,4 +1,4 @@
-import { expect, test, type Page } from '@playwright/test';
+import { type Page, expect, test } from '@playwright/test';
 import {
   createSinglePaneSession,
   createTwoPaneSession,
@@ -45,7 +45,9 @@ async function scrollViewportToTop(page: Page): Promise<void> {
 
 async function readCanvasInkRatio(page: Page): Promise<number> {
   return page.evaluate(() => {
-    const canvas = document.querySelector('[data-terminal-engine] canvas') as HTMLCanvasElement | null;
+    const canvas = document.querySelector(
+      '[data-terminal-engine] canvas'
+    ) as HTMLCanvasElement | null;
     if (!canvas) return 0;
     const ctx = canvas.getContext('2d');
     if (!ctx || canvas.width === 0 || canvas.height === 0) {
@@ -81,7 +83,9 @@ async function readCanvasInkRatio(page: Page): Promise<number> {
 
 async function clearTerminalCanvas(page: Page): Promise<void> {
   await page.evaluate(() => {
-    const canvas = document.querySelector('[data-terminal-engine] canvas') as HTMLCanvasElement | null;
+    const canvas = document.querySelector(
+      '[data-terminal-engine] canvas'
+    ) as HTMLCanvasElement | null;
     const ctx = canvas?.getContext('2d');
     if (!canvas || !ctx) {
       return;
@@ -179,19 +183,21 @@ test('desktop: vim mouse modes survive pane round-trip navigation', async ({ pag
   const vimPath = `/devices/${deviceId}/windows/${windowId}/panes/${encodeURIComponent(vimPaneId ?? '')}`;
   const shellPath = `/devices/${deviceId}/windows/${windowId}/panes/${encodeURIComponent(shellPaneId ?? '')}`;
 
-    try {
-      await page.goto(vimPath);
-      await expect(page.locator('.xterm').first()).toBeVisible({ timeout: 20_000 });
-      await expect.poll(() => readVisibleTerminalText(page), { timeout: 20_000 }).toContain('~');
+  try {
+    await page.goto(vimPath);
+    await expect(page.locator('.xterm').first()).toBeVisible({ timeout: 20_000 });
+    await expect.poll(() => readVisibleTerminalText(page), { timeout: 20_000 }).toContain('~');
 
-      await page.goto(shellPath);
-      await expect(page.locator('.xterm').first()).toBeVisible({ timeout: 20_000 });
-      await expect.poll(() => readVisibleTerminalText(page), { timeout: 20_000 }).toContain('PANE0_READY');
+    await page.goto(shellPath);
+    await expect(page.locator('.xterm').first()).toBeVisible({ timeout: 20_000 });
+    await expect
+      .poll(() => readVisibleTerminalText(page), { timeout: 20_000 })
+      .toContain('PANE0_READY');
 
-      await page.goto(vimPath);
-      await expect(page.locator('.xterm').first()).toBeVisible({ timeout: 20_000 });
-      await expect.poll(() => readVisibleTerminalText(page), { timeout: 20_000 }).toContain('~');
-    } finally {
+    await page.goto(vimPath);
+    await expect(page.locator('.xterm').first()).toBeVisible({ timeout: 20_000 });
+    await expect.poll(() => readVisibleTerminalText(page), { timeout: 20_000 }).toContain('~');
+  } finally {
     await request.delete(`/api/devices/${deviceId}`);
     ensureCleanSession(sessionName);
   }
@@ -302,7 +308,10 @@ test('desktop: vim exit releases mouse wheel back to viewport scrolling without 
   }
 });
 
-test('desktop: opencode refresh should not render pre-launch normal screen', async ({ page, request }) => {
+test('desktop: opencode refresh should not render pre-launch normal screen', async ({
+  page,
+  request,
+}) => {
   const sessionName = `tmex-e2e-opencode-refresh-${Date.now()}`;
   const { paneIds, windowId } = createTwoPaneSession(sessionName);
   const targetPaneId = paneIds[1] ?? paneIds[0];
@@ -310,7 +319,9 @@ test('desktop: opencode refresh should not render pre-launch normal screen', asy
   launchOpencode(targetPaneId);
 
   await expect
-    .poll(() => tmux(`display-message -p -t ${targetPaneId} '#{alternate_on}'`), { timeout: 20_000 })
+    .poll(() => tmux(`display-message -p -t ${targetPaneId} '#{alternate_on}'`), {
+      timeout: 20_000,
+    })
     .toBe('1');
 
   const name = `e2e-opencode-refresh-${Date.now()}`;
@@ -325,12 +336,16 @@ test('desktop: opencode refresh should not render pre-launch normal screen', asy
   try {
     await page.goto(targetPath);
     await expect(page.locator('.xterm').first()).toBeVisible({ timeout: 20_000 });
-    await expect.poll(() => readVisibleTerminalText(page), { timeout: 20_000 }).not.toContain('sh-3.2$ opencode .');
+    await expect
+      .poll(() => readVisibleTerminalText(page), { timeout: 20_000 })
+      .not.toContain('sh-3.2$ opencode .');
 
     await page.reload();
 
     await expect(page.locator('.xterm').first()).toBeVisible({ timeout: 20_000 });
-    await expect.poll(() => readVisibleTerminalText(page), { timeout: 20_000 }).not.toContain('sh-3.2$ opencode .');
+    await expect
+      .poll(() => readVisibleTerminalText(page), { timeout: 20_000 })
+      .not.toContain('sh-3.2$ opencode .');
   } finally {
     await request.delete(`/api/devices/${deviceId}`);
     ensureCleanSession(sessionName);
@@ -350,7 +365,9 @@ test('desktop: opencode pane round-trip should not render pre-launch normal scre
   launchOpencode(targetPaneId);
 
   await expect
-    .poll(() => tmux(`display-message -p -t ${targetPaneId} '#{alternate_on}'`), { timeout: 20_000 })
+    .poll(() => tmux(`display-message -p -t ${targetPaneId} '#{alternate_on}'`), {
+      timeout: 20_000,
+    })
     .toBe('1');
 
   const name = `e2e-opencode-pane-${Date.now()}`;
@@ -366,15 +383,21 @@ test('desktop: opencode pane round-trip should not render pre-launch normal scre
   try {
     await page.goto(targetPath);
     await expect(page.locator('.xterm').first()).toBeVisible({ timeout: 20_000 });
-    await expect.poll(() => readVisibleTerminalText(page), { timeout: 20_000 }).not.toContain('sh-3.2$ opencode .');
+    await expect
+      .poll(() => readVisibleTerminalText(page), { timeout: 20_000 })
+      .not.toContain('sh-3.2$ opencode .');
 
     await page.goto(shellPath);
     await expect(page.locator('.xterm').first()).toBeVisible({ timeout: 20_000 });
-    await expect.poll(() => readVisibleTerminalText(page), { timeout: 20_000 }).toContain('PANE0_READY');
+    await expect
+      .poll(() => readVisibleTerminalText(page), { timeout: 20_000 })
+      .toContain('PANE0_READY');
 
     await page.goto(targetPath);
     await expect(page.locator('.xterm').first()).toBeVisible({ timeout: 20_000 });
-    await expect.poll(() => readVisibleTerminalText(page), { timeout: 20_000 }).not.toContain('sh-3.2$ opencode .');
+    await expect
+      .poll(() => readVisibleTerminalText(page), { timeout: 20_000 })
+      .not.toContain('sh-3.2$ opencode .');
   } finally {
     await request.delete(`/api/devices/${deviceId}`);
     ensureCleanSession(sessionName);
@@ -392,7 +415,9 @@ test('desktop: focus restore repaints a cleared terminal canvas even when termin
   launchOpencode(targetPaneId);
 
   await expect
-    .poll(() => tmux(`display-message -p -t ${targetPaneId} '#{alternate_on}'`), { timeout: 20_000 })
+    .poll(() => tmux(`display-message -p -t ${targetPaneId} '#{alternate_on}'`), {
+      timeout: 20_000,
+    })
     .toBe('1');
 
   const name = `e2e-opencode-focus-repaint-${Date.now()}`;
@@ -418,7 +443,9 @@ test('desktop: focus restore repaints a cleared terminal canvas even when termin
       window.dispatchEvent(new Event('focus'));
     });
 
-    await expect.poll(() => readCanvasInkRatio(page), { timeout: 5_000 }).toBeGreaterThan(baseline * 0.8);
+    await expect
+      .poll(() => readCanvasInkRatio(page), { timeout: 5_000 })
+      .toBeGreaterThan(baseline * 0.8);
   } finally {
     await request.delete(`/api/devices/${deviceId}`);
     ensureCleanSession(sessionName);

@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { detectPackageManager, parseOsRelease, type LinuxDistroInfo } from './linux-distro';
+import { type LinuxDistroInfo, detectPackageManager, parseOsRelease } from './linux-distro';
 
 describe('parseOsRelease', () => {
   test('parses Ubuntu os-release', () => {

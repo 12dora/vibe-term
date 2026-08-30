@@ -3,6 +3,7 @@ import { resolve } from 'node:path';
 import { createOpenAICompatible } from '@ai-sdk/openai-compatible';
 import type { WatchRuleSampleDto } from '@tmex/shared';
 import { migrate } from 'drizzle-orm/bun-sqlite/migrator';
+import { encrypt } from '../crypto';
 import { createDevice, ensureSiteSettingsInitialized } from '../db';
 import { ensureAgentSettingsInitialized } from '../db/agent';
 import { getDb as getOrmDb } from '../db/client';
@@ -14,7 +15,6 @@ import {
   getWatchRuleState,
   upsertWatchRuleState,
 } from '../db/watch';
-import { encrypt } from '../crypto';
 import { dispatchRoutes } from './route';
 import { type WatchApiDeps, createWatchRoutes } from './watch';
 
@@ -66,7 +66,10 @@ interface ServiceStub {
   samples: WatchRuleSampleDto[];
 }
 
-function createDeps(overrides: Partial<WatchApiDeps> = {}): { deps: Partial<WatchApiDeps>; stub: ServiceStub } {
+function createDeps(overrides: Partial<WatchApiDeps> = {}): {
+  deps: Partial<WatchApiDeps>;
+  stub: ServiceStub;
+} {
   const stub: ServiceStub = { refreshed: [], removed: [], samples: [] };
   const deps: Partial<WatchApiDeps> = {
     service: {
@@ -240,7 +243,11 @@ describe('POST /api/watch/rules - 校验', () => {
   });
 
   test('intervalSeconds 下限：普通 5s、llm 30s', async () => {
-    const tooSmall = await call('POST', '/api/watch/rules', validCreateBody({ intervalSeconds: 3 }));
+    const tooSmall = await call(
+      'POST',
+      '/api/watch/rules',
+      validCreateBody({ intervalSeconds: 3 })
+    );
     expect(tooSmall.status).toBe(400);
 
     const llmTooSmall = await call(
@@ -338,7 +345,12 @@ describe('Watch rules CRUD', () => {
     expect(stub.refreshed).toEqual([rule.id]);
 
     // 改成 llm 但没有 conditionPrompt：合成校验拦下
-    const invalid = await call('PATCH', `/api/watch/rules/${rule.id}`, { triggerType: 'llm' }, deps);
+    const invalid = await call(
+      'PATCH',
+      `/api/watch/rules/${rule.id}`,
+      { triggerType: 'llm' },
+      deps
+    );
     expect(invalid.status).toBe(400);
     expect(getWatchRuleById(rule.id)?.triggerType).toBe('match');
 

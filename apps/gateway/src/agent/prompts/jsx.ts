@@ -62,7 +62,6 @@ export function h(
 
 // 把 JSX 类型命名空间挂在工厂 h 上（h.JSX），避免污染全局 JSX 命名空间，
 // 防止与前端 React 的 JSX 在统一编辑器工程里冲突。运行时无影响。
-// biome-ignore lint/style/noNamespace: JSX 类型命名空间需挂在工厂标识符上
 export namespace h {
   export namespace JSX {
     export type Element = string;

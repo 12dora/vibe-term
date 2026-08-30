@@ -1,5 +1,5 @@
-import { afterAll, describe, expect, it } from 'bun:test';
 import { Database } from 'bun:sqlite';
+import { afterAll, describe, expect, it } from 'bun:test';
 import { unlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';

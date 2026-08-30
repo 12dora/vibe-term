@@ -1,4 +1,4 @@
-import { expect, test, type Page } from '@playwright/test';
+import { type Page, expect, test } from '@playwright/test';
 import { wsBorsh } from '@tmex/shared';
 import { createTwoPaneSession, ensureCleanSession } from './helpers/tmux';
 import { isGatewayWsUrl } from './helpers/ws-borsh';
@@ -46,7 +46,8 @@ test('ws-borsh: applies TERM_HISTORY on initial load (shows pane ready marker)',
       const payload = frame.payload;
       if (typeof payload === 'string') return;
 
-      const bytes = payload instanceof Buffer ? new Uint8Array(payload) : new Uint8Array(payload as any);
+      const bytes =
+        payload instanceof Buffer ? new Uint8Array(payload) : new Uint8Array(payload as any);
       if (!wsBorsh.checkMagic(bytes)) return;
       const envelope = wsBorsh.decodeEnvelope(bytes);
 
@@ -72,7 +73,8 @@ test('ws-borsh: applies TERM_HISTORY on initial load (shows pane ready marker)',
       const payload = frame.payload;
       if (typeof payload === 'string') return;
 
-      const bytes = payload instanceof Buffer ? new Uint8Array(payload) : new Uint8Array(payload as any);
+      const bytes =
+        payload instanceof Buffer ? new Uint8Array(payload) : new Uint8Array(payload as any);
       if (!wsBorsh.checkMagic(bytes)) return;
 
       const envelope = wsBorsh.decodeEnvelope(bytes);
@@ -137,21 +139,27 @@ test('ws-borsh: applies TERM_HISTORY on initial load (shows pane ready marker)',
 
     // Wait for xterm to appear and history to be applied.
     await expect(page.locator('.xterm').first()).toBeVisible({ timeout: 20_000 });
-    await expect.poll(() => page.evaluate(() => Boolean((window as any).__tmexE2eXterm)), { timeout: 20_000 }).toBeTruthy();
-    await expect.poll(() => received.selectTokenByPane.get(targetPaneId) ?? null, { timeout: 20_000 }).toBeTruthy();
+    await expect
+      .poll(() => page.evaluate(() => Boolean((window as any).__tmexE2eXterm)), { timeout: 20_000 })
+      .toBeTruthy();
+    await expect
+      .poll(() => received.selectTokenByPane.get(targetPaneId) ?? null, { timeout: 20_000 })
+      .toBeTruthy();
 
     const tokenHex = received.selectTokenByPane.get(targetPaneId)!;
-    await expect.poll(() => received.historyTextByToken.get(tokenHex) ?? '', { timeout: 20_000 }).toContain(
-      'PANE0_READY'
-    );
-    await expect.poll(() => received.barrierKindsByToken.get(tokenHex) ?? [], { timeout: 20_000 }).toContain(
-      wsBorsh.KIND_SWITCH_ACK
-    );
-    await expect.poll(() => received.barrierKindsByToken.get(tokenHex) ?? [], { timeout: 20_000 }).toContain(
-      wsBorsh.KIND_LIVE_RESUME
-    );
+    await expect
+      .poll(() => received.historyTextByToken.get(tokenHex) ?? '', { timeout: 20_000 })
+      .toContain('PANE0_READY');
+    await expect
+      .poll(() => received.barrierKindsByToken.get(tokenHex) ?? [], { timeout: 20_000 })
+      .toContain(wsBorsh.KIND_SWITCH_ACK);
+    await expect
+      .poll(() => received.barrierKindsByToken.get(tokenHex) ?? [], { timeout: 20_000 })
+      .toContain(wsBorsh.KIND_LIVE_RESUME);
 
-    await expect.poll(() => readVisibleTerminalText(page), { timeout: 20_000 }).toContain('PANE0_READY');
+    await expect
+      .poll(() => readVisibleTerminalText(page), { timeout: 20_000 })
+      .toContain('PANE0_READY');
   } finally {
     await request.delete(`/api/devices/${deviceId}`);
     ensureCleanSession(sessionName);

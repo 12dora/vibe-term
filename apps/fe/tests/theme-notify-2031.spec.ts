@@ -23,7 +23,7 @@ async function setThemeViaUI(page: Page, theme: 'dark' | 'light'): Promise<void>
   if (isDark === wantDark) return;
   await page.getByTestId('theme-menu-trigger').click();
   await page.getByTestId(`theme-option-${theme}`).click();
-  await expect(page.locator('html')).toHaveClass(wantDark ? /\bdark\b/ : /^[^]*$(?<!\bdark\b)/);
+  await expect(page.locator('html')).toHaveClass(wantDark ? /\bdark\b/ : /^[\s\S]*$(?<!\bdark\b)/);
 }
 
 async function createDevice(

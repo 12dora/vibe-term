@@ -12,7 +12,9 @@ describe('buildSystemdServiceContent', () => {
 
     expect(content).toContain('WorkingDirectory=/home/krhougs/.local/share/tmex');
     expect(content).not.toContain('WorkingDirectory="/home/krhougs/.local/share/tmex"');
-    expect(content).toContain('ExecStart=/usr/bin/env bash "/home/krhougs/.local/share/tmex/run.sh"');
+    expect(content).toContain(
+      'ExecStart=/usr/bin/env bash "/home/krhougs/.local/share/tmex/run.sh"'
+    );
     expect(content).toContain('SyslogIdentifier=tmex');
     expect(content).toContain('StandardOutput=journal');
     expect(content).toContain('StandardError=journal');

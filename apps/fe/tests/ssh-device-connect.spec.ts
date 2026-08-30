@@ -1,4 +1,4 @@
-import { expect, test, type APIRequestContext, type Page } from '@playwright/test';
+import { type APIRequestContext, type Page, expect, test } from '@playwright/test';
 
 async function readVisibleTerminalText(page: Page): Promise<string> {
   return page.evaluate(() => {
@@ -27,7 +27,9 @@ async function resolveTargetDevice(
     devices: Array<{ id: string; name: string; type: string }>;
   };
 
-  const matches = payload.devices.filter((device) => device.type === 'ssh' && device.name === targetName);
+  const matches = payload.devices.filter(
+    (device) => device.type === 'ssh' && device.name === targetName
+  );
   if (matches.length === 0) {
     throw new Error(`device target "${targetName}" not found`);
   }
@@ -55,7 +57,9 @@ test('ssh device: probe and runtime connect are parameterized by target name', a
   const gatewayUrl = `http://127.0.0.1:${gatewayPort}`;
 
   const target = await resolveTargetDevice(request, gatewayUrl, targetName);
-  const probeResponse = await request.post(`${gatewayUrl}/api/devices/${target.id}/test-connection`);
+  const probeResponse = await request.post(
+    `${gatewayUrl}/api/devices/${target.id}/test-connection`
+  );
   expect(probeResponse.ok()).toBeTruthy();
   const probePayload = (await probeResponse.json()) as {
     success: boolean;

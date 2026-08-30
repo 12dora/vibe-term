@@ -39,9 +39,7 @@ test('sidebar: window tab follows terminal title and supports rename via menu', 
   const deviceId = created.device.id;
 
   try {
-    await page.goto(
-      `/devices/${deviceId}/windows/${windowId}/panes/${encodeURIComponent(paneId)}`
-    );
+    await page.goto(`/devices/${deviceId}/windows/${windowId}/panes/${encodeURIComponent(paneId)}`);
     await expect(page.locator('.xterm').first()).toBeVisible({ timeout: 20_000 });
 
     const windowItem = page.getByTestId(`window-item-${windowId}`);

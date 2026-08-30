@@ -3,9 +3,9 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
+  type GhosttyWasmMetadata,
   buildGhosttyWasmMetadata,
   verifyGhosttyWasmState,
-  type GhosttyWasmMetadata,
 } from './ghostty-wasm';
 
 const tempDirs: string[] = [];

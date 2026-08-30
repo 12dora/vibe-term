@@ -1,5 +1,5 @@
-import i18next from 'i18next';
 import { I18N_RESOURCES } from '@tmex/shared';
+import i18next from 'i18next';
 
 i18next.init({
   resources: I18N_RESOURCES,

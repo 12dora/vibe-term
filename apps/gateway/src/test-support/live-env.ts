@@ -22,9 +22,7 @@ export function requireLiveEnv(keys: readonly string[], hint: string): Record<st
 
   if (missing.length > 0) {
     console.error(
-      `\n[live-test] 缺少实测所需的环境变量：${missing.join('、')}。\n` +
-        `请在仓库根 test.env.local（已 gitignore）中填写后重试。${hint}\n` +
-        '实测打真实 endpoint，缺失凭证属配置问题（报错退出），并非产品缺陷。\n'
+      `\n[live-test] 缺少实测所需的环境变量：${missing.join('、')}。\n请在仓库根 test.env.local（已 gitignore）中填写后重试。${hint}\n实测打真实 endpoint，缺失凭证属配置问题（报错退出），并非产品缺陷。\n`
     );
     process.exit(1);
   }
@@ -45,9 +43,7 @@ export function requireAnyLiveEnv(keys: readonly string[], hint: string): Record
 
   if (Object.keys(present).length === 0) {
     console.error(
-      `\n[live-test] 需至少提供其中一个环境变量：${keys.join(' / ')}。\n` +
-        `请在仓库根 test.env.local（已 gitignore）中填写其一后重试。${hint}\n` +
-        '实测打真实 endpoint，缺失凭证属配置问题（报错退出），并非产品缺陷。\n'
+      `\n[live-test] 需至少提供其中一个环境变量：${keys.join(' / ')}。\n请在仓库根 test.env.local（已 gitignore）中填写其一后重试。${hint}\n实测打真实 endpoint，缺失凭证属配置问题（报错退出），并非产品缺陷。\n`
     );
     process.exit(1);
   }

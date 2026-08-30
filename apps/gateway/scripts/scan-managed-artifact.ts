@@ -121,9 +121,7 @@ export function scanManagedArtifact(artifactPath: string): ScanResult {
           findings.push(`adjacent_resource_sha_mismatch:${res.name}`);
         }
       }
-      const self = (matrix.targets ?? []).find(
-        (t) => t.outfile && basename(t.outfile) === base
-      );
+      const self = (matrix.targets ?? []).find((t) => t.outfile && basename(t.outfile) === base);
       if (self?.sha256 && self.sha256 !== sha256) {
         findings.push('artifact_sha_mismatch:target-matrix');
       }

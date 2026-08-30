@@ -77,7 +77,8 @@ export function ConnectionIndicator() {
 
   if (isClosed) {
     return (
-      <div
+      <button
+        type="button"
         className="fixed z-50 right-4 flex items-center rounded-full bg-background border border-border shadow-lg px-3 py-2 gap-2 text-sm text-destructive cursor-pointer"
         style={transitionStyle}
         onTransitionEnd={handleTransitionEnd}
@@ -85,7 +86,7 @@ export function ConnectionIndicator() {
       >
         <RefreshCcw className="size-4" />
         <span>{t('websocket.reconnect')}</span>
-      </div>
+      </button>
     );
   }
 

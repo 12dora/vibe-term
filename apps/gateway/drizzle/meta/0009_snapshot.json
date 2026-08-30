@@ -78,12 +78,8 @@
           "name": "agent_confirmations_session_id_agent_sessions_id_fk",
           "tableFrom": "agent_confirmations",
           "tableTo": "agent_sessions",
-          "columnsFrom": [
-            "session_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
+          "columnsFrom": ["session_id"],
+          "columnsTo": ["id"],
           "onDelete": "cascade",
           "onUpdate": "no action"
         }
@@ -146,10 +142,7 @@
       "indexes": {
         "agent_messages_session_seq_unique": {
           "name": "agent_messages_session_seq_unique",
-          "columns": [
-            "session_id",
-            "seq"
-          ],
+          "columns": ["session_id", "seq"],
           "isUnique": true
         }
       },
@@ -158,12 +151,8 @@
           "name": "agent_messages_session_id_agent_sessions_id_fk",
           "tableFrom": "agent_messages",
           "tableTo": "agent_sessions",
-          "columnsFrom": [
-            "session_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
+          "columnsFrom": ["session_id"],
+          "columnsTo": ["id"],
           "onDelete": "cascade",
           "onUpdate": "no action"
         }
@@ -217,12 +206,8 @@
           "name": "agent_queued_messages_session_id_agent_sessions_id_fk",
           "tableFrom": "agent_queued_messages",
           "tableTo": "agent_sessions",
-          "columnsFrom": [
-            "session_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
+          "columnsFrom": ["session_id"],
+          "columnsTo": ["id"],
           "onDelete": "cascade",
           "onUpdate": "no action"
         }
@@ -365,12 +350,8 @@
           "name": "agent_sessions_device_id_devices_id_fk",
           "tableFrom": "agent_sessions",
           "tableTo": "devices",
-          "columnsFrom": [
-            "device_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
+          "columnsFrom": ["device_id"],
+          "columnsTo": ["id"],
           "onDelete": "set null",
           "onUpdate": "no action"
         },
@@ -378,12 +359,8 @@
           "name": "agent_sessions_provider_id_llm_providers_id_fk",
           "tableFrom": "agent_sessions",
           "tableTo": "llm_providers",
-          "columnsFrom": [
-            "provider_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
+          "columnsFrom": ["provider_id"],
+          "columnsTo": ["id"],
           "onDelete": "set null",
           "onUpdate": "no action"
         }
@@ -461,12 +438,8 @@
           "name": "agent_settings_default_provider_id_llm_providers_id_fk",
           "tableFrom": "agent_settings",
           "tableTo": "llm_providers",
-          "columnsFrom": [
-            "default_provider_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
+          "columnsFrom": ["default_provider_id"],
+          "columnsTo": ["id"],
           "onDelete": "set null",
           "onUpdate": "no action"
         }
@@ -530,12 +503,8 @@
           "name": "device_runtime_status_device_id_devices_id_fk",
           "tableFrom": "device_runtime_status",
           "tableTo": "devices",
-          "columnsFrom": [
-            "device_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
+          "columnsFrom": ["device_id"],
+          "columnsTo": ["id"],
           "onDelete": "cascade",
           "onUpdate": "no action"
         }
@@ -584,12 +553,8 @@
           "name": "device_tree_order_device_id_devices_id_fk",
           "tableFrom": "device_tree_order",
           "tableTo": "devices",
-          "columnsFrom": [
-            "device_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
+          "columnsFrom": ["device_id"],
+          "columnsTo": ["id"],
           "onDelete": "cascade",
           "onUpdate": "no action"
         }
@@ -776,10 +741,7 @@
       "indexes": {
         "file_roots_device_path_unique": {
           "name": "file_roots_device_path_unique",
-          "columns": [
-            "device_id",
-            "path"
-          ],
+          "columns": ["device_id", "path"],
           "isUnique": true
         }
       },
@@ -788,12 +750,8 @@
           "name": "file_roots_device_id_devices_id_fk",
           "tableFrom": "file_roots",
           "tableTo": "devices",
-          "columnsFrom": [
-            "device_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
+          "columnsFrom": ["device_id"],
+          "columnsTo": ["id"],
           "onDelete": "cascade",
           "onUpdate": "no action"
         }
@@ -1086,10 +1044,7 @@
       "indexes": {
         "telegram_bot_chats_bot_chat_unique": {
           "name": "telegram_bot_chats_bot_chat_unique",
-          "columns": [
-            "bot_id",
-            "chat_id"
-          ],
+          "columns": ["bot_id", "chat_id"],
           "isUnique": true
         }
       },
@@ -1098,12 +1053,8 @@
           "name": "telegram_bot_chats_bot_id_telegram_bots_id_fk",
           "tableFrom": "telegram_bot_chats",
           "tableTo": "telegram_bots",
-          "columnsFrom": [
-            "bot_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
+          "columnsFrom": ["bot_id"],
+          "columnsTo": ["id"],
           "onDelete": "cascade",
           "onUpdate": "no action"
         }
@@ -1310,12 +1261,8 @@
           "name": "watch_rule_state_rule_id_watch_rules_id_fk",
           "tableFrom": "watch_rule_state",
           "tableTo": "watch_rules",
-          "columnsFrom": [
-            "rule_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
+          "columnsFrom": ["rule_id"],
+          "columnsTo": ["id"],
           "onDelete": "cascade",
           "onUpdate": "no action"
         }
@@ -1490,12 +1437,8 @@
           "name": "watch_rules_device_id_devices_id_fk",
           "tableFrom": "watch_rules",
           "tableTo": "devices",
-          "columnsFrom": [
-            "device_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
+          "columnsFrom": ["device_id"],
+          "columnsTo": ["id"],
           "onDelete": "cascade",
           "onUpdate": "no action"
         },
@@ -1503,12 +1446,8 @@
           "name": "watch_rules_provider_id_llm_providers_id_fk",
           "tableFrom": "watch_rules",
           "tableTo": "llm_providers",
-          "columnsFrom": [
-            "provider_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
+          "columnsFrom": ["provider_id"],
+          "columnsTo": ["id"],
           "onDelete": "set null",
           "onUpdate": "no action"
         }

@@ -1,8 +1,8 @@
 import { describe, expect, test } from 'bun:test';
 import type { Device } from '@tmex/shared';
 
-import { handleDeviceTestConnection } from './test-connection';
 import { createTmuxRuntimeRegistry } from '../tmux-client/runtime-registry';
+import { handleDeviceTestConnection } from './test-connection';
 
 const now = '2026-04-16T00:00:00.000Z';
 
@@ -102,7 +102,9 @@ describe('handleDeviceTestConnection', () => {
       getDevice: () => createDevice(),
       acquireRuntime: async () => ({
         async connect() {
-          throw new Error('auth_auto_missing: auto 模式下未找到可用认证方式（SSH_AUTH_SOCK / 私钥 / 密码）');
+          throw new Error(
+            'auth_auto_missing: auto 模式下未找到可用认证方式（SSH_AUTH_SOCK / 私钥 / 密码）'
+          );
         },
         async shutdown() {},
         requestSnapshot() {},

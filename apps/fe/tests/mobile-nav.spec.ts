@@ -16,4 +16,3 @@ test('mobile: topbar + sidebar sheet open/close', async ({ page }) => {
   await page.getByTestId('mobile-sidebar-close').click();
   await expect(page.getByTestId('mobile-sidebar-sheet')).toHaveCount(0);
 });
-

@@ -125,7 +125,11 @@ type GhosttyExports = WebAssembly.Exports & {
   ghostty_wasm_free_u8_array: (ptr: number, len: number) => void;
   ghostty_wasm_alloc_usize: () => number;
   ghostty_wasm_free_usize: (ptr: number) => void;
-  ghostty_terminal_new: (allocatorPtr: number, outTerminalPtr: number, optionsPtr: number) => number;
+  ghostty_terminal_new: (
+    allocatorPtr: number,
+    outTerminalPtr: number,
+    optionsPtr: number
+  ) => number;
   ghostty_terminal_free: (terminal: number) => void;
   ghostty_terminal_reset: (terminal: number) => void;
   ghostty_terminal_resize: (
@@ -654,12 +658,7 @@ export class GhosttyBindings {
     this.exports.ghostty_terminal_reset(terminal);
   }
 
-  resizeTerminal(
-    terminal: number,
-    cols: number,
-    rows: number,
-    cell: GhosttyCellDimensions
-  ): void {
+  resizeTerminal(terminal: number, cols: number, rows: number, cell: GhosttyCellDimensions): void {
     assertResult(
       this.exports.ghostty_terminal_resize(
         terminal,
@@ -782,11 +781,7 @@ export class GhosttyBindings {
         'ghostty_terminal_set(cursor)'
       );
       assertResult(
-        this.exports.ghostty_terminal_set(
-          terminal,
-          GHOSTTY_TERMINAL_OPT_COLOR_PALETTE,
-          palettePtr
-        ),
+        this.exports.ghostty_terminal_set(terminal, GHOSTTY_TERMINAL_OPT_COLOR_PALETTE, palettePtr),
         'ghostty_terminal_set(palette)'
       );
     } finally {
@@ -833,16 +828,10 @@ export class GhosttyBindings {
 
       return {
         total: Number(
-          scrollbar.view.getBigUint64(
-            this.field('GhosttyTerminalScrollbar', 'total').offset,
-            true
-          )
+          scrollbar.view.getBigUint64(this.field('GhosttyTerminalScrollbar', 'total').offset, true)
         ),
         offset: Number(
-          scrollbar.view.getBigUint64(
-            this.field('GhosttyTerminalScrollbar', 'offset').offset,
-            true
-          )
+          scrollbar.view.getBigUint64(this.field('GhosttyTerminalScrollbar', 'offset').offset, true)
         ),
         len: Number(
           scrollbar.view.getBigUint64(this.field('GhosttyTerminalScrollbar', 'len').offset, true)
@@ -877,7 +866,12 @@ export class GhosttyBindings {
   createFormatter(
     terminal: number,
     emit: number,
-    options: { trim: boolean; unwrap: boolean; includePalette: boolean; selectionPtr?: number | null }
+    options: {
+      trim: boolean;
+      unwrap: boolean;
+      includePalette: boolean;
+      selectionPtr?: number | null;
+    }
   ): number {
     const formatterOptions = this.allocStruct('GhosttyFormatterTerminalOptions');
     const extraOffset = this.field('GhosttyFormatterTerminalOptions', 'extra').offset;
@@ -906,24 +900,14 @@ export class GhosttyBindings {
         'unwrap',
         options.unwrap
       );
-      this.setField(
-        formatterOptions.view,
-        'GhosttyFormatterTerminalOptions',
-        'trim',
-        options.trim
-      );
+      this.setField(formatterOptions.view, 'GhosttyFormatterTerminalOptions', 'trim', options.trim);
       this.setField(
         extraView,
         'GhosttyFormatterTerminalExtra',
         'size',
         this.typeSize('GhosttyFormatterTerminalExtra')
       );
-      this.setField(
-        extraView,
-        'GhosttyFormatterTerminalExtra',
-        'palette',
-        options.includePalette
-      );
+      this.setField(extraView, 'GhosttyFormatterTerminalExtra', 'palette', options.includePalette);
       this.setField(
         screenView,
         'GhosttyFormatterScreenExtra',
@@ -954,21 +938,14 @@ export class GhosttyBindings {
     this.exports.ghostty_formatter_free(formatter);
   }
 
-  private resolveViewportGridRef(
-    terminal: number,
-    x: number,
-    y: number
-  ): StructAllocation | null {
+  private resolveViewportGridRef(terminal: number, x: number, y: number): StructAllocation | null {
     const point = this.allocStruct('GhosttyPoint');
     const outRef = this.allocStruct('GhosttyGridRef');
 
     try {
       this.setField(point.view, 'GhosttyPoint', 'tag', GHOSTTY_POINT_TAG_VIEWPORT);
       const coordOffset = this.field('GhosttyPoint', 'value').offset;
-      const coordView = this.view(
-        point.ptr + coordOffset,
-        this.typeSize('GhosttyPointCoordinate')
-      );
+      const coordView = this.view(point.ptr + coordOffset, this.typeSize('GhosttyPointCoordinate'));
       this.setField(coordView, 'GhosttyPointCoordinate', 'x', x);
       this.setField(coordView, 'GhosttyPointCoordinate', 'y', y);
 
@@ -1100,7 +1077,10 @@ export class GhosttyBindings {
     const outStatePtr = this.allocOpaque();
 
     try {
-      assertResult(this.exports.ghostty_render_state_new(0, outStatePtr), 'ghostty_render_state_new');
+      assertResult(
+        this.exports.ghostty_render_state_new(0, outStatePtr),
+        'ghostty_render_state_new'
+      );
       return this.readPointer(outStatePtr);
     } finally {
       this.freeOpaque(outStatePtr);
@@ -1127,7 +1107,10 @@ export class GhosttyBindings {
   }
 
   setRenderStateValue(state: number, option: number, valuePtr: number): void {
-    assertResult(this.exports.ghostty_render_state_set(state, option, valuePtr), 'ghostty_render_state_set');
+    assertResult(
+      this.exports.ghostty_render_state_set(state, option, valuePtr),
+      'ghostty_render_state_set'
+    );
   }
 
   getRenderStateColors(state: number, outColorsPtr: number): void {
@@ -1175,7 +1158,10 @@ export class GhosttyBindings {
   }
 
   getRenderStateRowValue(iterator: number, data: number, outPtr: number): void {
-    assertResult(this.getRenderStateRowValueResult(iterator, data, outPtr), 'ghostty_render_state_row_get');
+    assertResult(
+      this.getRenderStateRowValueResult(iterator, data, outPtr),
+      'ghostty_render_state_row_get'
+    );
   }
 
   setRenderStateRowValue(iterator: number, option: number, valuePtr: number): void {
@@ -1256,7 +1242,10 @@ export class GhosttyBindings {
     const outEncoderPtr = this.allocOpaque();
 
     try {
-      assertResult(this.exports.ghostty_key_encoder_new(0, outEncoderPtr), 'ghostty_key_encoder_new');
+      assertResult(
+        this.exports.ghostty_key_encoder_new(0, outEncoderPtr),
+        'ghostty_key_encoder_new'
+      );
       return this.readPointer(outEncoderPtr);
     } finally {
       this.freeOpaque(outEncoderPtr);
@@ -1314,7 +1303,10 @@ export class GhosttyBindings {
       return null;
     }
 
-    if (options.action === 'motion' && !(trackingAny || (trackingButton && options.anyButtonPressed))) {
+    if (
+      options.action === 'motion' &&
+      !(trackingAny || (trackingButton && options.anyButtonPressed))
+    ) {
       return null;
     }
 
@@ -1363,7 +1355,13 @@ export class GhosttyBindings {
       return `\u001b[${code};${column};${row}M`;
     }
 
-    if (this.isTerminalModeEnabled(terminal, GHOSTTY_MODE_UTF8_MOUSE) || trackingNormal || trackingButton || trackingAny || trackingX10) {
+    if (
+      this.isTerminalModeEnabled(terminal, GHOSTTY_MODE_UTF8_MOUSE) ||
+      trackingNormal ||
+      trackingButton ||
+      trackingAny ||
+      trackingX10
+    ) {
       const encodedCode = encodeX10Byte(code);
       const encodedColumn = encodeX10Byte(column);
       const encodedRow = encodeX10Byte(row);
@@ -1443,7 +1441,13 @@ export class GhosttyBindings {
     const requiredPtr = this.allocUsize();
 
     try {
-      const sizeResult = this.exports.ghostty_key_encoder_encode(encoder, eventHandle, 0, 0, requiredPtr);
+      const sizeResult = this.exports.ghostty_key_encoder_encode(
+        encoder,
+        eventHandle,
+        0,
+        0,
+        requiredPtr
+      );
       if (sizeResult !== GHOSTTY_OUT_OF_SPACE && sizeResult !== GHOSTTY_SUCCESS) {
         assertResult(sizeResult, 'ghostty_key_encoder_encode(size)');
       }

@@ -10,7 +10,9 @@ async function loadFreshModule(tag: string): Promise<GhosttyWasmModule> {
   return import(`./ghostty-wasm.ts?retry=${tag}-${Date.now()}`) as Promise<GhosttyWasmModule>;
 }
 
-async function withFailingInstantiate<T>(run: (calls: { count: number }) => Promise<T>): Promise<T> {
+async function withFailingInstantiate<T>(
+  run: (calls: { count: number }) => Promise<T>
+): Promise<T> {
   const realInstantiate = WebAssembly.instantiate;
   const calls = { count: 0 };
   (WebAssembly as { instantiate: unknown }).instantiate = async () => {

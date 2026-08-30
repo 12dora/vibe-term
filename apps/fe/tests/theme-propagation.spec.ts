@@ -22,9 +22,7 @@ async function setThemeViaUI(page: Page, theme: 'dark' | 'light'): Promise<void>
   if (isDark === wantDark) return;
   await page.getByTestId('theme-menu-trigger').click();
   await page.getByTestId(`theme-option-${theme}`).click();
-  await expect(page.locator('html')).toHaveClass(
-    wantDark ? /\bdark\b/ : /^[^]*$(?<!\bdark\b)/
-  );
+  await expect(page.locator('html')).toHaveClass(wantDark ? /\bdark\b/ : /^[\s\S]*$(?<!\bdark\b)/);
 }
 
 async function readTerminalBackground(page: Page): Promise<string | null> {
@@ -102,10 +100,7 @@ test('theme: single page — toggle dark/light flips xterm background color', as
   }
 });
 
-test('theme: gateway updates tmux window-style to match site theme', async ({
-  page,
-  request,
-}) => {
+test('theme: gateway updates tmux window-style to match site theme', async ({ page, request }) => {
   const sessionName = `tmex-e2e-theme-wstyle-${Date.now()}`;
   createSinglePaneSession(sessionName);
 
@@ -190,10 +185,14 @@ test('theme: cross-page — A toggles theme, B syncs within 1s via WS broadcast'
     await pageA.goto(`/devices/${deviceId}`);
 
     await expect
-      .poll(async () => expectBg(await readTerminalBackground(pageA), LIGHT_BG), { timeout: 10_000 })
+      .poll(async () => expectBg(await readTerminalBackground(pageA), LIGHT_BG), {
+        timeout: 10_000,
+      })
       .toBe(true);
     await expect
-      .poll(async () => expectBg(await readTerminalBackground(pageB), LIGHT_BG), { timeout: 15_000 })
+      .poll(async () => expectBg(await readTerminalBackground(pageB), LIGHT_BG), {
+        timeout: 15_000,
+      })
       .toBe(true);
 
     await expect

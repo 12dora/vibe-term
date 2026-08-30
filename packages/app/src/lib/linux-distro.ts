@@ -20,7 +20,10 @@ export function parseOsRelease(content: string): LinuxDistroInfo | null {
     if (eqIndex < 0) continue;
     const key = trimmed.slice(0, eqIndex);
     let value = trimmed.slice(eqIndex + 1);
-    if ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'"))) {
+    if (
+      (value.startsWith('"') && value.endsWith('"')) ||
+      (value.startsWith("'") && value.endsWith("'"))
+    ) {
       value = value.slice(1, -1);
     }
     fields[key] = value;

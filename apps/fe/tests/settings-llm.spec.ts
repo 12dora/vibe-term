@@ -102,7 +102,10 @@ test('settings: llm providers crud, defaults, search provider keys', async ({ pa
         return;
       }
       const manual = provider.modelDetails.filter((model) => model.source === 'manual');
-      provider.modelDetails = [...fetchedDetails(['model-alpha', 'model-beta', 'model-gamma']), ...manual];
+      provider.modelDetails = [
+        ...fetchedDetails(['model-alpha', 'model-beta', 'model-gamma']),
+        ...manual,
+      ];
       provider.models = effectiveModels(provider.modelDetails);
       provider.modelsFetchedAt = new Date().toISOString();
       await route.fulfill({ status: 200, json: { models: provider.models } });
@@ -261,11 +264,9 @@ test('settings: llm providers crud, defaults, search provider keys', async ({ pa
   await expect(modelsModal).toBeHidden();
 
   // After save the effective models drop model-beta and gain manual-model-x.
-  await expect.poll(() => providers[0]?.models).toEqual([
-    'model-alpha',
-    'model-gamma',
-    'manual-model-x',
-  ]);
+  await expect
+    .poll(() => providers[0]?.models)
+    .toEqual(['model-alpha', 'model-gamma', 'manual-model-x']);
 
   // Global defaults: pick provider + type model id, then save.
   await page.getByTestId('llm-default-provider-select').click();

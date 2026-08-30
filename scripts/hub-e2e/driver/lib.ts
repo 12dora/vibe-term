@@ -45,8 +45,7 @@ export function cookieHeaderFromMap(cookies: CookieMap): string {
 
 export function mergeSetCookies(current: CookieMap, headers: Headers): CookieMap {
   const next = { ...current };
-  const listed =
-    typeof headers.getSetCookie === 'function' ? headers.getSetCookie() : [];
+  const listed = typeof headers.getSetCookie === 'function' ? headers.getSetCookie() : [];
   for (const line of listed) {
     const pair = line.split(';', 1)[0];
     if (!pair) continue;

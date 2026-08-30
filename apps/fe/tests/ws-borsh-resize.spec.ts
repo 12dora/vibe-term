@@ -1,4 +1,4 @@
-import { expect, test, type Page } from '@playwright/test';
+import { type Page, expect, test } from '@playwright/test';
 import {
   createSinglePaneSession,
   createTwoPaneSession,
@@ -21,10 +21,7 @@ async function readTerminalSize(page: Page): Promise<{
   });
 }
 
-async function readTerminalPaneMatchState(
-  page: Page,
-  paneId: string
-): Promise<string> {
+async function readTerminalPaneMatchState(page: Page, paneId: string): Promise<string> {
   const terminalSize = await readTerminalSize(page);
   const paneSize = getPaneSize(paneId);
   if (!terminalSize) {

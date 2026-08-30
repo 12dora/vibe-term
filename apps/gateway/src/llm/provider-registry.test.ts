@@ -118,7 +118,9 @@ describe('resolveBaseUrl', () => {
   test('default: appends /v1 to a bare host', () => {
     expect(resolveBaseUrl('https://api.example.com')).toBe('https://api.example.com/v1');
     expect(resolveBaseUrl(' https://api.example.com ')).toBe('https://api.example.com/v1');
-    expect(resolveBaseUrl('https://api.example.com/openai')).toBe('https://api.example.com/openai/v1');
+    expect(resolveBaseUrl('https://api.example.com/openai')).toBe(
+      'https://api.example.com/openai/v1'
+    );
   });
 
   test('default: does not duplicate an existing version segment', () => {
@@ -129,7 +131,9 @@ describe('resolveBaseUrl', () => {
   test('trailing slash: ignores v1 and keeps the path as-is', () => {
     expect(resolveBaseUrl('https://api.example.com/')).toBe('https://api.example.com');
     expect(resolveBaseUrl(' https://api.example.com/v1// ')).toBe('https://api.example.com/v1');
-    expect(resolveBaseUrl('https://api.example.com/custom/')).toBe('https://api.example.com/custom');
+    expect(resolveBaseUrl('https://api.example.com/custom/')).toBe(
+      'https://api.example.com/custom'
+    );
   });
 
   test('drops the URL fragment (# not yet a special marker)', () => {

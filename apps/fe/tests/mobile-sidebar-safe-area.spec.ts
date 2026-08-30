@@ -24,7 +24,9 @@ test('mobile: sidebar hides scrollbar and covers safe area', async ({ page, requ
   await expect(page.getByTestId('devices-page')).toBeVisible();
   await expect(page.getByTestId('mobile-topbar')).toBeVisible();
 
-  const coarsePointer = await page.evaluate(() => window.matchMedia('(any-pointer: coarse)').matches);
+  const coarsePointer = await page.evaluate(
+    () => window.matchMedia('(any-pointer: coarse)').matches
+  );
   expect(coarsePointer).toBeTruthy();
 
   await page.getByTestId('mobile-sidebar-open').click();

@@ -1,10 +1,7 @@
 {
   "name": "tmex",
   "private": true,
-  "workspaces": [
-    "apps/*",
-    "packages/*"
-  ],
+  "workspaces": ["apps/*", "packages/*"],
   "scripts": {
     "dev": "bash ./scripts/dev-supervisor.sh",
     "notify:demo": "bash ./scripts/notify-demo.sh",

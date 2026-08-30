@@ -1,5 +1,5 @@
-import type { StateSnapshotPayload, TmuxPane, TmuxWindow } from '@tmex/shared';
 import { describe, expect, it } from 'bun:test';
+import type { StateSnapshotPayload, TmuxPane, TmuxWindow } from '@tmex/shared';
 import { applyDeviceTreeOverlay } from './overlay-utils';
 
 function pane(id: string, index: number): TmuxPane {

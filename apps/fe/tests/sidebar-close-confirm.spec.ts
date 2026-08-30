@@ -117,9 +117,7 @@ test.describe('mobile', () => {
       // 非选中窗口的 ⋮ 菜单按钮在触屏上无需 hover 即可见
       const menuButton = page.getByTestId(`window-menu-${windowIds[1]}`);
       await expect(menuButton).toBeVisible();
-      await expect
-        .poll(() => menuButton.evaluate((el) => getComputedStyle(el).opacity))
-        .toBe('1');
+      await expect.poll(() => menuButton.evaluate((el) => getComputedStyle(el).opacity)).toBe('1');
 
       // 关闭走菜单项，且不直接关闭，而是弹确认对话框
       await menuButton.click();

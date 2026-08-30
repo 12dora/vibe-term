@@ -23,8 +23,7 @@ describe('prompt jsx 运行时', () => {
   });
 
   test('h 调用函数组件并传入 children 数组', () => {
-    const Join = ({ children }: { children: unknown }) =>
-      flattenNodes(children as never).join('|');
+    const Join = ({ children }: { children: unknown }) => flattenNodes(children as never).join('|');
     expect(h(Join, null, 'x', 'y')).toBe('x|y');
   });
 

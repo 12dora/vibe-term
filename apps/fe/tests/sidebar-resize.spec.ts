@@ -43,8 +43,6 @@ test.describe('mobile', () => {
 
     const sheet = page.getByTestId('mobile-sidebar-sheet');
     await expect(sheet).toBeVisible();
-    await expect
-      .poll(async () => (await sheet.boundingBox())?.width ?? 0)
-      .toBe(390);
+    await expect.poll(async () => (await sheet.boundingBox())?.width ?? 0).toBe(390);
   });
 });

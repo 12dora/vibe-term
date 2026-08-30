@@ -1,9 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 
-import {
-  ControlModeCommandQueue,
-  capturePaneFrameAtControlBarrier,
-} from './control-mode-capture';
+import { ControlModeCommandQueue, capturePaneFrameAtControlBarrier } from './control-mode-capture';
 import { createControlModeParser } from './control-mode-parser';
 
 const encoder = new TextEncoder();

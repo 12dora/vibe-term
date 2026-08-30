@@ -1,5 +1,5 @@
-import { eventNotifier } from '../events';
 import { getDeviceById } from '../db';
+import { eventNotifier } from '../events';
 import { type DeviceSessionRuntime, createDeviceSessionRuntime } from './device-session-runtime';
 import { createTmuxRuntimeRegistry } from './runtime-registry';
 

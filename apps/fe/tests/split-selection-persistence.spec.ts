@@ -1,4 +1,4 @@
-import { type APIRequestContext, expect, test, type Page } from '@playwright/test';
+import { type APIRequestContext, type Page, expect, test } from '@playwright/test';
 import {
   createFourPaneSession,
   createTwoPaneSession,
@@ -81,7 +81,10 @@ async function findVisibleTextRangeInPane(
   throw new Error(`visible text not found in pane ${paneId}: ${needle}`);
 }
 
-async function getCanvasMetricsInPane(page: Page, paneId: string): Promise<{
+async function getCanvasMetricsInPane(
+  page: Page,
+  paneId: string
+): Promise<{
   left: number;
   top: number;
   cellWidth: number;
@@ -102,9 +105,7 @@ async function getCanvasMetricsInPane(page: Page, paneId: string): Promise<{
     throw new Error(`canvas metrics unavailable for pane ${paneId}`);
   }
 
-  const [colsRaw, rowsRaw] = tmux(
-    `display-message -p -t ${paneId} '#{pane_width}\t#{pane_height}'`
-  )
+  const [colsRaw, rowsRaw] = tmux(`display-message -p -t ${paneId} '#{pane_width}\t#{pane_height}'`)
     .split('\t')
     .map((v) => v.trim());
   const cols = Number.parseInt(colsRaw ?? '80', 10) || 80;
@@ -160,11 +161,7 @@ test('bug1: split-pane B selection persists while A continuously outputs (5s / 1
   const paneA = paneIds[0]!;
   const paneB = paneIds[1]!;
 
-  const deviceId = await createDevice(
-    request,
-    sessionName,
-    `e2e-bug1-persist-${Date.now()}`
-  );
+  const deviceId = await createDevice(request, sessionName, `e2e-bug1-persist-${Date.now()}`);
 
   try {
     await page.goto(`/devices/${deviceId}`);
@@ -224,10 +221,7 @@ test('bug1: 2x2 split — any pane output does not affect other panes selection'
 
     for (let idx = 0; idx < paneIds.length; idx++) {
       await expect
-        .poll(
-          () => readVisibleTerminalTextByPane(page, paneIds[idx]!),
-          { timeout: 20_000 }
-        )
+        .poll(() => readVisibleTerminalTextByPane(page, paneIds[idx]!), { timeout: 20_000 })
         .toContain(`PANE${idx}_MARKER`);
     }
 
@@ -280,13 +274,9 @@ test('bug1: split-pane focus switch (same window) does not clear selection', asy
     const paneBLocator = page.locator(`[data-pane-id="${paneB}"]`);
     await paneBLocator.click();
     await expect
-      .poll(
-        () =>
-          page
-            .locator(`[data-pane-id="${paneB}"][data-focused]`)
-            .count(),
-        { timeout: 8_000 }
-      )
+      .poll(() => page.locator(`[data-pane-id="${paneB}"][data-focused]`).count(), {
+        timeout: 8_000,
+      })
       .toBe(1);
 
     await dragVisibleTextInPane(page, paneB, 'FOCUS_SWITCH_TARGET');
@@ -297,13 +287,9 @@ test('bug1: split-pane focus switch (same window) does not clear selection', asy
     const paneALocator = page.locator(`[data-pane-id="${paneA}"]`);
     await paneALocator.click();
     await expect
-      .poll(
-        () =>
-          page
-            .locator(`[data-pane-id="${paneA}"][data-focused]`)
-            .count(),
-        { timeout: 8_000 }
-      )
+      .poll(() => page.locator(`[data-pane-id="${paneA}"][data-focused]`).count(), {
+        timeout: 8_000,
+      })
       .toBe(1);
 
     // 分屏同窗切焦点不重建终端，selection 保留
@@ -314,13 +300,9 @@ test('bug1: split-pane focus switch (same window) does not clear selection', asy
     // 切回 B：点 titlebar 避免触发 canvas pointer down 清 selection
     await page.locator(`[data-pane-id="${paneB}"] [data-testid="split-pane-titlebar"]`).click();
     await expect
-      .poll(
-        () =>
-          page
-            .locator(`[data-pane-id="${paneB}"][data-focused]`)
-            .count(),
-        { timeout: 8_000 }
-      )
+      .poll(() => page.locator(`[data-pane-id="${paneB}"][data-focused]`).count(), {
+        timeout: 8_000,
+      })
       .toBe(1);
     // selection 仍在（titlebar 点击不触发 canvas pointer down）
     expect(await paneSelectionToolbarVisible(page, paneB)).toBe(true);
@@ -387,7 +369,10 @@ test('bug1: cross-window switch still clears selection (existing expected semant
   }
 
   async function getCanvasMetrics(): Promise<{
-    left: number; top: number; cellWidth: number; cellHeight: number;
+    left: number;
+    top: number;
+    cellWidth: number;
+    cellHeight: number;
   }> {
     const metrics = await page.evaluate(() => {
       const term = (window as any).__tmexE2eXterm;
@@ -396,8 +381,10 @@ test('bug1: cross-window switch still clears selection (existing expected semant
       const rect = canvas.getBoundingClientRect();
       const cell = term._core?._renderService?.dimensions?.css?.cell;
       return {
-        left: rect.left, top: rect.top,
-        cellWidth: Number(cell?.width ?? 0), cellHeight: Number(cell?.height ?? 0),
+        left: rect.left,
+        top: rect.top,
+        cellWidth: Number(cell?.width ?? 0),
+        cellHeight: Number(cell?.height ?? 0),
       };
     });
     if (!metrics) throw new Error('canvas metrics unavailable');
@@ -430,13 +417,15 @@ test('bug1: cross-window switch still clears selection (existing expected semant
     await expect.poll(() => readVisibleText(), { timeout: 20_000 }).toContain('XWINDOW_TARGET');
 
     await dragVisibleText('XWINDOW_TARGET');
-    await expect.poll(async () => (await readSelectionText()) ?? '', { timeout: 10_000 }).toBe(
-      'XWINDOW_TARGET'
-    );
+    await expect
+      .poll(async () => (await readSelectionText()) ?? '', { timeout: 10_000 })
+      .toBe('XWINDOW_TARGET');
 
     await page.getByTestId(`window-item-${win1}`).click();
     await expect(page.getByTestId('device-page')).toBeVisible();
-    await expect.poll(async () => (await readSelectionText()) ?? null, { timeout: 10_000 }).toBeNull();
+    await expect
+      .poll(async () => (await readSelectionText()) ?? null, { timeout: 10_000 })
+      .toBeNull();
   } finally {
     await request.delete(`/api/devices/${deviceId}`);
     ensureCleanSession(sessionName);

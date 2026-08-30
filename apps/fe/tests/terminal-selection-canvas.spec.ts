@@ -150,14 +150,12 @@ test('desktop: canvas selection supports drag, double click, triple click and co
       `send-keys -t ${sessionName}.0 "printf 'dragtarget\\r\\ndbltoken keep\\r\\ntripline\\r\\n'" C-m`
     );
 
-    await expect.poll(() => readVisibleTerminalText(page), { timeout: 20_000 }).toContain(
-      'dragtarget'
-    );
+    await expect
+      .poll(() => readVisibleTerminalText(page), { timeout: 20_000 })
+      .toContain('dragtarget');
 
     await dragVisibleText(page, 'dragtarget');
-    await expect.poll(() => readSelectionText(page), { timeout: 10_000 }).toBe(
-      'dragtarget'
-    );
+    await expect.poll(() => readSelectionText(page), { timeout: 10_000 }).toBe('dragtarget');
 
     await clickVisibleText(page, 'dbltoken', 2);
     await expect.poll(() => readSelectionText(page), { timeout: 10_000 }).toBe('dbltoken');
@@ -196,14 +194,18 @@ test('desktop: pane switch, reconnect and resize should clear canvas selection s
 
     await page.goto(pane0Path);
     await waitForCanvasTerminal(page);
-    await expect.poll(() => readVisibleTerminalText(page), { timeout: 20_000 }).toContain('panezero');
+    await expect
+      .poll(() => readVisibleTerminalText(page), { timeout: 20_000 })
+      .toContain('panezero');
 
     await dragVisibleText(page, 'panezero');
     await expect.poll(() => readSelectionText(page), { timeout: 10_000 }).toBe('panezero');
 
     await page.goto(pane1Path);
     await waitForCanvasTerminal(page);
-    await expect.poll(() => readVisibleTerminalText(page), { timeout: 20_000 }).toContain('paneone');
+    await expect
+      .poll(() => readVisibleTerminalText(page), { timeout: 20_000 })
+      .toContain('paneone');
     await expect.poll(() => readSelectionText(page), { timeout: 10_000 }).toBeNull();
 
     await page.reload();
@@ -305,18 +307,18 @@ test('desktop: selection toolbar copies via GUI and copy shortcut clears selecti
     await waitForCanvasTerminal(page);
 
     tmux(`send-keys -t ${sessionName}.0 "printf 'toolbartarget\\r\\n'" C-m`);
-    await expect.poll(() => readVisibleTerminalText(page), { timeout: 20_000 }).toContain(
-      'toolbartarget'
-    );
+    await expect
+      .poll(() => readVisibleTerminalText(page), { timeout: 20_000 })
+      .toContain('toolbartarget');
 
     await dragVisibleText(page, 'toolbartarget');
     await expect.poll(() => readSelectionText(page), { timeout: 10_000 }).toBe('toolbartarget');
     await expect(page.getByTestId('terminal-selection-toolbar')).toBeVisible();
 
     await page.getByTestId('terminal-selection-copy').click();
-    await expect.poll(() => readClipboardText(page), { timeout: 10_000 }).toContain(
-      'toolbartarget'
-    );
+    await expect
+      .poll(() => readClipboardText(page), { timeout: 10_000 })
+      .toContain('toolbartarget');
     await expect.poll(() => readSelectionText(page), { timeout: 10_000 }).toBeNull();
     await expect(page.getByTestId('terminal-selection-toolbar')).toHaveCount(0);
 

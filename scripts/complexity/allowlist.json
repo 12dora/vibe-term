@@ -251,7 +251,7 @@
     "reason": "应用装配根（S2 判定）"
   },
   "packages/ghostty-terminal/src/ghostty-wasm.ts": {
-    "fileLines": 1620,
+    "fileLines": 1624,
     "reason": "FFI/资源所有权边界，拆分有内存生命周期风险"
   },
   "packages/ghostty-terminal/src/ghostty-wasm.ts:encodeMouseEvent": {
