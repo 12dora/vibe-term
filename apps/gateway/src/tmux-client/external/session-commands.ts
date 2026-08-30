@@ -16,6 +16,8 @@ import type { TmuxConnectionOptions } from '../connection-types';
 import {
   type AtomicPaneCapture,
   type ControlModeCommandQueue,
+  MAX_PANE_HISTORY_CAPTURE_BYTES,
+  MAX_PANE_HISTORY_LINES,
   capturePaneFrameAtControlBarrier,
 } from '../control-mode-capture';
 import { SNAPSHOT_FIELD_SEPARATOR, isTmuxPaneId, isTmuxWindowId } from '../snapshot-format';
@@ -121,6 +123,10 @@ export function buildResizePaneByIdArgv(
 
 export class SessionCommands {
   private stackedLayoutTransition: Promise<void> = Promise.resolve();
+  private readonly paneHistoryInflight = new Map<
+    string,
+    Promise<{ data: string; alternateScreen: boolean; modes: number } | null>
+  >();
 
   constructor(private readonly host: SessionCommandHost) {}
 
@@ -331,30 +337,50 @@ export class SessionCommands {
   async fetchPaneHistory(
     paneId: string
   ): Promise<{ data: string; alternateScreen: boolean; modes: number } | null> {
-    const screenInfo = parsePaneScreenInfo(
-      (await this.runTmux(['display-message', '-p', '-t', paneId, PANE_SCREEN_INFO_FORMAT], true))
-        .stdout
-    );
-    const normal = (
-      await this.runTmux(
-        ['capture-pane', '-t', paneId, '-S', '-', '-E', '-', '-e', '-J', '-N', '-p'],
-        true,
-        30_000
-      )
-    ).stdout;
-    const alternate = (
-      await this.runTmux(
-        ['capture-pane', '-t', paneId, '-a', '-S', '-', '-E', '-', '-e', '-J', '-N', '-p', '-q'],
-        true,
-        30_000
-      )
-    ).stdout;
+    const existing = this.paneHistoryInflight.get(paneId);
+    if (existing) return existing;
+    const pending = this.fetchPaneHistoryUncached(paneId).finally(() => {
+      if (this.paneHistoryInflight.get(paneId) === pending) {
+        this.paneHistoryInflight.delete(paneId);
+      }
+    });
+    this.paneHistoryInflight.set(paneId, pending);
+    return pending;
+  }
 
-    const history = screenInfo.alternateScreen
-      ? hasRenderableTerminalContent(normal)
-        ? normal
-        : alternate
-      : normal || alternate;
+  private async fetchPaneHistoryUncached(
+    paneId: string
+  ): Promise<{ data: string; alternateScreen: boolean; modes: number } | null> {
+    const screenRaw = (
+      await this.runTmux(['display-message', '-p', '-t', paneId, PANE_SCREEN_INFO_FORMAT], true)
+    ).stdout;
+    const screenInfo = parsePaneScreenInfo(screenRaw);
+    const alternateOn = parseAlternateOnFlag(screenRaw);
+
+    const capture = async (alternate: boolean): Promise<string> => {
+      try {
+        return await this.host.runHistoryCapture(
+          buildLegacyHistoryCaptureArgv(paneId, alternate),
+          MAX_PANE_HISTORY_CAPTURE_BYTES
+        );
+      } catch (error) {
+        if (error instanceof TmuxTargetMissingError) return '';
+        throw error;
+      }
+    };
+
+    let history: string;
+    if (alternateOn === null) {
+      const normal = await capture(false);
+      const alternate = await capture(true);
+      history = screenInfo.alternateScreen
+        ? hasRenderableTerminalContent(normal)
+          ? normal
+          : alternate
+        : normal || alternate;
+    } else {
+      history = await capture(false);
+    }
 
     if (!history) {
       return null;
@@ -738,4 +764,19 @@ export class SessionCommands {
       'truecolor',
     ]);
   }
+}
+
+function parseAlternateOnFlag(raw: string): boolean | null {
+  const flag = raw.trim().split(/\s+/)[0];
+  if (flag === '1') return true;
+  if (flag === '0') return false;
+  return null;
+}
+
+function buildLegacyHistoryCaptureArgv(paneId: string, alternate: boolean): string[] {
+  const argv = ['capture-pane', '-t', paneId];
+  if (alternate) argv.push('-a');
+  argv.push('-S', `-${MAX_PANE_HISTORY_LINES}`, '-E', '-', '-e', '-J', '-N', '-p');
+  if (alternate) argv.push('-q');
+  return argv;
 }

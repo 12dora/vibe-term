@@ -549,7 +549,7 @@ describe('LocalExternalTmuxConnection EAGAIN handling', () => {
     try {
       // public requestSnapshot：内部捕获瞬时 spawn 错误，不应抛出/不触发 onError/onClose
       connection.requestSnapshot();
-      await Bun.sleep(30);
+      await Bun.sleep(200);
     } finally {
       process.off('unhandledRejection', onUnhandled);
     }
@@ -610,14 +610,14 @@ describe('LocalExternalTmuxConnection EAGAIN handling', () => {
     // 1) 触发一次 EAGAIN：不发快照、不 shutdown
     eagainPhase = true;
     connection.requestSnapshot();
-    await Bun.sleep(30);
+    await Bun.sleep(200);
     expect(snapshots.length).toBe(baseSnapshots);
     expect(closeCalls).toBe(0);
 
     // 2) 恢复正常：后续快照正常发出，连接健康
     eagainPhase = false;
     connection.requestSnapshot();
-    await Bun.sleep(30);
+    await Bun.sleep(200);
     expect(snapshots.length).toBeGreaterThan(baseSnapshots);
 
     expect(

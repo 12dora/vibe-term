@@ -32,14 +32,17 @@ describe('SnapshotRefreshCoordinator', () => {
     let runs = 0;
     let active = 0;
     let maxActive = 0;
-    const coordinator = new SnapshotRefreshCoordinator(async () => {
-      const index = runs;
-      runs += 1;
-      active += 1;
-      maxActive = Math.max(maxActive, active);
-      await gates[index]?.promise;
-      active -= 1;
-    });
+    const coordinator = new SnapshotRefreshCoordinator(
+      async () => {
+        const index = runs;
+        runs += 1;
+        active += 1;
+        maxActive = Math.max(maxActive, active);
+        await gates[index]?.promise;
+        active -= 1;
+      },
+      { quietPeriodMs: 0 }
+    );
 
     const first = coordinator.request();
     const second = coordinator.request();
@@ -61,15 +64,89 @@ describe('SnapshotRefreshCoordinator', () => {
 
   test('resets after a failed run so a later demand can retry', async () => {
     let runs = 0;
-    const coordinator = new SnapshotRefreshCoordinator(async () => {
-      runs += 1;
-      if (runs === 1) {
-        throw new Error('snapshot failed');
-      }
-    });
+    const coordinator = new SnapshotRefreshCoordinator(
+      async () => {
+        runs += 1;
+        if (runs === 1) {
+          throw new Error('snapshot failed');
+        }
+      },
+      { quietPeriodMs: 0 }
+    );
 
     await expect(coordinator.request()).rejects.toThrow('snapshot failed');
     await expect(coordinator.request()).resolves.toBeUndefined();
     expect(runs).toBe(2);
+  });
+
+  test('quiet period caps structure refreshes under 1s of continuous notifications', async () => {
+    let now = 0;
+    let runs = 0;
+    const waits: Array<{ due: number; resolve: () => void }> = [];
+    const coordinator = new SnapshotRefreshCoordinator(
+      async () => {
+        runs += 1;
+      },
+      {
+        quietPeriodMs: 150,
+        now: () => now,
+        delay: (ms) =>
+          new Promise<void>((resolve) => {
+            waits.push({ due: now + ms, resolve });
+          }),
+      }
+    );
+
+    async function tick(ms: number): Promise<void> {
+      now += ms;
+      const due = waits.filter((item) => item.due <= now);
+      const rest = waits.filter((item) => item.due > now);
+      waits.length = 0;
+      waits.push(...rest);
+      for (const item of due) item.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    }
+
+    coordinator.request();
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(runs).toBe(1);
+
+    for (let elapsed = 0; elapsed < 1000; elapsed += 10) {
+      coordinator.request();
+      await tick(10);
+    }
+
+    // 3 commands per refresh（display-message / list-windows / list-panes）
+    expect(runs).toBeLessThanOrEqual(7);
+    expect(runs * 3).toBeLessThanOrEqual(21);
+    expect(runs).toBeGreaterThanOrEqual(6);
+  });
+
+  test('requestImmediate skips the quiet period for user commands', async () => {
+    let now = 0;
+    let runs = 0;
+    let delayed = 0;
+    const coordinator = new SnapshotRefreshCoordinator(
+      async () => {
+        runs += 1;
+      },
+      {
+        quietPeriodMs: 150,
+        now: () => now,
+        delay: (ms) => {
+          delayed += ms;
+          now += ms;
+          return Promise.resolve();
+        },
+      }
+    );
+
+    await coordinator.request();
+    expect(runs).toBe(1);
+    await coordinator.requestImmediate();
+    expect(runs).toBe(2);
+    expect(delayed).toBe(0);
   });
 });

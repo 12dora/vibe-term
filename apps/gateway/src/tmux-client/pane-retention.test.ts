@@ -92,6 +92,32 @@ describe('pane retention', () => {
     expect(result.replay[0]?.needsScreen).toBe(true);
   });
 
+  test('cold ingest does not copy payload or fan out, while retained panes keep segments', () => {
+    const retention = new PaneRetention({ scheduleTimers: false });
+    retention.reconcilePanes([
+      { paneId: '%1', paneEpoch: EPOCH_A },
+      { paneId: '%2', paneEpoch: EPOCH_B },
+    ]);
+    const received: string[] = [];
+    const lease = retention.attachConsumer({
+      onData: (segment) => received.push(`${segment.paneId}:${decoder.decode(segment.data)}`),
+    });
+    lease.applySubscriptions(1n, [request('%2', EPOCH_B)], []);
+
+    const coldPayload = encoder.encode('discarded');
+    const coldResult = retention.ingest('%1', EPOCH_A, coldPayload);
+    coldPayload.fill(0x23);
+    expect(coldResult).toBeNull();
+    expect(received).toEqual([]);
+    expect(retention.getLatestCursor('%1')?.terminalSeq).toBe(9n);
+
+    const livePayload = encoder.encode('abc');
+    const live = retention.ingest('%2', EPOCH_B, livePayload);
+    livePayload.fill(0);
+    expect(decoder.decode(live?.data ?? new Uint8Array())).toBe('abc');
+    expect(received).toEqual(['%2:abc']);
+  });
+
   test('keeps exact replay through grace and hot, then evicts it at TTL', () => {
     let now = 0;
     const retention = new PaneRetention({

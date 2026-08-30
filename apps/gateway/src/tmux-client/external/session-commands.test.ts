@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import type { TmuxWindow } from '@tmex/shared';
 
+import { PANE_SCREEN_INFO_FORMAT } from '../capture-history';
 import type { TmuxConnectionOptions } from '../connection-types';
 import { ControlModeCommandQueue } from '../control-mode-capture';
 import { SNAPSHOT_FIELD_SEPARATOR } from '../snapshot-format';
@@ -360,5 +361,84 @@ describe('SessionCommands', () => {
     expect(allowCalls.map((argv) => argv.join(' '))).not.toContain(
       'set-window-option -t @1 window-size latest'
     );
+  });
+
+  const screenInfoArgv = ['display-message', '-p', '-t', '%1', PANE_SCREEN_INFO_FORMAT];
+
+  test('fetchPaneHistory bounds capture and skips the inactive screen when alt-screen is known', async () => {
+    const captures: Array<{ argv: string[]; maxOutputBytes: number }> = [];
+    const { host, responses } = createHost({
+      runHistoryCapture: async (argv, maxOutputBytes) => {
+        captures.push({ argv, maxOutputBytes });
+        return 'VISIBLE\n';
+      },
+    });
+    responses.set(screenInfoArgv.join(' '), ok('0 8 1 4 0 0 0 0 0\n'));
+
+    const result = await new SessionCommands(host).fetchPaneHistory('%1');
+
+    expect(captures).toHaveLength(1);
+    expect(captures[0]?.argv).toEqual([
+      'capture-pane',
+      '-t',
+      '%1',
+      '-S',
+      '-4096',
+      '-E',
+      '-',
+      '-e',
+      '-J',
+      '-N',
+      '-p',
+    ]);
+    expect(captures[0]?.maxOutputBytes).toBeGreaterThan(64 * 1024);
+    expect(result?.alternateScreen).toBe(false);
+    expect(result?.data.startsWith('VISIBLE')).toBe(true);
+  });
+
+  test('fetchPaneHistory captures both screens only when alt-screen state is unknown, still bounded', async () => {
+    const captures: Array<{ argv: string[]; maxOutputBytes: number }> = [];
+    const { host, responses } = createHost({
+      runHistoryCapture: async (argv, maxOutputBytes) => {
+        captures.push({ argv, maxOutputBytes });
+        return argv.includes('-a') ? 'ALT\n' : 'NORMAL\n';
+      },
+    });
+    responses.set(screenInfoArgv.join(' '), ok('not-a-flag\n'));
+
+    const result = await new SessionCommands(host).fetchPaneHistory('%1');
+
+    expect(captures).toHaveLength(2);
+    expect(captures.map((entry) => entry.argv.includes('-a'))).toEqual([false, true]);
+    expect(captures.every((entry) => entry.argv.includes('-4096'))).toBe(true);
+    expect(captures.every((entry) => entry.maxOutputBytes > 64 * 1024)).toBe(true);
+    expect(result?.data.startsWith('NORMAL')).toBe(true);
+  });
+
+  test('concurrent fetchPaneHistory callers for the same pane share one capture', async () => {
+    let started = 0;
+    let resolveCapture!: (value: string) => void;
+    const gate = new Promise<string>((resolve) => {
+      resolveCapture = resolve;
+    });
+    const { host, responses } = createHost({
+      runHistoryCapture: async () => {
+        started += 1;
+        return gate;
+      },
+    });
+    responses.set(screenInfoArgv.join(' '), ok('0 0 0 24 0 0 0 0 0\n'));
+    const commands = new SessionCommands(host);
+
+    const first = commands.fetchPaneHistory('%1');
+    const second = commands.fetchPaneHistory('%1');
+    await Bun.sleep(0);
+    expect(started).toBe(1);
+
+    resolveCapture('shared\n');
+    const [left, right] = await Promise.all([first, second]);
+    expect(left).toBe(right);
+    expect(left?.data.startsWith('shared')).toBe(true);
+    expect(started).toBe(1);
   });
 });

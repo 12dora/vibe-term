@@ -147,7 +147,7 @@ export class PaneRetention {
 
     const segment = this.replay.append(state, data, now);
     this.policy.trimPaneReplay(state, now);
-    this.replay.fanout(state, segment);
+    if (segment) this.replay.fanout(state, segment);
     this.policy.afterIngest(state, now);
     return segment;
   }

@@ -88,20 +88,20 @@ export class PaneReplayStore {
     }
   }
 
-  append(state: PaneState, data: Uint8Array, now: number): PaneDataSegment {
-    const ownedData = copyBytes(data);
+  append(state: PaneState, data: Uint8Array, now: number): PaneDataSegment | null {
     const seqStart = state.latestSeq;
-    const seqEnd = seqStart + BigInt(ownedData.byteLength);
+    const seqEnd = seqStart + BigInt(data.byteLength);
     state.latestSeq = seqEnd;
 
-    const retain = state.mode !== 'cold';
-    if (retain) {
-      state.replay.push({ seqStart, seqEnd, data: ownedData, receivedAt: now });
-      state.replayBytes += ownedData.byteLength;
-      this.kernel.adjustRetainedBytes(ownedData.byteLength);
-    } else {
+    if (state.mode === 'cold') {
       state.dirtyWhileCold = true;
+      return null;
     }
+
+    const ownedData = copyBytes(data);
+    state.replay.push({ seqStart, seqEnd, data: ownedData, receivedAt: now });
+    state.replayBytes += ownedData.byteLength;
+    this.kernel.adjustRetainedBytes(ownedData.byteLength);
 
     return {
       paneId: state.paneId,
@@ -113,6 +113,7 @@ export class PaneReplayStore {
   }
 
   fanout(state: PaneState, segment: PaneDataSegment): void {
+    if (this.kernel.consumers.size === 0) return;
     for (const consumer of this.kernel.consumers.values()) {
       const request = consumer.active.get(state.paneId) ?? consumer.hot.get(state.paneId);
       if (!request || !bytesEqual(request.paneEpoch, state.paneEpoch)) continue;

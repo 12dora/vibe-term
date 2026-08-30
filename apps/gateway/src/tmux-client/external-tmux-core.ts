@@ -393,7 +393,7 @@ export abstract class ExternalTmuxConnectionCore {
   }
 
   requestSnapshot(): void {
-    void this.requestSnapshotInternal().catch((error) => {
+    void this.snapshotRefreshCoordinator.request().catch((error) => {
       this.handleSnapshotFailure(error);
     });
   }
@@ -672,7 +672,7 @@ export abstract class ExternalTmuxConnectionCore {
   }
 
   protected async requestSnapshotInternal(): Promise<void> {
-    return this.snapshotRefreshCoordinator.request();
+    return this.snapshotRefreshCoordinator.requestImmediate();
   }
 
   protected async performSnapshot(): Promise<void> {

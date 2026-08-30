@@ -134,6 +134,9 @@ function parsePaneFrameInfo(block: ControlModeBlock): Omit<AtomicPaneCapture, 't
   };
 }
 
+export const MAX_PANE_HISTORY_LINES = 4096;
+export const MAX_PANE_HISTORY_CAPTURE_BYTES = 2 * 1024 * 1024;
+
 export async function capturePaneFrameAtControlBarrier(
   queue: ControlModeCommandQueue,
   write: (command: string) => void,
@@ -143,11 +146,18 @@ export async function capturePaneFrameAtControlBarrier(
   timeoutMs = 10_000
 ): Promise<AtomicPaneCapture> {
   if (!isTmuxPaneId(paneId)) throw new Error(`invalid tmux pane id: ${paneId}`);
-  const boundedHistoryLines = Math.max(0, Math.min(4096, Math.floor(historyLines)));
-  const infoPromise = queue.execute(write, `display-message -p -t ${paneId} "#{pane_width}|#{pane_height}|#{alternate_on}|#{cursor_x}|#{cursor_y}|#{history_size}|#{mouse_standard_flag}|#{mouse_button_flag}|#{mouse_all_flag}|#{mouse_sgr_flag}|#{mouse_utf8_flag}"`, {
-    timeoutMs,
-    transform: parsePaneFrameInfo,
-  });
+  const boundedHistoryLines = Math.max(
+    0,
+    Math.min(MAX_PANE_HISTORY_LINES, Math.floor(historyLines))
+  );
+  const infoPromise = queue.execute(
+    write,
+    `display-message -p -t ${paneId} "#{pane_width}|#{pane_height}|#{alternate_on}|#{cursor_x}|#{cursor_y}|#{history_size}|#{mouse_standard_flag}|#{mouse_button_flag}|#{mouse_all_flag}|#{mouse_sgr_flag}|#{mouse_utf8_flag}"`,
+    {
+      timeoutMs,
+      transform: parsePaneFrameInfo,
+    }
+  );
   const visibleArgs = ['capture-pane', '-p', '-e', '-J', '-N', '-t', paneId];
   const textPromise = queue.execute(write, visibleArgs.join(' '), {
     literal: true,

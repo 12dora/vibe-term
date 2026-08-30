@@ -27,6 +27,7 @@ import {
 } from './external-tmux-core';
 import { buildEnsureGhosttyTerminfoScript } from './ghostty-terminfo';
 import { encodeBytesToHexChunks } from './input-encoder';
+import { TmuxTargetMissingError, isTargetMissingMessage } from './target-missing';
 import {
   isControlModeSupported,
   parseTmuxVersion,
@@ -46,7 +47,7 @@ interface LocalExternalTmuxConnectionDeps {
   enableSubscription: boolean;
   platform: NodeJS.Platform;
   getDevice: (deviceId: string) => Device | null;
-  run: (argv: string[]) => Promise<CommandResult>;
+  run: (argv: string[], maxOutputBytes?: number) => Promise<CommandResult>;
   ensureGhosttyTerminfo: () => Promise<boolean>;
   parkingCommand: () => string;
   spawnControlClient: (argv: string[]) => ControlClientProcess;
@@ -92,7 +93,45 @@ function isTransientSpawnError(error: unknown): boolean {
   );
 }
 
-export function defaultRun(argv: string[]): Promise<CommandResult> {
+export async function readTextWithByteLimit(
+  stream: ReadableStream<Uint8Array>,
+  maxOutputBytes?: number
+): Promise<string> {
+  if (maxOutputBytes === undefined) {
+    return new Response(stream).text();
+  }
+  const limit = Math.max(1, Math.floor(maxOutputBytes));
+  const reader = stream.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      if (!value?.byteLength) continue;
+      total += value.byteLength;
+      if (total > limit) {
+        throw new Error('tmux history capture exceeded bounded output');
+      }
+      chunks.push(value);
+    }
+  } finally {
+    try {
+      reader.releaseLock();
+    } catch {
+      /* ignore */
+    }
+  }
+  const merged = new Uint8Array(total);
+  let offset = 0;
+  for (const chunk of chunks) {
+    merged.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return new TextDecoder().decode(merged);
+}
+
+export function defaultRun(argv: string[], maxOutputBytes?: number): Promise<CommandResult> {
   return new Promise((resolve, reject) => {
     const subprocess = Bun.spawn(argv, {
       env: buildLocalTmuxEnv(getLocalShellPath()),
@@ -101,14 +140,21 @@ export function defaultRun(argv: string[]): Promise<CommandResult> {
     });
 
     Promise.all([
-      new Response(subprocess.stdout).text(),
+      readTextWithByteLimit(subprocess.stdout, maxOutputBytes),
       new Response(subprocess.stderr).text(),
       subprocess.exited,
     ])
       .then(([stdout, stderr, exitCode]) => {
         resolve({ stdout, stderr, exitCode });
       })
-      .catch(reject);
+      .catch((error) => {
+        try {
+          subprocess.kill();
+        } catch {
+          /* ignore */
+        }
+        reject(error);
+      });
   });
 }
 
@@ -297,11 +343,37 @@ export class LocalExternalTmuxConnection extends ExternalTmuxConnectionCore {
   }
 
   protected async runHistoryCapture(argv: string[], maxOutputBytes: number): Promise<string> {
-    const { stdout } = await this.runTmux(argv, 'silent');
-    if (new TextEncoder().encode(stdout).byteLength > maxOutputBytes) {
+    let result: CommandResult;
+    try {
+      result = await this.deps.run(buildLocalTmuxArgv(argv), maxOutputBytes);
+    } catch (error) {
+      if (
+        error instanceof Error &&
+        error.message === 'tmux history capture exceeded bounded output'
+      ) {
+        throw error;
+      }
+      if (isTransientSpawnError(error)) {
+        result = {
+          exitCode: TMUX_SPAWN_UNAVAILABLE_EXIT,
+          stdout: '',
+          stderr: error instanceof Error ? error.message : String(error),
+        };
+      } else {
+        throw error;
+      }
+    }
+    if (new TextEncoder().encode(result.stdout).byteLength > maxOutputBytes) {
       throw new Error('tmux history capture exceeded bounded output');
     }
-    return stdout;
+    if (result.exitCode === 0) return result.stdout;
+    const message = (
+      result.stderr.trim() ||
+      result.stdout.trim() ||
+      `tmux command failed: ${argv.join(' ')}`
+    ).trim();
+    if (isTargetMissingMessage(message)) throw new TmuxTargetMissingError(message);
+    throw new Error(message);
   }
 
   protected shouldAbortSnapshot(results: CommandResult[]): boolean {

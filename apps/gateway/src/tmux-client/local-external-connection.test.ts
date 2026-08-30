@@ -7,6 +7,7 @@ import type { TmuxEvent } from './events';
 import {
   type ControlClientProcess,
   LocalExternalTmuxConnection,
+  readTextWithByteLimit,
   shouldIgnoreReaderAbortError,
 } from './local-external-connection';
 import { TmuxTargetMissingError } from './target-missing';
@@ -205,6 +206,31 @@ async function waitFor<T>(fn: () => T | null | undefined, timeoutMs = 3000): Pro
 
 beforeAll(() => {
   runMigrations();
+});
+
+describe('readTextWithByteLimit', () => {
+  test('rejects when stdout exceeds the capture byte cap', async () => {
+    const stream = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(new Uint8Array(8).fill(0x61));
+        controller.enqueue(new Uint8Array(8).fill(0x62));
+        controller.close();
+      },
+    });
+    await expect(readTextWithByteLimit(stream, 10)).rejects.toThrow(
+      'tmux history capture exceeded bounded output'
+    );
+  });
+
+  test('returns the decoded text when under the cap', async () => {
+    const stream = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(new TextEncoder().encode('ok'));
+        controller.close();
+      },
+    });
+    await expect(readTextWithByteLimit(stream, 16)).resolves.toBe('ok');
+  });
 });
 
 describe('LocalExternalTmuxConnection', () => {
@@ -902,10 +928,10 @@ describe('LocalExternalTmuxConnection', () => {
           ) {
             return ok('1 8 3 40 0 0 0 0 0\n');
           }
-          if (command === 'capture-pane -t %1 -S - -E - -e -J -N -p') {
+          if (command === 'capture-pane -t %1 -S -4096 -E - -e -J -N -p') {
             return ok('VIM SCREEN\n');
           }
-          if (command === 'capture-pane -t %1 -a -S - -E - -e -J -N -p -q') {
+          if (command === 'capture-pane -t %1 -a -S -4096 -E - -e -J -N -p -q') {
             return ok('\n\n\n');
           }
           throw new Error(`unexpected command: ${command}`);
@@ -958,10 +984,10 @@ describe('LocalExternalTmuxConnection', () => {
           ) {
             return ok('1 2 1 40 0 1 0 1 0\n');
           }
-          if (command === 'capture-pane -t %1 -S - -E - -e -J -N -p') {
+          if (command === 'capture-pane -t %1 -S -4096 -E - -e -J -N -p') {
             return ok('VISIBLE TUI\n');
           }
-          if (command === 'capture-pane -t %1 -a -S - -E - -e -J -N -p -q') {
+          if (command === 'capture-pane -t %1 -a -S -4096 -E - -e -J -N -p -q') {
             return ok('sh-3.2$ opencode .\n');
           }
           throw new Error(`unexpected command: ${command}`);
@@ -1015,10 +1041,10 @@ describe('LocalExternalTmuxConnection', () => {
             // 光标在可见区域倒数第 3 行（如 Claude Code 输入行），列 8
             return ok('0 8 1 4 0 0 0 0 0\n');
           }
-          if (command === 'capture-pane -t %1 -S - -E - -e -J -N -p') {
+          if (command === 'capture-pane -t %1 -S -4096 -E - -e -J -N -p') {
             return ok('sh-3.2$ \n> input   \nstatus bar\n\n');
           }
-          if (command === 'capture-pane -t %1 -a -S - -E - -e -J -N -p -q') {
+          if (command === 'capture-pane -t %1 -a -S -4096 -E - -e -J -N -p -q') {
             return ok('');
           }
           throw new Error(`unexpected command: ${command}`);
@@ -1689,7 +1715,7 @@ describe('LocalExternalTmuxConnection lifecycle events', () => {
     await connection.connect();
     invalid = true;
     connection.requestSnapshot();
-    await Bun.sleep(80);
+    await Bun.sleep(200);
 
     expect(events).toHaveLength(0);
     connection.disconnect();
@@ -1812,9 +1838,9 @@ describe('LocalExternalTmuxConnection lifecycle events', () => {
     await connection.connect();
     expect(events).toHaveLength(0);
 
-    connection.requestSnapshot();
-    connection.requestSnapshot();
-    connection.requestSnapshot();
+    (connection as any).requestSnapshotInternal();
+    (connection as any).requestSnapshotInternal();
+    (connection as any).requestSnapshotInternal();
     await Bun.sleep(30);
 
     expect(paneListCalls).toBe(2);
@@ -1827,7 +1853,7 @@ describe('LocalExternalTmuxConnection lifecycle events', () => {
     expect(events.map((e) => e.eventType)).toEqual(['tmux_pane_close']);
 
     connection.requestSnapshot();
-    await Bun.sleep(50);
+    await Bun.sleep(200);
     expect(events.map((e) => e.eventType)).toEqual(['tmux_pane_close']);
     connection.disconnect();
   });
