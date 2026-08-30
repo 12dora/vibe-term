@@ -1,14 +1,8 @@
-// 会话钥 / auth mode 的 React 绑定。
+// auth mode 的 React 绑定。
 
 import type { AuthApi, AuthModeResponse } from '@tmex/api-client/auth/index';
 import { defaultAuthApi } from '@tmex/api-client/auth/index';
-import { useCallback, useEffect, useState, useSyncExternalStore } from 'react';
-import type { SessionKeyInfo } from './session-key-store';
-import { getSessionKeySnapshot, subscribeSessionKey } from './session-key-store';
-
-export function useSessionKey(): SessionKeyInfo | null {
-  return useSyncExternalStore(subscribeSessionKey, getSessionKeySnapshot, getSessionKeySnapshot);
-}
+import { useCallback, useEffect, useState } from 'react';
 
 export interface AuthModeState {
   mode: AuthModeResponse | null;

@@ -1,6 +1,15 @@
-// HTTPS 配置表单的纯逻辑：SAN / 端口 / 域名 / 邮箱校验与时间展示。
+// HTTPS 配置表单的纯逻辑：SAN / 端口 / 域名 / 邮箱校验、ACME 轮询节奏与时间展示。
 //
 // 规则与批次 2 契约（PUT /api/tls）逐条对齐，前端先拦一遍只是为了少一次往返，后端仍是权威。
+
+import type { TlsStatusResponse } from '@tmex/api-client/local/tls-types';
+
+export const ACME_POLL_INTERVAL_MS = 3000;
+
+/** ACME 签发是后台任务，只有 pending 期间才轮询 `GET /api/tls`。 */
+export function acmePollInterval(status: TlsStatusResponse | null | undefined): number | false {
+  return status?.acme?.status === 'pending' ? ACME_POLL_INTERVAL_MS : false;
+}
 
 const HOSTNAME_PATTERN =
   /^(?=.{1,253}$)[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?(\.[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?)*$/;

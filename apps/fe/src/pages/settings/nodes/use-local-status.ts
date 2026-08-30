@@ -3,10 +3,9 @@
 // mesh 下 `GET /api/local/status` 需要 self 会话，未登录返回 401——这里把 401 单独摘出来，
 // 由调用方渲染「请先登录」提示，而不是当成加载失败或直接崩掉。
 
-import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { type LocalApi, LocalApiError, defaultLocalApi } from '@tmex/api-client/local/local-api';
 import type { LocalStatusResponse } from '@tmex/api-client/local/types';
-import { useCallback } from 'react';
+import { useProtectedStatusQuery } from '../use-protected-status-query';
 
 export const LOCAL_STATUS_QUERY_KEY = ['local-status'] as const;
 
@@ -24,29 +23,11 @@ function isUnauthorized(error: unknown): boolean {
 }
 
 export function useLocalStatus(api: LocalApi = defaultLocalApi): LocalStatusState {
-  const queryClient = useQueryClient();
-  const query = useQuery({
-    queryKey: LOCAL_STATUS_QUERY_KEY,
-    queryFn: () => api.status(),
-    // 401 不重试：重试只会多刷几次登录拦截器。
-    retry: (failureCount, error) => !isUnauthorized(error) && failureCount < 2,
-  });
-
-  const refresh = useCallback(() => {
-    void queryClient.invalidateQueries({ queryKey: LOCAL_STATUS_QUERY_KEY });
-  }, [queryClient]);
-
-  const loginRequired = isUnauthorized(query.error);
-  return {
-    status: query.data ?? null,
-    loading: query.isPending,
-    loginRequired,
-    error:
-      !query.error || loginRequired
-        ? null
-        : query.error instanceof Error
-          ? query.error.message
-          : String(query.error),
-    refresh,
-  };
+  const { status, loading, loginRequired, error, refresh } =
+    useProtectedStatusQuery<LocalStatusResponse>({
+      queryKey: LOCAL_STATUS_QUERY_KEY,
+      queryFn: () => api.status(),
+      isUnauthorized,
+    });
+  return { status, loading, loginRequired, error, refresh };
 }

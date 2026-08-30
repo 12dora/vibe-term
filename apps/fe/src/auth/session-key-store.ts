@@ -6,7 +6,7 @@
 //   * sk_sess 只能签 login，不得签任何 user_key_log 记录。
 //   * TOTP 只在 delegation.method === 'root' 且用户开了 TOTP 时随登录下发。
 //
-// 这里只有常驻的状态与订阅，**不 import argon2 / 椭圆曲线**；建立会话与签名的实现在
+// 这里只有常驻的状态，**不 import argon2 / 椭圆曲线**；建立会话与签名的实现在
 // `./session-login`，由 `ensureNodeLogin()` 在真的要登录时才 `import()` 进来。
 
 import { markLoggedIn } from '@/node/mesh-nodes';
@@ -56,25 +56,6 @@ export type LoginNodeResult = { ok: true } | { ok: false; code: LoginFailureCode
 
 let current: SessionKeySecrets | null = null;
 
-const stateListeners = new Set<() => void>();
-
-function notifyState(): void {
-  for (const listener of [...stateListeners]) listener();
-}
-
-export function subscribeSessionKey(listener: () => void): () => void {
-  stateListeners.add(listener);
-  return () => {
-    stateListeners.delete(listener);
-  };
-}
-
-/** 纯快照（React `useSyncExternalStore` 用）：过期即视为不存在，但不做副作用。 */
-export function getSessionKeySnapshot(): SessionKeyInfo | null {
-  if (!current) return null;
-  return Date.now() >= current.info.expiresAt ? null : current.info;
-}
-
 /** 命令式读取：顺带清掉已过期的会话钥。 */
 export function getSessionKey(): SessionKeyInfo | null {
   if (!current) return null;
@@ -96,7 +77,6 @@ export function clearSessionKey(): void {
   current.kTotp?.fill(0);
   current.totpCode = null;
   current = null;
-  notifyState();
 }
 
 /** fan-out 结束后清掉一次性的 TOTP 码；k_totp 保留供后续新 node 登录时配合新码使用。 */
@@ -117,7 +97,6 @@ export function readSessionSecrets(): SessionKeySecrets | null {
 export function adoptSessionSecrets(secrets: SessionKeySecrets): SessionKeyInfo {
   clearSessionKey();
   current = secrets;
-  notifyState();
   return secrets.info;
 }
 

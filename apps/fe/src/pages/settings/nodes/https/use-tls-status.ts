@@ -3,13 +3,13 @@
 // ACME 签发是后台任务：`PUT /api/tls` 立刻返回 `acme.status === 'pending'`，真正的成败要靠
 // 轮询 `GET /api/tls` 才能看到，所以 pending 期间自动每 3 秒拉一次，其余时间不轮询。
 
-import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { type TlsApi, TlsApiError, defaultTlsApi } from '@tmex/api-client/local/tls-api';
 import type { TlsStatusResponse } from '@tmex/api-client/local/tls-types';
-import { useCallback } from 'react';
+import { useProtectedStatusQuery } from '../../use-protected-status-query';
+import { acmePollInterval } from './tls-form';
 
 export const TLS_STATUS_QUERY_KEY = ['tls-status'] as const;
-export const ACME_POLL_INTERVAL_MS = 3000;
+export { ACME_POLL_INTERVAL_MS } from './tls-form';
 
 export interface TlsStatusState {
   status: TlsStatusResponse | null;
@@ -31,42 +31,11 @@ export function useTlsStatus(
   options: { enabled?: boolean } = {}
 ): TlsStatusState {
   // 纯 node 角色下整块 HTTPS 都是灰的，连状态都不该去问（mesh 下这一发还要带上会话）。
-  const enabled = options.enabled ?? true;
-  const queryClient = useQueryClient();
-  const query = useQuery({
+  return useProtectedStatusQuery<TlsStatusResponse>({
     queryKey: TLS_STATUS_QUERY_KEY,
     queryFn: () => api.status(),
-    enabled,
-    // 401 不重试：重试只会多刷几次登录拦截器。
-    retry: (failureCount, error) => !isUnauthorized(error) && failureCount < 2,
-    refetchInterval: (q) =>
-      q.state.data?.acme?.status === 'pending' ? ACME_POLL_INTERVAL_MS : false,
+    isUnauthorized,
+    enabled: options.enabled,
+    refetchInterval: acmePollInterval,
   });
-
-  const refresh = useCallback(() => {
-    void queryClient.invalidateQueries({ queryKey: TLS_STATUS_QUERY_KEY });
-  }, [queryClient]);
-
-  const setStatus = useCallback(
-    (next: TlsStatusResponse) => {
-      queryClient.setQueryData(TLS_STATUS_QUERY_KEY, next);
-    },
-    [queryClient]
-  );
-
-  const loginRequired = isUnauthorized(query.error);
-  return {
-    status: query.data ?? null,
-    // 关掉查询时 react-query 也报 pending，但这时不该转圈。
-    loading: enabled && query.isPending,
-    loginRequired,
-    error:
-      !query.error || loginRequired
-        ? null
-        : query.error instanceof Error
-          ? query.error.message
-          : String(query.error),
-    refresh,
-    setStatus,
-  };
 }

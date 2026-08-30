@@ -466,8 +466,3 @@ export function sharedMeshEvents(): MeshEventSource {
   }
   return sharedSource;
 }
-
-/** 仅测试使用：替换 / 清空共享实例。 */
-export function setSharedMeshEvents(source: MeshEventSource | null): void {
-  sharedSource = source;
-}
