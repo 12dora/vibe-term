@@ -590,6 +590,7 @@ export abstract class ExternalTmuxConnectionCore {
   }
 
   protected async startControlClient(): Promise<void> {
+    this.sessionCommands.invalidateInflightHistory();
     return this.controlLifecycle.startControlClient();
   }
 

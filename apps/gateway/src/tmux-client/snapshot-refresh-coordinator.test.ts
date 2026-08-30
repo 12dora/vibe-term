@@ -149,4 +149,65 @@ describe('SnapshotRefreshCoordinator', () => {
     expect(runs).toBe(2);
     expect(delayed).toBe(0);
   });
+
+  test('requestImmediate during a quiet wait upgrades that run without a trailing refresh', async () => {
+    let now = 0;
+    let runs = 0;
+    const waits: Array<{ due: number; resolve: () => void }> = [];
+    const coordinator = new SnapshotRefreshCoordinator(
+      async () => {
+        runs += 1;
+      },
+      {
+        quietPeriodMs: 150,
+        now: () => now,
+        delay: (ms) =>
+          new Promise<void>((resolve) => {
+            waits.push({ due: now + ms, resolve });
+          }),
+      }
+    );
+
+    await coordinator.request();
+    expect(runs).toBe(1);
+
+    const structure = coordinator.request();
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(runs).toBe(1);
+    expect(waits).toHaveLength(1);
+
+    const immediate = coordinator.requestImmediate();
+    await Promise.resolve();
+    await Promise.resolve();
+    await Promise.all([structure, immediate]);
+
+    expect(runs).toBe(2);
+    now += 150;
+    for (const wait of waits) wait.resolve();
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(runs).toBe(2);
+  });
+
+  test('requestImmediate during an in-flight refresh still schedules one trailing run', async () => {
+    const gate = deferred();
+    let runs = 0;
+    const coordinator = new SnapshotRefreshCoordinator(
+      async () => {
+        runs += 1;
+        if (runs === 1) await gate.promise;
+      },
+      { quietPeriodMs: 0 }
+    );
+
+    const first = coordinator.requestImmediate();
+    await waitFor(() => runs === 1);
+    const second = coordinator.requestImmediate();
+    expect(second).toBe(first);
+
+    gate.resolve();
+    await Promise.all([first, second]);
+    expect(runs).toBe(2);
+  });
 });

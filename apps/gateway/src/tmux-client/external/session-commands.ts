@@ -123,12 +123,17 @@ export function buildResizePaneByIdArgv(
 
 export class SessionCommands {
   private stackedLayoutTransition: Promise<void> = Promise.resolve();
+  private historyTransportGeneration = 0;
   private readonly paneHistoryInflight = new Map<
     string,
     Promise<{ data: string; alternateScreen: boolean; modes: number } | null>
   >();
 
   constructor(private readonly host: SessionCommandHost) {}
+
+  invalidateInflightHistory(): void {
+    this.historyTransportGeneration += 1;
+  }
 
   resizePane(paneId: string, cols: number, rows: number): void {
     this.fire(() => this.resizePaneInternal(paneId, cols, rows));
@@ -337,54 +342,56 @@ export class SessionCommands {
   async fetchPaneHistory(
     paneId: string
   ): Promise<{ data: string; alternateScreen: boolean; modes: number } | null> {
-    const existing = this.paneHistoryInflight.get(paneId);
+    const key = `${this.historyTransportGeneration}:${paneId}`;
+    const existing = this.paneHistoryInflight.get(key);
     if (existing) return existing;
     const pending = this.fetchPaneHistoryUncached(paneId).finally(() => {
-      if (this.paneHistoryInflight.get(paneId) === pending) {
-        this.paneHistoryInflight.delete(paneId);
+      if (this.paneHistoryInflight.get(key) === pending) {
+        this.paneHistoryInflight.delete(key);
       }
     });
-    this.paneHistoryInflight.set(paneId, pending);
+    this.paneHistoryInflight.set(key, pending);
     return pending;
   }
 
   private async fetchPaneHistoryUncached(
     paneId: string
   ): Promise<{ data: string; alternateScreen: boolean; modes: number } | null> {
-    const screenRaw = (
-      await this.runTmux(['display-message', '-p', '-t', paneId, PANE_SCREEN_INFO_FORMAT], true)
-    ).stdout;
+    const screenResult = await this.runTmux(
+      ['display-message', '-p', '-t', paneId, PANE_SCREEN_INFO_FORMAT],
+      true
+    );
+    if (screenResult.exitCode !== 0) {
+      return null;
+    }
+    const screenRaw = screenResult.stdout;
     const screenInfo = parsePaneScreenInfo(screenRaw);
     const alternateOn = parseAlternateOnFlag(screenRaw);
 
-    const capture = async (alternate: boolean): Promise<string> => {
-      try {
-        return await this.host.runHistoryCapture(
-          buildLegacyHistoryCaptureArgv(paneId, alternate),
-          MAX_PANE_HISTORY_CAPTURE_BYTES
-        );
-      } catch (error) {
-        if (error instanceof TmuxTargetMissingError) return '';
-        throw error;
-      }
-    };
+    const capture = (alternate: boolean): Promise<string> =>
+      this.host.runHistoryCapture(
+        buildLegacyHistoryCaptureArgv(paneId, alternate),
+        MAX_PANE_HISTORY_CAPTURE_BYTES
+      );
 
     let history: string;
-    if (alternateOn === null) {
-      const normal = await capture(false);
-      const alternate = await capture(true);
-      history = screenInfo.alternateScreen
-        ? hasRenderableTerminalContent(normal)
-          ? normal
-          : alternate
-        : normal || alternate;
-    } else {
-      history = await capture(false);
+    try {
+      if (alternateOn === null) {
+        const normal = await capture(false);
+        const alternate = await capture(true);
+        history = screenInfo.alternateScreen
+          ? hasRenderableTerminalContent(normal)
+            ? normal
+            : alternate
+          : normal || alternate;
+      } else {
+        history = await capture(false);
+      }
+    } catch (error) {
+      if (error instanceof TmuxTargetMissingError) return null;
+      throw error;
     }
 
-    if (!history) {
-      return null;
-    }
     return {
       data: appendCursorRestore(history, screenInfo),
       alternateScreen: screenInfo.alternateScreen,

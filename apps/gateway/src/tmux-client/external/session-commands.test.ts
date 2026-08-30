@@ -455,4 +455,89 @@ describe('SessionCommands', () => {
     const result = await new SessionCommands(host).fetchPaneHistory('%1');
     expect(result?.data.startsWith('KEEP_TAIL')).toBe(true);
   });
+
+  test('fetchPaneHistory returns empty history with cursor/mode metadata when capture succeeds with no text', async () => {
+    const histories: Array<{
+      paneId: string;
+      data: string;
+      alternateScreen: boolean;
+      modes: number;
+    }> = [];
+    const { host, responses } = createHost({
+      runHistoryCapture: async () => '',
+    });
+    host.callbacks.onTerminalHistory = (paneId, data, alternateScreen, modes) => {
+      histories.push({ paneId, data, alternateScreen, modes });
+    };
+    responses.set(screenInfoArgv.join(' '), ok('0 8 1 4 0 1 0 1 0\n'));
+    const commands = new SessionCommands(host);
+
+    const result = await commands.fetchPaneHistory('%1');
+    expect(result).toEqual({
+      data: '\x1b[2A\x1b[9G',
+      alternateScreen: false,
+      modes: 10,
+    });
+
+    await commands.capturePaneHistory('%1');
+    expect(histories).toEqual([
+      { paneId: '%1', data: '\x1b[2A\x1b[9G', alternateScreen: false, modes: 10 },
+    ]);
+  });
+
+  test('fetchPaneHistory returns null only when the pane target is missing', async () => {
+    const histories: Array<{ paneId: string; data: string }> = [];
+    const missingDisplay = createHost({
+      runHistoryCapture: async () => {
+        throw new Error('capture should not run when display-message already missed');
+      },
+    });
+    missingDisplay.host.callbacks.onTerminalHistory = (paneId, data) => {
+      histories.push({ paneId, data });
+    };
+    missingDisplay.responses.set(screenInfoArgv.join(' '), fail("can't find pane: %1"));
+    const missingDisplayCommands = new SessionCommands(missingDisplay.host);
+    expect(await missingDisplayCommands.fetchPaneHistory('%1')).toBeNull();
+    await missingDisplayCommands.capturePaneHistory('%1');
+    expect(histories).toEqual([]);
+
+    const missingCapture = createHost({
+      runHistoryCapture: async () => {
+        throw new TmuxTargetMissingError("can't find pane: %1");
+      },
+    });
+    missingCapture.responses.set(screenInfoArgv.join(' '), ok('0 8 1 4 0 0 0 0 0\n'));
+    expect(await new SessionCommands(missingCapture.host).fetchPaneHistory('%1')).toBeNull();
+  });
+
+  test('in-flight fetchPaneHistory does not reuse a capture from a previous transport generation', async () => {
+    let started = 0;
+    const gates: Array<(value: string) => void> = [];
+    const { host, responses } = createHost({
+      runHistoryCapture: async () => {
+        started += 1;
+        return new Promise<string>((resolve) => {
+          gates.push(resolve);
+        });
+      },
+    });
+    responses.set(screenInfoArgv.join(' '), ok('0 0 0 24 0 0 0 0 0\n'));
+    const commands = new SessionCommands(host);
+
+    const first = commands.fetchPaneHistory('%1');
+    await Bun.sleep(0);
+    expect(started).toBe(1);
+
+    commands.invalidateInflightHistory();
+    const second = commands.fetchPaneHistory('%1');
+    await Bun.sleep(0);
+    expect(started).toBe(2);
+    expect(second).not.toBe(first);
+
+    gates[0]?.('stale\n');
+    gates[1]?.('fresh\n');
+    const [stale, fresh] = await Promise.all([first, second]);
+    expect(stale?.data.startsWith('stale')).toBe(true);
+    expect(fresh?.data.startsWith('fresh')).toBe(true);
+  });
 });

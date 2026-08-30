@@ -28,7 +28,10 @@ export class SnapshotRefreshCoordinator {
   }
 
   requestImmediate(): Promise<void> {
-    this.cancelQuiet?.();
+    if (this.cancelQuiet && this.active) {
+      this.cancelQuiet();
+      return this.active;
+    }
     return this.enqueue(true);
   }
 
