@@ -1,7 +1,7 @@
 import { useIsFetching, useQuery, useQueryClient } from '@tanstack/react-query';
 import type { FileEntryDto, FileRootDto, SystemInfo } from '@tmex/shared';
 import { Loader2, RotateCw, TriangleAlert } from 'lucide-react';
-import { useEffect, useMemo } from 'react';
+import { memo, useEffect, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { matchPath, useLocation, useNavigate } from 'react-router';
 
@@ -25,6 +25,9 @@ import { useRsyncMissingToast } from './use-rsync-missing-toast';
 const DEFAULT_TRANSFER_MAX_BYTES = 2 * 1024 * 1024 * 1024;
 
 const INDENT_STEP = 12;
+
+// 单个目录一次最多渲染多少行：后端每目录上限 2000，全量挂载会造出上千个带右键菜单的组件
+const DISPLAY_CAP = 500;
 
 function useSelectedFilePath(): { rootId: string; path: string } | null {
   const location = useLocation();
@@ -119,11 +122,15 @@ function FilesTabInner({ hideHeader }: FilesTabProps) {
     if (rootsQuery.data) pruneStaleRoots(rootsQuery.data.roots.map((r) => r.id));
   }, [rootsQuery.data, pruneStaleRoots]);
 
-  const ctx: TreeContext = {
-    llmConfigured: (providersQuery.data?.providers ?? []).length > 0,
-    localDeviceId: devicesQuery.data?.devices.find((d) => d.type === 'local')?.id ?? null,
-    transferMaxBytes: systemInfoQuery.data?.transferMaxBytes ?? DEFAULT_TRANSFER_MAX_BYTES,
-  };
+  // 每次渲染都新建 ctx 会让整棵树的 memo 失效
+  const ctx = useMemo<TreeContext>(
+    () => ({
+      llmConfigured: (providersQuery.data?.providers ?? []).length > 0,
+      localDeviceId: devicesQuery.data?.devices.find((d) => d.type === 'local')?.id ?? null,
+      transferMaxBytes: systemInfoQuery.data?.transferMaxBytes ?? DEFAULT_TRANSFER_MAX_BYTES,
+    }),
+    [providersQuery.data, devicesQuery.data, systemInfoQuery.data]
+  );
 
   const refresh = () => void queryClient.invalidateQueries({ queryKey: ['files'] });
 
@@ -205,7 +212,7 @@ function FilesTabInner({ hideHeader }: FilesTabProps) {
 
 // 递归的目录节点：把数据（列表 + 轮询）、上传、rsync 提示三块副作用交给对应 hooks，
 // 自身只负责组合与递归渲染子节点。
-function DirNode({
+const DirNode = memo(function DirNode({
   root,
   rootId,
   path,
@@ -232,8 +239,13 @@ function DirNode({
     localDeviceId: ctx.localDeviceId,
   });
 
+  const [showAll, setShowAll] = useState(false);
+
   const indent = depth * INDENT_STEP + 4;
   const childIndent = indent + 18;
+  const entries = query.data?.entries;
+  const hidden = !showAll && entries ? Math.max(entries.length - DISPLAY_CAP, 0) : 0;
+  const visible = hidden > 0 && entries ? entries.slice(0, DISPLAY_CAP) : entries;
 
   return (
     <DirectoryNodeView
@@ -262,7 +274,7 @@ function DirNode({
       {query.isError && (
         <NodeError code={errCode} indent={childIndent} onRetry={() => void query.refetch()} />
       )}
-      {query.data?.entries.map((entry) =>
+      {visible?.map((entry) =>
         entry.type === 'dir' ? (
           <DirNode
             key={entry.path}
@@ -276,6 +288,17 @@ function DirNode({
         ) : (
           <FileLeaf key={entry.path} entry={entry} root={root} depth={depth + 1} />
         )
+      )}
+      {hidden > 0 && (
+        <button
+          type="button"
+          data-testid={`file-show-more-${rootId}-${path}`}
+          onClick={() => setShowAll(true)}
+          style={{ paddingLeft: childIndent }}
+          className="flex w-full min-w-0 items-center rounded-md py-1 pr-2 text-left text-[11px] text-muted-foreground hover:bg-sidebar-accent hover:text-foreground"
+        >
+          {t('files.showMore', { count: hidden })}
+        </button>
       )}
       {query.data && query.data.entries.length === 0 && (
         <div
@@ -295,9 +318,9 @@ function DirNode({
       )}
     </DirectoryNodeView>
   );
-}
+});
 
-function FileLeaf({
+const FileLeaf = memo(function FileLeaf({
   entry,
   root,
   depth,
@@ -363,4 +386,4 @@ function FileLeaf({
       />
     </ContextMenu>
   );
-}
+});

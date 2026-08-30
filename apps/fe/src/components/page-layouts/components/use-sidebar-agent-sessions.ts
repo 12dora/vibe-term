@@ -10,13 +10,16 @@ import {
   normalizeAgentNodeId,
 } from '@tmex/stores';
 import { useRuntime } from '@tmex/stores/react';
-import { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
-
-const PANE_KEY_SEPARATOR = '\u0000';
-
-export function paneKey(deviceId: string, paneId: string): string {
-  return `${deviceId}${PANE_KEY_SEPARATOR}${paneId}`;
-}
+import {
+  type Context,
+  createContext,
+  useCallback,
+  useContext,
+  useEffect,
+  useMemo,
+  useState,
+} from 'react';
+import { useShallow } from 'zustand/react/shallow';
 
 /** updatedAt 倒序；同一时间戳按 id 升序兜底，保证比较函数反对称与排序稳定 */
 export function compareSessions(a: AgentSessionDto, b: AgentSessionDto): number {
@@ -49,21 +52,61 @@ export function orderSessions(
   return ordered;
 }
 
-export function groupSessionsByPane(
-  ordered: readonly AgentSessionDto[]
+const PANE_KEY_SEPARATOR = '\u0000';
+const NO_SESSIONS: AgentSessionDto[] = [];
+
+function paneKey(deviceId: string, paneId: string): string {
+  return `${deviceId}${PANE_KEY_SEPARATOR}${paneId}`;
+}
+
+/**
+ * 一份 sessions + sessionOrder 下按 pane 的分组，按 node 各缓存一份：
+ * 每个 pane 的选择器都要这份结果，重算一次就够，之后各自 O(1) 取自己那格。
+ */
+const paneGroupCache = new WeakMap<
+  object,
+  Map<string, { order: readonly string[]; grouped: Map<string, AgentSessionDto[]> }>
+>();
+
+function groupSessionsByPane(
+  sessions: Record<string, AgentSessionDto | undefined>,
+  sessionOrder: readonly string[],
+  nodeId: string | null
 ): Map<string, AgentSessionDto[]> {
+  let byNode = paneGroupCache.get(sessions);
+  if (!byNode) {
+    byNode = new Map();
+    paneGroupCache.set(sessions, byNode);
+  }
+  const cacheKey = nodeId ?? '';
+  const cached = byNode.get(cacheKey);
+  if (cached && cached.order === sessionOrder) return cached.grouped;
+
   const grouped = new Map<string, AgentSessionDto[]>();
-  for (const session of ordered) {
+  for (const session of orderSessions(sessions, sessionOrder)) {
     if (!session.deviceId || !session.paneId) continue;
+    if (!isSessionOnNode(session, nodeId)) continue;
     const key = paneKey(session.deviceId, session.paneId);
     const list = grouped.get(key);
-    if (list) {
-      list.push(session);
-    } else {
-      grouped.set(key, [session]);
-    }
+    if (list) list.push(session);
+    else grouped.set(key, [session]);
   }
+  byNode.set(cacheKey, { order: sessionOrder, grouped });
   return grouped;
+}
+
+/** 本 node 上挂在该 pane 的会话，顺序与整表一致 */
+export function sessionsForPane(
+  sessions: Record<string, AgentSessionDto | undefined>,
+  sessionOrder: readonly string[],
+  nodeId: string | null,
+  deviceId: string,
+  paneId: string
+): AgentSessionDto[] {
+  return (
+    groupSessionsByPane(sessions, sessionOrder, nodeId).get(paneKey(deviceId, paneId)) ??
+    NO_SESSIONS
+  );
 }
 
 export function collectKnownPaneIds(
@@ -116,14 +159,16 @@ export function isSessionPaused(
   return isNodePaused(nodeOffline, session.lastError);
 }
 
-export interface SidebarAgentSessionsContextValue {
-  orderedSessions: AgentSessionDto[];
-  sessionsByPane: ReadonlyMap<string, AgentSessionDto[]>;
-  activeSessionId: string | null;
-  /** 本分节所属 node（null 即 entry 自身）；新建会话与过滤都用它 */
-  nodeId: string | null;
+/** 分节级的稳定值：会话变动不改它的引用，行菜单据此免于跟着列表重渲染 */
+export interface SidebarAgentCommands {
   /** 本分节所属 node 是否离线（`undefined` 即 mesh 状态未知）：行灰显且不可点入 */
   nodeOffline: boolean | undefined;
+  requestRenameSession: (session: AgentSessionDto) => void;
+  requestDeleteSession: (session: AgentSessionDto) => void;
+}
+
+/** 对话框状态只有 AgentSessionDialogs 消费，单独成 context，开关对话框不惊动会话行 */
+export interface SidebarAgentDialogsState {
   sessionRenameCandidate: AgentSessionDto | null;
   sessionRenameValue: string;
   setSessionRenameValue: (value: string) => void;
@@ -132,27 +177,65 @@ export interface SidebarAgentSessionsContextValue {
   sessionDeleteCandidate: AgentSessionDto | null;
   closeDeleteDialog: () => void;
   confirmDeleteSession: () => void;
-  requestRenameSession: (session: AgentSessionDto) => void;
-  requestDeleteSession: (session: AgentSessionDto) => void;
 }
 
-export const SidebarAgentSessionsContext = createContext<SidebarAgentSessionsContextValue | null>(
-  null
-);
+export const SidebarAgentCommandsContext = createContext<SidebarAgentCommands | null>(null);
+export const SidebarAgentDialogsContext = createContext<SidebarAgentDialogsState | null>(null);
 
-export function useSidebarAgentSessions(): SidebarAgentSessionsContextValue {
-  const ctx = useContext(SidebarAgentSessionsContext);
-  if (!ctx) {
+function useProvided<T>(context: Context<T | null>): T {
+  const value = useContext(context);
+  if (!value) {
     throw new Error('sidebarAgentAdapter must be used within SidebarAgentSessionsProvider');
   }
-  return ctx;
+  return value;
 }
 
-export function useSidebarAgentSessionsController(): SidebarAgentSessionsContextValue {
+export function useSidebarAgentCommands(): SidebarAgentCommands {
+  return useProvided(SidebarAgentCommandsContext);
+}
+
+export function useSidebarAgentDialogs(): SidebarAgentDialogsState {
+  return useProvided(SidebarAgentDialogsContext);
+}
+
+// 会话状态一律来自 entry（self）网关，与本分节挂的是哪个 node 的运行时无关
+function useSessionNodeId(): string | null {
+  return normalizeAgentNodeId(useRuntime().nodeId);
+}
+
+/** 单个 pane 的会话列表：内容不变就保持数组引用，本 pane 之外的更新不会重渲染这一支 */
+export function useSessionsForPane(deviceId: string, paneId: string): AgentSessionDto[] {
+  const nodeId = useSessionNodeId();
+  return selfAgentStore()(
+    useShallow((state) =>
+      sessionsForPane(state.sessions, state.sessionOrder, nodeId, deviceId, paneId)
+    )
+  );
+}
+
+/** 本 node 上的全部会话（孤立会话区用；只有那一个组件订阅整表） */
+export function useNodeSessions(): AgentSessionDto[] {
+  const nodeId = useSessionNodeId();
+  return selfAgentStore()(
+    useShallow((state) =>
+      orderSessions(state.sessions, state.sessionOrder).filter((session) =>
+        isSessionOnNode(session, nodeId)
+      )
+    )
+  );
+}
+
+export function useActiveSessionId(): string | null {
+  const nodeId = useSessionNodeId();
+  return selfAgentStore()((state) => activeSessionIdOnNode(state, nodeId));
+}
+
+export function useSidebarAgentSessionsController(): {
+  commands: SidebarAgentCommands;
+  dialogs: SidebarAgentDialogsState;
+} {
   const runtime = useRuntime();
-  // 会话状态一律来自 entry（self）网关，与本分节挂的是哪个 node 的运行时无关
   const agentStore = selfAgentStore();
-  const nodeId = normalizeAgentNodeId(runtime.nodeId);
   const nodeOffline = useNodeOffline(runtime.nodeId);
 
   // AgentTab 挂载时也会拉列表，这里只在列表尚未加载过时兜底，避免切换侧边栏 tab 反复全量拉取
@@ -161,19 +244,6 @@ export function useSidebarAgentSessionsController(): SidebarAgentSessionsContext
     store.ensureInitialized();
     if (!store.sessionsLoaded) void store.loadSessions();
   }, [agentStore]);
-
-  const sessions = agentStore((state) => state.sessions);
-  const sessionOrder = agentStore((state) => state.sessionOrder);
-  const activeSessionId = agentStore((state) => activeSessionIdOnNode(state, nodeId));
-
-  // 单一列表按 node 过滤：本分节只展示绑在自己这个 node 上的会话，
-  // 于是 isSessionAttached 比对的快照也一定是该会话所在 node 的快照。
-  const orderedSessions = useMemo(
-    () =>
-      orderSessions(sessions, sessionOrder).filter((session) => isSessionOnNode(session, nodeId)),
-    [sessions, sessionOrder, nodeId]
-  );
-  const sessionsByPane = useMemo(() => groupSessionsByPane(orderedSessions), [orderedSessions]);
 
   const [sessionRenameCandidate, setSessionRenameCandidate] = useState<AgentSessionDto | null>(
     null
@@ -209,13 +279,13 @@ export function useSidebarAgentSessionsController(): SidebarAgentSessionsContext
   const closeRenameDialog = useCallback(() => setSessionRenameCandidate(null), []);
   const closeDeleteDialog = useCallback(() => setSessionDeleteCandidate(null), []);
 
-  return useMemo(
+  const commands = useMemo(
+    () => ({ nodeOffline, requestRenameSession, requestDeleteSession }),
+    [nodeOffline, requestRenameSession, requestDeleteSession]
+  );
+
+  const dialogs = useMemo(
     () => ({
-      orderedSessions,
-      sessionsByPane,
-      activeSessionId,
-      nodeId,
-      nodeOffline,
       sessionRenameCandidate,
       sessionRenameValue,
       setSessionRenameValue,
@@ -224,15 +294,8 @@ export function useSidebarAgentSessionsController(): SidebarAgentSessionsContext
       sessionDeleteCandidate,
       closeDeleteDialog,
       confirmDeleteSession,
-      requestRenameSession,
-      requestDeleteSession,
     }),
     [
-      orderedSessions,
-      sessionsByPane,
-      activeSessionId,
-      nodeId,
-      nodeOffline,
       sessionRenameCandidate,
       sessionRenameValue,
       closeRenameDialog,
@@ -240,8 +303,8 @@ export function useSidebarAgentSessionsController(): SidebarAgentSessionsContext
       sessionDeleteCandidate,
       closeDeleteDialog,
       confirmDeleteSession,
-      requestRenameSession,
-      requestDeleteSession,
     ]
   );
+
+  return { commands, dialogs };
 }

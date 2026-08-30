@@ -3,7 +3,7 @@
 import { useQueryClient } from '@tanstack/react-query';
 import { formatBytes } from '@tmex/api-client';
 import { useFileTreeStore, useRuntime } from '@tmex/stores/react';
-import { type ChangeEvent, type DragEvent, useCallback, useRef, useState } from 'react';
+import { type ChangeEvent, type DragEvent, useCallback, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { toast } from 'sonner';
 import { uploadFileWithTransport } from './bulk-transfer';
@@ -82,30 +82,34 @@ export function useDirectoryUpload(
     [expand, path, queryClient, rootId, runtime.apiClient, runtime.nodeId, t, transferMaxBytes]
   );
 
-  const dropZoneProps: DropZoneProps = {
-    onDragEnter: (e) => {
-      if (!hasExternalFiles(e)) return;
-      e.preventDefault();
-      dragDepth.current += 1;
-      setDragActive(true);
-    },
-    onDragOver: (e) => {
-      if (!hasExternalFiles(e)) return;
-      e.preventDefault();
-      e.dataTransfer.dropEffect = 'copy';
-    },
-    onDragLeave: (e) => {
-      if (!hasExternalFiles(e)) return;
-      dragDepth.current -= 1;
-      if (dragDepth.current <= 0) resetDrag();
-    },
-    onDrop: (e) => {
-      if (!hasExternalFiles(e)) return;
-      e.preventDefault();
-      resetDrag();
-      void upload(Array.from(e.dataTransfer.files));
-    },
-  };
+  // 稳定引用：目录节点每次重渲染都新建这组 handler 会连带刷新拖放区的 props
+  const dropZoneProps = useMemo<DropZoneProps>(
+    () => ({
+      onDragEnter: (e) => {
+        if (!hasExternalFiles(e)) return;
+        e.preventDefault();
+        dragDepth.current += 1;
+        setDragActive(true);
+      },
+      onDragOver: (e) => {
+        if (!hasExternalFiles(e)) return;
+        e.preventDefault();
+        e.dataTransfer.dropEffect = 'copy';
+      },
+      onDragLeave: (e) => {
+        if (!hasExternalFiles(e)) return;
+        dragDepth.current -= 1;
+        if (dragDepth.current <= 0) resetDrag();
+      },
+      onDrop: (e) => {
+        if (!hasExternalFiles(e)) return;
+        e.preventDefault();
+        resetDrag();
+        void upload(Array.from(e.dataTransfer.files));
+      },
+    }),
+    [resetDrag, upload]
+  );
 
   return {
     dragActive,

@@ -16,7 +16,7 @@ import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '
 import { Input } from '@tmex/ui/input';
 import { X } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
-import { useSidebarAgentSessions } from './use-sidebar-agent-sessions';
+import { useSidebarAgentDialogs } from './use-sidebar-agent-sessions';
 
 export function AgentSessionDialogs() {
   const { t } = useTranslation();
@@ -29,7 +29,7 @@ export function AgentSessionDialogs() {
     sessionDeleteCandidate,
     closeDeleteDialog,
     confirmDeleteSession,
-  } = useSidebarAgentSessions();
+  } = useSidebarAgentDialogs();
 
   return (
     <>

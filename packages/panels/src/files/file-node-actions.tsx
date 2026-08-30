@@ -6,7 +6,7 @@ import { useRuntime } from '@tmex/stores/react';
 import { ContextMenuContent, ContextMenuItem, ContextMenuSeparator } from '@tmex/ui/context-menu';
 import { Download, FolderOpen } from 'lucide-react';
 import type { DragEvent } from 'react';
-import { useCallback } from 'react';
+import { useCallback, useMemo } from 'react';
 import { useTranslation } from 'react-i18next';
 import { toast } from 'sonner';
 import { downloadFileWithTransport } from './bulk-transfer';
@@ -48,21 +48,24 @@ export function useFileNodeActions(rootId: string, entry: FileEntryDto): FileNod
     }
   }, [entry.name, entry.path, rootId, runtime, t]);
 
-  const dragHandlers: FileNodeDragHandlers = {
-    onDragStart: (e) => {
-      // 拖到系统下载（仅 Chromium 生效，URL 必须绝对；其它浏览器静默无效，菜单「下载」兜底）
-      const absUrl = window.location.origin + fileDownloadUrl(runtime.nodeId, rootId, entry.path);
-      e.dataTransfer.setData('DownloadURL', `application/octet-stream:${entry.name}:${absUrl}`);
-      e.dataTransfer.effectAllowed = 'copy';
-    },
-    onDragEnd: (e) => {
-      // 拖到 OS 成功放下时（dropEffect=copy）由浏览器接管下载，JS 无进度可显示，
-      // 仅给一个轻提示让用户知道下载已开始（去浏览器下载区查看进度）
-      if (e.dataTransfer.dropEffect === 'copy') {
-        toast(t('files.transfer.dragDownloadStarted', { name: entry.name }));
-      }
-    },
-  };
+  const dragHandlers = useMemo<FileNodeDragHandlers>(
+    () => ({
+      onDragStart: (e) => {
+        // 拖到系统下载（仅 Chromium 生效，URL 必须绝对；其它浏览器静默无效，菜单「下载」兜底）
+        const absUrl = window.location.origin + fileDownloadUrl(runtime.nodeId, rootId, entry.path);
+        e.dataTransfer.setData('DownloadURL', `application/octet-stream:${entry.name}:${absUrl}`);
+        e.dataTransfer.effectAllowed = 'copy';
+      },
+      onDragEnd: (e) => {
+        // 拖到 OS 成功放下时（dropEffect=copy）由浏览器接管下载，JS 无进度可显示，
+        // 仅给一个轻提示让用户知道下载已开始（去浏览器下载区查看进度）
+        if (e.dataTransfer.dropEffect === 'copy') {
+          toast(t('files.transfer.dragDownloadStarted', { name: entry.name }));
+        }
+      },
+    }),
+    [entry.name, entry.path, rootId, runtime.nodeId, t]
+  );
 
   return { download, dragHandlers };
 }

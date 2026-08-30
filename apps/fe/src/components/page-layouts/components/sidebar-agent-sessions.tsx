@@ -15,21 +15,26 @@ import { useTranslation } from 'react-i18next';
 import { AgentSessionDialogs } from './agent-session-dialogs';
 import { OrphanSessionRow, PaneSessionRow } from './agent-session-row';
 import {
-  SidebarAgentSessionsContext,
+  SidebarAgentCommandsContext,
+  SidebarAgentDialogsContext,
   collectKnownPaneIds,
   isSessionAttached,
   isSessionPaused,
-  paneKey,
-  useSidebarAgentSessions,
+  useActiveSessionId,
+  useNodeSessions,
+  useSessionsForPane,
+  useSidebarAgentCommands,
   useSidebarAgentSessionsController,
 } from './use-sidebar-agent-sessions';
 
 export function SidebarAgentSessionsProvider({ children }: { children: ReactNode }) {
-  const value = useSidebarAgentSessionsController();
+  const { commands, dialogs } = useSidebarAgentSessionsController();
   return (
-    <SidebarAgentSessionsContext.Provider value={value}>
-      {children}
-    </SidebarAgentSessionsContext.Provider>
+    <SidebarAgentCommandsContext.Provider value={commands}>
+      <SidebarAgentDialogsContext.Provider value={dialogs}>
+        {children}
+      </SidebarAgentDialogsContext.Provider>
+    </SidebarAgentCommandsContext.Provider>
   );
 }
 
@@ -85,12 +90,13 @@ function AgentPaneSessions({
   deviceId: string;
   paneId: string;
 }) {
-  const { sessionsByPane, activeSessionId, nodeOffline } = useSidebarAgentSessions();
+  const { nodeOffline } = useSidebarAgentCommands();
   const handleSelectSession = useSelectSession(nav);
-  const sessions = sessionsByPane.get(paneKey(deviceId, paneId));
+  const sessions = useSessionsForPane(deviceId, paneId);
+  const activeSessionId = useActiveSessionId();
   return (
     <div className="mt-1 space-y-0.5 [@media(any-pointer:coarse)]:space-y-1">
-      {sessions?.map((session) => (
+      {sessions.map((session) => (
         <PaneSessionRow
           key={session.id}
           session={session}
@@ -114,7 +120,9 @@ function AgentOrphanSessions({
 }) {
   const { t } = useTranslation();
   const [open, setOpen] = useState(false);
-  const { orderedSessions, activeSessionId, nodeOffline } = useSidebarAgentSessions();
+  const { nodeOffline } = useSidebarAgentCommands();
+  const orderedSessions = useNodeSessions();
+  const activeSessionId = useActiveSessionId();
   const handleSelectSession = useSelectSession(nav);
   const snapshots = useTmuxStore((state) => state.snapshots);
 

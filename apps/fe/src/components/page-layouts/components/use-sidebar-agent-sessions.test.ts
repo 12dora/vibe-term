@@ -1,14 +1,15 @@
 import { describe, expect, test } from 'bun:test';
 import type { AgentSessionDto, StateSnapshotPayload, TmuxPane, TmuxWindow } from '@tmex/shared';
 import { isSessionOnNode } from '@tmex/stores';
+import { shallow } from 'zustand/vanilla/shallow';
+import { OrphanSessionRow, PaneSessionRow } from './agent-session-row';
 import {
   collectKnownPaneIds,
   compareSessions,
-  groupSessionsByPane,
   isSessionAttached,
   isSessionPaused,
   orderSessions,
-  paneKey,
+  sessionsForPane,
 } from './use-sidebar-agent-sessions';
 
 function session(partial: Partial<AgentSessionDto> & { id: string }): AgentSessionDto {
@@ -34,6 +35,8 @@ function session(partial: Partial<AgentSessionDto> & { id: string }): AgentSessi
     ...partial,
   };
 }
+
+const NODE_A = 'a'.repeat(32);
 
 function toRecord(list: AgentSessionDto[]): Record<string, AgentSessionDto> {
   return Object.fromEntries(list.map((item) => [item.id, item]));
@@ -117,30 +120,63 @@ describe('orderSessions', () => {
   });
 });
 
-describe('groupSessionsByPane', () => {
-  test('groups by device+pane preserving input order', () => {
-    const first = session({ id: 'a', deviceId: 'd1', paneId: '%1' });
-    const second = session({ id: 'b', deviceId: 'd1', paneId: '%1' });
-    const other = session({ id: 'c', deviceId: 'd2', paneId: '%1' });
-    const grouped = groupSessionsByPane([first, second, other]);
-    expect(grouped.get(paneKey('d1', '%1'))?.map((item) => item.id)).toEqual(['a', 'b']);
-    expect(grouped.get(paneKey('d2', '%1'))?.map((item) => item.id)).toEqual(['c']);
-  });
+describe('sessionsForPane', () => {
+  const order = ['a', 'b', 'c'];
 
-  test('does not collide when ids concatenate ambiguously', () => {
-    const left = session({ id: 'a', deviceId: 'd', paneId: '1%1' });
-    const right = session({ id: 'b', deviceId: 'd1', paneId: '%1' });
-    const grouped = groupSessionsByPane([left, right]);
-    expect(grouped.size).toBe(2);
-  });
-
-  test('drops sessions without device or pane', () => {
-    const grouped = groupSessionsByPane([
-      session({ id: 'a' }),
-      session({ id: 'b', deviceId: 'd1' }),
-      session({ id: 'c', paneId: '%1' }),
+  test('只取本 node 挂在该 pane 上的会话，顺序跟随 sessionOrder', () => {
+    const sessions = toRecord([
+      session({ id: 'a', deviceId: 'd1', paneId: '%1' }),
+      session({ id: 'b', deviceId: 'd1', paneId: '%1' }),
+      session({ id: 'c', deviceId: 'd2', paneId: '%1' }),
     ]);
-    expect(grouped.size).toBe(0);
+    expect(sessionsForPane(sessions, ['b', 'a'], null, 'd1', '%1').map((s) => s.id)).toEqual([
+      'b',
+      'a',
+    ]);
+    expect(sessionsForPane(sessions, order, NODE_A, 'd1', '%1')).toEqual([]);
+  });
+
+  test('device/pane 分开比较，拼接歧义不会串台', () => {
+    const sessions = toRecord([
+      session({ id: 'a', deviceId: 'd', paneId: '1%1' }),
+      session({ id: 'b', deviceId: 'd1', paneId: '%1' }),
+    ]);
+    expect(sessionsForPane(sessions, order, null, 'd1', '%1').map((s) => s.id)).toEqual(['b']);
+    expect(sessionsForPane(sessions, order, null, 'd', '1%1').map((s) => s.id)).toEqual(['a']);
+  });
+
+  test('未绑定 device/pane 的会话不入列', () => {
+    const sessions = toRecord([session({ id: 'a' }), session({ id: 'b', deviceId: 'd1' })]);
+    expect(sessionsForPane(sessions, order, null, 'd1', '%1')).toEqual([]);
+  });
+
+  // 性能契约：某个会话更新后，未受影响的 pane 必须逐项同引用（useShallow 据此保住数组引用，
+  // 该 pane 分支整支不重渲染），受影响 pane 内没变的行也保持同引用（React.memo 据此跳过）。
+  test('无关会话更新后，其它 pane 的列表逐项同引用', () => {
+    const before = toRecord([
+      session({ id: 'a', deviceId: 'd1', paneId: '%1' }),
+      session({ id: 'b', deviceId: 'd1', paneId: '%1' }),
+      session({ id: 'c', deviceId: 'd2', paneId: '%2' }),
+    ]);
+    const after = { ...before, a: { ...before.a, title: 'renamed' } };
+
+    const otherBefore = sessionsForPane(before, order, null, 'd2', '%2');
+    const otherAfter = sessionsForPane(after, order, null, 'd2', '%2');
+    expect(shallow(otherBefore, otherAfter)).toBe(true);
+
+    const paneBefore = sessionsForPane(before, order, null, 'd1', '%1');
+    const paneAfter = sessionsForPane(after, order, null, 'd1', '%1');
+    expect(shallow(paneBefore, paneAfter)).toBe(false);
+    expect(paneAfter[0]).not.toBe(paneBefore[0]);
+    expect(paneAfter[1]).toBe(paneBefore[1]);
+  });
+});
+
+describe('会话行组件', () => {
+  test('两种会话行都是 React.memo 组件（props 不变即跳过重渲染）', () => {
+    for (const row of [PaneSessionRow, OrphanSessionRow]) {
+      expect((row as unknown as { $$typeof: symbol }).$$typeof).toBe(Symbol.for('react.memo'));
+    }
   });
 });
 
@@ -203,8 +239,6 @@ describe('isSessionAttached', () => {
   });
 });
 
-const NODE_A = 'a'.repeat(32);
-
 describe('per-node session filtering', () => {
   const local = session({ id: 'local', deviceId: 'd1', paneId: '%1' });
   const remote = session({ id: 'remote', nodeId: NODE_A, deviceId: 'd1', paneId: '%1' });
@@ -216,10 +250,9 @@ describe('per-node session filtering', () => {
   });
 
   test('grouping by pane stays per node, so identical device:pane keys do not collide', () => {
-    const selfGroups = groupSessionsByPane(all.filter((item) => isSessionOnNode(item, null)));
-    const remoteGroups = groupSessionsByPane(all.filter((item) => isSessionOnNode(item, NODE_A)));
-    expect(selfGroups.get(paneKey('d1', '%1'))).toEqual([local]);
-    expect(remoteGroups.get(paneKey('d1', '%1'))).toEqual([remote]);
+    const sessions = toRecord(all);
+    expect(sessionsForPane(sessions, ['local', 'remote'], null, 'd1', '%1')).toEqual([local]);
+    expect(sessionsForPane(sessions, ['local', 'remote'], NODE_A, 'd1', '%1')).toEqual([remote]);
   });
 });
 

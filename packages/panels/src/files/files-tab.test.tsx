@@ -4,7 +4,7 @@
 // 「关掉开关就消失」由 root-visibility 的单测覆盖。
 
 import { describe, expect, test } from 'bun:test';
-import type { FileRootDto } from '@tmex/shared';
+import type { FileEntryDto, FileRootDto } from '@tmex/shared';
 import { installWindowStorage } from '@tmex/stores/test-utils';
 
 installWindowStorage();
@@ -116,5 +116,84 @@ describe('FilesTab 在 node 离线时', () => {
     expect(renderFilesTab({ roots: [LOCAL_ROOT] })).not.toContain(
       'data-testid="files-node-offline"'
     );
+  });
+});
+
+function fileEntry(index: number): FileEntryDto {
+  return {
+    name: `f${index}.txt`,
+    path: `${LOCAL_ROOT.path}/f${index}.txt`,
+    type: 'file',
+    category: 'text',
+    size: 1,
+    modifiedAt: null,
+    isSymlink: false,
+  };
+}
+
+/**
+ * 静态渲染下 zustand 读的是**建店时**的 state（persist 的 hydrate 之后才落到 getState），
+ * 展开态无法经 localStorage 预置，于是把 fileTree 面换成一个已展开的桩；
+ * 目录列表直接喂进 query 缓存，这样能在无 DOM 环境里数出真正挂载了多少行。
+ */
+function renderExpandedRoot(entries: FileEntryDto[]): string {
+  const runtime = createAppRuntime({ storagePrefix: `files-tab-test-${storageSeq++}:` });
+  const fileTreeState = {
+    expanded: { [`${LOCAL_ROOT.id}\n${LOCAL_ROOT.path}`]: true },
+    toggle: () => undefined,
+    expand: () => undefined,
+    collapse: () => undefined,
+    pruneRoot: () => undefined,
+    pruneStaleRoots: () => undefined,
+  };
+  const fileTree = Object.assign(
+    <T,>(selector: (state: typeof fileTreeState) => T): T => selector(fileTreeState),
+    { getState: () => fileTreeState }
+  );
+  const expandedRuntime = {
+    ...runtime,
+    stores: { ...runtime.stores, fileTree },
+  } as unknown as typeof runtime;
+
+  const queryClient = new QueryClient();
+  queryClient.setQueryData(['files', 'roots'], { roots: [LOCAL_ROOT] });
+  queryClient.setQueryData(['files', 'list', LOCAL_ROOT.id, LOCAL_ROOT.path], {
+    path: LOCAL_ROOT.path,
+    entries,
+    truncated: false,
+  });
+  const html = renderToStaticMarkup(
+    <MemoryRouter>
+      <I18nextProvider i18n={i18n}>
+        <QueryClientProvider client={queryClient}>
+          <RuntimeProvider runtime={expandedRuntime}>
+            <SidebarProvider>
+              <FilesTab />
+            </SidebarProvider>
+          </RuntimeProvider>
+        </QueryClientProvider>
+      </I18nextProvider>
+    </MemoryRouter>
+  );
+  runtime.dispose();
+  return html;
+}
+
+function countRows(html: string): number {
+  return html.match(/data-testid="file-item-/g)?.length ?? 0;
+}
+
+describe('FilesTab 的单目录行数上限', () => {
+  test('2000 条只挂 500 行，其余收在「显示其余」按钮后', () => {
+    const html = renderExpandedRoot(Array.from({ length: 2000 }, (_, i) => fileEntry(i)));
+    expect(countRows(html)).toBe(500);
+    expect(html).toContain(`data-testid="file-show-more-${LOCAL_ROOT.id}-${LOCAL_ROOT.path}"`);
+    expect(html).toContain('显示其余 1500 项');
+  });
+
+  test('未超过上限时全量渲染，不出现「显示其余」', () => {
+    const html = renderExpandedRoot(Array.from({ length: 12 }, (_, i) => fileEntry(i)));
+    expect(countRows(html)).toBe(12);
+    expect(html).not.toContain('data-testid="file-show-more-');
   });
 });

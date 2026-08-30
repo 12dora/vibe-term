@@ -13,8 +13,9 @@ import {
 } from '@tmex/ui/dropdown-menu';
 import { useSidebar } from '@tmex/ui/sidebar';
 import { Bot, MoreHorizontal, Pencil, Trash2 } from 'lucide-react';
+import { memo } from 'react';
 import { useTranslation } from 'react-i18next';
-import { useSidebarAgentSessions } from './use-sidebar-agent-sessions';
+import { useSidebarAgentCommands } from './use-sidebar-agent-sessions';
 
 export function StatusDot({ status }: { status: AgentSessionDto['status'] }) {
   return (
@@ -42,7 +43,7 @@ function SessionActionsMenu({
 }) {
   const { t } = useTranslation();
   const { isMobile } = useSidebar();
-  const { requestRenameSession, requestDeleteSession } = useSidebarAgentSessions();
+  const { requestRenameSession, requestDeleteSession } = useSidebarAgentCommands();
   const enlarged = enlargeOnTouch && isMobile;
   return (
     <DropdownMenu>
@@ -99,7 +100,7 @@ function SessionActionsMenu({
   );
 }
 
-export function PaneSessionRow({
+export const PaneSessionRow = memo(function PaneSessionRow({
   session,
   isActive,
   paused = false,
@@ -139,9 +140,9 @@ export function PaneSessionRow({
       </div>
     </div>
   );
-}
+});
 
-export function OrphanSessionRow({
+export const OrphanSessionRow = memo(function OrphanSessionRow({
   session,
   isActive,
   paused = false,
@@ -193,4 +194,4 @@ export function OrphanSessionRow({
       </div>
     </div>
   );
-}
+});
