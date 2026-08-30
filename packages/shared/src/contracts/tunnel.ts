@@ -28,8 +28,8 @@ export type TunnelErrorCode =
   | 'dns_route_failed'
   /** Cloudflare API 调用失败（token 权限不足 / account 不对 / 网络） */
   | 'access_api_failed'
-  /** standalone 下 named 隧道启动前必须先配置 Cloudflare Access */
-  | 'access_required'
+  /** 本机既未启用登录也未受 Access 保护时，启动隧道必须显式带 acknowledgeExposure=true */
+  | 'exposure_ack_required'
   | 'process_failed'
   | 'busy'
   | 'not_configured'
@@ -123,8 +123,10 @@ export interface TunnelStatusResponse {
   config: TunnelConfigStatus;
   process: TunnelProcessStatus;
   access: TunnelAccessStatus;
-  /** 本机是否启用了登录（mesh 角色）；false 时 named 隧道必须先配置 Access，quick 隧道禁止 */
+  /** 本机是否启用了登录（mesh 角色下的用户名/密码/2FA） */
   loginEnforced: boolean;
+  /** 隧道流量是否受保护：loginEnforced，或 Access 已配置且强制校验且主机名匹配 */
+  exposureProtected: boolean;
   /** 进行中或最近一次结束的 job */
   job: TunnelJobStatus | null;
   /** 当前进程是否已按 TMEX_TRUST_PROXY=true 运行（生效值） */
@@ -142,13 +144,14 @@ export type TunnelActionRequest =
   | { action: 'install' }
   | { action: 'login' }
   | { action: 'cancel_login' }
-  | { action: 'create'; hostname: string; tunnelName?: string }
-  | { action: 'quick_start' }
-  | { action: 'start' }
+  | { action: 'create'; hostname: string; tunnelName?: string; acknowledgeExposure?: boolean }
+  /** 未受保护（!exposureProtected）时必须 acknowledgeExposure=true，否则 409 exposure_ack_required */
+  | { action: 'quick_start'; acknowledgeExposure?: boolean }
+  | { action: 'start'; acknowledgeExposure?: boolean }
   | { action: 'stop' }
   | { action: 'remove' }
   | { action: 'check' }
-  | { action: 'set_auto_start'; autoStart: boolean }
+  | { action: 'set_auto_start'; autoStart: boolean; acknowledgeExposure?: boolean }
   | { action: 'set_trust_proxy'; trustProxy: boolean }
   /** 保存 Cloudflare API token（需 Access: Apps and Policies 编辑权限）与 account id；同步动作 */
   | { action: 'set_access_credentials'; apiToken: string; accountId: string }
