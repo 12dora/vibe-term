@@ -224,6 +224,26 @@ interface XtermHandle {
   };
 }
 
+/**
+ * 从「管理设备」登录某台远端 node。
+ *
+ * 登录页只登录 entry 自身（`loginSelf`，不做 fan-out），其余 node 一律按需登录；侧边栏也不再
+ * 为没开过设备显示的 node 留登录入口，所以拿到该 node 的会话（`/n/:id/api/*` 需要它）只剩设备页
+ * 这一条路。**必须走 SPA 内部跳转**：会话钥 sk_sess 只在内存里，`goto` / `reload` 这类整页导航
+ * 会把它丢掉，「登录此节点」按钮届时只能退回 `/login?node=`。
+ *
+ * 返回后浏览器上下文里带着该 node 的会话 cookie，`page.request` 与页面共用同一个 cookie jar。
+ */
+export async function signInToNodeFromDevicesPage(page: Page, nodeId: string): Promise<void> {
+  await page.locator('a[href="/devices"]').first().click();
+  await expect(page.getByTestId('devices-page')).toBeVisible({ timeout: 30_000 });
+  await expect(page.getByTestId(`devices-node-login-${nodeId}`)).toBeVisible({ timeout: 30_000 });
+  await page.getByTestId(`node-login-${nodeId}`).click();
+  await expect(page.getByTestId(`devices-node-login-${nodeId}`)).toHaveCount(0, {
+    timeout: 30_000,
+  });
+}
+
 export async function createDeviceOnNode(
   page: Page,
   state: MeshState,
