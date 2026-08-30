@@ -251,7 +251,6 @@ export {
   type TermOutputView,
   decodeTermOutputView,
   decodePayload,
-  decodeEnvelopeAndPayload,
   type ChunkData,
   encodeChunk,
   decodeChunk,

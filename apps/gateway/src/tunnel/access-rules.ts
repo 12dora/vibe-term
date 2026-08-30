@@ -51,7 +51,7 @@ export function parseAccessRulesJson(raw: string | null | undefined): TunnelAcce
   }
 }
 
-export function rulesToCfInclude(
+export function toCloudflareInclude(
   rules: TunnelAccessPolicyRule[]
 ): Array<{ email: { email: string } } | { email_domain: { domain: string } }> {
   return rules.map((rule) =>
@@ -61,7 +61,7 @@ export function rulesToCfInclude(
   );
 }
 
-export function rulesFromCfInclude(include: unknown): TunnelAccessPolicyRule[] {
+export function fromCloudflareInclude(include: unknown): TunnelAccessPolicyRule[] {
   if (!Array.isArray(include)) return [];
   const out: TunnelAccessPolicyRule[] = [];
   for (const item of include) {
@@ -81,6 +81,3 @@ export function rulesFromCfInclude(include: unknown): TunnelAccessPolicyRule[] {
   }
   return out;
 }
-
-export const toCloudflareInclude = rulesToCfInclude;
-export const fromCloudflareInclude = rulesFromCfInclude;

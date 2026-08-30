@@ -12,7 +12,9 @@ export type DetectedTunnel = TunnelExternalStatus & {
   accountId: string | null;
 };
 
-export const EMPTY_EXTERNAL: DetectedTunnel = {
+export type ExternalDetection = DetectedTunnel & { tokenAccountId: string | null };
+
+export const EMPTY_EXTERNAL: ExternalDetection = {
   detected: false,
   source: null,
   configPath: null,
@@ -25,6 +27,7 @@ export const EMPTY_EXTERNAL: DetectedTunnel = {
   tokenFile: null,
   logFile: null,
   accountId: null,
+  tokenAccountId: null,
 };
 
 export type ExternalAccessApi = {
@@ -57,14 +60,6 @@ export type ExternalDetectDeps = {
 
 const CACHE_MS = 30_000;
 
-type CacheEntry = { at: number; value: DetectedTunnel };
-
-let cache: CacheEntry | null = null;
-
-export function resetExternalDetectCache(): void {
-  cache = null;
-}
-
 export function defaultListProcesses(): ExternalProcess[] {
   try {
     const proc = Bun.spawnSync(['ps', '-axo', 'pid=,command='], { stdout: 'pipe', stderr: 'pipe' });
@@ -85,14 +80,6 @@ export function parsePsOutput(text: string): ExternalProcess[] {
     out.push({ pid: Number(match[1]), command: match[2] ?? '' });
   }
   return out;
-}
-
-export async function detectExternalCloudflared(deps: ExternalDetectDeps): Promise<DetectedTunnel> {
-  const now = deps.now ?? Date.now;
-  if (cache && now() - cache.at < CACHE_MS) return cache.value;
-  const value = await detectUncached(deps);
-  cache = { at: now(), value };
-  return value;
 }
 
 type Candidate = {
@@ -686,8 +673,6 @@ function normalizeProcesses(raw: ExternalProcess[] | string): ExternalProcess[] 
   return typeof raw === 'string' ? parsePsOutput(raw) : raw;
 }
 
-export type ExternalDetection = DetectedTunnel & { tokenAccountId: string | null };
-
 export class ExternalTunnelDetector {
   private localCache: { at: number; value: ExternalDetection } | null = null;
 
@@ -695,7 +680,6 @@ export class ExternalTunnelDetector {
 
   invalidate(): void {
     this.localCache = null;
-    resetExternalDetectCache();
   }
 
   async detect(): Promise<ExternalDetection> {

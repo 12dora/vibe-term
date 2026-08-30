@@ -126,3 +126,98 @@ describe('WebSocket inbound binary frames', () => {
     attached.onClose();
   });
 });
+
+function decodeErrorFrame(frame: Uint8Array) {
+  const envelope = wsBorsh.decodeEnvelope(frame);
+  expect(envelope.kind).toBe(wsBorsh.KIND_ERROR);
+  return wsBorsh.decodePayload(wsBorsh.schema.ErrorSchema, envelope.payload);
+}
+
+describe('RTC inbound decoded envelope', () => {
+  test('frame is envelope-decoded exactly once and skips handleMessage', async () => {
+    const server = new WebSocketServer();
+    const ws = createBorshTestWs();
+    const received: Uint8Array[] = [];
+    const handleBorshMessage = spyOn(server, 'handleBorshMessage').mockImplementation(
+      async (_ws, _kind, _seq, payload) => {
+        received.push(payload);
+      }
+    );
+    const handleMessage = spyOn(server, 'handleMessage');
+    const decode = spyOn(wsBorsh, 'decodeEnvelope');
+    const { frame, payload } = encodeHelloFrame();
+
+    server.deliverRtcInbound(ws, frame);
+    await flushAsync();
+
+    expect(decode.mock.calls.length).toBe(1);
+    expect(handleMessage).not.toHaveBeenCalled();
+    expect(received).toHaveLength(1);
+    expect(received[0]).toEqual(payload);
+
+    decode.mockRestore();
+    handleMessage.mockRestore();
+    handleBorshMessage.mockRestore();
+  });
+
+  test('invalid RTC envelope matches handleMessage error frames', () => {
+    const cases: Uint8Array[] = [
+      new Uint8Array([1, 2, 3, 4]),
+      new Uint8Array(20),
+      (() => {
+        const withMagic = new Uint8Array(20);
+        withMagic[0] = 0x54;
+        withMagic[1] = 0x58;
+        return withMagic;
+      })(),
+    ];
+    for (const bytes of cases) {
+      const viaMessage = new WebSocketServer();
+      const wsMessage = createBorshTestWs();
+      viaMessage.handleMessage(wsMessage, Buffer.from(bytes));
+
+      const viaRtc = new WebSocketServer();
+      const wsRtc = createBorshTestWs();
+      viaRtc.deliverRtcInbound(wsRtc, bytes);
+
+      expect(wsRtc.sent).toHaveLength(wsMessage.sent.length);
+      const rtcFrame = wsRtc.sent[0];
+      const messageFrame = wsMessage.sent[0];
+      if (!rtcFrame || !messageFrame) continue;
+      expect(decodeErrorFrame(rtcFrame)).toEqual(decodeErrorFrame(messageFrame));
+    }
+  });
+
+  test('async-retaining handler sees stable bytes after RTC buffer reuse', async () => {
+    const server = new WebSocketServer();
+    const ws = createBorshTestWs();
+    const received: Uint8Array[] = [];
+    let release!: () => void;
+    const blocked = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const handleBorshMessage = spyOn(server, 'handleBorshMessage').mockImplementation(
+      async (_ws, _kind, _seq, payload) => {
+        await blocked;
+        received.push(payload);
+      }
+    );
+
+    const { frame, payload } = encodeHelloFrame();
+    const backing = new Uint8Array(frame.byteLength);
+    backing.set(frame);
+    const decode = spyOn(wsBorsh, 'decodeEnvelope').mockImplementation((data) =>
+      wsBorsh.decodeEnvelopeView(data)
+    );
+    server.deliverRtcInbound(ws, backing);
+    backing.fill(0xee);
+    decode.mockRestore();
+    release();
+    await flushAsync();
+
+    expect(received).toHaveLength(1);
+    expect(received[0]).toEqual(payload);
+
+    handleBorshMessage.mockRestore();
+  });
+});

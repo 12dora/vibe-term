@@ -702,9 +702,7 @@ function createSessionBindings(s: Awaited<ReturnType<typeof createMeshStoresAndS
     deliverInbound: (session, bytes) => {
       const entry = sessions.getBySession(session);
       if (!entry || !verifyBoundSession(entry)) return;
-      try {
-        gateway.wsServer.handleMessage(session, Buffer.from(bytes));
-      } catch {}
+      gateway.wsServer.deliverRtcInbound(session, bytes);
     },
     verifyInbound: (session) => {
       const entry = sessions.getBySession(session);

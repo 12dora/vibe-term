@@ -25,13 +25,17 @@ export class StreamReplayState {
   private resumeSnapshot = false;
   private resumeGeneration: bigint | null = null;
 
-  noteOutbound(bytes: Uint8Array): void {
-    let env: ReturnType<typeof wsBorsh.decodeEnvelope>;
+  private tryDecodeEnvelope(bytes: Uint8Array): wsBorsh.Envelope | null {
     try {
-      env = wsBorsh.decodeEnvelope(bytes);
+      return wsBorsh.decodeEnvelope(bytes);
     } catch {
-      return;
+      return null;
     }
+  }
+
+  noteOutbound(bytes: Uint8Array): void {
+    const env = this.tryDecodeEnvelope(bytes);
+    if (!env) return;
     this.outboundSeq = env.seq;
     try {
       switch (env.kind) {
@@ -92,12 +96,8 @@ export class StreamReplayState {
   }
 
   noteInbound(bytes: Uint8Array): InboundReplayNote {
-    let env: ReturnType<typeof wsBorsh.decodeEnvelope>;
-    try {
-      env = wsBorsh.decodeEnvelope(bytes);
-    } catch {
-      return { kind: null };
-    }
+    const env = this.tryDecodeEnvelope(bytes);
+    if (!env) return { kind: null };
     if (env.kind === wsBorsh.KIND_DEVICE_CONNECTED) {
       try {
         const payload = wsBorsh.decodePayload(wsBorsh.schema.DeviceConnectedSchema, env.payload);
@@ -164,12 +164,8 @@ export class StreamReplayState {
   }
 
   rewriteQueuedFrame(bytes: Uint8Array): Uint8Array | null {
-    let env: ReturnType<typeof wsBorsh.decodeEnvelope>;
-    try {
-      env = wsBorsh.decodeEnvelope(bytes);
-    } catch {
-      return bytes;
-    }
+    const env = this.tryDecodeEnvelope(bytes);
+    if (!env) return bytes;
     if (env.kind !== wsBorsh.KIND_CANONICAL_COMMAND) return bytes;
     try {
       const command = wsBorsh.decodeCanonicalCommandPayload(env.payload).command;
@@ -244,8 +240,12 @@ export class StreamReplayState {
   private paneSubPayloads(): Array<{ deviceId: string; paneIds: string[] } | null> {
     const out: Array<{ deviceId: string; paneIds: string[] } | null> = [];
     for (const frame of this.paneSubs.values()) {
+      const env = this.tryDecodeEnvelope(frame);
+      if (!env) {
+        out.push(null);
+        continue;
+      }
       try {
-        const env = wsBorsh.decodeEnvelope(frame);
         out.push(wsBorsh.decodePayload(wsBorsh.schema.TmuxSubscribePanesSchema, env.payload));
       } catch {
         out.push(null);

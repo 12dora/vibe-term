@@ -225,37 +225,37 @@ export class WebSocketServer
     ws: ServerWebSocket<GatewaySocketData> | GatewaySession,
     message: string | Buffer
   ): void {
-    if (typeof message === 'string') {
-      return;
-    }
+    if (typeof message === 'string') return;
+    this.deliverRtcInbound(this.bindingOf(ws).session, message);
+  }
 
-    const { session } = this.bindingOf(ws);
-    if (session.closed) {
-      return;
-    }
-    const data: Uint8Array = message;
-
-    if (!wsBorsh.checkMagic(data)) {
-      this.sendError(session, null, wsBorsh.ERROR_INVALID_FRAME, 'Missing magic bytes', false);
-      return;
-    }
-
-    let envelope: wsBorsh.Envelope;
+  deliverRtcInbound(session: GatewaySession, bytes: Uint8Array): void {
+    if (session.closed) return;
     try {
-      envelope = wsBorsh.decodeEnvelope(data);
-    } catch (err) {
-      const e = err instanceof wsBorsh.WsBorshError ? err : null;
-      this.sendError(
-        session,
-        null,
-        e?.code ?? wsBorsh.ERROR_INVALID_FRAME,
-        e?.message ?? 'Invalid envelope',
-        e?.retryable ?? false
-      );
-      return;
-    }
-
-    this.handleDecodedEnvelope(session, envelope);
+      if (!wsBorsh.checkMagic(bytes)) {
+        this.sendError(session, null, wsBorsh.ERROR_INVALID_FRAME, 'Missing magic bytes', false);
+        return;
+      }
+      let envelope: wsBorsh.Envelope;
+      try {
+        envelope = wsBorsh.decodeEnvelope(bytes);
+      } catch (err) {
+        const e = err instanceof wsBorsh.WsBorshError ? err : null;
+        this.sendError(
+          session,
+          null,
+          e?.code ?? wsBorsh.ERROR_INVALID_FRAME,
+          e?.message ?? 'Invalid envelope',
+          e?.retryable ?? false
+        );
+        return;
+      }
+      const p = envelope.payload;
+      // 入站缓冲可能被回收；owned 启发式会把整块 ArrayBuffer 视图当成已持有，须再排除仍指向入站缓冲的情况。
+      const owned =
+        p.buffer !== bytes.buffer && p.byteOffset === 0 && p.byteLength === p.buffer.byteLength;
+      this.handleDecodedEnvelope(session, owned ? envelope : { ...envelope, payload: p.slice() });
+    } catch {}
   }
 
   handleDecodedEnvelope(session: GatewaySession, envelope: wsBorsh.Envelope): void {

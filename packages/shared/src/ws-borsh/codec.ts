@@ -155,21 +155,6 @@ export function decodePayload<T>(schema: Schema<T>, data: Uint8Array): T {
   }
 }
 
-export function decodeEnvelopeAndPayload<T>(
-  envelopeData: Uint8Array,
-  payloadSchema: Schema<T>
-): DecodedEnvelope<T> {
-  const envelope = decodeEnvelope(envelopeData);
-  const payload = decodePayload(payloadSchema, envelope.payload);
-  return {
-    version: envelope.version,
-    kind: envelope.kind,
-    flags: envelope.flags,
-    seq: envelope.seq,
-    payload,
-  };
-}
-
 // ========== Chunk 编码/解码 ==========
 
 export type ChunkData = b.infer<typeof ChunkSchema>;

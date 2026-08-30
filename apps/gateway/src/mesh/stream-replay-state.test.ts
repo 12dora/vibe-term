@@ -48,3 +48,12 @@ describe('StreamReplayState.noteInbound', () => {
     expect(replay.noteInbound(new Uint8Array([1, 2, 3]))).toEqual({ kind: null });
   });
 });
+
+describe('StreamReplayState.rewriteQueuedFrame', () => {
+  test('无法解码的帧原样返回', () => {
+    const replay = new StreamReplayState();
+    const original = new Uint8Array([0xde, 0xad, 0xbe, 0xef]);
+    const returned = replay.rewriteQueuedFrame(original);
+    expect(returned).toBe(original);
+  });
+});

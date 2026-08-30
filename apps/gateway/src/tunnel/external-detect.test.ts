@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import {
+  EMPTY_EXTERNAL,
   ExternalTunnelDetector,
   hostnamesFromLog,
   parseArgv,
@@ -8,6 +9,7 @@ import {
   parseProcessList,
   parseTunnelToken,
   serviceHitsOrigin,
+  toExternalStatus,
 } from './external-detect';
 
 describe('external tunnel parsing', () => {
@@ -289,5 +291,56 @@ ingress:
       tokenAccountId: 'acct',
     });
     expect(JSON.stringify(found)).not.toContain('super-secret');
+  });
+
+  test('invalidate drops the per-instance cache', async () => {
+    let scans = 0;
+    const d = new ExternalTunnelDetector({
+      originPort: 19883,
+      now: () => 1,
+      homedir: () => '/no-home',
+      platform: 'linux',
+      listProcesses: async () => {
+        scans += 1;
+        return '';
+      },
+      readFile: async () => null,
+      listDir: async () => [],
+    });
+    await d.detect();
+    await d.detect();
+    expect(scans).toBe(1);
+    d.invalidate();
+    await d.detect();
+    expect(scans).toBe(2);
+  });
+});
+
+describe('toExternalStatus', () => {
+  test('projects DetectedTunnel onto TunnelExternalStatus and copies hostnames', () => {
+    const detected = {
+      ...EMPTY_EXTERNAL,
+      detected: true,
+      source: 'process' as const,
+      tunnelId: 'tid',
+      tunnelName: 'tmex',
+      hostnames: ['tmex.example.com'],
+      hasOriginCert: true,
+      running: true,
+    };
+    const status = toExternalStatus(detected);
+    expect(status).toEqual({
+      detected: true,
+      source: 'process',
+      configPath: null,
+      tunnelId: 'tid',
+      tunnelName: 'tmex',
+      hostnames: ['tmex.example.com'],
+      hasOriginCert: true,
+      running: true,
+    });
+    expect(status.hostnames).not.toBe(detected.hostnames);
+    status.hostnames.push('other.example.com');
+    expect(detected.hostnames).toEqual(['tmex.example.com']);
   });
 });

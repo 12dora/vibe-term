@@ -7,7 +7,6 @@ import type {
   TunnelActionResponse,
   TunnelBinaryStatus,
   TunnelErrorResponse,
-  TunnelExternalStatus,
   TunnelJobKind,
   TunnelJobStatus,
   TunnelMode,
@@ -35,9 +34,11 @@ import {
 import { type Downloader, defaultDownloader, installCloudflaredBinary } from './download';
 import { TunnelError, tunnelErrorFrom, tunnelHttpStatus } from './errors';
 import {
+  EMPTY_EXTERNAL,
   type ExternalDetectDeps,
   type ExternalDetection,
   ExternalTunnelDetector,
+  toExternalStatus,
 } from './external-detect';
 import { defaultTunnelName, normalizeTunnelHostname, normalizeTunnelName } from './hostname';
 import { LogRingBuffer } from './log-buffer';
@@ -102,22 +103,6 @@ const HOST_ENV_MESSAGE = 'Host environment is not managed by tmex-cli';
 const EXPOSURE_ACK_MESSAGE =
   'This instance has no sign-in and no Cloudflare Access protection; confirm public exposure explicitly';
 const EXTERNAL_MANAGED_MESSAGE = 'managed by the system service';
-
-const EMPTY_EXTERNAL: ExternalDetection = {
-  detected: false,
-  source: null,
-  configPath: null,
-  tunnelId: null,
-  tunnelName: null,
-  hostnames: [],
-  hasOriginCert: false,
-  running: false,
-  pid: null,
-  tokenFile: null,
-  logFile: null,
-  accountId: null,
-  tokenAccountId: null,
-};
 
 function yamlQuote(value: string): string {
   if (/[:#\n]|^\s|\s$/.test(value)) {
@@ -318,7 +303,7 @@ export class TunnelManager {
     const persisted = this.safePersisted();
     const loggedIn = existsSync(originCertPath(this.tunnelDir));
     const access = this.accessStatus();
-    const external = this.externalStatus();
+    const external = toExternalStatus(this.lastExternal);
     const loginEnforced = this.loginEnforcedFn();
     const exposureProtected = this.isExposureProtected(persisted, access, loginEnforced);
     const running = persisted.externallyManaged
@@ -603,20 +588,6 @@ export class TunnelManager {
         lastError: null,
       };
     }
-  }
-
-  private externalStatus(): TunnelExternalStatus {
-    const ext = this.lastExternal;
-    return {
-      detected: ext.detected,
-      source: ext.source,
-      configPath: ext.configPath,
-      tunnelId: ext.tunnelId,
-      tunnelName: ext.tunnelName,
-      hostnames: [...ext.hostnames],
-      hasOriginCert: ext.hasOriginCert,
-      running: ext.running,
-    };
   }
 
   async refreshExternal(): Promise<void> {
