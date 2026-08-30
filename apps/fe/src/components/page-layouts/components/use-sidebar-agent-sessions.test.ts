@@ -228,8 +228,13 @@ describe('isSessionPaused', () => {
     expect(isSessionPaused(session({ id: 'a' }), true)).toBe(true);
   });
 
-  test('paused when the backend propagated NODE_OFFLINE', () => {
-    expect(isSessionPaused(session({ id: 'a', lastError: 'NODE_OFFLINE' }), false)).toBe(true);
+  test('mesh state wins: a node back online reopens a session still holding NODE_OFFLINE', () => {
+    expect(isSessionPaused(session({ id: 'a', lastError: 'NODE_OFFLINE' }), false)).toBe(false);
+  });
+
+  test('falls back to the session error while the mesh state is unknown', () => {
+    expect(isSessionPaused(session({ id: 'a', lastError: 'NODE_OFFLINE' }), undefined)).toBe(true);
+    expect(isSessionPaused(session({ id: 'a', lastError: 'boom' }), undefined)).toBe(false);
   });
 
   test('not paused for an online node with an unrelated error', () => {

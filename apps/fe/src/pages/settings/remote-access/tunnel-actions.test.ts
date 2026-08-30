@@ -8,7 +8,12 @@ import type {
   TunnelJobStatus,
   TunnelStatusResponse,
 } from '@tmex/shared';
-import { TunnelActionController, checkResultOf, isTunnelBusy } from './tunnel-actions';
+import {
+  TunnelActionController,
+  checkResultOf,
+  checkRunning,
+  isTunnelBusy,
+} from './tunnel-actions';
 
 function noop(): void {}
 
@@ -36,6 +41,7 @@ function status(overrides: Partial<TunnelStatusResponse> = {}): TunnelStatusResp
     },
     job: null,
     trustProxy: false,
+    configuredTrustProxy: false,
     restartRequired: false,
     log: [],
     ...overrides,
@@ -151,17 +157,48 @@ describe('TunnelActionController 结果处理', () => {
     expect(h.controller.snapshot().error).toBeNull();
   });
 
-  test('check 成功记为可访问，job 带 error 记为不可达', async () => {
-    const ok = harness(async () => ({ status: status(), job: job() }));
-    await ok.controller.run({ action: 'check' });
-    expect(ok.controller.snapshot().check).toEqual({ ok: true, message: null });
+  test('check 只记下 job id，结论要等轮询：running → done', async () => {
+    const accepted = job({ id: 'check-1', state: 'running', finishedAt: null });
+    const h = harness(async () => ({ status: status({ job: accepted }), job: accepted }));
+    await h.controller.run({ action: 'check' });
 
-    const bad = harness(async () => ({
-      status: status(),
-      job: job({ state: 'error', error: { code: 'process_failed', message: '502 bad gateway' } }),
-    }));
-    await bad.controller.run({ action: 'check' });
-    expect(bad.controller.snapshot().check).toEqual({ ok: false, message: '502 bad gateway' });
+    expect(h.controller.snapshot().checkJobId).toBe('check-1');
+    // 受理时的 202 什么都不说明，此刻不能有结论。
+    expect(checkResultOf(accepted, 'check-1')).toBeNull();
+
+    const done = job({ id: 'check-1', state: 'done' });
+    expect(checkResultOf(done, 'check-1')).toEqual({ ok: true, message: null });
+  });
+
+  test('check 的 job 转 error 时给不可达与服务端 message：running → error', async () => {
+    const accepted = job({ id: 'check-2', state: 'running', finishedAt: null });
+    const h = harness(async () => ({ status: status({ job: accepted }), job: accepted }));
+    await h.controller.run({ action: 'check' });
+
+    const failed = job({
+      id: 'check-2',
+      state: 'error',
+      error: { code: 'unknown', message: 'health check HTTP 502' },
+    });
+    expect(checkResultOf(failed, h.controller.snapshot().checkJobId)).toEqual({
+      ok: false,
+      message: 'health check HTTP 502',
+    });
+  });
+
+  test('再次点击检查会先清掉上一次的 job id', async () => {
+    let id = 'check-a';
+    const h = harness(async () => {
+      const accepted = job({ id, state: 'running', finishedAt: null });
+      return { status: status({ job: accepted }), job: accepted };
+    });
+    await h.controller.run({ action: 'check' });
+    expect(h.controller.snapshot().checkJobId).toBe('check-a');
+    // 上一个 job 结束后才轮得到第二次检查（job 在跑时动作会被锁挡住）。
+    h.setStatus(status({ job: job({ id: 'check-a', state: 'done' }) }));
+    id = 'check-b';
+    await h.controller.run({ action: 'check' });
+    expect(h.controller.snapshot().checkJobId).toBe('check-b');
   });
 
   test('失败时保留错误码并重拉状态', async () => {
@@ -191,17 +228,35 @@ describe('TunnelActionController 结果处理', () => {
   });
 });
 
+describe('checkRunning', () => {
+  test('只在轮询到的就是这次受理的 job 且仍在跑时为真', () => {
+    expect(checkRunning(job({ id: 'check-1', state: 'running' }), 'check-1')).toBe(true);
+    expect(checkRunning(job({ id: 'check-1', state: 'done' }), 'check-1')).toBe(false);
+    expect(checkRunning(null, 'check-1')).toBe(false);
+    expect(checkRunning(job({ id: 'check-1', state: 'running' }), null)).toBe(false);
+  });
+
+  test('被别的动作的 job 顶掉后不再算「正在检查」，也不给结论', () => {
+    const other = job({ id: 'start-1', kind: 'start', state: 'running' });
+    expect(checkRunning(other, 'check-1')).toBe(false);
+    expect(checkResultOf(other, 'check-1')).toBeNull();
+  });
+});
+
 describe('checkResultOf', () => {
-  test('没有 job 时按可访问处理', () => {
-    expect(checkResultOf({ status: status(), job: null })).toEqual({ ok: true, message: null });
+  test('没有 job、job 对不上号或还在跑，一律没有结论', () => {
+    expect(checkResultOf(null, 'check-1')).toBeNull();
+    expect(checkResultOf(job({ id: 'other', state: 'done' }), 'check-1')).toBeNull();
+    expect(checkResultOf(job({ id: 'check-1', state: 'running' }), 'check-1')).toBeNull();
+    expect(checkResultOf(job({ id: 'check-1', state: 'done' }), null)).toBeNull();
   });
 
   test('job 报错但没有 message 时退回错误码', () => {
     expect(
-      checkResultOf({
-        status: status(),
-        job: job({ state: 'error', error: { code: 'process_failed', message: '' } }),
-      })
+      checkResultOf(
+        job({ id: 'check-1', state: 'error', error: { code: 'process_failed', message: '' } }),
+        'check-1'
+      )
     ).toEqual({ ok: false, message: 'process_failed' });
   });
 });

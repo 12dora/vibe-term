@@ -9,11 +9,14 @@ import {
   currentWizardStep,
   describeTunnelError,
   effectiveMode,
+  isAuthRequiredError,
   isValidHostname,
+  isValidTunnelName,
   jobStepKey,
   logTail,
   stepState,
   toTunnelError,
+  trustProxyRestartRequired,
   tunnelErrorKey,
   tunnelPill,
   tunnelPollInterval,
@@ -43,6 +46,7 @@ function status(overrides: Partial<TunnelStatusResponse> = {}): TunnelStatusResp
     },
     job: null,
     trustProxy: false,
+    configuredTrustProxy: false,
     restartRequired: false,
     log: [],
     ...overrides,
@@ -123,15 +127,87 @@ describe('isValidHostname', () => {
   });
 });
 
+describe('isValidTunnelName', () => {
+  test('接受小写字母、数字、连字符与下划线', () => {
+    expect(isValidTunnelName('tmex')).toBe(true);
+    expect(isValidTunnelName('tmex-01_a')).toBe(true);
+    expect(isValidTunnelName('9')).toBe(true);
+  });
+
+  test('拒绝路径分隔符、点、大写、空串与超长名称', () => {
+    expect(isValidTunnelName('../../package')).toBe(false);
+    expect(isValidTunnelName('a/b')).toBe(false);
+    expect(isValidTunnelName('a\\b')).toBe(false);
+    expect(isValidTunnelName('a.b')).toBe(false);
+    expect(isValidTunnelName('Tmex')).toBe(false);
+    expect(isValidTunnelName('')).toBe(false);
+    expect(isValidTunnelName('-tmex')).toBe(false);
+    expect(isValidTunnelName('_tmex')).toBe(false);
+    expect(isValidTunnelName('a'.repeat(64))).toBe(false);
+    expect(isValidTunnelName('a'.repeat(63))).toBe(true);
+  });
+});
+
 describe('jobStepKey', () => {
-  test('已知步骤给文案键', () => {
-    expect(jobStepKey('download')).toBe('settings.remoteAccess.jobStep.download');
-    expect(jobStepKey('route_dns')).toBe('settings.remoteAccess.jobStep.route_dns');
+  test('后端实际发出的步骤全部有文案键', () => {
+    for (const step of [
+      'download',
+      'extract',
+      'verify',
+      'login',
+      'wait_cert',
+      'cancelled',
+      'create',
+      'route_dns',
+      'start',
+      'check',
+      'ok',
+    ]) {
+      expect(jobStepKey(step)).toBe(`settings.remoteAccess.jobStep.${step}`);
+    }
   });
 
   test('未知或缺失步骤返回 null', () => {
     expect(jobStepKey('mystery')).toBeNull();
     expect(jobStepKey(null)).toBeNull();
+  });
+});
+
+describe('trustProxyRestartRequired', () => {
+  test('已保存值与生效值一致且后端没报重启时不提示', () => {
+    expect(trustProxyRestartRequired(status())).toBe(false);
+  });
+
+  test('已保存值与生效值不一致即需重启', () => {
+    expect(trustProxyRestartRequired(status({ configuredTrustProxy: true }))).toBe(true);
+  });
+
+  test('后端自报需要重启时也提示', () => {
+    expect(trustProxyRestartRequired(status({ restartRequired: true }))).toBe(true);
+  });
+});
+
+describe('isAuthRequiredError', () => {
+  test('动作错误或 job 错误任一为 auth_required 都算', () => {
+    expect(isAuthRequiredError(status(), null)).toBe(false);
+    expect(isAuthRequiredError(status(), { code: 'busy', message: 'busy' })).toBe(false);
+    expect(isAuthRequiredError(status(), { code: 'auth_required', message: 'no user' })).toBe(true);
+    expect(
+      isAuthRequiredError(
+        status({
+          job: {
+            id: 'j1',
+            kind: 'create',
+            state: 'error',
+            step: null,
+            error: { code: 'auth_required', message: 'no user' },
+            startedAt: '2026-08-30T00:00:00.000Z',
+            finishedAt: '2026-08-30T00:00:01.000Z',
+          },
+        }),
+        null
+      )
+    ).toBe(true);
   });
 });
 
@@ -141,6 +217,7 @@ describe('错误映射', () => {
 
   test('已知错误码走本地化键', () => {
     expect(tunnelErrorKey('login_timeout')).toBe('settings.remoteAccess.errors.login_timeout');
+    expect(tunnelErrorKey('auth_required')).toBe('settings.remoteAccess.errors.auth_required');
     expect(describeTunnelError(t, { code: 'busy', message: 'busy' })).toBe(
       'settings.remoteAccess.errors.busy'
     );

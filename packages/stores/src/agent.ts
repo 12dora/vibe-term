@@ -8,6 +8,8 @@ import { persist } from 'zustand/middleware';
 import { createAgentDeltaBuffer } from './agent-delta-buffer';
 import { type AgentEventContext, handleAgentEventMessage } from './agent-event-router';
 import { createAgentHistorySync } from './agent-history-sync';
+import { activeSessionIds } from './agent-node-state';
+import { AGENT_PERSIST_VERSION, migrateAgentPersistedState } from './agent-persist';
 import { createAgentSessionActions } from './agent-session-actions';
 import { type AgentState, createInitialAgentStateData } from './agent-state';
 import type { RuntimeCore } from './runtime';
@@ -89,9 +91,9 @@ export function createAgentStore(core: RuntimeCore, disposers: Array<() => void>
               for (const sessionId of subscribedSessions) {
                 sendSubscribe(sessionId);
               }
-              const activeSessionId = get().activeSessionId;
-              if (activeSessionId) {
-                void get().loadHistory(activeSessionId);
+              // 每个 node 的当前会话各自补史：断线期间的增量都要补上
+              for (const sessionId of activeSessionIds(get())) {
+                void get().loadHistory(sessionId);
               }
             })
           );
@@ -113,17 +115,18 @@ export function createAgentStore(core: RuntimeCore, disposers: Array<() => void>
           ensureInitialized() {
             setupClientHandlers();
             core.client.connect();
-            const activeSessionId = get().activeSessionId;
-            if (activeSessionId && !subscribedSessions.has(activeSessionId)) {
-              subscribeSession(activeSessionId);
+            for (const sessionId of activeSessionIds(get())) {
+              if (!subscribedSessions.has(sessionId)) subscribeSession(sessionId);
             }
           },
         };
       },
       {
         name: `${core.storagePrefix}tmex-agent`,
+        version: AGENT_PERSIST_VERSION,
+        migrate: migrateAgentPersistedState,
         partialize: (state) => ({
-          activeSessionId: state.activeSessionId,
+          activeSessionIdByNode: state.activeSessionIdByNode,
           defaultWriteMode: state.defaultWriteMode,
         }),
       }

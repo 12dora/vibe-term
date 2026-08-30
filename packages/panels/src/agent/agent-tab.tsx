@@ -62,6 +62,7 @@ export function AgentTab(host: AgentTabHost = {}) {
       {model.hasContext && (
         <AgentComposer
           draftEmpty={model.draftEmpty}
+          draftPrompt={model.draft?.prompt ?? null}
           disabled={model.inputDisabled}
           running={model.running}
           hasActiveSession={Boolean(model.activeSession)}

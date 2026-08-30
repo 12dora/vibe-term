@@ -120,7 +120,7 @@ export function WebhooksTab() {
               data-testid="webhook-url-input"
               value={newWebhookUrl}
               onChange={(event) => setNewWebhookUrl(event.target.value)}
-              placeholder="https://example.com/webhook"
+              placeholder={t('webhook.urlPlaceholder')}
               className="min-h-10"
             />
           </div>

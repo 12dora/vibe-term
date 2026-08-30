@@ -1,11 +1,21 @@
 // 远程访问状态卡：状态徽标、公网地址、启停 / 移除 / 连通性检查，以及可折叠的 cloudflared 日志。
 
 import type { TunnelStatusResponse } from '@tmex/shared';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@tmex/ui/alert-dialog';
 import { Badge } from '@tmex/ui/badge';
 import { Button, buttonVariants } from '@tmex/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@tmex/ui/card';
 import { ExternalLink, Loader2, Play, Radar, Square, Trash2 } from 'lucide-react';
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { CopyButton } from '../nodes/copy-feedback';
 import { SetupNotice } from '../nodes/setup/form-parts';
@@ -33,6 +43,9 @@ export function TunnelStatusCard({
   const configured = status.config.mode !== 'off';
   const stoppable = status.process.state === 'running' || status.process.state === 'starting';
   const { busy, pending } = actions;
+  // 命名隧道的移除会连 Cloudflare 上的隧道一起删掉，不可撤销，必须二次确认。
+  const [confirmRemove, setConfirmRemove] = useState(false);
+  const remove = () => actions.run({ action: 'remove' });
 
   return (
     <Card data-testid="remote-access-status">
@@ -141,13 +154,19 @@ export function TunnelStatusCard({
               size="sm"
               variant="destructive"
               disabled={busy}
-              onClick={() => actions.run({ action: 'remove' })}
+              onClick={() => (status.config.mode === 'named' ? setConfirmRemove(true) : remove())}
               data-testid="remote-access-remove"
             >
               {pending === 'remove' ? <Loader2 className="animate-spin" /> : <Trash2 />}
               {t('settings.remoteAccess.actions.remove')}
             </Button>
           </div>
+        )}
+
+        {actions.checking && (
+          <SetupNotice tone="info" testId="remote-access-check-running">
+            {t('settings.remoteAccess.check.running')}
+          </SetupNotice>
         )}
 
         {actions.check && (
@@ -166,7 +185,61 @@ export function TunnelStatusCard({
 
         <TunnelLog log={status.log} />
       </CardContent>
+      <ConfirmRemoveDialog
+        open={confirmRemove}
+        onCancel={() => setConfirmRemove(false)}
+        onConfirm={() => {
+          setConfirmRemove(false);
+          remove();
+        }}
+      />
     </Card>
+  );
+}
+
+/** 命名隧道的移除确认：停止隧道、删除本机凭证，并在 Cloudflare 删除该隧道。 */
+function ConfirmRemoveDialog({
+  open,
+  onCancel,
+  onConfirm,
+}: {
+  open: boolean;
+  onCancel: () => void;
+  onConfirm: () => void;
+}) {
+  const { t } = useTranslation();
+  if (!open) return null;
+  return (
+    <AlertDialog
+      open
+      onOpenChange={(next) => {
+        if (!next) onCancel();
+      }}
+    >
+      <AlertDialogContent data-testid="remote-access-confirm-remove">
+        <AlertDialogHeader>
+          <AlertDialogTitle>{t('settings.remoteAccess.confirmRemove.title')}</AlertDialogTitle>
+          <AlertDialogDescription>
+            <span className="block">{t('settings.remoteAccess.confirmRemove.description')}</span>
+            <span className="mt-2 block">
+              {t('settings.remoteAccess.confirmRemove.irreversible')}
+            </span>
+          </AlertDialogDescription>
+        </AlertDialogHeader>
+        <AlertDialogFooter>
+          <AlertDialogCancel onClick={onCancel} data-testid="remote-access-confirm-remove-cancel">
+            {t('settings.remoteAccess.confirmRemove.cancel')}
+          </AlertDialogCancel>
+          <AlertDialogAction
+            variant="destructive"
+            onClick={onConfirm}
+            data-testid="remote-access-confirm-remove-confirm"
+          >
+            {t('settings.remoteAccess.confirmRemove.confirm')}
+          </AlertDialogAction>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
   );
 }
 

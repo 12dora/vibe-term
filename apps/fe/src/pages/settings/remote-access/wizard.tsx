@@ -6,12 +6,20 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@tmex
 import { Cloud, Download, Loader2, Rocket, RotateCcw, Zap } from 'lucide-react';
 import type { ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
+import { Link } from 'react-router';
 import { useRestartGateway } from '../nodes/restart/use-restart-now';
 import { SetupNotice, SwitchRow } from '../nodes/setup/form-parts';
 import { NamedTunnelStep } from './named-step';
 import { DetailRow, JobProgress, WizardStepCard } from './step-shell';
 import type { TunnelActions } from './tunnel-actions';
-import { currentWizardStep, describeTunnelError, effectiveMode, stepState } from './tunnel-model';
+import {
+  currentWizardStep,
+  describeTunnelError,
+  effectiveMode,
+  isAuthRequiredError,
+  stepState,
+  trustProxyRestartRequired,
+} from './tunnel-model';
 
 export interface TunnelWizardProps {
   status: TunnelStatusResponse;
@@ -19,6 +27,8 @@ export interface TunnelWizardProps {
   chosenMode: TunnelMode | null;
   onChooseMode: (mode: TunnelMode) => void;
   isHub: boolean;
+  /** 本机登录已关闭（`/api/auth/mode` 报 `none`）：暴露到公网前必须先开。 */
+  authDisabled: boolean;
   onRestarted: () => void;
 }
 
@@ -28,11 +38,13 @@ export function TunnelWizard({
   chosenMode,
   onChooseMode,
   isHub,
+  authDisabled,
   onRestarted,
 }: TunnelWizardProps) {
   const { t } = useTranslation();
   const current = currentWizardStep(status, chosenMode);
   const mode = effectiveMode(status, chosenMode);
+  const authRequired = authDisabled || isAuthRequiredError(status, actions.error);
 
   return (
     <Card data-testid="remote-access-wizard">
@@ -50,6 +62,15 @@ export function TunnelWizard({
         >
           <InstallStep status={status} actions={actions} />
         </WizardStepCard>
+
+        {authRequired && (
+          <SetupNotice tone="warning" testId="remote-access-auth-required">
+            <p>{t('settings.remoteAccess.authRequired.notice')}</p>
+            <Link className="text-primary underline-offset-4 hover:underline" to="?tab=nodes">
+              {t('settings.remoteAccess.authRequired.link')}
+            </Link>
+          </SetupNotice>
+        )}
 
         <WizardStepCard
           index={2}
@@ -298,19 +319,30 @@ function ProxyStep({
 }) {
   const { t } = useTranslation();
   const restart = useRestartGateway(undefined, onRestarted);
+  const restartRequired = trustProxyRestartRequired(status);
 
   return (
     <div className="space-y-3">
+      {/* 开关绑已保存值：生效值要等重启，直接绑它会让开关在保存后弹回去。 */}
       <SwitchRow
         id="remote-access-trust-proxy"
         label={t('settings.remoteAccess.steps.proxy.trustProxy')}
         hint={t('settings.remoteAccess.steps.proxy.trustProxyHint')}
-        checked={status.trustProxy}
+        checked={status.configuredTrustProxy}
         disabled={actions.busy}
         onCheckedChange={(checked) =>
           actions.run({ action: 'set_trust_proxy', trustProxy: checked })
         }
       />
+      <p className="text-xs text-muted-foreground">
+        {t('settings.remoteAccess.steps.proxy.trustProxyDetail')}
+      </p>
+      <DetailRow
+        label={t('settings.remoteAccess.steps.proxy.trustProxyEffective')}
+        testId="remote-access-trust-proxy-effective"
+      >
+        {t(`settings.remoteAccess.steps.proxy.trustProxyState.${status.trustProxy ? 'on' : 'off'}`)}
+      </DetailRow>
       <SwitchRow
         id="remote-access-auto-start"
         label={t('settings.remoteAccess.steps.proxy.autoStart')}
@@ -320,7 +352,7 @@ function ProxyStep({
         onCheckedChange={(checked) => actions.run({ action: 'set_auto_start', autoStart: checked })}
       />
 
-      {status.restartRequired && (
+      {restartRequired && (
         <div
           className="flex flex-wrap items-center gap-2 rounded-lg bg-amber-500/10 p-2 text-xs text-amber-600 dark:text-amber-400"
           data-testid="remote-access-restart-required"

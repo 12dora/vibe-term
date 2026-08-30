@@ -302,6 +302,7 @@ function FileLeaf({
   root,
   depth,
 }: { entry: FileEntryDto; root: FileRootDto; depth: number }) {
+  const { t } = useTranslation();
   const navigate = useNavigate();
   const runtime = useRuntime();
   const { isMobile, setOpenMobile } = useSidebar();
@@ -344,7 +345,10 @@ function FileLeaf({
             />
             <span className="min-w-0 flex-1 truncate text-xs">{entry.name}</span>
             {entry.isSymlink && (
-              <span className="shrink-0 text-[9px] text-muted-foreground/60" title="symlink">
+              <span
+                className="shrink-0 text-[9px] text-muted-foreground/60"
+                title={t('files.symlink')}
+              >
                 ↗
               </span>
             )}

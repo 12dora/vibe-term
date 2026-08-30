@@ -2,7 +2,6 @@ import { type ReactNode, useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 
 import type { AgentWriteMode } from '@tmex/shared';
-import { useAgentStore } from '@tmex/stores/react';
 import { Button } from '@tmex/ui/button';
 import { Switch } from '@tmex/ui/switch';
 import { Textarea } from '@tmex/ui/textarea';
@@ -17,6 +16,7 @@ function ChatInput({
   running,
   steerable,
   disabled,
+  draftPrompt,
   modelPicker,
   writeModeControl,
 }: {
@@ -26,14 +26,15 @@ function ChatInput({
   running?: boolean;
   steerable?: boolean;
   disabled?: boolean;
+  /** 本 node 草稿上的预填 prompt（rsync 自动安装流程） */
+  draftPrompt?: string | null;
   modelPicker?: ReactNode;
   writeModeControl?: ReactNode;
 }) {
   const { t } = useTranslation();
   const [text, setText] = useState('');
 
-  // 消费草稿预填 prompt（rsync 自动安装流程）：出现新预填值时填入输入框一次，等待用户手动发送。
-  const draftPrompt = useAgentStore((state) => state.draft?.prompt ?? null);
+  // 消费草稿预填 prompt：出现新预填值时填入输入框一次，等待用户手动发送。
   const appliedPromptRef = useRef<string | null>(null);
   useEffect(() => {
     if (draftPrompt && draftPrompt !== appliedPromptRef.current) {
@@ -136,6 +137,7 @@ function ChatInput({
 /** 输入区：空草稿态的欢迎块 + 输入框及其模型 / 写入模式控件 */
 export function AgentComposer({
   draftEmpty,
+  draftPrompt,
   disabled,
   running,
   hasActiveSession,
@@ -152,6 +154,8 @@ export function AgentComposer({
   onAllowControlCharsChange,
 }: {
   draftEmpty: boolean;
+  /** 本 node 草稿上的预填 prompt */
+  draftPrompt: string | null;
   disabled: boolean;
   running: boolean;
   hasActiveSession: boolean;
@@ -180,6 +184,7 @@ export function AgentComposer({
       )}
       <ChatInput
         disabled={disabled}
+        draftPrompt={draftPrompt}
         running={running}
         steerable={hasActiveSession}
         onSend={onSend}

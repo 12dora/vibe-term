@@ -3,6 +3,7 @@ import { describe, expect, test } from 'bun:test';
 import { ApiClient, type FetchLike } from '@tmex/api-client';
 import { noopNotificationSink } from '@tmex/notifications';
 import type { AgentSessionDto } from '@tmex/shared';
+import { activeSessionIdOnNode } from './agent-node-state';
 import { createAgentSessionActions } from './agent-session-actions';
 import { mergeFetchedSessions } from './agent-session-map';
 import {
@@ -161,7 +162,7 @@ describe('loadSessions concurrency', () => {
 
     expect(Object.keys(harness.state().sessions).sort()).toEqual(['a', 'new1']);
     expect(harness.state().sessionOrder).toEqual(['new1', 'a']);
-    expect(harness.state().activeSessionId).toBe('new1');
+    expect(activeSessionIdOnNode(harness.state(), null)).toBe('new1');
   });
 
   test('keeps a rename that landed while the list request is in flight', async () => {
@@ -184,7 +185,7 @@ describe('loadSessions concurrency', () => {
     const harness = createLoadHarness({
       sessions: { a: doomed, b: other },
       sessionOrder: ['b', 'a'],
-      activeSessionId: 'a',
+      activeSessionIdByNode: { self: 'a' },
     });
 
     const loading = harness.state().loadSessions();
@@ -195,7 +196,7 @@ describe('loadSessions concurrency', () => {
 
     expect(harness.state().sessions.a).toBeUndefined();
     expect(harness.state().sessionOrder).toEqual(['b']);
-    expect(harness.state().activeSessionId).toBeNull();
+    expect(activeSessionIdOnNode(harness.state(), null)).toBeNull();
     expect(harness.clearedRuntimes).toEqual(['a']);
   });
 
@@ -223,7 +224,7 @@ describe('loadSessions concurrency', () => {
     const harness = createLoadHarness({
       sessions: { a: kept, b: removed },
       sessionOrder: ['b', 'a'],
-      activeSessionId: 'b',
+      activeSessionIdByNode: { self: 'b' },
     });
 
     const loading = harness.state().loadSessions();
@@ -232,7 +233,7 @@ describe('loadSessions concurrency', () => {
 
     expect(harness.state().sessions.b).toBeUndefined();
     expect(harness.state().sessionOrder).toEqual(['a']);
-    expect(harness.state().activeSessionId).toBeNull();
+    expect(activeSessionIdOnNode(harness.state(), null)).toBeNull();
     expect(harness.state().sessionsLoaded).toBe(true);
   });
 });

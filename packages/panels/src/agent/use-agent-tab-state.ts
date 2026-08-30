@@ -13,7 +13,6 @@ import type {
   Device,
 } from '@tmex/shared';
 import type {
-  AgentState,
   AppRuntime,
   DraftSession,
   HostServices,
@@ -21,8 +20,10 @@ import type {
   SessionInProgress,
 } from '@tmex/stores';
 import {
+  activeSessionIdOnNode,
+  draftOnNode,
   hostAppPath,
-  isSessionOnNode,
+  isDraftMaterializingOnNode,
   normalizeAgentNodeId,
   resolveAgentStore,
 } from '@tmex/stores';
@@ -94,14 +95,6 @@ function useRoutePane(snapshots: SnapshotMap, host: HostServices): RoutePane {
   return { routeDeviceId, routePaneId, routePaneTitle };
 }
 
-/** 会话列表是全 node 共用的一份，本 tab 只认绑定在自己这个 node 上的活动会话 */
-function activeSessionIdOnNode(state: AgentState, nodeId: string | null): string | null {
-  const { activeSessionId } = state;
-  if (!activeSessionId) return null;
-  const session = state.sessions[activeSessionId];
-  return session && isSessionOnNode(session, nodeId) ? activeSessionId : null;
-}
-
 function useAgentSessionSlice(
   agentStore: AgentStoreHandle,
   nodeId: string | null
@@ -111,9 +104,7 @@ function useAgentSessionSlice(
     const id = activeSessionIdOnNode(state, nodeId);
     return id ? state.sessions[id] : undefined;
   });
-  const draft = agentStore((state) =>
-    state.draft && normalizeAgentNodeId(state.draft.nodeId) === nodeId ? state.draft : null
-  );
+  const draft = agentStore((state) => draftOnNode(state, nodeId));
   const messages = agentStore((state) => {
     const id = activeSessionIdOnNode(state, nodeId);
     return id ? state.messages[id] : undefined;
@@ -130,7 +121,7 @@ function useAgentSessionSlice(
     const id = activeSessionIdOnNode(state, nodeId);
     return id ? state.sending[id] : undefined;
   });
-  const materializingDraft = agentStore((state) => state.materializingDraft);
+  const materializingDraft = agentStore((state) => isDraftMaterializingOnNode(state, nodeId));
   const queued = agentStore((state) => {
     const id = activeSessionIdOnNode(state, nodeId);
     return id ? state.queued[id] : undefined;

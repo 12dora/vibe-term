@@ -16,6 +16,7 @@
       "retry": "再試行",
       "pageLoadFailed": "このページの読み込みに失敗しました。",
       "pageLoadFailedHint": "ネットワーク接続を確認してから再試行してください。",
+      "mermaidRenderFailed": "Mermaid のレンダリングに失敗しました：{{message}}",
       "test": "テスト",
       "send": "送信",
       "success": "成功",
@@ -45,6 +46,7 @@
       "sidebarCollapse": "サイドバーを折りたたむ",
       "openSidebar": "サイドバーを開く",
       "closeSidebar": "サイドバーを閉じる",
+      "toggleSubmenu": "サブメニューの開閉",
       "jumpToLatest": "最新にジャンプ",
       "switchToEditor": "エディタ入力に切り替え",
       "switchToDirect": "直接入力に切り替え",
@@ -65,7 +67,7 @@
       "noDevices": "デバイスがありません",
       "noDevicesDescription": "ローカルまたは SSH デバイスを追加して開始",
       "name": "デバイス名",
-      "namePlaceholder": "例：My Server",
+      "namePlaceholder": "例：マイサーバー",
       "type": "タイプ",
       "typeLocal": "ローカルデバイス",
       "typeSSH": "SSH リモートデバイス",
@@ -151,11 +153,11 @@
         "title": "キーボード動作",
         "description": "ソフトウェアキーボード表示時のページの回避方法",
         "modeLift": "ページ移動",
-        "modeLiftDesc": "キーボード表示時にページ全体を上に移動（端末サイズは不変）",
-        "modeResize": "端末リサイズ",
-        "modeResizeDesc": "キーボード上の領域に合わせて端末を縮小（リモートの行数が変わります）",
+        "modeLiftDesc": "キーボード表示時にページ全体を上に移動（ターミナルサイズは不変）",
+        "modeResize": "ターミナルをリサイズ",
+        "modeResizeDesc": "キーボード上の領域に合わせてターミナルを縮小（リモートの行数が変わります）",
         "modeFollow": "カーソル追従",
-        "modeFollowDesc": "カーソルがキーボードの真上に来るよう移動（端末サイズは不変）"
+        "modeFollowDesc": "カーソルがキーボードの真上に来るよう移動（ターミナルサイズは不変）"
       },
       "initializing": "ターミナルを初期化中...",
       "connecting": "デバイスに接続中...",
@@ -166,15 +168,15 @@
       "deviceErrorWithType": "[{{type}}] デバイスエラー",
       "noDeviceSelected": "デバイスが選択されていません",
       "windowClosed": "現在のウィンドウは閉じられました。サイドバーからウィンドウを選択してください。",
-      "paneClosed": "現在のペインは閉じられました。サイドバーからペインを選択してください。",
+      "paneClosed": "現在のターミナルは閉じられました。サイドバーから選択してください。",
       "bellNotification": "ターミナルベル",
       "bellDescriptionWithTitle": "ウィンドウ {{window}} · {{paneLabel}}",
       "bellFallback": "tmux ベルを受信",
       "notificationFallbackTitle": "ターミナル通知",
       "notificationSourceLabel": "{{source}} から",
       "notificationFallbackDetail": "ターミナル通知",
-      "paneTitle": "ペイン {{index}}",
-      "activePane": "現在のペイン",
+      "paneTitle": "ターミナル {{index}}",
+      "activePane": "現在のターミナル",
       "activeWindow": "現在のウィンドウ",
       "editorPlaceholder": "ここにコマンドを入力...",
       "editorClear": "クリア",
@@ -186,7 +188,7 @@
       "inputModeEditor": "エディタ",
       "newWindow": "新規ウィンドウ",
       "closeWindow": "ウィンドウを閉じる",
-      "closePane": "ペインを閉じる",
+      "closePane": "ターミナルを閉じる",
       "copy": "コピー",
       "paste": "貼り付け",
       "copied": "クリップボードにコピーしました",
@@ -263,7 +265,7 @@
           "action": {
             "paste": "貼り付け",
             "toggleKeyboard": "テキスト入力/キーボード切替",
-            "newAgentSession": "新しい Agent セッション",
+            "newAgentSession": "新しいエージェントセッション",
             "scrollToBottom": "ターミナルを最下部へ"
           },
           "loadFailed": "ショートカットの読み込みに失敗しました",
@@ -314,7 +316,8 @@
         },
         "check": {
           "reachable": "到達可能",
-          "unreachable": "到達不可"
+          "unreachable": "到達不可",
+          "running": "確認中…"
         },
         "log": {
           "title": "ログ",
@@ -360,21 +363,31 @@
             "hostnameInvalid": "tmex.example.com のような小文字のホスト名を入力してください。",
             "tunnelName": "トンネル名",
             "tunnelNamePlaceholder": "tmex",
-            "tunnelNameHint": "省略可。未入力の場合は tmex が生成します。",
+            "tunnelNameHint": "空欄可。空欄の場合は tmex が生成します。使用できるのは小文字・数字・ハイフン・アンダースコアのみです。",
             "hubHint": "Hub として運用する場合は、Hub の公開アドレスをこのホスト名に設定してください。",
-            "hubHintLink": "ノード設定を開く"
+            "hubHintLink": "ノード設定を開く",
+            "tunnelId": "トンネル ID",
+            "configured": "名前付きトンネルを作成しました。",
+            "changeHint": "ホスト名やトンネルを変更するには、先に上で現在のトンネルを削除してください。",
+            "tunnelNameInvalid": "トンネル名は小文字または数字で始まり、小文字・数字・ハイフン・アンダースコアのみ、63 文字以内で指定してください。"
           },
           "proxy": {
             "title": "リバースプロキシの信頼",
             "description": "トンネルはクライアントアドレスとプロトコルを置き換えるため、信頼設定の調整が必要です。",
             "trustProxy": "リバースプロキシヘッダーを信頼する",
-            "trustProxyHint": "tmex がトンネルの背後にある場合に有効化します。クライアントアドレスとプロトコルを正しく判定できます。",
+            "trustProxyHint": "tmex にこのトンネル経由でしか到達できない場合のみ有効にしてください。",
             "autoStart": "tmex と同時に起動",
             "autoStartHint": "ゲートウェイ起動時にトンネルを自動で立ち上げます。",
             "restartRequired": "保存しました。再起動後に有効になります。",
             "restartNow": "今すぐ再起動",
             "restarting": "再起動中",
-            "restartTimeout": "再起動がタイムアウトしました。tmex を手動で再起動してください。"
+            "restartTimeout": "再起動がタイムアウトしました。tmex を手動で再起動してください。",
+            "trustProxyDetail": "有効にすると tmex は X-Forwarded-Proto と X-Forwarded-For を信頼します。トンネルを迂回してローカルの待ち受けポートに直接到達できる相手はこれらを偽装できるため、そのポートへのアクセスを制限してください。",
+            "trustProxyEffective": "現在の適用値",
+            "trustProxyState": {
+              "on": "信頼中",
+              "off": "未信頼"
+            }
           }
         },
         "jobStep": {
@@ -387,7 +400,9 @@
           "create": "トンネルを作成中",
           "wait_cert": "承認を待機中",
           "login": "Cloudflare にログイン中",
-          "cancelled": "キャンセル済み"
+          "cancelled": "キャンセル済み",
+          "check": "接続確認",
+          "ok": "完了"
         },
         "errors": {
           "unsupported_platform": "このプラットフォームは Cloudflare Tunnel に対応していません。",
@@ -402,7 +417,19 @@
           "busy": "別の操作が進行中です。",
           "not_configured": "リモートアクセスは未設定です。",
           "invalid_request": "リクエストが不正です。",
-          "unknown": "操作に失敗しました：{{message}}"
+          "unknown": "操作に失敗しました：{{message}}",
+          "auth_required": "公開する前に、このマシンでサインインを有効にしてください。"
+        },
+        "authRequired": {
+          "notice": "公開する前に、このマシンでサインインを有効にしてください。",
+          "link": "マルチノード設定を開く"
+        },
+        "confirmRemove": {
+          "title": "名前付きトンネルを削除しますか？",
+          "description": "トンネルを停止し、このマシンに保存された資格情報を削除し、Cloudflare 上のトンネルも削除します。",
+          "irreversible": "Cloudflare 上のトンネルは復元できず、公開アドレスは直ちに使えなくなります。",
+          "confirm": "トンネルを削除",
+          "cancel": "キャンセル"
         }
       },
       "deviceManagement": {
@@ -584,9 +611,9 @@
       "authCount": "承認済み {{authorized}} / 承認待ち {{pending}}（最大 8）",
       "chatId": "Chat ID",
       "applyTime": "申請時間",
-      "gatewayOnline": "🟢 Gateway online @ {{siteName}}",
+      "gatewayOnline": "🟢 ゲートウェイがオンラインになりました @ {{siteName}}",
       "deviceConnectionError": "🔴 {{siteName}}：デバイス「{{deviceName}}」({{host}}) で接続エラー [{{category}}]\n{{error}}",
-      "agentCredentialWarning": "⚠️ {{siteName}}：Agent セッション「{{sessionTitle}}」のメッセージに認証情報が含まれている可能性があります（{{types}}）。LLM に送信され保存されるため、漏洩のリスクがあります。",
+      "agentCredentialWarning": "⚠️ {{siteName}}：エージェントセッション「{{sessionTitle}}」のメッセージに認証情報が含まれている可能性があります（{{types}}）。LLM に送信され保存されるため、漏洩のリスクがあります。",
       "authSuccess": "✅ 承認されました。通知を受信できます。",
       "authPending": "⏳ 認証リクエストを受信しました。tmex 設定ページで承認してください。",
       "authFailed": "❌ 認証リクエストに失敗しました。管理者に連絡してください。",
@@ -670,6 +697,7 @@
       "title": "Webhooks",
       "url": "Webhook URL",
       "secret": "シークレット",
+      "urlPlaceholder": "https://example.com/webhook",
       "secretPlaceholder": "署名に使用（HMAC-SHA256）",
       "enabled": "有効",
       "eventMask": "イベント",
@@ -757,17 +785,17 @@
       "llmDefaultProviderNotFound": "デフォルトプロバイダーが存在しません",
       "llmSearchProviderInvalid": "検索プロバイダーは none、tavily、brave のいずれかである必要があります",
       "llmFetchModelsFailed": "モデル一覧の取得に失敗しました：{{detail}}",
-      "agentSessionNotFound": "Agent セッションが存在しません",
-      "agentSessionBusy": "Agent セッションは実行中です。停止するか完了をお待ちください",
-      "agentSessionAwaitingConfirmation": "Agent セッションに未処理の確認リクエストがあります。先に処理してください",
+      "agentSessionNotFound": "エージェントセッションが存在しません",
+      "agentSessionBusy": "エージェントセッションは実行中です。停止するか完了をお待ちください",
+      "agentSessionAwaitingConfirmation": "エージェントセッションに未処理の確認リクエストがあります。先に処理してください",
       "agentDeviceRequired": "デバイスを指定してください",
-      "agentPaneRequired": "ターミナル pane を指定してください",
+      "agentPaneRequired": "ターミナルを指定してください",
       "agentWriteModeInvalid": "書き込みモードは confirm または auto である必要があります",
       "agentMaxStepsInvalid": "1 ターンあたりの最大ステップ数は 1〜100 の範囲で指定してください",
       "agentProviderWebSearchRequiresResponses": "プロバイダ内蔵の Web 検索は openai-responses プロトコルのみ対応しています",
       "agentHostedToolUnknown": "不明な hosted ツール: {{name}}",
       "agentHostedToolRequiresResponses": "プロバイダの hosted ツールは openai-responses プロトコルのみ対応しています",
-      "agentSessionOrphaned": "この Agent セッションは孤立しており（端末が存在しません）、読み取り専用です",
+      "agentSessionOrphaned": "このエージェントセッションは孤立しており（ターミナルが存在しません）、読み取り専用です",
       "agentQueuedMessageNotFound": "キューのメッセージが存在しません",
       "agentConfirmationNotFound": "確認リクエストが存在しません",
       "agentConfirmationAlreadyDecided": "確認リクエストは既に処理済みです",
@@ -805,12 +833,12 @@
       "folderLayoutInvalid": "グループ配置が無効です"
     },
     "notification": {
-      "clickToJump": "対応するペインにジャンプ",
+      "clickToJump": "対応するターミナルにジャンプ",
       "eventType": {
         "terminal_bell": "🔔 ターミナルベル",
         "terminal_notification": "🔔 ターミナル通知",
         "tmux_window_close": "🪟 ウィンドウ閉じる",
-        "tmux_pane_close": "📱 ペイン閉じる",
+        "tmux_pane_close": "📱 ターミナルを閉じました",
         "device_tmux_missing": "⚠️ Tmux がありません",
         "device_disconnect": "🔌 デバイス切断",
         "session_created": "🆕 セッション作成",
@@ -825,7 +853,7 @@
       "site": "サイト",
       "device": "デバイス",
       "window": "ウィンドウ",
-      "pane": "ペイン",
+      "pane": "ターミナル",
       "time": "時間",
       "directLink": "直接リンク",
       "message": "メッセージ",
@@ -834,13 +862,13 @@
       "telegramBell": {
         "title": "🔔 {{siteName}} からのベル：{{terminalTopbarLabel}}",
         "viewLink": "表示",
-        "terminalTopbarLabel": "ウィンドウ {{window}} · ペイン {{pane}} @ {{device}}"
+        "terminalTopbarLabel": "ウィンドウ {{window}} · ターミナル {{pane}} @ {{device}}"
       },
       "telegramNotification": {},
       "agent": {
-        "confirmationPending": "Agent「{{title}}」がツール {{toolName}} の実行確認を求めています",
-        "turnFinished": "Agent「{{title}}」のターンが完了しました",
-        "error": "Agent「{{title}}」でエラーが発生しました：{{message}}"
+        "confirmationPending": "エージェント「{{title}}」がツール {{toolName}} の実行確認を求めています",
+        "turnFinished": "エージェント「{{title}}」のターンが完了しました",
+        "error": "エージェント「{{title}}」でエラーが発生しました：{{message}}"
       },
       "watch": {
         "matchTriggered": "Watch「{{name}}」がマッチしました：{{text}}",
@@ -850,7 +878,7 @@
         "unconfirmedSuffix": "（モデル利用不可のため LLM 未確認）",
         "modelUnavailable": "Watch「{{name}}」のモデル呼び出しに失敗しました：{{message}}",
         "ruleError": "Watch「{{name}}」が {{count}} 回連続で失敗したため自動停止しました：{{message}}",
-        "paneGone": "Watch「{{name}}」のペイン（{{paneId}}）が破棄されたため、ルールを削除しました"
+        "paneGone": "Watch「{{name}}」のターミナル（{{paneId}}）が破棄されたため、ルールを削除しました"
       }
     },
     "sidebar": {
@@ -863,13 +891,13 @@
       "settings": "設定",
       "nodes": "マルチノード連携",
       "currentWindow": "現在のウィンドウ",
-      "currentPane": "現在のペイン",
+      "currentPane": "現在のターミナル",
       "newWindow": "ウィンドウを作成",
       "closeWindow": "ウィンドウを閉じる",
-      "closePane": "ペインを閉じる",
+      "closePane": "ターミナルを閉じる",
       "addDevice": "デバイスを追加",
       "tab": {
-        "panes": "端末",
+        "panes": "ターミナル",
         "agent": "エージェント",
         "files": "ファイル"
       },
@@ -897,16 +925,16 @@
         "withdraw": "取り消し"
       },
       "orphan": {
-        "readonly": "このセッションは孤立しており（端末が存在しません）、読み取り専用です",
+        "readonly": "このセッションは孤立しており（ターミナルが存在しません）、読み取り専用です",
         "title": "孤立セッション",
         "process": "プロセス",
         "startedAt": "作成日時"
       },
       "files": {
-        "comingSoon": "Coming Soon"
+        "comingSoon": "近日公開"
       },
       "panel": {
-        "title": "Agent",
+        "title": "エージェント",
         "empty": "セッションを選択または作成してください",
         "inputPlaceholder": "メッセージを入力…",
         "send": "送信",
@@ -915,8 +943,8 @@
         "scrollToBottom": "最下部へ"
       },
       "welcome": {
-        "title": "新しい Agent チャット",
-        "subtitle": "タスクを入力して、選択した端末での作業を始めましょう"
+        "title": "新しいエージェントチャット",
+        "subtitle": "タスクを入力して、選択したターミナルでの作業を始めましょう"
       },
       "session": {
         "none": "セッション未選択",
@@ -935,7 +963,7 @@
         "deleteTitle": "このセッションを削除しますか？",
         "deleteDesc": "「{{title}}」とそのメッセージはすべて完全に削除されます。",
         "deleteConfirm": "削除",
-        "createDisabledNoPane": "ターミナルのペインを開いてからセッションを作成してください",
+        "createDisabledNoPane": "ターミナルを開いてからセッションを作成してください",
         "privacyNotice": "セッションはターミナル画面の内容を設定済みの LLM サービスへ送信します。"
       },
       "node": {
@@ -943,9 +971,9 @@
       },
       "binding": {
         "invalid": "無効",
-        "mismatchTitle": "このセッションは別のペインにバインドされています",
+        "mismatchTitle": "このセッションは別のターミナルにバインドされています",
         "goTo": "移動",
-        "rebind": "現在のペインに再バインド"
+        "rebind": "現在のターミナルに再バインド"
       },
       "writeMode": {
         "confirm": "書き込み確認",
@@ -966,13 +994,14 @@
         "read_screen": "画面読み取り",
         "web_search": "Web 検索",
         "fetch_url": "URL 取得",
-        "get_pane_info": "ペイン情報を取得",
+        "get_pane_info": "ターミナル情報を取得",
         "run_command": "コマンドを実行",
-        "denied": "拒否されました"
+        "denied": "拒否されました",
+        "imageAlt": "生成された画像"
       },
       "paneBadge": {
-        "bound": "Agent バインド中",
-        "generating": "Agent 出力中"
+        "bound": "エージェントバインド済み",
+        "generating": "エージェント出力中"
       },
       "controlChars": {
         "label": "制御文字",
@@ -982,7 +1011,7 @@
         "title": "思考プロセス"
       },
       "toast": {
-        "errorTitle": "Agent「{{title}}」でエラー",
+        "errorTitle": "エージェント「{{title}}」でエラー",
         "credentialWarningTitle": "メッセージに認証情報が含まれる可能性",
         "credentialWarningDescription": "{{types}} を検出しました。内容は変更されませんが、LLM に送信され保存されるため、漏洩のリスクがあります。"
       }
@@ -992,32 +1021,32 @@
       "new": "新規ウィンドウ",
       "newInCwd": "この場所で新規ウィンドウ",
       "close": "ウィンドウを閉じる",
-      "closePane": "ペインを閉じる",
+      "closePane": "ターミナルを閉じる",
       "closeConfirmTitle": "このウィンドウを閉じますか？",
-      "closePaneConfirmTitle": "このペインを閉じますか？",
+      "closePaneConfirmTitle": "このターミナルを閉じますか？",
       "closeConfirmDesc": "\"{{name}}\" で実行中のプロセスは終了されます。この操作は取り消せません。",
       "menu": "ウィンドウ操作",
-      "paneMenu": "ペイン操作",
+      "paneMenu": "ターミナル操作",
       "dragHandle": "ドラッグしてウィンドウを並べ替え",
-      "dragHandlePane": "ドラッグしてペインを並べ替え",
+      "dragHandlePane": "ドラッグしてターミナルを並べ替え",
       "rename": "ウィンドウ名を変更",
       "renamePlaceholder": "名前を入力",
       "renameDesc": "カスタム名はターミナルが設定したタイトルを上書きし、ゲートウェイが再起動するまで保持されます。",
       "renameReset": "自動名に戻す",
-      "switchPane": "ペイン切替",
+      "switchPane": "ターミナル切替",
       "splitRight": "右に分割",
       "splitDown": "下に分割",
-      "paneCount": "{{count}} ペイン",
-      "pane": "ペイン",
+      "paneCount": "{{count}} 個のターミナル",
+      "pane": "ターミナル",
       "moveToWindow": "このウィンドウへ移動",
       "breakToWindow": "新しいウィンドウに分離"
     },
     "watch": {
       "title": "監視ルール",
-      "dialogDesc": "このペインの画面を監視し、条件を満たしたら通知します",
+      "dialogDesc": "このターミナルの画面を監視し、条件を満たしたら通知します",
       "openMonitor": "このターミナルを監視",
       "rules": {
-        "empty": "このペインにはまだ監視ルールがありません",
+        "empty": "このターミナルにはまだ監視ルールがありません",
         "addRule": "新規ルール",
         "edit": "編集",
         "delete": "削除",
@@ -1163,7 +1192,7 @@
       "menu": {
         "copyAbsolute": "絶対パスをコピー",
         "copyRelative": "相対パスをコピー",
-        "sendToAgent": "Agent に送る",
+        "sendToAgent": "エージェントに送る",
         "expand": "展開",
         "collapse": "折りたたむ",
         "upload": "このフォルダにアップロード",
@@ -1171,6 +1200,7 @@
       },
       "copied": "クリップボードにコピーしました",
       "copyFailed": "コピーに失敗しました",
+      "symlink": "シンボリックリンク",
       "sendToAgent": {
         "prompt": "このパスを処理してください：`{{path}}`"
       },
@@ -1634,7 +1664,7 @@
         "transportDc": "WebRTC",
         "transportRelay": "ハブ中継",
         "iceTitle": "接続の詳細",
-        "icePlaceholder": "ダイレクト接続が無効のため、表示できる情報はありません。",
+        "icePlaceholder": "直接接続の詳細はありません。",
         "connectionState": "接続状態",
         "iceState": "ICE の状態",
         "localCandidate": "ローカルアドレス",
@@ -1674,6 +1704,7 @@
           "confirmPassword": "パスワードの確認",
           "hubUrl": "ハブのアドレス",
           "hubUrlHint": "ハブの https アドレス（例：https://tmex.example.com）。",
+          "urlPlaceholder": "https://tmex.example.com",
           "token": "参加コード",
           "tokenHint": "ハブの「ノード」ページで作成します。有効期間は 10 分です。コード全体を貼り付けてください。",
           "tokenPlaceholder": "ハブで作成した参加コードを貼り付け",

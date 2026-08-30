@@ -59,7 +59,31 @@ export function isValidHostname(value: string): boolean {
   return labels.every((label) => label.length <= 63 && HOSTNAME_LABEL.test(label));
 }
 
-const JOB_STEPS = new Set(['download', 'extract', 'verify', 'create_tunnel', 'route_dns', 'start']);
+/** 与后端 `manager.ts` 里 `step(...)` 实际发出的标识一一对应。 */
+/**
+ * 隧道名称：与后端一致的 `^[a-z0-9](?:[a-z0-9_-]{0,62})$`。名称会直接拼成凭证文件名，
+ * 斜杠与 `..` 必须挡在外面；这里只做即时反馈，真正的把关在后端。
+ */
+const TUNNEL_NAME = /^[a-z0-9](?:[a-z0-9_-]{0,62})$/;
+
+export function isValidTunnelName(value: string): boolean {
+  return TUNNEL_NAME.test(value);
+}
+
+const JOB_STEPS = new Set([
+  'download',
+  'extract',
+  'verify',
+  'login',
+  'wait_cert',
+  'cancelled',
+  'create',
+  'create_tunnel',
+  'route_dns',
+  'start',
+  'check',
+  'ok',
+]);
 
 /** 已知进度标识返回文案键；未知返回 null（由调用方原样展示服务端给的标识）。 */
 export function jobStepKey(step: string | null): string | null {
@@ -81,6 +105,7 @@ const ERROR_CODES = new Set<TunnelErrorCode>([
   'busy',
   'not_configured',
   'invalid_request',
+  'auth_required',
 ]);
 
 export function tunnelErrorKey(code: string): string | null {
@@ -106,6 +131,22 @@ export function describeTunnelError(t: Translate, error: TunnelError): string {
   const key = tunnelErrorKey(error.code);
   if (key) return t(key);
   return t(`${ERROR_PREFIX}unknown`, { message: error.message });
+}
+
+/**
+ * `trustProxy` 是当前进程的生效值，`configuredTrustProxy` 是已写进 app.env 的期望值：
+ * 两者不一致就必须重启才算数。后端也给了 `restartRequired`，这里两条都认，避免旧后端漏报。
+ */
+export function trustProxyRestartRequired(status: TunnelStatusResponse): boolean {
+  return status.restartRequired || status.configuredTrustProxy !== status.trustProxy;
+}
+
+/** 本机没开登录时后端会拒绝创建隧道（`auth_required`）：动作错误与 job 错误都要认。 */
+export function isAuthRequiredError(
+  status: TunnelStatusResponse,
+  error: TunnelError | null
+): boolean {
+  return error?.code === 'auth_required' || status.job?.error?.code === 'auth_required';
 }
 
 export const TUNNEL_ACTIVE_POLL_MS = 2000;

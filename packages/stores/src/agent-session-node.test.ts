@@ -3,6 +3,7 @@ import { describe, expect, test } from 'bun:test';
 import { ApiClient, type FetchLike } from '@tmex/api-client';
 import { noopNotificationSink } from '@tmex/notifications';
 import type { AgentSessionDto } from '@tmex/shared';
+import { draftOnNode } from './agent-node-state';
 import { createAgentSessionActions } from './agent-session-actions';
 import { isSessionOnNode, normalizeAgentNodeId } from './agent-session-map';
 import {
@@ -132,9 +133,9 @@ describe('createSession carries the bound node', () => {
   test('sends the remote nodeId when the draft is bound to another node', async () => {
     const harness = createHarness();
     harness.state().startDraft({ nodeId: NODE_A, deviceId: 'd1', paneId: '%1', paneTitle: 'vim' });
-    expect(harness.state().draft?.nodeId).toBe(NODE_A);
+    expect(draftOnNode(harness.state(), NODE_A)?.nodeId).toBe(NODE_A);
 
-    const session = await harness.state().materializeDraft();
+    const session = await harness.state().materializeDraft(NODE_A);
 
     expect(harness.bodies()[0]?.nodeId).toBe(NODE_A);
     expect(session?.nodeId).toBe(NODE_A);

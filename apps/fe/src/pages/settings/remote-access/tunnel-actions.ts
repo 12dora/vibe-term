@@ -8,7 +8,12 @@
 
 import { type ApiClient, defaultApiClient } from '@tmex/api-client';
 import { runTunnelAction } from '@tmex/api-client/local/tunnel-api';
-import type { TunnelActionRequest, TunnelActionResponse, TunnelStatusResponse } from '@tmex/shared';
+import type {
+  TunnelActionRequest,
+  TunnelActionResponse,
+  TunnelJobStatus,
+  TunnelStatusResponse,
+} from '@tmex/shared';
 import { useMemo, useRef, useSyncExternalStore } from 'react';
 import { type TunnelError, toTunnelError } from './tunnel-model';
 
@@ -22,8 +27,11 @@ export interface TunnelCheckResult {
 export interface TunnelActionState {
   pending: TunnelActionName | null;
   error: TunnelError | null;
-  /** 最近一次「检查连通性」的结果。 */
-  check: TunnelCheckResult | null;
+  /**
+   * 最近一次「检查连通性」受理到的 job id。`check` 是后台 job：202 只代表受理，
+   * 结果必须等轮询看到同一个 job 到达 done / error 才算数。
+   */
+  checkJobId: string | null;
 }
 
 export interface TunnelActionCallbacks {
@@ -40,7 +48,7 @@ export function isTunnelBusy(
   return pending !== null || status?.job?.state === 'running';
 }
 
-const INITIAL: TunnelActionState = { pending: null, error: null, check: null };
+const INITIAL: TunnelActionState = { pending: null, error: null, checkJobId: null };
 
 export class TunnelActionController {
   private state: TunnelActionState = INITIAL;
@@ -76,12 +84,12 @@ export class TunnelActionController {
     this.update({
       pending: req.action,
       error: null,
-      check: req.action === 'check' ? null : this.state.check,
+      checkJobId: req.action === 'check' ? null : this.state.checkJobId,
     });
     try {
       const res = await this.runAction(req);
       this.readCallbacks().onStatus(res.status);
-      if (req.action === 'check') this.update({ check: checkResultOf(res) });
+      if (req.action === 'check') this.update({ checkJobId: res.job?.id ?? null });
     } catch (error) {
       this.update({ error: toTunnelError(error) });
       // 失败时服务端状态很可能已经变了（进程退出、job 转 error），必须重拉才看得到。
@@ -97,15 +105,38 @@ export class TunnelActionController {
   }
 }
 
-/** `check` 是同步动作：结果落在响应的 job 上，job 带 error 即不可达。 */
-export function checkResultOf(res: TunnelActionResponse): TunnelCheckResult {
-  const job = res.job;
-  if (job?.error) return { ok: false, message: job.error.message || job.error.code };
-  return { ok: job?.state !== 'error', message: null };
+/**
+ * 只有轮询到的 job 就是这次受理的那一个、并且已经到达终态时才给结论：
+ * 受理时的 202（`state: 'running'`）什么都说明不了，据此显示「可访问」等于凭空报喜。
+ */
+export function checkResultOf(
+  job: TunnelJobStatus | null | undefined,
+  checkJobId: string | null
+): TunnelCheckResult | null {
+  if (!checkJobId || !job || job.id !== checkJobId || job.state === 'running') return null;
+  if (job.state === 'error') {
+    return { ok: false, message: job.error ? job.error.message || job.error.code : null };
+  }
+  return { ok: true, message: null };
+}
+
+/**
+ * 检查还在跑。只认「轮询到的 job 就是这次受理的那一个且仍是 running」：
+ * 若它已被别的动作的 job 顶掉，这次检查就当没发生，否则会永远停在「正在检查」。
+ */
+export function checkRunning(
+  job: TunnelJobStatus | null | undefined,
+  checkJobId: string | null
+): boolean {
+  return checkJobId !== null && job?.id === checkJobId && job.state === 'running';
 }
 
 export interface TunnelActions extends TunnelActionState {
   busy: boolean;
+  /** check job 到达终态后的结论；未检查或还在跑时为 null。 */
+  check: TunnelCheckResult | null;
+  /** check job 已受理但还没有结论。 */
+  checking: boolean;
   run: (req: TunnelActionRequest) => void;
   clearError: () => void;
 }
@@ -143,9 +174,12 @@ export function useTunnelActions(
     controller.snapshot
   );
 
+  const check = checkResultOf(status?.job, state.checkJobId);
   return {
     ...state,
     busy: isTunnelBusy(state.pending, status),
+    check,
+    checking: checkRunning(status?.job, state.checkJobId),
     run: (req) => void controller.run(req),
     clearError: controller.clearError,
   };

@@ -11,7 +11,7 @@ import type {
   TunnelStatusResponse,
 } from '@tmex/shared';
 import { installWindowStorage } from '@tmex/stores/test-utils';
-import type { TunnelActionState } from './tunnel-actions';
+import type { TunnelActions } from './tunnel-actions';
 
 installWindowStorage();
 
@@ -19,12 +19,18 @@ let status: TunnelStatusResponse | null = null;
 let loading = false;
 let loginRequired = false;
 let loadError: string | null = null;
-let actionState: TunnelActionState & { busy: boolean } = {
+type ActionSnapshot = Omit<TunnelActions, 'run' | 'clearError'>;
+
+const IDLE_ACTIONS: ActionSnapshot = {
   pending: null,
   error: null,
+  checkJobId: null,
   check: null,
+  checking: false,
   busy: false,
 };
+
+let actionState: ActionSnapshot = { ...IDLE_ACTIONS };
 
 mock.module('./use-tunnel-status', () => ({
   TUNNEL_STATUS_QUERY_KEY: ['tunnel-status'],
@@ -78,6 +84,7 @@ function tunnel(overrides: Partial<TunnelStatusResponse> = {}): TunnelStatusResp
     },
     job: null,
     trustProxy: false,
+    configuredTrustProxy: false,
     restartRequired: false,
     log: [],
     ...overrides,
@@ -125,6 +132,13 @@ function isDisabled(html: string, testId: string): boolean {
   return / disabled=""/.test(tag[0]);
 }
 
+/** 开关的选中态只看 `aria-checked`：class 里的 `data-checked:` 变体前缀不算数。 */
+function isChecked(html: string, testId: string): boolean {
+  const tag = new RegExp(`<[a-z]+[^>]*data-testid="${testId}"[^>]*>`).exec(html);
+  if (!tag) throw new Error(`missing element: ${testId}`);
+  return tag[0].includes('aria-checked="true"');
+}
+
 function stepStateOf(html: string, testId: string): string | null {
   const tag = new RegExp(`<[a-z]+[^>]*data-testid="${testId}"[^>]*>`).exec(html);
   if (!tag) throw new Error(`missing element: ${testId}`);
@@ -136,7 +150,7 @@ beforeEach(() => {
   loading = false;
   loginRequired = false;
   loadError = null;
-  actionState = { pending: null, error: null, check: null, busy: false };
+  actionState = { ...IDLE_ACTIONS };
   resetMeshNodesStateForTest();
 });
 
@@ -231,37 +245,51 @@ describe('状态徽标与操作按钮', () => {
 
   test('忙锁：所有操作按钮同时禁用', () => {
     status = configured('quick', 'running');
-    actionState = { pending: 'stop', error: null, check: null, busy: true };
+    actionState = { ...IDLE_ACTIONS, pending: 'stop', busy: true };
     const html = render();
     expect(isDisabled(html, 'remote-access-stop')).toBe(true);
     expect(isDisabled(html, 'remote-access-check')).toBe(true);
     expect(isDisabled(html, 'remote-access-remove')).toBe(true);
   });
 
-  test('连通性检查的结果就地展示', () => {
+  test('检查受理后先给中性的「检查中」，不提前报可访问', () => {
     status = configured('quick', 'running');
-    actionState = { pending: null, error: null, check: { ok: true, message: null }, busy: false };
+    actionState = { ...IDLE_ACTIONS, checkJobId: 'check-1', checking: true };
+    const html = render();
+    expect(html).toContain('data-testid="remote-access-check-running"');
+    expect(html).not.toContain('data-testid="remote-access-check-ok"');
+    expect(html).not.toContain('data-testid="remote-access-check-failed"');
+  });
+
+  test('检查 job 到达终态后就地展示结果', () => {
+    status = configured('quick', 'running');
+    actionState = { ...IDLE_ACTIONS, checkJobId: 'check-1', check: { ok: true, message: null } };
     expect(render()).toContain('data-testid="remote-access-check-ok"');
 
     actionState = {
-      pending: null,
-      error: null,
+      ...IDLE_ACTIONS,
+      checkJobId: 'check-1',
       check: { ok: false, message: '502 bad gateway' },
-      busy: false,
     };
     const html = render();
     expect(html).toContain('data-testid="remote-access-check-failed"');
     expect(html).toContain('502 bad gateway');
+  });
+
+  test('命名隧道的移除要先过确认对话框', () => {
+    status = configured('named', 'running');
+    const html = render();
+    expect(html).toContain('data-testid="remote-access-remove"');
+    // 静态渲染点不了按钮，对话框默认不在 DOM 里。
+    expect(html).not.toContain('data-testid="remote-access-confirm-remove"');
   });
 });
 
 describe('错误码映射', () => {
   test('已知错误码走本地化文案', () => {
     actionState = {
-      pending: null,
+      ...IDLE_ACTIONS,
       error: { code: 'busy', message: 'another action is running' },
-      check: null,
-      busy: false,
     };
     const html = render();
     expect(html).toContain('data-testid="remote-access-error"');
@@ -269,12 +297,7 @@ describe('错误码映射', () => {
   });
 
   test('未知错误码退回带原始 message 的兜底文案', () => {
-    actionState = {
-      pending: null,
-      error: { code: 'unknown', message: 'network down' },
-      check: null,
-      busy: false,
-    };
+    actionState = { ...IDLE_ACTIONS, error: { code: 'unknown', message: 'network down' } };
     expect(render()).toContain('settings.remoteAccess.errors.unknown');
   });
 });
@@ -358,9 +381,31 @@ describe('向导步进', () => {
     expect(html).toContain('data-testid="remote-access-restart-now"');
   });
 
+  test('信任开关绑已保存值，生效值单独展示', () => {
+    // 刚保存完：已保存 true，进程仍按 false 跑。
+    status = configured('quick', 'running', {
+      configuredTrustProxy: true,
+      trustProxy: false,
+      restartRequired: true,
+    });
+    const html = render();
+    expect(isChecked(html, 'remote-access-trust-proxy')).toBe(true);
+    expect(html).toContain('data-testid="remote-access-trust-proxy-effective"');
+    expect(html).toContain('settings.remoteAccess.steps.proxy.trustProxyState.off');
+    expect(html).toContain('settings.remoteAccess.steps.proxy.trustProxyDetail');
+  });
+
+  test('已保存值与生效值不一致时即便后端没报 restartRequired 也提示重启', () => {
+    status = configured('quick', 'running', { configuredTrustProxy: true, trustProxy: false });
+    expect(render()).toContain('data-testid="remote-access-restart-required"');
+  });
+
   test('不需要重启时不显示重启提示', () => {
     status = configured('quick', 'running');
-    expect(render()).not.toContain('data-testid="remote-access-restart-required"');
+    const html = render();
+    expect(html).not.toContain('data-testid="remote-access-restart-required"');
+    expect(isChecked(html, 'remote-access-trust-proxy')).toBe(false);
+    expect(html).toContain('settings.remoteAccess.steps.proxy.trustProxyState.off');
   });
 });
 
@@ -427,6 +472,20 @@ describe('命名隧道', () => {
     expect(renderWizard('named')).toContain('settings.remoteAccess.errors.dns_route_failed');
   });
 
+  test('已配置命名隧道时第 3 步只给只读摘要，没有创建表单', () => {
+    status = configured('named', 'running', {
+      auth: { loggedIn: true, loginUrl: null },
+    });
+    status.config.tunnelName = 'tmex';
+    status.config.tunnelId = 'd8e1f0aa-0000-4000-8000-000000000000';
+    const html = render();
+    expect(html).toContain('data-testid="remote-access-named-summary"');
+    expect(html).toContain('tmex.example.com');
+    expect(html).toContain('d8e1f0aa-0000-4000-8000-000000000000');
+    expect(html).not.toContain('data-testid="remote-access-create-submit"');
+    expect(html).not.toContain('data-testid="remote-access-hostname"');
+  });
+
   test('本机即 hub 时在主机名步骤给出 Hub 公开地址提示', () => {
     status = configured('named', 'stopped', { auth: { loggedIn: true, loginUrl: null } });
 
@@ -437,6 +496,36 @@ describe('命名隧道', () => {
     const html = render();
     expect(html).toContain('data-testid="remote-access-hub-hint"');
     expect(html).toContain('?tab=nodes');
+  });
+});
+
+describe('未启用登录时的提醒', () => {
+  test('/api/auth/mode 报 none 时在第 2 步之前给出提示并链到多节点设置', () => {
+    const html = renderWizard('named', false, true);
+    expect(html).toContain('data-testid="remote-access-auth-required"');
+    expect(html).toContain('settings.remoteAccess.authRequired.notice');
+    expect(html).toContain('?tab=nodes');
+    expect(html.indexOf('data-testid="remote-access-auth-required"')).toBeLessThan(
+      html.indexOf('data-testid="remote-access-step-mode"')
+    );
+  });
+
+  test('后端回 auth_required 时同样常驻提示', () => {
+    status = tunnel({
+      auth: { loggedIn: true, loginUrl: null },
+      job: job({
+        kind: 'create',
+        state: 'error',
+        error: { code: 'auth_required', message: 'sign-in disabled' },
+      }),
+    });
+    const html = renderWizard('named');
+    expect(html).toContain('data-testid="remote-access-auth-required"');
+    expect(html).toContain('settings.remoteAccess.errors.auth_required');
+  });
+
+  test('登录已启用且没有相关错误时不打扰', () => {
+    expect(renderWizard('named')).not.toContain('data-testid="remote-access-auth-required"');
   });
 });
 
@@ -464,7 +553,7 @@ describe('日志', () => {
  * 第 3 步走哪条路径由本地选择驱动，静态渲染点不了方式卡——命名隧道的子步骤直接渲染
  * `TunnelWizard` 并把选择传进去；`RemoteAccessTab` 只负责把 `useState` 接上这个入参。
  */
-function renderWizard(mode: TunnelMode, isHub = false): string {
+function renderWizard(mode: TunnelMode, isHub = false, authDisabled = false): string {
   const current = status;
   if (!current) throw new Error('status fixture is required');
   return renderToStaticMarkup(
@@ -475,6 +564,7 @@ function renderWizard(mode: TunnelMode, isHub = false): string {
         chosenMode={mode}
         onChooseMode={() => undefined}
         isHub={isHub}
+        authDisabled={authDisabled}
         onRestarted={() => undefined}
       />
     </MemoryRouter>

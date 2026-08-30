@@ -3,27 +3,9 @@ import { matchPath } from 'react-router';
 
 import { createBrowserHostServices, hostAppPath } from '@tmex/stores';
 
-import { NODE_OFFLINE_ERROR, isNodePaused } from './agent-node-offline';
 import { AGENT_PANE_ROUTE_PATH } from './use-agent-tab-state';
 
 const NODE_A = 'a'.repeat(32);
-
-describe('isNodePaused', () => {
-  test('follows the mesh signal when the host provides one', () => {
-    expect(isNodePaused(true, null)).toBe(true);
-    expect(isNodePaused(false, null)).toBe(false);
-  });
-
-  test('a node back online resumes input even while the session still holds NODE_OFFLINE', () => {
-    expect(isNodePaused(false, NODE_OFFLINE_ERROR)).toBe(false);
-  });
-
-  test('falls back to the session error when the host has no mesh state', () => {
-    expect(isNodePaused(undefined, NODE_OFFLINE_ERROR)).toBe(true);
-    expect(isNodePaused(undefined, 'rate limited')).toBe(false);
-    expect(isNodePaused(undefined, null)).toBe(false);
-  });
-});
 
 // useMatch 先对 pathname 整体解码再匹配，测试里用同样的形状喂 matchPath
 describe('pane route pattern', () => {

@@ -16,6 +16,7 @@
       "retry": "重试",
       "pageLoadFailed": "页面加载失败。",
       "pageLoadFailedHint": "请检查网络连接后重试。",
+      "mermaidRenderFailed": "Mermaid 渲染失败：{{message}}",
       "test": "测试",
       "send": "发送",
       "success": "成功",
@@ -45,6 +46,7 @@
       "sidebarCollapse": "收起侧边栏",
       "openSidebar": "打开侧边栏",
       "closeSidebar": "关闭侧边栏",
+      "toggleSubmenu": "展开或收起子菜单",
       "jumpToLatest": "跳转到最新",
       "switchToEditor": "切换到编辑器输入",
       "switchToDirect": "切换到直接输入",
@@ -166,15 +168,15 @@
       "deviceErrorWithType": "[{{type}}] 设备错误",
       "noDeviceSelected": "未选择设备",
       "windowClosed": "当前窗口已关闭，请在侧边栏重新选择窗口。",
-      "paneClosed": "当前 Pane 已关闭，请在侧边栏重新选择 Pane。",
+      "paneClosed": "当前终端已关闭，请在侧边栏重新选择。",
       "bellNotification": "终端 Bell",
       "bellDescriptionWithTitle": "窗口 {{window}} · {{paneLabel}}",
       "bellFallback": "收到 tmux bell",
       "notificationFallbackTitle": "终端通知",
       "notificationSourceLabel": "来自 {{source}}",
       "notificationFallbackDetail": "终端通知",
-      "paneTitle": "Pane {{index}}",
-      "activePane": "当前 pane",
+      "paneTitle": "终端 {{index}}",
+      "activePane": "当前终端",
       "activeWindow": "当前窗口",
       "editorPlaceholder": "在此输入命令...",
       "editorClear": "清空",
@@ -186,7 +188,7 @@
       "inputModeEditor": "编辑器",
       "newWindow": "新建窗口",
       "closeWindow": "关闭窗口",
-      "closePane": "关闭 pane",
+      "closePane": "关闭终端",
       "copy": "复制",
       "paste": "粘贴",
       "copied": "已复制到剪贴板",
@@ -263,7 +265,7 @@
           "action": {
             "paste": "粘贴",
             "toggleKeyboard": "切换文本框/键盘",
-            "newAgentSession": "新建 Agent 会话",
+            "newAgentSession": "新建智能体会话",
             "scrollToBottom": "终端回到最下方"
           },
           "loadFailed": "加载快捷键失败",
@@ -314,7 +316,8 @@
         },
         "check": {
           "reachable": "可访问",
-          "unreachable": "不可达"
+          "unreachable": "不可达",
+          "running": "正在检查…"
         },
         "log": {
           "title": "日志",
@@ -360,21 +363,31 @@
             "hostnameInvalid": "主机名格式不正确，请填写形如 tmex.example.com 的小写域名。",
             "tunnelName": "隧道名称",
             "tunnelNamePlaceholder": "tmex",
-            "tunnelNameHint": "可留空，留空时由 tmex 生成。",
+            "tunnelNameHint": "可留空，留空时由 tmex 生成。只能使用小写字母、数字、连字符与下划线。",
             "hubHint": "作为 Hub 时，请将 Hub 公开地址设为此主机名。",
-            "hubHintLink": "前往多节点互联设置"
+            "hubHintLink": "前往多节点互联设置",
+            "tunnelId": "隧道 ID",
+            "configured": "命名隧道已创建。",
+            "changeHint": "如需更换主机名或隧道，请先在上方移除现有隧道。",
+            "tunnelNameInvalid": "隧道名称需以小写字母或数字开头，只能包含小写字母、数字、连字符与下划线，最长 63 个字符。"
           },
           "proxy": {
             "title": "反向代理信任",
             "description": "隧道会替换客户端地址与协议，需要相应调整 tmex 的信任设置。",
             "trustProxy": "信任反向代理头",
-            "trustProxyHint": "tmex 位于隧道之后时需要开启，以便正确识别客户端地址与协议。",
+            "trustProxyHint": "仅当 tmex 只能经由该隧道访问时才开启。",
             "autoStart": "随 tmex 启动",
             "autoStartHint": "网关启动时自动拉起隧道。",
             "restartRequired": "配置已保存，重启后生效。",
             "restartNow": "立即重启",
             "restarting": "正在重启",
-            "restartTimeout": "重启超时，请手动重启 tmex。"
+            "restartTimeout": "重启超时，请手动重启 tmex。",
+            "trustProxyDetail": "开启后 tmex 会信任 X-Forwarded-Proto 与 X-Forwarded-For。能绕过隧道直连本机监听端口的人可以伪造这两个请求头，因此请限制该端口的外部访问。",
+            "trustProxyEffective": "当前生效",
+            "trustProxyState": {
+              "on": "已信任",
+              "off": "未信任"
+            }
           }
         },
         "jobStep": {
@@ -387,7 +400,9 @@
           "create": "创建隧道",
           "wait_cert": "等待授权",
           "login": "登录 Cloudflare",
-          "cancelled": "已取消"
+          "cancelled": "已取消",
+          "check": "检查连通性",
+          "ok": "完成"
         },
         "errors": {
           "unsupported_platform": "当前系统不支持 Cloudflare Tunnel。",
@@ -402,7 +417,19 @@
           "busy": "另一项操作正在进行。",
           "not_configured": "尚未配置远程访问。",
           "invalid_request": "请求无效。",
-          "unknown": "操作失败：{{message}}"
+          "unknown": "操作失败：{{message}}",
+          "auth_required": "请先为本机启用登录，再开放公网访问。"
+        },
+        "authRequired": {
+          "notice": "请先为本机启用登录，再开放公网访问。",
+          "link": "前往多节点互联设置"
+        },
+        "confirmRemove": {
+          "title": "移除命名隧道？",
+          "description": "这会停止隧道、删除本机保存的凭证，并在 Cloudflare 上删除该隧道。",
+          "irreversible": "Cloudflare 上的隧道无法恢复，公网地址会立即失效。",
+          "confirm": "移除隧道",
+          "cancel": "取消"
         }
       },
       "deviceManagement": {
@@ -582,11 +609,11 @@
       "expand": "展开",
       "collapse": "收起",
       "authCount": "已授权 {{authorized}} / 待授权 {{pending}}（总上限 8）",
-      "chatId": "chatId",
+      "chatId": "Chat ID",
       "applyTime": "申请时间",
-      "gatewayOnline": "🟢 Gateway online @ {{siteName}}",
+      "gatewayOnline": "🟢 网关已上线 @ {{siteName}}",
       "deviceConnectionError": "🔴 {{siteName}}：设备「{{deviceName}}」({{host}}) 连接异常 [{{category}}]\n{{error}}",
-      "agentCredentialWarning": "⚠️ {{siteName}}：Agent 会话「{{sessionTitle}}」的一条消息疑似包含凭证（{{types}}）。该内容将发送至 LLM 并存储，存在泄露风险。",
+      "agentCredentialWarning": "⚠️ {{siteName}}：智能体会话「{{sessionTitle}}」的一条消息疑似包含凭证（{{types}}）。该内容将发送至 LLM 并存储，存在泄露风险。",
       "authSuccess": "✅ 已授权，可接收通知。",
       "authPending": "⏳ 已收到授权申请，请在 tmex 设置页审批。",
       "authFailed": "❌ 授权申请失败，请联系管理员。",
@@ -670,6 +697,7 @@
       "title": "Webhooks",
       "url": "Webhook 地址",
       "secret": "密钥",
+      "urlPlaceholder": "https://example.com/webhook",
       "secretPlaceholder": "用于签名（HMAC-SHA256）",
       "enabled": "启用",
       "eventMask": "事件",
@@ -721,8 +749,8 @@
     "websocket": {
       "error": "WebSocket 连接错误",
       "checkGateway": "请检查 Gateway 状态",
-      "upgradeFailed": "Upgrade failed",
-      "invalidMessage": "Invalid message format",
+      "upgradeFailed": "升级失败",
+      "invalidMessage": "消息格式无效",
       "reconnecting": "重连中",
       "reconnect": "重新连接"
     },
@@ -741,11 +769,11 @@
       "missingFields": "缺少必填字段",
       "sshRequiresHost": "SSH 设备需要 host 或 sshConfigRef",
       "invalidRequest": "请求无效",
-      "deviceNotFound": "Device not found",
+      "deviceNotFound": "设备不存在",
       "botNotFound": "Bot 不存在",
       "chatNotFound": "Chat 不存在",
-      "urlAndSecretRequired": "URL and secret required",
-      "notFound": "Not found",
+      "urlAndSecretRequired": "URL 与密钥不能为空",
+      "notFound": "未找到",
       "llmProviderNameRequired": "Provider 名称不能为空",
       "llmProviderProtocolInvalid": "协议必须是 openai-chat 或 openai-responses",
       "llmProviderBaseUrlInvalid": "Base URL 必须以 http:// 或 https:// 开头",
@@ -757,17 +785,17 @@
       "llmDefaultProviderNotFound": "默认 provider 不存在",
       "llmSearchProviderInvalid": "搜索服务必须是 none、tavily 或 brave",
       "llmFetchModelsFailed": "拉取模型列表失败：{{detail}}",
-      "agentSessionNotFound": "Agent 会话不存在",
-      "agentSessionBusy": "Agent 会话正在运行中，请先停止或等待完成",
-      "agentSessionAwaitingConfirmation": "Agent 会话有待处理的确认请求，请先处理",
+      "agentSessionNotFound": "智能体会话不存在",
+      "agentSessionBusy": "智能体会话正在运行中，请先停止或等待完成",
+      "agentSessionAwaitingConfirmation": "智能体会话有待处理的确认请求，请先处理",
       "agentDeviceRequired": "必须指定设备",
-      "agentPaneRequired": "必须指定终端 pane",
+      "agentPaneRequired": "必须指定终端",
       "agentWriteModeInvalid": "写入模式必须是 confirm 或 auto",
       "agentMaxStepsInvalid": "每回合最大步数必须在 1-100 之间",
       "agentProviderWebSearchRequiresResponses": "Provider 内置搜索仅支持 openai-responses 协议",
       "agentHostedToolUnknown": "未知的 hosted 工具：{{name}}",
-      "agentHostedToolRequiresResponses": "Provider hosted 工具仅支持 openai-responses 协议",
-      "agentSessionOrphaned": "该 Agent 会话已孤立（绑定终端已不存在），仅可只读查看",
+      "agentHostedToolRequiresResponses": "服务商托管工具仅支持 openai-responses 协议",
+      "agentSessionOrphaned": "该智能体会话已孤立（绑定终端已不存在），仅可只读查看",
       "agentQueuedMessageNotFound": "排队消息不存在",
       "agentConfirmationNotFound": "确认请求不存在",
       "agentConfirmationAlreadyDecided": "确认请求已被处理",
@@ -805,19 +833,19 @@
       "folderLayoutInvalid": "分组布局无效"
     },
     "notification": {
-      "clickToJump": "点击跳转到对应 Pane",
+      "clickToJump": "点击跳转到对应终端",
       "eventType": {
         "terminal_bell": "🔔 终端 Bell",
         "terminal_notification": "🔔 终端通知",
         "tmux_window_close": "🪟 窗口关闭",
-        "tmux_pane_close": "📱 Pane 关闭",
+        "tmux_pane_close": "📱 终端关闭",
         "device_tmux_missing": "⚠️ Tmux 不可用",
         "device_disconnect": "🔌 设备断开",
         "session_created": "🆕 会话创建",
         "session_closed": "🚪 会话关闭",
-        "agent_confirmation_pending": "🤖 Agent 等待确认",
-        "agent_turn_finished": "🤖 Agent 回合完成",
-        "agent_error": "🤖 Agent 错误",
+        "agent_confirmation_pending": "🤖 智能体等待确认",
+        "agent_turn_finished": "🤖 智能体回合完成",
+        "agent_error": "🤖 智能体错误",
         "watch_triggered": "👁️ Watch 规则触发",
         "watch_model_unavailable": "👁️ Watch 模型不可用",
         "watch_rule_error": "👁️ Watch 规则错误"
@@ -825,7 +853,7 @@
       "site": "站点",
       "device": "设备",
       "window": "窗口",
-      "pane": "Pane",
+      "pane": "终端",
       "time": "时间",
       "directLink": "直达",
       "message": "信息",
@@ -834,13 +862,13 @@
       "telegramBell": {
         "title": "🔔 来自 {{siteName}} 的 Bell：{{terminalTopbarLabel}}",
         "viewLink": "点击查看",
-        "terminalTopbarLabel": "窗口 {{window}} · Pane {{pane}} @ {{device}}"
+        "terminalTopbarLabel": "窗口 {{window}} · 终端 {{pane}} @ {{device}}"
       },
       "telegramNotification": {},
       "agent": {
-        "confirmationPending": "Agent「{{title}}」请求执行工具 {{toolName}}，等待确认",
-        "turnFinished": "Agent「{{title}}」回合完成",
-        "error": "Agent「{{title}}」出错：{{message}}"
+        "confirmationPending": "智能体「{{title}}」请求执行工具 {{toolName}}，等待确认",
+        "turnFinished": "智能体「{{title}}」回合完成",
+        "error": "智能体「{{title}}」出错：{{message}}"
       },
       "watch": {
         "matchTriggered": "监控「{{name}}」命中：{{text}}",
@@ -850,7 +878,7 @@
         "unconfirmedSuffix": "（模型不可用，未经 LLM 二次确认）",
         "modelUnavailable": "监控「{{name}}」模型调用失败：{{message}}",
         "ruleError": "监控「{{name}}」连续失败 {{count}} 次，已自动停用：{{message}}",
-        "paneGone": "监控「{{name}}」的 Pane（{{paneId}}）已销毁，规则已自动删除"
+        "paneGone": "监控「{{name}}」的终端（{{paneId}}）已销毁，规则已自动删除"
       }
     },
     "sidebar": {
@@ -863,10 +891,10 @@
       "settings": "设置",
       "nodes": "多节点互联",
       "currentWindow": "当前窗口",
-      "currentPane": "当前 pane",
+      "currentPane": "当前终端",
       "newWindow": "新建窗口",
       "closeWindow": "关闭窗口",
-      "closePane": "关闭 pane",
+      "closePane": "关闭终端",
       "addDevice": "添加设备",
       "tab": {
         "panes": "终端",
@@ -903,10 +931,10 @@
         "startedAt": "创建于"
       },
       "files": {
-        "comingSoon": "Coming Soon"
+        "comingSoon": "即将推出"
       },
       "panel": {
-        "title": "Agent",
+        "title": "智能体",
         "empty": "选择或创建一个会话",
         "inputPlaceholder": "输入消息…",
         "send": "发送",
@@ -915,12 +943,12 @@
         "scrollToBottom": "回到底部"
       },
       "welcome": {
-        "title": "新建 Agent 对话",
-        "subtitle": "向 Agent 描述你的需求，在所选终端中协作"
+        "title": "新建智能体对话",
+        "subtitle": "向智能体描述你的需求，在所选终端中协作"
       },
       "session": {
         "none": "未选择会话",
-        "new": "新建 Agent 会话",
+        "new": "新建智能体会话",
         "switch": "切换会话",
         "selectPaneHint": "选择一个会话",
         "noSessions": "暂无会话",
@@ -935,7 +963,7 @@
         "deleteTitle": "删除此会话？",
         "deleteDesc": "“{{title}}”及其全部消息将被永久删除。",
         "deleteConfirm": "删除",
-        "createDisabledNoPane": "请先打开一个终端 Pane 再创建会话",
+        "createDisabledNoPane": "请先打开一个终端再创建会话",
         "privacyNotice": "会话将把终端屏幕内容发送给配置的 LLM 服务。"
       },
       "node": {
@@ -943,7 +971,7 @@
       },
       "binding": {
         "invalid": "已失效",
-        "mismatchTitle": "此会话绑定的 Pane 与当前终端不一致",
+        "mismatchTitle": "此会话绑定的终端与当前所选终端不一致",
         "goTo": "跳转过去",
         "rebind": "重绑到当前"
       },
@@ -966,23 +994,24 @@
         "read_screen": "读取屏幕",
         "web_search": "网络搜索",
         "fetch_url": "抓取网页",
-        "get_pane_info": "获取面板信息",
+        "get_pane_info": "获取终端信息",
         "run_command": "运行命令",
-        "denied": "已拒绝"
+        "denied": "已拒绝",
+        "imageAlt": "生成的图片"
       },
       "paneBadge": {
-        "bound": "Agent 已绑定",
-        "generating": "Agent 输出中"
+        "bound": "智能体已绑定",
+        "generating": "智能体输出中"
       },
       "controlChars": {
         "label": "控制字符",
-        "hint": "允许 agent 通过 send_input 发送原始控制字符（C0）。默认关闭；仅在必要时开启。"
+        "hint": "允许智能体通过 send_input 发送原始控制字符（C0）。默认关闭；仅在必要时开启。"
       },
       "reasoning": {
         "title": "思考过程"
       },
       "toast": {
-        "errorTitle": "Agent“{{title}}”出错",
+        "errorTitle": "智能体「{{title}}」出错",
         "credentialWarningTitle": "消息疑似包含凭证",
         "credentialWarningDescription": "检测到 {{types}}。内容不会被修改，但会发送至 LLM 并存储，存在泄露风险。"
       }
@@ -992,23 +1021,23 @@
       "new": "新建窗口",
       "newInCwd": "在此目录新建窗口",
       "close": "关闭窗口",
-      "closePane": "关闭面板",
+      "closePane": "关闭终端",
       "closeConfirmTitle": "关闭此窗口？",
-      "closePaneConfirmTitle": "关闭此面板？",
+      "closePaneConfirmTitle": "关闭此终端？",
       "closeConfirmDesc": "\"{{name}}\" 中运行的进程将被终止，此操作无法撤销。",
       "menu": "窗口操作",
-      "paneMenu": "面板操作",
+      "paneMenu": "终端操作",
       "dragHandle": "拖动以调整窗口顺序",
-      "dragHandlePane": "拖动以调整 pane 顺序",
+      "dragHandlePane": "拖动以调整终端顺序",
       "rename": "重命名窗口",
       "renamePlaceholder": "输入名称",
       "renameDesc": "自定义名称会覆盖终端设置的标题，并保留至 gateway 重启。",
       "renameReset": "恢复自动名称",
-      "switchPane": "切换 Pane",
+      "switchPane": "切换终端",
       "splitRight": "向右分屏",
       "splitDown": "向下分屏",
-      "paneCount": "{{count}} 个 pane",
-      "pane": "Pane",
+      "paneCount": "{{count}} 个终端",
+      "pane": "终端",
       "moveToWindow": "移入此窗口",
       "breakToWindow": "拆为独立窗口"
     },
@@ -1163,7 +1192,7 @@
       "menu": {
         "copyAbsolute": "复制绝对位置",
         "copyRelative": "复制相对位置",
-        "sendToAgent": "发送到 Agent",
+        "sendToAgent": "发送到智能体",
         "expand": "展开",
         "collapse": "收起",
         "upload": "上传文件到这个文件夹",
@@ -1171,6 +1200,7 @@
       },
       "copied": "已复制到剪贴板",
       "copyFailed": "复制失败",
+      "symlink": "符号链接",
       "sendToAgent": {
         "prompt": "请处理这个路径：`{{path}}`"
       },
@@ -1634,7 +1664,7 @@
         "transportDc": "WebRTC",
         "transportRelay": "Hub 中转",
         "iceTitle": "连接详情",
-        "icePlaceholder": "直连未启用，暂无数据。",
+        "icePlaceholder": "暂无直连详情。",
         "connectionState": "连接状态",
         "iceState": "ICE 状态",
         "localCandidate": "本端地址",
@@ -1674,6 +1704,7 @@
           "confirmPassword": "确认密码",
           "hubUrl": "Hub 地址",
           "hubUrlHint": "Hub 的 https 地址，例如 https://tmex.example.com。",
+          "urlPlaceholder": "https://tmex.example.com",
           "token": "加入码",
           "tokenHint": "在 Hub 的「节点」页生成，10 分钟内有效。请完整粘贴。",
           "tokenPlaceholder": "粘贴 Hub 生成的加入码",

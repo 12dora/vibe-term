@@ -10,6 +10,7 @@ import {
   updateAgentSession,
 } from '@tmex/api-client';
 import type { AgentSessionDto } from '@tmex/shared';
+import { agentNodeKey } from './agent-node-state';
 import { type AgentSessionActionsDeps, reportActionError } from './agent-session-deps';
 import { mergeFetchedSessions, withSessionOrder } from './agent-session-map';
 import type { AgentActions, AgentState, CreateSessionOptions } from './agent-state';
@@ -120,6 +121,44 @@ function createPatchActions(patchSession: PatchSession): AgentSessionPatchAction
   };
 }
 
+/** 把所有指向该会话的选中态清空并退订：会话被本端删除或被别端移除时调用。 */
+function clearActiveSession(deps: AgentSessionActionsDeps, sessionId: string): void {
+  const { set, get, unsubscribe } = deps;
+  const current = get().activeSessionIdByNode;
+  const next: Record<string, string | null> = {};
+  let changed = false;
+  for (const [key, id] of Object.entries(current)) {
+    if (id === sessionId) {
+      next[key] = null;
+      changed = true;
+    } else {
+      next[key] = id;
+    }
+  }
+  if (!changed) return;
+  unsubscribe(sessionId);
+  set({ activeSessionIdByNode: next });
+}
+
+/** 列表拉取后，清掉那些指向已不存在会话的选中态（被别端删除）。 */
+function pruneMissingActiveSessions(deps: AgentSessionActionsDeps): void {
+  const { set, get, unsubscribe } = deps;
+  const state = get();
+  const next: Record<string, string | null> = {};
+  const stale: string[] = [];
+  for (const [key, id] of Object.entries(state.activeSessionIdByNode)) {
+    if (id && !state.sessions[id]) {
+      next[key] = null;
+      stale.push(id);
+    } else {
+      next[key] = id;
+    }
+  }
+  if (stale.length === 0) return;
+  for (const id of stale) unsubscribe(id);
+  set({ activeSessionIdByNode: next });
+}
+
 function pruneSessionState(prev: AgentState, sessionId: string): Partial<AgentState> {
   return {
     ...withSessionOrder(withoutKey(prev.sessions, sessionId)),
@@ -163,11 +202,8 @@ export function createAgentSessionCrudActions(
         ...withSessionOrder(mergeFetchedSessions(before, prev.sessions, sessionList)),
         sessionsLoaded: true,
       }));
-      // 持久化的 activeSessionId 可能已被别端删除
-      const state = get();
-      if (state.activeSessionId && !state.sessions[state.activeSessionId]) {
-        state.setActiveSession(null);
-      }
+      // 持久化的选中会话可能已被别端删除
+      pruneMissingActiveSessions(deps);
     } catch (error) {
       console.error('[agent] loadSessions failed:', error);
     }
@@ -199,16 +235,23 @@ export function createAgentSessionCrudActions(
       }
     },
 
-    setActiveSession(sessionId) {
-      const previous = get().activeSessionId;
+    setActiveSession(sessionId, nodeId) {
+      const state = get();
+      const session = sessionId ? state.sessions[sessionId] : undefined;
+      const key = agentNodeKey(session ? session.nodeId : nodeId);
+      const previous = state.activeSessionIdByNode[key] ?? null;
       if (previous === sessionId) return;
 
       if (previous) {
         unsubscribe(previous);
       }
 
-      // 选中真实会话即退出草稿态
-      set({ activeSessionId: sessionId, draft: null, materializingDraft: false });
+      // 选中真实会话即退出该 node 的草稿态；别的 node 的选择与草稿原样保留
+      set((prev) => ({
+        activeSessionIdByNode: { ...prev.activeSessionIdByNode, [key]: sessionId },
+        draftByNode: { ...prev.draftByNode, [key]: null },
+        materializingDraftByNode: { ...prev.materializingDraftByNode, [key]: false },
+      }));
 
       if (sessionId) {
         subscribe(sessionId);
@@ -229,9 +272,7 @@ export function createAgentSessionCrudActions(
     async deleteSession(sessionId) {
       try {
         await deleteAgentSession(sessionId, apiClient);
-        if (get().activeSessionId === sessionId) {
-          get().setActiveSession(null);
-        }
+        clearActiveSession(deps, sessionId);
         clearSessionRuntime(sessionId);
         set((prev) => pruneSessionState(prev, sessionId));
         return true;

@@ -48,16 +48,18 @@ export interface AgentStateData {
   sessions: Record<string, AgentSessionDto | undefined>;
   sessionOrder: string[];
   sessionsLoaded: boolean;
-  activeSessionId: string | null;
+  /** 每个 node 各自选中的会话（键见 `agentNodeKey`）：切 node 只换视图，不清别人的选择 */
+  activeSessionIdByNode: Record<string, string | null>;
   messages: Record<string, AgentMessageDto[] | undefined>;
   historyLoaded: Record<string, boolean | undefined>;
   inProgress: Record<string, SessionInProgress | undefined>;
   pendingConfirmations: Record<string, PendingConfirmationUi[] | undefined>;
   queued: Record<string, AgentQueuedMessageDto[] | undefined>;
   sending: Record<string, boolean | undefined>;
-  draft: DraftSession | null;
-  /** 当前草稿是否正在物化（创建 session 请求 in-flight），输入区据此禁用 */
-  materializingDraft: boolean;
+  /** 每个 node 各自的未发送草稿（键见 `agentNodeKey`） */
+  draftByNode: Record<string, DraftSession | null>;
+  /** 该 node 的草稿是否正在物化（创建 session 请求 in-flight），输入区据此禁用 */
+  materializingDraftByNode: Record<string, boolean>;
   // 新建 session 的默认写入模式（浏览器记忆，session 创建前也由开关控制）
   defaultWriteMode: AgentWriteMode;
 }
@@ -66,7 +68,11 @@ export interface AgentActions {
   ensureInitialized: () => void;
   loadSessions: () => Promise<void>;
   refreshSession: (sessionId: string) => Promise<void>;
-  setActiveSession: (sessionId: string | null) => void;
+  /**
+   * 选中会话。所属 node 优先取会话自身的 `nodeId`；会话还没进本地表（或传 null 清空选择）
+   * 时用 `nodeId` 参数定位分片。
+   */
+  setActiveSession: (sessionId: string | null, nodeId?: string | null) => void;
   createSession: (
     deviceId: string,
     paneId: string,
@@ -93,9 +99,12 @@ export interface AgentActions {
   ) => Promise<void>;
   // 草稿会话
   startDraft: (input: StartDraftInput) => void;
-  updateDraft: (patch: Partial<Pick<DraftSession, 'providerId' | 'modelId'>>) => void;
-  clearDraft: () => void;
-  materializeDraft: () => Promise<AgentSessionDto | null>;
+  updateDraft: (
+    nodeId: string | null,
+    patch: Partial<Pick<DraftSession, 'providerId' | 'modelId'>>
+  ) => void;
+  clearDraft: (nodeId: string | null) => void;
+  materializeDraft: (nodeId: string | null) => Promise<AgentSessionDto | null>;
 }
 
 /** 起草参数：node + pane 定位，加上起源元数据与预填 prompt */
@@ -128,15 +137,15 @@ export function createInitialAgentStateData(): AgentStateData {
     sessions: {},
     sessionOrder: [],
     sessionsLoaded: false,
-    activeSessionId: null,
+    activeSessionIdByNode: {},
     messages: {},
     historyLoaded: {},
     inProgress: {},
     pendingConfirmations: {},
     queued: {},
     sending: {},
-    draft: null,
-    materializingDraft: false,
+    draftByNode: {},
+    materializingDraftByNode: {},
     defaultWriteMode: 'confirm',
   };
 }

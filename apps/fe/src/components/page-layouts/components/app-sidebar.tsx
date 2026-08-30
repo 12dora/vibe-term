@@ -2,8 +2,7 @@ import { Bot, FolderClosed, Monitor, PanelsTopLeft } from 'lucide-react';
 import { type ComponentProps, Suspense, lazy } from 'react';
 import { useTranslation } from 'react-i18next';
 
-import { useMeshNodes } from '@/node/mesh-nodes';
-import { isNodeOffline } from '@/node/node-offline';
+import { useNodeOffline } from '@/node/node-offline';
 import { useRouteNodeId } from '@/node/node-runtime-boundary';
 import { NodeRuntimeScope } from '@/node/node-runtime-scope';
 import { selfAgentStore } from '@/node/self-agent-store';
@@ -20,15 +19,6 @@ import { SidebarTitle } from './sidebar-title';
 const AgentTab = lazy(() => import('@tmex/panels/agent').then((m) => ({ default: m.AgentTab })));
 const FilesTab = lazy(() => import('@tmex/panels/files').then((m) => ({ default: m.FilesTab })));
 
-/**
- * `enabled: false` 只订阅宿主级 mesh 快照，不发 `/api/mesh/*` 也不订阅事件流
- * ——拉取与订阅是设备区 `SideBarDeviceList` 的活。
- */
-function useRouteNodeOffline(routeNodeId: string): boolean {
-  const { nodes, entryNodeId } = useMeshNodes({ enabled: false });
-  return isNodeOffline(nodes, entryNodeId, routeNodeId);
-}
-
 const navMainItems = [
   {
     title: 'nav.manageDevices',
@@ -44,7 +34,7 @@ export function AppSidebar({ ...props }: ComponentProps<typeof Sidebar>) {
   // 外壳常驻在 self 运行时下；智能体 / 文件两个标签服务的是当前路由所在的 node，
   // 单独套一层该 node 的运行时（切 node 时这两块重挂是预期的，设备树不受影响）
   const routeNodeId = useRouteNodeId();
-  const routeNodeOffline = useRouteNodeOffline(routeNodeId);
+  const routeNodeOffline = useNodeOffline(routeNodeId);
 
   return (
     <Sidebar variant="inset" {...props}>

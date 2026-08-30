@@ -4,6 +4,7 @@ import { ApiClient, type FetchLike } from '@tmex/api-client';
 import { noopNotificationSink } from '@tmex/notifications';
 import type { AgentSessionDto } from '@tmex/shared';
 import type { AgentHistorySync } from './agent-history-sync';
+import { activeSessionIdOnNode, draftOnNode, isDraftMaterializingOnNode } from './agent-node-state';
 import { createAgentSessionActions, sortSessionOrder } from './agent-session-actions';
 import {
   type AgentGetState,
@@ -190,7 +191,7 @@ describe('materializeDraft', () => {
       .startDraft({ nodeId: null, deviceId: 'd1', paneId: '%1', paneTitle: 'pane one' });
 
     const submit = async (text: string): Promise<void> => {
-      const session = await harness.state().materializeDraft();
+      const session = await harness.state().materializeDraft(null);
       expect(session).not.toBeNull();
       if (session) {
         await harness.state().sendMessage(session.id, text);
@@ -198,15 +199,15 @@ describe('materializeDraft', () => {
     };
 
     const first = submit('first');
-    expect(harness.state().materializingDraft).toBe(true);
+    expect(isDraftMaterializingOnNode(harness.state(), null)).toBe(true);
     const second = submit('second');
     await Promise.all([first, second]);
 
     expect(harness.createCount()).toBe(1);
     expect(Object.keys(harness.state().sessions)).toEqual(['s1']);
-    expect(harness.state().activeSessionId).toBe('s1');
-    expect(harness.state().draft).toBeNull();
-    expect(harness.state().materializingDraft).toBe(false);
+    expect(activeSessionIdOnNode(harness.state(), null)).toBe('s1');
+    expect(draftOnNode(harness.state(), null)).toBeNull();
+    expect(isDraftMaterializingOnNode(harness.state(), null)).toBe(false);
     expect(
       harness
         .state()
@@ -219,8 +220,8 @@ describe('materializeDraft', () => {
     const harness = createDraftHarness({ gateCreate: true });
     harness.state().startDraft({ nodeId: null, deviceId: 'd1', paneId: '%1', paneTitle: null });
 
-    const first = harness.state().materializeDraft();
-    const second = harness.state().materializeDraft();
+    const first = harness.state().materializeDraft(null);
+    const second = harness.state().materializeDraft(null);
     expect(second).toBe(first);
 
     harness.releaseCreate();
@@ -234,21 +235,21 @@ describe('materializeDraft', () => {
     harness
       .state()
       .startDraft({ nodeId: null, deviceId: 'd1', paneId: '%1', paneTitle: 'pane one' });
-    const pending = harness.state().materializeDraft();
+    const pending = harness.state().materializeDraft(null);
 
     // 请求在途时用户切到另一个 pane 的新草稿
     harness
       .state()
       .startDraft({ nodeId: null, deviceId: 'd1', paneId: '%2', paneTitle: 'pane two' });
-    expect(harness.state().materializingDraft).toBe(false);
+    expect(isDraftMaterializingOnNode(harness.state(), null)).toBe(false);
 
     harness.releaseCreate();
     const session = await pending;
 
     expect(session?.id).toBe('s1');
     expect(harness.state().sessions.s1).toBeDefined();
-    expect(harness.state().activeSessionId).toBeNull();
-    expect(harness.state().draft?.paneId).toBe('%2');
+    expect(activeSessionIdOnNode(harness.state(), null)).toBeNull();
+    expect(draftOnNode(harness.state(), null)?.paneId).toBe('%2');
     expect(harness.subscribed).toEqual([]);
   });
 });
@@ -386,7 +387,7 @@ describe('deleteSession', () => {
       ensureInitialized: () => {},
       sessions: { s1: makeSession('s1', '2026-01-01T00:00:00.000Z') },
       sessionOrder: ['s1'],
-      activeSessionId: 's1',
+      activeSessionIdByNode: { self: 's1' },
     };
 
     expect(await state.deleteSession('s1')).toBe(true);
@@ -395,6 +396,6 @@ describe('deleteSession', () => {
     expect(clearedRuntimes).toEqual(['s1']);
     expect(state.sessions.s1).toBeUndefined();
     expect(state.sessionOrder).toEqual([]);
-    expect(state.activeSessionId).toBeNull();
+    expect(activeSessionIdOnNode(state, null)).toBeNull();
   });
 });

@@ -162,7 +162,7 @@ export function BecomeHubForm({
               id="setup-hub-public-url"
               value={values.hubPublicUrl}
               onChange={(event) => update({ hubPublicUrl: event.target.value })}
-              placeholder="https://tmex.example.com"
+              placeholder={t('nodes.setup.fields.urlPlaceholder')}
               autoComplete="url"
               className="min-h-10"
             />

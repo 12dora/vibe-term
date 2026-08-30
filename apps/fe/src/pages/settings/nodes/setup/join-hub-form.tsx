@@ -128,7 +128,7 @@ export function JoinHubForm({
               id="setup-hub-url"
               value={values.hubUrl}
               onChange={(event) => update({ hubUrl: event.target.value })}
-              placeholder="https://tmex.example.com"
+              placeholder={t('nodes.setup.fields.urlPlaceholder')}
               autoComplete="url"
               className="min-h-10"
             />

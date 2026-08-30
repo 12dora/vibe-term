@@ -76,7 +76,7 @@ export function NavMain({
                     }
                   >
                     <ChevronRight />
-                    <span className="sr-only">Toggle</span>
+                    <span className="sr-only">{t('nav.toggleSubmenu')}</span>
                   </CollapsibleTrigger>
                   <CollapsibleContent>
                     <SidebarMenuSub>

@@ -252,6 +252,7 @@ function extractToolImages(call: UiToolCall): string[] {
 }
 
 function ToolImages({ images }: { images: string[] }) {
+  const { t } = useTranslation();
   if (images.length === 0) return null;
   return (
     <div className="flex flex-wrap gap-2">
@@ -266,7 +267,7 @@ function ToolImages({ images }: { images: string[] }) {
         >
           <img
             src={src}
-            alt="generated"
+            alt={t('agent.tool.imageAlt')}
             className="max-h-64 max-w-full rounded-md border border-border object-contain"
             loading="lazy"
           />

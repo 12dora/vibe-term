@@ -22,6 +22,7 @@ export const I18N_RESOURCES = {
       "retry": "Retry",
       "pageLoadFailed": "Failed to load this page.",
       "pageLoadFailedHint": "Check your network connection, then retry.",
+      "mermaidRenderFailed": "Mermaid failed to render: {{message}}",
       "test": "Test",
       "send": "Send",
       "success": "Success",
@@ -51,6 +52,7 @@ export const I18N_RESOURCES = {
       "sidebarCollapse": "Collapse Sidebar",
       "openSidebar": "Open Sidebar",
       "closeSidebar": "Close Sidebar",
+      "toggleSubmenu": "Toggle submenu",
       "jumpToLatest": "Jump to Latest",
       "switchToEditor": "Switch to Editor Input",
       "switchToDirect": "Switch to Direct Input",
@@ -172,15 +174,15 @@ export const I18N_RESOURCES = {
       "deviceErrorWithType": "[{{type}}] Device Error",
       "noDeviceSelected": "No device selected",
       "windowClosed": "Current window has been closed, please select a window from the sidebar.",
-      "paneClosed": "Current pane has been closed, please select a pane from the sidebar.",
+      "paneClosed": "The current terminal has been closed. Select another one from the sidebar.",
       "bellNotification": "Terminal Bell",
       "bellDescriptionWithTitle": "Window {{window}} · {{paneLabel}}",
       "bellFallback": "Received tmux bell",
       "notificationFallbackTitle": "Terminal Notification",
       "notificationSourceLabel": "From {{source}}",
       "notificationFallbackDetail": "Terminal notification",
-      "paneTitle": "Pane {{index}}",
-      "activePane": "Current Pane",
+      "paneTitle": "Terminal {{index}}",
+      "activePane": "Current terminal",
       "activeWindow": "Current Window",
       "editorPlaceholder": "Enter commands here...",
       "editorClear": "Clear",
@@ -192,7 +194,7 @@ export const I18N_RESOURCES = {
       "inputModeEditor": "Editor",
       "newWindow": "New Window",
       "closeWindow": "Close Window",
-      "closePane": "Close Pane",
+      "closePane": "Close terminal",
       "copy": "Copy",
       "paste": "Paste",
       "copied": "Copied to clipboard",
@@ -320,7 +322,8 @@ export const I18N_RESOURCES = {
         },
         "check": {
           "reachable": "Reachable",
-          "unreachable": "Unreachable"
+          "unreachable": "Unreachable",
+          "running": "Checking…"
         },
         "log": {
           "title": "Log",
@@ -366,21 +369,31 @@ export const I18N_RESOURCES = {
             "hostnameInvalid": "Enter a lowercase hostname such as tmex.example.com.",
             "tunnelName": "Tunnel name",
             "tunnelNamePlaceholder": "tmex",
-            "tunnelNameHint": "Optional. tmex generates a name when left empty.",
+            "tunnelNameHint": "Optional; tmex generates one when left empty. Lowercase letters, digits, hyphens and underscores only.",
             "hubHint": "On a Hub, set the Hub public URL to this hostname.",
-            "hubHintLink": "Open node settings"
+            "hubHintLink": "Open node settings",
+            "tunnelId": "Tunnel ID",
+            "configured": "The named tunnel has been created.",
+            "changeHint": "To use a different hostname or tunnel, remove the current tunnel above first.",
+            "tunnelNameInvalid": "The tunnel name must start with a lowercase letter or digit and may contain only lowercase letters, digits, hyphens and underscores, up to 63 characters."
           },
           "proxy": {
             "title": "Reverse proxy trust",
             "description": "The tunnel replaces the client address and protocol, so tmex needs matching trust settings.",
             "trustProxy": "Trust reverse proxy headers",
-            "trustProxyHint": "Required when tmex runs behind the tunnel, so client addresses and protocols are read correctly.",
+            "trustProxyHint": "Turn this on only if tmex can be reached through this tunnel alone.",
             "autoStart": "Start with tmex",
             "autoStartHint": "Bring the tunnel up when the gateway starts.",
             "restartRequired": "Saved. Restart to apply.",
             "restartNow": "Restart now",
             "restarting": "Restarting",
-            "restartTimeout": "Restart timed out. Restart tmex manually."
+            "restartTimeout": "Restart timed out. Restart tmex manually.",
+            "trustProxyDetail": "When on, tmex trusts X-Forwarded-Proto and X-Forwarded-For. Anyone who can bypass the tunnel and reach the local listening port directly could forge them, so restrict access to that port.",
+            "trustProxyEffective": "In effect now",
+            "trustProxyState": {
+              "on": "Trusted",
+              "off": "Not trusted"
+            }
           }
         },
         "jobStep": {
@@ -393,7 +406,9 @@ export const I18N_RESOURCES = {
           "create": "Creating tunnel",
           "wait_cert": "Waiting for authorization",
           "login": "Signing in to Cloudflare",
-          "cancelled": "Cancelled"
+          "cancelled": "Cancelled",
+          "check": "Checking connectivity",
+          "ok": "Done"
         },
         "errors": {
           "unsupported_platform": "Cloudflare Tunnel is not supported on this platform.",
@@ -408,7 +423,19 @@ export const I18N_RESOURCES = {
           "busy": "Another operation is in progress.",
           "not_configured": "Remote access is not configured.",
           "invalid_request": "Invalid request.",
-          "unknown": "Operation failed: {{message}}"
+          "unknown": "Operation failed: {{message}}",
+          "auth_required": "Enable sign-in on this machine before exposing it publicly."
+        },
+        "authRequired": {
+          "notice": "Enable sign-in on this machine before exposing it publicly.",
+          "link": "Open multi-node settings"
+        },
+        "confirmRemove": {
+          "title": "Remove the named tunnel?",
+          "description": "This stops the tunnel, deletes the credentials stored on this machine and deletes the tunnel in Cloudflare.",
+          "irreversible": "The tunnel in Cloudflare cannot be restored and the public address stops working immediately.",
+          "confirm": "Remove tunnel",
+          "cancel": "Cancel"
         }
       },
       "deviceManagement": {
@@ -676,6 +703,7 @@ export const I18N_RESOURCES = {
       "title": "Webhooks",
       "url": "Webhook URL",
       "secret": "Secret",
+      "urlPlaceholder": "https://example.com/webhook",
       "secretPlaceholder": "Used to sign payloads (HMAC-SHA256)",
       "enabled": "Enabled",
       "eventMask": "Events",
@@ -767,7 +795,7 @@ export const I18N_RESOURCES = {
       "agentSessionBusy": "Agent session is currently running, stop it or wait for completion",
       "agentSessionAwaitingConfirmation": "Agent session has pending confirmations, resolve them first",
       "agentDeviceRequired": "Device is required",
-      "agentPaneRequired": "Terminal pane is required",
+      "agentPaneRequired": "A terminal is required",
       "agentWriteModeInvalid": "Write mode must be confirm or auto",
       "agentMaxStepsInvalid": "Max steps per turn must be between 1 and 100",
       "agentProviderWebSearchRequiresResponses": "Provider built-in web search requires the openai-responses protocol",
@@ -811,12 +839,12 @@ export const I18N_RESOURCES = {
       "folderLayoutInvalid": "Invalid group layout"
     },
     "notification": {
-      "clickToJump": "Click to jump to corresponding pane",
+      "clickToJump": "Click to jump to the corresponding terminal",
       "eventType": {
         "terminal_bell": "🔔 Terminal Bell",
         "terminal_notification": "🔔 Terminal Notification",
         "tmux_window_close": "🪟 Window Closed",
-        "tmux_pane_close": "📱 Pane Closed",
+        "tmux_pane_close": "📱 Terminal Closed",
         "device_tmux_missing": "⚠️ Tmux Missing",
         "device_disconnect": "🔌 Device Disconnected",
         "session_created": "🆕 Session Created",
@@ -831,7 +859,7 @@ export const I18N_RESOURCES = {
       "site": "Site",
       "device": "Device",
       "window": "Window",
-      "pane": "Pane",
+      "pane": "Terminal",
       "time": "Time",
       "directLink": "Direct Link",
       "message": "Message",
@@ -840,7 +868,7 @@ export const I18N_RESOURCES = {
       "telegramBell": {
         "title": "🔔 Bell from {{siteName}}: {{terminalTopbarLabel}}",
         "viewLink": "Click to view",
-        "terminalTopbarLabel": "Window {{window}} · Pane {{pane}} @ {{device}}"
+        "terminalTopbarLabel": "Window {{window}} · Terminal {{pane}} @ {{device}}"
       },
       "telegramNotification": {},
       "agent": {
@@ -856,7 +884,7 @@ export const I18N_RESOURCES = {
         "unconfirmedSuffix": " (model unavailable, not LLM-confirmed)",
         "modelUnavailable": "Watch \"{{name}}\" model call failed: {{message}}",
         "ruleError": "Watch \"{{name}}\" failed {{count}} times in a row and has been disabled: {{message}}",
-        "paneGone": "Watch \"{{name}}\" pane ({{paneId}}) was destroyed; the rule has been removed"
+        "paneGone": "Watch \"{{name}}\" terminal ({{paneId}}) was destroyed; the rule has been removed"
       }
     },
     "sidebar": {
@@ -869,10 +897,10 @@ export const I18N_RESOURCES = {
       "settings": "Settings",
       "nodes": "Multi-node Mesh",
       "currentWindow": "Current Window",
-      "currentPane": "Current Pane",
+      "currentPane": "Current terminal",
       "newWindow": "Create Window",
       "closeWindow": "Close Window",
-      "closePane": "Close Pane",
+      "closePane": "Close terminal",
       "addDevice": "Add Device",
       "tab": {
         "panes": "Terminals",
@@ -941,16 +969,16 @@ export const I18N_RESOURCES = {
         "deleteTitle": "Delete this session?",
         "deleteDesc": "\"{{title}}\" and all its messages will be permanently deleted.",
         "deleteConfirm": "Delete",
-        "createDisabledNoPane": "Open a terminal pane to create a session",
+        "createDisabledNoPane": "Open a terminal to create a session",
         "privacyNotice": "Sessions send terminal screen content to the configured LLM service."
       },
       "node": {
         "offlinePaused": "Node offline. Session paused."
       },
       "binding": {
-        "invalid": "Pane unavailable",
-        "mismatchTitle": "This session is bound to a different pane",
-        "goTo": "Go to pane",
+        "invalid": "Terminal unavailable",
+        "mismatchTitle": "This session is bound to a different terminal",
+        "goTo": "Go to terminal",
         "rebind": "Rebind here"
       },
       "writeMode": {
@@ -972,9 +1000,10 @@ export const I18N_RESOURCES = {
         "read_screen": "Read screen",
         "web_search": "Web search",
         "fetch_url": "Fetch URL",
-        "get_pane_info": "Get pane info",
+        "get_pane_info": "Get terminal info",
         "run_command": "Run command",
-        "denied": "Denied"
+        "denied": "Denied",
+        "imageAlt": "Generated image"
       },
       "paneBadge": {
         "bound": "Agent bound",
@@ -998,32 +1027,32 @@ export const I18N_RESOURCES = {
       "new": "New Window",
       "newInCwd": "New window here",
       "close": "Close window",
-      "closePane": "Close pane",
+      "closePane": "Close terminal",
       "closeConfirmTitle": "Close this window?",
-      "closePaneConfirmTitle": "Close this pane?",
+      "closePaneConfirmTitle": "Close this terminal?",
       "closeConfirmDesc": "Processes running in \"{{name}}\" will be terminated. This action cannot be undone.",
       "menu": "Window actions",
-      "paneMenu": "Pane actions",
+      "paneMenu": "Terminal actions",
       "dragHandle": "Drag to reorder window",
-      "dragHandlePane": "Drag to reorder pane",
+      "dragHandlePane": "Drag to reorder terminals",
       "rename": "Rename window",
       "renamePlaceholder": "Enter a name",
       "renameDesc": "The custom name overrides the title set by the terminal and is kept until the gateway restarts.",
       "renameReset": "Use automatic name",
-      "switchPane": "Switch pane",
+      "switchPane": "Switch terminal",
       "splitRight": "Split right",
       "splitDown": "Split down",
-      "paneCount": "{{count}} panes",
-      "pane": "Pane",
+      "paneCount": "{{count}} terminals",
+      "pane": "Terminal",
       "moveToWindow": "Move into this window",
       "breakToWindow": "Break into new window"
     },
     "watch": {
       "title": "Watch rules",
-      "dialogDesc": "Monitor this pane's screen and get notified when conditions are met",
-      "openMonitor": "Watch this pane",
+      "dialogDesc": "Monitor this terminal's screen and get notified when conditions are met",
+      "openMonitor": "Watch this terminal",
       "rules": {
-        "empty": "No watch rules for this pane yet",
+        "empty": "No watch rules for this terminal yet",
         "addRule": "New rule",
         "edit": "Edit",
         "delete": "Delete",
@@ -1177,6 +1206,7 @@ export const I18N_RESOURCES = {
       },
       "copied": "Copied to clipboard",
       "copyFailed": "Copy failed",
+      "symlink": "Symbolic link",
       "sendToAgent": {
         "prompt": "Please work with this path: `{{path}}`"
       },
@@ -1640,7 +1670,7 @@ export const I18N_RESOURCES = {
         "transportDc": "WebRTC",
         "transportRelay": "Hub relay",
         "iceTitle": "Connection details",
-        "icePlaceholder": "Direct connections are off, so there is nothing to show.",
+        "icePlaceholder": "Direct connection details unavailable.",
         "connectionState": "Connection",
         "iceState": "ICE state",
         "localCandidate": "Local address",
@@ -1680,6 +1710,7 @@ export const I18N_RESOURCES = {
           "confirmPassword": "Confirm password",
           "hubUrl": "Hub address",
           "hubUrlHint": "The hub's https address, for example https://tmex.example.com.",
+          "urlPlaceholder": "https://tmex.example.com",
           "token": "Join code",
           "tokenHint": "Create it on the hub, on its Nodes page. It is valid for 10 minutes — paste the whole code.",
           "tokenPlaceholder": "Paste the join code from the hub",
@@ -1815,6 +1846,7 @@ export const I18N_RESOURCES = {
       "retry": "重试",
       "pageLoadFailed": "页面加载失败。",
       "pageLoadFailedHint": "请检查网络连接后重试。",
+      "mermaidRenderFailed": "Mermaid 渲染失败：{{message}}",
       "test": "测试",
       "send": "发送",
       "success": "成功",
@@ -1844,6 +1876,7 @@ export const I18N_RESOURCES = {
       "sidebarCollapse": "收起侧边栏",
       "openSidebar": "打开侧边栏",
       "closeSidebar": "关闭侧边栏",
+      "toggleSubmenu": "展开或收起子菜单",
       "jumpToLatest": "跳转到最新",
       "switchToEditor": "切换到编辑器输入",
       "switchToDirect": "切换到直接输入",
@@ -1965,15 +1998,15 @@ export const I18N_RESOURCES = {
       "deviceErrorWithType": "[{{type}}] 设备错误",
       "noDeviceSelected": "未选择设备",
       "windowClosed": "当前窗口已关闭，请在侧边栏重新选择窗口。",
-      "paneClosed": "当前 Pane 已关闭，请在侧边栏重新选择 Pane。",
+      "paneClosed": "当前终端已关闭，请在侧边栏重新选择。",
       "bellNotification": "终端 Bell",
       "bellDescriptionWithTitle": "窗口 {{window}} · {{paneLabel}}",
       "bellFallback": "收到 tmux bell",
       "notificationFallbackTitle": "终端通知",
       "notificationSourceLabel": "来自 {{source}}",
       "notificationFallbackDetail": "终端通知",
-      "paneTitle": "Pane {{index}}",
-      "activePane": "当前 pane",
+      "paneTitle": "终端 {{index}}",
+      "activePane": "当前终端",
       "activeWindow": "当前窗口",
       "editorPlaceholder": "在此输入命令...",
       "editorClear": "清空",
@@ -1985,7 +2018,7 @@ export const I18N_RESOURCES = {
       "inputModeEditor": "编辑器",
       "newWindow": "新建窗口",
       "closeWindow": "关闭窗口",
-      "closePane": "关闭 pane",
+      "closePane": "关闭终端",
       "copy": "复制",
       "paste": "粘贴",
       "copied": "已复制到剪贴板",
@@ -2062,7 +2095,7 @@ export const I18N_RESOURCES = {
           "action": {
             "paste": "粘贴",
             "toggleKeyboard": "切换文本框/键盘",
-            "newAgentSession": "新建 Agent 会话",
+            "newAgentSession": "新建智能体会话",
             "scrollToBottom": "终端回到最下方"
           },
           "loadFailed": "加载快捷键失败",
@@ -2113,7 +2146,8 @@ export const I18N_RESOURCES = {
         },
         "check": {
           "reachable": "可访问",
-          "unreachable": "不可达"
+          "unreachable": "不可达",
+          "running": "正在检查…"
         },
         "log": {
           "title": "日志",
@@ -2159,21 +2193,31 @@ export const I18N_RESOURCES = {
             "hostnameInvalid": "主机名格式不正确，请填写形如 tmex.example.com 的小写域名。",
             "tunnelName": "隧道名称",
             "tunnelNamePlaceholder": "tmex",
-            "tunnelNameHint": "可留空，留空时由 tmex 生成。",
+            "tunnelNameHint": "可留空，留空时由 tmex 生成。只能使用小写字母、数字、连字符与下划线。",
             "hubHint": "作为 Hub 时，请将 Hub 公开地址设为此主机名。",
-            "hubHintLink": "前往多节点互联设置"
+            "hubHintLink": "前往多节点互联设置",
+            "tunnelId": "隧道 ID",
+            "configured": "命名隧道已创建。",
+            "changeHint": "如需更换主机名或隧道，请先在上方移除现有隧道。",
+            "tunnelNameInvalid": "隧道名称需以小写字母或数字开头，只能包含小写字母、数字、连字符与下划线，最长 63 个字符。"
           },
           "proxy": {
             "title": "反向代理信任",
             "description": "隧道会替换客户端地址与协议，需要相应调整 tmex 的信任设置。",
             "trustProxy": "信任反向代理头",
-            "trustProxyHint": "tmex 位于隧道之后时需要开启，以便正确识别客户端地址与协议。",
+            "trustProxyHint": "仅当 tmex 只能经由该隧道访问时才开启。",
             "autoStart": "随 tmex 启动",
             "autoStartHint": "网关启动时自动拉起隧道。",
             "restartRequired": "配置已保存，重启后生效。",
             "restartNow": "立即重启",
             "restarting": "正在重启",
-            "restartTimeout": "重启超时，请手动重启 tmex。"
+            "restartTimeout": "重启超时，请手动重启 tmex。",
+            "trustProxyDetail": "开启后 tmex 会信任 X-Forwarded-Proto 与 X-Forwarded-For。能绕过隧道直连本机监听端口的人可以伪造这两个请求头，因此请限制该端口的外部访问。",
+            "trustProxyEffective": "当前生效",
+            "trustProxyState": {
+              "on": "已信任",
+              "off": "未信任"
+            }
           }
         },
         "jobStep": {
@@ -2186,7 +2230,9 @@ export const I18N_RESOURCES = {
           "create": "创建隧道",
           "wait_cert": "等待授权",
           "login": "登录 Cloudflare",
-          "cancelled": "已取消"
+          "cancelled": "已取消",
+          "check": "检查连通性",
+          "ok": "完成"
         },
         "errors": {
           "unsupported_platform": "当前系统不支持 Cloudflare Tunnel。",
@@ -2201,7 +2247,19 @@ export const I18N_RESOURCES = {
           "busy": "另一项操作正在进行。",
           "not_configured": "尚未配置远程访问。",
           "invalid_request": "请求无效。",
-          "unknown": "操作失败：{{message}}"
+          "unknown": "操作失败：{{message}}",
+          "auth_required": "请先为本机启用登录，再开放公网访问。"
+        },
+        "authRequired": {
+          "notice": "请先为本机启用登录，再开放公网访问。",
+          "link": "前往多节点互联设置"
+        },
+        "confirmRemove": {
+          "title": "移除命名隧道？",
+          "description": "这会停止隧道、删除本机保存的凭证，并在 Cloudflare 上删除该隧道。",
+          "irreversible": "Cloudflare 上的隧道无法恢复，公网地址会立即失效。",
+          "confirm": "移除隧道",
+          "cancel": "取消"
         }
       },
       "deviceManagement": {
@@ -2381,11 +2439,11 @@ export const I18N_RESOURCES = {
       "expand": "展开",
       "collapse": "收起",
       "authCount": "已授权 {{authorized}} / 待授权 {{pending}}（总上限 8）",
-      "chatId": "chatId",
+      "chatId": "Chat ID",
       "applyTime": "申请时间",
-      "gatewayOnline": "🟢 Gateway online @ {{siteName}}",
+      "gatewayOnline": "🟢 网关已上线 @ {{siteName}}",
       "deviceConnectionError": "🔴 {{siteName}}：设备「{{deviceName}}」({{host}}) 连接异常 [{{category}}]\n{{error}}",
-      "agentCredentialWarning": "⚠️ {{siteName}}：Agent 会话「{{sessionTitle}}」的一条消息疑似包含凭证（{{types}}）。该内容将发送至 LLM 并存储，存在泄露风险。",
+      "agentCredentialWarning": "⚠️ {{siteName}}：智能体会话「{{sessionTitle}}」的一条消息疑似包含凭证（{{types}}）。该内容将发送至 LLM 并存储，存在泄露风险。",
       "authSuccess": "✅ 已授权，可接收通知。",
       "authPending": "⏳ 已收到授权申请，请在 tmex 设置页审批。",
       "authFailed": "❌ 授权申请失败，请联系管理员。",
@@ -2469,6 +2527,7 @@ export const I18N_RESOURCES = {
       "title": "Webhooks",
       "url": "Webhook 地址",
       "secret": "密钥",
+      "urlPlaceholder": "https://example.com/webhook",
       "secretPlaceholder": "用于签名（HMAC-SHA256）",
       "enabled": "启用",
       "eventMask": "事件",
@@ -2520,8 +2579,8 @@ export const I18N_RESOURCES = {
     "websocket": {
       "error": "WebSocket 连接错误",
       "checkGateway": "请检查 Gateway 状态",
-      "upgradeFailed": "Upgrade failed",
-      "invalidMessage": "Invalid message format",
+      "upgradeFailed": "升级失败",
+      "invalidMessage": "消息格式无效",
       "reconnecting": "重连中",
       "reconnect": "重新连接"
     },
@@ -2540,11 +2599,11 @@ export const I18N_RESOURCES = {
       "missingFields": "缺少必填字段",
       "sshRequiresHost": "SSH 设备需要 host 或 sshConfigRef",
       "invalidRequest": "请求无效",
-      "deviceNotFound": "Device not found",
+      "deviceNotFound": "设备不存在",
       "botNotFound": "Bot 不存在",
       "chatNotFound": "Chat 不存在",
-      "urlAndSecretRequired": "URL and secret required",
-      "notFound": "Not found",
+      "urlAndSecretRequired": "URL 与密钥不能为空",
+      "notFound": "未找到",
       "llmProviderNameRequired": "Provider 名称不能为空",
       "llmProviderProtocolInvalid": "协议必须是 openai-chat 或 openai-responses",
       "llmProviderBaseUrlInvalid": "Base URL 必须以 http:// 或 https:// 开头",
@@ -2556,17 +2615,17 @@ export const I18N_RESOURCES = {
       "llmDefaultProviderNotFound": "默认 provider 不存在",
       "llmSearchProviderInvalid": "搜索服务必须是 none、tavily 或 brave",
       "llmFetchModelsFailed": "拉取模型列表失败：{{detail}}",
-      "agentSessionNotFound": "Agent 会话不存在",
-      "agentSessionBusy": "Agent 会话正在运行中，请先停止或等待完成",
-      "agentSessionAwaitingConfirmation": "Agent 会话有待处理的确认请求，请先处理",
+      "agentSessionNotFound": "智能体会话不存在",
+      "agentSessionBusy": "智能体会话正在运行中，请先停止或等待完成",
+      "agentSessionAwaitingConfirmation": "智能体会话有待处理的确认请求，请先处理",
       "agentDeviceRequired": "必须指定设备",
-      "agentPaneRequired": "必须指定终端 pane",
+      "agentPaneRequired": "必须指定终端",
       "agentWriteModeInvalid": "写入模式必须是 confirm 或 auto",
       "agentMaxStepsInvalid": "每回合最大步数必须在 1-100 之间",
       "agentProviderWebSearchRequiresResponses": "Provider 内置搜索仅支持 openai-responses 协议",
       "agentHostedToolUnknown": "未知的 hosted 工具：{{name}}",
-      "agentHostedToolRequiresResponses": "Provider hosted 工具仅支持 openai-responses 协议",
-      "agentSessionOrphaned": "该 Agent 会话已孤立（绑定终端已不存在），仅可只读查看",
+      "agentHostedToolRequiresResponses": "服务商托管工具仅支持 openai-responses 协议",
+      "agentSessionOrphaned": "该智能体会话已孤立（绑定终端已不存在），仅可只读查看",
       "agentQueuedMessageNotFound": "排队消息不存在",
       "agentConfirmationNotFound": "确认请求不存在",
       "agentConfirmationAlreadyDecided": "确认请求已被处理",
@@ -2604,19 +2663,19 @@ export const I18N_RESOURCES = {
       "folderLayoutInvalid": "分组布局无效"
     },
     "notification": {
-      "clickToJump": "点击跳转到对应 Pane",
+      "clickToJump": "点击跳转到对应终端",
       "eventType": {
         "terminal_bell": "🔔 终端 Bell",
         "terminal_notification": "🔔 终端通知",
         "tmux_window_close": "🪟 窗口关闭",
-        "tmux_pane_close": "📱 Pane 关闭",
+        "tmux_pane_close": "📱 终端关闭",
         "device_tmux_missing": "⚠️ Tmux 不可用",
         "device_disconnect": "🔌 设备断开",
         "session_created": "🆕 会话创建",
         "session_closed": "🚪 会话关闭",
-        "agent_confirmation_pending": "🤖 Agent 等待确认",
-        "agent_turn_finished": "🤖 Agent 回合完成",
-        "agent_error": "🤖 Agent 错误",
+        "agent_confirmation_pending": "🤖 智能体等待确认",
+        "agent_turn_finished": "🤖 智能体回合完成",
+        "agent_error": "🤖 智能体错误",
         "watch_triggered": "👁️ Watch 规则触发",
         "watch_model_unavailable": "👁️ Watch 模型不可用",
         "watch_rule_error": "👁️ Watch 规则错误"
@@ -2624,7 +2683,7 @@ export const I18N_RESOURCES = {
       "site": "站点",
       "device": "设备",
       "window": "窗口",
-      "pane": "Pane",
+      "pane": "终端",
       "time": "时间",
       "directLink": "直达",
       "message": "信息",
@@ -2633,13 +2692,13 @@ export const I18N_RESOURCES = {
       "telegramBell": {
         "title": "🔔 来自 {{siteName}} 的 Bell：{{terminalTopbarLabel}}",
         "viewLink": "点击查看",
-        "terminalTopbarLabel": "窗口 {{window}} · Pane {{pane}} @ {{device}}"
+        "terminalTopbarLabel": "窗口 {{window}} · 终端 {{pane}} @ {{device}}"
       },
       "telegramNotification": {},
       "agent": {
-        "confirmationPending": "Agent「{{title}}」请求执行工具 {{toolName}}，等待确认",
-        "turnFinished": "Agent「{{title}}」回合完成",
-        "error": "Agent「{{title}}」出错：{{message}}"
+        "confirmationPending": "智能体「{{title}}」请求执行工具 {{toolName}}，等待确认",
+        "turnFinished": "智能体「{{title}}」回合完成",
+        "error": "智能体「{{title}}」出错：{{message}}"
       },
       "watch": {
         "matchTriggered": "监控「{{name}}」命中：{{text}}",
@@ -2649,7 +2708,7 @@ export const I18N_RESOURCES = {
         "unconfirmedSuffix": "（模型不可用，未经 LLM 二次确认）",
         "modelUnavailable": "监控「{{name}}」模型调用失败：{{message}}",
         "ruleError": "监控「{{name}}」连续失败 {{count}} 次，已自动停用：{{message}}",
-        "paneGone": "监控「{{name}}」的 Pane（{{paneId}}）已销毁，规则已自动删除"
+        "paneGone": "监控「{{name}}」的终端（{{paneId}}）已销毁，规则已自动删除"
       }
     },
     "sidebar": {
@@ -2662,10 +2721,10 @@ export const I18N_RESOURCES = {
       "settings": "设置",
       "nodes": "多节点互联",
       "currentWindow": "当前窗口",
-      "currentPane": "当前 pane",
+      "currentPane": "当前终端",
       "newWindow": "新建窗口",
       "closeWindow": "关闭窗口",
-      "closePane": "关闭 pane",
+      "closePane": "关闭终端",
       "addDevice": "添加设备",
       "tab": {
         "panes": "终端",
@@ -2702,10 +2761,10 @@ export const I18N_RESOURCES = {
         "startedAt": "创建于"
       },
       "files": {
-        "comingSoon": "Coming Soon"
+        "comingSoon": "即将推出"
       },
       "panel": {
-        "title": "Agent",
+        "title": "智能体",
         "empty": "选择或创建一个会话",
         "inputPlaceholder": "输入消息…",
         "send": "发送",
@@ -2714,12 +2773,12 @@ export const I18N_RESOURCES = {
         "scrollToBottom": "回到底部"
       },
       "welcome": {
-        "title": "新建 Agent 对话",
-        "subtitle": "向 Agent 描述你的需求，在所选终端中协作"
+        "title": "新建智能体对话",
+        "subtitle": "向智能体描述你的需求，在所选终端中协作"
       },
       "session": {
         "none": "未选择会话",
-        "new": "新建 Agent 会话",
+        "new": "新建智能体会话",
         "switch": "切换会话",
         "selectPaneHint": "选择一个会话",
         "noSessions": "暂无会话",
@@ -2734,7 +2793,7 @@ export const I18N_RESOURCES = {
         "deleteTitle": "删除此会话？",
         "deleteDesc": "“{{title}}”及其全部消息将被永久删除。",
         "deleteConfirm": "删除",
-        "createDisabledNoPane": "请先打开一个终端 Pane 再创建会话",
+        "createDisabledNoPane": "请先打开一个终端再创建会话",
         "privacyNotice": "会话将把终端屏幕内容发送给配置的 LLM 服务。"
       },
       "node": {
@@ -2742,7 +2801,7 @@ export const I18N_RESOURCES = {
       },
       "binding": {
         "invalid": "已失效",
-        "mismatchTitle": "此会话绑定的 Pane 与当前终端不一致",
+        "mismatchTitle": "此会话绑定的终端与当前所选终端不一致",
         "goTo": "跳转过去",
         "rebind": "重绑到当前"
       },
@@ -2765,23 +2824,24 @@ export const I18N_RESOURCES = {
         "read_screen": "读取屏幕",
         "web_search": "网络搜索",
         "fetch_url": "抓取网页",
-        "get_pane_info": "获取面板信息",
+        "get_pane_info": "获取终端信息",
         "run_command": "运行命令",
-        "denied": "已拒绝"
+        "denied": "已拒绝",
+        "imageAlt": "生成的图片"
       },
       "paneBadge": {
-        "bound": "Agent 已绑定",
-        "generating": "Agent 输出中"
+        "bound": "智能体已绑定",
+        "generating": "智能体输出中"
       },
       "controlChars": {
         "label": "控制字符",
-        "hint": "允许 agent 通过 send_input 发送原始控制字符（C0）。默认关闭；仅在必要时开启。"
+        "hint": "允许智能体通过 send_input 发送原始控制字符（C0）。默认关闭；仅在必要时开启。"
       },
       "reasoning": {
         "title": "思考过程"
       },
       "toast": {
-        "errorTitle": "Agent“{{title}}”出错",
+        "errorTitle": "智能体「{{title}}」出错",
         "credentialWarningTitle": "消息疑似包含凭证",
         "credentialWarningDescription": "检测到 {{types}}。内容不会被修改，但会发送至 LLM 并存储，存在泄露风险。"
       }
@@ -2791,23 +2851,23 @@ export const I18N_RESOURCES = {
       "new": "新建窗口",
       "newInCwd": "在此目录新建窗口",
       "close": "关闭窗口",
-      "closePane": "关闭面板",
+      "closePane": "关闭终端",
       "closeConfirmTitle": "关闭此窗口？",
-      "closePaneConfirmTitle": "关闭此面板？",
+      "closePaneConfirmTitle": "关闭此终端？",
       "closeConfirmDesc": "\"{{name}}\" 中运行的进程将被终止，此操作无法撤销。",
       "menu": "窗口操作",
-      "paneMenu": "面板操作",
+      "paneMenu": "终端操作",
       "dragHandle": "拖动以调整窗口顺序",
-      "dragHandlePane": "拖动以调整 pane 顺序",
+      "dragHandlePane": "拖动以调整终端顺序",
       "rename": "重命名窗口",
       "renamePlaceholder": "输入名称",
       "renameDesc": "自定义名称会覆盖终端设置的标题，并保留至 gateway 重启。",
       "renameReset": "恢复自动名称",
-      "switchPane": "切换 Pane",
+      "switchPane": "切换终端",
       "splitRight": "向右分屏",
       "splitDown": "向下分屏",
-      "paneCount": "{{count}} 个 pane",
-      "pane": "Pane",
+      "paneCount": "{{count}} 个终端",
+      "pane": "终端",
       "moveToWindow": "移入此窗口",
       "breakToWindow": "拆为独立窗口"
     },
@@ -2962,7 +3022,7 @@ export const I18N_RESOURCES = {
       "menu": {
         "copyAbsolute": "复制绝对位置",
         "copyRelative": "复制相对位置",
-        "sendToAgent": "发送到 Agent",
+        "sendToAgent": "发送到智能体",
         "expand": "展开",
         "collapse": "收起",
         "upload": "上传文件到这个文件夹",
@@ -2970,6 +3030,7 @@ export const I18N_RESOURCES = {
       },
       "copied": "已复制到剪贴板",
       "copyFailed": "复制失败",
+      "symlink": "符号链接",
       "sendToAgent": {
         "prompt": "请处理这个路径：`{{path}}`"
       },
@@ -3433,7 +3494,7 @@ export const I18N_RESOURCES = {
         "transportDc": "WebRTC",
         "transportRelay": "Hub 中转",
         "iceTitle": "连接详情",
-        "icePlaceholder": "直连未启用，暂无数据。",
+        "icePlaceholder": "暂无直连详情。",
         "connectionState": "连接状态",
         "iceState": "ICE 状态",
         "localCandidate": "本端地址",
@@ -3473,6 +3534,7 @@ export const I18N_RESOURCES = {
           "confirmPassword": "确认密码",
           "hubUrl": "Hub 地址",
           "hubUrlHint": "Hub 的 https 地址，例如 https://tmex.example.com。",
+          "urlPlaceholder": "https://tmex.example.com",
           "token": "加入码",
           "tokenHint": "在 Hub 的「节点」页生成，10 分钟内有效。请完整粘贴。",
           "tokenPlaceholder": "粘贴 Hub 生成的加入码",
@@ -3607,6 +3669,7 @@ export const I18N_RESOURCES = {
       "retry": "再試行",
       "pageLoadFailed": "このページの読み込みに失敗しました。",
       "pageLoadFailedHint": "ネットワーク接続を確認してから再試行してください。",
+      "mermaidRenderFailed": "Mermaid のレンダリングに失敗しました：{{message}}",
       "test": "テスト",
       "send": "送信",
       "success": "成功",
@@ -3636,6 +3699,7 @@ export const I18N_RESOURCES = {
       "sidebarCollapse": "サイドバーを折りたたむ",
       "openSidebar": "サイドバーを開く",
       "closeSidebar": "サイドバーを閉じる",
+      "toggleSubmenu": "サブメニューの開閉",
       "jumpToLatest": "最新にジャンプ",
       "switchToEditor": "エディタ入力に切り替え",
       "switchToDirect": "直接入力に切り替え",
@@ -3656,7 +3720,7 @@ export const I18N_RESOURCES = {
       "noDevices": "デバイスがありません",
       "noDevicesDescription": "ローカルまたは SSH デバイスを追加して開始",
       "name": "デバイス名",
-      "namePlaceholder": "例：My Server",
+      "namePlaceholder": "例：マイサーバー",
       "type": "タイプ",
       "typeLocal": "ローカルデバイス",
       "typeSSH": "SSH リモートデバイス",
@@ -3742,11 +3806,11 @@ export const I18N_RESOURCES = {
         "title": "キーボード動作",
         "description": "ソフトウェアキーボード表示時のページの回避方法",
         "modeLift": "ページ移動",
-        "modeLiftDesc": "キーボード表示時にページ全体を上に移動（端末サイズは不変）",
-        "modeResize": "端末リサイズ",
-        "modeResizeDesc": "キーボード上の領域に合わせて端末を縮小（リモートの行数が変わります）",
+        "modeLiftDesc": "キーボード表示時にページ全体を上に移動（ターミナルサイズは不変）",
+        "modeResize": "ターミナルをリサイズ",
+        "modeResizeDesc": "キーボード上の領域に合わせてターミナルを縮小（リモートの行数が変わります）",
         "modeFollow": "カーソル追従",
-        "modeFollowDesc": "カーソルがキーボードの真上に来るよう移動（端末サイズは不変）"
+        "modeFollowDesc": "カーソルがキーボードの真上に来るよう移動（ターミナルサイズは不変）"
       },
       "initializing": "ターミナルを初期化中...",
       "connecting": "デバイスに接続中...",
@@ -3757,15 +3821,15 @@ export const I18N_RESOURCES = {
       "deviceErrorWithType": "[{{type}}] デバイスエラー",
       "noDeviceSelected": "デバイスが選択されていません",
       "windowClosed": "現在のウィンドウは閉じられました。サイドバーからウィンドウを選択してください。",
-      "paneClosed": "現在のペインは閉じられました。サイドバーからペインを選択してください。",
+      "paneClosed": "現在のターミナルは閉じられました。サイドバーから選択してください。",
       "bellNotification": "ターミナルベル",
       "bellDescriptionWithTitle": "ウィンドウ {{window}} · {{paneLabel}}",
       "bellFallback": "tmux ベルを受信",
       "notificationFallbackTitle": "ターミナル通知",
       "notificationSourceLabel": "{{source}} から",
       "notificationFallbackDetail": "ターミナル通知",
-      "paneTitle": "ペイン {{index}}",
-      "activePane": "現在のペイン",
+      "paneTitle": "ターミナル {{index}}",
+      "activePane": "現在のターミナル",
       "activeWindow": "現在のウィンドウ",
       "editorPlaceholder": "ここにコマンドを入力...",
       "editorClear": "クリア",
@@ -3777,7 +3841,7 @@ export const I18N_RESOURCES = {
       "inputModeEditor": "エディタ",
       "newWindow": "新規ウィンドウ",
       "closeWindow": "ウィンドウを閉じる",
-      "closePane": "ペインを閉じる",
+      "closePane": "ターミナルを閉じる",
       "copy": "コピー",
       "paste": "貼り付け",
       "copied": "クリップボードにコピーしました",
@@ -3854,7 +3918,7 @@ export const I18N_RESOURCES = {
           "action": {
             "paste": "貼り付け",
             "toggleKeyboard": "テキスト入力/キーボード切替",
-            "newAgentSession": "新しい Agent セッション",
+            "newAgentSession": "新しいエージェントセッション",
             "scrollToBottom": "ターミナルを最下部へ"
           },
           "loadFailed": "ショートカットの読み込みに失敗しました",
@@ -3905,7 +3969,8 @@ export const I18N_RESOURCES = {
         },
         "check": {
           "reachable": "到達可能",
-          "unreachable": "到達不可"
+          "unreachable": "到達不可",
+          "running": "確認中…"
         },
         "log": {
           "title": "ログ",
@@ -3951,21 +4016,31 @@ export const I18N_RESOURCES = {
             "hostnameInvalid": "tmex.example.com のような小文字のホスト名を入力してください。",
             "tunnelName": "トンネル名",
             "tunnelNamePlaceholder": "tmex",
-            "tunnelNameHint": "省略可。未入力の場合は tmex が生成します。",
+            "tunnelNameHint": "空欄可。空欄の場合は tmex が生成します。使用できるのは小文字・数字・ハイフン・アンダースコアのみです。",
             "hubHint": "Hub として運用する場合は、Hub の公開アドレスをこのホスト名に設定してください。",
-            "hubHintLink": "ノード設定を開く"
+            "hubHintLink": "ノード設定を開く",
+            "tunnelId": "トンネル ID",
+            "configured": "名前付きトンネルを作成しました。",
+            "changeHint": "ホスト名やトンネルを変更するには、先に上で現在のトンネルを削除してください。",
+            "tunnelNameInvalid": "トンネル名は小文字または数字で始まり、小文字・数字・ハイフン・アンダースコアのみ、63 文字以内で指定してください。"
           },
           "proxy": {
             "title": "リバースプロキシの信頼",
             "description": "トンネルはクライアントアドレスとプロトコルを置き換えるため、信頼設定の調整が必要です。",
             "trustProxy": "リバースプロキシヘッダーを信頼する",
-            "trustProxyHint": "tmex がトンネルの背後にある場合に有効化します。クライアントアドレスとプロトコルを正しく判定できます。",
+            "trustProxyHint": "tmex にこのトンネル経由でしか到達できない場合のみ有効にしてください。",
             "autoStart": "tmex と同時に起動",
             "autoStartHint": "ゲートウェイ起動時にトンネルを自動で立ち上げます。",
             "restartRequired": "保存しました。再起動後に有効になります。",
             "restartNow": "今すぐ再起動",
             "restarting": "再起動中",
-            "restartTimeout": "再起動がタイムアウトしました。tmex を手動で再起動してください。"
+            "restartTimeout": "再起動がタイムアウトしました。tmex を手動で再起動してください。",
+            "trustProxyDetail": "有効にすると tmex は X-Forwarded-Proto と X-Forwarded-For を信頼します。トンネルを迂回してローカルの待ち受けポートに直接到達できる相手はこれらを偽装できるため、そのポートへのアクセスを制限してください。",
+            "trustProxyEffective": "現在の適用値",
+            "trustProxyState": {
+              "on": "信頼中",
+              "off": "未信頼"
+            }
           }
         },
         "jobStep": {
@@ -3978,7 +4053,9 @@ export const I18N_RESOURCES = {
           "create": "トンネルを作成中",
           "wait_cert": "承認を待機中",
           "login": "Cloudflare にログイン中",
-          "cancelled": "キャンセル済み"
+          "cancelled": "キャンセル済み",
+          "check": "接続確認",
+          "ok": "完了"
         },
         "errors": {
           "unsupported_platform": "このプラットフォームは Cloudflare Tunnel に対応していません。",
@@ -3993,7 +4070,19 @@ export const I18N_RESOURCES = {
           "busy": "別の操作が進行中です。",
           "not_configured": "リモートアクセスは未設定です。",
           "invalid_request": "リクエストが不正です。",
-          "unknown": "操作に失敗しました：{{message}}"
+          "unknown": "操作に失敗しました：{{message}}",
+          "auth_required": "公開する前に、このマシンでサインインを有効にしてください。"
+        },
+        "authRequired": {
+          "notice": "公開する前に、このマシンでサインインを有効にしてください。",
+          "link": "マルチノード設定を開く"
+        },
+        "confirmRemove": {
+          "title": "名前付きトンネルを削除しますか？",
+          "description": "トンネルを停止し、このマシンに保存された資格情報を削除し、Cloudflare 上のトンネルも削除します。",
+          "irreversible": "Cloudflare 上のトンネルは復元できず、公開アドレスは直ちに使えなくなります。",
+          "confirm": "トンネルを削除",
+          "cancel": "キャンセル"
         }
       },
       "deviceManagement": {
@@ -4175,9 +4264,9 @@ export const I18N_RESOURCES = {
       "authCount": "承認済み {{authorized}} / 承認待ち {{pending}}（最大 8）",
       "chatId": "Chat ID",
       "applyTime": "申請時間",
-      "gatewayOnline": "🟢 Gateway online @ {{siteName}}",
+      "gatewayOnline": "🟢 ゲートウェイがオンラインになりました @ {{siteName}}",
       "deviceConnectionError": "🔴 {{siteName}}：デバイス「{{deviceName}}」({{host}}) で接続エラー [{{category}}]\n{{error}}",
-      "agentCredentialWarning": "⚠️ {{siteName}}：Agent セッション「{{sessionTitle}}」のメッセージに認証情報が含まれている可能性があります（{{types}}）。LLM に送信され保存されるため、漏洩のリスクがあります。",
+      "agentCredentialWarning": "⚠️ {{siteName}}：エージェントセッション「{{sessionTitle}}」のメッセージに認証情報が含まれている可能性があります（{{types}}）。LLM に送信され保存されるため、漏洩のリスクがあります。",
       "authSuccess": "✅ 承認されました。通知を受信できます。",
       "authPending": "⏳ 認証リクエストを受信しました。tmex 設定ページで承認してください。",
       "authFailed": "❌ 認証リクエストに失敗しました。管理者に連絡してください。",
@@ -4261,6 +4350,7 @@ export const I18N_RESOURCES = {
       "title": "Webhooks",
       "url": "Webhook URL",
       "secret": "シークレット",
+      "urlPlaceholder": "https://example.com/webhook",
       "secretPlaceholder": "署名に使用（HMAC-SHA256）",
       "enabled": "有効",
       "eventMask": "イベント",
@@ -4348,17 +4438,17 @@ export const I18N_RESOURCES = {
       "llmDefaultProviderNotFound": "デフォルトプロバイダーが存在しません",
       "llmSearchProviderInvalid": "検索プロバイダーは none、tavily、brave のいずれかである必要があります",
       "llmFetchModelsFailed": "モデル一覧の取得に失敗しました：{{detail}}",
-      "agentSessionNotFound": "Agent セッションが存在しません",
-      "agentSessionBusy": "Agent セッションは実行中です。停止するか完了をお待ちください",
-      "agentSessionAwaitingConfirmation": "Agent セッションに未処理の確認リクエストがあります。先に処理してください",
+      "agentSessionNotFound": "エージェントセッションが存在しません",
+      "agentSessionBusy": "エージェントセッションは実行中です。停止するか完了をお待ちください",
+      "agentSessionAwaitingConfirmation": "エージェントセッションに未処理の確認リクエストがあります。先に処理してください",
       "agentDeviceRequired": "デバイスを指定してください",
-      "agentPaneRequired": "ターミナル pane を指定してください",
+      "agentPaneRequired": "ターミナルを指定してください",
       "agentWriteModeInvalid": "書き込みモードは confirm または auto である必要があります",
       "agentMaxStepsInvalid": "1 ターンあたりの最大ステップ数は 1〜100 の範囲で指定してください",
       "agentProviderWebSearchRequiresResponses": "プロバイダ内蔵の Web 検索は openai-responses プロトコルのみ対応しています",
       "agentHostedToolUnknown": "不明な hosted ツール: {{name}}",
       "agentHostedToolRequiresResponses": "プロバイダの hosted ツールは openai-responses プロトコルのみ対応しています",
-      "agentSessionOrphaned": "この Agent セッションは孤立しており（端末が存在しません）、読み取り専用です",
+      "agentSessionOrphaned": "このエージェントセッションは孤立しており（ターミナルが存在しません）、読み取り専用です",
       "agentQueuedMessageNotFound": "キューのメッセージが存在しません",
       "agentConfirmationNotFound": "確認リクエストが存在しません",
       "agentConfirmationAlreadyDecided": "確認リクエストは既に処理済みです",
@@ -4396,12 +4486,12 @@ export const I18N_RESOURCES = {
       "folderLayoutInvalid": "グループ配置が無効です"
     },
     "notification": {
-      "clickToJump": "対応するペインにジャンプ",
+      "clickToJump": "対応するターミナルにジャンプ",
       "eventType": {
         "terminal_bell": "🔔 ターミナルベル",
         "terminal_notification": "🔔 ターミナル通知",
         "tmux_window_close": "🪟 ウィンドウ閉じる",
-        "tmux_pane_close": "📱 ペイン閉じる",
+        "tmux_pane_close": "📱 ターミナルを閉じました",
         "device_tmux_missing": "⚠️ Tmux がありません",
         "device_disconnect": "🔌 デバイス切断",
         "session_created": "🆕 セッション作成",
@@ -4416,7 +4506,7 @@ export const I18N_RESOURCES = {
       "site": "サイト",
       "device": "デバイス",
       "window": "ウィンドウ",
-      "pane": "ペイン",
+      "pane": "ターミナル",
       "time": "時間",
       "directLink": "直接リンク",
       "message": "メッセージ",
@@ -4425,13 +4515,13 @@ export const I18N_RESOURCES = {
       "telegramBell": {
         "title": "🔔 {{siteName}} からのベル：{{terminalTopbarLabel}}",
         "viewLink": "表示",
-        "terminalTopbarLabel": "ウィンドウ {{window}} · ペイン {{pane}} @ {{device}}"
+        "terminalTopbarLabel": "ウィンドウ {{window}} · ターミナル {{pane}} @ {{device}}"
       },
       "telegramNotification": {},
       "agent": {
-        "confirmationPending": "Agent「{{title}}」がツール {{toolName}} の実行確認を求めています",
-        "turnFinished": "Agent「{{title}}」のターンが完了しました",
-        "error": "Agent「{{title}}」でエラーが発生しました：{{message}}"
+        "confirmationPending": "エージェント「{{title}}」がツール {{toolName}} の実行確認を求めています",
+        "turnFinished": "エージェント「{{title}}」のターンが完了しました",
+        "error": "エージェント「{{title}}」でエラーが発生しました：{{message}}"
       },
       "watch": {
         "matchTriggered": "Watch「{{name}}」がマッチしました：{{text}}",
@@ -4441,7 +4531,7 @@ export const I18N_RESOURCES = {
         "unconfirmedSuffix": "（モデル利用不可のため LLM 未確認）",
         "modelUnavailable": "Watch「{{name}}」のモデル呼び出しに失敗しました：{{message}}",
         "ruleError": "Watch「{{name}}」が {{count}} 回連続で失敗したため自動停止しました：{{message}}",
-        "paneGone": "Watch「{{name}}」のペイン（{{paneId}}）が破棄されたため、ルールを削除しました"
+        "paneGone": "Watch「{{name}}」のターミナル（{{paneId}}）が破棄されたため、ルールを削除しました"
       }
     },
     "sidebar": {
@@ -4454,13 +4544,13 @@ export const I18N_RESOURCES = {
       "settings": "設定",
       "nodes": "マルチノード連携",
       "currentWindow": "現在のウィンドウ",
-      "currentPane": "現在のペイン",
+      "currentPane": "現在のターミナル",
       "newWindow": "ウィンドウを作成",
       "closeWindow": "ウィンドウを閉じる",
-      "closePane": "ペインを閉じる",
+      "closePane": "ターミナルを閉じる",
       "addDevice": "デバイスを追加",
       "tab": {
-        "panes": "端末",
+        "panes": "ターミナル",
         "agent": "エージェント",
         "files": "ファイル"
       },
@@ -4488,16 +4578,16 @@ export const I18N_RESOURCES = {
         "withdraw": "取り消し"
       },
       "orphan": {
-        "readonly": "このセッションは孤立しており（端末が存在しません）、読み取り専用です",
+        "readonly": "このセッションは孤立しており（ターミナルが存在しません）、読み取り専用です",
         "title": "孤立セッション",
         "process": "プロセス",
         "startedAt": "作成日時"
       },
       "files": {
-        "comingSoon": "Coming Soon"
+        "comingSoon": "近日公開"
       },
       "panel": {
-        "title": "Agent",
+        "title": "エージェント",
         "empty": "セッションを選択または作成してください",
         "inputPlaceholder": "メッセージを入力…",
         "send": "送信",
@@ -4506,8 +4596,8 @@ export const I18N_RESOURCES = {
         "scrollToBottom": "最下部へ"
       },
       "welcome": {
-        "title": "新しい Agent チャット",
-        "subtitle": "タスクを入力して、選択した端末での作業を始めましょう"
+        "title": "新しいエージェントチャット",
+        "subtitle": "タスクを入力して、選択したターミナルでの作業を始めましょう"
       },
       "session": {
         "none": "セッション未選択",
@@ -4526,7 +4616,7 @@ export const I18N_RESOURCES = {
         "deleteTitle": "このセッションを削除しますか？",
         "deleteDesc": "「{{title}}」とそのメッセージはすべて完全に削除されます。",
         "deleteConfirm": "削除",
-        "createDisabledNoPane": "ターミナルのペインを開いてからセッションを作成してください",
+        "createDisabledNoPane": "ターミナルを開いてからセッションを作成してください",
         "privacyNotice": "セッションはターミナル画面の内容を設定済みの LLM サービスへ送信します。"
       },
       "node": {
@@ -4534,9 +4624,9 @@ export const I18N_RESOURCES = {
       },
       "binding": {
         "invalid": "無効",
-        "mismatchTitle": "このセッションは別のペインにバインドされています",
+        "mismatchTitle": "このセッションは別のターミナルにバインドされています",
         "goTo": "移動",
-        "rebind": "現在のペインに再バインド"
+        "rebind": "現在のターミナルに再バインド"
       },
       "writeMode": {
         "confirm": "書き込み確認",
@@ -4557,13 +4647,14 @@ export const I18N_RESOURCES = {
         "read_screen": "画面読み取り",
         "web_search": "Web 検索",
         "fetch_url": "URL 取得",
-        "get_pane_info": "ペイン情報を取得",
+        "get_pane_info": "ターミナル情報を取得",
         "run_command": "コマンドを実行",
-        "denied": "拒否されました"
+        "denied": "拒否されました",
+        "imageAlt": "生成された画像"
       },
       "paneBadge": {
-        "bound": "Agent バインド中",
-        "generating": "Agent 出力中"
+        "bound": "エージェントバインド済み",
+        "generating": "エージェント出力中"
       },
       "controlChars": {
         "label": "制御文字",
@@ -4573,7 +4664,7 @@ export const I18N_RESOURCES = {
         "title": "思考プロセス"
       },
       "toast": {
-        "errorTitle": "Agent「{{title}}」でエラー",
+        "errorTitle": "エージェント「{{title}}」でエラー",
         "credentialWarningTitle": "メッセージに認証情報が含まれる可能性",
         "credentialWarningDescription": "{{types}} を検出しました。内容は変更されませんが、LLM に送信され保存されるため、漏洩のリスクがあります。"
       }
@@ -4583,32 +4674,32 @@ export const I18N_RESOURCES = {
       "new": "新規ウィンドウ",
       "newInCwd": "この場所で新規ウィンドウ",
       "close": "ウィンドウを閉じる",
-      "closePane": "ペインを閉じる",
+      "closePane": "ターミナルを閉じる",
       "closeConfirmTitle": "このウィンドウを閉じますか？",
-      "closePaneConfirmTitle": "このペインを閉じますか？",
+      "closePaneConfirmTitle": "このターミナルを閉じますか？",
       "closeConfirmDesc": "\"{{name}}\" で実行中のプロセスは終了されます。この操作は取り消せません。",
       "menu": "ウィンドウ操作",
-      "paneMenu": "ペイン操作",
+      "paneMenu": "ターミナル操作",
       "dragHandle": "ドラッグしてウィンドウを並べ替え",
-      "dragHandlePane": "ドラッグしてペインを並べ替え",
+      "dragHandlePane": "ドラッグしてターミナルを並べ替え",
       "rename": "ウィンドウ名を変更",
       "renamePlaceholder": "名前を入力",
       "renameDesc": "カスタム名はターミナルが設定したタイトルを上書きし、ゲートウェイが再起動するまで保持されます。",
       "renameReset": "自動名に戻す",
-      "switchPane": "ペイン切替",
+      "switchPane": "ターミナル切替",
       "splitRight": "右に分割",
       "splitDown": "下に分割",
-      "paneCount": "{{count}} ペイン",
-      "pane": "ペイン",
+      "paneCount": "{{count}} 個のターミナル",
+      "pane": "ターミナル",
       "moveToWindow": "このウィンドウへ移動",
       "breakToWindow": "新しいウィンドウに分離"
     },
     "watch": {
       "title": "監視ルール",
-      "dialogDesc": "このペインの画面を監視し、条件を満たしたら通知します",
+      "dialogDesc": "このターミナルの画面を監視し、条件を満たしたら通知します",
       "openMonitor": "このターミナルを監視",
       "rules": {
-        "empty": "このペインにはまだ監視ルールがありません",
+        "empty": "このターミナルにはまだ監視ルールがありません",
         "addRule": "新規ルール",
         "edit": "編集",
         "delete": "削除",
@@ -4754,7 +4845,7 @@ export const I18N_RESOURCES = {
       "menu": {
         "copyAbsolute": "絶対パスをコピー",
         "copyRelative": "相対パスをコピー",
-        "sendToAgent": "Agent に送る",
+        "sendToAgent": "エージェントに送る",
         "expand": "展開",
         "collapse": "折りたたむ",
         "upload": "このフォルダにアップロード",
@@ -4762,6 +4853,7 @@ export const I18N_RESOURCES = {
       },
       "copied": "クリップボードにコピーしました",
       "copyFailed": "コピーに失敗しました",
+      "symlink": "シンボリックリンク",
       "sendToAgent": {
         "prompt": "このパスを処理してください：`{{path}}`"
       },
@@ -5225,7 +5317,7 @@ export const I18N_RESOURCES = {
         "transportDc": "WebRTC",
         "transportRelay": "ハブ中継",
         "iceTitle": "接続の詳細",
-        "icePlaceholder": "ダイレクト接続が無効のため、表示できる情報はありません。",
+        "icePlaceholder": "直接接続の詳細はありません。",
         "connectionState": "接続状態",
         "iceState": "ICE の状態",
         "localCandidate": "ローカルアドレス",
@@ -5265,6 +5357,7 @@ export const I18N_RESOURCES = {
           "confirmPassword": "パスワードの確認",
           "hubUrl": "ハブのアドレス",
           "hubUrlHint": "ハブの https アドレス（例：https://tmex.example.com）。",
+          "urlPlaceholder": "https://tmex.example.com",
           "token": "参加コード",
           "tokenHint": "ハブの「ノード」ページで作成します。有効期間は 10 分です。コード全体を貼り付けてください。",
           "tokenPlaceholder": "ハブで作成した参加コードを貼り付け",

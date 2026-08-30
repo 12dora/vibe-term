@@ -1,10 +1,12 @@
 import { useUIStore } from '@tmex/stores/react';
 import { THEME_PRESET_META } from '@tmex/theme';
 import { useEffect, useId, useRef, useState } from 'react';
+import { useTranslation } from 'react-i18next';
 
 // 动态 import('mermaid') 渲染单个 mermaid 图。SVG 经 securityLevel:'strict' 净化后，
 // 通过 ref + innerHTML 写入常驻容器（避免 dangerouslySetInnerHTML，规避 lint 与挂载竞态）。
 export function MermaidBlock({ code }: { code: string }) {
+  const { t } = useTranslation();
   const reactId = useId();
   const renderId = `mermaid-${reactId.replace(/[^a-zA-Z0-9-]/g, '')}`;
   const containerRef = useRef<HTMLDivElement>(null);
@@ -48,7 +50,9 @@ export function MermaidBlock({ code }: { code: string }) {
     <div className="my-2">
       {error && (
         <>
-          <p className="text-destructive text-xs">Mermaid 渲染失败：{error}</p>
+          <p className="text-destructive text-xs">
+            {t('common.mermaidRenderFailed', { message: error })}
+          </p>
           <pre className="bg-muted mt-1 overflow-x-auto rounded-md p-2 font-mono text-xs leading-relaxed">
             {code}
           </pre>

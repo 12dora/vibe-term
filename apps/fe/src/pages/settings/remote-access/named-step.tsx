@@ -12,9 +12,9 @@ import { useTranslation } from 'react-i18next';
 import { Link } from 'react-router';
 import { CopyButton } from '../nodes/copy-feedback';
 import { FormField, SetupNotice } from '../nodes/setup/form-parts';
-import { JobProgress, ProgressRow } from './step-shell';
+import { DetailRow, JobProgress, ProgressRow } from './step-shell';
 import type { TunnelActions } from './tunnel-actions';
-import { describeTunnelError, isValidHostname } from './tunnel-model';
+import { describeTunnelError, isValidHostname, isValidTunnelName } from './tunnel-model';
 
 export function NamedTunnelStep({
   status,
@@ -29,6 +29,10 @@ export function NamedTunnelStep({
   const job = status.job;
   const loginRunning = job?.kind === 'login' && job.state === 'running';
   const loginFailed = job?.kind === 'login' && job.state === 'error' && job.error !== null;
+
+  // 隧道已经建好：再点一次「创建并启动」会在 Cloudflare 上多出一条孤儿隧道并覆盖本地配置，
+  // 所以这一步只留只读摘要，换隧道必须先在状态卡里移除。
+  if (status.config.mode === 'named') return <NamedTunnelSummary status={status} isHub={isHub} />;
 
   if (!status.auth.loggedIn) {
     return (
@@ -95,6 +99,61 @@ export function NamedTunnelStep({
   return <CreateTunnelForm status={status} actions={actions} isHub={isHub} />;
 }
 
+function NamedTunnelSummary({
+  status,
+  isHub,
+}: {
+  status: TunnelStatusResponse;
+  isHub: boolean;
+}) {
+  const { t } = useTranslation();
+  return (
+    <div className="space-y-2" data-testid="remote-access-named-summary">
+      <SetupNotice tone="success" testId="remote-access-named-configured">
+        {t('settings.remoteAccess.steps.named.configured')}
+      </SetupNotice>
+      <div className="space-y-0.5">
+        <DetailRow
+          label={t('settings.remoteAccess.steps.named.hostname')}
+          testId="remote-access-named-hostname"
+        >
+          <span className="font-mono">{status.config.hostname ?? '—'}</span>
+        </DetailRow>
+        <DetailRow
+          label={t('settings.remoteAccess.steps.named.tunnelName')}
+          testId="remote-access-named-name"
+        >
+          <span className="font-mono">{status.config.tunnelName ?? '—'}</span>
+        </DetailRow>
+        <DetailRow
+          label={t('settings.remoteAccess.steps.named.tunnelId')}
+          testId="remote-access-named-id"
+        >
+          <span className="font-mono">{status.config.tunnelId ?? '—'}</span>
+        </DetailRow>
+      </div>
+      <HubHint isHub={isHub} />
+      <p className="text-xs text-muted-foreground">
+        {t('settings.remoteAccess.steps.named.changeHint')}
+      </p>
+    </div>
+  );
+}
+
+/** 本机即 Hub 时，创建出来的主机名同样要写进 Hub 公开地址，否则 join 串仍指向内网。 */
+function HubHint({ isHub }: { isHub: boolean }) {
+  const { t } = useTranslation();
+  if (!isHub) return null;
+  return (
+    <p className="text-xs text-muted-foreground" data-testid="remote-access-hub-hint">
+      {t('settings.remoteAccess.steps.named.hubHint')}{' '}
+      <Link className="text-primary underline-offset-4 hover:underline" to="?tab=nodes">
+        {t('settings.remoteAccess.steps.named.hubHintLink')}
+      </Link>
+    </p>
+  );
+}
+
 function CreateTunnelForm({
   status,
   actions,
@@ -113,11 +172,13 @@ function CreateTunnelForm({
   const createFailed = job?.kind === 'create' && job.state === 'error' && job.error !== null;
   const trimmed = hostname.trim();
   const invalid = !isValidHostname(trimmed);
+  const name = tunnelName.trim();
+  // 名称留空时由后端生成；填了就必须过与后端一致的字符集校验（凭证文件名直接由它拼出来）。
+  const nameInvalid = name.length > 0 && !isValidTunnelName(name);
 
   const submit = () => {
     setTouched(true);
-    if (invalid || actions.busy) return;
-    const name = tunnelName.trim();
+    if (invalid || nameInvalid || actions.busy) return;
     actions.run(
       name
         ? { action: 'create', hostname: trimmed, tunnelName: name }
@@ -156,19 +217,15 @@ function CreateTunnelForm({
         />
       </FormField>
 
-      {isHub && (
-        <p className="text-xs text-muted-foreground" data-testid="remote-access-hub-hint">
-          {t('settings.remoteAccess.steps.named.hubHint')}{' '}
-          <Link className="text-primary underline-offset-4 hover:underline" to="?tab=nodes">
-            {t('settings.remoteAccess.steps.named.hubHintLink')}
-          </Link>
-        </p>
-      )}
+      <HubHint isHub={isHub} />
 
       <FormField
         id="remote-access-tunnel-name"
         label={t('settings.remoteAccess.steps.named.tunnelName')}
         hint={t('settings.remoteAccess.steps.named.tunnelNameHint')}
+        {...(nameInvalid
+          ? { error: t('settings.remoteAccess.steps.named.tunnelNameInvalid') }
+          : {})}
       >
         <Input
           id="remote-access-tunnel-name"
@@ -186,7 +243,7 @@ function CreateTunnelForm({
         <Button
           type="button"
           size="sm"
-          disabled={actions.busy}
+          disabled={actions.busy || nameInvalid}
           onClick={submit}
           data-testid="remote-access-create-submit"
         >

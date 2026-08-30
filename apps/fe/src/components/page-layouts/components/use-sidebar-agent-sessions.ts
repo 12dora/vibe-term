@@ -1,15 +1,16 @@
 // 侧边栏 agent 会话装饰的控制器：bootstrap、排序/分组派生、重命名与删除对话框状态。
 
-import { useMeshNodes } from '@/node/mesh-nodes';
-import { isNodeOffline } from '@/node/node-offline';
+import { useNodeOffline } from '@/node/node-offline';
 import { selfAgentStore } from '@/node/self-agent-store';
 import type { AgentSessionDto, StateSnapshotPayload } from '@tmex/shared';
-import { isSessionOnNode, normalizeAgentNodeId } from '@tmex/stores';
+import {
+  activeSessionIdOnNode,
+  isNodePaused,
+  isSessionOnNode,
+  normalizeAgentNodeId,
+} from '@tmex/stores';
 import { useRuntime } from '@tmex/stores/react';
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
-
-/** 后端在 node 离线传播时写入会话的 lastError */
-export const NODE_OFFLINE_ERROR = 'NODE_OFFLINE';
 
 const PANE_KEY_SEPARATOR = '\u0000';
 
@@ -104,18 +105,15 @@ export function isSessionAttached(
   return panes.has(session.paneId);
 }
 
-/** 会话是否因所在 node 离线而暂停（灰显、不可点入） */
-export function isSessionPaused(session: AgentSessionDto, nodeOffline: boolean): boolean {
-  return nodeOffline || session.lastError === NODE_OFFLINE_ERROR;
-}
-
 /**
- * `enabled: false` 只读宿主级 mesh 快照：不发 `/api/mesh/*`、不订阅事件流
- * ——拉取与订阅是设备区自己的活。
+ * 会话是否因所在 node 离线而暂停（灰显、不可点入）。与 agent 面板同一套三态语义：
+ * mesh 在线态是权威信号，node 回来后残留的 NODE_OFFLINE 不再永久禁用该会话。
  */
-function useNodeOffline(runtimeNodeId: string): boolean {
-  const { nodes, entryNodeId } = useMeshNodes({ enabled: false });
-  return isNodeOffline(nodes, entryNodeId, runtimeNodeId);
+export function isSessionPaused(
+  session: AgentSessionDto,
+  nodeOffline: boolean | undefined
+): boolean {
+  return isNodePaused(nodeOffline, session.lastError);
 }
 
 export interface SidebarAgentSessionsContextValue {
@@ -124,8 +122,8 @@ export interface SidebarAgentSessionsContextValue {
   activeSessionId: string | null;
   /** 本分节所属 node（null 即 entry 自身）；新建会话与过滤都用它 */
   nodeId: string | null;
-  /** 本分节所属 node 是否离线：行灰显且不可点入 */
-  nodeOffline: boolean;
+  /** 本分节所属 node 是否离线（`undefined` 即 mesh 状态未知）：行灰显且不可点入 */
+  nodeOffline: boolean | undefined;
   sessionRenameCandidate: AgentSessionDto | null;
   sessionRenameValue: string;
   setSessionRenameValue: (value: string) => void;
@@ -166,7 +164,7 @@ export function useSidebarAgentSessionsController(): SidebarAgentSessionsContext
 
   const sessions = agentStore((state) => state.sessions);
   const sessionOrder = agentStore((state) => state.sessionOrder);
-  const activeSessionId = agentStore((state) => state.activeSessionId);
+  const activeSessionId = agentStore((state) => activeSessionIdOnNode(state, nodeId));
 
   // 单一列表按 node 过滤：本分节只展示绑在自己这个 node 上的会话，
   // 于是 isSessionAttached 比对的快照也一定是该会话所在 node 的快照。

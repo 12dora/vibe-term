@@ -15,6 +15,7 @@ import { FlowBridges } from '@/components/flow-bridges';
 import { AppSidebar } from '@/components/page-layouts/components/app-sidebar';
 import { SidePanelHost } from '@/components/side-panels/side-panel-host';
 import { useAppMonoFont } from '@/lib/fonts/useAppMonoFont';
+import { MeshNodesResident } from '@/node/mesh-nodes-resident';
 import { NodeRouteGate, NodeRuntimeBoundary, useRouteNodeId } from '@/node/node-runtime-boundary';
 import { NodeRuntimeScope } from '@/node/node-runtime-scope';
 import { appNodeRuntimes, nodeQueryClient } from '@/node/node-runtimes';
@@ -139,6 +140,7 @@ function RootLayout() {
       <SidebarProvider open={!sidebarCollapsed} onOpenChange={(open) => setSidebarCollapsed(!open)}>
         <StatusBarSync />
         <FlowBridges />
+        <MeshNodesResident />
         <NodeRuntimeScope nodeId={SELF_NODE_ID}>
           <AppSidebar />
           <SelfSettingsEventsInit />

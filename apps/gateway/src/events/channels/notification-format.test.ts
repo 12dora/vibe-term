@@ -38,7 +38,7 @@ describe('notification-format raw views', () => {
   });
 
   test('buildTerminalTopbarLabel uses window/pane index when present', () => {
-    expect(buildTerminalTopbarLabel(makeEvent())).toBe('Window 7 · Pane 3 @ mac');
+    expect(buildTerminalTopbarLabel(makeEvent())).toBe('Window 7 · Terminal 3 @ mac');
   });
 
   test('pane meta and raw views keep HTML special characters unescaped', () => {

@@ -89,7 +89,7 @@ function createSessionActions(state: AgentTabState, view: AgentTabView) {
       if (activeSession) {
         void agentStore.getState().setSessionModel(activeSession.id, providerId, modelId);
       } else if (draft) {
-        agentStore.getState().updateDraft({ providerId, modelId });
+        agentStore.getState().updateDraft(nodeId, { providerId, modelId });
       }
     },
   };
@@ -97,16 +97,16 @@ function createSessionActions(state: AgentTabState, view: AgentTabView) {
 
 type AgentStoreState = ReturnType<AgentStoreHandle['getState']>;
 
-function sendToDraft(store: AgentStoreState, text: string): void {
+function sendToDraft(store: AgentStoreState, nodeId: string | null, text: string): void {
   // materializeDraft 对同一草稿去重：并发提交共享同一次建会话，消息落在同一 session
   void (async () => {
-    const session = await store.materializeDraft();
+    const session = await store.materializeDraft(nodeId);
     if (session) await store.sendMessage(session.id, text);
   })();
 }
 
 function createMessageActions(state: AgentTabState) {
-  const { agentStore, activeSession, draft } = state;
+  const { agentStore, activeSession, draft, nodeId } = state;
   return {
     onSend: (text: string) => {
       const store = agentStore.getState();
@@ -119,7 +119,7 @@ function createMessageActions(state: AgentTabState) {
         return;
       }
       if (draft) {
-        sendToDraft(store, text);
+        sendToDraft(store, nodeId, text);
       }
     },
     onSteer: (text: string) => {

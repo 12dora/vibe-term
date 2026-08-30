@@ -46,6 +46,14 @@ export {
 } from './agent';
 export { resolveAgentStore, setAgentHostStore } from './agent-host-store';
 export { isSessionOnNode, normalizeAgentNodeId, type SessionMap } from './agent-session-map';
+export {
+  activeSessionIdOnNode,
+  activeSessionIds,
+  agentNodeKey,
+  draftOnNode,
+  isDraftMaterializingOnNode,
+} from './agent-node-state';
+export { NODE_OFFLINE_ERROR, isNodePaused } from './agent-node-offline';
 export { createFileTreeStore, fileNodeKey, type FileTreeStore } from './file-tree';
 
 export * from './agent-thread';

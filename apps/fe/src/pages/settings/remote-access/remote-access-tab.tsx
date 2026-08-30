@@ -43,7 +43,7 @@ function RemoteNodeNotice() {
 function SelfRemoteAccess() {
   const { t } = useTranslation();
   const tunnel = useTunnelStatus();
-  const { mode } = useSharedAuthMode();
+  const { mode, loaded: modeLoaded } = useSharedAuthMode();
   const [chosenMode, setChosenMode] = useState<TunnelMode | null>(null);
 
   const { setStatus, refresh } = tunnel;
@@ -99,6 +99,7 @@ function SelfRemoteAccess() {
         chosenMode={chosenMode}
         onChooseMode={setChosenMode}
         isHub={isSelfHub(mode)}
+        authDisabled={modeLoaded && mode?.mode === 'none'}
         onRestarted={refresh}
       />
     </div>

@@ -2,10 +2,9 @@
 
 import type { AgentQueuedMessageDto, AgentSessionDto, AgentWriteMode } from '@tmex/shared';
 import type { DraftSession } from '@tmex/stores';
-import { lastUserMessageText } from '@tmex/stores';
+import { NODE_OFFLINE_ERROR, isNodePaused, lastUserMessageText } from '@tmex/stores';
 
 import { type BindingInfo, resolveBinding } from './agent-binding';
-import { NODE_OFFLINE_ERROR, isNodePaused } from './agent-node-offline';
 import { canRebindToRoute } from './agent-route-sync';
 import type { AgentTabState } from './use-agent-tab-state';
 
