@@ -61,6 +61,8 @@ export interface TunnelConfigStatus {
   tunnelId: string | null;
   /** 随 gateway 启动自动拉起 */
   autoStart: boolean;
+  /** 隧道进程由系统服务托管（adopt_external），tmex 不拉起/停止它 */
+  externallyManaged: boolean;
   /** 本机监听端口（cloudflared ingress 的 origin） */
   originPort: number;
 }
@@ -94,6 +96,24 @@ export interface TunnelAccessStatus {
   lastError: string | null;
 }
 
+/**
+ * 系统里已存在、不由 tmex 托管的 cloudflared（brew/launchd/systemd 服务或手工进程）。
+ * 探测来源：进程列表、launchd/systemd 单元、~/.cloudflared/config.yml 与 cert.pem。
+ */
+export interface TunnelExternalStatus {
+  detected: boolean;
+  /** 'launchd' | 'systemd' | 'process' | 'config' */
+  source: string | null;
+  configPath: string | null;
+  tunnelId: string | null;
+  tunnelName: string | null;
+  /** config.yml ingress 里 service 指向本机 gateway 端口的主机名 */
+  hostnames: string[];
+  /** ~/.cloudflared/cert.pem 存在 */
+  hasOriginCert: boolean;
+  running: boolean;
+}
+
 export interface TunnelProcessStatus {
   state: TunnelProcessState;
   pid: number | null;
@@ -123,6 +143,7 @@ export interface TunnelStatusResponse {
   config: TunnelConfigStatus;
   process: TunnelProcessStatus;
   access: TunnelAccessStatus;
+  external: TunnelExternalStatus;
   /** 本机是否启用了登录（mesh 角色下的用户名/密码/2FA） */
   loginEnforced: boolean;
   /** 隧道流量是否受保护：loginEnforced，或 Access 已配置且强制校验且主机名匹配 */
@@ -160,6 +181,13 @@ export type TunnelActionRequest =
   | { action: 'configure_access'; rules: TunnelAccessPolicyRule[] }
   /** 删除 Access 应用；异步 job kind = 'access' */
   | { action: 'remove_access' }
+  /** 用已保存凭证按主机名同步 Cloudflare 上已存在的 Access 应用/策略到本地状态；异步 job kind = 'access' */
+  | { action: 'sync_access' }
+  /**
+   * 接管系统里已存在的隧道：mode=named、hostname 取 external.hostnames[index]，
+   * 不由 tmex 拉起进程（external 已在跑），只做状态展示与连通性检查
+   */
+  | { action: 'adopt_external'; hostname: string }
   | { action: 'set_access_enforce'; enforceJwt: boolean };
 
 export interface TunnelActionResponse {
