@@ -2,7 +2,12 @@
 // 全部与 React 无关，便于脱离 DOM 直接测。
 
 import { TunnelApiError } from '@tmex/api-client/local/tunnel-api';
-import type { TunnelErrorCode, TunnelMode, TunnelStatusResponse } from '@tmex/shared';
+import type {
+  TunnelActionRequest,
+  TunnelErrorCode,
+  TunnelMode,
+  TunnelStatusResponse,
+} from '@tmex/shared';
 
 export type TunnelPill = 'notConfigured' | 'stopped' | 'starting' | 'running' | 'error';
 
@@ -13,24 +18,58 @@ export type TunnelPill = 'notConfigured' | 'stopped' | 'starting' | 'running' | 
 export function tunnelPill(status: TunnelStatusResponse): TunnelPill {
   if (status.process.state === 'error') return 'error';
   if (status.config.mode === 'off') return 'notConfigured';
+  // 接管来的隧道由系统服务跑，tmex 侧没有进程，运行态以探测结果为准。
+  if (status.config.externallyManaged) return status.external.running ? 'running' : 'stopped';
   if (status.process.state === 'running') return 'running';
   if (status.process.state === 'starting') return 'starting';
   return 'stopped';
 }
 
-export type WizardStep = 1 | 2 | 3 | 4;
+/** Access 徽标：未配置 / 已配置但网关不校验令牌 / 已配置且强制校验。 */
+export type AccessPill = 'notConfigured' | 'notEnforced' | 'protected';
 
-/**
- * 当前所处步骤。`chosenMode` 是本地选择（尚未落库），只在还没配置出隧道时参与判断：
- * 一旦 `config.mode` 有值，方式就以服务端为准。
- */
-export function currentWizardStep(
-  status: TunnelStatusResponse,
-  chosenMode: TunnelMode | null
-): WizardStep {
-  if (!status.binary.installed) return 1;
-  if (status.config.mode !== 'off') return 4;
-  return chosenMode === 'quick' || chosenMode === 'named' ? 3 : 2;
+export function accessPill(status: TunnelStatusResponse): AccessPill {
+  if (!status.access.configured) return 'notConfigured';
+  return status.access.enforceJwt ? 'protected' : 'notEnforced';
+}
+
+export type WizardStepId =
+  | 'install'
+  | 'mode'
+  | 'login'
+  | 'hostname'
+  | 'access'
+  | 'create'
+  | 'quick'
+  | 'tunnel'
+  | 'proxy';
+
+export interface WizardContext {
+  status: TunnelStatusResponse;
+  /** 本地选择的方式（尚未落库） */
+  chosenMode: TunnelMode | null;
+  /** 主机名步骤已在本地确认——契约里没有单独保存主机名的动作，只能由向导自己记。 */
+  hostnameConfirmed: boolean;
+}
+
+const NAMED_STEPS: WizardStepId[] = [
+  'install',
+  'mode',
+  'login',
+  'hostname',
+  'access',
+  'create',
+  'proxy',
+];
+const QUICK_STEPS: WizardStepId[] = ['install', 'mode', 'quick', 'proxy'];
+const UNDECIDED_STEPS: WizardStepId[] = ['install', 'mode', 'tunnel', 'proxy'];
+
+/** 步骤序列随方式变化：临时隧道没有登录 / 主机名 / 访问控制。 */
+export function wizardSteps(ctx: WizardContext): WizardStepId[] {
+  const mode = effectiveMode(ctx.status, ctx.chosenMode);
+  if (mode === 'named') return NAMED_STEPS;
+  if (mode === 'quick') return QUICK_STEPS;
+  return UNDECIDED_STEPS;
 }
 
 /** 步骤 3 展示哪条路径：已配置时以服务端为准，否则用本地选择。 */
@@ -44,9 +83,45 @@ export function effectiveMode(
 
 export type StepState = 'todo' | 'current' | 'done';
 
-export function stepState(step: WizardStep, current: WizardStep): StepState {
-  if (step === current) return 'current';
-  return step < current ? 'done' : 'todo';
+function tunnelReady(status: TunnelStatusResponse): boolean {
+  return status.binary.installed || status.config.externallyManaged;
+}
+
+/**
+ * 每一步单独判定，不按下标推：访问控制是可选步骤，永远不会成为「当前」，
+ * 也不应该因为排在创建之前就被算成已完成。
+ */
+export function wizardStepState(step: WizardStepId, ctx: WizardContext): StepState {
+  const { status, hostnameConfirmed } = ctx;
+  const mode = effectiveMode(status, ctx.chosenMode);
+  const ready = tunnelReady(status);
+  const created = status.config.mode === 'named';
+
+  switch (step) {
+    case 'install':
+      return ready ? 'done' : 'current';
+    case 'mode':
+      if (!ready) return 'todo';
+      return mode === 'off' ? 'current' : 'done';
+    case 'tunnel':
+      return 'todo';
+    case 'quick':
+      if (!ready || mode !== 'quick') return 'todo';
+      return status.config.mode === 'quick' ? 'done' : 'current';
+    case 'login':
+      if (!ready || mode !== 'named') return 'todo';
+      return status.auth.loggedIn || created ? 'done' : 'current';
+    case 'hostname':
+      if (wizardStepState('login', ctx) !== 'done') return 'todo';
+      return created || hostnameConfirmed ? 'done' : 'current';
+    case 'access':
+      return status.access.configured ? 'done' : 'todo';
+    case 'create':
+      if (created) return 'done';
+      return wizardStepState('hostname', ctx) === 'done' ? 'current' : 'todo';
+    case 'proxy':
+      return status.config.mode === 'off' ? 'todo' : 'current';
+  }
 }
 
 const HOSTNAME_LABEL = /^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/;
@@ -59,7 +134,6 @@ export function isValidHostname(value: string): boolean {
   return labels.every((label) => label.length <= 63 && HOSTNAME_LABEL.test(label));
 }
 
-/** 与后端 `manager.ts` 里 `step(...)` 实际发出的标识一一对应。 */
 /**
  * 隧道名称：与后端一致的 `^[a-z0-9](?:[a-z0-9_-]{0,62})$`。名称会直接拼成凭证文件名，
  * 斜杠与 `..` 必须挡在外面；这里只做即时反馈，真正的把关在后端。
@@ -70,6 +144,7 @@ export function isValidTunnelName(value: string): boolean {
   return TUNNEL_NAME.test(value);
 }
 
+/** 与后端 `manager.ts` 里 `step(...)` 实际发出的标识一一对应。 */
 const JOB_STEPS = new Set([
   'download',
   'extract',
@@ -83,6 +158,10 @@ const JOB_STEPS = new Set([
   'start',
   'check',
   'ok',
+  'create_app',
+  'policy',
+  'delete_app',
+  'sync',
 ]);
 
 /** 已知进度标识返回文案键；未知返回 null（由调用方原样展示服务端给的标识）。 */
@@ -101,12 +180,17 @@ const ERROR_CODES = new Set<TunnelErrorCode>([
   'invalid_hostname',
   'tunnel_exists',
   'dns_route_failed',
+  'access_api_failed',
+  'exposure_ack_required',
   'process_failed',
   'busy',
   'not_configured',
   'invalid_request',
   'auth_required',
 ]);
+
+/** 带 `{{message}}` 插值的错误文案：服务端的原始描述比通用句子更有用。 */
+const ERROR_CODES_WITH_MESSAGE = new Set<TunnelErrorCode>(['access_api_failed']);
 
 export function tunnelErrorKey(code: string): string | null {
   return ERROR_CODES.has(code as TunnelErrorCode) ? `${ERROR_PREFIX}${code}` : null;
@@ -129,8 +213,9 @@ type Translate = (key: string, options?: Record<string, unknown>) => string;
 /** 已知错误码走本地化文案；未知码退化成「操作失败 + 服务端 message」。 */
 export function describeTunnelError(t: Translate, error: TunnelError): string {
   const key = tunnelErrorKey(error.code);
-  if (key) return t(key);
-  return t(`${ERROR_PREFIX}unknown`, { message: error.message });
+  if (!key) return t(`${ERROR_PREFIX}unknown`, { message: error.message });
+  if (ERROR_CODES_WITH_MESSAGE.has(error.code)) return t(key, { message: error.message });
+  return t(key);
 }
 
 /**
@@ -141,12 +226,38 @@ export function trustProxyRestartRequired(status: TunnelStatusResponse): boolean
   return status.restartRequired || status.configuredTrustProxy !== status.trustProxy;
 }
 
-/** 本机没开登录时后端会拒绝创建隧道（`auth_required`）：动作错误与 job 错误都要认。 */
+/** 旧后端在本机未启用登录时会直接拒绝创建隧道（`auth_required`）：动作错误与 job 错误都要认。 */
 export function isAuthRequiredError(
   status: TunnelStatusResponse,
   error: TunnelError | null
 ): boolean {
   return error?.code === 'auth_required' || status.job?.error?.code === 'auth_required';
+}
+
+type ExposingAction = Extract<TunnelActionRequest, { acknowledgeExposure?: boolean }>;
+
+/** 会把 tmex 开放到公网的动作：未受保护时必须带上用户的显式确认。 */
+export function isExposingAction(req: TunnelActionRequest): req is ExposingAction {
+  if (req.action === 'set_auto_start') return req.autoStart;
+  return req.action === 'create' || req.action === 'quick_start' || req.action === 'start';
+}
+
+/** 只有用户勾了「我了解风险」才带上 `acknowledgeExposure`，否则由后端 409 挡下。 */
+export function withExposureAck(
+  req: TunnelActionRequest,
+  acknowledged: boolean
+): TunnelActionRequest {
+  if (!acknowledged || !isExposingAction(req)) return req;
+  return { ...req, acknowledgeExposure: true };
+}
+
+export function isExposureAckError(
+  status: TunnelStatusResponse,
+  error: TunnelError | null
+): boolean {
+  return (
+    error?.code === 'exposure_ack_required' || status.job?.error?.code === 'exposure_ack_required'
+  );
 }
 
 export const TUNNEL_ACTIVE_POLL_MS = 2000;

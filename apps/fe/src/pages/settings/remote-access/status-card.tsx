@@ -1,4 +1,4 @@
-// 远程访问状态卡：状态徽标、公网地址、启停 / 移除 / 连通性检查，以及可折叠的 cloudflared 日志。
+// 远程访问状态卡：状态与 Access 徽标、公网地址、启停 / 移除 / 连通性检查，以及可折叠的 cloudflared 日志。
 
 import type { TunnelStatusResponse } from '@tmex/shared';
 import {
@@ -14,14 +14,21 @@ import {
 import { Badge } from '@tmex/ui/badge';
 import { Button, buttonVariants } from '@tmex/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@tmex/ui/card';
-import { ExternalLink, Loader2, Play, Radar, Square, Trash2 } from 'lucide-react';
+import { ExternalLink, Loader2, Play, Radar, Square, Trash2, Unplug } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { CopyButton } from '../nodes/copy-feedback';
 import { SetupNotice } from '../nodes/setup/form-parts';
+import { type ExposureState, ExposureWarning } from './exposure';
 import { DetailRow } from './step-shell';
 import type { TunnelActions } from './tunnel-actions';
-import { describeTunnelError, logTail, tunnelPill } from './tunnel-model';
+import {
+  accessPill,
+  describeTunnelError,
+  isExposureAckError,
+  logTail,
+  tunnelPill,
+} from './tunnel-model';
 
 const PILL_VARIANT = {
   notConfigured: 'outline',
@@ -31,21 +38,32 @@ const PILL_VARIANT = {
   error: 'destructive',
 } as const;
 
+const ACCESS_PILL_VARIANT = {
+  notConfigured: 'outline',
+  notEnforced: 'secondary',
+  protected: 'default',
+} as const;
+
 export function TunnelStatusCard({
   status,
   actions,
+  exposure,
 }: {
   status: TunnelStatusResponse;
   actions: TunnelActions;
+  exposure: ExposureState;
 }) {
   const { t } = useTranslation();
   const pill = tunnelPill(status);
+  const access = accessPill(status);
   const configured = status.config.mode !== 'off';
+  const adopted = status.config.externallyManaged;
   const stoppable = status.process.state === 'running' || status.process.state === 'starting';
   const { busy, pending } = actions;
   // 命名隧道的移除会连 Cloudflare 上的隧道一起删掉，不可撤销，必须二次确认。
   const [confirmRemove, setConfirmRemove] = useState(false);
   const remove = () => actions.run({ action: 'remove' });
+  const ackError = isExposureAckError(status, actions.error);
 
   return (
     <Card data-testid="remote-access-status">
@@ -55,13 +73,29 @@ export function TunnelStatusCard({
           <Badge variant={PILL_VARIANT[pill]} data-testid="remote-access-state">
             {t(`settings.remoteAccess.state.${pill}`)}
           </Badge>
+          <Badge variant={ACCESS_PILL_VARIANT[access]} data-testid="remote-access-access-state">
+            {t(`settings.remoteAccess.accessState.${access}`)}
+          </Badge>
+          {adopted && (
+            <Badge variant="secondary" data-testid="remote-access-managed">
+              {t('settings.remoteAccess.externallyManaged')}
+            </Badge>
+          )}
         </CardTitle>
       </CardHeader>
       <CardContent className="space-y-3">
-        {actions.error && (
+        {actions.error && !ackError && (
           <SetupNotice tone="error" testId="remote-access-error">
             {describeTunnelError(t, actions.error)}
           </SetupNotice>
+        )}
+
+        {ackError && (
+          <ExposureWarning
+            exposure={{ ...exposure, ackRequired: true }}
+            id="remote-access-status-ack"
+            testId="remote-access-status-exposure"
+          />
         )}
 
         {status.process.state === 'error' && status.process.lastError && (
@@ -109,9 +143,25 @@ export function TunnelStatusCard({
           </div>
         )}
 
+        {adopted && (
+          <SetupNotice tone="info" testId="remote-access-managed-notice">
+            {t('settings.remoteAccess.externallyManagedNotice')}
+          </SetupNotice>
+        )}
+
+        {/* 接管来的隧道由系统服务拉起，tmex 这边的启停 / 移除会被后端 409 挡回来。 */}
+        {configured && !adopted && !stoppable && (
+          <ExposureWarning
+            exposure={exposure}
+            id="remote-access-start-ack"
+            testId="remote-access-start-exposure"
+            variant="compact"
+          />
+        )}
+
         {configured && (
           <div className="flex flex-wrap gap-2">
-            {!stoppable && (
+            {!adopted && !stoppable && (
               <Button
                 type="button"
                 size="sm"
@@ -123,7 +173,7 @@ export function TunnelStatusCard({
                 {t('settings.remoteAccess.actions.start')}
               </Button>
             )}
-            {stoppable && (
+            {!adopted && stoppable && (
               <Button
                 type="button"
                 size="sm"
@@ -136,7 +186,7 @@ export function TunnelStatusCard({
                 {t('settings.remoteAccess.actions.stop')}
               </Button>
             )}
-            {status.process.state === 'running' && (
+            {(adopted || status.process.state === 'running') && (
               <Button
                 type="button"
                 size="sm"
@@ -149,17 +199,31 @@ export function TunnelStatusCard({
                 {t('settings.remoteAccess.actions.check')}
               </Button>
             )}
-            <Button
-              type="button"
-              size="sm"
-              variant="destructive"
-              disabled={busy}
-              onClick={() => (status.config.mode === 'named' ? setConfirmRemove(true) : remove())}
-              data-testid="remote-access-remove"
-            >
-              {pending === 'remove' ? <Loader2 className="animate-spin" /> : <Trash2 />}
-              {t('settings.remoteAccess.actions.remove')}
-            </Button>
+            {adopted ? (
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                disabled={busy}
+                onClick={remove}
+                data-testid="remote-access-release"
+              >
+                {pending === 'remove' ? <Loader2 className="animate-spin" /> : <Unplug />}
+                {t('settings.remoteAccess.actions.release')}
+              </Button>
+            ) : (
+              <Button
+                type="button"
+                size="sm"
+                variant="destructive"
+                disabled={busy}
+                onClick={() => (status.config.mode === 'named' ? setConfirmRemove(true) : remove())}
+                data-testid="remote-access-remove"
+              >
+                {pending === 'remove' ? <Loader2 className="animate-spin" /> : <Trash2 />}
+                {t('settings.remoteAccess.actions.remove')}
+              </Button>
+            )}
           </div>
         )}
 

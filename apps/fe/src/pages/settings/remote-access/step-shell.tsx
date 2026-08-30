@@ -1,5 +1,6 @@
 // 远程访问向导的步骤外壳与几个小展示件。
 
+import { Badge } from '@tmex/ui/badge';
 import { Check, Loader2 } from 'lucide-react';
 import type { ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
@@ -12,6 +13,7 @@ export function WizardStepCard({
   description,
   state,
   testId,
+  tag,
   children,
 }: {
   index: number;
@@ -19,6 +21,8 @@ export function WizardStepCard({
   description?: string;
   state: StepState;
   testId: string;
+  /** 可选步骤的标签（推荐 / 可选）。 */
+  tag?: string;
   children?: ReactNode;
 }) {
   return (
@@ -33,7 +37,14 @@ export function WizardStepCard({
         <StepMarker index={index} state={state} testId={`${testId}-marker`} />
         <div className="min-w-0 flex-1 space-y-2">
           <div className="space-y-0.5">
-            <h3 className="text-sm font-medium">{title}</h3>
+            <h3 className="flex flex-wrap items-center gap-1.5 text-sm font-medium">
+              {title}
+              {tag && (
+                <Badge variant="secondary" data-testid={`${testId}-tag`}>
+                  {tag}
+                </Badge>
+              )}
+            </h3>
             {description && <p className="text-xs text-muted-foreground">{description}</p>}
           </div>
           {children}

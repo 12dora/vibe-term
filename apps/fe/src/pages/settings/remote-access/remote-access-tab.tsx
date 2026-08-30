@@ -13,8 +13,11 @@ import { Loader2 } from 'lucide-react';
 import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { SetupNotice } from '../nodes/setup/form-parts';
+import type { ExposureState } from './exposure';
+import type { NamedDraft } from './named-step';
 import { TunnelStatusCard } from './status-card';
-import { useTunnelActions } from './tunnel-actions';
+import { type TunnelActions, useTunnelActions } from './tunnel-actions';
+import { isExposureAckError, withExposureAck } from './tunnel-model';
 import { useTunnelStatus } from './use-tunnel-status';
 import { TunnelWizard } from './wizard';
 
@@ -43,11 +46,15 @@ function RemoteNodeNotice() {
 function SelfRemoteAccess() {
   const { t } = useTranslation();
   const tunnel = useTunnelStatus();
-  const { mode, loaded: modeLoaded } = useSharedAuthMode();
+  const { mode } = useSharedAuthMode();
   const [chosenMode, setChosenMode] = useState<TunnelMode | null>(null);
+  const [acknowledged, setAcknowledged] = useState(false);
+  const [hostname, setHostnameValue] = useState('');
+  const [tunnelName, setTunnelNameValue] = useState('');
+  const [confirmed, setConfirmed] = useState(false);
 
   const { setStatus, refresh } = tunnel;
-  const actions = useTunnelActions(tunnel.status, { onStatus: setStatus, onRefresh: refresh });
+  const rawActions = useTunnelActions(tunnel.status, { onStatus: setStatus, onRefresh: refresh });
 
   if (tunnel.loginRequired) {
     return (
@@ -90,16 +97,45 @@ function SelfRemoteAccess() {
     );
   }
 
+  const status = tunnel.status;
+  const draft: NamedDraft = {
+    hostname,
+    tunnelName,
+    confirmed,
+    // 改主机名等于推翻上一次确认：创建那一步必须重新走一遍。
+    setHostname: (value) => {
+      setHostnameValue(value);
+      setConfirmed(false);
+    },
+    setTunnelName: (value) => {
+      setTunnelNameValue(value);
+      setConfirmed(false);
+    },
+    setConfirmed,
+  };
+  const exposure: ExposureState = {
+    unprotected: !status.exposureProtected,
+    acknowledged,
+    setAcknowledged,
+    ackRequired: isExposureAckError(status, rawActions.error),
+  };
+  // 开放性动作只有在用户勾了确认之后才带上 `acknowledgeExposure`，否则由后端 409 挡下。
+  const actions: TunnelActions = {
+    ...rawActions,
+    run: (req) => rawActions.run(withExposureAck(req, acknowledged)),
+  };
+
   return (
     <div className="flex w-full flex-col gap-4" data-testid="settings-remote-access-tab">
-      <TunnelStatusCard status={tunnel.status} actions={actions} />
+      <TunnelStatusCard status={status} actions={actions} exposure={exposure} />
       <TunnelWizard
-        status={tunnel.status}
+        status={status}
         actions={actions}
         chosenMode={chosenMode}
         onChooseMode={setChosenMode}
+        draft={draft}
         isHub={isSelfHub(mode)}
-        authDisabled={modeLoaded && mode?.mode === 'none'}
+        exposure={exposure}
         onRestarted={refresh}
       />
     </div>

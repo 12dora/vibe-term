@@ -1,24 +1,31 @@
-// 远程访问向导：安装 cloudflared → 选择方式 → 建立隧道 → 反向代理信任。
+// 远程访问向导。步骤序列随方式变化：
+//   命名隧道 安装 → 方式 → 登录 → 主机名 → 访问控制 → 创建并启动 → 反向代理信任
+//   临时隧道 安装 → 方式 → 启动 → 反向代理信任
 
 import type { TunnelMode, TunnelStatusResponse } from '@tmex/shared';
 import { Button } from '@tmex/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@tmex/ui/card';
 import { Cloud, Download, Loader2, Rocket, RotateCcw, Zap } from 'lucide-react';
-import type { ReactNode } from 'react';
+import { type ReactNode, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Link } from 'react-router';
 import { useRestartGateway } from '../nodes/restart/use-restart-now';
 import { SetupNotice, SwitchRow } from '../nodes/setup/form-parts';
-import { NamedTunnelStep } from './named-step';
+import { accessStepTag } from './access-model';
+import { AccessStep } from './access-step';
+import { type ExposureState, ExposureWarning } from './exposure';
+import { ExternalTunnelCard } from './external-card';
+import { CreateStep, HostnameStep, LoginStep, type NamedDraft } from './named-step';
 import { DetailRow, JobProgress, WizardStepCard } from './step-shell';
 import type { TunnelActions } from './tunnel-actions';
 import {
-  currentWizardStep,
+  type WizardStepId,
   describeTunnelError,
   effectiveMode,
   isAuthRequiredError,
-  stepState,
   trustProxyRestartRequired,
+  wizardStepState,
+  wizardSteps,
 } from './tunnel-model';
 
 export interface TunnelWizardProps {
@@ -26,9 +33,9 @@ export interface TunnelWizardProps {
   actions: TunnelActions;
   chosenMode: TunnelMode | null;
   onChooseMode: (mode: TunnelMode) => void;
+  draft: NamedDraft;
   isHub: boolean;
-  /** 本机登录已关闭（`/api/auth/mode` 报 `none`）：暴露到公网前必须先开。 */
-  authDisabled: boolean;
+  exposure: ExposureState;
   onRestarted: () => void;
 }
 
@@ -37,14 +44,19 @@ export function TunnelWizard({
   actions,
   chosenMode,
   onChooseMode,
+  draft,
   isHub,
-  authDisabled,
+  exposure,
   onRestarted,
 }: TunnelWizardProps) {
   const { t } = useTranslation();
-  const current = currentWizardStep(status, chosenMode);
-  const mode = effectiveMode(status, chosenMode);
-  const authRequired = authDisabled || isAuthRequiredError(status, actions.error);
+  const [externalDismissed, setExternalDismissed] = useState(false);
+
+  const ctx = { status, chosenMode, hostnameConfirmed: draft.confirmed };
+  const steps = wizardSteps(ctx);
+  const authRequired = isAuthRequiredError(status, actions.error);
+  const showExternal =
+    status.external.detected && status.config.mode === 'off' && !externalDismissed;
 
   return (
     <Card data-testid="remote-access-wizard">
@@ -53,75 +65,155 @@ export function TunnelWizard({
         <CardDescription>{t('settings.remoteAccess.description')}</CardDescription>
       </CardHeader>
       <CardContent className="space-y-3">
-        <WizardStepCard
-          index={1}
-          testId="remote-access-step-install"
-          state={stepState(1, current)}
-          title={t('settings.remoteAccess.steps.install.title')}
-          description={t('settings.remoteAccess.steps.install.description')}
-        >
-          <InstallStep status={status} actions={actions} />
-        </WizardStepCard>
-
-        {authRequired && (
-          <SetupNotice tone="warning" testId="remote-access-auth-required">
-            <p>{t('settings.remoteAccess.authRequired.notice')}</p>
-            <Link className="text-primary underline-offset-4 hover:underline" to="?tab=nodes">
-              {t('settings.remoteAccess.authRequired.link')}
-            </Link>
-          </SetupNotice>
+        {showExternal && (
+          <ExternalTunnelCard
+            status={status}
+            actions={actions}
+            onDismiss={() => setExternalDismissed(true)}
+          />
         )}
 
-        <WizardStepCard
-          index={2}
-          testId="remote-access-step-mode"
-          state={stepState(2, current)}
-          title={t('settings.remoteAccess.steps.mode.title')}
-          description={t('settings.remoteAccess.steps.mode.description')}
-        >
-          <ModeChooser
-            selected={mode}
-            locked={status.config.mode !== 'off'}
-            disabled={actions.busy || !status.binary.installed}
-            onSelect={onChooseMode}
-          />
-        </WizardStepCard>
-
-        <WizardStepCard
-          index={3}
-          testId="remote-access-step-tunnel"
-          state={stepState(3, current)}
-          title={t(`settings.remoteAccess.steps.${mode === 'off' ? 'tunnel' : mode}.title`)}
-          description={t(
-            `settings.remoteAccess.steps.${mode === 'off' ? 'tunnel' : mode}.description`
-          )}
-        >
-          {mode === 'off' ? (
-            <p
-              className="text-xs text-muted-foreground"
-              data-testid="remote-access-step-tunnel-idle"
-            >
-              {t('settings.remoteAccess.steps.mode.pending')}
-            </p>
-          ) : mode === 'named' ? (
-            <NamedTunnelStep status={status} actions={actions} isHub={isHub} />
-          ) : (
-            <QuickTunnelStep status={status} actions={actions} />
-          )}
-        </WizardStepCard>
-
-        <WizardStepCard
-          index={4}
-          testId="remote-access-step-proxy"
-          state={stepState(4, current)}
-          title={t('settings.remoteAccess.steps.proxy.title')}
-          description={t('settings.remoteAccess.steps.proxy.description')}
-        >
-          <ProxyStep status={status} actions={actions} onRestarted={onRestarted} />
-        </WizardStepCard>
+        {steps.map((step, index) => (
+          <StepSlot
+            key={step}
+            step={step}
+            index={index + 1}
+            state={wizardStepState(step, ctx)}
+            status={status}
+          >
+            {step === 'mode' && authRequired && (
+              <SetupNotice tone="warning" testId="remote-access-auth-required">
+                <p>{t('settings.remoteAccess.authRequired.notice')}</p>
+                <Link className="text-primary underline-offset-4 hover:underline" to="?tab=nodes">
+                  {t('settings.remoteAccess.authRequired.link')}
+                </Link>
+              </SetupNotice>
+            )}
+            {step === 'mode' && (
+              <ExposureWarning
+                exposure={exposure}
+                id="remote-access-mode-ack"
+                testId="remote-access-exposure"
+              />
+            )}
+            <StepContent
+              step={step}
+              status={status}
+              actions={actions}
+              draft={draft}
+              isHub={isHub}
+              exposure={exposure}
+              chosenMode={chosenMode}
+              onChooseMode={onChooseMode}
+              onRestarted={onRestarted}
+            />
+          </StepSlot>
+        ))}
       </CardContent>
     </Card>
   );
+}
+
+function StepSlot({
+  step,
+  index,
+  state,
+  status,
+  children,
+}: {
+  step: WizardStepId;
+  index: number;
+  state: 'todo' | 'current' | 'done';
+  status: TunnelStatusResponse;
+  children: ReactNode;
+}) {
+  const { t } = useTranslation();
+  return (
+    <WizardStepCard
+      index={index}
+      testId={`remote-access-step-${step}`}
+      state={state}
+      title={t(`settings.remoteAccess.steps.${step}.title`)}
+      description={t(`settings.remoteAccess.steps.${step}.description`)}
+      tag={
+        step === 'access'
+          ? t(`settings.remoteAccess.access.tag.${accessStepTag(status)}`)
+          : undefined
+      }
+    >
+      {children}
+    </WizardStepCard>
+  );
+}
+
+function StepContent({
+  step,
+  status,
+  actions,
+  draft,
+  isHub,
+  exposure,
+  chosenMode,
+  onChooseMode,
+  onRestarted,
+}: {
+  step: WizardStepId;
+  status: TunnelStatusResponse;
+  actions: TunnelActions;
+  draft: NamedDraft;
+  isHub: boolean;
+  exposure: ExposureState;
+  chosenMode: TunnelMode | null;
+  onChooseMode: (mode: TunnelMode) => void;
+  onRestarted: () => void;
+}) {
+  const { t } = useTranslation();
+  switch (step) {
+    case 'install':
+      return <InstallStep status={status} actions={actions} />;
+    case 'mode':
+      return (
+        <ModeChooser
+          selected={effectiveMode(status, chosenMode)}
+          locked={status.config.mode !== 'off'}
+          disabled={actions.busy || !status.binary.installed}
+          onSelect={onChooseMode}
+        />
+      );
+    case 'tunnel':
+      return (
+        <p className="text-xs text-muted-foreground" data-testid="remote-access-step-tunnel-idle">
+          {t('settings.remoteAccess.steps.mode.pending')}
+        </p>
+      );
+    case 'quick':
+      return <QuickTunnelStep status={status} actions={actions} exposure={exposure} />;
+    case 'login':
+      return <LoginStep status={status} actions={actions} />;
+    case 'hostname':
+      return <HostnameStep status={status} actions={actions} draft={draft} isHub={isHub} />;
+    case 'access':
+      return <AccessStep status={status} actions={actions} />;
+    case 'create':
+      return (
+        <CreateStep
+          status={status}
+          actions={actions}
+          draft={draft}
+          isHub={isHub}
+          exposure={exposure}
+        />
+      );
+    case 'proxy':
+      return (
+        <ProxyStep
+          status={status}
+          actions={actions}
+          exposure={exposure}
+          onRestarted={onRestarted}
+        />
+      );
+  }
 }
 
 function InstallStep({
@@ -136,7 +228,7 @@ function InstallStep({
   const installing = job?.kind === 'install' && job.state === 'running';
   const installFailed = job?.kind === 'install' && job.state === 'error' && job.error !== null;
 
-  if (!status.supported) {
+  if (!status.supported && !status.config.externallyManaged) {
     return (
       <SetupNotice tone="warning" testId="remote-access-unsupported">
         {t('settings.remoteAccess.unsupported', { platform: status.platform })}
@@ -161,6 +253,14 @@ function InstallStep({
           </DetailRow>
         )}
       </div>
+    );
+  }
+
+  if (status.config.externallyManaged) {
+    return (
+      <SetupNotice tone="info" testId="remote-access-install-skipped">
+        {t('settings.remoteAccess.steps.install.skipped')}
+      </SetupNotice>
     );
   }
 
@@ -272,9 +372,11 @@ function ModeCard({
 function QuickTunnelStep({
   status,
   actions,
+  exposure,
 }: {
   status: TunnelStatusResponse;
   actions: TunnelActions;
+  exposure: ExposureState;
 }) {
   const { t } = useTranslation();
   const job = status.job;
@@ -293,16 +395,24 @@ function QuickTunnelStep({
       ) : starting ? (
         <JobProgress step={job.step} testId="remote-access-quick-progress" />
       ) : (
-        <Button
-          type="button"
-          size="sm"
-          disabled={actions.busy || !status.binary.installed}
-          onClick={() => actions.run({ action: 'quick_start' })}
-          data-testid="remote-access-quick-start"
-        >
-          {actions.pending === 'quick_start' ? <Loader2 className="animate-spin" /> : <Rocket />}
-          {t('settings.remoteAccess.actions.quickStart')}
-        </Button>
+        <>
+          <ExposureWarning
+            exposure={exposure}
+            id="remote-access-quick-ack"
+            testId="remote-access-quick-exposure"
+            variant="compact"
+          />
+          <Button
+            type="button"
+            size="sm"
+            disabled={actions.busy || !status.binary.installed}
+            onClick={() => actions.run({ action: 'quick_start' })}
+            data-testid="remote-access-quick-start"
+          >
+            {actions.pending === 'quick_start' ? <Loader2 className="animate-spin" /> : <Rocket />}
+            {t('settings.remoteAccess.actions.quickStart')}
+          </Button>
+        </>
       )}
     </div>
   );
@@ -311,10 +421,12 @@ function QuickTunnelStep({
 function ProxyStep({
   status,
   actions,
+  exposure,
   onRestarted,
 }: {
   status: TunnelStatusResponse;
   actions: TunnelActions;
+  exposure: ExposureState;
   onRestarted: () => void;
 }) {
   const { t } = useTranslation();
@@ -343,14 +455,29 @@ function ProxyStep({
       >
         {t(`settings.remoteAccess.steps.proxy.trustProxyState.${status.trustProxy ? 'on' : 'off'}`)}
       </DetailRow>
-      <SwitchRow
-        id="remote-access-auto-start"
-        label={t('settings.remoteAccess.steps.proxy.autoStart')}
-        hint={t('settings.remoteAccess.steps.proxy.autoStartHint')}
-        checked={status.config.autoStart}
-        disabled={actions.busy}
-        onCheckedChange={(checked) => actions.run({ action: 'set_auto_start', autoStart: checked })}
-      />
+
+      {!status.config.externallyManaged && (
+        <>
+          <SwitchRow
+            id="remote-access-auto-start"
+            label={t('settings.remoteAccess.steps.proxy.autoStart')}
+            hint={t('settings.remoteAccess.steps.proxy.autoStartHint')}
+            checked={status.config.autoStart}
+            disabled={actions.busy}
+            onCheckedChange={(checked) =>
+              actions.run({ action: 'set_auto_start', autoStart: checked })
+            }
+          />
+          {!status.config.autoStart && (
+            <ExposureWarning
+              exposure={exposure}
+              id="remote-access-auto-start-ack"
+              testId="remote-access-auto-start-exposure"
+              variant="compact"
+            />
+          )}
+        </>
+      )}
 
       {restartRequired && (
         <div

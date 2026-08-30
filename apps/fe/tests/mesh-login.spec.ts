@@ -1,4 +1,5 @@
 import { expect, test } from '@playwright/test';
+import { sidebarDeviceVisibilityKey } from '@tmex/stores';
 import {
   type MeshState,
   createDeviceOnNode,
@@ -18,7 +19,9 @@ test.beforeAll(() => {
   state = readMeshState();
 });
 
-test('mesh: password login lists the hub self node and the joined node', async ({ page }) => {
+test('mesh: sidebar shows the hub self node; other nodes only once a device is enabled', async ({
+  page,
+}) => {
   await loginWithPassword(page, state);
 
   const nodeList = page.getByTestId('sidebar-node-list');
@@ -26,13 +29,8 @@ test('mesh: password login lists the hub self node and the joined node', async (
 
   // entry（hub）在侧边栏用 `self` 作为 runtime node id，远端 node 用真实 node id。
   await expect(page.getByTestId('sidebar-node-header-self')).toBeVisible();
-  await expect(page.getByTestId(`sidebar-node-header-${state.remoteNodeId}`)).toBeVisible();
-  // 徽标 title 是 `<展示名> · <nodeId>`。以 hub 为 entry 时 /api/mesh/nodes 的 name 取自
-  // peers 表，刚 join 完那一段时间里会退化成 nodeId，所以断言只锚定 nodeId。
-  await expect(page.getByTestId(`node-badge-${state.remoteNodeId}`).first()).toHaveAttribute(
-    'title',
-    new RegExp(`${state.remoteNodeId}$`)
-  );
+  // 远端 node 的设备缺省不在侧边栏显示，整节（含登录入口）都不出现——登录别的节点走「管理设备」。
+  await expect(page.getByTestId(`sidebar-node-header-${state.remoteNodeId}`)).toHaveCount(0);
 
   // 侧边栏渲染的成员集就是 entry 的 /api/mesh/nodes：两台、远端在线且已完成 fan-out 登录。
   const nodes = await page.evaluate(() =>
@@ -44,6 +42,46 @@ test('mesh: password login lists the hub self node and the joined node', async (
   const remote = nodes.find((node) => node.id === state.remoteNodeId);
   expect(remote?.online).toBe(true);
   expect(remote?.loggedIn).toBe(true);
+
+  // 打开远端 node 一台设备的侧边栏显示（等价于「管理设备」里的终端开关）后，那一节才出现。
+  const deviceName = `tmex-mesh-sidebar-${Date.now()}`;
+  const deviceId = await createDeviceOnNode(page, state, state.remoteNodeId, {
+    name: deviceName,
+    session: deviceName,
+  });
+  try {
+    await page.evaluate(
+      (key) => {
+        const raw = window.localStorage.getItem('tmex-ui');
+        const parsed = (raw ? JSON.parse(raw) : { state: {}, version: 0 }) as {
+          state?: { sidebarDeviceVisibility?: Record<string, boolean> };
+        };
+        const persistedState = parsed.state ?? {};
+        persistedState.sidebarDeviceVisibility = {
+          ...(persistedState.sidebarDeviceVisibility ?? {}),
+          [key]: true,
+        };
+        window.localStorage.setItem(
+          'tmex-ui',
+          JSON.stringify({ ...parsed, state: persistedState, version: 0 })
+        );
+      },
+      sidebarDeviceVisibilityKey(state.remoteNodeId, deviceId)
+    );
+    await page.reload();
+
+    await expect(page.getByTestId(`sidebar-node-header-${state.remoteNodeId}`)).toBeVisible({
+      timeout: 30_000,
+    });
+    // 徽标 title 是 `<展示名> · <nodeId>`。以 hub 为 entry 时 /api/mesh/nodes 的 name 取自
+    // peers 表，刚 join 完那一段时间里会退化成 nodeId，所以断言只锚定 nodeId。
+    await expect(page.getByTestId(`node-badge-${state.remoteNodeId}`).first()).toHaveAttribute(
+      'title',
+      new RegExp(`${state.remoteNodeId}$`)
+    );
+  } finally {
+    await deleteDeviceOnNode(page, state, state.remoteNodeId, deviceId);
+  }
 });
 
 test('mesh: terminal on the joined node echoes through the entry', async ({ page }) => {

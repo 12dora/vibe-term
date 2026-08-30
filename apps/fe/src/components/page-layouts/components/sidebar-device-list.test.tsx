@@ -39,9 +39,12 @@ const {
   sidebarNodeSortableId,
   toSidebarEntries,
 } = await import('./sidebar-device-list');
-const { SidebarNodeSection, inventoryDevices, selectedDeviceIdForNode } = await import(
-  './sidebar-node-section'
-);
+const {
+  SidebarNodeSection,
+  hasSidebarVisibleDeviceForNode,
+  inventoryDevices,
+  selectedDeviceIdForNode,
+} = await import('./sidebar-node-section');
 const { SortableVerticalList, useSortableRow } = await import('@tmex/panels/device-tree');
 
 /**
@@ -208,6 +211,24 @@ describe('inventoryDevices', () => {
   });
 });
 
+describe('hasSidebarVisibleDeviceForNode', () => {
+  test('只认该 node 前缀下显式打开的设备', () => {
+    const visibility = {
+      [sidebarDeviceVisibilityKey('node-a', 'd1')]: false,
+      [sidebarDeviceVisibilityKey('node-b', 'd1')]: true,
+    };
+    expect(hasSidebarVisibleDeviceForNode(visibility, 'node-a')).toBe(false);
+    expect(hasSidebarVisibleDeviceForNode(visibility, 'node-b')).toBe(true);
+    expect(hasSidebarVisibleDeviceForNode({}, 'node-b')).toBe(false);
+  });
+
+  test('id 互为前缀的 node 不会互相带出来', () => {
+    const visibility = { [sidebarDeviceVisibilityKey('node-ab', 'd1')]: true };
+    expect(hasSidebarVisibleDeviceForNode(visibility, 'node-a')).toBe(false);
+    expect(hasSidebarVisibleDeviceForNode(visibility, 'node-ab')).toBe(true);
+  });
+});
+
 describe('SidebarNodeSection', () => {
   const OFFLINE_NODE = '0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c';
 
@@ -286,26 +307,57 @@ describe('SidebarNodeSection', () => {
     expect(html).not.toContain(`data-testid="sidebar-node-offline-${OFFLINE_NODE}"`);
   });
 
-  test('在线但未登录：默认折叠成一个登录入口，不自动登录、不渲染设备树', () => {
-    const html = render(
-      <SidebarNodeSection
-        node={{
-          id: '0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c',
-          runtimeNodeId: '0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c',
-          name: 'studio',
-          online: true,
-          loggedIn: false,
-          isSelf: false,
-          inventory: null,
-        }}
-      />
-    );
+  function signedOutNode() {
+    return {
+      id: '0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c',
+      runtimeNodeId: '0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c',
+      name: 'studio',
+      online: true,
+      loggedIn: false,
+      isSelf: false,
+      inventory: null,
+    };
+  }
+
+  test('在线但未登录：一台设备都没开侧边栏显示时整节不渲染（登录入口只在「管理设备」里）', () => {
+    const html = render(<SidebarNodeSection node={signedOutNode()} />);
+
+    expect(html).not.toContain('data-testid="sidebar-node-login-');
+    expect(html).not.toContain('data-testid="sidebar-node-expand-');
+    expect(html).not.toContain('data-testid="node-badge-0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c"');
+  });
+
+  test('在线但未登录：开过设备显示的 node 保留紧凑登录行，不自动登录、不渲染设备树', () => {
+    const html = render(<SidebarNodeSection node={signedOutNode()} />, {
+      [sidebarDeviceVisibilityKey('0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c', 'd1')]: true,
+    });
+
     expect(html).toContain('data-testid="sidebar-node-login-0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c"');
     // 折叠态：只有「展开并登录」这一个入口，既没有设备树也没有登录中的转圈
     expect(html).toContain('data-testid="sidebar-node-expand-0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c"');
     expect(html).not.toContain('data-testid="sidebar-node-pending-');
     expect(html).not.toContain('data-testid="runtime-device-list"');
     expect(html).not.toContain('data-testid="device-item-');
+  });
+
+  test('在线但未登录：设备显示被关掉（显式 false）同样整节不渲染', () => {
+    const html = render(<SidebarNodeSection node={signedOutNode()} />, {
+      [sidebarDeviceVisibilityKey('0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c', 'd1')]: false,
+      // 别的 node 开着的设备不能把这一节带出来
+      [sidebarDeviceVisibilityKey('0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d', 'd2')]: true,
+    });
+
+    expect(html).not.toContain('data-testid="sidebar-node-login-');
+  });
+
+  test('在线但未登录：正在浏览该 node 的某台设备时保留登录行', () => {
+    const html = render(
+      <SidebarNodeSection node={signedOutNode()} />,
+      {},
+      '/n/0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c/devices/d1'
+    );
+
+    expect(html).toContain('data-testid="sidebar-node-login-0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c"');
   });
 
   test('在线且已登录：挂该 node 的运行时并渲染设备树', () => {

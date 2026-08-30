@@ -6,20 +6,24 @@ import type { TunnelStatusResponse } from '@tmex/shared';
 import {
   TUNNEL_ACTIVE_POLL_MS,
   TUNNEL_IDLE_POLL_MS,
-  currentWizardStep,
+  accessPill,
   describeTunnelError,
   effectiveMode,
   isAuthRequiredError,
+  isExposingAction,
+  isExposureAckError,
   isValidHostname,
   isValidTunnelName,
   jobStepKey,
   logTail,
-  stepState,
   toTunnelError,
   trustProxyRestartRequired,
   tunnelErrorKey,
   tunnelPill,
   tunnelPollInterval,
+  withExposureAck,
+  wizardStepState,
+  wizardSteps,
 } from './tunnel-model';
 
 function status(overrides: Partial<TunnelStatusResponse> = {}): TunnelStatusResponse {
@@ -34,6 +38,7 @@ function status(overrides: Partial<TunnelStatusResponse> = {}): TunnelStatusResp
       tunnelName: null,
       tunnelId: null,
       autoStart: false,
+      externallyManaged: false,
       originPort: 9883,
     },
     process: {
@@ -44,6 +49,30 @@ function status(overrides: Partial<TunnelStatusResponse> = {}): TunnelStatusResp
       lastError: null,
       restarts: 0,
     },
+    access: {
+      hasCredentials: false,
+      accountId: null,
+      teamDomain: null,
+      configured: false,
+      appId: null,
+      aud: null,
+      hostname: null,
+      rules: [],
+      enforceJwt: true,
+      lastError: null,
+    },
+    external: {
+      detected: false,
+      source: null,
+      configPath: null,
+      tunnelId: null,
+      tunnelName: null,
+      hostnames: [],
+      hasOriginCert: false,
+      running: false,
+    },
+    loginEnforced: true,
+    exposureProtected: true,
     job: null,
     trustProxy: false,
     configuredTrustProxy: false,
@@ -69,6 +98,13 @@ describe('tunnelPill', () => {
     );
   });
 
+  test('接管来的隧道按探测到的运行态显示，不看 tmex 自己的进程', () => {
+    const config = { ...status().config, mode: 'named' as const, externallyManaged: true };
+    const external = { ...status().external, detected: true, running: true };
+    expect(tunnelPill(status({ config, external }))).toBe('running');
+    expect(tunnelPill(status({ config }))).toBe('stopped');
+  });
+
   test('进程报错优先于「未配置」：移除失败后不能显示成一片干净', () => {
     expect(
       tunnelPill(
@@ -78,21 +114,34 @@ describe('tunnelPill', () => {
   });
 });
 
-describe('currentWizardStep / effectiveMode', () => {
-  test('没装 cloudflared 一律停在第 1 步', () => {
-    const s = status({ binary: { installed: false, version: null, path: null, source: null } });
-    expect(currentWizardStep(s, 'named')).toBe(1);
+describe('wizardSteps / effectiveMode', () => {
+  test('命名隧道七步：访问控制排在主机名之后、创建之前', () => {
+    expect(
+      wizardSteps({ status: status(), chosenMode: 'named', hostnameConfirmed: false })
+    ).toEqual(['install', 'mode', 'login', 'hostname', 'access', 'create', 'proxy']);
   });
 
-  test('装好但没选方式停在第 2 步，选了方式进第 3 步', () => {
-    expect(currentWizardStep(status(), null)).toBe(2);
-    expect(currentWizardStep(status(), 'quick')).toBe(3);
+  test('临时隧道没有登录 / 主机名 / 访问控制', () => {
+    expect(
+      wizardSteps({ status: status(), chosenMode: 'quick', hostnameConfirmed: false })
+    ).toEqual(['install', 'mode', 'quick', 'proxy']);
   });
 
-  test('已经建好隧道直接进第 4 步，方式以服务端为准', () => {
+  test('还没选方式时第 3 步只是占位', () => {
+    expect(wizardSteps({ status: status(), chosenMode: null, hostnameConfirmed: false })).toEqual([
+      'install',
+      'mode',
+      'tunnel',
+      'proxy',
+    ]);
+  });
+
+  test('已经建好隧道后方式以服务端为准', () => {
     const s = status({ config: { ...status().config, mode: 'named', hostname: 'a.example.com' } });
-    expect(currentWizardStep(s, 'quick')).toBe(4);
     expect(effectiveMode(s, 'quick')).toBe('named');
+    expect(wizardSteps({ status: s, chosenMode: 'quick', hostnameConfirmed: false })).toContain(
+      'access'
+    );
   });
 
   test('未配置时方式取本地选择', () => {
@@ -101,11 +150,129 @@ describe('currentWizardStep / effectiveMode', () => {
   });
 });
 
-describe('stepState', () => {
-  test('当前步高亮、之前的步骤打勾、之后的步骤待办', () => {
-    expect(stepState(1, 3)).toBe('done');
-    expect(stepState(3, 3)).toBe('current');
-    expect(stepState(4, 3)).toBe('todo');
+describe('wizardStepState', () => {
+  const ctx = (
+    s: TunnelStatusResponse,
+    chosenMode: 'named' | 'quick' | null,
+    hostnameConfirmed = false
+  ) => ({ status: s, chosenMode, hostnameConfirmed });
+
+  test('没装 cloudflared 时停在安装步', () => {
+    const s = status({ binary: { installed: false, version: null, path: null, source: null } });
+    expect(wizardStepState('install', ctx(s, 'named'))).toBe('current');
+    expect(wizardStepState('mode', ctx(s, 'named'))).toBe('todo');
+  });
+
+  test('装好但没选方式时停在方式步', () => {
+    expect(wizardStepState('install', ctx(status(), null))).toBe('done');
+    expect(wizardStepState('mode', ctx(status(), null))).toBe('current');
+  });
+
+  test('命名隧道：登录 → 主机名 → 创建依次推进', () => {
+    const notLoggedIn = status();
+    expect(wizardStepState('login', ctx(notLoggedIn, 'named'))).toBe('current');
+    expect(wizardStepState('hostname', ctx(notLoggedIn, 'named'))).toBe('todo');
+    expect(wizardStepState('create', ctx(notLoggedIn, 'named'))).toBe('todo');
+
+    const loggedIn = status({ auth: { loggedIn: true, loginUrl: null } });
+    expect(wizardStepState('login', ctx(loggedIn, 'named'))).toBe('done');
+    expect(wizardStepState('hostname', ctx(loggedIn, 'named'))).toBe('current');
+    expect(wizardStepState('create', ctx(loggedIn, 'named'))).toBe('todo');
+
+    expect(wizardStepState('hostname', ctx(loggedIn, 'named', true))).toBe('done');
+    expect(wizardStepState('create', ctx(loggedIn, 'named', true))).toBe('current');
+  });
+
+  test('访问控制是可选步：没配就一直是待办，配了才打勾，绝不抢当前步', () => {
+    const loggedIn = status({ auth: { loggedIn: true, loginUrl: null } });
+    expect(wizardStepState('access', ctx(loggedIn, 'named', true))).toBe('todo');
+    const configured = status({
+      auth: { loggedIn: true, loginUrl: null },
+      access: { ...status().access, configured: true },
+    });
+    expect(wizardStepState('access', ctx(configured, 'named', true))).toBe('done');
+  });
+
+  test('隧道建好后创建步打勾、反向代理步成为当前步', () => {
+    const s = status({ config: { ...status().config, mode: 'named', hostname: 'a.example.com' } });
+    expect(wizardStepState('create', ctx(s, 'named'))).toBe('done');
+    expect(wizardStepState('hostname', ctx(s, 'named'))).toBe('done');
+    expect(wizardStepState('proxy', ctx(s, 'named'))).toBe('current');
+  });
+
+  test('接管系统隧道时安装与登录直接算完成', () => {
+    const s = status({
+      binary: { installed: false, version: null, path: null, source: null },
+      config: { ...status().config, mode: 'named', externallyManaged: true },
+    });
+    expect(wizardStepState('install', ctx(s, 'named'))).toBe('done');
+    expect(wizardStepState('login', ctx(s, 'named'))).toBe('done');
+  });
+
+  test('临时隧道启动前是当前步，启动后打勾', () => {
+    expect(wizardStepState('quick', ctx(status(), 'quick'))).toBe('current');
+    const started = status({ config: { ...status().config, mode: 'quick' } });
+    expect(wizardStepState('quick', ctx(started, 'quick'))).toBe('done');
+  });
+});
+
+describe('accessPill', () => {
+  test('未配置 / 已配置未强制 / 已保护', () => {
+    expect(accessPill(status())).toBe('notConfigured');
+    expect(
+      accessPill(status({ access: { ...status().access, configured: true, enforceJwt: false } }))
+    ).toBe('notEnforced');
+    expect(
+      accessPill(status({ access: { ...status().access, configured: true, enforceJwt: true } }))
+    ).toBe('protected');
+  });
+});
+
+describe('暴露确认', () => {
+  test('只有会把 tmex 开放出去的动作才需要确认', () => {
+    expect(isExposingAction({ action: 'quick_start' })).toBe(true);
+    expect(isExposingAction({ action: 'start' })).toBe(true);
+    expect(isExposingAction({ action: 'create', hostname: 'a.example.com' })).toBe(true);
+    expect(isExposingAction({ action: 'set_auto_start', autoStart: true })).toBe(true);
+    // 关掉自启动是收敛，不需要确认。
+    expect(isExposingAction({ action: 'set_auto_start', autoStart: false })).toBe(false);
+    expect(isExposingAction({ action: 'stop' })).toBe(false);
+    expect(isExposingAction({ action: 'install' })).toBe(false);
+  });
+
+  test('没勾确认时请求不带 acknowledgeExposure', () => {
+    expect(withExposureAck({ action: 'quick_start' }, false)).toEqual({ action: 'quick_start' });
+    expect(withExposureAck({ action: 'quick_start' }, true)).toEqual({
+      action: 'quick_start',
+      acknowledgeExposure: true,
+    });
+  });
+
+  test('非开放性动作即使勾了也不加这个字段', () => {
+    expect(withExposureAck({ action: 'stop' }, true)).toEqual({ action: 'stop' });
+  });
+
+  test('动作错误或 job 错误任一为 exposure_ack_required 都要弹确认', () => {
+    expect(isExposureAckError(status(), null)).toBe(false);
+    expect(isExposureAckError(status(), { code: 'exposure_ack_required', message: 'ack' })).toBe(
+      true
+    );
+    expect(
+      isExposureAckError(
+        status({
+          job: {
+            id: 'j1',
+            kind: 'start',
+            state: 'error',
+            step: null,
+            error: { code: 'exposure_ack_required', message: 'ack' },
+            startedAt: '2026-08-30T00:00:00.000Z',
+            finishedAt: '2026-08-30T00:00:01.000Z',
+          },
+        }),
+        null
+      )
+    ).toBe(true);
   });
 });
 
@@ -162,6 +329,10 @@ describe('jobStepKey', () => {
       'start',
       'check',
       'ok',
+      'create_app',
+      'policy',
+      'delete_app',
+      'sync',
     ]) {
       expect(jobStepKey(step)).toBe(`settings.remoteAccess.jobStep.${step}`);
     }
@@ -220,6 +391,18 @@ describe('错误映射', () => {
     expect(tunnelErrorKey('auth_required')).toBe('settings.remoteAccess.errors.auth_required');
     expect(describeTunnelError(t, { code: 'busy', message: 'busy' })).toBe(
       'settings.remoteAccess.errors.busy'
+    );
+  });
+
+  test('Access API 失败带上服务端的原始描述', () => {
+    expect(describeTunnelError(t, { code: 'access_api_failed', message: 'token invalid' })).toBe(
+      'settings.remoteAccess.errors.access_api_failed:{"message":"token invalid"}'
+    );
+  });
+
+  test('exposure_ack_required 有自己的文案', () => {
+    expect(tunnelErrorKey('exposure_ack_required')).toBe(
+      'settings.remoteAccess.errors.exposure_ack_required'
     );
   });
 

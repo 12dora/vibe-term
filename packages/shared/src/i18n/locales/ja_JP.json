@@ -312,7 +312,8 @@
           "openLoginUrl": "認可ページを開く",
           "cancelLogin": "キャンセル",
           "create": "作成して開始",
-          "quickStart": "開始"
+          "quickStart": "開始",
+          "release": "引き継ぎを解除"
         },
         "check": {
           "reachable": "到達可能",
@@ -333,7 +334,8 @@
             "sourceValue": {
               "managed": "tmex が管理",
               "system": "システムに導入済み"
-            }
+            },
+            "skipped": "cloudflared はシステムサービスが提供しているため、インストールは不要です。"
           },
           "mode": {
             "title": "方式の選択",
@@ -388,6 +390,28 @@
               "on": "信頼中",
               "off": "未信頼"
             }
+          },
+          "login": {
+            "title": "Cloudflare にサインイン",
+            "description": "Cloudflare アカウントでトンネルと DNS レコードを作成する権限を tmex に付与します。",
+            "skipped": "トンネルはシステムサービス管理のため、tmex 内での Cloudflare サインインは不要です。"
+          },
+          "hostname": {
+            "title": "ホスト名",
+            "description": "トンネルの固定公開アドレスです。",
+            "confirm": "このホスト名を使う",
+            "edit": "変更",
+            "pending": "先に Cloudflare にサインインしてください。"
+          },
+          "access": {
+            "title": "アクセス制御（Cloudflare Access）",
+            "description": "Cloudflare のエッジでメールアドレスにより許可します。拒否されたリクエストはこの端末に届きません。"
+          },
+          "create": {
+            "title": "作成して起動",
+            "description": "Cloudflare でトンネルを作成し、DNS レコードを設定して起動します。",
+            "pending": "先にホスト名を確定してください。",
+            "adopted": "システム上の既存トンネルを引き継ぎました。"
           }
         },
         "jobStep": {
@@ -402,7 +426,11 @@
           "login": "Cloudflare にログイン中",
           "cancelled": "キャンセル済み",
           "check": "接続確認",
-          "ok": "完了"
+          "ok": "完了",
+          "create_app": "Access アプリケーションを作成",
+          "policy": "アクセスポリシーを適用",
+          "delete_app": "Access アプリケーションを削除",
+          "sync": "Access アプリケーションを同期"
         },
         "errors": {
           "unsupported_platform": "このプラットフォームは Cloudflare Tunnel に対応していません。",
@@ -418,7 +446,9 @@
           "not_configured": "リモートアクセスは未設定です。",
           "invalid_request": "リクエストが不正です。",
           "unknown": "操作に失敗しました：{{message}}",
-          "auth_required": "公開する前に、このマシンでサインインを有効にしてください。"
+          "auth_required": "公開する前に、このマシンでサインインを有効にしてください。",
+          "access_api_failed": "Cloudflare API の呼び出しに失敗しました：{{message}}",
+          "exposure_ack_required": "この操作は tmex をインターネットに公開します。先にリスクの確認が必要です。"
         },
         "authRequired": {
           "notice": "公開する前に、このマシンでサインインを有効にしてください。",
@@ -430,6 +460,101 @@
           "irreversible": "Cloudflare 上のトンネルは復元できず、公開アドレスは直ちに使えなくなります。",
           "confirm": "トンネルを削除",
           "cancel": "キャンセル"
+        },
+        "accessState": {
+          "notConfigured": "Access 未設定",
+          "notEnforced": "Access 設定済み・未強制",
+          "protected": "Access で保護"
+        },
+        "externallyManaged": "システムサービス管理",
+        "externallyManagedNotice": "このトンネルはシステムサービスが実行しており、tmex は起動・停止を行いません。tmex で管理するには先に引き継ぎを解除してください。",
+        "exposure": {
+          "warning": "この端末はサインインが無効で、Cloudflare Access も未設定です。トンネルを開くと誰でも tmex にアクセスできます。信頼できるネットワークか、リスクを明確に受け入れる場合のみ続行してください。サインイン（マルチノード）の有効化または Access の設定を推奨します。",
+          "warningShort": "サインインが無効で Cloudflare Access も未設定です。トンネルを開くと誰でも tmex にアクセスできます。",
+          "acknowledge": "リスクを理解した上でインターネットに公開する",
+          "ackRequired": "この操作は tmex をインターネットに公開します。チェックを入れて確認してください。",
+          "enableLogin": "サインインを有効にする（マルチノード）"
+        },
+        "access": {
+          "tag": {
+            "recommended": "推奨",
+            "optional": "任意"
+          },
+          "lastError": "Cloudflare Access：{{message}}",
+          "credentials": {
+            "title": "Cloudflare 認証情報",
+            "apiToken": "API トークン",
+            "apiTokenHint": "「Access: Apps and Policies — Edit」権限が必要です。トークンはこの端末のサーバー側にのみ保存され、再表示されません。",
+            "accountId": "アカウント ID",
+            "accountIdHint": "Cloudflare ダッシュボードに表示される Account ID です。",
+            "save": "保存",
+            "saved": "認証情報を保存しました。",
+            "clear": "削除",
+            "teamDomain": "チームドメイン"
+          },
+          "rules": {
+            "title": "アクセスを許可するユーザー",
+            "description": "いずれかのルールに一致する利用者が Cloudflare Access を通過できます。ルールは 1 件以上必要です。",
+            "add": "ルールを追加",
+            "remove": "ルールを削除",
+            "apply": "Cloudflare に適用",
+            "needHostname": "ホスト名がありません。Access アプリケーションはホスト名に紐づくため、先に名前付きトンネルを作成または引き継いでください。",
+            "kind": {
+              "email": "メールアドレス",
+              "email_domain": "メールドメイン"
+            },
+            "placeholder": {
+              "email": "you@example.com",
+              "email_domain": "example.com"
+            },
+            "invalid": {
+              "email": "完全なメールアドレスを入力してください。",
+              "email_domain": "example.com のようなメールドメインを入力してください。"
+            }
+          },
+          "sync": {
+            "action": "Cloudflare から同期",
+            "hint": "認証情報は保存済みですが、ローカルに Access アプリケーションの記録がありません。{{hostname}} 用のアプリケーションを Cloudflare ダッシュボードで作成済みの場合は、重複作成を避けるため先に同期してください。"
+          },
+          "app": {
+            "title": "Access アプリケーション",
+            "appId": "アプリケーション ID",
+            "aud": "AUD",
+            "hostname": "対象ホスト名",
+            "rules": "ルール",
+            "noRules": "なし",
+            "enforce": "ゲートウェイで Access トークンを検証",
+            "enforceHint": "トンネル経由のリクエストで Cf-Access-Jwt-Assertion を検証し、通らないものを拒否します。",
+            "enforceOff": "トークン検証は無効です。Cloudflare のエッジでは引き続き未認可のアクセスを遮断しますが、Access を迂回したリクエストはこの端末では拒否されません。",
+            "remove": "Access アプリケーションを削除"
+          },
+          "confirmRemove": {
+            "title": "Access アプリケーションを削除しますか？",
+            "description": "Cloudflare 上のアプリケーションとポリシーを削除します。このホスト名は Access で保護されなくなります。",
+            "confirm": "アプリケーションを削除",
+            "cancel": "キャンセル"
+          }
+        },
+        "external": {
+          "title": "システム上の Cloudflare Tunnel を検出しました",
+          "description": "この端末には tmex が管理していないトンネルが既に存在します。引き継ぐか、tmex で新たに作成できます。",
+          "source": "検出元",
+          "sourceValue": {
+            "launchd": "launchd サービス",
+            "systemd": "systemd サービス",
+            "process": "実行中のプロセス",
+            "config": "設定ファイル"
+          },
+          "configPath": "設定ファイル",
+          "running": "状態",
+          "runningValue": {
+            "on": "実行中",
+            "off": "停止中"
+          },
+          "noHostname": "この端末の tmex を指すホスト名が設定に見つからないため、引き継げません。",
+          "chooseHostname": "ホスト名を選択",
+          "adopt": "このトンネルを使う",
+          "dismiss": "tmex で新しいトンネルを作成"
         }
       },
       "deviceManagement": {

@@ -312,7 +312,8 @@
           "openLoginUrl": "Open authorization page",
           "cancelLogin": "Cancel",
           "create": "Create and start",
-          "quickStart": "Start"
+          "quickStart": "Start",
+          "release": "Release"
         },
         "check": {
           "reachable": "Reachable",
@@ -333,7 +334,8 @@
             "sourceValue": {
               "managed": "Managed by tmex",
               "system": "Found on PATH"
-            }
+            },
+            "skipped": "cloudflared is provided by the system service; no installation needed."
           },
           "mode": {
             "title": "Choose a mode",
@@ -388,6 +390,28 @@
               "on": "Trusted",
               "off": "Not trusted"
             }
+          },
+          "login": {
+            "title": "Sign in to Cloudflare",
+            "description": "Authorize tmex to create tunnels and DNS records in your Cloudflare account.",
+            "skipped": "The tunnel is managed by a system service; signing in to Cloudflare from tmex is not required."
+          },
+          "hostname": {
+            "title": "Hostname",
+            "description": "The fixed public address of the tunnel.",
+            "confirm": "Use this hostname",
+            "edit": "Edit",
+            "pending": "Sign in to Cloudflare first."
+          },
+          "access": {
+            "title": "Access control (Cloudflare Access)",
+            "description": "Allow visitors by email at the Cloudflare edge; rejected requests never reach this machine."
+          },
+          "create": {
+            "title": "Create and start",
+            "description": "Create the tunnel in Cloudflare, add the DNS record and start it.",
+            "pending": "Confirm the hostname first.",
+            "adopted": "The existing system tunnel has been adopted."
           }
         },
         "jobStep": {
@@ -402,7 +426,11 @@
           "login": "Signing in to Cloudflare",
           "cancelled": "Cancelled",
           "check": "Checking connectivity",
-          "ok": "Done"
+          "ok": "Done",
+          "create_app": "Creating Access application",
+          "policy": "Applying access policy",
+          "delete_app": "Deleting Access application",
+          "sync": "Syncing Access application"
         },
         "errors": {
           "unsupported_platform": "Cloudflare Tunnel is not supported on this platform.",
@@ -418,7 +446,9 @@
           "not_configured": "Remote access is not configured.",
           "invalid_request": "Invalid request.",
           "unknown": "Operation failed: {{message}}",
-          "auth_required": "Enable sign-in on this machine before exposing it publicly."
+          "auth_required": "Enable sign-in on this machine before exposing it publicly.",
+          "access_api_failed": "Cloudflare API call failed: {{message}}",
+          "exposure_ack_required": "This exposes tmex to the public internet. Confirm that you understand the risk first."
         },
         "authRequired": {
           "notice": "Enable sign-in on this machine before exposing it publicly.",
@@ -430,6 +460,101 @@
           "irreversible": "The tunnel in Cloudflare cannot be restored and the public address stops working immediately.",
           "confirm": "Remove tunnel",
           "cancel": "Cancel"
+        },
+        "accessState": {
+          "notConfigured": "Access not configured",
+          "notEnforced": "Access configured, not enforced",
+          "protected": "Access protected"
+        },
+        "externallyManaged": "Managed by system service",
+        "externallyManagedNotice": "This tunnel is run by a system service; tmex does not start or stop it. Release it first to let tmex manage the tunnel.",
+        "exposure": {
+          "warning": "Sign-in is disabled on this machine and Cloudflare Access is not configured: once the tunnel is up, anyone can reach tmex. Continue only on a trusted network or if you explicitly accept the risk; enabling sign-in (mesh) or configuring Access is recommended.",
+          "warningShort": "Sign-in is disabled and Cloudflare Access is not configured: once the tunnel is up, anyone can reach tmex.",
+          "acknowledge": "I understand the risk and want to expose tmex publicly",
+          "ackRequired": "This exposes tmex to the public internet. Tick the box to confirm.",
+          "enableLogin": "Enable sign-in (mesh)"
+        },
+        "access": {
+          "tag": {
+            "recommended": "Recommended",
+            "optional": "Optional"
+          },
+          "lastError": "Cloudflare Access: {{message}}",
+          "credentials": {
+            "title": "Cloudflare credentials",
+            "apiToken": "API token",
+            "apiTokenHint": "Requires the \"Access: Apps and Policies — Edit\" permission. The token is stored on this machine only and never echoed back.",
+            "accountId": "Account ID",
+            "accountIdHint": "The Account ID of that account in the Cloudflare dashboard.",
+            "save": "Save",
+            "saved": "Credentials saved.",
+            "clear": "Clear",
+            "teamDomain": "Team domain"
+          },
+          "rules": {
+            "title": "Allowed users",
+            "description": "Visitors matching any rule pass Cloudflare Access. At least one rule is required.",
+            "add": "Add rule",
+            "remove": "Remove rule",
+            "apply": "Apply to Cloudflare",
+            "needHostname": "No hostname yet: an Access application is bound to a hostname, so create or adopt a named tunnel first.",
+            "kind": {
+              "email": "Email",
+              "email_domain": "Email domain"
+            },
+            "placeholder": {
+              "email": "you@example.com",
+              "email_domain": "example.com"
+            },
+            "invalid": {
+              "email": "Enter a complete email address.",
+              "email_domain": "Enter an email domain, such as example.com."
+            }
+          },
+          "sync": {
+            "action": "Sync from Cloudflare",
+            "hint": "Credentials are saved but no Access application is recorded locally. If you already created one for {{hostname}} in the Cloudflare dashboard, sync first to avoid creating a duplicate."
+          },
+          "app": {
+            "title": "Access application",
+            "appId": "Application ID",
+            "aud": "AUD",
+            "hostname": "Covered hostname",
+            "rules": "Rules",
+            "noRules": "None",
+            "enforce": "Verify Access tokens at the gateway",
+            "enforceHint": "Validate Cf-Access-Jwt-Assertion on tunnel requests and reject the ones that fail.",
+            "enforceOff": "Token verification is off. Cloudflare still blocks unauthorized visitors at the edge, but requests that bypass Access will not be rejected by this machine.",
+            "remove": "Remove Access application"
+          },
+          "confirmRemove": {
+            "title": "Remove the Access application?",
+            "description": "This deletes the application and its policy in Cloudflare; the hostname will no longer be protected by Access.",
+            "confirm": "Remove application",
+            "cancel": "Cancel"
+          }
+        },
+        "external": {
+          "title": "Existing Cloudflare Tunnel detected",
+          "description": "This machine already runs a tunnel that tmex does not manage. Adopt it, or let tmex create a new one.",
+          "source": "Source",
+          "sourceValue": {
+            "launchd": "launchd service",
+            "systemd": "systemd service",
+            "process": "Running process",
+            "config": "Configuration file"
+          },
+          "configPath": "Configuration file",
+          "running": "State",
+          "runningValue": {
+            "on": "Running",
+            "off": "Not running"
+          },
+          "noHostname": "Its configuration has no hostname pointing at this tmex, so it cannot be adopted.",
+          "chooseHostname": "Choose a hostname",
+          "adopt": "Use this tunnel",
+          "dismiss": "Let tmex create a new tunnel"
         }
       },
       "deviceManagement": {

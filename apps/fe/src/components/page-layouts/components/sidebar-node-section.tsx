@@ -5,6 +5,9 @@
 //   - 在线但未登录：折叠，只给一个「登录」入口，**不**自动登录也**不**建立连接；
 //     用户点开才用内存里的会话钥静默登录，登不上再退回「登录此节点」按钮；
 //   - 离线：灰显最近一次已知 inventory 里的设备名，不建连接、不发请求。
+//
+// 三种形态都受同一条门槛约束：远端 node 至少要有一台设备被打开侧边栏显示，整节才出现
+// （self 分节不受此限）。登录别的 node 一律走「管理设备」，侧边栏不做未开启 node 的登录入口。
 
 import { NodeLoginButton } from '@/auth/NodeLoginButton';
 import { loginErrorKey } from '@/auth/login-errors';
@@ -82,6 +85,23 @@ export function selectedDeviceIdForNode(pathname: string, runtimeNodeId: string)
   }
 }
 
+/**
+ * 该 node 下是否至少有一台设备被打开了侧边栏显示。
+ *
+ * 未登录的 node 读不到它的设备列表（mesh 的 inventory 只带版本号），只能反过来看开关本身：
+ * 远端设备缺省隐藏，用户在「管理设备」里打开时才显式写入 `true`，按复合键前缀数一遍即可。
+ */
+export function hasSidebarVisibleDeviceForNode(
+  visibility: Record<string, boolean>,
+  runtimeNodeId: string
+): boolean {
+  const prefix = `${runtimeNodeId}:`;
+  for (const [key, visible] of Object.entries(visibility)) {
+    if (visible && key.startsWith(prefix)) return true;
+  }
+  return false;
+}
+
 function badgeOf(node: SidebarNodeEntry): NodeBadgeInfo {
   return {
     nodeId: node.runtimeNodeId,
@@ -127,18 +147,28 @@ function SectionHeader({
  * 在线但还没有该 node 会话：默认折叠，一个请求都不发。用户点开才触发静默登录
  * （`useNodeLoginGate` 用内存里的会话钥），登录期间显示转圈，失败退回「登录此节点」按钮
  * ——会话钥已经没了的话那个按钮会带 `?node=` 去登录页。
+ *
+ * 一台设备都没开侧边栏显示的 node 整节不出现：登录进去也只剩一个空标题，那条登录入口反而
+ * 像是「登完就消失」。开启过设备的 node 才留这条紧凑行，供用户重新登录回来；正在浏览该 node
+ * 某台设备时同样保留，否则页面上就没有登录入口可点了。
  */
 function SidebarNodeSignIn({ node, drag }: { node: SidebarNodeEntry; drag?: SidebarNodeSortable }) {
   const { t } = useTranslation();
   const [expanded, setExpanded] = useState(false);
   const gate = useNodeLoginGate(node.runtimeNodeId, { enabled: expanded });
+  const visibility = useUIStore((state) => state.sidebarDeviceVisibility);
+  const selectedDeviceId = selectedDeviceIdForNode(useLocation().pathname, node.runtimeNodeId);
+  const present =
+    selectedDeviceId !== null || hasSidebarVisibleDeviceForNode(visibility, node.runtimeNodeId);
+  const presence = useSectionPresence(present, null);
+  if (!presence.rendered) return null;
 
   return (
     <div
       ref={drag?.sortable.setNodeRef}
       style={drag?.sortable.style}
       data-testid={`sidebar-node-login-${node.runtimeNodeId}`}
-      className={cn('space-y-0.5', drag?.sortable.isDragging && 'opacity-60')}
+      className={cn('space-y-0.5', presence.className, drag?.sortable.isDragging && 'opacity-60')}
     >
       <SectionHeader node={node} drag={drag} />
       <div className="px-1 pb-0.5">

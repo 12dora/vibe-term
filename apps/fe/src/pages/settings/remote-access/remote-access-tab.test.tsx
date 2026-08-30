@@ -1,5 +1,5 @@
-// 「远程访问」标签的静态渲染：远端路由拦截、加载 / 未登录 / 失败分支、状态徽标矩阵、
-// 向导步进（临时隧道与命名隧道两条路径）、登录授权地址与取消、错误码映射与忙锁。
+// 「远程访问」标签的静态渲染：远端路由拦截、加载 / 未登录 / 失败分支、状态与 Access 徽标矩阵、
+// 向导步进（临时隧道与命名隧道两条路径）、暴露警示与确认、Cloudflare Access 区块、系统隧道接管。
 // 无 DOM 测试环境，用 react-dom/server 静态渲染（与 HttpsSection / SettingsPage 测试同一套做法）。
 
 import { beforeEach, describe, expect, mock, test } from 'bun:test';
@@ -11,6 +11,8 @@ import type {
   TunnelStatusResponse,
 } from '@tmex/shared';
 import { installWindowStorage } from '@tmex/stores/test-utils';
+import type { ExposureState } from './exposure';
+import type { NamedDraft } from './named-step';
 import type { TunnelActions } from './tunnel-actions';
 
 installWindowStorage();
@@ -72,6 +74,7 @@ function tunnel(overrides: Partial<TunnelStatusResponse> = {}): TunnelStatusResp
       tunnelName: null,
       tunnelId: null,
       autoStart: false,
+      externallyManaged: false,
       originPort: 9883,
     },
     process: {
@@ -82,6 +85,30 @@ function tunnel(overrides: Partial<TunnelStatusResponse> = {}): TunnelStatusResp
       lastError: null,
       restarts: 0,
     },
+    access: {
+      hasCredentials: false,
+      accountId: null,
+      teamDomain: null,
+      configured: false,
+      appId: null,
+      aud: null,
+      hostname: null,
+      rules: [],
+      enforceJwt: true,
+      lastError: null,
+    },
+    external: {
+      detected: false,
+      source: null,
+      configPath: null,
+      tunnelId: null,
+      tunnelName: null,
+      hostnames: [],
+      hasOriginCert: false,
+      running: false,
+    },
+    loginEnforced: true,
+    exposureProtected: true,
     job: null,
     trustProxy: false,
     configuredTrustProxy: false,
@@ -143,6 +170,11 @@ function stepStateOf(html: string, testId: string): string | null {
   const tag = new RegExp(`<[a-z]+[^>]*data-testid="${testId}"[^>]*>`).exec(html);
   if (!tag) throw new Error(`missing element: ${testId}`);
   return /data-step-state="([a-z]+)"/.exec(tag[0])?.[1] ?? null;
+}
+
+/** 向导里步骤卡出现的先后顺序。 */
+function stepOrder(html: string): string[] {
+  return [...html.matchAll(/data-testid="remote-access-step-([a-z]+)"/g)].map((m) => m[1] ?? '');
 }
 
 beforeEach(() => {
@@ -285,6 +317,154 @@ describe('状态徽标与操作按钮', () => {
   });
 });
 
+describe('Access 徽标', () => {
+  test('未配置 / 已配置但未强制 / 已保护三态', () => {
+    expect(render()).toContain('settings.remoteAccess.accessState.notConfigured');
+
+    status = tunnel({
+      access: { ...tunnel().access, configured: true, enforceJwt: false },
+    });
+    expect(render()).toContain('settings.remoteAccess.accessState.notEnforced');
+
+    status = tunnel({ access: { ...tunnel().access, configured: true, enforceJwt: true } });
+    expect(render()).toContain('settings.remoteAccess.accessState.protected');
+  });
+});
+
+describe('系统隧道接管', () => {
+  const detected = (overrides: Partial<TunnelStatusResponse['external']> = {}) => ({
+    ...tunnel().external,
+    detected: true,
+    source: 'launchd',
+    configPath: '/Users/me/.cloudflared/config.yml',
+    tunnelId: 'd8e1f0aa-0000-4000-8000-000000000000',
+    tunnelName: 'home',
+    hostnames: ['tmex.example.com'],
+    hasOriginCert: true,
+    running: true,
+    ...overrides,
+  });
+
+  test('探测到系统隧道且本机未配置时，在向导顶部给接管卡', () => {
+    status = tunnel({ external: detected() });
+    const html = render();
+    expect(html).toContain('data-testid="remote-access-external"');
+    expect(html).toContain('settings.remoteAccess.external.sourceValue.launchd');
+    expect(html).toContain('home');
+    expect(html).toContain('tmex.example.com');
+    expect(html).toContain('settings.remoteAccess.external.runningValue.on');
+    expect(html).toContain('data-testid="remote-access-external-adopt"');
+    expect(html).toContain('data-testid="remote-access-external-dismiss"');
+    // 接管卡排在第 1 步之前。
+    expect(html.indexOf('data-testid="remote-access-external"')).toBeLessThan(
+      html.indexOf('data-testid="remote-access-step-install"')
+    );
+  });
+
+  test('多个主机名时给下拉选择，没有主机名时不让接管', () => {
+    status = tunnel({ external: detected({ hostnames: ['a.example.com', 'b.example.com'] }) });
+    expect(render()).toContain('settings.remoteAccess.external.chooseHostname');
+
+    status = tunnel({ external: detected({ hostnames: [] }) });
+    const html = render();
+    expect(html).toContain('data-testid="remote-access-external-no-hostname"');
+    expect(isDisabled(html, 'remote-access-external-adopt')).toBe(true);
+  });
+
+  test('已经配置过隧道时不再打扰', () => {
+    status = configured('named', 'running', { external: detected() });
+    expect(render()).not.toContain('data-testid="remote-access-external"');
+  });
+
+  test('接管之后：状态卡打「由系统服务托管」，只留检查与取消接管', () => {
+    status = configured('named', 'stopped', { external: detected() });
+    status.config.externallyManaged = true;
+    const html = render();
+    expect(html).toContain('data-testid="remote-access-managed"');
+    expect(html).toContain('data-testid="remote-access-managed-notice"');
+    expect(html).toContain('data-testid="remote-access-check"');
+    expect(html).toContain('data-testid="remote-access-release"');
+    expect(html).not.toContain('data-testid="remote-access-start"');
+    expect(html).not.toContain('data-testid="remote-access-stop"');
+    expect(html).not.toContain('data-testid="remote-access-remove"');
+    // 运行态以探测结果为准，tmex 侧没有进程。
+    expect(html).toContain('settings.remoteAccess.state.running');
+  });
+
+  test('接管之后安装与登录两步显示为跳过', () => {
+    status = configured('named', 'stopped', {
+      binary: { installed: false, version: null, path: null, source: null },
+      external: detected(),
+    });
+    status.config.externallyManaged = true;
+    const html = render();
+    expect(html).toContain('data-testid="remote-access-install-skipped"');
+    expect(html).toContain('data-testid="remote-access-login-skipped"');
+    expect(stepStateOf(html, 'remote-access-step-install')).toBe('done');
+    expect(stepStateOf(html, 'remote-access-step-login')).toBe('done');
+    expect(html).toContain('settings.remoteAccess.steps.create.adopted');
+  });
+});
+
+describe('暴露警示与确认', () => {
+  test('未受保护时方式步骤上方给出警示与确认勾选，并链到多节点设置', () => {
+    status = tunnel({ loginEnforced: false, exposureProtected: false });
+    const html = render();
+    expect(html).toContain('data-testid="remote-access-exposure"');
+    expect(html).toContain('settings.remoteAccess.exposure.warning');
+    expect(html).toContain('data-testid="remote-access-exposure-ack"');
+    expect(html).toContain('?tab=nodes');
+    expect(html.indexOf('data-testid="remote-access-exposure"')).toBeLessThan(
+      html.indexOf('data-testid="remote-access-mode-chooser"')
+    );
+  });
+
+  test('未受保护不禁用临时隧道选项，也不禁用启动按钮', () => {
+    status = tunnel({ loginEnforced: false, exposureProtected: false });
+    const html = render();
+    expect(isDisabled(html, 'remote-access-mode-quick-input')).toBe(false);
+
+    status = configured('quick', 'stopped', { loginEnforced: false, exposureProtected: false });
+    const started = render();
+    expect(isDisabled(started, 'remote-access-start')).toBe(false);
+    expect(started).toContain('data-testid="remote-access-start-exposure"');
+  });
+
+  test('临时隧道与创建按钮旁各有一条精简警示', () => {
+    status = tunnel({ loginEnforced: false, exposureProtected: false });
+    expect(renderWizard('quick')).toContain('data-testid="remote-access-quick-exposure"');
+
+    status = tunnel({
+      auth: { loggedIn: true, loginUrl: null },
+      loginEnforced: false,
+      exposureProtected: false,
+    });
+    const html = renderWizard('named', { draft: namedDraft({ confirmed: true }) });
+    expect(html).toContain('data-testid="remote-access-create-exposure"');
+    expect(html).toContain('settings.remoteAccess.exposure.warningShort');
+  });
+
+  test('已受保护时一条警示都不出现', () => {
+    status = configured('quick', 'stopped');
+    const html = render();
+    expect(html).not.toContain('data-testid="remote-access-exposure"');
+    expect(html).not.toContain('data-testid="remote-access-start-exposure"');
+  });
+
+  test('后端回 exposure_ack_required 时给确认框而不是通用错误', () => {
+    status = configured('quick', 'stopped');
+    actionState = {
+      ...IDLE_ACTIONS,
+      error: { code: 'exposure_ack_required', message: 'ack required' },
+    };
+    const html = render();
+    expect(html).toContain('data-testid="remote-access-status-exposure"');
+    expect(html).toContain('data-testid="remote-access-status-exposure-required"');
+    expect(html).toContain('data-testid="remote-access-status-exposure-ack"');
+    expect(html).not.toContain('data-testid="remote-access-error"');
+  });
+});
+
 describe('错误码映射', () => {
   test('已知错误码走本地化文案', () => {
     actionState = {
@@ -296,6 +476,14 @@ describe('错误码映射', () => {
     expect(html).toContain('settings.remoteAccess.errors.busy');
   });
 
+  test('Access API 失败带上服务端 message', () => {
+    actionState = {
+      ...IDLE_ACTIONS,
+      error: { code: 'access_api_failed', message: 'token lacks permission' },
+    };
+    expect(render()).toContain('settings.remoteAccess.errors.access_api_failed');
+  });
+
   test('未知错误码退回带原始 message 的兜底文案', () => {
     actionState = { ...IDLE_ACTIONS, error: { code: 'unknown', message: 'network down' } };
     expect(render()).toContain('settings.remoteAccess.errors.unknown');
@@ -303,6 +491,31 @@ describe('错误码映射', () => {
 });
 
 describe('向导步进', () => {
+  test('命名隧道的步骤顺序：安装 → 方式 → 登录 → 主机名 → 访问控制 → 创建 → 反向代理', () => {
+    status = tunnel({ auth: { loggedIn: true, loginUrl: null } });
+    expect(stepOrder(renderWizard('named'))).toEqual([
+      'install',
+      'mode',
+      'login',
+      'hostname',
+      'access',
+      'create',
+      'proxy',
+    ]);
+  });
+
+  test('临时隧道没有登录 / 主机名 / 访问控制三步', () => {
+    expect(stepOrder(renderWizard('quick'))).toEqual(['install', 'mode', 'quick', 'proxy']);
+  });
+
+  test('访问控制步带「推荐」（未启用登录）或「可选」（已启用登录）标签', () => {
+    status = tunnel({ auth: { loggedIn: true, loginUrl: null }, loginEnforced: false });
+    expect(renderWizard('named')).toContain('settings.remoteAccess.access.tag.recommended');
+
+    status = tunnel({ auth: { loggedIn: true, loginUrl: null }, loginEnforced: true });
+    expect(renderWizard('named')).toContain('settings.remoteAccess.access.tag.optional');
+  });
+
   test('未安装 cloudflared 时停在第 1 步并给安装按钮', () => {
     status = tunnel({ binary: { installed: false, version: null, path: null, source: null } });
     const html = render();
@@ -354,10 +567,10 @@ describe('向导步进', () => {
     expect(html).toContain('data-testid="remote-access-binary"');
   });
 
-  test('已建好隧道时方式卡锁定，向导停在第 4 步', () => {
+  test('已建好隧道时方式卡锁定，向导停在反向代理步', () => {
     status = configured('named', 'running');
     const html = render();
-    expect(stepStateOf(html, 'remote-access-step-tunnel')).toBe('done');
+    expect(stepStateOf(html, 'remote-access-step-create')).toBe('done');
     expect(stepStateOf(html, 'remote-access-step-proxy')).toBe('current');
     expect(isDisabled(html, 'remote-access-mode-named-input')).toBe(true);
     expect(isDisabled(html, 'remote-access-mode-quick-input')).toBe(true);
@@ -379,6 +592,12 @@ describe('向导步进', () => {
     expect(html).toContain('data-testid="remote-access-auto-start"');
     expect(html).toContain('data-testid="remote-access-restart-required"');
     expect(html).toContain('data-testid="remote-access-restart-now"');
+  });
+
+  test('接管来的隧道不给「随 tmex 启动」开关', () => {
+    status = configured('named', 'stopped');
+    status.config.externallyManaged = true;
+    expect(render()).not.toContain('data-testid="remote-access-auto-start"');
   });
 
   test('信任开关绑已保存值，生效值单独展示', () => {
@@ -441,13 +660,47 @@ describe('命名隧道', () => {
     expect(renderWizard('named')).toContain('settings.remoteAccess.errors.login_timeout');
   });
 
-  test('登录后展示主机名与隧道名称表单', () => {
+  test('登录后主机名步给出表单，创建步先等主机名确认', () => {
     status = tunnel({ auth: { loggedIn: true, loginUrl: null } });
     const html = renderWizard('named');
     expect(html).toContain('data-testid="remote-access-logged-in"');
     expect(html).toContain('data-testid="remote-access-hostname"');
     expect(html).toContain('data-testid="remote-access-tunnel-name"');
+    expect(html).toContain('data-testid="remote-access-hostname-confirm"');
+    expect(html).toContain('data-testid="remote-access-create-pending"');
+    expect(html).not.toContain('data-testid="remote-access-create-submit"');
+  });
+
+  test('主机名非法时不让进入下一步', () => {
+    status = tunnel({ auth: { loggedIn: true, loginUrl: null } });
+    const invalid = renderWizard('named', { draft: namedDraft({ hostname: 'example' }) });
+    expect(isDisabled(invalid, 'remote-access-hostname-confirm')).toBe(true);
+    expect(invalid).toContain('settings.remoteAccess.steps.named.hostnameInvalid');
+
+    const valid = renderWizard('named', {
+      draft: namedDraft({ hostname: 'tmex.example.com' }),
+    });
+    expect(isDisabled(valid, 'remote-access-hostname-confirm')).toBe(false);
+  });
+
+  test('隧道名称非法时同样挡住下一步', () => {
+    status = tunnel({ auth: { loggedIn: true, loginUrl: null } });
+    const html = renderWizard('named', {
+      draft: namedDraft({ hostname: 'tmex.example.com', tunnelName: '../../pkg' }),
+    });
+    expect(html).toContain('settings.remoteAccess.steps.named.tunnelNameInvalid');
+    expect(isDisabled(html, 'remote-access-hostname-confirm')).toBe(true);
+  });
+
+  test('确认主机名后创建步才出现「创建并启动」', () => {
+    status = tunnel({ auth: { loggedIn: true, loginUrl: null } });
+    const html = renderWizard('named', {
+      draft: namedDraft({ hostname: 'tmex.example.com', confirmed: true }),
+    });
+    expect(html).toContain('data-testid="remote-access-hostname-confirmed"');
+    expect(html).toContain('data-testid="remote-access-hostname-edit"');
     expect(html).toContain('data-testid="remote-access-create-submit"');
+    expect(html).not.toContain('data-testid="remote-access-create-pending"');
   });
 
   test('创建 job 在跑时展示 DNS 配置进度', () => {
@@ -455,7 +708,9 @@ describe('命名隧道', () => {
       auth: { loggedIn: true, loginUrl: null },
       job: job({ kind: 'create', state: 'running', step: 'route_dns' }),
     });
-    const html = renderWizard('named');
+    const html = renderWizard('named', {
+      draft: namedDraft({ hostname: 'tmex.example.com', confirmed: true }),
+    });
     expect(html).toContain('data-testid="remote-access-create-progress"');
     expect(html).toContain('settings.remoteAccess.jobStep.route_dns');
   });
@@ -469,10 +724,13 @@ describe('命名隧道', () => {
         error: { code: 'dns_route_failed', message: 'no zone' },
       }),
     });
-    expect(renderWizard('named')).toContain('settings.remoteAccess.errors.dns_route_failed');
+    const html = renderWizard('named', {
+      draft: namedDraft({ hostname: 'tmex.example.com', confirmed: true }),
+    });
+    expect(html).toContain('settings.remoteAccess.errors.dns_route_failed');
   });
 
-  test('已配置命名隧道时第 3 步只给只读摘要，没有创建表单', () => {
+  test('已配置命名隧道时主机名步只读，没有创建表单', () => {
     status = configured('named', 'running', {
       auth: { loggedIn: true, loginUrl: null },
     });
@@ -499,18 +757,168 @@ describe('命名隧道', () => {
   });
 });
 
-describe('未启用登录时的提醒', () => {
-  test('/api/auth/mode 报 none 时在第 2 步之前给出提示并链到多节点设置', () => {
-    const html = renderWizard('named', false, true);
-    expect(html).toContain('data-testid="remote-access-auth-required"');
-    expect(html).toContain('settings.remoteAccess.authRequired.notice');
-    expect(html).toContain('?tab=nodes');
-    expect(html.indexOf('data-testid="remote-access-auth-required"')).toBeLessThan(
-      html.indexOf('data-testid="remote-access-step-mode"')
-    );
+describe('Cloudflare Access 区块', () => {
+  const loggedIn = (overrides: Partial<TunnelStatusResponse> = {}) =>
+    configured('named', 'running', { auth: { loggedIn: true, loginUrl: null }, ...overrides });
+
+  test('未保存凭证时给令牌与账户 ID 表单，且没有规则编辑器', () => {
+    status = loggedIn();
+    const html = render();
+    expect(html).toContain('data-testid="remote-access-access-credentials"');
+    expect(html).toContain('data-testid="remote-access-access-token"');
+    expect(html).toContain('data-testid="remote-access-access-account"');
+    expect(html).toContain('settings.remoteAccess.access.credentials.apiTokenHint');
+    // 令牌不能明文回显。
+    expect(html).toContain('type="password"');
+    expect(html).not.toContain('data-testid="remote-access-access-rules"');
+    // 两个字段都空时保存按钮不可点。
+    expect(isDisabled(html, 'remote-access-access-save-credentials')).toBe(true);
   });
 
-  test('后端回 auth_required 时同样常驻提示', () => {
+  test('已保存凭证时只展示账户 ID、团队域与清除按钮', () => {
+    status = loggedIn({
+      access: {
+        ...tunnel().access,
+        hasCredentials: true,
+        accountId: 'acc-123',
+        teamDomain: 'tmex.cloudflareaccess.com',
+      },
+    });
+    const html = render();
+    expect(html).toContain('data-testid="remote-access-access-credentials-saved"');
+    expect(html).toContain('acc-123');
+    expect(html).toContain('tmex.cloudflareaccess.com');
+    expect(html).toContain('data-testid="remote-access-access-clear-credentials"');
+    expect(html).not.toContain('data-testid="remote-access-access-token"');
+  });
+
+  test('凭证已保存但没有应用时提示先同步，并给出同步与应用两个按钮', () => {
+    status = loggedIn({ access: { ...tunnel().access, hasCredentials: true } });
+    const html = render();
+    expect(html).toContain('data-testid="remote-access-access-rules"');
+    expect(html).toContain('data-testid="remote-access-access-sync-hint"');
+    expect(html).toContain('data-testid="remote-access-access-sync"');
+    expect(html).toContain('data-testid="remote-access-access-apply"');
+    // 默认一条空规则：不合法，应用按钮禁用；也不给删除按钮（至少留一条）。
+    expect(html).toContain('data-testid="remote-access-access-rule-0-value"');
+    expect(isDisabled(html, 'remote-access-access-apply')).toBe(true);
+    expect(html).not.toContain('data-testid="remote-access-access-rule-0-remove"');
+  });
+
+  test('服务端已有规则时回填草稿，应用按钮可用，且能删除多余规则', () => {
+    status = loggedIn({
+      access: {
+        ...tunnel().access,
+        hasCredentials: true,
+        rules: [
+          { kind: 'email', value: 'you@example.com' },
+          { kind: 'email_domain', value: 'example.com' },
+        ],
+      },
+    });
+    const html = render();
+    expect(html).toContain('you@example.com');
+    expect(html).toContain('example.com');
+    expect(isDisabled(html, 'remote-access-access-apply')).toBe(false);
+    expect(html).toContain('data-testid="remote-access-access-rule-0-remove"');
+    expect(html).toContain('data-testid="remote-access-access-rule-1-remove"');
+  });
+
+  test('非法规则值就地报错', () => {
+    status = loggedIn({
+      access: {
+        ...tunnel().access,
+        hasCredentials: true,
+        rules: [{ kind: 'email', value: 'not-an-email' }],
+      },
+    });
+    const html = render();
+    expect(html).toContain('data-testid="remote-access-access-rule-0-error"');
+    expect(html).toContain('settings.remoteAccess.access.rules.invalid.email');
+    expect(isDisabled(html, 'remote-access-access-apply')).toBe(true);
+  });
+
+  test('还没有主机名时同步与应用都不可用，并说明原因', () => {
+    status = tunnel({
+      auth: { loggedIn: true, loginUrl: null },
+      access: { ...tunnel().access, hasCredentials: true },
+    });
+    const html = renderWizard('named');
+    expect(html).toContain('data-testid="remote-access-access-no-hostname"');
+    expect(isDisabled(html, 'remote-access-access-sync')).toBe(true);
+    expect(isDisabled(html, 'remote-access-access-apply')).toBe(true);
+    expect(html).not.toContain('data-testid="remote-access-access-sync-hint"');
+  });
+
+  test('access job 在跑时展示创建应用与配置策略的进度', () => {
+    status = loggedIn({
+      access: { ...tunnel().access, hasCredentials: true },
+      job: job({ kind: 'access', state: 'running', step: 'create_app' }),
+    });
+    expect(render()).toContain('settings.remoteAccess.jobStep.create_app');
+
+    status = loggedIn({
+      access: { ...tunnel().access, hasCredentials: true },
+      job: job({ kind: 'access', state: 'running', step: 'policy' }),
+    });
+    const html = render();
+    expect(html).toContain('data-testid="remote-access-access-progress"');
+    expect(html).toContain('settings.remoteAccess.jobStep.policy');
+  });
+
+  test('应用已建好时展示应用 ID / AUD / 覆盖主机名 / 规则与强制开关', () => {
+    status = loggedIn({
+      access: {
+        ...tunnel().access,
+        hasCredentials: true,
+        configured: true,
+        appId: 'app-1',
+        aud: 'aud-hash',
+        hostname: 'tmex.example.com',
+        rules: [{ kind: 'email', value: 'you@example.com' }],
+      },
+    });
+    const html = render();
+    expect(html).toContain('data-testid="remote-access-access-app"');
+    expect(html).toContain('app-1');
+    expect(html).toContain('aud-hash');
+    expect(html).toContain('data-testid="remote-access-access-app-hostname"');
+    expect(html).toContain('data-testid="remote-access-access-app-rules"');
+    expect(isChecked(html, 'remote-access-access-enforce')).toBe(true);
+    expect(html).not.toContain('data-testid="remote-access-access-enforce-off"');
+    expect(html).toContain('data-testid="remote-access-access-remove"');
+    // 静态渲染点不了按钮，删除应用的确认框默认不在 DOM 里。
+    expect(html).not.toContain('data-testid="remote-access-access-confirm-remove"');
+  });
+
+  test('关闭令牌校验时给出明确警告', () => {
+    status = loggedIn({
+      access: {
+        ...tunnel().access,
+        hasCredentials: true,
+        configured: true,
+        enforceJwt: false,
+        rules: [{ kind: 'email', value: 'you@example.com' }],
+      },
+    });
+    const html = render();
+    expect(isChecked(html, 'remote-access-access-enforce')).toBe(false);
+    expect(html).toContain('data-testid="remote-access-access-enforce-off"');
+    expect(html).toContain('settings.remoteAccess.access.app.enforceOff');
+  });
+
+  test('Access 最近一次错误就地展示', () => {
+    status = loggedIn({
+      access: { ...tunnel().access, hasCredentials: true, lastError: 'token expired' },
+    });
+    const html = render();
+    expect(html).toContain('data-testid="remote-access-access-last-error"');
+    expect(html).toContain('settings.remoteAccess.access.lastError');
+  });
+});
+
+describe('未启用登录时的兼容提醒', () => {
+  test('后端仍回 auth_required 时给出旧提示并链到多节点设置', () => {
     status = tunnel({
       auth: { loggedIn: true, loginUrl: null },
       job: job({
@@ -519,12 +927,16 @@ describe('未启用登录时的提醒', () => {
         error: { code: 'auth_required', message: 'sign-in disabled' },
       }),
     });
-    const html = renderWizard('named');
+    const html = renderWizard('named', {
+      actions: { ...IDLE_ACTIONS, error: { code: 'auth_required', message: 'sign-in disabled' } },
+    });
     expect(html).toContain('data-testid="remote-access-auth-required"');
-    expect(html).toContain('settings.remoteAccess.errors.auth_required');
+    expect(html).toContain('settings.remoteAccess.authRequired.notice');
+    expect(html).toContain('?tab=nodes');
   });
 
-  test('登录已启用且没有相关错误时不打扰', () => {
+  test('没有相关错误时不打扰', () => {
+    status = tunnel({ auth: { loggedIn: true, loginUrl: null } });
     expect(renderWizard('named')).not.toContain('data-testid="remote-access-auth-required"');
   });
 });
@@ -549,22 +961,55 @@ describe('日志', () => {
   });
 });
 
+function namedDraft(overrides: Partial<NamedDraft> = {}): NamedDraft {
+  return {
+    hostname: '',
+    tunnelName: '',
+    confirmed: false,
+    setHostname: () => undefined,
+    setTunnelName: () => undefined,
+    setConfirmed: () => undefined,
+    ...overrides,
+  };
+}
+
+function exposureState(overrides: Partial<ExposureState> = {}): ExposureState {
+  const current = status;
+  return {
+    unprotected: current ? !current.exposureProtected : false,
+    acknowledged: false,
+    setAcknowledged: () => undefined,
+    ackRequired: false,
+    ...overrides,
+  };
+}
+
 /**
- * 第 3 步走哪条路径由本地选择驱动，静态渲染点不了方式卡——命名隧道的子步骤直接渲染
- * `TunnelWizard` 并把选择传进去；`RemoteAccessTab` 只负责把 `useState` 接上这个入参。
+ * 方式与主机名草稿都由标签层的 `useState` 驱动，静态渲染点不了控件——命名隧道的子步骤
+ * 直接渲染 `TunnelWizard` 并把它们传进去；`RemoteAccessTab` 只负责把 state 接上这些入参。
  */
-function renderWizard(mode: TunnelMode, isHub = false, authDisabled = false): string {
+function renderWizard(
+  mode: TunnelMode,
+  options: {
+    isHub?: boolean;
+    draft?: NamedDraft;
+    actions?: ActionSnapshot;
+    exposure?: Partial<ExposureState>;
+  } = {}
+): string {
   const current = status;
   if (!current) throw new Error('status fixture is required');
+  const snapshot = options.actions ?? actionState;
   return renderToStaticMarkup(
     <MemoryRouter initialEntries={['/settings']}>
       <TunnelWizard
         status={current}
-        actions={{ ...actionState, run: () => undefined, clearError: () => undefined }}
+        actions={{ ...snapshot, run: () => undefined, clearError: () => undefined }}
         chosenMode={mode}
         onChooseMode={() => undefined}
-        isHub={isHub}
-        authDisabled={authDisabled}
+        draft={options.draft ?? namedDraft()}
+        isHub={options.isHub ?? false}
+        exposure={exposureState(options.exposure)}
         onRestarted={() => undefined}
       />
     </MemoryRouter>
