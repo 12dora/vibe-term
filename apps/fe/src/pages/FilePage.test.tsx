@@ -83,7 +83,11 @@ describe('FilePage 媒体 URL 带 node 前缀', () => {
     );
   });
 
-  test('markdown 图片 resolver 带 node 前缀', () => {
+  test('markdown 图片 resolver 带 node 前缀', async () => {
+    // MarkdownPreview 是 lazy 的：首帧只出 Suspense fallback，等模块解析完再渲染一次。
+    const first = renderFilePage('0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a', 'r1', '/doc.md', 'markdown');
+    expect(first).not.toContain('data-markdown-image');
+    await new Promise((resolve) => setTimeout(resolve, 0));
     const markup = renderFilePage('0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a', 'r1', '/doc.md', 'markdown');
     expect(markup).toContain(
       '/n/0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a/api/files/raw?rootId=r1&amp;path=img%2Fa.png'

@@ -12,6 +12,7 @@
     "./code-viewer": "./src/code-viewer/index.ts",
     "./watch": "./src/watch/index.ts",
     "./settings": "./src/settings/index.ts",
+    "./settings/events": "./src/settings/settings-events-init.tsx",
     "./device-tree": "./src/device-tree/index.ts",
     "./device-console": "./src/device-console/index.ts",
     "./device-management": "./src/device-management/index.ts",

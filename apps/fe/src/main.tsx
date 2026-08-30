@@ -22,7 +22,7 @@ import { appNodeRuntimes, nodeQueryClient } from '@/node/node-runtimes';
 import { PageWrapper } from '@/page-wrapper';
 import { installSessionInterceptor } from '@tmex/api-client/auth/index';
 import { ConnectionIndicator } from '@tmex/panels';
-import { SettingsEventsInit } from '@tmex/panels/settings';
+import { SettingsEventsInit } from '@tmex/panels/settings/events';
 import { WatchEventsInit } from '@tmex/panels/watch';
 import { SELF_NODE_ID, useNodeRuntime } from '@tmex/stores';
 import { RuntimeProvider, useSiteStore, useUIStore } from '@tmex/stores/react';

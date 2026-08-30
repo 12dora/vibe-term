@@ -47,6 +47,13 @@ function render(entry = '/settings'): string {
   );
 }
 
+// 各标签面板是 React.lazy：首帧只出 Suspense fallback，等模块解析完再渲染一次才有面板。
+async function renderResolved(entry = '/settings'): Promise<string> {
+  render(entry);
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  return render(entry);
+}
+
 describe('SettingsPage 标签栏', () => {
   test('七个标签都在，「节点」排在设备与文件与通知之间', () => {
     const html = render();
@@ -73,21 +80,25 @@ describe('SettingsPage 标签栏', () => {
     expect(html).toContain('settings.tabGroup.remoteAccess');
   });
 
-  test('面板互斥：默认标签下只挂通用面板，NodesTab / 远程访问都不渲染', () => {
-    const html = render();
+  test('面板互斥：默认标签下只挂通用面板，NodesTab / 远程访问都不渲染', async () => {
+    const html = await renderResolved();
     expect(html).toContain('data-testid="general-settings-tab"');
     expect(html).not.toContain('data-testid="settings-nodes-tab"');
     expect(html).not.toContain('data-testid="settings-remote-access-tab"');
   });
 
-  test('`?tab=` 选中对应标签的面板（用有替身的「通知」面板验证深链）', () => {
-    const html = render('/settings?tab=notifications');
+  test('`?tab=` 选中对应标签的面板（用有替身的「通知」面板验证深链）', async () => {
+    // 未加载过的标签首帧只有 Suspense fallback，说明面板确实被拆成了独立分块。
+    expect(render('/settings?tab=notifications')).not.toContain(
+      'data-testid="notification-settings-tab"'
+    );
+    const html = await renderResolved('/settings?tab=notifications');
     expect(html).toContain('data-testid="notification-settings-tab"');
     expect(html).not.toContain('data-testid="general-settings-tab"');
   });
 
-  test('`?tab=` 不是合法标签时退回「通用」', () => {
-    const html = render('/settings?tab=bogus');
+  test('`?tab=` 不是合法标签时退回「通用」', async () => {
+    const html = await renderResolved('/settings?tab=bogus');
     expect(html).toContain('data-testid="general-settings-tab"');
   });
 });

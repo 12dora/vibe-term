@@ -98,13 +98,21 @@ function resolveLanguage(fileName: string): string | undefined {
   return EXT_TO_LANG[lower.slice(dot + 1)];
 }
 
+// highlightAuto 要拿全部语法各跑一遍，代价随体积暴涨（1 MiB 未知文本 ~7.7 s，直接冻住主线程），
+// 所以只对小文件做自动识别；已知语言的 hljs.highlight 快两个数量级（2 MiB TS ~33 ms），阈值放宽即可。
+// 网关放行的文本上限是 2 MiB，两条线以上一律渲染转义纯文本。
+const AUTO_DETECT_LIMIT = 64 * 1024;
+const HIGHLIGHT_LIMIT = 512 * 1024;
+
 function highlightCode(code: string, fileName: string): string {
   const lang = resolveLanguage(fileName);
   try {
     if (lang && hljs.getLanguage(lang)) {
-      return hljs.highlight(code, { language: lang }).value;
+      return code.length > HIGHLIGHT_LIMIT
+        ? escapeHtml(code)
+        : hljs.highlight(code, { language: lang }).value;
     }
-    return hljs.highlightAuto(code).value;
+    return code.length > AUTO_DETECT_LIMIT ? escapeHtml(code) : hljs.highlightAuto(code).value;
   } catch {
     return escapeHtml(code);
   }

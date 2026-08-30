@@ -2,6 +2,7 @@ import { useMutation } from '@tanstack/react-query';
 import {
   Bell,
   Globe,
+  Loader2,
   Monitor,
   Network,
   RotateCcw,
@@ -9,13 +10,12 @@ import {
   Settings as SettingsIcon,
   Sparkles,
 } from 'lucide-react';
-import { useState } from 'react';
+import { Suspense, lazy, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useSearchParams } from 'react-router';
 import { toast } from 'sonner';
 
 import { parseApiError } from '@tmex/api-client';
-import { TerminalSettingsTab } from '@tmex/panels/settings';
 import { useRuntime } from '@tmex/stores/react';
 import { cn } from '@tmex/ui';
 import {
@@ -31,13 +31,32 @@ import {
 import { Button } from '@tmex/ui/button';
 import { Reveal } from '@tmex/ui/motion';
 import { Tabs, TabsList, TabsTrigger, pillTabTriggerClassName } from '@tmex/ui/tabs';
-import { AISettingsTab } from './settings/ai-settings-tab';
-import { DevicesAndFilesTab } from './settings/devices-and-files-tab';
-import { GeneralSettingsTab } from './settings/general-settings-tab';
-import { NodesTab } from './settings/nodes/nodes-tab';
-import { NotificationSettingsTab } from './settings/notification-settings-tab';
-import { RemoteAccessTab } from './settings/remote-access/remote-access-tab';
 import { useSiteSettingsForm } from './settings/use-site-settings-form';
+
+// 每个标签页独立成块：进设置页只下载当前标签的代码，切换过一次后 React.lazy 缓存模块，之后切换是同步的。
+const GeneralSettingsTab = lazy(() =>
+  import('./settings/general-settings-tab').then((m) => ({ default: m.GeneralSettingsTab }))
+);
+const DevicesAndFilesTab = lazy(() =>
+  import('./settings/devices-and-files-tab').then((m) => ({ default: m.DevicesAndFilesTab }))
+);
+const NodesTab = lazy(() =>
+  import('./settings/nodes/nodes-tab').then((m) => ({ default: m.NodesTab }))
+);
+const NotificationSettingsTab = lazy(() =>
+  import('./settings/notification-settings-tab').then((m) => ({
+    default: m.NotificationSettingsTab,
+  }))
+);
+const AISettingsTab = lazy(() =>
+  import('./settings/ai-settings-tab').then((m) => ({ default: m.AISettingsTab }))
+);
+const TerminalSettingsTab = lazy(() =>
+  import('@tmex/panels/settings').then((m) => ({ default: m.TerminalSettingsTab }))
+);
+const RemoteAccessTab = lazy(() =>
+  import('./settings/remote-access/remote-access-tab').then((m) => ({ default: m.RemoteAccessTab }))
+);
 
 export type SettingsTab =
   | 'general'
@@ -165,19 +184,27 @@ export default function SettingsPage() {
           多数标签页返回的是 Fragment，卡片之间的间距原本由外层 gap 提供——包一层就必须
           把同样的 gap 补回来，否则卡片会贴在一起。 */}
       <Reveal key={activeTab} className="flex min-w-0 flex-col gap-4 sm:gap-6">
-        {activeTab === 'general' && <GeneralSettingsTab form={form} />}
+        <Suspense
+          fallback={
+            <div className="flex min-h-40 items-center justify-center text-muted-foreground">
+              <Loader2 className="size-5 animate-spin motion-reduce:animate-none" />
+            </div>
+          }
+        >
+          {activeTab === 'general' && <GeneralSettingsTab form={form} />}
 
-        {activeTab === 'devicesAndFiles' && <DevicesAndFilesTab />}
+          {activeTab === 'devicesAndFiles' && <DevicesAndFilesTab />}
 
-        {activeTab === 'nodes' && <NodesTab />}
+          {activeTab === 'nodes' && <NodesTab />}
 
-        {activeTab === 'notifications' && <NotificationSettingsTab form={form} />}
+          {activeTab === 'notifications' && <NotificationSettingsTab form={form} />}
 
-        {activeTab === 'ai' && <AISettingsTab />}
+          {activeTab === 'ai' && <AISettingsTab />}
 
-        {activeTab === 'terminal' && <TerminalSettingsTab />}
+          {activeTab === 'terminal' && <TerminalSettingsTab />}
 
-        {activeTab === 'remoteAccess' && <RemoteAccessTab />}
+          {activeTab === 'remoteAccess' && <RemoteAccessTab />}
+        </Suspense>
       </Reveal>
     </div>
   );

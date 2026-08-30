@@ -16,8 +16,13 @@ import {
 } from '@tmex/ui/alert-dialog';
 import { Button } from '@tmex/ui/button';
 import { AlertTriangle, Download, Loader2, RefreshCw } from 'lucide-react';
+import { Suspense, lazy } from 'react';
 import { useTranslation } from 'react-i18next';
-import { MarkdownPreview } from '../markdown/markdown-preview';
+
+// 变更日志才用得到 Markdown 渲染链（约 137 KiB gzip），设置页其余部分不该为它买单。
+const MarkdownPreview = lazy(() =>
+  import('../markdown/markdown-preview').then((m) => ({ default: m.MarkdownPreview }))
+);
 
 function InfoRow({ label, value }: { label: string; value: React.ReactNode }) {
   return (
@@ -130,7 +135,9 @@ export function ChangelogSection({
       <div className="text-sm font-semibold">{t('settings.version.changelog')}</div>
       <div className="rounded-lg border border-border bg-card px-4 py-3">
         {changelog ? (
-          <MarkdownPreview source={changelog} basePath="/" />
+          <Suspense fallback={<Loader2 className="h-4 w-4 animate-spin" />}>
+            <MarkdownPreview source={changelog} basePath="/" />
+          </Suspense>
         ) : (
           <div className="text-sm text-muted-foreground">
             {t('settings.version.changelogUnavailable')}

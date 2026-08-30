@@ -2,7 +2,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import type { FileCategory, FileStatResponse } from '@tmex/shared';
 import { basename, dirname } from '@tmex/shared';
 import { Download, ExternalLink, FileWarning, Loader2, RotateCw } from 'lucide-react';
-import { type ReactNode, useMemo } from 'react';
+import { type ReactNode, Suspense, lazy, useMemo } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useParams } from 'react-router';
 
@@ -18,11 +18,16 @@ import { formatBytes } from '@tmex/api-client';
 import { fileRawUrl } from '@tmex/api-client';
 import { CodeViewer } from '@tmex/panels/code-viewer';
 import { startTransferToast } from '@tmex/panels/files';
-import { MarkdownPreview } from '@tmex/panels/markdown';
 import { type AppRuntime, type FileRef, decodeFileRef } from '@tmex/stores';
 import { useRuntime } from '@tmex/stores/react';
 import { Button } from '@tmex/ui/button';
 import { IconTooltip } from '@tmex/ui/icon-tooltip';
+
+// Markdown 渲染链（react-markdown + katex + mermaid 等）约 137 KiB gzip，只有 markdown 文件用得到，
+// 代码 / 纯文本预览不该为它买单。
+const MarkdownPreview = lazy(() =>
+  import('@tmex/panels/markdown').then((m) => ({ default: m.MarkdownPreview }))
+);
 
 function useFileRef(ref?: string): FileRef | null {
   return useMemo(() => (ref ? decodeFileRef(ref) : null), [ref]);
@@ -217,12 +222,21 @@ function TextView({
   if (category === 'markdown') {
     return (
       <div className="h-full overflow-auto px-4 py-4 md:px-6">
-        <MarkdownPreview
-          source={content}
-          basePath={dirname(path)}
-          urlResolver={(imgPath) => fileRawUrl(nodeId, rootId, imgPath)}
-          className="mx-auto max-w-3xl"
-        />
+        <Suspense
+          fallback={
+            <CenteredMessage
+              icon={<Loader2 className="size-6 animate-spin motion-reduce:animate-none" />}
+              text={t('common.loading')}
+            />
+          }
+        >
+          <MarkdownPreview
+            source={content}
+            basePath={dirname(path)}
+            urlResolver={(imgPath) => fileRawUrl(nodeId, rootId, imgPath)}
+            className="mx-auto max-w-3xl"
+          />
+        </Suspense>
       </div>
     );
   }
