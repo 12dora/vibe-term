@@ -21,6 +21,7 @@ import {
   getSessionKey,
   hasSessionKey,
   resetNodeLoginsForTest,
+  setLoginLoaderForTest,
 } from './session-key-store';
 import {
   establishSessionFromPasskey,
@@ -164,6 +165,7 @@ afterEach(() => {
   clearSessionKey();
   resetNodeLoginsForTest();
   resetMeshNodesStateForTest();
+  setLoginLoaderForTest();
 });
 
 describe('establishSessionFromSeed', () => {
@@ -382,6 +384,53 @@ describe('ensureNodeLogin', () => {
     const { api, captured } = mockApi({});
     expect(await ensureNodeLogin(NODE_A, { api })).toEqual({ ok: false, code: 'NO_SESSION_KEY' });
     expect(captured.challengeCalls).toHaveLength(0);
+  });
+
+  test('登录 chunk 拉不下来时返回 NETWORK_ERROR，下一次调用重新加载', async () => {
+    establishRoot();
+    setMeshNodesStateForTest({ entryNodeId: ENTRY, nodes: [meshRow(NODE_A, NODE_A_PK)] });
+    let loads = 0;
+    setLoginLoaderForTest(() => {
+      loads += 1;
+      return loads === 1
+        ? Promise.reject(new Error('Failed to fetch dynamically imported module'))
+        : Promise.resolve({ loginToNode: async () => ({ ok: true }) as const });
+    });
+
+    expect(await ensureNodeLogin(NODE_A)).toEqual({ ok: false, code: 'NETWORK_ERROR' });
+    expect(getMeshNodesState().nodes.find((node) => node.id === NODE_A)?.loggedIn).toBe(false);
+
+    expect(await ensureNodeLogin(NODE_A)).toEqual({ ok: true });
+    expect(loads).toBe(2);
+    expect(getMeshNodesState().nodes.find((node) => node.id === NODE_A)?.loggedIn).toBe(true);
+  });
+
+  test('并发调用只加载一次实现、只登录一次', async () => {
+    establishRoot();
+    let loads = 0;
+    let logins = 0;
+    let release = (): void => {};
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    setLoginLoaderForTest(async () => {
+      loads += 1;
+      await gate;
+      return {
+        loginToNode: async () => {
+          logins += 1;
+          return { ok: true } as const;
+        },
+      };
+    });
+
+    const first = ensureNodeLogin(NODE_A);
+    const second = ensureNodeLogin(NODE_A);
+    expect(second).toBe(first);
+    release();
+    expect(await Promise.all([first, second])).toEqual([{ ok: true }, { ok: true }]);
+    expect(loads).toBe(1);
+    expect(logins).toBe(1);
   });
 });
 

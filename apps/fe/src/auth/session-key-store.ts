@@ -134,6 +134,12 @@ interface EnsureNodeLoginOptions {
 /** 每个 node 同时只允许一次登录请求在途，重复调用共享同一个 Promise。 */
 const nodeLoginsInFlight = new Map<string, Promise<LoginNodeResult>>();
 
+type LoginModule = {
+  loginToNode: (nodeId: string, opts: EnsureNodeLoginOptions) => Promise<LoginNodeResult>;
+};
+
+let loadLogin: () => Promise<LoginModule> = () => import('./session-login');
+
 /**
  * 按需登录某台 node：内存里的会话钥还在就静默完成，成功后就地把 mesh 列表里那一行标成已登录。
  *
@@ -152,12 +158,14 @@ export function ensureNodeLogin(
   if (existing) return existing;
   if (!hasSessionKey()) return Promise.resolve({ ok: false, code: 'NO_SESSION_KEY' });
 
-  const task = import('./session-login')
+  const task = loadLogin()
     .then((mod) => mod.loginToNode(nodeId, opts))
     .then((result) => {
       if (result.ok) markLoggedIn(nodeId);
       return result;
     })
+    // chunk 拉不下来（离线 / 部署换了 hash）也得给调用方一个结果，否则门闸永远停在 pending。
+    .catch((): LoginNodeResult => ({ ok: false, code: 'NETWORK_ERROR' }))
     .finally(() => {
       nodeLoginsInFlight.delete(nodeId);
     });
@@ -168,4 +176,9 @@ export function ensureNodeLogin(
 /** 仅测试使用：丢弃在途的单 node 登录，避免用例之间互相串。 */
 export function resetNodeLoginsForTest(): void {
   nodeLoginsInFlight.clear();
+}
+
+/** 仅测试使用：替换登录实现的加载器，不传则还原成真的 `import('./session-login')`。 */
+export function setLoginLoaderForTest(loader?: () => Promise<LoginModule>): void {
+  loadLogin = loader ?? (() => import('./session-login'));
 }
