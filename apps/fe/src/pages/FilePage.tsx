@@ -22,6 +22,7 @@ import { MarkdownPreview } from '@tmex/panels/markdown';
 import { type AppRuntime, type FileRef, decodeFileRef } from '@tmex/stores';
 import { useRuntime } from '@tmex/stores/react';
 import { Button } from '@tmex/ui/button';
+import { IconTooltip } from '@tmex/ui/icon-tooltip';
 
 function useFileRef(ref?: string): FileRef | null {
   return useMemo(() => (ref ? decodeFileRef(ref) : null), [ref]);
@@ -323,34 +324,41 @@ export function PageActions({ ref }: { ref?: string }) {
 
   return (
     <>
-      <Button
-        variant="ghost"
-        size="icon-sm"
-        onClick={refresh}
-        title={t('common.refresh')}
-        data-testid="file-refresh"
-      >
-        <RotateCw className="h-4 w-4" />
-      </Button>
-      <a
-        href={fileRawUrl(nodeId, rootId, path)}
-        target="_blank"
-        rel="noopener noreferrer"
-        title={t('file.openRaw')}
-      >
-        <Button variant="ghost" size="icon-sm">
-          <ExternalLink className="h-4 w-4" />
+      <IconTooltip label={t('common.refresh')}>
+        <Button
+          variant="ghost"
+          size="icon-sm"
+          onClick={refresh}
+          aria-label={t('common.refresh')}
+          data-testid="file-refresh"
+        >
+          <RotateCw className="h-4 w-4" />
         </Button>
-      </a>
-      <Button
-        variant="ghost"
-        size="icon-sm"
-        data-testid="file-download-action"
-        title={t('file.download')}
-        onClick={() => triggerDownload(runtime, rootId, path, basename(path))}
-      >
-        <Download className="h-4 w-4" />
-      </Button>
+      </IconTooltip>
+      <IconTooltip label={t('file.openRaw')}>
+        <a
+          href={fileRawUrl(nodeId, rootId, path)}
+          target="_blank"
+          rel="noopener noreferrer"
+          aria-label={t('file.openRaw')}
+          className="inline-flex"
+        >
+          <Button variant="ghost" size="icon-sm" tabIndex={-1}>
+            <ExternalLink className="h-4 w-4" />
+          </Button>
+        </a>
+      </IconTooltip>
+      <IconTooltip label={t('file.download')}>
+        <Button
+          variant="ghost"
+          size="icon-sm"
+          data-testid="file-download-action"
+          aria-label={t('file.download')}
+          onClick={() => triggerDownload(runtime, rootId, path, basename(path))}
+        >
+          <Download className="h-4 w-4" />
+        </Button>
+      </IconTooltip>
     </>
   );
 }

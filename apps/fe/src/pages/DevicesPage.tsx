@@ -23,6 +23,7 @@ import {
   AlertDialogTitle,
 } from '@tmex/ui/alert-dialog';
 import { Button } from '@tmex/ui/button';
+import { IconTooltip } from '@tmex/ui/icon-tooltip';
 import { FolderPlus, Loader2, RotateCcw } from 'lucide-react';
 import { type ReactNode, useEffect, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
@@ -115,17 +116,18 @@ function ResetLayoutButton({ onConfirm, disabled }: { onConfirm: () => void; dis
   const [open, setOpen] = useState(false);
   return (
     <>
-      <Button
-        variant="ghost"
-        size="icon-sm"
-        data-testid="devices-reset-layout"
-        aria-label={t('devices.folders.resetLayout')}
-        title={t('devices.folders.resetLayout')}
-        disabled={disabled}
-        onClick={() => setOpen(true)}
-      >
-        <RotateCcw className="h-4 w-4" />
-      </Button>
+      <IconTooltip label={t('devices.folders.resetLayout')}>
+        <Button
+          variant="ghost"
+          size="icon-sm"
+          data-testid="devices-reset-layout"
+          aria-label={t('devices.folders.resetLayout')}
+          disabled={disabled}
+          onClick={() => setOpen(true)}
+        >
+          <RotateCcw className="h-4 w-4" />
+        </Button>
+      </IconTooltip>
       <AlertDialog open={open} onOpenChange={setOpen}>
         <AlertDialogContent>
           <AlertDialogHeader>
@@ -171,16 +173,17 @@ export function PageActions() {
       {commands && (
         <>
           <ResetLayoutButton onConfirm={commands.resetLayout} disabled={commands.layoutBusy} />
-          <Button
-            variant="ghost"
-            size="icon-sm"
-            data-testid="devices-new-folder"
-            aria-label={t('devices.folders.newFolder')}
-            title={t('devices.folders.newFolder')}
-            onClick={commands.newFolder}
-          >
-            <FolderPlus className="h-4 w-4" />
-          </Button>
+          <IconTooltip label={t('devices.folders.newFolder')}>
+            <Button
+              variant="ghost"
+              size="icon-sm"
+              data-testid="devices-new-folder"
+              aria-label={t('devices.folders.newFolder')}
+              onClick={commands.newFolder}
+            >
+              <FolderPlus className="h-4 w-4" />
+            </Button>
+          </IconTooltip>
         </>
       )}
       {targets.length > 1 ? (
