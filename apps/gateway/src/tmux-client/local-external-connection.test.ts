@@ -1933,6 +1933,8 @@ describe('LocalExternalTmuxConnection lifecycle events', () => {
     expect(events).toHaveLength(0);
 
     (connection as any).requestSnapshotInternal();
+    await waitFor(() => (paneListCalls >= 2 ? true : null));
+    // 刷新 A 已在途（被 staleGate 挂起），此时到达的请求按新语义合并成一次 trailing
     (connection as any).requestSnapshotInternal();
     (connection as any).requestSnapshotInternal();
     await Bun.sleep(30);
