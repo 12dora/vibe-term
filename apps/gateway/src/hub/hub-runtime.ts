@@ -454,11 +454,17 @@ export class HubRuntime {
   private async handleRedeem(req: Request): Promise<Response> {
     const body = await readJsonObjectBody(req);
     if (!body) return json({ error: 'invalid_body' }, 400);
+    let parsed: ReturnType<typeof parseRedeemRequest>;
     try {
-      const parsed = parseRedeemRequest(body, this.userStore);
-      const { hexId, token, stored, providedName, version, certBytes, certSig, certificate } =
-        parsed;
-      const now = this.now();
+      parsed = parseRedeemRequest(body, this.userStore);
+    } catch (err) {
+      if (err instanceof RedeemAbort) return json({ error: err.error }, err.status);
+      return validationError(err);
+    }
+    const { hexId, token, stored, providedName, version, certBytes, certSig, certificate } =
+      parsed;
+    const now = this.now();
+    try {
       let replayUserId: string | null = null;
       let replacedExisting = false;
       let alreadyAdmitted = false;
@@ -503,7 +509,7 @@ export class HubRuntime {
       return this.redeemSuccessPayload(replayUserId ?? token.userId, alreadyAdmitted);
     } catch (err) {
       if (err instanceof RedeemAbort) return json({ error: err.error }, err.status);
-      return validationError(err);
+      throw err;
     }
   }
 

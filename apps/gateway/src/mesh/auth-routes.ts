@@ -647,18 +647,19 @@ export class AuthRoutes {
       stored = null;
     }
     if (!stored || stored.userId !== user.id) return bad;
+    let assertion: ReturnType<typeof decodePasskeyAssertionSig>;
     try {
-      const assertion = decodePasskeyAssertionSig(delegationSig);
-      const ok = await this.verifyPasskey({
-        challenge: delegationChallenge(delegation),
-        delegation,
-        assertion,
-        credentialId: delegation.credential_id,
-      });
-      return ok ? { ok: true } : bad;
+      assertion = decodePasskeyAssertionSig(delegationSig);
     } catch {
       return bad;
     }
+    const ok = await this.verifyPasskey({
+      challenge: delegationChallenge(delegation),
+      delegation,
+      assertion,
+      credentialId: delegation.credential_id,
+    });
+    return ok ? { ok: true } : bad;
   }
 
   private async checkTotp(
