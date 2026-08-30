@@ -2715,7 +2715,7 @@ export const I18N_RESOURCES = {
       },
       "welcome": {
         "title": "新建 Agent 对话",
-        "subtitle": "向 Agent 描述你的需求，开始在所选终端中协作"
+        "subtitle": "向 Agent 描述你的需求，在所选终端中协作"
       },
       "session": {
         "none": "未选择会话",

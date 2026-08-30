@@ -1,8 +1,8 @@
 // 侧边栏 agent 会话装饰的控制器：bootstrap、排序/分组派生、重命名与删除对话框状态。
 
-import { toRuntimeNodeId, useMeshNodes } from '@/node/mesh-nodes';
+import { useMeshNodes } from '@/node/mesh-nodes';
+import { isNodeOffline } from '@/node/node-offline';
 import { selfAgentStore } from '@/node/self-agent-store';
-import type { MeshNode } from '@tmex/api-client/auth/index';
 import type { AgentSessionDto, StateSnapshotPayload } from '@tmex/shared';
 import { isSessionOnNode, normalizeAgentNodeId } from '@tmex/stores';
 import { useRuntime } from '@tmex/stores/react';
@@ -102,19 +102,6 @@ export function isSessionAttached(
   const panes = panesByDevice.get(session.deviceId);
   if (!panes) return true;
   return panes.has(session.paneId);
-}
-
-/**
- * 该 node 是否离线。mesh 列表里没有这一行（standalone、列表尚未加载）一律按在线处理：
- * 宁可让用户点进去看到请求错误，也不要把本机会话灰掉。
- */
-export function isNodeOffline(
-  nodes: readonly MeshNode[],
-  entryNodeId: string | null,
-  runtimeNodeId: string
-): boolean {
-  const row = nodes.find((node) => toRuntimeNodeId(node.id, entryNodeId) === runtimeNodeId);
-  return row ? !row.online : false;
 }
 
 /** 会话是否因所在 node 离线而暂停（灰显、不可点入） */

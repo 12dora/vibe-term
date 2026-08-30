@@ -4,6 +4,8 @@
 
 import { Fragment, type ReactNode, createContext, useContext } from 'react';
 import type { AgentState } from './agent';
+import { resolveAgentStore } from './agent-host-store';
+import { normalizeAgentNodeId } from './agent-session-map';
 import type { AppRuntime } from './app-runtime';
 import type { FileTreeState } from './file-tree';
 import type { SiteState } from './site';
@@ -87,7 +89,13 @@ export function useFileTreeStore<T>(selector: (state: FileTreeState) => T): T {
   return useRuntime().stores.fileTree(selector);
 }
 
+/**
+ * 分屏 pane 的 agent 徽标。会话由 entry 网关统一持有（`resolveAgentStore`），
+ * 所以 `/n/:nodeId` 路由下也得读那一份 store，再按本 runtime 的 nodeId 过滤。
+ */
 export function usePaneAgentState(deviceId: string, paneId: string): PaneAgentState {
-  const agentStore = useRuntime().stores.agent;
-  return agentStore((state) => selectPaneAgentState(state, deviceId, paneId));
+  const runtime = useRuntime();
+  const agentStore = resolveAgentStore(runtime.stores.agent);
+  const nodeId = normalizeAgentNodeId(runtime.nodeId);
+  return agentStore((state) => selectPaneAgentState(state, deviceId, paneId, nodeId));
 }

@@ -1,12 +1,10 @@
 import { describe, expect, test } from 'bun:test';
-import type { MeshNode } from '@tmex/api-client/auth/index';
 import type { AgentSessionDto, StateSnapshotPayload, TmuxPane, TmuxWindow } from '@tmex/shared';
 import { isSessionOnNode } from '@tmex/stores';
 import {
   collectKnownPaneIds,
   compareSessions,
   groupSessionsByPane,
-  isNodeOffline,
   isSessionAttached,
   isSessionPaused,
   orderSessions,
@@ -206,11 +204,6 @@ describe('isSessionAttached', () => {
 });
 
 const NODE_A = 'a'.repeat(32);
-const ENTRY = 'e'.repeat(32);
-
-function meshNode(id: string, online: boolean): MeshNode {
-  return { id, name: id, publicKey: '', online, loggedIn: true } as MeshNode;
-}
 
 describe('per-node session filtering', () => {
   const local = session({ id: 'local', deviceId: 'd1', paneId: '%1' });
@@ -227,23 +220,6 @@ describe('per-node session filtering', () => {
     const remoteGroups = groupSessionsByPane(all.filter((item) => isSessionOnNode(item, NODE_A)));
     expect(selfGroups.get(paneKey('d1', '%1'))).toEqual([local]);
     expect(remoteGroups.get(paneKey('d1', '%1'))).toEqual([remote]);
-  });
-});
-
-describe('isNodeOffline', () => {
-  const nodes = [meshNode(ENTRY, true), meshNode(NODE_A, false)];
-
-  test('maps the entry node onto the self runtime id', () => {
-    expect(isNodeOffline(nodes, ENTRY, 'self')).toBe(false);
-  });
-
-  test('reports a remote node that went offline', () => {
-    expect(isNodeOffline(nodes, ENTRY, NODE_A)).toBe(true);
-  });
-
-  test('unknown rows (standalone / list not loaded) count as online', () => {
-    expect(isNodeOffline([], null, 'self')).toBe(false);
-    expect(isNodeOffline(nodes, ENTRY, 'c'.repeat(32))).toBe(false);
   });
 });
 
