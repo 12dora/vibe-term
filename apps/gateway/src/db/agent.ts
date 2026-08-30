@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, gt, isNull, max, sql } from 'drizzle-orm';
+import { and, asc, desc, eq, gt, gte, isNull, lt, max, sql } from 'drizzle-orm';
 import { getDb as getOrmDb } from './client';
 import {
   type AgentConfirmationStatus,
@@ -251,6 +251,85 @@ export function listAgentMessages(
       : eq(agentMessages.sessionId, sessionId);
 
   return orm.select().from(agentMessages).where(conditions).orderBy(asc(agentMessages.seq)).all();
+}
+
+export const AGENT_MESSAGE_WINDOW_PAGE_SIZE = 200;
+
+export function listAgentMessagesForWindow(
+  sessionId: string,
+  charBudget: number,
+  options: { pageSize?: number; lengthMargin?: number } = {}
+): AgentMessageRecord[] {
+  const pageSize = Math.max(1, options.pageSize ?? AGENT_MESSAGE_WINDOW_PAGE_SIZE);
+  const lengthMargin = options.lengthMargin ?? Math.max(1024, Math.ceil(charBudget * 0.1));
+  const orm = getOrmDb();
+  // SQL length 从新到旧累加到预算+余量，并继续到一条 user，避免 suffix 从 tool 对中间起头。
+  let remaining = charBudget + lengthMargin;
+  let seenUser = false;
+  let oldestSeq: number | null = null;
+  let cursorSeq: number | undefined;
+
+  while (true) {
+    const conditions =
+      cursorSeq === undefined
+        ? eq(agentMessages.sessionId, sessionId)
+        : and(eq(agentMessages.sessionId, sessionId), lt(agentMessages.seq, cursorSeq));
+    const page = orm
+      .select({
+        seq: agentMessages.seq,
+        role: agentMessages.role,
+        contentLen: sql<number>`length(${agentMessages.content})`.mapWith(Number),
+      })
+      .from(agentMessages)
+      .where(conditions)
+      .orderBy(desc(agentMessages.seq))
+      .limit(pageSize)
+      .all();
+    if (page.length === 0) {
+      break;
+    }
+
+    let stop = false;
+    for (const row of page) {
+      remaining -= row.contentLen;
+      if (row.role === 'user') {
+        seenUser = true;
+      }
+      oldestSeq = row.seq;
+      cursorSeq = row.seq;
+      if (remaining <= 0 && seenUser) {
+        stop = true;
+        break;
+      }
+    }
+    if (stop || page.length < pageSize) {
+      break;
+    }
+  }
+
+  if (oldestSeq === null) {
+    return [];
+  }
+
+  return orm
+    .select()
+    .from(agentMessages)
+    .where(and(eq(agentMessages.sessionId, sessionId), gte(agentMessages.seq, oldestSeq)))
+    .orderBy(asc(agentMessages.seq))
+    .all();
+}
+
+export function getFirstAgentUserMessage(sessionId: string): AgentMessageRecord | null {
+  const orm = getOrmDb();
+  return (
+    orm
+      .select()
+      .from(agentMessages)
+      .where(and(eq(agentMessages.sessionId, sessionId), eq(agentMessages.role, 'user')))
+      .orderBy(asc(agentMessages.seq))
+      .limit(1)
+      .get() ?? null
+  );
 }
 
 export function getMaxAgentMessageSeq(sessionId: string): number {

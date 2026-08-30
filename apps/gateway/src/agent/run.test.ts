@@ -739,6 +739,31 @@ describe('AgentRun 核心循环', () => {
     expect(getAgentSessionById(harness.session.id)?.title).toBe('Check Disk Usage');
   });
 
+  test('标题生成只用首条 user，不扫完整历史', async () => {
+    const mock = createMockChatServer(() =>
+      sseResponse([chunk({ role: 'assistant', content: 'ok' }), chunk({}, 'stop')])
+    );
+
+    const harness = createHarness({
+      baseUrl: mock.baseUrl,
+      title: 'New Session',
+      generatedTitle: 'From First User',
+    });
+    appendAgentMessage(harness.session.id, 'user', { role: 'user', content: 'check disk usage' });
+    appendAgentMessage(harness.session.id, 'assistant', {
+      role: 'assistant',
+      content: [{ type: 'text', text: 'old' }],
+    });
+    appendAgentMessage(harness.session.id, 'user', { role: 'user', content: 'later unrelated' });
+
+    const run = new AgentRun(harness.session.id, harness.deps);
+    await run.execute();
+
+    expect(harness.titleCalls.length).toBe(1);
+    expect(harness.titleCalls[0]).toContain('check disk usage');
+    expect(harness.titleCalls[0]).not.toContain('later unrelated');
+  });
+
   test('标题已自定义时不再生成', async () => {
     const mock = createMockChatServer(() =>
       sseResponse([chunk({ role: 'assistant', content: 'ok' }), chunk({}, 'stop')])

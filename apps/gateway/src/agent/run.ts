@@ -10,13 +10,19 @@ import {
   type AgentSessionRecord,
   appendAgentMessage,
   getAgentSessionById,
+  getFirstAgentUserMessage,
   getMaxAgentMessageSeq,
-  listAgentMessages,
+  listAgentMessagesForWindow,
   updateAgentSession,
 } from '../db/agent';
 import { t } from '../i18n';
 import type { PaneEmulator } from '../tmux-client/pane-emulator';
-import { type BuiltRunRequest, buildRunRequest, buildRunTools } from './build-run-request';
+import {
+  type BuiltRunRequest,
+  MESSAGE_WINDOW_CHAR_BUDGET,
+  buildRunRequest,
+  buildRunTools,
+} from './build-run-request';
 import {
   type AgentStopReason,
   type RunOnceDecision,
@@ -285,7 +291,9 @@ export class AgentRun {
       createFetchUrlTool: this.deps.createFetchUrlTool,
     });
     return buildRunRequest({
-      messages: listAgentMessages(this.sessionId).map((record) => record.content as ModelMessage),
+      messages: listAgentMessagesForWindow(this.sessionId, MESSAGE_WINDOW_CHAR_BUDGET).map(
+        (record) => record.content as ModelMessage
+      ),
       resolvedModel,
       tools,
       paneId: session.paneId,
@@ -405,9 +413,10 @@ export class AgentRun {
     session: AgentSessionRecord,
     model: LanguageModel
   ): Promise<void> {
+    const firstUser = getFirstAgentUserMessage(this.sessionId);
     await maybeGenerateSessionTitle({
       currentTitle: session.title,
-      messages: listAgentMessages(this.sessionId),
+      messages: firstUser ? [firstUser] : [],
       generate: (prompt) => this.deps.generateTitle(model, prompt),
       sessionId: this.sessionId,
       apply: (title) => {
