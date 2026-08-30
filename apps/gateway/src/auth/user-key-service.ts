@@ -13,14 +13,9 @@ import type {
 import {
   applyKeyLogRecord,
   buildKeyLogRecord,
-  decodeAddPasskeyPayload,
-  decodeAdmitNodePayload,
   decodeBase64url,
-  decodeCertificate,
   decodeKeyLogRecord,
-  decodeRemovePasskeyPayload,
   decodeResetRootPayload,
-  decodeRevokeNodePayload,
   decodeSetTotpPayload,
   deriveSeed,
   detectFork,
@@ -32,21 +27,30 @@ import {
   generateKdfParams,
   genesisHead,
   hexToBytes,
-  nodeIdToHex,
   rootKeyFromSeed,
   signKeyLogRecordWithRoot,
   verifyKeyLogRecord,
 } from '@tmex/shared/auth';
-import { eq } from 'drizzle-orm';
 import { encrypt } from '../crypto';
-import { nodeIdentity } from '../db/schema';
 import { toBuffer } from './binary';
-import { type KeyLogStore, projectPayloadJson } from './key-log-store';
+import type { KeyLogStore } from './key-log-store';
 import { type NodeIdentityKeys, selfSignedNodeCertificate } from './node-identity-service';
 import type { SaveNodeIdentityInput } from './node-identity-store';
 import type { NodeSessionStore } from './node-session-store';
 import type { AuthDb } from './types';
+import {
+  type AppliedKeyLogStep,
+  type EncryptedIdentity,
+  bindIdentityUser,
+  createTxStores,
+  kdfParamsToJson,
+  persistApplied,
+  persistEncryptedIdentity,
+  wipeUserDerivedState,
+} from './user-key-persistence';
 import type { UserStore } from './user-store';
+
+export { kdfParamsToJson };
 
 export type ApplyKeyLogInput = {
   bytes: Uint8Array;
@@ -110,19 +114,7 @@ type BootstrapSelfAdmitInput = {
 
 type DecodedKeyLog = ReturnType<typeof decodeKeyLogRecord>;
 
-type JoinReplayStep = {
-  input: ApplyKeyLogInput;
-  record: DecodedKeyLog;
-  hash: Uint8Array;
-  next: UserKeyState;
-  effects: KeyLogEffect[];
-};
-
-type AuthStores = {
-  userStore: UserStore;
-  keyLogStore: KeyLogStore;
-  nodeSessionStore: NodeSessionStore;
-};
+type JoinReplayStep = AppliedKeyLogStep;
 
 type JoinReplaySuccess = {
   ok: true;
@@ -130,8 +122,6 @@ type JoinReplaySuccess = {
   state: UserKeyState;
   steps: JoinReplayStep[];
 };
-
-const IDENTITY_ROW_ID = 1;
 
 export type UserKeyServiceDeps = {
   db: AuthDb;
@@ -148,15 +138,6 @@ const DEFAULT_KDF: KdfParams = {
   iterations: 3,
   parallelism: 1,
 };
-
-export function kdfParamsToJson(params: KdfParams): string {
-  return JSON.stringify({
-    salt: encodeBase64url(params.salt),
-    memory_kib: params.memory_kib,
-    iterations: params.iterations,
-    parallelism: params.parallelism,
-  });
-}
 
 export function kdfParamsFromJson(json: string): KdfParams {
   try {
@@ -287,7 +268,7 @@ export class UserKeyService {
     const now = Date.now();
     try {
       this.db.transaction((tx) => {
-        const stores = this.txStores(tx);
+        const stores = createTxStores(tx, this.userStore, this.keyLogStore, this.nodeSessionStore);
         const again = stores.keyLogStore.getAtSeq(userId, Number(step.record.seq));
         if (
           again &&
@@ -361,7 +342,7 @@ export class UserKeyService {
     casHead: { seq: bigint; hash: Uint8Array }
   ): void {
     this.db.transaction((tx) => {
-      const stores = this.txStores(tx);
+      const stores = createTxStores(tx, this.userStore, this.keyLogStore, this.nodeSessionStore);
       const current = stores.userStore.getById(userId);
       if (!current) throw new UnknownUser();
       if (
@@ -602,7 +583,7 @@ export class UserKeyService {
     }
 
     this.db.transaction((tx) => {
-      const stores = this.txStores(tx);
+      const stores = createTxStores(tx, this.userStore, this.keyLogStore, this.nodeSessionStore);
       const { userStore, keyLogStore, nodeSessionStore } = stores;
       if (!existing) {
         userStore.create({
@@ -644,15 +625,6 @@ export class UserKeyService {
       rootPublicKey: next.rootPublicKey,
       rootEpoch: next.rootEpoch,
       rootKey,
-    };
-  }
-
-  private txStores(tx: unknown): AuthStores {
-    const db = tx as AuthDb;
-    return {
-      userStore: new (this.userStore.constructor as typeof UserStore)(db),
-      keyLogStore: new (this.keyLogStore.constructor as typeof KeyLogStore)(db),
-      nodeSessionStore: new (this.nodeSessionStore.constructor as typeof NodeSessionStore)(db),
     };
   }
 
@@ -757,7 +729,7 @@ export class UserKeyService {
 
     let replacedStaleUsername: string | undefined;
     this.db.transaction((tx) => {
-      const stores = this.txStores(tx);
+      const stores = createTxStores(tx, this.userStore, this.keyLogStore, this.nodeSessionStore);
       const { userStore, keyLogStore, nodeSessionStore } = stores;
       const byId = userStore.getById(genesisUid);
       const byName = userStore.getByUsername(username);
@@ -829,16 +801,6 @@ function mapApplyManyError(err: unknown): ApplyManyResult | null {
   return null;
 }
 
-type EncryptedIdentity = {
-  nodeId: string;
-  hubUrl: string | null;
-  privateKey: string;
-  x25519PrivateKey: string;
-  certificateJson: string;
-  certSig: Uint8Array;
-  userId: string | null;
-};
-
 async function encryptIdentity(input: SaveNodeIdentityInput): Promise<EncryptedIdentity> {
   const [privateKey, x25519PrivateKey] = await Promise.all([
     encrypt(toBuffer(input.edPrivateKey).toString('base64')),
@@ -853,26 +815,6 @@ async function encryptIdentity(input: SaveNodeIdentityInput): Promise<EncryptedI
     certSig: input.certSig,
     userId: input.userId ?? null,
   };
-}
-
-function persistEncryptedIdentity(db: AuthDb, identity: EncryptedIdentity): void {
-  const row = {
-    nodeId: identity.nodeId,
-    hubUrl: identity.hubUrl,
-    privateKey: identity.privateKey,
-    x25519PrivateKey: identity.x25519PrivateKey,
-    certificateJson: identity.certificateJson,
-    certSig: toBuffer(identity.certSig),
-    userId: identity.userId,
-  };
-  db.insert(nodeIdentity)
-    .values({ id: IDENTITY_ROW_ID, ...row })
-    .onConflictDoUpdate({ target: nodeIdentity.id, set: row })
-    .run();
-}
-
-function bindIdentityUser(db: AuthDb, userId: string): void {
-  db.update(nodeIdentity).set({ userId }).where(eq(nodeIdentity.id, IDENTITY_ROW_ID)).run();
 }
 
 function tryDecodeRecord(bytes: Uint8Array): DecodedKeyLog | null {
@@ -904,109 +846,4 @@ function bytesEqual(a: Uint8Array, b: Uint8Array): boolean {
     diff |= a[i] ^ b[i];
   }
   return diff === 0;
-}
-
-function wipeUserDerivedState(
-  userStore: UserStore,
-  keyLogStore: KeyLogStore,
-  nodeSessionStore: NodeSessionStore,
-  userId: string
-): void {
-  keyLogStore.deleteAll(userId);
-  userStore.deleteKeysByUser(userId);
-  nodeSessionStore.deleteAllForUser(userId);
-  userStore.deleteCertsByUser(userId);
-  userStore.deleteNodesByUser(userId);
-  userStore.deleteEnrollmentTokensByUser(userId);
-}
-
-function persistApplied(
-  stores: AuthStores,
-  userId: string,
-  step: JoinReplayStep,
-  now: number
-): void {
-  const { userStore, keyLogStore, nodeSessionStore } = stores;
-  const { record, input, hash, effects, next } = step;
-  const seq = Number(record.seq);
-  keyLogStore.append({
-    userId,
-    seq,
-    prevHash: record.prev_hash,
-    hash,
-    rootEpoch: record.root_epoch,
-    type: record.type,
-    recordBytes: input.bytes,
-    sig: input.sig,
-    payloadJson: projectPayloadJson(record.type, record.payload),
-    createdAt: now,
-  });
-  userStore.updateRoot(userId, {
-    rootPublicKey: next.rootPublicKey,
-    rootEpoch: next.rootEpoch,
-    kdfParamsJson: kdfParamsToJson(next.kdfParams),
-    now,
-  });
-  userStore.setKeyLogHead(userId, { seq: Number(next.head.seq), hash: next.head.hash, now });
-
-  if (record.type === 'rotate-root' || record.type === 'reset-root') {
-    userStore.deleteKeysByUser(userId);
-    userStore.setTotpRecordSeq(userId, null, now);
-    if (record.type === 'reset-root') userStore.deleteCertsByUser(userId);
-  }
-  const byType: Partial<Record<DecodedKeyLog['type'], () => void>> = {
-    'set-totp': () => userStore.setTotpRecordSeq(userId, seq, now),
-    'clear-totp': () => userStore.setTotpRecordSeq(userId, null, now),
-    'add-passkey': () => {
-      const payload = decodeAddPasskeyPayload(record.payload);
-      userStore.insertKey({
-        id: crypto.randomUUID(),
-        userId,
-        credentialId: decodeBase64url(payload.credential_id),
-        publicKey: payload.public_key,
-        rpId: payload.rp_id,
-        origin: payload.origin,
-        counter: payload.counter,
-        transports: payload.transports,
-        name: payload.name || null,
-        logSeq: seq,
-        now,
-      });
-    },
-    'remove-passkey': () => {
-      const row = userStore.getKeyByCredentialId(
-        decodeBase64url(decodeRemovePasskeyPayload(record.payload).credential_id)
-      );
-      if (row) userStore.deleteKey(row.id);
-    },
-    'admit-node': () => {
-      const payload = decodeAdmitNodePayload(record.payload);
-      const certificate = decodeCertificate(payload.certificate_bytes);
-      userStore.upsertCert({
-        nodeId: nodeIdToHex(certificate.node_id),
-        userId,
-        admitRecordSeq: seq,
-        certificateBytes: payload.certificate_bytes,
-        certSig: payload.cert_sig,
-        authorizationBytes: payload.authorization_bytes,
-        authorizationSig: payload.authorization_sig,
-        revokedLogSeq: null,
-      });
-    },
-    'revoke-node': () => {
-      const hex = nodeIdToHex(decodeRevokeNodePayload(record.payload).node_id);
-      userStore.markCertRevoked(hex, seq);
-      userStore.deletePeer(hex);
-    },
-  };
-  byType[record.type]?.();
-
-  for (const effect of effects) {
-    if (effect.type === 'revokeAllSessions') nodeSessionStore.revokeAllForUser(userId, now);
-    else if (effect.type === 'revokeSessionsByCredential') {
-      nodeSessionStore.revokeByCredential(decodeBase64url(effect.credentialId), now);
-    } else if (effect.type === 'revokeSessionsVia') {
-      nodeSessionStore.revokeVia(nodeIdToHex(effect.nodeId), now);
-    } else if (effect.type === 'clearPeerCache') userStore.deleteAllPeers();
-  }
 }
