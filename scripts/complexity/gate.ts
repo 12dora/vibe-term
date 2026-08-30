@@ -1,8 +1,10 @@
 // 复杂度门禁：McCabe 圈复杂度 / 函数行数 / 文件行数 三条阈值，超标即失败。
 // 有意保留的热点写进 allowlist.json（键为 "相对路径:函数名"，值为保留理由），
 // 门禁对这些条目只要求不继续恶化（不高于记录的 cc / lines）。
-// 用法：bun scripts/complexity/gate.ts [--report]（--report 只打印排行，不判定失败）
-import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
+// 用法：bun scripts/complexity/gate.ts [--report|--tighten]
+//   --report  只打印排行，不判定失败
+//   --tighten 按当前实测值收紧 allowlist（只降不升；降回默认阈值内的字段/条目直接删除，失配条目剔除）
+import { existsSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs';
 import { join, relative } from 'node:path';
 import ts from 'typescript';
 
@@ -105,10 +107,12 @@ for (const top of ['apps', 'packages']) walk(join(ROOT, top), files);
 const all: Fn[] = [];
 const violations: string[] = [];
 const usedAllow = new Set<string>();
+const fileLineCounts = new Map<string, number>();
 for (const file of files) {
   const { fns, lines } = analyze(file);
   all.push(...fns);
   const rel = relative(ROOT, file);
+  fileLineCounts.set(rel, lines);
   const fileAllow = allow[rel];
   if (fileAllow) usedAllow.add(rel);
   const fileLimit = fileAllow?.fileLines ?? LIMITS.fileLines;
@@ -124,6 +128,43 @@ for (const file of files) {
   }
 }
 const stale = Object.keys(allow).filter((k) => !usedAllow.has(k));
+
+if (process.argv.includes('--tighten')) {
+  // 同名函数取最大实测值（gate 判定对每个同 key 函数都生效，锁值必须覆盖最大者）
+  const maxCc = new Map<string, number>();
+  const maxLines = new Map<string, number>();
+  for (const fn of all) {
+    const key = `${fn.file}:${fn.name}`;
+    maxCc.set(key, Math.max(maxCc.get(key) ?? 0, fn.cc));
+    maxLines.set(key, Math.max(maxLines.get(key) ?? 0, fn.lines));
+  }
+  const next: Allow = {};
+  for (const [key, entry] of Object.entries(allow)) {
+    if (stale.includes(key)) continue;
+    const updated = { ...entry };
+    if (entry.fileLines !== undefined) {
+      const cur = fileLineCounts.get(key) ?? 0;
+      if (cur > LIMITS.fileLines) updated.fileLines = Math.min(entry.fileLines, cur);
+      else delete updated.fileLines;
+    }
+    if (entry.cc !== undefined) {
+      const cur = maxCc.get(key) ?? 0;
+      if (cur > LIMITS.cc) updated.cc = Math.min(entry.cc, cur);
+      else delete updated.cc;
+    }
+    if (entry.lines !== undefined) {
+      const cur = maxLines.get(key) ?? 0;
+      if (cur > LIMITS.fnLines) updated.lines = Math.min(entry.lines, cur);
+      else delete updated.lines;
+    }
+    if (updated.cc !== undefined || updated.lines !== undefined || updated.fileLines !== undefined) {
+      next[key] = updated;
+    }
+  }
+  writeFileSync(allowPath, `${JSON.stringify(next, null, 2)}\n`);
+  console.log(`allowlist tightened: ${Object.keys(allow).length} -> ${Object.keys(next).length} entries`);
+  process.exit(0);
+}
 
 if (process.argv.includes('--report')) {
   const byCc = [...all].sort((a, b) => b.cc - a.cc).slice(0, 30);
