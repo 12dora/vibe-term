@@ -10,11 +10,12 @@ import {
   Settings as SettingsIcon,
   Sparkles,
 } from 'lucide-react';
-import { Suspense, lazy, useState } from 'react';
+import { Suspense, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useSearchParams } from 'react-router';
 import { toast } from 'sonner';
 
+import { lazyChunk } from '@/lazy-chunk';
 import { parseApiError } from '@tmex/api-client';
 import { useRuntime } from '@tmex/stores/react';
 import { cn } from '@tmex/ui';
@@ -34,28 +35,24 @@ import { Tabs, TabsList, TabsTrigger, pillTabTriggerClassName } from '@tmex/ui/t
 import { useSiteSettingsForm } from './settings/use-site-settings-form';
 
 // 每个标签页独立成块：进设置页只下载当前标签的代码，切换过一次后 React.lazy 缓存模块，之后切换是同步的。
-const GeneralSettingsTab = lazy(() =>
-  import('./settings/general-settings-tab').then((m) => ({ default: m.GeneralSettingsTab }))
+const GeneralSettingsTab = lazyChunk(() =>
+  import('./settings/general-settings-tab').then((m) => m.GeneralSettingsTab)
 );
-const DevicesAndFilesTab = lazy(() =>
-  import('./settings/devices-and-files-tab').then((m) => ({ default: m.DevicesAndFilesTab }))
+const DevicesAndFilesTab = lazyChunk(() =>
+  import('./settings/devices-and-files-tab').then((m) => m.DevicesAndFilesTab)
 );
-const NodesTab = lazy(() =>
-  import('./settings/nodes/nodes-tab').then((m) => ({ default: m.NodesTab }))
+const NodesTab = lazyChunk(() => import('./settings/nodes/nodes-tab').then((m) => m.NodesTab));
+const NotificationSettingsTab = lazyChunk(() =>
+  import('./settings/notification-settings-tab').then((m) => m.NotificationSettingsTab)
 );
-const NotificationSettingsTab = lazy(() =>
-  import('./settings/notification-settings-tab').then((m) => ({
-    default: m.NotificationSettingsTab,
-  }))
+const AISettingsTab = lazyChunk(() =>
+  import('./settings/ai-settings-tab').then((m) => m.AISettingsTab)
 );
-const AISettingsTab = lazy(() =>
-  import('./settings/ai-settings-tab').then((m) => ({ default: m.AISettingsTab }))
+const TerminalSettingsTab = lazyChunk(() =>
+  import('@tmex/panels/settings/terminal').then((m) => m.TerminalSettingsTab)
 );
-const TerminalSettingsTab = lazy(() =>
-  import('@tmex/panels/settings/terminal').then((m) => ({ default: m.TerminalSettingsTab }))
-);
-const RemoteAccessTab = lazy(() =>
-  import('./settings/remote-access/remote-access-tab').then((m) => ({ default: m.RemoteAccessTab }))
+const RemoteAccessTab = lazyChunk(() =>
+  import('./settings/remote-access/remote-access-tab').then((m) => m.RemoteAccessTab)
 );
 
 export type SettingsTab =

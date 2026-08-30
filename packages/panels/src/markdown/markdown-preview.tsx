@@ -33,6 +33,43 @@ export function resolveImgSrc(
   return resolver(normalizePosixPath(`${base}${src}`));
 }
 
+/**
+ * highlightAuto 要拿所有语法各跑一遍，代价随体积暴涨（1 MiB 未标语言的块要十秒量级，直接冻住主线程）。
+ * 超限的未标语言代码块打上 no-highlight，rehype-highlight 会整块跳过；显式 ```lang 的块不受影响，
+ * 走的是快两个数量级的 hljs.highlight。块级阈值与 CodeViewer 的自动识别护栏一致，
+ * 文档级阈值挡住「成百上千个小块累加」这种块级阈值看不见的情况。
+ */
+const AUTO_DETECT_BLOCK_LIMIT = 64 * 1024;
+const AUTO_DETECT_DOC_LIMIT = 256 * 1024;
+
+export function skipsAutoDetect(blockLength: number, docLength: number): boolean {
+  return blockLength > AUTO_DETECT_BLOCK_LIMIT || docLength > AUTO_DETECT_DOC_LIMIT;
+}
+
+interface MdastNode {
+  type: string;
+  lang?: string | null;
+  value?: string;
+  data?: { hProperties?: Record<string, unknown> };
+  children?: MdastNode[];
+}
+
+/** remark 阶段给超限的未标语言代码块挂上 no-highlight（经 data.hProperties 落到 `<code>` 上）。 */
+function guardAutoDetect(docLength: number) {
+  return () => (tree: MdastNode) => {
+    const walk = (node: MdastNode): void => {
+      if (node.type === 'code') {
+        if (!node.lang && skipsAutoDetect((node.value ?? '').length, docLength)) {
+          node.data = { ...node.data, hProperties: { className: ['no-highlight'] } };
+        }
+        return;
+      }
+      for (const child of node.children ?? []) walk(child);
+    };
+    walk(tree);
+  };
+}
+
 function buildComponents(basePath: string, resolver: ImgUrlResolver | null): Components {
   return {
     a: ({ node: _node, ...props }) => (
@@ -63,8 +100,9 @@ function buildComponents(basePath: string, resolver: ImgUrlResolver | null): Com
         return <MermaidBlock code={String(children).replace(/\n$/, '')} />;
       }
       // fenced 代码块（rehype-highlight 会附加 hljs / language-* class），
-      // inline code 没有 language-* 也不会被 hljs 处理。
-      if (lang) {
+      // inline code 没有 language-* 也不会被 hljs 处理；
+      // 被护栏打上 no-highlight 的块拿不到 language-*，但它仍然是 fenced 块。
+      if (lang || className?.includes('no-highlight')) {
         return (
           <code {...props} className={cn('font-mono text-[13px]', className)}>
             {children}
@@ -131,7 +169,7 @@ export function MarkdownPreview({
   return (
     <div className={cn('min-w-0 text-sm', className)}>
       <ReactMarkdown
-        remarkPlugins={[remarkGfm, remarkMath]}
+        remarkPlugins={[remarkGfm, remarkMath, guardAutoDetect(source.length)]}
         rehypePlugins={[rehypeKatex, [rehypeHighlight, { detect: true }]]}
         components={components}
       >
