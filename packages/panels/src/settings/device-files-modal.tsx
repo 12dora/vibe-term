@@ -22,7 +22,7 @@ export function DeviceFilesModal({ device, nodeId, open, onOpenChange }: DeviceF
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent
-        className="sm:max-w-2xl"
+        className="flex max-h-[calc(100dvh-2rem)] flex-col sm:max-w-2xl"
         data-testid={`device-files-modal-${device.id}`}
         data-node-id={nodeId}
       >
@@ -30,7 +30,9 @@ export function DeviceFilesModal({ device, nodeId, open, onOpenChange }: DeviceF
           <DialogTitle>{t('settings.files.deviceModalTitle', { name: device.name })}</DialogTitle>
         </DialogHeader>
 
-        <FilesSettingsTab lockedDeviceId={device.id} title={t('settings.files.roots')} />
+        <div className="-mr-2 min-h-0 flex-1 overflow-y-auto pr-2">
+          <FilesSettingsTab lockedDeviceId={device.id} title={t('settings.files.roots')} />
+        </div>
       </DialogContent>
     </Dialog>
   );

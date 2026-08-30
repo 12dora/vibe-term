@@ -74,7 +74,7 @@ export function DeviceDialog({
       <DialogContent
         data-testid="device-dialog"
         data-device-kind={kind}
-        className="w-full max-w-2xl"
+        className="flex max-h-[calc(100dvh-2rem)] w-full flex-col sm:max-w-2xl"
       >
         <DialogHeader>
           <DialogTitle className="flex flex-wrap items-center gap-2">
@@ -91,8 +91,8 @@ export function DeviceDialog({
           <DialogDescription>{description}</DialogDescription>
         </DialogHeader>
 
-        <form onSubmit={handleSubmit} className="space-y-4">
-          <div className="-mr-2 max-h-[min(70dvh,720px)] space-y-5 overflow-y-auto pr-2">
+        <form onSubmit={handleSubmit} className="flex min-h-0 min-w-0 flex-1 flex-col gap-4">
+          <div className="-mr-2 min-h-0 min-w-0 flex-1 space-y-5 overflow-y-auto pr-2">
             {isEditMode && isRemote && device && (
               <DeviceRemoteInfoFields device={device} nodeContext={nodeContext} />
             )}

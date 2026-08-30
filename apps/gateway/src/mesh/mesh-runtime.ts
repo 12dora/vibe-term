@@ -18,6 +18,7 @@ import { HubTrustStore } from '../auth/hub-trust-store';
 import type { AuthDb } from '../auth/types';
 import { HUB_META_PEER_ID } from '../auth/user-store';
 import { type TmexRoles, config as gatewayConfig } from '../config';
+import { getSiteSettings } from '../db/site-settings';
 import { HubRuntime, type HubTurnConfig } from '../hub';
 import { createHubKeyLogSource } from '../hub/hub-key-log-source';
 import type { HubTlsInfoProvider } from '../hub/hub-runtime';
@@ -618,7 +619,7 @@ async function constructMeshDeps(opts: CreateMeshRuntimeOptions) {
           stun: config.stunServers,
           turn: (turnConfig(config) as HubTurnConfig) ?? null,
           nodeId: identity.nodeIdHex,
-          siteName: gatewayConfig.siteNameDefault,
+          siteName: resolveSiteName(),
         },
         authenticate: (req) => {
           const result = authenticateRequest(req, { roles: config.roles, nodeSessionStore });
@@ -1153,7 +1154,7 @@ function wireMeshHttp(
       const row = userStore.getNode(identity.nodeIdHex);
       if (row?.name && row.name !== identity.nodeIdHex) return row.name;
       if (config.roles.hub) {
-        const site = gatewayConfig.siteNameDefault?.trim();
+        const site = resolveSiteName();
         if (site) return site;
       }
       return listed && listed !== 'self' ? listed : null;
@@ -1286,4 +1287,13 @@ export async function createMeshRuntime(opts: CreateMeshRuntimeOptions): Promise
   const wired = wireMeshEventsAndSessions(deps);
   const http = wireMeshHttp(deps, wired);
   return assembleMeshRuntime(deps, wired, http);
+}
+
+// Hub 显示名回落：优先设置页保存的站点名称，其次 app.env 的 TMEX_SITE_NAME。
+function resolveSiteName(): string {
+  try {
+    const saved = getSiteSettings().siteName?.trim();
+    if (saved) return saved;
+  } catch {}
+  return gatewayConfig.siteNameDefault?.trim() ?? '';
 }
