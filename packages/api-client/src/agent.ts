@@ -28,10 +28,16 @@ export interface UpdateAgentSessionPatch {
   paneId?: string;
 }
 
+/**
+ * 列出 agent sessions。`nodeId` 缺省返回全部；`'self'` 只返回绑定本 gateway pane 的；
+ * 其他值只返回绑定该远端 node 的。
+ */
 export async function fetchAgentSessions(
-  client: ApiClient = defaultApiClient
+  client: ApiClient = defaultApiClient,
+  options: { nodeId?: string } = {}
 ): Promise<AgentSessionDto[]> {
-  const res = await client.fetch('/api/agent/sessions');
+  const query = options.nodeId ? `?nodeId=${encodeURIComponent(options.nodeId)}` : '';
+  const res = await client.fetch(`/api/agent/sessions${query}`);
   if (!res.ok) {
     throw new Error(await parseApiError(res, 'Failed to load agent sessions'));
   }

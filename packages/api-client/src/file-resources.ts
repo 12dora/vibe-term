@@ -1,6 +1,7 @@
 // 文件根与目录/文件元信息的 REST 端点。
 
 import type {
+  BrowseDirectoryResponse,
   CreateFileRootRequest,
   FileContentResponse,
   FileRootResponse,
@@ -86,4 +87,17 @@ export async function fetchFileContent(
   const res = await client.fetch(filesApiUrl('content', rootId, path));
   if (!res.ok) throw await parseError(res);
   return (await res.json()) as FileContentResponse;
+}
+
+/** 图形化路径选择器：列出设备上任意目录的子目录（不受 roots 白名单约束）。 */
+export async function browseDirectory(
+  params: { deviceId: string; path?: string; hidden?: boolean },
+  client: ApiClient = defaultApiClient
+): Promise<BrowseDirectoryResponse> {
+  const search = new URLSearchParams({ deviceId: params.deviceId });
+  if (params.path) search.set('path', params.path);
+  if (params.hidden) search.set('hidden', '1');
+  const res = await client.fetch(`/api/files/browse?${search.toString()}`);
+  if (!res.ok) throw await parseError(res);
+  return (await res.json()) as BrowseDirectoryResponse;
 }

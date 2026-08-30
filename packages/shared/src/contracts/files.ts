@@ -143,3 +143,27 @@ export type UploadCommitEvent =
   | { type: 'progress'; transferred: number; pct: number; rate: string }
   | { type: 'done'; uploaded: string }
   | { type: 'error'; code: FileErrorCode; detail?: string };
+
+/** `GET /api/files/browse` 的单个子目录条目（图形化路径选择器，不受 file roots 白名单约束） */
+export interface BrowseDirectoryEntryDto {
+  name: string;
+  /** 绝对路径 */
+  path: string;
+  hidden: boolean;
+  /** 指向目录的符号链接 */
+  symlink: boolean;
+}
+
+/**
+ * `GET /api/files/browse?deviceId=&path=&hidden=` 响应。
+ * `path` 为空时从设备默认目录（SSH 为登录用户 home，本机为 `os.homedir()`）开始；
+ * 响应里的 `path` 为规范化后的绝对路径，`parent` 到根为 null。
+ */
+export interface BrowseDirectoryResponse {
+  path: string;
+  parent: string | null;
+  /** 按名称排序，隐藏目录在 `hidden=true` 时才返回 */
+  entries: BrowseDirectoryEntryDto[];
+  /** 条目数达到上限被截断 */
+  truncated: boolean;
+}

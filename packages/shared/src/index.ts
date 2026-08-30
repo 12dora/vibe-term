@@ -56,6 +56,7 @@ export * from './contracts/weixin';
 export * from './contracts/tmux';
 export * from './contracts/websocket';
 export * from './contracts/notifications';
+export * from './contracts/tunnel';
 export * from './contracts/llm';
 export * from './contracts/agent';
 export * from './contracts/watch';

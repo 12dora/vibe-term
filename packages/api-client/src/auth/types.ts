@@ -136,6 +136,9 @@ export interface NodeLoginRequiredBody {
   nodeId: string;
 }
 
+export type MeshNodeReach = 'lan' | 'wan' | 'relay' | null;
+export type MeshNodeTransport = 'ws-secure' | 'relay' | 'dc' | null;
+
 /** `GET /api/mesh/nodes` 的单行（**需会话**）。 */
 export interface MeshNode {
   id: string;
@@ -143,10 +146,15 @@ export interface MeshNode {
   /** base64url，32 字节 */
   publicKey: string;
   online: boolean;
-  /** `lan` / `relay` / null（不可达） */
-  reach: string | null;
-  /** Actual peer-link transport. `reach` stays lan/relay/null for compatibility. */
-  transport?: 'ws-secure' | 'relay' | 'dc' | null;
+  /**
+   * entry ↔ node 的到达路径：`lan`（对端地址为私网/本机）、`wan`（公网直连）、
+   * `relay`（经 hub 中转）、null（不可达）。
+   */
+  reach: MeshNodeReach;
+  /** 实际 peer link 承载。 */
+  transport?: MeshNodeTransport;
+  /** entry ↔ node 最近一次 ping/pong 往返毫秒数；未测得为 null。 */
+  rttMs?: number | null;
   version: string | null;
   direct_capable: boolean;
   inventory?: unknown;

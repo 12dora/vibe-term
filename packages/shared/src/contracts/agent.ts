@@ -14,6 +14,8 @@ export const DEFAULT_AGENT_SESSION_TITLE = 'New Session';
 export interface AgentSessionDto {
   id: string;
   title: string;
+  /** 绑定 pane 所在的 mesh node；null 表示拥有该 session 的 gateway 自身（self） */
+  nodeId: string | null;
   deviceId: string | null;
   paneId: string | null;
   providerId: string | null;
@@ -70,6 +72,8 @@ export interface ListAgentSessionsResponse {
 }
 
 export interface CreateAgentSessionRequest {
+  /** 远端 node id；缺省 / null / 'self' 均表示本 gateway */
+  nodeId?: string | null;
   deviceId: string;
   paneId: string;
   providerId?: string | null;
