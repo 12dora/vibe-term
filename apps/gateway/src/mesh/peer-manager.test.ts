@@ -2450,4 +2450,180 @@ describe('PeerManager', () => {
     expect(managerA.listReach().get(peer.nodeId)).toBe('lan');
     expect(managerA.rttOf(peer.nodeId)).toBeNull();
   });
+
+  test('dropping a dc link with a parked ws-secure fallback emits one lan/wan link info and never null', async () => {
+    const { db, close } = createMigratedAuthDb();
+    fixtures.push({ close });
+    const store = new UserStore(db);
+    seedUser(store);
+    const self = seedNodeIdentity(store, 'user-1');
+    const peer = seedNodeIdentity(store, 'user-1');
+    store.upsertPeer({
+      nodeId: peer.nodeId,
+      name: 'peer',
+      endpointsJson: '[]',
+      inventoryJson: '{}',
+      directCapable: false,
+      lastSeenAt: Date.now(),
+      listVersion: 1,
+    });
+    store.upsertPeer({
+      nodeId: self.nodeId,
+      name: 'self',
+      endpointsJson: '[]',
+      inventoryJson: '{}',
+      directCapable: false,
+      lastSeenAt: Date.now(),
+      listVersion: 1,
+    });
+    const infos: Array<{
+      nodeId: string;
+      reach: 'lan' | 'wan' | 'relay' | null;
+      transport: string | null;
+      rttMs: number | null;
+    }> = [];
+    const scheduler = new ImmediateScheduler();
+    const managerA = new PeerManager({
+      identity: self,
+      userStore: store,
+      uplink: dummyUplink(self, store),
+      peerPort: 0,
+      startServer: false,
+      scheduler,
+      onLinkInfo: (info) => infos.push({ ...info }),
+    });
+    const managerB = new PeerManager({
+      identity: peer,
+      userStore: store,
+      uplink: dummyUplink(peer, store),
+      peerPort: 0,
+      startServer: false,
+      scheduler,
+    });
+    fixtures.push({ close, stop: () => managerA.stop() });
+    fixtures.push({ close, stop: () => managerB.stop() });
+    const [wsA, wsB] = createInMemoryLinkPair();
+    echoQuiesceCaps(wsB);
+    expect(managerA.adoptLink(peer.nodeId, wsA, 'ws-secure', self.nodeId, '10.0.0.8')).toBe(wsA);
+    expect(managerB.adoptLink(self.nodeId, wsB, 'ws-secure', self.nodeId, '10.0.0.8')).toBe(wsB);
+    await waitUntil(() => managerA.quiesceCapableOf(peer.nodeId));
+    scheduler.tickIntervals();
+    await waitUntil(() => managerA.rttOf(peer.nodeId) != null);
+    expect(managerA.rttOf(peer.nodeId)).toBeGreaterThanOrEqual(0);
+
+    const [dcA, dcB] = createInMemoryLinkPair();
+    echoQuiesceCaps(dcB);
+    expect(managerA.adoptLink(peer.nodeId, dcA, 'dc', self.nodeId, '10.0.0.8')).toBe(dcA);
+    expect(managerA.transportOf(peer.nodeId)).toBe('dc');
+    expect(managerA.rttOf(peer.nodeId)).toBeNull();
+
+    const watermark = infos.length;
+    dcA.close('drop-dc');
+    await waitUntil(() => managerA.transportOf(peer.nodeId) === 'ws-secure');
+    const post = infos.slice(watermark);
+    expect(post.map((row) => row.reach)).not.toContain(null);
+    expect(post).toHaveLength(1);
+    expect(post[0]?.reach).toBe('lan');
+    expect(post[0]?.transport).toBe('ws-secure');
+    expect(post[0]?.rttMs).toBeNull();
+    expect(managerA.rttOf(peer.nodeId)).toBeNull();
+    expect(managerA.listReach().get(peer.nodeId)).toBe('lan');
+  });
+
+  test('dropping a live link with a parked ws-secure inbound emits one lan/wan link info and never null', async () => {
+    const { db, close } = createMigratedAuthDb();
+    fixtures.push({ close });
+    const store = new UserStore(db);
+    seedUser(store);
+    const self = seedNodeIdentity(store, 'user-1');
+    const peer = seedNodeIdentity(store, 'user-1');
+    store.upsertPeer({
+      nodeId: peer.nodeId,
+      name: 'peer',
+      endpointsJson: '[]',
+      inventoryJson: '{}',
+      directCapable: false,
+      lastSeenAt: Date.now(),
+      listVersion: 1,
+    });
+    const infos: Array<{
+      nodeId: string;
+      reach: 'lan' | 'wan' | 'relay' | null;
+      transport: string | null;
+      rttMs: number | null;
+    }> = [];
+    const manager = new PeerManager({
+      identity: self,
+      userStore: store,
+      uplink: dummyUplink(self, store),
+      peerPort: 0,
+      startServer: false,
+      onLinkInfo: (info) => infos.push({ ...info }),
+    });
+    fixtures.push({ close, stop: () => manager.stop() });
+    const [liveA, liveB] = createInMemoryLinkPair();
+    fixtures.push({ close: () => liveB.close('test') });
+    expect(manager.adoptLink(peer.nodeId, liveA, 'relay', self.nodeId)).toBe(liveA);
+    const [parkA, parkB] = createInMemoryLinkPair();
+    fixtures.push({ close: () => parkB.close('test') });
+    expect(manager.adoptLink(peer.nodeId, parkA, 'ws-secure', peer.nodeId, '203.0.113.10')).toBe(
+      liveA
+    );
+    expect(manager.transportOf(peer.nodeId)).toBe('relay');
+
+    const watermark = infos.length;
+    liveA.close('drop-live');
+    await waitUntil(() => manager.transportOf(peer.nodeId) === 'ws-secure');
+    const post = infos.slice(watermark);
+    expect(post.map((row) => row.reach)).not.toContain(null);
+    expect(post).toHaveLength(1);
+    expect(post[0]?.reach).toBe('wan');
+    expect(post[0]?.transport).toBe('ws-secure');
+    expect(post[0]?.rttMs).toBeNull();
+    expect(manager.rttOf(peer.nodeId)).toBeNull();
+  });
+
+  test('dropping the last live link emits a single null reach', async () => {
+    const { db, close } = createMigratedAuthDb();
+    fixtures.push({ close });
+    const store = new UserStore(db);
+    seedUser(store);
+    const self = seedNodeIdentity(store, 'user-1');
+    const peer = seedNodeIdentity(store, 'user-1');
+    store.upsertPeer({
+      nodeId: peer.nodeId,
+      name: 'peer',
+      endpointsJson: '[]',
+      inventoryJson: '{}',
+      directCapable: false,
+      lastSeenAt: Date.now(),
+      listVersion: 1,
+    });
+    const infos: Array<{
+      nodeId: string;
+      reach: 'lan' | 'wan' | 'relay' | null;
+      transport: string | null;
+      rttMs: number | null;
+    }> = [];
+    const manager = new PeerManager({
+      identity: self,
+      userStore: store,
+      uplink: dummyUplink(self, store),
+      peerPort: 0,
+      startServer: false,
+      onLinkInfo: (info) => infos.push({ ...info }),
+    });
+    fixtures.push({ close, stop: () => manager.stop() });
+    const [local] = createInMemoryLinkPair();
+    expect(manager.adoptLink(peer.nodeId, local, 'dc', self.nodeId, '10.0.0.8')).toBe(local);
+    expect(manager.listReach().get(peer.nodeId)).toBe('lan');
+    const watermark = infos.length;
+    local.close('drop-last');
+    await waitUntil(() => manager.listReach().get(peer.nodeId) == null);
+    const post = infos.slice(watermark);
+    expect(post).toHaveLength(1);
+    expect(post[0]?.reach).toBeNull();
+    expect(post[0]?.transport).toBeNull();
+    expect(post[0]?.rttMs).toBeNull();
+  });
 });

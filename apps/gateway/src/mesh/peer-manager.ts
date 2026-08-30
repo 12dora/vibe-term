@@ -336,6 +336,7 @@ export class PeerManager {
   private readonly lostDirect = new Set<string>();
   private readonly transportWaiters = new Map<string, TransportWaiter[]>();
   private upgradeInflight = 0;
+  private linkInfoHold = 0;
   private readonly upgradeWaiters: Array<() => void> = [];
   private upgradeScan: { clear: () => void } | null = null;
   private stopped = false;
@@ -1874,11 +1875,22 @@ export class PeerManager {
   }
 
   private emitLinkInfo(live: LivePeer): void {
+    if (this.linkInfoHold > 0) return;
     this.onLinkInfo?.({
       nodeId: live.peerNodeId,
       reach: classifyPeerReach(live.transport, live.remoteAddress),
       transport: live.transport,
       rttMs: live.rttMs,
+    });
+  }
+
+  private emitOfflineLinkInfo(nodeId: string): void {
+    if (this.linkInfoHold > 0) return;
+    this.onLinkInfo?.({
+      nodeId,
+      reach: null,
+      transport: null,
+      rttMs: null,
     });
   }
 
@@ -1931,16 +1943,11 @@ export class PeerManager {
       this.scheduler.now() + PEER_RTC_WAKE_COOLDOWN_MS
     );
     this.notifyTransport(nodeId);
-    this.onLinkInfo?.({
-      nodeId,
-      reach: this.listReach().get(nodeId) ?? null,
-      transport: this.transportOf(nodeId),
-      rttMs: this.rttOf(nodeId),
-    });
     if (this.stopped || reason === 'revoked') {
       this.cancelDcUpgradeRetry(nodeId);
       this.lostDirect.delete(nodeId);
       this.dropParked(nodeId, reason);
+      this.emitOfflineLinkInfo(nodeId);
       return;
     }
     if (wasDc) {
@@ -1950,9 +1957,18 @@ export class PeerManager {
       gate.nextEligibleAt = 0;
       gate.coalesced = false;
     }
-    this.promoteRetiring(nodeId);
-    this.activateParked(nodeId);
+    // 提升完成后再发一次 link info，避免中间态 reach=null 被当成离线
+    this.linkInfoHold += 1;
+    try {
+      this.promoteRetiring(nodeId);
+      this.activateParked(nodeId);
+    } finally {
+      this.linkInfoHold -= 1;
+    }
     if (wasDc) this.armDcUpgradeRetry(nodeId);
+    const next = this.live.get(nodeId);
+    if (next) this.emitLinkInfo(next);
+    else this.emitOfflineLinkInfo(nodeId);
   }
 
   private promoteRetiring(nodeId: string): boolean {
@@ -1973,6 +1989,10 @@ export class PeerManager {
     best.retireTimer = null;
     best.gotQuiesceAck = false;
     best.gotPeerQuiesce = false;
+    best.rttMs = null;
+    best.pingSentAt = null;
+    best.lastEmittedRttMs = null;
+    best.lastRttEmitAt = 0;
     this.live.set(nodeId, best);
     this.armIdle(best);
     this.startPing(best);
