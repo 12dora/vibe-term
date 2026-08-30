@@ -36,8 +36,7 @@ import {
 } from './hub-test-helpers';
 import { NodeRegistry } from './node-registry';
 import type { HubKeyLogSource } from './types';
-import type { UplinkCtlMessage } from './uplink-protocol';
-import { KEY_LOG_PAGE_MAX_BYTES } from './uplink-protocol';
+import { KEY_LOG_PAGE_MAX_BYTES, type UplinkCtlMessage, decodeUplinkCtl } from './uplink-protocol';
 import {
   HUB_CTL_QUEUE_MAX,
   HUB_KEY_LOG_REQ_BURST,
@@ -91,6 +90,7 @@ async function authNode(
   nodeLink: LinkSession;
   hubLink: LinkSession;
   inbox: CtlInbox;
+  list: UplinkCtlMessage;
 }> {
   const seeded = seedAdmittedNode(store, userId, opts);
   const [nodeLink, hubLink] = createInMemoryLinkPair();
@@ -115,6 +115,7 @@ async function authNode(
     nodeLink,
     hubLink,
     inbox,
+    list,
   };
 }
 
@@ -129,6 +130,26 @@ async function takeUntil(
     if (msg.t === t) return msg;
   }
   throw new Error(`did not receive ${t}`);
+}
+
+function tapCtlSend(link: LinkSession): Uint8Array[] {
+  const sent: Uint8Array[] = [];
+  const orig = link.ctl.send.bind(link.ctl);
+  link.ctl.send = (bytes: Uint8Array) => {
+    sent.push(bytes);
+    orig(bytes);
+  };
+  return sent;
+}
+
+function nodeListPayloads(sent: Uint8Array[]): Uint8Array[] {
+  return sent.filter((bytes) => {
+    try {
+      return decodeUplinkCtl(bytes).t === 'node.list';
+    } catch {
+      return false;
+    }
+  });
 }
 
 describe('UplinkServer', () => {
@@ -155,8 +176,7 @@ describe('UplinkServer', () => {
         authTimeoutMs: 60_000,
       });
       const node = await authNode(server, userStore, user.id);
-      await server.broadcastNodeList(user.id);
-      const listed = await takeUntil(node.inbox, 'node.list');
+      const listed = node.list;
       expect(listed.t).toBe('node.list');
       if (listed.t === 'node.list') {
         expect(listed.hub).toEqual({
@@ -199,8 +219,7 @@ describe('UplinkServer', () => {
         authTimeoutMs: 60_000,
       });
       const node = await authNode(server, userStore, user.id, { name: 'node-a' });
-      await server.broadcastNodeList(user.id);
-      const listed = await takeUntil(node.inbox, 'node.list');
+      const listed = node.list;
       expect(listed.t).toBe('node.list');
       if (listed.t !== 'node.list') throw new Error('expected list');
       expect(listed.hub).toEqual({
@@ -695,8 +714,8 @@ describe('UplinkServer', () => {
         expect(ack.ok).toBe(true);
         expect(ack.id).toBe('dup-2');
       }
-      const update = await takeUntil(b.inbox, 'node.list');
-      expect(update.t).toBe('node.list');
+      await new Promise((r) => setTimeout(r, 30));
+      expect(b.inbox.drain().some((msg) => msg.t === 'node.list')).toBe(false);
       server.stop();
     } finally {
       close();
@@ -1609,6 +1628,55 @@ describe('UplinkServer', () => {
       await stopping;
       expect(appendFinished).toBe(true);
       expect(stopResolved).toBe(true);
+    } finally {
+      close();
+    }
+  });
+
+  test('broadcastNodeList encodes once and reuses bytes across N links', async () => {
+    const { db, close } = createMigratedAuthDb();
+    try {
+      const { userStore, keyLogSource } = createHubTestStack(db);
+      const user = seedUser(userStore);
+      const { server } = makeServer(db, userStore, keyLogSource);
+      const a = await authNode(server, userStore, user.id, { name: 'a' });
+      const b = await authNode(server, userStore, user.id, { name: 'b' });
+      const c = await authNode(server, userStore, user.id, { name: 'c' });
+      a.inbox.drain();
+      b.inbox.drain();
+      c.inbox.drain();
+      const taps = [a, b, c].map((n) => tapCtlSend(n.hubLink));
+      sendCtl(a.nodeLink, {
+        t: 'node.status',
+        version: '2.0.0',
+        tmux: false,
+        direct_capable: false,
+        inventory: { panes: 4 },
+        endpoints: [],
+      });
+      await takeUntil(b.inbox, 'node.list');
+      const lists = taps.flatMap(nodeListPayloads);
+      expect(lists).toHaveLength(3);
+      expect(lists.every((bytes) => bytes === lists[0])).toBe(true);
+      server.stop();
+    } finally {
+      close();
+    }
+  });
+
+  test('broadcastNodeList skips send when the projected list is unchanged', async () => {
+    const { db, close } = createMigratedAuthDb();
+    try {
+      const { userStore, keyLogSource } = createHubTestStack(db);
+      const user = seedUser(userStore);
+      const { server } = makeServer(db, userStore, keyLogSource);
+      const node = await authNode(server, userStore, user.id);
+      const sent = tapCtlSend(node.hubLink);
+      await server.broadcastNodeList(user.id);
+      expect(nodeListPayloads(sent)).toHaveLength(0);
+      await server.broadcastNodeList(user.id);
+      expect(nodeListPayloads(sent)).toHaveLength(0);
+      server.stop();
     } finally {
       close();
     }

@@ -163,8 +163,11 @@ describe('UserStore', () => {
         listVersion: 4,
       });
       expect(store.listPeers()[0]?.listVersion).toBe(4);
+      expect(store.getPeer('node-b')?.listVersion).toBe(4);
+      expect(store.getPeer('missing')).toBeNull();
       store.deletePeer('node-b');
       expect(store.listPeers()).toHaveLength(0);
+      expect(store.getPeer('node-b')).toBeNull();
     } finally {
       close();
     }

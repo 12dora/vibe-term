@@ -355,6 +355,15 @@ export class UserStore {
     return this.db.select().from(peerCache).all().map(toPeer);
   }
 
+  getPeer(nodeId: string): PeerCacheRecord | null {
+    const row = this.db.select().from(peerCache).where(eq(peerCache.nodeId, nodeId)).get();
+    return row ? toPeer(row) : null;
+  }
+
+  touchPeerLastSeenAt(nodeId: string, lastSeenAt: number): void {
+    this.db.update(peerCache).set({ lastSeenAt }).where(eq(peerCache.nodeId, nodeId)).run();
+  }
+
   upsertPeer(input: UpsertPeerCacheInput): void {
     this.db
       .insert(peerCache)

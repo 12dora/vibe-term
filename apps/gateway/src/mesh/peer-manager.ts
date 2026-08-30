@@ -1662,6 +1662,7 @@ export class PeerManager {
     live.lastStreamAt = this.scheduler.now();
     live.zeroStreamsSince = 0;
     this.clearIdle(live);
+    if (live.retiring) this.armRetireTimer(live);
     void stream.closed.then(() => {
       live.streams = Math.max(0, live.streams - 1);
       live.lastStreamAt = this.scheduler.now();
@@ -1669,6 +1670,7 @@ export class PeerManager {
       if (live.streams > 0) return;
       if (live.retiring) {
         this.maybeFinishRetire(live);
+        if (live.retiring && !live.finishRetired) this.armRetireTimer(live);
         return;
       }
       if (this.live.get(live.peerNodeId) === live) this.armIdle(live);
@@ -1754,22 +1756,35 @@ export class PeerManager {
   private async applyPeerStatus(live: LivePeer, msg: Record<string, unknown>): Promise<void> {
     if (!this.isTrusted(live.peerNodeId)) return;
     const peerNodeId = live.peerNodeId;
-    const existing = this.userStore.listPeers().find((row) => row.nodeId === peerNodeId);
-    this.userStore.upsertPeer({
-      nodeId: peerNodeId,
-      name: existing?.name ?? peerNodeId,
-      endpointsJson: jsonText(
-        sanitizeEndpoints(msg.endpoints ?? existing?.endpointsJson ?? [], this.server?.port)
-      ),
-      inventoryJson: jsonText(msg.inventory ?? existing?.inventoryJson ?? {}),
-      directCapable:
-        typeof msg.direct_capable === 'boolean'
-          ? msg.direct_capable
-          : (existing?.directCapable ?? false),
-      lastSeenAt: this.scheduler.now(),
-      listVersion: existing?.listVersion ?? 0,
-    });
-    this.notifyPeerEndpointsChanged(peerNodeId);
+    const existing = this.userStore.getPeer(peerNodeId);
+    const endpointsJson = jsonText(
+      sanitizeEndpoints(msg.endpoints ?? existing?.endpointsJson ?? [], this.server?.port)
+    );
+    const inventoryJson = jsonText(msg.inventory ?? existing?.inventoryJson ?? {});
+    const directCapable =
+      typeof msg.direct_capable === 'boolean'
+        ? msg.direct_capable
+        : (existing?.directCapable ?? false);
+    const lastSeenAt = this.scheduler.now();
+    const changed =
+      !existing ||
+      existing.endpointsJson !== endpointsJson ||
+      existing.inventoryJson !== inventoryJson ||
+      existing.directCapable !== directCapable;
+    if (changed) {
+      this.userStore.upsertPeer({
+        nodeId: peerNodeId,
+        name: existing?.name ?? peerNodeId,
+        endpointsJson,
+        inventoryJson,
+        directCapable,
+        lastSeenAt,
+        listVersion: existing?.listVersion ?? 0,
+      });
+      this.notifyPeerEndpointsChanged(peerNodeId);
+    } else {
+      this.userStore.touchPeerLastSeenAt(peerNodeId, lastSeenAt);
+    }
     const head = isRecord(msg.key_log_head) ? msg.key_log_head : null;
     if (!head || !this.keyLogApplier) return;
     try {
@@ -1921,7 +1936,7 @@ export class PeerManager {
           this.dropPeer(live.peerNodeId, 'idle');
         }
       },
-      Math.min(this.idleMs, 1_000)
+      Math.max(1, this.idleMs)
     );
   }
 
@@ -2030,12 +2045,15 @@ export class PeerManager {
       timer: null,
       remoteAddress,
     };
-    parked.timer = this.scheduler.interval(() => {
-      if (this.parked.get(peerNodeId) !== parked) return;
-      if (this.scheduler.now() - parked.at >= PEER_RETIRE_MAX_MS) {
-        this.dropParked(peerNodeId, 'park-timeout');
-      }
-    }, 250);
+    parked.timer = this.scheduler.interval(
+      () => {
+        if (this.parked.get(peerNodeId) !== parked) return;
+        if (this.scheduler.now() - parked.at >= PEER_RETIRE_MAX_MS) {
+          this.dropParked(peerNodeId, 'park-timeout');
+        }
+      },
+      Math.max(1, PEER_RETIRE_MAX_MS - (this.scheduler.now() - parkedAt))
+    );
     void session.closed.then(() => {
       const cur = this.parked.get(peerNodeId);
       if (cur?.session === session) {
@@ -2110,11 +2128,29 @@ export class PeerManager {
     }
     set.add(prev);
     this.sendPeerCtl(prev, { t: 'link.quiesce' });
-    prev.retireTimer?.clear();
-    prev.retireTimer = this.scheduler.interval(() => {
-      this.maybeFinishRetire(prev, reason);
-    }, 250);
+    this.armRetireTimer(prev, reason);
     this.maybeFinishRetire(prev, reason);
+  }
+
+  private nextRetireDelayMs(live: LivePeer): number {
+    const now = this.scheduler.now();
+    let due = live.retiredAt + PEER_RETIRE_MAX_MS;
+    if (live.streams === 0 && live.zeroStreamsSince > 0) {
+      due = Math.min(
+        due,
+        Math.max(live.retiredAt + PEER_RETIRE_MIN_MS, live.zeroStreamsSince + PEER_RETIRE_QUIET_MS)
+      );
+    }
+    return Math.max(1, due - now);
+  }
+
+  private armRetireTimer(live: LivePeer, reason = 'replaced'): void {
+    live.retireTimer?.clear();
+    live.retireTimer = null;
+    if (!live.retiring || live.finishRetired) return;
+    live.retireTimer = this.scheduler.interval(() => {
+      this.maybeFinishRetire(live, reason);
+    }, this.nextRetireDelayMs(live));
   }
 
   private maybeFinishRetire(live: LivePeer, reason = 'replaced'): void {

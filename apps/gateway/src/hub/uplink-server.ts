@@ -425,6 +425,8 @@ export class UplinkServer {
   private readonly ctlQueues = new WeakMap<LinkSession, CtlQueueState>();
   private readonly rtcSessions = new Map<string, RtcSessionRegistration>();
   private listVersion = 0;
+  private readonly lastNodeListFp = new Map<string, Uint8Array>();
+  private readonly lastNodeListSent = new Map<string, Uint8Array>();
   private stopped = false;
   private readonly inflightCtl = new Set<Promise<void>>();
   private readonly keyLogReqLimiter: KeyLogReqLimiter;
@@ -549,16 +551,26 @@ export class UplinkServer {
     return true;
   }
 
-  async broadcastNodeList(userId: string): Promise<void> {
-    if (this.stopped) return;
+  async broadcastNodeList(userId: string): Promise<boolean> {
+    if (this.stopped) return false;
     try {
       const msg = await this.buildNodeList(userId);
-      if (this.stopped) return;
+      if (this.stopped) return false;
+      const fingerprint = encodeUplinkCtl({ ...msg, version: 0 });
+      const prev = this.lastNodeListFp.get(userId);
+      if (prev && bytesEqual(prev, fingerprint)) return false;
+      this.listVersion += 1;
+      msg.version = this.listVersion;
+      const bytes = encodeUplinkCtl(msg);
+      this.lastNodeListFp.set(userId, fingerprint);
+      this.lastNodeListSent.set(userId, bytes);
       for (const entry of this.registry.listForBroadcast(userId)) {
-        this.send(entry.link, msg);
+        this.sendBytes(entry.link, bytes);
       }
+      return true;
     } catch {
       // broadcast is best-effort after persist/ack
+      return false;
     }
   }
 
@@ -600,6 +612,8 @@ export class UplinkServer {
     this.accepted.clear();
     this.authTimers.clear();
     this.rtcSessions.clear();
+    this.lastNodeListFp.clear();
+    this.lastNodeListSent.clear();
     this.keyLogReqLimiter.clear();
     this.keyLogReqLogs.clear();
     this.authRejectLogs.clear();
@@ -642,8 +656,12 @@ export class UplinkServer {
   }
 
   private send(link: LinkSession, msg: UplinkCtlMessage): void {
+    this.sendBytes(link, encodeUplinkCtl(msg));
+  }
+
+  private sendBytes(link: LinkSession, bytes: Uint8Array): void {
     try {
-      link.ctl.send(encodeUplinkCtl(msg));
+      link.ctl.send(bytes);
     } catch {
       // a dead uplink must never throw out of persist/ack
     }
@@ -807,7 +825,10 @@ export class UplinkServer {
     this.live.set(link, live);
     this.startHeartbeat(live);
     this.send(link, { t: 'auth.ok' });
-    await this.broadcastNodeList(userId);
+    if (!(await this.broadcastNodeList(userId))) {
+      const cached = this.lastNodeListSent.get(userId);
+      if (cached) this.sendBytes(link, cached);
+    }
   }
 
   private async handleNodeStatus(
@@ -1277,7 +1298,7 @@ export class UplinkServer {
   }
 
   private async buildNodeList(userId: string): Promise<NodeListMessage> {
-    this.listVersion += 1;
+    const version = Math.max(1, this.listVersion);
     const head = await this.keyLogSource.head(userId);
     const online = new Map(
       this.registry.listForBroadcast(userId).map((n) => [n.nodeId, n] as const)
@@ -1307,7 +1328,7 @@ export class UplinkServer {
         nodeId: hubNodeId,
         publicUrl: this.config.publicUrl,
         now: this.now(),
-        listVersion: this.listVersion,
+        listVersion: version,
       });
       const existing = nodes.find((n) => n.id === hubNodeId);
       upsertById(
@@ -1328,7 +1349,7 @@ export class UplinkServer {
     }
     return {
       t: 'node.list',
-      version: this.listVersion,
+      version,
       key_log_head: { seq: seqToWire(head.seq), hash: bytesToB64url(head.hash) },
       rtc: { stun: this.config.stun, turn: this.config.turn ?? null },
       nodes,
