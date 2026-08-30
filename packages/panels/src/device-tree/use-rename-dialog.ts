@@ -31,7 +31,8 @@ export function useRenameDialog(): RenameDialogState {
       const windows = runtime.stores.tmux.getState().snapshots[deviceId]?.session?.windows;
       const target = windows?.find((w) => w.id === windowId);
       if (!target) return;
-      setValue(target.customName ?? buildWindowTitleParts(target).title);
+      // 用 rawTitle：展示用 title 会补 U+FE0E 强制文本呈现，不能回写进 tmux 窗口名
+      setValue(target.customName ?? buildWindowTitleParts(target).rawTitle);
       setCandidate({
         kind: 'window',
         deviceId,

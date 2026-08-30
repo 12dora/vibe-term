@@ -4,7 +4,10 @@
 
 import { useState } from 'react';
 import { WatchDialog } from '../watch/watch-dialog';
-import { DeferredTerminalSettingsSheet } from './deferred-terminal-settings-sheet';
+import {
+  DeferredTerminalSettingsSheet,
+  useTerminalSettingsPreload,
+} from './deferred-terminal-settings-sheet';
 import { DeviceConsoleToolbar } from './device-console-toolbar';
 import { RefreshConfirmDialog } from './refresh-confirm-dialog';
 import { useDeviceConsoleActions } from './use-device-console-actions';
@@ -20,6 +23,8 @@ export function DeviceConsoleActions({ deviceId, windowId, paneId }: DeviceConso
   const [showRefreshConfirm, setShowRefreshConfirm] = useState(false);
   const [showWatchDialog, setShowWatchDialog] = useState(false);
   const [showTerminalSettings, setShowTerminalSettings] = useState(false);
+  // 空闲预热终端设置 chunk：趁当前 index.html 还新鲜先拉下来，绕开发版后旧 chunk 404 的窗口
+  useTerminalSettingsPreload();
 
   return (
     <>

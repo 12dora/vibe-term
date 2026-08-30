@@ -4,7 +4,6 @@ import { fileURLToPath } from 'node:url';
 
 import type { StateSnapshotPayload, TmuxPane, TmuxWindow, WatchRuleDto } from '@tmex/shared';
 
-import { terminalSettingsFallbackView } from './deferred-terminal-settings-sheet';
 import {
   type ToolbarButton,
   type ToolbarButtonsInput,
@@ -209,27 +208,14 @@ function lookup(translation: Record<string, unknown>, key: string): unknown {
   }, translation);
 }
 
-describe('terminalSettingsFallbackView', () => {
-  test('renders the loading state through i18n keys', () => {
-    expect(terminalSettingsFallbackView(false)).toEqual({
-      role: 'status',
-      messageKey: 'settings.terminal.loading',
-      showRetry: false,
-    });
-  });
-
-  test('renders the failure state through i18n keys with a retry', () => {
-    expect(terminalSettingsFallbackView(true)).toEqual({
-      role: 'alert',
-      messageKey: 'settings.terminal.loadFailed',
-      showRetry: true,
-    });
-  });
-
+// 兜底条的视图模型在 deferred-terminal-settings-sheet.test.tsx 覆盖，这里只守 i18n key 落地
+describe('terminal settings fallback i18n keys', () => {
   test('every fallback key is translated in all locales', async () => {
     const keys = [
       'settings.terminal.loading',
       'settings.terminal.loadFailed',
+      'settings.terminal.loadFailedHint',
+      'settings.terminal.reloadApp',
       'common.retry',
       'common.close',
     ];
