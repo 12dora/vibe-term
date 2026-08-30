@@ -24,7 +24,7 @@ import type { GatewayRuntime } from '../runtime';
 import type { WebSocketServer } from '../ws';
 import { GatewaySession } from '../ws/gateway-session';
 import { createFakeCarrier } from '../ws/test-helpers';
-import { SessionRegistry, createMeshRuntime } from './mesh-runtime';
+import { SessionRegistry, createMeshRuntime, isAdvertisablePeerAddress } from './mesh-runtime';
 import {
   ImmediateScheduler,
   fakeSocketPair,
@@ -261,9 +261,14 @@ describe('createMeshRuntime', () => {
       order.push('uplink');
       await origUplink();
     };
+    const origRtc = mesh.rtc.close.bind(mesh.rtc);
+    mesh.rtc.close = () => {
+      order.push('rtc');
+      origRtc();
+    };
 
     await mesh.stop();
-    expect(order).toEqual(['peer', 'uplink']);
+    expect(order).toEqual(['peer', 'uplink', 'rtc']);
   });
 
   test('exposes gateway WS guard and inbound mesh handleRequest for peer via', async () => {
@@ -1122,5 +1127,68 @@ describe('SessionRegistry', () => {
     expect(dup).toEqual({ ok: false, code: 'DUPLICATE_CID' });
     if (!first.ok) throw new Error('expected ok');
     expect(registry.getByConnectionId(first.entry.connectionId)?.session).toBe(a);
+  });
+});
+
+describe('isAdvertisablePeerAddress', () => {
+  const ni = (address: string, family: string | number, internal = false) =>
+    ({
+      address,
+      netmask: family === 'IPv6' || family === 6 ? 'ffff:ffff:ffff:ffff::' : '255.255.255.0',
+      family,
+      mac: '',
+      internal,
+      cidr: null,
+      scopeid: 0,
+    }) as Parameters<typeof isAdvertisablePeerAddress>[0];
+
+  test('pins current accept and reject cases', () => {
+    const accept: Array<[string, string | number]> = [
+      ['10.0.0.12', 'IPv4'],
+      ['192.0.2.10', 4],
+      ['192.168.1.1', 'IPv4'],
+      ['223.255.255.255', 'IPv4'],
+      ['240.0.0.1', 'IPv4'],
+      ['255.255.255.255', 'IPv4'],
+      ['2001:db8::8', 'IPv6'],
+      ['2001:db8::8', 6],
+      ['2600::1', 'IPv6'],
+      ['fe7f::1', 'IPv6'],
+      ['fec0::1', 'IPv6'],
+      ['::2', 'IPv6'],
+    ];
+    const reject: Array<[string, string | number, boolean?]> = [
+      ['10.0.0.12', 'IPv4', true],
+      ['127.0.0.1', 'IPv4'],
+      ['127.1.2.3', 'IPv4'],
+      ['169.254.10.20', 'IPv4'],
+      ['0.0.0.0', 'IPv4'],
+      ['224.0.0.1', 'IPv4'],
+      ['239.255.255.255', 'IPv4'],
+      ['256.0.0.1', 'IPv4'],
+      ['10.0.0', 'IPv4'],
+      ['1.2.3.4.5', 'IPv4'],
+      ['not-an-ip', 'IPv4'],
+      ['2001:db8::8', 'IPX'],
+      ['fe80::1', 'IPv6'],
+      ['fe80::1%en0', 'IPv6'],
+      ['febf::1', 'IPv6'],
+      ['ff02::1', 'IPv6'],
+      ['ff00::1', 'IPv6'],
+      ['::', 'IPv6'],
+      ['::1', 'IPv6'],
+      ['::1', 6],
+      [':::1', 'IPv6'],
+      ['2001:db8::1.2.3.4', 'IPv6'],
+    ];
+    for (const [address, family] of accept) {
+      expect(isAdvertisablePeerAddress(ni(address, family)), `${family} ${address}`).toBe(true);
+    }
+    for (const [address, family, internal] of reject) {
+      expect(
+        isAdvertisablePeerAddress(ni(address, family, Boolean(internal))),
+        `${family} ${address}${internal ? ' internal' : ''}`
+      ).toBe(false);
+    }
   });
 });
