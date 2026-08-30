@@ -34,7 +34,7 @@ import {
   signLogin,
 } from '@tmex/shared/auth';
 
-export type SessionKeyMethod = 'root' | 'passkey';
+type SessionKeyMethod = 'root' | 'passkey';
 
 /** 对外可见的会话钥元数据（不含任何私钥字节）。 */
 export interface SessionKeyInfo {
@@ -69,7 +69,7 @@ export type LoginFailureCode =
   | 'NODE_LIST_FAILED'
   | (string & {});
 
-export type LoginNodeResult = { ok: true } | { ok: false; code: LoginFailureCode };
+type LoginNodeResult = { ok: true } | { ok: false; code: LoginFailureCode };
 
 // ---------------------------------------------------------------------------
 // 状态
@@ -137,7 +137,7 @@ export function setTotpCode(code: string): void {
 // 建立会话钥
 // ---------------------------------------------------------------------------
 
-export interface EstablishFromSeedOptions {
+interface EstablishFromSeedOptions {
   uid: string;
   entryNodeId: string;
   rootEpoch: number;
@@ -187,7 +187,7 @@ export function establishSessionFromSeed(
   return current.info;
 }
 
-export interface EstablishFromPasswordOptions extends EstablishFromSeedOptions {
+interface EstablishFromPasswordOptions extends EstablishFromSeedOptions {
   password: string;
   kdfParams: { salt: string; memory_kib: number; iterations: number; parallelism: number };
 }
@@ -204,7 +204,7 @@ export async function establishSessionFromPassword(
   return establishSessionFromSeed(seed, opts);
 }
 
-export interface EstablishFromPasskeyOptions {
+interface EstablishFromPasskeyOptions {
   uid: string;
   entryNodeId: string;
   /** 指定用哪一把；不给则按当前 origin / RP 过滤后再选。 */
@@ -219,7 +219,7 @@ export interface EstablishFromPasskeyOptions {
   generateSessionKeyPair?: () => { publicKey: Uint8Array; secretKey: Uint8Array };
 }
 
-export class PasskeyCredentialUnknownError extends Error {
+class PasskeyCredentialUnknownError extends Error {
   readonly code = 'PASSKEY_CREDENTIAL_UNKNOWN';
   constructor() {
     super('no passkey credential available for this entry');
@@ -239,7 +239,7 @@ function currentOrigin(override?: string): string {
  * - `browser`：**不由前端挑**，把这份列表原样交给 WebAuthn，让浏览器 / 认证器选；
  * - `none`：当前 origin 一把可用的都没有。
  */
-export type PasskeySelection =
+type PasskeySelection =
   | { kind: 'bind'; credentialId: string }
   | { kind: 'browser'; allowCredentials: PublicKeyCredentialDescriptorJSON[] }
   | { kind: 'none' };
@@ -396,7 +396,7 @@ export async function establishSessionFromPasskey(
 // 登录
 // ---------------------------------------------------------------------------
 
-export interface LoginToNodeOptions {
+interface LoginToNodeOptions {
   api?: AuthApi;
   /** 已知的 node 行（避免 fan-out 时每个 node 各拉一次列表）。 */
   node?: MeshNode;
@@ -422,38 +422,32 @@ export async function loginToNode(
   const session = getSessionKey();
   if (!current || !session) return { ok: false, code: 'NO_SESSION_KEY' };
   const api = opts.api ?? defaultAuthApi;
-  const bootstrap = opts.selfBootstrap === true && nodeId === SELF_NODE_ID;
 
   let node = opts.node;
-  if (!node && !bootstrap) {
-    try {
-      node = (await api.listNodes()).find((item) => item.id === nodeId);
-    } catch {
-      return { ok: false, code: 'NETWORK_ERROR' };
-    }
-  }
-  if (!node && !bootstrap) return { ok: false, code: 'UNKNOWN_NODE' };
-
-  const needsTotp = session.method === 'root' && session.hasTotp;
-  if (needsTotp && !(current.kTotp && current.totpCode)) {
-    return { ok: false, code: 'TOTP_REQUIRED' };
+  if (!node && !(opts.selfBootstrap && nodeId === SELF_NODE_ID)) {
+    const nodes = await api.listNodes().catch(() => null);
+    if (!nodes) return { ok: false, code: 'NETWORK_ERROR' };
+    node = nodes.find((item) => item.id === nodeId);
+    if (!node) return { ok: false, code: 'UNKNOWN_NODE' };
   }
 
-  let challenge: Awaited<ReturnType<AuthApi['challenge']>>;
-  try {
-    challenge = await api.challenge(nodeId, session.uid);
-  } catch {
-    return { ok: false, code: 'NETWORK_ERROR' };
-  }
+  // 需要 TOTP 但码不在内存里 → null（回 TOTP_REQUIRED，一个请求都不发）；不需要 TOTP → undefined。
+  const totp =
+    session.method === 'root' && session.hasTotp
+      ? current.kTotp && current.totpCode
+        ? { code: current.totpCode, k_totp: encodeBase64url(current.kTotp) }
+        : null
+      : undefined;
+  if (totp === null) return { ok: false, code: 'TOTP_REQUIRED' };
+
+  const challenge = await api.challenge(nodeId, session.uid).catch(() => null);
+  if (!challenge) return { ok: false, code: 'NETWORK_ERROR' };
 
   const targetPk = decodeBase64url(challenge.nodePk);
-  if (node) {
-    if (!bytesEqual(targetPk, decodeBase64url(node.publicKey))) {
-      return { ok: false, code: 'NODE_PK_MISMATCH' };
-    }
-  } else {
-    selfChallengePk = targetPk;
+  if (node && !bytesEqual(targetPk, decodeBase64url(node.publicKey))) {
+    return { ok: false, code: 'NODE_PK_MISMATCH' };
   }
+  if (!node) selfChallengePk = targetPk;
 
   const login = buildLogin({
     challengeId: challenge.challenge_id,
@@ -463,29 +457,24 @@ export async function loginToNode(
     uid: session.uid,
     entry: session.entryNodeId,
   });
-  const sig = signLogin(current.sessSk, login);
-
-  try {
-    const result = await api.login(nodeId, {
+  const result = await api
+    .login(nodeId, {
       login: encodeBase64url(encodeLogin(login)),
-      sig: encodeBase64url(sig),
+      sig: encodeBase64url(signLogin(current.sessSk, login)),
       delegation: encodeBase64url(current.delegationBytes),
       delegation_sig: encodeBase64url(current.delegationSig),
-      ...(needsTotp && current.kTotp && current.totpCode
-        ? { totp: { code: current.totpCode, k_totp: encodeBase64url(current.kTotp) } }
-        : {}),
-    });
-    return result.ok ? { ok: true } : { ok: false, code: result.code };
-  } catch {
-    return { ok: false, code: 'NETWORK_ERROR' };
-  }
+      ...(totp ? { totp } : {}),
+    })
+    .catch(() => null);
+  if (!result) return { ok: false, code: 'NETWORK_ERROR' };
+  return result.ok ? { ok: true } : { ok: false, code: result.code };
 }
 
 // ---------------------------------------------------------------------------
 // entry 自身登录 + 按需的单 node 登录
 // ---------------------------------------------------------------------------
 
-export interface LoginSelfOptions {
+interface LoginSelfOptions {
   api?: AuthApi;
 }
 
@@ -506,36 +495,25 @@ export async function loginSelf(opts: LoginSelfOptions = {}): Promise<LoginNodeR
     return selfResult;
   }
 
-  let nodes: MeshNode[];
-  try {
-    nodes = await api.listNodes();
-  } catch {
-    clearTotpCode();
-    return { ok: false, code: 'NODE_LIST_FAILED' };
-  }
-
-  const entryNodeId = current?.info.entryNodeId ?? null;
-  const selfRow = entryNodeId ? nodes.find((node) => node.id === entryNodeId) : undefined;
-  if (
-    selfRow &&
-    selfChallengePk &&
-    !bytesEqual(selfChallengePk, decodeBase64url(selfRow.publicKey))
-  ) {
-    selfChallengePk = null;
-    clearSessionKey();
-    clearTotpCode();
-    return { ok: false, code: 'NODE_PK_MISMATCH' };
-  }
-  selfChallengePk = null;
-
+  const nodes = await api.listNodes().catch(() => null);
   // 一次性 TOTP 码用完即弃：它只在 ±30s 内有效，留着也救不了后面的懒登录，
   // 而 k_totp（服务端 TOTP 密文的解密钥）保留在内存里，用户下次输入新码时直接可用。
   clearTotpCode();
+  if (!nodes) return { ok: false, code: 'NODE_LIST_FAILED' };
+
+  const selfRow = nodes.find((node) => node.id === current?.info.entryNodeId);
+  const pinnedPk = selfChallengePk;
+  selfChallengePk = null;
+  if (selfRow && pinnedPk && !bytesEqual(pinnedPk, decodeBase64url(selfRow.publicKey))) {
+    clearSessionKey();
+    return { ok: false, code: 'NODE_PK_MISMATCH' };
+  }
+
   markLoggedIn(SELF_NODE_ID);
   return { ok: true };
 }
 
-export interface EnsureNodeLoginOptions {
+interface EnsureNodeLoginOptions {
   api?: AuthApi;
   /** 已知的 node 行，省掉 `loginToNode` 内部再拉一次 `/api/mesh/nodes`。 */
   node?: MeshNode;
@@ -577,19 +555,4 @@ export function ensureNodeLogin(
 /** 仅测试使用：丢弃在途的单 node 登录，避免用例之间互相串。 */
 export function resetNodeLoginsForTest(): void {
   nodeLoginsInFlight.clear();
-}
-
-/** 全部登出：对每台 node fan-out `POST /n/:T/api/auth/logout`，随后丢弃会话钥。 */
-export async function logoutEverywhere(opts: { api?: AuthApi } = {}): Promise<void> {
-  const api = opts.api ?? defaultAuthApi;
-  let nodes: MeshNode[] = [];
-  try {
-    nodes = await api.listNodes();
-  } catch {
-    nodes = [];
-  }
-  await Promise.all(
-    nodes.filter((node) => node.loggedIn).map((node) => api.logout(node.id).catch(() => undefined))
-  );
-  clearSessionKey();
 }

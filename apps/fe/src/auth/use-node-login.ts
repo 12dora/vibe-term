@@ -5,7 +5,6 @@
 // 「登录此节点」按钮 → `/login?node=`。
 
 import {
-  type MeshNodesState,
   ensureAuthMode,
   getMeshNodesState,
   refreshMeshNodes,
@@ -16,7 +15,7 @@ import type { MeshNode } from '@tmex/api-client/auth/index';
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import { type LoginFailureCode, ensureNodeLogin } from './session-key-store';
 
-export type NodeLoginGateStatus =
+type NodeLoginGateStatus =
   /** 可以直接渲染该 node 的内容：本机、standalone、已登录，或确定判断不了。 */
   | 'ready'
   /** 正在确认状态或正在静默登录。 */
@@ -32,13 +31,38 @@ export interface NodeLoginGate {
   retry: () => void;
 }
 
-export interface UseNodeLoginGateOptions {
+interface UseNodeLoginGateOptions {
   /** false 时门闸恒为 `ready` 且不发任何请求（侧边栏折叠态）。 */
   enabled?: boolean;
 }
 
-function selectState(): MeshNodesState {
-  return getMeshNodesState();
+/**
+ * 静默登录：`needsLogin` 起来就登一次，失败后停下等 `retry()`。
+ * 失败记录带上 nodeId：切到另一台 node 时旧的失败自动不再匹配，不必额外重置。
+ */
+function useSilentLogin(
+  nodeId: string,
+  row: MeshNode | null,
+  needsLogin: boolean
+): { code: LoginFailureCode | null; retry: () => void } {
+  const [failure, setFailure] = useState<{ nodeId: string; code: LoginFailureCode } | null>(null);
+  const rowRef = useRef<MeshNode | null>(row);
+  rowRef.current = row;
+  const code = failure?.nodeId === nodeId ? failure.code : null;
+
+  useEffect(() => {
+    if (!needsLogin || code !== null) return;
+    let cancelled = false;
+    void ensureNodeLogin(nodeId, { node: rowRef.current ?? undefined }).then((result) => {
+      if (!cancelled && !result.ok) setFailure({ nodeId, code: result.code });
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [needsLogin, code, nodeId]);
+
+  // 清掉失败记录即重新触发上面的静默登录。
+  return { code, retry: useCallback(() => setFailure(null), []) };
 }
 
 /**
@@ -53,61 +77,31 @@ export function useNodeLoginGate(
   runtimeNodeId: string,
   options: UseNodeLoginGateOptions = {}
 ): NodeLoginGate {
-  const enabled = options.enabled ?? true;
-  const snapshot = useSyncExternalStore(subscribeMeshNodes, selectState, selectState);
-  // 失败记录带上 nodeId：切到另一台 node 时旧的失败自动不再匹配，不必额外重置。
-  const [failure, setFailure] = useState<{ nodeId: string; code: LoginFailureCode } | null>(null);
-
-  const meshEnabled = snapshot.mode?.mode === 'mesh';
-  const isSelf =
-    runtimeNodeId === SELF_NODE_ID ||
-    (snapshot.entryNodeId != null && runtimeNodeId === snapshot.entryNodeId);
-  const active = enabled && !isSelf;
-
-  const row: MeshNode | null =
-    active && meshEnabled
-      ? (snapshot.nodes.find((node) => node.id === runtimeNodeId) ?? null)
-      : null;
-  const rowRef = useRef<MeshNode | null>(row);
-  rowRef.current = row;
-
+  const snapshot = useSyncExternalStore(subscribeMeshNodes, getMeshNodesState, getMeshNodesState);
+  const active =
+    (options.enabled ?? true) &&
+    runtimeNodeId !== SELF_NODE_ID &&
+    runtimeNodeId !== snapshot.entryNodeId;
+  const meshEnabled = active && snapshot.mode?.mode === 'mesh';
+  const row = meshEnabled
+    ? (snapshot.nodes.find((node) => node.id === runtimeNodeId) ?? null)
+    : null;
   const modeUnknown = active && !snapshot.modeLoaded;
-  const listUnknown =
-    active && meshEnabled && snapshot.loadedAt === null && snapshot.error === null;
+  const listUnknown = meshEnabled && snapshot.loadedAt === null && snapshot.error === null;
 
   useEffect(() => {
-    if (!active) return;
-    void ensureAuthMode();
+    if (active) void ensureAuthMode();
   }, [active]);
   useEffect(() => {
-    if (!listUnknown) return;
-    void refreshMeshNodes();
+    if (listUnknown) void refreshMeshNodes();
   }, [listUnknown]);
 
   const needsLogin = row?.online === true && !row.loggedIn;
-  const failedHere = failure?.nodeId === runtimeNodeId ? failure : null;
-
-  useEffect(() => {
-    if (!needsLogin || failedHere) return;
-    let cancelled = false;
-    void ensureNodeLogin(runtimeNodeId, { node: rowRef.current ?? undefined }).then((result) => {
-      if (cancelled || result.ok) return;
-      setFailure({ nodeId: runtimeNodeId, code: result.code });
-    });
-    return () => {
-      cancelled = true;
-    };
-  }, [needsLogin, failedHere, runtimeNodeId]);
-
-  // 清掉失败记录即重新触发上面的静默登录。
-  const retry = useCallback(() => setFailure(null), []);
+  const { code, retry } = useSilentLogin(runtimeNodeId, row, needsLogin);
 
   let status: NodeLoginGateStatus = 'ready';
-  if (modeUnknown || listUnknown) {
-    status = 'pending';
-  } else if (needsLogin) {
-    status = failedHere ? 'blocked' : 'pending';
-  }
+  if (modeUnknown || listUnknown) status = 'pending';
+  else if (needsLogin) status = code === null ? 'pending' : 'blocked';
 
-  return { status, code: failedHere?.code ?? null, retry };
+  return { status, code, retry };
 }

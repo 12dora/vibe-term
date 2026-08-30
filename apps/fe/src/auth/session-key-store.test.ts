@@ -63,11 +63,14 @@ function mockApi(options: {
   meshListStatus?: number;
   /** entry 自身在 mesh 列表里的公钥（默认与 challenge 返回的一致）。 */
   entryPkInList?: Uint8Array;
+  /** 让匹配的请求直接网络失败。 */
+  offline?: (url: string) => boolean;
 }): { api: AuthApi; captured: Captured } {
   const nodes = options.nodes ?? [{ id: NODE_A, publicKey: NODE_A_PK }];
   const captured: Captured = { loginCalls: [], challengeCalls: [], meshListCalls: 0 };
 
   const client = new ApiClient('', (url, init) => {
+    if (options.offline?.(url)) return Promise.reject(new Error('offline'));
     if (url === '/api/mesh/nodes') {
       captured.meshListCalls += 1;
       if (options.meshListStatus && options.meshListStatus !== 200) {
@@ -230,6 +233,18 @@ describe('loginToNode', () => {
     establishRoot();
     const { api } = mockApi({});
     expect(await loginToNode(NODE_UNKNOWN, { api })).toEqual({ ok: false, code: 'UNKNOWN_NODE' });
+  });
+
+  test('列表 / challenge / login 任一网络失败都映射成 NETWORK_ERROR', async () => {
+    establishRoot();
+    const offline = { ok: false, code: 'NETWORK_ERROR' };
+    for (const match of [
+      (url: string) => url === '/api/mesh/nodes',
+      (url: string) => url.endsWith('/challenge'),
+      (url: string) => url.endsWith('/login'),
+    ]) {
+      expect(await loginToNode(NODE_A, { api: mockApi({ offline: match }).api })).toEqual(offline);
+    }
   });
 
   test('后端返回的 code 原样透出', async () => {
