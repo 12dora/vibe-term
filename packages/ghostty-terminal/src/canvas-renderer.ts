@@ -82,6 +82,10 @@ function sameSelectionRects(
   return true;
 }
 
+function toDeviceCell(size: number, dpr: number): number {
+  return Math.max(1, Math.round(size * dpr));
+}
+
 function colorToCss(color: GhosttyColorRgb): string {
   return `rgb(${color.r} ${color.g} ${color.b})`;
 }
@@ -199,6 +203,8 @@ export class CanvasRenderer {
   private readonly colorCache = new Map<number, string>();
   // 四种字形变体（regular / italic / bold / bold-italic），随 deviceFontSize 在 resize 内失效。
   private fontVariants: (string | null)[] = [null, null, null, null];
+  // 上一帧的完整输入：拖拽期间 dpr/cell 变化时用它整帧重画（见 drawSelectionOnly）。
+  private lastFrame: CanvasRendererFrame | null = null;
   private drawnSelectionRects: GhosttySelectionRect[] = [];
   private drawnSelectionColor = '';
   private cursorBlinkVisible = true;
@@ -244,6 +250,7 @@ export class CanvasRenderer {
   }
 
   render(frame: CanvasRendererFrame): void {
+    this.lastFrame = frame;
     this.frameCount += 1;
     this.lastDrawnRows = [];
     this.cellDimensions = frame.cellDimensions;
@@ -317,6 +324,7 @@ export class CanvasRenderer {
     this.lastCursor = null;
     this.lastCursorRect = null;
     this.drawnSelectionRects = [];
+    this.lastFrame = null;
     this.stopCursorBlink();
   }
 
@@ -345,8 +353,8 @@ export class CanvasRenderer {
     const nextCols = Math.max(1, cols);
     const nextRows = Math.max(1, rows);
     const dpr = Math.max(1, globalThis.devicePixelRatio ?? 1);
-    const deviceCellWidth = Math.max(1, Math.round(this.cellDimensions.width * dpr));
-    const deviceCellHeight = Math.max(1, Math.round(this.cellDimensions.height * dpr));
+    const deviceCellWidth = toDeviceCell(this.cellDimensions.width, dpr);
+    const deviceCellHeight = toDeviceCell(this.cellDimensions.height, dpr);
 
     if (
       this.cols === nextCols &&
@@ -452,8 +460,27 @@ export class CanvasRenderer {
   }
 
   // 只重画选区层：拖拽期间的唯一变化就是选区矩形，主画布/光标层一个像素都不用碰。
+  // 例外：拖拽期间 dpr / cell 尺寸可能已变（浏览器缩放、换屏），而网格未变时不会有新帧
+  // 进来，此时位图尺寸整体过期，只补选区层会按旧网格落笔——退回用上一帧数据整帧重画。
   drawSelectionOnly(rects: GhosttySelectionRect[], color: string): void {
+    const frame = this.lastFrame;
+    if (frame && this.layoutStale()) {
+      this.render({ ...frame, selectionRects: rects, selectionColor: color, forceFull: true });
+      return;
+    }
+
     this.drawSelection(rects, color, false);
+  }
+
+  private layoutStale(): boolean {
+    const dpr = Math.max(1, globalThis.devicePixelRatio ?? 1);
+    return (
+      this.dpr !== dpr ||
+      this.deviceCellWidth !== toDeviceCell(this.cellDimensions.width, dpr) ||
+      this.deviceCellHeight !== toDeviceCell(this.cellDimensions.height, dpr) ||
+      this.mainCanvas.width !== this.cols * this.deviceCellWidth ||
+      this.mainCanvas.height !== this.rows * this.deviceCellHeight
+    );
   }
 
   // 选区层与主画布的按行重绘互不相干：只在选区矩形集、选区色或画布尺寸变化时重画，

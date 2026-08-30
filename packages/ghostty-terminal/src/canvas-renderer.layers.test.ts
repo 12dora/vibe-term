@@ -265,6 +265,35 @@ describe('选区层只在选区状态变化时重画', () => {
     renderFrame(renderer, { selectionRects: [{ row: 0, x: 0, width: 1 }] });
     expect(drain(selectionCanvas).some((op) => op.type === 'fillRect')).toBeTrue();
   });
+
+  // 浏览器缩放 / 换屏后 dpr 变了但网格未变：拖拽期间不会有新帧进来，选区快路径必须
+  // 退回整帧重画并重建位图，否则一直按旧尺寸落笔。
+  test('dpr 变化后 drawSelectionOnly 退回整帧重画并按新尺寸落笔', () => {
+    const { renderer, mainCanvas, selectionCanvas } = setup();
+    const rects = [{ row: 1, x: 1, width: 2 }];
+    renderFrame(renderer, { selectionRects: rects });
+    drain(selectionCanvas);
+    expect(mainCanvas.width).toBe(40);
+    expect(mainCanvas.height).toBe(80);
+
+    (globalThis as { devicePixelRatio?: number }).devicePixelRatio = 2;
+    const frames = renderer.getDebugState().frameCount;
+    renderer.drawSelectionOnly(rects, THEME.selectionBackground);
+
+    expect(renderer.getDebugState().frameCount).toBe(frames + 1);
+    expect(mainCanvas.width).toBe(80);
+    expect(mainCanvas.height).toBe(160);
+    expect(drain(selectionCanvas).filter((op) => op.type === 'fillRect')).toEqual([
+      {
+        type: 'fillRect',
+        x: 20,
+        y: 40,
+        width: 40,
+        height: 40,
+        fillStyle: THEME.selectionBackground,
+      },
+    ]);
+  });
 });
 
 describe('光标层只在光标状态变化时重画', () => {
