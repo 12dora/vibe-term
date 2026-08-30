@@ -15,6 +15,8 @@ export interface DeviceCardHostProps {
   nodeContext: DeviceNodeContext;
   connection?: DeviceConnectionAdapter;
   offline?: boolean;
+  /** 该设备是否配过文件根目录；由列表统一查一次文件根后下发 */
+  hasRoots?: boolean;
   dragHandle?: ReactNode;
   style?: CSSProperties;
   className?: string;
@@ -38,6 +40,7 @@ export function DeviceCardHost({
   nodeContext,
   connection,
   offline,
+  hasRoots,
   dragHandle,
   style,
   className,
@@ -58,6 +61,7 @@ export function DeviceCardHost({
         nodeContext={nodeContext}
         connection={connection}
         offline={offline}
+        hasRoots={hasRoots}
         dragHandle={dragHandle}
         style={style}
         className={className}

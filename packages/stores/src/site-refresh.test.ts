@@ -162,3 +162,75 @@ describe('useSiteStore refreshSettings 并发', () => {
     expect(useSiteStore.getState().loading).toBe(false);
   });
 });
+
+// 侧栏引导与设置页表单会同时要站点设置：在途的那次 GET 共享给所有等待方，
+// 但保存 / 失效信号之后的重拉必须另起一次（搭车会拿回变更之前的数据）。
+describe('useSiteStore 站点设置取数的共享', () => {
+  beforeEach(() => {
+    originalFetch = globalThis.fetch;
+    installDeferredFetch();
+    installDocumentStub();
+    useSiteStore.setState({ settings: null, loading: false });
+    useUIStore.setState({ theme: 'dark' });
+  });
+
+  afterEach(() => {
+    globalThis.fetch = originalFetch;
+    restoreDocument?.();
+    restoreDocument = null;
+  });
+
+  test('并发的 fetchSettings 只发一次请求', async () => {
+    const first = useSiteStore.getState().fetchSettings();
+    const second = useSiteStore.getState().fetchSettings();
+    expect(pending).toHaveLength(1);
+
+    pending[0]?.(makeSiteSettings({ siteName: 'shared' }));
+    await expect(first).resolves.toMatchObject({ siteName: 'shared' });
+    await expect(second).resolves.toMatchObject({ siteName: 'shared' });
+    expect(useSiteStore.getState().settings?.siteName).toBe('shared');
+  });
+
+  test('ensureFreshSettings 搭在途请求的车：引导与设置表单只出一次 GET', async () => {
+    const boot = useSiteStore.getState().fetchSettings();
+    const form = useSiteStore.getState().ensureFreshSettings();
+    expect(pending).toHaveLength(1);
+
+    pending[0]?.(makeSiteSettings({ siteName: 'shared' }));
+    await expect(form).resolves.toMatchObject({ siteName: 'shared' });
+    await boot;
+  });
+
+  test('ensureFreshSettings 不吃缓存：已有设置也照样重拉', async () => {
+    useSiteStore.setState({ settings: makeSiteSettings({ siteName: 'cached' }) });
+
+    const fresh = useSiteStore.getState().ensureFreshSettings();
+    expect(pending).toHaveLength(1);
+    pending[0]?.(makeSiteSettings({ siteName: 'fresh' }));
+    await expect(fresh).resolves.toMatchObject({ siteName: 'fresh' });
+    expect(useSiteStore.getState().settings?.siteName).toBe('fresh');
+  });
+
+  test('refreshSettings 不搭在途请求的车：保存后必须拿到变更之后的数据', async () => {
+    const boot = useSiteStore.getState().fetchSettings();
+    const afterSave = useSiteStore.getState().refreshSettings();
+    expect(pending).toHaveLength(2);
+
+    pending[0]?.(makeSiteSettings({ siteName: 'before-save' }));
+    pending[1]?.(makeSiteSettings({ siteName: 'after-save' }));
+    await expect(afterSave).resolves.toMatchObject({ siteName: 'after-save' });
+    await boot;
+    expect(useSiteStore.getState().settings?.siteName).toBe('after-save');
+  });
+
+  test('在途请求结束后不再被复用', async () => {
+    const first = useSiteStore.getState().ensureFreshSettings();
+    pending[0]?.(makeSiteSettings({ siteName: 'first' }));
+    await first;
+
+    const second = useSiteStore.getState().ensureFreshSettings();
+    expect(pending).toHaveLength(2);
+    pending[1]?.(makeSiteSettings({ siteName: 'second' }));
+    await expect(second).resolves.toMatchObject({ siteName: 'second' });
+  });
+});

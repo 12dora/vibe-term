@@ -5,6 +5,7 @@ import { buildSiteThemeUpdate } from '@tmex/ws-client';
 import i18next from 'i18next';
 import { create } from 'zustand';
 import type { RuntimeCore } from './runtime';
+import { createSiteSettingsLoader } from './site-settings-loader';
 import type { UIStore } from './ui';
 
 export interface SiteState {
@@ -12,7 +13,11 @@ export interface SiteState {
   loading: boolean;
   /** 服务端能力集（GET /api/capabilities）；消费方按 featureset 决定渲染，默认空集 */
   capabilities: FeatureSet;
+  /** 引导用：已有缓存直接返回，否则复用在途请求或发起一次 */
   fetchSettings: () => Promise<SiteSettings>;
+  /** 不吃缓存但可复用在途请求：设置表单挂载时要新鲜数据，又不必和引导请求各发一次 */
+  ensureFreshSettings: () => Promise<SiteSettings>;
+  /** 一定新发一次请求：保存成功或收到 S2C 失效信号后，必须拿到变更之后的数据 */
   refreshSettings: () => Promise<SiteSettings>;
   loadCapabilities: () => Promise<void>;
   updateTheme: (theme: ThemeMode) => void;
@@ -77,25 +82,6 @@ export function createSiteStore(
     }
   }
 
-  // S2C 失效信号可能连着来，多个 REST 重拉会并发在途；只允许最新一次提交，
-  // 否则慢的旧响应后到就会把新设置（含 theme/language）盖回旧值
-  let settingsGeneration = 0;
-
-  function beginSettingsRequest(): number {
-    settingsGeneration += 1;
-    return settingsGeneration;
-  }
-
-  function isLatestSettingsRequest(generation: number): boolean {
-    return generation === settingsGeneration;
-  }
-
-  // 本地主题变更（切外观 / 选预设）立刻成为最新事实：在途 settings 响应回来时已是旧数据，
-  // 直接作废，否则它会把刚选的外观写回去并连带清掉预设。
-  function invalidateSettingsRequests(): void {
-    settingsGeneration += 1;
-  }
-
   function writeThemeToLocalStorage(theme: ThemeMode): void {
     // 与 syncThemeToUIStore 同理：离线 fallback 是浏览器级的（决定首屏亮/暗），
     // 远端 node 的外观不得写进去。
@@ -125,55 +111,24 @@ export function createSiteStore(
       syncThemeToUIStore(settings.theme);
     }
 
+    const loader = createSiteSettingsLoader({
+      request: () => fetchSiteSettings(core.apiClient),
+      current: () => get().settings,
+      setLoading: (loading) => set({ loading }),
+      commit: commitSettings,
+      fallback: DEFAULT_SETTINGS,
+    });
+
     return {
       settings: null,
       loading: false,
       capabilities: FeatureSet.empty(),
 
-      fetchSettings: async () => {
-        const existing = get().settings;
-        if (existing) {
-          return existing;
-        }
+      fetchSettings: loader.fetchSettings,
 
-        const generation = beginSettingsRequest();
-        set({ loading: true });
-        try {
-          const settings = await fetchSiteSettings(core.apiClient);
-          if (!isLatestSettingsRequest(generation)) {
-            return get().settings ?? settings;
-          }
-          commitSettings(settings);
-          return settings;
-        } catch (err) {
-          console.error('[site] failed to fetch settings:', err);
-          if (!isLatestSettingsRequest(generation)) {
-            return get().settings ?? DEFAULT_SETTINGS;
-          }
-          commitSettings(DEFAULT_SETTINGS);
-          return DEFAULT_SETTINGS;
-        }
-      },
+      ensureFreshSettings: loader.ensureFreshSettings,
 
-      refreshSettings: async () => {
-        const generation = beginSettingsRequest();
-        set({ loading: true });
-        try {
-          const settings = await fetchSiteSettings(core.apiClient);
-          // 已有更新的重拉在途/已提交：这次响应是旧数据，只返回不落库
-          if (!isLatestSettingsRequest(generation)) {
-            return get().settings ?? settings;
-          }
-          commitSettings(settings);
-          return settings;
-        } catch (err) {
-          console.error('[site] failed to refresh settings:', err);
-          if (isLatestSettingsRequest(generation)) {
-            set({ loading: false });
-          }
-          throw err;
-        }
-      },
+      refreshSettings: loader.refreshSettings,
 
       loadCapabilities: async () => {
         try {
@@ -185,7 +140,9 @@ export function createSiteStore(
       },
 
       updateTheme: (theme) => {
-        invalidateSettingsRequests();
+        // 本地主题变更（切外观 / 选预设）立刻成为最新事实：在途 settings 响应回来时已是旧数据，
+        // 直接作废，否则它会把刚选的外观写回去并连带清掉预设。
+        loader.invalidate();
         const current = get().settings;
         const nextSettings: SiteSettings = current
           ? { ...current, theme }

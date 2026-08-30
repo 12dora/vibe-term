@@ -4,7 +4,7 @@
 import { describe, expect, test } from 'bun:test';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { devicesQueryKey } from '@tmex/api-client';
-import type { Device } from '@tmex/shared';
+import type { Device, FileRootDto } from '@tmex/shared';
 import { I18N_RESOURCES } from '@tmex/shared';
 import { createAppRuntime } from '@tmex/stores';
 import { RuntimeProvider } from '@tmex/stores/react';
@@ -37,11 +37,25 @@ const DEVICE: Device = {
 };
 const OTHER_DEVICE: Device = { ...DEVICE, id: 'dev-2', name: '客厅', sortOrder: 0 };
 
+const DEVICE_ROOT: FileRootDto = {
+  id: 'root-1',
+  deviceId: DEVICE.id,
+  deviceName: DEVICE.name,
+  deviceType: 'local',
+  path: '/srv/data',
+  name: 'data',
+  enabled: true,
+  sortOrder: 0,
+};
+
 let storageSeq = 0;
 
-function renderPanel(options: { devices?: Device[]; offline?: boolean } = {}): string {
+function renderPanel(
+  options: { devices?: Device[]; offline?: boolean; roots?: FileRootDto[] } = {}
+): string {
   const queryClient = new QueryClient();
   if (options.devices) queryClient.setQueryData(devicesQueryKey, { devices: options.devices });
+  if (options.roots) queryClient.setQueryData(['files', 'roots'], { roots: options.roots });
   const runtime = createAppRuntime({
     nodeId: 'self',
     storagePrefix: `device-panel-test-${storageSeq++}:`,
@@ -96,5 +110,34 @@ describe('DeviceManagementPanel 的渲染分支', () => {
     expect(html).toContain('data-testid="devices-offline-hint"');
     expect(html).toContain('data-testid="devices-grid"');
     expect(html).not.toContain('data-testid="device-card-handle-dev-1"');
+  });
+});
+
+/** 含指定 testid 的那个标签 */
+function tagOf(html: string, testId: string): string | null {
+  const marker = `data-testid="${testId}"`;
+  const index = html.indexOf(marker);
+  if (index === -1) return null;
+  return html.slice(html.lastIndexOf('<', index), html.indexOf('>', index) + 1);
+}
+
+// 文件根由列表查一次后按设备下发（每张卡片各订阅一次会重复整表扫描），
+// 归并结果必须仍然逐设备区分。
+describe('DeviceGrid 下发的文件根归属', () => {
+  test('只有配过目录的设备文件开关可用', () => {
+    const html = renderPanel({ devices: [DEVICE, OTHER_DEVICE], roots: [DEVICE_ROOT] });
+    expect(tagOf(html, 'device-card-sidebar-files-dev-1')).not.toContain('aria-disabled="true"');
+    expect(tagOf(html, 'device-card-sidebar-files-dev-2')).toContain('aria-disabled="true"');
+  });
+
+  test('一个目录都没配时所有设备的文件开关都禁用', () => {
+    const html = renderPanel({ devices: [DEVICE, OTHER_DEVICE], roots: [] });
+    expect(tagOf(html, 'device-card-sidebar-files-dev-1')).toContain('aria-disabled="true"');
+    expect(tagOf(html, 'device-card-sidebar-files-dev-2')).toContain('aria-disabled="true"');
+  });
+
+  test('离线时不再去要列表，但缓存里的目录照样算数', () => {
+    const html = renderPanel({ devices: [DEVICE], offline: true, roots: [DEVICE_ROOT] });
+    expect(tagOf(html, 'device-card-sidebar-files-dev-1')).not.toContain('aria-disabled="true"');
   });
 });

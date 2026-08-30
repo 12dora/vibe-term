@@ -85,25 +85,26 @@ function renderCard(options: {
   roots?: FileRootDto[];
 }): string {
   const nodeContext = options.nodeContext ?? SELF_CONTEXT;
+  const deviceProp = options.device ?? LOCAL_DEVICE;
   // 每次一个独立的 persist key：共享的内存 localStorage 不会把用例之间的偏好串起来。
   const runtime = createAppRuntime({
     nodeId: nodeContext.runtimeNodeId,
     storagePrefix: `device-card-test-${storageSeq++}:`,
   });
   const queryClient = new QueryClient();
-  if (options.roots) {
-    queryClient.setQueryData(['files', 'roots'], { roots: options.roots });
-  }
+  // 文件根改由列表统一查一次后下发（见 device-grid），卡片只收一个布尔量
+  const hasRoots = (options.roots ?? []).some((root) => root.deviceId === deviceProp.id);
   const html = renderToStaticMarkup(
     <MemoryRouter>
       <I18nextProvider i18n={i18n}>
         <QueryClientProvider client={queryClient}>
           <RuntimeProvider runtime={runtime}>
             <DeviceCard
-              device={options.device ?? LOCAL_DEVICE}
+              device={deviceProp}
               nodeContext={nodeContext}
               connection={options.connection}
               offline={options.offline}
+              hasRoots={hasRoots}
               onEdit={() => undefined}
               onDelete={() => undefined}
             />

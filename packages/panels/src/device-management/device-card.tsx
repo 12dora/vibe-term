@@ -7,8 +7,8 @@
 // `offline`：所属节点离线，卡片来自最近一次快照——灰显、标「节点离线」、编辑/删除/测试等
 // 要打远端 API 的动作禁用；连接开关仍可点（手动发起一次连接尝试）。
 
-import { useMutation, useQuery } from '@tanstack/react-query';
-import { fetchFileRoots, testDeviceConnection } from '@tmex/api-client';
+import { useMutation } from '@tanstack/react-query';
+import { testDeviceConnection } from '@tmex/api-client';
 import type { Device } from '@tmex/shared';
 import {
   hostAppPath,
@@ -67,6 +67,11 @@ export interface DeviceCardProps {
   connection?: DeviceConnectionAdapter;
   /** 所属节点离线：灰显 + 禁用需要远端 API 的操作 */
   offline?: boolean;
+  /**
+   * 该设备是否配过文件根目录（决定「文件」侧栏开关可不可用）。由宿主统一查一次文件根后下发：
+   * 每张卡片各订阅一次会把 O(设备数 × 根数) 的扫描重复几十遍。
+   */
+  hasRoots?: boolean;
   /** 节点内排序的把手（宿主注入），渲染在第一行最左 */
   dragHandle?: ReactNode;
   /** 卡片根节点内联样式；列表用它挂 `--tmex-stagger-index` 做逐项入场 */
@@ -253,6 +258,7 @@ export const DeviceCard = memo(function DeviceCard({
   nodeContext,
   connection,
   offline = false,
+  hasRoots = false,
   dragHandle,
   style,
   className,
@@ -264,16 +270,6 @@ export const DeviceCard = memo(function DeviceCard({
   const [filesModalOpen, setFilesModalOpen] = useState(false);
   // 开过一次就常驻挂载，关闭动画才播得完；没开过的卡片一个 modal 都不挂（一页几十张）。
   const [filesModalMounted, setFilesModalMounted] = useState(false);
-
-  // 与文件侧栏同一个 query key：`file-roots` 设置事件失效 ['files'] 后，
-  // 在弹窗里配完目录，这里的「文件」开关立刻从禁用变可用。
-  const rootsQuery = useQuery({
-    queryKey: ['files', 'roots'],
-    queryFn: () => fetchFileRoots(runtime.apiClient),
-    enabled: filesUi && !offline,
-    throwOnError: false,
-  });
-  const hasRoots = (rootsQuery.data?.roots ?? []).some((root) => root.deviceId === device.id);
 
   const visibilityKey = sidebarDeviceVisibilityKey(nodeId, device.id);
   const sidebarVisible = useUIStore((state) =>

@@ -74,6 +74,12 @@ const SETTINGS_TABS: SettingsTab[] = [
   'remoteAccess',
 ];
 
+/** 用 `SiteSettingsForm` 的标签；其余标签下不必拉 `/api/settings/site`。 */
+const TABS_USING_SITE_SETTINGS: ReadonlySet<SettingsTab> = new Set<SettingsTab>([
+  'general',
+  'notifications',
+]);
+
 function isSettingsTab(value: string | null): value is SettingsTab {
   return value !== null && (SETTINGS_TABS as string[]).includes(value);
 }
@@ -91,7 +97,8 @@ export default function SettingsPage() {
   // 切换标签时用 replace 写回，避免每点一次都往历史里塞一条。
   const [searchParams, setSearchParams] = useSearchParams();
   const activeTab = settingsTabFromParam(searchParams.get('tab'));
-  const form = useSiteSettingsForm();
+  // 表单常挂在页级（切标签不丢未保存的草稿），但只有真正用它的两个标签才去拉站点设置。
+  const form = useSiteSettingsForm({ enabled: TABS_USING_SITE_SETTINGS.has(activeTab) });
 
   const selectTab = (value: SettingsTab) => {
     setSearchParams(

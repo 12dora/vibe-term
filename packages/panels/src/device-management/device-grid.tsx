@@ -16,7 +16,10 @@ import {
   useSortable,
 } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
+import { useQuery } from '@tanstack/react-query';
+import { fetchFileRoots } from '@tmex/api-client';
 import type { Device } from '@tmex/shared';
+import { useRuntime } from '@tmex/stores/react';
 import { cn } from '@tmex/ui';
 import { GripVertical } from 'lucide-react';
 import { type CSSProperties, memo, useMemo } from 'react';
@@ -27,17 +30,23 @@ import type { useDeviceManagementState } from './use-device-management-state';
 const HANDLE_CLASS =
   'inline-flex size-6 shrink-0 cursor-grab touch-none items-center justify-center rounded-md text-muted-foreground/60 transition-colors duration-(--tmex-motion-fast) ease-out hover:bg-accent hover:text-foreground active:cursor-grabbing motion-reduce:transition-none';
 
-type CardProps = Omit<DeviceCardHostProps, 'device' | 'dragHandle' | 'style' | 'className'>;
+// hasRoots 逐设备不同，不进这份「整列表共用」的 props
+type CardProps = Omit<
+  DeviceCardHostProps,
+  'device' | 'hasRoots' | 'dragHandle' | 'style' | 'className'
+>;
 
 // 记忆化 + 上面稳定下来的 card：一台设备的状态变化不再重渲染整页卡片
 const SortableDeviceCard = memo(function SortableDeviceCard({
   device,
   disabled,
+  hasRoots,
   style,
   card,
 }: {
   device: Device;
   disabled: boolean;
+  hasRoots: boolean;
   style?: CSSProperties;
   card: CardProps;
 }) {
@@ -81,7 +90,7 @@ const SortableDeviceCard = memo(function SortableDeviceCard({
         transition: sortable.transition,
       }}
     >
-      <DeviceCardHost device={device} dragHandle={dragHandle} {...card} />
+      <DeviceCardHost device={device} hasRoots={hasRoots} dragHandle={dragHandle} {...card} />
     </div>
   );
 });
@@ -99,6 +108,7 @@ export function DeviceGrid({
     useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates })
   );
   const { devices, deviceIds, reorderDisabled } = state;
+  const deviceIdsWithRoots = useDeviceIdsWithRoots(card.offline ?? false);
   // 宿主每次渲染都新建 card 字面量；按字段锁住引用，卡片的 memo 才拦得住
   const { queryKey, nodeContext, connection, offline } = card;
   const cardProps = useMemo<CardProps>(
@@ -123,6 +133,7 @@ export function DeviceGrid({
               key={device.id}
               device={device}
               disabled={reorderDisabled}
+              hasRoots={deviceIdsWithRoots.has(device.id)}
               style={state.staggerStyle(device.id, index)}
               card={cardProps}
             />
@@ -131,4 +142,21 @@ export function DeviceGrid({
       </SortableContext>
     </DndContext>
   );
+}
+
+/**
+ * 整个列表只订阅一次文件根，归并成设备 id 集合下发给卡片。
+ * 与文件侧栏同一个 query key：`file-roots` 设置事件失效 ['files'] 后，
+ * 在弹窗里配完目录，卡片上的「文件」开关立刻从禁用变可用。
+ */
+function useDeviceIdsWithRoots(offline: boolean): ReadonlySet<string> {
+  const runtime = useRuntime();
+  const rootsQuery = useQuery({
+    queryKey: ['files', 'roots'],
+    queryFn: () => fetchFileRoots(runtime.apiClient),
+    enabled: runtime.features.filesUi && !offline,
+    throwOnError: false,
+  });
+  const roots = rootsQuery.data?.roots;
+  return useMemo(() => new Set((roots ?? []).map((root) => root.deviceId)), [roots]);
 }
