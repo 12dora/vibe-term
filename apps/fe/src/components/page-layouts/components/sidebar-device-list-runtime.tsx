@@ -5,6 +5,7 @@ import { useGlobalDevice } from '@/components/global-device-provider';
 import {
   SideBarDeviceList as DeviceTreeSideBarDeviceList,
   shouldHideSidebarNodeSection,
+  useDeviceTreeSelection,
   useSidebarDeviceStats,
 } from '@tmex/panels/device-tree';
 import { useRuntime } from '@tmex/stores/react';
@@ -39,7 +40,8 @@ export interface SideBarDeviceListForRuntimeProps {
 function DeviceTree({
   expansionKeyFor,
   emptyLabel,
-}: Omit<SideBarDeviceListForRuntimeProps, 'section'>) {
+  pinnedDeviceId,
+}: Omit<SideBarDeviceListForRuntimeProps, 'section'> & { pinnedDeviceId?: string }) {
   const { ensureDeviceSubscribed, connection } = useGlobalDevice();
   const agentUi = useRuntime().features.agentUi;
   const agentAdapter = useSidebarAgentAdapter();
@@ -51,6 +53,7 @@ function DeviceTree({
       agent={agentUi ? agentAdapter : undefined}
       expansionKeyFor={expansionKeyFor}
       emptyLabel={emptyLabel}
+      pinnedDeviceId={pinnedDeviceId}
     />
   );
 
@@ -71,8 +74,10 @@ function NodeSection({
   const stats = useSidebarDeviceStats();
   const visible =
     stats.failed || !shouldHideSidebarNodeSection(stats, section.keepWhenNoDevices ?? false);
-  // 切 node 会让「选中的那台无条件保留」失效，整节可能就此隐藏：淡出后再卸载，别硬切
-  const presence = useSectionPresence(visible, null);
+  // 切 node 会让「选中的那台无条件保留」失效，整节可能就此隐藏：淡出后再卸载，别硬切；
+  // 退场期间把上一个选中设备钉住，否则设备行先消失、只剩分节头在淡
+  const { selectedDeviceId } = useDeviceTreeSelection();
+  const presence = useSectionPresence(visible, selectedDeviceId);
   if (!presence.rendered) {
     return null;
   }
@@ -85,7 +90,7 @@ function NodeSection({
       className={cn('space-y-0.5', presence.className, section.containerClassName)}
     >
       {section.header}
-      <DeviceTree {...rest} />
+      <DeviceTree {...rest} pinnedDeviceId={presence.value} />
     </div>
   );
 }

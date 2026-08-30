@@ -1,4 +1,5 @@
 export { SideBarDeviceList, type SideBarDeviceListProps } from './sidebar-device-list';
+export { useDeviceTreeSelection } from './device-tree-navigation';
 export type { DeviceTreeNavigation, SidebarAgentAdapter } from './agent-adapter';
 export {
   shouldHideSidebarNodeSection,

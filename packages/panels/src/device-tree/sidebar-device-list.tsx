@@ -45,6 +45,8 @@ export interface SideBarDeviceListProps {
   emptyLabel?: string;
   /** 宿主连接管理；未传时不渲染连接开关，展开仍走 ensureDeviceSubscribed */
   connection?: DeviceConnectionAdapter;
+  /** 分节退场期间要继续显示的设备（宿主锁存的上一个选中设备），替代路由选中 */
+  pinnedDeviceId?: string;
 }
 
 export function SideBarDeviceList({
@@ -54,6 +56,7 @@ export function SideBarDeviceList({
   agent,
   emptyLabel,
   connection,
+  pinnedDeviceId,
 }: SideBarDeviceListProps) {
   const { t } = useTranslation();
   const runtime = useRuntime();
@@ -163,9 +166,9 @@ export function SideBarDeviceList({
         devices,
         sidebarDeviceVisibility,
         runtime.nodeId,
-        selectedDeviceId
+        pinnedDeviceId ?? selectedDeviceId
       ),
-    [devices, selectedDeviceId, sidebarDeviceVisibility, runtime.nodeId]
+    [devices, selectedDeviceId, pinnedDeviceId, sidebarDeviceVisibility, runtime.nodeId]
   );
 
   const autoExpandedDeviceIdsRef = useRef(new Set<string>());
