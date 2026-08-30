@@ -58,11 +58,17 @@ interface StoreHarness {
   store: ReturnType<typeof createAgentStore>;
   messageUrls: string[];
   setRemote: (sessions: AgentSessionDto[]) => void;
+  /** deferHistory 模式下放行所有挂起的历史响应 */
+  releaseHistory: () => Promise<void>;
 }
 
-function createStoreHarness(sessions: AgentSessionDto[]): StoreHarness {
+function createStoreHarness(
+  sessions: AgentSessionDto[],
+  options: { deferHistory?: boolean } = {}
+): StoreHarness {
   let remote = sessions;
   const messageUrls: string[] = [];
+  const heldHistory: Array<() => void> = [];
 
   const transport: FetchLike = async (url) => {
     const json = (body: unknown) =>
@@ -74,6 +80,9 @@ function createStoreHarness(sessions: AgentSessionDto[]): StoreHarness {
     const match = /^\/api\/agent\/sessions\/([^/?]+)\/messages/.exec(url);
     if (match) {
       messageUrls.push(url);
+      if (options.deferHistory) {
+        await new Promise<void>((resolve) => heldHistory.push(resolve));
+      }
       return json({ messages: [makeMessage(match[1])] });
     }
     throw new Error(`unexpected request ${url}`);
@@ -92,6 +101,12 @@ function createStoreHarness(sessions: AgentSessionDto[]): StoreHarness {
     messageUrls,
     setRemote: (next) => {
       remote = next;
+    },
+    releaseHistory: async () => {
+      while (heldHistory.length > 0) {
+        for (const resolve of heldHistory.splice(0)) resolve();
+        await flush();
+      }
     },
   };
 }
@@ -134,6 +149,25 @@ describe('非活跃历史的保留预算（真实 store）', () => {
     for (const sessionId of retained) {
       expect(state.historyLoaded[sessionId]).toBe(true);
     }
+  });
+
+  test('首次历史响应集中延迟返回时，写回后仍不超预算', async () => {
+    const sessions = Array.from({ length: 20 }, (_, i) => makeSession(`s${i}`, i));
+    const harness = createStoreHarness(sessions, { deferHistory: true });
+    await harness.store.getState().loadSessions();
+
+    // 一份历史都不放行就把 20 个会话全部激活：淘汰不能只发生在切换会话时
+    for (const session of sessions) {
+      harness.store.getState().setActiveSession(session.id);
+    }
+    await flush();
+    await harness.releaseHistory();
+
+    const state = harness.store.getState();
+    const retained = Object.keys(state.messages);
+    expect(retained.length).toBeLessThanOrEqual(HISTORY_SESSION_BUDGET + 1);
+    expect(retained).toContain('s19');
+    expect(Object.keys(state.sessions).length).toBe(20);
   });
 
   test('被淘汰的会话重新打开时全量重拉一次历史', async () => {

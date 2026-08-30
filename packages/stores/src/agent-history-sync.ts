@@ -30,6 +30,8 @@ export interface AgentHistorySyncDeps {
   set: AgentDataSetState;
   get: AgentDataGetState;
   debounceMs?: number;
+  /** 历史写回 store 之后的回调：延迟返回的首次拉取也要按预算淘汰 */
+  onWriteback?: () => void;
 }
 
 export interface AgentHistorySync {
@@ -89,6 +91,7 @@ export function createAgentHistorySync(deps: AgentHistorySyncDeps): AgentHistory
             : prev.inProgress,
         };
       });
+      deps.onWriteback?.();
     } catch (error) {
       console.error('[agent] loadHistory failed:', error);
     } finally {

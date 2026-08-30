@@ -10,7 +10,9 @@ import type { AgentActions } from './agent-state';
 export type { AgentSessionActionsDeps } from './agent-session-deps';
 export { mergeFetchedSessions, sortSessionOrder, withSessionOrder } from './agent-session-map';
 
-export type AgentSessionActions = Omit<AgentActions, 'ensureInitialized'>;
+export type AgentSessionActions = Omit<AgentActions, 'ensureInitialized'> & {
+  evictHistories: () => void;
+};
 
 export function createAgentSessionActions(deps: AgentSessionActionsDeps): AgentSessionActions {
   return {

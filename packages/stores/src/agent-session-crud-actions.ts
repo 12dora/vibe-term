@@ -30,7 +30,10 @@ export type AgentSessionCrudActions = Pick<
   | 'setSessionModel'
   | 'rebindPane'
   | 'stopSession'
->;
+> & {
+  /** 按预算淘汰非活跃历史；除切换会话外，历史写回后也要跑一遍 */
+  evictHistories: () => void;
+};
 
 /** 建会话并写入 store，但不改变当前激活会话（激活由调用方按新鲜度决定） */
 export async function createSessionRequest(
@@ -255,6 +258,7 @@ export function createAgentSessionCrudActions(
 
   return {
     ...createPatchActions(patchSession),
+    evictHistories,
 
     loadSessions() {
       if (loadingSessions) return loadingSessions;

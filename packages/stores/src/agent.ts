@@ -71,7 +71,14 @@ export function createAgentStore(core: RuntimeCore, disposers: Array<() => void>
   return create<AgentState>()(
     persist(
       (set, get) => {
-        const history = createAgentHistorySync({ apiClient: core.apiClient, set, get });
+        // 淘汰逻辑随会话动作一起创建，这里先占位、创建后回填
+        let evictHistories: () => void = () => {};
+        const history = createAgentHistorySync({
+          apiClient: core.apiClient,
+          set,
+          get,
+          onWriteback: () => evictHistories(),
+        });
         const deltas = createAgentDeltaBuffer(set);
 
         function subscribeSession(sessionId: string): void {
@@ -127,18 +134,21 @@ export function createAgentStore(core: RuntimeCore, disposers: Array<() => void>
           );
         }
 
+        const { evictHistories: evict, ...sessionActions } = createAgentSessionActions({
+          apiClient: core.apiClient,
+          notifications: core.notifications,
+          set,
+          get,
+          history,
+          subscribe: subscribeSession,
+          unsubscribe: unsubscribeSession,
+          clearSessionRuntime,
+        });
+        evictHistories = evict;
+
         return {
           ...createInitialAgentStateData(),
-          ...createAgentSessionActions({
-            apiClient: core.apiClient,
-            notifications: core.notifications,
-            set,
-            get,
-            history,
-            subscribe: subscribeSession,
-            unsubscribe: unsubscribeSession,
-            clearSessionRuntime,
-          }),
+          ...sessionActions,
 
           ensureInitialized() {
             setupClientHandlers();
