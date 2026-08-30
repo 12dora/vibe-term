@@ -50,6 +50,7 @@ async function setup(overrides: ConstructorParameters<typeof TunnelManager>[0] =
     runningWaitMs: 800,
     trustProxy: false,
     healthzStartedAt: 111,
+    loginEnforced: () => true,
     ...overrides,
   });
   return { dir, spawner, store, manager };
@@ -98,6 +99,10 @@ describe('TunnelManager', () => {
     const job = await waitJob(ctx.manager);
     expect(job?.state).toBe('done');
     expect(ctx.manager.status().auth.loggedIn).toBe(true);
+    expect(ctx.manager.status().auth.loginUrl).toBeNull();
+    const loginLog = ctx.manager.status().log.join('\n');
+    expect(loginLog).not.toContain('aud=xyz');
+    expect(loginLog).not.toMatch(/https:\/\/dash\.cloudflare\.com\/[^\s]*\?/);
 
     const ctx2 = await setup({ loginTimeoutMs: 40, loginPollMs: 5 });
     dirs.push(ctx2.dir);
@@ -270,6 +275,171 @@ describe('TunnelManager', () => {
     if ('status' in ok.payload) {
       expect(ok.payload.status.restartRequired).toBe(true);
       expect(ok.payload.status.trustProxy).toBe(false);
+      expect(ok.payload.status.configuredTrustProxy).toBe(true);
+    }
+  });
+
+  test('refuses public exposure when login is not enforced', async () => {
+    const ctx = await setup({ loginEnforced: () => false });
+    dirs.push(ctx.dir);
+    await writeFile(join(ctx.dir, 'cert.pem'), 'CERT', 'utf8');
+    const expected = {
+      code: 'auth_required' as const,
+      message: 'Sign-in must be enabled before exposing tmex publicly',
+    };
+    for (const body of [
+      { action: 'quick_start' as const },
+      { action: 'create' as const, hostname: 'remote.example.com' },
+      { action: 'start' as const },
+      { action: 'set_auto_start' as const, autoStart: true },
+    ]) {
+      const result = await ctx.manager.handleAction(body);
+      expect(result.httpStatus).toBe(409);
+      expect('error' in result.payload && result.payload.error).toEqual(expected);
+    }
+    const disable = await ctx.manager.handleAction({ action: 'set_auto_start', autoStart: false });
+    expect(disable.httpStatus).toBe(200);
+    expect(ctx.manager.status().config.autoStart).toBe(false);
+  });
+
+  test('skips auto-start at boot when login is not enforced', async () => {
+    const warnings: string[] = [];
+    const ctx = await setup({
+      loginEnforced: () => false,
+      warn: (message) => warnings.push(message),
+    });
+    dirs.push(ctx.dir);
+    ctx.store.save({ mode: 'quick', autoStart: true });
+    ctx.spawner.on((s) => argsInclude(s, '--url'), {
+      hold: true,
+      stdout: 'https://boot.trycloudflare.com\nRegistered tunnel connection\n',
+    });
+    await ctx.manager.start();
+    expect(ctx.manager.status().process.state).toBe('stopped');
+    expect(ctx.spawner.calls.some((c) => argsInclude(c, '--url'))).toBe(false);
+    expect(warnings.some((w) => /sign-in must be enabled/i.test(w))).toBe(true);
+  });
+
+  test('rejects path-traversal tunnel names before writing credentials', async () => {
+    const ctx = await setup();
+    dirs.push(ctx.dir);
+    await writeFile(join(ctx.dir, 'cert.pem'), 'CERT', 'utf8');
+    for (const tunnelName of ['../../x', '/abs', 'foo\nbar', 'a'.repeat(64)]) {
+      const result = await ctx.manager.handleAction({
+        action: 'create',
+        hostname: 'ok.example.com',
+        tunnelName,
+      });
+      expect(result.httpStatus).toBe(400);
+      expect('error' in result.payload && result.payload.error.code).toBe('invalid_request');
+    }
+    expect(ctx.spawner.calls.some((c) => argsInclude(c, 'create'))).toBe(false);
+  });
+
+  test('check job finishes as done/ok or error, never stuck on step check', async () => {
+    const ctx = await setup({
+      fetchImpl: (async (_input: RequestInfo | URL) => {
+        return new Response('nope', { status: 503 });
+      }) as typeof fetch,
+    });
+    dirs.push(ctx.dir);
+    ctx.spawner.on((s) => argsInclude(s, '--url'), {
+      hold: true,
+      stdout: 'https://lucky-cloud-9.trycloudflare.com\nRegistered tunnel connection\n',
+    });
+    await ctx.manager.handleAction({ action: 'quick_start' });
+    await waitJob(ctx.manager);
+    await ctx.manager.handleAction({ action: 'check' });
+    const job = await waitJob(ctx.manager);
+    expect(job?.state).toBe('error');
+    expect(job?.error?.code).toBeTruthy();
+    expect(job?.error?.message).toBeTruthy();
+    expect(job?.step).not.toBe('check');
+  });
+
+  test('clears publicUrl on quick start/stop and does not leak named hostnames', async () => {
+    const ctx = await setup();
+    dirs.push(ctx.dir);
+    await writeFile(join(ctx.dir, 'cert.pem'), 'CERT', 'utf8');
+    ctx.spawner.once((s) => argsInclude(s, 'create'), {
+      stdout: 'Created tunnel tmex-remote with id 550e8400-e29b-41d4-a716-446655440000\n',
+    });
+    ctx.spawner.on((s) => argsInclude(s, 'dns'), { stdout: 'ok\n' });
+    ctx.spawner.on((s) => argsInclude(s, 'run'), {
+      hold: true,
+      stdout: 'Registered tunnel connection\n',
+    });
+    await ctx.manager.handleAction({ action: 'create', hostname: 'remote.example.com' });
+    await waitJob(ctx.manager);
+    await waitState(ctx.manager, 'running');
+    expect(ctx.manager.status().process.publicUrl).toBe('https://remote.example.com');
+
+    await ctx.manager.handleAction({ action: 'stop' });
+    await waitJob(ctx.manager);
+    expect(ctx.manager.status().process.publicUrl).toBeNull();
+
+    ctx.spawner.on((s) => argsInclude(s, '--url'), {
+      hold: true,
+      stdout: 'https://fresh-cloud.trycloudflare.com\nRegistered tunnel connection\n',
+    });
+    await ctx.manager.handleAction({ action: 'remove' });
+    await waitJob(ctx.manager);
+    await ctx.manager.handleAction({ action: 'quick_start' });
+    await waitJob(ctx.manager);
+    expect(ctx.manager.status().process.publicUrl).toBe('https://fresh-cloud.trycloudflare.com');
+    expect(ctx.manager.status().process.publicUrl).not.toBe('https://remote.example.com');
+
+    await ctx.manager.handleAction({ action: 'stop' });
+    await waitJob(ctx.manager);
+    expect(ctx.manager.status().process.publicUrl).toBeNull();
+  });
+
+  test('create is rejected while a tunnel is already configured', async () => {
+    const ctx = await setup();
+    dirs.push(ctx.dir);
+    ctx.store.save({ mode: 'quick', hostname: null, tunnelName: null, tunnelId: null });
+    const result = await ctx.manager.handleAction({
+      action: 'create',
+      hostname: 'another.example.com',
+    });
+    expect(result.httpStatus).toBe(409);
+    expect('error' in result.payload && result.payload.error.code).toBe('tunnel_exists');
+  });
+
+  test('passes originUrl from bind host into cloudflared', async () => {
+    const ctx = await setup({ originUrl: 'http://[::1]:19883' });
+    dirs.push(ctx.dir);
+    ctx.spawner.on((s) => argsInclude(s, '--url'), {
+      hold: true,
+      stdout: 'https://v6.trycloudflare.com\nRegistered tunnel connection\n',
+    });
+    await ctx.manager.handleAction({ action: 'quick_start' });
+    await waitJob(ctx.manager);
+    const quick = ctx.spawner.calls.find((c) => argsInclude(c, '--url'));
+    expect(quick?.args).toContain('http://[::1]:19883');
+  });
+
+  test('configuredTrustProxy comes from host-env and drives restartRequired', async () => {
+    let saved: boolean | null = true;
+    const ctx = await setup({
+      trustProxy: false,
+      readHostEnv: async () => saved,
+    });
+    dirs.push(ctx.dir);
+    await ctx.manager.start();
+    expect(ctx.manager.status().trustProxy).toBe(false);
+    expect(ctx.manager.status().configuredTrustProxy).toBe(true);
+    expect(ctx.manager.status().restartRequired).toBe(true);
+
+    ctx.manager.setPatchHostEnv(async (value) => {
+      saved = value;
+    });
+    const ok = await ctx.manager.handleAction({ action: 'set_trust_proxy', trustProxy: false });
+    expect(ok.httpStatus).toBe(200);
+    if ('status' in ok.payload) {
+      expect(ok.payload.status.configuredTrustProxy).toBe(false);
+      expect(ok.payload.status.trustProxy).toBe(false);
+      expect(ok.payload.status.restartRequired).toBe(false);
     }
   });
 });

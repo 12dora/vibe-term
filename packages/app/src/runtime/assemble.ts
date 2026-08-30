@@ -328,6 +328,19 @@ function buildTlsLifecycle(
       });
     });
   });
+  tunnelManager.setReadHostEnv(async () => {
+    const envPath = resolveSetupEnvPath();
+    try {
+      const existing = await readEnvFile(envPath);
+      const raw = existing.TMEX_TRUST_PROXY;
+      if (raw === undefined) return null;
+      const value = raw.trim().toLowerCase();
+      return value === '1' || value === 'true' || value === 'yes';
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null;
+      throw error;
+    }
+  });
   return {
     tls,
     httpsListener,
@@ -472,9 +485,11 @@ export async function assembleTmex(opts: AssembleTmexOptions = {}): Promise<Asse
     websocket,
     async start() {
       await mesh?.start();
+      gateway.restoreRemoteAgentSessions?.();
     },
     async stop() {
       stopPromise ??= (async () => {
+        await tryStop(() => gateway.stopAgentSessions?.(), 'agent-supervisor');
         await tryStop(() => mesh?.stop(), 'mesh');
         await tryStop(() => hub?.stop(), 'hub');
         await tryStop(() => gateway.stop(), 'gateway');

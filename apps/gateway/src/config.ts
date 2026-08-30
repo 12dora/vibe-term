@@ -126,6 +126,16 @@ export function parsePeerBindHost(raw: string | undefined): string[] {
   return hosts.length > 0 ? hosts : [...DEFAULT_PEER_BIND_HOSTS];
 }
 
+export function originUrlFromBindHost(bindHost: string, port: number): string {
+  const unwrapped =
+    bindHost.startsWith('[') && bindHost.endsWith(']') && bindHost.includes(':')
+      ? bindHost.slice(1, -1)
+      : bindHost;
+  const host = unwrapped === '0.0.0.0' ? '127.0.0.1' : unwrapped === '::' ? '::1' : unwrapped;
+  const authority = host.includes(':') ? `[${host}]:${port}` : `${host}:${port}`;
+  return `http://${authority}`;
+}
+
 function getOptionalEnv(key: string): string | null {
   const value = process.env[key]?.trim();
   return value ? value : null;
@@ -150,6 +160,7 @@ export const config = {
   // 服务配置
   port: resolveGatewayPort(),
   bindHost: getEnv('TMEX_BIND_HOST', '0.0.0.0'),
+  originUrl: originUrlFromBindHost(getEnv('TMEX_BIND_HOST', '0.0.0.0'), resolveGatewayPort()),
   baseUrl: getEnv('TMEX_BASE_URL', 'http://127.0.0.1:8085'),
   siteNameDefault: getEnv('TMEX_SITE_NAME', 'tmex'),
 

@@ -1,4 +1,4 @@
-import { join } from 'node:path';
+import { dirname, isAbsolute, join, relative, resolve } from 'node:path';
 import { TunnelError } from './errors';
 import { type SpawnHandle, type Spawner, collectOutput } from './spawn';
 
@@ -71,7 +71,13 @@ export function configYmlPath(tunnelDir: string): string {
 }
 
 export function credentialsPathFor(tunnelDir: string, tunnelIdOrName: string): string {
-  return join(tunnelDir, `${tunnelIdOrName}.json`);
+  const dir = resolve(tunnelDir);
+  const candidate = resolve(dir, `${tunnelIdOrName}.json`);
+  const rel = relative(dir, candidate);
+  if (!rel || rel.startsWith('..') || isAbsolute(rel) || dirname(candidate) !== dir) {
+    throw new TunnelError('invalid_request', 'tunnel name is not a valid identifier');
+  }
+  return candidate;
 }
 
 export type CloudflaredEnv = {
@@ -193,12 +199,7 @@ export class CloudflaredProvider {
     );
   }
 
-  spawnQuickRun(bin: string, originPort: number): SpawnHandle {
-    return this.spawn(bin, [
-      'tunnel',
-      '--no-autoupdate',
-      '--url',
-      `http://127.0.0.1:${originPort}`,
-    ]);
+  spawnQuickRun(bin: string, originUrl: string): SpawnHandle {
+    return this.spawn(bin, ['tunnel', '--no-autoupdate', '--url', originUrl]);
   }
 }

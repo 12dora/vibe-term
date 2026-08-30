@@ -3,6 +3,7 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { TunnelStatusResponse } from '@tmex/shared';
+import { MESH_VIA_SELF, requestDispatchContext, setMeshRequestContext } from '../mesh/mesh-deps';
 import { MemoryTunnelConfigStore } from '../tunnel/config-store';
 import { FakeSpawner, argsInclude } from '../tunnel/fake-spawn';
 import { TunnelManager } from '../tunnel/manager';
@@ -35,6 +36,7 @@ async function setup() {
     loginPollMs: 20,
     runningWaitMs: 400,
     trustProxy: false,
+    loginEnforced: () => true,
   });
   managers.push(manager);
   return { dir, manager, routes: createTunnelRoutes(manager) };
@@ -99,6 +101,7 @@ describe('tunnel routes', () => {
     });
     expect(body.job).toBeNull();
     expect(body.trustProxy).toBe(false);
+    expect(body.configuredTrustProxy).toBe(false);
     expect(body.restartRequired).toBe(false);
     expect(Array.isArray(body.log)).toBe(true);
   });
@@ -137,5 +140,71 @@ describe('tunnel routes', () => {
     });
     await dispatch(ctx.routes, 'POST', '/api/tunnel/actions', { action: 'cancel_login' });
     await ctx.manager.stop();
+  });
+
+  test('POST create with traversal tunnelName is 400', async () => {
+    const ctx = await setup();
+    dirs.push(ctx.dir);
+    for (const tunnelName of ['../../x', '/abs', 'foo\nbar', 'a'.repeat(64)]) {
+      const res = await dispatch(ctx.routes, 'POST', '/api/tunnel/actions', {
+        action: 'create',
+        hostname: 'ok.example.com',
+        tunnelName,
+      });
+      expect(res.status).toBe(400);
+      const body = (await res.json()) as { error: { code: string } };
+      expect(body.error.code).toBe('invalid_request');
+    }
+  });
+
+  test('exposing actions return 409 auth_required when login is not enforced', async () => {
+    const ctx = await setup();
+    dirs.push(ctx.dir);
+    ctx.manager.setLoginEnforced(() => false);
+    const expected = {
+      error: {
+        code: 'auth_required',
+        message: 'Sign-in must be enabled before exposing tmex publicly',
+      },
+    };
+    for (const body of [
+      { action: 'quick_start' },
+      { action: 'create', hostname: 'ok.example.com' },
+      { action: 'start' },
+      { action: 'set_auto_start', autoStart: true },
+    ]) {
+      const res = await dispatch(ctx.routes, 'POST', '/api/tunnel/actions', body);
+      expect(res.status).toBe(409);
+      expect(await res.json()).toEqual(expected);
+    }
+  });
+
+  test('peer-forwarded /api/tunnel requests return 404', async () => {
+    const ctx = await setup();
+    dirs.push(ctx.dir);
+
+    const forwarded = req('GET', '/api/tunnel/status');
+    requestDispatchContext.set(forwarded, { uid: 'user-1', viaNodeId: 'remote-node' });
+    const forwardedRes = dispatchRoutes(forwarded, '/api/tunnel/status', ctx.routes, {
+      path: '/api/tunnel/status',
+    });
+    if (!forwardedRes) throw new Error('no route');
+    expect((await forwardedRes).status).toBe(404);
+
+    const peer = req('POST', '/api/tunnel/actions', { action: 'check' });
+    setMeshRequestContext(peer, { via: 'peer-a', clientIp: 'peer:peer-a' });
+    const peerRes = dispatchRoutes(peer, '/api/tunnel/actions', ctx.routes, {
+      path: '/api/tunnel/actions',
+    });
+    if (!peerRes) throw new Error('no route');
+    expect((await peerRes).status).toBe(404);
+
+    const local = req('GET', '/api/tunnel/status');
+    requestDispatchContext.set(local, { uid: 'user-1', viaNodeId: MESH_VIA_SELF });
+    const localRes = dispatchRoutes(local, '/api/tunnel/status', ctx.routes, {
+      path: '/api/tunnel/status',
+    });
+    if (!localRes) throw new Error('no route');
+    expect((await localRes).status).toBe(200);
   });
 });

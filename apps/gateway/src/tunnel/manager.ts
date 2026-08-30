@@ -12,7 +12,7 @@ import type {
   TunnelStatusResponse,
 } from '@tmex/shared';
 import { PROCESS_STARTED_AT } from '../api/system-routes';
-import { config } from '../config';
+import { config, originUrlFromBindHost } from '../config';
 import { getDb as getOrmDb } from '../db/client';
 import {
   DEFAULT_TUNNEL_CONFIG,
@@ -22,7 +22,7 @@ import {
 } from './config-store';
 import { type Downloader, defaultDownloader, installCloudflaredBinary } from './download';
 import { TunnelError, tunnelErrorFrom, tunnelHttpStatus } from './errors';
-import { defaultTunnelName, normalizeTunnelHostname } from './hostname';
+import { defaultTunnelName, normalizeTunnelHostname, normalizeTunnelName } from './hostname';
 import { LogRingBuffer } from './log-buffer';
 import { isTunnelPlatformSupported, tunnelPlatformLabel } from './platform';
 import {
@@ -37,10 +37,12 @@ import { type Spawner, bunSpawner, consumeLines } from './spawn';
 import { TunnelSupervisor } from './supervisor';
 
 export type PatchHostEnv = (trustProxy: boolean) => Promise<void>;
+export type ReadHostEnv = () => Promise<boolean | null>;
 
 export type TunnelManagerOptions = {
   tunnelDir?: string;
   originPort?: number;
+  originUrl?: string;
   platform?: NodeJS.Platform;
   arch?: string;
   store?: TunnelConfigStoreLike;
@@ -49,6 +51,7 @@ export type TunnelManagerOptions = {
   downloader?: Downloader;
   fetchImpl?: typeof fetch;
   patchHostEnv?: PatchHostEnv | null;
+  readHostEnv?: ReadHostEnv | null;
   now?: () => number;
   sleep?: (ms: number) => Promise<void>;
   loginTimeoutMs?: number;
@@ -56,8 +59,11 @@ export type TunnelManagerOptions = {
   killTimeoutMs?: number;
   healthzStartedAt?: number;
   trustProxy?: boolean;
+  configuredTrustProxy?: boolean;
   probeVersionOnStart?: boolean;
   runningWaitMs?: number;
+  loginEnforced?: () => boolean;
+  warn?: (message: string) => void;
 };
 
 type BinaryCache = {
@@ -69,6 +75,7 @@ type BinaryCache = {
 const LOGIN_TIMEOUT_MS = 10 * 60 * 1000;
 const LOGIN_POLL_MS = 500;
 const HOST_ENV_MESSAGE = 'Host environment is not managed by tmex-cli';
+const AUTH_REQUIRED_MESSAGE = 'Sign-in must be enabled before exposing tmex publicly';
 
 function yamlQuote(value: string): string {
   if (/[:#\n]|^\s|\s$/.test(value)) {
@@ -82,7 +89,7 @@ export function writeNamedConfigYml(opts: {
   credentialsPath: string;
   certPath: string;
   hostname: string;
-  originPort: number;
+  originUrl: string;
 }): string {
   return [
     `tunnel: ${opts.tunnelId}`,
@@ -90,7 +97,7 @@ export function writeNamedConfigYml(opts: {
     `origincert: ${yamlQuote(opts.certPath)}`,
     'ingress:',
     `  - hostname: ${opts.hostname}`,
-    `    service: http://127.0.0.1:${opts.originPort}`,
+    `    service: ${opts.originUrl}`,
     '  - service: http_status:404',
     '',
   ].join('\n');
@@ -99,6 +106,7 @@ export function writeNamedConfigYml(opts: {
 export class TunnelManager {
   private readonly tunnelDir: string;
   private readonly originPort: number;
+  private readonly originUrl: string;
   private readonly platform: NodeJS.Platform;
   private readonly arch: string;
   private readonly store: TunnelConfigStoreLike;
@@ -115,8 +123,12 @@ export class TunnelManager {
   private readonly provider: CloudflaredProvider;
   private readonly supervisor: TunnelSupervisor;
   private readonly probeVersionOnStart: boolean;
+  private readonly warn: (message: string) => void;
+  private loginEnforcedFn: () => boolean;
   private trustProxy: boolean;
+  private configuredTrustProxy: boolean;
   private patchHostEnv: PatchHostEnv | null;
+  private readHostEnv: ReadHostEnv | null;
   private restartRequired = false;
   private job: TunnelJobStatus | null = null;
   private loginHandle: { kill: (signal?: NodeJS.Signals) => void; exited: Promise<number> } | null =
@@ -127,14 +139,14 @@ export class TunnelManager {
   private lastStartOpts: {
     bin: string;
     mode: 'named' | 'quick';
-    originPort: number;
+    originUrl: string;
     configPath: string;
-    namedPublicUrl: string | null;
   } | null = null;
 
   constructor(opts: TunnelManagerOptions = {}) {
     this.tunnelDir = opts.tunnelDir ?? config.tunnelDir;
     this.originPort = opts.originPort ?? config.port;
+    this.originUrl = opts.originUrl ?? originUrlFromBindHost(config.bindHost, this.originPort);
     this.platform = opts.platform ?? process.platform;
     this.arch = opts.arch ?? process.arch;
     this.store = opts.store ?? new TunnelConfigStore(getOrmDb());
@@ -142,6 +154,7 @@ export class TunnelManager {
     this.downloader = opts.downloader ?? defaultDownloader;
     this.fetchImpl = opts.fetchImpl ?? fetch;
     this.patchHostEnv = opts.patchHostEnv ?? null;
+    this.readHostEnv = opts.readHostEnv ?? null;
     this.now = opts.now ?? Date.now;
     this.sleep = opts.sleep ?? ((ms) => Bun.sleep(ms));
     this.loginTimeoutMs = opts.loginTimeoutMs ?? LOGIN_TIMEOUT_MS;
@@ -149,7 +162,11 @@ export class TunnelManager {
     this.healthzStartedAt = opts.healthzStartedAt ?? PROCESS_STARTED_AT;
     this.runningWaitMs = opts.runningWaitMs ?? 30_000;
     this.trustProxy = opts.trustProxy ?? config.trustProxy;
+    this.configuredTrustProxy = opts.configuredTrustProxy ?? this.trustProxy;
+    this.restartRequired = this.configuredTrustProxy !== this.trustProxy;
     this.probeVersionOnStart = opts.probeVersionOnStart ?? false;
+    this.loginEnforcedFn = opts.loginEnforced ?? (() => config.roles.hub || config.roles.node);
+    this.warn = opts.warn ?? ((message) => console.warn(message));
     const spawner: Spawner = opts.spawner ?? bunSpawner;
     this.provider = new CloudflaredProvider(spawner, this.tunnelDir);
     this.supervisor = new TunnelSupervisor({
@@ -167,19 +184,33 @@ export class TunnelManager {
     this.patchHostEnv = fn;
   }
 
+  setReadHostEnv(fn: ReadHostEnv | null): void {
+    this.readHostEnv = fn;
+    void this.refreshConfiguredTrustProxy();
+  }
+
+  setLoginEnforced(fn: () => boolean): void {
+    this.loginEnforcedFn = fn;
+  }
+
   async start(): Promise<void> {
     await mkdir(this.tunnelDir, { recursive: true }).catch(() => {});
     this.refreshBinaryPresence();
+    await this.refreshConfiguredTrustProxy();
     if ((this.probeVersionOnStart || !config.isTest) && this.binary.path) {
       await this.probeVersion();
     }
     const persisted = this.store.get();
     if (persisted.autoStart && persisted.mode !== 'off') {
-      try {
-        await this.startProcess(persisted.mode);
-      } catch (error) {
-        this.supervisor.state = 'error';
-        this.supervisor.lastError = tunnelErrorFrom(error).message;
+      if (!this.loginEnforcedFn()) {
+        this.warn(`[tunnel] auto-start skipped: ${AUTH_REQUIRED_MESSAGE}`);
+      } else {
+        try {
+          await this.startProcess(persisted.mode);
+        } catch (error) {
+          this.supervisor.state = 'error';
+          this.supervisor.lastError = tunnelErrorFrom(error).message;
+        }
       }
     }
   }
@@ -194,15 +225,13 @@ export class TunnelManager {
     this.refreshBinaryPresence();
     const persisted = this.safePersisted();
     const loggedIn = existsSync(originCertPath(this.tunnelDir));
-    const namedUrl =
-      persisted.mode === 'named' && persisted.hostname ? `https://${persisted.hostname}` : null;
+    const running = this.supervisor.state === 'running';
     const publicUrl =
-      this.supervisor.publicUrl ??
-      (this.supervisor.state === 'running'
-        ? namedUrl
-        : persisted.mode === 'named'
-          ? namedUrl
-          : null);
+      persisted.mode === 'named' && running && persisted.hostname
+        ? `https://${persisted.hostname}`
+        : persisted.mode === 'quick' && running
+          ? this.supervisor.publicUrl
+          : null;
     return {
       supported: isTunnelPlatformSupported(this.platform, this.arch),
       platform: tunnelPlatformLabel(this.platform, this.arch),
@@ -214,10 +243,7 @@ export class TunnelManager {
       },
       auth: {
         loggedIn,
-        loginUrl:
-          this.job?.kind === 'login' && this.job.state === 'running'
-            ? this.loginUrl
-            : this.loginUrl,
+        loginUrl: this.job?.kind === 'login' && this.job.state === 'running' ? this.loginUrl : null,
       },
       config: {
         mode: persisted.mode,
@@ -237,6 +263,7 @@ export class TunnelManager {
       },
       job: this.job ? { ...this.job } : null,
       trustProxy: this.trustProxy,
+      configuredTrustProxy: this.configuredTrustProxy,
       restartRequired: this.restartRequired,
       log: this.logs.snapshot(),
     };
@@ -255,12 +282,17 @@ export class TunnelManager {
           this.cancelLogin();
           return this.ok(200);
         case 'create':
+          this.requireLoginEnforced();
+          this.requireModeOff();
+          this.assertCreateName(body.hostname, body.tunnelName);
           return await this.enqueueJob('create', (step) =>
             this.jobCreate(body.hostname, body.tunnelName, step)
           );
         case 'quick_start':
+          this.requireLoginEnforced();
           return await this.enqueueJob('start', (step) => this.jobQuickStart(step));
         case 'start':
+          this.requireLoginEnforced();
           return await this.enqueueJob('start', (step) => this.jobStart(step));
         case 'stop':
           return await this.enqueueJob('stop', (step) => this.jobStop(step));
@@ -269,6 +301,7 @@ export class TunnelManager {
         case 'check':
           return await this.enqueueJob('check', (step) => this.jobCheck(step));
         case 'set_auto_start':
+          if (body.autoStart) this.requireLoginEnforced();
           this.store.save({ autoStart: body.autoStart });
           return this.ok(200);
         case 'set_trust_proxy':
@@ -326,11 +359,35 @@ export class TunnelManager {
       const parsed = tunnelErrorFrom(error);
       job.state = 'error';
       job.error = parsed;
+      if (job.kind === 'check') job.step = parsed.code;
     } finally {
       job.finishedAt = new Date(this.now()).toISOString();
-      if (job.kind === 'login' && job.state !== 'running') {
+      if (job.kind === 'login') {
         this.loginHandle = null;
-        if (job.state !== 'done') this.loginUrl = null;
+        this.loginUrl = null;
+      }
+    }
+  }
+
+  private requireLoginEnforced(): void {
+    if (!this.loginEnforcedFn()) {
+      throw new TunnelError('auth_required', AUTH_REQUIRED_MESSAGE);
+    }
+  }
+
+  private requireModeOff(): void {
+    if (this.store.get().mode !== 'off') {
+      throw new TunnelError('tunnel_exists', 'A tunnel is already configured; remove it first');
+    }
+  }
+
+  private assertCreateName(hostnameRaw: string, tunnelNameRaw: string | undefined): void {
+    if (!normalizeTunnelHostname(hostnameRaw)) {
+      throw new TunnelError('invalid_hostname', 'hostname is not a valid RFC 1123 name');
+    }
+    if (tunnelNameRaw?.trim()) {
+      if (!normalizeTunnelName(tunnelNameRaw)) {
+        throw new TunnelError('invalid_request', 'tunnel name is not a valid identifier');
       }
     }
   }
@@ -479,7 +536,12 @@ export class TunnelManager {
     if (!hostname) {
       throw new TunnelError('invalid_hostname', 'hostname is not a valid RFC 1123 name');
     }
-    const tunnelName = (tunnelNameRaw?.trim() || defaultTunnelName(hostname)).toLowerCase();
+    const tunnelName = normalizeTunnelName(
+      tunnelNameRaw?.trim() ? tunnelNameRaw : defaultTunnelName(hostname)
+    );
+    if (!tunnelName) {
+      throw new TunnelError('invalid_request', 'tunnel name is not a valid identifier');
+    }
     await mkdir(this.tunnelDir, { recursive: true });
     const credFile = credentialsPathFor(this.tunnelDir, tunnelName);
     step('create');
@@ -497,7 +559,7 @@ export class TunnelManager {
       credentialsPath,
       certPath: cert,
       hostname,
-      originPort: this.originPort,
+      originUrl: this.originUrl,
     });
     await writeFile(configYmlPath(this.tunnelDir), yml, 'utf8');
     this.store.save({
@@ -578,7 +640,6 @@ export class TunnelManager {
       throw new TunnelError('not_configured', 'no hostname or public URL to check');
     }
     const url = `${target.replace(/\/$/, '')}/healthz`;
-    step('check');
     const ac = new AbortController();
     const timer = setTimeout(() => ac.abort(), 5_000);
     try {
@@ -608,7 +669,16 @@ export class TunnelManager {
       throw new TunnelError('not_configured', HOST_ENV_MESSAGE);
     }
     await this.patchHostEnv(trustProxy);
-    this.restartRequired = trustProxy !== this.trustProxy;
+    this.configuredTrustProxy = trustProxy;
+    this.restartRequired = this.configuredTrustProxy !== this.trustProxy;
+  }
+
+  private async refreshConfiguredTrustProxy(): Promise<void> {
+    if (this.readHostEnv) {
+      const saved = await this.readHostEnv();
+      this.configuredTrustProxy = saved ?? this.trustProxy;
+    }
+    this.restartRequired = this.configuredTrustProxy !== this.trustProxy;
   }
 
   private async startProcess(mode: TunnelMode): Promise<void> {
@@ -623,17 +693,14 @@ export class TunnelManager {
     ) {
       await this.supervisor.stop();
     }
-    const persisted = this.store.get();
-    const namedPublicUrl =
-      mode === 'named' && persisted.hostname ? `https://${persisted.hostname}` : null;
     this.lastStartOpts = {
       bin,
       mode,
-      originPort: this.originPort,
+      originUrl: this.originUrl,
       configPath: configYmlPath(this.tunnelDir),
-      namedPublicUrl,
     };
     this.logs.clear();
+    this.supervisor.publicUrl = null;
     await this.supervisor.start(this.lastStartOpts);
     await this.waitUntilRunning();
   }

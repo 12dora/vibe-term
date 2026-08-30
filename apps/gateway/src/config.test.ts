@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import {
+  originUrlFromBindHost,
   parsePeerBindHost,
   parsePeerPort,
   parseStunServers,
@@ -25,6 +26,7 @@ async function loadConfigWith(env: Record<string, string | undefined>): Promise<
   turnUrl: string | null;
   turnUsername: string | null;
   turnCredential: string | null;
+  originUrl: string;
   trustProxy: boolean;
 }> {
   const saved = new Map<string, string | undefined>();
@@ -54,6 +56,7 @@ async function loadConfigWith(env: Record<string, string | undefined>): Promise<
         turnUsername: string | null;
         turnCredential: string | null;
         trustProxy: boolean;
+        originUrl: string;
       };
     };
     return mod.config;
@@ -288,5 +291,19 @@ describe('config.trustProxy', () => {
     expect(on.trustProxy).toBe(true);
     const one = await loadConfigWith({ TMEX_TRUST_PROXY: '1' });
     expect(one.trustProxy).toBe(true);
+  });
+});
+
+describe('config.originUrl', () => {
+  test('maps bind host wildcards to a connectable origin', async () => {
+    expect(originUrlFromBindHost('0.0.0.0', 19883)).toBe('http://127.0.0.1:19883');
+    expect(originUrlFromBindHost('::', 19883)).toBe('http://[::1]:19883');
+    expect(originUrlFromBindHost('[::]', 80)).toBe('http://[::1]:80');
+    expect(originUrlFromBindHost('10.0.0.2', 9663)).toBe('http://10.0.0.2:9663');
+    expect(originUrlFromBindHost('2001:db8::1', 9663)).toBe('http://[2001:db8::1]:9663');
+    const v4 = await loadConfigWith({ TMEX_BIND_HOST: '0.0.0.0', GATEWAY_PORT: '19883' });
+    expect(v4.originUrl).toBe('http://127.0.0.1:19883');
+    const v6 = await loadConfigWith({ TMEX_BIND_HOST: '::', GATEWAY_PORT: '9443' });
+    expect(v6.originUrl).toBe('http://[::1]:9443');
   });
 });

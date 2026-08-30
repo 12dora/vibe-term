@@ -1,9 +1,14 @@
 import { describe, expect, test } from 'bun:test';
-import { resolveTunnelDir } from '../config';
-import { defaultTunnelName, normalizeTunnelHostname } from './hostname';
+import { mkdtemp } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join, resolve } from 'node:path';
+import { originUrlFromBindHost, resolveTunnelDir } from '../config';
+import { TunnelError } from './errors';
+import { defaultTunnelName, normalizeTunnelHostname, normalizeTunnelName } from './hostname';
 import { LogRingBuffer } from './log-buffer';
 import { cloudflaredDownloadSpec, isTunnelPlatformSupported } from './platform';
 import {
+  credentialsPathFor,
   parseCreateOutput,
   parseLoginUrl,
   parseQuickUrl,
@@ -24,6 +29,26 @@ describe('normalizeTunnelHostname', () => {
   test('default tunnel name uses the first label', () => {
     expect(defaultTunnelName('remote.example.com')).toBe('tmex-remote');
   });
+
+  test('default tunnel name stays within the identifier length limit', () => {
+    const long = `${'a'.repeat(63)}.example.com`;
+    const name = defaultTunnelName(long);
+    expect(name.length).toBeLessThanOrEqual(63);
+    expect(normalizeTunnelName(name)).toBe(name);
+  });
+});
+
+describe('normalizeTunnelName', () => {
+  test('accepts cloudflared-safe identifiers and rejects traversal', () => {
+    expect(normalizeTunnelName('tmex-remote')).toBe('tmex-remote');
+    expect(normalizeTunnelName('Tmex_Remote1')).toBe('tmex_remote1');
+    expect(normalizeTunnelName('../../x')).toBeNull();
+    expect(normalizeTunnelName('/abs')).toBeNull();
+    expect(normalizeTunnelName('foo\nbar')).toBeNull();
+    expect(normalizeTunnelName('a'.repeat(64))).toBeNull();
+    expect(normalizeTunnelName('a'.repeat(63))).toBe('a'.repeat(63));
+    expect(normalizeTunnelName('')).toBeNull();
+  });
 });
 
 describe('redactSecrets', () => {
@@ -33,6 +58,16 @@ describe('redactSecrets', () => {
     expect(redactSecrets(`token=${hex} keep`)).toBe('token=*** keep');
     expect(redactSecrets(`secret ${b64}`)).toBe('secret ***');
     expect(redactSecrets('short abcdef1234567890')).toBe('short abcdef1234567890');
+  });
+
+  test('redacts Cloudflare authorization URLs before they are stored', () => {
+    const dash = 'Please visit https://dash.cloudflare.com/argotunnel?aud=xyz&token=abc keep';
+    expect(redactSecrets(dash)).not.toContain('aud=xyz');
+    expect(redactSecrets(dash)).not.toContain('token=abc');
+    expect(redactSecrets(dash)).toContain('https://dash.cloudflare.com/***');
+    const other = 'open https://example.com/login?token=secret-value now';
+    expect(redactSecrets(other)).not.toContain('secret-value');
+    expect(redactSecrets(other)).toContain('token=***');
   });
 });
 
@@ -108,5 +143,27 @@ describe('resolveTunnelDir', () => {
     expect(
       resolveTunnelDir({ DATABASE_URL: '/var/tmex/tmex.db', TMEX_TUNNEL_DIR: undefined })
     ).toBe('/var/tmex/tunnel');
+  });
+});
+
+describe('originUrlFromBindHost', () => {
+  test('maps wildcard and specific bind hosts to a loopback origin URL', () => {
+    expect(originUrlFromBindHost('0.0.0.0', 19883)).toBe('http://127.0.0.1:19883');
+    expect(originUrlFromBindHost('::', 19883)).toBe('http://[::1]:19883');
+    expect(originUrlFromBindHost('[::]', 9443)).toBe('http://[::1]:9443');
+    expect(originUrlFromBindHost('127.0.0.1', 80)).toBe('http://127.0.0.1:80');
+    expect(originUrlFromBindHost('::1', 8080)).toBe('http://[::1]:8080');
+    expect(originUrlFromBindHost('192.168.1.10', 9663)).toBe('http://192.168.1.10:9663');
+    expect(originUrlFromBindHost('2001:db8::1', 9663)).toBe('http://[2001:db8::1]:9663');
+  });
+});
+
+describe('credentialsPathFor', () => {
+  test('resolves inside tunnelDir and rejects path traversal', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'tmex-tun-cred-'));
+    expect(credentialsPathFor(dir, 'tmex-ok')).toBe(resolve(dir, 'tmex-ok.json'));
+    for (const name of ['../../x', '/abs', 'foo/bar']) {
+      expect(() => credentialsPathFor(dir, name)).toThrow(TunnelError);
+    }
   });
 });

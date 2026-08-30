@@ -23,6 +23,8 @@ export function tunnelErrorFrom(error: unknown): { code: TunnelErrorCode; messag
 export function tunnelHttpStatus(code: TunnelErrorCode): number {
   switch (code) {
     case 'busy':
+    case 'tunnel_exists':
+    case 'auth_required':
       return 409;
     case 'invalid_request':
     case 'invalid_hostname':

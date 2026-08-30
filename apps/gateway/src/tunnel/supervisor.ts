@@ -43,13 +43,13 @@ export class TunnelSupervisor {
   async start(opts: {
     bin: string;
     mode: SupervisorMode;
-    originPort: number;
+    originUrl: string;
     configPath: string;
-    namedPublicUrl: string | null;
   }): Promise<void> {
     this.enabled = true;
     this.generation += 1;
     this.lastError = null;
+    this.publicUrl = null;
     this.backoffMs = MIN_BACKOFF_MS;
     await this.spawnChild(opts, this.generation);
   }
@@ -59,6 +59,7 @@ export class TunnelSupervisor {
     this.generation += 1;
     const child = this.child;
     this.child = null;
+    this.publicUrl = null;
     if (!child) {
       this.state = 'stopped';
       this.pid = null;
@@ -74,19 +75,18 @@ export class TunnelSupervisor {
     opts: {
       bin: string;
       mode: SupervisorMode;
-      originPort: number;
+      originUrl: string;
       configPath: string;
-      namedPublicUrl: string | null;
     },
     generation: number
   ): Promise<void> {
     if (!this.enabled || generation !== this.generation) return;
     this.state = 'starting';
-    this.publicUrl = opts.mode === 'named' ? opts.namedPublicUrl : this.publicUrl;
+    this.publicUrl = null;
     const child =
       opts.mode === 'named'
         ? this.deps.provider.spawnNamedRun(opts.bin, opts.configPath)
-        : this.deps.provider.spawnQuickRun(opts.bin, opts.originPort);
+        : this.deps.provider.spawnQuickRun(opts.bin, opts.originUrl);
     this.child = child;
     this.pid = child.pid;
     this.startedAt = new Date().toISOString();
@@ -118,9 +118,8 @@ export class TunnelSupervisor {
     opts: {
       bin: string;
       mode: SupervisorMode;
-      originPort: number;
+      originUrl: string;
       configPath: string;
-      namedPublicUrl: string | null;
     },
     generation: number
   ): Promise<void> {
