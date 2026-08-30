@@ -6,7 +6,7 @@ import { describe, expect, test } from 'bun:test';
 import { Suspense } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 
-import { lazyChunk } from './lazy-chunk';
+import { MAX_CHUNK_RETRIES, lazyChunk, retryChunkLoad } from './lazy-chunk';
 
 function render(node: React.ReactNode): string {
   return renderToStaticMarkup(
@@ -36,5 +36,49 @@ describe('lazyChunk', () => {
     expect(html).toContain('data-testid="page-load-error"');
     expect(html).toContain('data-testid="page-load-retry"');
     expect(html).not.toContain('data-testid="pending"');
+  });
+
+  test('重试只按失败计数、进行中不重复发起、达到上限才整页刷新', async () => {
+    let pending: Array<{ resolve: (c: () => null) => void; reject: (e: Error) => void }> = [];
+    const load = () =>
+      new Promise<() => null>((resolve, reject) => {
+        pending.push({ resolve, reject });
+      });
+    const loaded: unknown[] = [];
+    let reloads = 0;
+    const retry = () =>
+      retryChunkLoad(
+        load,
+        (c) => loaded.push(c),
+        () => reloads++
+      );
+
+    retry();
+    retry();
+    retry();
+    expect(pending).toHaveLength(1);
+    expect(reloads).toBe(0);
+
+    for (let i = 0; i < MAX_CHUNK_RETRIES; i++) {
+      pending[pending.length - 1].reject(new Error('chunk 404'));
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      retry();
+    }
+    expect(pending).toHaveLength(MAX_CHUNK_RETRIES);
+    expect(reloads).toBe(1);
+
+    pending = [];
+    const ok = () =>
+      new Promise<() => null>((resolve) => {
+        pending.push({ resolve, reject: () => {} });
+      });
+    retryChunkLoad(
+      ok,
+      (c) => loaded.push(c),
+      () => reloads++
+    );
+    pending[0].resolve(() => null);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(loaded).toHaveLength(1);
   });
 });
