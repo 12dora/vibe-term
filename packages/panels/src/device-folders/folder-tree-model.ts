@@ -160,7 +160,9 @@ export function resolveDrop(
   activeId: string,
   overId: string,
   layout: DeviceFolderLayout,
-  implicit: readonly string[] = []
+  implicit: readonly string[] = [],
+  // 宿主（DeviceFolderTree）每次渲染只建一次容器模型，直接传进来复用
+  containers: Map<string, DeviceFolderContainer> = listContainers(layout, implicit)
 ): DeviceFolderDrop | null {
   if (activeId === overId) return null;
   const activeFolderId = parseFolderElementId(activeId);
@@ -183,7 +185,6 @@ export function resolveDrop(
 
   const activeNodeId = parseNodeElementId(activeId);
   if (activeNodeId === null) return null;
-  const containers = listContainers(layout, implicit);
 
   let targetContainerId: string;
   let index: number | null;
@@ -229,11 +230,11 @@ export interface DeviceFolderPlaceholder {
 export function previewPlaceholder(
   layout: DeviceFolderLayout,
   implicit: readonly string[],
-  drop: DeviceFolderDrop | null
+  drop: DeviceFolderDrop | null,
+  containers: Map<string, DeviceFolderContainer> = listContainers(layout, implicit)
 ): DeviceFolderPlaceholder | null {
   if (!drop || drop.kind !== 'node') return null;
   const containerId = folderContainerId(drop.targetFolderId);
-  const containers = listContainers(layout, implicit);
   if (!containers.has(containerId)) return null;
   const from = locateNode(containers, nodeElementId(drop.nodeId));
   if (from?.containerId === containerId) return null;

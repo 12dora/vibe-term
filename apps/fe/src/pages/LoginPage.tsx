@@ -289,9 +289,3 @@ export const PageTitle = () => {
   const { t } = useTranslation();
   return <>{t('auth.login.title')}</>;
 };
-
-/** 供 F4-2 的路由表挂载：`{ path: 'login', element: <LoginPage /> }`。 */
-export const loginRoute = {
-  path: 'login',
-  moduleLoader: () => import('./LoginPage'),
-} as const;

@@ -114,7 +114,8 @@ interface TreeContextValue {
   containers: Map<string, DeviceFolderContainer>;
   foldersById: Map<string, DeviceFolder>;
   itemCounts: Map<string, number>;
-  layout: DeviceFolderLayout;
+  /** 有 placement 的节点 id：没有 placement 的节点还挂在根层的默认位置上 */
+  placedNodeIds: ReadonlySet<string>;
   expandedOf: (folderId: string) => boolean;
   dropContainerId: string | null;
   /** 跨容器拖拽时占位条插在哪；同容器重排为 null */
@@ -153,8 +154,8 @@ function NodeItem({
   containerId: string;
   folderId: string | null;
 }) {
-  const { renderNode, nodeDraggable, dragDisabled, layout } = useTree();
-  const implicit = !layout.placements.some((placement) => placement.nodeId === nodeId);
+  const { renderNode, nodeDraggable, dragDisabled, placedNodeIds } = useTree();
+  const implicit = !placedNodeIds.has(nodeId);
   if (nodeDraggable && !nodeDraggable(nodeId, { folderId })) {
     const content = renderNode(nodeId, { folderId, implicit, dragDisabled, dragControls: null });
     if (content === null || content === undefined || content === false) return null;
@@ -355,6 +356,10 @@ export function DeviceFolderTree(props: DeviceFolderTreeProps) {
     () => listContainers(layout, implicitRootNodeIds),
     [layout, implicitRootNodeIds]
   );
+  const placedNodeIds = useMemo<ReadonlySet<string>>(
+    () => new Set(layout.placements.map((placement) => placement.nodeId)),
+    [layout.placements]
+  );
   const folderElementIds = useMemo(() => rootFolderElementIds(layout), [layout]);
   const foldersById = useMemo(
     () => new Map(layout.folders.map((folder) => [folder.id, folder])),
@@ -367,8 +372,11 @@ export function DeviceFolderTree(props: DeviceFolderTreeProps) {
   useImperativeHandle(ref, () => ({ startNewFolder: () => setCreatingFolder(true) }), []);
 
   const activeDrop = useMemo(
-    () => (activeId && overId ? resolveDrop(activeId, overId, layout, implicitRootNodeIds) : null),
-    [activeId, overId, layout, implicitRootNodeIds]
+    () =>
+      activeId && overId
+        ? resolveDrop(activeId, overId, layout, implicitRootNodeIds, containers)
+        : null,
+    [activeId, overId, layout, implicitRootNodeIds, containers]
   );
   const dropContainerId = dropTargetContainerId(activeDrop);
   // 指针停在所有分组之外的空白：整棵树高亮，示意松手会移到最外层
@@ -376,12 +384,12 @@ export function DeviceFolderTree(props: DeviceFolderTreeProps) {
     activeId !== null && overId === dropZoneId(ROOT_CONTAINER_ID) && activeDrop !== null;
   // 目标分组还收着的时候不插占位条：内容区没挂载，插了也看不见（等自动展开之后再说）
   const placeholder = useMemo(() => {
-    const next = previewPlaceholder(layout, implicitRootNodeIds, activeDrop);
+    const next = previewPlaceholder(layout, implicitRootNodeIds, activeDrop, containers);
     if (!next) return null;
     const folderId = containerFolderId(next.containerId);
     if (folderId && expanded[folderId] === false) return null;
     return next;
-  }, [layout, implicitRootNodeIds, activeDrop, expanded]);
+  }, [layout, implicitRootNodeIds, activeDrop, expanded, containers]);
 
   // 拖过折叠的分组停留一会儿就自动展开，方便往里放
   const autoExpandRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -404,10 +412,10 @@ export function DeviceFolderTree(props: DeviceFolderTreeProps) {
       setOverId(null);
       // 指针离开整棵树（含拖出窗口）：取消，不动布局
       if (disabled || dropId === null) return;
-      const drop = resolveDrop(dragId, dropId, layout, implicitRootNodeIds);
+      const drop = resolveDrop(dragId, dropId, layout, implicitRootNodeIds, containers);
       if (drop) onDrop(drop);
     },
-    [disabled, layout, implicitRootNodeIds, onDrop]
+    [disabled, layout, implicitRootNodeIds, containers, onDrop]
   );
 
   const actions = useMemo<TreeContextValue['actions']>(
@@ -439,7 +447,7 @@ export function DeviceFolderTree(props: DeviceFolderTreeProps) {
       containers,
       foldersById,
       itemCounts,
-      layout,
+      placedNodeIds,
       expandedOf,
       dropContainerId,
       placeholder,
@@ -455,7 +463,7 @@ export function DeviceFolderTree(props: DeviceFolderTreeProps) {
       containers,
       foldersById,
       itemCounts,
-      layout,
+      placedNodeIds,
       expandedOf,
       dropContainerId,
       placeholder,

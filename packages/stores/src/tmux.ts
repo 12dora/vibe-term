@@ -15,6 +15,14 @@ export type { DeviceInitialErrorInput, TmuxState } from './tmux-state';
 
 const CONNECT_DEDUP_WINDOW_MS = 500;
 
+/** 乐观重排：认识的 id 按请求顺序排在前面，其余条目保持原相对顺序追加在后；未知 id 丢弃 */
+function reorderById<T extends { id: string }>(items: readonly T[], ids: readonly string[]): T[] {
+  const byId = new Map(items.map((item) => [item.id, item] as const));
+  const requested = new Set(ids);
+  const known = ids.map((id) => byId.get(id)).filter((item) => item !== undefined);
+  return [...known, ...items.filter((item) => !requested.has(item.id))];
+}
+
 export interface TmuxStoreDeps {
   getUI: () => UIStore;
   getSite: () => SiteStore;
@@ -278,14 +286,11 @@ export function createTmuxStore(
           const snapshot = prev.snapshots[deviceId];
           const session = snapshot?.session;
           if (!session) return {};
-          const byId = new Map(session.windows.map((w) => [w.id, w] as const));
-          const requested = new Set(windowIds);
-          const known = windowIds.map((id) => byId.get(id)).filter((w) => w !== undefined);
-          const rest = session.windows.filter((w) => !requested.has(w.id));
+          const windows = reorderById(session.windows, windowIds);
           return {
             snapshots: {
               ...prev.snapshots,
-              [deviceId]: { ...snapshot, session: { ...session, windows: [...known, ...rest] } },
+              [deviceId]: { ...snapshot, session: { ...session, windows } },
             },
           };
         });
@@ -357,14 +362,9 @@ export function createTmuxStore(
           const snapshot = prev.snapshots[deviceId];
           const session = snapshot?.session;
           if (!session) return {};
-          const requested = new Set(paneIds);
-          const windows = session.windows.map((w) => {
-            if (w.id !== windowId) return w;
-            const byId = new Map(w.panes.map((p) => [p.id, p] as const));
-            const known = paneIds.map((id) => byId.get(id)).filter((p) => p !== undefined);
-            const rest = w.panes.filter((p) => !requested.has(p.id));
-            return { ...w, panes: [...known, ...rest] };
-          });
+          const windows = session.windows.map((w) =>
+            w.id === windowId ? { ...w, panes: reorderById(w.panes, paneIds) } : w
+          );
           return {
             snapshots: {
               ...prev.snapshots,

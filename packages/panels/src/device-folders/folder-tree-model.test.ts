@@ -432,3 +432,51 @@ describe('containerItemIds', () => {
     ).toEqual(nodeIds);
   });
 });
+
+describe('复用外部容器模型', () => {
+  const implicit = ['self'];
+
+  test('传入的容器模型与默认自建的结果一致（节点 / 分组头 / 放置区三类落点）', () => {
+    const layout = sampleLayout();
+    const containers = listContainers(layout, implicit);
+    for (const overId of [
+      'node:n1',
+      'node:n2',
+      'folder:a',
+      'folder:b',
+      dropZoneId('folder:b'),
+      bodyDropZoneId('folder:b'),
+      dropZoneId(ROOT_CONTAINER_ID),
+      'bogus',
+    ]) {
+      expect(resolveDrop('node:self', overId, layout, implicit, containers)).toEqual(
+        resolveDrop('node:self', overId, layout, implicit)
+      );
+    }
+  });
+
+  test('resolveDrop 只按传入的容器模型定位节点', () => {
+    const layout = sampleLayout();
+    // 少了隐式节点的模型：self 不在任何容器里，落到 n1 上仍解析为 a 分组的 0 号位
+    const withoutImplicit = listContainers(layout, []);
+    expect(resolveDrop('node:self', 'node:n1', layout, implicit, withoutImplicit)).toEqual({
+      kind: 'node',
+      nodeId: 'self',
+      targetFolderId: 'a',
+      index: 0,
+    });
+    // 同一个模型里 self 不在根容器：落到根落点条上不再判为原地移动
+    expect(
+      resolveDrop('node:self', dropZoneId(ROOT_CONTAINER_ID), layout, implicit, withoutImplicit)
+    ).toEqual({ kind: 'node', nodeId: 'self', targetFolderId: null, index: null });
+  });
+
+  test('previewPlaceholder 复用传入的容器模型', () => {
+    const layout = sampleLayout();
+    const containers = listContainers(layout, implicit);
+    const drop = resolveDrop('node:self', 'node:n1', layout, implicit, containers);
+    expect(previewPlaceholder(layout, implicit, drop, containers)).toEqual(
+      previewPlaceholder(layout, implicit, drop)
+    );
+  });
+});

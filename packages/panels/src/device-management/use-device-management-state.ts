@@ -11,6 +11,7 @@ import { staggerItemStyle } from '@tmex/ui/motion';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { toast } from 'sonner';
+import { reorderDevicesOptimistically } from '../device-tree/device-reorder';
 import { sortDevices } from '../device-tree/device-tree-selectors';
 
 /** 首屏逐项入场的延迟档位上限（35ms/档），超出的卡片与最后一档同时进场 */
@@ -98,13 +99,9 @@ export function useDeviceManagementState({
       await queryClient.cancelQueries({ queryKey: devicesQueryKey });
       const previous = queryClient.getQueryData<DevicesResponse>(devicesQueryKey);
       if (previous) {
-        const byId = new Map(previous.devices.map((device) => [device.id, device]));
-        const reordered = deviceIds.flatMap((id, index) => {
-          const device = byId.get(id);
-          return device ? [{ ...device, sortOrder: index }] : [];
+        queryClient.setQueryData(devicesQueryKey, {
+          devices: reorderDevicesOptimistically(previous.devices, deviceIds),
         });
-        const rest = previous.devices.filter((device) => !deviceIds.includes(device.id));
-        queryClient.setQueryData(devicesQueryKey, { devices: [...reordered, ...rest] });
       }
       return { previous };
     },

@@ -15,6 +15,7 @@ import { useTranslation } from 'react-i18next';
 import { toast } from 'sonner';
 import type { DeviceConnectionAdapter } from '../device-connection';
 import type { SidebarAgentAdapter } from './agent-adapter';
+import { reorderDevicesOptimistically } from './device-reorder';
 import { DeviceRow } from './device-row';
 import { useDeviceTreeDialogs } from './device-tree-dialogs';
 import { SortableVerticalList } from './device-tree-dnd';
@@ -132,15 +133,9 @@ export function SideBarDeviceList({
       await queryClient.cancelQueries({ queryKey });
       const previous = queryClient.getQueryData<{ devices: DeviceListItem[] }>(queryKey);
       if (previous) {
-        const byId = new Map(previous.devices.map((d) => [d.id, d]));
-        const reordered = deviceIds
-          .map((id, index) => {
-            const d = byId.get(id);
-            return d ? { ...d, sortOrder: index } : undefined;
-          })
-          .filter((d): d is DeviceListItem => d !== undefined);
-        const rest = previous.devices.filter((d) => !deviceIds.includes(d.id));
-        queryClient.setQueryData(queryKey, { devices: [...reordered, ...rest] });
+        queryClient.setQueryData(queryKey, {
+          devices: reorderDevicesOptimistically(previous.devices, deviceIds),
+        });
       }
       return { previous };
     },
