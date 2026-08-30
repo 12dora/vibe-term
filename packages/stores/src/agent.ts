@@ -4,7 +4,7 @@
 import type { AgentSessionDto, AgentSessionStatus } from '@tmex/shared';
 import { buildAgentSubscribe, buildAgentUnsubscribe } from '@tmex/ws-client';
 import { create } from 'zustand';
-import { persist } from 'zustand/middleware';
+import { type PersistStorage, createJSONStorage, persist } from 'zustand/middleware';
 import { createAgentDeltaBuffer } from './agent-delta-buffer';
 import { type AgentEventContext, handleAgentEventMessage } from './agent-event-router';
 import { createAgentHistorySync } from './agent-history-sync';
@@ -23,6 +23,34 @@ export type {
   PendingConfirmationUi,
   StartDraftInput,
 } from './agent-state';
+
+type AgentPersisted = Pick<AgentState, 'activeSessionIdByNode' | 'defaultWriteMode'>;
+
+/**
+ * persist 在每次 set（含流式 delta flush）后都会写盘，而持久化的只有两个偏好字段：
+ * 序列化结果与已落盘的一致就跳过同步的 localStorage 写。
+ */
+function dedupedStorage(): PersistStorage<AgentPersisted> | undefined {
+  let written: string | null = null;
+  return createJSONStorage<AgentPersisted>(() => {
+    const base = window.localStorage;
+    return {
+      getItem: (name) => {
+        written = base.getItem(name);
+        return written;
+      },
+      setItem: (name, value) => {
+        if (value === written) return;
+        written = value;
+        base.setItem(name, value);
+      },
+      removeItem: (name) => {
+        written = null;
+        base.removeItem(name);
+      },
+    };
+  });
+}
 
 export function createAgentStore(core: RuntimeCore, disposers: Array<() => void> = []) {
   let initialized = false;
@@ -125,7 +153,8 @@ export function createAgentStore(core: RuntimeCore, disposers: Array<() => void>
         name: `${core.storagePrefix}tmex-agent`,
         version: AGENT_PERSIST_VERSION,
         migrate: migrateAgentPersistedState,
-        partialize: (state) => ({
+        storage: dedupedStorage(),
+        partialize: (state): AgentPersisted => ({
           activeSessionIdByNode: state.activeSessionIdByNode,
           defaultWriteMode: state.defaultWriteMode,
         }),

@@ -1,4 +1,4 @@
-import { type ReactNode, useEffect, useRef, useState } from 'react';
+import { memo, useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 
 import type { AgentWriteMode } from '@tmex/shared';
@@ -9,27 +9,77 @@ import { SendIcon, SparklesIcon, SquareIcon, ZapIcon } from 'lucide-react';
 
 import { ModelPicker } from './model-picker';
 
-function ChatInput({
+interface ComposerControls {
+  writeMode: AgentWriteMode;
+  allowControlChars: boolean;
+  modelProviderId: string | null;
+  modelId: string | null;
+  hasActiveSession: boolean;
+  isOrphan: boolean;
+  onModelChange: (providerId: string | null, modelId: string) => void;
+  onWriteModeChange: (writeMode: AgentWriteMode) => void;
+  onAllowControlCharsChange: (allow: boolean) => void;
+}
+
+/** 写入模式与控制字符开关：全是原始值 props，流式刷新不会让它失效 */
+const WriteModeControls = memo(function WriteModeControls({
+  writeMode,
+  allowControlChars,
+  hasActiveSession,
+  isOrphan,
+  onWriteModeChange,
+  onAllowControlCharsChange,
+}: Omit<ComposerControls, 'modelProviderId' | 'modelId' | 'onModelChange'>) {
+  const { t } = useTranslation();
+  return (
+    <div className="flex shrink-0 items-center gap-3">
+      <div className="flex items-center gap-1.5">
+        <span className="text-muted-foreground text-xs">
+          {writeMode === 'auto' ? t('agent.writeMode.auto') : t('agent.writeMode.confirm')}
+        </span>
+        <Switch
+          data-testid="agent-write-mode-switch"
+          checked={writeMode === 'auto'}
+          disabled={hasActiveSession && isOrphan}
+          onCheckedChange={(checked) => {
+            onWriteModeChange(checked ? 'auto' : 'confirm');
+          }}
+        />
+      </div>
+      {hasActiveSession && (
+        <div className="flex items-center gap-1.5">
+          <span className="text-muted-foreground text-xs" title={t('agent.controlChars.hint')}>
+            {t('agent.controlChars.label')}
+          </span>
+          <Switch
+            data-testid="agent-control-chars-switch"
+            checked={allowControlChars}
+            disabled={isOrphan}
+            title={t('agent.controlChars.hint')}
+            onCheckedChange={onAllowControlCharsChange}
+          />
+        </div>
+      )}
+    </div>
+  );
+});
+
+const ChatInput = memo(function ChatInput({
   onSend,
   onSteer,
   onStop,
   running,
-  steerable,
   disabled,
   draftPrompt,
-  modelPicker,
-  writeModeControl,
-}: {
-  onSend?: (text: string) => void;
-  onSteer?: (text: string) => void;
-  onStop?: () => void;
-  running?: boolean;
-  steerable?: boolean;
-  disabled?: boolean;
+  ...controls
+}: ComposerControls & {
+  onSend: (text: string) => void;
+  onSteer: (text: string) => void;
+  onStop: () => void;
+  running: boolean;
+  disabled: boolean;
   /** 本 node 草稿上的预填 prompt（rsync 自动安装流程） */
-  draftPrompt?: string | null;
-  modelPicker?: ReactNode;
-  writeModeControl?: ReactNode;
+  draftPrompt: string | null;
 }) {
   const { t } = useTranslation();
   const [text, setText] = useState('');
@@ -46,14 +96,14 @@ function ChatInput({
   const submit = (): void => {
     const trimmed = text.trim();
     if (!trimmed || disabled) return;
-    onSend?.(trimmed);
+    onSend(trimmed);
     setText('');
   };
 
   const steer = (): void => {
     const trimmed = text.trim();
     if (!trimmed || disabled) return;
-    onSteer?.(trimmed);
+    onSteer(trimmed);
     setText('');
   };
 
@@ -79,12 +129,19 @@ function ChatInput({
       />
       <div className="flex min-w-0 flex-wrap items-center gap-2 px-2.5 pb-2.5">
         <div className="flex min-w-0 flex-1 items-center gap-2">
-          {writeModeControl}
-          {modelPicker && <div className="min-w-0 flex-1">{modelPicker}</div>}
+          <WriteModeControls {...controls} />
+          <div className="min-w-0 flex-1">
+            <ModelPicker
+              providerId={controls.modelProviderId}
+              modelId={controls.modelId}
+              onChange={controls.onModelChange}
+              disabled={running}
+            />
+          </div>
         </div>
         {running ? (
           <div className="ml-auto flex shrink-0 items-center gap-1.5">
-            {steerable && (
+            {controls.hasActiveSession && (
               <Button
                 data-testid="agent-chat-steer"
                 size="icon"
@@ -111,7 +168,7 @@ function ChatInput({
               data-testid="agent-chat-stop"
               size="icon"
               variant="destructive"
-              onClick={() => onStop?.()}
+              onClick={onStop}
               aria-label={t('agent.panel.stop')}
             >
               <SquareIcon />
@@ -132,44 +189,20 @@ function ChatInput({
       </div>
     </div>
   );
-}
+});
 
 /** 输入区：空草稿态的欢迎块 + 输入框及其模型 / 写入模式控件 */
-export function AgentComposer({
+export const AgentComposer = memo(function AgentComposer({
   draftEmpty,
-  draftPrompt,
-  disabled,
-  running,
-  hasActiveSession,
-  isOrphan,
-  writeMode,
-  allowControlChars,
-  modelProviderId,
-  modelId,
-  onSend,
-  onSteer,
-  onStop,
-  onModelChange,
-  onWriteModeChange,
-  onAllowControlCharsChange,
-}: {
+  ...input
+}: ComposerControls & {
   draftEmpty: boolean;
-  /** 本 node 草稿上的预填 prompt */
   draftPrompt: string | null;
   disabled: boolean;
   running: boolean;
-  hasActiveSession: boolean;
-  isOrphan: boolean;
-  writeMode: AgentWriteMode;
-  allowControlChars: boolean;
-  modelProviderId: string | null;
-  modelId: string | null;
   onSend: (text: string) => void;
   onSteer: (text: string) => void;
   onStop: () => void;
-  onModelChange: (providerId: string | null, modelId: string) => void;
-  onWriteModeChange: (writeMode: AgentWriteMode) => void;
-  onAllowControlCharsChange: (allow: boolean) => void;
 }) {
   const { t } = useTranslation();
 
@@ -182,57 +215,7 @@ export function AgentComposer({
           <p className="text-muted-foreground text-xs">{t('agent.welcome.subtitle')}</p>
         </div>
       )}
-      <ChatInput
-        disabled={disabled}
-        draftPrompt={draftPrompt}
-        running={running}
-        steerable={hasActiveSession}
-        onSend={onSend}
-        onSteer={onSteer}
-        onStop={onStop}
-        modelPicker={
-          <ModelPicker
-            providerId={modelProviderId}
-            modelId={modelId}
-            onChange={onModelChange}
-            disabled={running}
-          />
-        }
-        writeModeControl={
-          <div className="flex shrink-0 items-center gap-3">
-            <div className="flex items-center gap-1.5">
-              <span className="text-muted-foreground text-xs">
-                {writeMode === 'auto' ? t('agent.writeMode.auto') : t('agent.writeMode.confirm')}
-              </span>
-              <Switch
-                data-testid="agent-write-mode-switch"
-                checked={writeMode === 'auto'}
-                disabled={hasActiveSession && isOrphan}
-                onCheckedChange={(checked) => {
-                  onWriteModeChange(checked ? 'auto' : 'confirm');
-                }}
-              />
-            </div>
-            {hasActiveSession && (
-              <div className="flex items-center gap-1.5">
-                <span
-                  className="text-muted-foreground text-xs"
-                  title={t('agent.controlChars.hint')}
-                >
-                  {t('agent.controlChars.label')}
-                </span>
-                <Switch
-                  data-testid="agent-control-chars-switch"
-                  checked={allowControlChars}
-                  disabled={isOrphan}
-                  title={t('agent.controlChars.hint')}
-                  onCheckedChange={onAllowControlCharsChange}
-                />
-              </div>
-            )}
-          </div>
-        }
-      />
+      <ChatInput {...input} />
     </div>
   );
-}
+});
