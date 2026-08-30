@@ -13,6 +13,7 @@ import {
   MESH_REJECT_4401_KIND,
   MESH_VIA_SELF,
   MESH_WS_KIND,
+  type MeshRewritten,
   WS_CLOSE_LOGIN_REQUIRED,
   getMeshRequestContext,
   isMeshRewritten,
@@ -44,8 +45,7 @@ import { HttpsListener } from '../tls/https-listener';
 import { TlsService } from '../tls/tls-service';
 import { createTmexGatewayRuntime } from './gateway';
 import { jsonErr } from './http';
-import { handleLocalRequest } from './local-routes';
-import type { LocalRouteDeps } from './local-routes';
+import { type LocalRouteDeps, handleLocalRequest } from './local-routes';
 import { serveFrontend as defaultServeFrontend } from './serve-frontend';
 import { handleSetupRequest } from './setup-routes';
 import { SETUP_RESTART_DELAY_MS, resolveSetupEnvPath } from './setup-service';
@@ -57,7 +57,7 @@ export function meshShutdownNeeded(roles: TmexRoles): boolean {
   return roles.hub || roles.node;
 }
 
-export type AssembleTmexOptions = {
+type AssembleTmexOptions = {
   roles?: TmexRoles;
   staticRoot?: string;
   createGatewayRuntime?: () => Promise<GatewayRuntime>;
@@ -68,7 +68,7 @@ export type AssembleTmexOptions = {
   nativeDir?: string;
 };
 
-export type AssembledTmex = {
+type AssembledTmex = {
   roles: TmexRoles;
   gateway: GatewayRuntime;
   mesh: MeshRuntime | null;
@@ -86,20 +86,18 @@ export type AssembledTmex = {
   isRestartRequested: () => boolean;
 };
 
+type HttpResult = Response | null | undefined | MeshRewritten;
+type HttpHandler = (req: Request, server: Bun.Server<unknown>) => HttpResult | Promise<HttpResult>;
+
 function defaultStaticRoot(): string {
-  if (process.env.TMEX_FE_DIST_DIR) {
-    return resolve(process.env.TMEX_FE_DIST_DIR);
-  }
-  return resolve(import.meta.dir, '../../resources/fe-dist');
+  return process.env.TMEX_FE_DIST_DIR
+    ? resolve(process.env.TMEX_FE_DIST_DIR)
+    : resolve(import.meta.dir, '../../resources/fe-dist');
 }
 
 function socketKind(ws: { data?: unknown }): string | undefined {
-  const data = ws.data;
-  if (typeof data === 'object' && data !== null && 'kind' in data) {
-    const kind = (data as { kind?: unknown }).kind;
-    if (typeof kind === 'string') return kind;
-  }
-  return undefined;
+  const kind = (ws.data as { kind?: unknown } | null)?.kind;
+  return typeof kind === 'string' ? kind : undefined;
 }
 
 function isMeshKind(kind: string | undefined): boolean {
@@ -111,43 +109,218 @@ function isMeshKind(kind: string | undefined): boolean {
   );
 }
 
-function clientIpFromServer(server: Bun.Server<unknown>, req: Request): string | undefined {
-  try {
-    const info = server.requestIP(req);
-    if (info?.address) return info.address;
-  } catch {
-    // requestIP is unavailable in some test fakes
-  }
-  return undefined;
-}
-
 function seedLocalContext(req: Request, bunServer: Bun.Server<unknown>): void {
   const existing = getMeshRequestContext(req);
+  let clientIp = existing.clientIp;
+  try {
+    clientIp ??= bunServer.requestIP(req)?.address || undefined;
+  } catch {}
   setMeshRequestContext(req, {
     ...existing,
     via: existing.via || MESH_VIA_SELF,
-    clientIp: existing.clientIp ?? clientIpFromServer(bunServer, req),
+    clientIp,
     trustProxy: gatewayConfig.trustProxy,
   });
 }
 
 async function attachStartedAt(resp: Response): Promise<Response> {
   const text = await resp.text();
+  const passthrough = () => new Response(text, { status: resp.status, headers: resp.headers });
   try {
     const body = JSON.parse(text) as unknown;
-    if (!body || typeof body !== 'object' || Array.isArray(body)) {
-      return new Response(text, { status: resp.status, headers: resp.headers });
-    }
+    if (!body || typeof body !== 'object' || Array.isArray(body)) return passthrough();
     const next = body as Record<string, unknown>;
-    if (typeof next.startedAt !== 'number') {
-      next.startedAt = PROCESS_STARTED_AT;
-    }
+    if (typeof next.startedAt !== 'number') next.startedAt = PROCESS_STARTED_AT;
     const headers = new Headers(resp.headers);
     headers.set('content-type', 'application/json');
     return new Response(JSON.stringify(next), { status: resp.status, headers });
   } catch {
-    return new Response(text, { status: resp.status, headers: resp.headers });
+    return passthrough();
   }
+}
+
+async function tryStop(run: () => unknown, label?: string): Promise<void> {
+  try {
+    await run();
+  } catch (err) {
+    if (label) console.error(`[tmex] ${label} stop failed`, err);
+  }
+}
+
+async function meshHttp(
+  mesh: MeshRuntime | null,
+  req: Request,
+  server: Bun.Server<unknown>
+): Promise<HttpResult> {
+  const path = new URL(req.url).pathname;
+  if (!mesh) {
+    return path === '/api/auth/mode' && req.method === 'GET'
+      ? Response.json({ mode: 'none' })
+      : null;
+  }
+  if (path.startsWith('/api/')) {
+    const blocked = mesh.localUiGuard(req);
+    if (blocked) return blocked;
+  }
+  if (path === '/ws' || path === '/n/self/ws' || path === `/n/${mesh.nodeId}/ws`) {
+    const wsGuard = mesh.guardGatewayWebSocket(req, server);
+    if (wsGuard !== null) return wsGuard ?? undefined;
+  }
+  const meshResp = await mesh.handleRequest(req, server);
+  if (isMeshRewritten(meshResp) || meshResp == null) return meshResp;
+  const next =
+    path === '/healthz' && req.method === 'GET' ? await attachStartedAt(meshResp) : meshResp;
+  return applyLocalRenewal(req, next);
+}
+
+async function gatewayHttp(
+  gateway: GatewayRuntime,
+  mesh: MeshRuntime | null,
+  req: Request,
+  server: Bun.Server<unknown>
+): Promise<HttpResult> {
+  const gatewayResp = await gateway.handleRequest(req, server);
+  if (gatewayResp instanceof Response)
+    return mesh ? applyLocalRenewal(req, gatewayResp) : gatewayResp;
+  if (gatewayResp === undefined && new URL(req.url).pathname === '/ws') return undefined;
+  return null;
+}
+
+function createHttpDispatch(handlers: HttpHandler[]): AssembledTmex['fetch'] {
+  const dispatch = async (
+    req: Request,
+    bunServer: Bun.Server<unknown>,
+    rewritten: boolean
+  ): Promise<Response | undefined> => {
+    seedLocalContext(req, bunServer);
+    for (const handler of handlers) {
+      const out = await handler(req, bunServer);
+      if (isMeshRewritten(out)) {
+        if (!rewritten) return dispatch(out.rewritten, bunServer, true);
+        continue;
+      }
+      if (out !== null) return out ?? undefined;
+    }
+  };
+  return (req, bunServer) => dispatch(req, bunServer, false);
+}
+
+function routeWebsocket(
+  gateway: GatewayRuntime,
+  mesh: MeshRuntime | null,
+  hub: HubRuntime | null
+): GatewayRuntime['websocket'] {
+  const gw = gateway.websocket;
+  return {
+    backpressureLimit: gw.backpressureLimit,
+    closeOnBackpressureLimit: gw.closeOnBackpressureLimit,
+    open(ws) {
+      if (hub?.isUplinkSocket(ws)) {
+        hub.handleUplinkOpen(ws as HubServerWebSocket);
+        return;
+      }
+      const kind = socketKind(ws);
+      if (!(mesh && isMeshKind(kind))) {
+        gw.open(ws);
+        return;
+      }
+      const data = ws.data as { sid?: string; uid?: string; via?: string; cid?: string };
+      mesh.websocket.open(ws as never);
+      if (kind !== MESH_GATEWAY_WS_KIND) return;
+      gw.open(ws);
+      const session = (ws.data as { session?: GatewaySession }).session;
+      if (!data.sid || !data.uid || !session) return;
+      const cid = typeof data.cid === 'string' && data.cid.trim() ? data.cid.trim() : '';
+      const registered = mesh.registerGatewaySession?.({
+        sid: data.sid,
+        uid: data.uid,
+        via: data.via ?? MESH_VIA_SELF,
+        session,
+        ...(cid ? { cid } : {}),
+      });
+      if (registered && !registered.ok) {
+        gw.closeSession(session, WS_CLOSE_LOGIN_REQUIRED, registered.code);
+      }
+    },
+    message(ws, message) {
+      if (hub?.isUplinkSocket(ws)) {
+        hub.handleUplinkMessage(ws as HubServerWebSocket, message);
+        return;
+      }
+      const kind = socketKind(ws);
+      if (mesh && isMeshKind(kind)) {
+        if (kind === MESH_GATEWAY_WS_KIND) {
+          if (!mesh.touchSocket(ws as never)) return;
+          gw.message(ws, message);
+          return;
+        }
+        mesh.websocket.message(ws as never, message);
+        return;
+      }
+      if (mesh && !mesh.touchSocket(ws as never)) return;
+      gw.message(ws, message);
+    },
+    drain(ws) {
+      if (hub?.isUplinkSocket(ws)) {
+        hub.handleUplinkDrain(ws as HubServerWebSocket);
+        return;
+      }
+      if (mesh && isMeshKind(socketKind(ws)) && socketKind(ws) !== MESH_GATEWAY_WS_KIND) {
+        mesh.websocket.drain(ws as never);
+        return;
+      }
+      gw.drain(ws);
+    },
+    close(ws, code, reason) {
+      if (hub?.isUplinkSocket(ws)) {
+        hub.handleUplinkClose(ws as HubServerWebSocket, code, reason);
+        return;
+      }
+      if (mesh) {
+        const session = (ws.data as { session?: GatewaySession }).session;
+        if (session) mesh.unregisterGatewaySession?.(session);
+        mesh.websocket.close(ws as never, code, reason);
+        if (isMeshKind(socketKind(ws)) && socketKind(ws) !== MESH_GATEWAY_WS_KIND) return;
+      }
+      gw.close(ws, code, reason);
+    },
+    closeSession(session, code, reason) {
+      gw.closeSession(session, code, reason);
+    },
+  };
+}
+
+function buildTlsLifecycle(
+  fetch: AssembledTmex['fetch'],
+  websocket: GatewayRuntime['websocket'],
+  db: GatewayRuntime['db'],
+  routeDeps: LocalRouteDeps,
+  tlsSlot: { service?: TlsService }
+) {
+  const httpsListener = new HttpsListener({
+    fetch,
+    websocket,
+    log: (message) => console.log(`[tmex] ${message}`),
+  });
+  const tls = new TlsService({
+    store: new TlsConfigStore(db),
+    listener: httpsListener,
+    challenge: new AcmeHttp01Challenge(),
+    envPath: resolveSetupEnvPath(),
+    trustProxy: gatewayConfig.trustProxy,
+  });
+  tlsSlot.service = tls;
+  return {
+    tls,
+    httpsListener,
+    tlsHandler: createTlsRoutes({
+      service: tls,
+      authorize: async (req) =>
+        isStandaloneRoles(routeDeps.roles) || routeDeps.authenticate(req).ok
+          ? null
+          : jsonErr('UNAUTHORIZED', 'login required', 401),
+    }),
+  };
 }
 
 export async function assembleTmex(opts: AssembleTmexOptions = {}): Promise<AssembledTmex> {
@@ -156,21 +329,12 @@ export async function assembleTmex(opts: AssembleTmexOptions = {}): Promise<Asse
   const createGateway = opts.createGatewayRuntime ?? createTmexGatewayRuntime;
   const createMesh = opts.createMeshRuntime ?? createMeshRuntime;
   const serveFrontend = opts.serveFrontend ?? defaultServeFrontend;
-
   const gateway = await createGateway();
   const tlsSlot: { service?: TlsService } = {};
 
   let mesh: MeshRuntime | null = null;
   if (roles.node) {
     const nativeDir = opts.nativeDir ?? process.env.TMEX_NATIVE_DIR ?? '';
-    const loadNative: LoadNative =
-      opts.loadNative ??
-      (async () => {
-        if (process.env.TMEX_DIRECT_ENABLED === 'false') return null;
-        if (!nativeDir) return null;
-        return loadNodeDatachannel({ nativeDir });
-      });
-    const identityUserId = (await new NodeIdentityStore(gateway.db).load())?.userId ?? undefined;
     mesh = await createMesh({
       db: gateway.db,
       gateway,
@@ -187,21 +351,21 @@ export async function assembleTmex(opts: AssembleTmexOptions = {}): Promise<Asse
         peerBindHost: gatewayConfig.peerBindHost,
       },
       hub: opts.hub,
-      loadNative,
-      userId: identityUserId,
-      tlsInfo: async () => {
-        const service = tlsSlot.service;
-        if (!service) return { caFingerprint: null, caPem: null };
-        return {
-          caFingerprint: (await service.status()).caFingerprint,
-          caPem: await service.caPem(),
-        };
-      },
+      loadNative:
+        opts.loadNative ??
+        (async () =>
+          process.env.TMEX_DIRECT_ENABLED === 'false' || !nativeDir
+            ? null
+            : loadNodeDatachannel({ nativeDir })),
+      userId: (await new NodeIdentityStore(gateway.db).load())?.userId ?? undefined,
+      tlsInfo: async () => ({
+        caFingerprint: tlsSlot.service ? (await tlsSlot.service.status()).caFingerprint : null,
+        caPem: (await tlsSlot.service?.caPem()) ?? null,
+      }),
     });
   }
 
   const hub = mesh?.hub ?? opts.hub ?? null;
-
   const auth = await createAuthContextFromDb(gateway.db, {
     installDir: resolveGatewayInstallDir(),
     envPath: resolveSetupEnvPath(),
@@ -216,13 +380,10 @@ export async function assembleTmex(opts: AssembleTmexOptions = {}): Promise<Asse
   let restartRequested = false;
   const scheduleRestart = (): void => {
     restartRequested = true;
-    setTimeout(() => {
-      if (processShutdown) {
-        void processShutdown();
-        return;
-      }
-      process.exit(0);
-    }, SETUP_RESTART_DELAY_MS);
+    setTimeout(
+      () => void (processShutdown ? processShutdown() : process.exit(0)),
+      SETUP_RESTART_DELAY_MS
+    );
   };
 
   const routeDeps: LocalRouteDeps = {
@@ -244,34 +405,20 @@ export async function assembleTmex(opts: AssembleTmexOptions = {}): Promise<Asse
     performHubJoin,
     scheduleRestart,
     quiesceMesh: async () => {
-      try {
-        await mesh?.stop();
-      } catch {
-        // best-effort
-      }
-      try {
-        await hub?.stop();
-      } catch {
-        // best-effort
-      }
+      await tryStop(() => mesh?.stop());
+      await tryStop(() => hub?.stop());
     },
     startedAt: PROCESS_STARTED_AT,
     authenticate: (req) => {
       try {
-        return authenticateRequest(req, {
-          roles,
-          nodeSessionStore: auth.nodeSessionStore,
-        });
+        return authenticateRequest(req, { roles, nodeSessionStore: auth.nodeSessionStore });
       } catch {
         return { ok: false };
       }
     },
     tlsStatus: async () => {
-      const service = tlsSlot.service;
-      if (!service) {
-        throw new Error('tls service is not initialized');
-      }
-      const status = await service.status();
+      if (!tlsSlot.service) throw new Error('tls service is not initialized');
+      const status = await tlsSlot.service.status();
       return {
         mode: status.mode,
         listenerRunning: status.listener.running,
@@ -281,229 +428,38 @@ export async function assembleTmex(opts: AssembleTmexOptions = {}): Promise<Asse
   };
 
   let tlsHandler: (req: Request) => Promise<Response | null> = async () => null;
-
-  const dispatch = async (
-    req: Request,
-    bunServer: Bun.Server<unknown>,
-    rewritten: boolean
-  ): Promise<Response | undefined> => {
-    seedLocalContext(req, bunServer);
-
-    const tlsResp = await tlsHandler(req);
-    if (tlsResp) return tlsResp;
-
-    const localResp = await handleLocalRequest(req, routeDeps);
-    if (localResp) return localResp;
-    const setupResp = await handleSetupRequest(req, routeDeps);
-    if (setupResp) return setupResp;
-
-    if (hub) {
-      const hubResp = await hub.handleRequest(req, bunServer);
-      if (hubResp instanceof Response) return hubResp;
-    }
-
-    if (mesh) {
-      const path = new URL(req.url).pathname;
-      if (path.startsWith('/api/')) {
-        const blocked = mesh.localUiGuard(req);
-        if (blocked) return blocked;
-      }
-      if (path === '/ws' || path === '/n/self/ws' || path === `/n/${mesh.nodeId}/ws`) {
-        const wsGuard = mesh.guardGatewayWebSocket(req, bunServer);
-        if (wsGuard !== null) return wsGuard ?? undefined;
-      }
-      const meshResp = await mesh.handleRequest(req, bunServer);
-      if (isMeshRewritten(meshResp) && !rewritten) {
-        return dispatch(meshResp.rewritten, bunServer, true);
-      }
-      if (meshResp instanceof Response) {
-        const path = new URL(req.url).pathname;
-        const next =
-          path === '/healthz' && req.method === 'GET' ? await attachStartedAt(meshResp) : meshResp;
-        return applyLocalRenewal(req, next);
-      }
-      if (meshResp === undefined) return undefined;
-    } else {
-      const path = new URL(req.url).pathname;
-      if (path === '/api/auth/mode' && req.method === 'GET') {
-        return new Response(JSON.stringify({ mode: 'none' }), {
-          status: 200,
-          headers: { 'content-type': 'application/json' },
-        });
-      }
-    }
-
-    const gatewayResp = await gateway.handleRequest(req, bunServer);
-    if (gatewayResp instanceof Response) {
-      return mesh ? applyLocalRenewal(req, gatewayResp) : gatewayResp;
-    }
-    if (gatewayResp === undefined && new URL(req.url).pathname === '/ws') {
-      return undefined;
-    }
-    return serveFrontend(req, staticRoot);
-  };
-
-  const fetch: AssembledTmex['fetch'] = async (req, bunServer) => {
-    return dispatch(req, bunServer, false);
-  };
-
-  const websocket: GatewayRuntime['websocket'] = {
-    backpressureLimit: gateway.websocket.backpressureLimit,
-    closeOnBackpressureLimit: gateway.websocket.closeOnBackpressureLimit,
-    open(ws) {
-      if (hub?.isUplinkSocket(ws)) {
-        hub.handleUplinkOpen(ws as HubServerWebSocket);
-        return;
-      }
-      const kind = socketKind(ws);
-      if (mesh && isMeshKind(kind)) {
-        const data = ws.data as {
-          sid?: string;
-          uid?: string;
-          via?: string;
-          cid?: string;
-        };
-        const sid = data.sid;
-        const uid = data.uid;
-        const via = data.via ?? MESH_VIA_SELF;
-        mesh.websocket.open(ws as never);
-        if (kind === MESH_GATEWAY_WS_KIND) {
-          gateway.websocket.open(ws);
-          const session = (ws.data as { session?: GatewaySession }).session;
-          if (sid && uid && session) {
-            const cid = typeof data.cid === 'string' && data.cid.trim() ? data.cid.trim() : '';
-            const registered = mesh.registerGatewaySession?.({
-              sid,
-              uid,
-              via,
-              session,
-              ...(cid ? { cid } : {}),
-            });
-            if (registered && !registered.ok) {
-              gateway.websocket.closeSession(session, WS_CLOSE_LOGIN_REQUIRED, registered.code);
-            }
-          }
-        }
-        return;
-      }
-      gateway.websocket.open(ws);
-    },
-    message(ws, message) {
-      if (hub?.isUplinkSocket(ws)) {
-        hub.handleUplinkMessage(ws as HubServerWebSocket, message);
-        return;
-      }
-      const kind = socketKind(ws);
-      if (mesh && isMeshKind(kind)) {
-        if (kind === MESH_GATEWAY_WS_KIND) {
-          if (!mesh.touchSocket(ws as never)) return;
-          gateway.websocket.message(ws, message);
-          return;
-        }
-        mesh.websocket.message(ws as never, message);
-        return;
-      }
-      if (mesh && !mesh.touchSocket(ws as never)) {
-        return;
-      }
-      gateway.websocket.message(ws, message);
-    },
-    drain(ws) {
-      if (hub?.isUplinkSocket(ws)) {
-        hub.handleUplinkDrain(ws as HubServerWebSocket);
-        return;
-      }
-      const kind = socketKind(ws);
-      if (mesh && isMeshKind(kind) && kind !== MESH_GATEWAY_WS_KIND) {
-        mesh.websocket.drain(ws as never);
-        return;
-      }
-      gateway.websocket.drain(ws);
-    },
-    close(ws, code, reason) {
-      if (hub?.isUplinkSocket(ws)) {
-        hub.handleUplinkClose(ws as HubServerWebSocket, code, reason);
-        return;
-      }
-      const kind = socketKind(ws);
-      if (mesh) {
-        const session = (ws.data as { session?: GatewaySession }).session;
-        if (session) mesh.unregisterGatewaySession?.(session);
-        mesh.websocket.close(ws as never, code, reason);
-        if (
-          kind === MESH_WS_KIND ||
-          kind === MESH_FORWARD_WS_KIND ||
-          kind === MESH_REJECT_4401_KIND
-        ) {
-          return;
-        }
-      }
-      gateway.websocket.close(ws, code, reason);
-    },
-    closeSession(session, code, reason) {
-      gateway.websocket.closeSession(session, code, reason);
-    },
-  };
-
-  const challenge = new AcmeHttp01Challenge();
-  const store = new TlsConfigStore(gateway.db);
-  const httpsListener = new HttpsListener({
-    fetch,
-    websocket,
-    log: (message) => console.log(`[tmex] ${message}`),
-  });
-  const tlsService = new TlsService({
-    store,
-    listener: httpsListener,
-    challenge,
-    envPath: resolveSetupEnvPath(),
-    trustProxy: gatewayConfig.trustProxy,
-  });
-  tlsSlot.service = tlsService;
-  tlsHandler = createTlsRoutes({
-    service: tlsService,
-    authorize: async (req) => {
-      if (isStandaloneRoles(roles)) return null;
-      const result = routeDeps.authenticate(req);
-      if (!result.ok) {
-        return jsonErr('UNAUTHORIZED', 'login required', 401);
-      }
-      return null;
-    },
-  });
+  const fetch = createHttpDispatch([
+    (req) => tlsHandler(req),
+    (req) => handleLocalRequest(req, routeDeps),
+    (req) => handleSetupRequest(req, routeDeps),
+    (req, server) =>
+      hub ? hub.handleRequest(req, server).then((r) => (r instanceof Response ? r : null)) : null,
+    (req, server) => meshHttp(mesh, req, server),
+    (req, server) => gatewayHttp(gateway, mesh, req, server),
+    (req) => serveFrontend(req, staticRoot),
+  ]);
+  const websocket = routeWebsocket(gateway, mesh, hub);
+  const tlsLife = buildTlsLifecycle(fetch, websocket, gateway.db, routeDeps, tlsSlot);
+  tlsHandler = tlsLife.tlsHandler;
 
   let stopPromise: Promise<void> | null = null;
-
   return {
     roles,
     gateway,
     mesh,
     hub,
-    tls: tlsService,
-    httpsListener,
+    tls: tlsLife.tls,
+    httpsListener: tlsLife.httpsListener,
     fetch,
     websocket,
     async start() {
       await mesh?.start();
     },
     async stop() {
-      if (stopPromise) return stopPromise;
-      stopPromise = (async () => {
-        try {
-          await mesh?.stop();
-        } catch (err) {
-          console.error('[tmex] mesh stop failed', err);
-        }
-        try {
-          await hub?.stop();
-        } catch (err) {
-          console.error('[tmex] hub stop failed', err);
-        }
-        try {
-          await gateway.stop();
-        } catch (err) {
-          console.error('[tmex] gateway stop failed', err);
-        }
+      stopPromise ??= (async () => {
+        await tryStop(() => mesh?.stop(), 'mesh');
+        await tryStop(() => hub?.stop(), 'hub');
+        await tryStop(() => gateway.stop(), 'gateway');
       })();
       return stopPromise;
     },
@@ -516,7 +472,7 @@ export async function assembleTmex(opts: AssembleTmexOptions = {}): Promise<Asse
   };
 }
 
-export type ShutdownHooks = {
+type ShutdownHooks = {
   on?: (event: string, listener: (...args: unknown[]) => void) => unknown;
   exit?: (code: number) => void;
   timeoutMs?: number;
@@ -533,29 +489,19 @@ export function createProcessShutdown(
     if (promise) return promise;
     promise = new Promise<void>((resolve) => {
       let finished = false;
-      const timer = setTimeout(() => {
+      const timer = setTimeout(() => done(1), timeoutMs);
+      function done(code: number) {
         if (finished) return;
         finished = true;
-        exit(1);
+        clearTimeout(timer);
+        exit(code);
         resolve();
-      }, timeoutMs);
+      }
       void Promise.resolve()
         .then(stop)
         .then(
-          () => {
-            if (finished) return;
-            finished = true;
-            clearTimeout(timer);
-            exit(0);
-            resolve();
-          },
-          () => {
-            if (finished) return;
-            finished = true;
-            clearTimeout(timer);
-            exit(1);
-            resolve();
-          }
+          () => done(0),
+          () => done(1)
         );
     });
     return promise;
@@ -572,9 +518,7 @@ export function installShutdownHandlers(
       process.on(event as NodeJS.Signals, listener as NodeJS.SignalsListener);
     });
   const run = createProcessShutdown(stop, hooks);
-  const handler = () => {
-    void run();
-  };
+  const handler = () => void run();
   on('SIGINT', handler);
   on('SIGTERM', handler);
   return run;
