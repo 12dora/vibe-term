@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
+import { afterAll, beforeAll, describe, expect, spyOn, test } from 'bun:test';
 import { resolve } from 'node:path';
 import { createOpenAICompatible } from '@ai-sdk/openai-compatible';
 import type { EventType, WebhookEvent } from '@tmex/shared';
@@ -90,10 +90,17 @@ interface Harness {
   timers: Array<{ ms: number; cleared: boolean; fire: () => void }>;
 }
 
-function createHarness(options: { llmBaseUrl?: string; errorThreshold?: number } = {}): Harness {
+function createHarness(
+  options: {
+    llmBaseUrl?: string;
+    errorThreshold?: number;
+    useProductionSchedulerClock?: boolean;
+  } = {}
+): Harness {
   let screenValue: string | (() => string) = '';
   let captureError: Error | null = null;
   let now = new Date('2026-06-13T12:00:00.000Z');
+  let schedulerNowMs = 0;
   const ownRuleIds = new Set<string>();
 
   const notifications: Harness['notifications'] = [];
@@ -146,6 +153,7 @@ function createHarness(options: { llmBaseUrl?: string; errorThreshold?: number }
       broadcasts.push({ ruleId, eventType, payload });
     },
     now: () => now,
+    ...(options.useProductionSchedulerClock ? {} : { monotonicNow: () => schedulerNowMs }),
     scheduleInterval: (fn, ms) => {
       const entry = { ms, cleared: false, fire: fn };
       timers.push(entry);
@@ -187,6 +195,7 @@ function createHarness(options: { llmBaseUrl?: string; errorThreshold?: number }
     },
     advanceMinutes: (minutes) => {
       now = new Date(now.getTime() + minutes * 60_000);
+      schedulerNowMs += minutes * 60_000;
     },
     holdCapture: () => {
       let release: () => void = () => {};
@@ -319,6 +328,50 @@ describe('WatchService - 调度与设备连接分组', () => {
     expect(harness.captureCalls).toEqual(['%1', '%1']);
 
     await harness.service.stop();
+  });
+
+  test('墙钟前跳不会让规则立刻到期', async () => {
+    const harness = createHarness();
+    harness.makeRule({ fireMode: 'repeat', intervalSeconds: 5 });
+    harness.setScreen('quiet\n');
+    await harness.service.start();
+
+    harness.setNow(new Date('2026-06-13T13:00:00.000Z'));
+    await harness.service.tickPane(TEST_DEVICE_ID, '%1');
+    expect(harness.captureCalls).toEqual([]);
+
+    const live = harness.timers.filter((t) => !t.cleared);
+    expect(live[0]?.ms).toBeLessThanOrEqual(5000);
+
+    await harness.service.stop();
+  });
+
+  test('墙钟回拨不会把下一拍推迟数小时', async () => {
+    const harness = createHarness();
+    harness.makeRule({ fireMode: 'repeat', intervalSeconds: 5 });
+    harness.setScreen('quiet\n');
+    await harness.service.start();
+
+    harness.setNow(new Date('2026-06-13T11:00:00.000Z'));
+    await harness.service.tickPane(TEST_DEVICE_ID, '%1');
+    expect(harness.captureCalls).toEqual([]);
+    const live = harness.timers.filter((t) => !t.cleared);
+    expect(live[0]?.ms).toBeLessThanOrEqual(5000);
+
+    await harness.service.stop();
+  });
+
+  test('未注入 monotonicNow 时调度走 performance.now', async () => {
+    const perf = spyOn(performance, 'now');
+    try {
+      const harness = createHarness({ useProductionSchedulerClock: true });
+      harness.makeRule({ intervalSeconds: 5 });
+      await harness.service.start();
+      expect(perf).toHaveBeenCalled();
+      await harness.service.stop();
+    } finally {
+      perf.mockRestore();
+    }
   });
 });
 

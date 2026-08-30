@@ -1,11 +1,15 @@
 export const SNAPSHOT_REFRESH_QUIET_PERIOD_MS = 150;
 
+type CoordinatorPhase = 'idle' | 'waiting' | 'refreshing';
+
 export class SnapshotRefreshCoordinator {
   private active: Promise<void> | null = null;
   private trailingRequested = false;
   private trailingImmediate = false;
   private lastRefreshAt: number | null = null;
   private cancelQuiet: (() => void) | null = null;
+  private phase: CoordinatorPhase = 'idle';
+  private skipQuiet = false;
   private readonly quietPeriodMs: number;
   private readonly now: () => number;
   private readonly delay: (ms: number) => Promise<void>;
@@ -28,8 +32,9 @@ export class SnapshotRefreshCoordinator {
   }
 
   requestImmediate(): Promise<void> {
-    if (this.cancelQuiet && this.active) {
-      this.cancelQuiet();
+    if (this.active && this.phase !== 'refreshing') {
+      this.skipQuiet = true;
+      this.cancelQuiet?.();
       return this.active;
     }
     return this.enqueue(true);
@@ -37,19 +42,25 @@ export class SnapshotRefreshCoordinator {
 
   private enqueue(immediate: boolean): Promise<void> {
     if (this.active) {
-      this.trailingRequested = true;
-      if (immediate) this.trailingImmediate = true;
+      if (this.phase === 'refreshing') {
+        this.trailingRequested = true;
+        if (immediate) this.trailingImmediate = true;
+      }
       return this.active;
     }
 
     this.trailingRequested = false;
     this.trailingImmediate = false;
+    this.skipQuiet = immediate;
+    this.phase = 'waiting';
     const active = Promise.resolve().then(async () => {
       try {
-        if (!immediate) {
-          await this.waitQuiet();
-        }
         while (true) {
+          if (!this.skipQuiet) {
+            await this.waitQuiet();
+          }
+          this.skipQuiet = false;
+          this.phase = 'refreshing';
           await this.refresh();
           this.lastRefreshAt = this.now();
           if (!this.trailingRequested) {
@@ -58,11 +69,11 @@ export class SnapshotRefreshCoordinator {
           const nextImmediate = this.trailingImmediate;
           this.trailingRequested = false;
           this.trailingImmediate = false;
-          if (!nextImmediate) {
-            await this.waitQuiet();
-          }
+          this.skipQuiet = nextImmediate;
+          this.phase = 'waiting';
         }
       } finally {
+        this.phase = 'idle';
         this.active = null;
       }
     });

@@ -353,9 +353,64 @@ describe('WatchRuleScheduler', () => {
     expect(dueLog[1]).toEqual({ now: 35_000, due: ['fast'] });
   });
 
-  test('injected clock rollback does not postpone a due rule by hours', () => {
-    const clock = { now: 0 };
-    const scheduler = new WatchRuleScheduler({ now: () => clock.now });
+  test('Date.now rollback between add and first callback does not re-arm a full interval', () => {
+    const dateNow = spyOn(Date, 'now');
+    let wall = 1_700_000_000_000;
+    dateNow.mockImplementation(() => wall);
+    try {
+      const delays: number[] = [];
+      const scheduler = new WatchRuleScheduler();
+      const scheduleInterval = (_fn: () => void, ms: number) => {
+        delays.push(ms);
+        return () => {};
+      };
+
+      scheduler.add(
+        { id: 'r1', deviceId: 'd1', paneId: '%1', triggerType: 'match', intervalSeconds: 5 },
+        () => {},
+        scheduleInterval
+      );
+      expect(delays[0]).toBeGreaterThan(4900);
+      expect(delays[0]).toBeLessThanOrEqual(5000);
+
+      wall -= 3_600_000;
+      expect(scheduler.takeDueRuleIds('d1', '%1')).toEqual([]);
+      expect(delays.at(-1)).toBeLessThanOrEqual(5000);
+    } finally {
+      dateNow.mockRestore();
+    }
+  });
+
+  test('Date.now restoration (forward leap) does not create a huge delay', () => {
+    const dateNow = spyOn(Date, 'now');
+    let wall = 1_700_000_000_000;
+    dateNow.mockImplementation(() => wall);
+    try {
+      const delays: number[] = [];
+      const scheduler = new WatchRuleScheduler();
+      const scheduleInterval = (_fn: () => void, ms: number) => {
+        delays.push(ms);
+        return () => {};
+      };
+
+      scheduler.add(
+        { id: 'r1', deviceId: 'd1', paneId: '%1', triggerType: 'match', intervalSeconds: 5 },
+        () => {},
+        scheduleInterval
+      );
+
+      wall += 3_600_000;
+      expect(scheduler.takeDueRuleIds('d1', '%1')).toEqual([]);
+      expect(delays.at(-1)).toBeLessThanOrEqual(5000);
+      expect(delays.at(-1)).toBeGreaterThan(4900);
+    } finally {
+      dateNow.mockRestore();
+    }
+  });
+
+  test('monotonic elapsed time is preserved when wall clock rolls back', () => {
+    const mono = { now: 0 };
+    const scheduler = new WatchRuleScheduler({ now: () => mono.now });
     const delays: number[] = [];
     const scheduleInterval = (_fn: () => void, ms: number) => {
       delays.push(ms);
@@ -369,11 +424,7 @@ describe('WatchRuleScheduler', () => {
     );
     expect(delays).toEqual([5000]);
 
-    clock.now = 4000;
-    expect(scheduler.takeDueRuleIds('d1', '%1')).toEqual([]);
-    expect(delays.at(-1)).toBe(1000);
-
-    clock.now = -3_600_000;
+    mono.now = 4000;
     expect(scheduler.takeDueRuleIds('d1', '%1')).toEqual([]);
     expect(delays.at(-1)).toBe(1000);
   });

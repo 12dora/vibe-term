@@ -269,6 +269,53 @@ describe('decodeRollingTail UTF-8 alignment', () => {
     expect(text).toBe('');
     expect(text.includes('\uFFFD')).toBe(false);
   });
+
+  test('overflow 截在 3 字节 lead 之后不产出 U+FFFD', () => {
+    const euro = encoder.encode('€');
+    const payload = new Uint8Array([0x61, 0x62, 0x63, 0x64, euro[0]]);
+    const chunks: Uint8Array[] = [];
+    const next = appendRollingTail(chunks, 0, payload, 4);
+    expect(next.total).toBe(4);
+    const text = decodeRollingTail(chunks, next.total);
+    expect(text).toBe('bcd');
+    expect(text.includes('\uFFFD')).toBe(false);
+  });
+
+  test('截在 3 字节序列中段不产出 U+FFFD', () => {
+    const euro = encoder.encode('€');
+    const buf = new Uint8Array([0x61, euro[0], euro[1]]);
+    const text = decodeRollingTail([buf], buf.length);
+    expect(text).toBe('a');
+    expect(text.includes('\uFFFD')).toBe(false);
+  });
+
+  test('截在 4 字节序列中段不产出 U+FFFD', () => {
+    const grin = encoder.encode('😀');
+    expect(grin.byteLength).toBe(4);
+    const buf = new Uint8Array([0x61, grin[0], grin[1], grin[2]]);
+    const text = decodeRollingTail([buf], buf.length);
+    expect(text).toBe('a');
+    expect(text.includes('\uFFFD')).toBe(false);
+  });
+
+  test('overflow 截在 4 字节 lead 之后不产出 U+FFFD', () => {
+    const grin = encoder.encode('😀');
+    const payload = new Uint8Array([0x61, 0x62, 0x63, 0x64, grin[0]]);
+    const chunks: Uint8Array[] = [];
+    const next = appendRollingTail(chunks, 0, payload, 4);
+    const text = decodeRollingTail(chunks, next.total);
+    expect(text).toBe('bcd');
+    expect(text.includes('\uFFFD')).toBe(false);
+  });
+
+  test('同时裁掉头部 continuation 与尾部不完整序列', () => {
+    const euro = encoder.encode('€');
+    const grin = encoder.encode('😀');
+    const buf = new Uint8Array([euro[1], euro[2], 0x61, 0x62, grin[0], grin[1]]);
+    const text = decodeRollingTail([buf], buf.length);
+    expect(text).toBe('ab');
+    expect(text.includes('\uFFFD')).toBe(false);
+  });
 });
 
 describe('defaultRun history capture bound', () => {

@@ -64,6 +64,7 @@ export interface WatchServiceDeps {
   getDevice: typeof getDeviceById;
   getSettings: typeof getSiteSettings;
   now: () => Date;
+  monotonicNow?: () => number;
   scheduleInterval: (fn: () => void, ms: number) => () => void;
   errorThreshold: number;
   llmMaxRetries: number;
@@ -104,7 +105,9 @@ export class WatchService {
 
   constructor(deps: Partial<WatchServiceDeps> = {}) {
     this.deps = { ...defaultDeps, ...deps };
-    this.scheduler = new WatchRuleScheduler({ now: () => this.deps.now().getTime() });
+    this.scheduler = new WatchRuleScheduler(
+      this.deps.monotonicNow ? { now: this.deps.monotonicNow } : {}
+    );
     this.runtimePool = new WatchRuntimePool({
       acquireRuntime: this.deps.acquireRuntime,
       releaseRuntime: this.deps.releaseRuntime,

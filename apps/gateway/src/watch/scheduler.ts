@@ -49,20 +49,7 @@ export class WatchRuleScheduler {
   private readonly now: () => number;
 
   constructor(options: WatchRuleSchedulerOptions = {}) {
-    const raw = options.now ?? (() => performance.now());
-    let lastRaw: number | undefined;
-    let mono = 0;
-    this.now = () => {
-      const n = raw();
-      if (lastRaw === undefined) {
-        lastRaw = n;
-        return 0;
-      }
-      const d = n - lastRaw;
-      lastRaw = n;
-      if (d > 0) mono += d;
-      return Math.floor(mono);
-    };
+    this.now = options.now ?? (() => performance.now());
   }
 
   has(ruleId: string): boolean {
@@ -242,7 +229,7 @@ export class WatchRuleScheduler {
     group.armedDeadline = nearest;
     group.clearTimer = group.scheduleInterval(
       () => group.onTick(group.deviceId, group.paneId),
-      Math.max(0, nearest - this.now())
+      Math.max(0, Math.round(nearest - this.now()))
     );
   }
 }

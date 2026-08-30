@@ -134,7 +134,8 @@ export function decodeRollingTail(chunks: Uint8Array[], total: number): string {
   while (start < merged.length && (merged[start] & 0xc0) === 0x80) {
     start += 1;
   }
-  return new TextDecoder().decode(start === 0 ? merged : merged.subarray(start));
+  const slice = start === 0 ? merged : merged.subarray(start);
+  return new TextDecoder().decode(slice, { stream: true });
 }
 
 export async function readTextWithByteLimit(

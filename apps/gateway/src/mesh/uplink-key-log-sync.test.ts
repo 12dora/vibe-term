@@ -122,29 +122,21 @@ describe('UplinkKeyLogSync', () => {
   test('stale generation cannot failFork or tear down after reset', async () => {
     const hash0 = new Uint8Array(32);
     const hung = { release() {} };
-    let headCalls = 0;
+    let applyCalls = 0;
     const forks: KeyLogForkEvent[] = [];
-    const { host, torn, emitted, bump } = makeHost();
+    const rec = { seq: 1n, bytes: randomBytes(8), sig: randomBytes(64) };
+    const { host, torn, emitted, sent, bump } = makeHost();
     const sync = new UplinkKeyLogSync({
       host,
       applier: {
-        async head(_userId, signal) {
-          headCalls += 1;
-          if (headCalls === 1) {
-            await new Promise<void>((resolve) => {
-              hung.release = resolve;
-              const onAbort = () => resolve();
-              if (signal?.aborted) {
-                resolve();
-                return;
-              }
-              signal?.addEventListener('abort', onAbort, { once: true });
-            });
-            return { seq: 0n, hash: hash0 };
-          }
+        async head() {
           return { seq: 0n, hash: hash0 };
         },
         async applyMany() {
+          applyCalls += 1;
+          await new Promise<void>((resolve) => {
+            hung.release = resolve;
+          });
           return { applied: 0, error: 'fork' };
         },
       },
@@ -155,7 +147,13 @@ describe('UplinkKeyLogSync', () => {
     });
     sync.reset('init');
     sync.ingestNodeList(nodeList({ key_log_head: { seq: 3n, hash: new Uint8Array(32).fill(3) } }));
-    await waitUntil(() => headCalls === 1);
+    await waitUntil(() => sent.length === 1);
+    const req = decodeUplinkCtl(sent[0] ?? new Uint8Array());
+    expect(req.t).toBe('key.log.req');
+    if (req.t === 'key.log.req') {
+      sync.handleKeyLogRes({ t: 'key.log.res', records: [rec], id: req.id });
+    }
+    await waitUntil(() => applyCalls === 1);
     const previous = sync.snapshotTasks(1);
     sync.reset('reconnect');
     bump();

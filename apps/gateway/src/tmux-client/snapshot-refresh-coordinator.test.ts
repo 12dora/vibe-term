@@ -45,12 +45,12 @@ describe('SnapshotRefreshCoordinator', () => {
     );
 
     const first = coordinator.request();
+    await waitFor(() => runs === 1);
     const second = coordinator.request();
     const third = coordinator.request();
 
     expect(first).toBe(second);
     expect(second).toBe(third);
-    await waitFor(() => runs === 1);
     expect(runs).toBe(1);
 
     gates[0]?.resolve();
@@ -188,6 +188,81 @@ describe('SnapshotRefreshCoordinator', () => {
     await Promise.resolve();
     await Promise.resolve();
     expect(runs).toBe(2);
+  });
+
+  test('finite burst during quiet wait does not schedule a third refresh', async () => {
+    let now = 0;
+    let runs = 0;
+    const waits: Array<{ due: number; resolve: () => void }> = [];
+    const firstRefresh = deferred();
+    const coordinator = new SnapshotRefreshCoordinator(
+      async () => {
+        runs += 1;
+        if (runs === 1) await firstRefresh.promise;
+      },
+      {
+        quietPeriodMs: 150,
+        now: () => now,
+        delay: (ms) =>
+          new Promise<void>((resolve) => {
+            waits.push({ due: now + ms, resolve });
+          }),
+      }
+    );
+
+    const first = coordinator.requestImmediate();
+    await waitFor(() => runs === 1);
+    coordinator.request();
+    coordinator.request();
+    firstRefresh.resolve();
+    await waitFor(() => waits.length === 1);
+    expect(runs).toBe(1);
+
+    coordinator.request();
+    coordinator.request();
+    now += 150;
+    for (const wait of waits.splice(0)) wait.resolve();
+    await Promise.resolve();
+    await Promise.resolve();
+    await first;
+
+    expect(runs).toBe(2);
+    now += 150;
+    for (const wait of waits.splice(0)) wait.resolve();
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(runs).toBe(2);
+  });
+
+  test('same-tick request then requestImmediate upgrades before quiet wait (one refresh)', async () => {
+    let now = 0;
+    let runs = 0;
+    let delayed = 0;
+    const coordinator = new SnapshotRefreshCoordinator(
+      async () => {
+        runs += 1;
+      },
+      {
+        quietPeriodMs: 150,
+        now: () => now,
+        delay: (ms) => {
+          delayed += ms;
+          now += ms;
+          return Promise.resolve();
+        },
+      }
+    );
+
+    await coordinator.requestImmediate();
+    expect(runs).toBe(1);
+
+    const leading = coordinator.request();
+    const upgraded = coordinator.requestImmediate();
+    expect(upgraded).toBe(leading);
+    await Promise.all([leading, upgraded]);
+
+    expect(runs).toBe(2);
+    expect(delayed).toBe(0);
   });
 
   test('requestImmediate during an in-flight refresh still schedules one trailing run', async () => {

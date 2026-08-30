@@ -214,7 +214,26 @@ describe('parseListOnly', () => {
     }
   });
 
-  test('200k synthetic lines: same page as full parse+sort, retained ≤ MAX_ENTRIES+1', () => {
+  test('collator 相等的名字在截断边界保持输入顺序', () => {
+    const out = [
+      'drwxr-xr-x          160 2026/06/14 15:06:34 .',
+      '-rw-r--r--            1 2026/06/14 15:06:34 zzz',
+      '-rw-r--r--            1 2026/06/14 15:06:34 FILE1',
+      '-rw-r--r--            1 2026/06/14 15:06:34 file01',
+      '-rw-r--r--            1 2026/06/14 15:06:34 File1',
+      '-rw-r--r--            1 2026/06/14 15:06:34 file1',
+    ].join('\n');
+    const expected = parseListOnly(out).slice().sort(compareListEntry).slice(0, 2);
+    const bounded = parseListOnlyBounded(out, 2);
+    expect(expected.map((e) => e.name)).toEqual(['FILE1', 'file01']);
+    expect(bounded.truncated).toBe(true);
+    expect(bounded.entries.map((e) => e.name)).toEqual(expected.map((e) => e.name));
+  });
+
+  // 新契约：先对全集排序再取前 MAX_ENTRIES（不是旧的「先取前 N 条再排序」）。
+  // 例：c.txt, a.txt, b.txt, zdir 且 cap=3 时，有界收集器返回 zdir,a,b；
+  // 旧路径会先截成 c,a,b 再排序得到 a,b,c。
+  test('有界收集器按全局排序取前 MAX_ENTRIES（新契约，非旧截断兼容）', () => {
     const lines: string[] = ['drwxr-xr-x          160 2026/06/14 15:06:34 .'];
     for (let i = 0; i < 200_000; i++) {
       const n = String(199_999 - i).padStart(6, '0');

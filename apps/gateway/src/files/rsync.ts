@@ -268,16 +268,20 @@ function listSortKey(type: RsyncEntry['type'], name: string): string | null {
 type RankedEntry = {
   entry: RsyncEntry;
   key: string | null;
+  seq: number;
 };
 
 function compareRanked(a: RankedEntry, b: RankedEntry): number {
   if (a.key !== null && b.key !== null) {
-    return a.key < b.key ? -1 : a.key > b.key ? 1 : 0;
+    if (a.key !== b.key) return a.key < b.key ? -1 : 1;
+    return a.seq - b.seq;
   }
   const ad = a.entry.type === 'dir' ? 0 : 1;
   const bd = b.entry.type === 'dir' ? 0 : 1;
   if (ad !== bd) return ad - bd;
-  return LIST_COLLATOR.compare(a.entry.name, b.entry.name);
+  const byName = LIST_COLLATOR.compare(a.entry.name, b.entry.name);
+  if (byName !== 0) return byName;
+  return a.seq - b.seq;
 }
 
 export function compareListEntry(
@@ -317,6 +321,7 @@ export function createListOnlyCollector(maxEntries: number): {
   const keep = maxEntries + 1;
   const heap: RankedEntry[] = [];
   let overflow = false;
+  let seq = 0;
 
   const worse = (a: RankedEntry, b: RankedEntry) => compareRanked(a, b) > 0;
 
@@ -352,23 +357,17 @@ export function createListOnlyCollector(maxEntries: number): {
     accept(line: string) {
       const entry = parseListOnlyLine(line);
       if (!entry) return;
-      const key = listSortKey(entry.type, entry.name);
+      const ranked: RankedEntry = { entry, key: listSortKey(entry.type, entry.name), seq: seq++ };
       if (heap.length < keep) {
-        heap.push({ entry, key });
+        heap.push(ranked);
         bubbleUp(heap.length - 1);
         return;
       }
-      const worst = heap[0];
-      const cannotEnter =
-        key !== null && worst.key !== null
-          ? key >= worst.key
-          : compareListEntry(entry, worst.entry) >= 0;
-      if (cannotEnter) {
+      if (compareRanked(ranked, heap[0]) >= 0) {
         overflow = true;
         return;
       }
-      worst.entry = entry;
-      worst.key = key;
+      heap[0] = ranked;
       bubbleDown(0);
       overflow = true;
     },
@@ -378,8 +377,8 @@ export function createListOnlyCollector(maxEntries: number): {
     snapshot() {
       const sorted = heap
         .slice()
-        .map((item) => item.entry)
-        .sort(compareListEntry);
+        .sort(compareRanked)
+        .map((item) => item.entry);
       const truncated = overflow || sorted.length > maxEntries;
       return {
         entries: truncated ? sorted.slice(0, maxEntries) : sorted,

@@ -3,7 +3,12 @@ import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'no
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { FilesBulkHooks } from '../../api/files';
-import { BULK_FRAME_SIZE, BULK_IDLE_TIMEOUT_MS, BulkTransferService } from './bulk';
+import {
+  BULK_FRAME_SIZE,
+  BULK_IDLE_TIMEOUT_MS,
+  BULK_UPLOAD_QUEUE_BUDGET_BYTES,
+  BulkTransferService,
+} from './bulk';
 import { DC_HIGH_WATER_BYTES } from './data-channel-carrier';
 import { type FakeDataChannel, pairDataChannels } from './test-fakes';
 
@@ -523,5 +528,80 @@ describe('BulkTransferService', () => {
     );
     expect(jsonFromSent(node).some((m) => m.op === 'eof')).toBe(false);
     expect(harness.aborted).toContain(id);
+  });
+
+  test('upload queue stays within the byte budget under slow appends', async () => {
+    const id = 'tx-bp-upload';
+    const harness = createHarness();
+    harnesses.push(harness);
+    const budget = 200;
+    const frame = new Uint8Array(80).fill(1);
+    let queued = 0;
+    let maxQueued = 0;
+    const gates: Array<() => void> = [];
+    const orig = harness.hooks.appendUpload.bind(harness.hooks);
+    harness.hooks.appendUpload = async (transferId, bytes) => {
+      queued += bytes.byteLength;
+      maxQueued = Math.max(maxQueued, queued);
+      await new Promise<void>((resolve) => {
+        gates.push(resolve);
+      });
+      queued -= bytes.byteLength;
+      return orig(transferId, bytes);
+    };
+    const service = new BulkTransferService({
+      files: harness.hooks,
+      uploadQueueBudgetBytes: budget,
+    });
+    services.push(service);
+    const [browser, node] = pairDataChannels(`bulk:${id}`);
+    harness.addUpload(id, 'user-1', frame.byteLength * 5);
+    service.attachChannel(node, { uid: 'user-1' });
+
+    browser.sendMessage(JSON.stringify({ op: 'put', transferId: id, size: frame.byteLength * 5 }));
+    for (let i = 0; i < 5; i++) {
+      browser.sendMessageBinary(Buffer.from(frame));
+    }
+    await Bun.sleep(20);
+
+    expect(maxQueued).toBeLessThanOrEqual(budget);
+    expect(gates.length).toBeLessThanOrEqual(Math.floor(budget / frame.byteLength));
+    expect(jsonFromSent(node).some((m) => m.ok === false && m.code === 'backpressure')).toBe(true);
+    expect(harness.uploads.has(id)).toBe(false);
+
+    for (const release of gates) release();
+  });
+
+  test('upload idle watchdog refreshes when a queued append completes', async () => {
+    const id = 'tx-idle-progress';
+    const harness = createHarness();
+    harnesses.push(harness);
+    const orig = harness.hooks.appendUpload.bind(harness.hooks);
+    harness.hooks.appendUpload = async (transferId, bytes) => {
+      await Bun.sleep(35);
+      return orig(transferId, bytes);
+    };
+    const service = new BulkTransferService({
+      files: harness.hooks,
+      idleTimeoutMs: 50,
+    });
+    services.push(service);
+    const [browser, node] = pairDataChannels(`bulk:${id}`);
+    harness.addUpload(id, 'user-1', 3);
+    service.attachChannel(node, { uid: 'user-1' });
+
+    browser.sendMessage(JSON.stringify({ op: 'put', transferId: id, size: 3 }));
+    browser.sendMessageBinary(Buffer.from([1]));
+    browser.sendMessageBinary(Buffer.from([2]));
+    browser.sendMessageBinary(Buffer.from([3]));
+    browser.sendMessage(JSON.stringify({ op: 'done' }));
+
+    await waitFor(() => jsonFromSent(node).some((m) => m.ok === true), 'ok after slow writes', 500);
+    expect(jsonFromSent(node).some((m) => m.code === 'timeout')).toBe(false);
+    expect(harness.uploads.get(id)?.received).toBe(3);
+  });
+
+  test('upload queue budget defaults to 8 MiB', () => {
+    expect(BULK_UPLOAD_QUEUE_BUDGET_BYTES).toBe(8 * 1024 * 1024);
   });
 });

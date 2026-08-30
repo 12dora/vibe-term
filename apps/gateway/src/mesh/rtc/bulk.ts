@@ -7,6 +7,7 @@ export const BULK_CHANNEL_PREFIX = 'bulk:';
 export const BULK_FRAME_SIZE = 64 * 1024;
 export const BULK_IDLE_TIMEOUT_MS = 30_000;
 export const BULK_CONTROL_MAX_BYTES = 4096;
+export const BULK_UPLOAD_QUEUE_BUDGET_BYTES = 8 * 1024 * 1024;
 
 export type BulkState = 'idle' | 'put' | 'get' | 'done' | 'eof' | 'aborted';
 
@@ -20,6 +21,7 @@ export type BulkTransferServiceOptions = {
   files: FilesBulkHooks;
   now?: () => number;
   idleTimeoutMs?: number;
+  uploadQueueBudgetBytes?: number;
 };
 
 type BulkControl = {
@@ -43,6 +45,7 @@ type BulkChannel = {
   drainWaiters: Array<() => void>;
   cancelDownload: (() => void) | null;
   io: Promise<void>;
+  queuedBytes: number;
 };
 
 export function parseBulkChannelLabel(label: string | undefined | null): string | null {
@@ -100,12 +103,14 @@ export class BulkTransferService {
   private readonly files: FilesBulkHooks;
   private readonly now: () => number;
   private readonly idleTimeoutMs: number;
+  private readonly uploadQueueBudgetBytes: number;
   private readonly channels = new Set<BulkChannel>();
 
   constructor(opts: BulkTransferServiceOptions) {
     this.files = opts.files;
     this.now = opts.now ?? Date.now;
     this.idleTimeoutMs = opts.idleTimeoutMs ?? BULK_IDLE_TIMEOUT_MS;
+    this.uploadQueueBudgetBytes = opts.uploadQueueBudgetBytes ?? BULK_UPLOAD_QUEUE_BUDGET_BYTES;
   }
 
   attachChannel(dc: DataChannelLike, ctx: BulkAttachContext): void {
@@ -127,6 +132,7 @@ export class BulkTransferService {
       drainWaiters: [],
       cancelDownload: null,
       io: Promise.resolve(),
+      queuedBytes: 0,
     };
     this.channels.add(ch);
     dc.setBufferedAmountLowThreshold(DC_LOW_WATER_BYTES);
@@ -172,7 +178,19 @@ export class BulkTransferService {
       this.fail(ch, 'protocol', { cleanup: false });
       return;
     }
-    this.enqueue(ch, () => this.writePut(ch, copyBytes(bytes)));
+    const copy = copyBytes(bytes);
+    if (ch.queuedBytes + copy.byteLength > this.uploadQueueBudgetBytes) {
+      this.fail(ch, 'backpressure', { cleanup: true });
+      return;
+    }
+    ch.queuedBytes += copy.byteLength;
+    this.enqueue(ch, async () => {
+      try {
+        await this.writePut(ch, copy);
+      } finally {
+        ch.queuedBytes -= copy.byteLength;
+      }
+    });
   }
 
   private enqueue(ch: BulkChannel, op: () => Promise<void>): void {
@@ -251,6 +269,7 @@ export class BulkTransferService {
         return;
       }
       ch.received = res.received;
+      this.armIdle(ch);
     } catch {
       if (ch.state === 'put') this.fail(ch, 'unknown', { cleanup: true });
     }
