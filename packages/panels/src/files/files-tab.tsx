@@ -244,8 +244,14 @@ const DirNode = memo(function DirNode({
   const indent = depth * INDENT_STEP + 4;
   const childIndent = indent + 18;
   const entries = query.data?.entries;
-  const hidden = !showAll && entries ? Math.max(entries.length - DISPLAY_CAP, 0) : 0;
-  const visible = hidden > 0 && entries ? entries.slice(0, DISPLAY_CAP) : entries;
+  // 选中的文件落在上限之外时把上限撑到它，否则路由直达的那一行根本不会挂载
+  const selected = useSelectedFilePath();
+  const cap =
+    entries && entries.length > DISPLAY_CAP && selected?.rootId === rootId
+      ? Math.max(DISPLAY_CAP, entries.findIndex((entry) => entry.path === selected.path) + 1)
+      : DISPLAY_CAP;
+  const hidden = !showAll && entries ? Math.max(entries.length - cap, 0) : 0;
+  const visible = hidden > 0 && entries ? entries.slice(0, cap) : entries;
 
   return (
     <DirectoryNodeView

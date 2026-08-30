@@ -32,6 +32,19 @@ export interface ChatThreadProps {
   className?: string;
 }
 
+/**
+ * 渲染窗口的起点：吸底时跟着最新的 windowSize 条走；
+ * 用户上滚（frozenStart 非空）后起点冻结，新块只往下追加，正在读的块不会被顶掉。
+ */
+export function windowStartIndex(
+  total: number,
+  windowSize: number,
+  frozenStart: number | null
+): number {
+  if (frozenStart !== null) return Math.min(frozenStart, Math.max(0, total - 1));
+  return Math.max(0, total - windowSize);
+}
+
 export function isPinnedToBottom(el: {
   scrollHeight: number;
   scrollTop: number;
@@ -111,6 +124,7 @@ export function ChatThread({
   );
   const [showJumpToBottom, setShowJumpToBottom] = useState(false);
   const [windowSize, setWindowSize] = useState(WINDOW_STEP);
+  const [frozenStart, setFrozenStart] = useState<number | null>(null);
 
   const scrollToBottom = (): void => {
     const el = containerRef.current;
@@ -118,6 +132,7 @@ export function ChatThread({
     el.scrollTop = el.scrollHeight;
     pinnedRef.current = true;
     setShowJumpToBottom(false);
+    setFrozenStart(null);
   };
 
   // 吸底：用户未上滚时新内容自动滚到底，多次 flush 合并成一帧一次读写，避免每次提交都强制布局
@@ -149,7 +164,7 @@ export function ChatThread({
     const anchor = anchorRef.current;
     anchorRef.current = null;
     if (el && anchor !== null) el.scrollTop = el.scrollHeight - anchor;
-  }, [windowSize]);
+  }, [windowSize, frozenStart]);
 
   const handleScroll = (): void => {
     const el = containerRef.current;
@@ -157,12 +172,16 @@ export function ChatThread({
     const pinned = isPinnedToBottom(el);
     pinnedRef.current = pinned;
     setShowJumpToBottom(!pinned);
+    setFrozenStart((prev) =>
+      pinned ? null : (prev ?? windowStartIndex(blocks.length, windowSize, null))
+    );
   };
 
   const showEarlier = (): void => {
     const el = containerRef.current;
     anchorRef.current = el ? el.scrollHeight - el.scrollTop : null;
-    setWindowSize((size) => size + WINDOW_STEP);
+    if (frozenStart !== null) setFrozenStart(Math.max(0, frozenStart - WINDOW_STEP));
+    else setWindowSize((size) => size + WINDOW_STEP);
   };
 
   if (blocks.length === 0 && !running) {
@@ -176,7 +195,7 @@ export function ChatThread({
     );
   }
 
-  const hidden = Math.max(0, blocks.length - windowSize);
+  const hidden = windowStartIndex(blocks.length, windowSize, frozenStart);
 
   return (
     <div className={cn('relative min-h-0 flex-1', className)}>

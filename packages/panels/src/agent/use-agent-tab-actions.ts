@@ -2,7 +2,7 @@
 // 动作对象整个 tab 生命周期内保持同一引用（依赖走 ref 快照），
 // 这样流式 delta flush 不会让 memo 化的输入区失效。
 
-import { useRef } from 'react';
+import { useEffect, useLayoutEffect, useRef } from 'react';
 import type { NavigateFunction } from 'react-router';
 import { useNavigate } from 'react-router';
 
@@ -210,12 +210,18 @@ export function createAgentTabActions(ref: AgentTabActionDepsRef): AgentTabActio
   };
 }
 
+// 无 DOM（SSR / bun test）时降级成 useEffect，避免 React 的 useLayoutEffect 警告
+const useCommitEffect = typeof document === 'undefined' ? useEffect : useLayoutEffect;
+
 export function useAgentTabActions(state: AgentTabState, view: AgentTabView): AgentTabActions {
   const navigate = useNavigate();
   const { host } = useRuntime();
   const setSidebarTab = useUIStore((uiState) => uiState.setSidebarTab);
   const deps = useRef<AgentTabActionDeps>({ state, view, navigate, host, setSidebarTab });
-  deps.current = { state, view, navigate, host, setSidebarTab };
+  // 快照只在提交后写入：被中断/丢弃的那一帧渲染不会让按钮打到另一个会话上
+  useCommitEffect(() => {
+    deps.current = { state, view, navigate, host, setSidebarTab };
+  }, [state, view, navigate, host, setSidebarTab]);
   const actions = useRef<AgentTabActions | null>(null);
   actions.current ??= createAgentTabActions(deps);
   return actions.current;

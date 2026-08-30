@@ -9,7 +9,7 @@ import type { ReactElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { I18nextProvider } from 'react-i18next';
 import { buildBlocksWithConfirmations } from './agent-thread-blocks';
-import { ChatThread, isPinnedToBottom, threadRows } from './chat-thread';
+import { ChatThread, isPinnedToBottom, threadRows, windowStartIndex } from './chat-thread';
 
 const i18n = i18next.createInstance();
 await i18n.init({
@@ -133,6 +133,22 @@ describe('ChatThread', () => {
     expect(html).toContain('显示更早的 300 条消息');
     expect(html).toContain('question 300');
     expect(html).not.toContain('question 299');
+  });
+});
+
+describe('windowStartIndex', () => {
+  test('吸底时跟着最新的窗口走，上滚冻结后起点不动', () => {
+    expect(windowStartIndex(500, 200, null)).toBe(300);
+    expect(windowStartIndex(700, 200, null)).toBe(500);
+    // 用户在 500 条时上滚，起点冻在 300；再来 200 条也还是 300
+    expect(windowStartIndex(500, 200, 300)).toBe(300);
+    expect(windowStartIndex(700, 200, 300)).toBe(300);
+    // 「显示更早」在冻结态下往前挪一个步长
+    expect(windowStartIndex(700, 200, 100)).toBe(100);
+    // 会话切换导致块数缩水时起点被夹回去
+    expect(windowStartIndex(10, 200, 300)).toBe(9);
+    expect(windowStartIndex(0, 200, 300)).toBe(0);
+    expect(windowStartIndex(120, 200, null)).toBe(0);
   });
 });
 

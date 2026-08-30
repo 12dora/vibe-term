@@ -1,5 +1,6 @@
 // 流式 delta flush 期间输入区不应重渲染：动作引用恒定 + 传给 AgentComposer 的 props 全是原始值，
-// memo 的浅比较因此始终命中。bun test 无 DOM，这里用 React.memo 的浅比较语义直接判定。
+// memo 的浅比较因此始终命中。bun test 无 DOM，这里用 React.memo 的浅比较语义直接判定；
+// 依赖快照按 useAgentTabActions 的语义只在「提交」时写入，渲染本身不写。
 
 import { describe, expect, test } from 'bun:test';
 
@@ -107,6 +108,22 @@ function shallowEqual(a: Record<string, unknown>, b: Record<string, unknown>): b
   return keys.every((key) => Object.is(a[key], b[key]));
 }
 
+/** 一次渲染算出的依赖快照 */
+function depsOf(state: AgentTabState): AgentTabActionDeps {
+  return {
+    state,
+    view: deriveAgentTabView(state),
+    navigate: (() => {}) as unknown as AgentTabActionDeps['navigate'],
+    host: {} as AgentTabActionDeps['host'],
+    setSidebarTab: () => {},
+  };
+}
+
+/** 提交（useAgentTabActions 里的 layout effect）才把快照写进 ref */
+function commit(ref: { current: AgentTabActionDeps }, state: AgentTabState): void {
+  ref.current = depsOf(state);
+}
+
 describe('composer 与流式刷新的隔离', () => {
   test('AgentComposer 是 memo 组件', () => {
     expect((AgentComposer as unknown as { $$typeof: symbol }).$$typeof).toBe(
@@ -118,52 +135,36 @@ describe('composer 与流式刷新的隔离', () => {
     const stopped: string[] = [];
     const active = session();
     const deps = { current: {} as AgentTabActionDeps };
-    const setState = (state: AgentTabState): void => {
-      deps.current = {
-        state,
-        view: deriveAgentTabView(state),
-        navigate: (() => {}) as unknown as AgentTabActionDeps['navigate'],
-        host: {} as AgentTabActionDeps['host'],
-        setSidebarTab: () => {},
-      };
-    };
 
-    setState(makeState(stopped, active, undefined));
+    commit(deps, makeState(stopped, active, undefined));
     const actions = createAgentTabActions(deps);
     const first = composerProps(deps.current.state, actions);
 
     let changed = 0;
     for (let i = 1; i <= FLUSHES; i += 1) {
-      setState(makeState(stopped, active, progress(i * 40)));
+      commit(deps, makeState(stopped, active, progress(i * 40)));
       if (!shallowEqual(first, composerProps(deps.current.state, actions))) changed += 1;
     }
 
     expect(changed).toBe(0);
   });
 
-  test('动作引用恒定但始终作用于最新的 state', () => {
+  test('动作引用恒定但始终作用于最新已提交的 state', () => {
     const stopped: string[] = [];
     const deps = { current: {} as AgentTabActionDeps };
-    const first = session({ id: 's1' });
-    const setState = (state: AgentTabState): void => {
-      deps.current = {
-        state,
-        view: deriveAgentTabView(state),
-        navigate: (() => {}) as unknown as AgentTabActionDeps['navigate'],
-        host: {} as AgentTabActionDeps['host'],
-        setSidebarTab: () => {},
-      };
-    };
 
-    setState(makeState(stopped, first, undefined));
+    commit(deps, makeState(stopped, session({ id: 's1' }), undefined));
     const actions = createAgentTabActions(deps);
     const onStop = actions.onStop;
 
     actions.onStop();
-    setState(makeState(stopped, session({ id: 's2' }), progress(10)));
+    // 只渲染不提交（会话切换的那一帧被中断/丢弃）：动作仍应作用于屏幕上的 s1
+    depsOf(makeState(stopped, session({ id: 's2' }), progress(10)));
+    actions.onStop();
+    commit(deps, makeState(stopped, session({ id: 's2' }), progress(10)));
     actions.onStop();
 
     expect(actions.onStop).toBe(onStop);
-    expect(stopped).toEqual(['s1', 's2']);
+    expect(stopped).toEqual(['s1', 's1', 's2']);
   });
 });

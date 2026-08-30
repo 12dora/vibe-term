@@ -18,7 +18,7 @@ installWindowStorage();
 
 const { QueryClient, QueryClientProvider } = await import('@tanstack/react-query');
 const { I18N_RESOURCES } = await import('@tmex/shared');
-const { createAppRuntime } = await import('@tmex/stores');
+const { createAppRuntime, fileRoute, hostAppPath } = await import('@tmex/stores');
 const { RuntimeProvider } = await import('@tmex/stores/react');
 const i18next = (await import('i18next')).default;
 const { renderToStaticMarkup } = await import('react-dom/server');
@@ -136,7 +136,7 @@ function fileEntry(index: number): FileEntryDto {
  * 展开态无法经 localStorage 预置，于是把 fileTree 面换成一个已展开的桩；
  * 目录列表直接喂进 query 缓存，这样能在无 DOM 环境里数出真正挂载了多少行。
  */
-function renderExpandedRoot(entries: FileEntryDto[]): string {
+function renderExpandedRoot(entries: FileEntryDto[], selectedPath?: string): string {
   const runtime = createAppRuntime({ storagePrefix: `files-tab-test-${storageSeq++}:` });
   const fileTreeState = {
     expanded: { [`${LOCAL_ROOT.id}\n${LOCAL_ROOT.path}`]: true },
@@ -162,8 +162,11 @@ function renderExpandedRoot(entries: FileEntryDto[]): string {
     entries,
     truncated: false,
   });
+  const route = selectedPath
+    ? hostAppPath(runtime.host, fileRoute(LOCAL_ROOT.id, selectedPath))
+    : '/';
   const html = renderToStaticMarkup(
-    <MemoryRouter>
+    <MemoryRouter initialEntries={[route]}>
       <I18nextProvider i18n={i18n}>
         <QueryClientProvider client={queryClient}>
           <RuntimeProvider runtime={expandedRuntime}>
@@ -189,6 +192,14 @@ describe('FilesTab 的单目录行数上限', () => {
     expect(countRows(html)).toBe(500);
     expect(html).toContain(`data-testid="file-show-more-${LOCAL_ROOT.id}-${LOCAL_ROOT.path}"`);
     expect(html).toContain('显示其余 1500 项');
+  });
+
+  test('路由选中的文件在上限之外时上限撑到它，行仍然挂载', () => {
+    const entries = Array.from({ length: 2000 }, (_, i) => fileEntry(i));
+    const html = renderExpandedRoot(entries, entries[999].path);
+    expect(html).toContain(`data-testid="file-item-${LOCAL_ROOT.id}-${entries[999].path}"`);
+    expect(countRows(html)).toBe(1000);
+    expect(html).toContain('显示其余 1000 项');
   });
 
   test('未超过上限时全量渲染，不出现「显示其余」', () => {
