@@ -15,7 +15,7 @@ const stopPropagation = (event: { stopPropagation: () => void }) => event.stopPr
 
 /**
  * 展开态的设备子树：加载中 / 空窗口 / 窗口列表 + 新建窗口按钮。
- * 根节点的 `tmex-reveal` 只在展开挂载时播一次；tmux 快照推送只是重渲染，不会重放。
+ * 出入场动画由外层 `DeviceRow` 的 Collapsible 统一负责，这里不再叠一层入场动画。
  */
 export function DeviceWindowList(props: DeviceWindowListProps) {
   const { device, windows, onCreateWindow } = props;
@@ -30,7 +30,7 @@ export function DeviceWindowList(props: DeviceWindowListProps) {
   return (
     <div
       data-testid={`device-tree-${deviceId}`}
-      className="tmex-reveal space-y-1.5 py-1.5 pr-1.5 pl-6 [@media(any-pointer:coarse)]:space-y-2"
+      className="space-y-1.5 py-1.5 pr-1.5 pl-6 [@media(any-pointer:coarse)]:space-y-2"
     >
       {!windows && <DeviceTreeHint text={t('common.loading')} />}
       {windows?.length === 0 && <DeviceTreeHint text={t('window.noWindows')} />}

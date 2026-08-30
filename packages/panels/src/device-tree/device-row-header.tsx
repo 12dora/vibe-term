@@ -27,9 +27,12 @@ export function DeviceRowHeader({
 
   return (
     <div className="relative px-3 py-1.5">
-      {isSelected && (
-        <span className="absolute left-0 top-0 bottom-0 w-0.5 bg-muted-foreground/70" />
-      )}
+      <span
+        className={cn(
+          'absolute left-0 top-0 bottom-0 w-0.5 bg-muted-foreground/70 transition-opacity duration-(--tmex-motion-fast) ease-out motion-reduce:transition-none',
+          isSelected ? 'opacity-100' : 'opacity-0'
+        )}
+      />
       <div className="flex items-center gap-2">
         <button
           type="button"
@@ -56,7 +59,10 @@ export function DeviceRowHeader({
           className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground [@media(any-pointer:coarse)]:h-9 [@media(any-pointer:coarse)]:w-9"
         >
           <ChevronRight
-            className={cn('h-3.5 w-3.5 transition-transform', isExpanded && 'rotate-90')}
+            className={cn(
+              'h-3.5 w-3.5 transition-transform duration-(--tmex-motion-fast) ease-out motion-reduce:transition-none',
+              isExpanded && 'rotate-90'
+            )}
           />
         </button>
       </div>

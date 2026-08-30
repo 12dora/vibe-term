@@ -46,7 +46,7 @@ export const WindowRowHeader = memo(function WindowRowHeader({
       data-testid={`window-item-${tmuxWindow.id}`}
       data-active={isPaneSelected ? 'true' : undefined}
       className={cn(
-        'flex-1 min-w-0 flex items-center gap-2 px-2 py-1.5 rounded-lg text-left transition-colors pr-7 [@media(any-pointer:coarse)]:py-2.5 [@media(any-pointer:coarse)]:pr-12',
+        'flex-1 min-w-0 flex items-center gap-2 px-2 py-1.5 rounded-lg text-left transition-colors duration-(--tmex-motion-fast) ease-out motion-reduce:transition-none pr-7 [@media(any-pointer:coarse)]:py-2.5 [@media(any-pointer:coarse)]:pr-12',
         isMobile && 'py-2.5 pr-13',
         isPaneSelected ? 'bg-primary/10 text-primary' : 'hover:bg-accent/50 text-foreground'
       )}

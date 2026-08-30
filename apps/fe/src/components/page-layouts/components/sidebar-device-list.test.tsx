@@ -260,6 +260,16 @@ describe('SidebarNodeSection', () => {
     expect(html).not.toContain('data-testid="device-item-');
   });
 
+  test('可见的离线分节首屏就在且不透明：presence 外壳既不推迟渲染也不淡入一遍', () => {
+    const html = render(<SidebarNodeSection node={offlineNode()} />, {
+      [sidebarDeviceVisibilityKey(OFFLINE_NODE, 'd1')]: true,
+    });
+
+    expect(html).toContain(`data-testid="sidebar-node-offline-${OFFLINE_NODE}"`);
+    const section = html.slice(html.indexOf(`data-testid="sidebar-node-offline-${OFFLINE_NODE}"`));
+    expect(section.slice(0, section.indexOf('>'))).toContain('opacity-100');
+  });
+
   test('离线 node：当前选中的那台设备无条件保留（与在线选择器同一条例外）', () => {
     const html = render(
       <SidebarNodeSection node={offlineNode()} />,

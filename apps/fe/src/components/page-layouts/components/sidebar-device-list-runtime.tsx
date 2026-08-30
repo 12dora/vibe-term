@@ -11,6 +11,7 @@ import { useRuntime } from '@tmex/stores/react';
 import { cn } from '@tmex/ui';
 import type { CSSProperties, ReactNode } from 'react';
 import { SidebarAgentSessionsProvider, useSidebarAgentAdapter } from './sidebar-agent-sessions';
+import { useSectionPresence } from './use-section-presence';
 
 /** 聚合视图的分节外壳：分节头与设备树同生共死，没有可显示的设备时整节都不渲染。 */
 export interface SidebarNodeSectionShell {
@@ -68,7 +69,11 @@ function NodeSection({
   ...rest
 }: SideBarDeviceListForRuntimeProps & { section: SidebarNodeSectionShell }) {
   const stats = useSidebarDeviceStats();
-  if (!stats.failed && shouldHideSidebarNodeSection(stats, section.keepWhenNoDevices ?? false)) {
+  const visible =
+    stats.failed || !shouldHideSidebarNodeSection(stats, section.keepWhenNoDevices ?? false);
+  // 切 node 会让「选中的那台无条件保留」失效，整节可能就此隐藏：淡出后再卸载，别硬切
+  const presence = useSectionPresence(visible, null);
+  if (!presence.rendered) {
     return null;
   }
 
@@ -77,7 +82,7 @@ function NodeSection({
       ref={section.containerRef}
       style={section.containerStyle}
       data-testid={section.testId}
-      className={cn('space-y-0.5', section.containerClassName)}
+      className={cn('space-y-0.5', presence.className, section.containerClassName)}
     >
       {section.header}
       <DeviceTree {...rest} />

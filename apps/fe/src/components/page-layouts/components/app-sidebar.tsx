@@ -73,17 +73,23 @@ export function AppSidebar({ ...props }: ComponentProps<typeof Sidebar>) {
       </SidebarHeader>
       <SidebarContent className="flex min-h-0 flex-col overflow-hidden">
         {/* 换 tab 时只让新内容淡入；壳的 flex 链（min-h-0 / flex-1）必须原样透下去，
-            否则设备树与文件树会失去可滚动高度。 */}
-        <Reveal key={sidebarTab} className="flex min-h-0 flex-1 flex-col">
-          {sidebarTab === 'panes' && <SideBarDeviceList />}
-          {sidebarTab !== 'panes' && (
+            否则设备树与文件树会失去可滚动高度。
+            设备树的 key 只能是 tab 本身：切 node 时它不重挂（展开态/滚动位置都得留着）。
+            智能体 / 文件两块本来就随 routeNodeId 重挂，key 带上 node 让重挂淡入而不是直接弹出。 */}
+        {sidebarTab === 'panes' && (
+          <Reveal key="panes" className="flex min-h-0 flex-1 flex-col">
+            <SideBarDeviceList />
+          </Reveal>
+        )}
+        {sidebarTab !== 'panes' && (
+          <Reveal key={`${sidebarTab}:${routeNodeId}`} className="flex min-h-0 flex-1 flex-col">
             <NodeRuntimeScope nodeId={routeNodeId}>
               <Suspense fallback={null}>
                 {sidebarTab === 'agent' ? <AgentTab /> : <FilesTab />}
               </Suspense>
             </NodeRuntimeScope>
-          )}
-        </Reveal>
+          </Reveal>
+        )}
       </SidebarContent>
       <SidebarFooter>
         <NavMain items={navMainItems} />

@@ -1,4 +1,5 @@
 import { cn } from '@tmex/ui';
+import { Collapsible, CollapsibleContent } from '@tmex/ui/collapsible';
 import { memo } from 'react';
 import { DeviceRowHeader } from './device-row-header';
 import { useSortableRow } from './device-tree-dnd';
@@ -27,13 +28,19 @@ export const DeviceRow = memo(function DeviceRow(props: DeviceRowProps) {
       style={sortable.style}
       data-testid={`device-item-${deviceId}`}
       className={cn(
-        'group/device rounded-xl border border-border/60 overflow-hidden',
+        'group/device rounded-xl border border-border/60 overflow-hidden transition-colors duration-(--tmex-motion-fast) ease-out motion-reduce:transition-none',
         isSelected ? 'bg-chat-surface' : 'bg-muted/20',
         sortable.isDragging && 'opacity-60 shadow-lg'
       )}
     >
       <DeviceRowHeader {...props} sortable={sortable} status={status} />
-      {showTree && <DeviceWindowList {...props} windows={windows} />}
+      {/* 受控 Collapsible：展开/收起都走高度+透明度过渡；首屏已展开的设备由 Base UI
+          自己取消入场过渡（不会从 0 高度弹一下），收起时面板走完过渡才卸载 */}
+      <Collapsible open={showTree}>
+        <CollapsibleContent>
+          <DeviceWindowList {...props} windows={windows} />
+        </CollapsibleContent>
+      </Collapsible>
     </div>
   );
 });

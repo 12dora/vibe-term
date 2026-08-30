@@ -25,6 +25,7 @@ import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Link, matchPath, useLocation } from 'react-router';
 import { SideBarDeviceListForRuntime } from './sidebar-device-list-runtime';
+import { useSectionPresence } from './use-section-presence';
 
 /** 分节整体的拖拽接线；未传即不可拖（standalone / 单元测试直接渲染分节时）。 */
 export interface SidebarNodeSortable {
@@ -177,7 +178,12 @@ function SidebarNodeSignIn({ node, drag }: { node: SidebarNodeEntry; drag?: Side
   );
 }
 
-export function SidebarNodeSection({
+/**
+ * 离线分节：灰显最近一次已知 inventory 里的设备。已知设备被取消显示（或切到别的 node
+ * 让「选中的那台无条件保留」失效）时整节隐藏——过 `useSectionPresence` 淡出后再卸载，
+ * 退场期间沿用锁住的设备列表，不会先掉内容再消失。
+ */
+function SidebarNodeOffline({
   node,
   drag,
 }: { node: SidebarNodeEntry; drag?: SidebarNodeSortable }) {
@@ -186,50 +192,57 @@ export function SidebarNodeSection({
   const visibility = useUIStore((state) => state.sidebarDeviceVisibility);
   const selectedDeviceId = selectedDeviceIdForNode(useLocation().pathname, node.runtimeNodeId);
 
-  if (!node.online) {
-    const knownDevices = inventoryDevices(node.inventory);
-    const devices = knownDevices.filter(
-      (device) =>
-        device.id === selectedDeviceId ||
-        isSidebarDeviceVisible(visibility, node.runtimeNodeId, device.id)
-    );
-    // 已知设备全被取消显示时整节隐藏（与在线分节同一条规则）；零已知设备只给 self 留空态。
-    if (
-      shouldHideSidebarNodeSection(
-        { total: knownDevices.length, visible: devices.length },
-        node.isSelf
-      )
-    ) {
-      return null;
-    }
+  const knownDevices = inventoryDevices(node.inventory);
+  const devices = knownDevices.filter(
+    (device) =>
+      device.id === selectedDeviceId ||
+      isSidebarDeviceVisible(visibility, node.runtimeNodeId, device.id)
+  );
+  // 已知设备全被取消显示时整节隐藏（与在线分节同一条规则）；零已知设备只给 self 留空态。
+  const hidden = shouldHideSidebarNodeSection(
+    { total: knownDevices.length, visible: devices.length },
+    node.isSelf
+  );
+  const presence = useSectionPresence(!hidden, devices);
+  if (!presence.rendered) return null;
 
-    return (
-      <div
-        ref={drag?.sortable.setNodeRef}
-        style={drag?.sortable.style}
-        data-testid={`sidebar-node-offline-${node.runtimeNodeId}`}
-        className={cn('space-y-0.5', drag?.sortable.isDragging && 'opacity-60')}
-      >
-        <SectionHeader node={node} hint={t('sidebar.node.offline')} drag={drag} />
-        {knownDevices.length === 0 ? (
-          <div className="tmex-fade px-2 py-1 text-[11px] text-muted-foreground/60">
-            {t('sidebar.node.noKnownDevices')}
-          </div>
-        ) : (
-          devices.map((device) => (
-            <Link
-              key={device.id}
-              to={nodeAppPath(node.runtimeNodeId, `/devices/${encodeURIComponent(device.id)}`)}
-              data-testid={`sidebar-node-offline-device-${device.id}`}
-              className="flex items-center gap-2 rounded-md px-2 py-1 text-xs text-muted-foreground/60"
-            >
-              <Monitor className="h-3.5 w-3.5 shrink-0" />
-              <span className="truncate">{device.name}</span>
-            </Link>
-          ))
-        )}
-      </div>
-    );
+  return (
+    <div
+      ref={drag?.sortable.setNodeRef}
+      style={drag?.sortable.style}
+      data-testid={`sidebar-node-offline-${node.runtimeNodeId}`}
+      className={cn('space-y-0.5', presence.className, drag?.sortable.isDragging && 'opacity-60')}
+    >
+      <SectionHeader node={node} hint={t('sidebar.node.offline')} drag={drag} />
+      {knownDevices.length === 0 ? (
+        <div className="px-2 py-1 text-[11px] text-muted-foreground/60">
+          {t('sidebar.node.noKnownDevices')}
+        </div>
+      ) : (
+        presence.value.map((device) => (
+          <Link
+            key={device.id}
+            to={nodeAppPath(node.runtimeNodeId, `/devices/${encodeURIComponent(device.id)}`)}
+            data-testid={`sidebar-node-offline-device-${device.id}`}
+            className="flex items-center gap-2 rounded-md px-2 py-1 text-xs text-muted-foreground/60"
+          >
+            <Monitor className="h-3.5 w-3.5 shrink-0" />
+            <span className="truncate">{device.name}</span>
+          </Link>
+        ))
+      )}
+    </div>
+  );
+}
+
+export function SidebarNodeSection({
+  node,
+  drag,
+}: { node: SidebarNodeEntry; drag?: SidebarNodeSortable }) {
+  const { t } = useTranslation();
+
+  if (!node.online) {
+    return <SidebarNodeOffline node={node} drag={drag} />;
   }
 
   if (!node.loggedIn) {
