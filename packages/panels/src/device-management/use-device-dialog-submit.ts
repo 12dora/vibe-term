@@ -16,7 +16,7 @@ import {
 
 export type DeviceDialogMode = 'create' | 'edit';
 
-export type DeviceMutationPayload =
+type DeviceMutationPayload =
   | { mode: 'create'; payload: CreateDeviceRequest }
   | { mode: 'edit'; payload: UpdateDeviceRequest };
 
@@ -49,7 +49,7 @@ function useMutationCallbacks(queryKey: readonly unknown[], onClose: () => void)
   };
 }
 
-export interface DeviceDialogSubmitParams {
+interface DeviceDialogSubmitParams {
   mode: DeviceDialogMode;
   device?: Device;
   values: DeviceFormValues;
@@ -59,7 +59,7 @@ export interface DeviceDialogSubmitParams {
   offline?: boolean;
 }
 
-export interface DeviceDialogSubmitModel {
+interface DeviceDialogSubmitModel {
   attempted: boolean;
   isSubmitting: boolean;
   handleSubmit: (event: FormEvent) => Promise<void>;

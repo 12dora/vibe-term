@@ -13,7 +13,7 @@ import { useTranslation } from 'react-i18next';
 import type { DeviceConnectionAdapter, DeviceConnectionStatus } from '../device-connection';
 import { deviceStatusDotClass } from '../device-tree/device-connection-control';
 
-export type DeviceConnectAction = 'connect' | 'disconnect' | 'pending';
+type DeviceConnectAction = 'connect' | 'disconnect' | 'pending';
 
 export function deviceConnectAction(status: DeviceConnectionStatus): DeviceConnectAction {
   switch (status) {
@@ -42,7 +42,7 @@ export function displayedConnectionStatus(
   return status === 'connected' ? 'disconnected' : status;
 }
 
-export interface DeviceCardConnectToggleProps {
+interface DeviceCardConnectToggleProps {
   deviceId: string;
   connection: DeviceConnectionAdapter;
   offline?: boolean;

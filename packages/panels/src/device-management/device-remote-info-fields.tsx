@@ -20,7 +20,7 @@ function InfoRow({ label, value }: { label: string; value: string }) {
   );
 }
 
-export interface DeviceRemoteInfoFieldsProps {
+interface DeviceRemoteInfoFieldsProps {
   device: Device;
   nodeContext: DeviceNodeContext;
 }
