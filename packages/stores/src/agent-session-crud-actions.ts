@@ -10,6 +10,7 @@ import {
   updateAgentSession,
 } from '@tmex/api-client';
 import type { AgentSessionDto } from '@tmex/shared';
+import { selectEvictableHistories } from './agent-history-budget';
 import { agentNodeKey } from './agent-node-state';
 import { type AgentSessionActionsDeps, reportActionError } from './agent-session-deps';
 import { mergeFetchedSessions, withSessionOrder } from './agent-session-map';
@@ -71,12 +72,12 @@ export async function createSessionRequest(
   }
 }
 
-function withoutKey<T>(
+function dropKeys<T>(
   record: Record<string, T | undefined>,
-  key: string
+  keys: readonly string[]
 ): Record<string, T | undefined> {
   const next = { ...record };
-  delete next[key];
+  for (const key of keys) delete next[key];
   return next;
 }
 
@@ -159,27 +160,66 @@ function pruneMissingActiveSessions(deps: AgentSessionActionsDeps): void {
   set({ activeSessionIdByNode: next });
 }
 
-function pruneSessionState(prev: AgentState, sessionId: string): Partial<AgentState> {
+function pruneSessionState(prev: AgentState, sessionIds: readonly string[]): Partial<AgentState> {
   return {
-    ...withSessionOrder(withoutKey(prev.sessions, sessionId)),
-    messages: withoutKey(prev.messages, sessionId),
-    historyLoaded: withoutKey(prev.historyLoaded, sessionId),
-    inProgress: withoutKey(prev.inProgress, sessionId),
-    pendingConfirmations: withoutKey(prev.pendingConfirmations, sessionId),
-    queued: withoutKey(prev.queued, sessionId),
+    ...withSessionOrder(dropKeys(prev.sessions, sessionIds)),
+    messages: dropKeys(prev.messages, sessionIds),
+    historyLoaded: dropKeys(prev.historyLoaded, sessionIds),
+    inProgress: dropKeys(prev.inProgress, sessionIds),
+    pendingConfirmations: dropKeys(prev.pendingConfirmations, sessionIds),
+    queued: dropKeys(prev.queued, sessionIds),
   };
 }
 
 export function createAgentSessionCrudActions(
   deps: AgentSessionActionsDeps
 ): AgentSessionCrudActions {
-  const { apiClient, notifications, set, get, subscribe, unsubscribe, clearSessionRuntime } = deps;
+  const {
+    apiClient,
+    notifications,
+    set,
+    get,
+    history,
+    subscribe,
+    unsubscribe,
+    clearSessionRuntime,
+  } = deps;
 
   // 列表拉取的 in-flight 去重：StrictMode 双 effect 与快速切 tab 会并发触发
   let loadingSessions: Promise<void> | null = null;
+  // 最近激活在前：非活跃会话的历史按此顺序淘汰
+  const recentSessions: string[] = [];
 
   function reportError(error: unknown): void {
     reportActionError(notifications, error);
+  }
+
+  function forgetRecent(sessionIds: readonly string[]): void {
+    for (const sessionId of sessionIds) {
+      const index = recentSessions.indexOf(sessionId);
+      if (index >= 0) recentSessions.splice(index, 1);
+    }
+  }
+
+  /** 会话已不存在（本端删除或别端删除）时的统一清理；订阅只存在于选中会话，由选中态清理负责退订 */
+  function forgetSessions(sessionIds: readonly string[]): void {
+    if (sessionIds.length === 0) return;
+    for (const sessionId of sessionIds) clearSessionRuntime(sessionId);
+    forgetRecent(sessionIds);
+    set((prev) => pruneSessionState(prev, sessionIds));
+  }
+
+  /** 清空超出预算的非活跃历史；historyLoaded 一并复位，重新打开时全量重拉 */
+  function evictHistories(): void {
+    const evicted = selectEvictableHistories(get(), recentSessions);
+    if (evicted.length === 0) return;
+    // 在途的历史请求令牌一并作废，否则其响应会把半截历史写回来
+    for (const sessionId of evicted) history.clearSession(sessionId);
+    forgetRecent(evicted);
+    set((prev) => ({
+      messages: dropKeys(prev.messages, evicted),
+      historyLoaded: dropKeys(prev.historyLoaded, evicted),
+    }));
   }
 
   const patchSession: PatchSession = async (sessionId, patch, errorFallback) => {
@@ -198,12 +238,16 @@ export function createAgentSessionCrudActions(
     const before = get().sessions;
     try {
       const sessionList = await fetchAgentSessions(apiClient);
+      const previous = get().sessions;
       set((prev) => ({
         ...withSessionOrder(mergeFetchedSessions(before, prev.sessions, sessionList)),
         sessionsLoaded: true,
       }));
       // 持久化的选中会话可能已被别端删除
       pruneMissingActiveSessions(deps);
+      // 别端删除的会话走与本端删除相同的清理，否则历史/队列态会一直留在内存里
+      const current = get().sessions;
+      forgetSessions(Object.keys(previous).filter((id) => previous[id] && !current[id]));
     } catch (error) {
       console.error('[agent] loadSessions failed:', error);
     }
@@ -255,10 +299,14 @@ export function createAgentSessionCrudActions(
 
       if (sessionId) {
         subscribe(sessionId);
+        const index = recentSessions.indexOf(sessionId);
+        if (index >= 0) recentSessions.splice(index, 1);
+        recentSessions.unshift(sessionId);
         if (!get().historyLoaded[sessionId]) {
           void get().loadHistory(sessionId);
         }
       }
+      evictHistories();
     },
 
     async createSession(deviceId, paneId, options) {
@@ -273,8 +321,7 @@ export function createAgentSessionCrudActions(
       try {
         await deleteAgentSession(sessionId, apiClient);
         clearActiveSession(deps, sessionId);
-        clearSessionRuntime(sessionId);
-        set((prev) => pruneSessionState(prev, sessionId));
+        forgetSessions([sessionId]);
         return true;
       } catch (error) {
         reportError(error);
