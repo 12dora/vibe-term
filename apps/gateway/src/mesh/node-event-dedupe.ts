@@ -22,6 +22,8 @@ export class NodeEventDedupe {
     return JSON.stringify({
       status: event.status,
       reach: event.reach ?? null,
+      transport: event.transport ?? null,
+      rttMs: event.rttMs ?? null,
       inventory: event.inventory ?? null,
       version: event.version ?? null,
       direct_capable: event.direct_capable ?? false,

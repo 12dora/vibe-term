@@ -71,7 +71,9 @@ export function AgentBindingStatus({
             disabled={newSessionDisabled}
             onClick={onNewSession}
             aria-label={t('agent.session.new')}
-            title={newSessionDisabled ? t('agent.session.selectPaneHint') : t('agent.session.new')}
+            title={
+              newSessionDisabled ? t('agent.session.createDisabledNoPane') : t('agent.session.new')
+            }
           >
             <PlusIcon />
           </Button>

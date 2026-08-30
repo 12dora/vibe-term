@@ -7,7 +7,13 @@
 
 import { isAuthTransitionActive } from '@/auth/auth-transition';
 import { SELF_NODE_ID } from '@tmex/api-client';
-import type { AuthApi, AuthModeResponse, MeshNode } from '@tmex/api-client/auth/index';
+import type {
+  AuthApi,
+  AuthModeResponse,
+  MeshNode,
+  MeshNodeReach,
+  MeshNodeTransport,
+} from '@tmex/api-client/auth/index';
 import { defaultAuthApi } from '@tmex/api-client/auth/index';
 import { bytesToHex, decodeBase64url, sha256 } from '@tmex/shared/auth';
 import { useCallback, useEffect, useMemo, useState, useSyncExternalStore } from 'react';
@@ -48,6 +54,8 @@ export function patchNodesWithEvent(nodes: MeshNode[], event: NodeEventPayload):
       ...node,
       online,
       reach: online ? event.reach : null,
+      transport: online ? pick(event.transport, node.transport) : null,
+      rttMs: online ? pick(event.rttMs, node.rttMs) : null,
       inventory: event.inventory ?? node.inventory,
       version: event.version ?? versionOf(event.inventory) ?? node.version,
       direct_capable: event.direct_capable ?? node.direct_capable,
@@ -55,6 +63,12 @@ export function patchNodesWithEvent(nodes: MeshNode[], event: NodeEventPayload):
     } satisfies MeshNode;
   });
   return changed ? next : nodes;
+}
+
+/** 事件里没带这一段（老 node 的帧）时保留上一次列表里的值，别把已知信息清成未知。 */
+function pick<T>(fromEvent: T | undefined, previous: T | undefined): T | null {
+  if (fromEvent !== undefined) return fromEvent;
+  return previous ?? null;
 }
 
 function versionOf(inventory: unknown): string | null {
@@ -89,7 +103,11 @@ export interface NodeRow {
   publicKey: string;
   fingerprint: string;
   online: boolean;
-  reach: 'lan' | 'relay' | null;
+  reach: MeshNodeReach;
+  /** peer link 的实际承载；未知为 `null`。 */
+  transport: MeshNodeTransport;
+  /** entry ↔ node 的 ping/pong 往返毫秒数；未测得为 `null`。 */
+  rttMs: number | null;
   version: string | null;
   directCapable: boolean;
   loggedIn: boolean;
@@ -104,8 +122,18 @@ export interface NodeRow {
   certSig: string | null;
 }
 
-function reachOf(reach: string | null): 'lan' | 'relay' | null {
-  return reach === 'lan' || reach === 'relay' ? reach : null;
+function reachOf(reach: string | null | undefined): MeshNodeReach {
+  return reach === 'lan' || reach === 'wan' || reach === 'relay' ? reach : null;
+}
+
+function transportOf(transport: string | null | undefined): MeshNodeTransport {
+  return transport === 'ws-secure' || transport === 'relay' || transport === 'dc'
+    ? transport
+    : null;
+}
+
+function rttOf(rttMs: number | null | undefined): number | null {
+  return typeof rttMs === 'number' && Number.isFinite(rttMs) && rttMs >= 0 ? rttMs : null;
 }
 
 /**
@@ -128,6 +156,8 @@ export function mergeNodes(
       fingerprint: publicKeyFingerprint(node.publicKey),
       online: node.online,
       reach: reachOf(node.reach),
+      transport: transportOf(node.transport),
+      rttMs: rttOf(node.rttMs),
       version: node.version ?? hub?.version ?? null,
       directCapable: node.direct_capable || (hub?.direct_capable ?? false),
       loggedIn: node.loggedIn,

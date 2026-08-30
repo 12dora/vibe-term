@@ -29,6 +29,7 @@ export function createAgentSessionDraftActions(
 
   async function materializeDraftRequest(draft: DraftSession): Promise<AgentSessionDto | null> {
     const session = await createSessionRequest(deps, draft.deviceId, draft.paneId, {
+      nodeId: draft.nodeId,
       providerId: draft.providerId,
       modelId: draft.modelId,
       originPaneTitle: draft.paneTitle,
@@ -42,7 +43,7 @@ export function createAgentSessionDraftActions(
   }
 
   return {
-    startDraft(deviceId, paneId, paneTitle, prompt) {
+    startDraft(input) {
       const previous = get().activeSessionId;
       if (previous) {
         unsubscribe(previous);
@@ -54,12 +55,13 @@ export function createAgentSessionDraftActions(
         materializingDraft: false,
         draft: {
           key: `draft-${draftSequence}`,
-          deviceId,
-          paneId,
+          nodeId: input.nodeId,
+          deviceId: input.deviceId,
+          paneId: input.paneId,
           providerId: null,
           modelId: null,
-          paneTitle,
-          prompt: prompt ?? null,
+          paneTitle: input.paneTitle,
+          prompt: input.prompt ?? null,
         },
       });
     },

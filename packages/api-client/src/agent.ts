@@ -10,6 +10,8 @@ import type {
 import { type ApiClient, defaultApiClient, parseApiError } from './client';
 
 export interface CreateAgentSessionRequest {
+  /** 绑定 pane 所在的 mesh node；缺省 / null / 'self' 均表示本 gateway */
+  nodeId?: string | null;
   deviceId: string;
   paneId: string;
   providerId?: string | null;

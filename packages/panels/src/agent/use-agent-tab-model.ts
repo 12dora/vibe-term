@@ -7,7 +7,7 @@ import type { UiThreadBlock } from '@tmex/stores';
 import { type AgentTabView, deriveAgentTabView } from './agent-tab-view';
 import { buildBlocksWithConfirmations, buildConfirmationMap } from './agent-thread-blocks';
 import { type AgentTabActions, useAgentTabActions } from './use-agent-tab-actions';
-import { useAgentTabState } from './use-agent-tab-state';
+import { type AgentTabHost, useAgentTabState } from './use-agent-tab-state';
 
 export { type BindingInfo, resolveBinding } from './agent-binding';
 
@@ -16,8 +16,8 @@ export interface AgentTabModel extends AgentTabView, AgentTabActions {
   confirmationByToolCallId: Map<string, string>;
 }
 
-export function useAgentTabModel(): AgentTabModel {
-  const state = useAgentTabState();
+export function useAgentTabModel(host: AgentTabHost = {}): AgentTabModel {
+  const state = useAgentTabState(host);
   const { messages, inProgress, pendingConfirmations } = state;
 
   const confirmationByToolCallId = useMemo(

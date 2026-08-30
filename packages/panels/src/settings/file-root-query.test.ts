@@ -2,9 +2,13 @@ import { describe, expect, test } from 'bun:test';
 
 import type { ApiClient } from '@tmex/api-client';
 
+import type { FileRootDto } from '@tmex/shared';
+
 import {
   type FileRootDeviceGroup,
+  type FileRootEntry,
   collectFileRootClients,
+  filterFileRootEntries,
   resolveFileRootClient,
   resolveFileRootsListState,
 } from './file-root-query';
@@ -83,5 +87,20 @@ describe('resolveFileRootClient', () => {
   test('设备不属于任何分组或未注入分组时回落', () => {
     expect(resolveFileRootClient(groups, fallback, 'unknown')).toBe(fallback);
     expect(resolveFileRootClient(undefined, fallback, 'd2')).toBe(fallback);
+  });
+});
+
+describe('filterFileRootEntries', () => {
+  const entries: FileRootEntry[] = [
+    { root: { id: 'r1', deviceId: 'd1', path: '/a' } as FileRootDto, client: client('c1') },
+    { root: { id: 'r2', deviceId: 'd2', path: '/b' } as FileRootDto, client: client('c1') },
+  ];
+
+  test('单设备模式只留该设备的 roots', () => {
+    expect(filterFileRootEntries(entries, 'd2').map((entry) => entry.root.id)).toEqual(['r2']);
+  });
+
+  test('未锁定设备时原样返回', () => {
+    expect(filterFileRootEntries(entries, undefined)).toBe(entries);
   });
 });

@@ -10,6 +10,13 @@ import type { NodeSessionStore } from '../auth/node-session-store';
 import type { UserStore } from '../auth/user-store';
 import type { WebSocketServer } from '../ws';
 import {
+  RTT_EVENT_MIN_INTERVAL_MS,
+  addressFromIceCandidate,
+  classifyPeerReach,
+  hostFromWsUrl,
+  rttChangedMaterially,
+} from './address-class';
+import {
   backoffDelayMs,
   defaultScheduler,
   encodeJsonBytes,
@@ -111,6 +118,12 @@ export type PeerManagerOptions = {
   onGatewaySessionClose?: (session: import('../ws/gateway-session').GatewaySession) => void;
   onBrowserSignal?: (msg: RtcSignalMessage, fromNodeId?: string) => void;
   ensureDcSession?: (peerNodeId: string, rtcSession: string) => void;
+  onLinkInfo?: (info: {
+    nodeId: string;
+    reach: PeerReach;
+    transport: PeerTransportKind | null;
+    rttMs: number | null;
+  }) => void;
 };
 
 export type PeerLinkFactory = (
@@ -143,6 +156,11 @@ type LivePeer = {
   quiesceCapable: boolean;
   helloReplied: boolean;
   probeSent: boolean;
+  remoteAddress: string | null;
+  rttMs: number | null;
+  pingSentAt: number | null;
+  lastRttEmitAt: number;
+  lastEmittedRttMs: number | null;
 };
 
 type UpgradeGate = {
@@ -185,6 +203,7 @@ type ParkedInbound = {
   generation: number;
   at: number;
   timer: { clear: () => void } | null;
+  remoteAddress: string | null;
 };
 
 function isServerSocketAdapter(value: WebSocketTransportInput): value is ServerSocketAdapter {
@@ -298,6 +317,14 @@ export class PeerManager {
     | null;
   private readonly onBrowserSignal: ((msg: RtcSignalMessage, fromNodeId?: string) => void) | null;
   private readonly ensureDcSession: ((peerNodeId: string, rtcSession: string) => void) | null;
+  private readonly onLinkInfo:
+    | ((info: {
+        nodeId: string;
+        reach: PeerReach;
+        transport: PeerTransportKind | null;
+        rttMs: number | null;
+      }) => void)
+    | null;
   private readonly rtcListeners = new Map<string, Set<(msg: RtcSignalMessage) => void>>();
   private readonly rtcInbox = new Map<string, RtcSignalMessage[]>();
   private readonly server: PeerServer | null;
@@ -344,6 +371,7 @@ export class PeerManager {
     this.onGatewaySessionClose = opts.onGatewaySessionClose ?? null;
     this.onBrowserSignal = opts.onBrowserSignal ?? null;
     this.ensureDcSession = opts.ensureDcSession ?? null;
+    this.onLinkInfo = opts.onLinkInfo ?? null;
     this.uplink.setOnRelayStream((stream, from) => {
       void this.acceptRelay(stream, from);
     });
@@ -354,8 +382,8 @@ export class PeerManager {
         port: opts.peerPort,
         hostname: opts.hostname,
         scheduler: this.scheduler,
-        onAccept: (socket) => {
-          void this.acceptDirect(socket);
+        onAccept: (socket, remoteIp) => {
+          void this.acceptDirect(socket, remoteIp === 'unknown' ? null : remoteIp);
         },
       });
     }
@@ -426,6 +454,10 @@ export class PeerManager {
     return this.live.get(nodeId)?.transport ?? null;
   }
 
+  rttOf(nodeId: string): number | null {
+    return this.live.get(nodeId)?.rttMs ?? null;
+  }
+
   async waitForTransport(
     nodeId: string,
     kind: PeerTransportKind,
@@ -474,9 +506,18 @@ export class PeerManager {
     peerNodeId: string,
     session: LinkSession,
     transport: PeerTransportKind = 'ws-secure',
-    initiatedBy?: string
+    initiatedBy?: string,
+    remoteAddress?: string | null
   ): LinkSession | null {
-    return this.track(session, peerNodeId, transport, initiatedBy ?? peerNodeId, this.generation);
+    return this.track(
+      session,
+      peerNodeId,
+      transport,
+      initiatedBy ?? peerNodeId,
+      this.generation,
+      false,
+      remoteAddress ?? null
+    );
   }
 
   receiveRtcSignal(fromNodeId: string, msg: RtcSignalMessage): void {
@@ -587,7 +628,7 @@ export class PeerManager {
         if (this.userStore.getCert(id)?.revokedLogSeq != null) this.onRevoked(id);
         continue;
       }
-      out.set(id, live.transport === 'relay' ? 'relay' : 'lan');
+      out.set(id, classifyPeerReach(live.transport, live.remoteAddress));
     }
     return out;
   }
@@ -1215,7 +1256,18 @@ export class PeerManager {
       }
       const session = new LinkMux(result.link, { role: result.role });
       const initiatedBy = result.role === 'initiator' ? this.identity.nodeId : result.peerNodeId;
-      const kept = this.track(session, result.peerNodeId, 'dc', initiatedBy, gen);
+      const pair = result.pc.getSelectedCandidatePair?.();
+      const remoteAddress =
+        pair?.remote?.address ?? addressFromIceCandidate(pair?.remote?.candidate) ?? null;
+      const kept = this.track(
+        session,
+        result.peerNodeId,
+        'dc',
+        initiatedBy,
+        gen,
+        false,
+        remoteAddress
+      );
       if (kept === session) {
         const live = this.live.get(result.peerNodeId);
         if (live) live.unsubRtc = unsub;
@@ -1335,7 +1387,15 @@ export class PeerManager {
             quiet(() => session.close('stopped'));
             throw new NodeUnreachableError(nodeId, 'peer manager stopped');
           }
-          const kept = this.track(session, nodeId, 'ws-secure', this.identity.nodeId, gen);
+          const kept = this.track(
+            session,
+            nodeId,
+            'ws-secure',
+            this.identity.nodeId,
+            gen,
+            false,
+            null
+          );
           if (kept) return kept;
         }
       } catch (err) {
@@ -1389,14 +1449,19 @@ export class PeerManager {
       result.peerNodeId,
       'ws-secure',
       this.identity.nodeId,
-      gen
+      gen,
+      false,
+      hostFromWsUrl(url)
     );
     if (!kept) throw new Error('simultaneous-dial');
     this.rememberKeys(result.peerNodeId, result.sendKey, result.recvKey);
     return kept;
   }
 
-  private async acceptDirect(socket: ServerSocketAdapter): Promise<void> {
+  private async acceptDirect(
+    socket: ServerSocketAdapter,
+    remoteAddress: string | null
+  ): Promise<void> {
     const gen = this.generation;
     try {
       const result = await handshakeWsDirect({
@@ -1409,7 +1474,15 @@ export class PeerManager {
         quiet(() => result.session.close('stopped'));
         return;
       }
-      this.track(result.session, result.peerNodeId, 'ws-secure', result.peerNodeId, gen);
+      this.track(
+        result.session,
+        result.peerNodeId,
+        'ws-secure',
+        result.peerNodeId,
+        gen,
+        false,
+        remoteAddress
+      );
       this.rememberKeys(result.peerNodeId, result.sendKey, result.recvKey);
     } catch {
       quiet(() => socket.close(1000, 'handshake-failed'));
@@ -1442,7 +1515,8 @@ export class PeerManager {
     transport: PeerTransportKind,
     initiatedBy: string,
     gen: number,
-    quiesceCapable = false
+    quiesceCapable = false,
+    remoteAddress: string | null = null
   ): LinkSession | null {
     const reject = (reason: string, keep: LinkSession | null = null) => {
       quiet(() => session.close(reason));
@@ -1451,6 +1525,8 @@ export class PeerManager {
     if (this.stale(gen)) return reject('stale');
     if (!this.isTrusted(peerNodeId)) return reject('not-trusted');
     const prev = this.live.get(peerNodeId);
+    const resolvedAddress =
+      remoteAddress ?? (transport === 'dc' ? (prev?.remoteAddress ?? null) : null);
     if (prev && prev.session !== session) {
       const rank = comparePeerTransport(transport, prev.transport);
       if (rank < 0) return reject('lower-priority', prev.session);
@@ -1461,13 +1537,21 @@ export class PeerManager {
         }
       }
       if (!prev.quiesceCapable) {
-        this.parkInbound(peerNodeId, session, transport, initiatedBy, gen);
+        this.parkInbound(peerNodeId, session, transport, initiatedBy, gen, resolvedAddress);
         this.probeQuiesce(prev);
         return prev.session;
       }
       this.retirePeer(prev, 'replaced');
     }
-    return this.installLive(session, peerNodeId, transport, initiatedBy, gen, quiesceCapable);
+    return this.installLive(
+      session,
+      peerNodeId,
+      transport,
+      initiatedBy,
+      gen,
+      quiesceCapable,
+      resolvedAddress
+    );
   }
 
   private installLive(
@@ -1476,7 +1560,8 @@ export class PeerManager {
     transport: PeerTransportKind,
     initiatedBy: string,
     gen: number,
-    quiesceCapable: boolean
+    quiesceCapable: boolean,
+    remoteAddress: string | null
   ): LinkSession {
     const live: LivePeer = {
       session,
@@ -1501,6 +1586,11 @@ export class PeerManager {
       quiesceCapable,
       helloReplied: false,
       probeSent: false,
+      remoteAddress,
+      rttMs: null,
+      pingSentAt: null,
+      lastRttEmitAt: 0,
+      lastEmittedRttMs: null,
     };
     this.live.set(peerNodeId, live);
     this.bindSession(live);
@@ -1510,6 +1600,7 @@ export class PeerManager {
     this.sendPeerStatus(live);
     this.notifyTransport(peerNodeId);
     this.notifyLive(peerNodeId, session);
+    this.emitLinkInfo(live);
     if (transport === 'dc') {
       this.lostDirect.delete(peerNodeId);
       this.cancelDcUpgradeRetry(peerNodeId);
@@ -1626,7 +1717,7 @@ export class PeerManager {
     const work = asyncCtl[t as keyof typeof asyncCtl];
     if (work) this.runCtlAsync(t, live.peerNodeId, work);
     else if (t === 'ping') this.sendPeerCtl(live, { t: 'pong' });
-    else if (t === 'pong') live.missedPongs = 0;
+    else if (t === 'pong') this.onPeerPong(live);
     else if (t === 'link.hello') {
       if ((Array.isArray(msg.caps) ? msg.caps : []).includes('quiesce')) {
         this.markQuiesceCapable(live);
@@ -1769,8 +1860,37 @@ export class PeerManager {
         return;
       }
       live.missedPongs += 1;
+      live.pingSentAt = performance.now();
       this.sendPeerCtl(live, { t: 'ping' });
     }, PEER_PING_INTERVAL_MS);
+  }
+
+  private onPeerPong(live: LivePeer): void {
+    live.missedPongs = 0;
+    if (live.pingSentAt == null) return;
+    live.rttMs = Math.max(0, Math.round(performance.now() - live.pingSentAt));
+    live.pingSentAt = null;
+    this.maybeEmitRtt(live);
+  }
+
+  private emitLinkInfo(live: LivePeer): void {
+    this.onLinkInfo?.({
+      nodeId: live.peerNodeId,
+      reach: classifyPeerReach(live.transport, live.remoteAddress),
+      transport: live.transport,
+      rttMs: live.rttMs,
+    });
+  }
+
+  private maybeEmitRtt(live: LivePeer): void {
+    if (!rttChangedMaterially(live.lastEmittedRttMs, live.rttMs)) return;
+    const now = this.scheduler.now();
+    if (live.lastEmittedRttMs != null && now - live.lastRttEmitAt < RTT_EVENT_MIN_INTERVAL_MS) {
+      return;
+    }
+    live.lastRttEmitAt = now;
+    live.lastEmittedRttMs = live.rttMs;
+    this.emitLinkInfo(live);
   }
 
   private armIdle(live: LivePeer): void {
@@ -1811,6 +1931,12 @@ export class PeerManager {
       this.scheduler.now() + PEER_RTC_WAKE_COOLDOWN_MS
     );
     this.notifyTransport(nodeId);
+    this.onLinkInfo?.({
+      nodeId,
+      reach: this.listReach().get(nodeId) ?? null,
+      transport: this.transportOf(nodeId),
+      rttMs: this.rttOf(nodeId),
+    });
     if (this.stopped || reason === 'revoked') {
       this.cancelDcUpgradeRetry(nodeId);
       this.lostDirect.delete(nodeId);
@@ -1853,6 +1979,7 @@ export class PeerManager {
     this.sendPeerStatus(best);
     this.notifyTransport(nodeId);
     this.notifyLive(nodeId, best.session);
+    this.emitLinkInfo(best);
     return true;
   }
 
@@ -1861,7 +1988,8 @@ export class PeerManager {
     session: LinkSession,
     transport: PeerTransportKind,
     initiatedBy: string,
-    gen: number
+    gen: number,
+    remoteAddress: string | null
   ): void {
     const existing = this.parked.get(peerNodeId);
     const parkedAt = existing?.at ?? this.scheduler.now();
@@ -1880,6 +2008,7 @@ export class PeerManager {
       generation: gen,
       at: parkedAt,
       timer: null,
+      remoteAddress,
     };
     parked.timer = this.scheduler.interval(() => {
       if (this.parked.get(peerNodeId) !== parked) return;
@@ -1927,7 +2056,15 @@ export class PeerManager {
     this.parked.delete(nodeId);
     parked.timer?.clear();
     this.parkedSessions.delete(parked.session);
-    this.track(parked.session, nodeId, parked.transport, parked.initiatedBy, parked.generation);
+    this.track(
+      parked.session,
+      nodeId,
+      parked.transport,
+      parked.initiatedBy,
+      parked.generation,
+      false,
+      parked.remoteAddress
+    );
   }
 
   private retirePeer(prev: LivePeer, reason: string): void {

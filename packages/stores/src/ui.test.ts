@@ -118,6 +118,41 @@ describe('sidebar tab state', () => {
     });
   });
 
+  test('persists sidebar files visibility separately from the terminal switch', () => {
+    const prefix = `ui-sidebar-files-visibility-${Date.now()}-`;
+    const store = createUIStore({ storagePrefix: prefix });
+
+    expect(store.getState().sidebarFilesVisibility).toEqual({});
+
+    store.getState().setSidebarFilesVisibility('node-a:device-1', false);
+    store.getState().setSidebarDeviceVisibility('node-a:device-1', true);
+    expect(store.getState().sidebarFilesVisibility).toEqual({ 'node-a:device-1': false });
+    expect(store.getState().sidebarDeviceVisibility).toEqual({ 'node-a:device-1': true });
+
+    const persisted = JSON.parse(storage.getItem(`${prefix}tmex-ui`) ?? '{}') as {
+      state?: { sidebarFilesVisibility?: Record<string, boolean> };
+    };
+    expect(persisted.state?.sidebarFilesVisibility).toEqual({ 'node-a:device-1': false });
+
+    const rehydrated = createUIStore({ storagePrefix: prefix });
+    expect(rehydrated.getState().sidebarFilesVisibility).toEqual({ 'node-a:device-1': false });
+  });
+
+  test('normalizes invalid persisted files visibility', () => {
+    const prefix = `ui-sidebar-invalid-files-visibility-${Date.now()}-`;
+    storage.setItem(
+      `${prefix}tmex-ui`,
+      JSON.stringify({
+        state: { sidebarFilesVisibility: { 'node-a:device-1': 1, 'node-a:device-2': false } },
+        version: 0,
+      })
+    );
+
+    expect(createUIStore({ storagePrefix: prefix }).getState().sidebarFilesVisibility).toEqual({
+      'node-a:device-2': false,
+    });
+  });
+
   test('normalizes invalid persisted device visibility', () => {
     const prefix = `ui-sidebar-invalid-visibility-${Date.now()}-`;
     storage.setItem(

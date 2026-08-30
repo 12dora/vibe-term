@@ -58,7 +58,7 @@ export type HubTlsInfo = {
 
 export type HubTlsInfoProvider = () => HubTlsInfo | Promise<HubTlsInfo>;
 
-export type PeerReachKind = 'lan' | 'relay' | null;
+export type PeerReachKind = 'lan' | 'wan' | 'relay' | null;
 
 export type PeerTransportKind = 'ws-secure' | 'relay' | 'dc';
 
@@ -68,6 +68,8 @@ export type NodeEventPayload = {
   nodeId: string;
   status: NodeEventStatus;
   reach?: PeerReachKind;
+  transport?: PeerTransportKind | null;
+  rttMs?: number | null;
   inventory?: string | null;
   version?: string | null;
   direct_capable?: boolean;
@@ -79,6 +81,7 @@ export type PeerLinkProvider = {
   listReach(): Map<string, PeerReachKind>;
   listHubOnline?(): ReadonlySet<string>;
   transportOf?(nodeId: string): PeerTransportKind | null;
+  rttOf?(nodeId: string): number | null;
   onNodeEvent(cb: (event: NodeEventPayload) => void): () => void;
 };
 

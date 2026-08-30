@@ -1,6 +1,8 @@
 // 设置面板全量出口：消费方（fe 设置页/设备页）按 featureset 决定渲染哪些 tab。
 
 export { DeviceEntryCard } from './device-entry-card';
+export { DeviceFilesModal, type DeviceFilesModalProps } from './device-files-modal';
+export { DirectoryPickerModal, type DirectoryPickerModalProps } from './directory-picker-modal';
 export {
   FilesSettingsTab,
   type FileRootDeviceGroup,

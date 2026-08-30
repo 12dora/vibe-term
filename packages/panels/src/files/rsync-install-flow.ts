@@ -1,6 +1,11 @@
-import i18next from 'i18next';
 import type { AppRuntime } from '@tmex/stores';
-import { encodePaneIdForUrl, hostAppPath } from '@tmex/stores';
+import {
+  encodePaneIdForUrl,
+  hostAppPath,
+  normalizeAgentNodeId,
+  resolveAgentStore,
+} from '@tmex/stores';
+import i18next from 'i18next';
 import { toast } from 'sonner';
 
 const CONNECT_TIMEOUT_MS = 12_000;
@@ -87,7 +92,15 @@ export async function openAgentInNewWindowWithPrompt(
     }
 
     // 3. 先起草（含预填 prompt）→ 再导航 → 切 agent → 手机强开 sidebar
-    runtime.stores.agent.getState().startDraft(deviceId, win.paneId, win.paneTitle, promptText);
+    resolveAgentStore(runtime.stores.agent)
+      .getState()
+      .startDraft({
+        nodeId: normalizeAgentNodeId(runtime.nodeId),
+        deviceId,
+        paneId: win.paneId,
+        paneTitle: win.paneTitle,
+        prompt: promptText,
+      });
     runtime.host.navigate(
       hostAppPath(
         runtime.host,

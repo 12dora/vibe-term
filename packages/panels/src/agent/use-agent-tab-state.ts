@@ -13,17 +13,39 @@ import type {
   Device,
 } from '@tmex/shared';
 import type {
+  AgentState,
   AppRuntime,
   DraftSession,
+  HostServices,
   PendingConfirmationUi,
   SessionInProgress,
 } from '@tmex/stores';
-import { useAgentStore, useRuntime, useTmuxStore } from '@tmex/stores/react';
+import {
+  hostAppPath,
+  isSessionOnNode,
+  normalizeAgentNodeId,
+  resolveAgentStore,
+} from '@tmex/stores';
+import { useRuntime, useTmuxStore } from '@tmex/stores/react';
 
 import { type SnapshotMap, findPaneTitle } from './agent-binding';
 import { shouldRedraftForRoute } from './agent-route-sync';
 
 export type AgentStoreHandle = AppRuntime['stores']['agent'];
+
+/** 路由 pane 的匹配 pattern；多 node 宿主经 host.appPath 带上 `/n/<id>` 前缀。 */
+export const AGENT_PANE_ROUTE_PATH = '/devices/:deviceId/windows/:windowId/panes/:paneId';
+
+/**
+ * 宿主注入面。多 node 宿主里 agent 状态一律由 entry（self）网关提供：
+ * 远端 pane 的会话也由它持有并运行，所以 store 与路由 runtime 是分开的两件事。
+ */
+export interface AgentTabHost {
+  /** 服务 agent 状态的 store；缺省用当前 runtime 的（单 node 宿主行为不变） */
+  agentStore?: AgentStoreHandle;
+  /** 路由 node 是否离线；`undefined` 表示宿主没有 mesh 状态 */
+  nodeOffline?: boolean;
+}
 
 interface RoutePane {
   routeDeviceId: string | null;
@@ -56,10 +78,13 @@ interface DevicesSlice {
 export interface AgentTabState extends RoutePane, AgentSessionSlice, DevicesSlice {
   agentStore: AgentStoreHandle;
   snapshots: SnapshotMap;
+  /** 本 tab 服务的 node（null 即 entry 自身）；创建/草稿一律带上它 */
+  nodeId: string | null;
+  nodeOffline: boolean | undefined;
 }
 
-function useRoutePane(snapshots: SnapshotMap): RoutePane {
-  const paneMatch = useMatch('/devices/:deviceId/windows/:windowId/panes/:paneId');
+function useRoutePane(snapshots: SnapshotMap, host: HostServices): RoutePane {
+  const paneMatch = useMatch(hostAppPath(host, AGENT_PANE_ROUTE_PATH));
   const routeDeviceId = paneMatch?.params.deviceId ?? null;
   const routePaneId = paneMatch?.params.paneId ?? null;
   const routePaneTitle = useMemo(
@@ -69,31 +94,52 @@ function useRoutePane(snapshots: SnapshotMap): RoutePane {
   return { routeDeviceId, routePaneId, routePaneTitle };
 }
 
-function useAgentSessionSlice(): AgentSessionSlice {
-  const sessions = useAgentStore((state) => state.sessions);
-  const activeSessionId = useAgentStore((state) => state.activeSessionId);
-  const draft = useAgentStore((state) => state.draft);
-  const messages = useAgentStore((state) =>
-    state.activeSessionId ? state.messages[state.activeSessionId] : undefined
+/** 会话列表是全 node 共用的一份，本 tab 只认绑定在自己这个 node 上的活动会话 */
+function activeSessionIdOnNode(state: AgentState, nodeId: string | null): string | null {
+  const { activeSessionId } = state;
+  if (!activeSessionId) return null;
+  const session = state.sessions[activeSessionId];
+  return session && isSessionOnNode(session, nodeId) ? activeSessionId : null;
+}
+
+function useAgentSessionSlice(
+  agentStore: AgentStoreHandle,
+  nodeId: string | null
+): AgentSessionSlice {
+  const activeSessionId = agentStore((state) => activeSessionIdOnNode(state, nodeId));
+  const activeSession = agentStore((state) => {
+    const id = activeSessionIdOnNode(state, nodeId);
+    return id ? state.sessions[id] : undefined;
+  });
+  const draft = agentStore((state) =>
+    state.draft && normalizeAgentNodeId(state.draft.nodeId) === nodeId ? state.draft : null
   );
-  const inProgress = useAgentStore((state) =>
-    state.activeSessionId ? state.inProgress[state.activeSessionId] : undefined
-  );
-  const pendingConfirmations = useAgentStore((state) =>
-    state.activeSessionId ? state.pendingConfirmations[state.activeSessionId] : undefined
-  );
-  const sending = useAgentStore((state) =>
-    state.activeSessionId ? state.sending[state.activeSessionId] : undefined
-  );
-  const materializingDraft = useAgentStore((state) => state.materializingDraft);
-  const queued = useAgentStore((state) =>
-    state.activeSessionId ? state.queued[state.activeSessionId] : undefined
-  );
-  const defaultWriteMode = useAgentStore((state) => state.defaultWriteMode);
+  const messages = agentStore((state) => {
+    const id = activeSessionIdOnNode(state, nodeId);
+    return id ? state.messages[id] : undefined;
+  });
+  const inProgress = agentStore((state) => {
+    const id = activeSessionIdOnNode(state, nodeId);
+    return id ? state.inProgress[id] : undefined;
+  });
+  const pendingConfirmations = agentStore((state) => {
+    const id = activeSessionIdOnNode(state, nodeId);
+    return id ? state.pendingConfirmations[id] : undefined;
+  });
+  const sending = agentStore((state) => {
+    const id = activeSessionIdOnNode(state, nodeId);
+    return id ? state.sending[id] : undefined;
+  });
+  const materializingDraft = agentStore((state) => state.materializingDraft);
+  const queued = agentStore((state) => {
+    const id = activeSessionIdOnNode(state, nodeId);
+    return id ? state.queued[id] : undefined;
+  });
+  const defaultWriteMode = agentStore((state) => state.defaultWriteMode);
 
   return {
     activeSessionId,
-    activeSession: activeSessionId ? sessions[activeSessionId] : undefined,
+    activeSession,
     draft,
     messages,
     inProgress,
@@ -125,6 +171,7 @@ function useSessionsBootstrap(agentStore: AgentStoreHandle): void {
 /** 空态即草稿态：进入 agent tab 且有路由 pane 但无会话/草稿时自动起草 */
 function useAutoDraft(
   agentStore: AgentStoreHandle,
+  nodeId: string | null,
   activeSession: AgentSessionDto | undefined,
   draft: DraftSession | null,
   route: RoutePane
@@ -132,9 +179,14 @@ function useAutoDraft(
   const { routeDeviceId, routePaneId, routePaneTitle } = route;
   useEffect(() => {
     if (!activeSession && !draft && routeDeviceId && routePaneId) {
-      agentStore.getState().startDraft(routeDeviceId, routePaneId, routePaneTitle);
+      agentStore.getState().startDraft({
+        nodeId,
+        deviceId: routeDeviceId,
+        paneId: routePaneId,
+        paneTitle: routePaneTitle,
+      });
     }
-  }, [activeSession, draft, routeDeviceId, routePaneId, routePaneTitle, agentStore]);
+  }, [activeSession, draft, nodeId, routeDeviceId, routePaneId, routePaneTitle, agentStore]);
 }
 
 /**
@@ -143,6 +195,7 @@ function useAutoDraft(
  */
 function useSyncDraftToRoute(
   agentStore: AgentStoreHandle,
+  nodeId: string | null,
   activeSession: AgentSessionDto | undefined,
   draft: DraftSession | null,
   route: RoutePane
@@ -156,23 +209,36 @@ function useSyncDraftToRoute(
       Boolean(activeSession)
     );
     if (!redraft) return;
-    agentStore
-      .getState()
-      .startDraft(routeDeviceId, routePaneId, routePaneTitle, draft?.prompt ?? null);
-  }, [activeSession, draft, routeDeviceId, routePaneId, routePaneTitle, agentStore]);
+    agentStore.getState().startDraft({
+      nodeId,
+      deviceId: routeDeviceId,
+      paneId: routePaneId,
+      paneTitle: routePaneTitle,
+      prompt: draft?.prompt ?? null,
+    });
+  }, [activeSession, draft, nodeId, routeDeviceId, routePaneId, routePaneTitle, agentStore]);
 }
 
-export function useAgentTabState(): AgentTabState {
+export function useAgentTabState(host: AgentTabHost = {}): AgentTabState {
   const runtime = useRuntime();
-  const agentStore = runtime.stores.agent;
+  const agentStore = host.agentStore ?? resolveAgentStore(runtime.stores.agent);
+  const nodeId = normalizeAgentNodeId(runtime.nodeId);
   const snapshots = useTmuxStore((state) => state.snapshots);
   const devices = useDevices(runtime);
-  const route = useRoutePane(snapshots);
-  const session = useAgentSessionSlice();
+  const route = useRoutePane(snapshots, runtime.host);
+  const session = useAgentSessionSlice(agentStore, nodeId);
 
   useSessionsBootstrap(agentStore);
-  useAutoDraft(agentStore, session.activeSession, session.draft, route);
-  useSyncDraftToRoute(agentStore, session.activeSession, session.draft, route);
+  useAutoDraft(agentStore, nodeId, session.activeSession, session.draft, route);
+  useSyncDraftToRoute(agentStore, nodeId, session.activeSession, session.draft, route);
 
-  return { agentStore, snapshots, ...devices, ...route, ...session };
+  return {
+    agentStore,
+    snapshots,
+    nodeId,
+    nodeOffline: host.nodeOffline,
+    ...devices,
+    ...route,
+    ...session,
+  };
 }

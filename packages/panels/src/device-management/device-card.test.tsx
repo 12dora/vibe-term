@@ -1,11 +1,11 @@
 // 设备卡片：种类展示（本地 / SSH / 远端节点上的设备）、连接开关的三种状态、
-// 「显示在侧栏」开关默认值。bun test 无 DOM，用 react-dom/server 静态渲染断言 HTML；
-// 静态渲染下 zustand 走 `getInitialState`，所以侧栏开关只能覆盖默认值，
-// 「存过的值优先」由 stores 的单测覆盖。
+// 「侧栏显示」开关组（终端 / 文件）的默认值与禁用态。bun test 无 DOM，
+// 用 react-dom/server 静态渲染断言 HTML；静态渲染下 zustand 走 `getInitialState`，
+// 所以侧栏开关只能覆盖默认值，「存过的值优先」由 stores 的单测覆盖。
 
 import { describe, expect, test } from 'bun:test';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import type { Device } from '@tmex/shared';
+import type { Device, FileRootDto } from '@tmex/shared';
 import { I18N_RESOURCES } from '@tmex/shared';
 import { createAppRuntime, sidebarDeviceVisibilityKey } from '@tmex/stores';
 import { RuntimeProvider } from '@tmex/stores/react';
@@ -49,6 +49,17 @@ const SSH_DEVICE: Device = {
   username: 'root',
 };
 
+const DEVICE_ROOT: FileRootDto = {
+  id: 'root-1',
+  deviceId: LOCAL_DEVICE.id,
+  deviceName: LOCAL_DEVICE.name,
+  deviceType: 'local',
+  path: '/srv/data',
+  name: 'data',
+  enabled: true,
+  sortOrder: 0,
+};
+
 const SELF_CONTEXT: DeviceNodeContext = { runtimeNodeId: 'self', name: '', isSelf: true };
 const REMOTE_CONTEXT: DeviceNodeContext = { runtimeNodeId: 'n1', name: '书房节点', isSelf: false };
 
@@ -69,6 +80,7 @@ function renderCard(options: {
   nodeContext?: DeviceNodeContext;
   connection?: DeviceConnectionAdapter;
   offline?: boolean;
+  roots?: FileRootDto[];
 }): string {
   const nodeContext = options.nodeContext ?? SELF_CONTEXT;
   // 每次一个独立的 persist key：共享的内存 localStorage 不会把用例之间的偏好串起来。
@@ -76,10 +88,14 @@ function renderCard(options: {
     nodeId: nodeContext.runtimeNodeId,
     storagePrefix: `device-card-test-${storageSeq++}:`,
   });
+  const queryClient = new QueryClient();
+  if (options.roots) {
+    queryClient.setQueryData(['files', 'roots'], { roots: options.roots });
+  }
   const html = renderToStaticMarkup(
     <MemoryRouter>
       <I18nextProvider i18n={i18n}>
-        <QueryClientProvider client={new QueryClient()}>
+        <QueryClientProvider client={queryClient}>
           <RuntimeProvider runtime={runtime}>
             <DeviceCard
               device={options.device ?? LOCAL_DEVICE}
@@ -120,8 +136,8 @@ function tagOf(html: string, testId: string): string | null {
  * 开关的选中态只看 `aria-checked`：class 里同时带 `data-checked:` / `data-unchecked:`
  * 两个 tailwind 变体前缀，按 data-* 属性匹配会永远命中。
  */
-function switchState(html: string): string | null {
-  const tag = tagOf(html, 'device-card-sidebar-dev-1');
+function switchState(html: string, testId = 'device-card-sidebar-dev-1'): string | null {
+  const tag = tagOf(html, testId);
   if (!tag) return null;
   return tag.includes('aria-checked="true"') ? 'checked' : 'unchecked';
 }
@@ -272,12 +288,59 @@ describe('DeviceCard 的离线态', () => {
 });
 
 describe('DeviceCard 的侧栏可见性开关', () => {
-  test('self 的设备默认开', () => {
+  test('一个组标签带终端 / 文件两个开关', () => {
+    const html = renderCard({ roots: [DEVICE_ROOT] });
+    expect(html).toContain('data-testid="device-card-sidebar-group-dev-1"');
+    expect(html).toContain('侧栏显示');
+    expect(html).toContain('data-testid="device-card-sidebar-dev-1"');
+    expect(html).toContain('data-testid="device-card-sidebar-files-dev-1"');
+    expect(html).toContain('在侧栏的终端页显示该设备');
+    expect(html).toContain('在侧栏的文件页显示该设备的目录');
+  });
+
+  test('终端开关：self 的设备默认开', () => {
     expect(switchState(renderCard({}))).toBe('checked');
   });
 
-  test('远端 node 的设备默认关', () => {
+  test('终端开关：远端 node 的设备默认关', () => {
     expect(switchState(renderCard({ nodeContext: REMOTE_CONTEXT }))).toBe('unchecked');
+  });
+
+  test('文件开关：配过目录就默认开，本机与远端一致', () => {
+    expect(
+      switchState(renderCard({ roots: [DEVICE_ROOT] }), 'device-card-sidebar-files-dev-1')
+    ).toBe('checked');
+    expect(
+      switchState(
+        renderCard({ nodeContext: REMOTE_CONTEXT, roots: [DEVICE_ROOT] }),
+        'device-card-sidebar-files-dev-1'
+      )
+    ).toBe('checked');
+  });
+
+  test('文件开关：没配过目录时禁用并提示去配目录', () => {
+    const html = renderCard({ roots: [] });
+    const tag = tagOf(html, 'device-card-sidebar-files-dev-1');
+    expect(tag).toContain('aria-disabled="true"');
+    expect(switchState(html, 'device-card-sidebar-files-dev-1')).toBe('unchecked');
+    expect(html).toContain('尚未为该设备配置目录');
+    expect(html).not.toContain('在侧栏的文件页显示该设备的目录');
+  });
+
+  test('文件开关：只认本设备的目录', () => {
+    const html = renderCard({ roots: [{ ...DEVICE_ROOT, deviceId: 'other-device' }] });
+    expect(tagOf(html, 'device-card-sidebar-files-dev-1')).toContain('aria-disabled="true"');
+  });
+
+  // 离线只是不再去打远端要列表（`enabled`），缓存里的目录照样算数：
+  // 两个开关都是浏览器本地偏好，离线期间仍然可改。
+  test('节点离线时沿用缓存里的目录，开关不被禁用', () => {
+    const tag = tagOf(
+      renderCard({ nodeContext: REMOTE_CONTEXT, offline: true, roots: [DEVICE_ROOT] }),
+      'device-card-sidebar-files-dev-1'
+    );
+    expect(tag).not.toContain('aria-disabled="true"');
+    expect(tag).toContain('aria-checked="true"');
   });
 
   test('紧凑布局仍保留 e2e 依赖的选择器', () => {

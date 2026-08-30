@@ -473,6 +473,16 @@ export const NodeEventLegacySchema = b.struct({
   inventory: OptionStringSchema,
 });
 
+export const NodeEventV2Schema = b.struct({
+  nodeId: b.string(),
+  status: b.u8(),
+  reach: OptionStringSchema,
+  inventory: OptionStringSchema,
+  version: OptionStringSchema,
+  directCapable: OptionBoolSchema,
+  name: OptionStringSchema,
+});
+
 export const NodeEventSchema = b.struct({
   nodeId: b.string(),
   status: b.u8(),
@@ -481,6 +491,8 @@ export const NodeEventSchema = b.struct({
   version: OptionStringSchema,
   directCapable: OptionBoolSchema,
   name: OptionStringSchema,
+  transport: OptionStringSchema,
+  rttMs: OptionU32Schema,
 });
 
 export type NodeEventWire = {
@@ -491,6 +503,8 @@ export type NodeEventWire = {
   version: string | null;
   directCapable: boolean | null;
   name: string | null;
+  transport: string | null;
+  rttMs: number | null;
 };
 
 export function encodeNodeEvent(data: {
@@ -501,7 +515,10 @@ export function encodeNodeEvent(data: {
   version?: string | null;
   directCapable?: boolean | null;
   name?: string | null;
+  transport?: string | null;
+  rttMs?: number | null;
 }): Uint8Array {
+  const rtt = data.rttMs;
   return NodeEventSchema.serialize({
     nodeId: data.nodeId,
     status: data.status,
@@ -510,24 +527,31 @@ export function encodeNodeEvent(data: {
     version: data.version ?? null,
     directCapable: data.directCapable ?? null,
     name: data.name ?? null,
+    transport: data.transport ?? null,
+    rttMs: typeof rtt === 'number' && Number.isFinite(rtt) && rtt >= 0 ? Math.round(rtt) : null,
   });
 }
 
+// 三代帧按新→旧依次尝试；老 node 发来的帧缺后加字段时补 null。
 export function decodeNodeEvent(bytes: Uint8Array): NodeEventWire {
   try {
     return NodeEventSchema.deserialize(bytes);
-  } catch {
-    const legacy = NodeEventLegacySchema.deserialize(bytes);
-    return {
-      nodeId: legacy.nodeId,
-      status: legacy.status,
-      reach: legacy.reach,
-      inventory: legacy.inventory,
-      version: null,
-      directCapable: null,
-      name: null,
-    };
-  }
+  } catch {}
+  try {
+    return { ...NodeEventV2Schema.deserialize(bytes), transport: null, rttMs: null };
+  } catch {}
+  const legacy = NodeEventLegacySchema.deserialize(bytes);
+  return {
+    nodeId: legacy.nodeId,
+    status: legacy.status,
+    reach: legacy.reach,
+    inventory: legacy.inventory,
+    version: null,
+    directCapable: null,
+    name: null,
+    transport: null,
+    rttMs: null,
+  };
 }
 
 export const RtcSignalSchema = b.struct({

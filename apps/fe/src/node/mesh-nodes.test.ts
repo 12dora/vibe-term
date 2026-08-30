@@ -97,6 +97,51 @@ describe('patchNodesWithEvent', () => {
     expect(next).toBe(nodes);
   });
 
+  test('online 事件带上 transport 与 rttMs，offline 一并清掉', () => {
+    const online = patchNodesWithEvent(nodes, {
+      nodeId: 'a',
+      status: 'online',
+      reach: 'wan',
+      transport: 'ws-secure',
+      rttMs: 42,
+      inventory: null,
+    });
+    expect(online[0].reach).toBe('wan');
+    expect(online[0].transport).toBe('ws-secure');
+    expect(online[0].rttMs).toBe(42);
+
+    const offline = patchNodesWithEvent(online, {
+      nodeId: 'a',
+      status: 'offline',
+      reach: 'wan',
+      transport: 'ws-secure',
+      rttMs: 42,
+      inventory: null,
+    });
+    expect(offline[0].reach).toBeNull();
+    expect(offline[0].transport).toBeNull();
+    expect(offline[0].rttMs).toBeNull();
+  });
+
+  test('事件没带 transport / rttMs 时保留列表里已有的值', () => {
+    const base = patchNodesWithEvent(nodes, {
+      nodeId: 'b',
+      status: 'online',
+      reach: 'lan',
+      transport: 'dc',
+      rttMs: 7,
+      inventory: null,
+    });
+    const next = patchNodesWithEvent(base, {
+      nodeId: 'b',
+      status: 'online',
+      reach: 'lan',
+      inventory: null,
+    });
+    expect(next[1].transport).toBe('dc');
+    expect(next[1].rttMs).toBe(7);
+  });
+
   test('NODE_EVENT 更新 version / direct_capable / name', () => {
     const next = patchNodesWithEvent(nodes, {
       nodeId: 'a',
@@ -182,6 +227,38 @@ describe('mergeNodes', () => {
     expect(rows[1].isHub).toBe(false);
     expect(rows[1].online).toBe(false);
     expect(rows[1].reach).toBeNull();
+  });
+
+  test('transport 与 rttMs 原样带进行；未知取值归一成 null', () => {
+    // 线上可能来自更新的 node，出现前端还不认识的枚举值，一律归一成 null 而不是照单全收
+    const weird = {
+      ...node({ id: 'weird' }),
+      reach: 'nonsense',
+      transport: 'quic',
+      rttMs: -1,
+    } as unknown as MeshNode;
+    const rows = mergeNodes(
+      [
+        node({ id: 'entry', reach: 'wan', transport: 'ws-secure', rttMs: 12.4 }),
+        node({ id: 'dc', reach: 'lan', transport: 'dc', rttMs: null }),
+        weird,
+      ],
+      null,
+      { entryNodeId: 'entry', hubNodeId: null }
+    );
+    const byId = new Map(rows.map((row) => [row.id, row]));
+    expect(byId.get('entry')).toMatchObject({ reach: 'wan', transport: 'ws-secure', rttMs: 12.4 });
+    expect(byId.get('dc')).toMatchObject({ reach: 'lan', transport: 'dc', rttMs: null });
+    expect(byId.get('weird')).toMatchObject({ reach: null, transport: null, rttMs: null });
+  });
+
+  test('mesh 行不带 transport / rttMs 时补 null', () => {
+    const rows = mergeNodes([node({ id: 'legacy' })], null, {
+      entryNodeId: null,
+      hubNodeId: null,
+    });
+    expect(rows[0].transport).toBeNull();
+    expect(rows[0].rttMs).toBeNull();
   });
 
   test('hub 列表里多出来的 node 不会凭空出现在表里', () => {

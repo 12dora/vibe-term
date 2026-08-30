@@ -6,10 +6,11 @@ import { AgentStatusBanners } from './agent-status-banners';
 import { ChatThread } from './chat-thread';
 import { QueueChips } from './queue-chips';
 import { useAgentTabModel } from './use-agent-tab-model';
+import type { AgentTabHost } from './use-agent-tab-state';
 
-export function AgentTab() {
+export function AgentTab(host: AgentTabHost = {}) {
   const { t } = useTranslation();
-  const model = useAgentTabModel();
+  const model = useAgentTabModel(host);
 
   return (
     <div data-testid="agent-tab" className="flex h-full min-h-0 flex-col">
@@ -25,6 +26,7 @@ export function AgentTab() {
 
       <AgentStatusBanners
         isOrphan={model.isOrphan}
+        showNodeOffline={model.showNodeOffline}
         showPaneMismatch={model.showPaneMismatch}
         bindingValid={model.binding?.state === 'valid'}
         canRebind={model.canRebind}

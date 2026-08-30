@@ -64,7 +64,7 @@ export type DataChannelLinkSlot = {
   session: LinkSession | null;
 };
 
-export type PeerReach = 'lan' | 'relay' | null;
+export type PeerReach = 'lan' | 'wan' | 'relay' | null;
 
 export type EstablishedPeerLink = {
   session: LinkSession;

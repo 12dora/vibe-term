@@ -29,7 +29,15 @@ const { renderToStaticMarkup } = await import('react-dom/server');
 const { MemoryRouter } = await import('react-router');
 const { default: SettingsPage, settingsTabFromParam } = await import('./SettingsPage');
 
-const TAB_IDS = ['general', 'terminal', 'devicesAndFiles', 'nodes', 'notifications', 'ai'];
+const TAB_IDS = [
+  'general',
+  'terminal',
+  'remoteAccess',
+  'devicesAndFiles',
+  'nodes',
+  'notifications',
+  'ai',
+];
 
 function render(entry = '/settings'): string {
   return renderToStaticMarkup(
@@ -40,7 +48,7 @@ function render(entry = '/settings'): string {
 }
 
 describe('SettingsPage 标签栏', () => {
-  test('六个标签都在，「节点」排在设备与文件与通知之间', () => {
+  test('七个标签都在，「节点」排在设备与文件与通知之间', () => {
     const html = render();
     for (const tab of TAB_IDS) {
       expect(html).toContain(`data-testid="settings-tab-${tab}"`);
@@ -54,10 +62,22 @@ describe('SettingsPage 标签栏', () => {
     expect(html).toContain('settings.tabGroup.nodes');
   });
 
-  test('面板互斥：默认标签下只挂通用面板，NodesTab 不渲染', () => {
+  test('「远程访问」紧挨在「终端」右侧', () => {
+    const html = render();
+    expect(html.indexOf('settings-tab-remoteAccess')).toBeGreaterThan(
+      html.indexOf('settings-tab-terminal')
+    );
+    expect(html.indexOf('settings-tab-remoteAccess')).toBeLessThan(
+      html.indexOf('settings-tab-devicesAndFiles')
+    );
+    expect(html).toContain('settings.tabGroup.remoteAccess');
+  });
+
+  test('面板互斥：默认标签下只挂通用面板，NodesTab / 远程访问都不渲染', () => {
     const html = render();
     expect(html).toContain('data-testid="general-settings-tab"');
     expect(html).not.toContain('data-testid="settings-nodes-tab"');
+    expect(html).not.toContain('data-testid="settings-remote-access-tab"');
   });
 
   test('`?tab=` 选中对应标签的面板（用有替身的「通知」面板验证深链）', () => {

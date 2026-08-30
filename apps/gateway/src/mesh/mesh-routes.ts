@@ -222,7 +222,8 @@ export class MeshRoutes {
           selfName,
           self,
           hubNodeId,
-          (nid) => this.deps.peers.transportOf?.(nid) ?? null
+          (nid) => this.deps.peers.transportOf?.(nid) ?? null,
+          (nid) => this.deps.peers.rttOf?.(nid) ?? null
         )
       )
       .filter((n) => n != null);
@@ -296,7 +297,9 @@ export class MeshRoutes {
   private broadcastNodeEvent(event: {
     nodeId: string;
     status: string;
-    reach?: 'lan' | 'relay' | null;
+    reach?: 'lan' | 'wan' | 'relay' | null;
+    transport?: 'ws-secure' | 'relay' | 'dc' | null;
+    rttMs?: number | null;
     inventory?: string | null;
     version?: string | null;
     direct_capable?: boolean;
@@ -310,6 +313,8 @@ export class MeshRoutes {
       version: event.version ?? null,
       directCapable: event.direct_capable ?? null,
       name: event.name ?? null,
+      transport: event.transport ?? null,
+      rttMs: event.rttMs ?? null,
     });
     const frame = wsBorsh.encodeEnvelope(wsBorsh.KIND_NODE_EVENT, payload, ++this.seq);
     this.broadcast(frame);

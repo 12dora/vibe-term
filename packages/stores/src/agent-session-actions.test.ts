@@ -16,6 +16,7 @@ function makeSession(id: string, updatedAt: string): AgentSessionDto {
   return {
     id,
     title: id,
+    nodeId: null,
     deviceId: 'd1',
     paneId: '%1',
     providerId: null,
@@ -184,7 +185,9 @@ function createDraftHarness(options: { gateCreate?: boolean } = {}): DraftHarnes
 describe('materializeDraft', () => {
   test('concurrent calls share one create request and both messages land in one session', async () => {
     const harness = createDraftHarness();
-    harness.state().startDraft('d1', '%1', 'pane one');
+    harness
+      .state()
+      .startDraft({ nodeId: null, deviceId: 'd1', paneId: '%1', paneTitle: 'pane one' });
 
     const submit = async (text: string): Promise<void> => {
       const session = await harness.state().materializeDraft();
@@ -214,7 +217,7 @@ describe('materializeDraft', () => {
 
   test('repeated calls on the same draft return the identical in-flight promise', () => {
     const harness = createDraftHarness({ gateCreate: true });
-    harness.state().startDraft('d1', '%1', null);
+    harness.state().startDraft({ nodeId: null, deviceId: 'd1', paneId: '%1', paneTitle: null });
 
     const first = harness.state().materializeDraft();
     const second = harness.state().materializeDraft();
@@ -228,11 +231,15 @@ describe('materializeDraft', () => {
 
   test('a stale materialization does not take over a newer draft', async () => {
     const harness = createDraftHarness({ gateCreate: true });
-    harness.state().startDraft('d1', '%1', 'pane one');
+    harness
+      .state()
+      .startDraft({ nodeId: null, deviceId: 'd1', paneId: '%1', paneTitle: 'pane one' });
     const pending = harness.state().materializeDraft();
 
     // 请求在途时用户切到另一个 pane 的新草稿
-    harness.state().startDraft('d1', '%2', 'pane two');
+    harness
+      .state()
+      .startDraft({ nodeId: null, deviceId: 'd1', paneId: '%2', paneTitle: 'pane two' });
     expect(harness.state().materializingDraft).toBe(false);
 
     harness.releaseCreate();

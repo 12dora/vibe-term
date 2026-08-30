@@ -4,7 +4,9 @@ import type { NavigateFunction } from 'react-router';
 import { useNavigate } from 'react-router';
 
 import type { AgentSessionDto, AgentWriteMode } from '@tmex/shared';
-import { useUIStore } from '@tmex/stores/react';
+import type { HostServices } from '@tmex/stores';
+import { encodePaneIdForUrl, hostAppPath } from '@tmex/stores';
+import { useRuntime, useUIStore } from '@tmex/stores/react';
 
 import type { BindingInfo } from './agent-binding';
 import { canRebindToRoute } from './agent-route-sync';
@@ -29,25 +31,30 @@ export interface AgentTabActions {
   onAllowControlCharsChange: (allow: boolean) => void;
 }
 
+// 会话绑定的 pane 属于本 tab 所在的 node，跳转必须带上该 node 的路由前缀
 function navigateToBinding(
   navigate: NavigateFunction,
+  host: HostServices,
   activeSession: AgentSessionDto | undefined,
   binding: BindingInfo | null
 ): void {
   if (!activeSession?.deviceId) return;
   if (binding?.state === 'valid' && binding.windowId && activeSession.paneId) {
     navigate(
-      `/devices/${activeSession.deviceId}/windows/${binding.windowId}/panes/${encodeURIComponent(activeSession.paneId)}`
+      hostAppPath(
+        host,
+        `/devices/${activeSession.deviceId}/windows/${binding.windowId}/panes/${encodePaneIdForUrl(activeSession.paneId)}`
+      )
     );
     return;
   }
   if (binding?.state === 'unknown') {
-    navigate(`/devices/${activeSession.deviceId}`);
+    navigate(hostAppPath(host, `/devices/${activeSession.deviceId}`));
   }
 }
 
 function createSessionActions(state: AgentTabState, view: AgentTabView) {
-  const { agentStore, activeSession, activeSessionId, draft } = state;
+  const { agentStore, activeSession, activeSessionId, draft, nodeId } = state;
   const { routeDeviceId, routePaneId, routePaneTitle } = state;
   return {
     onDecide: (confirmationId: string, approved: boolean) => {
@@ -56,7 +63,12 @@ function createSessionActions(state: AgentTabState, view: AgentTabView) {
     },
     onNewSession: () => {
       if (!routeDeviceId || !routePaneId) return;
-      agentStore.getState().startDraft(routeDeviceId, routePaneId, routePaneTitle);
+      agentStore.getState().startDraft({
+        nodeId,
+        deviceId: routeDeviceId,
+        paneId: routePaneId,
+        paneTitle: routePaneTitle,
+      });
     },
     onStop: () => {
       if (!activeSession) return;
@@ -159,6 +171,7 @@ function createSettingActions(state: AgentTabState) {
 
 export function useAgentTabActions(state: AgentTabState, view: AgentTabView): AgentTabActions {
   const navigate = useNavigate();
+  const { host } = useRuntime();
   const setSidebarTab = useUIStore((uiState) => uiState.setSidebarTab);
   return {
     ...createSessionActions(state, view),
@@ -166,7 +179,7 @@ export function useAgentTabActions(state: AgentTabState, view: AgentTabView): Ag
     ...createQueueActions(state, view),
     ...createSettingActions(state),
     onBindingClick: () => {
-      navigateToBinding(navigate, state.activeSession, view.binding);
+      navigateToBinding(navigate, host, state.activeSession, view.binding);
     },
     onSwitchSession: () => {
       setSidebarTab('panes');

@@ -1,7 +1,9 @@
 import { describe, expect, test } from 'bun:test';
+import { DOMAIN_CERTIFICATE, encodeCertificate, hexToBytes } from '@tmex/shared/auth';
 import {
   parseJson,
   pickMeshNodeName,
+  projectMeshListNode,
   projectNode,
   upsertById,
   versionFromInventory,
@@ -67,5 +69,46 @@ describe('node-list-projection', () => {
       })
     ).toBe('home');
     expect(pickMeshNodeName({ id: 'bb', isSelf: false, listedName: 'studio' })).toBe('studio');
+  });
+
+  test('wan reach is online and includes transport plus rttMs', () => {
+    const selfId = 'aa'.repeat(16);
+    const peerId = 'cc'.repeat(16);
+    const dto = projectMeshListNode(
+      peerId,
+      selfId,
+      new Uint8Array(32).fill(1),
+      new Map(),
+      new Map([[peerId, 'wan']]),
+      new Set(),
+      new Map([
+        [
+          peerId,
+          {
+            certificateBytes: encodeCertificate({
+              domain: DOMAIN_CERTIFICATE,
+              uid: 'user-1',
+              node_id: hexToBytes(peerId),
+              ed_pk: new Uint8Array(32).fill(4),
+              x25519_pk: new Uint8Array(32).fill(5),
+              enroll_pk: new Uint8Array(32).fill(6),
+              issued_at: 1n,
+            }),
+          },
+        ],
+      ]),
+      new Map([[peerId, { inventoryJson: '{}', directCapable: false }]]),
+      new Map([[peerId, 'studio']]),
+      new Map(),
+      null,
+      undefined,
+      null,
+      () => 'ws-secure',
+      () => 80
+    );
+    expect(dto?.online).toBe(true);
+    expect(dto?.reach).toBe('wan');
+    expect(dto?.transport).toBe('ws-secure');
+    expect(dto?.rttMs).toBe(80);
   });
 });

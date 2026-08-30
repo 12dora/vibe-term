@@ -119,7 +119,13 @@
       "directFallbackToast": "Direct connection dropped; recent input may not have been delivered",
       "sidebar": {
         "show": "Show in sidebar",
-        "hint": "Browser-local preference: whether this device appears in the sidebar device list on this browser."
+        "hint": "Browser-local preference: whether this device appears in the sidebar device list on this browser.",
+        "group": "Show in sidebar",
+        "terminal": "Terminal",
+        "files": "Files",
+        "terminalHint": "Show this device on the sidebar Terminal tab",
+        "filesHint": "Show this device's directories on the sidebar Files tab",
+        "filesDisabledHint": "No directories configured for this device"
       },
       "addTo": {
         "label": "Add device to",
@@ -221,7 +227,8 @@
         "nodes": "Multi-node Mesh",
         "notifications": "Notifications",
         "ai": "AI",
-        "terminal": "Terminal"
+        "terminal": "Terminal",
+        "remoteAccess": "Remote access"
       },
       "terminal": {
         "title": "Terminal Settings",
@@ -261,6 +268,137 @@
           },
           "loadFailed": "Failed to load shortcuts",
           "retry": "Retry"
+        }
+      },
+      "remoteAccess": {
+        "title": "Remote access",
+        "wizardTitle": "Setup",
+        "description": "Expose this machine over Cloudflare Tunnel, without a public IP or port forwarding.",
+        "remoteNodeNotice": "Remote access can only be configured on the machine you are connected to.",
+        "loginRequired": "Sign in to this machine to configure remote access.",
+        "loadFailed": "Unable to load remote access status.",
+        "unsupported": "Cloudflare Tunnel is not supported on this platform ({{platform}}).",
+        "modeLabel": "Mode",
+        "publicUrl": "Public URL",
+        "restartsLabel": "Restarts",
+        "restarts": "{{times}}",
+        "state": {
+          "notConfigured": "Not configured",
+          "stopped": "Stopped",
+          "starting": "Starting",
+          "running": "Running",
+          "error": "Error"
+        },
+        "mode": {
+          "quick": {
+            "title": "Quick tunnel",
+            "description": "No account required. The URL changes on every start. Best for testing."
+          },
+          "named": {
+            "title": "Named tunnel",
+            "description": "Requires a Cloudflare account and a hosted domain. The URL stays fixed."
+          }
+        },
+        "actions": {
+          "start": "Start",
+          "stop": "Stop",
+          "remove": "Remove",
+          "check": "Check connectivity",
+          "open": "Open in new tab",
+          "install": "Install",
+          "login": "Sign in to Cloudflare",
+          "openLoginUrl": "Open authorization page",
+          "cancelLogin": "Cancel",
+          "create": "Create and start",
+          "quickStart": "Start"
+        },
+        "check": {
+          "reachable": "Reachable",
+          "unreachable": "Unreachable"
+        },
+        "log": {
+          "title": "Log",
+          "empty": "No output yet."
+        },
+        "steps": {
+          "install": {
+            "title": "Install cloudflared",
+            "description": "tmex downloads cloudflared into its own data directory and leaves the system untouched.",
+            "version": "Version",
+            "path": "Path",
+            "source": "Source",
+            "sourceValue": {
+              "managed": "Managed by tmex",
+              "system": "Found on PATH"
+            }
+          },
+          "mode": {
+            "title": "Choose a mode",
+            "description": "Remove the existing tunnel first if you need to switch modes later.",
+            "pending": "Choose a mode to continue."
+          },
+          "tunnel": {
+            "title": "Create the tunnel",
+            "description": "Complete the setup here after choosing a mode."
+          },
+          "quick": {
+            "title": "Quick tunnel",
+            "description": "Starting the tunnel issues a temporary trycloudflare.com URL that expires on stop.",
+            "started": "Quick tunnel is running."
+          },
+          "named": {
+            "title": "Named tunnel",
+            "description": "Uses a domain you already host on Cloudflare, so the URL stays fixed.",
+            "login": {
+              "description": "Authorize a domain on the page that opens, then return here.",
+              "waiting": "Waiting for authorization on Cloudflare",
+              "done": "Signed in to Cloudflare."
+            },
+            "hostname": "Hostname",
+            "hostnamePlaceholder": "tmex.example.com",
+            "hostnameHint": "Use a subdomain of a domain you host on Cloudflare.",
+            "hostnameInvalid": "Enter a lowercase hostname such as tmex.example.com.",
+            "tunnelName": "Tunnel name",
+            "tunnelNamePlaceholder": "tmex",
+            "tunnelNameHint": "Optional. tmex generates a name when left empty.",
+            "hubHint": "On a Hub, set the Hub public URL to this hostname.",
+            "hubHintLink": "Open node settings"
+          },
+          "proxy": {
+            "title": "Reverse proxy trust",
+            "description": "The tunnel replaces the client address and protocol, so tmex needs matching trust settings.",
+            "trustProxy": "Trust reverse proxy headers",
+            "trustProxyHint": "Required when tmex runs behind the tunnel, so client addresses and protocols are read correctly.",
+            "autoStart": "Start with tmex",
+            "autoStartHint": "Bring the tunnel up when the gateway starts.",
+            "restartRequired": "Saved. Restart to apply.",
+            "restartNow": "Restart now",
+            "restarting": "Restarting",
+            "restartTimeout": "Restart timed out. Restart tmex manually."
+          }
+        },
+        "jobStep": {
+          "download": "Downloading",
+          "extract": "Extracting",
+          "verify": "Verifying",
+          "create_tunnel": "Creating tunnel",
+          "route_dns": "Configuring DNS",
+          "start": "Starting"
+        },
+        "errors": {
+          "unsupported_platform": "Cloudflare Tunnel is not supported on this platform.",
+          "binary_missing": "cloudflared was not found. Install it first.",
+          "download_failed": "Failed to download cloudflared. Check the network and retry.",
+          "not_logged_in": "Not signed in to Cloudflare. Complete the authorization first.",
+          "login_timeout": "Authorization timed out. Start the sign-in again.",
+          "invalid_hostname": "The hostname is not valid.",
+          "tunnel_exists": "A tunnel with this name already exists. Choose another name.",
+          "dns_route_failed": "Failed to configure the DNS record. Confirm the domain is hosted on Cloudflare.",
+          "process_failed": "cloudflared failed to start. See the log for details.",
+          "busy": "Another operation is in progress.",
+          "not_configured": "Remote access is not configured.",
+          "invalid_request": "Invalid request.",
+          "unknown": "Operation failed: {{message}}"
         }
       },
       "deviceManagement": {
@@ -346,6 +484,19 @@
         "path": "Path",
         "pathPlaceholder": "/absolute/path/to/directory",
         "pathHint": "Absolute path on the selected device.",
+        "browse": "Browse…",
+        "lockedDescription": "Directories on this device browsable in the Files tab.",
+        "deviceModalTitle": "{{name}} · Directories",
+        "pickerTitle": "Select directory",
+        "pickerDescription": "Browse directories on the device and fill in the path.",
+        "pickerUp": "Parent directory",
+        "pickerShowHidden": "Show hidden directories",
+        "pickerEmpty": "No subdirectories",
+        "pickerFailed": "Failed to load directory",
+        "pickerTruncated": "Too many subdirectories; the list is truncated",
+        "pickerSymlink": "Symbolic link",
+        "pickerCurrent": "Current directory",
+        "pickerConfirm": "Select this directory",
         "enabled": "Enabled",
         "addFailed": "Failed to add directory",
         "updateFailed": "Failed to update directory",
@@ -767,7 +918,7 @@
         "none": "No session selected",
         "new": "New agent session",
         "switch": "Switch session",
-        "selectPaneHint": "Select a pane in the Terminals tab to start a session",
+        "selectPaneHint": "Select a session",
         "noSessions": "No sessions yet",
         "showAll": "Show all sessions",
         "menu": "Session actions",
@@ -782,6 +933,9 @@
         "deleteConfirm": "Delete",
         "createDisabledNoPane": "Open a terminal pane to create a session",
         "privacyNotice": "Sessions send terminal screen content to the configured LLM service."
+      },
+      "node": {
+        "offlinePaused": "Node offline. Session paused."
       },
       "binding": {
         "invalid": "Pane unavailable",
@@ -978,6 +1132,7 @@
       "title": "Files",
       "refresh": "Refresh file list",
       "noRoots": "No accessible directories. Add one in Settings → Files.",
+      "nodeOffline": "Node offline",
       "emptyDir": "Empty",
       "truncated": "Too many items — list truncated",
       "download": "Download",
@@ -1426,6 +1581,7 @@
       },
       "reach": {
         "lan": "Local network",
+        "wan": "Internet",
         "relay": "Via hub",
         "none": "Unreachable"
       },
@@ -1468,8 +1624,11 @@
       },
       "badge": {
         "direct": "Direct",
-        "primary": "Relayed",
-        "rttUnknown": "Latency unknown",
+        "reachRow": "Reach",
+        "transportRow": "Transport",
+        "transportWs": "WebSocket",
+        "transportDc": "WebRTC",
+        "transportRelay": "Hub relay",
         "iceTitle": "Connection details",
         "icePlaceholder": "Direct connections are off, so there is nothing to show.",
         "connectionState": "Connection",

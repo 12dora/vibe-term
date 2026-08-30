@@ -33,6 +33,7 @@ import {
   decodePayload,
   encodeChunk,
   encodeEnvelope,
+  encodeNodeEvent,
   encodePayload,
   generateChunkStreamId,
   getErrorMessage,
@@ -65,6 +66,7 @@ import {
   NODE_EVENT_STATUS_REVOKED,
   NodeEventLegacySchema,
   NodeEventSchema,
+  NodeEventV2Schema,
   PingPongSchema,
   RTC_SIGNAL_FROM_BROWSER,
   RTC_SIGNAL_FROM_NODE,
@@ -707,6 +709,8 @@ describe('mesh / hub 协议消息', () => {
       version: null,
       directCapable: null,
       name: null,
+      transport: null,
+      rttMs: null,
     };
     const decoded = decodePayload(NodeEventSchema, encodePayload(NodeEventSchema, data));
     expect(decoded).toEqual(data);
@@ -721,6 +725,8 @@ describe('mesh / hub 协议消息', () => {
         version: null,
         directCapable: null,
         name: null,
+        transport: null,
+        rttMs: null,
       })
     );
     expect(offline.status).toBe(NODE_EVENT_STATUS_OFFLINE);
@@ -738,6 +744,8 @@ describe('mesh / hub 协议消息', () => {
       version: '1.2.3',
       directCapable: true,
       name: 'studio',
+      transport: 'dc',
+      rttMs: 7,
     };
     const decoded = decodePayload(NodeEventSchema, encodePayload(NodeEventSchema, data));
     expect(decoded).toEqual(data);
@@ -752,6 +760,8 @@ describe('mesh / hub 协议消息', () => {
         version: null,
         directCapable: null,
         name: null,
+        transport: null,
+        rttMs: null,
       })
     );
     expect(omitted.version).toBeNull();
@@ -774,7 +784,36 @@ describe('mesh / hub 协议消息', () => {
       version: null,
       directCapable: null,
       name: null,
+      transport: null,
+      rttMs: null,
     });
+
+    const v2 = decodeNodeEvent(
+      encodePayload(NodeEventV2Schema, {
+        nodeId: 'n3',
+        status: NODE_EVENT_STATUS_ONLINE,
+        reach: 'lan',
+        inventory: null,
+        version: '1.0.0',
+        directCapable: true,
+        name: 'n3',
+      })
+    );
+    expect(v2.transport).toBeNull();
+    expect(v2.rttMs).toBeNull();
+    expect(v2.version).toBe('1.0.0');
+
+    const v3 = decodeNodeEvent(
+      encodeNodeEvent({
+        nodeId: 'n4',
+        status: NODE_EVENT_STATUS_ONLINE,
+        reach: 'wan',
+        transport: 'ws-secure',
+        rttMs: 12.6,
+      })
+    );
+    expect(v3.transport).toBe('ws-secure');
+    expect(v3.rttMs).toBe(13);
   });
 
   it('RTC_SIGNAL payload roundtrip', () => {

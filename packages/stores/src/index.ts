@@ -30,6 +30,7 @@ export {
 export { createUIStore, type KeyboardBehaviorMode, type SidebarTab, type UIStore } from './ui';
 export {
   isSidebarDeviceVisible,
+  isSidebarFilesVisible,
   sidebarDeviceVisibilityKey,
 } from './sidebar-device-visibility';
 export { createSiteStore, type SiteStore } from './site';
@@ -39,8 +40,12 @@ export {
   type AgentStore,
   type CreateSessionOptions,
   type DraftSession,
+  type AgentState,
   type PendingConfirmationUi,
+  type StartDraftInput,
 } from './agent';
+export { resolveAgentStore, setAgentHostStore } from './agent-host-store';
+export { isSessionOnNode, normalizeAgentNodeId, type SessionMap } from './agent-session-map';
 export { createFileTreeStore, fileNodeKey, type FileTreeStore } from './file-tree';
 
 export * from './agent-thread';

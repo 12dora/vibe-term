@@ -102,10 +102,13 @@ function SessionActionsMenu({
 export function PaneSessionRow({
   session,
   isActive,
+  paused = false,
   onSelect,
 }: {
   session: AgentSessionDto;
   isActive: boolean;
+  /** 所在 node 离线：灰显且不可点入（点进去只会得到一屏请求错误） */
+  paused?: boolean;
   onSelect: (session: AgentSessionDto) => void;
 }) {
   const { isMobile } = useSidebar();
@@ -114,11 +117,17 @@ export function PaneSessionRow({
       <button
         type="button"
         data-testid={`agent-session-item-${session.id}`}
+        disabled={paused}
+        data-paused={paused ? '' : undefined}
         onClick={() => onSelect(session)}
         className={cn(
           'w-full flex items-center gap-1.5 px-2 py-1 pr-7 rounded-md text-left transition-colors duration-(--tmex-motion-fast) ease-out motion-reduce:transition-none [@media(any-pointer:coarse)]:min-h-11 [@media(any-pointer:coarse)]:py-2 [@media(any-pointer:coarse)]:pr-12',
           isMobile && 'min-h-11 py-2 pr-12',
-          isActive ? 'bg-primary/10 text-primary' : 'hover:bg-accent/30 text-muted-foreground'
+          paused
+            ? 'text-muted-foreground/60'
+            : isActive
+              ? 'bg-primary/10 text-primary'
+              : 'hover:bg-accent/30 text-muted-foreground'
         )}
       >
         <Bot className="size-3 shrink-0 opacity-70" />
@@ -135,10 +144,13 @@ export function PaneSessionRow({
 export function OrphanSessionRow({
   session,
   isActive,
+  paused = false,
   onSelect,
 }: {
   session: AgentSessionDto;
   isActive: boolean;
+  /** 所在 node 离线：灰显且不可点入 */
+  paused?: boolean;
   onSelect: (session: AgentSessionDto) => void;
 }) {
   const language = useSiteStore((state) => state.settings?.language ?? 'en_US');
@@ -153,10 +165,16 @@ export function OrphanSessionRow({
       <button
         type="button"
         data-testid={`agent-orphan-session-${session.id}`}
+        disabled={paused}
+        data-paused={paused ? '' : undefined}
         onClick={() => onSelect(session)}
         className={cn(
           'w-full flex flex-col gap-0.5 px-2 py-1.5 pr-7 rounded-lg text-left transition-colors duration-(--tmex-motion-fast) ease-out motion-reduce:transition-none',
-          isActive ? 'bg-primary/10 text-primary' : 'hover:bg-accent/30'
+          paused
+            ? 'text-muted-foreground/60'
+            : isActive
+              ? 'bg-primary/10 text-primary'
+              : 'hover:bg-accent/30'
         )}
       >
         <span className="flex items-center gap-1.5">

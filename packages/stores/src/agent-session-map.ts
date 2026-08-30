@@ -1,5 +1,6 @@
 // sessions 映射的纯函数工具：排序、派生 sessionOrder、列表拉取结果与本地写入的合并。
 
+import { SELF_NODE_ID } from '@tmex/api-client';
 import type { AgentSessionDto } from '@tmex/shared';
 
 export type SessionMap = Record<string, AgentSessionDto | undefined>;
@@ -60,4 +61,13 @@ export function mergeFetchedSessions(
   }
 
   return merged;
+}
+
+/** session 绑定 node 的规范形态：`self` / 空值一律折叠成 null（持有该 session 的 gateway 自身）。 */
+export function normalizeAgentNodeId(nodeId: string | null | undefined): string | null {
+  return !nodeId || nodeId === SELF_NODE_ID ? null : nodeId;
+}
+
+export function isSessionOnNode(session: AgentSessionDto, nodeId: string | null): boolean {
+  return normalizeAgentNodeId(session.nodeId) === normalizeAgentNodeId(nodeId);
 }

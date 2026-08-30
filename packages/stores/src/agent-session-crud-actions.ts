@@ -43,6 +43,7 @@ export async function createSessionRequest(
       {
         deviceId,
         paneId,
+        ...(options?.nodeId ? { nodeId: options.nodeId } : {}),
         ...(options?.providerId !== undefined ? { providerId: options.providerId } : {}),
         ...(options?.modelId !== undefined && options.modelId !== null
           ? { modelId: options.modelId }

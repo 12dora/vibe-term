@@ -1,8 +1,15 @@
 // 侧边栏 agent 会话装饰的控制器：bootstrap、排序/分组派生、重命名与删除对话框状态。
 
+import { toRuntimeNodeId, useMeshNodes } from '@/node/mesh-nodes';
+import { selfAgentStore } from '@/node/self-agent-store';
+import type { MeshNode } from '@tmex/api-client/auth/index';
 import type { AgentSessionDto, StateSnapshotPayload } from '@tmex/shared';
-import { useAgentStore, useRuntime } from '@tmex/stores/react';
+import { isSessionOnNode, normalizeAgentNodeId } from '@tmex/stores';
+import { useRuntime } from '@tmex/stores/react';
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
+
+/** 后端在 node 离线传播时写入会话的 lastError */
+export const NODE_OFFLINE_ERROR = 'NODE_OFFLINE';
 
 const PANE_KEY_SEPARATOR = '\u0000';
 
@@ -79,6 +86,9 @@ export function collectKnownPaneIds(
  * 设备快照尚未加载（设备离线/未订阅）时按「仍挂载」处理，防止快照到达前后在孤立区闪现。
  * devicesReady 为 false（设备列表 pending/失败）时 knownDeviceIds 为空，此时不做设备存在性判定，
  * 否则加载中所有绑定会话都会被误判为孤立，请求失败时更会永久误判。
+ *
+ * 传入的会话已按 node 过滤（见控制器），因此这里比对的快照/设备一定属于该会话所在的 node，
+ * 不会拿当前路由 node 的快照去判定别的 node 上的会话。
  */
 export function isSessionAttached(
   session: AgentSessionDto,
@@ -94,10 +104,41 @@ export function isSessionAttached(
   return panes.has(session.paneId);
 }
 
+/**
+ * 该 node 是否离线。mesh 列表里没有这一行（standalone、列表尚未加载）一律按在线处理：
+ * 宁可让用户点进去看到请求错误，也不要把本机会话灰掉。
+ */
+export function isNodeOffline(
+  nodes: readonly MeshNode[],
+  entryNodeId: string | null,
+  runtimeNodeId: string
+): boolean {
+  const row = nodes.find((node) => toRuntimeNodeId(node.id, entryNodeId) === runtimeNodeId);
+  return row ? !row.online : false;
+}
+
+/** 会话是否因所在 node 离线而暂停（灰显、不可点入） */
+export function isSessionPaused(session: AgentSessionDto, nodeOffline: boolean): boolean {
+  return nodeOffline || session.lastError === NODE_OFFLINE_ERROR;
+}
+
+/**
+ * `enabled: false` 只读宿主级 mesh 快照：不发 `/api/mesh/*`、不订阅事件流
+ * ——拉取与订阅是设备区自己的活。
+ */
+function useNodeOffline(runtimeNodeId: string): boolean {
+  const { nodes, entryNodeId } = useMeshNodes({ enabled: false });
+  return isNodeOffline(nodes, entryNodeId, runtimeNodeId);
+}
+
 export interface SidebarAgentSessionsContextValue {
   orderedSessions: AgentSessionDto[];
   sessionsByPane: ReadonlyMap<string, AgentSessionDto[]>;
   activeSessionId: string | null;
+  /** 本分节所属 node（null 即 entry 自身）；新建会话与过滤都用它 */
+  nodeId: string | null;
+  /** 本分节所属 node 是否离线：行灰显且不可点入 */
+  nodeOffline: boolean;
   sessionRenameCandidate: AgentSessionDto | null;
   sessionRenameValue: string;
   setSessionRenameValue: (value: string) => void;
@@ -124,20 +165,28 @@ export function useSidebarAgentSessions(): SidebarAgentSessionsContextValue {
 
 export function useSidebarAgentSessionsController(): SidebarAgentSessionsContextValue {
   const runtime = useRuntime();
+  // 会话状态一律来自 entry（self）网关，与本分节挂的是哪个 node 的运行时无关
+  const agentStore = selfAgentStore();
+  const nodeId = normalizeAgentNodeId(runtime.nodeId);
+  const nodeOffline = useNodeOffline(runtime.nodeId);
+
   // AgentTab 挂载时也会拉列表，这里只在列表尚未加载过时兜底，避免切换侧边栏 tab 反复全量拉取
   useEffect(() => {
-    const store = runtime.stores.agent.getState();
+    const store = agentStore.getState();
     store.ensureInitialized();
     if (!store.sessionsLoaded) void store.loadSessions();
-  }, [runtime]);
+  }, [agentStore]);
 
-  const sessions = useAgentStore((state) => state.sessions);
-  const sessionOrder = useAgentStore((state) => state.sessionOrder);
-  const activeSessionId = useAgentStore((state) => state.activeSessionId);
+  const sessions = agentStore((state) => state.sessions);
+  const sessionOrder = agentStore((state) => state.sessionOrder);
+  const activeSessionId = agentStore((state) => state.activeSessionId);
 
+  // 单一列表按 node 过滤：本分节只展示绑在自己这个 node 上的会话，
+  // 于是 isSessionAttached 比对的快照也一定是该会话所在 node 的快照。
   const orderedSessions = useMemo(
-    () => orderSessions(sessions, sessionOrder),
-    [sessions, sessionOrder]
+    () =>
+      orderSessions(sessions, sessionOrder).filter((session) => isSessionOnNode(session, nodeId)),
+    [sessions, sessionOrder, nodeId]
   );
   const sessionsByPane = useMemo(() => groupSessionsByPane(orderedSessions), [orderedSessions]);
 
@@ -158,9 +207,9 @@ export function useSidebarAgentSessionsController(): SidebarAgentSessionsContext
     if (!sessionRenameCandidate) return;
     const trimmed = sessionRenameValue.trim();
     if (!trimmed) return;
-    void runtime.stores.agent.getState().renameSession(sessionRenameCandidate.id, trimmed);
+    void agentStore.getState().renameSession(sessionRenameCandidate.id, trimmed);
     setSessionRenameCandidate(null);
-  }, [runtime, sessionRenameCandidate, sessionRenameValue]);
+  }, [agentStore, sessionRenameCandidate, sessionRenameValue]);
 
   const requestDeleteSession = useCallback((session: AgentSessionDto) => {
     setSessionDeleteCandidate(session);
@@ -168,9 +217,9 @@ export function useSidebarAgentSessionsController(): SidebarAgentSessionsContext
 
   const confirmDeleteSession = useCallback(() => {
     if (!sessionDeleteCandidate) return;
-    void runtime.stores.agent.getState().deleteSession(sessionDeleteCandidate.id);
+    void agentStore.getState().deleteSession(sessionDeleteCandidate.id);
     setSessionDeleteCandidate(null);
-  }, [runtime, sessionDeleteCandidate]);
+  }, [agentStore, sessionDeleteCandidate]);
 
   const closeRenameDialog = useCallback(() => setSessionRenameCandidate(null), []);
   const closeDeleteDialog = useCallback(() => setSessionDeleteCandidate(null), []);
@@ -180,6 +229,8 @@ export function useSidebarAgentSessionsController(): SidebarAgentSessionsContext
       orderedSessions,
       sessionsByPane,
       activeSessionId,
+      nodeId,
+      nodeOffline,
       sessionRenameCandidate,
       sessionRenameValue,
       setSessionRenameValue,
@@ -195,6 +246,8 @@ export function useSidebarAgentSessionsController(): SidebarAgentSessionsContext
       orderedSessions,
       sessionsByPane,
       activeSessionId,
+      nodeId,
+      nodeOffline,
       sessionRenameCandidate,
       sessionRenameValue,
       closeRenameDialog,

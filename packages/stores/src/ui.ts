@@ -96,8 +96,10 @@ export interface UIState {
   sidebarCollapsed: boolean;
   sidebarTab: SidebarTab;
   sidebarDeviceExpanded: Record<string, boolean>;
-  /** 设备是否出现在侧边栏；key 为 `${runtimeNodeId}:${deviceId}`（见 sidebar-device-visibility.ts） */
+  /** 设备是否出现在侧边栏终端页；key 为 `${runtimeNodeId}:${deviceId}`（见 sidebar-device-visibility.ts） */
   sidebarDeviceVisibility: Record<string, boolean>;
+  /** 设备的目录是否出现在侧边栏文件页；同一套复合键，缺省跟随「该设备是否配了目录」 */
+  sidebarFilesVisibility: Record<string, boolean>;
   /** 设备管理页文件夹的展开态；key 为文件夹 id，缺键视为展开 */
   deviceFolderExpanded: Record<string, boolean>;
   /** 侧边栏 node 分节的手工顺序（mesh node id）；未列出的 node 按 API 顺序排在后面 */
@@ -118,6 +120,8 @@ export interface UIState {
   setSidebarDeviceExpanded: (deviceId: string, expanded: boolean) => void;
   /** key 由 `sidebarDeviceVisibilityKey(runtimeNodeId, deviceId)` 生成 */
   setSidebarDeviceVisibility: (key: string, visible: boolean) => void;
+  /** key 由 `sidebarDeviceVisibilityKey(runtimeNodeId, deviceId)` 生成 */
+  setSidebarFilesVisibility: (key: string, visible: boolean) => void;
   setDeviceFolderExpanded: (folderId: string, expanded: boolean) => void;
   setSidebarNodeOrder: (nodeIds: string[]) => void;
   setInputMode: (mode: 'direct' | 'editor') => void;
@@ -145,6 +149,7 @@ export function createUIStore(core: Pick<RuntimeCore, 'storagePrefix'>) {
         sidebarTab: 'panes',
         sidebarDeviceExpanded: {},
         sidebarDeviceVisibility: {},
+        sidebarFilesVisibility: {},
         deviceFolderExpanded: {},
         sidebarNodeOrder: [],
         inputMode: 'direct',
@@ -167,6 +172,10 @@ export function createUIStore(core: Pick<RuntimeCore, 'storagePrefix'>) {
         setSidebarDeviceVisibility: (key, visible) =>
           set((state) => ({
             sidebarDeviceVisibility: { ...state.sidebarDeviceVisibility, [key]: visible },
+          })),
+        setSidebarFilesVisibility: (key, visible) =>
+          set((state) => ({
+            sidebarFilesVisibility: { ...state.sidebarFilesVisibility, [key]: visible },
           })),
         setDeviceFolderExpanded: (folderId, expanded) =>
           set((state) => ({
@@ -227,6 +236,7 @@ export function createUIStore(core: Pick<RuntimeCore, 'storagePrefix'>) {
           sidebarCollapsed: state.sidebarCollapsed,
           sidebarDeviceExpanded: state.sidebarDeviceExpanded,
           sidebarDeviceVisibility: state.sidebarDeviceVisibility,
+          sidebarFilesVisibility: state.sidebarFilesVisibility,
           deviceFolderExpanded: state.deviceFolderExpanded,
           sidebarNodeOrder: state.sidebarNodeOrder,
           inputMode: state.inputMode,
@@ -247,6 +257,7 @@ export function createUIStore(core: Pick<RuntimeCore, 'storagePrefix'>) {
             sidebarSections: _legacySections,
             sidebarDeviceExpanded,
             sidebarDeviceVisibility,
+            sidebarFilesVisibility,
             deviceFolderExpanded,
             sidebarNodeOrder,
             themePreset,
@@ -259,6 +270,7 @@ export function createUIStore(core: Pick<RuntimeCore, 'storagePrefix'>) {
             ...rest,
             sidebarDeviceExpanded: normalizeBooleanMap(sidebarDeviceExpanded),
             sidebarDeviceVisibility: normalizeBooleanMap(sidebarDeviceVisibility),
+            sidebarFilesVisibility: normalizeBooleanMap(sidebarFilesVisibility),
             deviceFolderExpanded: normalizeBooleanMap(deviceFolderExpanded),
             sidebarNodeOrder: normalizeIdList(sidebarNodeOrder),
             themePreset: normalizeThemePreset(themePreset),

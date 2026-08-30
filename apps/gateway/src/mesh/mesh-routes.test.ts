@@ -110,11 +110,59 @@ describe('mesh-routes', () => {
       expect(peer?.online).toBe(true);
       expect(peer?.reach).toBe('lan');
       expect(peer?.transport).toBe('dc');
+      expect((peer as { rttMs?: number | null })?.rttMs).toBeNull();
       expect(peer?.loggedIn).toBe(true);
       expect(peer?.direct_capable).toBe(true);
       expect(peer?.version).toBe('1.2.3');
       expect((self as { isHub?: boolean })?.isHub).toBe(false);
       expect((peer as { isHub?: boolean })?.isHub).toBe(false);
+    } finally {
+      mesh.close();
+    }
+  });
+
+  test('GET /api/mesh/nodes reports wan reach, transport and rttMs', async () => {
+    const peers = new FakePeers();
+    peers.reach.set(PEER_ID, 'wan');
+    peers.transport.set(PEER_ID, 'ws-secure');
+    peers.rtt.set(PEER_ID, 80);
+    const mesh = await bootMesh({ peers });
+    try {
+      mesh.userStore.upsertCert({
+        nodeId: PEER_ID,
+        userId: mesh.boot.userId,
+        admitRecordSeq: 2,
+        certificateBytes: encodeCertificate({
+          domain: DOMAIN_CERTIFICATE,
+          uid: mesh.boot.userId,
+          node_id: hexToBytes(PEER_ID),
+          ed_pk: new Uint8Array(32).fill(4),
+          x25519_pk: new Uint8Array(32).fill(5),
+          enroll_pk: new Uint8Array(32).fill(6),
+          issued_at: 1n,
+        }),
+        certSig: new Uint8Array(64),
+        authorizationBytes: new Uint8Array(8),
+        authorizationSig: new Uint8Array(64),
+      });
+      const { sid } = await challengeAndLogin(mesh.runtime, mesh.boot);
+      const list = await call(mesh.runtime, 'http://localhost/api/mesh/nodes', {
+        headers: { cookie: `tmex_s_self=${sid}` },
+      });
+      const body = (await list.json()) as {
+        nodes: Array<{
+          id: string;
+          online: boolean;
+          reach: string | null;
+          transport: string | null;
+          rttMs: number | null;
+        }>;
+      };
+      const peer = body.nodes.find((n) => n.id === PEER_ID);
+      expect(peer?.online).toBe(true);
+      expect(peer?.reach).toBe('wan');
+      expect(peer?.transport).toBe('ws-secure');
+      expect(peer?.rttMs).toBe(80);
     } finally {
       mesh.close();
     }
@@ -712,12 +760,20 @@ describe('mesh-routes', () => {
         },
       } as MeshServerWebSocket;
       mesh.runtime.handleWebSocket.open(ws);
-      peers.emit({ nodeId: PEER_ID, status: 'online' });
+      peers.emit({
+        nodeId: PEER_ID,
+        status: 'online',
+        reach: 'wan',
+        transport: 'ws-secure',
+        rttMs: 80,
+      });
       expect(frames.length).toBe(1);
       const frame = frames[0];
       if (!frame) throw new Error('missing NODE_EVENT frame');
       const env = wsBorsh.decodeEnvelope(frame);
       expect(env.kind).toBe(wsBorsh.KIND_NODE_EVENT);
+      const decoded = wsBorsh.decodeNodeEvent(env.payload);
+      expect(decoded.reach).toBe('wan');
 
       const logout = await call(mesh.runtime, 'http://localhost/api/auth/logout', {
         method: 'POST',

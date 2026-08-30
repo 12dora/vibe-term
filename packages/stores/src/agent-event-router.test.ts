@@ -28,6 +28,7 @@ function makeSession(overrides: Partial<AgentSessionDto> = {}): AgentSessionDto 
   return {
     id: 's1',
     title: 'session',
+    nodeId: null,
     deviceId: 'd1',
     paneId: '%1',
     providerId: null,

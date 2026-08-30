@@ -5,6 +5,8 @@
 // 不可用）时 `resolveDirectDiagnostics()` 回落到恒为 `primary` 的桩，契约与桩都在
 // `packages/ws-client/src/direct/types.ts`。
 
+import { SELF_NODE_ID } from '@tmex/api-client';
+import type { MeshNodeReach, MeshNodeTransport } from '@tmex/api-client/auth/index';
 import type { DirectDiagnostics } from '@tmex/ws-client/direct/types';
 import { resolveDirectDiagnostics } from '@tmex/ws-client/direct/types';
 import { useMemo, useSyncExternalStore } from 'react';
@@ -20,12 +22,35 @@ export function useDirectDiagnostics(nodeId: string): DirectDiagnostics {
   return useSyncExternalStore(source.subscribe, source.get, source.get);
 }
 
-/** entry ↔ 该 node 的到达路径（`lan` / `relay` / null）。 */
-export function useNodeReach(nodeId: string): 'lan' | 'relay' | null {
+/** entry ↔ 该 node 的链路：到达路径、承载与 ping/pong 往返时延。 */
+export interface NodeLink {
+  reach: MeshNodeReach;
+  transport: MeshNodeTransport;
+  /** entry ↔ node 的往返毫秒数；未测得为 `null`。 */
+  rttMs: number | null;
+}
+
+const UNREACHABLE_LINK: NodeLink = { reach: null, transport: null, rttMs: null };
+
+export function useNodeLink(nodeId: string): NodeLink {
   const state = useSyncExternalStore(subscribeMeshNodes, getMeshNodesState, getMeshNodesState);
   const node = state.nodes.find(
-    (row) => row.id === nodeId || (state.entryNodeId === row.id && nodeId === 'self')
+    (row) => row.id === nodeId || (state.entryNodeId === row.id && nodeId === SELF_NODE_ID)
   );
-  const reach = node?.reach ?? null;
-  return reach === 'lan' || reach === 'relay' ? reach : null;
+  if (!node) return UNREACHABLE_LINK;
+  return {
+    reach: normalizeReach(node.reach),
+    transport: normalizeTransport(node.transport),
+    rttMs: typeof node.rttMs === 'number' && Number.isFinite(node.rttMs) ? node.rttMs : null,
+  };
+}
+
+function normalizeReach(reach: string | null | undefined): MeshNodeReach {
+  return reach === 'lan' || reach === 'wan' || reach === 'relay' ? reach : null;
+}
+
+function normalizeTransport(transport: string | null | undefined): MeshNodeTransport {
+  return transport === 'ws-secure' || transport === 'relay' || transport === 'dc'
+    ? transport
+    : null;
 }

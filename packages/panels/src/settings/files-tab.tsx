@@ -12,6 +12,7 @@ import { FileRootFormModal } from './file-root-form-modal';
 import {
   type FileRootDeviceGroup,
   type FileRootEntry,
+  filterFileRootEntries,
   resolveFileRootsListState,
   useFileRootsQuery,
 } from './file-root-query';
@@ -34,6 +35,13 @@ export interface FilesSettingsTabProps {
    * 宿主若在其他缓存域（另一个 QueryClient）也展示 roots，可借此扇出失效。
    */
   onRootsMutated?: () => void;
+  /**
+   * 单设备模式：隐藏设备选择器（只读展示），新增的 root 一律落在该设备上，
+   * 列表也只显示该设备的 roots。设备卡片里的「目录」弹窗用它。
+   */
+  lockedDeviceId?: string;
+  /** 覆盖卡片标题；缺省用「文件」 */
+  title?: string;
 }
 
 // 外壳门：runtime.features.filesUi 关断时不渲染文件根设置卡，也不发起 files 查询（内层 hooks 不执行）。
@@ -67,7 +75,12 @@ function FileRootsError({ onRetry, retrying }: { onRetry: () => void; retrying: 
   );
 }
 
-function FilesSettingsTabInner({ deviceGroups, onRootsMutated }: FilesSettingsTabProps) {
+function FilesSettingsTabInner({
+  deviceGroups,
+  onRootsMutated,
+  lockedDeviceId,
+  title,
+}: FilesSettingsTabProps) {
   const { t } = useTranslation();
   const { apiClient } = useRuntime();
 
@@ -83,7 +96,7 @@ function FilesSettingsTabInner({ deviceGroups, onRootsMutated }: FilesSettingsTa
     enabled: !deviceGroups,
   });
 
-  const entries = rootsQuery.data ?? [];
+  const entries = filterFileRootEntries(rootsQuery.data ?? [], lockedDeviceId);
   const devices = devicesQuery.data?.devices ?? [];
   const listState = resolveFileRootsListState({
     isLoading: rootsQuery.isLoading,
@@ -106,8 +119,12 @@ function FilesSettingsTabInner({ deviceGroups, onRootsMutated }: FilesSettingsTa
       <Card className="border-0 ring-0" data-testid="settings-files-section">
         <CardHeader className="flex flex-row items-center justify-between gap-2">
           <div className="space-y-1">
-            <CardTitle>{t('settings.files.title')}</CardTitle>
-            <p className="text-sm text-muted-foreground">{t('settings.files.description')}</p>
+            <CardTitle>{title ?? t('settings.files.title')}</CardTitle>
+            <p className="text-sm text-muted-foreground">
+              {lockedDeviceId
+                ? t('settings.files.lockedDescription')
+                : t('settings.files.description')}
+            </p>
           </div>
           <Button variant="secondary" data-testid="settings-files-root-add" onClick={openAdd}>
             <Plus className="h-4 w-4" />
@@ -151,6 +168,7 @@ function FilesSettingsTabInner({ deviceGroups, onRootsMutated }: FilesSettingsTa
         editClient={editingEntry?.client}
         devices={devices}
         deviceGroups={deviceGroups}
+        lockedDeviceId={lockedDeviceId}
         onRootsMutated={onRootsMutated}
       />
     </>

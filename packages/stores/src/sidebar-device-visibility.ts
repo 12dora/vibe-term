@@ -18,3 +18,19 @@ export function isSidebarDeviceVisible(
   const stored = map[sidebarDeviceVisibilityKey(runtimeNodeId, deviceId)];
   return stored ?? runtimeNodeId === SELF_NODE_ID;
 }
+
+/**
+ * 侧边栏「文件」页的设备可见性，与终端页分开记（同一套复合键，另一张表）。
+ *
+ * 缺省规则与终端页不同：配了目录就默认显示（本机与远端一视同仁）——目录是用户逐个手工配上去的，
+ * 配完还要再去开一次开关纯属多余；没配目录时无从显示，缺省即关。显式写入的值永远优先。
+ */
+export function isSidebarFilesVisible(
+  map: Record<string, boolean>,
+  runtimeNodeId: string,
+  deviceId: string,
+  hasRoots: boolean
+): boolean {
+  const stored = map[sidebarDeviceVisibilityKey(runtimeNodeId, deviceId)];
+  return stored ?? hasRoots;
+}

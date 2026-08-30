@@ -19,6 +19,7 @@ export type {
   CreateSessionOptions,
   DraftSession,
   PendingConfirmationUi,
+  StartDraftInput,
 } from './agent-state';
 
 export function createAgentStore(core: RuntimeCore, disposers: Array<() => void> = []) {

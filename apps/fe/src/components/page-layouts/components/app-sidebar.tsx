@@ -2,8 +2,12 @@ import { Bot, FolderClosed, Monitor, PanelsTopLeft } from 'lucide-react';
 import { type ComponentProps, Suspense, lazy } from 'react';
 import { useTranslation } from 'react-i18next';
 
+import { useMeshNodes } from '@/node/mesh-nodes';
 import { useRouteNodeId } from '@/node/node-runtime-boundary';
 import { NodeRuntimeScope } from '@/node/node-runtime-scope';
+import { selfAgentStore } from '@/node/self-agent-store';
+import { SELF_NODE_ID } from '@tmex/api-client';
+import type { MeshNode } from '@tmex/api-client/auth/index';
 import { useUIStore } from '@tmex/stores/react';
 import { Reveal } from '@tmex/ui/motion';
 import { Sidebar, SidebarContent, SidebarFooter, SidebarHeader } from '@tmex/ui/sidebar';
@@ -16,6 +20,30 @@ import { SidebarTitle } from './sidebar-title';
 // 把 agent / files 两个子系统（含各自 store + 重组件链）移出首屏 entry chunk。
 const AgentTab = lazy(() => import('@tmex/panels/agent').then((m) => ({ default: m.AgentTab })));
 const FilesTab = lazy(() => import('@tmex/panels/files').then((m) => ({ default: m.FilesTab })));
+
+/**
+ * 路由所在 node 是否离线。名单里没有这个 node（standalone、mesh 列表还没回来）时按在线算，
+ * 行为与今天一致。
+ */
+export function isRouteNodeOffline(
+  nodes: MeshNode[],
+  entryNodeId: string | null,
+  routeNodeId: string
+): boolean {
+  const targetId = routeNodeId === SELF_NODE_ID ? entryNodeId : routeNodeId;
+  if (!targetId) return false;
+  const node = nodes.find((item) => item.id === targetId);
+  return node ? !node.online : false;
+}
+
+/**
+ * `enabled: false` 只订阅宿主级 mesh 快照，不发 `/api/mesh/*` 也不订阅事件流
+ * ——拉取与订阅是设备区 `SideBarDeviceList` 的活。
+ */
+function useRouteNodeOffline(routeNodeId: string): boolean {
+  const { nodes, entryNodeId } = useMeshNodes({ enabled: false });
+  return isRouteNodeOffline(nodes, entryNodeId, routeNodeId);
+}
 
 const navMainItems = [
   {
@@ -32,6 +60,7 @@ export function AppSidebar({ ...props }: ComponentProps<typeof Sidebar>) {
   // 外壳常驻在 self 运行时下；智能体 / 文件两个标签服务的是当前路由所在的 node，
   // 单独套一层该 node 的运行时（切 node 时这两块重挂是预期的，设备树不受影响）
   const routeNodeId = useRouteNodeId();
+  const routeNodeOffline = useRouteNodeOffline(routeNodeId);
 
   return (
     <Sidebar variant="inset" {...props}>
@@ -85,7 +114,13 @@ export function AppSidebar({ ...props }: ComponentProps<typeof Sidebar>) {
           <Reveal key={`${sidebarTab}:${routeNodeId}`} className="flex min-h-0 flex-1 flex-col">
             <NodeRuntimeScope nodeId={routeNodeId}>
               <Suspense fallback={null}>
-                {sidebarTab === 'agent' ? <AgentTab /> : <FilesTab />}
+                {sidebarTab === 'agent' ? (
+                  /* 智能体状态固定由 entry（self）网关提供：绑远端 pane 的会话也由它运行，
+                     路由 node 只决定展示哪一批会话、以及设备树/快照来自谁。 */
+                  <AgentTab agentStore={selfAgentStore()} nodeOffline={routeNodeOffline} />
+                ) : (
+                  <FilesTab nodeOffline={routeNodeOffline} />
+                )}
               </Suspense>
             </NodeRuntimeScope>
           </Reveal>

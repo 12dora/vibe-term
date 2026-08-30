@@ -30,6 +30,8 @@ export interface FileRootFormModalProps {
   editClient?: ApiClient;
   devices: Device[];
   deviceGroups?: FileRootDeviceGroup[];
+  /** 单设备模式：设备字段只读，新增只落该设备 */
+  lockedDeviceId?: string;
   onRootsMutated?: () => void;
 }
 
@@ -40,6 +42,7 @@ export function FileRootFormModal({
   editClient,
   devices,
   deviceGroups,
+  lockedDeviceId,
   onRootsMutated,
 }: FileRootFormModalProps) {
   const { t } = useTranslation();
@@ -49,6 +52,7 @@ export function FileRootFormModal({
     editClient,
     devices,
     deviceGroups,
+    lockedDeviceId,
     onOpenChange,
     onRootsMutated,
   });

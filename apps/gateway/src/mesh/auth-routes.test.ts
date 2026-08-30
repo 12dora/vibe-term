@@ -48,11 +48,10 @@ export const PASSWORD = 'tmex-test';
 // biome-ignore lint/suspicious/noExportsInTest: shared harness
 export class FakePeers implements PeerLinkProvider {
   readonly links = new Map<string, LinkSession>();
-  readonly reach = new Map<string, 'lan' | 'relay' | null>();
+  readonly reach = new Map<string, 'lan' | 'wan' | 'relay' | null>();
   readonly transport = new Map<string, 'ws-secure' | 'relay' | 'dc' | null>();
-  readonly listeners = new Set<
-    (e: { nodeId: string; status: 'online' | 'offline' | 'revoked' }) => void
-  >();
+  readonly rtt = new Map<string, number | null>();
+  readonly listeners = new Set<(e: import('./mesh-deps').NodeEventPayload) => void>();
   failGetLink = 0;
 
   async getLink(nodeId: string): Promise<LinkSession> {
@@ -65,12 +64,16 @@ export class FakePeers implements PeerLinkProvider {
     return link;
   }
 
-  listReach(): Map<string, 'lan' | 'relay' | null> {
+  listReach(): Map<string, 'lan' | 'wan' | 'relay' | null> {
     return this.reach;
   }
 
   transportOf(nodeId: string): 'ws-secure' | 'relay' | 'dc' | null {
     return this.transport.get(nodeId) ?? null;
+  }
+
+  rttOf(nodeId: string): number | null {
+    return this.rtt.get(nodeId) ?? null;
   }
 
   hubOnline = new Set<string>();
@@ -79,14 +82,12 @@ export class FakePeers implements PeerLinkProvider {
     return this.hubOnline;
   }
 
-  onNodeEvent(
-    cb: (e: { nodeId: string; status: 'online' | 'offline' | 'revoked' }) => void
-  ): () => void {
+  onNodeEvent(cb: (e: import('./mesh-deps').NodeEventPayload) => void): () => void {
     this.listeners.add(cb);
     return () => this.listeners.delete(cb);
   }
 
-  emit(event: { nodeId: string; status: 'online' | 'offline' | 'revoked' }): void {
+  emit(event: import('./mesh-deps').NodeEventPayload): void {
     for (const cb of this.listeners) cb(event);
   }
 }

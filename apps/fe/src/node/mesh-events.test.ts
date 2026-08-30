@@ -112,6 +112,8 @@ describe('decodeMeshFrame', () => {
         nodeId: 'node-a',
         status: 'online',
         reach: 'relay',
+        transport: null,
+        rttMs: null,
         inventory: { version: '1.0.0' },
         version: null,
         direct_capable: null,
@@ -134,12 +136,36 @@ describe('decodeMeshFrame', () => {
         nodeId: 'legacy-node',
         status: 'online',
         reach: 'lan',
+        transport: null,
+        rttMs: null,
         inventory: null,
         version: null,
         direct_capable: null,
         name: null,
       } satisfies NodeEventPayload,
     });
+  });
+
+  test('reach=wan 解得出来（老前端只认 lan/relay，新 node 会发 wan）', () => {
+    const frame = nodeEventFrame({
+      nodeId: 'a',
+      status: wsBorsh.NODE_EVENT_STATUS_ONLINE,
+      reach: 'wan',
+      inventory: null,
+    });
+    const decoded = decodeMeshFrame(frame);
+    expect(decoded?.kind === 'node-event' && decoded.payload.reach).toBe('wan');
+  });
+
+  test('未知 reach 归一成 null', () => {
+    const frame = nodeEventFrame({
+      nodeId: 'a',
+      status: wsBorsh.NODE_EVENT_STATUS_ONLINE,
+      reach: 'quantum',
+      inventory: null,
+    });
+    const decoded = decodeMeshFrame(frame);
+    expect(decoded?.kind === 'node-event' && decoded.payload.reach).toBeNull();
   });
 
   test('offline / revoked 枚举映射', () => {

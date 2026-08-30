@@ -22,6 +22,24 @@ describe('NodeEventDedupe', () => {
       false
     );
     expect(
+      dedupe.shouldEmitList({
+        ...base,
+        inventory: '{"version":"2"}',
+        version: '2',
+        transport: 'ws-secure',
+        rttMs: 12,
+      })
+    ).toBe(true);
+    expect(
+      dedupe.shouldEmitList({
+        ...base,
+        inventory: '{"version":"2"}',
+        version: '2',
+        transport: 'ws-secure',
+        rttMs: 12,
+      })
+    ).toBe(false);
+    expect(
       dedupe.shouldEmitList({ ...base, inventory: '{"version":"2"}', version: '2', name: 'n2' })
     ).toBe(true);
     expect(

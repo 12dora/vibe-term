@@ -125,7 +125,13 @@ export const I18N_RESOURCES = {
       "directFallbackToast": "Direct connection dropped; recent input may not have been delivered",
       "sidebar": {
         "show": "Show in sidebar",
-        "hint": "Browser-local preference: whether this device appears in the sidebar device list on this browser."
+        "hint": "Browser-local preference: whether this device appears in the sidebar device list on this browser.",
+        "group": "Show in sidebar",
+        "terminal": "Terminal",
+        "files": "Files",
+        "terminalHint": "Show this device on the sidebar Terminal tab",
+        "filesHint": "Show this device's directories on the sidebar Files tab",
+        "filesDisabledHint": "No directories configured for this device"
       },
       "addTo": {
         "label": "Add device to",
@@ -227,7 +233,8 @@ export const I18N_RESOURCES = {
         "nodes": "Multi-node Mesh",
         "notifications": "Notifications",
         "ai": "AI",
-        "terminal": "Terminal"
+        "terminal": "Terminal",
+        "remoteAccess": "Remote access"
       },
       "terminal": {
         "title": "Terminal Settings",
@@ -267,6 +274,137 @@ export const I18N_RESOURCES = {
           },
           "loadFailed": "Failed to load shortcuts",
           "retry": "Retry"
+        }
+      },
+      "remoteAccess": {
+        "title": "Remote access",
+        "wizardTitle": "Setup",
+        "description": "Expose this machine over Cloudflare Tunnel, without a public IP or port forwarding.",
+        "remoteNodeNotice": "Remote access can only be configured on the machine you are connected to.",
+        "loginRequired": "Sign in to this machine to configure remote access.",
+        "loadFailed": "Unable to load remote access status.",
+        "unsupported": "Cloudflare Tunnel is not supported on this platform ({{platform}}).",
+        "modeLabel": "Mode",
+        "publicUrl": "Public URL",
+        "restartsLabel": "Restarts",
+        "restarts": "{{times}}",
+        "state": {
+          "notConfigured": "Not configured",
+          "stopped": "Stopped",
+          "starting": "Starting",
+          "running": "Running",
+          "error": "Error"
+        },
+        "mode": {
+          "quick": {
+            "title": "Quick tunnel",
+            "description": "No account required. The URL changes on every start. Best for testing."
+          },
+          "named": {
+            "title": "Named tunnel",
+            "description": "Requires a Cloudflare account and a hosted domain. The URL stays fixed."
+          }
+        },
+        "actions": {
+          "start": "Start",
+          "stop": "Stop",
+          "remove": "Remove",
+          "check": "Check connectivity",
+          "open": "Open in new tab",
+          "install": "Install",
+          "login": "Sign in to Cloudflare",
+          "openLoginUrl": "Open authorization page",
+          "cancelLogin": "Cancel",
+          "create": "Create and start",
+          "quickStart": "Start"
+        },
+        "check": {
+          "reachable": "Reachable",
+          "unreachable": "Unreachable"
+        },
+        "log": {
+          "title": "Log",
+          "empty": "No output yet."
+        },
+        "steps": {
+          "install": {
+            "title": "Install cloudflared",
+            "description": "tmex downloads cloudflared into its own data directory and leaves the system untouched.",
+            "version": "Version",
+            "path": "Path",
+            "source": "Source",
+            "sourceValue": {
+              "managed": "Managed by tmex",
+              "system": "Found on PATH"
+            }
+          },
+          "mode": {
+            "title": "Choose a mode",
+            "description": "Remove the existing tunnel first if you need to switch modes later.",
+            "pending": "Choose a mode to continue."
+          },
+          "tunnel": {
+            "title": "Create the tunnel",
+            "description": "Complete the setup here after choosing a mode."
+          },
+          "quick": {
+            "title": "Quick tunnel",
+            "description": "Starting the tunnel issues a temporary trycloudflare.com URL that expires on stop.",
+            "started": "Quick tunnel is running."
+          },
+          "named": {
+            "title": "Named tunnel",
+            "description": "Uses a domain you already host on Cloudflare, so the URL stays fixed.",
+            "login": {
+              "description": "Authorize a domain on the page that opens, then return here.",
+              "waiting": "Waiting for authorization on Cloudflare",
+              "done": "Signed in to Cloudflare."
+            },
+            "hostname": "Hostname",
+            "hostnamePlaceholder": "tmex.example.com",
+            "hostnameHint": "Use a subdomain of a domain you host on Cloudflare.",
+            "hostnameInvalid": "Enter a lowercase hostname such as tmex.example.com.",
+            "tunnelName": "Tunnel name",
+            "tunnelNamePlaceholder": "tmex",
+            "tunnelNameHint": "Optional. tmex generates a name when left empty.",
+            "hubHint": "On a Hub, set the Hub public URL to this hostname.",
+            "hubHintLink": "Open node settings"
+          },
+          "proxy": {
+            "title": "Reverse proxy trust",
+            "description": "The tunnel replaces the client address and protocol, so tmex needs matching trust settings.",
+            "trustProxy": "Trust reverse proxy headers",
+            "trustProxyHint": "Required when tmex runs behind the tunnel, so client addresses and protocols are read correctly.",
+            "autoStart": "Start with tmex",
+            "autoStartHint": "Bring the tunnel up when the gateway starts.",
+            "restartRequired": "Saved. Restart to apply.",
+            "restartNow": "Restart now",
+            "restarting": "Restarting",
+            "restartTimeout": "Restart timed out. Restart tmex manually."
+          }
+        },
+        "jobStep": {
+          "download": "Downloading",
+          "extract": "Extracting",
+          "verify": "Verifying",
+          "create_tunnel": "Creating tunnel",
+          "route_dns": "Configuring DNS",
+          "start": "Starting"
+        },
+        "errors": {
+          "unsupported_platform": "Cloudflare Tunnel is not supported on this platform.",
+          "binary_missing": "cloudflared was not found. Install it first.",
+          "download_failed": "Failed to download cloudflared. Check the network and retry.",
+          "not_logged_in": "Not signed in to Cloudflare. Complete the authorization first.",
+          "login_timeout": "Authorization timed out. Start the sign-in again.",
+          "invalid_hostname": "The hostname is not valid.",
+          "tunnel_exists": "A tunnel with this name already exists. Choose another name.",
+          "dns_route_failed": "Failed to configure the DNS record. Confirm the domain is hosted on Cloudflare.",
+          "process_failed": "cloudflared failed to start. See the log for details.",
+          "busy": "Another operation is in progress.",
+          "not_configured": "Remote access is not configured.",
+          "invalid_request": "Invalid request.",
+          "unknown": "Operation failed: {{message}}"
         }
       },
       "deviceManagement": {
@@ -352,6 +490,19 @@ export const I18N_RESOURCES = {
         "path": "Path",
         "pathPlaceholder": "/absolute/path/to/directory",
         "pathHint": "Absolute path on the selected device.",
+        "browse": "Browse…",
+        "lockedDescription": "Directories on this device browsable in the Files tab.",
+        "deviceModalTitle": "{{name}} · Directories",
+        "pickerTitle": "Select directory",
+        "pickerDescription": "Browse directories on the device and fill in the path.",
+        "pickerUp": "Parent directory",
+        "pickerShowHidden": "Show hidden directories",
+        "pickerEmpty": "No subdirectories",
+        "pickerFailed": "Failed to load directory",
+        "pickerTruncated": "Too many subdirectories; the list is truncated",
+        "pickerSymlink": "Symbolic link",
+        "pickerCurrent": "Current directory",
+        "pickerConfirm": "Select this directory",
         "enabled": "Enabled",
         "addFailed": "Failed to add directory",
         "updateFailed": "Failed to update directory",
@@ -773,7 +924,7 @@ export const I18N_RESOURCES = {
         "none": "No session selected",
         "new": "New agent session",
         "switch": "Switch session",
-        "selectPaneHint": "Select a pane in the Terminals tab to start a session",
+        "selectPaneHint": "Select a session",
         "noSessions": "No sessions yet",
         "showAll": "Show all sessions",
         "menu": "Session actions",
@@ -788,6 +939,9 @@ export const I18N_RESOURCES = {
         "deleteConfirm": "Delete",
         "createDisabledNoPane": "Open a terminal pane to create a session",
         "privacyNotice": "Sessions send terminal screen content to the configured LLM service."
+      },
+      "node": {
+        "offlinePaused": "Node offline. Session paused."
       },
       "binding": {
         "invalid": "Pane unavailable",
@@ -984,6 +1138,7 @@ export const I18N_RESOURCES = {
       "title": "Files",
       "refresh": "Refresh file list",
       "noRoots": "No accessible directories. Add one in Settings → Files.",
+      "nodeOffline": "Node offline",
       "emptyDir": "Empty",
       "truncated": "Too many items — list truncated",
       "download": "Download",
@@ -1432,6 +1587,7 @@ export const I18N_RESOURCES = {
       },
       "reach": {
         "lan": "Local network",
+        "wan": "Internet",
         "relay": "Via hub",
         "none": "Unreachable"
       },
@@ -1474,8 +1630,11 @@ export const I18N_RESOURCES = {
       },
       "badge": {
         "direct": "Direct",
-        "primary": "Relayed",
-        "rttUnknown": "Latency unknown",
+        "reachRow": "Reach",
+        "transportRow": "Transport",
+        "transportWs": "WebSocket",
+        "transportDc": "WebRTC",
+        "transportRelay": "Hub relay",
         "iceTitle": "Connection details",
         "icePlaceholder": "Direct connections are off, so there is nothing to show.",
         "connectionState": "Connection",
@@ -1755,7 +1914,13 @@ export const I18N_RESOURCES = {
       "directFallbackToast": "直连已断开，最近输入可能未送达",
       "sidebar": {
         "show": "显示在侧栏",
-        "hint": "仅本浏览器生效的偏好：该设备是否出现在侧栏设备列表里。"
+        "hint": "仅本浏览器生效的偏好：该设备是否出现在侧栏设备列表里。",
+        "group": "侧栏显示",
+        "terminal": "终端",
+        "files": "文件",
+        "terminalHint": "在侧栏的终端页显示该设备",
+        "filesHint": "在侧栏的文件页显示该设备的目录",
+        "filesDisabledHint": "尚未为该设备配置目录"
       },
       "addTo": {
         "label": "添加设备到",
@@ -1857,7 +2022,8 @@ export const I18N_RESOURCES = {
         "nodes": "多节点互联",
         "notifications": "通知",
         "ai": "AI",
-        "terminal": "终端"
+        "terminal": "终端",
+        "remoteAccess": "远程访问"
       },
       "terminal": {
         "title": "终端设置",
@@ -1897,6 +2063,137 @@ export const I18N_RESOURCES = {
           },
           "loadFailed": "加载快捷键失败",
           "retry": "重试"
+        }
+      },
+      "remoteAccess": {
+        "title": "远程访问",
+        "wizardTitle": "配置向导",
+        "description": "通过 Cloudflare Tunnel 把本机的 tmex 暴露到公网，无需公网 IP 或端口映射。",
+        "remoteNodeNotice": "远程访问只能在当前连接的机器上配置。",
+        "loginRequired": "请先登录本机后再配置远程访问。",
+        "loadFailed": "无法读取远程访问状态。",
+        "unsupported": "当前系统（{{platform}}）不支持 Cloudflare Tunnel。",
+        "modeLabel": "方式",
+        "publicUrl": "公网地址",
+        "restartsLabel": "重启次数",
+        "restarts": "{{times}} 次",
+        "state": {
+          "notConfigured": "未配置",
+          "stopped": "已停止",
+          "starting": "启动中",
+          "running": "运行中",
+          "error": "错误"
+        },
+        "mode": {
+          "quick": {
+            "title": "临时隧道",
+            "description": "无需账号，地址随每次启动变化，适合测试。"
+          },
+          "named": {
+            "title": "命名隧道",
+            "description": "需要 Cloudflare 账号与已托管的域名，地址固定。"
+          }
+        },
+        "actions": {
+          "start": "启动",
+          "stop": "停止",
+          "remove": "移除",
+          "check": "检查连通性",
+          "open": "在新标签页打开",
+          "install": "安装",
+          "login": "登录 Cloudflare",
+          "openLoginUrl": "打开授权页面",
+          "cancelLogin": "取消",
+          "create": "创建并启动",
+          "quickStart": "启动"
+        },
+        "check": {
+          "reachable": "可访问",
+          "unreachable": "不可达"
+        },
+        "log": {
+          "title": "日志",
+          "empty": "暂无输出。"
+        },
+        "steps": {
+          "install": {
+            "title": "安装 cloudflared",
+            "description": "tmex 会把 cloudflared 下载到自己的数据目录，不改动系统。",
+            "version": "版本",
+            "path": "路径",
+            "source": "来源",
+            "sourceValue": {
+              "managed": "由 tmex 管理",
+              "system": "系统已安装"
+            }
+          },
+          "mode": {
+            "title": "选择方式",
+            "description": "建立隧道后如需更换方式，先移除现有隧道。",
+            "pending": "请先选择一种方式。"
+          },
+          "tunnel": {
+            "title": "建立隧道",
+            "description": "选择方式后在这里完成建立。"
+          },
+          "quick": {
+            "title": "临时隧道",
+            "description": "启动后生成一个 trycloudflare.com 的临时地址，停止即失效。",
+            "started": "临时隧道已启动。"
+          },
+          "named": {
+            "title": "命名隧道",
+            "description": "使用已托管在 Cloudflare 的域名，地址固定。",
+            "login": {
+              "description": "在打开的授权页面中选择域名并授权，完成后回到本页。",
+              "waiting": "等待在 Cloudflare 完成授权",
+              "done": "已登录 Cloudflare。"
+            },
+            "hostname": "主机名",
+            "hostnamePlaceholder": "tmex.example.com",
+            "hostnameHint": "填写已托管在 Cloudflare 的域名下的子域。",
+            "hostnameInvalid": "主机名格式不正确，请填写形如 tmex.example.com 的小写域名。",
+            "tunnelName": "隧道名称",
+            "tunnelNamePlaceholder": "tmex",
+            "tunnelNameHint": "可留空，留空时由 tmex 生成。",
+            "hubHint": "作为 Hub 时，请将 Hub 公开地址设为此主机名。",
+            "hubHintLink": "前往多节点互联设置"
+          },
+          "proxy": {
+            "title": "反向代理信任",
+            "description": "隧道会替换客户端地址与协议，需要相应调整 tmex 的信任设置。",
+            "trustProxy": "信任反向代理头",
+            "trustProxyHint": "tmex 位于隧道之后时需要开启，以便正确识别客户端地址与协议。",
+            "autoStart": "随 tmex 启动",
+            "autoStartHint": "网关启动时自动拉起隧道。",
+            "restartRequired": "配置已保存，重启后生效。",
+            "restartNow": "立即重启",
+            "restarting": "正在重启",
+            "restartTimeout": "重启超时，请手动重启 tmex。"
+          }
+        },
+        "jobStep": {
+          "download": "下载",
+          "extract": "解压",
+          "verify": "校验",
+          "create_tunnel": "创建隧道",
+          "route_dns": "配置 DNS",
+          "start": "启动"
+        },
+        "errors": {
+          "unsupported_platform": "当前系统不支持 Cloudflare Tunnel。",
+          "binary_missing": "未找到 cloudflared，请先完成安装。",
+          "download_failed": "下载 cloudflared 失败，请检查网络后重试。",
+          "not_logged_in": "尚未登录 Cloudflare，请先完成授权。",
+          "login_timeout": "授权超时，请重新发起登录。",
+          "invalid_hostname": "主机名格式不正确。",
+          "tunnel_exists": "同名隧道已存在，请更换名称。",
+          "dns_route_failed": "配置 DNS 记录失败，请确认该域名已托管在 Cloudflare。",
+          "process_failed": "cloudflared 进程启动失败，详见日志。",
+          "busy": "另一项操作正在进行。",
+          "not_configured": "尚未配置远程访问。",
+          "invalid_request": "请求无效。",
+          "unknown": "操作失败：{{message}}"
         }
       },
       "deviceManagement": {
@@ -1982,6 +2279,19 @@ export const I18N_RESOURCES = {
         "path": "路径",
         "pathPlaceholder": "/绝对路径/到/目录",
         "pathHint": "所选设备上的绝对路径。",
+        "browse": "浏览…",
+        "lockedDescription": "此设备上可在「文件」标签页浏览的目录。",
+        "deviceModalTitle": "{{name}} · 目录",
+        "pickerTitle": "选择目录",
+        "pickerDescription": "浏览设备上的目录，选中后填入路径。",
+        "pickerUp": "上一级",
+        "pickerShowHidden": "显示隐藏目录",
+        "pickerEmpty": "没有子目录",
+        "pickerFailed": "加载目录失败",
+        "pickerTruncated": "子目录过多，列表已截断",
+        "pickerSymlink": "符号链接",
+        "pickerCurrent": "当前目录",
+        "pickerConfirm": "选择此目录",
         "enabled": "启用",
         "addFailed": "添加目录失败",
         "updateFailed": "更新目录失败",
@@ -2403,7 +2713,7 @@ export const I18N_RESOURCES = {
         "none": "未选择会话",
         "new": "新建 Agent 会话",
         "switch": "切换会话",
-        "selectPaneHint": "请在「终端」标签中选择一个 Pane 来开启会话",
+        "selectPaneHint": "选择一个会话",
         "noSessions": "暂无会话",
         "showAll": "显示全部会话",
         "menu": "会话操作",
@@ -2418,6 +2728,9 @@ export const I18N_RESOURCES = {
         "deleteConfirm": "删除",
         "createDisabledNoPane": "请先打开一个终端 Pane 再创建会话",
         "privacyNotice": "会话将把终端屏幕内容发送给配置的 LLM 服务。"
+      },
+      "node": {
+        "offlinePaused": "节点离线，会话已暂停"
       },
       "binding": {
         "invalid": "已失效",
@@ -2614,6 +2927,7 @@ export const I18N_RESOURCES = {
       "title": "文件",
       "refresh": "刷新文件列表",
       "noRoots": "没有可访问的目录。请在「设置 → 文件」中添加。",
+      "nodeOffline": "节点离线",
       "emptyDir": "空目录",
       "truncated": "条目过多，列表已截断",
       "download": "下载",
@@ -3062,6 +3376,7 @@ export const I18N_RESOURCES = {
       },
       "reach": {
         "lan": "局域网",
+        "wan": "公网",
         "relay": "经 Hub 中转",
         "none": "不可达"
       },
@@ -3104,8 +3419,11 @@ export const I18N_RESOURCES = {
       },
       "badge": {
         "direct": "直连",
-        "primary": "中转",
-        "rttUnknown": "延迟未知",
+        "reachRow": "到达路径",
+        "transportRow": "承载",
+        "transportWs": "WebSocket",
+        "transportDc": "WebRTC",
+        "transportRelay": "Hub 中转",
         "iceTitle": "连接详情",
         "icePlaceholder": "直连未启用，暂无数据。",
         "connectionState": "连接状态",
@@ -3384,7 +3702,13 @@ export const I18N_RESOURCES = {
       "directFallbackToast": "直接接続が切断されました。直近の入力が届いていない可能性があります",
       "sidebar": {
         "show": "サイドバーに表示",
-        "hint": "このブラウザーのみの設定です。サイドバーのデバイス一覧にこのデバイスを表示するかどうかを切り替えます。"
+        "hint": "このブラウザーのみの設定です。サイドバーのデバイス一覧にこのデバイスを表示するかどうかを切り替えます。",
+        "group": "サイドバー表示",
+        "terminal": "ターミナル",
+        "files": "ファイル",
+        "terminalHint": "サイドバーのターミナルタブにこのデバイスを表示します",
+        "filesHint": "サイドバーのファイルタブにこのデバイスのディレクトリを表示します",
+        "filesDisabledHint": "このデバイスにはディレクトリが設定されていません"
       },
       "addTo": {
         "label": "デバイスの追加先",
@@ -3486,7 +3810,8 @@ export const I18N_RESOURCES = {
         "nodes": "マルチノード連携",
         "notifications": "通知",
         "ai": "AI",
-        "terminal": "ターミナル"
+        "terminal": "ターミナル",
+        "remoteAccess": "リモートアクセス"
       },
       "terminal": {
         "title": "ターミナル設定",
@@ -3526,6 +3851,137 @@ export const I18N_RESOURCES = {
           },
           "loadFailed": "ショートカットの読み込みに失敗しました",
           "retry": "再試行"
+        }
+      },
+      "remoteAccess": {
+        "title": "リモートアクセス",
+        "wizardTitle": "セットアップ",
+        "description": "Cloudflare Tunnel でこのマシンを公開します。グローバル IP やポート開放は不要です。",
+        "remoteNodeNotice": "リモートアクセスは現在接続しているマシンでのみ設定できます。",
+        "loginRequired": "リモートアクセスを設定するには、このマシンにログインしてください。",
+        "loadFailed": "リモートアクセスの状態を取得できません。",
+        "unsupported": "このプラットフォーム（{{platform}}）は Cloudflare Tunnel に対応していません。",
+        "modeLabel": "方式",
+        "publicUrl": "公開アドレス",
+        "restartsLabel": "再起動回数",
+        "restarts": "{{times}} 回",
+        "state": {
+          "notConfigured": "未設定",
+          "stopped": "停止中",
+          "starting": "起動中",
+          "running": "稼働中",
+          "error": "エラー"
+        },
+        "mode": {
+          "quick": {
+            "title": "一時トンネル",
+            "description": "アカウント不要。起動のたびにアドレスが変わります。検証向けです。"
+          },
+          "named": {
+            "title": "名前付きトンネル",
+            "description": "Cloudflare アカウントと管理中のドメインが必要です。アドレスは固定されます。"
+          }
+        },
+        "actions": {
+          "start": "開始",
+          "stop": "停止",
+          "remove": "削除",
+          "check": "接続確認",
+          "open": "新しいタブで開く",
+          "install": "インストール",
+          "login": "Cloudflare にログイン",
+          "openLoginUrl": "認可ページを開く",
+          "cancelLogin": "キャンセル",
+          "create": "作成して開始",
+          "quickStart": "開始"
+        },
+        "check": {
+          "reachable": "到達可能",
+          "unreachable": "到達不可"
+        },
+        "log": {
+          "title": "ログ",
+          "empty": "出力はありません。"
+        },
+        "steps": {
+          "install": {
+            "title": "cloudflared のインストール",
+            "description": "tmex は cloudflared を自身のデータディレクトリに配置し、システムは変更しません。",
+            "version": "バージョン",
+            "path": "パス",
+            "source": "取得元",
+            "sourceValue": {
+              "managed": "tmex が管理",
+              "system": "システムに導入済み"
+            }
+          },
+          "mode": {
+            "title": "方式の選択",
+            "description": "方式を変更する場合は、既存のトンネルを先に削除してください。",
+            "pending": "方式を選択してください。"
+          },
+          "tunnel": {
+            "title": "トンネルの作成",
+            "description": "方式を選択したあと、ここで作成します。"
+          },
+          "quick": {
+            "title": "一時トンネル",
+            "description": "起動すると trycloudflare.com の一時アドレスが発行され、停止すると無効になります。",
+            "started": "一時トンネルが稼働しています。"
+          },
+          "named": {
+            "title": "名前付きトンネル",
+            "description": "Cloudflare で管理中のドメインを使うため、アドレスは固定されます。",
+            "login": {
+              "description": "開いた認可ページでドメインを承認し、このページに戻ってください。",
+              "waiting": "Cloudflare での認可を待機しています",
+              "done": "Cloudflare にログイン済みです。"
+            },
+            "hostname": "ホスト名",
+            "hostnamePlaceholder": "tmex.example.com",
+            "hostnameHint": "Cloudflare で管理しているドメインのサブドメインを指定します。",
+            "hostnameInvalid": "tmex.example.com のような小文字のホスト名を入力してください。",
+            "tunnelName": "トンネル名",
+            "tunnelNamePlaceholder": "tmex",
+            "tunnelNameHint": "省略可。未入力の場合は tmex が生成します。",
+            "hubHint": "Hub として運用する場合は、Hub の公開アドレスをこのホスト名に設定してください。",
+            "hubHintLink": "ノード設定を開く"
+          },
+          "proxy": {
+            "title": "リバースプロキシの信頼",
+            "description": "トンネルはクライアントアドレスとプロトコルを置き換えるため、信頼設定の調整が必要です。",
+            "trustProxy": "リバースプロキシヘッダーを信頼する",
+            "trustProxyHint": "tmex がトンネルの背後にある場合に有効化します。クライアントアドレスとプロトコルを正しく判定できます。",
+            "autoStart": "tmex と同時に起動",
+            "autoStartHint": "ゲートウェイ起動時にトンネルを自動で立ち上げます。",
+            "restartRequired": "保存しました。再起動後に有効になります。",
+            "restartNow": "今すぐ再起動",
+            "restarting": "再起動中",
+            "restartTimeout": "再起動がタイムアウトしました。tmex を手動で再起動してください。"
+          }
+        },
+        "jobStep": {
+          "download": "ダウンロード",
+          "extract": "展開",
+          "verify": "検証",
+          "create_tunnel": "トンネル作成",
+          "route_dns": "DNS 設定",
+          "start": "起動"
+        },
+        "errors": {
+          "unsupported_platform": "このプラットフォームは Cloudflare Tunnel に対応していません。",
+          "binary_missing": "cloudflared が見つかりません。先にインストールしてください。",
+          "download_failed": "cloudflared のダウンロードに失敗しました。ネットワークを確認して再試行してください。",
+          "not_logged_in": "Cloudflare にログインしていません。先に認可を完了してください。",
+          "login_timeout": "認可がタイムアウトしました。ログインをやり直してください。",
+          "invalid_hostname": "ホスト名の形式が正しくありません。",
+          "tunnel_exists": "同名のトンネルが既に存在します。別の名前を指定してください。",
+          "dns_route_failed": "DNS レコードの設定に失敗しました。ドメインが Cloudflare で管理されているか確認してください。",
+          "process_failed": "cloudflared の起動に失敗しました。ログを確認してください。",
+          "busy": "別の操作が進行中です。",
+          "not_configured": "リモートアクセスは未設定です。",
+          "invalid_request": "リクエストが不正です。",
+          "unknown": "操作に失敗しました：{{message}}"
         }
       },
       "deviceManagement": {
@@ -3611,6 +4067,19 @@ export const I18N_RESOURCES = {
         "path": "パス",
         "pathPlaceholder": "/絶対パス/ディレクトリ",
         "pathHint": "選択したデバイス上の絶対パス。",
+        "browse": "参照…",
+        "lockedDescription": "このデバイスで「ファイル」タブから閲覧できるディレクトリ。",
+        "deviceModalTitle": "{{name}} · ディレクトリ",
+        "pickerTitle": "ディレクトリを選択",
+        "pickerDescription": "デバイス上のディレクトリを参照してパスを入力します。",
+        "pickerUp": "上の階層",
+        "pickerShowHidden": "隠しディレクトリを表示",
+        "pickerEmpty": "サブディレクトリがありません",
+        "pickerFailed": "ディレクトリの読み込みに失敗しました",
+        "pickerTruncated": "サブディレクトリが多いため一覧は省略されています",
+        "pickerSymlink": "シンボリックリンク",
+        "pickerCurrent": "現在のディレクトリ",
+        "pickerConfirm": "このディレクトリを選択",
         "enabled": "有効",
         "addFailed": "ディレクトリの追加に失敗しました",
         "updateFailed": "ディレクトリの更新に失敗しました",
@@ -4032,7 +4501,7 @@ export const I18N_RESOURCES = {
         "none": "セッション未選択",
         "new": "新規エージェントセッション",
         "switch": "セッションを切り替え",
-        "selectPaneHint": "「端末」タブでペインを選択してセッションを開始してください",
+        "selectPaneHint": "セッションを選択",
         "noSessions": "セッションがありません",
         "showAll": "すべてのセッションを表示",
         "menu": "セッション操作",
@@ -4047,6 +4516,9 @@ export const I18N_RESOURCES = {
         "deleteConfirm": "削除",
         "createDisabledNoPane": "ターミナルのペインを開いてからセッションを作成してください",
         "privacyNotice": "セッションはターミナル画面の内容を設定済みの LLM サービスへ送信します。"
+      },
+      "node": {
+        "offlinePaused": "ノードがオフラインです。セッションを一時停止しました。"
       },
       "binding": {
         "invalid": "無効",
@@ -4243,6 +4715,7 @@ export const I18N_RESOURCES = {
       "title": "ファイル",
       "refresh": "ファイル一覧を更新",
       "noRoots": "アクセス可能なディレクトリがありません。「設定 → ファイル」で追加してください。",
+      "nodeOffline": "ノードはオフラインです",
       "emptyDir": "空のディレクトリ",
       "truncated": "項目が多すぎるため一覧を省略しました",
       "download": "ダウンロード",
@@ -4691,6 +5164,7 @@ export const I18N_RESOURCES = {
       },
       "reach": {
         "lan": "ローカル",
+        "wan": "インターネット",
         "relay": "ハブ経由",
         "none": "到達不可"
       },
@@ -4733,8 +5207,11 @@ export const I18N_RESOURCES = {
       },
       "badge": {
         "direct": "ダイレクト",
-        "primary": "中継",
-        "rttUnknown": "遅延不明",
+        "reachRow": "到達経路",
+        "transportRow": "トランスポート",
+        "transportWs": "WebSocket",
+        "transportDc": "WebRTC",
+        "transportRelay": "ハブ中継",
         "iceTitle": "接続の詳細",
         "icePlaceholder": "ダイレクト接続が無効のため、表示できる情報はありません。",
         "connectionState": "接続状態",

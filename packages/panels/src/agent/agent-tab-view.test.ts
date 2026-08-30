@@ -28,6 +28,7 @@ function session(overrides: Partial<AgentSessionDto> = {}): AgentSessionDto {
   return {
     id: 's1',
     title: 'session',
+    nodeId: null,
     deviceId: 'd1',
     paneId: '%1',
     providerId: null,
@@ -52,6 +53,8 @@ function state(overrides: Partial<AgentTabState> = {}): AgentTabState {
   return {
     agentStore: {} as AgentStoreHandle,
     snapshots: snapshots('%1'),
+    nodeId: null,
+    nodeOffline: undefined,
     devices,
     devicesLoading: false,
     devicesError: false,
@@ -114,5 +117,59 @@ describe('deriveAgentTabView rebind eligibility', () => {
     const view = deriveAgentTabView(state({ routeDeviceId: 'd2', routePaneId: '%2' }));
     expect(view.showPaneMismatch).toBe(true);
     expect(view.canRebind).toBe(false);
+  });
+});
+
+describe('deriveAgentTabView node offline', () => {
+  test('shows the offline banner and disables input while the route node is offline', () => {
+    const view = deriveAgentTabView(state({ nodeOffline: true }));
+    expect(view.showNodeOffline).toBe(true);
+    expect(view.inputDisabled).toBe(true);
+  });
+
+  test('re-enables input once the node is back online, session error notwithstanding', () => {
+    const view = deriveAgentTabView(
+      state({
+        nodeOffline: false,
+        activeSession: session({ status: 'error', lastError: 'NODE_OFFLINE' }),
+      })
+    );
+    expect(view.showNodeOffline).toBe(false);
+    expect(view.inputDisabled).toBe(false);
+    // 节点已回来，错误条如实回显直到用户重发
+    expect(view.errorText).toBe('NODE_OFFLINE');
+  });
+
+  test('replaces the raw NODE_OFFLINE error with the offline banner while offline', () => {
+    const view = deriveAgentTabView(
+      state({
+        nodeOffline: true,
+        activeSession: session({ status: 'error', lastError: 'NODE_OFFLINE' }),
+      })
+    );
+    expect(view.showNodeOffline).toBe(true);
+    expect(view.errorText).toBeNull();
+  });
+
+  test('falls back to the session error when the host has no mesh state', () => {
+    const view = deriveAgentTabView(
+      state({
+        nodeOffline: undefined,
+        activeSession: session({ status: 'error', lastError: 'NODE_OFFLINE' }),
+      })
+    );
+    expect(view.showNodeOffline).toBe(true);
+    expect(view.inputDisabled).toBe(true);
+  });
+
+  test('leaves unrelated errors alone', () => {
+    const view = deriveAgentTabView(
+      state({
+        nodeOffline: false,
+        activeSession: session({ status: 'error', lastError: 'boom' }),
+      })
+    );
+    expect(view.showNodeOffline).toBe(false);
+    expect(view.errorText).toBe('boom');
   });
 });

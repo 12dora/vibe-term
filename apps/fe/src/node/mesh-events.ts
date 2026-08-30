@@ -3,7 +3,11 @@
 //
 // 该连接**只属于 entry（self）**：mesh 事件是入口对整张 mesh 的视图，不按 node 分身。
 
-import { handleGlobalUnauthorized } from '@tmex/api-client/auth/index';
+import {
+  type MeshNodeReach,
+  type MeshNodeTransport,
+  handleGlobalUnauthorized,
+} from '@tmex/api-client/auth/index';
 import { wsBorsh } from '@tmex/shared';
 import { encodeBase64url } from '@tmex/shared/auth';
 
@@ -11,12 +15,17 @@ import { encodeBase64url } from '@tmex/shared/auth';
 export const WS_UNAUTHORIZED_CLOSE_CODE = 4401;
 
 export type NodeEventStatus = 'online' | 'offline' | 'revoked';
-export type NodeReach = 'lan' | 'relay' | null;
+export type NodeReach = MeshNodeReach;
+export type NodeTransport = MeshNodeTransport;
 
 export interface NodeEventPayload {
   nodeId: string;
   status: NodeEventStatus;
   reach: NodeReach;
+  /** peer link 的实际承载；老 node 的帧里没有这一段，解出为 `undefined`。 */
+  transport?: NodeTransport;
+  /** entry ↔ node 最近一次 ping/pong 往返毫秒数；未测得为 `null`，帧里没有为 `undefined`。 */
+  rttMs?: number | null;
   /** node.status 上报的 inventory（JSON 字符串已解析）；不可解析时保留原串。 */
   inventory: unknown;
   version?: string | null;
@@ -71,7 +80,21 @@ function fromFromWire(from: number): 'browser' | 'node' | null {
 }
 
 function reachFromWire(reach: string | null): NodeReach {
-  return reach === 'lan' || reach === 'relay' ? reach : null;
+  return reach === 'lan' || reach === 'wan' || reach === 'relay' ? reach : null;
+}
+
+// 老 node 的帧里没有这两段，解出 `undefined`——与「新帧明确报告没有」（null）区分开，
+// 投影时才知道该保留上一次轮询到的值还是清掉。
+function transportFromWire(transport: unknown): NodeTransport | undefined {
+  if (transport === undefined) return undefined;
+  return transport === 'ws-secure' || transport === 'relay' || transport === 'dc'
+    ? transport
+    : null;
+}
+
+function rttFromWire(rttMs: unknown): number | null | undefined {
+  if (rttMs === undefined) return undefined;
+  return typeof rttMs === 'number' && Number.isFinite(rttMs) && rttMs >= 0 ? rttMs : null;
 }
 
 function parseInventory(raw: string | null): unknown {
@@ -92,7 +115,10 @@ export function decodeMeshFrame(data: Uint8Array): MeshFrame | null {
     const envelope = wsBorsh.decodeEnvelope(data);
     if (envelope.version !== wsBorsh.CURRENT_VERSION) return null;
     if (envelope.kind === wsBorsh.KIND_NODE_EVENT) {
-      const payload = wsBorsh.decodeNodeEvent(envelope.payload);
+      // `transport` / `rttMs` 是后加的线上字段：老 node 发来的帧里没有，解出为 undefined。
+      const payload = wsBorsh.decodeNodeEvent(envelope.payload) as ReturnType<
+        typeof wsBorsh.decodeNodeEvent
+      > & { transport?: unknown; rttMs?: unknown };
       const status = statusFromWire(payload.status);
       if (!status) return null;
       return {
@@ -101,6 +127,8 @@ export function decodeMeshFrame(data: Uint8Array): MeshFrame | null {
           nodeId: payload.nodeId,
           status,
           reach: reachFromWire(payload.reach),
+          transport: transportFromWire(payload.transport),
+          rttMs: rttFromWire(payload.rttMs),
           inventory: parseInventory(payload.inventory),
           version: payload.version,
           direct_capable: payload.directCapable,

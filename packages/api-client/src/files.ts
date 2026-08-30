@@ -2,6 +2,7 @@
 
 export { FileApiError } from './file-errors';
 export {
+  browseDirectory,
   createFileRoot,
   deleteFileRoot,
   fetchFileContent,

@@ -2,7 +2,12 @@
 // send 与 paste / newAgentSession 才需要有效设备与 pane。
 
 import type { TerminalShortcutAction, TerminalShortcutItem } from '@tmex/shared';
-import { type AppRuntime, bridgeOpenMobileSidebar } from '@tmex/stores';
+import {
+  type AppRuntime,
+  bridgeOpenMobileSidebar,
+  normalizeAgentNodeId,
+  resolveAgentStore,
+} from '@tmex/stores';
 import { useRuntime } from '@tmex/stores/react';
 import type { TerminalRef } from '@tmex/terminal-ui';
 import { type RefObject, useCallback } from 'react';
@@ -88,7 +93,14 @@ export function useTerminalShortcutActions({
       }
       // agent UI 关闭时按钮已在渲染前过滤，这里再兜底一次
       if (item.action === 'newAgentSession' && runtime.features.agentUi) {
-        runtime.stores.agent.getState().startDraft(deviceId, resolvedPaneId, null);
+        resolveAgentStore(runtime.stores.agent)
+          .getState()
+          .startDraft({
+            nodeId: normalizeAgentNodeId(runtime.nodeId),
+            deviceId,
+            paneId: resolvedPaneId,
+            paneTitle: null,
+          });
         runtime.stores.ui.getState().setSidebarCollapsed(false);
         bridgeOpenMobileSidebar();
         runtime.stores.ui.getState().setSidebarTab('agent');

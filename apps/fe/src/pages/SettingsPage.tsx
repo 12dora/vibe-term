@@ -1,6 +1,7 @@
 import { useMutation } from '@tanstack/react-query';
 import {
   Bell,
+  Globe,
   Monitor,
   Network,
   RotateCcw,
@@ -35,6 +36,7 @@ import { DevicesAndFilesTab } from './settings/devices-and-files-tab';
 import { GeneralSettingsTab } from './settings/general-settings-tab';
 import { NodesTab } from './settings/nodes/nodes-tab';
 import { NotificationSettingsTab } from './settings/notification-settings-tab';
+import { RemoteAccessTab } from './settings/remote-access/remote-access-tab';
 import { useSiteSettingsForm } from './settings/use-site-settings-form';
 
 export type SettingsTab =
@@ -43,7 +45,8 @@ export type SettingsTab =
   | 'nodes'
   | 'notifications'
   | 'ai'
-  | 'terminal';
+  | 'terminal'
+  | 'remoteAccess';
 
 const SETTINGS_TABS: SettingsTab[] = [
   'general',
@@ -52,6 +55,7 @@ const SETTINGS_TABS: SettingsTab[] = [
   'notifications',
   'ai',
   'terminal',
+  'remoteAccess',
 ];
 
 function isSettingsTab(value: string | null): value is SettingsTab {
@@ -100,6 +104,12 @@ export default function SettingsPage() {
       label: t('settings.tabGroup.terminal'),
       icon: Monitor,
       testId: 'settings-tab-terminal',
+    },
+    {
+      value: 'remoteAccess',
+      label: t('settings.tabGroup.remoteAccess'),
+      icon: Globe,
+      testId: 'settings-tab-remoteAccess',
     },
     {
       value: 'devicesAndFiles',
@@ -166,6 +176,8 @@ export default function SettingsPage() {
         {activeTab === 'ai' && <AISettingsTab />}
 
         {activeTab === 'terminal' && <TerminalSettingsTab />}
+
+        {activeTab === 'remoteAccess' && <RemoteAccessTab />}
       </Reveal>
     </div>
   );

@@ -1,9 +1,11 @@
 // 侧边栏设备树的 agent 会话装饰：会话分支/孤立会话区/对话框与「新建会话」动作，
 // 经 SidebarAgentAdapter 注入 @tmex/panels/device-tree（包内零 agent 依赖）。
 
+import { selfAgentStore } from '@/node/self-agent-store';
 import type { DeviceTreeNavigation, SidebarAgentAdapter } from '@tmex/panels/device-tree';
 import type { AgentSessionDto, TmuxPane } from '@tmex/shared';
 import type { AppRuntime } from '@tmex/stores';
+import { normalizeAgentNodeId } from '@tmex/stores';
 import { useRuntime, useTmuxStore, useUIStore } from '@tmex/stores/react';
 import { cn } from '@tmex/ui';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@tmex/ui/collapsible';
@@ -16,6 +18,7 @@ import {
   SidebarAgentSessionsContext,
   collectKnownPaneIds,
   isSessionAttached,
+  isSessionPaused,
   paneKey,
   useSidebarAgentSessions,
   useSidebarAgentSessionsController,
@@ -36,7 +39,7 @@ function useSelectSession(nav: DeviceTreeNavigation) {
   const setSidebarTab = useUIStore((state) => state.setSidebarTab);
   return useCallback(
     (session: AgentSessionDto) => {
-      runtime.stores.agent.getState().setActiveSession(session.id);
+      selfAgentStore().getState().setActiveSession(session.id);
       setSidebarTab('agent');
       if (session.deviceId && session.paneId) {
         const windows =
@@ -53,6 +56,7 @@ function useSelectSession(nav: DeviceTreeNavigation) {
   );
 }
 
+// 会话由 entry（self）网关持有并运行，草稿只是带上目标 pane 所在的 node
 function createSessionForPane(
   runtime: AppRuntime,
   nav: DeviceTreeNavigation,
@@ -61,7 +65,14 @@ function createSessionForPane(
   pane: TmuxPane
 ) {
   nav.navigateToPane(deviceId, windowId, pane.id, { keepSidebarOpen: true });
-  runtime.stores.agent.getState().startDraft(deviceId, pane.id, pane.title ?? null);
+  selfAgentStore()
+    .getState()
+    .startDraft({
+      nodeId: normalizeAgentNodeId(runtime.nodeId),
+      deviceId,
+      paneId: pane.id,
+      paneTitle: pane.title ?? null,
+    });
   runtime.stores.ui.getState().setSidebarTab('agent');
 }
 
@@ -74,7 +85,7 @@ function AgentPaneSessions({
   deviceId: string;
   paneId: string;
 }) {
-  const { sessionsByPane, activeSessionId } = useSidebarAgentSessions();
+  const { sessionsByPane, activeSessionId, nodeOffline } = useSidebarAgentSessions();
   const handleSelectSession = useSelectSession(nav);
   const sessions = sessionsByPane.get(paneKey(deviceId, paneId));
   return (
@@ -84,6 +95,7 @@ function AgentPaneSessions({
           key={session.id}
           session={session}
           isActive={session.id === activeSessionId}
+          paused={isSessionPaused(session, nodeOffline)}
           onSelect={handleSelectSession}
         />
       ))}
@@ -102,7 +114,7 @@ function AgentOrphanSessions({
 }) {
   const { t } = useTranslation();
   const [open, setOpen] = useState(false);
-  const { orderedSessions, activeSessionId } = useSidebarAgentSessions();
+  const { orderedSessions, activeSessionId, nodeOffline } = useSidebarAgentSessions();
   const handleSelectSession = useSelectSession(nav);
   const snapshots = useTmuxStore((state) => state.snapshots);
 
@@ -143,6 +155,7 @@ function AgentOrphanSessions({
             key={session.id}
             session={session}
             isActive={session.id === activeSessionId}
+            paused={isSessionPaused(session, nodeOffline)}
             onSelect={handleSelectSession}
           />
         ))}

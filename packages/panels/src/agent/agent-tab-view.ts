@@ -5,6 +5,7 @@ import type { DraftSession } from '@tmex/stores';
 import { lastUserMessageText } from '@tmex/stores';
 
 import { type BindingInfo, resolveBinding } from './agent-binding';
+import { NODE_OFFLINE_ERROR, isNodePaused } from './agent-node-offline';
 import { canRebindToRoute } from './agent-route-sync';
 import type { AgentTabState } from './use-agent-tab-state';
 
@@ -21,6 +22,8 @@ export interface AgentTabView {
   showNewSession: boolean;
   newSessionDisabled: boolean;
   showPaneMismatch: boolean;
+  /** 路由 node 离线：会话暂停，输入禁用 */
+  showNodeOffline: boolean;
   canRebind: boolean;
   inputDisabled: boolean;
   sending: boolean;
@@ -57,7 +60,12 @@ function hasPaneMismatch(state: AgentTabState): boolean {
   return activeSession.paneId !== routePaneId || activeSession.deviceId !== routeDeviceId;
 }
 
-function deriveComposerView(state: AgentTabState, isOrphan: boolean, hasContext: boolean) {
+function deriveComposerView(
+  state: AgentTabState,
+  isOrphan: boolean,
+  hasContext: boolean,
+  nodeOffline: boolean
+) {
   const { activeSession, draft, sending } = state;
   return {
     modelProviderId: activeSession ? activeSession.providerId : (draft?.providerId ?? null),
@@ -68,6 +76,7 @@ function deriveComposerView(state: AgentTabState, isOrphan: boolean, hasContext:
     // 草稿物化在途时同样禁用输入，避免同一草稿被重复提交
     inputDisabled:
       isOrphan ||
+      nodeOffline ||
       !hasContext ||
       activeSession?.status === 'waiting_confirmation' ||
       Boolean(sending) ||
@@ -76,16 +85,19 @@ function deriveComposerView(state: AgentTabState, isOrphan: boolean, hasContext:
   };
 }
 
-function deriveStatusView(state: AgentTabState, isOrphan: boolean) {
+function deriveStatusView(state: AgentTabState, isOrphan: boolean, nodeOffline: boolean) {
   const { activeSession, messages, routeDeviceId, routePaneId } = state;
+  // 离线横幅已经解释了 NODE_OFFLINE，不再叠一条原样回显 lastError 的错误条
+  const lastError = activeSession?.status === 'error' ? activeSession.lastError : null;
   return {
     running: activeSession?.status === 'running',
     // 新建按钮仅在「有内容的活动会话」时显示；草稿态/空会话本身即新会话，隐藏之
     showNewSession: Boolean(activeSession && (messages?.length ?? 0) > 0),
     newSessionDisabled: !routeDeviceId || !routePaneId,
     showPaneMismatch: Boolean(activeSession && !isOrphan && hasPaneMismatch(state)),
+    showNodeOffline: nodeOffline,
     canRebind: canRebindToRoute(activeSession, { deviceId: routeDeviceId, paneId: routePaneId }),
-    errorText: activeSession?.status === 'error' ? activeSession.lastError : null,
+    errorText: nodeOffline && lastError === NODE_OFFLINE_ERROR ? null : lastError,
     retryText: lastUserMessageText(messages),
   };
 }
@@ -95,6 +107,7 @@ export function deriveAgentTabView(state: AgentTabState): AgentTabView {
   const binding = deriveBinding(state);
   const isOrphan = isOrphanSession(state, binding);
   const hasContext = Boolean(activeSession || draft);
+  const nodeOffline = isNodePaused(state.nodeOffline, activeSession?.lastError ?? null);
   return {
     activeSession,
     draft,
@@ -103,7 +116,7 @@ export function deriveAgentTabView(state: AgentTabState): AgentTabView {
     isOrphan,
     hasContext,
     draftEmpty: Boolean(draft && !activeSession),
-    ...deriveStatusView(state, isOrphan),
-    ...deriveComposerView(state, isOrphan, hasContext),
+    ...deriveStatusView(state, isOrphan, nodeOffline),
+    ...deriveComposerView(state, isOrphan, hasContext, nodeOffline),
   };
 }

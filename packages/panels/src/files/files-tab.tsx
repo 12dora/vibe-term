@@ -7,7 +7,7 @@ import { matchPath, useLocation, useNavigate } from 'react-router';
 
 import { fetchDevices, fetchFileRoots, fetchLlmProviders } from '@tmex/api-client';
 import { decodeFileRef, fileRoute, hostAppPath } from '@tmex/stores';
-import { useFileTreeStore, useRuntime } from '@tmex/stores/react';
+import { useFileTreeStore, useRuntime, useTmuxStore, useUIStore } from '@tmex/stores/react';
 import { cn } from '@tmex/ui';
 import { Button } from '@tmex/ui/button';
 import { ContextMenu, ContextMenuTrigger } from '@tmex/ui/context-menu';
@@ -17,6 +17,7 @@ import { DirectoryNodeView } from './directory-node-view';
 import { fileIconColor, fileIconFor } from './file-icon';
 import { FileNodeMenuContent, useFileNodeActions } from './file-node-actions';
 import { NodeError } from './node-menu';
+import { selectVisibleFileRoots } from './root-visibility';
 import { useDirectoryListing } from './use-directory-listing';
 import { hasExternalFiles, useDirectoryUpload } from './use-directory-upload';
 import { useRsyncMissingToast } from './use-rsync-missing-toast';
@@ -44,19 +45,35 @@ interface TreeContext {
 export interface FilesTabProps {
   /** 不渲染头部行（标题 + 刷新按钮）；宿主连续渲染多个实例时避免重复头部。 */
   hideHeader?: boolean;
+  /** 该 runtime 所属 node 已离线：只留一行提示，不发请求也不显示陈旧目录。 */
+  nodeOffline?: boolean;
 }
 
-// 外壳门：runtime.features.filesUi 关断时不渲染文件树，也不发起 files 查询（内层 hooks 不执行）。
+// 外壳门：runtime.features.filesUi 关断、或所属 node 离线时都不渲染文件树，
+// 也不发起 files 查询（内层 hooks 不执行）；node 回线后内层重挂自动重新拉取。
 export function FilesTab(props: FilesTabProps = {}) {
   const { features } = useRuntime();
+  const { t } = useTranslation();
   if (!features.filesUi) return null;
+  if (props.nodeOffline) {
+    return (
+      <SidebarGroup className="flex min-h-0 flex-1 flex-col pt-0" data-testid="files-tab">
+        <div
+          data-testid="files-node-offline"
+          className="px-3 py-6 text-center text-xs text-muted-foreground"
+        >
+          {t('files.nodeOffline')}
+        </div>
+      </SidebarGroup>
+    );
+  }
   return <FilesTabInner {...props} />;
 }
 
 function FilesTabInner({ hideHeader }: FilesTabProps) {
   const { t } = useTranslation();
   const queryClient = useQueryClient();
-  const { apiClient } = useRuntime();
+  const { apiClient, nodeId } = useRuntime();
   const isFetching = useIsFetching({ queryKey: ['files'] });
   const pruneStaleRoots = useFileTreeStore((s) => s.pruneStaleRoots);
 
@@ -84,9 +101,17 @@ function FilesTabInner({ hideHeader }: FilesTabProps) {
     throwOnError: false,
   });
 
+  const filesVisibility = useUIStore((state) => state.sidebarFilesVisibility);
+  const deviceConnected = useTmuxStore((state) => state.deviceConnected);
   const roots = useMemo(
-    () => (rootsQuery.data?.roots ?? []).filter((r) => r.enabled),
-    [rootsQuery.data]
+    () =>
+      selectVisibleFileRoots({
+        roots: rootsQuery.data?.roots ?? [],
+        runtimeNodeId: nodeId,
+        visibility: filesVisibility,
+        deviceConnected,
+      }),
+    [rootsQuery.data, nodeId, filesVisibility, deviceConnected]
   );
 
   // 加载后清理陈旧的持久化展开键（根/设备已不存在）

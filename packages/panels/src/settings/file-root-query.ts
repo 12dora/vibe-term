@@ -47,6 +47,15 @@ export interface FileRootEntry {
   client: ApiClient;
 }
 
+/** 单设备模式只显示锁定设备的 roots；未锁定时原样返回。 */
+export function filterFileRootEntries(
+  entries: FileRootEntry[],
+  lockedDeviceId: string | undefined
+): FileRootEntry[] {
+  if (!lockedDeviceId) return entries;
+  return entries.filter((entry) => entry.root.deviceId === lockedDeviceId);
+}
+
 export type FileRootsListState = 'loading' | 'error' | 'empty' | 'ready';
 
 export interface FileRootsListStateInput {

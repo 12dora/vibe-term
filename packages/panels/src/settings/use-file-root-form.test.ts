@@ -1,9 +1,13 @@
 import { describe, expect, test } from 'bun:test';
 
-import type { Device } from '@tmex/shared';
+import type { Device, FileRootDto } from '@tmex/shared';
 
 import type { FileRootDeviceGroup } from './file-root-query';
-import { collectFileRootDeviceOptions, isFileRootFormSubmittable } from './use-file-root-form';
+import {
+  collectFileRootDeviceOptions,
+  isFileRootFormSubmittable,
+  resolveFileRootFormDeviceId,
+} from './use-file-root-form';
 
 const devices = [
   { id: 'd1', name: 'laptop', type: 'local' },
@@ -54,5 +58,21 @@ describe('collectFileRootDeviceOptions', () => {
       { id: 'g1', name: 'here' },
       { id: 'g2', name: 'there', type: 'ssh' },
     ]);
+  });
+});
+
+describe('resolveFileRootFormDeviceId', () => {
+  const root = { id: 'r1', deviceId: 'd2', path: '/srv' } as FileRootDto;
+
+  test('单设备模式新增时强制用锁定设备', () => {
+    expect(resolveFileRootFormDeviceId(undefined, 'd1')).toBe('d1');
+  });
+
+  test('编辑模式始终跟随 root 自己的设备', () => {
+    expect(resolveFileRootFormDeviceId(root, 'd1')).toBe('d2');
+  });
+
+  test('未锁定时新增从空开始', () => {
+    expect(resolveFileRootFormDeviceId(undefined, undefined)).toBe('');
   });
 });

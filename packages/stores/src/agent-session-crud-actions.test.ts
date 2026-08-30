@@ -16,6 +16,7 @@ function makeSession(id: string, updatedAt: string, title = id): AgentSessionDto
   return {
     id,
     title,
+    nodeId: null,
     deviceId: 'd1',
     paneId: '%1',
     providerId: null,

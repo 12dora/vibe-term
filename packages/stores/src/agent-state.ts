@@ -20,6 +20,8 @@ export interface PendingConfirmationUi {
 export interface DraftSession {
   /** 草稿代际标识：物化结果回填前用它判定草稿是否已被新的草稿取代 */
   key: string;
+  /** 绑定 pane 所在的 mesh node；null 表示持有该会话的 gateway 自身 */
+  nodeId: string | null;
   deviceId: string;
   paneId: string;
   providerId: string | null;
@@ -32,6 +34,8 @@ export interface DraftSession {
 
 /** 创建会话的可选参数（草稿物化时传入） */
 export interface CreateSessionOptions {
+  /** 绑定 pane 所在的 mesh node；缺省 / null 表示本 gateway */
+  nodeId?: string | null;
   providerId?: string | null;
   modelId?: string | null;
   providerHostedTools?: string[];
@@ -88,15 +92,22 @@ export interface AgentActions {
     reason?: string
   ) => Promise<void>;
   // 草稿会话
-  startDraft: (
-    deviceId: string,
-    paneId: string,
-    paneTitle: string | null,
-    prompt?: string | null
-  ) => void;
+  startDraft: (input: StartDraftInput) => void;
   updateDraft: (patch: Partial<Pick<DraftSession, 'providerId' | 'modelId'>>) => void;
   clearDraft: () => void;
   materializeDraft: () => Promise<AgentSessionDto | null>;
+}
+
+/** 起草参数：node + pane 定位，加上起源元数据与预填 prompt */
+export interface StartDraftInput {
+  /** 绑定 pane 所在的 mesh node；null 表示本 gateway */
+  nodeId: string | null;
+  deviceId: string;
+  paneId: string;
+  /** snapshot 中该 pane 的标题，作为起源元数据兜底 */
+  paneTitle: string | null;
+  /** 预填到输入框的草稿 prompt（如 rsync 自动安装流程），由 ChatInput 消费一次 */
+  prompt?: string | null;
 }
 
 export interface AgentState extends AgentStateData, AgentActions {}

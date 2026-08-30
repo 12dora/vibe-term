@@ -1,5 +1,5 @@
-import { StreamingMarkdown } from '../../markdown/streaming-markdown';
 import { cn } from '@tmex/ui';
+import { StreamingMarkdown } from '../../markdown/streaming-markdown';
 
 export function AssistantMessage({
   text,

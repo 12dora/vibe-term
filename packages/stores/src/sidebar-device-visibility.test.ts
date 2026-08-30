@@ -1,5 +1,9 @@
 import { describe, expect, test } from 'bun:test';
-import { isSidebarDeviceVisible, sidebarDeviceVisibilityKey } from './sidebar-device-visibility';
+import {
+  isSidebarDeviceVisible,
+  isSidebarFilesVisible,
+  sidebarDeviceVisibilityKey,
+} from './sidebar-device-visibility';
 
 const NODE_A = '0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a';
 
@@ -25,5 +29,26 @@ describe('isSidebarDeviceVisible', () => {
     const map = { 'self:d1': false, [`${NODE_A}:d1`]: true };
     expect(isSidebarDeviceVisible(map, 'self', 'd1')).toBe(false);
     expect(isSidebarDeviceVisible(map, NODE_A, 'd1')).toBe(true);
+  });
+});
+
+describe('isSidebarFilesVisible', () => {
+  test('无记录时跟随「该设备是否配了目录」，本机与远端一致', () => {
+    expect(isSidebarFilesVisible({}, 'self', 'd1', true)).toBe(true);
+    expect(isSidebarFilesVisible({}, NODE_A, 'd1', true)).toBe(true);
+    expect(isSidebarFilesVisible({}, 'self', 'd1', false)).toBe(false);
+    expect(isSidebarFilesVisible({}, NODE_A, 'd1', false)).toBe(false);
+  });
+
+  test('显式记录优先于默认值（两个方向都生效）', () => {
+    expect(isSidebarFilesVisible({ 'self:d1': false }, 'self', 'd1', true)).toBe(false);
+    expect(isSidebarFilesVisible({ [`${NODE_A}:d1`]: true }, NODE_A, 'd1', false)).toBe(true);
+  });
+
+  test('与终端页共用复合键，但读的是各自的表', () => {
+    const filesMap = { 'self:d1': true };
+    expect(isSidebarFilesVisible(filesMap, 'self', 'd1', false)).toBe(true);
+    expect(isSidebarDeviceVisible({}, 'self', 'd1')).toBe(true);
+    expect(isSidebarFilesVisible({}, NODE_A, 'd1', false)).toBe(false);
   });
 });

@@ -119,7 +119,13 @@
       "directFallbackToast": "直连已断开，最近输入可能未送达",
       "sidebar": {
         "show": "显示在侧栏",
-        "hint": "仅本浏览器生效的偏好：该设备是否出现在侧栏设备列表里。"
+        "hint": "仅本浏览器生效的偏好：该设备是否出现在侧栏设备列表里。",
+        "group": "侧栏显示",
+        "terminal": "终端",
+        "files": "文件",
+        "terminalHint": "在侧栏的终端页显示该设备",
+        "filesHint": "在侧栏的文件页显示该设备的目录",
+        "filesDisabledHint": "尚未为该设备配置目录"
       },
       "addTo": {
         "label": "添加设备到",
@@ -221,7 +227,8 @@
         "nodes": "多节点互联",
         "notifications": "通知",
         "ai": "AI",
-        "terminal": "终端"
+        "terminal": "终端",
+        "remoteAccess": "远程访问"
       },
       "terminal": {
         "title": "终端设置",
@@ -261,6 +268,137 @@
           },
           "loadFailed": "加载快捷键失败",
           "retry": "重试"
+        }
+      },
+      "remoteAccess": {
+        "title": "远程访问",
+        "wizardTitle": "配置向导",
+        "description": "通过 Cloudflare Tunnel 把本机的 tmex 暴露到公网，无需公网 IP 或端口映射。",
+        "remoteNodeNotice": "远程访问只能在当前连接的机器上配置。",
+        "loginRequired": "请先登录本机后再配置远程访问。",
+        "loadFailed": "无法读取远程访问状态。",
+        "unsupported": "当前系统（{{platform}}）不支持 Cloudflare Tunnel。",
+        "modeLabel": "方式",
+        "publicUrl": "公网地址",
+        "restartsLabel": "重启次数",
+        "restarts": "{{times}} 次",
+        "state": {
+          "notConfigured": "未配置",
+          "stopped": "已停止",
+          "starting": "启动中",
+          "running": "运行中",
+          "error": "错误"
+        },
+        "mode": {
+          "quick": {
+            "title": "临时隧道",
+            "description": "无需账号，地址随每次启动变化，适合测试。"
+          },
+          "named": {
+            "title": "命名隧道",
+            "description": "需要 Cloudflare 账号与已托管的域名，地址固定。"
+          }
+        },
+        "actions": {
+          "start": "启动",
+          "stop": "停止",
+          "remove": "移除",
+          "check": "检查连通性",
+          "open": "在新标签页打开",
+          "install": "安装",
+          "login": "登录 Cloudflare",
+          "openLoginUrl": "打开授权页面",
+          "cancelLogin": "取消",
+          "create": "创建并启动",
+          "quickStart": "启动"
+        },
+        "check": {
+          "reachable": "可访问",
+          "unreachable": "不可达"
+        },
+        "log": {
+          "title": "日志",
+          "empty": "暂无输出。"
+        },
+        "steps": {
+          "install": {
+            "title": "安装 cloudflared",
+            "description": "tmex 会把 cloudflared 下载到自己的数据目录，不改动系统。",
+            "version": "版本",
+            "path": "路径",
+            "source": "来源",
+            "sourceValue": {
+              "managed": "由 tmex 管理",
+              "system": "系统已安装"
+            }
+          },
+          "mode": {
+            "title": "选择方式",
+            "description": "建立隧道后如需更换方式，先移除现有隧道。",
+            "pending": "请先选择一种方式。"
+          },
+          "tunnel": {
+            "title": "建立隧道",
+            "description": "选择方式后在这里完成建立。"
+          },
+          "quick": {
+            "title": "临时隧道",
+            "description": "启动后生成一个 trycloudflare.com 的临时地址，停止即失效。",
+            "started": "临时隧道已启动。"
+          },
+          "named": {
+            "title": "命名隧道",
+            "description": "使用已托管在 Cloudflare 的域名，地址固定。",
+            "login": {
+              "description": "在打开的授权页面中选择域名并授权，完成后回到本页。",
+              "waiting": "等待在 Cloudflare 完成授权",
+              "done": "已登录 Cloudflare。"
+            },
+            "hostname": "主机名",
+            "hostnamePlaceholder": "tmex.example.com",
+            "hostnameHint": "填写已托管在 Cloudflare 的域名下的子域。",
+            "hostnameInvalid": "主机名格式不正确，请填写形如 tmex.example.com 的小写域名。",
+            "tunnelName": "隧道名称",
+            "tunnelNamePlaceholder": "tmex",
+            "tunnelNameHint": "可留空，留空时由 tmex 生成。",
+            "hubHint": "作为 Hub 时，请将 Hub 公开地址设为此主机名。",
+            "hubHintLink": "前往多节点互联设置"
+          },
+          "proxy": {
+            "title": "反向代理信任",
+            "description": "隧道会替换客户端地址与协议，需要相应调整 tmex 的信任设置。",
+            "trustProxy": "信任反向代理头",
+            "trustProxyHint": "tmex 位于隧道之后时需要开启，以便正确识别客户端地址与协议。",
+            "autoStart": "随 tmex 启动",
+            "autoStartHint": "网关启动时自动拉起隧道。",
+            "restartRequired": "配置已保存，重启后生效。",
+            "restartNow": "立即重启",
+            "restarting": "正在重启",
+            "restartTimeout": "重启超时，请手动重启 tmex。"
+          }
+        },
+        "jobStep": {
+          "download": "下载",
+          "extract": "解压",
+          "verify": "校验",
+          "create_tunnel": "创建隧道",
+          "route_dns": "配置 DNS",
+          "start": "启动"
+        },
+        "errors": {
+          "unsupported_platform": "当前系统不支持 Cloudflare Tunnel。",
+          "binary_missing": "未找到 cloudflared，请先完成安装。",
+          "download_failed": "下载 cloudflared 失败，请检查网络后重试。",
+          "not_logged_in": "尚未登录 Cloudflare，请先完成授权。",
+          "login_timeout": "授权超时，请重新发起登录。",
+          "invalid_hostname": "主机名格式不正确。",
+          "tunnel_exists": "同名隧道已存在，请更换名称。",
+          "dns_route_failed": "配置 DNS 记录失败，请确认该域名已托管在 Cloudflare。",
+          "process_failed": "cloudflared 进程启动失败，详见日志。",
+          "busy": "另一项操作正在进行。",
+          "not_configured": "尚未配置远程访问。",
+          "invalid_request": "请求无效。",
+          "unknown": "操作失败：{{message}}"
         }
       },
       "deviceManagement": {
@@ -346,6 +484,19 @@
         "path": "路径",
         "pathPlaceholder": "/绝对路径/到/目录",
         "pathHint": "所选设备上的绝对路径。",
+        "browse": "浏览…",
+        "lockedDescription": "此设备上可在「文件」标签页浏览的目录。",
+        "deviceModalTitle": "{{name}} · 目录",
+        "pickerTitle": "选择目录",
+        "pickerDescription": "浏览设备上的目录，选中后填入路径。",
+        "pickerUp": "上一级",
+        "pickerShowHidden": "显示隐藏目录",
+        "pickerEmpty": "没有子目录",
+        "pickerFailed": "加载目录失败",
+        "pickerTruncated": "子目录过多，列表已截断",
+        "pickerSymlink": "符号链接",
+        "pickerCurrent": "当前目录",
+        "pickerConfirm": "选择此目录",
         "enabled": "启用",
         "addFailed": "添加目录失败",
         "updateFailed": "更新目录失败",
@@ -767,7 +918,7 @@
         "none": "未选择会话",
         "new": "新建 Agent 会话",
         "switch": "切换会话",
-        "selectPaneHint": "请在「终端」标签中选择一个 Pane 来开启会话",
+        "selectPaneHint": "选择一个会话",
         "noSessions": "暂无会话",
         "showAll": "显示全部会话",
         "menu": "会话操作",
@@ -782,6 +933,9 @@
         "deleteConfirm": "删除",
         "createDisabledNoPane": "请先打开一个终端 Pane 再创建会话",
         "privacyNotice": "会话将把终端屏幕内容发送给配置的 LLM 服务。"
+      },
+      "node": {
+        "offlinePaused": "节点离线，会话已暂停"
       },
       "binding": {
         "invalid": "已失效",
@@ -978,6 +1132,7 @@
       "title": "文件",
       "refresh": "刷新文件列表",
       "noRoots": "没有可访问的目录。请在「设置 → 文件」中添加。",
+      "nodeOffline": "节点离线",
       "emptyDir": "空目录",
       "truncated": "条目过多，列表已截断",
       "download": "下载",
@@ -1426,6 +1581,7 @@
       },
       "reach": {
         "lan": "局域网",
+        "wan": "公网",
         "relay": "经 Hub 中转",
         "none": "不可达"
       },
@@ -1468,8 +1624,11 @@
       },
       "badge": {
         "direct": "直连",
-        "primary": "中转",
-        "rttUnknown": "延迟未知",
+        "reachRow": "到达路径",
+        "transportRow": "承载",
+        "transportWs": "WebSocket",
+        "transportDc": "WebRTC",
+        "transportRelay": "Hub 中转",
         "iceTitle": "连接详情",
         "icePlaceholder": "直连未启用，暂无数据。",
         "connectionState": "连接状态",

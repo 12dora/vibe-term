@@ -1,10 +1,14 @@
 import { describe, expect, test } from 'bun:test';
+import type { MeshNode } from '@tmex/api-client/auth/index';
 import type { AgentSessionDto, StateSnapshotPayload, TmuxPane, TmuxWindow } from '@tmex/shared';
+import { isSessionOnNode } from '@tmex/stores';
 import {
   collectKnownPaneIds,
   compareSessions,
   groupSessionsByPane,
+  isNodeOffline,
   isSessionAttached,
+  isSessionPaused,
   orderSessions,
   paneKey,
 } from './use-sidebar-agent-sessions';
@@ -12,6 +16,7 @@ import {
 function session(partial: Partial<AgentSessionDto> & { id: string }): AgentSessionDto {
   return {
     title: partial.id,
+    nodeId: null,
     deviceId: null,
     paneId: null,
     providerId: null,
@@ -197,5 +202,61 @@ describe('isSessionAttached', () => {
     expect(isSessionAttached(bound, new Set(), new Map(), false)).toBe(true);
     // 未绑定 pane 的会话与设备列表无关，始终算孤立
     expect(isSessionAttached(session({ id: 'b' }), new Set(), new Map(), false)).toBe(false);
+  });
+});
+
+const NODE_A = 'a'.repeat(32);
+const ENTRY = 'e'.repeat(32);
+
+function meshNode(id: string, online: boolean): MeshNode {
+  return { id, name: id, publicKey: '', online, loggedIn: true } as MeshNode;
+}
+
+describe('per-node session filtering', () => {
+  const local = session({ id: 'local', deviceId: 'd1', paneId: '%1' });
+  const remote = session({ id: 'remote', nodeId: NODE_A, deviceId: 'd1', paneId: '%1' });
+  const all = [local, remote];
+
+  test('a node section only lists the sessions bound to it', () => {
+    expect(all.filter((item) => isSessionOnNode(item, null))).toEqual([local]);
+    expect(all.filter((item) => isSessionOnNode(item, NODE_A))).toEqual([remote]);
+  });
+
+  test('grouping by pane stays per node, so identical device:pane keys do not collide', () => {
+    const selfGroups = groupSessionsByPane(all.filter((item) => isSessionOnNode(item, null)));
+    const remoteGroups = groupSessionsByPane(all.filter((item) => isSessionOnNode(item, NODE_A)));
+    expect(selfGroups.get(paneKey('d1', '%1'))).toEqual([local]);
+    expect(remoteGroups.get(paneKey('d1', '%1'))).toEqual([remote]);
+  });
+});
+
+describe('isNodeOffline', () => {
+  const nodes = [meshNode(ENTRY, true), meshNode(NODE_A, false)];
+
+  test('maps the entry node onto the self runtime id', () => {
+    expect(isNodeOffline(nodes, ENTRY, 'self')).toBe(false);
+  });
+
+  test('reports a remote node that went offline', () => {
+    expect(isNodeOffline(nodes, ENTRY, NODE_A)).toBe(true);
+  });
+
+  test('unknown rows (standalone / list not loaded) count as online', () => {
+    expect(isNodeOffline([], null, 'self')).toBe(false);
+    expect(isNodeOffline(nodes, ENTRY, 'c'.repeat(32))).toBe(false);
+  });
+});
+
+describe('isSessionPaused', () => {
+  test('paused while the node is offline', () => {
+    expect(isSessionPaused(session({ id: 'a' }), true)).toBe(true);
+  });
+
+  test('paused when the backend propagated NODE_OFFLINE', () => {
+    expect(isSessionPaused(session({ id: 'a', lastError: 'NODE_OFFLINE' }), false)).toBe(true);
+  });
+
+  test('not paused for an online node with an unrelated error', () => {
+    expect(isSessionPaused(session({ id: 'a', lastError: 'boom' }), false)).toBe(false);
   });
 });

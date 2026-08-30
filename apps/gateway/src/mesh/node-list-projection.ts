@@ -1,5 +1,6 @@
 import { decodeCertificate, encodeBase64url } from '@tmex/shared/auth';
 import { nodeSessionCookieName } from '../auth/cookies';
+import { isPeerReachable } from './address-class';
 import { MESH_VIA_SELF } from './mesh-deps';
 
 type Meta = {
@@ -14,8 +15,9 @@ export type MeshNodeDto = {
   name: string;
   publicKey: string;
   online: boolean;
-  reach: 'lan' | 'relay' | null;
+  reach: 'lan' | 'wan' | 'relay' | null;
   transport: 'ws-secure' | 'relay' | 'dc' | null;
+  rttMs: number | null;
   version: string | null;
   direct_capable: boolean;
   inventory: unknown;
@@ -86,7 +88,7 @@ export function projectMeshListNode(
   selfId: string,
   selfPk: Uint8Array,
   cookies: Map<string, string>,
-  reach: Map<string, 'lan' | 'relay' | null>,
+  reach: Map<string, 'lan' | 'wan' | 'relay' | null>,
   hubOnline: ReadonlySet<string>,
   certById: Map<string, { certificateBytes: Uint8Array }>,
   peerById: Map<string, { inventoryJson?: string | null; directCapable?: boolean }>,
@@ -95,7 +97,8 @@ export function projectMeshListNode(
   selfName: string | null,
   self: { inventory?: unknown; direct_capable: boolean; version?: string } | undefined,
   hubNodeId: string | null,
-  transportOf?: (id: string) => 'ws-secure' | 'relay' | 'dc' | null
+  transportOf?: (id: string) => 'ws-secure' | 'relay' | 'dc' | null,
+  rttOf?: (id: string) => number | null
 ): MeshNodeDto | null {
   const isSelf = id === selfId;
   const cert = certById.get(id);
@@ -121,7 +124,7 @@ export function projectMeshListNode(
       registryName: registryById.get(id),
       selfName,
     }),
-    isSelf || hubOnline.has(id) || r === 'lan' || r === 'relay',
+    isSelf || hubOnline.has(id) || isPeerReachable(r),
     {
       inventory: inv,
       directCapable: peer?.directCapable ?? false,
@@ -142,6 +145,7 @@ export function projectMeshListNode(
     online: core.online,
     reach: r,
     transport: isSelf ? null : (transportOf?.(id) ?? null),
+    rttMs: isSelf ? null : (rttOf?.(id) ?? null),
     version: core.version || versionFromInventory(core.inventory),
     direct_capable: core.direct_capable,
     inventory: core.inventory,

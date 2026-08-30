@@ -2,10 +2,12 @@ import type { Device, FileRootDto } from '@tmex/shared';
 import { useEffect, useState } from 'react';
 
 import type { ApiClient } from '@tmex/api-client';
+import { useRuntime } from '@tmex/stores/react';
 
 import {
   type FileRootDeviceGroup,
   type FileRootDeviceOption,
+  resolveFileRootClient,
   useFileRootSaveMutation,
 } from './file-root-query';
 
@@ -28,6 +30,14 @@ export function isFileRootFormSubmittable(draft: FileRootFormDraft, isEdit: bool
   return pathValid && (isEdit || draft.deviceId.length > 0);
 }
 
+/** 编辑模式沿用 root 自己的设备；单设备模式（locked）新增时设备由宿主锁定。 */
+export function resolveFileRootFormDeviceId(
+  root: FileRootDto | undefined,
+  lockedDeviceId: string | undefined
+): string {
+  return root?.deviceId ?? lockedDeviceId ?? '';
+}
+
 export interface FileRootFormParams {
   open: boolean;
   /** 缺省表示新增模式 */
@@ -35,12 +45,16 @@ export interface FileRootFormParams {
   editClient?: ApiClient;
   devices: Device[];
   deviceGroups?: FileRootDeviceGroup[];
+  /** 单设备模式：设备只读且新增只落该设备 */
+  lockedDeviceId?: string;
   onOpenChange: (open: boolean) => void;
   onRootsMutated?: () => void;
 }
 
 export interface FileRootFormModel {
   isEdit: boolean;
+  /** 单设备模式：设备字段只读 */
+  locked: boolean;
   deviceId: string;
   setDeviceId: (deviceId: string) => void;
   path: string;
@@ -52,6 +66,8 @@ export interface FileRootFormModel {
   canSubmit: boolean;
   isPending: boolean;
   submit: () => void;
+  /** 目录选择器要打的 gateway：与该设备 roots 的落盘 client 一致 */
+  browseClient: ApiClient;
 }
 
 export function useFileRootForm({
@@ -60,11 +76,13 @@ export function useFileRootForm({
   editClient,
   devices,
   deviceGroups,
+  lockedDeviceId,
   onOpenChange,
   onRootsMutated,
 }: FileRootFormParams): FileRootFormModel {
   const isEdit = Boolean(root);
-  const [deviceId, setDeviceId] = useState('');
+  const { apiClient } = useRuntime();
+  const [deviceId, setDeviceId] = useState(() => resolveFileRootFormDeviceId(root, lockedDeviceId));
   const [path, setPath] = useState('');
   const [enabled, setEnabled] = useState(true);
 
@@ -72,10 +90,10 @@ export function useFileRootForm({
     if (!open) {
       return;
     }
-    setDeviceId(root?.deviceId ?? '');
+    setDeviceId(resolveFileRootFormDeviceId(root, lockedDeviceId));
     setPath(root?.path ?? '');
     setEnabled(root?.enabled ?? true);
-  }, [open, root]);
+  }, [open, root, lockedDeviceId]);
 
   const saveMutation = useFileRootSaveMutation({
     root,
@@ -90,6 +108,7 @@ export function useFileRootForm({
 
   return {
     isEdit,
+    locked: !isEdit && Boolean(lockedDeviceId),
     deviceId,
     setDeviceId,
     path,
@@ -100,6 +119,9 @@ export function useFileRootForm({
     selectedDevice: deviceOptions.find((device) => device.id === deviceId),
     canSubmit,
     isPending: saveMutation.isPending,
+    browseClient: isEdit
+      ? (editClient ?? apiClient)
+      : resolveFileRootClient(deviceGroups, apiClient, deviceId),
     submit: () => {
       if (!canSubmit || saveMutation.isPending) {
         return;
