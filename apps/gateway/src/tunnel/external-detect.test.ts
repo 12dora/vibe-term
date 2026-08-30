@@ -86,7 +86,7 @@ ingress:
     );
   });
 
-  test('detector prefers launchd + sibling hostname file and caches for 30s', async () => {
+  test('detector prefers launchd + origin-matching log ingress and caches for 30s', async () => {
     const files = new Map<string, string>([
       [
         '/Users/me/Library/LaunchAgents/com.tmex.cloudflared.plist',
@@ -100,7 +100,10 @@ ingress:
         '/tmp/tmex-cf/token',
         Buffer.from(JSON.stringify({ a: 'acct', t: 'tid', s: 'secret' })).toString('base64'),
       ],
-      ['/tmp/tmex-cf/hostname', 'tmex.example.org\n'],
+      [
+        '/tmp/cf.log',
+        '{"ingress":[{"hostname":"tmex.example.org","service":"http://127.0.0.1:19883"}]}\n',
+      ],
       ['/tmp/tmex-cf/tunnel-id', 'tid\n'],
     ]);
     const dirs = new Map<string, string[]>([
@@ -127,9 +130,128 @@ ingress:
       hostnames: ['tmex.example.org'],
     });
     now += 10_000;
-    files.delete('/tmp/tmex-cf/hostname');
+    files.delete('/tmp/cf.log');
     const cached = await d.detect();
     expect(cached.hostnames).toEqual(['tmex.example.org']);
+  });
+
+  test('ignores a sibling hostname file without origin ingress evidence', async () => {
+    const d = new ExternalTunnelDetector({
+      originPort: 19883,
+      now: () => 1,
+      homedir: () => '/no-home',
+      platform: 'linux',
+      listProcesses: async () => '7 /usr/bin/cloudflared tunnel run --token-file /tmp/token\n',
+      readFile: async (path) => {
+        if (path === '/tmp/token') {
+          return Buffer.from(JSON.stringify({ a: 'acct', t: 'tid', s: 's' })).toString('base64');
+        }
+        if (path === '/tmp/hostname') return 'sibling.example.com\n';
+        return null;
+      },
+      listDir: async () => [],
+    });
+    const found = await d.detect();
+    expect(found.hostnames).toEqual([]);
+    expect(found.running).toBe(true);
+    expect(found.tunnelId).toBe('tid');
+  });
+
+  test('reads the --config path declared by the candidate, not ~/.cloudflared/config.yml', async () => {
+    const d = new ExternalTunnelDetector({
+      originPort: 19883,
+      now: () => 1,
+      homedir: () => '/home/me',
+      platform: 'linux',
+      listProcesses: async () => '11 /usr/bin/cloudflared tunnel --config /custom/cf.yml run\n',
+      readFile: async (path) => {
+        if (path === '/home/me/.cloudflared/config.yml') {
+          return 'tunnel: other\ningress:\n  - hostname: wrong.example.com\n    service: http://127.0.0.1:19883\n';
+        }
+        if (path === '/custom/cf.yml') {
+          return `tunnel: 550e8400-e29b-41d4-a716-446655440000
+ingress:
+  - hostname: custom.example.com
+    service: http://127.0.0.1:19883
+`;
+        }
+        return null;
+      },
+      listDir: async () => [],
+    });
+    const found = await d.detect();
+    expect(found.configPath).toBe('/custom/cf.yml');
+    expect(found.hostnames).toEqual(['custom.example.com']);
+    expect(found.running).toBe(true);
+  });
+
+  test('does not mark a candidate running based on an unrelated cloudflared process', async () => {
+    const d = new ExternalTunnelDetector({
+      originPort: 19883,
+      now: () => 1,
+      homedir: () => '/Users/me',
+      platform: 'darwin',
+      listProcesses: async () =>
+        '9 /opt/homebrew/bin/cloudflared tunnel run --token-file /tmp/other/token\n',
+      readFile: async (path) => {
+        if (path === '/Users/me/Library/LaunchAgents/com.tmex.cloudflared.plist') {
+          return `<plist><dict><key>ProgramArguments</key><array>
+            <string>/opt/homebrew/bin/cloudflared</string><string>tunnel</string>
+            <string>--config</string><string>/tmp/tmex/config.yml</string>
+            <string>run</string>
+          </array></dict></plist>`;
+        }
+        if (path === '/tmp/tmex/config.yml') {
+          return `tunnel: 550e8400-e29b-41d4-a716-446655440000
+ingress:
+  - hostname: tmex.example.com
+    service: http://127.0.0.1:19883
+`;
+        }
+        if (path === '/tmp/other/token') {
+          return Buffer.from(JSON.stringify({ a: 'a', t: 'other-id', s: 's' })).toString('base64');
+        }
+        return null;
+      },
+      listDir: async (path) =>
+        path === '/Users/me/Library/LaunchAgents' ? ['com.tmex.cloudflared.plist'] : [],
+    });
+    const found = await d.detect();
+    expect(found.source).toBe('launchd');
+    expect(found.hostnames).toEqual(['tmex.example.com']);
+    expect(found.running).toBe(false);
+  });
+
+  test('prefers the running candidate when multiple tunnels exist', async () => {
+    const d = new ExternalTunnelDetector({
+      originPort: 19883,
+      now: () => 1,
+      homedir: () => '/home/me',
+      platform: 'linux',
+      listProcesses: async () => '22 /usr/bin/cloudflared tunnel --config /run/cf.yml run\n',
+      readFile: async (path) => {
+        if (path === '/home/me/.cloudflared/config.yml') {
+          return `tunnel: 11111111-1111-1111-1111-111111111111
+ingress:
+  - hostname: stopped.example.com
+    service: http://127.0.0.1:19883
+`;
+        }
+        if (path === '/run/cf.yml') {
+          return `tunnel: 22222222-2222-2222-2222-222222222222
+ingress:
+  - hostname: live.example.com
+    service: http://127.0.0.1:19883
+`;
+        }
+        return null;
+      },
+      listDir: async () => [],
+    });
+    const found = await d.detect();
+    expect(found.running).toBe(true);
+    expect(found.hostnames).toEqual(['live.example.com']);
+    expect(found.configPath).toBe('/run/cf.yml');
   });
 
   test('uses Cloudflare tunnel API for hostname and name when no sibling file', async () => {

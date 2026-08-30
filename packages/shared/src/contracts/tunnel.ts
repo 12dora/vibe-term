@@ -178,7 +178,7 @@ export type TunnelActionRequest =
   | { action: 'check' }
   | { action: 'set_auto_start'; autoStart: boolean; acknowledgeExposure?: boolean }
   | { action: 'set_trust_proxy'; trustProxy: boolean }
-  /** 保存 Cloudflare API token（需 Access: Apps and Policies 编辑权限）与 account id；同步动作 */
+  /** 保存 Cloudflare API token（需 Access: Apps and Policies — Edit 与 Access: Organizations, Identity Providers, and Groups — Read）与 account id；同步动作 */
   | { action: 'set_access_credentials'; apiToken: string; accountId: string }
   | { action: 'clear_access_credentials' }
   /**

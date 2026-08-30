@@ -747,6 +747,7 @@ export const tunnelAccess = sqliteTable(
     rulesJson: text('rules_json').notNull().default('[]'),
     enforceJwt: integer('enforce_jwt', { mode: 'boolean' }).notNull().default(false),
     lastError: text('last_error'),
+    bypassAppId: text('bypass_app_id'),
     updatedAt: text('updated_at').notNull(),
   },
   (table) => [check('tunnel_access_singleton_check', sql`${table.id} = 'default'`)]

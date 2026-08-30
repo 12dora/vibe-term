@@ -198,6 +198,19 @@ describe('tunnel routes', () => {
     }
   });
 
+  test('POST configure_access with invalid hostname is 400', async () => {
+    const ctx = await setup();
+    dirs.push(ctx.dir);
+    const res = await dispatch(ctx.routes, 'POST', '/api/tunnel/actions', {
+      action: 'configure_access',
+      hostname: 'NOT A HOST',
+      rules: [{ kind: 'email', value: 'a@example.com' }],
+    });
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as { error: { code: string } };
+    expect(body.error.code).toBe('invalid_hostname');
+  });
+
   test('POST configure_access without rules is 400', async () => {
     const ctx = await setup();
     dirs.push(ctx.dir);

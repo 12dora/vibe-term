@@ -95,6 +95,19 @@ export async function detectExternalCloudflared(deps: ExternalDetectDeps): Promi
   return value;
 }
 
+type Candidate = {
+  source: 'process' | 'launchd' | 'systemd' | 'config';
+  parsed: ParsedArgs;
+  pid: number | null;
+};
+
+const SOURCE_RANK: Record<Candidate['source'], number> = {
+  launchd: 4,
+  systemd: 3,
+  process: 2,
+  config: 1,
+};
+
 async function detectUncached(deps: ExternalDetectDeps): Promise<DetectedTunnel> {
   const home = deps.homeDir ?? deps.homedir?.() ?? homedir();
   const readFile = async (path: string): Promise<string | null> =>
@@ -103,58 +116,134 @@ async function detectUncached(deps: ExternalDetectDeps): Promise<DetectedTunnel>
     (await (deps.listDir ?? defaultListDir)(path)) ?? [];
   const rawProcesses = await (deps.listProcesses ?? defaultListProcesses)();
   const processes = normalizeProcesses(rawProcesses);
-
   const cloudflaredHome = join(home, '.cloudflared');
   const hasOriginCert = Boolean(await readFile(join(cloudflaredHome, 'cert.pem')));
-  const configPath = join(cloudflaredHome, 'config.yml');
-  const ymlText = await readFile(configPath);
-  const parsedYml = ymlText ? parseCloudflaredYml(ymlText) : null;
+  const defaultConfigPath = join(cloudflaredHome, 'config.yml');
 
-  const procHits = processes.filter((p) => isCloudflaredTunnelCommand(p.command));
-  const running = procHits.length > 0;
-  const fromProc = procHits[0] ? parseCommandLine(procHits[0].command) : null;
+  type LocalCandidate = Candidate;
 
-  const launchd = await findLaunchdUnit(home, listDir, readFile);
-  const systemd = await findSystemdUnit(home, listDir, readFile);
-
-  let source: string | null = null;
-  let parsed = fromProc;
-  if (launchd) {
-    source = 'launchd';
-    parsed = mergeParsed(launchd, parsed);
-  } else if (systemd) {
-    source = 'systemd';
-    parsed = mergeParsed(systemd, parsed);
-  } else if (fromProc) {
-    source = 'process';
-  } else if (parsedYml) {
-    source = 'config';
-    parsed = {
-      tokenFile: null,
-      logFile: null,
-      configPath,
-      tunnelId: parsedYml.tunnelId,
-      tunnelName: parsedYml.tunnelName,
-    };
+  const collected: LocalCandidate[] = [];
+  for (const proc of processes.filter((p) => isCloudflaredTunnelCommand(p.command))) {
+    collected.push({ source: 'process', parsed: parseCommandLine(proc.command), pid: proc.pid });
+  }
+  for (const unit of await findLaunchdUnits(home, listDir, readFile)) {
+    collected.push({ source: 'launchd', parsed: unit, pid: null });
+  }
+  for (const unit of await findSystemdUnits(home, listDir, readFile)) {
+    collected.push({ source: 'systemd', parsed: unit, pid: null });
+  }
+  const defaultYmlText = await readFile(defaultConfigPath);
+  if (defaultYmlText) {
+    const parsedYml = parseCloudflaredYml(defaultYmlText);
+    collected.push({
+      source: 'config',
+      parsed: {
+        tokenFile: null,
+        logFile: null,
+        configPath: defaultConfigPath,
+        tunnelId: parsedYml?.tunnelId ?? null,
+        tunnelName: parsedYml?.tunnelName ?? null,
+      },
+      pid: null,
+    });
   }
 
-  const detected = Boolean(source);
-  const tokenFile = parsed?.tokenFile ?? null;
-  const logFile = parsed?.logFile ?? null;
-  const resolvedConfig = parsed?.configPath ?? (ymlText ? configPath : null);
+  const merged = mergeCandidates(collected);
+  const enriched: Array<DetectedTunnel & { score: number }> = [];
+  for (const cand of merged) {
+    const item = await enrichCandidate(cand, {
+      originPort: deps.originPort,
+      readFile,
+      hasOriginCert,
+      accessApi: deps.accessApi ?? deps.accessClient ?? null,
+      getApiCredentials: deps.getApiCredentials ?? deps.getCredentials,
+    });
+    enriched.push(item);
+  }
 
-  let tunnelId = parsed?.tunnelId ?? parsedYml?.tunnelId ?? null;
-  let tunnelName = parsed?.tunnelName ?? parsedYml?.tunnelName ?? null;
+  enriched.sort((a, b) => b.score - a.score);
+  const best = enriched[0];
+  if (!best) {
+    return { ...EMPTY_EXTERNAL, hasOriginCert };
+  }
+  return {
+    detected: best.detected,
+    source: best.source,
+    configPath: best.configPath,
+    tunnelId: best.tunnelId,
+    tunnelName: best.tunnelName,
+    hostnames: best.hostnames,
+    hasOriginCert,
+    running: best.running,
+    pid: best.pid,
+    tokenFile: best.tokenFile,
+    logFile: best.logFile,
+    accountId: best.accountId,
+  };
+}
+
+function candidateKey(parsed: ParsedArgs): string {
+  if (parsed.tunnelId) return `id:${parsed.tunnelId.toLowerCase()}`;
+  if (parsed.tokenFile) return `token:${parsed.tokenFile}`;
+  if (parsed.configPath) return `config:${parsed.configPath}`;
+  if (parsed.tunnelName) return `name:${parsed.tunnelName.toLowerCase()}`;
+  return `anon:${JSON.stringify(parsed)}`;
+}
+
+function mergeCandidates(collected: Candidate[]): Candidate[] {
+  const byKey = new Map<string, Candidate>();
+  for (const cand of collected) {
+    const key = candidateKey(cand.parsed);
+    const existing = byKey.get(key);
+    if (!existing) {
+      byKey.set(key, cand);
+      continue;
+    }
+    const source =
+      SOURCE_RANK[cand.source] >= SOURCE_RANK[existing.source] ? cand.source : existing.source;
+    byKey.set(key, {
+      source,
+      parsed: mergeParsed(existing.parsed, cand.parsed),
+      pid: existing.pid ?? cand.pid,
+    });
+  }
+  return [...byKey.values()];
+}
+
+async function enrichCandidate(
+  cand: Candidate,
+  opts: {
+    originPort: number;
+    readFile: (path: string) => Promise<string | null>;
+    hasOriginCert: boolean;
+    accessApi: ExternalAccessApi | null;
+    getApiCredentials?: () => Promise<{ accountId: string; apiToken: string } | null>;
+  }
+): Promise<DetectedTunnel & { score: number }> {
+  let tunnelId = cand.parsed.tunnelId;
+  let tunnelName = cand.parsed.tunnelName;
   let accountId: string | null = null;
+  const tokenFile = cand.parsed.tokenFile;
+  const logFile = cand.parsed.logFile;
+  const configPath = cand.parsed.configPath;
+  let yml: ReturnType<typeof parseCloudflaredYml> = null;
+  if (configPath) {
+    const text = await opts.readFile(configPath);
+    yml = text ? parseCloudflaredYml(text) : null;
+    if (yml) {
+      tunnelId = tunnelId ?? yml.tunnelId;
+      tunnelName = tunnelName ?? yml.tunnelName;
+    }
+  }
 
   if (tokenFile) {
-    const tokenMeta = parseTokenFileMeta(await readFile(tokenFile));
+    const tokenMeta = parseTokenFileMeta(await opts.readFile(tokenFile));
     if (tokenMeta) {
       tunnelId = tunnelId ?? tokenMeta.tunnelId;
       accountId = tokenMeta.accountId;
     }
     if (!tunnelId) {
-      const idSibling = (await readFile(join(dirnameOf(tokenFile), 'tunnel-id')))?.trim();
+      const idSibling = (await opts.readFile(join(dirnameOf(tokenFile), 'tunnel-id')))?.trim();
       if (idSibling && looksLikeId(idSibling)) tunnelId = idSibling;
     }
   }
@@ -163,44 +252,46 @@ async function detectUncached(deps: ExternalDetectDeps): Promise<DetectedTunnel>
     const fromApi = await lookupTunnelName({
       tunnelId,
       accountId,
-      accessApi: deps.accessApi ?? deps.accessClient ?? null,
-      getApiCredentials: deps.getApiCredentials ?? deps.getCredentials,
+      accessApi: opts.accessApi,
+      getApiCredentials: opts.getApiCredentials,
     });
     if (fromApi) tunnelName = fromApi;
   }
 
   const hostnames = await resolveHostnames({
-    originPort: deps.originPort,
-    yml: parsedYml,
+    originPort: opts.originPort,
+    yml,
     tokenFile,
     logFile,
     tunnelId,
     accountId,
-    readFile,
-    accessApi: deps.accessApi ?? deps.accessClient ?? null,
-    getApiCredentials: deps.getApiCredentials ?? deps.getCredentials,
+    readFile: opts.readFile,
+    accessApi: opts.accessApi,
+    getApiCredentials: opts.getApiCredentials,
   });
 
-  if (parsedYml && !tunnelName && parsedYml.tunnelName && looksLikeName(parsedYml.tunnelName)) {
-    tunnelName = parsedYml.tunnelName;
-  }
-  if (parsedYml && !tunnelId && parsedYml.tunnelId && looksLikeId(parsedYml.tunnelId)) {
-    tunnelId = parsedYml.tunnelId;
-  }
-
+  const running = cand.pid != null;
+  const detected = Boolean(
+    cand.source || tunnelId || tokenFile || configPath || hostnames.length || running
+  );
+  let score = SOURCE_RANK[cand.source] ?? 0;
+  if (running && hostnames.length) score += 200;
+  else if (hostnames.length) score += 100;
+  else if (running) score += 10;
   return {
     detected,
-    source,
-    configPath: resolvedConfig,
+    source: cand.source,
+    configPath: configPath,
     tunnelId,
     tunnelName,
     hostnames: uniqueHostnames(hostnames),
-    hasOriginCert,
+    hasOriginCert: opts.hasOriginCert,
     running,
-    pid: procHits[0]?.pid ?? null,
+    pid: cand.pid,
     tokenFile,
     logFile,
     accountId,
+    score,
   };
 }
 
@@ -366,17 +457,14 @@ async function resolveHostnames(opts: {
   accessApi: ExternalAccessApi | null;
   getApiCredentials?: () => Promise<{ accountId: string; apiToken: string } | null>;
 }): Promise<string[]> {
-  if (opts.yml) {
-    const fromYml = opts.yml.ingress
-      .filter((r) => r.hostname && serviceHitsOrigin(r.service, opts.originPort))
-      .map((r) => r.hostname as string);
-    if (fromYml.length) return fromYml;
-  }
-  if (opts.tokenFile) {
-    const sibling = join(dirnameOf(opts.tokenFile), 'hostname');
-    const host = (await opts.readFile(sibling))?.trim().toLowerCase();
-    if (host) return [host];
-  }
+  const fromYml = opts.yml
+    ? opts.yml.ingress
+        .filter((r) => r.hostname && serviceHitsOrigin(r.service, opts.originPort))
+        .map((r) => r.hostname as string)
+    : [];
+  if (fromYml.length) return fromYml;
+
+  let fromApi: string[] = [];
   const creds = opts.getApiCredentials ? await opts.getApiCredentials() : null;
   if (creds && opts.accessApi && opts.tunnelId) {
     const accountId = opts.accountId ?? creds.accountId;
@@ -386,14 +474,15 @@ async function resolveHostnames(opts: {
         creds.apiToken,
         opts.tunnelId
       );
-      const matched = ingress
+      fromApi = ingress
         .filter((r) => r.hostname && serviceHitsOrigin(r.service, opts.originPort))
         .map((r) => r.hostname as string);
-      if (matched.length) return matched;
     } catch {
       // 探测失败时继续看日志
     }
   }
+  if (fromApi.length) return fromApi;
+
   if (opts.logFile) {
     const fromLog = parseIngressFromLog((await opts.readFile(opts.logFile)) ?? '', opts.originPort);
     if (fromLog.length) return fromLog;
@@ -422,11 +511,12 @@ async function lookupTunnelName(opts: {
   }
 }
 
-async function findLaunchdUnit(
+async function findLaunchdUnits(
   home: string,
   listDir: (path: string) => Promise<string[]>,
   readFile: (path: string) => Promise<string | null>
-): Promise<ParsedArgs | null> {
+): Promise<ParsedArgs[]> {
+  const out: ParsedArgs[] = [];
   const dirs = [join(home, 'Library/LaunchAgents'), '/Library/LaunchDaemons'];
   for (const dir of dirs) {
     for (const name of await listDir(dir)) {
@@ -435,17 +525,18 @@ async function findLaunchdUnit(
       if (!body || !body.includes('cloudflared')) continue;
       const args = parsePlistProgramArguments(body);
       if (!args.some((a) => a.includes('cloudflared'))) continue;
-      return parseArgv(args);
+      out.push(parseArgv(args));
     }
   }
-  return null;
+  return out;
 }
 
-async function findSystemdUnit(
+async function findSystemdUnits(
   home: string,
   listDir: (path: string) => Promise<string[]>,
   readFile: (path: string) => Promise<string | null>
-): Promise<ParsedArgs | null> {
+): Promise<ParsedArgs[]> {
+  const out: ParsedArgs[] = [];
   const dirs = ['/etc/systemd/system', '/lib/systemd/system', join(home, '.config/systemd/user')];
   for (const dir of dirs) {
     for (const name of await listDir(dir)) {
@@ -454,10 +545,10 @@ async function findSystemdUnit(
       if (!body) continue;
       const exec = body.match(/^ExecStart=(.+)$/m)?.[1];
       if (!exec || !exec.includes('cloudflared')) continue;
-      return parseCommandLine(exec);
+      out.push(parseCommandLine(exec));
     }
   }
-  return null;
+  return out;
 }
 
 export function parsePlistProgramArguments(plist: string): string[] {
@@ -543,10 +634,6 @@ function unescapeXml(value: string): string {
 
 function looksLikeId(value: string): boolean {
   return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value);
-}
-
-function looksLikeName(value: string | null): boolean {
-  return Boolean(value && !looksLikeId(value));
 }
 
 function uniqueHostnames(values: string[]): string[] {

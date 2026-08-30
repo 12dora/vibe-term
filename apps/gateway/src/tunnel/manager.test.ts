@@ -485,12 +485,11 @@ describe('TunnelManager', () => {
   });
 
   test('configure_access creates app, replaces policy, and enables JWT', async () => {
-    const calls: string[] = [];
+    let allowPolicy: Record<string, unknown> | null = null;
     const ctx = await setup({
       fetchImpl: async (input, init) => {
         const url = String(input);
         const method = init?.method ?? 'GET';
-        calls.push(`${method} ${url}`);
         if (url.includes('/access/organizations')) {
           return Response.json({
             success: true,
@@ -504,10 +503,17 @@ describe('TunnelManager', () => {
           });
         }
         if (url.includes('/access/apps/app-1/policies') && method === 'GET') {
-          return Response.json({ success: true, result: [] });
+          return Response.json({ success: true, result: allowPolicy ? [allowPolicy] : [] });
         }
         if (url.includes('/access/apps/app-1/policies') && method === 'POST') {
-          return Response.json({ success: true, result: { id: 'pol-1' } });
+          const body = JSON.parse(String(init?.body));
+          allowPolicy = {
+            id: 'pol-1',
+            name: 'tmex-allow',
+            decision: 'allow',
+            include: body.include,
+          };
+          return Response.json({ success: true, result: allowPolicy });
         }
         if (url.endsWith('/access/apps/app-1') && method === 'GET') {
           return Response.json({
@@ -542,6 +548,7 @@ describe('TunnelManager', () => {
     expect(access.aud).toBe('aud-1');
     expect(access.enforceJwt).toBe(true);
     expect(access.hostname).toBe('remote.example.com');
+    expect(access.effective).toBe(true);
     expect(ctx.manager.status().exposureProtected).toBe(true);
   });
 
@@ -569,12 +576,15 @@ describe('TunnelManager', () => {
     const ctx = await setup({
       loginEnforced: () => false,
       externalDetectDeps: {
-        listProcesses: async () => '  1 cloudflared tunnel --token-file /tmp/tok run\n',
+        listProcesses: async () =>
+          '  1 cloudflared tunnel --logfile /tmp/cf.log --token-file /tmp/tok run\n',
         readFile: async (path) => {
           if (path === '/tmp/tok') {
             return Buffer.from(JSON.stringify({ a: 'a', t: 'tid', s: 's' })).toString('base64');
           }
-          if (path === '/tmp/hostname') return 'ext.example.com';
+          if (path === '/tmp/cf.log') {
+            return '{"ingress":[{"hostname":"ext.example.com","service":"http://127.0.0.1:19883"}]}\n';
+          }
           return null;
         },
         listDir: async () => [],
@@ -625,7 +635,8 @@ describe('TunnelManager', () => {
     expect(failed.httpStatus).toBe(400);
     expect('error' in failed.payload && failed.payload.error.code).toBe('access_api_failed');
     expect(ctx.manager.status().access.hasCredentials).toBe(false);
-    expect(ctx.manager.status().access.lastError).toBe('Invalid API Token');
+    expect(ctx.manager.status().access.lastError).toContain('Invalid API Token');
+    expect(ctx.manager.status().access.lastError).toContain('Access: Organizations');
 
     const okCtx = await setup({
       fetchImpl: async (input) => {
@@ -702,5 +713,282 @@ describe('TunnelManager', () => {
     expect(access.appId).toBe('app-9');
     expect(access.aud).toBe('aud-9');
     expect(access.rules).toEqual([{ kind: 'email', value: 'owner@example.com' }]);
+    expect(access.effective).toBe(false);
+    expect(access.bypassAppId).toBeNull();
+  });
+
+  test('configure_access with mesh role also creates bypass apps for machine paths', async () => {
+    const createdDomains: string[] = [];
+    const policies = new Map<string, unknown[]>();
+    const ctx = await setup({
+      hasMeshRole: true,
+      fetchImpl: async (input, init) => {
+        const url = String(input);
+        const method = init?.method ?? 'GET';
+        const body = init?.body ? JSON.parse(String(init.body)) : undefined;
+        if (url.includes('/access/organizations')) {
+          return Response.json({
+            success: true,
+            result: { auth_domain: 'acme.cloudflareaccess.com' },
+          });
+        }
+        if (url.includes('/access/apps?') && method === 'GET') {
+          return Response.json({
+            success: true,
+            result: [],
+            result_info: { page: 1, per_page: 100, total_count: 0, total_pages: 1 },
+          });
+        }
+        if (url.endsWith('/access/apps') && method === 'POST') {
+          createdDomains.push(body.domain);
+          const id =
+            body.domain === 'remote.example.com'
+              ? 'app-1'
+              : body.domain.endsWith('/api/hub/')
+                ? 'bypass-api'
+                : 'bypass-hub';
+          policies.set(id, []);
+          return Response.json({
+            success: true,
+            result: { id, aud: `aud-${id}`, name: body.name, domain: body.domain },
+          });
+        }
+        const polMatch = url.match(/\/access\/apps\/([^/]+)\/policies/);
+        if (polMatch && method === 'GET') {
+          return Response.json({ success: true, result: policies.get(polMatch[1] ?? '') ?? [] });
+        }
+        if (polMatch && method === 'POST') {
+          const appId = polMatch[1] ?? '';
+          const pol = {
+            id: `pol-${appId}`,
+            name: body.name,
+            decision: body.decision,
+            include: body.include,
+          };
+          policies.set(appId, [pol]);
+          return Response.json({ success: true, result: pol });
+        }
+        if (url.endsWith('/access/apps/app-1') && method === 'GET') {
+          return Response.json({
+            success: true,
+            result: { id: 'app-1', aud: 'aud-app-1', domain: 'remote.example.com', name: 'tmex' },
+          });
+        }
+        return Response.json(
+          { success: false, errors: [{ message: `${method} ${url}` }] },
+          { status: 400 }
+        );
+      },
+    });
+    dirs.push(ctx.dir);
+    await ctx.manager.handleAction({
+      action: 'set_access_credentials',
+      apiToken: 'tok',
+      accountId: 'acc',
+    });
+    ctx.store.save({ mode: 'named', hostname: 'remote.example.com' });
+    await ctx.manager.handleAction({
+      action: 'configure_access',
+      rules: [{ kind: 'email', value: 'owner@example.com' }],
+    });
+    const job = await waitJob(ctx.manager);
+    expect(job?.state).toBe('done');
+    expect(createdDomains).toEqual(
+      expect.arrayContaining([
+        'remote.example.com',
+        'remote.example.com/hub/',
+        'remote.example.com/api/hub/',
+      ])
+    );
+    expect(ctx.manager.status().access.bypassAppId).toBe('bypass-hub');
+  });
+
+  test('configure_access with explicit hostname works when mode is off', async () => {
+    const captured = { domain: null as string | null };
+    let allowPolicy: Record<string, unknown> | null = null;
+    const ctx = await setup({
+      fetchImpl: async (input, init) => {
+        const url = String(input);
+        const method = init?.method ?? 'GET';
+        const body = init?.body ? JSON.parse(String(init.body)) : undefined;
+        if (url.includes('/access/organizations')) {
+          return Response.json({
+            success: true,
+            result: { auth_domain: 'acme.cloudflareaccess.com' },
+          });
+        }
+        if (url.endsWith('/access/apps') && method === 'POST') {
+          captured.domain = typeof body.domain === 'string' ? body.domain : null;
+          return Response.json({
+            success: true,
+            result: { id: 'app-h', aud: 'aud-h', domain: body.domain, name: 'tmex' },
+          });
+        }
+        if (url.includes('/policies') && method === 'GET') {
+          return Response.json({ success: true, result: allowPolicy ? [allowPolicy] : [] });
+        }
+        if (url.includes('/policies') && method === 'POST') {
+          allowPolicy = {
+            id: 'pol-h',
+            name: 'tmex-allow',
+            decision: 'allow',
+            include: body.include,
+          };
+          return Response.json({ success: true, result: allowPolicy });
+        }
+        if (url.endsWith('/access/apps/app-h') && method === 'GET') {
+          return Response.json({
+            success: true,
+            result: { id: 'app-h', aud: 'aud-h', domain: captured.domain, name: 'tmex' },
+          });
+        }
+        return Response.json(
+          { success: false, errors: [{ message: `${method} ${url}` }] },
+          { status: 400 }
+        );
+      },
+    });
+    dirs.push(ctx.dir);
+    await ctx.manager.handleAction({
+      action: 'set_access_credentials',
+      apiToken: 'tok',
+      accountId: 'acc',
+    });
+    expect(ctx.manager.status().config.mode).toBe('off');
+    await ctx.manager.handleAction({
+      action: 'configure_access',
+      hostname: 'draft.example.com',
+      rules: [{ kind: 'email', value: 'owner@example.com' }],
+    });
+    const job = await waitJob(ctx.manager);
+    expect(job?.state).toBe('done');
+    expect(captured.domain).toBe('draft.example.com');
+    expect(ctx.manager.status().access.hostname).toBe('draft.example.com');
+    expect(ctx.manager.status().access.effective).toBe(false);
+    ctx.store.save({ mode: 'named', hostname: 'draft.example.com' });
+    expect(ctx.manager.status().exposureProtected).toBe(true);
+    expect(ctx.manager.status().access.effective).toBe(true);
+  });
+
+  test('quick tunnel after named Access removal does not enforce the guard snapshot', async () => {
+    const accessStore = new MemoryTunnelAccessStore();
+    await accessStore.save({
+      accountId: 'acc',
+      apiToken: 'tok',
+      teamDomain: 'team.cloudflareaccess.com',
+      appId: 'app',
+      aud: 'aud',
+      hostname: 'old.example.com',
+      rules: [{ kind: 'email', value: 'a@example.com' }],
+      enforceJwt: true,
+    });
+    const ctx = await setup({ loginEnforced: () => false, accessStore });
+    dirs.push(ctx.dir);
+    ctx.spawner.on((s) => argsInclude(s, '--url'), {
+      hold: true,
+      stdout: 'https://lucky-cloud-9.trycloudflare.com\nRegistered tunnel connection\n',
+    });
+    await ctx.manager.handleAction({ action: 'quick_start', acknowledgeExposure: true });
+    await waitJob(ctx.manager);
+    const status = ctx.manager.status();
+    expect(status.config.mode).toBe('quick');
+    expect(status.access.configured).toBe(true);
+    expect(status.access.enforceJwt).toBe(true);
+    expect(status.access.effective).toBe(false);
+    expect(status.exposureProtected).toBe(false);
+  });
+
+  test('check treats Access login redirect as access_protected', async () => {
+    const ctx = await setup({
+      fetchImpl: async () =>
+        new Response(null, {
+          status: 302,
+          headers: { location: 'https://acme.cloudflareaccess.com/cdn-cgi/access/login' },
+        }),
+    });
+    dirs.push(ctx.dir);
+    ctx.spawner.on((s) => argsInclude(s, '--url'), {
+      hold: true,
+      stdout: 'https://lucky-cloud-9.trycloudflare.com\nRegistered tunnel connection\n',
+    });
+    await ctx.manager.handleAction({ action: 'quick_start' });
+    await waitJob(ctx.manager);
+    await ctx.manager.handleAction({ action: 'check' });
+    const job = await waitJob(ctx.manager);
+    expect(job?.state).toBe('done');
+    expect(job?.step).toBe('access_protected');
+  });
+
+  test('remove_access keeps local state when DELETE is not 404', async () => {
+    const accessStore = new MemoryTunnelAccessStore();
+    await accessStore.save({
+      accountId: 'acc',
+      apiToken: 'tok',
+      teamDomain: 'team.cloudflareaccess.com',
+      appId: 'app-keep',
+      aud: 'aud',
+      hostname: 'ok.example.com',
+      rules: [{ kind: 'email', value: 'a@example.com' }],
+      enforceJwt: true,
+    });
+    const ctx = await setup({
+      loginEnforced: () => true,
+      accessStore,
+      fetchImpl: async () =>
+        Response.json({ success: false, errors: [{ message: 'Forbidden' }] }, { status: 403 }),
+    });
+    dirs.push(ctx.dir);
+    await ctx.manager.handleAction({ action: 'remove_access' });
+    const job = await waitJob(ctx.manager);
+    expect(job?.state).toBe('error');
+    expect(job?.error?.code).toBe('access_api_failed');
+    expect(ctx.manager.status().access.appId).toBe('app-keep');
+    expect(ctx.manager.status().access.configured).toBe(true);
+  });
+
+  test('remove_access and set_access_enforce(false) require ack when tunnel is running unprotected', async () => {
+    const accessStore = new MemoryTunnelAccessStore();
+    await accessStore.save({
+      accountId: 'acc',
+      apiToken: 'tok',
+      teamDomain: 'team.cloudflareaccess.com',
+      appId: 'app',
+      aud: 'aud',
+      hostname: 'ok.example.com',
+      rules: [{ kind: 'email', value: 'a@example.com' }],
+      enforceJwt: true,
+    });
+    const ctx = await setup({
+      loginEnforced: () => false,
+      accessStore,
+      fetchImpl: async () => new Response(null, { status: 404 }),
+    });
+    dirs.push(ctx.dir);
+    ctx.store.save({ mode: 'named', hostname: 'ok.example.com', tunnelId: 'tid', tunnelName: 'n' });
+    ctx.spawner.on((s) => argsInclude(s, 'run'), {
+      hold: true,
+      stdout: 'Registered tunnel connection\n',
+    });
+    await ctx.manager.handleAction({ action: 'start' });
+    await waitJob(ctx.manager);
+    expect(ctx.manager.status().process.state).toBe('running');
+
+    const enforce = await ctx.manager.handleAction({
+      action: 'set_access_enforce',
+      enforceJwt: false,
+    });
+    expect(enforce.httpStatus).toBe(409);
+    expect('error' in enforce.payload && enforce.payload.error.code).toBe('exposure_ack_required');
+
+    const removed = await ctx.manager.handleAction({ action: 'remove_access' });
+    expect(removed.httpStatus).toBe(409);
+
+    const okEnforce = await ctx.manager.handleAction({
+      action: 'set_access_enforce',
+      enforceJwt: false,
+      acknowledgeExposure: true,
+    });
+    expect(okEnforce.httpStatus).toBe(200);
+    expect(ctx.manager.status().access.enforceJwt).toBe(false);
   });
 });

@@ -1,4 +1,4 @@
-import type { TunnelAccessPolicyRule, TunnelAccessStatus } from '@tmex/shared';
+import type { TunnelAccessPolicyRule, TunnelAccessStatus, TunnelMode } from '@tmex/shared';
 import { eq } from 'drizzle-orm';
 import type { AuthDb } from '../auth/types';
 import { decryptWithContext, encrypt } from '../crypto';
@@ -19,6 +19,8 @@ export type TunnelAccessPersisted = {
   rules: TunnelAccessPolicyRule[];
   enforceJwt: boolean;
   lastError: string | null;
+  /** 全部 bypass 应用 id；契约 bypassAppId 取第一项（/hub/） */
+  bypassAppIds: string[];
   updatedAt: string;
 };
 
@@ -32,6 +34,7 @@ export const DEFAULT_TUNNEL_ACCESS: TunnelAccessPersisted = {
   rules: [],
   enforceJwt: false,
   lastError: null,
+  bypassAppIds: [],
   updatedAt: '',
 };
 
@@ -45,27 +48,75 @@ export interface TunnelAccessStoreLike {
   getApiToken(): Promise<string | null>;
 }
 
-export function accessStatusFrom(row: TunnelAccessPersisted): TunnelAccessStatus {
+export function computeAccessEffective(opts: {
+  configured: boolean;
+  enforceJwt: boolean;
+  accessHostname: string | null;
+  tunnelMode: TunnelMode;
+  tunnelHostname: string | null;
+}): boolean {
+  if (opts.tunnelMode !== 'named') return false;
+  return Boolean(
+    opts.configured &&
+      opts.enforceJwt &&
+      opts.accessHostname &&
+      opts.accessHostname === opts.tunnelHostname
+  );
+}
+
+export function parseBypassAppIds(raw: string | null | undefined): string[] {
+  if (!raw?.trim()) return [];
+  const text = raw.trim();
+  if (text.startsWith('[')) {
+    try {
+      const parsed = JSON.parse(text) as unknown;
+      if (!Array.isArray(parsed)) return [];
+      return parsed.filter((v): v is string => typeof v === 'string' && Boolean(v.trim()));
+    } catch {
+      return [];
+    }
+  }
+  return [text];
+}
+
+export function serializeBypassAppIds(ids: string[]): string | null {
+  if (!ids.length) return null;
+  return JSON.stringify(ids);
+}
+
+export function accessStatusFrom(
+  row: TunnelAccessPersisted,
+  opts?: { tunnelMode?: TunnelMode; tunnelHostname?: string | null }
+): TunnelAccessStatus {
+  const configured = Boolean(row.appId && row.aud && row.hostname);
   return {
     hasCredentials: Boolean(row.apiTokenEnc && row.accountId),
     accountId: row.accountId,
     teamDomain: row.teamDomain,
-    configured: Boolean(row.appId && row.aud && row.hostname),
+    configured,
     appId: row.appId,
     aud: row.aud,
     hostname: row.hostname,
     rules: [...row.rules],
     enforceJwt: row.enforceJwt,
+    effective: computeAccessEffective({
+      configured,
+      enforceJwt: row.enforceJwt,
+      accessHostname: row.hostname,
+      tunnelMode: opts?.tunnelMode ?? 'off',
+      tunnelHostname: opts?.tunnelHostname ?? null,
+    }),
+    bypassAppId: row.bypassAppIds[0] ?? null,
     lastError: row.lastError,
   };
 }
 
 export class MemoryTunnelAccessStore implements TunnelAccessStoreLike {
-  private row: TunnelAccessPersisted = { ...DEFAULT_TUNNEL_ACCESS, rules: [] };
+  private row: TunnelAccessPersisted = { ...DEFAULT_TUNNEL_ACCESS, rules: [], bypassAppIds: [] };
   private apiToken: string | null = null;
 
   get(): TunnelAccessPersisted {
-    return { ...this.row, rules: [...this.row.rules] };
+    return { ...this.row, rules: [...this.row.rules], bypassAppIds: [...this.row.bypassAppIds] };
   }
 
   async save(patch: TunnelAccessPatch): Promise<TunnelAccessPersisted> {
@@ -93,7 +144,7 @@ export class TunnelAccessStore implements TunnelAccessStoreLike {
         .from(tunnelAccess)
         .where(eq(tunnelAccess.id, TUNNEL_ACCESS_ID))
         .get();
-      if (!row) return { ...DEFAULT_TUNNEL_ACCESS, rules: [] };
+      if (!row) return { ...DEFAULT_TUNNEL_ACCESS, rules: [], bypassAppIds: [] };
       return {
         accountId: row.accountId ?? null,
         apiTokenEnc: row.apiTokenEnc ?? null,
@@ -104,10 +155,11 @@ export class TunnelAccessStore implements TunnelAccessStoreLike {
         rules: parseAccessRulesJson(row.rulesJson),
         enforceJwt: Boolean(row.enforceJwt),
         lastError: row.lastError ?? null,
+        bypassAppIds: parseBypassAppIds(row.bypassAppId),
         updatedAt: row.updatedAt,
       };
     } catch {
-      return { ...DEFAULT_TUNNEL_ACCESS, rules: [] };
+      return { ...DEFAULT_TUNNEL_ACCESS, rules: [], bypassAppIds: [] };
     }
   }
 
@@ -131,6 +183,7 @@ export class TunnelAccessStore implements TunnelAccessStoreLike {
       rulesJson: JSON.stringify(next.rules),
       enforceJwt: next.enforceJwt,
       lastError: next.lastError,
+      bypassAppId: serializeBypassAppIds(next.bypassAppIds),
       updatedAt: next.updatedAt,
     };
     this.db
@@ -148,6 +201,7 @@ export class TunnelAccessStore implements TunnelAccessStoreLike {
           rulesJson: values.rulesJson,
           enforceJwt: values.enforceJwt,
           lastError: values.lastError,
+          bypassAppId: values.bypassAppId,
           updatedAt: values.updatedAt,
         },
       })
@@ -186,6 +240,7 @@ function applyAccessPatch(
     rules: patch.rules !== undefined ? patch.rules : current.rules,
     enforceJwt: patch.enforceJwt ?? current.enforceJwt,
     lastError,
+    bypassAppIds: patch.bypassAppIds !== undefined ? patch.bypassAppIds : current.bypassAppIds,
     updatedAt: new Date().toISOString(),
   };
 }

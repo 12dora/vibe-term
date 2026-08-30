@@ -1,12 +1,22 @@
 import type { TunnelAccessPolicyRule } from '@tmex/shared';
+import {
+  ACCESS_BYPASS_PATH_PREFIXES,
+  TMEX_ALLOW_POLICY_NAME,
+  TMEX_APP_NAME,
+  TMEX_BYPASS_POLICY_NAME,
+  bypassAppDomain,
+  bypassAppName,
+} from './access-paths';
 import { fromCloudflareInclude, toCloudflareInclude } from './access-rules';
 import { TunnelError } from './errors';
 import { redactSecrets } from './redact';
 
 const CF_API = 'https://api.cloudflare.com/client/v4';
-const APP_NAME = 'tmex';
-const POLICY_NAME = 'tmex-allow';
 const SESSION_DURATION = '24h';
+const AUTHORIZING_DECISIONS = new Set(['allow', 'bypass', 'service_auth']);
+
+export const ACCESS_TOKEN_PERMISSIONS =
+  'Access: Apps and Policies — Edit and Access: Organizations, Identity Providers, and Groups — Read';
 
 export type CloudflareApp = {
   id: string;
@@ -52,34 +62,52 @@ function readString(rec: Record<string, unknown> | null, key: string): string | 
   return typeof value === 'string' && value.trim() ? value.trim() : null;
 }
 
+function policyLabel(policy: CloudflarePolicy): string {
+  return policy.name.trim() || policy.id;
+}
+
 export class CloudflareAccessClient {
   constructor(private readonly fetchImpl: TunnelFetch = fetch) {}
 
   async getOrganization(accountId: string, apiToken: string): Promise<{ teamDomain: string }> {
-    const result = await this.request<Record<string, unknown>>(
-      'GET',
-      `/accounts/${encodeURIComponent(accountId)}/access/organizations`,
-      apiToken
-    );
+    let result: Record<string, unknown>;
+    try {
+      result = await this.request<Record<string, unknown>>(
+        'GET',
+        `/accounts/${encodeURIComponent(accountId)}/access/organizations`,
+        apiToken
+      );
+    } catch (error) {
+      const parsed = error instanceof TunnelError ? error.message : String(error);
+      throw new TunnelError(
+        'access_api_failed',
+        sanitizeAccessMessage(`${parsed}. Token needs ${ACCESS_TOKEN_PERMISSIONS}`)
+      );
+    }
     const authDomain = readString(result, 'auth_domain');
     if (!authDomain) {
       throw new TunnelError(
         'access_api_failed',
-        'Cloudflare Access organization has no team domain'
+        `Cloudflare Access organization has no team domain. Token needs ${ACCESS_TOKEN_PERMISSIONS}`
       );
     }
     return { teamDomain: authDomain.replace(/^https?:\/\//, '').replace(/\/$/, '') };
   }
 
-  async createApp(accountId: string, apiToken: string, hostname: string): Promise<CloudflareApp> {
+  async createApp(
+    accountId: string,
+    apiToken: string,
+    hostname: string,
+    opts?: { name?: string; domain?: string }
+  ): Promise<CloudflareApp> {
     const result = await this.request<Record<string, unknown>>(
       'POST',
       `/accounts/${encodeURIComponent(accountId)}/access/apps`,
       apiToken,
       {
         type: 'self_hosted',
-        name: APP_NAME,
-        domain: hostname,
+        name: opts?.name ?? TMEX_APP_NAME,
+        domain: opts?.domain ?? hostname,
         session_duration: SESSION_DURATION,
       }
     );
@@ -90,7 +118,8 @@ export class CloudflareAccessClient {
     accountId: string,
     apiToken: string,
     appId: string,
-    hostname: string
+    hostname: string,
+    opts?: { name?: string; domain?: string }
   ): Promise<CloudflareApp> {
     const result = await this.request<Record<string, unknown>>(
       'PUT',
@@ -98,8 +127,8 @@ export class CloudflareAccessClient {
       apiToken,
       {
         type: 'self_hosted',
-        name: APP_NAME,
-        domain: hostname,
+        name: opts?.name ?? TMEX_APP_NAME,
+        domain: opts?.domain ?? hostname,
         session_duration: SESSION_DURATION,
       }
     );
@@ -119,7 +148,9 @@ export class CloudflareAccessClient {
     await this.request(
       'DELETE',
       `/accounts/${encodeURIComponent(accountId)}/access/apps/${encodeURIComponent(appId)}`,
-      apiToken
+      apiToken,
+      undefined,
+      { notFoundOk: true }
     );
   }
 
@@ -189,12 +220,20 @@ export class CloudflareAccessClient {
   ): Promise<void> {
     const include = toCloudflareInclude(rules);
     const body = {
-      name: POLICY_NAME,
+      name: TMEX_ALLOW_POLICY_NAME,
       decision: 'allow',
       include,
     };
     const existing = await this.listPolicies(accountId, apiToken, appId);
-    const keep = existing[0];
+    this.assertNoForeignAuthorizingPolicies(existing, TMEX_ALLOW_POLICY_NAME);
+    const ours = existing.filter((p) => p.name === TMEX_ALLOW_POLICY_NAME);
+    if (ours.length > 1) {
+      throw new TunnelError(
+        'access_api_failed',
+        `Multiple ${TMEX_ALLOW_POLICY_NAME} policies exist (${ours.map(policyLabel).join(', ')}). Remove extras in the Cloudflare dashboard, then retry.`
+      );
+    }
+    const keep = ours[0];
     if (!keep) {
       await this.request(
         'POST',
@@ -202,21 +241,87 @@ export class CloudflareAccessClient {
         apiToken,
         body
       );
-      return;
-    }
-    await this.request(
-      'PUT',
-      `/accounts/${encodeURIComponent(accountId)}/access/apps/${encodeURIComponent(appId)}/policies/${encodeURIComponent(keep.id)}`,
-      apiToken,
-      body
-    );
-    for (const extra of existing.slice(1)) {
+    } else {
       await this.request(
-        'DELETE',
-        `/accounts/${encodeURIComponent(accountId)}/access/apps/${encodeURIComponent(appId)}/policies/${encodeURIComponent(extra.id)}`,
-        apiToken
-      ).catch(() => {});
+        'PUT',
+        `/accounts/${encodeURIComponent(accountId)}/access/apps/${encodeURIComponent(appId)}/policies/${encodeURIComponent(keep.id)}`,
+        apiToken,
+        body
+      );
     }
+    const verified = await this.listPolicies(accountId, apiToken, appId);
+    this.assertNoForeignAuthorizingPolicies(verified, TMEX_ALLOW_POLICY_NAME);
+    const allow = verified.find((p) => p.name === TMEX_ALLOW_POLICY_NAME && p.decision === 'allow');
+    if (!allow) {
+      throw new TunnelError(
+        'access_api_failed',
+        `Cloudflare Access did not persist the ${TMEX_ALLOW_POLICY_NAME} allow policy`
+      );
+    }
+    const got = fromCloudflareInclude(allow.include);
+    if (!rulesMatch(got, rules)) {
+      throw new TunnelError(
+        'access_api_failed',
+        'Cloudflare Access allow policy does not match the requested rules'
+      );
+    }
+  }
+
+  async ensureBypassPolicy(accountId: string, apiToken: string, appId: string): Promise<void> {
+    const body = {
+      name: TMEX_BYPASS_POLICY_NAME,
+      decision: 'bypass',
+      include: [{ everyone: {} }],
+    };
+    const existing = await this.listPolicies(accountId, apiToken, appId);
+    this.assertNoForeignAuthorizingPolicies(existing, TMEX_BYPASS_POLICY_NAME);
+    const ours = existing.filter((p) => p.name === TMEX_BYPASS_POLICY_NAME);
+    if (ours.length > 1) {
+      throw new TunnelError(
+        'access_api_failed',
+        `Multiple ${TMEX_BYPASS_POLICY_NAME} policies exist (${ours.map(policyLabel).join(', ')}). Remove extras in the Cloudflare dashboard, then retry.`
+      );
+    }
+    const keep = ours[0];
+    if (!keep) {
+      await this.request(
+        'POST',
+        `/accounts/${encodeURIComponent(accountId)}/access/apps/${encodeURIComponent(appId)}/policies`,
+        apiToken,
+        body
+      );
+    } else {
+      await this.request(
+        'PUT',
+        `/accounts/${encodeURIComponent(accountId)}/access/apps/${encodeURIComponent(appId)}/policies/${encodeURIComponent(keep.id)}`,
+        apiToken,
+        body
+      );
+    }
+  }
+
+  async upsertBypassApps(
+    accountId: string,
+    apiToken: string,
+    hostname: string,
+    existingIds: string[]
+  ): Promise<string[]> {
+    const apps = await this.listApps(accountId, apiToken);
+    const ids: string[] = [];
+    for (let i = 0; i < ACCESS_BYPASS_PATH_PREFIXES.length; i++) {
+      const prefix = ACCESS_BYPASS_PATH_PREFIXES[i] ?? '/hub/';
+      const domain = bypassAppDomain(hostname, prefix);
+      const name = bypassAppName(prefix);
+      const found =
+        apps.find((a) => a.domain.toLowerCase() === domain.toLowerCase()) ??
+        (existingIds[i] ? apps.find((a) => a.id === existingIds[i]) : undefined);
+      const app = found
+        ? await this.updateApp(accountId, apiToken, found.id, hostname, { name, domain })
+        : await this.createApp(accountId, apiToken, hostname, { name, domain });
+      await this.ensureBypassPolicy(accountId, apiToken, app.id);
+      ids.push(app.id);
+    }
+    return ids;
   }
 
   async readAppRules(
@@ -225,17 +330,32 @@ export class CloudflareAccessClient {
     appId: string
   ): Promise<TunnelAccessPolicyRule[]> {
     const policies = await this.listPolicies(accountId, apiToken, appId);
-    const allow = policies.find((p) => p.decision === 'allow') ?? policies[0];
+    const allow =
+      policies.find((p) => p.name === TMEX_ALLOW_POLICY_NAME && p.decision === 'allow') ??
+      policies.find((p) => p.decision === 'allow');
     return fromCloudflareInclude(allow?.include);
   }
 
   findAppForHostname(apps: CloudflareApp[], hostname: string): CloudflareApp | null {
     const host = hostname.toLowerCase();
-    for (const app of apps) {
-      const domain = app.domain.toLowerCase();
-      if (domain === host || domain.startsWith(`${host}/`)) return app;
+    const exact = apps.find((app) => app.domain.toLowerCase() === host);
+    if (exact) return exact;
+    return (
+      apps.find((app) => app.name === TMEX_APP_NAME && app.domain.toLowerCase() === host) ?? null
+    );
+  }
+
+  findBypassApps(apps: CloudflareApp[], hostname: string): CloudflareApp[] {
+    const host = hostname.toLowerCase();
+    const wanted = ACCESS_BYPASS_PATH_PREFIXES.map((p) => bypassAppDomain(host, p).toLowerCase());
+    const out: CloudflareApp[] = [];
+    for (const domain of wanted) {
+      const hit =
+        apps.find((a) => a.domain.toLowerCase() === domain) ??
+        apps.find((a) => a.name.startsWith('tmex-bypass') && a.domain.toLowerCase() === domain);
+      if (hit) out.push(hit);
     }
-    return null;
+    return out;
   }
 
   async getTunnel(
@@ -277,6 +397,20 @@ export class CloudflareAccessClient {
     return rows;
   }
 
+  private assertNoForeignAuthorizingPolicies(
+    policies: CloudflarePolicy[],
+    managedName: string
+  ): void {
+    const foreign = policies.filter(
+      (p) => p.name !== managedName && AUTHORIZING_DECISIONS.has(p.decision)
+    );
+    if (!foreign.length) return;
+    throw new TunnelError(
+      'access_api_failed',
+      `Cloudflare Access already has extra allow/bypass/service-auth policies that tmex does not manage: ${foreign.map(policyLabel).join(', ')}. Remove them in the Cloudflare dashboard, then retry.`
+    );
+  }
+
   private parseApp(result: Record<string, unknown>): CloudflareApp {
     const id = readString(result, 'id');
     const aud = readString(result, 'aud');
@@ -289,7 +423,7 @@ export class CloudflareAccessClient {
     return {
       id,
       aud,
-      name: readString(result, 'name') ?? APP_NAME,
+      name: readString(result, 'name') ?? TMEX_APP_NAME,
       domain: readString(result, 'domain') ?? '',
     };
   }
@@ -298,9 +432,10 @@ export class CloudflareAccessClient {
     method: string,
     path: string,
     apiToken: string,
-    body?: unknown
+    body?: unknown,
+    opts?: { notFoundOk?: boolean }
   ): Promise<T> {
-    const { result } = await this.requestEnvelope<T>(method, path, apiToken, body);
+    const { result } = await this.requestEnvelope<T>(method, path, apiToken, body, opts);
     return result as T;
   }
 
@@ -308,7 +443,8 @@ export class CloudflareAccessClient {
     method: string,
     path: string,
     apiToken: string,
-    body?: unknown
+    body?: unknown,
+    opts?: { notFoundOk?: boolean }
   ): Promise<CfEnvelope<T>> {
     let res: Response;
     try {
@@ -323,6 +459,9 @@ export class CloudflareAccessClient {
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       throw new TunnelError('access_api_failed', sanitizeAccessMessage(message));
+    }
+    if (res.status === 404 && opts?.notFoundOk) {
+      return { success: true, result: undefined as T };
     }
     let envelope: CfEnvelope<T> = {};
     try {
@@ -339,4 +478,12 @@ export class CloudflareAccessClient {
     }
     return envelope;
   }
+}
+
+function rulesMatch(got: TunnelAccessPolicyRule[], want: TunnelAccessPolicyRule[]): boolean {
+  if (got.length !== want.length) return false;
+  const key = (r: TunnelAccessPolicyRule) => `${r.kind}:${r.value}`;
+  const a = [...got].map(key).sort();
+  const b = [...want].map(key).sort();
+  return a.every((v, i) => v === b[i]);
 }

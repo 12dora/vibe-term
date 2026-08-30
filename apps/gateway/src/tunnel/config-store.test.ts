@@ -18,6 +18,10 @@ describe('tunnel_config migration', () => {
       }>;
       expect(cols.map((c) => c.name)).toContain('exposure_acknowledged_at');
       expect(cols.map((c) => c.name)).toContain('externally_managed');
+      const accessCols = sqlite.query('PRAGMA table_info(tunnel_access)').all() as Array<{
+        name: string;
+      }>;
+      expect(accessCols.map((c) => c.name)).toContain('bypass_app_id');
       const store = new TunnelConfigStore(db);
       expect(store.get().mode).toBe('off');
       const saved = store.save({

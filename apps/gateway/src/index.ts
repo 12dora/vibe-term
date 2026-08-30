@@ -3,6 +3,7 @@ import { handleSystemApiRequest } from './api/system';
 import { config } from './config';
 import { createGatewayRuntime } from './runtime';
 import { getDisplayVersion } from './system/version';
+import { guardedGatewayFetch } from './tunnel/access-guard';
 
 interface RunningRuntime {
   stop: () => Promise<void>;
@@ -19,11 +20,11 @@ async function main(): Promise<void> {
       // 拉满到 255s；流式上传/下载（commit / prepare）持续有 NDJSON 数据，本就不受影响。
       idleTimeout: 255,
       async fetch(req, bunServer) {
-        const response = gateway.handleRequest(req, bunServer);
-        if (response !== undefined) {
-          return response;
-        }
-        return new Response('Not Found', { status: 404 });
+        return guardedGatewayFetch(
+          req,
+          (request, server) => gateway.handleRequest(request, server),
+          bunServer
+        );
       },
       websocket: gateway.websocket,
     });

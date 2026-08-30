@@ -76,33 +76,47 @@ export type VerifyAccessJwtInput = {
   jwks: JwksCache;
 };
 
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function isFiniteNumber(value: unknown): value is number {
+  return typeof value === 'number' && Number.isFinite(value);
+}
+
 export async function verifyAccessJwt(input: VerifyAccessJwtInput): Promise<boolean> {
-  const parsed = splitJwt(input.token);
-  if (!parsed) return false;
-  const { header, payload, signingInput, signature } = parsed;
-  if (header.alg !== 'RS256') return false;
-  const kid = typeof header.kid === 'string' ? header.kid : '';
-  if (!kid) return false;
-  let key: JwkRsa | null;
   try {
-    key = await input.jwks.getKey(input.teamDomain, kid);
+    const parsed = splitJwt(input.token);
+    if (!parsed) return false;
+    const { header, payload, signingInput, signature } = parsed;
+    if (header.alg !== 'RS256') return false;
+    const kid = typeof header.kid === 'string' ? header.kid : '';
+    if (!kid) return false;
+    let key: JwkRsa | null;
+    try {
+      key = await input.jwks.getKey(input.teamDomain, kid);
+    } catch {
+      return false;
+    }
+    if (!key?.n || !key.e) return false;
+    const ok = await verifyRs256(signingInput, signature, key);
+    if (!ok) return false;
+    const nowSec = Math.floor((input.now ?? Date.now()) / 1000);
+    if (!isFiniteNumber(payload.exp) || nowSec >= payload.exp) return false;
+    if (payload.nbf !== undefined && (!isFiniteNumber(payload.nbf) || nowSec < payload.nbf)) {
+      return false;
+    }
+    const iss = teamIssuer(input.teamDomain);
+    if (payload.iss !== iss) return false;
+    const auds = Array.isArray(payload.aud)
+      ? payload.aud.filter((v): v is string => typeof v === 'string')
+      : typeof payload.aud === 'string'
+        ? [payload.aud]
+        : [];
+    return auds.includes(input.aud);
   } catch {
     return false;
   }
-  if (!key?.n || !key.e) return false;
-  const ok = await verifyRs256(signingInput, signature, key);
-  if (!ok) return false;
-  const nowSec = Math.floor((input.now ?? Date.now()) / 1000);
-  if (typeof payload.exp === 'number' && nowSec >= payload.exp) return false;
-  if (typeof payload.nbf === 'number' && nowSec < payload.nbf) return false;
-  const iss = teamIssuer(input.teamDomain);
-  if (payload.iss !== iss) return false;
-  const auds = Array.isArray(payload.aud)
-    ? payload.aud.filter((v): v is string => typeof v === 'string')
-    : typeof payload.aud === 'string'
-      ? [payload.aud]
-      : [];
-  return auds.includes(input.aud);
 }
 
 type JwtHeader = { alg?: string; kid?: string; typ?: string };
@@ -117,11 +131,12 @@ function splitJwt(token: string): {
   const parts = token.split('.');
   if (parts.length !== 3 || !parts[0] || !parts[1] || !parts[2]) return null;
   try {
-    const header = JSON.parse(utf8FromB64url(parts[0])) as JwtHeader;
-    const payload = JSON.parse(utf8FromB64url(parts[1])) as JwtPayload;
+    const headerRaw: unknown = JSON.parse(utf8FromB64url(parts[0]));
+    const payloadRaw: unknown = JSON.parse(utf8FromB64url(parts[1]));
+    if (!isPlainObject(headerRaw) || !isPlainObject(payloadRaw)) return null;
     return {
-      header,
-      payload,
+      header: headerRaw as JwtHeader,
+      payload: payloadRaw as JwtPayload,
       signingInput: `${parts[0]}.${parts[1]}`,
       signature: b64urlToBytes(parts[2]),
     };

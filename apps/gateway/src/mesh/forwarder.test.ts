@@ -99,6 +99,10 @@ describe('forwarder', () => {
               'proxy-authorization': 'x',
               'x-forwarded-for': '1.1.1.1',
               accept: 'image/*',
+              'cf-connecting-ip': '203.0.113.9',
+              'cf-access-jwt-assertion': 'header.payload.sig',
+              'cf-access-authenticated-user-email': 'user@example.com',
+              'cf-ray': 'abc123',
             },
           }),
           dummyServer
@@ -117,6 +121,10 @@ describe('forwarder', () => {
       expect(streams.lastOpen?.headers.host).toBeUndefined();
       expect(streams.lastOpen?.headers.connection).toBeUndefined();
       expect(streams.lastOpen?.headers.accept).toBe('image/*');
+      expect(streams.lastOpen?.headers['cf-connecting-ip']).toBeUndefined();
+      expect(streams.lastOpen?.headers['cf-access-jwt-assertion']).toBeUndefined();
+      expect(streams.lastOpen?.headers['cf-access-authenticated-user-email']).toBeUndefined();
+      expect(streams.lastOpen?.headers['cf-ray']).toBeUndefined();
 
       streams.nextResponse = new Response('<html></html>', {
         headers: { 'content-type': 'text/html; charset=utf-8' },

@@ -25,6 +25,18 @@ function rejectIfForwarded(req: Request, ctx: ApiRouteContext): Response | null 
   return new Response(null, { status: 404 });
 }
 
+function optionalHostname(body: Record<string, unknown>): string | undefined {
+  if (body.hostname === undefined) return undefined;
+  if (typeof body.hostname !== 'string') {
+    throw new TunnelError('invalid_request', 'hostname must be a string');
+  }
+  const hostname = normalizeTunnelHostname(body.hostname);
+  if (!hostname) {
+    throw new TunnelError('invalid_hostname', 'hostname is not a valid RFC 1123 name');
+  }
+  return hostname;
+}
+
 function optionalAck(body: Record<string, unknown>): boolean | undefined {
   if (body.acknowledgeExposure === undefined) return undefined;
   if (typeof body.acknowledgeExposure !== 'boolean') {
@@ -43,9 +55,15 @@ function parseAction(body: Record<string, unknown>): TunnelActionRequest {
     case 'remove':
     case 'check':
     case 'clear_access_credentials':
-    case 'remove_access':
-    case 'sync_access':
       return { action };
+    case 'remove_access': {
+      const acknowledgeExposure = optionalAck(body);
+      return acknowledgeExposure === undefined ? { action } : { action, acknowledgeExposure };
+    }
+    case 'sync_access': {
+      const hostname = optionalHostname(body);
+      return hostname === undefined ? { action } : { action, hostname };
+    }
     case 'quick_start':
     case 'start': {
       const acknowledgeExposure = optionalAck(body);
@@ -108,13 +126,24 @@ function parseAction(body: Record<string, unknown>): TunnelActionRequest {
       if (!Array.isArray(body.rules)) {
         throw new TunnelError('invalid_request', 'rules must be an array');
       }
-      return { action: 'configure_access', rules: parseAccessRules(body.rules) };
+      const hostname = optionalHostname(body);
+      return {
+        action: 'configure_access',
+        rules: parseAccessRules(body.rules),
+        ...(hostname === undefined ? {} : { hostname }),
+      };
     }
-    case 'set_access_enforce':
+    case 'set_access_enforce': {
       if (typeof body.enforceJwt !== 'boolean') {
         throw new TunnelError('invalid_request', 'enforceJwt must be a boolean');
       }
-      return { action: 'set_access_enforce', enforceJwt: body.enforceJwt };
+      const acknowledgeExposure = optionalAck(body);
+      return {
+        action: 'set_access_enforce',
+        enforceJwt: body.enforceJwt,
+        ...(acknowledgeExposure === undefined ? {} : { acknowledgeExposure }),
+      };
+    }
     case 'adopt_external': {
       if (typeof body.hostname !== 'string') {
         throw new TunnelError('invalid_request', 'hostname is required');

@@ -1,13 +1,17 @@
 import { json } from '../api/http';
 import { parseCookies } from '../auth/cookies';
+import { isPeerInboundRequest } from '../mesh/peer-request-marker';
 import type { TunnelFetch } from './access-client';
 import { JwksCache, verifyAccessJwt } from './access-jwt';
+import { isAccessGuardExemptPath } from './access-paths';
 
 export type AccessEnforcement = {
   enforceJwt: boolean;
   configured: boolean;
   aud: string | null;
   teamDomain: string | null;
+  /** 与当前 named 隧道主机名匹配时才真正强制；缺省时回退到 enforceJwt && configured */
+  effective?: boolean;
 };
 
 export type AccessGuardOptions = {
@@ -24,6 +28,7 @@ const defaultSnapshot = (): AccessEnforcement => ({
   configured: false,
   aud: null,
   teamDomain: null,
+  effective: false,
 });
 
 let snapshotFn: () => AccessEnforcement = defaultSnapshot;
@@ -72,6 +77,43 @@ export function createAccessGuard(opts: AccessGuardOptions = {}) {
     });
 }
 
+export function accessEnforcementActive(snap: AccessEnforcement): boolean {
+  if (snap.effective === false) return false;
+  const on = snap.effective === true || (snap.enforceJwt && snap.configured);
+  return Boolean(on && snap.aud && snap.teamDomain);
+}
+
+/**
+ * 每个 Bun `fetch` 最外层调用：豁免 peer inbound、机器路径、无 cf-connecting-ip，再校验 JWT。
+ */
+export async function guardEntryAccess(req: Request): Promise<Response | null> {
+  if (isPeerInboundRequest(req)) return null;
+  let pathname = '/';
+  try {
+    pathname = new URL(req.url).pathname;
+  } catch {
+    return json(DENIED, 403);
+  }
+  if (isAccessGuardExemptPath(pathname)) return null;
+  return enforceTunnelAccessJwt(req);
+}
+
+export async function guardedGatewayFetch(
+  req: Request,
+  handle: (
+    req: Request,
+    bunServer: Bun.Server<unknown>
+  ) => Response | Promise<Response | undefined> | undefined,
+  bunServer: Bun.Server<unknown>,
+  notFound: () => Response = () => new Response('Not Found', { status: 404 })
+): Promise<Response> {
+  const denied = await guardEntryAccess(req);
+  if (denied) return denied;
+  const response = await handle(req, bunServer);
+  if (response !== undefined) return response;
+  return notFound();
+}
+
 export async function enforceTunnelAccessJwt(req: Request): Promise<Response | null> {
   return enforceAccessJwt(req, {
     snapshot: snapshotFn,
@@ -92,16 +134,21 @@ export async function enforceAccessJwt(
 ): Promise<Response | null> {
   if (!req.headers.get('cf-connecting-ip')) return null;
   const snap = opts.snapshot();
-  if (!snap.enforceJwt || !snap.configured || !snap.aud || !snap.teamDomain) return null;
+  if (!accessEnforcementActive(snap) || !snap.aud || !snap.teamDomain) return null;
   const token = readAccessJwt(req);
   if (!token) return json(DENIED, 403);
-  const ok = await verifyAccessJwt({
-    token,
-    teamDomain: snap.teamDomain,
-    aud: snap.aud,
-    now: (opts.now ?? Date.now)(),
-    jwks: opts.jwks,
-  });
+  let ok = false;
+  try {
+    ok = await verifyAccessJwt({
+      token,
+      teamDomain: snap.teamDomain,
+      aud: snap.aud,
+      now: (opts.now ?? Date.now)(),
+      jwks: opts.jwks,
+    });
+  } catch {
+    return json(DENIED, 403);
+  }
   if (!ok) return json(DENIED, 403);
   return null;
 }

@@ -32,7 +32,7 @@ import {
 import type { GatewayRuntime } from '../../../../apps/gateway/src/runtime';
 import { resolveInstallDir as resolveGatewayInstallDir } from '../../../../apps/gateway/src/system/install-info';
 import { TlsConfigStore } from '../../../../apps/gateway/src/tls/tls-config-store';
-import { guardTunnelAccess } from '../../../../apps/gateway/src/tunnel/access-guard';
+import { guardEntryAccess } from '../../../../apps/gateway/src/tunnel/access-guard';
 import { tunnelManager } from '../../../../apps/gateway/src/tunnel/manager';
 import type { GatewaySession } from '../../../../apps/gateway/src/ws/gateway-session';
 import { readNodeEnv } from '../../../../packages/shared/src/env/load-env';
@@ -156,8 +156,6 @@ async function meshHttp(
   req: Request,
   server: Bun.Server<unknown>
 ): Promise<HttpResult> {
-  const denied = await guardTunnelAccess(req);
-  if (denied) return denied;
   const path = new URL(req.url).pathname;
   if (!mesh) {
     return path === '/api/auth/mode' && req.method === 'GET'
@@ -199,6 +197,10 @@ function createHttpDispatch(handlers: HttpHandler[]): AssembledTmex['fetch'] {
     rewritten: boolean
   ): Promise<Response | undefined> => {
     seedLocalContext(req, bunServer);
+    if (!rewritten) {
+      const denied = await guardEntryAccess(req);
+      if (denied) return denied;
+    }
     for (const handler of handlers) {
       const out = await handler(req, bunServer);
       if (isMeshRewritten(out)) {

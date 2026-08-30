@@ -8,6 +8,15 @@ import type { MeshRuntime } from '../../../../apps/gateway/src/mesh/mesh-runtime
 import type { LoadNative } from '../../../../apps/gateway/src/mesh/rtc';
 import type { GatewayRuntime } from '../../../../apps/gateway/src/runtime';
 import { TlsConfigStore } from '../../../../apps/gateway/src/tls/tls-config-store';
+import {
+  resetAccessGuardForTests,
+  setAccessGuardFetch,
+  setAccessGuardSnapshot,
+} from '../../../../apps/gateway/src/tunnel/access-guard';
+import {
+  generateAccessTestKey,
+  signAccessJwt,
+} from '../../../../apps/gateway/src/tunnel/access-jwt';
 import { createCa, issueLeaf, parseCertificate } from '../tls/cert-authority';
 import {
   SHUTDOWN_TIMEOUT_MS,
@@ -980,5 +989,90 @@ describe('installShutdownHandlers', () => {
     handlers.get('SIGTERM')?.();
     await Bun.sleep(50);
     expect(exited).toBe(1);
+  });
+});
+
+describe('assembleTmex Access guard at outermost fetch', () => {
+  afterEach(() => {
+    resetAccessGuardForTests();
+  });
+
+  const ENFORCED = {
+    enforceJwt: true,
+    configured: true,
+    effective: true,
+    teamDomain: 'team.cloudflareaccess.com',
+    aud: 'aud-1',
+  };
+
+  test('header without JWT is 403 before TLS/local/hub handlers', async () => {
+    setAccessGuardSnapshot(() => ENFORCED);
+    let gatewayHits = 0;
+    const assembled = await assembleTmex({
+      roles: { hub: false, node: false },
+      createGatewayRuntime: async () =>
+        fakeGateway({
+          handleRequest: () => {
+            gatewayHits += 1;
+            return new Response('from-gateway');
+          },
+        }),
+    });
+    const res = await assembled.fetch(
+      new Request('http://localhost/api/devices', { headers: { 'cf-connecting-ip': '1.2.3.4' } }),
+      dummyServer
+    );
+    expect(res?.status).toBe(403);
+    expect(gatewayHits).toBe(0);
+  });
+
+  test('valid JWT reaches inner handlers', async () => {
+    setAccessGuardSnapshot(() => ENFORCED);
+    const { privateKey, jwk } = await generateAccessTestKey('asm');
+    setAccessGuardFetch(async () => Response.json({ keys: [jwk] }));
+    const token = await signAccessJwt(
+      privateKey,
+      { alg: 'RS256', kid: 'asm', typ: 'JWT' },
+      {
+        aud: [ENFORCED.aud],
+        iss: `https://${ENFORCED.teamDomain}`,
+        exp: Math.floor(Date.now() / 1000) + 120,
+      }
+    );
+    const assembled = await assembleTmex({
+      roles: { hub: false, node: false },
+      createGatewayRuntime: async () =>
+        fakeGateway({
+          handleRequest: () => new Response('from-gateway'),
+        }),
+    });
+    const res = await assembled.fetch(
+      new Request('http://localhost/api/devices', {
+        headers: {
+          'cf-connecting-ip': '1.2.3.4',
+          'Cf-Access-Jwt-Assertion': token,
+        },
+      }),
+      dummyServer
+    );
+    expect(res?.status).toBe(200);
+    expect(await res?.text()).toBe('from-gateway');
+  });
+
+  test('/hub/uplink without JWT is not blocked by the guard', async () => {
+    setAccessGuardSnapshot(() => ENFORCED);
+    const assembled = await assembleTmex({
+      roles: { hub: false, node: false },
+      hub: fakeHub({
+        handleRequest: async () => new Response('uplink-ok'),
+      }),
+      createGatewayRuntime: async () => fakeGateway(),
+    });
+    const res = await assembled.fetch(
+      new Request('http://localhost/hub/uplink', { headers: { 'cf-connecting-ip': '1.2.3.4' } }),
+      dummyServer
+    );
+    expect(res?.status).toBe(200);
+    expect(await res?.text()).toBe('uplink-ok');
   });
 });

@@ -41,7 +41,17 @@ const DROP_ON_401_REWRITE = new Set([
   'etag',
   'content-disposition',
 ]);
-const DROP_REQUEST_HEADERS = new Set(['cookie', 'authorization', 'host', 'connection', 'upgrade']);
+const DROP_REQUEST_HEADERS = new Set([
+  'cookie',
+  'authorization',
+  'host',
+  'connection',
+  'upgrade',
+  'cf-connecting-ip',
+  'cf-access-jwt-assertion',
+  'cf-access-authenticated-user-email',
+  'cf-ray',
+]);
 
 type ForwarderDeps = {
   nodeId: string;

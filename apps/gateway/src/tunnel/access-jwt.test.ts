@@ -125,4 +125,52 @@ describe('verifyAccessJwt', () => {
     ).toBe(true);
     expect(fetches).toBe(2);
   });
+
+  test('rejects a signed token with missing exp', async () => {
+    const { publicKey, privateKey } = await generateRsa();
+    const kid = 'kid-exp';
+    const jwks = new JwksCache({
+      now: () => NOW,
+      fetchImpl: async () => Response.json({ keys: [await jwkFor(publicKey, kid)] }),
+    });
+    const token = await signJwt(
+      privateKey,
+      { alg: 'RS256', kid, typ: 'JWT' },
+      { aud: [AUD], iss: `https://${TEAM}` }
+    );
+    expect(await verifyAccessJwt({ token, teamDomain: TEAM, aud: AUD, now: NOW, jwks })).toBe(
+      false
+    );
+  });
+
+  test('returns false for a JSON null header without throwing', async () => {
+    const token = `${Buffer.from('null').toString('base64url')}.${Buffer.from(
+      JSON.stringify({ aud: AUD, iss: `https://${TEAM}`, exp: Math.floor(NOW / 1000) + 60 })
+    ).toString('base64url')}.sig`;
+    expect(
+      await verifyAccessJwt({
+        token,
+        teamDomain: TEAM,
+        aud: AUD,
+        now: NOW,
+        jwks: new JwksCache(),
+      })
+    ).toBe(false);
+  });
+
+  test('rejects alg none and HS256', async () => {
+    const jwks = new JwksCache();
+    for (const alg of ['none', 'HS256']) {
+      const token = `${Buffer.from(JSON.stringify({ alg, kid: 'k' })).toString('base64url')}.${Buffer.from(
+        JSON.stringify({
+          aud: AUD,
+          iss: `https://${TEAM}`,
+          exp: Math.floor(NOW / 1000) + 60,
+        })
+      ).toString('base64url')}.sig`;
+      expect(await verifyAccessJwt({ token, teamDomain: TEAM, aud: AUD, now: NOW, jwks })).toBe(
+        false
+      );
+    }
+  });
 });

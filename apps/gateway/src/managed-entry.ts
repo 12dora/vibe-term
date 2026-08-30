@@ -124,12 +124,14 @@ async function runManagedGateway(): Promise<void> {
     { materializeManagedMigrations },
     { createGatewayRuntime },
     { getDisplayVersion, getManagementMode, getUpdateOwner },
+    { guardedGatewayFetch },
   ] = await Promise.all([
     import('./api/system-managed'),
     import('./config'),
     import('./db/managed-migrations'),
     import('./runtime'),
     import('./system/info-public'),
+    import('./tunnel/access-guard'),
   ]);
 
   const managedHost = resolveManagedEndpointHost(config.bindHost);
@@ -165,11 +167,11 @@ async function runManagedGateway(): Promise<void> {
         if (!runtime) {
           return runtimeUnavailableResponse();
         }
-        const response = runtime.handleRequest(req, bunServer);
-        if (response !== undefined) {
-          return response;
-        }
-        return new Response('Not Found', { status: 404 });
+        return guardedGatewayFetch(
+          req,
+          (request, server) => runtime.handleRequest(request, server),
+          bunServer
+        );
       },
       websocket: {
         backpressureLimit: initialWebSocket.backpressureLimit,

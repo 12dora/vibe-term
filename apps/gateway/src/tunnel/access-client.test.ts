@@ -42,41 +42,134 @@ describe('CloudflareAccessClient', () => {
     });
   });
 
-  test('replaces a single allow policy and deletes extras', async () => {
+  test('replaces only the tmex-allow policy and refuses extra authorizing policies', async () => {
     const calls: Array<{ method?: string; url: string; body?: unknown }> = [];
+    let policies = [
+      { id: 'pol-1', name: 'tmex-allow', decision: 'allow', include: [] as unknown[] },
+    ];
     const client = new CloudflareAccessClient(async (input, init) => {
       const url = String(input);
       const method = init?.method;
       const body = init?.body ? JSON.parse(String(init.body)) : undefined;
       calls.push({ method, url, body });
       if (url.endsWith('/policies') && method === 'GET') {
-        return jsonRes({
-          success: true,
-          result: [
-            { id: 'pol-1', include: [] },
-            { id: 'pol-2', include: [] },
-          ],
-        });
+        return jsonRes({ success: true, result: policies });
       }
       if (url.endsWith('/policies/pol-1') && method === 'PUT') {
-        return jsonRes({ success: true, result: { id: 'pol-1', include: body?.include } });
-      }
-      if (url.endsWith('/policies/pol-2') && method === 'DELETE') {
-        return jsonRes({ success: true, result: null });
+        policies = [
+          {
+            id: 'pol-1',
+            name: 'tmex-allow',
+            decision: 'allow',
+            include: body?.include ?? [],
+          },
+        ];
+        return jsonRes({ success: true, result: policies[0] });
       }
       return jsonRes({ success: false, errors: [{ message: `unexpected ${method} ${url}` }] }, 400);
     });
     const rules = [{ kind: 'email' as const, value: 'a@example.com' }];
     await client.replaceAllowPolicy('acc1', 'tok', 'app-1', rules);
     expect(calls.some((c) => c.method === 'PUT' && c.url.endsWith('/policies/pol-1'))).toBe(true);
-    expect(calls.some((c) => c.method === 'DELETE' && c.url.endsWith('/policies/pol-2'))).toBe(
-      true
-    );
+    expect(calls.some((c) => c.method === 'DELETE')).toBe(false);
     const put = calls.find((c) => c.method === 'PUT');
     expect(put?.body).toMatchObject({
+      name: 'tmex-allow',
       decision: 'allow',
       include: [{ email: { email: 'a@example.com' } }],
     });
+  });
+
+  test('fails replaceAllowPolicy when a non-tmex allow policy exists', async () => {
+    const client = new CloudflareAccessClient(async (input, init) => {
+      const url = String(input);
+      if (url.endsWith('/policies') && (init?.method ?? 'GET') === 'GET') {
+        return jsonRes({
+          success: true,
+          result: [
+            { id: 'pol-1', name: 'tmex-allow', decision: 'allow', include: [] },
+            { id: 'pol-2', name: 'contractors', decision: 'allow', include: [] },
+          ],
+        });
+      }
+      return jsonRes({ success: false, errors: [{ message: url }] }, 400);
+    });
+    try {
+      await client.replaceAllowPolicy('acc1', 'tok', 'app-1', [
+        { kind: 'email', value: 'a@example.com' },
+      ]);
+      throw new Error('expected failure');
+    } catch (error) {
+      expect((error as Error).message).toContain('contractors');
+      expect((error as { code?: string }).code).toBe('access_api_failed');
+    }
+  });
+
+  test('treats DELETE 404 as already-deleted and fails other DELETE errors', async () => {
+    const gone = new CloudflareAccessClient(async () => new Response('missing', { status: 404 }));
+    await gone.deleteApp('acc1', 'tok', 'app-1');
+    const denied = new CloudflareAccessClient(async () =>
+      jsonRes({ success: false, errors: [{ message: 'Forbidden' }] }, 403)
+    );
+    try {
+      await denied.deleteApp('acc1', 'tok', 'app-1');
+      throw new Error('expected failure');
+    } catch (error) {
+      expect((error as Error).message).toBe('Forbidden');
+    }
+  });
+
+  test('creates bypass apps for /hub/ and /api/hub/ with everyone bypass', async () => {
+    const created: unknown[] = [];
+    const client = new CloudflareAccessClient(async (input, init) => {
+      const url = String(input);
+      const method = init?.method ?? 'GET';
+      const body = init?.body ? JSON.parse(String(init.body)) : undefined;
+      if (url.includes('/access/apps?')) {
+        return jsonRes({
+          success: true,
+          result: [],
+          result_info: { page: 1, per_page: 100, total_count: 0, total_pages: 1 },
+        });
+      }
+      if (url.endsWith('/access/apps') && method === 'POST') {
+        created.push(body);
+        const id = body.domain.includes('/api/hub/') ? 'bypass-api' : 'bypass-hub';
+        return jsonRes({
+          success: true,
+          result: { id, aud: `aud-${id}`, name: body.name, domain: body.domain },
+        });
+      }
+      if (url.includes('/policies') && method === 'GET') {
+        return jsonRes({ success: true, result: [] });
+      }
+      if (url.includes('/policies') && method === 'POST') {
+        created.push(body);
+        return jsonRes({ success: true, result: { id: 'pol-b', name: body.name } });
+      }
+      return jsonRes({ success: false, errors: [{ message: `${method} ${url}` }] }, 400);
+    });
+    const ids = await client.upsertBypassApps('acc1', 'tok', 'tmex.example.com', []);
+    expect(ids).toEqual(['bypass-hub', 'bypass-api']);
+    expect(created).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          type: 'self_hosted',
+          domain: 'tmex.example.com/hub/',
+          name: 'tmex-bypass-hub',
+        }),
+        expect.objectContaining({
+          type: 'self_hosted',
+          domain: 'tmex.example.com/api/hub/',
+          name: 'tmex-bypass-api-hub',
+        }),
+        expect.objectContaining({
+          name: 'tmex-bypass',
+          decision: 'bypass',
+          include: [{ everyone: {} }],
+        }),
+      ])
+    );
   });
 
   test('maps Cloudflare error envelopes without leaking tokens', async () => {
@@ -87,7 +180,11 @@ describe('CloudflareAccessClient', () => {
       await client.getOrganization('acc1', 'super-secret-token-value-xxxxxxxx');
       throw new Error('expected failure');
     } catch (error) {
-      expect((error as Error).message).toBe('Invalid API Token');
+      expect((error as Error).message).toContain('Invalid API Token');
+      expect((error as Error).message).toContain('Access: Apps and Policies — Edit');
+      expect((error as Error).message).toContain(
+        'Access: Organizations, Identity Providers, and Groups — Read'
+      );
       expect((error as Error).message).not.toContain('super-secret');
     }
   });
