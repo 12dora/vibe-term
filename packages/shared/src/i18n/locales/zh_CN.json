@@ -486,7 +486,7 @@
           "credentials": {
             "title": "Cloudflare 凭证",
             "apiToken": "API 令牌",
-            "apiTokenHint": "需要 Access: Apps and Policies — Edit 权限。令牌只保存在本机服务端，不会回显。",
+            "apiTokenHint": "需要 Cloudflare API 令牌，权限：Access: Apps and Policies（编辑）与 Access: Organizations, Identity Providers, and Groups（读取）。",
             "accountId": "账户 ID",
             "accountIdHint": "Cloudflare 控制台中该账号的 Account ID。",
             "save": "保存",

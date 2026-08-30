@@ -486,7 +486,7 @@
           "credentials": {
             "title": "Cloudflare credentials",
             "apiToken": "API token",
-            "apiTokenHint": "Requires the \"Access: Apps and Policies — Edit\" permission. The token is stored on this machine only and never echoed back.",
+            "apiTokenHint": "Cloudflare API token with permissions: Access: Apps and Policies (Edit) and Access: Organizations, Identity Providers, and Groups (Read).",
             "accountId": "Account ID",
             "accountIdHint": "The Account ID of that account in the Cloudflare dashboard.",
             "save": "Save",

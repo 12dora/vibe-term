@@ -492,7 +492,7 @@ export const I18N_RESOURCES = {
           "credentials": {
             "title": "Cloudflare credentials",
             "apiToken": "API token",
-            "apiTokenHint": "Requires the \"Access: Apps and Policies — Edit\" permission. The token is stored on this machine only and never echoed back.",
+            "apiTokenHint": "Cloudflare API token with permissions: Access: Apps and Policies (Edit) and Access: Organizations, Identity Providers, and Groups (Read).",
             "accountId": "Account ID",
             "accountIdHint": "The Account ID of that account in the Cloudflare dashboard.",
             "save": "Save",
@@ -2444,7 +2444,7 @@ export const I18N_RESOURCES = {
           "credentials": {
             "title": "Cloudflare 凭证",
             "apiToken": "API 令牌",
-            "apiTokenHint": "需要 Access: Apps and Policies — Edit 权限。令牌只保存在本机服务端，不会回显。",
+            "apiTokenHint": "需要 Cloudflare API 令牌，权限：Access: Apps and Policies（编辑）与 Access: Organizations, Identity Providers, and Groups（读取）。",
             "accountId": "账户 ID",
             "accountIdHint": "Cloudflare 控制台中该账号的 Account ID。",
             "save": "保存",
@@ -4395,7 +4395,7 @@ export const I18N_RESOURCES = {
           "credentials": {
             "title": "Cloudflare 認証情報",
             "apiToken": "API トークン",
-            "apiTokenHint": "「Access: Apps and Policies — Edit」権限が必要です。トークンはこの端末のサーバー側にのみ保存され、再表示されません。",
+            "apiTokenHint": "Cloudflare API トークンが必要です。権限：Access: Apps and Policies（編集）と Access: Organizations, Identity Providers, and Groups（読み取り）。",
             "accountId": "アカウント ID",
             "accountIdHint": "Cloudflare ダッシュボードに表示される Account ID です。",
             "save": "保存",

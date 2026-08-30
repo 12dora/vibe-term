@@ -486,7 +486,7 @@
           "credentials": {
             "title": "Cloudflare 認証情報",
             "apiToken": "API トークン",
-            "apiTokenHint": "「Access: Apps and Policies — Edit」権限が必要です。トークンはこの端末のサーバー側にのみ保存され、再表示されません。",
+            "apiTokenHint": "Cloudflare API トークンが必要です。権限：Access: Apps and Policies（編集）と Access: Organizations, Identity Providers, and Groups（読み取り）。",
             "accountId": "アカウント ID",
             "accountIdHint": "Cloudflare ダッシュボードに表示される Account ID です。",
             "save": "保存",
