@@ -126,7 +126,7 @@ async function browseLocal(
   return ok(toResponse(absPath, entries));
 }
 
-// 远端 stdout：P<resolved>\0 后跟成对的 <d|l>\0<basename>\0（find -printf '%y\\0%f\\0'）
+// 远端 stdout：P<resolved>\0 后跟成对的 <d|l>\0<basename>\0（POSIX sh 循环输出，不依赖 GNU find）
 function parseSshListing(stdout: Uint8Array): {
   path: string;
   items: Array<{ type: 'd' | 'l'; name: string }>;
@@ -163,7 +163,8 @@ export function buildSshBrowseCommand(absPath: string | null): string {
     'if [ ! -e "$target" ]; then echo not_found >&2; exit 2; fi',
     'if [ ! -d "$target" ]; then echo not_a_directory >&2; exit 20; fi',
     'printf \'P%s\\0\' "$target"',
-    'find "$target" -maxdepth 1 -mindepth 1 \\( -type d -o \\( -type l -xtype d \\) \\) -printf \'%y\\0%f\\0\'',
+    'cd "$target" || exit 1',
+    'for f in .* *; do [ "$f" = . ] && continue; [ "$f" = .. ] && continue; if [ -L "$f" ]; then [ -d "$f" ] && printf \'l\\0%s\\0\' "$f"; elif [ -d "$f" ]; then printf \'d\\0%s\\0\' "$f"; fi; done',
   ].join('; ');
 }
 

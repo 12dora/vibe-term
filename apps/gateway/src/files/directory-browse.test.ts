@@ -244,9 +244,9 @@ describe('browseDirectory — SSH', () => {
         depsFor(sshDevice(), { execSsh })
       )
     );
-    expect(seenCommand).toContain('find ');
-    expect(seenCommand).toContain('-maxdepth 1');
-    expect(seenCommand).toContain('-type l');
+    expect(seenCommand).toContain('for f in .* *');
+    expect(seenCommand).toContain("printf 'P%s");
+    expect(seenCommand).toContain('[ -L "$f" ]');
     expect(seenCommand).toContain("'/home/u/My Docs'");
     expect(shown.path).toBe('/home/u/My Docs');
     expect(shown.parent).toBe('/home/u');
