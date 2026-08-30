@@ -410,6 +410,16 @@ interface LoginToNodeOptions {
 /** self bootstrap 登录时用过的 nodePk，登录后必须与 mesh 列表里的公钥核对。 */
 let selfChallengePk: Uint8Array | null = null;
 
+/** 需要 TOTP 但码不在内存里 → null（回 TOTP_REQUIRED，一个请求都不发）；不需要 TOTP → undefined。 */
+function resolveTotp(session: SessionKeyInfo) {
+  if (session.method !== 'root' || !session.hasTotp) return undefined;
+  if (!current?.kTotp || !current.totpCode) return null;
+  return { code: current.totpCode, k_totp: encodeBase64url(current.kTotp) };
+}
+
+const pinnedPkOk = (targetPk: Uint8Array, node: MeshNode | undefined): boolean =>
+  !node || bytesEqual(targetPk, decodeBase64url(node.publicKey));
+
 /**
  * 对单台 node 执行设计 §2「登录」的 1–3 步。
  * 第 1 步拿到的 `nodePk` 必须与 `/api/mesh/nodes` 中该 node 的公钥一致，
@@ -417,36 +427,27 @@ let selfChallengePk: Uint8Array | null = null;
  */
 export async function loginToNode(
   nodeId: string,
-  opts: LoginToNodeOptions = {}
+  { api = defaultAuthApi, node: knownNode, selfBootstrap }: LoginToNodeOptions = {}
 ): Promise<LoginNodeResult> {
   const session = getSessionKey();
   if (!current || !session) return { ok: false, code: 'NO_SESSION_KEY' };
-  const api = opts.api ?? defaultAuthApi;
 
-  let node = opts.node;
-  if (!node && !(opts.selfBootstrap && nodeId === SELF_NODE_ID)) {
+  let node = knownNode;
+  if (!node && !(selfBootstrap && nodeId === SELF_NODE_ID)) {
     const nodes = await api.listNodes().catch(() => null);
     if (!nodes) return { ok: false, code: 'NETWORK_ERROR' };
     node = nodes.find((item) => item.id === nodeId);
     if (!node) return { ok: false, code: 'UNKNOWN_NODE' };
   }
 
-  // 需要 TOTP 但码不在内存里 → null（回 TOTP_REQUIRED，一个请求都不发）；不需要 TOTP → undefined。
-  const totp =
-    session.method === 'root' && session.hasTotp
-      ? current.kTotp && current.totpCode
-        ? { code: current.totpCode, k_totp: encodeBase64url(current.kTotp) }
-        : null
-      : undefined;
+  const totp = resolveTotp(session);
   if (totp === null) return { ok: false, code: 'TOTP_REQUIRED' };
 
   const challenge = await api.challenge(nodeId, session.uid).catch(() => null);
   if (!challenge) return { ok: false, code: 'NETWORK_ERROR' };
 
   const targetPk = decodeBase64url(challenge.nodePk);
-  if (node && !bytesEqual(targetPk, decodeBase64url(node.publicKey))) {
-    return { ok: false, code: 'NODE_PK_MISMATCH' };
-  }
+  if (!pinnedPkOk(targetPk, node)) return { ok: false, code: 'NODE_PK_MISMATCH' };
   if (!node) selfChallengePk = targetPk;
 
   const login = buildLogin({
@@ -457,15 +458,14 @@ export async function loginToNode(
     uid: session.uid,
     entry: session.entryNodeId,
   });
-  const result = await api
-    .login(nodeId, {
-      login: encodeBase64url(encodeLogin(login)),
-      sig: encodeBase64url(signLogin(current.sessSk, login)),
-      delegation: encodeBase64url(current.delegationBytes),
-      delegation_sig: encodeBase64url(current.delegationSig),
-      ...(totp ? { totp } : {}),
-    })
-    .catch(() => null);
+  const body = {
+    login: encodeBase64url(encodeLogin(login)),
+    sig: encodeBase64url(signLogin(current.sessSk, login)),
+    delegation: encodeBase64url(current.delegationBytes),
+    delegation_sig: encodeBase64url(current.delegationSig),
+    totp,
+  };
+  const result = await api.login(nodeId, body).catch(() => null);
   if (!result) return { ok: false, code: 'NETWORK_ERROR' };
   return result.ok ? { ok: true } : { ok: false, code: result.code };
 }
@@ -504,7 +504,7 @@ export async function loginSelf(opts: LoginSelfOptions = {}): Promise<LoginNodeR
   const selfRow = nodes.find((node) => node.id === current?.info.entryNodeId);
   const pinnedPk = selfChallengePk;
   selfChallengePk = null;
-  if (selfRow && pinnedPk && !bytesEqual(pinnedPk, decodeBase64url(selfRow.publicKey))) {
+  if (pinnedPk && !pinnedPkOk(pinnedPk, selfRow)) {
     clearSessionKey();
     return { ok: false, code: 'NODE_PK_MISMATCH' };
   }
@@ -540,7 +540,7 @@ export function ensureNodeLogin(
   if (existing) return existing;
   if (!hasSessionKey()) return Promise.resolve({ ok: false, code: 'NO_SESSION_KEY' });
 
-  const task = loginToNode(nodeId, { api: opts.api, node: opts.node })
+  const task = loginToNode(nodeId, opts)
     .then((result) => {
       if (result.ok) markLoggedIn(nodeId);
       return result;

@@ -46,11 +46,20 @@ export function NodesTable({ rows, ...deps }: { rows: NodeRow[] } & NodeActionDe
   );
 }
 
+function deriveNodeRow(row: NodeRow, t: (key: string) => string) {
+  return {
+    statusClass: row.online ? 'text-emerald-500' : 'text-muted-foreground',
+    statusText: t(row.online ? 'nodes.status.online' : 'nodes.status.offline'),
+    reachText: row.reach ? t(`nodes.reach.${row.reach}`) : '—',
+  };
+}
+
 function NodeRowView({ row, ...deps }: { row: NodeRow } & NodeActionDeps) {
   const { t } = useTranslation();
   const { renaming, setRenaming, nameDraft, setNameDraft, busy, rename, revoke } =
     useNodeRowActions(row, deps);
   const disabledHint = deps.hubOnline ? undefined : t('nodes.hubOffline');
+  const view = deriveNodeRow(row, t);
 
   return (
     <tr className="border-b border-border/60 last:border-0" data-testid={`nodes-row-${row.id}`}>
@@ -76,21 +85,12 @@ function NodeRowView({ row, ...deps }: { row: NodeRow } & NodeActionDeps) {
         )}
       </Td>
       <Td>
-        <span
-          data-testid={`nodes-status-${row.id}`}
-          className={row.online ? 'text-emerald-500' : 'text-muted-foreground'}
-        >
-          {row.online ? t('nodes.status.online') : t('nodes.status.offline')}
+        <span data-testid={`nodes-status-${row.id}`} className={view.statusClass}>
+          {view.statusText}
         </span>
       </Td>
       <Td>
-        <span data-testid={`nodes-reach-${row.id}`}>
-          {row.reach === 'lan'
-            ? t('nodes.reach.lan')
-            : row.reach === 'relay'
-              ? t('nodes.reach.relay')
-              : '—'}
-        </span>
+        <span data-testid={`nodes-reach-${row.id}`}>{view.reachText}</span>
       </Td>
       <Td>{row.version ?? '—'}</Td>
       <Td>{row.lastSeenAt ? new Date(row.lastSeenAt).toLocaleString() : '—'}</Td>

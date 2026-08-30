@@ -156,6 +156,22 @@ export function useDirectMutations(api: DirectApi, callbacks: DirectMutationCall
   };
 }
 
+/** 徽章列表：不支持时只有一枚，支持时按「支持 / 安装 / 生效 / 已停用」顺序累加。 */
+function directBadges(direct: LocalDirectStatus, t: Translate): Array<[string, string]> {
+  const { supported, installed, enabled, capable, version } = direct;
+  if (!supported) return [['unsupported', t('nodes.machine.directUnsupported')]];
+  const installedText = version
+    ? t('nodes.machine.directInstalledVersion', { version })
+    : t('nodes.machine.directInstalled');
+  const badges: Array<[string, string]> = [
+    ['supported', t('nodes.machine.directSupported')],
+    ['installed', installed ? installedText : t('nodes.machine.directNotInstalled')],
+  ];
+  if (installed && capable) badges.push(['active', t('nodes.machine.directActive')]);
+  if (installed && !enabled) badges.push(['disabled', t('nodes.machine.directDisabled')]);
+  return badges;
+}
+
 export function DirectSection({
   direct,
   busy,
@@ -170,32 +186,18 @@ export function DirectSection({
   onAction: (action: LocalDirectAction) => void;
 }) {
   const { t } = useTranslation();
-  const { supported, installed, enabled, capable, version } = direct;
+  const { supported, installed, enabled } = direct;
   const primary = installed ? 'remove' : 'install';
   const PrimaryIcon = installed ? Trash2 : Download;
-  const installedLabel = installed
-    ? version
-      ? t('nodes.machine.directInstalledVersion', { version })
-      : t('nodes.machine.directInstalled')
-    : t('nodes.machine.directNotInstalled');
   return (
     <>
       <Row label={t('nodes.machine.direct')}>
         <div className="flex flex-wrap items-center gap-2">
-          {supported ? (
-            <>
-              <DirectBadge id="supported">{t('nodes.machine.directSupported')}</DirectBadge>
-              <DirectBadge id="installed">{installedLabel}</DirectBadge>
-              {installed && capable && (
-                <DirectBadge id="active">{t('nodes.machine.directActive')}</DirectBadge>
-              )}
-              {installed && !enabled && (
-                <DirectBadge id="disabled">{t('nodes.machine.directDisabled')}</DirectBadge>
-              )}
-            </>
-          ) : (
-            <DirectBadge id="unsupported">{t('nodes.machine.directUnsupported')}</DirectBadge>
-          )}
+          {directBadges(direct, t).map(([id, text]) => (
+            <Badge key={id} variant="outline" data-testid={`local-machine-direct-${id}`}>
+              {text}
+            </Badge>
+          ))}
           <Button
             type="button"
             size="xs"
@@ -232,14 +234,6 @@ export function DirectSection({
         </p>
       )}
     </>
-  );
-}
-
-function DirectBadge({ id, children }: { id: string; children: React.ReactNode }) {
-  return (
-    <Badge variant="outline" data-testid={`local-machine-direct-${id}`}>
-      {children}
-    </Badge>
   );
 }
 

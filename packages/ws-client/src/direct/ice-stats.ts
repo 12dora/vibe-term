@@ -20,8 +20,8 @@ function str(value: unknown): string | null {
   return typeof value === 'string' && value.length > 0 ? value : null;
 }
 
-function candidateAddress(report: Record<string, unknown>): string | null {
-  return str(report.address) ?? str(report.ip) ?? null;
+function candidateAddress(report: Record<string, unknown> | undefined): string | null {
+  return str(report?.address) ?? str(report?.ip);
 }
 
 /**
@@ -38,7 +38,7 @@ function candidateAddress(report: Record<string, unknown>): string | null {
 export function readSelectedPair(report: StatsReportLike): SelectedPairStats | null {
   const byId = new Map<string, Record<string, unknown>>();
   const pairs: Array<Record<string, unknown>> = [];
-  const transports: Array<Record<string, unknown>> = [];
+  let selectedPairId: string | null = null;
 
   // biome-ignore lint/complexity/noForEach: RTCStatsReport 只暴露 forEach，没有可迭代协议
   report.forEach((entry) => {
@@ -47,11 +47,8 @@ export function readSelectedPair(report: StatsReportLike): SelectedPairStats | n
     if (id) byId.set(id, entry);
     const type = str(entry.type);
     if (type === 'candidate-pair') pairs.push(entry);
-    if (type === 'transport') transports.push(entry);
+    if (type === 'transport') selectedPairId ??= str(entry.selectedCandidatePairId);
   });
-
-  const selectedPairId =
-    transports.map((t) => str(t.selectedCandidatePairId)).find((v) => v !== null) ?? null;
 
   const pair =
     (selectedPairId ? byId.get(selectedPairId) : undefined) ??
@@ -60,18 +57,16 @@ export function readSelectedPair(report: StatsReportLike): SelectedPairStats | n
     pairs.find((p) => str(p.state) === 'succeeded');
   if (!pair) return null;
 
-  const localId = str(pair.localCandidateId);
-  const remoteId = str(pair.remoteCandidateId);
-  const local = localId ? byId.get(localId) : undefined;
-  const remote = remoteId ? byId.get(remoteId) : undefined;
+  const local = byId.get(str(pair.localCandidateId) ?? '');
+  const remote = byId.get(str(pair.remoteCandidateId) ?? '');
   const rtt = pair.currentRoundTripTime;
 
   return {
-    localCandidateType: local ? str(local.candidateType) : null,
-    remoteCandidateType: remote ? str(remote.candidateType) : null,
-    localAddress: local ? candidateAddress(local) : null,
-    remoteAddress: remote ? candidateAddress(remote) : null,
-    protocol: (local ? str(local.protocol) : null) ?? str(pair.protocol),
+    localCandidateType: str(local?.candidateType),
+    remoteCandidateType: str(remote?.candidateType),
+    localAddress: candidateAddress(local),
+    remoteAddress: candidateAddress(remote),
+    protocol: str(local?.protocol) ?? str(pair.protocol),
     rttMs: typeof rtt === 'number' && Number.isFinite(rtt) ? rtt * 1000 : null,
   };
 }

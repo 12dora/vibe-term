@@ -52,7 +52,7 @@ export function fragmentBytes(
     dv.setUint32(0, frameId >>> 0, true);
     dv.setUint16(4, idx, true);
     dv.setUint16(6, total, true);
-    if (end > start) chunk.set(payload.subarray(start, end), FRAGMENT_HEADER_SIZE);
+    chunk.set(payload.subarray(start, end), FRAGMENT_HEADER_SIZE);
     parts.push(chunk);
   }
   return parts;
@@ -96,10 +96,7 @@ export class FragmentAssembler {
 
   sweep(): void {
     if (this.disposed) return;
-    const now = this.o.now();
-    for (const [id, frame] of this.pending) {
-      if (frame.deadline <= now) this.drop(id);
-    }
+    this.expire(this.o.now());
     this.armTimer();
   }
 
@@ -107,45 +104,12 @@ export class FragmentAssembler {
     const o = this.o;
     try {
       if (this.disposed) return null;
-      if (chunk.byteLength < FRAGMENT_HEADER_SIZE) return fail('short', 'chunk-too-short');
-      if (chunk.byteLength > o.maxMessageBytes) return fail('chunk-too-large', 'chunk-too-large');
-      const dv = new DataView(chunk.buffer, chunk.byteOffset, chunk.byteLength);
-      const frameId = dv.getUint32(0, true);
-      const idx = dv.getUint16(4, true);
-      const total = dv.getUint16(6, true);
-      if (total === 0) return fail('total-zero', 'bad-total');
-      if (total > o.maxTotal) {
-        return fail('total-exceeds', `fragment total ${total} exceeds ${o.maxTotal}`);
-      }
-      if (idx >= total) return fail('bad-index', 'bad-index');
-      const payloadLen = chunk.byteLength - FRAGMENT_HEADER_SIZE;
-      if (payloadLen > o.payloadMax) {
-        return fail('payload-exceeds', `fragment payload ${payloadLen} exceeds ${o.payloadMax}`);
-      }
+      const head = this.readHeader(chunk, fail);
+      if (!head) return null;
+      const { frameId, idx } = head;
       const now = o.now();
-      for (const [id, f] of this.pending) {
-        if (f.deadline <= now) this.drop(id);
-      }
-      let frame = this.pending.get(frameId);
-      if (frame && frame.total !== total) {
-        this.drop(frameId);
-        frame = undefined;
-      }
-      if (!frame) {
-        while (this.order.length > 0 && this.pending.size >= o.maxInFlight) {
-          const id = this.order.shift();
-          if (id !== undefined && this.pending.has(id)) this.drop(id);
-        }
-        frame = {
-          total,
-          received: 0,
-          bytes: 0,
-          chunks: new Array(total),
-          deadline: now + o.timeoutMs,
-        };
-        this.pending.set(frameId, frame);
-        this.order.push(frameId);
-      }
+      this.expire(now);
+      const frame = this.openFrame(frameId, head.total, now);
       if (frame.chunks[idx]) return null;
       if (o.refreshDeadline) frame.deadline = o.now() + o.timeoutMs;
       const piece = chunk.subarray(FRAGMENT_HEADER_SIZE).slice();
@@ -176,6 +140,42 @@ export class FragmentAssembler {
     }
   }
 
+  private readHeader(chunk: Uint8Array, fail: (kind: FragmentFail, message: string) => null) {
+    const o = this.o;
+    if (chunk.byteLength < FRAGMENT_HEADER_SIZE) return fail('short', 'chunk-too-short');
+    if (chunk.byteLength > o.maxMessageBytes) return fail('chunk-too-large', 'chunk-too-large');
+    const dv = new DataView(chunk.buffer, chunk.byteOffset, chunk.byteLength);
+    const idx = dv.getUint16(4, true);
+    const total = dv.getUint16(6, true);
+    const payloadLen = chunk.byteLength - FRAGMENT_HEADER_SIZE;
+    if (total === 0) return fail('total-zero', 'bad-total');
+    if (total > o.maxTotal) {
+      return fail('total-exceeds', `fragment total ${total} exceeds ${o.maxTotal}`);
+    }
+    if (idx >= total) return fail('bad-index', 'bad-index');
+    if (payloadLen > o.payloadMax) {
+      return fail('payload-exceeds', `fragment payload ${payloadLen} exceeds ${o.payloadMax}`);
+    }
+    return { frameId: dv.getUint32(0, true), idx, total };
+  }
+
+  /** 取回同一 frameId 的在途帧；total 变了或不存在则按 LRU 腾位后重建。 */
+  private openFrame(frameId: number, total: number, now: number): Pending {
+    const existing = this.pending.get(frameId);
+    if (existing?.total === total) return existing;
+    if (existing) this.drop(frameId);
+    while (this.order.length && this.pending.size >= this.o.maxInFlight) this.drop(this.order[0]);
+    const chunks: Array<Uint8Array | undefined> = new Array(total);
+    const frame = { total, received: 0, bytes: 0, chunks, deadline: now + this.o.timeoutMs };
+    this.pending.set(frameId, frame);
+    this.order.push(frameId);
+    return frame;
+  }
+
+  private expire(now: number): void {
+    for (const [id, frame] of this.pending) if (frame.deadline <= now) this.drop(id);
+  }
+
   private drop(frameId: number): void {
     const frame = this.pending.get(frameId);
     if (frame) this.pendingBytes -= frame.bytes;
@@ -190,17 +190,13 @@ export class FragmentAssembler {
     this.clearTimer();
     if (this.disposed || this.pending.size === 0) return;
     let earliest = Number.POSITIVE_INFINITY;
-    for (const frame of this.pending.values()) {
-      if (frame.deadline < earliest) earliest = frame.deadline;
-    }
+    for (const frame of this.pending.values()) earliest = Math.min(earliest, frame.deadline);
     if (earliest === Number.POSITIVE_INFINITY) return;
-    this.timer = setTimeoutFn(
-      () => {
-        this.timer = null;
-        this.sweep();
-      },
-      Math.max(0, earliest - this.o.now())
-    );
+    const delay = Math.max(0, earliest - this.o.now());
+    this.timer = setTimeoutFn(() => {
+      this.timer = null;
+      this.sweep();
+    }, delay);
   }
 
   private clearTimer(): void {
