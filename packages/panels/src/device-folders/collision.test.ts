@@ -139,8 +139,10 @@ describe('落点分档：条目之间的空隙归给相邻的兄弟', () => {
   });
 
   test('分组重排：停在两个分组之间的空隙 → 插到空隙处，而不是甩到末尾', () => {
-    // 260 落在分组 a（250 结束）与分组 b（270 开始）之间
-    expect(overId('folder:b', 260)).toBe('folder:a');
+    // 260 落在分组 a（250 结束）与分组 b（270 开始）之间：离 b 自己的中心更近 = 还在原位
+    expect(overId('folder:b', 260)).toBe('folder:b');
+    // 越过中点就归给 a，不会掉到整棵树上被甩到末尾
+    expect(overId('folder:b', 200)).toBe('folder:a');
     const drop = resolveDrop('folder:b', 'folder:a', LAYOUT);
     expect(drop).toEqual({ kind: 'folder', folderId: 'b', index: 0 });
   });
@@ -152,6 +154,18 @@ describe('落点分档：条目之间的空隙归给相邻的兄弟', () => {
       'node:n1',
       'node:r2',
     ]);
+  });
+});
+
+describe('拖回原位：被拖元素自己也是候选', () => {
+  test('n2 拖到 n3 再拖回自己原来的位置 → 选中自己，退避的兄弟归位', () => {
+    expect(overId('node:n2', 205)).toBe('node:n3');
+    expect(overId('node:n2', 135)).toBe('node:n2');
+    expect(resolveDrop('node:n2', 'node:n2', LAYOUT)).toBeNull();
+  });
+
+  test('跨容器时原容器里的自己不会被别的容器当成兄弟', () => {
+    expect(overId('node:n2', 385)).toBe('node:r1');
   });
 });
 

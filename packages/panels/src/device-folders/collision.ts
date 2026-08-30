@@ -45,7 +45,7 @@ export const deviceFolderCollisionDetection: CollisionDetection = (args) => {
 
   // 键盘拖拽没有指针坐标（`pointerWithin` 恒为空），只能退回最近中心。
   if (!args.pointerCoordinates) {
-    const candidates = pick([...groups.zones, ...groups.items]);
+    const candidates = pick([...groups.zones, ...groups.items, String(args.active.id)]);
     const activeContainerId = containerIdOf(args.active);
     const rootRect = args.droppableRects.get(rootZone);
     // 节点在分组里时把根落点区也放进候选：根层没有兄弟节点的话，候选里根本没有任何指向根
@@ -83,7 +83,9 @@ export const deviceFolderCollisionDetection: CollisionDetection = (args) => {
   // 指针在整棵树之外：over 为空 = 取消
   if (containerId === null) return [];
 
-  const siblings = pick(groups.items).filter(
+  // 被拖元素自己（原位变暗的那个）也要参与（键盘分支同理）：指针回到原来的位置时选中自己，
+  // sortable 才会把已经退避的兄弟归位——否则最近的永远是邻居，邻居一直占着原位不回来。
+  const siblings = pick([...groups.items, String(args.active.id)]).filter(
     (container) => containerIdOf(container) === containerId
   );
   if (siblings.length > 0) return closestCenter({ ...args, droppableContainers: siblings });
