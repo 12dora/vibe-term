@@ -1,9 +1,10 @@
 import { cn } from '@tmex/ui';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@tmex/ui/collapsible';
 import { BrainIcon, ChevronRightIcon, Loader2Icon } from 'lucide-react';
+import { memo } from 'react';
 import { useTranslation } from 'react-i18next';
 
-export function ReasoningBlock({
+export const ReasoningBlock = memo(function ReasoningBlock({
   text,
   streaming = false,
   className,
@@ -32,4 +33,4 @@ export function ReasoningBlock({
       </CollapsibleContent>
     </Collapsible>
   );
-}
+});

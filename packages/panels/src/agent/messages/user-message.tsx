@@ -1,6 +1,10 @@
 import { cn } from '@tmex/ui';
+import { memo } from 'react';
 
-export function UserMessage({ text, className }: { text: string; className?: string }) {
+export const UserMessage = memo(function UserMessage({
+  text,
+  className,
+}: { text: string; className?: string }) {
   return (
     <div
       data-testid="agent-user-message"
@@ -12,4 +16,4 @@ export function UserMessage({ text, className }: { text: string; className?: str
       {text}
     </div>
   );
-}
+});

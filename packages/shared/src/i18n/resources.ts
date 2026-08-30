@@ -1074,7 +1074,8 @@ export const I18N_RESOURCES = {
         "send": "Send",
         "stop": "Stop",
         "retry": "Retry",
-        "scrollToBottom": "Scroll to bottom"
+        "scrollToBottom": "Scroll to bottom",
+        "showEarlier": "Show {{count}} earlier messages"
       },
       "welcome": {
         "title": "New Agent chat",
@@ -1302,6 +1303,7 @@ export const I18N_RESOURCES = {
       "nodeOffline": "Node offline",
       "emptyDir": "Empty",
       "truncated": "Too many items — list truncated",
+      "showMore": "Show {{count}} more",
       "download": "Download",
       "error": {
         "invalid": "Invalid request",
@@ -3026,7 +3028,8 @@ export const I18N_RESOURCES = {
         "send": "发送",
         "stop": "停止",
         "retry": "重试",
-        "scrollToBottom": "回到底部"
+        "scrollToBottom": "回到底部",
+        "showEarlier": "显示更早的 {{count}} 条消息"
       },
       "welcome": {
         "title": "新建智能体对话",
@@ -3254,6 +3257,7 @@ export const I18N_RESOURCES = {
       "nodeOffline": "节点离线",
       "emptyDir": "空目录",
       "truncated": "条目过多，列表已截断",
+      "showMore": "显示其余 {{count}} 项",
       "download": "下载",
       "error": {
         "invalid": "无效请求",
@@ -4977,7 +4981,8 @@ export const I18N_RESOURCES = {
         "send": "送信",
         "stop": "停止",
         "retry": "再試行",
-        "scrollToBottom": "最下部へ"
+        "scrollToBottom": "最下部へ",
+        "showEarlier": "以前のメッセージ {{count}} 件を表示"
       },
       "welcome": {
         "title": "新しいエージェントチャット",
@@ -5205,6 +5210,7 @@ export const I18N_RESOURCES = {
       "nodeOffline": "ノードはオフラインです",
       "emptyDir": "空のディレクトリ",
       "truncated": "項目が多すぎるため一覧を省略しました",
+      "showMore": "残り {{count}} 件を表示",
       "download": "ダウンロード",
       "error": {
         "invalid": "不正なリクエスト",

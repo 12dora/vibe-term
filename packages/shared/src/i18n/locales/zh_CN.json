@@ -1068,7 +1068,8 @@
         "send": "发送",
         "stop": "停止",
         "retry": "重试",
-        "scrollToBottom": "回到底部"
+        "scrollToBottom": "回到底部",
+        "showEarlier": "显示更早的 {{count}} 条消息"
       },
       "welcome": {
         "title": "新建智能体对话",
@@ -1296,6 +1297,7 @@
       "nodeOffline": "节点离线",
       "emptyDir": "空目录",
       "truncated": "条目过多，列表已截断",
+      "showMore": "显示其余 {{count}} 项",
       "download": "下载",
       "error": {
         "invalid": "无效请求",

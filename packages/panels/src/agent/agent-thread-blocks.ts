@@ -35,6 +35,7 @@ export function buildBlocksWithConfirmations(
   confirmations: Confirmations
 ): UiThreadBlock[] {
   const merged = buildThreadBlocks(messages, inProgress);
+  if (!confirmations || confirmations.length === 0) return merged;
   const knownToolCallIds = new Set<string>();
   for (const block of merged) {
     if (block.kind === 'tool-call') {

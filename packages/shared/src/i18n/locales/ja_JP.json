@@ -1068,7 +1068,8 @@
         "send": "送信",
         "stop": "停止",
         "retry": "再試行",
-        "scrollToBottom": "最下部へ"
+        "scrollToBottom": "最下部へ",
+        "showEarlier": "以前のメッセージ {{count}} 件を表示"
       },
       "welcome": {
         "title": "新しいエージェントチャット",
@@ -1296,6 +1297,7 @@
       "nodeOffline": "ノードはオフラインです",
       "emptyDir": "空のディレクトリ",
       "truncated": "項目が多すぎるため一覧を省略しました",
+      "showMore": "残り {{count}} 件を表示",
       "download": "ダウンロード",
       "error": {
         "invalid": "不正なリクエスト",

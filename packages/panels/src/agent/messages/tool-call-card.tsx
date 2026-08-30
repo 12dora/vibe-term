@@ -16,7 +16,7 @@ import {
   WrenchIcon,
   XIcon,
 } from 'lucide-react';
-import { createContext, useContext, useState } from 'react';
+import { createContext, memo, useContext, useState } from 'react';
 import type { ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
 
@@ -429,7 +429,12 @@ function ToolDetailsDialog({
   );
 }
 
-export function ToolCallCard({ call, confirmationId, onDecide, className }: ToolCallCardProps) {
+export const ToolCallCard = memo(function ToolCallCard({
+  call,
+  confirmationId,
+  onDecide,
+  className,
+}: ToolCallCardProps) {
   const { t } = useTranslation();
   const [dialogOpen, setDialogOpen] = useState(false);
   const status = toolCallStatus(call, confirmationId);
@@ -486,4 +491,4 @@ export function ToolCallCard({ call, confirmationId, onDecide, className }: Tool
       />
     </div>
   );
-}
+});

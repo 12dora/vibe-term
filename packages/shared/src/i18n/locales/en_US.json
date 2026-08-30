@@ -1068,7 +1068,8 @@
         "send": "Send",
         "stop": "Stop",
         "retry": "Retry",
-        "scrollToBottom": "Scroll to bottom"
+        "scrollToBottom": "Scroll to bottom",
+        "showEarlier": "Show {{count}} earlier messages"
       },
       "welcome": {
         "title": "New Agent chat",
@@ -1296,6 +1297,7 @@
       "nodeOffline": "Node offline",
       "emptyDir": "Empty",
       "truncated": "Too many items — list truncated",
+      "showMore": "Show {{count}} more",
       "download": "Download",
       "error": {
         "invalid": "Invalid request",

@@ -1,7 +1,8 @@
 import { cn } from '@tmex/ui';
+import { memo } from 'react';
 import { StreamingMarkdown } from '../../markdown/streaming-markdown';
 
-export function AssistantMessage({
+export const AssistantMessage = memo(function AssistantMessage({
   text,
   streaming = false,
   className,
@@ -18,4 +19,4 @@ export function AssistantMessage({
       <StreamingMarkdown text={text} streaming={streaming} />
     </div>
   );
-}
+});
