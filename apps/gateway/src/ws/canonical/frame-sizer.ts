@@ -5,6 +5,14 @@ import { canonicalEventPayloadBytes } from './encoded-size';
 import type { CanonicalEvent, CanonicalPaneTarget } from './types';
 
 const EMPTY = new Uint8Array();
+const UTF8 = new TextEncoder();
+
+function utf8ByteLength(value: string): number {
+  for (let index = 0; index < value.length; index += 1) {
+    if ((value.charCodeAt(index) ?? 0) > 0x7f) return UTF8.encode(value).byteLength;
+  }
+  return value.length;
+}
 
 export class CanonicalFrameSizer {
   private readonly maxDataByKey = new Map<string, number>();
@@ -19,7 +27,7 @@ export class CanonicalFrameSizer {
   }
 
   maxPaneDataBytes(target: CanonicalPaneTarget, paneEpoch: Uint8Array): number {
-    const key = `PaneData\0${target.deviceId}\0${target.paneId}\0${target.serverEpoch.byteLength}\0${paneEpoch.byteLength}`;
+    const key = `PaneData\0${utf8ByteLength(target.deviceId)}\0${utf8ByteLength(target.paneId)}\0${target.serverEpoch.byteLength}\0${paneEpoch.byteLength}`;
     return this.cachedMaxData(key, () =>
       this.maxDataForEmpty({
         PaneData: {

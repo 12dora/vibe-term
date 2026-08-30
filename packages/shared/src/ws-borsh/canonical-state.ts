@@ -3,6 +3,7 @@ import { assertCanonicalEncoding } from './canonical-scan';
 import { assertCanonicalEventSemantics } from './canonical-state-validation';
 import {
   ERROR_FRAME_TOO_LARGE,
+  ERROR_INVALID_FRAME,
   ERROR_PAYLOAD_DECODE_FAILED,
   ERROR_UNSUPPORTED_PROTOCOL,
   WsBorshError,
@@ -360,4 +361,66 @@ export function decodeCanonicalEventPayload(payload: Uint8Array): CanonicalEvent
   assertCanonicalEncoding(CanonicalEventEnvelopeSchema, payload);
   assertCanonicalEventSemantics(decoded.event);
   return decoded;
+}
+
+const PANE_DATA_VARIANT = 3;
+const TEXT_DECODER = new TextDecoder();
+
+export type CanonicalPaneDataHeader = {
+  pane: CanonicalPaneTarget;
+  paneEpoch: Uint8Array;
+  seqStart: bigint;
+  seqEnd: bigint;
+};
+
+export function peekCanonicalPaneDataHeader(payload: Uint8Array): CanonicalPaneDataHeader | null {
+  assertCanonicalPayloadBounded(payload);
+  if (payload.byteLength < 3) {
+    throw new WsBorshError(ERROR_PAYLOAD_DECODE_FAILED, false, 'invalid canonical event');
+  }
+  const protocolVersion = (payload[0] ?? 0) | ((payload[1] ?? 0) << 8);
+  if (protocolVersion !== CANONICAL_STATE_PROTOCOL_VERSION) {
+    throw new WsBorshError(ERROR_UNSUPPORTED_PROTOCOL, false);
+  }
+  if (payload[2] !== PANE_DATA_VARIANT) return null;
+  assertCanonicalEncoding(CanonicalEventEnvelopeSchema, payload);
+  return readValidatedPaneDataHeader(payload);
+}
+
+function readU32Le(bytes: Uint8Array, offset: number): number {
+  return new DataView(bytes.buffer, bytes.byteOffset + offset, 4).getUint32(0, true);
+}
+
+function readU64Le(bytes: Uint8Array, offset: number): bigint {
+  return new DataView(bytes.buffer, bytes.byteOffset + offset, 8).getBigUint64(0, true);
+}
+
+function readValidatedPaneDataHeader(payload: Uint8Array): CanonicalPaneDataHeader {
+  let offset = 3;
+  const deviceLen = readU32Le(payload, offset);
+  offset += 4;
+  const deviceId = TEXT_DECODER.decode(payload.subarray(offset, offset + deviceLen));
+  offset += deviceLen;
+  const serverEpoch = payload.slice(offset, offset + 16);
+  offset += 16;
+  const paneLen = readU32Le(payload, offset);
+  offset += 4;
+  const paneId = TEXT_DECODER.decode(payload.subarray(offset, offset + paneLen));
+  offset += paneLen;
+  const paneEpoch = payload.slice(offset, offset + 16);
+  offset += 16;
+  const seqStart = readU64Le(payload, offset);
+  offset += 8;
+  const seqEnd = readU64Le(payload, offset);
+  offset += 8;
+  const dataLen = readU32Le(payload, offset);
+  if (seqEnd < seqStart || seqEnd - seqStart !== BigInt(dataLen)) {
+    throw new WsBorshError(ERROR_INVALID_FRAME, false, 'PaneData sequence range mismatch');
+  }
+  return {
+    pane: { deviceId, serverEpoch, paneId },
+    paneEpoch,
+    seqStart,
+    seqEnd,
+  };
 }

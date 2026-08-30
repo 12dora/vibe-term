@@ -168,7 +168,10 @@ export class Forwarder {
   handleForwardSocketClose(ws: MeshServerWebSocket, code?: number, reason?: string): void {
     const pump = this.pumps.get(ws);
     this.pumps.delete(ws);
-    if (!pump) return;
+    if (!pump) {
+      discardPendingStream(ws.data?.token);
+      return;
+    }
     pump.browserClosed = true;
     pump.failoverAbort?.abort();
     pump.helloWait?.();
@@ -544,6 +547,7 @@ export class Forwarder {
       stream.close();
       return jsonError('upgrade_failed', 500);
     }
+    if (pendingStreams.get(token) === stream) armPendingExpiry(token, stream);
     return undefined;
   }
 
@@ -663,14 +667,16 @@ class StreamReplayState {
     }
     if (env.kind !== wsBorsh.KIND_CANONICAL_EVENT) return env.kind;
     try {
-      const event = wsBorsh.decodeCanonicalEventPayload(env.payload).event;
-      if (!('PaneData' in event)) return env.kind;
-      const paneData = event.PaneData;
-      this.paneCursors.set(paneCursorKey(paneData.pane.deviceId, paneData.pane.paneId), {
-        pane: paneData.pane,
-        paneEpoch: paneData.paneEpoch,
-        terminalSeq: paneData.seqEnd,
-      });
+      const header = wsBorsh.peekCanonicalPaneDataHeader(env.payload);
+      if (header) {
+        this.paneCursors.set(paneCursorKey(header.pane.deviceId, header.pane.paneId), {
+          pane: header.pane,
+          paneEpoch: header.paneEpoch,
+          terminalSeq: header.seqEnd,
+        });
+        return env.kind;
+      }
+      wsBorsh.decodeCanonicalEventPayload(env.payload);
     } catch {}
     return env.kind;
   }
@@ -867,12 +873,54 @@ class StreamReplayState {
 }
 
 const pendingStreams = new Map<string, OpenedWsStream>();
+const pendingExpiry = new Map<string, ReturnType<typeof setTimeout>>();
+const PENDING_FORWARD_STREAM_TTL_MS = 15_000;
+
+export function pendingForwardStreamCount(): number {
+  return pendingStreams.size;
+}
 
 export function takePendingForwardStream(token: string | undefined): OpenedWsStream | undefined {
   if (!token) return undefined;
   const stream = pendingStreams.get(token);
   pendingStreams.delete(token);
+  clearPendingExpiry(token);
   return stream;
+}
+
+function discardPendingStream(token: string | undefined): void {
+  if (!token) return;
+  const stream = pendingStreams.get(token);
+  pendingStreams.delete(token);
+  clearPendingExpiry(token);
+  if (!stream) return;
+  try {
+    stream.close();
+  } catch {}
+}
+
+function clearPendingExpiry(token: string): void {
+  const timer = pendingExpiry.get(token);
+  if (timer === undefined) return;
+  clearTimeout(timer);
+  pendingExpiry.delete(token);
+}
+
+function armPendingExpiry(token: string, stream: OpenedWsStream): void {
+  const timer = setTimeout(() => {
+    expirePendingForwardStream(token, stream);
+  }, PENDING_FORWARD_STREAM_TTL_MS);
+  timer.unref?.();
+  pendingExpiry.set(token, timer);
+}
+
+export function expirePendingForwardStream(token: string, stream: OpenedWsStream): void {
+  if (pendingStreams.get(token) !== stream) return;
+  pendingStreams.delete(token);
+  clearPendingExpiry(token);
+  try {
+    stream.close();
+  } catch {}
 }
 
 function pumpDead(pump: ForwardPump, signal: AbortSignal): boolean {

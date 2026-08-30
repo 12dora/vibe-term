@@ -117,6 +117,8 @@ export {
   decodeCanonicalCommandPayload,
   encodeCanonicalEventPayload,
   decodeCanonicalEventPayload,
+  peekCanonicalPaneDataHeader,
+  type CanonicalPaneDataHeader,
 } from './canonical-state';
 export {
   STATE_SNAPSHOT_DIFF_FORMAT_ABSOLUTE_JSON,

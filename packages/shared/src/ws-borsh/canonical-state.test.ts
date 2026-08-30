@@ -10,6 +10,7 @@ import {
   decodeCanonicalEventPayload,
   encodeCanonicalCommandPayload,
   encodeCanonicalEventPayload,
+  peekCanonicalPaneDataHeader,
 } from './canonical-state';
 import { WsBorshError } from './errors';
 
@@ -246,5 +247,43 @@ describe('canonical encoding scan', () => {
     expect(decodeCanonicalCommandPayload(commandPayload).command).toEqual(command);
     const eventPayload = encodeCanonicalEventPayload(errorEvent);
     expect(decodeCanonicalEventPayload(eventPayload).event).toEqual(errorEvent);
+  });
+});
+
+describe('peekCanonicalPaneDataHeader', () => {
+  test('extracts PaneData cursor fields without requiring a data copy', () => {
+    const data = new Uint8Array(4096).fill(7);
+    const event = paneDataEvent(data);
+    const payload = encodeCanonicalEventPayload(event);
+    const peeked = peekCanonicalPaneDataHeader(payload);
+    const decoded = decodeCanonicalEventPayload(payload).event;
+    expect(peeked).not.toBeNull();
+    if (!peeked || !('PaneData' in decoded)) throw new Error('expected PaneData');
+    expect(peeked.pane).toEqual(decoded.PaneData.pane);
+    expect(peeked.paneEpoch).toEqual(decoded.PaneData.paneEpoch);
+    expect(peeked.seqStart).toBe(decoded.PaneData.seqStart);
+    expect(peeked.seqEnd).toBe(decoded.PaneData.seqEnd);
+    expect(peeked.paneEpoch).not.toBe(payload);
+  });
+
+  test('returns null for non-PaneData events and rejects malformed PaneData like decode', () => {
+    const errorPayload = encodeCanonicalEventPayload({
+      Error: { requestId: null, code: 3, message: 'x', retryable: false },
+    });
+    expect(peekCanonicalPaneDataHeader(errorPayload)).toBeNull();
+    expect(decodeCanonicalEventPayload(errorPayload).event).toHaveProperty('Error');
+
+    const payload = encodeCanonicalEventPayload(paneDataEvent(new Uint8Array([1, 2, 3])));
+    const tooLong = corruptPaneDataSeqEnd(payload, 3, 99n);
+    expect(() => decodeCanonicalEventPayload(tooLong)).toThrow('PaneData sequence range mismatch');
+    expect(() => peekCanonicalPaneDataHeader(tooLong)).toThrow('PaneData sequence range mismatch');
+
+    const truncated = payload.slice(0, -1);
+    expect(() => decodeCanonicalEventPayload(truncated)).toThrow(WsBorshError);
+    expect(() => peekCanonicalPaneDataHeader(truncated)).toThrow(WsBorshError);
+
+    const trailing = Uint8Array.from([...payload, 0]);
+    expect(() => decodeCanonicalEventPayload(trailing)).toThrow(WsBorshError);
+    expect(() => peekCanonicalPaneDataHeader(trailing)).toThrow(WsBorshError);
   });
 });

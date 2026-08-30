@@ -309,6 +309,27 @@ describe('canonical frame sizer', () => {
     expect(other).toBe(first - 1);
   });
 
+  test('cycling unique pane identities does not grow the size cache unboundedly', () => {
+    const sizer = new CanonicalFrameSizer(1024);
+    for (let index = 0; index < 10_000; index += 1) {
+      sizer.maxPaneDataBytes(
+        {
+          deviceId: `device-${index}`,
+          serverEpoch: PANE.serverEpoch,
+          paneId: `%${index}`,
+        },
+        PANE_EPOCH
+      );
+    }
+    const cache = sizer as unknown as { maxDataByKey: Map<string, number> };
+    expect(cache.maxDataByKey.size).toBeLessThan(32);
+
+    const ascii = sizer.maxPaneDataBytes({ ...PANE, deviceId: 'ab' }, PANE_EPOCH);
+    const cjk = sizer.maxPaneDataBytes({ ...PANE, deviceId: '设备' }, PANE_EPOCH);
+    expect(cjk).toBeLessThan(ascii);
+    expect(sizer.maxPaneDataBytes({ ...PANE, deviceId: '窗口' }, PANE_EPOCH)).toBe(cjk);
+  });
+
   test('max data bytes respect the canonical payload cap even when the sizer cap is larger', () => {
     const sizer = new CanonicalFrameSizer(1024 * 1024);
     const maxPane = sizer.maxPaneDataBytes(PANE, PANE_EPOCH);

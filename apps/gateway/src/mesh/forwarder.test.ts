@@ -4,6 +4,7 @@ import type { LinkSession } from '@tmex/shared/link';
 import {
   FakePeers,
   FakeStreams,
+  FakeWs,
   NODE_ID,
   asResponse,
   bootMesh,
@@ -11,7 +12,7 @@ import {
   challengeAndLogin,
   dummyServer,
 } from './auth-routes.test';
-import { getSelfRewrite } from './forwarder';
+import { expirePendingForwardStream, getSelfRewrite, pendingForwardStreamCount } from './forwarder';
 import {
   MESH_FORWARD_CSP,
   MESH_FORWARD_WS_KIND,
@@ -283,6 +284,81 @@ describe('forwarder', () => {
       expect(data?.kind).toBe(MESH_FORWARD_WS_KIND);
       expect(streams.wsAuth).toBe('remote-sid');
       expect(streams.wsCid).toBe('tab-nonce');
+    } finally {
+      mesh.close();
+    }
+  });
+
+  test('browser close before forward WS open drops the pending remote stream', async () => {
+    const peers = new FakePeers();
+    peers.links.set(OTHER, dummyLink);
+    const streams = new FakeStreams();
+    const mesh = await bootMesh({ peers, streams });
+    try {
+      let data: { kind?: string; token?: string } | undefined;
+      const server = {
+        upgrade(_req: Request, opts?: { data?: unknown }) {
+          data = opts?.data as typeof data;
+          return true;
+        },
+      };
+      const prior = pendingForwardStreamCount();
+      const upgrade = await mesh.runtime.handleRequest(
+        new Request(`http://localhost/n/${OTHER}/ws`, {
+          headers: { cookie: `tmex_s_${OTHER}=remote-sid` },
+        }),
+        server
+      );
+      expect(upgrade).toBeUndefined();
+      expect(pendingForwardStreamCount()).toBe(prior + 1);
+      const remote = streams.lastWs;
+      expect(remote?.closedOnce).toBe(false);
+      const ws = {
+        data: data ?? { kind: MESH_FORWARD_WS_KIND },
+        send() {
+          return 0;
+        },
+        close() {},
+      } as MeshServerWebSocket;
+      mesh.runtime.handleWebSocket.close(ws);
+      expect(pendingForwardStreamCount()).toBe(prior);
+      expect(remote?.closedOnce).toBe(true);
+    } finally {
+      mesh.close();
+    }
+  });
+
+  test('pending stream expiry is identity-checked', async () => {
+    const peers = new FakePeers();
+    peers.links.set(OTHER, dummyLink);
+    const streams = new FakeStreams();
+    const mesh = await bootMesh({ peers, streams });
+    try {
+      let data: { kind?: string; token?: string } | undefined;
+      const server = {
+        upgrade(_req: Request, opts?: { data?: unknown }) {
+          data = opts?.data as typeof data;
+          return true;
+        },
+      };
+      const prior = pendingForwardStreamCount();
+      await mesh.runtime.handleRequest(
+        new Request(`http://localhost/n/${OTHER}/ws`, {
+          headers: { cookie: `tmex_s_${OTHER}=remote-sid` },
+        }),
+        server
+      );
+      const token = data?.token;
+      const remote = streams.lastWs;
+      if (!remote || typeof token !== 'string') throw new Error('expected pending stream');
+      const other = new FakeWs();
+      expirePendingForwardStream(token, other);
+      expect(pendingForwardStreamCount()).toBe(prior + 1);
+      expect(remote.closedOnce).toBe(false);
+      expect(other.closedOnce).toBe(false);
+      expirePendingForwardStream(token, remote);
+      expect(pendingForwardStreamCount()).toBe(prior);
+      expect(remote.closedOnce).toBe(true);
     } finally {
       mesh.close();
     }
@@ -587,6 +663,74 @@ describe('forwarder', () => {
       const sub = decoded.command.SetPaneSubscriptions;
       expect(sub.generation).toBe(4n);
       expect(sub.activePanes[0]?.cursor?.terminalSeq).toBe(40n);
+    } finally {
+      mesh.close();
+    }
+  });
+
+  test('malformed canonical PaneData does not patch the failover cursor', async () => {
+    const dcLink = { id: 'dc' } as unknown as LinkSession;
+    const relayLink = { id: 'relay' } as unknown as LinkSession;
+    const peers = new FakePeers();
+    peers.links.set(OTHER, dcLink);
+    peers.transport.set(OTHER, 'dc');
+    const streams = new FakeStreams();
+    const mesh = await bootMesh({ peers, streams, sleep: async () => {} });
+    try {
+      const { ws } = await openForwardWs(mesh.runtime, peers, streams, OTHER);
+      const epoch = new Uint8Array(16).fill(7);
+      const pane = { deviceId: 'dev-1', serverEpoch: epoch, paneId: '%1' };
+      mesh.runtime.handleWebSocket.message(ws, encodeHelloFrame());
+      mesh.runtime.handleWebSocket.message(
+        ws,
+        wsBorsh.encodeEnvelope(
+          wsBorsh.KIND_CANONICAL_COMMAND,
+          wsBorsh.encodeCanonicalCommandPayload({
+            SetPaneSubscriptions: {
+              generation: 3n,
+              activePanes: [{ pane, cursor: { paneEpoch: epoch, terminalSeq: 10n } }],
+              hotPanes: [],
+            },
+          }),
+          4
+        )
+      );
+      const valid = wsBorsh.encodeCanonicalEventPayload({
+        PaneData: {
+          pane,
+          paneEpoch: epoch,
+          seqStart: 39n,
+          seqEnd: 40n,
+          data: new Uint8Array([1]),
+        },
+      });
+      const malformed = valid.slice();
+      new DataView(malformed.buffer, malformed.byteOffset, malformed.byteLength).setBigUint64(
+        malformed.byteLength - 1 - 4 - 8,
+        99n,
+        true
+      );
+      streams.lastWs?.pushFromRemote(
+        wsBorsh.encodeEnvelope(wsBorsh.KIND_CANONICAL_EVENT, malformed, 8)
+      );
+      peers.links.set(OTHER, relayLink);
+      peers.transport.set(OTHER, 'relay');
+      streams.lastWs?.close(1011, 'reset');
+      await waitUntil(() => streams.wsOpens.length === 2, 2_000);
+      const replayed = streams.wsOpens[1]?.ws.sent ?? [];
+      const commandFrame = replayed.find((frame) => {
+        try {
+          return wsBorsh.decodeEnvelope(frame).kind === wsBorsh.KIND_CANONICAL_COMMAND;
+        } catch {
+          return false;
+        }
+      });
+      expect(commandFrame).toBeDefined();
+      const decoded = wsBorsh.decodeCanonicalCommandPayload(
+        wsBorsh.decodeEnvelope(commandFrame as Uint8Array).payload
+      );
+      if (!('SetPaneSubscriptions' in decoded.command)) throw new Error('expected subscribe');
+      expect(decoded.command.SetPaneSubscriptions.activePanes[0]?.cursor?.terminalSeq).toBe(10n);
     } finally {
       mesh.close();
     }
