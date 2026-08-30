@@ -4,8 +4,8 @@ import { isSessionOnNode } from '@tmex/stores';
 import { shallow } from 'zustand/vanilla/shallow';
 import { OrphanSessionRow, PaneSessionRow } from './agent-session-row';
 import {
-  collectKnownPaneIds,
   compareSessions,
+  createKnownPaneIdsCollector,
   isSessionAttached,
   isSessionPaused,
   orderSessions,
@@ -181,9 +181,9 @@ describe('会话行组件', () => {
   });
 });
 
-describe('collectKnownPaneIds', () => {
+describe('createKnownPaneIdsCollector', () => {
   test('collects pane ids per device', () => {
-    const panes = collectKnownPaneIds({
+    const panes = createKnownPaneIdsCollector()({
       d1: snapshot('d1', ['%1', '%2']),
       d2: snapshot('d2', ['%3']),
     });
@@ -192,7 +192,7 @@ describe('collectKnownPaneIds', () => {
   });
 
   test('skips devices without a loaded session snapshot', () => {
-    const panes = collectKnownPaneIds({
+    const panes = createKnownPaneIdsCollector()({
       d1: { deviceId: 'd1', session: null },
       d2: undefined,
     });
@@ -203,7 +203,7 @@ describe('collectKnownPaneIds', () => {
 
 describe('isSessionAttached', () => {
   const known = new Set(['d1']);
-  const panesByDevice = collectKnownPaneIds({ d1: snapshot('d1', ['%1']) });
+  const panesByDevice = createKnownPaneIdsCollector()({ d1: snapshot('d1', ['%1']) });
 
   test('attached when the pane still exists', () => {
     const item = session({ id: 'a', deviceId: 'd1', paneId: '%1' });
@@ -276,38 +276,66 @@ describe('isSessionPaused', () => {
   });
 });
 
-describe('collectKnownPaneIds 引用复用', () => {
+describe('createKnownPaneIdsCollector 引用复用', () => {
   test('同一 snapshots 引用返回同一张表', () => {
+    const collect = createKnownPaneIdsCollector();
     const snapshots = { d1: snapshot('d1', ['%1']) };
-    expect(collectKnownPaneIds(snapshots)).toBe(collectKnownPaneIds(snapshots));
+    expect(collect(snapshots)).toBe(collect(snapshots));
   });
 
   test('pane 结构未变的新快照对象仍复用上次的表（改标题等 metadata 事件）', () => {
-    const before = collectKnownPaneIds({ d1: snapshot('d1', ['%1', '%2']) });
-    const after = collectKnownPaneIds({ d1: snapshot('d1', ['%1', '%2']) });
+    const collect = createKnownPaneIdsCollector();
+    const before = collect({ d1: snapshot('d1', ['%1', '%2']) });
+    const after = collect({ d1: snapshot('d1', ['%1', '%2']) });
     expect(after).toBe(before);
   });
 
   test('pane 被关掉后表随之更新', () => {
-    const before = collectKnownPaneIds({ d1: snapshot('d1', ['%1', '%2']) });
-    const after = collectKnownPaneIds({ d1: snapshot('d1', ['%1']) });
+    const collect = createKnownPaneIdsCollector();
+    const before = collect({ d1: snapshot('d1', ['%1', '%2']) });
+    const after = collect({ d1: snapshot('d1', ['%1']) });
     expect(after).not.toBe(before);
     expect([...(after.get('d1') ?? [])]).toEqual(['%1']);
   });
 
   test('设备离线后其条目消失，其余设备的 pane 集合引用保持不变', () => {
+    const collect = createKnownPaneIdsCollector();
     const stable = snapshot('d1', ['%1']);
-    const before = collectKnownPaneIds({ d1: stable, d2: snapshot('d2', ['%3']) });
-    const after = collectKnownPaneIds({ d1: stable });
+    const before = collect({ d1: stable, d2: snapshot('d2', ['%3']) });
+    const after = collect({ d1: stable });
     expect(after.has('d2')).toBe(false);
     expect(after.get('d1')).toBe(before.get('d1'));
   });
 
   test('新设备上线时表更新', () => {
-    const before = collectKnownPaneIds({ d1: snapshot('d1', ['%1']) });
-    const after = collectKnownPaneIds({ d1: snapshot('d1', ['%1']), d2: snapshot('d2', ['%9']) });
+    const collect = createKnownPaneIdsCollector();
+    const before = collect({ d1: snapshot('d1', ['%1']) });
+    const after = collect({ d1: snapshot('d1', ['%1']), d2: snapshot('d2', ['%9']) });
     expect(after).not.toBe(before);
     expect([...(after.get('d2') ?? [])]).toEqual(['%9']);
+  });
+
+  // 聚合侧边栏每个 node 分节各挂一份 tmux store，两份缓存必须互不冲刷
+  test('两个 node 的选择器交替执行，各自仍复用自己的表', () => {
+    const collectA = createKnownPaneIdsCollector();
+    const collectB = createKnownPaneIdsCollector();
+    const firstA = collectA({ a1: snapshot('a1', ['%1']) });
+    const firstB = collectB({ b1: snapshot('b1', ['%2', '%3']) });
+
+    for (let i = 0; i < 3; i += 1) {
+      expect(collectA({ a1: snapshot('a1', ['%1']) })).toBe(firstA);
+      expect(collectB({ b1: snapshot('b1', ['%2', '%3']) })).toBe(firstB);
+    }
+    expect([...(firstA.get('a1') ?? [])]).toEqual(['%1']);
+    expect([...(firstB.get('b1') ?? [])]).toEqual(['%2', '%3']);
+  });
+
+  test('两个选择器同名设备互不串味：一边 pane 关掉不影响另一边', () => {
+    const collectA = createKnownPaneIdsCollector();
+    const collectB = createKnownPaneIdsCollector();
+    const firstB = collectB({ d1: snapshot('d1', ['%1', '%2']) });
+    collectA({ d1: snapshot('d1', ['%1']) });
+    expect(collectB({ d1: snapshot('d1', ['%1', '%2']) })).toBe(firstB);
   });
 });
 

@@ -6,7 +6,7 @@ import type { DeviceTreeNavigation, SidebarAgentAdapter } from '@tmex/panels/dev
 import type { AgentSessionDto, TmuxPane } from '@tmex/shared';
 import type { AppRuntime } from '@tmex/stores';
 import { normalizeAgentNodeId } from '@tmex/stores';
-import { useRuntime, useTmuxStore, useUIStore } from '@tmex/stores/react';
+import { useRuntime, useUIStore } from '@tmex/stores/react';
 import { cn } from '@tmex/ui';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@tmex/ui/collapsible';
 import { ChevronRight, History } from 'lucide-react';
@@ -17,10 +17,10 @@ import { OrphanSessionRow, PaneSessionRow } from './agent-session-row';
 import {
   SidebarAgentCommandsContext,
   SidebarAgentDialogsContext,
-  collectKnownPaneIds,
   isSessionAttached,
   isSessionPaused,
   useActiveSessionId,
+  useKnownPaneIds,
   useNodeSessions,
   useSessionsForPane,
   useSidebarAgentCommands,
@@ -125,7 +125,7 @@ function AgentOrphanSessions({
   const activeSessionId = useActiveSessionId();
   const handleSelectSession = useSelectSession(nav);
   // 直接选派生出的 pane 索引：pane 结构没变的 metadata 事件返回同一引用，本分节不重渲染
-  const panesByDevice = useTmuxStore((state) => collectKnownPaneIds(state.snapshots));
+  const panesByDevice = useKnownPaneIds();
 
   // 会话按 device:pane 挂到对应 pane 节点；设备缺失或 pane 已关闭的归为孤立
   const orphanSessions = useMemo(() => {

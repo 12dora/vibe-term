@@ -9,7 +9,7 @@ import {
   isSessionOnNode,
   normalizeAgentNodeId,
 } from '@tmex/stores';
-import { useRuntime } from '@tmex/stores/react';
+import { useRuntime, useTmuxStore } from '@tmex/stores/react';
 import {
   type Context,
   createContext,
@@ -17,6 +17,7 @@ import {
   useContext,
   useEffect,
   useMemo,
+  useRef,
   useState,
 } from 'react';
 import { useShallow } from 'zustand/react/shallow';
@@ -154,11 +155,6 @@ export function sessionsForPane(
 
 /** 单个设备的 pane 集合，按该设备 windows 数组的引用缓存，同一份 windows 不重扫 */
 const devicePaneIdsCache = new WeakMap<object, ReadonlySet<string>>();
-/** 一份 snapshots 映射对应的合并结果：同一引用重复调用（多次渲染）直接命中 */
-const knownPaneIdsCache = new WeakMap<object, ReadonlyMap<string, ReadonlySet<string>>>();
-/** 上一次的按设备结果与合并结果：pane 集合没变就连引用一起复用（见下方说明） */
-const lastPaneIdsByDevice = new Map<string, ReadonlySet<string>>();
-let lastKnownPaneIds: ReadonlyMap<string, ReadonlySet<string>> = new Map();
 
 function sameIds(a: ReadonlySet<string>, b: ReadonlySet<string>): boolean {
   if (a.size !== b.size) return false;
@@ -179,44 +175,68 @@ function scanPaneIds(windows: readonly TmuxWindow[]): ReadonlySet<string> {
   return paneIds;
 }
 
-function sameAsLast(byDevice: ReadonlyMap<string, ReadonlySet<string>>): boolean {
-  if (byDevice.size !== lastKnownPaneIds.size) return false;
-  for (const [deviceId, panes] of byDevice) {
-    if (lastKnownPaneIds.get(deviceId) !== panes) return false;
-  }
-  return true;
-}
+export type KnownPaneIdsCollector = (
+  snapshots: Record<string, StateSnapshotPayload | undefined>
+) => ReadonlyMap<string, ReadonlySet<string>>;
 
 /**
- * 各设备当前存活的 pane id（快照未到达的设备不入表，见 `isSessionAttached`）。
+ * 建一个「各设备当前存活的 pane id」的选择器（快照未到达的设备不入表，见 `isSessionAttached`）。
  *
  * 孤立会话区常驻挂载且订阅整张 snapshots 表，而改标题/改 cwd 这类 metadata-patch 极其频繁——
  * 它们只换快照对象，pane 结构原封不动。所以这里逐层复用引用：windows 数组没换就不重扫；
  * 扫出来的 pane 集合与上次内容相同就交还上次那个 Set；每个设备都复用则整张表也交还上次那个
  * Map。于是无关的 metadata 事件在选择器处就被 Object.is 拦掉，不再触发重算与重渲染。
+ *
+ * 「上一次结果」必须随挂载点走，不能做成模块级单例：聚合侧边栏每个 node 分节各挂一份 tmux
+ * store，共用一份缓存会被彼此的快照来回冲掉（设备集合不同则 `sameAsLast` 永远为假），
+ * 于是两个分节交替执行时谁都拿不到稳定引用，复用直接失效。
  */
-export function collectKnownPaneIds(
-  snapshots: Record<string, StateSnapshotPayload | undefined>
-): ReadonlyMap<string, ReadonlySet<string>> {
-  const cached = knownPaneIdsCache.get(snapshots);
-  if (cached) return cached;
+export function createKnownPaneIdsCollector(): KnownPaneIdsCollector {
+  /** 一份 snapshots 映射对应的合并结果：同一引用重复调用（多次渲染）直接命中 */
+  const bySnapshots = new WeakMap<object, ReadonlyMap<string, ReadonlySet<string>>>();
+  const lastPaneIdsByDevice = new Map<string, ReadonlySet<string>>();
+  let lastKnownPaneIds: ReadonlyMap<string, ReadonlySet<string>> = new Map();
 
-  const byDevice = new Map<string, ReadonlySet<string>>();
-  for (const [deviceId, snapshot] of Object.entries(snapshots)) {
-    const windows = snapshot?.session?.windows;
-    if (!windows) continue;
-    const paneIds = scanPaneIds(windows);
-    const previous = lastPaneIdsByDevice.get(deviceId);
-    byDevice.set(deviceId, previous && sameIds(previous, paneIds) ? previous : paneIds);
-  }
+  const sameAsLast = (byDevice: ReadonlyMap<string, ReadonlySet<string>>): boolean => {
+    if (byDevice.size !== lastKnownPaneIds.size) return false;
+    for (const [deviceId, panes] of byDevice) {
+      if (lastKnownPaneIds.get(deviceId) !== panes) return false;
+    }
+    return true;
+  };
 
-  const result = sameAsLast(byDevice) ? lastKnownPaneIds : byDevice;
-  // 设备下线后其条目一并淘汰，缓存不随时间膨胀
-  lastPaneIdsByDevice.clear();
-  for (const [deviceId, panes] of result) lastPaneIdsByDevice.set(deviceId, panes);
-  lastKnownPaneIds = result;
-  knownPaneIdsCache.set(snapshots, result);
-  return result;
+  return (snapshots) => {
+    const cached = bySnapshots.get(snapshots);
+    if (cached) return cached;
+
+    const byDevice = new Map<string, ReadonlySet<string>>();
+    for (const [deviceId, snapshot] of Object.entries(snapshots)) {
+      const windows = snapshot?.session?.windows;
+      if (!windows) continue;
+      const paneIds = scanPaneIds(windows);
+      const previous = lastPaneIdsByDevice.get(deviceId);
+      byDevice.set(deviceId, previous && sameIds(previous, paneIds) ? previous : paneIds);
+    }
+
+    const result = sameAsLast(byDevice) ? lastKnownPaneIds : byDevice;
+    // 设备下线后其条目一并淘汰，缓存不随时间膨胀
+    lastPaneIdsByDevice.clear();
+    for (const [deviceId, panes] of result) lastPaneIdsByDevice.set(deviceId, panes);
+    lastKnownPaneIds = result;
+    bySnapshots.set(snapshots, result);
+    return result;
+  };
+}
+
+/**
+ * 本分节所属 node 的 pane 索引。缓存挂在本次挂载上（`useRef`），因此同一 node 的连续更新
+ * 能复用引用，而别的 node 分节各有各的一份，互不冲刷。
+ */
+export function useKnownPaneIds(): ReadonlyMap<string, ReadonlySet<string>> {
+  const collectorRef = useRef<KnownPaneIdsCollector | null>(null);
+  collectorRef.current ??= createKnownPaneIdsCollector();
+  const collect = collectorRef.current;
+  return useTmuxStore((state) => collect(state.snapshots));
 }
 
 /**
