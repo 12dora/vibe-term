@@ -54,6 +54,7 @@ export { CANONICAL_PENDING_SWEEP_MS } from './canonical/bytes';
 
 export class CanonicalFeedSession {
   private readonly devices = new Map<string, AttachedDevice>();
+  private readonly attaching = new Map<string, Promise<boolean>>();
   private readonly screenJobs = new Map<string, ScreenJob>();
   private readonly inputIds = new Set<string>();
   private readonly inputIdOrder: string[] = [];
@@ -158,56 +159,23 @@ export class CanonicalFeedSession {
   async attachDevice(deviceId: string, runtime?: CanonicalFeedRuntime): Promise<boolean> {
     if (this.closed) return false;
     this.ensureReady();
-    const existing = this.devices.get(deviceId);
-    if (existing && (!runtime || existing.runtime === runtime)) return true;
-    if (existing) this.detachDevice(deviceId);
-    const resolved = runtime ?? (await this.options.resolveRuntime(deviceId));
-    if (!resolved) return false;
-
-    let attached: AttachedDevice | null = null;
-    const lease = resolved.attachPaneConsumer({
-      onData: (segment) => this.stream.handlePaneData(deviceId, segment),
-      onGap: (gap) => this.stream.handlePaneGap(deviceId, gap),
-    });
-    const listener: DeviceSessionRuntimeListener = {
-      onMetadataPatch: (patch) => {
-        if (!attached) return;
-        if (!this.sizer.eventFits({ SourceMetadataPatch: patch })) {
-          attached.metadataNeedsRebase = true;
-          this.sender.sendMetadataSnapshot(attached);
-          this.schedulePendingSweep();
-          return;
-        }
-        if (!canonicalSendAccepted(this.sender.send({ SourceMetadataPatch: patch }))) {
-          attached.metadataNeedsRebase = true;
-          this.schedulePendingSweep();
-        }
-      },
-      onMetadataRebaseRequired: () => {
-        if (!attached) return;
-        attached.metadataNeedsRebase = true;
-        this.sender.sendMetadataSnapshot(attached);
-        this.schedulePendingSweep();
-      },
-      onClose: () => {
-        if (!attached) return;
-        attached.metadataNeedsRebase = true;
-        this.stream.sendOrQueueStreamGap(wsBorsh.SOURCE_GAP_REASON_EPOCH_CHANGED);
-        this.schedulePendingSweep();
-      },
-    };
-    attached = {
-      deviceId,
-      runtime: resolved,
-      lease,
-      detachListener: resolved.subscribe(listener),
-      metadataNeedsRebase: true,
-    };
-    this.devices.set(deviceId, attached);
-    this.options.onDeviceAttached?.(deviceId, resolved);
-    this.sender.sendMetadataSnapshot(attached);
-    this.schedulePendingSweep();
-    return true;
+    for (;;) {
+      const inflight = this.attaching.get(deviceId);
+      if (inflight) {
+        await inflight;
+        if (this.closed) return false;
+        const existing = this.devices.get(deviceId);
+        if (existing && (!runtime || existing.runtime === runtime)) return true;
+        continue;
+      }
+      const work = this.attachDeviceExclusive(deviceId, runtime);
+      this.attaching.set(deviceId, work);
+      try {
+        return await work;
+      } finally {
+        if (this.attaching.get(deviceId) === work) this.attaching.delete(deviceId);
+      }
+    }
   }
 
   detachDevice(deviceId: string): void {
@@ -224,6 +192,89 @@ export class CanonicalFeedSession {
       }
     }
     this.options.onDeviceDetached?.(deviceId, attached.runtime);
+  }
+
+  private async attachDeviceExclusive(
+    deviceId: string,
+    runtime?: CanonicalFeedRuntime
+  ): Promise<boolean> {
+    if (this.closed) return false;
+    const existing = this.devices.get(deviceId);
+    if (existing && (!runtime || existing.runtime === runtime)) return true;
+    if (existing) this.detachDevice(deviceId);
+    const resolved = runtime ?? (await this.options.resolveRuntime(deviceId));
+    if (!resolved || this.closed) return false;
+    const raced = this.devices.get(deviceId);
+    if (raced && raced.runtime === resolved && (!runtime || raced.runtime === runtime)) {
+      return true;
+    }
+    if (raced) this.detachDevice(deviceId);
+    return this.installAttachedDevice(deviceId, resolved);
+  }
+
+  private installAttachedDevice(deviceId: string, resolved: CanonicalFeedRuntime): boolean {
+    let attached: AttachedDevice | null = null;
+    const lease = resolved.attachPaneConsumer({
+      onData: (segment) => this.stream.handlePaneData(deviceId, segment),
+      onGap: (gap) => this.stream.handlePaneGap(deviceId, gap),
+    });
+    const listener: DeviceSessionRuntimeListener = {
+      onMetadataPatch: (patch) => {
+        if (!attached) return;
+        if (!this.sizer.eventFits({ SourceMetadataPatch: patch })) {
+          this.requestMetadataRebase(attached);
+          return;
+        }
+        if (!canonicalSendAccepted(this.sender.send({ SourceMetadataPatch: patch }))) {
+          attached.metadataNeedsRebase = true;
+          this.schedulePendingSweep();
+        }
+      },
+      onMetadataRebaseRequired: () => {
+        if (!attached) return;
+        this.requestMetadataRebase(attached);
+      },
+      onClose: () => {
+        if (!attached) return;
+        attached.metadataNeedsRebase = true;
+        this.stream.sendOrQueueStreamGap(wsBorsh.SOURCE_GAP_REASON_EPOCH_CHANGED);
+        this.schedulePendingSweep();
+      },
+    };
+    let detachListener = () => {};
+    try {
+      detachListener = resolved.subscribe(listener);
+    } catch (error) {
+      lease.close();
+      throw error;
+    }
+    if (this.closed) {
+      lease.close();
+      detachListener();
+      return false;
+    }
+    attached = {
+      deviceId,
+      runtime: resolved,
+      lease,
+      detachListener,
+      metadataNeedsRebase: true,
+    };
+    this.devices.set(deviceId, attached);
+    this.options.onDeviceAttached?.(deviceId, resolved);
+    this.sender.sendMetadataSnapshot(attached);
+    this.schedulePendingSweep();
+    return true;
+  }
+
+  private requestMetadataRebase(attached: AttachedDevice): void {
+    if (attached.metadataNeedsRebase) {
+      this.schedulePendingSweep();
+      return;
+    }
+    attached.metadataNeedsRebase = true;
+    this.sender.sendMetadataSnapshot(attached);
+    this.schedulePendingSweep();
   }
 
   // pending 项原本只由 Bun 的 drain 回调推进，而 drain 仅在 socket 曾经背压后排空时派发。

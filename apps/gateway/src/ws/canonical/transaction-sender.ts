@@ -2,7 +2,8 @@ import { wsBorsh } from '@tmex/shared';
 
 import type { PaneHistoryPage } from '../../tmux-client/pane-history-reader';
 import type { PaneDataSegment, PaneScreenCheckpoint } from '../../tmux-client/pane-retention';
-import { copyBytes, defaultCreateEpoch, paneKey } from './bytes';
+import { ENVELOPE_BYTES, bytesEqual, copyBytes, defaultCreateEpoch, paneKey } from './bytes';
+import { canonicalEventPayloadBytes, sourceMetadataRecordBytes } from './encoded-size';
 import type { CanonicalFrameSizer } from './frame-sizer';
 import {
   type AttachedDevice,
@@ -21,7 +22,16 @@ export interface CanonicalTransactionSenderOptions {
   getServerEpoch: (deviceId: string) => Uint8Array | null | undefined;
 }
 
+interface MetadataPartitionCache {
+  epoch: Uint8Array;
+  revision: bigint;
+  maxFrameBytes: number;
+  chunks: wsBorsh.SourceMetadataRecord[][];
+}
+
 export class CanonicalTransactionSender {
+  private metadataPartitionCache: MetadataPartitionCache | null = null;
+
   constructor(private readonly options: CanonicalTransactionSenderOptions) {}
 
   get sizer(): CanonicalFrameSizer {
@@ -53,13 +63,14 @@ export class CanonicalTransactionSender {
     const maxDataBytes = this.options.sizer.maxContentChunkBytes(kind, requestId);
     if (maxDataBytes <= 0) return false;
     for (let offset = 0; offset < data.byteLength; offset += maxDataBytes) {
+      const chunk = data.subarray(offset, offset + maxDataBytes);
       const event =
         kind === 'screen'
           ? ({
-              ScreenChunk: { requestId, offset, data: data.slice(offset, offset + maxDataBytes) },
+              ScreenChunk: { requestId, offset, data: chunk },
             } satisfies CanonicalEvent)
           : ({
-              HistoryChunk: { requestId, offset, data: data.slice(offset, offset + maxDataBytes) },
+              HistoryChunk: { requestId, offset, data: chunk },
             } satisfies CanonicalEvent);
       if (!canonicalSendContinue(this.sendFitted(event))) return false;
     }
@@ -147,7 +158,7 @@ export class CanonicalTransactionSender {
   sendMetadataSnapshot(device: AttachedDevice): boolean {
     const snapshot = device.runtime.getMetadataSnapshot();
     const snapshotId = defaultCreateEpoch();
-    const chunks = this.partitionMetadataRecords(snapshot, snapshotId);
+    const chunks = this.cachedOrPartitionMetadata(snapshot, snapshotId);
     if (!chunks) return false;
     let sent = true;
     for (let index = 0; index < chunks.length; index += 1) {
@@ -179,56 +190,83 @@ export class CanonicalTransactionSender {
     snapshotId: Uint8Array
   ): wsBorsh.SourceMetadataRecord[][] | null {
     if (snapshot.records.length === 0) return [[]];
+    const budget = this.metadataRecordsBudget(snapshot, snapshotId);
+    if (budget == null) return null;
     const chunks: wsBorsh.SourceMetadataRecord[][] = [];
     let current: wsBorsh.SourceMetadataRecord[] = [];
+    let used = 0;
     for (const record of snapshot.records) {
-      const candidate = [...current, record];
-      const event: CanonicalEvent = {
-        SourceMetadataSnapshot: {
-          metadataEpoch: snapshot.metadataEpoch,
-          revision: snapshot.revision,
-          snapshotId,
-          chunkIndex: 0xffff,
-          totalChunks: 0xffff,
-          records: candidate,
-        },
-      };
-      if (this.options.sizer.eventFits(event)) {
-        current = candidate;
-        continue;
-      }
-      if (current.length === 0) {
-        this.sendError(
-          null,
-          wsBorsh.ERROR_FRAME_TOO_LARGE,
-          'metadata record exceeds frame limit',
-          false
-        );
+      const size = sourceMetadataRecordBytes(record);
+      if (size == null || size > budget) {
+        this.sendMetadataRecordTooLarge();
         return null;
       }
-      chunks.push(current);
-      current = [record];
-      const single = {
-        SourceMetadataSnapshot: {
-          metadataEpoch: snapshot.metadataEpoch,
-          revision: snapshot.revision,
-          snapshotId,
-          chunkIndex: 0xffff,
-          totalChunks: 0xffff,
-          records: current,
-        },
-      } satisfies CanonicalEvent;
-      if (!this.options.sizer.eventFits(single)) {
-        this.sendError(
-          null,
-          wsBorsh.ERROR_FRAME_TOO_LARGE,
-          'metadata record exceeds frame limit',
-          false
-        );
-        return null;
+      if (current.length > 0 && used + size > budget) {
+        chunks.push(current);
+        current = [];
+        used = 0;
       }
+      current.push(record);
+      used += size;
     }
     if (current.length > 0) chunks.push(current);
     return chunks;
+  }
+
+  private cachedOrPartitionMetadata(
+    snapshot: ReturnType<CanonicalFeedRuntime['getMetadataSnapshot']>,
+    snapshotId: Uint8Array
+  ): wsBorsh.SourceMetadataRecord[][] | null {
+    const cached = this.metadataPartitionCache;
+    const maxFrameBytes = this.options.sizer.maxFrameBytes;
+    if (
+      cached &&
+      cached.revision === snapshot.revision &&
+      cached.maxFrameBytes === maxFrameBytes &&
+      bytesEqual(cached.epoch, snapshot.metadataEpoch)
+    ) {
+      return cached.chunks;
+    }
+    const chunks = this.partitionMetadataRecords(snapshot, snapshotId);
+    this.metadataPartitionCache = chunks
+      ? {
+          epoch: copyBytes(snapshot.metadataEpoch),
+          revision: snapshot.revision,
+          maxFrameBytes,
+          chunks,
+        }
+      : null;
+    return chunks;
+  }
+
+  private metadataRecordsBudget(
+    snapshot: ReturnType<CanonicalFeedRuntime['getMetadataSnapshot']>,
+    snapshotId: Uint8Array
+  ): number | null {
+    const emptyPayload = canonicalEventPayloadBytes({
+      SourceMetadataSnapshot: {
+        metadataEpoch: snapshot.metadataEpoch,
+        revision: snapshot.revision,
+        snapshotId,
+        chunkIndex: 0xffff,
+        totalChunks: 0xffff,
+        records: [],
+      },
+    });
+    if (emptyPayload == null) return null;
+    const maxPayload = Math.min(
+      this.options.sizer.maxFrameBytes - ENVELOPE_BYTES,
+      wsBorsh.CANONICAL_STATE_MAX_PAYLOAD_BYTES
+    );
+    return maxPayload - emptyPayload;
+  }
+
+  private sendMetadataRecordTooLarge(): void {
+    this.sendError(
+      null,
+      wsBorsh.ERROR_FRAME_TOO_LARGE,
+      'metadata record exceeds frame limit',
+      false
+    );
   }
 }

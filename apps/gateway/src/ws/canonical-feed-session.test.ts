@@ -32,6 +32,7 @@ class FakeRuntime implements CanonicalFeedRuntime {
   readonly listeners = new Set<DeviceSessionRuntimeListener>();
   readonly input: Array<[string, string]> = [];
   readonly resizes: Array<[string, number, number]> = [];
+  openConsumers = 0;
   screenData = encoder.encode('screen');
   checkpoint: PaneScreenCheckpoint | null = null;
   baseSeqOverride: bigint | null = null;
@@ -71,7 +72,14 @@ class FakeRuntime implements CanonicalFeedRuntime {
   }
 
   attachPaneConsumer(callbacks: PaneRetentionConsumerCallbacks) {
-    return this.retention.attachConsumer(callbacks);
+    this.openConsumers += 1;
+    const lease = this.retention.attachConsumer(callbacks);
+    const close = lease.close.bind(lease);
+    lease.close = () => {
+      this.openConsumers -= 1;
+      close();
+    };
+    return lease;
   }
 
   subscribe(listener: DeviceSessionRuntimeListener): () => void {
@@ -596,5 +604,111 @@ describe('canonical feed session', () => {
     expect(guarded.terminateReasons).toEqual([]);
     expect(guarded.terminateCalls()).toBe(0);
     session.close();
+  });
+
+  test('coalesces metadata rebase while a snapshot is already pending', async () => {
+    const runtime = new FakeRuntime();
+    let snapshotAttempts = 0;
+    let allowSnapshot = true;
+    const session = new CanonicalFeedSession({
+      maxFrameBytes: 32 * 1024,
+      sendEvent: (event) => {
+        if ('SourceMetadataSnapshot' in event) {
+          snapshotAttempts += 1;
+          if (!allowSnapshot) return false;
+        }
+        return true;
+      },
+      resolveRuntime: async () => runtime,
+    });
+    expect(await session.attachDevice('device-a')).toBe(true);
+    const afterAttach = snapshotAttempts;
+    expect(afterAttach).toBe(1);
+
+    allowSnapshot = false;
+    for (const listener of runtime.listeners) {
+      listener.onMetadataRebaseRequired?.(runtime.getMetadataSnapshot());
+    }
+    expect(snapshotAttempts).toBe(afterAttach + 1);
+    for (const listener of runtime.listeners) {
+      listener.onMetadataRebaseRequired?.(runtime.getMetadataSnapshot());
+    }
+    expect(snapshotAttempts).toBe(afterAttach + 1);
+
+    allowSnapshot = true;
+    session.onDrain();
+    expect(snapshotAttempts).toBe(afterAttach + 2);
+    session.close();
+  });
+
+  test('serializes concurrent attachDevice for the same device and keeps one consumer', async () => {
+    const runtime = new FakeRuntime();
+    let release!: (value: CanonicalFeedRuntime | null) => void;
+    const barrier = new Promise<CanonicalFeedRuntime | null>((resolve) => {
+      release = resolve;
+    });
+    const session = new CanonicalFeedSession({
+      maxFrameBytes: 32 * 1024,
+      sendEvent: () => true,
+      resolveRuntime: async () => barrier,
+    });
+    const first = session.attachDevice('device-a');
+    const second = session.attachDevice('device-a');
+    release(runtime);
+    expect(await first).toBe(true);
+    expect(await second).toBe(true);
+    expect(runtime.openConsumers).toBe(1);
+    expect(runtime.listeners.size).toBe(1);
+    session.close();
+    expect(runtime.openConsumers).toBe(0);
+    expect(runtime.listeners.size).toBe(0);
+  });
+
+  test('cleans up when attach fails or the session closes during resolve', async () => {
+    const runtime = new FakeRuntime();
+    let release!: (value: CanonicalFeedRuntime | null) => void;
+    const barrier = new Promise<CanonicalFeedRuntime | null>((resolve) => {
+      release = resolve;
+    });
+    const session = new CanonicalFeedSession({
+      maxFrameBytes: 32 * 1024,
+      sendEvent: () => true,
+      resolveRuntime: async () => barrier,
+    });
+    const pending = session.attachDevice('device-a');
+    const concurrent = session.attachDevice('device-a');
+    session.close();
+    release(runtime);
+    expect(await pending).toBe(false);
+    expect(await concurrent).toBe(false);
+    expect(runtime.openConsumers).toBe(0);
+    expect(runtime.listeners.size).toBe(0);
+
+    const failed = new CanonicalFeedSession({
+      maxFrameBytes: 32 * 1024,
+      sendEvent: () => true,
+      resolveRuntime: async () => null,
+    });
+    expect(await failed.attachDevice('device-a')).toBe(false);
+    expect(await failed.attachDevice('device-a')).toBe(false);
+    failed.close();
+  });
+
+  test('closes the lease and listener if the session closes while installing', async () => {
+    const runtime = new FakeRuntime();
+    const holder: { session: CanonicalFeedSession | null } = { session: null };
+    const attach = runtime.attachPaneConsumer.bind(runtime);
+    runtime.attachPaneConsumer = (callbacks) => {
+      holder.session?.close();
+      return attach(callbacks);
+    };
+    holder.session = new CanonicalFeedSession({
+      maxFrameBytes: 32 * 1024,
+      sendEvent: () => true,
+      resolveRuntime: async () => runtime,
+    });
+    expect(await holder.session.attachDevice('device-a', runtime)).toBe(false);
+    expect(runtime.openConsumers).toBe(0);
+    expect(runtime.listeners.size).toBe(0);
   });
 });

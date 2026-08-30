@@ -174,7 +174,8 @@ export class CanonicalPaneStream {
     }
     let offset = 0;
     while (offset < segment.data.byteLength) {
-      const data = segment.data.slice(offset, offset + maxDataBytes);
+      // sendEvent 同步把 payload 拷进独立 frame，视图只活到 serialize 结束。
+      const data = segment.data.subarray(offset, offset + maxDataBytes);
       const seqStart = segment.seqStart + BigInt(offset);
       const event: CanonicalEvent = {
         PaneData: {

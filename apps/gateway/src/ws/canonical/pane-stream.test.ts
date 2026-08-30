@@ -11,8 +11,11 @@ const SERVER_EPOCH = new Uint8Array(16).fill(0x11);
 const PANE_EPOCH = new Uint8Array(16).fill(0x22);
 const encoder = new TextEncoder();
 
-function createStream(sendEvent: (event: wsBorsh.CanonicalEvent) => CanonicalSendResult) {
-  const sizer = new CanonicalFrameSizer(wsBorsh.CANONICAL_STATE_MAX_FRAME_BYTES);
+function createStream(
+  sendEvent: (event: wsBorsh.CanonicalEvent) => CanonicalSendResult,
+  maxFrameBytes = wsBorsh.CANONICAL_STATE_MAX_FRAME_BYTES
+) {
+  const sizer = new CanonicalFrameSizer(maxFrameBytes);
   const sender = new CanonicalTransactionSender({
     sizer,
     sendEvent,
@@ -26,7 +29,7 @@ function createStream(sendEvent: (event: wsBorsh.CanonicalEvent) => CanonicalSen
     maxPendingPaneGaps: 8,
     onPendingWork: () => pending.push(1),
   });
-  return { stream, pending };
+  return { stream, pending, sizer };
 }
 
 describe('canonical pane stream', () => {
@@ -110,5 +113,63 @@ describe('canonical pane stream', () => {
     expect(stream.snapshotStats().pendingPaneGaps).toBe(0);
     expect(stream.snapshotStats().paneGapsSent).toBe(1);
     expect(pending.length).toBe(0);
+  });
+
+  test('chunks PaneData with subarray views and keeps serialized frames after source mutation', () => {
+    const frames: Uint8Array[] = [];
+    const events: wsBorsh.CanonicalEvent[] = [];
+    const { stream, sizer } = createStream((event) => {
+      events.push(event);
+      frames.push(wsBorsh.encodeCanonicalEventPayload(event).slice());
+      return true;
+    }, 256);
+    const data = new Uint8Array(400);
+    for (let index = 0; index < data.byteLength; index += 1) data[index] = index & 0xff;
+    const maxData = sizer.maxPaneDataBytes(
+      { deviceId: 'device-a', serverEpoch: SERVER_EPOCH, paneId: '%1' },
+      PANE_EPOCH
+    );
+    expect(maxData).toBeGreaterThan(0);
+    expect(maxData).toBeLessThan(data.byteLength);
+
+    const sent = stream.sendPaneData('device-a', {
+      paneId: '%1',
+      paneEpoch: PANE_EPOCH,
+      seqStart: 0n,
+      seqEnd: BigInt(data.byteLength),
+      data,
+    });
+    expect(sent).toBe(true);
+    expect(events.length).toBeGreaterThan(1);
+
+    const reconstructed = new Uint8Array(data.byteLength);
+    let offset = 0;
+    for (const event of events) {
+      if (!('PaneData' in event)) throw new Error('expected PaneData');
+      expect(event.PaneData.data.buffer).toBe(data.buffer);
+      reconstructed.set(event.PaneData.data, offset);
+      offset += event.PaneData.data.byteLength;
+    }
+    expect(offset).toBe(data.byteLength);
+    expect(reconstructed).toEqual(data);
+
+    data.fill(0xff);
+    for (const [index, event] of events.entries()) {
+      const frame = frames[index];
+      if (!frame || !('PaneData' in event)) throw new Error('missing frame');
+      expect(wsBorsh.encodeCanonicalEventPayload(event)).not.toEqual(frame);
+      expect(frame).toEqual(frames[index]);
+    }
+    const decoded = frames.map((frame) => wsBorsh.decodeCanonicalEventPayload(frame).event);
+    const recovered = new Uint8Array(400);
+    let recoveredOffset = 0;
+    for (const event of decoded) {
+      if (!('PaneData' in event)) throw new Error('expected PaneData');
+      recovered.set(event.PaneData.data, recoveredOffset);
+      recoveredOffset += event.PaneData.data.byteLength;
+    }
+    const original = new Uint8Array(400);
+    for (let index = 0; index < original.byteLength; index += 1) original[index] = index & 0xff;
+    expect(recovered).toEqual(original);
   });
 });

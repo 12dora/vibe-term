@@ -98,7 +98,7 @@ function metadataFieldBytes(field: wsBorsh.SourceMetadataField): number | null {
   return sum(U8, metadataValueBytes(field.value));
 }
 
-function metadataRecordBytes(record: wsBorsh.SourceMetadataRecord): number | null {
+export function sourceMetadataRecordBytes(record: wsBorsh.SourceMetadataRecord): number | null {
   return sum(
     entityKeyBytes(record.key),
     optionBytes(record.parent, entityKeyBytes),
@@ -195,7 +195,7 @@ function metadataEventBytes(event: CanonicalEvent): number | null | undefined {
       borshFixedBytes(value.snapshotId, BYTES16),
       U16,
       U16,
-      vecBytes(value.records, metadataRecordBytes)
+      vecBytes(value.records, sourceMetadataRecordBytes)
     );
   }
   if ('SourceMetadataPatch' in event) {
@@ -204,7 +204,7 @@ function metadataEventBytes(event: CanonicalEvent): number | null | undefined {
       borshFixedBytes(value.metadataEpoch, BYTES16),
       U64,
       U64,
-      vecBytes(value.upserts, metadataRecordBytes),
+      vecBytes(value.upserts, sourceMetadataRecordBytes),
       vecBytes(value.removals, entityKeyBytes)
     );
   }
