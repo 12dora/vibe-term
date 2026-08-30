@@ -142,3 +142,14 @@ export {
 
 export * from './network';
 export * from './tmux-version';
+
+// ==================== 角色模型 ====================
+
+export {
+  type TmexRoleName,
+  type TmexRoles,
+  isStandaloneRoles,
+  isTmexRoleName,
+  roleNameFromFlags,
+  rolesFromName,
+} from './roles';

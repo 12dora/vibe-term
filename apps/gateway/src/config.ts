@@ -1,5 +1,8 @@
 import { tmpdir } from 'node:os';
 import { dirname, isAbsolute, join, posix, resolve, win32 } from 'node:path';
+import { type TmexRoles, isTmexRoleName, rolesFromName } from '@tmex/shared';
+
+export type { TmexRoles };
 
 declare const TMEX_MANAGED_BUILD: boolean | undefined;
 
@@ -72,23 +75,15 @@ function getGatewayOwnerToken(): string | null {
   return value.toLowerCase();
 }
 
-export type TmexRoles = { hub: boolean; node: boolean };
-
 export function parseTmexRoles(raw: string | undefined): TmexRoles {
   if (raw === undefined) {
-    return { hub: false, node: false };
+    return rolesFromName('standalone');
   }
   const value = raw.trim();
-  if (value === 'standalone') {
-    return { hub: false, node: false };
+  if (!isTmexRoleName(value)) {
+    throw new Error('TMEX_ROLES must be one of standalone | node | hub,node');
   }
-  if (value === 'node') {
-    return { hub: false, node: true };
-  }
-  if (value === 'hub,node') {
-    return { hub: true, node: true };
-  }
-  throw new Error('TMEX_ROLES must be one of standalone | node | hub,node');
+  return rolesFromName(value);
 }
 
 export function parsePeerPort(raw: string | undefined): number {

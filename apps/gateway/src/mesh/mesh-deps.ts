@@ -1,8 +1,8 @@
+import { type TmexRoles, isStandaloneRoles } from '@tmex/shared';
 import type { LinkSession } from '@tmex/shared/link';
-import type { TmexRoles } from '../config';
 import { type DispatchContext, requestDispatchContext } from './types';
 
-export { requestDispatchContext };
+export { isStandaloneRoles, requestDispatchContext };
 export type { DispatchContext };
 
 export const MESH_VIA_SELF = 'self';
@@ -247,10 +247,6 @@ export function isMeshRewritten(value: unknown): value is MeshRewritten {
     'rewritten' in value &&
     (value as MeshRewritten).rewritten instanceof Request
   );
-}
-
-export function isStandaloneRoles(roles: MeshRoles): boolean {
-  return !roles.hub && !roles.node;
 }
 
 export type MeshUpgradeServer = {

@@ -1,31 +1,27 @@
-export type TmexRoleName = 'standalone' | 'node' | 'hub,node';
+import {
+  type TmexRoleName,
+  type TmexRoles,
+  isStandaloneRoles,
+  isTmexRoleName,
+  roleNameFromFlags,
+  rolesFromName,
+} from '../../../../packages/shared/src/roles';
 
-export type TmexRoles = { hub: boolean; node: boolean };
+export type { TmexRoleName, TmexRoles };
+export { isStandaloneRoles, roleNameFromFlags };
 
 export const DEFAULT_PEER_PORT = 39001;
 export const DEFAULT_STUN_SERVERS = 'stun:stun.l.google.com:19302';
 
 export function parseTmexRoleName(raw: string | undefined): TmexRoleName {
   const value = (raw ?? 'standalone').trim();
-  if (value === 'standalone' || value === 'node' || value === 'hub,node') {
-    return value;
+  if (!isTmexRoleName(value)) {
+    throw new Error('role must be one of standalone | node | hub,node');
   }
-  throw new Error('role must be one of standalone | node | hub,node');
+  return value;
 }
 
 export function parseTmexRoles(raw: string | undefined): TmexRoles {
   const name = parseTmexRoleName(raw === undefined || raw.trim() === '' ? 'standalone' : raw);
-  if (name === 'standalone') return { hub: false, node: false };
-  if (name === 'node') return { hub: false, node: true };
-  return { hub: true, node: true };
-}
-
-export function isStandaloneRoles(roles: TmexRoles): boolean {
-  return !roles.hub && !roles.node;
-}
-
-export function roleNameFromFlags(roles: TmexRoles): TmexRoleName {
-  if (roles.hub && roles.node) return 'hub,node';
-  if (roles.node) return 'node';
-  return 'standalone';
+  return rolesFromName(name);
 }

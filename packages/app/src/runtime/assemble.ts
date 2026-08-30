@@ -1,11 +1,7 @@
 import { resolve } from 'node:path';
 import { PROCESS_STARTED_AT } from '../../../../apps/gateway/src/api/system-routes';
 import { NodeIdentityStore } from '../../../../apps/gateway/src/auth/node-identity-store';
-import {
-  type TmexRoles,
-  config as gatewayConfig,
-  parseTmexRoles,
-} from '../../../../apps/gateway/src/config';
+import { config as gatewayConfig } from '../../../../apps/gateway/src/config';
 import type { HubRuntime, HubServerWebSocket } from '../../../../apps/gateway/src/hub';
 import {
   MESH_FORWARD_WS_KIND,
@@ -43,7 +39,7 @@ import { withEnvLock } from '../lib/env-mutation';
 import { createAuthContextFromDb } from '../lib/local-auth';
 import { loadNodeDatachannel } from '../lib/native-datachannel';
 import { detectCurrentNativePin } from '../lib/native-manifest';
-import { isStandaloneRoles } from '../lib/roles';
+import { type TmexRoles, isStandaloneRoles, parseTmexRoles } from '../lib/roles';
 import { AcmeHttp01Challenge } from '../tls/acme-challenge';
 import { HttpsListener } from '../tls/https-listener';
 import { TlsService } from '../tls/tls-service';
