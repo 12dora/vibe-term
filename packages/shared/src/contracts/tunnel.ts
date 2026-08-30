@@ -92,6 +92,10 @@ export interface TunnelAccessStatus {
   rules: TunnelAccessPolicyRule[];
   /** 网关对带 cf-connecting-ip 的请求强制校验 Cf-Access-Jwt-Assertion */
   enforceJwt: boolean;
+  /** 校验实际生效：configured && enforceJwt && hostname 与当前隧道主机名一致 */
+  effective: boolean;
+  /** hub 角色下为 /hub/ 机器端点建的 bypass 应用 id（无则 null） */
+  bypassAppId: string | null;
   /** 最近一次 Access API 错误（脱敏） */
   lastError: string | null;
 }
@@ -177,18 +181,26 @@ export type TunnelActionRequest =
   /** 保存 Cloudflare API token（需 Access: Apps and Policies 编辑权限）与 account id；同步动作 */
   | { action: 'set_access_credentials'; apiToken: string; accountId: string }
   | { action: 'clear_access_credentials' }
-  /** 为当前 hostname 创建/更新 Access 应用与 allow 策略；异步 job kind = 'access' */
-  | { action: 'configure_access'; rules: TunnelAccessPolicyRule[] }
-  /** 删除 Access 应用；异步 job kind = 'access' */
-  | { action: 'remove_access' }
+  /**
+   * 为主机名创建/更新 Access 应用与 allow 策略；异步 job kind = 'access'。
+   * `hostname` 缺省取 config.hostname（mode=off 时可传向导里已确认的主机名，先于建隧道配置 Access）。
+   * hub 角色会同时为 /hub/ 机器端点建 bypass 应用，避免节点 uplink / 加入被 Access 拦截。
+   */
+  | { action: 'configure_access'; rules: TunnelAccessPolicyRule[]; hostname?: string }
+  /**
+   * 删除 Access 应用；异步 job kind = 'access'。隧道运行中且这是最后一道保护
+   * （!loginEnforced）时必须 acknowledgeExposure=true，否则 409 exposure_ack_required
+   */
+  | { action: 'remove_access'; acknowledgeExposure?: boolean }
   /** 用已保存凭证按主机名同步 Cloudflare 上已存在的 Access 应用/策略到本地状态；异步 job kind = 'access' */
-  | { action: 'sync_access' }
+  | { action: 'sync_access'; hostname?: string }
   /**
    * 接管系统里已存在的隧道：mode=named、hostname 取 external.hostnames[index]，
    * 不由 tmex 拉起进程（external 已在跑），只做状态展示与连通性检查
    */
   | { action: 'adopt_external'; hostname: string }
-  | { action: 'set_access_enforce'; enforceJwt: boolean };
+  /** 关闭强制校验且这是最后一道保护时同样需要 acknowledgeExposure=true */
+  | { action: 'set_access_enforce'; enforceJwt: boolean; acknowledgeExposure?: boolean };
 
 export interface TunnelActionResponse {
   status: TunnelStatusResponse;
