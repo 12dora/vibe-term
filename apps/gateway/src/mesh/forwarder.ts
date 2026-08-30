@@ -1,5 +1,4 @@
 import { wsBorsh } from '@tmex/shared';
-import type { LinkSession } from '@tmex/shared/link';
 import { buildSetCookie, nodeSessionCookieName, parseCookies } from '../auth/cookies';
 import {
   AUTH_401_BODY_LIMIT,
@@ -10,7 +9,6 @@ import {
   MESH_REJECT_4401_KIND,
   MESH_VIA_SELF,
   type MeshHandleResult,
-  type MeshRewritten,
   type MeshServerWebSocket,
   type MeshUpgradeServer,
   type OpenedWsStream,
@@ -20,7 +18,6 @@ import {
   STREAM_FAILOVER_MAX_ATTEMPTS,
   STREAM_FAILOVER_RESUME_WAIT_MS,
   type StreamOpener,
-  WS_CLOSE_LOGIN_REQUIRED,
   X_TMEX_SESSION_RENEWED,
   X_TMEX_SET_SESSION,
   getMeshRequestContext,
@@ -30,26 +27,23 @@ import {
 import { isHttps, jsonError } from './session-middleware';
 
 const AUTH_SKIP = new Set(['/api/auth/challenge', '/api/auth/login']);
-
 const RESPONSE_ALLOW = new Set([
-  'content-type',
   'content-length',
   'content-range',
   'accept-ranges',
   'cache-control',
   'etag',
   'last-modified',
-  'content-disposition',
 ]);
-
 const DROP_ON_401_REWRITE = new Set([
   'content-length',
   'content-range',
   'etag',
   'content-disposition',
 ]);
+const DROP_REQUEST_HEADERS = new Set(['cookie', 'authorization', 'host', 'connection', 'upgrade']);
 
-export type ForwarderDeps = {
+type ForwarderDeps = {
   nodeId: string;
   peers: PeerLinkProvider;
   streams: StreamOpener;
@@ -57,13 +51,10 @@ export type ForwarderDeps = {
   log?: (line: string) => void;
 };
 
-export type ForwardResult = MeshHandleResult;
-
 type ForwardMeta = {
   nodeId: string;
   auth: string;
   cid?: string;
-  link: LinkSession;
   transport: PeerTransportKind | null;
 };
 
@@ -74,7 +65,6 @@ type ForwardPump = {
   auth: string;
   cid?: string;
   stream: OpenedWsStream | null;
-  boundLink: LinkSession | null;
   boundTransport: PeerTransportKind | null;
   replay: StreamReplayState;
   generation: number;
@@ -91,18 +81,14 @@ type ForwardPump = {
 const pendingMeta = new WeakMap<OpenedWsStream, ForwardMeta>();
 const IDEMPOTENT_HTTP = new Set(['GET', 'HEAD']);
 
-const selfRewrites = new WeakMap<Request, string>();
-
 export function getSelfRewrite(req: Request): string | null {
-  return selfRewrites.get(req) ?? getMeshRequestContext(req).selfRewrite ?? null;
+  return getMeshRequestContext(req).selfRewrite ?? null;
 }
 
-export function parseNodePrefix(pathname: string): { nodeId: string; rest: string } | null {
+function parseNodePrefix(pathname: string): { nodeId: string; rest: string } | null {
   const match = pathname.match(/^\/n\/([^/]+)(\/.*)?$/);
   if (!match) return null;
-  const nodeId = decodeURIComponent(match[1] ?? '');
-  const rest = match[2] && match[2].length > 0 ? match[2] : '/';
-  return { nodeId, rest };
+  return { nodeId: decodeURIComponent(match[1] ?? ''), rest: match[2] || '/' };
 }
 
 export function rewriteSelf(req: Request, localNodeId: string): Request | null {
@@ -113,19 +99,17 @@ export function rewriteSelf(req: Request, localNodeId: string): Request | null {
   return rewriteRequest(req, parsed.rest + url.search);
 }
 
-export function rewriteRequest(req: Request, rewrite: string): Request {
+function rewriteRequest(req: Request, rewrite: string): Request {
   const url = new URL(req.url);
   const q = rewrite.indexOf('?');
-  if (q === -1) {
-    url.pathname = rewrite;
-    url.search = '';
-  } else {
-    url.pathname = rewrite.slice(0, q);
-    url.search = rewrite.slice(q);
-  }
+  url.pathname = q === -1 ? rewrite : rewrite.slice(0, q);
+  url.search = q === -1 ? '' : rewrite.slice(q);
   const inner = new Request(url, req);
-  const ctx = getMeshRequestContext(req);
-  setMeshRequestContext(inner, { ...ctx, via: MESH_VIA_SELF, selfRewrite: undefined });
+  setMeshRequestContext(inner, {
+    ...getMeshRequestContext(req),
+    via: MESH_VIA_SELF,
+    selfRewrite: undefined,
+  });
   return inner;
 }
 
@@ -139,7 +123,7 @@ export class Forwarder {
     this.log = deps.log ?? ((line) => console.info(line));
   }
 
-  async handle(req: Request, server: MeshUpgradeServer): Promise<ForwardResult> {
+  async handle(req: Request, server: MeshUpgradeServer): Promise<MeshHandleResult> {
     const url = new URL(req.url);
     const parsed = parseNodePrefix(url.pathname);
     if (!parsed) return null;
@@ -153,10 +137,6 @@ export class Forwarder {
       return this.handleRemoteHttp(req, parsed.nodeId, parsed.rest, url.search);
     }
     return null;
-  }
-
-  handleForwardSocketOpen(ws: MeshServerWebSocket): void {
-    void ws;
   }
 
   handleForwardSocketMessage(ws: MeshServerWebSocket, message: unknown): void {
@@ -197,7 +177,6 @@ export class Forwarder {
       auth: meta?.auth ?? ws.data.auth ?? '',
       cid: meta?.cid ?? ws.data.cid,
       stream: null,
-      boundLink: meta?.link ?? null,
       boundTransport: meta?.transport ?? null,
       replay: new StreamReplayState(),
       generation: 0,
@@ -211,19 +190,17 @@ export class Forwarder {
       inflight: null,
     };
     this.pumps.set(ws, pump);
-    this.bindStream(pump, stream, meta?.link ?? null, meta?.transport ?? null);
+    this.bindStream(pump, stream, meta?.transport ?? null);
   }
 
   private bindStream(
     pump: ForwardPump,
     stream: OpenedWsStream,
-    link: LinkSession | null,
     transport: PeerTransportKind | null
   ): void {
     pump.generation += 1;
     const generation = pump.generation;
     pump.stream = stream;
-    pump.boundLink = link;
     pump.boundTransport = transport;
     pump.streamAlive = true;
     stream.onMessage((bytes) => {
@@ -241,16 +218,10 @@ export class Forwarder {
   }
 
   private handleRemoteBytes(pump: ForwardPump, bytes: Uint8Array): void {
-    pump.replay.noteInbound(bytes);
+    const kind = pump.replay.noteInbound(bytes);
     if (pump.resumeWait && pump.replay.isResumeReady()) {
       pump.resumeWait();
       pump.resumeWait = null;
-    }
-    let kind: number | null = null;
-    try {
-      kind = wsBorsh.decodeEnvelope(bytes).kind;
-    } catch {
-      kind = null;
     }
     if (kind === wsBorsh.KIND_HELLO_S2C) {
       pump.helloWait?.();
@@ -280,55 +251,12 @@ export class Forwarder {
     const from = pump.boundTransport ?? 'none';
     const abort = new AbortController();
     pump.failoverAbort = abort;
-    const signal = abort.signal;
     try {
       for (let attempt = 0; attempt < STREAM_FAILOVER_MAX_ATTEMPTS; attempt += 1) {
-        if (pump.browserClosed || signal.aborted) return;
-        const delay = STREAM_FAILOVER_BACKOFF_MS[attempt] ?? 1600;
-        if (delay > 0) {
-          try {
-            await this.sleep(delay, signal);
-          } catch {
-            return;
-          }
-        }
-        if (pump.browserClosed || signal.aborted) return;
-        let link: LinkSession;
-        try {
-          link = await this.deps.peers.getLink(pump.nodeId);
-        } catch {
-          continue;
-        }
-        if (pump.browserClosed || signal.aborted) return;
-        const transport = this.deps.peers.transportOf?.(pump.nodeId) ?? null;
-        let stream: OpenedWsStream;
-        try {
-          stream = await this.deps.streams.openWsStream(link, pump.auth, pump.cid);
-        } catch {
-          continue;
-        }
-        pump.inflight = stream;
-        if (pump.browserClosed || signal.aborted) {
-          this.discardStream(pump, stream);
-          return;
-        }
-        this.bindStream(pump, stream, link, transport);
-        pump.inflight = null;
-        const resumed = await this.replaySubscription(pump, stream, signal);
-        if (pump.browserClosed || signal.aborted) {
-          this.discardStream(pump, stream);
-          return;
-        }
-        if (!pump.streamAlive || pump.stream !== stream) continue;
-        const to = transport ?? 'none';
-        const desc = pump.replay.describeReplay();
-        this.log(
-          `[mesh][stream] failover stream=${pump.id} from=${from} to=${to} resumed=${resumed} mode=${desc.mode} panes=${desc.panes} cursor=${desc.cursor}`
-        );
-        pump.failingOver = false;
-        pump.failoverAbort = null;
-        this.flushQueue(pump);
-        return;
+        const stream = await this.openFailoverStream(pump, abort.signal, attempt);
+        if (stream === 'aborted') return;
+        if (!stream) continue;
+        if (await this.completeFailover(pump, stream, from, abort.signal)) return;
       }
       this.closeBrowser(pump, { code: 1011, reason: 'failover-exhausted' });
     } finally {
@@ -339,42 +267,89 @@ export class Forwarder {
     }
   }
 
+  private async openFailoverStream(
+    pump: ForwardPump,
+    signal: AbortSignal,
+    attempt: number
+  ): Promise<OpenedWsStream | null | 'aborted'> {
+    if (pumpDead(pump, signal)) return 'aborted';
+    const delay = STREAM_FAILOVER_BACKOFF_MS[attempt] ?? 1600;
+    if (delay > 0) {
+      try {
+        await this.sleep(delay, signal);
+      } catch {
+        return 'aborted';
+      }
+    }
+    if (pumpDead(pump, signal)) return 'aborted';
+    const link = await this.deps.peers.getLink(pump.nodeId).catch(() => null);
+    if (pumpDead(pump, signal)) return 'aborted';
+    if (!link) return null;
+    const transport = this.deps.peers.transportOf?.(pump.nodeId) ?? null;
+    const stream = await this.deps.streams
+      .openWsStream(link, pump.auth, pump.cid)
+      .catch(() => null);
+    if (!stream) return pumpDead(pump, signal) ? 'aborted' : null;
+    pump.inflight = stream;
+    if (pumpDead(pump, signal)) {
+      this.discardStream(pump, stream);
+      return 'aborted';
+    }
+    this.bindStream(pump, stream, transport);
+    pump.inflight = null;
+    return stream;
+  }
+
+  private async completeFailover(
+    pump: ForwardPump,
+    stream: OpenedWsStream,
+    from: string,
+    signal: AbortSignal
+  ): Promise<boolean> {
+    const resumed = await this.replaySubscription(pump, stream, signal);
+    if (pumpDead(pump, signal)) {
+      this.discardStream(pump, stream);
+      return true;
+    }
+    if (!pump.streamAlive || pump.stream !== stream) return false;
+    const desc = pump.replay.describeReplay();
+    this.log(
+      `[mesh][stream] failover stream=${pump.id} from=${from} to=${pump.boundTransport ?? 'none'} resumed=${resumed} mode=${desc.mode} panes=${desc.panes} cursor=${desc.cursor}`
+    );
+    pump.failingOver = false;
+    pump.failoverAbort = null;
+    this.flushQueue(pump);
+    return true;
+  }
+
   private async replaySubscription(
     pump: ForwardPump,
     stream: OpenedWsStream,
     signal: AbortSignal
   ): Promise<number> {
     pump.replay.beginResume();
+    const wait = async (key: 'helloWait' | 'resumeWait', ms: number, before?: () => void) => {
+      const waited = new Promise<void>((resolve) => {
+        pump[key] = resolve;
+      });
+      before?.();
+      await Promise.race([waited, this.sleep(ms, signal).catch(() => undefined)]);
+      pump[key] = null;
+    };
     const hello = pump.replay.hello;
-    if (hello) {
-      const waited = new Promise<void>((resolve) => {
-        pump.helloWait = resolve;
-      });
-      stream.send(hello);
-      await Promise.race([waited, this.sleep(2_000, signal).catch(() => undefined)]);
-      pump.helloWait = null;
-    }
-    for (const frame of pump.replay.buildConnectFrames()) {
-      if (signal.aborted || pump.browserClosed) break;
-      stream.send(frame);
-    }
+    if (hello) await wait('helloWait', 2_000, () => stream.send(hello));
+    const sendAll = (frames: Uint8Array[]): void => {
+      for (const frame of frames) {
+        if (pumpDead(pump, signal)) return;
+        stream.send(frame);
+      }
+    };
+    sendAll(pump.replay.buildConnectFrames());
     if (pump.replay.devices.size > 0 && !pump.replay.isResumeReady()) {
-      const waited = new Promise<void>((resolve) => {
-        pump.resumeWait = resolve;
-      });
-      await Promise.race([
-        waited,
-        this.sleep(STREAM_FAILOVER_RESUME_WAIT_MS, signal).catch(() => undefined),
-      ]);
-      pump.resumeWait = null;
+      await wait('resumeWait', STREAM_FAILOVER_RESUME_WAIT_MS);
     }
-    for (const frame of pump.replay.buildPostConnectFrames()) {
-      if (signal.aborted || pump.browserClosed) break;
-      stream.send(frame);
-    }
-    if (!signal.aborted && !pump.browserClosed) {
-      pump.replay.markCanonicalResumeSent();
-    }
+    sendAll(pump.replay.buildPostConnectFrames());
+    if (!pumpDead(pump, signal)) pump.replay.markCanonicalResumeSent();
     return pump.replay.resumedPaneCount();
   }
 
@@ -396,9 +371,7 @@ export class Forwarder {
     }
     try {
       stream.close();
-    } catch {
-      // already closed
-    }
+    } catch {}
   }
 
   private closeBrowser(pump: ForwardPump, info: { code?: number; reason?: string }): void {
@@ -407,20 +380,20 @@ export class Forwarder {
     this.pumps.delete(pump.ws);
     try {
       pump.ws.close(info.code, info.reason);
-    } catch {
-      // already closed
-    }
+    } catch {}
   }
 
   private isLocalNode(id: string): boolean {
     return id === MESH_VIA_SELF || id === this.deps.nodeId;
   }
 
-  private handleSelf(req: Request, rest: string, search: string): MeshRewritten {
+  private handleSelf(req: Request, rest: string, search: string) {
     const rewrite = rest + search;
-    selfRewrites.set(req, rewrite);
-    const ctx = getMeshRequestContext(req);
-    setMeshRequestContext(req, { ...ctx, via: MESH_VIA_SELF, selfRewrite: rewrite });
+    setMeshRequestContext(req, {
+      ...getMeshRequestContext(req),
+      via: MESH_VIA_SELF,
+      selfRewrite: rewrite,
+    });
     return { rewritten: rewriteRequest(req, rewrite) };
   }
 
@@ -430,53 +403,57 @@ export class Forwarder {
     rest: string,
     search: string
   ): Promise<Response> {
-    const headers = filterRequestHeaders(req);
-    const auth = AUTH_SKIP.has(stripQuery(rest))
-      ? null
-      : (parseCookies(req.headers.get('cookie')).get(nodeSessionCookieName(nodeId)) ?? null);
-    const origin = req.headers.get('origin') ?? new URL(req.url).origin;
     const abort = new AbortController();
     const onAbort = (): void => abort.abort();
     req.signal.addEventListener('abort', onAbort, { once: true });
-    const body = req.body && req.method !== 'GET' && req.method !== 'HEAD' ? req.body : null;
-    const retryable = IDEMPOTENT_HTTP.has(req.method) && !body;
-    const attempts = retryable ? HTTP_FAILOVER_MAX_ATTEMPTS : 1;
     try {
-      for (let attempt = 0; attempt < attempts; attempt += 1) {
-        if (abort.signal.aborted) break;
-        if (attempt > 0) {
-          try {
-            await this.sleep(STREAM_FAILOVER_BACKOFF_MS[attempt] ?? 200, abort.signal);
-          } catch {
-            break;
-          }
-        }
-        let link: LinkSession;
-        try {
-          link = await this.deps.peers.getLink(nodeId);
-        } catch {
-          if (!retryable) break;
-          continue;
-        }
-        try {
-          return this.adaptResponse(
-            req,
-            await this.deps.streams.openHttpStream(
-              link,
-              { method: req.method, path: rest, query: search, headers, origin, auth },
-              body,
-              abort.signal
-            ),
-            nodeId
-          );
-        } catch {
-          if (!retryable) break;
-        }
-      }
-      return jsonError('NODE_UNREACHABLE', 503, { nodeId });
+      return await this.forwardHttp(req, nodeId, rest, search, abort.signal);
     } finally {
       req.signal.removeEventListener('abort', onAbort);
     }
+  }
+
+  private async forwardHttp(
+    req: Request,
+    nodeId: string,
+    rest: string,
+    search: string,
+    signal: AbortSignal
+  ): Promise<Response> {
+    const headers = filterRequestHeaders(req);
+    const auth = AUTH_SKIP.has(rest)
+      ? null
+      : (parseCookies(req.headers.get('cookie')).get(nodeSessionCookieName(nodeId)) ?? null);
+    const origin = req.headers.get('origin') ?? new URL(req.url).origin;
+    const retryable = IDEMPOTENT_HTTP.has(req.method);
+    const body = retryable ? null : req.body;
+    const attempts = retryable ? HTTP_FAILOVER_MAX_ATTEMPTS : 1;
+    for (let attempt = 0; attempt < attempts; attempt += 1) {
+      if (signal.aborted) break;
+      if (attempt > 0) {
+        try {
+          await this.sleep(STREAM_FAILOVER_BACKOFF_MS[attempt] ?? 200, signal);
+        } catch {
+          break;
+        }
+      }
+      try {
+        const link = await this.deps.peers.getLink(nodeId);
+        return await this.adaptResponse(
+          req,
+          await this.deps.streams.openHttpStream(
+            link,
+            { method: req.method, path: rest, query: search, headers, origin, auth },
+            body,
+            signal
+          ),
+          nodeId
+        );
+      } catch {
+        if (!retryable) break;
+      }
+    }
+    return jsonError('NODE_UNREACHABLE', 503, { nodeId });
   }
 
   private async handleRemoteWs(
@@ -489,30 +466,16 @@ export class Forwarder {
       const upgraded = server.upgrade(req, {
         data: { kind: MESH_REJECT_4401_KIND, nodeId, auth: null },
       });
-      if (!upgraded) {
-        return jsonError('UNAUTHORIZED', 401, { code: 'NODE_LOGIN_REQUIRED', nodeId });
-      }
-      return undefined;
+      return upgraded
+        ? undefined
+        : jsonError('UNAUTHORIZED', 401, { code: 'NODE_LOGIN_REQUIRED', nodeId });
     }
-    if (req.signal.aborted) {
-      return jsonError('NODE_UNREACHABLE', 503, { nodeId });
-    }
-    let link: LinkSession;
-    try {
-      link = await this.deps.peers.getLink(nodeId);
-    } catch {
-      return jsonError('NODE_UNREACHABLE', 503, { nodeId });
-    }
-    if (req.signal.aborted) {
-      return jsonError('NODE_UNREACHABLE', 503, { nodeId });
-    }
-    const cid = new URL(req.url).searchParams.get('cid')?.trim() || '';
-    let stream: OpenedWsStream;
-    try {
-      stream = await this.deps.streams.openWsStream(link, auth, cid || undefined);
-    } catch {
-      return jsonError('NODE_UNREACHABLE', 503, { nodeId });
-    }
+    if (req.signal.aborted) return jsonError('NODE_UNREACHABLE', 503, { nodeId });
+    const link = await this.deps.peers.getLink(nodeId).catch(() => null);
+    if (!link || req.signal.aborted) return jsonError('NODE_UNREACHABLE', 503, { nodeId });
+    const cid = new URL(req.url).searchParams.get('cid')?.trim() || undefined;
+    const stream = await this.deps.streams.openWsStream(link, auth, cid).catch(() => null);
+    if (!stream) return jsonError('NODE_UNREACHABLE', 503, { nodeId });
     if (req.signal.aborted) {
       stream.close();
       return jsonError('NODE_UNREACHABLE', 503, { nodeId });
@@ -522,12 +485,11 @@ export class Forwarder {
     pendingMeta.set(stream, {
       nodeId,
       auth,
-      cid: cid || undefined,
-      link,
+      cid,
       transport: this.deps.peers.transportOf?.(nodeId) ?? null,
     });
     const ok = server.upgrade(req, {
-      data: { kind: MESH_FORWARD_WS_KIND, nodeId, auth, token, cid: cid || undefined },
+      data: { kind: MESH_FORWARD_WS_KIND, nodeId, auth, token, cid },
     });
     if (!ok) {
       pendingStreams.delete(token);
@@ -538,69 +500,11 @@ export class Forwarder {
   }
 
   private async adaptResponse(req: Request, upstream: Response, nodeId: string): Promise<Response> {
-    const headers = new Headers();
-    let contentType = '';
-    let contentDisposition: string | null = null;
-    upstream.headers.forEach((value, key) => {
-      const lower = key.toLowerCase();
-      if (lower === X_TMEX_SET_SESSION) return;
-      if (lower === 'content-type') {
-        contentType = value;
-        return;
-      }
-      if (lower === 'content-disposition') {
-        contentDisposition = value;
-        return;
-      }
-      if (RESPONSE_ALLOW.has(lower) || lower.startsWith('x-tmex-')) headers.set(key, value);
-    });
-    const mime = baseMime(contentType);
-    if (mime && MESH_ALLOWED_MIME.has(mime)) {
-      headers.set('content-type', contentType || mime);
-      if (contentDisposition) headers.set('content-disposition', contentDisposition);
-    } else {
-      headers.set('content-type', 'application/octet-stream');
-      headers.set('content-disposition', 'attachment');
-    }
-    headers.set('content-security-policy', MESH_FORWARD_CSP);
-    headers.set('x-content-type-options', 'nosniff');
-
-    const setSession = upstream.headers.get(X_TMEX_SET_SESSION);
-    if (setSession) {
-      const parsed = parseSetSessionHeader(setSession);
-      if (parsed) appendNodeCookie(req, headers, nodeId, parsed.sid, parsed.maxAgeSec);
-    }
-    const renewed = upstream.headers.get(X_TMEX_SESSION_RENEWED);
-    if (renewed) {
-      headers.set(X_TMEX_SESSION_RENEWED, renewed);
-      const sid = parseCookies(req.headers.get('cookie')).get(nodeSessionCookieName(nodeId));
-      const expiresAt = Number(renewed);
-      if (sid && Number.isFinite(expiresAt)) {
-        appendNodeCookie(
-          req,
-          headers,
-          nodeId,
-          sid,
-          Math.max(0, Math.floor((expiresAt - Date.now()) / 1000))
-        );
-      }
-    }
-    if (upstream.status !== 401) {
-      return new Response(upstream.body, { status: upstream.status, headers });
-    }
-    const raw = await readBodyLimited(upstream, AUTH_401_BODY_LIMIT);
-    let body: Record<string, unknown> = { code: 'NODE_LOGIN_REQUIRED', nodeId };
-    try {
-      const parsed = JSON.parse(raw) as unknown;
-      if (typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed)) {
-        body = { ...(parsed as Record<string, unknown>), code: 'NODE_LOGIN_REQUIRED', nodeId };
-      }
-    } catch {
-      if (raw) body.message = raw;
-    }
-    for (const name of DROP_ON_401_REWRITE) headers.delete(name);
-    headers.set('content-type', 'application/json');
-    return new Response(JSON.stringify(body), { status: 401, headers });
+    const headers = copyUpstreamHeaders(upstream);
+    return (
+      (await applyAuthPolicy(req, headers, upstream, nodeId)) ??
+      new Response(upstream.body, { status: upstream.status, headers })
+    );
   }
 }
 
@@ -690,40 +594,37 @@ class StreamReplayState {
           }
         }
       }
-    } catch {
-      // ignore undecodable tracking frames
-    }
+    } catch {}
   }
 
-  noteInbound(bytes: Uint8Array): void {
+  noteInbound(bytes: Uint8Array): number | null {
     let env: ReturnType<typeof wsBorsh.decodeEnvelope>;
     try {
       env = wsBorsh.decodeEnvelope(bytes);
     } catch {
-      return;
+      return null;
     }
     if (env.kind === wsBorsh.KIND_DEVICE_CONNECTED) {
       const deviceId = this.noteDeviceConnected(bytes);
       if (deviceId) this.resumeDevices.add(deviceId);
-      return;
+      return env.kind;
     }
     if (env.kind === wsBorsh.KIND_STATE_SNAPSHOT || env.kind === wsBorsh.KIND_CHUNK) {
       if (this.resumeDevices.size > 0) this.resumeSnapshot = true;
-      return;
+      return env.kind;
     }
-    if (env.kind !== wsBorsh.KIND_CANONICAL_EVENT) return;
+    if (env.kind !== wsBorsh.KIND_CANONICAL_EVENT) return env.kind;
     try {
       const event = wsBorsh.decodeCanonicalEventPayload(env.payload).event;
-      if (!('PaneData' in event)) return;
+      if (!('PaneData' in event)) return env.kind;
       const paneData = event.PaneData;
       this.paneCursors.set(paneCursorKey(paneData.pane.deviceId, paneData.pane.paneId), {
         pane: paneData.pane,
         paneEpoch: paneData.paneEpoch,
         terminalSeq: paneData.seqEnd,
       });
-    } catch {
-      // ignore
-    }
+    } catch {}
+    return env.kind;
   }
 
   noteDeviceConnected(bytes: Uint8Array): string | null {
@@ -755,14 +656,14 @@ class StreamReplayState {
   }
 
   buildPostConnectFrames(): Uint8Array[] {
-    const frames: Uint8Array[] = [];
     const canonical = this.buildCanonicalResume();
-    if (canonical) frames.push(canonical);
-    for (const frame of this.paneSubs.values()) frames.push(frame);
-    for (const frame of this.lastSelect.values()) frames.push(frame);
-    for (const frame of this.buildLegacyHistoryRequests()) frames.push(frame);
-    for (const frame of this.agents.values()) frames.push(frame);
-    return frames;
+    return [
+      ...(canonical ? [canonical] : []),
+      ...this.paneSubs.values(),
+      ...this.lastSelect.values(),
+      ...this.buildLegacyHistoryRequests(),
+      ...this.agents.values(),
+    ];
   }
 
   markCanonicalResumeSent(): void {
@@ -810,29 +711,23 @@ class StreamReplayState {
   }
 
   describeReplay(): { mode: string; panes: string; cursor: string } {
-    if (this.canonicalSub) {
-      const rows = [...this.canonicalSub.activePanes, ...this.canonicalSub.hotPanes];
-      const panes = rows.map((row) => row.pane.paneId);
-      const cursorParts = rows.map((row) => {
-        const cursor = this.paneCursors.get(paneCursorKey(row.pane.deviceId, row.pane.paneId));
-        return cursor ? `${row.pane.paneId}:${cursor.terminalSeq}` : `${row.pane.paneId}:-`;
-      });
+    const rows = this.canonicalRows();
+    if (rows) {
       return {
         mode: 'canonical',
-        panes: panes.join(',') || '-',
-        cursor: cursorParts.join(',') || '-',
+        panes: rows.map((row) => row.pane.paneId).join(',') || '-',
+        cursor:
+          rows
+            .map((row) => {
+              const cursor = this.paneCursors.get(
+                paneCursorKey(row.pane.deviceId, row.pane.paneId)
+              );
+              return `${row.pane.paneId}:${cursor ? cursor.terminalSeq : '-'}`;
+            })
+            .join(',') || '-',
       };
     }
-    const paneIds: string[] = [];
-    for (const frame of this.paneSubs.values()) {
-      try {
-        const env = wsBorsh.decodeEnvelope(frame);
-        const payload = wsBorsh.decodePayload(wsBorsh.schema.TmuxSubscribePanesSchema, env.payload);
-        paneIds.push(...payload.paneIds);
-      } catch {
-        // ignore
-      }
-    }
+    const paneIds = this.paneSubPayloads().flatMap((row) => row?.paneIds ?? []);
     return {
       mode: paneIds.length > 0 ? 'legacy' : 'none',
       panes: paneIds.join(',') || '-',
@@ -841,58 +736,58 @@ class StreamReplayState {
   }
 
   resumedPaneCount(): number {
-    if (this.canonicalSub) {
-      const keys = new Set<string>();
-      for (const row of this.canonicalSub.activePanes) {
-        keys.add(paneCursorKey(row.pane.deviceId, row.pane.paneId));
-      }
-      for (const row of this.canonicalSub.hotPanes) {
-        keys.add(paneCursorKey(row.pane.deviceId, row.pane.paneId));
-      }
-      return keys.size;
+    const rows = this.canonicalRows();
+    if (rows) {
+      return new Set(rows.map((row) => paneCursorKey(row.pane.deviceId, row.pane.paneId))).size;
     }
     let count = 0;
+    for (const row of this.paneSubPayloads()) count += row ? row.paneIds.length : 1;
+    return count;
+  }
+
+  private canonicalRows(): wsBorsh.CanonicalPaneSubscription[] | null {
+    return this.canonicalSub
+      ? [...this.canonicalSub.activePanes, ...this.canonicalSub.hotPanes]
+      : null;
+  }
+
+  private paneSubPayloads(): Array<{ deviceId: string; paneIds: string[] } | null> {
+    const out: Array<{ deviceId: string; paneIds: string[] } | null> = [];
     for (const frame of this.paneSubs.values()) {
       try {
         const env = wsBorsh.decodeEnvelope(frame);
-        const payload = wsBorsh.decodePayload(wsBorsh.schema.TmuxSubscribePanesSchema, env.payload);
-        count += payload.paneIds.length;
+        out.push(wsBorsh.decodePayload(wsBorsh.schema.TmuxSubscribePanesSchema, env.payload));
       } catch {
-        count += 1;
+        out.push(null);
       }
     }
-    return count;
+    return out;
   }
 
   private buildLegacyHistoryRequests(): Uint8Array[] {
     if (this.canonicalSub) return [];
     const frames: Uint8Array[] = [];
     const seen = new Set<string>();
-    for (const frame of this.paneSubs.values()) {
-      try {
-        const env = wsBorsh.decodeEnvelope(frame);
-        const payload = wsBorsh.decodePayload(wsBorsh.schema.TmuxSubscribePanesSchema, env.payload);
-        for (const paneId of payload.paneIds) {
-          const key = `${payload.deviceId}\0${paneId}`;
-          if (seen.has(key)) continue;
-          seen.add(key);
-          const requestToken = new Uint8Array(16);
-          crypto.getRandomValues(requestToken);
-          this.outboundSeq += 1;
-          frames.push(
-            wsBorsh.encodeEnvelope(
-              wsBorsh.KIND_TMUX_FETCH_PANE_HISTORY,
-              wsBorsh.encodePayload(wsBorsh.schema.TmuxFetchPaneHistorySchema, {
-                deviceId: payload.deviceId,
-                paneId,
-                requestToken,
-              }),
-              this.outboundSeq
-            )
-          );
-        }
-      } catch {
-        // ignore
+    for (const row of this.paneSubPayloads()) {
+      if (!row) continue;
+      for (const paneId of row.paneIds) {
+        const key = `${row.deviceId}\0${paneId}`;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        const requestToken = new Uint8Array(16);
+        crypto.getRandomValues(requestToken);
+        this.outboundSeq += 1;
+        frames.push(
+          wsBorsh.encodeEnvelope(
+            wsBorsh.KIND_TMUX_FETCH_PANE_HISTORY,
+            wsBorsh.encodePayload(wsBorsh.schema.TmuxFetchPaneHistorySchema, {
+              deviceId: row.deviceId,
+              paneId,
+              requestToken,
+            }),
+            this.outboundSeq
+          )
+        );
       }
     }
     return frames;
@@ -928,8 +823,81 @@ const pendingStreams = new Map<string, OpenedWsStream>();
 export function takePendingForwardStream(token: string | undefined): OpenedWsStream | undefined {
   if (!token) return undefined;
   const stream = pendingStreams.get(token);
-  if (stream) pendingStreams.delete(token);
+  pendingStreams.delete(token);
   return stream;
+}
+
+function pumpDead(pump: ForwardPump, signal: AbortSignal): boolean {
+  return pump.browserClosed || signal.aborted;
+}
+
+function copyUpstreamHeaders(upstream: Response): Headers {
+  const headers = new Headers();
+  let contentType = '';
+  let contentDisposition: string | null = null;
+  upstream.headers.forEach((value, key) => {
+    const lower = key.toLowerCase();
+    if (lower === X_TMEX_SET_SESSION) return;
+    if (lower === 'content-type') {
+      contentType = value;
+      return;
+    }
+    if (lower === 'content-disposition') {
+      contentDisposition = value;
+      return;
+    }
+    if (RESPONSE_ALLOW.has(lower) || lower.startsWith('x-tmex-')) headers.set(key, value);
+  });
+  const mime = baseMime(contentType);
+  if (mime && MESH_ALLOWED_MIME.has(mime)) {
+    headers.set('content-type', contentType || mime);
+    if (contentDisposition) headers.set('content-disposition', contentDisposition);
+  } else {
+    headers.set('content-type', 'application/octet-stream');
+    headers.set('content-disposition', 'attachment');
+  }
+  headers.set('content-security-policy', MESH_FORWARD_CSP);
+  headers.set('x-content-type-options', 'nosniff');
+  return headers;
+}
+
+async function applyAuthPolicy(
+  req: Request,
+  headers: Headers,
+  upstream: Response,
+  nodeId: string
+): Promise<Response | null> {
+  const parsed = parseSetSessionHeader(upstream.headers.get(X_TMEX_SET_SESSION) ?? '');
+  if (parsed) appendNodeCookie(req, headers, nodeId, parsed.sid, parsed.maxAgeSec);
+  const renewed = upstream.headers.get(X_TMEX_SESSION_RENEWED);
+  if (renewed) {
+    headers.set(X_TMEX_SESSION_RENEWED, renewed);
+    const sid = parseCookies(req.headers.get('cookie')).get(nodeSessionCookieName(nodeId));
+    const expiresAt = Number(renewed);
+    if (sid && Number.isFinite(expiresAt)) {
+      appendNodeCookie(
+        req,
+        headers,
+        nodeId,
+        sid,
+        Math.max(0, Math.floor((expiresAt - Date.now()) / 1000))
+      );
+    }
+  }
+  if (upstream.status !== 401) return null;
+  const raw = await readBodyLimited(upstream, AUTH_401_BODY_LIMIT);
+  let body: Record<string, unknown> = { code: 'NODE_LOGIN_REQUIRED', nodeId };
+  try {
+    const parsedBody = JSON.parse(raw) as unknown;
+    if (typeof parsedBody === 'object' && parsedBody !== null && !Array.isArray(parsedBody)) {
+      body = { ...(parsedBody as Record<string, unknown>), code: 'NODE_LOGIN_REQUIRED', nodeId };
+    }
+  } catch {
+    if (raw) body.message = raw;
+  }
+  for (const name of DROP_ON_401_REWRITE) headers.delete(name);
+  headers.set('content-type', 'application/json');
+  return new Response(JSON.stringify(body), { status: 401, headers });
 }
 
 function appendNodeCookie(
@@ -950,11 +918,7 @@ function filterRequestHeaders(req: Request): Record<string, string> {
   req.headers.forEach((value, key) => {
     const lower = key.toLowerCase();
     if (
-      lower === 'cookie' ||
-      lower === 'authorization' ||
-      lower === 'host' ||
-      lower === 'connection' ||
-      lower === 'upgrade' ||
+      DROP_REQUEST_HEADERS.has(lower) ||
       lower.startsWith('proxy-') ||
       lower.startsWith('x-forwarded-')
     ) {
@@ -965,58 +929,38 @@ function filterRequestHeaders(req: Request): Record<string, string> {
   return out;
 }
 
-function stripQuery(path: string): string {
-  const i = path.indexOf('?');
-  return i === -1 ? path : path.slice(0, i);
-}
-
 function baseMime(contentType: string): string {
-  const trimmed = contentType.trim().toLowerCase();
-  if (!trimmed) return '';
-  const semi = trimmed.indexOf(';');
-  return (semi === -1 ? trimmed : trimmed.slice(0, semi)).trim();
+  return contentType.trim().toLowerCase().split(';')[0]?.trim() ?? '';
 }
 
 async function readBodyLimited(response: Response, limit: number): Promise<string> {
   const reader = response.body?.getReader();
-  if (!reader) {
-    return '';
-  }
+  if (!reader) return '';
   const chunks: Uint8Array[] = [];
   let total = 0;
   try {
     while (true) {
       const { done, value } = await reader.read();
       if (done) break;
-      if (!value || value.byteLength === 0) continue;
-      const remaining = limit - total;
-      if (remaining <= 0) {
+      if (!value?.byteLength) continue;
+      const take = Math.min(value.byteLength, limit - total);
+      if (take <= 0) {
         await reader.cancel();
         break;
       }
-      if (value.byteLength > remaining) {
-        chunks.push(value.slice(0, remaining));
-        total = limit;
+      chunks.push(take < value.byteLength ? value.subarray(0, take) : value);
+      total += take;
+      if (take < value.byteLength) {
         await reader.cancel();
         break;
       }
-      chunks.push(value);
-      total += value.byteLength;
     }
   } catch {
     try {
       await reader.cancel();
-    } catch {
-      // ignore
-    }
+    } catch {}
   }
-  const out = new Uint8Array(total);
-  let offset = 0;
-  for (const chunk of chunks) {
-    out.set(chunk, offset);
-    offset += chunk.byteLength;
-  }
-  return new TextDecoder().decode(out);
+  return new TextDecoder().decode(Buffer.concat(chunks, total));
 }
 
 function paneCursorKey(deviceId: string, paneId: string): string {
