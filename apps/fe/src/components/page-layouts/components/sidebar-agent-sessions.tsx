@@ -124,16 +124,16 @@ function AgentOrphanSessions({
   const orderedSessions = useNodeSessions();
   const activeSessionId = useActiveSessionId();
   const handleSelectSession = useSelectSession(nav);
-  const snapshots = useTmuxStore((state) => state.snapshots);
+  // 直接选派生出的 pane 索引：pane 结构没变的 metadata 事件返回同一引用，本分节不重渲染
+  const panesByDevice = useTmuxStore((state) => collectKnownPaneIds(state.snapshots));
 
   // 会话按 device:pane 挂到对应 pane 节点；设备缺失或 pane 已关闭的归为孤立
   const orphanSessions = useMemo(() => {
     const known = new Set(knownDeviceIds);
-    const panesByDevice = collectKnownPaneIds(snapshots);
     return orderedSessions.filter(
       (session) => !isSessionAttached(session, known, panesByDevice, devicesReady)
     );
-  }, [orderedSessions, knownDeviceIds, snapshots, devicesReady]);
+  }, [orderedSessions, knownDeviceIds, panesByDevice, devicesReady]);
 
   if (orphanSessions.length === 0) return null;
   return (

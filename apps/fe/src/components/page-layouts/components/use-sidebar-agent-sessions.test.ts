@@ -10,6 +10,7 @@ import {
   isSessionPaused,
   orderSessions,
   sessionsForPane,
+  sessionsOnNode,
 } from './use-sidebar-agent-sessions';
 
 function session(partial: Partial<AgentSessionDto> & { id: string }): AgentSessionDto {
@@ -272,5 +273,65 @@ describe('isSessionPaused', () => {
 
   test('not paused for an online node with an unrelated error', () => {
     expect(isSessionPaused(session({ id: 'a', lastError: 'boom' }), false)).toBe(false);
+  });
+});
+
+describe('collectKnownPaneIds 引用复用', () => {
+  test('同一 snapshots 引用返回同一张表', () => {
+    const snapshots = { d1: snapshot('d1', ['%1']) };
+    expect(collectKnownPaneIds(snapshots)).toBe(collectKnownPaneIds(snapshots));
+  });
+
+  test('pane 结构未变的新快照对象仍复用上次的表（改标题等 metadata 事件）', () => {
+    const before = collectKnownPaneIds({ d1: snapshot('d1', ['%1', '%2']) });
+    const after = collectKnownPaneIds({ d1: snapshot('d1', ['%1', '%2']) });
+    expect(after).toBe(before);
+  });
+
+  test('pane 被关掉后表随之更新', () => {
+    const before = collectKnownPaneIds({ d1: snapshot('d1', ['%1', '%2']) });
+    const after = collectKnownPaneIds({ d1: snapshot('d1', ['%1']) });
+    expect(after).not.toBe(before);
+    expect([...(after.get('d1') ?? [])]).toEqual(['%1']);
+  });
+
+  test('设备离线后其条目消失，其余设备的 pane 集合引用保持不变', () => {
+    const stable = snapshot('d1', ['%1']);
+    const before = collectKnownPaneIds({ d1: stable, d2: snapshot('d2', ['%3']) });
+    const after = collectKnownPaneIds({ d1: stable });
+    expect(after.has('d2')).toBe(false);
+    expect(after.get('d1')).toBe(before.get('d1'));
+  });
+
+  test('新设备上线时表更新', () => {
+    const before = collectKnownPaneIds({ d1: snapshot('d1', ['%1']) });
+    const after = collectKnownPaneIds({ d1: snapshot('d1', ['%1']), d2: snapshot('d2', ['%9']) });
+    expect(after).not.toBe(before);
+    expect([...(after.get('d2') ?? [])]).toEqual(['%9']);
+  });
+});
+
+describe('sessionsOnNode', () => {
+  test('只保留本 node 的会话且顺序与整表一致', () => {
+    const local = session({ id: 'local' });
+    const remote = session({ id: 'remote', nodeId: NODE_A });
+    const sessions = toRecord([local, remote]);
+    expect(sessionsOnNode(sessions, ['remote', 'local'], null).map((s) => s.id)).toEqual(['local']);
+    expect(sessionsOnNode(sessions, ['remote', 'local'], NODE_A).map((s) => s.id)).toEqual([
+      'remote',
+    ]);
+  });
+
+  test('同一 sessions + sessionOrder 引用返回同一数组', () => {
+    const sessions = toRecord([session({ id: 'a' })]);
+    const order = ['a'];
+    expect(sessionsOnNode(sessions, order, null)).toBe(sessionsOnNode(sessions, order, null));
+  });
+
+  test('sessions 更新后重新计算', () => {
+    const before = toRecord([session({ id: 'a' })]);
+    const after = { ...before, b: session({ id: 'b' }) };
+    expect(sessionsOnNode(before, ['a'], null).map((s) => s.id)).toEqual(['a']);
+    expect(sessionsOnNode(after, ['a', 'b'], null).map((s) => s.id)).toEqual(['a', 'b']);
   });
 });

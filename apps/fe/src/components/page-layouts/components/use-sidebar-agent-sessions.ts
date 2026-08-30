@@ -2,7 +2,7 @@
 
 import { useNodeOffline } from '@/node/node-offline';
 import { selfAgentStore } from '@/node/self-agent-store';
-import type { AgentSessionDto, StateSnapshotPayload } from '@tmex/shared';
+import type { AgentSessionDto, StateSnapshotPayload, TmuxWindow } from '@tmex/shared';
 import {
   activeSessionIdOnNode,
   isNodePaused,
@@ -59,6 +59,50 @@ function paneKey(deviceId: string, paneId: string): string {
   return `${deviceId}${PANE_KEY_SEPARATOR}${paneId}`;
 }
 
+/** 一份 sessions + sessionOrder 的排序结果：分组与孤立会话区共用，排一次就够 */
+const orderedCache = new WeakMap<
+  object,
+  { order: readonly string[]; ordered: readonly AgentSessionDto[] }
+>();
+
+function orderedSessions(
+  sessions: Record<string, AgentSessionDto | undefined>,
+  sessionOrder: readonly string[]
+): readonly AgentSessionDto[] {
+  const cached = orderedCache.get(sessions);
+  if (cached && cached.order === sessionOrder) return cached.ordered;
+  const ordered = orderSessions(sessions, sessionOrder);
+  orderedCache.set(sessions, { order: sessionOrder, ordered });
+  return ordered;
+}
+
+/** 本 node 的有序会话列表，按 node 各缓存一份：孤立会话区常驻挂载，每次 store 变更都要它 */
+const nodeSessionsCache = new WeakMap<
+  object,
+  Map<string, { order: readonly string[]; list: AgentSessionDto[] }>
+>();
+
+/** 本 node 上的全部会话，顺序与整表一致 */
+export function sessionsOnNode(
+  sessions: Record<string, AgentSessionDto | undefined>,
+  sessionOrder: readonly string[],
+  nodeId: string | null
+): AgentSessionDto[] {
+  let byNode = nodeSessionsCache.get(sessions);
+  if (!byNode) {
+    byNode = new Map();
+    nodeSessionsCache.set(sessions, byNode);
+  }
+  const cacheKey = nodeId ?? '';
+  const cached = byNode.get(cacheKey);
+  if (cached && cached.order === sessionOrder) return cached.list;
+  const list = orderedSessions(sessions, sessionOrder).filter((session) =>
+    isSessionOnNode(session, nodeId)
+  );
+  byNode.set(cacheKey, { order: sessionOrder, list });
+  return list;
+}
+
 /**
  * 一份 sessions + sessionOrder 下按 pane 的分组，按 node 各缓存一份：
  * 每个 pane 的选择器都要这份结果，重算一次就够，之后各自 O(1) 取自己那格。
@@ -83,9 +127,8 @@ function groupSessionsByPane(
   if (cached && cached.order === sessionOrder) return cached.grouped;
 
   const grouped = new Map<string, AgentSessionDto[]>();
-  for (const session of orderSessions(sessions, sessionOrder)) {
+  for (const session of sessionsOnNode(sessions, sessionOrder, nodeId)) {
     if (!session.deviceId || !session.paneId) continue;
-    if (!isSessionOnNode(session, nodeId)) continue;
     const key = paneKey(session.deviceId, session.paneId);
     const list = grouped.get(key);
     if (list) list.push(session);
@@ -109,20 +152,71 @@ export function sessionsForPane(
   );
 }
 
+/** 单个设备的 pane 集合，按该设备 windows 数组的引用缓存，同一份 windows 不重扫 */
+const devicePaneIdsCache = new WeakMap<object, ReadonlySet<string>>();
+/** 一份 snapshots 映射对应的合并结果：同一引用重复调用（多次渲染）直接命中 */
+const knownPaneIdsCache = new WeakMap<object, ReadonlyMap<string, ReadonlySet<string>>>();
+/** 上一次的按设备结果与合并结果：pane 集合没变就连引用一起复用（见下方说明） */
+const lastPaneIdsByDevice = new Map<string, ReadonlySet<string>>();
+let lastKnownPaneIds: ReadonlyMap<string, ReadonlySet<string>> = new Map();
+
+function sameIds(a: ReadonlySet<string>, b: ReadonlySet<string>): boolean {
+  if (a.size !== b.size) return false;
+  for (const id of a) {
+    if (!b.has(id)) return false;
+  }
+  return true;
+}
+
+function scanPaneIds(windows: readonly TmuxWindow[]): ReadonlySet<string> {
+  const cached = devicePaneIdsCache.get(windows);
+  if (cached) return cached;
+  const paneIds = new Set<string>();
+  for (const window of windows) {
+    for (const pane of window.panes) paneIds.add(pane.id);
+  }
+  devicePaneIdsCache.set(windows, paneIds);
+  return paneIds;
+}
+
+function sameAsLast(byDevice: ReadonlyMap<string, ReadonlySet<string>>): boolean {
+  if (byDevice.size !== lastKnownPaneIds.size) return false;
+  for (const [deviceId, panes] of byDevice) {
+    if (lastKnownPaneIds.get(deviceId) !== panes) return false;
+  }
+  return true;
+}
+
+/**
+ * 各设备当前存活的 pane id（快照未到达的设备不入表，见 `isSessionAttached`）。
+ *
+ * 孤立会话区常驻挂载且订阅整张 snapshots 表，而改标题/改 cwd 这类 metadata-patch 极其频繁——
+ * 它们只换快照对象，pane 结构原封不动。所以这里逐层复用引用：windows 数组没换就不重扫；
+ * 扫出来的 pane 集合与上次内容相同就交还上次那个 Set；每个设备都复用则整张表也交还上次那个
+ * Map。于是无关的 metadata 事件在选择器处就被 Object.is 拦掉，不再触发重算与重渲染。
+ */
 export function collectKnownPaneIds(
   snapshots: Record<string, StateSnapshotPayload | undefined>
-): Map<string, Set<string>> {
-  const byDevice = new Map<string, Set<string>>();
+): ReadonlyMap<string, ReadonlySet<string>> {
+  const cached = knownPaneIdsCache.get(snapshots);
+  if (cached) return cached;
+
+  const byDevice = new Map<string, ReadonlySet<string>>();
   for (const [deviceId, snapshot] of Object.entries(snapshots)) {
     const windows = snapshot?.session?.windows;
     if (!windows) continue;
-    const paneIds = new Set<string>();
-    for (const window of windows) {
-      for (const pane of window.panes) paneIds.add(pane.id);
-    }
-    byDevice.set(deviceId, paneIds);
+    const paneIds = scanPaneIds(windows);
+    const previous = lastPaneIdsByDevice.get(deviceId);
+    byDevice.set(deviceId, previous && sameIds(previous, paneIds) ? previous : paneIds);
   }
-  return byDevice;
+
+  const result = sameAsLast(byDevice) ? lastKnownPaneIds : byDevice;
+  // 设备下线后其条目一并淘汰，缓存不随时间膨胀
+  lastPaneIdsByDevice.clear();
+  for (const [deviceId, panes] of result) lastPaneIdsByDevice.set(deviceId, panes);
+  lastKnownPaneIds = result;
+  knownPaneIdsCache.set(snapshots, result);
+  return result;
 }
 
 /**
@@ -217,11 +311,7 @@ export function useSessionsForPane(deviceId: string, paneId: string): AgentSessi
 export function useNodeSessions(): AgentSessionDto[] {
   const nodeId = useSessionNodeId();
   return selfAgentStore()(
-    useShallow((state) =>
-      orderSessions(state.sessions, state.sessionOrder).filter((session) =>
-        isSessionOnNode(session, nodeId)
-      )
-    )
+    useShallow((state) => sessionsOnNode(state.sessions, state.sessionOrder, nodeId))
   );
 }
 
