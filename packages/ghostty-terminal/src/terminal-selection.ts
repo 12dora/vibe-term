@@ -21,6 +21,7 @@ type PointerDragState = {
   mode: SelectionMode;
   lastClientX: number | null;
   lastClientY: number | null;
+  lastPoint: SelectionPoint | null;
 };
 
 export type SelectionHostContext = {
@@ -29,6 +30,7 @@ export type SelectionHostContext = {
   getScreenBounds(): { top: number; bottom: number } | null;
   scrollViewportBy(delta: number): void;
   render(): void;
+  renderSelection(): void;
 };
 
 // 指针拖拽结束后的处置：ignored=非本次拖拽的事件；clear=原地单击应清空选择；
@@ -45,6 +47,10 @@ export function selectionModeFromClickDetail(detail: number): SelectionMode {
   return 'character';
 }
 
+function samePoint(point: SelectionPoint, previous: SelectionPoint | null): boolean {
+  return previous !== null && previous.line === point.line && previous.col === point.col;
+}
+
 function createPointerDragState(): PointerDragState {
   return {
     active: false,
@@ -52,6 +58,7 @@ function createPointerDragState(): PointerDragState {
     mode: 'character',
     lastClientX: null,
     lastClientY: null,
+    lastPoint: null,
   };
 }
 
@@ -116,6 +123,7 @@ export class TerminalSelection {
       mode,
       lastClientX: clientX,
       lastClientY: clientY,
+      lastPoint: point,
     };
     this.state = resolvePointerSelection(
       this.state,
@@ -140,12 +148,17 @@ export class TerminalSelection {
     this.drag.lastClientX = clientX;
     this.drag.lastClientY = clientY;
 
-    if (point) {
-      this.drag.moved = true;
+    // 落在同一个 cell 的移动不改变选区：直接跳过，避免每个 mousemove 都触发重绘。
+    if (point && !samePoint(point, this.drag.lastPoint)) {
+      this.drag.lastPoint = point;
       this.state = updateSelectionFocus(this.state, point, (line) =>
         this.context.getLineModel(line)
       );
-      this.context.render();
+      // 拖拽期间只有选区矩形在变：走 rAF 合并的选区层重绘，不跑全渲染。
+      this.context.renderSelection();
+    }
+    if (point) {
+      this.drag.moved = true;
     }
 
     this.updateAutoScroll();
@@ -250,6 +263,7 @@ export class TerminalSelection {
     }
 
     this.state = updateSelectionFocus(this.state, point, (line) => this.context.getLineModel(line));
+    this.drag.lastPoint = point;
     this.drag.moved = true;
     this.context.render();
   }

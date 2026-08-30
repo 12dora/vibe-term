@@ -53,6 +53,11 @@ const SCENARIOS: Scenario[] = [
     },
   },
   {
+    name: 'clean frames (0/40)',
+    dirtyRows: 0,
+    mutate: () => {},
+  },
+  {
     name: '20% dirty rows (8/40)',
     dirtyRows: Math.round(ROWS * 0.2),
     mutate: (write, frame) => {

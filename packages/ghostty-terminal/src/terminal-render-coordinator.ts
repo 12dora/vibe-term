@@ -51,6 +51,7 @@ export type RenderCoordinatorHost = {
   selectionColor(): string;
   fileLinkContext(): FileLinkContext | null;
   onSnapshot(snapshot: RenderSnapshot): void;
+  onSelectionText(text: string | null): void;
 };
 
 // 渲染编排：拉取 WASM 快照 → 维护绝对行号的行模型缓存 → 交给 CanvasRenderer 出帧，
@@ -68,6 +69,7 @@ export class TerminalRenderCoordinator {
   private readonly loop = new TerminalRenderLoop(() => {
     this.renderNow();
   });
+  private selectionFrame: number | null = null;
   private linkOverlayDrawnOffset = -1;
   private viewportOffset = 0;
   private viewportRows = DEFAULT_ROWS;
@@ -107,6 +109,28 @@ export class TerminalRenderCoordinator {
     this.loop.schedule();
   }
 
+  // 选区拖拽专用：本帧只有选区矩形变了，复用上一次全渲染留下的 renderedRows / lineCache
+  // 重画选区层，不碰 WASM，也不重扫任何 cell；每帧最多一次。
+  scheduleSelectionRepaint(): void {
+    if (this.selectionFrame !== null) {
+      return;
+    }
+
+    this.selectionFrame = requestAnimationFrame(() => {
+      this.selectionFrame = null;
+      const renderer = this.renderer;
+      if (!renderer) {
+        return;
+      }
+
+      renderer.drawSelectionOnly(
+        this.host.selectionRects(this.viewportOffset, this.viewportRows),
+        this.host.selectionColor()
+      );
+      this.host.onSelectionText(this.host.selectionText());
+    });
+  }
+
   // 标记本次渲染必须全画并立即同步执行（不等 rAF）：DOM 重插入或容器尺寸变化后
   // canvas 位图可能已被清空，但内核未必同步报 dirty='full'（issue #45 bug 3）。
   forceFullRepaint(): void {
@@ -116,6 +140,7 @@ export class TerminalRenderCoordinator {
 
   cancelPending(): void {
     this.loop.cancelPending();
+    this.cancelSelectionRepaint();
   }
 
   setTheme(theme: GhosttyTheme): void {
@@ -189,6 +214,9 @@ export class TerminalRenderCoordinator {
       return;
     }
 
+    // 全渲染本身会重画选区层，排队中的选区帧就是多余的。
+    this.cancelSelectionRepaint();
+
     // 本帧若被 forceFullRepaint 标记，传给 renderer 让它绕过 dirty='clean' 早退
     //（issue #45 bug 3）。
     const forceFull = this.loop.consumeForceFull();
@@ -239,10 +267,20 @@ export class TerminalRenderCoordinator {
   }
 
   dispose(): void {
+    this.cancelSelectionRepaint();
     this.renderer?.dispose();
     this.renderer = null;
     this.lineCache.clear();
     this.renderedRows = [];
+  }
+
+  private cancelSelectionRepaint(): void {
+    if (this.selectionFrame === null) {
+      return;
+    }
+
+    cancelAnimationFrame(this.selectionFrame);
+    this.selectionFrame = null;
   }
 
   private lineModelFor(row: GhosttyRenderRow): SelectionLineModel {

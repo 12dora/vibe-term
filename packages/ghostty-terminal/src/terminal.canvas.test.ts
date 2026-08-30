@@ -2238,6 +2238,42 @@ describe('GhosttyTerminalController clipboard and selection API', () => {
     disposable.dispose();
   });
 
+  // 拖拽热路径：每个 mousemove 曾同步跑一遍完整渲染（重扫全部行 / 重算选区文本）。
+  // 现在只排一帧选区层重绘，全渲染仍由输出、自动滚动、松手等真正的内容变化驱动。
+  test('拖拽中的移动只排选区帧，输出与松手仍走全渲染', async () => {
+    dom = installCanvasDom();
+    const bindings = createFakeBindings();
+    // readScrollbar 每次全渲染恰好调用一次，用作全渲染计数器。
+    let fullRenders = 0;
+    const readScrollbar = bindings.readScrollbar;
+    bindings.readScrollbar = (...args: any[]) => {
+      fullRenders += 1;
+      return readScrollbar(...args);
+    };
+    const { terminal } = await setupTerminal(bindings);
+    await dom.flushAnimationFrames();
+
+    expect(terminal.startTouchSelection(4, 4, 'character')).toBeTrue();
+    const afterBegin = fullRenders;
+
+    terminal.updateTouchSelection(40, 4);
+    terminal.updateTouchSelection(80, 4);
+    terminal.updateTouchSelection(81, 4);
+    expect(fullRenders).toBe(afterBegin);
+    expect(dom.pendingAnimationFrames()).toBe(1);
+
+    await dom.flushAnimationFrames();
+    expect(fullRenders).toBe(afterBegin);
+    expect((globalThis as any).__tmexE2eTerminalSelectionText ?? null).not.toBeNull();
+
+    // 拖拽期间到达的输出必须照常全渲染。
+    terminal.write('output during drag');
+    await dom.flushAnimationFrames();
+    expect(fullRenders).toBeGreaterThan(afterBegin);
+
+    terminal.endTouchSelection();
+  });
+
   // 分屏回归：同一页挂多个控制器时，__tmexE2eTerminalSelectionText 是唯一的全局探针，
   // 每个控制器每帧都会写它。空闲 pane 的任意一帧曾把有选区 pane 的探针抹成 null，而渲染
   // 循环按需调度、本 pane 空闲后不会再写回来，探针就永久停在 null

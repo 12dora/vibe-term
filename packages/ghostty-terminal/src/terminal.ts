@@ -153,6 +153,7 @@ export class GhosttyTerminalController implements CompatibleTerminalLike {
         selectionColor: () => this.options.theme.selectionBackground,
         fileLinkContext: () => this.fileLinkContext,
         onSnapshot: (snapshot) => this.applyRenderSnapshot(snapshot),
+        onSelectionText: (text) => this.updateSelectionTextProbe(text),
       }
     );
     this.selection = new TerminalSelection({
@@ -164,6 +165,9 @@ export class GhosttyTerminalController implements CompatibleTerminalLike {
       },
       render: () => {
         this.renderCoordinator.renderNow();
+      },
+      renderSelection: () => {
+        this.renderCoordinator.scheduleSelectionRepaint();
       },
     });
   }

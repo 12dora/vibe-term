@@ -1,6 +1,6 @@
 // render-state 的跨帧缓存：调色板按 colors 结构体字节比对失效，行按逐 cell 比对复用。
-// 内核在当前 ghostty 构建里把每一行恒报为 dirty（见 bench/render-bridge.bench.ts），
-// 因此「哪些行真的要重画」完全由这里的比对决定，钉住其失效条件。
+// 内核报脏的行才会走逐 cell 比对（短路见 render-state.dirty.test.ts），比对结果决定
+// 「哪些行真的要重画」，这里钉住其失效条件。
 import { describe, expect, test } from 'bun:test';
 import { type GhosttyBindings, getGhosttyBindings } from './ghostty-wasm';
 import {

@@ -116,6 +116,7 @@ let previousClearInterval: typeof globalThis.clearInterval;
 
 function setup(): {
   renderer: CanvasRenderer;
+  mainCanvas: FakeCanvas;
   selectionCanvas: FakeCanvas;
   cursorCanvas: FakeCanvas;
 } {
@@ -137,7 +138,12 @@ function setup(): {
   });
 
   // 构造顺序：main / link / selection / cursor
-  return { renderer, selectionCanvas: created[2], cursorCanvas: created[3] };
+  return {
+    renderer,
+    mainCanvas: created[0],
+    selectionCanvas: created[2],
+    cursorCanvas: created[3],
+  };
 }
 
 function drain(canvas: FakeCanvas): DrawOp[] {
@@ -181,6 +187,23 @@ afterEach(() => {
 });
 
 describe('选区层只在选区状态变化时重画', () => {
+  // 拖拽期间的每帧入口：只重画选区层，主画布与光标层一笔都不动。
+  test('drawSelectionOnly 不碰主画布与光标层，且对同一批矩形去重', () => {
+    const { renderer, mainCanvas, selectionCanvas, cursorCanvas } = setup();
+    renderFrame(renderer, { selectionRects: [{ row: 0, x: 1, width: 2 }] });
+    drain(mainCanvas);
+    drain(selectionCanvas);
+    drain(cursorCanvas);
+
+    renderer.drawSelectionOnly([{ row: 1, x: 0, width: 3 }], 'rgba(9,9,9,0.5)');
+    expect(drain(selectionCanvas).length).toBeGreaterThan(0);
+    expect(drain(mainCanvas)).toEqual([]);
+    expect(drain(cursorCanvas)).toEqual([]);
+
+    renderer.drawSelectionOnly([{ row: 1, x: 0, width: 3 }], 'rgba(9,9,9,0.5)');
+    expect(drain(selectionCanvas)).toEqual([]);
+  });
+
   test('无选区的连续帧不碰选区层', () => {
     const { renderer, selectionCanvas } = setup();
     renderFrame(renderer);

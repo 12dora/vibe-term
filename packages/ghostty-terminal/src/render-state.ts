@@ -329,7 +329,9 @@ function readRawCellEnum(
   return bindings.view().getInt32(scratch.u32, true);
 }
 
-function readReportedRowDirty(resources: GhosttyRenderStateResources): boolean {
+// 内核的行 dirty 位遵循「消费即清」：读到 true 必须写回 false，否则它一直是 true
+//（旧实现从不回写，于是每行恒报脏，只能靠逐 cell 比对判断变化）。
+function consumeReportedRowDirty(resources: GhosttyRenderStateResources): boolean {
   const scratch = ensureScratch(resources);
   const bindings = resources.bindings;
   assertReadResult(
@@ -340,7 +342,17 @@ function readReportedRowDirty(resources: GhosttyRenderStateResources): boolean {
     ),
     'bool'
   );
-  return bindings.view().getUint8(scratch.u8) !== 0;
+  if (bindings.view().getUint8(scratch.u8) === 0) {
+    return false;
+  }
+
+  bindings.view().setUint8(scratch.u8, 0);
+  bindings.setRenderStateRowValue(
+    resources.rowIteratorHandle,
+    GHOSTTY_RENDER_STATE_ROW_DATA_DIRTY,
+    scratch.u8
+  );
+  return true;
 }
 
 function readCellColor(
@@ -763,6 +775,12 @@ function readRow(
   rowIndex: number,
   previous: GhosttyRenderRow | null
 ): GhosttyRenderRow {
+  // dirty 位先读：内核报本行未脏且上一帧可比时整行沿用，一个 cell 都不读。
+  const reportedDirty = consumeReportedRowDirty(resources);
+  if (!reportedDirty && previous) {
+    return previous.dirty ? { ...previous, dirty: false } : previous;
+  }
+
   const rawRow = readRowRaw(resources);
   resources.bindings.bindRenderStateRowCells(resources.rowIteratorHandle, resources.rowCellsHandle);
 
@@ -771,9 +789,6 @@ function readRow(
 
   const wrap = readRawRowBool(resources, rawRow, GHOSTTY_ROW_DATA_WRAP);
   const wrapContinuation = readRawRowBool(resources, rawRow, GHOSTTY_ROW_DATA_WRAP_CONTINUATION);
-  // WASM 侧的行 dirty 位在当前 ghostty 构建里恒为 true（见 bench 报告），只作为
-  // 「必须重画」的下限；真正的重画判据是上面的逐 cell 比对。
-  const reportedDirty = readReportedRowDirty(resources);
 
   const reused = changed
     ? null
@@ -885,6 +900,9 @@ export function* iterateRows(
   );
 
   const rows: GhosttyRenderRow[] = [];
+  // dirty 位在迭代中逐行被消费，生成器一旦被中途丢弃这一帧就不能再当基线：
+  // 先作废缓存，走完整轮才写回。
+  resources.previousRows = null;
   let rowIndex = 0;
   while (
     rowIndex < meta.rows &&

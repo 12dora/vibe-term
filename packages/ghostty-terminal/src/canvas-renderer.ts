@@ -451,6 +451,11 @@ export class CanvasRenderer {
     this.linkContext.clearRect(0, 0, this.linkCanvas.width, this.linkCanvas.height);
   }
 
+  // 只重画选区层：拖拽期间的唯一变化就是选区矩形，主画布/光标层一个像素都不用碰。
+  drawSelectionOnly(rects: GhosttySelectionRect[], color: string): void {
+    this.drawSelection(rects, color, false);
+  }
+
   // 选区层与主画布的按行重绘互不相干：只在选区矩形集、选区色或画布尺寸变化时重画，
   // 没有选区的常态帧（绝大多数）完全不碰这一层。
   private drawSelection(rects: GhosttySelectionRect[], color: string, wiped: boolean): void {
