@@ -2,6 +2,7 @@ import { Brand } from '@/components/brand';
 import { SIDE_PANEL_LINK_STATE, useSidePanel } from '@/components/side-panels/use-side-panel';
 import { useSharedAuthMode } from '@/node/mesh-nodes';
 import { useSiteStore, useTmuxStore } from '@tmex/stores/react';
+import { IconTooltip } from '@tmex/ui/icon-tooltip';
 import { useSidebar } from '@tmex/ui/sidebar';
 import { Network, Settings, X } from 'lucide-react';
 import { useEffect } from 'react';
@@ -30,42 +31,45 @@ export function SidebarTitle() {
   return (
     <div className="flex items-center gap-1 px-2">
       {isMobile && (
-        <button
-          type="button"
-          data-testid="mobile-sidebar-close"
-          onClick={() => setOpenMobile(false)}
-          className={`${ACTION_BUTTON_CLASS} ml-[-8px]`}
-          aria-label={t('nav.closeSidebar')}
-          title={t('nav.closeSidebar')}
-        >
-          <X className="h-4 w-4" />
-        </button>
+        <IconTooltip label={t('nav.closeSidebar')} className="ml-[-8px]">
+          <button
+            type="button"
+            data-testid="mobile-sidebar-close"
+            onClick={() => setOpenMobile(false)}
+            className={ACTION_BUTTON_CLASS}
+            aria-label={t('nav.closeSidebar')}
+          >
+            <X className="h-4 w-4" />
+          </button>
+        </IconTooltip>
       )}
       <Brand linkTo="/" linkComponent={NavLink} className="flex-1" />
       <div className="flex shrink-0 items-center gap-0.5 mr-[-8px]">
         <WsLatency />
         <ThemeMenu />
         {meshEnabled && (
-          <NavLink
-            to={hrefFor('nodes')}
-            state={SIDE_PANEL_LINK_STATE}
-            className={ACTION_BUTTON_CLASS}
-            data-testid="sidebar-nodes"
-            aria-label={t('sidebar.nodes')}
-            title={t('sidebar.nodes')}
-          >
-            <Network className="h-4 w-4" />
-          </NavLink>
+          <IconTooltip label={t('sidebar.nodes')}>
+            <NavLink
+              to={hrefFor('nodes')}
+              state={SIDE_PANEL_LINK_STATE}
+              className={ACTION_BUTTON_CLASS}
+              data-testid="sidebar-nodes"
+              aria-label={t('sidebar.nodes')}
+            >
+              <Network className="h-4 w-4" />
+            </NavLink>
+          </IconTooltip>
         )}
-        <NavLink
-          to="/settings"
-          className={ACTION_BUTTON_CLASS}
-          data-testid="sidebar-settings"
-          aria-label={t('sidebar.settings')}
-          title={t('sidebar.settings')}
-        >
-          <Settings className="h-4 w-4" />
-        </NavLink>
+        <IconTooltip label={t('sidebar.settings')}>
+          <NavLink
+            to="/settings"
+            className={ACTION_BUTTON_CLASS}
+            data-testid="sidebar-settings"
+            aria-label={t('sidebar.settings')}
+          >
+            <Settings className="h-4 w-4" />
+          </NavLink>
+        </IconTooltip>
       </div>
     </div>
   );

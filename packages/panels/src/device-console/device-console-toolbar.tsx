@@ -2,6 +2,7 @@
 
 import { PaneSwitcherMenu } from '@tmex/terminal-ui';
 import { Button } from '@tmex/ui/button';
+import { IconTooltip } from '@tmex/ui/icon-tooltip';
 import {
   ArrowDownToLine,
   Keyboard,
@@ -116,27 +117,29 @@ export function buildToolbarButtons(input: ToolbarButtonsInput): ToolbarButton[]
   ];
 }
 
-function ToolbarIconButton({ button }: { button: ToolbarButton }) {
+/** 气泡文案与 aria-label 同源，且不再挂 title——否则原生提示会和气泡叠着出两层。 */
+export function ToolbarIconButton({ button }: { button: ToolbarButton }) {
   const Icon = button.icon;
   return (
-    <Button
-      variant="ghost"
-      size="icon-sm"
-      className={button.badge ? 'relative' : undefined}
-      onClick={button.onClick}
-      disabled={button.disabled}
-      data-testid={button.testId}
-      aria-label={button.label}
-      title={button.label}
-    >
-      <Icon className="h-4 w-4" />
-      {button.badge?.visible && (
-        <span
-          className="absolute right-1 top-1 h-1.5 w-1.5 rounded-full bg-primary"
-          data-testid={button.badge.testId}
-        />
-      )}
-    </Button>
+    <IconTooltip label={button.label}>
+      <Button
+        variant="ghost"
+        size="icon-sm"
+        className={button.badge ? 'relative' : undefined}
+        onClick={button.onClick}
+        disabled={button.disabled}
+        data-testid={button.testId}
+        aria-label={button.label}
+      >
+        <Icon className="h-4 w-4" />
+        {button.badge?.visible && (
+          <span
+            className="absolute right-1 top-1 h-1.5 w-1.5 rounded-full bg-primary"
+            data-testid={button.badge.testId}
+          />
+        )}
+      </Button>
+    </IconTooltip>
   );
 }
 

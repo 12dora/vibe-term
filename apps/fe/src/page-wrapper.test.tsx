@@ -44,4 +44,16 @@ describe('PageWrapper', () => {
     expect(html).toContain('data-testid="mobile-sidebar-open"');
     expect(html).not.toContain('data-testid="brand"');
   });
+
+  test('侧栏开关带 aria-label 与说明气泡，桌面展开态说的是「收起」', () => {
+    const html = renderToStaticMarkup(
+      <MemoryRouter>
+        <SidebarProvider>
+          <PageWrapper moduleLoader={moduleLoader} />
+        </SidebarProvider>
+      </MemoryRouter>
+    );
+    expect(html).toContain('aria-label="nav.sidebarCollapse"');
+    expect(html).toContain('data-slot="tooltip-trigger"');
+  });
 });

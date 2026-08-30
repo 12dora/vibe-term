@@ -76,4 +76,12 @@ describe('SidebarTitle', () => {
     const html = render(null);
     expect(html).not.toContain('data-testid="sidebar-nodes"');
   });
+
+  test('纯图标入口都带 aria-label 与说明气泡（主题、节点、设置各一枚）', () => {
+    const html = render(MESH_MODE);
+    for (const label of ['settings.theme', 'sidebar.nodes', 'sidebar.settings']) {
+      expect(html).toContain(`aria-label="${label}"`);
+    }
+    expect(html.split('data-slot="tooltip-trigger"').length - 1).toBe(3);
+  });
 });

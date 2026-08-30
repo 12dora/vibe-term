@@ -6,6 +6,7 @@ import { useUIStore } from '@tmex/stores/react';
 import { Button } from '@tmex/ui/button';
 import { Switch } from '@tmex/ui/switch';
 import { Loader2, Send, Trash2 } from 'lucide-react';
+import { type KeyboardEvent, useEffect } from 'react';
 import { useTranslation } from 'react-i18next';
 import { ShortcutsBar } from './terminal-shortcuts-slot';
 import type { EditorInput } from './use-editor-input';
@@ -23,6 +24,8 @@ export interface EditorInputPanelProps {
   isMobile: boolean;
   canInteractWithPane: boolean;
   onActivateShortcut: (item: TerminalShortcutItem) => void;
+  /** Esc 收起命令输入框，回到直接输入 */
+  onClose: () => void;
 }
 
 export function EditorInputPanel({
@@ -30,17 +33,33 @@ export function EditorInputPanel({
   isMobile,
   canInteractWithPane,
   onActivateShortcut,
+  onClose,
 }: EditorInputPanelProps) {
   const { t } = useTranslation();
   const editorSendWithEnter = useUIStore((state) => state.editorSendWithEnter);
   const setEditorSendWithEnter = useUIStore((state) => state.setEditorSendWithEnter);
-  const { editorText, editorTextareaRef, isSending } = editor;
+  const { editorText, editorTextareaRef, isSending, focusEditor } = editor;
   const sendDisabled = !canInteractWithPane || isSending;
+
+  // 面板由顶栏图标展开，焦点直接落到输入框，省一次点击
+  useEffect(() => {
+    focusEditor();
+  }, [focusEditor]);
+
+  // Esc 收起；输入法候选窗开着时的 Esc 归输入法，不能顺手把面板关了
+  const handleKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
+    if (event.key !== 'Escape' || event.nativeEvent.isComposing) {
+      return;
+    }
+    event.preventDefault();
+    onClose();
+  };
 
   return (
     <div
       data-virtual-keyboard-avoid
-      className="tmex-fade editor-mode-input bg-card/85 backdrop-blur-sm"
+      onKeyDown={handleKeyDown}
+      className="editor-mode-input bg-card/85 backdrop-blur-sm"
     >
       {/* 移动端 editor 模式：快捷键栏在编辑器上方 */}
       {isMobile && (

@@ -6,9 +6,28 @@ import { PageLoadFallback } from '@/PageLoadFallback';
 import { Brand } from '@/components/brand';
 import { type PageModuleLoader, usePageModule } from '@/use-page-module';
 import { cn } from '@tmex/ui';
+import { IconTooltip } from '@tmex/ui/icon-tooltip';
 import { Separator } from '@tmex/ui/separator';
-import { SidebarTrigger } from '@tmex/ui/sidebar';
+import { SidebarTrigger, useSidebar } from '@tmex/ui/sidebar';
+import { useTranslation } from 'react-i18next';
 import { useParams } from 'react-router';
+
+/** 顶栏左上角唯一的图标按钮：移动端开侧栏，桌面端展开/收起侧栏，文案随形态走。 */
+function SidebarToggle() {
+  const { t } = useTranslation();
+  const { isMobile, state } = useSidebar();
+  const label = isMobile
+    ? t('nav.openSidebar')
+    : state === 'expanded'
+      ? t('nav.sidebarCollapse')
+      : t('nav.sidebarExpand');
+
+  return (
+    <IconTooltip label={label} className="-ml-1">
+      <SidebarTrigger aria-label={label} data-testid="mobile-sidebar-open" />
+    </IconTooltip>
+  );
+}
 
 export function PageWrapper({
   moduleLoader,
@@ -38,11 +57,7 @@ export function PageWrapper({
         data-testid="mobile-topbar"
       >
         <div className="flex min-w-0 flex-1 items-center gap-2 px-4">
-          {withSidebar ? (
-            <SidebarTrigger className="-ml-1 shrink-0" data-testid="mobile-sidebar-open" />
-          ) : (
-            <Brand size="sm" linkTo="/" />
-          )}
+          {withSidebar ? <SidebarToggle /> : <Brand size="sm" linkTo="/" />}
           <Separator
             orientation="vertical"
             className="mr-2 shrink-0 data-[orientation=vertical]:h-4"

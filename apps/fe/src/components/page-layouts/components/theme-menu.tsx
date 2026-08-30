@@ -17,6 +17,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@tmex/ui/dropdown-menu';
+import { IconTooltip } from '@tmex/ui/icon-tooltip';
 import { Moon, Palette, Sun } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 
@@ -61,16 +62,17 @@ export function ThemeMenuView({ appearance, preset, onSelect }: ThemeMenuViewPro
 
   return (
     <DropdownMenu>
-      <DropdownMenuTrigger
-        data-testid="theme-menu-trigger"
-        data-theme-preset={preset ?? ''}
-        data-theme-appearance={appearance}
-        aria-label={t('settings.theme')}
-        title={t('settings.theme')}
-        className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-sidebar-accent hover:text-foreground data-popup-open:bg-sidebar-accent data-popup-open:text-foreground"
-      >
-        <Palette className="h-4 w-4" />
-      </DropdownMenuTrigger>
+      <IconTooltip label={t('settings.theme')}>
+        <DropdownMenuTrigger
+          data-testid="theme-menu-trigger"
+          data-theme-preset={preset ?? ''}
+          data-theme-appearance={appearance}
+          aria-label={t('settings.theme')}
+          className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-sidebar-accent hover:text-foreground data-popup-open:bg-sidebar-accent data-popup-open:text-foreground"
+        >
+          <Palette className="h-4 w-4" />
+        </DropdownMenuTrigger>
+      </IconTooltip>
       <DropdownMenuContent
         align="end"
         backdrop

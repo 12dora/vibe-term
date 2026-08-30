@@ -13,6 +13,7 @@ import { resolveTerminalTheme } from '@tmex/theme';
 import { useCallback, useMemo, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
 import type { DeviceConnectionAdapter } from '../device-connection';
+import { CommandInputCollapse } from './command-input-collapse';
 import { EditorInputPanel } from './editor-input-panel';
 import { TerminalStage } from './terminal-stage';
 import { useConsoleTargets } from './use-console-targets';
@@ -69,6 +70,7 @@ export function DeviceConsole({
 
   const isMobile = useMobileViewport();
   const inputMode = useUIStore((state) => state.inputMode);
+  const setInputMode = useUIStore((state) => state.setInputMode);
   const uiTheme = useUIStore((state) => state.theme);
   const themePreset = useUIStore((state) => state.themePreset);
   const terminalFontId = useUIStore((state) => state.terminalFontId);
@@ -163,14 +165,15 @@ export function DeviceConsole({
         onActivateShortcut={onActivateShortcut}
       />
 
-      {inputMode === 'editor' && (
+      <CommandInputCollapse open={inputMode === 'editor'}>
         <EditorInputPanel
           editor={editor}
           isMobile={isMobile}
           canInteractWithPane={selection.canInteractWithPane}
           onActivateShortcut={onActivateShortcut}
+          onClose={() => setInputMode('direct')}
         />
-      )}
+      </CommandInputCollapse>
     </div>
   );
 }
