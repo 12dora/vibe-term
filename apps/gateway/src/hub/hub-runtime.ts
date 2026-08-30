@@ -209,10 +209,11 @@ export class HubRuntime {
   handleUplinkOpen(ws: HubServerWebSocket): void {
     const adapter = new BunServerWsAdapter(ws);
     ws.data.adapter = adapter;
-    const link = new WebSocketLink(adapter, { role: 'acceptor' });
-    const remoteAddressValue = (ws as unknown as { remoteAddress?: unknown }).remoteAddress;
-    const remoteAddress = typeof remoteAddressValue === 'string' ? remoteAddressValue : undefined;
-    this.uplink.accept(link, remoteAddress ? { remoteAddress } : undefined);
+    const remote = (ws as unknown as { remoteAddress?: unknown }).remoteAddress;
+    this.uplink.accept(
+      new WebSocketLink(adapter, { role: 'acceptor' }),
+      typeof remote === 'string' ? { remoteAddress: remote } : undefined
+    );
   }
 
   handleUplinkMessage(ws: HubServerWebSocket, message: string | ArrayBuffer | Uint8Array): void {
@@ -282,14 +283,14 @@ export class HubRuntime {
     const nodeId = stored?.node_id ?? token.nodeId;
     if (nodeId) body.node_id = nodeId;
     const admitted = nodeId ? this.userStore.getCert(nodeId) : null;
-    const alreadyAdmitted = Boolean(admitted && admitted.revokedLogSeq === null);
+    const alreadyAdmitted = admitted?.revokedLogSeq === null;
     body.already_admitted = alreadyAdmitted;
     if (alreadyAdmitted && admitted) {
       body.certificate = encodeBase64url(admitted.certificateBytes);
       body.cert_sig = encodeBase64url(admitted.certSig);
     } else {
-      if (stored?.certificate_b64) body.certificate = stored.certificate_b64;
-      if (stored?.cert_sig_b64) body.cert_sig = stored.cert_sig_b64;
+      body.certificate = stored?.certificate_b64;
+      body.cert_sig = stored?.cert_sig_b64;
     }
     return json(body);
   }
@@ -328,22 +329,16 @@ export class HubRuntime {
     } catch {
       return json({ error: 'bad_record' }, 400);
     }
-    if (record.type !== 'revoke-node') {
-      return json({ error: 'not_revoke_node' }, 400);
-    }
+    if (record.type !== 'revoke-node') return json({ error: 'not_revoke_node' }, 400);
     let payload: ReturnType<typeof decodeRevokeNodePayload>;
     try {
       payload = decodeRevokeNodePayload(record.payload);
     } catch {
       return json({ error: 'bad_payload' }, 400);
     }
-    if (nodeIdToHex(payload.node_id) !== nodeId) {
-      return json({ error: 'node_mismatch' }, 400);
-    }
+    if (nodeIdToHex(payload.node_id) !== nodeId) return json({ error: 'node_mismatch' }, 400);
     const result = await this.keyLogSource.append(auth.userId, { bytes, sig });
-    if (!result.ok) {
-      return json({ error: result.error }, 400);
-    }
+    if (!result.ok) return json({ error: result.error }, 400);
     await this.uplink.applyAppendEffects(auth.userId, result);
     return json({ ok: true, id: nodeId, status: 'revoked' });
   }
@@ -381,16 +376,14 @@ export class HubRuntime {
     const authExp = Number(authorization.exp);
     const bodyExp = typeof body.exp === 'number' ? body.exp : authExp;
     const expiresAt = Math.min(authExp, bodyExp);
-    if (!Number.isFinite(expiresAt) || expiresAt <= now) {
-      return json({ error: 'expired' }, 400);
-    }
+    if (!Number.isFinite(expiresAt) || expiresAt <= now) return json({ error: 'expired' }, 400);
     if (this.userStore.getEnrollmentTokenByEnrollPublicKey(enrollPk)) {
       return json({ error: 'duplicate_enroll_pk' }, 409);
     }
     const payload: StoredEnrollmentPayload = {
       authorization_b64: encodeBase64url(authorizationBytes),
       entry_node_id: auth.entryNodeId,
-      ...(auth.sid ? { entry_sid: auth.sid } : {}),
+      ...(auth.sid && { entry_sid: auth.sid }),
     };
     const token = this.userStore.createEnrollmentToken({
       id: crypto.randomUUID(),
@@ -458,66 +451,59 @@ export class HubRuntime {
     try {
       parsed = parseRedeemRequest(body, this.userStore);
     } catch (err) {
-      if (err instanceof RedeemAbort) return json({ error: err.error }, err.status);
-      return validationError(err);
+      return redeemCatch(err, true);
     }
-    const { hexId, token, stored, providedName, version, certBytes, certSig, certificate } =
-      parsed;
-    const now = this.now();
     try {
-      let replayUserId: string | null = null;
-      let replacedExisting = false;
-      let alreadyAdmitted = false;
-      try {
-        this.db.transaction((tx) => {
-          const result = redeemInTransaction(tx as AuthDb, parsed, body, now);
-          replacedExisting = result.replacedExisting;
-          alreadyAdmitted = result.alreadyAdmitted;
-        });
-      } catch (err) {
-        if (err instanceof RedeemReplay) replayUserId = err.userId;
-        else throw err;
-      }
-      if (replacedExisting) {
-        this.registry.updateMeta(
-          hexId,
-          {
-            ...(providedName ? { name: providedName } : {}),
-            ...(version ? { version } : {}),
-          },
-          now
-        );
-      }
-      if (!replayUserId && stored.entry_node_id) {
-        const admitted = alreadyAdmitted ? this.userStore.getCert(hexId) : null;
-        this.uplink.sendTo(stored.entry_node_id, {
-          t: 'enroll.redeemed',
-          certificate: encodeBase64url(admitted?.certificateBytes ?? certBytes),
-          cert_sig: encodeBase64url(admitted?.certSig ?? certSig),
-          enroll_pk: encodeBase64url(certificate.enroll_pk),
-          node_id: hexId,
-          already_admitted: alreadyAdmitted,
-          ...(stored.entry_sid ? { entry_sid: stored.entry_sid } : {}),
-        });
-      }
-      if (replacedExisting) await this.uplink.broadcastNodeList(token.userId);
-      if (replayUserId) {
-        const replayedCert = this.userStore.getCert(hexId);
-        alreadyAdmitted = Boolean(replayedCert && replayedCert.revokedLogSeq === null);
-      }
-      if (alreadyAdmitted) console.info(`[hub] already admitted node=${hexId}`);
-      return this.redeemSuccessPayload(replayUserId ?? token.userId, alreadyAdmitted);
+      return await this.finishRedeem(parsed, body);
     } catch (err) {
-      if (err instanceof RedeemAbort) return json({ error: err.error }, err.status);
-      throw err;
+      return redeemCatch(err, false);
     }
+  }
+
+  private async finishRedeem(
+    parsed: ReturnType<typeof parseRedeemRequest>,
+    body: Record<string, unknown>
+  ): Promise<Response> {
+    const { hexId, token, stored, providedName, version, certBytes, certSig, certificate } = parsed;
+    const now = this.now();
+    let replayUserId: string | null = null;
+    let replacedExisting = false;
+    let alreadyAdmitted = false;
+    try {
+      this.db.transaction((tx) => {
+        ({ replacedExisting, alreadyAdmitted } = redeemInTransaction(
+          tx as AuthDb,
+          parsed,
+          body,
+          now
+        ));
+      });
+    } catch (err) {
+      if (!(err instanceof RedeemReplay)) throw err;
+      replayUserId = err.userId;
+    }
+    if (replacedExisting) this.registry.updateMeta(hexId, nameVersion(providedName, version), now);
+    if (!replayUserId && stored.entry_node_id) {
+      const admitted = alreadyAdmitted ? this.userStore.getCert(hexId) : null;
+      this.uplink.sendTo(stored.entry_node_id, {
+        t: 'enroll.redeemed',
+        certificate: encodeBase64url(admitted ? admitted.certificateBytes : certBytes),
+        cert_sig: encodeBase64url(admitted ? admitted.certSig : certSig),
+        enroll_pk: encodeBase64url(certificate.enroll_pk),
+        node_id: hexId,
+        already_admitted: alreadyAdmitted,
+        ...(stored.entry_sid && { entry_sid: stored.entry_sid }),
+      });
+    }
+    if (replacedExisting) await this.uplink.broadcastNodeList(token.userId);
+    if (replayUserId) alreadyAdmitted = this.userStore.getCert(hexId)?.revokedLogSeq === null;
+    if (alreadyAdmitted) console.info(`[hub] already admitted node=${hexId}`);
+    return this.redeemSuccessPayload(replayUserId ?? token.userId, alreadyAdmitted);
   }
 
   private async redeemSuccessPayload(userId: string, alreadyAdmitted: boolean): Promise<Response> {
     const user = this.userStore.getById(userId);
-    if (!user) {
-      return json({ error: 'user_not_found' }, 500);
-    }
+    if (!user) return json({ error: 'user_not_found' }, 500);
     const records = await this.keyLogSource.list(user.id);
     const certs = this.userStore.listCerts().filter((c) => c.userId === user.id);
     return json({
@@ -565,38 +551,53 @@ class RedeemReplay extends Error {
   }
 }
 
+function redeemCatch(err: unknown, parsePhase: boolean): Response {
+  if (err instanceof RedeemAbort) return json({ error: err.error }, err.status);
+  if (parsePhase) return validationError(err);
+  throw err;
+}
+
+function abortRedeem(cond: boolean, error: string, status = 400): asserts cond is false {
+  if (cond) throw new RedeemAbort(error, status);
+}
+
+function decodeOrAbort<T>(fn: () => T, error: string): T {
+  try {
+    return fn();
+  } catch {
+    throw new RedeemAbort(error, 400);
+  }
+}
+
+function nameVersion(
+  name: string | null,
+  version: string | null
+): { name?: string; version?: string } {
+  return { ...(name && { name }), ...(version && { version }) };
+}
+
 function parseRedeemRequest(body: Record<string, unknown>, userStore: UserStore) {
   const providedName = typeof body.name === 'string' && body.name.trim() ? body.name.trim() : null;
   const certBytes = requireB64url(body, 'certificate');
   const certSig = requireB64url(body, 'cert_sig', 64);
-  let certificate: ReturnType<typeof decodeCertificate>;
-  try {
-    certificate = decodeCertificate(certBytes);
-  } catch {
-    throw new RedeemAbort('bad_certificate', 400);
-  }
+  const certificate = decodeOrAbort(() => decodeCertificate(certBytes), 'bad_certificate');
   const token = userStore.getEnrollmentTokenByEnrollPublicKey(certificate.enroll_pk);
   if (!token) throw new RedeemAbort('unknown_enrollment', 400);
-  if (!verifyNodeCertificate(certBytes, certSig, token.enrollPublicKey)) {
-    throw new RedeemAbort('bad_cert_sig', 400);
-  }
+  abortRedeem(!verifyNodeCertificate(certBytes, certSig, token.enrollPublicKey), 'bad_cert_sig');
   const stored = parseStoredEnrollment(token.authorizationJson);
   if (!stored) throw new RedeemAbort('bad_token', 400);
-  let authorization: ReturnType<typeof decodeAuthorization>;
-  try {
-    authorization = decodeAuthorization(decodeB64url(stored.authorization_b64));
-  } catch {
-    throw new RedeemAbort('bad_authorization', 400);
-  }
-  if (!bytesEqual(authorization.enroll_pk, certificate.enroll_pk)) {
-    throw new RedeemAbort('enroll_pk_mismatch', 400);
-  }
-  if (authorization.uid !== certificate.uid || authorization.uid !== token.userId) {
-    throw new RedeemAbort('uid_mismatch', 400);
-  }
+  const authorization = decodeOrAbort(
+    () => decodeAuthorization(decodeB64url(stored.authorization_b64)),
+    'bad_authorization'
+  );
+  abortRedeem(!bytesEqual(authorization.enroll_pk, certificate.enroll_pk), 'enroll_pk_mismatch');
+  abortRedeem(
+    authorization.uid !== certificate.uid || authorization.uid !== token.userId,
+    'uid_mismatch'
+  );
   return {
     name: providedName ?? 'node',
-    version: typeof body.version === 'string' ? body.version : '',
+    version: typeof body.version === 'string' && body.version ? body.version : null,
     providedName,
     certBytes,
     certSig,
@@ -639,70 +640,71 @@ function redeemInTransaction(
     throw new RedeemAbort('reused', 400);
   }
   const userRow = store.getById(fresh.userId);
-  if (!userRow) throw new RedeemAbort('user_not_found', 500);
-  if (authorization.root_epoch !== userRow.rootEpoch) throw new RedeemAbort('epoch_mismatch', 400);
-  if (fresh.expiresAt <= now) throw new RedeemAbort('expired', 400);
   const existing = store.getNode(hexId);
   const existingCert = store.getCert(hexId);
+  const keys = existing ? readNodeIdentityKeys(store, hexId) : null;
+  abortRedeem(!userRow, 'user_not_found', 500);
+  abortRedeem(authorization.root_epoch !== userRow?.rootEpoch, 'epoch_mismatch');
+  abortRedeem(fresh.expiresAt <= now, 'expired');
+  abortRedeem(
+    Boolean(
+      existing &&
+        (existing.userId !== fresh.userId ||
+          !keys ||
+          !bytesEqual(keys.edPk, certificate.ed_pk) ||
+          !bytesEqual(keys.x25519Pk, certificate.x25519_pk) ||
+          !verifyRedeemPop(body, certificate, keys.edPk, certBytes))
+    ),
+    'node_exists',
+    409
+  );
+  abortRedeem(
+    existingCert?.revokedLogSeq != null || existing?.status === 'revoked',
+    'node_revoked',
+    409
+  );
+  if (existing) detachEnrollmentTokensFromNode(authDb, hexId);
+  abortRedeem(
+    !store.consumeEnrollmentToken(certificate.enroll_pk, {
+      nodeId: hexId,
+      now,
+      authorizationJson: JSON.stringify({
+        ...stored,
+        certificate_b64: encodeBase64url(certBytes),
+        cert_sig_b64: encodeBase64url(certSig),
+        node_id: hexId,
+      } satisfies StoredEnrollmentPayload),
+    }),
+    'reused'
+  );
   if (existing) {
-    const existingKeys = readNodeIdentityKeys(store, hexId);
-    if (
-      existing.userId !== fresh.userId ||
-      !existingKeys ||
-      !bytesEqual(existingKeys.edPk, certificate.ed_pk) ||
-      !bytesEqual(existingKeys.x25519Pk, certificate.x25519_pk) ||
-      !verifyRedeemPop(body, certificate, existingKeys.edPk, certBytes)
-    ) {
-      throw new RedeemAbort('node_exists', 409);
-    }
-    if (existingCert?.revokedLogSeq != null || existing.status === 'revoked') {
-      throw new RedeemAbort('node_revoked', 409);
-    }
-    detachEnrollmentTokensFromNode(authDb, hexId);
-  } else if (existingCert?.revokedLogSeq != null) {
-    throw new RedeemAbort('node_revoked', 409);
-  }
-  const alreadyAdmitted = Boolean(existingCert && existingCert.revokedLogSeq === null);
-  const consumed = store.consumeEnrollmentToken(certificate.enroll_pk, {
-    nodeId: hexId,
-    now,
-    authorizationJson: JSON.stringify({
-      ...stored,
-      certificate_b64: encodeBase64url(certBytes),
-      cert_sig_b64: encodeBase64url(certSig),
-      node_id: hexId,
-    } satisfies StoredEnrollmentPayload),
-  });
-  if (!consumed) throw new RedeemAbort('reused', 400);
-  if (existing) {
-    patchNode(authDb, hexId, {
+    patchNode(authDb, hexId, { status: 'enrolled', ...nameVersion(providedName, version) });
+  } else {
+    store.createNode({
+      id: hexId,
+      userId: fresh.userId,
+      name,
       status: 'enrolled',
-      ...(providedName ? { name: providedName } : {}),
-      ...(version ? { version } : {}),
+      version,
+      now,
     });
-    return { replacedExisting: true, alreadyAdmitted };
   }
-  store.createNode({
-    id: hexId,
-    userId: fresh.userId,
-    name,
-    status: 'enrolled',
-    version: version || null,
-    now,
-  });
-  return { replacedExisting: false, alreadyAdmitted };
+  return {
+    replacedExisting: Boolean(existing),
+    alreadyAdmitted: existingCert?.revokedLogSeq === null,
+  };
 }
 
 function parseStoredEnrollment(raw: string): StoredEnrollmentPayload | null {
   try {
-    const parsed: unknown = JSON.parse(raw);
-    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return null;
-    const obj = parsed as Record<string, unknown>;
-    if (typeof obj.authorization_b64 !== 'string') return null;
-    const str = (key: string) => (typeof obj[key] === 'string' ? obj[key] : undefined);
+    const obj: unknown = JSON.parse(raw);
+    if (!obj || typeof obj !== 'object' || Array.isArray(obj)) return null;
+    const rec = obj as Record<string, unknown>;
+    if (typeof rec.authorization_b64 !== 'string') return null;
+    const str = (key: string) => (typeof rec[key] === 'string' ? rec[key] : undefined);
     return {
-      authorization_b64: obj.authorization_b64,
-      entry_node_id: typeof obj.entry_node_id === 'string' ? obj.entry_node_id : null,
+      authorization_b64: rec.authorization_b64,
+      entry_node_id: typeof rec.entry_node_id === 'string' ? rec.entry_node_id : null,
       entry_sid: str('entry_sid'),
       certificate_b64: str('certificate_b64'),
       cert_sig_b64: str('cert_sig_b64'),

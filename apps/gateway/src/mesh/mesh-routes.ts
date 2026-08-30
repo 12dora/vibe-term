@@ -1,7 +1,7 @@
 import { wsBorsh } from '@tmex/shared';
-import { decodeCertificate, encodeBase64url } from '@tmex/shared/auth';
+import { encodeBase64url } from '@tmex/shared/auth';
 import { readJsonObjectBody } from '../api/http';
-import { nodeSessionCookieName, parseCookies } from '../auth/cookies';
+import { parseCookies } from '../auth/cookies';
 import type { NodeSessionStore } from '../auth/node-session-store';
 import type { UserStore } from '../auth/user-store';
 import type { PublicAuthNode } from './auth-routes';
@@ -22,12 +22,7 @@ import {
   X_TMEX_CONNECTION,
   getMeshRequestContext,
 } from './mesh-deps';
-import {
-  parseJson,
-  pickMeshNodeName,
-  projectNode,
-  versionFromInventory,
-} from './node-list-projection';
+import { type MeshNodeDto, projectMeshListNode } from './node-list-projection';
 import {
   type AuthenticateOk,
   type SessionMiddlewareDeps,
@@ -38,19 +33,7 @@ import {
 } from './session-middleware';
 import type { UplinkStatus } from './types';
 
-export type MeshNodeDto = {
-  id: string;
-  name: string;
-  publicKey: string;
-  online: boolean;
-  reach: 'lan' | 'relay' | null;
-  transport: 'ws-secure' | 'relay' | 'dc' | null;
-  version: string | null;
-  direct_capable: boolean;
-  inventory: unknown;
-  loggedIn: boolean;
-  isHub: boolean;
-};
+export type { MeshNodeDto };
 
 export type MeshRoutesDeps = {
   roles: MeshRoles;
@@ -151,9 +134,7 @@ export class MeshRoutes {
       const env = wsBorsh.decodeEnvelope(bytes);
       if (env.kind !== wsBorsh.KIND_RTC_SIGNAL) return;
       const payload = wsBorsh.decodePayload(wsBorsh.schema.RtcSignalSchema, env.payload);
-      if (payload.from === wsBorsh.RTC_SIGNAL_FROM_NODE) {
-        return;
-      }
+      if (payload.from === wsBorsh.RTC_SIGNAL_FROM_NODE) return;
       const uid = ws.data.uid;
       const sid = ws.data.sid;
       this.deps.rtcSignals.send(
@@ -166,9 +147,7 @@ export class MeshRoutes {
         },
         uid && sid ? { uid, sid } : undefined
       );
-    } catch {
-      // drop malformed frames
-    }
+    } catch {}
   }
 
   handleMeshSocketClose(ws: MeshServerWebSocket): void {
@@ -187,23 +166,22 @@ export class MeshRoutes {
     entrySid?: string;
   }): void {
     if (!msg.entrySid) return;
-    try {
-      wsBorsh.schema.assertEnrollRedeemedFields({
-        enrollPk: msg.enrollPk,
-        certificate: msg.certificate,
-        certSig: msg.certSig,
-        nodeId: msg.nodeId,
-      });
-    } catch {
-      return;
-    }
-    const payload = wsBorsh.encodePayload(wsBorsh.schema.EnrollRedeemedSchema, {
+    const fields = {
       enrollPk: msg.enrollPk,
       certificate: msg.certificate,
       certSig: msg.certSig,
       nodeId: msg.nodeId,
-    });
-    const frame = wsBorsh.encodeEnvelope(wsBorsh.KIND_ENROLL_REDEEMED, payload, ++this.seq);
+    };
+    try {
+      wsBorsh.schema.assertEnrollRedeemedFields(fields);
+    } catch {
+      return;
+    }
+    const frame = wsBorsh.encodeEnvelope(
+      wsBorsh.KIND_ENROLL_REDEEMED,
+      wsBorsh.encodePayload(wsBorsh.schema.EnrollRedeemedSchema, fields),
+      ++this.seq
+    );
     for (const ws of this.meshSockets) {
       if (ws.data.sid !== msg.entrySid) continue;
       try {
@@ -228,60 +206,26 @@ export class MeshRoutes {
     const hubNodeId = this.deps.roles.hub
       ? this.deps.nodeId
       : (this.deps.userStore.getHubMeta()?.nodeId ?? null);
-    const nodes: MeshNodeDto[] = [];
-    for (const id of new Set([this.deps.nodeId, ...certs.map((c) => c.nodeId)])) {
-      const cert = certById.get(id);
-      if (id !== this.deps.nodeId && !cert) continue;
-      let publicKey = this.deps.nodePk;
-      if (id !== this.deps.nodeId && cert) {
-        try {
-          publicKey = decodeCertificate(cert.certificateBytes).ed_pk;
-        } catch {
-          continue;
-        }
-      }
-      const isSelf = id === this.deps.nodeId;
-      const r = reach.get(id) ?? null;
-      const peer = peerById.get(id);
-      const inv = parseJson(peer?.inventoryJson, peer?.inventoryJson ?? null);
-      const core = projectNode(
-        id,
-        pickMeshNodeName({
+    return [...new Set([this.deps.nodeId, ...certs.map((c) => c.nodeId)])]
+      .map((id) =>
+        projectMeshListNode(
           id,
-          isSelf,
-          listedName: listedById.get(id),
-          registryName: registryById.get(id),
-          selfName: isSelf ? selfName : null,
-        }),
-        isSelf || hubOnline.has(id) || r === 'lan' || r === 'relay',
-        {
-          inventory: inv,
-          directCapable: peer?.directCapable ?? false,
-          version: versionFromInventory(inv),
-        },
-        isSelf && self
-          ? {
-              inventory: self.inventory,
-              directCapable: self.direct_capable,
-              version: self.version || undefined,
-            }
-          : null
-      );
-      nodes.push({
-        id,
-        name: core.name,
-        publicKey: encodeBase64url(publicKey),
-        online: core.online,
-        reach: r,
-        transport: isSelf ? null : (this.deps.peers.transportOf?.(id) ?? null),
-        version: core.version || versionFromInventory(core.inventory),
-        direct_capable: core.direct_capable,
-        inventory: core.inventory,
-        loggedIn: cookies.has(nodeSessionCookieName(isSelf ? MESH_VIA_SELF : id)),
-        isHub: hubNodeId != null && id === hubNodeId,
-      });
-    }
-    return nodes;
+          this.deps.nodeId,
+          this.deps.nodePk,
+          cookies,
+          reach,
+          hubOnline,
+          certById,
+          peerById,
+          listedById,
+          registryById,
+          selfName,
+          self,
+          hubNodeId,
+          (nid) => this.deps.peers.transportOf?.(nid) ?? null
+        )
+      )
+      .filter((n) => n != null);
   }
 
   private handleRtcConfig(): Response {
@@ -311,41 +255,27 @@ export class MeshRoutes {
   private async handleRtcAuthorize(req: Request, auth: AuthenticateOk): Promise<Response> {
     if (!auth.userId) return jsonError('UNAUTHORIZED', 401);
     if (!this.deps.rtcFingerprint) return jsonError('DIRECT_UNAVAILABLE', 503);
-    const body = await readJsonObjectBody(req);
-    const rtcSession = typeof body?.rtcSession === 'string' ? body.rtcSession : '';
-    const fp = body?.fp_browser as { algorithm?: unknown; value?: unknown } | null | undefined;
-    if (
-      !rtcSession ||
-      typeof fp !== 'object' ||
-      fp === null ||
-      typeof fp.algorithm !== 'string' ||
-      typeof fp.value !== 'string'
-    ) {
-      return jsonError('MALFORMED', 400);
-    }
+    const parsed = rtcAuthFields(await readJsonObjectBody(req), req);
+    if (!parsed) return jsonError('MALFORMED', 400);
     if (!auth.sid) return jsonError('UNAUTHORIZED', 401);
     const via = getMeshRequestContext(req).via || MESH_VIA_SELF;
-    const requestedConnectionId =
-      (typeof body?.connectionId === 'string' ? body.connectionId.trim() : '') ||
-      req.headers.get(X_TMEX_CONNECTION)?.trim() ||
-      null;
     const resolved = this.deps.connectionLookup?.({
       sid: auth.sid,
       via,
-      connectionId: requestedConnectionId,
+      connectionId: parsed.connectionId,
     });
-    if (resolved && !resolved.ok) {
-      return jsonError(resolved.code, resolved.code === 'MULTIPLE_CONNECTIONS' ? 409 : 404, {
-        hint: 'send connectionId from GET /api/mesh/connection or x-tmex-connection',
-      });
-    }
+    const fail = lookupFail(
+      resolved,
+      'send connectionId from GET /api/mesh/connection or x-tmex-connection'
+    );
+    if (fail) return fail;
     const granted = await this.deps.rtcFingerprint.authorizeBrowser({
-      rtcSession,
+      rtcSession: parsed.rtcSession,
       uid: auth.userId,
       via,
       sid: auth.sid,
       ...(resolved?.ok ? { connectionId: resolved.connectionId } : {}),
-      fpBrowser: { algorithm: fp.algorithm, value: fp.value },
+      fpBrowser: parsed.fp,
     });
     if (!granted) return jsonError('DIRECT_UNAVAILABLE', 503);
     return jsonBody({ nonce: encodeBase64url(granted.nonce), fp_node: granted.fpNode });
@@ -354,26 +284,13 @@ export class MeshRoutes {
   private handleMeshWsUpgrade(req: Request, server: MeshUpgradeServer): Response | undefined {
     const result = authenticateRequest(req, this.sessionDeps);
     if (!result.ok || !result.sid || !result.userId) {
-      const upgraded = server.upgrade(req, {
-        data: { kind: MESH_REJECT_4401_KIND },
-      });
-      if (!upgraded) {
-        return jsonError('UNAUTHORIZED', 401);
-      }
-      return undefined;
+      const upgraded = server.upgrade(req, { data: { kind: MESH_REJECT_4401_KIND } });
+      return upgraded ? undefined : jsonError('UNAUTHORIZED', 401);
     }
     const ok = server.upgrade(req, {
-      data: {
-        kind: MESH_WS_KIND,
-        sid: result.sid,
-        uid: result.userId,
-        via: MESH_VIA_SELF,
-      },
+      data: { kind: MESH_WS_KIND, sid: result.sid, uid: result.userId, via: MESH_VIA_SELF },
     });
-    if (!ok) {
-      return jsonError('upgrade_failed', 500);
-    }
-    return undefined;
+    return ok ? undefined : jsonError('upgrade_failed', 500);
   }
 
   private broadcastNodeEvent(event: {
@@ -419,6 +336,37 @@ export class MeshRoutes {
       }
     }
   }
+}
+
+function lookupFail(
+  resolved: { ok: true; connectionId: string } | { ok: false; code: string } | undefined,
+  hint: string
+): Response | null {
+  return resolved && !resolved.ok
+    ? jsonError(resolved.code, resolved.code === 'MULTIPLE_CONNECTIONS' ? 409 : 404, { hint })
+    : null;
+}
+
+function rtcAuthFields(body: Record<string, unknown> | null, req: Request) {
+  const rtcSession = typeof body?.rtcSession === 'string' ? body.rtcSession : '';
+  const fp = body?.fp_browser as { algorithm?: unknown; value?: unknown } | undefined;
+  if (
+    !rtcSession ||
+    typeof fp !== 'object' ||
+    !fp ||
+    typeof fp.algorithm !== 'string' ||
+    typeof fp.value !== 'string'
+  ) {
+    return null;
+  }
+  return {
+    rtcSession,
+    fp: { algorithm: fp.algorithm, value: fp.value },
+    connectionId:
+      (typeof body?.connectionId === 'string' ? body.connectionId.trim() : '') ||
+      req.headers.get(X_TMEX_CONNECTION)?.trim() ||
+      null,
+  };
 }
 
 function toBytes(message: unknown): Uint8Array | null {

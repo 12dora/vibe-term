@@ -1,8 +1,26 @@
+import { decodeCertificate, encodeBase64url } from '@tmex/shared/auth';
+import { nodeSessionCookieName } from '../auth/cookies';
+import { MESH_VIA_SELF } from './mesh-deps';
+
 type Meta = {
   endpoints?: unknown;
   inventory?: unknown;
   directCapable?: boolean;
   version?: string | null;
+};
+
+export type MeshNodeDto = {
+  id: string;
+  name: string;
+  publicKey: string;
+  online: boolean;
+  reach: 'lan' | 'relay' | null;
+  transport: 'ws-secure' | 'relay' | 'dc' | null;
+  version: string | null;
+  direct_capable: boolean;
+  inventory: unknown;
+  loggedIn: boolean;
+  isHub: boolean;
 };
 
 export function parseJson(raw: string | null | undefined, fallback: unknown): unknown {
@@ -61,4 +79,73 @@ export function pickMeshNodeName(input: {
     (input.isSelf ? usable(input.selfName) : null) ??
     (input.isSelf ? input.selfName?.trim() || 'self' : input.id)
   );
+}
+
+export function projectMeshListNode(
+  id: string,
+  selfId: string,
+  selfPk: Uint8Array,
+  cookies: Map<string, string>,
+  reach: Map<string, 'lan' | 'relay' | null>,
+  hubOnline: ReadonlySet<string>,
+  certById: Map<string, { certificateBytes: Uint8Array }>,
+  peerById: Map<string, { inventoryJson?: string | null; directCapable?: boolean }>,
+  listedById: Map<string, string>,
+  registryById: Map<string, string>,
+  selfName: string | null,
+  self: { inventory?: unknown; direct_capable: boolean; version?: string } | undefined,
+  hubNodeId: string | null,
+  transportOf?: (id: string) => 'ws-secure' | 'relay' | 'dc' | null
+): MeshNodeDto | null {
+  const isSelf = id === selfId;
+  const cert = certById.get(id);
+  let publicKey: Uint8Array | null = isSelf ? selfPk : null;
+  if (!isSelf) {
+    if (!cert) return null;
+    try {
+      publicKey = decodeCertificate(cert.certificateBytes).ed_pk;
+    } catch {
+      return null;
+    }
+  }
+  const peer = peerById.get(id);
+  if (!publicKey) return null;
+  const r = reach.get(id) ?? null;
+  const inv = parseJson(peer?.inventoryJson, peer?.inventoryJson ?? null);
+  const core = projectNode(
+    id,
+    pickMeshNodeName({
+      id,
+      isSelf,
+      listedName: listedById.get(id),
+      registryName: registryById.get(id),
+      selfName,
+    }),
+    isSelf || hubOnline.has(id) || r === 'lan' || r === 'relay',
+    {
+      inventory: inv,
+      directCapable: peer?.directCapable ?? false,
+      version: versionFromInventory(inv),
+    },
+    isSelf && self
+      ? {
+          inventory: self.inventory,
+          directCapable: self.direct_capable,
+          version: self.version || undefined,
+        }
+      : null
+  );
+  return {
+    id,
+    name: core.name,
+    publicKey: encodeBase64url(publicKey),
+    online: core.online,
+    reach: r,
+    transport: isSelf ? null : (transportOf?.(id) ?? null),
+    version: core.version || versionFromInventory(core.inventory),
+    direct_capable: core.direct_capable,
+    inventory: core.inventory,
+    loggedIn: cookies.has(nodeSessionCookieName(isSelf ? MESH_VIA_SELF : id)),
+    isHub: hubNodeId === id,
+  };
 }
