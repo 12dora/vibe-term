@@ -8,6 +8,7 @@ import {
   useCallback,
   useContext,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useSyncExternalStore,
@@ -235,8 +236,9 @@ function useIntentActions(
 }
 
 /**
- * 连接态的读取源。快照在渲染期写入（读取立刻可见），变更通知留到提交后按设备派发，
- * 适配器与 context 值因此身份恒定：一台设备的状态变化不再让所有行 / 卡片重渲染。
+ * 连接态的读取源。快照在渲染期算好、提交后（useLayoutEffect）才写进 store 并按设备派发通知：
+ * 被放弃的并发渲染因此永远不会漏出来，订阅方也在同一帧内同步跟上。
+ * 适配器与 context 值身份恒定：一台设备的状态变化不再让所有行 / 卡片重渲染。
  */
 function useDeviceStatusStore(
   intentionallyDisconnected: ReadonlySet<string>,
@@ -247,8 +249,9 @@ function useDeviceStatusStore(
   const storeRef = useRef<DeviceStatusStore | null>(null);
   if (storeRef.current === null) storeRef.current = new DeviceStatusStore(snapshot);
   const store = storeRef.current;
-  store.setSnapshot(snapshot);
-  useEffect(store.notifyChanged);
+  useLayoutEffect(() => {
+    store.publish(snapshot);
+  }, [store, snapshot]);
   return store;
 }
 

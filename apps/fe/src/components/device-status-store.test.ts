@@ -35,8 +35,7 @@ describe('DeviceStatusStore', () => {
     const store = new DeviceStatusStore(snapshotOf([]));
     const woken = mountRows(store);
 
-    store.setSnapshot(snapshotOf(['dev-7']));
-    store.notifyChanged();
+    store.publish(snapshotOf(['dev-7']));
 
     expect([...woken].filter(([, count]) => count > 0)).toEqual([['dev-7', 1]]);
     expect(store.status('dev-7')).toBe('connected');
@@ -47,8 +46,7 @@ describe('DeviceStatusStore', () => {
     const store = new DeviceStatusStore(snapshotOf(DEVICE_IDS));
     const woken = mountRows(store);
 
-    store.setSnapshot(snapshotOf(DEVICE_IDS, ['dev-3']));
-    store.notifyChanged();
+    store.publish(snapshotOf(DEVICE_IDS, ['dev-3']));
 
     expect([...woken].filter(([, count]) => count > 0)).toEqual([['dev-3', 1]]);
     expect(store.isIntentionallyDisconnected('dev-3')).toBe(true);
@@ -59,18 +57,36 @@ describe('DeviceStatusStore', () => {
     const store = new DeviceStatusStore(snapshotOf(['dev-1']));
     const woken = mountRows(store);
 
-    store.setSnapshot(snapshotOf(['dev-1']));
-    store.notifyChanged();
+    store.publish(snapshotOf(['dev-1']));
 
     expect([...woken.values()].every((count) => count === 0)).toBe(true);
   });
 
-  test('读取走的是渲染期刚写入的快照（通知之前就已可见）', () => {
+  test('未提交的快照不可见：纯函数算好但没 publish，读到的还是上一帧', () => {
     const store = new DeviceStatusStore(snapshotOf([]));
-    store.setSnapshot(snapshotOf(['dev-1']));
+    const woken = mountRows(store);
+
+    // 模拟被 React 放弃的并发渲染：快照算出来了，提交后的 useLayoutEffect 没跑
+    const abandoned = snapshotOf(['dev-1']);
+
+    expect(store.isConnected('dev-1')).toBe(false);
+    expect(store.status('dev-1')).toBe('disconnected');
+    expect([...woken.values()].every((count) => count === 0)).toBe(true);
+
+    store.publish(abandoned);
 
     expect(store.isConnected('dev-1')).toBe(true);
-    expect(store.isConnected('dev-2')).toBe(false);
+    expect(woken.get('dev-1')).toBe(1);
+  });
+
+  test('publish 一步到位：监听者被唤醒时读到的已经是新值', () => {
+    const store = new DeviceStatusStore(snapshotOf([]));
+    const seen: string[] = [];
+    store.subscribe('dev-1', () => seen.push(store.status('dev-1')));
+
+    store.publish(snapshotOf(['dev-1']));
+
+    expect(seen).toEqual(['connected']);
   });
 
   test('退订后不再被唤醒，最后一个监听者走掉即摘掉该设备的登记', () => {
@@ -82,8 +98,7 @@ describe('DeviceStatusStore', () => {
 
     unsubscribe();
     unsubscribe();
-    store.setSnapshot(snapshotOf(['dev-1']));
-    store.notifyChanged();
+    store.publish(snapshotOf(['dev-1']));
 
     expect(woken).toBe(0);
   });
@@ -99,8 +114,7 @@ describe('DeviceStatusStore', () => {
       card += 1;
     });
 
-    store.setSnapshot(snapshotOf(['dev-1']));
-    store.notifyChanged();
+    store.publish(snapshotOf(['dev-1']));
 
     expect([row, card]).toEqual([1, 1]);
   });
@@ -110,7 +124,7 @@ describe('DeviceStatusStore', () => {
     const woken = mountRows(store);
 
     const pending = new Map([['dev-2', { kind: 'connect' as const, at: 0 }]]);
-    store.setSnapshot(
+    store.publish(
       createDeviceConnectionSnapshot(
         new Set(),
         {
@@ -122,11 +136,9 @@ describe('DeviceStatusStore', () => {
         pending
       )
     );
-    store.notifyChanged();
     expect(store.status('dev-2')).toBe('connecting');
 
-    store.setSnapshot(snapshotOf(['dev-2']));
-    store.notifyChanged();
+    store.publish(snapshotOf(['dev-2']));
 
     expect(woken.get('dev-2')).toBe(2);
     expect([...woken].filter(([, count]) => count > 0)).toEqual([['dev-2', 2]]);

@@ -1,4 +1,4 @@
-import { VersionTab } from '@tmex/panels/settings';
+import { VersionTab } from '@tmex/panels/settings/version';
 import { I18N_MANIFEST, type LocaleCode } from '@tmex/shared';
 import { Card, CardContent, CardHeader, CardTitle } from '@tmex/ui/card';
 import { Input } from '@tmex/ui/input';

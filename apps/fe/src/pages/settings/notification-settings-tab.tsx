@@ -1,4 +1,6 @@
-import { TelegramBotsTab, WebhooksTab, WeixinAccountsTab } from '@tmex/panels/settings';
+import { TelegramBotsTab } from '@tmex/panels/settings/telegram-bots';
+import { WebhooksTab } from '@tmex/panels/settings/webhooks';
+import { WeixinAccountsTab } from '@tmex/panels/settings/weixin-accounts';
 import { Card, CardContent } from '@tmex/ui/card';
 import { Input } from '@tmex/ui/input';
 import { Switch } from '@tmex/ui/switch';

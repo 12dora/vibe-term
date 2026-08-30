@@ -52,7 +52,7 @@ const AISettingsTab = lazy(() =>
   import('./settings/ai-settings-tab').then((m) => ({ default: m.AISettingsTab }))
 );
 const TerminalSettingsTab = lazy(() =>
-  import('@tmex/panels/settings').then((m) => ({ default: m.TerminalSettingsTab }))
+  import('@tmex/panels/settings/terminal').then((m) => ({ default: m.TerminalSettingsTab }))
 );
 const RemoteAccessTab = lazy(() =>
   import('./settings/remote-access/remote-access-tab').then((m) => ({ default: m.RemoteAccessTab }))

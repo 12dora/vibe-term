@@ -16,6 +16,7 @@ import { I18nextProvider } from 'react-i18next';
 import { MemoryRouter } from 'react-router';
 import type { DeviceConnectionAdapter, DeviceConnectionStatus } from '../device-connection';
 import { DeviceCard } from './device-card';
+import { useDeviceCardActions } from './device-card-host';
 import type { DeviceNodeContext } from './device-node-context';
 
 installWindowStorage();
@@ -115,9 +116,31 @@ function renderCard(options: {
   return html;
 }
 
-/** 记忆化是「无关设备的更新不重渲染整页卡片」的前提，别被顺手拆掉 */
-test('卡片是 memo 组件', () => {
-  expect((DeviceCard as unknown as { $$typeof: symbol }).$$typeof).toBe(Symbol.for('react.memo'));
+interface ActionsPass {
+  onEdit: () => void;
+  onDelete: () => void;
+  editing: boolean;
+}
+
+/**
+ * 宿主自身状态变化引起的重渲染。仓库没有 DOM 测试环境，这里用「渲染期 setState」让
+ * react-dom/server 就地重渲染同一个组件（hook 记忆保留），等价于宿主打开编辑对话框那一次重渲染。
+ */
+function ActionsProbe({ device, passes }: { device: Device; passes: ActionsPass[] }) {
+  const { onEdit, onDelete, editing } = useDeviceCardActions(device);
+  passes.push({ onEdit, onDelete, editing });
+  if (!editing) onEdit();
+  return null;
+}
+
+/** 记忆化只有在 props 身份稳定时才会真的 bail out，回调别被顺手改回内联箭头函数 */
+test('宿主开关对话框重渲染后，交给卡片的回调身份不变', () => {
+  const passes: ActionsPass[] = [];
+  renderToStaticMarkup(<ActionsProbe device={LOCAL_DEVICE} passes={passes} />);
+
+  expect(passes.map((pass) => pass.editing)).toEqual([false, true]);
+  expect(passes[1]?.onEdit).toBe(passes[0]?.onEdit);
+  expect(passes[1]?.onDelete).toBe(passes[0]?.onDelete);
 });
 
 function occurrences(html: string, text: string): number {
