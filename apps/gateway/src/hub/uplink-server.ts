@@ -14,6 +14,8 @@ import {
 import type { LinkSession, LinkStream } from '@tmex/shared/link';
 import type { AuthDb } from '../auth/types';
 import type { UserStore } from '../auth/user-store';
+import { parseJson, projectNode, upsertById } from '../mesh/node-list-projection';
+import { pumpLink } from '../mesh/stream-pump';
 import { patchNode } from './node-persistence';
 import type { NodeRegistry } from './node-registry';
 import {
@@ -1285,15 +1287,18 @@ export class UplinkServer {
       .filter((n) => n.userId === userId && n.status === 'enrolled')
       .map((n) => {
         const live = online.get(n.id);
-        return {
-          id: n.id,
-          name: n.name,
-          online: Boolean(live),
-          endpoints: live?.meta.endpoints ?? parseJson(n.endpointsJson, []),
-          inventory: live?.meta.inventory ?? parseJson(n.inventoryJson, {}),
-          direct_capable: live?.meta.directCapable ?? n.directCapable,
-          version: live?.meta.version ?? n.version ?? '',
-        };
+        return projectNode(
+          n.id,
+          n.name,
+          Boolean(live),
+          {
+            endpoints: parseJson(n.endpointsJson, []),
+            inventory: parseJson(n.inventoryJson, {}),
+            directCapable: n.directCapable,
+            version: n.version ?? '',
+          },
+          live?.meta
+        );
       });
     const hubNodeId = this.config.nodeId ?? this.userStore.getHubMeta()?.nodeId;
     const hubName = hubNodeId ? this.nodeDisplayName(hubNodeId) : null;
@@ -1304,57 +1309,45 @@ export class UplinkServer {
         now: this.now(),
         listVersion: this.listVersion,
       });
-      const live = online.get(hubNodeId);
       const existing = nodes.find((n) => n.id === hubNodeId);
-      const hubEntry = {
-        id: hubNodeId,
-        name: hubName ?? hubNodeId,
-        online: true,
-        endpoints: live?.meta.endpoints ?? existing?.endpoints ?? [],
-        inventory: live?.meta.inventory ?? existing?.inventory ?? {},
-        direct_capable: live?.meta.directCapable ?? existing?.direct_capable ?? false,
-        version: live?.meta.version ?? existing?.version ?? '',
-      };
-      if (existing) {
-        existing.name = hubEntry.name;
-        existing.online = true;
-        existing.endpoints = hubEntry.endpoints;
-        existing.inventory = hubEntry.inventory;
-        existing.direct_capable = hubEntry.direct_capable;
-        existing.version = hubEntry.version;
-      } else {
-        nodes.push(hubEntry);
-      }
+      upsertById(
+        nodes,
+        projectNode(
+          hubNodeId,
+          hubName ?? hubNodeId,
+          true,
+          {
+            endpoints: existing?.endpoints ?? [],
+            inventory: existing?.inventory ?? {},
+            directCapable: existing?.direct_capable ?? false,
+            version: existing?.version ?? '',
+          },
+          online.get(hubNodeId)?.meta
+        )
+      );
     }
-    const msg: NodeListMessage = {
+    return {
       t: 'node.list',
       version: this.listVersion,
       key_log_head: { seq: seqToWire(head.seq), hash: bytesToB64url(head.hash) },
-      rtc: {
-        stun: this.config.stun,
-        turn: this.config.turn ?? null,
-      },
+      rtc: { stun: this.config.stun, turn: this.config.turn ?? null },
       nodes,
+      ...(hubNodeId
+        ? {
+            hub: {
+              nodeId: hubNodeId,
+              publicUrl: this.config.publicUrl,
+              ...(hubName ? { name: hubName } : {}),
+            },
+          }
+        : {}),
     };
-    if (hubNodeId) {
-      msg.hub = {
-        nodeId: hubNodeId,
-        publicUrl: this.config.publicUrl,
-        ...(hubName ? { name: hubName } : {}),
-      };
-    }
-    return msg;
   }
 
   private nodeDisplayName(nodeId: string): string {
-    const row = this.userStore.getNode(nodeId);
-    const registry = row?.name?.trim();
+    const registry = this.userStore.getNode(nodeId)?.name?.trim();
     if (registry && registry !== nodeId) return registry;
-    const site = this.config.siteName?.trim();
-    if (site) return site;
-    const host = os.hostname().trim();
-    if (host) return host;
-    return nodeId;
+    return this.config.siteName?.trim() || os.hostname().trim() || nodeId;
   }
 }
 
@@ -1371,14 +1364,6 @@ function stringifyJson(value: unknown): string {
     return JSON.stringify(value ?? null);
   } catch {
     return 'null';
-  }
-}
-
-function parseJson(raw: string, fallback: unknown): unknown {
-  try {
-    return JSON.parse(raw);
-  } catch {
-    return fallback;
   }
 }
 
@@ -1413,8 +1398,8 @@ function pumpRelay(a: LinkStream, b: LinkStream): void {
   };
   a.onAbort(abortBoth);
   b.onAbort(abortBoth);
-  void copyDirection(a, b, abortBoth);
-  void copyDirection(b, a, abortBoth);
+  void pumpLink(a, b, abortBoth);
+  void pumpLink(b, a, abortBoth);
 }
 
 function parseDcPeerSession(rtcSession: string): { a: string; b: string } | null {
@@ -1428,20 +1413,4 @@ function parseDcPeerSession(rtcSession: string): { a: string; b: string } | null
   const a = first < second ? first : second;
   const b = first < second ? second : first;
   return { a, b };
-}
-
-async function copyDirection(src: LinkStream, dst: LinkStream, onError: () => void): Promise<void> {
-  const reader = src.readable.getReader();
-  try {
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      if (value) {
-        await dst.write(value.bytes, { head: value.head });
-      }
-    }
-    dst.end();
-  } catch {
-    onError();
-  }
 }

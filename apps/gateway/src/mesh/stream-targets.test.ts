@@ -614,7 +614,168 @@ describe('http/ws stream targets', () => {
     const opened = await openWsStream(a, issued.sid);
     await expect(opened.stream.closed).resolves.toMatchObject({ reason: 'rst' });
   });
+
+  test('HTTP abort cancel() rejection is not unhandled', async () => {
+    const [a, b] = createInMemoryLinkPair();
+    b.onStream((stream) => {
+      void acceptHttpStream(stream, {
+        peerNodeId: 'entry-1',
+        sessionStore: {
+          verify: () => ({ ok: true, session: { userId: 'user-1' } }),
+        } as unknown as NodeSessionStore,
+        async dispatchHttp() {
+          return new Response(
+            new ReadableStream({
+              start() {},
+              cancel() {
+                return Promise.reject(new Error('cancel-fail'));
+              },
+            })
+          );
+        },
+      });
+    });
+    const unhandled = await collectUnhandled(async () => {
+      const res = await openHttpStream(a, {
+        method: 'GET',
+        path: '/api/hang',
+        origin: 'http://localhost',
+        auth: 'sid',
+      });
+      await res.body?.cancel();
+      await Bun.sleep(30);
+    });
+    expect(unhandled).toEqual([]);
+  });
+
+  test('failed response head cancels the upload and does not unhandle writeBody', async () => {
+    const [a, b] = createInMemoryLinkPair();
+    b.onStream(async (stream) => {
+      await stream.end();
+    });
+    let cancelled = false;
+    const body = new ReadableStream<Uint8Array>({
+      pull(controller) {
+        controller.enqueue(new Uint8Array([1]));
+      },
+      cancel() {
+        cancelled = true;
+      },
+    });
+    const unhandled = await collectUnhandled(async () => {
+      await expect(
+        openHttpStream(
+          a,
+          { method: 'POST', path: '/api/echo', origin: 'http://localhost', auth: 'sid' },
+          body
+        )
+      ).rejects.toBeDefined();
+      await Bun.sleep(20);
+    });
+    expect(cancelled).toBe(true);
+    expect(unhandled).toEqual([]);
+  });
+
+  test('GET without body does not unhandle end() when the peer RSTs before head', async () => {
+    const [a, b] = createInMemoryLinkPair();
+    b.onStream((stream) => {
+      stream.reset('link-down');
+    });
+    const unhandled = await collectUnhandled(async () => {
+      await expect(
+        openHttpStream(a, {
+          type: 'http',
+          method: 'GET',
+          path: '/api/devices',
+          origin: 'http://entry',
+          auth: null,
+        })
+      ).rejects.toThrow();
+    });
+    expect(unhandled).toEqual([]);
+  });
+
+  test('openWsStream.close end() rejection is not unhandled', async () => {
+    const server = new WebSocketServer();
+    const { db, close } = createMigratedAuthDb();
+    fixtures.push({ close });
+    const store = new NodeSessionStore(db);
+    const userStore = new UserStore(db);
+    seedUser(userStore);
+    const sid = store.issue({
+      userId: 'user-1',
+      viaNodeId: 'entry-1',
+      sessPublicKey: new Uint8Array(32),
+      delegationMethod: 'root',
+      now: Date.now(),
+    });
+    const [a, b] = createInMemoryLinkPair();
+    b.onStream((stream) => {
+      void acceptWsStream(stream, {
+        peerNodeId: 'entry-1',
+        sessionStore: store,
+        wsServer: server,
+      });
+    });
+    const opened = await openWsStream(a, sid.sid);
+    opened.stream.end = () => Promise.reject(new Error('end-fail'));
+    const unhandled = await collectUnhandled(async () => {
+      opened.close();
+      await Bun.sleep(20);
+    });
+    expect(unhandled).toEqual([]);
+  });
+
+  test('WS teardown end() rejection is not unhandled', async () => {
+    const server = new WebSocketServer();
+    const { db, close } = createMigratedAuthDb();
+    fixtures.push({ close });
+    const store = new NodeSessionStore(db);
+    const userStore = new UserStore(db);
+    seedUser(userStore);
+    const issued = store.issue({
+      userId: 'user-1',
+      viaNodeId: 'entry-1',
+      sessPublicKey: new Uint8Array(32),
+      delegationMethod: 'root',
+      now: Date.now(),
+    });
+    const [a, b] = createInMemoryLinkPair();
+    b.onStream((stream) => {
+      stream.end = () => Promise.reject(new Error('teardown-end-fail'));
+      void acceptWsStream(stream, {
+        peerNodeId: 'entry-1',
+        sessionStore: store,
+        wsServer: server,
+      });
+    });
+    const opened = await openWsStream(a, issued.sid);
+    const unhandled = await collectUnhandled(async () => {
+      opened.close();
+      await Bun.sleep(40);
+    });
+    expect(unhandled).toEqual([]);
+  });
 });
+
+async function collectUnhandled(run: () => Promise<void>): Promise<unknown[]> {
+  const unhandled: unknown[] = [];
+  const onUnhandled = (reason: unknown) => {
+    unhandled.push(reason);
+  };
+  const events = process as unknown as {
+    on(event: string, listener: (reason: unknown) => void): void;
+    off(event: string, listener: (reason: unknown) => void): void;
+  };
+  events.on('unhandledRejection', onUnhandled);
+  try {
+    await run();
+    await Bun.sleep(20);
+  } finally {
+    events.off('unhandledRejection', onUnhandled);
+  }
+  return unhandled;
+}
 
 describe('LinkStreamCarrier with attachStreamSession', () => {
   test('attachStreamSession routes HELLO without a Bun socket', async () => {

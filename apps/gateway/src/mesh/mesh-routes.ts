@@ -23,6 +23,12 @@ import {
   getMeshRequestContext,
 } from './mesh-deps';
 import {
+  parseJson,
+  pickMeshNodeName,
+  projectNode,
+  versionFromInventory,
+} from './node-list-projection';
+import {
   type AuthenticateOk,
   type SessionMiddlewareDeps,
   authenticateRequest,
@@ -213,26 +219,19 @@ export class MeshRoutes {
     const reach = this.deps.peers.listReach();
     const hubOnline = this.deps.peers.listHubOnline?.() ?? new Set<string>();
     const certs = this.deps.userStore.listCerts().filter((c) => c.revokedLogSeq == null);
-    const peers = this.deps.userStore.listPeers();
-    const peerById = new Map(peers.map((p) => [p.nodeId, p]));
-    const listedById = new Map(
-      (this.deps.listedNames?.() ?? []).map((row) => [row.id, row.name] as const)
-    );
-    const registryById = new Map(
-      this.deps.userStore.listNodes().map((row) => [row.id, row.name] as const)
-    );
+    const certById = new Map(certs.map((c) => [c.nodeId, c]));
+    const peerById = new Map(this.deps.userStore.listPeers().map((p) => [p.nodeId, p]));
+    const listedById = new Map((this.deps.listedNames?.() ?? []).map((row) => [row.id, row.name]));
+    const registryById = new Map(this.deps.userStore.listNodes().map((row) => [row.id, row.name]));
     const selfName = this.deps.selfName?.() ?? null;
-    const ids = new Set<string>([this.deps.nodeId]);
-    for (const cert of certs) ids.add(cert.nodeId);
+    const self = this.deps.selfStatus?.();
     const hubNodeId = this.deps.roles.hub
       ? this.deps.nodeId
       : (this.deps.userStore.getHubMeta()?.nodeId ?? null);
-
     const nodes: MeshNodeDto[] = [];
-    for (const id of ids) {
-      const cert = certs.find((c) => c.nodeId === id);
+    for (const id of new Set([this.deps.nodeId, ...certs.map((c) => c.nodeId)])) {
+      const cert = certById.get(id);
       if (id !== this.deps.nodeId && !cert) continue;
-      const peer = peerById.get(id);
       let publicKey = this.deps.nodePk;
       if (id !== this.deps.nodeId && cert) {
         try {
@@ -243,47 +242,42 @@ export class MeshRoutes {
       }
       const isSelf = id === this.deps.nodeId;
       const r = reach.get(id) ?? null;
-      const online = isSelf ? true : hubOnline.has(id) || r === 'lan' || r === 'relay';
-      const loggedIn = isSelf
-        ? cookies.has(nodeSessionCookieName(MESH_VIA_SELF))
-        : cookies.has(nodeSessionCookieName(id));
-      const listedName = listedById.get(id);
-      const registryName = registryById.get(id);
-      let inventory: unknown = null;
-      if (peer?.inventoryJson) {
-        try {
-          inventory = JSON.parse(peer.inventoryJson);
-        } catch {
-          inventory = peer.inventoryJson;
-        }
-      }
-      let version = versionFromInventory(inventory);
-      let directCapable = peer?.directCapable ?? false;
-      if (isSelf) {
-        const self = this.deps.selfStatus?.();
-        if (self) {
-          inventory = self.inventory ?? inventory;
-          version = self.version || versionFromInventory(inventory);
-          directCapable = self.direct_capable;
-        }
-      }
-      nodes.push({
+      const peer = peerById.get(id);
+      const inv = parseJson(peer?.inventoryJson, peer?.inventoryJson ?? null);
+      const core = projectNode(
         id,
-        name: pickMeshNodeName({
+        pickMeshNodeName({
           id,
           isSelf,
-          listedName,
-          registryName,
+          listedName: listedById.get(id),
+          registryName: registryById.get(id),
           selfName: isSelf ? selfName : null,
         }),
+        isSelf || hubOnline.has(id) || r === 'lan' || r === 'relay',
+        {
+          inventory: inv,
+          directCapable: peer?.directCapable ?? false,
+          version: versionFromInventory(inv),
+        },
+        isSelf && self
+          ? {
+              inventory: self.inventory,
+              directCapable: self.direct_capable,
+              version: self.version || undefined,
+            }
+          : null
+      );
+      nodes.push({
+        id,
+        name: core.name,
         publicKey: encodeBase64url(publicKey),
-        online,
+        online: core.online,
         reach: r,
         transport: isSelf ? null : (this.deps.peers.transportOf?.(id) ?? null),
-        version,
-        direct_capable: directCapable,
-        inventory,
-        loggedIn,
+        version: core.version || versionFromInventory(core.inventory),
+        direct_capable: core.direct_capable,
+        inventory: core.inventory,
+        loggedIn: cookies.has(nodeSessionCookieName(isSelf ? MESH_VIA_SELF : id)),
         isHub: hubNodeId != null && id === hubNodeId,
       });
     }
@@ -296,25 +290,18 @@ export class MeshRoutes {
   }
 
   private handleConnection(req: Request, auth: AuthenticateOk): Response {
-    if (!auth.sid) {
-      return jsonError('UNAUTHORIZED', 401);
-    }
+    if (!auth.sid) return jsonError('UNAUTHORIZED', 401);
     const via = getMeshRequestContext(req).via || MESH_VIA_SELF;
-    const url = new URL(req.url);
-    const cid = url.searchParams.get('cid')?.trim() || null;
-    const header = req.headers.get(X_TMEX_CONNECTION)?.trim() || null;
+    const cid = new URL(req.url).searchParams.get('cid')?.trim() || null;
     const resolved = this.deps.connectionLookup?.({
       sid: auth.sid,
       via,
       cid,
-      connectionId: cid ? null : header,
+      connectionId: cid ? null : req.headers.get(X_TMEX_CONNECTION)?.trim() || null,
     });
-    if (!resolved) {
-      return jsonError('NO_CONNECTION', 404);
-    }
+    if (!resolved) return jsonError('NO_CONNECTION', 404);
     if (!resolved.ok) {
-      const status = resolved.code === 'MULTIPLE_CONNECTIONS' ? 409 : 404;
-      return jsonError(resolved.code, status, {
+      return jsonError(resolved.code, resolved.code === 'MULTIPLE_CONNECTIONS' ? 409 : 404, {
         hint: 'open Gateway WS with ?cid=<tab-nonce> then GET /api/mesh/connection?cid=',
       });
     }
@@ -322,37 +309,33 @@ export class MeshRoutes {
   }
 
   private async handleRtcAuthorize(req: Request, auth: AuthenticateOk): Promise<Response> {
-    if (!auth.userId) {
-      return jsonError('UNAUTHORIZED', 401);
-    }
-    if (!this.deps.rtcFingerprint) {
-      return jsonError('DIRECT_UNAVAILABLE', 503);
-    }
+    if (!auth.userId) return jsonError('UNAUTHORIZED', 401);
+    if (!this.deps.rtcFingerprint) return jsonError('DIRECT_UNAVAILABLE', 503);
     const body = await readJsonObjectBody(req);
     const rtcSession = typeof body?.rtcSession === 'string' ? body.rtcSession : '';
-    const fp = body?.fp_browser;
-    if (!rtcSession || typeof fp !== 'object' || fp === null) {
+    const fp = body?.fp_browser as { algorithm?: unknown; value?: unknown } | null | undefined;
+    if (
+      !rtcSession ||
+      typeof fp !== 'object' ||
+      fp === null ||
+      typeof fp.algorithm !== 'string' ||
+      typeof fp.value !== 'string'
+    ) {
       return jsonError('MALFORMED', 400);
     }
-    const fpBrowser = fp as { algorithm?: unknown; value?: unknown };
-    if (typeof fpBrowser.algorithm !== 'string' || typeof fpBrowser.value !== 'string') {
-      return jsonError('MALFORMED', 400);
-    }
+    if (!auth.sid) return jsonError('UNAUTHORIZED', 401);
     const via = getMeshRequestContext(req).via || MESH_VIA_SELF;
-    if (!auth.sid) {
-      return jsonError('UNAUTHORIZED', 401);
-    }
-    const bodyConnectionId = typeof body?.connectionId === 'string' ? body.connectionId.trim() : '';
-    const headerConnectionId = req.headers.get(X_TMEX_CONNECTION)?.trim() || '';
-    const requestedConnectionId = bodyConnectionId || headerConnectionId || null;
+    const requestedConnectionId =
+      (typeof body?.connectionId === 'string' ? body.connectionId.trim() : '') ||
+      req.headers.get(X_TMEX_CONNECTION)?.trim() ||
+      null;
     const resolved = this.deps.connectionLookup?.({
       sid: auth.sid,
       via,
       connectionId: requestedConnectionId,
     });
     if (resolved && !resolved.ok) {
-      const status = resolved.code === 'MULTIPLE_CONNECTIONS' ? 409 : 404;
-      return jsonError(resolved.code, status, {
+      return jsonError(resolved.code, resolved.code === 'MULTIPLE_CONNECTIONS' ? 409 : 404, {
         hint: 'send connectionId from GET /api/mesh/connection or x-tmex-connection',
       });
     }
@@ -362,15 +345,10 @@ export class MeshRoutes {
       via,
       sid: auth.sid,
       ...(resolved?.ok ? { connectionId: resolved.connectionId } : {}),
-      fpBrowser: { algorithm: fpBrowser.algorithm, value: fpBrowser.value },
+      fpBrowser: { algorithm: fp.algorithm, value: fp.value },
     });
-    if (!granted) {
-      return jsonError('DIRECT_UNAVAILABLE', 503);
-    }
-    return jsonBody({
-      nonce: encodeBase64url(granted.nonce),
-      fp_node: granted.fpNode,
-    });
+    if (!granted) return jsonError('DIRECT_UNAVAILABLE', 503);
+    return jsonBody({ nonce: encodeBase64url(granted.nonce), fp_node: granted.fpNode });
   }
 
   private handleMeshWsUpgrade(req: Request, server: MeshUpgradeServer): Response | undefined {
@@ -448,36 +426,6 @@ function toBytes(message: unknown): Uint8Array | null {
   if (message instanceof ArrayBuffer) return new Uint8Array(message);
   if (ArrayBuffer.isView(message)) {
     return new Uint8Array(message.buffer, message.byteOffset, message.byteLength);
-  }
-  return null;
-}
-
-function usableMeshName(name: string | null | undefined, nodeId: string): string | null {
-  const trimmed = name?.trim() ?? '';
-  if (!trimmed || trimmed === nodeId || trimmed === 'self') return null;
-  return trimmed;
-}
-
-function pickMeshNodeName(input: {
-  id: string;
-  isSelf: boolean;
-  listedName?: string | null;
-  registryName?: string | null;
-  selfName?: string | null;
-}): string {
-  return (
-    usableMeshName(input.listedName, input.id) ??
-    usableMeshName(input.registryName, input.id) ??
-    (input.isSelf ? usableMeshName(input.selfName, input.id) : null) ??
-    (input.isSelf ? input.selfName?.trim() || 'self' : input.id)
-  );
-}
-
-function versionFromInventory(inventory: unknown): string | null {
-  if (inventory && typeof inventory === 'object' && inventory !== null && 'version' in inventory) {
-    const value = (inventory as { version: unknown }).version;
-    if (value == null) return null;
-    return String(value);
   }
   return null;
 }

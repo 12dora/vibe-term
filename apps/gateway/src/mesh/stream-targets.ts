@@ -7,6 +7,7 @@ import { encodeJsonBytes, isRecord } from './ctl';
 import { LinkStreamCarrier } from './link-stream-carrier';
 import { X_TMEX_SESSION_RENEWED } from './mesh-deps';
 import { parseOpenPayload } from './peer-protocol';
+import { pumpToLink } from './stream-pump';
 import type { DispatchHttp, HttpStreamOpenPayload, WsStreamOpenPayload } from './types';
 
 const AUTH_SKIP_PATHS = new Set(['/api/auth/challenge', '/api/auth/login']);
@@ -28,12 +29,6 @@ export type StreamAuthContext = {
   now?: () => number;
 };
 
-export type StreamAuthOk = {
-  ok: true;
-  uid: string | null;
-  renewedExpiresAt?: number;
-};
-
 export function isAuthSkippedPath(path: string): boolean {
   const bare = path.split('?')[0] ?? path;
   return AUTH_SKIP_PATHS.has(bare);
@@ -42,23 +37,24 @@ export function isAuthSkippedPath(path: string): boolean {
 export function stripForwardedRequestHeaders(
   headers?: Record<string, string> | null
 ): Record<string, string> {
-  const out: Record<string, string> = {};
-  if (!headers) return out;
-  for (const [key, value] of Object.entries(headers)) {
-    const lower = key.toLowerCase();
-    if (BLOCKED_REQUEST_HEADERS.has(lower)) continue;
-    if (lower.startsWith('proxy-')) continue;
-    if (lower.startsWith('x-forwarded-')) continue;
-    out[key] = value;
-  }
-  return out;
+  return copyHeaders(
+    headers,
+    (k) => BLOCKED_REQUEST_HEADERS.has(k) || k.startsWith('proxy-') || k.startsWith('x-forwarded-')
+  );
 }
 
 export function stripSetCookieHeaders(headers: Record<string, string>): Record<string, string> {
+  return copyHeaders(headers, (k) => k === 'set-cookie');
+}
+
+function copyHeaders(
+  headers: Record<string, string> | null | undefined,
+  drop: (lower: string) => boolean
+): Record<string, string> {
   const out: Record<string, string> = {};
+  if (!headers) return out;
   for (const [key, value] of Object.entries(headers)) {
-    if (key.toLowerCase() === 'set-cookie') continue;
-    out[key] = value;
+    if (!drop(key.toLowerCase())) out[key] = value;
   }
   return out;
 }
@@ -82,39 +78,83 @@ function logHttpForwardAborted(fields: {
   const now = Date.now();
   if (now - lastHttpForwardAbortLogAt < HTTP_FORWARD_ABORT_LOG_INTERVAL_MS) return;
   lastHttpForwardAbortLogAt = now;
-  const expected = fields.expected === null ? '-' : String(fields.expected);
   console.warn(
-    `[mesh][http] forward aborted status=${fields.status} sent=${fields.sent} expected=${expected} reason=${fields.reason}`
+    `[mesh][http] forward aborted status=${fields.status} sent=${fields.sent} expected=${fields.expected ?? '-'} reason=${fields.reason}`
   );
 }
 
 function headerRecord(headers: Headers): Record<string, string> {
   const out: Record<string, string> = {};
   headers.forEach((value, key) => {
-    if (key.toLowerCase() === 'set-cookie') return;
     out[key] = value;
   });
+  return stripSetCookieHeaders(out);
+}
+
+function stringHeaders(value: unknown): Record<string, string> {
+  const out: Record<string, string> = {};
+  if (!isRecord(value)) return out;
+  for (const [key, val] of Object.entries(value)) {
+    if (typeof val === 'string') out[key] = val;
+  }
   return out;
+}
+
+function str(value: unknown, fallback = ''): string {
+  return typeof value === 'string' ? value : fallback;
+}
+
+function requestBodyFromLink(
+  reader: ReadableStreamDefaultReader<{ bytes: Uint8Array; head: boolean }>,
+  stream: LinkStream,
+  abort: AbortController,
+  complete: () => boolean
+): ReadableStream<Uint8Array> {
+  return new ReadableStream({
+    async pull(controller) {
+      for (;;) {
+        let chunk: Awaited<ReturnType<typeof reader.read>>;
+        try {
+          chunk = await reader.read();
+        } catch (err) {
+          controller.error(err);
+          return;
+        }
+        if (chunk.done) {
+          controller.close();
+          return;
+        }
+        if (chunk.value?.head) continue;
+        if (chunk.value?.bytes.byteLength) {
+          controller.enqueue(chunk.value.bytes);
+          return;
+        }
+      }
+    },
+    cancel() {
+      if (!abort.signal.aborted) abort.abort();
+      if (!complete())
+        try {
+          stream.reset('request-cancelled');
+        } catch {
+          // already reset
+        }
+    },
+  });
 }
 
 function verifyAuth(
   auth: string | null | undefined,
   path: string,
   ctx: StreamAuthContext
-): StreamAuthOk | { ok: false; reason: string } {
-  if (isAuthSkippedPath(path)) {
-    return { ok: true, uid: null };
-  }
-  if (!auth) {
-    return { ok: false, reason: 'missing auth' };
-  }
+): { ok: true; uid: string | null; renewedExpiresAt?: number } | { ok: false; reason: string } {
+  if (isAuthSkippedPath(path)) return { ok: true, uid: null };
+  if (!auth) return { ok: false, reason: 'missing auth' };
   const result = ctx.sessionStore.verify(auth, {
     viaNodeId: ctx.peerNodeId,
     now: ctx.now?.() ?? Date.now(),
   });
-  if (!result.ok) {
-    return { ok: false, reason: result.reason };
-  }
+  if (!result.ok) return { ok: false, reason: result.reason };
   return {
     ok: true,
     uid: result.session.userId,
@@ -127,20 +167,12 @@ export async function acceptHttpStream(
   opts: StreamAuthContext & { dispatchHttp: DispatchHttp }
 ): Promise<void> {
   const open = parseOpenPayload(stream.openPayload) ?? {};
-  const method = typeof open.method === 'string' ? open.method : 'GET';
-  const path = typeof open.path === 'string' ? open.path : '/';
-  const query = typeof open.query === 'string' ? open.query : '';
-  const origin = typeof open.origin === 'string' ? open.origin : 'http://localhost';
-  const headers = stripForwardedRequestHeaders(
-    isRecord(open.headers)
-      ? Object.fromEntries(
-          Object.entries(open.headers).filter(
-            (entry): entry is [string, string] => typeof entry[1] === 'string'
-          )
-        )
-      : {}
-  );
-  const auth = typeof open.auth === 'string' ? open.auth : null;
+  const method = str(open.method, 'GET');
+  const path = str(open.path, '/');
+  const query = str(open.query);
+  const origin = str(open.origin, 'http://localhost');
+  const headers = stripForwardedRequestHeaders(stringHeaders(open.headers));
+  const auth = str(open.auth) || null;
   const verified = verifyAuth(auth, path, opts);
   if (!verified.ok) {
     await writeHttpResponse(
@@ -158,69 +190,18 @@ export async function acceptHttpStream(
     null;
   let responseReader: ReadableStreamDefaultReader<Uint8Array> | null = null;
   let responseComplete = false;
-
   const cancelReaders = () => {
-    try {
-      void requestReader?.cancel();
-    } catch {
-      // already cancelled
-    }
-    try {
-      void responseReader?.cancel();
-    } catch {
-      // already cancelled
-    }
+    void requestReader?.cancel().catch(() => {});
+    void responseReader?.cancel().catch(() => {});
   };
-
   stream.onAbort(() => {
     if (!abort.signal.aborted) abort.abort();
     cancelReaders();
   });
-
-  if (hasBody) {
-    requestReader = stream.readable.getReader();
-  }
-
-  const requestBody = hasBody
-    ? new ReadableStream<Uint8Array>({
-        async pull(controller) {
-          const reader = requestReader;
-          if (!reader) {
-            controller.close();
-            return;
-          }
-          while (true) {
-            let chunk: Awaited<ReturnType<typeof reader.read>>;
-            try {
-              chunk = await reader.read();
-            } catch (err) {
-              controller.error(err);
-              return;
-            }
-            if (chunk.done) {
-              controller.close();
-              return;
-            }
-            if (chunk.value?.head) continue;
-            if (chunk.value && chunk.value.bytes.byteLength > 0) {
-              controller.enqueue(chunk.value.bytes);
-              return;
-            }
-          }
-        },
-        cancel() {
-          if (!abort.signal.aborted) abort.abort();
-          if (!responseComplete) {
-            try {
-              stream.reset('request-cancelled');
-            } catch {
-              // already reset
-            }
-          }
-        },
-      })
+  if (hasBody) requestReader = stream.readable.getReader();
+  const requestBody = requestReader
+    ? requestBodyFromLink(requestReader, stream, abort, () => responseComplete)
     : null;
-
   const url = new URL(path + query, origin.endsWith('/') ? origin : `${origin}/`);
   const request = new Request(url, {
     method,
@@ -244,7 +225,7 @@ export async function acceptHttpStream(
     return;
   }
 
-  const responseHeaders = stripSetCookieHeaders(headerRecord(response.headers));
+  const responseHeaders = headerRecord(response.headers);
   if (verified.renewedExpiresAt !== undefined) {
     responseHeaders[X_TMEX_SESSION_RENEWED] = String(verified.renewedExpiresAt);
   }
@@ -253,25 +234,14 @@ export async function acceptHttpStream(
     await stream.write(encodeJsonBytes({ status: response.status, headers: responseHeaders }), {
       head: true,
     });
-    if (response.body) {
-      responseReader = response.body.getReader();
-      try {
-        while (true) {
-          if (abort.signal.aborted) break;
-          const { done, value } = await responseReader.read();
-          if (done) break;
-          if (value && value.byteLength > 0) {
-            await stream.write(value);
-          }
-        }
-      } catch {
-        if (!abort.signal.aborted && !responseComplete) {
-          stream.reset('response-cancelled');
-        }
-        return;
-      }
+    responseReader = response.body?.getReader() ?? null;
+    if (
+      !(await pumpToLink(responseReader, stream, () => {
+        if (!abort.signal.aborted && !responseComplete) stream.reset('response-cancelled');
+      }))
+    ) {
+      return;
     }
-    await stream.end();
     responseComplete = true;
   } catch {
     if (!responseComplete) {
@@ -292,9 +262,7 @@ async function writeHttpResponse(
 ): Promise<void> {
   try {
     await stream.write(encodeJsonBytes({ status, headers }), { head: true });
-    if (body) {
-      await stream.write(new TextEncoder().encode(body));
-    }
+    if (body) await stream.write(new TextEncoder().encode(body));
     await stream.end();
   } catch {
     try {
@@ -340,30 +308,15 @@ export async function openHttpStream(
   });
 
   const upload = { reader: null as ReadableStreamDefaultReader<Uint8Array> | null };
-  const writeBody = (async () => {
-    if (!body) {
-      await stream.end();
-      return;
-    }
-    if (body instanceof Uint8Array) {
-      if (body.byteLength > 0 && !stopUpload.signal.aborted) await stream.write(body);
-      if (!stopUpload.signal.aborted) await stream.end();
-      return;
-    }
-    upload.reader = body.getReader();
-    try {
-      while (!stopUpload.signal.aborted) {
-        const { done, value } = await upload.reader.read();
-        if (done) break;
-        if (value && value.byteLength > 0) {
-          await stream.write(value);
-        }
-      }
-      if (!stopUpload.signal.aborted) await stream.end();
-    } catch {
+  if (body && !(body instanceof Uint8Array)) upload.reader = body.getReader();
+  void pumpToLink(
+    upload.reader ?? (body instanceof Uint8Array ? body : null),
+    stream,
+    () => {
       if (!gotHead && !stopUpload.signal.aborted) rst();
-    }
-  })();
+    },
+    () => stopUpload.signal.aborted
+  );
 
   try {
     const head = await readHttpHead(stream);
@@ -391,9 +344,8 @@ export async function openHttpStream(
           reason: error.message,
         });
       }
-      if (!bodyController) return;
       try {
-        bodyController.error(error);
+        bodyController?.error(error);
       } catch {
         // already closed/errored
       }
@@ -432,13 +384,11 @@ export async function openHttpStream(
               controller.enqueue(value.bytes);
             }
           }
-          if (abortedAfterHead) {
-            failBody(new Error('http stream aborted'));
-            return;
-          }
+          if (abortedAfterHead) return failBody(new Error('http stream aborted'));
           if (expectedLength !== null && sent < expectedLength) {
-            failBody(new Error(`http body truncated: sent=${sent} expected=${expectedLength}`));
-            return;
+            return failBody(
+              new Error(`http body truncated: sent=${sent} expected=${expectedLength}`)
+            );
           }
           controller.close();
         } catch (err) {
@@ -452,7 +402,12 @@ export async function openHttpStream(
     return new Response(responseBody, { status: head.status, headers: head.headers });
   } finally {
     signal?.removeEventListener('abort', onOuterAbort);
-    void writeBody;
+    if (!stopUpload.signal.aborted) stopUpload.abort();
+    try {
+      void upload.reader?.cancel().catch(() => {});
+    } catch {
+      // already released
+    }
   }
 }
 
@@ -471,17 +426,11 @@ async function readHttpHead(stream: LinkStream): Promise<{
       }
       if (value.head) {
         const parsed = parseOpenPayload(value.bytes) ?? {};
-        const status = typeof parsed.status === 'number' ? parsed.status : 200;
-        const headers = stripSetCookieHeaders(
-          isRecord(parsed.headers)
-            ? Object.fromEntries(
-                Object.entries(parsed.headers).filter(
-                  (entry): entry is [string, string] => typeof entry[1] === 'string'
-                )
-              )
-            : {}
-        );
-        return { status, headers, rest };
+        return {
+          status: typeof parsed.status === 'number' ? parsed.status : 200,
+          headers: stripSetCookieHeaders(stringHeaders(parsed.headers)),
+          rest,
+        };
       }
       rest.push(value.bytes);
     }
@@ -508,7 +457,7 @@ export async function acceptWsStream(
   opts: AcceptWsStreamOptions
 ): Promise<void> {
   const open = parseOpenPayload(stream.openPayload) ?? {};
-  const auth = typeof open.auth === 'string' ? open.auth : '';
+  const auth = str(open.auth);
   const verified = verifyAuth(auth, '/ws', opts);
   if (!verified.ok) {
     stream.reset(verified.reason);
@@ -517,11 +466,7 @@ export async function acceptWsStream(
   const sid = auth;
   const via = opts.peerNodeId;
   const uid = verified.uid;
-  const cidRaw =
-    (typeof open.cid === 'string' && open.cid) ||
-    (typeof open.connectionId === 'string' && open.connectionId) ||
-    '';
-  const cid = cidRaw.trim();
+  const cid = (str(open.cid) || str(open.connectionId)).trim();
   const carrier = new LinkStreamCarrier(stream);
   const attached = opts.wsServer.attachStreamSession(carrier);
   let tornDown = false;
@@ -540,7 +485,7 @@ export async function acceptWsStream(
     }
     try {
       if (mode === 'rst') stream.reset(reason ?? 'session-invalid');
-      else void stream.end();
+      else void stream.end().catch(() => {});
     } catch {
       // already closed
     }
@@ -579,7 +524,6 @@ export async function acceptWsStream(
         teardown('rst', check.reason);
         return;
       }
-      void uid;
       attached.onMessage(value.bytes);
     }
   } catch {
@@ -614,7 +558,7 @@ export async function openWsStream(
       })
     ),
     close: () => {
-      void stream.end();
+      void stream.end().catch(() => {});
     },
   };
 }
