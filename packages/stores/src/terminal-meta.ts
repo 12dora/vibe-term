@@ -106,9 +106,10 @@ export function buildWindowDisplayName(window: WindowTitleInput): string {
 }
 
 export function buildBrowserTitle(label?: string | null): string {
-  const siteName = getSiteNameFallback();
+  // 站点名在两条分支上都要归一，否则没选中窗格时标签页上又变回彩色 emoji
+  const siteName = forceTextPresentation(getSiteNameFallback());
   if (!label?.trim()) {
     return siteName;
   }
-  return `[${forceTextPresentation(siteName)}]${forceTextPresentation(label)}`;
+  return `[${siteName}]${forceTextPresentation(label)}`;
 }

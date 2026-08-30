@@ -23,8 +23,11 @@ export interface DevicesResponse {
 }
 
 // 多个包共享 ['devices'] 查询缓存且约定形态为 { devices }，故列表端点保留信封返回
-export async function fetchDevices(client: ApiClient = defaultApiClient): Promise<DevicesResponse> {
-  const res = await client.fetch('/api/devices');
+export async function fetchDevices(
+  client: ApiClient = defaultApiClient,
+  init?: RequestInit
+): Promise<DevicesResponse> {
+  const res = await client.fetch('/api/devices', init);
   if (!res.ok) {
     throw new Error(await parseApiError(res, 'Failed to load devices'));
   }

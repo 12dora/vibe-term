@@ -2,7 +2,9 @@
 // 展示路径统一补 U+FE0E；重命名等回写路径必须拿到未归一的原文。
 
 import { describe, expect, test } from 'bun:test';
+import { setSiteFallbackReader } from './site-fallback';
 import {
+  buildBrowserTitle,
   buildTerminalLabel,
   buildWindowDisplayName,
   buildWindowTitleParts,
@@ -72,5 +74,26 @@ describe('display helpers 应用归一', () => {
     expect(
       buildWindowDisplayName({ name: '✳node', panes: [{ active: true, title: 'build' }] })
     ).toBe(`✳${VS15}node: build`);
+  });
+});
+
+describe('buildBrowserTitle', () => {
+  test('无标签时站点名同样归一', () => {
+    const restore = setSiteFallbackReader(() => ({ siteName: '✳ tmex' }));
+    try {
+      expect(buildBrowserTitle(null)).toBe(`✳${VS15} tmex`);
+      expect(buildBrowserTitle('   ')).toBe(`✳${VS15} tmex`);
+    } finally {
+      restore();
+    }
+  });
+
+  test('带标签时站点名与标签都归一', () => {
+    const restore = setSiteFallbackReader(() => ({ siteName: '✳ tmex' }));
+    try {
+      expect(buildBrowserTitle('✴ vim')).toBe(`[✳${VS15} tmex]✴${VS15} vim`);
+    } finally {
+      restore();
+    }
   });
 });

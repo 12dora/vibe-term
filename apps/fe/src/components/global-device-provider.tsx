@@ -303,7 +303,7 @@ function useEnsureDeviceSubscribed(
 export function devicesQueryOptions(apiClient: ApiClient, offline: boolean) {
   return {
     queryKey: ['devices'] as const,
-    queryFn: () => fetchDevices(apiClient),
+    queryFn: ({ signal }: { signal?: AbortSignal }) => fetchDevices(apiClient, { signal }),
     enabled: !offline,
     throwOnError: false as const,
   };

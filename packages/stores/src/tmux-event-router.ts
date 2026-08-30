@@ -53,6 +53,13 @@ function clipboardWriterFor(ctx: TmuxEventRouterContext): DeferredClipboardWrite
   return writer;
 }
 
+function disposeClipboardWriter(ctx: TmuxEventRouterContext): void {
+  const writer = clipboardWriters.get(ctx);
+  if (!writer) return;
+  clipboardWriters.delete(ctx);
+  writer.dispose();
+}
+
 const handlers: TmuxEventHandlers = {
   'connection-state': (event, ctx) => {
     ctx.setState((prev) => ({
@@ -224,11 +231,19 @@ const handlers: TmuxEventHandlers = {
   'transport-error': (event) => {
     console.error('[tmux] gateway transport error:', event.error);
   },
+
+  'pending-overflow': (event) => {
+    console.warn('[tmux] pending send overflow:', event);
+  },
 };
 
 export function createTmuxEventRouter(
-  ctx: TmuxEventRouterContext
+  ctx: TmuxEventRouterContext,
+  disposers?: Array<() => void>
 ): (event: GatewayTransportEvent) => void {
+  // 挂起中的延迟写入器持有全局手势监听：runtime 拆卸时必须一并释放，
+  // 否则卸载后的手势仍会写剪贴板并弹通知
+  disposers?.push(() => disposeClipboardWriter(ctx));
   return (event) => {
     const handler = handlers[event.type] as
       | ((event: GatewayTransportEvent, ctx: TmuxEventRouterContext) => void)

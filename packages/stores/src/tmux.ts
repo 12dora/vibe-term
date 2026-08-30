@@ -105,16 +105,19 @@ export function createTmuxStore(
         },
       });
 
-      const routeEvent = createTmuxEventRouter({
-        core,
-        getState: get,
-        setState: set,
-        getSite: deps.getSite,
-        selection,
-        paneSubscriptions,
-        onReady: handleReady,
-        sendWindowStyleForCurrentTheme,
-      });
+      const routeEvent = createTmuxEventRouter(
+        {
+          core,
+          getState: get,
+          setState: set,
+          getSite: deps.getSite,
+          selection,
+          paneSubscriptions,
+          onReady: handleReady,
+          sendWindowStyleForCurrentTheme,
+        },
+        disposers
+      );
 
       disposers.push(core.transport.onEvent(routeEvent));
       const initialState = core.transport.getState();

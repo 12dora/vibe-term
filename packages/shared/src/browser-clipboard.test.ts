@@ -271,6 +271,74 @@ describe('createDeferredClipboardWriter', () => {
     expect(writer.hasPending()).toBe(false);
   });
 
+  /** 手工控制每次写入何时完成，用来构造乱序完成 */
+  function gatedWrite() {
+    const gates: Array<{ resolve: () => void; reject: () => void }> = [];
+    const write = mock(
+      (_text: string) =>
+        new Promise<void>((resolve, reject) => {
+          gates.push({ resolve, reject: () => reject(new Error('denied')) });
+        })
+    );
+    return { gates, write };
+  }
+
+  it('乱序完成：新写入先成功后，迟到的旧写入失败不再挂起', async () => {
+    const { gates, write } = gatedWrite();
+    const { calls, target, writer } = createWriterHarness(write);
+
+    const stale = writer.write('stale');
+    const fresh = writer.write('fresh');
+    gates[1].resolve();
+    await fresh;
+    gates[0].reject();
+    await stale;
+
+    expect(calls).toEqual(['success']);
+    expect(writer.hasPending()).toBe(false);
+    expect(target.listenerCount()).toBe(0);
+  });
+
+  it('乱序完成：新写入失败挂起后，迟到的旧写入成功不清掉挂起的新文本', async () => {
+    const { gates, write } = gatedWrite();
+    const { calls, target, writer } = createWriterHarness(write);
+
+    const stale = writer.write('stale');
+    const fresh = writer.write('fresh');
+    gates[1].reject();
+    await fresh;
+    expect(calls).toEqual(['pending']);
+    expect(writer.hasPending()).toBe(true);
+
+    gates[0].resolve();
+    await stale;
+    expect(calls).toEqual(['pending']);
+    expect(writer.hasPending()).toBe(true);
+
+    target.fire('pointerdown');
+    gates[2].resolve();
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(write.mock.calls.map((call) => call[0])).toEqual(['stale', 'fresh', 'fresh']);
+    expect(calls).toEqual(['pending', 'success']);
+    expect(target.listenerCount()).toBe(0);
+  });
+
+  it('dispose 后在途写入失败：不重新注册手势监听也不回调', async () => {
+    const { gates, write } = gatedWrite();
+    const { calls, target, writer } = createWriterHarness(write);
+
+    const inFlight = writer.write('deferred');
+    writer.dispose();
+    gates[0].reject();
+    await inFlight;
+
+    expect(calls).toEqual([]);
+    expect(writer.hasPending()).toBe(false);
+    expect(target.listenerCount()).toBe(0);
+  });
+
   it('dispose 拆掉监听与定时器，不再回调', async () => {
     jest.useFakeTimers();
     const write = mock(async () => {

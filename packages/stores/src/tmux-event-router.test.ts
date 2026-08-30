@@ -165,22 +165,29 @@ function createHarness(options: HarnessOptions = {}) {
     }),
   } as unknown as SiteStore;
 
-  const route = createTmuxEventRouter({
-    core,
-    getState: () => state,
-    setState,
-    getSite: () => site,
-    selection,
-    paneSubscriptions,
-    onReady: () => record('ready'),
-    sendWindowStyleForCurrentTheme: (deviceId: string) => record('windowStyle', deviceId),
-  });
+  const disposers: Array<() => void> = [];
+  const route = createTmuxEventRouter(
+    {
+      core,
+      getState: () => state,
+      setState,
+      getSite: () => site,
+      selection,
+      paneSubscriptions,
+      onReady: () => record('ready'),
+      sendWindowStyleForCurrentTheme: (deviceId: string) => record('windowStyle', deviceId),
+    },
+    disposers
+  );
 
   return {
     route,
     calls,
     namesOf,
     getState: () => state,
+    dispose() {
+      for (const dispose of disposers.splice(0)) dispose();
+    },
     setSelectedPane(deviceId: string, windowId: string, paneId: string) {
       setState((prev) => ({
         selectedPanes: { ...prev.selectedPanes, [deviceId]: { windowId, paneId } },
@@ -475,6 +482,53 @@ describe('tmux transport event router', () => {
     }
   });
 
+  test('router 拆卸释放延迟剪贴板写入器：挂起监听被摘掉，后续手势不写剪贴板也不弹通知', async () => {
+    const listeners = new Map<string, Set<() => void>>();
+    const windowStub = {
+      addEventListener(type: string, listener: () => void) {
+        const bucket = listeners.get(type) ?? new Set<() => void>();
+        bucket.add(listener);
+        listeners.set(type, bucket);
+      },
+      removeEventListener(type: string, listener: () => void) {
+        listeners.get(type)?.delete(listener);
+      },
+    };
+    Object.defineProperty(globalThis, 'window', { value: windowStub, configurable: true });
+
+    try {
+      const harness = createHarness({
+        clipboardAttempt: () => Promise.reject(new Error('no user activation')),
+      });
+      harness.setSelectedPane('device-a', '@1', '%1');
+      harness.route({
+        type: 'clipboard-write',
+        deviceId: 'device-a',
+        paneId: '%1',
+        text: 'copied',
+      });
+      await Promise.resolve();
+      await Promise.resolve();
+
+      const pending = [...(listeners.get('pointerdown') ?? [])];
+      expect(pending).toHaveLength(1);
+      expect(harness.namesOf('notify:info')).toHaveLength(1);
+
+      harness.dispose();
+      expect([...(listeners.get('pointerdown') ?? [])]).toHaveLength(0);
+
+      for (const listener of pending) listener();
+      await Promise.resolve();
+      await Promise.resolve();
+
+      expect(harness.namesOf('writeClipboardText')).toHaveLength(1);
+      expect(harness.namesOf('notify:success')).toHaveLength(0);
+      expect(harness.namesOf('notify:error')).toHaveLength(0);
+    } finally {
+      Reflect.deleteProperty(globalThis, 'window');
+    }
+  });
+
   test('clipboard-write failure surfaces an error toast', async () => {
     const harness = createHarness({ clipboardResult: Promise.reject(new Error('denied')) });
     harness.setSelectedPane('device-a', '@1', '%1');
@@ -532,6 +586,15 @@ describe('tmux transport event router', () => {
 
     expect(() =>
       harness.route({ type: 'not-a-real-event' } as unknown as GatewayTransportEvent)
+    ).not.toThrow();
+    expect(() =>
+      harness.route({
+        type: 'pending-overflow',
+        kind: 0x0301,
+        pendingFrames: 0,
+        pendingBytes: 0,
+        droppedFrames: 2,
+      })
     ).not.toThrow();
   });
 });

@@ -26,30 +26,24 @@ export interface SiteSettingsLoader {
   invalidate: () => void;
 }
 
+interface InflightRequest {
+  /** 请求发出那一刻分配的代次，终生不变：搭车方不会把它顶掉 */
+  generation: number;
+  promise: Promise<SiteSettings>;
+}
+
 export function createSiteSettingsLoader(options: SiteSettingsLoaderOptions): SiteSettingsLoader {
   // S2C 失效信号可能连着来，多个 REST 重拉会并发在途；只允许最新一次提交，
-  // 否则慢的旧响应后到就会把新设置（含 theme/language）盖回旧值
+  // 否则慢的旧响应后到就会把新设置（含 theme/language）盖回旧值。
+  // 代次绑在物理请求上而非调用方：invalidate() 之后在途请求既不可搭车也不可提交。
   let generation = 0;
   // 侧栏引导与设置页表单会同时要站点设置：在途的那次请求共享给所有等待方。
   // 只有 fetchSettings / ensureFreshSettings 允许搭车；refreshSettings 一定另起一次——
   // 它跑在 PATCH 成功或 S2C 失效之后，搭上变更之前发出的请求会拿回旧数据。
-  let inflight: Promise<SiteSettings> | null = null;
+  let inflight: InflightRequest | null = null;
 
-  function send(join: boolean): Promise<SiteSettings> {
-    if (join && inflight) {
-      return inflight;
-    }
-    const request = options.request().finally(() => {
-      if (inflight === request) {
-        inflight = null;
-      }
-    });
-    inflight = request;
-    return request;
-  }
-
-  function commitIfLatest(requestGeneration: number, settings: SiteSettings): SiteSettings {
-    // 已有更新的重拉在途/已提交：这次响应是旧数据，只返回不落库
+  function commitIfCurrent(requestGeneration: number, settings: SiteSettings): SiteSettings {
+    // 已有更新的重拉在途/已提交，或期间被 invalidate：这次响应是旧数据，只返回不落库
     if (requestGeneration !== generation) {
       return options.current() ?? settings;
     }
@@ -57,24 +51,43 @@ export function createSiteSettingsLoader(options: SiteSettingsLoaderOptions): Si
     return settings;
   }
 
-  function begin(): number {
-    generation += 1;
-    options.setLoading(true);
-    return generation;
+  function release(requestGeneration: number): void {
+    if (inflight?.generation === requestGeneration) {
+      inflight = null;
+    }
   }
 
-  async function load(join: boolean): Promise<SiteSettings> {
-    const requestGeneration = begin();
-    try {
-      return commitIfLatest(requestGeneration, await send(join));
-    } catch (err) {
-      console.error('[site] failed to refresh settings:', err);
-      // 在途请求已作废时，复位 loading 的责任归最新那次
-      if (requestGeneration === generation) {
-        options.setLoading(false);
+  // 提交与失败清理都由发起这次物理请求的所有者完成，搭车方只等结果，与搭车顺序无关
+  function start(): InflightRequest {
+    generation += 1;
+    const requestGeneration = generation;
+    options.setLoading(true);
+    const promise = options.request().then(
+      (settings) => {
+        release(requestGeneration);
+        return commitIfCurrent(requestGeneration, settings);
+      },
+      (err: unknown) => {
+        release(requestGeneration);
+        console.error('[site] failed to load settings:', err);
+        // 已被更新的请求接手时，复位 loading 的责任归最新那次
+        if (requestGeneration === generation) {
+          options.setLoading(false);
+        }
+        throw err;
       }
-      throw err;
+    );
+    const entry: InflightRequest = { generation: requestGeneration, promise };
+    inflight = entry;
+    return entry;
+  }
+
+  function acquire(join: boolean): InflightRequest {
+    // 代次对不上说明它已被 invalidate 或被更新的请求取代，搭车只会拿回过期数据
+    if (join && inflight && inflight.generation === generation) {
+      return inflight;
     }
+    return start();
   }
 
   return {
@@ -83,18 +96,18 @@ export function createSiteSettingsLoader(options: SiteSettingsLoaderOptions): Si
       if (existing) {
         return existing;
       }
-      const requestGeneration = begin();
+      const entry = acquire(true);
       try {
-        return commitIfLatest(requestGeneration, await send(true));
-      } catch (err) {
-        console.error('[site] failed to fetch settings:', err);
-        return commitIfLatest(requestGeneration, options.fallback);
+        return await entry.promise;
+      } catch {
+        // 失败已由所有者记过日志；引导路径不抛，落兜底值让 UI 起得来
+        return options.current() ?? commitIfCurrent(entry.generation, options.fallback);
       }
     },
 
-    ensureFreshSettings: () => load(true),
+    ensureFreshSettings: () => acquire(true).promise,
 
-    refreshSettings: () => load(false),
+    refreshSettings: () => acquire(false).promise,
 
     invalidate: () => {
       generation += 1;

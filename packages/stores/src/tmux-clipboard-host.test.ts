@@ -29,6 +29,7 @@ mock.module('@tmex/ws-client', () => ({
     onError: () => () => {},
     onLatency: () => () => {},
     onChunkProgress: () => () => {},
+    onPendingOverflow: () => () => {},
     connect: () => {},
     disconnect: () => {},
     getState: () => 'READY',
