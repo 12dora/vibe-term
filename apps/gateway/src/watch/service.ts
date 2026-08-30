@@ -86,8 +86,8 @@ const defaultDeps: WatchServiceDeps = {
   getSettings: getSiteSettings,
   now: () => new Date(),
   scheduleInterval: (fn, ms) => {
-    const timer = setInterval(fn, ms);
-    return () => clearInterval(timer);
+    const timer = setTimeout(fn, ms);
+    return () => clearTimeout(timer);
   },
   errorThreshold: 10,
   llmMaxRetries: 2,
@@ -95,7 +95,7 @@ const defaultDeps: WatchServiceDeps = {
 
 export class WatchService {
   private readonly deps: WatchServiceDeps;
-  private readonly scheduler = new WatchRuleScheduler();
+  private readonly scheduler: WatchRuleScheduler;
   private readonly runtimePool: WatchRuntimePool;
   private readonly samples = new WatchSampleStore();
   private readonly notifier: WatchNotifier;
@@ -104,6 +104,7 @@ export class WatchService {
 
   constructor(deps: Partial<WatchServiceDeps> = {}) {
     this.deps = { ...defaultDeps, ...deps };
+    this.scheduler = new WatchRuleScheduler({ now: () => this.deps.now().getTime() });
     this.runtimePool = new WatchRuntimePool({
       acquireRuntime: this.deps.acquireRuntime,
       releaseRuntime: this.deps.releaseRuntime,

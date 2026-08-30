@@ -86,6 +86,7 @@ interface Harness {
   setCaptureError: (error: Error | null) => void;
   setNow: (date: Date) => void;
   advanceMinutes: (minutes: number) => void;
+  holdCapture: () => () => void;
   timers: Array<{ ms: number; cleared: boolean; fire: () => void }>;
 }
 
@@ -101,11 +102,15 @@ function createHarness(options: { llmBaseUrl?: string; errorThreshold?: number }
   const releases: string[] = [];
   const captureCalls: string[] = [];
   const timers: Harness['timers'] = [];
+  let captureHold: Promise<void> | null = null;
 
   const runtime: WatchRuntimeLike = {
     connect: async () => {},
     capturePaneText: async (paneId) => {
       captureCalls.push(paneId);
+      if (captureHold) {
+        await captureHold;
+      }
       if (captureError) {
         throw captureError;
       }
@@ -182,6 +187,16 @@ function createHarness(options: { llmBaseUrl?: string; errorThreshold?: number }
     },
     advanceMinutes: (minutes) => {
       now = new Date(now.getTime() + minutes * 60_000);
+    },
+    holdCapture: () => {
+      let release: () => void = () => {};
+      captureHold = new Promise<void>((resolve) => {
+        release = () => {
+          captureHold = null;
+          resolve();
+        };
+      });
+      return release;
     },
     timers,
   };
@@ -267,11 +282,40 @@ describe('WatchService - 调度与设备连接分组', () => {
       expect(harness.service.isRuleScheduled(rule.id)).toBe(true);
     }
 
+    harness.advanceMinutes(0.5);
     await harness.service.tickPane(TEST_DEVICE_ID, '%1');
     expect(harness.captureCalls).toEqual(['%1']);
     expect(rules.every((rule) => harness.service.getSamples(rule.id).length === 1)).toBe(true);
 
+    harness.advanceMinutes(0.5);
     await harness.service.tickPane(TEST_DEVICE_ID, '%1');
+    expect(harness.captureCalls).toEqual(['%1', '%1']);
+
+    await harness.service.stop();
+  });
+
+  test('pane tick 进行中到达的下一次 tick 会在完成后补跑（pending 合并）', async () => {
+    const harness = createHarness();
+    harness.makeRule({ fireMode: 'repeat', intervalSeconds: 5 });
+    harness.setScreen('quiet\n');
+    await harness.service.start();
+
+    const release = harness.holdCapture();
+    harness.advanceMinutes(0.1);
+    const first = harness.service.tickPane(TEST_DEVICE_ID, '%1');
+    const waitStart = Date.now();
+    while (harness.captureCalls.length === 0 && Date.now() - waitStart < 1000) {
+      await Promise.resolve();
+    }
+    expect(harness.captureCalls).toEqual(['%1']);
+
+    harness.advanceMinutes(0.1);
+    const second = harness.service.tickPane(TEST_DEVICE_ID, '%1');
+    expect(harness.captureCalls).toEqual(['%1']);
+
+    release();
+    await first;
+    await second;
     expect(harness.captureCalls).toEqual(['%1', '%1']);
 
     await harness.service.stop();

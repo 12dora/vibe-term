@@ -115,11 +115,15 @@ describe('WatchRuleScheduler', () => {
   });
 
   test('100 条同 pane 规则只调度 1 个 timer；长 interval 规则跳过中间 tick', () => {
-    const scheduler = new WatchRuleScheduler();
-    const timers: Array<{ ms: number; fire: () => void }> = [];
-    const scheduleInterval = (fn: () => void, ms: number) => {
-      timers.push({ ms, fire: fn });
-      return () => {};
+    const clock = { now: 0 };
+    const scheduler = new WatchRuleScheduler({ now: () => clock.now });
+    const timers: Array<{ ms: number; cleared: boolean }> = [];
+    const scheduleInterval = (_fn: () => void, ms: number) => {
+      const entry = { ms, cleared: false };
+      timers.push(entry);
+      return () => {
+        entry.cleared = true;
+      };
     };
 
     for (let i = 0; i < 99; i++) {
@@ -147,14 +151,14 @@ describe('WatchRuleScheduler', () => {
       scheduleInterval
     );
 
-    expect(timers).toHaveLength(1);
-    expect(timers[0]?.ms).toBe(5000);
+    expect(timers.filter((t) => !t.cleared)).toHaveLength(1);
+    expect(timers.filter((t) => !t.cleared)[0]?.ms).toBe(5000);
 
-    expect(scheduler.takeDueRuleIds('d1', '%1')).toHaveLength(99);
-    expect(scheduler.takeDueRuleIds('d1', '%1')).toHaveLength(99);
-    expect(scheduler.takeDueRuleIds('d1', '%1')).toHaveLength(99);
-    expect(scheduler.takeDueRuleIds('d1', '%1')).toHaveLength(99);
-    expect(scheduler.takeDueRuleIds('d1', '%1')).toHaveLength(99);
+    for (const at of [5000, 10_000, 15_000, 20_000, 25_000]) {
+      clock.now = at;
+      expect(scheduler.takeDueRuleIds('d1', '%1')).toHaveLength(99);
+    }
+    clock.now = 30_000;
     const sixth = scheduler.takeDueRuleIds('d1', '%1');
     expect(sixth).toHaveLength(100);
     expect(sixth).toContain('slow');
@@ -186,5 +190,166 @@ describe('WatchRuleScheduler', () => {
 
     scheduler.detach('slow');
     expect(timers.filter((t) => !t.cleared)).toHaveLength(0);
+  });
+
+  test('detach 最后一条规则时若 pane tick 在飞，随后 attach 必须重新武装 timer', async () => {
+    const clock = { now: 0 };
+    const scheduler = new WatchRuleScheduler({ now: () => clock.now });
+    const timers: Array<{ ms: number; cleared: boolean }> = [];
+    const scheduleInterval = (_fn: () => void, ms: number) => {
+      const entry = { ms, cleared: false };
+      timers.push(entry);
+      return () => {
+        entry.cleared = true;
+      };
+    };
+    const add = (id: string, intervalSeconds: number) =>
+      scheduler.add(
+        { id, deviceId: 'd1', paneId: '%1', triggerType: 'match', intervalSeconds },
+        () => {},
+        scheduleInterval
+      );
+
+    add('r1', 5);
+    expect(timers.filter((t) => !t.cleared)).toHaveLength(1);
+
+    let release: () => void = () => {};
+    const inflight = scheduler.runPaneExclusive('d1', '%1', async () => {
+      await new Promise<void>((resolve) => {
+        release = resolve;
+      });
+    });
+
+    scheduler.detach('r1');
+    expect(scheduler.has('r1')).toBe(false);
+    expect(timers.filter((t) => !t.cleared)).toHaveLength(0);
+
+    add('r2', 30);
+    const live = timers.filter((t) => !t.cleared);
+    expect(live).toHaveLength(1);
+    expect(live[0]?.ms).toBe(30_000);
+
+    release();
+    await inflight;
+    expect(timers.filter((t) => !t.cleared)).toHaveLength(1);
+  });
+
+  test('5s + 7s 规则按各自绝对 deadline 触发，7s 规则在 7/14/21 而非 10/20', () => {
+    const clock = { now: 0 };
+    const scheduler = new WatchRuleScheduler({ now: () => clock.now });
+    const timers: Array<{ ms: number; cleared: boolean }> = [];
+    const scheduleInterval = (_fn: () => void, ms: number) => {
+      const entry = { ms, cleared: false };
+      timers.push(entry);
+      return () => {
+        entry.cleared = true;
+      };
+    };
+    const add = (id: string, intervalSeconds: number) =>
+      scheduler.add(
+        { id, deviceId: 'd1', paneId: '%1', triggerType: 'match', intervalSeconds },
+        () => {},
+        scheduleInterval
+      );
+
+    add('r5', 5);
+    add('r7', 7);
+    expect(timers.filter((t) => !t.cleared).map((t) => t.ms)).toEqual([5000]);
+
+    const fired: Record<string, number[]> = { r5: [], r7: [] };
+    const tickAt = (ms: number) => {
+      clock.now = ms;
+      for (const id of scheduler.takeDueRuleIds('d1', '%1')) {
+        fired[id]?.push(ms);
+      }
+    };
+
+    tickAt(5000);
+    expect(timers.filter((t) => !t.cleared).map((t) => t.ms)).toEqual([2000]);
+    tickAt(7000);
+    expect(timers.filter((t) => !t.cleared).map((t) => t.ms)).toEqual([3000]);
+    tickAt(10_000);
+    tickAt(14_000);
+    tickAt(15_000);
+    tickAt(20_000);
+    tickAt(21_000);
+
+    expect(fired.r5).toEqual([5000, 10_000, 15_000, 20_000]);
+    expect(fired.r7).toEqual([7000, 14_000, 21_000]);
+  });
+
+  test('移除已等待 25s 的 5s 规则不推迟同组 30s 规则的 deadline', () => {
+    const clock = { now: 0 };
+    const scheduler = new WatchRuleScheduler({ now: () => clock.now });
+    const timers: Array<{ ms: number; cleared: boolean }> = [];
+    const scheduleInterval = (_fn: () => void, ms: number) => {
+      const entry = { ms, cleared: false };
+      timers.push(entry);
+      return () => {
+        entry.cleared = true;
+      };
+    };
+
+    scheduler.add(
+      { id: 'slow', deviceId: 'd1', paneId: '%1', triggerType: 'match', intervalSeconds: 30 },
+      () => {},
+      scheduleInterval
+    );
+    scheduler.add(
+      { id: 'fast', deviceId: 'd1', paneId: '%1', triggerType: 'match', intervalSeconds: 5 },
+      () => {},
+      scheduleInterval
+    );
+
+    clock.now = 25_000;
+    scheduler.detach('fast');
+    expect(timers.filter((t) => !t.cleared).map((t) => t.ms)).toEqual([5000]);
+
+    clock.now = 30_000;
+    expect(scheduler.takeDueRuleIds('d1', '%1')).toEqual(['slow']);
+  });
+
+  test('pane tick 进行中到达的 timer 记为 pending，完成后补跑，5s 规则不会被 30s 慢评估饿死', async () => {
+    const clock = { now: 0 };
+    const scheduler = new WatchRuleScheduler({ now: () => clock.now });
+    const scheduleInterval = () => () => {};
+    const add = (id: string, intervalSeconds: number, triggerType: 'match' | 'llm' = 'match') =>
+      scheduler.add(
+        { id, deviceId: 'd1', paneId: '%1', triggerType, intervalSeconds },
+        () => {},
+        scheduleInterval
+      );
+
+    add('fast', 5);
+    add('slow', 30, 'llm');
+
+    const dueLog: Array<{ now: number; due: string[] }> = [];
+    let release: () => void = () => {};
+    const fn = async () => {
+      const due = scheduler.takeDueRuleIds('d1', '%1');
+      dueLog.push({ now: clock.now, due: [...due] });
+      if (due.includes('slow')) {
+        await new Promise<void>((resolve) => {
+          release = resolve;
+        });
+      }
+    };
+
+    clock.now = 30_000;
+    const inflight = scheduler.runPaneExclusive('d1', '%1', fn);
+    await Promise.resolve();
+    expect(dueLog).toHaveLength(1);
+    expect(dueLog[0]?.due).toEqual(expect.arrayContaining(['fast', 'slow']));
+
+    clock.now = 35_000;
+    const coalesced = scheduler.runPaneExclusive('d1', '%1', fn);
+    await Promise.resolve();
+    expect(dueLog).toHaveLength(1);
+
+    release();
+    await inflight;
+    await coalesced;
+    expect(dueLog).toHaveLength(2);
+    expect(dueLog[1]).toEqual({ now: 35_000, due: ['fast'] });
   });
 });

@@ -19,8 +19,7 @@ export interface ScheduledRule {
   deviceId: string;
   paneId: string;
   intervalMs: number;
-  accruedMs: number;
-  clearTimer: (() => void) | null;
+  deadline: number;
   tickPromise: Promise<void> | null;
 }
 
@@ -28,16 +27,30 @@ interface PaneGroup {
   deviceId: string;
   paneId: string;
   ruleIds: Set<string>;
-  minIntervalMs: number;
+  armedDeadline: number;
   clearTimer: (() => void) | null;
-  tickPromise: Promise<void> | null;
   onTick: (deviceId: string, paneId: string) => void;
   scheduleInterval: (fn: () => void, ms: number) => () => void;
+}
+
+interface PaneInflight {
+  promise: Promise<void>;
+  pending: boolean;
+}
+
+export interface WatchRuleSchedulerOptions {
+  now?: () => number;
 }
 
 export class WatchRuleScheduler {
   private readonly rules = new Map<string, ScheduledRule>();
   private readonly groups = new Map<string, PaneGroup>();
+  private readonly inflight = new Map<string, PaneInflight>();
+  private readonly now: () => number;
+
+  constructor(options: WatchRuleSchedulerOptions = {}) {
+    this.now = options.now ?? Date.now;
+  }
 
   has(ruleId: string): boolean {
     return this.rules.has(ruleId);
@@ -59,13 +72,13 @@ export class WatchRuleScheduler {
     if (this.rules.has(rule.id)) {
       return null;
     }
+    const intervalMs = effectiveIntervalSeconds(rule) * 1000;
     const entry: ScheduledRule = {
       ruleId: rule.id,
       deviceId: rule.deviceId,
       paneId: rule.paneId,
-      intervalMs: effectiveIntervalSeconds(rule) * 1000,
-      accruedMs: 0,
-      clearTimer: null,
+      intervalMs,
+      deadline: this.now() + intervalMs,
       tickPromise: null,
     };
     this.rules.set(rule.id, entry);
@@ -78,18 +91,17 @@ export class WatchRuleScheduler {
     if (!group) {
       return [];
     }
+    const now = this.now();
     const due: string[] = [];
     for (const ruleId of group.ruleIds) {
       const entry = this.rules.get(ruleId);
-      if (!entry) {
+      if (!entry || entry.deadline > now) {
         continue;
       }
-      entry.accruedMs += group.minIntervalMs;
-      if (entry.accruedMs >= entry.intervalMs) {
-        entry.accruedMs = 0;
-        due.push(ruleId);
-      }
+      entry.deadline = now + entry.intervalMs;
+      due.push(ruleId);
     }
+    this.armGroup(group);
     return due;
   }
 
@@ -107,23 +119,10 @@ export class WatchRuleScheduler {
     group.ruleIds.delete(ruleId);
     if (group.ruleIds.size === 0) {
       group.clearTimer?.();
-      group.clearTimer = null;
-      if (!group.tickPromise) {
-        this.groups.delete(key);
-      }
+      this.groups.delete(key);
       return entry;
     }
-    let min = Number.POSITIVE_INFINITY;
-    for (const id of group.ruleIds) {
-      const remaining = this.rules.get(id);
-      if (remaining && remaining.intervalMs < min) {
-        min = remaining.intervalMs;
-      }
-    }
-    if (min !== group.minIntervalMs) {
-      group.minIntervalMs = min;
-      this.armGroup(group);
-    }
+    this.armGroup(group);
     return entry;
   }
 
@@ -148,25 +147,32 @@ export class WatchRuleScheduler {
   }
 
   async runPaneExclusive(deviceId: string, paneId: string, fn: () => Promise<void>): Promise<void> {
-    const group = this.groups.get(paneKey(deviceId, paneId));
-    if (!group || group.tickPromise) {
+    const key = paneKey(deviceId, paneId);
+    const existing = this.inflight.get(key);
+    if (existing) {
+      existing.pending = true;
+      return existing.promise;
+    }
+    if (!this.groups.has(key)) {
       return;
     }
+    const state: PaneInflight = { promise: Promise.resolve(), pending: false };
     const promise = (async () => {
       try {
-        await fn();
+        do {
+          state.pending = false;
+          await fn();
+        } while (state.pending);
       } catch (error) {
         console.error(`[watch] pane tick failed for ${deviceId} ${paneId}:`, error);
+      } finally {
+        if (this.inflight.get(key) === state) {
+          this.inflight.delete(key);
+        }
       }
-    })().finally(() => {
-      if (group.tickPromise === promise) {
-        group.tickPromise = null;
-      }
-      if (group.ruleIds.size === 0) {
-        this.groups.delete(paneKey(deviceId, paneId));
-      }
-    });
-    group.tickPromise = promise;
+    })();
+    state.promise = promise;
+    this.inflight.set(key, state);
     return promise;
   }
 
@@ -174,9 +180,9 @@ export class WatchRuleScheduler {
     if (entry.tickPromise) {
       await entry.tickPromise.catch(() => undefined);
     }
-    const group = this.groups.get(paneKey(entry.deviceId, entry.paneId));
-    if (group?.tickPromise) {
-      await group.tickPromise.catch(() => undefined);
+    const pane = this.inflight.get(paneKey(entry.deviceId, entry.paneId));
+    if (pane) {
+      await pane.promise.catch(() => undefined);
     }
   }
 
@@ -192,9 +198,8 @@ export class WatchRuleScheduler {
         deviceId: entry.deviceId,
         paneId: entry.paneId,
         ruleIds: new Set([entry.ruleId]),
-        minIntervalMs: entry.intervalMs,
+        armedDeadline: entry.deadline,
         clearTimer: null,
-        tickPromise: null,
         onTick,
         scheduleInterval,
       };
@@ -203,17 +208,28 @@ export class WatchRuleScheduler {
       return;
     }
     group.ruleIds.add(entry.ruleId);
-    if (entry.intervalMs < group.minIntervalMs) {
-      group.minIntervalMs = entry.intervalMs;
+    if (!group.clearTimer || entry.deadline < group.armedDeadline) {
       this.armGroup(group);
     }
   }
 
   private armGroup(group: PaneGroup): void {
     group.clearTimer?.();
+    let nearest = Number.POSITIVE_INFINITY;
+    for (const id of group.ruleIds) {
+      const remaining = this.rules.get(id);
+      if (remaining && remaining.deadline < nearest) {
+        nearest = remaining.deadline;
+      }
+    }
+    if (!Number.isFinite(nearest)) {
+      group.clearTimer = null;
+      return;
+    }
+    group.armedDeadline = nearest;
     group.clearTimer = group.scheduleInterval(
       () => group.onTick(group.deviceId, group.paneId),
-      group.minIntervalMs
+      Math.max(0, nearest - this.now())
     );
   }
 }
