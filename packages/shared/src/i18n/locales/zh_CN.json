@@ -193,6 +193,7 @@
       "paste": "粘贴",
       "copied": "已复制到剪贴板",
       "copyFailed": "复制失败",
+      "copyPending": "点一下屏幕以完成复制",
       "pasteFailed": "无法读取剪贴板，请检查浏览器权限",
       "clearSelection": "取消选择",
       "fileLinkNotFound": "文件不存在或无法访问",
@@ -242,6 +243,8 @@
         "savedInBrowser": "这些设置仅保存在当前浏览器中。",
         "loading": "正在加载终端设置……",
         "loadFailed": "终端设置加载失败。",
+        "loadFailedHint": "可能刚发布了新版本，重新加载应用即可获取最新文件。",
+        "reloadApp": "重新加载应用",
         "shortcuts": {
           "title": "自定义快捷键",
           "savedOnServer": "保存在服务器、多端共享——修改后需点「保存」才生效。",

@@ -145,54 +145,60 @@ describe('mouse reporting gestures', () => {
     expect(machine.currentState()).toBe('pending');
   });
 
-  test('drag emits exactly one press, streaming motion and one release', () => {
-    const { machine, calls } = createHarness({ reporting: true });
-    machine.handleTouchStart(asTouchEvent(touchEvent([touch(1, 100, 100)])));
-    machine.handleTouchMove(asTouchEvent(touchEvent([touch(1, 108, 100)])));
-    machine.handleTouchMove(asTouchEvent(touchEvent([touch(1, 140, 100)])));
-    machine.handleTouchMove(asTouchEvent(touchEvent([touch(1, 160, 120)])));
-    machine.handleTouchEnd(asTouchEvent(touchEvent([], [touch(1, 170, 130)])));
-
-    expect(calls).toEqual([
-      'press(100,100)',
-      'motion(140,100)',
-      'motion(160,120)',
-      'release(170,130)',
-      'noteTouchHandled',
-    ]);
-    expect(machine.currentState()).toBe('idle');
-  });
-
-  test('a rejected press aborts the gesture without further reports', () => {
+  test('a rejected press swallows the tap without emitting a release', () => {
     const { machine, calls } = createHarness({ reporting: true, pressSucceeds: false });
     machine.handleTouchStart(asTouchEvent(touchEvent([touch(1, 100, 100)])));
-    machine.handleTouchMove(asTouchEvent(touchEvent([touch(1, 140, 100)])));
-    machine.handleTouchMove(asTouchEvent(touchEvent([touch(1, 160, 100)])));
+    machine.handleTouchEnd(asTouchEvent(touchEvent([], [touch(1, 100, 100)])));
 
-    expect(calls).toEqual(['press-rejected(100,100)']);
+    expect(calls).toEqual(['press-rejected(100,100)', 'noteTouchHandled', 'focus']);
     expect(machine.currentState()).toBe('idle');
   });
 
-  test('a non-primary finger lifting does not end the drag', () => {
+  test('single-finger movement scrolls via wheel reports instead of dragging', () => {
     const { machine, calls } = createHarness({ reporting: true });
-    machine.handleTouchStart(asTouchEvent(touchEvent([touch(1, 100, 100)])));
-    machine.handleTouchMove(asTouchEvent(touchEvent([touch(1, 140, 100)])));
-    calls.length = 0;
-    machine.handleTouchEnd(asTouchEvent(touchEvent([touch(1, 140, 100)], [touch(2, 300, 300)])));
+    machine.handleTouchStart(asTouchEvent(touchEvent([touch(1, 100, 200)])));
+    expect(machine.currentState()).toBe('pending');
 
-    expect(calls).toEqual([]);
-    expect(machine.currentState()).toBe('drag');
+    const move = touchEvent([touch(1, 100, 160)]);
+    machine.handleTouchMove(asTouchEvent(move));
+
+    expect(calls).toEqual(['viewportGesture(40,100,160)']);
+    expect(calls.some((call) => call.startsWith('press'))).toBe(false);
+    expect(calls.some((call) => call.startsWith('motion'))).toBe(false);
+    expect(move.defaultPrevented).toBe(true);
+    expect(machine.currentState()).toBe('scroll');
   });
 
-  test('touchcancel during a drag releases at the last motion point', () => {
+  test('lifting after a single-finger scroll emits no tap report', () => {
     const { machine, calls } = createHarness({ reporting: true });
-    machine.handleTouchStart(asTouchEvent(touchEvent([touch(1, 100, 100)])));
-    machine.handleTouchMove(asTouchEvent(touchEvent([touch(1, 140, 100)])));
-    machine.handleTouchMove(asTouchEvent(touchEvent([touch(1, 155, 111)])));
+    machine.handleTouchStart(asTouchEvent(touchEvent([touch(1, 100, 200)])));
+    machine.handleTouchMove(asTouchEvent(touchEvent([touch(1, 100, 160)])));
     calls.length = 0;
-    machine.handleTouchCancel(asTouchEvent(touchEvent([], [touch(1, 155, 111)])));
+    machine.handleTouchEnd(asTouchEvent(touchEvent([], [touch(1, 100, 160)])));
 
-    expect(calls).toEqual(['release(155,111)', 'noteTouchHandled']);
+    expect(calls).toEqual([]);
+    expect(machine.currentState()).toBe('idle');
+  });
+
+  test('a non-primary finger lifting keeps the scroll alive', () => {
+    const { machine, calls } = createHarness({ reporting: true });
+    machine.handleTouchStart(asTouchEvent(touchEvent([touch(1, 100, 200)])));
+    machine.handleTouchMove(asTouchEvent(touchEvent([touch(1, 100, 160)])));
+    calls.length = 0;
+    machine.handleTouchEnd(asTouchEvent(touchEvent([touch(1, 100, 160)], [touch(2, 300, 300)])));
+
+    expect(calls).toEqual([]);
+    expect(machine.currentState()).toBe('scroll');
+  });
+
+  test('touchcancel during a single-finger scroll leaves no pressed button', () => {
+    const { machine, calls } = createHarness({ reporting: true });
+    machine.handleTouchStart(asTouchEvent(touchEvent([touch(1, 100, 200)])));
+    machine.handleTouchMove(asTouchEvent(touchEvent([touch(1, 100, 160)])));
+    calls.length = 0;
+    machine.handleTouchCancel(asTouchEvent(touchEvent([], [touch(1, 100, 160)])));
+
+    expect(calls).toEqual([]);
     expect(machine.currentState()).toBe('idle');
   });
 });
@@ -274,15 +280,34 @@ describe('long-press selection', () => {
     expect(machine.currentState()).toBe('idle');
   });
 
-  test('crossing the drag threshold disarms the long press', () => {
+  test('crossing the scroll threshold disarms the long press', () => {
     jest.useFakeTimers();
     const { machine, calls } = createHarness({ reporting: true });
-    machine.handleTouchStart(asTouchEvent(touchEvent([touch(1, 100, 100)])));
-    machine.handleTouchMove(asTouchEvent(touchEvent([touch(1, 140, 100)])));
+    machine.handleTouchStart(asTouchEvent(touchEvent([touch(1, 100, 200)])));
+    machine.handleTouchMove(asTouchEvent(touchEvent([touch(1, 100, 160)])));
     jest.advanceTimersByTime(LONG_PRESS_SELECT_MS * 2);
 
-    expect(calls).toEqual(['press(100,100)', 'motion(140,100)']);
-    expect(machine.currentState()).toBe('drag');
+    expect(calls).toEqual(['viewportGesture(40,100,160)']);
+    expect(calls.some((call) => call.startsWith('startSelection'))).toBe(false);
+    expect(machine.currentState()).toBe('scroll');
+  });
+
+  test('a long press while mouse reporting still selects locally, reporting nothing', () => {
+    jest.useFakeTimers();
+    const { machine, calls } = createHarness({ reporting: true });
+    machine.handleTouchStart(asTouchEvent(touchEvent([touch(1, 100, 200)])));
+    jest.advanceTimersByTime(LONG_PRESS_SELECT_MS);
+    machine.handleTouchMove(asTouchEvent(touchEvent([touch(1, 100, 150)])));
+    machine.handleTouchEnd(asTouchEvent(touchEvent([], [touch(1, 100, 150)])));
+
+    expect(calls).toEqual([
+      'startSelection(100,200,word)',
+      'updateSelection(100,150)',
+      'endSelection',
+      'noteTouchHandled',
+    ]);
+    expect(calls.some((call) => call.startsWith('viewportGesture'))).toBe(false);
+    expect(machine.currentState()).toBe('idle');
   });
 
   test('a second finger disarms the long press', () => {

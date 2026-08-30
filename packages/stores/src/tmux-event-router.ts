@@ -1,6 +1,6 @@
 // gateway transport 事件路由：按事件类型分发到独立 handler，替代单个大 switch。
 
-import { wsBorsh } from '@tmex/shared';
+import { type DeferredClipboardWriter, createDeferredClipboardWriter, wsBorsh } from '@tmex/shared';
 import type { GatewayTransportEvent } from '@tmex/ws-client';
 import type { PaneSubscriptionManager } from './pane-subscriptions';
 import {
@@ -29,6 +29,29 @@ type TmuxEventHandlers = {
     ctx: TmuxEventRouterContext
   ) => void;
 };
+
+// 远端（OSC52）发起的复制没有用户激活，iOS Safari 会拒绝写剪贴板：交给延迟写入器挂起，
+// 等下一次真实手势重试。writer 按 router 上下文缓存，挂起状态才能跨事件存活。
+const clipboardWriters = new WeakMap<TmuxEventRouterContext, DeferredClipboardWriter>();
+
+function clipboardWriterFor(ctx: TmuxEventRouterContext): DeferredClipboardWriter {
+  const existing = clipboardWriters.get(ctx);
+  if (existing) return existing;
+
+  const writer = createDeferredClipboardWriter(
+    {
+      onPending: () => ctx.core.notifications.info(ctx.core.t('terminal.copyPending')),
+      onSuccess: () => ctx.core.notifications.success(ctx.core.t('terminal.copied')),
+      onFailure: (error) => {
+        console.warn('[tmux] clipboard write failed:', error);
+        ctx.core.notifications.error(ctx.core.t('terminal.copyFailed'));
+      },
+    },
+    { write: (text) => ctx.core.host.writeClipboardText(text) }
+  );
+  clipboardWriters.set(ctx, writer);
+  return writer;
+}
 
 const handlers: TmuxEventHandlers = {
   'connection-state': (event, ctx) => {
@@ -187,15 +210,7 @@ const handlers: TmuxEventHandlers = {
     if (!current || current.paneId !== event.paneId) {
       return;
     }
-    void ctx.core.host.writeClipboardText(event.text).then(
-      () => {
-        ctx.core.notifications.success(ctx.core.t('terminal.copied'));
-      },
-      (err) => {
-        console.warn('[tmux] clipboard write failed:', err);
-        ctx.core.notifications.error(ctx.core.t('terminal.copyFailed'));
-      }
-    );
+    void clipboardWriterFor(ctx).write(event.text);
   },
 
   'site-theme-update': (event, ctx) => {

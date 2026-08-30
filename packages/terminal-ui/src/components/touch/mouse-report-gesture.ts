@@ -1,38 +1,22 @@
-import type { TouchPoint } from './touch-geometry';
 import type { TerminalScroller } from './types';
 
-// 触摸 → 鼠标上报（press/motion/release）。独占最后一次 motion 坐标，
-// 供 touchcancel / 主指抬起时补发 release 用（丢 release 会让 TUI 卡在"左键按住"）。
+// 触摸 → 鼠标上报。触摸端只保留 tap（press+release）：单指移动一律是滚动，
+// 不再向 TUI 流式上报 motion，因此也不存在需要补发 release 的"卡住左键"场景。
 export class MouseReportGesture {
-  private lastDragX = 0;
-  private lastDragY = 0;
-
-  press(terminal: TerminalScroller | null, clientX: number, clientY: number): boolean {
-    return Boolean(terminal?.sendTouchMouseEvent?.({ action: 'press', clientX, clientY }));
+  private send(
+    terminal: TerminalScroller | null,
+    action: 'press' | 'release',
+    clientX: number,
+    clientY: number
+  ): boolean {
+    return Boolean(terminal?.sendTouchMouseEvent?.({ action, clientX, clientY }));
   }
 
-  motion(terminal: TerminalScroller | null, clientX: number, clientY: number): void {
-    this.lastDragX = clientX;
-    this.lastDragY = clientY;
-    terminal?.sendTouchMouseEvent?.({ action: 'motion', clientX, clientY });
-  }
-
-  release(terminal: TerminalScroller | null, clientX: number, clientY: number): void {
-    terminal?.sendTouchMouseEvent?.({ action: 'release', clientX, clientY });
-  }
-
-  // tap：press/release 都用起点坐标（阈值内的抖动不应改变点击 cell）
+  // tap：press/release 都用起点坐标（阈值内的抖动不应改变点击 cell）；
+  // press 发送失败（上报模式中途关闭）则不补 release
   tap(terminal: TerminalScroller | null, clientX: number, clientY: number): void {
-    if (this.press(terminal, clientX, clientY)) {
-      this.release(terminal, clientX, clientY);
+    if (this.send(terminal, 'press', clientX, clientY)) {
+      this.send(terminal, 'release', clientX, clientY);
     }
-  }
-
-  releaseAt(terminal: TerminalScroller | null, endedTouch: TouchPoint | null): void {
-    this.release(
-      terminal,
-      endedTouch?.clientX ?? this.lastDragX,
-      endedTouch?.clientY ?? this.lastDragY
-    );
   }
 }

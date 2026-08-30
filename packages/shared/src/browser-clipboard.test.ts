@@ -1,5 +1,10 @@
-import { afterEach, describe, expect, it, mock } from 'bun:test';
-import { writeTextToClipboard } from './browser-clipboard';
+import { afterEach, describe, expect, it, jest, mock } from 'bun:test';
+import {
+  DEFERRED_CLIPBOARD_TTL_MS,
+  type GestureEventTarget,
+  createDeferredClipboardWriter,
+  writeTextToClipboard,
+} from './browser-clipboard';
 
 const originalNavigator = Object.getOwnPropertyDescriptor(globalThis, 'navigator');
 const originalDocument = Object.getOwnPropertyDescriptor(globalThis, 'document');
@@ -85,5 +90,200 @@ describe('writeTextToClipboard', () => {
     stub('navigator', {});
     stub('document', {});
     await expect(writeTextToClipboard('x')).rejects.toThrow('clipboard unavailable');
+  });
+});
+
+interface FakeGestureTarget extends GestureEventTarget {
+  listenerCount(): number;
+  fire(type: string): void;
+}
+
+function fakeGestureTarget(): FakeGestureTarget {
+  const listeners = new Map<string, Set<() => void>>();
+  return {
+    addEventListener(type, listener) {
+      const bucket = listeners.get(type) ?? new Set<() => void>();
+      bucket.add(listener);
+      listeners.set(type, bucket);
+    },
+    removeEventListener(type, listener) {
+      listeners.get(type)?.delete(listener);
+    },
+    listenerCount() {
+      let total = 0;
+      for (const bucket of listeners.values()) total += bucket.size;
+      return total;
+    },
+    fire(type) {
+      for (const listener of [...(listeners.get(type) ?? [])]) listener();
+    },
+  };
+}
+
+function fakeHandlers() {
+  return {
+    calls: [] as string[],
+    make(calls: string[]) {
+      return {
+        onPending: () => calls.push('pending'),
+        onSuccess: () => calls.push('success'),
+        onFailure: () => calls.push('failure'),
+      };
+    },
+  };
+}
+
+function createWriterHarness(write: (text: string) => Promise<void>, ttlMs?: number) {
+  const calls: string[] = [];
+  const target = fakeGestureTarget();
+  const writer = createDeferredClipboardWriter(fakeHandlers().make(calls), {
+    write,
+    target,
+    ...(ttlMs === undefined ? {} : { ttlMs }),
+  });
+  return { calls, target, writer };
+}
+
+describe('createDeferredClipboardWriter', () => {
+  afterEach(() => {
+    jest.useRealTimers();
+  });
+
+  it('写入成功时立即回调 success，不挂起任何监听', async () => {
+    const write = mock(async () => {});
+    const { calls, target, writer } = createWriterHarness(write);
+
+    await writer.write('hello');
+
+    expect(write).toHaveBeenCalledWith('hello');
+    expect(calls).toEqual(['success']);
+    expect(writer.hasPending()).toBe(false);
+    expect(target.listenerCount()).toBe(0);
+  });
+
+  it('首次失败后挂起，下一次用户手势里重试成功', async () => {
+    let allow = false;
+    const write = mock(async (_text: string) => {
+      if (!allow) throw new Error('no user activation');
+    });
+    const { calls, target, writer } = createWriterHarness(write);
+
+    await writer.write('deferred');
+    expect(calls).toEqual(['pending']);
+    expect(writer.hasPending()).toBe(true);
+    expect(target.listenerCount()).toBeGreaterThan(0);
+
+    allow = true;
+    target.fire('pointerdown');
+    await Promise.resolve();
+
+    expect(write.mock.calls.map((call) => call[0])).toEqual(['deferred', 'deferred']);
+    expect(calls).toEqual(['pending', 'success']);
+    expect(writer.hasPending()).toBe(false);
+    expect(target.listenerCount()).toBe(0);
+  });
+
+  it('手势里二次失败只报一次 failure 并拆掉监听', async () => {
+    const write = mock(async () => {
+      throw new Error('denied');
+    });
+    const { calls, target, writer } = createWriterHarness(write);
+
+    await writer.write('deferred');
+    target.fire('keydown');
+    await Promise.resolve();
+    target.fire('keydown');
+
+    expect(calls).toEqual(['pending', 'failure']);
+    expect(target.listenerCount()).toBe(0);
+  });
+
+  it('TTL 到期未等到手势则报 failure 并放弃', async () => {
+    jest.useFakeTimers();
+    const write = mock(async () => {
+      throw new Error('denied');
+    });
+    const { calls, target, writer } = createWriterHarness(write);
+
+    await writer.write('deferred');
+    jest.advanceTimersByTime(DEFERRED_CLIPBOARD_TTL_MS + 1);
+
+    expect(calls).toEqual(['pending', 'failure']);
+    expect(writer.hasPending()).toBe(false);
+    expect(target.listenerCount()).toBe(0);
+
+    target.fire('pointerdown');
+    await Promise.resolve();
+    expect(write).toHaveBeenCalledTimes(1);
+  });
+
+  it('挂起期间再来一次复制：最新文本获胜，只提示一次并重置 TTL', async () => {
+    jest.useFakeTimers();
+    let allow = false;
+    const write = mock(async (_text: string) => {
+      if (!allow) throw new Error('denied');
+    });
+    const { calls, target, writer } = createWriterHarness(write);
+
+    await writer.write('first');
+    jest.advanceTimersByTime(DEFERRED_CLIPBOARD_TTL_MS - 1);
+    await writer.write('second');
+    expect(calls).toEqual(['pending']);
+
+    jest.advanceTimersByTime(DEFERRED_CLIPBOARD_TTL_MS - 1);
+    expect(writer.hasPending()).toBe(true);
+
+    allow = true;
+    target.fire('touchend');
+    await Promise.resolve();
+
+    expect(write.mock.calls.map((call) => call[0])).toEqual(['first', 'second', 'second']);
+    expect(calls).toEqual(['pending', 'success']);
+  });
+
+  it('挂起期间的一次直接成功会丢弃过期挂起', async () => {
+    let allow = false;
+    const write = mock(async (_text: string) => {
+      if (!allow) throw new Error('denied');
+    });
+    const { calls, target, writer } = createWriterHarness(write);
+
+    await writer.write('stale');
+    allow = true;
+    await writer.write('fresh');
+
+    expect(calls).toEqual(['pending', 'success']);
+    expect(writer.hasPending()).toBe(false);
+    expect(target.listenerCount()).toBe(0);
+  });
+
+  it('没有可挂手势的宿主（target 为 null）直接报 failure', async () => {
+    const calls: string[] = [];
+    const writer = createDeferredClipboardWriter(fakeHandlers().make(calls), {
+      write: async () => {
+        throw new Error('denied');
+      },
+      target: null,
+    });
+
+    await writer.write('x');
+    expect(calls).toEqual(['failure']);
+    expect(writer.hasPending()).toBe(false);
+  });
+
+  it('dispose 拆掉监听与定时器，不再回调', async () => {
+    jest.useFakeTimers();
+    const write = mock(async () => {
+      throw new Error('denied');
+    });
+    const { calls, target, writer } = createWriterHarness(write);
+
+    await writer.write('deferred');
+    writer.dispose();
+    jest.advanceTimersByTime(DEFERRED_CLIPBOARD_TTL_MS * 2);
+    target.fire('pointerdown');
+
+    expect(calls).toEqual(['pending']);
+    expect(target.listenerCount()).toBe(0);
   });
 });

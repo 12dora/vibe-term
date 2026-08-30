@@ -60,6 +60,8 @@ interface HarnessOptions {
   historyRouted?: boolean;
   mountedPanes?: Array<[string, string]>;
   clipboardResult?: Promise<void>;
+  /** 按尝试次数返回结果：用于「先失败、手势里重试成功」的延迟写入路径 */
+  clipboardAttempt?: (attempt: number) => Promise<void>;
 }
 
 function createHarness(options: HarnessOptions = {}) {
@@ -134,6 +136,9 @@ function createHarness(options: HarnessOptions = {}) {
       navigate: (to: string) => record('navigate', to),
       writeClipboardText: (text: string) => {
         record('writeClipboardText', text);
+        if (options.clipboardAttempt) {
+          return options.clipboardAttempt(namesOf('writeClipboardText').length);
+        }
         return options.clipboardResult ?? Promise.resolve();
       },
     },
@@ -417,6 +422,57 @@ describe('tmux transport event router', () => {
     expect(harness.namesOf('notify:success').map((call) => call.args[0])).toEqual([
       'terminal.copied',
     ]);
+  });
+
+  test('clipboard-write 失败后挂起，下一次用户手势里重试成功', async () => {
+    const listeners = new Map<string, Set<() => void>>();
+    const windowStub = {
+      addEventListener(type: string, listener: () => void) {
+        const bucket = listeners.get(type) ?? new Set<() => void>();
+        bucket.add(listener);
+        listeners.set(type, bucket);
+      },
+      removeEventListener(type: string, listener: () => void) {
+        listeners.get(type)?.delete(listener);
+      },
+    };
+    Object.defineProperty(globalThis, 'window', { value: windowStub, configurable: true });
+
+    try {
+      const harness = createHarness({
+        clipboardAttempt: (attempt) =>
+          attempt === 1 ? Promise.reject(new Error('no user activation')) : Promise.resolve(),
+      });
+      harness.setSelectedPane('device-a', '@1', '%1');
+      harness.route({
+        type: 'clipboard-write',
+        deviceId: 'device-a',
+        paneId: '%1',
+        text: 'copied',
+      });
+      await Promise.resolve();
+      await Promise.resolve();
+
+      expect(harness.namesOf('notify:info').map((call) => call.args[0])).toEqual([
+        'terminal.copyPending',
+      ]);
+      expect(harness.namesOf('notify:error')).toHaveLength(0);
+
+      for (const listener of [...(listeners.get('pointerdown') ?? [])]) listener();
+      await Promise.resolve();
+      await Promise.resolve();
+
+      expect(harness.namesOf('writeClipboardText').map((call) => call.args[0])).toEqual([
+        'copied',
+        'copied',
+      ]);
+      expect(harness.namesOf('notify:success').map((call) => call.args[0])).toEqual([
+        'terminal.copied',
+      ]);
+      expect(harness.namesOf('notify:error')).toHaveLength(0);
+    } finally {
+      Reflect.deleteProperty(globalThis, 'window');
+    }
   });
 
   test('clipboard-write failure surfaces an error toast', async () => {

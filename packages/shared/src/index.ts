@@ -39,7 +39,15 @@ export {
   dirname,
   normalizePosixPath,
 } from './posix-path';
-export { writeTextToClipboard } from './browser-clipboard';
+export {
+  DEFERRED_CLIPBOARD_TTL_MS,
+  type DeferredClipboardHandlers,
+  type DeferredClipboardOptions,
+  type DeferredClipboardWriter,
+  type GestureEventTarget,
+  createDeferredClipboardWriter,
+  writeTextToClipboard,
+} from './browser-clipboard';
 
 // ==================== 日期格式化 ====================
 

@@ -27,6 +27,7 @@ export class MobileTouchGestureMachine {
   private touchId: number | null = null;
   private touchStartX = 0;
   private touchStartY = 0;
+  private reporting = false;
 
   private readonly container: Element;
   private readonly resolveTerminal: ResolveTerminal;
@@ -54,6 +55,7 @@ export class MobileTouchGestureMachine {
     this.selection.clear();
     this.state = 'idle';
     this.touchId = null;
+    this.reporting = false;
     this.scroll.resetAccumulator();
   }
 
@@ -61,7 +63,12 @@ export class MobileTouchGestureMachine {
     return findTouchById(touches, this.touchId) ?? touches.item(0);
   }
 
+  // 上报模式（alt-screen TUI）下本地滚动条无意义，右缘 36px 热区会变成 TUI 死区：
+  // 仅在直接命中滚动条元素时才 bypass
   private bypasses(clientX: number, clientY: number, eventTarget: EventTarget | null): boolean {
+    if (this.reporting) {
+      return hitsScrollbarElement(clientX, clientY, eventTarget, this.elementFromPoint);
+    }
     return shouldBypassCustomScroll(
       this.container,
       clientX,
@@ -83,20 +90,14 @@ export class MobileTouchGestureMachine {
       this.scroll.anchorSingle(touch.clientY);
 
       const terminal = this.resolveTerminal();
-      const reporting = Boolean(terminal?.isMouseReporting?.());
+      this.reporting = Boolean(terminal?.isMouseReporting?.());
 
-      // 上报模式（alt-screen TUI）下本地滚动条无意义，右缘 36px 热区会变成 TUI 死区：
-      // 仅在直接命中滚动条元素时才 bypass
-      const bypass = reporting
-        ? hitsScrollbarElement(touch.clientX, touch.clientY, event.target, this.elementFromPoint)
-        : this.bypasses(touch.clientX, touch.clientY, event.target);
-
-      if (bypass) {
+      if (this.bypasses(touch.clientX, touch.clientY, event.target)) {
         this.state = 'bypass';
         return;
       }
 
-      this.state = reporting ? 'pending' : 'scroll';
+      this.state = this.reporting ? 'pending' : 'scroll';
       this.selection.arm(() => {
         const activeTerminal = this.resolveTerminal();
         if (this.selection.start(activeTerminal, this.touchStartX, this.touchStartY)) {
@@ -106,7 +107,7 @@ export class MobileTouchGestureMachine {
       return;
     }
 
-    // 第二指加入：press 未发（pending）→ 双指滚轮；拖拽中 → 忽略新指；
+    // 第二指加入：tap 待定（pending）→ 双指滚轮；
     // wheel 中触点数变化 → 只重锚质心，不产生 delta
     if (this.state === 'pending') {
       this.selection.clear();
@@ -144,26 +145,13 @@ export class MobileTouchGestureMachine {
       if (!exceedsMoveTolerance(this.touchStartX, this.touchStartY, touch.clientX, touch.clientY)) {
         return;
       }
-      this.selection.clear();
-      const terminal = this.resolveTerminal();
-      // press 用起点坐标（拖拽语义的锚点）；发送失败（模式中途关闭）则静默放弃本次手势
-      if (!this.mouseReport.press(terminal, this.touchStartX, this.touchStartY)) {
-        this.state = 'idle';
-        return;
-      }
-      this.state = 'drag';
-      this.mouseReport.motion(terminal, touch.clientX, touch.clientY);
-      preventIfCancelable(event);
-      return;
+      // 触摸端不再把单指升级成 TUI 拖拽（press + 流式 motion）：iOS 上单指必须是滚动，
+      // 与原生文本 App 一致。上报模式下滚动同样走 handleViewportGesture（终端编码成滚轮
+      // 64/65），TUI 里的框选交给长按本地选择。
+      this.state = 'scroll';
     }
 
-    if (this.state === 'drag') {
-      this.mouseReport.motion(this.resolveTerminal(), touch.clientX, touch.clientY);
-      preventIfCancelable(event);
-      return;
-    }
-
-    // state === 'scroll'：原有单指滚动路径
+    // state === 'scroll'：单指滚动路径（上报/非上报共用）
     if (
       this.selection.isArmed() &&
       exceedsMoveTolerance(this.touchStartX, this.touchStartY, touch.clientX, touch.clientY)
@@ -171,7 +159,7 @@ export class MobileTouchGestureMachine {
       this.selection.clear();
     }
 
-    // 滚动途中划入滚动条热区：交还原生（拖拽/上报态不做此升级，避免吞 motion 卡键）。
+    // 滚动途中划入滚动条热区：交还原生（上报态只认真正的滚动条元素，见 bypasses）。
     // 长按定时器必须一并解除：bypass 后 move 直接 return，定时器若仍武装会在原生
     // 滚动条拖拽途中翻成 select 态并起本地选择。
     if (this.bypasses(touch.clientX, touch.clientY, event.target)) {
@@ -198,19 +186,6 @@ export class MobileTouchGestureMachine {
     // wheel 态触点减少但未清零：重锚质心继续
     if (this.state === 'wheel' && event.touches.length > 0) {
       this.scroll.anchorWheel(event.touches);
-      return;
-    }
-
-    if (this.state === 'drag') {
-      // 非主指抬起不结束拖拽
-      if (event.touches.length > 0 && !findTouchById(event.changedTouches, this.touchId)) {
-        return;
-      }
-      const terminal = this.resolveTerminal();
-      this.mouseReport.releaseAt(terminal, findTouchById(event.changedTouches, this.touchId));
-      terminal?.noteTouchHandled?.();
-      preventIfCancelable(event);
-      this.resetGesture();
       return;
     }
 
@@ -246,12 +221,7 @@ export class MobileTouchGestureMachine {
   };
 
   readonly handleTouchCancel = (event: TouchEvent): void => {
-    if (this.state === 'drag') {
-      // 丢 release 会让 TUI 卡在"左键按住"状态（且触摸设备上没有后续真实 mouseup 解救）
-      const terminal = this.resolveTerminal();
-      this.mouseReport.releaseAt(terminal, null);
-      terminal?.noteTouchHandled?.();
-    } else if (this.state === 'select') {
+    if (this.state === 'select') {
       const terminal = this.resolveTerminal();
       this.selection.end(terminal);
       terminal?.noteTouchHandled?.();

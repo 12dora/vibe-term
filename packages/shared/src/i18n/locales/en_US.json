@@ -193,6 +193,7 @@
       "paste": "Paste",
       "copied": "Copied to clipboard",
       "copyFailed": "Copy failed",
+      "copyPending": "Tap the screen to finish copying",
       "pasteFailed": "Could not read clipboard, check browser permissions",
       "clearSelection": "Dismiss selection",
       "fileLinkNotFound": "File does not exist or is not accessible",
@@ -242,6 +243,8 @@
         "savedInBrowser": "These settings are saved in this browser only.",
         "loading": "Loading terminal settings…",
         "loadFailed": "Terminal settings failed to load.",
+        "loadFailedHint": "A new version was likely deployed. Reload the app to fetch the latest files.",
+        "reloadApp": "Reload app",
         "shortcuts": {
           "title": "Custom Shortcuts",
           "savedOnServer": "Saved on the server and shared across all your browsers — changes take effect after you click Save.",
