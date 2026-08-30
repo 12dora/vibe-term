@@ -61,6 +61,8 @@ interface AgentWsHubOptions {
 export class AgentWsHub {
   private clients = new Set<GatewaySession>();
   private subscriptions = new Map<string, Set<GatewaySession>>();
+  private inflightSubscribes = new Map<string, Map<GatewaySession, number>>();
+  private establishedSubs = new Map<string, Set<GatewaySession>>();
   private syncProvider: AgentSyncProvider;
 
   constructor(options: AgentWsHubOptions = {}) {
@@ -79,6 +81,7 @@ export class AgentWsHub {
     this.clients.delete(session);
     for (const [sessionId, subscribers] of this.subscriptions) {
       subscribers.delete(session);
+      this.clearEstablished(session, sessionId);
       if (subscribers.size === 0) {
         this.subscriptions.delete(sessionId);
       }
@@ -94,18 +97,23 @@ export class AgentWsHub {
       return;
     }
 
-    const subscribers = this.addSubscription(session, sessionId);
+    this.addSubscription(session, sessionId);
+    this.bumpInflight(session, sessionId, 1);
+    let outcome: 'ok' | 'missing' | 'error' = 'ok';
     try {
       const sync = await this.syncProvider(sessionId);
       if (!sync) {
-        this.unsubscribe(session, sessionId);
+        outcome = 'missing';
         return;
       }
-      if (!subscribers.has(session)) return;
+      if (!this.hasSubscription(session, sessionId)) return;
+      this.markEstablished(session, sessionId);
       this.sendAgentEvent(session, sessionId, wsBorsh.AGENT_EVENT_SYNC, sync, 0);
     } catch (err) {
-      this.unsubscribe(session, sessionId);
+      outcome = 'error';
       console.error(`[agent-ws-hub] sync for session ${sessionId} failed:`, err);
+    } finally {
+      this.finishSubscribeAttempt(session, sessionId, outcome);
     }
   }
 
@@ -113,6 +121,7 @@ export class AgentWsHub {
     const subscribers = this.subscriptions.get(sessionId);
     if (!subscribers) return;
     subscribers.delete(session);
+    this.clearEstablished(session, sessionId);
     if (subscribers.size === 0) {
       this.subscriptions.delete(sessionId);
     }
@@ -176,6 +185,62 @@ export class AgentWsHub {
       if (subscribers.has(session)) count++;
     }
     return count;
+  }
+
+  private finishSubscribeAttempt(
+    session: GatewaySession,
+    sessionId: string,
+    outcome: 'ok' | 'missing' | 'error'
+  ): void {
+    const remaining = this.bumpInflight(session, sessionId, -1);
+    if (outcome === 'missing') {
+      this.unsubscribe(session, sessionId);
+      return;
+    }
+    if (
+      outcome === 'error' &&
+      remaining === 0 &&
+      !this.isEstablished(session, sessionId) &&
+      this.hasSubscription(session, sessionId)
+    ) {
+      this.unsubscribe(session, sessionId);
+    }
+  }
+
+  private bumpInflight(session: GatewaySession, sessionId: string, delta: number): number {
+    let bySession = this.inflightSubscribes.get(sessionId);
+    if (!bySession) {
+      bySession = new Map();
+      this.inflightSubscribes.set(sessionId, bySession);
+    }
+    const next = (bySession.get(session) ?? 0) + delta;
+    if (next <= 0) {
+      bySession.delete(session);
+      if (bySession.size === 0) this.inflightSubscribes.delete(sessionId);
+      return 0;
+    }
+    bySession.set(session, next);
+    return next;
+  }
+
+  private markEstablished(session: GatewaySession, sessionId: string): void {
+    let set = this.establishedSubs.get(sessionId);
+    if (!set) {
+      set = new Set();
+      this.establishedSubs.set(sessionId, set);
+    }
+    set.add(session);
+  }
+
+  private isEstablished(session: GatewaySession, sessionId: string): boolean {
+    return this.establishedSubs.get(sessionId)?.has(session) === true;
+  }
+
+  private clearEstablished(session: GatewaySession, sessionId: string): void {
+    const set = this.establishedSubs.get(sessionId);
+    if (!set) return;
+    set.delete(session);
+    if (set.size === 0) this.establishedSubs.delete(sessionId);
   }
 
   private sendAgentEvent<K extends keyof AgentEventPayloadMap>(

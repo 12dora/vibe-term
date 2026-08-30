@@ -221,7 +221,19 @@ export function appendAgentMessage(
   role: AgentMessageRole,
   content: unknown
 ): AgentMessageRecord {
-  const [created] = appendAgentMessages(sessionId, [{ role, content }]);
+  const orm = getOrmDb();
+  const created = orm
+    .insert(agentMessages)
+    .values({
+      id: crypto.randomUUID(),
+      sessionId,
+      seq: nextSessionSeqSql(agentMessages, sessionId),
+      role,
+      content,
+      createdAt: new Date().toISOString(),
+    })
+    .returning()
+    .get();
   if (!created) {
     throw new Error('failed to append agent message');
   }
@@ -234,6 +246,10 @@ export function appendAgentMessages(
 ): AgentMessageRecord[] {
   if (messages.length === 0) {
     return [];
+  }
+  const first = messages[0];
+  if (messages.length === 1 && first) {
+    return [appendAgentMessage(sessionId, first.role, first.content)];
   }
 
   const orm = getOrmDb();
@@ -257,6 +273,8 @@ export function appendAgentMessages(
     if (created.length !== rows.length) {
       throw new Error('failed to append agent messages');
     }
+    // SQLite RETURNING 不保证行序，调用方按数组顺序广播
+    created.sort((a, b) => a.seq - b.seq);
     return created;
   });
 }

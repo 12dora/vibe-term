@@ -306,6 +306,51 @@ describe('appendAgentMessages', () => {
     expect(batchA.map((row) => row.seq)).toEqual([0, 1]);
     expect(nextB.seq).toBe(1);
   });
+
+  test('batch 返回数组按 seq 升序，不依赖 SQLite RETURNING 行序', () => {
+    const session = createAgentSession({ title: 'batch-returning-order', modelId: 'm' });
+    const rows = appendAgentMessages(
+      session.id,
+      Array.from({ length: 12 }, (_, i) => ({
+        role: 'user' as const,
+        content: { role: 'user', content: `m${i}` },
+      }))
+    );
+
+    const seqs = rows.map((row) => row.seq);
+    expect(seqs).toEqual(Array.from({ length: 12 }, (_, i) => i));
+    for (let i = 1; i < seqs.length; i++) {
+      expect(seqs[i]).toBeGreaterThan(seqs[i - 1] ?? -1);
+    }
+    expect(rows.map((row) => (row.content as { content: string }).content)).toEqual(
+      Array.from({ length: 12 }, (_, i) => `m${i}`)
+    );
+  });
+
+  test('单行 append 与 batch 并发仍产生唯一递增 seq', async () => {
+    const session = createAgentSession({ title: 'mixed-append-seq', modelId: 'm' });
+    const [singles, batch] = await Promise.all([
+      Promise.all(
+        Array.from({ length: 8 }, (_, i) =>
+          Promise.resolve().then(() => appendAgentMessage(session.id, 'user', `s${i}`))
+        )
+      ),
+      Promise.resolve().then(() =>
+        appendAgentMessages(
+          session.id,
+          Array.from({ length: 5 }, (_, i) => ({
+            role: 'assistant' as const,
+            content: `b${i}`,
+          }))
+        )
+      ),
+    ]);
+
+    const seqs = [...singles, ...batch].map((row) => row.seq).sort((a, b) => a - b);
+    expect(seqs).toEqual(Array.from({ length: 13 }, (_, i) => i));
+    expect(new Set(seqs).size).toBe(13);
+    expect(listAgentMessages(session.id).map((row) => row.seq)).toEqual(seqs);
+  });
 });
 
 describe('agent confirmations', () => {

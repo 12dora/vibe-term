@@ -321,6 +321,53 @@ describe('AgentWsHub', () => {
     expect(ws.sent.length).toBe(0);
   });
 
+  test('已有订阅的 re-sync 失败时保留原订阅', async () => {
+    let shouldFail = false;
+    const hub = new AgentWsHub({
+      syncProvider: async () => {
+        if (shouldFail) throw new Error('resync boom');
+        return stubSync;
+      },
+    });
+    const ws = createMockWs();
+    await subscribeReady(hub, ws, 'session-a');
+
+    shouldFail = true;
+    await hub.subscribe(ws, 'session-a');
+    expect(ws.sent.length).toBe(0);
+
+    hub.broadcastAgentEvent('session-a', wsBorsh.AGENT_EVENT_STATUS, { status: 'running' }, 1);
+    expect(ws.sent.length).toBe(1);
+    expect(decodeAgentEvent(requireFrame(ws.sent)).json).toEqual({ status: 'running' });
+  });
+
+  test('并发 subscribe 其中一个失败时保留成功一侧的注册', async () => {
+    let rejectFirst: (err: Error) => void = () => {};
+    let calls = 0;
+    const hub = new AgentWsHub({
+      syncProvider: () => {
+        calls += 1;
+        if (calls === 1) {
+          return new Promise<AgentSyncEventPayload>((_, reject) => {
+            rejectFirst = reject;
+          });
+        }
+        return Promise.resolve(stubSync);
+      },
+    });
+    const ws = createMockWs();
+    const first = hub.subscribe(ws, 'session-a');
+    const second = hub.subscribe(ws, 'session-a');
+    await second;
+    rejectFirst(new Error('first boom'));
+    await first;
+
+    expect(decodeAgentEvent(requireFrame(ws.sent)).eventType).toBe(wsBorsh.AGENT_EVENT_SYNC);
+    ws.sent.length = 0;
+    hub.broadcastAgentEvent('session-a', wsBorsh.AGENT_EVENT_STATUS, { status: 'running' }, 1);
+    expect(ws.sent.length).toBe(1);
+  });
+
   test('超出单客户端订阅上限的新 session 被拒绝', async () => {
     const hub = new AgentWsHub({ syncProvider: async () => stubSync });
     const ws = createMockWs();

@@ -413,6 +413,49 @@ function createKeyLogApplier(keys: UserKeyService, onHeadChanged?: () => void): 
   };
 }
 
+export function attachKeyLogHeadNotify(
+  apply: UserKeyService['apply'],
+  notify: () => void
+): UserKeyService['apply'] {
+  return async (userId, input) => {
+    const result = await apply(userId, input);
+    if (result.ok) notify();
+    return result;
+  };
+}
+
+export type KeyLogUplinkPort = {
+  sendCtl(msg: { t: 'key.log.append'; bytes: Uint8Array; sig: Uint8Array }): void;
+  appendAndAck(record: {
+    bytes: Uint8Array;
+    sig: Uint8Array;
+  }): Promise<{ ok: boolean; seq?: bigint | number; error?: string }>;
+  queryHubHead(): Promise<{ seq: bigint | number; hash: Uint8Array } | null>;
+  queryKeyLogAt(seq: bigint): Promise<{ bytes: Uint8Array; sig: Uint8Array } | null>;
+};
+
+export function createKeyLogPublisher(
+  uplink: KeyLogUplinkPort,
+  notifyHead: () => void
+): KeyLogPublisher {
+  return {
+    publish(record) {
+      try {
+        uplink.sendCtl({ t: 'key.log.append', bytes: record.bytes, sig: record.sig });
+      } catch {}
+      notifyHead();
+    },
+    async publishAndAck(record) {
+      // hub ACK 时本地 head 尚未更新；status 刷新挂在 apply 成功路径，避免读到旧 head
+      const ack = await uplink.appendAndAck(record);
+      if (ack.ok) return { ok: true, seq: ack.seq ?? 0n };
+      return { ok: false, error: ack.error ?? 'hub_error' };
+    },
+    queryHubHead: () => uplink.queryHubHead(),
+    queryKeyLogAt: (seq) => uplink.queryKeyLogAt(seq),
+  };
+}
+
 async function openAdaptedWsStream(
   link: LinkSession,
   auth: string,
@@ -548,9 +591,12 @@ async function createMeshStoresAndServices(opts: CreateMeshRuntimeOptions) {
     verifyPasskeyAssertion: makeVerifyPasskeyAssertion(userStore),
   });
   const peerHolder = { manager: null } as { manager: PeerManager | null };
-  const applier = createKeyLogApplier(keyLogService, () =>
-    peerHolder.manager?.notifyKeyLogHeadChanged()
+  const notifyKeyLogHead = () => peerHolder.manager?.notifyKeyLogHeadChanged();
+  keyLogService.apply = attachKeyLogHeadNotify(
+    keyLogService.apply.bind(keyLogService),
+    notifyKeyLogHead
   );
+  const applier = createKeyLogApplier(keyLogService, notifyKeyLogHead);
   const userIdOf = () => resolveUserId(userStore, identity.nodeIdHex, opts.userId) ?? '';
   const nodeEvents = new Set<(event: NodeEventPayload) => void>();
   const nodeEventDedupe = new NodeEventDedupe();
@@ -1119,22 +1165,9 @@ function wireMeshHttp(
       openHttpStream(link, { type: 'http', ...open }, body, signal),
     openWsStream: (link, auth, cid) => openAdaptedWsStream(link, auth, cid),
   };
-  const publisher: KeyLogPublisher = {
-    publish(record) {
-      try {
-        uplink.sendCtl({ t: 'key.log.append', bytes: record.bytes, sig: record.sig });
-      } catch {}
-      d.peerHolder.manager?.notifyKeyLogHeadChanged();
-    },
-    async publishAndAck(record) {
-      const ack = await uplink.appendAndAck(record);
-      d.peerHolder.manager?.notifyKeyLogHeadChanged();
-      if (ack.ok) return { ok: true, seq: ack.seq ?? 0n };
-      return { ok: false, error: ack.error ?? 'hub_error' };
-    },
-    queryHubHead: () => uplink.queryHubHead(),
-    queryKeyLogAt: (seq) => uplink.queryKeyLogAt(seq),
-  };
+  const publisher = createKeyLogPublisher(uplink, () =>
+    d.peerHolder.manager?.notifyKeyLogHeadChanged()
+  );
   const http = new MeshHttpRuntime({
     roles: config.roles,
     nodeId: identity.nodeIdHex,

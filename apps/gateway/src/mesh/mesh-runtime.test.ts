@@ -24,7 +24,13 @@ import type { GatewayRuntime } from '../runtime';
 import type { WebSocketServer } from '../ws';
 import { GatewaySession } from '../ws/gateway-session';
 import { createFakeCarrier } from '../ws/test-helpers';
-import { SessionRegistry, createMeshRuntime, isAdvertisablePeerAddress } from './mesh-runtime';
+import {
+  SessionRegistry,
+  attachKeyLogHeadNotify,
+  createKeyLogPublisher,
+  createMeshRuntime,
+  isAdvertisablePeerAddress,
+} from './mesh-runtime';
 import {
   ImmediateScheduler,
   fakeSocketPair,
@@ -1355,5 +1361,84 @@ describe('isAdvertisablePeerAddress', () => {
         `${family} ${address}${internal ? ' internal' : ''}`
       ).toBe(false);
     }
+  });
+});
+
+describe('key-log head notify wiring', () => {
+  const record = { bytes: new Uint8Array([1]), sig: new Uint8Array([2]) };
+
+  test('attachKeyLogHeadNotify 仅在 apply 成功后通知', async () => {
+    const calls: string[] = [];
+    const apply = attachKeyLogHeadNotify(
+      async () => {
+        calls.push('apply');
+        return { ok: true as const, seq: 4, hash: new Uint8Array(32), effects: [] };
+      },
+      () => {
+        calls.push('notify');
+      }
+    );
+    await apply('user-1', record);
+    expect(calls).toEqual(['apply', 'notify']);
+  });
+
+  test('attachKeyLogHeadNotify apply 失败不通知', async () => {
+    let notified = 0;
+    const apply = attachKeyLogHeadNotify(
+      async () => ({ ok: false as const, error: 'fork' }),
+      () => {
+        notified += 1;
+      }
+    );
+    const result = await apply('user-1', record);
+    expect(result).toEqual({ ok: false, error: 'fork' });
+    expect(notified).toBe(0);
+  });
+
+  test('publishAndAck 在 hub ACK 后不通知（等本地 apply）', async () => {
+    let notified = 0;
+    const publisher = createKeyLogPublisher(
+      {
+        sendCtl() {},
+        async appendAndAck() {
+          return { ok: true, seq: 3n };
+        },
+        async queryHubHead() {
+          return null;
+        },
+        async queryKeyLogAt() {
+          return null;
+        },
+      },
+      () => {
+        notified += 1;
+      }
+    );
+    const ack = await publisher.publishAndAck?.(record);
+    expect(ack).toEqual({ ok: true, seq: 3n });
+    expect(notified).toBe(0);
+  });
+
+  test('publish 仍在本地 apply 之后的 fan-out 路径通知', () => {
+    let notified = 0;
+    const publisher = createKeyLogPublisher(
+      {
+        sendCtl() {},
+        async appendAndAck() {
+          return { ok: false, error: 'unused' };
+        },
+        async queryHubHead() {
+          return null;
+        },
+        async queryKeyLogAt() {
+          return null;
+        },
+      },
+      () => {
+        notified += 1;
+      }
+    );
+    publisher.publish(record);
+    expect(notified).toBe(1);
   });
 });
