@@ -38,8 +38,8 @@ export interface DeviceSessionRuntimeConnection {
   disconnect(): void;
   isSessionClosedEmitted?(): boolean;
   requestSnapshot(): void;
-  sendInput(paneId: string, data: string): void;
-  sendInputBytes?(paneId: string, data: Uint8Array): void;
+  sendInput(paneId: string, data: string): void | Promise<void>;
+  sendInputBytes?(paneId: string, data: Uint8Array): void | Promise<void>;
   resizePane(paneId: string, cols: number, rows: number): void;
   selectPane(windowId: string, paneId: string): void;
   selectPaneWithSize(windowId: string, paneId: string, cols: number, rows: number): void;
@@ -130,6 +130,7 @@ export class DeviceSessionRuntime {
   private connectPromise: Promise<void> | null = null;
   private connectGeneration = 0;
   private terminated = false;
+  private connected = false;
   private closeEmitted = false;
   private manualDisconnect = false;
   private connectionDisconnected = false;
@@ -191,6 +192,10 @@ export class DeviceSessionRuntime {
 
   get isTerminated(): boolean {
     return this.terminated;
+  }
+
+  isConnected(): boolean {
+    return this.connected && !this.terminated && !this.connectionDisconnected;
   }
 
   // 本次连接是否已因 session gone 发出 session_closed（供断开告警抑制双发）。
@@ -306,7 +311,14 @@ export class DeviceSessionRuntime {
   }
 
   sendInput(paneId: string, data: string): void {
-    this.connection.sendInput(paneId, data);
+    void this.connection.sendInput(paneId, data);
+  }
+
+  async sendInputAndWait(paneId: string, data: string): Promise<void> {
+    if (!this.isConnected()) {
+      throw new Error('Device session runtime not connected');
+    }
+    await this.connection.sendInput(paneId, data);
   }
 
   sendInputBytes(paneId: string, data: Uint8Array): void {
@@ -425,6 +437,7 @@ export class DeviceSessionRuntime {
       if (this.wasConnectAbandoned(generation)) {
         return;
       }
+      this.connected = true;
     } catch (error) {
       if (this.wasConnectAbandoned(generation)) {
         return;
@@ -452,6 +465,7 @@ export class DeviceSessionRuntime {
       return;
     }
     this.connectionDisconnected = true;
+    this.connected = false;
     this.connection.disconnect();
   }
 

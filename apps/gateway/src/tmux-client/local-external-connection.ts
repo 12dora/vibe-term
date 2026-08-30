@@ -212,12 +212,12 @@ export class LocalExternalTmuxConnection extends ExternalTmuxConnectionCore {
     this.stopControlClient();
   }
 
-  sendInput(paneId: string, data: string): void {
-    this.enqueueInputBytes(paneId, new TextEncoder().encode(data));
+  sendInput(paneId: string, data: string): Promise<void> {
+    return this.enqueueInputBytes(paneId, new TextEncoder().encode(data));
   }
 
-  sendInputBytes(paneId: string, data: Uint8Array): void {
-    this.enqueueInputBytes(paneId, Uint8Array.from(data));
+  sendInputBytes(paneId: string, data: Uint8Array): Promise<void> {
+    return this.enqueueInputBytes(paneId, Uint8Array.from(data));
   }
 
   protected resolveDefaultWorkingDir(): string {
@@ -325,9 +325,9 @@ export class LocalExternalTmuxConnection extends ExternalTmuxConnectionCore {
     this.callbacks.onError(error instanceof Error ? error : new Error(String(error)));
   }
 
-  private enqueueInputBytes(paneId: string, data: Uint8Array): void {
+  private enqueueInputBytes(paneId: string, data: Uint8Array): Promise<void> {
     if (!this.connected) {
-      return;
+      return Promise.resolve();
     }
 
     const task = async () => {
@@ -350,6 +350,7 @@ export class LocalExternalTmuxConnection extends ExternalTmuxConnectionCore {
     void next.catch((error) => {
       this.callbacks.onError(error);
     });
+    return next;
   }
 
   private async assertTmuxCompatibility(): Promise<void> {

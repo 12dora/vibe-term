@@ -36,6 +36,10 @@ export function isAuthSkippedPath(path: string): boolean {
   return AUTH_SKIP_PATHS.has(bare) || bare.startsWith('/api/mesh-internal/');
 }
 
+function resolveInboundHttpUrl(path: string, query: string, origin: string): URL {
+  return new URL(path + query, origin.endsWith('/') ? origin : `${origin}/`);
+}
+
 export function stripForwardedRequestHeaders(
   headers?: Record<string, string> | null
 ): Record<string, string> {
@@ -178,7 +182,19 @@ export async function acceptHttpStream(
     opts.peerNodeId
   );
   const auth = str(open.auth) || null;
-  const verified = verifyAuth(auth, path, opts);
+  let url: URL;
+  try {
+    url = resolveInboundHttpUrl(path, query, origin);
+  } catch {
+    await writeHttpResponse(
+      stream,
+      400,
+      { 'content-type': 'application/json' },
+      JSON.stringify({ error: 'invalid path' })
+    );
+    return;
+  }
+  const verified = verifyAuth(auth, url.pathname, opts);
   if (!verified.ok) {
     await writeHttpResponse(
       stream,
@@ -207,7 +223,6 @@ export async function acceptHttpStream(
   const requestBody = requestReader
     ? requestBodyFromLink(requestReader, stream, abort, () => responseComplete)
     : null;
-  const url = new URL(path + query, origin.endsWith('/') ? origin : `${origin}/`);
   const request = new Request(url, {
     method,
     headers,

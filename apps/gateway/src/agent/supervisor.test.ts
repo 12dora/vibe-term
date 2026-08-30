@@ -18,6 +18,7 @@ import {
   updateAgentSession,
 } from '../db/agent';
 import { getDb as getOrmDb } from '../db/client';
+import { notifyNodeOffline } from './node-offline-bus';
 import { AgentRun, type AgentRunDeps, type AgentStopReason } from './run';
 import {
   AgentAwaitingConfirmationError,
@@ -1098,5 +1099,51 @@ describe('AgentSupervisor - syncProvider', () => {
 
     const missing = await harness.hub.syncProvider!(crypto.randomUUID());
     expect(missing).toBeNull();
+  });
+});
+
+describe('AgentSupervisor - 远端恢复与 shutdown 离线通知', () => {
+  test('start() 不恢复远端 running session，restoreRemoteSessions 之后才拉起', async () => {
+    const mock = createMockChatServer(() =>
+      sseResponse([chunk({ role: 'assistant', content: 'remote-resumed' }), chunk({}, 'stop')])
+    );
+    const harness = createSupervisorHarness({
+      baseUrl: mock.baseUrl,
+      sessionStatus: 'running',
+    });
+    updateAgentSession(harness.session.id, { nodeId: 'peer-restore-1' });
+    appendAgentMessage(harness.session.id, 'user', { role: 'user', content: 'continue remote' });
+
+    await harness.supervisor.start();
+    expect(harness.supervisor.isSessionActive(harness.session.id)).toBe(false);
+    expect(getAgentSessionById(harness.session.id)?.status).toBe('running');
+
+    harness.supervisor.restoreRemoteSessions();
+    await harness.waitForIdle();
+    expect(getAgentSessionById(harness.session.id)?.status).toBe('idle');
+  });
+
+  test('supervisor stopping 时忽略 NODE_OFFLINE，session 保持 running', async () => {
+    const NODE_ID = 'peer-stopping-offline';
+    const mock = createMockChatServer(() =>
+      slowSseResponse(
+        [
+          chunk({ role: 'assistant', content: 'working ' }),
+          chunk({ content: 'more ' }),
+          chunk({}, 'stop'),
+        ],
+        80
+      )
+    );
+    const harness = createSupervisorHarness({ baseUrl: mock.baseUrl });
+    updateAgentSession(harness.session.id, { nodeId: NODE_ID });
+    await harness.supervisor.start();
+    harness.supervisor.submitUserMessage(harness.session.id, 'talk');
+    await new Promise((r) => setTimeout(r, 30));
+    await harness.supervisor.stop();
+    notifyNodeOffline(NODE_ID);
+    const session = getAgentSessionById(harness.session.id);
+    expect(session?.status).toBe('running');
+    expect(session?.lastError).not.toBe('NODE_OFFLINE');
   });
 });

@@ -193,27 +193,8 @@ export class AgentSupervisor {
     // 重启恢复：running → 从已落库 messages 重新发起 run（等价重试最后 step）。
     // crash 可能发生在 confirmations 落库之后、status 置 waiting_confirmation 之前，
     // 残留 pending 已无运行中的 run 对应，先作废并补 execution-denied result 防止消息流悬空
-    for (const session of getAgentSessionsByStatus('running')) {
-      const cancelled = this.cancelPendingConfirmations(session.id, 'invalidated after restart');
-      if (cancelled > 0) {
-        this.appendApprovalResponsesIfReady(session.id);
-      }
-      this.startRun(session.id);
-    }
-
-    // waiting_confirmation：pending confirmations 仍在则保持等待（不重发通知——
-    // confirmations 表有记录代表已通知过）；pending 缺失说明 crash 在中间态，尝试自愈
-    for (const session of getAgentSessionsByStatus('waiting_confirmation')) {
-      const pending = listPendingAgentConfirmations(session.id);
-      if (pending.length > 0) {
-        continue;
-      }
-      if (this.appendApprovalResponsesIfReady(session.id)) {
-        this.startRun(session.id);
-      } else {
-        updateAgentSession(session.id, { status: 'idle' });
-      }
-    }
+    // 远端 session 等 mesh bridge 安装后再 restoreRemoteSessions()
+    this.restoreSessions('local');
 
     // stop() 超时留下的 stale session：仍在跑的等它 settle 再续；已 settle 的立即恢复
     for (const sessionId of [...this.staleSessionIds]) {
@@ -222,10 +203,25 @@ export class AgentSupervisor {
 
     // 订阅设备关闭事件：设备 runtime 断开时主动停止绑定该设备的 session
     registerDeviceCloseListener((deviceId) => this.stopSessionsForDevice(deviceId, 'pane_lost'));
-    registerNodeOfflineListener((nodeId) => this.stopSessionsForNode(nodeId));
+    registerNodeOfflineListener((nodeId) => {
+      if (this.stopping) {
+        return;
+      }
+      this.stopSessionsForNode(nodeId);
+    });
+  }
+
+  restoreRemoteSessions(): void {
+    if (!this.started || this.stopping) {
+      return;
+    }
+    this.restoreSessions('remote');
   }
 
   async stop(): Promise<void> {
+    if (this.stopping) {
+      return;
+    }
     this.stopping = true;
     this.started = false;
 
@@ -245,6 +241,39 @@ export class AgentSupervisor {
     for (const [sessionId, entry] of this.activeRuns) {
       entry.stale = true;
       this.staleSessionIds.add(sessionId);
+    }
+  }
+
+  private restoreSessions(scope: 'local' | 'remote'): void {
+    const match = (session: AgentSessionRecord): boolean =>
+      scope === 'remote' ? Boolean(session.nodeId) : !session.nodeId;
+
+    for (const session of getAgentSessionsByStatus('running')) {
+      if (!match(session) || this.activeRuns.has(session.id)) {
+        continue;
+      }
+      const cancelled = this.cancelPendingConfirmations(session.id, 'invalidated after restart');
+      if (cancelled > 0) {
+        this.appendApprovalResponsesIfReady(session.id);
+      }
+      this.startRun(session.id);
+    }
+
+    // waiting_confirmation：pending confirmations 仍在则保持等待（不重发通知——
+    // confirmations 表有记录代表已通知过）；pending 缺失说明 crash 在中间态，尝试自愈
+    for (const session of getAgentSessionsByStatus('waiting_confirmation')) {
+      if (!match(session)) {
+        continue;
+      }
+      const pending = listPendingAgentConfirmations(session.id);
+      if (pending.length > 0) {
+        continue;
+      }
+      if (this.appendApprovalResponsesIfReady(session.id)) {
+        this.startRun(session.id);
+      } else {
+        updateAgentSession(session.id, { status: 'idle' });
+      }
     }
   }
 

@@ -100,33 +100,39 @@ export class SshExternalTmuxConnection extends ExternalTmuxConnectionCore {
     void this.shutdownInternal(false);
   }
 
-  sendInput(paneId: string, data: string): void {
-    this.sendInputBytes(paneId, new TextEncoder().encode(data));
+  sendInput(paneId: string, data: string): Promise<void> {
+    return this.sendInputBytes(paneId, new TextEncoder().encode(data));
   }
 
-  sendInputBytes(paneId: string, data: Uint8Array): void {
+  sendInputBytes(paneId: string, data: Uint8Array): Promise<void> {
     if (!this.connected) {
-      return;
+      return Promise.resolve();
     }
 
+    const writes: Promise<void>[] = [];
     for (const chunk of encodeBytesToHexChunks(data)) {
       const control = this.controlChannel;
       if (control) {
-        void this.controlCommands
-          .execute(
-            (command) => control.write(command),
-            ['send-keys', '-H', '-t', paneId, ...chunk].join(' '),
-            { transform: () => undefined, timeoutMs: 30_000 }
-          )
-          .catch((error) => {
-            this.callbacks.onError(error instanceof Error ? error : new Error(String(error)));
-          });
+        writes.push(
+          this.controlCommands
+            .execute(
+              (command) => control.write(command),
+              ['send-keys', '-H', '-t', paneId, ...chunk].join(' '),
+              { transform: () => undefined, timeoutMs: 30_000 }
+            )
+            .then(() => undefined)
+            .catch((error) => {
+              this.callbacks.onError(error instanceof Error ? error : new Error(String(error)));
+              throw error;
+            })
+        );
       } else {
-        void this.runTmux(['send-keys', '-H', '-t', paneId, ...chunk]).catch((error) => {
-          this.callbacks.onError(error);
-        });
+        writes.push(
+          this.runTmux(['send-keys', '-H', '-t', paneId, ...chunk]).then(() => undefined)
+        );
       }
     }
+    return Promise.all(writes).then(() => undefined);
   }
 
   protected resolveDefaultWorkingDir(): string {

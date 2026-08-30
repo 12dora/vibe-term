@@ -58,6 +58,8 @@ export interface GatewayRuntime {
     closeSession: (session: GatewaySocketData['session'], code: number, reason: string) => void;
   };
   onRestartRequested: (listener: () => Promise<void> | void) => void;
+  restoreRemoteAgentSessions?: () => void;
+  stopAgentSessions?: () => Promise<void>;
   stop: () => Promise<void>;
 }
 
@@ -190,6 +192,12 @@ export async function createGatewayRuntime(
     },
     onRestartRequested(listener) {
       runtimeController.onRestart(listener);
+    },
+    restoreRemoteAgentSessions() {
+      agentSupervisor.restoreRemoteSessions();
+    },
+    stopAgentSessions() {
+      return agentSupervisor.stop();
     },
     async stop() {
       connectionAlertNotifier.setBroadcaster(null);

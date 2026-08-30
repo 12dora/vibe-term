@@ -176,6 +176,51 @@ describe('assembleTmex role matrix', () => {
     expect(stops).toBe(2);
   });
 
+  test('stops agent sessions before mesh, then gateway', async () => {
+    const order: string[] = [];
+    const gateway = fakeGateway({
+      async stopAgentSessions() {
+        order.push('agent');
+      },
+      async stop() {
+        order.push('gateway');
+      },
+    });
+    const mesh = fakeMesh({
+      async stop() {
+        order.push('mesh');
+      },
+    });
+    const assembled = await assembleTmex({
+      roles: { hub: false, node: true },
+      createGatewayRuntime: async () => gateway,
+      createMeshRuntime: async () => mesh,
+    });
+    await assembled.stop();
+    expect(order).toEqual(['agent', 'mesh', 'gateway']);
+  });
+
+  test('restores remote agent sessions after mesh start', async () => {
+    const order: string[] = [];
+    const gateway = fakeGateway({
+      restoreRemoteAgentSessions() {
+        order.push('restore');
+      },
+    });
+    const mesh = fakeMesh({
+      async start() {
+        order.push('mesh');
+      },
+    });
+    const assembled = await assembleTmex({
+      roles: { hub: false, node: true },
+      createGatewayRuntime: async () => gateway,
+      createMeshRuntime: async () => mesh,
+    });
+    await assembled.start();
+    expect(order).toEqual(['mesh', 'restore']);
+  });
+
   test('registers gateway WS with cid from the upgrade query, not a client connectionId', async () => {
     const registered: Array<{ cid?: string; sid: string; uid: string; via: string }> = [];
     const mesh = fakeMesh({

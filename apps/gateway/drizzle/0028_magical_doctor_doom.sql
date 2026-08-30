@@ -1,4 +1,6 @@
-PRAGMA foreign_keys=OFF;--> statement-breakpoint
+CREATE TABLE `__bk_agent_messages` AS SELECT * FROM `agent_messages`;--> statement-breakpoint
+CREATE TABLE `__bk_agent_queued_messages` AS SELECT * FROM `agent_queued_messages`;--> statement-breakpoint
+CREATE TABLE `__bk_agent_confirmations` AS SELECT * FROM `agent_confirmations`;--> statement-breakpoint
 CREATE TABLE `__new_agent_sessions` (
 	`id` text PRIMARY KEY NOT NULL,
 	`title` text NOT NULL,
@@ -27,5 +29,10 @@ CREATE TABLE `__new_agent_sessions` (
 INSERT INTO `__new_agent_sessions`("id", "title", "node_id", "device_id", "pane_id", "provider_id", "model_id", "system_prompt", "write_mode", "use_provider_web_search", "provider_hosted_tools", "allow_control_chars", "origin_pane_title", "origin_process_name", "status", "last_error", "max_steps_per_turn", "created_at", "updated_at") SELECT "id", "title", "node_id", "device_id", "pane_id", "provider_id", "model_id", "system_prompt", "write_mode", "use_provider_web_search", "provider_hosted_tools", "allow_control_chars", "origin_pane_title", "origin_process_name", "status", "last_error", "max_steps_per_turn", "created_at", "updated_at" FROM `agent_sessions`;--> statement-breakpoint
 DROP TABLE `agent_sessions`;--> statement-breakpoint
 ALTER TABLE `__new_agent_sessions` RENAME TO `agent_sessions`;--> statement-breakpoint
-PRAGMA foreign_keys=ON;--> statement-breakpoint
-CREATE INDEX `agent_sessions_node_id_idx` ON `agent_sessions` (`node_id`);
+CREATE INDEX `agent_sessions_node_id_idx` ON `agent_sessions` (`node_id`);--> statement-breakpoint
+INSERT INTO `agent_messages` SELECT * FROM `__bk_agent_messages`;--> statement-breakpoint
+INSERT INTO `agent_queued_messages` SELECT * FROM `__bk_agent_queued_messages`;--> statement-breakpoint
+INSERT INTO `agent_confirmations` SELECT * FROM `__bk_agent_confirmations`;--> statement-breakpoint
+DROP TABLE `__bk_agent_messages`;--> statement-breakpoint
+DROP TABLE `__bk_agent_queued_messages`;--> statement-breakpoint
+DROP TABLE `__bk_agent_confirmations`;

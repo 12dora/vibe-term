@@ -26,7 +26,7 @@ import { getDisplayVersion } from '../system/version';
 import type { GatewaySession } from '../ws/gateway-session';
 import { isPeerReachable } from './address-class';
 import { defaultScheduler, encodeJsonBytes } from './ctl';
-import { setMeshAgentBridge } from './mesh-agent-bridge';
+import { isRemoteNodePresent, lookupRemoteNode, setMeshAgentBridge } from './mesh-agent-bridge';
 import {
   type CachedRtcConfig,
   type ConnectionLookupResult,
@@ -818,7 +818,7 @@ function wireMeshEventsAndSessions(d: Awaited<ReturnType<typeof constructMeshDep
         if (rejectPeer(node.id, true)) continue;
         d.emitListNodeEvent({
           nodeId: node.id,
-          status: node.online ? 'online' : 'offline',
+          status: isRemoteNodePresent(node.online, reach.get(node.id)) ? 'online' : 'offline',
           reach: reach.get(node.id) ?? null,
           transport: d.peerHolder.manager?.transportOf(node.id) ?? null,
           rttMs: d.peerHolder.manager?.rttOf(node.id) ?? null,
@@ -1168,9 +1168,11 @@ function wireMeshHttp(
   d.httpHolder.runtime = http;
   setMeshAgentBridge({
     lookupNode(nodeId) {
-      const reach = peers.listReach();
-      if (!reach.has(nodeId)) return 'unknown';
-      return reach.get(nodeId) == null ? 'offline' : 'online';
+      return lookupRemoteNode(
+        nodeId,
+        peers.listReach(),
+        peers.listHubOnline?.() ?? new Set<string>()
+      );
     },
     forwardInternalHttp: (nodeId, path, body, signal) =>
       http.forwarder.forwardInternalHttp(nodeId, path, body, signal),

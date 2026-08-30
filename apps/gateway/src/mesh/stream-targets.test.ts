@@ -753,6 +753,72 @@ describe('http/ws stream targets', () => {
     expect(unhandled).toEqual([]);
   });
 
+  test('mesh-internal path traversal does not skip session auth', async () => {
+    const cases = [
+      '/api/mesh-internal/../agent/sessions',
+      '/api/mesh-internal/%2e%2e/agent/sessions',
+      '/api/mesh-internal/foo/../../agent/sessions',
+      '/api/mesh-internal/%2e%2e/%2e%2e/agent/sessions',
+    ];
+    for (const path of cases) {
+      const [a, b] = createInMemoryLinkPair();
+      let dispatchedPath: string | null = null;
+      let verifyCalled = false;
+      b.onStream((stream) => {
+        void acceptHttpStream(stream, {
+          peerNodeId: 'entry-1',
+          sessionStore: {
+            verify: () => {
+              verifyCalled = true;
+              return { ok: false, reason: 'missing auth' };
+            },
+          } as unknown as NodeSessionStore,
+          async dispatchHttp(req) {
+            dispatchedPath = new URL(req.url).pathname;
+            return new Response('leaked', { status: 200 });
+          },
+        });
+      });
+      const res = await openHttpStream(a, {
+        method: 'GET',
+        path,
+        origin: 'http://localhost',
+        auth: null,
+      });
+      expect(res.status).toBe(401);
+      expect(await res.json()).toEqual({ error: 'missing auth' });
+      expect(dispatchedPath).toBeNull();
+      expect(verifyCalled).toBe(false);
+    }
+  });
+
+  test('normalised /api/mesh-internal/ still skips session auth', async () => {
+    const [a, b] = createInMemoryLinkPair();
+    let dispatchedPath: string | null = null;
+    b.onStream((stream) => {
+      void acceptHttpStream(stream, {
+        peerNodeId: 'entry-1',
+        sessionStore: {
+          verify: () => {
+            throw new Error('session auth must be skipped');
+          },
+        } as unknown as NodeSessionStore,
+        async dispatchHttp(req) {
+          dispatchedPath = new URL(req.url).pathname;
+          return new Response('ok', { status: 200 });
+        },
+      });
+    });
+    const res = await openHttpStream(a, {
+      method: 'POST',
+      path: '/api/mesh-internal/tmux/pane-info',
+      origin: 'http://localhost',
+      auth: null,
+    });
+    expect(res.status).toBe(200);
+    expect(dispatchedPath ?? '').toBe('/api/mesh-internal/tmux/pane-info');
+  });
+
   test('WS teardown end() rejection is not unhandled', async () => {
     const server = new WebSocketServer();
     const { db, close } = createMigratedAuthDb();
