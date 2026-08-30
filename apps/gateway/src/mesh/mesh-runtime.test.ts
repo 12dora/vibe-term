@@ -944,6 +944,169 @@ describe('createMeshRuntime', () => {
     expect(renamedBody.nodes.find((n) => n.id === peerId)?.name).toBe('renamed-a');
   });
 
+  test('emits hub online when hub meta is absent from nodes but the cert is live', async () => {
+    const { db, close } = createMigratedAuthDb();
+    const userStore = new UserStore(db);
+    seedUser(userStore);
+    const hubId = 'ef'.repeat(16);
+    userStore.upsertCert({
+      nodeId: hubId,
+      userId: 'user-1',
+      admitRecordSeq: 1,
+      certificateBytes: encodeCertificate({
+        domain: DOMAIN_CERTIFICATE,
+        uid: 'user-1',
+        node_id: hexToBytes(hubId),
+        ed_pk: new Uint8Array(32).fill(7),
+        x25519_pk: new Uint8Array(32).fill(7),
+        enroll_pk: new Uint8Array(32).fill(7),
+        issued_at: 1n,
+      }),
+      certSig: randomBytes(64),
+      authorizationBytes: randomBytes(8),
+      authorizationSig: randomBytes(64),
+      revokedLogSeq: null,
+    });
+    const [clientWs, hubWs] = fakeSocketPair();
+    const hub = new WebSocketLink(hubWs, { role: 'acceptor' });
+    hub.ctl.onMessage(() => {});
+    const events: Array<{ nodeId: string; status: string; name?: string }> = [];
+    const mesh = await createMeshRuntime({
+      db,
+      gateway: fakeGateway(db),
+      config: {
+        roles: { hub: false, node: true },
+        hubUrl: 'http://127.0.0.1:9',
+        peerPort: 0,
+        stunServers: [],
+      },
+      wsFactory: () => clientWs,
+      startPeerServer: false,
+    });
+    fixtures.push({ close, stop: () => mesh.stop() });
+    mesh.onNodeEvent((event) => {
+      events.push({ nodeId: event.nodeId, status: event.status, name: event.name });
+    });
+    await mesh.start();
+    await waitUntil(() => mesh.uplink.link !== null);
+    hub.ctl.send(encodeUplinkCtl({ t: 'auth.challenge', nonce: encodeBase64url(randomBytes(32)) }));
+    hub.ctl.send(encodeUplinkCtl({ t: 'auth.ok' }));
+    await waitUntil(() => mesh.uplink.state === 'online');
+    hub.ctl.send(
+      encodeUplinkCtl({
+        t: 'node.list',
+        version: 1,
+        key_log_head: { seq: 0n, hash: new Uint8Array(32) },
+        rtc: { stun: [], turn: null },
+        hub: { nodeId: hubId, publicUrl: 'https://hub.example', name: 'hub-site' },
+        nodes: [
+          {
+            id: mesh.nodeId,
+            name: 'home',
+            online: true,
+            endpoints: [],
+            inventory: {},
+            direct_capable: false,
+            version: '1.0.0',
+          },
+        ],
+      })
+    );
+    await waitUntil(() => events.some((e) => e.nodeId === hubId && e.status === 'online'));
+    expect(events.find((e) => e.nodeId === hubId)).toMatchObject({
+      status: 'online',
+      name: 'hub-site',
+    });
+    expect(mesh.lastNodeList?.nodes.some((n) => n.id === hubId)).toBe(false);
+  });
+
+  test('prunes unlisted peers that have no matching live cert', async () => {
+    const { db, close } = createMigratedAuthDb();
+    const userStore = new UserStore(db);
+    seedUser(userStore);
+    const peerId = 'cd'.repeat(16);
+    const ghostId = 'ab'.repeat(16);
+    userStore.upsertCert({
+      nodeId: peerId,
+      userId: 'user-1',
+      admitRecordSeq: 1,
+      certificateBytes: encodeCertificate({
+        domain: DOMAIN_CERTIFICATE,
+        uid: 'user-1',
+        node_id: hexToBytes(peerId),
+        ed_pk: new Uint8Array(32).fill(4),
+        x25519_pk: new Uint8Array(32).fill(4),
+        enroll_pk: new Uint8Array(32).fill(4),
+        issued_at: 1n,
+      }),
+      certSig: randomBytes(64),
+      authorizationBytes: randomBytes(8),
+      authorizationSig: randomBytes(64),
+      revokedLogSeq: null,
+    });
+    userStore.upsertPeer({
+      nodeId: peerId,
+      name: 'peer',
+      endpointsJson: '[]',
+      inventoryJson: '{}',
+      directCapable: false,
+      lastSeenAt: Date.now(),
+      listVersion: 1,
+    });
+    userStore.upsertPeer({
+      nodeId: ghostId,
+      name: 'ghost',
+      endpointsJson: '[]',
+      inventoryJson: '{}',
+      directCapable: false,
+      lastSeenAt: Date.now(),
+      listVersion: 1,
+    });
+    const [clientWs, hubWs] = fakeSocketPair();
+    const hub = new WebSocketLink(hubWs, { role: 'acceptor' });
+    hub.ctl.onMessage(() => {});
+    const mesh = await createMeshRuntime({
+      db,
+      gateway: fakeGateway(db),
+      config: {
+        roles: { hub: false, node: true },
+        hubUrl: 'http://127.0.0.1:9',
+        peerPort: 0,
+        stunServers: [],
+      },
+      wsFactory: () => clientWs,
+      startPeerServer: false,
+    });
+    fixtures.push({ close, stop: () => mesh.stop() });
+    await mesh.start();
+    await waitUntil(() => mesh.uplink.link !== null);
+    hub.ctl.send(encodeUplinkCtl({ t: 'auth.challenge', nonce: encodeBase64url(randomBytes(32)) }));
+    hub.ctl.send(encodeUplinkCtl({ t: 'auth.ok' }));
+    await waitUntil(() => mesh.uplink.state === 'online');
+    hub.ctl.send(
+      encodeUplinkCtl({
+        t: 'node.list',
+        version: 1,
+        key_log_head: { seq: 0n, hash: new Uint8Array(32) },
+        rtc: { stun: [], turn: null },
+        nodes: [
+          {
+            id: peerId,
+            name: 'peer',
+            online: true,
+            endpoints: [],
+            inventory: {},
+            direct_capable: false,
+            version: '1.0.0',
+          },
+        ],
+      })
+    );
+    await waitUntil(() => mesh.lastNodeList !== null);
+    expect(mesh.userStore.listPeers().some((row) => row.nodeId === ghostId)).toBe(false);
+    expect(mesh.userStore.listPeers().some((row) => row.nodeId === peerId)).toBe(true);
+  });
+
   test('re-advertises node.status endpoints when network interfaces change', async () => {
     const { db, close } = createMigratedAuthDb();
     seedUser(new UserStore(db));
@@ -1151,7 +1314,9 @@ describe('isAdvertisablePeerAddress', () => {
       ['240.0.0.1', 'IPv4'],
       ['255.255.255.255', 'IPv4'],
       ['2001:db8::8', 'IPv6'],
+      ['2001:db8::8%eth0', 'IPv6'],
       ['2001:db8::8', 6],
+      ['0.1.2.3', 'IPv4'],
       ['2600::1', 'IPv6'],
       ['fe7f::1', 'IPv6'],
       ['fec0::1', 'IPv6'],

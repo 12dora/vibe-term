@@ -100,7 +100,7 @@ function isLanIpv4(host: string): boolean {
 }
 
 function isLanIpv6(host: string): boolean {
-  const w = parseIpv6(host);
+  const w = parseIpv6Words(host);
   if (!w) return false;
   const w0 = w[0] ?? 0;
   const isLoopback = w.slice(0, 7).every((x) => x === 0) && (w[7] ?? 0) === 1;
@@ -123,9 +123,12 @@ function parseIpv4(host: string): [number, number, number, number] | null {
   return o as [number, number, number, number];
 }
 
-function parseIpv6(host: string): number[] | null {
-  if (host.includes('.')) return null;
-  const compressed = host.split('::');
+/** 解析 IPv6 为 8 个 16-bit 字；zone-id（`%iface`）在内部剥掉。畸形输入返回 null。 */
+export function parseIpv6Words(address: string): number[] | null {
+  const cut = address.indexOf('%');
+  const bare = (cut === -1 ? address : address.slice(0, cut)).toLowerCase();
+  if (bare.includes('.')) return null;
+  const compressed = bare.split('::');
   if (compressed.length > 2) return null;
   const parseGroup = (group: string): number[] | null => {
     if (!group) return [];

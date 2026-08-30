@@ -25,7 +25,7 @@ import type { HubTlsInfoProvider } from '../hub/hub-runtime';
 import type { GatewayRuntime } from '../runtime';
 import { getDisplayVersion } from '../system/version';
 import type { GatewaySession } from '../ws/gateway-session';
-import { isPeerReachable } from './address-class';
+import { isPeerReachable, parseIpv6Words } from './address-class';
 import { defaultScheduler, encodeJsonBytes } from './ctl';
 import { isRemoteNodePresent, lookupRemoteNode, setMeshAgentBridge } from './mesh-agent-bridge';
 import {
@@ -316,58 +316,31 @@ function parseIpv4Octets(address: string): number[] | null {
   return octets;
 }
 
-function parseIpv6Words(address: string): number[] | null {
-  const bare = stripZoneId(address).toLowerCase();
-  if (bare.includes('.')) return null;
-  const compressed = bare.split('::');
-  if (compressed.length > 2) return null;
-  const parseGroup = (raw: string): number[] | null => {
-    if (!raw) return [];
-    const parts = raw.split(':');
-    const words: number[] = [];
-    for (const part of parts) {
-      if (!/^[0-9a-f]{1,4}$/.test(part)) return null;
-      words.push(Number.parseInt(part, 16));
-    }
-    return words;
-  };
-  if (compressed.length === 1) {
-    const words = parseGroup(compressed[0] ?? '');
-    return words && words.length === 8 ? words : null;
-  }
-  const left = parseGroup(compressed[0] ?? '');
-  const right = parseGroup(compressed[1] ?? '');
-  if (!left || !right) return null;
-  const missing = 8 - left.length - right.length;
-  if (missing < 0) return null;
-  return [...left, ...Array(missing).fill(0), ...right];
+function isAdvertisableIpv4(address: string): boolean {
+  const o = parseIpv4Octets(stripZoneId(address));
+  if (!o) return false;
+  const [a, b] = o;
+  if (a === 127) return false;
+  if (a === 0) return o.some((n) => n !== 0);
+  if (a === 169) return b !== 254;
+  return a < 224 || a > 239;
+}
+
+function isAdvertisableIpv6(address: string): boolean {
+  const w = parseIpv6Words(address);
+  if (!w) return false;
+  const w0 = w[0];
+  if ((w0 & 0xffc0) === 0xfe80) return false;
+  if ((w0 & 0xff00) === 0xff00) return false;
+  if (w.slice(0, 7).some((x) => x !== 0)) return true;
+  return w[7] > 1;
 }
 
 export function isAdvertisablePeerAddress(addr: os.NetworkInterfaceInfo): boolean {
   if (addr.internal) return false;
   const family = addr.family as string | number;
-  if (family === 'IPv4' || family === 4) {
-    const o = parseIpv4Octets(stripZoneId(addr.address));
-    if (!o) return false;
-    const a = o[0] ?? 0;
-    const b = o[1] ?? 0;
-    return !(
-      o.every((n) => n === 0) ||
-      a === 127 ||
-      (a === 169 && b === 254) ||
-      (a >= 224 && a <= 239)
-    );
-  }
-  if (family === 'IPv6' || family === 6) {
-    const w = parseIpv6Words(addr.address);
-    if (!w) return false;
-    const w0 = w[0] ?? 0;
-    return !(
-      (w.slice(0, 7).every((x) => x === 0) && (w[7] ?? 0) <= 1) ||
-      (w0 & 0xffc0) === 0xfe80 ||
-      (w0 & 0xff00) === 0xff00
-    );
-  }
+  if (family === 'IPv4' || family === 4) return isAdvertisableIpv4(addr.address);
+  if (family === 'IPv6' || family === 6) return isAdvertisableIpv6(addr.address);
   return false;
 }
 
@@ -557,7 +530,7 @@ async function stopQuietly(parts: Array<[string, () => void | Promise<void>]>): 
   }
 }
 
-async function constructMeshDeps(opts: CreateMeshRuntimeOptions) {
+async function createMeshStoresAndServices(opts: CreateMeshRuntimeOptions) {
   const { db, gateway, config } = opts;
   const userStore = new UserStore(db);
   const keyLogStore = new KeyLogStore(db);
@@ -634,13 +607,37 @@ async function constructMeshDeps(opts: CreateMeshRuntimeOptions) {
         tlsInfo: opts.tlsInfo,
       }))
     : (opts.hub ?? null);
+  return {
+    opts,
+    db,
+    gateway,
+    config,
+    userStore,
+    nodeSessionStore,
+    challengeStore,
+    identity,
+    keyLogService,
+    applier,
+    userIdOf,
+    nodeEvents,
+    nodeEventDedupe,
+    state,
+    emitListNodeEvent,
+    emitSyntheticOffline,
+    emitRevoked,
+    signalListeners,
+    hub,
+    peerHolder: { manager: null } as { manager: PeerManager | null },
+    innerSignalsHolder: { router: null } as { router: MeshRtcSignalRouter | null },
+    startBrowserAcceptHolder: { fn() {} } as { fn: (rtcSession: string) => void },
+    httpHolder: { runtime: null } as { runtime: MeshHttpRuntime | null },
+    interfacesFn: opts.networkInterfaces ?? os.networkInterfaces,
+    loadNative: (opts.loadNative ?? (async () => null)) as LoadNative,
+  };
+}
 
-  const peerHolder: { manager: PeerManager | null } = { manager: null };
-  const innerSignalsHolder: { router: MeshRtcSignalRouter | null } = { router: null };
-  const startBrowserAcceptHolder: { fn: (rtcSession: string) => void } = { fn() {} };
-  const httpHolder: { runtime: MeshHttpRuntime | null } = { runtime: null };
-  const interfacesFn = opts.networkInterfaces ?? os.networkInterfaces;
-  const loadNative: LoadNative = opts.loadNative ?? (async () => null);
+function createSessionBindings(s: Awaited<ReturnType<typeof createMeshStoresAndServices>>) {
+  const { opts, gateway, config, identity, loadNative, state } = s;
   const sessions = new SessionRegistry();
   const bulk = new BulkTransferService({ files: filesBulkHooks });
   const acceptingBrowser = new Set<string>();
@@ -649,7 +646,7 @@ async function constructMeshDeps(opts: CreateMeshRuntimeOptions) {
     iceConfigProvider: () =>
       state.lastRtc ?? { stun: config.stunServers, turn: turnConfig(config) },
     identity: { nodeId: identity.nodeIdHex, edSecretKey: identity.edPrivateKey },
-    userStore,
+    userStore: s.userStore,
     handshakeTimeoutMs: opts.rtcHandshakeTimeoutMs,
     sendControl: (session, kind, payload) => sendControl(gateway, session, kind, payload),
     deliverInbound: (session, bytes) => {
@@ -687,7 +684,7 @@ async function constructMeshDeps(opts: CreateMeshRuntimeOptions) {
       return false;
     }
     const now = Date.now();
-    const verified = nodeSessionStore.verify(entry.sid, { viaNodeId: entry.via, now });
+    const verified = s.nodeSessionStore.verify(entry.sid, { viaNodeId: entry.via, now });
     if (!verified.ok) {
       teardownBinding(entry);
       return false;
@@ -710,57 +707,103 @@ async function constructMeshDeps(opts: CreateMeshRuntimeOptions) {
       } catch {}
     }
   }
+  return { sessions, bulk, acceptingBrowser, rtc, verifyBoundSession, teardownBinding };
+}
+
+async function constructMeshDeps(opts: CreateMeshRuntimeOptions) {
+  const stores = await createMeshStoresAndServices(opts);
+  const bindings = createSessionBindings(stores);
   const scheduler = opts.scheduler ?? defaultScheduler();
   const statusProvider = () => {
     const version = getDisplayVersion();
     return {
       version,
       tmux: true,
-      direct_capable: rtc.available,
+      direct_capable: bindings.rtc.available,
       inventory: { version },
       endpoints: enumeratePeerEndpoints(
-        peerHolder.manager?.listenPort ?? config.peerPort,
-        interfacesFn()
+        stores.peerHolder.manager?.listenPort ?? stores.config.peerPort,
+        stores.interfacesFn()
       ),
     };
   };
-  return {
-    opts,
-    db,
-    gateway,
-    config,
-    userStore,
-    nodeSessionStore,
-    challengeStore,
-    identity,
-    keyLogService,
-    applier,
-    userIdOf,
-    nodeEvents,
-    nodeEventDedupe,
-    state,
-    emitListNodeEvent,
-    emitSyntheticOffline,
-    emitRevoked,
-    signalListeners,
-    hub,
-    peerHolder,
-    innerSignalsHolder,
-    startBrowserAcceptHolder,
-    httpHolder,
-    sessions,
-    bulk,
-    acceptingBrowser,
-    rtc,
-    verifyBoundSession,
-    teardownBinding,
-    scheduler,
-    statusProvider,
-  };
+  return { ...stores, ...bindings, scheduler, statusProvider };
 }
 
-function wireMeshEventsAndSessions(d: Awaited<ReturnType<typeof constructMeshDeps>>) {
-  const { opts, config, identity, userStore, state, rtc, sessions, hub, bulk } = d;
+type MeshDeps = Awaited<ReturnType<typeof constructMeshDeps>>;
+type RejectPeerFn = (nodeId: string, alwaysDelete: boolean) => boolean;
+type EnsureDcFn = (peerNodeId: string, rtcSession: string) => void;
+
+function handleUplinkNodeList(d: MeshDeps, list: UplinkNodeList, rejectPeer: RejectPeerFn): void {
+  const { state, identity } = d;
+  state.lastNodeList = list;
+  if (!state.hubPresenceLive) state.hubGeneration += 1;
+  state.hubPresenceLive = true;
+  state.lastRtc = { stun: list.rtc.stun, turn: list.rtc.turn ?? null };
+  const reach = d.peerHolder.manager?.listReach() ?? new Map();
+  const hubId = list.hub?.nodeId ?? null;
+  const emitListed = (node: UplinkNodeList['nodes'][number]) => {
+    d.emitListNodeEvent({
+      nodeId: node.id,
+      status: isRemoteNodePresent(node.online, reach.get(node.id)) ? 'online' : 'offline',
+      reach: reach.get(node.id) ?? null,
+      transport: d.peerHolder.manager?.transportOf(node.id) ?? null,
+      rttMs: d.peerHolder.manager?.rttOf(node.id) ?? null,
+      inventory:
+        typeof node.inventory === 'string'
+          ? node.inventory
+          : JSON.stringify(node.inventory ?? null),
+      version: node.version,
+      direct_capable: node.direct_capable,
+      name: node.name,
+    });
+    if (node.id !== identity.nodeIdHex) d.peerHolder.manager?.notifyPeerEndpointsChanged(node.id);
+  };
+  const emitHubIfUnlisted = () => {
+    if (
+      hubId &&
+      hubId !== identity.nodeIdHex &&
+      hubId !== HUB_META_PEER_ID &&
+      !list.nodes.some((node) => node.id === hubId)
+    ) {
+      const cert = d.userStore.getCert(hubId);
+      const uid = d.userIdOf();
+      if (cert && uid && cert.userId === uid && cert.revokedLogSeq == null) {
+        d.emitListNodeEvent({
+          nodeId: hubId,
+          status: 'online',
+          reach: reach.get(hubId) ?? null,
+          transport: d.peerHolder.manager?.transportOf(hubId) ?? null,
+          rttMs: d.peerHolder.manager?.rttOf(hubId) ?? null,
+          name: list.hub?.name,
+        });
+      }
+    }
+  };
+  for (const node of list.nodes) {
+    if (node.id === HUB_META_PEER_ID) continue;
+    if (rejectPeer(node.id, true)) continue;
+    emitListed(node);
+  }
+  emitHubIfUnlisted();
+  pruneStaleListedPeers(d, hubId, rejectPeer);
+}
+
+function pruneStaleListedPeers(d: MeshDeps, hubId: string | null, rejectPeer: RejectPeerFn): void {
+  for (const peer of d.userStore.listPeers()) {
+    if (
+      peer.nodeId === d.identity.nodeIdHex ||
+      peer.nodeId === HUB_META_PEER_ID ||
+      peer.nodeId === hubId
+    ) {
+      continue;
+    }
+    rejectPeer(peer.nodeId, false);
+  }
+}
+
+function createUplinkWiring(d: MeshDeps) {
+  const { opts, config, identity, userStore, hub } = d;
   const hubTrust = config.hubUrl ? new HubTrustStore(d.db).get(config.hubUrl) : null;
   if (config.hubUrl && !hubTrust?.caPem) {
     let label = config.hubUrl;
@@ -807,63 +850,7 @@ function wireMeshEventsAndSessions(d: Awaited<ReturnType<typeof constructMeshDep
         entrySid: msg.entrySid,
       });
     },
-    onNodeList: (list) => {
-      state.lastNodeList = list;
-      if (!state.hubPresenceLive) state.hubGeneration += 1;
-      state.hubPresenceLive = true;
-      state.lastRtc = { stun: list.rtc.stun, turn: list.rtc.turn ?? null };
-      const reach = d.peerHolder.manager?.listReach() ?? new Map();
-      const hubId = list.hub?.nodeId ?? null;
-      for (const node of list.nodes) {
-        if (node.id === HUB_META_PEER_ID) continue;
-        if (rejectPeer(node.id, true)) continue;
-        d.emitListNodeEvent({
-          nodeId: node.id,
-          status: isRemoteNodePresent(node.online, reach.get(node.id)) ? 'online' : 'offline',
-          reach: reach.get(node.id) ?? null,
-          transport: d.peerHolder.manager?.transportOf(node.id) ?? null,
-          rttMs: d.peerHolder.manager?.rttOf(node.id) ?? null,
-          inventory:
-            typeof node.inventory === 'string'
-              ? node.inventory
-              : JSON.stringify(node.inventory ?? null),
-          version: node.version,
-          direct_capable: node.direct_capable,
-          name: node.name,
-        });
-        if (node.id !== identity.nodeIdHex)
-          d.peerHolder.manager?.notifyPeerEndpointsChanged(node.id);
-      }
-      if (
-        hubId &&
-        hubId !== identity.nodeIdHex &&
-        hubId !== HUB_META_PEER_ID &&
-        !list.nodes.some((node) => node.id === hubId)
-      ) {
-        const cert = userStore.getCert(hubId);
-        const uid = d.userIdOf();
-        if (cert && uid && cert.userId === uid && cert.revokedLogSeq == null) {
-          d.emitListNodeEvent({
-            nodeId: hubId,
-            status: 'online',
-            reach: reach.get(hubId) ?? null,
-            transport: d.peerHolder.manager?.transportOf(hubId) ?? null,
-            rttMs: d.peerHolder.manager?.rttOf(hubId) ?? null,
-            name: list.hub?.name,
-          });
-        }
-      }
-      for (const peer of userStore.listPeers()) {
-        if (
-          peer.nodeId === identity.nodeIdHex ||
-          peer.nodeId === HUB_META_PEER_ID ||
-          peer.nodeId === hubId
-        ) {
-          continue;
-        }
-        rejectPeer(peer.nodeId, false);
-      }
-    },
+    onNodeList: (list) => handleUplinkNodeList(d, list, rejectPeer),
     onRtcSignal: (msg: UplinkRtcSignal) => {
       const signal: RtcSignalMessage = {
         rtcSession: msg.rtcSession,
@@ -885,6 +872,11 @@ function wireMeshEventsAndSessions(d: Awaited<ReturnType<typeof constructMeshDep
       }
     },
   });
+  return { uplink, ensureDc };
+}
+
+function createPeerWiring(d: MeshDeps, uplink: UplinkClient, ensureDc: EnsureDcFn) {
+  const { opts, config, identity, userStore, state, rtc, sessions, hub } = d;
   const noopUpgrade: MeshUpgradeServer = { upgrade: () => false };
   const dispatchInboundHttp = async (request: Request, ctx: DispatchContext): Promise<Response> => {
     const trusted = requestDispatchContext.get(request);
@@ -962,6 +954,16 @@ function wireMeshEventsAndSessions(d: Awaited<ReturnType<typeof constructMeshDep
     }
     if (!live) state.hubPresenceLive = false;
   });
+  return peerManager;
+}
+
+function createRtcBrowserWiring(
+  d: MeshDeps,
+  uplink: UplinkClient,
+  peerManager: PeerManager,
+  ensureDc: EnsureDcFn
+) {
+  const { identity, rtc, sessions, bulk } = d;
   const innerSignals = new MeshRtcSignalRouter({
     selfNodeId: identity.nodeIdHex,
     shouldCacheLocal(signal, sourceNodeId) {
@@ -1002,9 +1004,7 @@ function wireMeshEventsAndSessions(d: Awaited<ReturnType<typeof constructMeshDep
       });
     }
     const signaling = {
-      send: (msg: RtcSignalMessage) => {
-        innerSignals.send(msg);
-      },
+      send: (msg: RtcSignalMessage) => innerSignals.send(msg),
       onMessage: (cb: (msg: RtcSignalMessage) => void) => innerSignals.onLocal(rtcSession, cb),
     };
     void rtc
@@ -1074,11 +1074,18 @@ function wireMeshEventsAndSessions(d: Awaited<ReturnType<typeof constructMeshDep
       };
     },
   };
+  return { fingerprint, signals };
+}
+
+function wireMeshEventsAndSessions(d: MeshDeps) {
+  const { uplink, ensureDc } = createUplinkWiring(d);
+  const peerManager = createPeerWiring(d, uplink, ensureDc);
+  const { fingerprint, signals } = createRtcBrowserWiring(d, uplink, peerManager, ensureDc);
   return { uplink, peerManager, fingerprint, signals };
 }
 
 function wireMeshHttp(
-  d: Awaited<ReturnType<typeof constructMeshDeps>>,
+  d: MeshDeps,
   w: ReturnType<typeof wireMeshEventsAndSessions>
 ): MeshHttpRuntime {
   const { config, identity, userStore, state } = d;
@@ -1182,7 +1189,7 @@ function wireMeshHttp(
 }
 
 function assembleMeshRuntime(
-  d: Awaited<ReturnType<typeof constructMeshDeps>>,
+  d: MeshDeps,
   w: ReturnType<typeof wireMeshEventsAndSessions>,
   http: MeshHttpRuntime
 ): MeshRuntime {

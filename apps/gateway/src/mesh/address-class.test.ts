@@ -5,6 +5,7 @@ import {
   classifyRemoteAddress,
   hostFromWsUrl,
   isPeerReachable,
+  parseIpv6Words,
   rttChangedMaterially,
 } from './address-class';
 
@@ -104,6 +105,35 @@ describe('rttChangedMaterially', () => {
     expect(rttChangedMaterially(100, 120)).toBe(true);
     expect(rttChangedMaterially(8, 11)).toBe(true);
     expect(rttChangedMaterially(50, 61)).toBe(true);
+  });
+});
+
+describe('parseIpv6Words', () => {
+  test('expands compressed groups and lowercases', () => {
+    expect(parseIpv6Words('::1')).toEqual([0, 0, 0, 0, 0, 0, 0, 1]);
+    expect(parseIpv6Words('::')).toEqual([0, 0, 0, 0, 0, 0, 0, 0]);
+    expect(parseIpv6Words('2001:db8::8')).toEqual([0x2001, 0xdb8, 0, 0, 0, 0, 0, 8]);
+    expect(parseIpv6Words('FE80::1')).toEqual(parseIpv6Words('fe80::1'));
+    expect(parseIpv6Words('2001:0db8:0000:0000:0000:0000:0000:0001')).toEqual([
+      0x2001, 0xdb8, 0, 0, 0, 0, 0, 1,
+    ]);
+    expect(parseIpv6Words('1:2:3:4:5:6:7:8::')).toEqual([1, 2, 3, 4, 5, 6, 7, 8]);
+  });
+
+  test('strips zone-id before expanding so scoped and bare forms match', () => {
+    expect(parseIpv6Words('fe80::1%en0')).toEqual(parseIpv6Words('fe80::1'));
+    expect(parseIpv6Words('2001:db8::8%eth0')).toEqual(parseIpv6Words('2001:db8::8'));
+    expect(parseIpv6Words('::1%lo0')).toEqual([0, 0, 0, 0, 0, 0, 0, 1]);
+  });
+
+  test('rejects malformed, dotted, and over-compressed input', () => {
+    expect(parseIpv6Words('')).toBeNull();
+    expect(parseIpv6Words(':::1')).toBeNull();
+    expect(parseIpv6Words('1::2::3')).toBeNull();
+    expect(parseIpv6Words('gggg::1')).toBeNull();
+    expect(parseIpv6Words('2001:db8::1.2.3.4')).toBeNull();
+    expect(parseIpv6Words('1:2:3:4:5:6:7:8:9')).toBeNull();
+    expect(parseIpv6Words('::ffff:10.1.2.3')).toBeNull();
   });
 });
 
