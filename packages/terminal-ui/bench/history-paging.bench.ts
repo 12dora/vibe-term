@@ -1,4 +1,5 @@
 import type { GatewayPaneHistoryPage, GatewayPaneScreenSnapshot } from '@tmex/ws-client';
+import { HeadlessTerminal } from 'ghostty-terminal/headless';
 import {
   normalizeHistoryForTerminal,
   normalizeLiveOutputForTerminal,
@@ -139,3 +140,42 @@ console.log(`history paging: ${PAGE_COUNT} pages x ${PAGE_BYTES / 1024} KiB, ${C
 run('warmup', writeBatched);
 run('warmup', writeLegacy);
 report([run('legacy (per-page)', writeLegacy), run('batched (current)', writeBatched)]);
+
+// 真实 ghostty parser 下的分页重排：TerminalSurface 现在把成串到达的页攒到一个
+// 显示帧窗口再重建一次，这里对比逐页重建与整批一次重建的解析耗时。
+// RIS：HeadlessTerminal 没有 reset()，用整机复位序列等价替代 writeCanonicalSnapshot 的 reset
+const RIS = '\x1bc';
+const REPLAY_PAGES = 22;
+const REPLAY_PAGE_BYTES = 126 * 1024;
+
+function makeReplayPage(index: number): GatewayPaneHistoryPage {
+  const line = `${String(index).padStart(4, '0')} ${'x'.repeat(COLS - 5)}\n`;
+  const body = line.repeat(Math.ceil(REPLAY_PAGE_BYTES / line.length));
+  const lineEnd = (REPLAY_PAGES - index) * ROWS;
+  return { ...makePage(index), lineStart: lineEnd - ROWS, lineEnd, data: encoder.encode(body) };
+}
+
+async function replay(
+  label: string,
+  pages: readonly GatewayPaneHistoryPage[],
+  perPage: boolean
+): Promise<void> {
+  const terminal = await HeadlessTerminal.create({ cols: COLS, rows: ROWS, scrollback: 10_000 });
+  const accumulated: GatewayPaneHistoryPage[] = [];
+  const started = performance.now();
+  for (const page of pages) {
+    accumulated.unshift(page);
+    if (!perPage && page !== pages[pages.length - 1]) continue;
+    terminal.write(RIS);
+    terminal.write(buildCanonicalSnapshotPayload(snapshot, accumulated));
+  }
+  const elapsedMs = performance.now() - started;
+  terminal.free();
+  console.log(`${label.padEnd(30)} ${elapsedMs.toFixed(1).padStart(8)} ms`);
+}
+
+const replayPages = Array.from({ length: REPLAY_PAGES }, (_, index) => makeReplayPage(index));
+console.log(`\nghostty replay: ${REPLAY_PAGES} pages x ${REPLAY_PAGE_BYTES / 1024} KiB`);
+await replay('warmup', replayPages, false);
+await replay('per-page rebuild', replayPages, true);
+await replay('batched rebuild', replayPages, false);

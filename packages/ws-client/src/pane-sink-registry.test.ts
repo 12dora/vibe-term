@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, test } from 'bun:test';
+import { DEFAULT_PANE_OUTPUT_FLUSH_MS } from './pane-output-coalescer';
 import {
   type PaneResetOrigin,
   type PaneSink,
@@ -49,7 +50,9 @@ function createFrameRecordingSink() {
 
 const encode = (text: string) => new TextEncoder().encode(text);
 // 输出合并在微任务边界落地：让出一次微任务队列即可看到 flush 结果
-const flushOutputs = () => Promise.resolve();
+// 默认合并窗口是定时器（见 pane-output-coalescer），微任务边界不再触发下发
+const flushOutputs = () =>
+  new Promise((resolve) => setTimeout(resolve, DEFAULT_PANE_OUTPUT_FLUSH_MS * 4));
 
 afterEach(() => {
   resetPaneSinkRegistryForTest();

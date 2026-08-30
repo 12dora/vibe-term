@@ -19,6 +19,9 @@ type HistoryPageRejection = Extract<HistoryPageValidation, { ok: false }>;
 // 分页上限 = ceil(10000 / 512)（gateway 单页最多 MAX_CAPTURE_LINES = 512 行）再留两页余量。
 const MAX_SURFACE_HISTORY_BYTES = 10_000 * 200;
 const MAX_SURFACE_HISTORY_PAGES = 22;
+// 每页到达都整屏重排一次的话，一次滚到底的代价是 O(页数²)；成串到达的页（sink 挂载
+// 时的回放、快链路上的连续分页）攒一个显示帧再重排，末页与 live 字节到达时立即落地。
+const HISTORY_BATCH_MS = 16;
 
 export interface TerminalSurfaceTarget {
   dispose(): void;
@@ -51,6 +54,7 @@ export interface TerminalSurfaceOptions<Target extends TerminalSurfaceTarget> {
   onSnapshotApplied?(target: Target, snapshot: GatewayPaneScreenSnapshot | null): void;
   maxHistoryBytes?: number;
   maxHistoryPages?: number;
+  scheduleHistoryFlush?(flush: () => void): void;
 }
 
 function copyHistoryCursor(cursor: GatewayHistoryCursor | null): GatewayHistoryCursor | null {
@@ -113,6 +117,8 @@ export class TerminalSurface<Target extends TerminalSurfaceTarget> {
   private historyPages: GatewayPaneHistoryPage[] = [];
   private historyBytes = 0;
   private nextHistoryCursor: GatewayHistoryCursor | null = null;
+  private historyFlushPending = false;
+  private historyFlushScheduled = false;
   private recoveryRequested = false;
   private recoveryReason: GatewayRebaseReason | null = null;
   private disposed = false;
@@ -168,6 +174,8 @@ export class TerminalSurface<Target extends TerminalSurfaceTarget> {
 
   write(frame: GatewayTerminalData): void {
     if (this.disposed || !this.target) return;
+    // 攒着的 history 重排会 reset 终端，live 字节必须写在重排之后
+    this.flushHistory();
     this.options.writeLive(this.target, frame.data);
   }
 
@@ -178,6 +186,7 @@ export class TerminalSurface<Target extends TerminalSurfaceTarget> {
     this.historyPages = [];
     this.historyBytes = 0;
     this.nextHistoryCursor = copyHistoryCursor(owned.historyCursor);
+    this.historyFlushPending = false;
     this.recoveryRequested = false;
     this.recoveryReason = null;
     this.options.writeSnapshot(this.target, owned, []);
@@ -204,6 +213,7 @@ export class TerminalSurface<Target extends TerminalSurfaceTarget> {
   dispose(): void {
     if (this.disposed) return;
     this.disposed = true;
+    this.historyFlushPending = false;
     this.target?.dispose();
     this.target = null;
     this.latestSnapshot = null;
@@ -231,16 +241,44 @@ export class TerminalSurface<Target extends TerminalSurfaceTarget> {
       return;
     }
     this.nextHistoryCursor = null;
+    // 预算耗尽，不会再有页进来：把攒着的页立刻落地
+    this.flushHistory();
   }
 
   private commitHistoryPage(page: GatewayPaneHistoryPage): void {
-    const target = this.target;
-    const snapshot = this.latestSnapshot;
-    if (!target || !snapshot) return;
+    if (!this.target || !this.latestSnapshot) return;
     const owned = copyHistoryPage(page);
     insertHistoryPage(this.historyPages, owned);
     this.historyBytes += owned.data.byteLength;
     this.nextHistoryCursor = copyHistoryCursor(owned.nextCursor);
+    this.historyFlushPending = true;
+    // 末页之后不会再有页到达，等窗口只是白白多等一帧
+    if (!this.nextHistoryCursor) {
+      this.flushHistory();
+      return;
+    }
+    if (this.historyFlushScheduled) return;
+    this.historyFlushScheduled = true;
+    this.scheduleHistoryFlush(() => {
+      this.historyFlushScheduled = false;
+      this.flushHistory();
+    });
+  }
+
+  private scheduleHistoryFlush(flush: () => void): void {
+    if (this.options.scheduleHistoryFlush) {
+      this.options.scheduleHistoryFlush(flush);
+      return;
+    }
+    setTimeout(flush, HISTORY_BATCH_MS);
+  }
+
+  private flushHistory(): void {
+    if (!this.historyFlushPending) return;
+    this.historyFlushPending = false;
+    const target = this.target;
+    const snapshot = this.latestSnapshot;
+    if (!target || !snapshot) return;
     this.options.writeSnapshot(target, snapshot, this.historyPages);
     this.options.onSnapshotApplied?.(target, snapshot);
   }

@@ -1,14 +1,16 @@
 // per-pane 输出合并：高频小帧逐帧下发时，每帧都要在 WASM 里搬一次缓冲、查一次 alt-screen、
-// 排一次渲染，成本按帧数线性增长。这里把同一个 pane 在同一宏任务内的连续输出攒成一帧，
-// 在微任务边界（不是定时器，避免交互延迟回退）或攒够 flushBytes 时一次性下发。
+// 排一次渲染，成本按帧数线性增长。每条 WebSocket 消息是独立宏任务，微任务边界只能合并
+// 同一条消息里的连续帧，因此这里用有界窗口：攒够 flushBytes 立即下发，否则最多等
+// DEFAULT_PANE_OUTPUT_FLUSH_MS 毫秒（不用 rAF：一帧 16.7ms 的回显延迟比这更差）。
 //
 // 顺序保证：同一 pane 的字节严格按到达顺序拼接；任何会改变画面基线的事件
 //（reset / history / snapshot / rebase / sink 换绑与注销）都要先 flush 再执行。
-// 帧字节按引用暂存不复制：flush 必定发生在同一宏任务内（微任务边界或攒够阈值），
-// 解码缓冲在此期间不会被复用。
+// 帧字节按引用暂存不复制：每帧的字节来自各自的解码结果，没有跨帧复用的缓冲。
 import type { GatewayTerminalData } from './transport';
 
 export const DEFAULT_PANE_OUTPUT_FLUSH_BYTES = 32 * 1024;
+// 攒不满阈值时的最大附加延迟
+export const DEFAULT_PANE_OUTPUT_FLUSH_MS = 4;
 
 export type PaneOutputScheduler = (flush: () => void) => void;
 
@@ -68,7 +70,8 @@ export class PaneOutputCoalescer {
     options: PaneOutputCoalescerOptions = {}
   ) {
     this.flushBytes = options.flushBytes ?? DEFAULT_PANE_OUTPUT_FLUSH_BYTES;
-    this.schedule = options.schedule ?? ((flush) => queueMicrotask(flush));
+    this.schedule =
+      options.schedule ?? ((flush) => void setTimeout(flush, DEFAULT_PANE_OUTPUT_FLUSH_MS));
   }
 
   push(key: string, frame: GatewayTerminalData): void {

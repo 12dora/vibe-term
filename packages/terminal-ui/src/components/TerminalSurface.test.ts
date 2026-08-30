@@ -68,6 +68,9 @@ interface Harness {
   recoveries: GatewayRebaseReason[];
   applied: Array<GatewayPaneScreenSnapshot | null>;
   stream(): string;
+  // history 批处理窗口由测试显式驱动
+  runScheduled(): void;
+  scheduledCount(): number;
 }
 
 async function createHarness(options?: {
@@ -77,6 +80,7 @@ async function createHarness(options?: {
   const target = createTarget();
   const recoveries: GatewayRebaseReason[] = [];
   const applied: Array<GatewayPaneScreenSnapshot | null> = [];
+  let pending: Array<() => void> = [];
   const surface = new TerminalSurface<RecordingTarget>({
     createTarget: async () => target,
     writeSnapshot: writeCanonicalSnapshot,
@@ -88,10 +92,23 @@ async function createHarness(options?: {
     onSnapshotApplied: (_target, snapshot) => {
       applied.push(snapshot);
     },
+    scheduleHistoryFlush: (flush) => pending.push(flush),
     ...options,
   });
   await surface.initialize();
-  return { surface, target, recoveries, applied, stream: () => target.writes.join('') };
+  return {
+    surface,
+    target,
+    recoveries,
+    applied,
+    stream: () => target.writes.join(''),
+    runScheduled: () => {
+      const callbacks = pending;
+      pending = [];
+      for (const callback of callbacks) callback();
+    },
+    scheduledCount: () => pending.length,
+  };
 }
 
 function cursorOf(beforeLine: number): GatewayHistoryCursor {
@@ -161,42 +178,68 @@ describe('TerminalSurface history paging', () => {
 
     harness.target.writes.length = 0;
     expect(harness.surface.applyHistoryPage(PAGE_NEWEST)).toBe(true);
+    harness.runScheduled();
     expect(harness.stream()).toBe(`${PREFIX}l5\r\nl6\r\ncurrent\r\n`);
     expect(harness.surface.getNextHistoryCursor()).toEqual(cursorOf(4));
 
     harness.target.writes.length = 0;
     expect(harness.surface.applyHistoryPage(PAGE_MIDDLE)).toBe(true);
+    harness.runScheduled();
     expect(harness.stream()).toBe(`${PREFIX}l3\r\nl4\r\nl5\r\nl6\r\ncurrent\r\n`);
 
     harness.target.writes.length = 0;
+    // 末页（nextCursor 为空）不等窗口，直接落地
     expect(harness.surface.applyHistoryPage(PAGE_OLDEST)).toBe(true);
     expect(harness.stream()).toBe(`${PREFIX}l1\r\nl2\r\nl3\r\nl4\r\nl5\r\nl6\r\ncurrent\r\n`);
     expect(harness.surface.getNextHistoryCursor()).toBeNull();
   });
 
-  test('每页到达都重建一次终端：reset / resize / repaint 各一次，CR 状态复位', async () => {
+  test('一个窗口内到达的多页只重建一次终端：reset / resize / repaint 各一次，CR 状态复位', async () => {
     const harness = await createHarness();
     harness.surface.replace(snapshotOf(SNAPSHOT_BODY, cursorOf(6)));
     harness.target.liveOutputEndedWithCR = true;
 
     harness.surface.applyHistoryPage(PAGE_NEWEST);
     harness.surface.applyHistoryPage(PAGE_MIDDLE);
+    expect(harness.scheduledCount()).toBe(1);
+    harness.runScheduled();
 
-    expect(harness.target.resets).toBe(3);
-    expect(harness.target.repaints).toBe(3);
-    expect(harness.target.sizes).toHaveLength(3);
+    expect(harness.target.resets).toBe(2);
+    expect(harness.target.repaints).toBe(2);
+    expect(harness.target.sizes).toHaveLength(2);
     expect(harness.target.liveOutputEndedWithCR).toBe(false);
-    expect(harness.applied).toHaveLength(4);
+    expect(harness.applied).toHaveLength(3);
   });
 
-  test('history 落地后 live 输出继续追加在快照正文之后', async () => {
+  test('22 页成串到达只触发一次重建', async () => {
+    const pageCount = 22;
+    const harness = await createHarness({ maxHistoryPages: pageCount });
+    harness.surface.replace(snapshotOf(SNAPSHOT_BODY, cursorOf(pageCount)));
+    harness.target.resets = 0;
+
+    // 末页 lineStart 为 0（nextCursor 为空）会立即落地，这里只喂到倒数第二页
+    for (let index = pageCount; index > 1; index -= 1) {
+      expect(harness.surface.applyHistoryPage(pageOf(index - 1, index, `l${index}\n`))).toBe(true);
+    }
+    expect(harness.target.resets).toBe(0);
+
+    harness.runScheduled();
+    expect(harness.target.resets).toBe(1);
+    expect(harness.surface.getDiagnosticState().historyPages).toBe(pageCount - 1);
+  });
+
+  test('live 输出到达时先落地攒着的 history，再追加字节', async () => {
     const harness = await createHarness();
     harness.surface.replace(snapshotOf(SNAPSHOT_BODY, cursorOf(6)));
     harness.surface.applyHistoryPage(PAGE_NEWEST);
 
     harness.target.writes.length = 0;
     harness.surface.write({ deviceId: 'device-1', paneId: '%1', data: encoder.encode('next\n') });
-    expect(harness.stream()).toBe('next\r\n');
+    expect(harness.stream()).toBe(`${PREFIX}l5\r\nl6\r\ncurrent\r\nnext\r\n`);
+
+    // 窗口到点时不再重建一次，live 字节不会被清掉
+    harness.runScheduled();
+    expect(harness.stream()).toBe(`${PREFIX}l5\r\nl6\r\ncurrent\r\nnext\r\n`);
   });
 
   test('alternate-screen 模式位与快照尺寸在每次重建时保持一致', async () => {
@@ -204,6 +247,7 @@ describe('TerminalSurface history paging', () => {
     const snapshot = snapshotOf(SNAPSHOT_BODY, cursorOf(6));
     harness.surface.replace({ ...snapshot, cols: 100, rows: 30 });
     harness.surface.applyHistoryPage(PAGE_NEWEST);
+    harness.runScheduled();
 
     expect(harness.target.sizes).toEqual([
       { cols: 100, rows: 30 },
@@ -260,6 +304,8 @@ describe('TerminalSurface history paging', () => {
 
     harness.target.writes.length = 0;
     harness.surface.replace(snapshotOf(SNAPSHOT_BODY, cursorOf(6)));
+    // 攒着的页随快照一起作废，窗口到点不再重建
+    harness.runScheduled();
     expect(harness.stream()).toBe(`${PREFIX}current\r\n`);
     expect(harness.surface.getDiagnosticState().historyPages).toBe(0);
     expect(harness.surface.getDiagnosticState().historyBytes).toBe(0);

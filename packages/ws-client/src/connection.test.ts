@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import { BorshWebSocketClient, defaultWsUrl } from './client';
 import { createGatewayConnection } from './connection';
+import { DEFAULT_PANE_OUTPUT_FLUSH_MS } from './pane-output-coalescer';
 import type { PaneSink } from './pane-sink-registry';
 import { createSharedGatewayTransport } from './transport';
 
@@ -14,6 +15,9 @@ function collectingSink(outputs: Uint8Array[]): PaneSink {
   };
 }
 
+const flushOutputs = () =>
+  new Promise((resolve) => setTimeout(resolve, DEFAULT_PANE_OUTPUT_FLUSH_MS * 4));
+
 describe('createGatewayConnection', () => {
   test('每个连接持有独立的 pane-sink 注册表', async () => {
     const a = createGatewayConnection({ wsUrl: 'ws://a.example/ws' });
@@ -23,12 +27,12 @@ describe('createGatewayConnection', () => {
     a.paneSinks.registerPaneSink('dev', 'pane', collectingSink(receivedA));
 
     b.paneSinks.dispatchPaneOutput('dev', 'pane', new Uint8Array([1]));
-    // 输出在微任务边界合并下发
-    await Promise.resolve();
+    // 输出在合并窗口到点后下发
+    await flushOutputs();
     expect(receivedA.length).toBe(0);
 
     a.paneSinks.dispatchPaneOutput('dev', 'pane', new Uint8Array([2]));
-    await Promise.resolve();
+    await flushOutputs();
     expect(receivedA.length).toBe(1);
 
     a.dispose();

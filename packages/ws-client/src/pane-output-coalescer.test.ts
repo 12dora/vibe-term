@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { PaneOutputCoalescer } from './pane-output-coalescer';
+import { DEFAULT_PANE_OUTPUT_FLUSH_MS, PaneOutputCoalescer } from './pane-output-coalescer';
 import type { GatewayTerminalData } from './transport';
 
 const encode = (text: string) => new TextEncoder().encode(text);
@@ -130,5 +130,52 @@ describe('PaneOutputCoalescer', () => {
     harness.runScheduled();
 
     expect(harness.texts()).toEqual(['kept']);
+  });
+});
+
+describe('PaneOutputCoalescer 默认有界调度', () => {
+  function createDefaultHarness() {
+    const emitted: GatewayTerminalData[] = [];
+    return {
+      coalescer: new PaneOutputCoalescer((_key, merged) => emitted.push(merged)),
+      texts: () => emitted.map((entry) => decode(entry.data)),
+    };
+  }
+
+  const tick = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+  test('同一宏任务内的连续帧合并为一次下发', async () => {
+    const harness = createDefaultHarness();
+
+    harness.coalescer.push('dev:%1', frame('%1', 'a'));
+    harness.coalescer.push('dev:%1', frame('%1', 'b'));
+    await Promise.resolve();
+    expect(harness.texts()).toEqual([]);
+
+    await tick(DEFAULT_PANE_OUTPUT_FLUSH_MS * 4);
+    expect(harness.texts()).toEqual(['ab']);
+  });
+
+  test('窗口内跨宏任务到达的帧同样合并', async () => {
+    const harness = createDefaultHarness();
+
+    harness.coalescer.push('dev:%1', frame('%1', 'a'));
+    await tick(0);
+    harness.coalescer.push('dev:%1', frame('%1', 'b'));
+    expect(harness.texts()).toEqual([]);
+
+    await tick(DEFAULT_PANE_OUTPUT_FLUSH_MS * 4);
+    expect(harness.texts()).toEqual(['ab']);
+  });
+
+  test('控制事件的 flush 立即下发，窗口到点不再补发空帧', async () => {
+    const harness = createDefaultHarness();
+
+    harness.coalescer.push('dev:%1', frame('%1', 'a'));
+    harness.coalescer.flush('dev:%1');
+    expect(harness.texts()).toEqual(['a']);
+
+    await tick(DEFAULT_PANE_OUTPUT_FLUSH_MS * 4);
+    expect(harness.texts()).toEqual(['a']);
   });
 });
