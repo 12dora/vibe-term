@@ -106,7 +106,7 @@ async function handleUploadChunk(req: Request, id: string, url: URL): Promise<Re
   if (!body.ok) return codeError('too_large');
   const res = await appendUploadChunkAsync(id, offset, body.bytes);
   if (!res.ok) {
-    if (res.reason === 'not_found') return codeError('not_found');
+    if (res.reason === 'not_found' || res.reason === 'cancelled') return codeError('not_found');
     if (res.reason === 'too_large') return codeError('too_large');
     return json({ error: t('apiError.invalidRequest') }, 409);
   }

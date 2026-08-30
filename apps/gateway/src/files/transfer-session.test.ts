@@ -1,5 +1,6 @@
-import { describe, expect, test } from 'bun:test';
-import { existsSync, mkdtempSync, readFileSync, rmSync, utimesSync } from 'node:fs';
+import { afterEach, describe, expect, spyOn, test } from 'bun:test';
+import { existsSync, mkdtempSync, readFileSync, rmSync, statSync, utimesSync } from 'node:fs';
+import * as fsPromises from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
@@ -60,6 +61,123 @@ describe('upload session chunking', () => {
     });
     expect(readFileSync(s.tmpPath)).toEqual(Buffer.from([9, 8, 7, 6]));
     removeUploadSession(s.id);
+  });
+
+  test('concurrent offset=0 appends: one succeeds, the other is bad_offset', async () => {
+    const s = createUploadSession({ rootId: 'r', destDir: '/d', name: 'a.txt', size: 6 });
+    const a = new Uint8Array([1, 1, 1]);
+    const b = new Uint8Array([2, 2, 2]);
+    const [r1, r2] = await Promise.all([
+      appendUploadChunkAsync(s.id, 0, a),
+      appendUploadChunkAsync(s.id, 0, b),
+    ]);
+    const results = [r1, r2];
+    const ok = results.filter((r) => r.ok);
+    const bad = results.filter((r) => !r.ok);
+    expect(ok).toEqual([{ ok: true, received: 3 }]);
+    expect(bad).toEqual([{ ok: false, reason: 'bad_offset' }]);
+    expect(getUploadSession(s.id)?.received).toBe(3);
+    const onDisk = readFileSync(s.tmpPath);
+    expect(onDisk.byteLength).toBe(3);
+    const winner = r1.ok ? a : b;
+    expect(onDisk).toEqual(Buffer.from(winner));
+    removeUploadSession(s.id);
+  });
+
+  describe('async append fs edge cases', () => {
+    const realOpen = fsPromises.open;
+    const spies: Array<ReturnType<typeof spyOn>> = [];
+    afterEach(() => {
+      for (const spy of spies) spy.mockRestore();
+      spies.length = 0;
+    });
+
+    function mockOpen(
+      wrap: (fh: Awaited<ReturnType<typeof realOpen>>) => {
+        write: (buf: Uint8Array) => Promise<{ bytesWritten: number; buffer: Uint8Array }>;
+        truncate: (len?: number) => Promise<void>;
+        close: () => Promise<void>;
+      }
+    ) {
+      spies.push(
+        spyOn(fsPromises, 'open').mockImplementation(async (path, flags) => {
+          const fh = await realOpen(path, flags);
+          return wrap(fh) as Awaited<ReturnType<typeof realOpen>>;
+        })
+      );
+    }
+
+    test('loops until the full buffer is persisted', async () => {
+      const s = createUploadSession({ rootId: 'r', destDir: '/d', name: 'a.txt', size: 4 });
+      mockOpen((fh) => ({
+        write: async (buf) => {
+          const n = Math.min(1, buf.byteLength);
+          await fh.write(buf.subarray(0, n));
+          return { bytesWritten: n, buffer: buf };
+        },
+        truncate: (len) => fh.truncate(len),
+        close: () => fh.close(),
+      }));
+      expect(await appendUploadChunkAsync(s.id, 0, new Uint8Array([1, 2, 3, 4]))).toEqual({
+        ok: true,
+        received: 4,
+      });
+      expect(readFileSync(s.tmpPath)).toEqual(Buffer.from([1, 2, 3, 4]));
+      removeUploadSession(s.id);
+    });
+
+    test('write half then throw truncates back to received', async () => {
+      const s = createUploadSession({ rootId: 'r', destDir: '/d', name: 'a.txt', size: 8 });
+      mockOpen((fh) => ({
+        write: async (buf) => {
+          const n = Math.max(1, Math.floor(buf.byteLength / 2));
+          await fh.write(buf.subarray(0, n));
+          throw new Error('ENOSPC');
+        },
+        truncate: (len) => fh.truncate(len),
+        close: () => fh.close(),
+      }));
+      await expect(appendUploadChunkAsync(s.id, 0, new Uint8Array(8).fill(9))).rejects.toThrow(
+        'ENOSPC'
+      );
+      expect(statSync(s.tmpPath).size).toBe(0);
+      expect(getUploadSession(s.id)?.received).toBe(0);
+      spies[0]?.mockRestore();
+      spies.length = 0;
+      expect(await appendUploadChunkAsync(s.id, 0, new Uint8Array([1, 2, 3]))).toEqual({
+        ok: true,
+        received: 3,
+      });
+      expect(readFileSync(s.tmpPath)).toEqual(Buffer.from([1, 2, 3]));
+      removeUploadSession(s.id);
+    });
+
+    test('cancel while append is in flight does not report success', async () => {
+      const s = createUploadSession({ rootId: 'r', destDir: '/d', name: 'a.txt', size: 8 });
+      let releaseWrite!: () => void;
+      const held = new Promise<void>((resolve) => {
+        releaseWrite = resolve;
+      });
+      let startedWrite!: () => void;
+      const started = new Promise<void>((resolve) => {
+        startedWrite = resolve;
+      });
+      mockOpen((fh) => ({
+        write: async (buf) => {
+          startedWrite();
+          await held;
+          return fh.write(buf);
+        },
+        truncate: (len) => fh.truncate(len),
+        close: () => fh.close(),
+      }));
+      const pending = appendUploadChunkAsync(s.id, 0, new Uint8Array([1, 2, 3, 4]));
+      await started;
+      removeUploadSession(s.id);
+      releaseWrite();
+      expect(await pending).toEqual({ ok: false, reason: 'cancelled' });
+      expect(getUploadSession(s.id)).toBeUndefined();
+    });
   });
 
   test('sweepOrphanTransferTemps 仅清理超期的传输临时目录', () => {

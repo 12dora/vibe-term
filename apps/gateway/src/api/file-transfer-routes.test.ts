@@ -1,10 +1,12 @@
-import { afterEach, describe, expect, test } from 'bun:test';
+import { afterEach, describe, expect, spyOn, test } from 'bun:test';
 import { readFileSync } from 'node:fs';
+import * as fsPromises from 'node:fs/promises';
 import {
   createUploadSession,
   getUploadSession,
   removeUploadSession,
 } from '../files/transfer-session';
+import { t } from '../i18n';
 import { filesRoutes } from './files';
 import { dispatchRoutes } from './route';
 
@@ -108,5 +110,74 @@ describe('PUT /api/files/upload/:id bounded body', () => {
     expect(second.status).toBe(200);
     expect(await second.json()).toEqual({ received: 6 });
     expect(readFileSync(s.tmpPath)).toEqual(Buffer.from([1, 2, 3, 4, 5, 6]));
+  });
+
+  test('concurrent offset=0 PUTs: one 200, the other 409', async () => {
+    const s = session(6);
+    const [a, b] = await Promise.all([
+      dispatch(
+        new Request(`http://localhost/api/files/upload/${s.id}?offset=0`, {
+          method: 'PUT',
+          body: new Uint8Array([1, 2, 3]),
+        })
+      ) as Promise<Response>,
+      dispatch(
+        new Request(`http://localhost/api/files/upload/${s.id}?offset=0`, {
+          method: 'PUT',
+          body: new Uint8Array([4, 5, 6]),
+        })
+      ) as Promise<Response>,
+    ]);
+    const statuses = [a.status, b.status].sort((x, y) => x - y);
+    expect(statuses).toEqual([200, 409]);
+    const winner = a.status === 200 ? a : b;
+    const loser = a.status === 409 ? a : b;
+    expect(await winner.json()).toEqual({ received: 3 });
+    expect(await loser.json()).toEqual({ error: t('apiError.invalidRequest') });
+    expect(getUploadSession(s.id)?.received).toBe(3);
+    expect(readFileSync(s.tmpPath).byteLength).toBe(3);
+  });
+
+  test('DELETE while PUT append is in flight does not report success', async () => {
+    const s = session(8);
+    const realOpen = fsPromises.open;
+    let releaseWrite!: () => void;
+    const held = new Promise<void>((resolve) => {
+      releaseWrite = resolve;
+    });
+    let startedWrite!: () => void;
+    const started = new Promise<void>((resolve) => {
+      startedWrite = resolve;
+    });
+    const spy = spyOn(fsPromises, 'open').mockImplementation(async (path, flags) => {
+      const fh = await realOpen(path, flags);
+      return {
+        write: async (buf: Uint8Array) => {
+          startedWrite();
+          await held;
+          return fh.write(buf);
+        },
+        truncate: (len?: number) => fh.truncate(len),
+        close: () => fh.close(),
+      } as Awaited<ReturnType<typeof realOpen>>;
+    });
+    try {
+      const put = dispatch(
+        new Request(`http://localhost/api/files/upload/${s.id}?offset=0`, {
+          method: 'PUT',
+          body: new Uint8Array([1, 2, 3, 4]),
+        })
+      ) as Promise<Response>;
+      await started;
+      const del = (await dispatch(
+        new Request(`http://localhost/api/files/upload/${s.id}`, { method: 'DELETE' })
+      )) as Response;
+      expect(del.status).toBe(200);
+      releaseWrite();
+      const putRes = await put;
+      expect(putRes.status).toBe(404);
+    } finally {
+      spy.mockRestore();
+    }
   });
 });

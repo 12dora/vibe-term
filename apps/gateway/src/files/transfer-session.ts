@@ -1,7 +1,15 @@
 // 上传会话状态：分块上传期间在内存维护 session + 本机临时文件。
 // 纯状态管理（不含 rsync）。清理三重保障：每次操作的显式清理 + 周期 GC + 启动孤儿扫描。
-import { appendFileSync, mkdtempSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
-import { open } from 'node:fs/promises';
+import {
+  appendFileSync,
+  mkdtempSync,
+  readdirSync,
+  rmSync,
+  statSync,
+  truncateSync,
+  writeFileSync,
+} from 'node:fs';
+import * as fsPromises from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -110,15 +118,15 @@ export function getUploadSession(id: string): UploadSession | undefined {
 
 export type AppendResult =
   | { ok: true; received: number }
-  | { ok: false; reason: 'not_found' | 'bad_offset' | 'too_large' };
+  | { ok: false; reason: 'not_found' | 'bad_offset' | 'too_large' | 'cancelled' };
+
+type AppendFail = Exclude<AppendResult, { ok: true }>;
 
 function prepareAppend(
   id: string,
   offset: number,
   byteLength: number
-):
-  | { ok: true; session: UploadSession }
-  | { ok: false; reason: 'not_found' | 'bad_offset' | 'too_large' } {
+): { ok: true; session: UploadSession } | AppendFail {
   const s = sessions.get(id);
   if (!s) return { ok: false, reason: 'not_found' };
   if (offset !== s.received) return { ok: false, reason: 'bad_offset' };
@@ -131,6 +139,51 @@ function advanceReceived(session: UploadSession, byteLength: number): AppendResu
   return { ok: true, received: session.received };
 }
 
+const sessionTails = new Map<string, Promise<void>>();
+
+function enqueueSessionOp<T>(id: string, op: () => Promise<T>): Promise<T> {
+  const prev = sessionTails.get(id) ?? Promise.resolve();
+  const next = prev.then(op, op);
+  const settled = next.then(
+    () => undefined,
+    () => undefined
+  );
+  sessionTails.set(id, settled);
+  void settled.then(() => {
+    if (sessionTails.get(id) === settled && !sessions.has(id)) sessionTails.delete(id);
+  });
+  return next;
+}
+
+async function persistChunk(tmpPath: string, committed: number, bytes: Uint8Array): Promise<void> {
+  const fh = await fsPromises.open(tmpPath, 'a');
+  try {
+    let offset = 0;
+    while (offset < bytes.byteLength) {
+      const { bytesWritten } = await fh.write(bytes.subarray(offset));
+      if (bytesWritten <= 0) throw new Error('short write');
+      offset += bytesWritten;
+    }
+    await fh.close();
+  } catch (err) {
+    try {
+      await fh.truncate(committed);
+    } catch {
+      try {
+        truncateSync(tmpPath, committed);
+      } catch {
+        // 临时文件可能已被 cancel 删掉
+      }
+    }
+    try {
+      await fh.close();
+    } catch {
+      // 可能已关闭
+    }
+    throw err;
+  }
+}
+
 // 顺序追加 chunk：offset 必须等于已收字节数；不得超出声明 size。
 export function appendUploadChunk(id: string, offset: number, bytes: Uint8Array): AppendResult {
   const prepared = prepareAppend(id, offset, bytes.byteLength);
@@ -139,20 +192,38 @@ export function appendUploadChunk(id: string, offset: number, bytes: Uint8Array)
   return advanceReceived(prepared.session, bytes.byteLength);
 }
 
-export async function appendUploadChunkAsync(
+async function appendUploadChunkLocked(
   id: string,
   offset: number,
   bytes: Uint8Array
 ): Promise<AppendResult> {
   const prepared = prepareAppend(id, offset, bytes.byteLength);
   if (!prepared.ok) return prepared;
-  const fh = await open(prepared.session.tmpPath, 'a');
+  const session = prepared.session;
+  const committed = session.received;
   try {
-    await fh.write(bytes);
-  } finally {
-    await fh.close();
+    await persistChunk(session.tmpPath, committed, bytes);
+  } catch (err) {
+    if (sessions.get(id) !== session) return { ok: false, reason: 'cancelled' };
+    throw err;
   }
-  return advanceReceived(prepared.session, bytes.byteLength);
+  if (sessions.get(id) !== session) {
+    try {
+      truncateSync(session.tmpPath, committed);
+    } catch {
+      // 已 cancel 并删除
+    }
+    return { ok: false, reason: 'cancelled' };
+  }
+  return advanceReceived(session, bytes.byteLength);
+}
+
+export function appendUploadChunkAsync(
+  id: string,
+  offset: number,
+  bytes: Uint8Array
+): Promise<AppendResult> {
+  return enqueueSessionOp(id, () => appendUploadChunkLocked(id, offset, bytes));
 }
 
 // 移除会话：中止进行中的 rsync 推送 + 删除临时文件。
@@ -160,6 +231,7 @@ export function removeUploadSession(id: string): void {
   const s = sessions.get(id);
   if (!s) return;
   sessions.delete(id);
+  sessionTails.delete(id);
   try {
     s.abort.abort();
   } catch {
