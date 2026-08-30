@@ -52,6 +52,11 @@ describe('previewEnd', () => {
     expect(text.slice(0, previewEnd(text)).split('\n')).toHaveLength(2001);
   });
 
+  test('截断点落在代理对中间时回退一位', () => {
+    const text = `${'x'.repeat(64 * 1024 - 1)}😀tail`;
+    expect(previewEnd(text)).toBe(64 * 1024 - 1);
+  });
+
   test('字符上限先到时不看行数', () => {
     // 每行 100 字符，2000 行远超 64 KiB
     const text = `${'a'.repeat(99)}\n`.repeat(2000);

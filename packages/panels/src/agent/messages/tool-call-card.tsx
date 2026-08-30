@@ -55,10 +55,15 @@ export function previewEnd(text: string): number {
   let index = 0;
   for (let line = 0; line < PREVIEW_MAX_LINES; line++) {
     const next = text.indexOf('\n', index);
-    if (next < 0 || next >= cap) return cap;
+    if (next < 0 || next >= cap) return trimSurrogate(text, cap);
     index = next + 1;
   }
   return index;
+}
+
+function trimSurrogate(text: string, end: number): number {
+  const code = text.charCodeAt(end - 1);
+  return end < text.length && code >= 0xd800 && code <= 0xdbff ? end - 1 : end;
 }
 
 function CollapsedText({ label, text }: { label: string; text: string }) {
