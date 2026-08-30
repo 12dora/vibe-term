@@ -724,12 +724,32 @@ export const tunnelConfig = sqliteTable(
     tunnelName: text('tunnel_name'),
     tunnelId: text('tunnel_id'),
     autoStart: integer('auto_start', { mode: 'boolean' }).notNull().default(false),
+    externallyManaged: integer('externally_managed', { mode: 'boolean' }).notNull().default(false),
+    exposureAcknowledgedAt: text('exposure_acknowledged_at'),
     updatedAt: text('updated_at').notNull(),
   },
   (table) => [
     check('tunnel_config_singleton_check', sql`${table.id} = 'default'`),
     check('tunnel_config_mode_check', sql`${table.mode} in ('off', 'quick', 'named')`),
   ]
+);
+
+export const tunnelAccess = sqliteTable(
+  'tunnel_access',
+  {
+    id: text('id').primaryKey(),
+    accountId: text('account_id'),
+    apiTokenEnc: text('api_token_enc'),
+    teamDomain: text('team_domain'),
+    appId: text('app_id'),
+    aud: text('aud'),
+    hostname: text('hostname'),
+    rulesJson: text('rules_json').notNull().default('[]'),
+    enforceJwt: integer('enforce_jwt', { mode: 'boolean' }).notNull().default(false),
+    lastError: text('last_error'),
+    updatedAt: text('updated_at').notNull(),
+  },
+  (table) => [check('tunnel_access_singleton_check', sql`${table.id} = 'default'`)]
 );
 
 export type UserRow = typeof users.$inferSelect;
@@ -744,3 +764,4 @@ export type PeerCacheRow = typeof peerCache.$inferSelect;
 export type TlsConfigRow = typeof tlsConfig.$inferSelect;
 export type HubTrustRow = typeof hubTrust.$inferSelect;
 export type TunnelConfigRow = typeof tunnelConfig.$inferSelect;
+export type TunnelAccessRow = typeof tunnelAccess.$inferSelect;

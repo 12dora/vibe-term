@@ -2,10 +2,12 @@ import { randomUUID } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import { mkdir, rm, writeFile } from 'node:fs/promises';
 import type {
+  TunnelAccessStatus,
   TunnelActionRequest,
   TunnelActionResponse,
   TunnelBinaryStatus,
   TunnelErrorResponse,
+  TunnelExternalStatus,
   TunnelJobKind,
   TunnelJobStatus,
   TunnelMode,
@@ -14,6 +16,15 @@ import type {
 import { PROCESS_STARTED_AT } from '../api/system-routes';
 import { config, originUrlFromBindHost } from '../config';
 import { getDb as getOrmDb } from '../db/client';
+import { CloudflareAccessClient, type TunnelFetch, sanitizeAccessMessage } from './access-client';
+import { setAccessGuardSource, setAccessJwtVerifier } from './access-guard';
+import { AccessJwtVerifier } from './access-jwt';
+import { parseAccessRules } from './access-rules';
+import {
+  MemoryTunnelAccessStore,
+  TunnelAccessStore,
+  type TunnelAccessStoreLike,
+} from './access-store';
 import {
   DEFAULT_TUNNEL_CONFIG,
   TunnelConfigStore,
@@ -22,6 +33,11 @@ import {
 } from './config-store';
 import { type Downloader, defaultDownloader, installCloudflaredBinary } from './download';
 import { TunnelError, tunnelErrorFrom, tunnelHttpStatus } from './errors';
+import {
+  type ExternalDetectDeps,
+  type ExternalDetection,
+  ExternalTunnelDetector,
+} from './external-detect';
 import { defaultTunnelName, normalizeTunnelHostname, normalizeTunnelName } from './hostname';
 import { LogRingBuffer } from './log-buffer';
 import { isTunnelPlatformSupported, tunnelPlatformLabel } from './platform';
@@ -49,7 +65,7 @@ export type TunnelManagerOptions = {
   spawner?: Spawner;
   which?: (cmd: string) => string | null;
   downloader?: Downloader;
-  fetchImpl?: typeof fetch;
+  fetchImpl?: TunnelFetch;
   patchHostEnv?: PatchHostEnv | null;
   readHostEnv?: ReadHostEnv | null;
   now?: () => number;
@@ -64,6 +80,11 @@ export type TunnelManagerOptions = {
   runningWaitMs?: number;
   loginEnforced?: () => boolean;
   warn?: (message: string) => void;
+  accessStore?: TunnelAccessStoreLike;
+  accessClient?: CloudflareAccessClient;
+  externalDetect?: ExternalTunnelDetector;
+  externalDetectDeps?: Partial<ExternalDetectDeps>;
+  registerAccessGuard?: boolean;
 };
 
 type BinaryCache = {
@@ -75,7 +96,25 @@ type BinaryCache = {
 const LOGIN_TIMEOUT_MS = 10 * 60 * 1000;
 const LOGIN_POLL_MS = 500;
 const HOST_ENV_MESSAGE = 'Host environment is not managed by tmex-cli';
-const AUTH_REQUIRED_MESSAGE = 'Sign-in must be enabled before exposing tmex publicly';
+const EXPOSURE_ACK_MESSAGE =
+  'This instance has no sign-in and no Cloudflare Access protection; confirm public exposure explicitly';
+const EXTERNAL_MANAGED_MESSAGE = 'managed by the system service';
+
+const EMPTY_EXTERNAL: ExternalDetection = {
+  detected: false,
+  source: null,
+  configPath: null,
+  tunnelId: null,
+  tunnelName: null,
+  hostnames: [],
+  hasOriginCert: false,
+  running: false,
+  pid: null,
+  tokenFile: null,
+  logFile: null,
+  accountId: null,
+  tokenAccountId: null,
+};
 
 function yamlQuote(value: string): string {
   if (/[:#\n]|^\s|\s$/.test(value)) {
@@ -112,7 +151,7 @@ export class TunnelManager {
   private readonly store: TunnelConfigStoreLike;
   private readonly which: (cmd: string) => string | null;
   private readonly downloader: Downloader;
-  private readonly fetchImpl: typeof fetch;
+  private readonly fetchImpl: TunnelFetch;
   private readonly now: () => number;
   private readonly sleep: (ms: number) => Promise<void>;
   private readonly loginTimeoutMs: number;
@@ -124,6 +163,11 @@ export class TunnelManager {
   private readonly supervisor: TunnelSupervisor;
   private readonly probeVersionOnStart: boolean;
   private readonly warn: (message: string) => void;
+  private readonly accessStore: TunnelAccessStoreLike;
+  private readonly accessClient: CloudflareAccessClient;
+  private readonly jwtVerifier: AccessJwtVerifier;
+  private readonly externalDetector: ExternalTunnelDetector;
+  private lastExternal: ExternalDetection = { ...EMPTY_EXTERNAL };
   private loginEnforcedFn: () => boolean;
   private trustProxy: boolean;
   private configuredTrustProxy: boolean;
@@ -167,6 +211,30 @@ export class TunnelManager {
     this.probeVersionOnStart = opts.probeVersionOnStart ?? false;
     this.loginEnforcedFn = opts.loginEnforced ?? (() => config.roles.hub || config.roles.node);
     this.warn = opts.warn ?? ((message) => console.warn(message));
+    this.accessStore =
+      opts.accessStore ??
+      (opts.store ? new MemoryTunnelAccessStore() : new TunnelAccessStore(getOrmDb()));
+    this.accessClient = opts.accessClient ?? new CloudflareAccessClient(this.fetchImpl);
+    this.jwtVerifier = new AccessJwtVerifier({ fetchImpl: this.fetchImpl, now: this.now });
+    this.externalDetector =
+      opts.externalDetect ??
+      new ExternalTunnelDetector({
+        originPort: this.originPort,
+        now: this.now,
+        platform: this.platform,
+        getCredentials: async () => {
+          const apiToken = await this.accessStore.getApiToken();
+          const accountId = this.accessStore.get().accountId;
+          if (!apiToken || !accountId) return null;
+          return { accountId, apiToken };
+        },
+        accessClient: this.accessClient,
+        ...opts.externalDetectDeps,
+      });
+    if (opts.registerAccessGuard !== false) {
+      setAccessGuardSource(() => this.accessGuardState());
+      setAccessJwtVerifier(this.jwtVerifier);
+    }
     const spawner: Spawner = opts.spawner ?? bunSpawner;
     this.provider = new CloudflaredProvider(spawner, this.tunnelDir);
     this.supervisor = new TunnelSupervisor({
@@ -201,9 +269,12 @@ export class TunnelManager {
       await this.probeVersion();
     }
     const persisted = this.store.get();
+    await this.refreshExternal();
     if (persisted.autoStart && persisted.mode !== 'off') {
-      if (!this.loginEnforcedFn()) {
-        this.warn(`[tunnel] auto-start skipped: ${AUTH_REQUIRED_MESSAGE}`);
+      if (persisted.externallyManaged) {
+        // 系统服务托管，不拉起子进程
+      } else if (!this.isExposureProtected() && !persisted.exposureAcknowledgedAt) {
+        this.warn(`[tunnel] auto-start skipped: ${EXPOSURE_ACK_MESSAGE}`);
       } else {
         try {
           await this.startProcess(persisted.mode);
@@ -225,9 +296,18 @@ export class TunnelManager {
     this.refreshBinaryPresence();
     const persisted = this.safePersisted();
     const loggedIn = existsSync(originCertPath(this.tunnelDir));
-    const running = this.supervisor.state === 'running';
-    const publicUrl =
-      persisted.mode === 'named' && running && persisted.hostname
+    const access = this.accessStatus();
+    const external = this.externalStatus();
+    const loginEnforced = this.loginEnforcedFn();
+    const exposureProtected = this.isExposureProtected(persisted, access, loginEnforced);
+    const running = persisted.externallyManaged
+      ? this.lastExternal.running
+      : this.supervisor.state === 'running';
+    const publicUrl = persisted.externallyManaged
+      ? persisted.hostname
+        ? `https://${persisted.hostname}`
+        : null
+      : persisted.mode === 'named' && running && persisted.hostname
         ? `https://${persisted.hostname}`
         : persisted.mode === 'quick' && running
           ? this.supervisor.publicUrl
@@ -251,16 +331,25 @@ export class TunnelManager {
         tunnelName: persisted.tunnelName,
         tunnelId: persisted.tunnelId,
         autoStart: persisted.autoStart,
+        externallyManaged: persisted.externallyManaged,
         originPort: this.originPort,
       },
       process: {
-        state: this.supervisor.state,
-        pid: this.supervisor.pid,
-        startedAt: this.supervisor.startedAt,
+        state: persisted.externallyManaged
+          ? this.lastExternal.running
+            ? 'running'
+            : 'stopped'
+          : this.supervisor.state,
+        pid: persisted.externallyManaged ? null : this.supervisor.pid,
+        startedAt: persisted.externallyManaged ? null : this.supervisor.startedAt,
         publicUrl,
-        lastError: this.supervisor.lastError,
-        restarts: this.supervisor.restarts,
+        lastError: persisted.externallyManaged ? null : this.supervisor.lastError,
+        restarts: persisted.externallyManaged ? 0 : this.supervisor.restarts,
       },
+      access,
+      external,
+      loginEnforced,
+      exposureProtected,
       job: this.job ? { ...this.job } : null,
       trustProxy: this.trustProxy,
       configuredTrustProxy: this.configuredTrustProxy,
@@ -282,38 +371,70 @@ export class TunnelManager {
           this.cancelLogin();
           return this.ok(200);
         case 'create':
-          this.requireLoginEnforced();
+          this.requireNotExternallyManaged();
+          await this.requireExposureAck(body.acknowledgeExposure);
           this.requireModeOff();
           this.assertCreateName(body.hostname, body.tunnelName);
           return await this.enqueueJob('create', (step) =>
             this.jobCreate(body.hostname, body.tunnelName, step)
           );
         case 'quick_start':
-          this.requireLoginEnforced();
+          this.requireNotExternallyManaged();
+          await this.requireExposureAck(body.acknowledgeExposure);
           return await this.enqueueJob('start', (step) => this.jobQuickStart(step));
         case 'start':
-          this.requireLoginEnforced();
+          this.requireNotExternallyManaged();
+          await this.requireExposureAck(body.acknowledgeExposure);
           return await this.enqueueJob('start', (step) => this.jobStart(step));
         case 'stop':
+          this.requireNotExternallyManaged();
           return await this.enqueueJob('stop', (step) => this.jobStop(step));
         case 'remove':
+          if (this.store.get().externallyManaged) {
+            this.releaseExternal();
+            return this.ok(200);
+          }
           return await this.enqueueJob('remove', (step) => this.jobRemove(step));
         case 'check':
           return await this.enqueueJob('check', (step) => this.jobCheck(step));
         case 'set_auto_start':
-          if (body.autoStart) this.requireLoginEnforced();
+          if (body.autoStart) {
+            this.requireNotExternallyManaged();
+            await this.requireExposureAck(body.acknowledgeExposure);
+          }
           this.store.save({ autoStart: body.autoStart });
           return this.ok(200);
         case 'set_trust_proxy':
           await this.setTrustProxy(body.trustProxy);
+          return this.ok(200);
+        case 'set_access_credentials':
+          await this.setAccessCredentials(body.apiToken, body.accountId);
+          return this.ok(200);
+        case 'clear_access_credentials':
+          await this.clearAccessCredentials();
+          return this.ok(200);
+        case 'configure_access':
+          return await this.enqueueJob('access', (step) =>
+            this.jobConfigureAccess(body.rules, step)
+          );
+        case 'remove_access':
+          return await this.enqueueJob('access', (step) => this.jobRemoveAccess(step));
+        case 'sync_access':
+          return await this.enqueueJob('access', (step) => this.jobSyncAccess(step));
+        case 'set_access_enforce':
+          await this.setAccessEnforce(body.enforceJwt);
+          return this.ok(200);
+        case 'adopt_external':
+          await this.adoptExternal(body.hostname);
           return this.ok(200);
         default:
           throw new TunnelError('invalid_request', 'unknown action');
       }
     } catch (error) {
       const parsed = tunnelErrorFrom(error);
+      const override = error instanceof TunnelError ? error.httpStatusOverride : undefined;
       return {
-        httpStatus: tunnelHttpStatus(parsed.code),
+        httpStatus: tunnelHttpStatus(parsed.code, override),
         payload: { error: parsed },
       };
     }
@@ -369,9 +490,97 @@ export class TunnelManager {
     }
   }
 
-  private requireLoginEnforced(): void {
-    if (!this.loginEnforcedFn()) {
-      throw new TunnelError('auth_required', AUTH_REQUIRED_MESSAGE);
+  private requireNotExternallyManaged(): void {
+    if (this.store.get().externallyManaged) {
+      throw new TunnelError('invalid_request', EXTERNAL_MANAGED_MESSAGE, 409);
+    }
+  }
+
+  private async requireExposureAck(acknowledgeExposure: boolean | undefined): Promise<void> {
+    if (this.isExposureProtected()) return;
+    if (acknowledgeExposure === true) {
+      this.store.save({ exposureAcknowledgedAt: new Date(this.now()).toISOString() });
+      return;
+    }
+    throw new TunnelError('exposure_ack_required', EXPOSURE_ACK_MESSAGE);
+  }
+
+  private isExposureProtected(
+    persisted = this.safePersisted(),
+    access = this.accessStatus(),
+    loginEnforced = this.loginEnforcedFn()
+  ): boolean {
+    return (
+      loginEnforced ||
+      Boolean(
+        access.configured &&
+          access.enforceJwt &&
+          access.hostname &&
+          access.hostname === persisted.hostname
+      )
+    );
+  }
+
+  private accessGuardState() {
+    const access = this.accessStatus();
+    return {
+      configured: access.configured,
+      enforceJwt: access.enforceJwt,
+      aud: access.aud,
+      teamDomain: access.teamDomain,
+    };
+  }
+
+  private accessStatus(): TunnelAccessStatus {
+    try {
+      const row = this.accessStore.get();
+      return {
+        hasCredentials: Boolean(row.apiTokenEnc && row.accountId),
+        accountId: row.accountId,
+        teamDomain: row.teamDomain,
+        configured: Boolean(row.appId && row.aud && row.hostname),
+        appId: row.appId,
+        aud: row.aud,
+        hostname: row.hostname,
+        rules: [...row.rules],
+        enforceJwt: row.enforceJwt,
+        lastError: row.lastError,
+      };
+    } catch {
+      return {
+        hasCredentials: false,
+        accountId: null,
+        teamDomain: null,
+        configured: false,
+        appId: null,
+        aud: null,
+        hostname: null,
+        rules: [],
+        enforceJwt: false,
+        lastError: null,
+      };
+    }
+  }
+
+  private externalStatus(): TunnelExternalStatus {
+    const ext = this.lastExternal;
+    return {
+      detected: ext.detected,
+      source: ext.source,
+      configPath: ext.configPath,
+      tunnelId: ext.tunnelId,
+      tunnelName: ext.tunnelName,
+      hostnames: [...ext.hostnames],
+      hasOriginCert: ext.hasOriginCert,
+      running: ext.running,
+    };
+  }
+
+  async refreshExternal(): Promise<void> {
+    try {
+      this.lastExternal = await this.externalDetector.detect();
+    } catch {
+      this.lastExternal = { ...EMPTY_EXTERNAL };
     }
   }
 
@@ -601,6 +810,20 @@ export class TunnelManager {
     await this.supervisor.stop();
   }
 
+  // 取消接管：只清本地配置，不停系统服务、不动 Cloudflare 上的隧道。
+  private releaseExternal(): void {
+    this.store.save({
+      mode: 'off',
+      hostname: null,
+      tunnelName: null,
+      tunnelId: null,
+      externallyManaged: false,
+      autoStart: false,
+    });
+    this.supervisor.publicUrl = null;
+    this.supervisor.lastError = null;
+  }
+
   private async jobRemove(step: (name: string) => void): Promise<void> {
     step('stop');
     await this.supervisor.stop();
@@ -671,6 +894,159 @@ export class TunnelManager {
     await this.patchHostEnv(trustProxy);
     this.configuredTrustProxy = trustProxy;
     this.restartRequired = this.configuredTrustProxy !== this.trustProxy;
+  }
+
+  private async setAccessCredentials(apiTokenRaw: string, accountIdRaw: string): Promise<void> {
+    const apiToken = apiTokenRaw.trim();
+    const accountId = accountIdRaw.trim();
+    if (!apiToken || !accountId) {
+      throw new TunnelError('invalid_request', 'apiToken and accountId are required');
+    }
+    try {
+      const { teamDomain } = await this.accessClient.getOrganization(accountId, apiToken);
+      await this.accessStore.save({
+        apiToken,
+        accountId,
+        teamDomain,
+        lastError: null,
+      });
+    } catch (error) {
+      const parsed = tunnelErrorFrom(error);
+      const message = sanitizeAccessMessage(parsed.message);
+      await this.accessStore.save({ lastError: message }).catch(() => {});
+      throw new TunnelError('access_api_failed', message);
+    }
+  }
+
+  private async clearAccessCredentials(): Promise<void> {
+    await this.accessStore.save({
+      apiToken: null,
+      accountId: null,
+      lastError: null,
+    });
+  }
+
+  private async setAccessEnforce(enforceJwt: boolean): Promise<void> {
+    const access = this.accessStore.get();
+    if (!access.appId || !access.aud) {
+      throw new TunnelError('not_configured', 'Cloudflare Access is not configured');
+    }
+    await this.accessStore.save({ enforceJwt, lastError: null });
+  }
+
+  private async jobConfigureAccess(rulesRaw: unknown, step: (name: string) => void): Promise<void> {
+    const rules = parseAccessRules(rulesRaw);
+    const persisted = this.store.get();
+    const hostname = persisted.hostname;
+    if (!hostname) {
+      throw new TunnelError('not_configured', 'named tunnel hostname is required');
+    }
+    const apiToken = await this.accessStore.getApiToken();
+    const accountId = this.accessStore.get().accountId;
+    if (!apiToken || !accountId) {
+      throw new TunnelError('not_configured', 'Cloudflare Access credentials are not saved');
+    }
+    try {
+      step('create_app');
+      const current = this.accessStore.get();
+      const app = current.appId
+        ? await this.accessClient.updateApp(accountId, apiToken, current.appId, hostname)
+        : await this.accessClient.createApp(accountId, apiToken, hostname);
+      step('policy');
+      await this.accessClient.replaceAllowPolicy(accountId, apiToken, app.id, rules);
+      step('verify');
+      const verified = await this.accessClient.getApp(accountId, apiToken, app.id);
+      await this.accessStore.save({
+        appId: verified.id,
+        aud: verified.aud,
+        hostname,
+        rules,
+        enforceJwt: true,
+        lastError: null,
+      });
+    } catch (error) {
+      const parsed = tunnelErrorFrom(error);
+      const message = sanitizeAccessMessage(parsed.message);
+      await this.accessStore.save({ lastError: message }).catch(() => {});
+      throw new TunnelError(
+        parsed.code === 'access_api_failed' ? 'access_api_failed' : parsed.code,
+        message
+      );
+    }
+  }
+
+  private async jobRemoveAccess(step: (name: string) => void): Promise<void> {
+    step('delete_app');
+    const row = this.accessStore.get();
+    const apiToken = await this.accessStore.getApiToken();
+    if (row.appId && apiToken && row.accountId) {
+      await this.accessClient.deleteApp(row.accountId, apiToken, row.appId).catch(() => {});
+    }
+    await this.accessStore.save({
+      appId: null,
+      aud: null,
+      hostname: null,
+      rules: [],
+      enforceJwt: false,
+      lastError: null,
+    });
+  }
+
+  private async jobSyncAccess(step: (name: string) => void): Promise<void> {
+    step('sync');
+    const apiToken = await this.accessStore.getApiToken();
+    const accountId = this.accessStore.get().accountId;
+    if (!apiToken || !accountId) {
+      throw new TunnelError('not_configured', 'Cloudflare Access credentials are not saved');
+    }
+    await this.refreshExternal();
+    const hostname = this.store.get().hostname ?? this.lastExternal.hostnames[0] ?? null;
+    if (!hostname) {
+      throw new TunnelError('not_configured', 'no hostname to match an Access application');
+    }
+    try {
+      const apps = await this.accessClient.listApps(accountId, apiToken);
+      const app = this.accessClient.findAppForHostname(apps, hostname);
+      if (!app) {
+        await this.accessStore.save({
+          lastError: sanitizeAccessMessage('No Access application matches this hostname'),
+        });
+        return;
+      }
+      const rules = await this.accessClient.readAppRules(accountId, apiToken, app.id);
+      await this.accessStore.save({
+        appId: app.id,
+        aud: app.aud,
+        hostname,
+        rules,
+        lastError: null,
+      });
+    } catch (error) {
+      const parsed = tunnelErrorFrom(error);
+      const message = sanitizeAccessMessage(parsed.message);
+      await this.accessStore.save({ lastError: message }).catch(() => {});
+      throw new TunnelError('access_api_failed', message);
+    }
+  }
+
+  private async adoptExternal(hostnameRaw: string): Promise<void> {
+    const hostname = normalizeTunnelHostname(hostnameRaw);
+    if (!hostname) {
+      throw new TunnelError('invalid_hostname', 'hostname is not a valid RFC 1123 name');
+    }
+    this.externalDetector.invalidate();
+    await this.refreshExternal();
+    if (!this.lastExternal.hostnames.includes(hostname)) {
+      throw new TunnelError('invalid_request', 'hostname is not in the detected external tunnel');
+    }
+    this.store.save({
+      mode: 'named',
+      hostname,
+      tunnelId: this.lastExternal.tunnelId,
+      tunnelName: this.lastExternal.tunnelName,
+      externallyManaged: true,
+      autoStart: false,
+    });
   }
 
   private async refreshConfiguredTrustProxy(): Promise<void> {

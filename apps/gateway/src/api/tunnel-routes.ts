@@ -1,6 +1,7 @@
 import type { TunnelActionRequest } from '@tmex/shared';
 import { MESH_VIA_SELF, getMeshRequestContext, requestDispatchContext } from '../mesh/mesh-deps';
 import { isPeerInboundRequest } from '../mesh/peer-request-marker';
+import { parseAccessRules } from '../tunnel/access-rules';
 import { TunnelError, tunnelErrorFrom, tunnelHttpStatus } from '../tunnel/errors';
 import { normalizeTunnelHostname, normalizeTunnelName } from '../tunnel/hostname';
 import { type TunnelManager, tunnelManager } from '../tunnel/manager';
@@ -24,18 +25,32 @@ function rejectIfForwarded(req: Request, ctx: ApiRouteContext): Response | null 
   return new Response(null, { status: 404 });
 }
 
+function optionalAck(body: Record<string, unknown>): boolean | undefined {
+  if (body.acknowledgeExposure === undefined) return undefined;
+  if (typeof body.acknowledgeExposure !== 'boolean') {
+    throw new TunnelError('invalid_request', 'acknowledgeExposure must be a boolean');
+  }
+  return body.acknowledgeExposure;
+}
+
 function parseAction(body: Record<string, unknown>): TunnelActionRequest {
   const action = body.action;
   switch (action) {
     case 'install':
     case 'login':
     case 'cancel_login':
-    case 'quick_start':
-    case 'start':
     case 'stop':
     case 'remove':
     case 'check':
+    case 'clear_access_credentials':
+    case 'remove_access':
+    case 'sync_access':
       return { action };
+    case 'quick_start':
+    case 'start': {
+      const acknowledgeExposure = optionalAck(body);
+      return acknowledgeExposure === undefined ? { action } : { action, acknowledgeExposure };
+    }
     case 'create': {
       if (typeof body.hostname !== 'string') {
         throw new TunnelError('invalid_request', 'hostname is required');
@@ -44,25 +59,72 @@ function parseAction(body: Record<string, unknown>): TunnelActionRequest {
       if (!hostname) {
         throw new TunnelError('invalid_hostname', 'hostname is not a valid RFC 1123 name');
       }
+      const acknowledgeExposure = optionalAck(body);
       if (typeof body.tunnelName === 'string' && body.tunnelName.trim()) {
         const tunnelName = normalizeTunnelName(body.tunnelName);
         if (!tunnelName) {
           throw new TunnelError('invalid_request', 'tunnel name is not a valid identifier');
         }
-        return { action: 'create', hostname, tunnelName };
+        return {
+          action: 'create',
+          hostname,
+          tunnelName,
+          ...(acknowledgeExposure === undefined ? {} : { acknowledgeExposure }),
+        };
       }
-      return { action: 'create', hostname };
+      return {
+        action: 'create',
+        hostname,
+        ...(acknowledgeExposure === undefined ? {} : { acknowledgeExposure }),
+      };
     }
-    case 'set_auto_start':
+    case 'set_auto_start': {
       if (typeof body.autoStart !== 'boolean') {
         throw new TunnelError('invalid_request', 'autoStart must be a boolean');
       }
-      return { action: 'set_auto_start', autoStart: body.autoStart };
+      const acknowledgeExposure = optionalAck(body);
+      return {
+        action: 'set_auto_start',
+        autoStart: body.autoStart,
+        ...(acknowledgeExposure === undefined ? {} : { acknowledgeExposure }),
+      };
+    }
     case 'set_trust_proxy':
       if (typeof body.trustProxy !== 'boolean') {
         throw new TunnelError('invalid_request', 'trustProxy must be a boolean');
       }
       return { action: 'set_trust_proxy', trustProxy: body.trustProxy };
+    case 'set_access_credentials': {
+      if (typeof body.apiToken !== 'string' || typeof body.accountId !== 'string') {
+        throw new TunnelError('invalid_request', 'apiToken and accountId are required');
+      }
+      return {
+        action: 'set_access_credentials',
+        apiToken: body.apiToken,
+        accountId: body.accountId,
+      };
+    }
+    case 'configure_access': {
+      if (!Array.isArray(body.rules)) {
+        throw new TunnelError('invalid_request', 'rules must be an array');
+      }
+      return { action: 'configure_access', rules: parseAccessRules(body.rules) };
+    }
+    case 'set_access_enforce':
+      if (typeof body.enforceJwt !== 'boolean') {
+        throw new TunnelError('invalid_request', 'enforceJwt must be a boolean');
+      }
+      return { action: 'set_access_enforce', enforceJwt: body.enforceJwt };
+    case 'adopt_external': {
+      if (typeof body.hostname !== 'string') {
+        throw new TunnelError('invalid_request', 'hostname is required');
+      }
+      const hostname = normalizeTunnelHostname(body.hostname);
+      if (!hostname) {
+        throw new TunnelError('invalid_hostname', 'hostname is not a valid RFC 1123 name');
+      }
+      return { action: 'adopt_external', hostname };
+    }
     default:
       throw new TunnelError('invalid_request', 'unknown action');
   }
@@ -73,9 +135,10 @@ export function createTunnelRoutes(manager: TunnelManager = tunnelManager): ApiR
     route({
       method: 'GET',
       path: '/api/tunnel/status',
-      handler: (req, _params, ctx) => {
+      handler: async (req, _params, ctx) => {
         const blocked = rejectIfForwarded(req, ctx);
         if (blocked) return blocked;
+        await manager.refreshExternal();
         return json(manager.status());
       },
     }),

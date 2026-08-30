@@ -3,6 +3,7 @@ import type { ChallengeStore } from '../auth/challenge-store';
 import type { NodeSessionStore } from '../auth/node-session-store';
 import type { UserKeyService } from '../auth/user-key-service';
 import type { UserStore } from '../auth/user-store';
+import { guardTunnelAccess } from '../tunnel/access-guard';
 import { type AuthKeyLogPublisher, AuthRoutes } from './auth-routes';
 import { Forwarder, rewriteSelf, takePendingForwardStream } from './forwarder';
 import {
@@ -148,6 +149,8 @@ export class MeshHttpRuntime {
   }
 
   async handleRequest(req: Request, server: MeshUpgradeServer): Promise<MeshHandleResult> {
+    const denied = await guardTunnelAccess(req);
+    if (denied) return denied;
     const safeReq = isPeerInboundRequest(req) ? req : stripMeshPeerMarkerFromRequest(req);
     const path = new URL(safeReq.url).pathname;
     if (isMeshInternalPath(path)) {

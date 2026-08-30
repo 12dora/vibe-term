@@ -37,6 +37,14 @@ async function setup() {
     runningWaitMs: 400,
     trustProxy: false,
     loginEnforced: () => true,
+    registerAccessGuard: false,
+    externalDetectDeps: {
+      listProcesses: async () => '',
+      readFile: async () => null,
+      listDir: async () => [],
+      homedir: () => '/no-home',
+      platform: 'linux',
+    },
   });
   managers.push(manager);
   return { dir, manager, routes: createTunnelRoutes(manager) };
@@ -103,6 +111,16 @@ describe('tunnel routes', () => {
     expect(body.trustProxy).toBe(false);
     expect(body.configuredTrustProxy).toBe(false);
     expect(body.restartRequired).toBe(false);
+    expect(body.loginEnforced).toBe(true);
+    expect(body.exposureProtected).toBe(true);
+    expect(body.access).toMatchObject({
+      hasCredentials: false,
+      configured: false,
+      enforceJwt: false,
+      rules: [],
+    });
+    expect(body.external).toMatchObject({ detected: false });
+    expect(body.config.externallyManaged).toBe(false);
     expect(Array.isArray(body.log)).toBe(true);
   });
 
@@ -157,14 +175,15 @@ describe('tunnel routes', () => {
     }
   });
 
-  test('exposing actions return 409 auth_required when login is not enforced', async () => {
+  test('POST exposing actions return 409 exposure_ack_required when unprotected', async () => {
     const ctx = await setup();
     dirs.push(ctx.dir);
     ctx.manager.setLoginEnforced(() => false);
     const expected = {
       error: {
-        code: 'auth_required',
-        message: 'Sign-in must be enabled before exposing tmex publicly',
+        code: 'exposure_ack_required',
+        message:
+          'This instance has no sign-in and no Cloudflare Access protection; confirm public exposure explicitly',
       },
     };
     for (const body of [
@@ -177,6 +196,28 @@ describe('tunnel routes', () => {
       expect(res.status).toBe(409);
       expect(await res.json()).toEqual(expected);
     }
+  });
+
+  test('POST configure_access without rules is 400', async () => {
+    const ctx = await setup();
+    dirs.push(ctx.dir);
+    const res = await dispatch(ctx.routes, 'POST', '/api/tunnel/actions', {
+      action: 'configure_access',
+      rules: [],
+    });
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as { error: { code: string } };
+    expect(body.error.code).toBe('invalid_request');
+  });
+
+  test('POST set_access_credentials without token is 400', async () => {
+    const ctx = await setup();
+    dirs.push(ctx.dir);
+    const res = await dispatch(ctx.routes, 'POST', '/api/tunnel/actions', {
+      action: 'set_access_credentials',
+      accountId: 'acc',
+    });
+    expect(res.status).toBe(400);
   });
 
   test('peer-forwarded /api/tunnel requests return 404', async () => {

@@ -11,6 +11,8 @@ export type TunnelPersisted = {
   tunnelName: string | null;
   tunnelId: string | null;
   autoStart: boolean;
+  externallyManaged: boolean;
+  exposureAcknowledgedAt: string | null;
   updatedAt: string;
 };
 
@@ -20,6 +22,8 @@ export const DEFAULT_TUNNEL_CONFIG: TunnelPersisted = {
   tunnelName: null,
   tunnelId: null,
   autoStart: false,
+  externallyManaged: false,
+  exposureAcknowledgedAt: null,
   updatedAt: '',
 };
 
@@ -67,6 +71,8 @@ export class TunnelConfigStore implements TunnelConfigStoreLike {
         tunnelName: row.tunnelName ?? null,
         tunnelId: row.tunnelId ?? null,
         autoStart: Boolean(row.autoStart),
+        externallyManaged: Boolean(row.externallyManaged),
+        exposureAcknowledgedAt: row.exposureAcknowledgedAt ?? null,
         updatedAt: row.updatedAt,
       };
     } catch {
@@ -82,6 +88,12 @@ export class TunnelConfigStore implements TunnelConfigStoreLike {
       tunnelName: patch.tunnelName !== undefined ? patch.tunnelName : current.tunnelName,
       tunnelId: patch.tunnelId !== undefined ? patch.tunnelId : current.tunnelId,
       autoStart: patch.autoStart ?? current.autoStart,
+      externallyManaged:
+        patch.externallyManaged !== undefined ? patch.externallyManaged : current.externallyManaged,
+      exposureAcknowledgedAt:
+        patch.exposureAcknowledgedAt !== undefined
+          ? patch.exposureAcknowledgedAt
+          : current.exposureAcknowledgedAt,
       updatedAt: new Date().toISOString(),
     };
     const values = {
@@ -91,6 +103,8 @@ export class TunnelConfigStore implements TunnelConfigStoreLike {
       tunnelName: next.tunnelName,
       tunnelId: next.tunnelId,
       autoStart: next.autoStart,
+      externallyManaged: next.externallyManaged,
+      exposureAcknowledgedAt: next.exposureAcknowledgedAt,
       updatedAt: next.updatedAt,
     };
     this.db
@@ -104,6 +118,8 @@ export class TunnelConfigStore implements TunnelConfigStoreLike {
           tunnelName: values.tunnelName,
           tunnelId: values.tunnelId,
           autoStart: values.autoStart,
+          externallyManaged: values.externallyManaged,
+          exposureAcknowledgedAt: values.exposureAcknowledgedAt,
           updatedAt: values.updatedAt,
         },
       })

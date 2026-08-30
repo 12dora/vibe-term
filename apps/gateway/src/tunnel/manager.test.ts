@@ -2,6 +2,7 @@ import { afterEach, describe, expect, test } from 'bun:test';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { MemoryTunnelAccessStore } from './access-store';
 import { MemoryTunnelConfigStore } from './config-store';
 import { FakeSpawner, argsInclude } from './fake-spawn';
 import { TunnelManager } from './manager';
@@ -51,6 +52,14 @@ async function setup(overrides: ConstructorParameters<typeof TunnelManager>[0] =
     trustProxy: false,
     healthzStartedAt: 111,
     loginEnforced: () => true,
+    registerAccessGuard: false,
+    externalDetectDeps: {
+      listProcesses: async () => '',
+      readFile: async () => null,
+      listDir: async () => [],
+      homedir: () => '/no-home',
+      platform: 'linux',
+    },
     ...overrides,
   });
   return { dir, spawner, store, manager };
@@ -279,13 +288,14 @@ describe('TunnelManager', () => {
     }
   });
 
-  test('refuses public exposure when login is not enforced', async () => {
+  test('requires acknowledgeExposure when unprotected', async () => {
     const ctx = await setup({ loginEnforced: () => false });
     dirs.push(ctx.dir);
     await writeFile(join(ctx.dir, 'cert.pem'), 'CERT', 'utf8');
     const expected = {
-      code: 'auth_required' as const,
-      message: 'Sign-in must be enabled before exposing tmex publicly',
+      code: 'exposure_ack_required' as const,
+      message:
+        'This instance has no sign-in and no Cloudflare Access protection; confirm public exposure explicitly',
     };
     for (const body of [
       { action: 'quick_start' as const },
@@ -297,12 +307,19 @@ describe('TunnelManager', () => {
       expect(result.httpStatus).toBe(409);
       expect('error' in result.payload && result.payload.error).toEqual(expected);
     }
+    const acked = await ctx.manager.handleAction({
+      action: 'set_auto_start',
+      autoStart: true,
+      acknowledgeExposure: true,
+    });
+    expect(acked.httpStatus).toBe(200);
+    expect(ctx.manager.status().config.autoStart).toBe(true);
+    expect(ctx.manager.status().exposureProtected).toBe(false);
     const disable = await ctx.manager.handleAction({ action: 'set_auto_start', autoStart: false });
     expect(disable.httpStatus).toBe(200);
-    expect(ctx.manager.status().config.autoStart).toBe(false);
   });
 
-  test('skips auto-start at boot when login is not enforced', async () => {
+  test('skips auto-start at boot when unprotected and unacknowledged', async () => {
     const warnings: string[] = [];
     const ctx = await setup({
       loginEnforced: () => false,
@@ -317,7 +334,7 @@ describe('TunnelManager', () => {
     await ctx.manager.start();
     expect(ctx.manager.status().process.state).toBe('stopped');
     expect(ctx.spawner.calls.some((c) => argsInclude(c, '--url'))).toBe(false);
-    expect(warnings.some((w) => /sign-in must be enabled/i.test(w))).toBe(true);
+    expect(warnings.some((w) => /confirm public exposure/i.test(w))).toBe(true);
   });
 
   test('rejects path-traversal tunnel names before writing credentials', async () => {
@@ -441,5 +458,249 @@ describe('TunnelManager', () => {
       expect(ok.payload.status.trustProxy).toBe(false);
       expect(ok.payload.status.restartRequired).toBe(false);
     }
+  });
+
+  test('set_access_credentials validates via organizations and stores teamDomain', async () => {
+    const ctx = await setup({
+      fetchImpl: async (input) => {
+        expect(String(input)).toContain('/access/organizations');
+        return Response.json({
+          success: true,
+          result: { auth_domain: 'acme.cloudflareaccess.com' },
+        });
+      },
+    });
+    dirs.push(ctx.dir);
+    const result = await ctx.manager.handleAction({
+      action: 'set_access_credentials',
+      apiToken: 'cf-token',
+      accountId: 'account-1',
+    });
+    expect(result.httpStatus).toBe(200);
+    const status = ctx.manager.status();
+    expect(status.access.hasCredentials).toBe(true);
+    expect(status.access.accountId).toBe('account-1');
+    expect(status.access.teamDomain).toBe('acme.cloudflareaccess.com');
+    expect(status.loginEnforced).toBe(true);
+  });
+
+  test('configure_access creates app, replaces policy, and enables JWT', async () => {
+    const calls: string[] = [];
+    const ctx = await setup({
+      fetchImpl: async (input, init) => {
+        const url = String(input);
+        const method = init?.method ?? 'GET';
+        calls.push(`${method} ${url}`);
+        if (url.includes('/access/organizations')) {
+          return Response.json({
+            success: true,
+            result: { auth_domain: 'acme.cloudflareaccess.com' },
+          });
+        }
+        if (url.endsWith('/access/apps') && method === 'POST') {
+          return Response.json({
+            success: true,
+            result: { id: 'app-1', aud: 'aud-1', domain: 'remote.example.com', name: 'tmex' },
+          });
+        }
+        if (url.includes('/access/apps/app-1/policies') && method === 'GET') {
+          return Response.json({ success: true, result: [] });
+        }
+        if (url.includes('/access/apps/app-1/policies') && method === 'POST') {
+          return Response.json({ success: true, result: { id: 'pol-1' } });
+        }
+        if (url.endsWith('/access/apps/app-1') && method === 'GET') {
+          return Response.json({
+            success: true,
+            result: { id: 'app-1', aud: 'aud-1', domain: 'remote.example.com', name: 'tmex' },
+          });
+        }
+        return Response.json(
+          { success: false, errors: [{ message: `unexpected ${method} ${url}` }] },
+          { status: 400 }
+        );
+      },
+    });
+    dirs.push(ctx.dir);
+    await ctx.manager.handleAction({
+      action: 'set_access_credentials',
+      apiToken: 'tok',
+      accountId: 'acc',
+    });
+    ctx.store.save({ mode: 'named', hostname: 'remote.example.com' });
+    const queued = await ctx.manager.handleAction({
+      action: 'configure_access',
+      rules: [{ kind: 'email', value: 'owner@example.com' }],
+    });
+    expect(queued.httpStatus).toBe(202);
+    const job = await waitJob(ctx.manager);
+    expect(job?.state).toBe('done');
+    expect(job?.step).toBe('verify');
+    const access = ctx.manager.status().access;
+    expect(access.configured).toBe(true);
+    expect(access.appId).toBe('app-1');
+    expect(access.aud).toBe('aud-1');
+    expect(access.enforceJwt).toBe(true);
+    expect(access.hostname).toBe('remote.example.com');
+    expect(ctx.manager.status().exposureProtected).toBe(true);
+  });
+
+  test('named start is allowed without ack when Access JWT is enforced for the hostname', async () => {
+    const accessStore = new MemoryTunnelAccessStore();
+    await accessStore.save({
+      accountId: 'acc',
+      apiToken: 'tok',
+      teamDomain: 'team.cloudflareaccess.com',
+      appId: 'app',
+      aud: 'aud',
+      hostname: 'ok.example.com',
+      rules: [{ kind: 'email_domain', value: 'example.com' }],
+      enforceJwt: true,
+    });
+    const ctx = await setup({ loginEnforced: () => false, accessStore });
+    dirs.push(ctx.dir);
+    ctx.store.save({ mode: 'named', hostname: 'ok.example.com', tunnelId: 'tid', tunnelName: 'n' });
+    expect(ctx.manager.status().exposureProtected).toBe(true);
+    const result = await ctx.manager.handleAction({ action: 'start' });
+    expect(result.httpStatus).toBe(202);
+  });
+
+  test('adopt_external blocks start/stop while system-managed; remove releases the adoption', async () => {
+    const ctx = await setup({
+      loginEnforced: () => false,
+      externalDetectDeps: {
+        listProcesses: async () => '  1 cloudflared tunnel --token-file /tmp/tok run\n',
+        readFile: async (path) => {
+          if (path === '/tmp/tok') {
+            return Buffer.from(JSON.stringify({ a: 'a', t: 'tid', s: 's' })).toString('base64');
+          }
+          if (path === '/tmp/hostname') return 'ext.example.com';
+          return null;
+        },
+        listDir: async () => [],
+        homedir: () => '/no-home',
+        platform: 'linux',
+      },
+    });
+    dirs.push(ctx.dir);
+    const adopt = await ctx.manager.handleAction({
+      action: 'adopt_external',
+      hostname: 'ext.example.com',
+    });
+    expect(adopt.httpStatus).toBe(200);
+    const status = ctx.manager.status();
+    expect(status.config.externallyManaged).toBe(true);
+    expect(status.config.mode).toBe('named');
+    expect(status.config.hostname).toBe('ext.example.com');
+    const start = await ctx.manager.handleAction({ action: 'start', acknowledgeExposure: true });
+    expect(start.httpStatus).toBe(409);
+    expect('error' in start.payload && start.payload.error.message).toBe(
+      'managed by the system service'
+    );
+    const stop = await ctx.manager.handleAction({ action: 'stop' });
+    expect(stop.httpStatus).toBe(409);
+    const remove = await ctx.manager.handleAction({ action: 'remove' });
+    expect(remove.httpStatus).toBe(200);
+    const released = ctx.manager.status();
+    expect(released.config.externallyManaged).toBe(false);
+    expect(released.config.mode).toBe('off');
+    expect(released.config.hostname).toBeNull();
+    expect(released.external.detected).toBe(true);
+  });
+
+  test('set_access_credentials maps API failure and clear wipes token', async () => {
+    const ctx = await setup({
+      fetchImpl: async () =>
+        Response.json(
+          { success: false, errors: [{ message: 'Invalid API Token' }] },
+          { status: 401 }
+        ),
+    });
+    dirs.push(ctx.dir);
+    const failed = await ctx.manager.handleAction({
+      action: 'set_access_credentials',
+      apiToken: 'bad-token',
+      accountId: 'acc',
+    });
+    expect(failed.httpStatus).toBe(400);
+    expect('error' in failed.payload && failed.payload.error.code).toBe('access_api_failed');
+    expect(ctx.manager.status().access.hasCredentials).toBe(false);
+    expect(ctx.manager.status().access.lastError).toBe('Invalid API Token');
+
+    const okCtx = await setup({
+      fetchImpl: async (input) => {
+        if (String(input).includes('/access/organizations')) {
+          return Response.json({
+            success: true,
+            result: { auth_domain: 'acme.cloudflareaccess.com' },
+          });
+        }
+        return Response.json(
+          { success: false, errors: [{ message: String(input) }] },
+          { status: 400 }
+        );
+      },
+    });
+    dirs.push(okCtx.dir);
+    await okCtx.manager.handleAction({
+      action: 'set_access_credentials',
+      apiToken: 'tok',
+      accountId: 'acc',
+    });
+    expect(okCtx.manager.status().access.hasCredentials).toBe(true);
+    const cleared = await okCtx.manager.handleAction({ action: 'clear_access_credentials' });
+    expect(cleared.httpStatus).toBe(200);
+    expect(okCtx.manager.status().access.hasCredentials).toBe(false);
+    expect(okCtx.manager.status().access.accountId).toBeNull();
+  });
+
+  test('sync_access copies dashboard Access app rules for the hostname', async () => {
+    const ctx = await setup({
+      fetchImpl: async (input) => {
+        const url = String(input);
+        if (url.includes('/access/organizations')) {
+          return Response.json({
+            success: true,
+            result: { auth_domain: 'acme.cloudflareaccess.com' },
+          });
+        }
+        if (url.includes('/access/apps?')) {
+          return Response.json({
+            success: true,
+            result: [{ id: 'app-9', aud: 'aud-9', domain: 'remote.example.com', name: 'tmex' }],
+            result_info: { page: 1, per_page: 100, total_count: 1, total_pages: 1 },
+          });
+        }
+        if (url.includes('/access/apps/app-9/policies')) {
+          return Response.json({
+            success: true,
+            result: [
+              {
+                id: 'pol-1',
+                decision: 'allow',
+                include: [{ email: { email: 'owner@example.com' } }],
+              },
+            ],
+          });
+        }
+        return Response.json({ success: false, errors: [{ message: url }] }, { status: 400 });
+      },
+    });
+    dirs.push(ctx.dir);
+    await ctx.manager.handleAction({
+      action: 'set_access_credentials',
+      apiToken: 'tok',
+      accountId: 'acc',
+    });
+    ctx.store.save({ mode: 'named', hostname: 'remote.example.com' });
+    const queued = await ctx.manager.handleAction({ action: 'sync_access' });
+    expect(queued.httpStatus).toBe(202);
+    const job = await waitJob(ctx.manager);
+    expect(job?.state).toBe('done');
+    const access = ctx.manager.status().access;
+    expect(access.configured).toBe(true);
+    expect(access.appId).toBe('app-9');
+    expect(access.aud).toBe('aud-9');
+    expect(access.rules).toEqual([{ kind: 'email', value: 'owner@example.com' }]);
   });
 });
