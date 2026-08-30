@@ -18,9 +18,9 @@ import {
   type DirectApi,
   type DirectMutationCallbacks,
   DirectMutationController,
-  LocalMachineCard,
   describeDirectError,
-} from './local-machine-card';
+} from './direct-section';
+import { LocalMachineCard } from './local-machine-card';
 
 const MESH_MODE: AuthModeResponse = {
   mode: 'mesh',

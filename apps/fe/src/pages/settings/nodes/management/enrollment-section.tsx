@@ -19,10 +19,11 @@ import type { AuthApi } from '@tmex/api-client/auth/index';
 import { requireRootEpoch } from '@tmex/api-client/auth/index';
 import { Button } from '@tmex/ui/button';
 import { Input } from '@tmex/ui/input';
-import { Check, Copy, Loader2, ShieldCheck } from 'lucide-react';
+import { Check, Loader2, ShieldCheck } from 'lucide-react';
 import { useCallback, useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { CopyLabel, useCopyToClipboard } from '../copy-feedback';
+import { CopyableCode } from '../copy-feedback';
+import { actionErrorText } from './errors';
 import type { ResolvedMode } from './types';
 
 export function EnrollmentSection({
@@ -95,14 +96,7 @@ export function EnrollmentSection({
       // 走到这里说明 enrollment 没建成（多半是 hub 请求失败）：复用窗口里的根钥没有任何
       // 后续动作会用到，立刻清零，不要等 5 分钟定时器（见 F4-fix 评审 Major「所有权式清零」）。
       prompt.forget();
-      const code = (err as { code?: string })?.code;
-      setError(
-        code
-          ? t(`auth.errors.${code}`, { defaultValue: code })
-          : err instanceof Error
-            ? err.message
-            : String(err)
-      );
+      setError(actionErrorText(t, err));
     } finally {
       setBusy(false);
     }
@@ -213,39 +207,4 @@ export function resolveHubPublicUrl(
 ): string | null {
   const url = created?.hubPublicUrl ?? mode.hubPublicUrl ?? null;
   return isTrustedHubUrl(url) ? url : null;
-}
-
-export function CopyableCode({
-  label,
-  value,
-  testId,
-}: {
-  label: string;
-  value: string;
-  testId: string;
-}) {
-  const { copied, copy } = useCopyToClipboard(value);
-  return (
-    <div className="flex flex-col gap-1">
-      <span className="text-[11px] text-muted-foreground">{label}</span>
-      <div className="flex items-start gap-1">
-        <code
-          className="min-w-0 flex-1 break-all rounded bg-background p-2 text-[11px]"
-          data-testid={testId}
-        >
-          {value}
-        </code>
-        <Button
-          type="button"
-          size="xs"
-          variant="outline"
-          onClick={copy}
-          data-testid={`${testId}-copy`}
-        >
-          {copied ? <Check className="tmex-scale-in" /> : <Copy className="tmex-scale-in" />}
-          <CopyLabel copied={copied} />
-        </Button>
-      </div>
-    </div>
-  );
 }
