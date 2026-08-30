@@ -29,6 +29,8 @@ export type TunnelErrorCode =
   | 'busy'
   | 'not_configured'
   | 'invalid_request'
+  /** 本机未启用登录（standalone 且无用户），拒绝把无鉴权的 gateway 暴露到公网 */
+  | 'auth_required'
   | 'unknown';
 
 export interface TunnelBinaryStatus {
@@ -88,8 +90,10 @@ export interface TunnelStatusResponse {
   process: TunnelProcessStatus;
   /** 进行中或最近一次结束的 job */
   job: TunnelJobStatus | null;
-  /** 当前进程是否已按 TMEX_TRUST_PROXY=true 运行 */
+  /** 当前进程是否已按 TMEX_TRUST_PROXY=true 运行（生效值） */
   trustProxy: boolean;
+  /** app.env 里已保存的值（期望值）；与 trustProxy 不一致即需重启 */
+  configuredTrustProxy: boolean;
   /** 已写入 env 但需重启才生效 */
   restartRequired: boolean;
   /** 最近若干行 cloudflared 输出（已脱敏） */
