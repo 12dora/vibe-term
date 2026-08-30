@@ -172,6 +172,48 @@ describe('parseListOnly', () => {
     expect(bounded.retained).toBe(3);
   });
 
+  test('bounded parse matches full sort when under the cap', () => {
+    const out = [
+      '-rw-r--r--            1 2026/06/14 15:06:34 z.txt',
+      '-rw-r--r--            1 2026/06/14 15:06:34 a.txt',
+      'drwxr-xr-x           64 2026/06/14 15:06:34 sub',
+      'drwxr-xr-x           64 2026/06/14 15:06:34 文件',
+      '-rw-r--r--            1 2026/06/14 15:06:34 file2.txt',
+      '-rw-r--r--            1 2026/06/14 15:06:34 file10.txt',
+    ].join('\n');
+    const expected = parseListOnly(out).slice().sort(compareListEntry);
+    const bounded = parseListOnlyBounded(out, 2000);
+    expect(bounded.truncated).toBe(false);
+    expect(bounded.entries).toEqual(expected);
+    expect(bounded.retained).toBe(expected.length);
+  });
+
+  test('sort key order matches compareListEntry for mixed ASCII names (property)', () => {
+    const alphabet =
+      'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789._- ~!@#$%^&()+=[]{};,';
+    const types = ['file', 'dir', 'symlink', 'other'] as const;
+    for (let trial = 0; trial < 40; trial++) {
+      const n = 60;
+      const max = 15;
+      const lines: string[] = ['drwxr-xr-x          160 2026/06/14 15:06:34 .'];
+      for (let i = 0; i < n; i++) {
+        let name = '';
+        const len = 1 + ((trial * 17 + i * 13) % 12);
+        for (let k = 0; k < len; k++) {
+          name += alphabet[(trial * 31 + i * 47 + k * 11) % alphabet.length];
+        }
+        name = `${name.replaceAll(' ', '_') || 'f'}-${i}`;
+        const type = types[(trial + i) % types.length];
+        const perms = type === 'dir' ? 'd' : type === 'symlink' ? 'l' : '-';
+        lines.push(`${perms}rw-r--r--            5 2026/06/14 15:06:34 ${name}`);
+      }
+      const stdout = lines.join('\n');
+      const expected = parseListOnly(stdout).slice().sort(compareListEntry).slice(0, max);
+      const bounded = parseListOnlyBounded(stdout, max);
+      expect(bounded.entries).toEqual(expected);
+    }
+  });
+
   test('200k synthetic lines: same page as full parse+sort, retained ≤ MAX_ENTRIES+1', () => {
     const lines: string[] = ['drwxr-xr-x          160 2026/06/14 15:06:34 .'];
     for (let i = 0; i < 200_000; i++) {

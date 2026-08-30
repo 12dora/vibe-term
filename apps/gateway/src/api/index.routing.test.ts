@@ -40,7 +40,7 @@ describe('handleApiRequest production route table', () => {
   test('PUT /api/devices/order hits reorderDevices and not the :id handler', async () => {
     const reorder = track(spyOn(devicesDb, 'reorderDevices').mockImplementation(() => {}));
     const getById = track(spyOn(devicesDb, 'getDeviceById'));
-    track(spyOn(devicesDb, 'getAllDevices').mockReturnValue([]));
+    track(spyOn(devicesDb, 'listDevicesWithRuntimeStatus').mockReturnValue([]));
     track(
       spyOn(devicesDb, 'getDeviceRuntimeStatus').mockReturnValue({
         deviceId: 'unused',

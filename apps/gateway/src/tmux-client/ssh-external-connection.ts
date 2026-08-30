@@ -19,6 +19,7 @@ import {
 } from './external-tmux-core';
 import { buildEnsureGhosttyTerminfoScript } from './ghostty-terminfo';
 import { encodeBytesToHexChunks } from './input-encoder';
+import { appendRollingTail, decodeRollingTail } from './local-external-connection';
 import { buildSshBootstrapScript, parseSshBootstrapOutput } from './ssh-bootstrap';
 import { resolveSshConnectConfig } from './ssh-connect-config';
 import { TmuxTargetMissingError, isTargetMissingMessage } from './target-missing';
@@ -532,10 +533,11 @@ export class SshExternalTmuxConnection extends ExternalTmuxConnectionCore {
     const outputLimit = Math.max(1, Math.floor(maxOutputBytes));
     return new Promise<CommandResult>((resolve, reject) => {
       let settled = false;
+      let truncated = false;
       let exitCode = 0;
       let stdoutBytes = 0;
       let stderrBytes = 0;
-      const stdout: Buffer[] = [];
+      const stdout: Uint8Array[] = [];
       const stderr: Buffer[] = [];
       let stream: ClientChannel | null = null;
 
@@ -562,12 +564,15 @@ export class SshExternalTmuxConnection extends ExternalTmuxConnectionCore {
         stream = channel;
         channel.on('data', (chunk: Buffer) => {
           if (settled) return;
-          stdoutBytes += chunk.byteLength;
-          if (stdoutBytes > outputLimit) {
-            finishReject(new Error('tmux history capture exceeded bounded output'));
-            return;
+          const next = appendRollingTail(stdout, stdoutBytes, Buffer.from(chunk), outputLimit);
+          stdoutBytes = next.total;
+          if (next.overflowed) {
+            truncated = true;
+            try {
+              stream?.close();
+              stream?.destroy();
+            } catch {}
           }
-          stdout.push(Buffer.from(chunk));
         });
         channel.stderr.on('data', (chunk: Buffer) => {
           if (settled) return;
@@ -586,8 +591,8 @@ export class SshExternalTmuxConnection extends ExternalTmuxConnectionCore {
           settled = true;
           clearTimeout(timer);
           resolve({
-            exitCode,
-            stdout: Buffer.concat(stdout, stdoutBytes).toString(),
+            exitCode: truncated ? 0 : exitCode,
+            stdout: decodeRollingTail(stdout, stdoutBytes),
             stderr: Buffer.concat(stderr, stderrBytes).toString(),
           });
         });

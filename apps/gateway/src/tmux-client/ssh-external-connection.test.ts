@@ -690,9 +690,7 @@ describe('SshExternalTmuxConnection', () => {
     expect(fakeClient.commandChannel.writes).toHaveLength(queuedBefore);
     expect(fakeClient.isolatedChannels).toHaveLength(2);
 
-    await expect(connection.capturePaneHistoryRange('%1', -20, -1, 4)).rejects.toThrow(
-      /bounded output/
-    );
+    await expect(connection.capturePaneHistoryRange('%1', -20, -1, 4)).resolves.toBe('w-b\n');
     connection.disconnect();
   });
 

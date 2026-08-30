@@ -221,6 +221,65 @@ function typeFromPerms(perms: string): RsyncEntry['type'] {
 
 const LIST_COLLATOR = new Intl.Collator(undefined, { numeric: true, sensitivity: 'base' });
 
+// 与 LIST_COLLATOR 同序的 ASCII 主权重（locale 启动时标定一次）；非 ASCII 回退 collator。
+const ASCII_WEIGHT = new Uint8Array(128);
+{
+  const chars: string[] = [];
+  for (let i = 0; i < 128; i++) chars.push(String.fromCharCode(i));
+  chars.sort((a, b) => LIST_COLLATOR.compare(a, b) || a.charCodeAt(0) - b.charCodeAt(0));
+  let weight = 1;
+  ASCII_WEIGHT[chars[0].charCodeAt(0)] = weight;
+  for (let i = 1; i < chars.length; i++) {
+    if (LIST_COLLATOR.compare(chars[i - 1], chars[i]) !== 0) weight++;
+    ASCII_WEIGHT[chars[i].charCodeAt(0)] = weight;
+  }
+}
+const DIGIT_WEIGHT = ASCII_WEIGHT[48];
+
+function listSortKey(type: RsyncEntry['type'], name: string): string | null {
+  const n = name.length;
+  let out = type === 'dir' ? '\x01' : '\x02';
+  let i = 0;
+  while (i < n) {
+    const code = name.charCodeAt(i);
+    if (code > 127) return null;
+    if (code >= 48 && code <= 57) {
+      let j = i + 1;
+      while (j < n) {
+        const c = name.charCodeAt(j);
+        if (c < 48 || c > 57) break;
+        j++;
+      }
+      let start = i;
+      while (start < j - 1 && name.charCodeAt(start) === 48) start++;
+      const bodyLen = j - start;
+      out += String.fromCharCode(DIGIT_WEIGHT);
+      out += String(bodyLen).padStart(4, '0');
+      out += name.slice(start, j);
+      i = j;
+      continue;
+    }
+    out += String.fromCharCode(ASCII_WEIGHT[code]);
+    i++;
+  }
+  return out;
+}
+
+type RankedEntry = {
+  entry: RsyncEntry;
+  key: string | null;
+};
+
+function compareRanked(a: RankedEntry, b: RankedEntry): number {
+  if (a.key !== null && b.key !== null) {
+    return a.key < b.key ? -1 : a.key > b.key ? 1 : 0;
+  }
+  const ad = a.entry.type === 'dir' ? 0 : 1;
+  const bd = b.entry.type === 'dir' ? 0 : 1;
+  if (ad !== bd) return ad - bd;
+  return LIST_COLLATOR.compare(a.entry.name, b.entry.name);
+}
+
 export function compareListEntry(
   a: Pick<RsyncEntry, 'type' | 'name'>,
   b: Pick<RsyncEntry, 'type' | 'name'>
@@ -256,10 +315,10 @@ export function createListOnlyCollector(maxEntries: number): {
   snapshot: () => { entries: RsyncEntry[]; truncated: boolean; retained: number };
 } {
   const keep = maxEntries + 1;
-  const heap: RsyncEntry[] = [];
+  const heap: RankedEntry[] = [];
   let overflow = false;
 
-  const worse = (a: RsyncEntry, b: RsyncEntry) => compareListEntry(a, b) > 0;
+  const worse = (a: RankedEntry, b: RankedEntry) => compareRanked(a, b) > 0;
 
   const bubbleUp = (start: number) => {
     let i = start;
@@ -293,16 +352,23 @@ export function createListOnlyCollector(maxEntries: number): {
     accept(line: string) {
       const entry = parseListOnlyLine(line);
       if (!entry) return;
+      const key = listSortKey(entry.type, entry.name);
       if (heap.length < keep) {
-        heap.push(entry);
+        heap.push({ entry, key });
         bubbleUp(heap.length - 1);
         return;
       }
-      if (compareListEntry(entry, heap[0]) >= 0) {
+      const worst = heap[0];
+      const cannotEnter =
+        key !== null && worst.key !== null
+          ? key >= worst.key
+          : compareListEntry(entry, worst.entry) >= 0;
+      if (cannotEnter) {
         overflow = true;
         return;
       }
-      heap[0] = entry;
+      worst.entry = entry;
+      worst.key = key;
       bubbleDown(0);
       overflow = true;
     },
@@ -310,7 +376,10 @@ export function createListOnlyCollector(maxEntries: number): {
       return heap.length;
     },
     snapshot() {
-      const sorted = heap.slice().sort(compareListEntry);
+      const sorted = heap
+        .slice()
+        .map((item) => item.entry)
+        .sort(compareListEntry);
       const truncated = overflow || sorted.length > maxEntries;
       return {
         entries: truncated ? sorted.slice(0, maxEntries) : sorted,

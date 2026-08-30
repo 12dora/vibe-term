@@ -50,14 +50,14 @@ async function captureSql<T>(fn: () => T | Promise<T>): Promise<{ result: T; sql
 }
 
 describe('GET /api/devices query batching', () => {
-  test('100 台设备 ≤ 3 次查询，缺状态行用默认值，shape 含 runtime 字段', async () => {
+  test('100 台设备恰好 1 次查询，缺状态行用默认值，shape 含 runtime 字段', async () => {
     const statusSpy = spyOn(devicesDb, 'getDeviceRuntimeStatus');
     const { result, sqls } = await captureSql(() =>
       handleApiRequest(new Request('http://localhost/api/devices'), fakeServer)
     );
     const response = await result;
     expect(response.status).toBe(200);
-    expect(sqls.filter((sql) => /^\s*select\b/i.test(sql)).length).toBeLessThanOrEqual(3);
+    expect(sqls.filter((sql) => /^\s*select\b/i.test(sql)).length).toBe(1);
     expect(statusSpy).toHaveBeenCalledTimes(0);
     statusSpy.mockRestore();
 
@@ -85,7 +85,7 @@ describe('GET /api/devices query batching', () => {
     expect(rest?.lastErrorType).toBeNull();
   });
 
-  test('reorder 响应同样批量带 runtime 状态且查询 ≤ 3', async () => {
+  test('reorder 响应同样批量带 runtime 状态且恰好 1 次 SELECT', async () => {
     const ids = Array.from({ length: 100 }, (_, i) => `${PREFIX}${String(i).padStart(3, '0')}`);
     const statusSpy = spyOn(devicesDb, 'getDeviceRuntimeStatus');
     const { result, sqls } = await captureSql(() =>
@@ -101,7 +101,7 @@ describe('GET /api/devices query batching', () => {
     const response = await result;
     expect(response.status).toBe(200);
     const selects = sqls.filter((sql) => /^\s*select\b/i.test(sql));
-    expect(selects.length).toBeLessThanOrEqual(3);
+    expect(selects.length).toBe(1);
     expect(statusSpy).toHaveBeenCalledTimes(0);
     statusSpy.mockRestore();
     const body = (await response.json()) as {

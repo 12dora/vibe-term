@@ -7,6 +7,7 @@ import type { TmuxEvent } from './events';
 import {
   type ControlClientProcess,
   LocalExternalTmuxConnection,
+  defaultRun,
   readTextWithByteLimit,
   shouldIgnoreReaderAbortError,
 } from './local-external-connection';
@@ -209,17 +210,15 @@ beforeAll(() => {
 });
 
 describe('readTextWithByteLimit', () => {
-  test('rejects when stdout exceeds the capture byte cap', async () => {
+  test('returns the most recent bytes when stdout exceeds the capture byte cap', async () => {
     const stream = new ReadableStream<Uint8Array>({
       start(controller) {
-        controller.enqueue(new Uint8Array(8).fill(0x61));
-        controller.enqueue(new Uint8Array(8).fill(0x62));
+        controller.enqueue(encoder.encode('01234567'));
+        controller.enqueue(encoder.encode('89ABCDEF'));
         controller.close();
       },
     });
-    await expect(readTextWithByteLimit(stream, 10)).rejects.toThrow(
-      'tmux history capture exceeded bounded output'
-    );
+    await expect(readTextWithByteLimit(stream, 10)).resolves.toBe('6789ABCDEF');
   });
 
   test('returns the decoded text when under the cap', async () => {
@@ -230,6 +229,15 @@ describe('readTextWithByteLimit', () => {
       },
     });
     await expect(readTextWithByteLimit(stream, 16)).resolves.toBe('ok');
+  });
+});
+
+describe('defaultRun history capture bound', () => {
+  test('over-limit capture returns the tail, not an error', async () => {
+    const payload = `${'H'.repeat(20)}TAIL`;
+    const result = await defaultRun(['/bin/sh', '-c', `printf '%s' '${payload}'`], 8);
+    expect(result.stdout).toBe(payload.slice(-8));
+    expect(result.exitCode).toBe(0);
   });
 });
 

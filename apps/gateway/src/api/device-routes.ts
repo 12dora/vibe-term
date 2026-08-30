@@ -4,7 +4,6 @@ import { encrypt } from '../crypto';
 import {
   createDevice,
   deleteDevice,
-  getAllDevices,
   getDeviceById,
   getDeviceRuntimeStatus,
   reorderDevices,
@@ -53,9 +52,6 @@ function enrichDeviceWithRuntime(device: Device): Device & {
 }
 
 function listEnrichedDevices() {
-  if (getAllDevices().length === 0) {
-    return [];
-  }
   return listDevicesWithRuntimeStatus();
 }
 

@@ -391,7 +391,7 @@ describe('SessionCommands', () => {
       '-N',
       '-p',
     ]);
-    expect(captures[0]?.maxOutputBytes).toBeGreaterThan(64 * 1024);
+    expect(captures[0]?.maxOutputBytes).toBe(4 * 1024 * 1024);
     expect(result?.alternateScreen).toBe(false);
     expect(result?.data.startsWith('VISIBLE')).toBe(true);
   });
@@ -411,7 +411,7 @@ describe('SessionCommands', () => {
     expect(captures).toHaveLength(2);
     expect(captures.map((entry) => entry.argv.includes('-a'))).toEqual([false, true]);
     expect(captures.every((entry) => entry.argv.includes('-4096'))).toBe(true);
-    expect(captures.every((entry) => entry.maxOutputBytes > 64 * 1024)).toBe(true);
+    expect(captures.every((entry) => entry.maxOutputBytes === 4 * 1024 * 1024)).toBe(true);
     expect(result?.data.startsWith('NORMAL')).toBe(true);
   });
 
@@ -440,5 +440,19 @@ describe('SessionCommands', () => {
     expect(left).toBe(right);
     expect(left?.data.startsWith('shared')).toBe(true);
     expect(started).toBe(1);
+  });
+
+  test('fetchPaneHistory returns the capture tail instead of failing at the byte cap', async () => {
+    const tail = 'KEEP_TAIL\n';
+    const { host, responses } = createHost({
+      runHistoryCapture: async (_argv, maxOutputBytes) => {
+        expect(maxOutputBytes).toBe(4 * 1024 * 1024);
+        return tail;
+      },
+    });
+    responses.set(screenInfoArgv.join(' '), ok('0 8 1 4 0 0 0 0 0\n'));
+
+    const result = await new SessionCommands(host).fetchPaneHistory('%1');
+    expect(result?.data.startsWith('KEEP_TAIL')).toBe(true);
   });
 });

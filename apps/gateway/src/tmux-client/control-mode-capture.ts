@@ -135,7 +135,7 @@ function parsePaneFrameInfo(block: ControlModeBlock): Omit<AtomicPaneCapture, 't
 }
 
 export const MAX_PANE_HISTORY_LINES = 4096;
-export const MAX_PANE_HISTORY_CAPTURE_BYTES = 2 * 1024 * 1024;
+export const MAX_PANE_HISTORY_CAPTURE_BYTES = 4 * 1024 * 1024;
 
 export async function capturePaneFrameAtControlBarrier(
   queue: ControlModeCommandQueue,

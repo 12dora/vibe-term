@@ -93,9 +93,48 @@ function isTransientSpawnError(error: unknown): boolean {
   );
 }
 
+export function appendRollingTail(
+  chunks: Uint8Array[],
+  totalBytes: number,
+  incoming: Uint8Array,
+  limit: number
+): { total: number; overflowed: boolean } {
+  if (incoming.byteLength >= limit) {
+    chunks.length = 0;
+    chunks.push(incoming.subarray(incoming.byteLength - limit));
+    return { total: limit, overflowed: true };
+  }
+  chunks.push(incoming);
+  let total = totalBytes + incoming.byteLength;
+  const overflowed = total > limit;
+  while (total > limit) {
+    const extra = total - limit;
+    const head = chunks[0];
+    if (head.byteLength <= extra) {
+      chunks.shift();
+      total -= head.byteLength;
+    } else {
+      chunks[0] = head.subarray(extra);
+      total = limit;
+    }
+  }
+  return { total, overflowed };
+}
+
+export function decodeRollingTail(chunks: Uint8Array[], total: number): string {
+  const merged = new Uint8Array(total);
+  let offset = 0;
+  for (const chunk of chunks) {
+    merged.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return new TextDecoder().decode(merged);
+}
+
 export async function readTextWithByteLimit(
   stream: ReadableStream<Uint8Array>,
-  maxOutputBytes?: number
+  maxOutputBytes?: number,
+  onLimit?: () => void
 ): Promise<string> {
   if (maxOutputBytes === undefined) {
     return new Response(stream).text();
@@ -109,11 +148,17 @@ export async function readTextWithByteLimit(
       const { done, value } = await reader.read();
       if (done) break;
       if (!value?.byteLength) continue;
-      total += value.byteLength;
-      if (total > limit) {
-        throw new Error('tmux history capture exceeded bounded output');
+      const next = appendRollingTail(chunks, total, value, limit);
+      total = next.total;
+      if (next.overflowed) {
+        onLimit?.();
+        try {
+          await reader.cancel();
+        } catch {
+          /* ignore */
+        }
+        break;
       }
-      chunks.push(value);
     }
   } finally {
     try {
@@ -122,13 +167,7 @@ export async function readTextWithByteLimit(
       /* ignore */
     }
   }
-  const merged = new Uint8Array(total);
-  let offset = 0;
-  for (const chunk of chunks) {
-    merged.set(chunk, offset);
-    offset += chunk.byteLength;
-  }
-  return new TextDecoder().decode(merged);
+  return decodeRollingTail(chunks, total);
 }
 
 export function defaultRun(argv: string[], maxOutputBytes?: number): Promise<CommandResult> {
@@ -139,13 +178,21 @@ export function defaultRun(argv: string[], maxOutputBytes?: number): Promise<Com
       stderr: 'pipe',
     });
 
+    let truncated = false;
     Promise.all([
-      readTextWithByteLimit(subprocess.stdout, maxOutputBytes),
+      readTextWithByteLimit(subprocess.stdout, maxOutputBytes, () => {
+        truncated = true;
+        try {
+          subprocess.kill();
+        } catch {
+          /* ignore */
+        }
+      }),
       new Response(subprocess.stderr).text(),
       subprocess.exited,
     ])
       .then(([stdout, stderr, exitCode]) => {
-        resolve({ stdout, stderr, exitCode });
+        resolve({ stdout, stderr, exitCode: truncated ? 0 : exitCode });
       })
       .catch((error) => {
         try {
@@ -362,9 +409,6 @@ export class LocalExternalTmuxConnection extends ExternalTmuxConnectionCore {
       } else {
         throw error;
       }
-    }
-    if (new TextEncoder().encode(result.stdout).byteLength > maxOutputBytes) {
-      throw new Error('tmux history capture exceeded bounded output');
     }
     if (result.exitCode === 0) return result.stdout;
     const message = (
