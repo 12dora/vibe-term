@@ -5,31 +5,29 @@ import { resolveBinding } from './use-agent-tab-model';
 
 const devices: Device[] = [{ id: 'd1', name: 'laptop' } as Device];
 
-function snapshotWithPane(paneId: string): Record<string, StateSnapshotPayload | undefined> {
+function snapshotWithPane(paneId: string): StateSnapshotPayload {
   return {
-    d1: {
-      session: {
-        windows: [
-          {
-            id: '@1',
-            name: 'shell',
-            customName: null,
-            panes: [{ id: paneId, title: 'vim', customName: null }],
-          },
-        ],
-      },
-    } as unknown as StateSnapshotPayload,
-  };
+    session: {
+      windows: [
+        {
+          id: '@1',
+          name: 'shell',
+          customName: null,
+          panes: [{ id: paneId, title: 'vim', customName: null }],
+        },
+      ],
+    },
+  } as unknown as StateSnapshotPayload;
 }
 
 describe('resolveBinding', () => {
   test('returns null without a complete binding', () => {
-    expect(resolveBinding({ deviceId: null, paneId: '%1' }, {}, devices)).toBeNull();
-    expect(resolveBinding({ deviceId: 'd1', paneId: null }, {}, devices)).toBeNull();
+    expect(resolveBinding({ deviceId: null, paneId: '%1' }, undefined, devices)).toBeNull();
+    expect(resolveBinding({ deviceId: 'd1', paneId: null }, undefined, devices)).toBeNull();
   });
 
   test('marks the binding unknown while the device has no snapshot', () => {
-    expect(resolveBinding({ deviceId: 'd1', paneId: '%1' }, {}, devices)).toEqual({
+    expect(resolveBinding({ deviceId: 'd1', paneId: '%1' }, undefined, devices)).toEqual({
       label: '%1@laptop',
       state: 'unknown',
       windowId: null,

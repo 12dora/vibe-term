@@ -7,21 +7,19 @@ import type { AgentStoreHandle, AgentTabState } from './use-agent-tab-state';
 
 const devices: Device[] = [{ id: 'd1', name: 'laptop' } as Device];
 
-function snapshots(paneId: string): Record<string, StateSnapshotPayload | undefined> {
+function snapshot(paneId: string): StateSnapshotPayload {
   return {
-    d1: {
-      session: {
-        windows: [
-          {
-            id: '@1',
-            name: 'shell',
-            customName: null,
-            panes: [{ id: paneId, title: 'vim', customName: null }],
-          },
-        ],
-      },
-    } as unknown as StateSnapshotPayload,
-  };
+    session: {
+      windows: [
+        {
+          id: '@1',
+          name: 'shell',
+          customName: null,
+          panes: [{ id: paneId, title: 'vim', customName: null }],
+        },
+      ],
+    },
+  } as unknown as StateSnapshotPayload;
 }
 
 function session(overrides: Partial<AgentSessionDto> = {}): AgentSessionDto {
@@ -52,7 +50,7 @@ function session(overrides: Partial<AgentSessionDto> = {}): AgentSessionDto {
 function state(overrides: Partial<AgentTabState> = {}): AgentTabState {
   return {
     agentStore: {} as AgentStoreHandle,
-    snapshots: snapshots('%1'),
+    bindingSnapshot: snapshot('%1'),
     nodeId: null,
     nodeOffline: undefined,
     devices,
@@ -99,7 +97,7 @@ describe('deriveAgentTabView orphan classification', () => {
   });
 
   test('classifies as orphan when the bound pane vanished', () => {
-    const view = deriveAgentTabView(state({ snapshots: snapshots('%9') }));
+    const view = deriveAgentTabView(state({ bindingSnapshot: snapshot('%9') }));
     expect(view.isOrphan).toBe(true);
   });
 });
@@ -107,7 +105,7 @@ describe('deriveAgentTabView orphan classification', () => {
 describe('deriveAgentTabView rebind eligibility', () => {
   test('offers rebind for another pane on the same device', () => {
     const view = deriveAgentTabView(
-      state({ routePaneId: '%2', snapshots: snapshots('%1'), routePaneTitle: null })
+      state({ routePaneId: '%2', bindingSnapshot: snapshot('%1'), routePaneTitle: null })
     );
     expect(view.showPaneMismatch).toBe(true);
     expect(view.canRebind).toBe(true);
@@ -117,6 +115,15 @@ describe('deriveAgentTabView rebind eligibility', () => {
     const view = deriveAgentTabView(state({ routeDeviceId: 'd2', routePaneId: '%2' }));
     expect(view.showPaneMismatch).toBe(true);
     expect(view.canRebind).toBe(false);
+  });
+
+  // 绑定 chip 解析的是会话所在设备的快照，路由切到别的设备不应把会话判成孤立
+  test('keeps the binding valid while the route points at another device', () => {
+    const view = deriveAgentTabView(
+      state({ routeDeviceId: 'd2', routePaneId: '%2', routePaneTitle: null })
+    );
+    expect(view.binding?.state).toBe('valid');
+    expect(view.isOrphan).toBe(false);
   });
 });
 

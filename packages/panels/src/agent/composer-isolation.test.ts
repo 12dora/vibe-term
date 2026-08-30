@@ -47,7 +47,7 @@ function makeState(
   } as unknown as AgentStoreHandle;
   return {
     agentStore,
-    snapshots: {},
+    bindingSnapshot: undefined,
     nodeId: null,
     nodeOffline: undefined,
     devices: [{ id: 'd1', name: 'laptop' }],

@@ -4,7 +4,7 @@ import type { AgentQueuedMessageDto, AgentSessionDto, AgentWriteMode } from '@tm
 import type { DraftSession } from '@tmex/stores';
 import { NODE_OFFLINE_ERROR, isNodePaused, lastUserMessageText } from '@tmex/stores';
 
-import { type BindingInfo, resolveBinding } from './agent-binding';
+import { type BindingInfo, bindingSource, resolveBinding } from './agent-binding';
 import { canRebindToRoute } from './agent-route-sync';
 import type { AgentTabState } from './use-agent-tab-state';
 
@@ -36,10 +36,8 @@ export interface AgentTabView {
 
 /** 草稿态（尚未创建 session）也显示绑定 chip：此时显示的是将要绑定的 pane */
 function deriveBinding(state: AgentTabState): BindingInfo | null {
-  const { activeSession, draft } = state;
-  const source =
-    activeSession ?? (draft ? { deviceId: draft.deviceId, paneId: draft.paneId } : null);
-  return source ? resolveBinding(source, state.snapshots, state.devices) : null;
+  const source = bindingSource(state.activeSession, state.draft);
+  return source ? resolveBinding(source, state.bindingSnapshot, state.devices) : null;
 }
 
 /** 孤立会话：设备缺失 / 不在列表 / pane 在快照中已不存在 → 仅可只读查看 */

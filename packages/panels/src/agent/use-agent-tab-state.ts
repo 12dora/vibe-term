@@ -11,6 +11,7 @@ import type {
   AgentSessionDto,
   AgentWriteMode,
   Device,
+  StateSnapshotPayload,
 } from '@tmex/shared';
 import type {
   AppRuntime,
@@ -29,7 +30,7 @@ import {
 } from '@tmex/stores';
 import { useRuntime, useTmuxStore } from '@tmex/stores/react';
 
-import { type SnapshotMap, findPaneTitle } from './agent-binding';
+import { bindingSource, deviceSnapshot, findPaneTitle } from './agent-binding';
 import { shouldRedraftForRoute } from './agent-route-sync';
 
 export type AgentStoreHandle = AppRuntime['stores']['agent'];
@@ -78,21 +79,27 @@ interface DevicesSlice {
 
 export interface AgentTabState extends RoutePane, AgentSessionSlice, DevicesSlice {
   agentStore: AgentStoreHandle;
-  snapshots: SnapshotMap;
+  /** 绑定 chip 解析所需的那一台设备（会话/草稿所在设备）的快照 */
+  bindingSnapshot: StateSnapshotPayload | undefined;
   /** 本 tab 服务的 node（null 即 entry 自身）；创建/草稿一律带上它 */
   nodeId: string | null;
   nodeOffline: boolean | undefined;
 }
 
-function useRoutePane(snapshots: SnapshotMap, host: HostServices): RoutePane {
+function useRouteMatch(host: HostServices): Omit<RoutePane, 'routePaneTitle'> {
   const paneMatch = useMatch(hostAppPath(host, AGENT_PANE_ROUTE_PATH));
-  const routeDeviceId = paneMatch?.params.deviceId ?? null;
-  const routePaneId = paneMatch?.params.paneId ?? null;
-  const routePaneTitle = useMemo(
-    () => findPaneTitle(snapshots, routeDeviceId, routePaneId),
-    [snapshots, routeDeviceId, routePaneId]
-  );
-  return { routeDeviceId, routePaneId, routePaneTitle };
+  return {
+    routeDeviceId: paneMatch?.params.deviceId ?? null,
+    routePaneId: paneMatch?.params.paneId ?? null,
+  };
+}
+
+/**
+ * 按设备窄订阅 tmux 快照：selector 只返回目标设备那一份，
+ * 其他设备的 snapshot/patch 虽然会换掉整张 map，本 tab 不会因此重渲染。
+ */
+function useDeviceSnapshot(deviceId: string | null): StateSnapshotPayload | undefined {
+  return useTmuxStore((state) => deviceSnapshot(state.snapshots, deviceId));
 }
 
 function useAgentSessionSlice(
@@ -214,10 +221,20 @@ export function useAgentTabState(host: AgentTabHost = {}): AgentTabState {
   const runtime = useRuntime();
   const agentStore = host.agentStore ?? resolveAgentStore(runtime.stores.agent);
   const nodeId = normalizeAgentNodeId(runtime.nodeId);
-  const snapshots = useTmuxStore((state) => state.snapshots);
   const devices = useDevices(runtime);
-  const route = useRoutePane(snapshots, runtime.host);
+  const { routeDeviceId, routePaneId } = useRouteMatch(runtime.host);
   const session = useAgentSessionSlice(agentStore, nodeId);
+
+  // 绑定设备与路由设备可以不同（会话绑在旧 pane、路由已切走），两份快照分别订阅
+  const routeSnapshot = useDeviceSnapshot(routeDeviceId);
+  const bindingSnapshot = useDeviceSnapshot(
+    bindingSource(session.activeSession, session.draft)?.deviceId ?? null
+  );
+  const routePaneTitle = useMemo(
+    () => findPaneTitle(routeSnapshot, routePaneId),
+    [routeSnapshot, routePaneId]
+  );
+  const route: RoutePane = { routeDeviceId, routePaneId, routePaneTitle };
 
   useSessionsBootstrap(agentStore);
   useAutoDraft(agentStore, nodeId, session.activeSession, session.draft, route);
@@ -225,7 +242,7 @@ export function useAgentTabState(host: AgentTabHost = {}): AgentTabState {
 
   return {
     agentStore,
-    snapshots,
+    bindingSnapshot,
     nodeId,
     nodeOffline: host.nodeOffline,
     ...devices,
