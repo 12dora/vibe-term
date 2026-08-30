@@ -8,10 +8,6 @@ import {
   type LinkStream,
 } from './types';
 
-/**
- * Adapter for wrapping a Bun `ServerWebSocket` outside this package.
- * `send` matches Bun: `>0` accepted, `-1` queued with backpressure, `0` discarded.
- */
 export interface ServerSocketAdapter {
   send(bytes: Uint8Array): number;
   close(code?: number, reason?: string): void;
@@ -195,7 +191,6 @@ function createQueuedTransport(hooks: QueuedTransportHooks): ByteTransport {
   };
 }
 
-/** Standard DOM/Bun client `WebSocket` (`send(): void`, event listeners). */
 export function createClientWebSocketTransport(ws: WebSocket): ByteTransport {
   if (ws.binaryType !== undefined) {
     ws.binaryType = 'arraybuffer';
@@ -254,10 +249,6 @@ export type WebSocketLinkOptions = {
   maxLinkUnacked?: number;
 };
 
-/**
- * LinkSession over a client `WebSocket` or a `ServerSocketAdapter`
- * wrapping a Bun `ServerWebSocket`.
- */
 export class WebSocketLink implements LinkSession {
   private readonly mux: LinkMux;
 

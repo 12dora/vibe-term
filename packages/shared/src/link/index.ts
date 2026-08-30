@@ -38,6 +38,16 @@ export {
   type SecureChannelDirections,
 } from './secure-channel-link';
 export {
+  DC_MAX_MESSAGE_BYTES,
+  DEFAULT_FRAME_TIMEOUT_MS,
+  DEFAULT_MAX_IN_FLIGHT,
+  FRAGMENT_HEADER_SIZE,
+  FRAGMENT_PAYLOAD_SIZE,
+  FragmentAssembler,
+  fragmentBytes,
+  type FragmentFail,
+} from './fragment-core';
+export {
   FRAME_HEADER_SIZE,
   MAX_FRAME_PAYLOAD,
   INITIAL_STREAM_WINDOW,
