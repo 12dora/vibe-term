@@ -1,14 +1,6 @@
 // 上传会话状态：分块上传期间在内存维护 session + 本机临时文件。
 // 纯状态管理（不含 rsync）。清理三重保障：每次操作的显式清理 + 周期 GC + 启动孤儿扫描。
-import {
-  appendFileSync,
-  mkdtempSync,
-  readdirSync,
-  rmSync,
-  statSync,
-  truncateSync,
-  writeFileSync,
-} from 'node:fs';
+import { mkdtempSync, readdirSync, rmSync, statSync, truncateSync, writeFileSync } from 'node:fs';
 import * as fsPromises from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -185,13 +177,6 @@ async function persistChunk(tmpPath: string, committed: number, bytes: Uint8Arra
 }
 
 // 顺序追加 chunk：offset 必须等于已收字节数；不得超出声明 size。
-export function appendUploadChunk(id: string, offset: number, bytes: Uint8Array): AppendResult {
-  const prepared = prepareAppend(id, offset, bytes.byteLength);
-  if (!prepared.ok) return prepared;
-  appendFileSync(prepared.session.tmpPath, bytes);
-  return advanceReceived(prepared.session, bytes.byteLength);
-}
-
 async function appendUploadChunkLocked(
   id: string,
   offset: number,

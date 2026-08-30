@@ -4,7 +4,6 @@ import * as fsPromises from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
-  appendUploadChunk,
   appendUploadChunkAsync,
   createUploadSession,
   getUploadSession,
@@ -13,26 +12,26 @@ import {
 } from './transfer-session';
 
 describe('upload session chunking', () => {
-  test('sequential append; rejects bad offset / overflow / missing session', () => {
+  test('sequential append; rejects bad offset / overflow / missing session', async () => {
     const s = createUploadSession({ rootId: 'r', destDir: '/d', name: 'a.txt', size: 6 });
     expect(existsSync(s.tmpPath)).toBe(true);
 
-    expect(appendUploadChunk(s.id, 0, new Uint8Array([1, 2, 3]))).toEqual({
+    expect(await appendUploadChunkAsync(s.id, 0, new Uint8Array([1, 2, 3]))).toEqual({
       ok: true,
       received: 3,
     });
     // 非顺序 offset 被拒
-    expect(appendUploadChunk(s.id, 0, new Uint8Array([9]))).toEqual({
+    expect(await appendUploadChunkAsync(s.id, 0, new Uint8Array([9]))).toEqual({
       ok: false,
       reason: 'bad_offset',
     });
     // 超出声明 size 被拒
-    expect(appendUploadChunk(s.id, 3, new Uint8Array([4, 5, 6, 7]))).toEqual({
+    expect(await appendUploadChunkAsync(s.id, 3, new Uint8Array([4, 5, 6, 7]))).toEqual({
       ok: false,
       reason: 'too_large',
     });
     // 正确补齐
-    expect(appendUploadChunk(s.id, 3, new Uint8Array([4, 5, 6]))).toEqual({
+    expect(await appendUploadChunkAsync(s.id, 3, new Uint8Array([4, 5, 6]))).toEqual({
       ok: true,
       received: 6,
     });
@@ -42,7 +41,7 @@ describe('upload session chunking', () => {
     removeUploadSession(s.id);
     expect(getUploadSession(s.id)).toBeUndefined();
     expect(existsSync(tmpDir)).toBe(false);
-    expect(appendUploadChunk(s.id, 0, new Uint8Array([1]))).toEqual({
+    expect(await appendUploadChunkAsync(s.id, 0, new Uint8Array([1]))).toEqual({
       ok: false,
       reason: 'not_found',
     });

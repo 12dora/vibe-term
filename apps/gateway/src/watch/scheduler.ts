@@ -49,7 +49,20 @@ export class WatchRuleScheduler {
   private readonly now: () => number;
 
   constructor(options: WatchRuleSchedulerOptions = {}) {
-    this.now = options.now ?? Date.now;
+    const raw = options.now ?? (() => performance.now());
+    let lastRaw: number | undefined;
+    let mono = 0;
+    this.now = () => {
+      const n = raw();
+      if (lastRaw === undefined) {
+        lastRaw = n;
+        return 0;
+      }
+      const d = n - lastRaw;
+      lastRaw = n;
+      if (d > 0) mono += d;
+      return Math.floor(mono);
+    };
   }
 
   has(ruleId: string): boolean {

@@ -137,7 +137,7 @@ function createHarness() {
         },
       });
     },
-    appendUpload(transferId, bytes) {
+    async appendUpload(transferId, bytes) {
       const up = uploads.get(transferId);
       if (!up) return { ok: false, code: 'not_found' };
       if (up.received + bytes.byteLength > up.expectedSize) {
@@ -445,6 +445,37 @@ describe('BulkTransferService', () => {
 
   test('idleTimeoutMs defaults to 30s', () => {
     expect(BULK_IDLE_TIMEOUT_MS).toBe(30_000);
+  });
+
+  test('put awaits a slow appendUpload before accepting done', async () => {
+    const id = 'tx-await-put';
+    const harness = createHarness();
+    harnesses.push(harness);
+    let release!: () => void;
+    const held = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const orig = harness.hooks.appendUpload.bind(harness.hooks);
+    harness.hooks.appendUpload = async (transferId, bytes) => {
+      await held;
+      return orig(transferId, bytes);
+    };
+    const service = new BulkTransferService({ files: harness.hooks });
+    services.push(service);
+    const [browser, node] = pairDataChannels(`bulk:${id}`);
+    harness.addUpload(id, 'user-1', 3);
+    service.attachChannel(node, { uid: 'user-1' });
+
+    browser.sendMessage(JSON.stringify({ op: 'put', transferId: id, size: 3 }));
+    browser.sendMessageBinary(Buffer.from([9, 8, 7]));
+    browser.sendMessage(JSON.stringify({ op: 'done' }));
+    await Bun.sleep(20);
+    expect(jsonFromSent(node).some((m) => m.ok === true)).toBe(false);
+    expect(harness.uploads.get(id)?.received).toBe(0);
+
+    release();
+    await waitFor(() => jsonFromSent(node).some((m) => m.ok === true), 'ok after append');
+    expect(harness.uploads.get(id)?.received).toBe(3);
   });
 
   test('verify failure and abortByOwner abort the channel', async () => {

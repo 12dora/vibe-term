@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, spyOn, test } from 'bun:test';
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import * as fsPromises from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { BrowseDirectoryResponse, Device } from '@tmex/shared';
@@ -8,6 +9,7 @@ import * as deviceStorage from '../files/device-storage';
 import { directoryBrowseIo } from '../files/directory-browse';
 import * as sshCommand from '../files/ssh-command';
 import {
+  appendUploadChunkAsync,
   createDownloadSession,
   createUploadSession,
   getDownloadSession,
@@ -171,24 +173,70 @@ describe('files bulk hooks', () => {
     }
   });
 
-  test('appendUpload writes the same temp file HTTP PUT uses so commit can succeed', () => {
+  test('appendUpload writes the same temp file HTTP PUT uses so commit can succeed', async () => {
     const session = createUploadSession({ rootId: 'r', destDir: '/d', name: 'a.bin', size: 5 });
     try {
-      expect(appendUpload(session.id, new Uint8Array([1, 2, 3]))).toEqual({
+      expect(await appendUpload(session.id, new Uint8Array([1, 2, 3]))).toEqual({
         ok: true,
         received: 3,
       });
-      expect(appendUpload(session.id, new Uint8Array([4, 5]))).toEqual({
+      expect(await appendUpload(session.id, new Uint8Array([4, 5]))).toEqual({
         ok: true,
         received: 5,
       });
       expect(getUploadSession(session.id)?.received).toBe(5);
       expect(readFileSync(session.tmpPath)).toEqual(Buffer.from([1, 2, 3, 4, 5]));
-      expect(appendUpload(session.id, new Uint8Array([6]))).toEqual({
+      expect(await appendUpload(session.id, new Uint8Array([6]))).toEqual({
         ok: false,
         code: 'too_large',
       });
     } finally {
+      removeUploadSession(session.id);
+    }
+  });
+
+  test('HTTP append suspended mid-write vs RTC append at the same offset: exactly one succeeds', async () => {
+    const session = createUploadSession({ rootId: 'r', destDir: '/d', name: 'a.bin', size: 6 });
+    const realOpen = fsPromises.open;
+    let releaseWrite!: () => void;
+    const held = new Promise<void>((resolve) => {
+      releaseWrite = resolve;
+    });
+    let startedWrite!: () => void;
+    const started = new Promise<void>((resolve) => {
+      startedWrite = resolve;
+    });
+    const spy = spyOn(fsPromises, 'open').mockImplementation(async (path, flags) => {
+      const fh = await realOpen(path, flags);
+      return {
+        write: async (buf: Uint8Array) => {
+          startedWrite();
+          await held;
+          return fh.write(buf);
+        },
+        truncate: (len?: number) => fh.truncate(len),
+        close: () => fh.close(),
+      } as Awaited<ReturnType<typeof realOpen>>;
+    });
+    try {
+      const http = appendUploadChunkAsync(session.id, 0, new Uint8Array([1, 1, 1]));
+      await started;
+      const rtc = appendUpload(session.id, new Uint8Array([2, 2, 2]));
+      releaseWrite();
+      const [httpRes, rtcRes] = [await http, await rtc];
+      const results = [httpRes, rtcRes];
+      const ok = results.filter((r) => r.ok);
+      const bad = results.filter((r) => !r.ok);
+      expect(ok).toHaveLength(1);
+      expect(bad).toHaveLength(1);
+      expect(ok[0]).toEqual({ ok: true, received: 3 });
+      expect(getUploadSession(session.id)?.received).toBe(3);
+      const onDisk = readFileSync(session.tmpPath);
+      expect(onDisk.byteLength).toBe(3);
+      const winner = httpRes.ok ? Buffer.from([1, 1, 1]) : Buffer.from([2, 2, 2]);
+      expect(onDisk).toEqual(winner);
+    } finally {
+      spy.mockRestore();
       removeUploadSession(session.id);
     }
   });

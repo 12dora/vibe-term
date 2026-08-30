@@ -42,6 +42,7 @@ type BulkChannel = {
   timer: ReturnType<typeof setTimeout> | null;
   drainWaiters: Array<() => void>;
   cancelDownload: (() => void) | null;
+  io: Promise<void>;
 };
 
 export function parseBulkChannelLabel(label: string | undefined | null): string | null {
@@ -125,6 +126,7 @@ export class BulkTransferService {
       timer: null,
       drainWaiters: [],
       cancelDownload: null,
+      io: Promise.resolve(),
     };
     this.channels.add(ch);
     dc.setBufferedAmountLowThreshold(DC_LOW_WATER_BYTES);
@@ -170,7 +172,11 @@ export class BulkTransferService {
       this.fail(ch, 'protocol', { cleanup: false });
       return;
     }
-    this.onData(ch, copyBytes(bytes));
+    this.enqueue(ch, () => this.writePut(ch, copyBytes(bytes)));
+  }
+
+  private enqueue(ch: BulkChannel, op: () => Promise<void>): void {
+    ch.io = ch.io.then(op, op);
   }
 
   private onControl(ch: BulkChannel, control: BulkControl): void {
@@ -187,7 +193,7 @@ export class BulkTransferService {
       return;
     }
     if (ch.state === 'put' && control.op === 'done') {
-      this.finishPut(ch);
+      this.enqueue(ch, async () => this.finishPut(ch));
       return;
     }
     this.fail(ch, 'protocol', { cleanup: ch.state === 'put' || ch.state === 'get' });
@@ -226,7 +232,8 @@ export class BulkTransferService {
     ch.state = 'put';
   }
 
-  private onData(ch: BulkChannel, bytes: Uint8Array): void {
+  private async writePut(ch: BulkChannel, bytes: Uint8Array): Promise<void> {
+    if (ch.state !== 'put') return;
     const transferId = ch.transferId;
     if (!transferId) {
       this.fail(ch, 'protocol', { cleanup: false });
@@ -236,15 +243,21 @@ export class BulkTransferService {
       this.fail(ch, 'too_large', { cleanup: true });
       return;
     }
-    const res = this.files.appendUpload(transferId, bytes);
-    if (!res.ok) {
-      this.fail(ch, res.code, { cleanup: true });
-      return;
+    try {
+      const res = await this.files.appendUpload(transferId, bytes);
+      if (ch.state !== 'put') return;
+      if (!res.ok) {
+        this.fail(ch, res.code, { cleanup: true });
+        return;
+      }
+      ch.received = res.received;
+    } catch {
+      if (ch.state === 'put') this.fail(ch, 'unknown', { cleanup: true });
     }
-    ch.received = res.received;
   }
 
   private finishPut(ch: BulkChannel): void {
+    if (ch.state !== 'put') return;
     if (ch.received !== ch.expectedSize) {
       this.fail(ch, 'invalid', { cleanup: true });
       return;

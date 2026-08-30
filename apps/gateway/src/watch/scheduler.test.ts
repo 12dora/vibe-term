@@ -1,4 +1,4 @@
-import { describe, expect, test } from 'bun:test';
+import { describe, expect, spyOn, test } from 'bun:test';
 import { WatchRuleScheduler, effectiveIntervalSeconds } from './scheduler';
 
 describe('effectiveIntervalSeconds', () => {
@@ -351,5 +351,48 @@ describe('WatchRuleScheduler', () => {
     await coalesced;
     expect(dueLog).toHaveLength(2);
     expect(dueLog[1]).toEqual({ now: 35_000, due: ['fast'] });
+  });
+
+  test('injected clock rollback does not postpone a due rule by hours', () => {
+    const clock = { now: 0 };
+    const scheduler = new WatchRuleScheduler({ now: () => clock.now });
+    const delays: number[] = [];
+    const scheduleInterval = (_fn: () => void, ms: number) => {
+      delays.push(ms);
+      return () => {};
+    };
+
+    scheduler.add(
+      { id: 'r1', deviceId: 'd1', paneId: '%1', triggerType: 'match', intervalSeconds: 5 },
+      () => {},
+      scheduleInterval
+    );
+    expect(delays).toEqual([5000]);
+
+    clock.now = 4000;
+    expect(scheduler.takeDueRuleIds('d1', '%1')).toEqual([]);
+    expect(delays.at(-1)).toBe(1000);
+
+    clock.now = -3_600_000;
+    expect(scheduler.takeDueRuleIds('d1', '%1')).toEqual([]);
+    expect(delays.at(-1)).toBe(1000);
+  });
+
+  test('default clock uses performance.now rather than Date.now', () => {
+    const perf = spyOn(performance, 'now');
+    const dateNow = spyOn(Date, 'now');
+    try {
+      const scheduler = new WatchRuleScheduler();
+      scheduler.add(
+        { id: 'r1', deviceId: 'd1', paneId: '%1', triggerType: 'match', intervalSeconds: 5 },
+        () => {},
+        () => () => {}
+      );
+      expect(perf).toHaveBeenCalled();
+      expect(dateNow).not.toHaveBeenCalled();
+    } finally {
+      perf.mockRestore();
+      dateNow.mockRestore();
+    }
   });
 });

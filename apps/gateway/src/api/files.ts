@@ -1,5 +1,5 @@
 import {
-  appendUploadChunk,
+  appendUploadChunkAsync,
   getDownloadSession,
   getUploadSession,
   removeDownloadSession,
@@ -26,7 +26,7 @@ export type FilesBulkHooks = {
   appendUpload(
     transferId: string,
     bytes: Uint8Array
-  ): { ok: true; received: number } | { ok: false; code: string };
+  ): Promise<{ ok: true; received: number } | { ok: false; code: string }>;
   abortTransfer(transferId: string): void;
 };
 
@@ -76,13 +76,13 @@ export function openDownload(transferId: string): ReadableStream<Uint8Array> | n
   return streamTempFile(session.tmpPath, () => cleanupDownload(transferId));
 }
 
-export function appendUpload(
+export async function appendUpload(
   transferId: string,
   bytes: Uint8Array
-): { ok: true; received: number } | { ok: false; code: string } {
+): Promise<{ ok: true; received: number } | { ok: false; code: string }> {
   const session = getUploadSession(transferId);
   if (!session) return { ok: false, code: 'not_found' };
-  const res = appendUploadChunk(transferId, session.received, bytes);
+  const res = await appendUploadChunkAsync(transferId, session.received, bytes);
   if (!res.ok) {
     if (res.reason === 'too_large') return { ok: false, code: 'too_large' };
     if (res.reason === 'not_found') return { ok: false, code: 'not_found' };
