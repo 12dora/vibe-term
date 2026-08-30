@@ -6,7 +6,7 @@ import {
   statFile,
 } from '../files/device-storage';
 import {
-  appendUploadChunk,
+  appendUploadChunkAsync,
   createDownloadSession,
   createUploadSession,
   getDownloadSession,
@@ -54,11 +54,57 @@ async function handleUploadInit(req: Request): Promise<Response> {
   return json({ uploadId: session.id, chunkSize: UPLOAD_CHUNK_SIZE });
 }
 
+async function readBodyCapped(
+  req: Request,
+  cap: number
+): Promise<{ ok: true; bytes: Uint8Array } | { ok: false }> {
+  if (!req.body) return { ok: true, bytes: new Uint8Array(0) };
+  const reader = req.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    if (!value || value.byteLength === 0) continue;
+    total += value.byteLength;
+    if (total > cap) {
+      await reader.cancel().catch(() => {});
+      return { ok: false };
+    }
+    chunks.push(value);
+  }
+  if (chunks.length === 0) return { ok: true, bytes: new Uint8Array(0) };
+  if (chunks.length === 1) return { ok: true, bytes: chunks[0] };
+  const out = new Uint8Array(total);
+  let offset = 0;
+  for (const chunk of chunks) {
+    out.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return { ok: true, bytes: out };
+}
+
 async function handleUploadChunk(req: Request, id: string, url: URL): Promise<Response> {
   const offset = parseNonNegativeSafeInt(url.searchParams.get('offset'));
   if (offset === null) return json({ error: t('apiError.invalidRequest') }, 400);
-  const bytes = new Uint8Array(await req.arrayBuffer());
-  const res = appendUploadChunk(id, offset, bytes);
+  const session = getUploadSession(id);
+  if (!session) return codeError('not_found');
+  if (offset !== session.received) return json({ error: t('apiError.invalidRequest') }, 409);
+
+  const remaining = session.size - session.received;
+  const hardCap = remaining < UPLOAD_CHUNK_SIZE ? remaining : UPLOAD_CHUNK_SIZE;
+  const contentLengthRaw = req.headers.get('Content-Length');
+  let cap = hardCap;
+  if (contentLengthRaw !== null) {
+    const contentLength = parseNonNegativeSafeInt(contentLengthRaw);
+    if (contentLength === null) return json({ error: t('apiError.invalidRequest') }, 400);
+    if (contentLength > hardCap) return codeError('too_large');
+    cap = contentLength;
+  }
+
+  const body = await readBodyCapped(req, cap);
+  if (!body.ok) return codeError('too_large');
+  const res = await appendUploadChunkAsync(id, offset, body.bytes);
   if (!res.ok) {
     if (res.reason === 'not_found') return codeError('not_found');
     if (res.reason === 'too_large') return codeError('too_large');

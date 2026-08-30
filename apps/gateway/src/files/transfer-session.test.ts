@@ -1,9 +1,10 @@
 import { describe, expect, test } from 'bun:test';
-import { existsSync, mkdtempSync, rmSync, utimesSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, rmSync, utimesSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
   appendUploadChunk,
+  appendUploadChunkAsync,
   createUploadSession,
   getUploadSession,
   removeUploadSession,
@@ -44,6 +45,21 @@ describe('upload session chunking', () => {
       ok: false,
       reason: 'not_found',
     });
+  });
+
+  test('appendUploadChunkAsync writes then advances received', async () => {
+    const s = createUploadSession({ rootId: 'r', destDir: '/d', name: 'a.txt', size: 4 });
+    const pending = appendUploadChunkAsync(s.id, 0, new Uint8Array([9, 8]));
+    expect(pending).toBeInstanceOf(Promise);
+    expect(await pending).toEqual({ ok: true, received: 2 });
+    expect(getUploadSession(s.id)?.received).toBe(2);
+    expect(readFileSync(s.tmpPath)).toEqual(Buffer.from([9, 8]));
+    expect(await appendUploadChunkAsync(s.id, 2, new Uint8Array([7, 6]))).toEqual({
+      ok: true,
+      received: 4,
+    });
+    expect(readFileSync(s.tmpPath)).toEqual(Buffer.from([9, 8, 7, 6]));
+    removeUploadSession(s.id);
   });
 
   test('sweepOrphanTransferTemps 仅清理超期的传输临时目录', () => {

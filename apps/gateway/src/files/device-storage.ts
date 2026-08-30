@@ -18,6 +18,7 @@ import {
   RsyncMissingLocalError,
   type RsyncProgress,
   classifyRsyncFailure,
+  createListOnlyCollector,
   parseListOnly,
   runRsync,
 } from './rsync';
@@ -121,15 +122,6 @@ function entryToDto(entry: RsyncEntry, parentPath: string): FileEntryDto {
   };
 }
 
-function sortEntries(entries: FileEntryDto[]): void {
-  entries.sort((a, b) => {
-    const ad = a.type === 'dir' ? 0 : 1;
-    const bd = b.type === 'dir' ? 0 : 1;
-    if (ad !== bd) return ad - bd;
-    return a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' });
-  });
-}
-
 function looksBinary(buf: Buffer): boolean {
   const len = Math.min(buf.length, 8192);
   for (let i = 0; i < len; i++) {
@@ -158,10 +150,12 @@ export async function listDirectory(
   return withNormalizedRsync(rootId, inputPath, async ({ spec, path }) => {
     const listPath = path.endsWith('/') ? path : `${path}/`;
     let res: Awaited<ReturnType<typeof runRsync>>;
+    const collector = createListOnlyCollector(MAX_ENTRIES);
     try {
       res = await runRsync(rsyncListArgs(spec, listPath), {
         env: spec.env,
         timeoutMs: LIST_TIMEOUT_MS,
+        onStdoutLine: (line) => collector.accept(line),
       });
     } catch (error) {
       if (error instanceof RsyncMissingLocalError) return fail('rsync_missing_local');
@@ -169,12 +163,12 @@ export async function listDirectory(
     }
     if (res.exitCode !== 0) return fail(classifyRsyncFailure(res.exitCode, res.stderr), res.stderr);
 
-    const parsed = parseListOnly(res.stdout);
-    const truncated = parsed.length > MAX_ENTRIES;
-    const slice = truncated ? parsed.slice(0, MAX_ENTRIES) : parsed;
-    const entries = slice.map((e) => entryToDto(e, path));
-    sortEntries(entries);
-    return ok({ path, entries, truncated });
+    const parsed = collector.snapshot();
+    return ok({
+      path,
+      entries: parsed.entries.map((e) => entryToDto(e, path)),
+      truncated: parsed.truncated,
+    });
   });
 }
 
@@ -221,12 +215,19 @@ export async function statFile(
   });
 }
 
-async function copyToBuffer(
+async function copyToTempFile(
   spec: RsyncDeviceSpec,
   normPath: string
-): Promise<FileOpResult<Buffer>> {
+): Promise<FileOpResult<{ tmpPath: string; size: number; cleanup: () => void }>> {
   const dir = mkdtempSync(join(tmpdir(), 'tmex-rfile-'));
   const dest = join(dir, 'f');
+  const cleanup = () => {
+    try {
+      rmSync(dir, { recursive: true, force: true });
+    } catch {
+      // best-effort
+    }
+  };
   try {
     let res: Awaited<ReturnType<typeof runRsync>>;
     try {
@@ -235,17 +236,38 @@ async function copyToBuffer(
         timeoutMs: COPY_TIMEOUT_MS,
       });
     } catch (error) {
+      cleanup();
       if (error instanceof RsyncMissingLocalError) return fail('rsync_missing_local');
       throw error;
     }
-    if (res.exitCode !== 0) return fail(classifyRsyncFailure(res.exitCode, res.stderr), res.stderr);
-    return ok(readFileSync(dest));
-  } finally {
-    try {
-      rmSync(dir, { recursive: true, force: true });
-    } catch {
-      // best-effort
+    if (res.exitCode !== 0) {
+      cleanup();
+      return fail(classifyRsyncFailure(res.exitCode, res.stderr), res.stderr);
     }
+    let size = 0;
+    try {
+      size = statSync(dest).size;
+    } catch {
+      cleanup();
+      return fail('unknown');
+    }
+    return ok({ tmpPath: dest, size, cleanup });
+  } catch (error) {
+    cleanup();
+    throw error;
+  }
+}
+
+async function copyToBuffer(
+  spec: RsyncDeviceSpec,
+  normPath: string
+): Promise<FileOpResult<Buffer>> {
+  const copied = await copyToTempFile(spec, normPath);
+  if (!copied.ok) return copied;
+  try {
+    return ok(readFileSync(copied.data.tmpPath));
+  } finally {
+    copied.data.cleanup();
   }
 }
 
@@ -278,9 +300,11 @@ export async function readTextFile(
 }
 
 export interface RawFileData {
-  data: Uint8Array<ArrayBuffer>;
+  tmpPath: string;
+  size: number;
   name: string;
   mime: string | null;
+  cleanup: () => void;
 }
 
 export async function readRawFile(
@@ -293,12 +317,21 @@ export async function readRawFile(
     if (st.data.type === 'dir') return fail('is_directory');
     if (st.data.size != null && st.data.size > RAW_MAX_BYTES) return fail('too_large');
 
-    const buf = await copyToBuffer(spec, path);
-    if (!buf.ok) return buf;
-    if (buf.data.length > RAW_MAX_BYTES) return fail('too_large');
+    const copied = await copyToTempFile(spec, path);
+    if (!copied.ok) return copied;
+    if (copied.data.size > RAW_MAX_BYTES) {
+      copied.data.cleanup();
+      return fail('too_large');
+    }
 
     const name = posixBasename(path);
-    return ok<RawFileData>({ data: new Uint8Array(buf.data), name, mime: mimeOf(name) });
+    return ok<RawFileData>({
+      tmpPath: copied.data.tmpPath,
+      size: copied.data.size,
+      name,
+      mime: mimeOf(name),
+      cleanup: copied.data.cleanup,
+    });
   });
 }
 

@@ -1,6 +1,7 @@
 // 上传会话状态：分块上传期间在内存维护 session + 本机临时文件。
 // 纯状态管理（不含 rsync）。清理三重保障：每次操作的显式清理 + 周期 GC + 启动孤儿扫描。
 import { appendFileSync, mkdtempSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { open } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -111,15 +112,47 @@ export type AppendResult =
   | { ok: true; received: number }
   | { ok: false; reason: 'not_found' | 'bad_offset' | 'too_large' };
 
-// 顺序追加 chunk：offset 必须等于已收字节数；不得超出声明 size。
-export function appendUploadChunk(id: string, offset: number, bytes: Uint8Array): AppendResult {
+function prepareAppend(
+  id: string,
+  offset: number,
+  byteLength: number
+):
+  | { ok: true; session: UploadSession }
+  | { ok: false; reason: 'not_found' | 'bad_offset' | 'too_large' } {
   const s = sessions.get(id);
   if (!s) return { ok: false, reason: 'not_found' };
   if (offset !== s.received) return { ok: false, reason: 'bad_offset' };
-  if (s.received + bytes.byteLength > s.size) return { ok: false, reason: 'too_large' };
-  appendFileSync(s.tmpPath, bytes);
-  s.received += bytes.byteLength;
-  return { ok: true, received: s.received };
+  if (s.received + byteLength > s.size) return { ok: false, reason: 'too_large' };
+  return { ok: true, session: s };
+}
+
+function advanceReceived(session: UploadSession, byteLength: number): AppendResult {
+  session.received += byteLength;
+  return { ok: true, received: session.received };
+}
+
+// 顺序追加 chunk：offset 必须等于已收字节数；不得超出声明 size。
+export function appendUploadChunk(id: string, offset: number, bytes: Uint8Array): AppendResult {
+  const prepared = prepareAppend(id, offset, bytes.byteLength);
+  if (!prepared.ok) return prepared;
+  appendFileSync(prepared.session.tmpPath, bytes);
+  return advanceReceived(prepared.session, bytes.byteLength);
+}
+
+export async function appendUploadChunkAsync(
+  id: string,
+  offset: number,
+  bytes: Uint8Array
+): Promise<AppendResult> {
+  const prepared = prepareAppend(id, offset, bytes.byteLength);
+  if (!prepared.ok) return prepared;
+  const fh = await open(prepared.session.tmpPath, 'a');
+  try {
+    await fh.write(bytes);
+  } finally {
+    await fh.close();
+  }
+  return advanceReceived(prepared.session, bytes.byteLength);
 }
 
 // 移除会话：中止进行中的 rsync 推送 + 删除临时文件。

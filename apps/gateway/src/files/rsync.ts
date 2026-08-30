@@ -91,6 +91,29 @@ async function readStdoutWithProgress(
   return full;
 }
 
+async function readStdoutLines(
+  stream: ReadableStream<Uint8Array>,
+  onLine: (line: string) => void
+): Promise<string> {
+  const reader = stream.getReader();
+  const decoder = new TextDecoder();
+  let buf = '';
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buf += decoder.decode(value, { stream: true });
+    let nl = buf.indexOf('\n');
+    while (nl >= 0) {
+      onLine(buf.slice(0, nl));
+      buf = buf.slice(nl + 1);
+      nl = buf.indexOf('\n');
+    }
+  }
+  buf += decoder.decode();
+  if (buf) onLine(buf);
+  return '';
+}
+
 export async function runRsync(
   argv: string[],
   opts: {
@@ -101,6 +124,8 @@ export async function runRsync(
     onProgress?: (p: RsyncProgress) => void;
     // 空闲超时（仅 onProgress 模式生效）：无任何 stdout 数据持续该时长则判超时 kill
     idleTimeoutMs?: number;
+    // 提供时：按行消费 stdout，不累积全文（list-only 有界解析）
+    onStdoutLine?: (line: string) => void;
   } = {}
 ): Promise<RsyncResult> {
   const streaming = typeof opts.onProgress === 'function';
@@ -158,7 +183,9 @@ export async function runRsync(
           opts.onProgress!,
           resetIdle
         )
-      : new Response(proc.stdout as ReadableStream<Uint8Array>).text();
+      : opts.onStdoutLine
+        ? readStdoutLines(proc.stdout as ReadableStream<Uint8Array>, opts.onStdoutLine)
+        : new Response(proc.stdout as ReadableStream<Uint8Array>).text();
     const [stdout, stderr, exitCode] = await Promise.all([
       stdoutPromise,
       new Response(proc.stderr as ReadableStream<Uint8Array>).text(),
@@ -190,6 +217,126 @@ function typeFromPerms(perms: string): RsyncEntry['type'] {
     default:
       return 'other';
   }
+}
+
+const LIST_COLLATOR = new Intl.Collator(undefined, { numeric: true, sensitivity: 'base' });
+
+export function compareListEntry(
+  a: Pick<RsyncEntry, 'type' | 'name'>,
+  b: Pick<RsyncEntry, 'type' | 'name'>
+): number {
+  const ad = a.type === 'dir' ? 0 : 1;
+  const bd = b.type === 'dir' ? 0 : 1;
+  if (ad !== bd) return ad - bd;
+  return LIST_COLLATOR.compare(a.name, b.name);
+}
+
+function parseListOnlyLine(rawLine: string): RsyncEntry | null {
+  const line = rawLine.replace(/\r$/, '');
+  const m = LIST_RE.exec(line);
+  if (!m) return null;
+
+  const type = typeFromPerms(m[1]);
+  let name = unescapeOctal(m[9]);
+  if (type === 'symlink') {
+    const arrow = name.indexOf(' -> ');
+    if (arrow >= 0) name = name.slice(0, arrow);
+  }
+  if (name === '' || name === '.' || name === '..') return null;
+
+  const sizeNum = Number.parseInt(m[2].replace(/,/g, ''), 10);
+  const size = type === 'dir' ? null : Number.isNaN(sizeNum) ? null : sizeNum;
+  const modifiedAt = `${m[3]}-${m[4]}-${m[5]}T${m[6]}:${m[7]}:${m[8]}`;
+  return { name, type, size, modifiedAt };
+}
+
+export function createListOnlyCollector(maxEntries: number): {
+  accept: (line: string) => void;
+  readonly retained: number;
+  snapshot: () => { entries: RsyncEntry[]; truncated: boolean; retained: number };
+} {
+  const keep = maxEntries + 1;
+  const heap: RsyncEntry[] = [];
+  let overflow = false;
+
+  const worse = (a: RsyncEntry, b: RsyncEntry) => compareListEntry(a, b) > 0;
+
+  const bubbleUp = (start: number) => {
+    let i = start;
+    while (i > 0) {
+      const p = (i - 1) >> 1;
+      if (!worse(heap[i], heap[p])) break;
+      const tmp = heap[i];
+      heap[i] = heap[p];
+      heap[p] = tmp;
+      i = p;
+    }
+  };
+
+  const bubbleDown = (start: number) => {
+    let i = start;
+    for (;;) {
+      const left = i * 2 + 1;
+      const right = left + 1;
+      let worst = i;
+      if (left < heap.length && worse(heap[left], heap[worst])) worst = left;
+      if (right < heap.length && worse(heap[right], heap[worst])) worst = right;
+      if (worst === i) break;
+      const tmp = heap[i];
+      heap[i] = heap[worst];
+      heap[worst] = tmp;
+      i = worst;
+    }
+  };
+
+  return {
+    accept(line: string) {
+      const entry = parseListOnlyLine(line);
+      if (!entry) return;
+      if (heap.length < keep) {
+        heap.push(entry);
+        bubbleUp(heap.length - 1);
+        return;
+      }
+      if (compareListEntry(entry, heap[0]) >= 0) {
+        overflow = true;
+        return;
+      }
+      heap[0] = entry;
+      bubbleDown(0);
+      overflow = true;
+    },
+    get retained() {
+      return heap.length;
+    },
+    snapshot() {
+      const sorted = heap.slice().sort(compareListEntry);
+      const truncated = overflow || sorted.length > maxEntries;
+      return {
+        entries: truncated ? sorted.slice(0, maxEntries) : sorted,
+        truncated,
+        retained: heap.length,
+      };
+    },
+  };
+}
+
+export function parseListOnlyBounded(
+  stdout: string,
+  maxEntries: number
+): { entries: RsyncEntry[]; truncated: boolean; retained: number } {
+  const collector = createListOnlyCollector(maxEntries);
+  for (const line of stdout.split('\n')) collector.accept(line);
+  return collector.snapshot();
+}
+
+export function parseListOnly(stdout: string): RsyncEntry[] {
+  const entries: RsyncEntry[] = [];
+  for (const rawLine of stdout.split('\n')) {
+    const entry = parseListOnlyLine(rawLine);
+    if (entry) entries.push(entry);
+  }
+  return entries;
 }
 
 // 将 GNU rsync（LC_ALL=C）的八进制转义序列还原为原始 UTF-8 字符。
@@ -226,7 +373,7 @@ export function unescapeOctal(input: string): string {
     if (i + 3 < input.length) {
       const digits = input.slice(i + 1, i + 4);
       if (/^[0-7]{3}$/.test(digits)) {
-        const val = parseInt(digits, 8);
+        const val = Number.parseInt(digits, 8);
         if (val <= 255) {
           pendingBytes.push(val);
           i += 4;
@@ -244,30 +391,6 @@ export function unescapeOctal(input: string): string {
   return result.join('');
 }
 
-export function parseListOnly(stdout: string): RsyncEntry[] {
-  const entries: RsyncEntry[] = [];
-  for (const rawLine of stdout.split('\n')) {
-    const line = rawLine.replace(/\r$/, '');
-    const m = LIST_RE.exec(line);
-    if (!m) continue;
-
-    const type = typeFromPerms(m[1]);
-    let name = unescapeOctal(m[9]);
-    if (type === 'symlink') {
-      const arrow = name.indexOf(' -> ');
-      if (arrow >= 0) name = name.slice(0, arrow);
-    }
-    if (name === '' || name === '.' || name === '..') continue;
-
-    const sizeNum = Number.parseInt(m[2].replace(/,/g, ''), 10);
-    const size = type === 'dir' ? null : Number.isNaN(sizeNum) ? null : sizeNum;
-    const modifiedAt = `${m[3]}-${m[4]}-${m[5]}T${m[6]}:${m[7]}:${m[8]}`;
-    entries.push({ name, type, size, modifiedAt });
-  }
-  return entries;
-}
-
-// 根据退出码 + stderr 推断错误类别。
 export function classifyRsyncFailure(exitCode: number, stderr: string): FileErrorCode {
   const s = stderr.toLowerCase();
 

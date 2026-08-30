@@ -1,5 +1,13 @@
 import { describe, expect, test } from 'bun:test';
-import { classifyRsyncFailure, parseListOnly, parseRsyncProgress, unescapeOctal } from './rsync';
+import { MAX_ENTRIES } from './categorize';
+import {
+  classifyRsyncFailure,
+  compareListEntry,
+  parseListOnly,
+  parseListOnlyBounded,
+  parseRsyncProgress,
+  unescapeOctal,
+} from './rsync';
 
 describe('unescapeOctal', () => {
   test('pure ASCII unchanged', () => {
@@ -135,8 +143,7 @@ describe('parseListOnly', () => {
   });
 
   test('handles escaped symlink names with arrow', () => {
-    const out =
-      'lrwxrwxrwx           10 2024/01/15 10:30:00 \\344\\270\\211 -> /etc/hosts';
+    const out = 'lrwxrwxrwx           10 2024/01/15 10:30:00 \\344\\270\\211 -> /etc/hosts';
     const entries = parseListOnly(out);
     expect(entries).toHaveLength(1);
     expect(entries[0].type).toBe('symlink');
@@ -151,6 +158,40 @@ describe('parseListOnly', () => {
     ].join('\n');
     const entries = parseListOnly(out);
     expect(entries.map((e) => e.name)).toEqual(['三申机型2022-演示流程设计.md', 'テスト.txt']);
+  });
+
+  test('bounded parse keeps dirs-first then name page, matching full sort+cap', () => {
+    const out = [
+      '-rw-r--r--            1 2026/06/14 15:06:34 z.txt',
+      '-rw-r--r--            1 2026/06/14 15:06:34 a.txt',
+      'drwxr-xr-x           64 2026/06/14 15:06:34 sub',
+    ].join('\n');
+    const bounded = parseListOnlyBounded(out, 2);
+    expect(bounded.truncated).toBe(true);
+    expect(bounded.entries.map((e) => e.name)).toEqual(['sub', 'a.txt']);
+    expect(bounded.retained).toBe(3);
+  });
+
+  test('200k synthetic lines: same page as full parse+sort, retained ≤ MAX_ENTRIES+1', () => {
+    const lines: string[] = ['drwxr-xr-x          160 2026/06/14 15:06:34 .'];
+    for (let i = 0; i < 200_000; i++) {
+      const n = String(199_999 - i).padStart(6, '0');
+      lines.push(`-rw-r--r--            5 2026/06/14 15:06:34 f${n}.txt`);
+    }
+    lines.push('drwxr-xr-x           64 2026/06/14 15:06:34 zdir');
+    lines.push('drwxr-xr-x           64 2026/06/14 15:06:34 adir');
+    const stdout = lines.join('\n');
+
+    const all = parseListOnly(stdout);
+    const expected = all.slice().sort(compareListEntry).slice(0, MAX_ENTRIES);
+    const bounded = parseListOnlyBounded(stdout, MAX_ENTRIES);
+
+    expect(all.length).toBe(200_002);
+    expect(bounded.truncated).toBe(true);
+    expect(bounded.entries).toEqual(expected);
+    expect(bounded.entries[0]?.name).toBe('adir');
+    expect(bounded.entries[1]?.name).toBe('zdir');
+    expect(bounded.retained).toBe(MAX_ENTRIES + 1);
   });
 });
 
