@@ -8,6 +8,7 @@ import { useRuntime, useTmuxStore } from '@tmex/stores/react';
 import type { PaneSelection, TerminalRef, TerminalSizeSnapshot } from '@tmex/terminal-ui';
 import { type RefObject, useCallback } from 'react';
 import { useNavigate } from 'react-router';
+import { resolveCloseFallback } from './close-pane-fallback';
 import {
   appendRecentSelectRequest,
   resolveSnapshotSelectSize,
@@ -29,6 +30,8 @@ export interface PaneSelectionDispatch {
     options?: { forceFullSelect?: boolean }
   ) => void;
   handleUserSelectPane: (windowId: string, paneId: string) => void;
+  /** 关闭 pane：若关的是 URL 点名的 pane，先把路由挪到幸存目标再发 close-pane */
+  handleClosePane: (windowId: string, paneId: string) => void;
 }
 
 function paneRoutePath(
@@ -46,6 +49,7 @@ function paneRoutePath(
 export function usePaneSelectionDispatch({
   deviceId,
   windowId,
+  resolvedPaneId,
   windows,
   terminalRef,
   terminalContainerRef,
@@ -53,6 +57,7 @@ export function usePaneSelectionDispatch({
 }: {
   deviceId?: string;
   windowId?: string;
+  resolvedPaneId?: string;
   windows?: readonly TmuxWindow[];
   terminalRef: RefObject<TerminalRef | null>;
   terminalContainerRef: RefObject<HTMLDivElement | null>;
@@ -61,6 +66,7 @@ export function usePaneSelectionDispatch({
   const runtime = useRuntime();
   const navigate = useNavigate();
   const selectPane = useTmuxStore((state) => state.selectPane);
+  const closePane = useTmuxStore((state) => state.closePane);
 
   const { isMobileRef, isSplitViewRef, recentSelectRequestsRef, userInitiatedSelectionRef } = refs;
 
@@ -149,6 +155,42 @@ export function usePaneSelectionDispatch({
     [deviceId, navigateToPane, userInitiatedSelectionRef]
   );
 
+  // 关闭 pane：路由指向它时先落到幸存目标（本窗剩余 pane → 其他窗口 → 设备列表），
+  // 再发 close-pane，避免 URL 短暂指向已删除的 pane
+  const handleClosePane = useCallback(
+    (targetWindowId: string, targetPaneId: string) => {
+      if (!deviceId) return;
+      const fallback = resolveCloseFallback({
+        windows,
+        routeWindowId: windowId,
+        routePaneId: resolvedPaneId,
+        closingWindowId: targetWindowId,
+        closingPaneId: targetPaneId,
+      });
+      if (fallback.kind === 'pane') {
+        userInitiatedSelectionRef.current = {
+          windowId: fallback.windowId,
+          paneId: fallback.paneId,
+          at: Date.now(),
+        };
+        navigateToPane(deviceId, fallback.windowId, fallback.paneId);
+      } else if (fallback.kind === 'device-list') {
+        navigateToDeviceList();
+      }
+      closePane(deviceId, targetPaneId);
+    },
+    [
+      closePane,
+      deviceId,
+      navigateToDeviceList,
+      navigateToPane,
+      resolvedPaneId,
+      userInitiatedSelectionRef,
+      windowId,
+      windows,
+    ]
+  );
+
   return {
     navigateToPane,
     navigateToDeviceList,
@@ -156,5 +198,6 @@ export function usePaneSelectionDispatch({
     recordSelectRequest,
     followSelection,
     handleUserSelectPane,
+    handleClosePane,
   };
 }

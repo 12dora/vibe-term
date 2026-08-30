@@ -25,6 +25,19 @@ export interface MissingSelectionState {
   missingSelectionKey: string | null;
 }
 
+/** URL 目标的身份：settle 计时与「曾见过该 pane」记账共用同一个 key */
+export function paneRouteKey({
+  deviceId,
+  windowId,
+  resolvedPaneId,
+}: {
+  deviceId?: string;
+  windowId?: string;
+  resolvedPaneId?: string;
+}): string {
+  return `${deviceId}:${windowId}:${resolvedPaneId ?? ''}`;
+}
+
 export function resolveMissingSelection({
   deviceId,
   windowId,
@@ -51,8 +64,29 @@ export function resolveMissingSelection({
     isWindowMissing,
     isPaneMissing,
     missingSelectionKey:
-      isWindowMissing || isPaneMissing ? `${deviceId}:${windowId}:${resolvedPaneId ?? ''}` : null,
+      isWindowMissing || isPaneMissing
+        ? paneRouteKey({ deviceId, windowId, resolvedPaneId })
+        : null,
   };
+}
+
+/**
+ * URL 点名的 pane 是否已被快照确认关闭：它曾出现在快照里、随后从快照消失。
+ * 「还没出现在快照里」（深链、刚 split 出来的 pane）不算，仍走 settle 宽限期。
+ */
+export function resolveConfirmedPaneClosure({
+  routeKey,
+  seenRouteKey,
+  isPaneMissing,
+  hasSelectedPane,
+}: {
+  routeKey: string;
+  seenRouteKey: string | null;
+  isPaneMissing: boolean;
+  hasSelectedPane: boolean;
+}): boolean {
+  if (hasSelectedPane || !isPaneMissing) return false;
+  return seenRouteKey === routeKey;
 }
 
 /** PC 分屏：非移动端 + 当前 window 多 pane + layout 可用 + 选择未失效 */

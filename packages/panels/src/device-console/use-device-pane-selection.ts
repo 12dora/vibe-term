@@ -34,12 +34,15 @@ export interface DevicePaneSelection {
   isPaneMissing: boolean;
   /** 宽限期后 URL 目标仍不在快照中：视为已关闭 */
   isSelectionInvalid: boolean;
+  /** 快照已确认 URL 点名的 pane 被关闭：不要再为它挂载 Terminal */
+  isPaneConfirmedClosed: boolean;
   isSplitView: boolean;
   canInteractWithPane: boolean;
   handleResize: (cols: number, rows: number) => void;
   handleSync: (cols: number, rows: number) => void;
   handleResizeSettled: () => void;
   handleUserSelectPane: (targetWindowId: string, targetPaneId: string) => void;
+  handleClosePane: (targetWindowId: string, targetPaneId: string) => void;
 }
 
 export function useDevicePaneSelection({
@@ -68,6 +71,7 @@ export function useDevicePaneSelection({
   const dispatch = usePaneSelectionDispatch({
     deviceId,
     windowId,
+    resolvedPaneId,
     windows,
     terminalRef,
     terminalContainerRef,
@@ -116,11 +120,13 @@ export function useDevicePaneSelection({
     isWindowMissing: state.isWindowMissing,
     isPaneMissing: state.isPaneMissing,
     isSelectionInvalid: state.isSelectionInvalid,
+    isPaneConfirmedClosed: state.isPaneConfirmedClosed,
     isSplitView: state.isSplitView,
     canInteractWithPane: state.canInteractWithPane,
     handleResize,
     handleSync,
     handleResizeSettled,
     handleUserSelectPane: dispatch.handleUserSelectPane,
+    handleClosePane: dispatch.handleClosePane,
   };
 }

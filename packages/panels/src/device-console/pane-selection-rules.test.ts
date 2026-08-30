@@ -1,7 +1,9 @@
 import { describe, expect, test } from 'bun:test';
 import {
   appendRecentSelectRequest,
+  paneRouteKey,
   resolveActivePaneEventFollow,
+  resolveConfirmedPaneClosure,
   resolveMissingSelection,
   resolveRemotePaneSizeSync,
   resolveSelectDispatch,
@@ -64,6 +66,51 @@ describe('resolveMissingSelection', () => {
         hasSelectedPane: false,
       })
     ).toEqual({ isWindowMissing: false, isPaneMissing: false, missingSelectionKey: null });
+  });
+});
+
+describe('resolveConfirmedPaneClosure', () => {
+  const routeKey = paneRouteKey({ deviceId: 'd1', windowId: '@1', resolvedPaneId: '%1' });
+
+  test('confirms the closure only for a pane that was in a snapshot before', () => {
+    expect(
+      resolveConfirmedPaneClosure({
+        routeKey,
+        seenRouteKey: routeKey,
+        isPaneMissing: true,
+        hasSelectedPane: false,
+      })
+    ).toBe(true);
+  });
+
+  test('waits for the settle grace when the target was never seen', () => {
+    expect(
+      resolveConfirmedPaneClosure({
+        routeKey,
+        seenRouteKey: null,
+        isPaneMissing: true,
+        hasSelectedPane: false,
+      })
+    ).toBe(false);
+    expect(
+      resolveConfirmedPaneClosure({
+        routeKey,
+        seenRouteKey: paneRouteKey({ deviceId: 'd1', windowId: '@1', resolvedPaneId: '%9' }),
+        isPaneMissing: true,
+        hasSelectedPane: false,
+      })
+    ).toBe(false);
+  });
+
+  test('reports nothing while the pane is still in the snapshot', () => {
+    expect(
+      resolveConfirmedPaneClosure({
+        routeKey,
+        seenRouteKey: routeKey,
+        isPaneMissing: false,
+        hasSelectedPane: true,
+      })
+    ).toBe(false);
   });
 });
 

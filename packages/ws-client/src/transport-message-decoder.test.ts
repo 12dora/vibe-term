@@ -216,6 +216,8 @@ describe('decodeGatewayTransportMessage', () => {
       version: '9.9.9',
       directCapable: true,
       name: 'studio',
+      transport: null,
+      rttMs: null,
     });
     expect(decodeNodeEventMessage(payload)).toEqual({
       type: 'node-event',

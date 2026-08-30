@@ -1,10 +1,20 @@
 // 选择面：当前设备的选中 window/pane、待重试的选择事务与最近上报的终端尺寸。
 
+import type { StateSnapshotPayload } from '@tmex/shared';
 import { type SelectFailureReason, generateSelectToken } from '@tmex/ws-client';
 import type { RuntimeCore } from './runtime';
 import type { TmuxStoreAccess } from './tmux-state';
 
 const RESELECT_RETRY_DELAY_MS = 250;
+
+export function snapshotHasPane(
+  snapshot: StateSnapshotPayload | undefined,
+  paneId: string
+): boolean {
+  return Boolean(
+    snapshot?.session?.windows.some((window) => window.panes.some((pane) => pane.id === paneId))
+  );
+}
 
 export function normalizeTerminalSize(
   cols: number | undefined,
@@ -33,6 +43,14 @@ export interface TmuxSelectionActions {
   /** select 状态机上报失败：非 rejected 时排队一次重试 */
   handleSelectFailed(deviceId: string, reason: SelectFailureReason): void;
   cancelReselect(deviceId: string): void;
+  /**
+   * 新快照删除了当前选中的 pane：取消它的 select 事务与待重试，并清空选中记录，
+   * 避免 ACK/progress 超时与 250ms 重选对着已死 pane 空转（回落交给路由对账）。
+   */
+  handleSnapshotPaneRemoval(
+    deviceId: string,
+    previousSnapshot: StateSnapshotPayload | undefined
+  ): void;
   /** 记录最近一次上报的终端尺寸，供后续 select-pane 复用 */
   recordTerminalSize(deviceId: string, cols: number, rows: number): void;
   dispose(): void;
@@ -132,6 +150,24 @@ export function createTmuxSelectionActions(
     },
 
     cancelReselect,
+
+    handleSnapshotPaneRemoval(deviceId, previousSnapshot) {
+      const current = access.getState().selectedPanes[deviceId];
+      if (!current) return;
+      // 旧快照里也没有它 ≠ 已关闭：可能是刚建好/深链的 pane，快照还没追上
+      if (!snapshotHasPane(previousSnapshot, current.paneId)) return;
+      if (snapshotHasPane(access.getState().snapshots[deviceId], current.paneId)) return;
+
+      cancelReselect(deviceId);
+      core.selectMachine().abandonPane(deviceId, current.paneId);
+      access.setState((prev) => {
+        const selected = prev.selectedPanes[deviceId];
+        if (!selected || selected.paneId !== current.paneId) return {};
+        const nextSelected = { ...prev.selectedPanes };
+        delete nextSelected[deviceId];
+        return { selectedPanes: nextSelected };
+      });
+    },
 
     recordTerminalSize(deviceId, cols, rows) {
       const normalizedSize = normalizeTerminalSize(cols, rows);

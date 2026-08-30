@@ -141,7 +141,7 @@ function StageContent(props: TerminalStageProps) {
     prepareResources,
     onActivateShortcut,
   } = props;
-  const { isSelectionInvalid, isSplitView, canInteractWithPane } = selection;
+  const { isSelectionInvalid, isPaneConfirmedClosed, isSplitView, canInteractWithPane } = selection;
 
   const shortcutsSlot = (
     <TerminalShortcutsSlot
@@ -188,6 +188,7 @@ function StageContent(props: TerminalStageProps) {
             deviceConnected={deviceConnected}
             focusedTerminalRef={bindFocusedTerminalRef}
             onUserSelectPane={selection.handleUserSelectPane}
+            onClosePane={selection.handleClosePane}
             onWindowResize={selection.handleResize}
             onWindowResizeSettled={selection.handleResizeSettled}
             prepareResources={prepareResources}
@@ -196,6 +197,12 @@ function StageContent(props: TerminalStageProps) {
         {shortcutsSlot}
       </div>
     );
+  }
+
+  // 快照已确认这个 pane 被关闭：不挂 Terminal（挂上只会对死 pane 订阅/select），
+  // 也不显示「连接中」——路由对账会立刻回落到幸存 pane
+  if (isPaneConfirmedClosed) {
+    return null;
   }
 
   return (
@@ -231,6 +238,7 @@ export function TerminalStage(props: TerminalStageProps) {
     props.deviceConnected &&
     Boolean(props.resolvedPaneId) &&
     !props.selection.isSelectionInvalid &&
+    !props.selection.isPaneConfirmedClosed &&
     !props.selectedPane;
 
   return (

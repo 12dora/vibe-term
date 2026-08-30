@@ -6,6 +6,8 @@ import type { TmuxPane, TmuxWindow } from '@tmex/shared';
 import type { PaneSelection, TimedPaneSelection } from '@tmex/terminal-ui';
 import { type RefObject, useEffect, useMemo, useRef, useState } from 'react';
 import {
+  paneRouteKey,
+  resolveConfirmedPaneClosure,
   resolveMissingSelection,
   resolveSplitView,
   resolveStackedLayoutTarget,
@@ -38,6 +40,8 @@ export interface PaneSelectionState {
   isLoading: boolean;
   isWindowMissing: boolean;
   isPaneMissing: boolean;
+  /** 路由 pane 曾在快照里、现已消失：不等宽限期就可以判定它被关闭了 */
+  isPaneConfirmedClosed: boolean;
   isSelectionSettledMissing: boolean;
   isSelectionInvalid: boolean;
   canInteractWithPane: boolean;
@@ -103,10 +107,27 @@ export function usePaneSelectionState({
     return () => window.clearTimeout(timer);
   }, [missingSelectionKey]);
 
-  const isSelectionSettledMissing =
+  // 曾在快照里见过 URL 点名的 pane：它之后从快照消失就是「被关闭」，无需等宽限期
+  const routeKey = paneRouteKey({ deviceId, windowId, resolvedPaneId });
+  const seenPaneRouteKeyRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (selectedPane) seenPaneRouteKeyRef.current = routeKey;
+  }, [routeKey, selectedPane]);
+
+  const isPaneConfirmedClosed = resolveConfirmedPaneClosure({
+    routeKey,
+    seenRouteKey: seenPaneRouteKeyRef.current,
+    isPaneMissing,
+    hasSelectedPane: Boolean(selectedPane),
+  });
+
+  // 宽限期只用于「快照还没追上」的深链；已确认关闭的 pane 直接让路由对账回落
+  const isSelectionInvalid =
     missingSelectionKey !== null && settledMissingKey === missingSelectionKey;
-  const isSelectionInvalid = isSelectionSettledMissing;
-  const canInteractWithPane = Boolean(deviceConnected && resolvedPaneId && !isSelectionInvalid);
+  const isSelectionSettledMissing = isSelectionInvalid || isPaneConfirmedClosed;
+  const canInteractWithPane = Boolean(
+    deviceConnected && resolvedPaneId && !isSelectionInvalid && !isPaneConfirmedClosed
+  );
 
   const isSplitView = resolveSplitView({ isMobile, selectedWindow, isSelectionInvalid });
   const isSplitViewRef = useRef(isSplitView);
@@ -161,6 +182,7 @@ export function usePaneSelectionState({
     isLoading,
     isWindowMissing,
     isPaneMissing,
+    isPaneConfirmedClosed,
     isSelectionSettledMissing,
     isSelectionInvalid,
     canInteractWithPane,

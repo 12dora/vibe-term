@@ -727,6 +727,17 @@ export class SelectStateMachine {
 
   // ========== 清理 ==========
 
+  /**
+   * 目标 pane 已从快照中消失（被 kill / 关闭）：丢弃针对它的事务与门控缓冲。
+   * 不走 failTransaction——失败回调会触发调用方的重选重试，对着死 pane 空转。
+   */
+  abandonPane(deviceId: string, paneId: string): boolean {
+    const transaction = this.transactions.get(deviceId);
+    if (!transaction || transaction.paneId !== paneId) return false;
+    this.cancelTransaction(deviceId);
+    return true;
+  }
+
   cleanup(deviceId: string): void {
     this.cancelTransaction(deviceId);
     this.outputGates.delete(deviceId);

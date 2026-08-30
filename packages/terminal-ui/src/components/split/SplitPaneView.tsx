@@ -2,7 +2,7 @@
 
 import { useBellStore } from '@tmex/notifications';
 import type { TmuxPane } from '@tmex/shared';
-import { usePaneAgentState, useTmuxStore } from '@tmex/stores/react';
+import { usePaneAgentState } from '@tmex/stores/react';
 import { useCallback } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Terminal } from '../Terminal';
@@ -66,6 +66,8 @@ export interface SplitPaneViewProps {
   prepareResources?: () => Promise<void>;
   registerTerminal: (paneId: string, ref: TerminalRef | null) => void;
   onUserSelectPane: (windowId: string, paneId: string) => void;
+  /** 关闭 pane 交给宿主：关掉 URL 点名的 pane 需要先回落路由再发命令 */
+  onClosePane: (windowId: string, paneId: string) => void;
   onTitleBarPointerDown: (paneId: string, event: React.PointerEvent<HTMLDivElement>) => void;
 }
 
@@ -85,10 +87,10 @@ export function SplitPaneView({
   prepareResources,
   registerTerminal,
   onUserSelectPane,
+  onClosePane,
   onTitleBarPointerDown,
 }: SplitPaneViewProps) {
   const { t } = useTranslation();
-  const closePane = useTmuxStore((state) => state.closePane);
   const paneId = pane.paneId;
   const meta = paneMetaText(paneInfo);
 
@@ -153,7 +155,7 @@ export function SplitPaneView({
             onPointerDown={(event) => event.stopPropagation()}
             onClick={(event) => {
               event.stopPropagation();
-              closePane(deviceId, paneId);
+              onClosePane(windowId, paneId);
             }}
           >
             <span className="text-xs leading-none">×</span>

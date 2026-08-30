@@ -34,6 +34,8 @@ export interface SplitTerminalAreaProps {
   /** 焦点 pane 的 TerminalRef 会转发到这里（DevicePage 的 terminalRef） */
   focusedTerminalRef: (ref: TerminalRef | null) => void;
   onUserSelectPane: (windowId: string, paneId: string) => void;
+  /** 关闭 pane：由宿主决定关闭前是否需要先回落路由 */
+  onClosePane: (windowId: string, paneId: string) => void;
   /** window 级尺寸上报（resize-window 语义），复用单 pane 的 KIND_TERM_RESIZE 通道 */
   onWindowResize: (cols: number, rows: number) => void;
   onWindowResizeSettled?: (cols: number, rows: number) => void;
@@ -49,6 +51,7 @@ export function SplitTerminalArea({
   deviceConnected,
   focusedTerminalRef,
   onUserSelectPane,
+  onClosePane,
   onWindowResize,
   onWindowResizeSettled,
   prepareResources,
@@ -136,6 +139,7 @@ export function SplitTerminalArea({
           prepareResources={prepareResources}
           registerTerminal={registerTerminal}
           onUserSelectPane={onUserSelectPane}
+          onClosePane={onClosePane}
           onTitleBarPointerDown={handleTitleBarPointerDown}
         />
       ))}

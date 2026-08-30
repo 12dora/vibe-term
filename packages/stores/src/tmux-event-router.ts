@@ -79,22 +79,24 @@ const handlers: TmuxEventHandlers = {
   },
 
   'metadata-snapshot': (event, ctx) => {
+    const { deviceId } = event.snapshot;
+    const previous = ctx.getState().snapshots[deviceId];
     ctx.setState((prev) => ({
-      snapshots: { ...prev.snapshots, [event.snapshot.deviceId]: event.snapshot },
+      snapshots: { ...prev.snapshots, [deviceId]: event.snapshot },
     }));
+    ctx.selection.handleSnapshotPaneRemoval(deviceId, previous);
   },
 
   'metadata-patch': (event, ctx) => {
-    ctx.setState((prev) => {
-      const current = prev.snapshots[event.deviceId];
-      if (!current) return {};
-      return {
-        snapshots: {
-          ...prev.snapshots,
-          [event.deviceId]: wsBorsh.applyLegacyStateSnapshotDiff(current, event.patch),
-        },
-      };
-    });
+    const previous = ctx.getState().snapshots[event.deviceId];
+    if (!previous) return;
+    ctx.setState((prev) => ({
+      snapshots: {
+        ...prev.snapshots,
+        [event.deviceId]: wsBorsh.applyLegacyStateSnapshotDiff(previous, event.patch),
+      },
+    }));
+    ctx.selection.handleSnapshotPaneRemoval(event.deviceId, previous);
   },
 
   'tmux-event': (event, ctx) => {

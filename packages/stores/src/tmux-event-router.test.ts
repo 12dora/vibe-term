@@ -142,6 +142,8 @@ function createHarness(options: HarnessOptions = {}) {
 
   const selection = {
     maybeReselectCurrentPane: (deviceId: string) => record('reselect', deviceId),
+    handleSnapshotPaneRemoval: (deviceId: string, previous: StateSnapshotPayload | undefined) =>
+      record('snapshotPaneRemoval', deviceId, previous),
   } as unknown as TmuxSelectionActions;
 
   const paneSubscriptions = {
@@ -284,6 +286,35 @@ describe('tmux transport event router', () => {
     expect(harness.getState().snapshots['device-a']?.session?.windows[0]?.panes[0]?.title).toBe(
       'after'
     );
+  });
+
+  test('metadata snapshot reports the previous snapshot for selection reconciliation', () => {
+    const harness = createHarness();
+
+    harness.route({ type: 'metadata-snapshot', snapshot });
+    harness.route({ type: 'metadata-snapshot', snapshot });
+
+    const removals = harness.namesOf('snapshotPaneRemoval');
+    expect(removals).toHaveLength(2);
+    expect(removals[0]?.args).toEqual(['device-a', undefined]);
+    expect(removals[1]?.args).toEqual(['device-a', snapshot]);
+  });
+
+  test('metadata patch reconciles the selection against the pre-patch snapshot', () => {
+    const harness = createHarness();
+
+    harness.route({ type: 'metadata-snapshot', snapshot });
+    harness.route({
+      type: 'metadata-patch',
+      deviceId: 'device-a',
+      patch: {
+        removals: [{ entityKind: wsBorsh.SOURCE_ENTITY_PANE, nativeId: '%1' }],
+        upserts: [],
+      },
+    });
+
+    expect(harness.getState().snapshots['device-a']?.session?.windows[0]?.panes).toEqual([]);
+    expect(harness.namesOf('snapshotPaneRemoval')[1]?.args).toEqual(['device-a', snapshot]);
   });
 
   test('metadata patch for unknown device is ignored', () => {

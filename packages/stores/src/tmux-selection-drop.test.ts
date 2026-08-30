@@ -148,7 +148,10 @@ describe('snapshot removal of the selected pane', () => {
 
   test('clears the selection and cancels the transaction once the pane leaves the snapshot', () => {
     const harness = createHarness();
-    harness.publish({ type: 'metadata-snapshot', snapshot: snapshotWith([pane('%1'), pane('%2')]) });
+    harness.publish({
+      type: 'metadata-snapshot',
+      snapshot: snapshotWith([pane('%1'), pane('%2')]),
+    });
     harness.store.getState().selectPane('device-a', '@1', '%2');
 
     harness.publish({ type: 'metadata-snapshot', snapshot: snapshotWith([pane('%1')]) });
@@ -176,7 +179,10 @@ describe('snapshot removal of the selected pane', () => {
 
   test('keeps a selection whose pane only moved to another window', () => {
     const harness = createHarness();
-    harness.publish({ type: 'metadata-snapshot', snapshot: snapshotWith([pane('%1'), pane('%2')]) });
+    harness.publish({
+      type: 'metadata-snapshot',
+      snapshot: snapshotWith([pane('%1'), pane('%2')]),
+    });
     harness.store.getState().selectPane('device-a', '@1', '%2');
 
     harness.publish({
@@ -204,7 +210,10 @@ describe('snapshot removal of the selected pane', () => {
 
   test('cancels the pending reselect retry so no select-pane targets the dead pane', () => {
     const harness = createHarness();
-    harness.publish({ type: 'metadata-snapshot', snapshot: snapshotWith([pane('%1'), pane('%2')]) });
+    harness.publish({
+      type: 'metadata-snapshot',
+      snapshot: snapshotWith([pane('%1'), pane('%2')]),
+    });
     harness.store.getState().selectPane('device-a', '@1', '%2');
 
     // select 失败排队一次 250ms 重试，随后快照确认 pane 已消失
