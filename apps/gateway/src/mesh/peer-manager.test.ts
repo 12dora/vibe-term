@@ -1801,6 +1801,89 @@ describe('PeerManager', () => {
     expect(cached?.inventoryJson).toContain('9.9.9');
   });
 
+  test('peer ctl async handlers log errors instead of unhandled rejection', async () => {
+    const { db, close } = createMigratedAuthDb();
+    fixtures.push({ close });
+    const store = new UserStore(db);
+    seedUser(store);
+    const self = seedNodeIdentity(store, 'user-1');
+    const peer = seedNodeIdentity(store, 'user-1');
+    store.upsertPeer({
+      nodeId: peer.nodeId,
+      name: 'studio',
+      endpointsJson: '[]',
+      inventoryJson: '{}',
+      directCapable: false,
+      lastSeenAt: Date.now(),
+      listVersion: 1,
+    });
+    store.upsertPeer = () => {
+      throw new Error('upsert-fail');
+    };
+    const manager = new PeerManager({
+      identity: self,
+      userStore: store,
+      uplink: dummyUplink(self, store),
+      peerPort: 0,
+      startServer: false,
+      keyLogApplier: {
+        async head() {
+          return { seq: 0n, hash: new Uint8Array(32) };
+        },
+        async applyMany() {
+          throw new Error('apply-fail');
+        },
+      },
+    });
+    fixtures.push({ close, stop: () => manager.stop() });
+    const [local, remote] = createInMemoryLinkPair();
+    echoQuiesceCaps(remote);
+    expect(manager.adoptLink(peer.nodeId, local, 'ws-secure', self.nodeId)).toBe(local);
+    await waitUntil(() => manager.quiesceCapableOf(peer.nodeId));
+
+    const unhandled: unknown[] = [];
+    const onUnhandled = (reason: unknown) => {
+      unhandled.push(reason);
+    };
+    const events = process as unknown as {
+      on(event: string, listener: (reason: unknown) => void): void;
+      off(event: string, listener: (reason: unknown) => void): void;
+    };
+    const logs: string[] = [];
+    const origLog = console.log;
+    console.log = (...args: unknown[]) => {
+      logs.push(args.map(String).join(' '));
+    };
+    events.on('unhandledRejection', onUnhandled);
+    try {
+      remote.ctl.send(
+        encodeJsonBytes({
+          t: 'node.status',
+          endpoints: [],
+          inventory: {},
+          direct_capable: true,
+        })
+      );
+      remote.ctl.send(
+        encodeJsonBytes({
+          t: 'key.log.res',
+          records: [{ seq: 1, bytes: 'AAAA', sig: 'AAAA' }],
+        })
+      );
+      await Bun.sleep(50);
+    } finally {
+      events.off('unhandledRejection', onUnhandled);
+      console.log = origLog;
+    }
+    expect(unhandled).toEqual([]);
+    expect(logs.some((line) => line.includes('ctl failed') && line.includes('upsert-fail'))).toBe(
+      true
+    );
+    expect(logs.some((line) => line.includes('ctl failed') && line.includes('apply-fail'))).toBe(
+      true
+    );
+  });
+
   test('failed DC upgrade retry does not produce an unhandled rejection', async () => {
     const { db, close } = createMigratedAuthDb();
     fixtures.push({ close });

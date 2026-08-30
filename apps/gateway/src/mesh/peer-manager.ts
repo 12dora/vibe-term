@@ -194,6 +194,14 @@ function isServerSocketAdapter(value: WebSocketTransportInput): value is ServerS
   );
 }
 
+function quiet(fn: () => void): void {
+  try {
+    fn();
+  } catch {
+    // ignore
+  }
+}
+
 function abortable<T>(promise: Promise<T>, signal: AbortSignal): Promise<T> {
   if (signal.aborted) {
     return Promise.reject(signal.reason ?? new Error('aborted'));
@@ -235,19 +243,11 @@ function waitSocketOpen(
       else resolve();
     };
     const onAbort = () => {
-      try {
-        socket.close(1000, 'stopped');
-      } catch {
-        // ignore
-      }
+      quiet(() => socket.close(1000, 'stopped'));
       finish(new Error('aborted'));
     };
     const timer = setTimeout(() => {
-      try {
-        socket.close(1000, 'connect-timeout');
-      } catch {
-        // ignore
-      }
+      quiet(() => socket.close(1000, 'connect-timeout'));
       finish(new Error('connect-timeout'));
     }, timeoutMs);
     if (signal?.aborted) {
@@ -600,16 +600,32 @@ export class PeerManager {
     live.recvKey = recvKey;
   }
 
-  private currentGeneration(): number {
-    return this.generation;
+  private stale(gen: number): boolean {
+    return this.stopped || gen !== this.generation;
+  }
+
+  private throwIfStopped(nodeId: string, gen: number, err?: unknown): void {
+    if (!this.stale(gen)) return;
+    throw err instanceof NodeUnreachableError
+      ? err
+      : new NodeUnreachableError(nodeId, 'peer manager stopped');
+  }
+
+  private runCtlAsync(kind: string, peer: string, work: () => Promise<void>): void {
+    void work().catch((err) => {
+      rtcLog('ctl failed', {
+        peer,
+        kind,
+        reason: err instanceof Error ? err.message : String(err),
+      });
+    });
   }
 
   private isTrusted(nodeId: string): boolean {
     const cert = this.userStore.getCert(nodeId);
     if (!cert || cert.revokedLogSeq != null) return false;
     const uid = this.uplink.userId;
-    if (!uid || cert.userId !== uid) return false;
-    return true;
+    return !!uid && cert.userId === uid;
   }
 
   private requireTrusted(nodeId: string): void {
@@ -626,8 +642,10 @@ export class PeerManager {
   private wantsUpgrade(live: LivePeer): boolean {
     if (live.retiring) return false;
     if (live.transport === 'dc') return false;
-    if (live.transport === 'ws-secure') return this.shouldTryDc(live.peerNodeId);
-    return this.shouldTryDc(live.peerNodeId) || this.hasWsSecureCandidate(live.peerNodeId);
+    return (
+      this.shouldTryDc(live.peerNodeId) ||
+      (live.transport === 'relay' && this.hasWsSecureCandidate(live.peerNodeId))
+    );
   }
 
   private ensureGate(nodeId: string): UpgradeGate {
@@ -777,45 +795,34 @@ export class PeerManager {
     if (this.stopped) return;
     const now = this.scheduler.now();
     const gate = this.ensureIncomingWakeGate(fromNodeId);
-    if (now < gate.nextEligibleAt) {
-      rtcLogRateLimited(`wake:rate:${fromNodeId}`, 'signal recv', {
+    const drop = (tag: string, dropped: string) =>
+      rtcLogRateLimited(`wake:${tag}:${fromNodeId}`, 'signal recv', {
         peer: fromNodeId,
         kind: 'wake',
-        dropped: 'rate',
+        dropped,
       });
+    if (now < gate.nextEligibleAt) {
+      drop('rate', 'rate');
       return;
     }
     if (!this.consumeWakeVerifyToken(gate, now)) {
-      rtcLogRateLimited(`wake:rate:${fromNodeId}`, 'signal recv', {
-        peer: fromNodeId,
-        kind: 'wake',
-        dropped: 'rate',
-      });
+      drop('rate', 'rate');
       return;
     }
     const wake = parseRtcWakeSdp(msg.sdp);
     if (!wake || !this.acceptSignedRtcWake(fromNodeId, msg, wake)) {
-      rtcLogRateLimited(`wake:auth:${fromNodeId}`, 'signal recv', {
-        peer: fromNodeId,
-        kind: 'wake',
-        dropped: 'auth',
-      });
+      drop('auth', 'auth');
       return;
     }
     gate.nextEligibleAt = now + PEER_RTC_WAKE_COOLDOWN_MS;
     if (this.identity.nodeId.toLowerCase() >= fromNodeId.toLowerCase()) {
-      rtcLogRateLimited(`wake:role:${fromNodeId}`, 'signal recv', {
-        peer: fromNodeId,
-        kind: 'wake',
-        dropped: 'not-offerer',
-      });
+      drop('role', 'not-offerer');
       return;
     }
     rtcLog('signal recv', { peer: fromNodeId, kind: 'wake' });
-    if (this.live.get(fromNodeId)?.transport === 'dc') return;
-    if (!this.shouldTryDc(fromNodeId)) return;
-    if (this.pending.has(fromNodeId) || this.upgrading.has(fromNodeId)) return;
     const live = this.live.get(fromNodeId);
+    if (live?.transport === 'dc' || !this.shouldTryDc(fromNodeId)) return;
+    if (this.pending.has(fromNodeId) || this.upgrading.has(fromNodeId)) return;
     if (live && !this.wantsUpgrade(live)) return;
     void this.getLink(fromNodeId).catch(() => undefined);
   }
@@ -834,7 +841,7 @@ export class PeerManager {
     if (Math.abs(this.scheduler.now() - wake.issued_at) > RTC_WAKE_MAX_SKEW_MS) return false;
     if (!this.isTrusted(wake.from)) return false;
     const cert = this.userStore.getCert(wake.from);
-    if (!cert || cert.revokedLogSeq != null) return false;
+    if (!cert) return false;
     let edPk: Uint8Array;
     try {
       edPk = decodeCertificate(cert.certificateBytes).ed_pk;
@@ -920,13 +927,12 @@ export class PeerManager {
       return;
     }
     const live = this.live.get(nodeId);
-    if (!live || live.transport === 'dc') {
-      if (live?.transport === 'dc') {
-        this.lostDirect.delete(nodeId);
-        this.cancelDcUpgradeRetry(nodeId);
-      }
+    if (live?.transport === 'dc') {
+      this.lostDirect.delete(nodeId);
+      this.cancelDcUpgradeRetry(nodeId);
       return;
     }
+    if (!live) return;
     if (!live.quiesceCapable) return;
     let rec = this.dcUpgradeRetry.get(nodeId);
     if (!rec) {
@@ -1024,10 +1030,6 @@ export class PeerManager {
     if (!gate) return;
     gate.inflight = false;
     this.disarmDeferredRtcWake(gate);
-  }
-
-  private maybeSendRtcWake(peerNodeId: string): void {
-    this.dispatchRtcWake(peerNodeId);
   }
 
   private dispatchRtcWake(peerNodeId: string): void {
@@ -1202,17 +1204,13 @@ export class PeerManager {
       },
     };
     const connectP = this.rtc.connectToPeer(nodeId, wrapped);
-    this.maybeSendRtcWake(nodeId);
+    this.dispatchRtcWake(nodeId);
     try {
       const result = await abortable(connectP, signal);
-      if (this.stopped || gen !== this.generation) {
+      if (this.stale(gen)) {
         this.releaseRtcAttempt(nodeId, unsub);
         unsub = null;
-        try {
-          result.pc.close();
-        } catch {
-          // ignore
-        }
+        quiet(() => result.pc.close());
         throw new Error('stopped');
       }
       const session = new LinkMux(result.link, { role: result.role });
@@ -1237,62 +1235,54 @@ export class PeerManager {
 
   private async dial(nodeId: string): Promise<LinkSession> {
     await Promise.resolve();
-    const gen = this.currentGeneration();
+    const gen = this.generation;
     const signal = this.stopAbort.signal;
     const existingLive = this.live.get(nodeId);
     const floor = existingLive ? PEER_TRANSPORT_RANK[existingLive.transport] : 0;
-
-    const stopped = () => this.stopped || gen !== this.generation;
-    const throwIfStopped = (err?: unknown) => {
-      if (!stopped()) return;
-      throw err instanceof NodeUnreachableError
-        ? err
-        : new NodeUnreachableError(nodeId, 'peer manager stopped');
-    };
-
+    const skipDcFirst = !existingLive && this.lostDirect.has(nodeId);
     let dcError: unknown = null;
-    const skipForegroundDc = !existingLive && this.lostDirect.has(nodeId);
-    if (PEER_TRANSPORT_RANK.dc > floor && this.shouldTryDc(nodeId) && !skipForegroundDc) {
+    const above = (kind: PeerTransportKind) => PEER_TRANSPORT_RANK[kind] > floor;
+    const tryDc = async (): Promise<LinkSession | null> => {
+      if (!above('dc') || !this.shouldTryDc(nodeId)) return null;
       try {
-        const dc = await this.dialDc(nodeId, gen, signal);
-        if (dc) return dc;
+        return await this.dialDc(nodeId, gen, signal);
       } catch (err) {
         dcError = err;
-        throwIfStopped(err);
+        this.throwIfStopped(nodeId, gen, err);
+        return null;
       }
+    };
+    const liveOf = async () => this.live.get(nodeId)?.session ?? null;
+    const attempts: Array<{
+      run: () => Promise<LinkSession | null>;
+      fallback?: 'ws-secure';
+      skipStop?: boolean;
+    }> = [];
+    if (!skipDcFirst) attempts.push({ run: tryDc });
+    if (above('ws-secure')) {
+      attempts.push({
+        run: () => this.dialWsSecure(nodeId, gen, signal),
+        fallback: 'ws-secure',
+      });
     }
-
-    if (PEER_TRANSPORT_RANK['ws-secure'] > floor) {
-      if (dcError) {
+    attempts.push({ run: liveOf });
+    if (skipDcFirst) {
+      attempts.push({ run: tryDc, skipStop: true });
+      attempts.push({ run: liveOf });
+    }
+    for (const step of attempts) {
+      if (step.fallback && dcError) {
         rtcLog('dial failed', {
           peer: nodeId,
           reason: dcError instanceof Error ? dcError.message : String(dcError),
-          fallback: 'ws-secure',
+          fallback: step.fallback,
         });
       }
-      const ws = await this.dialWsSecure(nodeId, gen, signal);
-      if (ws) return ws;
-      throwIfStopped();
+      const got = await step.run();
+      if (got) return got;
+      if (!step.skipStop) this.throwIfStopped(nodeId, gen);
     }
-
-    const already = this.live.get(nodeId);
-    if (already) return already.session;
-    throwIfStopped();
-
-    if (skipForegroundDc && PEER_TRANSPORT_RANK.dc > floor && this.shouldTryDc(nodeId)) {
-      try {
-        const dc = await this.dialDc(nodeId, gen, signal);
-        if (dc) return dc;
-      } catch (err) {
-        dcError = err;
-        throwIfStopped(err);
-      }
-      const afterDc = this.live.get(nodeId);
-      if (afterDc) return afterDc.session;
-      throwIfStopped();
-    }
-
-    if (dcError != null || (PEER_TRANSPORT_RANK.dc > floor && this.shouldTryDc(nodeId))) {
+    if (dcError != null || (above('dc') && this.shouldTryDc(nodeId))) {
       rtcLog('dial failed', {
         peer: nodeId,
         reason:
@@ -1304,7 +1294,6 @@ export class PeerManager {
         fallback: 'relay',
       });
     }
-
     try {
       const stream = await this.uplink.openRelay(nodeId);
       const result = await handshakeRelay({
@@ -1324,9 +1313,7 @@ export class PeerManager {
         this.identity.nodeId,
         gen
       );
-      if (!kept) {
-        throw new NodeUnreachableError(nodeId, 'simultaneous-dial');
-      }
+      if (!kept) throw new NodeUnreachableError(nodeId, 'simultaneous-dial');
       this.rememberKeys(result.peerNodeId, result.sendKey, result.recvKey);
       return kept;
     } catch (err) {
@@ -1344,35 +1331,25 @@ export class PeerManager {
       try {
         const session = await abortable(Promise.resolve(this.linkFactory(nodeId, signal)), signal);
         if (session) {
-          if (this.stopped || gen !== this.generation) {
-            try {
-              session.close('stopped');
-            } catch {
-              // ignore
-            }
+          if (this.stale(gen)) {
+            quiet(() => session.close('stopped'));
             throw new NodeUnreachableError(nodeId, 'peer manager stopped');
           }
           const kept = this.track(session, nodeId, 'ws-secure', this.identity.nodeId, gen);
           if (kept) return kept;
         }
       } catch (err) {
-        if (this.stopped || gen !== this.generation) {
-          throw err instanceof NodeUnreachableError
-            ? err
-            : new NodeUnreachableError(nodeId, 'peer manager stopped');
-        }
+        this.throwIfStopped(nodeId, gen, err);
       }
     }
     const cached = this.userStore.listPeers().find((row) => row.nodeId === nodeId);
     const endpoints = cached ? parseEndpoints(cached.endpointsJson, this.server?.port) : [];
     for (const url of endpoints) {
-      if (this.stopped || gen !== this.generation) {
-        throw new NodeUnreachableError(nodeId, 'peer manager stopped');
-      }
+      this.throwIfStopped(nodeId, gen);
       try {
         return await this.dialDirect(url, nodeId, gen, signal);
       } catch (err) {
-        if (this.stopped || gen !== this.generation) throw err;
+        if (this.stale(gen)) throw err;
       }
     }
     return null;
@@ -1386,13 +1363,11 @@ export class PeerManager {
   ): Promise<LinkSession> {
     const ws = await abortable(Promise.resolve(this.wsFactory(url)), signal);
     await waitSocketOpen(ws, this.connectTimeoutMs, signal);
-    if (this.stopped || gen !== this.generation) {
-      try {
+    if (this.stale(gen)) {
+      quiet(() => {
         if (isServerSocketAdapter(ws)) ws.close(1000, 'stopped');
         else (ws as WebSocket).close(1000, 'stopped');
-      } catch {
-        // ignore
-      }
+      });
       throw new Error('stopped');
     }
     const result = await handshakeWsDirect({
@@ -1405,7 +1380,7 @@ export class PeerManager {
       result.session.close('peer-id-mismatch');
       throw new Error('peer-id-mismatch');
     }
-    if (this.stopped || gen !== this.generation) {
+    if (this.stale(gen)) {
       result.session.close('stopped');
       throw new Error('stopped');
     }
@@ -1422,7 +1397,7 @@ export class PeerManager {
   }
 
   private async acceptDirect(socket: ServerSocketAdapter): Promise<void> {
-    const gen = this.currentGeneration();
+    const gen = this.generation;
     try {
       const result = await handshakeWsDirect({
         socket,
@@ -1430,23 +1405,19 @@ export class PeerManager {
         identity: this.identity,
         userStore: this.userStore,
       });
-      if (this.stopped || gen !== this.generation) {
-        result.session.close('stopped');
+      if (this.stale(gen)) {
+        quiet(() => result.session.close('stopped'));
         return;
       }
       this.track(result.session, result.peerNodeId, 'ws-secure', result.peerNodeId, gen);
       this.rememberKeys(result.peerNodeId, result.sendKey, result.recvKey);
     } catch {
-      try {
-        socket.close(1000, 'handshake-failed');
-      } catch {
-        // already closed
-      }
+      quiet(() => socket.close(1000, 'handshake-failed'));
     }
   }
 
   private async acceptRelay(stream: LinkStream, from: string): Promise<void> {
-    const gen = this.currentGeneration();
+    const gen = this.generation;
     try {
       const result = await handshakeRelay({
         stream,
@@ -1454,23 +1425,15 @@ export class PeerManager {
         identity: this.identity,
         userStore: this.userStore,
       });
-      if (this.stopped || gen !== this.generation) {
-        result.session.close('stopped');
+      if (this.stale(gen)) {
+        quiet(() => result.session.close('stopped'));
         return;
       }
       this.track(result.session, result.peerNodeId, 'relay', from || result.peerNodeId, gen);
       this.rememberKeys(result.peerNodeId, result.sendKey, result.recvKey);
     } catch {
-      try {
-        stream.reset('handshake-failed');
-      } catch {
-        // already closed
-      }
+      quiet(() => stream.reset('handshake-failed'));
     }
-  }
-
-  private preferredInitiator(peerNodeId: string): string {
-    return winningDialInitiator(this.identity.nodeId, peerNodeId);
   }
 
   private track(
@@ -1481,42 +1444,20 @@ export class PeerManager {
     gen: number,
     quiesceCapable = false
   ): LinkSession | null {
-    if (this.stopped || gen !== this.generation) {
-      try {
-        session.close('stale');
-      } catch {
-        // already closed
-      }
-      return null;
-    }
-    if (!this.isTrusted(peerNodeId)) {
-      try {
-        session.close('not-trusted');
-      } catch {
-        // already closed
-      }
-      return null;
-    }
+    const reject = (reason: string, keep: LinkSession | null = null) => {
+      quiet(() => session.close(reason));
+      return keep;
+    };
+    if (this.stale(gen)) return reject('stale');
+    if (!this.isTrusted(peerNodeId)) return reject('not-trusted');
     const prev = this.live.get(peerNodeId);
     if (prev && prev.session !== session) {
       const rank = comparePeerTransport(transport, prev.transport);
-      if (rank < 0) {
-        try {
-          session.close('lower-priority');
-        } catch {
-          // already closed
-        }
-        return prev.session;
-      }
+      if (rank < 0) return reject('lower-priority', prev.session);
       if (rank === 0) {
-        const winner = this.preferredInitiator(peerNodeId);
+        const winner = winningDialInitiator(this.identity.nodeId, peerNodeId);
         if (initiatedBy !== winner && prev.initiatedBy === winner) {
-          try {
-            session.close('simultaneous-dial');
-          } catch {
-            // already closed
-          }
-          return prev.session;
+          return reject('simultaneous-dial', prev.session);
         }
       }
       if (!prev.quiesceCapable) {
@@ -1526,6 +1467,17 @@ export class PeerManager {
       }
       this.retirePeer(prev, 'replaced');
     }
+    return this.installLive(session, peerNodeId, transport, initiatedBy, gen, quiesceCapable);
+  }
+
+  private installLive(
+    session: LinkSession,
+    peerNodeId: string,
+    transport: PeerTransportKind,
+    initiatedBy: string,
+    gen: number,
+    quiesceCapable: boolean
+  ): LinkSession {
     const live: LivePeer = {
       session,
       peerNodeId,
@@ -1571,12 +1523,8 @@ export class PeerManager {
     const { session, peerNodeId } = live;
     const origOpen = session.openStream.bind(session);
     session.openStream = async (openPayload: Uint8Array) => {
-      if (live.finishRetired) {
-        throw new Error('peer link replaced');
-      }
-      if (live.streams >= this.maxConcurrentStreams) {
-        throw new Error('too-many-streams');
-      }
+      if (live.finishRetired) throw new Error('peer link replaced');
+      if (live.streams >= this.maxConcurrentStreams) throw new Error('too-many-streams');
       const stream = await origOpen(openPayload);
       this.onLocalStream(live, stream);
       return stream;
@@ -1669,66 +1617,45 @@ export class PeerManager {
   private handlePeerCtl(live: LivePeer, bytes: Uint8Array): void {
     const msg = parseOpenPayload(bytes);
     if (!msg || typeof msg.t !== 'string') return;
-    switch (msg.t) {
-      case 'ping':
-        this.sendPeerCtl(live, { t: 'pong' });
-        return;
-      case 'pong':
-        live.missedPongs = 0;
-        return;
-      case 'link.hello': {
-        const caps = Array.isArray(msg.caps) ? msg.caps : [];
-        if (caps.includes('quiesce')) this.markQuiesceCapable(live);
-        if (!live.helloReplied) {
-          live.helloReplied = true;
-          this.sendLinkHello(live);
-        }
-        return;
+    const t = msg.t;
+    const asyncCtl = {
+      'node.status': () => this.applyPeerStatus(live, msg),
+      'key.log.req': () => this.serveKeyLog(live, msg),
+      'key.log.res': () => this.applyKeyLogRes(msg),
+    } as const;
+    const work = asyncCtl[t as keyof typeof asyncCtl];
+    if (work) this.runCtlAsync(t, live.peerNodeId, work);
+    else if (t === 'ping') this.sendPeerCtl(live, { t: 'pong' });
+    else if (t === 'pong') live.missedPongs = 0;
+    else if (t === 'link.hello') {
+      if ((Array.isArray(msg.caps) ? msg.caps : []).includes('quiesce')) {
+        this.markQuiesceCapable(live);
       }
-      case 'link.quiesce.probe':
-        this.markQuiesceCapable(live);
-        this.sendPeerCtl(live, { t: 'link.quiesce.probe.ack' });
-        return;
-      case 'link.quiesce.probe.ack':
-        this.markQuiesceCapable(live);
-        return;
-      case 'link.quiesce':
+      if (!live.helloReplied) {
+        live.helloReplied = true;
+        this.sendLinkHello(live);
+      }
+    } else if (t === 'link.quiesce.probe') {
+      this.markQuiesceCapable(live);
+      this.sendPeerCtl(live, { t: 'link.quiesce.probe.ack' });
+    } else if (t === 'link.quiesce.probe.ack') this.markQuiesceCapable(live);
+    else if (t === 'link.quiesce' || t === 'link.quiesce.ack') {
+      if (t === 'link.quiesce') {
         live.gotPeerQuiesce = true;
-        this.markQuiesceCapable(live);
         this.sendPeerCtl(live, { t: 'link.quiesce.ack' });
-        if (live.retiring) this.maybeFinishRetire(live);
-        return;
-      case 'link.quiesce.ack':
-        live.gotQuiesceAck = true;
-        this.markQuiesceCapable(live);
-        if (live.retiring) this.maybeFinishRetire(live);
-        return;
-      case 'node.status':
-        void this.applyPeerStatus(live, msg);
-        return;
-      case 'key.log.req':
-        void this.serveKeyLog(live, msg);
-        return;
-      case 'key.log.res':
-        void this.applyKeyLogRes(msg);
-        return;
-      case 'rtc.signal': {
-        const signal: RtcSignalMessage = {
-          rtcSession: typeof msg.rtcSession === 'string' ? msg.rtcSession : '',
-          from: msg.from === 'browser' ? 'browser' : 'node',
-          to: typeof msg.to === 'string' ? msg.to : '',
-          sdp: typeof msg.sdp === 'string' ? msg.sdp : null,
-          candidate: typeof msg.candidate === 'string' ? msg.candidate : null,
-        };
-        if (signal.from === 'browser') {
-          this.onBrowserSignal?.(signal, live.peerNodeId);
-          return;
-        }
-        this.receiveRtcSignal(live.peerNodeId, signal);
-        return;
-      }
-      default:
-        return;
+      } else live.gotQuiesceAck = true;
+      this.markQuiesceCapable(live);
+      if (live.retiring) this.maybeFinishRetire(live);
+    } else if (t === 'rtc.signal') {
+      const signal: RtcSignalMessage = {
+        rtcSession: typeof msg.rtcSession === 'string' ? msg.rtcSession : '',
+        from: msg.from === 'browser' ? 'browser' : 'node',
+        to: typeof msg.to === 'string' ? msg.to : '',
+        sdp: typeof msg.sdp === 'string' ? msg.sdp : null,
+        candidate: typeof msg.candidate === 'string' ? msg.candidate : null,
+      };
+      if (signal.from === 'browser') this.onBrowserSignal?.(signal, live.peerNodeId);
+      else this.receiveRtcSignal(live.peerNodeId, signal);
     }
   }
 
@@ -1766,30 +1693,26 @@ export class PeerManager {
 
   private async serveKeyLog(live: LivePeer, msg: Record<string, unknown>): Promise<void> {
     if (!this.keyLogApplier?.list) return;
-    try {
-      const fromSeq = parseSeq(msg.from_seq, 'from_seq');
-      const requested = typeof msg.limit === 'number' ? msg.limit : 256;
-      const limit = Math.min(256, Math.max(1, requested));
-      const fetched = await this.keyLogApplier.list(
-        this.uplink.userId,
-        fromSeq,
-        undefined,
-        limit + 1
-      );
-      const hasMore = fetched.length > limit;
-      const records = hasMore ? fetched.slice(0, limit) : fetched;
-      this.sendPeerCtl(live, {
-        t: 'key.log.res',
-        records: records.map((row) => ({
-          seq: Number(row.seq),
-          bytes: encodeBase64url(row.bytes),
-          sig: encodeBase64url(row.sig),
-        })),
-        has_more: hasMore,
-      });
-    } catch {
-      // ignore
-    }
+    const fromSeq = parseSeq(msg.from_seq, 'from_seq');
+    const requested = typeof msg.limit === 'number' ? msg.limit : 256;
+    const limit = Math.min(256, Math.max(1, requested));
+    const fetched = await this.keyLogApplier.list(
+      this.uplink.userId,
+      fromSeq,
+      undefined,
+      limit + 1
+    );
+    const hasMore = fetched.length > limit;
+    const records = hasMore ? fetched.slice(0, limit) : fetched;
+    this.sendPeerCtl(live, {
+      t: 'key.log.res',
+      records: records.map((row) => ({
+        seq: Number(row.seq),
+        bytes: encodeBase64url(row.bytes),
+        sig: encodeBase64url(row.sig),
+      })),
+      has_more: hasMore,
+    });
   }
 
   private async applyKeyLogRes(msg: Record<string, unknown>): Promise<void> {
@@ -1946,11 +1869,7 @@ export class PeerManager {
       this.parked.delete(peerNodeId);
       existing.timer?.clear();
       this.parkedSessions.delete(existing.session);
-      try {
-        existing.session.close('replaced-park');
-      } catch {
-        // already closed
-      }
+      quiet(() => existing.session.close('replaced-park'));
     }
     this.armParkedDrain(session);
     this.parkedSessions.add(session);
@@ -1982,11 +1901,7 @@ export class PeerManager {
   private armParkedDrain(session: LinkSession): void {
     session.onStream((stream) => {
       if (!this.parkedSessions.has(session)) return;
-      try {
-        stream.reset('parked');
-      } catch {
-        // already closed
-      }
+      quiet(() => stream.reset('parked'));
     });
     session.ctl.onMessage(() => {
       // drain ctl while parked so the inbox cannot grow
@@ -1999,11 +1914,7 @@ export class PeerManager {
     this.parked.delete(nodeId);
     parked.timer?.clear();
     this.parkedSessions.delete(parked.session);
-    try {
-      parked.session.close(reason);
-    } catch {
-      // already closed
-    }
+    quiet(() => parked.session.close(reason));
   }
 
   private activateParked(nodeId: string): void {
@@ -2054,26 +1965,20 @@ export class PeerManager {
     if (live.streams > 0) return;
     const now = this.scheduler.now();
     const elapsed = now - live.retiredAt;
-    if (live.gotQuiesceAck && live.gotPeerQuiesce) {
-      this.finishRetire(live, reason);
-      return;
-    }
-    if (elapsed >= PEER_RETIRE_MAX_MS) {
-      this.finishRetire(live, reason);
-      return;
-    }
     const quietFor = live.zeroStreamsSince > 0 ? now - live.zeroStreamsSince : 0;
-    if (elapsed >= PEER_RETIRE_MIN_MS && quietFor >= PEER_RETIRE_QUIET_MS) {
+    if (
+      (live.gotQuiesceAck && live.gotPeerQuiesce) ||
+      elapsed >= PEER_RETIRE_MAX_MS ||
+      (elapsed >= PEER_RETIRE_MIN_MS && quietFor >= PEER_RETIRE_QUIET_MS)
+    ) {
       this.finishRetire(live, reason);
     }
   }
 
   private sendPeerCtl(live: LivePeer, msg: Record<string, unknown>): void {
-    try {
+    quiet(() => {
       void Promise.resolve(live.session.ctl.send(encodeJsonBytes(msg))).catch(() => undefined);
-    } catch {
-      // link may already be closing
-    }
+    });
   }
 
   private sendLinkHello(live: LivePeer): void {
@@ -2101,11 +2006,7 @@ export class PeerManager {
 
   private finishRetire(live: LivePeer, reason = 'replaced'): void {
     if (live.finishRetired) {
-      try {
-        live.session.close(reason);
-      } catch {
-        // already closed
-      }
+      quiet(() => live.session.close(reason));
       return;
     }
     live.finishRetired = true;
@@ -2125,11 +2026,7 @@ export class PeerManager {
     this.clearIdle(live);
     live.pingTimer?.clear();
     live.pingTimer = null;
-    try {
-      live.session.close(reason);
-    } catch {
-      // already closed
-    }
+    quiet(() => live.session.close(reason));
   }
 
   private forceCloseRetiring(nodeId: string, reason: string): void {
@@ -2180,8 +2077,7 @@ function parseEndpoints(endpointsJson: string, fallbackPort?: number): string[] 
       return;
     }
     if (raw.includes('://')) return;
-    const host = raw.includes('/') ? raw : raw;
-    const withPath = host.includes('/peer') ? host : `${host}/peer`;
+    const withPath = raw.includes('/peer') ? raw : `${raw}/peer`;
     const url = withPath.startsWith('ws') ? withPath : `ws://${withPath}`;
     if (url.length > PEER_MAX_ENDPOINT_LENGTH) return;
     urls.push(url);
