@@ -122,7 +122,9 @@ interface TreeContextValue {
   dragDisabled: boolean;
   creatingFolder: boolean;
   renamingFolderId: string | null;
-  props: DeviceFolderTreeProps;
+  renderNode: DeviceFolderTreeProps['renderNode'];
+  nodeDraggable: DeviceFolderTreeProps['nodeDraggable'];
+  nodeLabel: DeviceFolderTreeProps['nodeLabel'];
   actions: {
     toggle: (folderId: string, expanded: boolean) => void;
     startRename: (folderId: string) => void;
@@ -151,23 +153,16 @@ function NodeItem({
   containerId: string;
   folderId: string | null;
 }) {
-  const { props, dragDisabled, layout } = useTree();
+  const { renderNode, nodeDraggable, dragDisabled, layout } = useTree();
   const implicit = !layout.placements.some((placement) => placement.nodeId === nodeId);
-  if (props.nodeDraggable && !props.nodeDraggable(nodeId, { folderId })) {
-    const content = props.renderNode(nodeId, {
-      folderId,
-      implicit,
-      dragDisabled,
-      dragControls: null,
-    });
+  if (nodeDraggable && !nodeDraggable(nodeId, { folderId })) {
+    const content = renderNode(nodeId, { folderId, implicit, dragDisabled, dragControls: null });
     if (content === null || content === undefined || content === false) return null;
     return <div data-testid={`device-folder-item-node:${nodeId}`}>{content}</div>;
   }
   return (
     <DeviceFolderNodeShell nodeId={nodeId} containerId={containerId} disabled={dragDisabled}>
-      {(dragControls) =>
-        props.renderNode(nodeId, { folderId, implicit, dragDisabled, dragControls })
-      }
+      {(dragControls) => renderNode(nodeId, { folderId, implicit, dragDisabled, dragControls })}
     </DeviceFolderNodeShell>
   );
 }
@@ -270,7 +265,7 @@ function FolderNode({ folder }: { folder: DeviceFolder }) {
  */
 function DragPreview({ activeId }: { activeId: string }) {
   const { t } = useTranslation();
-  const { foldersById, itemCounts, props } = useTree();
+  const { foldersById, itemCounts, nodeLabel } = useTree();
   const folderId = parseFolderElementId(activeId);
   const folder = folderId ? foldersById.get(folderId) : undefined;
   const nodeId = folderId === null ? parseNodeElementId(activeId) : null;
@@ -295,7 +290,7 @@ function DragPreview({ activeId }: { activeId: string }) {
           <span className="flex size-7 shrink-0 items-center justify-center rounded-md border border-border bg-muted text-muted-foreground">
             <Server className="size-4" />
           </span>
-          <span className="min-w-0 flex-1 truncate font-medium">{props.nodeLabel(nodeId)}</span>
+          <span className="min-w-0 flex-1 truncate font-medium">{nodeLabel(nodeId)}</span>
         </>
       ) : null}
     </div>
@@ -334,6 +329,9 @@ export function DeviceFolderTree(props: DeviceFolderTreeProps) {
   const {
     layout,
     implicitRootNodeIds,
+    renderNode,
+    nodeDraggable,
+    nodeLabel,
     expanded,
     onExpandedChange,
     onDrop,
@@ -448,7 +446,9 @@ export function DeviceFolderTree(props: DeviceFolderTreeProps) {
       dragDisabled: disabled,
       creatingFolder,
       renamingFolderId,
-      props,
+      renderNode,
+      nodeDraggable,
+      nodeLabel,
       actions,
     }),
     [
@@ -462,7 +462,9 @@ export function DeviceFolderTree(props: DeviceFolderTreeProps) {
       disabled,
       creatingFolder,
       renamingFolderId,
-      props,
+      renderNode,
+      nodeDraggable,
+      nodeLabel,
       actions,
     ]
   );

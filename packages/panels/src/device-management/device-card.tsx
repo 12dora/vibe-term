@@ -42,7 +42,7 @@ import {
   WifiOff,
   Zap,
 } from 'lucide-react';
-import { type CSSProperties, type ReactNode, useState } from 'react';
+import { type CSSProperties, type ReactNode, memo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Link } from 'react-router';
 import { toast } from 'sonner';
@@ -246,7 +246,7 @@ function SidebarVisibilityToggle({
   );
 }
 
-export function DeviceCard({
+export const DeviceCard = memo(function DeviceCard({
   device,
   onEdit,
   onDelete,
@@ -414,4 +414,4 @@ export function DeviceCard({
       )}
     </>
   );
-}
+});

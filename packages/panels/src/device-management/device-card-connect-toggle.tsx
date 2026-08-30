@@ -10,7 +10,11 @@ import { Button } from '@tmex/ui/button';
 import { Loader2 } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import type { DeviceConnectionAdapter, DeviceConnectionStatus } from '../device-connection';
+import {
+  type DeviceConnectionAdapter,
+  type DeviceConnectionStatus,
+  useDeviceConnectionStatus,
+} from '../device-connection';
 import { deviceStatusDotClass } from '../device-tree/device-connection-control';
 
 type DeviceConnectAction = 'connect' | 'disconnect' | 'pending';
@@ -58,11 +62,8 @@ export function DeviceCardConnectToggle({
   useEffect(() => {
     if (!offline) setAttemptedWhileOffline(false);
   }, [offline]);
-  const status = displayedConnectionStatus(
-    connection.status(deviceId),
-    offline,
-    attemptedWhileOffline
-  );
+  const liveStatus = useDeviceConnectionStatus(connection, deviceId) ?? 'disconnected';
+  const status = displayedConnectionStatus(liveStatus, offline, attemptedWhileOffline);
   const action = deviceConnectAction(status);
   const label =
     action === 'disconnect'

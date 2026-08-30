@@ -70,6 +70,7 @@ function stubConnection(status: DeviceConnectionStatus): DeviceConnectionAdapter
     isIntentionallyDisconnected: () => status === 'disconnected',
     connect: () => undefined,
     disconnect: () => undefined,
+    subscribe: () => () => undefined,
   };
 }
 
@@ -113,6 +114,11 @@ function renderCard(options: {
   runtime.dispose();
   return html;
 }
+
+/** 记忆化是「无关设备的更新不重渲染整页卡片」的前提，别被顺手拆掉 */
+test('卡片是 memo 组件', () => {
+  expect((DeviceCard as unknown as { $$typeof: symbol }).$$typeof).toBe(Symbol.for('react.memo'));
+});
 
 function occurrences(html: string, text: string): number {
   return html.split(text).length - 1;

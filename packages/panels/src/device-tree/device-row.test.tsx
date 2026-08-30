@@ -12,6 +12,7 @@ import i18next from 'i18next';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { I18nextProvider } from 'react-i18next';
 import { MemoryRouter } from 'react-router';
+import type { DeviceConnectionAdapter, DeviceConnectionStatus } from '../device-connection';
 import { DeviceRow } from './device-row';
 import { SortableVerticalList } from './device-tree-dnd';
 
@@ -38,7 +39,26 @@ const DEVICE: Device = {
 
 let storageSeq = 0;
 
-function renderRow(options: { isExpanded: boolean; isSelected?: boolean }): string {
+/** 只认「本设备」的连接适配器：行必须按设备读它，不能拿整表 */
+function stubConnection(
+  statusByDevice: Record<string, DeviceConnectionStatus>,
+  intentionallyDisconnected: readonly string[] = []
+): DeviceConnectionAdapter {
+  return {
+    status: (deviceId) => statusByDevice[deviceId] ?? 'disconnected',
+    isConnected: (deviceId) => statusByDevice[deviceId] === 'connected',
+    isIntentionallyDisconnected: (deviceId) => intentionallyDisconnected.includes(deviceId),
+    connect: () => undefined,
+    disconnect: () => undefined,
+    subscribe: () => () => undefined,
+  };
+}
+
+function renderRow(options: {
+  isExpanded: boolean;
+  isSelected?: boolean;
+  connection?: DeviceConnectionAdapter;
+}): string {
   const runtime = createAppRuntime({
     nodeId: 'self',
     storagePrefix: `device-row-test-${storageSeq++}:`,
@@ -63,6 +83,7 @@ function renderRow(options: { isExpanded: boolean; isSelected?: boolean }): stri
                 onWindowClick={() => undefined}
                 onWatchPane={() => undefined}
                 nav={{ navigateToPane: () => undefined }}
+                connection={options.connection}
               />
             </SortableVerticalList>
           </RuntimeProvider>
@@ -101,6 +122,25 @@ describe('DeviceRow 子树的展开态', () => {
 
   test('子树不再叠一层入场动画：tmex-reveal 由 collapsible 的高度过渡取代', () => {
     expect(renderRow({ isExpanded: true })).not.toContain('tmex-reveal');
+  });
+
+  test('连接态按设备从适配器读取，不看别台设备', () => {
+    const html = renderRow({
+      isExpanded: false,
+      connection: stubConnection({ [DEVICE.id]: 'reconnecting', 'dev-other': 'connected' }),
+    });
+
+    expect(html).toContain(`data-testid="device-online-status-${DEVICE.id}"`);
+    expect(html).toContain('data-status="reconnecting"');
+  });
+
+  test('主动断开的设备即使展开也不渲染子树', () => {
+    const html = renderRow({
+      isExpanded: true,
+      connection: stubConnection({ [DEVICE.id]: 'disconnected' }, [DEVICE.id]),
+    });
+
+    expect(html).not.toContain(`data-testid="device-tree-${DEVICE.id}"`);
   });
 
   test('选中指示条常驻，只切透明度，未选中时也在 DOM 里', () => {

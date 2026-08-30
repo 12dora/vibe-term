@@ -19,7 +19,7 @@ import { CSS } from '@dnd-kit/utilities';
 import type { Device } from '@tmex/shared';
 import { cn } from '@tmex/ui';
 import { GripVertical } from 'lucide-react';
-import type { CSSProperties } from 'react';
+import { type CSSProperties, memo, useMemo } from 'react';
 import { useTranslation } from 'react-i18next';
 import { DeviceCardHost, type DeviceCardHostProps } from './device-card-host';
 import type { useDeviceManagementState } from './use-device-management-state';
@@ -29,7 +29,8 @@ const HANDLE_CLASS =
 
 type CardProps = Omit<DeviceCardHostProps, 'device' | 'dragHandle' | 'style' | 'className'>;
 
-function SortableDeviceCard({
+// 记忆化 + 上面稳定下来的 card：一台设备的状态变化不再重渲染整页卡片
+const SortableDeviceCard = memo(function SortableDeviceCard({
   device,
   disabled,
   style,
@@ -83,7 +84,7 @@ function SortableDeviceCard({
       <DeviceCardHost device={device} dragHandle={dragHandle} {...card} />
     </div>
   );
-}
+});
 
 export function DeviceGrid({
   state,
@@ -98,6 +99,12 @@ export function DeviceGrid({
     useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates })
   );
   const { devices, deviceIds, reorderDisabled } = state;
+  // 宿主每次渲染都新建 card 字面量；按字段锁住引用，卡片的 memo 才拦得住
+  const { queryKey, nodeContext, connection, offline } = card;
+  const cardProps = useMemo<CardProps>(
+    () => ({ queryKey, nodeContext, connection, offline }),
+    [queryKey, nodeContext, connection, offline]
+  );
 
   return (
     <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={state.onDragEnd}>
@@ -117,7 +124,7 @@ export function DeviceGrid({
               device={device}
               disabled={reorderDisabled}
               style={state.staggerStyle(device.id, index)}
-              card={card}
+              card={cardProps}
             />
           ))}
         </div>

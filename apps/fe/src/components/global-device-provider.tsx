@@ -9,6 +9,7 @@ import {
   useContext,
   useEffect,
   useMemo,
+  useRef,
   useSyncExternalStore,
 } from 'react';
 import { useTranslation } from 'react-i18next';
@@ -16,8 +17,6 @@ import { matchPath, useLocation } from 'react-router';
 import {
   type DeviceRuntimeSlices,
   createDeviceConnectionSnapshot,
-  deriveDeviceConnectionStatus,
-  isDeviceConnected,
   runPendingSettlement,
   shouldEnsureDeviceSubscription,
   shouldEnsureRouteDeviceSubscription,
@@ -31,6 +30,7 @@ import {
   pendingConnectionRequests,
   reconcileDeviceSubscriptions,
 } from './device-intent-store';
+import { DeviceStatusStore } from './device-status-store';
 
 export type { DeviceIdStorage } from './device-connection-persistence';
 export {
@@ -234,24 +234,41 @@ function useIntentActions(
   return { connect, disconnect };
 }
 
-function useDeviceConnectionAdapter(
+/**
+ * 连接态的读取源。快照在渲染期写入（读取立刻可见），变更通知留到提交后按设备派发，
+ * 适配器与 context 值因此身份恒定：一台设备的状态变化不再让所有行 / 卡片重渲染。
+ */
+function useDeviceStatusStore(
   intentionallyDisconnected: ReadonlySet<string>,
   slices: DeviceRuntimeSlices,
-  pending: PendingConnectionSnapshot,
+  pending: PendingConnectionSnapshot
+): DeviceStatusStore {
+  const snapshot = createDeviceConnectionSnapshot(intentionallyDisconnected, slices, pending);
+  const storeRef = useRef<DeviceStatusStore | null>(null);
+  if (storeRef.current === null) storeRef.current = new DeviceStatusStore(snapshot);
+  const store = storeRef.current;
+  store.setSnapshot(snapshot);
+  useEffect(store.notifyChanged);
+  return store;
+}
+
+function useDeviceConnectionAdapter(
+  store: DeviceStatusStore,
   intentActions: Pick<DeviceConnectionAdapter, 'connect' | 'disconnect'>
 ): DeviceConnectionAdapter {
   const { connect, disconnect } = intentActions;
 
-  return useMemo<DeviceConnectionAdapter>(() => {
-    const snapshot = createDeviceConnectionSnapshot(intentionallyDisconnected, slices, pending);
-    return {
-      isConnected: (deviceId) => isDeviceConnected(slices.deviceConnected, deviceId),
-      status: (deviceId) => deriveDeviceConnectionStatus(deviceId, snapshot),
-      isIntentionallyDisconnected: (deviceId) => intentionallyDisconnected.has(deviceId),
+  return useMemo<DeviceConnectionAdapter>(
+    () => ({
+      isConnected: store.isConnected,
+      status: store.status,
+      isIntentionallyDisconnected: store.isIntentionallyDisconnected,
+      subscribe: store.subscribe,
       connect,
       disconnect,
-    };
-  }, [intentionallyDisconnected, slices, pending, connect, disconnect]);
+    }),
+    [store, connect, disconnect]
+  );
 }
 
 /**
@@ -312,12 +329,8 @@ export function GlobalDeviceProvider({ children }: GlobalDeviceProviderProps) {
 
   usePendingSettlement(pendingStore, pending, intent.disconnected, slices);
   const intentActions = useIntentActions(intentStore, pendingStore, actions);
-  const connection = useDeviceConnectionAdapter(
-    intent.disconnected,
-    slices,
-    pending,
-    intentActions
-  );
+  const statusStore = useDeviceStatusStore(intent.disconnected, slices, pending);
+  const connection = useDeviceConnectionAdapter(statusStore, intentActions);
 
   const value = useMemo(
     () => ({ ensureDeviceSubscribed, connection }),

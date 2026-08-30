@@ -1,6 +1,10 @@
 import { cn } from '@tmex/ui';
 import { Collapsible, CollapsibleContent } from '@tmex/ui/collapsible';
 import { memo } from 'react';
+import {
+  useDeviceConnectionStatus,
+  useDeviceIntentionallyDisconnected,
+} from '../device-connection';
 import { DeviceRowHeader } from './device-row-header';
 import { useSortableRow } from './device-tree-dnd';
 import type { DeviceRowProps } from './device-tree-row-props';
@@ -17,9 +21,10 @@ export const DeviceRow = memo(function DeviceRow(props: DeviceRowProps) {
   // 只订阅本设备的切片：别的设备推快照/改连接态时这一行不会重渲染
   const windows = useDeviceWindows(deviceId);
   const isOnline = useDeviceOnline(deviceId);
+  const connectionStatus = useDeviceConnectionStatus(connection, deviceId);
+  const isIntentionallyDisconnected = useDeviceIntentionallyDisconnected(connection, deviceId);
 
-  const status = connection?.status(deviceId) ?? (isOnline ? 'connected' : 'disconnected');
-  const isIntentionallyDisconnected = connection?.isIntentionallyDisconnected(deviceId) ?? false;
+  const status = connectionStatus ?? (isOnline ? 'connected' : 'disconnected');
   const showTree = isExpanded && !isIntentionallyDisconnected;
 
   return (

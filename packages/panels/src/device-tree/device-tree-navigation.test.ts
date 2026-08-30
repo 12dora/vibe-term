@@ -301,6 +301,24 @@ describe('createPendingNavigationSlot', () => {
     expect(slot.get()).toBeNull();
   });
 
+  // 目标设备 id 只有靠这条回调才能跟上槽位，订阅方才敢只订那一台的快照
+  test('onChange reports every write, clear and ttl expiry', () => {
+    const { timers, fire } = fakeTimers();
+    const seen: Array<string | null> = [];
+    const slot = createPendingNavigationSlot({
+      timers,
+      onChange: (next) => seen.push(next?.deviceId ?? null),
+    });
+
+    slot.set(pending);
+    slot.set({ deviceId: 'dev-2', windowId: '@5', at: 1 });
+    fire(2);
+    slot.set(pending);
+    slot.clear();
+
+    expect(seen).toEqual(['dev-1', 'dev-2', null, 'dev-1', null]);
+  });
+
   test('dispose clears the timer so an unmounted tree never fires', () => {
     const { timers, scheduled } = fakeTimers();
     const slot = createPendingNavigationSlot({ timers });

@@ -12,7 +12,10 @@ import type { TerminalRef } from '@tmex/terminal-ui';
 import { resolveTerminalTheme } from '@tmex/theme';
 import { useCallback, useMemo, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
-import type { DeviceConnectionAdapter } from '../device-connection';
+import {
+  type DeviceConnectionAdapter,
+  useDeviceIntentionallyDisconnected,
+} from '../device-connection';
 import { CommandInputCollapse } from './command-input-collapse';
 import { EditorInputPanel } from './editor-input-panel';
 import { TerminalStage } from './terminal-stage';
@@ -85,8 +88,9 @@ export function DeviceConsole({
   const targets = useConsoleTargets({ deviceId, windowId, resolvedPaneId, devicesQueryKey });
   const { windows, selectedWindow, selectedPane, deviceConnected, isReconnecting } = targets;
 
-  const isIntentionallyDisconnected = Boolean(
-    deviceId && connection?.isIntentionallyDisconnected(deviceId)
+  const isIntentionallyDisconnected = useDeviceIntentionallyDisconnected(
+    connection,
+    deviceId ?? ''
   );
 
   const prepareResources = useCallback(

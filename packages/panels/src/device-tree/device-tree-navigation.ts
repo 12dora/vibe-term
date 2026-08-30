@@ -8,7 +8,7 @@ import {
 } from '@tmex/stores';
 import { useRuntime, useTmuxStore } from '@tmex/stores/react';
 import { useSidebar } from '@tmex/ui/sidebar';
-import { useCallback, useEffect, useMemo, useRef } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { matchPath, useLocation, useNavigate } from 'react-router';
 import type { DeviceTreeNavigation } from './agent-adapter';
 
@@ -141,6 +141,8 @@ export interface PendingNavigationTimers {
 export interface PendingNavigationSlotOptions {
   ttlMs?: number;
   timers?: PendingNavigationTimers;
+  /** 写入 / 清空 / 过期都会回调；订阅方据此只订目标设备那一份快照 */
+  onChange?: (pending: PendingNavigation | null) => void;
 }
 
 /**
@@ -174,20 +176,24 @@ export function createPendingNavigationSlot(
     timers.clearTimer(handle);
     handle = null;
   };
+  const commit = (next: PendingNavigation | null) => {
+    pending = next;
+    options.onChange?.(next);
+  };
 
   return {
     get: () => pending,
     set: (next) => {
       cancelTimer();
-      pending = next;
+      commit(next);
       handle = timers.setTimer(() => {
         handle = null;
-        pending = null;
+        commit(null);
       }, ttlMs);
     },
     clear: () => {
       cancelTimer();
-      pending = null;
+      commit(null);
     },
     dispose: () => {
       cancelTimer();
@@ -196,14 +202,23 @@ export function createPendingNavigationSlot(
   };
 }
 
-function usePendingNavigationSlot(): PendingNavigationSlot {
+/** 除槽位本身外还给出「目标设备 id」这一位状态，供调用方按设备订阅快照 */
+function usePendingNavigationSlot(): {
+  slot: PendingNavigationSlot;
+  targetDeviceId: string | null;
+} {
+  const [targetDeviceId, setTargetDeviceId] = useState<string | null>(null);
   const slotRef = useRef<PendingNavigationSlot | null>(null);
-  if (slotRef.current === null) slotRef.current = createPendingNavigationSlot();
+  if (slotRef.current === null) {
+    slotRef.current = createPendingNavigationSlot({
+      onChange: (pending) => setTargetDeviceId(pending?.deviceId ?? null),
+    });
+  }
   const slot = slotRef.current;
 
   useEffect(() => () => slot.dispose(), [slot]);
 
-  return slot;
+  return { slot, targetDeviceId };
 }
 
 export function useDeviceTreeSelection(): DeviceTreeSelection {
@@ -232,11 +247,14 @@ export function useDeviceTreeNavigationApi(): DeviceTreeNavigationApi {
   const { isMobile, setOpenMobile } = useSidebar();
   const { host, nodeId } = useRuntime();
   const selectWindow = useTmuxStore((state) => state.selectWindow);
-  const snapshots = useTmuxStore((state) => state.snapshots);
   const { pathname } = useLocation();
   const patterns = useMemo(() => deviceTreeRoutePatterns(host), [host]);
 
-  const pendingNavigation = usePendingNavigationSlot();
+  const { slot: pendingNavigation, targetDeviceId } = usePendingNavigationSlot();
+  // 只订 pending 目标那一台的窗口列表：别的设备推快照不会重跑下面的落定 effect
+  const targetWindows = useTmuxStore((state) =>
+    targetDeviceId ? state.snapshots[targetDeviceId]?.session?.windows : undefined
+  );
 
   // 路由离开目标设备即作废 pending：普通 NavLink 跳转不会经过 navigateToPane，
   // 否则 TTL 内到货的快照会把用户从新页面拽回旧 pane
@@ -275,7 +293,7 @@ export function useDeviceTreeNavigationApi(): DeviceTreeNavigationApi {
   useEffect(() => {
     const outcome = resolvePendingNavigation(
       pendingNavigation.get(),
-      (deviceId) => snapshots[deviceId]?.session?.windows,
+      (deviceId) => (deviceId === targetDeviceId ? targetWindows : undefined),
       Date.now()
     );
     if (outcome.status === 'expired') {
@@ -285,7 +303,7 @@ export function useDeviceTreeNavigationApi(): DeviceTreeNavigationApi {
     if (outcome.status !== 'ready') return;
     pendingNavigation.clear();
     navigateToPane(outcome.deviceId, outcome.windowId, outcome.paneId);
-  }, [snapshots, navigateToPane, pendingNavigation]);
+  }, [targetDeviceId, targetWindows, navigateToPane, pendingNavigation]);
 
   const navigateToWindow = useCallback(
     (deviceId: string, windowId: string, panes: TmuxPane[]) => {
