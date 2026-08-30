@@ -15,7 +15,7 @@ import {
   getWatchRuleById,
   getWatchRuleState,
 } from '../db/watch';
-import { WatchService, type WatchRuntimeLike, effectiveIntervalSeconds } from './service';
+import { type WatchRuntimeLike, WatchService, effectiveIntervalSeconds } from './service';
 
 const TEST_DEVICE_ID = 'watch-service-test-device';
 
@@ -72,7 +72,10 @@ afterAll(() => {
 
 interface Harness {
   service: WatchService;
-  notifications: Array<{ eventType: EventType; event: Omit<WebhookEvent, 'eventType' | 'timestamp'> }>;
+  notifications: Array<{
+    eventType: EventType;
+    event: Omit<WebhookEvent, 'eventType' | 'timestamp'>;
+  }>;
   broadcasts: Array<{ ruleId: string; eventType: number; payload: unknown }>;
   acquires: string[];
   releases: string[];
@@ -83,7 +86,7 @@ interface Harness {
   setCaptureError: (error: Error | null) => void;
   setNow: (date: Date) => void;
   advanceMinutes: (minutes: number) => void;
-  timers: Array<{ ms: number; cleared: boolean }>;
+  timers: Array<{ ms: number; cleared: boolean; fire: () => void }>;
 }
 
 function createHarness(options: { llmBaseUrl?: string; errorThreshold?: number } = {}): Harness {
@@ -138,8 +141,8 @@ function createHarness(options: { llmBaseUrl?: string; errorThreshold?: number }
       broadcasts.push({ ruleId, eventType, payload });
     },
     now: () => now,
-    scheduleInterval: (_fn, ms) => {
-      const entry = { ms, cleared: false };
+    scheduleInterval: (fn, ms) => {
+      const entry = { ms, cleared: false, fire: fn };
       timers.push(entry);
       return () => {
         entry.cleared = true;
@@ -247,6 +250,29 @@ describe('WatchService - 调度与设备连接分组', () => {
     updateWatchRule(rule.id, { enabled: true });
     await harness.service.refreshRule(rule.id);
     expect(harness.service.isRuleScheduled(rule.id)).toBe(true);
+
+    await harness.service.stop();
+  });
+
+  test('同 pane 100 条规则每个 polling tick 只 capture 一次', async () => {
+    const harness = createHarness();
+    const rules = Array.from({ length: 100 }, (_, i) =>
+      harness.makeRule({ pattern: `P${i}`, fireMode: 'repeat' })
+    );
+    harness.setScreen('quiet\n');
+    await harness.service.start();
+
+    expect(harness.timers.filter((t) => !t.cleared)).toHaveLength(1);
+    for (const rule of rules) {
+      expect(harness.service.isRuleScheduled(rule.id)).toBe(true);
+    }
+
+    await harness.service.tickPane(TEST_DEVICE_ID, '%1');
+    expect(harness.captureCalls).toEqual(['%1']);
+    expect(rules.every((rule) => harness.service.getSamples(rule.id).length === 1)).toBe(true);
+
+    await harness.service.tickPane(TEST_DEVICE_ID, '%1');
+    expect(harness.captureCalls).toEqual(['%1', '%1']);
 
     await harness.service.stop();
   });
@@ -407,7 +433,9 @@ describe('WatchService - LLM 介入', () => {
     await harness.service.tickRule(rule.id);
     expect(harness.notifications).toHaveLength(1);
     expect(harness.notifications[0].eventType).toBe('watch_triggered');
-    const message = String((harness.notifications[0].event.payload as Record<string, unknown>).message);
+    const message = String(
+      (harness.notifications[0].event.payload as Record<string, unknown>).message
+    );
     expect(message).not.toMatch(UNCONFIRMED_FRAGMENT);
 
     await harness.service.stop();
@@ -435,7 +463,9 @@ describe('WatchService - LLM 介入', () => {
     await harness.service.tickRule(rule.id);
     // fail-open：触发 + 标注未经确认 + 模型不可用告警
     const triggered = harness.notifications.filter((n) => n.eventType === 'watch_triggered');
-    const unavailable = harness.notifications.filter((n) => n.eventType === 'watch_model_unavailable');
+    const unavailable = harness.notifications.filter(
+      (n) => n.eventType === 'watch_model_unavailable'
+    );
     expect(triggered).toHaveLength(1);
     expect(unavailable).toHaveLength(1);
     expect(String((triggered[0].event.payload as Record<string, unknown>).message)).toMatch(

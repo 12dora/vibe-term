@@ -1,6 +1,6 @@
 import { hostname } from 'node:os';
 import type { Device, DeviceRuntimeStatus } from '@tmex/shared';
-import { asc, count, desc, eq, max } from 'drizzle-orm';
+import { asc, count, desc, eq, inArray, max } from 'drizzle-orm';
 import { getDb as getOrmDb } from './client';
 import { removeDeviceFolderPlacementsForDevice } from './device-folders';
 import { getGatewayKv, setGatewayKv } from './kv';
@@ -9,6 +9,67 @@ import { deviceRuntimeStatus, deviceTreeOrder, devices, siteSettings } from './s
 import type { DeviceTreeOrderRecord } from './types';
 
 export type { DeviceTreeOrderRecord };
+
+export type DeviceWithRuntime = Device & {
+  lastSeenAt: string | null;
+  lastError: string | null;
+  lastErrorType: string | null;
+  tmuxAvailable: boolean;
+};
+
+function defaultRuntimeStatus(deviceId: string): DeviceRuntimeStatus {
+  return {
+    deviceId,
+    lastSeenAt: null,
+    tmuxAvailable: false,
+    lastError: null,
+    lastErrorType: null,
+  };
+}
+
+function runtimeFromRow(
+  row: typeof deviceRuntimeStatus.$inferSelect | null | undefined,
+  deviceId: string
+): DeviceRuntimeStatus {
+  if (!row) {
+    return defaultRuntimeStatus(deviceId);
+  }
+  return {
+    deviceId: row.deviceId,
+    lastSeenAt: row.lastSeenAt,
+    tmuxAvailable: row.tmuxAvailable,
+    lastError: row.lastError,
+    lastErrorType: row.lastErrorType,
+  };
+}
+
+function defaultTreeOrder(deviceId: string): DeviceTreeOrderRecord {
+  return { deviceId, windows: [], panes: {} };
+}
+
+function treeOrderFromRow(
+  row: typeof deviceTreeOrder.$inferSelect | null | undefined,
+  deviceId: string
+): DeviceTreeOrderRecord {
+  if (!row) {
+    return defaultTreeOrder(deviceId);
+  }
+  return {
+    deviceId: row.deviceId,
+    windows: Array.isArray(row.windows) ? row.windows : [],
+    panes: row.panes && typeof row.panes === 'object' ? row.panes : {},
+  };
+}
+
+function attachRuntime(device: Device, status: DeviceRuntimeStatus): DeviceWithRuntime {
+  return {
+    ...device,
+    lastSeenAt: status.lastSeenAt,
+    lastError: status.lastError,
+    lastErrorType: status.lastErrorType,
+    tmuxAvailable: status.tmuxAvailable,
+  };
+}
 
 export const DEFAULT_LOCAL_DEVICE_SEED_KEY = 'default_local_device_seeded';
 
@@ -113,6 +174,22 @@ export function getAllDevices(): Device[] {
     .map(toDevice);
 }
 
+export function listDevicesWithRuntimeStatus(): DeviceWithRuntime[] {
+  const orm = getOrmDb();
+  return orm
+    .select({
+      device: devices,
+      status: deviceRuntimeStatus,
+    })
+    .from(devices)
+    .leftJoin(deviceRuntimeStatus, eq(deviceRuntimeStatus.deviceId, devices.id))
+    .orderBy(asc(devices.sortOrder), desc(devices.createdAt))
+    .all()
+    .map(({ device, status }) =>
+      attachRuntime(toDevice(device), runtimeFromRow(status, device.id))
+    );
+}
+
 export function reorderDevices(orderedIds: string[]): void {
   const orm = getOrmDb();
   const now = new Date().toISOString();
@@ -182,16 +259,27 @@ export function getDeviceTreeOrder(deviceId: string): DeviceTreeOrderRecord {
     .from(deviceTreeOrder)
     .where(eq(deviceTreeOrder.deviceId, deviceId))
     .get();
+  return treeOrderFromRow(row, deviceId);
+}
 
-  if (!row) {
-    return { deviceId, windows: [], panes: {} };
+export function getDeviceTreeOrders(deviceIds: string[]): Map<string, DeviceTreeOrderRecord> {
+  const result = new Map<string, DeviceTreeOrderRecord>();
+  for (const id of deviceIds) {
+    result.set(id, defaultTreeOrder(id));
   }
-
-  return {
-    deviceId: row.deviceId,
-    windows: Array.isArray(row.windows) ? row.windows : [],
-    panes: row.panes && typeof row.panes === 'object' ? row.panes : {},
-  };
+  if (deviceIds.length === 0) {
+    return result;
+  }
+  const orm = getOrmDb();
+  const rows = orm
+    .select()
+    .from(deviceTreeOrder)
+    .where(inArray(deviceTreeOrder.deviceId, deviceIds))
+    .all();
+  for (const row of rows) {
+    result.set(row.deviceId, treeOrderFromRow(row, row.deviceId));
+  }
+  return result;
 }
 
 export function setWindowOrder(deviceId: string, windowIds: string[]): void {
@@ -229,24 +317,7 @@ export function getDeviceRuntimeStatus(deviceId: string): DeviceRuntimeStatus {
     .from(deviceRuntimeStatus)
     .where(eq(deviceRuntimeStatus.deviceId, deviceId))
     .get();
-
-  if (!row) {
-    return {
-      deviceId,
-      lastSeenAt: null,
-      tmuxAvailable: false,
-      lastError: null,
-      lastErrorType: null,
-    };
-  }
-
-  return {
-    deviceId: row.deviceId,
-    lastSeenAt: row.lastSeenAt,
-    tmuxAvailable: row.tmuxAvailable,
-    lastError: row.lastError,
-    lastErrorType: row.lastErrorType,
-  };
+  return runtimeFromRow(row, deviceId);
 }
 
 export function updateDeviceRuntimeStatus(

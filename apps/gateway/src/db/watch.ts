@@ -186,10 +186,10 @@ export function getWatchRuleState(ruleId: string): WatchRuleStateRecord | null {
   return orm.select().from(watchRuleState).where(eq(watchRuleState.ruleId, ruleId)).get() ?? null;
 }
 
-export function upsertWatchRuleState(
+export function writeWatchRuleState(
   ruleId: string,
   updates: Partial<Omit<WatchRuleStateRecord, 'ruleId'>>
-): WatchRuleStateRecord {
+): void {
   const orm = getOrmDb();
   const setValues: Partial<typeof watchRuleState.$inferInsert> = {};
 
@@ -214,14 +214,21 @@ export function upsertWatchRuleState(
       .values({ ruleId })
       .onConflictDoNothing({ target: watchRuleState.ruleId })
       .run();
-  } else {
-    orm
-      .insert(watchRuleState)
-      .values({ ruleId, ...setValues })
-      .onConflictDoUpdate({ target: watchRuleState.ruleId, set: setValues })
-      .run();
+    return;
   }
 
+  orm
+    .insert(watchRuleState)
+    .values({ ruleId, ...setValues })
+    .onConflictDoUpdate({ target: watchRuleState.ruleId, set: setValues })
+    .run();
+}
+
+export function upsertWatchRuleState(
+  ruleId: string,
+  updates: Partial<Omit<WatchRuleStateRecord, 'ruleId'>>
+): WatchRuleStateRecord {
+  writeWatchRuleState(ruleId, updates);
   const state = getWatchRuleState(ruleId);
   if (!state) {
     throw new Error('failed to upsert watch rule state');

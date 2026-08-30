@@ -10,6 +10,7 @@ import {
   reorderDevices,
   updateDevice,
 } from '../db';
+import { listDevicesWithRuntimeStatus } from '../db/devices';
 import { t } from '../i18n';
 import { connectionAlertNotifier } from '../push/connection-alerts';
 import { pushSupervisor } from '../push/supervisor';
@@ -51,9 +52,15 @@ function enrichDeviceWithRuntime(device: Device): Device & {
   };
 }
 
+function listEnrichedDevices() {
+  if (getAllDevices().length === 0) {
+    return [];
+  }
+  return listDevicesWithRuntimeStatus();
+}
+
 async function handleGetDevices(): Promise<Response> {
-  const devices = getAllDevices().map(enrichDeviceWithRuntime);
-  return json({ devices });
+  return json({ devices: listEnrichedDevices() });
 }
 
 async function handleGetDevice(id: string): Promise<Response> {
@@ -144,7 +151,7 @@ async function handleReorderDevices(req: Request): Promise<Response> {
 
   reorderDevices(body.deviceIds as string[]);
   broadcastSettingsUpdate('devices');
-  return json({ devices: getAllDevices().map(enrichDeviceWithRuntime) });
+  return json({ devices: listEnrichedDevices() });
 }
 
 async function handleDeleteDevice(id: string): Promise<Response> {

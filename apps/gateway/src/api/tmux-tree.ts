@@ -1,5 +1,6 @@
 import type { StateSnapshotPayload, TmuxSession } from '@tmex/shared';
-import { getAllDevices, getDeviceById, getDeviceTreeOrder } from '../db';
+import { getAllDevices, getDeviceById } from '../db';
+import { getDeviceTreeOrders } from '../db/devices';
 import { t } from '../i18n';
 import { pushSupervisor } from '../push/supervisor';
 import { getTreeOverlayBridge } from '../settings/broadcaster';
@@ -28,7 +29,11 @@ export function handleTmuxTreeApiRequest(
   return null;
 }
 
-function resolveDeviceTree(deviceId: string, deviceName: string): DeviceTreeEntry {
+function resolveDeviceTree(
+  deviceId: string,
+  deviceName: string,
+  order: { windows: string[]; panes: Record<string, string[]> }
+): DeviceTreeEntry {
   const snapshot: StateSnapshotPayload | null =
     getDeviceSnapshot(deviceId) ?? pushSupervisor.getLastSnapshot(deviceId);
 
@@ -36,7 +41,7 @@ function resolveDeviceTree(deviceId: string, deviceName: string): DeviceTreeEntr
     return { deviceId, deviceName, session: null };
   }
 
-  const ordered = applyDeviceTreeOverlay(snapshot, getDeviceTreeOrder(deviceId));
+  const ordered = applyDeviceTreeOverlay(snapshot, order);
   const names = getTreeOverlayBridge()?.getCustomNames(deviceId) ?? { windows: {}, panes: {} };
   const named = applyCustomNamesOverlay(ordered, names);
   return { deviceId, deviceName, session: named.session };
@@ -48,9 +53,23 @@ async function handleGetTmuxTree(deviceId: string | null): Promise<Response> {
     if (!device) {
       return json({ error: t('apiError.deviceNotFound') }, 404);
     }
-    return json({ devices: [resolveDeviceTree(device.id, device.name)] });
+    const orders = getDeviceTreeOrders([device.id]);
+    return json({
+      devices: [
+        resolveDeviceTree(
+          device.id,
+          device.name,
+          orders.get(device.id) ?? { windows: [], panes: {} }
+        ),
+      ],
+    });
   }
 
-  const devices = getAllDevices().map((device) => resolveDeviceTree(device.id, device.name));
-  return json({ devices });
+  const devices = getAllDevices();
+  const orders = getDeviceTreeOrders(devices.map((device) => device.id));
+  return json({
+    devices: devices.map((device) =>
+      resolveDeviceTree(device.id, device.name, orders.get(device.id) ?? { windows: [], panes: {} })
+    ),
+  });
 }

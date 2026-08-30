@@ -15,7 +15,7 @@ import {
   getWatchRuleById,
   getWatchRuleState,
   updateWatchRule,
-  upsertWatchRuleState,
+  writeWatchRuleState,
 } from '../db/watch';
 import { eventNotifier } from '../events';
 import { resolveLanguageModel } from '../llm/provider-registry';
@@ -41,10 +41,7 @@ export interface WatchServiceDeps {
   listEnabledRules: () => WatchRuleRecord[];
   getRule: (id: string) => WatchRuleRecord | null;
   getState: (id: string) => WatchRuleStateRecord | null;
-  upsertState: (
-    id: string,
-    updates: Partial<Omit<WatchRuleStateRecord, 'ruleId'>>
-  ) => WatchRuleStateRecord;
+  upsertState: (id: string, updates: Partial<Omit<WatchRuleStateRecord, 'ruleId'>>) => void;
   updateRule: (
     id: string,
     updates: Partial<Omit<WatchRuleRecord, 'id' | 'createdAt' | 'updatedAt'>>
@@ -76,7 +73,7 @@ const defaultDeps: WatchServiceDeps = {
   listEnabledRules: getEnabledWatchRules,
   getRule: getWatchRuleById,
   getState: getWatchRuleState,
-  upsertState: upsertWatchRuleState,
+  upsertState: writeWatchRuleState,
   updateRule: updateWatchRule,
   deleteRule: deleteWatchRule,
   acquireRuntime: (deviceId) => tmuxRuntimeRegistry.acquire(deviceId),
@@ -172,10 +169,16 @@ export class WatchService {
     return this.scheduler.runExclusive(ruleId, () => this.runTick(ruleId));
   }
 
+  async tickPane(deviceId: string, paneId: string): Promise<void> {
+    return this.scheduler.runPaneExclusive(deviceId, paneId, () =>
+      this.runPaneTick(deviceId, paneId)
+    );
+  }
+
   private addRule(rule: WatchRuleRecord): void {
     const added = this.scheduler.add(
       rule,
-      (ruleId) => void this.tickRule(ruleId),
+      (deviceId, paneId) => void this.tickPane(deviceId, paneId),
       this.deps.scheduleInterval
     );
     if (!added) {
@@ -202,13 +205,19 @@ export class WatchService {
   }
 
   private async runTick(ruleId: string): Promise<void> {
-    const rule = this.deps.getRule(ruleId);
-    if (!rule || !rule.enabled) {
-      await this.teardownRule(ruleId);
+    const captured = await this.captureForRule(ruleId);
+    if (!captured) {
       return;
     }
+    await this.evaluateCaptured(captured.rule, captured.screen, captured.now);
+  }
 
-    const device = this.runtimePool.get(rule.deviceId);
+  private async runPaneTick(deviceId: string, paneId: string): Promise<void> {
+    const dueIds = this.scheduler.takeDueRuleIds(deviceId, paneId);
+    if (dueIds.length === 0) {
+      return;
+    }
+    const device = this.runtimePool.get(deviceId);
     if (!device) {
       return;
     }
@@ -217,23 +226,82 @@ export class WatchService {
     let screen: string;
     try {
       const runtime = await this.runtimePool.ensureRuntime(device);
-      screen = await runtime.capturePaneText(rule.paneId);
+      screen = await runtime.capturePaneText(paneId);
     } catch (error) {
-      if (!this.scheduler.has(rule.id)) {
-        return;
+      for (const ruleId of dueIds) {
+        await this.handleCaptureFailure(ruleId, error, now);
       }
-      const message = toErrorMessage(error);
-      if (isTargetMissingMessage(message)) {
-        await this.handlePaneGone(rule);
-        return;
-      }
-      await this.recordRuleError(rule, message, now);
-      return;
-    }
-    if (!this.scheduler.has(rule.id)) {
       return;
     }
 
+    for (const ruleId of dueIds) {
+      if (!this.scheduler.has(ruleId)) {
+        continue;
+      }
+      await this.scheduler.runExclusive(ruleId, async () => {
+        const rule = this.deps.getRule(ruleId);
+        if (!rule || !rule.enabled) {
+          await this.teardownRule(ruleId);
+          return;
+        }
+        await this.evaluateCaptured(rule, screen, now);
+      });
+    }
+  }
+
+  private async captureForRule(
+    ruleId: string
+  ): Promise<{ rule: WatchRuleRecord; screen: string; now: Date } | null> {
+    const rule = this.deps.getRule(ruleId);
+    if (!rule || !rule.enabled) {
+      await this.teardownRule(ruleId);
+      return null;
+    }
+
+    const device = this.runtimePool.get(rule.deviceId);
+    if (!device) {
+      return null;
+    }
+
+    const now = this.deps.now();
+    try {
+      const runtime = await this.runtimePool.ensureRuntime(device);
+      const screen = await runtime.capturePaneText(rule.paneId);
+      if (!this.scheduler.has(rule.id)) {
+        return null;
+      }
+      return { rule, screen, now };
+    } catch (error) {
+      await this.handleCaptureFailure(ruleId, error, now, rule);
+      return null;
+    }
+  }
+
+  private async handleCaptureFailure(
+    ruleId: string,
+    error: unknown,
+    now: Date,
+    knownRule?: WatchRuleRecord
+  ): Promise<void> {
+    if (!this.scheduler.has(ruleId)) {
+      return;
+    }
+    const rule = knownRule ?? this.deps.getRule(ruleId);
+    if (!rule) {
+      return;
+    }
+    const message = toErrorMessage(error);
+    if (isTargetMissingMessage(message)) {
+      await this.handlePaneGone(rule);
+      return;
+    }
+    await this.recordRuleError(rule, message, now);
+  }
+
+  private async evaluateCaptured(rule: WatchRuleRecord, screen: string, now: Date): Promise<void> {
+    if (!this.scheduler.has(rule.id)) {
+      return;
+    }
     const state = this.deps.getState(rule.id);
     if (rule.triggerType === 'llm') {
       await this.processLlmRule(rule, state, screen, now);

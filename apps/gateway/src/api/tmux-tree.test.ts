@@ -1,12 +1,9 @@
-import { afterEach, beforeAll, describe, expect, test } from 'bun:test';
-import type { Server } from 'bun';
+import { afterEach, beforeAll, describe, expect, spyOn, test } from 'bun:test';
 import type { StateSnapshotPayload } from '@tmex/shared';
-import {
-  createDevice,
-  ensureSiteSettingsInitialized,
-  setPaneOrder,
-  setWindowOrder,
-} from '../db';
+import type { Server } from 'bun';
+import { createDevice, ensureSiteSettingsInitialized, setPaneOrder, setWindowOrder } from '../db';
+import { getSqliteClient } from '../db/client';
+import * as devicesDb from '../db/devices';
 import { runMigrations } from '../db/migrate';
 import { type TreeOverlayBridge, registerTreeOverlayBridge } from '../settings/broadcaster';
 import { registerSnapshotLookup } from '../tmux/snapshot-directory';
@@ -76,7 +73,10 @@ function makeSnapshot(deviceId: string): StateSnapshotPayload {
   };
 }
 
-function registerFakeNames(names: { windows: Record<string, string>; panes: Record<string, string> }) {
+function registerFakeNames(names: {
+  windows: Record<string, string>;
+  panes: Record<string, string>;
+}) {
   const bridge: TreeOverlayBridge = {
     reorderWindows: () => {},
     reorderPanes: () => {},
@@ -189,5 +189,47 @@ describe('GET /api/tmux/tree', () => {
     expect(response.status).toBe(200);
     const body = (await response.json()) as { devices: TreeDeviceJson[] };
     expect(body.devices.find((d) => d.deviceId === DEVICE_A)?.session).not.toBeNull();
+  });
+
+  test('100 台设备树查询 ≤ 3 次 SQL，缺 tree-order 行用空默认值', async () => {
+    const prefix = 'r3-tree-q-';
+    const now = new Date().toISOString();
+    for (let i = 0; i < 100; i++) {
+      createDevice({
+        id: `${prefix}${String(i).padStart(3, '0')}`,
+        name: `tree-q-${i}`,
+        type: 'local',
+        authMode: 'auto',
+        session: 'tmex',
+        sortOrder: 1000 + i,
+        createdAt: now,
+        updatedAt: now,
+      });
+    }
+    setWindowOrder(`${prefix}000`, ['@9']);
+
+    const orderSpy = spyOn(devicesDb, 'getDeviceTreeOrder');
+    const db = getSqliteClient();
+    const orig = db.prepare.bind(db);
+    const sqls: string[] = [];
+    db.prepare = ((sql: string) => {
+      sqls.push(sql);
+      return orig(sql);
+    }) as typeof db.prepare;
+    try {
+      const { status, json } = await call('GET', '/api/tmux/tree');
+      expect(status).toBe(200);
+      expect(sqls.filter((sql) => /^\s*select\b/i.test(sql)).length).toBeLessThanOrEqual(3);
+      expect(orderSpy).toHaveBeenCalledTimes(0);
+      const devices = json.devices as TreeDeviceJson[];
+      const ordered = devices.find((d) => d.deviceId === `${prefix}000`);
+      const empty = devices.find((d) => d.deviceId === `${prefix}001`);
+      expect(ordered?.deviceName).toBe('tree-q-0');
+      expect(empty?.deviceName).toBe('tree-q-1');
+      expect(empty?.session).toBeNull();
+    } finally {
+      orderSpy.mockRestore();
+      db.prepare = orig;
+    }
   });
 });
