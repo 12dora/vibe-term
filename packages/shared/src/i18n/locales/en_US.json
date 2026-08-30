@@ -1118,6 +1118,8 @@
         "details": "Details",
         "close": "Close",
         "result": "Result",
+        "previewNote": "Showing first {{shown}} of {{total}} characters",
+        "copyFull": "Copy full output",
         "screen": "Screen capture",
         "send_input": "Send input",
         "read_screen": "Read screen",

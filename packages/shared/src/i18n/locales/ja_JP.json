@@ -1118,6 +1118,8 @@
         "details": "詳細",
         "close": "閉じる",
         "result": "結果",
+        "previewNote": "先頭 {{shown}} 文字のみ表示（全 {{total}} 文字）",
+        "copyFull": "全出力をコピー",
         "screen": "画面キャプチャ",
         "send_input": "入力送信",
         "read_screen": "画面読み取り",

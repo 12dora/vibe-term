@@ -1118,6 +1118,8 @@
         "details": "详情",
         "close": "关闭",
         "result": "结果",
+        "previewNote": "仅显示前 {{shown}} 个字符（共 {{total}}）",
+        "copyFull": "复制完整输出",
         "screen": "屏幕快照",
         "send_input": "发送输入",
         "read_screen": "读取屏幕",

@@ -16,7 +16,7 @@ import {
   WrenchIcon,
   XIcon,
 } from 'lucide-react';
-import { createContext, memo, useContext, useState } from 'react';
+import { createContext, memo, useContext, useMemo, useState } from 'react';
 import type { ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
 
@@ -46,8 +46,25 @@ function callErrorText(call: UiToolCall): string | null {
 
 const DetailsExpandedContext = createContext(false);
 
+const PREVIEW_MAX_CHARS = 64 * 1024;
+const PREVIEW_MAX_LINES = 2000;
+
+/** 挂进 DOM 的预览长度：64 KiB 与 2000 行取先到者；完整串只留在内存里供复制 */
+export function previewEnd(text: string): number {
+  const cap = Math.min(text.length, PREVIEW_MAX_CHARS);
+  let index = 0;
+  for (let line = 0; line < PREVIEW_MAX_LINES; line++) {
+    const next = text.indexOf('\n', index);
+    if (next < 0 || next >= cap) return cap;
+    index = next + 1;
+  }
+  return index;
+}
+
 function CollapsedText({ label, text }: { label: string; text: string }) {
+  const { t } = useTranslation();
   const defaultOpen = useContext(DetailsExpandedContext);
+  const end = previewEnd(text);
   return (
     <Collapsible defaultOpen={defaultOpen}>
       <CollapsibleTrigger className="text-muted-foreground hover:text-foreground group flex items-center gap-1 text-xs">
@@ -56,8 +73,22 @@ function CollapsedText({ label, text }: { label: string; text: string }) {
       </CollapsibleTrigger>
       <CollapsibleContent>
         <pre className="bg-muted mt-1 max-h-64 overflow-auto rounded-md p-2 font-mono text-xs whitespace-pre-wrap break-all">
-          {text}
+          {end < text.length ? text.slice(0, end) : text}
         </pre>
+        {end < text.length && (
+          <div className="text-muted-foreground mt-1 flex flex-wrap items-center gap-2 text-xs">
+            <span data-testid="agent-tool-preview-note">
+              {t('agent.tool.previewNote', { shown: end, total: text.length })}
+            </span>
+            <Button
+              size="xs"
+              variant="ghost"
+              onClick={() => void navigator.clipboard?.writeText(text)}
+            >
+              {t('agent.tool.copyFull')}
+            </Button>
+          </div>
+        )}
       </CollapsibleContent>
     </Collapsible>
   );
@@ -215,24 +246,29 @@ function FetchUrlBody({ call }: { call: UiToolCall }) {
 const BASE64_IMAGE_RE = /^[A-Za-z0-9+/]{256,}={0,2}$/;
 const IMAGE_URL_RE = /^https?:\/\/\S+\.(png|jpe?g|webp|gif)(\?\S*)?$/i;
 
-function asImageSrc(value: unknown): string | null {
+/** 超过该长度的值不再探测：整串拷贝与正则的代价远超收益 */
+const IMAGE_VALUE_MAX_CHARS = 512 * 1024;
+
+function asImageSrc(value: unknown, allowBareBase64: boolean): string | null {
   if (typeof value !== 'string' || value.length === 0) return null;
+  if (value.length > IMAGE_VALUE_MAX_CHARS) return null;
   if (value.startsWith('data:image/')) return value;
   if (IMAGE_URL_RE.test(value)) return value;
+  if (!allowBareBase64) return null;
   // 裸 base64（如 OpenAI image_generation 的 { result }）默认按 png 处理
-  if (BASE64_IMAGE_RE.test(value.replace(/\s/g, ''))) {
-    return `data:image/png;base64,${value.replace(/\s/g, '')}`;
-  }
-  return null;
+  const compact = value.replace(/\s/g, '');
+  return BASE64_IMAGE_RE.test(compact) ? `data:image/png;base64,${compact}` : null;
 }
 
 /** 通用：从 tool output 探测可内联渲染的图片（image_generation 的 result / image / images 等字段） */
-function extractToolImages(call: UiToolCall): string[] {
+export function extractToolImages(call: UiToolCall): string[] {
   if (!call.resolved || call.isError || call.denied) return [];
+  // 裸 base64 猜测只对出图工具开放，普通工具的长输出不做全串扫描
+  const allowBareBase64 = call.toolName.toLowerCase().includes('image');
   const images: string[] = [];
   const visit = (value: unknown, depth: number): void => {
     if (images.length >= 8 || depth > 3) return;
-    const src = asImageSrc(value);
+    const src = asImageSrc(value, allowBareBase64);
     if (src) {
       images.push(src);
       return;
@@ -388,6 +424,20 @@ function ToolApproval({
   );
 }
 
+/** 仅在弹窗打开时挂载：图片探测按 call 记忆，不随每次重渲染重扫 output */
+export function ToolDetailsBody({ call, view }: { call: UiToolCall; view: ToolView | undefined }) {
+  const images = useMemo(() => extractToolImages(call), [call]);
+  const Body = view?.Body;
+  return (
+    <div className="text-muted-foreground flex flex-col gap-3 overflow-auto text-xs">
+      <DetailsExpandedContext.Provider value={true}>
+        {Body ? <Body call={call} /> : <GenericBody call={call} hideOutput={images.length > 0} />}
+        <ToolImages images={images} />
+      </DetailsExpandedContext.Provider>
+    </div>
+  );
+}
+
 function ToolDetailsDialog({
   call,
   view,
@@ -403,8 +453,6 @@ function ToolDetailsDialog({
   open: boolean;
   onOpenChange: (open: boolean) => void;
 }) {
-  const images = extractToolImages(call);
-  const Body = view?.Body;
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="flex max-h-[80vh] max-w-2xl flex-col gap-3 overflow-hidden sm:max-w-2xl">
@@ -414,16 +462,7 @@ function ToolDetailsDialog({
             <span>{label}</span>
           </DialogTitle>
         </DialogHeader>
-        <div className="text-muted-foreground flex flex-col gap-3 overflow-auto text-xs">
-          <DetailsExpandedContext.Provider value={true}>
-            {Body ? (
-              <Body call={call} />
-            ) : (
-              <GenericBody call={call} hideOutput={images.length > 0} />
-            )}
-            <ToolImages images={images} />
-          </DetailsExpandedContext.Provider>
-        </div>
+        <ToolDetailsBody call={call} view={view} />
       </DialogContent>
     </Dialog>
   );

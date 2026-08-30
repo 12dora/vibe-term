@@ -1044,6 +1044,8 @@ export type TranslationKey =
   | 'agent.tool.details'
   | 'agent.tool.close'
   | 'agent.tool.result'
+  | 'agent.tool.previewNote'
+  | 'agent.tool.copyFull'
   | 'agent.tool.screen'
   | 'agent.tool.send_input'
   | 'agent.tool.read_screen'
