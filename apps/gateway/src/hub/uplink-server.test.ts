@@ -1728,4 +1728,148 @@ describe('UplinkServer', () => {
       close();
     }
   });
+
+  test('key.log.req byte-limit paging encodes key.log.res once', async () => {
+    const { db, close } = createMigratedAuthDb();
+    try {
+      const { userStore } = createHubTestStack(db);
+      const user = seedUser(userStore);
+      const payload = new Uint8Array(700_000).fill(7);
+      const sig = new Uint8Array(64).fill(9);
+      const rows = Array.from({ length: 2 }, (_, i) => ({
+        seq: BigInt(i + 1),
+        bytes: payload,
+        sig,
+      }));
+      const source: HubKeyLogSource = {
+        async head() {
+          return { seq: 2n, hash: new Uint8Array(32) };
+        },
+        async list() {
+          return rows;
+        },
+        async append() {
+          return { ok: false, error: 'readonly' };
+        },
+      };
+      const { server } = makeServer(db, userStore, source);
+      const node = await authNode(server, userStore, user.id);
+      const sent = tapCtlSend(node.hubLink);
+      const encode = spyOn(uplinkProtocol, 'encodeUplinkCtl');
+      sendCtl(node.nodeLink, { t: 'key.log.req', from_seq: 1, id: 'once-1', limit: 256 });
+      await waitFor(() => sent.some((bytes) => bytes.byteLength > 0));
+      const resCalls = encode.mock.calls.filter(([msg]) => msg.t === 'key.log.res');
+      expect(resCalls).toHaveLength(1);
+      const res = resCalls[0]?.[0];
+      expect(res && res.t === 'key.log.res' ? res.has_more : undefined).toBe(true);
+      expect(res && res.t === 'key.log.res' ? res.records.length : -1).toBeLessThan(2);
+      encode.mockRestore();
+      server.stop();
+    } finally {
+      close();
+    }
+  });
+
+  test('interleaved slow/fast node.list builds keep newest head and monotonic version', async () => {
+    const { db, close } = createMigratedAuthDb();
+    try {
+      const { userStore, keyLogSource } = createHubTestStack(db);
+      const user = seedUser(userStore);
+      let seq = 1n;
+      const hold = Promise.withResolvers<void>();
+      let stallNext = false;
+      let heads = 0;
+      const hashFor = (s: bigint): Uint8Array => {
+        const h = new Uint8Array(32);
+        h[0] = Number(s);
+        return h;
+      };
+      const source: HubKeyLogSource = {
+        async head() {
+          heads += 1;
+          const snap = { seq, hash: hashFor(seq) };
+          if (stallNext) {
+            stallNext = false;
+            await hold.promise;
+            return snap;
+          }
+          return snap;
+        },
+        list: (userId, fromSeq, limit) => keyLogSource.list(userId, fromSeq, limit),
+        append: (userId, record) => keyLogSource.append(userId, record),
+      };
+      const { server } = makeServer(db, userStore, source);
+      const node = await authNode(server, userStore, user.id);
+      const sent = tapCtlSend(node.hubLink);
+      const headsAfterAuth = heads;
+      stallNext = true;
+      const slow = server.broadcastNodeList(user.id);
+      await waitFor(() => heads > headsAfterAuth);
+      seq = 2n;
+      const fast = server.broadcastNodeList(user.id);
+      hold.resolve();
+      await Promise.all([slow, fast]);
+      const lists = nodeListPayloads(sent).map((bytes) => decodeUplinkCtl(bytes));
+      const versions = lists.map((msg) => {
+        if (msg.t !== 'node.list') throw new Error('expected node.list');
+        return msg.version;
+      });
+      for (let i = 1; i < versions.length; i++) {
+        expect(versions[i]).toBeGreaterThan(versions[i - 1]);
+      }
+      const cached = nodeListCaches(server).lastNodeListSent.get(user.id);
+      expect(cached).toBeDefined();
+      const finalList = decodeUplinkCtl(cached as Uint8Array);
+      expect(finalList.t).toBe('node.list');
+      if (finalList.t !== 'node.list') throw new Error('expected node.list');
+      expect(finalList.key_log_head.seq).toBe(2);
+      expect(finalList.version).toBe(versions[versions.length - 1] ?? finalList.version);
+      server.stop();
+    } finally {
+      close();
+    }
+  });
+
+  test('burst of node.list triggers coalesces to a bounded number of rebuilds', async () => {
+    const { db, close } = createMigratedAuthDb();
+    try {
+      const { userStore, keyLogSource } = createHubTestStack(db);
+      const user = seedUser(userStore);
+      const hold = Promise.withResolvers<void>();
+      let heads = 0;
+      let gateHeads = false;
+      const source: HubKeyLogSource = {
+        async head() {
+          heads += 1;
+          if (gateHeads) await hold.promise;
+          return keyLogSource.head(user.id);
+        },
+        list: (userId, fromSeq, limit) => keyLogSource.list(userId, fromSeq, limit),
+        append: (userId, record) => keyLogSource.append(userId, record),
+      };
+      const { server } = makeServer(db, userStore, source);
+      await authNode(server, userStore, user.id);
+      const headsAfterAuth = heads;
+      gateHeads = true;
+      const first = server.broadcastNodeList(user.id);
+      await waitFor(() => heads > headsAfterAuth);
+      const burst = Array.from({ length: 20 }, () => server.broadcastNodeList(user.id));
+      hold.resolve();
+      await Promise.all([first, ...burst]);
+      expect(heads - headsAfterAuth).toBeLessThanOrEqual(2);
+      expect(heads - headsAfterAuth).toBeGreaterThanOrEqual(1);
+      server.stop();
+    } finally {
+      close();
+    }
+  });
 });
+
+async function waitFor(pred: () => boolean, timeoutMs = 1_000): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (pred()) return;
+    await new Promise((r) => setTimeout(r, 5));
+  }
+  throw new Error('waitFor timeout');
+}

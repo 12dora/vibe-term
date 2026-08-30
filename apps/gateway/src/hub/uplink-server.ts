@@ -16,6 +16,7 @@ import type { AuthDb } from '../auth/types';
 import type { UserStore } from '../auth/user-store';
 import { parseJson, projectNode, upsertById } from '../mesh/node-list-projection';
 import { pumpLink } from '../mesh/stream-pump';
+import { trimKeyLogPageToByteLimit } from './key-log-page';
 import { patchNode } from './node-persistence';
 import type { NodeRegistry } from './node-registry';
 import {
@@ -30,7 +31,6 @@ import {
 } from './types';
 import {
   KEY_LOG_PAGE_DEFAULT_LIMIT,
-  KEY_LOG_PAGE_MAX_BYTES,
   KEY_LOG_PAGE_MAX_LIMIT,
   type NodeListMessage,
   type RtcSignalMessage,
@@ -166,6 +166,8 @@ export class UplinkServer {
   private listVersion = 0;
   private readonly lastNodeListFp = new Map<string, string>();
   private readonly lastNodeListSent = new Map<string, Uint8Array>();
+  private readonly nodeListLatestGen = new Map<string, number>();
+  private readonly nodeListInflight = new Map<string, Promise<'sent' | 'unchanged' | 'failed'>>();
   private stopped = false;
   private readonly inflightCtl = new Set<Promise<void>>();
   private readonly keyLogReqLimiter: KeyLogReqLimiter;
@@ -292,7 +294,44 @@ export class UplinkServer {
 
   async broadcastNodeList(userId: string): Promise<'sent' | 'unchanged' | 'failed'> {
     if (this.stopped) return 'failed';
+    this.nodeListLatestGen.set(userId, (this.nodeListLatestGen.get(userId) ?? 0) + 1);
+    const existing = this.nodeListInflight.get(userId);
+    if (existing) return existing;
+    const run = this.pumpNodeListBroadcast(userId);
+    this.nodeListInflight.set(userId, run);
+    return run;
+  }
+
+  private async pumpNodeListBroadcast(userId: string): Promise<'sent' | 'unchanged' | 'failed'> {
+    try {
+      let result: 'sent' | 'unchanged' | 'failed' = 'unchanged';
+      while (!this.stopped) {
+        const gen = this.nodeListLatestGen.get(userId) ?? 0;
+        result = await this.publishNodeList(userId, gen);
+        if (this.stopped) {
+          this.nodeListInflight.delete(userId);
+          return 'failed';
+        }
+        // 必须与 gen 比较同一同步段内摘掉 inflight，await 后再删会丢掉其间到达的 trigger
+        if (gen === (this.nodeListLatestGen.get(userId) ?? 0)) {
+          this.nodeListInflight.delete(userId);
+          return result;
+        }
+      }
+      this.nodeListInflight.delete(userId);
+      return 'failed';
+    } catch (err) {
+      this.nodeListInflight.delete(userId);
+      throw err;
+    }
+  }
+
+  private async publishNodeList(
+    userId: string,
+    gen: number
+  ): Promise<'sent' | 'unchanged' | 'failed'> {
     if (this.registry.listForBroadcast(userId).length === 0) {
+      if (gen !== (this.nodeListLatestGen.get(userId) ?? 0)) return 'unchanged';
       this.lastNodeListFp.delete(userId);
       this.lastNodeListSent.delete(userId);
       return 'unchanged';
@@ -300,6 +339,7 @@ export class UplinkServer {
     try {
       const msg = await this.buildNodeList(userId);
       if (this.stopped) return 'failed';
+      if (gen !== (this.nodeListLatestGen.get(userId) ?? 0)) return 'unchanged';
       const fingerprint = nodeListFingerprint(msg);
       const prev = this.lastNodeListFp.get(userId);
       if (prev === fingerprint) return 'unchanged';
@@ -313,7 +353,6 @@ export class UplinkServer {
       }
       return 'sent';
     } catch {
-      // broadcast is best-effort after persist/ack
       return 'failed';
     }
   }
@@ -649,32 +688,14 @@ export class UplinkServer {
     const requested = msg.limit ?? KEY_LOG_PAGE_DEFAULT_LIMIT;
     const limit = Math.min(KEY_LOG_PAGE_MAX_LIMIT, Math.max(1, requested));
     const fetched = await this.keyLogSource.list(live.userId, fromSeq, limit + 1);
-    let hasMore = fetched.length > limit;
-    let page = hasMore ? fetched.slice(0, limit) : fetched;
-    while (page.length > 0) {
-      const encoded = encodeUplinkCtl({
-        t: 'key.log.res',
-        records: page.map((r) => ({
-          seq: seqToWire(r.seq),
-          bytes: bytesToB64url(r.bytes),
-          sig: bytesToB64url(r.sig),
-        })),
-        has_more: hasMore,
-        ...(msg.id ? { id: msg.id } : {}),
-      });
-      if (encoded.byteLength <= KEY_LOG_PAGE_MAX_BYTES) break;
-      page = page.slice(0, -1);
-      hasMore = true;
-    }
-    this.warnKeyLogReq(live.nodeId, fromSeq, page.length, false);
+    const hasMore = fetched.length > limit;
+    const page = hasMore ? fetched.slice(0, limit) : fetched;
+    const trimmed = trimKeyLogPageToByteLimit(page, hasMore, msg.id ? { id: msg.id } : undefined);
+    this.warnKeyLogReq(live.nodeId, fromSeq, trimmed.records.length, false);
     this.send(live.link, {
       t: 'key.log.res',
-      records: page.map((r) => ({
-        seq: seqToWire(r.seq),
-        bytes: bytesToB64url(r.bytes),
-        sig: bytesToB64url(r.sig),
-      })),
-      has_more: hasMore,
+      records: trimmed.records,
+      has_more: trimmed.hasMore,
       ...(msg.id ? { id: msg.id } : {}),
     });
   }
