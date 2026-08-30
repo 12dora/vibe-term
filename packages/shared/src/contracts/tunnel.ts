@@ -12,7 +12,8 @@ export type TunnelJobKind =
   | 'start'
   | 'stop'
   | 'remove'
-  | 'check';
+  | 'check'
+  | 'access';
 
 export type TunnelJobState = 'running' | 'done' | 'error';
 
@@ -25,6 +26,10 @@ export type TunnelErrorCode =
   | 'invalid_hostname'
   | 'tunnel_exists'
   | 'dns_route_failed'
+  /** Cloudflare API 调用失败（token 权限不足 / account 不对 / 网络） */
+  | 'access_api_failed'
+  /** standalone 下 named 隧道启动前必须先配置 Cloudflare Access */
+  | 'access_required'
   | 'process_failed'
   | 'busy'
   | 'not_configured'
@@ -60,6 +65,35 @@ export interface TunnelConfigStatus {
   originPort: number;
 }
 
+export type TunnelAccessPolicyRule =
+  | { kind: 'email'; value: string }
+  | { kind: 'email_domain'; value: string };
+
+/**
+ * Cloudflare Access 应用状态（standalone 模式下公网隧道的鉴权层；mesh 登录实例可选）。
+ * API token / account id 只存服务端，状态里只透出是否已保存。
+ */
+export interface TunnelAccessStatus {
+  /** 已保存 Cloudflare API token + account id */
+  hasCredentials: boolean;
+  accountId: string | null;
+  /** Access 团队域（<team>.cloudflareaccess.com），从 API 读取 */
+  teamDomain: string | null;
+  /** 已为当前 hostname 创建 Access 应用 */
+  configured: boolean;
+  appId: string | null;
+  /** 应用 AUD 标签，网关校验 JWT 时使用 */
+  aud: string | null;
+  /** 应用覆盖的主机名 */
+  hostname: string | null;
+  /** allow 策略规则（邮箱 / 邮箱域） */
+  rules: TunnelAccessPolicyRule[];
+  /** 网关对带 cf-connecting-ip 的请求强制校验 Cf-Access-Jwt-Assertion */
+  enforceJwt: boolean;
+  /** 最近一次 Access API 错误（脱敏） */
+  lastError: string | null;
+}
+
 export interface TunnelProcessStatus {
   state: TunnelProcessState;
   pid: number | null;
@@ -88,6 +122,9 @@ export interface TunnelStatusResponse {
   auth: TunnelAuthStatus;
   config: TunnelConfigStatus;
   process: TunnelProcessStatus;
+  access: TunnelAccessStatus;
+  /** 本机是否启用了登录（mesh 角色）；false 时 named 隧道必须先配置 Access，quick 隧道禁止 */
+  loginEnforced: boolean;
   /** 进行中或最近一次结束的 job */
   job: TunnelJobStatus | null;
   /** 当前进程是否已按 TMEX_TRUST_PROXY=true 运行（生效值） */
@@ -112,7 +149,15 @@ export type TunnelActionRequest =
   | { action: 'remove' }
   | { action: 'check' }
   | { action: 'set_auto_start'; autoStart: boolean }
-  | { action: 'set_trust_proxy'; trustProxy: boolean };
+  | { action: 'set_trust_proxy'; trustProxy: boolean }
+  /** 保存 Cloudflare API token（需 Access: Apps and Policies 编辑权限）与 account id；同步动作 */
+  | { action: 'set_access_credentials'; apiToken: string; accountId: string }
+  | { action: 'clear_access_credentials' }
+  /** 为当前 hostname 创建/更新 Access 应用与 allow 策略；异步 job kind = 'access' */
+  | { action: 'configure_access'; rules: TunnelAccessPolicyRule[] }
+  /** 删除 Access 应用；异步 job kind = 'access' */
+  | { action: 'remove_access' }
+  | { action: 'set_access_enforce'; enforceJwt: boolean };
 
 export interface TunnelActionResponse {
   status: TunnelStatusResponse;
