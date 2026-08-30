@@ -530,8 +530,9 @@ export async function acceptWsStream(
         return;
       }
       if (!value) continue;
+      let envelope: wsBorsh.Envelope;
       try {
-        wsBorsh.decodeEnvelope(value.bytes);
+        envelope = wsBorsh.decodeEnvelope(value.bytes);
       } catch {
         teardown('rst', 'invalid-ws-frame');
         return;
@@ -544,7 +545,7 @@ export async function acceptWsStream(
         teardown('rst', check.reason);
         return;
       }
-      attached.onMessage(value.bytes);
+      attached.onDecodedEnvelope(envelope);
     }
   } catch {
     teardown('rst', 'ws-read-failed');

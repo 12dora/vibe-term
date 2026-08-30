@@ -194,6 +194,7 @@ export class WebSocketServer
   attachStreamSession(carrier: Carrier): {
     session: GatewaySession;
     onMessage: (bytes: Uint8Array) => void;
+    onDecodedEnvelope: (envelope: wsBorsh.Envelope) => void;
     onClose: () => void;
   } {
     const session = new GatewaySession({ primary: carrier });
@@ -206,6 +207,13 @@ export class WebSocketServer
       onMessage: (bytes) => {
         if (session.closed) return;
         this.handleMessage(session, Buffer.from(bytes));
+      },
+      onDecodedEnvelope: (envelope) => {
+        if (session.closed) return;
+        const p = envelope.payload;
+        // 视图 payload 在 mux 缓冲回收后会失效；已独立持有则不必再拷
+        const owned = p.byteOffset === 0 && p.byteLength === p.buffer.byteLength;
+        this.handleDecodedEnvelope(session, owned ? envelope : { ...envelope, payload: p.slice() });
       },
       onClose: () => {
         this.handleCarrierClose(session, carrier);
@@ -247,12 +255,18 @@ export class WebSocketServer
       return;
     }
 
-    const clientState = session.borshState;
+    this.handleDecodedEnvelope(session, envelope);
+  }
+
+  handleDecodedEnvelope(session: GatewaySession, envelope: wsBorsh.Envelope): void {
+    if (session.closed) {
+      return;
+    }
 
     if (envelope.kind === wsBorsh.KIND_CHUNK) {
       try {
         const chunk = wsBorsh.decodeChunk(envelope.payload);
-        const reassembled = clientState.chunkReassembler.addChunk(chunk);
+        const reassembled = session.borshState.chunkReassembler.addChunk(chunk);
         if (!reassembled) {
           return;
         }

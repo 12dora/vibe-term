@@ -1,7 +1,7 @@
 import { describe, expect, spyOn, test } from 'bun:test';
 import { wsBorsh } from '@tmex/shared';
 import { WebSocketServer } from './index';
-import { createBorshTestWs } from './test-helpers';
+import { createBorshTestWs, createFakeCarrier } from './test-helpers';
 
 function flushAsync(): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, 0));
@@ -71,5 +71,58 @@ describe('WebSocket inbound binary frames', () => {
 
     handleBorshMessage.mockRestore();
     server.handleClose(ws);
+  });
+
+  test('mesh decoded envelope is not envelope-decoded again', async () => {
+    const server = new WebSocketServer();
+    const attached = server.attachStreamSession(createFakeCarrier());
+    const received: Uint8Array[] = [];
+    const handleBorshMessage = spyOn(server, 'handleBorshMessage').mockImplementation(
+      async (_ws, _kind, _seq, payload) => {
+        received.push(payload);
+      }
+    );
+    const { frame, payload } = encodeHelloFrame();
+    const envelope = wsBorsh.decodeEnvelope(frame);
+    const decode = spyOn(wsBorsh, 'decodeEnvelope');
+    attached.onDecodedEnvelope(envelope);
+    await flushAsync();
+    const extraDecodes = decode.mock.calls.length;
+    decode.mockRestore();
+    handleBorshMessage.mockRestore();
+    attached.onClose();
+    expect(extraDecodes).toBe(0);
+    expect(received).toHaveLength(1);
+    expect(received[0]).toEqual(payload);
+  });
+
+  test('async-retaining handler still sees stable bytes after inbound buffer reuse', async () => {
+    const server = new WebSocketServer();
+    const attached = server.attachStreamSession(createFakeCarrier());
+    const received: Uint8Array[] = [];
+    let release!: () => void;
+    const blocked = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const handleBorshMessage = spyOn(server, 'handleBorshMessage').mockImplementation(
+      async (_ws, _kind, _seq, payload) => {
+        await blocked;
+        received.push(payload);
+      }
+    );
+
+    const { frame, payload } = encodeHelloFrame();
+    const backing = new Uint8Array(frame.byteLength);
+    backing.set(frame);
+    attached.onDecodedEnvelope(wsBorsh.decodeEnvelopeView(backing));
+    backing.fill(0xee);
+    release();
+    await flushAsync();
+
+    expect(received).toHaveLength(1);
+    expect(received[0]).toEqual(payload);
+
+    handleBorshMessage.mockRestore();
+    attached.onClose();
   });
 });

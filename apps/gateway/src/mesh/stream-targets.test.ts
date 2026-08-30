@@ -1,4 +1,4 @@
-import { afterEach, beforeAll, describe, expect, test } from 'bun:test';
+import { afterEach, beforeAll, describe, expect, spyOn, test } from 'bun:test';
 import { wsBorsh } from '@tmex/shared';
 import { createInMemoryLinkPair } from '@tmex/shared/link';
 import { handleApiRequest } from '../api';
@@ -169,6 +169,90 @@ describe('http/ws stream targets', () => {
     expect(first.value).toBeDefined();
     const envelope = wsBorsh.decodeEnvelope(first.value as Uint8Array);
     expect(envelope.kind).toBe(wsBorsh.KIND_HELLO_S2C);
+    opened.close();
+  });
+
+  test('mesh-forwarded WS frame is envelope-decoded exactly once', async () => {
+    const server = new WebSocketServer();
+    const { db, close } = createMigratedAuthDb();
+    fixtures.push({ close });
+    const store = new NodeSessionStore(db);
+    seedUser(new UserStore(db));
+    const sid = store.issue({
+      userId: 'user-1',
+      viaNodeId: 'entry-1',
+      sessPublicKey: new Uint8Array(32),
+      delegationMethod: 'root',
+      now: Date.now(),
+    });
+    const [a, b] = createInMemoryLinkPair();
+    b.onStream((stream) => {
+      void acceptWsStream(stream, {
+        peerNodeId: 'entry-1',
+        sessionStore: store,
+        wsServer: server,
+      });
+    });
+    const opened = await openWsStream(a, sid.sid);
+    const helloPayload = wsBorsh.encodePayload(wsBorsh.schema.HelloC2SSchema, {
+      clientImpl: 'mesh-decode-once',
+      clientVersion: 'test',
+      maxFrameBytes: wsBorsh.DEFAULT_MAX_FRAME_BYTES,
+      supportsCompression: false,
+      supportsDiffSnapshot: false,
+    });
+    const frame = wsBorsh.encodeEnvelope(wsBorsh.KIND_HELLO_C2S, helloPayload, 1);
+    const decode = spyOn(wsBorsh, 'decodeEnvelope');
+    await opened.send(frame);
+    const reader = opened.readable.getReader();
+    const first = await reader.read();
+    const inboundDecodes = decode.mock.calls.length;
+    decode.mockRestore();
+    expect(inboundDecodes).toBe(1);
+    expect(first.value).toBeDefined();
+    expect(wsBorsh.decodeEnvelope(first.value as Uint8Array).kind).toBe(wsBorsh.KIND_HELLO_S2C);
+    opened.close();
+  });
+
+  test('mesh-forwarded large WS frame keeps payload bytes', async () => {
+    const server = new WebSocketServer();
+    const received: Uint8Array[] = [];
+    const handleBorsh = spyOn(server, 'handleBorshMessage').mockImplementation(
+      async (_session, _kind, _seq, payload) => {
+        received.push(payload.slice());
+      }
+    );
+    const { db, close } = createMigratedAuthDb();
+    fixtures.push({ close });
+    const store = new NodeSessionStore(db);
+    seedUser(new UserStore(db));
+    const sid = store.issue({
+      userId: 'user-1',
+      viaNodeId: 'entry-1',
+      sessPublicKey: new Uint8Array(32),
+      delegationMethod: 'root',
+      now: Date.now(),
+    });
+    const [a, b] = createInMemoryLinkPair();
+    b.onStream((stream) => {
+      void acceptWsStream(stream, {
+        peerNodeId: 'entry-1',
+        sessionStore: store,
+        wsServer: server,
+      });
+    });
+    const opened = await openWsStream(a, sid.sid);
+    const largePayload = Uint8Array.from({ length: 128 * 1024 }, (_, i) => i & 0xff);
+    const frame = wsBorsh.encodeEnvelope(wsBorsh.KIND_TERM_INPUT, largePayload, 7);
+    const decode = spyOn(wsBorsh, 'decodeEnvelope');
+    await opened.send(frame);
+    await waitUntil(() => received.length >= 1);
+    const inboundDecodes = decode.mock.calls.length;
+    decode.mockRestore();
+    handleBorsh.mockRestore();
+    expect(inboundDecodes).toBe(1);
+    expect(received).toHaveLength(1);
+    expect(received[0]).toEqual(largePayload);
     opened.close();
   });
 
