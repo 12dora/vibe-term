@@ -11,7 +11,8 @@
     "./i18n/locales/en_US.json": "./src/i18n/locales/en_US.json",
     "./i18n/locales/zh_CN.json": "./src/i18n/locales/zh_CN.json",
     "./i18n/locales/ja_JP.json": "./src/i18n/locales/ja_JP.json",
-    "./link": "./src/link/index.ts"
+    "./link": "./src/link/index.ts",
+    "./uplink": "./src/uplink/codec.ts"
   },
   "scripts": {
     "build:i18n": "bun scripts/build-i18n.ts",
