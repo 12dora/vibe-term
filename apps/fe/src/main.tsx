@@ -26,7 +26,7 @@ import { SettingsEventsInit } from '@tmex/panels/settings/events';
 import { WatchEventsInit } from '@tmex/panels/watch';
 import { SELF_NODE_ID, useNodeRuntime } from '@tmex/stores';
 import { RuntimeProvider, useSiteStore, useUIStore } from '@tmex/stores/react';
-import { useKeyboardAvoidance } from '@tmex/terminal-ui';
+import { useKeyboardAvoidance } from '@tmex/terminal-ui/hooks/use-keyboard-avoidance';
 import { applyThemePreset, isThemePreset } from '@tmex/theme';
 import { SidebarInset, SidebarProvider, useSidebar } from '@tmex/ui/sidebar';
 

@@ -1,6 +1,7 @@
 // mesh 身份相关的前端入口。F4-2/F4-3 从这里取 `NodeLoginButton` / `hasSessionKey` / `loginToNode`。
 
 export * from './session-key-store';
+export * from './session-login';
 export * from './login-errors';
 export * from './use-node-login';
 export * from './use-session-key';

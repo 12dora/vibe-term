@@ -14,11 +14,13 @@ import {
   clearSessionKey,
   clearTotpCode,
   ensureNodeLogin,
+  setTotpCode,
+} from '@/auth/session-key-store';
+import {
   establishSessionFromPasskey,
   establishSessionFromPassword,
   loginSelf,
-  setTotpCode,
-} from '@/auth/session-key-store';
+} from '@/auth/session-login';
 import { useAuthMode } from '@/auth/use-session-key';
 import { Brand } from '@/components/brand';
 import type { AuthApi, AuthModeResponse } from '@tmex/api-client/auth/index';

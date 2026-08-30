@@ -18,15 +18,17 @@ import {
 import {
   clearSessionKey,
   ensureNodeLogin,
-  establishSessionFromPasskey,
-  establishSessionFromSeed,
   getSessionKey,
   hasSessionKey,
+  resetNodeLoginsForTest,
+} from './session-key-store';
+import {
+  establishSessionFromPasskey,
+  establishSessionFromSeed,
   loginSelf,
   loginToNode,
-  resetNodeLoginsForTest,
   selectPasskeyCredential,
-} from './session-key-store';
+} from './session-login';
 
 const UID = 'alice';
 /** node id 一律是规范的 32 位小写 hex（`assertNodeId` 只接受这种形态）。 */
@@ -380,6 +382,25 @@ describe('ensureNodeLogin', () => {
     const { api, captured } = mockApi({});
     expect(await ensureNodeLogin(NODE_A, { api })).toEqual({ ok: false, code: 'NO_SESSION_KEY' });
     expect(captured.challengeCalls).toHaveLength(0);
+  });
+});
+
+describe('常驻模块的静态依赖', () => {
+  test('只动态加载 ./session-login，不静态拖入 argon2 / 椭圆曲线（否则会回到首屏 chunk）', async () => {
+    const scan = async (file: string) =>
+      new Bun.Transpiler({ loader: file.endsWith('x') ? 'tsx' : 'ts' }).scanImports(
+        await Bun.file(`${import.meta.dir}/${file}`).text()
+      );
+    const store = await scan('session-key-store.ts');
+    expect(store.find((entry) => entry.path === './session-login')?.kind).toBe('dynamic-import');
+    expect(store.map((entry) => entry.path)).not.toContain('@tmex/shared/auth');
+
+    // 侧边栏 / 路由边界这两条常驻入口也只能碰 store，不能直接引实现。
+    for (const file of ['NodeLoginButton.tsx', 'use-node-login.ts']) {
+      const paths = (await scan(file)).map((entry) => entry.path);
+      expect(paths).not.toContain('./session-login');
+      expect(paths).not.toContain('@tmex/shared/auth');
+    }
   });
 });
 
