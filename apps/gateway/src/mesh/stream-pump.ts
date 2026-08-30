@@ -17,7 +17,7 @@ export async function pumpToLink(
       if (!value) continue;
       const bytes = value instanceof Uint8Array ? value : value.bytes;
       const head = !(value instanceof Uint8Array) && value.head;
-      if (bytes.byteLength) await dst.write(bytes, head ? { head: true } : undefined);
+      if (bytes.byteLength || head) await dst.write(bytes, head ? { head: true } : undefined);
     }
     if (!stopped?.()) await dst.end();
     return true;

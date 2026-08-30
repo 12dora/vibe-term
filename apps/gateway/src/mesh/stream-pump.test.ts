@@ -3,6 +3,24 @@ import type { LinkStream } from '@tmex/shared/link';
 import { pumpLink, pumpToLink } from './stream-pump';
 
 describe('pumpToLink', () => {
+  test('keeps zero-length HEAD frames', async () => {
+    const src = new ReadableStream<{ bytes: Uint8Array; head?: boolean }>({
+      start(controller) {
+        controller.enqueue({ bytes: new Uint8Array(0), head: true });
+        controller.enqueue({ bytes: new Uint8Array(0) });
+        controller.close();
+      },
+    });
+    const writes: Array<{ head?: boolean } | undefined> = [];
+    await pumpToLink(src.getReader(), {
+      write: async (_bytes, opts) => {
+        writes.push(opts);
+      },
+      end: async () => {},
+    });
+    expect(writes).toEqual([{ head: true }]);
+  });
+
   test('awaits end and reports rejection via onError', async () => {
     const src = new ReadableStream<Uint8Array>({
       start(controller) {
