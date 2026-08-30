@@ -2547,3 +2547,133 @@ describe('GhosttyTerminalController clipboard and selection API', () => {
     expect(terminal.hasSelection()).toBeFalse();
   });
 });
+
+// 模式查询是 WASM 导出调用 + 临时内存 alloc/free，而悬停 / 滚轮每个事件要查最多 7 个模式。
+// 缓存按「代」失效：写入 VT、reset、resize、模式快照恢复都必须 bump，两次写入之间只查一轮。
+describe('GhosttyTerminalController 模式查询缓存', () => {
+  let dom: FakeDom | null = null;
+  let importVersion = 9000;
+
+  afterEach(() => {
+    dom?.restore();
+    dom = null;
+    mock.restore();
+  });
+
+  function countModeQueries(bindings: FakeBindings): { modeQueries: number } {
+    const counter = { modeQueries: 0 };
+    const original = bindings.isTerminalModeEnabled;
+    bindings.isTerminalModeEnabled = (...args: any[]): boolean => {
+      counter.modeQueries += 1;
+      return original(...args);
+    };
+    return counter;
+  }
+
+  async function openTerminal(bindings: FakeBindings): Promise<{
+    terminal: any;
+    screen: FakeElement | null;
+  }> {
+    importVersion += 1;
+    const { createTerminalController } = await loadControllerModule(bindings, importVersion);
+    const terminal = await createTerminalController({
+      theme: TEST_THEME,
+      fontFamily: 'monospace',
+      fontSize: 13,
+      scrollback: 1000,
+    });
+    const container = dom?.document.createElement('div');
+    if (container && dom) {
+      container.setBoundingClientRect({ width: 960, height: 480 });
+      dom.document.body.appendChild(container);
+      terminal.open(container as unknown as HTMLElement);
+    }
+
+    const screen = findElementByClass(terminal.element as unknown as FakeElement, 'xterm-screen');
+    screen?.setBoundingClientRect({ width: 960, height: 480, left: 0, top: 0 });
+    return { terminal, screen };
+  }
+
+  function hover(screen: FakeElement | null, clientX: number, clientY: number): void {
+    screen?.dispatchEvent(
+      new FakeMouseEvent('mousemove', { clientX, clientY, buttons: 0 }) as unknown as FakeEvent
+    );
+  }
+
+  test('两次写入之间的悬停风暴不再产生额外的 WASM 模式查询', async () => {
+    dom = installCanvasDom();
+    const bindings = createFakeBindings();
+    const counter = countModeQueries(bindings);
+    const { terminal, screen } = await openTerminal(bindings);
+
+    terminal.write('hello');
+    counter.modeQueries = 0;
+
+    hover(screen, 10, 10);
+    const afterFirstHover = counter.modeQueries;
+    expect(afterFirstHover).toBeGreaterThan(0);
+
+    for (let index = 0; index < 30; index += 1) {
+      hover(screen, 10 + index, 10 + index);
+    }
+
+    expect(counter.modeQueries).toBe(afterFirstHover);
+    terminal.dispose();
+  });
+
+  test('写入 VT 改动模式后缓存立即作废', async () => {
+    dom = installCanvasDom();
+    const bindings = createFakeBindings();
+    bindings.writeVt = () => {
+      bindings.modeState?.add(1000);
+    };
+    const { terminal } = await openTerminal(bindings);
+
+    expect(terminal.isMouseReporting()).toBeFalse();
+    terminal.write('enable-mouse-reporting');
+
+    expect(terminal.isMouseReporting()).toBeTrue();
+    terminal.dispose();
+  });
+
+  test('退出 alt-screen 仍会清掉鼠标上报模式', async () => {
+    dom = installCanvasDom();
+    const bindings = createFakeBindings();
+    bindings.modeState?.add(1049);
+    bindings.modeState?.add(1000);
+    bindings.writeVt = () => {
+      bindings.modeState?.delete(1049);
+    };
+    const { terminal } = await openTerminal(bindings);
+
+    // 先预热缓存：退出判定必须拿到写入前的 alt-screen 真值，写入后再查一次新值。
+    expect(terminal.isMouseReporting()).toBeTrue();
+    terminal.write('leave-alt-screen');
+
+    expect(bindings.modeState?.has(1000)).toBeFalse();
+    expect(terminal.isMouseReporting()).toBeFalse();
+    terminal.dispose();
+  });
+
+  test('resize 与 reset 都会作废模式缓存', async () => {
+    dom = installCanvasDom();
+    const bindings = createFakeBindings();
+    const counter = countModeQueries(bindings);
+    const { terminal } = await openTerminal(bindings);
+
+    expect(terminal.isMouseReporting()).toBeFalse();
+    counter.modeQueries = 0;
+    expect(terminal.isMouseReporting()).toBeFalse();
+    expect(counter.modeQueries).toBe(0);
+
+    terminal.resize(terminal.cols + 4, terminal.rows);
+    expect(terminal.isMouseReporting()).toBeFalse();
+    expect(counter.modeQueries).toBeGreaterThan(0);
+
+    const afterResize = counter.modeQueries;
+    terminal.reset();
+    expect(terminal.isMouseReporting()).toBeFalse();
+    expect(counter.modeQueries).toBeGreaterThan(afterResize);
+    terminal.dispose();
+  });
+});

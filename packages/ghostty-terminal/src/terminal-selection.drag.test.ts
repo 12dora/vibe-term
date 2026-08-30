@@ -17,7 +17,10 @@ const BOUNDS = { top: 0, bottom: 200 };
 
 type Calls = { render: number; renderSelection: number; scroll: number[] };
 
-function createContext(overrides: Partial<SelectionHostContext> = {}): {
+function createContext(
+  overrides: Partial<SelectionHostContext> = {},
+  scrollMoves = true
+): {
   context: SelectionHostContext;
   calls: Calls;
 } {
@@ -31,6 +34,7 @@ function createContext(overrides: Partial<SelectionHostContext> = {}): {
     getScreenBounds: () => BOUNDS,
     scrollViewportBy: (delta: number) => {
       calls.scroll.push(delta);
+      return scrollMoves;
     },
     render: () => {
       calls.render += 1;
@@ -187,5 +191,54 @@ describe('TerminalRenderCoordinator 选区重绘', () => {
     coordinator.dispose();
     await fakeDom.flushAnimationFrames();
     expect(painted).toEqual([]);
+  });
+});
+
+// 自动滚动每 48ms 一拍。旧实现每拍无条件跑两次全渲染（滚动一次 + 焦点更新一次），
+// 而贴顶 / 贴底时滚动其实是空操作，两次全渲染都白跑。
+describe('TerminalSelection 自动滚动重绘', () => {
+  test('滚不动的一拍不渲染', async () => {
+    const { context, calls } = createContext({}, false);
+    const selection = new TerminalSelection(context);
+
+    selection.begin(5, 5, 'character');
+    selection.update(5, 400);
+    const baseline = { render: calls.render, renderSelection: calls.renderSelection };
+
+    await new Promise((resolve) => setTimeout(resolve, 160));
+    selection.endDrag();
+
+    expect(calls.scroll.length).toBeGreaterThan(0);
+    expect(calls.render).toBe(baseline.render);
+    expect(calls.renderSelection).toBe(baseline.renderSelection);
+  });
+
+  test('滚动生效的一拍只跑一次全渲染，焦点更新走选区层重绘', async () => {
+    const scrolls: number[] = [];
+    let scrolledLines = 0;
+    const { context, calls } = createContext({
+      scrollViewportBy: (delta: number) => {
+        scrolls.push(delta);
+        scrolledLines += delta;
+        return true;
+      },
+      // 视口滚动后同一屏坐标落到新的绝对行号上，焦点必须跟着走。
+      hitTest: (clientX: number, clientY: number) => ({
+        line: scrolledLines + Math.floor(clientY / CELL_HEIGHT),
+        col: Math.floor(clientX / CELL_WIDTH),
+      }),
+    });
+    const selection = new TerminalSelection(context);
+
+    selection.begin(5, 5, 'character');
+    selection.update(5, 400);
+    const beforeTicks = { render: calls.render, renderSelection: calls.renderSelection };
+
+    await new Promise((resolve) => setTimeout(resolve, 160));
+    selection.endDrag();
+
+    expect(scrolls.length).toBeGreaterThan(0);
+    expect(calls.render - beforeTicks.render).toBe(scrolls.length);
+    expect(calls.renderSelection - beforeTicks.renderSelection).toBe(scrolls.length);
   });
 });

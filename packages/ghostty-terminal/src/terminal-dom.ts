@@ -8,6 +8,11 @@ import type {
 
 const SCROLLBAR_FADE_MS = 3000;
 
+// 淡出 deadline 用单调时钟，墙钟回拨不会让滚动条提前消失 / 长期挂着。
+function monotonicNow(): number {
+  return typeof performance?.now === 'function' ? performance.now() : Date.now();
+}
+
 export type TerminalScrollbarState = {
   total: number;
   offset: number;
@@ -128,6 +133,7 @@ export class TerminalDomSurface {
   private helperTextarea: HTMLElement | null = null;
   private scrollbarThumb: HTMLDivElement | null = null;
   private scrollbarFadeTimer: ReturnType<typeof setTimeout> | null = null;
+  private scrollbarFadeDeadline = 0;
   private scrollbarVisible = false;
   private focused = true;
   private linkCursorActive = false;
@@ -299,21 +305,37 @@ export class TerminalDomSurface {
     thumb.style.opacity = this.scrollbarVisible ? '1' : '0';
   }
 
+  // 悬停会以刷新率调用（120Hz 即每秒 120 次）：滚动条已可见时只推后到期时间戳，
+  // 不重写样式、也不销毁重建定时器；定时器到点自己看 deadline 决定隐藏还是续期。
   showScrollbarTransient(): void {
     if (!this.focused || !this.scrollbarThumb) {
       return;
     }
+
+    this.scrollbarFadeDeadline = monotonicNow() + SCROLLBAR_FADE_MS;
+    if (this.scrollbarVisible && this.scrollbarFadeTimer !== null) {
+      return;
+    }
+
     this.scrollbarVisible = true;
     this.scrollbarThumb.style.opacity = '1';
-    if (this.scrollbarFadeTimer) {
-      clearTimeout(this.scrollbarFadeTimer);
-    }
+    this.armScrollbarFade(SCROLLBAR_FADE_MS);
+  }
+
+  private armScrollbarFade(delay: number): void {
     this.scrollbarFadeTimer = setTimeout(() => {
+      this.scrollbarFadeTimer = null;
+      const remaining = this.scrollbarFadeDeadline - monotonicNow();
+      if (remaining > 0) {
+        this.armScrollbarFade(remaining);
+        return;
+      }
+
       this.scrollbarVisible = false;
       if (this.scrollbarThumb) {
         this.scrollbarThumb.style.opacity = '0';
       }
-    }, SCROLLBAR_FADE_MS);
+    }, delay);
   }
 
   setFocused(focused: boolean): void {
@@ -330,6 +352,7 @@ export class TerminalDomSurface {
   }
 
   cancelScrollbarFade(): void {
+    this.scrollbarFadeDeadline = 0;
     if (!this.scrollbarFadeTimer) {
       return;
     }

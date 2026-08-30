@@ -90,6 +90,11 @@ export class TerminalInputBridge {
   private readonly wheelAccumulatorY = createWheelAccumulator();
   private readonly wheelAccumulatorX = createWheelAccumulator();
   private syncOutputModeSupported: boolean | null = null;
+  // 模式查询按「代」缓存：每次 isTerminalModeEnabled 都是一次 WASM 导出调用 + 临时内存
+  // alloc/free，而一次悬停 / 滚轮就要查最多 7 个模式。任何可能改模式的操作（写 VT、
+  // reset、resize、快照恢复、清鼠标上报）都必须 bump 代号，缓存整体作废后按需重查。
+  private readonly modeCache = new Map<number, boolean>();
+  private modeGeneration = 0;
 
   constructor(
     private readonly bindings: GhosttyBindings,
@@ -97,8 +102,24 @@ export class TerminalInputBridge {
     private readonly host: InputBridgeHost
   ) {}
 
+  get modeCacheGeneration(): number {
+    return this.modeGeneration;
+  }
+
+  invalidateModeCache(): void {
+    this.modeGeneration += 1;
+    this.modeCache.clear();
+  }
+
   isModeEnabled(mode: number): boolean {
-    return this.bindings.isTerminalModeEnabled(this.handles.terminal, mode);
+    const cached = this.modeCache.get(mode);
+    if (cached !== undefined) {
+      return cached;
+    }
+    // 抛错（内核不支持该模式）时不写缓存，交由调用方的兼容分支处理。
+    const enabled = this.bindings.isTerminalModeEnabled(this.handles.terminal, mode);
+    this.modeCache.set(mode, enabled);
+    return enabled;
   }
 
   isAltScreenActive(): boolean {
@@ -149,6 +170,7 @@ export class TerminalInputBridge {
     for (const [field, mode] of MODE_SNAPSHOT_FIELDS) {
       this.bindings.setTerminalMode(this.handles.terminal, mode, snapshot[field]);
     }
+    this.invalidateModeCache();
     this.bindings.resetMouseEncoder(this.handles.mouseEncoder);
     this.mouse.lastMotionCell = null;
   }
@@ -157,6 +179,7 @@ export class TerminalInputBridge {
     for (const mode of MOUSE_TRACKING_MODES) {
       this.bindings.setTerminalMode(this.handles.terminal, mode, false);
     }
+    this.invalidateModeCache();
     this.resetMouseEncoder();
     this.mouse.pressedButtons.clear();
     this.mouse.lastMotionCell = null;

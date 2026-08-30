@@ -161,7 +161,9 @@ export class GhosttyTerminalController implements CompatibleTerminalLike {
       hitTest: (clientX, clientY) => this.renderCoordinator.hitTest(clientX, clientY),
       getScreenBounds: () => this.dom.screenBounds(),
       scrollViewportBy: (delta) => {
+        const before = this.bindings.readScrollbar(this.handles.terminal).offset;
         this.bindings.scrollViewportDelta(this.handles.terminal, delta);
+        return this.bindings.readScrollbar(this.handles.terminal).offset !== before;
       },
       render: () => {
         this.renderCoordinator.renderNow();
@@ -326,8 +328,11 @@ export class GhosttyTerminalController implements CompatibleTerminalLike {
       return;
     }
 
+    // 写入前的 alt-screen 走模式缓存（上次写入后已填好），写入后立刻作废：
+    // 之后的查询都命中新一代缓存，两次写入之间的悬停/滚轮不再重复问 WASM。
     const prevAltScreen = this.input.isAltScreenActive();
     this.bindings.writeVt(this.handles.terminal, data);
+    this.input.invalidateModeCache();
     if (prevAltScreen && !this.input.isAltScreenActive()) {
       this.clearMouseTrackingModes();
     }
@@ -363,6 +368,7 @@ export class GhosttyTerminalController implements CompatibleTerminalLike {
     this.renderCoordinator.invalidateLines();
     this.clearSelectionState(false);
     this.bindings.resetTerminal(this.handles.terminal);
+    this.input.invalidateModeCache();
     this.renderCoordinator.schedule();
   }
 
@@ -399,6 +405,7 @@ export class GhosttyTerminalController implements CompatibleTerminalLike {
     // 先落内核再提交本地状态：WASM 抛错时 cols/rows 保持旧值，同尺寸重试仍会走到这里；
     // 反过来先写字段会让「控制器尺寸 == 目标尺寸」永久成立而早退，尺寸再也对不回去。
     this.bindings.resizeTerminal(this.handles.terminal, nextCols, nextRows, this.dom.cell);
+    this.input.invalidateModeCache();
     this.input.resetMouseEncoder();
     this.cols = nextCols;
     this.rows = nextRows;

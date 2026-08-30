@@ -28,7 +28,8 @@ export type SelectionHostContext = {
   getLineModel(line: number): SelectionLineModel;
   hitTest(clientX: number, clientY: number): SelectionPoint | null;
   getScreenBounds(): { top: number; bottom: number } | null;
-  scrollViewportBy(delta: number): void;
+  // 返回视口偏移是否真的变了：贴顶 / 贴底时滚动是空操作，本 tick 无需重绘。
+  scrollViewportBy(delta: number): boolean;
   render(): void;
   renderSelection(): void;
 };
@@ -242,29 +243,43 @@ export class TerminalSelection {
       return;
     }
 
-    let delta = 0;
-    if (this.drag.lastClientY < bounds.top) {
-      delta = -1;
-    } else if (this.drag.lastClientY > bounds.bottom) {
-      delta = 1;
-    }
-
+    const delta = this.autoScrollDelta(bounds);
     if (delta === 0) {
       this.stopAutoScroll();
       return;
     }
 
-    this.context.scrollViewportBy(delta);
-    this.context.render();
+    // 只有真滚动了才跑全渲染刷新视口；命中测试必须排在渲染之后，才看得到新的视口偏移。
+    if (this.context.scrollViewportBy(delta)) {
+      this.context.render();
+    }
+    this.trackAutoScrollFocus(this.drag.lastClientX, this.drag.lastClientY);
+  }
 
-    const point = this.context.hitTest(this.drag.lastClientX, this.drag.lastClientY);
+  private autoScrollDelta(bounds: { top: number; bottom: number }): number {
+    if (this.drag.lastClientY === null) {
+      return 0;
+    }
+    if (this.drag.lastClientY < bounds.top) {
+      return -1;
+    }
+    return this.drag.lastClientY > bounds.bottom ? 1 : 0;
+  }
+
+  // 焦点跟随滚动后的新视口。焦点未跨 cell 则连选区层都不用重画。
+  private trackAutoScrollFocus(clientX: number, clientY: number): void {
+    const point = this.context.hitTest(clientX, clientY);
     if (!point) {
+      return;
+    }
+
+    this.drag.moved = true;
+    if (samePoint(point, this.drag.lastPoint)) {
       return;
     }
 
     this.state = updateSelectionFocus(this.state, point, (line) => this.context.getLineModel(line));
     this.drag.lastPoint = point;
-    this.drag.moved = true;
-    this.context.render();
+    this.context.renderSelection();
   }
 }
