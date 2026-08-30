@@ -561,7 +561,6 @@ export class UplinkClient {
         listVersion: list.version,
       });
     }
-    this.persistAdmittedPeers(list);
   }
 
   private emitNodeList(list: UplinkNodeList): void {

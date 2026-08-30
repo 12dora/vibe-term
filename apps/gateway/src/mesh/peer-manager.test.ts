@@ -1,10 +1,11 @@
 import { afterEach, describe, expect, test } from 'bun:test';
-import { generateEd25519KeyPair, randomBytes } from '@tmex/shared/auth';
+import { encodeBase64url, generateEd25519KeyPair, randomBytes } from '@tmex/shared/auth';
 import { createInMemoryLinkPair } from '@tmex/shared/link';
 import { createMigratedAuthDb } from '../auth/test-db';
 import { UserStore } from '../auth/user-store';
 import { defaultScheduler, encodeJsonBytes } from './ctl';
 import {
+  KEY_LOG_STATUS_DEBOUNCE_MS,
   PEER_DC_UPGRADE_RETRY_DELAYS_MS,
   PEER_DC_UPGRADE_RETRY_TAIL_MS,
   PEER_RETIRE_MAX_MS,
@@ -3000,4 +3001,98 @@ describe('PeerManager', () => {
     liveB.ctl.send(encodeJsonBytes({ t: 'link.quiesce' }));
     expect((await retired).reason).toBe('replaced');
   });
+
+  test('key-log append broadcasts node.status with the new head', async () => {
+    const { manager, scheduler, statuses, head } = await setupStatusPeer(fixtures);
+    await waitUntil(() => statuses.some((row) => row.t === 'node.status'));
+    expect(statuses.filter((row) => row.t === 'node.status')).toHaveLength(1);
+    head.seq = 4n;
+    head.hash = new Uint8Array(32).fill(4);
+    manager.notifyKeyLogHeadChanged();
+    scheduler.advance(KEY_LOG_STATUS_DEBOUNCE_MS);
+    await waitUntil(() => statuses.filter((row) => row.t === 'node.status').length === 2);
+    const latest = statuses.filter((row) => row.t === 'node.status').at(-1);
+    expect(latest?.key_log_head).toEqual({
+      seq: 4,
+      hash: encodeBase64url(head.hash),
+    });
+  });
+
+  test('key-log append bursts coalesce into one status broadcast', async () => {
+    const { manager, scheduler, statuses, head } = await setupStatusPeer(fixtures);
+    await waitUntil(() => statuses.some((row) => row.t === 'node.status'));
+    head.seq = 5n;
+    head.hash = new Uint8Array(32).fill(5);
+    manager.notifyKeyLogHeadChanged();
+    manager.notifyKeyLogHeadChanged();
+    manager.notifyKeyLogHeadChanged();
+    expect(statuses.filter((row) => row.t === 'node.status')).toHaveLength(1);
+    scheduler.advance(KEY_LOG_STATUS_DEBOUNCE_MS);
+    await waitUntil(() => statuses.filter((row) => row.t === 'node.status').length === 2);
+    expect(statuses.filter((row) => row.t === 'node.status')).toHaveLength(2);
+  });
+
+  test('unchanged advertised status including key-log head is skipped', async () => {
+    const { manager, statuses } = await setupStatusPeer(fixtures);
+    await waitUntil(() => statuses.some((row) => row.t === 'node.status'));
+    manager.refreshAdvertisedStatus();
+    await Bun.sleep(20);
+    expect(statuses.filter((row) => row.t === 'node.status')).toHaveLength(1);
+  });
 });
+
+async function setupStatusPeer(fixtures: Array<{ close: () => void; stop?: () => Promise<void> }>) {
+  const { db, close } = createMigratedAuthDb();
+  const store = new UserStore(db);
+  seedUser(store);
+  const self = seedNodeIdentity(store, 'user-1');
+  const peer = seedNodeIdentity(store, 'user-1');
+  store.upsertPeer({
+    nodeId: peer.nodeId,
+    name: 'peer',
+    endpointsJson: '[]',
+    inventoryJson: '{}',
+    directCapable: false,
+    lastSeenAt: Date.now(),
+    listVersion: 1,
+  });
+  const head = { seq: 1n, hash: new Uint8Array(32).fill(1) };
+  const scheduler = new ImmediateScheduler();
+  const manager = new PeerManager({
+    identity: self,
+    userStore: store,
+    uplink: dummyUplink(self, store),
+    peerPort: 0,
+    startServer: false,
+    scheduler,
+    keyLogApplier: {
+      async head() {
+        return { seq: head.seq, hash: head.hash };
+      },
+      async applyMany() {
+        return { applied: 0 };
+      },
+    },
+    statusProvider: (): UplinkStatus => ({
+      version: '1',
+      tmux: false,
+      direct_capable: false,
+      inventory: {},
+      endpoints: [],
+    }),
+  });
+  fixtures.push({ close, stop: () => manager.stop() });
+  const [local, remote] = createInMemoryLinkPair();
+  const statuses: Array<Record<string, unknown>> = [];
+  remote.ctl.onMessage((bytes) => {
+    try {
+      const msg = JSON.parse(new TextDecoder().decode(bytes)) as Record<string, unknown>;
+      if (msg.t === 'node.status') statuses.push(msg);
+    } catch {
+      /* ignore */
+    }
+  });
+  echoQuiesceCaps(remote);
+  expect(manager.adoptLink(peer.nodeId, local, 'ws-secure', self.nodeId)).toBe(local);
+  return { manager, scheduler, statuses, head };
+}

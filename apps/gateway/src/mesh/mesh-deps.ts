@@ -22,6 +22,10 @@ export const STREAM_FAILOVER_BACKOFF_MS = [0, 50, 100, 200, 400, 800, 1600] as c
 export const STREAM_FAILOVER_MAX_ATTEMPTS = STREAM_FAILOVER_BACKOFF_MS.length;
 export const STREAM_FAILOVER_RESUME_WAIT_MS = 8_000;
 export const HTTP_FAILOVER_MAX_ATTEMPTS = 4;
+/** failover 期间泵队列上限；溢出关闭浏览器侧连接（1011 / STREAM_QUEUE_OVERFLOW_REASON），不静默丢帧。 */
+export const STREAM_QUEUE_MAX_FRAMES = 256;
+export const STREAM_QUEUE_MAX_BYTES = 4 * 1024 * 1024;
+export const STREAM_QUEUE_OVERFLOW_REASON = 'forward-queue-overflow';
 
 export const MESH_WS_KIND = 'mesh-event';
 export const MESH_FORWARD_WS_KIND = 'mesh-forward-ws';
@@ -95,7 +99,7 @@ export type HttpStreamOpen = {
 };
 
 export type OpenedWsStream = {
-  send(bytes: Uint8Array): void;
+  send(bytes: Uint8Array): Promise<void>;
   onMessage(cb: (bytes: Uint8Array) => void): void;
   onClose(cb: (info: { code?: number; reason?: string }) => void): void;
   close(code?: number, reason?: string): void;

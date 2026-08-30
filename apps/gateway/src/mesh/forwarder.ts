@@ -17,6 +17,9 @@ import {
   STREAM_FAILOVER_BACKOFF_MS,
   STREAM_FAILOVER_MAX_ATTEMPTS,
   STREAM_FAILOVER_RESUME_WAIT_MS,
+  STREAM_QUEUE_MAX_BYTES,
+  STREAM_QUEUE_MAX_FRAMES,
+  STREAM_QUEUE_OVERFLOW_REASON,
   type StreamOpener,
   X_TMEX_SESSION_RENEWED,
   X_TMEX_SET_SESSION,
@@ -87,6 +90,7 @@ type ForwardPump = {
   resumeWait: (() => void) | null;
   streamAlive: boolean;
   inflight: OpenedWsStream | null;
+  queueBytes: number;
 };
 
 const pendingMeta = new WeakMap<OpenedWsStream, ForwardMeta>();
@@ -160,10 +164,10 @@ export class Forwarder {
     if (!bytes) return;
     pump.replay.noteOutbound(bytes);
     if (pump.failingOver || !pump.stream) {
-      pump.queue.push(bytes.slice());
+      if (!enqueueFrame(pump, bytes)) this.failPump(pump, STREAM_QUEUE_OVERFLOW_REASON);
       return;
     }
-    pump.stream.send(bytes);
+    this.sendToStream(pump, pump.stream, bytes);
   }
 
   handleForwardSocketClose(ws: MeshServerWebSocket, code?: number, reason?: string): void {
@@ -205,6 +209,7 @@ export class Forwarder {
       resumeWait: null,
       streamAlive: true,
       inflight: null,
+      queueBytes: 0,
     };
     this.pumps.set(ws, pump);
     this.bindStream(pump, stream, meta?.transport ?? null);
@@ -389,11 +394,11 @@ export class Forwarder {
       pump[key] = null;
     };
     const hello = pump.replay.hello;
-    if (hello) await wait('helloWait', 2_000, () => stream.send(hello));
+    if (hello) await wait('helloWait', 2_000, () => this.sendToStream(pump, stream, hello));
     const sendAll = (frames: Uint8Array[]): void => {
       for (const frame of frames) {
         if (pumpDead(pump, signal)) return;
-        stream.send(frame);
+        this.sendToStream(pump, stream, frame);
       }
     };
     sendAll(pump.replay.buildConnectFrames());
@@ -407,12 +412,48 @@ export class Forwarder {
 
   private flushQueue(pump: ForwardPump): void {
     const queued = pump.queue.splice(0);
+    pump.queueBytes = 0;
     const stream = pump.stream;
     if (!stream) return;
     for (const bytes of queued) {
       const out = pump.replay.rewriteQueuedFrame(bytes);
-      if (out) stream.send(out);
+      if (out) this.sendToStream(pump, stream, out);
     }
+  }
+
+  private sendToStream(pump: ForwardPump, stream: OpenedWsStream, bytes: Uint8Array): void {
+    let pending: Promise<void>;
+    try {
+      pending = Promise.resolve(stream.send(bytes));
+    } catch {
+      this.onSendFailed(pump, stream);
+      return;
+    }
+    void pending.then(undefined, () => this.onSendFailed(pump, stream));
+  }
+
+  private onSendFailed(pump: ForwardPump, stream: OpenedWsStream): void {
+    if (pump.browserClosed || pump.stream !== stream) return;
+    pump.streamAlive = false;
+    try {
+      stream.close(1011, 'send-failed');
+    } catch {}
+    if (pump.failingOver) return;
+    void this.failover(pump, { code: 1011, reason: 'send-failed' });
+  }
+
+  private failPump(pump: ForwardPump, reason: string): void {
+    if (pump.browserClosed) return;
+    pump.failoverAbort?.abort();
+    pump.helloWait?.();
+    pump.helloWait = null;
+    pump.resumeWait?.();
+    pump.resumeWait = null;
+    const inflight = pump.inflight;
+    pump.inflight = null;
+    inflight?.close(1011, reason);
+    pump.stream?.close(1011, reason);
+    this.closeBrowser(pump, { code: 1011, reason });
   }
 
   private discardStream(pump: ForwardPump, stream: OpenedWsStream): void {
@@ -619,6 +660,18 @@ export function expirePendingForwardStream(token: string, stream: OpenedWsStream
 
 function pumpDead(pump: ForwardPump, signal: AbortSignal): boolean {
   return pump.browserClosed || signal.aborted;
+}
+
+function enqueueFrame(pump: ForwardPump, bytes: Uint8Array): boolean {
+  if (
+    pump.queue.length >= STREAM_QUEUE_MAX_FRAMES ||
+    pump.queueBytes + bytes.byteLength > STREAM_QUEUE_MAX_BYTES
+  ) {
+    return false;
+  }
+  pump.queue.push(bytes.slice());
+  pump.queueBytes += bytes.byteLength;
+  return true;
 }
 
 function copyUpstreamHeaders(upstream: Response): Headers {

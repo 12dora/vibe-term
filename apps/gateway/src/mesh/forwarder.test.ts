@@ -24,6 +24,9 @@ import {
   MESH_FORWARD_WS_KIND,
   MESH_REJECT_4401_KIND,
   type MeshServerWebSocket,
+  STREAM_QUEUE_MAX_BYTES,
+  STREAM_QUEUE_MAX_FRAMES,
+  STREAM_QUEUE_OVERFLOW_REASON,
   X_TMEX_SET_SESSION,
   isMeshRewritten,
 } from './mesh-deps';
@@ -971,6 +974,123 @@ describe('forwarder', () => {
     }
   });
 
+  test('failover queue frame cap closes the browser instead of dropping frames', async () => {
+    const { mesh, ws, closed, release } = await beginBlockedFailover();
+    try {
+      for (let i = 0; i < STREAM_QUEUE_MAX_FRAMES; i += 1) {
+        mesh.runtime.handleWebSocket.message(ws, new Uint8Array([i & 0xff]));
+      }
+      expect(closed()).toBeUndefined();
+      mesh.runtime.handleWebSocket.message(ws, new Uint8Array([0xee]));
+      expect(closed()?.code).toBe(1011);
+      expect(closed()?.reason).toBe(STREAM_QUEUE_OVERFLOW_REASON);
+    } finally {
+      release();
+      mesh.close();
+    }
+  });
+
+  test('failover queue byte cap closes the browser instead of dropping frames', async () => {
+    const { mesh, ws, closed, release } = await beginBlockedFailover();
+    try {
+      const chunk = new Uint8Array(1024 * 1024);
+      let queued = 0;
+      while (queued + chunk.byteLength <= STREAM_QUEUE_MAX_BYTES) {
+        mesh.runtime.handleWebSocket.message(ws, chunk);
+        queued += chunk.byteLength;
+      }
+      expect(closed()).toBeUndefined();
+      mesh.runtime.handleWebSocket.message(ws, chunk);
+      expect(closed()?.code).toBe(1011);
+      expect(closed()?.reason).toBe(STREAM_QUEUE_OVERFLOW_REASON);
+    } finally {
+      release();
+      mesh.close();
+    }
+  });
+
+  test('queued frames under the cap replay after failover', async () => {
+    const dcLink = { id: 'dc' } as unknown as LinkSession;
+    const relayLink = { id: 'relay' } as unknown as LinkSession;
+    const peers = new FakePeers();
+    peers.links.set(OTHER, dcLink);
+    peers.transport.set(OTHER, 'dc');
+    const streams = new FakeStreams();
+    const origGetLink = peers.getLink.bind(peers);
+    let blockLink = false;
+    let releaseLink: (() => void) | undefined;
+    peers.getLink = async (nodeId: string) => {
+      if (blockLink) {
+        await new Promise<void>((resolve) => {
+          releaseLink = resolve;
+        });
+      }
+      return origGetLink(nodeId);
+    };
+    const mesh = await bootMesh({ peers, streams, sleep: async () => {} });
+    try {
+      const { ws } = await openForwardWs(mesh.runtime, peers, streams, OTHER);
+      mesh.runtime.handleWebSocket.message(ws, encodeHelloFrame());
+      blockLink = true;
+      peers.links.set(OTHER, relayLink);
+      peers.transport.set(OTHER, 'relay');
+      streams.lastWs?.close(1011, 'reset');
+      await waitUntil(() => releaseLink !== undefined, 2_000);
+      const queued: Uint8Array[] = [];
+      for (let i = 0; i < 8; i += 1) {
+        const frame = new Uint8Array([0xa0, i, 0x0d, 0x0a]);
+        queued.push(frame);
+        mesh.runtime.handleWebSocket.message(ws, frame);
+      }
+      releaseLink?.();
+      await waitUntil(() => streams.wsOpens.length === 2, 2_000);
+      const sent = streams.wsOpens[1]?.ws.sent ?? [];
+      for (const frame of queued) {
+        expect(sent.filter((row) => bytesEqual(row, frame))).toHaveLength(1);
+      }
+    } finally {
+      mesh.close();
+    }
+  });
+
+  test('rejected stream write triggers failover once without unhandled rejection', async () => {
+    const dcLink = { id: 'dc' } as unknown as LinkSession;
+    const relayLink = { id: 'relay' } as unknown as LinkSession;
+    const peers = new FakePeers();
+    peers.links.set(OTHER, dcLink);
+    peers.transport.set(OTHER, 'dc');
+    const streams = new FakeStreams();
+    const mesh = await bootMesh({ peers, streams, sleep: async () => {} });
+    const unhandled: unknown[] = [];
+    const onUnhandled = (reason: unknown) => {
+      unhandled.push(reason);
+    };
+    const events = process as unknown as {
+      on(event: string, listener: (reason: unknown) => void): void;
+      off(event: string, listener: (reason: unknown) => void): void;
+    };
+    events.on('unhandledRejection', onUnhandled);
+    try {
+      const { ws, closed } = await openForwardWs(mesh.runtime, peers, streams, OTHER);
+      mesh.runtime.handleWebSocket.message(ws, encodeHelloFrame());
+      const first = streams.lastWs;
+      expect(first).not.toBeNull();
+      if (!first) throw new Error('expected upstream ws');
+      first.sendError = new Error('write-closed');
+      peers.links.set(OTHER, relayLink);
+      peers.transport.set(OTHER, 'relay');
+      mesh.runtime.handleWebSocket.message(ws, new Uint8Array([0x11, 0x22]));
+      await waitUntil(() => streams.wsOpens.length === 2, 2_000);
+      expect(closed()).toBeUndefined();
+      expect(streams.wsOpens).toHaveLength(2);
+      await Bun.sleep(20);
+      expect(unhandled).toEqual([]);
+    } finally {
+      events.off('unhandledRejection', onUnhandled);
+      mesh.close();
+    }
+  });
+
   test('HTTP forward removes the request abort listener after success and error', async () => {
     const peers = new FakePeers();
     peers.links.set(OTHER, dummyLink);
@@ -1201,6 +1321,45 @@ function trackAbort(controller: AbortController): {
     return remove(type, listener, opts);
   }) as typeof signal.removeEventListener;
   return tracked;
+}
+
+async function beginBlockedFailover(): Promise<{
+  mesh: Awaited<ReturnType<typeof bootMesh>>;
+  ws: MeshServerWebSocket;
+  closed: () => { code?: number; reason?: string } | undefined;
+  release: () => void;
+}> {
+  const dcLink = { id: 'dc' } as unknown as LinkSession;
+  const relayLink = { id: 'relay' } as unknown as LinkSession;
+  const peers = new FakePeers();
+  peers.links.set(OTHER, dcLink);
+  peers.transport.set(OTHER, 'dc');
+  const streams = new FakeStreams();
+  const origGetLink = peers.getLink.bind(peers);
+  let blockLink = false;
+  let releaseLink: (() => void) | undefined;
+  peers.getLink = async (nodeId: string) => {
+    if (blockLink) {
+      await new Promise<void>((resolve) => {
+        releaseLink = resolve;
+      });
+    }
+    return origGetLink(nodeId);
+  };
+  const mesh = await bootMesh({ peers, streams, sleep: async () => {} });
+  const { ws, closed } = await openForwardWs(mesh.runtime, peers, streams, OTHER);
+  mesh.runtime.handleWebSocket.message(ws, encodeHelloFrame());
+  blockLink = true;
+  peers.links.set(OTHER, relayLink);
+  peers.transport.set(OTHER, 'relay');
+  streams.lastWs?.close(1011, 'reset');
+  await waitUntil(() => releaseLink !== undefined, 2_000);
+  return {
+    mesh,
+    ws,
+    closed,
+    release: () => releaseLink?.(),
+  };
 }
 
 async function openForwardWs(

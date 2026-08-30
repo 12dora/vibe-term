@@ -399,12 +399,13 @@ function turnConfig(config: MeshRuntimeConfig): CachedRtcConfig['turn'] {
   return null;
 }
 
-function createKeyLogApplier(keys: UserKeyService): KeyLogApplier {
+function createKeyLogApplier(keys: UserKeyService, onHeadChanged?: () => void): KeyLogApplier {
   return {
     head: (userId, signal) => keys.head(userId, signal),
     list: (userId, fromSeq, signal, limit) => keys.list(userId, fromSeq, signal, limit),
     async applyMany(userId, records, signal) {
       const result = await keys.applyMany(userId, records, signal);
+      if (result.applied > 0) onHeadChanged?.();
       return result.ok
         ? { applied: result.applied }
         : { applied: result.applied, error: result.error };
@@ -446,7 +447,7 @@ async function openAdaptedWsStream(
   opened.stream.onAbort(() => notifyClose({ code: 1011, reason: 'reset' }));
   return {
     send(bytes) {
-      void opened.send(bytes);
+      return opened.send(bytes);
     },
     onMessage(cb) {
       messageCbs.push(cb);
@@ -546,7 +547,10 @@ async function createMeshStoresAndServices(opts: CreateMeshRuntimeOptions) {
     nodeSessionStore,
     verifyPasskeyAssertion: makeVerifyPasskeyAssertion(userStore),
   });
-  const applier = createKeyLogApplier(keyLogService);
+  const peerHolder = { manager: null } as { manager: PeerManager | null };
+  const applier = createKeyLogApplier(keyLogService, () =>
+    peerHolder.manager?.notifyKeyLogHeadChanged()
+  );
   const userIdOf = () => resolveUserId(userStore, identity.nodeIdHex, opts.userId) ?? '';
   const nodeEvents = new Set<(event: NodeEventPayload) => void>();
   const nodeEventDedupe = new NodeEventDedupe();
@@ -627,7 +631,7 @@ async function createMeshStoresAndServices(opts: CreateMeshRuntimeOptions) {
     emitRevoked,
     signalListeners,
     hub,
-    peerHolder: { manager: null } as { manager: PeerManager | null },
+    peerHolder,
     innerSignalsHolder: { router: null } as { router: MeshRtcSignalRouter | null },
     startBrowserAcceptHolder: { fn() {} } as { fn: (rtcSession: string) => void },
     httpHolder: { runtime: null } as { runtime: MeshHttpRuntime | null },
@@ -1120,9 +1124,11 @@ function wireMeshHttp(
       try {
         uplink.sendCtl({ t: 'key.log.append', bytes: record.bytes, sig: record.sig });
       } catch {}
+      d.peerHolder.manager?.notifyKeyLogHeadChanged();
     },
     async publishAndAck(record) {
       const ack = await uplink.appendAndAck(record);
+      d.peerHolder.manager?.notifyKeyLogHeadChanged();
       if (ack.ok) return { ok: true, seq: ack.seq ?? 0n };
       return { ok: false, error: ack.error ?? 'hub_error' };
     },

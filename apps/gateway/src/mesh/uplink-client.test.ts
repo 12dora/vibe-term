@@ -137,9 +137,8 @@ describe('UplinkClient', () => {
         ],
       })
     );
-    await waitUntil(() => userStore.listPeers().some((row) => row.nodeId === peerId));
-    expect(userStore.listPeers().find((row) => row.nodeId === nodeId)).toBeUndefined();
     await waitUntil(() => received.some((row) => row.includes('key.log.req')));
+    expect(userStore.listPeers().find((row) => row.nodeId === peerId)).toBeUndefined();
     const firstReq = JSON.parse(received.find((row) => row.includes('key.log.req')) ?? '{}') as {
       id?: string;
     };
@@ -151,6 +150,8 @@ describe('UplinkClient', () => {
       })
     );
     await waitUntil(() => applied.length > 0);
+    await waitUntil(() => userStore.listPeers().some((row) => row.nodeId === peerId));
+    expect(userStore.listPeers().find((row) => row.nodeId === nodeId)).toBeUndefined();
     expect(applied[0]?.bytes).toEqual(recBytes);
     expect(lists).toHaveLength(1);
 
@@ -2186,6 +2187,57 @@ describe('UplinkClient', () => {
     expect(userStore.getHubMeta()?.publicUrl).toBe('https://new.example');
     expect(userStore.listPeers().find((row) => row.nodeId === 'hub')?.listVersion).toBe(2);
     expect(lists.every((row) => row.version !== 1)).toBe(true);
+  });
+
+  test('accepted node.list persists admitted peers once then emits without a second persist', async () => {
+    const { db, close } = createMigratedAuthDb();
+    fixtures.push({ close });
+    const userStore = new UserStore(db);
+    seedUser(userStore);
+    const peerId = 'cd'.repeat(16);
+    admitPeer(userStore, peerId);
+    let persistCalls = 0;
+    const origUpsert = userStore.upsertPeer.bind(userStore);
+    userStore.upsertPeer = (input) => {
+      persistCalls += 1;
+      origUpsert(input);
+    };
+    const lists: UplinkNodeList[] = [];
+    const { hub, nodeId } = await bootOnline({
+      userStore,
+      onNodeList: (list) => lists.push(list),
+    });
+    hub.ctl.send(
+      encodeUplinkCtl({
+        t: 'node.list',
+        version: 3,
+        key_log_head: { seq: 0n, hash: new Uint8Array(32) },
+        rtc: { stun: [], turn: null },
+        nodes: [
+          {
+            id: nodeId,
+            name: 'self',
+            online: true,
+            endpoints: [],
+            inventory: {},
+            direct_capable: false,
+            version: '1.0.0',
+          },
+          {
+            id: peerId,
+            name: 'peer',
+            online: true,
+            endpoints: ['ws://10.0.0.2:39001/peer'],
+            inventory: {},
+            direct_capable: true,
+            version: '1.0.0',
+          },
+        ],
+      })
+    );
+    await waitUntil(() => lists.length === 1);
+    expect(persistCalls).toBe(1);
+    expect(userStore.listPeers().find((row) => row.nodeId === peerId)?.name).toBe('peer');
   });
 
   test('resets node.list version watermark on a new connection generation', async () => {

@@ -62,6 +62,7 @@ export const PEER_MISSED_PONG_LIMIT = 3;
 export const PEER_MAX_CONCURRENT_STREAMS = 256;
 export const PEER_UPGRADE_COOLDOWN_MS = 10_000;
 export const PEER_UPGRADE_SCAN_MS = 15_000;
+export const KEY_LOG_STATUS_DEBOUNCE_MS = 100;
 export const PEER_UPGRADE_BACKOFF_CAP_MS = 5 * 60 * 1000;
 export const PEER_UPGRADE_MAX_INFLIGHT = 4;
 export const PEER_MAX_ENDPOINTS = 16;
@@ -340,6 +341,7 @@ export class PeerManager {
   private linkInfoHold = 0;
   private readonly upgradeWaiters: Array<() => void> = [];
   private upgradeScan: { clear: () => void } | null = null;
+  private keyLogStatusDebounce: { clear: () => void } | null = null;
   private stopped = false;
   private generation = 0;
   private stopAbort = new AbortController();
@@ -416,6 +418,8 @@ export class PeerManager {
     this.stopAbort.abort();
     this.upgradeScan?.clear();
     this.upgradeScan = null;
+    this.keyLogStatusDebounce?.clear();
+    this.keyLogStatusDebounce = null;
     this.server?.stop();
     for (const nodeId of [...this.parked.keys()]) {
       this.dropParked(nodeId, 'stopped');
@@ -617,6 +621,15 @@ export class PeerManager {
     for (const live of this.live.values()) {
       this.sendPeerStatus(live);
     }
+  }
+
+  notifyKeyLogHeadChanged(): void {
+    if (this.stopped || this.keyLogStatusDebounce) return;
+    this.keyLogStatusDebounce = this.scheduler.interval(() => {
+      this.keyLogStatusDebounce?.clear();
+      this.keyLogStatusDebounce = null;
+      this.refreshAdvertisedStatus();
+    }, KEY_LOG_STATUS_DEBOUNCE_MS);
   }
 
   listReach(): Map<string, PeerReach> {
@@ -1838,33 +1851,34 @@ export class PeerManager {
   private sendPeerStatus(live: LivePeer): void {
     const status = this.statusProvider?.();
     if (!status) return;
-    const encoded = jsonStable(status);
-    if (encoded === live.lastAdvertisedStatusJson) return;
-    live.lastAdvertisedStatusJson = encoded;
-    const payload: Record<string, unknown> = {
-      t: 'node.status',
-      version: status.version,
-      tmux: status.tmux,
-      direct_capable: status.direct_capable,
-      inventory: status.inventory,
-      endpoints: status.endpoints,
-      name: status.name,
+    const push = (head?: { seq: bigint; hash: Uint8Array }) => {
+      const encoded = `${jsonStable(status)}\0${head ? `${head.seq.toString()}:${encodeBase64url(head.hash)}` : ''}`;
+      if (encoded === live.lastAdvertisedStatusJson) return;
+      live.lastAdvertisedStatusJson = encoded;
+      this.sendPeerCtl(live, {
+        t: 'node.status',
+        version: status.version,
+        tmux: status.tmux,
+        direct_capable: status.direct_capable,
+        inventory: status.inventory,
+        endpoints: status.endpoints,
+        name: status.name,
+        ...(head
+          ? { key_log_head: { seq: Number(head.seq), hash: encodeBase64url(head.hash) } }
+          : {}),
+      });
     };
-    if (this.keyLogApplier) {
-      void this.keyLogApplier
-        .head(this.uplink.userId)
-        .then((head) => {
-          if (this.live.get(live.peerNodeId) !== live && !live.retiring) return;
-          payload.key_log_head = {
-            seq: Number(head.seq),
-            hash: encodeBase64url(head.hash),
-          };
-          this.sendPeerCtl(live, payload);
-        })
-        .catch(() => undefined);
+    if (!this.keyLogApplier) {
+      push();
       return;
     }
-    this.sendPeerCtl(live, payload);
+    void this.keyLogApplier
+      .head(this.uplink.userId)
+      .then((head) => {
+        if (this.live.get(live.peerNodeId) !== live && !live.retiring) return;
+        push(head);
+      })
+      .catch(() => undefined);
   }
 
   private startPing(live: LivePeer): void {

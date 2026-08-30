@@ -99,9 +99,13 @@ export class FakeWs implements OpenedWsStream {
   private closed: Array<(info: { code?: number; reason?: string }) => void> = [];
   closedOnce = false;
 
-  send(bytes: Uint8Array): void {
-    if (this.closedOnce) return;
+  sendError: Error | null = null;
+
+  send(bytes: Uint8Array): Promise<void> {
+    if (this.closedOnce) return Promise.resolve();
+    if (this.sendError) return Promise.reject(this.sendError);
     this.sent.push(bytes);
+    return Promise.resolve();
   }
   onMessage(cb: (bytes: Uint8Array) => void): void {
     this.msg.push(cb);
