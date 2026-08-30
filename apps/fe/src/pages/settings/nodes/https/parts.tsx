@@ -1,11 +1,10 @@
 // HTTPS 区块内部共用的展示件（与 setup/ 的同类件刻意各自独立，两者文件范围不同）。
 
-import { Button } from '@tmex/ui/button';
 import { Input } from '@tmex/ui/input';
-import { CircleCheck, CircleX, Copy, Info, TriangleAlert } from 'lucide-react';
+import { CircleCheck, CircleX, Info, TriangleAlert } from 'lucide-react';
 import type { ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
-import { CopyLabel, useCopyToClipboard } from '../copy-feedback';
+import { CopyButton } from '../copy-feedback';
 
 export type NoticeTone = 'info' | 'success' | 'warning' | 'error';
 
@@ -149,7 +148,6 @@ export function ListenerFields({
 }
 
 export function CopyableCode({ value, testId }: { value: string; testId: string }) {
-  const { copied, copy } = useCopyToClipboard(value);
   return (
     <span className="flex min-w-0 items-center gap-1">
       <code
@@ -158,10 +156,7 @@ export function CopyableCode({ value, testId }: { value: string; testId: string 
       >
         {value}
       </code>
-      <Button type="button" size="xs" variant="ghost" onClick={copy} data-testid={`${testId}-copy`}>
-        {copied ? <CircleCheck className="tmex-scale-in" /> : <Copy className="tmex-scale-in" />}
-        <CopyLabel copied={copied} />
-      </Button>
+      <CopyButton value={value} testId={testId} />
     </span>
   );
 }

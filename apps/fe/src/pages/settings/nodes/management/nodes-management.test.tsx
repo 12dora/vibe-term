@@ -13,7 +13,7 @@ const { MemoryRouter } = await import('react-router');
 const { resetMeshNodesStateForTest, setMeshNodesStateForTest } = await import('@/node/mesh-nodes');
 const { setPendingStorage, clearPendingEnrollments } = await import('@/node/enrollment');
 const { NodesManagement } = await import('./nodes-management');
-const { canAutoSignAdmit } = await import('./use-admit-action');
+const { canAutoSignAdmit, invalidCertificateKey } = await import('./use-admit-action');
 const { resolveHubPublicUrl } = await import('./enrollment-section');
 const { rootKeyFromSeed } = await import('@tmex/shared/auth');
 
@@ -136,6 +136,13 @@ describe('canAutoSignAdmit', () => {
   test('passkey 不行：认证器仪式必须由用户手势触发，留在「待确认」', () => {
     expect(canAutoSignAdmit({ kind: 'passkey', credentialId: 'a' })).toBe(false);
     expect(canAutoSignAdmit(null)).toBe(false);
+  });
+});
+
+describe('invalidCertificateKey', () => {
+  test('过期与验签失败分开提示', () => {
+    expect(invalidCertificateKey('expired')).toBe('nodes.enrollment.expired');
+    expect(invalidCertificateKey('bad_sig')).toBe('nodes.enrollment.badCertSig');
   });
 });
 

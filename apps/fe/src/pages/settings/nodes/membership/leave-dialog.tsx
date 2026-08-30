@@ -18,7 +18,7 @@ import {
 import { Loader2 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import type { SetupIntent } from './intent';
-import type { MeshRole } from './role-transition';
+import { type MeshRole, ROLE_LABEL_KEY } from './role-transition';
 import type { LeaveMesh } from './use-leave-mesh';
 
 export type LeaveDialogKind = 'leave' | 'switch' | 'change-hub';
@@ -31,12 +31,6 @@ export interface LeaveDialogRequest {
   /** 重启后要展开的向导路径；纯粹退出为 null。 */
   intent: SetupIntent | null;
 }
-
-const ROLE_LABEL_KEY: Record<LocalRole, string> = {
-  standalone: 'nodes.machine.roleStandalone',
-  node: 'nodes.machine.roleNode',
-  'hub,node': 'nodes.machine.roleHub',
-};
 
 const TITLE_KEY: Record<LeaveDialogKind, string> = {
   leave: 'nodes.membership.leaveConfirm.title',

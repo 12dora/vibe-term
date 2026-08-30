@@ -44,6 +44,11 @@ export function canAutoSignAdmit(signer: RecordSigner | null): boolean {
   return signer?.kind === 'root';
 }
 
+/** 证书对不上时的提示：过期与验签失败要分开讲，其余情况一律按验签失败处理。 */
+export function invalidCertificateKey(reason: string): string {
+  return reason === 'expired' ? 'nodes.enrollment.expired' : 'nodes.enrollment.badCertSig';
+}
+
 export function useAdmitAction({
   api,
   mode,
@@ -70,6 +75,18 @@ export function useAdmitAction({
     listUnconfirmedRecordIds,
     listUnconfirmedRecordIds
   );
+
+  /** 置忙 → 跑动作 → 失败弹 toast → 复位；三处 admit 入口共用同一套忙态与错误处理。 */
+  const withBusy = useCallback(async (id: string, run: () => Promise<void>) => {
+    setBusyPendingId(id);
+    try {
+      await run();
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : String(err));
+    } finally {
+      setBusyPendingId(null);
+    }
+  }, []);
 
   /** 把一条**已签好**的 admit 记录送出去，并按 B2-6 的码处理结果。 */
   const submitAdmit = useCallback(
@@ -141,11 +158,7 @@ export function useAdmitAction({
         return;
       }
       if (outcome.kind === 'invalid') {
-        toast.error(
-          outcome.reason === 'expired'
-            ? t('nodes.enrollment.expired')
-            : t('nodes.enrollment.badCertSig')
-        );
+        toast.error(t(invalidCertificateKey(outcome.reason)));
         return;
       }
       const id = outcome.pending.hubEnrollmentId;
@@ -153,20 +166,15 @@ export function useAdmitAction({
       // 复用窗口已过、或窗口里是 passkey：都留在「待确认」，等用户点按钮。
       const plan = admitPlan(id, canAutoSignAdmit(signer));
       if (plan === 'wait') return;
-      setBusyPendingId(id);
-      try {
+      await withBusy(id, async () => {
         const stored = unconfirmedRecord(id);
         if (plan === 'resend' && stored) await submitAdmit(outcome.pending, stored);
         else if (signer) {
           await signAdmit(outcome.pending, outcome.certificateBytes, outcome.certSig, signer);
         }
-      } catch (err) {
-        toast.error(err instanceof Error ? err.message : String(err));
-      } finally {
-        setBusyPendingId(null);
-      }
+      });
     },
-    [signAdmit, submitAdmit, t]
+    [signAdmit, submitAdmit, t, withBusy]
   );
 
   /**
@@ -181,14 +189,7 @@ export function useAdmitAction({
       if (!mode) return;
       const stored = unconfirmedRecord(pending.hubEnrollmentId);
       if (stored) {
-        setBusyPendingId(pending.hubEnrollmentId);
-        try {
-          await submitAdmit(pending, stored);
-        } catch (err) {
-          toast.error(err instanceof Error ? err.message : String(err));
-        } finally {
-          setBusyPendingId(null);
-        }
+        await withBusy(pending.hubEnrollmentId, () => submitAdmit(pending, stored));
         return;
       }
       let signer: RecordSigner | null;
@@ -200,8 +201,7 @@ export function useAdmitAction({
         return;
       }
       if (!signer) return;
-      setBusyPendingId(pending.hubEnrollmentId);
-      try {
+      await withBusy(pending.hubEnrollmentId, async () => {
         const candidates = hubApi ? await collectRedeemedCertificates(hubApi, [pending]) : [];
         for (const candidate of candidates) {
           const outcome = offerCertificate([pending], candidate, Date.now());
@@ -210,22 +210,14 @@ export function useAdmitAction({
             return;
           }
           if (outcome.kind === 'invalid') {
-            toast.error(
-              outcome.reason === 'expired'
-                ? t('nodes.enrollment.expired')
-                : t('nodes.enrollment.badCertSig')
-            );
+            toast.error(t(invalidCertificateKey(outcome.reason)));
             return;
           }
         }
         toast.error(t('nodes.enrollment.noCertificateYet'));
-      } catch (err) {
-        toast.error(err instanceof Error ? err.message : String(err));
-      } finally {
-        setBusyPendingId(null);
-      }
+      });
     },
-    [hubApi, mode, prompt, signAdmit, submitAdmit, t]
+    [hubApi, mode, prompt, signAdmit, submitAdmit, t, withBusy]
   );
 
   return { handleOutcome, confirmManually, busyPendingId, hubUnconfirmedIds, admittedIds };

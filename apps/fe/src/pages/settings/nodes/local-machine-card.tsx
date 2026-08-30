@@ -28,7 +28,7 @@ import {
 } from './direct-section';
 import type { SetupIntent } from './membership/intent';
 import { LeaveDialog, type LeaveDialogRequest } from './membership/leave-dialog';
-import { classifyRoleChange } from './membership/role-transition';
+import { ROLE_LABEL_KEY, classifyRoleChange } from './membership/role-transition';
 import { useLeaveMesh } from './membership/use-leave-mesh';
 import {
   type RestartGateway,
@@ -48,12 +48,6 @@ export interface LocalMachineCardProps {
   /** standalone 下切角色不调任何接口，只让上层把对应的向导路径展开。 */
   onSelectSetupPath?: (path: SetupIntent) => void;
 }
-
-const ROLE_LABEL_KEY: Record<LocalRole, string> = {
-  standalone: 'nodes.machine.roleStandalone',
-  node: 'nodes.machine.roleNode',
-  'hub,node': 'nodes.machine.roleHub',
-};
 
 /** 后端只认这三个角色串（`packages/app/src/lib/roles.ts`）。 */
 const SELECTABLE_ROLES: LocalRole[] = ['standalone', 'node', 'hub,node'];

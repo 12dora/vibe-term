@@ -2,7 +2,8 @@
 // 避免整棵树跟着 snapshots 这张大表在每次 metadata patch 上重渲染。
 // 返回值要么是原始值，要么是 store 里原样透出的引用，故无需额外的相等性比较。
 
-import type { StateSnapshotPayload, TmuxWindow } from '@tmex/shared';
+import type { Device, LocaleCode, StateSnapshotPayload, TmuxWindow } from '@tmex/shared';
+import { toBCP47 } from '@tmex/shared';
 import { isSidebarDeviceVisible } from '@tmex/stores';
 import { useTmuxStore } from '@tmex/stores/react';
 import { useCallback } from 'react';
@@ -130,4 +131,15 @@ export function mergeReorderedVisibleIds(
     }
   }
   return merged;
+}
+
+// 设备列表的统一顺序：先 sortOrder 再按名称做 locale 感知比较；顺带按 id 去重（缓存 / 快照 / 节点 inventory 会撞 id）
+export function sortDevices<T extends Device>(devices: readonly T[], language: LocaleCode): T[] {
+  const byId = new Map<string, T>();
+  for (const device of devices) if (!byId.has(device.id)) byId.set(device.id, device);
+  return [...byId.values()].sort(
+    (a, b) =>
+      a.sortOrder - b.sortOrder ||
+      a.name.localeCompare(b.name, toBCP47(language), { numeric: true, sensitivity: 'base' })
+  );
 }

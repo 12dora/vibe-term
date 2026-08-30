@@ -9,6 +9,13 @@ import type { SetupIntent } from './intent';
 
 export type MeshRole = Exclude<LocalRole, 'standalone'>;
 
+/** 角色的展示文案 key：本机卡片的下拉与退出对话框共用一套，别各写各的。 */
+export const ROLE_LABEL_KEY: Record<LocalRole, string> = {
+  standalone: 'nodes.machine.roleStandalone',
+  node: 'nodes.machine.roleNode',
+  'hub,node': 'nodes.machine.roleHub',
+};
+
 export type RoleTransition =
   /** 目标就是当前角色。 */
   | { kind: 'none' }

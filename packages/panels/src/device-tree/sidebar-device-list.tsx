@@ -5,7 +5,6 @@ import {
   reorderDevices,
 } from '@tmex/api-client';
 import type { Device } from '@tmex/shared';
-import { toBCP47 } from '@tmex/shared';
 import { hostAppPath } from '@tmex/stores';
 import { useRuntime, useSiteStore, useTmuxStore, useUIStore } from '@tmex/stores/react';
 import { Button } from '@tmex/ui/button';
@@ -20,7 +19,11 @@ import { DeviceRow } from './device-row';
 import { useDeviceTreeDialogs } from './device-tree-dialogs';
 import { SortableVerticalList } from './device-tree-dnd';
 import { useDeviceTreeNavigationApi, useDeviceTreeSelection } from './device-tree-navigation';
-import { mergeReorderedVisibleIds, selectSidebarVisibleDevices } from './device-tree-selectors';
+import {
+  mergeReorderedVisibleIds,
+  selectSidebarVisibleDevices,
+  sortDevices,
+} from './device-tree-selectors';
 
 type DeviceListItem = Device & {
   lastError?: string | null;
@@ -210,15 +213,7 @@ export function SideBarDeviceList({
   }, [visibleDevices, ensureDeviceSubscribed, sidebarDeviceExpanded, expansionKey]);
 
   // 隐藏设备也要参与排序：重排提交的是完整顺序，隐藏设备必须留在自己的槽位上
-  const allSortedDevices = useMemo(
-    () =>
-      [...devices].sort(
-        (a, b) =>
-          a.sortOrder - b.sortOrder ||
-          a.name.localeCompare(b.name, toBCP47(language), { numeric: true, sensitivity: 'base' })
-      ),
-    [devices, language]
-  );
+  const allSortedDevices = useMemo(() => sortDevices(devices, language), [devices, language]);
 
   const visibleDeviceIdSet = useMemo(
     () => new Set(visibleDevices.map((device) => device.id)),

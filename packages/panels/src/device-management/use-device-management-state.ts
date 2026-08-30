@@ -5,13 +5,13 @@ import type { DragEndEvent } from '@dnd-kit/core';
 import { arrayMove } from '@dnd-kit/sortable';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { type DevicesResponse, fetchDevices, reorderDevices } from '@tmex/api-client';
-import type { Device, LocaleCode } from '@tmex/shared';
-import { toBCP47 } from '@tmex/shared';
+import type { Device } from '@tmex/shared';
 import { useRuntime, useSiteStore, useTmuxStore } from '@tmex/stores/react';
 import { staggerItemStyle } from '@tmex/ui/motion';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { toast } from 'sonner';
+import { sortDevices } from '../device-tree/device-tree-selectors';
 
 /** 首屏逐项入场的延迟档位上限（35ms/档），超出的卡片与最后一档同时进场 */
 const STAGGER_MAX_INDEX = 11;
@@ -19,20 +19,6 @@ const STAGGER_MAX_INDEX = 11;
 const STAGGER_FALLBACK_MS = 1500;
 
 const NO_DEVICES: Device[] = [];
-
-// 顺序与侧边栏 Panes Tab 一致：先 sortOrder 再按设备名 locale 感知排序；顺带按 id 去重
-// （列表可能来自缓存 + 快照 + 节点 inventory 几处，撞 id 会渲染出两张一样的卡片）。
-function sortDevices(devices: readonly Device[], language: LocaleCode): Device[] {
-  const byId = new Map<string, Device>();
-  for (const device of devices) {
-    if (!byId.has(device.id)) byId.set(device.id, device);
-  }
-  return [...byId.values()].sort(
-    (a, b) =>
-      a.sortOrder - b.sortOrder ||
-      a.name.localeCompare(b.name, toBCP47(language), { numeric: true, sensitivity: 'base' })
-  );
-}
 
 export function useDeviceManagementState({
   devicesQueryKey,
