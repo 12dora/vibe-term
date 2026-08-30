@@ -3,8 +3,6 @@ import type { AuthDb } from '../auth/types';
 import { decryptWithContext, encrypt } from '../crypto';
 import { tlsConfig } from '../db/schema';
 import {
-  type AcmeChallengeType,
-  type AcmeStatus,
   DEFAULT_TLS_BIND_HOST,
   DEFAULT_TLS_PORT,
   TLS_CONFIG_ENTITY_ID,
@@ -12,29 +10,39 @@ import {
   TLS_CONFIG_SCOPE,
   type TlsConfigPatch,
   type TlsConfigPublic,
-  type TlsMode,
   type TlsPrivateMaterial,
 } from './types';
 
-const SECRET_FIELDS = {
-  caKeyPem: 'ca_key',
-  keyPem: 'key',
-  acmeCfToken: 'acme_cf_token',
-  acmeAccountKey: 'acme_account_key',
-} as const;
+const SECRET_SPECS = [
+  ['caKeyPem', 'caKeyEnc', 'ca_key'],
+  ['keyPem', 'keyEnc', 'key'],
+  ['acmeCfToken', 'acmeCfTokenEnc', 'acme_cf_token'],
+  ['acmeAccountKey', 'acmeAccountKeyEnc', 'acme_account_key'],
+] as const;
 
-type SecretField = (typeof SECRET_FIELDS)[keyof typeof SECRET_FIELDS];
+const MERGE_KEYS = ['mode', 'tlsPort', 'bindHost', 'sans', 'acmeStaging', 'acmeStatus'] as const;
+const NULLABLE_KEYS = [
+  'caCertPem',
+  'certPem',
+  'certNotBefore',
+  'certNotAfter',
+  'acmeEmail',
+  'acmeDomain',
+  'acmeChallenge',
+  'acmeAccountUrl',
+  'acmeAccountDirectory',
+  'acmeLastError',
+  'acmeLastAttemptAt',
+  'acmeNextRenewAt',
+] as const;
 
-function isTlsMode(value: string): value is TlsMode {
-  return value === 'none' || value === 'external' || value === 'selfsigned' || value === 'acme';
-}
-
-function isAcmeChallenge(value: string | null): value is AcmeChallengeType {
-  return value === 'http-01' || value === 'dns-01';
-}
-
-function isAcmeStatus(value: string): value is AcmeStatus {
-  return value === 'idle' || value === 'pending' || value === 'ok' || value === 'error';
+function oneOf<T extends string>(
+  value: string | null | undefined,
+  allowed: readonly T[]
+): T | undefined {
+  return typeof value === 'string' && (allowed as readonly string[]).includes(value)
+    ? (value as T)
+    : undefined;
 }
 
 function emptyPublic(now = 0): TlsConfigPublic {
@@ -88,12 +96,10 @@ export class TlsConfigStore {
 
   async get(): Promise<TlsConfigPublic> {
     const row = this.db.select().from(tlsConfig).where(eq(tlsConfig.id, TLS_CONFIG_ROW_ID)).get();
-    if (!row) {
-      return emptyPublic();
-    }
+    if (!row) return emptyPublic();
     return {
       id: TLS_CONFIG_ROW_ID,
-      mode: isTlsMode(row.mode) ? row.mode : 'none',
+      mode: oneOf(row.mode, ['none', 'external', 'selfsigned', 'acme'] as const) ?? 'none',
       tlsPort: row.tlsPort,
       bindHost: row.bindHost,
       sans: parseSans(row.sans),
@@ -103,11 +109,11 @@ export class TlsConfigStore {
       certNotAfter: row.certNotAfter ?? null,
       acmeEmail: row.acmeEmail ?? null,
       acmeDomain: row.acmeDomain ?? null,
-      acmeChallenge: isAcmeChallenge(row.acmeChallenge) ? row.acmeChallenge : null,
+      acmeChallenge: oneOf(row.acmeChallenge, ['http-01', 'dns-01'] as const) ?? null,
       acmeStaging: Boolean(row.acmeStaging),
       acmeAccountUrl: row.acmeAccountUrl ?? null,
       acmeAccountDirectory: row.acmeAccountDirectory ?? null,
-      acmeStatus: isAcmeStatus(row.acmeStatus) ? row.acmeStatus : 'idle',
+      acmeStatus: oneOf(row.acmeStatus, ['idle', 'pending', 'ok', 'error'] as const) ?? 'idle',
       acmeLastError: row.acmeLastError ?? null,
       acmeLastAttemptAt: row.acmeLastAttemptAt ?? null,
       acmeNextRenewAt: row.acmeNextRenewAt ?? null,
@@ -124,100 +130,38 @@ export class TlsConfigStore {
     if (!row) {
       return { caKeyPem: null, keyPem: null, acmeCfToken: null, acmeAccountKey: null };
     }
-    return {
-      caKeyPem: await decryptField(row.caKeyEnc, SECRET_FIELDS.caKeyPem),
-      keyPem: await decryptField(row.keyEnc, SECRET_FIELDS.keyPem),
-      acmeCfToken: await decryptField(row.acmeCfTokenEnc, SECRET_FIELDS.acmeCfToken),
-      acmeAccountKey: await decryptField(row.acmeAccountKeyEnc, SECRET_FIELDS.acmeAccountKey),
-    };
+    return Object.fromEntries(
+      await Promise.all(
+        SECRET_SPECS.map(async ([key, enc, field]) => [key, await decryptField(row[enc], field)])
+      )
+    ) as TlsPrivateMaterial;
   }
 
   async upsert(partial: TlsConfigPatch): Promise<TlsConfigPublic> {
     const current = await this.get();
     const secrets = await this.getPrivateMaterial();
-    const nextSecrets: TlsPrivateMaterial = {
-      caKeyPem: 'caKeyPem' in partial ? (partial.caKeyPem ?? null) : secrets.caKeyPem,
-      keyPem: 'keyPem' in partial ? (partial.keyPem ?? null) : secrets.keyPem,
-      acmeCfToken: 'acmeCfToken' in partial ? (partial.acmeCfToken ?? null) : secrets.acmeCfToken,
-      acmeAccountKey:
-        'acmeAccountKey' in partial ? (partial.acmeAccountKey ?? null) : secrets.acmeAccountKey,
-    };
-    const [caKeyEnc, keyEnc, acmeCfTokenEnc, acmeAccountKeyEnc] = await Promise.all([
-      encryptField(nextSecrets.caKeyPem),
-      encryptField(nextSecrets.keyPem),
-      encryptField(nextSecrets.acmeCfToken),
-      encryptField(nextSecrets.acmeAccountKey),
-    ]);
-    const updatedAt = partial.updatedAt ?? Date.now();
+    const nextSecrets = Object.fromEntries(
+      SECRET_SPECS.map(([key]) => [key, key in partial ? (partial[key] ?? null) : secrets[key]])
+    ) as TlsPrivateMaterial;
+    const enc = Object.fromEntries(
+      await Promise.all(
+        SECRET_SPECS.map(async ([key, encKey]) => [encKey, await encryptField(nextSecrets[key])])
+      )
+    );
     const values = {
       id: TLS_CONFIG_ROW_ID,
-      mode: partial.mode ?? current.mode,
-      tlsPort: partial.tlsPort ?? current.tlsPort,
-      bindHost: partial.bindHost ?? current.bindHost,
-      sans: partial.sans ?? current.sans,
-      caCertPem: 'caCertPem' in partial ? (partial.caCertPem ?? null) : current.caCertPem,
-      caKeyEnc,
-      certPem: 'certPem' in partial ? (partial.certPem ?? null) : current.certPem,
-      keyEnc,
-      certNotBefore:
-        'certNotBefore' in partial ? (partial.certNotBefore ?? null) : current.certNotBefore,
-      certNotAfter:
-        'certNotAfter' in partial ? (partial.certNotAfter ?? null) : current.certNotAfter,
-      acmeEmail: 'acmeEmail' in partial ? (partial.acmeEmail ?? null) : current.acmeEmail,
-      acmeDomain: 'acmeDomain' in partial ? (partial.acmeDomain ?? null) : current.acmeDomain,
-      acmeChallenge:
-        'acmeChallenge' in partial ? (partial.acmeChallenge ?? null) : current.acmeChallenge,
-      acmeStaging: partial.acmeStaging ?? current.acmeStaging,
-      acmeCfTokenEnc,
-      acmeAccountKeyEnc,
-      acmeAccountUrl:
-        'acmeAccountUrl' in partial ? (partial.acmeAccountUrl ?? null) : current.acmeAccountUrl,
-      acmeAccountDirectory:
-        'acmeAccountDirectory' in partial
-          ? (partial.acmeAccountDirectory ?? null)
-          : current.acmeAccountDirectory,
-      acmeStatus: partial.acmeStatus ?? current.acmeStatus,
-      acmeLastError:
-        'acmeLastError' in partial ? (partial.acmeLastError ?? null) : current.acmeLastError,
-      acmeLastAttemptAt:
-        'acmeLastAttemptAt' in partial
-          ? (partial.acmeLastAttemptAt ?? null)
-          : current.acmeLastAttemptAt,
-      acmeNextRenewAt:
-        'acmeNextRenewAt' in partial ? (partial.acmeNextRenewAt ?? null) : current.acmeNextRenewAt,
-      updatedAt,
+      updatedAt: partial.updatedAt ?? Date.now(),
+      ...Object.fromEntries(MERGE_KEYS.map((key) => [key, partial[key] ?? current[key]])),
+      ...Object.fromEntries(
+        NULLABLE_KEYS.map((key) => [key, key in partial ? (partial[key] ?? null) : current[key]])
+      ),
+      ...enc,
     };
+    const { id: _id, ...set } = values;
     this.db
       .insert(tlsConfig)
-      .values(values)
-      .onConflictDoUpdate({
-        target: tlsConfig.id,
-        set: {
-          mode: values.mode,
-          tlsPort: values.tlsPort,
-          bindHost: values.bindHost,
-          sans: values.sans,
-          caCertPem: values.caCertPem,
-          caKeyEnc: values.caKeyEnc,
-          certPem: values.certPem,
-          keyEnc: values.keyEnc,
-          certNotBefore: values.certNotBefore,
-          certNotAfter: values.certNotAfter,
-          acmeEmail: values.acmeEmail,
-          acmeDomain: values.acmeDomain,
-          acmeChallenge: values.acmeChallenge,
-          acmeStaging: values.acmeStaging,
-          acmeCfTokenEnc: values.acmeCfTokenEnc,
-          acmeAccountKeyEnc: values.acmeAccountKeyEnc,
-          acmeAccountUrl: values.acmeAccountUrl,
-          acmeAccountDirectory: values.acmeAccountDirectory,
-          acmeStatus: values.acmeStatus,
-          acmeLastError: values.acmeLastError,
-          acmeLastAttemptAt: values.acmeLastAttemptAt,
-          acmeNextRenewAt: values.acmeNextRenewAt,
-          updatedAt: values.updatedAt,
-        },
-      })
+      .values(values as typeof tlsConfig.$inferInsert)
+      .onConflictDoUpdate({ target: tlsConfig.id, set })
       .run();
     return this.get();
   }
@@ -230,7 +174,7 @@ async function encryptField(plaintext: string | null): Promise<string | null> {
 
 async function decryptField(
   ciphertext: string | null | undefined,
-  field: SecretField
+  field: (typeof SECRET_SPECS)[number][2]
 ): Promise<string | null> {
   if (!ciphertext) return null;
   return decryptWithContext(ciphertext, {

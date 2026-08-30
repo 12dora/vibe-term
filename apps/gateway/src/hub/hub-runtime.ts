@@ -13,9 +13,11 @@ import {
 } from '@tmex/shared/auth';
 import { type LinkSession, type ServerSocketAdapter, WebSocketLink } from '@tmex/shared/link';
 import { json, readJsonObjectBody } from '../api/http';
+import { matchPath } from '../api/route';
+import { decodeB64url, requireB64url, validationError } from '../api/route-input';
 import { makeVerifyPasskeyAssertion } from '../auth/passkey';
 import type { AuthDb } from '../auth/types';
-import { UserStore } from '../auth/user-store';
+import { type UserRecord, UserStore } from '../auth/user-store';
 import { detachEnrollmentTokensFromNode, patchNode } from './node-persistence';
 import { NodeRegistry } from './node-registry';
 import { encodeRedeemPopMessage } from './redeem-pop';
@@ -31,7 +33,6 @@ import {
   type HubRuntimeConfig,
   type HubUplinkSocketData,
 } from './types';
-import { b64urlToBytes } from './uplink-protocol';
 import { type RegisterRtcSessionInput, UplinkServer } from './uplink-server';
 
 export type HubUpgradeServer = {
@@ -176,44 +177,33 @@ export class HubRuntime {
       return ok ? undefined : json({ error: 'upgrade_failed' }, 500);
     }
     if (!path.startsWith('/api/hub/')) return undefined;
-    if (path === '/api/hub/enrollments/redeem') {
-      if (req.method !== 'POST') return json({ error: 'method_not_allowed' }, 405);
-      return this.handleRedeem(req);
-    }
-    if (path === '/api/hub/enrollments') {
-      if (req.method !== 'POST') return json({ error: 'method_not_allowed' }, 405);
-      return this.withAuth(req, (auth) => this.handleCreateEnrollment(req, auth));
-    }
-    const enrollmentGet = path.match(/^\/api\/hub\/enrollments\/([^/]+)$/);
-    if (enrollmentGet) {
-      const enrollmentId = enrollmentGet[1];
-      if (!enrollmentId || enrollmentId === 'redeem') {
-        return json({ error: 'not_found' }, 404);
-      }
-      if (req.method !== 'GET') return json({ error: 'method_not_allowed' }, 405);
-      return this.withAuth(req, (auth) =>
-        this.handleGetEnrollment(decodeURIComponent(enrollmentId), auth)
-      );
-    }
-    if (path === '/api/hub/nodes') {
-      if (req.method !== 'GET') return json({ error: 'method_not_allowed' }, 405);
-      return this.withAuth(req, (auth) => this.handleListNodes(auth));
-    }
-    const rename = path.match(/^\/api\/hub\/nodes\/([^/]+)\/rename$/);
-    if (rename) {
-      const nodeId = rename[1];
-      if (!nodeId) return json({ error: 'not_found' }, 404);
-      if (req.method !== 'POST') return json({ error: 'method_not_allowed' }, 405);
-      return this.withAuth(req, (auth) => this.handleRename(req, decodeURIComponent(nodeId), auth));
-    }
-    const revoke = path.match(/^\/api\/hub\/nodes\/([^/]+)\/revoke$/);
-    if (revoke) {
-      const nodeId = revoke[1];
-      if (!nodeId) return json({ error: 'not_found' }, 404);
-      if (req.method !== 'POST') return json({ error: 'method_not_allowed' }, 405);
-      return this.withAuth(req, (auth) => this.handleRevoke(req, decodeURIComponent(nodeId), auth));
-    }
-    return json({ error: 'not_found' }, 404);
+    const hit = (
+      pattern: string,
+      method: string,
+      fn: (p: Record<string, string>) => Response | Promise<Response>
+    ) => {
+      const params = matchPath(path, pattern);
+      if (!params) return;
+      if (req.method !== method) return json({ error: 'method_not_allowed' }, 405);
+      return fn(params);
+    };
+    return (
+      hit('/api/hub/enrollments/redeem', 'POST', () => this.handleRedeem(req)) ??
+      hit('/api/hub/enrollments', 'POST', () =>
+        this.withAuth(req, (a) => this.handleCreateEnrollment(req, a))
+      ) ??
+      hit('/api/hub/enrollments/:id', 'GET', (p) =>
+        this.withAuth(req, (a) => this.handleGetEnrollment(decodeURIComponent(p.id), a))
+      ) ??
+      hit('/api/hub/nodes', 'GET', () => this.withAuth(req, (a) => this.handleListNodes(a))) ??
+      hit('/api/hub/nodes/:id/rename', 'POST', (p) =>
+        this.withAuth(req, (a) => this.handleRename(req, decodeURIComponent(p.id), a))
+      ) ??
+      hit('/api/hub/nodes/:id/revoke', 'POST', (p) =>
+        this.withAuth(req, (a) => this.handleRevoke(req, decodeURIComponent(p.id), a))
+      ) ??
+      json({ error: 'not_found' }, 404)
+    );
   }
 
   handleUplinkOpen(ws: HubServerWebSocket): void {
@@ -280,36 +270,26 @@ export class HubRuntime {
 
   private handleGetEnrollment(id: string, auth: HubAuthResult): Response {
     const token = this.userStore.getEnrollmentTokenById(id);
-    if (!token || token.userId !== auth.userId) {
-      return json({ error: 'not_found' }, 404);
-    }
+    if (!token || token.userId !== auth.userId) return json({ error: 'not_found' }, 404);
     const stored = parseStoredEnrollment(token.authorizationJson);
     const redeemed = token.usedAt !== null;
-    const body: {
-      status: 'pending' | 'redeemed';
-      enroll_pk: string;
-      already_admitted: boolean;
-      certificate?: string;
-      cert_sig?: string;
-      node_id?: string;
-    } = {
+    const body: Record<string, unknown> = {
       status: redeemed ? 'redeemed' : 'pending',
       enroll_pk: encodeBase64url(token.enrollPublicKey),
       already_admitted: false,
     };
-    if (redeemed) {
-      const nodeId = stored?.node_id ?? token.nodeId;
-      if (nodeId) body.node_id = nodeId;
-      const admitted = nodeId ? this.userStore.getCert(nodeId) : null;
-      const alreadyAdmitted = Boolean(admitted && admitted.revokedLogSeq === null);
-      body.already_admitted = alreadyAdmitted;
-      if (alreadyAdmitted && admitted) {
-        body.certificate = encodeBase64url(admitted.certificateBytes);
-        body.cert_sig = encodeBase64url(admitted.certSig);
-      } else {
-        if (stored?.certificate_b64) body.certificate = stored.certificate_b64;
-        if (stored?.cert_sig_b64) body.cert_sig = stored.cert_sig_b64;
-      }
+    if (!redeemed) return json(body);
+    const nodeId = stored?.node_id ?? token.nodeId;
+    if (nodeId) body.node_id = nodeId;
+    const admitted = nodeId ? this.userStore.getCert(nodeId) : null;
+    const alreadyAdmitted = Boolean(admitted && admitted.revokedLogSeq === null);
+    body.already_admitted = alreadyAdmitted;
+    if (alreadyAdmitted && admitted) {
+      body.certificate = encodeBase64url(admitted.certificateBytes);
+      body.cert_sig = encodeBase64url(admitted.certSig);
+    } else {
+      if (stored?.certificate_b64) body.certificate = stored.certificate_b64;
+      if (stored?.cert_sig_b64) body.cert_sig = stored.cert_sig_b64;
     }
     return json(body);
   }
@@ -317,17 +297,14 @@ export class HubRuntime {
   private async handleRename(req: Request, nodeId: string, auth: HubAuthResult): Promise<Response> {
     const body = await readJsonObjectBody(req);
     const name = body?.name;
-    if (typeof name !== 'string' || name.trim().length === 0) {
-      return json({ error: 'invalid_name' }, 400);
-    }
+    if (typeof name !== 'string' || !name.trim()) return json({ error: 'invalid_name' }, 400);
+    const next = name.trim();
     const node = this.userStore.getNode(nodeId);
-    if (!node || node.userId !== auth.userId) {
-      return json({ error: 'not_found' }, 404);
-    }
-    patchNode(this.db, nodeId, { name: name.trim() });
-    this.registry.updateMeta(nodeId, { name: name.trim() }, this.now());
+    if (!node || node.userId !== auth.userId) return json({ error: 'not_found' }, 404);
+    patchNode(this.db, nodeId, { name: next });
+    this.registry.updateMeta(nodeId, { name: next }, this.now());
     await this.uplink.broadcastNodeList(auth.userId);
-    return json({ ok: true, id: nodeId, name: name.trim() });
+    return json({ ok: true, id: nodeId, name: next });
   }
 
   private async handleRevoke(req: Request, nodeId: string, auth: HubAuthResult): Promise<Response> {
@@ -340,10 +317,10 @@ export class HubRuntime {
     let bytes: Uint8Array;
     let sig: Uint8Array;
     try {
-      bytes = b64urlToBytes(requireBodyString(body, 'bytes'));
-      sig = b64urlToBytes(requireBodyString(body, 'sig'), 64);
+      bytes = requireB64url(body, 'bytes');
+      sig = requireB64url(body, 'sig', 64);
     } catch (err) {
-      return json({ error: err instanceof Error ? err.message : 'invalid_fields' }, 400);
+      return validationError(err);
     }
     let record: ReturnType<typeof decodeKeyLogRecord>;
     try {
@@ -380,11 +357,11 @@ export class HubRuntime {
     let authorizationBytes: Uint8Array;
     let authorizationSig: Uint8Array;
     try {
-      enrollPk = b64urlToBytes(requireBodyString(body, 'enroll_pk'), 32);
-      authorizationBytes = b64urlToBytes(requireBodyString(body, 'authorization'));
-      authorizationSig = b64urlToBytes(requireBodyString(body, 'authorization_sig'));
+      enrollPk = requireB64url(body, 'enroll_pk', 32);
+      authorizationBytes = requireB64url(body, 'authorization');
+      authorizationSig = requireB64url(body, 'authorization_sig');
     } catch (err) {
-      return json({ error: err instanceof Error ? err.message : 'invalid_fields' }, 400);
+      return validationError(err);
     }
     let authorization: ReturnType<typeof decodeAuthorization>;
     try {
@@ -392,51 +369,14 @@ export class HubRuntime {
     } catch {
       return json({ error: 'bad_authorization' }, 400);
     }
-    if (authorization.uid !== user.id) {
-      return json({ error: 'uid_mismatch' }, 400);
-    }
-    if (authorization.root_epoch !== user.rootEpoch) {
-      return json({ error: 'epoch_mismatch' }, 400);
-    }
-    if (!bytesEqual(authorization.enroll_pk, enrollPk)) {
-      return json({ error: 'enroll_pk_mismatch' }, 400);
-    }
-    if (authorization.signer === 'root') {
-      if (
-        authorizationSig.byteLength !== 64 ||
-        !verifyEd25519(authorizationSig, authorizationBytes, user.rootPublicKey)
-      ) {
-        return json({ error: 'bad_authorization_sig' }, 400);
-      }
-    } else if (authorization.signer === 'passkey') {
-      const credentialId = authorization.credential_id;
-      if (!credentialId) {
-        return json({ error: 'missing_credential_id' }, 400);
-      }
-      let credentialIdBytes: Uint8Array;
-      try {
-        credentialIdBytes = decodeBase64url(credentialId);
-      } catch {
-        return json({ error: 'bad_authorization' }, 400);
-      }
-      const storedKey = this.userStore.getKeyByCredentialId(credentialIdBytes);
-      if (!storedKey || storedKey.userId !== user.id) {
-        return json({ error: 'unknown_passkey' }, 400);
-      }
-      const verify = makeVerifyPasskeyAssertion(this.userStore);
-      const ok = await verify({
-        recordBytes: authorizationBytes,
-        sig: authorizationSig,
-        credentialId,
-        publicKey: storedKey.publicKey,
-        challenge: sha256(authorizationBytes),
-      });
-      if (!ok) {
-        return json({ error: 'bad_authorization_sig' }, 400);
-      }
-    } else {
-      return json({ error: 'bad_authorization' }, 400);
-    }
+    const authErr = await this.verifyEnrollmentAuthorization(
+      user,
+      enrollPk,
+      authorizationBytes,
+      authorizationSig,
+      authorization
+    );
+    if (authErr) return json({ error: authErr }, 400);
     const now = this.now();
     const authExp = Number(authorization.exp);
     const bodyExp = typeof body.exp === 'number' ? body.exp : authExp;
@@ -474,183 +414,97 @@ export class HubRuntime {
     );
   }
 
+  private async verifyEnrollmentAuthorization(
+    user: UserRecord,
+    enrollPk: Uint8Array,
+    authorizationBytes: Uint8Array,
+    authorizationSig: Uint8Array,
+    authorization: ReturnType<typeof decodeAuthorization>
+  ): Promise<string | null> {
+    if (authorization.uid !== user.id) return 'uid_mismatch';
+    if (authorization.root_epoch !== user.rootEpoch) return 'epoch_mismatch';
+    if (!bytesEqual(authorization.enroll_pk, enrollPk)) return 'enroll_pk_mismatch';
+    if (authorization.signer === 'root') {
+      return authorizationSig.byteLength === 64 &&
+        verifyEd25519(authorizationSig, authorizationBytes, user.rootPublicKey)
+        ? null
+        : 'bad_authorization_sig';
+    }
+    if (authorization.signer !== 'passkey') return 'bad_authorization';
+    const credentialId = authorization.credential_id;
+    if (!credentialId) return 'missing_credential_id';
+    let credentialIdBytes: Uint8Array;
+    try {
+      credentialIdBytes = decodeBase64url(credentialId);
+    } catch {
+      return 'bad_authorization';
+    }
+    const storedKey = this.userStore.getKeyByCredentialId(credentialIdBytes);
+    if (!storedKey || storedKey.userId !== user.id) return 'unknown_passkey';
+    const ok = await makeVerifyPasskeyAssertion(this.userStore)({
+      recordBytes: authorizationBytes,
+      sig: authorizationSig,
+      credentialId,
+      publicKey: storedKey.publicKey,
+      challenge: sha256(authorizationBytes),
+    });
+    return ok ? null : 'bad_authorization_sig';
+  }
+
   private async handleRedeem(req: Request): Promise<Response> {
     const body = await readJsonObjectBody(req);
     if (!body) return json({ error: 'invalid_body' }, 400);
-    const name = typeof body.name === 'string' && body.name.trim() ? body.name.trim() : 'node';
-    const version = typeof body.version === 'string' ? body.version : '';
-    let certBytes: Uint8Array;
-    let certSig: Uint8Array;
     try {
-      certBytes = b64urlToBytes(requireBodyString(body, 'certificate'));
-      certSig = b64urlToBytes(requireBodyString(body, 'cert_sig'), 64);
-    } catch (err) {
-      return json({ error: err instanceof Error ? err.message : 'invalid_fields' }, 400);
-    }
-    let certificate: ReturnType<typeof decodeCertificate>;
-    try {
-      certificate = decodeCertificate(certBytes);
-    } catch {
-      return json({ error: 'bad_certificate' }, 400);
-    }
-    const token = this.userStore.getEnrollmentTokenByEnrollPublicKey(certificate.enroll_pk);
-    if (!token) {
-      return json({ error: 'unknown_enrollment' }, 400);
-    }
-    if (!verifyNodeCertificate(certBytes, certSig, token.enrollPublicKey)) {
-      return json({ error: 'bad_cert_sig' }, 400);
-    }
-    const stored = parseStoredEnrollment(token.authorizationJson);
-    if (!stored) {
-      return json({ error: 'bad_token' }, 400);
-    }
-    let authorization: ReturnType<typeof decodeAuthorization>;
-    try {
-      authorization = decodeAuthorization(b64urlToBytes(stored.authorization_b64));
-    } catch {
-      return json({ error: 'bad_authorization' }, 400);
-    }
-    if (!bytesEqual(authorization.enroll_pk, certificate.enroll_pk)) {
-      return json({ error: 'enroll_pk_mismatch' }, 400);
-    }
-    if (authorization.uid !== certificate.uid || authorization.uid !== token.userId) {
-      return json({ error: 'uid_mismatch' }, 400);
-    }
-    const hexId = nodeIdToHex(certificate.node_id);
-    const now = this.now();
-    const providedName =
-      typeof body.name === 'string' && body.name.trim() ? body.name.trim() : null;
-    let replayUserId: string | null = null;
-    let replacedExisting = false;
-    let alreadyAdmitted = false;
-    try {
-      this.db.transaction((tx) => {
-        const authDb = tx as AuthDb;
-        const store = new UserStore(authDb);
-        const fresh = store.getEnrollmentTokenByEnrollPublicKey(certificate.enroll_pk);
-        if (!fresh) {
-          throw new RedeemAbort('unknown_enrollment', 400);
-        }
-        if (fresh.usedAt !== null) {
-          const prev = parseStoredEnrollment(fresh.authorizationJson);
-          if (
-            prev?.certificate_b64 === encodeBase64url(certBytes) &&
-            prev?.cert_sig_b64 === encodeBase64url(certSig)
-          ) {
-            throw new RedeemReplay(fresh.userId);
-          }
-          throw new RedeemAbort('reused', 400);
-        }
-        const userRow = store.getById(fresh.userId);
-        if (!userRow) {
-          throw new RedeemAbort('user_not_found', 500);
-        }
-        if (authorization.root_epoch !== userRow.rootEpoch) {
-          throw new RedeemAbort('epoch_mismatch', 400);
-        }
-        if (fresh.expiresAt <= now) {
-          throw new RedeemAbort('expired', 400);
-        }
-        const existing = store.getNode(hexId);
-        const existingCert = store.getCert(hexId);
-        if (existing) {
-          if (existing.userId !== fresh.userId) {
-            throw new RedeemAbort('node_exists', 409);
-          }
-          const existingKeys = readNodeIdentityKeys(store, hexId);
-          if (
-            !existingKeys ||
-            !bytesEqual(existingKeys.edPk, certificate.ed_pk) ||
-            !bytesEqual(existingKeys.x25519Pk, certificate.x25519_pk)
-          ) {
-            throw new RedeemAbort('node_exists', 409);
-          }
-          if (!verifyRedeemPop(body, certificate, existingKeys.edPk, certBytes)) {
-            throw new RedeemAbort('node_exists', 409);
-          }
-          if (existingCert?.revokedLogSeq != null || existing.status === 'revoked') {
-            throw new RedeemAbort('node_revoked', 409);
-          }
-          detachEnrollmentTokensFromNode(authDb, hexId);
-        } else if (existingCert?.revokedLogSeq != null) {
-          throw new RedeemAbort('node_revoked', 409);
-        }
-        if (existingCert && existingCert.revokedLogSeq === null) {
-          alreadyAdmitted = true;
-        }
-        const consumed = store.consumeEnrollmentToken(certificate.enroll_pk, {
-          nodeId: hexId,
-          now,
-          authorizationJson: JSON.stringify({
-            ...stored,
-            certificate_b64: encodeBase64url(certBytes),
-            cert_sig_b64: encodeBase64url(certSig),
-            node_id: hexId,
-          } satisfies StoredEnrollmentPayload),
+      const parsed = parseRedeemRequest(body, this.userStore);
+      const { hexId, token, stored, providedName, version, certBytes, certSig, certificate } =
+        parsed;
+      const now = this.now();
+      let replayUserId: string | null = null;
+      let replacedExisting = false;
+      let alreadyAdmitted = false;
+      try {
+        this.db.transaction((tx) => {
+          const result = redeemInTransaction(tx as AuthDb, parsed, body, now);
+          replacedExisting = result.replacedExisting;
+          alreadyAdmitted = result.alreadyAdmitted;
         });
-        if (!consumed) {
-          throw new RedeemAbort('reused', 400);
-        }
-        if (existing) {
-          patchNode(authDb, hexId, {
-            status: 'enrolled',
+      } catch (err) {
+        if (err instanceof RedeemReplay) replayUserId = err.userId;
+        else throw err;
+      }
+      if (replacedExisting) {
+        this.registry.updateMeta(
+          hexId,
+          {
             ...(providedName ? { name: providedName } : {}),
             ...(version ? { version } : {}),
-          });
-          replacedExisting = true;
-        } else {
-          store.createNode({
-            id: hexId,
-            userId: fresh.userId,
-            name,
-            status: 'enrolled',
-            version: version || null,
-            now,
-          });
-        }
-      });
-    } catch (err) {
-      if (err instanceof RedeemReplay) {
-        replayUserId = err.userId;
-      } else if (err instanceof RedeemAbort) {
-        return json({ error: err.error }, err.status);
-      } else {
-        throw err;
+          },
+          now
+        );
       }
+      if (!replayUserId && stored.entry_node_id) {
+        const admitted = alreadyAdmitted ? this.userStore.getCert(hexId) : null;
+        this.uplink.sendTo(stored.entry_node_id, {
+          t: 'enroll.redeemed',
+          certificate: encodeBase64url(admitted?.certificateBytes ?? certBytes),
+          cert_sig: encodeBase64url(admitted?.certSig ?? certSig),
+          enroll_pk: encodeBase64url(certificate.enroll_pk),
+          node_id: hexId,
+          already_admitted: alreadyAdmitted,
+          ...(stored.entry_sid ? { entry_sid: stored.entry_sid } : {}),
+        });
+      }
+      if (replacedExisting) await this.uplink.broadcastNodeList(token.userId);
+      if (replayUserId) {
+        const replayedCert = this.userStore.getCert(hexId);
+        alreadyAdmitted = Boolean(replayedCert && replayedCert.revokedLogSeq === null);
+      }
+      if (alreadyAdmitted) console.info(`[hub] already admitted node=${hexId}`);
+      return this.redeemSuccessPayload(replayUserId ?? token.userId, alreadyAdmitted);
+    } catch (err) {
+      if (err instanceof RedeemAbort) return json({ error: err.error }, err.status);
+      return validationError(err);
     }
-    if (replacedExisting) {
-      this.registry.updateMeta(
-        hexId,
-        {
-          ...(providedName ? { name: providedName } : {}),
-          ...(version ? { version } : {}),
-        },
-        now
-      );
-    }
-    if (!replayUserId && stored.entry_node_id) {
-      const admitted = alreadyAdmitted ? this.userStore.getCert(hexId) : null;
-      this.uplink.sendTo(stored.entry_node_id, {
-        t: 'enroll.redeemed',
-        certificate: encodeBase64url(admitted?.certificateBytes ?? certBytes),
-        cert_sig: encodeBase64url(admitted?.certSig ?? certSig),
-        enroll_pk: encodeBase64url(certificate.enroll_pk),
-        node_id: hexId,
-        already_admitted: alreadyAdmitted,
-        ...(stored.entry_sid ? { entry_sid: stored.entry_sid } : {}),
-      });
-    }
-    if (replacedExisting) {
-      await this.uplink.broadcastNodeList(token.userId);
-    }
-    if (replayUserId) {
-      const replayedCert = this.userStore.getCert(hexId);
-      alreadyAdmitted = Boolean(replayedCert && replayedCert.revokedLogSeq === null);
-    }
-    if (alreadyAdmitted) {
-      console.info(`[hub] already admitted node=${hexId}`);
-    }
-    return this.redeemSuccessPayload(replayUserId ?? token.userId, alreadyAdmitted);
   }
 
   private async redeemSuccessPayload(userId: string, alreadyAdmitted: boolean): Promise<Response> {
@@ -705,12 +559,132 @@ class RedeemReplay extends Error {
   }
 }
 
-function requireBodyString(body: Record<string, unknown>, key: string): string {
-  const value = body[key];
-  if (typeof value !== 'string' || value.length === 0) {
-    throw new Error(`missing ${key}`);
+function parseRedeemRequest(body: Record<string, unknown>, userStore: UserStore) {
+  const providedName = typeof body.name === 'string' && body.name.trim() ? body.name.trim() : null;
+  const certBytes = requireB64url(body, 'certificate');
+  const certSig = requireB64url(body, 'cert_sig', 64);
+  let certificate: ReturnType<typeof decodeCertificate>;
+  try {
+    certificate = decodeCertificate(certBytes);
+  } catch {
+    throw new RedeemAbort('bad_certificate', 400);
   }
-  return value;
+  const token = userStore.getEnrollmentTokenByEnrollPublicKey(certificate.enroll_pk);
+  if (!token) throw new RedeemAbort('unknown_enrollment', 400);
+  if (!verifyNodeCertificate(certBytes, certSig, token.enrollPublicKey)) {
+    throw new RedeemAbort('bad_cert_sig', 400);
+  }
+  const stored = parseStoredEnrollment(token.authorizationJson);
+  if (!stored) throw new RedeemAbort('bad_token', 400);
+  let authorization: ReturnType<typeof decodeAuthorization>;
+  try {
+    authorization = decodeAuthorization(decodeB64url(stored.authorization_b64));
+  } catch {
+    throw new RedeemAbort('bad_authorization', 400);
+  }
+  if (!bytesEqual(authorization.enroll_pk, certificate.enroll_pk)) {
+    throw new RedeemAbort('enroll_pk_mismatch', 400);
+  }
+  if (authorization.uid !== certificate.uid || authorization.uid !== token.userId) {
+    throw new RedeemAbort('uid_mismatch', 400);
+  }
+  return {
+    name: providedName ?? 'node',
+    version: typeof body.version === 'string' ? body.version : '',
+    providedName,
+    certBytes,
+    certSig,
+    certificate,
+    token,
+    stored,
+    authorization,
+    hexId: nodeIdToHex(certificate.node_id),
+  };
+}
+
+function redeemInTransaction(
+  authDb: AuthDb,
+  parsed: ReturnType<typeof parseRedeemRequest>,
+  body: Record<string, unknown>,
+  now: number
+): { replacedExisting: boolean; alreadyAdmitted: boolean } {
+  const {
+    certificate,
+    certBytes,
+    certSig,
+    stored,
+    authorization,
+    hexId,
+    name,
+    version,
+    providedName,
+  } = parsed;
+  const store = new UserStore(authDb);
+  const fresh = store.getEnrollmentTokenByEnrollPublicKey(certificate.enroll_pk);
+  if (!fresh) throw new RedeemAbort('unknown_enrollment', 400);
+  if (fresh.usedAt !== null) {
+    const prev = parseStoredEnrollment(fresh.authorizationJson);
+    if (
+      prev?.certificate_b64 === encodeBase64url(certBytes) &&
+      prev?.cert_sig_b64 === encodeBase64url(certSig)
+    ) {
+      throw new RedeemReplay(fresh.userId);
+    }
+    throw new RedeemAbort('reused', 400);
+  }
+  const userRow = store.getById(fresh.userId);
+  if (!userRow) throw new RedeemAbort('user_not_found', 500);
+  if (authorization.root_epoch !== userRow.rootEpoch) throw new RedeemAbort('epoch_mismatch', 400);
+  if (fresh.expiresAt <= now) throw new RedeemAbort('expired', 400);
+  const existing = store.getNode(hexId);
+  const existingCert = store.getCert(hexId);
+  if (existing) {
+    const existingKeys = readNodeIdentityKeys(store, hexId);
+    if (
+      existing.userId !== fresh.userId ||
+      !existingKeys ||
+      !bytesEqual(existingKeys.edPk, certificate.ed_pk) ||
+      !bytesEqual(existingKeys.x25519Pk, certificate.x25519_pk) ||
+      !verifyRedeemPop(body, certificate, existingKeys.edPk, certBytes)
+    ) {
+      throw new RedeemAbort('node_exists', 409);
+    }
+    if (existingCert?.revokedLogSeq != null || existing.status === 'revoked') {
+      throw new RedeemAbort('node_revoked', 409);
+    }
+    detachEnrollmentTokensFromNode(authDb, hexId);
+  } else if (existingCert?.revokedLogSeq != null) {
+    throw new RedeemAbort('node_revoked', 409);
+  }
+  const alreadyAdmitted = Boolean(existingCert && existingCert.revokedLogSeq === null);
+  const consumed = store.consumeEnrollmentToken(certificate.enroll_pk, {
+    nodeId: hexId,
+    now,
+    authorizationJson: JSON.stringify({
+      ...stored,
+      certificate_b64: encodeBase64url(certBytes),
+      cert_sig_b64: encodeBase64url(certSig),
+      node_id: hexId,
+    } satisfies StoredEnrollmentPayload),
+  });
+  if (!consumed) throw new RedeemAbort('reused', 400);
+  if (existing) {
+    patchNode(authDb, hexId, {
+      status: 'enrolled',
+      ...(providedName ? { name: providedName } : {}),
+      ...(version ? { version } : {}),
+    });
+    return { replacedExisting: true, alreadyAdmitted };
+  }
+  store.createNode({
+    id: hexId,
+    userId: fresh.userId,
+    name,
+    status: 'enrolled',
+    version: version || null,
+    now,
+  });
+  return { replacedExisting: false, alreadyAdmitted };
 }
 
 function parseStoredEnrollment(raw: string): StoredEnrollmentPayload | null {
@@ -719,13 +693,14 @@ function parseStoredEnrollment(raw: string): StoredEnrollmentPayload | null {
     if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return null;
     const obj = parsed as Record<string, unknown>;
     if (typeof obj.authorization_b64 !== 'string') return null;
+    const str = (key: string) => (typeof obj[key] === 'string' ? obj[key] : undefined);
     return {
       authorization_b64: obj.authorization_b64,
       entry_node_id: typeof obj.entry_node_id === 'string' ? obj.entry_node_id : null,
-      entry_sid: typeof obj.entry_sid === 'string' ? obj.entry_sid : undefined,
-      certificate_b64: typeof obj.certificate_b64 === 'string' ? obj.certificate_b64 : undefined,
-      cert_sig_b64: typeof obj.cert_sig_b64 === 'string' ? obj.cert_sig_b64 : undefined,
-      node_id: typeof obj.node_id === 'string' ? obj.node_id : undefined,
+      entry_sid: str('entry_sid'),
+      certificate_b64: str('certificate_b64'),
+      cert_sig_b64: str('cert_sig_b64'),
+      node_id: str('node_id'),
     };
   } catch {
     return null;
@@ -739,18 +714,19 @@ function verifyRedeemPop(
   certBytes: Uint8Array
 ): boolean {
   if (typeof body.pop !== 'string') return false;
-  let sig: Uint8Array;
   try {
-    sig = b64urlToBytes(body.pop, 64);
+    return verifyEd25519(
+      decodeB64url(body.pop, 64),
+      encodeRedeemPopMessage({
+        enrollmentId: encodeBase64url(certificate.enroll_pk),
+        nodeId: certificate.node_id,
+        certBytes,
+      }),
+      existingPk
+    );
   } catch {
     return false;
   }
-  const message = encodeRedeemPopMessage({
-    enrollmentId: encodeBase64url(certificate.enroll_pk),
-    nodeId: certificate.node_id,
-    certBytes,
-  });
-  return verifyEd25519(sig, message, existingPk);
 }
 
 function readNodeIdentityKeys(
