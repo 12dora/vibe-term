@@ -106,7 +106,7 @@ export function createSendInputTool(ctx: TerminalToolContext): Tool {
             },
           });
           try {
-            runtime.sendInput(ctx.paneId, data);
+            await runtime.sendInput(ctx.paneId, data);
             await ctx.sleepMs(SEND_INPUT_SETTLE_MS);
           } finally {
             untap();
@@ -138,7 +138,7 @@ export function createSendInputTool(ctx: TerminalToolContext): Tool {
           };
         }
 
-        runtime.sendInput(ctx.paneId, data);
+        await runtime.sendInput(ctx.paneId, data);
         await ctx.sleepMs(SEND_INPUT_SETTLE_MS);
         const [screen, info] = await Promise.all([
           runtime.capturePaneText(ctx.paneId, { historyLines: 0 }),

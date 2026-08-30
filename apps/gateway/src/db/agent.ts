@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, gt, max, sql } from 'drizzle-orm';
+import { and, asc, desc, eq, gt, isNull, max, sql } from 'drizzle-orm';
 import { getDb as getOrmDb } from './client';
 import {
   type AgentConfirmationStatus,
@@ -92,6 +92,7 @@ export function updateAgentSettings(
 
 export interface CreateAgentSessionInput {
   title: string;
+  nodeId?: string | null;
   deviceId?: string | null;
   paneId?: string | null;
   providerId?: string | null;
@@ -112,6 +113,7 @@ export function createAgentSession(input: CreateAgentSessionInput): AgentSession
   const row: typeof agentSessions.$inferInsert = {
     id: crypto.randomUUID(),
     title: input.title,
+    nodeId: input.nodeId ?? null,
     deviceId: input.deviceId ?? null,
     paneId: input.paneId ?? null,
     providerId: input.providerId ?? null,
@@ -143,9 +145,19 @@ export function getAgentSessionById(id: string): AgentSessionRecord | null {
   return orm.select().from(agentSessions).where(eq(agentSessions.id, id)).get() ?? null;
 }
 
-export function getAllAgentSessions(): AgentSessionRecord[] {
+export function getAllAgentSessions(filter: { nodeId?: string } = {}): AgentSessionRecord[] {
   const orm = getOrmDb();
-  return orm.select().from(agentSessions).orderBy(desc(agentSessions.updatedAt)).all();
+  const query = orm.select().from(agentSessions);
+  if (filter.nodeId === 'self') {
+    return query.where(isNull(agentSessions.nodeId)).orderBy(desc(agentSessions.updatedAt)).all();
+  }
+  if (filter.nodeId) {
+    return query
+      .where(eq(agentSessions.nodeId, filter.nodeId))
+      .orderBy(desc(agentSessions.updatedAt))
+      .all();
+  }
+  return query.orderBy(desc(agentSessions.updatedAt)).all();
 }
 
 export function getAgentSessionsByStatus(status: AgentSessionStatus): AgentSessionRecord[] {
@@ -169,6 +181,7 @@ export function updateAgentSession(
 
   for (const key of [
     'title',
+    'nodeId',
     'deviceId',
     'paneId',
     'providerId',

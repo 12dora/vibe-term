@@ -20,6 +20,7 @@ import {
   systemPrefixRoutes,
   tmuxTreeRoutes,
 } from './system-routes';
+import { tunnelRoutes } from './tunnel-routes';
 import { watchRoutes } from './watch';
 
 export type { SystemApiHandler };
@@ -30,6 +31,7 @@ const apiRoutes: ApiRoute[] = [
   ...deviceFolderRoutes,
   ...tmuxTreeRoutes,
   ...settingsRoutes,
+  ...tunnelRoutes,
   ...telegramRoutes,
   ...weixinRoutes,
   ...llmRoutes,

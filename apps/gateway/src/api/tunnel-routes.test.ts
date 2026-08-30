@@ -1,0 +1,141 @@
+import { afterEach, describe, expect, test } from 'bun:test';
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import type { TunnelStatusResponse } from '@tmex/shared';
+import { MemoryTunnelConfigStore } from '../tunnel/config-store';
+import { FakeSpawner, argsInclude } from '../tunnel/fake-spawn';
+import { TunnelManager } from '../tunnel/manager';
+import { dispatchRoutes } from './route';
+import { createTunnelRoutes } from './tunnel-routes';
+
+async function setup() {
+  const dir = await mkdtemp(join(tmpdir(), 'tmex-tun-rt-'));
+  const spawner = new FakeSpawner();
+  spawner.on((s) => argsInclude(s, '--version'), {
+    stdout: 'cloudflared version 2025.8.1\n',
+  });
+  spawner.on((s) => argsInclude(s, 'login'), {
+    hold: true,
+    stdout: 'https://dash.cloudflare.com/argotunnel\n',
+  });
+  const manager = new TunnelManager({
+    tunnelDir: dir,
+    originPort: 19883,
+    platform: 'linux',
+    arch: 'x64',
+    store: new MemoryTunnelConfigStore(),
+    spawner: spawner.spawn,
+    which: () => '/usr/bin/cloudflared',
+    downloader: async (_url, dest) => {
+      await Bun.write(dest, 'x');
+    },
+    sleep: (ms) => Bun.sleep(Math.min(ms, 5)),
+    loginTimeoutMs: 5_000,
+    loginPollMs: 20,
+    runningWaitMs: 400,
+    trustProxy: false,
+  });
+  managers.push(manager);
+  return { dir, manager, routes: createTunnelRoutes(manager) };
+}
+
+const dirs: string[] = [];
+const managers: TunnelManager[] = [];
+afterEach(async () => {
+  while (managers.length) {
+    await managers.pop()?.stop();
+  }
+  while (dirs.length) {
+    const dir = dirs.pop();
+    if (dir) await rm(dir, { recursive: true, force: true });
+  }
+});
+
+function req(method: string, path: string, body?: unknown): Request {
+  return new Request(`http://localhost${path}`, {
+    method,
+    headers: body !== undefined ? { 'Content-Type': 'application/json' } : undefined,
+    body: body !== undefined ? JSON.stringify(body) : undefined,
+  });
+}
+
+async function dispatch(
+  routes: ReturnType<typeof createTunnelRoutes>,
+  method: string,
+  path: string,
+  body?: unknown
+): Promise<Response> {
+  const request = req(method, path, body);
+  const result = dispatchRoutes(request, path, routes, { path });
+  if (!result) throw new Error('no route');
+  return result;
+}
+
+describe('tunnel routes', () => {
+  test('GET /api/tunnel/status returns the contract shape', async () => {
+    const ctx = await setup();
+    dirs.push(ctx.dir);
+    const res = await dispatch(ctx.routes, 'GET', '/api/tunnel/status');
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as TunnelStatusResponse;
+    expect(body.supported).toBe(true);
+    expect(body.platform).toBe('linux-x64');
+    expect(body.binary).toMatchObject({ installed: true, source: 'system' });
+    expect(body.auth).toMatchObject({ loggedIn: false, loginUrl: null });
+    expect(body.config).toMatchObject({
+      mode: 'off',
+      hostname: null,
+      tunnelName: null,
+      tunnelId: null,
+      autoStart: false,
+      originPort: 19883,
+    });
+    expect(body.process).toMatchObject({
+      state: 'stopped',
+      pid: null,
+      publicUrl: null,
+      restarts: 0,
+    });
+    expect(body.job).toBeNull();
+    expect(body.trustProxy).toBe(false);
+    expect(body.restartRequired).toBe(false);
+    expect(Array.isArray(body.log)).toBe(true);
+  });
+
+  test('POST create with invalid hostname is 400', async () => {
+    const ctx = await setup();
+    dirs.push(ctx.dir);
+    const res = await dispatch(ctx.routes, 'POST', '/api/tunnel/actions', {
+      action: 'create',
+      hostname: 'NOT A HOST',
+    });
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({
+      error: { code: 'invalid_hostname', message: 'hostname is not a valid RFC 1123 name' },
+    });
+  });
+
+  test('POST create without hostname is 400 invalid_request', async () => {
+    const ctx = await setup();
+    dirs.push(ctx.dir);
+    const res = await dispatch(ctx.routes, 'POST', '/api/tunnel/actions', { action: 'create' });
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as { error: { code: string } };
+    expect(body.error.code).toBe('invalid_request');
+  });
+
+  test('second job while one is running returns 409 busy', async () => {
+    const ctx = await setup();
+    dirs.push(ctx.dir);
+    const login = await dispatch(ctx.routes, 'POST', '/api/tunnel/actions', { action: 'login' });
+    expect(login.status).toBe(202);
+    const busy = await dispatch(ctx.routes, 'POST', '/api/tunnel/actions', { action: 'install' });
+    expect(busy.status).toBe(409);
+    expect(await busy.json()).toEqual({
+      error: { code: 'busy', message: 'A tunnel job is already running' },
+    });
+    await dispatch(ctx.routes, 'POST', '/api/tunnel/actions', { action: 'cancel_login' });
+    await ctx.manager.stop();
+  });
+});

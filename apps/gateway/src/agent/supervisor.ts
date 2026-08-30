@@ -36,7 +36,8 @@ import {
   findApprovalRequests,
 } from './approval-response-reconciler';
 import { registerDeviceCloseListener } from './device-close-bus';
-import type { AgentStopReason } from './run';
+import { registerNodeOfflineListener } from './node-offline-bus';
+import { type AgentStopReason, NODE_OFFLINE_ERROR } from './outcome-resolver';
 import { AgentRun, type AgentRunDeps } from './run';
 import { detectSecrets } from './secret-scan';
 import { type AgentWsHub, agentWsHub } from './ws-hub';
@@ -95,9 +96,15 @@ export type SubmitUserMessageResult =
   | { kind: 'message'; record: AgentMessageRecord }
   | { kind: 'queued'; record: AgentQueuedMessageRecord };
 
-/** 会话是否孤立：绑定设备被删 / 缺失（后端可靠判定；pane 关闭但设备在线由前端判定屏蔽） */
+/** 会话是否孤立：本机绑定设备被删；远端 node 的 device 不在本机库，不算 orphan */
 function isSessionOrphan(session: AgentSessionRecord): boolean {
-  return !session.deviceId || !getDeviceById(session.deviceId);
+  if (!session.deviceId) {
+    return true;
+  }
+  if (session.nodeId) {
+    return false;
+  }
+  return !getDeviceById(session.deviceId);
 }
 
 function toQueuedWire(record: AgentQueuedMessageRecord): {
@@ -115,6 +122,7 @@ interface ActiveRun {
   stale: boolean;
   resumeSuppressed: boolean;
   deviceId: string | null;
+  nodeId: string | null;
 }
 
 interface AgentSupervisorDeps {
@@ -134,6 +142,7 @@ export class AgentSupervisor {
   private readonly staleSessionIds = new Set<string>();
   private readonly resumeSuppressedSessionIds = new Set<string>();
   private readonly lostDeviceIds = new Set<string>();
+  private readonly lostNodeIds = new Set<string>();
   private started = false;
   private stopping = false;
 
@@ -213,6 +222,7 @@ export class AgentSupervisor {
 
     // 订阅设备关闭事件：设备 runtime 断开时主动停止绑定该设备的 session
     registerDeviceCloseListener((deviceId) => this.stopSessionsForDevice(deviceId, 'pane_lost'));
+    registerNodeOfflineListener((nodeId) => this.stopSessionsForNode(nodeId));
   }
 
   async stop(): Promise<void> {
@@ -427,6 +437,41 @@ export class AgentSupervisor {
     }
   }
 
+  /**
+   * mesh peer 离线时停止绑定该 node 的 session：
+   * 活动 run 一律 abort；无活动 run 的 running/waiting 直接落 error，lastError=NODE_OFFLINE。
+   */
+  stopSessionsForNode(nodeId: string): void {
+    this.lostNodeIds.add(nodeId);
+    for (const [sessionId, entry] of this.activeRuns) {
+      const boundNodeId = entry.nodeId ?? getAgentSessionById(sessionId)?.nodeId ?? null;
+      if (boundNodeId !== nodeId) {
+        continue;
+      }
+      this.suppressResume(sessionId);
+      entry.run.requestStop('node_offline');
+    }
+
+    const sessions = [
+      ...getAgentSessionsByStatus('running'),
+      ...getAgentSessionsByStatus('waiting_confirmation'),
+    ].filter((s) => s.nodeId === nodeId);
+
+    for (const session of sessions) {
+      this.suppressResume(session.id);
+      if (this.activeRuns.has(session.id)) {
+        continue;
+      }
+      updateAgentSession(session.id, { status: 'error', lastError: NODE_OFFLINE_ERROR });
+      this.deps.hub.broadcastAgentEvent(
+        session.id,
+        wsBorsh.AGENT_EVENT_STATUS,
+        { status: 'error', lastError: NODE_OFFLINE_ERROR },
+        0
+      );
+    }
+  }
+
   resolveConfirmation(
     confirmationId: string,
     approved: boolean,
@@ -507,9 +552,14 @@ export class AgentSupervisor {
     }
 
     this.resumeSuppressedSessionIds.delete(sessionId);
-    const deviceId = getAgentSessionById(sessionId)?.deviceId ?? null;
+    const session = getAgentSessionById(sessionId);
+    const deviceId = session?.deviceId ?? null;
+    const nodeId = session?.nodeId ?? null;
     if (deviceId) {
       this.lostDeviceIds.delete(deviceId);
+    }
+    if (nodeId) {
+      this.lostNodeIds.delete(nodeId);
     }
     const run = this.deps.createRun(sessionId);
     const entry: ActiveRun = {
@@ -518,6 +568,7 @@ export class AgentSupervisor {
       stale: false,
       resumeSuppressed: false,
       deviceId,
+      nodeId,
     };
     entry.promise = run
       .execute()
@@ -555,6 +606,9 @@ export class AgentSupervisor {
       return;
     }
     if (session.deviceId && this.lostDeviceIds.has(session.deviceId)) {
+      return;
+    }
+    if (session.nodeId && this.lostNodeIds.has(session.nodeId)) {
       return;
     }
     if (session.status === 'stopped') {

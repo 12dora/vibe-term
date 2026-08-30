@@ -25,6 +25,7 @@ import { tmuxRuntimeRegistry } from './tmux-client/registry';
 import { primeLocalShellPath } from './tmux/local-shell-path';
 import { registerSnapshotLookup } from './tmux/snapshot-directory';
 import { registerThemeBroadcaster } from './tmux/theme-broadcaster';
+import { tunnelManager } from './tunnel/manager';
 import { watchService } from './watch/service';
 import { weixinService } from './weixin/service';
 import { WebSocketServer } from './ws';
@@ -122,6 +123,7 @@ export async function createGatewayRuntime(
   await pushSupervisor.start();
   await agentSupervisor.start();
   await watchService.start();
+  await tunnelManager.start();
 
   try {
     const settings = getSiteSettings();
@@ -197,6 +199,7 @@ export async function createGatewayRuntime(
       registerEventNotifyBroadcaster(null);
       registerTreeOverlayBridge(null);
       wsServer.closeAll();
+      await tunnelManager.stop();
       await watchService.stop();
       await agentSupervisor.stop();
       await pushSupervisor.stopAll();

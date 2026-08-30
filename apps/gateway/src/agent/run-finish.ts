@@ -3,6 +3,7 @@ import { wsBorsh } from '@tmex/shared';
 import { type AgentSessionRecord, appendAgentMessage, createAgentConfirmation } from '../db/agent';
 import { t } from '../i18n';
 import type { AgentStopReason } from './outcome-resolver';
+import { NODE_OFFLINE_ERROR } from './outcome-resolver';
 import type { PendingApproval } from './run-stream-handlers';
 
 export type AgentRunOutcome = 'idle' | 'waiting_confirmation' | 'stopped' | 'interrupted' | 'error';
@@ -129,6 +130,9 @@ export function finishAbortedRun(
       session,
       sink.terminalFatalMessage || 'terminal connection lost: pane/device unavailable'
     );
+  }
+  if (sink.stopReason === 'node_offline') {
+    return finishErrorRun(sink, session, NODE_OFFLINE_ERROR);
   }
   sink.setStatus('stopped');
   sink.broadcast(wsBorsh.AGENT_EVENT_TURN_FINISHED, {

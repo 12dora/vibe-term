@@ -24,7 +24,9 @@ import {
   X_TMEX_CONNECTION,
   isStandaloneRoles,
 } from './mesh-deps';
+import { handleMeshInternalTmuxRequest, isMeshInternalPath } from './mesh-internal-tmux-routes';
 import { MeshRoutes } from './mesh-routes';
+import { isPeerInboundRequest, stripMeshPeerMarkerFromRequest } from './peer-request-marker';
 import {
   type SessionMiddlewareDeps,
   authenticateRequest,
@@ -146,11 +148,16 @@ export class MeshHttpRuntime {
   }
 
   async handleRequest(req: Request, server: MeshUpgradeServer): Promise<MeshHandleResult> {
-    const forwarded = await this.forwarder.handle(req, server);
-    if (forwarded !== null) {
-      return this.finalizeHandle(req, forwarded);
+    const safeReq = isPeerInboundRequest(req) ? req : stripMeshPeerMarkerFromRequest(req);
+    const path = new URL(safeReq.url).pathname;
+    if (isMeshInternalPath(path)) {
+      return handleMeshInternalTmuxRequest(safeReq);
     }
-    return this.finalizeHandle(req, await this.dispatchLocal(req, server));
+    const forwarded = await this.forwarder.handle(safeReq, server);
+    if (forwarded !== null) {
+      return this.finalizeHandle(safeReq, forwarded);
+    }
+    return this.finalizeHandle(safeReq, await this.dispatchLocal(safeReq, server));
   }
 
   guardGatewayWebSocket(req: Request, server: MeshUpgradeServer): Response | null | undefined {
@@ -325,6 +332,9 @@ export class MeshHttpRuntime {
       return null;
     }
     if (isStaticAsset(path)) {
+      return null;
+    }
+    if (isMeshInternalPath(path)) {
       return null;
     }
     if (PUBLIC_API.has(path)) {

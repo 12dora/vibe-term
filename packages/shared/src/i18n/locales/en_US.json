@@ -383,7 +383,11 @@
           "verify": "Verifying",
           "create_tunnel": "Creating tunnel",
           "route_dns": "Configuring DNS",
-          "start": "Starting"
+          "start": "Starting",
+          "create": "Creating tunnel",
+          "wait_cert": "Waiting for authorization",
+          "login": "Signing in to Cloudflare",
+          "cancelled": "Cancelled"
         },
         "errors": {
           "unsupported_platform": "Cloudflare Tunnel is not supported on this platform.",

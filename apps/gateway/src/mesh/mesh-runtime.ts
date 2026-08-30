@@ -1,6 +1,7 @@
 import os from 'node:os';
 import { canonicalHubUrl, encodeBase64url } from '@tmex/shared/auth';
 import { type LinkSession, createInMemoryLinkPair } from '@tmex/shared/link';
+import { notifyNodeOffline } from '../agent/node-offline-bus';
 import { filesBulkHooks } from '../api/files';
 import {
   ChallengeStore,
@@ -23,7 +24,9 @@ import type { HubTlsInfoProvider } from '../hub/hub-runtime';
 import type { GatewayRuntime } from '../runtime';
 import { getDisplayVersion } from '../system/version';
 import type { GatewaySession } from '../ws/gateway-session';
+import { isPeerReachable } from './address-class';
 import { defaultScheduler, encodeJsonBytes } from './ctl';
+import { setMeshAgentBridge } from './mesh-agent-bridge';
 import {
   type CachedRtcConfig,
   type ConnectionLookupResult,
@@ -582,6 +585,9 @@ async function constructMeshDeps(opts: CreateMeshRuntimeOptions) {
     hubGeneration: 0,
   };
   const emitNodeEvent = (event: NodeEventPayload) => {
+    if (event.status === 'offline' || event.status === 'revoked') {
+      notifyNodeOffline(event.nodeId);
+    }
     for (const cb of nodeEvents) {
       try {
         cb(event);
@@ -814,6 +820,8 @@ function wireMeshEventsAndSessions(d: Awaited<ReturnType<typeof constructMeshDep
           nodeId: node.id,
           status: node.online ? 'online' : 'offline',
           reach: reach.get(node.id) ?? null,
+          transport: d.peerHolder.manager?.transportOf(node.id) ?? null,
+          rttMs: d.peerHolder.manager?.rttOf(node.id) ?? null,
           inventory:
             typeof node.inventory === 'string'
               ? node.inventory
@@ -838,6 +846,8 @@ function wireMeshEventsAndSessions(d: Awaited<ReturnType<typeof constructMeshDep
             nodeId: hubId,
             status: 'online',
             reach: reach.get(hubId) ?? null,
+            transport: d.peerHolder.manager?.transportOf(hubId) ?? null,
+            rttMs: d.peerHolder.manager?.rttOf(hubId) ?? null,
             name: list.hub?.name,
           });
         }
@@ -920,6 +930,22 @@ function wireMeshEventsAndSessions(d: Awaited<ReturnType<typeof constructMeshDep
       d.startBrowserAcceptHolder.fn(signal.rtcSession);
     },
     ensureDcSession: ensureDc,
+    onLinkInfo: (info) => {
+      const listed = state.lastNodeList?.nodes.find((node) => node.id === info.nodeId);
+      const peer = userStore.listPeers().find((row) => row.nodeId === info.nodeId);
+      const hubOnline = listed?.online === true;
+      d.emitListNodeEvent({
+        nodeId: info.nodeId,
+        status: isPeerReachable(info.reach) || hubOnline ? 'online' : 'offline',
+        reach: info.reach,
+        transport: info.transport,
+        rttMs: info.rttMs,
+        inventory: peer?.inventoryJson ?? null,
+        version: listed?.version ?? undefined,
+        direct_capable: peer?.directCapable,
+        name: listed?.name,
+      });
+    },
   });
   d.peerHolder.manager = peerManager;
   uplink.onStateChange((liveState) => {
@@ -929,7 +955,7 @@ function wireMeshEventsAndSessions(d: Awaited<ReturnType<typeof constructMeshDep
       for (const node of state.lastNodeList.nodes) {
         if (node.id === identity.nodeIdHex || !node.online) continue;
         const r = reach.get(node.id);
-        if (r === 'lan' || r === 'relay') continue;
+        if (isPeerReachable(r)) continue;
         d.emitSyntheticOffline(node.id);
       }
     }
@@ -1060,6 +1086,7 @@ function wireMeshHttp(
     getLink: (nodeId) => peerManager.getLink(nodeId),
     listReach: () => peerManager.listReach(),
     transportOf: (nodeId) => peerManager.transportOf(nodeId),
+    rttOf: (nodeId) => peerManager.rttOf(nodeId),
     listHubOnline: () => {
       const ids = new Set<string>();
       if (!state.hubPresenceLive || uplink.state !== 'online' || !state.lastNodeList) return ids;
@@ -1139,6 +1166,15 @@ function wireMeshHttp(
   });
   http.auth.setTlsInfo(d.opts.tlsInfo);
   d.httpHolder.runtime = http;
+  setMeshAgentBridge({
+    lookupNode(nodeId) {
+      const reach = peers.listReach();
+      if (!reach.has(nodeId)) return 'unknown';
+      return reach.get(nodeId) == null ? 'offline' : 'online';
+    },
+    forwardInternalHttp: (nodeId, path, body, signal) =>
+      http.forwarder.forwardInternalHttp(nodeId, path, body, signal),
+  });
   return http;
 }
 
@@ -1229,6 +1265,7 @@ function assembleMeshRuntime(
       if (stopPromise) return stopPromise;
       stopPromise = (async () => {
         d.nodeEventDedupe.clear();
+        setMeshAgentBridge(null);
         await stopQuietly([
           ['peer', () => peerManager.stop()],
           ['uplink', () => uplink.stop()],

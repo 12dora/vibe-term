@@ -23,9 +23,10 @@ export function asEmulatorSource(runtime: unknown): EmulatorStreamSource | null 
 }
 
 export interface AcquireRunResourcesParams {
+  nodeId?: string | null;
   deviceId: string | null;
   paneId: string | null;
-  acquireRuntime: (deviceId: string) => Promise<TerminalRuntimeLike>;
+  acquireRuntime: (nodeId: string | null, deviceId: string) => Promise<TerminalRuntimeLike>;
   acquireEmulator?: (
     deviceId: string,
     paneId: string,
@@ -52,7 +53,7 @@ export async function acquireRunResources(
 
   let runtime: TerminalRuntimeLike;
   try {
-    runtime = await params.acquireRuntime(params.deviceId);
+    runtime = await params.acquireRuntime(params.nodeId ?? null, params.deviceId);
   } catch (error) {
     return {
       runtime: null,
@@ -115,9 +116,14 @@ export async function releaseHeldPaneEmulator(
 export interface ReleaseRunResourcesParams {
   emulator: PaneEmulator | null;
   runtime: TerminalRuntimeLike | null;
+  nodeId?: string | null;
   deviceId: string | null;
   paneId: string | null;
-  releaseRuntime: (deviceId: string, runtime?: TerminalRuntimeLike) => Promise<void>;
+  releaseRuntime: (
+    nodeId: string | null,
+    deviceId: string,
+    runtime?: TerminalRuntimeLike
+  ) => Promise<void>;
   releaseEmulator?: (deviceId: string, paneId: string) => Promise<number>;
   destroyEmulator?: (deviceId: string, paneId: string) => Promise<void>;
 }
@@ -138,7 +144,7 @@ export async function releaseRunResources(params: ReleaseRunResourcesParams): Pr
 
   if (params.runtime && params.deviceId) {
     try {
-      await params.releaseRuntime(params.deviceId, params.runtime);
+      await params.releaseRuntime(params.nodeId ?? null, params.deviceId, params.runtime);
     } catch (error) {
       console.error(`[agent-run] failed to release runtime ${params.deviceId}:`, error);
     }

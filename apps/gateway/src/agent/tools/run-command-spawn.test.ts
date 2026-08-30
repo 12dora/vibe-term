@@ -101,7 +101,9 @@ describe('applyDisablePaging', () => {
     await applyDisablePaging({
       mode: 'posix',
       disablePagingCommand: 'terminal length 0',
-      sendInput: (data) => sent.push(data),
+      sendInput: (data) => {
+        sent.push(data);
+      },
       sleepMs: async () => {},
       resetBuffer: () => {
         throw new Error('should not reset');
@@ -110,7 +112,9 @@ describe('applyDisablePaging', () => {
     await applyDisablePaging({
       mode: 'cli',
       disablePagingCommand: undefined,
-      sendInput: (data) => sent.push(data),
+      sendInput: (data) => {
+        sent.push(data);
+      },
       sleepMs: async () => {},
       resetBuffer: () => {
         throw new Error('should not reset');
@@ -126,7 +130,9 @@ describe('applyDisablePaging', () => {
     await applyDisablePaging({
       mode: 'cli',
       disablePagingCommand: 'terminal length 0',
-      sendInput: (data) => sent.push(data),
+      sendInput: (data) => {
+        sent.push(data);
+      },
       sleepMs: async (ms) => {
         slept.push(ms);
       },

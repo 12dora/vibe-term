@@ -63,6 +63,12 @@ describe('resolveRunOnceOutcome 优先级', () => {
       message: PANE_LOST_FALLBACK_MESSAGE,
     });
     expect(resolveRunOnceOutcome(base({ stopReason: 'manual' }))).toEqual({ kind: 'stopped' });
+    expect(
+      resolveRunOnceOutcome(base({ stopReason: 'node_offline', terminalFatalMessage: '' }))
+    ).toEqual({
+      kind: 'pane-lost-error',
+      message: 'NODE_OFFLINE',
+    });
   });
 
   test('steerRequested 压过 aborted（含 terminalFatal）/ streamError / approval / queue', () => {

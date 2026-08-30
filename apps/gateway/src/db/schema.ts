@@ -204,7 +204,10 @@ export const agentSessions = sqliteTable(
   {
     id: text('id').primaryKey(),
     title: text('title').notNull(),
-    deviceId: text('device_id').references(() => devices.id, { onDelete: 'set null' }),
+    /** 绑定 pane 所在 mesh node；null 表示本 gateway（self） */
+    nodeId: text('node_id'),
+    // 无 FK：远端 node 的 deviceId 不在本机 devices 表
+    deviceId: text('device_id'),
     paneId: text('pane_id'),
     providerId: text('provider_id').references(() => llmProviders.id, { onDelete: 'set null' }),
     modelId: text('model_id').notNull(),
@@ -235,6 +238,7 @@ export const agentSessions = sqliteTable(
       'agent_sessions_status_check',
       sql`${table.status} in ('idle', 'running', 'waiting_confirmation', 'stopped', 'error')`
     ),
+    index('agent_sessions_node_id_idx').on(table.nodeId),
   ]
 );
 
@@ -711,6 +715,23 @@ export const hubTrust = sqliteTable('hub_trust', {
   createdAt: integer('created_at').notNull(),
 });
 
+export const tunnelConfig = sqliteTable(
+  'tunnel_config',
+  {
+    id: text('id').primaryKey(),
+    mode: text('mode').notNull().default('off'),
+    hostname: text('hostname'),
+    tunnelName: text('tunnel_name'),
+    tunnelId: text('tunnel_id'),
+    autoStart: integer('auto_start', { mode: 'boolean' }).notNull().default(false),
+    updatedAt: text('updated_at').notNull(),
+  },
+  (table) => [
+    check('tunnel_config_singleton_check', sql`${table.id} = 'default'`),
+    check('tunnel_config_mode_check', sql`${table.mode} in ('off', 'quick', 'named')`),
+  ]
+);
+
 export type UserRow = typeof users.$inferSelect;
 export type UserKeyRow = typeof userKeys.$inferSelect;
 export type UserKeyLogRow = typeof userKeyLog.$inferSelect;
@@ -722,3 +743,4 @@ export type NodeIdentityRow = typeof nodeIdentity.$inferSelect;
 export type PeerCacheRow = typeof peerCache.$inferSelect;
 export type TlsConfigRow = typeof tlsConfig.$inferSelect;
 export type HubTrustRow = typeof hubTrust.$inferSelect;
+export type TunnelConfigRow = typeof tunnelConfig.$inferSelect;

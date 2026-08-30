@@ -13,6 +13,7 @@ function fakeSession(overrides: Partial<AgentSessionRecord> = {}): AgentSessionR
   return {
     id: 'sess-1',
     title: 'Test',
+    nodeId: null,
     deviceId: null,
     paneId: null,
     providerId: null,
@@ -99,6 +100,10 @@ describe('run-finish', () => {
     const paneLost = fakeSink('', { stopReason: 'pane_lost' });
     expect(finishAbortedRun(paneLost.sink, session)).toBe('error');
     expect(paneLost.events.some((e) => e.includes('pane/device unavailable'))).toBe(true);
+
+    const nodeOffline = fakeSink('', { stopReason: 'node_offline' });
+    expect(finishAbortedRun(nodeOffline.sink, session)).toBe('error');
+    expect(nodeOffline.events).toContain('status:error:NODE_OFFLINE');
 
     const stopped = fakeSink('', { stopReason: 'manual' });
     expect(finishAbortedRun(stopped.sink, session)).toBe('stopped');

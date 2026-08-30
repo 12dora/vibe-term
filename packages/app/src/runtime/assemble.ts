@@ -32,10 +32,13 @@ import {
 import type { GatewayRuntime } from '../../../../apps/gateway/src/runtime';
 import { resolveInstallDir as resolveGatewayInstallDir } from '../../../../apps/gateway/src/system/install-info';
 import { TlsConfigStore } from '../../../../apps/gateway/src/tls/tls-config-store';
+import { tunnelManager } from '../../../../apps/gateway/src/tunnel/manager';
 import type { GatewaySession } from '../../../../apps/gateway/src/ws/gateway-session';
 import { readNodeEnv } from '../../../../packages/shared/src/env/load-env';
 import { disableDirect, enableDirect } from '../commands/direct';
 import { performHubJoin } from '../commands/hub';
+import { readEnvFile, writeEnvFile } from '../lib/env-file';
+import { withEnvLock } from '../lib/env-mutation';
 import { createAuthContextFromDb } from '../lib/local-auth';
 import { loadNodeDatachannel } from '../lib/native-datachannel';
 import { detectCurrentNativePin } from '../lib/native-manifest';
@@ -310,6 +313,21 @@ function buildTlsLifecycle(
     trustProxy: gatewayConfig.trustProxy,
   });
   tlsSlot.service = tls;
+  tunnelManager.setPatchHostEnv(async (trustProxy) => {
+    const envPath = resolveSetupEnvPath();
+    await withEnvLock(async () => {
+      let existing: Record<string, string> = {};
+      try {
+        existing = await readEnvFile(envPath);
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+      }
+      await writeEnvFile(envPath, {
+        ...existing,
+        TMEX_TRUST_PROXY: trustProxy ? 'true' : 'false',
+      });
+    });
+  });
   return {
     tls,
     httpsListener,

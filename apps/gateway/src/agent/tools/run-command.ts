@@ -64,9 +64,11 @@ export interface RunCommandParams {
   disablePagingCommand?: string;
 }
 
+export type RunCommandSendInput = (data: string) => void | Promise<void>;
+
 export interface RunCommandDeps {
   emulator: RunCommandEmulator;
-  sendInput: (data: string) => void;
+  sendInput: RunCommandSendInput;
   sleepMs?: (ms: number) => Promise<void>;
   /** 注入 nonce（默认基于计数器；避免直接用 Math.random，便于测试） */
   makeNonce?: () => string;
@@ -139,7 +141,7 @@ export async function executeRunCommand(
     });
     const promptRegex = resolvePromptRegex(args, deps.emulator.render());
     if (args.usePosix) nonce = runtime.makeNonce();
-    deps.sendInput(
+    await deps.sendInput(
       buildRunCommandPayload({
         command: args.command,
         usePosix: args.usePosix,
@@ -165,9 +167,9 @@ export async function executeRunCommand(
   }
 }
 
-function checkPager(cleanedNow: string, sendInput: (data: string) => void): boolean {
+async function checkPager(cleanedNow: string, sendInput: RunCommandSendInput): Promise<boolean> {
   if (MORE_MARKERS.some((re) => re.test(cleanedNow.slice(-200)))) {
-    sendInput(' ');
+    await sendInput(' ');
     return true;
   }
   return false;
@@ -214,7 +216,7 @@ function checkPromptCompletion(
 
 interface CommandWaitParams {
   emulator: RunCommandEmulator;
-  sendInput: (data: string) => void;
+  sendInput: RunCommandSendInput;
   sleepMs: (ms: number) => Promise<void>;
   now: () => number;
   deadline: number;
@@ -266,7 +268,7 @@ async function waitForCommandCompletion(params: CommandWaitParams): Promise<RunC
     );
     if (posix) return posix;
 
-    if (checkPager(cleanedNow, params.sendInput)) {
+    if (await checkPager(cleanedNow, params.sendInput)) {
       idleStableSince = 0;
       continue;
     }

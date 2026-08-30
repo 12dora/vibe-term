@@ -1,4 +1,5 @@
-import { posix, win32 } from 'node:path';
+import { tmpdir } from 'node:os';
+import { dirname, isAbsolute, join, posix, resolve, win32 } from 'node:path';
 
 declare const TMEX_MANAGED_BUILD: boolean | undefined;
 
@@ -130,6 +131,18 @@ function getOptionalEnv(key: string): string | null {
   return value ? value : null;
 }
 
+/** cloudflared 数据目录：显式 `TMEX_TUNNEL_DIR`，否则 sqlite 旁的 `tunnel/`。 */
+export function resolveTunnelDir(env: NodeJS.ProcessEnv = process.env): string {
+  const explicit = env.TMEX_TUNNEL_DIR?.trim();
+  if (explicit) return explicit;
+  const dbUrl = (env.DATABASE_URL ?? './tmex.db').trim();
+  if (dbUrl === ':memory:' || dbUrl.startsWith('file::memory:')) {
+    return join(tmpdir(), 'tmex-tunnel');
+  }
+  const dbPath = isAbsolute(dbUrl) ? dbUrl : resolve(dbUrl);
+  return join(dirname(dbPath), 'tunnel');
+}
+
 export const config = {
   // 核心安全配置（生产环境建议配置，用于加密敏感字段）
   masterKey: process.env.TMEX_MASTER_KEY,
@@ -142,6 +155,7 @@ export const config = {
 
   // 数据库
   databaseUrl: getEnv('DATABASE_URL', './tmex.db'),
+  tunnelDir: resolveTunnelDir(),
 
   // 文件传输（上传/下载）单文件字节上限，默认 2GB；后端校验 + 前端上传前预校验共用
   transferMaxBytes: Number.parseInt(getEnv('TMEX_TRANSFER_MAX_BYTES', '2147483648'), 10),

@@ -383,7 +383,11 @@
           "verify": "校验",
           "create_tunnel": "创建隧道",
           "route_dns": "配置 DNS",
-          "start": "启动"
+          "start": "启动",
+          "create": "创建隧道",
+          "wait_cert": "等待授权",
+          "login": "登录 Cloudflare",
+          "cancelled": "已取消"
         },
         "errors": {
           "unsupported_platform": "当前系统不支持 Cloudflare Tunnel。",

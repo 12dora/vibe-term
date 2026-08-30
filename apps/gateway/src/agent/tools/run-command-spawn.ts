@@ -64,12 +64,12 @@ export function attachRunCommandTap(
 export async function applyDisablePaging(input: {
   mode: RunCommandMode;
   disablePagingCommand: string | undefined;
-  sendInput: (data: string) => void;
+  sendInput: (data: string) => void | Promise<void>;
   sleepMs: (ms: number) => Promise<void>;
   resetBuffer: () => void;
 }): Promise<void> {
   if (input.mode !== 'cli' || !input.disablePagingCommand) return;
-  input.sendInput(`${input.disablePagingCommand}\r`);
+  await input.sendInput(`${input.disablePagingCommand}\r`);
   await input.sleepMs(200);
   input.resetBuffer();
 }

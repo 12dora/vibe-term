@@ -1,10 +1,12 @@
 import type { PaneInfo } from '../../tmux-client/capture-history';
 import type { PaneEmulator } from '../../tmux-client/pane-emulator';
+import type { PaneSnapshotLookup } from './pane-info';
 
 export interface TerminalRuntimeLike {
-  sendInput(paneId: string, data: string): void;
+  sendInput(paneId: string, data: string): void | Promise<void>;
   capturePaneText(paneId: string, opts?: { historyLines?: number }): Promise<string>;
   getPaneInfo(paneId: string): Promise<PaneInfo>;
+  findPaneInSnapshot?(paneId: string): PaneSnapshotLookup;
   /** runtime 已终止（设备连接断开等）时为 true；用于主动停止 run 而非等工具超时 */
   readonly isTerminated?: boolean;
 }

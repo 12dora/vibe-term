@@ -126,6 +126,7 @@ export class AgentRun {
     this.runtimePaneId = session.paneId;
     try {
       const acquired = await acquireRunResources({
+        nodeId: session.nodeId,
         deviceId: runtimeDeviceId,
         paneId: session.paneId,
         acquireRuntime: this.deps.acquireRuntime,
@@ -143,6 +144,7 @@ export class AgentRun {
       await releaseRunResources({
         emulator,
         runtime,
+        nodeId: session.nodeId,
         deviceId: runtimeDeviceId,
         paneId: session.paneId,
         releaseRuntime: this.deps.releaseRuntime,

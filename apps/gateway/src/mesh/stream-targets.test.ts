@@ -409,6 +409,33 @@ describe('http/ws stream targets', () => {
     expect(seen.viaNodeId).toBe('entry-1');
   });
 
+  test('acceptHttpStream 写入 x-tmex-mesh-peer 并覆盖 OPEN 里的伪造值', async () => {
+    const [a, b] = createInMemoryLinkPair();
+    const seen = { peer: null as string | null };
+    b.onStream((stream) => {
+      void acceptHttpStream(stream, {
+        peerNodeId: 'entry-1',
+        sessionStore: {
+          verify: () => ({
+            ok: true,
+            session: { userId: 'user-1' },
+          }),
+        } as unknown as NodeSessionStore,
+        async dispatchHttp(req) {
+          seen.peer = req.headers.get('x-tmex-mesh-peer');
+          return new Response('ok');
+        },
+      });
+    });
+    await openHttpStream(a, {
+      method: 'POST',
+      path: '/api/mesh-internal/tmux/pane-info',
+      origin: 'http://localhost',
+      headers: { 'x-tmex-mesh-peer': 'forged-node' },
+    });
+    expect(seen.peer).toBe('entry-1');
+  });
+
   test('dispatchRoutes attaches mesh from requestDispatchContext', async () => {
     const req = new Request('http://localhost/api/x');
     requestDispatchContext.set(req, { uid: 'user-1', viaNodeId: 'node-a' });

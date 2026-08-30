@@ -383,7 +383,11 @@
           "verify": "検証",
           "create_tunnel": "トンネル作成",
           "route_dns": "DNS 設定",
-          "start": "起動"
+          "start": "起動",
+          "create": "トンネルを作成中",
+          "wait_cert": "承認を待機中",
+          "login": "Cloudflare にログイン中",
+          "cancelled": "キャンセル済み"
         },
         "errors": {
           "unsupported_platform": "このプラットフォームは Cloudflare Tunnel に対応していません。",

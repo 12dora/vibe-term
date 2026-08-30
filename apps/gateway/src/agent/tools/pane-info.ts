@@ -10,7 +10,7 @@ import {
   toToolErrorMessage,
 } from './terminal-context';
 
-interface SnapshotPaneContext {
+export interface SnapshotPaneContext {
   title: string | null;
   currentPath: string | null;
   windowName: string | null;
@@ -20,10 +20,11 @@ interface SnapshotPaneContext {
   splitPaneCount: number | null;
 }
 
-export function findPaneInSnapshot(
-  deviceId: string,
-  paneId: string
-): { found: true; context: SnapshotPaneContext } | { found: false; snapshotExists: boolean } {
+export type PaneSnapshotLookup =
+  | { found: true; context: SnapshotPaneContext }
+  | { found: false; snapshotExists: boolean };
+
+export function findPaneInSnapshot(deviceId: string, paneId: string): PaneSnapshotLookup {
   const snapshot = getDeviceSnapshot(deviceId);
   const session = snapshot?.session;
   if (!snapshot || !session) {
@@ -95,7 +96,8 @@ export function createGetPaneInfoTool(ctx: TerminalToolContext): Tool {
         const info = await runtime.getPaneInfo(ctx.paneId);
         const emulator = liveEmulator(ctx);
         const alternateScreen = emulator ? emulator.isAlternateScreen() : info.alternateScreen;
-        const lookup = findPaneInSnapshot(ctx.deviceId, ctx.paneId);
+        const lookup =
+          runtime.findPaneInSnapshot?.(ctx.paneId) ?? findPaneInSnapshot(ctx.deviceId, ctx.paneId);
         if (!lookup.found && lookup.snapshotExists) {
           return failTool(ctx, 'Bound pane no longer exists in snapshot.');
         }

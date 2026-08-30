@@ -871,6 +871,67 @@ describe('AgentSupervisor - stop 语义', () => {
     expect(mine?.status).toBe('error');
     expect(others?.status).toBe('running');
   });
+
+  test('stopSessionsForNode：无活动 run 时 running 落 error NODE_OFFLINE 并广播', async () => {
+    const NODE_ID = 'peer-offline-1';
+    const harness = createSupervisorHarness({
+      baseUrl: 'http://unused',
+      sessionStatus: 'running',
+    });
+    updateAgentSession(harness.session.id, { nodeId: NODE_ID });
+
+    const other = createAgentSession({
+      title: 'Other node',
+      deviceId: TEST_DEVICE_ID,
+      paneId: '%2',
+      modelId: 'mock-model',
+      nodeId: 'other-peer',
+    });
+    updateAgentSession(other.id, { status: 'running' });
+
+    const beforeCount = harness.broadcasts.length;
+    harness.supervisor.stopSessionsForNode(NODE_ID);
+
+    expect(getAgentSessionById(harness.session.id)?.status).toBe('error');
+    expect(getAgentSessionById(harness.session.id)?.lastError).toBe('NODE_OFFLINE');
+    expect(getAgentSessionById(other.id)?.status).toBe('running');
+
+    const newEvents = harness.broadcasts
+      .slice(beforeCount)
+      .filter(
+        (b) =>
+          b.sessionId === harness.session.id &&
+          b.payload !== null &&
+          typeof b.payload === 'object' &&
+          (b.payload as { lastError?: string }).lastError === 'NODE_OFFLINE'
+      );
+    expect(newEvents.length).toBeGreaterThan(0);
+  });
+
+  test('stopSessionsForNode：活动 run 被 abort 且 lastError=NODE_OFFLINE', async () => {
+    const NODE_ID = 'peer-offline-run';
+    const mock = createMockChatServer(() =>
+      slowSseResponse(
+        [
+          chunk({ role: 'assistant', content: 'working ' }),
+          chunk({ content: 'more ' }),
+          chunk({}, 'stop'),
+        ],
+        50
+      )
+    );
+    const harness = createSupervisorHarness({ baseUrl: mock.baseUrl });
+    updateAgentSession(harness.session.id, { nodeId: NODE_ID });
+    await harness.supervisor.start();
+    harness.supervisor.submitUserMessage(harness.session.id, 'talk');
+    await new Promise((r) => setTimeout(r, 80));
+    harness.supervisor.stopSessionsForNode(NODE_ID);
+    await harness.waitForIdle();
+    const session = getAgentSessionById(harness.session.id);
+    expect(session?.status).toBe('error');
+    expect(session?.lastError).toBe('NODE_OFFLINE');
+    expect(harness.supervisor.isSessionActive(harness.session.id)).toBe(false);
+  });
 });
 
 describe('AgentSupervisor - 重启恢复', () => {

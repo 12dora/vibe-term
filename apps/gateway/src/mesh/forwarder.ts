@@ -134,6 +134,9 @@ export class Forwarder {
       return this.handleRemoteWs(req, server, parsed.nodeId);
     }
     if (parsed.rest === '/api' || parsed.rest.startsWith('/api/')) {
+      if (parsed.rest.startsWith('/api/mesh-internal')) {
+        return jsonError('FORBIDDEN', 403);
+      }
       return this.handleRemoteHttp(req, parsed.nodeId, parsed.rest, url.search);
     }
     return null;
@@ -191,6 +194,41 @@ export class Forwarder {
     };
     this.pumps.set(ws, pump);
     this.bindStream(pump, stream, meta?.transport ?? null);
+  }
+
+  async forwardInternalHttp(
+    nodeId: string,
+    path: string,
+    body: unknown,
+    signal?: AbortSignal
+  ): Promise<Response> {
+    const abort = signal ?? new AbortController().signal;
+    const payload = typeof body === 'string' ? body : JSON.stringify(body ?? {});
+    const bytes = new TextEncoder().encode(payload);
+    const streamBody = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(bytes);
+        controller.close();
+      },
+    });
+    try {
+      const link = await this.deps.peers.getLink(nodeId);
+      return await this.deps.streams.openHttpStream(
+        link,
+        {
+          method: 'POST',
+          path,
+          query: '',
+          headers: { 'content-type': 'application/json' },
+          origin: 'http://localhost',
+          auth: null,
+        },
+        streamBody,
+        abort
+      );
+    } catch {
+      return jsonError('NODE_UNREACHABLE', 503, { nodeId });
+    }
   }
 
   private bindStream(

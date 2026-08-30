@@ -20,6 +20,7 @@ import {
 } from '../db/agent';
 import { getDb as getOrmDb } from '../db/client';
 import { createLlmProvider } from '../db/llm';
+import { setMeshAgentBridge } from '../mesh/mesh-agent-bridge';
 import { createAgentRoutes } from './agent';
 import { dispatchRoutes } from './route';
 
@@ -220,6 +221,64 @@ describe('POST /api/agent/sessions', () => {
     expect(session.writeMode).toBe('confirm');
     expect(session.status).toBe('idle');
     expect(session.paneId).toBe('%7');
+    expect(session.nodeId).toBeNull();
+  });
+
+  test('nodeId 缺省/null/self 均落库为 null', async () => {
+    for (const nodeId of [undefined, null, 'self'] as const) {
+      const { status, json } = await call('POST', '/api/agent/sessions', {
+        deviceId: TEST_DEVICE_ID,
+        paneId: '%self-node',
+        modelId: 'mock-model',
+        ...(nodeId === undefined ? {} : { nodeId }),
+      });
+      expect(status).toBe(201);
+      expect((json.session as { nodeId: string | null }).nodeId).toBeNull();
+    }
+  });
+
+  test('远端 nodeId：未知 → 404，离线 → 503，在线跳过本机 device 校验', async () => {
+    setMeshAgentBridge({
+      lookupNode(nodeId) {
+        if (nodeId === 'online-peer') return 'online';
+        if (nodeId === 'offline-peer') return 'offline';
+        return 'unknown';
+      },
+      forwardInternalHttp: async () => new Response(JSON.stringify({ info: {} }), { status: 200 }),
+    });
+    try {
+      expect(
+        (
+          await call('POST', '/api/agent/sessions', {
+            nodeId: 'ghost-peer',
+            deviceId: 'remote-device',
+            paneId: '%1',
+            modelId: 'm',
+          })
+        ).status
+      ).toBe(404);
+      expect(
+        (
+          await call('POST', '/api/agent/sessions', {
+            nodeId: 'offline-peer',
+            deviceId: 'remote-device',
+            paneId: '%1',
+            modelId: 'm',
+          })
+        ).status
+      ).toBe(503);
+      const { status, json } = await call('POST', '/api/agent/sessions', {
+        nodeId: 'online-peer',
+        deviceId: 'remote-device',
+        paneId: '%9',
+        modelId: 'm',
+      });
+      expect(status).toBe(201);
+      expect((json.session as { nodeId: string; deviceId: string }).nodeId).toBe('online-peer');
+      expect((json.session as { deviceId: string }).deviceId).toBe('remote-device');
+    } finally {
+      setMeshAgentBridge(null);
+    }
   });
 });
 
@@ -233,6 +292,21 @@ describe('GET /api/agent/sessions', () => {
     expect(status).toBe(200);
     const sessions = json.sessions as Array<{ id: string }>;
     expect(sessions.map((s) => s.id)).toEqual([target.id]);
+  });
+
+  test('按 nodeId=self / 远端 nodeId 过滤', async () => {
+    const selfSession = createTestSession({ paneId: '%node-self', nodeId: null });
+    const remoteSession = createTestSession({ paneId: '%node-remote', nodeId: 'peer-node-1' });
+    const selfList = await call('GET', '/api/agent/sessions?nodeId=self');
+    expect(selfList.status).toBe(200);
+    const selfIds = (selfList.json.sessions as Array<{ id: string }>).map((s) => s.id);
+    expect(selfIds).toContain(selfSession.id);
+    expect(selfIds).not.toContain(remoteSession.id);
+
+    const remoteList = await call('GET', '/api/agent/sessions?nodeId=peer-node-1');
+    expect(remoteList.status).toBe(200);
+    const remoteIds = (remoteList.json.sessions as Array<{ id: string }>).map((s) => s.id);
+    expect(remoteIds).toEqual([remoteSession.id]);
   });
 });
 
@@ -265,6 +339,19 @@ describe('GET/PATCH/DELETE /api/agent/sessions/:id', () => {
     expect(updated.paneId).toBe('%42');
     expect(updated.systemPrompt).toBe('be careful');
     expect(updated.maxStepsPerTurn).toBe(10);
+  });
+
+  test('PATCH 不能改 nodeId', async () => {
+    const session = createTestSession({ nodeId: null });
+    const { status, json } = await call('PATCH', `/api/agent/sessions/${session.id}`, {
+      nodeId: 'peer-should-ignore',
+      title: 'Keep node',
+    });
+    expect(status).toBe(200);
+    const updated = json.session as { nodeId: string | null; title: string };
+    expect(updated.nodeId).toBeNull();
+    expect(updated.title).toBe('Keep node');
+    expect(getAgentSessionById(session.id)?.nodeId).toBeNull();
   });
 
   test('PATCH 空 title → 400；非法 writeMode → 400', async () => {

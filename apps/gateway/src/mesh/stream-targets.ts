@@ -7,6 +7,7 @@ import { encodeJsonBytes, isRecord } from './ctl';
 import { LinkStreamCarrier } from './link-stream-carrier';
 import { X_TMEX_SESSION_RENEWED } from './mesh-deps';
 import { parseOpenPayload } from './peer-protocol';
+import { X_TMEX_MESH_PEER, attachMeshPeerMarker } from './peer-request-marker';
 import { pumpToLink } from './stream-pump';
 import type { DispatchHttp, HttpStreamOpenPayload, WsStreamOpenPayload } from './types';
 
@@ -21,6 +22,7 @@ const BLOCKED_REQUEST_HEADERS = new Set([
   'connection',
   'upgrade',
   'x-tmex-via',
+  X_TMEX_MESH_PEER,
 ]);
 
 export type StreamAuthContext = {
@@ -31,7 +33,7 @@ export type StreamAuthContext = {
 
 export function isAuthSkippedPath(path: string): boolean {
   const bare = path.split('?')[0] ?? path;
-  return AUTH_SKIP_PATHS.has(bare);
+  return AUTH_SKIP_PATHS.has(bare) || bare.startsWith('/api/mesh-internal/');
 }
 
 export function stripForwardedRequestHeaders(
@@ -171,7 +173,10 @@ export async function acceptHttpStream(
   const path = str(open.path, '/');
   const query = str(open.query);
   const origin = str(open.origin, 'http://localhost');
-  const headers = stripForwardedRequestHeaders(stringHeaders(open.headers));
+  const headers = attachMeshPeerMarker(
+    stripForwardedRequestHeaders(stringHeaders(open.headers)),
+    opts.peerNodeId
+  );
   const auth = str(open.auth) || null;
   const verified = verifyAuth(auth, path, opts);
   if (!verified.ok) {

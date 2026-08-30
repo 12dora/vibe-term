@@ -9,7 +9,9 @@ import {
   resolveProviderHostedTools,
   resolveProviderWebSearchTool,
 } from '../llm/provider-registry';
+import { getMeshAgentBridge } from '../mesh/mesh-agent-bridge';
 import { tmuxRuntimeRegistry } from '../tmux-client/registry';
+import { RemotePaneRuntime, RemotePaneUnreachableError } from './remote-pane-runtime';
 import type { TerminalRuntimeLike } from './tools/terminal';
 import { createFetchUrlTool, createWebSearchTool } from './tools/web';
 import { agentWsHub } from './ws-hub';
@@ -25,8 +27,12 @@ export interface AgentRunDeps {
   createFetchUrlTool: () => Tool;
   hasQueuedMessages: (sessionId: string) => boolean;
   drainQueuedMessages: (sessionId: string) => string[];
-  acquireRuntime: (deviceId: string) => Promise<TerminalRuntimeLike>;
-  releaseRuntime: (deviceId: string, runtime?: TerminalRuntimeLike) => Promise<void>;
+  acquireRuntime: (nodeId: string | null, deviceId: string) => Promise<TerminalRuntimeLike>;
+  releaseRuntime: (
+    nodeId: string | null,
+    deviceId: string,
+    runtime?: TerminalRuntimeLike
+  ) => Promise<void>;
   broadcast: <K extends keyof AgentEventPayloadMap>(
     sessionId: string,
     eventType: K,
@@ -63,8 +69,22 @@ export const defaultAgentRunDeps: AgentRunDeps = {
     agentWsHub.broadcastAgentEvent(sessionId, wsBorsh.AGENT_EVENT_QUEUE_UPDATED, { queued: [] }, 0);
     return items.map((item) => item.text);
   },
-  acquireRuntime: (deviceId) => tmuxRuntimeRegistry.acquire(deviceId),
-  releaseRuntime: (deviceId, runtime) => tmuxRuntimeRegistry.release(deviceId, runtime),
+  acquireRuntime: async (nodeId, deviceId) => {
+    if (nodeId) {
+      const bridge = getMeshAgentBridge();
+      if (!bridge) {
+        throw new RemotePaneUnreachableError(nodeId);
+      }
+      return new RemotePaneRuntime(nodeId, deviceId, bridge.forwardInternalHttp);
+    }
+    return tmuxRuntimeRegistry.acquire(deviceId);
+  },
+  releaseRuntime: async (nodeId, deviceId, runtime) => {
+    if (nodeId || runtime instanceof RemotePaneRuntime) {
+      return;
+    }
+    await tmuxRuntimeRegistry.release(deviceId, runtime);
+  },
   broadcast: (sessionId, eventType, payload, seq) =>
     agentWsHub.broadcastAgentEvent(sessionId, eventType, payload, seq),
   notify: (eventType, event) => eventNotifier.notify(eventType, event),

@@ -1,4 +1,4 @@
-export type AgentStopReason = 'manual' | 'shutdown' | 'pane_lost';
+export type AgentStopReason = 'manual' | 'shutdown' | 'pane_lost' | 'node_offline';
 
 export interface RunOnceSignals {
   stalled: boolean;
@@ -24,6 +24,7 @@ export type RunOnceDecision =
   | { kind: 'idle' };
 
 export const PANE_LOST_FALLBACK_MESSAGE = 'terminal connection lost: pane/device unavailable';
+export const NODE_OFFLINE_ERROR = 'NODE_OFFLINE';
 
 function resolveAborted(signals: RunOnceSignals): RunOnceDecision {
   if (signals.terminalFatal) {
@@ -37,6 +38,9 @@ function resolveAborted(signals: RunOnceSignals): RunOnceDecision {
       kind: 'pane-lost-error',
       message: signals.terminalFatalMessage || PANE_LOST_FALLBACK_MESSAGE,
     };
+  }
+  if (signals.stopReason === 'node_offline') {
+    return { kind: 'pane-lost-error', message: NODE_OFFLINE_ERROR };
   }
   return { kind: 'stopped' };
 }

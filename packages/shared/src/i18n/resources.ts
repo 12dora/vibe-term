@@ -389,7 +389,11 @@ export const I18N_RESOURCES = {
           "verify": "Verifying",
           "create_tunnel": "Creating tunnel",
           "route_dns": "Configuring DNS",
-          "start": "Starting"
+          "start": "Starting",
+          "create": "Creating tunnel",
+          "wait_cert": "Waiting for authorization",
+          "login": "Signing in to Cloudflare",
+          "cancelled": "Cancelled"
         },
         "errors": {
           "unsupported_platform": "Cloudflare Tunnel is not supported on this platform.",
@@ -2178,7 +2182,11 @@ export const I18N_RESOURCES = {
           "verify": "校验",
           "create_tunnel": "创建隧道",
           "route_dns": "配置 DNS",
-          "start": "启动"
+          "start": "启动",
+          "create": "创建隧道",
+          "wait_cert": "等待授权",
+          "login": "登录 Cloudflare",
+          "cancelled": "已取消"
         },
         "errors": {
           "unsupported_platform": "当前系统不支持 Cloudflare Tunnel。",
@@ -3966,7 +3974,11 @@ export const I18N_RESOURCES = {
           "verify": "検証",
           "create_tunnel": "トンネル作成",
           "route_dns": "DNS 設定",
-          "start": "起動"
+          "start": "起動",
+          "create": "トンネルを作成中",
+          "wait_cert": "承認を待機中",
+          "login": "Cloudflare にログイン中",
+          "cancelled": "キャンセル済み"
         },
         "errors": {
           "unsupported_platform": "このプラットフォームは Cloudflare Tunnel に対応していません。",

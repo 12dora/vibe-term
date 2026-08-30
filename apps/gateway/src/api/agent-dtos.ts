@@ -26,6 +26,7 @@ export function toSessionDto(record: AgentSessionRecord): AgentSessionDto {
   return {
     id: record.id,
     title: record.title,
+    nodeId: record.nodeId,
     deviceId: record.deviceId,
     paneId: record.paneId,
     providerId: record.providerId,

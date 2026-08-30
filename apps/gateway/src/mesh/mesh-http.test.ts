@@ -7,7 +7,9 @@ import {
   type MeshServerWebSocket,
   WS_CLOSE_LOGIN_REQUIRED,
   WS_SESSION_VERIFY_MS,
+  setMeshRequestContext,
 } from './mesh-deps';
+import { X_TMEX_MESH_PEER } from './peer-request-marker';
 
 describe('mesh-http', () => {
   test('standalone localUiGuard always passes', async () => {
@@ -191,6 +193,70 @@ describe('mesh-http', () => {
         dummyServer
       );
       expect(authed).toBeNull();
+    } finally {
+      mesh.close();
+    }
+  });
+
+  test('mesh-internal 无标记 → 403；外部伪造标记被剥掉仍 403', async () => {
+    const mesh = await bootMesh();
+    try {
+      const denied = await mesh.runtime.handleRequest(
+        new Request('http://localhost/api/mesh-internal/tmux/pane-info', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ deviceId: 'd', paneId: '%1' }),
+        }),
+        dummyServer
+      );
+      expect(denied instanceof Response ? denied.status : 0).toBe(403);
+
+      const spoofed = await mesh.runtime.handleRequest(
+        new Request('http://localhost/api/mesh-internal/tmux/pane-info', {
+          method: 'POST',
+          headers: {
+            'content-type': 'application/json',
+            'x-tmex-mesh-peer': 'forged-peer',
+          },
+          body: JSON.stringify({ deviceId: 'd', paneId: '%1' }),
+        }),
+        dummyServer
+      );
+      expect(spoofed instanceof Response ? spoofed.status : 0).toBe(403);
+    } finally {
+      mesh.close();
+    }
+  });
+
+  test('peer inbound 保留标记，mesh-internal 不因缺 cookie 返回 403', async () => {
+    const mesh = await bootMesh();
+    try {
+      const req = new Request('http://localhost/api/mesh-internal/tmux/pane-info', {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          [X_TMEX_MESH_PEER]: 'entry-peer',
+        },
+        body: JSON.stringify({ deviceId: 'missing', paneId: '%1' }),
+      });
+      setMeshRequestContext(req, { via: 'entry-peer', clientIp: 'peer:entry-peer' });
+      const res = await mesh.runtime.handleRequest(req, dummyServer);
+      expect(res instanceof Response).toBe(true);
+      if (res instanceof Response) {
+        expect(res.status).not.toBe(403);
+        expect(res.status).not.toBe(401);
+      }
+    } finally {
+      mesh.close();
+    }
+  });
+
+  test('localUiGuard 不拦截 /api/mesh-internal（由标记鉴权）', async () => {
+    const mesh = await bootMesh();
+    try {
+      expect(
+        mesh.runtime.localUiGuard(new Request('http://localhost/api/mesh-internal/tmux/pane-info'))
+      ).toBeNull();
     } finally {
       mesh.close();
     }
