@@ -15,14 +15,13 @@ export const RENEWAL_BACKOFF_MAX_MS = 24 * 60 * 60 * 1000;
 export const DNS_PROPAGATION_INTERVAL_MS = 2000;
 export const DNS_PROPAGATION_TIMEOUT_MS = 120_000;
 
-type AcmeAuthorization = {
-  identifier: { type: string; value: string };
-};
-
-type AcmeChallenge = {
-  type: string;
-  token: string;
-};
+type AcmeAuthorization = { identifier: { type: string; value: string } };
+type AcmeChallenge = { type: string; token: string };
+type ChallengeFn = (
+  authz: AcmeAuthorization,
+  challenge: AcmeChallenge,
+  keyAuthorization: string
+) => Promise<unknown>;
 
 export type AcmeClientLike = {
   createAccount(data?: { contact?: string[]; termsOfServiceAgreed?: boolean }): Promise<unknown>;
@@ -32,20 +31,13 @@ export type AcmeClientLike = {
     email?: string;
     termsOfServiceAgreed?: boolean;
     challengePriority?: string[];
-    challengeCreateFn: (
-      authz: AcmeAuthorization,
-      challenge: AcmeChallenge,
-      keyAuthorization: string
-    ) => Promise<unknown>;
-    challengeRemoveFn: (
-      authz: AcmeAuthorization,
-      challenge: AcmeChallenge,
-      keyAuthorization: string
-    ) => Promise<unknown>;
+    skipChallengeVerification?: boolean;
+    challengeCreateFn: ChallengeFn;
+    challengeRemoveFn: ChallengeFn;
   }): Promise<string>;
 };
 
-export type AcmeClientFactory = (opts: {
+type AcmeClientFactory = (opts: {
   directoryUrl: string;
   accountKey: string;
   accountUrl?: string;
@@ -76,7 +68,6 @@ export type AcmeIssueInput = {
   store: TlsConfigStore;
   challenge: AcmeHttp01Challenge;
   dns: CloudflareDnsClient;
-  fetch?: typeof fetch;
   log?: (message: string) => void;
   now?: () => number;
   clientFactory?: AcmeClientFactory;
@@ -87,30 +78,28 @@ export type AcmeIssueInput = {
   sleep?: (ms: number) => Promise<void>;
 };
 
+type PendingChallenges = {
+  dns: Array<{ zoneId: string; recordId: string; token: string }>;
+  http: string[];
+  failures: string[];
+};
+
+type AccountRow = { acmeAccountUrl: string | null; acmeAccountDirectory: string | null };
+
 function asPem(value: string | Buffer): string {
   return Buffer.isBuffer(value) ? value.toString('utf8') : value;
+}
+
+function errMsg(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
 }
 
 export function acmeDirectoryUrl(staging: boolean): string {
   return staging ? acme.directory.letsencrypt.staging : acme.directory.letsencrypt.production;
 }
 
-function defaultClientFactory(opts: {
-  directoryUrl: string;
-  accountKey: string;
-  accountUrl?: string;
-}): AcmeClientLike {
-  return new acme.Client({
-    directoryUrl: opts.directoryUrl,
-    accountKey: opts.accountKey,
-    accountUrl: opts.accountUrl,
-  }) as unknown as AcmeClientLike;
-}
-
 function throwIfAborted(signal?: AbortSignal): void {
-  if (signal?.aborted) {
-    throw new Error('acme issuance aborted');
-  }
+  if (signal?.aborted) throw new Error('acme issuance aborted');
 }
 
 async function resolveNameserverIps(nameservers: string[]): Promise<string[]> {
@@ -120,37 +109,37 @@ async function resolveNameserverIps(nameservers: string[]): Promise<string[]> {
       ips.push(ns);
       continue;
     }
-    try {
-      ips.push(...(await dnsPromises.resolve4(ns)));
-    } catch {
-      // try AAAA
-    }
-    try {
-      ips.push(...(await dnsPromises.resolve6(ns)));
-    } catch {
-      // skip unresolvable NS
+    for (const result of await Promise.allSettled([
+      dnsPromises.resolve4(ns),
+      dnsPromises.resolve6(ns),
+    ])) {
+      if (result.status === 'fulfilled') ips.push(...result.value);
     }
   }
   return ips;
 }
 
-export const DOH_ENDPOINT = 'https://cloudflare-dns.com/dns-query';
+function txtResolver(servers?: string[]): Resolver {
+  const resolver = new Resolver({ timeout: 3_000, tries: 1 });
+  if (servers) resolver.setServers(servers);
+  return resolver;
+}
+
+const DOH_ENDPOINT = 'https://cloudflare-dns.com/dns-query';
 const RESOLVE_ATTEMPT_TIMEOUT_MS = 8_000;
 
-function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
-  return new Promise<T>((resolve, reject) => {
-    const timer = setTimeout(() => reject(new Error(`${label} timed out after ${ms}ms`)), ms);
-    promise.then(
-      (value) => {
-        clearTimeout(timer);
-        resolve(value);
-      },
-      (error) => {
-        clearTimeout(timer);
-        reject(error);
-      }
-    );
-  });
+async function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<T>((_, reject) => {
+        timer = setTimeout(() => reject(new Error(`${label} timed out after ${ms}ms`)), ms);
+      }),
+    ]);
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 /** UDP 53 在代理/受限网络下常不可达，先走 DNS-over-HTTPS（可过 HTTP 代理），再退到权威 NS 与系统解析器。 */
@@ -166,19 +155,14 @@ export async function resolveTxtOverHttps(
     headers: { accept: 'application/dns-json' },
     signal: AbortSignal.timeout(RESOLVE_ATTEMPT_TIMEOUT_MS),
   });
-  if (!response.ok) {
-    throw new Error(`doh ${response.status}`);
-  }
+  if (!response.ok) throw new Error(`doh ${response.status}`);
   const body = (await response.json()) as { Answer?: Array<{ type: number; data: string }> };
   return (body.Answer ?? [])
     .filter((answer) => answer.type === 16)
     .map((answer) => [answer.data.replace(/^"|"$/g, '').replace(/"\s*"/g, '')]);
 }
 
-export async function defaultResolveTxt(
-  hostname: string,
-  nameservers?: string[]
-): Promise<string[][]> {
+async function defaultResolveTxt(hostname: string, nameservers?: string[]): Promise<string[][]> {
   try {
     return await resolveTxtOverHttps(hostname);
   } catch {
@@ -192,10 +176,8 @@ export async function defaultResolveTxt(
         'nameserver lookup'
       );
       if (ips.length > 0) {
-        const resolver = new Resolver({ timeout: 3_000, tries: 1 });
-        resolver.setServers(ips);
         return await withTimeout(
-          resolver.resolveTxt(hostname),
+          txtResolver(ips).resolveTxt(hostname),
           RESOLVE_ATTEMPT_TIMEOUT_MS,
           'authoritative TXT lookup'
         );
@@ -204,8 +186,11 @@ export async function defaultResolveTxt(
       // fall through to the system resolver
     }
   }
-  const system = new Resolver({ timeout: 3_000, tries: 1 });
-  return withTimeout(system.resolveTxt(hostname), RESOLVE_ATTEMPT_TIMEOUT_MS, 'system TXT lookup');
+  return withTimeout(
+    txtResolver().resolveTxt(hostname),
+    RESOLVE_ATTEMPT_TIMEOUT_MS,
+    'system TXT lookup'
+  );
 }
 
 export async function waitForTxt(opts: {
@@ -225,26 +210,137 @@ export async function waitForTxt(opts: {
   const sleep = opts.sleep ?? ((ms) => new Promise((resolve) => setTimeout(resolve, ms)));
   const resolveTxt = opts.resolveTxt ?? defaultResolveTxt;
   const deadline = now() + timeoutMs;
-
   const visible = async (): Promise<boolean> => {
     throwIfAborted(opts.signal);
     try {
-      const records = await resolveTxt(opts.hostname, opts.nameservers);
-      return records.flat().includes(opts.value);
+      return (await resolveTxt(opts.hostname, opts.nameservers)).flat().includes(opts.value);
     } catch {
       return false;
     }
   };
-
-  if (await visible()) return;
-  while (now() < deadline) {
-    throwIfAborted(opts.signal);
+  while (!(await visible())) {
     const remaining = deadline - now();
-    if (remaining <= 0) break;
+    if (remaining <= 0) {
+      throw new Error(`dns-01 TXT ${opts.hostname} did not propagate within ${timeoutMs}ms`);
+    }
     await sleep(Math.min(intervalMs, remaining));
-    if (await visible()) return;
   }
-  throw new Error(`dns-01 TXT ${opts.hostname} did not propagate within ${timeoutMs}ms`);
+}
+
+async function openAccount(
+  input: AcmeIssueInput,
+  current: AccountRow,
+  accountKey: string,
+  directoryUrl: string,
+  email: string
+): Promise<{ client: AcmeClientLike; accountUrl: string }> {
+  const reuse = Boolean(current.acmeAccountUrl) && current.acmeAccountDirectory === directoryUrl;
+  const factory =
+    input.clientFactory ?? ((opts) => new acme.Client(opts) as unknown as AcmeClientLike);
+  const client = await factory({
+    directoryUrl,
+    accountKey,
+    accountUrl: reuse ? (current.acmeAccountUrl ?? undefined) : undefined,
+  });
+  if (!reuse) {
+    await client.createAccount({ termsOfServiceAgreed: true, contact: [`mailto:${email}`] });
+  }
+  throwIfAborted(input.signal);
+  return {
+    client,
+    accountUrl: client.getAccountUrl() || (reuse ? (current.acmeAccountUrl ?? '') : ''),
+  };
+}
+
+async function createChallenge(
+  input: AcmeIssueInput,
+  cfToken: string | null,
+  pending: PendingChallenges,
+  now: () => number,
+  authz: AcmeAuthorization,
+  challenge: AcmeChallenge,
+  keyAuthorization: string
+): Promise<void> {
+  throwIfAborted(input.signal);
+  if (challenge.type === 'http-01') {
+    input.challenge.set(challenge.token, keyAuthorization);
+    pending.http.push(challenge.token);
+    return;
+  }
+  if (challenge.type !== 'dns-01') throw new Error(`unsupported acme challenge ${challenge.type}`);
+  if (!cfToken) throw new Error('cloudflare token required for dns-01');
+  const domain = authz.identifier.value;
+  const zoneId = await input.dns.findZoneId(cfToken, domain);
+  const name = `_acme-challenge.${domain}`;
+  pending.dns.push({
+    zoneId,
+    recordId: await input.dns.createTxt(cfToken, zoneId, name, keyAuthorization),
+    token: challenge.token,
+  });
+  let nameservers: string[] | undefined;
+  try {
+    nameservers = await input.dns.getNameServers(cfToken, zoneId);
+  } catch (error) {
+    input.log?.(`acme dns-01 nameserver lookup failed, using system resolver: ${errMsg(error)}`);
+  }
+  await waitForTxt({
+    hostname: name,
+    value: keyAuthorization,
+    nameservers: nameservers?.length ? nameservers : undefined,
+    resolveTxt: input.resolveTxt,
+    intervalMs: input.dnsIntervalMs,
+    timeoutMs: input.dnsTimeoutMs,
+    sleep: input.sleep,
+    now,
+    signal: input.signal,
+  });
+}
+
+async function removeChallenge(
+  input: AcmeIssueInput,
+  cfToken: string | null,
+  pending: PendingChallenges,
+  challenge: AcmeChallenge
+): Promise<void> {
+  if (challenge.type === 'http-01') {
+    input.challenge.clear(challenge.token);
+    const idx = pending.http.indexOf(challenge.token);
+    if (idx >= 0) pending.http.splice(idx, 1);
+    return;
+  }
+  if (challenge.type !== 'dns-01') return;
+  const storedIdx = pending.dns.findIndex((item) => item.token === challenge.token);
+  const stored = storedIdx >= 0 ? pending.dns[storedIdx] : undefined;
+  if (!cfToken || !stored) return;
+  try {
+    await input.dns.deleteRecord(cfToken, stored.zoneId, stored.recordId);
+    pending.dns.splice(storedIdx, 1);
+  } catch (error) {
+    input.log?.(`acme dns-01 challengeRemoveFn failed for ${stored.recordId}: ${errMsg(error)}`);
+  }
+}
+
+async function cleanupChallenges(
+  input: AcmeIssueInput,
+  cfToken: string | null,
+  pending: PendingChallenges
+): Promise<void> {
+  while (pending.dns.length > 0) {
+    const rec = pending.dns.pop();
+    if (!rec) continue;
+    if (!cfToken) {
+      pending.failures.push(`missing cloudflare token for ${rec.recordId}`);
+      continue;
+    }
+    try {
+      await input.dns.deleteRecord(cfToken, rec.zoneId, rec.recordId);
+    } catch (error) {
+      pending.failures.push(`${rec.recordId}: ${errMsg(error)}`);
+      input.log?.(`acme dns-01 cleanup failed for ${rec.recordId}: ${errMsg(error)}`);
+    }
+  }
+  for (const token of pending.http) input.challenge.clear(token);
+  pending.http.length = 0;
 }
 
 export async function issue(input: AcmeIssueInput): Promise<AcmeIssuedMaterial> {
@@ -259,57 +355,14 @@ export async function issue(input: AcmeIssueInput): Promise<AcmeIssuedMaterial> 
     throw new Error('acme issuance is missing domain, email, or challenge');
   }
   const secrets = await input.store.getPrivateMaterial();
-  let accountKey = secrets.acmeAccountKey;
-  if (!accountKey) {
-    accountKey = asPem(await acme.crypto.createPrivateEcdsaKey('P-256'));
-  }
-  void input.fetch;
+  const accountKey =
+    secrets.acmeAccountKey ?? asPem(await acme.crypto.createPrivateEcdsaKey('P-256'));
   const directoryUrl = acmeDirectoryUrl(Boolean(staging));
-  const reuseAccount =
-    Boolean(current.acmeAccountUrl) && current.acmeAccountDirectory === directoryUrl;
-  const client = await (input.clientFactory ?? defaultClientFactory)({
-    directoryUrl,
-    accountKey,
-    accountUrl: reuseAccount ? (current.acmeAccountUrl ?? undefined) : undefined,
-  });
-  if (!reuseAccount) {
-    await client.createAccount({
-      termsOfServiceAgreed: true,
-      contact: [`mailto:${email}`],
-    });
-  }
-  throwIfAborted(input.signal);
-  const accountUrl = client.getAccountUrl() || (reuseAccount ? (current.acmeAccountUrl ?? '') : '');
-
+  const { client, accountUrl } = await openAccount(input, current, accountKey, directoryUrl, email);
   const leafKey = asPem(await acme.crypto.createPrivateEcdsaKey('P-256'));
   const [, csr] = await acme.crypto.createCsr({ commonName: domain, altNames: [domain] }, leafKey);
-  const outstandingDns: Array<{ zoneId: string; recordId: string; token: string }> = [];
-  const httpTokens: string[] = [];
-  const cleanupFailures: string[] = [];
-
-  const deleteOutstanding = async (): Promise<void> => {
-    const cfToken = secrets.acmeCfToken;
-    while (outstandingDns.length > 0) {
-      const rec = outstandingDns.pop();
-      if (!rec) continue;
-      if (!cfToken) {
-        cleanupFailures.push(`missing cloudflare token for ${rec.recordId}`);
-        continue;
-      }
-      try {
-        await input.dns.deleteRecord(cfToken, rec.zoneId, rec.recordId);
-      } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
-        cleanupFailures.push(`${rec.recordId}: ${message}`);
-        input.log?.(`acme dns-01 cleanup failed for ${rec.recordId}: ${message}`);
-      }
-    }
-    for (const token of httpTokens) {
-      input.challenge.clear(token);
-    }
-    httpTokens.length = 0;
-  };
-
+  const pending: PendingChallenges = { dns: [], http: [], failures: [] };
+  const cfToken = secrets.acmeCfToken;
   let certPem: string | undefined;
   try {
     certPem = await client.auto({
@@ -318,81 +371,15 @@ export async function issue(input: AcmeIssueInput): Promise<AcmeIssuedMaterial> 
       termsOfServiceAgreed: true,
       challengePriority: [challengeType],
       skipChallengeVerification: true,
-      challengeCreateFn: async (authz, challenge, keyAuthorization) => {
-        throwIfAborted(input.signal);
-        if (challenge.type === 'http-01') {
-          input.challenge.set(challenge.token, keyAuthorization);
-          httpTokens.push(challenge.token);
-          return;
-        }
-        if (challenge.type === 'dns-01') {
-          const token = secrets.acmeCfToken;
-          if (!token) {
-            throw new Error('cloudflare token required for dns-01');
-          }
-          const zoneId = await input.dns.findZoneId(token, authz.identifier.value);
-          const name = `_acme-challenge.${authz.identifier.value}`;
-          const recordId = await input.dns.createTxt(token, zoneId, name, keyAuthorization);
-          outstandingDns.push({ zoneId, recordId, token: challenge.token });
-          let nameservers: string[] = [];
-          try {
-            nameservers = await input.dns.getNameServers(token, zoneId);
-          } catch (error) {
-            input.log?.(
-              `acme dns-01 nameserver lookup failed, using system resolver: ${
-                error instanceof Error ? error.message : String(error)
-              }`
-            );
-          }
-          await waitForTxt({
-            hostname: name,
-            value: keyAuthorization,
-            nameservers: nameservers.length > 0 ? nameservers : undefined,
-            resolveTxt: input.resolveTxt,
-            intervalMs: input.dnsIntervalMs,
-            timeoutMs: input.dnsTimeoutMs,
-            sleep: input.sleep,
-            now,
-            signal: input.signal,
-          });
-          return;
-        }
-        throw new Error(`unsupported acme challenge ${challenge.type}`);
-      },
-      challengeRemoveFn: async (_authz, challenge) => {
-        if (challenge.type === 'http-01') {
-          input.challenge.clear(challenge.token);
-          const idx = httpTokens.indexOf(challenge.token);
-          if (idx >= 0) httpTokens.splice(idx, 1);
-          return;
-        }
-        if (challenge.type === 'dns-01') {
-          const cfToken = secrets.acmeCfToken;
-          const storedIdx = outstandingDns.findIndex((item) => item.token === challenge.token);
-          const stored = storedIdx >= 0 ? outstandingDns[storedIdx] : undefined;
-          if (cfToken && stored) {
-            try {
-              await input.dns.deleteRecord(cfToken, stored.zoneId, stored.recordId);
-              outstandingDns.splice(storedIdx, 1);
-            } catch (error) {
-              input.log?.(
-                `acme dns-01 challengeRemoveFn failed for ${stored.recordId}: ${
-                  error instanceof Error ? error.message : String(error)
-                }`
-              );
-            }
-          }
-        }
-      },
+      challengeCreateFn: (authz, challenge, keyAuthorization) =>
+        createChallenge(input, cfToken, pending, now, authz, challenge, keyAuthorization),
+      challengeRemoveFn: (_authz, challenge) => removeChallenge(input, cfToken, pending, challenge),
     });
-
     throwIfAborted(input.signal);
   } finally {
-    await deleteOutstanding();
+    await cleanupChallenges(input, cfToken, pending);
   }
-  if (!certPem) {
-    throw new Error('acme auto returned an empty certificate');
-  }
+  if (!certPem) throw new Error('acme auto returned an empty certificate');
   const parsed = parseCertificate(certPem);
   return {
     certPem,
@@ -405,11 +392,11 @@ export async function issue(input: AcmeIssueInput): Promise<AcmeIssuedMaterial> 
     directoryUrl,
     domain,
     cleanupWarning:
-      cleanupFailures.length > 0 ? `dns-01 cleanup failed: ${cleanupFailures.join('; ')}` : null,
+      pending.failures.length > 0 ? `dns-01 cleanup failed: ${pending.failures.join('; ')}` : null,
   };
 }
 
-export type RenewalSchedulerOptions = {
+type RenewalSchedulerOptions = {
   isDue: () => boolean | Promise<boolean>;
   renew: () => Promise<void>;
   now?: () => number;
@@ -453,10 +440,14 @@ export class RenewalScheduler {
     this.backoffMs = RENEWAL_BACKOFF_MIN_MS;
   }
 
-  retryAfterFailure(): void {
+  retryAfterFailure(detail?: string): void {
     const wait = this.backoffMs;
     this.backoffMs = Math.min(this.backoffMs * 2, RENEWAL_BACKOFF_MAX_MS);
-    this.opts.log?.(`tls renewal failed, retry in ${wait}ms`);
+    this.opts.log?.(
+      detail
+        ? `tls renewal failed, retry in ${wait}ms: ${detail}`
+        : `tls renewal failed, retry in ${wait}ms`
+    );
     this.arm(wait);
   }
 
@@ -487,14 +478,7 @@ export class RenewalScheduler {
       this.backoffMs = RENEWAL_BACKOFF_MIN_MS;
       this.arm(this.checkIntervalMs);
     } catch (error) {
-      const wait = this.backoffMs;
-      this.backoffMs = Math.min(this.backoffMs * 2, RENEWAL_BACKOFF_MAX_MS);
-      this.opts.log?.(
-        `tls renewal failed, retry in ${wait}ms: ${
-          error instanceof Error ? error.message : String(error)
-        }`
-      );
-      this.arm(wait);
+      this.retryAfterFailure(errMsg(error));
     }
   }
 }

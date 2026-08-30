@@ -84,7 +84,7 @@ export type TlsListener = {
   stop(): Promise<void>;
 };
 
-export type AcmeRunReason = 'apply' | 'renew' | 'scheduler' | 'startup';
+type AcmeRunReason = 'apply' | 'renew' | 'scheduler' | 'startup';
 
 export type TlsServiceOptions = {
   store: TlsConfigStore;
@@ -102,15 +102,10 @@ export type TlsServiceOptions = {
   clearTimeoutFn?: (id: unknown) => void;
 };
 
-type AcmeJobTuple = {
-  domain: string;
-  challenge: AcmeChallengeType | null;
-  staging: boolean;
-};
+type AcmeJobTuple = { domain: string; challenge: AcmeChallengeType | null; staging: boolean };
 
 class SerialQueue {
   private chain: Promise<unknown> = Promise.resolve();
-
   run<T>(fn: () => Promise<T>): Promise<T> {
     const next = this.chain.then(fn, fn);
     this.chain = next.then(
@@ -119,6 +114,14 @@ class SerialQueue {
     );
     return next;
   }
+}
+
+function errMsg(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+function asTlsFailed(error: unknown): TlsApiError {
+  return error instanceof TlsApiError ? error : new TlsApiError('tls_failed', 500, errMsg(error));
 }
 
 export class TlsService {
@@ -143,9 +146,7 @@ export class TlsService {
       opts.scheduleBackground ??
       ((work) => {
         void work().catch((error) => {
-          opts.log?.(
-            `tls background task failed: ${error instanceof Error ? error.message : String(error)}`
-          );
+          opts.log?.(`tls background task failed: ${errMsg(error)}`);
         });
       });
     this.scheduler = new RenewalScheduler({
@@ -167,9 +168,7 @@ export class TlsService {
 
   async load(): Promise<TlsConfigPublic> {
     const fromEnv = await readTrustProxy(this.opts.envPath);
-    if (fromEnv !== null) {
-      this.trustProxy = fromEnv;
-    }
+    if (fromEnv !== null) this.trustProxy = fromEnv;
     return this.opts.store.get();
   }
 
@@ -177,22 +176,19 @@ export class TlsService {
     await this.mutex.run(async () => {
       await this.load();
       const row = await this.opts.store.get();
-      if (row.mode === 'selfsigned' || row.mode === 'acme') {
-        await this.applyListener();
-      } else {
-        await this.opts.listener.apply(null);
-      }
+      await (row.mode === 'selfsigned' || row.mode === 'acme'
+        ? this.applyListener()
+        : this.opts.listener.apply(null));
       if (row.mode !== 'acme') return;
       this.scheduler.start();
-      const bindError = this.opts.listener.state().error;
       const due = row.acmeNextRenewAt !== null && this.now() >= row.acmeNextRenewAt;
-      const needsResume =
+      if (
         row.acmeStatus === 'pending' ||
         row.acmeStatus === 'error' ||
         !row.certPem ||
         due ||
-        Boolean(bindError);
-      if (needsResume) {
+        this.opts.listener.state().error
+      ) {
         this.queueAcmeIssue('startup');
       }
     });
@@ -203,14 +199,8 @@ export class TlsService {
     let certificate: TlsStatus['certificate'] = null;
     if (row.certPem) {
       try {
-        const parsed = parseCertificate(row.certPem);
-        certificate = {
-          subject: parsed.subject,
-          sans: parsed.sans,
-          notBefore: parsed.notBefore,
-          notAfter: parsed.notAfter,
-          issuer: parsed.issuer,
-        };
+        const { subject, sans, notBefore, notAfter, issuer } = parseCertificate(row.certPem);
+        certificate = { subject, sans, notBefore, notAfter, issuer };
       } catch {
         certificate = null;
       }
@@ -248,10 +238,7 @@ export class TlsService {
 
   async caPem(): Promise<string | null> {
     const row = await this.opts.store.get();
-    if (row.mode !== 'selfsigned' || !row.caCertPem) {
-      return null;
-    }
-    return row.caCertPem;
+    return row.mode === 'selfsigned' && row.caCertPem ? row.caCertPem : null;
   }
 
   async applyMode(input: ApplyModeInput): Promise<TlsStatus> {
@@ -265,18 +252,7 @@ export class TlsService {
         throw new TlsApiError('not_applicable', 409, 'renew is not applicable in this TLS mode');
       }
       if (row.mode === 'selfsigned') {
-        try {
-          await this.issueSelfSigned(row.sans);
-          await this.applyListener();
-        } catch (error) {
-          if (error instanceof TlsApiError) throw error;
-          throw new TlsApiError(
-            'tls_failed',
-            500,
-            error instanceof Error ? error.message : String(error)
-          );
-        }
-        this.throwIfBindFailed();
+        await this.reissueSelfSigned(row.sans);
         return this.status();
       }
       await this.opts.store.upsert({
@@ -305,16 +281,10 @@ export class TlsService {
           await writeTrustProxy(this.opts.envPath, input.trustProxy);
         });
       } catch (error) {
-        throw new TlsApiError(
-          'tls_failed',
-          500,
-          error instanceof Error ? error.message : String(error)
-        );
+        throw new TlsApiError('tls_failed', 500, errMsg(error));
       }
       this.invalidateActiveWork();
-      await this.opts.store.upsert({ mode: 'external' });
-      this.scheduler.stop();
-      await this.opts.listener.apply(null);
+      await this.stopTls('external');
       this.trustProxy = input.trustProxy;
       this.restartRequired = true;
       return this.status();
@@ -323,42 +293,25 @@ export class TlsService {
     this.invalidateActiveWork();
 
     if (input.mode === 'none') {
-      await this.opts.store.upsert({ mode: 'none' });
-      this.scheduler.stop();
-      await this.opts.listener.apply(null);
+      await this.stopTls('none');
       return this.status();
     }
 
     if (input.mode === 'selfsigned') {
       const sans = validateSans(input.sans);
-      const tlsPort = validatePort(input.tlsPort);
-      const bindHost = validateBindHost(input.bindHost);
       await this.opts.store.upsert({
         mode: 'selfsigned',
         sans,
-        tlsPort,
-        bindHost,
+        tlsPort: validatePort(input.tlsPort),
+        bindHost: validateBindHost(input.bindHost),
       });
       this.scheduler.stop();
-      try {
-        await this.issueSelfSigned(sans);
-        await this.applyListener();
-      } catch (error) {
-        if (error instanceof TlsApiError) throw error;
-        throw new TlsApiError(
-          'tls_failed',
-          500,
-          error instanceof Error ? error.message : String(error)
-        );
-      }
-      this.throwIfBindFailed();
+      await this.reissueSelfSigned(sans);
       return this.status();
     }
 
     const domain = validateDomain(input.domain);
     const email = validateEmail(input.email);
-    const tlsPort = validatePort(input.tlsPort);
-    const bindHost = validateBindHost(input.bindHost);
     if (input.challenge !== 'http-01' && input.challenge !== 'dns-01') {
       throw new TlsApiError('invalid_domain', 400, 'challenge must be http-01 or dns-01');
     }
@@ -371,11 +324,10 @@ export class TlsService {
       );
     }
     const directoryUrl = acmeDirectoryUrl(Boolean(input.staging));
-    const directoryChanged = current.acmeAccountDirectory !== directoryUrl;
     await this.opts.store.upsert({
       mode: 'acme',
-      tlsPort,
-      bindHost,
+      tlsPort: validatePort(input.tlsPort),
+      bindHost: validateBindHost(input.bindHost),
       sans: [domain],
       acmeDomain: domain,
       acmeEmail: email,
@@ -385,12 +337,28 @@ export class TlsService {
       acmeLastError: null,
       acmeNextRenewAt: this.now() + RENEWAL_BACKOFF_MIN_MS,
       acmeAccountDirectory: directoryUrl,
-      ...(directoryChanged ? { acmeAccountUrl: null } : {}),
+      ...(current.acmeAccountDirectory !== directoryUrl ? { acmeAccountUrl: null } : {}),
       ...(input.cloudflareToken ? { acmeCfToken: input.cloudflareToken } : {}),
     });
     this.queueAcmeIssue('apply');
     this.scheduler.start();
     return this.status();
+  }
+
+  private async stopTls(mode: 'none' | 'external'): Promise<void> {
+    await this.opts.store.upsert({ mode });
+    this.scheduler.stop();
+    await this.opts.listener.apply(null);
+  }
+
+  private async reissueSelfSigned(sans: string[]): Promise<void> {
+    try {
+      await this.issueSelfSigned(sans);
+      await this.applyListener();
+    } catch (error) {
+      throw asTlsFailed(error);
+    }
+    this.throwIfBindFailed();
   }
 
   private invalidateActiveWork(): void {
@@ -441,19 +409,14 @@ export class TlsService {
     const secrets = await this.opts.store.getPrivateMaterial();
     const certDue =
       row.certNotAfter !== null && this.now() >= row.certNotAfter - ACME_RENEW_LEAD_MS;
-    const hasMaterial = Boolean(row.certPem) && Boolean(secrets.keyPem);
-    const activateOnly =
-      hasMaterial && !certDue && (reason === 'scheduler' || reason === 'startup');
-
-    if (activateOnly) {
-      await this.mutex.run(async () => {
-        if (!(await this.jobStillValid(epoch, tuple))) return;
-        await this.applyListener();
-        const bindError = this.opts.listener.state().error;
-        if (bindError) {
-          await this.persistAcmeFailure(bindError);
-          throw new Error(bindError);
-        }
+    if (
+      Boolean(row.certPem) &&
+      Boolean(secrets.keyPem) &&
+      !certDue &&
+      (reason === 'scheduler' || reason === 'startup')
+    ) {
+      await this.runIfJob(epoch, tuple, async () => {
+        await this.applyListenerOrFail();
         await this.opts.store.upsert({
           acmeStatus: 'ok',
           acmeLastError: null,
@@ -465,8 +428,7 @@ export class TlsService {
       return;
     }
 
-    await this.mutex.run(async () => {
-      if (!(await this.jobStillValid(epoch, tuple))) return;
+    await this.runIfJob(epoch, tuple, async () => {
       await this.opts.store.upsert({
         acmeStatus: 'pending',
         acmeLastAttemptAt: this.now(),
@@ -487,47 +449,62 @@ export class TlsService {
         store: this.opts.store,
         challenge: this.opts.challenge,
         dns: this.dns,
-        fetch: this.opts.fetch,
         log: this.opts.log,
         now: this.now,
         signal,
       });
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      await this.mutex.run(async () => {
-        if (!(await this.jobStillValid(epoch, tuple))) return;
-        await this.persistAcmeFailure(message);
+      await this.runIfJob(epoch, tuple, async () => {
+        await this.persistAcmeFailure(errMsg(error));
       });
       throw error;
     }
 
+    await this.runIfJob(
+      epoch,
+      tuple,
+      async () => {
+        await this.opts.store.upsert({
+          certPem: material.certPem,
+          keyPem: material.keyPem,
+          certNotBefore: material.notBefore,
+          certNotAfter: material.notAfter,
+          sans: [material.domain],
+          acmeAccountKey: material.accountKey,
+          acmeAccountUrl: material.accountUrl || null,
+          acmeAccountDirectory: material.directoryUrl,
+          acmeLastAttemptAt: this.now(),
+          acmeNextRenewAt: material.nextRenewAt,
+          acmeStatus: 'ok',
+          acmeLastError: material.cleanupWarning,
+        });
+        await this.applyListenerOrFail();
+        this.scheduler.resetBackoff();
+      },
+      signal,
+      () => this.opts.log?.('discarding stale acme issuance')
+    );
+  }
+
+  private async runIfJob(
+    epoch: number,
+    tuple: AcmeJobTuple,
+    fn: () => Promise<void>,
+    signal?: AbortSignal,
+    onStale?: () => void
+  ): Promise<void> {
     await this.mutex.run(async () => {
-      if (!(await this.jobStillValid(epoch, tuple)) || signal.aborted) {
-        this.opts.log?.('discarding stale acme issuance');
-        return;
-      }
-      await this.opts.store.upsert({
-        certPem: material.certPem,
-        keyPem: material.keyPem,
-        certNotBefore: material.notBefore,
-        certNotAfter: material.notAfter,
-        sans: [material.domain],
-        acmeAccountKey: material.accountKey,
-        acmeAccountUrl: material.accountUrl || null,
-        acmeAccountDirectory: material.directoryUrl,
-        acmeLastAttemptAt: this.now(),
-        acmeNextRenewAt: material.nextRenewAt,
-        acmeStatus: 'ok',
-        acmeLastError: material.cleanupWarning,
-      });
-      await this.applyListener();
-      const bindError = this.opts.listener.state().error;
-      if (bindError) {
-        await this.persistAcmeFailure(bindError);
-        throw new Error(bindError);
-      }
-      this.scheduler.resetBackoff();
+      if (!(await this.jobStillValid(epoch, tuple)) || signal?.aborted) return onStale?.();
+      await fn();
     });
+  }
+
+  private async applyListenerOrFail(): Promise<void> {
+    await this.applyListener();
+    const error = this.opts.listener.state().error;
+    if (!error) return;
+    await this.persistAcmeFailure(error);
+    throw new Error(error);
   }
 
   private async jobStillValid(epoch: number, tuple: AcmeJobTuple): Promise<boolean> {
@@ -583,10 +560,7 @@ export class TlsService {
   private async applyListener(): Promise<void> {
     const row = await this.opts.store.get();
     const secrets = await this.opts.store.getPrivateMaterial();
-    if (!row.certPem || !secrets.keyPem) {
-      await this.opts.listener.apply(null);
-      return;
-    }
+    if (!row.certPem || !secrets.keyPem) return this.opts.listener.apply(null);
     await this.opts.listener.apply({
       port: row.tlsPort,
       host: row.bindHost,
@@ -597,9 +571,7 @@ export class TlsService {
 
   private throwIfBindFailed(): void {
     const error = this.opts.listener.state().error;
-    if (error) {
-      throw new TlsApiError('port_in_use', 409, error);
-    }
+    if (error) throw new TlsApiError('port_in_use', 409, error);
   }
 }
 
@@ -612,9 +584,7 @@ function validatePort(value: number): number {
 
 function validateBindHost(value: string): string {
   const host = value.trim();
-  if (!host) {
-    throw new TlsApiError('invalid_port', 400, 'bindHost is required');
-  }
+  if (!host) throw new TlsApiError('invalid_port', 400, 'bindHost is required');
   return host;
 }
 
@@ -631,7 +601,7 @@ function validateSans(sans: string[]): string[] {
 
 function validateDomain(value: string): string {
   const domain = value.trim().toLowerCase();
-  if (!domain || domain.includes('*') || isIP(domain) !== 0 || !isValidHostname(domain)) {
+  if (!domain || domain.includes('*') || isIP(domain) !== 0 || !HOSTNAME_RE.test(domain)) {
     throw new TlsApiError('invalid_domain', 400, 'domain must be a hostname without wildcards');
   }
   return domain;
@@ -639,24 +609,17 @@ function validateDomain(value: string): string {
 
 function validateEmail(value: string): string {
   const email = value.trim();
-  if (!EMAIL_RE.test(email)) {
-    throw new TlsApiError('invalid_email', 400, 'email is invalid');
-  }
+  if (!EMAIL_RE.test(email)) throw new TlsApiError('invalid_email', 400, 'email is invalid');
   return email;
 }
 
 function isValidSan(value: string): boolean {
-  return isIP(value) !== 0 || isValidHostname(value);
-}
-
-function isValidHostname(value: string): boolean {
-  return HOSTNAME_RE.test(value);
+  return isIP(value) !== 0 || HOSTNAME_RE.test(value);
 }
 
 async function readTrustProxy(envPath: string): Promise<boolean | null> {
   try {
-    const values = await readEnvFile(envPath);
-    const raw = values.TMEX_TRUST_PROXY;
+    const raw = (await readEnvFile(envPath)).TMEX_TRUST_PROXY;
     if (raw === undefined) return null;
     const normalized = raw.trim().toLowerCase();
     return normalized === '1' || normalized === 'true' || normalized === 'yes';
@@ -671,12 +634,7 @@ async function writeTrustProxy(envPath: string, trustProxy: boolean): Promise<vo
   try {
     existing = await readEnvFile(envPath);
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
-      throw error;
-    }
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
   }
-  await writeEnvFile(envPath, {
-    ...existing,
-    TMEX_TRUST_PROXY: trustProxy ? 'true' : 'false',
-  });
+  await writeEnvFile(envPath, { ...existing, TMEX_TRUST_PROXY: trustProxy ? 'true' : 'false' });
 }
