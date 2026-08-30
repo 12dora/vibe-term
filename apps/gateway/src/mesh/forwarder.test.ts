@@ -12,7 +12,13 @@ import {
   challengeAndLogin,
   dummyServer,
 } from './auth-routes.test';
-import { expirePendingForwardStream, getSelfRewrite, pendingForwardStreamCount } from './forwarder';
+import {
+  DEFAULT_PENDING_FORWARD_STREAM_TTL_MS,
+  expirePendingForwardStream,
+  getSelfRewrite,
+  pendingForwardStreamCount,
+  setPendingForwardStreamTtlMs,
+} from './forwarder';
 import {
   MESH_FORWARD_CSP,
   MESH_FORWARD_WS_KIND,
@@ -359,6 +365,87 @@ describe('forwarder', () => {
       expirePendingForwardStream(token, remote);
       expect(pendingForwardStreamCount()).toBe(prior);
       expect(remote.closedOnce).toBe(true);
+    } finally {
+      mesh.close();
+    }
+  });
+
+  test('pending stream survives delayed WS open past the old 15s TTL', async () => {
+    const scale = 1_500;
+    setPendingForwardStreamTtlMs(DEFAULT_PENDING_FORWARD_STREAM_TTL_MS / scale);
+    const peers = new FakePeers();
+    peers.links.set(OTHER, dummyLink);
+    const streams = new FakeStreams();
+    const mesh = await bootMesh({ peers, streams });
+    try {
+      let data: { kind?: string; token?: string } | undefined;
+      const server = {
+        upgrade(_req: Request, opts?: { data?: unknown }) {
+          data = opts?.data as typeof data;
+          return true;
+        },
+      };
+      const prior = pendingForwardStreamCount();
+      const upgrade = await mesh.runtime.handleRequest(
+        new Request(`http://localhost/n/${OTHER}/ws`, {
+          headers: { cookie: `tmex_s_${OTHER}=remote-sid` },
+        }),
+        server
+      );
+      expect(upgrade).toBeUndefined();
+      expect(pendingForwardStreamCount()).toBe(prior + 1);
+      await new Promise((resolve) => setTimeout(resolve, 15_000 / scale + 5));
+      const remote = streams.lastWs;
+      expect(pendingForwardStreamCount()).toBe(prior + 1);
+      expect(remote?.closedOnce).toBe(false);
+      let browserClosed: { code?: number; reason?: string } | undefined;
+      const ws = {
+        data: data ?? { kind: MESH_FORWARD_WS_KIND },
+        send() {
+          return 0;
+        },
+        close(code?: number, reason?: string) {
+          browserClosed = { code, reason };
+        },
+      } as MeshServerWebSocket;
+      mesh.runtime.handleWebSocket.open(ws);
+      expect(browserClosed).toBeUndefined();
+      expect(pendingForwardStreamCount()).toBe(prior);
+      expect(remote?.closedOnce).toBe(false);
+      mesh.runtime.handleWebSocket.message(ws, new Uint8Array([1, 2, 3]));
+      expect(remote?.sent[0]).toEqual(new Uint8Array([1, 2, 3]));
+      mesh.runtime.handleWebSocket.close(ws);
+    } finally {
+      setPendingForwardStreamTtlMs(DEFAULT_PENDING_FORWARD_STREAM_TTL_MS);
+      mesh.close();
+    }
+  });
+
+  test('DEVICE_CONNECTED is forwarded once per device; malformed payload still forwarded', async () => {
+    const peers = new FakePeers();
+    peers.links.set(OTHER, dummyLink);
+    const streams = new FakeStreams();
+    const mesh = await bootMesh({ peers, streams });
+    try {
+      const { ws } = await openForwardWs(mesh.runtime, peers, streams, OTHER);
+      const sent: Uint8Array[] = [];
+      ws.send = (frame: Uint8Array) => {
+        sent.push(frame);
+        return frame.byteLength;
+      };
+      const connected = encodeDeviceConnectedFrame('dev-1');
+      streams.lastWs?.pushFromRemote(connected);
+      streams.lastWs?.pushFromRemote(connected);
+      expect(sent).toHaveLength(1);
+      expect(sent[0]).toEqual(connected);
+      const malformed = wsBorsh.encodeEnvelope(
+        wsBorsh.KIND_DEVICE_CONNECTED,
+        new Uint8Array([0xff, 0x00]),
+        9
+      );
+      streams.lastWs?.pushFromRemote(malformed);
+      expect(sent).toHaveLength(2);
+      expect(sent[1]).toEqual(malformed);
     } finally {
       mesh.close();
     }

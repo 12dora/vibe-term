@@ -14,6 +14,7 @@ import {
 } from '@tmex/shared/auth';
 import type { UserStore } from '../../auth/user-store';
 import { decodeJsonBytes, isRecord, requireString } from '../ctl';
+import { withPeerHandshakeTimeout } from '../peer-handshake-timeout';
 import type { MeshIdentity } from '../types';
 import { PeerHandshakeError } from '../types';
 import { FANOUT_MAX_PENDING_BYTES, type FanoutDataChannel } from './channel-fanout';
@@ -252,22 +253,6 @@ function sendHandshake(
   channel.sendMessage(JSON.stringify(msg));
 }
 
-function withTimeout<T>(promise: Promise<T>, ms: number, message: string): Promise<T> {
-  return new Promise((resolve, reject) => {
-    const timer = setTimeout(() => reject(new PeerHandshakeError('timeout', message)), ms);
-    promise.then(
-      (value) => {
-        clearTimeout(timer);
-        resolve(value);
-      },
-      (err) => {
-        clearTimeout(timer);
-        reject(err);
-      }
-    );
-  });
-}
-
 export async function handshakeDataChannel(opts: {
   channel: DataChannelLike;
   pc: PeerConnectionLike;
@@ -352,7 +337,7 @@ export async function handshakeDataChannel(opts: {
   };
 
   try {
-    await withTimeout(
+    await withPeerHandshakeTimeout(
       (async () => {
         while (!verified || !gotDone) {
           if (peerHello && gotSig && !verified) {

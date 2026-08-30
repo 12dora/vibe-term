@@ -53,8 +53,8 @@ import {
 import { type Spawner, bunSpawner, consumeLines } from './spawn';
 import { TunnelSupervisor } from './supervisor';
 
-export type PatchHostEnv = (trustProxy: boolean) => Promise<void>;
-export type ReadHostEnv = () => Promise<boolean | null>;
+type PatchHostEnv = (trustProxy: boolean) => Promise<void>;
+type ReadHostEnv = () => Promise<boolean | null>;
 
 export type TunnelManagerOptions = {
   tunnelDir?: string;
@@ -126,7 +126,7 @@ function yamlQuote(value: string): string {
   return value;
 }
 
-export function writeNamedConfigYml(opts: {
+function writeNamedConfigYml(opts: {
   tunnelId: string;
   credentialsPath: string;
   certPath: string;
@@ -145,7 +145,7 @@ export function writeNamedConfigYml(opts: {
   ].join('\n');
 }
 
-export function isAccessProtectedHealthResponse(res: Response): boolean {
+function isAccessProtectedHealthResponse(res: Response): boolean {
   const location = res.headers.get('location') ?? '';
   if (
     (res.status === 302 || res.status === 303) &&

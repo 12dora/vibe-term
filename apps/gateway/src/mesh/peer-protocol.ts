@@ -28,6 +28,7 @@ import {
 } from '@tmex/shared/link';
 import type { UserStore } from '../auth/user-store';
 import { decodeJsonBytes, encodeCtlMessage, isRecord, requireString } from './ctl';
+import { withPeerHandshakeTimeout } from './peer-handshake-timeout';
 import { type MeshIdentity, PeerHandshakeError, type PeerTransportKind } from './types';
 
 export type PeerHelloWire = {
@@ -159,22 +160,6 @@ type CtlIo = {
   recv: () => Promise<Uint8Array>;
 };
 
-function waitWithTimeout<T>(promise: Promise<T>, ms: number, message: string): Promise<T> {
-  return new Promise((resolve, reject) => {
-    const timer = setTimeout(() => reject(new PeerHandshakeError('timeout', message)), ms);
-    promise.then(
-      (value) => {
-        clearTimeout(timer);
-        resolve(value);
-      },
-      (err) => {
-        clearTimeout(timer);
-        reject(err);
-      }
-    );
-  });
-}
-
 function ctlPushRecv(
   onMessage: (cb: (bytes: Uint8Array) => void) => void
 ): () => Promise<Uint8Array> {
@@ -243,7 +228,7 @@ async function exchangeHelloAndSig(
     await io.send(encodePeerCtl({ t: 'sig', sig: encodeBase64url(sig) }));
   };
 
-  await waitWithTimeout(
+  await withPeerHandshakeTimeout(
     (async () => {
       while (!peerHello || !gotSig) {
         const bytes = await io.recv();

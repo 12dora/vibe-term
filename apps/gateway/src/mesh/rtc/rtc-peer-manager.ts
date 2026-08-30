@@ -13,6 +13,7 @@ import type {
   RtcFingerprintProvider,
   RtcSignalMessage,
 } from '../mesh-deps';
+import { withPeerHandshakeTimeout } from '../peer-handshake-timeout';
 import type { MeshIdentity } from '../types';
 import { PeerHandshakeError } from '../types';
 import {
@@ -131,22 +132,6 @@ type BrowserRecord = {
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-function withTimeout<T>(promise: Promise<T>, ms: number, message: string): Promise<T> {
-  return new Promise((resolve, reject) => {
-    const timer = setTimeout(() => reject(new PeerHandshakeError('timeout', message)), ms);
-    promise.then(
-      (value) => {
-        clearTimeout(timer);
-        resolve(value);
-      },
-      (err) => {
-        clearTimeout(timer);
-        reject(err);
-      }
-    );
-  });
 }
 
 function fingerprintsEqual(a: DtlsFingerprint, b: DtlsFingerprint): boolean {
@@ -290,7 +275,7 @@ export class RtcPeerManager implements RtcFingerprintProvider {
       : waitDataChannel(pc, this.handshakeTimeoutMs, undefined, peerNodeId);
     try {
       const channel = fanoutDataChannel(
-        await withTimeout(channelP, this.handshakeTimeoutMs, 'datachannel missing'),
+        await withPeerHandshakeTimeout(channelP, this.handshakeTimeoutMs, 'datachannel missing'),
         { peer: peerNodeId }
       );
       bindChannelDiagnostics(channel, peerNodeId);
@@ -657,7 +642,7 @@ function waitDataChannel(
   label?: string,
   peer?: string
 ): Promise<DataChannelLike> {
-  return withTimeout(
+  return withPeerHandshakeTimeout(
     new Promise((resolve) => {
       pc.onDataChannel((dc) => {
         if (label && dc.getLabel && dc.getLabel() !== label) return;
@@ -674,7 +659,7 @@ function waitChannelOpen(dc: DataChannelLike, timeoutMs: number): Promise<void> 
   if (dc.isOpen()) {
     return Promise.resolve();
   }
-  return withTimeout(
+  return withPeerHandshakeTimeout(
     new Promise((resolve, reject) => {
       dc.onOpen(() => resolve());
       dc.onError((err) => reject(new Error(err)));
@@ -700,7 +685,7 @@ function waitFirstMessage(
     });
     if (typeof ret === 'function') unsub = ret as () => void;
   });
-  return withTimeout(first, timeoutMs, 'sess nonce timeout').finally(() => {
+  return withPeerHandshakeTimeout(first, timeoutMs, 'sess nonce timeout').finally(() => {
     unsub?.();
     unsub = undefined;
   });

@@ -24,6 +24,7 @@ import {
   jsonStable,
   parseSeq,
 } from './ctl';
+import { jsonText } from './json-text';
 import type { RtcSignalMessage } from './mesh-deps';
 import { handshakeRelay, handshakeWsDirect, parseOpenPayload } from './peer-protocol';
 import { PeerServer } from './peer-server';
@@ -2231,18 +2232,6 @@ export class PeerManager {
       this.finishRetire(live, reason);
     }
   }
-}
-
-function jsonText(value: unknown): string {
-  if (typeof value === 'string') {
-    try {
-      JSON.parse(value);
-      return value;
-    } catch {
-      return JSON.stringify(value);
-    }
-  }
-  return JSON.stringify(value ?? null);
 }
 
 function sanitizeEndpoints(value: unknown, fallbackPort?: number): string[] {
