@@ -87,11 +87,11 @@ export type VerifyChainForJoinResult =
   | { ok: true; state: UserKeyState; replacedStaleUsername?: string }
   | { ok: false; error: string };
 
-export type VerifyChainForJoinOptions = {
+type VerifyChainForJoinOptions = {
   anchorHash?: Uint8Array;
 };
 
-export type CommitJoinInput = {
+type CommitJoinInput = {
   records: ApplyKeyLogInput[];
   expectedRootPublicKey: Uint8Array;
   anchorHash: Uint8Array;
@@ -101,20 +101,27 @@ export type CommitJoinInput = {
   now?: number;
 };
 
-export type BootstrapSelfAdmitInput = {
+type BootstrapSelfAdmitInput = {
   username: string;
   password: string;
   identity: NodeIdentityKeys;
   now?: number;
 };
 
+type DecodedKeyLog = ReturnType<typeof decodeKeyLogRecord>;
+
 type JoinReplayStep = {
   input: ApplyKeyLogInput;
-  record: ReturnType<typeof decodeKeyLogRecord>;
+  record: DecodedKeyLog;
   hash: Uint8Array;
-  previous: UserKeyState;
   next: UserKeyState;
   effects: KeyLogEffect[];
+};
+
+type AuthStores = {
+  userStore: UserStore;
+  keyLogStore: KeyLogStore;
+  nodeSessionStore: NodeSessionStore;
 };
 
 type JoinReplaySuccess = {
@@ -257,81 +264,41 @@ export class UserKeyService {
     input: ApplyKeyLogInput,
     opts: { allowGenesis: boolean }
   ): Promise<ApplyKeyLogServiceResult> {
-    let record: ReturnType<typeof decodeKeyLogRecord>;
-    try {
-      record = decodeKeyLogRecord(input.bytes);
-    } catch {
+    if (!tryDecodeRecord(input.bytes)) {
       return { ok: false, error: 'malformed_payload' };
     }
-
-    const user = this.userStore.getById(userId);
-    if (!user) {
+    if (!this.userStore.getById(userId)) {
       return { ok: false, error: 'unknown_user' };
     }
-
-    const existing = this.keyLogStore.getAtSeq(userId, Number(record.seq));
-    const state = this.currentState(userId);
-    const verified = await verifyKeyLogRecord(input.bytes, input.sig, {
-      head: state.head,
-      rootEpoch: state.rootEpoch,
-      rootPublicKey: state.rootPublicKey,
-      resolvePasskey: (id) => state.passkeys.get(id)?.public_key ?? null,
-      verifyPasskeyAssertion: this.verifyPasskeyAssertion,
-      existingAtSeq: existing ? { bytes: existing.bytes, sig: existing.sig } : undefined,
+    const stepped = await this.replayStep(input, this.currentState(userId), {
       allowGenesis: opts.allowGenesis,
+      userId,
     });
-    if (!verified.ok) {
-      return verified;
+    if (!stepped.ok) {
+      return { ok: false, error: stepped.error as ApplyKeyLogFailure['error'] };
     }
-
-    return this.commitVerified(userId, input, verified.record, verified.hash, state);
+    return this.commitVerified(userId, stepped);
   }
 
   private async commitVerified(
     userId: string,
-    input: ApplyKeyLogInput,
-    record: ReturnType<typeof decodeKeyLogRecord>,
-    hash: Uint8Array,
-    previous: UserKeyState
+    step: JoinReplayStep
   ): Promise<ApplyKeyLogServiceResult> {
-    const applied = await applyKeyLogRecord(previous, record, hash, {
-      verifyPasskeyAssertion: this.verifyPasskeyAssertion,
-    });
-    if (!applied.ok) {
-      return applied;
-    }
-
     const now = Date.now();
     try {
       this.db.transaction((tx) => {
-        const userStore = new (this.userStore.constructor as typeof UserStore)(tx as AuthDb);
-        const keyLogStore = new (this.keyLogStore.constructor as typeof KeyLogStore)(tx as AuthDb);
-        const nodeSessionStore = new (this.nodeSessionStore.constructor as typeof NodeSessionStore)(
-          tx as AuthDb
-        );
-        const again = keyLogStore.getAtSeq(userId, Number(record.seq));
+        const stores = this.txStores(tx);
+        const again = stores.keyLogStore.getAtSeq(userId, Number(step.record.seq));
         if (
           again &&
-          detectFork({ bytes: again.bytes, sig: again.sig }, { bytes: input.bytes, sig: input.sig })
+          detectFork(
+            { bytes: again.bytes, sig: again.sig },
+            { bytes: step.input.bytes, sig: step.input.sig }
+          )
         ) {
           throw new ForkCollision();
         }
-        persistApplied({
-          userStore,
-          keyLogStore,
-          nodeSessionStore,
-          userId,
-          record,
-          bytes: input.bytes,
-          sig: input.sig,
-          hash,
-          effects: applied.effects,
-          now,
-          nextHead: applied.state.head,
-          nextRootPublicKey: applied.state.rootPublicKey,
-          nextRootEpoch: applied.state.rootEpoch,
-          nextKdfParams: applied.state.kdfParams,
-        });
+        persistApplied(stores, userId, step, now);
       });
     } catch (err) {
       if (err instanceof ForkCollision) {
@@ -339,12 +306,11 @@ export class UserKeyService {
       }
       throw err;
     }
-
     return {
       ok: true,
-      seq: Number(record.seq),
-      hash,
-      effects: applied.effects,
+      seq: Number(step.record.seq),
+      hash: step.hash,
+      effects: step.effects,
     };
   }
 
@@ -353,155 +319,82 @@ export class UserKeyService {
     records: ApplyKeyLogInput[],
     signal?: AbortSignal
   ): Promise<ApplyManyResult> {
-    const aborted = (): ApplyManyResult | null => {
-      if (!signal?.aborted) return null;
-      return { ok: false, applied: 0, error: 'aborted' };
-    };
-    const early = aborted();
-    if (early) return early;
+    const abort = { ok: false as const, applied: 0 as const, error: 'aborted' };
+    if (signal?.aborted) return abort;
     await Promise.resolve();
-    const yielded = aborted();
-    if (yielded) return yielded;
-
-    if (records.length === 0) {
-      const user = this.userStore.getById(userId);
-      if (!user) {
-        return { ok: false, applied: 0, error: 'unknown_user' };
-      }
-      return {
-        ok: true,
-        applied: 0,
-        seq: user.keyLogHeadSeq,
-        hash: user.keyLogHeadHash,
-      };
-    }
+    if (signal?.aborted) return abort;
 
     const user = this.userStore.getById(userId);
-    if (!user) {
-      return { ok: false, applied: 0, error: 'unknown_user' };
+    if (!user) return { ok: false, applied: 0, error: 'unknown_user' };
+    if (records.length === 0) {
+      return { ok: true, applied: 0, seq: user.keyLogHeadSeq, hash: user.keyLogHeadHash };
     }
 
-    type Prepared = {
-      input: ApplyKeyLogInput;
-      record: ReturnType<typeof decodeKeyLogRecord>;
-      hash: Uint8Array;
-      effects: KeyLogEffect[];
-      nextHead: { seq: bigint; hash: Uint8Array };
-      nextRootPublicKey: Uint8Array;
-      nextRootEpoch: number;
-      nextKdfParams: KdfParams;
-    };
-    const prepared: Prepared[] = [];
-    let state = this.currentState(userId);
-    const casHead = { seq: state.head.seq, hash: state.head.hash };
+    const prepared = await this.prepareApplyMany(userId, records, signal);
+    if (!prepared.ok) return prepared;
+    if (signal?.aborted) return abort;
 
-    for (const input of records) {
-      const stop = aborted();
-      if (stop) return stop;
-      let record: ReturnType<typeof decodeKeyLogRecord>;
-      try {
-        record = decodeKeyLogRecord(input.bytes);
-      } catch {
-        return { ok: false, applied: 0, error: 'malformed_payload' };
-      }
-      const existing = this.keyLogStore.getAtSeq(userId, Number(record.seq));
-      const verified = await verifyKeyLogRecord(input.bytes, input.sig, {
-        head: state.head,
-        rootEpoch: state.rootEpoch,
-        rootPublicKey: state.rootPublicKey,
-        resolvePasskey: (id) => state.passkeys.get(id)?.public_key ?? null,
-        verifyPasskeyAssertion: this.verifyPasskeyAssertion,
-        existingAtSeq: existing ? { bytes: existing.bytes, sig: existing.sig } : undefined,
-        allowGenesis: false,
-      });
-      if (!verified.ok) {
-        return { ok: false, applied: 0, error: verified.error };
-      }
-      const applied = await applyKeyLogRecord(state, verified.record, verified.hash, {
-        verifyPasskeyAssertion: this.verifyPasskeyAssertion,
-      });
-      if (!applied.ok) {
-        return { ok: false, applied: 0, error: applied.error };
-      }
-      prepared.push({
-        input,
-        record: verified.record,
-        hash: verified.hash,
-        effects: applied.effects,
-        nextHead: {
-          seq: applied.state.head.seq,
-          hash: new Uint8Array(applied.state.head.hash),
-        },
-        nextRootPublicKey: new Uint8Array(applied.state.rootPublicKey),
-        nextRootEpoch: applied.state.rootEpoch,
-        nextKdfParams: applied.state.kdfParams,
-      });
-      state = applied.state;
-    }
-
-    const beforeCommit = aborted();
-    if (beforeCommit) return beforeCommit;
-
+    const { steps, casHead } = prepared;
     try {
-      this.db.transaction((tx) => {
-        const userStore = new (this.userStore.constructor as typeof UserStore)(tx as AuthDb);
-        const keyLogStore = new (this.keyLogStore.constructor as typeof KeyLogStore)(tx as AuthDb);
-        const nodeSessionStore = new (this.nodeSessionStore.constructor as typeof NodeSessionStore)(
-          tx as AuthDb
-        );
-        const current = userStore.getById(userId);
-        if (!current) {
-          throw new UnknownUser();
-        }
-        if (
-          BigInt(current.keyLogHeadSeq) !== casHead.seq ||
-          !bytesEqual(current.keyLogHeadHash, casHead.hash)
-        ) {
-          throw new HeadCasMismatch();
-        }
-        const now = Date.now();
-        for (const step of prepared) {
-          persistApplied({
-            userStore,
-            keyLogStore,
-            nodeSessionStore,
-            userId,
-            record: step.record,
-            bytes: step.input.bytes,
-            sig: step.input.sig,
-            hash: step.hash,
-            effects: step.effects,
-            now,
-            nextHead: step.nextHead,
-            nextRootPublicKey: step.nextRootPublicKey,
-            nextRootEpoch: step.nextRootEpoch,
-            nextKdfParams: step.nextKdfParams,
-          });
-        }
-      });
+      this.commitPrepared(userId, steps, casHead);
     } catch (err) {
-      if (err instanceof ForkCollision) {
-        return { ok: false, applied: 0, error: 'fork' };
-      }
-      if (err instanceof HeadCasMismatch) {
-        return { ok: false, applied: 0, error: 'head_cas' };
-      }
-      if (err instanceof UnknownUser) {
-        return { ok: false, applied: 0, error: 'unknown_user' };
-      }
+      const mapped = mapApplyManyError(err);
+      if (mapped) return mapped;
       throw err;
     }
 
-    const last = prepared[prepared.length - 1];
+    const last = steps.at(-1);
     if (!last) {
       return { ok: true, applied: 0, seq: Number(casHead.seq), hash: casHead.hash };
     }
     return {
       ok: true,
-      applied: prepared.length,
-      seq: Number(last.nextHead.seq),
-      hash: last.nextHead.hash,
+      applied: steps.length,
+      seq: Number(last.next.head.seq),
+      hash: last.next.head.hash,
     };
+  }
+
+  private commitPrepared(
+    userId: string,
+    steps: JoinReplayStep[],
+    casHead: { seq: bigint; hash: Uint8Array }
+  ): void {
+    this.db.transaction((tx) => {
+      const stores = this.txStores(tx);
+      const current = stores.userStore.getById(userId);
+      if (!current) throw new UnknownUser();
+      if (
+        BigInt(current.keyLogHeadSeq) !== casHead.seq ||
+        !bytesEqual(current.keyLogHeadHash, casHead.hash)
+      ) {
+        throw new HeadCasMismatch();
+      }
+      const now = Date.now();
+      for (const step of steps) persistApplied(stores, userId, step, now);
+    });
+  }
+
+  private async prepareApplyMany(
+    userId: string,
+    records: ApplyKeyLogInput[],
+    signal?: AbortSignal
+  ): Promise<
+    | { ok: true; steps: JoinReplayStep[]; casHead: { seq: bigint; hash: Uint8Array } }
+    | { ok: false; applied: 0; error: string }
+  > {
+    const abort = { ok: false as const, applied: 0 as const, error: 'aborted' };
+    const steps: JoinReplayStep[] = [];
+    let state = this.currentState(userId);
+    const casHead = { seq: state.head.seq, hash: state.head.hash };
+    for (const input of records) {
+      if (signal?.aborted) return abort;
+      const stepped = await this.replayStep(input, state, { userId });
+      if (!stepped.ok) return { ok: false, applied: 0, error: stepped.error };
+      steps.push(stepped);
+      state = stepped.next;
+    }
+    return { ok: true, steps, casHead };
   }
 
   async head(userId: string, signal?: AbortSignal): Promise<{ seq: bigint; hash: Uint8Array }> {
@@ -683,35 +576,11 @@ export class UserKeyService {
     const genesisInput: ApplyKeyLogInput = { bytes: genesisBytes, sig: genesisSig };
 
     let state = emptyUserKeyState(new Uint8Array(32), undefined, genesisEpoch);
-    const genesisVerified = await verifyKeyLogRecord(genesisBytes, genesisSig, {
-      head: state.head,
-      rootEpoch: state.rootEpoch,
-      rootPublicKey: state.rootPublicKey,
-      resolvePasskey: () => null,
-      verifyPasskeyAssertion: this.verifyPasskeyAssertion,
-      allowGenesis: true,
-    });
-    if (!genesisVerified.ok) {
-      throw new Error(`bootstrap genesis verify failed: ${genesisVerified.error}`);
+    const genesisStep = await this.replayStep(genesisInput, state, { allowGenesis: true });
+    if (!genesisStep.ok) {
+      throw new Error(`bootstrap genesis apply failed: ${genesisStep.error}`);
     }
-    const genesisApplied = await applyKeyLogRecord(
-      state,
-      genesisVerified.record,
-      genesisVerified.hash,
-      { verifyPasskeyAssertion: this.verifyPasskeyAssertion }
-    );
-    if (!genesisApplied.ok) {
-      throw new Error(`bootstrap genesis apply failed: ${genesisApplied.error}`);
-    }
-    const genesisStep: JoinReplayStep = {
-      input: genesisInput,
-      record: genesisVerified.record,
-      hash: genesisVerified.hash,
-      previous: state,
-      next: genesisApplied.state,
-      effects: genesisApplied.effects,
-    };
-    state = genesisApplied.state;
+    state = genesisStep.next;
 
     const admit = await selfSignedNodeCertificate(input.identity, rootKey, {
       uid: userId,
@@ -727,38 +596,14 @@ export class UserKeyService {
     });
     const admitBytes = encodeKeyLogRecord(admitRecord);
     const admitSig = signKeyLogRecordWithRoot(rootKey, admitBytes);
-    const admitInput: ApplyKeyLogInput = { bytes: admitBytes, sig: admitSig };
-    const admitVerified = await verifyKeyLogRecord(admitBytes, admitSig, {
-      head: state.head,
-      rootEpoch: state.rootEpoch,
-      rootPublicKey: state.rootPublicKey,
-      resolvePasskey: (id) => state.passkeys.get(id)?.public_key ?? null,
-      verifyPasskeyAssertion: this.verifyPasskeyAssertion,
-    });
-    if (!admitVerified.ok) {
-      throw new Error(`bootstrap admit-node verify failed: ${admitVerified.error}`);
+    const admitStep = await this.replayStep({ bytes: admitBytes, sig: admitSig }, state);
+    if (!admitStep.ok) {
+      throw new Error(`bootstrap admit-node apply failed: ${admitStep.error}`);
     }
-    const admitApplied = await applyKeyLogRecord(state, admitVerified.record, admitVerified.hash, {
-      verifyPasskeyAssertion: this.verifyPasskeyAssertion,
-    });
-    if (!admitApplied.ok) {
-      throw new Error(`bootstrap admit-node apply failed: ${admitApplied.error}`);
-    }
-    const admitStep: JoinReplayStep = {
-      input: admitInput,
-      record: admitVerified.record,
-      hash: admitVerified.hash,
-      previous: state,
-      next: admitApplied.state,
-      effects: admitApplied.effects,
-    };
 
     this.db.transaction((tx) => {
-      const userStore = new (this.userStore.constructor as typeof UserStore)(tx as AuthDb);
-      const keyLogStore = new (this.keyLogStore.constructor as typeof KeyLogStore)(tx as AuthDb);
-      const nodeSessionStore = new (this.nodeSessionStore.constructor as typeof NodeSessionStore)(
-        tx as AuthDb
-      );
+      const stores = this.txStores(tx);
+      const { userStore, keyLogStore, nodeSessionStore } = stores;
       if (!existing) {
         userStore.create({
           id: userId,
@@ -785,43 +630,9 @@ export class UserKeyService {
           now,
         });
       }
-      persistApplied({
-        userStore,
-        keyLogStore,
-        nodeSessionStore,
-        userId,
-        record: genesisStep.record,
-        bytes: genesisStep.input.bytes,
-        sig: genesisStep.input.sig,
-        hash: genesisStep.hash,
-        effects: genesisStep.effects,
-        now,
-        nextHead: genesisStep.next.head,
-        nextRootPublicKey: genesisStep.next.rootPublicKey,
-        nextRootEpoch: genesisStep.next.rootEpoch,
-        nextKdfParams: genesisStep.next.kdfParams,
-      });
-      persistApplied({
-        userStore,
-        keyLogStore,
-        nodeSessionStore,
-        userId,
-        record: admitStep.record,
-        bytes: admitStep.input.bytes,
-        sig: admitStep.input.sig,
-        hash: admitStep.hash,
-        effects: admitStep.effects,
-        now,
-        nextHead: admitStep.next.head,
-        nextRootPublicKey: admitStep.next.rootPublicKey,
-        nextRootEpoch: admitStep.next.rootEpoch,
-        nextKdfParams: admitStep.next.kdfParams,
-      });
-      (tx as AuthDb)
-        .update(nodeIdentity)
-        .set({ userId })
-        .where(eq(nodeIdentity.id, IDENTITY_ROW_ID))
-        .run();
+      persistApplied(stores, userId, genesisStep, now);
+      persistApplied(stores, userId, admitStep, now);
+      bindIdentityUser(tx as AuthDb, userId);
     });
 
     const next = this.userStore.getById(userId);
@@ -836,22 +647,61 @@ export class UserKeyService {
     };
   }
 
+  private txStores(tx: unknown): AuthStores {
+    const db = tx as AuthDb;
+    return {
+      userStore: new (this.userStore.constructor as typeof UserStore)(db),
+      keyLogStore: new (this.keyLogStore.constructor as typeof KeyLogStore)(db),
+      nodeSessionStore: new (this.nodeSessionStore.constructor as typeof NodeSessionStore)(db),
+    };
+  }
+
+  private async replayStep(
+    input: ApplyKeyLogInput,
+    state: UserKeyState,
+    opts?: { allowGenesis?: boolean; userId?: string; rejectReset?: boolean }
+  ): Promise<({ ok: true } & JoinReplayStep) | { ok: false; error: string }> {
+    const record = tryDecodeRecord(input.bytes);
+    if (!record) return { ok: false, error: 'malformed_payload' };
+    if (opts?.rejectReset && record.type === 'reset-root') {
+      return { ok: false, error: 'reset_not_genesis' };
+    }
+    const existing = opts?.userId
+      ? this.keyLogStore.getAtSeq(opts.userId, Number(record.seq))
+      : undefined;
+    const verified = await verifyKeyLogRecord(input.bytes, input.sig, {
+      head: state.head,
+      rootEpoch: state.rootEpoch,
+      rootPublicKey: state.rootPublicKey,
+      resolvePasskey: (id) => state.passkeys.get(id)?.public_key ?? null,
+      verifyPasskeyAssertion: this.verifyPasskeyAssertion,
+      existingAtSeq: existing ? { bytes: existing.bytes, sig: existing.sig } : undefined,
+      allowGenesis: opts?.allowGenesis,
+    });
+    if (!verified.ok) return { ok: false, error: verified.error };
+    const applied = await applyKeyLogRecord(state, verified.record, verified.hash, {
+      verifyPasskeyAssertion: this.verifyPasskeyAssertion,
+    });
+    if (!applied.ok) return { ok: false, error: applied.error };
+    return {
+      ok: true,
+      input,
+      record: verified.record,
+      hash: verified.hash,
+      next: applied.state,
+      effects: applied.effects,
+    };
+  }
+
   private async replayJoinChain(
     records: ApplyKeyLogInput[],
     expectedRootPublicKey: Uint8Array,
     anchorHash: Uint8Array
   ): Promise<JoinReplaySuccess | { ok: false; error: string }> {
     const first = records[0];
-    if (!first) {
-      return { ok: false, error: 'missing_genesis' };
-    }
-    let genesis: ReturnType<typeof decodeKeyLogRecord>;
-    try {
-      genesis = decodeKeyLogRecord(first.bytes);
-    } catch {
-      return { ok: false, error: 'missing_genesis' };
-    }
-    if (genesis.type !== 'reset-root' || genesis.seq !== 1n) {
+    if (!first) return { ok: false, error: 'missing_genesis' };
+    const genesis = tryDecodeRecord(first.bytes);
+    if (!genesis || genesis.type !== 'reset-root' || genesis.seq !== 1n) {
       return { ok: false, error: 'missing_genesis' };
     }
 
@@ -862,61 +712,26 @@ export class UserKeyService {
 
     for (let i = 0; i < records.length; i++) {
       const item = records[i];
-      if (!item) {
-        return { ok: false, error: 'malformed_payload' };
-      }
-      let decoded: ReturnType<typeof decodeKeyLogRecord>;
-      try {
-        decoded = decodeKeyLogRecord(item.bytes);
-      } catch {
-        return { ok: false, error: 'malformed_payload' };
-      }
-      if (decoded.type === 'reset-root' && i !== 0) {
-        return { ok: false, error: 'reset_not_genesis' };
-      }
-      const verified = await verifyKeyLogRecord(item.bytes, item.sig, {
-        head: state.head,
-        rootEpoch: state.rootEpoch,
-        rootPublicKey: state.rootPublicKey,
-        resolvePasskey: (id) => state.passkeys.get(id)?.public_key ?? null,
-        verifyPasskeyAssertion: this.verifyPasskeyAssertion,
+      if (!item) return { ok: false, error: 'malformed_payload' };
+      const stepped = await this.replayStep(item, state, {
         allowGenesis: i === 0,
+        rejectReset: i !== 0,
       });
-      if (!verified.ok) {
-        return { ok: false, error: verified.error };
-      }
-      const applied = await applyKeyLogRecord(state, verified.record, verified.hash, {
-        verifyPasskeyAssertion: this.verifyPasskeyAssertion,
-      });
-      if (!applied.ok) {
-        return { ok: false, error: applied.error };
-      }
-      const hash = verified.hash;
-      if (bytesEqual(hash, anchorHash)) {
+      if (!stepped.ok) return stepped;
+      if (bytesEqual(stepped.hash, anchorHash)) {
         anchorFound = true;
-        epochAtAnchor = applied.state.rootEpoch;
-      } else if (anchorFound) {
-        if (decoded.type === 'rotate-root' || decoded.type === 'reset-root') {
-          return { ok: false, error: 'epoch_changed' };
-        }
-        if (epochAtAnchor != null && applied.state.rootEpoch !== epochAtAnchor) {
-          return { ok: false, error: 'epoch_changed' };
-        }
+        epochAtAnchor = stepped.next.rootEpoch;
+      } else if (
+        anchorFound &&
+        joinEpochBroke(stepped.record.type, stepped.next.rootEpoch, epochAtAnchor)
+      ) {
+        return { ok: false, error: 'epoch_changed' };
       }
-      steps.push({
-        input: item,
-        record: verified.record,
-        hash,
-        previous: state,
-        next: applied.state,
-        effects: applied.effects,
-      });
-      state = applied.state;
+      steps.push(stepped);
+      state = stepped.next;
     }
 
-    if (!anchorFound) {
-      return { ok: false, error: 'anchor_missing' };
-    }
+    if (!anchorFound) return { ok: false, error: 'anchor_missing' };
     if (!bytesEqual(state.rootPublicKey, expectedRootPublicKey)) {
       return { ok: false, error: 'root_mismatch' };
     }
@@ -930,25 +745,20 @@ export class UserKeyService {
     identity?: EncryptedIdentity;
   }): VerifyChainForJoinResult {
     const { replay, username, now, identity } = args;
-    const genesisUid = replay.genesisUid;
-    const first = replay.steps[0];
-    if (!first) {
-      return { ok: false, error: 'missing_genesis' };
-    }
+    const { genesisUid, steps } = replay;
+    const first = steps[0];
+    if (!first) return { ok: false, error: 'missing_genesis' };
     let kdfJson = kdfParamsToJson(DEFAULT_KDF);
     try {
       kdfJson = kdfParamsToJson(decodeResetRootPayload(first.record.payload).kdf_params);
     } catch {
-      // keep default
+      kdfJson = kdfParamsToJson(DEFAULT_KDF);
     }
 
     let replacedStaleUsername: string | undefined;
     this.db.transaction((tx) => {
-      const userStore = new (this.userStore.constructor as typeof UserStore)(tx as AuthDb);
-      const keyLogStore = new (this.keyLogStore.constructor as typeof KeyLogStore)(tx as AuthDb);
-      const nodeSessionStore = new (this.nodeSessionStore.constructor as typeof NodeSessionStore)(
-        tx as AuthDb
-      );
+      const stores = this.txStores(tx);
+      const { userStore, keyLogStore, nodeSessionStore } = stores;
       const byId = userStore.getById(genesisUid);
       const byName = userStore.getByUsername(username);
       if (byName && byName.id !== genesisUid) {
@@ -967,12 +777,8 @@ export class UserKeyService {
           kdfParamsJson: kdfJson,
           now,
         });
-        if (byId.username !== username) {
-          userStore.updateUsername(genesisUid, username, now);
-        }
-        if (!replacedStaleUsername) {
-          userStore.deleteAllPeers();
-        }
+        if (byId.username !== username) userStore.updateUsername(genesisUid, username, now);
+        if (!replacedStaleUsername) userStore.deleteAllPeers();
       } else {
         userStore.create({
           id: genesisUid,
@@ -986,33 +792,9 @@ export class UserKeyService {
           now,
         });
       }
-      for (const step of replay.steps) {
-        persistApplied({
-          userStore,
-          keyLogStore,
-          nodeSessionStore,
-          userId: genesisUid,
-          record: step.record,
-          bytes: step.input.bytes,
-          sig: step.input.sig,
-          hash: step.hash,
-          effects: step.effects,
-          now,
-          nextHead: step.next.head,
-          nextRootPublicKey: step.next.rootPublicKey,
-          nextRootEpoch: step.next.rootEpoch,
-          nextKdfParams: step.next.kdfParams,
-        });
-      }
-      if (identity) {
-        persistEncryptedIdentity(tx as AuthDb, identity);
-      } else {
-        (tx as AuthDb)
-          .update(nodeIdentity)
-          .set({ userId: genesisUid })
-          .where(eq(nodeIdentity.id, IDENTITY_ROW_ID))
-          .run();
-      }
+      for (const step of steps) persistApplied(stores, genesisUid, step, now);
+      if (identity) persistEncryptedIdentity(tx as AuthDb, identity);
+      else bindIdentityUser(tx as AuthDb, genesisUid);
     });
     return {
       ok: true,
@@ -1038,6 +820,13 @@ class UnknownUser extends Error {
   constructor() {
     super('unknown_user');
   }
+}
+
+function mapApplyManyError(err: unknown): ApplyManyResult | null {
+  if (err instanceof ForkCollision) return { ok: false, applied: 0, error: 'fork' };
+  if (err instanceof HeadCasMismatch) return { ok: false, applied: 0, error: 'head_cas' };
+  if (err instanceof UnknownUser) return { ok: false, applied: 0, error: 'unknown_user' };
+  return null;
 }
 
 type EncryptedIdentity = {
@@ -1067,30 +856,43 @@ async function encryptIdentity(input: SaveNodeIdentityInput): Promise<EncryptedI
 }
 
 function persistEncryptedIdentity(db: AuthDb, identity: EncryptedIdentity): void {
+  const row = {
+    nodeId: identity.nodeId,
+    hubUrl: identity.hubUrl,
+    privateKey: identity.privateKey,
+    x25519PrivateKey: identity.x25519PrivateKey,
+    certificateJson: identity.certificateJson,
+    certSig: toBuffer(identity.certSig),
+    userId: identity.userId,
+  };
   db.insert(nodeIdentity)
-    .values({
-      id: IDENTITY_ROW_ID,
-      nodeId: identity.nodeId,
-      hubUrl: identity.hubUrl,
-      privateKey: identity.privateKey,
-      x25519PrivateKey: identity.x25519PrivateKey,
-      certificateJson: identity.certificateJson,
-      certSig: toBuffer(identity.certSig),
-      userId: identity.userId,
-    })
-    .onConflictDoUpdate({
-      target: nodeIdentity.id,
-      set: {
-        nodeId: identity.nodeId,
-        hubUrl: identity.hubUrl,
-        privateKey: identity.privateKey,
-        x25519PrivateKey: identity.x25519PrivateKey,
-        certificateJson: identity.certificateJson,
-        certSig: toBuffer(identity.certSig),
-        userId: identity.userId,
-      },
-    })
+    .values({ id: IDENTITY_ROW_ID, ...row })
+    .onConflictDoUpdate({ target: nodeIdentity.id, set: row })
     .run();
+}
+
+function bindIdentityUser(db: AuthDb, userId: string): void {
+  db.update(nodeIdentity).set({ userId }).where(eq(nodeIdentity.id, IDENTITY_ROW_ID)).run();
+}
+
+function tryDecodeRecord(bytes: Uint8Array): DecodedKeyLog | null {
+  try {
+    return decodeKeyLogRecord(bytes);
+  } catch {
+    return null;
+  }
+}
+
+function joinEpochBroke(
+  type: DecodedKeyLog['type'],
+  epoch: number,
+  epochAtAnchor: number | null
+): boolean {
+  return (
+    type === 'rotate-root' ||
+    type === 'reset-root' ||
+    (epochAtAnchor != null && epoch !== epochAtAnchor)
+  );
 }
 
 function bytesEqual(a: Uint8Array, b: Uint8Array): boolean {
@@ -1118,112 +920,93 @@ function wipeUserDerivedState(
   userStore.deleteEnrollmentTokensByUser(userId);
 }
 
-function persistApplied(args: {
-  userStore: UserStore;
-  keyLogStore: KeyLogStore;
-  nodeSessionStore: NodeSessionStore;
-  userId: string;
-  record: ReturnType<typeof decodeKeyLogRecord>;
-  bytes: Uint8Array;
-  sig: Uint8Array;
-  hash: Uint8Array;
-  effects: KeyLogEffect[];
-  now: number;
-  nextHead: { seq: bigint; hash: Uint8Array };
-  nextRootPublicKey: Uint8Array;
-  nextRootEpoch: number;
-  nextKdfParams: KdfParams;
-}): void {
-  const seq = Number(args.record.seq);
-  args.keyLogStore.append({
-    userId: args.userId,
+function persistApplied(
+  stores: AuthStores,
+  userId: string,
+  step: JoinReplayStep,
+  now: number
+): void {
+  const { userStore, keyLogStore, nodeSessionStore } = stores;
+  const { record, input, hash, effects, next } = step;
+  const seq = Number(record.seq);
+  keyLogStore.append({
+    userId,
     seq,
-    prevHash: args.record.prev_hash,
-    hash: args.hash,
-    rootEpoch: args.record.root_epoch,
-    type: args.record.type,
-    recordBytes: args.bytes,
-    sig: args.sig,
-    payloadJson: projectPayloadJson(args.record.type, args.record.payload),
-    createdAt: args.now,
+    prevHash: record.prev_hash,
+    hash,
+    rootEpoch: record.root_epoch,
+    type: record.type,
+    recordBytes: input.bytes,
+    sig: input.sig,
+    payloadJson: projectPayloadJson(record.type, record.payload),
+    createdAt: now,
   });
-
-  args.userStore.updateRoot(args.userId, {
-    rootPublicKey: args.nextRootPublicKey,
-    rootEpoch: args.nextRootEpoch,
-    kdfParamsJson: kdfParamsToJson(args.nextKdfParams),
-    now: args.now,
+  userStore.updateRoot(userId, {
+    rootPublicKey: next.rootPublicKey,
+    rootEpoch: next.rootEpoch,
+    kdfParamsJson: kdfParamsToJson(next.kdfParams),
+    now,
   });
-  args.userStore.setKeyLogHead(args.userId, {
-    seq: Number(args.nextHead.seq),
-    hash: args.nextHead.hash,
-    now: args.now,
-  });
+  userStore.setKeyLogHead(userId, { seq: Number(next.head.seq), hash: next.head.hash, now });
 
-  if (args.record.type === 'rotate-root' || args.record.type === 'reset-root') {
-    args.userStore.deleteKeysByUser(args.userId);
-    args.userStore.setTotpRecordSeq(args.userId, null, args.now);
-    if (args.record.type === 'reset-root') {
-      args.userStore.deleteCertsByUser(args.userId);
-    }
-  } else if (args.record.type === 'set-totp') {
-    args.userStore.setTotpRecordSeq(args.userId, seq, args.now);
-  } else if (args.record.type === 'clear-totp') {
-    args.userStore.setTotpRecordSeq(args.userId, null, args.now);
+  if (record.type === 'rotate-root' || record.type === 'reset-root') {
+    userStore.deleteKeysByUser(userId);
+    userStore.setTotpRecordSeq(userId, null, now);
+    if (record.type === 'reset-root') userStore.deleteCertsByUser(userId);
   }
+  const byType: Partial<Record<DecodedKeyLog['type'], () => void>> = {
+    'set-totp': () => userStore.setTotpRecordSeq(userId, seq, now),
+    'clear-totp': () => userStore.setTotpRecordSeq(userId, null, now),
+    'add-passkey': () => {
+      const payload = decodeAddPasskeyPayload(record.payload);
+      userStore.insertKey({
+        id: crypto.randomUUID(),
+        userId,
+        credentialId: decodeBase64url(payload.credential_id),
+        publicKey: payload.public_key,
+        rpId: payload.rp_id,
+        origin: payload.origin,
+        counter: payload.counter,
+        transports: payload.transports,
+        name: payload.name || null,
+        logSeq: seq,
+        now,
+      });
+    },
+    'remove-passkey': () => {
+      const row = userStore.getKeyByCredentialId(
+        decodeBase64url(decodeRemovePasskeyPayload(record.payload).credential_id)
+      );
+      if (row) userStore.deleteKey(row.id);
+    },
+    'admit-node': () => {
+      const payload = decodeAdmitNodePayload(record.payload);
+      const certificate = decodeCertificate(payload.certificate_bytes);
+      userStore.upsertCert({
+        nodeId: nodeIdToHex(certificate.node_id),
+        userId,
+        admitRecordSeq: seq,
+        certificateBytes: payload.certificate_bytes,
+        certSig: payload.cert_sig,
+        authorizationBytes: payload.authorization_bytes,
+        authorizationSig: payload.authorization_sig,
+        revokedLogSeq: null,
+      });
+    },
+    'revoke-node': () => {
+      const hex = nodeIdToHex(decodeRevokeNodePayload(record.payload).node_id);
+      userStore.markCertRevoked(hex, seq);
+      userStore.deletePeer(hex);
+    },
+  };
+  byType[record.type]?.();
 
-  if (args.record.type === 'add-passkey') {
-    const payload = decodeAddPasskeyPayload(args.record.payload);
-    args.userStore.insertKey({
-      id: crypto.randomUUID(),
-      userId: args.userId,
-      credentialId: decodeBase64url(payload.credential_id),
-      publicKey: payload.public_key,
-      rpId: payload.rp_id,
-      origin: payload.origin,
-      counter: payload.counter,
-      transports: payload.transports,
-      name: payload.name || null,
-      logSeq: seq,
-      now: args.now,
-    });
-  } else if (args.record.type === 'remove-passkey') {
-    const payload = decodeRemovePasskeyPayload(args.record.payload);
-    const row = args.userStore.getKeyByCredentialId(decodeBase64url(payload.credential_id));
-    if (row) {
-      args.userStore.deleteKey(row.id);
-    }
-  }
-
-  if (args.record.type === 'admit-node') {
-    const payload = decodeAdmitNodePayload(args.record.payload);
-    const certificate = decodeCertificate(payload.certificate_bytes);
-    args.userStore.upsertCert({
-      nodeId: nodeIdToHex(certificate.node_id),
-      userId: args.userId,
-      admitRecordSeq: seq,
-      certificateBytes: payload.certificate_bytes,
-      certSig: payload.cert_sig,
-      authorizationBytes: payload.authorization_bytes,
-      authorizationSig: payload.authorization_sig,
-      revokedLogSeq: null,
-    });
-  } else if (args.record.type === 'revoke-node') {
-    const payload = decodeRevokeNodePayload(args.record.payload);
-    const hex = nodeIdToHex(payload.node_id);
-    args.userStore.markCertRevoked(hex, seq);
-    args.userStore.deletePeer(hex);
-  }
-
-  for (const effect of args.effects) {
-    if (effect.type === 'revokeAllSessions') {
-      args.nodeSessionStore.revokeAllForUser(args.userId, args.now);
-    } else if (effect.type === 'revokeSessionsByCredential') {
-      args.nodeSessionStore.revokeByCredential(decodeBase64url(effect.credentialId), args.now);
+  for (const effect of effects) {
+    if (effect.type === 'revokeAllSessions') nodeSessionStore.revokeAllForUser(userId, now);
+    else if (effect.type === 'revokeSessionsByCredential') {
+      nodeSessionStore.revokeByCredential(decodeBase64url(effect.credentialId), now);
     } else if (effect.type === 'revokeSessionsVia') {
-      args.nodeSessionStore.revokeVia(nodeIdToHex(effect.nodeId), args.now);
-    } else if (effect.type === 'clearPeerCache') {
-      args.userStore.deleteAllPeers();
-    }
+      nodeSessionStore.revokeVia(nodeIdToHex(effect.nodeId), now);
+    } else if (effect.type === 'clearPeerCache') userStore.deleteAllPeers();
   }
 }
