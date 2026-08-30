@@ -1,4 +1,4 @@
-import { describe, expect, test } from 'bun:test';
+import { describe, expect, spyOn, test } from 'bun:test';
 import {
   buildKeyLogRecord,
   computeRecordHash,
@@ -37,6 +37,7 @@ import {
 import { NodeRegistry } from './node-registry';
 import type { HubKeyLogSource } from './types';
 import { KEY_LOG_PAGE_MAX_BYTES, type UplinkCtlMessage, decodeUplinkCtl } from './uplink-protocol';
+import * as uplinkProtocol from './uplink-protocol';
 import {
   HUB_CTL_QUEUE_MAX,
   HUB_KEY_LOG_REQ_BURST,
@@ -150,6 +151,44 @@ function nodeListPayloads(sent: Uint8Array[]): Uint8Array[] {
       return false;
     }
   });
+}
+
+function nodeListCaches(server: UplinkServer): {
+  lastNodeListFp: Map<string, unknown>;
+  lastNodeListSent: Map<string, Uint8Array>;
+} {
+  return server as unknown as {
+    lastNodeListFp: Map<string, unknown>;
+    lastNodeListSent: Map<string, Uint8Array>;
+  };
+}
+
+async function authUntilOk(
+  server: UplinkServer,
+  store: UserStore,
+  userId: string,
+  opts?: { name?: string }
+): Promise<{
+  nodeId: string;
+  nodeLink: LinkSession;
+  hubLink: LinkSession;
+  inbox: CtlInbox;
+}> {
+  const seeded = seedAdmittedNode(store, userId, opts);
+  const [nodeLink, hubLink] = createInMemoryLinkPair();
+  const inbox = ctlInbox(nodeLink);
+  server.accept(hubLink);
+  const challenge = await inbox.take();
+  expect(challenge.t).toBe('auth.challenge');
+  if (challenge.t !== 'auth.challenge') throw new Error('expected challenge');
+  sendCtl(nodeLink, {
+    t: 'auth.response',
+    node_id: seeded.nodeId,
+    sig: signAuth(seeded.ed.secretKey, decodeBase64url(challenge.nonce)),
+  });
+  const ok = await inbox.take();
+  expect(ok.t).toBe('auth.ok');
+  return { nodeId: seeded.nodeId, nodeLink, hubLink, inbox };
 }
 
 describe('UplinkServer', () => {
@@ -1646,6 +1685,7 @@ describe('UplinkServer', () => {
       b.inbox.drain();
       c.inbox.drain();
       const taps = [a, b, c].map((n) => tapCtlSend(n.hubLink));
+      const encode = spyOn(uplinkProtocol, 'encodeUplinkCtl');
       sendCtl(a.nodeLink, {
         t: 'node.status',
         version: '2.0.0',
@@ -1658,6 +1698,8 @@ describe('UplinkServer', () => {
       const lists = taps.flatMap(nodeListPayloads);
       expect(lists).toHaveLength(3);
       expect(lists.every((bytes) => bytes === lists[0])).toBe(true);
+      expect(encode.mock.calls.filter(([msg]) => msg.t === 'node.list')).toHaveLength(1);
+      encode.mockRestore();
       server.stop();
     } finally {
       close();
@@ -1676,6 +1718,68 @@ describe('UplinkServer', () => {
       expect(nodeListPayloads(sent)).toHaveLength(0);
       await server.broadcastNodeList(user.id);
       expect(nodeListPayloads(sent)).toHaveLength(0);
+      server.stop();
+    } finally {
+      close();
+    }
+  });
+
+  test('auth does not receive a cached node.list when keyLogSource.head() fails', async () => {
+    const { db, close } = createMigratedAuthDb();
+    try {
+      const { userStore, keyLogSource } = createHubTestStack(db);
+      const user = seedUser(userStore);
+      let failHead = false;
+      const source: HubKeyLogSource = {
+        head: async (userId) => {
+          if (failHead) throw new Error('head failed');
+          return keyLogSource.head(userId);
+        },
+        list: (userId, fromSeq, limit) => keyLogSource.list(userId, fromSeq, limit),
+        append: (userId, record) => keyLogSource.append(userId, record),
+      };
+      const { server } = makeServer(db, userStore, source);
+      await authNode(server, userStore, user.id, { name: 'a' });
+      expect(nodeListCaches(server).lastNodeListSent.has(user.id)).toBe(true);
+      failHead = true;
+      const b = await authUntilOk(server, userStore, user.id, { name: 'b' });
+      await new Promise((r) => setTimeout(r, 40));
+      expect(b.inbox.drain().some((msg) => msg.t === 'node.list')).toBe(false);
+      failHead = false;
+      const result = await server.broadcastNodeList(user.id);
+      expect(result).toBe('sent');
+      const list = await b.inbox.take();
+      expect(list.t).toBe('node.list');
+      server.stop();
+    } finally {
+      close();
+    }
+  });
+
+  test('last authenticated link close drops the per-user node.list cache without rebuilding', async () => {
+    const { db, close } = createMigratedAuthDb();
+    try {
+      const { userStore, keyLogSource } = createHubTestStack(db);
+      const user = seedUser(userStore);
+      let heads = 0;
+      const source: HubKeyLogSource = {
+        head: async (userId) => {
+          heads += 1;
+          return keyLogSource.head(userId);
+        },
+        list: (userId, fromSeq, limit) => keyLogSource.list(userId, fromSeq, limit),
+        append: (userId, record) => keyLogSource.append(userId, record),
+      };
+      const { server } = makeServer(db, userStore, source);
+      const node = await authNode(server, userStore, user.id);
+      expect(nodeListCaches(server).lastNodeListSent.has(user.id)).toBe(true);
+      expect(nodeListCaches(server).lastNodeListFp.has(user.id)).toBe(true);
+      const headsAfterAuth = heads;
+      node.nodeLink.close();
+      await node.hubLink.closed;
+      expect(heads).toBe(headsAfterAuth);
+      expect(nodeListCaches(server).lastNodeListSent.has(user.id)).toBe(false);
+      expect(nodeListCaches(server).lastNodeListFp.has(user.id)).toBe(false);
       server.stop();
     } finally {
       close();

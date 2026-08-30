@@ -77,7 +77,7 @@ export function fakeSocketPair(): [FakeServerSocket, FakeServerSocket] {
 export class ImmediateScheduler implements MeshScheduler {
   nowMs = 1_000;
   sleeps = 0;
-  readonly intervals: Array<{ fn: () => void; ms: number; cleared: boolean }> = [];
+  readonly intervals: Array<{ fn: () => void; ms: number; cleared: boolean; dueAt: number }> = [];
 
   now(): number {
     return this.nowMs;
@@ -89,7 +89,7 @@ export class ImmediateScheduler implements MeshScheduler {
   }
 
   interval(fn: () => void, ms: number): { clear: () => void } {
-    const handle = { fn, ms, cleared: false };
+    const handle = { fn, ms, cleared: false, dueAt: this.nowMs + ms };
     this.intervals.push(handle);
     return {
       clear() {
@@ -101,6 +101,20 @@ export class ImmediateScheduler implements MeshScheduler {
   tickIntervals(): void {
     for (const handle of this.intervals) {
       if (!handle.cleared) handle.fn();
+    }
+  }
+
+  /** 只触发已到期的 interval，按到期顺序；回调里新挂的 timer 等下次 advance。 */
+  advance(ms: number): void {
+    this.nowMs += ms;
+    const now = this.nowMs;
+    const due = this.intervals
+      .filter((handle) => !handle.cleared && handle.dueAt <= now)
+      .sort((a, b) => a.dueAt - b.dueAt);
+    for (const handle of due) {
+      if (handle.cleared) continue;
+      handle.fn();
+      if (!handle.cleared) handle.dueAt += handle.ms;
     }
   }
 }

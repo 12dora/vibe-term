@@ -9,6 +9,7 @@ import {
   PEER_DC_UPGRADE_RETRY_TAIL_MS,
   PEER_RETIRE_MAX_MS,
   PEER_RETIRE_MIN_MS,
+  PEER_RETIRE_QUIET_MS,
   PEER_RTC_WAKE_COOLDOWN_MS,
   PEER_RTC_WAKE_NONCE_CACHE,
   PEER_RTC_WAKE_VERIFY_BURST,
@@ -2725,11 +2726,40 @@ describe('PeerManager', () => {
     const idleTimers = scheduler.intervals.filter((row) => !row.cleared && row.ms === idleMs);
     expect(idleTimers).toHaveLength(1);
     expect(scheduler.intervals.some((row) => !row.cleared && row.ms === 1_000)).toBe(false);
-    scheduler.nowMs += idleMs - 1;
-    scheduler.tickIntervals();
+    scheduler.advance(idleMs - 1);
     expect(manager.listReach().get(peer.nodeId)).toBe('relay');
-    scheduler.nowMs += 1;
-    scheduler.tickIntervals();
+    scheduler.advance(1);
+    await waitUntil(() => manager.listReach().get(peer.nodeId) !== 'relay');
+  });
+
+  test('idle deadline re-arms from stream activity', async () => {
+    const { db, close } = createMigratedAuthDb();
+    fixtures.push({ close });
+    const store = new UserStore(db);
+    seedUser(store);
+    const self = seedNodeIdentity(store, 'user-1');
+    const peer = seedNodeIdentity(store, 'user-1');
+    const scheduler = new ImmediateScheduler();
+    const idleMs = 5_000;
+    const manager = new PeerManager({
+      identity: self,
+      userStore: store,
+      uplink: dummyUplink(self, store),
+      peerPort: 0,
+      startServer: false,
+      idleMs,
+      scheduler,
+    });
+    fixtures.push({ close, stop: () => manager.stop() });
+    const [local] = createInMemoryLinkPair();
+    expect(manager.adoptLink(peer.nodeId, local, 'relay', self.nodeId)).toBe(local);
+    scheduler.advance(3_000);
+    const stream = await local.openStream(new TextEncoder().encode('{"type":"keep"}'));
+    stream.reset('done');
+    await stream.closed;
+    scheduler.advance(2_000);
+    expect(manager.listReach().get(peer.nodeId)).toBe('relay');
+    scheduler.advance(3_000);
     await waitUntil(() => manager.listReach().get(peer.nodeId) !== 'relay');
   });
 
@@ -2772,11 +2802,9 @@ describe('PeerManager', () => {
     );
     expect(parkTimers).toHaveLength(1);
     const parkedClosed = parkA.closed;
-    scheduler.nowMs += PEER_RETIRE_MAX_MS - 1;
-    scheduler.tickIntervals();
+    scheduler.advance(PEER_RETIRE_MAX_MS - 1);
     expect(manager.transportOf(peer.nodeId)).toBe('relay');
-    scheduler.nowMs += 1;
-    scheduler.tickIntervals();
+    scheduler.advance(1);
     expect((await parkedClosed).reason).toBe('park-timeout');
     expect(manager.transportOf(peer.nodeId)).toBe('relay');
   });
@@ -2820,16 +2848,118 @@ describe('PeerManager', () => {
       (row) => !row.cleared && row.ms === PEER_RETIRE_MIN_MS
     );
     expect(retireTimers).toHaveLength(1);
-    scheduler.nowMs += PEER_RETIRE_MIN_MS - 1;
-    scheduler.tickIntervals();
+    scheduler.advance(PEER_RETIRE_MIN_MS - 1);
     let done = false;
     void retired.then(() => {
       done = true;
     });
     await new Promise((r) => setTimeout(r, 10));
     expect(done).toBe(false);
-    scheduler.nowMs += 1;
-    scheduler.tickIntervals();
+    scheduler.advance(1);
+    expect((await retired).reason).toBe('replaced');
+  });
+
+  test('retiring peer waits the quiet window after streams drain past min', async () => {
+    const { db, close } = createMigratedAuthDb();
+    fixtures.push({ close });
+    const store = new UserStore(db);
+    seedUser(store);
+    const self = seedNodeIdentity(store, 'user-1');
+    const peer = seedNodeIdentity(store, 'user-1');
+    store.upsertPeer({
+      nodeId: peer.nodeId,
+      name: 'peer',
+      endpointsJson: '[]',
+      inventoryJson: '{}',
+      directCapable: false,
+      lastSeenAt: Date.now(),
+      listVersion: 1,
+    });
+    const scheduler = new ImmediateScheduler();
+    const manager = new PeerManager({
+      identity: self,
+      userStore: store,
+      uplink: dummyUplink(self, store),
+      peerPort: 0,
+      startServer: false,
+      scheduler,
+    });
+    fixtures.push({ close, stop: () => manager.stop() });
+    const [liveA, liveB] = createInMemoryLinkPair();
+    echoQuiesceCaps(liveB);
+    expect(manager.adoptLink(peer.nodeId, liveA, 'ws-secure', self.nodeId)).toBe(liveA);
+    await waitUntil(() => manager.quiesceCapableOf(peer.nodeId));
+    const stream = await liveA.openStream(new TextEncoder().encode('{"type":"keep"}'));
+    const [nextA, nextB] = createInMemoryLinkPair();
+    fixtures.push({ close: () => nextB.close('test') });
+    echoQuiesceCaps(nextB);
+    const retired = liveA.closed;
+    expect(manager.adoptLink(peer.nodeId, nextA, 'dc', self.nodeId, '10.0.0.8')).toBe(nextA);
+    scheduler.advance(PEER_RETIRE_MIN_MS);
+    let done = false;
+    void retired.then(() => {
+      done = true;
+    });
+    await new Promise((r) => setTimeout(r, 10));
+    expect(done).toBe(false);
+    stream.reset('done');
+    await stream.closed;
+    scheduler.advance(PEER_RETIRE_QUIET_MS - 1);
+    await new Promise((r) => setTimeout(r, 10));
+    expect(done).toBe(false);
+    scheduler.advance(1);
+    expect((await retired).reason).toBe('replaced');
+  });
+
+  test('retiring peer finishes on the max deadline when quiet would be later', async () => {
+    const { db, close } = createMigratedAuthDb();
+    fixtures.push({ close });
+    const store = new UserStore(db);
+    seedUser(store);
+    const self = seedNodeIdentity(store, 'user-1');
+    const peer = seedNodeIdentity(store, 'user-1');
+    store.upsertPeer({
+      nodeId: peer.nodeId,
+      name: 'peer',
+      endpointsJson: '[]',
+      inventoryJson: '{}',
+      directCapable: false,
+      lastSeenAt: Date.now(),
+      listVersion: 1,
+    });
+    const scheduler = new ImmediateScheduler();
+    const manager = new PeerManager({
+      identity: self,
+      userStore: store,
+      uplink: dummyUplink(self, store),
+      peerPort: 0,
+      startServer: false,
+      scheduler,
+    });
+    fixtures.push({ close, stop: () => manager.stop() });
+    const [liveA, liveB] = createInMemoryLinkPair();
+    echoQuiesceCaps(liveB);
+    expect(manager.adoptLink(peer.nodeId, liveA, 'ws-secure', self.nodeId)).toBe(liveA);
+    await waitUntil(() => manager.quiesceCapableOf(peer.nodeId));
+    const stream = await liveA.openStream(new TextEncoder().encode('{"type":"keep"}'));
+    const [nextA, nextB] = createInMemoryLinkPair();
+    fixtures.push({ close: () => nextB.close('test') });
+    echoQuiesceCaps(nextB);
+    const retired = liveA.closed;
+    expect(manager.adoptLink(peer.nodeId, nextA, 'dc', self.nodeId, '10.0.0.8')).toBe(nextA);
+    scheduler.advance(PEER_RETIRE_MAX_MS - PEER_RETIRE_QUIET_MS + 1);
+    stream.reset('done');
+    await stream.closed;
+    let done = false;
+    void retired.then(() => {
+      done = true;
+    });
+    await new Promise((r) => setTimeout(r, 10));
+    expect(done).toBe(false);
+    scheduler.advance(PEER_RETIRE_QUIET_MS - 2);
+    await new Promise((r) => setTimeout(r, 10));
+    expect(done).toBe(false);
+    scheduler.advance(1);
     expect((await retired).reason).toBe('replaced');
   });
 

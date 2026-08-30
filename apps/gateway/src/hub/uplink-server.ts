@@ -425,7 +425,7 @@ export class UplinkServer {
   private readonly ctlQueues = new WeakMap<LinkSession, CtlQueueState>();
   private readonly rtcSessions = new Map<string, RtcSessionRegistration>();
   private listVersion = 0;
-  private readonly lastNodeListFp = new Map<string, Uint8Array>();
+  private readonly lastNodeListFp = new Map<string, string>();
   private readonly lastNodeListSent = new Map<string, Uint8Array>();
   private stopped = false;
   private readonly inflightCtl = new Set<Promise<void>>();
@@ -551,14 +551,19 @@ export class UplinkServer {
     return true;
   }
 
-  async broadcastNodeList(userId: string): Promise<boolean> {
-    if (this.stopped) return false;
+  async broadcastNodeList(userId: string): Promise<'sent' | 'unchanged' | 'failed'> {
+    if (this.stopped) return 'failed';
+    if (this.registry.listForBroadcast(userId).length === 0) {
+      this.lastNodeListFp.delete(userId);
+      this.lastNodeListSent.delete(userId);
+      return 'unchanged';
+    }
     try {
       const msg = await this.buildNodeList(userId);
-      if (this.stopped) return false;
-      const fingerprint = encodeUplinkCtl({ ...msg, version: 0 });
+      if (this.stopped) return 'failed';
+      const fingerprint = nodeListFingerprint(msg);
       const prev = this.lastNodeListFp.get(userId);
-      if (prev && bytesEqual(prev, fingerprint)) return false;
+      if (prev === fingerprint) return 'unchanged';
       this.listVersion += 1;
       msg.version = this.listVersion;
       const bytes = encodeUplinkCtl(msg);
@@ -567,10 +572,10 @@ export class UplinkServer {
       for (const entry of this.registry.listForBroadcast(userId)) {
         this.sendBytes(entry.link, bytes);
       }
-      return true;
+      return 'sent';
     } catch {
       // broadcast is best-effort after persist/ack
-      return false;
+      return 'failed';
     }
   }
 
@@ -825,7 +830,7 @@ export class UplinkServer {
     this.live.set(link, live);
     this.startHeartbeat(live);
     this.send(link, { t: 'auth.ok' });
-    if (!(await this.broadcastNodeList(userId))) {
+    if ((await this.broadcastNodeList(userId)) === 'unchanged') {
       const cached = this.lastNodeListSent.get(userId);
       if (cached) this.sendBytes(link, cached);
     }
@@ -1370,6 +1375,10 @@ export class UplinkServer {
     if (registry && registry !== nodeId) return registry;
     return this.config.siteName?.trim() || os.hostname().trim() || nodeId;
   }
+}
+
+function nodeListFingerprint(msg: NodeListMessage): string {
+  return JSON.stringify({ ...msg, version: 0 });
 }
 
 function stringifyJson(value: unknown): string {
