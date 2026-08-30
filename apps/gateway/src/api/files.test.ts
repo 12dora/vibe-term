@@ -1,8 +1,12 @@
 import { afterEach, describe, expect, spyOn, test } from 'bun:test';
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import type { BrowseDirectoryResponse, Device } from '@tmex/shared';
+import * as devicesDb from '../db';
 import * as deviceStorage from '../files/device-storage';
+import { directoryBrowseIo } from '../files/directory-browse';
+import * as sshCommand from '../files/ssh-command';
 import {
   createDownloadSession,
   createUploadSession,
@@ -500,5 +504,124 @@ describe('transfer uid cleanup', () => {
     expect(getUploadSession(transferId)).toBeUndefined();
     expect(getTransferOwner(transferId)).toBeNull();
     expectReusedUploadHasNoUid(transferId);
+  });
+});
+
+describe('GET /api/files/browse', () => {
+  const spies: Array<ReturnType<typeof spyOn>> = [];
+  const sandboxDirs: string[] = [];
+
+  afterEach(() => {
+    for (const spy of spies) spy.mockRestore();
+    spies.length = 0;
+    for (const dir of sandboxDirs) rmSync(dir, { recursive: true, force: true });
+    sandboxDirs.length = 0;
+  });
+
+  function localDevice(id = 'browse-http-local'): Device {
+    return {
+      id,
+      name: 'local',
+      type: 'local',
+      authMode: 'auto',
+      sortOrder: 0,
+      createdAt: '',
+      updatedAt: '',
+    };
+  }
+
+  test('400 when deviceId is missing', async () => {
+    const response = await dispatch('GET', '/api/files/browse?path=/tmp');
+    expect(response).toBeInstanceOf(Response);
+    const res = response as Response;
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({ error: 'invalid', code: 'invalid' });
+  });
+
+  test('400 on a relative path', async () => {
+    spies.push(spyOn(devicesDb, 'getDeviceById').mockReturnValue(localDevice()));
+    const response = await dispatch(
+      'GET',
+      `/api/files/browse?deviceId=${localDevice().id}&path=relative/path`
+    );
+    expect(response).toBeInstanceOf(Response);
+    const res = response as Response;
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({ error: 'invalid', code: 'invalid' });
+  });
+
+  test('404 for an unknown device', async () => {
+    spies.push(spyOn(devicesDb, 'getDeviceById').mockReturnValue(null));
+    const response = await dispatch('GET', '/api/files/browse?deviceId=no-such-device&path=/tmp');
+    expect(response).toBeInstanceOf(Response);
+    const res = response as Response;
+    expect(res.status).toBe(404);
+    expect(await res.json()).toEqual({ error: 'device_not_found', code: 'device_not_found' });
+  });
+
+  test('lists local subdirectories of a temp dir', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'tmex-browse-http-'));
+    sandboxDirs.push(root);
+    mkdirSync(join(root, 'sub'));
+    writeFileSync(join(root, 'file.txt'), 'x');
+    spies.push(spyOn(devicesDb, 'getDeviceById').mockReturnValue(localDevice()));
+
+    const response = await dispatch(
+      'GET',
+      `/api/files/browse?deviceId=${localDevice().id}&path=${encodeURIComponent(root)}`
+    );
+    expect(response).toBeInstanceOf(Response);
+    const res = response as Response;
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as BrowseDirectoryResponse;
+    expect(body.entries.map((e) => e.name)).toEqual(['sub']);
+    expect(body.truncated).toBe(false);
+  });
+
+  test('SSH browse uses a mocked remote exec', async () => {
+    const sshDevice: Device = {
+      id: 'browse-http-ssh',
+      name: 'ssh',
+      type: 'ssh',
+      host: 'h',
+      port: 22,
+      username: 'u',
+      authMode: 'key',
+      sortOrder: 0,
+      createdAt: '',
+      updatedAt: '',
+    };
+    spies.push(spyOn(devicesDb, 'getDeviceById').mockReturnValue(sshDevice));
+    spies.push(
+      spyOn(sshCommand, 'buildRsyncDeviceSpec').mockResolvedValue({
+        targetPrefix: 'u@h:',
+        rsh: 'ssh -p 22',
+        env: {},
+        cleanup: () => {},
+      })
+    );
+    const stdout = new TextEncoder().encode('P/home/u\0d\0proj\0l\0link-dir\0');
+    spies.push(
+      spyOn(directoryBrowseIo, 'execSsh').mockResolvedValue({
+        stdout,
+        stderr: '',
+        exitCode: 0,
+      })
+    );
+
+    const response = await dispatch(
+      'GET',
+      `/api/files/browse?deviceId=${sshDevice.id}&path=${encodeURIComponent('/home/u')}`
+    );
+    expect(response).toBeInstanceOf(Response);
+    const res = response as Response;
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as BrowseDirectoryResponse;
+    expect(body.path).toBe('/home/u');
+    expect(body.parent).toBe('/home');
+    expect(body.entries).toEqual([
+      { name: 'link-dir', path: '/home/u/link-dir', hidden: false, symlink: true },
+      { name: 'proj', path: '/home/u/proj', hidden: false, symlink: false },
+    ]);
   });
 });

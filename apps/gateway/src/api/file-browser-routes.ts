@@ -1,8 +1,19 @@
 import { listDirectory, readRawFile, readTextFile, statFile } from '../files/device-storage';
+import { browseDirectory } from '../files/directory-browse';
 import { t } from '../i18n';
 import { codeError } from './file-http';
 import { json } from './http';
 import { type ApiRoute, route } from './route';
+
+async function handleBrowse(url: URL): Promise<Response> {
+  const deviceId = url.searchParams.get('deviceId');
+  if (!deviceId) return codeError('invalid');
+  const path = url.searchParams.get('path') ?? '';
+  const hidden = url.searchParams.get('hidden') === '1';
+  const result = await browseDirectory(deviceId, path, hidden);
+  if (!result.ok) return codeError(result.code, result.detail);
+  return json(result.data);
+}
 
 async function handleList(url: URL): Promise<Response> {
   const rootId = url.searchParams.get('rootId');
@@ -51,6 +62,11 @@ async function handleRaw(url: URL): Promise<Response> {
 }
 
 export const fileBrowserRoutes: ApiRoute[] = [
+  route({
+    method: 'GET',
+    path: '/api/files/browse',
+    handler: (req) => handleBrowse(new URL(req.url)),
+  }),
   route({ method: 'GET', path: '/api/files/list', handler: (req) => handleList(new URL(req.url)) }),
   route({
     method: 'GET',
