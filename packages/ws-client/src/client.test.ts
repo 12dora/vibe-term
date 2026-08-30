@@ -783,7 +783,7 @@ describe('直连载体（attachDirectCarrier / activeCarrier）', () => {
     client.disconnect();
   });
 
-  test('直连背压：send() 返回 false（帧已排进直连队列），不改走 primary 也不重复发', () => {
+  test('直连背压：send() 返回 backpressure（帧已排进直连队列），不改走 primary 也不重复发', () => {
     const socket = new FakeSocket();
     const client = readyClient(socket);
     const carrier = new FakeDirectCarrier();
@@ -792,12 +792,12 @@ describe('直连载体（attachDirectCarrier / activeCarrier）', () => {
     const primaryBefore = socket.sent.length;
 
     carrier.sendResult = 'backpressure';
-    expect(client.send(wsBorsh.KIND_PING, new Uint8Array(0))).toBe(false);
+    expect(client.send(wsBorsh.KIND_PING, new Uint8Array(0))).toBe('backpressure');
     expect(carrier.sent.length).toBe(1);
     expect(socket.sent.length).toBe(primaryBefore);
 
     carrier.sendResult = 'sent';
-    expect(client.send(wsBorsh.KIND_PING, new Uint8Array(0))).toBe(true);
+    expect(client.send(wsBorsh.KIND_PING, new Uint8Array(0))).toBe('sent');
     expect(carrier.sent.length).toBe(2);
 
     client.disconnect();

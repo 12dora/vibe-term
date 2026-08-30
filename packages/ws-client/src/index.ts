@@ -5,6 +5,7 @@ export {
   defaultWsUrl,
   getBorshClient,
   type BorshClientOptions,
+  type ClientSendResult,
   type ConnectionState,
   type BorshMessage,
   type MessageHandler,
@@ -12,6 +13,8 @@ export {
   type ErrorHandler,
   type ChunkProgress,
   type ChunkProgressHandler,
+  type PendingOverflowHandler,
+  type PendingOverflowInfo,
   type WebSocketLike,
   type SocketFactory,
 } from './client';

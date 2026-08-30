@@ -1,7 +1,7 @@
 // 基于 BorshWebSocketClient 的 gateway transport：把连接事件与 S2C 帧翻译成 typed 事件流。
 
 import { wsBorsh } from '@tmex/shared';
-import type { BorshWebSocketClient, ConnectionState } from './client';
+import type { BorshWebSocketClient, ClientSendResult, ConnectionState } from './client';
 import { encodeGatewayTransportCommand } from './transport-command-encoder';
 import { decodeGatewayTransportMessage } from './transport-message-decoder';
 import type {
@@ -41,6 +41,7 @@ export class WebSocketGatewayTransport implements GatewayTransport {
         decodeGatewayTransportMessage(message.kind, message.payload, (event) => this.emit(event))
       ),
       client.onError((error) => this.emit({ type: 'transport-error', error })),
+      client.onPendingOverflow((info) => this.emit({ type: 'pending-overflow', ...info })),
     ];
   }
 
@@ -77,7 +78,7 @@ export class WebSocketGatewayTransport implements GatewayTransport {
     return this.client.isReady();
   }
 
-  send(command: GatewayTransportCommand): boolean {
+  send(command: GatewayTransportCommand): ClientSendResult {
     const message = encodeGatewayTransportCommand(command);
     return this.client.send(message.kind, message.payload);
   }
@@ -146,7 +147,7 @@ export class LazyWebSocketGatewayTransport implements GatewayTransport {
     return this.delegate().isReady();
   }
 
-  send(command: GatewayTransportCommand): boolean {
+  send(command: GatewayTransportCommand): ClientSendResult {
     return this.delegate().send(command);
   }
 

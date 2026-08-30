@@ -7,7 +7,7 @@ import type {
   StateSnapshotPayload,
   wsBorsh,
 } from '@tmex/shared';
-import type { ConnectionState } from './client';
+import type { ClientSendResult, ConnectionState } from './client';
 import type { MovePanePosition } from './message-builder';
 
 export interface GatewayTerminalCursor {
@@ -108,7 +108,14 @@ export type GatewayTransportEvent =
   | { type: 'site-theme-update'; theme: 'dark' | 'light' }
   // 服务端设置变更的缓存失效信号；namespace 保持 wire 原样（服务端可新增取值，客户端按需匹配）
   | { type: 'settings-update'; namespace: string }
-  | { type: 'transport-error'; error: Error };
+  | { type: 'transport-error'; error: Error }
+  | {
+      type: 'pending-overflow';
+      kind: number;
+      pendingFrames: number;
+      pendingBytes: number;
+      droppedFrames: number;
+    };
 
 export type GatewayNodeEvent = {
   type: 'node-event';
@@ -225,7 +232,7 @@ export interface GatewayTransport {
   dispose(): void;
   getState(): ConnectionState;
   isReady(): boolean;
-  send(command: GatewayTransportCommand): boolean;
+  send(command: GatewayTransportCommand): ClientSendResult | boolean;
   onEvent(handler: GatewayTransportEventHandler): () => void;
 }
 

@@ -9,6 +9,12 @@ import {
   type DirectCarrierLike,
 } from './carrier-switch';
 import { HeartbeatController } from './heartbeat-controller';
+import {
+  DEFAULT_MAX_PENDING_BYTES,
+  DEFAULT_MAX_PENDING_FRAMES,
+  type PendingOverflowInfo,
+  PendingSendQueue,
+} from './pending-send-queue';
 import { type BorshMessage, type ChunkProgress, ProtocolDispatcher } from './protocol-dispatcher';
 import { ReconnectController } from './reconnect-controller';
 
@@ -80,6 +86,10 @@ export interface BorshClientOptions {
   url?: string;
   /** 自定义 transport 工厂；缺省为 `new WebSocket(url)` */
   socketFactory?: SocketFactory;
+  /** 未就绪待发队列字节上限；缺省 2 MiB */
+  maxPendingBytes?: number;
+  /** 未就绪待发队列帧数上限；缺省 2048 */
+  maxPendingFrames?: number;
 }
 
 export type ConnectionState =
@@ -96,6 +106,14 @@ export type MessageHandler = (message: BorshMessage) => void;
 export type StateChangeHandler = (state: ConnectionState) => void;
 export type ErrorHandler = (error: Error) => void;
 export type ChunkProgressHandler = (progress: ChunkProgress) => void;
+export type PendingOverflowHandler = (info: PendingOverflowInfo) => void;
+
+/**
+ * 出站结果。`queued` / `backpressure` 数据未丢，调用方不必重发；
+ * `overflow` 表示本帧未入队（有序输入会整段丢弃），调用方必须视为发送失败。
+ */
+export type ClientSendResult = 'sent' | 'queued' | 'backpressure' | 'overflow';
+export type { PendingOverflowInfo };
 
 // ========== Borsh WebSocket 客户端 ==========
 
@@ -118,6 +136,7 @@ export class BorshWebSocketClient {
   private errorHandlers: Set<ErrorHandler> = new Set();
   private latencyHandlers: Set<(ms: number) => void> = new Set();
   private chunkProgressHandlers: Set<ChunkProgressHandler> = new Set();
+  private pendingOverflowHandlers: Set<PendingOverflowHandler> = new Set();
 
   // visibilitychange
   private visibilityHandler: (() => void) | null = null;
@@ -128,9 +147,7 @@ export class BorshWebSocketClient {
   private carrierChangeHandlers: Set<(active: ActiveCarrier) => void> = new Set();
   private resumeSubscribedPanes: (() => void) | null = null;
 
-  // 待发送队列
-  private pendingMessages: Array<{ kind: number; payload: Uint8Array }> = [];
-  private maxPendingMessages = 100;
+  private readonly pending: PendingSendQueue;
 
   hasConnectedOnce = false;
   latencyMs: number | null = null;
@@ -139,6 +156,10 @@ export class BorshWebSocketClient {
 
   constructor(options: Partial<BorshClientOptions> = {}) {
     this.options = { ...DEFAULT_OPTIONS, ...options };
+    this.pending = new PendingSendQueue({
+      maxBytes: this.options.maxPendingBytes ?? DEFAULT_MAX_PENDING_BYTES,
+      maxFrames: this.options.maxPendingFrames ?? DEFAULT_MAX_PENDING_FRAMES,
+    });
 
     this.dispatcher = new ProtocolDispatcher({
       onMessage: (message) => this.dispatchMessage(message),
@@ -220,6 +241,11 @@ export class BorshWebSocketClient {
   onChunkProgress(handler: ChunkProgressHandler): () => void {
     this.chunkProgressHandlers.add(handler);
     return () => this.chunkProgressHandlers.delete(handler);
+  }
+
+  onPendingOverflow(handler: PendingOverflowHandler): () => void {
+    this.pendingOverflowHandlers.add(handler);
+    return () => this.pendingOverflowHandlers.delete(handler);
   }
 
   // ========== 连接管理 ==========
@@ -390,17 +416,16 @@ export class BorshWebSocketClient {
   }
 
   /**
-   * 返回值语义：`true` = 已写进当前载体；`false` = **未立刻上线**（未就绪时进
-   * `pendingMessages`，或直连处于背压、整帧已排进直连队列）。两种情况数据都没丢，
-   * 调用方不需要也不应该重发。
+   * 返回值语义：
+   * - `sent`：已写进当前载体
+   * - `queued`：未就绪，已进入待发队列，就绪后按序 flush；无需重发
+   * - `backpressure`：直连背压，整帧已排进直连队列；无需重发
+   * - `overflow`：超出待发字节/帧预算，本帧未入队。有序输入（TERM_INPUT / TERM_PASTE）
+   *   会丢掉**整段**已排队输入并在本未就绪周期内拒绝后续输入，避免只丢掉中间而发出残缺序列。
    */
-  send(kind: number, payload: Uint8Array): boolean {
+  send(kind: number, payload: Uint8Array): ClientSendResult {
     if (!this.isReady()) {
-      // 未就绪，加入队列
-      if (this.pendingMessages.length < this.maxPendingMessages) {
-        this.pendingMessages.push({ kind, payload });
-      }
-      return false;
+      return this.enqueuePending(kind, payload);
     }
 
     const seq = this.nextSeq();
@@ -424,7 +449,7 @@ export class BorshWebSocketClient {
       }
     }
 
-    return flushed;
+    return flushed ? 'sent' : 'backpressure';
   }
 
   /** 返回是否已真正写出；`false` 表示直连在背压中、整帧已排队等待排水。 */
@@ -442,12 +467,28 @@ export class BorshWebSocketClient {
     }
   }
 
-  private flushPendingMessages(): void {
-    while (this.pendingMessages.length > 0) {
-      const msg = this.pendingMessages.shift();
-      if (msg) {
-        this.send(msg.kind, msg.payload);
+  private enqueuePending(kind: number, payload: Uint8Array): ClientSendResult {
+    const outcome = this.pending.enqueue(kind, payload);
+    if (outcome.status === 'queued') return 'queued';
+    if (outcome.info) this.emitPendingOverflow(outcome.info);
+    return 'overflow';
+  }
+
+  private emitPendingOverflow(info: PendingOverflowInfo): void {
+    console.warn('[borsh-client] Pending send overflow', info);
+    for (const handler of this.pendingOverflowHandlers) {
+      try {
+        handler(info);
+      } catch (err) {
+        console.error('[borsh-client] Pending overflow handler error:', err);
       }
+    }
+  }
+
+  private flushPendingMessages(): void {
+    const queued = this.pending.drain();
+    for (const msg of queued) {
+      this.send(msg.kind, msg.payload);
     }
   }
 
