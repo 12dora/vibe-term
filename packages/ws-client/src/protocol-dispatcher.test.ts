@@ -106,4 +106,19 @@ describe('ProtocolDispatcher', () => {
     }
     expect(rec.messages).toEqual([]);
   });
+
+  test('业务帧 payload 借用原始帧缓冲（零拷贝）', () => {
+    const rec = createRecorder();
+    const buffer = frame(wsBorsh.encodeEnvelope(wsBorsh.KIND_TERM_OUTPUT, new Uint8Array(64), 5));
+    rec.dispatcher.handleFrame(buffer);
+    expect(rec.messages[0]?.payload.buffer).toBe(buffer);
+  });
+
+  test('payload 长度前缀越界的帧被丢弃', () => {
+    const rec = createRecorder();
+    const bytes = wsBorsh.encodeEnvelope(wsBorsh.KIND_TERM_OUTPUT, new Uint8Array([1, 2]), 6);
+    new DataView(bytes.buffer, bytes.byteOffset).setUint32(12, 0xffffffff, true);
+    rec.dispatcher.handleFrame(frame(bytes));
+    expect(rec.messages).toEqual([]);
+  });
 });

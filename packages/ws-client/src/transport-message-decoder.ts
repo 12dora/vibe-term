@@ -124,7 +124,7 @@ const MESSAGE_DECODERS = new Map<number, MessageDecoder>([
   [
     wsBorsh.KIND_TERM_OUTPUT,
     (payload, emit) => {
-      const decoded = wsBorsh.decodePayload(wsBorsh.schema.TermOutputSchema, payload);
+      const decoded = wsBorsh.decodeTermOutputView(payload);
       emit({
         type: 'terminal-data',
         frame: { deviceId: decoded.deviceId, paneId: decoded.paneId, data: decoded.data },

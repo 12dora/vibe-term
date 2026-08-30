@@ -242,4 +242,20 @@ describe('decodeGatewayTransportMessage', () => {
     expect(handled).toBe(true);
     expect(events).toEqual([{ type: 'rebase-required', reason: 'resource_exhausted' }]);
   });
+  test('terminal-data 的 data 是 payload 视图，截断/越界 payload 抛错', () => {
+    const payload = wsBorsh.encodePayload(wsBorsh.schema.TermOutputSchema, {
+      deviceId: 'dev-1',
+      paneId: '%1',
+      encoding: 0,
+      data: new Uint8Array(32).fill(7),
+    });
+    const { events } = collect(wsBorsh.KIND_TERM_OUTPUT, payload);
+    const frame = (events[0] as Extract<GatewayTransportEvent, { type: 'terminal-data' }>).frame;
+    expect(frame.data.buffer).toBe(payload.buffer);
+
+    expect(() => collect(wsBorsh.KIND_TERM_OUTPUT, payload.subarray(0, 10))).toThrow();
+    const oversize = new Uint8Array(payload);
+    new DataView(oversize.buffer).setUint32(oversize.length - 36, 0xffffffff, true);
+    expect(() => collect(wsBorsh.KIND_TERM_OUTPUT, oversize)).toThrow();
+  });
 });

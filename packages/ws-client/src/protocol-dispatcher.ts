@@ -48,7 +48,8 @@ export class ProtocolDispatcher {
     }
 
     try {
-      const envelope = wsBorsh.decodeEnvelope(buffer);
+      // 视图解码：payload 直接借用帧缓冲，TERM_OUTPUT 的 MiB 级字节不再逐帧 copy 两遍
+      const envelope = wsBorsh.decodeEnvelopeView(buffer);
 
       if (envelope.kind === wsBorsh.KIND_CHUNK) {
         this.handleChunk(envelope.payload);

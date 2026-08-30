@@ -4,7 +4,7 @@
 import type { Schema } from '@zorsh/zorsh';
 import type { b } from '@zorsh/zorsh';
 import { ERROR_INVALID_FRAME, ERROR_PAYLOAD_DECODE_FAILED, WsBorshError } from './errors';
-import { ChunkSchema, EnvelopeSchema } from './schema';
+import { ChunkSchema, EnvelopeSchema, type TermOutputSchema } from './schema';
 
 // ========== 常量 ==========
 
@@ -77,6 +77,70 @@ export function decodeEnvelope(data: Uint8Array): Envelope {
       err instanceof Error ? err.message : 'Failed to decode envelope'
     );
   }
+}
+
+// 零拷贝解码：bytes 字段返回入参缓冲的 subarray 视图，只用于 TERM_OUTPUT 这类每帧可达 MiB 级的
+// 热路径（通用 schema 解码器逐字节 copy 一遍）。调用方不得改写返回的视图，也不得跨帧长期持有。
+
+const ENVELOPE_HEADER_BYTES = 16; // magic(2) + version(2) + kind(2) + flags(2) + seq(4) + payloadLen(4)
+const utf8Decoder = new TextDecoder();
+
+export function decodeEnvelopeView(data: Uint8Array): Envelope {
+  if (data.length < 12) {
+    throw new WsBorshError(ERROR_INVALID_FRAME, false, 'Envelope too small');
+  }
+  if (data[0] !== MAGIC[0] || data[1] !== MAGIC[1]) {
+    throw new WsBorshError(ERROR_INVALID_FRAME, false, 'Invalid magic bytes');
+  }
+  if (data.length < ENVELOPE_HEADER_BYTES) {
+    throw new WsBorshError(ERROR_INVALID_FRAME, false, 'Envelope header truncated');
+  }
+  const view = new DataView(data.buffer, data.byteOffset, data.byteLength);
+  const payloadLength = view.getUint32(12, true);
+  if (payloadLength > data.length - ENVELOPE_HEADER_BYTES) {
+    throw new WsBorshError(ERROR_INVALID_FRAME, false, 'Envelope payload truncated');
+  }
+  return {
+    magic: data.subarray(0, 2),
+    version: view.getUint16(2, true),
+    kind: view.getUint16(4, true),
+    flags: view.getUint16(6, true),
+    seq: view.getUint32(8, true),
+    payload: data.subarray(ENVELOPE_HEADER_BYTES, ENVELOPE_HEADER_BYTES + payloadLength),
+  };
+}
+
+export type TermOutputView = b.infer<typeof TermOutputSchema>;
+
+export function decodeTermOutputView(payload: Uint8Array): TermOutputView {
+  const view = new DataView(payload.buffer, payload.byteOffset, payload.byteLength);
+  let offset = 0;
+  const takeLength = (): number => {
+    if (offset + 4 > payload.length) {
+      throw new WsBorshError(ERROR_PAYLOAD_DECODE_FAILED, false, 'TERM_OUTPUT payload truncated');
+    }
+    const length = view.getUint32(offset, true);
+    offset += 4;
+    if (length > payload.length - offset) {
+      throw new WsBorshError(ERROR_PAYLOAD_DECODE_FAILED, false, 'TERM_OUTPUT payload truncated');
+    }
+    return length;
+  };
+  const takeString = (): string => {
+    const length = takeLength();
+    const text = utf8Decoder.decode(payload.subarray(offset, offset + length));
+    offset += length;
+    return text;
+  };
+  const deviceId = takeString();
+  const paneId = takeString();
+  const encoding = payload[offset];
+  if (encoding === undefined) {
+    throw new WsBorshError(ERROR_PAYLOAD_DECODE_FAILED, false, 'TERM_OUTPUT payload truncated');
+  }
+  offset += 1;
+  const dataLength = takeLength();
+  return { deviceId, paneId, encoding, data: payload.subarray(offset, offset + dataLength) };
 }
 
 export function decodePayload<T>(schema: Schema<T>, data: Uint8Array): T {
