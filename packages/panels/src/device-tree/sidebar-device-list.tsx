@@ -45,8 +45,8 @@ export interface SideBarDeviceListProps {
   emptyLabel?: string;
   /** 宿主连接管理；未传时不渲染连接开关，展开仍走 ensureDeviceSubscribed */
   connection?: DeviceConnectionAdapter;
-  /** 分节退场期间要继续显示的设备（宿主锁存的上一个选中设备），替代路由选中 */
-  pinnedDeviceId?: string;
+  /** 传了就只按这份 id 集合显示（分节退场期间宿主锁存的上一帧可见设备），不再按可见性/选中重算 */
+  pinnedDeviceIds?: readonly string[];
 }
 
 export function SideBarDeviceList({
@@ -56,7 +56,7 @@ export function SideBarDeviceList({
   agent,
   emptyLabel,
   connection,
-  pinnedDeviceId,
+  pinnedDeviceIds,
 }: SideBarDeviceListProps) {
   const { t } = useTranslation();
   const runtime = useRuntime();
@@ -160,16 +160,18 @@ export function SideBarDeviceList({
 
   // 侧边栏只展示「已选择显示」的设备（远端 node 默认全隐藏，本机默认全显示）；
   // 规则与「选中的那台无条件保留」见 selectSidebarVisibleDevices。
-  const visibleDevices = useMemo(
-    () =>
-      selectSidebarVisibleDevices(
-        devices,
-        sidebarDeviceVisibility,
-        runtime.nodeId,
-        pinnedDeviceId ?? selectedDeviceId
-      ),
-    [devices, selectedDeviceId, pinnedDeviceId, sidebarDeviceVisibility, runtime.nodeId]
-  );
+  const visibleDevices = useMemo(() => {
+    if (pinnedDeviceIds) {
+      const pinned = new Set(pinnedDeviceIds);
+      return devices.filter((device) => pinned.has(device.id));
+    }
+    return selectSidebarVisibleDevices(
+      devices,
+      sidebarDeviceVisibility,
+      runtime.nodeId,
+      selectedDeviceId
+    );
+  }, [devices, selectedDeviceId, pinnedDeviceIds, sidebarDeviceVisibility, runtime.nodeId]);
 
   const autoExpandedDeviceIdsRef = useRef(new Set<string>());
 

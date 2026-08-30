@@ -11,6 +11,8 @@ import { type SidebarDeviceStats, selectSidebarVisibleDevices } from './device-t
 export interface SidebarDeviceStatsResult extends SidebarDeviceStats {
   /** 设备列表请求失败：此时不能按「零设备」隐藏分节，要把加载失败/重试 UI 留给设备树。 */
   failed: boolean;
+  /** 侧边栏实际会渲染的设备 id（分节退场时供宿主锁存） */
+  visibleIds: string[];
 }
 
 export function useSidebarDeviceStats(
@@ -31,11 +33,12 @@ export function useSidebarDeviceStats(
   const { nodeId } = runtime;
   return useMemo(() => {
     const list = devices ?? [];
-    return {
-      total: list.length,
-      visible: selectSidebarVisibleDevices(list, sidebarDeviceVisibility, nodeId, selectedDeviceId)
-        .length,
-      failed,
-    };
+    const visibleIds = selectSidebarVisibleDevices(
+      list,
+      sidebarDeviceVisibility,
+      nodeId,
+      selectedDeviceId
+    ).map((device) => device.id);
+    return { total: list.length, visible: visibleIds.length, failed, visibleIds };
   }, [devices, failed, sidebarDeviceVisibility, nodeId, selectedDeviceId]);
 }
