@@ -73,15 +73,15 @@ export function meshConnectionPath(cid?: string | null): string {
   return cid ? `${MESH_CONNECTION_PATH}?cid=${encodeURIComponent(cid)}` : MESH_CONNECTION_PATH;
 }
 
-export const DEFAULT_RETRY_BASE_MS = 1000;
-export const DEFAULT_RETRY_MAX_MS = 30_000;
-export const DEFAULT_MAX_ATTEMPTS = 5;
-export const DEFAULT_CONNECT_TIMEOUT_MS = 15_000;
-export const DEFAULT_STATS_INTERVAL_MS = 2000;
+const DEFAULT_RETRY_BASE_MS = 1000;
+const DEFAULT_RETRY_MAX_MS = 30_000;
+const DEFAULT_MAX_ATTEMPTS = 5;
+const DEFAULT_CONNECT_TIMEOUT_MS = 15_000;
+const DEFAULT_STATS_INTERVAL_MS = 2000;
 /** `iceConnectionState === 'disconnected'` 的宽限期：撑过短暂抖动，超时就回落 primary。 */
-export const DEFAULT_ICE_DISCONNECT_GRACE_MS = 5000;
+const DEFAULT_ICE_DISCONNECT_GRACE_MS = 5000;
 /** `navigator.connection` 的 `change` 抖动很密，去抖后再重连。 */
-export const DEFAULT_NETWORK_CHANGE_DEBOUNCE_MS = 800;
+const DEFAULT_NETWORK_CHANGE_DEBOUNCE_MS = 800;
 
 /**
  * primary（Gateway WS）的状态源。`BorshWebSocketClient` 结构上即满足，
@@ -106,7 +106,7 @@ export interface GatewayConnectionLike {
 }
 
 /** 事件源的最小结构子集（`window` / `navigator.connection` 都满足）。 */
-export interface EventTargetLike {
+interface EventTargetLike {
   addEventListener(type: string, cb: () => void): void;
   removeEventListener(type: string, cb: () => void): void;
 }
@@ -181,6 +181,15 @@ interface Attempt {
   chain: Promise<void>;
 }
 
+/** 清理路径（注销订阅 / 关闭已关闭的对象）不该因二次调用抛出而中断。 */
+function quietly(fn: (() => void) | null | undefined): void {
+  try {
+    fn?.();
+  } catch {
+    // 已注销 / 已关闭
+  }
+}
+
 function toStringArray(value: unknown): string[] {
   if (!Array.isArray(value)) return typeof value === 'string' && value ? [value] : [];
   return value.filter((item): item is string => typeof item === 'string' && item.length > 0);
@@ -252,8 +261,7 @@ export class DirectCarrierController {
   private statsHandle: unknown = null;
   private networkDebounceHandle: unknown = null;
   private started = false;
-  private onlineHandler: (() => void) | null = null;
-  private connectionChangeHandler: (() => void) | null = null;
+  private readonly networkCleanups: (() => void)[] = [];
   private unsubscribeSignalingReady: (() => void) | null = null;
   private unsubscribeCarrierChange: (() => void) | null = null;
   private unsubscribePrimaryWait: (() => void) | null = null;
@@ -272,6 +280,12 @@ export class DirectCarrierController {
     this.cancelTimer =
       options.clearTimeoutFn ??
       ((handle) => (globalThis as typeof global).clearTimeout(handle as never));
+  }
+
+  /** 撤销一个定时器句柄并交回 `null`：`x = this.clearHandle(x)`。 */
+  private clearHandle(handle: unknown): null {
+    if (handle != null) this.cancelTimer(handle);
+    return null;
   }
 
   // ========== 对外只读状态 ==========
@@ -345,20 +359,20 @@ export class DirectCarrierController {
       return;
     }
     this.attempts = 0;
-    this.clearRetryTimer();
+    this.retryHandle = this.clearHandle(this.retryHandle);
     this.clearPrimaryWait();
-    this.teardownAttempt('retry');
+    this.teardownAttempt();
     this.connect();
   }
 
   stop(): void {
     this.started = false;
-    this.clearRetryTimer();
+    this.retryHandle = this.clearHandle(this.retryHandle);
+    this.statsHandle = this.clearHandle(this.statsHandle);
     this.clearPrimaryWait();
-    this.stopStatsPolling();
     this.removeNetworkListeners();
     this.removeSignalingReadyListener();
-    this.teardownAttempt('stopped');
+    this.teardownAttempt();
     this.setState('idle', null);
   }
 
@@ -439,38 +453,13 @@ export class DirectCarrierController {
     const pc = factory({ iceServers: buildIceServers(config) });
     if (this.stale(attempt)) {
       // 这一代已被替换：新建的 PC 必须就地关掉，否则泄漏
-      closeQuietly(pc);
+      quietly(() => pc.close());
       return;
     }
     attempt.pc = pc;
     const channel = pc.createDataChannel(SESS_CHANNEL_LABEL, { ordered: true });
     attempt.channel = channel;
-
-    pc.onicecandidate = (event) => {
-      if (this.stale(attempt)) return;
-      const candidate = event.candidate;
-      if (!candidate || !candidate.candidate) return;
-      const part: SignalPart = {
-        candidate: JSON.stringify({ candidate: candidate.candidate, mid: candidate.sdpMid ?? '0' }),
-      };
-      // offer 还没排上队时先攒着：entry 要先见到本 rtcSession 的 offer 才认候选。
-      if (!attempt.offerQueued) {
-        attempt.pendingLocalCandidates.push(part);
-        return;
-      }
-      this.queueSignal(attempt, part);
-    };
-    pc.onconnectionstatechange = () => {
-      if (this.stale(attempt)) return;
-      this.refreshIceSnapshot();
-      const s = pc.connectionState;
-      if (s === 'failed' || s === 'closed') this.failAttempt(`peer connection ${s}`, true);
-    };
-    pc.oniceconnectionstatechange = () => {
-      if (this.stale(attempt)) return;
-      this.refreshIceSnapshot();
-      this.handleIceConnectionState(attempt, pc.iceConnectionState);
-    };
+    this.watchPeer(attempt, pc);
 
     const offer = await pc.createOffer();
     await pc.setLocalDescription(offer);
@@ -500,9 +489,38 @@ export class DirectCarrierController {
     };
     channel.onclose = () => {
       if (this.stale(attempt)) return;
-      this.handleCarrierGone('direct channel closed');
+      this.failAttempt('direct channel closed', true);
     };
     if (channel.readyState === 'open') this.mountCarrier(attempt);
+  }
+
+  /** PC 侧的三个回调：本地候选出站、连接态、ICE 态；一律先比对 generation。 */
+  private watchPeer(attempt: Attempt, pc: RTCPeerConnectionLike): void {
+    pc.onicecandidate = (event) => {
+      if (this.stale(attempt)) return;
+      const candidate = event.candidate;
+      if (!candidate || !candidate.candidate) return;
+      const part: SignalPart = {
+        candidate: JSON.stringify({ candidate: candidate.candidate, mid: candidate.sdpMid ?? '0' }),
+      };
+      // offer 还没排上队时先攒着：entry 要先见到本 rtcSession 的 offer 才认候选。
+      if (!attempt.offerQueued) {
+        attempt.pendingLocalCandidates.push(part);
+        return;
+      }
+      this.queueSignal(attempt, part);
+    };
+    pc.onconnectionstatechange = () => {
+      if (this.stale(attempt)) return;
+      this.refreshIceSnapshot();
+      const s = pc.connectionState;
+      if (s === 'failed' || s === 'closed') this.failAttempt(`peer connection ${s}`, true);
+    };
+    pc.oniceconnectionstatechange = () => {
+      if (this.stale(attempt)) return;
+      this.refreshIceSnapshot();
+      this.handleIceConnectionState(attempt, pc.iceConnectionState);
+    };
   }
 
   private async fetchRtcConfig(attempt: Attempt): Promise<RtcConfigResponse | null> {
@@ -527,11 +545,9 @@ export class DirectCarrierController {
    * HELLO 帧（Borsh）在 B2-10 里也明确不改，所以身份只能靠握手 URL 上的 `?cid=` nonce
    * 加这一条 REST 换取。返回的是 node **自己生成**的 id，nonce 绝不能拿去 authorize。
    *
-   * - `404 NO_CONNECTION`：primary 还没在 node 上登记（刚开页面 / 刚断线）→ 等 primary 连上再来。
-   * - `409 MULTIPLE_CONNECTIONS`：同 sid 多条 live WS，node 无法定位到本标签页 → 这段时间
-   *   直连建不了，等 primary 重连过再试（届时 sid 上的连接分布会变）。
-   * - 其它非 2xx（老 node 上该路由返回 405、5xx 等）：5xx 退避重试，其余退化成不带
-   *   connectionId 的旧行为——单连接时 node 侧照样能唯一定位。
+   * 非 2xx 时：`NO_CONNECTION` / `MULTIPLE_CONNECTIONS` 交给 `throwIfPrimaryWait` 转成等待，
+   * 5xx 退避重试，其余（老 node 上该路由返回的 405 等）退化成不带 connectionId 的旧行为
+   * ——单连接时 node 侧照样能唯一定位。
    */
   private async fetchConnectionId(attempt: Attempt): Promise<string | null> {
     let res: Response;
@@ -553,9 +569,7 @@ export class DirectCarrierController {
       if (typeof body?.connectionId === 'string' && body.connectionId) return body.connectionId;
       throw new DirectAuthorizeError('connection lookup response malformed', true);
     }
-    const code = await readErrorCode(res);
-    const wait = primaryWaitFor(res.status, code);
-    if (wait) throw new DirectPrimaryWaitError(`connection lookup: ${code}`, wait);
+    await throwIfPrimaryWait(res, 'connection lookup');
     if (res.status >= 500) {
       throw new DirectAuthorizeError(`connection lookup failed (${res.status})`, false);
     }
@@ -583,9 +597,7 @@ export class DirectCarrierController {
     if (!res.ok) {
       // connectionId 在 GET 与 authorize 之间失效（primary 重连 / 又开了一个标签页）：
       // 这不是配置错误，按「等 primary」处理，别当成 4xx 永久失败卡死在 failed。
-      const code = await readErrorCode(res);
-      const wait = primaryWaitFor(res.status, code);
-      if (wait) throw new DirectPrimaryWaitError(`authorize: ${code}`, wait);
+      await throwIfPrimaryWait(res, 'authorize');
       // 4xx 是配置/权限问题，重试没有意义；5xx（如 DIRECT_UNAVAILABLE）才退避重试。
       throw new DirectAuthorizeError(`authorize failed (${res.status})`, res.status < 500);
     }
@@ -593,9 +605,8 @@ export class DirectCarrierController {
     const fp = body.fp_node as { algorithm?: unknown; value?: unknown } | undefined;
     if (
       typeof body.nonce !== 'string' ||
-      !fp ||
-      typeof fp.algorithm !== 'string' ||
-      typeof fp.value !== 'string'
+      typeof fp?.algorithm !== 'string' ||
+      typeof fp?.value !== 'string'
     ) {
       throw new DirectAuthorizeError('authorize response malformed', true);
     }
@@ -631,16 +642,14 @@ export class DirectCarrierController {
       if (typeof parsed.sdp !== 'string') return;
       const type = typeof parsed.type === 'string' ? parsed.type : 'answer';
       // 指纹绑定：先核对再 setRemoteDescription，不一致就不让 DTLS 起来。
-      const fpRemote = parseSdpFingerprint(parsed.sdp);
-      if (!fingerprintsEqual(fpRemote, attempt.fpNode)) {
+      if (!fingerprintsEqual(parseSdpFingerprint(parsed.sdp), attempt.fpNode)) {
         this.failAttempt('node DTLS fingerprint mismatch', false);
         return;
       }
       await pc.setRemoteDescription({ type, sdp: parsed.sdp });
       if (this.stale(attempt)) return;
       attempt.remoteReady = true;
-      const queued = attempt.pendingRemoteCandidates.splice(0);
-      for (const candidate of queued) {
+      for (const candidate of attempt.pendingRemoteCandidates.splice(0)) {
         try {
           await pc.addIceCandidate(candidate);
         } catch {
@@ -714,7 +723,7 @@ export class DirectCarrierController {
         void this.pumpOutbox(attempt);
         return;
       }
-      this.clearRetryTimer();
+      this.retryHandle = this.clearHandle(this.retryHandle);
       this.connect();
     });
   }
@@ -722,11 +731,7 @@ export class DirectCarrierController {
   private removeSignalingReadyListener(): void {
     const unsubscribe = this.unsubscribeSignalingReady;
     this.unsubscribeSignalingReady = null;
-    try {
-      unsubscribe?.();
-    } catch {
-      // 已注销
-    }
+    quietly(unsubscribe);
   }
 
   // ========== 载体挂载与激活 ==========
@@ -759,8 +764,9 @@ export class DirectCarrierController {
     attempt.carrier = carrier;
     carrier.onClose(() => {
       if (this.stale(attempt)) return;
-      this.handleCarrierGone(
-        failure.reason ? `direct protocol violation: ${failure.reason}` : 'direct channel closed'
+      this.failAttempt(
+        failure.reason ? `direct protocol violation: ${failure.reason}` : 'direct channel closed',
+        true
       );
     });
     this.subscribeCarrierChange(attempt);
@@ -773,7 +779,7 @@ export class DirectCarrierController {
   private subscribeCarrierChange(attempt: Attempt): void {
     const subscribe = this.options.connection.onCarrierChange;
     if (!subscribe) return;
-    this.unsubscribeCarrierChange?.();
+    quietly(this.unsubscribeCarrierChange);
     this.unsubscribeCarrierChange = subscribe.call(this.options.connection, (active) => {
       if (this.stale(attempt)) return;
       if (active === 'direct') {
@@ -781,7 +787,7 @@ export class DirectCarrierController {
         return;
       }
       // 切回 primary：这条直连已经不承载业务了，按载体失效处理（退避后重来）。
-      if (this.state === 'active') this.handleCarrierGone('switched back to primary');
+      if (this.state === 'active') this.failAttempt('switched back to primary', true);
     });
   }
 
@@ -790,7 +796,7 @@ export class DirectCarrierController {
     if (this.stale(attempt) || !attempt.carrier) return;
     if (this.state === 'active') return;
     this.attempts = 0;
-    this.clearAttemptTimeout(attempt);
+    attempt.timeoutHandle = this.clearHandle(attempt.timeoutHandle);
     this.setState('active', null);
     this.startStatsPolling();
   }
@@ -798,13 +804,12 @@ export class DirectCarrierController {
   // ========== 失败与退避 ==========
 
   private failAttempt(reason: string, retryable: boolean): void {
-    this.teardownAttempt(reason);
-    this.stopStatsPolling();
+    this.teardownAttempt();
+    this.statsHandle = this.clearHandle(this.statsHandle);
     this.route = null;
     this.rttMs = null;
     this.setState('failed', reason);
-    if (!retryable || !this.started) return;
-    this.scheduleRetry();
+    if (retryable && this.started) this.scheduleRetry();
   }
 
   /**
@@ -812,13 +817,8 @@ export class DirectCarrierController {
    * 所以**不消耗重试次数**，挂在 primary 的状态上等它重连过再来一轮。
    */
   private failWaitingPrimary(reason: string, mode: PrimaryWaitMode): void {
-    this.teardownAttempt(reason);
-    this.stopStatsPolling();
-    this.route = null;
-    this.rttMs = null;
-    this.setState('failed', reason);
-    if (!this.started) return;
-    this.waitForPrimary(mode);
+    this.failAttempt(reason, false);
+    if (this.started) this.waitForPrimary(mode);
   }
 
   /**
@@ -849,7 +849,7 @@ export class DirectCarrierController {
       if (!sawDown) return;
       this.clearPrimaryWait();
       this.attempts = 0;
-      this.clearRetryTimer();
+      this.retryHandle = this.clearHandle(this.retryHandle);
       this.connect();
     });
   }
@@ -857,16 +857,7 @@ export class DirectCarrierController {
   private clearPrimaryWait(): void {
     const unsubscribe = this.unsubscribePrimaryWait;
     this.unsubscribePrimaryWait = null;
-    try {
-      unsubscribe?.();
-    } catch {
-      // 已注销
-    }
-  }
-
-  /** 直连载体没了（通道关闭 / primary 断开导致屏障关掉直连）：退避重连。 */
-  private handleCarrierGone(reason: string): void {
-    this.failAttempt(reason, true);
+    quietly(unsubscribe);
   }
 
   /**
@@ -884,22 +875,18 @@ export class DirectCarrierController {
       }, this.options.iceDisconnectGraceMs ?? DEFAULT_ICE_DISCONNECT_GRACE_MS);
       return;
     }
-    if (attempt.iceGraceHandle != null && (state === 'connected' || state === 'completed')) {
-      this.cancelTimer(attempt.iceGraceHandle);
-      attempt.iceGraceHandle = null;
+    if (state === 'connected' || state === 'completed') {
+      attempt.iceGraceHandle = this.clearHandle(attempt.iceGraceHandle);
+      return;
     }
-    if (state === 'failed' || state === 'closed') {
-      this.failAttempt(`ice ${state}`, true);
-    }
+    if (state === 'failed' || state === 'closed') this.failAttempt(`ice ${state}`, true);
   }
 
   private scheduleRetry(): void {
     if (this.retryHandle != null) return;
-    const maxAttempts = this.options.maxAttempts ?? DEFAULT_MAX_ATTEMPTS;
-    if (this.attempts >= maxAttempts) return; // 停在 failed，等 retry() / 网络或信令恢复
-    const base = this.options.retryBaseMs ?? DEFAULT_RETRY_BASE_MS;
-    const max = this.options.retryMaxMs ?? DEFAULT_RETRY_MAX_MS;
-    const delay = Math.min(max, base * 2 ** this.attempts);
+    // 停在 failed，等 retry() / 网络或信令恢复
+    if (this.attempts >= (this.options.maxAttempts ?? DEFAULT_MAX_ATTEMPTS)) return;
+    const delay = this.retryDelay(this.attempts);
     this.attempts += 1;
     this.retryHandle = this.schedule(() => {
       this.retryHandle = null;
@@ -915,43 +902,16 @@ export class DirectCarrierController {
     return Math.min(max, base * 2 ** Math.max(0, attempt));
   }
 
-  private clearRetryTimer(): void {
-    if (this.retryHandle == null) return;
-    this.cancelTimer(this.retryHandle);
-    this.retryHandle = null;
-  }
-
-  private clearAttemptTimeout(attempt: Attempt): void {
-    if (attempt.timeoutHandle == null) return;
-    this.cancelTimer(attempt.timeoutHandle);
-    attempt.timeoutHandle = null;
-  }
-
-  private teardownAttempt(_reason: string): void {
+  private teardownAttempt(): void {
     const attempt = this.attempt;
     if (!attempt) return;
     this.attempt = null;
     attempt.cancelled = true;
-    this.clearAttemptTimeout(attempt);
-    if (attempt.iceGraceHandle != null) {
-      this.cancelTimer(attempt.iceGraceHandle);
-      attempt.iceGraceHandle = null;
-    }
-    try {
-      attempt.abort.abort();
-    } catch {
-      // AbortController 不会抛，保险起见
-    }
-    try {
-      attempt.unsubscribeSignal();
-    } catch {
-      // 信令已注销
-    }
-    try {
-      this.unsubscribeCarrierChange?.();
-    } catch {
-      // 已注销
-    }
+    attempt.timeoutHandle = this.clearHandle(attempt.timeoutHandle);
+    attempt.iceGraceHandle = this.clearHandle(attempt.iceGraceHandle);
+    quietly(() => attempt.abort.abort());
+    quietly(attempt.unsubscribeSignal);
+    quietly(this.unsubscribeCarrierChange);
     this.unsubscribeCarrierChange = null;
     if (attempt.channel) {
       attempt.channel.onopen = null;
@@ -962,19 +922,15 @@ export class DirectCarrierController {
       attempt.pc.onconnectionstatechange = null;
       attempt.pc.oniceconnectionstatechange = null;
     }
-    try {
-      attempt.carrier?.close();
-    } catch {
-      // 已关闭
-    }
-    if (attempt.pc) closeQuietly(attempt.pc);
+    quietly(() => attempt.carrier?.close());
+    quietly(() => attempt.pc?.close());
     this.options.connection.detachDirectCarrier?.();
   }
 
   // ========== 诊断 ==========
 
   private startStatsPolling(): void {
-    this.stopStatsPolling();
+    this.statsHandle = this.clearHandle(this.statsHandle);
     const interval = this.options.statsIntervalMs ?? DEFAULT_STATS_INTERVAL_MS;
     const tick = () => {
       this.statsHandle = null;
@@ -987,12 +943,6 @@ export class DirectCarrierController {
     };
     void this.pollStats();
     this.statsHandle = this.schedule(tick, interval);
-  }
-
-  private stopStatsPolling(): void {
-    if (this.statsHandle == null) return;
-    this.cancelTimer(this.statsHandle);
-    this.statsHandle = null;
   }
 
   /** 立即抓一次 stats（测试用；正常由轮询驱动）。 */
@@ -1019,6 +969,7 @@ export class DirectCarrierController {
     this.publish();
   }
 
+  /** PC 回调里只刷新两个状态字段，选中候选对仍沿用上一次 `pollStats` 的结果。 */
   private refreshIceSnapshot(): void {
     const pc = this.attempt?.pc;
     if (!pc) return;
@@ -1050,13 +1001,7 @@ export class DirectCarrierController {
       return;
     }
     this.snapshot = next;
-    for (const listener of this.listeners) {
-      try {
-        listener();
-      } catch {
-        // 订阅者异常不得影响其他订阅者
-      }
-    }
+    for (const listener of this.listeners) quietly(listener);
   }
 
   // ========== 状态与网络事件 ==========
@@ -1074,30 +1019,22 @@ export class DirectCarrierController {
   }
 
   private installNetworkListeners(): void {
-    const online = this.resolveNetworkEvents();
-    if (online?.addEventListener && !this.onlineHandler) {
-      const handler = () => this.handleNetworkChange(0);
-      online.addEventListener('online', handler);
-      this.onlineHandler = handler;
-    }
+    const bind = (target: EventTargetLike | null, type: string, debounceMs: number) => {
+      if (!target?.addEventListener) return;
+      const handler = () => this.handleNetworkChange(debounceMs);
+      target.addEventListener(type, handler);
+      this.networkCleanups.push(() => target.removeEventListener?.(type, handler));
+    };
+    bind(this.options.networkEvents ?? (globalThis as unknown as EventTargetLike), 'online', 0);
     // Wi-Fi ↔ 蜂窝切换通常不触发 `online`，只有 Network Information API 的 change。
-    const conn = this.resolveConnectionEvents();
-    if (conn?.addEventListener && !this.connectionChangeHandler) {
-      const handler = () =>
-        this.handleNetworkChange(
-          this.options.networkChangeDebounceMs ?? DEFAULT_NETWORK_CHANGE_DEBOUNCE_MS
-        );
-      conn.addEventListener('change', handler);
-      this.connectionChangeHandler = handler;
-    }
+    const events = this.options.connectionEvents;
+    const debounce = this.options.networkChangeDebounceMs ?? DEFAULT_NETWORK_CHANGE_DEBOUNCE_MS;
+    bind(events !== undefined ? events : defaultConnectionEvents(), 'change', debounce);
   }
 
   private handleNetworkChange(debounceMs: number): void {
     if (!this.started) return;
-    if (this.networkDebounceHandle != null) {
-      this.cancelTimer(this.networkDebounceHandle);
-      this.networkDebounceHandle = null;
-    }
+    this.networkDebounceHandle = this.clearHandle(this.networkDebounceHandle);
     if (debounceMs <= 0) {
       this.retry();
       return;
@@ -1110,33 +1047,8 @@ export class DirectCarrierController {
   }
 
   private removeNetworkListeners(): void {
-    if (this.networkDebounceHandle != null) {
-      this.cancelTimer(this.networkDebounceHandle);
-      this.networkDebounceHandle = null;
-    }
-    const onlineHandler = this.onlineHandler;
-    this.onlineHandler = null;
-    if (onlineHandler) this.resolveNetworkEvents()?.removeEventListener?.('online', onlineHandler);
-    const connHandler = this.connectionChangeHandler;
-    this.connectionChangeHandler = null;
-    if (connHandler) this.resolveConnectionEvents()?.removeEventListener?.('change', connHandler);
-  }
-
-  private resolveNetworkEvents(): EventTargetLike | null {
-    return this.options.networkEvents ?? (globalThis as unknown as EventTargetLike) ?? null;
-  }
-
-  private resolveConnectionEvents(): EventTargetLike | null {
-    if (this.options.connectionEvents !== undefined) return this.options.connectionEvents;
-    return defaultConnectionEvents();
-  }
-}
-
-function closeQuietly(pc: RTCPeerConnectionLike): void {
-  try {
-    pc.close();
-  } catch {
-    // 已关闭
+    this.networkDebounceHandle = this.clearHandle(this.networkDebounceHandle);
+    for (const off of this.networkCleanups.splice(0)) quietly(off);
   }
 }
 
@@ -1170,10 +1082,15 @@ class DirectPrimaryWaitError extends Error {
  * 只认**带明确 code** 的那两个状态：老 node 上 `/api/mesh/connection` 落到
  * `/api/mesh/*` 的 405、或路由缺失的裸 404，都不该被误判成「等 primary」而永久挂起。
  */
-function primaryWaitFor(status: number, code: string): PrimaryWaitMode | null {
-  if (status === 404 && code === 'NO_CONNECTION') return 'open';
-  if (status === 409 && code === 'MULTIPLE_CONNECTIONS') return 'reconnect';
-  return null;
+async function throwIfPrimaryWait(res: Response, label: string): Promise<void> {
+  const code = await readErrorCode(res);
+  const mode: PrimaryWaitMode | null =
+    res.status === 404 && code === 'NO_CONNECTION'
+      ? 'open'
+      : res.status === 409 && code === 'MULTIPLE_CONNECTIONS'
+        ? 'reconnect'
+        : null;
+  if (mode) throw new DirectPrimaryWaitError(`${label}: ${code}`, mode);
 }
 
 async function readErrorCode(res: Response): Promise<string> {

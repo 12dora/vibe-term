@@ -771,6 +771,27 @@ describe('DirectCarrierController 退避与网络变化', () => {
     expect(s.controller.getState()).toBe('idle');
   });
 
+  test('stop() 后再 start()：网络监听只挂一份，online 只重连一次', async () => {
+    const s = setup({ maxAttempts: 1 });
+    s.api.routes.set(RTC_AUTHORIZE_PATH, { status: 503, body: {} });
+    s.controller.start();
+    await flush();
+    s.controller.stop();
+    expect(s.network.count('online')).toBe(0);
+
+    s.controller.start();
+    await flush();
+    s.clock.advance(1000);
+    await flush();
+    expect(s.network.count('online')).toBe(1);
+    expect(s.netInfo.count('change')).toBe(1);
+
+    const before = s.peers.length;
+    s.network.emit('online');
+    await flush();
+    expect(s.peers.length).toBe(before + 1);
+  });
+
   test('navigator.connection 的 change 去抖后重连（Wi-Fi → 蜂窝不发 online）', async () => {
     const s = setup({ maxAttempts: 1, networkChangeDebounceMs: 800 });
     s.api.routes.set(RTC_AUTHORIZE_PATH, { status: 503, body: {} });
