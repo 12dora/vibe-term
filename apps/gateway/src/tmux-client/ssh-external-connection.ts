@@ -9,9 +9,6 @@ import type { TmuxConnectionOptions } from './connection-types';
 import { ControlModeCommandQueue } from './control-mode-capture';
 import { createControlModeSubscription } from './control-mode-subscription';
 import {
-  CONTROL_MAX_RESTARTS,
-  CONTROL_RESTART_DELAY_MS,
-  CONTROL_STABLE_RESET_MS,
   CONTROL_STDERR_TAIL_LIMIT,
   type CommandResult,
   type ExternalControlHandle,
@@ -20,6 +17,11 @@ import {
 import { buildEnsureGhosttyTerminfoScript } from './ghostty-terminfo';
 import { encodeBytesToHexChunks } from './input-encoder';
 import { appendRollingTail, decodeRollingTail } from './local-external-connection';
+import {
+  CONTROL_RECONNECT_POLICY,
+  type ControlReconnectHost,
+  reconnectControlChannel,
+} from './reconnect-control-channel';
 import { buildSshBootstrapScript, parseSshBootstrapOutput } from './ssh-bootstrap';
 import { resolveSshConnectConfig } from './ssh-connect-config';
 import { TmuxTargetMissingError, isTargetMissingMessage } from './target-missing';
@@ -450,61 +452,25 @@ export class SshExternalTmuxConnection extends ExternalTmuxConnectionCore {
   }
 
   private async reconnectControlClient(): Promise<void> {
-    if (Date.now() - this.controlStartedAt > CONTROL_STABLE_RESET_MS) {
-      this.controlRestartCount = 0;
-    }
-    this.controlRestartCount += 1;
-    const stderrMessage = this.controlStderrTail.trim();
-
-    if (this.controlRestartCount > CONTROL_MAX_RESTARTS) {
-      const message = stderrMessage || 'tmux control client channel closed repeatedly';
-      console.warn(`[ssh] tmux control client gave up on ${this.deviceId}: ${message}`);
-      updateDeviceRuntimeStatus(this.deviceId, {
-        lastSeenAt: new Date().toISOString(),
-        tmuxAvailable: false,
-        lastError: message,
-      });
-      void this.shutdownInternal(true);
-      return;
-    }
-
-    console.warn(
-      `[ssh] tmux control client channel closed on ${this.deviceId}, reconnecting (attempt ${this.controlRestartCount})`
-    );
-    await new Promise((resolve) =>
-      setTimeout(resolve, CONTROL_RESTART_DELAY_MS * this.controlRestartCount)
-    );
-    if (!this.connected || this.manualDisconnect) {
-      return;
-    }
-
-    const probe = await this.runTmuxAllowFailure(['has-session', '-t', this.sessionName]);
-    if (probe.exitCode !== 0) {
-      const message = probe.stderr.trim() || probe.stdout.trim() || 'tmux session gone';
-      console.warn(`[ssh] tmux session gone on ${this.deviceId}: ${message}`);
-      updateDeviceRuntimeStatus(this.deviceId, {
-        lastSeenAt: new Date().toISOString(),
-        tmuxAvailable: false,
-        lastError: message,
-      });
-      this.lifecycle.notifySessionClosed(message);
-      void this.shutdownInternal(true);
-      return;
-    }
-    if (!this.connected || this.manualDisconnect) {
-      return;
-    }
-
-    try {
-      await this.startControlClient();
-    } catch (error) {
-      console.warn(`[ssh] control client restart failed on ${this.deviceId}:`, error);
-      return;
-    }
-    this.requestSnapshot();
-    if (this.activePaneId) {
-      void this.capturePaneHistory(this.activePaneId).catch(() => undefined);
-    }
+    await reconnectControlChannel(CONTROL_RECONNECT_POLICY, {
+      host: this as unknown as ControlReconnectHost,
+      onGaveUp: (stderr) => {
+        const message = stderr || 'tmux control client channel closed repeatedly';
+        console.warn(`[ssh] tmux control client gave up on ${this.deviceId}: ${message}`);
+        updateDeviceRuntimeStatus(this.deviceId, {
+          lastSeenAt: new Date().toISOString(),
+          tmuxAvailable: false,
+          lastError: message,
+        });
+        void this.shutdownInternal(true);
+      },
+      onAttempt: (count) => {
+        console.warn(
+          `[ssh] tmux control client channel closed on ${this.deviceId}, reconnecting (attempt ${count})`
+        );
+      },
+      classifyProbe: (probe) => (probe.exitCode === 0 ? 'alive' : 'gone'),
+    });
   }
 
   private async runTmuxIsolated(

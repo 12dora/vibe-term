@@ -17,9 +17,6 @@ import {
 } from './control-mode-subscription';
 import type { ControlStreamMetricsSnapshot } from './control-stream-metrics';
 import {
-  CONTROL_MAX_RESTARTS,
-  CONTROL_RESTART_DELAY_MS,
-  CONTROL_STABLE_RESET_MS,
   CONTROL_STDERR_TAIL_LIMIT,
   type CommandResult,
   type ExternalControlHandle,
@@ -27,6 +24,11 @@ import {
 } from './external-tmux-core';
 import { buildEnsureGhosttyTerminfoScript } from './ghostty-terminfo';
 import { encodeBytesToHexChunks } from './input-encoder';
+import {
+  CONTROL_RECONNECT_POLICY,
+  type ControlReconnectHost,
+  reconnectControlChannel,
+} from './reconnect-control-channel';
 import { TmuxTargetMissingError, isTargetMissingMessage } from './target-missing';
 import {
   isControlModeSupported,
@@ -128,7 +130,11 @@ export function decodeRollingTail(chunks: Uint8Array[], total: number): string {
     merged.set(chunk, offset);
     offset += chunk.byteLength;
   }
-  return new TextDecoder().decode(merged);
+  let start = 0;
+  while (start < merged.length && (merged[start] & 0xc0) === 0x80) {
+    start += 1;
+  }
+  return new TextDecoder().decode(start === 0 ? merged : merged.subarray(start));
 }
 
 export async function readTextWithByteLimit(
@@ -616,67 +622,31 @@ export class LocalExternalTmuxConnection extends ExternalTmuxConnectionCore {
   }
 
   private async reconnectControlClient(exitCode: number): Promise<void> {
-    if (Date.now() - this.controlStartedAt > CONTROL_STABLE_RESET_MS) {
-      this.controlRestartCount = 0;
-    }
-    this.controlRestartCount += 1;
-    const stderrMessage = this.controlStderrTail.trim();
-
-    if (this.controlRestartCount > CONTROL_MAX_RESTARTS) {
-      const message =
-        stderrMessage || `tmux control client exited repeatedly (last code ${exitCode})`;
-      console.warn(`[local] tmux control client gave up on ${this.deviceId}: ${message}`);
-      void this.notifyRuntimeError(message);
-      void this.shutdownInternal(true);
-      return;
-    }
-
-    console.warn(
-      `[local] tmux control client exited (code ${exitCode}) on ${this.deviceId}, reconnecting (attempt ${this.controlRestartCount})`
-    );
-    await new Promise((resolve) =>
-      setTimeout(resolve, CONTROL_RESTART_DELAY_MS * this.controlRestartCount)
-    );
-    if (!this.connected || this.manualDisconnect) {
-      return;
-    }
-
-    const probe = await this.runTmuxAllowFailure(['has-session', '-t', this.sessionName]);
-    if (probe.exitCode === TMUX_SPAWN_UNAVAILABLE_EXIT) {
-      this.handleSpawnUnavailable(probe.stderr);
-      this.controlRestartCount = Math.max(0, this.controlRestartCount - 1);
-      if (this.connected && !this.manualDisconnect) {
-        setTimeout(() => {
-          void this.reconnectControlClient(exitCode);
-        }, CONTROL_RESTART_DELAY_MS * 4);
-      }
-      return;
-    }
-    if (probe.exitCode !== 0) {
-      const message = probe.stderr.trim() || probe.stdout.trim() || 'tmux session gone';
-      console.warn(`[local] tmux session gone on ${this.deviceId}: ${message}`);
-      updateDeviceRuntimeStatus(this.deviceId, {
-        lastSeenAt: new Date().toISOString(),
-        tmuxAvailable: false,
-        lastError: message,
-      });
-      this.lifecycle.notifySessionClosed(message);
-      void this.shutdownInternal(true);
-      return;
-    }
-    if (!this.connected || this.manualDisconnect) {
-      return;
-    }
-
-    try {
-      await this.startControlClient();
-    } catch (error) {
-      console.warn(`[local] control client restart failed on ${this.deviceId}:`, error);
-      return;
-    }
-    this.requestSnapshot();
-    if (this.activePaneId) {
-      void this.capturePaneHistory(this.activePaneId).catch(() => undefined);
+    const retry = await reconnectControlChannel(CONTROL_RECONNECT_POLICY, {
+      host: this as unknown as ControlReconnectHost,
+      onGaveUp: (stderr) => {
+        const message = stderr || `tmux control client exited repeatedly (last code ${exitCode})`;
+        console.warn(`[local] tmux control client gave up on ${this.deviceId}: ${message}`);
+        void this.notifyRuntimeError(message);
+        void this.shutdownInternal(true);
+      },
+      onAttempt: (count) => {
+        console.warn(
+          `[local] tmux control client exited (code ${exitCode}) on ${this.deviceId}, reconnecting (attempt ${count})`
+        );
+      },
+      classifyProbe: (probe) => {
+        if (probe.exitCode === TMUX_SPAWN_UNAVAILABLE_EXIT) {
+          this.handleSpawnUnavailable(probe.stderr);
+          return 'retry';
+        }
+        return probe.exitCode === 0 ? 'alive' : 'gone';
+      },
+    });
+    if (retry) {
+      setTimeout(() => {
+        void this.reconnectControlClient(exitCode);
+      }, retry.retryDelayMs);
     }
   }
 

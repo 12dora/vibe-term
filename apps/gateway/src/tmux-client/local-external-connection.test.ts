@@ -7,6 +7,8 @@ import type { TmuxEvent } from './events';
 import {
   type ControlClientProcess,
   LocalExternalTmuxConnection,
+  appendRollingTail,
+  decodeRollingTail,
   defaultRun,
   readTextWithByteLimit,
   shouldIgnoreReaderAbortError,
@@ -229,6 +231,43 @@ describe('readTextWithByteLimit', () => {
       },
     });
     await expect(readTextWithByteLimit(stream, 16)).resolves.toBe('ok');
+  });
+
+  test('does not emit replacement chars when a multibyte UTF-8 char is split at the byte cap', async () => {
+    const euro = encoder.encode('€');
+    expect(euro.byteLength).toBe(3);
+    const stream = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(euro);
+        controller.close();
+      },
+    });
+    const text = await readTextWithByteLimit(stream, 2);
+    expect(text).toBe('');
+    expect(text.includes('\uFFFD')).toBe(false);
+  });
+
+  test('keeps a complete multibyte char that sits entirely inside the retained tail', async () => {
+    const payload = encoder.encode('ab€');
+    const stream = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(payload);
+        controller.close();
+      },
+    });
+    await expect(readTextWithByteLimit(stream, 4)).resolves.toBe('b€');
+  });
+});
+
+describe('decodeRollingTail UTF-8 alignment', () => {
+  test('drops leading continuation bytes left by a mid-sequence byte trim', () => {
+    const euro = encoder.encode('€');
+    const chunks: Uint8Array[] = [];
+    const next = appendRollingTail(chunks, 0, euro, 2);
+    expect(next.total).toBe(2);
+    const text = decodeRollingTail(chunks, next.total);
+    expect(text).toBe('');
+    expect(text.includes('\uFFFD')).toBe(false);
   });
 });
 
