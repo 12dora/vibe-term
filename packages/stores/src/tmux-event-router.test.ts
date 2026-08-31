@@ -587,14 +587,15 @@ describe('tmux transport event router', () => {
     expect(() =>
       harness.route({ type: 'not-a-real-event' } as unknown as GatewayTransportEvent)
     ).not.toThrow();
-    expect(() =>
-      harness.route({
-        type: 'pending-overflow',
-        kind: 0x0301,
-        pendingFrames: 0,
-        pendingBytes: 0,
-        droppedFrames: 2,
-      })
-    ).not.toThrow();
+    harness.route({
+      type: 'pending-overflow',
+      kind: 0x0301,
+      pendingFrames: 0,
+      pendingBytes: 0,
+      droppedFrames: 2,
+    } as GatewayTransportEvent);
+    expect(harness.namesOf('notify:error').map((call) => call.args[0])).toContain(
+      'websocket.inputDropped'
+    );
   });
 });

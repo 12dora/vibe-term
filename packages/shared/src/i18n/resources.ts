@@ -888,6 +888,7 @@ export const I18N_RESOURCES = {
       "checkGateway": "Please check Gateway status",
       "upgradeFailed": "Upgrade failed",
       "invalidMessage": "Invalid message format",
+      "inputDropped": "Connection interrupted — your recent input could not be sent. Please type or paste it again once reconnected.",
       "reconnecting": "Reconnecting",
       "reconnect": "Reconnect"
     },
@@ -2847,6 +2848,7 @@ export const I18N_RESOURCES = {
       "checkGateway": "请检查 Gateway 状态",
       "upgradeFailed": "升级失败",
       "invalidMessage": "消息格式无效",
+      "inputDropped": "连接中断，刚才的输入未能发送。连接恢复后请重新输入或粘贴。",
       "reconnecting": "重连中",
       "reconnect": "重新连接"
     },
@@ -4805,6 +4807,7 @@ export const I18N_RESOURCES = {
       "checkGateway": "Gateway 状態を確認してください",
       "upgradeFailed": "アップグレードに失敗しました",
       "invalidMessage": "無効なメッセージ形式",
+      "inputDropped": "接続が中断されたため、直前の入力は送信されませんでした。再接続後にもう一度入力または貼り付けてください。",
       "reconnecting": "再接続中",
       "reconnect": "再接続"
     },

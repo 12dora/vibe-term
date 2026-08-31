@@ -882,6 +882,7 @@
       "checkGateway": "请检查 Gateway 状态",
       "upgradeFailed": "升级失败",
       "invalidMessage": "消息格式无效",
+      "inputDropped": "连接中断，刚才的输入未能发送。连接恢复后请重新输入或粘贴。",
       "reconnecting": "重连中",
       "reconnect": "重新连接"
     },

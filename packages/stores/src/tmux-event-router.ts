@@ -232,8 +232,9 @@ const handlers: TmuxEventHandlers = {
     console.error('[tmux] gateway transport error:', event.error);
   },
 
-  'pending-overflow': (event) => {
+  'pending-overflow': (event, ctx) => {
     console.warn('[tmux] pending send overflow:', event);
+    ctx.core.notifications.error(ctx.core.t('websocket.inputDropped'));
   },
 };
 

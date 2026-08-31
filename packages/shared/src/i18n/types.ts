@@ -831,6 +831,7 @@ export type TranslationKey =
   | 'websocket.checkGateway'
   | 'websocket.upgradeFailed'
   | 'websocket.invalidMessage'
+  | 'websocket.inputDropped'
   | 'websocket.reconnecting'
   | 'websocket.reconnect'
   | 'wsError'

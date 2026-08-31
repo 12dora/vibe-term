@@ -882,6 +882,7 @@
       "checkGateway": "Gateway 状態を確認してください",
       "upgradeFailed": "アップグレードに失敗しました",
       "invalidMessage": "無効なメッセージ形式",
+      "inputDropped": "接続が中断されたため、直前の入力は送信されませんでした。再接続後にもう一度入力または貼り付けてください。",
       "reconnecting": "再接続中",
       "reconnect": "再接続"
     },

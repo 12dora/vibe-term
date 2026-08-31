@@ -882,6 +882,7 @@
       "checkGateway": "Please check Gateway status",
       "upgradeFailed": "Upgrade failed",
       "invalidMessage": "Invalid message format",
+      "inputDropped": "Connection interrupted — your recent input could not be sent. Please type or paste it again once reconnected.",
       "reconnecting": "Reconnecting",
       "reconnect": "Reconnect"
     },

@@ -15,10 +15,19 @@ const TRAILING_PUNCT = /[.,;:!?]+$/;
 const SEG = String.raw`[^\s"'\`<>()[\]{}:,;=|/，。；：！？、（）【】《》"']`;
 // lookbehind：匹配起点前不能是路径字符或斜杠，防止从 `~/work` 的 `/work` 处、
 // 或更长 token 的中间开始匹配；`(?!~)` 排除 `~` 开头（无法得知远端 home）。
-const FILE_PATH_PATTERN = new RegExp(
-  `(?<!${SEG}|/)(?!~)(\\.{0,2}(?:/${SEG}+)+/?|${SEG}+(?:/${SEG}+)+/?|${SEG}*[^\\s"'\`<>()[\\]{}:,;=|，。；：！？、（）【】《》"'/.]\\.[A-Za-z][A-Za-z0-9]{0,9})(:\\d+(?::\\d+)?)?`,
-  'g'
-);
+// lookbehind 在 iOS Safari <16.4 不支持且为运行时构造，构建降级救不了：
+// 构造失败时返回 null，文件路径检测优雅降级为不可用（URL 检测不受影响）。
+function buildFilePathPattern(): RegExp | null {
+  try {
+    return new RegExp(
+      `(?<!${SEG}|/)(?!~)(\\.{0,2}(?:/${SEG}+)+/?|${SEG}+(?:/${SEG}+)+/?|${SEG}*[^\\s"'\`<>()[\\]{}:,;=|，。；：！？、（）【】《》"'/.]\\.[A-Za-z][A-Za-z0-9]{0,9})(:\\d+(?::\\d+)?)?`,
+      'g'
+    );
+  } catch {
+    return null;
+  }
+}
+const FILE_PATH_PATTERN = buildFilePathPattern();
 
 export type WrappedMatchKind = 'url' | 'file';
 
@@ -167,6 +176,9 @@ export function detectMatchesInWrappedLines(models: SelectionLineModel[]): Wrapp
     urlMatch = URL_PATTERN.exec(text);
   }
 
+  if (FILE_PATH_PATTERN === null) {
+    return matches;
+  }
   const masked = maskedChars.join('');
   FILE_PATH_PATTERN.lastIndex = 0;
   let fileMatch: RegExpExecArray | null = FILE_PATH_PATTERN.exec(masked);
