@@ -1,41 +1,51 @@
 import type { UpdateCheckResult } from '@tmex/shared';
+import { RELEASE_API_LATEST_URL, releaseTarballName } from '@tmex/shared';
 import { compareVersions } from './semver';
 import { getBaseVersion } from './version';
 
-const REGISTRY_URL = 'https://registry.npmjs.org/tmex-cli';
-const changelogCdnUrl = (version: string) =>
-  `https://cdn.jsdelivr.net/npm/tmex-cli@${version}/CHANGELOG.md`;
-
 const FETCH_TIMEOUT_MS = 10_000;
 
-interface Packument {
-  'dist-tags'?: { latest?: string };
-  time?: Record<string, string>;
+interface GithubReleaseAsset {
+  name?: string;
+}
+
+interface GithubRelease {
+  tag_name?: string;
+  published_at?: string | null;
+  body?: string | null;
+  assets?: GithubReleaseAsset[];
 }
 
 /**
- * 直接查询 npm registry 取 tmex-cli 最新版本，并尽力从 CDN 拉取目标版本的 CHANGELOG.md。
- * registry 与 CDN 均 no-store 强制取新。changelog 拉取失败返回 null（前端回退版本+日期）。
+ * 查询本仓库 GitHub Releases 最新版（不再走 npm registry）。
+ * changelog 取 release body（markdown）；空则 null。缺少对应 tarball 资产时
+ * 仍回报 latestVersion，但 hasUpdate=false，避免前端提供无法完成的升级。
  */
 export async function checkForUpdate(): Promise<UpdateCheckResult> {
   const current = getBaseVersion();
 
-  const res = await fetch(REGISTRY_URL, {
+  const res = await fetch(RELEASE_API_LATEST_URL, {
     cache: 'no-store',
-    headers: { accept: 'application/json', 'cache-control': 'no-cache' },
+    headers: {
+      accept: 'application/vnd.github+json',
+      'X-GitHub-Api-Version': '2022-11-28',
+    },
     signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
   });
   if (!res.ok) {
-    throw new Error(`npm registry HTTP ${res.status}`);
+    throw githubReleasesHttpError(res.status);
   }
 
-  const packument = (await res.json()) as Packument;
-  const latest = packument['dist-tags']?.latest ?? null;
-  const publishedAt = latest ? (packument.time?.[latest] ?? null) : null;
+  const release = (await res.json()) as GithubRelease;
+  const latest = stripLeadingV(release.tag_name);
+  const publishedAt = latest ? (release.published_at ?? null) : null;
+  const changelog = releaseChangelog(release.body);
+  const hasTarball =
+    latest !== null &&
+    Array.isArray(release.assets) &&
+    release.assets.some((asset) => asset.name === releaseTarballName(latest));
   const hasUpdate =
-    latest !== null && current !== 'unknown' && compareVersions(latest, current) > 0;
-
-  const changelog = latest ? await fetchChangelog(latest) : null;
+    latest !== null && hasTarball && current !== 'unknown' && compareVersions(latest, current) > 0;
 
   return {
     currentVersion: current,
@@ -46,16 +56,22 @@ export async function checkForUpdate(): Promise<UpdateCheckResult> {
   };
 }
 
-async function fetchChangelog(version: string): Promise<string | null> {
-  try {
-    const res = await fetch(changelogCdnUrl(version), {
-      cache: 'no-store',
-      signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
-    });
-    if (!res.ok) return null;
-    const text = await res.text();
-    return text.trim() ? text : null;
-  } catch {
-    return null;
+function stripLeadingV(tag: string | undefined): string | null {
+  if (typeof tag !== 'string' || tag.length === 0) return null;
+  return tag.replace(/^v/, '') || null;
+}
+
+function releaseChangelog(body: string | null | undefined): string | null {
+  if (typeof body !== 'string') return null;
+  return body.trim() ? body : null;
+}
+
+function githubReleasesHttpError(status: number): Error {
+  if (status === 403 || status === 429) {
+    return new Error(`GitHub Releases API HTTP ${status}: rate-limited or forbidden`);
   }
+  if (status === 404) {
+    return new Error('GitHub Releases API HTTP 404: release not found');
+  }
+  return new Error(`GitHub Releases API HTTP ${status}`);
 }

@@ -197,8 +197,9 @@ function main(): void {
   );
   console.log('  3) bun run build && bun run test:tmex');
   console.log(
-    `  4) git commit -am "chore(release): tmex-cli ${args.version}" && bun run publish:tmex`
+    `  4) git commit -am "chore(release): tmex-cli ${args.version}" && git tag v${args.version} && git push origin v${args.version}`
   );
+  console.log('     Pushing the v* tag publishes tmex-cli-<version>.tgz to GitHub Releases.');
 }
 
 main();

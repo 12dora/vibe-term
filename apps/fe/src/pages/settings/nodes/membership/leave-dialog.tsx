@@ -155,7 +155,7 @@ function LeaveProgress({ leave }: { leave: LeaveMesh }) {
         data-testid="membership-leave-restart-timeout"
       >
         <p>{t('nodes.membership.restartTimeout')}</p>
-        <p className="font-mono">npx tmex-cli restart</p>
+        <p className="font-mono">tmex restart</p>
       </div>
     );
   }

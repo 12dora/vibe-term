@@ -702,7 +702,7 @@ export function joinCommand(hubPublicUrl: string, token: string, name?: string |
     throw new Error('hub public url must be an https url');
   }
   const suffix = name?.trim() ? ` --name ${shellQuote(name.trim())}` : '';
-  return `npx tmex-cli hub join ${shellQuote(hubPublicUrl)} --token ${shellQuote(token)}${suffix}`;
+  return `tmex hub join ${shellQuote(hubPublicUrl)} --token ${shellQuote(token)}${suffix}`;
 }
 
 function shellQuote(value: string): string {

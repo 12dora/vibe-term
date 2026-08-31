@@ -48,6 +48,7 @@ export const I18N_RESOURCES = {
     "nav": {
       "manageDevices": "Manage Devices",
       "connectDevices": "Connect more devices",
+      "connectDevicesShort": "Connect devices",
       "settings": "Settings",
       "sidebarExpand": "Expand Sidebar",
       "sidebarCollapse": "Collapse Sidebar",
@@ -140,7 +141,7 @@ export const I18N_RESOURCES = {
         "host": {
           "entry": {
             "title": "Set up a public entry",
-            "description": "Open Settings → Remote access and choose Cloudflare Tunnel (named tunnel) or Direct connection to get a fixed HTTPS address.",
+            "description": "Open Settings → Remote access: Cloudflare Tunnel (named tunnel) gives you a fixed HTTPS address; Direct connection requires a fixed HTTPS entry you provide yourself.",
             "link": "Open remote access settings"
           },
           "hub": {
@@ -426,7 +427,7 @@ export const I18N_RESOURCES = {
             },
             "local": {
               "title": "Local sign-in is on",
-              "description": "Turns on sign-in protection. Keep the password strong and serve over HTTPS only."
+              "description": "Sign-in protection is on. Keep the password strong and serve over HTTPS only."
             },
             "unprotected": {
               "title": "No access protection configured",
@@ -888,7 +889,7 @@ export const I18N_RESOURCES = {
         "stateExecuting": "Applying the upgrade, the service is restarting…",
         "interruptNotice": "The connection will drop while the service restarts; it will recover shortly.",
         "checkFailed": "Failed to check for updates",
-        "terminalHint": "Or upgrade from a terminal: npx tmex-cli@<version> upgrade"
+        "terminalHint": "Or upgrade from a terminal: tmex upgrade"
       }
     },
     "telegram": {
@@ -2195,6 +2196,7 @@ export const I18N_RESOURCES = {
     "nav": {
       "manageDevices": "管理设备",
       "connectDevices": "接入更多设备",
+      "connectDevicesShort": "接入设备",
       "settings": "设置",
       "sidebarExpand": "展开侧边栏",
       "sidebarCollapse": "收起侧边栏",
@@ -2287,7 +2289,7 @@ export const I18N_RESOURCES = {
         "host": {
           "entry": {
             "title": "配置公网入口",
-            "description": "打开「设置 → 远程访问」，选择 Cloudflare Tunnel（命名隧道）或直接连接，获得一个固定的 HTTPS 地址。",
+            "description": "打开「设置 → 远程访问」：选择 Cloudflare Tunnel（命名隧道）可直接获得固定 HTTPS 地址；选择直接连接则需自行准备固定的 HTTPS 入口。",
             "link": "前往远程访问设置"
           },
           "hub": {
@@ -3035,7 +3037,7 @@ export const I18N_RESOURCES = {
         "stateExecuting": "正在执行升级，服务即将重启…",
         "interruptNotice": "服务重启期间连接会断开，稍候即可恢复。",
         "checkFailed": "检查更新失败",
-        "terminalHint": "或通过终端升级：npx tmex-cli@<version> upgrade"
+        "terminalHint": "或通过终端升级：tmex upgrade"
       }
     },
     "telegram": {
@@ -4341,6 +4343,7 @@ export const I18N_RESOURCES = {
     "nav": {
       "manageDevices": "デバイス管理",
       "connectDevices": "デバイスを追加",
+      "connectDevicesShort": "デバイス接続",
       "settings": "設定",
       "sidebarExpand": "サイドバーを展開",
       "sidebarCollapse": "サイドバーを折りたたむ",
@@ -4433,7 +4436,7 @@ export const I18N_RESOURCES = {
         "host": {
           "entry": {
             "title": "公開エントリを用意",
-            "description": "「設定 → リモートアクセス」を開き、Cloudflare Tunnel（名前付きトンネル）または直接接続を選んで、固定の HTTPS アドレスを取得します。",
+            "description": "「設定 → リモートアクセス」を開きます。Cloudflare Tunnel（名前付きトンネル）なら固定の HTTPS アドレスが得られ、直接接続なら固定の HTTPS 入口を自分で用意する必要があります。",
             "link": "リモートアクセス設定を開く"
           },
           "hub": {
@@ -4719,7 +4722,7 @@ export const I18N_RESOURCES = {
             },
             "local": {
               "title": "ローカルログインが有効です",
-              "description": "ログイン保護を有効にします。十分に強いパスワードを使い、公開は HTTPS のみで行ってください。"
+              "description": "ログイン保護は有効です。十分に強いパスワードを使い、公開は HTTPS のみで行ってください。"
             },
             "unprotected": {
               "title": "アクセス保護が未設定です",
@@ -5181,7 +5184,7 @@ export const I18N_RESOURCES = {
         "stateExecuting": "更新を適用中、サービスを再起動しています…",
         "interruptNotice": "サービス再起動中は接続が切断されますが、まもなく復旧します。",
         "checkFailed": "更新の確認に失敗しました",
-        "terminalHint": "またはターミナルから更新：npx tmex-cli@<version> upgrade"
+        "terminalHint": "またはターミナルから更新：tmex upgrade"
       }
     },
     "telegram": {

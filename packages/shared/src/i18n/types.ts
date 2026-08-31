@@ -56,6 +56,7 @@ export type TranslationKey =
   | 'nav'
   | 'nav.manageDevices'
   | 'nav.connectDevices'
+  | 'nav.connectDevicesShort'
   | 'nav.settings'
   | 'nav.sidebarExpand'
   | 'nav.sidebarCollapse'

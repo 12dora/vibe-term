@@ -1,12 +1,12 @@
 # tmex-cli
 
-Node.js-compatible CLI for initializing, diagnosing, upgrading, and uninstalling tmex deployment.
+Node.js-compatible CLI for initializing, diagnosing, upgrading, and uninstalling tmex.
 
-Use from npm:
-- `npx tmex-cli init`
-- `npx tmex-cli doctor`
-- `npx tmex-cli upgrade`
-- `npx tmex-cli uninstall`
+Install from GitHub Releases:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/12dora/tmex-enhanced/main/install.sh | bash
+```
 
 Commands:
 - `tmex init`

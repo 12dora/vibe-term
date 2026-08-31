@@ -53,20 +53,20 @@
 
 ## 首次搭 hub
 
-推荐路径：一台有公网 HTTPS 的机器做 `hub,node`，内网机器 `init` 后 `hub join`。包与升级流程与单机相同（`npx tmex-cli@<version> init` / `upgrade`）。
+推荐路径：一台有公网 HTTPS 的机器做 `hub,node`，内网机器 `init` 后 `hub join`。包与升级流程与单机相同（`bash install.sh` / `tmex upgrade`）。
 
 安装目录默认：macOS `~/Library/Application Support/tmex/`，Linux `~/.local/share/tmex/`。服务由 launchd / systemd 用户单元拉起。**不要**手改正在跑的生产安装目录里的库或 `app.env` 做试验。
 
 ### 1. 在入口机安装并指定角色
 
 ```bash
-npx tmex-cli@latest init --role hub,node
+bash install.sh --role hub,node
 ```
 
 交互模式会询问 `TMEX_HUB_PUBLIC_URL`（浏览器与 `hub join` 使用的 HTTPS 基址，例如 `https://tmex.example.com`）。非交互：
 
 ```bash
-npx tmex-cli@latest init --role hub,node --no-interactive \
+bash install.sh --role hub,node --no-interactive \
   --install-dir "$HOME/Library/Application Support/tmex" \
   --host 127.0.0.1 --port 9883 \
   --db-path "$HOME/Library/Application Support/tmex/data/tmex.db" \
@@ -81,7 +81,7 @@ npx tmex-cli@latest init --role hub,node --no-interactive \
 在 **hub 机本机**（服务已起来，命令走安装版 Bun 的 `runtime/cli-auth.js`）：
 
 ```bash
-npx tmex-cli hub user add <username>
+tmex hub user add <username>
 ```
 
 TTY 隐藏输入密码并二次确认；非 TTY 用 `TMEX_PASSWORD`。密码经 NFKC 后再做 argon2id。成功后：
@@ -97,7 +97,7 @@ TTY 隐藏输入密码并二次确认；非 TTY 用 `TMEX_PASSWORD`。密码经 
 **CLI（任意已加入的 node，含 hub 机）：**
 
 ```bash
-npx tmex-cli enroll [--ttl 10m]
+tmex enroll [--ttl 10m]
 ```
 
 输入密码（若该用户已启用 TOTP，再输入 `TMEX_TOTP` 或交互验证码）。打印 join 串与完整 `hub join` 命令，然后等待对端 redeem：
@@ -121,7 +121,7 @@ join 串有两个版本：
 在每台要加入的机器上（可先 `init --role standalone` 或 `--role node`）：
 
 ```bash
-npx tmex-cli hub join https://tmex.example.com --token <join 串> [--name 书房]
+tmex hub join https://tmex.example.com --token <join 串> [--name 书房]
 ```
 
 约束：
@@ -135,7 +135,7 @@ npx tmex-cli hub join https://tmex.example.com --token <join 串> [--name 书房
 - 不必先 `hub leave`：从角色 `node` 直接 join 另一台 hub 即可，`leave` 只清角色与 `TMEX_HUB_URL`；
 - 成功后提示在内网防火墙放行 `TMEX_PEER_PORT`（仅内网直连需要）。替换了旧账号时会打印一条明确日志。
 
-加入后各入口侧边栏自动出现新 node，无需手动添加设备。退出 mesh：`npx tmex-cli hub leave`（清 `hub_url`，角色改回 `standalone`，重启）。
+加入后各入口侧边栏自动出现新 node，无需手动添加设备。退出 mesh：`tmex hub leave`（清 `hub_url`，角色改回 `standalone`，重启）。
 
 ## Nodes 页
 
@@ -177,11 +177,11 @@ hub 不可达（`mode.hubNodeId` / `isHub` 学不到）：顶栏提示，新增 
 - 防远程猜密码 / 旁观，**不是**独立于口令的第二因素（与根钥同源派生）。需要独立第二因素时用 passkey。
 - UI 两段式：先生成密钥与 otpauth URI（不写日志）→ 扫码并输入 6 位码 → 本地校验通过才追加 `set-totp`。取消或离开页面会清零密钥。
 - **启用 TOTP 只能用密码**（需要 seed）。关闭 TOTP、增删 passkey 可用 passkey 授权。
-- CLI：`npx tmex-cli hub user totp <username>` 打印 otpauth URI（无 ASCII QR）。
+- CLI：`tmex hub user totp <username>` 打印 otpauth URI（无 ASCII QR）。
 
 ### 改密
 
-UI 与 `npx tmex-cli hub user passwd <username>` 都走 `rotate-root`（旧根钥签）。这是新安全 epoch：各 node 撤销该用户全部 `node-session`，删除全部 passkey，清空 TOTP。CLI 会打印警告，须在各入口重新注册。非 TTY：旧密码 `TMEX_PASSWORD_OLD`，新密码 `TMEX_PASSWORD`。
+UI 与 `tmex hub user passwd <username>` 都走 `rotate-root`（旧根钥签）。这是新安全 epoch：各 node 撤销该用户全部 `node-session`，删除全部 passkey，清空 TOTP。CLI 会打印警告，须在各入口重新注册。非 TTY：旧密码 `TMEX_PASSWORD_OLD`，新密码 `TMEX_PASSWORD`。
 
 登录体验：输入一次密码（或一次 passkey）生成 18 小时 `delegation`，先登当前入口 `self`，再用 `tmex_s_self` 拉 `/api/mesh/nodes`，对在线未登录的 node 并行登录。cookie `tmex_s_<nodeId>` / `tmex_s_self`：`HttpOnly; SameSite=Lax; Max-Age=64800`（18 h），HTTPS 加 `Secure`。滑动续期 18 小时，绝对上限 7 天。
 
@@ -190,8 +190,8 @@ UI 与 `npx tmex-cli hub user passwd <username>` 都走 `rotate-root`（旧根�
 直连是同一逻辑 WS 会话的第二条载体（浏览器↔目标 node 的 `sess` DataChannel），失败自动回落 hub relay，功能不变。
 
 ```bash
-npx tmex-cli direct enable
-npx tmex-cli direct disable
+tmex direct enable
+tmex direct disable
 ```
 
 `enable` 按 `platform / arch / libc` 查 pinned manifest，从 npm 拉单平台 tarball，校验 sha512 后解出 `node_datachannel.node` 到 `<installDir>/native/`，并写 `native/manifest.json`。`disable` 删除整个 `native/` 目录。`upgrade` 在部署 runtime 后若已有 native 且版本变化则重下；standalone 无 `native/` 则跳过。
@@ -235,7 +235,7 @@ hub 恢复后无需重新登录（cookie 仍有效）。
 ### `mesh reset-root`（任意 mesh 机器）
 
 ```bash
-npx tmex-cli mesh reset-root
+tmex mesh reset-root
 ```
 
 `TMEX_ROLES=standalone` 会拒绝。输入新密码后保留用户名，在本机重建根钥并自签 `admit-node`。用于「密码在失陷入口上泄露、攻击者抢先 `rotate-root`」这类无法依赖旧根钥的场景。
@@ -245,7 +245,7 @@ npx tmex-cli mesh reset-root
 ### `hub user reset`（仅 hub 机）
 
 ```bash
-npx tmex-cli hub user reset
+tmex hub user reset
 ```
 
 停服务 → 删除 `nodes` 与 `enrollment_tokens`（**保留 `node_certs`**）→ 再启动。日志提示：失陷节点在重新注册前须先 `revoke-node`。这只清注册表，不是改密。

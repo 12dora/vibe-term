@@ -143,7 +143,7 @@ export function RestartPanel({ waiter }: { waiter: RestartWaiter }) {
   return (
     <SetupNotice tone="warning" testId="setup-restart-timeout">
       <p>{t('nodes.setup.restart.timeout')}</p>
-      <p className="font-mono">npx tmex-cli restart</p>
+      <p className="font-mono">tmex restart</p>
     </SetupNotice>
   );
 }

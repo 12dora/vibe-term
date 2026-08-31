@@ -35,4 +35,14 @@ describe('i18n', () => {
     expect(t('cli.help')).toContain('tmex hub join');
     expect(t('cli.help')).toContain('--no-restart');
   });
+
+  test('path hint exists in both languages and zh-CN avoids 你', () => {
+    setLang('en');
+    expect(t('cli.shim.pathHint', { binDir: '/tmp/bin' })).toContain('/tmp/bin');
+    setLang('zh-CN');
+    const zh = t('cli.shim.pathHint', { binDir: '/tmp/bin' });
+    expect(zh).toContain('/tmp/bin');
+    expect(zh).toContain('PATH');
+    expect(zh).not.toContain('你');
+  });
 });

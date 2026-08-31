@@ -858,11 +858,11 @@ describe('凭据复用窗口', () => {
 describe('joinCommand', () => {
   test('带名称时加 --name，特殊字符加引号', () => {
     expect(joinCommand('https://hub.example', 'TOKEN', 'studio')).toBe(
-      "npx tmex-cli hub join 'https://hub.example' --token TOKEN --name studio"
+      "tmex hub join 'https://hub.example' --token TOKEN --name studio"
     );
     expect(joinCommand('https://hub.example', 'TOKEN', 'my node')).toContain("--name 'my node'");
     expect(joinCommand('https://hub.example', 'TOKEN', null)).toBe(
-      "npx tmex-cli hub join 'https://hub.example' --token TOKEN"
+      "tmex hub join 'https://hub.example' --token TOKEN"
     );
   });
 
@@ -871,7 +871,7 @@ describe('joinCommand', () => {
     expect(command).toContain("'https://hub.example/x?a=1&b=2'");
     expect(command).not.toContain('& b');
     // 引号之外不应再出现裸的 shell 元字符
-    expect(command.split("'")[0]).toBe('npx tmex-cli hub join ');
+    expect(command.split("'")[0]).toBe('tmex hub join ');
   });
 
   test('注入型 URL 直接拒绝，不是「引起来就算了」', () => {

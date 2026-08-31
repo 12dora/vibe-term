@@ -2,12 +2,14 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { formatHttpEndpoint, rewriteWildcardBindHost } from '../../../shared/src/network';
+import { releaseTarballName } from '../../../shared/src/release/source';
 import { defaultInstallDir } from '../constants';
 import { t } from '../i18n';
 import { checkBunVersion, readExplicitBunPath } from '../lib/bun';
+import { deployCliAndShim } from '../lib/cli-shim';
 import { getInstallHint } from '../lib/dep-install';
 import { mergeMissingEnvFileKeys, readEnvFile } from '../lib/env-file';
-import { pathExists } from '../lib/fs-utils';
+import { ensureDir, pathExists } from '../lib/fs-utils';
 import {
   backupInstallArtifacts,
   deployRuntimeFiles,
@@ -22,7 +24,12 @@ import {
   resolvePackageLayout,
 } from '../lib/install-layout';
 import { readJsonFile } from '../lib/json-file';
-import { runCommand } from '../lib/process';
+import { type RunCommandResult, runCommand } from '../lib/process';
+import {
+  type ReleaseFetch,
+  downloadReleaseTarball,
+  resolveReleaseVersion,
+} from '../lib/release-fetch';
 import { installService, stopService } from '../lib/service';
 import { asBoolean, asString } from '../lib/validate';
 import { readPackageVersion } from '../lib/version';
@@ -55,24 +62,65 @@ export async function reenableDirectAfterUpgrade(
   }
 }
 
-async function delegateUpgrade(parsed: ParsedArgs, targetVersion: string): Promise<void> {
-  const args = ['--yes', `tmex-cli@${targetVersion}`, 'upgrade', '--apply-current-package'];
+export type DelegateUpgradeDeps = {
+  fetch?: ReleaseFetch;
+  runCommand?: (
+    command: string,
+    args: string[],
+    options?: { cwd?: string; stdio?: 'inherit' | 'pipe' }
+  ) => Promise<RunCommandResult>;
+  execPath?: string;
+};
 
+function passthroughUpgradeFlags(parsed: ParsedArgs): string[] {
+  const args: string[] = [];
   const passthrough = ['install-dir', 'service-name', 'yes', 'lang'];
   for (const key of passthrough) {
     const value = parsed.flags[key];
     if (value === undefined) continue;
-
     if (value === true) {
       args.push(`--${key}`);
     } else {
       args.push(`--${key}`, String(value));
     }
   }
+  return args;
+}
 
-  const result = await runCommand('npx', args, { stdio: 'inherit' });
-  if (result.code !== 0) {
-    throw new Error(t('upgrade.delegateFailed', { code: result.code }));
+export async function delegateUpgrade(
+  parsed: ParsedArgs,
+  targetVersion: string,
+  deps: DelegateUpgradeDeps = {}
+): Promise<void> {
+  const fetchFn = deps.fetch ?? fetch;
+  const run = deps.runCommand ?? runCommand;
+  const execPath = deps.execPath ?? process.execPath;
+  const version = await resolveReleaseVersion(targetVersion, fetchFn);
+  const workDir = await mkdtemp(join(tmpdir(), 'tmex-cli-upgrade-'));
+
+  try {
+    const tarballPath = join(workDir, releaseTarballName(version));
+    await downloadReleaseTarball(version, tarballPath, fetchFn);
+
+    const extractDir = join(workDir, 'extract');
+    await ensureDir(extractDir);
+    const tarResult = await run('tar', ['-xzf', tarballPath, '-C', extractDir]);
+    if (tarResult.code !== 0) {
+      throw new Error(t('upgrade.extractFailed', { code: tarResult.code }));
+    }
+
+    const cliJs = join(extractDir, 'package', 'bin', 'tmex.js');
+    if (!(await pathExists(cliJs))) {
+      throw new Error(t('upgrade.assetMissing', { version }));
+    }
+
+    const args = [cliJs, 'upgrade', '--apply-current-package', ...passthroughUpgradeFlags(parsed)];
+    const result = await run(execPath, args, { stdio: 'inherit' });
+    if (result.code !== 0) {
+      throw new Error(t('upgrade.delegateFailed', { code: result.code }));
+    }
+  } finally {
+    await rm(workDir, { recursive: true, force: true }).catch(() => null);
   }
 }
 
@@ -144,6 +192,7 @@ export async function runUpgrade(parsed: ParsedArgs): Promise<void> {
     await backupInstallArtifacts(installLayout, backupDir);
 
     await deployRuntimeFiles(packageLayout, installLayout);
+    const shim = await deployCliAndShim(packageLayout, installLayout, bun.path);
     await reenableDirectAfterUpgrade(installDir);
     if (await pathExists(installLayout.envPath)) {
       await mergeMissingEnvFileKeys(installLayout.envPath, hubEnvDefaults());
@@ -168,6 +217,10 @@ export async function runUpgrade(parsed: ParsedArgs): Promise<void> {
     console.log(`[tmex] ${t('upgrade.done')}`);
     console.log(`- ${t('upgrade.summary.targetVersion')}: ${targetVersion}`);
     console.log(`- ${t('upgrade.summary.installDir')}: ${installDir}`);
+    console.log(`- ${t('cli.shim.ready', { shimPath: shim.shimPath })}`);
+    if (shim.pathHint) {
+      console.log(`- ${shim.pathHint}`);
+    }
   } catch (error) {
     console.error(`[tmex] ${t('upgrade.failedRollingBack')}`);
     await restoreInstallArtifacts(installLayout, backupDir);

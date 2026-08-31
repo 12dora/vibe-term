@@ -42,6 +42,7 @@
     "nav": {
       "manageDevices": "管理设备",
       "connectDevices": "接入更多设备",
+      "connectDevicesShort": "接入设备",
       "settings": "设置",
       "sidebarExpand": "展开侧边栏",
       "sidebarCollapse": "收起侧边栏",
@@ -134,7 +135,7 @@
         "host": {
           "entry": {
             "title": "配置公网入口",
-            "description": "打开「设置 → 远程访问」，选择 Cloudflare Tunnel（命名隧道）或直接连接，获得一个固定的 HTTPS 地址。",
+            "description": "打开「设置 → 远程访问」：选择 Cloudflare Tunnel（命名隧道）可直接获得固定 HTTPS 地址；选择直接连接则需自行准备固定的 HTTPS 入口。",
             "link": "前往远程访问设置"
           },
           "hub": {
@@ -882,7 +883,7 @@
         "stateExecuting": "正在执行升级，服务即将重启…",
         "interruptNotice": "服务重启期间连接会断开，稍候即可恢复。",
         "checkFailed": "检查更新失败",
-        "terminalHint": "或通过终端升级：npx tmex-cli@<version> upgrade"
+        "terminalHint": "或通过终端升级：tmex upgrade"
       }
     },
     "telegram": {

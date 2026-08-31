@@ -83,7 +83,7 @@ describe('enroll', () => {
       },
     });
     expect(result.token).toHaveLength(JOIN_TOKEN_CHARS);
-    expect(result.joinCommand).toContain('npx tmex-cli hub join');
+    expect(result.joinCommand).toContain('tmex hub join');
     expect(result.admitted).toBe(true);
     const user = auth.userStore.getByUsername('frank');
     if (!user) throw new Error('missing frank');

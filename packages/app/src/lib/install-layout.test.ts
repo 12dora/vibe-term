@@ -12,5 +12,6 @@ describe('createInstallLayout', () => {
     );
     expect(layout.runtimeServerPath).toBe(join('/tmp/tmex-install-test', 'runtime', 'server.js'));
     expect(layout.envPath).toBe(join('/tmp/tmex-install-test', 'app.env'));
+    expect(layout.cliDir).toBe(join('/tmp/tmex-install-test', 'cli'));
   });
 });

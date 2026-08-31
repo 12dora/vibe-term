@@ -9,6 +9,7 @@ import {
 } from '../constants';
 import { t } from '../i18n';
 import { checkBunVersion, readExplicitBunPath } from '../lib/bun';
+import { deployCliAndShim } from '../lib/cli-shim';
 import {
   type DepInstallPlan,
   executeDependencyInstall,
@@ -269,6 +270,7 @@ export async function runInit(parsed: ParsedArgs): Promise<void> {
   await ensureDir(dirname(config.databasePath));
 
   await deployRuntimeFiles(packageLayout, installLayout);
+  const shim = await deployCliAndShim(packageLayout, installLayout, bun.path);
   await enableDirectAfterInit(config);
 
   const masterKey = generateMasterKey();
@@ -313,4 +315,8 @@ export async function runInit(parsed: ParsedArgs): Promise<void> {
     `- ${t('init.summary.autostart')}: ${config.autostart ? t('init.summary.autostart.on') : t('init.summary.autostart.off')}`
   );
   console.log(`- ${t('init.summary.serviceHint')}: ${await serviceHint(config.serviceName)}`);
+  console.log(`- ${t('cli.shim.ready', { shimPath: shim.shimPath })}`);
+  if (shim.pathHint) {
+    console.log(`- ${shim.pathHint}`);
+  }
 }

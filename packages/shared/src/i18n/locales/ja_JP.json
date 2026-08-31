@@ -42,6 +42,7 @@
     "nav": {
       "manageDevices": "デバイス管理",
       "connectDevices": "デバイスを追加",
+      "connectDevicesShort": "デバイス接続",
       "settings": "設定",
       "sidebarExpand": "サイドバーを展開",
       "sidebarCollapse": "サイドバーを折りたたむ",
@@ -134,7 +135,7 @@
         "host": {
           "entry": {
             "title": "公開エントリを用意",
-            "description": "「設定 → リモートアクセス」を開き、Cloudflare Tunnel（名前付きトンネル）または直接接続を選んで、固定の HTTPS アドレスを取得します。",
+            "description": "「設定 → リモートアクセス」を開きます。Cloudflare Tunnel（名前付きトンネル）なら固定の HTTPS アドレスが得られ、直接接続なら固定の HTTPS 入口を自分で用意する必要があります。",
             "link": "リモートアクセス設定を開く"
           },
           "hub": {
@@ -420,7 +421,7 @@
             },
             "local": {
               "title": "ローカルログインが有効です",
-              "description": "ログイン保護を有効にします。十分に強いパスワードを使い、公開は HTTPS のみで行ってください。"
+              "description": "ログイン保護は有効です。十分に強いパスワードを使い、公開は HTTPS のみで行ってください。"
             },
             "unprotected": {
               "title": "アクセス保護が未設定です",
@@ -882,7 +883,7 @@
         "stateExecuting": "更新を適用中、サービスを再起動しています…",
         "interruptNotice": "サービス再起動中は接続が切断されますが、まもなく復旧します。",
         "checkFailed": "更新の確認に失敗しました",
-        "terminalHint": "またはターミナルから更新：npx tmex-cli@<version> upgrade"
+        "terminalHint": "またはターミナルから更新：tmex upgrade"
       }
     },
     "telegram": {

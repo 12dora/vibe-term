@@ -30,7 +30,7 @@
 ## Quick Start
 
 ```bash
-npx tmex-cli init
+curl -fsSL https://raw.githubusercontent.com/12dora/tmex-enhanced/main/install.sh | bash
 ```
 
 The installer generates keys, deploys runtime files, registers a user service (launchd on macOS, systemd on Linux), and starts tmex. Open the URL it prints, add your devices, and you are done.
@@ -39,7 +39,7 @@ The installer generates keys, deploys runtime files, registers a user service (l
 
 | **Open source, with history preserved** | **One-command install, self-updating** | **One sidebar for panes, agents, and files** |
 |---|---|---|
-| tmex is built in public with AI agents. Every design decision, iteration, and dead end is archived in `prompt-archives/` and `docs/`, so the engineering process is inspectable and reproducible. | `npx tmex-cli init` installs the service, generates keys, and starts serving. Upgrade in one click from the settings page, or run `npx tmex-cli upgrade`. Rollback is automatic if anything fails. | The left sidebar unites the device tree, AI Agent, and file manager. The Agent is tied to the active tmux pane: switch panes and the Agent context switches with you. |
+| tmex is built in public with AI agents. Every design decision, iteration, and dead end is archived in `prompt-archives/` and `docs/`, so the engineering process is inspectable and reproducible. | The one-line install script installs the service, generates keys, and starts serving. Upgrade in one click from the settings page, or run `tmex upgrade`. Rollback is automatic if anything fails. | The left sidebar unites the device tree, AI Agent, and file manager. The Agent is tied to the active tmux pane: switch panes and the Agent context switches with you. |
 
 | **Agent for coding and ops** | **Watch: a sentry for long jobs** | **Access your terminals from anywhere** |
 |---|---|---|
@@ -53,10 +53,10 @@ The installer generates keys, deploys runtime files, registers a user service (l
 
 ```bash
 # Interactive install (recommended)
-npx tmex-cli init
+curl -fsSL https://raw.githubusercontent.com/12dora/tmex-enhanced/main/install.sh | bash
 
 # Silent install for CI or automation
-npx tmex-cli init --no-interactive \
+bash install.sh --no-interactive \
   --install-dir ~/.local/share/tmex \
   --host 127.0.0.1 \
   --port 9883 \
@@ -64,16 +64,16 @@ npx tmex-cli init --no-interactive \
   --autostart true
 
 # Environment diagnosis
-npx tmex-cli doctor
+tmex doctor
 
 # Upgrade to the latest version
-npx tmex-cli upgrade
+tmex upgrade
 
 # Uninstall
-npx tmex-cli uninstall
+tmex uninstall
 ```
 
-Installation requires [Bun](https://bun.sh). The `doctor` command will check your environment and report any issues.
+Installation requires [Bun](https://bun.sh) (the installer will install it if missing). The `doctor` command will check your environment and report any issues. If `tmex` is not found after install, add `~/.local/bin` to PATH.
 
 ## Security
 

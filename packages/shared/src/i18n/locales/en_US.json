@@ -42,6 +42,7 @@
     "nav": {
       "manageDevices": "Manage Devices",
       "connectDevices": "Connect more devices",
+      "connectDevicesShort": "Connect devices",
       "settings": "Settings",
       "sidebarExpand": "Expand Sidebar",
       "sidebarCollapse": "Collapse Sidebar",
@@ -134,7 +135,7 @@
         "host": {
           "entry": {
             "title": "Set up a public entry",
-            "description": "Open Settings → Remote access and choose Cloudflare Tunnel (named tunnel) or Direct connection to get a fixed HTTPS address.",
+            "description": "Open Settings → Remote access: Cloudflare Tunnel (named tunnel) gives you a fixed HTTPS address; Direct connection requires a fixed HTTPS entry you provide yourself.",
             "link": "Open remote access settings"
           },
           "hub": {
@@ -420,7 +421,7 @@
             },
             "local": {
               "title": "Local sign-in is on",
-              "description": "Turns on sign-in protection. Keep the password strong and serve over HTTPS only."
+              "description": "Sign-in protection is on. Keep the password strong and serve over HTTPS only."
             },
             "unprotected": {
               "title": "No access protection configured",
@@ -882,7 +883,7 @@
         "stateExecuting": "Applying the upgrade, the service is restarting…",
         "interruptNotice": "The connection will drop while the service restarts; it will recover shortly.",
         "checkFailed": "Failed to check for updates",
-        "terminalHint": "Or upgrade from a terminal: npx tmex-cli@<version> upgrade"
+        "terminalHint": "Or upgrade from a terminal: tmex upgrade"
       }
     },
     "telegram": {

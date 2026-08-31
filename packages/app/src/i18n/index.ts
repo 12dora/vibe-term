@@ -102,9 +102,19 @@ const MESSAGES: Record<CliLang, Record<string, string>> = {
     'upgrade.failedRollingBack': 'Upgrade failed; rolling back.',
     'upgrade.summary.targetVersion': 'Target version',
     'upgrade.summary.installDir': 'Install dir',
+    'upgrade.versionNotFound': 'Release not found: {{version}} (HTTP 404).',
+    'upgrade.networkFailed': 'Failed to reach GitHub Releases: {{detail}}',
+    'upgrade.latestLookupFailed': 'GitHub latest-release response is missing tag_name.',
+    'upgrade.assetMissing':
+      'Extracted release is missing package/bin/tmex.js for version {{version}}.',
+    'upgrade.extractFailed': 'Failed to extract the release tarball (exit {{code}}).',
+
+    'cli.shim.pathHint':
+      '{{binDir}} is not on PATH. Add it so the tmex command is available: export PATH="{{binDir}}:$PATH"',
+    'cli.shim.ready': 'CLI command: tmex ({{shimPath}})',
 
     'uninstall.prompt.removeService': 'Uninstall system service',
-    'uninstall.prompt.removeProgram': 'Remove program files (runtime/resources/run.sh/meta)',
+    'uninstall.prompt.removeProgram': 'Remove program files (runtime/resources/cli/run.sh/meta)',
     'uninstall.prompt.removeEnv': 'Remove app.env',
     'uninstall.prompt.removeDatabase': 'Remove database file',
     'uninstall.done': 'Uninstall completed.',
@@ -231,9 +241,18 @@ const MESSAGES: Record<CliLang, Record<string, string>> = {
     'upgrade.failedRollingBack': '升级失败，开始回滚。',
     'upgrade.summary.targetVersion': '目标版本',
     'upgrade.summary.installDir': '安装目录',
+    'upgrade.versionNotFound': '未找到版本 {{version}}（HTTP 404）。',
+    'upgrade.networkFailed': '无法访问 GitHub Releases：{{detail}}',
+    'upgrade.latestLookupFailed': 'GitHub latest-release 响应缺少 tag_name。',
+    'upgrade.assetMissing': '版本 {{version}} 的解压结果缺少 package/bin/tmex.js。',
+    'upgrade.extractFailed': '解压发行包失败（退出码 {{code}}）。',
+
+    'cli.shim.pathHint':
+      '{{binDir}} 不在 PATH 中。加入后即可使用 tmex 命令：export PATH="{{binDir}}:$PATH"',
+    'cli.shim.ready': 'CLI 命令：tmex（{{shimPath}}）',
 
     'uninstall.prompt.removeService': '是否卸载系统服务',
-    'uninstall.prompt.removeProgram': '是否删除程序文件（runtime/resources/run.sh/meta）',
+    'uninstall.prompt.removeProgram': '是否删除程序文件（runtime/resources/cli/run.sh/meta）',
     'uninstall.prompt.removeEnv': '是否删除 app.env',
     'uninstall.prompt.removeDatabase': '是否删除数据库文件',
     'uninstall.done': '卸载完成。',

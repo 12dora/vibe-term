@@ -483,7 +483,7 @@ export async function runEnroll(
       user.keyLogHeadHash,
       caFingerprint
     );
-    const joinCommand = `npx tmex-cli hub join ${hubJoinUrl(ctx, io)} --token ${token}`;
+    const joinCommand = `tmex hub join ${hubJoinUrl(ctx, io)} --token ${token}`;
     log(io, `join token: ${token}`);
     log(io, joinCommand);
     if (io.wait === false) {

@@ -230,8 +230,8 @@
     "reason": "初始化逐字段默认值链（历轮保留）"
   },
   "packages/app/src/commands/init.ts:runInit": {
-    "cc": 18,
-    "reason": "初始化逐字段默认值链（历轮保留）"
+    "cc": 19,
+    "reason": "初始化逐字段默认值链（历轮保留；第八轮加 CLI 自部署 + shim 分支）"
   },
   "packages/app/src/lib/args.ts:resolveNestedCommand": {
     "cc": 26,

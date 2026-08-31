@@ -30,7 +30,7 @@
 ## 快速开始
 
 ```bash
-npx tmex-cli init
+curl -fsSL https://raw.githubusercontent.com/12dora/tmex-enhanced/main/install.sh | bash
 ```
 
 安装脚本会自动生成密钥、部署运行文件、注册用户级服务（macOS 用 launchd，Linux 用 systemd）并启动 tmex。打开命令行输出的地址，添加设备即可开始使用。
@@ -40,7 +40,7 @@ npx tmex-cli init
 
 | **AI 时代的开源方式** | **一键安装，自动升级** | **一个侧边栏管理全部** |
 |---|---|---|
-| tmex 在公开协作中持续迭代，每一次设计决策、方案取舍与踩坑记录都保留在 `prompt-archives/` 与 `docs/` 中，工程过程可查阅、可复现。 | `npx tmex-cli init` 自动安装并启动服务。升级可在设置页一键完成，或运行 `npx tmex-cli upgrade`；失败时自动回滚到上一个可用版本。 | 左侧边栏整合设备树、AI Agent 与文件管理。Agent 与当前 tmux pane 绑定，切换 pane 时上下文自动跟随。 |
+| tmex 在公开协作中持续迭代，每一次设计决策、方案取舍与踩坑记录都保留在 `prompt-archives/` 与 `docs/` 中，工程过程可查阅、可复现。 | 一键安装脚本自动安装并启动服务。升级可在设置页一键完成，或运行 `tmex upgrade`；失败时自动回滚到上一个可用版本。 | 左侧边栏整合设备树、AI Agent 与文件管理。Agent 与当前 tmux pane 绑定，切换 pane 时上下文自动跟随。 |
 
 | **终端 Agent，不止写代码** | **Watch：后台值守哨兵** | **随时随地访问终端** |
 |---|---|---|
@@ -54,10 +54,10 @@ npx tmex-cli init
 
 ```bash
 # 交互式安装（推荐）
-npx tmex-cli init
+curl -fsSL https://raw.githubusercontent.com/12dora/tmex-enhanced/main/install.sh | bash
 
 # 无交互安装（适用于 CI 或自动化）
-npx tmex-cli init --no-interactive \
+bash install.sh --no-interactive \
   --install-dir ~/.local/share/tmex \
   --host 127.0.0.1 \
   --port 9883 \
@@ -65,16 +65,16 @@ npx tmex-cli init --no-interactive \
   --autostart true
 
 # 环境诊断
-npx tmex-cli doctor
+tmex doctor
 
 # 升级到最新版本
-npx tmex-cli upgrade
+tmex upgrade
 
 # 卸载
-npx tmex-cli uninstall
+tmex uninstall
 ```
 
-安装需要 [Bun](https://bun.sh)。`doctor` 命令会检查环境并报告问题。
+安装需要 [Bun](https://bun.sh)（安装脚本在缺失时会自动安装）。`doctor` 命令会检查环境并报告问题。若安装后找不到 `tmex` 命令，将 `~/.local/bin` 加入 PATH。
 
 ## 安全
 

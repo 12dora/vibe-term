@@ -24,6 +24,7 @@ export interface InstallLayout {
   envPath: string;
   runScriptPath: string;
   metaPath: string;
+  cliDir: string;
 }
 
 export function createInstallLayout(installDir: string): InstallLayout {
@@ -39,6 +40,7 @@ export function createInstallLayout(installDir: string): InstallLayout {
     envPath: join(installDir, 'app.env'),
     runScriptPath: join(installDir, 'run.sh'),
     metaPath: join(installDir, 'install-meta.json'),
+    cliDir: join(installDir, 'cli'),
   };
 }
 

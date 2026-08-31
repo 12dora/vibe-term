@@ -4,15 +4,20 @@ import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { UpgradeState, UpgradeStatus } from '@tmex/shared';
+import { releaseTarballName, releaseTarballUrl } from '@tmex/shared';
 import { getInstallInfo } from './install-info';
+
+const TARBALL_FETCH_TIMEOUT_MS = 120_000;
 
 /**
  * 全局唯一升级状态机：idle / downloading / executing。
  *
  * 触发流程（仅 canSelfUpdate 由 API 层校验）：
- *  1. downloading：在临时目录 + 全新 cache 目录中 `bun add tmex-cli@<version>`（无视缓存）。
- *     此阶段失败时 gateway 仍存活，可经 status() 上报 error 并回到 idle。
- *  2. executing：detached 拉起下载包的 `bin/tmex.js upgrade --apply-current-package`，
+ *  1. downloading：从本仓库 GitHub Releases 下载 `tmex-cli-<version>.tgz`
+ *     到临时目录（fetch 跟随 GitHub 资产 302），再 `tar -xzf` 解出 npm pack
+ *     布局（`package/`）。CLI 为 bun bundle，无需 npm install。此阶段失败时
+ *     gateway 仍存活，可经 status() 上报 error 并回到 idle。
+ *  2. executing：detached 拉起解压包的 `package/bin/tmex.js upgrade --apply-current-package`，
  *     子进程停服务（杀掉本 gateway）→ 部署 → 重启。服务重启后新 gateway 启动即 idle。
  *
  * 依赖服务 unit 的 KillMode=process / AbandonProcessGroup=true，使 detached 子进程
@@ -52,7 +57,6 @@ class UpgradeController {
     const install = getInstallInfo();
     const installDir = install.installDir;
     let stageDir: string | null = null;
-    let cacheDir: string | null = null;
 
     try {
       if (!installDir) {
@@ -60,20 +64,9 @@ class UpgradeController {
       }
 
       stageDir = await mkdtemp(join(tmpdir(), 'tmex-upg-'));
-      cacheDir = await mkdtemp(join(tmpdir(), 'tmex-upg-cache-'));
-      await writeFile(
-        join(stageDir, 'package.json'),
-        `${JSON.stringify({ name: 'tmex-upgrade-stage', private: true })}\n`
-      );
-
-      // 阶段 1：下载（无视缓存：指向全新的 BUN_INSTALL_CACHE_DIR）
-      await this.runBunAdd(stageDir, cacheDir, version);
 
       // 校验下载产物：detached 子进程无法回报错误，缺二进制时趁本进程仍存活报错回 idle。
-      const binPath = join(stageDir, 'node_modules', 'tmex-cli', 'bin', 'tmex.js');
-      if (!existsSync(binPath)) {
-        throw new Error(`downloaded tmex-cli binary not found at ${binPath}`);
-      }
+      const binPath = await stageGithubRelease(stageDir, version);
 
       // 阶段 2：执行（detached，脱离服务进程组）。此后服务会被重启，本进程随之退出，
       // 临时目录交由系统 tmp 回收，不在此清理（清理会与子进程读包竞争）。
@@ -84,24 +77,7 @@ class UpgradeController {
       this.state = 'idle';
       this.targetVersion = null;
       if (stageDir) await rm(stageDir, { recursive: true, force: true }).catch(() => {});
-      if (cacheDir) await rm(cacheDir, { recursive: true, force: true }).catch(() => {});
     }
-  }
-
-  private runBunAdd(stageDir: string, cacheDir: string, version: string): Promise<void> {
-    return new Promise<void>((resolve, reject) => {
-      // gateway 运行于 bun，process.execPath 即 bun，无需 PATH 查找。
-      const child = spawn(process.execPath, ['add', `tmex-cli@${version}`], {
-        cwd: stageDir,
-        env: { ...process.env, BUN_INSTALL_CACHE_DIR: cacheDir },
-        stdio: 'ignore',
-      });
-      child.on('error', reject);
-      child.on('close', (code) => {
-        if (code === 0) resolve();
-        else reject(new Error(`bun add tmex-cli@${version} exited with code ${code ?? 'null'}`));
-      });
-    });
   }
 
   private spawnUpgrade(binPath: string, installDir: string, version: string): void {
@@ -137,6 +113,47 @@ class UpgradeController {
     child.unref();
     if (logFd !== null) closeSync(logFd);
   }
+}
+
+/**
+ * 下载 GitHub Release tarball 并解压到 stageDir（npm pack 布局：package/）。
+ * 返回 CLI 入口路径 `<stageDir>/package/bin/tmex.js`。
+ */
+export async function stageGithubRelease(stageDir: string, version: string): Promise<string> {
+  const tarballPath = join(stageDir, releaseTarballName(version));
+  await downloadReleaseTarball(releaseTarballUrl(version), tarballPath);
+  await extractTarball(tarballPath, stageDir);
+
+  const binPath = join(stageDir, 'package', 'bin', 'tmex.js');
+  if (!existsSync(binPath)) {
+    throw new Error(`downloaded tmex-cli binary not found at ${binPath}`);
+  }
+  return binPath;
+}
+
+async function downloadReleaseTarball(url: string, destPath: string): Promise<void> {
+  const res = await fetch(url, {
+    cache: 'no-store',
+    redirect: 'follow',
+    signal: AbortSignal.timeout(TARBALL_FETCH_TIMEOUT_MS),
+  });
+  if (!res.ok) {
+    throw new Error(`GitHub release tarball HTTP ${res.status}`);
+  }
+  await writeFile(destPath, new Uint8Array(await res.arrayBuffer()));
+}
+
+function extractTarball(tarballPath: string, stageDir: string): Promise<void> {
+  return new Promise<void>((resolve, reject) => {
+    const child = spawn('tar', ['-xzf', tarballPath, '-C', stageDir], {
+      stdio: 'ignore',
+    });
+    child.on('error', reject);
+    child.on('close', (code) => {
+      if (code === 0) resolve();
+      else reject(new Error(`tar extract exited with code ${code ?? 'null'}`));
+    });
+  });
 }
 
 export const upgradeController = new UpgradeController();

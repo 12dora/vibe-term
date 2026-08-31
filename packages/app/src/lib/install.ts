@@ -164,6 +164,10 @@ export async function backupInstallArtifacts(
   if (await pathExists(installLayout.metaPath)) {
     await copyFile(installLayout.metaPath, resolve(backupDir, 'install-meta.json'));
   }
+
+  if (await pathExists(installLayout.cliDir)) {
+    await copyDirectory(installLayout.cliDir, resolve(backupDir, 'cli'));
+  }
 }
 
 export async function restoreInstallArtifacts(
@@ -174,9 +178,11 @@ export async function restoreInstallArtifacts(
   const resourcesBackup = resolve(backupDir, 'resources');
   const runScriptBackup = resolve(backupDir, 'run.sh');
   const metaBackup = resolve(backupDir, 'install-meta.json');
+  const cliBackup = resolve(backupDir, 'cli');
 
   await rm(installLayout.runtimeDir, { recursive: true, force: true });
   await rm(installLayout.resourcesDir, { recursive: true, force: true });
+  await rm(installLayout.cliDir, { recursive: true, force: true });
 
   if (await pathExists(runtimeBackup)) {
     await copyDirectory(runtimeBackup, installLayout.runtimeDir);
@@ -192,5 +198,9 @@ export async function restoreInstallArtifacts(
 
   if (await pathExists(metaBackup)) {
     await copyFile(metaBackup, installLayout.metaPath);
+  }
+
+  if (await pathExists(cliBackup)) {
+    await copyDirectory(cliBackup, installLayout.cliDir);
   }
 }

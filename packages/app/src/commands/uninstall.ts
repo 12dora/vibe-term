@@ -1,6 +1,7 @@
 import { rm } from 'node:fs/promises';
 import { defaultInstallDir } from '../constants';
 import { t } from '../i18n';
+import { removeTmexShims } from '../lib/cli-shim';
 import { readEnvFile } from '../lib/env-file';
 import { pathExists, resolvePath } from '../lib/fs-utils';
 import { createInstallLayout, resolveInstallDir } from '../lib/install-layout';
@@ -55,8 +56,10 @@ export async function runUninstall(parsed: ParsedArgs): Promise<void> {
   if (removeProgram) {
     await removeIfExists(installLayout.runtimeDir);
     await removeIfExists(installLayout.resourcesDir);
+    await removeIfExists(installLayout.cliDir);
     await removeIfExists(installLayout.runScriptPath);
     await removeIfExists(installLayout.metaPath);
+    await removeTmexShims();
   }
 
   if (removeEnv) {

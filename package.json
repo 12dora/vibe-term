@@ -16,7 +16,7 @@
     "build:fonts": "bun scripts/fonts/build-fonts.ts",
     "build:theme-presets": "bun scripts/theme/build-theme-presets.ts",
     "release:tmex": "bun scripts/release.ts",
-    "publish:tmex": "bun run build && bun run --filter tmex-cli release",
+    "pack:tmex": "bun run build && bun run --filter tmex-cli pack",
     "test": "bun run --filter '*' test",
     "test:tmex": "bun run --filter tmex-cli test",
     "lint": "biome check . && bun scripts/complexity/gate.ts",

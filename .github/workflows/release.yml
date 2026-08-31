@@ -1,0 +1,85 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Release tag (e.g. v1.1.0)'
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Resolve tag
+        id: tag
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            TAG="${{ inputs.tag }}"
+          else
+            TAG="${GITHUB_REF_NAME}"
+          fi
+          TAG="${TAG#refs/tags/}"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "version=${TAG#v}" >> "$GITHUB_OUTPUT"
+
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ steps.tag.outputs.tag }}
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install
+        run: bun install --frozen-lockfile
+
+      - name: Build
+        run: bun run build
+
+      - name: Check package version matches tag
+        run: |
+          VERSION="${{ steps.tag.outputs.version }}"
+          PKG_VERSION="$(node -p "require('./packages/app/package.json').version")"
+          if [ "$PKG_VERSION" != "$VERSION" ]; then
+            echo "packages/app version $PKG_VERSION does not match tag version $VERSION"
+            exit 1
+          fi
+
+      - name: Pack CLI
+        working-directory: packages/app
+        run: |
+          npm pack
+          VERSION="${{ steps.tag.outputs.version }}"
+          shasum -a 256 "tmex-cli-${VERSION}.tgz" > SHA256SUMS
+          cat SHA256SUMS
+
+      - name: Publish GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG="${{ steps.tag.outputs.tag }}"
+          VERSION="${{ steps.tag.outputs.version }}"
+          TGZ="packages/app/tmex-cli-${VERSION}.tgz"
+          SUMS="packages/app/SHA256SUMS"
+          NOTES_ARGS=(--generate-notes)
+          if [ -f packages/app/CHANGELOG.md ]; then
+            NOTES_ARGS=(--notes-file packages/app/CHANGELOG.md)
+          fi
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" "$TGZ" "$SUMS" --clobber
+          else
+            gh release create "$TAG" "$TGZ" "$SUMS" --title "tmex-cli ${VERSION}" "${NOTES_ARGS[@]}"
+          fi

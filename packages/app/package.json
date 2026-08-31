@@ -1,10 +1,14 @@
 {
   "name": "tmex-cli",
-  "version": "1.0.2",
+  "version": "1.1.0",
   "type": "module",
   "bin": {
     "tmex": "./bin/tmex.js",
     "tmex-cli": "./bin/tmex.js"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/12dora/tmex-enhanced.git"
   },
   "publishConfig": {
     "access": "public"
@@ -15,9 +19,9 @@
     "bundle:resources": "bash ./scripts/bundle-resources.sh",
     "build:runtime": "bun scripts/build-runtime.ts",
     "build:artifacts": "bun scripts/build-artifacts.ts",
-    "build:cli": "bun build src/cli-node.ts --outfile ./dist/cli-node.js --target node --format esm",
+    "build:cli": "bun build src/cli-node.ts --outfile ./dist/cli-node.js --target node --format esm --packages bundle",
     "build": "bun run clean && bun run bundle:resources && bun run build:runtime && bun run build:cli",
-    "release": "npm publish",
+    "pack": "npm pack",
     "test": "bun test src"
   },
   "dependencies": {
