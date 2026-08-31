@@ -5,26 +5,18 @@
 // admit / 过期后立刻从 DOM 里消失。
 
 import type { CredentialPromptHandle } from '@/auth/credential-prompt';
-import { headFromResponse } from '@/auth/key-log-actions';
-import {
-  type CreatedEnrollment,
-  type PendingEnrollment,
-  createEnrollmentOnHub,
-  isTrustedHubUrl,
-  joinCommand,
-  requireRootPublicKey,
-} from '@/node/enrollment';
+import { type PendingEnrollment, joinCommand } from '@/node/enrollment';
 import type { HubApi } from '@/node/hub-api';
 import type { AuthApi } from '@tmex/api-client/auth/index';
-import { requireRootEpoch } from '@tmex/api-client/auth/index';
 import { Button } from '@tmex/ui/button';
 import { Input } from '@tmex/ui/input';
 import { Check, Loader2, ShieldCheck, X } from 'lucide-react';
-import { useCallback, useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { CopyableCode } from '../copy-feedback';
-import { actionErrorText } from './errors';
 import type { ResolvedMode } from './types';
+import { useCreateEnrollment } from './use-create-enrollment';
+
+export { resolveHubPublicUrl } from './use-create-enrollment';
 
 export function EnrollmentSection({
   api,
@@ -57,53 +49,8 @@ export function EnrollmentSection({
   clearedIds: string[];
 }) {
   const { t } = useTranslation();
-  const [name, setName] = useState('');
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  // join 串只在内存里、只显示这一次；admit / 过期后立即清掉。
-  const [created, setCreated] = useState<CreatedEnrollment | null>(null);
-
-  useEffect(() => {
-    if (created && clearedIds.includes(created.pending.hubEnrollmentId)) setCreated(null);
-  }, [clearedIds, created]);
-
-  const hubUrl = resolveHubPublicUrl(created, mode);
-
-  const submit = useCallback(async () => {
-    setError(null);
-    if (!hubApi) {
-      setError(t('nodes.hubOffline'));
-      return;
-    }
-    setBusy(true);
-    try {
-      const rootEpoch = requireRootEpoch(mode);
-      // 根公钥来自服务端：passkey 签授权时浏览器手里根本没有根钥，join 串第二段只能靠它。
-      const rootPublicKey = requireRootPublicKey(mode);
-      // 设计 §2 步骤 3：这次交互进 5 分钟窗口，随后的 admit-node 自动复用，不再打扰用户。
-      const signer = await prompt.request({ purpose: 'enroll' });
-      if (!signer) return;
-      const head = await api.keyLogHead();
-      const outcome = await createEnrollmentOnHub({
-        hubApi,
-        uid: mode.uid,
-        rootEpoch,
-        signer,
-        rootPublicKey,
-        keyLogHeadHash: headFromResponse(head).hash,
-        name,
-      });
-      setCreated(outcome);
-      setName('');
-    } catch (err) {
-      // 走到这里说明 enrollment 没建成（多半是 hub 请求失败）：复用窗口里的根钥没有任何
-      // 后续动作会用到，立刻清零，不要等 5 分钟定时器（见 F4-fix 评审 Major「所有权式清零」）。
-      prompt.forget();
-      setError(actionErrorText(t, err));
-    } finally {
-      setBusy(false);
-    }
-  }, [api, hubApi, mode, name, prompt, t]);
+  const create = useCreateEnrollment({ api, mode, hubApi, prompt, clearedIds });
+  const { created, hubUrl } = create;
 
   return (
     <>
@@ -114,19 +61,19 @@ export function EnrollmentSection({
         >
           <Input
             placeholder={t('nodes.enrollment.nameLabel')}
-            value={name}
+            value={create.name}
             data-testid="nodes-enroll-name"
-            onChange={(event) => setName(event.target.value)}
+            onChange={(event) => create.setName(event.target.value)}
           />
-          {error && <p className="text-xs text-destructive">{error}</p>}
+          {create.error && <p className="text-xs text-destructive">{create.error}</p>}
           <div>
             <Button
               type="button"
-              disabled={busy || !hubOnline}
-              onClick={() => void submit()}
+              disabled={create.busy || !hubOnline}
+              onClick={() => void create.submit()}
               data-testid="nodes-enroll-submit"
             >
-              {busy ? <Loader2 className="animate-spin" /> : <ShieldCheck />}
+              {create.busy ? <Loader2 className="animate-spin" /> : <ShieldCheck />}
               {t('nodes.enrollment.create')}
             </Button>
           </div>
@@ -210,17 +157,4 @@ export function EnrollmentSection({
       )}
     </>
   );
-}
-
-/**
- * join 命令里的 hub 地址：**只**来自 hub —— enrollment 创建响应的 `public_url`，
- * 或 `/api/auth/mode` 的 `hubPublicUrl`。两者都没有、或值不是可信 https URL 就不生成命令：
- * 它会被原样拼进一条让用户粘贴执行的 shell 命令，畸形值等于命令注入（见 F4-fix 评审 Major）。
- */
-export function resolveHubPublicUrl(
-  created: { hubPublicUrl: string | null } | null,
-  mode: { hubPublicUrl?: string | null }
-): string | null {
-  const url = created?.hubPublicUrl ?? mode.hubPublicUrl ?? null;
-  return isTrustedHubUrl(url) ? url : null;
 }

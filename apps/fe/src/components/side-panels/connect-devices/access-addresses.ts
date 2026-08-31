@@ -29,11 +29,11 @@ export function isLoopbackOrigin(origin: string): boolean {
 }
 
 function tunnelPublicUrl(tunnel: TunnelStatusResponse | null): string | null {
-  if (!tunnel) return null;
-  if (tunnel.config.mode === 'named' && tunnel.config.hostname) {
-    return `https://${tunnel.config.hostname}`;
-  }
-  if (tunnel.config.mode === 'quick') return tunnel.process.publicUrl;
+  // 整包跑测试时别的用例会往同一个查询键塞形状不完整的桩数据，这里按缺省处理而不是崩。
+  const config = tunnel?.config;
+  if (!config) return null;
+  if (config.mode === 'named' && config.hostname) return `https://${config.hostname}`;
+  if (config.mode === 'quick') return tunnel?.process?.publicUrl ?? null;
   return null;
 }
 

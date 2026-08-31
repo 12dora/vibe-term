@@ -1,6 +1,7 @@
 // 「服务器或电脑」页：安装 → 选接入方式 → 两条分支各自的分步指引。
 // 分支步骤接着前两步继续编号，读起来是一条连续的流程。
 
+import { joinCommand } from '@/node/enrollment';
 import { INSTALL_COMMAND } from '@tmex/shared';
 import { Tabs, TabsContent } from '@tmex/ui/tabs';
 import { useState } from 'react';
@@ -8,6 +9,8 @@ import { useTranslation } from 'react-i18next';
 import { CommandBlock } from './command-block';
 import { GuideLink, GuideStep } from './guide-step';
 import { GuideTabList } from './guide-tabs';
+import { joinCommandPreview } from './join-command-preview';
+import { JoinTokenFields, useJoinEnrollment } from './join-token';
 
 type Mode = 'join' | 'host';
 
@@ -19,6 +22,20 @@ const BRANCH_STEP_OFFSET = 3;
 export function JoinSteps() {
   const { t } = useTranslation();
   const prefix = 'connectDevices.computer.join';
+  const enrollment = useJoinEnrollment();
+  const { create } = enrollment;
+  // 加入码已生成就给真命令，否则给形状一致的预览（节点名随输入实时变化）。
+  const ready = create.created !== null && create.hubUrl !== null;
+  const command =
+    create.created && create.hubUrl
+      ? joinCommand(create.hubUrl, create.created.joinToken, create.created.pending.name)
+      : joinCommandPreview({
+          hubPublicUrl: create.hubUrl,
+          name: create.name,
+          tokenPlaceholder: t(`${prefix}.run.tokenPlaceholder`),
+          namePlaceholder: t(`${prefix}.run.namePlaceholder`),
+        });
+
   return (
     <>
       <GuideStep
@@ -31,26 +48,33 @@ export function JoinSteps() {
         index={BRANCH_STEP_OFFSET + 1}
         testId="connect-step-join-token"
         title={t(`${prefix}.token.title`)}
-        description={t(`${prefix}.token.description`)}
+        description={t(
+          enrollment.meshEnabled ? `${prefix}.token.meshDescription` : `${prefix}.token.description`
+        )}
       >
-        <GuideLink to="/settings?tab=nodes" testId="connect-join-token-link">
-          {t(`${prefix}.token.link`)}
-        </GuideLink>
+        <JoinTokenFields enrollment={enrollment} />
       </GuideStep>
       <GuideStep
         index={BRANCH_STEP_OFFSET + 2}
         testId="connect-step-join-run"
         title={t(`${prefix}.run.title`)}
-        description={t(`${prefix}.run.description`)}
+        description={t(ready ? `${prefix}.run.ready` : `${prefix}.run.description`)}
       >
-        <CommandBlock value={t(`${prefix}.run.example`)} testId="join" />
+        <CommandBlock value={command} testId="join" />
       </GuideStep>
       <GuideStep
         index={BRANCH_STEP_OFFSET + 3}
         testId="connect-step-join-confirm"
         title={t(`${prefix}.confirm.title`)}
         description={t(`${prefix}.confirm.description`)}
-      />
+      >
+        {create.created && (
+          <p className="text-xs text-muted-foreground" data-testid="connect-join-pending">
+            {t('nodes.enrollment.pending')}
+          </p>
+        )}
+      </GuideStep>
+      {enrollment.dialog}
     </>
   );
 }

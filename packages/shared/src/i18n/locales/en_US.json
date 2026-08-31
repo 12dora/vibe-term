@@ -126,12 +126,16 @@
           "token": {
             "title": "Generate a join token",
             "description": "In the relay's tmex open Settings → Multi-node Mesh → Node management, click Add → Generate join token, then copy the join command. The token is valid for 10 minutes.",
-            "link": "Open multi-node mesh settings"
+            "link": "Open multi-node mesh settings",
+            "meshDescription": "Generate a join token here, then copy the command in the next step. The token is valid for 10 minutes.",
+            "unavailable": "This machine is not part of a multi-node mesh, so a join token cannot be generated here."
           },
           "run": {
             "title": "Join from the new machine",
             "description": "Run the join command in the new machine's terminal (example below; use the command you copied):",
-            "example": "tmex hub join https://tmex.example.com --token <join-token> --name <node-name>"
+            "ready": "Run this command in the new machine's terminal:",
+            "tokenPlaceholder": "<join-token>",
+            "namePlaceholder": "<node-name>"
           },
           "confirm": {
             "title": "Confirm the join",

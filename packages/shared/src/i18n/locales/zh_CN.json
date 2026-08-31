@@ -126,12 +126,16 @@
           "token": {
             "title": "生成加入码",
             "description": "在中继的 tmex 中打开「设置 → 多节点互联 → 节点管理」，点「添加」→「生成加入码」，复制加入命令。加入码 10 分钟内有效。",
-            "link": "前往多节点互联设置"
+            "link": "前往多节点互联设置",
+            "meshDescription": "在此生成加入码并复制下一步的命令。加入码 10 分钟内有效。",
+            "unavailable": "本机未加入多节点互联，无法在此生成加入码。"
           },
           "run": {
             "title": "在新机器上加入",
             "description": "在新机器的终端执行加入命令（以下为示例，请以复制的命令为准）：",
-            "example": "tmex hub join https://tmex.example.com --token <加入码> --name <节点名称>"
+            "ready": "在新机器的终端执行以下命令：",
+            "tokenPlaceholder": "<加入码>",
+            "namePlaceholder": "<节点名称>"
           },
           "confirm": {
             "title": "确认加入",

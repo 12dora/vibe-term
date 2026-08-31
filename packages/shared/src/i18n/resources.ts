@@ -132,12 +132,16 @@ export const I18N_RESOURCES = {
           "token": {
             "title": "Generate a join token",
             "description": "In the relay's tmex open Settings → Multi-node Mesh → Node management, click Add → Generate join token, then copy the join command. The token is valid for 10 minutes.",
-            "link": "Open multi-node mesh settings"
+            "link": "Open multi-node mesh settings",
+            "meshDescription": "Generate a join token here, then copy the command in the next step. The token is valid for 10 minutes.",
+            "unavailable": "This machine is not part of a multi-node mesh, so a join token cannot be generated here."
           },
           "run": {
             "title": "Join from the new machine",
             "description": "Run the join command in the new machine's terminal (example below; use the command you copied):",
-            "example": "tmex hub join https://tmex.example.com --token <join-token> --name <node-name>"
+            "ready": "Run this command in the new machine's terminal:",
+            "tokenPlaceholder": "<join-token>",
+            "namePlaceholder": "<node-name>"
           },
           "confirm": {
             "title": "Confirm the join",
@@ -2286,12 +2290,16 @@ export const I18N_RESOURCES = {
           "token": {
             "title": "生成加入码",
             "description": "在中继的 tmex 中打开「设置 → 多节点互联 → 节点管理」，点「添加」→「生成加入码」，复制加入命令。加入码 10 分钟内有效。",
-            "link": "前往多节点互联设置"
+            "link": "前往多节点互联设置",
+            "meshDescription": "在此生成加入码并复制下一步的命令。加入码 10 分钟内有效。",
+            "unavailable": "本机未加入多节点互联，无法在此生成加入码。"
           },
           "run": {
             "title": "在新机器上加入",
             "description": "在新机器的终端执行加入命令（以下为示例，请以复制的命令为准）：",
-            "example": "tmex hub join https://tmex.example.com --token <加入码> --name <节点名称>"
+            "ready": "在新机器的终端执行以下命令：",
+            "tokenPlaceholder": "<加入码>",
+            "namePlaceholder": "<节点名称>"
           },
           "confirm": {
             "title": "确认加入",
@@ -4439,12 +4447,16 @@ export const I18N_RESOURCES = {
           "token": {
             "title": "参加コードを作成",
             "description": "中継側の tmex で「設定 → マルチノード連携 → ノード管理」を開き、「追加」→「参加コードを作成」をクリックして参加コマンドをコピーします。参加コードの有効期限は 10 分です。",
-            "link": "マルチノード連携設定を開く"
+            "link": "マルチノード連携設定を開く",
+            "meshDescription": "ここで参加コードを作成し、次の手順のコマンドをコピーします。参加コードの有効期限は 10 分です。",
+            "unavailable": "本機はマルチノード連携に参加していないため、ここでは参加コードを作成できません。"
           },
           "run": {
             "title": "新しいマシンで参加",
             "description": "新しいマシンのターミナルで参加コマンドを実行します（以下は例です。コピーしたコマンドを使用してください）：",
-            "example": "tmex hub join https://tmex.example.com --token <参加コード> --name <ノード名>"
+            "ready": "新しいマシンのターミナルで次のコマンドを実行します：",
+            "tokenPlaceholder": "<参加コード>",
+            "namePlaceholder": "<ノード名>"
           },
           "confirm": {
             "title": "参加を承認",
