@@ -178,6 +178,16 @@ export interface NodeLoginRequiredBody {
 export type MeshNodeReach = 'lan' | 'wan' | 'relay' | null;
 export type MeshNodeTransport = 'ws-secure' | 'relay' | 'dc' | null;
 
+/** 最近一次直连尝试的失败原因（按承载分开记）；从未尝试为 `null`。 */
+export interface MeshNodeDirectFailure {
+  /** 记录时刻（epoch 毫秒）。 */
+  at: number;
+  /** ws 直连的失败原因，形如 `timeout ws://10.77.88.3:39001/peer`。 */
+  ws?: string | null;
+  /** DataChannel 直连的失败原因，形如 `datachannel open timeout`。 */
+  dc?: string | null;
+}
+
 /** `GET /api/mesh/nodes` 的单行（**需会话**）。 */
 export interface MeshNode {
   id: string;
@@ -194,6 +204,14 @@ export interface MeshNode {
   transport?: MeshNodeTransport;
   /** entry ↔ node 最近一次 ping/pong 往返毫秒数；未测得为 null。 */
   rttMs?: number | null;
+  /** 当前链路的对端地址：`ws-secure` / `dc` 为对端主机，`relay` 为 hub 主机；未知为 null。 */
+  peerAddress?: string | null;
+  /** 当前这条链路建立的时刻（epoch 毫秒）；未知为 null。 */
+  linkSinceAt?: number | null;
+  /** 对端广播的 ws 接入地址。 */
+  endpoints?: string[];
+  /** 最近一次直连尝试的失败原因；已直连或从未尝试为 null。 */
+  directFailure?: MeshNodeDirectFailure | null;
   version: string | null;
   direct_capable: boolean;
   inventory?: unknown;

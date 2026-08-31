@@ -36,7 +36,6 @@ function toolbarInput(overrides: Partial<DeviceConsoleActionsModel> = {}): Toolb
       onSwitchPane: () => {},
       onSplitPane: () => {},
       onToggleInputMode: () => {},
-      onJumpToLatest: () => {},
       onConfirmRefresh: () => {},
       ...overrides,
     },

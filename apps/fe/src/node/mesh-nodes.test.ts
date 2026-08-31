@@ -142,6 +142,83 @@ describe('patchNodesWithEvent', () => {
     expect(next[1].rttMs).toBe(7);
   });
 
+  const linked = () => [
+    node({
+      id: 'a',
+      reach: 'lan',
+      transport: 'ws-secure',
+      peerAddress: '10.0.0.7',
+      linkSinceAt: 1_700_000_000_000,
+      directFailure: { at: 1_699_999_000_000, ws: 'timeout ws://10.0.0.9:39001/peer', dc: null },
+    }),
+    node({ id: 'b' }),
+  ];
+
+  test('同一条链路的事件保留只 REST 下发的现场', () => {
+    const next = patchNodesWithEvent(linked(), {
+      nodeId: 'a',
+      status: 'online',
+      reach: 'lan',
+      transport: 'ws-secure',
+      rttMs: 5,
+      inventory: null,
+    });
+    expect(next[0].peerAddress).toBe('10.0.0.7');
+    expect(next[0].linkSinceAt).toBe(1_700_000_000_000);
+    expect(next[0].directFailure?.ws).toBe('timeout ws://10.0.0.9:39001/peer');
+  });
+
+  test('事件没带 transport 时按同一条链路处理，现场照样保留', () => {
+    const next = patchNodesWithEvent(linked(), {
+      nodeId: 'a',
+      status: 'online',
+      reach: 'lan',
+      inventory: null,
+    });
+    expect(next[0].transport).toBe('ws-secure');
+    expect(next[0].peerAddress).toBe('10.0.0.7');
+    expect(next[0].linkSinceAt).toBe(1_700_000_000_000);
+  });
+
+  test('换了承载（ws-secure → relay）就把旧链路的现场清掉', () => {
+    const next = patchNodesWithEvent(linked(), {
+      nodeId: 'a',
+      status: 'online',
+      reach: 'relay',
+      transport: 'relay',
+      inventory: null,
+    });
+    expect(next[0].transport).toBe('relay');
+    expect(next[0].peerAddress).toBeNull();
+    expect(next[0].linkSinceAt).toBeNull();
+    expect(next[0].directFailure).toBeNull();
+  });
+
+  test('承载没变但到达路径变了同样清掉旧现场', () => {
+    const next = patchNodesWithEvent(linked(), {
+      nodeId: 'a',
+      status: 'online',
+      reach: 'wan',
+      transport: 'ws-secure',
+      inventory: null,
+    });
+    expect(next[0].peerAddress).toBeNull();
+    expect(next[0].linkSinceAt).toBeNull();
+    expect(next[0].directFailure).toBeNull();
+  });
+
+  test('offline 事件清掉链路现场', () => {
+    const next = patchNodesWithEvent(linked(), {
+      nodeId: 'a',
+      status: 'offline',
+      reach: null,
+      inventory: null,
+    });
+    expect(next[0].peerAddress).toBeNull();
+    expect(next[0].linkSinceAt).toBeNull();
+    expect(next[0].directFailure).toBeNull();
+  });
+
   test('NODE_EVENT 更新 version / direct_capable / name', () => {
     const next = patchNodesWithEvent(nodes, {
       nodeId: 'a',

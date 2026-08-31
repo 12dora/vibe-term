@@ -49,7 +49,6 @@ function model(overrides: Partial<DeviceConsoleActionsModel> = {}): DeviceConsol
     onSwitchPane: () => {},
     onSplitPane: () => {},
     onToggleInputMode: () => {},
-    onJumpToLatest: () => {},
     onConfirmRefresh: () => {},
     ...overrides,
   };
@@ -109,7 +108,6 @@ describe('buildToolbarButtons', () => {
       'split-down-button',
       undefined,
       'terminal-input-mode-toggle',
-      undefined,
       'watch-open-button',
       'keyboard-behavior-open-button',
     ]);
@@ -131,7 +129,6 @@ describe('buildToolbarButtons', () => {
     const buttons = buildToolbarButtons(toolbarInput({ canInteract: false }));
     expect(findButton(buttons, 'split-right')?.disabled).toBe(true);
     expect(findButton(buttons, 'input-mode')?.disabled).toBe(true);
-    expect(findButton(buttons, 'jump-to-latest')?.disabled).toBe(true);
     expect(findButton(buttons, 'refresh')?.disabled).toBeUndefined();
     expect(findButton(buttons, 'terminal-settings')?.disabled).toBeUndefined();
   });
@@ -168,7 +165,6 @@ describe('buildToolbarButtons', () => {
       model: model({
         onSplitPane: (direction) => calls.push(`split:${direction}`),
         onToggleInputMode: () => calls.push('input-mode'),
-        onJumpToLatest: () => calls.push('jump'),
       }),
       onOpenRefreshConfirm: () => calls.push('refresh'),
       onOpenWatchDialog: () => calls.push('watch'),
@@ -182,7 +178,6 @@ describe('buildToolbarButtons', () => {
       'split:down',
       'refresh',
       'input-mode',
-      'jump',
       'watch',
       'terminal-settings',
     ]);

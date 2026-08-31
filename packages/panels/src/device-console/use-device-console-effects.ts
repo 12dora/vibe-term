@@ -1,4 +1,4 @@
-// 控制台的副作用集合：输入模式切换/跳转事件的回到底部、设备错误提示、浏览器标题。
+// 控制台的副作用集合：输入模式切换后的回到底部、设备错误提示、浏览器标题。
 
 import { useBellStore } from '@tmex/notifications';
 import { PRODUCT_NAME, type TmuxPane, type TmuxWindow } from '@tmex/shared';
@@ -106,15 +106,4 @@ export function useDeviceConsoleEffects({
       document.title = restoredBrowserTitle(siteName, formatBrowserTitle);
     };
   }, [siteName, terminalLabel, formatBrowserTitle]);
-
-  useEffect(() => {
-    const handler = () => {
-      terminalRef.current?.scrollToBottom();
-    };
-
-    window.addEventListener('tmex:jump-to-latest', handler as EventListener);
-    return () => {
-      window.removeEventListener('tmex:jump-to-latest', handler as EventListener);
-    };
-  }, [terminalRef]);
 }

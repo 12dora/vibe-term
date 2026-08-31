@@ -51,12 +51,21 @@ export function patchNodesWithEvent(nodes: MeshNode[], event: NodeEventPayload):
     if (node.id !== event.nodeId) return node;
     changed = true;
     const online = event.status === 'online';
+    const transport = online ? pick(event.transport, node.transport) : null;
+    const reach = online ? event.reach : null;
+    // 只 REST 下发的链路现场（对端地址、建立时刻、未直连原因）：事件里没有这几段。承载与到达
+    // 路径都没变才是同一条链路，可以留用；一旦换了链路，旧地址与旧时长必须清掉，否则会一直显示
+    // 到下一次轮询。
+    const sameLink = online && transport === (node.transport ?? null) && reach === node.reach;
     return {
       ...node,
       online,
-      reach: online ? event.reach : null,
-      transport: online ? pick(event.transport, node.transport) : null,
+      reach,
+      transport,
       rttMs: online ? pick(event.rttMs, node.rttMs) : null,
+      peerAddress: sameLink ? (node.peerAddress ?? null) : null,
+      linkSinceAt: sameLink ? (node.linkSinceAt ?? null) : null,
+      directFailure: sameLink ? (node.directFailure ?? null) : null,
       inventory: event.inventory ?? node.inventory,
       version: event.version ?? versionOf(event.inventory) ?? node.version,
       direct_capable: event.direct_capable ?? node.direct_capable,

@@ -4,7 +4,6 @@ import { PaneSwitcherMenu } from '@tmex/terminal-ui';
 import { Button } from '@tmex/ui/button';
 import { IconTooltip } from '@tmex/ui/icon-tooltip';
 import {
-  ArrowDownToLine,
   Keyboard,
   type LucideIcon,
   Radar,
@@ -75,13 +74,6 @@ function coreButtons({ model, t, onOpenRefreshConfirm }: ToolbarButtonsInput): T
       label: isDirectInput ? t('nav.switchToEditor') : t('nav.switchToDirect'),
       disabled: !model.canInteract,
       onClick: model.onToggleInputMode,
-    },
-    {
-      key: 'jump-to-latest',
-      icon: ArrowDownToLine,
-      label: t('nav.jumpToLatest'),
-      disabled: !model.canInteract,
-      onClick: model.onJumpToLatest,
     },
   ];
 }

@@ -22,7 +22,6 @@ export interface DeviceConsoleActionsInput {
 export interface ConsoleCommands {
   onSwitchPane: (targetPaneId: string) => void;
   onSplitPane: (direction: SplitDirection) => void;
-  onJumpToLatest: () => void;
   onConfirmRefresh: () => void;
 }
 
@@ -113,18 +112,11 @@ function useConsoleCommands({
     [deviceId, resolvedPaneId, currentPath, runtime]
   );
 
-  const onJumpToLatest = useCallback(() => {
-    // detail 带 nodeId：将来多 node 面板并存时接收方可按 node 过滤（当前同一时刻只有一个控制台）
-    window.dispatchEvent(
-      new CustomEvent('tmex:jump-to-latest', { detail: { nodeId: runtime.nodeId } })
-    );
-  }, [runtime.nodeId]);
-
   const onConfirmRefresh = useCallback(() => {
     void (async () => runtime.host.reload())().catch(() => {});
   }, [runtime.host]);
 
-  return { onSwitchPane, onSplitPane, onJumpToLatest, onConfirmRefresh };
+  return { onSwitchPane, onSplitPane, onConfirmRefresh };
 }
 
 export function useDeviceConsoleActions({
