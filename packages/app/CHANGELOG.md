@@ -1,3 +1,47 @@
+# 1.1.4
+
+_2026-08-31_
+
+## English
+
+### Features
+
+- Sidebar Files tab is now multi-node: one section per node (self first, then the other mesh nodes in the same order as the terminal sidebar), headed by the node name; remote nodes that are not signed in show a sign-in row instead of silently showing nothing. Node sections and the roots inside a section can be dragged to reorder (`PUT /api/files/roots/order`).
+- Terminal header link badge: "Via hub" is now "Relay"; the connection details popover shows rows that apply to the actual link kind (reach, transport, RTT, connected-for; relay address and the reasons the last direct attempt failed for relay links; peer address for direct WebSocket links; ICE rows only for browser WebRTC) instead of a column of "unknown".
+- `GET /api/mesh/nodes` carries `peerAddress`, `linkSinceAt`, `endpoints` and `directFailure` for each node.
+
+### Performance
+
+- Switching terminals: the gateway no longer waits a fixed 450 ms after `TERM_HISTORY` before releasing live output; live output now resumes right after history (median 515 ms → ~22 ms on single-pane windows, ~100 ms on split windows).
+- Single-pane view keeps the three most recently viewed panes of a device mounted; switching back to one of them is a warm switch — no terminal reboot, no history replay (first content median ~90 ms → ~19 ms). Font loading no longer awaits when the fonts are already cached.
+- Node-to-node direct dialing tries all advertised endpoints concurrently (same-subnet addresses first) instead of one after another with a 3 s timeout each.
+
+### Fixes
+
+- Terminal cursor no longer flickers between two cells while a TUI redraws at high frequency (the cursor layer now waits for the output to settle before moving).
+- Removed the terminal toolbar "jump to latest" button (the keyboard-shortcut action remains).
+- `tmex upgrade` rejects unknown options (and `--help` prints usage) instead of silently running an upgrade against the default install directory.
+
+## 中文
+
+### 新功能
+
+- 侧栏「文件」改为多节点：每个节点一节（本机在前，其余节点顺序与终端侧栏一致），节头显示节点名；未登录的远端节点显示登录行而不是空白。节与节内目录都可拖动排序（`PUT /api/files/roots/order`）。
+- 终端右上角链路徽标：「经 Hub 中转」改为「中转」；连接详情按链路种类给出适用的行（到达路径、承载、延迟、已连接时长；中转链路给出中转地址与最近一次未直连的原因；直连 WebSocket 给出对端地址；ICE 明细只在浏览器 WebRTC 直连时列出），不再出现一列「未知」。
+- `GET /api/mesh/nodes` 每个节点增加 `peerAddress`、`linkSinceAt`、`endpoints`、`directFailure`。
+
+### 性能
+
+- 切换终端：网关不再在 `TERM_HISTORY` 之后固定等 450 ms 才放行实时输出（单 pane 窗口中位数 515 ms → 约 22 ms，分屏窗口约 100 ms）。
+- 单 pane 视图保留设备最近查看的 3 个 pane 的终端实例，切回即热切换——不重建终端、不重放 history（首帧中位数约 90 ms → 约 19 ms）。字体已缓存时不再等待。
+- 节点间直连改为对所有广播地址并发拨号（同网段优先），不再逐个等待 3 s 超时。
+
+### 修复
+
+- TUI 高频刷新时终端光标不再在两格之间狂闪（光标层等输出静默后再落笔）。
+- 删除终端工具栏的「回到底部」按钮（快捷键动作保留）。
+- `tmex upgrade` 拒绝未知参数（`--help` 打印用法），不再静默对默认安装目录执行升级。
+
 # 1.1.3
 
 _2026-08-31_

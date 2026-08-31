@@ -154,7 +154,33 @@ async function verifyHealth(installLayout: ReturnType<typeof createInstallLayout
   throw lastError || new Error(t('upgrade.healthFailed', { status: 'timeout' }));
 }
 
+const UPGRADE_FLAGS = new Set([
+  'apply-current-package',
+  'version',
+  'install-dir',
+  'service-name',
+  'yes',
+  'lang',
+  'bun-path',
+  'help',
+]);
+
+const UPGRADE_USAGE =
+  'Usage: tmex upgrade [--version <version>] [--install-dir <path>] [--bun-path <path>] [--yes] [--lang <code>]';
+
+function assertKnownUpgradeFlags(parsed: ParsedArgs): void {
+  const unknown = Object.keys(parsed.flags).filter((key) => !UPGRADE_FLAGS.has(key));
+  if (unknown.length > 0) {
+    throw new Error(`Unknown option(s): ${unknown.map((key) => `--${key}`).join(', ')}\n${UPGRADE_USAGE}`);
+  }
+}
+
 export async function runUpgrade(parsed: ParsedArgs): Promise<void> {
+  assertKnownUpgradeFlags(parsed);
+  if (parsed.flags.help) {
+    console.log(UPGRADE_USAGE);
+    return;
+  }
   const applyCurrent = asBoolean(parsed.flags['apply-current-package']) ?? false;
   const targetVersion = asString(parsed.flags.version) || 'latest';
 
