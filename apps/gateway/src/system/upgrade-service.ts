@@ -1,4 +1,4 @@
-import type { UpgradeStatus } from '@tmex/shared';
+import type { UpgradeState, UpgradeStatus } from '@tmex/shared';
 import { nodeSessionCookieName, parseCookies } from '../auth/cookies';
 import type { UserStore } from '../auth/user-store';
 import { MESH_VIA_SELF } from '../mesh/mesh-deps';
@@ -8,6 +8,8 @@ import { compareVersions } from './semver';
 import { requireLatestUpgradeRelease } from './update-check';
 
 const RELEASE_VERSION_PATTERN = /^\d+\.\d+\.\d+(-[0-9A-Za-z.-]+)?$/;
+const REMOTE_UPGRADE_JSON_MAX_BYTES = 64 * 1024;
+const UPGRADE_STATES = new Set<UpgradeState>(['idle', 'downloading', 'executing']);
 
 export type AuthorizedUpgradeForward = {
   forwardAuthorizedHttp: (
@@ -64,7 +66,10 @@ export async function handleMeshNodeUpgradeStart(opts: {
   }
   const local = isLocalUpgradeNode(localNodeId, nodeId);
   const resolvedId = local ? localNodeId : nodeId;
-  if (!local && !readNodeSession(req, nodeId)) {
+  if (local) {
+    const blocked = await rejectLocalUpgradePreflight(resolvedId);
+    if (blocked) return blocked;
+  } else if (!readNodeSession(req, nodeId)) {
     return jsonError('NODE_LOGIN_REQUIRED', 401, { nodeId });
   }
 
@@ -143,16 +148,31 @@ export async function mapForwardedUpgradeResponse(
   upstream: Response
 ): Promise<Response> {
   if (upstream.status === 404) {
+    discardUpstreamBody(upstream);
     return jsonError('UPGRADE_UNSUPPORTED', 404, { nodeId });
   }
   if (upstream.status === 403) {
+    discardUpstreamBody(upstream);
     return jsonError('UPGRADE_NOT_ALLOWED', 403, { nodeId });
   }
   if (upstream.status === 409) {
-    const extra = await readJsonObject(upstream);
-    return jsonError('UPGRADE_IN_PROGRESS', 409, { nodeId, ...extra });
+    const parsed = await readBoundedJsonObject(upstream);
+    const extra = parsed.ok ? pickUpgradeStatusFields(parsed.value) : {};
+    return jsonError('UPGRADE_IN_PROGRESS', 409, { ...extra, nodeId });
   }
   return upstream;
+}
+
+async function rejectLocalUpgradePreflight(nodeId: string): Promise<Response | null> {
+  const info = getSystemInfo();
+  if (!info.canSelfUpdate) {
+    return jsonError('UPGRADE_NOT_ALLOWED', 403, { nodeId });
+  }
+  const status = await readLocalUpgradeStatus();
+  if (status.state !== 'idle') {
+    return jsonError('UPGRADE_IN_PROGRESS', 409, { nodeId, ...status });
+  }
+  return null;
 }
 
 async function startLocalMeshUpgrade(nodeId: string, latestVersion: string): Promise<Response> {
@@ -184,7 +204,11 @@ async function startRemoteMeshUpgrade(
   if (infoRes.status !== 200) {
     return mapForwardedUpgradeResponse(nodeId, infoRes);
   }
-  const info = await readJsonObject(infoRes);
+  const parsed = await readBoundedJsonObject(infoRes);
+  if (!parsed.ok) {
+    return jsonError('NODE_UNREACHABLE', 503, { nodeId });
+  }
+  const info = parsed.value;
   const current = typeof info.baseVersion === 'string' ? info.baseVersion : null;
   if (info.canSelfUpdate === false) {
     return jsonError('UPGRADE_NOT_ALLOWED', 403, { nodeId });
@@ -209,14 +233,61 @@ function readNodeSession(req: Request, nodeId: string): string | null {
   return parseCookies(req.headers.get('cookie')).get(nodeSessionCookieName(nodeId)) ?? null;
 }
 
-async function readJsonObject(res: Response): Promise<Record<string, unknown>> {
+function pickUpgradeStatusFields(raw: Record<string, unknown>): Record<string, unknown> {
+  const extra: Record<string, unknown> = {};
+  if (typeof raw.state === 'string' && UPGRADE_STATES.has(raw.state as UpgradeState)) {
+    extra.state = raw.state;
+  }
+  for (const key of ['targetVersion', 'error', 'startedAt'] as const) {
+    const value = raw[key];
+    if (typeof value === 'string' || value === null) extra[key] = value;
+  }
+  return extra;
+}
+
+function discardUpstreamBody(res: Response): void {
+  void res.body?.cancel().catch(() => {});
+}
+
+type BoundedJson = { ok: true; value: Record<string, unknown> } | { ok: false };
+
+async function readBoundedJsonObject(res: Response): Promise<BoundedJson> {
+  const raw = await readBodyLimited(res, REMOTE_UPGRADE_JSON_MAX_BYTES);
+  if (!raw.ok) return { ok: false };
   try {
-    const parsed: unknown = await res.json();
+    const parsed: unknown = JSON.parse(raw.text);
     if (typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed)) {
-      return parsed as Record<string, unknown>;
+      return { ok: true, value: parsed as Record<string, unknown> };
     }
   } catch {
-    // ignore
+    // unparsable or empty
   }
-  return {};
+  return { ok: false };
+}
+
+async function readBodyLimited(
+  response: Response,
+  limit: number
+): Promise<{ ok: true; text: string } | { ok: false }> {
+  const reader = response.body?.getReader();
+  if (!reader) return { ok: false };
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      if (!value?.byteLength) continue;
+      if (total + value.byteLength > limit) {
+        await reader.cancel().catch(() => {});
+        return { ok: false };
+      }
+      chunks.push(value);
+      total += value.byteLength;
+    }
+  } catch {
+    await reader.cancel().catch(() => {});
+    return { ok: false };
+  }
+  return { ok: true, text: new TextDecoder().decode(Buffer.concat(chunks, total)) };
 }

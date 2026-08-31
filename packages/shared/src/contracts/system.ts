@@ -77,7 +77,8 @@ export type MeshUpgradeErrorCode =
   | 'UPGRADE_IN_PROGRESS'
   | 'UPGRADE_ALREADY_LATEST'
   | 'UPGRADE_UNSUPPORTED'
-  | 'RELEASE_UNAVAILABLE';
+  | 'RELEASE_UNAVAILABLE'
+  | 'NOT_FOUND';
 
 /** `GET /api/mesh/upgrade/latest`：具体可安装版本，不含入口节点 hasUpdate */
 export interface MeshUpgradeLatest {

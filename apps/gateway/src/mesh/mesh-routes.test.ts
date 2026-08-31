@@ -1364,6 +1364,7 @@ describe('mesh upgrade routes', () => {
         }
       );
       expect(res.status).toBe(404);
+      expect(await res.json()).toEqual({ code: 'NOT_FOUND', nodeId: REVOKED_ID });
     } finally {
       mesh.close();
     }
@@ -1447,6 +1448,22 @@ describe('mesh upgrade routes', () => {
 
   test('POST local upgrade when canSelfUpdate is false → UPGRADE_NOT_ALLOWED', async () => {
     mockGithubLatest('99.0.0');
+    const mesh = await bootMesh();
+    try {
+      const { sid } = await challengeAndLogin(mesh.runtime, mesh.boot);
+      const res = await call(mesh.runtime, `http://localhost/api/mesh/nodes/${NODE_ID}/upgrade`, {
+        method: 'POST',
+        headers: { cookie: `tmex_s_self=${sid}` },
+      });
+      expect(res.status).toBe(403);
+      expect(await res.json()).toEqual({ code: 'UPGRADE_NOT_ALLOWED', nodeId: NODE_ID });
+    } finally {
+      mesh.close();
+    }
+  });
+
+  test('POST local upgrade when canSelfUpdate is false and GitHub is down → UPGRADE_NOT_ALLOWED', async () => {
+    mockGithubLatest('9.9.9', { status: 502 });
     const mesh = await bootMesh();
     try {
       const { sid } = await challengeAndLogin(mesh.runtime, mesh.boot);
