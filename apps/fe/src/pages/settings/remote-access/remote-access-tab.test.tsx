@@ -5,6 +5,7 @@
 import { beforeEach, describe, expect, mock, test } from 'bun:test';
 import type { AuthModeResponse } from '@tmex/api-client/auth/index';
 import type {
+  LocalAuthStatus,
   TunnelJobStatus,
   TunnelMode,
   TunnelProcessState,
@@ -878,6 +879,103 @@ describe('命名隧道', () => {
   });
 });
 
+describe('直接连接', () => {
+  const localAuth = (overrides: Partial<LocalAuthStatus> = {}): LocalAuthStatus => ({
+    supported: true,
+    enabled: false,
+    effective: false,
+    credentialsPresent: false,
+    ...overrides,
+  });
+
+  test('方式步给出第三张卡，且不因为没装 cloudflared 就锁死', () => {
+    status = tunnel({ binary: { installed: false, version: null, path: null, source: null } });
+    const html = render();
+    expect(html).toContain('data-testid="remote-access-mode-direct"');
+    expect(html).toContain('settings.remoteAccess.mode.direct.description');
+    expect(isDisabled(html, 'remote-access-mode-direct-input')).toBe(false);
+  });
+
+  test('已建隧道时第三张卡同样锁定：换方式要先移除隧道', () => {
+    status = configured('named', 'running');
+    expect(isDisabled(render(), 'remote-access-mode-direct-input')).toBe(true);
+  });
+
+  test('选中后只剩方式与访问保护两步', () => {
+    expect(stepOrder(renderWizard('direct', { localAuth: localAuth() }))).toEqual([
+      'mode',
+      'direct',
+    ]);
+  });
+
+  test('hub / node 角色：已由节点登录保护，不再劝启用本机登录', () => {
+    const html = renderWizard('direct', { localAuth: localAuth({ supported: false }) });
+    expect(html).toContain('data-testid="remote-access-direct-node"');
+    expect(html).toContain('settings.remoteAccess.direct.protection.node.title');
+    expect(html).toContain('data-testid="remote-access-direct-entry"');
+    expect(html).not.toContain('data-testid="remote-access-direct-enable"');
+  });
+
+  test('本机登录已生效：受保护态，同样不给启用表单', () => {
+    const html = renderWizard('direct', {
+      localAuth: localAuth({ enabled: true, effective: true, credentialsPresent: true }),
+    });
+    expect(html).toContain('data-testid="remote-access-direct-local"');
+    expect(html).toContain('settings.remoteAccess.direct.protection.local.title');
+    expect(html).not.toContain('data-testid="remote-access-direct-enable"');
+  });
+
+  test('未受保护：警示 + 建首位用户表单 + 二次确认，勾选前不让提交', () => {
+    const html = renderWizard('direct', { localAuth: localAuth() });
+    expect(html).toContain('data-testid="remote-access-direct-unprotected"');
+    expect(html).toContain('settings.remoteAccess.direct.protection.unprotected.description');
+    expect(html).toContain('data-stage="bootstrap"');
+    expect(html).toContain('data-testid="remote-access-direct-username"');
+    expect(html).toContain('data-testid="remote-access-direct-password"');
+    expect(html).toContain('data-testid="remote-access-direct-confirm"');
+    // 启用前必须先看到「所有已打开的会话都要重新登录」，并显式勾选。
+    expect(html).toContain('data-testid="remote-access-direct-enable-warning"');
+    expect(html).toContain('settings.remoteAccess.direct.enable.warning');
+    expect(html).toContain('data-testid="remote-access-direct-ack"');
+    expect(isDisabled(html, 'remote-access-direct-enable-submit')).toBe(true);
+  });
+
+  test('已有账号时跳过建用户，只留开关', () => {
+    const html = renderWizard('direct', { localAuth: localAuth({ credentialsPresent: true }) });
+    expect(html).toContain('data-stage="enable"');
+    expect(html).not.toContain('data-testid="remote-access-direct-username"');
+    expect(html).toContain('data-testid="remote-access-direct-enable-submit"');
+  });
+
+  test('后端没下发 localAuth 时按未知处理，绝不报成「没有保护」', () => {
+    const html = renderWizard('direct');
+    expect(html).toContain('data-testid="remote-access-direct-unknown"');
+    expect(html).not.toContain('data-testid="remote-access-direct-unprotected"');
+    expect(html).not.toContain('data-testid="remote-access-direct-enable"');
+  });
+
+  test('三档保护态都带上 HTTPS 提示与「只保证需要登录」的说明', () => {
+    for (const auth of [
+      localAuth({ supported: false }),
+      localAuth({ enabled: true, effective: true, credentialsPresent: true }),
+      localAuth(),
+    ]) {
+      const html = renderWizard('direct', { localAuth: auth });
+      expect(html).toContain('settings.remoteAccess.direct.tls.hint');
+      expect(html).toContain('settings.remoteAccess.direct.tls.link');
+      expect(html).toContain('data-testid="remote-access-direct-caveat"');
+    }
+  });
+
+  test('这条路径不发任何隧道动作：安装 / 启动 / 创建按钮一个都不出现', () => {
+    const html = renderWizard('direct', { localAuth: localAuth() });
+    expect(html).not.toContain('data-testid="remote-access-install"');
+    expect(html).not.toContain('data-testid="remote-access-quick-start"');
+    expect(html).not.toContain('data-testid="remote-access-create"');
+    expect(html).not.toContain('data-testid="remote-access-trust-proxy"');
+  });
+});
+
 describe('Cloudflare Access 区块', () => {
   const loggedIn = (overrides: Partial<TunnelStatusResponse> = {}) =>
     configured('named', 'running', { auth: { loggedIn: true, loginUrl: null }, ...overrides });
@@ -911,6 +1009,15 @@ describe('Cloudflare Access 区块', () => {
     expect(html).toContain('tmex.cloudflareaccess.com');
     expect(html).toContain('data-testid="remote-access-access-clear-credentials"');
     expect(html).not.toContain('data-testid="remote-access-access-token"');
+  });
+
+  test('凭证已保存时不再常驻成功条——成功提示改成一次性 toast', () => {
+    status = loggedIn({
+      access: { ...tunnel().access, hasCredentials: true, accountId: 'acc-123' },
+    });
+    const html = render();
+    expect(html).toContain('data-testid="remote-access-access-credentials-saved"');
+    expect(html).not.toContain('settings.remoteAccess.access.credentials.saved');
   });
 
   test('凭证已保存但没有应用时提示先同步，并给出同步与应用两个按钮', () => {
@@ -1208,12 +1315,13 @@ function exposureState(overrides: Partial<ExposureState> = {}): ExposureState {
  * 直接渲染 `TunnelWizard` 并把它们传进去；`RemoteAccessTab` 只负责把 state 接上这些入参。
  */
 function renderWizard(
-  mode: TunnelMode,
+  mode: TunnelMode | 'direct',
   options: {
     isHub?: boolean;
     draft?: NamedDraft;
     actions?: ActionSnapshot;
     exposure?: Partial<ExposureState>;
+    localAuth?: LocalAuthStatus | null;
   } = {}
 ): string {
   const current = status;
@@ -1230,6 +1338,8 @@ function renderWizard(
         isHub={options.isHub ?? false}
         exposure={exposureState(options.exposure)}
         onRestarted={() => undefined}
+        localAuth={options.localAuth ?? null}
+        onLocalAuth={() => undefined}
       />
     </MemoryRouter>
   );

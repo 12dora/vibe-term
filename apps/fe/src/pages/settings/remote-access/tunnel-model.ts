@@ -3,12 +3,14 @@
 
 import { TunnelApiError } from '@tmex/api-client/local/tunnel-api';
 import type {
+  LocalAuthStatus,
   TunnelActionRequest,
   TunnelErrorCode,
   TunnelMode,
   TunnelStatusResponse,
 } from '@tmex/shared';
 import { externalAccessState } from './access-model';
+import { directProtected } from './direct-model';
 
 export type TunnelPill = 'notConfigured' | 'stopped' | 'starting' | 'running' | 'error';
 
@@ -95,15 +97,24 @@ export type WizardStepId =
   | 'access'
   | 'create'
   | 'quick'
+  | 'direct'
   | 'tunnel'
   | 'proxy';
+
+/**
+ * 向导的展示路径：服务端的 `TunnelMode` 之外多一条纯前端的 `direct`（自行暴露，不建任何隧道）。
+ * 选中 `direct` 不会发出任何隧道动作，也永远不会写进 `status.config.mode`。
+ */
+export type WizardMode = TunnelMode | 'direct';
 
 export interface WizardContext {
   status: TunnelStatusResponse;
   /** 本地选择的方式（尚未落库） */
-  chosenMode: TunnelMode | null;
+  chosenMode: WizardMode | null;
   /** 主机名步骤已在本地确认——契约里没有单独保存主机名的动作，只能由向导自己记。 */
   hostnameConfirmed: boolean;
+  /** `/api/auth/mode` 下发的本机登录状态；只有「直接连接」这条路径用得上。 */
+  localAuth?: LocalAuthStatus | null;
 }
 
 const NAMED_STEPS: WizardStepId[] = [
@@ -116,21 +127,27 @@ const NAMED_STEPS: WizardStepId[] = [
   'proxy',
 ];
 const QUICK_STEPS: WizardStepId[] = ['install', 'mode', 'quick', 'proxy'];
+/** 直接连接不装 cloudflared、不建隧道，也就没有安装与反向代理两步。 */
+const DIRECT_STEPS: WizardStepId[] = ['mode', 'direct'];
 const UNDECIDED_STEPS: WizardStepId[] = ['install', 'mode', 'tunnel', 'proxy'];
 
-/** 步骤序列随方式变化：临时隧道没有登录 / 主机名 / 访问控制。 */
+/** 步骤序列随方式变化：临时隧道没有登录 / 主机名 / 访问控制，直接连接只剩访问保护。 */
 export function wizardSteps(ctx: WizardContext): WizardStepId[] {
   const mode = effectiveMode(ctx.status, ctx.chosenMode);
   if (mode === 'named') return NAMED_STEPS;
   if (mode === 'quick') return QUICK_STEPS;
+  if (mode === 'direct') return DIRECT_STEPS;
   return UNDECIDED_STEPS;
 }
 
-/** 步骤 3 展示哪条路径：已配置时以服务端为准，否则用本地选择。 */
+/**
+ * 步骤 3 展示哪条路径：已配置隧道时以服务端为准（此时 `direct` 这条本地选择自动让位），
+ * 否则用本地选择。
+ */
 export function effectiveMode(
   status: TunnelStatusResponse,
-  chosenMode: TunnelMode | null
-): TunnelMode {
+  chosenMode: WizardMode | null
+): WizardMode {
   if (status.config.mode !== 'off') return status.config.mode;
   return chosenMode ?? 'off';
 }
@@ -155,8 +172,9 @@ export function wizardStepState(step: WizardStepId, ctx: WizardContext): StepSta
     case 'install':
       return ready ? 'done' : 'current';
     case 'mode':
-      if (!ready) return 'todo';
-      return mode === 'off' ? 'current' : 'done';
+      return modeStepState(mode, ready);
+    case 'direct':
+      return mode === 'direct' ? directStepState(ctx.localAuth) : 'todo';
     case 'tunnel':
       return 'todo';
     case 'quick':
@@ -176,6 +194,18 @@ export function wizardStepState(step: WizardStepId, ctx: WizardContext): StepSta
     case 'proxy':
       return status.config.mode === 'off' ? 'todo' : 'current';
   }
+}
+
+/** 「直接连接」与 cloudflared 无关：没装二进制也能选，方式步照样算完成。 */
+function modeStepState(mode: WizardMode, ready: boolean): StepState {
+  if (mode === 'direct') return 'done';
+  if (!ready) return 'todo';
+  return mode === 'off' ? 'current' : 'done';
+}
+
+/** 查到确实有登录门才算这一步做完；`localAuth` 缺失（旧后端）时停在当前步等用户确认。 */
+function directStepState(localAuth: LocalAuthStatus | null | undefined): StepState {
+  return directProtected(localAuth) ? 'done' : 'current';
 }
 
 const HOSTNAME_LABEL = /^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/;

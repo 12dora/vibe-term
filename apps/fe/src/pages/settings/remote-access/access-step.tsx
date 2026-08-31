@@ -17,8 +17,9 @@ import {
 import { Button } from '@tmex/ui/button';
 import { Input } from '@tmex/ui/input';
 import { Loader2, Plus, RefreshCw, Trash2, Upload, X } from 'lucide-react';
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
+import { toast } from 'sonner';
 import { FormField, SetupNotice, SwitchRow } from '../nodes/setup/form-parts';
 import {
   type AccessRuleDraft,
@@ -53,6 +54,7 @@ export function AccessStep({
 }) {
   const { t } = useTranslation();
   const access = status.access;
+  useCredentialsSavedToast(access.hasCredentials);
 
   return (
     <div className="space-y-4" data-testid="remote-access-access">
@@ -85,6 +87,21 @@ export function AccessStep({
       )}
     </div>
   );
+}
+
+/**
+ * 凭证保存成功只提示一次：常驻的成功条会一直占着位置，说的又是下面几行已经写明的事实。
+ * 只认 false → true 这一次跃迁；首次挂载时已有凭证不弹（进页面就弹一条陈年成功提示很怪）。
+ */
+function useCredentialsSavedToast(hasCredentials: boolean): void {
+  const { t } = useTranslation();
+  const previous = useRef(hasCredentials);
+  useEffect(() => {
+    if (hasCredentials && !previous.current) {
+      toast.success(t('settings.remoteAccess.access.credentials.saved'));
+    }
+    previous.current = hasCredentials;
+  }, [hasCredentials, t]);
 }
 
 /**
@@ -192,9 +209,6 @@ function SavedCredentials({
   return (
     <div className="space-y-2" data-testid="remote-access-access-credentials-saved">
       <SectionTitle text={t('settings.remoteAccess.access.credentials.title')} />
-      <SetupNotice tone="success">
-        {t('settings.remoteAccess.access.credentials.saved')}
-      </SetupNotice>
       <div className="space-y-0.5">
         <DetailRow
           label={t('settings.remoteAccess.access.credentials.accountId')}

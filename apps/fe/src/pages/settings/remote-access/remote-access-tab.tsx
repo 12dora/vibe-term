@@ -7,7 +7,7 @@ import { useSharedAuthMode } from '@/node/mesh-nodes';
 import { useRouteNodeId } from '@/node/node-runtime-boundary';
 import { isSelfNode } from '@tmex/api-client';
 import type { AuthModeResponse } from '@tmex/api-client/auth/index';
-import type { TunnelMode } from '@tmex/shared';
+import type { LocalAuthStatus } from '@tmex/shared';
 import { Card, CardContent, CardHeader, CardTitle } from '@tmex/ui/card';
 import { Loader2 } from 'lucide-react';
 import { useState } from 'react';
@@ -17,7 +17,7 @@ import type { ExposureState } from './exposure';
 import type { NamedDraft } from './named-step';
 import { TunnelStatusCard } from './status-card';
 import { type TunnelActions, useTunnelActions } from './tunnel-actions';
-import { isExposureAckError, withExposureAck } from './tunnel-model';
+import { type WizardMode, isExposureAckError, withExposureAck } from './tunnel-model';
 import { useTunnelStatus } from './use-tunnel-status';
 import { TunnelWizard } from './wizard';
 
@@ -47,7 +47,9 @@ function SelfRemoteAccess() {
   const { t } = useTranslation();
   const tunnel = useTunnelStatus();
   const { mode } = useSharedAuthMode();
-  const [chosenMode, setChosenMode] = useState<TunnelMode | null>(null);
+  const [chosenMode, setChosenMode] = useState<WizardMode | null>(null);
+  // 开关本机登录后接口会带回最新状态：就地覆盖，`/api/auth/mode` 的共享快照是进程级缓存，拉不动。
+  const [localAuthOverride, setLocalAuthOverride] = useState<LocalAuthStatus | null>(null);
   const [acknowledged, setAcknowledged] = useState(false);
   const [hostname, setHostnameValue] = useState('');
   const [tunnelName, setTunnelNameValue] = useState('');
@@ -137,6 +139,8 @@ function SelfRemoteAccess() {
         isHub={isSelfHub(mode)}
         exposure={exposure}
         onRestarted={refresh}
+        localAuth={localAuthOverride ?? mode?.localAuth ?? null}
+        onLocalAuth={setLocalAuthOverride}
       />
     </div>
   );

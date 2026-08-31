@@ -2,7 +2,7 @@
 
 import { describe, expect, test } from 'bun:test';
 import { TunnelApiError } from '@tmex/api-client/local/tunnel-api';
-import type { TunnelStatusResponse } from '@tmex/shared';
+import type { LocalAuthStatus, TunnelStatusResponse } from '@tmex/shared';
 import {
   TUNNEL_ACTIVE_POLL_MS,
   TUNNEL_IDLE_POLL_MS,
@@ -218,6 +218,73 @@ describe('wizardStepState', () => {
     expect(wizardStepState('quick', ctx(status(), 'quick'))).toBe('current');
     const started = status({ config: { ...status().config, mode: 'quick' } });
     expect(wizardStepState('quick', ctx(started, 'quick'))).toBe('done');
+  });
+});
+
+describe('直接连接路径', () => {
+  const notInstalled = { installed: false, version: null, path: null, source: null } as const;
+  const localAuth = (overrides: Partial<LocalAuthStatus> = {}): LocalAuthStatus => ({
+    supported: true,
+    enabled: false,
+    effective: false,
+    credentialsPresent: false,
+    ...overrides,
+  });
+  const ctx = (
+    s: TunnelStatusResponse,
+    auth?: LocalAuthStatus
+  ): Parameters<typeof wizardStepState>[1] => ({
+    status: s,
+    chosenMode: 'direct',
+    hostnameConfirmed: false,
+    localAuth: auth ?? null,
+  });
+
+  test('只有方式与访问保护两步：不建隧道就不需要安装与反向代理', () => {
+    expect(
+      wizardSteps({ status: status(), chosenMode: 'direct', hostnameConfirmed: false })
+    ).toEqual(['mode', 'direct']);
+  });
+
+  test('没装 cloudflared 也走得通：方式步直接算完成', () => {
+    const s = status({ binary: notInstalled });
+    expect(wizardSteps({ status: s, chosenMode: 'direct', hostnameConfirmed: false })).toEqual([
+      'mode',
+      'direct',
+    ]);
+    expect(wizardStepState('mode', ctx(s))).toBe('done');
+  });
+
+  test('访问保护步：查到门才打勾', () => {
+    expect(wizardStepState('direct', ctx(status(), localAuth({ supported: false })))).toBe('done');
+    expect(
+      wizardStepState(
+        'direct',
+        ctx(status(), localAuth({ enabled: true, effective: true, credentialsPresent: true }))
+      )
+    ).toBe('done');
+  });
+
+  test('没门 / 后端没下发状态都停在当前步——未知绝不当成已保护', () => {
+    expect(wizardStepState('direct', ctx(status(), localAuth()))).toBe('current');
+    expect(wizardStepState('direct', ctx(status()))).toBe('current');
+  });
+
+  test('别的路径里访问保护步既不出现，也不会抢当前步', () => {
+    const quick = { status: status(), chosenMode: 'quick' as const, hostnameConfirmed: false };
+    expect(wizardSteps(quick)).not.toContain('direct');
+    expect(wizardStepState('direct', quick)).toBe('todo');
+  });
+
+  test('服务端已建隧道时本地的 direct 选择让位给服务端方式', () => {
+    const s = status({ config: { ...status().config, mode: 'quick' } });
+    expect(effectiveMode(s, 'direct')).toBe('quick');
+    expect(wizardSteps({ status: s, chosenMode: 'direct', hostnameConfirmed: false })).toEqual([
+      'install',
+      'mode',
+      'quick',
+      'proxy',
+    ]);
   });
 });
 

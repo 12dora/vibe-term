@@ -302,7 +302,66 @@
           "named": {
             "title": "命名隧道",
             "description": "使用你托管在 Cloudflare 的域名，地址固定，可配合访问控制长期使用。"
+          },
+          "direct": {
+            "title": "直接连接",
+            "description": "自行通过固定 IP、端口映射或反向代理暴露 tmex 时选择此方式。"
           }
+        },
+        "direct": {
+          "protection": {
+            "node": {
+              "title": "已由节点登录保护",
+              "description": "这台机器已加入多节点互联，访问它必须先登录；直接暴露到公网同样要过登录这一关。"
+            },
+            "local": {
+              "title": "本机登录已启用",
+              "description": "访问 tmex 需要登录。请确保口令强度足够，并只通过 HTTPS 对外提供服务。"
+            },
+            "unprotected": {
+              "title": "当前没有任何访问保护",
+              "description": "公网直连意味着任何人拿到地址就能打开并使用这台机器上的 tmex，包括其中的终端与文件。启用本机登录后，访问 tmex 需要登录。"
+            },
+            "unknown": {
+              "title": "无法确认访问保护状态",
+              "description": "当前网关没有下发本机登录状态，通常是版本过旧。升级 tmex 后再确认；在确认之前不要把这台机器暴露到公网。"
+            }
+          },
+          "entryLabel": "当前入口",
+          "entryHint": "这是你此刻访问 tmex 用的地址。对外暴露时，把公网入口指向本机的 {{port}} 端口，或指向你自己的反向代理。",
+          "tls": {
+            "hint": "直接暴露请务必启用 HTTPS：明文 HTTP 会把登录口令与会话凭证暴露在链路上。",
+            "link": "前往节点设置配置 HTTPS"
+          },
+          "enable": {
+            "title": "启用本机登录",
+            "bootstrapHint": "这台机器还没有任何账号，先创建第一位用户。该操作只能在这台机器上完成。",
+            "username": "用户名",
+            "usernameHint": "1–64 个字符，只能使用字母、数字、点、下划线与连字符。",
+            "password": "口令",
+            "passwordHint": "至少 8 个字符。口令只用于本机登录，不会离开这台机器。",
+            "confirm": "确认口令",
+            "invalid": {
+              "username": "用户名格式不正确：1–64 个字符，只能使用字母、数字、点、下划线与连字符。",
+              "password": "口令至少需要 8 个字符。",
+              "confirm": "两次输入的口令不一致。"
+            },
+            "warning": "启用后访问 tmex 需要登录，当前所有已打开的会话都要重新登录一次。",
+            "acknowledge": "我知道所有已打开的会话都需要重新登录",
+            "action": "启用本机登录"
+          },
+          "errors": {
+            "notStandalone": "这台机器已加入多节点互联，登录由节点体系负责，无需也无法在此开关。",
+            "localOnly": "出于安全考虑，这项设置只能在这台机器上操作，不能通过远程访问修改。",
+            "credentialsRequired": "还没有可登录的账号，请先创建第一位用户。",
+            "alreadyEnabled": "本机登录已经启用，请刷新页面查看最新状态。",
+            "credentialsExist": "这台机器上已有账号，直接启用本机登录即可，无需再创建。",
+            "invalidUsername": "用户名格式不正确：1–64 个字符，只能使用字母、数字、点、下划线与连字符。",
+            "weakPassword": "口令至少需要 8 个字符。",
+            "malformed": "请求格式不正确，请刷新页面后重试。",
+            "unknown": "操作失败，请稍后重试。"
+          },
+          "caveat": "说明：本机登录当前保证的是「访问 tmex 需要登录」这一条；更严格的整站拦截仍在完善中，请不要据此放宽其他防护措施。"
         },
         "actions": {
           "start": "启动",
@@ -415,6 +474,10 @@
             "description": "在 Cloudflare 创建隧道、写入 DNS 记录并启动。",
             "pending": "请先确认主机名。",
             "adopted": "已接管系统中已有的隧道。"
+          },
+          "direct": {
+            "title": "访问保护",
+            "description": "直连暴露不经过 Cloudflare，这一步只确认这台机器是否要求登录。"
           }
         },
         "jobStep": {
@@ -495,7 +558,7 @@
             "accountId": "账户 ID",
             "accountIdHint": "Cloudflare 控制台侧栏里的 Account ID。",
             "save": "保存",
-            "saved": "凭证已保存，现在可以创建或同步 Access 应用。",
+            "saved": "Cloudflare 凭证已保存。",
             "clear": "清除",
             "teamDomain": "团队域"
           },

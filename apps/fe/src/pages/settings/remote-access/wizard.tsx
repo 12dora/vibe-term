@@ -1,11 +1,12 @@
 // 远程访问向导。步骤序列随方式变化：
 //   命名隧道 安装 → 方式 → 登录 → 主机名 → 访问控制 → 创建并启动 → 反向代理信任
 //   临时隧道 安装 → 方式 → 启动 → 反向代理信任
+//   直接连接 方式 → 访问保护（不建隧道，也就不需要 cloudflared 与反向代理信任两步）
 
-import type { TunnelMode, TunnelStatusResponse } from '@tmex/shared';
+import type { LocalAuthStatus, TunnelStatusResponse } from '@tmex/shared';
 import { Button } from '@tmex/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@tmex/ui/card';
-import { Cloud, Download, Loader2, Rocket, RotateCcw, Zap } from 'lucide-react';
+import { Cloud, Download, Loader2, Rocket, RotateCcw, Server, Zap } from 'lucide-react';
 import { type ReactNode, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Link } from 'react-router';
@@ -13,12 +14,14 @@ import { useRestartGateway } from '../nodes/restart/use-restart-now';
 import { SetupNotice, SwitchRow } from '../nodes/setup/form-parts';
 import { accessStepTag } from './access-model';
 import { AccessStep } from './access-step';
+import { DirectStep } from './direct-step';
 import { type ExposureState, ExposureWarning } from './exposure';
 import { ExternalTunnelCard } from './external-card';
 import { CreateStep, HostnameStep, LoginStep, type NamedDraft } from './named-step';
 import { DetailRow, JobProgress, WizardStepCard } from './step-shell';
 import type { TunnelActions } from './tunnel-actions';
 import {
+  type WizardMode,
   type WizardStepId,
   describeTunnelError,
   effectiveMode,
@@ -31,12 +34,15 @@ import {
 export interface TunnelWizardProps {
   status: TunnelStatusResponse;
   actions: TunnelActions;
-  chosenMode: TunnelMode | null;
-  onChooseMode: (mode: TunnelMode) => void;
+  chosenMode: WizardMode | null;
+  onChooseMode: (mode: WizardMode) => void;
   draft: NamedDraft;
   isHub: boolean;
   exposure: ExposureState;
   onRestarted: () => void;
+  /** 「直接连接」路径用的本机登录状态，来自 `/api/auth/mode`。 */
+  localAuth: LocalAuthStatus | null;
+  onLocalAuth: (next: LocalAuthStatus) => void;
 }
 
 export function TunnelWizard({
@@ -48,11 +54,13 @@ export function TunnelWizard({
   isHub,
   exposure,
   onRestarted,
+  localAuth,
+  onLocalAuth,
 }: TunnelWizardProps) {
   const { t } = useTranslation();
   const [externalDismissed, setExternalDismissed] = useState(false);
 
-  const ctx = { status, chosenMode, hostnameConfirmed: draft.confirmed };
+  const ctx = { status, chosenMode, hostnameConfirmed: draft.confirmed, localAuth };
   const steps = wizardSteps(ctx);
   const authRequired = isAuthRequiredError(status, actions.error);
   const showExternal =
@@ -106,6 +114,8 @@ export function TunnelWizard({
               chosenMode={chosenMode}
               onChooseMode={onChooseMode}
               onRestarted={onRestarted}
+              localAuth={localAuth}
+              onLocalAuth={onLocalAuth}
             />
           </StepSlot>
         ))}
@@ -156,6 +166,8 @@ function StepContent({
   chosenMode,
   onChooseMode,
   onRestarted,
+  localAuth,
+  onLocalAuth,
 }: {
   step: WizardStepId;
   status: TunnelStatusResponse;
@@ -163,23 +175,29 @@ function StepContent({
   draft: NamedDraft;
   isHub: boolean;
   exposure: ExposureState;
-  chosenMode: TunnelMode | null;
-  onChooseMode: (mode: TunnelMode) => void;
+  chosenMode: WizardMode | null;
+  onChooseMode: (mode: WizardMode) => void;
   onRestarted: () => void;
+  localAuth: LocalAuthStatus | null;
+  onLocalAuth: (next: LocalAuthStatus) => void;
 }) {
   const { t } = useTranslation();
   switch (step) {
     case 'install':
       return <InstallStep status={status} actions={actions} />;
     case 'mode':
+      // 选方式只是本地选择，装不装 cloudflared 由后面的安装步把关；
+      // 「直接连接」压根不需要它，按二进制状态锁死整块会让这条路径不可达。
       return (
         <ModeChooser
           selected={effectiveMode(status, chosenMode)}
           locked={status.config.mode !== 'off'}
-          disabled={actions.busy || !status.binary.installed}
+          disabled={actions.busy}
           onSelect={onChooseMode}
         />
       );
+    case 'direct':
+      return <DirectStep status={status} localAuth={localAuth} onLocalAuth={onLocalAuth} />;
     case 'tunnel':
       return (
         <p className="text-xs text-muted-foreground" data-testid="remote-access-step-tunnel-idle">
@@ -302,16 +320,16 @@ function ModeChooser({
   disabled,
   onSelect,
 }: {
-  selected: TunnelMode;
+  selected: WizardMode;
   /** 已经建过隧道：换方式必须先「移除」，这里只展示当前方式。 */
   locked: boolean;
   disabled: boolean;
-  onSelect: (mode: TunnelMode) => void;
+  onSelect: (mode: WizardMode) => void;
 }) {
   const { t } = useTranslation();
   return (
     <div
-      className="grid gap-3 sm:grid-cols-2"
+      className="grid gap-3 sm:grid-cols-3"
       role="radiogroup"
       aria-label={t('settings.remoteAccess.steps.mode.title')}
       data-testid="remote-access-mode-chooser"
@@ -330,6 +348,13 @@ function ModeChooser({
         disabled={disabled || locked}
         onSelect={onSelect}
       />
+      <ModeCard
+        mode="direct"
+        icon={<Server className="size-4" />}
+        selected={selected === 'direct'}
+        disabled={disabled || locked}
+        onSelect={onSelect}
+      />
     </div>
   );
 }
@@ -341,11 +366,11 @@ function ModeCard({
   disabled,
   onSelect,
 }: {
-  mode: Exclude<TunnelMode, 'off'>;
+  mode: Exclude<WizardMode, 'off'>;
   icon: ReactNode;
   selected: boolean;
   disabled: boolean;
-  onSelect: (mode: TunnelMode) => void;
+  onSelect: (mode: WizardMode) => void;
 }) {
   const { t } = useTranslation();
   return (

@@ -308,7 +308,66 @@ export const I18N_RESOURCES = {
           "named": {
             "title": "Named tunnel",
             "description": "Uses a domain you host on Cloudflare. The URL stays fixed and works with access control."
+          },
+          "direct": {
+            "title": "Direct connection",
+            "description": "Choose this when you expose tmex yourself — a static IP, port forwarding, or your own reverse proxy."
           }
+        },
+        "direct": {
+          "protection": {
+            "node": {
+              "title": "Protected by node sign-in",
+              "description": "This machine belongs to a multi-node mesh, so reaching it always requires signing in. Exposing it directly is covered by the same gate."
+            },
+            "local": {
+              "title": "Local sign-in is on",
+              "description": "Reaching tmex requires signing in. Keep the password strong and serve the machine over HTTPS only."
+            },
+            "unprotected": {
+              "title": "Nothing is protecting this machine",
+              "description": "Exposed directly, anyone who finds the address can open and use the tmex running here — terminals and files included. Turning on local sign-in means reaching tmex requires signing in."
+            },
+            "unknown": {
+              "title": "Can't confirm the protection state",
+              "description": "This gateway did not report its local sign-in state, usually because it is out of date. Upgrade tmex and check again; until then, keep the machine off the public internet."
+            }
+          },
+          "entryLabel": "Current entry",
+          "entryHint": "This is the address you are on right now. When you expose tmex, point the public entry at port {{port}} on this machine, or at your own reverse proxy.",
+          "tls": {
+            "hint": "Always serve a direct exposure over HTTPS — plain HTTP puts passwords and session cookies on the wire.",
+            "link": "Set up HTTPS in node settings"
+          },
+          "enable": {
+            "title": "Turn on local sign-in",
+            "bootstrapHint": "There is no account on this machine yet. Create the first user — this can only be done from the machine itself.",
+            "username": "Username",
+            "usernameHint": "1–64 characters: letters, digits, dot, underscore and hyphen.",
+            "password": "Password",
+            "passwordHint": "At least 8 characters. It is used for local sign-in only and never leaves this machine.",
+            "confirm": "Confirm password",
+            "invalid": {
+              "username": "Username must be 1–64 characters of letters, digits, dot, underscore or hyphen.",
+              "password": "The password needs at least 8 characters.",
+              "confirm": "The two passwords don't match."
+            },
+            "warning": "Once this is on, reaching tmex requires signing in — every session you have open right now will have to sign in again.",
+            "acknowledge": "I understand every open session will have to sign in again",
+            "action": "Turn on local sign-in"
+          },
+          "errors": {
+            "notStandalone": "This machine is part of a mesh: sign-in is handled by the node system and cannot be toggled here.",
+            "localOnly": "For safety this setting can only be changed from the machine itself, not over a remote connection.",
+            "credentialsRequired": "There is no account to sign in with yet. Create the first user first.",
+            "alreadyEnabled": "Local sign-in is already on. Reload the page to see the current state.",
+            "credentialsExist": "This machine already has an account — just turn local sign-in on, no need to create another.",
+            "invalidUsername": "Username must be 1–64 characters of letters, digits, dot, underscore or hyphen.",
+            "weakPassword": "The password needs at least 8 characters.",
+            "malformed": "The request was malformed. Reload the page and try again.",
+            "unknown": "That didn't work. Try again in a moment."
+          },
+          "caveat": "Note: local sign-in currently guarantees one thing — reaching tmex requires signing in. A stricter site-wide gate is still being finished, so don't relax your other defenses because of it."
         },
         "actions": {
           "start": "Start",
@@ -421,6 +480,10 @@ export const I18N_RESOURCES = {
             "description": "Create the tunnel in Cloudflare, add the DNS record, and start it.",
             "pending": "Confirm the hostname first.",
             "adopted": "The existing system tunnel has been adopted."
+          },
+          "direct": {
+            "title": "Access protection",
+            "description": "A direct connection never touches Cloudflare, so the only thing left to settle is whether this machine asks for a sign-in."
           }
         },
         "jobStep": {
@@ -501,7 +564,7 @@ export const I18N_RESOURCES = {
             "accountId": "Account ID",
             "accountIdHint": "The Account ID shown in the Cloudflare dashboard sidebar.",
             "save": "Save",
-            "saved": "Credentials saved. You can now create or sync an Access application.",
+            "saved": "Cloudflare credentials saved.",
             "clear": "Clear",
             "teamDomain": "Team domain"
           },
@@ -2285,7 +2348,66 @@ export const I18N_RESOURCES = {
           "named": {
             "title": "命名隧道",
             "description": "使用你托管在 Cloudflare 的域名，地址固定，可配合访问控制长期使用。"
+          },
+          "direct": {
+            "title": "直接连接",
+            "description": "自行通过固定 IP、端口映射或反向代理暴露 tmex 时选择此方式。"
           }
+        },
+        "direct": {
+          "protection": {
+            "node": {
+              "title": "已由节点登录保护",
+              "description": "这台机器已加入多节点互联，访问它必须先登录；直接暴露到公网同样要过登录这一关。"
+            },
+            "local": {
+              "title": "本机登录已启用",
+              "description": "访问 tmex 需要登录。请确保口令强度足够，并只通过 HTTPS 对外提供服务。"
+            },
+            "unprotected": {
+              "title": "当前没有任何访问保护",
+              "description": "公网直连意味着任何人拿到地址就能打开并使用这台机器上的 tmex，包括其中的终端与文件。启用本机登录后，访问 tmex 需要登录。"
+            },
+            "unknown": {
+              "title": "无法确认访问保护状态",
+              "description": "当前网关没有下发本机登录状态，通常是版本过旧。升级 tmex 后再确认；在确认之前不要把这台机器暴露到公网。"
+            }
+          },
+          "entryLabel": "当前入口",
+          "entryHint": "这是你此刻访问 tmex 用的地址。对外暴露时，把公网入口指向本机的 {{port}} 端口，或指向你自己的反向代理。",
+          "tls": {
+            "hint": "直接暴露请务必启用 HTTPS：明文 HTTP 会把登录口令与会话凭证暴露在链路上。",
+            "link": "前往节点设置配置 HTTPS"
+          },
+          "enable": {
+            "title": "启用本机登录",
+            "bootstrapHint": "这台机器还没有任何账号，先创建第一位用户。该操作只能在这台机器上完成。",
+            "username": "用户名",
+            "usernameHint": "1–64 个字符，只能使用字母、数字、点、下划线与连字符。",
+            "password": "口令",
+            "passwordHint": "至少 8 个字符。口令只用于本机登录，不会离开这台机器。",
+            "confirm": "确认口令",
+            "invalid": {
+              "username": "用户名格式不正确：1–64 个字符，只能使用字母、数字、点、下划线与连字符。",
+              "password": "口令至少需要 8 个字符。",
+              "confirm": "两次输入的口令不一致。"
+            },
+            "warning": "启用后访问 tmex 需要登录，当前所有已打开的会话都要重新登录一次。",
+            "acknowledge": "我知道所有已打开的会话都需要重新登录",
+            "action": "启用本机登录"
+          },
+          "errors": {
+            "notStandalone": "这台机器已加入多节点互联，登录由节点体系负责，无需也无法在此开关。",
+            "localOnly": "出于安全考虑，这项设置只能在这台机器上操作，不能通过远程访问修改。",
+            "credentialsRequired": "还没有可登录的账号，请先创建第一位用户。",
+            "alreadyEnabled": "本机登录已经启用，请刷新页面查看最新状态。",
+            "credentialsExist": "这台机器上已有账号，直接启用本机登录即可，无需再创建。",
+            "invalidUsername": "用户名格式不正确：1–64 个字符，只能使用字母、数字、点、下划线与连字符。",
+            "weakPassword": "口令至少需要 8 个字符。",
+            "malformed": "请求格式不正确，请刷新页面后重试。",
+            "unknown": "操作失败，请稍后重试。"
+          },
+          "caveat": "说明：本机登录当前保证的是「访问 tmex 需要登录」这一条；更严格的整站拦截仍在完善中，请不要据此放宽其他防护措施。"
         },
         "actions": {
           "start": "启动",
@@ -2398,6 +2520,10 @@ export const I18N_RESOURCES = {
             "description": "在 Cloudflare 创建隧道、写入 DNS 记录并启动。",
             "pending": "请先确认主机名。",
             "adopted": "已接管系统中已有的隧道。"
+          },
+          "direct": {
+            "title": "访问保护",
+            "description": "直连暴露不经过 Cloudflare，这一步只确认这台机器是否要求登录。"
           }
         },
         "jobStep": {
@@ -2478,7 +2604,7 @@ export const I18N_RESOURCES = {
             "accountId": "账户 ID",
             "accountIdHint": "Cloudflare 控制台侧栏里的 Account ID。",
             "save": "保存",
-            "saved": "凭证已保存，现在可以创建或同步 Access 应用。",
+            "saved": "Cloudflare 凭证已保存。",
             "clear": "清除",
             "teamDomain": "团队域"
           },
@@ -4261,7 +4387,66 @@ export const I18N_RESOURCES = {
           "named": {
             "title": "名前付きトンネル",
             "description": "Cloudflare で管理しているドメインを使います。アドレスは固定で、アクセス制御と併用できます。"
+          },
+          "direct": {
+            "title": "直接接続",
+            "description": "固定 IP・ポート転送・自前のリバースプロキシで tmex を自分で公開する場合はこちらを選びます。"
           }
+        },
+        "direct": {
+          "protection": {
+            "node": {
+              "title": "ノードのログインで保護されています",
+              "description": "このマシンはマルチノード構成に参加しているため、アクセスには必ずログインが必要です。直接公開しても同じ関門を通ります。"
+            },
+            "local": {
+              "title": "ローカルログインが有効です",
+              "description": "tmex へのアクセスにはログインが必要です。十分に強いパスワードを使い、公開は HTTPS のみで行ってください。"
+            },
+            "unprotected": {
+              "title": "アクセス保護がありません",
+              "description": "このまま公開すると、アドレスを知った人は誰でもこのマシンの tmex を——ターミナルもファイルも——そのまま使えます。ローカルログインを有効にすると、tmex へのアクセスにログインが必要になります。"
+            },
+            "unknown": {
+              "title": "アクセス保護の状態を確認できません",
+              "description": "ゲートウェイがローカルログインの状態を返していません。多くはバージョンが古いためです。tmex を更新して確認するまでは、このマシンを公開しないでください。"
+            }
+          },
+          "entryLabel": "現在の入口",
+          "entryHint": "いま tmex を開いているアドレスです。公開するときは、外部からの入口をこのマシンの {{port}} 番ポート、または自前のリバースプロキシに向けてください。",
+          "tls": {
+            "hint": "直接公開するときは必ず HTTPS を使ってください。平文の HTTP ではパスワードとセッション情報が経路上に流れます。",
+            "link": "ノード設定で HTTPS を設定する"
+          },
+          "enable": {
+            "title": "ローカルログインを有効にする",
+            "bootstrapHint": "このマシンにはまだアカウントがありません。最初のユーザーを作成します。この操作はマシン上でのみ実行できます。",
+            "username": "ユーザー名",
+            "usernameHint": "1〜64 文字。英数字とピリオド・アンダースコア・ハイフンが使えます。",
+            "password": "パスワード",
+            "passwordHint": "8 文字以上。ローカルログイン専用で、このマシンの外には出ません。",
+            "confirm": "パスワード（確認）",
+            "invalid": {
+              "username": "ユーザー名は 1〜64 文字で、英数字とピリオド・アンダースコア・ハイフンのみ使えます。",
+              "password": "パスワードは 8 文字以上にしてください。",
+              "confirm": "パスワードが一致しません。"
+            },
+            "warning": "有効にすると tmex へのアクセスにログインが必要になり、いま開いているセッションはすべてログインし直しになります。",
+            "acknowledge": "開いているセッションがすべてログインし直しになることを理解しました",
+            "action": "ローカルログインを有効にする"
+          },
+          "errors": {
+            "notStandalone": "このマシンはマルチノード構成に参加しています。ログインはノード側が担うため、ここでは切り替えられません。",
+            "localOnly": "安全のため、この設定はマシン上でのみ変更できます。リモートアクセス経由では変更できません。",
+            "credentialsRequired": "ログインできるアカウントがまだありません。先に最初のユーザーを作成してください。",
+            "alreadyEnabled": "ローカルログインはすでに有効です。ページを再読み込みして最新の状態を確認してください。",
+            "credentialsExist": "このマシンにはすでにアカウントがあります。作成せずにローカルログインを有効にしてください。",
+            "invalidUsername": "ユーザー名は 1〜64 文字で、英数字とピリオド・アンダースコア・ハイフンのみ使えます。",
+            "weakPassword": "パスワードは 8 文字以上にしてください。",
+            "malformed": "リクエストの形式が正しくありません。ページを再読み込みしてやり直してください。",
+            "unknown": "処理に失敗しました。しばらくしてからやり直してください。"
+          },
+          "caveat": "補足：ローカルログインが現時点で保証するのは「tmex へのアクセスにログインが必要になる」ことだけです。サイト全体の遮断は対応中のため、これを理由に他の対策を緩めないでください。"
         },
         "actions": {
           "start": "開始",
@@ -4374,6 +4559,10 @@ export const I18N_RESOURCES = {
             "description": "Cloudflare でトンネルを作成し、DNS レコードを追加して起動します。",
             "pending": "先にホスト名を確定してください。",
             "adopted": "システム上の既存トンネルを引き継ぎました。"
+          },
+          "direct": {
+            "title": "アクセス保護",
+            "description": "直接接続は Cloudflare を経由しないため、ここで確かめるのはこのマシンがログインを求めるかどうかだけです。"
           }
         },
         "jobStep": {
@@ -4454,7 +4643,7 @@ export const I18N_RESOURCES = {
             "accountId": "アカウント ID",
             "accountIdHint": "Cloudflare ダッシュボードのサイドバーに表示される Account ID です。",
             "save": "保存",
-            "saved": "認証情報を保存しました。Access アプリケーションの作成・同期ができます。",
+            "saved": "Cloudflare の認証情報を保存しました。",
             "clear": "削除",
             "teamDomain": "チームドメイン"
           },

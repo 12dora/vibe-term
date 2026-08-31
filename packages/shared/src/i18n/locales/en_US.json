@@ -302,7 +302,66 @@
           "named": {
             "title": "Named tunnel",
             "description": "Uses a domain you host on Cloudflare. The URL stays fixed and works with access control."
+          },
+          "direct": {
+            "title": "Direct connection",
+            "description": "Choose this when you expose tmex yourself — a static IP, port forwarding, or your own reverse proxy."
           }
+        },
+        "direct": {
+          "protection": {
+            "node": {
+              "title": "Protected by node sign-in",
+              "description": "This machine belongs to a multi-node mesh, so reaching it always requires signing in. Exposing it directly is covered by the same gate."
+            },
+            "local": {
+              "title": "Local sign-in is on",
+              "description": "Reaching tmex requires signing in. Keep the password strong and serve the machine over HTTPS only."
+            },
+            "unprotected": {
+              "title": "Nothing is protecting this machine",
+              "description": "Exposed directly, anyone who finds the address can open and use the tmex running here — terminals and files included. Turning on local sign-in means reaching tmex requires signing in."
+            },
+            "unknown": {
+              "title": "Can't confirm the protection state",
+              "description": "This gateway did not report its local sign-in state, usually because it is out of date. Upgrade tmex and check again; until then, keep the machine off the public internet."
+            }
+          },
+          "entryLabel": "Current entry",
+          "entryHint": "This is the address you are on right now. When you expose tmex, point the public entry at port {{port}} on this machine, or at your own reverse proxy.",
+          "tls": {
+            "hint": "Always serve a direct exposure over HTTPS — plain HTTP puts passwords and session cookies on the wire.",
+            "link": "Set up HTTPS in node settings"
+          },
+          "enable": {
+            "title": "Turn on local sign-in",
+            "bootstrapHint": "There is no account on this machine yet. Create the first user — this can only be done from the machine itself.",
+            "username": "Username",
+            "usernameHint": "1–64 characters: letters, digits, dot, underscore and hyphen.",
+            "password": "Password",
+            "passwordHint": "At least 8 characters. It is used for local sign-in only and never leaves this machine.",
+            "confirm": "Confirm password",
+            "invalid": {
+              "username": "Username must be 1–64 characters of letters, digits, dot, underscore or hyphen.",
+              "password": "The password needs at least 8 characters.",
+              "confirm": "The two passwords don't match."
+            },
+            "warning": "Once this is on, reaching tmex requires signing in — every session you have open right now will have to sign in again.",
+            "acknowledge": "I understand every open session will have to sign in again",
+            "action": "Turn on local sign-in"
+          },
+          "errors": {
+            "notStandalone": "This machine is part of a mesh: sign-in is handled by the node system and cannot be toggled here.",
+            "localOnly": "For safety this setting can only be changed from the machine itself, not over a remote connection.",
+            "credentialsRequired": "There is no account to sign in with yet. Create the first user first.",
+            "alreadyEnabled": "Local sign-in is already on. Reload the page to see the current state.",
+            "credentialsExist": "This machine already has an account — just turn local sign-in on, no need to create another.",
+            "invalidUsername": "Username must be 1–64 characters of letters, digits, dot, underscore or hyphen.",
+            "weakPassword": "The password needs at least 8 characters.",
+            "malformed": "The request was malformed. Reload the page and try again.",
+            "unknown": "That didn't work. Try again in a moment."
+          },
+          "caveat": "Note: local sign-in currently guarantees one thing — reaching tmex requires signing in. A stricter site-wide gate is still being finished, so don't relax your other defenses because of it."
         },
         "actions": {
           "start": "Start",
@@ -415,6 +474,10 @@
             "description": "Create the tunnel in Cloudflare, add the DNS record, and start it.",
             "pending": "Confirm the hostname first.",
             "adopted": "The existing system tunnel has been adopted."
+          },
+          "direct": {
+            "title": "Access protection",
+            "description": "A direct connection never touches Cloudflare, so the only thing left to settle is whether this machine asks for a sign-in."
           }
         },
         "jobStep": {
@@ -495,7 +558,7 @@
             "accountId": "Account ID",
             "accountIdHint": "The Account ID shown in the Cloudflare dashboard sidebar.",
             "save": "Save",
-            "saved": "Credentials saved. You can now create or sync an Access application.",
+            "saved": "Cloudflare credentials saved.",
             "clear": "Clear",
             "teamDomain": "Team domain"
           },

@@ -1,6 +1,8 @@
 // mesh 身份鉴权相关的 REST 报文类型（设计见 docs/hub/2026082700-hub-node-architecture.md §2 / §4）。
 // 所有二进制字段一律 base64url（无 padding）字符串，与 `@tmex/shared/auth` 的 encodeBase64url 对齐。
 
+import type { LocalAuthStatus } from '@tmex/shared';
+
 /** `GET /api/auth/mode` 的 kdf 参数投影（salt 为 base64url）。 */
 export interface AuthKdfParamsJson {
   salt: string;
@@ -39,6 +41,43 @@ export interface AuthModeResponse {
   hubPublicUrl?: string | null;
   /** self-signed CA 的 SPKI sha256 hex；无 CA 时为 null。 */
   caFingerprint?: string | null;
+  /**
+   * standalone 本机登录开关的状态（加性字段）。旧后端不下发：缺失时只能按「未知」处理，
+   * 绝不能当成「没有保护」——那会把已受保护的实例误报成裸奔。
+   */
+  localAuth?: LocalAuthStatus;
+}
+/** `POST /api/auth/local` 与 `POST /api/auth/local/bootstrap` 的 200 响应。 */
+export interface LocalAuthMutationResponse {
+  ok: true;
+  localAuth: LocalAuthStatus;
+}
+
+/**
+ * 本机登录接口的 `{code}`：`LOCAL_ONLY` 是 403（只允许从本机调用），
+ * `CREDENTIALS_REQUIRED` / `CREDENTIALS_EXIST` / `LOCAL_AUTH_ENABLED` 是 409，
+ * `not_standalone` 是 404（hub/node 上没有这个开关）。
+ */
+export type LocalAuthErrorCode =
+  | 'not_standalone'
+  | 'LOCAL_ONLY'
+  | 'CREDENTIALS_REQUIRED'
+  | 'LOCAL_AUTH_ENABLED'
+  | 'CREDENTIALS_EXIST'
+  | 'invalid_username'
+  | 'weak_password'
+  | 'MALFORMED'
+  | (string & {});
+
+/** 本机登录接口的非 2xx：`code` 必须原样保留，调用方据此选文案。 */
+export class LocalAuthApiError extends Error {
+  constructor(
+    readonly code: LocalAuthErrorCode,
+    readonly status: number
+  ) {
+    super(`local auth request failed: ${code}`);
+    this.name = 'LocalAuthApiError';
+  }
 }
 
 /**

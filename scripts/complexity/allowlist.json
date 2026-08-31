@@ -32,11 +32,11 @@
     "reason": "内聚顺序逻辑，拆分只增行（S1/S2 报告判定，见 prompt-archives/2026083003-perf-smell-gates-round6）"
   },
   "apps/fe/src/pages/settings/nodes/management/enrollment-section.tsx:EnrollmentSection": {
-    "lines": 169,
+    "lines": 185,
     "reason": "内聚顺序逻辑，拆分只增行（S1/S2 报告判定，见 prompt-archives/2026083003-perf-smell-gates-round6）"
   },
   "apps/fe/src/pages/settings/nodes/management/nodes-management.tsx:NodesManagement": {
-    "lines": 151,
+    "lines": 158,
     "reason": "内聚顺序逻辑，拆分只增行（S1/S2 报告判定，见 prompt-archives/2026083003-perf-smell-gates-round6）"
   },
   "apps/fe/src/pages/settings/nodes/management/use-admit-action.ts:useAdmitAction": {
