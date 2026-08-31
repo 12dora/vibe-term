@@ -361,7 +361,10 @@ export class CanvasRenderer {
       this.rows === nextRows &&
       this.dpr === dpr &&
       this.deviceCellWidth === deviceCellWidth &&
-      this.deviceCellHeight === deviceCellHeight
+      this.deviceCellHeight === deviceCellHeight &&
+      // 位图属性被外部改写/浏览器重置时（内容已清空），缓存几何不可信，必须走全量重建
+      this.mainCanvas.width === nextCols * deviceCellWidth &&
+      this.mainCanvas.height === nextRows * deviceCellHeight
     ) {
       return false;
     }

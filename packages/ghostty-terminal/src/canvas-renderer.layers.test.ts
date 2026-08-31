@@ -368,3 +368,25 @@ describe('光标层只在光标状态变化时重画', () => {
     expect(drain(cursorCanvas).some((op) => op.fillStyle === 'rgb(0 255 0)')).toBeTrue();
   });
 });
+
+describe('主画布位图属性被外部改写时的自愈', () => {
+  // iOS PWA 等环境下位图可能被外部重置：缓存几何与 canvas 属性失配时，
+  // 即便内核报 dirty='clean' 也必须全量重建，否则屏幕停留在陈旧/空白像素上。
+  test('位图宽高漂移后，clean 帧也会恢复位图尺寸并按 wiped 重建各层', () => {
+    const { renderer, mainCanvas, cursorCanvas } = setup();
+    renderFrame(renderer);
+    drain(mainCanvas);
+    drain(cursorCanvas);
+
+    // 对照：位图完好时 clean 帧不动光标层
+    renderFrame(renderer);
+    expect(drain(cursorCanvas)).toEqual([]);
+
+    mainCanvas.width = 1;
+    renderFrame(renderer);
+    // 尺寸恢复即位图已被重建（width 赋值本身清空并重建位图）；wiped 会连带光标层全重画
+    expect(mainCanvas.width).toBe(4 * CELL.width);
+    expect(mainCanvas.height).toBe(4 * CELL.height);
+    expect(drain(cursorCanvas).length).toBeGreaterThan(0);
+  });
+});
