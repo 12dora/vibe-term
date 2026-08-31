@@ -39,7 +39,7 @@ test.describe('mobile', () => {
 
   test('mobile: sidebar sheet takes full viewport width', async ({ page }) => {
     await page.goto('/');
-    await page.getByRole('button', { name: 'Toggle Sidebar' }).click();
+    await page.getByTestId('mobile-sidebar-open').click();
 
     const sheet = page.getByTestId('mobile-sidebar-sheet');
     await expect(sheet).toBeVisible();

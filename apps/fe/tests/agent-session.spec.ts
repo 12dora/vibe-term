@@ -409,17 +409,21 @@ test.describe
       await openAgentTab(page);
 
       const textarea = page.getByTestId('agent-chat-input-textarea');
+      const send = page.getByTestId('agent-chat-send');
       await expect(textarea).toBeEnabled();
 
       // 发首条消息进入 running（SLOW_REPLY 拉长流式，stop 按钮出现）
+      // send 按钮在空文本/sending/草稿物化期间禁用，fill 之后必须等它变为可点
       await textarea.fill('first message SLOW_REPLY');
-      await page.getByTestId('agent-chat-send').click();
+      await expect(send).toBeEnabled();
+      await send.click();
       await expect(page.getByTestId('agent-chat-stop')).toBeVisible({ timeout: 15_000 });
 
       // running 中输入框仍可用（不再禁用），再发消息进队列
       await expect(textarea).toBeEnabled();
       await textarea.fill('queued while running');
-      await page.getByTestId('agent-chat-send').click();
+      await expect(send).toBeEnabled();
+      await send.click();
       await expect(page.getByTestId('agent-queue')).toBeVisible({ timeout: 10_000 });
       await expect(page.getByTestId('agent-queue')).toContainText('queued while running');
 

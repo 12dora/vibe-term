@@ -85,6 +85,9 @@ test('ws-borsh: rapid theme toggle × browser resize keeps pane cols/rows stable
       });
     }
 
+    // 循环最后一次把 viewport 停在 1250×830，与初始 1200×800 下的 pane 尺寸直接比较没有意义；
+    // 先回到初始 viewport，drift 断言才是「反复抖动后能否收敛回原尺寸」。
+    await page.setViewportSize({ width: 1200, height: 800 });
     await page.waitForTimeout(2_000);
 
     const paneSizeAfter = getPaneSize(targetPaneId);

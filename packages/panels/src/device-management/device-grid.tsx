@@ -5,7 +5,6 @@ import {
   KeyboardSensor,
   MouseSensor,
   TouchSensor,
-  closestCenter,
   useSensor,
   useSensors,
 } from '@dnd-kit/core';
@@ -25,6 +24,7 @@ import { GripVertical } from 'lucide-react';
 import { type CSSProperties, memo, useMemo } from 'react';
 import { useTranslation } from 'react-i18next';
 import { DeviceCardHost, type DeviceCardHostProps } from './device-card-host';
+import { deviceGridCollisionDetection } from './device-grid-collision';
 import type { useDeviceManagementState } from './use-device-management-state';
 
 const HANDLE_CLASS =
@@ -117,7 +117,11 @@ export function DeviceGrid({
   );
 
   return (
-    <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={state.onDragEnd}>
+    <DndContext
+      sensors={sensors}
+      collisionDetection={deviceGridCollisionDetection}
+      onDragEnd={state.onDragEnd}
+    >
       <SortableContext items={deviceIds} strategy={rectSortingStrategy} disabled={reorderDisabled}>
         <div
           data-testid="devices-grid"
