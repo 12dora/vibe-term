@@ -76,6 +76,12 @@ export interface TmuxSelectionActions {
   dispose(): void;
 }
 
+// 整屏原子下发的链路不跑选择事务，缺口也就永远没人补：那条路径上画面由 canonical
+// 快照重建（每个终端实例挂载时自己拉），不需要这本账，记了只会让 warm 永久退化。
+function usesGapLedger(core: RuntimeCore): boolean {
+  return !core.transport.capabilities.atomicScreen;
+}
+
 export function createTmuxSelectionActions(
   core: RuntimeCore,
   access: TmuxStoreAccess
@@ -107,7 +113,7 @@ export function createTmuxSelectionActions(
       return;
     }
 
-    gaps.markGapped(deviceId, current.paneId);
+    if (usesGapLedger(core)) gaps.markGapped(deviceId, current.paneId);
     access.getState().selectPane(deviceId, current.windowId, current.paneId);
   }
 
@@ -177,6 +183,7 @@ export function createTmuxSelectionActions(
       retry.cancel(deviceId);
       core.selectMachine().cleanup(deviceId);
       gaps.resetDevice(deviceId);
+      if (!usesGapLedger(core)) return;
       gaps.markDeviceGapped(deviceId, snapshotPaneIds(access.getState().snapshots[deviceId]));
     },
 

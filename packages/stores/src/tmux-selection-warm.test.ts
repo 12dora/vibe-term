@@ -60,7 +60,7 @@ function createScheduler() {
 
 type SelectCommand = GatewayTransportCommand & { type: 'select-pane' };
 
-function createHarness() {
+function createHarness(options: { atomicScreen?: boolean } = {}) {
   const commands: GatewayTransportCommand[] = [];
   const resets: Array<[string, string]> = [];
   const histories: Array<[string, string]> = [];
@@ -80,7 +80,7 @@ function createHarness() {
 
   const core = {
     transport: {
-      capabilities: { atomicScreen: false, cursorHistory: false },
+      capabilities: { atomicScreen: options.atomicScreen === true, cursorHistory: false },
       send: (command: GatewayTransportCommand) => {
         commands.push(command);
         return true;
@@ -167,6 +167,13 @@ function createHarness() {
         frame: { deviceId: DEVICE, paneId, data: new Uint8Array(64) },
       } as unknown as GatewayTransportEvent);
     },
+    publishConnectionState(state: string): void {
+      emit?.({ type: 'connection-state', state } as unknown as GatewayTransportEvent);
+    },
+    connectDevice(): void {
+      store.getState().connectDevice(DEVICE);
+      emit?.({ type: 'device-connected', deviceId: DEVICE });
+    },
     publishDeviceEvent(event: Record<string, unknown>): void {
       emit?.({
         type: 'device-event',
@@ -186,6 +193,29 @@ function createHarness() {
         modes: 0,
       });
       emit?.({ type: 'live-resume', deviceId: DEVICE, selectToken });
+    },
+    /** 只发 history，不发 live-resume */
+    historyOnly(paneId: string): void {
+      emit?.({
+        type: 'legacy-history',
+        deviceId: DEVICE,
+        paneId,
+        selectToken: lastToken(),
+        data: 'screen',
+        alternateScreen: false,
+        modes: 0,
+      });
+    },
+    liveResumeWithToken(selectToken: Uint8Array): void {
+      emit?.({ type: 'live-resume', deviceId: DEVICE, selectToken });
+    },
+    /** 最近一次针对该 pane 的 select token */
+    tokenOf(paneId: string): Uint8Array {
+      const token = selectCommands()
+        .filter((command) => command.paneId === paneId)
+        .at(-1)?.selectToken;
+      if (!token) throw new Error(`no select-pane for ${paneId}`);
+      return token;
     },
     /** 触发在途的 ack/progress 超时 */
     fireTimeouts(): void {
@@ -385,6 +415,92 @@ describe('warm select on the real SelectStateMachine', () => {
     harness.select('%1', true);
 
     expect(harness.selectCommands().at(-1)?.wantHistory).toBe(true);
+    harness.dispose();
+  });
+
+  test('a gateway websocket reconnect interrupts every connected device stream', () => {
+    const harness = createHarness();
+    harness.publishConnectionState('READY');
+    harness.connectDevice();
+    harness.publishSnapshot(['%1', '%2']);
+    harness.select('%1');
+    harness.ack();
+    harness.complete('%1');
+    // %2 变成可见、%1 退居保活池
+    harness.select('%2', true);
+    harness.reset();
+
+    // 网关 WS 自己掉线重连：backoff 期间谁的输出都收不到
+    harness.publishConnectionState('RECONNECT_BACKOFF');
+    harness.publishConnectionState('READY');
+
+    // 隐藏的 %1 缓冲已经断裂，切回去必须冷
+    harness.select('%1', true);
+    expect(harness.selectCommands().at(-1)?.wantHistory).toBe(true);
+    harness.dispose();
+  });
+
+  test('the transport reaching READY for the first time is not an interruption', () => {
+    const harness = createHarness();
+    harness.publishConnectionState('WS_CONNECTING');
+    harness.publishConnectionState('READY');
+    harness.connectDevice();
+    harness.publishSnapshot(['%1', '%2']);
+    harness.select('%1');
+    harness.ack();
+    harness.complete('%1');
+    harness.select('%2', true);
+    harness.reset();
+
+    harness.select('%1', true);
+    expect(harness.selectCommands().at(-1)?.wantHistory).toBe(false);
+    harness.dispose();
+  });
+
+  test('an overflowed repair drops its record so a stale live-resume cannot borrow a newer one', () => {
+    const harness = createHarness();
+    harness.publishSnapshot(['%1', '%2']);
+    harness.select('%1');
+    harness.ack();
+    harness.select('%2', true); // %1 被打断 → 记缺口
+
+    // %1 的补洞 select：history 先落地，随后门控溢出 → 画面改由 rebase 重建
+    harness.select('%1', true);
+    const repairToken = harness.tokenOf('%1');
+    harness.ack();
+    harness.historyOnly('%1');
+    harness.overflowOutputGate('%1');
+    harness.liveResumeWithToken(repairToken);
+
+    // 另一笔无关事务走到 HISTORY_APPLIED
+    harness.select('%2');
+    harness.ack();
+    harness.historyOnly('%2');
+
+    // 迟到的旧 token live-resume 不得借用这笔事务把 %1 的缺口清掉
+    harness.liveResumeWithToken(repairToken);
+
+    harness.reset();
+    harness.select('%1', true);
+    expect(harness.selectCommands().at(-1)?.wantHistory).toBe(true);
+    harness.dispose();
+  });
+
+  test('atomicScreen transports never degrade into permanent cold switches', () => {
+    const harness = createHarness({ atomicScreen: true });
+    harness.publishConnectionState('READY');
+    harness.connectDevice();
+    harness.publishSnapshot(['%1', '%2']);
+    harness.select('%1');
+    harness.select('%2', true);
+
+    // 整屏原子下发链路没有选择事务可补洞：中断不得记缺口，否则 warm 永久退化
+    harness.publishDeviceEvent({ type: 'error', errorType: 'reconnecting', message: 'retry' });
+    harness.publishDeviceEvent({ type: 'reconnected' });
+    harness.reset();
+
+    harness.select('%1', true);
+    expect(harness.selectCommands().at(-1)?.wantHistory).toBe(false);
     harness.dispose();
   });
 });

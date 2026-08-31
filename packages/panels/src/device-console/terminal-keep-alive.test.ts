@@ -102,13 +102,13 @@ describe('stream interruption', () => {
     expect(keepAlivePaneKey(during, '%1')).toBe(keepAlivePaneKey(before, '%1'));
   });
 
-  test('resuming bumps the generation so the visible pane remounts cold', () => {
+  test('resuming keeps the visible terminal mounted and only revokes warm', () => {
     const interrupted = applyKeepAliveStreamState(warmPool(), true);
     const resumed = applyKeepAliveStreamState(interrupted, false);
 
-    // tmux 可能重启并复用 pane id：换代强制重挂一个空终端
-    expect(resumed.generation).toBe(interrupted.generation + 1);
-    expect(keepAlivePaneKey(resumed, '%1')).not.toBe(keepAlivePaneKey(interrupted, '%1'));
+    // 换 key 会在冷 history 到达前把可见终端卸掉，必然白闪一屏；
+    // 内容由缺口账本保证的那次冷 select 用 reset + history 原子替换
+    expect(keepAlivePaneKey(resumed, '%1')).toBe(keepAlivePaneKey(interrupted, '%1'));
     expect(isKeepAliveWarmTarget(resumed, 'dev-1', '%1')).toBe(false);
   });
 
@@ -128,12 +128,23 @@ describe('snapshot pane removal', () => {
     pool = retainLiveKeepAlivePanes(pool, new Set(['%2']));
 
     expect(keepAlivePaneIds(pool)).toEqual(['%2']);
-    expect(pool.generation).toBe(before.generation + 1);
 
     // 同一个 id 再出现（tmux 复用）：不在池里 ⇒ 冷；且 key 与旧实例不同
     pool = retainKeepAlivePane(pool, 'dev-1', '%1');
     expect(pool.visibleIsWarm).toBe(false);
     expect(keepAlivePaneKey(pool, '%1')).not.toBe(keepAlivePaneKey(before, '%1'));
+  });
+
+  test('removing a hidden pane never disturbs the visible one', () => {
+    let pool = createKeepAlivePool();
+    pool = retainKeepAlivePane(pool, 'dev-1', '%1');
+    pool = retainKeepAlivePane(pool, 'dev-1', '%2');
+    const visibleKey = keepAlivePaneKey(pool, '%2');
+
+    pool = retainLiveKeepAlivePanes(pool, new Set(['%2']));
+
+    // 可见实例重挂的话，路由身份没变、select 会被去重跳过，legacy 链路又不会自己拉首屏 ⇒ 空白
+    expect(keepAlivePaneKey(pool, '%2')).toBe(visibleKey);
   });
 
   test('the visible pane is never pruned (the snapshot may just be behind)', () => {
@@ -249,12 +260,12 @@ describe('published pool (terminal-stage lifecycle)', () => {
     expect(isWarmSelectTarget('dev-1', '%1')).toBe(false);
     expect(isRetainedPane('dev-1', '%2')).toBe(false);
 
-    // 恢复：可见 pane 换代重挂，仍然必须冷 select
+    // 恢复：可见实例继续挂着（不闪白），但仍然必须冷 select
     const after = stack.render('dev-1', '%1');
     stack.layoutCleanup();
     stack.layoutSetup();
     expect(isWarmSelectTarget('dev-1', '%1')).toBe(false);
-    expect(keepAlivePaneKey(after, '%1')).not.toBe(keepAlivePaneKey(during, '%1'));
+    expect(keepAlivePaneKey(after, '%1')).toBe(keepAlivePaneKey(during, '%1'));
   });
 
   test('a hidden pane deleted from the snapshot cannot be deep-linked back into warm', () => {

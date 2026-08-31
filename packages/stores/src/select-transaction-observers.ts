@@ -12,13 +12,31 @@ export interface SelectTransactionSource {
   getTransaction(deviceId: string): SelectTransaction | undefined;
 }
 
+// 与状态机的 validateToken 同义：事件必须属于当前这笔事务。少了这一步，
+// 一条过期 token 的 LIVE_RESUME 会「借用」后来那笔处于 HISTORY_APPLIED 的事务，
+// 把还没补上的缺口清掉。
+function currentTransaction(
+  machine: SelectTransactionSource,
+  deviceId: string,
+  selectToken: Uint8Array
+): SelectTransaction | null {
+  const transaction = machine.getTransaction(deviceId);
+  if (!transaction) return null;
+  const expected = transaction.selectToken;
+  if (expected.length !== selectToken.length) return null;
+  for (let i = 0; i < expected.length; i++) {
+    if (expected[i] !== selectToken[i]) return null;
+  }
+  return transaction;
+}
+
 export function observeSelectHistory(
   machine: SelectTransactionSource,
   gaps: PaneStreamGaps,
   deviceId: string,
   selectToken: Uint8Array
 ): void {
-  const transaction = machine.getTransaction(deviceId);
+  const transaction = currentTransaction(machine, deviceId, selectToken);
   if (!transaction || transaction.state !== 'ACKED' || transaction.outputGapped) return;
   gaps.noteHistoryCommitted(deviceId, selectToken);
 }
@@ -29,7 +47,12 @@ export function observeSelectLiveResume(
   deviceId: string,
   selectToken: Uint8Array
 ): void {
-  const transaction = machine.getTransaction(deviceId);
-  if (!transaction || transaction.state !== 'HISTORY_APPLIED' || transaction.outputGapped) return;
+  const transaction = currentTransaction(machine, deviceId, selectToken);
+  if (!transaction || transaction.state !== 'HISTORY_APPLIED') return;
+  if (transaction.outputGapped) {
+    // 画面改由 rebase 重建，history 没落地：作废这笔补洞记录，缺口留着
+    gaps.abortRepair(deviceId, selectToken);
+    return;
+  }
   gaps.completeRepair(deviceId, selectToken);
 }

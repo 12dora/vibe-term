@@ -21,11 +21,12 @@ export interface KeepAlivePool {
   visiblePaneId: string | null;
   visibleIsWarm: boolean;
   /**
-   * 池身份代际，进 React key。pane 被快照确认删除、或设备流恢复后自增：
-   * 同一个 pane id 再出现（tmux 重启复用 id、同一提交内先删后加）会拿到新 key，
-   * 强制重挂一个空终端，绝不复用旧缓冲。
+   * 每个 pane 各自的化身号，进它自己的 React key。**只有**被快照确认删除的那个 pane 会自增：
+   * 同一个 id 再出现（tmux 复用、同一提交内先删后加）时拿到新 key，重挂一个空终端。
+   * 绝不因为别的 pane 被删、或流中断恢复就换掉可见实例的 key——那会在冷 history 到达前
+   * 把可见终端卸掉，必然闪一屏空白。
    */
-  generation: number;
+  incarnations: Readonly<Record<string, number>>;
   /** 当前是否处于流中断态（断线 / 重连中） */
   streamInterrupted: boolean;
 }
@@ -37,7 +38,7 @@ export function createKeepAlivePool(limit: number = KEEP_ALIVE_LIMIT): KeepAlive
     limit: Math.max(1, limit),
     visiblePaneId: null,
     visibleIsWarm: false,
-    generation: 0,
+    incarnations: {},
     streamInterrupted: false,
   };
 }
@@ -66,12 +67,13 @@ export function retainKeepAlivePane(
 }
 
 /**
- * 设备流状态迁移（断线 / 重连中 ↔ 已连接），纯函数、可重复调用：
+ * 设备流状态迁移（断线 / 重连中 ↔ 已连接），纯函数、可重复调用。
+ * 两个方向都只动 panes 与 warm 资格，**不碰任何 pane 的 key**：
  *
  * - 进入中断：隐藏实例错过的输出永远补不回来，直接弃掉；可见实例虽然还挂着，
  *   但它同样错过了那段输出，一并取消 warm 资格（断线期间保持挂载以便看清已有内容）；
- * - 恢复：换代。可见实例重挂一个空终端由冷 select 重建——tmux 重启可能复用 pane id，
- *   继续用老缓冲会把两段无关的会话拼在一起。
+ * - 恢复：仍然只取消 warm 资格。可见终端继续挂着，由缺口账本保证的那次冷 select
+ *   用 reset + history 原子地换掉内容——先卸载再等 history 只会白闪一屏。
  */
 export function applyKeepAliveStreamState(
   pool: KeepAlivePool,
@@ -88,16 +90,11 @@ export function applyKeepAliveStreamState(
       visibleIsWarm: false,
     };
   }
-  return {
-    ...pool,
-    streamInterrupted: false,
-    generation: pool.generation + 1,
-    visibleIsWarm: false,
-  };
+  return { ...pool, streamInterrupted: false, visibleIsWarm: false };
 }
 
 /**
- * 快照确认还活着的 pane 集合：隐藏实例里已经不存在的直接卸载，并换代，
+ * 快照确认还活着的 pane 集合：隐藏实例里已经不存在的直接卸载，并**只**把它自己的化身号 +1，
  * 避免同一提交里「先删后加」让 React 复用旧实例。可见 pane 永远不裁——
  * 它的失效由路由对账处理（快照可能只是还没追上）。
  */
@@ -105,11 +102,19 @@ export function retainLiveKeepAlivePanes(
   pool: KeepAlivePool,
   livePaneIds: ReadonlySet<string>
 ): KeepAlivePool {
-  const kept = pool.panes.filter((id) => id === pool.visiblePaneId || livePaneIds.has(id));
-  if (kept.length === pool.panes.length) {
+  const removed = pool.panes.filter((id) => id !== pool.visiblePaneId && !livePaneIds.has(id));
+  if (removed.length === 0) {
     return pool;
   }
-  return { ...pool, panes: kept, generation: pool.generation + 1 };
+  const incarnations = { ...pool.incarnations };
+  for (const paneId of removed) {
+    incarnations[paneId] = (incarnations[paneId] ?? 0) + 1;
+  }
+  return {
+    ...pool,
+    panes: pool.panes.filter((id) => !removed.includes(id)),
+    incarnations,
+  };
 }
 
 export function keepAlivePaneIds(pool: KeepAlivePool): readonly string[] {
@@ -126,9 +131,9 @@ export function isKeepAliveWarmTarget(
 }
 
 /** 目标当前挂载中（还未被置为可见时的查询口） */
-/** React key：带设备与代际，代际一变就强制重挂 */
+/** React key：设备 + pane + 该 pane 自己的化身号，化身号一变才重挂 */
 export function keepAlivePaneKey(pool: KeepAlivePool, paneId: string): string {
-  return `${pool.deviceId ?? ''}:${pool.generation}:${paneId}`;
+  return `${pool.deviceId ?? ''}:${paneId}#${pool.incarnations[paneId] ?? 0}`;
 }
 
 export function isKeepAliveRetained(

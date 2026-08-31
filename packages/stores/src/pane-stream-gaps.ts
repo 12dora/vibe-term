@@ -67,8 +67,11 @@ export interface PaneStreamGaps {
   noteHistoryCommitted(deviceId: string, selectToken: Uint8Array): void;
   /** 观察到该 token 的事务干净地恢复了 live：缺口才算补上 */
   completeRepair(deviceId: string, selectToken: Uint8Array): void;
-  /** 补洞的 select 失败/被作废：丢掉补洞记录，缺口保留 */
-  abortRepair(deviceId: string): void;
+  /**
+   * 补洞的 select 失败/被作废：丢掉补洞记录，缺口保留。
+   * 带 selectToken 时只作废该 token 的记录（避免误伤后来那笔事务的补洞）。
+   */
+  abortRepair(deviceId: string, selectToken?: Uint8Array): void;
   /** 快照更新：丢掉快照里已经不存在的 pane */
   retainLivePanes(deviceId: string, livePaneIds: ReadonlySet<string>): void;
   /** 设备流整体中断（断线/重连）：补洞记录作废 */
@@ -137,7 +140,8 @@ export function createPaneStreamGaps(): PaneStreamGaps {
       if (panes.size === 0) gapped.delete(deviceId);
     },
 
-    abortRepair(deviceId) {
+    abortRepair(deviceId, selectToken) {
+      if (selectToken && !matchingRepair(deviceId, selectToken)) return;
       repairs.delete(deviceId);
     },
 

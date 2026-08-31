@@ -6,7 +6,7 @@ import {
   createDeferredClipboardWriter,
   wsBorsh,
 } from '@tmex/shared';
-import type { GatewayTransportEvent } from '@tmex/ws-client';
+import type { ConnectionState, GatewayTransportEvent } from '@tmex/ws-client';
 import type { PaneSubscriptionManager } from './pane-subscriptions';
 import {
   type TmuxDomainEventContext,
@@ -71,8 +71,28 @@ function isDeviceStreamInterruption(event: EventDevicePayload): boolean {
   return event.type === 'error' && event.errorType === 'reconnecting';
 }
 
+// 传输层是否曾经 READY 过：只有「READY 之后又离开 READY」才是真的断流，
+// 首次连接过程中的 WS_CONNECTING / HELLO_NEGOTIATING 不算。
+const transportWasReady = new WeakMap<TmuxEventRouterContext, boolean>();
+
+/**
+ * 网关 WS 自身重连同样让每个设备的字节流出现缺口：backoff 期间的 pane 输出没人收，
+ * 而 READY 之后只有当前 pane 会被重选，隐藏的保活实例会带着断裂的缓冲继续算 warm。
+ */
+function handleTransportStateChange(ctx: TmuxEventRouterContext, state: ConnectionState): void {
+  const wasReady = transportWasReady.get(ctx) === true;
+  transportWasReady.set(ctx, state === 'READY');
+  if (!wasReady || state === 'READY') return;
+
+  for (const deviceId of ctx.getState().connectedDevices) {
+    ctx.selection.handleDeviceStreamInterrupted(deviceId);
+    ctx.core.paneSinks.cleanupDevicePaneState(deviceId);
+  }
+}
+
 const handlers: TmuxEventHandlers = {
   'connection-state': (event, ctx) => {
+    handleTransportStateChange(ctx, event.state);
     ctx.setState((prev) => ({
       connectionState: event.state,
       hasConnectedOnce: event.state === 'READY' ? true : prev.hasConnectedOnce,
