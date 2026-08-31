@@ -1,5 +1,5 @@
 import { existsSync, readFileSync } from 'node:fs';
-import { resolve } from 'node:path';
+import { basename, resolve } from 'node:path';
 import type { GatewayDeployment } from '@tmex/shared';
 import { config } from '../config';
 
@@ -28,9 +28,16 @@ export interface InstallInfo {
  * （= installDir/resources/fe-dist）上溯两级，回退到 cwd（服务 WorkingDirectory=installDir）。
  */
 export function resolveInstallDir(): string {
+  const explicit = process.env.TMEX_INSTALL_DIR;
+  if (explicit) return resolve(explicit);
   const feDist = process.env.TMEX_FE_DIST_DIR;
   if (feDist) {
-    return resolve(feDist, '..', '..');
+    const resourcesParent = resolve(feDist, '..', '..');
+    if (basename(resourcesParent) === 'current') return resolve(resourcesParent, '..');
+    if (basename(resolve(resourcesParent, '..')) === 'versions') {
+      return resolve(resourcesParent, '..', '..');
+    }
+    return resourcesParent;
   }
   return process.cwd();
 }

@@ -3,6 +3,7 @@ import { config } from '../config';
 import { runtimeController } from '../control/runtime';
 import { getSiteSettings } from '../db';
 import { t } from '../i18n';
+import { getBaseVersion } from '../system/version';
 import { handleCapabilitiesApiRequest } from './capabilities';
 import { createGatewayOwnerProof } from './gateway-ownership';
 import { json, manifestJson } from './http';
@@ -81,6 +82,7 @@ export const healthRoutes: ApiRoute[] = [
       getTmuxHealth().then((tmux) => {
         return json({
           status: 'ok',
+          version: getBaseVersion(),
           startedAt: PROCESS_STARTED_AT,
           restarting: runtimeController.isRestarting(),
           // 供 e2e globalSetup 断言「连到的是 test 实例而非生产」，避免误改生产数据。

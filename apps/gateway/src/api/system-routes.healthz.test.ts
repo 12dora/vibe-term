@@ -10,9 +10,11 @@ describe('GET /healthz env', () => {
   test('reports the runtime NODE_ENV, not a missing-value fallback', async () => {
     const res = await handleApiRequest(new Request('http://localhost/healthz'), fakeServer);
     expect(res.status).toBe(200);
-    const body = (await res.json()) as { status: string; env: string };
+    const body = (await res.json()) as { status: string; env: string; version: string };
     expect(body.status).toBe('ok');
     expect(body.env).toBe(readNodeEnv());
+    expect(typeof body.version).toBe('string');
+    expect(body.version.length).toBeGreaterThan(0);
   });
 
   test('bun build does not inline healthz env as the compile-time NODE_ENV', async () => {
