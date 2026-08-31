@@ -1,5 +1,6 @@
 import type { StartUpgradeRequest } from '@tmex/shared';
 import { t } from '../i18n';
+import { getAccessAddresses } from '../system/access-addresses';
 import { MANAGED_EXTERNALLY, getSystemInfo, isManagedExternally } from '../system/info-public';
 import { json } from './http';
 
@@ -27,6 +28,10 @@ export function handleSystemApiRequest(
 ): Response | Promise<Response> | undefined {
   if (path === '/api/system/info' && req.method === 'GET') {
     return json(getSystemInfo());
+  }
+
+  if (path === '/api/system/addresses' && req.method === 'GET') {
+    return json(getAccessAddresses());
   }
 
   const managed = isManagedBuild() || isManagedExternally();

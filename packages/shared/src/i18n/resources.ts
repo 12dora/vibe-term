@@ -73,6 +73,12 @@ export const I18N_RESOURCES = {
           "ios": "iOS",
           "android": "Android"
         },
+        "address": {
+          "public": "Public address",
+          "lan": "LAN address",
+          "current": "Current address",
+          "loopbackHint": "This machine only listens on 127.0.0.1, so other devices cannot reach it directly. Set up remote access, or install with --host 0.0.0.0 to listen on all addresses."
+        },
         "addressLabel": "Current address",
         "ios": {
           "open": {
@@ -2221,6 +2227,12 @@ export const I18N_RESOURCES = {
           "ios": "iOS",
           "android": "Android"
         },
+        "address": {
+          "public": "公网地址",
+          "lan": "局域网地址",
+          "current": "当前地址",
+          "loopbackHint": "本机只监听 127.0.0.1，其他设备无法直接访问。请配置远程访问，或安装时用 --host 0.0.0.0 监听所有地址。"
+        },
         "addressLabel": "当前地址",
         "ios": {
           "open": {
@@ -4367,6 +4379,12 @@ export const I18N_RESOURCES = {
         "platform": {
           "ios": "iOS",
           "android": "Android"
+        },
+        "address": {
+          "public": "公開アドレス",
+          "lan": "LAN アドレス",
+          "current": "現在のアドレス",
+          "loopbackHint": "このマシンは 127.0.0.1 でのみ待ち受けているため、他のデバイスから直接アクセスできません。リモートアクセスを設定するか、--host 0.0.0.0 でインストールしてください。"
         },
         "addressLabel": "現在のアドレス",
         "ios": {

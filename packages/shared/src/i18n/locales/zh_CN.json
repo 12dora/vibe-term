@@ -67,6 +67,12 @@
           "ios": "iOS",
           "android": "Android"
         },
+        "address": {
+          "public": "公网地址",
+          "lan": "局域网地址",
+          "current": "当前地址",
+          "loopbackHint": "本机只监听 127.0.0.1，其他设备无法直接访问。请配置远程访问，或安装时用 --host 0.0.0.0 监听所有地址。"
+        },
         "addressLabel": "当前地址",
         "ios": {
           "open": {

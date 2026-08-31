@@ -1,0 +1,68 @@
+// 手机要访问的地址：不是浏览器当前的 origin（本机打开时是 127.0.0.1，别的设备根本连不上），
+// 而是按可达性排出来的候选——公网入口（隧道 / Hub 公开地址）、局域网 IP、以及非回环的当前地址。
+
+import type { AccessAddressesResponse, TunnelStatusResponse } from '@tmex/shared';
+
+export type AccessAddressKind = 'public' | 'lan' | 'current';
+
+export interface AccessAddress {
+  kind: AccessAddressKind;
+  url: string;
+}
+
+export interface AccessAddressInput {
+  origin: string;
+  tunnel: TunnelStatusResponse | null;
+  hubPublicUrl: string | null;
+  addresses: AccessAddressesResponse | null;
+}
+
+const LOOPBACK_HOSTS = new Set(['127.0.0.1', '[::1]', 'localhost']);
+
+export function isLoopbackOrigin(origin: string): boolean {
+  try {
+    const host = new URL(origin).hostname;
+    return LOOPBACK_HOSTS.has(host) || host === '::1' || host.startsWith('127.');
+  } catch {
+    return false;
+  }
+}
+
+function tunnelPublicUrl(tunnel: TunnelStatusResponse | null): string | null {
+  if (!tunnel) return null;
+  if (tunnel.config.mode === 'named' && tunnel.config.hostname) {
+    return `https://${tunnel.config.hostname}`;
+  }
+  if (tunnel.config.mode === 'quick') return tunnel.process.publicUrl;
+  return null;
+}
+
+/** 候选列表：公网 → 局域网 → 当前地址；全部为空时退回当前 origin（哪怕是回环，界面另给提示）。 */
+export function buildAccessAddresses(input: AccessAddressInput): AccessAddress[] {
+  const out: AccessAddress[] = [];
+  const seen = new Set<string>();
+  const push = (kind: AccessAddressKind, url: string | null) => {
+    if (!url) return;
+    const normalized = url.replace(/\/+$/, '');
+    if (seen.has(normalized)) return;
+    seen.add(normalized);
+    out.push({ kind, url: normalized });
+  };
+
+  push('public', tunnelPublicUrl(input.tunnel));
+  push('public', input.hubPublicUrl);
+  if (input.addresses && !input.addresses.loopbackOnly) {
+    for (const ip of input.addresses.lanAddresses) {
+      push('lan', `http://${ip}:${input.addresses.port}`);
+    }
+  }
+  if (input.origin && !isLoopbackOrigin(input.origin)) push('current', input.origin);
+  if (out.length === 0 && input.origin) push('current', input.origin);
+  return out;
+}
+
+/** 只剩回环地址可展示时提醒：本机只监听 127.0.0.1，其他设备连不上。 */
+export function showLoopbackHint(list: AccessAddress[], input: AccessAddressInput): boolean {
+  const onlyLoopback = list.every((item) => item.kind === 'current' && isLoopbackOrigin(item.url));
+  return onlyLoopback && (input.addresses?.loopbackOnly ?? isLoopbackOrigin(input.origin));
+}

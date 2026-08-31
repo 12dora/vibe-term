@@ -17,6 +17,7 @@ installWindowStorage();
 const { renderToStaticMarkup } = await import('react-dom/server');
 const { MemoryRouter } = await import('react-router');
 const { RuntimeProvider } = await import('@tmex/stores/react');
+const { QueryClient, QueryClientProvider } = await import('@tanstack/react-query');
 const { SidebarProvider } = await import('@tmex/ui/sidebar');
 const { appNodeRuntimes } = await import('@/node/node-runtimes');
 const ConnectDevicesPanel = (await import('./connect-devices-panel')).default;
@@ -27,10 +28,14 @@ const ORIGIN = 'http://localhost:9663';
 
 function render(node: React.ReactNode): string {
   const runtime = appNodeRuntimes.get('self').runtime;
+  // 地址列表走 react-query（静态渲染下查询不会发出，只会按 origin 兜底）。
+  const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return renderToStaticMarkup(
     <MemoryRouter>
       <RuntimeProvider runtime={runtime}>
-        <SidebarProvider>{node}</SidebarProvider>
+        <QueryClientProvider client={queryClient}>
+          <SidebarProvider>{node}</SidebarProvider>
+        </QueryClientProvider>
       </RuntimeProvider>
     </MemoryRouter>
   );
@@ -47,8 +52,10 @@ describe('ConnectDevicesPanel', () => {
     for (const step of ['open', 'add', 'launch']) {
       expect(html).toContain(`data-testid="connect-step-ios-${step}"`);
     }
-    expect(html).toContain('data-testid="command-block-origin"');
+    // 数据未到、origin 是回环：只剩「当前地址」兜底并给出回环提示。
+    expect(html).toContain('data-testid="command-block-address-0"');
     expect(html).toContain(ORIGIN);
+    expect(html).toContain('data-testid="connect-loopback-hint"');
     expect(html).toContain('connectDevices.mobile.ios.open.title');
   });
 

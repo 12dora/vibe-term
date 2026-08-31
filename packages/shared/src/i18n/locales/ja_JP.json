@@ -67,6 +67,12 @@
           "ios": "iOS",
           "android": "Android"
         },
+        "address": {
+          "public": "公開アドレス",
+          "lan": "LAN アドレス",
+          "current": "現在のアドレス",
+          "loopbackHint": "このマシンは 127.0.0.1 でのみ待ち受けているため、他のデバイスから直接アクセスできません。リモートアクセスを設定するか、--host 0.0.0.0 でインストールしてください。"
+        },
         "addressLabel": "現在のアドレス",
         "ios": {
           "open": {

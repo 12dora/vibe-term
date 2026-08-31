@@ -67,6 +67,12 @@
           "ios": "iOS",
           "android": "Android"
         },
+        "address": {
+          "public": "Public address",
+          "lan": "LAN address",
+          "current": "Current address",
+          "loopbackHint": "This machine only listens on 127.0.0.1, so other devices cannot reach it directly. Set up remote access, or install with --host 0.0.0.0 to listen on all addresses."
+        },
         "addressLabel": "Current address",
         "ios": {
           "open": {
