@@ -1,3 +1,19 @@
+# 1.1.5
+
+_2026-09-01_
+
+## English
+
+### Fixes
+
+- Switching terminals could leave the previous pane covering the new one until a page reload (hidden keep-alive slots used `visibility: hidden`, which the terminal mount re-enables on a descendant; slots now hide with `opacity` + `z-index`).
+
+## 中文
+
+### 修复
+
+- 切换终端后右侧可能仍显示旧终端、刷新才恢复（保活槽的 `visibility: hidden` 会被终端挂载点在后代上反选；改用 `opacity` + `z-index` 隐藏）。
+
 # 1.1.4
 
 _2026-08-31_
