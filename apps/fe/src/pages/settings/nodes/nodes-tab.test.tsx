@@ -52,7 +52,9 @@ mock.module('./https/use-tls-status', () => ({
 const { renderToStaticMarkup } = await import('react-dom/server');
 const { MemoryRouter } = await import('react-router');
 const { resetMeshNodesStateForTest, setMeshNodesStateForTest } = await import('@/node/mesh-nodes');
-const { setPendingStorage, clearPendingEnrollments, addPendingEnrollment } = await import('@/node/enrollment');
+const { setPendingStorage, clearPendingEnrollments, addPendingEnrollment } = await import(
+  '@/node/enrollment'
+);
 const { NodesTab } = await import('./nodes-tab');
 
 const MESH_MODE: AuthModeResponse = {
