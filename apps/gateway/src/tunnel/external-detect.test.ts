@@ -619,3 +619,54 @@ describe('token-tunnel log + Access probe', () => {
     expect(warnings.some((w) => /403/.test(w))).toBe(true);
   });
 });
+
+describe('外部 Access 探测的凭证来源区分', () => {
+  const baseDeps = {
+    originPort: 19883,
+    now: () => 1,
+    homedir: () => '/no-home',
+    platform: 'linux' as const,
+    listProcesses: async () => '7 /usr/bin/cloudflared tunnel run --token-file /tmp/token\n',
+    readFile: async (path: string) => {
+      if (path === '/tmp/token') {
+        return Buffer.from(JSON.stringify({ a: 'acct', t: 'tid', s: 's' })).toString('base64');
+      }
+      if (path === '/tmp/hostname') return 'tmex.example.com\n';
+      return null;
+    },
+    listDir: async () => [],
+  };
+
+  // 实测（2026-08-31 真机）：ARGO cert 令牌权限不足时 apps 接口静默返回空而非 403，
+  // 空列表无法证伪 dashboard 配置，必须降级为「无法检测」。
+  test('cert 回退凭证 + 空 apps 列表 → checked:false（不可证伪）', async () => {
+    const d = new ExternalTunnelDetector({
+      ...baseDeps,
+      getCredentials: async () => ({ accountId: 'acct', apiToken: 'tok', source: 'cert' as const }),
+      accessClient: {
+        getTunnelIngress: async () => [],
+        listApps: async () => [],
+      },
+    });
+    const found = await d.detect();
+    expect(found.externalAccess?.checked).toBe(false);
+  });
+
+  test('store 凭证 + 空 apps 列表 → checked:true 且无匹配（可信空结果）', async () => {
+    const d = new ExternalTunnelDetector({
+      ...baseDeps,
+      getCredentials: async () => ({
+        accountId: 'acct',
+        apiToken: 'tok',
+        source: 'store' as const,
+      }),
+      accessClient: {
+        getTunnelIngress: async () => [],
+        listApps: async () => [],
+      },
+    });
+    const found = await d.detect();
+    expect(found.externalAccess?.checked).toBe(true);
+    expect(found.externalAccess?.hostnameMatch).toBe(false);
+  });
+});

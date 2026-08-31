@@ -531,7 +531,11 @@ function appMatchesHostname(domain: string, hostname: string): boolean {
 async function probeExternalAccess(opts: {
   hostnames: string[];
   accessApi: ExternalAccessApi | null;
-  getApiCredentials?: () => Promise<{ accountId: string; apiToken: string } | null>;
+  getApiCredentials?: () => Promise<{
+    accountId: string;
+    apiToken: string;
+    source?: 'store' | 'cert';
+  } | null>;
   warn?: (message: string) => void;
 }): Promise<TunnelExternalAccessProbe> {
   if (!opts.accessApi?.listApps || !opts.getApiCredentials) return { ...EMPTY_EXTERNAL_ACCESS };
@@ -539,6 +543,12 @@ async function probeExternalAccess(opts: {
   if (!creds) return { ...EMPTY_EXTERNAL_ACCESS };
   try {
     const apps = await opts.accessApi.listApps(creds.accountId, creds.apiToken);
+    // 实测：cert.pem 的 ARGO 令牌对 Zero Trust 权限不足时，apps 接口不报 403 而是静默返回
+    // 空列表（同凭证访问 organizations 会 403）。空结果无法证伪「dashboard 已配置」，
+    // 只有 accessStore 里用户提供的 Access 令牌的空列表才可信。
+    if (apps.length === 0 && creds.source === 'cert') {
+      return { ...EMPTY_EXTERNAL_ACCESS };
+    }
     const match = apps.find((app) => opts.hostnames.some((h) => appMatchesHostname(app.domain, h)));
     let teamDomain: string | null = null;
     if (opts.accessApi.getOrganization) {

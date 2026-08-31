@@ -624,13 +624,17 @@ export class TunnelManager {
   }
 
   /** 探测专用：accessStore 优先，否则只读解析 ~/.cloudflared/cert.pem，永不落库。 */
-  private async detectionCredentials(): Promise<{ accountId: string; apiToken: string } | null> {
+  private async detectionCredentials(): Promise<{
+    accountId: string;
+    apiToken: string;
+    source?: 'store' | 'cert';
+  } | null> {
     const apiToken = await this.accessStore.getApiToken();
     const accountId = this.accessStore.get().accountId;
-    if (apiToken && accountId) return { accountId, apiToken };
+    if (apiToken && accountId) return { accountId, apiToken, source: 'store' };
     const fromCert = readArgoCertCredentials(this.homeDir);
     if (!fromCert) return null;
-    return { accountId: fromCert.accountId, apiToken: fromCert.apiToken };
+    return { accountId: fromCert.accountId, apiToken: fromCert.apiToken, source: 'cert' };
   }
 
   private refreshBinaryPresence(): void {
