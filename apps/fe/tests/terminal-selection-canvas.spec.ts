@@ -23,37 +23,45 @@ type VisibleTextRange = {
   endCol: number;
 };
 
+// shell 会回显 send-keys 打进去的整条命令，而这些命令的字面量里正好含有全部待测词
+// （`printf 'dragtarget\r\ndbltoken keep\r\ntripline\r\n'`）。回显行排在输出之前，
+// 逐行扫描先命中的是它——测试要点名的是命令的**输出**，故跳过回显行。
+// 另：回显与输出不是同一帧到达，这里轮询到输出行出现为止，避免抢跑。
 async function findVisibleTextRange(page: Page, needle: string): Promise<VisibleTextRange> {
-  const match = await page.evaluate((target) => {
-    const term = (window as any).__tmexE2eXterm;
-    if (!term) {
-      return null;
-    }
-
-    const buffer = term.buffer.active;
-    const start = buffer.viewportY;
-    const end = Math.min(buffer.length, start + term.rows);
-    for (let y = start; y < end; y += 1) {
-      const line = buffer.getLine(y);
-      const text = line ? line.translateToString(false) : '';
-      const startCol = text.indexOf(target);
-      if (startCol >= 0) {
-        return {
-          row: y - start,
-          startCol,
-          endCol: startCol + target.length - 1,
-        };
+  const handle = await page.waitForFunction(
+    (target) => {
+      const term = (window as any).__tmexE2eXterm;
+      if (!term) {
+        return null;
       }
-    }
 
-    return null;
-  }, needle);
+      const buffer = term.buffer.active;
+      const start = buffer.viewportY;
+      const end = Math.min(buffer.length, start + term.rows);
 
-  if (!match) {
-    throw new Error(`visible text not found: ${needle}`);
-  }
+      for (let y = start; y < end; y += 1) {
+        const line = buffer.getLine(y);
+        const text = line ? line.translateToString(false) : '';
+        if (text.includes("printf '")) {
+          continue;
+        }
+        const startCol = text.indexOf(target);
+        if (startCol >= 0) {
+          return {
+            row: y - start,
+            startCol,
+            endCol: startCol + target.length - 1,
+          };
+        }
+      }
 
-  return match;
+      return null;
+    },
+    needle,
+    { timeout: 20_000 }
+  );
+
+  return (await handle.jsonValue()) as VisibleTextRange;
 }
 
 async function getCanvasMetrics(page: Page): Promise<{

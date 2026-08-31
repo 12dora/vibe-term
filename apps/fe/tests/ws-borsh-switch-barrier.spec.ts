@@ -160,6 +160,8 @@ test('ws-borsh: rapid select cancels previous transaction (no LIVE_RESUME for ol
 
   const selectTokenByPane = new Map<string, string>();
   const liveResumes: string[] = [];
+  // 帧序：LIVE_RESUME(旧 token) 只允许出现在新 TMUX_SELECT 发出之前（旧事务已在被取消前正常完成）。
+  const frameOrder: Array<{ kind: 'select' | 'resume'; token: string }> = [];
 
   page.on('websocket', (ws) => {
     if (!isGatewayWsUrl(ws.url())) return;
@@ -169,14 +171,18 @@ test('ws-borsh: rapid select cancels previous transaction (no LIVE_RESUME for ol
       if (!envelope || envelope.kind !== KIND.TMUX_SELECT) return;
       const select = decodeTmuxSelect(envelope.payload);
       if (!select.paneId) return;
-      selectTokenByPane.set(select.paneId, select.selectToken.toString('hex'));
+      const token = select.selectToken.toString('hex');
+      selectTokenByPane.set(select.paneId, token);
+      frameOrder.push({ kind: 'select', token });
     });
 
     ws.on('framereceived', ({ payload }) => {
       const envelope = decodeEnvelope(payload as Buffer);
       if (!envelope || envelope.kind !== KIND.LIVE_RESUME) return;
       const resume = decodeLiveResume(envelope.payload);
-      liveResumes.push(resume.selectToken.toString('hex'));
+      const token = resume.selectToken.toString('hex');
+      liveResumes.push(token);
+      frameOrder.push({ kind: 'resume', token });
     });
   });
 
@@ -233,7 +239,12 @@ test('ws-borsh: rapid select cancels previous transaction (no LIVE_RESUME for ol
     await expect.poll(() => liveResumes.includes(tokenB!), { timeout: 20_000 }).toBeTruthy();
 
     await new Promise((resolve) => setTimeout(resolve, 1000));
-    expect(liveResumes.includes(tokenA!)).toBeFalsy();
+    const selectBIndex = frameOrder.findIndex((f) => f.kind === 'select' && f.token === tokenB);
+    expect(selectBIndex).toBeGreaterThanOrEqual(0);
+    const staleResumeAfterB = frameOrder
+      .slice(selectBIndex + 1)
+      .some((f) => f.kind === 'resume' && f.token === tokenA);
+    expect(staleResumeAfterB).toBeFalsy();
   } finally {
     await request.delete(`/api/devices/${deviceId}`);
     ensureCleanSession(sessionName);
