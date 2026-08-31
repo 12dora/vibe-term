@@ -3,8 +3,16 @@
 
 import { beforeEach, describe, expect, test } from 'bun:test';
 import type { AuthModeResponse, MeshNode } from '@tmex/api-client/auth/index';
+import type { UpgradeStatus } from '@tmex/shared';
 import { encodeBase64url } from '@tmex/shared/auth';
 import { installWindowStorage } from '@tmex/stores/test-utils';
+import type { NodeUpgradeEntry } from './types';
+import type {
+  UpgradeIo,
+  UpgradePollOutcome,
+  UpgradeStartOutcome,
+  UpgradeToasts,
+} from './use-node-upgrade';
 
 installWindowStorage();
 
@@ -17,7 +25,8 @@ const { canAutoSignAdmit, invalidCertificateKey, resetEnrollmentEngineForTest } 
   '@/node/enrollment-engine'
 );
 const { resolveHubPublicUrl } = await import('./enrollment-section');
-const { isUpgradeBusy, upgradeErrorText, upgradePhaseText } = await import('./use-node-upgrade');
+const { classifyPollFailure, isUpgradeBusy, runNodeUpgrade, upgradeErrorText, upgradePhaseText } =
+  await import('./use-node-upgrade');
 const { rootKeyFromSeed } = await import('@tmex/shared/auth');
 
 const MODE: AuthModeResponse = {
@@ -234,6 +243,280 @@ describe('节点升级派生逻辑', () => {
     // 「已是最新」不是失败，不进错误表；未知码保持可诊断
     expect(upgradeErrorText(t, 'UPGRADE_ALREADY_LATEST')).toBe('UPGRADE_ALREADY_LATEST');
     expect(upgradeErrorText(t, 'BOOM')).toBe('BOOM');
+  });
+});
+
+describe('节点升级状态机', () => {
+  const t = (key: string) => key;
+  const ROW = { id: 'n1', name: 'studio' };
+
+  function idle(overrides: Partial<UpgradeStatus> = {}): UpgradeStatus {
+    return { state: 'idle', targetVersion: null, error: null, startedAt: null, ...overrides };
+  }
+
+  function statusPoll(status: UpgradeStatus): UpgradePollOutcome {
+    return { kind: 'status', status };
+  }
+
+  interface Recorder {
+    toasts: UpgradeToasts;
+    log: Array<[keyof UpgradeToasts, string]>;
+  }
+
+  function recorder(): Recorder {
+    const log: Array<[keyof UpgradeToasts, string]> = [];
+    return {
+      log,
+      toasts: {
+        success: (m) => log.push(['success', m]),
+        info: (m) => log.push(['info', m]),
+        warning: (m) => log.push(['warning', m]),
+        error: (m) => log.push(['error', m]),
+      },
+    };
+  }
+
+  interface FakeIo {
+    io: UpgradeIo;
+    controller: AbortController;
+    counts: { polls: number; versions: number; waits: number };
+  }
+
+  /** 假 IO：时钟按 wait 的毫秒推进，poll / nodeVersion 按脚本逐次给结果（越界用最后一项）。 */
+  function fakeIo(opts: {
+    start: UpgradeStartOutcome;
+    polls: UpgradePollOutcome[];
+    versions?: Array<string | null | undefined>;
+    onWait?: (index: number, controller: AbortController) => void;
+    onPoll?: (index: number, controller: AbortController) => void;
+  }): FakeIo {
+    const controller = new AbortController();
+    const counts = { polls: 0, versions: 0, waits: 0 };
+    let clock = 0;
+    const pick = <T,>(list: T[], index: number): T => list[Math.min(index, list.length - 1)] as T;
+    const io: UpgradeIo = {
+      start: async () => opts.start,
+      poll: async () => {
+        counts.polls += 1;
+        opts.onPoll?.(counts.polls, controller);
+        return pick(opts.polls, counts.polls - 1);
+      },
+      nodeVersion: async () => pick(opts.versions ?? [undefined], counts.versions++),
+      wait: async (ms, signal) => {
+        counts.waits += 1;
+        clock += ms;
+        opts.onWait?.(counts.waits, controller);
+        return !signal.aborted;
+      },
+      now: () => clock,
+    };
+    return { io, controller, counts };
+  }
+
+  test('POST 回包丢失（NODE_UNREACHABLE）不算失败：继续轮询，目标版本变化即确认成功', async () => {
+    const rec = recorder();
+    const patches: Array<Partial<NodeUpgradeEntry>> = [];
+    let changed = 0;
+    const fake = fakeIo({
+      start: { kind: 'unconfirmed' },
+      // 掉线两轮（目标在重启），回来后是 idle 且没有 error——只能靠版本判定
+      polls: [{ kind: 'unreachable' }, { kind: 'unreachable' }, statusPoll(idle())],
+      versions: ['1.2.0'],
+    });
+    await runNodeUpgrade({
+      row: ROW,
+      targetVersion: '1.2.0',
+      io: fake.io,
+      signal: fake.controller.signal,
+      t,
+      toasts: rec.toasts,
+      patch: (entry) => patches.push(entry),
+      onChanged: () => {
+        changed += 1;
+      },
+    });
+    // 没有失败 toast，按钮也没有被放回可点状态
+    expect(rec.log.map(([kind]) => kind)).toEqual(['warning', 'success']);
+    expect(rec.log[0]?.[1]).toBe('nodes.upgrade.startUnconfirmed');
+    expect(rec.log[1]?.[1]).toBe('nodes.upgrade.done');
+    expect(patches.map((entry) => entry.phase)).toEqual([
+      'pending',
+      'restarting',
+      'restarting',
+      'restarting',
+      'done',
+    ]);
+    expect(changed).toBe(1);
+  });
+
+  test('POST 回包丢失且目标版本没变：宽限期后只报「未确认」，不报失败原因', async () => {
+    const rec = recorder();
+    const fake = fakeIo({
+      start: { kind: 'unconfirmed' },
+      polls: [statusPoll(idle())],
+      versions: ['1.1.0'],
+    });
+    await runNodeUpgrade({
+      row: ROW,
+      targetVersion: '1.2.0',
+      io: fake.io,
+      signal: fake.controller.signal,
+      t,
+      toasts: rec.toasts,
+      patch: () => undefined,
+      onChanged: () => undefined,
+    });
+    expect(rec.log).toEqual([
+      ['warning', 'nodes.upgrade.startUnconfirmed'],
+      ['warning', 'nodes.upgrade.timeout'],
+    ]);
+    // 30s 宽限期：2s 一轮，第 16 轮才越界，绝不空等满六分钟预算
+    expect(fake.counts.polls).toBe(16);
+  });
+
+  test('轮询期间节点被移除（404）：一轮内收尾并给出失败原因', async () => {
+    const rec = recorder();
+    const patches: Array<Partial<NodeUpgradeEntry>> = [];
+    let changed = 0;
+    const fake = fakeIo({
+      start: { kind: 'started', status: idle({ state: 'downloading', targetVersion: '1.2.0' }) },
+      polls: [{ kind: 'failed', code: 'NOT_FOUND' }],
+      // 节点已不在列表：版本无从比对，只能判失败
+      versions: [undefined],
+    });
+    await runNodeUpgrade({
+      row: ROW,
+      targetVersion: '1.2.0',
+      io: fake.io,
+      signal: fake.controller.signal,
+      t,
+      toasts: rec.toasts,
+      patch: (entry) => patches.push(entry),
+      onChanged: () => {
+        changed += 1;
+      },
+    });
+    expect(fake.counts.polls).toBe(1);
+    expect(rec.log).toEqual([
+      ['success', 'nodes.upgrade.started'],
+      ['error', 'nodes.upgrade.failed'],
+    ]);
+    expect(patches.at(-1)).toEqual({ phase: 'failed', error: 'nodes.upgrade.nodeGone' });
+    expect(changed).toBe(0);
+  });
+
+  test('轮询中卸载：不再轮询，也不再 toast / 刷新列表', async () => {
+    const rec = recorder();
+    const patches: Array<Partial<NodeUpgradeEntry>> = [];
+    let changed = 0;
+    const fake = fakeIo({
+      start: { kind: 'started', status: idle({ state: 'downloading', targetVersion: '1.2.0' }) },
+      // 第二轮 GET 在途时组件卸载：真实 IO 会抛 AbortError 并映射成 cancelled
+      polls: [statusPoll(idle({ state: 'downloading' })), { kind: 'cancelled' }],
+      onPoll: (index, controller) => {
+        if (index === 2) controller.abort();
+      },
+    });
+    await runNodeUpgrade({
+      row: ROW,
+      targetVersion: '1.2.0',
+      io: fake.io,
+      signal: fake.controller.signal,
+      t,
+      toasts: rec.toasts,
+      patch: (entry) => patches.push(entry),
+      onChanged: () => {
+        changed += 1;
+      },
+    });
+    expect(fake.counts.polls).toBe(2);
+    expect(fake.counts.versions).toBe(0);
+    expect(changed).toBe(0);
+    // 只有启动时那一条 toast，卸载后不再有超时 / 成功 / 失败提示
+    expect(rec.log).toEqual([['success', 'nodes.upgrade.started']]);
+    expect(patches.some((entry) => entry.phase === 'failed' || entry.phase === 'done')).toBe(false);
+  });
+
+  test('等待期间卸载：连下一轮 GET 都不发', async () => {
+    const rec = recorder();
+    let changed = 0;
+    const fake = fakeIo({
+      start: { kind: 'started', status: idle({ state: 'downloading', targetVersion: '1.2.0' }) },
+      polls: [statusPoll(idle({ state: 'downloading' }))],
+      onWait: (index, controller) => {
+        if (index === 1) controller.abort();
+      },
+    });
+    await runNodeUpgrade({
+      row: ROW,
+      targetVersion: '1.2.0',
+      io: fake.io,
+      signal: fake.controller.signal,
+      t,
+      toasts: rec.toasts,
+      patch: () => undefined,
+      onChanged: () => {
+        changed += 1;
+      },
+    });
+    expect(fake.counts.polls).toBe(0);
+    expect(changed).toBe(0);
+    expect(rec.log).toEqual([['success', 'nodes.upgrade.started']]);
+  });
+
+  test('轮询拿到 401 但目标版本已更新：判成功，不冤枉一次升完才丢会话的升级', async () => {
+    const rec = recorder();
+    const fake = fakeIo({
+      start: { kind: 'started', status: idle({ state: 'downloading', targetVersion: '1.2.0' }) },
+      polls: [{ kind: 'failed', code: 'NODE_LOGIN_REQUIRED' }],
+      versions: ['1.2.0'],
+    });
+    await runNodeUpgrade({
+      row: ROW,
+      targetVersion: '1.2.0',
+      io: fake.io,
+      signal: fake.controller.signal,
+      t,
+      toasts: rec.toasts,
+      patch: () => undefined,
+      onChanged: () => undefined,
+    });
+    expect(rec.log.at(-1)).toEqual(['success', 'nodes.upgrade.done']);
+  });
+
+  test('POST 的确定性错误照旧立刻失败', async () => {
+    const rec = recorder();
+    const fake = fakeIo({ start: { kind: 'failed', code: 'UPGRADE_NOT_ALLOWED' }, polls: [] });
+    await runNodeUpgrade({
+      row: ROW,
+      targetVersion: '1.2.0',
+      io: fake.io,
+      signal: fake.controller.signal,
+      t,
+      toasts: rec.toasts,
+      patch: () => undefined,
+      onChanged: () => undefined,
+    });
+    expect(fake.counts.polls).toBe(0);
+    expect(rec.log).toEqual([['error', 'nodes.upgrade.failed']]);
+  });
+});
+
+describe('classifyPollFailure', () => {
+  test('目标重启期间的 5xx 可重试', () => {
+    expect(classifyPollFailure(503, 'NODE_UNREACHABLE')).toBe('retry');
+    expect(classifyPollFailure(502, 'BAD_GATEWAY')).toBe('retry');
+    expect(classifyPollFailure(504, 'TIMEOUT')).toBe('retry');
+  });
+
+  test('确定性业务错误立刻收尾：吊销、会话失效、目标不支持升级', () => {
+    expect(classifyPollFailure(404, 'NOT_FOUND')).toBe('definitive');
+    expect(classifyPollFailure(404, 'UPGRADE_UNSUPPORTED')).toBe('definitive');
+    expect(classifyPollFailure(401, 'NODE_LOGIN_REQUIRED')).toBe('definitive');
+    expect(classifyPollFailure(403, 'UPGRADE_NOT_ALLOWED')).toBe('definitive');
+    expect(classifyPollFailure(400, 'BAD_REQUEST')).toBe('definitive');
+    // 业务码明确时不看状态码
+    expect(classifyPollFailure(503, 'UPGRADE_UNSUPPORTED')).toBe('definitive');
   });
 });
 
