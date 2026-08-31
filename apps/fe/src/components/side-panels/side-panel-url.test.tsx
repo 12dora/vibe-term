@@ -14,7 +14,7 @@ const { useSidePanel } = await import('./use-side-panel');
 
 describe('parseSidePanel', () => {
   test('认识的面板名原样返回', () => {
-    expect(parseSidePanel('nodes')).toBe('nodes');
+    expect(parseSidePanel('connect')).toBe('connect');
     expect(parseSidePanel('security')).toBe('security');
   });
 
@@ -35,27 +35,27 @@ describe('nextSidePanelParams', () => {
   });
 
   test('切换面板是覆盖而不是追加', () => {
-    const next = nextSidePanelParams(new URLSearchParams('panel=nodes'), 'security');
+    const next = nextSidePanelParams(new URLSearchParams('panel=connect'), 'security');
     expect(next.getAll('panel')).toEqual(['security']);
   });
 
   test('关闭只删 panel，其它参数不动', () => {
-    const next = nextSidePanelParams(new URLSearchParams('tab=nodes&panel=nodes'), null);
+    const next = nextSidePanelParams(new URLSearchParams('tab=nodes&panel=connect'), null);
     expect(next.has('panel')).toBe(false);
     expect(next.get('tab')).toBe('nodes');
   });
 
   test('不修改传入的参数对象', () => {
     const current = new URLSearchParams('tab=nodes');
-    nextSidePanelParams(current, 'nodes');
+    nextSidePanelParams(current, 'connect');
     expect(current.has('panel')).toBe(false);
   });
 });
 
 describe('sidePanelHref', () => {
   test('只给查询串，pathname 交给 react-router 补当前页', () => {
-    expect(sidePanelHref(new URLSearchParams(), 'nodes')).toBe('?panel=nodes');
-    expect(sidePanelHref(new URLSearchParams('tab=x'), 'nodes')).toBe('?tab=x&panel=nodes');
+    expect(sidePanelHref(new URLSearchParams(), 'connect')).toBe('?panel=connect');
+    expect(sidePanelHref(new URLSearchParams('tab=x'), 'connect')).toBe('?tab=x&panel=connect');
   });
 });
 
@@ -79,8 +79,8 @@ function renderProbe(entry: string): string {
 
 describe('useSidePanel', () => {
   test('读出当前面板；链接落在当前路由上并保留其它参数', () => {
-    const html = renderProbe('/n/abc/devices?tab=x&panel=nodes');
-    expect(html).toContain('data-panel="nodes"');
+    const html = renderProbe('/n/abc/devices?tab=x&panel=connect');
+    expect(html).toContain('data-panel="connect"');
     expect(html).toContain('href="/n/abc/devices?tab=x&amp;panel=security"');
   });
 

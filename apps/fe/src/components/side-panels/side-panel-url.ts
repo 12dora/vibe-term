@@ -5,7 +5,7 @@
 
 export const SIDE_PANEL_PARAM = 'panel';
 
-export const SIDE_PANEL_NAMES = ['nodes', 'security'] as const;
+export const SIDE_PANEL_NAMES = ['connect', 'security'] as const;
 
 export type SidePanelName = (typeof SIDE_PANEL_NAMES)[number];
 

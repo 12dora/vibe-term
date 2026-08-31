@@ -41,6 +41,7 @@
     },
     "nav": {
       "manageDevices": "Manage Devices",
+      "connectDevices": "Connect more devices",
       "settings": "Settings",
       "sidebarExpand": "Expand Sidebar",
       "sidebarCollapse": "Collapse Sidebar",
@@ -52,6 +53,102 @@
       "switchToDirect": "Switch to Direct Input",
       "refreshPage": "Refresh Page",
       "refreshPageConfirm": "Are you sure you want to refresh the page? Unsaved content will be lost."
+    },
+    "connectDevices": {
+      "title": "Connect more devices",
+      "tabs": {
+        "mobile": "Mobile device (control only)",
+        "computer": "Server or computer"
+      },
+      "mobile": {
+        "intro": "A phone or tablet acts as a controller: it operates connected machines through the browser and does not run a terminal itself. Add tmex to the home screen for a full-screen, app-like experience.",
+        "platform": {
+          "ios": "iOS",
+          "android": "Android"
+        },
+        "addressLabel": "Current address",
+        "ios": {
+          "open": {
+            "title": "Open tmex in Safari",
+            "description": "On iOS only Safari can add to the home screen. Open on your phone:"
+          },
+          "add": {
+            "title": "Add to Home Screen",
+            "description": "Tap Share at the bottom, choose \"Add to Home Screen\", then tap Add."
+          },
+          "launch": {
+            "title": "Launch from the home screen",
+            "description": "Tap the tmex icon on the home screen. If sign-in is enabled, you will sign in once on first launch."
+          }
+        },
+        "android": {
+          "open": {
+            "title": "Open tmex in Chrome",
+            "description": "Open on your phone:"
+          },
+          "add": {
+            "title": "Install the app",
+            "description": "Tap the menu in the top-right corner, choose \"Install app\" (or \"Add to Home screen\"), then confirm."
+          },
+          "launch": {
+            "title": "Launch from the home screen",
+            "description": "Open tmex from the home screen or app drawer. If sign-in is enabled, you will sign in once on first launch."
+          }
+        },
+        "remoteHint": "If this address is only reachable on the local network, the phone must be on the same network. For access from anywhere, set up remote access first.",
+        "remoteLink": "Open remote access settings"
+      },
+      "computer": {
+        "intro": "After installing tmex on another server or computer, there are two ways to connect: join an existing relay (Hub), or make this machine the relay so other machines can join it.",
+        "install": {
+          "title": "Install tmex",
+          "description": "Run the install script on the target machine (installs Bun automatically; Linux needs tmux ≥ 3.0). The terminal prints the access address when done.",
+          "command": "Install command",
+          "pathHint": "The install script provides the tmex command. If it is not found, reopen the terminal or run:"
+        },
+        "mode": {
+          "title": "Choose how to connect",
+          "join": "Join an existing relay",
+          "host": "Use this machine as the relay"
+        },
+        "join": {
+          "hub": {
+            "title": "Prepare the relay server",
+            "description": "The relay (Hub) needs a machine with a public HTTPS address. If there is none yet, set one up on that machine following \"Use this machine as the relay\"."
+          },
+          "token": {
+            "title": "Generate a join token",
+            "description": "In the relay's tmex open Settings → Multi-node Mesh → Node management, click Add → Generate join token, then copy the join command. The token is valid for 10 minutes.",
+            "link": "Open multi-node mesh settings"
+          },
+          "run": {
+            "title": "Join from the new machine",
+            "description": "Run the join command in the new machine's terminal (example below; use the command you copied):",
+            "example": "tmex hub join https://tmex.example.com --token <join-token> --name <node-name>"
+          },
+          "confirm": {
+            "title": "Confirm the join",
+            "description": "Back on the relay's Node management page, click Confirm join. The new machine appears in the device list after it restarts."
+          }
+        },
+        "host": {
+          "entry": {
+            "title": "Set up a public entry",
+            "description": "Open Settings → Remote access and choose Cloudflare Tunnel (named tunnel) or Direct connection to get a fixed HTTPS address.",
+            "link": "Open remote access settings"
+          },
+          "hub": {
+            "title": "Make it the relay",
+            "description": "Open Settings → Multi-node Mesh, choose \"Make this machine the Hub\", enter the address from the previous step as the Hub public URL, create the first account and restart.",
+            "warning": "The Hub public URL cannot be changed afterwards. Decide on the final domain first.",
+            "link": "Open multi-node mesh settings"
+          },
+          "invite": {
+            "title": "Connect other machines",
+            "description": "After installing tmex on other machines, follow \"Join an existing relay\" using a join token generated on this machine."
+          }
+        }
+      }
     },
     "device": {
       "title": "Device Management",
@@ -130,7 +227,8 @@
         "filesDisabledHint": "No directories configured for this device"
       },
       "addTo": {
-        "label": "Add device to",
+        "label": "Add device to existing node",
+        "remoteNode": "Add remote node",
         "self": "This machine"
       },
       "open": "Open",
@@ -278,9 +376,9 @@
       "remoteAccess": {
         "title": "Remote access",
         "wizardTitle": "Setup",
-        "description": "Publish this machine's tmex on the internet through Cloudflare Tunnel — no public IP and no port forwarding.",
+        "description": "Reach this machine's tmex remotely over Cloudflare Tunnel or a direct connection.",
         "remoteNodeNotice": "Remote access is configured on the machine your browser connects to directly. Switch to that machine and open this page there.",
-        "loginRequired": "Sign in to this machine before configuring remote access.",
+        "loginRequired": "Sign in before configuring remote access.",
         "loadFailed": "Couldn't load the remote access status. Make sure the tmex gateway is still running, then reload the page.",
         "unsupported": "No cloudflared build is available for this platform ({{platform}}), so Cloudflare Tunnel can't be used here.",
         "modeLabel": "Mode",
@@ -301,58 +399,64 @@
           },
           "named": {
             "title": "Named tunnel",
-            "description": "Uses a domain you host on Cloudflare. The URL stays fixed and works with access control."
+            "description": "Uses a domain hosted on Cloudflare. The URL stays fixed — good for long-term use."
+          }
+        },
+        "path": {
+          "tunnel": {
+            "title": "Cloudflare Tunnel",
+            "description": "No public IP or port forwarding needed; tmex manages cloudflared."
           },
           "direct": {
             "title": "Direct connection",
-            "description": "Choose this when you expose tmex yourself — a static IP, port forwarding, or your own reverse proxy."
+            "description": "Connect over a static IP, port forwarding or a reverse proxy — no Cloudflare needed."
           }
         },
         "direct": {
           "protection": {
             "node": {
               "title": "Protected by node sign-in",
-              "description": "This machine belongs to a multi-node mesh, so reaching it always requires signing in. Exposing it directly is covered by the same gate."
+              "description": "Sign-in protection is already on for this machine; reaching it requires signing in."
             },
             "local": {
               "title": "Local sign-in is on",
-              "description": "Reaching tmex requires signing in. Keep the password strong and serve the machine over HTTPS only."
+              "description": "Turns on sign-in protection. Keep the password strong and serve over HTTPS only."
             },
             "unprotected": {
-              "title": "Nothing is protecting this machine",
-              "description": "Exposed directly, anyone who finds the address can open and use the tmex running here — terminals and files included. Turning on local sign-in means reaching tmex requires signing in."
+              "title": "No access protection configured",
+              "description": "Anyone with the address can use the tmex on this machine. With sign-in protection on, access requires signing in."
             },
             "unknown": {
               "title": "Can't confirm the protection state",
-              "description": "This gateway did not report its local sign-in state, usually because it is out of date. Upgrade tmex and check again; until then, keep the machine off the public internet."
+              "description": "This gateway did not report its local sign-in state, usually because it is out of date. Upgrade tmex and try again."
             }
           },
           "entryLabel": "Current entry",
-          "entryHint": "This is the address you are on right now. When you expose tmex, point the public entry at port {{port}} on this machine, or at your own reverse proxy.",
+          "entryHint": "The address tmex is reached at. When exposing it, point the public entry at port {{port}} on this machine, or at a reverse proxy.",
           "tls": {
             "hint": "Always serve a direct exposure over HTTPS — plain HTTP puts passwords and session cookies on the wire.",
             "link": "Set up HTTPS in node settings"
           },
           "enable": {
             "title": "Turn on local sign-in",
-            "bootstrapHint": "There is no account on this machine yet. Create the first user — this can only be done from the machine itself.",
+            "bootstrapHint": "This machine has no account yet. Create the first user — only possible from this machine.",
             "username": "Username",
             "usernameHint": "1–64 characters: letters, digits, dot, underscore and hyphen.",
             "password": "Password",
-            "passwordHint": "At least 8 characters. It is used for local sign-in only and never leaves this machine.",
+            "passwordHint": "At least 8 characters. Used for local sign-in only.",
             "confirm": "Confirm password",
             "invalid": {
               "username": "Username must be 1–64 characters of letters, digits, dot, underscore or hyphen.",
               "password": "The password needs at least 8 characters.",
               "confirm": "The two passwords don't match."
             },
-            "warning": "Once this is on, reaching tmex requires signing in — every session you have open right now will have to sign in again.",
+            "warning": "Once on, reaching tmex requires signing in, and every open session has to sign in again.",
             "acknowledge": "I understand every open session will have to sign in again",
             "action": "Turn on local sign-in"
           },
           "errors": {
-            "notStandalone": "This machine is part of a mesh: sign-in is handled by the node system and cannot be toggled here.",
-            "localOnly": "For safety this setting can only be changed from the machine itself, not over a remote connection.",
+            "notStandalone": "This machine is part of a mesh: sign-in is handled by the node system, so this toggle is disabled.",
+            "localOnly": "For safety this setting can only be changed on this machine, not over a remote connection.",
             "credentialsRequired": "There is no account to sign in with yet. Create the first user first.",
             "alreadyEnabled": "Local sign-in is already on. Reload the page to see the current state.",
             "credentialsExist": "This machine already has an account — just turn local sign-in on, no need to create another.",
@@ -361,7 +465,7 @@
             "malformed": "The request was malformed. Reload the page and try again.",
             "unknown": "That didn't work. Try again in a moment."
           },
-          "caveat": "Note: local sign-in currently guarantees one thing — reaching tmex requires signing in. A stricter site-wide gate is still being finished, so don't relax your other defenses because of it."
+          "caveat": "Note: access protection only makes reaching tmex require a sign-in. Keep your other defenses in place."
         },
         "actions": {
           "start": "Start",
@@ -387,9 +491,13 @@
           "empty": "No output yet."
         },
         "steps": {
+          "path": {
+            "title": "Connection method",
+            "description": "Choose how to reach this machine's tmex remotely."
+          },
           "install": {
             "title": "Install cloudflared",
-            "description": "tmex downloads cloudflared into its own data directory and leaves any system install alone.",
+            "description": "Downloads cloudflared into the tmex data directory, leaving any existing install alone.",
             "version": "Version",
             "path": "Path",
             "source": "Source",
@@ -397,16 +505,16 @@
               "managed": "Managed by tmex",
               "system": "Found on PATH"
             },
-            "skipped": "cloudflared comes from the system service, so tmex doesn't need its own copy."
+            "skipped": "cloudflared comes from the system service; no second install needed."
           },
           "mode": {
-            "title": "Choose a mode",
-            "description": "To switch modes later, remove the current tunnel above first.",
-            "pending": "Choose a mode to continue."
+            "title": "Tunnel type",
+            "description": "To switch type after the tunnel exists, remove the current tunnel first.",
+            "pending": "Pick a tunnel type first."
           },
           "tunnel": {
             "title": "Create the tunnel",
-            "description": "Finish setting it up here once you've picked a mode."
+            "description": "Finish creating it here once a type is picked."
           },
           "quick": {
             "title": "Quick tunnel",
@@ -423,11 +531,11 @@
             },
             "hostname": "Hostname",
             "hostnamePlaceholder": "tmex.example.com",
-            "hostnameHint": "Use a subdomain of a domain you host on Cloudflare.",
+            "hostnameHint": "Use a subdomain of a domain hosted on Cloudflare.",
             "hostnameInvalid": "Enter a lowercase hostname such as tmex.example.com.",
             "tunnelName": "Tunnel name",
             "tunnelNamePlaceholder": "tmex",
-            "tunnelNameHint": "Optional — tmex generates one if you leave it empty. Lowercase letters, digits, hyphens and underscores only.",
+            "tunnelNameHint": "Optional (tmex generates one). Lowercase letters, digits, hyphens and underscores only.",
             "hubHint": "This machine is a Hub: set the Hub's public URL to this hostname so other nodes can connect through the tunnel.",
             "hubHintLink": "Open multi-node settings",
             "tunnelId": "Tunnel ID",
@@ -455,7 +563,7 @@
           },
           "login": {
             "title": "Sign in to Cloudflare",
-            "description": "Authorize tmex to create tunnels and DNS records in your Cloudflare account. The certificate stays on this machine.",
+            "description": "Authorize tmex to create tunnels and DNS records. The credentials stay on this machine.",
             "skipped": "The tunnel is run by a system service, so there's nothing to sign in to from tmex."
           },
           "hostname": {
@@ -467,7 +575,7 @@
           },
           "access": {
             "title": "Access",
-            "description": "Allow visitors by email at the Cloudflare edge; rejected requests never reach this machine."
+            "description": "Set an email allowlist in Cloudflare; requests from anyone else are blocked at the edge."
           },
           "create": {
             "title": "Create and start",
@@ -477,7 +585,7 @@
           },
           "direct": {
             "title": "Access protection",
-            "description": "A direct connection never touches Cloudflare, so the only thing left to settle is whether this machine asks for a sign-in."
+            "description": "A direct connection needs no Cloudflare; this step only sets up local sign-in protection."
           }
         },
         "jobStep": {
@@ -499,17 +607,17 @@
           "sync": "Syncing the Access application"
         },
         "errors": {
-          "unsupported_platform": "No cloudflared build is available for this platform, so Cloudflare Tunnel can't be used here.",
-          "binary_missing": "cloudflared wasn't found. Install it in the \"Install cloudflared\" step first.",
+          "unsupported_platform": "No cloudflared is available for this platform, so Cloudflare Tunnel can't be used.",
+          "binary_missing": "cloudflared wasn't found. Complete the \"Install cloudflared\" step first.",
           "download_failed": "Downloading cloudflared failed. Check that this machine can reach github.com, then try again.",
           "not_logged_in": "Cloudflare authorization isn't complete. Go back to \"Sign in to Cloudflare\" and finish it.",
           "login_timeout": "The Cloudflare authorization timed out. Start the sign-in again and pick a domain on the page that opens.",
           "invalid_hostname": "That hostname isn't valid. Use a lowercase name such as tmex.example.com.",
-          "tunnel_exists": "A tunnel with this name already exists in Cloudflare. Pick another name, or delete the existing one in Cloudflare.",
-          "dns_route_failed": "Adding the DNS record in Cloudflare failed. Confirm the domain is hosted in the same Cloudflare account and no conflicting record exists.",
-          "process_failed": "cloudflared didn't start. Expand the cloudflared log below, check the last lines, then try again.",
+          "tunnel_exists": "A tunnel with this name already exists in Cloudflare. Pick another name, or delete the existing one.",
+          "dns_route_failed": "Adding the DNS record failed. Confirm the domain is hosted in the same Cloudflare account and no conflicting record exists.",
+          "process_failed": "cloudflared didn't start. Expand the cloudflared log to see why.",
           "busy": "The previous operation hasn't finished yet. Try again in a moment.",
-          "not_configured": "Remote access isn't configured yet. Pick a mode in the setup below.",
+          "not_configured": "Remote access isn't configured yet. Pick a method in the setup below.",
           "invalid_request": "The request was rejected as invalid; this page may be out of date. Reload and try again.",
           "unknown": "Operation failed: {{message}}",
           "auth_required": "Sign-in isn't enabled on this machine. Enable it before going public, or anyone could walk straight into tmex.",
@@ -522,7 +630,7 @@
         },
         "confirmRemove": {
           "title": "Remove the named tunnel?",
-          "description": "The tunnel stops, the credentials stored on this machine are deleted, and the tunnel itself is deleted in Cloudflare.",
+          "description": "The tunnel stops, and both the credentials stored on this machine and the tunnel in Cloudflare are deleted.",
           "irreversible": "The tunnel in Cloudflare can't be restored, and the current public URL stops working immediately.",
           "confirm": "Remove tunnel",
           "cancel": "Cancel"
@@ -536,14 +644,14 @@
           "hostnameMismatch": "Access hostname mismatch"
         },
         "externallyManaged": "Run by a system service",
-        "externallyManagedNotice": "A system service runs this tunnel. tmex only reports its state and never starts or stops it. Release it first to hand the tunnel back to tmex.",
+        "externallyManagedNotice": "A system service runs this tunnel. tmex only shows its state and can't start or stop it. Release it first to hand the tunnel back to tmex.",
         "exposure": {
-          "warning": "Nothing is protecting this machine right now: the tunnel URL is a public entrance, and anyone who has it can use tmex. Enable sign-in (multi-node), or configure Cloudflare Access for this hostname and turn on token verification.",
+          "warning": "No access protection is configured: anyone with the tunnel URL can use tmex. Enable sign-in (multi-node), or configure Access and turn on token verification.",
           "warningShort": "Nothing is protecting this machine right now: anyone with the tunnel URL can use tmex.",
           "acknowledge": "I understand the risk and want to expose tmex publicly",
           "ackRequired": "This exposes tmex to the public internet. Tick the box above to confirm.",
           "enableLogin": "Enable sign-in (multi-node)",
-          "dropWarning": "This removes the last thing protecting the machine: the tunnel keeps running, and anyone will be able to use tmex."
+          "dropWarning": "Warning: the tunnel keeps running — once this is removed, anyone can use tmex."
         },
         "access": {
           "tag": {
@@ -554,7 +662,7 @@
           "credentials": {
             "title": "Cloudflare credentials",
             "apiToken": "API token",
-            "apiTokenHint": "A Cloudflare API token with Access: Apps and Policies (Edit) and Access: Organizations, Identity Providers, and Groups (Read). It is stored only on this machine.",
+            "apiTokenHint": "A Cloudflare API token with Access: Apps and Policies (Edit) and Access: Organizations, Identity Providers, and Groups (Read) is required.",
             "accountId": "Account ID",
             "accountIdHint": "The Account ID shown in the Cloudflare dashboard sidebar.",
             "save": "Save",
@@ -584,7 +692,7 @@
           },
           "sync": {
             "action": "Sync from Cloudflare",
-            "hint": "Credentials are saved, but tmex has no Access application on record. If you already created one for {{hostname}} in the Cloudflare dashboard, sync it in first so you don't end up with a duplicate."
+            "hint": "Credentials are saved, but tmex has no Access application on record. If you already created one for {{hostname}} in the Cloudflare dashboard, sync it in first to avoid a duplicate."
           },
           "probe": {
             "unknown": "Can't check Cloudflare Access for {{hostname}}: no usable Cloudflare credentials, or the lookup failed. This does not mean Access is unconfigured. Save an API token and account ID below and tmex will check again.",
@@ -602,7 +710,7 @@
             "noRules": "None",
             "enforce": "Verify Access tokens at the gateway",
             "enforceHint": "Validate Cf-Access-Jwt-Assertion on requests arriving through the tunnel and reject the ones that fail.",
-            "enforceOff": "Token verification is off. Cloudflare still blocks unauthorized visitors at the edge, but requests that reach the tunnel around Access won't be stopped by this machine.",
+            "enforceOff": "Token verification is off. Cloudflare still blocks unauthorized visitors at the edge, but requests that reach the tunnel around Access are let through.",
             "remove": "Remove Access application",
             "hostnameMismatch": "This application covers a different hostname than the current tunnel, so token verification has no effect. Apply the rules again to bind it to the current hostname."
           },
@@ -615,7 +723,7 @@
         },
         "external": {
           "title": "Existing Cloudflare Tunnel detected",
-          "description": "This machine already runs a tunnel that tmex doesn't manage. Adopt it, or ignore it and let tmex create its own.",
+          "description": "This machine already runs a tunnel outside tmex's management. Let tmex adopt it, or ignore it and create a new one.",
           "source": "Detected from",
           "sourceValue": {
             "launchd": "launchd service",
@@ -629,22 +737,22 @@
             "on": "Running",
             "off": "Not running"
           },
-          "accessLabel": "Cloudflare Access",
+          "accessLabel": "Access",
           "accessValue": {
-            "covered": "An application covers this hostname (dashboard)",
-            "absent": "No application covers this hostname",
+            "covered": "An Access application covers this hostname",
+            "absent": "No Access application covers this hostname",
             "unknown": "Can't check — no usable credentials"
           },
           "noHostname": "Its configuration has no hostname pointing at this tmex (127.0.0.1:{{port}}), so it can't be adopted. Check its ingress rules, or let tmex create its own tunnel.",
           "chooseHostname": "Choose the hostname to adopt",
-          "adopt": "Adopt this tunnel",
-          "adoptHint": "Adopting records this hostname as tmex's public address and shows the tunnel's state and access control here. The tunnel process keeps running under the system service — tmex never starts, stops, or rewrites its configuration. You can release it at any time; the system service is unaffected.",
-          "dismiss": "Ignore and let tmex create a new tunnel"
+          "adopt": "Adopt the existing tunnel",
+          "adoptHint": "Adopting sets this hostname as the public address and shows the tunnel's state and access control here. The tunnel process keeps running under the system service — tmex never starts, stops, or rewrites its configuration, and you can release it at any time.",
+          "dismiss": "Ignore and create a new tunnel"
         }
       },
       "deviceManagement": {
         "title": "Device Management",
-        "description": "Add, edit, and connect to your local and SSH devices.",
+        "description": "Add, edit, and connect to local and SSH devices.",
         "openButton": "Open Device Management"
       },
       "saveSettings": "Save Settings",
@@ -1100,7 +1208,6 @@
       "openSettings": "Open Settings",
       "manageDevices": "Manage Devices",
       "settings": "Settings",
-      "nodes": "Multi-node Mesh",
       "currentWindow": "Current Window",
       "currentPane": "Current terminal",
       "newWindow": "Create Window",

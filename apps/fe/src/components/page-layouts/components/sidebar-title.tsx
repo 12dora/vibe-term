@@ -1,25 +1,20 @@
 import { Brand } from '@/components/brand';
-import { SIDE_PANEL_LINK_STATE, useSidePanel } from '@/components/side-panels/use-side-panel';
-import { useSharedAuthMode } from '@/node/mesh-nodes';
 import { useSiteStore, useTmuxStore } from '@tmex/stores/react';
 import { IconTooltip } from '@tmex/ui/icon-tooltip';
 import { useSidebar } from '@tmex/ui/sidebar';
-import { Network, Settings, X } from 'lucide-react';
+import { Settings, X } from 'lucide-react';
 import { useEffect } from 'react';
 import { useTranslation } from 'react-i18next';
 import { NavLink } from './nav-link';
 import { ThemeMenu } from './theme-menu';
 
-/** 顶部动作按钮统一尺寸：mesh 下最多四个（延迟、主题、节点、设置），必须挤进一行。 */
+/** 顶部动作按钮统一尺寸：最多三个（延迟、主题、设置），必须挤进一行。 */
 const ACTION_BUTTON_CLASS =
   'inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-sidebar-accent hover:text-foreground';
 
 export function SidebarTitle() {
   const { t } = useTranslation();
   const { isMobile, setOpenMobile } = useSidebar();
-  const { meshEnabled } = useSharedAuthMode();
-  // 「多节点互联」改成右侧滑出面板：不离开当前页面，链接形态保留（可右键新开、可分享）。
-  const { hrefFor } = useSidePanel();
 
   // Fetch settings on mount if not loaded
   const fetchSettings = useSiteStore((state) => state.fetchSettings);
@@ -47,19 +42,6 @@ export function SidebarTitle() {
       <div className="flex shrink-0 items-center gap-0.5 mr-[-8px]">
         <WsLatency />
         <ThemeMenu />
-        {meshEnabled && (
-          <IconTooltip label={t('sidebar.nodes')}>
-            <NavLink
-              to={hrefFor('nodes')}
-              state={SIDE_PANEL_LINK_STATE}
-              className={ACTION_BUTTON_CLASS}
-              data-testid="sidebar-nodes"
-              aria-label={t('sidebar.nodes')}
-            >
-              <Network className="h-4 w-4" />
-            </NavLink>
-          </IconTooltip>
-        )}
         <IconTooltip label={t('sidebar.settings')}>
           <NavLink
             to="/settings"

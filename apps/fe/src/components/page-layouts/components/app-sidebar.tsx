@@ -1,7 +1,8 @@
-import { Bot, FolderClosed, Monitor, PanelsTopLeft } from 'lucide-react';
+import { Bot, CirclePlus, FolderClosed, Monitor, PanelsTopLeft } from 'lucide-react';
 import { type ComponentProps, Suspense, lazy } from 'react';
 import { useTranslation } from 'react-i18next';
 
+import { SIDE_PANEL_LINK_STATE, useSidePanel } from '@/components/side-panels/use-side-panel';
 import { useNodeOffline } from '@/node/node-offline';
 import { useRouteNodeId } from '@/node/node-runtime-boundary';
 import { NodeRuntimeScope } from '@/node/node-runtime-scope';
@@ -10,7 +11,7 @@ import { useUIStore } from '@tmex/stores/react';
 import { Reveal } from '@tmex/ui/motion';
 import { Sidebar, SidebarContent, SidebarFooter, SidebarHeader } from '@tmex/ui/sidebar';
 import { Tabs, TabsList, TabsTrigger, pillTabTriggerClassName } from '@tmex/ui/tabs';
-import { NavMain } from './nav-main';
+import { NavMain, type NavMainItem } from './nav-main';
 import { SideBarDeviceList } from './sidebar-device-list';
 import { SidebarTitle } from './sidebar-title';
 
@@ -19,13 +20,11 @@ import { SidebarTitle } from './sidebar-title';
 const AgentTab = lazy(() => import('@tmex/panels/agent').then((m) => ({ default: m.AgentTab })));
 const FilesTab = lazy(() => import('@tmex/panels/files').then((m) => ({ default: m.FilesTab })));
 
-const navMainItems = [
-  {
-    title: 'nav.manageDevices',
-    url: '/devices',
-    icon: Monitor,
-  },
-];
+const manageDevicesItem: NavMainItem = {
+  title: 'nav.manageDevices',
+  url: '/devices',
+  icon: Monitor,
+};
 
 export function AppSidebar({ ...props }: ComponentProps<typeof Sidebar>) {
   const { t } = useTranslation();
@@ -35,6 +34,18 @@ export function AppSidebar({ ...props }: ComponentProps<typeof Sidebar>) {
   // 单独套一层该 node 的运行时（切 node 时这两块重挂是预期的，设备树不受影响）
   const routeNodeId = useRouteNodeId();
   const routeNodeOffline = useNodeOffline(routeNodeId);
+  // 「接入更多设备」是右侧滑出面板：入口保持链接形态（可右键新开、可分享）。
+  const { hrefFor } = useSidePanel();
+  const footerItems: NavMainItem[] = [
+    {
+      title: 'nav.connectDevices',
+      url: hrefFor('connect'),
+      icon: CirclePlus,
+      testId: 'sidebar-connect-devices',
+      linkState: SIDE_PANEL_LINK_STATE,
+    },
+    manageDevicesItem,
+  ];
 
   return (
     <Sidebar variant="inset" {...props}>
@@ -101,7 +112,7 @@ export function AppSidebar({ ...props }: ComponentProps<typeof Sidebar>) {
         )}
       </SidebarContent>
       <SidebarFooter>
-        <NavMain items={navMainItems} />
+        <NavMain items={footerItems} />
         <div className="h-[var(--tmex-safe-area-bottom)]" />
       </SidebarFooter>
     </Sidebar>

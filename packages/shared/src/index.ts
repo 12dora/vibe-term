@@ -154,3 +154,4 @@ export {
   roleNameFromFlags,
   rolesFromName,
 } from './roles';
+export * from './release/source';

@@ -33,35 +33,44 @@ export function isPathActive(pathname: string, url: string): boolean {
   return normalizeNavPath(pathname) === normalizeNavPath(url);
 }
 
-export function NavMain({
-  items,
-}: {
-  items: {
+export interface NavMainItem {
+  title: string;
+  url: string;
+  icon: LucideIcon;
+  /** 面板入口这类只带查询串的目标（`?panel=…`）走这里带上 history state 与测试锚点。 */
+  testId?: string;
+  linkState?: unknown;
+  items?: {
     title: string;
     url: string;
-    icon: LucideIcon;
-    items?: {
-      title: string;
-      url: string;
-    }[];
   }[];
-}) {
+}
+
+export function NavMain({ items }: { items: NavMainItem[] }) {
   const { t } = useTranslation();
   const { pathname } = useLocation();
 
   return (
     <SidebarGroup>
-      <SidebarMenu>
+      {/* 底部两个入口并排；折叠成图标条时没有并排的宽度，改回竖排。 */}
+      <SidebarMenu className="flex-row gap-1 group-data-[collapsible=icon]:flex-col">
         {items.map((item) => {
           const active =
-            isPathActive(pathname, item.url) ||
-            Boolean(item.items?.some((subItem) => isPathActive(pathname, subItem.url)));
+            item.url.startsWith('/') &&
+            (isPathActive(pathname, item.url) ||
+              Boolean(item.items?.some((subItem) => isPathActive(pathname, subItem.url))));
           return (
-            <Collapsible key={item.title} defaultOpen={active} render={<SidebarMenuItem />}>
+            <Collapsible
+              key={item.title}
+              defaultOpen={active}
+              render={<SidebarMenuItem className="min-w-0 flex-1" />}
+            >
               <SidebarMenuButton
                 isActive={active}
                 tooltip={t(item.title)}
-                render={<NavLink to={item.url} />}
+                aria-label={t(item.title)}
+                data-testid={item.testId}
+                render={<NavLink to={item.url} state={item.linkState} />}
               >
                 <item.icon />
                 <span>{t(item.title)}</span>
