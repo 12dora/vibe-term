@@ -52,7 +52,7 @@ mock.module('./https/use-tls-status', () => ({
 const { renderToStaticMarkup } = await import('react-dom/server');
 const { MemoryRouter } = await import('react-router');
 const { resetMeshNodesStateForTest, setMeshNodesStateForTest } = await import('@/node/mesh-nodes');
-const { setPendingStorage, clearPendingEnrollments } = await import('@/node/enrollment');
+const { setPendingStorage, clearPendingEnrollments, addPendingEnrollment } = await import('@/node/enrollment');
 const { NodesTab } = await import('./nodes-tab');
 
 const MESH_MODE: AuthModeResponse = {
@@ -212,5 +212,23 @@ describe('NodesTab 角色切换向导', () => {
     expect(html).toContain('data-selected="false"');
     expect(html).not.toContain('data-testid="setup-join-hub-form"');
     expect(html).not.toContain('data-testid="setup-become-hub-form"');
+  });
+});
+
+describe('待确认记录的取消按钮', () => {
+  test('pending 行同时渲染确认与取消按钮', () => {
+    localStatus = status({ role: 'hub,node', hubPublicUrl: 'https://hub.example' });
+    addPendingEnrollment({
+      hubEnrollmentId: 'enr-cancel-1',
+      enrollPk: 'pk_base64url',
+      authorizationBytes: 'auth_bytes',
+      authorizationSig: 'auth_sig',
+      exp: Date.now() + 600_000,
+      name: 'new-node',
+      createdAt: Date.now(),
+    });
+    const html = render(MESH_MODE);
+    expect(html).toContain('data-testid="nodes-pending-confirm-enr-cancel-1"');
+    expect(html).toContain('data-testid="nodes-pending-cancel-enr-cancel-1"');
   });
 });

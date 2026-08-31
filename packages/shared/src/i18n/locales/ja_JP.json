@@ -1787,6 +1787,7 @@
         "joinToken": "参加コード",
         "pending": "新しいノードを待っています",
         "confirmPending": "承認",
+        "cancelPending": "キャンセル",
         "admitted": "ノードを追加しました",
         "unknownCertificate": "不明なノードからの応答を無視しました。",
         "badCertSig": "署名の検証に失敗したノードの応答を無視しました。",

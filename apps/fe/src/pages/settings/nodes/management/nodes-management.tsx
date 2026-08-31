@@ -11,6 +11,7 @@ import {
   listPendingEnrollments,
   nextPendingExpiry,
   prunePendingEnrollments,
+  removePendingEnrollment,
   subscribePendingEnrollments,
 } from '@/node/enrollment';
 import { useEnrollmentWatch } from '@/node/enrollment-watch';
@@ -73,7 +74,13 @@ export function NodesManagement({ mode: rawMode, api = defaultAuthApi }: NodesMa
   }, [hub, refreshNodes]);
 
   const [expiredIds, setExpiredIds] = useState<string[]>([]);
+  const [cancelledIds, setCancelledIds] = useState<string[]>([]);
   const [enrollOpen, setEnrollOpen] = useState(false);
+  // 取消只删本地 pending（hub 侧记录会自然过期）；同时把 id 记入 cleared，join 串立刻消失
+  const cancelPending = useCallback((pending: { hubEnrollmentId: string }) => {
+    removePendingEnrollment(pending.hubEnrollmentId);
+    setCancelledIds((prev) => [...prev, pending.hubEnrollmentId]);
+  }, []);
   const admit = useAdmitAction({ api, mode, hubApi: hub.hubApi, prompt, onDone: refreshAll });
 
   useEnrollmentWatch({
@@ -163,9 +170,10 @@ export function NodesManagement({ mode: rawMode, api = defaultAuthApi }: NodesMa
           prompt={prompt}
           pendings={pendings}
           onConfirm={(pending) => void admit.confirmManually(pending)}
+          onCancel={cancelPending}
           busyPendingId={admit.busyPendingId}
           hubUnconfirmedIds={admit.hubUnconfirmedIds}
-          clearedIds={[...expiredIds, ...admit.admittedIds]}
+          clearedIds={[...expiredIds, ...cancelledIds, ...admit.admittedIds]}
         />
 
         <NodesTable

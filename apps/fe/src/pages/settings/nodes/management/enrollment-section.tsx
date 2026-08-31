@@ -19,7 +19,7 @@ import type { AuthApi } from '@tmex/api-client/auth/index';
 import { requireRootEpoch } from '@tmex/api-client/auth/index';
 import { Button } from '@tmex/ui/button';
 import { Input } from '@tmex/ui/input';
-import { Check, Loader2, ShieldCheck } from 'lucide-react';
+import { Check, Loader2, ShieldCheck, X } from 'lucide-react';
 import { useCallback, useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { CopyableCode } from '../copy-feedback';
@@ -35,6 +35,7 @@ export function EnrollmentSection({
   prompt,
   pendings,
   onConfirm,
+  onCancel,
   busyPendingId,
   hubUnconfirmedIds,
   clearedIds,
@@ -48,6 +49,8 @@ export function EnrollmentSection({
   prompt: CredentialPromptHandle;
   pendings: PendingEnrollment[];
   onConfirm: (pending: PendingEnrollment) => void;
+  /** 取消一条待确认记录（误点「添加」的回退路径）：仅删本地 pending，hub 侧记录会自然过期。 */
+  onCancel: (pending: PendingEnrollment) => void;
   busyPendingId: string | null;
   hubUnconfirmedIds: string[];
   /** 已 admit / 已过期的 pending id：对应的 join 串必须立刻从 DOM 里消失。 */
@@ -175,18 +178,31 @@ export function EnrollmentSection({
                     {pending.name ?? pending.enrollPk.slice(0, 12)}
                   </span>
                 </span>
-                <Button
-                  type="button"
-                  size="xs"
-                  disabled={busyPendingId === id}
-                  onClick={() => onConfirm(pending)}
-                  data-testid={`nodes-pending-confirm-${id}`}
-                >
-                  {busyPendingId === id ? <Loader2 className="animate-spin" /> : <Check />}
-                  {unconfirmed
-                    ? t('nodes.enrollment.retryHub')
-                    : t('nodes.enrollment.confirmPending')}
-                </Button>
+                <span className="flex shrink-0 items-center gap-1">
+                  <Button
+                    type="button"
+                    size="xs"
+                    disabled={busyPendingId === id}
+                    onClick={() => onConfirm(pending)}
+                    data-testid={`nodes-pending-confirm-${id}`}
+                  >
+                    {busyPendingId === id ? <Loader2 className="animate-spin" /> : <Check />}
+                    {unconfirmed
+                      ? t('nodes.enrollment.retryHub')
+                      : t('nodes.enrollment.confirmPending')}
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="xs"
+                    disabled={busyPendingId === id}
+                    onClick={() => onCancel(pending)}
+                    data-testid={`nodes-pending-cancel-${id}`}
+                  >
+                    <X />
+                    {t('nodes.enrollment.cancelPending')}
+                  </Button>
+                </span>
               </li>
             );
           })}

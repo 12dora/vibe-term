@@ -1644,6 +1644,7 @@ export type TranslationKey =
   | 'nodes.enrollment.joinToken'
   | 'nodes.enrollment.pending'
   | 'nodes.enrollment.confirmPending'
+  | 'nodes.enrollment.cancelPending'
   | 'nodes.enrollment.admitted'
   | 'nodes.enrollment.unknownCertificate'
   | 'nodes.enrollment.badCertSig'

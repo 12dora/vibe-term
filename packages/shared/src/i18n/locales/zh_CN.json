@@ -1787,6 +1787,7 @@
         "joinToken": "加入码",
         "pending": "等待新节点加入",
         "confirmPending": "确认加入",
+        "cancelPending": "取消",
         "admitted": "节点已加入",
         "unknownCertificate": "收到未知节点的响应，已忽略。",
         "badCertSig": "节点响应的签名校验失败，已忽略。",

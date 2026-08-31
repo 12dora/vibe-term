@@ -1787,6 +1787,7 @@
         "joinToken": "Join code",
         "pending": "Waiting for the new node",
         "confirmPending": "Approve",
+        "cancelPending": "Cancel",
         "admitted": "Node added",
         "unknownCertificate": "Ignored a response from an unknown node.",
         "badCertSig": "Ignored a node response that failed its signature check.",
