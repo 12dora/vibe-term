@@ -131,6 +131,13 @@ const MESSAGES: Record<CliLang, Record<string, string>> = {
     'upgrade.repairStartFailed': 'Repair could not start {{version}}: {{error}}',
     'upgrade.alreadyCurrent': 'Already running {{version}}; nothing to upgrade.',
     'upgrade.checksumHttpFailed': 'Failed to fetch SHA256SUMS: {{detail}}',
+    'upgrade.integrityRequired':
+      'Release {{version}} requires SHA256SUMS (HTTP 200, matching digest). Refusing to continue.',
+    'upgrade.integrityUnverifiedDenied':
+      'Release {{version}} has no SHA256SUMS. Re-run with --allow-unverified to proceed.',
+    'upgrade.integrityMissingEntry': 'SHA256SUMS does not list {{file}}.',
+    'upgrade.pidNotOwned': 'PID {{pid}} is not the tmex runtime for this install ({{installDir}}).',
+    'upgrade.healthTlsListenerDown': 'TLS listener is not running (mode {{mode}}).',
 
     'cli.shim.pathHint':
       '{{binDir}} is not on PATH. Add it so the tmex command is available: export PATH="{{binDir}}:$PATH"',
@@ -292,6 +299,13 @@ const MESSAGES: Record<CliLang, Record<string, string>> = {
     'upgrade.repairStartFailed': '修复未能启动 {{version}}：{{error}}',
     'upgrade.alreadyCurrent': '当前已是 {{version}}，无需升级。',
     'upgrade.checksumHttpFailed': '获取 SHA256SUMS 失败：{{detail}}',
+    'upgrade.integrityRequired':
+      '版本 {{version}} 必须提供 SHA256SUMS（HTTP 200 且摘要匹配），拒绝继续。',
+    'upgrade.integrityUnverifiedDenied':
+      '版本 {{version}} 缺少 SHA256SUMS。若需跳过校验，请显式传入 --allow-unverified。',
+    'upgrade.integrityMissingEntry': 'SHA256SUMS 中没有 {{file}}。',
+    'upgrade.pidNotOwned': 'PID {{pid}} 不属于此安装目录的 tmex 运行时（{{installDir}}）。',
+    'upgrade.healthTlsListenerDown': 'TLS 监听未运行（mode {{mode}}）。',
 
     'cli.shim.pathHint':
       '{{binDir}} 不在 PATH 中。加入后即可使用 tmex 命令：export PATH="{{binDir}}:$PATH"',

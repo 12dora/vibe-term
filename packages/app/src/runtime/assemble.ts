@@ -1,5 +1,8 @@
 import { resolve } from 'node:path';
-import { PROCESS_STARTED_AT } from '../../../../apps/gateway/src/api/system-routes';
+import {
+  PROCESS_STARTED_AT,
+  setHealthzTlsProvider,
+} from '../../../../apps/gateway/src/api/system-routes';
 import { ChallengeStore } from '../../../../apps/gateway/src/auth/challenge-store';
 import { ensureNodeIdentity } from '../../../../apps/gateway/src/auth/node-identity-service';
 import { NodeIdentityStore } from '../../../../apps/gateway/src/auth/node-identity-store';
@@ -55,6 +58,7 @@ import { TlsService } from '../tls/tls-service';
 import { createTmexGatewayRuntime } from './gateway';
 import { jsonErr } from './http';
 import { type LocalRouteDeps, handleLocalRequest } from './local-routes';
+import { type RuntimeMode, handlePreflightHttp, readRuntimeMode } from './mode';
 import { serveFrontend as defaultServeFrontend } from './serve-frontend';
 import { handleSetupRequest } from './setup-routes';
 import { SETUP_RESTART_DELAY_MS, resolveSetupEnvPath } from './setup-service';
@@ -69,6 +73,7 @@ export function meshShutdownNeeded(roles: TmexRoles): boolean {
 type AssembleTmexOptions = {
   roles?: TmexRoles;
   staticRoot?: string;
+  runtimeMode?: RuntimeMode;
   createGatewayRuntime?: () => Promise<GatewayRuntime>;
   createMeshRuntime?: (opts: CreateMeshRuntimeOptions) => Promise<MeshRuntime>;
   serveFrontend?: (req: Request, staticRoot: string) => Promise<Response>;
@@ -504,15 +509,59 @@ function safeAssembleLocalAuth(authHttp: MeshHttpRuntime): () => boolean {
   };
 }
 
-export async function assembleTmex(opts: AssembleTmexOptions = {}): Promise<AssembledTmex> {
+function dummyTlsLifecycle(): { tls: TlsService; httpsListener: HttpsListener } {
+  const httpsListener = new HttpsListener({
+    fetch: async () => new Response('Not Found', { status: 404 }),
+    websocket: {
+      open() {},
+      message() {},
+      drain() {},
+      close() {},
+    },
+  });
+  return {
+    httpsListener,
+    tls: {
+      async startup() {},
+      stop() {},
+    } as TlsService,
+  };
+}
+
+async function assemblePreflightTmex(opts: AssembleTmexOptions): Promise<AssembledTmex> {
   const roles = opts.roles ?? parseTmexRoles(process.env.TMEX_ROLES);
-  const staticRoot = opts.staticRoot ?? defaultStaticRoot();
-  const createGateway = opts.createGatewayRuntime ?? createTmexGatewayRuntime;
-  const createMesh = opts.createMeshRuntime ?? createMeshRuntime;
-  const serveFrontend = opts.serveFrontend ?? defaultServeFrontend;
+  const createGateway =
+    opts.createGatewayRuntime ?? (() => createTmexGatewayRuntime(undefined, { mode: 'preflight' }));
   const gateway = await createGateway();
-  const tlsSlot: { service?: TlsService } = {};
-  const auth = await createAuthContextFromDb(gateway.db, {
+  const { tls, httpsListener } = dummyTlsLifecycle();
+  return {
+    roles,
+    gateway,
+    mesh: null,
+    hub: opts.hub ?? null,
+    tls,
+    httpsListener,
+    fetch: (req) => handlePreflightHttp(req, getBaseVersion(), PROCESS_STARTED_AT),
+    websocket: gateway.websocket,
+    async start() {},
+    async stop() {
+      await tryStop(() => gateway.stop(), 'gateway');
+    },
+    setProcessShutdown() {},
+    isRestartRequested() {
+      return false;
+    },
+  };
+}
+
+async function createAssembleAuthSurface(input: {
+  roles: TmexRoles;
+  gateway: GatewayRuntime;
+  opts: AssembleTmexOptions;
+  createMesh: (opts: CreateMeshRuntimeOptions) => Promise<MeshRuntime>;
+  tlsSlot: { service?: TlsService };
+}) {
+  const auth = await createAuthContextFromDb(input.gateway.db, {
     installDir: resolveGatewayInstallDir(),
     envPath: resolveSetupEnvPath(),
     env: {
@@ -521,30 +570,48 @@ export async function assembleTmex(opts: AssembleTmexOptions = {}): Promise<Asse
       TMEX_HUB_PUBLIC_URL: process.env.TMEX_HUB_PUBLIC_URL ?? '',
     },
   });
-
   let mesh: MeshRuntime | null = null;
   let authHttp: MeshHttpRuntime | null = null;
-  if (roles.node) {
+  if (input.roles.node) {
     mesh = await createNodeMesh({
-      roles,
-      gateway,
-      createMesh,
-      hub: opts.hub,
-      loadNative: opts.loadNative,
-      nativeDir: opts.nativeDir,
-      tlsSlot,
+      roles: input.roles,
+      gateway: input.gateway,
+      createMesh: input.createMesh,
+      hub: input.opts.hub,
+      loadNative: input.opts.loadNative,
+      nativeDir: input.opts.nativeDir,
+      tlsSlot: input.tlsSlot,
     });
   } else {
     authHttp = await createStandaloneAuthHttp({
-      roles,
-      gateway,
+      roles: input.roles,
+      gateway: input.gateway,
       auth,
-      localAuthEffective: opts.localAuthEffective,
-      tlsSlot,
+      localAuthEffective: input.opts.localAuthEffective,
+      tlsSlot: input.tlsSlot,
     });
   }
+  return { auth, mesh, authHttp, hub: mesh?.hub ?? input.opts.hub ?? null };
+}
 
-  const hub = mesh?.hub ?? opts.hub ?? null;
+export async function assembleTmex(opts: AssembleTmexOptions = {}): Promise<AssembledTmex> {
+  const runtimeMode = opts.runtimeMode ?? readRuntimeMode();
+  if (runtimeMode === 'preflight') return assemblePreflightTmex(opts);
+  const roles = opts.roles ?? parseTmexRoles(process.env.TMEX_ROLES);
+  const staticRoot = opts.staticRoot ?? defaultStaticRoot();
+  const createGateway =
+    opts.createGatewayRuntime ?? (() => createTmexGatewayRuntime(undefined, { mode: runtimeMode }));
+  const createMesh = opts.createMeshRuntime ?? createMeshRuntime;
+  const serveFrontend = opts.serveFrontend ?? defaultServeFrontend;
+  const gateway = await createGateway();
+  const tlsSlot: { service?: TlsService } = {};
+  const { auth, mesh, authHttp, hub } = await createAssembleAuthSurface({
+    roles,
+    gateway,
+    opts,
+    createMesh,
+    tlsSlot,
+  });
   const localAuthEffective = resolveLocalAuthEffective(opts.localAuthEffective, authHttp);
 
   let processShutdown: (() => Promise<void>) | null = null;
@@ -606,6 +673,10 @@ export async function assembleTmex(opts: AssembleTmexOptions = {}): Promise<Asse
     mesh?.invalidateAuthModeCache();
   });
   tlsHandler = tlsLife.tlsHandler;
+  setHealthzTlsProvider(async () => {
+    const status = await tlsLife.tls.status();
+    return { mode: status.mode, listenerRunning: status.listener.running };
+  });
 
   let stopPromise: Promise<void> | null = null;
   return {
@@ -623,6 +694,7 @@ export async function assembleTmex(opts: AssembleTmexOptions = {}): Promise<Asse
     },
     async stop() {
       stopPromise ??= (async () => {
+        setHealthzTlsProvider(null);
         await tryStop(() => gateway.stopAgentSessions?.(), 'agent-supervisor');
         await tryStop(() => mesh?.stop(), 'mesh');
         await tryStop(() => authHttp?.stop(), 'auth');

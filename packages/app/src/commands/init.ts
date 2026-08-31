@@ -268,6 +268,7 @@ async function startInstalledRuntime(config: InitConfig, runScriptPath: string):
   await createDirectProcessControl({
     runScriptPath,
     pidPath: pidFilePath(config.installDir),
+    installDir: config.installDir,
   }).start();
 }
 

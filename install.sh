@@ -3,6 +3,7 @@
 # Usage:
 #   curl -fsSL https://raw.githubusercontent.com/12dora/tmex-enhanced/main/install.sh | bash
 #   bash install.sh [init flags...]
+#   bash install.sh --allow-unverified [init flags...]  # checksum skip, versions < 1.1.4 only
 # Env:
 #   TMEX_VERSION  pin a release (with or without leading v)
 
@@ -221,6 +222,17 @@ tmex_print_path_hint() {
 tmex_install() {
   set -euo pipefail
 
+  local allow_unverified=0
+  local -a init_args=()
+  local arg
+  for arg in "$@"; do
+    if [ "$arg" = "--allow-unverified" ]; then
+      allow_unverified=1
+    else
+      init_args+=("$arg")
+    fi
+  done
+
   tmex_need_cmd curl
   tmex_need_cmd tar
   tmex_detect_os
@@ -247,10 +259,23 @@ tmex_install() {
     echo "tmex install: failed to fetch SHA256SUMS (network error)" >&2
     exit 1
   }
-  if [ "$(tmex_classify_checksum_http "$sums_code")" = "missing" ]; then
+  local sums_class
+  sums_class="$(tmex_classify_checksum_http "$sums_code")"
+  if [ "$sums_class" = "missing" ]; then
+    if tmex_version_ge "$version" "1.1.4"; then
+      echo "tmex install: Release ${version} requires SHA256SUMS (HTTP 200, matching digest). Refusing to continue." >&2
+      exit 1
+    fi
+    if [ "$allow_unverified" -ne 1 ]; then
+      echo "tmex install: Release ${version} has no SHA256SUMS. Re-run with --allow-unverified to proceed." >&2
+      exit 1
+    fi
     echo "tmex install: SHA256SUMS not found; tarball integrity is unverified"
-  elif [ "$(tmex_classify_checksum_http "$sums_code")" != "ok" ]; then
+  elif [ "$sums_class" != "ok" ]; then
     echo "tmex install: failed to fetch SHA256SUMS (HTTP ${sums_code})" >&2
+    exit 1
+  elif ! grep -Eq "tmex-cli-${version}\\.tgz$" "$sums_file"; then
+    echo "tmex install: SHA256SUMS does not list tmex-cli-${version}.tgz" >&2
     exit 1
   elif ! (
     cd "$TMEX_INSTALL_TMP"
@@ -260,7 +285,7 @@ tmex_install() {
       grep -E "tmex-cli-${version}\\.tgz$" SHA256SUMS | sha256sum -c -
     fi
   ); then
-    echo "tmex install: SHA256 mismatch for ${tarball_url}" >&2
+    echo "tmex install: Release tarball sha256 mismatch for tmex-cli-${version}.tgz" >&2
     exit 1
   fi
 
@@ -271,8 +296,6 @@ tmex_install() {
     exit 1
   fi
 
-  local -a init_args
-  init_args=("$@")
   if [ ! -t 0 ]; then
     if { exec 3</dev/tty; } 2>/dev/null; then
       echo "tmex install: stdin is not a TTY; attaching /dev/tty for prompts"

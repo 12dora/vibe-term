@@ -6,6 +6,7 @@ export type UpgradePhase =
   | 'lock'
   | 'staging'
   | 'preflight'
+  | 'stopping'
   | 'backup'
   | 'switching'
   | 'started'
@@ -40,6 +41,7 @@ export function recoveryAction(journal: UpgradeJournal | null): RecoveryKind {
     case 'staging':
     case 'preflight':
       return 'abort_candidate';
+    case 'stopping':
     case 'backup':
     case 'switching':
       return 'restart_old';

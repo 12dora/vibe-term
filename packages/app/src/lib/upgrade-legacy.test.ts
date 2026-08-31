@@ -71,4 +71,46 @@ describe('convertLegacyLayout', () => {
       convertLegacyLayout(installDir, { bunPath: '/usr/bin/bun', skipShims: true })
     ).rejects.toThrow(/cliVersion|install-meta/i);
   });
+
+  test('does not write a shim when current/cli/bin/tmex.js is missing', async () => {
+    const installDir = await mkdtemp(join(tmpdir(), 'tmex-legacy-nocli-'));
+    tempDirs.push(installDir);
+    const localBinDir = join(installDir, 'local-bin');
+    await mkdir(localBinDir, { recursive: true });
+    await mkdir(join(installDir, 'runtime'), { recursive: true });
+    await writeFile(join(installDir, 'runtime', 'server.js'), 'legacy-runtime\n');
+    await writeFile(join(localBinDir, 'tmex'), 'keep-me-shim\n');
+    await writeFile(
+      join(installDir, 'install-meta.json'),
+      `${JSON.stringify({ cliVersion: '1.0.2', serviceName: 'tmex', installDir }, null, 2)}\n`
+    );
+    await convertLegacyLayout(installDir, {
+      bunPath: '/usr/bin/bun',
+      localBinDir,
+      bunBinDir: join(installDir, 'missing-bun'),
+    });
+    expect(await readFile(join(localBinDir, 'tmex'), 'utf8')).toBe('keep-me-shim\n');
+    expect(await pathExists(join(installDir, 'current', 'cli', 'bin', 'tmex.js'))).toBe(false);
+  });
+
+  test('writes a shim when the legacy layout has a CLI', async () => {
+    const installDir = await mkdtemp(join(tmpdir(), 'tmex-legacy-cli-'));
+    tempDirs.push(installDir);
+    const localBinDir = join(installDir, 'local-bin');
+    await mkdir(join(installDir, 'cli', 'bin'), { recursive: true });
+    await mkdir(join(installDir, 'runtime'), { recursive: true });
+    await writeFile(join(installDir, 'cli', 'bin', 'tmex.js'), 'legacy-cli\n');
+    await writeFile(join(installDir, 'runtime', 'server.js'), 'legacy-runtime\n');
+    await writeFile(
+      join(installDir, 'install-meta.json'),
+      `${JSON.stringify({ cliVersion: '1.0.0', serviceName: 'tmex', installDir }, null, 2)}\n`
+    );
+    await convertLegacyLayout(installDir, {
+      bunPath: '/usr/bin/bun',
+      localBinDir,
+      bunBinDir: join(installDir, 'missing-bun'),
+    });
+    const shim = await readFile(join(localBinDir, 'tmex'), 'utf8');
+    expect(shim).toContain('current/cli/bin/tmex.js');
+  });
 });

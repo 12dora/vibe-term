@@ -11,6 +11,19 @@ import { type ApiRoute, route } from './route';
 import { getTmuxHealth } from './tmux-health';
 import { handleTmuxTreeApiRequest } from './tmux-tree';
 
+export type HealthzTlsInfo = {
+  mode: string;
+  listenerRunning: boolean;
+};
+
+let tlsHealthProvider: (() => Promise<HealthzTlsInfo> | HealthzTlsInfo) | null = null;
+
+export function setHealthzTlsProvider(
+  provider: (() => Promise<HealthzTlsInfo> | HealthzTlsInfo) | null
+): void {
+  tlsHealthProvider = provider;
+}
+
 async function handleGetManifest(method: 'GET' | 'HEAD'): Promise<Response> {
   const settings = getSiteSettings();
 
@@ -79,7 +92,10 @@ export const healthRoutes: ApiRoute[] = [
     method: 'GET',
     path: '/healthz',
     handler: (req) =>
-      getTmuxHealth().then((tmux) => {
+      getTmuxHealth().then(async (tmux) => {
+        const tls = tlsHealthProvider
+          ? await tlsHealthProvider()
+          : { mode: 'none', listenerRunning: false };
         return json({
           status: 'ok',
           version: getBaseVersion(),
@@ -88,6 +104,7 @@ export const healthRoutes: ApiRoute[] = [
           // 供 e2e globalSetup 断言「连到的是 test 实例而非生产」，避免误改生产数据。
           env: readNodeEnv(),
           tmux,
+          tls,
           owner: createGatewayOwnerProof(
             config.gatewayOwnerToken,
             req.headers.get('x-tmex-gateway-challenge'),

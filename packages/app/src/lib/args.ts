@@ -1,5 +1,8 @@
 import { t } from '../i18n';
 import type { ParsedArgs } from '../types';
+import { UPGRADE_FLAGS } from './upgrade-flags';
+
+export { UPGRADE_FLAGS, UPGRADE_PASSTHROUGH_FLAGS, UPGRADE_USAGE } from './upgrade-flags';
 
 export type NestedCommandName =
   | 'init'
@@ -187,19 +190,7 @@ const COMMAND_FLAGS: Record<NestedCommandName, ReadonlySet<string>> = {
     'service-name',
     'no-interactive',
   ]),
-  upgrade: new Set([
-    ...GLOBAL_FLAGS,
-    'version',
-    'install-dir',
-    'repair',
-    'keep-backup',
-    'no-service',
-    'apply-current-package',
-    'txn',
-    'service-name',
-    'yes',
-    'allow-missing-native',
-  ]),
+  upgrade: UPGRADE_FLAGS,
   uninstall: new Set([...GLOBAL_FLAGS, 'install-dir', 'yes', 'purge', 'service-name']),
   direct: new Set([...GLOBAL_FLAGS, 'install-dir']),
   enroll: new Set([...GLOBAL_FLAGS, 'install-dir', 'ttl', 'service-name']),

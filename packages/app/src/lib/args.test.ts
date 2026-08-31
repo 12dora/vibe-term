@@ -120,6 +120,23 @@ describe('assertKnownFlags', () => {
       )
     ).not.toThrow();
   });
+
+  test('accepts upgrade --txn, --allow-unverified and --no-service together', () => {
+    expect(() =>
+      assertKnownFlags(
+        parseArgs([
+          'upgrade',
+          '--apply-current-package',
+          '--no-service',
+          '--txn',
+          'abc',
+          '--allow-unverified',
+          '--install-dir',
+          '/tmp',
+        ])
+      )
+    ).not.toThrow();
+  });
 });
 
 describe('cli help', () => {

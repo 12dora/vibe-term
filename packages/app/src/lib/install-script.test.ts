@@ -1,22 +1,178 @@
-import { describe, expect, test } from 'bun:test';
+import { afterEach, describe, expect, test } from 'bun:test';
 import { spawnSync } from 'node:child_process';
-import { resolve } from 'node:path';
+import { createHash } from 'node:crypto';
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join, resolve } from 'node:path';
 
 const installSh = resolve(import.meta.dir, '../../../../install.sh');
+const sandboxDirs: string[] = [];
+
+afterEach(() => {
+  for (const dir of sandboxDirs.splice(0)) {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
 
 function sourceEval(
   fnCall: string,
-  extra = ''
+  extra = '',
+  options?: { env?: NodeJS.ProcessEnv }
 ): { status: number; stdout: string; stderr: string } {
   const script = `${extra}
 source ${JSON.stringify(installSh)}
 ${fnCall}
 `;
-  const result = spawnSync('bash', ['-c', script], { encoding: 'utf8' });
+  const result = spawnSync('bash', ['-c', script], {
+    encoding: 'utf8',
+    env: options?.env ? { ...process.env, ...options.env } : process.env,
+  });
   return {
     status: result.status ?? 1,
     stdout: result.stdout,
     stderr: result.stderr,
+  };
+}
+
+function sha256Hex(bytes: Uint8Array): string {
+  return createHash('sha256').update(bytes).digest('hex');
+}
+
+function writeExec(path: string, body: string): void {
+  writeFileSync(path, body);
+  chmodSync(path, 0o755);
+}
+
+function runInstallPolicy(opts: {
+  version: string;
+  sumsCode: string;
+  sumsBody?: string;
+  args?: string[];
+}): {
+  status: number;
+  stdout: string;
+  stderr: string;
+  tarCalled: boolean;
+  initArgs: string[];
+} {
+  const root = mkdtempSync(join(tmpdir(), 'tmex-install-policy-'));
+  sandboxDirs.push(root);
+  const bin = join(root, 'bin');
+  mkdirSync(bin);
+  const tgzSrc = join(root, 'payload.tgz');
+  writeFileSync(tgzSrc, `fake-tarball-${opts.version}\n`);
+  const hex = sha256Hex(readFileSync(tgzSrc));
+  const sumsFile = join(root, 'SHA256SUMS.body');
+  const sumsBody =
+    opts.sumsBody ??
+    (opts.sumsCode === '200' ? `${hex}  tmex-cli-${opts.version}.tgz\n` : 'not published\n');
+  writeFileSync(sumsFile, sumsBody);
+
+  const tarMark = join(root, 'tar.called');
+  const initLog = join(root, 'init.args');
+
+  writeExec(
+    join(bin, 'curl'),
+    `#!/usr/bin/env bash
+out=""
+url=""
+http_write=""
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    -o) out="$2"; shift 2 ;;
+    -w) http_write="$2"; shift 2 ;;
+    -H) shift 2 ;;
+    -s|-S|-L|-f|-sS|-fsSL|-sSL|-sL|-fsL) shift ;;
+    -*) shift ;;
+    *) url="$1"; shift ;;
+  esac
+done
+if [[ "$url" == *"/SHA256SUMS" ]]; then
+  if [ -n "$out" ]; then
+    cp "$FAKE_CURL_SUMS_BODY_FILE" "$out"
+  fi
+  if [ -n "$http_write" ]; then
+    printf '%s' "$FAKE_CURL_SUMS_CODE"
+  fi
+  exit 0
+fi
+if [[ "$url" == *tmex-cli-*.tgz ]]; then
+  cp "$FAKE_CURL_TGZ" "$out"
+  exit 0
+fi
+echo "fake-curl: unexpected url $url" >&2
+exit 1
+`
+  );
+
+  writeExec(
+    join(bin, 'tar'),
+    `#!/usr/bin/env bash
+printf '1' > "$FAKE_TAR_MARK"
+dest="."
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    -C) dest="$2"; shift 2 ;;
+    *) shift ;;
+  esac
+done
+mkdir -p "$dest/package/bin"
+printf '%s\\n' '#!/usr/bin/env node' > "$dest/package/bin/tmex.js"
+`
+  );
+
+  writeExec(
+    join(bin, 'node'),
+    `#!/usr/bin/env bash
+if [ "$1" = "--version" ]; then
+  echo "v22.11.0"
+  exit 0
+fi
+printf '%s\\n' "$@" > "$FAKE_NODE_LOG"
+exit 0
+`
+  );
+
+  const script = `
+source ${JSON.stringify(installSh)}
+tmex_install "$@"
+`;
+  const result = spawnSync('bash', ['-c', script, '--', ...(opts.args ?? [])], {
+    encoding: 'utf8',
+    env: {
+      ...process.env,
+      PATH: `${bin}:${process.env.PATH ?? ''}`,
+      TMPDIR: root,
+      TMEX_VERSION: opts.version,
+      FAKE_CURL_TGZ: tgzSrc,
+      FAKE_CURL_SUMS_CODE: opts.sumsCode,
+      FAKE_CURL_SUMS_BODY_FILE: sumsFile,
+      FAKE_TAR_MARK: tarMark,
+      FAKE_NODE_LOG: initLog,
+    },
+  });
+
+  let initArgs: string[] = [];
+  if (existsSync(initLog)) {
+    initArgs = readFileSync(initLog, 'utf8')
+      .trim()
+      .split('\n')
+      .filter((line) => line.length > 0);
+  }
+  return {
+    status: result.status ?? 1,
+    stdout: result.stdout,
+    stderr: result.stderr,
+    tarCalled: existsSync(tarMark),
+    initArgs,
   };
 }
 
@@ -112,5 +268,76 @@ HDR
     );
     expect(result.status).toBe(0);
     expect(result.stdout.trim().split('\n')).toEqual(['missing', 'ok', 'error']);
+  });
+});
+
+describe('install.sh download checksum policy', () => {
+  test('HTTP 404 for 1.1.4+ aborts and does not extract', () => {
+    const result = runInstallPolicy({ version: '1.1.4', sumsCode: '404' });
+    expect(result.status).not.toBe(0);
+    expect(`${result.stdout}\n${result.stderr}`).toMatch(
+      /requires SHA256SUMS|Refusing to continue/i
+    );
+    expect(result.tarCalled).toBe(false);
+    expect(result.initArgs).toEqual([]);
+  });
+
+  test('HTTP 404 for 1.1.4+ aborts even with --allow-unverified', () => {
+    const result = runInstallPolicy({
+      version: '1.1.4',
+      sumsCode: '404',
+      args: ['--allow-unverified'],
+    });
+    expect(result.status).not.toBe(0);
+    expect(result.tarCalled).toBe(false);
+  });
+
+  test('HTTP 404 for older versions aborts without --allow-unverified', () => {
+    const result = runInstallPolicy({ version: '1.1.0', sumsCode: '404' });
+    expect(result.status).not.toBe(0);
+    expect(`${result.stdout}\n${result.stderr}`).toMatch(/has no SHA256SUMS|--allow-unverified/i);
+    expect(result.tarCalled).toBe(false);
+  });
+
+  test('HTTP 404 for older versions continues only with --allow-unverified and strips the flag', () => {
+    const result = runInstallPolicy({
+      version: '1.1.0',
+      sumsCode: '404',
+      args: ['--allow-unverified', '--no-interactive'],
+    });
+    expect(result.status).toBe(0);
+    expect(result.tarCalled).toBe(true);
+    expect(result.initArgs.some((line) => line.includes('--allow-unverified'))).toBe(false);
+    expect(result.initArgs.join(' ')).toContain('--no-interactive');
+  });
+
+  test('HTTP 200 with digest mismatch aborts before extract', () => {
+    const result = runInstallPolicy({
+      version: '1.1.4',
+      sumsCode: '200',
+      sumsBody: `${'0'.repeat(64)}  tmex-cli-1.1.4.tgz\n`,
+    });
+    expect(result.status).not.toBe(0);
+    expect(`${result.stdout}\n${result.stderr}`).toMatch(/sha256 mismatch/i);
+    expect(result.tarCalled).toBe(false);
+  });
+
+  test('HTTP 200 with no exact tarball entry aborts before extract', () => {
+    const result = runInstallPolicy({
+      version: '1.1.4',
+      sumsCode: '200',
+      sumsBody: `${'a'.repeat(64)}  other-file.tgz\n`,
+    });
+    expect(result.status).not.toBe(0);
+    expect(`${result.stdout}\n${result.stderr}`).toMatch(/does not list|missing an entry/i);
+    expect(result.tarCalled).toBe(false);
+  });
+
+  test('HTTP 200 with matching digest extracts and runs init', () => {
+    const result = runInstallPolicy({ version: '1.1.4', sumsCode: '200' });
+    expect(result.status).toBe(0);
+    expect(result.tarCalled).toBe(true);
+    expect(result.initArgs.length).toBeGreaterThan(0);
+    expect(result.initArgs.some((line) => line.includes('tmex.js'))).toBe(true);
   });
 });

@@ -32,7 +32,8 @@ import {
   resolveServiceMode,
   withUpgradeLock,
 } from '../lib/upgrade-apply';
-import { verifyTarballSha256 } from '../lib/upgrade-verify';
+import { UPGRADE_FLAGS, UPGRADE_PASSTHROUGH_FLAGS, UPGRADE_USAGE } from '../lib/upgrade-flags';
+import { assertReleaseIntegrity } from '../lib/upgrade-verify';
 import { asBoolean, asString } from '../lib/validate';
 import { readPackageVersion } from '../lib/version';
 import type { InstallMeta, ParsedArgs } from '../types';
@@ -75,25 +76,13 @@ export type DelegateUpgradeDeps = {
   log?: (message: string) => void;
 };
 
-function passthroughUpgradeFlags(
+export function passthroughUpgradeFlags(
   parsed: ParsedArgs,
   extra: Record<string, string | boolean>
 ): string[] {
   const args: string[] = [];
   const merged = { ...parsed.flags, ...extra };
-  const passthrough = [
-    'install-dir',
-    'service-name',
-    'yes',
-    'lang',
-    'bun-path',
-    'keep-backup',
-    'no-service',
-    'txn',
-    'version',
-    'allow-missing-native',
-  ];
-  for (const key of passthrough) {
+  for (const key of UPGRADE_PASSTHROUGH_FLAGS) {
     const value = merged[key];
     if (value === undefined) continue;
     if (value === true) {
@@ -127,10 +116,13 @@ export async function delegateUpgrade(
     await downloadReleaseTarball(version, tarballPath, fetchFn);
     const bytes = await readFile(tarballPath);
     const sums = await fetchReleaseSha256Sums(version, releaseTarballName(version), fetchFn);
-    if (sums.missing || !sums.hex) {
+    const allowUnverified = asBoolean(parsed.flags['allow-unverified']) === true;
+    assertReleaseIntegrity(version, bytes, sums, {
+      allowUnverified,
+      fileName: releaseTarballName(version),
+    });
+    if (sums.unpublished || (sums.missing && !sums.hex)) {
       log(t('upgrade.integrityUnverified'));
-    } else if (!verifyTarballSha256(bytes, sums.hex)) {
-      throw new Error(t('upgrade.integrityMismatch', { file: releaseTarballName(version) }));
     }
 
     const extractDir = join(stagingDir, 'extract');
@@ -170,6 +162,7 @@ function parseUpgradeRunFlags(parsed: ParsedArgs) {
     targetVersion: asString(parsed.flags.version) || 'latest',
     keepBackup: asBoolean(parsed.flags['keep-backup']) === true,
     allowMissingNative: asBoolean(parsed.flags['allow-missing-native']) === true,
+    allowUnverified: asBoolean(parsed.flags['allow-unverified']) === true,
   };
 }
 
@@ -186,27 +179,12 @@ function printUpgradeDone(
   console.log(`- healthz: ${formatHttpEndpoint(host, port, '/healthz')}`);
 }
 
-const UPGRADE_FLAGS = new Set([
-  'apply-current-package',
-  'version',
-  'install-dir',
-  'service-name',
-  'yes',
-  'lang',
-  'bun-path',
-  'help',
-  'repair',
-  'keep-backup',
-  'allow-missing-native',
-]);
-
-const UPGRADE_USAGE =
-  'Usage: tmex upgrade [--version <version>] [--install-dir <path>] [--bun-path <path>] [--yes] [--lang <code>] [--repair] [--keep-backup] [--allow-missing-native]';
-
-function assertKnownUpgradeFlags(parsed: ParsedArgs): void {
+export function assertKnownUpgradeFlags(parsed: ParsedArgs): void {
   const unknown = Object.keys(parsed.flags).filter((key) => !UPGRADE_FLAGS.has(key));
   if (unknown.length > 0) {
-    throw new Error(`Unknown option(s): ${unknown.map((key) => `--${key}`).join(', ')}\n${UPGRADE_USAGE}`);
+    throw new Error(
+      `Unknown option(s): ${unknown.map((key) => `--${key}`).join(', ')}\n${UPGRADE_USAGE}`
+    );
   }
 }
 
@@ -281,7 +259,8 @@ async function runLockedUpgrade(opts: {
     meta: opts.meta,
     noServiceFlag: asBoolean(opts.parsed.flags['no-service']) ?? false,
   });
-  const action = await repairUpgrade(opts.installDir, opts.bunPath, { service });
+  const activeTxnId = asString(opts.parsed.flags.txn) ?? null;
+  const action = await repairUpgrade(opts.installDir, opts.bunPath, { service, activeTxnId });
   if (opts.repairOnly) {
     console.log(`[tmex] ${t('upgrade.repairDone', { action })}`);
     return;

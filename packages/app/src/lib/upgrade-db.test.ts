@@ -1,9 +1,10 @@
+import { Database } from 'bun:sqlite';
 import { afterEach, describe, expect, test } from 'bun:test';
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { pathExists } from './fs-utils';
-import { copyDbTrio, restoreDbTrio } from './upgrade-db';
+import { copyDbTrio, copyPreflightDb, restoreDbTrio, vacuumIntoScript } from './upgrade-db';
 
 const tempDirs: string[] = [];
 
@@ -65,5 +66,46 @@ describe('copyDbTrio', () => {
     expect(copied).toHaveLength(2);
     expect(await readFile(join(dest, 'tmex.db'), 'utf8')).toBe('db');
     expect(await pathExists(join(dest, 'tmex.db-shm'))).toBe(false);
+  });
+});
+
+describe('copyPreflightDb', () => {
+  test('vacuum script reads argv[1] and argv[2] and rejects empty paths', () => {
+    expect(vacuumIntoScript()).toContain('process.argv[1]');
+    expect(vacuumIntoScript()).toContain('process.argv[2]');
+    expect(vacuumIntoScript()).toContain('if (!src || !dest)');
+  });
+
+  test('VACUUM INTO copies a real sqlite database', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'tmex-db-vacuum-'));
+    tempDirs.push(root);
+    const srcDb = join(root, 'tmex.db');
+    const db = new Database(srcDb);
+    db.run('CREATE TABLE items (id INTEGER PRIMARY KEY, name TEXT)');
+    db.run("INSERT INTO items (name) VALUES ('alpha')");
+    db.close();
+    const destDir = join(root, 'out');
+    await copyPreflightDb(srcDb, destDir, process.execPath);
+    const dest = new Database(join(destDir, 'tmex.db'));
+    try {
+      expect(dest.query('SELECT name FROM items').get()).toEqual({ name: 'alpha' });
+    } finally {
+      dest.close();
+    }
+  });
+
+  test('passes src and dest after -e to spawnSync', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'tmex-db-argv-'));
+    tempDirs.push(root);
+    const srcDb = join(root, 'tmex.db');
+    await writeFile(srcDb, 'db');
+    let captured: string[] = [];
+    await copyPreflightDb(srcDb, join(root, 'out'), '/usr/bin/bun', ((cmd, args) => {
+      captured = args as string[];
+      return { status: 1, stdout: '', stderr: 'fail' };
+    }) as typeof import('node:child_process').spawnSync);
+    expect(captured[0]).toBe('-e');
+    expect(captured[2]).toBe(srcDb);
+    expect(captured[3]).toBe(join(root, 'out', 'tmex.db'));
   });
 });

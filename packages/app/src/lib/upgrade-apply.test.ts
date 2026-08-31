@@ -528,3 +528,248 @@ describe('repairUpgrade release gates', () => {
     }
   });
 });
+
+describe('repairUpgrade active txn and legacy dirs', () => {
+  test('missing journal keeps active staging and deletes orphan staging', async () => {
+    const installDir = await scratch();
+    await seedInstall(installDir, '1.0.0');
+    await mkdir(join(installDir, 'staging', 'active-txn', 'extract'), { recursive: true });
+    await writeFile(join(installDir, 'staging', 'active-txn', 'keep'), 'payload');
+    await mkdir(join(installDir, 'staging', 'orphan'), { recursive: true });
+    await writeFile(join(installDir, 'staging', 'orphan', 'x'), 'x');
+    const action = await repairUpgrade(installDir, '/usr/bin/bun', {
+      service: fakeService(),
+      activeTxnId: 'active-txn',
+    });
+    expect(action).toBe('cleanup');
+    expect(await pathExists(join(installDir, 'staging', 'active-txn', 'keep'))).toBe(true);
+    expect(await pathExists(join(installDir, 'staging', 'orphan'))).toBe(false);
+  });
+
+  test('terminal journal cleanup keeps the active txn staging', async () => {
+    const installDir = await scratch();
+    await seedInstall(installDir, '1.0.0');
+    await mkdir(join(installDir, 'staging', 'live-txn'), { recursive: true });
+    await writeFile(join(installDir, 'staging', 'live-txn', 'keep'), 'y');
+    await writeJournal(installDir, {
+      txnId: 'live-txn',
+      phase: 'aborted',
+      fromVersion: '1.0.0',
+      toVersion: '2.0.0',
+      startedAt: '2026-08-31T00:00:00.000Z',
+      updatedAt: '2026-08-31T00:00:01.000Z',
+    });
+    await repairUpgrade(installDir, '/usr/bin/bun', {
+      service: fakeService(),
+      activeTxnId: 'live-txn',
+    });
+    expect(await pathExists(join(installDir, 'staging', 'live-txn', 'keep'))).toBe(true);
+  });
+
+  test('legacy missing-journal repair plus failed preflight keeps top-level dirs', async () => {
+    const installDir = await scratch();
+    await mkdir(join(installDir, 'cli', 'bin'), { recursive: true });
+    await mkdir(join(installDir, 'runtime'), { recursive: true });
+    await mkdir(join(installDir, 'resources', 'fe-dist'), { recursive: true });
+    await mkdir(join(installDir, 'native'), { recursive: true });
+    await mkdir(join(installDir, 'data'), { recursive: true });
+    await writeFile(join(installDir, 'cli', 'bin', 'tmex.js'), 'legacy-cli\n');
+    await writeFile(join(installDir, 'runtime', 'server.js'), 'legacy-runtime\n');
+    await writeFile(join(installDir, 'resources', 'fe-dist', 'index.html'), '<html></html>\n');
+    await writeFile(join(installDir, 'native', 'node_datachannel.node'), 'legacy-native\n');
+    await writeFile(join(installDir, 'data', 'tmex.db'), 'db-bytes');
+    await writeFile(
+      join(installDir, 'install-meta.json'),
+      `${JSON.stringify(
+        {
+          serviceName: 'tmex',
+          platform: process.platform,
+          autostart: false,
+          installDir,
+          updatedAt: '2026-01-01T00:00:00.000Z',
+          cliVersion: '1.0.0',
+          bunPath: '/usr/bin/bun',
+        },
+        null,
+        2
+      )}\n`
+    );
+    await writeFile(
+      join(installDir, 'app.env'),
+      [
+        'NODE_ENV=production',
+        'TMEX_BIND_HOST=127.0.0.1',
+        'GATEWAY_PORT=19883',
+        `DATABASE_URL=${join(installDir, 'data', 'tmex.db')}`,
+        'TMEX_MASTER_KEY=test',
+        'TMEX_ROLES=standalone',
+        '',
+      ].join('\n')
+    );
+    const pkg = await writePackage(join(installDir, '_pkg2'), '2.0.0');
+    const service = fakeService();
+    await expect(
+      applyUpgrade(
+        {
+          installDir,
+          toVersion: '2.0.0',
+          packageLayout: pkg,
+          bunPath: '/usr/bin/bun',
+          noService: true,
+          skipShims: true,
+        },
+        {
+          service,
+          runCandidate: async () => ({ stop: async () => undefined }),
+          healthCheck: async () => {
+            throw new Error('preflight-boom');
+          },
+        }
+      )
+    ).rejects.toThrow(/preflight-boom|Preflight/i);
+    expect(service.stops).toBe(0);
+    expect(await pathExists(join(installDir, 'cli'))).toBe(true);
+    expect(await pathExists(join(installDir, 'runtime'))).toBe(true);
+    expect(await pathExists(join(installDir, 'resources'))).toBe(true);
+    expect(await pathExists(join(installDir, 'native'))).toBe(true);
+    expect(await pathExists(join(installDir, 'current'))).toBe(true);
+  });
+});
+
+describe('repairUpgrade stopping and old health', () => {
+  test('backup journal with service still running does not start again', async () => {
+    const installDir = await scratch();
+    await seedInstall(installDir, '1.0.0');
+    await writeJournal(installDir, {
+      txnId: 'txn-backup-run',
+      phase: 'backup',
+      fromVersion: '1.0.0',
+      toVersion: '2.0.0',
+      startedAt: '2026-08-31T00:00:00.000Z',
+      updatedAt: '2026-08-31T00:00:01.000Z',
+    });
+    const service = fakeService();
+    service.running = true;
+    const action = await repairUpgrade(installDir, '/usr/bin/bun', {
+      service,
+      healthCheck: async () => undefined,
+    });
+    expect(action).toBe('restart_old');
+    expect(service.starts).toBe(0);
+  });
+
+  test('backup journal with service stopped starts once', async () => {
+    const installDir = await scratch();
+    await seedInstall(installDir, '1.0.0');
+    await writeJournal(installDir, {
+      txnId: 'txn-backup-stop',
+      phase: 'backup',
+      fromVersion: '1.0.0',
+      toVersion: '2.0.0',
+      startedAt: '2026-08-31T00:00:00.000Z',
+      updatedAt: '2026-08-31T00:00:01.000Z',
+    });
+    const service = fakeService();
+    service.running = false;
+    const action = await repairUpgrade(installDir, '/usr/bin/bun', {
+      service,
+      healthCheck: async () => undefined,
+    });
+    expect(action).toBe('restart_old');
+    expect(service.starts).toBe(1);
+  });
+
+  test('stopping journal recovers via restart_old', async () => {
+    const installDir = await scratch();
+    await seedInstall(installDir, '1.0.0');
+    await writeJournal(installDir, {
+      txnId: 'txn-stopping',
+      phase: 'stopping',
+      fromVersion: '1.0.0',
+      toVersion: '2.0.0',
+      startedAt: '2026-08-31T00:00:00.000Z',
+      updatedAt: '2026-08-31T00:00:01.000Z',
+    });
+    const service = fakeService();
+    service.running = false;
+    expect(
+      await repairUpgrade(installDir, '/usr/bin/bun', {
+        service,
+        healthCheck: async () => undefined,
+      })
+    ).toBe('restart_old');
+  });
+
+  test('stop failure does not copy the database', async () => {
+    const installDir = await scratch();
+    await seedInstall(installDir, '1.0.0');
+    const pkg = await writePackage(join(installDir, '_pkg2'), '2.0.0');
+    const service = fakeService();
+    service.stop = async () => {
+      throw new Error('stop-failed');
+    };
+    await expect(
+      applyUpgrade(
+        {
+          installDir,
+          toVersion: '2.0.0',
+          packageLayout: pkg,
+          bunPath: '/usr/bin/bun',
+          noService: true,
+          skipShims: true,
+        },
+        {
+          service,
+          runCandidate: async () => ({ stop: async () => undefined }),
+          healthCheck: async () => undefined,
+        }
+      )
+    ).rejects.toThrow(/stop-failed/);
+    const journal = await readJournal(installDir);
+    expect(journal?.phase).toBe('stopping');
+    expect(await pathExists(join(installDir, 'backups', journal?.txnId ?? 'missing'))).toBe(false);
+    expect(await readFile(join(installDir, 'data', 'tmex.db'), 'utf8')).toBe('db-bytes');
+  });
+
+  test('1.0.2 managed repair uses status-only health and can roll back', async () => {
+    const installDir = await scratch();
+    await seedInstall(installDir, '1.0.2');
+    const metaPath = join(installDir, 'install-meta.json');
+    const meta = JSON.parse(await readFile(metaPath, 'utf8')) as Record<string, unknown>;
+    meta.serviceMode = 'managed';
+    await writeFile(metaPath, `${JSON.stringify(meta, null, 2)}\n`);
+    const pkg = await writePackage(join(installDir, '_pkg2'), '1.1.4');
+    const { deployPackageToVersionDir } = await import('./upgrade-apply');
+    await deployPackageToVersionDir(pkg, installDir, '1.1.4');
+    await switchCurrent(installDir, '1.1.4');
+    await mkdir(join(installDir, 'backups', 'txn-102'), { recursive: true });
+    await writeFile(join(installDir, 'backups', 'txn-102', 'tmex.db'), 'old-102');
+    await writeJournal(installDir, {
+      txnId: 'txn-102',
+      phase: 'started',
+      fromVersion: '1.0.2',
+      toVersion: '1.1.4',
+      startedAt: '2026-08-31T00:00:00.000Z',
+      updatedAt: '2026-08-31T00:00:01.000Z',
+      dbBackup: true,
+    });
+    const seen: Array<{ expectedVersion?: string; statusOnly?: boolean; minStartedAt?: string }> =
+      [];
+    await repairUpgrade(installDir, '/usr/bin/bun', {
+      service: fakeService(),
+      healthCheck: async (opts) => {
+        seen.push({
+          expectedVersion: opts.expectedVersion,
+          statusOnly: opts.statusOnly,
+          minStartedAt: opts.minStartedAt,
+        });
+        if (opts.expectedVersion === '1.1.4') throw new Error('new-unhealthy');
+      },
+    });
+    expect(seen[0]?.expectedVersion).toBe('1.1.4');
+    expect(seen[1]?.statusOnly).toBe(true);
+    expect(seen[1]?.minStartedAt).toBeUndefined();
+    expect(await readCurrentVersion(installDir)).toBe('1.0.2');
+    expect((await readJournal(installDir))?.phase).toBe('rolled_back');
+  });
+});

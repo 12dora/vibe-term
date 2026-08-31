@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, test } from 'bun:test';
 import type { ChildProcess } from 'node:child_process';
-import { spawnSync } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { EventEmitter } from 'node:events';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -19,9 +19,17 @@ import {
 
 const originalFetch = globalThis.fetch;
 const tempDirs: string[] = [];
+const liveChildren: ChildProcess[] = [];
 
 afterEach(() => {
   globalThis.fetch = originalFetch;
+  for (const child of liveChildren.splice(0)) {
+    try {
+      child.kill('SIGKILL');
+    } catch {
+      // already exited
+    }
+  }
   for (const dir of tempDirs.splice(0)) {
     rmSync(dir, { recursive: true, force: true });
   }
@@ -64,6 +72,33 @@ function packFakeCliTarball(version: string): Buffer {
   return readFileSync(tgz);
 }
 
+function matchingSumsBody(bytes: Buffer, version: string): string {
+  return `${sha256Hex(bytes)}  ${releaseTarballName(version)}\n`;
+}
+
+function stubGithubFetch(tarballBytes: Buffer, sums: { status: number; body: string }): string[] {
+  const requested: string[] = [];
+  globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
+    requested.push(url);
+    if (url.includes('SHA256SUMS')) {
+      return new Response(sums.body, { status: sums.status });
+    }
+    expect(init?.redirect === undefined || init.redirect === 'follow').toBe(true);
+    return new Response(toResponseBody(tarballBytes), { status: 200 });
+  }) as typeof fetch;
+  return requested;
+}
+
+function spawnSleepChild(): ChildProcess {
+  const child = spawn('sleep', ['60'], { stdio: 'ignore' });
+  liveChildren.push(child);
+  if (child.pid == null) {
+    throw new Error('failed to spawn sleep child');
+  }
+  return child;
+}
+
 describe('resolveUpgradeInstallDir', () => {
   test('walks up from current/ when install-meta sits at the parent', () => {
     const dir = tempDir('tmex-upg-current-');
@@ -86,17 +121,10 @@ describe('stageGithubRelease', () => {
   test('downloads GitHub tarball, extracts npm-pack layout, returns package/bin/tmex.js', async () => {
     const version = '9.9.9';
     const bytes = packFakeCliTarball(version);
-    const requested: string[] = [];
-
-    globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
-      const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
-      requested.push(url);
-      expect(init?.redirect === undefined || init.redirect === 'follow').toBe(true);
-      if (url.includes('SHA256SUMS')) {
-        return new Response('not published', { status: 404 });
-      }
-      return new Response(toResponseBody(bytes), { status: 200 });
-    }) as typeof fetch;
+    const requested = stubGithubFetch(bytes, {
+      status: 200,
+      body: matchingSumsBody(bytes, version),
+    });
 
     const stageDir = tempDir('tmex-upg-stage-');
     const binPath = await stageGithubRelease(stageDir, version);
@@ -133,12 +161,7 @@ describe('stageGithubRelease', () => {
     }
     const bytes = readFileSync(tgz);
 
-    globalThis.fetch = (async (_input: RequestInfo | URL, _init?: RequestInit) => {
-      const url =
-        typeof _input === 'string' ? _input : _input instanceof URL ? _input.href : _input.url;
-      if (url.includes('SHA256SUMS')) return new Response('nope', { status: 404 });
-      return new Response(toResponseBody(bytes), { status: 200 });
-    }) as typeof fetch;
+    stubGithubFetch(bytes, { status: 200, body: matchingSumsBody(bytes, '1.2.3') });
 
     await expect(stageGithubRelease(tempDir('tmex-upg-stage-'), '1.2.3')).rejects.toThrow(
       /downloaded tmex-cli binary not found/
@@ -160,12 +183,7 @@ describe('stageGithubRelease', () => {
       throw new Error(`tar pack failed: ${packed.stderr}`);
     }
     const bytes = readFileSync(tgz);
-    globalThis.fetch = (async (_input: RequestInfo | URL, _init?: RequestInit) => {
-      const url =
-        typeof _input === 'string' ? _input : _input instanceof URL ? _input.href : _input.url;
-      if (url.includes('SHA256SUMS')) return new Response('nope', { status: 404 });
-      return new Response(toResponseBody(bytes), { status: 200 });
-    }) as typeof fetch;
+    stubGithubFetch(bytes, { status: 200, body: matchingSumsBody(bytes, '1.2.3') });
 
     await expect(stageGithubRelease(tempDir('tmex-upg-stage-'), '1.2.3')).rejects.toThrow(
       /extracted package is missing/
@@ -322,15 +340,17 @@ describe('UpgradeController detached spawn', () => {
     expect(controller.status().state).toBe('idle');
     expect(controller.status().error).toMatch(/pid file|serviceMode/i);
     expect(spawned).toEqual([]);
+    expect(existsSync(join(dir, 'upgrade.log'))).toBe(false);
   });
 
-  test('passes --no-service when persisted mode is none and pid is live', async () => {
-    const dir = tempDir('tmex-upg-none-pid-');
+  test('refuses web upgrade when none-mode pid is live but foreign', async () => {
+    const dir = tempDir('tmex-upg-none-foreign-');
     writeFileSync(
       join(dir, 'install-meta.json'),
       `${JSON.stringify({ cliVersion: '1.1.3', serviceMode: 'none' })}\n`
     );
-    writeFileSync(join(dir, 'tmex.pid'), `${process.pid}\n`);
+    const sleeper = spawnSleepChild();
+    writeFileSync(join(dir, 'tmex.pid'), `${sleeper.pid}\n`);
     const spawned: string[][] = [];
     const child = new EventEmitter() as EventEmitter & { unref: () => void };
     child.unref = () => undefined;
@@ -344,6 +364,42 @@ describe('UpgradeController detached spawn', () => {
         bunPath: '/usr/bin/bun',
       }),
       stageRelease: async () => '/tmp/pkg/bin/tmex.js',
+      spawn: (_cmd, args) => {
+        spawned.push([...args]);
+        return child as unknown as ChildProcess;
+      },
+    });
+    expect(controller.start('1.2.3')).toBe(true);
+    await settle();
+    expect(controller.status().state).toBe('idle');
+    expect(controller.status().error).toMatch(/not the tmex runtime|does not belong|ownership/i);
+    expect(spawned).toEqual([]);
+    expect(existsSync(join(dir, 'upgrade.log'))).toBe(false);
+    expect(() => process.kill(sleeper.pid as number, 0)).not.toThrow();
+  });
+
+  test('passes --no-service when persisted mode is none and pid cmdline matches this install', async () => {
+    const dir = tempDir('tmex-upg-none-pid-');
+    writeFileSync(
+      join(dir, 'install-meta.json'),
+      `${JSON.stringify({ cliVersion: '1.1.3', serviceMode: 'none' })}\n`
+    );
+    writeFileSync(join(dir, 'tmex.pid'), `${process.pid}\n`);
+    const ownedCmd = `bun ${join(dir, 'current', 'runtime', 'server.js')}`;
+    const spawned: string[][] = [];
+    const child = new EventEmitter() as EventEmitter & { unref: () => void };
+    child.unref = () => undefined;
+    const controller = new UpgradeController({
+      getInstallInfo: () => ({
+        installedViaCli: true,
+        deployment: 'none',
+        installDir: dir,
+        serviceName: 'tmex',
+        cliVersion: '1.1.3',
+        bunPath: '/usr/bin/bun',
+      }),
+      stageRelease: async () => '/tmp/pkg/bin/tmex.js',
+      processCommandLine: () => ownedCmd,
       spawn: (_cmd, args) => {
         spawned.push([...args]);
         return child as unknown as ChildProcess;
@@ -390,15 +446,42 @@ describe('stageGithubRelease checksums', () => {
   test('aborts on SHA256 mismatch before extract', async () => {
     const version = '9.9.9';
     const bytes = packFakeCliTarball(version);
-    globalThis.fetch = (async (input: RequestInfo | URL) => {
-      const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
-      if (url.includes('SHA256SUMS')) {
-        return new Response(`${'0'.repeat(64)}  ${releaseTarballName(version)}\n`, { status: 200 });
-      }
-      return new Response(toResponseBody(bytes), { status: 200 });
-    }) as typeof fetch;
+    stubGithubFetch(bytes, {
+      status: 200,
+      body: `${'0'.repeat(64)}  ${releaseTarballName(version)}\n`,
+    });
     await expect(stageGithubRelease(tempDir('tmex-upg-sums-bad-'), version)).rejects.toThrow(
-      /SHA256 mismatch/
+      /sha256 mismatch/i
+    );
+  });
+
+  test('aborts when SHA256SUMS is HTTP 404 for versions >= 1.1.4', async () => {
+    const version = '1.1.4';
+    const bytes = packFakeCliTarball(version);
+    stubGithubFetch(bytes, { status: 404, body: 'not published' });
+    await expect(stageGithubRelease(tempDir('tmex-upg-sums-404-'), version)).rejects.toThrow(
+      /requires SHA256SUMS|Refusing to continue/i
+    );
+  });
+
+  test('aborts when SHA256SUMS is HTTP 404 for older targets (web never unverified)', async () => {
+    const version = '1.1.0';
+    const bytes = packFakeCliTarball(version);
+    stubGithubFetch(bytes, { status: 404, body: 'not published' });
+    await expect(stageGithubRelease(tempDir('tmex-upg-sums-404-old-'), version)).rejects.toThrow(
+      /SHA256SUMS is missing|integrity is unverified|SHA256SUMS is required/i
+    );
+  });
+
+  test('aborts when SHA256SUMS has no exact tarball entry', async () => {
+    const version = '1.1.4';
+    const bytes = packFakeCliTarball(version);
+    stubGithubFetch(bytes, {
+      status: 200,
+      body: `${sha256Hex(bytes)}  other-file.tgz\n`,
+    });
+    await expect(stageGithubRelease(tempDir('tmex-upg-sums-noentry-'), version)).rejects.toThrow(
+      /does not list|missing an entry/
     );
   });
 });

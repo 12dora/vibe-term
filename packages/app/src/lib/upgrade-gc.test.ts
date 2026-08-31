@@ -94,4 +94,19 @@ describe('sweepUpgradeGarbage', () => {
     expect(await pathExists(join(installDir, 'versions', '1.0.0'))).toBe(true);
     expect(await readFile(join(installDir, 'data', 'tmex.db'), 'utf8')).toBe('keep');
   });
+
+  test('cleans shim tmex.*.tmp without touching foreign shims', async () => {
+    const installDir = await mkdtemp(join(tmpdir(), 'tmex-gc-shim-'));
+    tempDirs.push(installDir);
+    const shimDir = join(installDir, 'local-bin');
+    await mkdir(shimDir, { recursive: true });
+    await writeFile(join(shimDir, 'tmex.1.tmp'), 'tmp');
+    await writeFile(join(shimDir, 'tmex'), 'foreign-or-real');
+    await writeFile(join(shimDir, 'other.tmp'), 'leave');
+    const { sweepUpgradeGarbage } = await import('./upgrade-gc');
+    await sweepUpgradeGarbage(installDir, { shimDirs: [shimDir] });
+    expect(await pathExists(join(shimDir, 'tmex.1.tmp'))).toBe(false);
+    expect(await readFile(join(shimDir, 'tmex'), 'utf8')).toBe('foreign-or-real');
+    expect(await readFile(join(shimDir, 'other.tmp'), 'utf8')).toBe('leave');
+  });
 });

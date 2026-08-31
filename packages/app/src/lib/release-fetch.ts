@@ -101,7 +101,7 @@ export async function fetchReleaseSha256Sums(
   version: string,
   fileName: string,
   fetchFn: ReleaseFetch = fetch
-): Promise<{ hex: string | null; missing: boolean }> {
+): Promise<{ hex: string | null; missing: boolean; unpublished: boolean }> {
   let response: Response;
   try {
     response = await fetchFn(releaseSha256SumsUrl(version), {
@@ -112,11 +112,11 @@ export async function fetchReleaseSha256Sums(
     const detail = error instanceof Error ? error.message : String(error);
     throw new Error(t('upgrade.checksumHttpFailed', { detail }));
   }
-  if (response.status === 404) return { hex: null, missing: true };
+  if (response.status === 404) return { hex: null, missing: true, unpublished: true };
   if (!response.ok) {
     throw new Error(t('upgrade.checksumHttpFailed', { detail: `HTTP ${response.status}` }));
   }
   const { parseSha256Sums } = await import('./upgrade-verify');
   const hex = parseSha256Sums(await response.text(), fileName || releaseTarballName(version));
-  return { hex, missing: hex === null };
+  return { hex, missing: hex === null, unpublished: false };
 }

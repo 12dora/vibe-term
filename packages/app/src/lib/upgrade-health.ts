@@ -1,9 +1,21 @@
+import { join } from 'node:path';
+import { formatHttpEndpoint } from '../../../shared/src/network';
 import { t } from '../i18n';
+import type { ServiceMode } from '../types';
+import { readEnvFile } from './env-file';
+import { pathExists } from './fs-utils';
+import type { UpgradeJournal } from './upgrade-state';
+
+export type HealthzTls = {
+  mode?: unknown;
+  listenerRunning?: unknown;
+};
 
 export type HealthzBody = {
   status?: unknown;
   version?: unknown;
   startedAt?: unknown;
+  tls?: HealthzTls;
 };
 
 export type HealthCheckOpts = {
@@ -11,6 +23,8 @@ export type HealthCheckOpts = {
   expectedVersion?: string;
   minStartedAt?: string;
   timeoutMs: number;
+  requireTlsListener?: boolean;
+  statusOnly?: boolean;
 };
 
 export type HealthCheckFn = (opts: HealthCheckOpts) => Promise<void>;
@@ -35,13 +49,39 @@ export function parseHealthTimestamp(value: unknown): number {
   return Number.NaN;
 }
 
+function tlsModeOf(body: HealthzBody): string {
+  const tls = body.tls;
+  if (!tls || typeof tls !== 'object') return '';
+  return typeof tls.mode === 'string' ? tls.mode : '';
+}
+
+function tlsListenerRunning(body: HealthzBody): boolean {
+  const tls = body.tls;
+  if (!tls || typeof tls !== 'object') return false;
+  return tls.listenerRunning === true;
+}
+
+function rejectMissingTlsListener(body: HealthzBody, requireTlsListener?: boolean): string | null {
+  if (!requireTlsListener) return null;
+  const mode = tlsModeOf(body);
+  if (mode !== 'selfsigned' && mode !== 'acme') return null;
+  if (tlsListenerRunning(body)) return null;
+  return t('upgrade.healthTlsListenerDown', { mode });
+}
+
 export function acceptHealthzBody(
   body: HealthzBody,
-  opts: { expectedVersion?: string; minStartedAt?: string }
+  opts: {
+    expectedVersion?: string;
+    minStartedAt?: string;
+    requireTlsListener?: boolean;
+    statusOnly?: boolean;
+  }
 ): string | null {
   if (body.status !== 'ok') {
     return t('upgrade.healthFailed', { status: String(body.status ?? '') });
   }
+  if (opts.statusOnly) return null;
   if (opts.expectedVersion && body.version !== opts.expectedVersion) {
     return t('upgrade.healthVersionMismatch', {
       expected: opts.expectedVersion,
@@ -58,7 +98,63 @@ export function acceptHealthzBody(
       });
     }
   }
-  return null;
+  return rejectMissingTlsListener(body, opts.requireTlsListener);
+}
+
+export async function liveHealthUrl(installDir: string): Promise<string | null> {
+  const envPath = join(installDir, 'app.env');
+  if (!(await pathExists(envPath))) return null;
+  const env = await readEnvFile(envPath).catch(() => null);
+  if (!env) return null;
+  const port = String(env.GATEWAY_PORT || '9883');
+  const host = String(env.TMEX_BIND_HOST || '127.0.0.1');
+  const bind = host === '0.0.0.0' || host === '::' ? '127.0.0.1' : host;
+  return formatHttpEndpoint(bind, port, '/healthz');
+}
+
+export function isLegacy102(version: string): boolean {
+  return version === '1.0.2';
+}
+
+export function oldServiceHealthOpts(input: {
+  fromVersion: string;
+  serviceMode?: ServiceMode;
+  restarted: boolean;
+  restartAt?: string;
+}): Pick<HealthCheckOpts, 'expectedVersion' | 'minStartedAt' | 'statusOnly'> {
+  if (isLegacy102(input.fromVersion)) {
+    return { statusOnly: true };
+  }
+  return {
+    minStartedAt: input.restarted ? input.restartAt : undefined,
+  };
+}
+
+export async function verifyOldHealthz(
+  journal: UpgradeJournal,
+  healthCheck: HealthCheckFn,
+  url: string | null,
+  options: {
+    serviceMode?: ServiceMode;
+    restarted: boolean;
+    restartAt?: string;
+    timeoutMs: number;
+  }
+): Promise<void> {
+  if (!url) {
+    throw new Error(t('upgrade.healthFailed', { status: 'missing-env' }));
+  }
+  const extra = oldServiceHealthOpts({
+    fromVersion: journal.fromVersion,
+    serviceMode: options.serviceMode,
+    restarted: options.restarted,
+    restartAt: options.restartAt,
+  });
+  await healthCheck({
+    url,
+    timeoutMs: options.timeoutMs,
+    ...extra,
+  });
 }
 
 export async function pollHealthz(opts: HealthCheckOpts): Promise<void> {
@@ -74,6 +170,8 @@ export async function pollHealthz(opts: HealthCheckOpts): Promise<void> {
         const reject = acceptHealthzBody(body, {
           expectedVersion: opts.expectedVersion,
           minStartedAt: opts.minStartedAt,
+          requireTlsListener: opts.requireTlsListener,
+          statusOnly: opts.statusOnly,
         });
         if (reject) {
           lastError = new Error(reject);

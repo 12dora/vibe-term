@@ -124,6 +124,76 @@ describe('ensureCandidateNativeAddon', () => {
     });
   });
 
+  test('reuses a matching local addon without calling enableDirect', async () => {
+    const installDir = await mkdtemp(join(tmpdir(), 'tmex-native-reuse-'));
+    tempDirs.push(installDir);
+    const fromLayout = createVersionLayout(installDir, '1.1.3');
+    const addon = Buffer.from('matching-native-addon');
+    await mkdir(fromLayout.nativeDir, { recursive: true });
+    await writeFile(nativeAddonPath(fromLayout.nativeDir), addon);
+    await writeFile(
+      nativeManifestPath(fromLayout.nativeDir),
+      JSON.stringify({
+        platform: 'darwin-arm64',
+        version: NATIVE_DATACHANNEL_VERSION,
+        sha256: sha256Hex(addon),
+        napiVersion: 8,
+      })
+    );
+    const pin: NativePin = {
+      platformId: 'darwin-arm64',
+      npmPackage: '@node-datachannel/darwin-arm64',
+      version: NATIVE_DATACHANNEL_VERSION,
+      tarballUrl: 'http://127.0.0.1:1/missing.tgz',
+      addonPath: `package/${NATIVE_ADDON_FILENAME}`,
+      integrity: 'sha512-dead',
+      napiVersion: 8,
+    };
+    await ensureCandidateNativeAddon({
+      installDir,
+      fromVersion: '1.1.3',
+      toVersion: '1.1.4',
+      pin,
+      enableDirect: async () => {
+        throw new Error('enableDirect should not be called');
+      },
+    });
+    const dest = nativeAddonPath(createVersionLayout(installDir, '1.1.4').nativeDir);
+    expect(await pathExists(dest)).toBe(true);
+    expect(sha256Hex(await readFile(dest))).toBe(sha256Hex(addon));
+  });
+
+  test('reinstalls when hash, platform, version or NAPI mismatch', async () => {
+    const installDir = await mkdtemp(join(tmpdir(), 'tmex-native-mismatch-'));
+    tempDirs.push(installDir);
+    const fromLayout = createVersionLayout(installDir, '1.1.3');
+    await mkdir(fromLayout.nativeDir, { recursive: true });
+    await writeFile(nativeAddonPath(fromLayout.nativeDir), 'old-addon');
+    await writeFile(
+      nativeManifestPath(fromLayout.nativeDir),
+      JSON.stringify({
+        platform: 'darwin-arm64',
+        version: '0.0.1',
+        sha256: sha256Hex('old-addon'),
+        napiVersion: 8,
+      })
+    );
+    let called = false;
+    await expect(
+      ensureCandidateNativeAddon({
+        installDir,
+        fromVersion: '1.1.3',
+        toVersion: '1.1.4',
+        pin: fakePin('http://127.0.0.1:1/missing.tgz', 'sha512-x'),
+        enableDirect: async () => {
+          called = true;
+          return { ok: false, reason: 'download failed' };
+        },
+      })
+    ).rejects.toThrow(/download failed/);
+    expect(called).toBe(true);
+  });
+
   test('is a no-op when the current version has no native manifest', async () => {
     const installDir = await mkdtemp(join(tmpdir(), 'tmex-native-skip-'));
     tempDirs.push(installDir);

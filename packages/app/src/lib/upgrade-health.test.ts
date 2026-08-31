@@ -36,6 +36,46 @@ describe('acceptHealthzBody', () => {
     expect(reject).toMatch(/1\.1\.4/);
   });
 
+  test('1.0.2 status-only body is accepted', () => {
+    expect(acceptHealthzBody({ status: 'ok' }, { statusOnly: true })).toBeNull();
+  });
+
+  test('1.1.3 numeric epoch startedAt still works with minStartedAt', () => {
+    expect(
+      acceptHealthzBody(
+        { status: 'ok', startedAt: 1_788_190_485_291 },
+        { minStartedAt: '2026-08-31T15:34:45.067Z' }
+      )
+    ).toBeNull();
+  });
+
+  test('requireTlsListener only blocks selfsigned/acme when listener is down', () => {
+    expect(
+      acceptHealthzBody(
+        { status: 'ok', version: '1.1.4', tls: { mode: 'none', listenerRunning: false } },
+        { expectedVersion: '1.1.4', requireTlsListener: true }
+      )
+    ).toBeNull();
+    expect(
+      acceptHealthzBody(
+        { status: 'ok', version: '1.1.4', tls: { mode: 'external', listenerRunning: false } },
+        { expectedVersion: '1.1.4', requireTlsListener: true }
+      )
+    ).toBeNull();
+    expect(
+      acceptHealthzBody(
+        { status: 'ok', version: '1.1.4', tls: { mode: 'selfsigned', listenerRunning: false } },
+        { expectedVersion: '1.1.4', requireTlsListener: true }
+      )
+    ).toMatch(/TLS|listener/i);
+    expect(
+      acceptHealthzBody(
+        { status: 'ok', version: '1.1.4', tls: { mode: 'acme', listenerRunning: true } },
+        { expectedVersion: '1.1.4', requireTlsListener: true }
+      )
+    ).toBeNull();
+  });
+
   test('rejects status other than ok', () => {
     expect(acceptHealthzBody({ status: 'degraded', startedAt: LEGACY_113.startedAt }, {})).toMatch(
       /degraded/
@@ -68,6 +108,25 @@ describe('acceptHealthzBody', () => {
 });
 
 describe('pollHealthz', () => {
+  test('accepts a live 1.0.2 body that only has status ok', async () => {
+    const server = Bun.serve({
+      hostname: '127.0.0.1',
+      port: 0,
+      fetch() {
+        return Response.json({ status: 'ok' });
+      },
+    });
+    try {
+      await pollHealthz({
+        url: `http://127.0.0.1:${server.port}/healthz`,
+        statusOnly: true,
+        timeoutMs: 5_000,
+      });
+    } finally {
+      server.stop(true);
+    }
+  });
+
   test('accepts a live 1.1.3-shaped /healthz without version', async () => {
     const startedAt = Date.now();
     const server = Bun.serve({

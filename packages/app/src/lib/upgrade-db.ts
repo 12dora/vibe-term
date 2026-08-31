@@ -5,6 +5,8 @@ import { ensureDir, fsyncDirBestEffort, fsyncPath, pathExists } from './fs-utils
 
 export const DB_SUFFIXES = ['', '-wal', '-shm'] as const;
 
+export type SpawnSyncFn = typeof spawnSync;
+
 export async function copyDbTrio(srcDb: string, destDir: string): Promise<string[]> {
   await ensureDir(destDir);
   const copied: string[] = [];
@@ -37,11 +39,12 @@ export async function restoreDbTrio(backupDir: string, destDb: string): Promise<
   fsyncDirBestEffort(dirname(destDb));
 }
 
-function vacuumIntoScript(): string {
+export function vacuumIntoScript(): string {
   return [
     'import { Database } from "bun:sqlite";',
-    'const src = process.argv[2];',
-    'const dest = process.argv[3];',
+    'const src = process.argv[1];',
+    'const dest = process.argv[2];',
+    'if (!src || !dest) throw new Error("VACUUM INTO requires src and dest");',
     'const db = new Database(src);',
     'try { db.run("PRAGMA wal_checkpoint(TRUNCATE)"); } catch {}',
     'const escaped = dest.replaceAll("\'", "\'\'");',
@@ -53,11 +56,12 @@ function vacuumIntoScript(): string {
 export async function copyPreflightDb(
   srcDb: string,
   destDir: string,
-  bunPath: string
+  bunPath: string,
+  spawn: SpawnSyncFn = spawnSync
 ): Promise<void> {
   await ensureDir(destDir);
   const dest = join(destDir, basename(srcDb));
-  const result = spawnSync(bunPath, ['-e', vacuumIntoScript(), srcDb, dest], {
+  const result = spawn(bunPath, ['-e', vacuumIntoScript(), srcDb, dest], {
     encoding: 'utf8',
     timeout: 30_000,
   });

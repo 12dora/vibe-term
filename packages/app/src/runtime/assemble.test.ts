@@ -1438,3 +1438,46 @@ describe('assembleTmex Access guard at outermost fetch', () => {
     expect(await res?.text()).toBe('uplink-ok');
   });
 });
+
+describe('assembleTmex preflight', () => {
+  test('skips mesh/TLS/frontend and only serves /healthz', async () => {
+    let meshCalls = 0;
+    let frontendCalls = 0;
+    let restored = 0;
+    const assembled = await assembleTmex({
+      runtimeMode: 'preflight',
+      roles: { hub: false, node: true },
+      createGatewayRuntime: async () =>
+        fakeGateway({
+          restoreRemoteAgentSessions() {
+            restored += 1;
+          },
+        }),
+      createMeshRuntime: async () => {
+        meshCalls += 1;
+        throw new Error('mesh must not start in preflight');
+      },
+      serveFrontend: async () => {
+        frontendCalls += 1;
+        return new Response('fe');
+      },
+    });
+    await assembled.start();
+    expect(meshCalls).toBe(0);
+    expect(restored).toBe(0);
+    const health = await assembled.fetch(new Request('http://127.0.0.1/healthz'), dummyServer);
+    expect(health?.status).toBe(200);
+    const body = (await health?.json()) as { status: string; version: string; startedAt: number };
+    expect(body.status).toBe('ok');
+    expect(typeof body.version).toBe('string');
+    expect(typeof body.startedAt).toBe('number');
+    const other = await assembled.fetch(
+      new Request('http://127.0.0.1/api/system/info'),
+      dummyServer
+    );
+    expect(other?.status).toBe(404);
+    expect(frontendCalls).toBe(0);
+    await assembled.tls.startup();
+    await assembled.stop();
+  });
+});

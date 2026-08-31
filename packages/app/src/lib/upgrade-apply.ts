@@ -1,16 +1,16 @@
 import { spawn } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
-import { readFileSync } from 'node:fs';
 import { readFile, rename, rm } from 'node:fs/promises';
 import { createServer } from 'node:net';
 import { basename, join } from 'node:path';
 import { formatHttpEndpoint } from '../../../shared/src/network';
 import type { DirectEnableResult, EnableDirectOptions } from '../commands/direct';
 import { t } from '../i18n';
+import { RUNTIME_MODE_ENV } from '../runtime/mode';
 import type { InstallMeta, ServiceMode } from '../types';
-import { deployCliPackage } from './cli-shim';
+import { defaultBunBinDir, defaultLocalBinDir, deployCliPackage } from './cli-shim';
 import { readEnvFile } from './env-file';
-import { ensureDir, pathExists, writeTextAtomic } from './fs-utils';
+import { ensureDir, pathExists } from './fs-utils';
 import { deployRuntimeFiles, writeInstallMeta, writeRunScript } from './install';
 import {
   type PackageLayout,
@@ -23,17 +23,26 @@ import { getServiceStatus, installService, stopService } from './service';
 import { copyDbTrio, copyPreflightDb, restoreDbTrio } from './upgrade-db';
 import {
   finishCommittedCleanup,
-  removeLegacyTopLevelDirs,
   removeTxnDirs,
   safeRemoveDir,
   sweepUpgradeGarbage,
 } from './upgrade-gc';
 import type { HealthCheckFn } from './upgrade-health';
-import { pollHealthz } from './upgrade-health';
+import { liveHealthUrl, pollHealthz, verifyOldHealthz } from './upgrade-health';
 import { convertLegacyLayout } from './upgrade-legacy';
 import { acquireUpgradeLock, isPidAlive, releaseUpgradeLock } from './upgrade-lock';
 import { ensureCandidateNativeAddon } from './upgrade-native';
-import { commandLineContains, killPidAndWait, waitForPidExit, waitUntil } from './upgrade-process';
+import {
+  type UpgradeServiceControl,
+  commandLineContains,
+  createDirectProcessControl,
+  hasLivePidFile,
+  hasOwnedLivePidFile,
+  killPidAndWait,
+  pidFilePath,
+  waitForPidExit,
+  waitUntil,
+} from './upgrade-process';
 import {
   type UpgradeJournal,
   advanceJournal,
@@ -44,14 +53,11 @@ import {
 } from './upgrade-state';
 import { readCurrentVersion, switchCurrent, versionDirPath } from './upgrade-switch';
 
+export type { UpgradeServiceControl };
+export { createDirectProcessControl, hasLivePidFile, hasOwnedLivePidFile, pidFilePath };
+
 const HEALTH_TIMEOUT_MS = 60_000;
 const STOP_TIMEOUT_MS = 20_000;
-
-export type UpgradeServiceControl = {
-  stop: () => Promise<void>;
-  start: () => Promise<void>;
-  isRunning: () => Promise<boolean>;
-};
 
 export type CandidateHandle = { stop: () => Promise<void>; logTail?: () => string; pid?: number };
 
@@ -70,6 +76,8 @@ export type UpgradeApplyDeps = {
   reenableDirect?: (installDir: string) => Promise<void>;
   enableDirect?: (options: EnableDirectOptions) => Promise<DirectEnableResult>;
   now?: () => Date;
+  activeTxnId?: string | null;
+  shimDirs?: string[];
 };
 
 export type ApplyUpgradeOptions = {
@@ -93,25 +101,6 @@ export function createTxnId(): string {
 export function resolveServiceMode(meta: InstallMeta, noServiceFlag?: boolean): ServiceMode {
   if (meta.serviceMode === 'none' || meta.serviceMode === 'managed') return meta.serviceMode;
   return noServiceFlag ? 'none' : 'managed';
-}
-
-export function pidFilePath(installDir: string): string {
-  return join(installDir, 'tmex.pid');
-}
-
-function readPidFile(pidPath: string): number | null {
-  try {
-    const raw = readFileSync(pidPath, 'utf8').trim();
-    const pid = Number(raw);
-    return Number.isInteger(pid) && pid > 0 ? pid : null;
-  } catch {
-    return null;
-  }
-}
-
-export function hasLivePidFile(installDir: string): boolean {
-  const pid = readPidFile(pidFilePath(installDir));
-  return pid !== null && isPidAlive(pid);
 }
 
 export function createManagedServiceControl(opts: {
@@ -146,40 +135,6 @@ export function createManagedServiceControl(opts: {
   };
 }
 
-export function createDirectProcessControl(opts: {
-  runScriptPath: string;
-  pidPath: string;
-  env?: NodeJS.ProcessEnv;
-}): UpgradeServiceControl {
-  return {
-    async stop() {
-      const pid = readPidFile(opts.pidPath);
-      if (pid && isPidAlive(pid)) {
-        await killPidAndWait(pid, STOP_TIMEOUT_MS);
-      }
-      if (pid && isPidAlive(pid)) {
-        throw new Error(t('upgrade.serviceDidNotStop', { timeout: STOP_TIMEOUT_MS }));
-      }
-      await rm(opts.pidPath, { force: true }).catch(() => null);
-    },
-    async start() {
-      const child = spawn('bash', [opts.runScriptPath], {
-        detached: true,
-        stdio: 'ignore',
-        env: opts.env ?? process.env,
-      });
-      child.unref();
-      if (child.pid) {
-        await writeTextAtomic(opts.pidPath, `${child.pid}\n`);
-      }
-    },
-    async isRunning() {
-      const pid = readPidFile(opts.pidPath);
-      return pid !== null && isPidAlive(pid);
-    },
-  };
-}
-
 export function createServiceControl(opts: {
   installDir: string;
   meta: InstallMeta;
@@ -191,6 +146,7 @@ export function createServiceControl(opts: {
     return createDirectProcessControl({
       runScriptPath: layout.runScriptPath,
       pidPath: pidFilePath(opts.installDir),
+      installDir: opts.installDir,
     });
   }
   return createManagedServiceControl({
@@ -278,22 +234,32 @@ async function promoteStagingToVersion(
   await deployPackageToVersionDir(packageLayout, installDir, toVersion);
 }
 
-async function liveHealthUrl(installDir: string): Promise<string | null> {
-  const envPath = join(installDir, 'app.env');
-  if (!(await pathExists(envPath))) return null;
-  const env = await readEnvFile(envPath).catch(() => null);
-  if (!env) return null;
-  const port = String(env.GATEWAY_PORT || '9883');
-  const host = String(env.TMEX_BIND_HOST || '127.0.0.1');
-  const bind = host === '0.0.0.0' || host === '::' ? '127.0.0.1' : host;
-  return formatHttpEndpoint(bind, port, '/healthz');
+function repairShimDirs(deps: UpgradeApplyDeps): string[] {
+  return deps.shimDirs ?? [defaultLocalBinDir(), defaultBunBinDir()];
+}
+
+async function sweepRepairGarbage(installDir: string, deps: UpgradeApplyDeps): Promise<void> {
+  await sweepUpgradeGarbage(installDir, {
+    keepTxnId: deps.activeTxnId,
+    shimDirs: repairShimDirs(deps),
+  });
 }
 
 async function cleanupTxn(
   installDir: string,
   journal: UpgradeJournal,
-  keepBackup: boolean
+  keepBackup: boolean,
+  activeTxnId?: string | null
 ): Promise<void> {
+  const keepStaging = Boolean(activeTxnId && journal.txnId === activeTxnId);
+  if (keepStaging) {
+    if (!(keepBackup || journal.keepBackup)) {
+      await rm(join(installDir, 'backups', journal.txnId), { recursive: true, force: true }).catch(
+        () => null
+      );
+    }
+    return;
+  }
   if (keepBackup || journal.keepBackup) {
     await rm(join(installDir, 'staging', journal.txnId), { recursive: true, force: true }).catch(
       () => null
@@ -359,7 +325,8 @@ async function rollbackToOld(
   service: UpgradeServiceControl,
   healthCheck: HealthCheckFn,
   error: string,
-  log: (message: string) => void
+  log: (message: string) => void,
+  serviceMode?: ServiceMode
 ): Promise<void> {
   await service.stop();
   await assertStopped(service);
@@ -385,9 +352,12 @@ async function rollbackToOld(
   const restartAt = new Date().toISOString();
   await service.start();
   const url = await liveHealthUrl(installDir);
-  if (url) {
-    await healthCheck({ url, minStartedAt: restartAt, timeoutMs: HEALTH_TIMEOUT_MS });
-  }
+  await verifyOldHealthz(journal, healthCheck, url, {
+    serviceMode,
+    restarted: true,
+    restartAt,
+    timeoutMs: HEALTH_TIMEOUT_MS,
+  });
   await removeCandidateVersion(installDir, journal.toVersion);
   await writeJournal(installDir, {
     ...journal,
@@ -414,10 +384,17 @@ async function verifyOldServiceRunning(
   installDir: string,
   journal: UpgradeJournal,
   service: UpgradeServiceControl,
-  healthCheck: HealthCheckFn
+  healthCheck: HealthCheckFn,
+  serviceMode?: ServiceMode
 ): Promise<void> {
-  const restartAt = new Date().toISOString();
-  await service.start();
+  const alreadyRunning = await service.isRunning();
+  let restarted = false;
+  let restartAt: string | undefined;
+  if (!alreadyRunning) {
+    restartAt = new Date().toISOString();
+    await service.start();
+    restarted = true;
+  }
   if (!(await service.isRunning())) {
     throw new Error(
       t('upgrade.repairStartFailed', {
@@ -427,9 +404,12 @@ async function verifyOldServiceRunning(
     );
   }
   const url = await liveHealthUrl(installDir);
-  if (url) {
-    await healthCheck({ url, minStartedAt: restartAt, timeoutMs: HEALTH_TIMEOUT_MS });
-  }
+  await verifyOldHealthz(journal, healthCheck, url, {
+    serviceMode,
+    restarted,
+    restartAt,
+    timeoutMs: HEALTH_TIMEOUT_MS,
+  });
 }
 
 async function markAborted(installDir: string, journal: UpgradeJournal): Promise<void> {
@@ -440,19 +420,24 @@ async function markAborted(installDir: string, journal: UpgradeJournal): Promise
   });
 }
 
-async function repairMissingJournal(installDir: string, bunPath: string): Promise<void> {
+async function repairMissingJournal(
+  installDir: string,
+  bunPath: string,
+  deps: UpgradeApplyDeps
+): Promise<void> {
   await convertLegacyLayout(installDir, { bunPath }).catch(() => false);
-  await sweepUpgradeGarbage(installDir);
-  if (await readCurrentVersion(installDir)) {
-    await removeLegacyTopLevelDirs(installDir);
-  }
+  await sweepRepairGarbage(installDir, deps);
 }
 
-async function repairAbortCandidate(installDir: string, journal: UpgradeJournal): Promise<void> {
+async function repairAbortCandidate(
+  installDir: string,
+  journal: UpgradeJournal,
+  deps: UpgradeApplyDeps
+): Promise<void> {
   await killRecordedCandidate(installDir, journal);
   await removeCandidateVersion(installDir, journal.toVersion);
-  await cleanupTxn(installDir, journal, false);
-  await sweepUpgradeGarbage(installDir);
+  await cleanupTxn(installDir, journal, false, deps.activeTxnId);
+  await sweepRepairGarbage(installDir, deps);
   await markAborted(installDir, journal);
 }
 
@@ -460,16 +445,18 @@ async function repairRestartOld(
   installDir: string,
   journal: UpgradeJournal,
   service: UpgradeServiceControl,
-  healthCheck: HealthCheckFn
+  healthCheck: HealthCheckFn,
+  deps: UpgradeApplyDeps,
+  serviceMode?: ServiceMode
 ): Promise<void> {
   const current = await readCurrentVersion(installDir);
   if (current && current !== journal.fromVersion && journal.fromVersion) {
     await switchCurrent(installDir, journal.fromVersion);
   }
-  await verifyOldServiceRunning(installDir, journal, service, healthCheck);
+  await verifyOldServiceRunning(installDir, journal, service, healthCheck, serviceMode);
   await removeCandidateVersion(installDir, journal.toVersion);
-  await cleanupTxn(installDir, journal, false);
-  await sweepUpgradeGarbage(installDir);
+  await cleanupTxn(installDir, journal, false, deps.activeTxnId);
+  await sweepRepairGarbage(installDir, deps);
   await markAborted(installDir, journal);
 }
 
@@ -490,6 +477,7 @@ async function repairVerifyOrRollback(
       url,
       expectedVersion: journal.toVersion,
       timeoutMs: HEALTH_TIMEOUT_MS,
+      requireTlsListener: true,
     });
     await commitSuccess(
       installDir,
@@ -501,19 +489,32 @@ async function repairVerifyOrRollback(
     );
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    await rollbackToOld(installDir, journal, bunPath, service, healthCheck, message, log);
+    await rollbackToOld(
+      installDir,
+      journal,
+      bunPath,
+      service,
+      healthCheck,
+      message,
+      log,
+      serviceMode
+    );
   }
 }
 
-async function repairTerminalCleanup(installDir: string, journal: UpgradeJournal): Promise<void> {
-  await cleanupTxn(installDir, journal, Boolean(journal.keepBackup));
+async function repairTerminalCleanup(
+  installDir: string,
+  journal: UpgradeJournal,
+  deps: UpgradeApplyDeps
+): Promise<void> {
+  await cleanupTxn(installDir, journal, Boolean(journal.keepBackup), deps.activeTxnId);
   if (journal.phase === 'committed') {
     await finishCommittedCleanup(installDir, {
       current: journal.toVersion,
       previous: journal.fromVersion !== journal.toVersion ? journal.fromVersion : null,
     });
   }
-  await sweepUpgradeGarbage(installDir);
+  await sweepRepairGarbage(installDir, deps);
 }
 
 function resolveRepairService(
@@ -548,15 +549,15 @@ export async function repairUpgrade(
   const service = resolveRepairService(installDir, deps, meta, layout);
 
   if (!journal) {
-    await repairMissingJournal(installDir, bunPath);
+    await repairMissingJournal(installDir, bunPath, deps);
     return action;
   }
   if (action === 'abort_candidate') {
-    await repairAbortCandidate(installDir, journal);
+    await repairAbortCandidate(installDir, journal, deps);
     return action;
   }
   if (action === 'restart_old') {
-    await repairRestartOld(installDir, journal, service, healthCheck);
+    await repairRestartOld(installDir, journal, service, healthCheck, deps, meta?.serviceMode);
     return action;
   }
   if (action === 'verify_or_rollback') {
@@ -571,7 +572,7 @@ export async function repairUpgrade(
     );
     return action;
   }
-  await repairTerminalCleanup(installDir, journal);
+  await repairTerminalCleanup(installDir, journal, deps);
   return action;
 }
 
@@ -607,6 +608,7 @@ async function runPreflight(
     TMEX_BASE_URL: formatHttpEndpoint('127.0.0.1', port),
     DATABASE_URL: preflightDb,
     TMEX_ROLES: 'standalone',
+    [RUNTIME_MODE_ENV]: 'preflight',
     TMEX_HUB_URL: '',
     TMEX_PEER_PORT: String(await allocateEphemeralPort()),
     TMEX_FE_DIST_DIR: join(versionDir, 'resources', 'fe-dist'),
@@ -669,11 +671,8 @@ async function backupAndSwitch(
   journal: UpgradeJournal,
   toVersion: string,
   bunPath: string,
-  service: UpgradeServiceControl,
   skipShims?: boolean
 ): Promise<UpgradeJournal> {
-  await service.stop();
-  await assertStopped(service);
   const layout = createInstallLayout(installDir);
   const env = await readEnvFile(layout.envPath).catch(() => null);
   let next = journal;
@@ -710,7 +709,12 @@ async function startNewAndCommit(
   await service.start();
   const url = await liveHealthUrl(installDir);
   if (!url) throw new Error(t('upgrade.healthFailed', { status: 'missing-env' }));
-  await healthCheck({ url, expectedVersion: toVersion, timeoutMs: HEALTH_TIMEOUT_MS });
+  await healthCheck({
+    url,
+    expectedVersion: toVersion,
+    timeoutMs: HEALTH_TIMEOUT_MS,
+    requireTlsListener: true,
+  });
   await commitSuccess(installDir, next, bunPath, keepBackup, log, serviceMode);
 }
 
@@ -780,6 +784,11 @@ async function executeUpgradeTxn(
       throw new Error(t('upgrade.preflightFailed', { version: ctx.toVersion, error: message }));
     }
 
+    journal = await advanceJournal(ctx.installDir, journal, 'stopping', {
+      keepBackup: ctx.keepBackup,
+    });
+    await ctx.service.stop();
+    await assertStopped(ctx.service);
     journal = await advanceJournal(ctx.installDir, journal, 'backup', {
       keepBackup: ctx.keepBackup,
     });
@@ -788,7 +797,6 @@ async function executeUpgradeTxn(
       journal,
       ctx.toVersion,
       ctx.bunPath,
-      ctx.service,
       options.skipShims
     );
     await startNewAndCommit(
@@ -813,7 +821,8 @@ async function executeUpgradeTxn(
         ctx.service,
         ctx.healthCheck,
         message,
-        ctx.log
+        ctx.log,
+        ctx.serviceMode
       );
     }
     throw error;

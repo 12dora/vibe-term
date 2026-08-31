@@ -1,11 +1,15 @@
 import { afterEach, describe, expect, test } from 'bun:test';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { releaseTarballUrl } from '../../../shared/src/release/source';
+import { releaseTarballName, releaseTarballUrl } from '../../../shared/src/release/source';
+import { sha256Hex } from '../lib/artifacts-manifest';
+import { pathExists } from '../lib/fs-utils';
 import { packNpmTarball } from '../lib/native-tarball';
 import { runCommand } from '../lib/process';
 import { releaseSha256SumsUrl } from '../lib/release-fetch';
+import { readJournal } from '../lib/upgrade-state';
+import { readCurrentVersion } from '../lib/upgrade-switch';
 import { delegateUpgrade, reenableDirectAfterUpgrade } from './upgrade';
 
 const tempDirs: string[] = [];
@@ -79,7 +83,12 @@ describe('delegateUpgrade', () => {
       {
         command: 'upgrade',
         positionals: [],
-        flags: { lang: 'en', 'bun-path': '/custom/bun', 'install-dir': installDir },
+        flags: {
+          lang: 'en',
+          'bun-path': '/custom/bun',
+          'install-dir': installDir,
+          'allow-unverified': true,
+        },
       },
       '1.1.0',
       {
@@ -128,7 +137,11 @@ describe('delegateUpgrade', () => {
     try {
       await expect(
         delegateUpgrade(
-          { command: 'upgrade', positionals: [], flags: { 'install-dir': installDir } },
+          {
+            command: 'upgrade',
+            positionals: [],
+            flags: { 'install-dir': installDir, 'allow-unverified': true },
+          },
           '1.1.0',
           {
             fetch: fakeFetch(tarball),
@@ -166,4 +179,191 @@ describe('delegateUpgrade', () => {
     ).rejects.toThrow(/9\.9\.9/);
     expect(spawned).toEqual([]);
   });
+
+  test('1.1.0 without --allow-unverified fails on SHA256SUMS 404', async () => {
+    const installDir = await mkdtemp(join(tmpdir(), 'tmex-upg-noflag-'));
+    tempDirs.push(installDir);
+    const tarball = packNpmTarball({
+      'package/bin/tmex.js': 'export {}\n',
+    });
+    const spawned: string[] = [];
+    await expect(
+      delegateUpgrade(
+        { command: 'upgrade', positionals: [], flags: { 'install-dir': installDir } },
+        '1.1.0',
+        {
+          fetch: fakeFetch(tarball),
+          runCommand: async (command) => {
+            spawned.push(command);
+            return { code: 0, stdout: '', stderr: '' };
+          },
+        }
+      )
+    ).rejects.toThrow(/allow-unverified|SHA256SUMS/);
+    expect(spawned).toEqual([]);
+  });
+
+  test('1.1.4 SHA256SUMS 404 fails even with --allow-unverified', async () => {
+    const installDir = await mkdtemp(join(tmpdir(), 'tmex-upg-114-'));
+    tempDirs.push(installDir);
+    const tarball = packNpmTarball({
+      'package/bin/tmex.js': 'export {}\n',
+    });
+    await expect(
+      delegateUpgrade(
+        {
+          command: 'upgrade',
+          positionals: [],
+          flags: { 'install-dir': installDir, 'allow-unverified': true },
+        },
+        '1.1.4',
+        {
+          fetch: async (url) => {
+            const href = String(url);
+            if (href.includes('SHA256SUMS')) return new Response('missing', { status: 404 });
+            if (href.includes('tmex-cli-')) return new Response(tarball, { status: 200 });
+            return new Response('nope', { status: 404 });
+          },
+          runCommand: async () => ({ code: 0, stdout: '', stderr: '' }),
+        }
+      )
+    ).rejects.toThrow(/1\.1\.4/);
+  });
+});
+
+describe('upgrade flag unification', () => {
+  test('passthrough argv from download is accepted by both flag tables', async () => {
+    const { parseArgs, assertKnownFlags } = await import('../lib/args');
+    const { assertKnownUpgradeFlags, passthroughUpgradeFlags } = await import('./upgrade');
+    const parsed = parseArgs([
+      'upgrade',
+      '--apply-current-package',
+      '--no-service',
+      '--txn',
+      'deadbeef',
+      '--version',
+      '1.1.4',
+      '--install-dir',
+      '/tmp/tmex',
+      '--allow-missing-native',
+      '--keep-backup',
+    ]);
+    expect(() => assertKnownFlags(parsed)).not.toThrow();
+    expect(() => assertKnownUpgradeFlags(parsed)).not.toThrow();
+    const argv = passthroughUpgradeFlags(parsed, { txn: 'deadbeef', version: '1.1.4' });
+    expect(argv).toContain('--no-service');
+    expect(argv).toContain('--txn');
+    expect(argv).not.toContain('--allow-unverified');
+    const applyParsed = parseArgs(['upgrade', '--apply-current-package', ...argv]);
+    expect(() => assertKnownFlags(applyParsed)).not.toThrow();
+    expect(() => assertKnownUpgradeFlags(applyParsed)).not.toThrow();
+  });
+
+  test('download extract then extracted CLI repair+apply commits and later cleans staging', async () => {
+    const installDir = await mkdtemp(join(tmpdir(), 'tmex-upg-e2e-'));
+    tempDirs.push(installDir);
+    await mkdir(join(installDir, 'versions', '1.0.0', 'runtime'), { recursive: true });
+    await mkdir(join(installDir, 'data'), { recursive: true });
+    await writeFile(join(installDir, 'versions', '1.0.0', 'runtime', 'server.js'), 'export {}\n');
+    const { switchCurrent } = await import('../lib/upgrade-switch');
+    await switchCurrent(installDir, '1.0.0');
+    await writeFile(
+      join(installDir, 'install-meta.json'),
+      `${JSON.stringify(
+        {
+          serviceName: 'tmex',
+          platform: process.platform,
+          autostart: false,
+          installDir,
+          updatedAt: '2026-01-01T00:00:00.000Z',
+          cliVersion: '1.0.0',
+          bunPath: process.execPath,
+          serviceMode: 'none',
+        },
+        null,
+        2
+      )}\n`
+    );
+    await writeFile(
+      join(installDir, 'app.env'),
+      [
+        'NODE_ENV=production',
+        'TMEX_BIND_HOST=127.0.0.1',
+        'GATEWAY_PORT=19883',
+        `DATABASE_URL=${join(installDir, 'data', 'tmex.db')}`,
+        'TMEX_MASTER_KEY=test',
+        'TMEX_ROLES=standalone',
+        '',
+      ].join('\n')
+    );
+    await writeFile(join(installDir, 'data', 'tmex.db'), 'db-bytes');
+
+    const appRoot = join(import.meta.dir, '../..');
+    const wrapper = `#!/usr/bin/env bun
+import { parseArgs } from ${JSON.stringify(`${appRoot}/src/lib/args.ts`)};
+import { assertKnownUpgradeFlags } from ${JSON.stringify(`${appRoot}/src/commands/upgrade.ts`)};
+import { asString } from ${JSON.stringify(`${appRoot}/src/lib/validate.ts`)};
+import { packageLayoutFromRoot } from ${JSON.stringify(`${appRoot}/src/lib/install-layout.ts`)};
+import { applyUpgrade, repairUpgrade } from ${JSON.stringify(`${appRoot}/src/lib/upgrade-apply.ts`)};
+
+const parsed = parseArgs(process.argv.slice(2));
+assertKnownUpgradeFlags(parsed);
+const installDir = asString(parsed.flags['install-dir']);
+const txn = asString(parsed.flags.txn);
+const toVersion = asString(parsed.flags.version) || '2.0.0';
+if (!installDir || !txn) throw new Error('missing install-dir or txn');
+const service = {
+  running: true,
+  async stop() { this.running = false; },
+  async start() { this.running = true; },
+  async isRunning() { return this.running; },
+};
+await repairUpgrade(installDir, process.execPath, { service, activeTxnId: txn, healthCheck: async () => undefined });
+const layout = await packageLayoutFromRoot(import.meta.dir + '/..');
+await applyUpgrade(
+  { installDir, toVersion, packageLayout: layout, bunPath: process.execPath, noService: true, skipShims: true, txnId: txn },
+  { service, runCandidate: async () => ({ stop: async () => undefined }), healthCheck: async () => undefined }
+);
+`;
+    const tarball = packNpmTarball({
+      'package/package.json':
+        '{"name":"tmex-cli","version":"2.0.0","bin":{"tmex":"./bin/tmex.js"}}\n',
+      'package/bin/tmex.js': wrapper,
+      'package/dist/cli-node.js': 'export {}\n',
+      'package/dist/runtime/server.js': 'export {}\n',
+      'package/resources/fe-dist/index.html': '<html></html>\n',
+      'package/resources/gateway-drizzle/0000.sql': '--\n',
+    });
+    const hex = sha256Hex(tarball);
+    await delegateUpgrade(
+      {
+        command: 'upgrade',
+        positionals: [],
+        flags: { 'install-dir': installDir, 'no-service': true, version: '2.0.0' },
+      },
+      '2.0.0',
+      {
+        fetch: async (url) => {
+          const href = String(url);
+          if (href === releaseTarballUrl('2.0.0') || href.includes(releaseTarballName('2.0.0'))) {
+            return new Response(tarball, { status: 200 });
+          }
+          if (href.includes('SHA256SUMS')) {
+            return new Response(`${hex}  ${releaseTarballName('2.0.0')}\n`, { status: 200 });
+          }
+          return new Response('nope', { status: 404 });
+        },
+        runCommand: async (command, args, options) => {
+          if (command === 'tar') return runCommand(command, args, options);
+          return runCommand(process.execPath, args, options);
+        },
+        execPath: process.execPath,
+        log: () => undefined,
+      }
+    );
+    expect(await readCurrentVersion(installDir)).toBe('2.0.0');
+    expect((await readJournal(installDir))?.phase).toBe('committed');
+    const journal = await readJournal(installDir);
+    expect(await pathExists(join(installDir, 'staging', journal?.txnId ?? 'missing'))).toBe(false);
+  }, 30_000);
 });

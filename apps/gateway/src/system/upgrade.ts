@@ -1,11 +1,14 @@
-import { type ChildProcess, spawn } from 'node:child_process';
+import { type ChildProcess, execFileSync, spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { closeSync, existsSync, openSync, readFileSync } from 'node:fs';
+import { closeSync, existsSync, openSync, readFileSync, realpathSync } from 'node:fs';
 import { mkdir, rm, writeFile } from 'node:fs/promises';
 import { basename, dirname, join } from 'node:path';
 import type { UpgradeState, UpgradeStatus } from '@tmex/shared';
 import { releaseTarballName, releaseTarballUrl } from '@tmex/shared';
 import { type InstallInfo, getInstallInfo } from './install-info';
+import { compareVersions } from './semver';
+
+const CHECKSUMS_REQUIRED_SINCE = '1.1.4';
 
 const TARBALL_FETCH_TIMEOUT_MS = 120_000;
 
@@ -32,10 +35,13 @@ export type UpgradeSpawnFn = (
   options: Parameters<typeof spawn>[2]
 ) => ChildProcess;
 
+export type ProcessCommandLineFn = (pid: number) => string | null;
+
 export type UpgradeControllerDeps = {
   spawn?: UpgradeSpawnFn;
   getInstallInfo?: () => InstallInfo;
   stageRelease?: (stageDir: string, version: string) => Promise<string>;
+  processCommandLine?: ProcessCommandLineFn;
 };
 
 /**
@@ -142,9 +148,7 @@ export class UpgradeController {
     const pidPath = join(installDir, 'tmex.pid');
     let pid: number | null = null;
     try {
-      const raw = readFileSync(pidPath, 'utf8').trim();
-      const parsed = Number(raw);
-      pid = Number.isInteger(parsed) && parsed > 0 ? parsed : null;
+      pid = parsePidFileContents(readFileSync(pidPath, 'utf8'));
     } catch {
       pid = null;
     }
@@ -157,10 +161,20 @@ export class UpgradeController {
         alive = (error as NodeJS.ErrnoException).code === 'EPERM';
       }
     }
-    if (!alive) {
+    if (!alive || pid === null) {
       throw new Error(
         'This install is not managed by a service (serviceMode=none) and has no live pid file. Stop the running process, then retry.'
       );
+    }
+    const readCmd = this.deps.processCommandLine ?? processCommandLine;
+    let cmdline: string | null = null;
+    try {
+      cmdline = readCmd(pid);
+    } catch {
+      cmdline = null;
+    }
+    if (!cmdline || !cmdlineOwnsInstallRuntime(cmdline, installDir)) {
+      throw new Error(`PID ${pid} is not the tmex runtime for this install (${installDir}).`);
     }
   }
 
@@ -170,6 +184,11 @@ export class UpgradeController {
     version: string,
     txnId: string
   ): Promise<void> {
+    const mode = this.readPersistedServiceMode(installDir);
+    if (mode === 'none') {
+      this.assertNoneModePidOwnership(installDir);
+    }
+
     let logFd: number | null = null;
     try {
       logFd = openSync(join(installDir, 'upgrade.log'), 'a');
@@ -177,41 +196,44 @@ export class UpgradeController {
       logFd = null;
     }
 
-    const mode = this.readPersistedServiceMode(installDir);
-    if (mode === 'none') {
-      this.assertNoneModePidOwnership(installDir);
-    }
-
-    const spawnFn = this.deps.spawn ?? spawn;
-    const args = [
-      binPath,
-      'upgrade',
-      '--apply-current-package',
-      '--install-dir',
-      installDir,
-      '--version',
-      version,
-      '--txn',
-      txnId,
-      '--bun-path',
-      process.execPath,
-    ];
-    if (mode === 'none') args.push('--no-service');
-    const child = spawnFn(process.execPath, args, {
-      cwd: installDir,
-      env: process.env,
-      detached: true,
-      stdio: logFd !== null ? ['ignore', logFd, logFd] : 'ignore',
-    });
-    this.spawnedChild = child;
-    child.once('exit', (code, signal) => this.onChildExit(code, signal));
-
-    return waitForSpawnAndDetach(child, () => {
-      if (logFd !== null) {
+    const closeLog = (): void => {
+      if (logFd === null) return;
+      try {
         closeSync(logFd);
-        logFd = null;
-      }
-    });
+      } catch {}
+      logFd = null;
+    };
+
+    try {
+      const spawnFn = this.deps.spawn ?? spawn;
+      const args = [
+        binPath,
+        'upgrade',
+        '--apply-current-package',
+        '--install-dir',
+        installDir,
+        '--version',
+        version,
+        '--txn',
+        txnId,
+        '--bun-path',
+        process.execPath,
+      ];
+      if (mode === 'none') args.push('--no-service');
+      const child = spawnFn(process.execPath, args, {
+        cwd: installDir,
+        env: process.env,
+        detached: true,
+        stdio: logFd !== null ? ['ignore', logFd, logFd] : 'ignore',
+      });
+      this.spawnedChild = child;
+      child.once('exit', (code, signal) => this.onChildExit(code, signal));
+
+      return waitForSpawnAndDetach(child, closeLog);
+    } catch (error) {
+      closeLog();
+      throw error;
+    }
   }
 }
 
@@ -290,6 +312,97 @@ export function sha256Hex(bytes: Uint8Array): string {
   return createHash('sha256').update(bytes).digest('hex');
 }
 
+export function processCommandLine(pid: number): string | null {
+  if (!Number.isInteger(pid) || pid <= 0) return null;
+  if (process.platform === 'linux') {
+    const procPath = `/proc/${pid}/cmdline`;
+    if (existsSync(procPath)) {
+      try {
+        return readFileSync(procPath, 'utf8').replace(/\0/g, ' ').trim() || null;
+      } catch {
+        return null;
+      }
+    }
+  }
+  try {
+    const out = execFileSync('ps', ['-p', String(pid), '-o', 'command='], {
+      encoding: 'utf8',
+      timeout: 2_000,
+    }).trim();
+    return out || null;
+  } catch {
+    return null;
+  }
+}
+
+function resolvedPathOrSelf(path: string): string | null {
+  try {
+    return realpathSync(path);
+  } catch {
+    return null;
+  }
+}
+
+export function cmdlineOwnsInstallRuntime(cmdline: string, installDir: string): boolean {
+  const needles = [
+    join(installDir, 'current', 'runtime', 'server.js'),
+    join(installDir, 'runtime', 'server.js'),
+  ];
+  const resolvedInstall = resolvedPathOrSelf(installDir);
+  if (resolvedInstall && resolvedInstall !== installDir) {
+    needles.push(
+      join(resolvedInstall, 'current', 'runtime', 'server.js'),
+      join(resolvedInstall, 'runtime', 'server.js')
+    );
+  }
+  for (const needle of needles) {
+    if (cmdline.includes(needle)) return true;
+    const resolved = resolvedPathOrSelf(needle);
+    if (resolved && resolved !== needle && cmdline.includes(resolved)) return true;
+  }
+  return false;
+}
+
+function asPositiveInt(value: unknown): number | null {
+  const n = typeof value === 'string' ? Number(value) : value;
+  if (typeof n === 'number' && Number.isInteger(n) && n > 0) return n;
+  return null;
+}
+
+export function parsePidFileContents(raw: string): number | null {
+  const trimmed = raw.trim();
+  if (!trimmed) return null;
+  const direct = asPositiveInt(trimmed);
+  if (direct !== null) return direct;
+  try {
+    const parsed: unknown = JSON.parse(trimmed);
+    if (parsed && typeof parsed === 'object' && 'pid' in parsed) {
+      return asPositiveInt((parsed as { pid: unknown }).pid);
+    }
+    return asPositiveInt(parsed);
+  } catch {
+    return null;
+  }
+}
+
+export function assertReleaseIntegrity(
+  version: string,
+  bytes: Uint8Array,
+  sums: { hex: string | null; missing: boolean }
+): void {
+  if (sums.missing || !sums.hex) {
+    if (compareVersions(version, CHECKSUMS_REQUIRED_SINCE) >= 0) {
+      throw new Error(
+        `Release ${version} requires SHA256SUMS (HTTP 200, matching digest). Refusing to continue.`
+      );
+    }
+    throw new Error('Release SHA256SUMS is missing; tarball integrity is unverified.');
+  }
+  if (sha256Hex(bytes) !== sums.hex) {
+    throw new Error(`Release tarball sha256 mismatch for ${releaseTarballName(version)}.`);
+  }
+}
+
 export function releaseSha256SumsUrl(version: string): string {
   return releaseTarballUrl(version).replace(releaseTarballName(version), 'SHA256SUMS');
 }
@@ -315,7 +428,7 @@ export async function fetchReleaseSha256Sums(
   }
   const hex = parseSha256Sums(await response.text(), fileName || releaseTarballName(version));
   if (!hex) {
-    throw new Error(`SHA256SUMS is missing an entry for ${fileName}`);
+    throw new Error(`SHA256SUMS does not list ${fileName}`);
   }
   return { hex, missing: false };
 }
@@ -329,9 +442,7 @@ export async function stageGithubRelease(stageDir: string, version: string): Pro
   await downloadReleaseTarball(releaseTarballUrl(version), tarballPath);
   const bytes = readFileSync(tarballPath);
   const sums = await fetchReleaseSha256Sums(version, releaseTarballName(version));
-  if (!sums.missing && sums.hex && sha256Hex(bytes) !== sums.hex) {
-    throw new Error(`SHA256 mismatch for ${releaseTarballName(version)}`);
-  }
+  assertReleaseIntegrity(version, bytes, sums);
   await extractTarball(tarballPath, stageDir);
 
   const packageRoot = join(stageDir, 'package');

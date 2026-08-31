@@ -29,6 +29,10 @@ describe('recoveryAction', () => {
     expect(recoveryAction(journal('switching'))).toBe('restart_old');
   });
 
+  test('stopping also restarts the old service', () => {
+    expect(recoveryAction(journal('stopping'))).toBe('restart_old');
+  });
+
   test('started verifies then commits or rolls back', () => {
     expect(recoveryAction(journal('started'))).toBe('verify_or_rollback');
   });

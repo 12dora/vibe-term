@@ -96,6 +96,16 @@ describe('fetchReleaseSha256Sums', () => {
       return jsonResponse(404, 'nope');
     });
     expect(result.missing).toBe(true);
+    expect(result.unpublished).toBe(true);
+    expect(result.hex).toBeNull();
+  });
+
+  test('200 without a matching line is missing but not unpublished', async () => {
+    const result = await fetchReleaseSha256Sums('1.1.4', 'tmex-cli-1.1.4.tgz', async () =>
+      jsonResponse(200, `${'a'.repeat(64)}  other.tgz\n`)
+    );
+    expect(result.missing).toBe(true);
+    expect(result.unpublished).toBe(false);
     expect(result.hex).toBeNull();
   });
 

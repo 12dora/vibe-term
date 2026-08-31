@@ -11,7 +11,7 @@ const LEGACY_DIRS = ['cli', 'runtime', 'resources', 'native'] as const;
 
 export async function convertLegacyLayout(
   installDir: string,
-  options: { bunPath: string; skipShims?: boolean }
+  options: { bunPath: string; skipShims?: boolean; localBinDir?: string; bunBinDir?: string }
 ): Promise<boolean> {
   if (hasCurrentLayout(installDir)) return false;
 
@@ -38,9 +38,15 @@ export async function convertLegacyLayout(
   await switchCurrent(installDir, fromVersion);
   await writeRunScript(dest, options.bunPath);
 
-  if (!options.skipShims) {
+  const cliJs = join(installDir, 'current', 'cli', 'bin', 'tmex.js');
+  if (!options.skipShims && (await pathExists(cliJs))) {
     const { installTmexShim } = await import('./cli-shim');
-    await installTmexShim({ installLayout: dest, bunPath: options.bunPath });
+    await installTmexShim({
+      installLayout: dest,
+      bunPath: options.bunPath,
+      localBinDir: options.localBinDir,
+      bunBinDir: options.bunBinDir,
+    });
   }
 
   return true;
