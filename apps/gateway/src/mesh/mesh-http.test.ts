@@ -1,4 +1,5 @@
 import { describe, expect, test } from 'bun:test';
+import { MemoryLocalAuthStore } from '../db/local-auth-settings';
 import { asResponse, bootMesh, challengeAndLogin, dummyServer } from './auth-routes.test';
 import {
   MESH_GATEWAY_WS_KIND,
@@ -10,6 +11,26 @@ import {
   setMeshRequestContext,
 } from './mesh-deps';
 import { X_TMEX_MESH_PEER } from './peer-request-marker';
+
+const LOGIN_PUBLIC = [
+  '/api/auth/mode',
+  '/api/auth/nodes',
+  '/api/auth/challenge',
+  '/api/auth/login',
+  '/api/auth/passkey/login/options',
+] as const;
+const LOCAL_PRESESSION = ['/api/auth/local', '/api/auth/local/bootstrap'] as const;
+
+function upgradeSpy() {
+  let data: { kind?: string; sid?: string; uid?: string; cid?: string } | undefined;
+  const server = {
+    upgrade(_req: Request, opts?: { data?: unknown }) {
+      data = opts?.data as typeof data;
+      return true;
+    },
+  };
+  return { server, dataOf: () => data };
+}
 
 describe('mesh-http', () => {
   test('standalone localUiGuard always passes', async () => {
@@ -257,6 +278,136 @@ describe('mesh-http', () => {
       expect(
         mesh.runtime.localUiGuard(new Request('http://localhost/api/mesh-internal/tmux/pane-info'))
       ).toBeNull();
+    } finally {
+      mesh.close();
+    }
+  });
+});
+
+describe('mesh-http 整站门 × localAuth', () => {
+  test('standalone 未生效：API / UI / WS / local 端点全部放行', async () => {
+    const mesh = await bootMesh({ roles: { hub: false, node: false } });
+    try {
+      const store = new MemoryLocalAuthStore();
+      mesh.runtime.auth.setLocalAuthStore(store);
+      expect(mesh.runtime.localUiGuard(new Request('http://localhost/api/devices'))).toBeNull();
+      expect(mesh.runtime.localUiGuard(new Request('http://localhost/login'))).toBeNull();
+      expect(mesh.runtime.localUiGuard(new Request('http://localhost/devices'))).toBeNull();
+      for (const path of LOGIN_PUBLIC) {
+        expect(mesh.runtime.localUiGuard(new Request(`http://localhost${path}`))).toBeNull();
+      }
+      for (const path of LOCAL_PRESESSION) {
+        expect(mesh.runtime.localUiGuard(new Request(`http://localhost${path}`))).toBeNull();
+      }
+      const { server, dataOf } = upgradeSpy();
+      expect(
+        mesh.runtime.guardGatewayWebSocket(new Request('http://localhost/ws'), server)
+      ).toBeNull();
+      expect(dataOf()).toBeUndefined();
+    } finally {
+      mesh.close();
+    }
+  });
+
+  test('standalone 生效：API 与未登录 WS 拒绝；登录流与 /login 仍公开', async () => {
+    const mesh = await bootMesh({ roles: { hub: false, node: false } });
+    try {
+      const store = new MemoryLocalAuthStore();
+      store.setEnabled(true);
+      mesh.runtime.auth.setLocalAuthStore(store);
+
+      const api = mesh.runtime.localUiGuard(new Request('http://localhost/api/devices'));
+      expect(api?.status).toBe(401);
+      expect(await api?.json()).toEqual({ code: 'UNAUTHORIZED' });
+
+      expect(mesh.runtime.localUiGuard(new Request('http://localhost/login'))).toBeNull();
+      expect(mesh.runtime.localUiGuard(new Request('http://localhost/assets/app.js'))).toBeNull();
+      for (const path of LOGIN_PUBLIC) {
+        expect(mesh.runtime.localUiGuard(new Request(`http://localhost${path}`))).toBeNull();
+      }
+      for (const path of LOCAL_PRESESSION) {
+        const blocked = mesh.runtime.localUiGuard(new Request(`http://localhost${path}`));
+        expect(blocked?.status).toBe(401);
+      }
+
+      const { server, dataOf } = upgradeSpy();
+      expect(
+        mesh.runtime.guardGatewayWebSocket(new Request('http://localhost/ws'), server)
+      ).toBeUndefined();
+      expect(dataOf()?.kind).toBe(MESH_REJECT_4401_KIND);
+
+      const { sid } = await challengeAndLogin(mesh.runtime, mesh.boot);
+      const cookie = { headers: { cookie: `tmex_s_self=${sid}` } };
+      expect(
+        mesh.runtime.localUiGuard(new Request('http://localhost/api/devices', cookie))
+      ).toBeNull();
+      expect(
+        mesh.runtime.localUiGuard(new Request('http://localhost/api/auth/local', cookie))
+      ).toBeNull();
+
+      const authed = upgradeSpy();
+      expect(
+        mesh.runtime.guardGatewayWebSocket(
+          new Request('http://localhost/ws', { headers: { cookie: `tmex_s_self=${sid}` } }),
+          authed.server
+        )
+      ).toBeUndefined();
+      expect(authed.dataOf()?.kind).toBe(MESH_GATEWAY_WS_KIND);
+      expect(authed.dataOf()?.sid).toBe(sid);
+    } finally {
+      mesh.close();
+    }
+  });
+
+  test('standalone 运行时开关：开启不卡住当前请求，关闭立即恢复开放', async () => {
+    const mesh = await bootMesh({ roles: { hub: false, node: false } });
+    try {
+      const store = new MemoryLocalAuthStore();
+      mesh.runtime.auth.setLocalAuthStore(store);
+      expect(mesh.runtime.localUiGuard(new Request('http://localhost/api/auth/local'))).toBeNull();
+
+      store.setEnabled(true);
+      const afterEnable = mesh.runtime.localUiGuard(new Request('http://localhost/api/devices'));
+      expect(afterEnable?.status).toBe(401);
+      const toggleBlocked = mesh.runtime.localUiGuard(
+        new Request('http://localhost/api/auth/local')
+      );
+      expect(toggleBlocked?.status).toBe(401);
+
+      store.setEnabled(false);
+      expect(mesh.runtime.localUiGuard(new Request('http://localhost/api/devices'))).toBeNull();
+      expect(mesh.runtime.localUiGuard(new Request('http://localhost/api/auth/local'))).toBeNull();
+      const { server, dataOf } = upgradeSpy();
+      expect(
+        mesh.runtime.guardGatewayWebSocket(new Request('http://localhost/ws'), server)
+      ).toBeNull();
+      expect(dataOf()).toBeUndefined();
+    } finally {
+      mesh.close();
+    }
+  });
+
+  test('node 角色 localUiGuard / WS 行为与本机登录无关', async () => {
+    const mesh = await bootMesh();
+    try {
+      const store = new MemoryLocalAuthStore();
+      store.setEnabled(true);
+      mesh.runtime.auth.setLocalAuthStore(store);
+
+      const api = mesh.runtime.localUiGuard(new Request('http://localhost/api/devices'));
+      expect(api?.status).toBe(401);
+      expect(mesh.runtime.localUiGuard(new Request('http://localhost/login'))).toBeNull();
+      for (const path of LOGIN_PUBLIC) {
+        expect(mesh.runtime.localUiGuard(new Request(`http://localhost${path}`))).toBeNull();
+      }
+      const local = mesh.runtime.localUiGuard(new Request('http://localhost/api/auth/local'));
+      expect(local?.status).toBe(401);
+
+      const { server, dataOf } = upgradeSpy();
+      expect(
+        mesh.runtime.guardGatewayWebSocket(new Request('http://localhost/ws'), server)
+      ).toBeUndefined();
+      expect(dataOf()?.kind).toBe(MESH_REJECT_4401_KIND);
     } finally {
       mesh.close();
     }

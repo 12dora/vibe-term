@@ -96,6 +96,32 @@ export type AuthRoutesDeps = {
   localAuth?: LocalAuthStoreLike;
 };
 
+/** 与 node 相同的登录前公开面；role 无关。 */
+export const AUTH_LOGIN_PUBLIC_PATHS = new Set([
+  '/api/auth/mode',
+  '/api/auth/nodes',
+  '/api/auth/challenge',
+  '/api/auth/login',
+  '/api/auth/passkey/login/options',
+]);
+
+/** standalone 门未生效时允许无会话触达的本机登录开关。 */
+export const AUTH_LOCAL_PRESESSION_PATHS = new Set([
+  '/api/auth/local',
+  '/api/auth/local/bootstrap',
+]);
+
+export function isAuthPublicPath(
+  path: string,
+  opts: { standalone: boolean; localAuthEffective: boolean }
+): boolean {
+  if (AUTH_LOGIN_PUBLIC_PATHS.has(path)) return true;
+  if (opts.standalone && !opts.localAuthEffective && AUTH_LOCAL_PRESESSION_PATHS.has(path)) {
+    return true;
+  }
+  return false;
+}
+
 export class AuthRoutes {
   private readonly failures = new Map<string, number[]>();
   private readonly sessionDeps: SessionMiddlewareDeps;
@@ -122,6 +148,10 @@ export class AuthRoutes {
 
   setLocalAuthStore(store: LocalAuthStoreLike): void {
     this.localAuth = store;
+  }
+
+  isLocalAuthEffective(): boolean {
+    return isLocalAuthEffective(this.localAuthCtx());
   }
 
   async handle(req: Request): Promise<Response | null> {

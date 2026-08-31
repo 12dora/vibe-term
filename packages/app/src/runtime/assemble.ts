@@ -1,7 +1,9 @@
 import { resolve } from 'node:path';
 import { PROCESS_STARTED_AT } from '../../../../apps/gateway/src/api/system-routes';
 import { NodeIdentityStore } from '../../../../apps/gateway/src/auth/node-identity-store';
+import type { NodeSessionStore } from '../../../../apps/gateway/src/auth/node-session-store';
 import { config as gatewayConfig } from '../../../../apps/gateway/src/config';
+import { readLocalAuthEffective } from '../../../../apps/gateway/src/db/local-auth-settings';
 import type { HubRuntime, HubServerWebSocket } from '../../../../apps/gateway/src/hub';
 import {
   MESH_FORWARD_WS_KIND,
@@ -39,7 +41,7 @@ import { withEnvLock } from '../lib/env-mutation';
 import { createAuthContextFromDb } from '../lib/local-auth';
 import { loadNodeDatachannel } from '../lib/native-datachannel';
 import { detectCurrentNativePin } from '../lib/native-manifest';
-import { type TmexRoles, isStandaloneRoles, parseTmexRoles } from '../lib/roles';
+import { type TmexRoles, parseTmexRoles } from '../lib/roles';
 import { AcmeHttp01Challenge } from '../tls/acme-challenge';
 import { HttpsListener } from '../tls/https-listener';
 import { TlsService } from '../tls/tls-service';
@@ -66,6 +68,7 @@ type AssembleTmexOptions = {
   hub?: HubRuntime;
   loadNative?: LoadNative;
   nativeDir?: string;
+  localAuthEffective?: () => boolean;
 };
 
 type AssembledTmex = {
@@ -88,6 +91,20 @@ type AssembledTmex = {
 
 type HttpResult = Response | null | undefined | MeshRewritten;
 type HttpHandler = (req: Request, server: Bun.Server<unknown>) => HttpResult | Promise<HttpResult>;
+
+function createRouteAuthenticate(
+  roles: TmexRoles,
+  nodeSessionStore: NodeSessionStore,
+  localAuthEffective: () => boolean
+): LocalRouteDeps['authenticate'] {
+  return (req) => {
+    try {
+      return authenticateRequest(req, { roles, nodeSessionStore, localAuthEffective });
+    } catch {
+      return { ok: false };
+    }
+  };
+}
 
 function defaultStaticRoot(): string {
   return process.env.TMEX_FE_DIST_DIR
@@ -348,9 +365,7 @@ function buildTlsLifecycle(
     tlsHandler: createTlsRoutes({
       service: tls,
       authorize: async (req) =>
-        isStandaloneRoles(routeDeps.roles) || routeDeps.authenticate(req).ok
-          ? null
-          : jsonErr('UNAUTHORIZED', 'login required', 401),
+        routeDeps.authenticate(req).ok ? null : jsonErr('UNAUTHORIZED', 'login required', 401),
     }),
   };
 }
@@ -441,13 +456,11 @@ export async function assembleTmex(opts: AssembleTmexOptions = {}): Promise<Asse
       await tryStop(() => hub?.stop());
     },
     startedAt: PROCESS_STARTED_AT,
-    authenticate: (req) => {
-      try {
-        return authenticateRequest(req, { roles, nodeSessionStore: auth.nodeSessionStore });
-      } catch {
-        return { ok: false };
-      }
-    },
+    authenticate: createRouteAuthenticate(
+      roles,
+      auth.nodeSessionStore,
+      opts.localAuthEffective ?? readLocalAuthEffective
+    ),
     tlsStatus: async () => {
       if (!tlsSlot.service) throw new Error('tls service is not initialized');
       const status = await tlsSlot.service.status();

@@ -3,7 +3,7 @@ import type { ChallengeStore } from '../auth/challenge-store';
 import type { NodeSessionStore } from '../auth/node-session-store';
 import type { UserKeyService } from '../auth/user-key-service';
 import type { UserStore } from '../auth/user-store';
-import { type AuthKeyLogPublisher, AuthRoutes } from './auth-routes';
+import { type AuthKeyLogPublisher, AuthRoutes, isAuthPublicPath } from './auth-routes';
 import { Forwarder, rewriteSelf, takePendingForwardStream } from './forwarder';
 import {
   type ConnectionLookup,
@@ -31,6 +31,7 @@ import {
   type SessionMiddlewareDeps,
   authenticateRequest,
   consumeSetSessionForBrowser,
+  isStandaloneOpenAuth,
   jsonBody,
   jsonError,
 } from './session-middleware';
@@ -61,13 +62,6 @@ export type MeshHttpRuntimeOptions = {
 };
 
 const STATIC_PREFIXES = ['/assets/', '/static/', '/favicon', '/manifest'];
-const PUBLIC_API = new Set([
-  '/api/auth/mode',
-  '/api/auth/nodes',
-  '/api/auth/challenge',
-  '/api/auth/login',
-  '/api/auth/passkey/login/options',
-]);
 
 type RegisteredSocket = {
   ws: MeshServerWebSocket;
@@ -95,6 +89,7 @@ export class MeshHttpRuntime {
       nodeSessionStore: opts.nodeSessionStore,
       now: this.now,
       trustProxy: opts.trustProxy,
+      localAuthEffective: () => this.auth.isLocalAuthEffective(),
     };
     this.forwarder = new Forwarder({
       nodeId: opts.nodeId,
@@ -161,14 +156,14 @@ export class MeshHttpRuntime {
   }
 
   guardGatewayWebSocket(req: Request, server: MeshUpgradeServer): Response | null | undefined {
-    if (isStandaloneRoles(this.roles)) {
-      return null;
-    }
     const path = new URL(req.url).pathname;
     if (path !== '/ws' && path !== '/n/self/ws' && path !== `/n/${this.nodeId}/ws`) {
       return null;
     }
     const auth = authenticateRequest(req, this.sessionDeps);
+    if (isStandaloneOpenAuth(auth)) {
+      return null;
+    }
     if (!auth.ok || !auth.sid || !auth.userId) {
       const upgraded = server.upgrade(req, {
         data: { kind: MESH_REJECT_4401_KIND, via: MESH_VIA_SELF },
@@ -324,9 +319,6 @@ export class MeshHttpRuntime {
   };
 
   localUiGuard(req: Request): Response | null {
-    if (isStandaloneRoles(this.roles)) {
-      return null;
-    }
     const path = new URL(req.url).pathname;
     if (path === '/login' || path.startsWith('/login/')) {
       return null;
@@ -337,7 +329,12 @@ export class MeshHttpRuntime {
     if (isMeshInternalPath(path)) {
       return null;
     }
-    if (PUBLIC_API.has(path)) {
+    if (
+      isAuthPublicPath(path, {
+        standalone: isStandaloneRoles(this.roles),
+        localAuthEffective: this.sessionDeps.localAuthEffective?.() ?? false,
+      })
+    ) {
       return null;
     }
     if (path.startsWith('/api/')) {
@@ -356,7 +353,7 @@ export class MeshHttpRuntime {
     server: MeshUpgradeServer
   ): Promise<Response | null | undefined> {
     const path = new URL(req.url).pathname;
-    if (path === '/healthz' && !isStandaloneRoles(this.roles)) {
+    if (path === '/healthz') {
       const auth = authenticateRequest(req, this.sessionDeps);
       if (!auth.ok) {
         return jsonBody({ status: 'ok' });

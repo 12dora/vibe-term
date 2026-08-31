@@ -777,6 +777,55 @@ describe('assembleTmex role matrix', () => {
     });
   });
 
+  test('standalone localAuth 生效时 GET /api/tls 与 node 一样要求会话', async () => {
+    process.env.TMEX_ROLES = 'standalone';
+    const assembled = await assembleTmex({
+      roles: { hub: false, node: false },
+      localAuthEffective: () => true,
+      createGatewayRuntime: async () => fakeGateway(),
+      createMeshRuntime: async () => {
+        throw new Error('no mesh');
+      },
+    });
+    const res = await assembled.fetch(new Request('http://127.0.0.1/api/tls'), dummyServer);
+    expect(res?.status).toBe(401);
+    expect(await res?.json()).toEqual({
+      error: { code: 'UNAUTHORIZED', message: 'login required' },
+    });
+  });
+
+  test('standalone localAuth 未生效时 GET /api/tls 仍开放；开关 live 读', async () => {
+    process.env.TMEX_ROLES = 'standalone';
+    let effective = false;
+    const assembled = await assembleTmex({
+      roles: { hub: false, node: false },
+      localAuthEffective: () => effective,
+      createGatewayRuntime: async () => fakeGateway(),
+      createMeshRuntime: async () => {
+        throw new Error('no mesh');
+      },
+    });
+    const open = await assembled.fetch(new Request('http://127.0.0.1/api/tls'), dummyServer);
+    expect(open?.status).toBe(200);
+    effective = true;
+    const closed = await assembled.fetch(new Request('http://127.0.0.1/api/tls'), dummyServer);
+    expect(closed?.status).toBe(401);
+    effective = false;
+    const restored = await assembled.fetch(new Request('http://127.0.0.1/api/tls'), dummyServer);
+    expect(restored?.status).toBe(200);
+  });
+
+  test('node GET /api/tls 不因 localAuthEffective=false 而放行', async () => {
+    const assembled = await assembleTmex({
+      roles: { hub: false, node: true },
+      localAuthEffective: () => false,
+      createGatewayRuntime: async () => fakeGateway(),
+      createMeshRuntime: async () => fakeMesh(),
+    });
+    const res = await assembled.fetch(new Request('http://127.0.0.1/api/tls'), dummyServer);
+    expect(res?.status).toBe(401);
+  });
+
   test('unknown ACME challenge token is 404, not SPA fallback', async () => {
     const assembled = await assembleTmex({
       roles: { hub: false, node: false },

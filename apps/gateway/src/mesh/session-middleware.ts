@@ -41,6 +41,11 @@ function standaloneOpenBypass(deps: SessionMiddlewareDeps): AuthenticateOk | nul
   return { ok: true, userId: null, session: null, sid: null };
 }
 
+/** standalone 开放短路：ok 但无 sid/uid，WS 门应放行而不是 4401。 */
+export function isStandaloneOpenAuth(auth: AuthenticateResult): boolean {
+  return auth.ok && auth.sid == null && auth.userId == null;
+}
+
 export function authenticateRequest(
   req: Request,
   deps: SessionMiddlewareDeps,

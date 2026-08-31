@@ -651,6 +651,39 @@ describe('auth-routes', () => {
     }
   });
 
+  test('isAuthPublicPath：登录流始终公开；local 仅 standalone 未生效时公开', async () => {
+    const { isAuthPublicPath } = await import('./auth-routes');
+    const login = [
+      '/api/auth/mode',
+      '/api/auth/nodes',
+      '/api/auth/challenge',
+      '/api/auth/login',
+      '/api/auth/passkey/login/options',
+    ];
+    for (const path of login) {
+      expect(isAuthPublicPath(path, { standalone: false, localAuthEffective: false })).toBe(true);
+      expect(isAuthPublicPath(path, { standalone: true, localAuthEffective: true })).toBe(true);
+    }
+    expect(
+      isAuthPublicPath('/api/auth/local', { standalone: true, localAuthEffective: false })
+    ).toBe(true);
+    expect(
+      isAuthPublicPath('/api/auth/local/bootstrap', {
+        standalone: true,
+        localAuthEffective: false,
+      })
+    ).toBe(true);
+    expect(
+      isAuthPublicPath('/api/auth/local', { standalone: true, localAuthEffective: true })
+    ).toBe(false);
+    expect(
+      isAuthPublicPath('/api/auth/local', { standalone: false, localAuthEffective: false })
+    ).toBe(false);
+    expect(
+      isAuthPublicPath('/api/auth/logout', { standalone: true, localAuthEffective: false })
+    ).toBe(false);
+  });
+
   test('GET /api/auth/mode reports persisted hub meta and roles.hub', async () => {
     const mesh = await bootMesh();
     try {
